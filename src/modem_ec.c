@@ -668,7 +668,11 @@ static int rx_xid_command(struct lapm_state *l, frame_t *f)
 	u8 parameters[XID_PARAMETER_LENGTH];
 	u8 private_parameters[XID_PRIVATE_LENGTH];
 	struct v42_xid_fields fields;
+	bool duplicate = l->v44_session.response_length != 0;
+	bool pending = l->v44_session.phase == LAPM_V44_COMMAND_PENDING;
 
+	if (!duplicate && l->state == LAPM_DATA)
+		return -1;
 	if (decode_xid(l, f, &config) != 0)
 		return -1;
 	build_xid_fields(&config, parameters, private_parameters, &fields);
@@ -676,7 +680,7 @@ static int rx_xid_command(struct lapm_state *l, frame_t *f)
 			&l->v44_session, f->buf + 2, (size_t)f->count - 2U,
 			&fields, &prepared) != LAPM_V44_OK)
 		return -1;
-	if (v44_offer_has_direction(&prepared.offer) && l->v44_path == NULL) {
+	if (!duplicate && !pending && v44_offer_has_direction(&prepared.offer)) {
 		candidate = create_v44_path(l, &prepared.offer);
 		if (candidate == NULL)
 			return -1;
@@ -685,8 +689,13 @@ static int rx_xid_command(struct lapm_state *l, frame_t *f)
 		v44_character_path_destroy(candidate);
 		return -1;
 	}
-	if (candidate != NULL)
-		l->v44_path = candidate;
+	/* V.42 8.10.2: a peer command does not confirm our own command.
+	 * Keep its timer, frozen offer, and codec setup until our response arrives.
+	 * A cached reply must not reapply old parameters or reset codec histories. */
+	if (duplicate || pending)
+		return 0;
+	v44_character_path_destroy(l->v44_path);
+	l->v44_path = candidate;
 	apply_xid_config(l, &config);
 	return 0;
 }

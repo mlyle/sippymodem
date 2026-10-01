@@ -209,21 +209,19 @@ enum lapm_v44_result lapm_v44_prepare_response(
 
 	if (!session_is_valid(session) || prepared == NULL)
 		return LAPM_V44_INVALID_ARGUMENT;
-	if ((session->phase == LAPM_V44_NEGOTIATED ||
-	     session->phase == LAPM_V44_DECLINED) &&
-	    session->response_committed && command != NULL &&
+	if (session->response_length != 0 && command != NULL &&
 	    command_length == session->peer_command_length &&
 	    memcmp(command, session->peer_command, command_length) == 0) {
 		candidate.owner = session;
 		candidate.revision = session->revision;
 		candidate.action = PREPARED_DUPLICATE_RESPONSE;
-		candidate.offer = session->negotiated_offer;
+		candidate.offer = session->response_offer;
 		candidate.length = session->response_length;
 		memcpy(candidate.data, session->response, candidate.length);
 		*prepared = candidate;
 		return LAPM_V44_OK;
 	}
-	if (session->phase != LAPM_V44_READY)
+	if (session->response_length != 0)
 		return LAPM_V44_INVALID_STATE;
 	result = decode_peer_offer(
 		command, command_length, &peer_present, &private_present,
@@ -235,7 +233,12 @@ enum lapm_v44_result lapm_v44_prepare_response(
 	candidate.action = PREPARED_RESPONSE;
 	candidate.command_length = command_length;
 	memcpy(candidate.command, command, command_length);
-	candidate.offer = effective_offer(session);
+	if (session->phase == LAPM_V44_COMMAND_PENDING)
+		candidate.offer = session->command_offer;
+	else if (session->phase == LAPM_V44_READY)
+		candidate.offer = effective_offer(session);
+	else
+		candidate.offer = session->negotiated_offer;
 	if (peer_present &&
 	    v44_xid_negotiate(
 		    &candidate.offer, &peer_offer, &candidate.offer) !=
@@ -336,23 +339,22 @@ enum lapm_v44_result lapm_v44_commit(
 			return LAPM_V44_STALE_TRANSACTION;
 		break;
 	case PREPARED_RESPONSE:
-		if (session->phase != LAPM_V44_READY)
+		if (session->response_length != 0)
 			return LAPM_V44_STALE_TRANSACTION;
-		session->negotiated_offer = prepared->offer;
-		session->response_committed = true;
+		session->response_offer = prepared->offer;
 		session->peer_command_length = prepared->command_length;
 		memcpy(session->peer_command, prepared->command,
 		       prepared->command_length);
 		session->response_length = prepared->length;
 		memcpy(session->response, prepared->data, prepared->length);
-		session->phase = has_enabled_direction(&prepared->offer) ?
-			LAPM_V44_NEGOTIATED :
-			LAPM_V44_DECLINED;
+		if (session->phase != LAPM_V44_COMMAND_PENDING) {
+			session->negotiated_offer = prepared->offer;
+			session->phase = has_enabled_direction(&prepared->offer) ?
+				LAPM_V44_NEGOTIATED : LAPM_V44_DECLINED;
+		}
 		break;
 	case PREPARED_DUPLICATE_RESPONSE:
-		if ((session->phase != LAPM_V44_NEGOTIATED &&
-		     session->phase != LAPM_V44_DECLINED) ||
-		    !session->response_committed ||
+		if (session->response_length == 0 ||
 		    prepared->length != session->response_length ||
 		    memcmp(prepared->data, session->response, prepared->length) != 0)
 			return LAPM_V44_STALE_TRANSACTION;

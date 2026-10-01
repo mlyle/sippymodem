@@ -59,18 +59,18 @@ struct lapm_v44_prepared {
 
 /*
  * The object is an owned value and contains no pointers into received frames.
- * One session performs either the command or response side of an initial XID
- * exchange. Mid-link renegotiation and simultaneous commands are deliberately
- * outside this slice.
+ * An initial exchange owns its outgoing command independently of its cached
+ * response to the peer. Either direction can finish first. Repeated peer
+ * commands replay that response without changing the negotiated selection.
  */
 struct lapm_v44_session {
 	struct lapm_v44_config config;
 	enum lapm_v44_phase phase;
 	uint64_t revision;
 	bool initialized;
-	bool response_committed;
 	struct v44_offer command_offer;
 	struct v44_offer negotiated_offer;
+	struct v44_offer response_offer;
 	size_t command_length;
 	uint8_t command[LAPM_V44_MAX_XID_SIZE];
 	size_t peer_command_length;

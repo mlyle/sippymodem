@@ -2360,6 +2360,161 @@ static bool test_lapm_xid_directions(void)
 	return true;
 }
 
+static bool test_lapm_xid_collisions(void)
+{
+	static const uint8_t peer_parameters[] = {
+		3, 4, 0x8a, 0x89, 0, 0,
+		5, 2, 2, 0x98, 6, 2, 3, 0xb8, 7, 1, 7, 8, 1, 11,
+	};
+	static const unsigned compression_types[] = {
+		MODEM_COMP_TYPE_NONE, MODEM_COMP_TYPE_V42BIS, MODEM_COMP_TYPE_V44,
+	};
+	struct modem_driver driver = {
+		.name = "LAPM XID collisions", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+
+	for (unsigned int scenario = 0; scenario < 2 * ARRAY_LENGTH(compression_types); ++scenario) {
+		unsigned int early_response = scenario / ARRAY_LENGTH(compression_types);
+		unsigned int compression = scenario % ARRAY_LENGTH(compression_types);
+		struct modem *m = modem_create(&driver, driver.name);
+		struct lapm_v44_session peer;
+		struct lapm_v44_prepared peer_command, peer_response;
+		struct v44_offer offer = v44_default_offer();
+		struct lapm_v44_config peer_config;
+		struct v42_xid_fields fields;
+		uint8_t preamble[109], command[130], wire[130], response[130];
+		frame_t incoming = { .buf = wire };
+		frame_t *outgoing;
+		int command_size, response_size;
+		int timer;
+
+		CHECK(m != NULL, "collision modem allocation failed");
+		m->caller = 1;
+		m->rx_rate = m->tx_rate = 2400;
+		m->cfg.comp = compression ? 3 : 0;
+		m->cfg.comp_types = compression_types[compression];
+		m->cfg.ec_tx_info_size = m->cfg.ec_rx_info_size = 70;
+		m->cfg.ec_tx_win_size = m->cfg.ec_rx_win_size = 2;
+		CHECK(modem_ec_init(m) == 0, "collision modem initialization failed");
+		modem_ec_start(m);
+		CHECK(modem_hdlc_get_bits(m, 8, preamble, sizeof(preamble)) ==
+			      (int)sizeof(preamble), "collision preamble failed");
+		outgoing = m->packer.hdlc.tx_frame;
+		m->packer.hdlc.tx_frame = NULL;
+		CHECK(outgoing != NULL && outgoing->size <= (int)sizeof(command),
+		      "collision command was missing");
+		command_size = outgoing->size;
+		memcpy(command, outgoing->buf, (size_t)command_size);
+		m->packer.hdlc.tx_complete(m->packer.hdlc.framer, outgoing);
+		CHECK(v42_xid_decode(command + 2, (size_t)command_size - 2u, &fields) == V42_XID_OK,
+		      "collision command did not decode");
+		fields.parameter_negotiation = peer_parameters;
+		fields.parameter_negotiation_length = sizeof(peer_parameters);
+		fields.user_data = NULL;
+		fields.user_data_length = 0;
+		offer.transmit.enabled = offer.receive.enabled = compression == 2;
+		peer_config = (struct lapm_v44_config) {
+			.enabled = compression == 2, .native_v44_ready = true, .local_offer = offer,
+		};
+		CHECK(lapm_v44_session_init(&peer, &peer_config) == LAPM_V44_OK &&
+		      lapm_v44_prepare_command(&peer, &fields, &peer_command) == LAPM_V44_OK &&
+		      lapm_v44_commit(&peer, &peer_command) == LAPM_V44_OK &&
+		      lapm_v44_prepare_response(&peer, command + 2, (size_t)command_size - 2u,
+			      &fields, &peer_response) == LAPM_V44_OK &&
+		      lapm_v44_commit(&peer, &peer_response) == LAPM_V44_OK,
+		      "peer could not prepare independent command and response");
+		if (early_response) {
+			wire[0] = m->ec.lapm.cmd_addr;
+			wire[1] = 0xaf;
+			memcpy(wire + 2, peer_response.data, peer_response.length);
+			incoming.count = 2 + (int)peer_response.length;
+			m->packer.hdlc.rx_complete(m->packer.hdlc.framer, &incoming);
+			outgoing = m->packer.hdlc.get_tx_frame(m->packer.hdlc.framer);
+			CHECK(outgoing != NULL && outgoing->buf[1] == 0x7f,
+			      "early XID response did not start establishment");
+			m->packer.hdlc.tx_complete(m->packer.hdlc.framer, outgoing);
+		}
+		timer = m->bit_timer;
+		wire[0] = m->ec.lapm.rsp_addr;
+		wire[1] = 0xaf;
+		memcpy(wire + 2, peer_command.data, peer_command.length);
+		incoming.count = 2 + (int)peer_command.length;
+		{
+			frame_t *saved_next = m->ec.lapm.ctrl_list->next;
+			struct v44_character_path *path = m->ec.lapm.v44_path;
+
+			m->ec.lapm.ctrl_list->next = m->ec.lapm.tx_ctrl;
+			m->packer.hdlc.rx_complete(m->packer.hdlc.framer, &incoming);
+			m->ec.lapm.ctrl_list->next = saved_next;
+			CHECK(m->ec.lapm.v44_session.response_length == 0 &&
+			      m->ec.lapm.v44_path == path && m->bit_timer == timer &&
+			      m->packer.hdlc.get_tx_frame(m->packer.hdlc.framer) == NULL,
+			      "unqueued collision response changed the transaction or codec");
+		}
+		m->packer.hdlc.rx_complete(m->packer.hdlc.framer, &incoming);
+		outgoing = m->packer.hdlc.get_tx_frame(m->packer.hdlc.framer);
+		CHECK(outgoing != NULL && outgoing->buf[1] == 0xaf && m->bit_timer == timer,
+		      "colliding command did not receive a response with the timer intact");
+		response_size = outgoing->size;
+		memcpy(response, outgoing->buf, (size_t)response_size);
+		m->packer.hdlc.tx_complete(m->packer.hdlc.framer, outgoing);
+		CHECK(lapm_v44_accept_response(&peer, response + 2,
+			      (size_t)response_size - 2u) == LAPM_V44_OK,
+		      "peer rejected the collision response");
+		if (!early_response) {
+			CHECK(m->ec.lapm.config && m->ec.lapm.v44_path == NULL &&
+			      m->ec.lapm.tx_info_size == 70 && m->ec.lapm.rx_info_size == 70 &&
+			      m->ec.lapm.v44_session.phase == LAPM_V44_COMMAND_PENDING,
+			      "peer command applied configuration before our response");
+			m->bit_timer_func(m);
+			outgoing = m->packer.hdlc.get_tx_frame(m->packer.hdlc.framer);
+			CHECK(outgoing != NULL && outgoing->size == command_size &&
+			      memcmp(outgoing->buf, command, (size_t)command_size) == 0,
+			      "colliding command changed the frozen retry");
+			m->packer.hdlc.tx_complete(m->packer.hdlc.framer, outgoing);
+		}
+		m->packer.hdlc.rx_complete(m->packer.hdlc.framer, &incoming);
+		outgoing = m->packer.hdlc.get_tx_frame(m->packer.hdlc.framer);
+		CHECK(outgoing != NULL && outgoing->size == response_size &&
+		      memcmp(outgoing->buf, response, (size_t)response_size) == 0,
+		      "duplicate collision command changed its response");
+		m->packer.hdlc.tx_complete(m->packer.hdlc.framer, outgoing);
+		if (!early_response) {
+			wire[0] = m->ec.lapm.cmd_addr;
+			memcpy(wire + 2, peer_response.data, peer_response.length);
+			incoming.count = 2 + (int)peer_response.length;
+			m->packer.hdlc.rx_complete(m->packer.hdlc.framer, &incoming);
+			outgoing = m->packer.hdlc.get_tx_frame(m->packer.hdlc.framer);
+			CHECK(outgoing != NULL && outgoing->buf[1] == 0x7f,
+			      "completed collision did not start establishment");
+			m->packer.hdlc.tx_complete(m->packer.hdlc.framer, outgoing);
+		}
+		CHECK(!m->ec.lapm.config && m->ec.lapm.tx_info_size == 119 &&
+		      m->ec.lapm.rx_info_size == 83 && m->ec.lapm.tx_win_size == 11 &&
+		      m->ec.lapm.rx_win_size == 7 &&
+		      (m->ec.lapm.v44_path != NULL) == (compression == 2) &&
+		      m->cfg.comp == (compression == 1 ? 3u : 0u),
+		      "collision did not confirm directional limits and one codec");
+		{
+			struct v44_character_path *path = m->ec.lapm.v44_path;
+
+			wire[0] = m->ec.lapm.rsp_addr;
+			memcpy(wire + 2, peer_command.data, peer_command.length);
+			incoming.count = 2 + (int)peer_command.length;
+			m->packer.hdlc.rx_complete(m->packer.hdlc.framer, &incoming);
+			outgoing = m->packer.hdlc.get_tx_frame(m->packer.hdlc.framer);
+			CHECK(outgoing != NULL && outgoing->size == response_size &&
+			      memcmp(outgoing->buf, response, (size_t)response_size) == 0 &&
+			      m->ec.lapm.v44_path == path && !m->ec.lapm.config,
+			      "late duplicate reset codec ownership or negotiation");
+			m->packer.hdlc.tx_complete(m->packer.hdlc.framer, outgoing);
+		}
+		modem_delete(m);
+	}
+	return true;
+}
+
 static bool test_lapm_repeated_xid_parameters(void)
 {
 	struct modem_driver driver = {
@@ -5551,6 +5706,7 @@ int main(void)
 		{ "AT V.34 symbol rate", test_at_v34_symbol_rate },
 		{ "LAPM XID parameter encoding", test_lapm_xid_parameters },
 		{ "LAPM XID negotiation directions", test_lapm_xid_directions },
+		{ "LAPM simultaneous XID negotiation", test_lapm_xid_collisions },
 		{ "LAPM repeated XID parameters", test_lapm_repeated_xid_parameters },
 		{ "bounded LAPM XID envelopes", test_lapm_xid_envelopes },
 		{ "bounded LAPM compression retry", test_lapm_dual_compression_retry },

@@ -222,6 +222,79 @@ static bool test_queue_transactions_and_retransmission(void)
 	return true;
 }
 
+static bool test_simultaneous_commands(void)
+{
+	const struct v44_offer offers[] = {
+		{ { true, { 4096, 200, 4096 } }, { true, { 2048, 100, 2000 } } },
+		{ { true, { 1024, 150, 3000 } }, { true, { 8192, 80, 1000 } } },
+	};
+	const struct v44_offer expected[] = {
+		{ { true, { 4096, 80, 1000 } }, { true, { 1024, 100, 2000 } } },
+		{ { true, { 1024, 100, 2000 } }, { true, { 4096, 80, 1000 } } },
+	};
+
+	/* A lost peer command can arrive after the response to our command. */
+	for (unsigned int response_first = 0; response_first < 2; ++response_first) {
+		struct lapm_v44_session peers[2], before;
+		struct lapm_v44_prepared commands[2], responses[2], retry, duplicate;
+		struct v44_offer selected;
+
+		for (unsigned int i = 0; i < 2; ++i) {
+			struct lapm_v44_config config = config_for(offers[i]);
+
+			CHECK(lapm_v44_session_init(&peers[i], &config) == LAPM_V44_OK &&
+			      lapm_v44_prepare_command(&peers[i], NULL, &commands[i]) == LAPM_V44_OK &&
+			      lapm_v44_commit(&peers[i], &commands[i]) == LAPM_V44_OK,
+			      "could not start simultaneous commands");
+		}
+		before = peers[1];
+		CHECK(lapm_v44_prepare_response(&peers[1], commands[0].data,
+			      commands[0].length, NULL, &responses[1]) == LAPM_V44_OK &&
+		      memcmp(&peers[1], &before, sizeof(before)) == 0 &&
+		      lapm_v44_commit(&peers[1], &responses[1]) == LAPM_V44_OK &&
+		      peers[1].phase == LAPM_V44_COMMAND_PENDING,
+		      "replying to a peer command replaced our pending transaction");
+		CHECK(lapm_v44_prepare_retransmission(&peers[1], &retry) == LAPM_V44_OK &&
+		      retry.length == commands[1].length &&
+		      memcmp(retry.data, commands[1].data, retry.length) == 0 &&
+		      lapm_v44_commit(&peers[1], &retry) == LAPM_V44_OK,
+		      "peer command changed the frozen retransmission");
+		if (response_first)
+			CHECK(lapm_v44_accept_response(&peers[0], responses[1].data,
+				      responses[1].length) == LAPM_V44_OK,
+			      "could not accept the early response");
+		CHECK(lapm_v44_prepare_response(&peers[0], commands[1].data,
+			      commands[1].length, NULL, &responses[0]) == LAPM_V44_OK &&
+		      lapm_v44_commit(&peers[0], &responses[0]) == LAPM_V44_OK,
+		      "could not answer the colliding or delayed peer command");
+		CHECK(lapm_v44_prepare_response(&peers[1], commands[0].data,
+			      commands[0].length, NULL, &duplicate) == LAPM_V44_OK &&
+		      duplicate.length == responses[1].length &&
+		      memcmp(duplicate.data, responses[1].data, duplicate.length) == 0 &&
+		      offers_equal(&duplicate.offer, &responses[1].offer) &&
+		      lapm_v44_commit(&peers[1], &duplicate) == LAPM_V44_OK &&
+		      peers[1].phase == LAPM_V44_COMMAND_PENDING,
+		      "duplicate peer command changed the pending transaction");
+		if (!response_first)
+			CHECK(lapm_v44_accept_response(&peers[0], responses[1].data,
+				      responses[1].length) == LAPM_V44_OK,
+			      "could not accept the delayed response");
+		CHECK(lapm_v44_accept_response(&peers[1], responses[0].data,
+			      responses[0].length) == LAPM_V44_OK,
+		      "could not finish the second pending transaction");
+		for (unsigned int i = 0; i < 2; ++i) {
+			CHECK(lapm_v44_get_negotiated_offer(&peers[i], &selected) == LAPM_V44_OK &&
+			      offers_equal(&selected, &expected[i]) &&
+			      lapm_v44_prepare_response(&peers[i], commands[1u - i].data,
+				      commands[1u - i].length, NULL, &duplicate) == LAPM_V44_OK &&
+			      duplicate.length == responses[i].length &&
+			      memcmp(duplicate.data, responses[i].data, duplicate.length) == 0,
+			      "simultaneous negotiation lost its selection or cached response");
+		}
+	}
+	return true;
+}
+
 static bool test_duplicate_command(void)
 {
 	static const uint8_t alternate_parameters[] = { 0x03, 0x01, 0x01 };
@@ -485,6 +558,7 @@ int main(void)
 		{ "queue transactions and retransmission",
 		  test_queue_transactions_and_retransmission },
 		{ "duplicate command", test_duplicate_command },
+		{ "simultaneous commands", test_simultaneous_commands },
 		{ "decline and malformed tails",
 		  test_decline_and_malformed_tails },
 		{ "response errors and reset", test_response_errors_and_reset },
