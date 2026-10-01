@@ -2521,6 +2521,126 @@ static bool test_lapm_v42bis_decoder_failure(void)
 	return true;
 }
 
+static bool test_lapm_v42bis_receive_pressure(void)
+{
+	static const char *const payloads[] = { "B", "BA", "BAC" };
+	struct modem_driver driver = {
+		.name = "LAPM V.42bis output pressure", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+
+	for (size_t scenario = 0; scenario < ARRAY_LENGTH(payloads); ++scenario) {
+		struct modem *m = modem_create(&driver, driver.name);
+		int pipe_fds[2], original_pty;
+		char filler[4096] = { 0 }, output[8];
+		uint8_t wire[6] = { 0 };
+		size_t length = strlen(payloads[scenario]);
+		frame_t incoming = { .buf = wire, .count = 3 + length };
+
+		CHECK(m != NULL, "receive-pressure modem allocation failed");
+		m->cfg.comp = 3;
+		m->cfg.comp_types = MODEM_COMP_TYPE_V42BIS;
+		m->cfg.comp_dict_size = 512;
+		m->cfg.comp_max_string = 34;
+		CHECK(start_lapm_compression_fixture(m, false), "receive-pressure fixture failed");
+		m->ec.lapm.state = 2;
+		m->ec.lapm.config = 0;
+		modem_update_status(m, STATUS_EC_LINK);
+		CHECK(pipe(pipe_fds) == 0 &&
+			      fcntl(pipe_fds[0], F_SETFL, O_NONBLOCK) == 0 &&
+			      fcntl(pipe_fds[1], F_SETFL, O_NONBLOCK) == 0,
+		      "receive-pressure pipe setup failed");
+		while (write(pipe_fds[1], filler, sizeof(filler)) > 0) {}
+		CHECK(errno == EAGAIN, "receive-pressure pipe did not fill");
+		original_pty = m->pty;
+		m->pty = pipe_fds[1];
+		wire[0] = m->ec.lapm.rsp_addr;
+		memcpy(wire + 3, payloads[scenario], length);
+		m->packer.hdlc.rx_complete(m->packer.hdlc.framer, &incoming);
+		CHECK(m->ec.lapm.busy && m->packer_process != NULL &&
+			      m->comp.count == 1 && m->comp.buf[m->comp.head] == 'B' &&
+			      m->ec.lapm.vr == 1 && m->ec.lapm.rx_count == (length > 2 ? 1 : 0),
+		      "compressed receive case %zu lost its blocked output or retry", scenario);
+		m->packer_process(m, 0);
+		CHECK(m->ec.lapm.busy && m->comp.count == 1,
+		      "compressed receive resumed before output became available");
+		while (read(pipe_fds[0], filler, sizeof(filler)) > 0) {}
+		m->packer_process(m, 0);
+		CHECK(read(pipe_fds[0], output, sizeof(output)) == (ssize_t)length &&
+			      memcmp(output, payloads[scenario], length) == 0 &&
+			      !m->ec.lapm.busy && m->ec.lapm.rx_count == 0 &&
+			      m->comp.count == 0 && m->comp.decoder.str_len == 0 &&
+			      m->packer_process == NULL,
+		      "compressed receive case %zu stalled or reordered bytes after pressure cleared", scenario);
+		m->pty = original_pty;
+		close(pipe_fds[0]);
+		close(pipe_fds[1]);
+		modem_ec_exit(m);
+		modem_comp_exit(m);
+		modem_delete(m);
+	}
+	return true;
+}
+
+static bool test_lapm_v42bis_transmit_pressure(void)
+{
+	static const int capacities[] = { 1, 3, 128 };
+	static const int strings[] = { 34, 250 };
+	struct modem_driver driver = {
+		.name = "LAPM V.42bis small transmit buffers", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+
+	for (size_t limit = 0; limit < ARRAY_LENGTH(strings); ++limit)
+	for (size_t capacity = 0; capacity < ARRAY_LENGTH(capacities); ++capacity) {
+		struct modem *m = modem_create(&driver, driver.name);
+		uint8_t expected[1024];
+		char output[2048], wire[128];
+		size_t received = 0;
+
+		CHECK(m != NULL, "transmit-pressure modem allocation failed");
+		m->cfg.comp = 3;
+		m->cfg.comp_types = MODEM_COMP_TYPE_V42BIS;
+		m->cfg.comp_dict_size = 512;
+		m->cfg.comp_max_string = strings[limit];
+		CHECK(start_lapm_compression_fixture(m, false), "transmit-pressure fixture failed");
+		m->ec.lapm.state = 2;
+		m->ec.lapm.config = 0;
+		modem_update_status(m, STATUS_EC_LINK);
+		for (size_t index = 0; index < sizeof(expected); ++index)
+			expected[index] = (uint8_t)(index * 23 + 7);
+		CHECK(m->xmit.size > (int)sizeof(expected), "transmit-pressure payload exceeds ring capacity");
+		memcpy(m->xmit.buf, expected, sizeof(expected));
+		m->xmit.head = m->xmit.count = sizeof(expected);
+		m->xmit.tail = 0;
+		for (unsigned iteration = 0; iteration < 8192; ++iteration) {
+			int count = m->get_chars(m, wire, capacities[capacity]);
+
+			CHECK(count >= 0 && count <= capacities[capacity], "small-buffer encoding failed");
+			if (count == 0)
+				break;
+			for (int byte = 0; byte < count; ++byte) {
+				int decoded = modem_comp_decode(m, (uint8_t)wire[byte],
+					output + received, sizeof(output) - received);
+
+				CHECK(decoded >= 0, "small-buffer decoding failed");
+				received += (size_t)decoded;
+			}
+		}
+		int count = modem_comp_flush_decoder(m, output + received, sizeof(output) - received);
+		CHECK(count >= 0, "small-buffer decoder flush failed");
+		received += (size_t)count;
+		CHECK(received == sizeof(expected) && memcmp(output, expected, sizeof(expected)) == 0 &&
+			      m->xmit.count == 0 && m->comp.encoder.olen == 0,
+		      "capacity %d with string limit %d consumed input while draining prior output",
+		      capacities[capacity], strings[limit]);
+		modem_ec_exit(m);
+		modem_comp_exit(m);
+		modem_delete(m);
+	}
+	return true;
+}
+
 static bool test_lapm_xid_directions(void)
 {
 	static const uint8_t peer_parameters[] = {
@@ -5950,6 +6070,8 @@ int main(void)
 		{ "LAPM V.42bis negotiation", test_lapm_v42bis_negotiation },
 		{ "LAPM V.42bis invalid parameters", test_lapm_v42bis_invalid_parameters },
 		{ "LAPM V.42bis decoder failure", test_lapm_v42bis_decoder_failure },
+		{ "LAPM V.42bis receive output pressure", test_lapm_v42bis_receive_pressure },
+		{ "LAPM V.42bis small transmit buffers", test_lapm_v42bis_transmit_pressure },
 		{ "LAPM XID negotiation directions", test_lapm_xid_directions },
 		{ "LAPM simultaneous XID negotiation", test_lapm_xid_collisions },
 		{ "LAPM repeated XID parameters", test_lapm_repeated_xid_parameters },

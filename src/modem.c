@@ -1352,8 +1352,10 @@ static int modem_put_chars(struct modem *m, const char *buf, int n)
 */
 static int modem_comp_get_chars(struct modem *m, char *buf, int n)
 {
-	int ret = 0, cnt;
+	int ret = modem_comp_read_encoder(m, buf, n), cnt;
 	char ch;
+	if (ret < 0)
+		return -1;
 	while(ret < n) {
 		cnt = modem_get_chars(m,&ch,1);
 		if(cnt <= 0)
@@ -1406,7 +1408,9 @@ static int modem_comp_put_chars(struct modem *m, const char *buf, int n)
 		if(!comp_send_output(m))
 			break;
 	}
-	if(i==n) {
+	/* The buffer still owns any blocked output. Flush after it drains,
+	 * including when LAPM retries with no remaining compressed input. */
+	if(i==n && m->comp.count == 0) {
 		cnt = modem_comp_flush_decoder(m,m->comp.buf,sizeof(m->comp.buf));
 		m->comp.count += cnt;
 		comp_send_output(m);

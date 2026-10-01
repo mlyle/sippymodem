@@ -1063,7 +1063,9 @@ static void push_rest_data(struct modem *m, int bits)
 		l->modem->packer_process = NULL;
 		return;
 	}
-	if (l->rx_count && l->modem->put_chars) {
+	/* A compression sink can own output after accepting the last input
+	 * octet. Retry even with no remaining LAPM payload to drain that output. */
+	if (l->modem->put_chars) {
 		int ret = l->modem->put_chars(l->modem,
 					      (const char*)(l->rx_buf+l->rx_head),
 					      l->rx_count);
@@ -1071,16 +1073,13 @@ static void push_rest_data(struct modem *m, int bits)
 			fail_receive_data(l);
 			return;
 		}
-		if (ret > 0) {
-			l->rx_head += ret;
-			l->rx_count -= ret;
-			if (!l->rx_count) {
-				l->rx_head = 0;
-				/* reset busy state */
-				l->busy = 0;
-				TX_RR(l,l->cmd_addr,0);
-				l->modem->packer_process = NULL;
-			}
+		l->rx_head += ret;
+		l->rx_count -= ret;
+		if (!l->rx_count && l->modem->comp.count == 0) {
+			l->rx_head = 0;
+			l->busy = 0;
+			TX_RR(l,l->cmd_addr,0);
+			l->modem->packer_process = NULL;
 		}
 	}
 }
@@ -1163,7 +1162,7 @@ static int rx_info(struct lapm_state *l, frame_t *f)
 		modem_update_status(l->modem, STATUS_EC_ERROR);
 		return -1;
 	}
-	if (ret != payload_length || l->busy) {
+	if (ret != payload_length || l->busy || l->modem->comp.count != 0) {
 		/* save rest data, enter busy state */
 		l->rx_head = 0;
 		l->rx_count = payload_length - ret;

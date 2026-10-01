@@ -188,6 +188,9 @@ extern bool modem_comp_parameters_valid(int dict_size, int max_str);
 extern int  modem_comp_config(struct modem *m, int dict_size, int max_str);
 extern void modem_comp_exit(struct modem *m);
 
+/* Drain queued encoded bytes before submitting another input octet.
+ * encode consumes ch on success; pending output or no space is an error. */
+extern int  modem_comp_read_encoder(struct modem *m, char *buf, int n);
 extern int  modem_comp_encode(struct modem *m, u8 ch, char *buf, int n);
 extern int  modem_comp_decode(struct modem *m, u8 ch, char *buf, int n);
 extern int  modem_comp_flush_encoder(struct modem *m, char *buf, int n);

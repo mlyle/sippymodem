@@ -221,6 +221,34 @@ static bool test_configuration_limits(void)
 	return true;
 }
 
+static bool test_encoder_input_ownership(void)
+{
+	struct modem m;
+	char output[4];
+
+	CHECK(initialize(&m, 512, 34), "encoder ownership fixture failed");
+	CHECK(modem_comp_read_encoder(&m, output, -1) < 0 &&
+		      modem_comp_read_encoder(&m, NULL, 1) < 0 &&
+		      modem_comp_read_encoder(&m, NULL, 0) == 0,
+	      "encoder drain accepted an invalid output buffer");
+	CHECK(modem_comp_encode(&m, 0, output, 0) < 0 && m.comp.encoder.str_len == 0,
+	      "encoder consumed input without output space");
+	CHECK(modem_comp_encode(&m, 0, output, 1) == 0 &&
+		      modem_comp_encode(&m, 'B', output, 1) == 1 && output[0] == 0,
+	      "encoder ownership escape fixture failed");
+	CHECK(modem_comp_encode(&m, 'C', output, 1) < 0 &&
+		      m.comp.encoder.str_len == 1 && m.comp.encoder.str_data[0] == 'B',
+	      "encoder accepted input while earlier output remained queued");
+	CHECK(modem_comp_read_encoder(&m, NULL, 0) == 0,
+	      "zero-capacity encoder drain changed pending output");
+	CHECK(modem_comp_read_encoder(&m, output, 1) == 1 && output[0] == 1 &&
+		      modem_comp_encode(&m, 'C', output, 1) == 1 && output[0] == 'B' &&
+		      modem_comp_flush_encoder(&m, output, sizeof(output)) == 1 && output[0] == 'C',
+	      "encoder failed to resume after draining its output");
+	modem_comp_exit(&m);
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -232,6 +260,7 @@ int main(void)
 		{ "V.42bis full string capacity", test_full_string_capacity },
 		{ "V.42bis mixed payloads", test_payloads },
 		{ "V.42bis transactional configuration", test_configuration_limits },
+		{ "V.42bis encoder input ownership", test_encoder_input_ownership },
 	};
 	unsigned failures = 0;
 

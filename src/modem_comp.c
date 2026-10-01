@@ -693,15 +693,22 @@ static int get_odata(struct comp_state *c, char *buf, int n)
         return ret;
 }
 
-int  modem_comp_encode(struct modem *m, u8 ch, char *buf, int n)
+int modem_comp_read_encoder(struct modem *m, char *buf, int n)
 {
-	int ret;
-	ret = get_odata(&m->comp.encoder,buf,n);
-	if (ret == n) return ret;
+	if (n <= 0)
+		return n == 0 ? 0 : -1;
+	if (buf == NULL)
+		return -1;
+	return get_odata(&m->comp.encoder, buf, n);
+}
+
+int modem_comp_encode(struct modem *m, u8 ch, char *buf, int n)
+{
+	if (n <= 0 || buf == NULL || m->comp.encoder.olen != 0)
+		return -1;
 	if(comp_encode(&m->comp.encoder,&ch,1)<0)
 		return -1;
-	ret += get_odata(&m->comp.encoder,buf+ret,n-ret);
-	return ret;
+	return get_odata(&m->comp.encoder,buf,n);
 }
 
 int  modem_comp_decode(struct modem *m, u8 ch, char *buf, int n)
