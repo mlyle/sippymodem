@@ -57,7 +57,6 @@
  *
  */
 
-//#define COMP_TEST  1
 //#define COMP_DEBUG 1
 
 /* V42bis parameters limitation */
@@ -90,29 +89,10 @@
 
 /* debug stuff */
 #if COMP_DEBUG
-#define INLINE_FUNC static
 #define COMP_DBG(fmt,arg...) dprintf("comp %d/%d: " fmt , \
                                      c->cmp_bits , c->raw_bits , ##arg)
-#if 1
-#define COMP_DBG1(fmt,arg...)
-#else
-#define COMP_DBG1(fmt,arg...) COMP_DBG(fmt , ##arg)
-static char *show_string(struct comp_state *c, u16 cw)
-{
-	static char _str[COMP_MAX_STRING+1];
-	int j;
-	_str[COMP_MAX_STRING] = 0;
-	for(j = COMP_MAX_STRING-1; cw && j >= 0 ; j--) {
-		_str[j] = c->dict[cw].ch;
-		cw = c->dict[cw].parent;
-	}
-	return _str+j+1;
-}
-#endif // 0
 #else  /* !COMP_DEBUG */
-#define INLINE_FUNC extern inline
 #define COMP_DBG(fmt,arg...)
-#define COMP_DBG1(fmt,arg...)
 #endif /* !COMP_DEBUG */
 
 #define COMP_ERR(fmt,arg...) eprintf("err: " fmt , ##arg)
@@ -148,7 +128,7 @@ static void dict_init(struct comp_state *c)
 }
 
 /* match one char */
-INLINE_FUNC u16 match_char(struct comp_state *c, u16 at, u8 ch)
+static inline u16 match_char(struct comp_state *c, u16 at, u8 ch)
 {
 	register u16 e;
 	if (!at)
@@ -163,7 +143,7 @@ INLINE_FUNC u16 match_char(struct comp_state *c, u16 at, u8 ch)
 }
 
 /* add one char */
-INLINE_FUNC u16 add_char(struct comp_state *c, u16 at, u8 ch)
+static inline u16 add_char(struct comp_state *c, u16 at, u8 ch)
 {
 	register u16 new = c->next_free;
 	register u16 next;
@@ -195,15 +175,13 @@ INLINE_FUNC u16 add_char(struct comp_state *c, u16 at, u8 ch)
 }
 
 
-
-
 /*
  *  decoder
  *
  */
 
 /* out decoded string */
-INLINE_FUNC int send_string(struct comp_state *c)
+static inline int send_string(struct comp_state *c)
 {
 	int ret;
 	memcpy(c->obuf+c->olen,c->str_data,c->str_len);
@@ -215,7 +193,7 @@ INLINE_FUNC int send_string(struct comp_state *c)
 }
 
 /* receive encoded data */
-INLINE_FUNC int recv_data(struct comp_state *c, u16 cw)
+static inline int recv_data(struct comp_state *c, u16 cw)
 {
 	int i,ret = 0;
 	u16 p = cw;
@@ -228,7 +206,6 @@ INLINE_FUNC int recv_data(struct comp_state *c, u16 cw)
 			return -1;
 		p = c->dict[p].parent;
 	}
-	COMP_DBG1("dec recv %d: '%s'\n",cw,show_string(c,cw));
 	p = cw;
 	i = c->str_len + ret - 1;
 	while(p) {
@@ -240,7 +217,7 @@ INLINE_FUNC int recv_data(struct comp_state *c, u16 cw)
 }
 
 /* flush decoder */
-int comp_flush_decoder(struct comp_state *c)
+static int comp_flush_decoder(struct comp_state *c)
 {
 	int ret, total_len;
 	total_len = c->flushed_len + c->str_len;
@@ -253,7 +230,7 @@ int comp_flush_decoder(struct comp_state *c)
 }
 
 /* decoder */
-int comp_decode(struct comp_state *c, u8 *in, int n)
+static int comp_decode(struct comp_state *c, u8 *in, int n)
 {
 	register int i, ret = 0;
 	register u16 cw, p;
@@ -313,9 +290,6 @@ int comp_decode(struct comp_state *c, u8 *in, int n)
 					if (!p) {
 						// fixme: prevent case add 303 at 303
 						c->last_added = add_char(c,c->update_at,ch);
-						COMP_DBG1("C dec add %d at %d: %d(%c) '%s'\n",
-							 c->last_added,c->update_at,
-							 ch,ch,show_string(c,c->last_added));
 						if (cw == c->next_free) { /* C-ERROR */
 							COMP_ERR("fatal: empty cw!\n");
 							return -1;
@@ -384,14 +358,10 @@ int comp_decode(struct comp_state *c, u8 *in, int n)
 				break;
 			}
 
-			//COMP_DBG1("dec rcv: %d(%c)\n", *in, *in);
 
 			if (c->update_at) {
 				if(!match_char(c,c->update_at,*in)) {
 					c->last_added = add_char(c,c->update_at,*in);
-					COMP_DBG1("T dec add %d at %d: %d(%c) '%s'\n",
-						 c->last_added,c->update_at,
-						 *in,*in,show_string(c,c->last_added));
 				}
 				c->update_at = 0;
 			}
@@ -444,7 +414,6 @@ int comp_decode(struct comp_state *c, u8 *in, int n)
 			  } }
 
 
-
 /* send encoded data */
 static int send_data(struct comp_state *c, u16 cw)
 {
@@ -466,7 +435,6 @@ static int send_data(struct comp_state *c, u16 cw)
 				ret++;
 				c->escape_char += ESCAPE_STEP;
 			}
-			COMP_DBG1("enc send: %d(%c)\n",c->str_data[i],c->str_data[i]);
 		}
 		break;
 	case COMPRESSED:
@@ -488,7 +456,6 @@ static int send_data(struct comp_state *c, u16 cw)
 		}
 		SEND_CW(c,cw);
 		SEND_BITS(c);
-		COMP_DBG1("enc send %d: '%s'\n",cw,show_string(c,cw));
 		break;
 	}
 	c->str_len = 0;
@@ -541,15 +508,12 @@ static int test_mode(struct comp_state *c)
 }
 
 /* flush encoder data */
-int comp_flush_encoder(struct comp_state *c)
+static int comp_flush_encoder(struct comp_state *c)
 {
 	int ret = 0;
-	//COMP_DBG1("flush_encoder...\n");
-#if 1 /* fixme: use something better */
 	if (c->update_at) {
 		return 0;
 	}
-#endif
 	if (c->last_matched) {
 		int total_len = c->flushed_len + c->str_len;
 		ret = send_data(c,c->last_matched);
@@ -559,13 +523,11 @@ int comp_flush_encoder(struct comp_state *c)
 		c->update_at = c->last_matched;
 		c->last_matched = 0;
 		c->flushed_len = 0;
-		//if (c->bit_len > 0) {
-			COMP_DBG("flush_encoder: send FLUSH\n");
-			/* send FLUSH and align by zeros */
-			SEND_CW(c,CCW_FLUSH);
-			ALIGN_BITS(c);
-			SEND_BITS(c);
-			//}
+		COMP_DBG("flush_encoder: send FLUSH\n");
+		/* send FLUSH and align by zeros */
+		SEND_CW(c,CCW_FLUSH);
+		ALIGN_BITS(c);
+		SEND_BITS(c);
 	}
 	if (ret)
 		COMP_DBG("flush_encoder %d...\n", ret);
@@ -574,8 +536,7 @@ int comp_flush_encoder(struct comp_state *c)
 
 
 /* encoder */
-#define NEW_ENCODER 1
-int comp_encode(struct comp_state *c, u8 *in, int n)
+static int comp_encode(struct comp_state *c, u8 *in, int n)
 {
 	register int i, ret=0;
 	register u16 cw = 0;
@@ -584,13 +545,9 @@ int comp_encode(struct comp_state *c, u8 *in, int n)
 		if (c->update_at) {
 			if (!match_char(c,c->update_at,*in)) {
 				c->last_added = add_char(c,c->update_at,*in);
-				COMP_DBG1("enc add %d at %d: %d(%c) '%s'\n",
-					 c->last_added,c->update_at,
-					 *in,*in,show_string(c,c->last_added));
 			}
 			c->update_at = 0;
 		}
-#if NEW_ENCODER
 		/* match string */
 		while(i<n) {
 			cw = match_char(c,c->last_matched,*in);
@@ -617,99 +574,8 @@ int comp_encode(struct comp_state *c, u8 *in, int n)
 		}
 		ret += test_mode(c);
 	}
-#else
-		/* match char */
-		cw = match_char(c,c->last_matched,*in);
-		if (!cw) {
-			/* add char */
-			c->update_at = c->last_matched;
-			/* send and reset string */
-			ret += send_data(c,c->last_matched);
-			c->last_matched = 0;
-		}
-		else if (cw == c->last_added) {
-			c->last_added = 0;
-			/* send and reset string */
-			ret += send_data(c,c->last_matched);
-			c->last_matched = 0;
-		}
-		else {
-			c->last_matched = cw;
-			/* collect char */
-			c->str_data[c->str_len++] = *in++;
-			if ( c->str_len + c->flushed_len == c->max_string ) {
-				/* send and reset string */
-				ret += send_data(c,c->last_matched);
-				c->last_matched = 0;
-			}
-			i++;
-		}
-	}
-	ret += test_mode(c);
-#endif
 	return ret;
 }
-
-
-#if COMP_TEST
-/*
- * Test encoder procedures
- *
- */
-
-/* force reset */
-int comp_force_reset(struct comp_state *c)
-{
-	int ret = 0;
-	if (c->mode != TRANSPARENT)
-		return 0;
-	COMP_DBG("comp_reset...\n");
-	if (c->last_matched) {
-		ret = send_data(c,c->last_matched);
-		c->last_matched = 0;
-	}
-	c->obuf[c->olen++] = c->escape_char;
-	c->obuf[c->olen++] = CC_RESET;
-	ret += 2;
-	c->bit_data = 0;
-	dict_init(c);
-	return ret;
-}
-
-/* force change compression mode */
-int comp_force_change_mode(struct comp_state *c, enum COMP_MODE mode)
-{
-	int ret = 0;
-	if (mode == c->mode)
-		return 0;
-	COMP_DBG("change_mode...\n");
-	if (c->last_matched) {
-		c->update_at = c->last_matched;
-		ret += send_data(c,c->last_matched);
-		c->last_matched = 0;
-	}
-	/* switch to compressed mode */
-	if (c->mode == TRANSPARENT) {
-		COMP_DBG("encoder %ld/%ld %d: switch to COMPRESSED mode.\n",
-			 c->cmp_bits,c->raw_bits,c->cmp_last);
-		c->obuf[c->olen++] = c->escape_char;
-		c->obuf[c->olen++] = CCW_ECM;
-		ret += 2;
-		c->bit_data = 0;
-		c->mode = COMPRESSED;
-	}
-	/* switch to transparent mode */
-	else if (c->mode == COMPRESSED) {
-		COMP_DBG("encoder %ld/%ld %d: switch to TRANSPARENT mode.\n",
-			 c->cmp_bits,c->raw_bits,c->cmp_last);
-		SEND_CW(c,CCW_ETM);
-		ALIGN_BITS(c);
-		SEND_BITS(c);
-		c->mode = TRANSPARENT;
-	}
-	return ret;
-}
-#endif
 
 
 /*
@@ -725,7 +591,7 @@ bool modem_comp_parameters_valid(int dict_size, int max_str)
 	       max_str >= MIN_STR_SIZE && max_str <= COMP_MAX_STRING;
 }
 
-int comp_init(struct comp_state *c,int dict_size,int max_str)
+static int comp_init(struct comp_state *c,int dict_size,int max_str)
 {
 	struct dict *d;
 	int i;
@@ -752,7 +618,7 @@ int comp_init(struct comp_state *c,int dict_size,int max_str)
 	return 0;
 }
 
-int comp_exit(struct comp_state *c)
+static int comp_exit(struct comp_state *c)
 {
 	COMP_DBG("comp exit: %d/%d %d\n",
 		 c->cmp_bits,c->raw_bits,c->cmp_last);
@@ -768,15 +634,6 @@ int comp_exit(struct comp_state *c)
  *  modem init procedures
  *
  */
-
-
-/* exported functions prototypes */
-extern int comp_init(struct comp_state *c,int dict_size,int max_str);
-extern int comp_exit(struct comp_state *c);
-extern int comp_encode(struct comp_state *c, u8 *in, int n);
-extern int comp_decode(struct comp_state *c, u8 *in, int n);
-extern int comp_flush_encoder(struct comp_state *c);
-extern int comp_flush_decoder(struct comp_state *c);
 
 
 int modem_comp_init(struct modem *m)
