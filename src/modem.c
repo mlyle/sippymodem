@@ -602,6 +602,12 @@ static void modem_hup(struct modem *m, unsigned local)
 	case STATE_DP_ESTAB:
 		if (m->result_code == 0)
 			m->result_code = RESULT_NOCARRIER;
+		/* SIP call progress may have no media clock yet. There is no modem
+		 * signal to drain, so cancellation must not wait for audio samples. */
+		if (m->dp != NULL && m->dp->id == DP_CALLPROG) {
+			modem_stop_now(m);
+			return;
+		}
 		if (local)
 			start_datapump_disconnect(m);
 		else {

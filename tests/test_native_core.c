@@ -901,6 +901,97 @@ static bool test_ath0_drains_link_cleardown(void)
 	return true;
 }
 
+struct call_cancel_capture {
+	unsigned int stops;
+	int stop_result;
+};
+
+static int capture_call_cancel(struct modem *modem)
+{
+	struct call_cancel_capture *capture = modem->dev_data;
+
+	capture->stops++;
+	return capture->stop_result;
+}
+
+static bool test_call_progress_cancels_without_media(void)
+{
+	struct datapumps datapumps = { 0 };
+	struct modem_driver driver = {
+		.name = "unclocked call cancellation",
+		.start = unused_start,
+		.stop = capture_call_cancel,
+		.ioctl = unused_control,
+	};
+
+	CHECK(datapumps_start(&datapumps) == DATAPUMPS_OK,
+	      "call cancellation registrations did not start");
+	for (unsigned int action = 0; action < 4; ++action)
+	for (unsigned int failure = 0; failure < 2; ++failure) {
+		struct call_cancel_capture capture = { .stop_result = failure ? -1 : 0 };
+		struct modem *modem = modem_create(&driver, driver.name);
+		int result_pipe[2];
+		char result_text[32];
+		const char *expected = action == 1 ? "OK\r\n" : "NO CARRIER\r\n";
+
+		CHECK(modem != NULL && pipe(result_pipe) == 0 &&
+			      fcntl(result_pipe[0], F_SETFL, O_NONBLOCK) == 0,
+		      "call cancellation fixture failed");
+		modem->dev_data = &capture;
+		modem->pty = result_pipe[1];
+		CHECK(process_at_command(modem, "ATE0V1Q0") == 0 &&
+			      process_at_command(modem, "ATDpeer") == 1 &&
+			      modem->started && modem->dp->id == DP_CALLPROG && modem->count == 0,
+		      "call did not enter unclocked SIP progress");
+		switch (action) {
+		case 0:
+			CHECK(modem_write(modem, " ", 1) == 1, "space did not cancel dialing");
+			break;
+		case 1:
+			CHECK(process_at_command(modem, "ATH0") == 1, "ATH0 cancellation failed");
+			break;
+		case 2:
+			modem_hangup(modem);
+			break;
+		case 3: {
+			struct termios termios = modem->termios;
+			CHECK(cfsetispeed(&termios, B0) == 0 && cfsetospeed(&termios, B0) == 0,
+			      "DTR cancellation fixture failed");
+			modem_update_termios(modem, &termios);
+			break;
+		}
+		}
+		CHECK(capture.stops == 1 && !modem->started && modem->dp == NULL &&
+			      modem->command && strcmp(modem_call_phase(modem), "idle") == 0 &&
+			      modem->sample_timer == 0 && modem->sample_timer_func == NULL &&
+			      modem->count == 0 && !modem->hangup_command_pending,
+		      "cancellation %u/%u waited for audio or retained freed state", action, failure);
+		CHECK(read(result_pipe[0], result_text, sizeof(result_text)) == (ssize_t)strlen(expected) &&
+			      memcmp(result_text, expected, strlen(expected)) == 0,
+		      "cancellation %u/%u did not emit its single result", action, failure);
+		CHECK(modem_report_outgoing_call_connected(modem) == 0 &&
+			      modem_report_remote_call_end(modem) == 0,
+		      "late signaling failed after cancellation");
+		modem_hangup(modem);
+		CHECK(capture.stops == 1 && modem->dp == NULL && !modem->started &&
+			      read(result_pipe[0], result_text, sizeof(result_text)) < 0 && errno == EAGAIN,
+		      "late signaling or repeated cancellation reopened the call or duplicated its result");
+		CHECK(process_at_command(modem, "ATDpeer") == 1 && modem->started &&
+			      modem->dp->id == DP_CALLPROG,
+		      "cancelled modem could not start another call");
+		modem_hangup(modem);
+		CHECK(capture.stops == 2 && !modem->started && modem->dp == NULL,
+		      "second call did not release its owner");
+		modem->pty = -1;
+		close(result_pipe[0]);
+		close(result_pipe[1]);
+		modem_delete(modem);
+	}
+	CHECK(datapumps_stop(&datapumps) == DATAPUMPS_OK,
+	      "cancelled calls retained datapump registrations");
+	return true;
+}
+
 static struct {
 	struct dp datapump;
 	const uint8_t *codewords;
@@ -6726,6 +6817,8 @@ int main(void)
 		  test_ato1_waits_for_datapump_retrain },
 		{ "bounded ATH0 link cleardown",
 		  test_ath0_drains_link_cleardown },
+		{ "call progress cancellation without media",
+		  test_call_progress_cancels_without_media },
 		{ "bounded AT dial destinations",
 		  test_at_dial_destinations_are_bounded },
 		{ "AT compression profile", test_at_compression_profile },
