@@ -156,15 +156,6 @@ static bool receive_record_pending(
 	       exchange->receive.semantic.phase4.record_pending;
 }
 
-static bool receive_is_in_e(
-	const struct v34_phase4_exchange *exchange)
-{
-	return exchange->receive.stage ==
-		       V34_PHASE34_RECEIVER_PHASE4 &&
-	       exchange->receive.semantic.phase4.stage ==
-		       V34_PHASE4_DECISION_RECEIVER_E;
-}
-
 static bool receive_is_waiting_for_answer_s(
 	const struct v34_phase4_exchange *exchange)
 {
@@ -232,7 +223,8 @@ static bool data_state_is_valid(
 		record_pending = receive_record_pending(exchange);
 		if (receive_is_complete(exchange) ||
 		    (record_pending && !exchange->failed) ||
-		    exchange->peer_mp_prime_received != receive_is_in_e(exchange))
+		    exchange->receive.stage != V34_PHASE34_RECEIVER_PHASE4 ||
+		    !exchange->receive.semantic.phase4.mp_received)
 			return false;
 	}
 	if (exchange->transmit_b1_complete !=
@@ -304,7 +296,8 @@ static bool transmitter_stage_is_valid(
 		       exchange->transmit_mp_started &&
 		       exchange->transmit_mp_prime_started &&
 		       exchange->transmit_mp_prime_complete &&
-		       exchange->peer_mp_prime_received &&
+		       (exchange->peer_mp_prime_received ||
+			exchange->receive_data_active) &&
 		       exchange->data_startup_prepared;
 	stage = exchange->transmit.training.stage;
 	entered_trn = stage == V34_TRAINING_TRANSMITTER_PHASE4_TRN ||
@@ -319,7 +312,8 @@ static bool transmitter_stage_is_valid(
 	if (stage == V34_TRAINING_TRANSMITTER_PHASE4_E &&
 	    (!exchange->transmit_mp_prime_started ||
 	     !exchange->transmit_mp_prime_complete ||
-	     !exchange->peer_mp_prime_received ||
+	     (!exchange->peer_mp_prime_received &&
+	      !exchange->receive_data_active) ||
 	     !exchange->data_startup_prepared))
 		return false;
 	if (exchange->rate_renegotiation)
@@ -628,15 +622,16 @@ static enum v34_phase4_exchange_result prepare_transmitter(
 		bool acknowledged;
 
 		/* V.34 11.4.1: acknowledge at the current record boundary.
-		 * A completed local MP-prime and reciprocal acknowledgment are
-		 * both required before ending the exchange with E. */
+		 * Finish local MP-prime after receiving reciprocal MP-prime or E,
+		 * as required by 11.4.1 and 11.6.1. */
 		if (exchange->transmit_mp_prime_started)
 			exchange->transmit_mp_prime_complete = true;
 		acknowledged = exchange->peer_mp_received;
 
 		if (exchange->transmit_mp_prime_started &&
 		    exchange->transmit_mp_prime_complete &&
-		    exchange->peer_mp_prime_received &&
+		    (exchange->peer_mp_prime_received ||
+		     exchange->receive_data_active) &&
 		    exchange->data_startup_prepared) {
 			result = transmit_result(v34_training_transmitter_start_e(
 				&exchange->transmit.training));
@@ -695,15 +690,6 @@ static enum v34_phase4_exchange_result continue_mp_receiver(
 	struct v34_phase4_exchange *exchange)
 {
 	return v34_phase34_receiver_continue_mp(&exchange->receive) ==
-		       V34_PHASE34_RECEIVER_OK ?
-	       V34_PHASE4_EXCHANGE_OK :
-	       V34_PHASE4_EXCHANGE_NUMERIC_FAILURE;
-}
-
-static enum v34_phase4_exchange_result expect_e_receiver(
-	struct v34_phase4_exchange *exchange)
-{
-	return v34_phase34_receiver_expect_e(&exchange->receive) ==
 		       V34_PHASE34_RECEIVER_OK ?
 	       V34_PHASE4_EXCHANGE_OK :
 	       V34_PHASE4_EXCHANGE_NUMERIC_FAILURE;
@@ -768,8 +754,7 @@ enum v34_phase4_exchange_result v34_phase4_exchange_prepare_data_startup(
 	next.data_startup = startup;
 	next.data_preparation_required = false;
 	next.data_startup_prepared = true;
-	result = next.peer_mp_prime_received ?
-		expect_e_receiver(&next) : continue_mp_receiver(&next);
+	result = continue_mp_receiver(&next);
 	if (result != V34_PHASE4_EXCHANGE_OK) {
 		next.failed = true;
 		if (v34_phase4_exchange_is_valid(&next))
@@ -821,7 +806,6 @@ static enum v34_phase4_exchange_result accept_mp_record(
 			return V34_PHASE4_EXCHANGE_SEQUENCE_MISMATCH;
 		exchange->peer_mp_prime_received = true;
 		*events |= V34_PHASE4_EXCHANGE_EVENT_PEER_MP_PRIME_RECEIVED;
-		return expect_e_receiver(exchange);
 	}
 	return continue_mp_receiver(exchange);
 }

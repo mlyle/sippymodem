@@ -3,6 +3,7 @@
 #include "v34_phase4_mp_receiver.h"
 
 #include "memory_region.h"
+#include "v34_phase4_e_sequence.h"
 #include "v34_training_sequence.h"
 
 #include <stddef.h>
@@ -17,8 +18,10 @@ bool v34_phase4_mp_receiver_is_valid(
 		       &receiver->descrambler, receiver->transmitting_role) &&
 	       v34_mp_receiver_is_valid(&receiver->records) &&
 	       receiver->previous_clockwise_quarter_turns <= 3u &&
+	       receiver->consecutive_ones <= V34_PHASE4_E_BITS &&
 	       (receiver->has_previous_symbol ||
-		receiver->previous_clockwise_quarter_turns == 0u);
+		(receiver->previous_clockwise_quarter_turns == 0u &&
+		 receiver->consecutive_ones == 0u));
 }
 
 enum v34_phase4_mp_receiver_result
@@ -125,6 +128,8 @@ v34_phase4_mp_receive_decision(
 			    &next.records, dibit, &differential_event) !=
 			    V34_PHASE4_MP_RECEIVER_OK)
 			return V34_PHASE4_MP_RECEIVER_INVALID_ARGUMENT;
+		next.consecutive_ones = v34_phase4_e_extend_one_run(
+			next.consecutive_ones, dibit);
 		if (next.constellation ==
 		    V34_CONSTELLATION_16_POINT) {
 			if (v34_descramble_mapped_dibit(
@@ -138,6 +143,8 @@ v34_phase4_mp_receive_decision(
 			     mapped_event.type !=
 				     V34_MP_RECEIVE_NO_EVENT))
 				return V34_PHASE4_MP_RECEIVER_INVALID_ARGUMENT;
+			next.consecutive_ones = v34_phase4_e_extend_one_run(
+				next.consecutive_ones, dibit);
 		}
 		emitted = differential_event.type !=
 				  V34_MP_RECEIVE_NO_EVENT ?

@@ -6,7 +6,7 @@
 #include "v34_adaptive_equalizer.h"
 #include "v34_phase3_j_sequence.h"
 #include "v34_phase3_s_receiver.h"
-#include "v34_phase4_e_receiver.h"
+#include "v34_phase4_mp_receiver.h"
 #include "v34_phase4_j_prime_sequence.h"
 #include "v34_training_sequence.h"
 
@@ -26,7 +26,6 @@ enum v34_phase4_decision_receiver_stage {
 	V34_PHASE4_DECISION_RECEIVER_TRN,
 	V34_PHASE4_DECISION_RECEIVER_TRN_OR_MP,
 	V34_PHASE4_DECISION_RECEIVER_MP,
-	V34_PHASE4_DECISION_RECEIVER_E,
 	V34_PHASE4_DECISION_RECEIVER_COMPLETE,
 };
 
@@ -57,14 +56,14 @@ enum v34_phase4_decision_receiver_result {
  * handoff. Qualify S recurrence before using it as equalizer feedback:
  * delayed Phase 3 J is not a training target. The physical timing
  * and one adaptive equalizer remain in the aggregate receive owner through
- * B1 and data. A complete MP event pauses this owner until the controller
- * decides whether to continue MP or start E. */
+ * B1 and data. A complete MP event pauses this owner for the controller. After
+ * a valid MP, the continuous decoder also accepts E: V.34 permits E to end the
+ * exchange when the peer's MP-prime was missed. */
 struct v34_phase4_decision_receiver {
 	struct v34_phase3_s_hunt answer_s;
 	struct v34_phase4_j_prime_receiver call_j_prime;
 	struct v34_training_sequence expected_trn;
 	struct v34_phase4_mp_receiver mp_receiver;
-	struct v34_phase4_e_receiver e_receiver;
 	/* Bounded complex correlation while S awaits peer TRN confirmation. */
 	int64_t trn_correlation_in_phase;
 	int64_t trn_correlation_quadrature;
@@ -74,7 +73,7 @@ struct v34_phase4_decision_receiver {
 	uint8_t trn_candidate_errors;
 	enum v34_phase4_decision_receiver_stage stage;
 	bool record_pending;
-	bool pending_record_is_valid;
+	bool mp_received;
 	bool rate_renegotiation;
 };
 
@@ -98,9 +97,6 @@ bool v34_phase4_decision_receiver_is_complete(
 
 enum v34_phase4_decision_receiver_result
 v34_phase4_decision_receiver_continue_mp(
-	struct v34_phase4_decision_receiver *receiver);
-enum v34_phase4_decision_receiver_result
-v34_phase4_decision_receiver_expect_e(
 	struct v34_phase4_decision_receiver *receiver);
 
 /* Consume one pending adaptive-equalizer observation.  The aggregate owns the

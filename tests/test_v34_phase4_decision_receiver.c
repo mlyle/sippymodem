@@ -162,7 +162,7 @@ static bool handle_record(
 		      &event->parameters.type0, &fixture->acknowledged),
 	      "acknowledged MP parameters changed");
 	fixture->acknowledged_records++;
-	return v34_phase4_decision_receiver_expect_e(&fixture->receiver) ==
+	return v34_phase4_decision_receiver_continue_mp(&fixture->receiver) ==
 	       V34_PHASE4_DECISION_RECEIVER_OK;
 }
 
@@ -314,7 +314,7 @@ static bool make_j_sequence(
 }
 
 static bool feed_mp_record(
-	struct receive_fixture *fixture, struct v34_phase4_mp *mp)
+	struct receive_fixture *fixture, struct v34_phase4_mp *mp, bool damaged)
 {
 	bool complete;
 
@@ -326,7 +326,11 @@ static bool feed_mp_record(
 
 		CHECK(v34_phase4_mp_next(
 			      mp, &ignored, &quarter, &rotation, &complete) ==
-			      V34_PHASE4_MP_OK &&
+			      V34_PHASE4_MP_OK, "MP source stopped");
+		/* Damage one payload symbol; its scrambler errors settle before E. */
+		if (damaged && mp->bit_index == 40u)
+			rotation = (uint8_t)((rotation + 1u) & 3u);
+		CHECK(
 		      v34_training_constellation_fixed_point(
 			      mp->constellation, quarter, rotation, &point) ==
 			      V34_CONSTELLATION_OK,
@@ -345,7 +349,7 @@ static bool feed_mp_record(
 
 static bool run_timeline(
 	enum v34_station_role role,
-	enum v34_constellation_size constellation, bool repeat_mp_prime,
+	enum v34_constellation_size constellation, unsigned int ending,
 	unsigned int extra_trn_symbols)
 {
 	struct receive_fixture fixture = {
@@ -504,7 +508,7 @@ static bool run_timeline(
 		CHECK(v34_phase4_mp_init_type0_from_trn(
 			      &mp, &trn, &fixture.unacknowledged) ==
 			      V34_PHASE4_MP_OK &&
-		      feed_mp_record(&fixture, &mp),
+		      feed_mp_record(&fixture, &mp, false),
 		      "first MP record stopped");
 		if (constellation == V34_CONSTELLATION_4_POINT)
 			CHECK(fixture.rejected_records == rejected_before &&
@@ -514,39 +518,26 @@ static bool run_timeline(
 	}
 	CHECK(v34_phase4_mp_start_next_type0_record(
 		      &mp, &fixture.unacknowledged) == V34_PHASE4_MP_OK &&
-	      feed_mp_record(&fixture, &mp),
+	      feed_mp_record(&fixture, &mp, false),
 	      "repeated MP record stopped");
 	CHECK(v34_phase4_mp_start_next_type0_record(
 		      &mp, &fixture.acknowledged) == V34_PHASE4_MP_OK &&
-	      feed_mp_record(&fixture, &mp),
+	      feed_mp_record(&fixture, &mp, ending == 2u),
 	      "acknowledged MP record stopped");
 	CHECK(fixture.unacknowledged_records >= 1u &&
-	      fixture.acknowledged_records == 1u &&
-	      fixture.receiver.stage == V34_PHASE4_DECISION_RECEIVER_E,
+	      fixture.acknowledged_records == (ending == 2u ? 0u : 1u) &&
+	      (ending != 2u || fixture.rejected_records != 0u) &&
+	      fixture.receiver.stage == V34_PHASE4_DECISION_RECEIVER_MP,
 	      "MP acquisition accepted %u/%u records (%u rejected)",
 	      fixture.unacknowledged_records, fixture.acknowledged_records,
 	      fixture.rejected_records);
-	if (repeat_mp_prime) {
+	if (ending == 1u) {
 		CHECK(v34_phase4_mp_start_next_type0_record(
 			      &mp, &fixture.acknowledged) == V34_PHASE4_MP_OK,
 		      "search-E MP repeat did not initialize");
-		/* E search consumes the repeated MP without publishing records. */
-		do {
-			bool complete;
-
-			CHECK(v34_phase4_mp_next(
-				      &mp, &normalized, &quarter, &rotation,
-				      &complete) == V34_PHASE4_MP_OK &&
-			      v34_training_constellation_fixed_point(
-				      constellation, quarter, rotation, &point) ==
-				      V34_CONSTELLATION_OK &&
-			      receive_fixed(
-				      &fixture, point,
-				      V34_PHASE4_DECISION_RECEIVER_OK),
-			      "search-E MP repeat stopped");
-			if (complete)
-				break;
-		} while (true);
+		CHECK(feed_mp_record(&fixture, &mp, false) &&
+		      fixture.acknowledged_records == 2u,
+		      "repeated MP-prime was not accepted");
 	}
 	CHECK(v34_phase4_e_sequence_init_from_mp(&e, &mp) ==
 		      V34_PHASE4_E_SEQUENCE_OK,
@@ -612,11 +603,11 @@ static bool test_role_constellation_timelines(void)
 					MP_ACQUISITION_TRN_SYMBOLS -
 						V34_TRAINING_SEQUENCE_MIN_SYMBOLS;
 
-			if (!run_timeline(
-				    roles[role], constellations[constellation],
-				    role == 0 && constellation == 1,
-				    extra_trn_symbols))
-				return false;
+			for (unsigned int ending = 0; ending < 3u; ++ending)
+				if (!run_timeline(
+					    roles[role], constellations[constellation],
+					    ending, extra_trn_symbols))
+					return false;
 			if (constellations[constellation] ==
 				    V34_CONSTELLATION_4_POINT &&
 			    !run_timeline(
@@ -1109,8 +1100,6 @@ static bool test_validation_and_transactionality(void)
 		      V34_PHASE4_DECISION_RECEIVER_INVALID_ARGUMENT &&
 	      v34_phase4_decision_receiver_continue_mp(&receiver) ==
 		      V34_PHASE4_DECISION_RECEIVER_INVALID_STATE &&
-	      v34_phase4_decision_receiver_expect_e(&receiver) ==
-		      V34_PHASE4_DECISION_RECEIVER_INVALID_STATE &&
 	      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
 	      memcmp(&output, &saved_output, sizeof(output)) == 0 &&
 	      memcmp(&event, &saved_event, sizeof(event)) == 0,
@@ -1132,6 +1121,51 @@ static bool test_validation_and_transactionality(void)
 	return true;
 }
 
+static bool test_e_requires_valid_mp(void)
+{
+	for (unsigned int role = 0; role < 2u; ++role) {
+		struct receive_fixture fixture = { 0 };
+		struct v34_scrambler scrambler;
+		uint8_t rotation = 0;
+
+		CHECK(v34_phase4_decision_receiver_resume_online(
+			      &fixture.receiver, role) == V34_PHASE4_DECISION_RECEIVER_OK &&
+		      v34_transmit_scrambler_init(&scrambler, role) == V34_FRAMING_OK,
+		      "early E fixture did not initialize");
+		/* Acquire the self-synchronizing decoder before the twenty-bit E run. */
+		for (unsigned int repeat = 0; repeat < 3u; ++repeat) {
+			struct v34_phase4_e_sequence sequence;
+
+			CHECK(v34_phase4_e_sequence_init(&sequence, &scrambler, role,
+				      V34_CONSTELLATION_4_POINT, rotation) ==
+				      V34_PHASE4_E_SEQUENCE_OK,
+			      "early E sequence did not initialize");
+			while (!v34_phase4_e_sequence_is_complete(&sequence)) {
+				struct qam_point normalized;
+				struct v34_analytic_sample point;
+				uint8_t quarter;
+
+				CHECK(v34_phase4_e_sequence_next(&sequence, &normalized,
+					      &quarter, &rotation) == V34_PHASE4_E_SEQUENCE_OK &&
+				      v34_training_constellation_fixed_point(
+					      V34_CONSTELLATION_4_POINT, quarter, rotation,
+					      &point) == V34_CONSTELLATION_OK &&
+				      receive_fixed(&fixture, point,
+					      V34_PHASE4_DECISION_RECEIVER_OK),
+				      "E without MP was accepted");
+			}
+			scrambler = sequence.scrambler;
+		}
+		CHECK(!fixture.receiver.mp_received &&
+		      fixture.receiver.mp_receiver.consecutive_ones == V34_PHASE4_E_BITS &&
+		      !v34_phase4_decision_receiver_is_complete(&fixture.receiver),
+		      "E without MP changed reception: mp=%u ones=%u stage=%u",
+		      fixture.receiver.mp_received,
+		      fixture.receiver.mp_receiver.consecutive_ones, fixture.receiver.stage);
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -1150,6 +1184,7 @@ int main(void)
 		  test_false_j_prime_preserves_training },
 		{ "validation and transactionality",
 		  test_validation_and_transactionality },
+		{ "E requires valid MP", test_e_requires_valid_mp },
 	};
 	unsigned int failures = 0;
 

@@ -703,31 +703,17 @@ enum v34_phase34_receiver_result v34_phase34_receiver_rearm_phase4_s(
 	return V34_PHASE34_RECEIVER_OK;
 }
 
-static enum v34_phase34_receiver_result phase4_control(
-	struct v34_phase34_receiver *receiver,
-	enum v34_phase4_decision_receiver_result (*control)(
-		struct v34_phase4_decision_receiver *))
+enum v34_phase34_receiver_result v34_phase34_receiver_continue_mp(
+	struct v34_phase34_receiver *receiver)
 {
 	if (!v34_phase34_receiver_is_valid(receiver) || receiver->failed ||
 	    receiver->stage != V34_PHASE34_RECEIVER_PHASE4)
 		return V34_PHASE34_RECEIVER_INVALID_STATE;
-	return control(&receiver->semantic.phase4) ==
+	return v34_phase4_decision_receiver_continue_mp(
+		       &receiver->semantic.phase4) ==
 		       V34_PHASE4_DECISION_RECEIVER_OK ?
 		       V34_PHASE34_RECEIVER_OK :
 		       V34_PHASE34_RECEIVER_INVALID_STATE;
-}
-
-enum v34_phase34_receiver_result v34_phase34_receiver_continue_mp(
-	struct v34_phase34_receiver *receiver)
-{
-	return phase4_control(
-		receiver, v34_phase4_decision_receiver_continue_mp);
-}
-
-enum v34_phase34_receiver_result v34_phase34_receiver_expect_e(
-	struct v34_phase34_receiver *receiver)
-{
-	return phase4_control(receiver, v34_phase4_decision_receiver_expect_e);
 }
 
 enum v34_phase34_receiver_result

@@ -24,6 +24,7 @@ struct v34_phase4_mp_receiver {
 	enum v34_station_role transmitting_role;
 	enum v34_constellation_size constellation;
 	uint8_t previous_clockwise_quarter_turns;
+	uint8_t consecutive_ones;
 	bool has_previous_symbol;
 };
 
@@ -47,7 +48,8 @@ bool v34_phase4_mp_receiver_is_valid(
 	const struct v34_phase4_mp_receiver *receiver);
 
 /* Consume one exact training-constellation decision. The first decision seeds
- * differential phase; later decisions continuously feed the MP record parser.
+ * differential phase; later decisions continuously feed the MP record parser
+ * and retain a bounded one-run for the following E sequence.
  * Rejected calls leave state and event unchanged. */
 enum v34_phase4_mp_receiver_result
 v34_phase4_mp_receive_decision(

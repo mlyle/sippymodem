@@ -20,6 +20,19 @@ enum {
 		V34_PHASE4_E_BITS / 4,
 };
 
+/* E is a run of twenty descrambled ones. MP framing contains zero start and
+ * fill bits, so the same continuous decoder can search for either sequence. */
+static inline uint8_t v34_phase4_e_extend_one_run(uint8_t current, uint8_t dibit)
+{
+	if (dibit == 3u) {
+		unsigned int extended = (unsigned int)current + 2u;
+
+		return extended < V34_PHASE4_E_BITS ?
+			       (uint8_t)extended : V34_PHASE4_E_BITS;
+	}
+	return dibit == 1u ? 1u : 0u;
+}
+
 enum v34_phase4_e_sequence_result {
 	V34_PHASE4_E_SEQUENCE_OK,
 	V34_PHASE4_E_SEQUENCE_COMPLETE,

@@ -130,7 +130,7 @@ static bool test_terminal_samples(const struct v34_phase34_receiver *receiver)
 	      sample_preserves_state(&next, V34_PHASE34_RECEIVER_FAILED),
 	      "failed receiver consumed a sample or reported completion");
 	if (next.stage == V34_PHASE34_RECEIVER_PHASE4)
-		next.semantic.phase4.e_receiver.previous_clockwise_quarter_turns = 4;
+		next.semantic.phase4.mp_receiver.previous_clockwise_quarter_turns = 4;
 	else
 		next.semantic.data.data_receiver.channel_receiver.frame_decoder
 			.channel_decoder.survivor.path_index =
@@ -324,8 +324,6 @@ static bool test_validation(void)
 	      v34_phase34_receiver_set_data_erasure(&receiver, true) ==
 		      V34_PHASE34_RECEIVER_INVALID_STATE &&
 	      v34_phase34_receiver_continue_mp(&receiver) ==
-		      V34_PHASE34_RECEIVER_INVALID_STATE &&
-	      v34_phase34_receiver_expect_e(&receiver) ==
 		      V34_PHASE34_RECEIVER_INVALID_STATE &&
 	      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
 	      "invalid controls changed an incomplete receiver");
@@ -685,7 +683,7 @@ static bool test_training_case(
 				      parameters_match(
 					      &output.mp.parameters.type0,
 					      &source.final_mp) &&
-				      v34_phase34_receiver_expect_e(&receiver) ==
+				      v34_phase34_receiver_continue_mp(&receiver) ==
 					      V34_PHASE34_RECEIVER_OK,
 				      "role %u rate %u final MP was not accepted",
 				      role, rate);

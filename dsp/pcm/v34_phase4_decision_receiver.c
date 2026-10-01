@@ -4,6 +4,7 @@
 
 #include "memory_region.h"
 #include "v34_constellation.h"
+#include "v34_phase4_e_sequence.h"
 
 #include <limits.h>
 #include <stddef.h>
@@ -209,19 +210,13 @@ bool v34_phase4_decision_receiver_is_valid(
 	     (!answer_s_state_is_valid(receiver) ||
 	      !call_j_prime_state_is_valid(receiver) ||
 	      !trn_state_is_valid(receiver))) ||
-	    (receiver->pending_record_is_valid && !receiver->record_pending) ||
+	    (receiver->mp_received &&
+	     receiver->stage < V34_PHASE4_DECISION_RECEIVER_MP) ||
 	    (receiver->record_pending &&
 	     receiver->stage != V34_PHASE4_DECISION_RECEIVER_MP))
 		return false;
-	if (receiver->stage < V34_PHASE4_DECISION_RECEIVER_E)
-		return true;
-	if (!v34_phase4_e_receiver_is_valid(&receiver->e_receiver) ||
-	    receiver->e_receiver.transmitting_role !=
-		    receiver->mp_receiver.transmitting_role ||
-	    receiver->e_receiver.constellation !=
-		    receiver->mp_receiver.constellation)
-		return false;
-	return v34_phase4_e_receiver_is_complete(&receiver->e_receiver) ==
+	return (receiver->mp_received &&
+		receiver->mp_receiver.consecutive_ones == V34_PHASE4_E_BITS) ==
 	       (receiver->stage == V34_PHASE4_DECISION_RECEIVER_COMPLETE);
 }
 
@@ -294,45 +289,17 @@ v34_phase4_decision_receiver_init(
 	return V34_PHASE4_DECISION_RECEIVER_OK;
 }
 
-static enum v34_phase4_decision_receiver_result clear_record(
-	struct v34_phase4_decision_receiver *receiver, bool expect_e)
-{
-	struct v34_phase4_decision_receiver next;
-
-	if (!v34_phase4_decision_receiver_is_valid(receiver))
-		return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
-	if (receiver->stage != V34_PHASE4_DECISION_RECEIVER_MP ||
-	    !receiver->record_pending ||
-	    (expect_e && !receiver->pending_record_is_valid))
-		return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
-	next = *receiver;
-	if (expect_e) {
-		if (v34_phase4_e_receiver_search_from_mp(
-			    &next.e_receiver, &next.mp_receiver) !=
-		    V34_PHASE4_E_RECEIVER_OK)
-			return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
-		next.stage = V34_PHASE4_DECISION_RECEIVER_E;
-	}
-	next.record_pending = false;
-	next.pending_record_is_valid = false;
-	if (!v34_phase4_decision_receiver_is_valid(&next))
-		return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
-	*receiver = next;
-	return V34_PHASE4_DECISION_RECEIVER_OK;
-}
-
 enum v34_phase4_decision_receiver_result
 v34_phase4_decision_receiver_continue_mp(
 	struct v34_phase4_decision_receiver *receiver)
 {
-	return clear_record(receiver, false);
-}
-
-enum v34_phase4_decision_receiver_result
-v34_phase4_decision_receiver_expect_e(
-	struct v34_phase4_decision_receiver *receiver)
-{
-	return clear_record(receiver, true);
+	if (!v34_phase4_decision_receiver_is_valid(receiver))
+		return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
+	if (receiver->stage != V34_PHASE4_DECISION_RECEIVER_MP ||
+	    !receiver->record_pending)
+		return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
+	receiver->record_pending = false;
+	return V34_PHASE4_DECISION_RECEIVER_OK;
 }
 
 static bool reset_expected_trn(
@@ -686,39 +653,20 @@ static enum v34_phase4_decision_receiver_result receive_mp(
 	*output = v34_receive_action_commit(
 		observation, hard->target, decoder_power_q15,
 		V34_ADAPTIVE_EQUALIZER_FULL);
+	if (receiver->mp_received &&
+	    receiver->mp_receiver.consecutive_ones == V34_PHASE4_E_BITS) {
+		receiver->stage = V34_PHASE4_DECISION_RECEIVER_COMPLETE;
+		return V34_PHASE4_DECISION_RECEIVER_E_COMPLETE;
+	}
 	if (emitted.type == V34_MP_RECEIVE_NO_EVENT)
 		return V34_PHASE4_DECISION_RECEIVER_OK;
 	receiver->record_pending = true;
-	receiver->pending_record_is_valid =
+	receiver->mp_received |=
 		(emitted.type == V34_MP_RECEIVE_TYPE0 ||
 		 emitted.type == V34_MP_RECEIVE_TYPE1) &&
 		emitted.frame_result == V34_MP_OK;
 	*event = emitted;
 	return V34_PHASE4_DECISION_RECEIVER_RECORD_READY;
-}
-
-static enum v34_phase4_decision_receiver_result receive_e(
-	struct v34_phase4_decision_receiver *receiver,
-	const struct v34_adaptive_equalizer_observation *observation,
-	uint16_t decoder_power_q15,
-	const struct v34_fixed_training_decision *hard,
-	struct v34_receive_action *output)
-{
-	enum v34_phase4_e_receiver_result result =
-		v34_phase4_e_receive_decision(
-			&receiver->e_receiver, hard->quarter_point,
-			hard->clockwise_quarter_turns);
-
-	if (result != V34_PHASE4_E_RECEIVER_OK &&
-	    result != V34_PHASE4_E_RECEIVER_COMPLETE)
-		return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
-	*output = v34_receive_action_commit(
-		observation, hard->target, decoder_power_q15,
-		V34_ADAPTIVE_EQUALIZER_FULL);
-	if (result == V34_PHASE4_E_RECEIVER_OK)
-		return V34_PHASE4_DECISION_RECEIVER_OK;
-	receiver->stage = V34_PHASE4_DECISION_RECEIVER_COMPLETE;
-	return V34_PHASE4_DECISION_RECEIVER_E_COMPLETE;
 }
 
 static bool output_is_valid(
@@ -822,14 +770,10 @@ v34_phase4_decision_receiver_observe(
 		result = receive_answer_s(
 			&next, observation, decoder_power_q15,
 			&generated);
-	else if (next.stage == V34_PHASE4_DECISION_RECEIVER_MP)
+	else
 		result = receive_mp(
 			&next, observation, decoder_power_q15, &hard,
 			&generated, &emitted);
-	else
-		result = receive_e(
-			&next, observation, decoder_power_q15, &hard,
-			&generated);
 	if (!consumed_result(result))
 		return result;
 	if (!v34_phase4_decision_receiver_is_valid(&next) ||

@@ -432,6 +432,8 @@ struct renegotiating_peer {
 	struct v34_data_startup startup;
 	struct v34_mp_record local_mp;
 	unsigned int acknowledgment_delay_records;
+	bool damage_acknowledgment;
+	bool acknowledgment_damaged;
 	bool peer_mp_received;
 	bool peer_acknowledged;
 	bool transmitting_mp;
@@ -473,9 +475,7 @@ static bool renegotiating_peer_sample(
 			peer->peer_mp_received = true;
 		}
 		peer->peer_acknowledged |= parameters->acknowledges_peer_mp;
-		CHECK((peer->peer_acknowledged ?
-		       v34_phase34_receiver_expect_e(&peer->receive) :
-		       v34_phase34_receiver_continue_mp(&peer->receive)) ==
+		CHECK(v34_phase34_receiver_continue_mp(&peer->receive) ==
 			      V34_PHASE34_RECEIVER_OK,
 		      "rate renegotiation peer could not continue MP");
 	} else if (result == V34_PHASE34_RECEIVER_E_COMPLETE) {
@@ -537,13 +537,34 @@ transmit:
 			peer->transmitting_mp = true;
 		}
 	}
+	/* Corrupt one transmitted MP-prime payload symbol while preserving the
+	 * peer's actual scrambler and line timeline. The following E stays intact. */
+	if (peer->damage_acknowledgment && local->acknowledges_peer_mp &&
+	    peer->training.stage == V34_TRAINING_TRANSMITTER_PHASE4_MP &&
+	    peer->training.phase4.mp.bit_index == 40u &&
+	    v34_training_line_needs_point(&peer->training.line)) {
+		struct qam_point point;
+		uint8_t quarter, rotation;
+		bool complete, accepted;
+
+		CHECK(v34_phase4_mp_next(&peer->training.phase4.mp, &point,
+			      &quarter, &rotation, &complete) == V34_PHASE4_MP_OK &&
+		      v34_training_constellation_point(V34_CONSTELLATION_4_POINT,
+			      quarter, (uint8_t)((rotation + 1u) & 3u), &point) ==
+			      V34_CONSTELLATION_OK &&
+		      v34_training_line_sample(&peer->training.line, &point,
+			      output, &accepted) == V34_TRAINING_LINE_OK && accepted,
+		      "damaged MP-prime symbol could not be emitted");
+		peer->acknowledgment_damaged = true;
+		return true;
+	}
 	return v34_training_transmitter_sample(&peer->training, output) ==
 		V34_TRAINING_TRANSMITTER_OK;
 }
 
 static bool test_online_rate_renegotiation(void)
 {
-	for (unsigned int variant = 0; variant < 4u; ++variant) {
+	for (unsigned int variant = 0; variant < 6u; ++variant) {
 		unsigned int calling_peer = variant & 1u;
 		struct endpoint caller, answerer;
 		struct renegotiating_peer peer = { 0 };
@@ -560,7 +581,8 @@ static bool test_online_rate_renegotiation(void)
 		      "rate renegotiation peer could not retain transmit line");
 		peer.receive = initiator->phase4.receive;
 		peer.local_mp = initiator->phase4.transmit_mp;
-		peer.acknowledgment_delay_records = variant >= 2u ? 6u : 0u;
+		peer.acknowledgment_delay_records = variant >= 2u && variant < 4u ? 6u : 0u;
+		peer.damage_acknowledgment = variant >= 4u;
 		v34_mp_record_common_parameters_mutable(&peer.local_mp)
 			->maximum_call_to_answer_rate_2400_bps_units = 3;
 		v34_mp_record_common_parameters_mutable(&peer.local_mp)
@@ -595,7 +617,7 @@ static bool test_online_rate_renegotiation(void)
 			    responder->mapping_frames_received >= 4u)
 				break;
 		}
-		CHECK((variant < 2u || waited_for_acknowledgment) &&
+		CHECK((variant < 2u || variant >= 4u || waited_for_acknowledgment) &&
 		      (events_seen & V34_PHASE4_EXCHANGE_EVENT_RATE_RENEGOTIATION) != 0 &&
 		      (events_seen & V34_PHASE4_EXCHANGE_EVENT_ONLINE) != 0 &&
 		      peer.transmitting_data && initiator->mapping_frames_received >= 4u &&
@@ -607,6 +629,11 @@ static bool test_online_rate_renegotiation(void)
 		      "rate renegotiation did not restore reduced-rate data: variant=%u events=0x%x frames=%u/%u",
 		      variant, events_seen, initiator->mapping_frames_received,
 		      responder->mapping_frames_received);
+		CHECK(!peer.damage_acknowledgment ||
+		      (peer.acknowledgment_damaged &&
+		       !responder->phase4.peer_mp_prime_received &&
+		       (events_seen & V34_PHASE4_EXCHANGE_EVENT_PEER_E_RECEIVED) != 0),
+		      "missed MP-prime did not recover through E: variant=%u", variant);
 	}
 	return true;
 }
@@ -991,7 +1018,7 @@ static bool test_peer_mp_preserves_trn_schedule(void)
 		      v34_phase4_exchange_prepare_data_startup(&crossed) ==
 			      V34_PHASE4_EXCHANGE_OK &&
 		      crossed.receive.semantic.phase4.stage ==
-			      V34_PHASE4_DECISION_RECEIVER_E,
+			      V34_PHASE4_DECISION_RECEIVER_MP,
 		      "early peer MP-prime did not arm independent E reception");
 		for (size_t index = 0;
 		     crossed.transmit.training.phase4_trn_symbols <
@@ -1009,7 +1036,7 @@ static bool test_peer_mp_preserves_trn_schedule(void)
 		      events == V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_MP_STARTED &&
 		      crossed.transmit_mp_started &&
 		      crossed.receive.semantic.phase4.stage ==
-			      V34_PHASE4_DECISION_RECEIVER_E,
+			      V34_PHASE4_DECISION_RECEIVER_MP,
 		      "independent E reception blocked the scheduled local MP");
 	}
 	for (size_t index = 0; index < SAMPLE_LIMIT; ++index) {
@@ -1209,7 +1236,7 @@ static bool test_mp_acknowledgment_boundaries(void)
 	      v34_phase4_exchange_is_valid(&pending) &&
 	      !v34_phase4_exchange_needs_data_preparation(&pending) &&
 	      pending.receive.semantic.phase4.stage ==
-		      V34_PHASE4_DECISION_RECEIVER_E,
+		      V34_PHASE4_DECISION_RECEIVER_MP,
 	      "early reciprocal MP-prime did not arm E reception");
 	CHECK(!pending.transmit_mp_prime_started &&
 	      !pending.transmit_mp_prime_complete,

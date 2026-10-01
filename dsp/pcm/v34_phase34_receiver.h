@@ -122,8 +122,6 @@ enum v34_phase34_receiver_result v34_phase34_receiver_rearm_phase4_s(
  * receive owner. */
 enum v34_phase34_receiver_result v34_phase34_receiver_continue_mp(
 	struct v34_phase34_receiver *receiver);
-enum v34_phase34_receiver_result v34_phase34_receiver_expect_e(
-	struct v34_phase34_receiver *receiver);
 
 /* End decision-feedback training at the local MP boundary. When the record
  * permits precoding, select the learned coefficients only if the measured
