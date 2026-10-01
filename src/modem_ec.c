@@ -397,7 +397,7 @@ static bool select_xid_parameter(
 }
 
 enum {
-	XID_PARAMETER_LENGTH = 20,
+	XID_PARAMETER_LENGTH = 19,
 	XID_PRIVATE_LENGTH = 15,
 };
 
@@ -638,8 +638,9 @@ static void build_xid_fields(
 	const unsigned int tx_bits = config->tx_info_size * 8U;
 	const unsigned int rx_bits = config->rx_info_size * 8U;
 	const u8 parameter_values[XID_PARAMETER_LENGTH] = {
-		/* V.42 Table 11a: a four-octet mask with mandatory bits set. */
-		PI_HDLC_OPTFUNCS, 4, 0x8a, 0x89, 0x00, 0x00,
+		/* V.42 (1993) Table 11: retain the 24-bit form for older peers.
+		 * Set mandatory bits; no optional procedure is supported. */
+		PI_HDLC_OPTFUNCS, 3, 0x8a, 0x89, 0x00,
 		PI_TX_INFO_MAXSIZE, 2, (u8)(tx_bits >> 8), (u8)tx_bits,
 		PI_RX_INFO_MAXSIZE, 2, (u8)(rx_bits >> 8), (u8)rx_bits,
 		PI_TX_WINDOW_SIZE, 1, config->tx_win_size,

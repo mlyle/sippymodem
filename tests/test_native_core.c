@@ -2217,7 +2217,7 @@ static bool test_lapm_dual_compression_retry(void)
 static bool test_lapm_xid_parameters(void)
 {
 	static const uint8_t expected_parameters[] = {
-		0x03, 0x04, 0x8a, 0x89, 0x00, 0x00,
+		0x03, 0x03, 0x8a, 0x89, 0x00,
 		0x05, 0x02, 0x02, 0x98, /* transmit N401: 83 octets, 664 bits */
 		0x06, 0x02, 0x03, 0xb8, /* receive N401: 119 octets, 952 bits */
 		0x07, 0x01, 0x07,
@@ -2788,14 +2788,14 @@ static bool test_lapm_v42bis_transmit_pressure(void)
 static bool test_lapm_xid_directions(void)
 {
 	static const uint8_t peer_parameters[] = {
-		0x03, 0x04, 0x8a, 0x89, 0x00, 0x00,
+		0x03, 0x04, 0x8e, 0x89, 0x00, 0x00, /* request unsupported SREJ */
 		0x05, 0x02, 0x02, 0x98, /* peer transmit: 83 octets */
 		0x06, 0x02, 0x03, 0xb8, /* peer receive: 119 octets */
 		0x07, 0x01, 0x07,
 		0x08, 0x01, 0x0b,
 	};
 	static const uint8_t local_parameters[] = {
-		0x03, 0x04, 0x8a, 0x89, 0x00, 0x00,
+		0x03, 0x03, 0x8a, 0x89, 0x00,
 		0x05, 0x02, 0x03, 0xb8,
 		0x06, 0x02, 0x02, 0x98,
 		0x07, 0x01, 0x0b,
@@ -2812,8 +2812,11 @@ static bool test_lapm_xid_directions(void)
 	for (unsigned int response = 0; response < 2; ++response) {
 		struct modem *modem = modem_create(&driver, driver.name);
 		uint8_t preamble[109];
-		uint8_t wire[26] = { 0, 0xaf, 0x82, 0x80, 0, 20 };
-		frame_t incoming = { .buf = wire, .count = sizeof(wire) };
+		uint8_t wire[26] = { 0, 0xaf, 0x82, 0x80, 0, 0 };
+		const uint8_t *parameters = response ? local_parameters : peer_parameters;
+		const size_t parameter_length = response ?
+			sizeof(local_parameters) : sizeof(peer_parameters);
+		frame_t incoming = { .buf = wire, .count = 6 + parameter_length };
 		struct v42_xid_fields fields;
 		frame_t *outgoing;
 
@@ -2837,7 +2840,8 @@ static bool test_lapm_xid_directions(void)
 			modem->packer.hdlc.tx_complete(modem->packer.hdlc.framer, outgoing);
 		}
 		wire[0] = response ? modem->ec.lapm.cmd_addr : modem->ec.lapm.rsp_addr;
-		memcpy(wire + 6, response ? local_parameters : peer_parameters, 20);
+		wire[5] = (uint8_t)parameter_length;
+		memcpy(wire + 6, parameters, parameter_length);
 		modem->packer.hdlc.rx_complete(modem->packer.hdlc.framer, &incoming);
 		CHECK(modem->ec.lapm.tx_info_size == (response ? 83u : 119u) &&
 			      modem->ec.lapm.rx_info_size == (response ? 119u : 83u) &&
@@ -3180,7 +3184,7 @@ static bool test_lapm_repeated_xid_parameters(void)
 	CHECK(response != NULL && response->buf[1] == 0xaf &&
 		      v42_xid_decode(response->buf + 2,
 			      (size_t)response->size - 2U, &fields) == V42_XID_OK &&
-		      fields.parameter_negotiation_length == 20 &&
+		      fields.parameter_negotiation_length == 19 &&
 		      modem->ec.lapm.tx_win_size == 15 &&
 		      modem->ec.lapm.rx_win_size == 15,
 	      "bounded repeated XID parameters did not produce a valid response");
@@ -3192,7 +3196,7 @@ static bool test_lapm_repeated_xid_parameters(void)
 static bool test_lapm_xid_envelopes(void)
 {
 	static const uint8_t expected_parameters[] = {
-		0x03, 0x04, 0x8a, 0x89, 0x00, 0x00,
+		0x03, 0x03, 0x8a, 0x89, 0x00,
 		0x05, 0x02, 0x04, 0x00,
 		0x06, 0x02, 0x04, 0x00,
 		0x07, 0x01, 0x0f,
