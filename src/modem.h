@@ -184,6 +184,8 @@ struct comp_state {
 
 
 extern int  modem_comp_init(struct modem *m);
+/* C-INIT for a fresh LAPM sequence; preserves the selected limits and storage. */
+extern int  modem_comp_reinitialize(struct modem *m);
 extern bool modem_comp_parameters_valid(int dict_size, int max_str);
 extern int  modem_comp_config(struct modem *m, int dict_size, int max_str);
 extern void modem_comp_exit(struct modem *m);

@@ -2144,8 +2144,10 @@ static bool test_lapm_dual_compression_retry(void)
 	/* The fixture selects peer TX=12, RX=13; offer an interval containing them. */
 	caller->cfg.ec_tx_win_size = 13;
 	caller->cfg.ec_rx_win_size = 12;
-	CHECK(modem_ec_init(caller) == 0, "compression retry initialization failed");
+	CHECK(modem_comp_init(caller) == 0 && modem_ec_init(caller) == 0,
+	      "compression retry initialization failed");
 	modem_ec_start(caller);
+	caller->state = 4;
 	CHECK(modem_hdlc_get_bits(caller, 8, preamble, sizeof(preamble)) == sizeof(preamble),
 	      "compression retry preamble failed");
 	outgoing = caller->packer.hdlc.tx_frame;
@@ -2206,6 +2208,8 @@ static bool test_lapm_dual_compression_retry(void)
 	incoming.count = 2;
 	caller->packer.hdlc.rx_complete(caller->packer.hdlc.framer, &incoming);
 	CHECK(caller->ec.lapm.state == 2, "compression retry did not establish LAPM");
+	modem_ec_exit(caller);
+	modem_comp_exit(caller);
 	modem_delete(caller);
 	return true;
 }
@@ -2305,6 +2309,143 @@ static bool start_lapm_compression_fixture(struct modem *m, bool response)
 		m->packer.hdlc.tx_frame = NULL;
 		CHECK(outgoing != NULL, "compression fixture command was missing");
 		m->packer.hdlc.tx_complete(m->packer.hdlc.framer, outgoing);
+	}
+	return true;
+}
+
+static bool test_lapm_v42bis_reinitialization(void)
+{
+	struct modem_driver driver = {
+		.name = "LAPM V.42bis initialization", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	static const unsigned strings[] = { 6, 250 };
+	uint8_t payload[40], decoded[128];
+	char encoded[1024];
+
+	for (size_t i = 0; i < sizeof(payload); ++i)
+		payload[i] = (uint8_t)(i % 7); /* Includes transparent-mode escapes. */
+	for (unsigned response = 0; response < 2; ++response)
+	for (size_t limit = 0; limit < ARRAY_LENGTH(strings); ++limit) {
+		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *peer = modem_create(&driver, driver.name);
+		uint8_t wire[] = {
+			0, 0xaf, 0x82, 0xf0, 0, 15,
+			0, 3, 'V', '4', '2', 1, 1, 3, 2, 2, 2, 0, 3, 1, strings[limit],
+		};
+		frame_t incoming = { .buf = wire, .count = sizeof(wire) };
+		frame_t *outgoing;
+		size_t length = 0;
+
+		CHECK(m != NULL && peer != NULL, "V.42bis initialization allocation failed");
+		m->cfg.comp = peer->cfg.comp = 3;
+		m->cfg.comp_types = peer->cfg.comp_types = MODEM_COMP_TYPE_V42BIS;
+		m->cfg.comp_dict_size = peer->cfg.comp_dict_size = 512;
+		m->cfg.comp_max_string = peer->cfg.comp_max_string = strings[limit];
+		CHECK(start_lapm_compression_fixture(m, response) && modem_comp_init(peer) == 0,
+		      "V.42bis initialization fixture failed");
+		struct lapm_state *l = &m->ec.lapm;
+		wire[0] = response ? l->cmd_addr : l->rsp_addr;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		outgoing = m->packer.hdlc.get_tx_frame(l);
+		CHECK(outgoing != NULL && outgoing->buf[1] == (response ? 0x7f : 0xaf),
+		      "V.42bis initialization did not finish negotiation");
+		m->packer.hdlc.tx_complete(l, outgoing);
+		/* Discard old codec data before a destructive link initialization. */
+		for (unsigned i = 0; i < 1024; ++i)
+			CHECK(modem_comp_encode(m, 'A', encoded, sizeof(encoded)) >= 0,
+			      "V.42bis history fixture could not encode");
+		CHECK(modem_comp_flush_encoder(m, encoded, sizeof(encoded)) >= 0 &&
+		      modem_comp_decode(m, 'B', encoded, sizeof(encoded)) >= 0 &&
+		      m->comp.encoder.mode == COMPRESSED && m->comp.decoder.str_len == 1,
+		      "V.42bis history fixture did not retain stream state");
+		m->comp.head = m->comp.count = 1;
+		m->comp.buf[1] = 'P';
+		struct lapm_v44_session session = l->v44_session;
+		wire[1] = response ? 0x73 : 0x7f;
+		incoming.count = 2;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(l->state == 2 && m->state == 5 && m->cfg.comp == 3 &&
+		      m->comp.encoder.next_free == 259 && m->comp.decoder.next_free == 259 &&
+		      m->comp.encoder.mode == TRANSPARENT && !m->comp.encoder.raw_bits &&
+		      !m->comp.encoder.bit_len && !m->comp.encoder.olen &&
+		      !m->comp.decoder.str_len && !m->comp.count && !m->comp.head &&
+		      m->comp.encoder.dict_size == 512 &&
+		      m->comp.encoder.max_string == (int)strings[limit] &&
+		      memcmp(&l->v44_session, &session, sizeof(session)) == 0,
+		      "LAPM initialization retained V.42bis history or changed its selection");
+		if (!response) {
+			outgoing = m->packer.hdlc.get_tx_frame(l);
+			CHECK(outgoing != NULL && outgoing->buf[1] == 0x73,
+			      "V.42bis initialization did not acknowledge SABME");
+			m->packer.hdlc.tx_complete(l, outgoing);
+		}
+		CHECK(modem_write(m, (const char *)payload, sizeof(payload)) == sizeof(payload),
+		      "reinitialized V.42bis link rejected terminal data");
+		outgoing = m->packer.hdlc.get_tx_frame(l);
+		CHECK(outgoing != NULL && outgoing->size > 3 && outgoing->buf[1] == 0 &&
+		      m->xmit.count == 0, "reinitialized V.42bis link did not send new data");
+		for (int i = 3; i < outgoing->size; ++i) {
+			int count = modem_comp_decode(peer, outgoing->buf[i],
+				(char *)decoded + length, (int)(sizeof(decoded) - length));
+			CHECK(count >= 0, "fresh peer rejected reinitialized V.42bis data");
+			length += (size_t)count;
+		}
+		int count = modem_comp_flush_decoder(peer, (char *)decoded + length,
+			(int)(sizeof(decoded) - length));
+		CHECK(count >= 0 && length + (size_t)count == sizeof(payload) &&
+		      memcmp(decoded, payload, sizeof(payload)) == 0,
+		      "reinitialized V.42bis encoder disagreed with a fresh peer");
+		m->packer.hdlc.tx_complete(l, outgoing);
+		modem_ec_exit(m);
+		modem_comp_exit(m);
+		modem_comp_exit(peer);
+		modem_delete(m);
+		modem_delete(peer);
+	}
+	/* C-INIT failure cannot leave a healthy carrier with unusable compression. */
+	for (unsigned response = 0; response < 2; ++response) {
+		struct modem *m = modem_create(&driver, driver.name);
+		uint8_t wire[] = {
+			0, 0xaf, 0x82, 0xf0, 0, 15,
+			0, 3, 'V', '4', '2', 1, 1, 3, 2, 2, 2, 0, 3, 1, 6,
+		};
+		frame_t incoming = { .buf = wire, .count = sizeof(wire) };
+		frame_t *outgoing;
+
+		CHECK(m != NULL, "missing-codec allocation failed");
+		m->caller = response;
+		m->cfg.comp = 3;
+		m->cfg.comp_types = MODEM_COMP_TYPE_V42BIS;
+		CHECK(modem_ec_init(m) == 0, "missing-codec error control failed");
+		modem_ec_start(m);
+		m->state = 4;
+		struct lapm_state *l = &m->ec.lapm;
+		if (response) {
+			void (*complete)(struct modem *) = m->packer.hdlc.tx_preamble_complete;
+			m->packer.hdlc.tx_preamble_complete = NULL;
+			m->packer.hdlc.tx_preamble_flags = 0;
+			complete(m);
+			outgoing = m->packer.hdlc.get_tx_frame(l);
+			CHECK(outgoing != NULL, "missing-codec XID command absent");
+			m->packer.hdlc.tx_complete(l, outgoing);
+		}
+		wire[0] = response ? l->cmd_addr : l->rsp_addr;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		if (!response) {
+			outgoing = m->packer.hdlc.get_tx_frame(l);
+			CHECK(outgoing != NULL && outgoing->buf[1] == 0xaf,
+			      "missing-codec XID response absent");
+			m->packer.hdlc.tx_complete(l, outgoing);
+			wire[1] = 0x7f;
+			incoming.count = 2;
+			m->packer.hdlc.rx_complete(l, &incoming);
+		}
+		CHECK(l->state == 0 && !modem_ec_can_establish(m) && !m->bit_timer &&
+		      strcmp(modem_call_phase(m), "cleardown") == 0,
+		      "failed V.42bis initialization left establishment active");
+		modem_ec_exit(m);
+		modem_delete(m);
 	}
 	return true;
 }
@@ -2879,7 +3020,8 @@ static bool test_lapm_xid_collisions(void)
 		m->cfg.comp_types = compression_types[compression];
 		m->cfg.ec_tx_info_size = m->cfg.ec_rx_info_size = 70;
 		m->cfg.ec_tx_win_size = m->cfg.ec_rx_win_size = 2;
-		CHECK(modem_ec_init(m) == 0, "collision modem initialization failed");
+		CHECK((compression != 1 || modem_comp_init(m) == 0) && modem_ec_init(m) == 0,
+		      "collision modem initialization failed");
 		modem_ec_start(m);
 		CHECK(modem_hdlc_get_bits(m, 8, preamble, sizeof(preamble)) ==
 			      (int)sizeof(preamble), "collision preamble failed");
@@ -2993,6 +3135,9 @@ static bool test_lapm_xid_collisions(void)
 			      "late duplicate reset codec ownership or negotiation");
 			m->packer.hdlc.tx_complete(m->packer.hdlc.framer, outgoing);
 		}
+		if (compression == 1)
+			modem_comp_exit(m);
+		modem_ec_exit(m);
 		modem_delete(m);
 	}
 	return true;
@@ -6374,6 +6519,7 @@ int main(void)
 		{ "AT V.34 symbol rate", test_at_v34_symbol_rate },
 		{ "LAPM XID parameter encoding", test_lapm_xid_parameters },
 		{ "LAPM V.42bis negotiation", test_lapm_v42bis_negotiation },
+		{ "LAPM V.42bis reinitialization", test_lapm_v42bis_reinitialization },
 		{ "LAPM V.42bis invalid parameters", test_lapm_v42bis_invalid_parameters },
 		{ "LAPM V.42bis decoder failure", test_lapm_v42bis_decoder_failure },
 		{ "LAPM V.42bis receive output pressure", test_lapm_v42bis_receive_pressure },

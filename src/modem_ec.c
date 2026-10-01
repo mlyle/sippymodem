@@ -1463,7 +1463,8 @@ static void rx_unnum_rsp(struct lapm_state *l, frame_t *f)
 				l->config = 0;
 				TIMER_STOP(l);
 				if (l->state == LAPM_IDLE) {
-					lapm_connect(l);
+					if (lapm_connect(l) != 0)
+						modem_update_status(l->modem, STATUS_EC_ERROR);
 				}
 				else if (l->state == LAPM_DATA) {
 					l->busy = 0;
@@ -1648,6 +1649,9 @@ static int reinitialize_for_link_establishment(struct lapm_state *l)
 	}
 	if (l->v44_path != NULL &&
 	    v44_character_path_reinitialize(l->v44_path) != V44_CHARACTER_PATH_OK)
+		return -1;
+	/* V.42bis 5.6: a new LAPM sequence initializes both compression histories. */
+	if (l->modem->cfg.comp && modem_comp_reinitialize(l->modem) != 0)
 		return -1;
 	l->rx_head = l->rx_count = 0;
 	l->modem->packer_process = NULL;

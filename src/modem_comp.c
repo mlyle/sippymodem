@@ -666,6 +666,21 @@ int modem_comp_config(struct modem *m,int dict_size,int max_str)
 	return 0;
 }
 
+int modem_comp_reinitialize(struct modem *m)
+{
+	if (m == NULL || m->comp.encoder.dict == NULL || m->comp.decoder.dict == NULL)
+		return -1;
+	dict_init(&m->comp.encoder);
+	dict_init(&m->comp.decoder);
+	m->comp.encoder.bit_data = m->comp.decoder.bit_data = 0;
+	m->comp.encoder.cmp_bits = m->comp.decoder.cmp_bits = 0;
+	m->comp.encoder.raw_bits = m->comp.decoder.raw_bits = 0;
+	m->comp.encoder.olen = m->comp.decoder.olen = 0;
+	m->comp.encoder.ohead = m->comp.decoder.ohead = 0;
+	m->comp.head = m->comp.count = 0;
+	return 0;
+}
+
 
 void modem_comp_exit(struct modem *m)
 {
