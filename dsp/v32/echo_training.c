@@ -133,9 +133,10 @@ static bool gain_lifecycle_matches(
 {
 	if (training_role(training) == V32_ANSWERING_TRANSMITTER)
 		return path->line.gain.gain_mode == AGC_GAIN_TRACKING;
+	/* The peer may stop R1 while our local echo interval starts. A quiet
+	 * receive block does not invalidate the gain learned from its training. */
 	return path->line.gain.gain_mode == AGC_GAIN_FROZEN &&
-	       path->line.gain.gain_mantissa_q15 != 0 &&
-	       path->line.gain.signal_present;
+	       path->line.gain.gain_mantissa_q15 != 0;
 }
 
 bool v32_echo_training_path_is_valid(

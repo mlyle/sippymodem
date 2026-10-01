@@ -3012,7 +3012,7 @@ static bool run_v22_abandoned_probe(void)
 	return true;
 }
 
-static bool run_v32_recording_replay(const char *path)
+static bool run_v32_recording_replay(const char *path, const char *expected_text)
 {
 	static const char dial_command[] = "ATDrecording\r";
 	static const char *const commands[] = {
@@ -3027,7 +3027,11 @@ static bool run_v32_recording_replay(const char *path)
 	struct datapumps datapumps = { 0 };
 	struct integration_endpoint endpoint;
 	size_t connected_at = SIZE_MAX;
+	bool expected_text_seen = false;
+	size_t expected_text_length = expected_text != NULL ? strlen(expected_text) : 0;
 
+	CHECK(expected_text_length < ENDPOINT_OUTPUT_CAPACITY,
+	      "V.32 replay expected text exceeds the output bound");
 	CHECK(channel_bench_recording_load(
 		      path, REPLAY_MAX_SAMPLES, &recording) ==
 		      CHANNEL_BENCH_OK,
@@ -3055,21 +3059,27 @@ static bool run_v32_recording_replay(const char *path)
 			endpoint.modem, endpoint.receive, endpoint.transmit,
 			(int)count);
 		offset += count;
-		CHECK(endpoint_drain(&endpoint),
-		      "V.32 recording replay terminal output overflowed");
-		if (connected_at == SIZE_MAX &&
-		    modem_is_online(endpoint.modem, DP_V32))
-			connected_at = offset;
-		if (connected_at != SIZE_MAX)
-			endpoint.output_count = 0;
+		if (modem_is_online(endpoint.modem, DP_V32)) {
+			if (connected_at == SIZE_MAX)
+				connected_at = offset;
+			CHECK(recording_replay_drain_online(
+				      &endpoint, expected_text, &expected_text_seen),
+			      "V.32 recording replay could not drain online output");
+		} else {
+			CHECK(endpoint_drain(&endpoint),
+			      "V.32 recording replay terminal output overflowed");
+		}
 	}
 	CHECK(connected_at != SIZE_MAX,
 	      "V.32 recording did not acquire carrier (final DP %d/status %d)",
 	      endpoint.modem->dp != NULL ? (int)endpoint.modem->dp->id : -1,
 	      endpoint.modem->dp != NULL ? (int)endpoint.modem->dp->status : -1);
+	CHECK(expected_text_length == 0 || expected_text_seen,
+	      "V.32 recording did not reproduce expected text '%s'", expected_text);
 	fprintf(stderr,
-		"[       OK ] V.32 recording replay (%zu samples, carrier at %zu)\n",
-		recording.count, connected_at);
+		"[       OK ] V.32 recording replay (%zu samples, carrier at %zu%s)\n",
+		recording.count, connected_at,
+		expected_text_seen ? ", expected text received" : "");
 
 	endpoint_destroy(&endpoint);
 	CHECK(datapumps_stop(&datapumps) == DATAPUMPS_OK,
@@ -4074,6 +4084,8 @@ int main(void)
 {
 	const char *v32_recording_path =
 		getenv("V32_REPLAY_RX_PCM");
+	const char *v32_recording_expected_text =
+		getenv("V32_REPLAY_EXPECT_TEXT");
 	const char *v34_recording_path =
 		getenv("V34_REPLAY_RX_PCM");
 	const char *v34_answer_recording_path =
@@ -4801,7 +4813,8 @@ int main(void)
 	if (v32_recording_path == NULL || v32_recording_path[0] == '\0') {
 		fprintf(stderr,
 			"[  SKIPPED ] V.32 recording replay (V32_REPLAY_RX_PCM unset)\n");
-	} else if (!run_v32_recording_replay(v32_recording_path)) {
+	} else if (!run_v32_recording_replay(
+			   v32_recording_path, v32_recording_expected_text)) {
 		return 1;
 	}
 	if (v22_recording_path == NULL || v22_recording_path[0] == '\0') {

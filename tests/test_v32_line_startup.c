@@ -669,6 +669,57 @@ static bool test_validation_is_transactional(void)
 	return true;
 }
 
+static bool test_measured_echo_timing(void)
+{
+	static const struct {
+		uint32_t samples;
+		bool caller;
+		uint16_t echo_delay;
+		uint16_t s_extension;
+	} cases[] = {
+		{ 400, true, 40, 120 },
+		/* A long packet/PSTN turnaround retains the full even NT for S,
+		 * while its echo window excludes the two 64T responses. */
+		{ 4533, true, 1212, 1360 },
+		{ 4333, false, 1216, 0 },
+		{ 8493, true, 2400, 2548 },
+		{ 8280, false, 2400, 0 },
+	};
+	static const struct {
+		uint32_t samples;
+		bool caller;
+	} rejected[] = {
+		{ 0, true }, { 0, false },
+		{ 8494, true }, { 8281, false },
+		{ UINT32_MAX, true }, { UINT32_MAX, false },
+	};
+	const struct v32_line_timing saved = {
+		.echo_round_trip_symbols = 73,
+		.caller_s_extension_symbols = 160,
+	};
+
+	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
+		struct v32_line_timing timing = saved;
+
+		CHECK(v32_line_timing_from_samples(
+			      cases[index].samples, cases[index].caller, &timing) &&
+		      timing.echo_round_trip_symbols == cases[index].echo_delay &&
+		      timing.caller_s_extension_symbols == cases[index].s_extension,
+		      "measured echo/S timing changed for case %zu", index);
+	}
+	for (size_t index = 0; index < ARRAY_LENGTH(rejected); ++index) {
+		struct v32_line_timing timing = saved;
+
+		CHECK(!v32_line_timing_from_samples(
+			      rejected[index].samples, rejected[index].caller, &timing) &&
+		      memcmp(&timing, &saved, sizeof(timing)) == 0,
+		      "unsupported turnaround changed timing for case %zu", index);
+	}
+	CHECK(!v32_line_timing_from_samples(400, true, NULL),
+	      "missing timing output was accepted");
+	return true;
+}
+
 static bool test_optional_recording_acquisition(void)
 {
 	const char *path = getenv("MODEM_TEST_V32_ANSWERER_PCM");
@@ -725,6 +776,7 @@ int main(void)
 		{ "resume after answer tone", test_resume_after_answer_tone },
 		{ "early answer loss recovery", test_early_answer_loss_recovery },
 		{ "transactional validation", test_validation_is_transactional },
+		{ "measured echo timing", test_measured_echo_timing },
 	};
 	unsigned int failures = 0;
 

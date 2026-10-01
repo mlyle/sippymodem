@@ -103,13 +103,6 @@ struct v32_datapump {
 	bool caller;
 };
 
-/* The measured turnaround owns two independent clocks: the caller's full,
- * even S extension and the canceller's bounded reference geometry. */
-struct v32_line_timing {
-	uint16_t echo_round_trip_symbols;
-	uint16_t caller_s_extension_symbols;
-};
-
 static struct dp *create_v32(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
 	int max_fragment, struct dp_operations *operations);
@@ -136,34 +129,6 @@ static enum v32_transmitter_role local_role(bool caller)
 static enum v32_endpoint_role endpoint_role(bool caller)
 {
 	return caller ? V32_CALLER : V32_ANSWERER;
-}
-
-static bool line_timing_from_samples(
-	uint32_t samples, bool extend_caller_s,
-	struct v32_line_timing *timing)
-{
-	uint64_t rounded;
-	struct v32_line_timing measured = { 0 };
-
-	if (samples == 0 || timing == NULL)
-		return false;
-	rounded = ((uint64_t)samples * V32_CARRIER_SYMBOL_RATE +
-		   MODEM_RATE - 1u) /
-		MODEM_RATE;
-	if (extend_caller_s && (rounded & 1u) != 0)
-		rounded++;
-	if (rounded == 0 ||
-	    (extend_caller_s && rounded > UINT16_MAX))
-		return false;
-	if (extend_caller_s)
-		measured.caller_s_extension_symbols = (uint16_t)rounded;
-	if (rounded < V32_ECHO_MIN_ROUND_TRIP_SYMBOLS)
-		rounded = V32_ECHO_MIN_ROUND_TRIP_SYMBOLS;
-	if (rounded > V32_ECHO_MAX_ROUND_TRIP_SYMBOLS)
-		rounded = V32_ECHO_MAX_ROUND_TRIP_SYMBOLS;
-	measured.echo_round_trip_symbols = (uint16_t)rounded;
-	*timing = measured;
-	return true;
 }
 
 static bool fixed_path_is_active(
@@ -1124,7 +1089,7 @@ static int process_caller_line_startup(
 		struct v32_conditioning_path conditioning;
 		struct v32_line_timing timing;
 
-		if (!line_timing_from_samples(
+		if (!v32_line_timing_from_samples(
 			    v32_line_startup_round_trip_samples(
 				    &datapump->line_startup),
 			    true, &timing) ||
@@ -1157,7 +1122,7 @@ static int process_answerer_line_startup(
 		return -1;
 	if (!complete)
 		return 0;
-	if (!line_timing_from_samples(
+	if (!v32_line_timing_from_samples(
 		    v32_answerer_line_startup_round_trip_samples(
 			    &datapump->answerer_line_startup),
 		    false, &timing) ||

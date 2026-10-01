@@ -14,7 +14,8 @@ enum {
 	V32_ECHO_WINDOW_SYMBOLS = 40,
 	/* A full window of separation keeps the two predictors disjoint. */
 	V32_ECHO_MIN_ROUND_TRIP_SYMBOLS = 40,
-	V32_ECHO_MAX_ROUND_TRIP_SYMBOLS = 480,
+	/* Keep up to one second of far-echo delay on packet/PSTN paths. */
+	V32_ECHO_MAX_ROUND_TRIP_SYMBOLS = 2400,
 	/* The transmit-reference alignment reserve includes the near window. */
 	V32_ECHO_ALIGNMENT_RESERVE_SYMBOLS = 48,
 	V32_ECHO_MAX_NEAR_DELAY_SYMBOLS =

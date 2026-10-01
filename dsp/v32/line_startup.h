@@ -19,8 +19,9 @@ enum {
 		SINGLE_TONE_SAMPLE_RATE,
 	/* The caller changes carrier state 64 +/- 2 symbols after acquiring the
 	 * answerer's turnaround marker. */
+	V32_REVERSAL_RESPONSE_SYMBOLS = 64,
 	V32_REVERSAL_RESPONSE_SAMPLES =
-		(SINGLE_TONE_SAMPLE_RATE * 64 +
+		(SINGLE_TONE_SAMPLE_RATE * V32_REVERSAL_RESPONSE_SYMBOLS +
 		 V32_STARTUP_SYMBOL_RATE / 2) /
 		V32_STARTUP_SYMBOL_RATE,
 	V32_REVERSAL_RESPONSE_TOLERANCE_SAMPLES =
@@ -62,6 +63,19 @@ enum v32_line_startup_result {
 	V32_LINE_STARTUP_INVALID_ARGUMENT,
 	V32_LINE_STARTUP_PROTOCOL_ERROR,
 };
+
+/* The measured turnaround owns two independent clocks: the caller's full,
+ * even S extension and the canceller's bounded reference geometry. */
+struct v32_line_timing {
+	uint16_t echo_round_trip_symbols;
+	uint16_t caller_s_extension_symbols;
+};
+
+/* Convert NT (caller) or MT (answerer) into protocol S duration and the
+ * physical far-echo window. Delays outside the bounded predictor range are
+ * rejected; rejection leaves timing unchanged. */
+bool v32_line_timing_from_samples(
+	uint32_t samples, bool caller, struct v32_line_timing *timing);
 
 /* Carrier states A and C use the same pulse-shaped 1800 Hz transmit lane as
  * the later V.32 training and data signals.  The answerer alternates A/C;

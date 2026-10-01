@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "line_startup.h"
+#include "echo_canceller.h"
 
 #include "carrier.h"
 #include "constellation.h"
@@ -836,4 +837,39 @@ const char *v32_line_startup_state_name(
 		return "failed";
 	}
 	return "unknown";
+}
+
+bool v32_line_timing_from_samples(
+	uint32_t samples, bool caller,
+	struct v32_line_timing *timing)
+{
+	uint64_t rounded;
+	uint64_t response;
+	struct v32_line_timing measured = { 0 };
+
+	if (samples == 0 || timing == NULL)
+		return false;
+	rounded = ((uint64_t)samples * V32_CARRIER_SYMBOL_RATE +
+		   V32_CARRIER_SAMPLE_RATE - 1u) /
+		V32_CARRIER_SAMPLE_RATE;
+	if (caller && (rounded & 1u) != 0)
+		rounded++;
+	if (rounded == 0 ||
+	    (caller && rounded > UINT16_MAX))
+		return false;
+	if (caller)
+		measured.caller_s_extension_symbols = (uint16_t)rounded;
+	/* NT includes both 64T reversal responses; MT includes only the caller's.
+	 * Echo returns without those protocol waits. Centre its predictor window
+	 * on that physical delay, allowing for pulse/filter and detector latency. */
+	response = (caller ? 2u : 1u) * V32_REVERSAL_RESPONSE_SYMBOLS +
+		V32_ECHO_WINDOW_SYMBOLS / 2u;
+	rounded = rounded > response ? rounded - response : 0;
+	if (rounded < V32_ECHO_MIN_ROUND_TRIP_SYMBOLS)
+		rounded = V32_ECHO_MIN_ROUND_TRIP_SYMBOLS;
+	if (rounded > V32_ECHO_MAX_ROUND_TRIP_SYMBOLS)
+		return false;
+	measured.echo_round_trip_symbols = (uint16_t)rounded;
+	*timing = measured;
+	return true;
 }

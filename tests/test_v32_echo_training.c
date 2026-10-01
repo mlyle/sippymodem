@@ -350,6 +350,9 @@ static bool test_contracts(
 	path.line.gain.signal_present = true;
 	CHECK(v32_echo_training_path_is_valid(&training, &path),
 	      "calling echo training rejected a learned frozen gain");
+	path.line.gain.signal_present = false;
+	CHECK(v32_echo_training_path_is_valid(&training, &path),
+	      "a quiet peer invalidated the learned frozen gain");
 	saved_path = path;
 	CHECK(v32_echo_training_next(NULL, &path, &quadrant) ==
 		      V32_ECHO_TRAINING_INVALID_ARGUMENT &&

@@ -456,6 +456,12 @@ an answered call. Each input is 8 kHz signed 16-bit little-endian PCM; the test
 loads at most three minutes and requires carrier acquisition within 15 seconds.
 The ordinary test run reports a clear skip for each missing recording.
 
+The integration test can replay an optional raw V.32 9600-bit/s originating
+call from an 8-kHz signed 16-bit little-endian receive recording. Set
+`V32_REPLAY_RX_PCM` to its path and `V32_REPLAY_EXPECT_TEXT` to a known online
+substring to require decoded payload as well as carrier acquisition. Without
+an expected substring, the replay checks carrier acquisition only.
+
 The same integration test can replay optional V.34 receive recordings. Set
 `V34_REPLAY_RX_PCM` for an originating call or `V34_ANSWER_REPLAY_RX_PCM` for
 an answered call. Set the corresponding `V34_REPLAY_SYMBOL_RATE` or

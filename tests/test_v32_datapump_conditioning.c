@@ -41,7 +41,8 @@ enum {
 		256,
 	TEST_ANSWERER_OFFER_POWER_SAMPLES = 400,
 	TEST_FRESH_CALLER_SAMPLES = 4000,
-	TEST_LONG_ONE_WAY_DELAY_SAMPLES = 800,
+	/* A half-second physical round trip must survive the line handoff. */
+	TEST_LONG_ONE_WAY_DELAY_SAMPLES = MODEM_RATE / 4,
 	TEST_LONG_LINE_LIMIT = MODEM_RATE * 12,
 	TEST_LONG_DRAIN_SAMPLES = TEST_LONG_ONE_WAY_DELAY_SAMPLES +
 		V32_ANSWERER_DROP_SILENCE_SAMPLES + 512,
@@ -194,9 +195,8 @@ static bool test_long_round_trip_line_startup(void)
 		.ioctl = unused_control,
 	};
 	struct dp_operations *operations;
-	uint32_t minimum_unbounded_samples =
-		(V32_ECHO_MAX_ROUND_TRIP_SYMBOLS * MODEM_RATE) /
-		V32_CARRIER_SYMBOL_RATE;
+	uint32_t minimum_turnaround_samples =
+		2u * TEST_LONG_ONE_WAY_DELAY_SAMPLES;
 
 	CHECK(v32_datapump_register() == 0,
 	      "V.32 long round-trip registration failed");
@@ -223,7 +223,9 @@ static bool test_long_round_trip_line_startup(void)
 			      operations, datapump,
 			      candidate_is_caller != 0,
 			      &measured_round_trip, &post_startup_power) &&
-		      measured_round_trip > minimum_unbounded_samples &&
+		      measured_round_trip > minimum_turnaround_samples &&
+		      measured_round_trip < minimum_turnaround_samples +
+			      3u * V32_REVERSAL_RESPONSE_SAMPLES &&
 		      (candidate_is_caller != 0 ||
 		       post_startup_power > UINT64_C(1000000000)),
 		      "V.32 role %u rejected/clipped its %u-sample line timing",

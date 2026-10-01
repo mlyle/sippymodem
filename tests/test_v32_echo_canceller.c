@@ -16,7 +16,7 @@ enum {
 	CONVERGENCE_TRAIN_SYMBOLS = 12000,
 	FREEZE_SYMBOLS = 1024,
 	RESUME_SYMBOLS = 4096,
-	EQUIVALENCE_SYMBOLS = 900,
+	EQUIVALENCE_SYMBOLS = V32_ECHO_REFERENCE_CAPACITY + 400,
 };
 
 struct echo_source {
@@ -362,12 +362,12 @@ static bool test_validation_and_aliases(void)
 	return true;
 }
 
-static bool test_convergence_freeze_and_resume(void)
+static bool run_convergence_freeze_and_resume(uint16_t round_trip)
 {
 	struct v32_echo_canceller canceller;
 	struct echo_source source = {
 		.near_delay_symbols = 4,
-		.round_trip_symbols = 73,
+		.round_trip_symbols = round_trip,
 	};
 	struct qam_point frozen_coefficients[V32_ECHO_PHASE_COUNT]
 					     [V32_ECHO_WINDOW_COUNT]
@@ -381,14 +381,14 @@ static bool test_convergence_freeze_and_resume(void)
 	double resume_start_power = 0.0;
 	double resume_end_power = 0.0;
 	size_t total_symbols = 0;
+	size_t warmup = round_trip + CONVERGENCE_WARMUP_SYMBOLS;
 
 	CHECK(v32_echo_canceller_init(
 		      &canceller, source.near_delay_symbols,
 		      source.round_trip_symbols) == V32_ECHO_OK,
 	      "convergence fixture did not initialize");
 	for (size_t symbol = 0;
-	     symbol < CONVERGENCE_WARMUP_SYMBOLS +
-		      CONVERGENCE_MEASURE_SYMBOLS;
+	     symbol < warmup + CONVERGENCE_MEASURE_SYMBOLS;
 	     ++symbol, ++total_symbols) {
 		struct qam_point reference;
 		double cleaned[V32_ECHO_PHASE_COUNT];
@@ -398,7 +398,7 @@ static bool test_convergence_freeze_and_resume(void)
 			      &canceller, &source, &reference, NULL, cleaned,
 			      (unsigned int)symbol + 1u),
 		      "initial echo fixture stopped at symbol %zu", symbol);
-		if (symbol >= CONVERGENCE_WARMUP_SYMBOLS) {
+		if (symbol >= warmup) {
 			for (size_t phase = 0;
 			     phase < V32_ECHO_PHASE_COUNT; ++phase)
 				initial_power += cleaned[phase] * cleaned[phase];
@@ -499,6 +499,18 @@ static bool test_convergence_freeze_and_resume(void)
 		      total_symbols % V32_ECHO_REFERENCE_CAPACITY,
 	      "resumed echo path did not converge or wrap: %.9g/%.9g",
 	      resume_end_power, resume_start_power);
+	return true;
+}
+
+static bool test_convergence_freeze_and_resume(void)
+{
+	static const uint16_t delays[] = {
+		73, 1212, V32_ECHO_MAX_ROUND_TRIP_SYMBOLS,
+	};
+
+	for (size_t index = 0; index < ARRAY_LENGTH(delays); ++index)
+		CHECK(run_convergence_freeze_and_resume(delays[index]),
+		      "echo convergence failed at delay %u", delays[index]);
 	return true;
 }
 
