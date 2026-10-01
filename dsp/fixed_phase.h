@@ -21,8 +21,7 @@ struct fixed_phase_q14 fixed_phase_sin_cos_q14(int16_t phase);
 /* Unsigned carrier phase uses 0x10000 units per full turn. */
 struct fixed_phase_q14 fixed_phase_sin_cos_u16_q14(uint16_t phase);
 
-/* The modem's compact 256-point cycle uses a positive Q14 endpoint and a
- * signed negative endpoint. */
+/* The compact 256-point cycle has endpoints +16384 and -16383. */
 int16_t fixed_phase_cosine_u8_q14(uint8_t phase);
 
 #endif

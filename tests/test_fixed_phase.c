@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <fixed_phase.h>
+#include <phase_profile.h>
 
 #include <limits.h>
 #include <math.h>
@@ -39,8 +40,7 @@ static bool test_generated_endpoints(void)
 	for (unsigned int index = 0; index <= 256; ++index) {
 		uint16_t atan_word = (uint16_t)lround(
 			atan((double)index / 256.0) * 32768.0);
-		uint16_t sine_word = (uint16_t)(uint32_t)(
-			sin(PI * (double)index / 512.0) * 32768.0);
+		uint16_t sine_word = FIXED_PHASE_QUARTER_Q15[index];
 		uint16_t cosine_word = (uint16_t)(uint32_t)(
 			cos(PI * (double)index / 512.0) * 32768.0);
 

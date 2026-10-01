@@ -200,6 +200,10 @@ When `ccache` is installed, all normal, test, and bundled-library compiles use
 it automatically with a repository-local cache under `.build/ccache`. Set
 `CCACHE=` to disable it or `CCACHE_DIR` to select another cache location.
 
+Python 3 generates the shared fixed carrier profile under `.build/generated/`.
+The source formula lives in `dsp/generate_phase_profile.py`; generated
+coefficients are build artifacts.
+
 Configure the daemon through the validated `SIP_*` environment variables, and
 run `./src/slmodemd` without a hardware-device argument or helper process. Set
 `SIP_RECORD_PREFIX` to enable the bounded recording interface; the prefix must

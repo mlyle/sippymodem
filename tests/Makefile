@@ -15,7 +15,9 @@ PJSIP_CFLAGS := $(shell \
 PJSIP_LDLIBS := $(shell \
 	$(PKG_CONFIG) --static --libs $(PJSIP_PACKAGE) 2>/dev/null)
 
+PHASE_PROFILE_HEADER := ../.build/generated/phase_profile.h
 CPPFLAGS += -D_POSIX_C_SOURCE=200809L -I../src -I../dsp \
+	-I$(dir $(PHASE_PROFILE_HEADER)) \
 	-I../dsp/v21_202 -I../dsp/v22 -I../dsp/v32 -I../dsp/pcm
 CFLAGS += -std=c11 -Wall -Wextra -Werror
 
@@ -1236,6 +1238,7 @@ V34_ADAPTIVE_EQUALIZER_TEST_BINARY := \
 V34_ADAPTIVE_EQUALIZER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v34_adaptive_equalizer.o \
 	$(BUILD_DIR)/v34_adaptive_equalizer.o \
+	$(BUILD_DIR)/fixed_phase.o \
 	$(BUILD_DIR)/v34_data_quality.o \
 	$(BUILD_DIR)/v34_rate_profile.o \
 	$(BUILD_DIR)/v34_equalizer.o
@@ -4054,7 +4057,7 @@ $(V34_EQUALIZER_TEST_BINARY): $(V34_EQUALIZER_TEST_OBJECTS)
 
 $(V34_ADAPTIVE_EQUALIZER_TEST_BINARY): \
 	$(V34_ADAPTIVE_EQUALIZER_TEST_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^
+	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V34_CONSTELLATION_TEST_BINARY): $(V34_CONSTELLATION_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
@@ -4809,8 +4812,13 @@ $(BUILD_DIR)/main_testable.o: \
 		-MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/fixed_phase.o: \
-	$(DSP_SOURCE_DIR)/fixed_phase.c | $(BUILD_DIR)
+	$(DSP_SOURCE_DIR)/fixed_phase.c $(PHASE_PROFILE_HEADER) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/test_fixed_phase.o: $(PHASE_PROFILE_HEADER)
+
+$(PHASE_PROFILE_HEADER): $(DSP_SOURCE_DIR)/generate_phase_profile.py
+	$(PYTHON) $< $@
 
 $(BUILD_DIR)/fractional_delay.o: \
 	$(DSP_SOURCE_DIR)/fractional_delay.c | $(BUILD_DIR)

@@ -2,6 +2,7 @@
 
 #include "v34_adaptive_equalizer.h"
 
+#include "fixed_phase.h"
 #include "integer_math.h"
 #include "memory_region.h"
 
@@ -36,36 +37,9 @@ _Static_assert(
 		V34_ADAPTIVE_EQUALIZER_QUALITY_BLOCK_SYMBOLS == 0,
 	"Recent quality blocks must divide both measurement windows");
 
-/* One bounded quarter cycle reconstructs the exact 256-step Q14 receive
- * carrier profile.  Its negative real-axis endpoint is deliberately -16383. */
-static const int16_t CARRIER_COSINE_QUARTER_Q14[65] = {
-	16384, 16379, 16364, 16339, 16305, 16260, 16206, 16142,
-	16069, 15985, 15892, 15790, 15678, 15557, 15426, 15286,
-	15136, 14978, 14810, 14634, 14449, 14255, 14053, 13842,
-	13622, 13395, 13159, 12916, 12665, 12406, 12139, 11866,
-	11585, 11297, 11002, 10701, 10393, 10079, 9759, 9434,
-	9102, 8765, 8423, 8075, 7723, 7366, 7005, 6639,
-	6269, 5896, 5519, 5139, 4756, 4369, 3980, 3589,
-	3196, 2801, 2404, 2005, 1605, 1205, 803, 402,
-	0,
-};
-
 static int16_t shifted_s16(uint32_t value, unsigned int shift)
 {
 	return wrap_s16_from_s32(arithmetic_shift_right_u32(value, shift));
-}
-
-static int16_t carrier_cosine_q14(uint8_t index)
-{
-	if (index <= 64u)
-		return CARRIER_COSINE_QUARTER_Q14[index];
-	if (index < 128u)
-		return (int16_t)-CARRIER_COSINE_QUARTER_Q14[128u - index];
-	if (index == 128u)
-		return -16383;
-	if (index <= 192u)
-		return (int16_t)-CARRIER_COSINE_QUARTER_Q14[index - 128u];
-	return CARRIER_COSINE_QUARTER_Q14[256u - index];
 }
 
 static uint64_t lineage_word(uint64_t lineage, uint16_t word)
@@ -612,8 +586,8 @@ static void update_carrier(
 			(uint32_t)phase, 16) & UINT32_C(0x1fff));
 	uint8_t index = (uint8_t)(coarse >> 5);
 	int32_t fraction = (int32_t)(coarse & UINT16_C(0x001f)) * 0x32;
-	int16_t cosine = carrier_cosine_q14(index);
-	int16_t sine = carrier_cosine_q14((uint8_t)(index + 64u));
+	int16_t cosine = fixed_phase_cosine_u8_q14(index);
+	int16_t sine = fixed_phase_cosine_u8_q14((uint8_t)(index + 64u));
 	int16_t negative_sine = wrap_s16_from_s32(-(int32_t)sine);
 	uint32_t interpolated_quadrature =
 		((uint32_t)(int32_t)negative_sine << 16) +

@@ -13,6 +13,7 @@
 
 include ../build/compiler.mk
 
+PYTHON ?= python3
 CPPFLAGS ?=
 CFLAGS ?= -O2 -g
 LDFLAGS ?=
@@ -34,7 +35,9 @@ DSP_V22_SOURCE_DIR := $(DSP_SOURCE_DIR)/v22
 DSP_V32_SOURCE_DIR := $(DSP_SOURCE_DIR)/v32
 DSP_PCM_SOURCE_DIR := $(DSP_SOURCE_DIR)/pcm
 
+PHASE_PROFILE_HEADER := ../.build/generated/phase_profile.h
 CPPFLAGS += -D_POSIX_C_SOURCE=200809L -I. -I$(DSP_SOURCE_DIR) \
+	-I$(dir $(PHASE_PROFILE_HEADER)) \
 	-I$(DSP_V21_202_SOURCE_DIR) -I$(DSP_V22_SOURCE_DIR) \
 	-I$(DSP_V32_SOURCE_DIR) -I$(DSP_PCM_SOURCE_DIR)
 CFLAGS += -std=gnu11 -Wall -Wextra
@@ -442,10 +445,16 @@ sdp_pjsip.o sip_signaling_pjsip.o: \
 %.o: %.c
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
+$(DSP_SOURCE_DIR)/fixed_phase.o: $(PHASE_PROFILE_HEADER)
+
+$(PHASE_PROFILE_HEADER): $(DSP_SOURCE_DIR)/generate_phase_profile.py
+	$(PYTHON) $< $@
+
 clean:
 	rm -f slmodemd $(SOURCES:.c=.o) $(DEPENDENCIES)
 	rm -f modem_test modem_main.o modem_cmdline.o modem_test.o
 	rm -f modem_datafile.o dp_dummy.o dp_sinus.o
 	rm -f .build_profile .depend
+	rm -f $(PHASE_PROFILE_HEADER)
 
 -include $(DEPENDENCIES)

@@ -12,6 +12,51 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class HeaderDependencyTests(unittest.TestCase):
+    def test_phase_profile_is_required_and_generator_changes_rebuild(self) -> None:
+        for directory in (ROOT / "src", ROOT / "tests"):
+            with (
+                self.subTest(directory=directory.name),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                fixture = Path(temporary)
+                dsp = fixture / "dsp"
+                build = fixture / "build"
+                dsp.mkdir()
+                build.mkdir()
+                source = dsp / "fixed_phase.c"
+                generator = dsp / "generate_phase_profile.py"
+                header = fixture / "phase_profile.h"
+                target = (dsp if directory.name == "src" else build) / "fixed_phase.o"
+                for path in (source, generator, header):
+                    path.write_text("/* fixture */\n", encoding="ascii")
+                    os.utime(path, (1, 1))
+                target.write_bytes(b"fixture object\n")
+                os.utime(target, (2, 2))
+                command = [
+                    "make", "--no-print-directory", "--question",
+                    f"DSP_SOURCE_DIR={dsp}", f"BUILD_DIR={build}",
+                    f"PHASE_PROFILE_HEADER={header}",
+                    "PJSIP_AVAILABLE=no", "PKG_CONFIG=false", str(target),
+                ]
+
+                def needs_rebuild() -> int:
+                    result = subprocess.run(
+                        command, cwd=directory, capture_output=True,
+                        text=True, timeout=10,
+                    )
+                    self.assertIn(result.returncode, (0, 1), result.stderr)
+                    return result.returncode
+
+                self.assertEqual(needs_rebuild(), 0)
+                os.utime(generator, (3, 3))
+                self.assertEqual(needs_rebuild(), 1, "generator change was ignored")
+                os.utime(header, (4, 4))
+                os.utime(target, (5, 5))
+                self.assertEqual(needs_rebuild(), 0)
+                header.unlink()
+                self.assertEqual(needs_rebuild(), 1, "missing profile was ignored")
+                self.assertEqual(target.read_bytes(), b"fixture object\n")
+
     def test_generated_dependencies_trigger_an_incremental_rebuild(self) -> None:
         # This test object was absent from the hand-maintained dependency list.
         source = "test_v34_phase4_decision_receiver.c"

@@ -3,6 +3,7 @@
 #include "fixed_phase.h"
 
 #include "integer_math.h"
+#include <phase_profile.h>
 
 #include <limits.h>
 #include <math.h>
@@ -12,9 +13,6 @@ enum {
 	FIXED_PHASE_QUARTER_STEPS = 256,
 	FIXED_PHASE_INTERPOLATION_STEPS = 32,
 };
-
-static const double FIXED_PHASE_PI =
-	3.1415926535897932384626433832795;
 
 static uint16_t atan_profile_u15(uint16_t ratio_q8)
 {
@@ -65,17 +63,6 @@ uint16_t fixed_phase_atan2_u15(int16_t x, int16_t y)
 	return (uint16_t)(y >= 0 ? 0x2000 - angle : angle + 0x2000);
 }
 
-/* These are exact integer endpoints of the original Q15 quarter-wave
- * profile.  Truncation is intentional; rounding differs by one at 114 of
- * the 257 endpoints. */
-static uint16_t quadrant_sine_q15(unsigned int index)
-{
-	double radians = FIXED_PHASE_PI * (double)index /
-		FIXED_PHASE_QUARTER_STEPS / 2.0;
-
-	return (uint16_t)(uint32_t)(sin(radians) * 32768.0);
-}
-
 static int16_t sine_u16_q14(uint16_t phase)
 {
 	uint16_t quadrant = (uint16_t)(phase >> 14);
@@ -90,8 +77,8 @@ static int16_t sine_u16_q14(uint16_t phase)
 		index = (uint16_t)(255u - index);
 		fraction = (uint16_t)(64u - fraction);
 	}
-	sample0 = quadrant_sine_q15(index);
-	sample1 = quadrant_sine_q15((unsigned int)index + 1u);
+	sample0 = FIXED_PHASE_QUARTER_Q15[index];
+	sample1 = FIXED_PHASE_QUARTER_Q15[index + 1u];
 	value = sample0 +
 		((sample1 - sample0) * fraction + 32) / 64;
 	value = (value + 1) >> 1;
@@ -110,10 +97,16 @@ struct fixed_phase_q14 fixed_phase_sin_cos_u16_q14(uint16_t phase)
 
 int16_t fixed_phase_cosine_u8_q14(uint8_t phase)
 {
+	unsigned int quadrant = phase >> 6;
+	unsigned int index = (phase & 0x3fu) * 4u;
+	int16_t value;
+
 	if (phase == 128u)
 		return -16383;
-	return (int16_t)(cos(
-		2.0 * FIXED_PHASE_PI * phase / 256.0) * 16384.0);
+	if ((quadrant & 1u) == 0)
+		index = FIXED_PHASE_QUARTER_STEPS - index;
+	value = (int16_t)(FIXED_PHASE_QUARTER_Q15[index] >> 1);
+	return quadrant == 1u || quadrant == 2u ? (int16_t)-value : value;
 }
 
 struct fixed_phase_q14 fixed_phase_sin_cos_q14(int16_t phase)
@@ -134,12 +127,10 @@ struct fixed_phase_q14 fixed_phase_sin_cos_q14(int16_t phase)
 		fraction = FIXED_PHASE_INTERPOLATION_STEPS - fraction;
 	}
 
-	sine0 = quadrant_sine_q15(index);
-	sine1 = quadrant_sine_q15(index + 1u);
-	cosine0 = quadrant_sine_q15(
-		FIXED_PHASE_QUARTER_STEPS - index);
-	cosine1 = quadrant_sine_q15(
-		FIXED_PHASE_QUARTER_STEPS - index - 1u);
+	sine0 = FIXED_PHASE_QUARTER_Q15[index];
+	sine1 = FIXED_PHASE_QUARTER_Q15[index + 1u];
+	cosine0 = FIXED_PHASE_QUARTER_Q15[FIXED_PHASE_QUARTER_STEPS - index];
+	cosine1 = FIXED_PHASE_QUARTER_Q15[FIXED_PHASE_QUARTER_STEPS - index - 1u];
 	sine = sine0 + arithmetic_shift_right_u32(
 		(uint32_t)(((int32_t)sine1 - sine0) * fraction), 5);
 	cosine = cosine0 + arithmetic_shift_right_u32(
