@@ -393,14 +393,17 @@ static int tx_super(struct lapm_state *l, u8 addr, u8 ctrl, u8 pf_mask)
 }
 
 
-/* parse xid */
-#define SET_PARAM(param,value,default) { \
-	if (((value)<(default) && (param)>=(default)) || \
-            ((value)>=(default) && (param)<(default))) \
-                (param) = (default); \
-	else if (((value)<(default) && (param)<(value)) || \
-                 ((value)>=(default) && (param)>(value))) \
-                (param) = (value); }
+/* V.42 9.2: select within the interval between the request and the default. */
+static unsigned int select_xid_parameter(
+	unsigned int preferred, unsigned int requested, unsigned int default_value)
+{
+	unsigned int minimum = requested < default_value ? requested : default_value;
+	unsigned int maximum = requested > default_value ? requested : default_value;
+
+	if (preferred < minimum)
+		return minimum;
+	return preferred > maximum ? maximum : preferred;
+}
 
 #define DEFAULT_MODEM_EC_CONFIG { \
 	.ec = 1, \
@@ -446,20 +449,25 @@ static void parse_xid_params(
 		case PI_TX_INFO_MAXSIZE:
 			pval = lapm_get_be_val(buf,plen);
 			pval >>= 3;
-			SET_PARAM(config->tx_info_size,pval,LAPM_DFLT_INFO_SIZE);
+			/* Table 11a directions are relative to the transmitting DCE. */
+			config->rx_info_size = select_xid_parameter(
+				config->rx_info_size, pval, LAPM_DFLT_INFO_SIZE);
 			break;
 		case PI_RX_INFO_MAXSIZE:
 			pval = lapm_get_be_val(buf,plen);
 			pval >>= 3;
-			SET_PARAM(config->rx_info_size,pval,LAPM_DFLT_INFO_SIZE);
+			config->tx_info_size = select_xid_parameter(
+				config->tx_info_size, pval, LAPM_DFLT_INFO_SIZE);
 			break;
 		case PI_TX_WINDOW_SIZE:
 			pval = lapm_get_be_val(buf,plen);
-			SET_PARAM(config->tx_win_size,pval,LAPM_DFLT_WIN_SIZE);
+			config->rx_win_size = select_xid_parameter(
+				config->rx_win_size, pval, LAPM_DFLT_WIN_SIZE);
 			break;
 		case PI_RX_WINDOW_SIZE:
 			pval = lapm_get_be_val(buf,plen);
-			SET_PARAM(config->rx_win_size,pval,LAPM_DFLT_WIN_SIZE);
+			config->tx_win_size = select_xid_parameter(
+				config->tx_win_size, pval, LAPM_DFLT_WIN_SIZE);
 			break;
 		default:
 			break;

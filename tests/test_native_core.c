@@ -2279,6 +2279,87 @@ static bool test_lapm_xid_parameters(void)
 	return true;
 }
 
+static bool test_lapm_xid_directions(void)
+{
+	static const uint8_t peer_parameters[] = {
+		0x03, 0x04, 0x8a, 0x89, 0x00, 0x00,
+		0x05, 0x02, 0x02, 0x98, /* peer transmit: 83 octets */
+		0x06, 0x02, 0x03, 0xb8, /* peer receive: 119 octets */
+		0x07, 0x01, 0x07,
+		0x08, 0x01, 0x0b,
+	};
+	static const uint8_t local_parameters[] = {
+		0x03, 0x04, 0x8a, 0x89, 0x00, 0x00,
+		0x05, 0x02, 0x03, 0xb8,
+		0x06, 0x02, 0x02, 0x98,
+		0x07, 0x01, 0x0b,
+		0x08, 0x01, 0x07,
+	};
+	struct modem_driver driver = {
+		.name = "LAPM XID directions",
+		.start = unused_start,
+		.stop = unused_stop,
+		.ioctl = unused_control,
+	};
+
+	/* Initial command reception and response confirmation use peer directions. */
+	for (unsigned int response = 0; response < 2; ++response) {
+		struct modem *modem = modem_create(&driver, driver.name);
+		uint8_t preamble[109];
+		uint8_t wire[26] = { 0, 0xaf, 0x82, 0x80, 0, 20 };
+		frame_t incoming = { .buf = wire, .count = sizeof(wire) };
+		struct v42_xid_fields fields;
+		frame_t *outgoing;
+
+		CHECK(modem != NULL, "directional XID modem could not be created");
+		modem->caller = response;
+		modem->cfg.comp = 0;
+		modem->rx_rate = modem->tx_rate = 2400;
+		modem->cfg.ec_tx_info_size = response ? 83 : 70;
+		modem->cfg.ec_rx_info_size = response ? 119 : 70;
+		modem->cfg.ec_tx_win_size = response ? 7 : 2;
+		modem->cfg.ec_rx_win_size = response ? 11 : 2;
+		CHECK(modem_ec_init(modem) == 0,
+		      "directional XID modem could not initialize");
+		modem_ec_start(modem);
+		if (modem->caller) {
+			CHECK(modem_hdlc_get_bits(modem, 8, preamble, sizeof(preamble)) ==
+				      (int)sizeof(preamble), "directional XID preamble failed");
+			outgoing = modem->packer.hdlc.tx_frame;
+			modem->packer.hdlc.tx_frame = NULL;
+			CHECK(outgoing != NULL, "directional XID command was missing");
+			modem->packer.hdlc.tx_complete(modem->packer.hdlc.framer, outgoing);
+		}
+		wire[0] = response ? modem->ec.lapm.cmd_addr : modem->ec.lapm.rsp_addr;
+		memcpy(wire + 6, response ? local_parameters : peer_parameters, 20);
+		modem->packer.hdlc.rx_complete(modem->packer.hdlc.framer, &incoming);
+		CHECK(modem->ec.lapm.tx_info_size == (response ? 83u : 119u) &&
+			      modem->ec.lapm.rx_info_size == (response ? 119u : 83u) &&
+			      modem->ec.lapm.tx_win_size == (response ? 7u : 11u) &&
+			      modem->ec.lapm.rx_win_size == (response ? 11u : 7u),
+		      "XID case %u did not reverse directions: N401 %u/%u, window %u/%u",
+		      response, modem->ec.lapm.tx_info_size, modem->ec.lapm.rx_info_size,
+		      modem->ec.lapm.tx_win_size, modem->ec.lapm.rx_win_size);
+		outgoing = modem->packer.hdlc.get_tx_frame(modem->packer.hdlc.framer);
+		CHECK(outgoing != NULL, "directional XID did not queue its reply");
+		if (response) {
+			CHECK(outgoing->buf[1] == 0x7f && modem->ec.lapm.config == 0,
+			      "directional XID response did not finish negotiation");
+		} else {
+			CHECK(outgoing->buf[1] == 0xaf &&
+				      v42_xid_decode(outgoing->buf + 2,
+					      (size_t)outgoing->size - 2U, &fields) == V42_XID_OK &&
+				      fields.parameter_negotiation_length == sizeof(local_parameters) &&
+				      memcmp(fields.parameter_negotiation, local_parameters,
+					      sizeof(local_parameters)) == 0,
+			      "XID response did not encode the local frame and window directions");
+		}
+		modem->packer.hdlc.tx_complete(modem->packer.hdlc.framer, outgoing);
+		modem_delete(modem);
+	}
+	return true;
+}
+
 static bool test_lapm_repeated_xid_parameters(void)
 {
 	struct modem_driver driver = {
@@ -5469,6 +5550,7 @@ int main(void)
 		{ "AT PCM profile controls", test_at_pcm_profile_controls },
 		{ "AT V.34 symbol rate", test_at_v34_symbol_rate },
 		{ "LAPM XID parameter encoding", test_lapm_xid_parameters },
+		{ "LAPM XID negotiation directions", test_lapm_xid_directions },
 		{ "LAPM repeated XID parameters", test_lapm_repeated_xid_parameters },
 		{ "bounded LAPM XID envelopes", test_lapm_xid_envelopes },
 		{ "bounded LAPM compression retry", test_lapm_dual_compression_retry },
