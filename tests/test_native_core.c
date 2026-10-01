@@ -800,6 +800,7 @@ static bool run_ath0_cleardown(enum ath0_test_completion completion, enum g711_l
 		response_bytes[1] = 0x53;
 		modem->packer.hdlc.rx_complete(modem->packer.hdlc.framer, &response);
 		CHECK(modem->state == TEST_STATE_EC_DISC &&
+		      modem->ec.lapm.state == LAPM_DISC_STATE &&
 		      modem->sample_timer == deadline && retrain_dp.hangup_calls == 0 &&
 		      modem->ec.lapm.tx_ctrl != modem->ec.lapm.ctrl_list &&
 		      modem->ec.lapm.tx_ctrl->buf[1] == UA_CONTROL,
@@ -3083,6 +3084,128 @@ static bool test_lapm_disconnected_disc(void)
 	return true;
 }
 
+static bool test_lapm_mode_command_collisions(void)
+{
+	struct modem_driver driver = {
+		.name = "LAPM mode collision", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+
+	for (unsigned caller = 0; caller < 2; ++caller)
+	for (unsigned disconnect = 0; disconnect < 2; ++disconnect)
+	for (unsigned identical = 0; identical < 2; ++identical)
+	for (unsigned poll = 0; poll < 2; ++poll)
+	for (unsigned pressure = 0; pressure < 2; ++pressure) {
+		struct modem *m = modem_create(&driver, driver.name);
+		uint8_t wire[LAPM_MAX_INFO_SIZE + 2] = { 0 };
+		frame_t incoming = { .buf = wire, .count = 2 };
+		frame_t *outgoing;
+
+		CHECK(m != NULL, "mode collision allocation failed");
+		m->caller = caller;
+		m->cfg.ec = 1;
+		m->cfg.comp = 0;
+		m->rx_rate = m->tx_rate = 28800;
+		CHECK(modem_ec_init(m) == 0, "mode collision initialization failed");
+		modem_ec_start(m);
+		m->state = 4; /* Host requests error-control establishment. */
+		struct lapm_state *l = &m->ec.lapm;
+		if (caller) {
+			void (*complete)(struct modem *) = m->packer.hdlc.tx_preamble_complete;
+			m->packer.hdlc.tx_preamble_complete = NULL;
+			m->packer.hdlc.tx_preamble_flags = 0;
+			complete(m);
+			outgoing = m->packer.hdlc.get_tx_frame(l);
+			CHECK(outgoing != NULL && outgoing->size <= (int)sizeof(wire),
+			      "collision originator did not send XID");
+			incoming.count = outgoing->size;
+			memcpy(wire, outgoing->buf, (size_t)incoming.count);
+			wire[0] = l->cmd_addr;
+			m->packer.hdlc.tx_complete(l, outgoing);
+		} else {
+			wire[0] = l->cmd_addr;
+			wire[1] = 0x0f; /* Peer-ready DM starts the local SABME. */
+		}
+		m->packer.hdlc.rx_complete(l, &incoming);
+		outgoing = m->packer.hdlc.get_tx_frame(l);
+		CHECK(l->state == 1 && outgoing != NULL && outgoing->buf[1] == 0x7f,
+		      "collision fixture did not start a local SABME transaction");
+		m->packer.hdlc.tx_complete(l, outgoing);
+		incoming.count = 2;
+		if (disconnect) {
+			wire[0] = l->cmd_addr;
+			wire[1] = 0x73;
+			m->packer.hdlc.rx_complete(l, &incoming);
+			CHECK(l->state == 2 && m->state == 5, "collision fixture did not connect");
+			m->state = 7; /* Host requests error-control release. */
+			modem_ec_stop(m);
+			outgoing = m->packer.hdlc.get_tx_frame(l);
+			CHECK(l->state == 3 && outgoing != NULL && outgoing->buf[1] == 0x53,
+			      "collision fixture did not start a local DISC transaction");
+			m->packer.hdlc.tx_complete(l, outgoing);
+		}
+		int pending = l->state;
+		unsigned host = m->state;
+		void (*timeout)(struct modem *) = m->bit_timer_func;
+		m->bit_timer = 1234; /* Preserve the remaining transaction deadline. */
+		l->rtx_count = 2;
+		wire[0] = l->rsp_addr;
+		wire[1] = ((disconnect != identical) ? 0x6f : 0x43) | poll << 4;
+		for (unsigned repeat = 0; repeat < (pressure ? LAPM_CTRL_FRAMES : 2); ++repeat) {
+			m->packer.hdlc.rx_complete(l, &incoming);
+			if (pressure && repeat == LAPM_CTRL_FRAMES - 1)
+				break;
+			CHECK(l->state == pending && m->state == host && l->rtx_count == 2 &&
+			      m->bit_timer == 1234 && m->bit_timer_func == timeout,
+			      "collision replaced pending transaction: role=%u local=%d identical=%u P=%u",
+			      caller, pending, identical, poll);
+			if (pressure)
+				continue;
+			outgoing = m->packer.hdlc.get_tx_frame(l);
+			CHECK(outgoing != NULL && outgoing->size == 2 &&
+			      outgoing->buf[0] == l->rsp_addr &&
+			      outgoing->buf[1] == ((identical ? 0x63 : 0x0f) | poll << 4),
+			      "collision response did not use UA/DM with F=P");
+			m->packer.hdlc.tx_complete(l, outgoing);
+		}
+		if (pressure) {
+			CHECK(l->state == 0 && m->bit_timer == 0 &&
+			      strcmp(modem_call_phase(m), "cleardown") == 0,
+			      "unreplyable collision retained a pending link");
+			modem_delete(m);
+			continue;
+		}
+		wire[0] = l->cmd_addr;
+		wire[1] = identical ? 0x63 : 0x0f;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(l->state == pending && m->state == host && m->bit_timer == 1234,
+		      "F=0 response completed a local P=1 transaction");
+		timeout(m);
+		outgoing = m->packer.hdlc.get_tx_frame(l);
+		CHECK(l->state == pending && l->rtx_count == 3 && outgoing != NULL &&
+		      outgoing->buf[1] == (disconnect ? 0x53 : 0x7f),
+		      "collision timeout retransmitted a different mode command");
+		m->packer.hdlc.tx_complete(l, outgoing);
+		wire[1] |= 0x10;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		if (identical && !disconnect) {
+			CHECK(l->state == 2 && m->state == 5 && !l->rtx_count && m->bit_timer > 1234,
+			      "matching SABME collision did not complete on UA F=1");
+			CHECK(modem_write(m, "A", 1) == 1, "connected collision rejected terminal data");
+			outgoing = m->packer.hdlc.get_tx_frame(l);
+			CHECK(outgoing != NULL && outgoing->size == 4 && outgoing->buf[3] == 'A',
+			      "connected collision did not transmit terminal data");
+			m->packer.hdlc.tx_complete(l, outgoing);
+		} else {
+			CHECK(l->state == 0 && !m->bit_timer &&
+			      strcmp(modem_call_phase(m), "cleardown") == 0,
+			      "collision resolution did not release the physical link");
+		}
+		modem_delete(m);
+	}
+	return true;
+}
+
 static bool test_lapm_numbered_frame_rejection(void)
 {
 	struct modem_driver driver = {
@@ -3587,18 +3710,25 @@ static bool test_lapm_idle_supervision(void)
 		}
 		wire[0] = l->rsp_addr;
 		m->packer.hdlc.rx_complete(l, &incoming);
-		CHECK(l->state == 2 && m->bit_timer == 744000 && !l->rtx_count,
-		      "established idle link did not start supervision");
-		idle_timeout = m->bit_timer_func;
 		outgoing = m->packer.hdlc.get_tx_frame(l);
 		CHECK(outgoing != NULL && outgoing->buf[1] == 0x73,
 		      "idle LAPM did not acknowledge SABME");
 		m->packer.hdlc.tx_complete(l, outgoing);
+		if (caller) {
+			CHECK(l->state == 1, "colliding SABME completed before the local UA");
+			wire[0] = l->cmd_addr;
+			wire[1] = 0x73;
+			m->packer.hdlc.rx_complete(l, &incoming);
+		}
+		CHECK(l->state == 2 && m->bit_timer == 744000 && !l->rtx_count,
+		      "established idle link did not start supervision");
+		idle_timeout = m->bit_timer_func;
 		m->bit_timer = 148800; /* Two seconds remain. */
 		CHECK(modem_set_param(m, MDMPRM_TX_RATE, 4800) == 0 &&
 		      modem_set_param(m, MDMPRM_RX_RATE, 7200) == 0 &&
 		      m->bit_timer == 24000 && m->bit_timer_func == idle_timeout,
 		      "rate publication changed the remaining idle interval");
+		wire[0] = l->rsp_addr;
 		wire[1] = 1; /* RR command P=0 */
 		incoming.count = 3;
 		m->packer.hdlc.rx_complete(l, &incoming);
@@ -5222,6 +5352,7 @@ int main(void)
 		{ "LAPM peer-ready DM establishment", test_lapm_peer_ready_dm },
 		{ "LAPM unnumbered response states", test_lapm_unnumbered_responses },
 		{ "LAPM disconnected DISC response", test_lapm_disconnected_disc },
+		{ "LAPM mode command collisions", test_lapm_mode_command_collisions },
 		{ "LAPM numbered frame rejection", test_lapm_numbered_frame_rejection },
 		{ "LAPM unnumbered frame rejection", test_lapm_unnumbered_frame_rejection },
 		{ "LAPM acknowledgement queue consistency", test_lapm_acknowledgement_queue_consistency },

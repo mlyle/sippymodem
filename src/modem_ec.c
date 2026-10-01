@@ -1402,8 +1402,21 @@ static void rx_super_rsp(struct lapm_state *l, frame_t *f)
 
 static void rx_unnum_cmd(struct lapm_state *l, frame_t *f)
 {
-	//LAPM_PRINT_FRAME("rx unnum:",1,f);
-	switch(FRAME_CTRL(f)&0xef) {
+	unsigned control = FRAME_CTRL(f) & 0xef;
+
+	/* V.42 8.9: answer colliding mode commands without replacing the
+	 * local transaction. Its UA/DM F=1 or retry deadline still owns release
+	 * or establishment; a peer command cannot restart that deadline. */
+	if ((control == FRAME_U_SABME || control == FRAME_U_DISC) &&
+	    (l->state == LAPM_ESTAB || l->state == LAPM_DISC)) {
+		bool identical = (control == FRAME_U_SABME) == (l->state == LAPM_ESTAB);
+
+		if ((identical ? TX_UA(l, FRAME_U_PF(f)) :
+		     TX_DM(l, FRAME_U_PF(f))) != 0)
+			complete_link_release(l);
+		return;
+	}
+	switch(control) {
 	case FRAME_U_SABME:
 	{
 		bool already_linked = l->state == LAPM_DATA;
