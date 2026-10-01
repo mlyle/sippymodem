@@ -569,7 +569,7 @@ static int tx_super(struct lapm_state *l, u8 addr, u8 ctrl, u8 pf_mask)
 }
 
 enum {
-	XID_PARAMETER_LENGTH = 19,
+	XID_PARAMETER_LENGTH = 20,
 	XID_PRIVATE_LENGTH = 15,
 };
 
@@ -724,42 +724,33 @@ static void build_xid_fields(
 	u8 private_parameters[XID_PRIVATE_LENGTH],
 	struct v42_xid_fields *fields)
 {
-	static const u8 parameter_template[XID_PARAMETER_LENGTH] = {
-		PI_HDLC_OPTFUNCS, 3, 0x8a, 0x89, 0x00,
-		PI_TX_INFO_MAXSIZE, 2, 0, 0,
-		PI_RX_INFO_MAXSIZE, 2, 0, 0,
-		PI_TX_WINDOW_SIZE, 1, 0,
-		PI_RX_WINDOW_SIZE, 1, 0,
+	const unsigned int tx_bits = config->tx_info_size * 8U;
+	const unsigned int rx_bits = config->rx_info_size * 8U;
+	const u8 parameter_values[XID_PARAMETER_LENGTH] = {
+		/* V.42 Table 11a: a four-octet mask with mandatory bits set. */
+		PI_HDLC_OPTFUNCS, 4, 0x8a, 0x89, 0x00, 0x00,
+		PI_TX_INFO_MAXSIZE, 2, (u8)(tx_bits >> 8), (u8)tx_bits,
+		PI_RX_INFO_MAXSIZE, 2, (u8)(rx_bits >> 8), (u8)rx_bits,
+		PI_TX_WINDOW_SIZE, 1, config->tx_win_size,
+		PI_RX_WINDOW_SIZE, 1, config->rx_win_size,
 	};
-	static const u8 private_template[XID_PRIVATE_LENGTH] = {
+	const u8 private_values[XID_PRIVATE_LENGTH] = {
 		PI_PARAMETER_SET_ID, 3, 0x56, 0x34, 0x32,
-		PI_V42BIS_REQUEST, 1, 0,
-		PI_V42BIS_CW_NUMBER, 2, 0, 0,
-		PI_V42BIS_MAX_STRING, 1, 0,
+		PI_V42BIS_REQUEST, 1, config->modem.comp,
+		PI_V42BIS_CW_NUMBER, 2,
+		(u8)(config->modem.comp_dict_size >> 8),
+		(u8)config->modem.comp_dict_size,
+		PI_V42BIS_MAX_STRING, 1, config->modem.comp_max_string,
 	};
-	u32 pval;
 
-	memcpy(parameters, parameter_template, sizeof(parameter_template));
-	memcpy(private_parameters, private_template, sizeof(private_template));
+	memcpy(parameters, parameter_values, sizeof(parameter_values));
+	memcpy(private_parameters, private_values, sizeof(private_values));
 	*fields = (struct v42_xid_fields) {
 		.parameter_negotiation = parameters,
 		.parameter_negotiation_length = XID_PARAMETER_LENGTH,
 	};
-	pval = config->tx_info_size<<3;
-	parameters[7] = (pval>>8)&0xff;
-	parameters[8] = pval&0xff;
-	pval = config->rx_info_size<<3;
-	parameters[11] = (pval>>8)&0xff;
-	parameters[12] = pval&0xff;
-	parameters[15] = config->tx_win_size;
-	parameters[18] = config->rx_win_size;
 	if (config->modem.comp &&
 	    (config->modem.comp_types & MODEM_COMP_TYPE_V42BIS) != 0) {
-		private_parameters[7] = config->modem.comp;
-		pval = config->modem.comp_dict_size;
-		private_parameters[10] = (pval>>8)&0xff;
-		private_parameters[11] = pval&0xff;
-		private_parameters[14] = config->modem.comp_max_string;
 		fields->private_negotiation = private_parameters;
 		fields->private_negotiation_length = XID_PRIVATE_LENGTH;
 	}

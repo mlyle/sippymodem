@@ -2206,8 +2206,88 @@ static bool test_lapm_dual_compression_retry(void)
 	return true;
 }
 
+static bool test_lapm_xid_parameters(void)
+{
+	static const uint8_t expected_parameters[] = {
+		0x03, 0x04, 0x8a, 0x89, 0x00, 0x00,
+		0x05, 0x02, 0x02, 0x98, /* transmit N401: 83 octets, 664 bits */
+		0x06, 0x02, 0x03, 0xb8, /* receive N401: 119 octets, 952 bits */
+		0x07, 0x01, 0x07,
+		0x08, 0x01, 0x0b,
+	};
+	static const uint8_t expected_private[] = {
+		0x00, 0x03, 'V', '4', '2',
+		0x01, 0x01, 0x03,
+		0x02, 0x02, 0x04, 0x00,
+		0x03, 0x01, 0x0c,
+	};
+	static const unsigned int compression_types[] = {
+		MODEM_COMP_TYPE_NONE,
+		MODEM_COMP_TYPE_V42BIS,
+		MODEM_COMP_TYPE_V44,
+		MODEM_COMP_TYPE_V42BIS | MODEM_COMP_TYPE_V44,
+	};
+	struct modem_driver driver = {
+		.name = "LAPM XID parameters",
+		.start = unused_start,
+		.stop = unused_stop,
+		.ioctl = unused_control,
+	};
+
+	for (size_t index = 0; index < ARRAY_LENGTH(compression_types); ++index) {
+		struct modem *modem = modem_create(&driver, "LAPM XID parameters");
+		struct v42_xid_fields fields;
+		uint8_t preamble[109];
+		frame_t *outgoing;
+
+		CHECK(modem != NULL, "XID parameter modem could not be created");
+		modem->caller = 1;
+		modem->rx_rate = modem->tx_rate = 2400;
+		modem->cfg.ec_tx_info_size = 83;
+		modem->cfg.ec_rx_info_size = 119;
+		modem->cfg.ec_tx_win_size = 7;
+		modem->cfg.ec_rx_win_size = 11;
+		modem->cfg.comp = 3;
+		modem->cfg.comp_types = compression_types[index];
+		modem->cfg.comp_dict_size = 1024;
+		modem->cfg.comp_max_string = 12;
+		CHECK(modem_ec_init(modem) == 0,
+		      "XID parameter modem could not initialize");
+		modem_ec_start(modem);
+		CHECK(modem_hdlc_get_bits(modem, 8, preamble, sizeof(preamble)) ==
+			      (int)sizeof(preamble),
+		      "XID parameter modem did not finish its preamble");
+		outgoing = modem->packer.hdlc.tx_frame;
+		CHECK(outgoing != NULL && outgoing->buf[1] == 0xaf &&
+			      v42_xid_decode(outgoing->buf + 2,
+				      (size_t)outgoing->size - 2U, &fields) == V42_XID_OK &&
+			      fields.parameter_negotiation_length == sizeof(expected_parameters) &&
+			      memcmp(fields.parameter_negotiation, expected_parameters,
+				      sizeof(expected_parameters)) == 0,
+		      "XID did not encode the V.42 mask and directional parameters");
+		if ((compression_types[index] & MODEM_COMP_TYPE_V42BIS) != 0) {
+			CHECK(fields.private_negotiation_length == sizeof(expected_private) &&
+				      memcmp(fields.private_negotiation, expected_private,
+					      sizeof(expected_private)) == 0,
+			      "XID did not encode the V.42bis parameters");
+		} else {
+			CHECK(fields.private_negotiation == NULL,
+			      "XID offered V.42bis without the configured capability");
+		}
+		modem_delete(modem);
+	}
+	return true;
+}
+
 static bool test_lapm_xid_envelopes(void)
 {
+	static const uint8_t expected_parameters[] = {
+		0x03, 0x04, 0x8a, 0x89, 0x00, 0x00,
+		0x05, 0x02, 0x04, 0x00,
+		0x06, 0x02, 0x04, 0x00,
+		0x07, 0x01, 0x0f,
+		0x08, 0x01, 0x0f,
+	};
 	enum {
 		XID_CONTROL = 0xaf,
 		SABME_CONTROL = 0x7f,
@@ -2266,7 +2346,9 @@ static bool test_lapm_xid_envelopes(void)
 		      v42_xid_decode(
 			      outgoing->buf + 2, (size_t)outgoing->size - 2U,
 			      &fields) == V42_XID_OK &&
-		      fields.parameter_negotiation_length == 19 &&
+		      fields.parameter_negotiation_length == sizeof(expected_parameters) &&
+		      memcmp(fields.parameter_negotiation, expected_parameters,
+			      sizeof(expected_parameters)) == 0 &&
 		      fields.private_negotiation_length == 15 &&
 		      fields.user_data != NULL &&
 		      v44_xid_decode(
@@ -2349,6 +2431,10 @@ static bool test_lapm_xid_envelopes(void)
 			      outgoing->buf + 2, (size_t)outgoing->size - 2U,
 			      &fields) == V42_XID_OK,
 	      "LAPM answerer did not return a bounded XID envelope");
+	CHECK(fields.parameter_negotiation_length == sizeof(expected_parameters) &&
+		      memcmp(fields.parameter_negotiation, expected_parameters,
+			      sizeof(expected_parameters)) == 0,
+	      "LAPM XID response did not encode the V.42 mandatory mask");
 	CHECK(fields.private_negotiation == NULL && fields.user_data != NULL,
 	      "LAPM answerer selected more than one compression method");
 	memcpy(received, outgoing->buf, (size_t)outgoing->size);
@@ -5342,6 +5428,7 @@ int main(void)
 		{ "AT compression profile", test_at_compression_profile },
 		{ "AT PCM profile controls", test_at_pcm_profile_controls },
 		{ "AT V.34 symbol rate", test_at_v34_symbol_rate },
+		{ "LAPM XID parameter encoding", test_lapm_xid_parameters },
 		{ "bounded LAPM XID envelopes", test_lapm_xid_envelopes },
 		{ "bounded LAPM compression retry", test_lapm_dual_compression_retry },
 		{ "LAPM directional preamble", test_lapm_directional_preamble },
