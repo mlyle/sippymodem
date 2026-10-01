@@ -3352,8 +3352,8 @@ static bool test_lapm_xid_envelopes(void)
 		caller->packer.hdlc.framer, &incoming);
 	CHECK(caller->ec.lapm.state == LAPM_DATA_STATE &&
 		      caller->ec.lapm.v44_path != NULL &&
-		      caller->ec.lapm.sent_count == 0 &&
-		      caller->ec.lapm.tx_count == 0 &&
+		      caller->ec.lapm.sent_info == caller->ec.lapm.info_list &&
+		      caller->ec.lapm.tx_info == caller->ec.lapm.info_list &&
 		      caller->ec.lapm.rx_count == 0 &&
 		      caller->packer_process == NULL,
 	      "received UA retained discarded frames or V.44 stream state");
@@ -4546,7 +4546,7 @@ static bool test_lapm_acknowledgement_window(void)
 			}
 		} else {
 			CHECK(l->state == 0 && l->va == 0 && l->vs == 0 &&
-			      l->sent_info == l->info_list && l->sent_count == 0 &&
+			      l->sent_info == l->info_list && l->tx_info == l->info_list &&
 			      m->bit_timer == 0 && l->rtx_count == 0 &&
 			      memcmp(retained, l->info_buf, sizeof(retained)) == 0 &&
 			      strcmp(modem_call_phase(m), "cleardown") == 0,
@@ -4621,7 +4621,7 @@ static bool test_lapm_repeated_sequence_error_poll(void)
 		m->packer.hdlc.rx_complete(l, &incoming);
 		outgoing = m->packer.hdlc.get_tx_frame(l);
 		CHECK(l->reject && l->vr == vr && l->va == 127 && l->vs == 0 &&
-		      l->sent_info == retained && l->sent_count == 1 &&
+		      l->sent_info == retained && l->tx_info == retained->next &&
 		      outgoing != NULL && outgoing->buf[1] == REJ && outgoing->buf[2] == 2 * vr,
 		      "first LAPM sequence error did not preserve information and send REJ");
 		m->packer.hdlc.tx_complete(l, outgoing);
@@ -4634,7 +4634,7 @@ static bool test_lapm_repeated_sequence_error_poll(void)
 			m->packer.hdlc.rx_complete(l, &incoming);
 			outgoing = m->packer.hdlc.get_tx_frame(l);
 			CHECK(l->reject && l->vr == vr && l->va == 127 && l->vs == 0 &&
-			      l->sent_info == retained && l->sent_count == 1 &&
+			      l->sent_info == retained && l->tx_info == retained->next &&
 			      m->bit_timer == timer && l->rtx_count == retries,
 			      "duplicate LAPM information changed retained recovery state");
 			if (poll) {
@@ -5010,7 +5010,8 @@ static bool test_lapm_stalled_retrain(void)
 		modem_process(m, receive, transmit, MODEM_FRAG);
 		CHECK(l->rtx_count == 2 && retrain_dp.retrain_calls == 1 && l->stalled_retrain &&
 		      m->state == ONLINE && !m->command && !m->retrain_pending &&
-		      l->sent_info == retained && l->sent_count == 2 && l->va == 0 && l->vs == 2,
+		      l->sent_info == retained && l->tx_info == retained->next->next &&
+		      l->va == 0 && l->vs == 2,
 		      "deferred stall retrain lost state or ran inside the datapump");
 		operations.process = process_retrain_dp;
 		for (unsigned frame = 0; frame < 20; ++frame)
@@ -5021,7 +5022,8 @@ static bool test_lapm_stalled_retrain(void)
 		uint8_t reply[] = { l->cmd_addr, 1, 5 }; /* RR F=1, N(R)=2 */
 		frame_t incoming = { .buf = reply, .count = sizeof(reply) };
 		m->packer.hdlc.rx_complete(l, &incoming);
-		CHECK(!l->stalled_retrain && !l->rtx_count && l->sent_count == 0 && l->va == 2,
+		CHECK(!l->stalled_retrain && !l->rtx_count &&
+		      l->sent_info == l->tx_info && l->va == 2,
 		      "successful poll did not acknowledge and rearm recovery");
 		lapm_source.offset = 0;
 		/* Drain the retained poll, then place a new information window. */
@@ -5112,7 +5114,8 @@ static bool test_lapm_peer_busy_acknowledgement(void)
 		lapm_sink.result = 1;
 		m->packer.hdlc.rx_complete(l, &incoming);
 		CHECK(l->va == nr && l->vs == ((base + 2) & 127) &&
-		      l->vr == sequenced && l->peer_busy && l->sent_count == 2 - (int)acknowledged &&
+		      l->vr == sequenced && l->peer_busy &&
+		      l->sent_info == &l->info_buf[acknowledged].frame &&
 		      m->bit_timer == timer && l->rtx_count == (int)recovery &&
 		      lapm_sink.length == sequenced && (!sequenced || lapm_sink.data[0] == 'X'),
 		      "I acknowledgement changed peer-busy enquiry (base=%u ack=%u recovery=%u sequenced=%u timer=%d/%d)",

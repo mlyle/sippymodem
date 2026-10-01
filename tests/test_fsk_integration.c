@@ -1801,7 +1801,7 @@ static bool exercise_low_speed_carrier_recovery(
 					fprintf(stderr,
 						"carrier recovery did not preserve LAPM "
 						"payloads (id=%u outputs=%zu/%zu "
-						"states=%u/%u lapm=%d/%d ctrl=%d/%d "
+						"states=%u/%u lapm=%d/%d control pending=%d/%d "
 						"timer=%d/%d)\n",
 						(unsigned int)id, caller->output_count,
 						answerer->output_count,
@@ -1809,8 +1809,8 @@ static bool exercise_low_speed_carrier_recovery(
 						answerer->modem->state,
 						caller->modem->ec.lapm.state,
 						answerer->modem->ec.lapm.state,
-						caller->modem->ec.lapm.ctrl_count,
-						answerer->modem->ec.lapm.ctrl_count,
+						caller->modem->ec.lapm.tx_ctrl != caller->modem->ec.lapm.ctrl_list,
+						answerer->modem->ec.lapm.tx_ctrl != answerer->modem->ec.lapm.ctrl_list,
 						caller->modem->bit_timer,
 						answerer->modem->bit_timer);
 					return false;
@@ -2341,15 +2341,16 @@ static bool run_media_call(
 		      output_contains_connect(
 			      &answerer, test_case->answerer_rx_rate),
 	      "%s connection did not reach both terminal interfaces "
-	      "(caller state=%u ec=%u lapm=%d/%d ctrl=%d timer=%d; "
-	      "answerer state=%u ec=%u lapm=%d/%d ctrl=%d timer=%d)",
+	      "(caller state=%u ec=%u lapm=%d/%d control pending=%d timer=%d; "
+	      "answerer state=%u ec=%u lapm=%d/%d control pending=%d timer=%d)",
 	      test_case->name, caller.modem->state, caller.modem->cfg.ec,
 	      caller.modem->ec.lapm.state, caller.modem->ec.lapm.config,
-	      caller.modem->ec.lapm.ctrl_count, caller.modem->bit_timer,
+	      caller.modem->ec.lapm.tx_ctrl != caller.modem->ec.lapm.ctrl_list,
+	      caller.modem->bit_timer,
 	      answerer.modem->state, answerer.modem->cfg.ec,
 	      answerer.modem->ec.lapm.state,
 	      answerer.modem->ec.lapm.config,
-	      answerer.modem->ec.lapm.ctrl_count,
+	      answerer.modem->ec.lapm.tx_ctrl != answerer.modem->ec.lapm.ctrl_list,
 	      answerer.modem->bit_timer);
 	if (connected_id == DP_V90 || connected_id == DP_V92) {
 		const char *upstream = connected_id == DP_V92 ?

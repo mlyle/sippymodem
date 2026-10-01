@@ -324,7 +324,6 @@ static inline frame_t *get_ctrl_frame(struct lapm_state *l)
 	}
 	f = l->ctrl_list;
 	l->ctrl_list = l->ctrl_list->next;
-	l->ctrl_count--; // debug only
 	return f;
 }
 
@@ -689,7 +688,6 @@ static int queue_xid(
 	if (lapm_v44_commit(&l->v44_session, prepared) !=
 	    LAPM_V44_OK) {
 		l->ctrl_list = f;
-		l->ctrl_count++;
 		return -1;
 	}
 	return 0;
@@ -991,7 +989,6 @@ static int tx_info(struct lapm_state *l)
 			
 		f->size = n + 3;
 		l->info_list = l->info_list->next;
-		l->tx_count++;   // debug
 	}
 
 	/* start T401 */
@@ -1010,8 +1007,6 @@ static int reject_info(struct lapm_state *l)
 		 l->va,l->vs,l->vr,n);
 	l->vs = l->va;
 	l->tx_info = l->sent_info;
-	l->tx_count += l->sent_count; // debug
-	l->sent_count = 0;            // debug
 	return n;
 }
 
@@ -1028,7 +1023,6 @@ static bool ack_info(struct lapm_state *l, u8 nr)
 			return false;
 		}
 		l->sent_info = l->sent_info->next;
-		l->sent_count--; // debug
 		l->va = (l->va+1)&0x7f;
 		n++;
 	}
@@ -1521,23 +1515,14 @@ static frame_t *lapm_get_tx_frame(void *framer)
 
 static void lapm_tx_complete(void *framer, frame_t *f)
 {
+#ifdef EC_DEBUG
 	struct lapm_state *l = framer;
-	LAPM_PRINT_FRAME("tx",TX_IS_COMMAND(f),f,f->size);
-	switch(FRAME_TYPE(f)) {
-	case FRAME_I:
-		l->sent_count++; // debug
-		l->tx_count--;   // debug
-		break;
-	case FRAME_S:
-	case FRAME_U:
-		l->ctrl_count++; // debug
-		break;
-	default:
-		EC_ERR("unknown frame type.\n");
-		break;
-	}
+	LAPM_PRINT_FRAME("tx", TX_IS_COMMAND(f), f, f->size);
+#else
+	(void)framer;
+	(void)f;
+#endif
 }
-
 
 static bool valid_numbered_frame(
 	const struct lapm_state *l, const frame_t *f, unsigned type)
@@ -1704,14 +1689,8 @@ static int lapm_config(struct lapm_state *l)
 
 static int lapm_disconnect(struct lapm_state *l)
 {
-	frame_t *queued = l->tx_ctrl;
-
 	/* Discard queued control traffic without reusing the frame that HDLC
 	 * may still be serializing. DISC takes the next available wire slot. */
-	while (queued != l->ctrl_list) {
-		queued = queued->next;
-		l->ctrl_count++;
-	}
 	l->ctrl_list = l->tx_ctrl;
 	l->config = 0;
 	l->rtx_count = 0;
@@ -1739,7 +1718,6 @@ static void reset_lapm_sequence(struct lapm_state *l)
 	/* discard info frames */
 	l->sent_info = l->info_list;
 	l->tx_info   = l->info_list;
-	l->sent_count = l->tx_count = 0;
 	l->stalled_polls = 0;
 	/* discard ctrl frames */
 	// TBD ???
@@ -1771,7 +1749,6 @@ static int alloc_frames(struct lapm_state *l)
 		f->buf  = l->ctrl_buf[i].ctrl;
 		f->size = sizeof(l->ctrl_buf[0]) - sizeof(frame_t);
 	}
-	l->ctrl_count= arrsize(l->ctrl_buf); // debug
 	l->tx_ctrl   = l->ctrl_list;
 	return 0;
 }

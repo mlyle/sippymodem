@@ -284,10 +284,6 @@ struct lapm_state {
                 u8 ctrl[4];
                 u8 info[LAPM_MAX_INFO_SIZE];
         } ctrl_buf[LAPM_CTRL_FRAMES];
-        /* temporary: debug counters: remove it */
-        int tx_count;   // debug
-        int sent_count; // debug
-        int ctrl_count; // debug
 };
 
 
