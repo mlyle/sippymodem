@@ -783,11 +783,7 @@ int modem_hdlc_put_bits(struct modem *m, int nbits,
 				else if (i) {
 					PACK_DBG("hdlc frame integrity error.\n");
 				}
-#if 1
-				else if ( h->rx_frame->count < 3 ) {
-#else
 				else if ( h->rx_frame->count < 4 ) {
-#endif
 					PACK_DBG("hdlc frame size error.\n");
 				}
 				else if ( h->rx_frame->fcs != GOOD_FCS ) {

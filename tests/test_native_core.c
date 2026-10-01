@@ -2719,6 +2719,180 @@ static bool test_lapm_peer_flag_preamble(void)
 	return true;
 }
 
+static bool test_lapm_receive_frame_boundaries(void)
+{
+	struct modem_driver driver = {
+		.name = "LAPM receive boundaries", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	static const uint8_t controls[] = { 0, 1, 5, 9, 0x73 };
+
+	for (unsigned caller = 0; caller < 2; ++caller) {
+		struct modem *m = modem_create(&driver, driver.name);
+		uint8_t wire[] = { 0, 0, 254, 'X' };
+		frame_t incoming = { .buf = wire };
+
+		CHECK(m != NULL, "receive boundary allocation failed");
+		m->caller = caller;
+		m->cfg.comp = 0;
+		CHECK(modem_ec_init(m) == 0, "receive boundary role initialization failed");
+		modem_ec_start(m);
+		struct lapm_state *l = &m->ec.lapm;
+		for (unsigned state = 0; state < 4; ++state) {
+			l->state = state;
+			m->bit_timer = 1234;
+			struct lapm_state before = *l;
+			unsigned event = m->new_event;
+
+			for (size_t control = 0; control < ARRAY_LENGTH(controls); ++control)
+			for (unsigned length = 0; length < 3; ++length) {
+				wire[0] = l->cmd_addr;
+				wire[1] = controls[control];
+				incoming.count = length;
+				if (length == 2 && wire[1] == 0x73)
+					continue; /* Complete U header. */
+				m->packer.hdlc.rx_complete(l, &incoming);
+				CHECK(memcmp(l, &before, sizeof(before)) == 0 &&
+				      m->bit_timer == 1234 && m->new_event == event,
+				      "truncated frame changed link state: state=%u control=%u length=%u",
+				      state, wire[1], length);
+			}
+			incoming.count = 3;
+			for (size_t control = 0; control < ARRAY_LENGTH(controls); ++control) {
+				wire[0] = 0x05; /* Unimplemented DLCI. */
+				wire[1] = controls[control];
+				m->packer.hdlc.rx_complete(l, &incoming);
+				CHECK(memcmp(l, &before, sizeof(before)) == 0 && m->bit_timer == 1234,
+				      "unimplemented address changed link state");
+				if ((state == 0 || state == 3) && wire[1] != 0x73) {
+					wire[0] = l->rsp_addr;
+					m->packer.hdlc.rx_complete(l, &incoming);
+					CHECK(memcmp(l, &before, sizeof(before)) == 0 &&
+					      m->bit_timer == 1234 && m->new_event == event,
+					      "I/S traffic established an idle or releasing link");
+				}
+			}
+		}
+		/* Pending XID and rejected payloads cannot supply a missing UA. */
+		l->state = 1;
+		l->config = 1;
+		wire[0] = l->rsp_addr;
+		wire[1] = wire[2] = 0;
+		incoming.count = sizeof(wire);
+		struct lapm_state before = *l;
+		unsigned event = m->new_event;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(memcmp(l, &before, sizeof(before)) == 0 &&
+		      m->bit_timer == 1234 && m->new_event == event,
+		      "early information bypassed XID negotiation");
+		l->config = 0;
+		l->rx_info_size = 0;
+		before = *l;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(memcmp(l, &before, sizeof(before)) == 0 &&
+		      m->bit_timer == 1234 && m->new_event == event,
+		      "rejected information completed establishment");
+		l->rx_info_size = LAPM_MAX_INFO_SIZE;
+		l->state = 1;
+		incoming.count = 2;
+		wire[0] = l->cmd_addr;
+		wire[1] = 0x63; /* UA F=0 cannot acknowledge SABME P=1. */
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(l->state == 1 && m->bit_timer == 1234,
+		      "unsolicited UA completed establishment");
+		wire[1] = 0x73;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(l->state == 2 && m->bit_timer > 1234,
+		      "solicited UA did not complete establishment");
+		for (size_t control = 0; control < ARRAY_LENGTH(controls) - 1; ++control) {
+			l->state = 1;
+			l->vs = l->va = l->vr = 17;
+			l->rtx_count = 2;
+			m->bit_timer = 1234;
+			m->put_chars = scripted_lapm_sink;
+			memset(&lapm_sink, 0, sizeof(lapm_sink));
+			lapm_sink.result = 1;
+			wire[0] = l->rsp_addr;
+			wire[1] = controls[control];
+			wire[2] = 0;
+			incoming.count = control == 0 ? sizeof(wire) : 3;
+			m->packer.hdlc.rx_complete(l, &incoming);
+			CHECK(l->state == 2 && l->vs == 0 && l->va == 0 &&
+			      l->vr == (control == 0) && !l->rtx_count &&
+			      l->peer_busy == (wire[1] == 5) && m->bit_timer > 1234,
+			      "valid I/S frame did not recover a lost UA: control=%u", wire[1]);
+			CHECK(lapm_sink.length == (control == 0) &&
+			      (control != 0 || lapm_sink.data[0] == 'X'),
+			      "lost-UA recovery dropped or repeated information");
+		}
+		modem_ec_exit(m);
+		modem_delete(m);
+	}
+	memset(&lapm_sink, 0, sizeof(lapm_sink));
+	return true;
+}
+
+static bool test_lapm_receive_information_limit(void)
+{
+	struct modem_driver driver = {
+		.name = "LAPM information limit", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	static const unsigned limits[] = { 8, LAPM_MAX_INFO_SIZE, UINT_MAX };
+
+	for (unsigned caller = 0; caller < 2; ++caller)
+	for (size_t limit = 0; limit < ARRAY_LENGTH(limits); ++limit)
+	for (unsigned oversized = 0; oversized < 2; ++oversized) {
+		struct modem *m = modem_create(&driver, driver.name);
+		unsigned capacity = limits[limit] < LAPM_MAX_INFO_SIZE ?
+			limits[limit] : LAPM_MAX_INFO_SIZE;
+		uint8_t wire[LAPM_MAX_INFO_SIZE + 4];
+		frame_t incoming = { .buf = wire, .count = capacity + oversized + 3 };
+
+		CHECK(m != NULL, "information limit allocation failed");
+		m->caller = caller;
+		m->cfg.comp = 0;
+		CHECK(modem_ec_init(m) == 0, "information limit initialization failed");
+		modem_ec_start(m);
+		struct lapm_state *l = &m->ec.lapm;
+		l->state = 2;
+		l->rx_info_size = limits[limit];
+		memset(l->rx_buf, 0x55, sizeof(l->rx_buf));
+		uint8_t saved_buffer[sizeof(l->rx_buf)];
+		memcpy(saved_buffer, l->rx_buf, sizeof(saved_buffer));
+		frame_t saved_frame = l->info_buf[0].frame;
+		memset(wire, 'X', sizeof(wire));
+		wire[0] = l->rsp_addr;
+		wire[1] = wire[2] = 0;
+		memset(&lapm_sink, 0, sizeof(lapm_sink));
+		m->put_chars = scripted_lapm_sink; /* Host blocks all payload. */
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(memcmp(&saved_frame, &l->info_buf[0].frame, sizeof(saved_frame)) == 0,
+		      "receive payload overwrote information queue metadata");
+		if (oversized) {
+			CHECK(l->state == 3 && l->vr == 0 && l->rx_count == 0 && !l->busy &&
+			      lapm_sink.calls == 0 && m->packer_process == NULL &&
+			      memcmp(l->rx_buf, saved_buffer, sizeof(saved_buffer)) == 0 &&
+			      l->tx_ctrl != l->ctrl_list && l->tx_ctrl->buf[1] == 0x53,
+			      "oversized information was acknowledged, decoded, or retained");
+		} else {
+			CHECK(l->state == 2 && l->vr == 1 && l->rx_count == (int)capacity && l->busy &&
+			      lapm_sink.calls == 1 && m->packer_process != NULL &&
+			      memcmp(l->rx_buf, wire + 3, capacity) == 0,
+			      "legal maximum payload was not retained under backpressure");
+			lapm_sink.result = capacity;
+			m->packer_process(m, 0);
+			CHECK(!l->busy && !l->rx_count && lapm_sink.length == capacity &&
+			      memcmp(lapm_sink.data, wire + 3, capacity) == 0,
+			      "legal maximum payload did not drain exactly once");
+		}
+		modem_ec_exit(m);
+		modem_delete(m);
+	}
+	memset(&lapm_sink, 0, sizeof(lapm_sink));
+	return true;
+}
+
 static bool test_lapm_receive_backpressure(void)
 {
 	enum { LAPM_DATA_STATE = 2 };
@@ -4675,6 +4849,8 @@ int main(void)
 		{ "LAPM directional preamble", test_lapm_directional_preamble },
 		{ "LAPM peer-flag preamble", test_lapm_peer_flag_preamble },
 		{ "LAPM receive backpressure", test_lapm_receive_backpressure },
+		{ "LAPM receive frame boundaries", test_lapm_receive_frame_boundaries },
+		{ "LAPM receive information limit", test_lapm_receive_information_limit },
 		{ "LAPM acknowledgement window", test_lapm_acknowledgement_window },
 		{ "LAPM repeated sequence error poll", test_lapm_repeated_sequence_error_poll },
 		{ "LAPM peer-busy acknowledgement", test_lapm_peer_busy_acknowledgement },

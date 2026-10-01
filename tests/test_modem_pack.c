@@ -761,6 +761,38 @@ static bool test_hdlc_round_trip(void)
 	return true;
 }
 
+static bool test_hdlc_minimum_frame_size(void)
+{
+	static const uint8_t payload[] = { 0x03, 0x73, 0x00 };
+
+	for (unsigned length = 1; length <= sizeof(payload); ++length) {
+		struct hdlc_fixture fixture = { .payload = payload, .payload_length = length };
+		struct modem transmitter = { .name = "short-frame transmitter" };
+		struct modem receiver = { .name = "short-frame receiver" };
+		uint8_t bits[256];
+
+		modem_hdlc_start(&transmitter);
+		modem_hdlc_start(&receiver);
+		transmitter.packer.hdlc.framer = &fixture;
+		transmitter.packer.hdlc.get_tx_frame = next_transmit_frame;
+		transmitter.packer.hdlc.tx_complete = transmit_complete;
+		receiver.packer.hdlc.framer = &fixture;
+		receiver.packer.hdlc.rx_complete = receive_complete;
+		CHECK(modem_hdlc_get_bits(&transmitter, 1, bits, sizeof(bits)) == sizeof(bits) &&
+		      modem_hdlc_put_bits(&receiver, 1, bits, sizeof(bits)) == sizeof(bits),
+		      "short HDLC wire exchange failed");
+		CHECK(fixture.transmit_completions == 1 &&
+		      fixture.receive_completions == (length >= 2) && !fixture.receive_overflow,
+		      "wrong minimum frame length: length=%u received=%u",
+		      length, fixture.receive_completions);
+		if (length >= 2)
+			CHECK(fixture.received_length == length &&
+			      memcmp(fixture.received, payload, length) == 0,
+			      "legal short frame changed its payload");
+	}
+	return true;
+}
+
 struct test_case {
 	const char *name;
 	bool (*run)(void);
@@ -790,6 +822,7 @@ int main(void)
 		  test_v42_rejects_bad_detection_stops },
 		{ "HDLC transmit preamble", test_hdlc_transmit_preamble },
 		{ "HDLC round trip", test_hdlc_round_trip },
+		{ "HDLC minimum frame size", test_hdlc_minimum_frame_size },
 	};
 	unsigned int failures = 0;
 

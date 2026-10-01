@@ -1203,8 +1203,6 @@ static int rx_info(struct lapm_state *l, frame_t *f)
 	int payload_length;
 	bool retrain_progress;
 	//LAPM_PRINT_FRAME("rx_info",1,f);
-	if (f->count < 3)
-		return -1;
 	payload_length = f->count - 3;
 
 	/* ack I frames: nr -1 */
@@ -1490,6 +1488,20 @@ static int rx_unnum_cmd(struct lapm_state *l, frame_t *f)
 	return 0;
 }
 
+static bool complete_link_establishment(struct lapm_state *l)
+{
+	if (reinitialize_for_link_establishment(l) != 0) {
+		l->state = LAPM_IDLE;
+		T401_STOP(l);
+		modem_update_status(l->modem, STATUS_EC_ERROR);
+		return false;
+	}
+	l->state = LAPM_DATA;
+	TIMER_STOP(l);
+	modem_update_status(l->modem, STATUS_EC_LINK);
+	return true;
+}
+
 static int rx_unnum_rsp(struct lapm_state *l, frame_t *f)
 {
 	//LAPM_PRINT_FRAME("rx unnum",0, f);
@@ -1534,21 +1546,14 @@ static int rx_unnum_rsp(struct lapm_state *l, frame_t *f)
 		break;
 	case FRAME_U_UA:
 		/* notify us about mode change, responds SABME,DISC */
+		if (!FRAME_U_PF(f))
+			break; /* Both locally initiated mode commands set P=1. */
 		switch(l->state) {
 		case LAPM_ESTAB:
-			if (reinitialize_for_link_establishment(l) != 0) {
-				l->state = LAPM_IDLE;
-				T401_STOP(l);
-				modem_update_status(l->modem, STATUS_EC_ERROR);
-				break;
-			}
-			l->state = LAPM_DATA;
-			TIMER_STOP(l);
-			modem_update_status(l->modem,STATUS_EC_LINK);
+			if (!l->config)
+				complete_link_establishment(l);
 			break;
 		case LAPM_DISC:
-			if (!FRAME_U_PF(f))
-				break;
 			l->state = LAPM_IDLE;
 			reset_lapm_sequence(l);
 			T401_STOP(l);
@@ -1650,47 +1655,42 @@ static void lapm_tx_complete(void *framer, frame_t *f)
 }
 
 
-static int valid_data_state(struct lapm_state *l)
-{
-	switch (l->state) {
-	case LAPM_ESTAB:
-		if (reinitialize_for_link_establishment(l) != 0) {
-			l->state = LAPM_IDLE;
-			T401_STOP(l);
-			modem_update_status(l->modem, STATUS_EC_ERROR);
-			return 0;
-		}
-		l->state = LAPM_DATA;
-		modem_update_status(l->modem,STATUS_EC_LINK);
-		return 1;
-	case LAPM_DATA:
-		return 1;
-	case LAPM_DISC:
-		/* V.42 8.7: ordinary traffic cannot acknowledge a DISC. */
-		return 0;
-	case LAPM_IDLE:
-		return 0;
-	default:
-		EC_ERR("valid_data_state: unknown state %d.\n", l->state);
-		return 0;
-	}
-	return 0;
-
-}
-
 static void lapm_rx_complete(void *framer, frame_t *f)
 {
 	struct lapm_state *l = framer;
+	unsigned type;
+
+	/* V.42 8.1.3: invalid length or DLCI frames have no protocol effect.
+	 * Check before logging or reading sequence fields from the HDLC buffer. */
+	if (f == NULL || f->buf == NULL || f->count < 2 ||
+	    (FRAME_ADDR(f) != l->cmd_addr && FRAME_ADDR(f) != l->rsp_addr))
+		return;
+	type = FRAME_TYPE(f);
+	if (type != FRAME_U && (f->count < 3 ||
+	    (l->state != LAPM_DATA && l->state != LAPM_ESTAB)))
+		return;
+	/* Frame rejection releases the link before acknowledging or decoding
+	 * information. N401 also bounds the retained receive buffer when the
+	 * character sink or decompressor applies backpressure. */
+	if (type == FRAME_I &&
+	    ((unsigned)(f->count - 3) > l->rx_info_size ||
+	     (size_t)(f->count - 3) > sizeof(l->rx_buf))) {
+		EC_ERR("information frame exceeds receive limit\n");
+		if (l->state == LAPM_DATA)
+			lapm_disconnect(l);
+		return;
+	}
+	/* V.42 (2002) 8.3.2.1 permits valid I/S traffic after a lost UA.
+	 * Validate it before completing SABME, and never bypass pending XID. */
+	if (type != FRAME_U && l->state == LAPM_ESTAB &&
+	    (l->config || !complete_link_establishment(l)))
+		return;
 	LAPM_PRINT_FRAME("rx",RX_IS_COMMAND(f),f);
-	switch(FRAME_TYPE(f)) {
+	switch(type) {
 	case FRAME_I:
-		if(!valid_data_state(l))
-			return;
 		rx_info(l,f);
 		break;
 	case FRAME_S:
-		if(!valid_data_state(l))
-			return;
 		if (RX_IS_COMMAND(f))
 			rx_super_cmd(l,f);
 		else
@@ -1708,7 +1708,7 @@ static void lapm_rx_complete(void *framer, frame_t *f)
 	}
 	/* Valid I/S traffic restarts idle supervision, without postponing an
 	 * outstanding acknowledgement, enquiry, or peer-busy timer. */
-	if ((FRAME_TYPE(f) == FRAME_I || FRAME_TYPE(f) == FRAME_S) &&
+	if (type != FRAME_U &&
 	    l->state == LAPM_DATA && !l->config &&
 	    (!l->modem->bit_timer || l->modem->bit_timer_func == t403_timeout))
 		start_idle_timer(l);
