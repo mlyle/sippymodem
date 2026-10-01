@@ -283,17 +283,6 @@ static int reinitialize_for_link_establishment(struct lapm_state *l)
 	return 0;
 }
 
-/* Big-endian value parsing. */
-extern inline u32 lapm_get_be_val(const u8 *buf, int len)
-{
-	u32 val = 0;
-	while(len--) {
-		val <<= 8;
-		val |= *buf++;
-	}
-	return val;
-}
-
 /* debug stuffs */
 #define EC_ERR(fmt,arg...) eprintf("%s ec err: " fmt , \
                                    l->modem->name , ##arg)
@@ -384,15 +373,25 @@ static int tx_super(struct lapm_state *l, u8 addr, u8 ctrl, u8 pf_mask)
 
 
 /* V.42 9.2: select within the interval between the request and the default. */
-static unsigned int select_xid_parameter(
-	unsigned int preferred, unsigned int requested, unsigned int default_value)
+static bool select_xid_parameter(
+	unsigned int proposed, unsigned int received, unsigned int default_value,
+	unsigned int capacity, bool command, unsigned int *selected)
 {
+	unsigned int requested = command ? received : proposed;
+	unsigned int value = command ? proposed : received;
 	unsigned int minimum = requested < default_value ? requested : default_value;
 	unsigned int maximum = requested > default_value ? requested : default_value;
 
-	if (preferred < minimum)
-		return minimum;
-	return preferred > maximum ? maximum : preferred;
+	if (command) {
+		if (value < minimum)
+			value = minimum;
+		if (value > maximum)
+			value = maximum;
+	}
+	if (value == 0 || value > capacity || value < minimum || value > maximum)
+		return false;
+	*selected = value;
+	return true;
 }
 
 #define DEFAULT_MODEM_EC_CONFIG { \
@@ -427,49 +426,62 @@ enum xid_decode_result {
 	XID_INVALID_COMPRESSION = -2,
 };
 
-static void parse_xid_params(
+/* The XID envelope has already validated each parameter's extent.
+ * Decode in the sending DCE's directions; missing values mean defaults. */
+static bool parse_xid_params(
 	struct lapm_xid_config *config, const u8 *buf, int len)
 {
-	u32 pval;
-	u8 pid, plen;
+	unsigned int seen = 0;
+
+	config->tx_info_size = config->rx_info_size = LAPM_DFLT_INFO_SIZE;
+	config->tx_win_size = config->rx_win_size = LAPM_DFLT_WIN_SIZE;
 	while (len > 0) {
-		pid  = buf[0];
-		plen = buf[1];
+		unsigned int pval = 0, *value, mask;
+		u8 pid = buf[0], plen = buf[1];
+		bool info = pid == PI_TX_INFO_MAXSIZE || pid == PI_RX_INFO_MAXSIZE;
+
 		buf += 2;
 		len -= 2 + plen;
-		if (len < 0)
-			break;
 		switch (pid) {
-		case PI_HDLC_OPTFUNCS:
-			break;
 		case PI_TX_INFO_MAXSIZE:
-			pval = lapm_get_be_val(buf,plen);
-			pval >>= 3;
-			/* Table 11a directions are relative to the transmitting DCE. */
-			config->rx_info_size = select_xid_parameter(
-				config->rx_info_size, pval, LAPM_DFLT_INFO_SIZE);
+			value = &config->tx_info_size;
 			break;
 		case PI_RX_INFO_MAXSIZE:
-			pval = lapm_get_be_val(buf,plen);
-			pval >>= 3;
-			config->tx_info_size = select_xid_parameter(
-				config->tx_info_size, pval, LAPM_DFLT_INFO_SIZE);
+			value = &config->rx_info_size;
 			break;
 		case PI_TX_WINDOW_SIZE:
-			pval = lapm_get_be_val(buf,plen);
-			config->rx_win_size = select_xid_parameter(
-				config->rx_win_size, pval, LAPM_DFLT_WIN_SIZE);
+			value = &config->tx_win_size;
 			break;
 		case PI_RX_WINDOW_SIZE:
-			pval = lapm_get_be_val(buf,plen);
-			config->tx_win_size = select_xid_parameter(
-				config->tx_win_size, pval, LAPM_DFLT_WIN_SIZE);
+			value = &config->rx_win_size;
 			break;
 		default:
-			break;
+			buf += plen;
+			continue;
 		}
+		if (plen == 0)
+			return false;
+		for (unsigned int index = 0; index < plen; ++index) {
+			if (pval > (UINT_MAX >> 8))
+				return false;
+			pval = (pval << 8) | buf[index];
+		}
+		if (info) {
+			/* N401 is an octet count, encoded in bits (Table 11a). */
+			if ((pval & 7U) != 0)
+				return false;
+			pval >>= 3;
+		} else if (pval == 0 || pval > 127) { /* V.42 8.2.3.2.2 */
+			return false;
+		}
+		mask = 1U << (pid - PI_TX_INFO_MAXSIZE);
+		if ((seen & mask) != 0 && *value != pval)
+			return false;
+		*value = pval;
+		seen |= mask;
 		buf += plen;
 	}
+	return true;
 }
 
 
@@ -539,6 +551,8 @@ static enum xid_decode_result decode_xid(
 	struct lapm_state *l, frame_t *f, struct lapm_xid_config *config)
 {
 	struct v42_xid_fields fields;
+	struct lapm_xid_config peer;
+	bool command;
 	size_t length;
 
 	if (f == NULL || f->buf == NULL || f->count < 2 || config == NULL)
@@ -555,10 +569,31 @@ static enum xid_decode_result decode_xid(
 		.rx_info_size = l->rx_info_size,
 		.modem = DEFAULT_MODEM_EC_CONFIG,
 	};
-	if (fields.parameter_negotiation != NULL)
-		parse_xid_params(
-			config, fields.parameter_negotiation,
-			(int)fields.parameter_negotiation_length);
+	if (!parse_xid_params(&peer, fields.parameter_negotiation,
+		(int)fields.parameter_negotiation_length))
+		return XID_MALFORMED;
+	command = RX_IS_COMMAND(f);
+	if (!command) {
+		struct v42_xid_fields offered;
+
+		/* Our cached command owns the proposal and retry interval.
+		 * A response confirms its values; it is not another request. */
+		if (v42_xid_decode(l->v44_session.command, l->v44_session.command_length,
+			&offered) != V42_XID_OK ||
+		    !parse_xid_params(config, offered.parameter_negotiation,
+			(int)offered.parameter_negotiation_length))
+			return XID_MALFORMED;
+	}
+	/* Table 11a directions are relative to the sending DCE. */
+	if (!select_xid_parameter(config->tx_info_size, peer.rx_info_size,
+		LAPM_DFLT_INFO_SIZE, LAPM_MAX_INFO_SIZE, command, &config->tx_info_size) ||
+	    !select_xid_parameter(config->rx_info_size, peer.tx_info_size,
+		LAPM_DFLT_INFO_SIZE, LAPM_MAX_INFO_SIZE, command, &config->rx_info_size) ||
+	    !select_xid_parameter(config->tx_win_size, peer.rx_win_size,
+		LAPM_DFLT_WIN_SIZE, LAPM_MAX_WIN_SIZE, command, &config->tx_win_size) ||
+	    !select_xid_parameter(config->rx_win_size, peer.tx_win_size,
+		LAPM_DFLT_WIN_SIZE, LAPM_MAX_WIN_SIZE, command, &config->rx_win_size))
+		return XID_MALFORMED;
 	if (fields.private_negotiation != NULL) {
 		enum xid_decode_result result = parse_xid_private_params(
 			&config->modem, &l->modem->cfg, RX_IS_COMMAND(f), fields.private_negotiation,

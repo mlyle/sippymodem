@@ -2141,6 +2141,9 @@ static bool test_lapm_dual_compression_retry(void)
 	CHECK(caller != NULL, "compression retry caller could not be created");
 	caller->caller = 1;
 	caller->rx_rate = caller->tx_rate = 2400;
+	/* The fixture selects peer TX=12, RX=13; offer an interval containing them. */
+	caller->cfg.ec_tx_win_size = 13;
+	caller->cfg.ec_rx_win_size = 12;
 	CHECK(modem_ec_init(caller) == 0, "compression retry initialization failed");
 	modem_ec_start(caller);
 	CHECK(modem_hdlc_get_bits(caller, 8, preamble, sizeof(preamble)) == sizeof(preamble),
@@ -2722,6 +2725,124 @@ static bool test_lapm_xid_directions(void)
 	return true;
 }
 
+static bool test_lapm_xid_numeric_values(void)
+{
+	static const struct {
+		uint8_t bytes[5];
+		uint8_t length, parameter;
+		bool command_ok, response_ok;
+		unsigned int command_value, response_value;
+	} cases[] = {
+		{ { 2, 0x98 }, 2, 5, true, true, 83, 83 },
+		{ { 2, 0 }, 2, 5, true, false, 70, 0 },
+		{ { 4, 0 }, 2, 5, true, true, 128, 128 },
+		{ { 4, 8 }, 2, 5, true, false, 128, 0 },
+		{ { 0xa0 }, 1, 5, true, false, 70, 0 },
+		{ { 0, 0, 0, 2, 0x98 }, 5, 5, true, true, 83, 83 },
+		{ { 0xff, 0, 0, 2, 0x98 }, 5, 5, false, false, 0, 0 },
+		{ { 2, 0x99 }, 2, 5, false, false, 0, 0 },
+		{ { 0 }, 0, 5, false, false, 0, 0 },
+		{ { 3 }, 1, 7, true, true, 3, 3 },
+		{ { 1 }, 1, 7, true, false, 2, 0 },
+		{ { 15 }, 1, 7, true, true, 15, 15 },
+		{ { 16 }, 1, 7, true, false, 15, 0 },
+		{ { 127 }, 1, 7, true, false, 15, 0 },
+		{ { 128 }, 1, 7, false, false, 0, 0 },
+		{ { 0 }, 1, 7, false, false, 0, 0 },
+		{ { 0, 0, 0, 0, 3 }, 5, 7, true, true, 3, 3 },
+		{ { 0xff, 0, 0, 0, 3 }, 5, 7, false, false, 0, 0 },
+		{ { 0 }, 0, 7, false, false, 0, 0 },
+		{ { 0xff, 0, 0, 0, 3 }, 5, 0xff, true, true, 15, 15 },
+		{ { 0 }, 0, 0xff, true, true, 15, 15 },
+		{ { 0 }, 0, 0, true, true, 15, 15 },
+	};
+	struct modem_driver driver = {
+		.name = "LAPM XID numeric values", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+
+	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index)
+	for (unsigned direction = 0; direction < 2; ++direction)
+	for (unsigned response = 0; response < 2; ++response) {
+		struct modem *m = modem_create(&driver, driver.name);
+		uint8_t preamble[109], command[130], parameters[7], wire[32];
+		size_t length;
+		int command_size = 0, timer;
+		bool info = cases[index].parameter == 5;
+		bool valid = response ? cases[index].response_ok : cases[index].command_ok;
+		unsigned int value = response ? cases[index].response_value : cases[index].command_value;
+		struct v42_xid_fields fields = {
+			.parameter_negotiation = cases[index].parameter ? parameters : NULL,
+			.parameter_negotiation_length = cases[index].parameter ? 2 + cases[index].length : 0,
+		};
+		frame_t incoming = { .buf = wire };
+		frame_t *outgoing;
+
+		CHECK(m != NULL, "numeric XID modem allocation failed");
+		m->caller = response;
+		m->cfg.comp = 0;
+		m->cfg.ec_tx_info_size = m->cfg.ec_rx_info_size = 70;
+		m->cfg.ec_tx_win_size = m->cfg.ec_rx_win_size = 2;
+		m->rx_rate = m->tx_rate = 2400;
+		CHECK(modem_ec_init(m) == 0, "numeric XID fixture failed");
+		modem_ec_start(m);
+		if (response) {
+			CHECK(modem_hdlc_get_bits(m, 8, preamble, sizeof(preamble)) == (int)sizeof(preamble),
+			      "numeric XID preamble failed");
+			outgoing = m->packer.hdlc.tx_frame;
+			m->packer.hdlc.tx_frame = NULL;
+			CHECK(outgoing != NULL && outgoing->size <= (int)sizeof(command), "numeric offer missing");
+			command_size = outgoing->size;
+			memcpy(command, outgoing->buf, command_size);
+			m->packer.hdlc.tx_complete(m->packer.hdlc.framer, outgoing);
+			/* Response validity belongs to that wire offer, even if local policy changes. */
+			m->ec.lapm.tx_info_size = m->ec.lapm.rx_info_size = 128;
+			m->ec.lapm.tx_win_size = m->ec.lapm.rx_win_size = 15;
+		}
+		timer = m->bit_timer;
+		parameters[0] = cases[index].parameter < 0xff ? cases[index].parameter + direction : 0xff;
+		parameters[1] = cases[index].length;
+		memcpy(parameters + 2, cases[index].bytes, cases[index].length);
+		wire[0] = response ? m->ec.lapm.cmd_addr : m->ec.lapm.rsp_addr;
+		wire[1] = 0xaf;
+		CHECK(v42_xid_encode(&fields, wire + 2, sizeof(wire) - 2, &length) == V42_XID_OK,
+		      "numeric XID encoding failed");
+		incoming.count = 2 + length;
+		m->packer.hdlc.rx_complete(m->packer.hdlc.framer, &incoming);
+		outgoing = m->packer.hdlc.get_tx_frame(m->packer.hdlc.framer);
+		if (!valid) {
+			CHECK(outgoing == NULL && m->bit_timer == timer &&
+				      (m->ec.lapm.config != 0) == (response != 0) &&
+				      m->ec.lapm.tx_info_size == (response ? 128u : 70u) &&
+				      m->ec.lapm.rx_info_size == (response ? 128u : 70u) &&
+				      m->ec.lapm.tx_win_size == (response ? 15u : 2u) &&
+				      m->ec.lapm.rx_win_size == (response ? 15u : 2u),
+			      "invalid numeric case %zu, direction %u, response %u changed negotiation",
+			      index, direction, response);
+			if (response) {
+				m->bit_timer_func(m);
+				outgoing = m->packer.hdlc.get_tx_frame(m->packer.hdlc.framer);
+				CHECK(outgoing != NULL && outgoing->size == command_size &&
+					      memcmp(outgoing->buf, command, command_size) == 0,
+				      "invalid numeric reply changed the frozen retry");
+			}
+		} else {
+			CHECK(outgoing != NULL && outgoing->buf[1] == (response ? 0x7f : 0xaf) &&
+				      m->ec.lapm.config == 0 &&
+				      m->ec.lapm.tx_info_size == (info && direction ? value : 128u) &&
+				      m->ec.lapm.rx_info_size == (info && !direction ? value : 128u) &&
+				      m->ec.lapm.tx_win_size == (!info && direction ? value : 15u) &&
+				      m->ec.lapm.rx_win_size == (!info && !direction ? value : 15u),
+			      "valid numeric case %zu, direction %u, response %u selected wrong limits",
+			      index, direction, response);
+		}
+		if (outgoing != NULL)
+			m->packer.hdlc.tx_complete(m->packer.hdlc.framer, outgoing);
+		modem_delete(m);
+	}
+	return true;
+}
+
 static bool test_lapm_xid_collisions(void)
 {
 	static const uint8_t peer_parameters[] = {
@@ -2903,6 +3024,12 @@ static bool test_lapm_repeated_xid_parameters(void)
 		wire[index + 1] = 1;
 		wire[index + 2] = 15;
 	}
+	wire[sizeof(wire) - 1] = 14;
+	modem->packer.hdlc.rx_complete(modem->packer.hdlc.framer, &incoming);
+	CHECK(modem->packer.hdlc.get_tx_frame(modem->packer.hdlc.framer) == NULL &&
+		      modem->ec.lapm.v44_session.response_length == 0,
+	      "conflicting repeated XID values produced a response");
+	wire[sizeof(wire) - 1] = 15;
 	modem->packer.hdlc.rx_complete(modem->packer.hdlc.framer, &incoming);
 	response = modem->packer.hdlc.get_tx_frame(modem->packer.hdlc.framer);
 	CHECK(response != NULL && response->buf[1] == 0xaf &&
@@ -6073,6 +6200,7 @@ int main(void)
 		{ "LAPM V.42bis receive output pressure", test_lapm_v42bis_receive_pressure },
 		{ "LAPM V.42bis small transmit buffers", test_lapm_v42bis_transmit_pressure },
 		{ "LAPM XID negotiation directions", test_lapm_xid_directions },
+		{ "LAPM XID numeric values", test_lapm_xid_numeric_values },
 		{ "LAPM simultaneous XID negotiation", test_lapm_xid_collisions },
 		{ "LAPM repeated XID parameters", test_lapm_repeated_xid_parameters },
 		{ "bounded LAPM XID envelopes", test_lapm_xid_envelopes },
