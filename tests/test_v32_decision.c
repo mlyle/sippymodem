@@ -10,6 +10,11 @@
 #include <stdint.h>
 #include <string.h>
 
+static const uint8_t RAW_TO_SYMBOL[16] = {
+	15, 14, 13, 12, 1, 3, 0, 2,
+	10, 8, 11, 9, 4, 5, 6, 7,
+};
+
 static uint64_t hash_u16(uint64_t hash, uint16_t value)
 {
 	hash ^= value & 0xffu;
@@ -112,10 +117,6 @@ static bool test_fixed_api_contracts(void)
 
 static bool test_fixed_geometry_and_small_slicers(void)
 {
-	static const uint8_t RAW_TO_SYMBOL[16] = {
-		15, 14, 13, 12, 1, 3, 0, 2,
-		10, 8, 11, 9, 4, 5, 6, 7,
-	};
 	uint64_t four_hash = UINT64_C(14695981039346656037);
 	uint64_t uncoded_hash = UINT64_C(14695981039346656037);
 
@@ -181,6 +182,10 @@ static bool test_fixed_geometry_and_small_slicers(void)
 
 static bool test_nearest_ties(void)
 {
+	static const int16_t samples[] = {
+		INT16_MIN, -12288, -8193, -8192, -8191, -4096, -1, 0,
+		1, 4096, 8191, 8192, 8193, 12288, INT16_MAX,
+	};
 	struct v32_equalizer_observation sample = observation(-8192, 4096);
 	struct v32_quadrant_decision four;
 	struct v32_uncoded_decision uncoded;
@@ -188,10 +193,31 @@ static bool test_nearest_ties(void)
 	CHECK(v32_decide_4_point(&sample, false, &four) ==
 		      V32_DECISION_OK && four.quadrant == 3,
 	      "four-point tie did not retain the first decision point");
-	sample = observation(-12288, 8192);
-	CHECK(v32_decide_uncoded_16(&sample, false, &uncoded) ==
-		      V32_DECISION_OK && uncoded.symbol == 15,
-	      "uncoded tie did not retain the first decision point");
+	/* An independent distance search over the fixed geometry checks all
+	 * decision edges and intersections, and the full signed input bounds. */
+	for (size_t i = 0; i < ARRAY_LENGTH(samples); ++i) {
+		for (size_t q = 0; q < ARRAY_LENGTH(samples); ++q) {
+			uint64_t best_distance = UINT64_MAX;
+			uint8_t expected = 0;
+
+			for (uint8_t raw = 0; raw < 16; ++raw) {
+				struct v32_fixed_point point = raw_point_16(raw);
+				int64_t di = (int64_t)samples[i] - point.i;
+				int64_t dq = (int64_t)samples[q] - point.q;
+				uint64_t distance = (uint64_t)(di * di + dq * dq);
+
+				if (distance < best_distance) {
+					best_distance = distance;
+					expected = RAW_TO_SYMBOL[raw];
+				}
+			}
+			sample = observation(samples[i], samples[q]);
+			CHECK(v32_decide_uncoded_16(&sample, true, &uncoded) ==
+				      V32_DECISION_OK && uncoded.symbol == expected,
+			      "uncoded nearest point changed at %d/%d",
+			      samples[i], samples[q]);
+		}
+	}
 	return true;
 }
 

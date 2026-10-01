@@ -56,21 +56,6 @@ static uint64_t distance_squared(
 	       (uint64_t)((int64_t)difference_q * difference_q);
 }
 
-static struct v32_fixed_point point_16(uint8_t index)
-{
-	bool positive_i = (index & 8u) != 0;
-	bool negative_q = (index & 4u) != 0;
-	bool outer_i = ((index >> 1) & 1u) == (unsigned int)positive_i;
-	bool outer_q = (index & 1u) == (unsigned int)negative_q;
-	int16_t i = (int16_t)((outer_i ? 3 : 1) * 4096);
-	int16_t q = (int16_t)((outer_q ? 3 : 1) * 4096);
-
-	return (struct v32_fixed_point){
-		.i = positive_i ? i : (int16_t)-i,
-		.q = negative_q ? (int16_t)-q : q,
-	};
-}
-
 static uint8_t nearest_generated(
 	const struct v32_equalizer_observation *observation,
 	uint8_t start, uint8_t count,
@@ -92,10 +77,30 @@ static uint8_t nearest_generated(
 	return selected;
 }
 
+static uint8_t symbol_16(uint8_t index)
+{
+	static const uint8_t RAW_TO_SYMBOL[16] = {
+		15, 14, 13, 12, 1, 3, 0, 2,
+		10, 8, 11, 9, 4, 5, 6, 7,
+	};
+
+	return RAW_TO_SYMBOL[index];
+}
+
 static uint8_t nearest_16(
 	const struct v32_equalizer_observation *observation)
 {
-	return nearest_generated(observation, 0, 16, point_16);
+	const int boundary = 2 * V32_CONSTELLATION_GRID_UNIT;
+	bool positive_i = observation->i > 0;
+	bool negative_q = observation->q < 0;
+	bool outer_i = observation->i <= -boundary || observation->i > boundary;
+	bool outer_q = observation->q < -boundary || observation->q >= boundary;
+
+	/* The grid search visits lower I and higher Q first. Preserve that
+	 * choice at every midpoint, including crossings of both boundaries. */
+	return (uint8_t)((positive_i ? 8u : 0u) | (negative_q ? 4u : 0u) |
+			(outer_i == positive_i ? 2u : 0u) |
+			(outer_q == negative_q ? 1u : 0u));
 }
 
 static uint16_t magnitude_16(uint8_t index)
@@ -105,23 +110,16 @@ static uint16_t magnitude_16(uint8_t index)
 	static const uint16_t RADIUS[3] = {
 		0x16a0, 0x3299, 0x43e2,
 	};
-	struct v32_fixed_point point = point_16(index);
+	struct v32_fixed_point point;
+
+	/* The bounded decision index maps to the transmitter's signal label. */
+	(void)v32_constellation_fixed_point(symbol_16(index), &point);
 	uint16_t absolute_i = (uint16_t)(point.i < 0 ? -point.i : point.i);
 	uint16_t absolute_q = (uint16_t)(point.q < 0 ? -point.q : point.q);
 	uint16_t magnitude_index = (uint16_t)(
-		((absolute_i + absolute_q) >> 13) - 1u);
+		(absolute_i + absolute_q) / (2 * V32_CONSTELLATION_GRID_UNIT) - 1u);
 
 	return RADIUS[magnitude_index];
-}
-
-static uint8_t symbol_16(uint8_t index)
-{
-	static const uint8_t RAW_TO_SYMBOL[16] = {
-		15, 14, 13, 12, 1, 3, 0, 2,
-		10, 8, 11, 9, 4, 5, 6, 7,
-	};
-
-	return RAW_TO_SYMBOL[index];
 }
 
 enum v32_decision_result v32_decide_known_quadrant(

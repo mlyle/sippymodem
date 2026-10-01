@@ -17,72 +17,52 @@ struct doubled_grid_point {
 	int quadrature;
 };
 
-static enum v32_constellation_result base_grid_point(
-	uint8_t symbol, struct doubled_grid_point *point);
-
 enum v32_constellation_result
 v32_constellation_fixed_point(
 	uint8_t symbol, struct v32_fixed_point *point)
 {
-	struct doubled_grid_point grid;
 	struct v32_fixed_point next;
+	uint8_t quadrant = (uint8_t)(symbol >> 2);
+	uint8_t position = (uint8_t)(symbol & 3u);
+	bool swap_magnitude_bits = (quadrant & 1u) != 0;
+	bool outer_in_phase =
+		swap_magnitude_bits ? (position & 2u) != 0 : (position & 1u) != 0;
+	bool outer_quadrature =
+		swap_magnitude_bits ? (position & 1u) != 0 : (position & 2u) != 0;
 
-	if (point == NULL || base_grid_point(symbol, &grid) !=
-				     V32_CONSTELLATION_OK)
+	if (symbol >= V32_CONSTELLATION_SYMBOLS || point == NULL)
 		return V32_CONSTELLATION_INVALID_ARGUMENT;
-	next.i = (int16_t)(grid.in_phase * 4096);
-	next.q = (int16_t)(grid.quadrature * 4096);
+	next = (struct v32_fixed_point){
+		.i = (int16_t)(signed_coordinate(
+			quadrant == 1 || quadrant == 2, outer_in_phase) *
+			V32_CONSTELLATION_GRID_UNIT),
+		.q = (int16_t)(signed_coordinate(
+			quadrant >= 2, outer_quadrature) * V32_CONSTELLATION_GRID_UNIT),
+	};
 	*point = next;
 	return V32_CONSTELLATION_OK;
+}
+
+static struct qam_point normalized_point(struct v32_fixed_point fixed)
+{
+	double normalization = V32_CONSTELLATION_GRID_UNIT * sqrt(18.0);
+
+	return (struct qam_point){
+		.in_phase = fixed.i / normalization,
+		.quadrature = fixed.q / normalization,
+	};
 }
 
 enum v32_constellation_result
 v32_constellation_point(
 	uint8_t symbol, struct qam_point *point)
 {
-	struct doubled_grid_point grid;
-	struct qam_point next;
-	double normalization = sqrt(18.0);
+	struct v32_fixed_point fixed;
 
-	if (point == NULL || base_grid_point(symbol, &grid) !=
+	if (point == NULL || v32_constellation_fixed_point(symbol, &fixed) !=
 				     V32_CONSTELLATION_OK)
 		return V32_CONSTELLATION_INVALID_ARGUMENT;
-	next = (struct qam_point){
-		.in_phase = grid.in_phase / normalization,
-		.quadrature = grid.quadrature / normalization,
-	};
-	*point = next;
-	return V32_CONSTELLATION_OK;
-}
-
-static enum v32_constellation_result base_grid_point(
-	uint8_t symbol, struct doubled_grid_point *point)
-{
-	struct doubled_grid_point next;
-	uint8_t quadrant;
-	uint8_t position;
-	bool swap_magnitude_bits;
-	bool outer_in_phase;
-	bool outer_quadrature;
-
-	if (symbol >= V32_CONSTELLATION_SYMBOLS || point == NULL)
-		return V32_CONSTELLATION_INVALID_ARGUMENT;
-	quadrant = (uint8_t)(symbol >> 2);
-	position = (uint8_t)(symbol & 3u);
-	swap_magnitude_bits = (quadrant & 1u) != 0;
-	outer_in_phase =
-		swap_magnitude_bits ? (position & 2u) != 0 :
-				      (position & 1u) != 0;
-	outer_quadrature =
-		swap_magnitude_bits ? (position & 1u) != 0 :
-				      (position & 2u) != 0;
-	next = (struct doubled_grid_point){
-		.in_phase = signed_coordinate(
-			quadrant == 1 || quadrant == 2, outer_in_phase),
-		.quadrature = signed_coordinate(
-			quadrant >= 2, outer_quadrature),
-	};
-	*point = next;
+	*point = normalized_point(fixed);
 	return V32_CONSTELLATION_OK;
 }
 
@@ -247,8 +227,10 @@ v32_trellis_fixed_signal_point(
 		(uint8_t)(signal_symbol & low_mask));
 	grid_point = trellis_subset_transform(subset, grid_point);
 	next = (struct v32_fixed_point){
-		.i = (int16_t)(grid_point.in_phase * 2048),
-		.q = (int16_t)(grid_point.quadrature * 2048),
+		.i = (int16_t)(grid_point.in_phase *
+			      (V32_CONSTELLATION_GRID_UNIT / 2)),
+		.q = (int16_t)(grid_point.quadrature *
+			      (V32_CONSTELLATION_GRID_UNIT / 2)),
 	};
 	*point = next;
 	return V32_CONSTELLATION_OK;
@@ -260,16 +242,12 @@ v32_trellis_constellation_point(
 	struct qam_point *point)
 {
 	struct v32_fixed_point fixed;
-	struct qam_point next;
-	double normalization = 4096.0 * sqrt(18.0);
 
 	if (point == NULL || v32_trellis_fixed_signal_point(
 				     data_bits_per_symbol, signal_symbol,
 				     &fixed) != V32_CONSTELLATION_OK)
 		return V32_CONSTELLATION_INVALID_ARGUMENT;
-	next.in_phase = fixed.i / normalization;
-	next.quadrature = fixed.q / normalization;
-	*point = next;
+	*point = normalized_point(fixed);
 	return V32_CONSTELLATION_OK;
 }
 
