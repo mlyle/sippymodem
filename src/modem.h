@@ -247,6 +247,7 @@ struct lapm_state {
         int peer_busy;
         int retrain_poll;
         bool stalled_retrain;
+        u8 stalled_polls; /* status enquiries without acknowledgement progress */
         u8  cmd_addr;
         u8  rsp_addr;
         u8 vs;
@@ -279,7 +280,6 @@ struct lapm_state {
                 u8 info[LAPM_MAX_INFO_SIZE];
         } ctrl_buf[LAPM_CTRL_FRAMES];
         /* temporary: debug counters: remove it */
-        int info_count; // debug
         int tx_count;   // debug
         int sent_count; // debug
         int ctrl_count; // debug

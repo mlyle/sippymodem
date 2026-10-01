@@ -173,8 +173,7 @@ static unsigned lapm_originator_preamble_flags(const struct modem *m)
 			  (l)->modem->bit_timer = lapm_timer_timeout(l); \
 			  (l)->modem->bit_timer_func = t401_timeout; }
 #define T401_STOP(l) 	{ EC_DBG("T401 stop.\n"); \
-                          (l)->modem->bit_timer = 0; (l)->rtx_count = 0; \
-                          (l)->stalled_retrain = false; }
+                          (l)->modem->bit_timer = 0; (l)->rtx_count = 0; }
 #define TIMER_START(l) T401_START(l)
 #define TIMER_STOP(l) start_idle_timer(l)
 
@@ -900,6 +899,19 @@ static void t401_timeout(struct modem *m)
 {
 	struct lapm_state *l = &m->ec.lapm;
 	EC_DBG("t401_timeout: %d...\n",l->rtx_count);
+	/* A final RR can complete every enquiry while acknowledging no data.
+	 * Keep a separate local progress budget across those recovery episodes;
+	 * the ordinary N400 counter still governs unanswered polls. */
+	if (l->state == LAPM_DATA && !l->config) {
+		if (l->busy || l->peer_busy)
+			l->stalled_polls = 0;
+		else if (l->sent_info != l->info_list &&
+			 ++l->stalled_polls > LAPM_MAX_RTX) {
+			EC_DBG("no information progress after status enquiries: disconnect\n");
+			lapm_disconnect(l);
+			return;
+		}
+	}
 	if (l->rtx_count > LAPM_MAX_RTX ) {
 		EC_DBG("t401: max retransmission count was reached.\n");
 		l->rtx_count = 0;
@@ -990,6 +1002,10 @@ static void start_idle_timer(struct lapm_state *l)
 	T401_STOP(l);
 	if (l->state != LAPM_DATA || l->config)
 		return;
+	if (l->sent_info == l->info_list) {
+		l->stalled_polls = 0;
+		l->stalled_retrain = false;
+	}
 	if (rate == 0)
 		rate = LAPM_TIMER_FALLBACK_BIT_RATE;
 	timeout = rate * LAPM_IDLE_TIMER_SECONDS;
@@ -1051,7 +1067,6 @@ static int tx_info(struct lapm_state *l)
 			
 		f->size = n + 3;
 		l->info_list = l->info_list->next;
-		l->info_count--; // debug
 		l->tx_count++;   // debug
 		LAPM_PRINT_FRAME("tx_info",1,f);
 	}
@@ -1100,9 +1115,12 @@ static int ack_info(struct lapm_state *l, u8 nr)
 		}
 		l->sent_info = l->sent_info->next;
 		l->sent_count--; // debug
-		l->info_count++; // debug
 		l->va = (l->va+1)&0x7f;
 		n++;
+	}
+	if (n > 0) {
+		l->stalled_polls = 0;
+		l->stalled_retrain = false;
 	}
 	/* V.42 8.4.3.2: an I acknowledgement must not stop or restart
 	 * T401 while our status poll or the peer's busy condition persists. */
@@ -1305,6 +1323,8 @@ static void rx_super_cmd(struct lapm_state *l, frame_t *f)
 	case FRAME_S_RNR:
 		/* going to peer_busy state */
 		l->peer_busy = 1;
+		l->stalled_polls = 0;
+		l->stalled_retrain = false;
 		if (ack_info(l,FRAME_NR(f)) < 0)
 			return;
 		/* V.42 8.4.6: enquire even with no outstanding information,
@@ -1369,6 +1389,8 @@ static void rx_super_rsp(struct lapm_state *l, frame_t *f)
 		break;
 	case FRAME_S_RNR:
 		l->peer_busy = 1;
+		l->stalled_polls = 0;
+		l->stalled_retrain = false;
 		if (ack_info(l,FRAME_NR(f)) < 0)
 			return;
 		if (l->rtx_count && FRAME_S_PF(f)) {
@@ -1605,8 +1627,6 @@ static frame_t *lapm_get_tx_frame(void *framer)
 		TIMER_START(l);
 	//LAPM_PRINT_FRAME("get_tx_frame",1,f);
 
-	//EC_DBG1("get_tx_frame: sent %d, tx %d, free %d...\n",
-	//  	  l->sent_count,l->tx_count,l->info_count);
 	return f;
 }
 
@@ -1618,8 +1638,6 @@ static void lapm_tx_complete(void *framer, frame_t *f)
 	case FRAME_I:
 		l->sent_count++; // debug
 		l->tx_count--;   // debug
-		//EC_DBG1("tx_info_complete: sent %d, tx %d, free %d.\n",
-		//	 l->sent_count,l->tx_count,l->info_count);
 		break;
 	case FRAME_S:
 	case FRAME_U:
@@ -1769,7 +1787,7 @@ static void reset_lapm_sequence(struct lapm_state *l)
 	l->sent_info = l->info_list;
 	l->tx_info   = l->info_list;
 	l->sent_count = l->tx_count = 0;
-	l->info_count = LAPM_INFO_FRAMES;
+	l->stalled_polls = 0;
 	/* discard ctrl frames */
 	// TBD ???
 }
@@ -1790,7 +1808,6 @@ static int alloc_frames(struct lapm_state *l)
 		f->buf  = l->info_buf[i].ctrl;
 		f->size = sizeof(l->info_buf[0]) - sizeof(frame_t);
 	}
-	l->info_count= arrsize(l->info_buf); // debug
 	l->tx_info   = l->info_list;
 	l->sent_info = l->info_list;
 	/* init  ctrl list */
@@ -1917,15 +1934,17 @@ bool modem_ec_take_retrain_request(struct modem *m)
 	l = &m->ec.lapm;
 	if (l->state != LAPM_DATA || l->config || l->busy || l->peer_busy ||
 	    m->bit_timer <= 0 || m->bit_timer_func != t401_timeout ||
-	    l->rtx_count < LAPM_RETRAIN_POLLS ||
+	    (l->rtx_count < LAPM_RETRAIN_POLLS &&
+	     l->stalled_polls < LAPM_RETRAIN_POLLS) ||
 	    l->stalled_retrain)
 		return false;
 	/* A PCM frame-phase slip can produce legal symbols but no usable HDLC
 	 * frames, even with no local information outstanding. Try physical
 	 * recovery once before LAPM exhausts N400. Keep
 	 * the queues and T401 progress, even if the datapump rejects the request.
-	 * A completed timer-recovery episode rearms this allowance; starting or
-	 * resuming retraining does not. Peer flow control is not a channel fault. */
+	 * Acknowledgement progress or a recovered idle link rearms the allowance;
+	 * starting or resuming retraining does not. Peer flow control is not a
+	 * channel fault. */
 	l->stalled_retrain = true;
 	return true;
 }
@@ -1962,12 +1981,13 @@ int modem_ec_resume_after_retrain(struct modem *m)
 	}
 	/* A physical interruption loses HDLC framing and leaves the peer's
 	 * receive sequence uncertain only while flow control or unacknowledged
-	 * information remains.  A clean retained window can continue directly. */
+	 * information or a status enquiry remains. A clean retained window can
+	 * continue directly. */
 	if (l->retrain_poll) {
 		l->peer_busy = 1;
 		return 0;
 	}
-	if (!l->busy && !l->peer_busy && l->va == l->vs)
+	if (!l->busy && !l->peer_busy && l->va == l->vs && !l->rtx_count)
 		return 0;
 	if (l->ctrl_list->next == l->tx_ctrl)
 		return -1;

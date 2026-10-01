@@ -3090,6 +3090,9 @@ static bool test_lapm_idle_supervision(void)
 		      l->rtx_count == 2 && l->va == l->vs &&
 		      modem_ec_take_retrain_request(m) && !modem_ec_take_retrain_request(m),
 		      "unanswered idle polls did not request one physical recovery");
+		CHECK(modem_ec_resume_after_retrain(m) == 0 && l->retrain_poll &&
+		      l->peer_busy && l->rtx_count == 1 && l->stalled_retrain,
+		      "idle retrain did not resynchronize its outstanding enquiry");
 		wire[0] = l->cmd_addr;
 		wire[2] = 1; /* RR response F=1 */
 		m->packer.hdlc.rx_complete(l, &incoming);
@@ -3112,6 +3115,127 @@ static bool test_lapm_idle_supervision(void)
 		modem_ec_exit(m);
 		modem_delete(m);
 	}
+	return true;
+}
+
+static bool test_lapm_acknowledgement_progress(void)
+{
+	enum { DATA = 2, DISC = 3, STALL, ACK, PEER_BUSY, LOCAL_BUSY };
+	static const uint8_t starts[] = { 0, 127 };
+	static const uint8_t payload[] = { 'X', 'Y' };
+	struct modem_driver driver = {
+		.name = "LAPM progress", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+
+	for (size_t start = 0; start < ARRAY_LENGTH(starts); ++start)
+	for (unsigned scenario = STALL; scenario <= LOCAL_BUSY; ++scenario) {
+		struct modem *m = modem_create(&driver, driver.name);
+		frame_t *outgoing;
+		unsigned base = starts[start];
+		uint8_t wire[] = { 0, 0x7f, 0 }; /* SABME P=1 */
+		frame_t incoming = { .buf = wire, .count = 2 };
+
+		CHECK(m != NULL, "progress fixture allocation failed");
+		m->cfg.ec = 1;
+		m->cfg.comp = 0;
+		m->cfg.ec_tx_info_size = m->cfg.ec_tx_win_size = 1;
+		m->rx_rate = m->tx_rate = 28800;
+		CHECK(modem_ec_init(m) == 0, "progress fixture initialization failed");
+		modem_hdlc_start(m);
+		modem_ec_start(m);
+		m->get_bits = modem_hdlc_get_bits;
+		m->put_bits = modem_hdlc_put_bits;
+		struct lapm_state *l = &m->ec.lapm;
+		wire[0] = l->rsp_addr;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		outgoing = m->packer.hdlc.get_tx_frame(l);
+		CHECK(outgoing != NULL && outgoing->buf[1] == 0x73, "progress fixture UA missing");
+		m->packer.hdlc.tx_complete(l, outgoing);
+		l->va = l->vs = base;
+		memset(&lapm_source, 0, sizeof(lapm_source));
+		lapm_source.data = payload;
+		lapm_source.length = sizeof(payload);
+		m->get_chars = scripted_lapm_source;
+		outgoing = m->packer.hdlc.get_tx_frame(l);
+		CHECK(outgoing != NULL && outgoing->size == 4 && outgoing->buf[3] == 'X',
+		      "progress fixture first information missing");
+		m->packer.hdlc.tx_complete(l, outgoing);
+		wire[0] = l->cmd_addr;
+		wire[1] = 1; /* RR F=1, unchanged N(R) */
+		wire[2] = (uint8_t)((base << 1) | 1);
+		incoming.count = 3;
+		for (unsigned expiry = 1; expiry <= 6; ++expiry) {
+			m->bit_timer_func(m);
+			if (expiry == 6) {
+				CHECK(l->state == DISC && !modem_ec_take_retrain_request(m),
+				      "nonadvancing final replies left an unbounded data stall");
+				outgoing = m->packer.hdlc.get_tx_frame(l);
+				CHECK(outgoing != NULL && outgoing->buf[1] == 0x53,
+				      "exhausted data progress did not send DISC");
+				m->packer.hdlc.tx_complete(l, outgoing);
+				break;
+			}
+			CHECK(l->state == DATA && l->stalled_polls == expiry &&
+			      modem_ec_take_retrain_request(m) == (expiry == 2) &&
+			      !modem_ec_take_retrain_request(m),
+			      "nonadvancing enquiries did not request exactly one recovery");
+			if (expiry == 2) {
+				CHECK(modem_ec_resume_after_retrain(m) == 0 && l->stalled_polls == 2 &&
+				      l->stalled_retrain, "physical recovery reset data-progress history");
+			}
+			while ((outgoing = m->packer.hdlc.get_tx_frame(l)) != NULL) {
+				CHECK(outgoing->size == 3 && outgoing->buf[1] == 1 &&
+				      outgoing->buf[2] == 1, "progress enquiry changed its wire format");
+				m->packer.hdlc.tx_complete(l, outgoing);
+			}
+			m->packer.hdlc.rx_complete(l, &incoming);
+			outgoing = m->packer.hdlc.get_tx_frame(l);
+			CHECK(outgoing != NULL && outgoing->size == 4 &&
+			      outgoing->buf[1] == (uint8_t)(base << 1) && outgoing->buf[3] == 'X' &&
+			      l->va == base && lapm_source.offset == 1,
+			      "unchanged acknowledgement lost or consumed pending data");
+			m->packer.hdlc.tx_complete(l, outgoing);
+			if (expiry == 2 && scenario != STALL)
+				break;
+		}
+		if (scenario == ACK) {
+			wire[2] = (uint8_t)(((base + 1) & 127) << 1); /* RR F=0 advances V(A). */
+			m->packer.hdlc.rx_complete(l, &incoming);
+			CHECK(!l->stalled_polls && !l->stalled_retrain && l->va == ((base + 1) & 127),
+			      "real acknowledgement progress did not rearm recovery");
+			outgoing = m->packer.hdlc.get_tx_frame(l);
+			CHECK(outgoing != NULL && outgoing->buf[3] == 'Y' && lapm_source.offset == 2,
+			      "acknowledgement progress did not preserve the next payload");
+			m->packer.hdlc.tx_complete(l, outgoing);
+			m->bit_timer_func(m);
+			CHECK(l->stalled_polls == 1 && !modem_ec_take_retrain_request(m),
+			      "new information inherited the previous stall budget");
+		} else if (scenario == PEER_BUSY || scenario == LOCAL_BUSY) {
+			if (scenario == PEER_BUSY) {
+				wire[1] = 5; /* RNR F=0 */
+				wire[2] &= ~1;
+				m->packer.hdlc.rx_complete(l, &incoming);
+			} else
+				l->busy = 1;
+			wire[2] |= 1;
+			for (unsigned expiry = 0; expiry < 10; ++expiry) {
+				m->bit_timer_func(m);
+				CHECK(l->state == DATA && !l->stalled_polls &&
+				      !modem_ec_take_retrain_request(m), "flow control consumed channel recovery");
+				while ((outgoing = m->packer.hdlc.get_tx_frame(l)) != NULL)
+					m->packer.hdlc.tx_complete(l, outgoing);
+				m->packer.hdlc.rx_complete(l, &incoming);
+				while ((outgoing = m->packer.hdlc.get_tx_frame(l)) != NULL)
+					m->packer.hdlc.tx_complete(l, outgoing);
+			}
+			CHECK(lapm_source.offset == 1 && l->va == base,
+			      "flow control discarded the pending payload");
+		}
+		modem_ec_exit(m);
+		modem_delete(m);
+	}
+	memset(&lapm_source, 0, sizeof(lapm_source));
 	return true;
 }
 
@@ -4556,6 +4680,7 @@ int main(void)
 		{ "LAPM peer-busy acknowledgement", test_lapm_peer_busy_acknowledgement },
 		{ "LAPM peer-busy timer", test_lapm_peer_busy_timer },
 		{ "LAPM idle supervision", test_lapm_idle_supervision },
+		{ "LAPM acknowledgement progress", test_lapm_acknowledgement_progress },
 		{ "bounded LAPM stalled retrain", test_lapm_stalled_retrain },
 		{ "LAPM retrain preserves link state",
 		  test_lapm_retrain_preserves_link_state },
