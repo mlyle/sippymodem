@@ -98,13 +98,12 @@ static uint8_t nearest_16(
 	return nearest_generated(observation, 0, 16, point_16);
 }
 
-static uint16_t magnitude_16(uint8_t index, bool sparse)
+static uint16_t magnitude_16(uint8_t index)
 {
-	static const uint16_t NORMAL[3] = {
+	/* The Q12 grid has squared radii 2, 10, and 18. These targets
+	 * approximate 4096 * sqrt(radius squared) within one unit. */
+	static const uint16_t RADIUS[3] = {
 		0x16a0, 0x3299, 0x43e2,
-	};
-	static const uint16_t SPARSE[3] = {
-		0, 0x2820, 0,
 	};
 	struct v32_fixed_point point = point_16(index);
 	uint16_t absolute_i = (uint16_t)(point.i < 0 ? -point.i : point.i);
@@ -112,7 +111,7 @@ static uint16_t magnitude_16(uint8_t index, bool sparse)
 	uint16_t magnitude_index = (uint16_t)(
 		((absolute_i + absolute_q) >> 13) - 1u);
 
-	return sparse ? SPARSE[magnitude_index] : NORMAL[magnitude_index];
+	return RADIUS[magnitude_index];
 }
 
 static uint8_t symbol_16(uint8_t index)
@@ -479,7 +478,7 @@ enum v32_decision_result v32_decide_tcm(
 	case 3:
 		selected = nearest_16(observation);
 		phase = PHASE_16[selected];
-		magnitude = magnitude_16(selected, false);
+		magnitude = magnitude_16(selected);
 		break;
 	case 4:
 		selected = quantize_32(observation);
@@ -551,7 +550,7 @@ enum v32_decision_result v32_decide_uncoded_16(
 	selected = nearest_16(observation);
 	next.symbol = symbol_16(selected);
 	next.equalizer = equalizer_decision(
-		observation, PHASE_16[selected], magnitude_16(selected, true),
+		observation, PHASE_16[selected], magnitude_16(selected),
 		adapt_on_error);
 	*decision = next;
 	return V32_DECISION_OK;

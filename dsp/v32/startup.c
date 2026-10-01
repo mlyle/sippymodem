@@ -4,9 +4,8 @@
 
 #include <stddef.h>
 
-/* This controller starts at TRN. The datapump owns the preceding answer-tone,
- * line-turnaround and conditioning exchange; two-wire echo-canceller training
- * remains follow-up work. */
+/* The datapump owns line turnaround and physical conditioning. This owner
+ * retains the rate and coding exchanged by R1/R2/R3/E. */
 
 enum {
 	V32_IMPLEMENTED_RATES = V32_RATE_CAPABILITY_4800 |
@@ -15,14 +14,6 @@ enum {
 				V32_RATE_CAPABILITY_12000 |
 				V32_RATE_CAPABILITY_14400,
 };
-
-static bool rate_requires_trellis(uint8_t rate)
-{
-	return rate == V32_RATE_CAPABILITY_7200 ||
-	       rate == V32_RATE_CAPABILITY_9600 ||
-	       rate == V32_RATE_CAPABILITY_12000 ||
-	       rate == V32_RATE_CAPABILITY_14400;
-}
 
 static bool offer_is_valid(
 	enum v32_rate_signal_type type,
@@ -39,9 +30,57 @@ static struct v32_rate_offer rate_offer(uint8_t rates)
 {
 	return (struct v32_rate_offer){
 		.rates = rates,
-		.trellis_at_highest_rate = rate_requires_trellis(
-			v32_rate_highest(rates)),
+		.trellis_at_highest_rate =
+			v32_rate_highest(rates) > V32_RATE_CAPABILITY_4800,
 	};
+}
+
+static struct v32_rate_offer offer_at_rate(
+	const struct v32_rate_offer *available, uint8_t rate)
+{
+	struct v32_rate_offer selected = rate_offer(rate);
+
+	if (rate == v32_rate_highest(available->rates))
+		selected.trellis_at_highest_rate = available->trellis_at_highest_rate;
+	return selected;
+}
+
+static bool offer_permits_selection(
+	const struct v32_rate_offer *available, const struct v32_rate_offer *selected)
+{
+	struct v32_rate_offer coding = offer_at_rate(available, selected->rates);
+
+	/* Trellis availability does not exclude mandatory uncoded 9600.
+	 * Selecting trellis requires that it was offered at that rate. */
+	return selected->rates != 0 &&
+	       (selected->rates & available->rates) == selected->rates &&
+	       (!selected->trellis_at_highest_rate || coding.trellis_at_highest_rate);
+}
+
+static bool decode_local_offer(
+	uint16_t word, enum v32_rate_signal_type expected_type,
+	uint8_t rates, struct v32_rate_offer *offer)
+{
+	enum v32_rate_signal_type type;
+	uint16_t canonical;
+
+	return v32_rate_signal_decode(word, &type, offer) == V32_RATE_SIGNAL_OK &&
+	       type == expected_type && offer->rates == rates &&
+	       v32_rate_signal_encode(type, offer, &canonical) == V32_RATE_SIGNAL_OK &&
+	       canonical == word;
+}
+
+bool v32_startup_selected_offer(
+	const struct v32_startup *startup, struct v32_rate_offer *offer)
+{
+	struct v32_rate_offer selected;
+
+	if (startup == NULL || offer == NULL || startup->selected_rate == 0 ||
+	    !decode_local_offer(startup->end_word, V32_END_SIGNAL,
+			startup->selected_rate, &selected))
+		return false;
+	*offer = selected;
+	return true;
 }
 
 static bool role_is_valid(enum v32_endpoint_role role)
@@ -65,23 +104,16 @@ static bool phase_is_valid_for_role(
 
 static bool words_are_valid(const struct v32_startup *startup)
 {
-	struct v32_rate_offer offer =
-		rate_offer(startup->transmitted_rates);
-	uint16_t rate_word;
-	uint16_t end_word = 0;
+	struct v32_rate_offer transmitted, selected;
 
-	if (v32_rate_signal_encode(
-		    V32_RATE_SIGNAL, &offer, &rate_word) !=
-	    V32_RATE_SIGNAL_OK)
+	if (!decode_local_offer(startup->rate_word, V32_RATE_SIGNAL,
+			startup->transmitted_rates, &transmitted))
 		return false;
-	if (startup->selected_rate != 0) {
-		offer = rate_offer(startup->selected_rate);
-		if (v32_rate_signal_encode(
-			    V32_END_SIGNAL, &offer, &end_word) !=
-		    V32_RATE_SIGNAL_OK)
-			return false;
-	}
-	return startup->rate_word == rate_word && startup->end_word == end_word;
+	if (startup->selected_rate == 0)
+		return startup->end_word == 0;
+	if (!v32_startup_selected_offer(startup, &selected))
+		return false;
+	return offer_permits_selection(&transmitted, &selected);
 }
 
 static bool rates_are_valid(const struct v32_startup *startup)
@@ -125,46 +157,27 @@ static bool rates_are_valid(const struct v32_startup *startup)
 	       !startup->selection_expected;
 }
 
-static bool configure_caller_response(
-	struct v32_startup *startup, uint8_t available_rates)
+static bool configure_rates(
+	struct v32_startup *startup, const struct v32_rate_offer *transmitted,
+	const struct v32_rate_offer *selected)
 {
-	struct v32_rate_offer available = rate_offer(available_rates);
 	uint16_t rate_word;
+	uint16_t end_word = 0;
 
-	if (available_rates == 0 ||
-	    (available_rates & (uint8_t)~startup->supported_rates) != 0 ||
+	if (transmitted->rates == 0 ||
+	    (transmitted->rates & (uint8_t)~startup->supported_rates) != 0 ||
 	    v32_rate_signal_encode(
-		    V32_RATE_SIGNAL, &available, &rate_word) !=
+		    V32_RATE_SIGNAL, transmitted, &rate_word) !=
 		    V32_RATE_SIGNAL_OK)
 		return false;
-	startup->transmitted_rates = available_rates;
-	startup->rate_word = rate_word;
-	return true;
-}
-
-static bool configure_selected_rate(
-	struct v32_startup *startup, uint8_t selected_rate,
-	uint8_t transmitted_rates)
-{
-	struct v32_rate_offer transmitted =
-		rate_offer(transmitted_rates);
-	struct v32_rate_offer selected = rate_offer(selected_rate);
-	uint16_t rate_word;
-	uint16_t end_word;
-
-	if (transmitted_rates == 0 ||
-	    (transmitted_rates & (uint8_t)~startup->supported_rates) != 0 ||
-	    (selected_rate & transmitted_rates) == 0 ||
-	    (selected_rate & (uint8_t)(selected_rate - 1u)) != 0 ||
-	    v32_rate_signal_encode(
-		    V32_RATE_SIGNAL, &transmitted, &rate_word) !=
-		    V32_RATE_SIGNAL_OK ||
-	    v32_rate_signal_encode(
-		    V32_END_SIGNAL, &selected, &end_word) !=
-		    V32_RATE_SIGNAL_OK)
-		return false;
-	startup->selected_rate = selected_rate;
-	startup->transmitted_rates = transmitted_rates;
+	if (selected != NULL) {
+		if (!offer_permits_selection(transmitted, selected) ||
+		    v32_rate_signal_encode(V32_END_SIGNAL, selected, &end_word) !=
+			    V32_RATE_SIGNAL_OK)
+			return false;
+	}
+	startup->selected_rate = selected != NULL ? selected->rates : 0;
+	startup->transmitted_rates = transmitted->rates;
 	startup->rate_word = rate_word;
 	startup->end_word = end_word;
 	return true;
@@ -391,37 +404,36 @@ enum v32_startup_result v32_startup_next_transmit(
 	return V32_STARTUP_OK;
 }
 
-static uint8_t compatible_rates(
-	const struct v32_startup *startup,
-	const struct v32_rate_offer *offer)
+static struct v32_rate_offer common_offer(
+	const struct v32_rate_offer *local, const struct v32_rate_offer *peer)
 {
-	uint8_t common = startup->supported_rates & offer->rates;
+	uint8_t common = local->rates & peer->rates;
+	uint8_t highest = v32_rate_highest(common);
+	struct v32_rate_offer available = offer_at_rate(local, highest);
+	struct v32_rate_offer remote = offer_at_rate(peer, highest);
 
-	if (!offer->trellis_at_highest_rate &&
-	    v32_rate_highest(offer->rates) == V32_RATE_CAPABILITY_9600)
-		common &= (uint8_t)~v32_rate_highest(offer->rates);
-	return common;
-}
-
-static bool offer_selects_rate(
-	const struct v32_rate_offer *offer, uint8_t selected_rate)
-{
-	return offer->rates == selected_rate &&
-	       offer->trellis_at_highest_rate ==
-		       rate_requires_trellis(selected_rate) &&
-	       selected_rate != 0;
+	/* At 9600, use trellis only when both peers offer it. V.32 1(e)
+	 * requires support for the uncoded 16-state alternative. */
+	available.rates = common;
+	available.trellis_at_highest_rate &= remote.trellis_at_highest_rate;
+	return available;
 }
 
 static enum v32_startup_result observe_rate_event(
 	struct v32_startup *startup,
 	const struct v32_rate_offer *offer)
 {
-	if (startup->phase == V32_CALLER_WAIT_OFFER) {
-		uint8_t available = compatible_rates(startup, offer);
+	struct v32_rate_offer local;
 
-		if (available == 0)
+	if (!decode_local_offer(startup->rate_word, V32_RATE_SIGNAL,
+			startup->transmitted_rates, &local))
+		return V32_STARTUP_INVALID_ARGUMENT;
+	if (startup->phase == V32_CALLER_WAIT_OFFER) {
+		struct v32_rate_offer available = common_offer(&local, offer);
+
+		if (available.rates == 0)
 			return V32_STARTUP_NO_COMMON_RATE;
-		if (!configure_caller_response(startup, available))
+		if (!configure_rates(startup, &available, NULL))
 			return V32_STARTUP_INVALID_ARGUMENT;
 		enter_phase(startup, V32_CALLER_SEND_RESPONSE);
 	} else if (startup->phase == V32_CALLER_SEND_RESPONSE) {
@@ -434,22 +446,21 @@ static enum v32_startup_result observe_rate_event(
 
 			selection.rates = selected;
 
-			if (!offer_selects_rate(&selection, selected) ||
-			    (selected & startup->transmitted_rates) == 0)
+			if (!offer_permits_selection(&local, &selection))
 				return V32_STARTUP_NO_COMMON_RATE;
-			if (!configure_selected_rate(
-				    startup, selected, startup->transmitted_rates))
+			if (!configure_rates(startup, &local, &selection))
 				return V32_STARTUP_INVALID_ARGUMENT;
 			startup->end_pending = true;
 			startup->selection_expected = false;
 		}
 	} else if (startup->phase == V32_ANSWERER_SEND_OFFER) {
-		uint8_t selected =
-			v32_rate_highest(compatible_rates(startup, offer));
+		struct v32_rate_offer available = common_offer(&local, offer);
+		uint8_t selected = v32_rate_highest(available.rates);
 
 		if (selected == 0)
 			return V32_STARTUP_NO_COMMON_RATE;
-		if (!configure_selected_rate(startup, selected, selected))
+		available.rates = selected;
+		if (!configure_rates(startup, &available, &available))
 			return V32_STARTUP_INVALID_ARGUMENT;
 		enter_phase(startup, V32_ANSWERER_RETRAIN);
 	}
@@ -460,7 +471,10 @@ static enum v32_startup_result observe_end_event(
 	struct v32_startup *startup,
 	const struct v32_rate_offer *offer)
 {
-	if (!offer_selects_rate(offer, startup->selected_rate))
+	struct v32_rate_offer selected;
+
+	if (!v32_startup_selected_offer(startup, &selected) ||
+	    !v32_rate_offers_match(offer, &selected))
 		return V32_STARTUP_NO_COMMON_RATE;
 	if (startup->phase == V32_ANSWERER_SEND_SELECTION)
 		startup->end_pending = true;

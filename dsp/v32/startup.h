@@ -66,7 +66,7 @@ struct v32_startup {
 	bool selection_expected;
 };
 
-/* 4800 is uncoded; enabled rates above 4800 use trellis coding. */
+/* Prefer trellis above 4800; 9600 also negotiates the uncoded alternative. */
 enum v32_startup_result v32_startup_init(
 	struct v32_startup *startup,
 	enum v32_endpoint_role role, uint8_t supported_rates);
@@ -74,6 +74,11 @@ bool v32_startup_is_valid(
 	const struct v32_startup *startup);
 bool v32_startup_is_complete(
 	const struct v32_startup *startup);
+
+/* Read the rate and coding retained in the locally selected E sequence.
+ * A missing selection or invalid word leaves offer unchanged. */
+bool v32_startup_selected_offer(
+	const struct v32_startup *startup, struct v32_rate_offer *offer);
 
 /* Call after the calling modem's second receiver conditioning completes. */
 enum v32_startup_result v32_startup_expect_selection(

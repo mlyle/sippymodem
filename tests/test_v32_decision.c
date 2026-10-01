@@ -159,6 +159,13 @@ static bool test_fixed_geometry_and_small_slicers(void)
 		      equalizer_decision_is_complete(
 			      &decision.equalizer, &sample, false),
 		      "uncoded decision point %u changed", raw);
+		int64_t magnitude = decision.equalizer.ideal_magnitude;
+		int64_t radius_error = magnitude * magnitude -
+			((int64_t)point.i * point.i + (int64_t)point.q * point.q);
+
+		CHECK(magnitude > 0 && radius_error >= -2 * magnitude &&
+		      radius_error <= 2 * magnitude,
+		      "uncoded point %u did not retain its constellation radius", raw);
 		uncoded_hash = hash_u16(uncoded_hash, (uint16_t)point.i);
 		uncoded_hash = hash_u16(uncoded_hash, (uint16_t)point.q);
 		uncoded_hash = hash_u16(
@@ -166,7 +173,7 @@ static bool test_fixed_geometry_and_small_slicers(void)
 		uncoded_hash = hash_u16(
 			uncoded_hash, decision.equalizer.ideal_magnitude);
 	}
-	CHECK(uncoded_hash == UINT64_C(0xa40013ae2f6bfbdb),
+	CHECK(uncoded_hash == UINT64_C(0x5fd76a6541cc1ab7),
 	      "uncoded oracle digest was %016llx",
 	      (unsigned long long)uncoded_hash);
 	return true;

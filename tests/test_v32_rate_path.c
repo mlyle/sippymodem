@@ -26,7 +26,8 @@ enum {
 	 * words before the first pair which the standard permits us to accept. */
 	TEST_ANSWERING_RATE_OBSERVATIONS = 4 * V32_RATE_SIGNAL_DIBITS,
 	TEST_SELECTED_MODES = 6,
-	TEST_DATA_GROUPS = 64,
+	/* Exercise adaptation well beyond its first few dozen decisions. */
+	TEST_DATA_GROUPS = 1024,
 };
 
 struct generated_source {

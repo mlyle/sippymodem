@@ -43,8 +43,9 @@ static enum v32_startup_output expected_output(
 	return V32_STARTUP_DIFFERENTIAL_DIBIT;
 }
 
-static bool check_role_exchange(
-	uint8_t caller_rates, uint8_t answerer_rates, uint8_t expected_rate)
+static bool check_coding_exchange(
+	uint8_t caller_rates, uint8_t answerer_rates, uint8_t expected_rate,
+	bool caller_uncoded, bool answerer_uncoded)
 {
 	struct v32_startup caller;
 	struct v32_startup answerer;
@@ -64,6 +65,7 @@ static bool check_role_exchange(
 			expected_rate == V32_RATE_CAPABILITY_12000 ||
 			expected_rate == V32_RATE_CAPABILITY_14400,
 	};
+	struct v32_rate_offer initial = { 0 };
 	uint32_t caller_phases = 0;
 	uint32_t answerer_phases = 0;
 	uint16_t expected_rate_word;
@@ -83,6 +85,23 @@ static bool check_role_exchange(
 		      V32_STARTUP_OK,
 	      "V.32 startup peers 0x%x/0x%x did not initialize", caller_rates,
 	      answerer_rates);
+	if (caller_uncoded) {
+		initial.rates = caller_rates;
+		CHECK(v32_rate_signal_encode(V32_RATE_SIGNAL, &initial,
+			      &caller.rate_word) == V32_RATE_SIGNAL_OK,
+		      "uncoded caller offer did not initialize");
+	}
+	if (answerer_uncoded) {
+		initial.rates = answerer_rates;
+		CHECK(v32_rate_signal_encode(V32_RATE_SIGNAL, &initial,
+			      &answerer.rate_word) == V32_RATE_SIGNAL_OK,
+		      "uncoded answerer offer did not initialize");
+	}
+	if (expected_rate == V32_RATE_CAPABILITY_9600 &&
+	    (caller_uncoded || answerer_uncoded)) {
+		selected.trellis_at_highest_rate = false;
+		caller_response.trellis_at_highest_rate = false;
+	}
 	for (size_t index = 0; index < TEST_MAX_STARTUP_DIBITS; ++index) {
 		enum v32_startup_output caller_output;
 		enum v32_startup_output answerer_output;
@@ -192,6 +211,13 @@ static bool check_role_exchange(
 	return true;
 }
 
+static bool check_role_exchange(
+	uint8_t caller_rates, uint8_t answerer_rates, uint8_t expected_rate)
+{
+	return check_coding_exchange(caller_rates, answerer_rates, expected_rate,
+				     false, false);
+}
+
 static bool test_rate_selection(void)
 {
 	uint8_t v32_rates = V32_RATE_CAPABILITY_4800 |
@@ -238,31 +264,74 @@ static bool test_rate_selection(void)
 				   V32_RATE_CAPABILITY_9600);
 }
 
-static bool test_uncoded_9600_fallback(void)
+static bool test_uncoded_9600_negotiation(void)
 {
-	struct v32_rate_offer uncoded_offer = {
-		.rates = V32_RATE_CAPABILITY_4800 |
-			 V32_RATE_CAPABILITY_9600,
-		.trellis_at_highest_rate = false,
+	static const uint8_t masks[] = {
+		V32_RATE_CAPABILITY_4800 | V32_RATE_CAPABILITY_9600,
+		V32_RATE_CAPABILITY_9600,
 	};
-	struct v32_startup caller;
-	uint16_t word;
 
-	CHECK(v32_startup_init(
-		      &caller, V32_CALLER,
-		      V32_RATE_CAPABILITY_4800 |
-			      V32_RATE_CAPABILITY_9600) ==
-		      V32_STARTUP_OK &&
-		      v32_rate_signal_encode(
-			      V32_RATE_SIGNAL, &uncoded_offer,
-			      &word) == V32_RATE_SIGNAL_OK &&
-		      observe_word(&caller, word) && observe_word(&caller, word) &&
-		      caller.phase == V32_CALLER_SEND_RESPONSE &&
-		      caller.transmitted_rates ==
-			      V32_RATE_CAPABILITY_4800 &&
-		      caller.selected_rate == 0 && caller.rate_word == 0x0511 &&
-		      caller.end_word == 0,
-	      "V.32 startup did not fall back from uncoded 9600");
+	for (size_t index = 0; index < ARRAY_LENGTH(masks); ++index)
+		CHECK(check_coding_exchange(masks[index], masks[index],
+			      V32_RATE_CAPABILITY_9600, false, true) &&
+		      check_coding_exchange(masks[index], masks[index],
+			      V32_RATE_CAPABILITY_9600, true, false) &&
+		      check_coding_exchange(masks[index], masks[index],
+			      V32_RATE_CAPABILITY_9600, true, true),
+		      "V.32 peers did not retain uncoded 9600 for mask %x", masks[index]);
+	return true;
+}
+
+static bool test_coding_selection_is_retained(void)
+{
+	const struct v32_rate_offer uncoded = { .rates = V32_RATE_CAPABILITY_9600 };
+	const struct v32_rate_offer coded = {
+		.rates = V32_RATE_CAPABILITY_9600, .trellis_at_highest_rate = true,
+	};
+	struct v32_startup caller, saved;
+	struct v32_rate_offer selected = { .rates = V32_RATE_CAPABILITY_4800 };
+	struct v32_rate_offer saved_offer = selected;
+
+	CHECK(v32_startup_init(&caller, V32_CALLER, uncoded.rates) == V32_STARTUP_OK &&
+	      !v32_startup_selected_offer(&caller, &selected) &&
+	      v32_rate_offers_match(&selected, &saved_offer) &&
+	      v32_startup_note_rate_signal(&caller, &uncoded) == V32_STARTUP_OK &&
+	      caller.rate_word == 0x0311 &&
+	      v32_startup_expect_selection(&caller) == V32_STARTUP_OK,
+	      "uncoded R1 was not preserved in the caller's R2");
+	saved = caller;
+	CHECK(v32_startup_note_rate_signal(&caller, &coded) == V32_STARTUP_NO_COMMON_RATE &&
+	      memcmp(&caller, &saved, sizeof(caller)) == 0 &&
+	      v32_startup_note_rate_signal(&caller, &uncoded) == V32_STARTUP_OK &&
+	      caller.end_word == 0xf311 &&
+	      v32_startup_selected_offer(&caller, &selected) &&
+	      v32_rate_offers_match(&selected, &uncoded),
+	      "R3 changed the coding offered by R2 or lost the uncoded E selection");
+	saved = caller;
+	CHECK(v32_startup_note_end_signal(&caller, &coded) == V32_STARTUP_NO_COMMON_RATE &&
+	      memcmp(&caller, &saved, sizeof(caller)) == 0,
+	      "a mismatched peer E changed the selected coding");
+	caller.end_word ^= 0x0080;
+	CHECK(!v32_startup_is_valid(&caller),
+	      "locally stored E contradicted the coding in R2");
+	caller = saved;
+	caller.end_word |= 0x0002;
+	saved_offer = selected;
+	CHECK(!v32_startup_is_valid(&caller) &&
+	      !v32_startup_selected_offer(&caller, &selected) &&
+	      v32_rate_offers_match(&selected, &saved_offer) &&
+	      !v32_startup_selected_offer(NULL, &selected) &&
+	      !v32_startup_selected_offer(&saved, NULL),
+	      "invalid selected-word lookup changed its output");
+	CHECK(v32_startup_init(&caller, V32_CALLER, coded.rates) == V32_STARTUP_OK &&
+	      v32_startup_note_rate_signal(&caller, &coded) == V32_STARTUP_OK &&
+	      caller.rate_word == 0x0391 &&
+	      v32_startup_expect_selection(&caller) == V32_STARTUP_OK &&
+	      v32_startup_note_rate_signal(&caller, &uncoded) == V32_STARTUP_OK &&
+	      caller.end_word == 0xf311 &&
+	      v32_startup_selected_offer(&caller, &selected) &&
+	      v32_rate_offers_match(&selected, &uncoded),
+	      "trellis availability prevented the peer from selecting uncoded 9600");
 	return true;
 }
 
@@ -794,7 +863,8 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "highest common rate", test_rate_selection },
-		{ "uncoded 9600 fallback", test_uncoded_9600_fallback },
+		{ "uncoded 9600 negotiation", test_uncoded_9600_negotiation },
+		{ "retained coding selection", test_coding_selection_is_retained },
 		{ "higher-rate offer fallback", test_higher_rate_offer_fallback },
 		{ "training boundary", test_training_boundary },
 		{ "selection readiness and rate boundary",

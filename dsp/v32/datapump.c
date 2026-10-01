@@ -393,11 +393,15 @@ static uint8_t rate_capabilities(const struct modem *modem, enum DP_ID id)
 static uint8_t selected_trellis_data_bits(
 	const struct v32_datapump *datapump)
 {
+	struct v32_rate_offer selected;
+
 	switch (datapump->startup.selected_rate) {
 	case V32_RATE_CAPABILITY_7200:
 		return V32_7200_DATA_BITS;
 	case V32_RATE_CAPABILITY_9600:
-		return V32_9600_TRELLIS_DATA_BITS;
+		return v32_startup_selected_offer(&datapump->startup, &selected) &&
+		       selected.trellis_at_highest_rate ?
+			V32_9600_TRELLIS_DATA_BITS : 0;
 	case V32_RATE_CAPABILITY_12000:
 		return V32_12000_DATA_BITS;
 	case V32_RATE_CAPABILITY_14400:
@@ -410,12 +414,6 @@ static uint8_t selected_trellis_data_bits(
 static bool uses_trellis(const struct v32_datapump *datapump)
 {
 	return selected_trellis_data_bits(datapump) != 0;
-}
-
-static bool uses_uncoded_9600(const struct v32_datapump *datapump)
-{
-	return datapump->startup.selected_rate == V32_RATE_CAPABILITY_9600 &&
-	       !uses_trellis(datapump);
 }
 
 static struct v32_datapump *v32_from_dp(struct dp *dp)
@@ -679,6 +677,9 @@ static int next_transmit_point(
 	uint8_t input = 3;
 	uint8_t symbol;
 	uint8_t trellis_data_bits = selected_trellis_data_bits(datapump);
+	bool uncoded_9600 =
+		datapump->startup.selected_rate == V32_RATE_CAPABILITY_9600 &&
+		trellis_data_bits == 0;
 	size_t bit_count = V32_4800_BITS_PER_SYMBOL;
 	enum v32_startup_output output;
 	enum v32_framing_result framing_result;
@@ -695,7 +696,7 @@ static int next_transmit_point(
 				return -1;
 			*linked = true;
 		}
-		if (uses_uncoded_9600(datapump))
+		if (uncoded_9600)
 			bit_count = V32_9600_BITS_PER_SYMBOL;
 		else if (trellis_data_bits != 0)
 			bit_count = trellis_data_bits;
@@ -705,7 +706,7 @@ static int next_transmit_point(
 		input = pack_bits(bits, bit_count);
 	}
 	if (output == V32_STARTUP_SELECTED_RATE_MARK &&
-	    uses_uncoded_9600(datapump))
+	    uncoded_9600)
 		input = 15;
 	if (output == V32_STARTUP_SELECTED_RATE_MARK &&
 	    trellis_data_bits != 0)
@@ -715,7 +716,7 @@ static int next_transmit_point(
 	     output == V32_STARTUP_DATA)) {
 		if (encode_trellis_transmit_point(datapump, input) != 0)
 			return -1;
-	} else if (uses_uncoded_9600(datapump) &&
+	} else if (uncoded_9600 &&
 	    (output == V32_STARTUP_SELECTED_RATE_MARK ||
 	     output == V32_STARTUP_DATA)) {
 		framing_result = v32_9600_symbol_encode(
@@ -1281,21 +1282,6 @@ static int finish_fixed_end(
 	return advance_fixed_b1(datapump, 0, result, linked);
 }
 
-static bool selected_offer_from_startup(
-	const struct v32_startup *startup,
-	struct v32_rate_offer *offer)
-{
-	enum v32_rate_signal_type type;
-
-	return startup != NULL && offer != NULL &&
-	       startup->selected_rate != 0 &&
-	       v32_rate_signal_decode(
-		       startup->end_word, &type, offer) ==
-		       V32_RATE_SIGNAL_OK &&
-	       type == V32_END_SIGNAL &&
-	       offer->rates == startup->selected_rate;
-}
-
 static int finish_fixed_rate(
 	struct v32_datapump *datapump, bool *linked)
 {
@@ -1319,7 +1305,7 @@ static int finish_fixed_rate(
 		struct v32_end_path end;
 		enum v32_end_path_result end_result;
 
-		if (!selected_offer_from_startup(
+		if (!v32_startup_selected_offer(
 			    &next_startup, &selected_offer))
 			return -1;
 		end_result = v32_end_path_init(
@@ -1369,7 +1355,7 @@ static int finish_fixed_rate(
 		if ((next_startup.selected_rate & handoff.offer.rates) !=
 			    next_startup.selected_rate ||
 		    next_startup.selection_expected ||
-		    !selected_offer_from_startup(&next_startup, &selected_offer))
+		    !v32_startup_selected_offer(&next_startup, &selected_offer))
 			return -1;
 		result = v32_end_path_init(
 			&end, &handoff, &selected_offer,

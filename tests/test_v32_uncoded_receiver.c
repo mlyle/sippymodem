@@ -190,9 +190,7 @@ static bool test_feedback_composition(
 		struct v32_uncoded_decision decision;
 		struct v32_uncoded_symbol symbol;
 		struct v32_fixed_point point;
-		uint16_t absolute_i;
-		uint16_t absolute_q;
-		uint16_t expected_magnitude;
+		struct v32_tcm_decision trellis_decision;
 		uint8_t expected_group;
 		bool adapt_on_error = (signal & 1u) != 0;
 
@@ -207,16 +205,14 @@ static bool test_feedback_composition(
 			.epoch = (uint64_t)signal + 1u,
 			.lineage = UINT64_C(0x9600f00000000001),
 		};
-		absolute_i = (uint16_t)(point.i < 0 ? -point.i : point.i);
-		absolute_q = (uint16_t)(point.q < 0 ? -point.q : point.q);
-		expected_magnitude = absolute_i + absolute_q == 0x4000u ?
-			0x2820u : 0;
-		CHECK(v32_decide_uncoded_16(
+		CHECK(v32_decide_tcm(&observation, 3, adapt_on_error,
+			      &trellis_decision) == V32_DECISION_OK &&
+		      v32_decide_uncoded_16(
 			      &observation, adapt_on_error, &decision) ==
 			      V32_DECISION_OK &&
 		      decision.symbol == signal &&
-		      decision.equalizer.ideal_magnitude ==
-			      expected_magnitude,
+		      equalizer_decisions_match(
+			      &decision.equalizer, &trellis_decision.equalizer),
 		      "feedback decision changed point %u", signal);
 		CHECK(v32_9600_symbol_decode(
 			      &expected_receiver.decoder, signal,
