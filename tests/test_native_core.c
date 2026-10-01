@@ -2993,6 +2993,128 @@ static bool test_lapm_repeated_sequence_error_poll(void)
 	return true;
 }
 
+static bool test_lapm_idle_supervision(void)
+{
+	struct modem_driver driver = {
+		.name = "LAPM idle supervision", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+
+	for (unsigned caller = 0; caller < 2; ++caller) {
+		struct modem *m = modem_create(&driver, driver.name);
+		frame_t *outgoing;
+		uint8_t wire[] = { 0, 0x7f, 0 }; /* SABME P=1 */
+		frame_t incoming = { .buf = wire, .count = 2 };
+		uint8_t bits[16];
+		void (*idle_timeout)(struct modem *);
+		int remaining;
+
+		CHECK(m != NULL, "idle LAPM allocation failed");
+		m->caller = caller;
+		m->cfg.ec = 1;
+		m->cfg.comp = 0;
+		m->rx_rate = 48000;
+		m->tx_rate = 26400;
+		CHECK(modem_ec_init(m) == 0, "idle LAPM initialization failed");
+		modem_hdlc_start(m);
+		modem_ec_start(m);
+		m->get_bits = modem_hdlc_get_bits;
+		m->put_bits = modem_hdlc_put_bits;
+		struct lapm_state *l = &m->ec.lapm;
+		if (m->packer.hdlc.tx_preamble_complete != NULL) {
+			uint8_t response[LAPM_MAX_INFO_SIZE + 2];
+			frame_t xid = { .buf = response };
+			void (*complete)(struct modem *) = m->packer.hdlc.tx_preamble_complete;
+
+			m->packer.hdlc.tx_preamble_complete = NULL;
+			m->packer.hdlc.tx_preamble_flags = 0;
+			complete(m);
+			outgoing = m->packer.hdlc.get_tx_frame(l);
+			CHECK(outgoing != NULL && outgoing->size <= (int)sizeof(response),
+			      "originator idle fixture did not send XID");
+			xid.count = outgoing->size;
+			memcpy(response, outgoing->buf, (size_t)xid.count);
+			response[0] = l->cmd_addr;
+			m->packer.hdlc.tx_complete(l, outgoing);
+			m->packer.hdlc.rx_complete(l, &xid);
+			CHECK(!l->config, "originator idle fixture did not complete XID");
+			outgoing = m->packer.hdlc.get_tx_frame(l);
+			CHECK(outgoing != NULL && outgoing->buf[1] == 0x7f,
+			      "originator idle fixture did not send SABME");
+			m->packer.hdlc.tx_complete(l, outgoing);
+		}
+		wire[0] = l->rsp_addr;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(l->state == 2 && m->bit_timer == 744000 && !l->rtx_count,
+		      "established idle link did not start supervision");
+		idle_timeout = m->bit_timer_func;
+		outgoing = m->packer.hdlc.get_tx_frame(l);
+		CHECK(outgoing != NULL && outgoing->buf[1] == 0x73,
+		      "idle LAPM did not acknowledge SABME");
+		m->packer.hdlc.tx_complete(l, outgoing);
+		m->bit_timer = 148800; /* Two seconds remain. */
+		CHECK(modem_set_param(m, MDMPRM_TX_RATE, 4800) == 0 &&
+		      modem_set_param(m, MDMPRM_RX_RATE, 7200) == 0 &&
+		      m->bit_timer == 24000 && m->bit_timer_func == idle_timeout,
+		      "rate publication changed the remaining idle interval");
+		wire[1] = 1; /* RR command P=0 */
+		incoming.count = 3;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(m->bit_timer == 120000 && !l->rtx_count &&
+		      !modem_ec_take_retrain_request(m),
+		      "valid idle traffic did not refresh supervision");
+		outgoing = m->packer.hdlc.get_tx_frame(l);
+		CHECK(outgoing != NULL && outgoing->buf[2] == 0,
+		      "idle ready command did not receive its reply");
+		m->packer.hdlc.tx_complete(l, outgoing);
+		m->bit_timer = 1;
+		CHECK(modem_get_bits(m, 1, bits, (int)sizeof(bits)) == (int)sizeof(bits) &&
+		      l->rtx_count == 1 && m->bit_timer == 36000 &&
+		      m->bit_timer_func != idle_timeout && !modem_ec_take_retrain_request(m),
+		      "idle expiry did not enter ordinary enquiry recovery");
+		outgoing = m->packer.hdlc.get_tx_frame(l);
+		CHECK(outgoing != NULL && outgoing->buf[0] == l->cmd_addr &&
+		      outgoing->buf[1] == 1 && outgoing->buf[2] == 1,
+		      "idle supervision did not send RR P=1");
+		m->packer.hdlc.tx_complete(l, outgoing);
+		m->bit_timer /= 2;
+		remaining = m->bit_timer;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(m->bit_timer == remaining && l->rtx_count == 1,
+		      "ordinary ready command postponed an unanswered idle poll");
+		outgoing = m->packer.hdlc.get_tx_frame(l);
+		CHECK(outgoing != NULL, "ready command lost its reply during recovery");
+		m->packer.hdlc.tx_complete(l, outgoing);
+		m->bit_timer = 1;
+		CHECK(modem_get_bits(m, 1, bits, (int)sizeof(bits)) == (int)sizeof(bits) &&
+		      l->rtx_count == 2 && l->va == l->vs &&
+		      modem_ec_take_retrain_request(m) && !modem_ec_take_retrain_request(m),
+		      "unanswered idle polls did not request one physical recovery");
+		wire[0] = l->cmd_addr;
+		wire[2] = 1; /* RR response F=1 */
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(!l->rtx_count && !l->stalled_retrain && m->bit_timer == 120000 &&
+		      m->bit_timer_func == idle_timeout,
+		      "final ready response did not restore idle supervision");
+		while ((outgoing = m->packer.hdlc.get_tx_frame(l)) != NULL)
+			m->packer.hdlc.tx_complete(l, outgoing);
+		l->busy = 1;
+		m->bit_timer = 1;
+		CHECK(modem_get_bits(m, 1, bits, (int)sizeof(bits)) == (int)sizeof(bits),
+		      "busy idle timer did not advance");
+		outgoing = m->packer.hdlc.get_tx_frame(l);
+		CHECK(outgoing != NULL && outgoing->buf[1] == 5 && outgoing->buf[2] == 1,
+		      "own-receiver busy did not send RNR P=1");
+		m->packer.hdlc.tx_complete(l, outgoing);
+		m->bit_timer_func(m);
+		CHECK(!modem_ec_take_retrain_request(m),
+		      "idle supervision treated receive backpressure as a channel fault");
+		modem_ec_exit(m);
+		modem_delete(m);
+	}
+	return true;
+}
+
 static bool test_lapm_stalled_retrain(void)
 {
 	enum { ONLINE = 5, LAPM_DATA_STATE = 2, LAPM_DISC_STATE = 3 };
@@ -3039,7 +3161,8 @@ static bool test_lapm_stalled_retrain(void)
 		}
 		frame_t *retained = l->sent_info;
 		/* No requests for flow control, establishment, raw mode, shutdown,
-		 * an unsupported datapump, or just the first unanswered poll. */
+		 * an unsupported datapump, an inactive timer, or the first poll. */
+		int timer = m->bit_timer;
 		for (unsigned excluded = 0; excluded < 10; ++excluded) {
 			l->rtx_count = excluded == 7 ? 1 : 2;
 			l->busy = excluded == 0;
@@ -3050,11 +3173,12 @@ static bool test_lapm_stalled_retrain(void)
 			m->state = excluded == 5 ? 7 : ONLINE;
 			operations.retrain = excluded == 6 ? NULL : request_retrain_dp;
 			m->get_bits = excluded == 8 ? modem_async_get_bits : modem_hdlc_get_bits;
-			l->va = excluded == 9 ? l->vs : 0;
+			m->bit_timer = excluded == 9 ? 0 : timer;
 			modem_process(m, receive, transmit, MODEM_FRAG);
 			CHECK(!retrain_dp.retrain_calls && !l->stalled_retrain,
 			      "excluded stall %u requested retrain", excluded);
 		}
+		m->bit_timer = timer;
 		l->rtx_count = 0;
 		l->va = 0;
 		operations.process = process_stalled_lapm_dp;
@@ -3192,7 +3316,7 @@ static bool test_lapm_peer_busy_acknowledgement(void)
 		wire[1] = RR;
 		incoming.count = 3;
 		m->packer.hdlc.rx_complete(l, &incoming);
-		CHECK(!l->peer_busy && !l->rtx_count && m->bit_timer == 0 &&
+		CHECK(!l->peer_busy && !l->rtx_count && m->bit_timer > 0 &&
 		      l->va == nr && l->vs == nr,
 		      "RR final did not release the acknowledged busy link");
 		for (unsigned int i = acknowledged; i < sizeof(payload); ++i) {
@@ -3438,7 +3562,7 @@ static bool test_lapm_retrain_preserves_link_state(void)
 		modem->packer.hdlc.rx_complete(
 			modem->packer.hdlc.framer, &incoming);
 		CHECK(lapm->peer_busy == 0 && !lapm->retrain_poll &&
-			      modem->bit_timer == 0 &&
+			      modem->bit_timer > 0 &&
 			      lapm->rtx_count == 0 && lapm->vs == 5 &&
 			      lapm->va == 5 && lapm->vr == 6 + (local == 0),
 		      "LAPM %s retrain did not accept peer progress",
@@ -3462,7 +3586,7 @@ static bool test_lapm_retrain_preserves_link_state(void)
 	modem_dp_reconnected(modem);
 	CHECK(modem->retrain_pending == 0 && !lapm->peer_busy &&
 		      !lapm->retrain_poll && lapm->rtx_count == 0 &&
-		      modem->bit_timer == 0 && lapm->vs == 5 && lapm->va == 5 &&
+		      modem->bit_timer > 0 && lapm->vs == 5 && lapm->va == 5 &&
 		      lapm->vr == 6 && modem->pack.bit == 0 &&
 		      modem->unpack.bit == 0,
 	      "clean LAPM retrain invented a recovery poll");
@@ -4431,6 +4555,7 @@ int main(void)
 		{ "LAPM repeated sequence error poll", test_lapm_repeated_sequence_error_poll },
 		{ "LAPM peer-busy acknowledgement", test_lapm_peer_busy_acknowledgement },
 		{ "LAPM peer-busy timer", test_lapm_peer_busy_timer },
+		{ "LAPM idle supervision", test_lapm_idle_supervision },
 		{ "bounded LAPM stalled retrain", test_lapm_stalled_retrain },
 		{ "LAPM retrain preserves link state",
 		  test_lapm_retrain_preserves_link_state },

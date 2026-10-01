@@ -59,11 +59,12 @@
 
 enum {
 	LAPM_TIMER_MIN_MS = 3000,
+	LAPM_IDLE_TIMER_SECONDS = 10,
 	LAPM_TIMER_RESPONSE_MARGIN_MS = 1000,
 	LAPM_TIMER_FRAME_OVERHEAD_OCTETS = 7,
 	LAPM_TIMER_STUFFED_BITS_PER_OCTET = 10,
 	LAPM_TIMER_FALLBACK_BIT_RATE = 57600,
-	/* Give ordinary retransmission two complete T401 intervals first. */
+	/* Allow two unanswered status enquiries before physical recovery. */
 	LAPM_RETRAIN_POLLS = 2,
 };
 
@@ -174,19 +175,9 @@ static unsigned lapm_originator_preamble_flags(const struct modem *m)
 #define T401_STOP(l) 	{ EC_DBG("T401 stop.\n"); \
                           (l)->modem->bit_timer = 0; (l)->rtx_count = 0; \
                           (l)->stalled_retrain = false; }
-#if T403_IMPLEMENTED
-#define TIMER_START(l)  { EC_DBG("T403 stop, T401 start.\n"); \
-                          (l)->rtx_count = 0; \
-			  (l)->modem->bit_timer = lapm_timer_timeout(l); \
-                          (l)->modem->bit_timer_func = t401_timeout; }
-#define TIMER_STOP(l)   { EC_DBG("T401 stop, T403 start.\n"); \
-                          (l)->rtx_count = 0; \
-			  (l)->modem->bit_timer = lapm_timer_timeout(l); \
-                          (l)->modem->bit_timer_func = t403_timeout; }
-#else /* !T403 */
 #define TIMER_START(l) T401_START(l)
-#define TIMER_STOP(l)  T401_STOP(l)
-#endif /* !T403 */
+#define TIMER_STOP(l) start_idle_timer(l)
+
 
 /* xid sub-fields definitions */
 /* param negotiation */
@@ -209,6 +200,8 @@ enum LAPM_STATES { LAPM_IDLE, LAPM_ESTAB, LAPM_DATA, LAPM_DISC };
 
 /* prototypes */
 static int lapm_connect(struct lapm_state *l);
+static void start_idle_timer(struct lapm_state *l);
+static void t403_timeout(struct modem *m);
 static int lapm_disconnect(struct lapm_state *l);
 static void reset_lapm_sequence(struct lapm_state *l);
 
@@ -961,9 +954,11 @@ void modem_ec_update_timer_rate(struct modem *m, uint64_t previous_rate)
 {
 	uint64_t rate, remaining;
 
-	/* T401 is elapsed time stored in duplex bit units. Other users of the
-	 * shared timer (notably the detector's mark preamble) count fixed bits. */
-	if (m == NULL || m->bit_timer <= 0 || m->bit_timer_func != t401_timeout)
+	/* LAPM elapsed-time timers use duplex bit units. Other timer owners,
+	 * including the detector's mark preamble, count fixed bits. */
+	if (m == NULL || m->bit_timer <= 0 ||
+	    (m->bit_timer_func != t401_timeout &&
+	     m->bit_timer_func != t403_timeout))
 		return;
 	rate = (uint64_t)m->rx_rate + m->tx_rate;
 	if (rate == 0)
@@ -977,22 +972,31 @@ void modem_ec_update_timer_rate(struct modem *m, uint64_t previous_rate)
 	m->bit_timer = remaining > INT_MAX ? INT_MAX : (int)remaining;
 }
 
-#if T403_IMPLEMENTED
-static void t403_timeout(struct lapm_state *l)
+/* V.42 8.12: supervise idle links with an ordinary status enquiry, then
+ * use the existing T401/N400 recovery procedure. */
+static void t403_timeout(struct modem *m)
 {
-	EC_DBG("t403_timeout...\n");
-	if (l->state != LAPM_DATA) {
-		EC_ERR("t403: no in data state.\n");
-		return;
-	}
-	if (l->busy)
-		TX_RNR(l,l->cmd_addr,1);
-	else
-		TX_RR(l,l->cmd_addr,1);
-	T401_START(l);
-	l->rtx_count = 1;
+	struct lapm_state *l = &m->ec.lapm;
+
+	if (l->state == LAPM_DATA && !l->config && !l->rtx_count)
+		t401_timeout(m);
 }
-#endif
+
+static void start_idle_timer(struct lapm_state *l)
+{
+	uint64_t rate = (uint64_t)l->modem->rx_rate + l->modem->tx_rate;
+	uint64_t timeout;
+
+	T401_STOP(l);
+	if (l->state != LAPM_DATA || l->config)
+		return;
+	if (rate == 0)
+		rate = LAPM_TIMER_FALLBACK_BIT_RATE;
+	timeout = rate * LAPM_IDLE_TIMER_SECONDS;
+	l->modem->bit_timer = timeout > INT_MAX ? INT_MAX : (int)timeout;
+	l->modem->bit_timer_func = t403_timeout;
+}
+
 
 
 /* transmit info */
@@ -1547,7 +1551,7 @@ static int rx_unnum_rsp(struct lapm_state *l, frame_t *f)
 
 			if (result == RX_XID_RESPONSE_ACCEPTED) {
 				l->config = 0;
-				T401_STOP(l);
+				TIMER_STOP(l);
 				if (l->state == LAPM_IDLE) {
 					lapm_connect(l);
 				}
@@ -1597,7 +1601,7 @@ static frame_t *lapm_get_tx_frame(void *framer)
 	f->buf[1] = l->vs << 1;
 	f->buf[2] = l->vr << 1;
 	l->vs = (l->vs + 1)&0x7f;
-	if (!l->modem->bit_timer)
+	if (!l->modem->bit_timer || l->modem->bit_timer_func == t403_timeout)
 		TIMER_START(l);
 	//LAPM_PRINT_FRAME("get_tx_frame",1,f);
 
@@ -1684,6 +1688,12 @@ static void lapm_rx_complete(void *framer, frame_t *f)
 		EC_ERR("unknown frame type.\n");
 		break;
 	}
+	/* Valid I/S traffic restarts idle supervision, without postponing an
+	 * outstanding acknowledgement, enquiry, or peer-busy timer. */
+	if ((FRAME_TYPE(f) == FRAME_I || FRAME_TYPE(f) == FRAME_S) &&
+	    l->state == LAPM_DATA && !l->config &&
+	    (!l->modem->bit_timer || l->modem->bit_timer_func == t403_timeout))
+		start_idle_timer(l);
 }
 
 
@@ -1906,11 +1916,13 @@ bool modem_ec_take_retrain_request(struct modem *m)
 		return false;
 	l = &m->ec.lapm;
 	if (l->state != LAPM_DATA || l->config || l->busy || l->peer_busy ||
-	    l->va == l->vs || l->rtx_count < LAPM_RETRAIN_POLLS ||
+	    m->bit_timer <= 0 || m->bit_timer_func != t401_timeout ||
+	    l->rtx_count < LAPM_RETRAIN_POLLS ||
 	    l->stalled_retrain)
 		return false;
 	/* A PCM frame-phase slip can produce legal symbols but no usable HDLC
-	 * frames. Try physical recovery once before LAPM exhausts N400. Keep
+	 * frames, even with no local information outstanding. Try physical
+	 * recovery once before LAPM exhausts N400. Keep
 	 * the queues and T401 progress, even if the datapump rejects the request.
 	 * A completed timer-recovery episode rearms this allowance; starting or
 	 * resuming retraining does not. Peer flow control is not a channel fault. */
