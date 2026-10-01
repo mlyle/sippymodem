@@ -2860,6 +2860,7 @@ static bool test_lapm_receive_information_limit(void)
 		modem_ec_start(m);
 		struct lapm_state *l = &m->ec.lapm;
 		l->state = 2;
+		m->state = 5;
 		l->rx_info_size = limits[limit];
 		memset(l->rx_buf, 0x55, sizeof(l->rx_buf));
 		uint8_t saved_buffer[sizeof(l->rx_buf)];
@@ -2874,10 +2875,11 @@ static bool test_lapm_receive_information_limit(void)
 		CHECK(memcmp(&saved_frame, &l->info_buf[0].frame, sizeof(saved_frame)) == 0,
 		      "receive payload overwrote information queue metadata");
 		if (oversized) {
-			CHECK(l->state == 3 && l->vr == 0 && l->rx_count == 0 && !l->busy &&
+			CHECK(l->state == 0 && l->vr == 0 && l->rx_count == 0 && !l->busy &&
 			      lapm_sink.calls == 0 && m->packer_process == NULL &&
 			      memcmp(l->rx_buf, saved_buffer, sizeof(saved_buffer)) == 0 &&
-			      l->tx_ctrl != l->ctrl_list && l->tx_ctrl->buf[1] == 0x53,
+			      l->tx_ctrl == l->ctrl_list && m->bit_timer == 0 &&
+			      strcmp(modem_call_phase(m), "cleardown") == 0,
 			      "oversized information was acknowledged, decoded, or retained");
 		} else {
 			CHECK(l->state == 2 && l->vr == 1 && l->rx_count == (int)capacity && l->busy &&
@@ -3081,6 +3083,109 @@ static bool test_lapm_disconnected_disc(void)
 	return true;
 }
 
+static bool test_lapm_numbered_frame_rejection(void)
+{
+	struct modem_driver driver = {
+		.name = "LAPM numbered rejection", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	static const struct {
+		unsigned control, length;
+		bool wrong_nr, response_only;
+	} cases[] = {
+		{ 0x0d, 3, false, false }, { 0x11, 3, false, false },
+		{ 0xfd, 3, false, false },
+		{ 1, 4, false, false }, { 5, 4, false, false }, { 9, 4, false, false },
+		{ 0, 4, true, false }, { 1, 3, true, false },
+		{ 5, 3, true, false }, { 9, 3, true, false },
+		{ 0, 4, false, true }, /* I frames are commands. */
+	};
+
+	for (unsigned caller = 0; caller < 2; ++caller)
+	for (unsigned state = 1; state <= 2; ++state)
+	for (unsigned response = 0; response < 2; ++response)
+	for (size_t i = 0; i < ARRAY_LENGTH(cases); ++i) {
+		if (cases[i].response_only && !response)
+			continue;
+		struct modem *m = modem_create(&driver, driver.name);
+		uint8_t wire[] = { 0, cases[i].control, 0, 'X' };
+		frame_t incoming = { .buf = wire, .count = cases[i].length };
+
+		CHECK(m != NULL, "numbered rejection allocation failed");
+		m->caller = caller;
+		m->cfg.ec = 1;
+		m->cfg.comp = 0;
+		m->rx_rate = m->tx_rate = 28800;
+		CHECK(modem_ec_init(m) == 0, "numbered rejection initialization failed");
+		modem_ec_start(m);
+		struct lapm_state *l = &m->ec.lapm;
+		l->state = state;
+		l->va = l->vs = state == 2 ? 7 : 0;
+		l->vr = 7;
+		l->busy = l->peer_busy = 1;
+		l->rx_count = 1;
+		l->rx_buf[0] = 'R';
+		m->state = state == 1 ? 4 : 5;
+		m->bit_timer = 1234;
+		m->put_chars = scripted_lapm_sink;
+		memset(&lapm_sink, 0, sizeof(lapm_sink));
+		lapm_sink.result = 1;
+		wire[0] = response ? l->cmd_addr : l->rsp_addr;
+		wire[2] = (uint8_t)((l->va + cases[i].wrong_nr) << 1);
+		struct lapm_state before = *l;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(lapm_sink.calls == 0, "rejected numbered frame delivered terminal data");
+		if (state == 1) {
+			CHECK(memcmp(l, &before, sizeof(before)) == 0 && m->state == 4 &&
+			      m->bit_timer == 1234,
+			      "rejected frame completed establishment: role=%u response=%u control=%02x length=%u nr=%u",
+			      caller, response, wire[1], cases[i].length, wire[2] >> 1);
+		} else {
+			CHECK(l->state == 0 && !l->rx_count && !l->busy && !l->peer_busy &&
+			      !m->bit_timer && l->tx_ctrl == l->ctrl_list &&
+			      l->rx_buf[0] == 'R' && strcmp(modem_call_phase(m), "cleardown") == 0,
+			      "rejected frame retained the physical link: role=%u response=%u control=%02x length=%u nr=%u",
+			      caller, response, wire[1], cases[i].length, wire[2] >> 1);
+		}
+		modem_delete(m);
+	}
+	memset(&lapm_sink, 0, sizeof(lapm_sink));
+	return true;
+}
+
+static bool test_lapm_acknowledgement_queue_consistency(void)
+{
+	struct modem_driver driver = {
+		.name = "LAPM acknowledgement consistency", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	struct modem *m = modem_create(&driver, driver.name);
+	static const uint8_t payload = 'A';
+
+	CHECK(m != NULL, "acknowledgement consistency allocation failed");
+	m->cfg.ec = 1;
+	m->cfg.comp = 0;
+	CHECK(modem_ec_init(m) == 0, "acknowledgement consistency initialization failed");
+	modem_ec_start(m);
+	struct lapm_state *l = &m->ec.lapm;
+	l->state = 2;
+	l->vs = 1; /* Sequence claims an outstanding frame; its queue is empty. */
+	m->state = 5;
+	m->get_chars = scripted_lapm_source;
+	memset(&lapm_source, 0, sizeof(lapm_source));
+	lapm_source.data = &payload;
+	lapm_source.length = 1;
+	uint8_t wire[] = { l->rsp_addr, 1, 2 };
+	frame_t incoming = { .buf = wire, .count = sizeof(wire) };
+	m->packer.hdlc.rx_complete(l, &incoming);
+	CHECK(l->state == 0 && !m->bit_timer && lapm_source.offset == 0 &&
+	      strcmp(modem_call_phase(m), "cleardown") == 0,
+	      "inconsistent acknowledgement resumed transmission or retained the link");
+	modem_delete(m);
+	memset(&lapm_source, 0, sizeof(lapm_source));
+	return true;
+}
+
 static bool test_lapm_receive_backpressure(void)
 {
 	enum { LAPM_DATA_STATE = 2 };
@@ -3139,7 +3244,7 @@ static bool test_lapm_receive_backpressure(void)
 
 static bool test_lapm_acknowledgement_window(void)
 {
-	enum { LAPM_DATA_STATE = 2, LAPM_DISC_STATE = 3 };
+	enum { LAPM_DATA_STATE = 2 };
 	static const uint8_t starts[] = { 5, 126 };
 	static const unsigned int distances[] = { 127, 0, 1, 3, 4 };
 	/* I command, then RR/RNR/REJ commands and solicited responses. */
@@ -3156,7 +3261,8 @@ static bool test_lapm_acknowledgement_window(void)
 	for (size_t index = 0; index < ARRAY_LENGTH(distances); ++index) {
 		struct modem *m = modem_create(&driver, driver.name);
 		struct lapm_state *l;
-		frame_t *retained, *outgoing;
+		frame_t *outgoing;
+		uint8_t retained[sizeof(m->ec.lapm.info_buf)];
 		unsigned int distance = distances[index];
 		uint8_t nr = (uint8_t)((starts[start] + distance) & 0x7f);
 		uint8_t wire[3];
@@ -3172,6 +3278,7 @@ static bool test_lapm_acknowledgement_window(void)
 		modem_ec_start(m);
 		l = &m->ec.lapm;
 		l->state = LAPM_DATA_STATE;
+		m->state = 5;
 		l->va = l->vs = starts[start];
 		m->get_bits = modem_hdlc_get_bits;
 		m->put_bits = modem_hdlc_put_bits;
@@ -3179,7 +3286,6 @@ static bool test_lapm_acknowledgement_window(void)
 		lapm_source.data = payload;
 		lapm_source.length = pending;
 		lapm_source.offset = 0;
-		retained = l->sent_info;
 		for (unsigned int frame = 0; frame < pending; ++frame) {
 			outgoing = m->packer.hdlc.get_tx_frame(l);
 			CHECK(outgoing != NULL && outgoing->size == 4,
@@ -3195,6 +3301,7 @@ static bool test_lapm_acknowledgement_window(void)
 		CHECK(outgoing != NULL && outgoing->buf[1] == 1,
 		      "LAPM acknowledgement fixture lost its poll");
 		m->packer.hdlc.tx_complete(l, outgoing);
+		memcpy(retained, l->info_buf, sizeof(retained));
 		wire[0] = kind < 4 ? l->rsp_addr : l->cmd_addr;
 		wire[1] = controls[kind];
 		wire[2] = (uint8_t)((nr << 1) | 1u);
@@ -3225,19 +3332,15 @@ static bool test_lapm_acknowledgement_window(void)
 				m->packer.hdlc.tx_complete(l, outgoing);
 			}
 		} else {
-			CHECK(l->state == LAPM_DISC_STATE && l->va == starts[start] &&
-			      l->vs == ((starts[start] + pending) & 0x7f) &&
-			      l->sent_info == retained && l->sent_count == (int)pending &&
-			      m->bit_timer > 0 && l->rtx_count == 0,
-			      "invalid acknowledgement consumed pending frames or disconnect timer "
+			CHECK(l->state == 0 && l->va == 0 && l->vs == 0 &&
+			      l->sent_info == l->info_list && l->sent_count == 0 &&
+			      m->bit_timer == 0 && l->rtx_count == 0 &&
+			      memcmp(retained, l->info_buf, sizeof(retained)) == 0 &&
+			      strcmp(modem_call_phase(m), "cleardown") == 0,
+			      "invalid acknowledgement changed payload or retained the physical link "
 			      "(base=%u pending=%u kind=%zu nr=%u)", starts[start], pending, kind, nr);
-			outgoing = m->packer.hdlc.get_tx_frame(l);
-			CHECK(outgoing != NULL && outgoing->size == 2 &&
-			      outgoing->buf[1] == 0x53,
-			      "invalid acknowledgement did not queue DISC");
-			m->packer.hdlc.tx_complete(l, outgoing);
 			CHECK(m->packer.hdlc.get_tx_frame(l) == NULL,
-			      "invalid acknowledgement queued traffic after DISC");
+			      "invalid acknowledgement queued traffic after release");
 		}
 		modem_ec_exit(m);
 		modem_delete(m);
@@ -5042,6 +5145,8 @@ int main(void)
 		{ "LAPM peer-ready DM establishment", test_lapm_peer_ready_dm },
 		{ "LAPM unnumbered response states", test_lapm_unnumbered_responses },
 		{ "LAPM disconnected DISC response", test_lapm_disconnected_disc },
+		{ "LAPM numbered frame rejection", test_lapm_numbered_frame_rejection },
+		{ "LAPM acknowledgement queue consistency", test_lapm_acknowledgement_queue_consistency },
 		{ "LAPM acknowledgement window", test_lapm_acknowledgement_window },
 		{ "LAPM repeated sequence error poll", test_lapm_repeated_sequence_error_poll },
 		{ "LAPM peer-busy acknowledgement", test_lapm_peer_busy_acknowledgement },

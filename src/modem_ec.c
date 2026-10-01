@@ -199,6 +199,7 @@ enum LAPM_STATES { LAPM_IDLE, LAPM_ESTAB, LAPM_DATA, LAPM_DISC };
 
 /* prototypes */
 static int lapm_connect(struct lapm_state *l);
+static void complete_link_release(struct lapm_state *l);
 static void start_idle_timer(struct lapm_state *l);
 static void t403_timeout(struct modem *m);
 static int lapm_disconnect(struct lapm_state *l);
@@ -1093,25 +1094,16 @@ static int reject_info(struct lapm_state *l)
 }
 
 /* ack info */
-static int ack_info(struct lapm_state *l, u8 nr)
+static bool ack_info(struct lapm_state *l, u8 nr)
 {
 	int n = 0;
-	unsigned int outstanding = (l->vs - l->va) & 0x7f;
-	unsigned int acknowledged = (nr - l->va) & 0x7f;
-
-	/* V.42 8.5.2: V(A) <= N(R) <= V(S), in modulo-128 order.
-	 * Validate the entire acknowledgement before releasing any frame. */
-	if (acknowledged > outstanding || outstanding > l->tx_win_size) {
-		EC_ERR("invalid acknowledgement %u outside window %u..%u\n",
-		       nr, l->va, l->vs);
-		lapm_disconnect(l);
-		return -1;
-	}
+	/* The receive boundary has validated N(R) before any state change. */
 	while(l->va != nr) {
-		if (l->sent_info == l->tx_info) { /* debug only ? */
-			EC_ERR("ack info: VERY BAD: empty sent list: va %d, vs %d\n",
-				 l->va,l->vs);
-			break;
+		if (l->sent_info == l->tx_info) {
+			EC_ERR("acknowledgement exceeds retained frames: va=%u vs=%u nr=%u\n",
+			       l->va, l->vs, nr);
+			complete_link_release(l);
+			return false;
 		}
 		l->sent_info = l->sent_info->next;
 		l->sent_count--; // debug
@@ -1129,7 +1121,7 @@ static int ack_info(struct lapm_state *l, u8 nr)
 		if ((l->vs-l->va)&0x7f)
 			TIMER_START(l); // exp.8.4.8
 	}
-	return n;
+	return true;
 }
 
 
@@ -1206,7 +1198,7 @@ static int rx_info(struct lapm_state *l, frame_t *f)
 	payload_length = f->count - 3;
 
 	/* ack I frames: nr -1 */
-	if (ack_info(l,FRAME_NR(f)) < 0)
+	if (!ack_info(l,FRAME_NR(f)))
 		return -1;
 	/* busy */
 	if (l->busy) {
@@ -1308,7 +1300,7 @@ static void rx_super_cmd(struct lapm_state *l, frame_t *f)
 	case FRAME_S_RR:
 		/* clear peer_busy state */
 		l->peer_busy = 0;
-		if (ack_info(l,FRAME_NR(f)) < 0)
+		if (!ack_info(l,FRAME_NR(f)))
 			return;
 		/* p=1 may be used for status checking */
 		if (FRAME_S_PF(f) || !tx_info(l)) {
@@ -1323,7 +1315,7 @@ static void rx_super_cmd(struct lapm_state *l, frame_t *f)
 		l->peer_busy = 1;
 		l->stalled_polls = 0;
 		l->stalled_retrain = false;
-		if (ack_info(l,FRAME_NR(f)) < 0)
+		if (!ack_info(l,FRAME_NR(f)))
 			return;
 		/* V.42 8.4.6: enquire even with no outstanding information,
 		 * but do not postpone an already transmitted status poll. */
@@ -1340,7 +1332,7 @@ static void rx_super_cmd(struct lapm_state *l, frame_t *f)
 	case FRAME_S_REJ:
 		/* clear peer_busy state */
 		l->peer_busy = 0;
-		if (ack_info(l,FRAME_NR(f)) < 0)
+		if (!ack_info(l,FRAME_NR(f)))
 			return;
 		if (!l->rtx_count) {
 			TIMER_STOP(l);
@@ -1354,13 +1346,6 @@ static void rx_super_cmd(struct lapm_state *l, frame_t *f)
 				TX_RR(l,FRAME_ADDR(f),FRAME_S_PF(f));
 		}
 		break;
-	case FRAME_S_SREJ:
-		/* TBD, optional */
-		EC_ERR("unsupported SREJ command!\n");
-		return;
-	default:
-		EC_ERR("unknown s frame: %02x.\n",FRAME_CTRL(f));
-		return;
 	}
 }
 
@@ -1378,7 +1363,7 @@ static void rx_super_rsp(struct lapm_state *l, frame_t *f)
 	switch(FRAME_CTRL(f)) {
 	case FRAME_S_RR:
 		l->peer_busy = 0;
-		if (ack_info(l,FRAME_NR(f)) < 0)
+		if (!ack_info(l,FRAME_NR(f)))
 			return;
 		if (l->rtx_count && FRAME_S_PF(f)) {
 			reject_info(l);
@@ -1389,7 +1374,7 @@ static void rx_super_rsp(struct lapm_state *l, frame_t *f)
 		l->peer_busy = 1;
 		l->stalled_polls = 0;
 		l->stalled_retrain = false;
-		if (ack_info(l,FRAME_NR(f)) < 0)
+		if (!ack_info(l,FRAME_NR(f)))
 			return;
 		if (l->rtx_count && FRAME_S_PF(f)) {
 			reject_info(l);
@@ -1400,20 +1385,13 @@ static void rx_super_rsp(struct lapm_state *l, frame_t *f)
 		break;
 	case FRAME_S_REJ:
 		l->peer_busy = 0;
-		if (ack_info(l,FRAME_NR(f)) < 0)
+		if (!ack_info(l,FRAME_NR(f)))
 			return;
 		if (!l->rtx_count || FRAME_S_PF(f)) {
 			reject_info(l);
 			TIMER_STOP(l);
 		}
 		break;
-	case FRAME_S_SREJ:
-		/* TBD, optional */
-		EC_ERR("unsupported SREJ response!\n");
-		return;
-	default:
-		EC_ERR("rx_s_rsp: unknown header %02x.\n", FRAME_CTRL(f));
-		return;
 	}
 	if (retrain_response)
 		l->retrain_poll = 0;
@@ -1643,6 +1621,28 @@ static void lapm_tx_complete(void *framer, frame_t *f)
 }
 
 
+static bool valid_numbered_frame(
+	const struct lapm_state *l, const frame_t *f, unsigned type)
+{
+	unsigned base = l->state == LAPM_ESTAB ? 0 : l->va;
+	unsigned outstanding = l->state == LAPM_ESTAB ? 0 : (l->vs - l->va) & 0x7f;
+	unsigned acknowledged = (FRAME_NR(f) - base) & 0x7f;
+
+	/* V.42 8.2.4.12/8.5.2: validate the modulo-128 window before
+	 * acknowledging information or completing a missing-UA exchange. */
+	if (acknowledged > outstanding || outstanding > l->tx_win_size)
+		return false;
+	if (type == FRAME_I)
+		return RX_IS_COMMAND(f) &&
+		       (unsigned)(f->count - 3) <= l->rx_info_size &&
+		       (size_t)(f->count - 3) <= sizeof(l->rx_buf);
+	/* The negotiated receiver implements RR, RNR and REJ. Supervisory
+	 * frames carry exactly two control octets and no information field. */
+	return f->count == 3 &&
+	       (FRAME_CTRL(f) == FRAME_S_RR || FRAME_CTRL(f) == FRAME_S_RNR ||
+		FRAME_CTRL(f) == FRAME_S_REJ);
+}
+
 static void lapm_rx_complete(void *framer, frame_t *f)
 {
 	struct lapm_state *l = framer;
@@ -1657,15 +1657,13 @@ static void lapm_rx_complete(void *framer, frame_t *f)
 	if (type != FRAME_U && (f->count < 3 ||
 	    (l->state != LAPM_DATA && l->state != LAPM_ESTAB)))
 		return;
-	/* Frame rejection releases the link before acknowledging or decoding
-	 * information. N401 also bounds the retained receive buffer when the
-	 * character sink or decompressor applies backpressure. */
-	if (type == FRAME_I &&
-	    ((unsigned)(f->count - 3) > l->rx_info_size ||
-	     (size_t)(f->count - 3) > sizeof(l->rx_buf))) {
-		EC_ERR("information frame exceeds receive limit\n");
+	/* V.42 8.5.5/8.4.9.2: reject malformed numbered frames before any
+	 * link indication, acknowledgement, flow control or payload delivery. */
+	if (type != FRAME_U && !valid_numbered_frame(l, f, type)) {
+		EC_ERR("rejected numbered frame: control=%02x length=%d nr=%u\n",
+		       FRAME_CTRL(f), f->count, FRAME_NR(f));
 		if (l->state == LAPM_DATA)
-			lapm_disconnect(l);
+			complete_link_release(l);
 		return;
 	}
 	/* V.42 (2002) 8.3.2.1 permits valid I/S traffic after a lost UA.
