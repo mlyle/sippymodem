@@ -765,40 +765,6 @@ void modem_update_status(struct modem *m, unsigned status)
 
 
 
-void modem_update_config(struct modem *m, struct modem_config *cfg)
-{
-	MODEM_DBG("modem update config...\n");
-#if 1
-#define PRINT_CONFIG(prm) MODEM_DBG(#prm " = %d (%d)\n",cfg->prm,m->cfg.prm)
-	PRINT_CONFIG(ec);
-	PRINT_CONFIG(ec_detector);
-	PRINT_CONFIG(ec_tx_win_size);
-	PRINT_CONFIG(ec_rx_win_size);
-	PRINT_CONFIG(ec_tx_info_size);
-	PRINT_CONFIG(ec_rx_info_size);
-	PRINT_CONFIG(comp);
-	PRINT_CONFIG(comp_types);
-	PRINT_CONFIG(comp_dict_size);
-	PRINT_CONFIG(comp_max_string);
-#endif
-	if (cfg->comp && m->cfg.comp &&
-	    (cfg->comp_types & MODEM_COMP_TYPE_V42BIS) != 0 &&
-	    (m->cfg.comp_types & MODEM_COMP_TYPE_V42BIS) != 0) {
-		m->cfg.comp = cfg->comp;
-		if(!modem_comp_config(m,cfg->comp_dict_size,
-				      cfg->comp_max_string)) {
-			m->cfg.comp_dict_size  = cfg->comp_dict_size;
-			m->cfg.comp_max_string = cfg->comp_max_string;
-		}
-		else { /* config failed */
-			; /* TBD: probably try to renegotiate */
-		}
-	}
-	else
-		m->cfg.comp = 0;
-}
-
-
 /*
  *    Interrupt handlers and services
  *

@@ -2155,6 +2155,9 @@ static bool test_lapm_dual_compression_retry(void)
 	CHECK(outgoing != NULL, "compression retry initial XID missing");
 	caller->packer.hdlc.tx_complete(caller->packer.hdlc.framer, outgoing);
 	before = caller->ec.lapm.v44_session;
+	/* The frozen dual offer also owns the V.42bis-only retry. */
+	caller->cfg.comp = 0;
+	caller->cfg.comp_types = MODEM_COMP_TYPE_NONE;
 	received[0] = caller->ec.lapm.cmd_addr;
 	received[1] = 0xaf;
 	memcpy(received + 2, lapm_dual_compression_response, sizeof(lapm_dual_compression_response));
@@ -2414,33 +2417,23 @@ static bool test_lapm_v42bis_reinitialization(void)
 		frame_t *outgoing;
 
 		CHECK(m != NULL, "missing-codec allocation failed");
-		m->caller = response;
 		m->cfg.comp = 3;
 		m->cfg.comp_types = MODEM_COMP_TYPE_V42BIS;
-		CHECK(modem_ec_init(m) == 0, "missing-codec error control failed");
-		modem_ec_start(m);
-		m->state = 4;
+		m->cfg.comp_dict_size = 512;
+		m->cfg.comp_max_string = 6;
+		CHECK(start_lapm_compression_fixture(m, response), "missing-codec fixture failed");
 		struct lapm_state *l = &m->ec.lapm;
-		if (response) {
-			void (*complete)(struct modem *) = m->packer.hdlc.tx_preamble_complete;
-			m->packer.hdlc.tx_preamble_complete = NULL;
-			m->packer.hdlc.tx_preamble_flags = 0;
-			complete(m);
-			outgoing = m->packer.hdlc.get_tx_frame(l);
-			CHECK(outgoing != NULL, "missing-codec XID command absent");
-			m->packer.hdlc.tx_complete(l, outgoing);
-		}
 		wire[0] = response ? l->cmd_addr : l->rsp_addr;
 		m->packer.hdlc.rx_complete(l, &incoming);
-		if (!response) {
-			outgoing = m->packer.hdlc.get_tx_frame(l);
-			CHECK(outgoing != NULL && outgoing->buf[1] == 0xaf,
-			      "missing-codec XID response absent");
-			m->packer.hdlc.tx_complete(l, outgoing);
-			wire[1] = 0x7f;
-			incoming.count = 2;
-			m->packer.hdlc.rx_complete(l, &incoming);
-		}
+		outgoing = m->packer.hdlc.get_tx_frame(l);
+		CHECK(outgoing != NULL && outgoing->buf[1] == (response ? 0x7f : 0xaf),
+		      "missing-codec fixture did not negotiate");
+		m->packer.hdlc.tx_complete(l, outgoing);
+		/* Lose the codec after negotiation, immediately before C-INIT. */
+		modem_comp_exit(m);
+		wire[1] = response ? 0x73 : 0x7f;
+		incoming.count = 2;
+		m->packer.hdlc.rx_complete(l, &incoming);
 		CHECK(l->state == 0 && !modem_ec_can_establish(m) && !m->bit_timer &&
 		      strcmp(modem_call_phase(m), "cleardown") == 0,
 		      "failed V.42bis initialization left establishment active");
@@ -2546,6 +2539,135 @@ static bool test_lapm_v42bis_negotiation(void)
 				}
 			}
 			m->packer.hdlc.tx_complete(m->packer.hdlc.framer, outgoing);
+		}
+		modem_ec_exit(m);
+		modem_comp_exit(m);
+		modem_delete(m);
+	}
+	return true;
+}
+
+static bool test_lapm_v42bis_frozen_offer(void)
+{
+	static const unsigned limits[][2] = { { 512, 6 }, { 1024, 12 } };
+	struct modem_driver driver = {
+		.name = "LAPM frozen V.42bis offer", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+
+	for (size_t limit = 0; limit < ARRAY_LENGTH(limits); ++limit)
+	for (unsigned scenario = 0; scenario < 64; ++scenario) {
+		unsigned local = scenario & 3;
+		unsigned peer = (scenario >> 2) & 3;
+		bool supported = (scenario & 16) != 0;
+		bool expanded = (scenario & 32) != 0;
+		unsigned selected = ((peer & 1) << 1) | ((peer & 2) >> 1);
+		bool invalid = (selected & ~(supported ? local : 0)) != 0;
+		struct modem *m = modem_create(&driver, driver.name);
+		uint8_t wire[] = {
+			0, 0xaf, 0x82, 0xf0, 0, 15,
+			0, 3, 'V', '4', '2', 1, 1, peer, 2, 2, 16, 0, 3, 1, 32,
+		};
+		frame_t incoming = { .buf = wire, .count = sizeof(wire) };
+		frame_t *outgoing;
+
+		CHECK(m != NULL, "frozen compression modem allocation failed");
+		m->cfg.comp = local;
+		m->cfg.comp_types = supported ? MODEM_COMP_TYPE_V42BIS : MODEM_COMP_TYPE_NONE;
+		m->cfg.comp_dict_size = limits[limit][0];
+		m->cfg.comp_max_string = limits[limit][1];
+		CHECK(start_lapm_compression_fixture(m, true), "frozen compression fixture failed");
+		struct lapm_state *l = &m->ec.lapm;
+		struct lapm_v44_session before = l->v44_session;
+		int timer = m->bit_timer;
+
+		/* Change policy after the command has gone onto the wire. */
+		m->cfg.comp = expanded ? 3 : 0;
+		m->cfg.comp_types = expanded ? MODEM_COMP_TYPE_ALL : MODEM_COMP_TYPE_NONE;
+		m->cfg.comp_dict_size = expanded ? 4096 : 512;
+		m->cfg.comp_max_string = expanded ? 250 : 6;
+		wire[0] = l->cmd_addr;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		outgoing = m->packer.hdlc.get_tx_frame(l);
+		if (invalid) {
+			CHECK(outgoing == NULL && l->config && m->bit_timer == timer &&
+			      m->cfg.comp == (expanded ? 3u : 0u) &&
+			      memcmp(&l->v44_session, &before, sizeof(before)) == 0,
+			      "frozen offer accepted unoffered directions: limit=%zu case=%u", limit, scenario);
+			m->bit_timer_func(m);
+			outgoing = m->packer.hdlc.get_tx_frame(l);
+			CHECK(outgoing != NULL && outgoing->size == (int)before.command_length + 2 &&
+			      memcmp(outgoing->buf + 2, before.command, before.command_length) == 0,
+			      "rejected compression response changed the frozen retry");
+		} else {
+			CHECK(outgoing != NULL && outgoing->buf[1] == 0x7f && !l->config &&
+			      m->cfg.comp == selected && m->state == 4,
+			      "frozen compression reply used current policy: limit=%zu case=%u", limit, scenario);
+			if (selected) {
+				CHECK(modem_ec_active_compression(m) == MODEM_EC_COMPRESSION_V42BIS &&
+				      m->cfg.comp_dict_size == (int)limits[limit][0] &&
+				      m->cfg.comp_max_string == (int)limits[limit][1] &&
+				      m->comp.encoder.dict_size == (int)limits[limit][0] &&
+				      m->comp.decoder.dict_size == (int)limits[limit][0] &&
+				      m->comp.encoder.max_string == (int)limits[limit][1] &&
+				      m->comp.decoder.max_string == (int)limits[limit][1],
+				      "frozen compression limits disagree with their codec: limit=%zu case=%u", limit, scenario);
+			}
+		}
+		m->packer.hdlc.tx_complete(l, outgoing);
+		modem_ec_exit(m);
+		modem_comp_exit(m);
+		modem_delete(m);
+	}
+	return true;
+}
+
+static bool test_lapm_v42bis_configuration_failure(void)
+{
+	struct modem_driver driver = {
+		.name = "LAPM V.42bis configuration failure", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+
+	for (unsigned response = 0; response < 2; ++response)
+	for (unsigned missing = 0; missing < 2; ++missing) {
+		struct modem *m = modem_create(&driver, driver.name);
+		uint8_t wire[] = {
+			0, 0xaf, 0x82, 0xf0, 0, 15,
+			0, 3, 'V', '4', '2', 1, 1, 3, 2, 2, 4, 0, 3, 1, 12,
+		};
+		frame_t incoming = { .buf = wire, .count = sizeof(wire) };
+
+		CHECK(m != NULL, "failed configuration modem allocation failed");
+		m->cfg.comp = 3;
+		m->cfg.comp_types = MODEM_COMP_TYPE_V42BIS;
+		m->cfg.comp_dict_size = 1024;
+		m->cfg.comp_max_string = 12;
+		m->cfg.ec_tx_info_size = m->cfg.ec_rx_info_size = 70;
+		m->cfg.ec_tx_win_size = m->cfg.ec_rx_win_size = 2;
+		CHECK(start_lapm_compression_fixture(m, response), "failed configuration fixture failed");
+		struct lapm_state *l = &m->ec.lapm;
+		if (missing)
+			modem_comp_exit(m);
+		else
+			CHECK(modem_comp_config(m, 512, 6) == 0, "smaller codec fixture failed");
+		int dict = m->comp.encoder.dict_size;
+		int max_string = m->comp.encoder.max_string;
+		wire[0] = response ? l->cmd_addr : l->rsp_addr;
+		/* A failed response must also be absent from the duplicate cache. */
+		for (unsigned attempt = 0; attempt < 2; ++attempt) {
+			m->packer.hdlc.rx_complete(l, &incoming);
+			CHECK(!modem_ec_can_establish(m) && !l->config && !m->bit_timer &&
+			      strcmp(modem_call_phase(m), "cleardown") == 0 &&
+			      m->packer.hdlc.get_tx_frame(l) == NULL &&
+			      l->v44_session.phase == LAPM_V44_READY &&
+			      !l->v44_session.command_length && !l->v44_session.response_length &&
+			      m->cfg.comp == 3 && m->cfg.comp_dict_size == 1024 && m->cfg.comp_max_string == 12 &&
+			      l->tx_info_size == 70 && l->rx_info_size == 70 &&
+			      l->tx_win_size == 2 && l->rx_win_size == 2 &&
+			      m->comp.encoder.dict_size == dict && m->comp.decoder.dict_size == dict &&
+			      m->comp.encoder.max_string == max_string && m->comp.decoder.max_string == max_string,
+			      "failed codec setup advertised or applied configuration: response=%u missing=%u", response, missing);
 		}
 		modem_ec_exit(m);
 		modem_comp_exit(m);
@@ -6611,6 +6733,8 @@ int main(void)
 		{ "AT V.34 symbol rate", test_at_v34_symbol_rate },
 		{ "LAPM XID parameter encoding", test_lapm_xid_parameters },
 		{ "LAPM V.42bis negotiation", test_lapm_v42bis_negotiation },
+		{ "LAPM frozen V.42bis offer", test_lapm_v42bis_frozen_offer },
+		{ "LAPM V.42bis configuration failure", test_lapm_v42bis_configuration_failure },
 		{ "LAPM V.42bis reinitialization", test_lapm_v42bis_reinitialization },
 		{ "LAPM V.42bis invalid parameters", test_lapm_v42bis_invalid_parameters },
 		{ "LAPM V.42bis decoder failure", test_lapm_v42bis_decoder_failure },
