@@ -446,6 +446,12 @@ const char *modem_call_phase(const struct modem *m)
 }
 
 
+bool modem_ec_can_establish(const struct modem *m)
+{
+	return m != NULL && m->cfg.ec &&
+	       (m->state == STATE_EC_ESTAB || IS_STATE_ONLINE(m->state));
+}
+
 static int modem_set_state(struct modem *m, unsigned new_state)
 {
         MODEM_DBG("modem set state: %x --> %x...\n",

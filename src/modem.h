@@ -515,6 +515,8 @@ extern int  modem_ec_init(struct modem *m);
 extern void modem_ec_exit(struct modem *m);
 extern void modem_ec_start(struct modem *m);
 extern void modem_ec_stop(struct modem *m);
+/* Whether the host still accepts LAPM establishment for this call. */
+extern bool modem_ec_can_establish(const struct modem *m);
 /* Consume a bounded request; the host invokes retrain outside DSP callbacks. */
 extern bool modem_ec_take_retrain_request(struct modem *m);
 extern int modem_ec_resume_after_retrain(struct modem *m);

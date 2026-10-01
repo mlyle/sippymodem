@@ -1458,7 +1458,7 @@ static int rx_unnum_cmd(struct lapm_state *l, frame_t *f)
 	case FRAME_U_DISC:
 		/* respond UA (or DM) */
 		if (l->state == LAPM_IDLE)
-			TX_DM(l,1);
+			TX_DM(l,FRAME_U_PF(f));
 		else { /* going to disconnected state,
 			  discard unacked I frames, reset all  */
 			l->state = LAPM_IDLE;
@@ -1502,41 +1502,31 @@ static bool complete_link_establishment(struct lapm_state *l)
 	return true;
 }
 
+static void complete_link_release(struct lapm_state *l)
+{
+	l->state = LAPM_IDLE;
+	reset_lapm_sequence(l);
+	l->rx_head = l->rx_count = 0;
+	l->modem->packer_process = NULL;
+	T401_STOP(l);
+	modem_update_status(l->modem, STATUS_EC_RELEASE);
+}
+
 static int rx_unnum_rsp(struct lapm_state *l, frame_t *f)
 {
 	//LAPM_PRINT_FRAME("rx unnum",0, f);
 	switch(FRAME_CTRL(f)&0xef) {
 	case FRAME_U_DM:
-		/* notify peer about disconnected state */
-		/* TBD */
-		switch(l->state) {
-		case LAPM_ESTAB:
-		case LAPM_DISC:
-			if (FRAME_U_PF(f)) {
-				l->state = LAPM_IDLE;
-				reset_lapm_sequence(l);
-				T401_STOP(l);
-				// TBD notify CF
-				modem_update_status(l->modem,STATUS_EC_RELEASE);
-			}
-			break;
-		case LAPM_DATA:
-			if (l->rtx_count || !FRAME_U_PF(f)) {
-				l->state = LAPM_IDLE;
-				reset_lapm_sequence(l);
-				// TBD: notify CF
-				modem_update_status(l->modem,STATUS_EC_RELEASE);
-			}
-			break;
-		case LAPM_IDLE:
-			if (!FRAME_U_PF(f)) {
-				// TBD: notify CF
-				// to establish connection
-				modem_update_status(l->modem,STATUS_EC_LINK);
-			}
-			break;
-		default:
-			break;
+		if (l->state == LAPM_IDLE) {
+			/* V.42 8.8: establish with SABME before indicating a link. */
+			if (!FRAME_U_PF(f) && !l->config &&
+			    modem_ec_can_establish(l->modem) &&
+			    l->modem->packer.hdlc.tx_preamble_complete == NULL &&
+			    lapm_connect(l) != 0)
+				modem_update_status(l->modem, STATUS_EC_ERROR);
+		} else if ((l->state == LAPM_DATA && (l->rtx_count || !FRAME_U_PF(f))) ||
+			   ((l->state == LAPM_ESTAB || l->state == LAPM_DISC) && FRAME_U_PF(f))) {
+			complete_link_release(l);
 		}
 		break;
 	case FRAME_U_UI:
@@ -1554,10 +1544,7 @@ static int rx_unnum_rsp(struct lapm_state *l, frame_t *f)
 				complete_link_establishment(l);
 			break;
 		case LAPM_DISC:
-			l->state = LAPM_IDLE;
-			reset_lapm_sequence(l);
-			T401_STOP(l);
-			modem_update_status(l->modem,STATUS_EC_RELEASE);
+			complete_link_release(l);
 			break;
 		default:
 			// TBD
@@ -1568,8 +1555,9 @@ static int rx_unnum_rsp(struct lapm_state *l, frame_t *f)
 		/* reset vars */
 		break;
 	case FRAME_U_FRMR:
-		/* not recovarable error */
-		/* TBD */
+		/* V.42 8.5.6: retransmission cannot repair a rejected frame. */
+		if (l->state == LAPM_DATA)
+			complete_link_release(l);
 		break;
 	case FRAME_U_XID:
 		if (l->config) {

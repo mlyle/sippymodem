@@ -2897,6 +2897,190 @@ static bool test_lapm_receive_information_limit(void)
 	return true;
 }
 
+static bool test_lapm_peer_ready_dm(void)
+{
+	struct modem_driver driver = {
+		.name = "LAPM peer-ready DM", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	struct modem *m = modem_create(&driver, driver.name);
+	uint8_t wire[] = { 0, 0x0f, 0 };
+	frame_t incoming = { .buf = wire, .count = 2 };
+	frame_t *outgoing;
+
+	CHECK(m != NULL, "peer-ready allocation failed");
+	m->cfg.ec = 1;
+	m->cfg.comp = 0;
+	m->tx_rate = m->rx_rate = 28800;
+	CHECK(modem_ec_init(m) == 0, "peer-ready initialization failed");
+	modem_hdlc_start(m);
+	modem_ec_start(m);
+	m->get_bits = modem_hdlc_get_bits;
+	m->put_bits = modem_hdlc_put_bits;
+	m->state = 4; /* Host is waiting for error-control establishment. */
+	struct lapm_state *l = &m->ec.lapm;
+	wire[0] = l->cmd_addr;
+	l->config = 1;
+	m->bit_timer = 1234;
+	m->packer.hdlc.rx_complete(l, &incoming);
+	CHECK(l->state == 0 && l->config && m->state == 4 && m->bit_timer == 1234 &&
+	      l->tx_ctrl == l->ctrl_list, "peer-ready DM bypassed pending XID");
+	l->config = 0;
+	m->packer.hdlc.rx_complete(l, &incoming);
+	CHECK(l->state == 1 && m->state == 4 && m->bit_timer > 1234,
+	      "peer-ready DM reported CONNECT without establishing LAPM");
+	outgoing = m->packer.hdlc.get_tx_frame(l);
+	CHECK(outgoing != NULL && outgoing->buf[0] == l->cmd_addr &&
+	      outgoing->buf[1] == 0x7f && outgoing->size == 2,
+	      "peer-ready DM did not send SABME P=1");
+	m->packer.hdlc.tx_complete(l, outgoing);
+	int timer = m->bit_timer;
+	m->packer.hdlc.rx_complete(l, &incoming);
+	CHECK(l->state == 1 && m->state == 4 && m->bit_timer == timer,
+	      "colliding DM F=0 changed establishment");
+	wire[1] = 0x73; /* UA F=1 completes the SABME exchange. */
+	m->packer.hdlc.rx_complete(l, &incoming);
+	CHECK(l->state == 2 && m->state == 5, "SABME acknowledgement did not connect");
+	CHECK(modem_write(m, "A", 1) == 1, "established LAPM rejected terminal data");
+	outgoing = m->packer.hdlc.get_tx_frame(l);
+	CHECK(outgoing != NULL && outgoing->size == 4 && outgoing->buf[1] == 0 &&
+	      outgoing->buf[3] == 'A' && m->xmit.count == 0,
+	      "peer-ready link did not transmit the queued keystroke");
+	m->packer.hdlc.tx_complete(l, outgoing);
+	wire[1] = 1;
+	wire[2] = 2; /* RR N(R)=1 acknowledges the information frame. */
+	incoming.count = 3;
+	m->packer.hdlc.rx_complete(l, &incoming);
+	CHECK(l->va == l->vs && m->packer.hdlc.get_tx_frame(l) == NULL,
+	      "peer-ready exchange repeated acknowledged terminal data");
+	modem_delete(m);
+
+	/* An originator must finish its wire preamble and XID first. */
+	m = modem_create(&driver, driver.name);
+	CHECK(m != NULL, "originator peer-ready allocation failed");
+	m->caller = 1;
+	m->cfg.comp = 0;
+	CHECK(modem_ec_init(m) == 0, "originator peer-ready initialization failed");
+	modem_hdlc_start(m);
+	modem_ec_start(m);
+	l = &m->ec.lapm;
+	struct lapm_state before = *l;
+	wire[0] = l->cmd_addr;
+	wire[1] = 0x0f;
+	incoming.count = 2;
+	m->state = 4;
+	m->packer.hdlc.rx_complete(l, &incoming);
+	CHECK(memcmp(l, &before, sizeof(before)) == 0 && m->state == 4 &&
+	      m->packer.hdlc.tx_preamble_complete != NULL && m->bit_timer == 0,
+	      "peer-ready DM bypassed the originator preamble");
+	modem_delete(m);
+	static const struct { unsigned state, ec; } unwilling[] = {
+		{ 0, 1 }, { 7, 1 }, { 8, 1 }, { 4, 0 },
+	};
+	for (size_t i = 0; i < ARRAY_LENGTH(unwilling); ++i) {
+		m = modem_create(&driver, driver.name);
+		CHECK(m != NULL, "closing peer-ready allocation failed");
+		m->cfg.ec = unwilling[i].ec;
+		m->cfg.comp = 0;
+		CHECK(modem_ec_init(m) == 0, "closing peer-ready initialization failed");
+		modem_ec_start(m);
+		l = &m->ec.lapm;
+		wire[0] = l->cmd_addr;
+		m->state = unwilling[i].state;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(l->state == 0 && l->tx_ctrl == l->ctrl_list && m->bit_timer == 0 &&
+		      m->state == unwilling[i].state, "peer-ready DM reopened an unwilling host");
+		modem_delete(m);
+	}
+	return true;
+}
+
+static bool test_lapm_unnumbered_responses(void)
+{
+	struct modem_driver driver = {
+		.name = "LAPM link responses", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	static const struct {
+		unsigned state, control, poll, next;
+	} cases[] = {
+		{ 0, 0x1f, 0, 0 }, /* Solicited DM in disconnected state is ignored. */
+		{ 1, 0x0f, 0, 1 }, { 1, 0x1f, 0, 0 },
+		{ 3, 0x0f, 0, 3 }, { 3, 0x1f, 0, 0 },
+		{ 2, 0x0f, 0, 0 }, { 2, 0x1f, 0, 2 }, { 2, 0x1f, 1, 0 },
+		{ 3, 0x63, 0, 3 }, { 3, 0x73, 0, 0 },
+		{ 0, 0x87, 0, 0 }, { 1, 0x87, 0, 1 },
+		{ 2, 0x87, 0, 0 }, { 3, 0x87, 0, 3 },
+		{ 0, 0x97, 0, 0 }, { 1, 0x97, 0, 1 },
+		{ 2, 0x97, 0, 0 }, { 3, 0x97, 0, 3 },
+	};
+
+	for (unsigned caller = 0; caller < 2; ++caller)
+	for (size_t i = 0; i < ARRAY_LENGTH(cases); ++i) {
+		struct modem *m = modem_create(&driver, driver.name);
+		uint8_t wire[7] = { 0 };
+		bool frmr = (cases[i].control & 0xef) == 0x87;
+		frame_t incoming = { .buf = wire, .count = frmr ? 7 : 2 };
+
+		CHECK(m != NULL, "link response allocation failed");
+		m->caller = caller;
+		m->cfg.comp = 0;
+		m->tx_rate = m->rx_rate = 28800;
+		CHECK(modem_ec_init(m) == 0, "link response initialization failed");
+		modem_ec_start(m);
+		struct lapm_state *l = &m->ec.lapm;
+		l->state = cases[i].state;
+		l->rtx_count = cases[i].poll;
+		l->vr = 7;
+		m->bit_timer = 1234;
+		m->state = 5;
+		wire[0] = l->cmd_addr;
+		wire[1] = cases[i].control;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(l->state == (int)cases[i].next,
+		      "wrong response transition: role=%u state=%u control=%02x poll=%u next=%d",
+		      caller, cases[i].state, cases[i].control, cases[i].poll, l->state);
+		if (cases[i].state == cases[i].next) {
+			CHECK(l->vr == 7 && l->rtx_count == (int)cases[i].poll && m->bit_timer == 1234,
+			      "ignored response changed the deadline or sequence");
+		} else {
+			CHECK(l->vr == 0 && l->rtx_count == 0 && m->bit_timer == 0 &&
+			      strcmp(modem_call_phase(m), "cleardown") == 0,
+			      "released link retained its sequence or recovery timer");
+		}
+		modem_delete(m);
+	}
+	return true;
+}
+
+static bool test_lapm_disconnected_disc(void)
+{
+	struct modem_driver driver = {
+		.name = "LAPM disconnected DISC", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+
+	for (unsigned caller = 0; caller < 2; ++caller)
+	for (unsigned poll = 0; poll < 2; ++poll) {
+		struct modem *m = modem_create(&driver, driver.name);
+		CHECK(m != NULL, "disconnected DISC allocation failed");
+		m->caller = caller;
+		m->cfg.comp = 0;
+		CHECK(modem_ec_init(m) == 0, "disconnected DISC initialization failed");
+		modem_ec_start(m);
+		struct lapm_state *l = &m->ec.lapm;
+		uint8_t wire[] = { l->rsp_addr, 0x43 | poll << 4 };
+		frame_t incoming = { .buf = wire, .count = sizeof(wire) };
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(l->state == 0 && l->tx_ctrl != l->ctrl_list &&
+		      l->tx_ctrl->size == 2 && l->tx_ctrl->buf[0] == l->rsp_addr &&
+		      l->tx_ctrl->buf[1] == (0x0f | poll << 4),
+		      "disconnected DISC response did not echo P in F: role=%u P=%u", caller, poll);
+		modem_delete(m);
+	}
+	return true;
+}
+
 static bool test_lapm_receive_backpressure(void)
 {
 	enum { LAPM_DATA_STATE = 2 };
@@ -4855,6 +5039,9 @@ int main(void)
 		{ "LAPM receive backpressure", test_lapm_receive_backpressure },
 		{ "LAPM receive frame boundaries", test_lapm_receive_frame_boundaries },
 		{ "LAPM receive information limit", test_lapm_receive_information_limit },
+		{ "LAPM peer-ready DM establishment", test_lapm_peer_ready_dm },
+		{ "LAPM unnumbered response states", test_lapm_unnumbered_responses },
+		{ "LAPM disconnected DISC response", test_lapm_disconnected_disc },
 		{ "LAPM acknowledgement window", test_lapm_acknowledgement_window },
 		{ "LAPM repeated sequence error poll", test_lapm_repeated_sequence_error_poll },
 		{ "LAPM peer-busy acknowledgement", test_lapm_peer_busy_acknowledgement },
