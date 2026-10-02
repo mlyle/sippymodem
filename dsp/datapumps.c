@@ -12,13 +12,10 @@
 #include "v34_datapump.h"
 #include "v90_datapump.h"
 
+#include <limits.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-
-struct call_progress {
-	struct dp dp;
-};
 
 static struct dp *create_call_progress(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
@@ -34,31 +31,28 @@ static struct dp_operations call_progress_operations = {
 	.process = process_call_progress,
 };
 
-static struct call_progress *call_progress_from_dp(
-	struct dp *dp)
+static bool call_progress_is_valid(const struct dp *dp)
 {
-	if (dp == NULL || dp->id != DP_CALLPROG ||
-	    dp->op != &call_progress_operations || dp->modem == NULL ||
-	    dp->dp_data == NULL)
-		return NULL;
-	return dp->dp_data;
+	return dp != NULL && dp->id == DP_CALLPROG &&
+	       dp->op == &call_progress_operations && dp->modem != NULL &&
+	       dp->dp_data == dp;
 }
 
 static struct dp *create_call_progress(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
 	int max_fragment, struct dp_operations *operations)
 {
-	struct call_progress *call_progress;
+	struct dp *call_progress;
 
 	if (modem == NULL || id != DP_CALLPROG || caller != 1 ||
 	    sample_rate != MODEM_RATE || max_fragment != MODEM_FRAG ||
 	    operations != &call_progress_operations ||
-	    operations->use_count != 0)
+	    operations->use_count == INT_MAX)
 		return NULL;
 	call_progress = calloc(1, sizeof(*call_progress));
 	if (call_progress == NULL)
 		return NULL;
-	call_progress->dp = (struct dp){
+	*call_progress = (struct dp){
 		.id = id,
 		.modem = modem,
 		.status = DPSTAT_OK,
@@ -66,19 +60,15 @@ static struct dp *create_call_progress(
 		.dp_data = call_progress,
 	};
 	operations->use_count++;
-	return &call_progress->dp;
+	return call_progress;
 }
 
 static int delete_call_progress(struct dp *dp)
 {
-	struct call_progress *call_progress =
-		call_progress_from_dp(dp);
-
-	if (call_progress == NULL || call_progress_operations.use_count != 1)
+	if (!call_progress_is_valid(dp) || call_progress_operations.use_count <= 0)
 		return -1;
 	call_progress_operations.use_count--;
-	call_progress->dp.dp_data = NULL;
-	free(call_progress);
+	free(dp);
 	return 0;
 }
 
@@ -88,7 +78,7 @@ static int process_call_progress(
 	if (count <= 0 || count > MODEM_FRAG || transmit == NULL)
 		return DPSTAT_ERROR;
 	memset(transmit, 0, (size_t)count * sizeof(int16_t));
-	if (call_progress_from_dp(dp) == NULL || receive == NULL)
+	if (!call_progress_is_valid(dp) || receive == NULL)
 		return DPSTAT_ERROR;
 	return DPSTAT_OK;
 }

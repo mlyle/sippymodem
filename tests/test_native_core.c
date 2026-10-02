@@ -6460,6 +6460,43 @@ static bool test_registration_rollback_retains_ownership(void)
 	return true;
 }
 
+static bool test_call_progress_supports_independent_modems(void)
+{
+	struct datapumps owner = { 0 };
+	struct modem modems[2] = { 0 };
+	struct dp *calls[2];
+	struct dp_operations *operations;
+	int16_t receive[MODEM_FRAG] = { 0 };
+	int16_t transmit[MODEM_FRAG];
+
+	CHECK(datapumps_start(&owner) == DATAPUMPS_OK,
+	      "independent call-progress registrations did not start");
+	operations = modem_dp_get_registered_ops(DP_CALLPROG);
+	for (unsigned i = 0; i < 2; ++i)
+		calls[i] = operations->create(
+			&modems[i], DP_CALLPROG, 1, MODEM_RATE, MODEM_FRAG, operations);
+	CHECK(calls[0] != NULL && calls[1] != NULL && calls[0] != calls[1] &&
+		      calls[0]->modem == &modems[0] && calls[1]->modem == &modems[1] &&
+		      operations->use_count == 2,
+	      "one modem's call progress prevented another independent instance");
+	CHECK(datapumps_stop(&owner) == DATAPUMPS_BUSY &&
+		      operations->delete(calls[0]) == 0 && operations->use_count == 1 &&
+		      datapumps_stop(&owner) == DATAPUMPS_BUSY,
+	      "deleting one call progress released another modem's registration");
+	memset(transmit, 1, sizeof(transmit));
+	CHECK(operations->process(calls[1], receive, transmit, MODEM_FRAG) == DPSTAT_OK &&
+		      samples_are_silent(transmit, MODEM_FRAG),
+	      "remaining call progress stopped processing silently");
+	calls[0] = operations->create(
+		&modems[0], DP_CALLPROG, 1, MODEM_RATE, MODEM_FRAG, operations);
+	CHECK(calls[0] != NULL && operations->use_count == 2 &&
+		      operations->delete(calls[1]) == 0 && operations->use_count == 1 &&
+		      operations->delete(calls[0]) == 0 && operations->use_count == 0 &&
+		      datapumps_stop(&owner) == DATAPUMPS_OK,
+	      "call progress did not support replacement and final deregistration");
+	return true;
+}
+
 static bool test_owns_source_built_datapump_registrations(void)
 {
 	struct datapumps datapumps = { 0 };
@@ -6987,6 +7024,8 @@ int main(void)
 		  test_registration_conflicts_preserve_foreign_owners },
 		{ "registration rollback retains ownership",
 		  test_registration_rollback_retains_ownership },
+		{ "independent call-progress modems",
+		  test_call_progress_supports_independent_modems },
 	};
 	unsigned int failures = 0;
 
