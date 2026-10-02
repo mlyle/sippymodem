@@ -70,6 +70,7 @@
  *
  *****************************************************************************/
 
+#include <limits.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <ctype.h>
@@ -524,8 +525,7 @@ static int process_plus_MS(struct modem *m, char *p, int *len)
 	enum DP_ID selectable_id;
 	char *end;
 	unsigned long n;
-	unsigned int dp_id;
-	int auto_mode,min_rate,max_rate;
+	unsigned long values[4];
 	int is_found=0;
 		
 	AT_DBG ("AT+MS...\n");
@@ -550,33 +550,37 @@ static int process_plus_MS(struct modem *m, char *p, int *len)
 			break;
 		}
 
-#define PARSE_MS_ITEM(p,len,item) { \
-		n = strtoul (p,&end,0); \
-		if (end != p) { item = n; }  \
-		*len += end - p; p = end;    \
-		if (*p != ',') goto setup_ms;        \
-		*len += 1; p++;              \
-                }
-		
-		dp_id    = MODEM_DP(m);
-		auto_mode= MODEM_AUTOMODE(m);
-		min_rate = m->min_rate;
-		max_rate = m->max_rate;
-
-		PARSE_MS_ITEM(p,len,dp_id);
-		PARSE_MS_ITEM(p,len,auto_mode);
-		PARSE_MS_ITEM(p,len,min_rate);
-		PARSE_MS_ITEM(p,len,max_rate);
-	setup_ms:
-		if (dp_id != MODEM_DP(m) && !modem_dp_is_selectable(dp_id))
+		values[0] = MODEM_DP(m);
+		values[1] = MODEM_AUTOMODE(m);
+		values[2] = m->min_rate;
+		values[3] = m->max_rate;
+		for (size_t index = 0; index < 4; index++) {
+			n = strtoul(p, &end, 0);
+			if (end != p) {
+				if (memchr(p, '-', (size_t)(end - p)) != NULL)
+					return -1;
+				values[index] = n;
+			}
+			*len += (int)(end - p);
+			p = end;
+			if (*p != ',')
+				break;
+			if (index == 3)
+				return -1;
+			(*len)++;
+			p++;
+		}
+		/* Validate in the parsed width before narrowing into modem state. */
+		if (values[0] > UINT_MAX || values[1] > 1 ||
+		    values[2] > values[3] || values[2] < MODEM_MIN_RATE ||
+		    values[3] > MODEM_MAX_RATE ||
+		    (values[0] != MODEM_DP(m) &&
+		     !modem_dp_is_selectable((enum DP_ID)values[0])))
 			return -1;
-		if((auto_mode != 0 && auto_mode != 1) || min_rate > max_rate ||
-		   min_rate < MODEM_MIN_RATE || max_rate > MODEM_MAX_RATE )
-			return -1;
-		MODEM_DP(m)       = dp_id;
-		MODEM_AUTOMODE(m) = auto_mode;
-		m->min_rate       = min_rate;
-		m->max_rate       = max_rate;
+		MODEM_DP(m) = (unsigned)values[0];
+		MODEM_AUTOMODE(m) = (unsigned)values[1];
+		m->min_rate = (unsigned)values[2];
+		m->max_rate = (unsigned)values[3];
 		break;
 	case '?':
 		n = sprintf(strval,"%d,%d,%u,%u",MODEM_DP(m),MODEM_AUTOMODE(m),

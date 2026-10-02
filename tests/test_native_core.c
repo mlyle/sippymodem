@@ -6530,6 +6530,51 @@ static bool test_at_ms_uses_builtin_catalog(void)
 	return true;
 }
 
+static bool test_at_ms_rejects_wrapped_values(void)
+{
+	static const char *invalid[] = {
+		"AT+MS=4294967386", "AT+MS=-4294967206",
+		"AT+MS=-18446744073709551526", "AT+MS=90, -18446744073709551615",
+		"AT+MS=18446744073709551616", "AT+MS=90,4294967297",
+		"AT+MS=90,-4294967295", "AT+MS=90,1,4294967596,56000",
+		"AT+MS=90,1,300,4295023296", "AT+MS=90,1,-4294966996,56000",
+		"AT+MS=90,1,300,-4294911296", "AT+MS=90,1,300,56000,",
+	};
+	struct modem_driver driver = {
+		.name = "modulation input test",
+		.start = unused_start,
+		.stop = unused_stop,
+		.ioctl = unused_control,
+	};
+	struct modem *m = modem_create(&driver, "modulation input test");
+	char initial[] = "AT+MS=34,0,2400,33600";
+	char omitted[] = "AT+MS=90";
+	char sparse[] = "AT+MS=,1,,56000";
+	char chained[] = "AT+MS=92+V90D=1";
+	char command[96];
+
+	CHECK(m != NULL && process_at_command(m, initial) == 0,
+	      "modulation input fixture did not initialize");
+	for (size_t i = 0; i < ARRAY_LENGTH(invalid); i++) {
+		snprintf(command, sizeof(command), "%s", invalid[i]);
+		CHECK(process_at_command(m, command) == -1 &&
+		      MODEM_DP(m) == DP_V34 && MODEM_AUTOMODE(m) == 0 &&
+		      m->min_rate == 2400 && m->max_rate == 33600,
+		      "invalid modulation input altered state: %s", invalid[i]);
+	}
+	CHECK(process_at_command(m, omitted) == 0 && MODEM_DP(m) == DP_V90 &&
+	      MODEM_AUTOMODE(m) == 0 && m->min_rate == 2400 && m->max_rate == 33600,
+	      "omitted AT+MS values did not retain the current settings");
+	CHECK(process_at_command(m, sparse) == 0 && MODEM_DP(m) == DP_V90 &&
+	      MODEM_AUTOMODE(m) == 1 && m->min_rate == 2400 && m->max_rate == 56000,
+	      "empty AT+MS fields did not preserve the unrelated settings");
+	CHECK(process_at_command(m, chained) == 0 && MODEM_DP(m) == DP_V92 &&
+	      modem_get_param(m, MDMPRM_V90_DIGITAL_INDICATION) == 1,
+	      "AT+MS did not preserve following PCM configuration commands");
+	modem_delete(m);
+	return true;
+}
+
 static bool test_builtin_datapump_lifecycle(void)
 {
 	struct modem_driver driver = {
@@ -6975,6 +7020,7 @@ int main(void)
 		{ "independent datapump factory instances", test_datapump_factory_instances },
 		{ "concurrent datapump lifetimes", test_concurrent_datapump_lifetimes },
 		{ "AT+MS built-in catalog", test_at_ms_uses_builtin_catalog },
+		{ "AT+MS rejects wrapped values", test_at_ms_rejects_wrapped_values },
 		{ "source-built data-pump ownership",
 		  test_builtin_datapump_lifecycle },
 		{ "independent call-progress modems",
