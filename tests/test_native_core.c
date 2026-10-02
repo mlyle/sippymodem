@@ -906,6 +906,46 @@ static int capture_call_cancel(struct modem *modem)
 	return capture->stop_result;
 }
 
+static bool test_stop_cancels_link_detection(void)
+{
+	struct modem_driver driver = {
+		.name = "stopped link detection", .start = unused_start,
+		.stop = capture_call_cancel, .ioctl = unused_control,
+	};
+
+	for (unsigned caller = 0; caller < 2; ++caller)
+	for (unsigned failure = 0; failure < 2; ++failure)
+	for (unsigned transmit = 0; transmit < 2; ++transmit) {
+		struct call_cancel_capture capture = { .stop_result = failure ? -1 : 0 };
+		struct modem *m = modem_create(&driver, driver.name);
+		uint8_t bits[32] = { 0 };
+
+		CHECK(m != NULL, "stopped detection allocation failed");
+		m->dev_data = &capture;
+		m->caller = caller;
+		m->started = 1;
+		m->state = 4;
+		m->cfg.ec = 1;
+		m->tx_rate = m->rx_rate = 4800;
+		modem_detector_start(m);
+		m->get_bits = modem_detector_get_bits;
+		m->put_bits = modem_detector_put_bits;
+		m->bit_timer = 8;
+		CHECK(modem_stop_now(m) == capture.stop_result && capture.stops == 1 &&
+		      !m->started && strcmp(modem_call_phase(m), "idle") == 0 &&
+		      m->bit_timer == 0 && m->bit_timer_func == NULL,
+		      "stop retained detection work: caller %u failure %u", caller, failure);
+		CHECK((transmit ? modem_get_bits(m, 8, bits, sizeof(bits)) :
+				  modem_put_bits(m, 8, bits, sizeof(bits))) == sizeof(bits) &&
+		      strcmp(modem_call_phase(m), "idle") == 0 && m->command &&
+		      m->get_bits == NULL && m->put_bits == NULL &&
+		      m->bit_timer == 0 && m->bit_timer_func == NULL,
+		      "late %s bits revived a stopped call", transmit ? "transmit" : "receive");
+		modem_delete(m);
+	}
+	return true;
+}
+
 static bool test_call_progress_cancels_without_media(void)
 {
 	struct modem_driver driver = {
@@ -6828,6 +6868,113 @@ void __wrap_v44_character_path_destroy(struct v44_character_path *path)
 	__real_v44_character_path_destroy(path);
 }
 
+static bool test_lapm_exit_retires_framing(void)
+{
+	enum { INITIALIZED, PREAMBLE, QUEUED_REPLY, BORROWED_REPLY, DEFERRED_INPUT };
+	struct modem_driver driver = {
+		.name = "LAPM framing retirement", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	const struct v44_character_path_config codec = {
+		.codec = { .transmit_enabled = true, .transmit_parameters = {
+			.codeword_limit = V44_MIN_CODEWORDS,
+			.max_string_length = V44_MIN_STRING_LENGTH,
+			.history_size = V44_MIN_HISTORY_SIZE,
+		} },
+		.receive_buffer_capacity = 1,
+		.read = lapm_v44_source, .write = lapm_v44_sink,
+	};
+
+	for (unsigned phase = INITIALIZED; phase <= DEFERRED_INPUT; ++phase)
+	for (unsigned caller = 0; caller < 2; ++caller)
+	for (unsigned compressed = 0; compressed < 2; ++compressed) {
+		struct modem *m = modem_create(&driver, driver.name);
+		uint8_t bits[32], wire[] = { 0, 0x7f, 0, 'x' };
+		frame_t incoming = { .buf = wire, .count = 2 };
+		unsigned destroyed = destroyed_v44_paths;
+
+		CHECK(m != NULL, "framing retirement allocation failed");
+		m->caller = caller;
+		m->cfg.comp = 0;
+		m->cfg.ec = 1;
+		m->state = 4;
+		CHECK(modem_ec_init(m) == 0, "framing retirement initialization failed");
+		struct lapm_state *l = &m->ec.lapm;
+		if (phase == INITIALIZED) {
+			/* An initialized corrector does not own the raw packer. */
+			modem_async_start(m);
+			m->get_bits = modem_async_get_bits;
+			m->put_bits = modem_async_put_bits;
+			m->pack.bit = 3;
+			m->pack.data = 5;
+		} else {
+			modem_hdlc_start(m);
+			m->get_bits = modem_hdlc_get_bits;
+			m->put_bits = modem_hdlc_put_bits;
+			m->caller = phase == PREAMBLE;
+			modem_ec_start(m);
+			m->caller = caller;
+			if (phase == PREAMBLE) {
+				m->packer.hdlc.tx_preamble_flags = 1;
+			} else if (phase == DEFERRED_INPUT) {
+				l->state = 2;
+				m->put_chars = scripted_lapm_sink;
+				memset(&lapm_sink, 0, sizeof(lapm_sink));
+				wire[0] = l->rsp_addr;
+				wire[1] = 0;
+				incoming.count = sizeof(wire);
+				m->packer.hdlc.rx_complete(l, &incoming);
+				CHECK(l->rx_count && m->packer_process != NULL,
+				      "deferred input fixture did not queue work");
+			} else {
+				wire[0] = l->rsp_addr;
+				m->packer.hdlc.rx_complete(l, &incoming);
+				CHECK(l->tx_ctrl != l->ctrl_list, "reply fixture did not queue a frame");
+				if (phase == BORROWED_REPLY) {
+					CHECK(modem_hdlc_get_bits(m, 1, bits, 1) == 1 &&
+					      m->packer.hdlc.tx_frame != NULL,
+					      "reply fixture did not borrow a frame");
+				}
+			}
+		}
+		if (compressed) {
+			l->v44_path = v44_character_path_create(&codec);
+			CHECK(l->v44_path != NULL, "retirement codec allocation failed");
+		}
+		unsigned state = m->state;
+		modem_ec_exit(m);
+		modem_ec_exit(m);
+		CHECK(l->state == 0 && l->modem == NULL && l->info_list == NULL &&
+		      l->ctrl_list == NULL && l->v44_path == NULL && !l->rx_count &&
+		      m->packer_process == NULL && destroyed_v44_paths == destroyed + compressed,
+		      "exit retained LAPM ownership at phase %u", phase);
+		if (phase == INITIALIZED) {
+			CHECK(m->get_bits == modem_async_get_bits && m->put_bits == modem_async_put_bits &&
+			      m->pack.bit == 3 && m->pack.data == 5,
+			      "exit reset an independently owned raw packer");
+		} else {
+			struct hdlc_state *h = &m->packer.hdlc;
+			CHECK(h->framer == NULL && h->get_tx_frame == NULL &&
+			      h->tx_complete == NULL && h->rx_complete == NULL &&
+			      h->tx_frame == NULL && !h->tx_preamble_flags &&
+			      h->tx_preamble_complete == NULL && !m->bit_timer &&
+			      m->bit_timer_func == NULL,
+			      "exit retained a framing callback at phase %u", phase);
+			CHECK(modem_get_bits(m, 8, bits, sizeof(bits)) == sizeof(bits),
+			      "retired framing did not generate idle flags");
+			for (unsigned i = 0; i < sizeof(bits); ++i)
+				CHECK(bits[i] == 0x7e, "retired framing transmitted a stale frame");
+			CHECK(modem_put_bits(m, 8, bits, sizeof(bits)) == sizeof(bits) &&
+			      l->state == 0 && m->state == state && !m->bit_timer,
+			      "late framing input restarted retired LAPM");
+		}
+		modem_delete(m);
+		CHECK(destroyed_v44_paths == destroyed + compressed,
+		      "modem destruction repeated codec release");
+	}
+	return true;
+}
+
 static bool test_retrain_preserves_lapm_establishment(void)
 {
 	enum { LAPM_DATA_STATE = 2 };
@@ -7694,6 +7841,7 @@ int main(void)
 		  test_ath0_drains_link_cleardown },
 		{ "call progress cancellation without media",
 		  test_call_progress_cancels_without_media },
+		{ "stop cancels link detection", test_stop_cancels_link_detection },
 		{ "bounded AT dial destinations",
 		  test_at_dial_destinations_are_bounded },
 		{ "AT compression profile", test_at_compression_profile },
@@ -7750,6 +7898,7 @@ int main(void)
 		{ "retrain preserves V.42 detection", test_retrain_preserves_detection },
 		{ "retrain preserves LAPM establishment",
 		  test_retrain_preserves_lapm_establishment },
+		{ "LAPM exit retires framing", test_lapm_exit_retires_framing },
 		{ "LAPM timer follows rate changes", test_lapm_timer_follows_rate_changes },
 		{ "V.21 brief answer mark",
 		  test_v21_originator_answers_brief_mark },

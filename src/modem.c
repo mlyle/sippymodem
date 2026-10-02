@@ -1478,6 +1478,9 @@ static int modem_stop (struct modem *m)
 	m->retrain_pending = 0;
 	m->sample_timer = 0;
 	m->sample_timer_func = NULL;
+	m->bit_timer = 0;
+	m->bit_timer_func = NULL;
+	m->packer_process = NULL;
 
 	if(m->started) {
 		ret = m->driver.stop(m);

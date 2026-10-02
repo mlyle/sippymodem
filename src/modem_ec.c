@@ -1774,21 +1774,6 @@ static int lapm_init(struct lapm_state *l, struct modem *m)
 	return 0;
 }
 
-static int lapm_exit(struct lapm_state *l)
-{
-	if (l->modem != NULL)
-		l->modem->packer_process = NULL;
-	l->rx_head = l->rx_count = 0;
-	v44_character_path_destroy(l->v44_path);
-	l->v44_path = NULL;
-	reset_lapm_sequence(l);
-	l->info_list = 0;
-	l->ctrl_list = 0;
-	return 0;
-}
-
-
-
 /* modem ec interface func */
 static void modem_ec_negotiate(struct modem *m)
 {
@@ -1920,7 +1905,15 @@ int modem_ec_init(struct modem *m)
 void modem_ec_exit(struct modem *m)
 {
 	struct lapm_state *l = &m->ec.lapm;
-	lapm_exit(l);
+
+	/* Retire borrowed frames and negotiation callbacks before their owner.
+	 * A call that fell back to raw framing has no LAPM binding to reset. */
+	if (m->packer.hdlc.framer == l)
+		modem_hdlc_start(m);
+	if (m->packer_process == push_rest_data)
+		m->packer_process = NULL;
+	v44_character_path_destroy(l->v44_path);
+	memset(l, 0, sizeof(*l));
 }
 
 enum modem_ec_compression
