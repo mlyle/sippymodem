@@ -158,14 +158,14 @@ static unsigned lapm_originator_preamble_flags(const struct modem *m)
 }
 
 /* tx unnumbered */
-#define TX_SABME(l) tx_unnum(l,l->cmd_addr,FRAME_U_SABME|0x10,0,0)
-#define TX_DISC(l)  tx_unnum(l,l->cmd_addr,FRAME_U_DISC|0x10,0,0)
-#define TX_UA(l,pf_mask) tx_unnum(l,l->rsp_addr,FRAME_U_UA|pf_mask,0,0)
-#define TX_DM(l,pf_mask) tx_unnum(l,l->rsp_addr,FRAME_U_DM|pf_mask,0,0)
+#define TX_SABME(l) tx_control(l,l->cmd_addr,FRAME_U_SABME|0x10,0)
+#define TX_DISC(l)  tx_control(l,l->cmd_addr,FRAME_U_DISC|0x10,0)
+#define TX_UA(l,pf_mask) tx_control(l,l->rsp_addr,FRAME_U_UA|pf_mask,0)
+#define TX_DM(l,pf_mask) tx_control(l,l->rsp_addr,FRAME_U_DM|pf_mask,0)
 /* tx supervisory */
-#define TX_RR(l,addr,pf_mask)  tx_super(l,addr,FRAME_S_RR,pf_mask)
-#define TX_RNR(l,addr,pf_mask) tx_super(l,addr,FRAME_S_RNR,pf_mask)
-#define TX_REJ(l,addr,pf_mask) tx_super(l,addr,FRAME_S_REJ,pf_mask)
+#define TX_RR(l,addr,pf_mask)  tx_control(l,addr,FRAME_S_RR,pf_mask)
+#define TX_RNR(l,addr,pf_mask) tx_control(l,addr,FRAME_S_RNR,pf_mask)
+#define TX_REJ(l,addr,pf_mask) tx_control(l,addr,FRAME_S_REJ,pf_mask)
 
 /* timers */
 #define T401_START(l) 	{ EC_DBG("T401 start.\n");\
@@ -330,34 +330,22 @@ static inline frame_t *get_ctrl_frame(struct lapm_state *l)
 
 
 
-/* U transmission */
-static int tx_unnum(struct lapm_state *l, u8 addr, u8 ctrl, u8 *info, int len)
+/* Mode commands and supervisory frames share the first two octets. */
+static int tx_control(struct lapm_state *l, u8 addr, u8 ctrl, u8 pf_mask)
 {
 	frame_t *f = get_ctrl_frame(l);
-	if (!f) {
-		EC_ERR("tx_unnum: cannot alloc frame.\n");
-		return -1;
-	}
-	f->buf[0] = addr;
-	f->buf[1] = ctrl;
-	if (info && len)
-		memcpy(f->buf+2,info,len);
-	f->size = 2 + len;
-	return 0;
-}
 
-/* S transmission */
-static int tx_super(struct lapm_state *l, u8 addr, u8 ctrl, u8 pf_mask)
-{
-	frame_t *f = get_ctrl_frame(l);
 	if (!f) {
-		EC_ERR("tx_super: cannot alloc frame.\n");
+		EC_ERR("cannot queue control frame.\n");
 		return -1;
 	}
 	f->buf[0] = addr;
 	f->buf[1] = ctrl;
-	f->buf[2] = (l->vr << 1)|pf_mask;
-	f->size = 3;
+	f->size = 2;
+	if (FRAME_TYPE(f) == FRAME_S) {
+		f->buf[2] = (l->vr << 1)|pf_mask;
+		f->size = 3;
+	}
 	return 0;
 }
 
@@ -365,7 +353,7 @@ static int tx_super(struct lapm_state *l, u8 addr, u8 ctrl, u8 pf_mask)
 /* V.42 8.4.6/8.4.7: status enquiries and replies reflect own-receiver busy. */
 static int tx_status(struct lapm_state *l, u8 addr, u8 pf_mask)
 {
-	return tx_super(l, addr, l->busy ? FRAME_S_RNR : FRAME_S_RR, pf_mask);
+	return tx_control(l, addr, l->busy ? FRAME_S_RNR : FRAME_S_RR, pf_mask);
 }
 
 /* V.42 9.2: select within the interval between the request and the default. */
