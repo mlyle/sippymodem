@@ -11419,6 +11419,39 @@ static bool test_validation(void)
 	return true;
 }
 
+/* Retained INFO0 metadata must keep the codec fixed across call epochs. */
+static bool test_local_offer_law(void)
+{
+	for (enum pcm_protocol protocol = PCM_PROTOCOL_V90; protocol <= PCM_PROTOCOL_V92; ++protocol) {
+		for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+			struct pcm_call_configuration selected = protocol == PCM_PROTOCOL_V90 ?
+				configuration(V90_DIGITAL_MODEM, law) : v92_configuration(V90_DIGITAL_MODEM, law);
+			struct pcm_call call;
+			struct pcm_call_observation observation;
+			uint8_t transmitted = 0xa5;
+
+			memset(&observation, 0x5a, sizeof(observation));
+
+			CHECK(pcm_call_init(&call, &selected) == PCM_CALL_OK && pcm_call_is_valid(&call),
+			      "matching INFO0 codec was rejected");
+			struct v90_info0d *offer = protocol == PCM_PROTOCOL_V90 ?
+				&call.local_info0.digital : &call.local_info0.v92_digital.v90;
+			offer->pcm_law = law == G711_LAW_PCMU ? V90_PCM_A_LAW : V90_PCM_MU_LAW;
+			const struct pcm_call before = call;
+			const struct pcm_call_observation saved_observation = observation;
+
+			CHECK(!pcm_call_is_valid(&call) &&
+			      pcm_call_octet(&call, silence_octet(law), 0, &transmitted, &observation) ==
+				PCM_CALL_INVALID_ARGUMENT && transmitted == 0xa5 &&
+			      memcmp(&call, &before, sizeof(call)) == 0 &&
+			      memcmp(&observation, &saved_observation, sizeof(observation)) == 0,
+			      "mismatched retained INFO0 codec changed call state or output: protocol=%u law=%u",
+			      protocol, law);
+		}
+	}
+	return true;
+}
+
 static bool test_v92_validation(void)
 {
 	struct pcm_call_configuration selected =
@@ -12110,6 +12143,7 @@ int main(int argc, char **argv)
 		{ "V.92 upstream reselection through retrain", test_v92_upstream_reselection },
 		{ "validation and transactionality", test_validation },
 		{ "V.92 validation", test_v92_validation },
+		{ "retained INFO0 codec law", test_local_offer_law },
 		{ "result names", test_result_names },
 		{ "automatic conventional upstream and peer-limited fallback", test_automatic_upstream },
 	};
