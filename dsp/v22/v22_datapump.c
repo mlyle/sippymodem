@@ -606,8 +606,11 @@ static int decode_600_phase_change(
 static uint32_t scrambled_confirmation_target(
 	const struct v22_datapump *datapump)
 {
-	return datapump->originator ? V22_ORIGINATE_SCRAMBLED_CONFIRM_BITS :
-					V22_ANSWER_SCRAMBLED_CONFIRM_BITS;
+	uint32_t bits = datapump->originator ? V22_ORIGINATE_SCRAMBLED_CONFIRM_BITS :
+		V22_ANSWER_SCRAMBLED_CONFIRM_BITS;
+
+	/* The confirmation interval is measured in time at either bit rate. */
+	return datapump_uses_600(datapump) ? bits / 2 : bits;
 }
 
 static int begin_connect_hold(struct v22_datapump *datapump)

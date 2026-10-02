@@ -141,6 +141,9 @@ struct modem_test_case {
 	bool require_lapm;
 	bool require_v44;
 	bool digital_caller;
+	bool automatic_pcm_roles;
+	bool conventional_upstream;
+	bool factory_transport;
 	enum integration_impairment impairment;
 };
 
@@ -896,7 +899,7 @@ static bool exercise_retrain(
 {
 	enum {
 		TEST_STATE_COMMAND_ONLINE = 6,
-		PRESERVED_CAPACITY = 64,
+		PRESERVED_CAPACITY = 128,
 		ATO1_100MS_FRAMES =
 			(MODEM_RATE / 10) / SIP_FRAME_SAMPLES,
 	};
@@ -931,6 +934,7 @@ static bool exercise_retrain(
 	size_t answerer_preserved_offset;
 	size_t pre_retrain_length;
 	size_t preserved_length;
+	unsigned int transmit_rate;
 	uint32_t pending_transmit_data = 0;
 	unsigned int completion_frames = 0;
 	int pending_transmit_bits = 0;
@@ -950,7 +954,9 @@ static bool exercise_retrain(
 	peer_retrains = peer->modem->dp->op->retrain != NULL;
 	caller->output_count = 0;
 	answerer->output_count = 0;
-	pre_retrain_length = raw_transport ? bit_rate / 50u / 10u : 0;
+	transmit_rate = caller->modem->tx_rate > answerer->modem->tx_rate ?
+		caller->modem->tx_rate : answerer->modem->tx_rate;
+	pre_retrain_length = raw_transport ? transmit_rate / 50u / 10u : 0;
 	/* Leave a clean character queued behind any asynchronous character or
 	 * mapping-frame input already owned by the datapump. */
 	preserved_length = raw_transport ? pre_retrain_length + 8u : 5u;
@@ -1072,7 +1078,7 @@ static bool exercise_retrain(
 	}
 	for (unsigned int frame = 0;
 	     frame < (v8_datapump_modulation(id) == V8_MODULATION_V32 ?
-			      V32_RETRAIN_FRAME_LIMIT : id == DP_V92 ?
+			      V32_RETRAIN_FRAME_LIMIT : v8_datapump_uses_pcm(id) ?
 			      V92_RETRAIN_FRAME_LIMIT : RETRAIN_FRAME_LIMIT);
 	     ++frame) {
 		bool losing_response = lose_first_response &&
@@ -2128,13 +2134,13 @@ static bool run_media_call(
 		CHECK(modem_set_sreg(caller.modem, SREG_CONNNECT_MSG_FORMAT, 1) == 0 &&
 		      modem_set_sreg(answerer.modem, SREG_CONNNECT_MSG_FORMAT, 1) == 0,
 		      "%s did not enable negotiated PCM details", test_case->name);
-		CHECK(modem_set_sreg(
+		CHECK(test_case->automatic_pcm_roles || (modem_set_sreg(
 			      caller.modem, SREG_V90_DIGITAL_INDICATION,
 			      test_case->digital_caller) == 0 &&
 		      modem_set_sreg(
 			      answerer.modem,
 			      SREG_V90_DIGITAL_INDICATION,
-			      !test_case->digital_caller) == 0,
+			      !test_case->digital_caller) == 0),
 		      "%s integration endpoints did not accept PCM roles",
 		      test_case->name);
 	}
@@ -2144,18 +2150,18 @@ static bool run_media_call(
 		      MODEM_AUTOMODE(answerer.modem) == 1,
 	      "source-built modem did not default to its available capability");
 	if (test_case->raw_transport) {
-		CHECK(modem_write(
-			      caller.modem, raw_command,
-			      (int)(sizeof(raw_command) - 1u)) ==
-			      (int)(sizeof(raw_command) - 1u) &&
-		      modem_write(
-			      answerer.modem, raw_command,
-			      (int)(sizeof(raw_command) - 1u)) ==
-			      (int)(sizeof(raw_command) - 1u) &&
+		const char *caller_command = test_case->factory_transport && test_case->automode ?
+			"AT\r" : raw_command;
+		const char *answerer_command = test_case->factory_transport && test_case->answerer_automode ?
+			"AT\r" : raw_command;
+
+		CHECK(modem_write(caller.modem, caller_command, (int)strlen(caller_command)) ==
+		      (int)strlen(caller_command) &&
+		      modem_write(answerer.modem, answerer_command, (int)strlen(answerer_command)) ==
+		      (int)strlen(answerer_command) &&
 		      endpoint_drain(&caller) && endpoint_drain(&answerer) &&
-		      output_contains(&caller, "OK") &&
-		      output_contains(&answerer, "OK"),
-		      "%s did not accept raw transport", test_case->name);
+		      output_contains(&caller, "OK") && output_contains(&answerer, "OK"),
+		      "%s did not accept raw-peer transport", test_case->name);
 		caller.output_count = 0;
 		answerer.output_count = 0;
 	}
@@ -2360,7 +2366,7 @@ static bool run_media_call(
 	      answerer.modem->ec.lapm.tx_ctrl != answerer.modem->ec.lapm.ctrl_list,
 	      answerer.modem->bit_timer);
 	if (connected_id == DP_V90 || connected_id == DP_V92) {
-		const char *upstream = connected_id == DP_V92 ?
+		const char *upstream = connected_id == DP_V92 && !test_case->conventional_upstream ?
 			"Upstream: PCM\r\n" : "Upstream: V34\r\n";
 		CHECK(output_contains(&caller, upstream) && output_contains(&answerer, upstream),
 		      "%s did not report negotiated upstream to both terminals", test_case->name);
@@ -4079,6 +4085,7 @@ static bool run_factory_startup_cases(const char *filter, bool *selected)
 				.training_frame_limit = 2000,
 				.automode = !answering, .answerer_fixed = !answering,
 				.answerer_automode = answering, .raw_transport = true,
+				.automatic_pcm_roles = true, .factory_transport = true,
 			};
 
 			snprintf(name, sizeof(name), "legacy startup %s %s",
@@ -4095,6 +4102,61 @@ static bool run_factory_startup_cases(const char *filter, bool *selected)
 					return false;
 				fprintf(stderr, "[       OK ] %s over %s SIP media\n",
 					name, codec_name(codecs[codec]));
+			}
+		}
+	}
+	return true;
+}
+
+static bool run_factory_pcm_cases(const char *filter, bool *selected)
+{
+	static const enum media_codec codecs[] = { MEDIA_CODEC_PCMU, MEDIA_CODEC_PCMA };
+
+	for (unsigned protocol = 90; protocol <= 92; protocol += 2) {
+		for (unsigned answering = 0; answering < 2; ++answering) {
+			for (unsigned peer_digital = 0; peer_digital < 2; ++peer_digital) {
+				char name[100], fixed[100];
+				bool digital_caller = answering ? peer_digital : !peer_digital;
+				enum DP_ID peer_id = protocol == 90 ? DP_V90 : DP_V92;
+				unsigned upstream_rate = digital_caller && answering && protocol == 90 ? 31200 : 33600;
+				struct modem_test_case test = {
+					.id = answering ? peer_id : DP_V92,
+					.answerer_id = answering ? DP_V92 : peer_id,
+					.connected_id = peer_id,
+					.answerer_connected_id = peer_id,
+					.name = name,
+					.selection_command = answering ? fixed : "AT\r",
+					.answerer_selection_command = answering ? "AT\r" : fixed,
+					.caller_tx_rate = digital_caller ? 28000 : upstream_rate,
+					.caller_rx_rate = digital_caller ? upstream_rate : 28000,
+					.answerer_tx_rate = digital_caller ? upstream_rate : 28000,
+					.answerer_rx_rate = digital_caller ? 28000 : upstream_rate,
+					.training_frame_limit = 1500,
+					.automode = !answering, .answerer_fixed = !answering,
+					.answerer_automode = answering, .requires_v8 = true,
+					.requires_exact_g711 = true, .raw_transport = true,
+					.digital_caller = digital_caller, .automatic_pcm_roles = true,
+					.conventional_upstream = true, .factory_transport = true,
+					.test_retrain = protocol == 90 && !answering && peer_digital,
+					.impairment = INTEGRATION_IMPAIRMENT_DIGITAL_DELAY,
+				};
+
+				snprintf(name, sizeof(name), "factory PCM %s V.%u %s peer",
+					answering ? "answering" : "calling", protocol,
+					peer_digital ? "digital" : "analog");
+				snprintf(fixed, sizeof(fixed), "AT+MS=%u,0,28000,28000+V90D=%u\r",
+					protocol, peer_digital);
+				if (filter != NULL && filter[0] != '\0' && strstr(name, filter) == NULL)
+					continue;
+				*selected = true;
+				for (size_t codec = 0; codec < ARRAY_LENGTH(codecs); ++codec) {
+					fprintf(stderr, "[ RUN      ] %s over %s SIP media\n",
+						name, codec_name(codecs[codec]));
+					if (!run_media_call(&test, codecs[codec]))
+						return false;
+					fprintf(stderr, "[       OK ] %s over %s SIP media\n",
+						name, codec_name(codecs[codec]));
+				}
 			}
 		}
 	}
@@ -4935,6 +4997,8 @@ int main(void)
 			   v90_recording_expected_text)) {
 		return 1;
 	}
+	if (!run_factory_pcm_cases(integration_filter, &integration_case_selected))
+		return 1;
 	if (!run_factory_startup_cases(integration_filter, &integration_case_selected))
 		return 1;
 	for (size_t standard = 0; standard < ARRAY_LENGTH(test_cases);

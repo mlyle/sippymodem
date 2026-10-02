@@ -51,6 +51,7 @@
 #include <sys/ioctl.h>
 
 #include <modem.h>
+#include <modem_param.h>
 #include <modem_debug.h>
 #include <v8_datapump.h>
 
@@ -2115,7 +2116,7 @@ static int sregs_init(unsigned char sregs[])
 	sregs[SREG_EC]   = 1;
 	sregs[SREG_COMP] = 0x3;
 	sregs[SREG_COMP_TYPES] = MODEM_COMP_TYPE_DEFAULT;
-	sregs[SREG_V90_DIGITAL_INDICATION] = 0;
+	sregs[SREG_V90_DIGITAL_INDICATION] = MODEM_PCM_POLICY_AUTO;
 	sregs[SREG_V92_QUICK_CONNECT] = 1;
 	sregs[SREG_V92_PCM_UPSTREAM] = 0;
 	sregs[SREG_V92_PCM_UPSTREAM_MAX_DRN] = 0;

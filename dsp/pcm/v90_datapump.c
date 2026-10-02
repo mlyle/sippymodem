@@ -711,6 +711,10 @@ static bool process_octet(
 	}
 	if (result != PCM_CALL_OK)
 		return false;
+	if (datapump->protocol == PCM_PROTOCOL_V92 && datapump->call.protocol == PCM_PROTOCOL_V90) {
+		datapump->protocol = PCM_PROTOCOL_V90;
+		datapump->dp.id = DP_V90;
+	}
 	if (was_qc && datapump->call.stage == PCM_CALL_PHASE2)
 		datapump->dp.modem->dsp_info.startup = MODEM_STARTUP_QC;
 	if (was_online && datapump->call.retrain_active &&

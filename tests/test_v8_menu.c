@@ -463,8 +463,9 @@ static bool test_pcm_role_fallback(void)
 	      v8_pcm_select_roles(
 		      &call_menu, &joint_menu, &roles) == V8_MENU_OK &&
 	      roles.caller == V8_PCM_ROLE_ANALOG &&
-	      roles.answerer == V8_PCM_ROLE_DIGITAL,
-	      "V.8 did not apply the dual-digital role preference");
+	      roles.answerer == V8_PCM_ROLE_DIGITAL &&
+	      joint_menu.pcm_availability == V8_PCM_DIGITAL,
+	      "V.8 did not resolve the dual-digital role in its joint menu");
 	CHECK(v8_pcm_call_menu_init(
 		      &call_menu, V8_PCM_ANALOG, 0, false) == V8_MENU_OK &&
 	      v8_pcm_call_menu_init(

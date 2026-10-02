@@ -287,7 +287,7 @@ static bool test_raw_answerer_selects_v14(void)
 		EXPECTED_ADP_PATTERNS = 16,
 		EXPECTED_PATTERN_BITS = 36,
 		EXPECTED_ADP_BITS =
-			EXPECTED_ADP_PATTERNS * EXPECTED_PATTERN_BITS,
+			EXPECTED_ADP_PATTERNS * EXPECTED_PATTERN_BITS + 9,
 		EARLY_ADP_BITS = 3 * EXPECTED_PATTERN_BITS,
 	};
 	uint8_t bits[EXPECTED_ADP_BITS];
@@ -311,7 +311,7 @@ static bool test_raw_answerer_selects_v14(void)
 
 	answer_datapump.modem = &answerer;
 	modem_detector_start(&answerer);
-	CHECK(answerer.bit_timer == 7200 &&
+	CHECK(answerer.bit_timer == 14400 &&
 		      answerer.packer.detector.tx_pattern[0] == 0xa2 &&
 		      answerer.packer.detector.tx_pattern[1] == 0x00,
 	      "raw answerer did not arm T400 with ADP-V.14");
@@ -357,12 +357,12 @@ static bool test_raw_answerer_selects_v14(void)
 		      EXPECTED_ADP_BITS - EARLY_ADP_BITS - 1) ==
 		      EXPECTED_ADP_BITS - EARLY_ADP_BITS - 1 &&
 		      answerer.packer.detector.tx_count ==
-			      2 * EXPECTED_ADP_PATTERNS + 1 &&
+			      2 * EXPECTED_ADP_PATTERNS + 2 &&
 		      answerer.pack.bit == 1 && answerer.bit_timer == 0,
-	      "V.14 answerer did not retain the final ADP bit");
+	      "V.14 answerer did not retain the final ADP mark");
 	CHECK(modem_detector_get_bits(
 		      &answerer, 1, bits + EXPECTED_ADP_BITS - 1, 1) == 1,
-	      "V.14 answerer did not emit the final ADP bit");
+	      "V.14 answerer did not emit the final ADP mark");
 	CHECK(answerer.packer.detector.tx_count == 0 &&
 		      answerer.bit_timer_func == NULL,
 	      "V.14 answerer did not finish after exactly 16 ADPs");
@@ -377,7 +377,7 @@ static bool test_raw_answerer_selects_v14(void)
 	return true;
 }
 
-static bool test_v42_waits_for_a_delayed_peer(void)
+static bool test_v42_starts_detection_immediately(void)
 {
 	uint8_t bits[512];
 	struct modem originator = {
@@ -393,32 +393,15 @@ static bool test_v42_waits_for_a_delayed_peer(void)
 	};
 
 	modem_detector_start(&originator);
-	CHECK(originator.bit_timer == 512 &&
-		      originator.packer.detector.tx_count == 0,
-	      "V.42 originator did not begin with the 512-bit mark interval");
-	CHECK(modem_detector_get_bits(
-		      &originator, 1, bits, 512) == 512,
-	      "V.42 originator did not emit its initial mark interval");
-	originator.bit_timer = 0;
-	originator.bit_timer_func(&originator);
-	CHECK(originator.bit_timer == 0 &&
+	CHECK(originator.bit_timer == 7200 &&
 		      originator.packer.detector.tx_count == 1,
-	      "V.42 originator did not begin its continuous ODP run");
-
-	/* Discard more than the former T400-limited ODP run before the answerer
-	 * reaches its own packet-protocol boundary. */
-	for (unsigned int iteration = 0; iteration < 101; ++iteration)
-		CHECK(modem_detector_get_bits(
-			      &originator, 1, bits, (int)ARRAY_LENGTH(bits)) ==
-			      (int)ARRAY_LENGTH(bits),
-		      "V.42 originator stopped during the delayed ODP run");
-	CHECK(originator.bit_timer == 0 &&
-		      originator.packer.detector.tx_count > 1 &&
-		      originator.packer.detector.ec_enable == 0,
-	      "V.42 originator abandoned detection before its peer arrived");
-
+	      "V.42 originator did not arm T400 and begin ODP immediately");
+	CHECK(modem_detector_get_bits(&originator, 1, bits, 37) == 37 &&
+	      detection_character_matches(bits, 0x88) &&
+	      detection_character_matches(bits + 18, 0x89),
+	      "V.42 originator did not start with a complete ODP pair");
 	modem_detector_start(&answerer);
-	CHECK(answerer.bit_timer == 2073600,
+	CHECK(answerer.bit_timer == 7200,
 	      "V.42 answerer armed %d initial detection bits",
 	      answerer.bit_timer);
 	for (unsigned int iteration = 0;
@@ -598,7 +581,7 @@ static bool test_v42_rejects_bad_detection_stops(void)
 				modem_detector_start(&modem);
 				CHECK(receive_detection_bits(&modem, bits, count, width) &&
 				      modem.packer.detector.rx_count < 4 &&
-				      modem.packer.detector.tx_count == 0,
+				      modem.packer.detector.tx_count == (modem.caller ? 1 : 0),
 				      "accepted bad stop: pattern %zu width %u character %u",
 				      pattern, width, broken);
 				bits[3 + broken * 18 + 9] = 1;
@@ -812,8 +795,8 @@ int main(void)
 		  test_async_preserves_raw_data_through_t400 },
 		{ "raw answerer V.14 selection",
 		  test_raw_answerer_selects_v14 },
-		{ "V.42 delayed startup",
-		  test_v42_waits_for_a_delayed_peer },
+		{ "V.42 immediate startup",
+		  test_v42_starts_detection_immediately },
 		{ "V.42 bounded HDLC flag transition",
 		  test_v42_flags_do_not_extend_detection },
 		{ "V.42 synchronous flag boundaries",

@@ -909,11 +909,11 @@ void modem_ec_update_timer_rate(struct modem *m, uint64_t previous_rate)
 {
 	uint64_t rate, remaining;
 
-	/* LAPM elapsed-time timers use duplex bit units. Other timer owners,
-	 * including the detector's mark preamble, count fixed bits. */
+	/* V.42 elapsed-time timers use duplex bit units, including T400. */
 	if (m == NULL || m->bit_timer <= 0 ||
 	    (m->bit_timer_func != t401_timeout &&
-	     m->bit_timer_func != t403_timeout))
+	     m->bit_timer_func != t403_timeout &&
+	     m->get_bits != modem_detector_get_bits))
 		return;
 	rate = (uint64_t)m->rx_rate + m->tx_rate;
 	if (rate == 0)

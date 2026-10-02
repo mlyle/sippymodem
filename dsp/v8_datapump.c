@@ -159,6 +159,7 @@ static struct dp *create_v8(
 		v8_datapump_modulation(id);
 	enum v8_menu_result menu_result;
 	uint16_t offered = modulation;
+	unsigned role_policy = MODEM_PCM_POLICY_ANALOG;
 	bool digital = false;
 	bool lapm;
 	bool restarting = modem != NULL && modem->dp != NULL &&
@@ -182,12 +183,15 @@ static struct dp *create_v8(
 	if (menu_result != V8_MENU_OK)
 		return NULL;
 	if (v8_datapump_uses_pcm(id)) {
-		digital = modem_get_param(
-			modem, MDMPRM_V90_DIGITAL_INDICATION) != 0;
+		role_policy = modem_get_param(modem, MDMPRM_V90_DIGITAL_INDICATION);
+		if (role_policy > MODEM_PCM_POLICY_AUTO)
+			return NULL;
+		digital = role_policy == MODEM_PCM_POLICY_DIGITAL;
 		local_menu.pcm_present = true;
 		local_menu.pstn_access_present = true;
-		local_menu.pcm_availability = digital ? V8_PCM_DIGITAL : V8_PCM_ANALOG;
-		local_menu.pstn_access = digital ? V8_PSTN_DIGITAL : 0;
+		local_menu.pcm_availability = role_policy == MODEM_PCM_POLICY_AUTO ?
+			V8_PCM_ANALOG | V8_PCM_DIGITAL : digital ? V8_PCM_DIGITAL : V8_PCM_ANALOG;
+		local_menu.pstn_access = role_policy != MODEM_PCM_POLICY_ANALOG ? V8_PSTN_DIGITAL : 0;
 	}
 	datapump = calloc(1, sizeof(*datapump));
 	if (datapump == NULL)
@@ -233,7 +237,9 @@ static struct dp *create_v8(
 		datapump->restarted = restarting;
 		if (restarting && !caller)
 			datapump->handshake.answering.quiet_samples = 0;
-		if (!restarting && modem_get_param(modem, MDMPRM_V92_QUICK_CONNECT)) {
+		/* QC1 commits to a PCM role before menus; automatic roles need CM/JM. */
+		if (!restarting && role_policy != MODEM_PCM_POLICY_AUTO &&
+		    modem_get_param(modem, MDMPRM_V92_QUICK_CONNECT)) {
 			struct v92_qc1_message local = {
 				.sender = digital ? V90_DIGITAL_MODEM : V90_ANALOG_MODEM,
 				.acknowledgment = !caller,

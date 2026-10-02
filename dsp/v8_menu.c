@@ -341,13 +341,14 @@ enum v8_menu_result v8_joint_menu_select(
 		return V8_MENU_INVALID_ARGUMENT;
 	/* Resolve PCM availability before constructing JM, including when only
 	 * one endpoint offers PCM. V.8 section 7.4 permits the PCM category in
-	 * JM only when it was present in CM. */
+	 * JM only when it was present in CM. Advertise the selected answerer
+	 * role so the peer need not resolve an ambiguous dual-role JM. */
 	selected = (struct v8_menu){
 		.call_function = call_menu->call_function,
 		.modulations = call_menu->modulations & answer_menu->modulations,
 		.modulation_octets = call_menu->modulation_octets,
-		.pcm_availability = roles.caller == V8_PCM_ROLE_NONE ?
-			0 : answer_menu->pcm_availability,
+		.pcm_availability = roles.answerer == V8_PCM_ROLE_DIGITAL ? V8_PCM_DIGITAL :
+			roles.answerer == V8_PCM_ROLE_ANALOG ? V8_PCM_ANALOG : 0,
 		.pstn_access =
 			(call_menu->pstn_access & V8_PSTN_CALL_CELLULAR) |
 			(answer_menu->pstn_access &

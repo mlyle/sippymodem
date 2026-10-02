@@ -41,6 +41,9 @@
  *
  */
 
+#include <limits.h>
+#include <stdint.h>
+
 #include <modem.h>
 #include <modem_debug.h>
 
@@ -324,9 +327,7 @@ void modem_async_start(struct modem *m)
 #define ADP1_V42 0xc2
 
 #define DETECTOR_MATCH_CHARACTERS (2 * V42_ORIGINATOR_MATCH_PATTERNS)
-#define DETECTOR_ORIGINATOR_MARK_BITS (64 * 8)
-#define DETECTOR_ANSWER_TIMEOUT_SCALE 96
-#define DETECTOR_FALLBACK_RATE 28800
+#define DETECTOR_FALLBACK_RATE 57600
 
 _Static_assert(V42_ANSWER_REPLY_PATTERNS >=
 		       V42_MINIMUM_ANSWER_PATTERNS,
@@ -356,16 +357,28 @@ static void detector_set_pattern(u8 pattern[2], u8 first, u8 second)
 
 static void detector_finish(struct modem *m);
 
-static int detector_rate(const struct modem *m)
+static void detector_timeout(struct modem *m)
 {
-	return m->tx_rate > 0 ? (int)m->tx_rate : DETECTOR_FALLBACK_RATE;
+	/* Finish the final ODP pair and its mark interval before raw data. */
+	if (m->caller) {
+		struct detect_state *d = &m->packer.detector;
+
+		d->tx_limit = d->tx_count & ~1;
+		if (d->tx_limit == 0)
+			d->tx_limit = 2;
+		m->bit_timer = 0;
+		m->bit_timer_func = NULL;
+	} else {
+		detector_finish(m);
+	}
 }
 
-
-static void detector_start(struct modem *m)
+static uint64_t detector_rate(const struct modem *m)
 {
-	PACK_DBG("detector start...\n");
-	m->packer.detector.tx_count = 1;
+	/* The shared bit timer advances on both transmitted and received bits. */
+	uint64_t rate = (uint64_t)m->tx_rate + m->rx_rate;
+
+	return rate != 0 ? rate : DETECTOR_FALLBACK_RATE;
 }
 
 static void detector_start_adp_reply(struct modem *m)
@@ -384,12 +397,16 @@ static int detector_ec_required(const struct modem *m)
 
 static void detector_finish(struct modem *m)
 {
+	struct bits_state transmit_tail = m->pack;
+	struct bits_state receive_tail = m->unpack;
 	u8 residue_pattern[2] = {
 		m->packer.detector.rx_pattern[0],
 		m->packer.detector.rx_pattern[1],
 	};
+	/* One received pair can precede a late ODP at the T400 boundary.
+	 * It arms the residue filter; four characters still select V.42. */
 	int discard_residue = !m->packer.detector.ec_enable &&
-		m->packer.detector.rx_count >= DETECTOR_MATCH_CHARACTERS;
+		m->packer.detector.rx_count >= 2;
 
 	PACK_DBG("detector finished.\n");
 	m->packer.detector.tx_count = 0;
@@ -403,6 +420,8 @@ static void detector_finish(struct modem *m)
 	modem_update_status(m,STATUS_PACK_LINK);
 	if (!m->cfg.ec && m->get_bits == modem_async_get_bits) {
 		m->packer.async.transmit_mark_bits = 0;
+		/* Preserve any marks already queued at the framing boundary. */
+		m->pack = transmit_tail;
 		if (discard_residue) {
 			REVERSE_BITS(residue_pattern[0]);
 			REVERSE_BITS(residue_pattern[1]);
@@ -412,6 +431,13 @@ static void detector_finish(struct modem *m)
 				residue_pattern[1];
 			m->packer.async.detection_residue_state =
 				ASYNC_DETECTION_RESIDUE_WAIT;
+			/* The detector has consumed every complete character. Seed
+			 * the raw receiver with its partial next character so a
+			 * fragment boundary cannot turn ADP/ODP residue into data. */
+			for (int bit = receive_tail.bit - 1; bit >= 0; --bit) {
+				u8 value = (receive_tail.data >> bit) & 1u;
+				modem_async_put_bits(m, 1, &value, 1);
+			}
 		}
 	}
 }
@@ -462,12 +488,14 @@ int modem_detector_get_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 		}
 		if (bit_cnt <= 0)
 			break;
-		if (!m->caller &&
-		    d->tx_count > 2 * V42_ANSWER_REPLY_PATTERNS) {
+		if (d->tx_limit != 0 && d->tx_count > d->tx_limit) {
 			/* Finish the selected output group with marks.  The detector
 			 * changes ownership only after every required ADP bit is on the
 			 * wire, independent of receive-side activity. */
-			int marks = nbits - s->bit;
+			int marks = d->tx_count == d->tx_limit + 1 ?
+				9 : nbits - s->bit;
+
+			d->tx_count = d->tx_limit + 2;
 
 			s->data = (s->data << marks) |
 				(((u32)1 << marks) - 1u);
@@ -487,8 +515,8 @@ int modem_detector_get_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 			s->bit += 9;
 		}
 	}
-	if (!m->caller &&
-	    d->tx_count > 2 * V42_ANSWER_REPLY_PATTERNS && s->bit == 0)
+	if (d->tx_limit != 0 &&
+	    d->tx_count > d->tx_limit + 1 && s->bit == 0)
 		detector_finish(m);
 	return ret;
 }
@@ -547,38 +575,38 @@ int modem_detector_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 			}
 		}
 	}
-	if (finish)
-		detector_finish(m);
+	if (finish) {
+		if (m->caller && !d->ec_enable)
+			detector_timeout(m);
+		else
+			detector_finish(m);
+	}
 	return ret;
 }
 
 void modem_detector_start(struct modem *m)
 {
 	struct detect_state *d = &m->packer.detector;
-	int rate = detector_rate(m);
+	uint64_t timeout = detector_rate(m) * V42_T400_MS / 1000;
 	d->tx_count = 0; /* mute transmitter */
 	d->rx_count = 0;
+	d->tx_limit = m->caller ? 0 : 2 * V42_ANSWER_REPLY_PATTERNS;
 	d->ec_enable = 0;
 	if (m->caller) {
 		detector_set_pattern(d->tx_pattern, ODP0, ODP1);
 		detector_set_pattern(d->rx_pattern, ADP0, ADP1_V42);
-		m->bit_timer_func = detector_start;
-		m->bit_timer = DETECTOR_ORIGINATOR_MARK_BITS;
+		d->tx_count = 1;
 	}
 	else {
 		detector_set_pattern(
 			d->tx_pattern, ADP0,
 			m->cfg.ec ? ADP1_V42 : ADP1_V14);
 		detector_set_pattern(d->rx_pattern, ODP0, ODP1);
-		m->bit_timer_func = detector_finish;
-		/* The initial data-mode boundary can be substantially skewed between
-		 * peers.  Keep reliable-mode detection alive until the remote ODP
-		 * arrives; the call-level training timeout remains the outer bound. */
-		m->bit_timer = m->cfg.ec ?
-			DETECTOR_FALLBACK_RATE *
-				DETECTOR_ANSWER_TIMEOUT_SCALE * 3 / 4 :
-			rate * V42_T400_MS / 1000;
 	}
+	/* V.42 7.2.1 and 9.1.1: start detection immediately and bound
+	 * either role by the default 750 ms T400. */
+	m->bit_timer_func = detector_timeout;
+	m->bit_timer = timeout > INT_MAX ? INT_MAX : timeout > 0 ? (int)timeout : 1;
 	m->pack.bit  = m->unpack.bit  = 0;
 	m->pack.data = 0;
 	m->unpack.data = 0xffffu; /* No flag history before this carrier epoch. */

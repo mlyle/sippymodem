@@ -45,8 +45,13 @@ explicit half-duplex turns and preserves the complete mark-hold interval before
 listening again.
 
 `ATZ` restores automatic V.92 selection (`AT+MS=92,1,300,56000`) and
-unrestricted conventional upstream rate and symbol-rate negotiation. The caller
-prefers V.8 negotiation and recognizes legacy answer tones when V.8 is absent.
+unrestricted conventional upstream rate and symbol-rate negotiation.
+`AT+V90D=2` is the default: V.8 negotiates either PCM role with the peer.
+Use `AT+V90D=0` to pin the analog role or `AT+V90D=1` to pin the digital role.
+Automatic roles use the full V.8 menu exchange; quick connect remains available
+when a role is pinned. A V.90-only peer selects V.90 during INFO0 while the
+completed ranging and probing are retained. The caller prefers V.8 negotiation
+and recognizes legacy answer tones when V.8 is absent.
 It tries Bell 212A before Bell 103 on their shared answer tone and permits
 V.22bis to negotiate 1200 bit/s or retry at 600 bit/s within the selected range.
 The answerer begins with ANSam; without a call menu it continues through V.32,
@@ -58,7 +63,9 @@ channel; a fixed family or rate range still limits automatic fallback.
 The answer sequence follows ITU-T V.8 (11/2000), 8.1.1 and 8.2.2: five seconds
 of unanswered ANSam and a 75 ms silent transition. V.22bis 6.3.1.1 supplies
 the 2400/1200-bit/s decision. Optional V.92 PCM upstream is selected with
-`AT+V92U=1`.
+`AT+V92U=1`. V.34 upload is the default. V.42 detection uses its 750 ms
+T400 deadline in either role, then falls back to raw data when error correction
+is optional and the peer does not respond.
 
 When LAPM compression is requested, XID may offer both V.44 and the legacy
 method but selects exactly one in the response. A negotiated V.44 session owns

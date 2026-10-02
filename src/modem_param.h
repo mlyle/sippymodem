@@ -44,6 +44,13 @@
 #ifndef __MODEM_PARAM_H__
 #define __MODEM_PARAM_H__
 
+/* AT+V90D policy; V.8 selects complementary roles in automatic mode. */
+enum modem_pcm_policy {
+	MODEM_PCM_POLICY_ANALOG = 0,
+	MODEM_PCM_POLICY_DIGITAL = 1,
+	MODEM_PCM_POLICY_AUTO = 2,
+};
+
 /* param names */
 enum MODEM_PARAMETER_NAMES {
 	MDMPRM_NONE,

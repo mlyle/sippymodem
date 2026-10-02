@@ -394,6 +394,7 @@ struct modem {
 		} async;
 		struct detect_state {
 			int tx_count;
+			int tx_limit;
 			u8 tx_pattern[2];
 			int rx_count;
 			u8 rx_pattern[2];

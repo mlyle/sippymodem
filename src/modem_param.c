@@ -84,7 +84,7 @@ long modem_get_param(struct modem *m, unsigned param_name)
 	case MDMPRM_DP_ADDR:
 		return (long)(m->dp);
 	case MDMPRM_V90_DIGITAL_INDICATION:
-		return m->sregs[SREG_V90_DIGITAL_INDICATION] != 0;
+		return m->sregs[SREG_V90_DIGITAL_INDICATION];
 	case MDMPRM_V92_QUICK_CONNECT:
 		return m->sregs[SREG_V92_QUICK_CONNECT] != 0;
 	case MDMPRM_V92_PCM_UPSTREAM:
@@ -214,7 +214,9 @@ long modem_set_param(struct modem *m, unsigned name, int val)
 		// bla-bla
 		return m->driver.ioctl(m, MDMCTL_PULSEDIAL, val);
 	case MDMPRM_V90_DIGITAL_INDICATION:
-		m->sregs[SREG_V90_DIGITAL_INDICATION] = val != 0;
+		if (val < MODEM_PCM_POLICY_ANALOG || val > MODEM_PCM_POLICY_AUTO)
+			return -1;
+		m->sregs[SREG_V90_DIGITAL_INDICATION] = val;
 		break;
 	case MDMPRM_V92_QUICK_CONNECT:
 		m->sregs[SREG_V92_QUICK_CONNECT] = val != 0;

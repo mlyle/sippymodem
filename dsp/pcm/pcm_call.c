@@ -116,7 +116,7 @@ static bool stored_peer_info0_is_valid(const struct pcm_call *call)
 	return pcm_info0_is_valid(call->protocol,
 		       call->local_role == V90_ANALOG_MODEM ?
 			       V90_DIGITAL_MODEM : V90_ANALOG_MODEM, &call->peer_info0) &&
-	       (call->protocol == PCM_PROTOCOL_V90 ||
+	       (call->protocol == PCM_PROTOCOL_V90 || call->stage == PCM_CALL_PHASE2 ||
 		(call->local_role == V90_ANALOG_MODEM ?
 			call->peer_info0.v92_digital.v92_capable :
 			call->peer_info0.v92_analog.v92_capable));
@@ -1001,7 +1001,11 @@ static bool call_is_valid(
 	case PCM_CALL_PHASE2:
 		child_valid = pcm_phase2_is_valid(&call->state.phase2) &&
 			      call->state.phase2.local_role == call->local_role &&
-			      call->state.phase2.info0_protocol == call->protocol;
+			      (call->state.phase2.info0_protocol == call->protocol ||
+			       (call->protocol == PCM_PROTOCOL_V90 &&
+				call->state.phase2.info0_protocol == PCM_PROTOCOL_V92 &&
+				call->state.phase2.peer_info0_stored &&
+				call->state.phase2.startup.protocol == PCM_PROTOCOL_V90));
 		child_failed = pcm_phase2_has_failed(&call->state.phase2);
 		break;
 	case PCM_CALL_PHASE3:
@@ -2184,8 +2188,15 @@ static enum pcm_call_result advance_phase2(
 		if (pcm_phase2_startup_selection(
 			    &call->state.phase2, &startup) != PCM_PHASE2_OK)
 			return PCM_CALL_SEQUENCE_MISMATCH;
-		if (startup.protocol != call->protocol)
-			return PCM_CALL_UNUSABLE_SELECTION;
+		if (startup.protocol != call->protocol) {
+			if (call->protocol != PCM_PROTOCOL_V92 || startup.protocol != PCM_PROTOCOL_V90)
+				return PCM_CALL_UNUSABLE_SELECTION;
+			/* INFO0 may decline V.92. Retain the completed ranging and
+			 * probing, then use the ordinary INFO1/training/data path.
+			 * The Phase 2 owner retains its original INFO0 wire format. */
+			call->protocol = PCM_PROTOCOL_V90;
+			call->short_startup = (struct pcm_call_short_startup){ 0 };
+		}
 		if (call->local_role == V90_ANALOG_MODEM)
 			result = startup.phase2 == PCM_PHASE2_SHORT ?
 				start_short_analog_info1(call) :

@@ -1403,9 +1403,73 @@ static bool test_v92_negotiated_lapm_bypasses_detection(void)
 	return true;
 }
 
+static bool test_v42_detection_deadline(void)
+{
+	static const unsigned rates[][2] = {
+		{ 600, 600 }, { 1200, 1200 }, { 9600, 9600 },
+		{ 31200, 28000 }, { 33600, 56000 },
+	};
+	struct modem_driver driver = {
+		.name = "V.42 detection deadline", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+
+	for (size_t i = 0; i < ARRAY_LENGTH(rates); ++i) {
+		for (unsigned caller = 0; caller <= 1; ++caller) {
+			struct modem *m = modem_create(&driver, "V.42 detection deadline");
+			struct dp dp = { .id = DP_V34, .modem = m };
+			unsigned tx_phase = 0, rx_phase = 0, tick;
+			uint32_t transmit_tail = 0;
+
+			CHECK(m != NULL, "detection deadline allocation failed");
+			m->dp = &dp;
+			m->caller = caller;
+			m->tx_rate = rates[i][0];
+			m->rx_rate = rates[i][1];
+			m->cfg.ec = m->cfg.ec_detector = 1;
+			modem_dp_connected(m);
+			m->xmit.buf[0] = 'Z';
+			m->xmit.count = m->xmit.head = 1;
+			CHECK(m->bit_timer == (int)((m->tx_rate + m->rx_rate) * 750 / 1000),
+			      "T400 did not start at 750 ms for case %zu role %u", i, caller);
+			for (tick = 0; tick < 850 && m->get_bits == modem_detector_get_bits; ++tick) {
+				tx_phase += m->tx_rate;
+				rx_phase += m->rx_rate;
+				while (tx_phase >= 1000 && m->get_bits == modem_detector_get_bits) {
+					uint8_t bit;
+
+					tx_phase -= 1000;
+					CHECK(modem_get_bits(m, 1, &bit, 1) == 1,
+					      "detection transmit clock failed");
+					transmit_tail = (transmit_tail << 1) | bit;
+				}
+				while (rx_phase >= 1000 && m->get_bits == modem_detector_get_bits) {
+					uint8_t mark = 1;
+
+					rx_phase -= 1000;
+					CHECK(modem_put_bits(m, 1, &mark, 1) == 1,
+					      "detection receive clock failed");
+				}
+				CHECK(tick >= 748 || m->get_bits == modem_detector_get_bits,
+				      "T400 expired early for case %zu role %u", i, caller);
+			}
+			CHECK(tick >= 749 && tick < 850 && !m->cfg.ec &&
+			      m->get_bits == modem_async_get_bits &&
+			      m->put_bits == modem_async_put_bits && !m->bit_timer &&
+			      m->xmit.count == 1 && m->pack.bit <= 9,
+			      "missing detection reply stalled or lost queued data: case %zu role %u", i, caller);
+			CHECK(!caller || (transmit_tail & 0x3ffffu) == (0x89u << 9 | 0x1ffu),
+			      "raw fallback truncated the final ODP repetition");
+			m->dp = NULL;
+			modem_delete(m);
+		}
+	}
+	return true;
+}
+
 static bool complete_raw_v14_detection(struct modem *answerer)
 {
-	uint8_t bits[576];
+	uint8_t bits[585];
 	struct modem pattern_source = {
 		.name = "raw detection pattern source",
 	};
@@ -1590,14 +1654,33 @@ static bool test_v8_handoff(void)
 		enum DP_ID caller_requested;
 		enum DP_ID answerer_requested;
 		enum DP_ID handoff;
-		bool caller_digital;
-		bool answerer_digital;
+		unsigned caller_policy;
+		unsigned answerer_policy;
 		enum modem_pcm_role caller_role;
 		enum modem_pcm_role answerer_role;
 		bool caller_v34_fallback;
 		bool caller_lapm;
 		bool answerer_lapm;
 	} selections[] = {
+		{ DP_V90, DP_V90, DP_V90,
+		  2, 0, MODEM_PCM_ROLE_DIGITAL, MODEM_PCM_ROLE_ANALOG,
+		  false, true, true },
+		{ DP_V92, DP_V92, DP_V92,
+		  0, 2, MODEM_PCM_ROLE_ANALOG, MODEM_PCM_ROLE_DIGITAL,
+		  false, true, true },
+		{ DP_V92, DP_V92, DP_V92,
+		  2, 1, MODEM_PCM_ROLE_ANALOG, MODEM_PCM_ROLE_DIGITAL,
+		  false, true, true },
+		{ DP_V92, DP_V92, DP_V92,
+		  1, 2, MODEM_PCM_ROLE_DIGITAL, MODEM_PCM_ROLE_ANALOG,
+		  false, true, true },
+		{ DP_V92, DP_V92, DP_V92,
+		  2, 2, MODEM_PCM_ROLE_ANALOG, MODEM_PCM_ROLE_DIGITAL,
+		  false, true, true },
+		{ DP_V92, DP_V34, DP_V34,
+		  2, 0, MODEM_PCM_ROLE_NONE, MODEM_PCM_ROLE_NONE,
+		  true, true, true },
+
 		{ DP_V34, DP_V34, DP_V34,
 		  false, false, MODEM_PCM_ROLE_NONE, MODEM_PCM_ROLE_NONE,
 		  false, true, true },
@@ -1656,13 +1739,10 @@ static bool test_v8_handoff(void)
 		      "V.8 handoff endpoints did not initialize");
 		MODEM_AUTOMODE(caller) = run >= ARRAY_LENGTH(selections);
 		MODEM_AUTOMODE(answerer) = MODEM_AUTOMODE(caller);
-		CHECK(process_at_command(
-			      caller, selections[selection].caller_digital ?
-				      "AT+V90D=1" : "AT+V90D=0") == 0 &&
-			      process_at_command(
-				      answerer,
-				      selections[selection].answerer_digital ?
-					      "AT+V90D=1" : "AT+V90D=0") == 0,
+		CHECK(modem_set_param(caller, MDMPRM_V90_DIGITAL_INDICATION,
+			      selections[selection].caller_policy) == 0 &&
+		      modem_set_param(answerer, MDMPRM_V90_DIGITAL_INDICATION,
+			      selections[selection].answerer_policy) == 0,
 		      "V.8 endpoints did not accept PCM role configuration");
 		caller->cfg.ec = selections[selection].caller_lapm;
 		answerer->cfg.ec = selections[selection].answerer_lapm;
@@ -1749,7 +1829,8 @@ static bool test_automatic_factory_profile(void)
 		      modem->min_rate == 300 && modem->max_rate == 56000 &&
 		      modem->v90_upstream_min_rate == 0 && modem->v90_upstream_max_rate == 0 &&
 		      modem->v34_symbol_rate == 0 && modem->v90_upstream_max_baud == 0 &&
-		      modem_get_param(modem, MDMPRM_V92_PCM_UPSTREAM) == 0,
+		      modem_get_param(modem, MDMPRM_V92_PCM_UPSTREAM) == 0 &&
+		      modem_get_param(modem, MDMPRM_V90_DIGITAL_INDICATION) == MODEM_PCM_POLICY_AUTO,
 		      "factory profile restricted automatic mode or rate");
 		CHECK(process_at_command(modem, "AT+MS=21,0,300,300+V34B=2400+V90U=9600,9600,3000+V92U=1") == 0 &&
 		      process_at_command(modem, "ATZ") == 0,
@@ -2146,7 +2227,7 @@ static bool test_at_pcm_profile_controls(void)
 	struct modem *modem = modem_create(&driver, driver.name);
 
 	CHECK(modem != NULL &&
-		      modem_get_param(modem, MDMPRM_V90_DIGITAL_INDICATION) == 0 &&
+		      modem_get_param(modem, MDMPRM_V90_DIGITAL_INDICATION) == MODEM_PCM_POLICY_AUTO &&
 		      modem_get_param(modem, MDMPRM_V92_QUICK_CONNECT) == 1 &&
 		      modem_get_param(modem, MDMPRM_V92_PCM_UPSTREAM) == 0 &&
 		      modem->v90_upstream_min_rate == 0 &&
@@ -2155,10 +2236,15 @@ static bool test_at_pcm_profile_controls(void)
 	      "PCM profile controls did not have deterministic defaults");
 	CHECK(modem->v92_upstream_lu_ucode == 0,
 	      "PCM upstream did not default to the profile training level");
+	CHECK(process_at_command(modem, "AT+V90D=2") == 0 &&
+	      modem_get_param(modem, MDMPRM_V90_DIGITAL_INDICATION) == MODEM_PCM_POLICY_AUTO &&
+	      modem_set_param(modem, MDMPRM_V90_DIGITAL_INDICATION, -1) == -1 &&
+	      modem_set_param(modem, MDMPRM_V90_DIGITAL_INDICATION, 3) == -1,
+	      "automatic PCM role was not retained or validated");
 	CHECK(process_at_command(modem, "AT+V90D=1") == 0 &&
 		      modem_get_param(
 			      modem, MDMPRM_V90_DIGITAL_INDICATION) == 1 &&
-		      process_at_command(modem, "AT+V90D=2") == -1 &&
+		      process_at_command(modem, "AT+V90D=3") == -1 &&
 		      modem_get_param(
 			      modem, MDMPRM_V90_DIGITAL_INDICATION) == 1,
 	      "AT+V90D was not transactional");
@@ -2238,7 +2324,7 @@ static bool test_at_pcm_profile_controls(void)
 	      "PCM upstream query omitted the selected training level");
 	CHECK(process_at_command(modem, "ATZ") == 0 &&
 		      modem_get_param(
-			      modem, MDMPRM_V90_DIGITAL_INDICATION) == 0 &&
+			      modem, MDMPRM_V90_DIGITAL_INDICATION) == MODEM_PCM_POLICY_AUTO &&
 		      modem_get_param(modem, MDMPRM_V92_QUICK_CONNECT) == 1 &&
 		      modem_get_param(modem, MDMPRM_V92_PCM_UPSTREAM) == 0 &&
 		      modem->v90_upstream_min_rate == 0 &&
@@ -6388,11 +6474,12 @@ static bool test_lapm_timer_follows_rate_changes(void)
 	      "rate update restarted a stopped LAPM timer");
 	modem_ec_exit(m);
 	modem_detector_start(m);
+	m->get_bits = modem_detector_get_bits;
 	timeout = m->bit_timer_func;
-	CHECK(m->bit_timer == 512 &&
+	CHECK(m->bit_timer == 3600 &&
 	      modem_set_param(m, MDMPRM_TX_RATE, 24000) == 0 &&
-	      m->bit_timer == 512 && m->bit_timer_func == timeout,
-	      "rate update rescaled the detector's fixed-bit mark preamble");
+	      m->bit_timer == 21600 && m->bit_timer_func == timeout,
+	      "rate update altered the detector's remaining T400 interval");
 	modem_delete(m);
 	return true;
 }
@@ -7250,6 +7337,7 @@ int main(void)
 		{ "escape holds candidate bytes", test_escape_holds_candidate_bytes },
 		{ "V.8 datapump mapping", test_v8_datapump_mapping },
 		{ "V.8 handoff", test_v8_handoff },
+		{ "V.42 detection deadline", test_v42_detection_deadline },
 		{ "automatic factory profile", test_automatic_factory_profile },
 		{ "automatic startup deadline", test_automatic_startup_deadline },
 		{ "V.8 fallback limits", test_v8_fallback_limits },

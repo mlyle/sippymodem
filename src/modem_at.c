@@ -656,18 +656,20 @@ static int process_plus_V34B(struct modem *m, char *p, int *len)
 	}
 }
 
-static int process_plus_boolean_param(
+static int process_plus_choice_param(
 	struct modem *m, char *p, int *len, unsigned int parameter)
 {
 	char response[8];
 	unsigned long value;
+	unsigned maximum = parameter == MDMPRM_V90_DIGITAL_INDICATION ?
+		MODEM_PCM_POLICY_AUTO : 1;
 
 	switch (*p) {
 	case '=':
 		p++;
 		*len = 1;
 		if (*p == '?') {
-			const char capabilities[] = "(0,1)";
+			const char *capabilities = maximum == MODEM_PCM_POLICY_AUTO ? "(0,1,2)" : "(0,1)";
 
 			modem_send_to_tty(m, capabilities,
 					  (int)strlen(capabilities));
@@ -676,7 +678,7 @@ static int process_plus_boolean_param(
 			return 0;
 		}
 		if (parse_unsigned(&p, len, &value, 0) != 1 ||
-		    value > 1 || *p == ',')
+		    value > maximum || *p == ',')
 			return -1;
 		return (int)modem_set_param(m, parameter, (int)value);
 	case '?':
@@ -1480,7 +1482,7 @@ int process_at_command(struct modem *m, char *cmd)
 				}
 				if (!toupper_strncmp(p, "90D", 3)) {
 					p += 3;
-					ret = process_plus_boolean_param(
+					ret = process_plus_choice_param(
 						m, p, &len,
 						MDMPRM_V90_DIGITAL_INDICATION);
 					break;
@@ -1492,7 +1494,7 @@ int process_at_command(struct modem *m, char *cmd)
 				}
 				if (!toupper_strncmp(p, "92Q", 3)) {
 					p += 3;
-					ret = process_plus_boolean_param(
+					ret = process_plus_choice_param(
 						m, p, &len,
 						MDMPRM_V92_QUICK_CONNECT);
 					break;
