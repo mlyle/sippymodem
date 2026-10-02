@@ -1401,14 +1401,8 @@ static void rx_unnum_rsp(struct lapm_state *l, frame_t *f)
 			if (result == RX_XID_RESPONSE_ACCEPTED) {
 				l->config = 0;
 				TIMER_STOP(l);
-				if (l->state == LAPM_IDLE) {
-					if (lapm_connect(l) != 0)
-						complete_link_release(l);
-				}
-				else if (l->state == LAPM_DATA) {
-					l->busy = 0;
-					TX_RR(l,l->cmd_addr,0);
-				}
+				if (lapm_connect(l) != 0)
+					complete_link_release(l);
 			}
 			else if (result == RX_XID_RESPONSE_FATAL) {
 				complete_link_release(l);
@@ -1618,20 +1612,6 @@ static int lapm_connect(struct lapm_state *l)
 	return 0;
 }
 
-/* negotiate params */
-static int lapm_config(struct lapm_state *l)
-{
-	if (tx_xid_command(l) != 0)
-		return -1;
-	l->config = 1;
-	if (l->state == LAPM_DATA) {
-		l->busy = 1;
-		TX_RNR(l,l->cmd_addr,1);
-	}
-	T401_START(l);
-	return 0;
-}
-
 static int lapm_disconnect(struct lapm_state *l)
 {
 	/* Discard queued control traffic without reusing the frame that HDLC
@@ -1724,10 +1704,16 @@ static int lapm_init(struct lapm_state *l, struct modem *m)
 /* modem ec interface func */
 static void modem_ec_negotiate(struct modem *m)
 {
+	struct lapm_state *l = &m->ec.lapm;
+
 	m->packer.hdlc.tx_complete  = lapm_tx_complete;
 	m->packer.hdlc.get_tx_frame = lapm_get_tx_frame;
-	if (lapm_config(&m->ec.lapm) != 0)
-		complete_link_release(&m->ec.lapm);
+	if (tx_xid_command(l) != 0) {
+		complete_link_release(l);
+		return;
+	}
+	l->config = 1;
+	T401_START(l);
 }
 
 void modem_ec_start(struct modem *m)
