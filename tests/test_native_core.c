@@ -6325,6 +6325,124 @@ static bool test_v21_originator_answers_brief_mark(void)
 	return true;
 }
 
+static struct {
+	bool start_v8;
+	bool stop_fsk;
+	bool stop_v8;
+	bool start_v23;
+} registration_fault;
+
+#define REGISTRATION_WRAPPER(name, fault) \
+	int __real_##name(void); \
+	int __wrap_##name(void) \
+	{ \
+		if (registration_fault.fault) { \
+			registration_fault.fault = false; \
+			return -1; \
+		} \
+		return __real_##name(); \
+	}
+
+REGISTRATION_WRAPPER(v8_datapump_register, start_v8)
+REGISTRATION_WRAPPER(fsk300_datapump_unregister, stop_fsk)
+REGISTRATION_WRAPPER(v8_datapump_unregister, stop_v8)
+REGISTRATION_WRAPPER(v23_datapump_register, start_v23)
+
+static const enum DP_ID registered_ids[] = {
+	DP_CALLPROG, DP_V21, DP_B103, DP_V8, DP_V23,
+	DP_V22, DP_V22BIS, DP_B212, DP_V32, DP_V32BIS,
+	DP_V34, DP_V90, DP_V92, DP_BAUDOT,
+};
+
+static bool registrations_match(enum DP_ID foreign_id, struct dp_operations *foreign)
+{
+	for (size_t i = 0; i < ARRAY_LENGTH(registered_ids); ++i)
+		CHECK(modem_dp_get_registered_ops(registered_ids[i]) ==
+			      (registered_ids[i] == foreign_id ? foreign : NULL),
+		      "modulation %u has an unexpected registration", registered_ids[i]);
+	return true;
+}
+
+static bool test_registration_conflicts_preserve_foreign_owners(void)
+{
+	struct dp_operations foreign = {
+		.name = "foreign registration",
+		.create = unused_dp_create,
+		.delete = unused_dp_delete,
+		.process = unused_dp_process,
+	};
+
+	for (size_t occupied = 0; occupied < ARRAY_LENGTH(registered_ids); ++occupied) {
+		struct datapumps owner = { 0 };
+
+		CHECK(modem_dp_register(registered_ids[occupied], &foreign) == 0 &&
+			      datapumps_start(&owner) == DATAPUMPS_REGISTRATION_CONFLICT &&
+			      !datapumps_are_started(&owner),
+		      "occupied modulation %u did not reject startup", registered_ids[occupied]);
+		CHECK(registrations_match(registered_ids[occupied], &foreign),
+		      "failed startup altered foreign registrations");
+		CHECK(datapumps_stop(&owner) == DATAPUMPS_NOT_STARTED &&
+			      modem_dp_deregister(registered_ids[occupied], &foreign) == 0 &&
+			      datapumps_start(&owner) == DATAPUMPS_OK &&
+			      datapumps_stop(&owner) == DATAPUMPS_OK,
+		      "registration owner did not recover after modulation %u was released",
+		      registered_ids[occupied]);
+	}
+	return true;
+}
+
+static bool test_registration_rollback_retains_ownership(void)
+{
+	struct datapumps owner = { 0 };
+	struct modem modem = { 0 };
+	struct dp_operations *progress;
+	struct dp *call;
+
+	registration_fault.start_v8 = registration_fault.stop_fsk = true;
+	CHECK(datapumps_start(&owner) == DATAPUMPS_REGISTRATION_CONFLICT &&
+		      !datapumps_are_started(&owner) &&
+		      modem_dp_get_registered_ops(DP_CALLPROG) != NULL &&
+		      modem_dp_get_registered_ops(DP_V21) != NULL &&
+		      modem_dp_get_registered_ops(DP_V8) == NULL,
+	      "failed startup did not retain its incomplete registration prefix");
+	progress = modem_dp_get_registered_ops(DP_CALLPROG);
+	call = progress->create(&modem, DP_CALLPROG, 1, MODEM_RATE, MODEM_FRAG, progress);
+	CHECK(call != NULL && datapumps_stop(&owner) == DATAPUMPS_BUSY &&
+		      progress->delete(call) == 0 && datapumps_stop(&owner) == DATAPUMPS_OK,
+	      "startup rollback lost ownership or bypassed a live datapump");
+	CHECK(registrations_match(DP_CALLPROG, NULL),
+	      "startup rollback retained registrations");
+
+	CHECK(datapumps_start(&owner) == DATAPUMPS_OK,
+	      "shutdown restoration fixture did not start");
+	registration_fault.stop_v8 = true;
+	CHECK(datapumps_stop(&owner) == DATAPUMPS_REGISTRATION_CONFLICT &&
+		      datapumps_are_started(&owner),
+	      "failed shutdown did not restore its full registration set");
+	for (size_t i = 0; i < ARRAY_LENGTH(registered_ids); ++i)
+		CHECK(modem_dp_get_registered_ops(registered_ids[i]) != NULL,
+		      "shutdown restoration lost modulation %u", registered_ids[i]);
+	CHECK(datapumps_stop(&owner) == DATAPUMPS_OK,
+	      "restored registration owner did not stop");
+
+	CHECK(datapumps_start(&owner) == DATAPUMPS_OK,
+	      "shutdown rollback fixture did not start");
+	registration_fault.stop_v8 = registration_fault.start_v23 = true;
+	CHECK(datapumps_stop(&owner) == DATAPUMPS_REGISTRATION_CONFLICT &&
+		      !datapumps_are_started(&owner) &&
+		      modem_dp_get_registered_ops(DP_V8) != NULL &&
+		      modem_dp_get_registered_ops(DP_V23) == NULL &&
+		      modem_dp_get_registered_ops(DP_V22) == NULL &&
+		      datapumps_stop(&owner) == DATAPUMPS_OK,
+	      "failed shutdown rollback did not retain the families still owned");
+	CHECK(registrations_match(DP_CALLPROG, NULL),
+	      "shutdown rollback retained registrations");
+	CHECK(datapumps_start(&owner) == DATAPUMPS_OK &&
+		      datapumps_stop(&owner) == DATAPUMPS_OK,
+	      "registration owner could not restart after incomplete rollback");
+	return true;
+}
+
 static bool test_owns_source_built_datapump_registrations(void)
 {
 	struct datapumps datapumps = { 0 };
@@ -6373,38 +6491,11 @@ static bool test_owns_source_built_datapump_registrations(void)
 	int16_t transmit[MODEM_FRAG];
 	uint64_t v32_calling_power = 0;
 
-	CHECK(modem_dp_get_registered_ops(DP_CALLPROG) == NULL &&
-		      modem_dp_get_registered_ops(DP_V8) == NULL &&
-		      modem_dp_get_registered_ops(DP_V21) == NULL &&
-		      modem_dp_get_registered_ops(DP_B103) == NULL &&
-		      modem_dp_get_registered_ops(DP_V23) == NULL &&
-		      modem_dp_get_registered_ops(DP_V22) == NULL &&
-		      modem_dp_get_registered_ops(DP_V22BIS) == NULL &&
-		      modem_dp_get_registered_ops(DP_B212) == NULL &&
-		      modem_dp_get_registered_ops(DP_V32) == NULL &&
-		      modem_dp_get_registered_ops(DP_V32BIS) == NULL &&
-		      modem_dp_get_registered_ops(DP_V34) == NULL &&
-		      modem_dp_get_registered_ops(DP_V90) == NULL &&
-		      modem_dp_get_registered_ops(DP_V92) == NULL &&
-		      modem_dp_get_registered_ops(DP_BAUDOT) == NULL &&
+	CHECK(registrations_match(DP_V90, NULL) &&
 		      modem_dp_register(DP_V90, &conflict_operations) == 0 &&
 		      datapumps_start(&datapumps) ==
 			      DATAPUMPS_REGISTRATION_CONFLICT &&
-		      modem_dp_get_registered_ops(DP_CALLPROG) == NULL &&
-		      modem_dp_get_registered_ops(DP_V8) == NULL &&
-		      modem_dp_get_registered_ops(DP_V21) == NULL &&
-		      modem_dp_get_registered_ops(DP_B103) == NULL &&
-		      modem_dp_get_registered_ops(DP_V23) == NULL &&
-		      modem_dp_get_registered_ops(DP_V22) == NULL &&
-		      modem_dp_get_registered_ops(DP_V22BIS) == NULL &&
-		      modem_dp_get_registered_ops(DP_B212) == NULL &&
-		      modem_dp_get_registered_ops(DP_V32) == NULL &&
-		      modem_dp_get_registered_ops(DP_V32BIS) == NULL &&
-		      modem_dp_get_registered_ops(DP_V34) == NULL &&
-		      modem_dp_get_registered_ops(DP_V90) ==
-			      &conflict_operations &&
-		      modem_dp_get_registered_ops(DP_V92) == NULL &&
-		      modem_dp_get_registered_ops(DP_BAUDOT) == NULL &&
+		      registrations_match(DP_V90, &conflict_operations) &&
 		      modem_dp_deregister(DP_V90, &conflict_operations) == 0 &&
 		      datapumps_start(&datapumps) ==
 			      DATAPUMPS_OK &&
@@ -6777,20 +6868,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 	modem_delete(modem);
 	CHECK(datapumps_stop(&datapumps) ==
 		      DATAPUMPS_OK &&
-		      modem_dp_get_registered_ops(DP_CALLPROG) == NULL &&
-		      modem_dp_get_registered_ops(DP_V8) == NULL &&
-		      modem_dp_get_registered_ops(DP_V21) == NULL &&
-		      modem_dp_get_registered_ops(DP_B103) == NULL &&
-		      modem_dp_get_registered_ops(DP_V23) == NULL &&
-		      modem_dp_get_registered_ops(DP_V22) == NULL &&
-		      modem_dp_get_registered_ops(DP_V22BIS) == NULL &&
-		      modem_dp_get_registered_ops(DP_B212) == NULL &&
-		      modem_dp_get_registered_ops(DP_V32) == NULL &&
-		      modem_dp_get_registered_ops(DP_V32BIS) == NULL &&
-		      modem_dp_get_registered_ops(DP_V34) == NULL &&
-		      modem_dp_get_registered_ops(DP_V90) == NULL &&
-		      modem_dp_get_registered_ops(DP_V92) == NULL &&
-		      modem_dp_get_registered_ops(DP_BAUDOT) == NULL &&
+		      registrations_match(DP_V90, NULL) &&
 		      !datapumps_are_started(&datapumps) &&
 		      datapumps_stop(&datapumps) ==
 			      DATAPUMPS_NOT_STARTED &&
@@ -6888,6 +6966,10 @@ int main(void)
 		  test_v21_originator_answers_brief_mark },
 		{ "source-built data-pump ownership",
 		  test_owns_source_built_datapump_registrations },
+		{ "registration conflicts preserve foreign owners",
+		  test_registration_conflicts_preserve_foreign_owners },
+		{ "registration rollback retains ownership",
+		  test_registration_rollback_retains_ownership },
 	};
 	unsigned int failures = 0;
 

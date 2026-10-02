@@ -48,8 +48,7 @@ static void destroy_incomplete_runtime(struct modem_runtime *runtime)
 	recording_files_destroy(runtime->recording_files);
 	if (runtime->modem != NULL)
 		modem_delete(runtime->modem);
-	if (datapumps_are_started(&runtime->datapumps))
-		(void)datapumps_stop(&runtime->datapumps);
+	(void)datapumps_stop(&runtime->datapumps);
 	pty_terminal_destroy(runtime->terminal);
 	free(runtime);
 }

@@ -93,209 +93,90 @@ static int process_call_progress(
 	return DPSTAT_OK;
 }
 
-enum datapumps_result datapumps_start(
-	struct datapumps *datapumps)
+static int register_call_progress(void)
+{
+	return modem_dp_register(DP_CALLPROG, &call_progress_operations);
+}
+
+static int unregister_call_progress(void)
+{
+	return modem_dp_deregister(DP_CALLPROG, &call_progress_operations);
+}
+
+static bool call_progress_is_busy(void)
+{
+	return call_progress_operations.use_count != 0;
+}
+
+/* Each family changes all of its aliases or leaves them unchanged on error.
+ * Registration changes and datapump lifetimes are serialized by the owner. */
+static const struct {
+	int (*start)(void);
+	int (*stop)(void);
+	bool (*is_busy)(void);
+} families[] = {
+	{ register_call_progress, unregister_call_progress, call_progress_is_busy },
+	{ fsk300_datapump_register, fsk300_datapump_unregister, fsk300_datapump_is_busy },
+	{ v8_datapump_register, v8_datapump_unregister, v8_datapump_is_busy },
+	{ v23_datapump_register, v23_datapump_unregister, v23_datapump_is_busy },
+	{ v22_datapump_register, v22_datapump_unregister, v22_datapump_is_busy },
+	{ v32_datapump_register, v32_datapump_unregister, v32_datapump_is_busy },
+	{ v34_datapump_register, v34_datapump_unregister, v34_datapump_is_busy },
+	{ v90_datapump_register, v90_datapump_unregister, v90_datapump_is_busy },
+	{ baudot_datapump_register, baudot_datapump_unregister, baudot_datapump_is_busy },
+};
+
+enum { FAMILY_COUNT = sizeof(families) / sizeof(families[0]) };
+
+enum datapumps_result datapumps_start(struct datapumps *datapumps)
 {
 	if (datapumps == NULL)
 		return DATAPUMPS_INVALID_ARGUMENT;
-	if (datapumps->call_progress_registered && datapumps->fsk300_registered &&
-	    datapumps->v8_registered && datapumps->v23_registered &&
-	    datapumps->v22_registered &&
-	    datapumps->v32_registered && datapumps->v34_registered &&
-	    datapumps->v90_registered &&
-	    datapumps->baudot_registered)
+	if (datapumps_are_started(datapumps))
 		return DATAPUMPS_ALREADY_STARTED;
-	if (datapumps->call_progress_registered || datapumps->fsk300_registered ||
-	    datapumps->v8_registered || datapumps->v23_registered ||
-	    datapumps->v22_registered ||
-	    datapumps->v32_registered || datapumps->v34_registered ||
-	    datapumps->v90_registered ||
-	    datapumps->baudot_registered ||
-	    modem_dp_get_registered_ops(DP_CALLPROG) != NULL ||
-	    modem_dp_get_registered_ops(DP_V8) != NULL ||
-	    modem_dp_get_registered_ops(DP_V21) != NULL ||
-	    modem_dp_get_registered_ops(DP_B103) != NULL ||
-	    modem_dp_get_registered_ops(DP_V23) != NULL ||
-	    modem_dp_get_registered_ops(DP_V22) != NULL ||
-	    modem_dp_get_registered_ops(DP_V22BIS) != NULL ||
-	    modem_dp_get_registered_ops(DP_B212) != NULL ||
-	    modem_dp_get_registered_ops(DP_V32) != NULL ||
-	    modem_dp_get_registered_ops(DP_V32BIS) != NULL ||
-	    modem_dp_get_registered_ops(DP_V34) != NULL ||
-	    modem_dp_get_registered_ops(DP_V90) != NULL ||
-	    modem_dp_get_registered_ops(DP_V92) != NULL ||
-	    modem_dp_get_registered_ops(DP_BAUDOT) != NULL ||
-	    modem_dp_register(DP_CALLPROG, &call_progress_operations) != 0)
+	if (datapumps->registered_families != 0)
 		return DATAPUMPS_REGISTRATION_CONFLICT;
-	if (fsk300_datapump_register() != 0) {
-		(void)modem_dp_deregister(
-			DP_CALLPROG, &call_progress_operations);
-		return DATAPUMPS_REGISTRATION_CONFLICT;
+	while (datapumps->registered_families < FAMILY_COUNT) {
+		if (families[datapumps->registered_families].start() != 0) {
+			(void)datapumps_stop(datapumps);
+			return DATAPUMPS_REGISTRATION_CONFLICT;
+		}
+		datapumps->registered_families++;
 	}
-	if (v8_datapump_register() != 0) {
-		(void)fsk300_datapump_unregister();
-		(void)modem_dp_deregister(
-			DP_CALLPROG, &call_progress_operations);
-		return DATAPUMPS_REGISTRATION_CONFLICT;
-	}
-	if (v23_datapump_register() != 0) {
-		(void)v8_datapump_unregister();
-		(void)fsk300_datapump_unregister();
-		(void)modem_dp_deregister(
-			DP_CALLPROG, &call_progress_operations);
-		return DATAPUMPS_REGISTRATION_CONFLICT;
-	}
-	if (v22_datapump_register() != 0) {
-		(void)v23_datapump_unregister();
-		(void)v8_datapump_unregister();
-		(void)fsk300_datapump_unregister();
-		(void)modem_dp_deregister(
-			DP_CALLPROG, &call_progress_operations);
-		return DATAPUMPS_REGISTRATION_CONFLICT;
-	}
-	if (v32_datapump_register() != 0) {
-		(void)v22_datapump_unregister();
-		(void)v23_datapump_unregister();
-		(void)v8_datapump_unregister();
-		(void)fsk300_datapump_unregister();
-		(void)modem_dp_deregister(
-			DP_CALLPROG, &call_progress_operations);
-		return DATAPUMPS_REGISTRATION_CONFLICT;
-	}
-	if (v34_datapump_register() != 0) {
-		(void)v32_datapump_unregister();
-		(void)v22_datapump_unregister();
-		(void)v23_datapump_unregister();
-		(void)v8_datapump_unregister();
-		(void)fsk300_datapump_unregister();
-		(void)modem_dp_deregister(
-			DP_CALLPROG, &call_progress_operations);
-		return DATAPUMPS_REGISTRATION_CONFLICT;
-	}
-	if (v90_datapump_register() != 0) {
-		(void)v34_datapump_unregister();
-		(void)v32_datapump_unregister();
-		(void)v22_datapump_unregister();
-		(void)v23_datapump_unregister();
-		(void)v8_datapump_unregister();
-		(void)fsk300_datapump_unregister();
-		(void)modem_dp_deregister(
-			DP_CALLPROG, &call_progress_operations);
-		return DATAPUMPS_REGISTRATION_CONFLICT;
-	}
-	if (baudot_datapump_register() != 0) {
-		(void)v90_datapump_unregister();
-		(void)v34_datapump_unregister();
-		(void)v32_datapump_unregister();
-		(void)v22_datapump_unregister();
-		(void)v23_datapump_unregister();
-		(void)v8_datapump_unregister();
-		(void)fsk300_datapump_unregister();
-		(void)modem_dp_deregister(
-			DP_CALLPROG, &call_progress_operations);
-		return DATAPUMPS_REGISTRATION_CONFLICT;
-	}
-	datapumps->call_progress_registered = true;
-	datapumps->fsk300_registered = true;
-	datapumps->v8_registered = true;
-	datapumps->v23_registered = true;
-	datapumps->v22_registered = true;
-	datapumps->v32_registered = true;
-	datapumps->v34_registered = true;
-	datapumps->v90_registered = true;
-	datapumps->baudot_registered = true;
 	return DATAPUMPS_OK;
 }
 
-enum datapumps_result datapumps_stop(
-	struct datapumps *datapumps)
+enum datapumps_result datapumps_stop(struct datapumps *datapumps)
 {
+	unsigned previous_count;
+
 	if (datapumps == NULL)
 		return DATAPUMPS_INVALID_ARGUMENT;
-	if (!datapumps->call_progress_registered && !datapumps->fsk300_registered &&
-	    !datapumps->v8_registered && !datapumps->v23_registered &&
-	    !datapumps->v22_registered &&
-	    !datapumps->v32_registered && !datapumps->v34_registered &&
-	    !datapumps->v90_registered &&
-	    !datapumps->baudot_registered)
+	if (datapumps->registered_families == 0)
 		return DATAPUMPS_NOT_STARTED;
-	if (!datapumps->call_progress_registered || !datapumps->fsk300_registered ||
-	    !datapumps->v8_registered || !datapumps->v23_registered ||
-	    !datapumps->v22_registered ||
-	    !datapumps->v32_registered || !datapumps->v34_registered ||
-	    !datapumps->v90_registered ||
-	    !datapumps->baudot_registered)
+	if (datapumps->registered_families > FAMILY_COUNT)
 		return DATAPUMPS_REGISTRATION_CONFLICT;
-	if (call_progress_operations.use_count != 0 ||
-	    fsk300_datapump_is_busy() ||
-	    v8_datapump_is_busy() ||
-	    v23_datapump_is_busy() ||
-	    v22_datapump_is_busy() ||
-	    v32_datapump_is_busy() ||
-	    v34_datapump_is_busy() ||
-	    v90_datapump_is_busy() ||
-	    baudot_datapump_is_busy())
-		return DATAPUMPS_BUSY;
-	if (baudot_datapump_unregister() != 0)
-		return DATAPUMPS_REGISTRATION_CONFLICT;
-	if (v90_datapump_unregister() != 0)
-		goto restore_baudot;
-	if (v34_datapump_unregister() != 0)
-		goto restore_v90;
-	if (v32_datapump_unregister() != 0)
-		goto restore_v34;
-	if (v22_datapump_unregister() != 0)
-		goto restore_v32;
-	if (v23_datapump_unregister() != 0)
-		goto restore_v22;
-	if (v8_datapump_unregister() != 0) {
-		(void)v23_datapump_register();
-		goto restore_v22;
+	previous_count = datapumps->registered_families;
+	for (unsigned i = 0; i < previous_count; ++i)
+		if (families[i].is_busy())
+			return DATAPUMPS_BUSY;
+	while (datapumps->registered_families != 0) {
+		if (families[datapumps->registered_families - 1].stop() != 0) {
+			while (datapumps->registered_families < previous_count) {
+				if (families[datapumps->registered_families].start() != 0)
+					break;
+				datapumps->registered_families++;
+			}
+			return DATAPUMPS_REGISTRATION_CONFLICT;
+		}
+		datapumps->registered_families--;
 	}
-	if (fsk300_datapump_unregister() != 0) {
-		(void)v8_datapump_register();
-		(void)v23_datapump_register();
-		goto restore_v22;
-	}
-	if (modem_dp_deregister(
-		    DP_CALLPROG, &call_progress_operations) != 0) {
-		(void)fsk300_datapump_register();
-		(void)v8_datapump_register();
-		(void)v23_datapump_register();
-		goto restore_v22;
-	}
-	datapumps->call_progress_registered = false;
-	datapumps->fsk300_registered = false;
-	datapumps->v8_registered = false;
-	datapumps->v23_registered = false;
-	datapumps->v22_registered = false;
-	datapumps->v32_registered = false;
-	datapumps->v34_registered = false;
-	datapumps->v90_registered = false;
-	datapumps->baudot_registered = false;
 	return DATAPUMPS_OK;
-restore_v22:
-	(void)v22_datapump_register();
-restore_v32:
-	(void)v32_datapump_register();
-restore_v34:
-	(void)v34_datapump_register();
-restore_v90:
-	(void)v90_datapump_register();
-restore_baudot:
-	(void)baudot_datapump_register();
-	return DATAPUMPS_REGISTRATION_CONFLICT;
 }
 
-bool datapumps_are_started(
-	const struct datapumps *datapumps)
+bool datapumps_are_started(const struct datapumps *datapumps)
 {
-	return datapumps != NULL && datapumps->call_progress_registered &&
-	       datapumps->fsk300_registered && datapumps->v8_registered &&
-	       datapumps->v23_registered && datapumps->v22_registered &&
-	       datapumps->v32_registered && datapumps->v34_registered &&
-	       datapumps->v90_registered &&
-	       datapumps->baudot_registered;
+	return datapumps != NULL && datapumps->registered_families == FAMILY_COUNT;
 }
 
 const char *datapumps_result_name(

@@ -54,6 +54,7 @@ struct runtime_capture {
 	size_t teardown_count;
 	bool fail_modem;
 	bool fail_datapumps;
+	bool retain_datapumps_on_failure;
 	bool fail_adapter;
 	bool fail_calls;
 	bool fail_recording;
@@ -117,11 +118,11 @@ enum datapumps_result datapumps_start(
 	capture.datapump_starts++;
 	if (datapumps == NULL)
 		return DATAPUMPS_INVALID_ARGUMENT;
-	if (capture.fail_datapumps)
+	if (capture.fail_datapumps) {
+		datapumps->registered_families = capture.retain_datapumps_on_failure ? 1 : 0;
 		return DATAPUMPS_REGISTRATION_CONFLICT;
-	datapumps->call_progress_registered = true;
-	datapumps->fsk300_registered = true;
-	datapumps->v23_registered = true;
+	}
+	datapumps->registered_families = 1;
 	return DATAPUMPS_OK;
 }
 
@@ -129,20 +130,10 @@ enum datapumps_result datapumps_stop(
 	struct datapumps *datapumps)
 {
 	capture.datapump_stops++;
-	if (datapumps == NULL || !datapumps->call_progress_registered ||
-	    !datapumps->fsk300_registered || !datapumps->v23_registered)
+	if (datapumps == NULL || datapumps->registered_families == 0)
 		return DATAPUMPS_NOT_STARTED;
-	datapumps->call_progress_registered = false;
-	datapumps->fsk300_registered = false;
-	datapumps->v23_registered = false;
+	datapumps->registered_families = 0;
 	return DATAPUMPS_OK;
-}
-
-bool datapumps_are_started(
-	const struct datapumps *datapumps)
-{
-	return datapumps != NULL && datapumps->call_progress_registered &&
-	       datapumps->fsk300_registered && datapumps->v23_registered;
 }
 
 bool slmodem_driver_init(
@@ -558,8 +549,15 @@ static bool test_creation_rolls_back(void)
 	capture.fail_datapumps = true;
 	CHECK(modem_runtime_create(&config, "busy-datapumps") == NULL &&
 		      errno == EBUSY && capture.datapump_starts == 1 &&
-		      capture.datapump_stops == 0 && capture.modem_creates == 0,
+		      capture.datapump_stops == 1 && capture.modem_creates == 0,
 	      "runtime hid a data-pump registration conflict");
+
+	memset(&capture, 0, sizeof(capture));
+	capture.fail_datapumps = capture.retain_datapumps_on_failure = true;
+	CHECK(modem_runtime_create(&config, "partial-datapumps") == NULL &&
+		      errno == EBUSY && capture.datapump_stops == 1 &&
+		      capture.modem_creates == 0,
+	      "runtime did not release retained registrations after failed startup");
 
 	memset(&capture, 0, sizeof(capture));
 	capture.fail_adapter = true;
