@@ -80,6 +80,7 @@
 #include <modem.h>
 #include <modem_debug.h>
 #include <modem_param.h>
+#include <pcm_rate.h>
 
 #define AT_DBG(fmt...) // dprintf("at: " fmt)
 
@@ -766,17 +767,6 @@ static int process_plus_V90U(struct modem *m, char *p, int *len)
 	}
 }
 
-static unsigned int v92_pcm_upstream_drn(unsigned long rate)
-{
-	for (unsigned int drn = 1; drn <= 19; ++drn) {
-		unsigned int candidate = ((drn + 17u) * 8000u + 3u) / 6u;
-
-		if (rate == candidate)
-			return drn;
-	}
-	return 0;
-}
-
 static int process_plus_V92U(struct modem *m, char *p, int *len)
 {
 	char response[24];
@@ -803,9 +793,10 @@ static int process_plus_V92U(struct modem *m, char *p, int *len)
 		if (*p == ',') {
 			p++;
 			*len += 1;
-			if (parse_unsigned(&p, len, &rate, 0) != 1 || enabled == 0)
+			if (parse_unsigned(&p, len, &rate, 0) != 1 ||
+			    enabled == 0 || rate > UINT32_MAX)
 				return -1;
-			max_drn = v92_pcm_upstream_drn(rate);
+			max_drn = pcm_upstream_data_rate_number((uint32_t)rate);
 			if (max_drn == 0)
 				return -1;
 			if (*p == ',') {
@@ -831,7 +822,7 @@ static int process_plus_V92U(struct modem *m, char *p, int *len)
 			snprintf(response, sizeof(response), "%ld",
 				 modem_get_param(m, MDMPRM_V92_PCM_UPSTREAM));
 		} else {
-			rate = ((max_drn + 17u) * 8000u + 3u) / 6u;
+			rate = pcm_upstream_bit_rate((uint8_t)max_drn);
 			snprintf(response, sizeof(response), "%ld,%lu",
 				 modem_get_param(m, MDMPRM_V92_PCM_UPSTREAM), rate);
 			if (m->v92_upstream_lu_ucode != 0) {

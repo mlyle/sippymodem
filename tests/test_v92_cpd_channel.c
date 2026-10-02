@@ -119,7 +119,7 @@ static bool test_channel_model(enum g711_law law, double main, double post, doub
 	if (rate >= 9u && cpd.trellis == V92_CPD_TRELLIS_16_STATE) {
 		unsigned int modulus = cpd.modulus[3];
 		__uint128_t capacity = 1u, smaller = 1u;
-		__uint128_t required = (__uint128_t)1u << v92_pcm_mapping_data_bits(rate);
+		__uint128_t required = (__uint128_t)1u << pcm_upstream_frame_bits(rate);
 
 		CHECK(modulus > 1u, "rate %u has no balanced alphabet", rate);
 		for (size_t symbol = 0u; symbol < V92_CPD_MODULUS_COUNT; ++symbol) {

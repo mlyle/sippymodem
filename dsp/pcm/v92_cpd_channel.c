@@ -428,7 +428,7 @@ bool v92_cpd_channel_design(struct v92_cpd_parameters *parameters,
 	 * or erase payload distinctions during companding. Keep the low-rate
 	 * and level-selected direct mappings separate. */
 	if (next.data_rate_number >= 9u && next.trellis == V92_CPD_TRELLIS_16_STATE) {
-		if (!balanced_moduli(next.modulus, v92_pcm_mapping_data_bits(next.data_rate_number)))
+		if (!balanced_moduli(next.modulus, pcm_upstream_frame_bits(next.data_rate_number)))
 			return false;
 	}
 	/* The direct 40k/44k selections omit outer representatives that an

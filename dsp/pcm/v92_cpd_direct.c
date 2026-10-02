@@ -48,7 +48,7 @@ static bool direct_tables(
 	uint8_t data_rate_number, bool extend_e2u)
 {
 	unsigned int data_bits =
-		v92_pcm_mapping_data_bits(data_rate_number);
+		pcm_upstream_frame_bits(data_rate_number);
 	uint8_t point_count = 0u;
 
 	if (parameters == NULL || !g711_law_is_valid(law) ||

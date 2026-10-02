@@ -28,7 +28,7 @@ static struct v92_cpd_parameters parameters(uint8_t rate)
 		.filters_present = true,
 		.constellations_present = true,
 	};
-	unsigned int bits = v92_pcm_mapping_data_bits(rate);
+	unsigned int bits = pcm_upstream_frame_bits(rate);
 	uint8_t point_count = 0u;
 
 	cpd.filter[V92_CPD_PREFILTER_FEED_FORWARD].count = 4u;

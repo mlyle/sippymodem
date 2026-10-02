@@ -8,6 +8,11 @@ enum {
 	PCM_MAPPING_FRAME_INTERVALS = 6,
 };
 
+static uint32_t frame_bit_rate(uint32_t frame_bits, uint32_t symbols)
+{
+	return (frame_bits * 8000u + symbols / 2u) / symbols;
+}
+
 uint32_t pcm_downstream_bit_rate(uint8_t data_rate_number)
 {
 	uint32_t frame_bits;
@@ -16,8 +21,23 @@ uint32_t pcm_downstream_bit_rate(uint8_t data_rate_number)
 	    data_rate_number > PCM_DOWNSTREAM_MAX_DATA_RATE_NUMBER)
 		return 0;
 	frame_bits = PCM_DOWNSTREAM_BASE_FRAME_BITS + data_rate_number;
-	return (frame_bits * 8000u + PCM_MAPPING_FRAME_INTERVALS / 2u) /
-	       PCM_MAPPING_FRAME_INTERVALS;
+	return frame_bit_rate(frame_bits, PCM_MAPPING_FRAME_INTERVALS);
+}
+
+uint32_t pcm_upstream_bit_rate(uint8_t data_rate_number)
+{
+	return frame_bit_rate(pcm_upstream_frame_bits(data_rate_number),
+			      PCM_UPSTREAM_FRAME_SYMBOLS);
+}
+
+uint8_t pcm_upstream_data_rate_number(uint32_t bit_rate)
+{
+	for (uint8_t number = PCM_UPSTREAM_MIN_DATA_RATE_NUMBER;
+	     number <= PCM_UPSTREAM_MAX_DATA_RATE_NUMBER; ++number) {
+		if (pcm_upstream_bit_rate(number) == bit_rate)
+			return number;
+	}
+	return 0;
 }
 
 bool pcm_downstream_rates_select(

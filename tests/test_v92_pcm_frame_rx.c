@@ -569,7 +569,7 @@ static bool polarity_mapping(struct v92_pcm_mapping *mapping,
 			__uint128_t capacity = 1u;
 			for (unsigned i = 0u; i < V92_CPD_MODULUS_COUNT; ++i)
 				capacity *= i % 4u == 3u ? n : 2u * n;
-			if (capacity >= ((__uint128_t)1u << v92_pcm_mapping_data_bits(rate)))
+			if (capacity >= ((__uint128_t)1u << pcm_upstream_frame_bits(rate)))
 				break;
 		}
 		CHECK(n <= 64u, "polarity modulus exceeds fixture constellation");

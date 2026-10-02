@@ -20,7 +20,6 @@
 #include <string.h>
 
 enum {
-	V90_NETWORK_CHARACTERS_PER_SECOND = 8000,
 	V90_UPSTREAM_RATE_UNIT = 2400,
 	PCM_PHASE3_RETURN_BASE_DEADLINE_SAMPLES =
 		V34_PHASE2_SAMPLE_RATE * 51 / 10,
@@ -4348,20 +4347,15 @@ bool pcm_call_get_data_rates(
 			&call->state.data_path.v92_analog.upstream.encoder.mapping :
 			&call->state.data_path.v92_digital.upstream.decoder.mapping;
 
-		upstream_rate = ((uint32_t)mapping->data_bits_per_frame *
-				V90_NETWORK_CHARACTERS_PER_SECOND +
-				V92_PCM_MAPPING_FRAME_SYMBOLS / 2u) / V92_PCM_MAPPING_FRAME_SYMBOLS;
+		upstream_rate = pcm_upstream_bit_rate(mapping->cpd.data_rate_number);
 	} else {
 		upstream_units = online_upstream_rate_units(call);
 		if (upstream_units == 0)
 			return false;
 		upstream_rate = (uint32_t)upstream_units * V90_UPSTREAM_RATE_UNIT;
 	}
-	downstream_rate =
-		((uint32_t)downstream->frame_bits *
-		 V90_NETWORK_CHARACTERS_PER_SECOND +
-		 V90_CP_FRAME_INTERVALS / 2u) /
-		V90_CP_FRAME_INTERVALS;
+	downstream_rate = pcm_downstream_bit_rate(
+		(uint8_t)(downstream->frame_bits - PCM_DOWNSTREAM_BASE_FRAME_BITS));
 	if (call->local_role == V90_ANALOG_MODEM) {
 		*transmit_bits_per_second = upstream_rate;
 		*receive_bits_per_second = downstream_rate;

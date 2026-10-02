@@ -57,7 +57,7 @@ static bool owned_mapping_is_valid(
 	       station->mapping.law == station->transmit.control.cpu.law &&
 	       station->mapping.data_bits_per_frame != 0u &&
 	       station->mapping.data_bits_per_frame ==
-		       v92_pcm_mapping_data_bits(
+		       pcm_upstream_frame_bits(
 			       station->mapping.cpd.data_rate_number) &&
 	       station->mapping.cpd.modulus_present &&
 	       station->mapping.cpd.filters_present &&

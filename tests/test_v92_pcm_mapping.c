@@ -21,7 +21,7 @@ static struct v92_cpd_parameters parameters(uint8_t data_rate_number)
 		.constellations_present = true,
 	};
 	unsigned int bits = 2u *
-		(data_rate_number + V92_PCM_MAPPING_RATE_INDEX_BASE);
+		(data_rate_number + PCM_UPSTREAM_RATE_INDEX_BASE);
 	uint8_t point_count = 0u;
 
 	value.filter[V92_CPD_PREFILTER_FEED_FORWARD].count = 4u;
@@ -63,10 +63,10 @@ static void generated_bits(
 
 static bool test_rate_matrix(void)
 {
-	CHECK(v92_pcm_mapping_data_bits(0u) == 0u &&
-	      v92_pcm_mapping_data_bits(1u) == 36u &&
-	      v92_pcm_mapping_data_bits(19u) == 72u &&
-	      v92_pcm_mapping_data_bits(20u) == 0u,
+	CHECK(pcm_upstream_frame_bits(0u) == 0u &&
+	      pcm_upstream_frame_bits(1u) == 36u &&
+	      pcm_upstream_frame_bits(19u) == 72u &&
+	      pcm_upstream_frame_bits(20u) == 0u,
 	      "rate geometry boundaries changed");
 	for (unsigned int law = G711_LAW_PCMU;
 	     law <= G711_LAW_PCMA; ++law) {
@@ -85,7 +85,7 @@ static bool test_rate_matrix(void)
 			      v92_pcm_mapping_is_valid(&mapping) &&
 			      mapping.data_bits_per_frame ==
 				      2u * (rate +
-					    V92_PCM_MAPPING_RATE_INDEX_BASE),
+					    PCM_UPSTREAM_RATE_INDEX_BASE),
 			      "rate %u law %u did not initialize", rate, law);
 			copy = mapping;
 			CHECK(v92_pcm_mapping_equal(&mapping, &copy),

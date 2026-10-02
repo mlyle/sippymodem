@@ -14,6 +14,7 @@
 #include <v34_datapump.h>
 #include <v90_datapump.h>
 #include <v90_profile.h>
+#include <pcm_rate.h>
 
 #include "test.h"
 #include "lapm_xid_fixture.h"
@@ -2197,6 +2198,50 @@ static bool test_at_pcm_rejects_invalid_numbers(void)
 	      modem_get_sreg(m, SREG_V92_PCM_UPSTREAM_MAX_DRN) == 13 &&
 	      m->v92_upstream_lu_ucode == 69,
 	      "shared parsing changed numeric bases or concatenated commands");
+	modem_delete(m);
+	return true;
+}
+
+static bool test_at_pcm_upstream_rate_queries(void)
+{
+	struct modem_driver driver = {
+		.name = "AT PCM upstream rates", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	struct modem *m = modem_create(&driver, driver.name);
+	int response_pipe[2];
+	char command[64], response[64], expected[32];
+
+	CHECK(m != NULL && pipe(response_pipe) == 0,
+	      "PCM rate query fixture could not be created");
+	m->pty = response_pipe[1];
+	for (uint8_t number = PCM_UPSTREAM_MIN_DATA_RATE_NUMBER;
+	     number <= PCM_UPSTREAM_MAX_DATA_RATE_NUMBER; ++number) {
+		uint32_t rate = pcm_upstream_bit_rate(number);
+		ssize_t length;
+
+		snprintf(command, sizeof(command), "AT+V92U=1,%u", rate);
+		CHECK(process_at_command(m, command) == 0 &&
+		      modem_get_sreg(m, SREG_V92_PCM_UPSTREAM_MAX_DRN) == number &&
+		      process_at_command(m, "AT+V92U?") == 0,
+		      "PCM upstream rate number %u could not be set and queried", number);
+		length = read(response_pipe[0], response, sizeof(response) - 1u);
+		CHECK(length > 0, "PCM upstream query produced no response");
+		response[length] = '\0';
+		snprintf(expected, sizeof(expected), "1,%u\r\n", rate);
+		CHECK(strstr(response, expected) != NULL,
+		      "PCM upstream query disagreed with rate number %u", number);
+		snprintf(command, sizeof(command), "AT+V92U=1,%u", rate + 1u);
+		CHECK(process_at_command(m, command) == -1 &&
+		      modem_get_sreg(m, SREG_V92_PCM_UPSTREAM_MAX_DRN) == number,
+		      "off-grid upstream rate changed the retained selection");
+	}
+	CHECK(process_at_command(m, "AT+V92U=1,4294995296") == -1 &&
+	      modem_get_sreg(m, SREG_V92_PCM_UPSTREAM_MAX_DRN) == 19,
+	      "oversized upstream rate wrapped into the shared rate type");
+	close(response_pipe[1]);
+	close(response_pipe[0]);
+	m->pty = -1;
 	modem_delete(m);
 	return true;
 }
@@ -7044,6 +7089,7 @@ int main(void)
 		{ "AT compression profile", test_at_compression_profile },
 		{ "AT PCM profile controls", test_at_pcm_profile_controls },
 		{ "AT PCM numeric validation", test_at_pcm_rejects_invalid_numbers },
+		{ "AT PCM upstream rate queries", test_at_pcm_upstream_rate_queries },
 		{ "AT V.34 symbol rate", test_at_v34_symbol_rate },
 		{ "LAPM XID parameter encoding", test_lapm_xid_parameters },
 		{ "LAPM V.42bis negotiation", test_lapm_v42bis_negotiation },

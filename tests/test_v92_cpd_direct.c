@@ -18,7 +18,7 @@ enum {
 
 static uint8_t expected_point_count(uint8_t rate)
 {
-	unsigned int bits = v92_pcm_mapping_data_bits(rate);
+	unsigned int bits = pcm_upstream_frame_bits(rate);
 	uint8_t count = 0u;
 
 	if (rate == 16u)
@@ -47,7 +47,7 @@ static bool direct_sections_are_correct(
 	uint8_t point_count = expected_point_count(rate);
 	__uint128_t product = 1u;
 	__uint128_t expected =
-		(__uint128_t)1u << v92_pcm_mapping_data_bits(rate);
+		(__uint128_t)1u << pcm_upstream_frame_bits(rate);
 
 	CHECK(cpd->modulus_present && cpd->filters_present &&
 	      cpd->constellations_present &&
@@ -69,10 +69,10 @@ static bool direct_sections_are_correct(
 	for (size_t symbol = 0u;
 	     symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
 		unsigned int exponent =
-			v92_pcm_mapping_data_bits(rate) /
+			pcm_upstream_frame_bits(rate) /
 			V92_PCM_MAPPING_FRAME_SYMBOLS;
 
-		if (symbol < v92_pcm_mapping_data_bits(rate) %
+		if (symbol < pcm_upstream_frame_bits(rate) %
 				     V92_PCM_MAPPING_FRAME_SYMBOLS)
 			exponent++;
 		unsigned int modulus = rate == 16u ?
@@ -346,7 +346,7 @@ static bool test_level_selection(void)
 					static const uint8_t minimum_points[] = { 24u, 27u, 31u, 34u, 39u };
 					unsigned points = cpd.constellation[0].count;
 					__uint128_t capacity = 1u, smaller = 1u;
-					__uint128_t required = (__uint128_t)1u << v92_pcm_mapping_data_bits(rates[rate]);
+					__uint128_t required = (__uint128_t)1u << pcm_upstream_frame_bits(rates[rate]);
 
 					CHECK(points == minimum_points[rates[rate] - 15u],
 					      "direct selection retained an oversized alphabet");

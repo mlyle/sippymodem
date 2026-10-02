@@ -6,15 +6,6 @@
 
 #include <string.h>
 
-uint8_t v92_pcm_mapping_data_bits(uint8_t data_rate_number)
-{
-	if (data_rate_number == 0u ||
-	    data_rate_number > V92_CPD_MAX_DATA_RATE_NUMBER)
-		return 0u;
-	return (uint8_t)(2u *
-		(data_rate_number + V92_PCM_MAPPING_RATE_INDEX_BASE));
-}
-
 static const struct v92_cpd_constellation *symbol_constellation(
 	const struct v92_pcm_mapping *mapping, size_t symbol)
 {
@@ -62,7 +53,7 @@ bool v92_pcm_mapping_is_valid(const struct v92_pcm_mapping *mapping)
 	    !mapping->cpd.filters_present ||
 	    !mapping->cpd.constellations_present ||
 	    mapping->data_bits_per_frame !=
-		    v92_pcm_mapping_data_bits(mapping->cpd.data_rate_number) ||
+		    pcm_upstream_frame_bits(mapping->cpd.data_rate_number) ||
 	    mapping->data_bits_per_frame < V92_PCM_MAPPING_MIN_BITS ||
 	    mapping->data_bits_per_frame > V92_PCM_MAPPING_MAX_BITS)
 		return false;
@@ -137,7 +128,7 @@ enum v92_pcm_mapping_result v92_pcm_mapping_init(
 	memset(&initialized, 0, sizeof(initialized));
 	initialized.cpd = *cpd;
 	initialized.law = law;
-	initialized.data_bits_per_frame = v92_pcm_mapping_data_bits(cpd->data_rate_number);
+	initialized.data_bits_per_frame = pcm_upstream_frame_bits(cpd->data_rate_number);
 	if (!v92_pcm_mapping_is_valid(&initialized))
 		return V92_PCM_MAPPING_INVALID_PARAMETERS;
 	*mapping = initialized;

@@ -7946,7 +7946,7 @@ static bool capture_v92_duplex_data(
 			expected.four_times_gain_q0_16 = rx->decoder.mapping.cpd.four_times_gain_q0_16;
 			if (offer->expected >= 9u && expected.trellis == V92_CPD_TRELLIS_16_STATE) {
 				__uint128_t capacity = 1u;
-				__uint128_t required = (__uint128_t)1u << v92_pcm_mapping_data_bits(offer->expected);
+				__uint128_t required = (__uint128_t)1u << pcm_upstream_frame_bits(offer->expected);
 
 				/* The focused channel test checks the balanced geometry.
 				 * Here require its capacity to agree with the negotiated

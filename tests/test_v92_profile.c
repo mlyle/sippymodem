@@ -48,6 +48,38 @@ static bool cpt_constellation_is_canonical(
 	return true;
 }
 
+static bool test_upstream_rates(void)
+{
+	/* V.92 6.1 and Table 30, rounded to the nearest integer for reporting. */
+	static const uint32_t reported[] = {
+		24000, 25333, 26667, 28000, 29333, 30667, 32000,
+		33333, 34667, 36000, 37333, 38667, 40000, 41333,
+		42667, 44000, 45333, 46667, 48000,
+	};
+
+	for (size_t index = 0; index < ARRAY_LENGTH(reported); ++index) {
+		uint8_t number = (uint8_t)(index + 1u);
+
+		CHECK(pcm_upstream_frame_bits(number) == 36u + 2u * index &&
+		      pcm_upstream_bit_rate(number) == reported[index] &&
+		      pcm_upstream_data_rate_number(reported[index]) == number &&
+		      pcm_upstream_data_rate_number(reported[index] - 1u) == 0 &&
+		      pcm_upstream_data_rate_number(reported[index] + 1u) == 0,
+		      "upstream rate number %u changed geometry or reporting", number);
+	}
+	for (unsigned int number = 0; number <= UINT8_MAX; ++number) {
+		if (number >= 1u && number <= ARRAY_LENGTH(reported))
+			continue;
+		CHECK(pcm_upstream_frame_bits((uint8_t)number) == 0 &&
+		      pcm_upstream_bit_rate((uint8_t)number) == 0,
+		      "unsupported upstream rate number %u was accepted", number);
+	}
+	CHECK(pcm_upstream_data_rate_number(0) == 0 &&
+	      pcm_upstream_data_rate_number(UINT32_MAX) == 0,
+	      "cleardown or oversized rate was accepted as an upstream selection");
+	return true;
+}
+
 static bool test_generated_profiles(void)
 {
 	for (unsigned int law_index = G711_LAW_PCMU;
@@ -365,7 +397,7 @@ static bool test_result_names(void)
 
 int main(void)
 {
-	if (!test_generated_profiles() || !test_conventional_policy() ||
+	if (!test_upstream_rates() || !test_generated_profiles() || !test_conventional_policy() ||
 	    !test_transactionality() || !test_result_names())
 		return 1;
 	return 0;

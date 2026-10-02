@@ -11,11 +11,12 @@
 #include <stdint.h>
 
 enum {
-	V92_PCM_MAPPING_FRAME_SYMBOLS = V92_CPD_MODULUS_COUNT,
+	V92_PCM_MAPPING_FRAME_SYMBOLS = PCM_UPSTREAM_FRAME_SYMBOLS,
 	V92_PCM_MAPPING_PHASES = V92_CPD_FRAME_INTERVALS,
-	V92_PCM_MAPPING_RATE_INDEX_BASE = 17,
-	V92_PCM_MAPPING_MIN_BITS = 36,
-	V92_PCM_MAPPING_MAX_BITS = 72,
+	V92_PCM_MAPPING_MIN_BITS =
+		2 * (PCM_UPSTREAM_RATE_INDEX_BASE + PCM_UPSTREAM_MIN_DATA_RATE_NUMBER),
+	V92_PCM_MAPPING_MAX_BITS =
+		2 * (PCM_UPSTREAM_RATE_INDEX_BASE + PCM_UPSTREAM_MAX_DATA_RATE_NUMBER),
 };
 
 enum v92_pcm_mapping_result {
@@ -33,9 +34,6 @@ struct v92_pcm_mapping {
 	enum g711_law law;
 	uint8_t data_bits_per_frame;
 };
-
-/* CPd rate number zero is cleardown; unsupported values return zero. */
-uint8_t v92_pcm_mapping_data_bits(uint8_t data_rate_number);
 
 enum v92_pcm_mapping_result v92_pcm_mapping_init(
 	struct v92_pcm_mapping *mapping, enum g711_law law,
