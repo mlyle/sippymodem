@@ -102,7 +102,6 @@ static int sregs_init(unsigned char sregs[]);
 static void do_modem_change_dp(struct modem *);
 static int modem_start(struct modem *);
 static int modem_stop (struct modem *);
-static struct dp_operations *get_dp_operations(enum DP_ID id);
 static int modem_get_chars(struct modem *m, char *buf, int n);
 static int modem_put_chars(struct modem *m, const char *buf, int n);
 static int modem_comp_get_chars(struct modem *m, char *buf, int n);
@@ -227,52 +226,32 @@ const char *modem_active_modulation_name(const struct modem *m)
 	return driver != NULL ? driver->name : NULL;
 }
 
-static struct dp_operations *get_dp_operations(enum DP_ID id)
-{
-	struct dp_driver *p;
-	for(p = modem_dp_drivers ; p->id > 0 ; p++)
-		if (p->id == id) return p->op;
-	return NULL;
-}
-
 int modem_dp_register(enum DP_ID id, struct dp_operations *op)
 {
-	struct dp_driver *p;
+	struct dp_driver *driver = get_dp_driver(id);
 
 	if (!op || op->use_count != 0 || !op->create || !op->delete ||
-	    !op->process)
+	    !op->process || driver == NULL || driver->op != NULL)
 		return -1;
-	for(p = modem_dp_drivers ; p->id > 0 ; p++) {
-		if (p->id == id && !p->op) {
-			p->op = op;
-			return 0;
-		}
-	}
-	return -1;
+	driver->op = op;
+	return 0;
 }
 
 int modem_dp_deregister(enum DP_ID id, struct dp_operations *op)
 {
-	struct dp_driver *p;
+	struct dp_driver *driver = get_dp_driver(id);
 
-	if (!op || op->use_count != 0)
+	if (!op || op->use_count != 0 || driver == NULL || driver->op != op)
 		return -1;
-	for(p = modem_dp_drivers ; p->id > 0 ; p++)
-		if (p->id == id && p->op == op) {
-			p->op = NULL;
-			return 0;
-		}
-	return -1;
+	driver->op = NULL;
+	return 0;
 }
 
 struct dp_operations *modem_dp_get_registered_ops(enum DP_ID id)
 {
-	struct dp_driver *p;
+	struct dp_driver *driver = get_dp_driver(id);
 
-	for (p = modem_dp_drivers; p->id > 0; p++)
-		if (p->id == id)
-			return p->op;
-	return NULL;
+	return driver != NULL ? driver->op : NULL;
 }
 
 
@@ -1427,7 +1406,7 @@ static void do_modem_change_dp (struct modem *m)
 
 		MODEM_DBG("%ld: change dp: --> %d...\n", m->count, id);
 
-		op = get_dp_operations(id);
+		op = modem_dp_get_registered_ops(id);
 		if (op && op->create)
 			dp = op->create(m,dp_id,
 					m->caller,m->srate,
@@ -1978,7 +1957,7 @@ static int modem_dial_start(struct modem *m)
 	if (m->started)
 		modem_stop(m);
 	m->caller = 1;
-	op = get_dp_operations(DP_CALLPROG);
+	op = modem_dp_get_registered_ops(DP_CALLPROG);
 	if (op && op->create)
 		dp = op->create(m,DP_CALLPROG,
 				m->caller,m->srate,
