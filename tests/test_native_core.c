@@ -3284,6 +3284,110 @@ static bool test_lapm_v42bis_receive_pressure(void)
 	return true;
 }
 
+static int lapm_v44_source(void *context, uint8_t *output, size_t capacity)
+{
+	return capacity > INT_MAX ? -1 :
+		scripted_lapm_source(context, (char *)output, (int)capacity);
+}
+
+static int lapm_v44_sink(void *context, const uint8_t *input, size_t length)
+{
+	return length > INT_MAX ? -1 :
+		scripted_lapm_sink(context, (const char *)input, (int)length);
+}
+
+static bool test_lapm_v44_receive_pressure(void)
+{
+	static const uint8_t payload[] = "Accepted input must retain pending output.";
+	const struct v44_parameters parameters = {
+		.codeword_limit = V44_MIN_CODEWORDS,
+		.max_string_length = V44_MIN_STRING_LENGTH,
+		.history_size = V44_MIN_HISTORY_SIZE,
+	};
+	struct modem_driver driver = {
+		.name = "LAPM V.44 output pressure", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	struct modem *m = modem_create(&driver, driver.name);
+	uint8_t wire[512];
+	size_t wire_length = 0;
+	bool idle = false, checked = false;
+
+	CHECK(m != NULL, "V.44 pressure allocation failed");
+	m->cfg.comp = 0;
+	CHECK(modem_ec_init(m) == 0, "V.44 pressure initialization failed");
+	modem_ec_start(m);
+	m->ec.lapm.state = 2;
+	m->state = 5;
+	memset(&lapm_source, 0, sizeof(lapm_source));
+	memset(&lapm_sink, 0, sizeof(lapm_sink));
+	lapm_source.data = payload;
+	lapm_source.length = sizeof(payload) - 1;
+	struct v44_character_path_config config = {
+		.codec = { .transmit_enabled = true, .transmit_parameters = parameters },
+		.receive_buffer_capacity = 1, .context = m,
+		.read = lapm_v44_source, .write = lapm_v44_sink,
+	};
+	struct v44_character_path *sender = v44_character_path_create(&config);
+	CHECK(sender != NULL, "V.44 pressure sender failed");
+	for (unsigned attempt = 0; attempt < sizeof(wire) && !idle; ++attempt) {
+		size_t length = 0;
+		enum v44_character_path_result result = v44_character_path_transmit(
+			sender, wire + wire_length, sizeof(wire) - wire_length, &length);
+		CHECK((result == V44_CHARACTER_PATH_OK || result == V44_CHARACTER_PATH_IDLE) &&
+		      length <= sizeof(wire) - wire_length, "V.44 pressure source failed");
+		wire_length += length;
+		idle = result == V44_CHARACTER_PATH_IDLE;
+	}
+	v44_character_path_destroy(sender);
+	CHECK(idle && wire_length > 0 && lapm_source.offset == sizeof(payload) - 1,
+	      "V.44 pressure wire did not finish");
+	config.codec.transmit_enabled = false;
+	config.codec.receive_enabled = true;
+	config.codec.receive_parameters = parameters;
+	m->ec.lapm.v44_path = v44_character_path_create(&config);
+	CHECK(m->ec.lapm.v44_path != NULL, "V.44 pressure receiver failed");
+	for (size_t index = 0; index < wire_length; ++index) {
+		uint8_t frame[] = { m->ec.lapm.rsp_addr, (uint8_t)(m->ec.lapm.vr << 1), 0, wire[index] };
+		frame_t incoming = { .buf = frame, .count = sizeof(frame) };
+		frame_t *outgoing;
+
+		m->packer.hdlc.rx_complete(&m->ec.lapm, &incoming);
+		if (m->ec.lapm.busy) {
+			CHECK(!checked && m->ec.lapm.rx_count == 0 && m->packer_process != NULL &&
+			      lapm_sink.length == 0, "V.44 lost pending output after the final input byte");
+			outgoing = m->packer.hdlc.get_tx_frame(&m->ec.lapm);
+			CHECK(outgoing != NULL && outgoing->buf[1] == 5 &&
+			      outgoing->buf[2] >> 1 == m->ec.lapm.vr,
+			      "V.44 blocked output did not acknowledge its input with RNR");
+			m->packer.hdlc.tx_complete(&m->ec.lapm, outgoing);
+			m->packer_process(m, 0);
+			CHECK(m->ec.lapm.busy && m->ec.lapm.rx_count == 0 && lapm_sink.length == 0,
+			      "zero-input retry lost blocked V.44 output");
+			lapm_sink.result = 1;
+			m->packer_process(m, 0);
+			CHECK(!m->ec.lapm.busy && m->ec.lapm.rx_count == 0 && m->packer_process == NULL &&
+			      lapm_sink.length == 1 && lapm_sink.data[0] == payload[0],
+			      "V.44 output did not drain once and clear busy");
+			outgoing = m->packer.hdlc.get_tx_frame(&m->ec.lapm);
+			CHECK(outgoing != NULL && outgoing->buf[1] == 1,
+			      "V.44 drained output did not publish RR");
+			m->packer.hdlc.tx_complete(&m->ec.lapm, outgoing);
+			checked = true;
+		}
+		while ((outgoing = m->packer.hdlc.get_tx_frame(&m->ec.lapm)) != NULL)
+			m->packer.hdlc.tx_complete(&m->ec.lapm, outgoing);
+	}
+	CHECK(checked && lapm_sink.length == sizeof(payload) - 1 &&
+	      memcmp(lapm_sink.data, payload, sizeof(payload) - 1) == 0 &&
+	      v44_character_path_finish_receive(m->ec.lapm.v44_path) == V44_CHARACTER_PATH_OK,
+	      "V.44 pressure lost or repeated decoded characters");
+	modem_delete(m);
+	memset(&lapm_source, 0, sizeof(lapm_source));
+	memset(&lapm_sink, 0, sizeof(lapm_sink));
+	return true;
+}
+
 static bool test_lapm_v42bis_transmit_pressure(void)
 {
 	static const int capacities[] = { 1, 3, 128 };
@@ -7452,6 +7556,7 @@ int main(void)
 		{ "LAPM V.42bis invalid parameters", test_lapm_v42bis_invalid_parameters },
 		{ "LAPM V.42bis decoder failure", test_lapm_v42bis_decoder_failure },
 		{ "LAPM V.42bis receive output pressure", test_lapm_v42bis_receive_pressure },
+		{ "LAPM V.44 receive output pressure", test_lapm_v44_receive_pressure },
 		{ "LAPM V.42bis small transmit buffers", test_lapm_v42bis_transmit_pressure },
 		{ "LAPM XID negotiation directions", test_lapm_xid_directions },
 		{ "LAPM XID numeric values", test_lapm_xid_numeric_values },

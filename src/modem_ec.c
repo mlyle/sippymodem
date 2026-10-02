@@ -1063,7 +1063,6 @@ static bool ack_info(struct lapm_state *l, u8 nr)
 }
 
 
-/* push rest data (when busy) */
 static void fail_receive_data(struct lapm_state *l)
 {
 	l->rx_head = l->rx_count = 0;
@@ -1072,63 +1071,56 @@ static void fail_receive_data(struct lapm_state *l)
 	modem_update_status(l->modem, STATUS_EC_ERROR);
 }
 
+/* Keep accepted input and pending codec output separate: NEED_OUTPUT can
+ * persist after the final information octet has been consumed. */
+static int write_info_payload(struct lapm_state *l, const uint8_t *input,
+	int length, bool *pending)
+{
+	*pending = false;
+	if (l->v44_path != NULL) {
+		size_t consumed = 0;
+		enum v44_character_path_result result = v44_character_path_receive(
+			l->v44_path, length == 0 ? NULL : input, (size_t)length, &consumed);
+		if (consumed > (size_t)length ||
+		    (result != V44_CHARACTER_PATH_OK && result != V44_CHARACTER_PATH_NEED_OUTPUT) ||
+		    (result == V44_CHARACTER_PATH_OK && consumed != (size_t)length))
+			return -1;
+		*pending = result == V44_CHARACTER_PATH_NEED_OUTPUT;
+		return (int)consumed;
+	}
+	int consumed = l->modem->put_chars ?
+		l->modem->put_chars(l->modem, (const char *)input, length) : 0;
+	if (consumed < 0 || consumed > length)
+		return -1;
+	*pending = consumed != length || l->modem->comp.count != 0;
+	return consumed;
+}
+
 static void push_rest_data(struct modem *m, int bits)
 {
 	struct lapm_state *l = &m->ec.lapm;
+	bool pending;
 	(void)bits;
-	if (l->state != LAPM_DATA)
+	if (l->state != LAPM_DATA || (l->v44_path == NULL && m->put_chars == NULL))
 		return;
-	if (l->v44_path != NULL) {
-		size_t consumed = 0;
-		enum v44_character_path_result result =
-			v44_character_path_receive(
-				l->v44_path,
-				l->rx_count == 0 ? NULL : l->rx_buf + l->rx_head,
-				(size_t)l->rx_count, &consumed);
-
-		if (consumed > (size_t)l->rx_count) {
-			fail_receive_data(l);
-			return;
-		}
-		l->rx_head += (int)consumed;
-		l->rx_count -= (int)consumed;
-		if (result == V44_CHARACTER_PATH_NEED_OUTPUT)
-			return;
-		if (result != V44_CHARACTER_PATH_OK || l->rx_count != 0) {
-			fail_receive_data(l);
-			return;
-		}
-		l->rx_head = 0;
-		l->busy = 0;
-		TX_RR(l,l->cmd_addr,0);
-		l->modem->packer_process = NULL;
+	int consumed = write_info_payload(l, l->rx_buf + l->rx_head, l->rx_count, &pending);
+	if (consumed < 0) {
+		fail_receive_data(l);
 		return;
 	}
-	/* A compression sink can own output after accepting the last input
-	 * octet. Retry even with no remaining LAPM payload to drain that output. */
-	if (l->modem->put_chars) {
-		int ret = l->modem->put_chars(l->modem,
-					      (const char*)(l->rx_buf+l->rx_head),
-					      l->rx_count);
-		if (ret < 0 || ret > l->rx_count) {
-			fail_receive_data(l);
-			return;
-		}
-		l->rx_head += ret;
-		l->rx_count -= ret;
-		if (!l->rx_count && l->modem->comp.count == 0) {
-			l->rx_head = 0;
-			l->busy = 0;
-			TX_RR(l,l->cmd_addr,0);
-			l->modem->packer_process = NULL;
-		}
-	}
+	l->rx_head += consumed;
+	l->rx_count -= consumed;
+	if (pending)
+		return;
+	l->rx_head = 0;
+	l->busy = 0;
+	TX_RR(l,l->cmd_addr,0);
+	l->modem->packer_process = NULL;
 }
 
 /* info frame process */
 static int rx_info(struct lapm_state *l, frame_t *f)
 {
-	int ret = 0;
 	int payload_length;
 	bool retrain_progress;
 	payload_length = f->count - 3;
@@ -1176,34 +1168,13 @@ static int rx_info(struct lapm_state *l, frame_t *f)
 		l->peer_busy = 0;
 		l->retrain_poll = 0;
 	}
-	/* recv data */
-
-	if (l->v44_path != NULL) {
-		size_t consumed = 0;
-		enum v44_character_path_result result =
-			v44_character_path_receive(
-				l->v44_path, f->buf + 3, (size_t)payload_length,
-				&consumed);
-
-		if (consumed > (size_t)payload_length ||
-		    (result != V44_CHARACTER_PATH_OK &&
-		     result != V44_CHARACTER_PATH_NEED_OUTPUT) ||
-		    (result == V44_CHARACTER_PATH_OK &&
-		     consumed != (size_t)payload_length)) {
-			modem_update_status(l->modem, STATUS_EC_ERROR);
-			return -1;
-		}
-		ret = (int)consumed;
-		if (result == V44_CHARACTER_PATH_NEED_OUTPUT)
-			l->busy = 1;
-	} else if(l->modem->put_chars)
-		ret = l->modem->put_chars(
-			l->modem, (const char *)(f->buf + 3), payload_length);
-	if (ret < 0 || ret > payload_length) {
+	bool pending;
+	int ret = write_info_payload(l, f->buf + 3, payload_length, &pending);
+	if (ret < 0) {
 		modem_update_status(l->modem, STATUS_EC_ERROR);
 		return -1;
 	}
-	if (ret != payload_length || l->busy || l->modem->comp.count != 0) {
+	if (pending || l->modem->comp.count != 0) {
 		/* save rest data, enter busy state */
 		l->rx_head = 0;
 		l->rx_count = payload_length - ret;
