@@ -54,8 +54,10 @@ completed ranging and probing are retained. The caller prefers V.8 negotiation
 and recognizes legacy answer tones when V.8 is absent.
 It tries Bell 212A before Bell 103 on their shared answer tone and permits
 V.22bis to negotiate 1200 bit/s or retry at 600 bit/s within the selected range.
+Once a family mark is selected, its datapump owns the changing training
+waveform; an initial ANS may still give way to another family's mark.
 The answerer begins with ANSam; without a call menu it continues through V.32,
-V.22bis/V.22, Bell 103/212A, V.21, V.22 at 600 bit/s, and V.23. These probes
+V.22bis/V.22, V.22 at 600 bit/s, Bell 103/212A, V.21, and V.23. These probes
 share the normal datapumps and one carrier-wait deadline (`S7`). Baudot and
 ISDN DOVBS require explicit selection. The final rate depends on the peer and
 channel; a fixed family or rate range still limits automatic fallback.
@@ -197,15 +199,14 @@ preserves the training deadline across ordinary-V.8 fallback, and reports
 Connect cases require that evidence; fallback calls still exercise data and
 retrains but are reported as profile mismatches.
 
-For broad incoming-call selection, issue `AT+MS=92,1,300,56000` and `ATS0=1`.
-The factory selection remains fixed V.21. Automatic answering accepts V.8
-callers offering lower families within the configured rate bounds; paired
-media tests cover V.21, V.23, V.22bis, V.32, and V.34. It also recognizes a
-legacy V.32 caller's sustained 1800-Hz response during ANSam and transfers its
-acquired carrier into the existing 75-ms silence and AC turnaround exchange,
-without repeating the answer tone or claiming V.8 negotiation. This early
-branch follows recorded peer behavior, but the complete no-menu tone ladder
-and V.22-only downgrade within the shared V.22/V.22bis family remain incomplete.
+For automatic incoming calls, issue `ATS0=1`; the factory modulation and
+rate range already admit all implemented data-modem families. Automatic
+answering accepts V.8 menus and legacy callers within those bounds. A legacy
+V.32 caller's sustained 1800-Hz response during ANSam transfers the acquired
+carrier into the existing 75-ms silence and AC turnaround exchange. V.22
+recognizes 600-bit/s scrambled training in its acquired QAM points, sharing
+the normal decoder while retaining timing and carrier state. Unconfirmed
+higher-rate probes yield to the next answer tone within the same `S7` deadline.
 
 Initialize the pinned pjproject submodule once, then build with `make`:
 

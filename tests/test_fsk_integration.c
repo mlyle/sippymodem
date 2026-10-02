@@ -8,6 +8,7 @@
 #include <g711.h>
 #include <media.h>
 #include <qam.h>
+#include <single_tone.h>
 #include <v21.h>
 #include <v22_datapump.h>
 #include <v22_framing.h>
@@ -126,6 +127,7 @@ struct modem_test_case {
 	unsigned int answerer_rx_rate;
 	unsigned int carrier_loss_samples;
 	unsigned int training_frame_limit;
+	unsigned int answer_tone_prefix_ms;
 	unsigned int caller_delay_frames;
 	unsigned int minimum_caller_rate_signals;
 	unsigned int minimum_caller_rate_signal_sample;
@@ -2042,6 +2044,39 @@ static bool exercise_cleardown(
 	return true;
 }
 
+/* Some legacy answerers send ANS before their family-specific mark. Keep
+ * the fixed datapump unclocked until that preamble has finished. */
+static bool present_legacy_answer_tone(struct integration_endpoint *caller,
+	enum media_codec codec, unsigned int milliseconds)
+{
+	struct single_tone_transmitter tone;
+	enum g711_law law;
+	unsigned int samples = milliseconds * (MODEM_RATE / 1000);
+
+	if (!codec_law(codec, &law) ||
+	    single_tone_transmitter_init(&tone, 2100, 12000) != SINGLE_TONE_OK)
+		return false;
+	for (unsigned int offset = 0; offset < samples; offset += MODEM_FRAG) {
+		int16_t receive[MODEM_FRAG], transmit[MODEM_FRAG];
+		unsigned int count = samples - offset;
+
+		if (count > MODEM_FRAG)
+			count = MODEM_FRAG;
+		for (unsigned int i = 0; i < count; ++i) {
+			int16_t sample;
+
+			if (single_tone_transmitter_sample(&tone, &sample) != SINGLE_TONE_OK)
+				return false;
+			receive[i] = decode_codeword(law, encode_codeword(law, sample));
+		}
+		modem_process(caller->modem, receive, transmit, (int)count);
+		if (!endpoint_drain(caller) || caller->modem->dp == NULL ||
+		    caller->modem->dp->id != DP_V8)
+			return false;
+	}
+	return true;
+}
+
 static bool run_media_call(
 	const struct modem_test_case *test_case,
 	enum media_codec codec)
@@ -2235,6 +2270,9 @@ static bool run_media_call(
 		      modem_report_incoming_call(answerer.modem) == 0 &&
 		      answerer.modem->started,
 	      "connected SIP call did not select %s roles", test_case->name);
+	CHECK(test_case->answer_tone_prefix_ms == 0 ||
+	      present_legacy_answer_tone(&caller, codec, test_case->answer_tone_prefix_ms),
+	      "%s did not retain automatic startup through legacy ANS", test_case->name);
 	CHECK(!impair_answerer_precarrier ||
 		      endpoint_replace_precarrier_silence(
 			      &answerer, codec,
@@ -4067,6 +4105,8 @@ static bool run_factory_startup_cases(const char *filter, bool *selected)
 	for (size_t peer = 0; peer < ARRAY_LENGTH(peers); ++peer) {
 		for (unsigned answering = 0; answering < 2; ++answering) {
 			char name[80], fixed[80];
+			bool test_prefix = !answering && (peers[peer].id == DP_V22 ||
+				peers[peer].id == DP_V22BIS || peers[peer].id == DP_V23);
 			enum DP_ID modern_id = peers[peer].id == DP_V32 ? DP_V32BIS :
 				answering && peers[peer].id == DP_B212 ? DP_V22 : peers[peer].id;
 			unsigned caller_rate = peers[peer].id == DP_V23 ? 75 : peers[peer].rate;
@@ -4088,20 +4128,24 @@ static bool run_factory_startup_cases(const char *filter, bool *selected)
 				.automatic_pcm_roles = true, .factory_transport = true,
 			};
 
-			snprintf(name, sizeof(name), "legacy startup %s %s",
-				answering ? "answering" : "calling", peers[peer].name);
 			snprintf(fixed, sizeof(fixed), "AT+MS=%u,0,%u,%u\r",
 				peers[peer].code, peers[peer].rate, peers[peer].rate);
-			if (filter != NULL && filter[0] != '\0' && strstr(name, filter) == NULL)
-				continue;
-			*selected = true;
-			for (size_t codec = 0; codec < ARRAY_LENGTH(codecs); ++codec) {
-				fprintf(stderr, "[ RUN      ] %s over %s SIP media\n",
-					name, codec_name(codecs[codec]));
-				if (!run_media_call(&test, codecs[codec]))
-					return false;
-				fprintf(stderr, "[       OK ] %s over %s SIP media\n",
-					name, codec_name(codecs[codec]));
+			for (unsigned int prefix = 0; prefix <= (unsigned int)test_prefix; ++prefix) {
+				test.answer_tone_prefix_ms = prefix ? 2600 : 0;
+				snprintf(name, sizeof(name), "legacy startup %s %s%s",
+					answering ? "answering" : "calling", peers[peer].name,
+					prefix ? " after ANS" : "");
+				if (filter != NULL && filter[0] != '\0' && strstr(name, filter) == NULL)
+					continue;
+				*selected = true;
+				for (size_t codec = 0; codec < ARRAY_LENGTH(codecs); ++codec) {
+					fprintf(stderr, "[ RUN      ] %s over %s SIP media\n",
+						name, codec_name(codecs[codec]));
+					if (!run_media_call(&test, codecs[codec]))
+						return false;
+					fprintf(stderr, "[       OK ] %s over %s SIP media\n",
+						name, codec_name(codecs[codec]));
+				}
 			}
 		}
 	}

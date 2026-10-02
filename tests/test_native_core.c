@@ -1848,7 +1848,9 @@ static bool test_automatic_startup_deadline(void)
 	};
 	const struct dp_operations *ops = modem_dp_get_registered_ops(DP_V8);
 
-	for (unsigned scenario = 0; scenario < 4; ++scenario) {
+	/* The final case admits 600 bit/s: a constant answer mark must still
+	 * expire without becoming scrambled training or resetting S7. */
+	for (unsigned scenario = 0; scenario < 5; ++scenario) {
 		struct modem *modem = modem_create(&driver, driver.name);
 		struct single_tone_transmitter tone;
 		struct dp *dp;

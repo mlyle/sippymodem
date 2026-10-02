@@ -22,6 +22,9 @@ enum {
 	LEGACY_TONE_COUNT = 5,
 	LEGACY_ANSWER_SAMPLES = 5 * MODEM_RATE,
 	LEGACY_GAP_SAMPLES = MODEM_RATE * 75 / 1000,
+	/* Retain confirmed S1/1200 training; otherwise retry before a fixed
+	 * 600-bit/s answerer abandons its initial carrier acquisition. */
+	LEGACY_V22_RETRY_SAMPLES = MODEM_RATE * 16 / 10,
 };
 
 static const struct {
@@ -38,11 +41,11 @@ static const struct {
 	bool rate600;
 } legacy_stages[] = {
 	{ DP_V32BIS, 3 * MODEM_RATE, false },
-	{ DP_V22BIS, 3 * MODEM_RATE, false },
+	{ DP_V22BIS, 2 * MODEM_RATE, false },
+	{ DP_V22, 3 * MODEM_RATE, true },
 	{ DP_B103, MODEM_RATE * 3 / 5, false },
 	{ DP_B212, 2 * MODEM_RATE, false },
 	{ DP_V21, 2 * MODEM_RATE, false },
-	{ DP_V22, 3 * MODEM_RATE, true },
 	{ DP_V23, 2 * MODEM_RATE, false },
 };
 
@@ -536,7 +539,12 @@ static int next_answer_probe(struct v8_datapump *datapump)
 
 static int observe_legacy_answer(struct v8_datapump *datapump, const int16_t *receive, int count)
 {
-	if (!datapump->caller || !MODEM_AUTOMODE(datapump->dp.modem) ||
+	/* ANS alone can precede another family's answer mark. Once that mark
+	 * selects a family, its datapump owns the changing training waveform. */
+	if ((datapump->legacy != NULL &&
+	     (v8_datapump_modulation(datapump->legacy->id) != V8_MODULATION_V32 ||
+	      v32_datapump_has_peer(datapump->legacy))) ||
+	    !datapump->caller || !MODEM_AUTOMODE(datapump->dp.modem) ||
 	    datapump->handshake.calling.state != V8_CALLING_WAIT_ANSWER_SIGNAL)
 		return DPSTAT_OK;
 	for (int sample = 0; sample < count; ++sample) {
@@ -601,7 +609,7 @@ static int process_legacy(struct v8_datapump *datapump, const int16_t *receive, 
 		    legacy_id(datapump, DP_B103) != 0)
 			return start_legacy(datapump, DP_B103, false) ? DPSTAT_OK : DPSTAT_ERROR;
 		if (result == DPSTAT_OK && datapump->legacy->id == DP_V22BIS &&
-		    datapump->legacy_samples >= 3 * MODEM_RATE &&
+		    datapump->legacy_samples >= LEGACY_V22_RETRY_SAMPLES &&
 		    !v22_datapump_has_peer(datapump->legacy) &&
 		    datapump->dp.modem->min_rate <= 600 &&
 		    datapump->dp.modem->max_rate >= 600)

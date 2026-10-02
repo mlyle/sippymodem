@@ -101,6 +101,9 @@ struct v22_datapump {
 	struct qam_demodulator demodulator;
 	struct v22_symbol_encoder encoder;
 	struct v22_symbol_decoder decoder;
+	struct v22_symbol_decoder rate600_decoder;
+	uint16_t rate600_confirm_bits;
+	uint8_t rate600_turns;
 	struct v22bis_symbol_encoder v22bis_encoder;
 	struct v22bis_receiver v22bis_receiver;
 	struct v22bis_rate_signal_detector rate_signal_detector;
@@ -248,6 +251,10 @@ static struct v22_datapump *v22_from_dp(struct dp *dp)
 	    datapump->scrambled_mark_bits >
 		    V22_ORIGINATE_SCRAMBLED_CONFIRM_BITS ||
 	    datapump->v22bis_confirm_bits > V22BIS_CONFIRM_BITS ||
+	    datapump->rate600_confirm_bits > V22_ORIGINATE_SCRAMBLED_CONFIRM_BITS / 2 ||
+	    (datapump->rate600_turns & ~0xau) != 0 ||
+	    datapump->rate600_decoder.phase_quadrant >= QPSK_QUADRANT_COUNT ||
+	    !v22_scrambler_is_valid(&datapump->rate600_decoder.descrambler) ||
 	    datapump->rate_signal_tx_symbols >
 		    V22BIS_RATE_SIGNAL_SYMBOLS ||
 	    datapump->rate_signal_wait_samples >
@@ -389,6 +396,7 @@ static struct dp *create_v22(
 		free(datapump);
 		return NULL;
 	}
+	datapump->rate600_decoder = datapump->decoder;
 	if (id == DP_B212 && !datapump->originator &&
 	    single_tone_transmitter_init(&datapump->bell_answer_tone, 2225,
 		    V22_TRANSMIT_AMPLITUDE) != SINGLE_TONE_OK) {
@@ -578,16 +586,15 @@ static int decode_phase_change(
 }
 
 static int decode_600_phase_change(
-	struct v22_datapump *datapump,
+	struct v22_symbol_decoder *decoder,
 	const struct qam_point *previous,
-	const struct qam_point *current, uint8_t *bit)
+	const struct qam_point *current, uint8_t *bit, uint8_t *quarter_turns)
 {
 	double cross;
 	uint8_t quadrant;
-	uint8_t quarter_turns;
 
 	if (!point_is_finite(previous) || !point_is_finite(current) ||
-	    bit == NULL)
+	    decoder == NULL || bit == NULL || quarter_turns == NULL)
 		return -1;
 	cross = previous->in_phase * current->quadrature -
 		previous->quadrature * current->in_phase;
@@ -595,11 +602,11 @@ static int decode_600_phase_change(
 		return -1;
 	/* Choose between the two Table 1 rotations before quarter-turn
 	 * quantization discards which side of a tie the observation occupied. */
-	quarter_turns = cross < 0.0 ? 3u : 1u;
+	*quarter_turns = cross < 0.0 ? 3u : 1u;
 	quadrant = (uint8_t)(
-		(datapump->decoder.phase_quadrant + quarter_turns) & 3u);
+		(decoder->phase_quadrant + *quarter_turns) & 3u);
 	return v22_600_symbol_decode(
-		       &datapump->decoder, quadrant, bit) == V22_FRAMING_OK ?
+		       decoder, quadrant, bit) == V22_FRAMING_OK ?
 		       0 : -1;
 }
 
@@ -621,6 +628,54 @@ static int begin_connect_hold(struct v22_datapump *datapump)
 	datapump->phase_samples = 0;
 	datapump->scrambled_mark_bits = 0;
 	return 0;
+}
+
+/* Recognize scrambled 600-bit/s ones in the same acquired QAM points.
+ * Requiring both Table 1 rotations excludes the constant answer mark. */
+static int observe_auto_600(struct v22_datapump *datapump,
+	const struct qam_point *point, bool *selected)
+{
+	uint8_t bit, turns;
+	uint32_t target = scrambled_confirmation_target(datapump) / 2;
+
+	*selected = false;
+	if (!MODEM_AUTOMODE(datapump->dp.modem) ||
+	    datapump->dp.modem->min_rate > V22_600_BIT_RATE ||
+	    datapump->dp.modem->max_rate < V22_600_BIT_RATE ||
+	    datapump->dp.id == DP_B212 || datapump_uses_600(datapump) ||
+	    !datapump->has_previous_receive_point ||
+	    (datapump->training_state != V22_TRAINING_WAIT_SCRAMBLED_MARK &&
+	     datapump->training_state != V22_TRAINING_CONNECT_HOLD))
+		return 0;
+	if (decode_600_phase_change(&datapump->rate600_decoder,
+		    &datapump->previous_receive_point, point, &bit, &turns) != 0)
+		return -1;
+	if (bit == 0) {
+		datapump->rate600_confirm_bits = 0;
+		datapump->rate600_turns = 0;
+		return 0;
+	}
+	if (datapump->rate600_confirm_bits < target)
+		datapump->rate600_confirm_bits++;
+	datapump->rate600_turns |= (uint8_t)(1u << turns);
+	if (datapump->rate600_confirm_bits < target ||
+	    datapump->rate600_turns != 0xau)
+		return 0;
+	datapump->bit_rate = V22_600_BIT_RATE;
+	datapump->dp.id = DP_V22;
+	datapump->dp.op = &v22_operations;
+	datapump->decoder = datapump->rate600_decoder;
+	datapump->v22bis_receiver_initialized = false;
+	datapump->v22bis_confirm_bits = 0;
+	datapump->rate_signal_tx_symbols = 0;
+	datapump->rate_signal_wait_samples = 0;
+	datapump->rate_signal_late_candidate = false;
+	datapump->rate_signal_reply_sent = false;
+	v22bis_rate_signal_detector_reset(&datapump->rate_signal_detector);
+	if (datapump->originator && start_scrambled_transmit(datapump) != 0)
+		return -1;
+	*selected = true;
+	return begin_connect_hold(datapump);
 }
 
 static int start_v22bis_transmit(
@@ -757,7 +812,8 @@ static int observe_600_phase_change(
 	uint8_t bit;
 
 	observe_answer_mark(datapump, quarter_turns);
-	if (decode_600_phase_change(datapump, previous, current, &bit) != 0)
+	if (decode_600_phase_change(&datapump->decoder, previous, current,
+		    &bit, &quarter_turns) != 0)
 		return -1;
 	return observe_bits(datapump, &bit, 1);
 }
@@ -1199,6 +1255,9 @@ static int reset_v22_receive_path(struct v22_datapump *datapump)
 		return -1;
 	datapump->demodulator = demodulator;
 	datapump->decoder = decoder;
+	datapump->rate600_decoder = decoder;
+	datapump->rate600_confirm_bits = 0;
+	datapump->rate600_turns = 0;
 	datapump->previous_receive_point = (struct qam_point){ 0 };
 	datapump->has_previous_receive_point = false;
 	datapump->v22bis_receiver_initialized = false;
@@ -1395,6 +1454,15 @@ static int receive_sample(
 		return 0;
 	if (discard)
 		goto remember_point;
+	{
+		bool selected;
+
+		if (observe_auto_600(datapump, &point, &selected) != 0)
+			return -1;
+		if (selected)
+			goto remember_point;
+	}
+
 	if (datapump_is_retraining(datapump)) {
 		bool decode_current =
 			datapump->retrain_peer_signal_received;
