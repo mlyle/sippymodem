@@ -652,8 +652,7 @@ static bool run_ath0_cleardown(
 	modem->cfg.ec_rx_info_size = 128;
 	CHECK(modem_ec_init(modem) == 0,
 	      "ATH0 LAPM owner did not initialize");
-	modem_hdlc_start(modem);
-	modem_ec_start(modem);
+	modem_update_status(modem, STATUS_PACK_LINK);
 	modem->ec.lapm.state = LAPM_DATA_STATE;
 	modem->state = TEST_STATE_COMMAND_ONLINE;
 	modem->command = 1;
@@ -941,6 +940,114 @@ static bool test_stop_cancels_link_detection(void)
 		      m->get_bits == NULL && m->put_bits == NULL &&
 		      m->bit_timer == 0 && m->bit_timer_func == NULL,
 		      "late %s bits revived a stopped call", transmit ? "transmit" : "receive");
+		modem_delete(m);
+	}
+	return true;
+}
+
+struct framing_cancel_capture {
+	unsigned int hangups;
+	unsigned int retries;
+	int hangup_result;
+};
+
+static int capture_framing_hangup(struct dp *dp)
+{
+	struct framing_cancel_capture *capture = dp->modem->dev_data;
+
+	capture->hangups++;
+	return capture->hangup_result;
+}
+
+static void capture_framing_retry(struct modem *m, int bits)
+{
+	struct framing_cancel_capture *capture = m->dev_data;
+
+	(void)bits;
+	capture->retries++;
+}
+
+static bool test_hangup_uses_active_framing(void)
+{
+	enum { DETECTION, LAPM, ASYNC };
+	enum { TEST_STATE_DP_ESTAB = 2, TEST_LAPM_DISC = 3 };
+	struct modem_driver driver = {
+		.name = "framing cancellation", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	const struct dp_operations operations = {
+		.name = "framing cancellation", .hangup = capture_framing_hangup,
+	};
+
+	for (unsigned mode = DETECTION; mode <= ASYNC; ++mode)
+	for (unsigned caller = 0; caller < 2; ++caller)
+	for (unsigned local = 0; local < 2; ++local)
+	for (unsigned failure = 0; failure < 2; ++failure) {
+		struct framing_cancel_capture capture = { .hangup_result = failure ? -1 : 0 };
+		struct modem *m = modem_create(&driver, driver.name);
+		struct dp dp = { .id = DP_V34, .modem = m, .op = &operations,
+			.status = DPSTAT_CONNECT };
+		uint8_t bits[32] = { 0 };
+		unsigned long deadline;
+
+		CHECK(m != NULL, "framing cancellation allocation failed");
+		m->dp = &dp;
+		m->dev_data = &capture;
+		m->caller = caller;
+		m->cfg.ec = mode != ASYNC;
+		m->cfg.ec_detector = mode == DETECTION;
+		m->cfg.comp = 0;
+		m->tx_rate = m->rx_rate = 4800;
+		m->state = TEST_STATE_DP_ESTAB;
+		m->started = 1;
+		m->count = 1234;
+		CHECK(modem_ec_init(m) == 0, "framing cancellation LAPM allocation failed");
+		modem_dp_connected(m);
+		if (mode == ASYNC && !caller)
+			modem_update_status(m, STATUS_PACK_LINK);
+		CHECK(mode == DETECTION ? m->get_bits == modem_detector_get_bits :
+		      mode == LAPM ? m->get_bits == modem_hdlc_get_bits :
+		                     m->get_bits == modem_async_get_bits,
+		      "framing cancellation did not select mode %u", mode);
+		m->bit_timer = 8;
+		m->bit_timer_func = bit_timer_expired;
+		m->packer_process = capture_framing_retry;
+		if (local)
+			modem_hangup(m);
+		else
+			modem_update_status(m, STATUS_NOCARRIER);
+		deadline = m->sample_timer;
+		if (local && mode == LAPM) {
+			CHECK(strcmp(modem_call_phase(m), "error-control-disconnect") == 0 &&
+			      capture.hangups == 0 && m->ec.lapm.state == TEST_LAPM_DISC &&
+			      m->get_bits == modem_hdlc_get_bits && m->put_bits == modem_hdlc_put_bits &&
+			      m->bit_timer > 8 && m->bit_timer_func != bit_timer_expired &&
+			      m->packer_process == NULL && deadline - m->count == MODEM_RATE * 3 / 2 &&
+			      m->packer.hdlc.tx_preamble_flags == 0 &&
+			      m->packer.hdlc.tx_preamble_complete == NULL,
+			      "active LAPM release lost its frame route or timeout");
+			CHECK(modem_get_bits(m, 8, bits, sizeof(bits)) == sizeof(bits) &&
+			      m->ec.lapm.tx_ctrl == m->ec.lapm.ctrl_list,
+			      "LAPM release could not serialize DISC: caller %u", caller);
+		} else {
+			unsigned long delay = local && !failure ? MODEM_RATE * 3 : 48;
+
+			CHECK(strcmp(modem_call_phase(m), "cleardown") == 0 &&
+			      capture.hangups == local && m->get_bits == NULL && m->put_bits == NULL &&
+			      m->bit_timer == 0 && m->bit_timer_func == NULL && m->packer_process == NULL &&
+			      deadline - m->count == delay && m->sample_timer_func != NULL,
+			      "physical cleardown retained framing work: mode %u caller %u local %u failure %u",
+			      mode, caller, local, failure);
+			CHECK(mode == LAPM || m->ec.lapm.state == 0,
+			      "hangup started LAPM release without HDLC");
+			CHECK(modem_get_bits(m, 8, bits, sizeof(bits)) == sizeof(bits) &&
+			      modem_put_bits(m, 8, bits, sizeof(bits)) == sizeof(bits) &&
+			      m->sample_timer == deadline && m->ring_count == 0 && capture.retries == 0 &&
+			      strcmp(modem_call_phase(m), "cleardown") == 0,
+			      "late bits ran old work during physical cleardown");
+		}
+		m->dp = NULL; /* The fixture owns the stack datapump. */
+		CHECK(modem_stop_now(m) == 0, "framing cancellation cleanup failed");
 		modem_delete(m);
 	}
 	return true;
@@ -8086,6 +8193,7 @@ int main(void)
 		{ "call progress cancellation without media",
 		  test_call_progress_cancels_without_media },
 		{ "stop cancels link detection", test_stop_cancels_link_detection },
+		{ "hangup follows active framing", test_hangup_uses_active_framing },
 		{ "bounded AT dial destinations",
 		  test_at_dial_destinations_are_bounded },
 		{ "AT compression profile", test_at_compression_profile },

@@ -1795,6 +1795,9 @@ void modem_ec_stop(struct modem *m)
 	struct hdlc_state *h = &m->packer.hdlc;
 	struct lapm_state *l = &m->ec.lapm;
 	EC_DBG("modem_ec_stop...\n");
+	/* Release may interrupt the originator's flag preamble. */
+	h->tx_complete = lapm_tx_complete;
+	h->get_tx_frame = lapm_get_tx_frame;
 	h->tx_preamble_flags = 0;
 	h->tx_preamble_complete = NULL;
 	lapm_disconnect(l);

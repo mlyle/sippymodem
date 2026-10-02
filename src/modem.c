@@ -424,6 +424,9 @@ static int modem_set_state(struct modem *m, unsigned new_state)
 		m->put_chars = 0;
 		m->get_bits  = 0;
 		m->put_bits  = 0;
+		m->bit_timer = 0;
+		m->bit_timer_func = NULL;
+		m->packer_process = NULL;
 		break;
 	default:
 		MODEM_ERR("invalid state: %d\n", new_state);
@@ -532,7 +535,9 @@ static void modem_hup(struct modem *m, unsigned local)
 	case STATE_EC_ESTAB:
 	case STATE_MODEM_ONLINE:
 	case STATE_COMMAND_ONLINE:
-		if(local && m->cfg.ec) {
+		if (local && m->cfg.ec &&
+		    m->get_bits == modem_hdlc_get_bits &&
+		    m->put_bits == modem_hdlc_put_bits) {
 			modem_ec_stop(m);
 			modem_set_state(m,STATE_EC_DISC);
 			schedule_modem_timer(
