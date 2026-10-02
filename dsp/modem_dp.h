@@ -45,6 +45,7 @@
 #include <modem_defs.h>
 
 #include <stdbool.h>
+#include <stddef.h>
 
 
 /*
@@ -89,6 +90,11 @@ struct dp_driver {
 	struct dp_operations *op;
 };
 
+struct dp_binding {
+	enum DP_ID id;
+	struct dp_operations *op;
+};
+
 /* data pump structure */
 struct dp {
         enum DP_ID id;
@@ -110,6 +116,9 @@ extern int modem_put_bits(struct modem *m, int nbits, u8 *buf, int n);
 
 /* Registration changes and datapump lifetimes use one serialized owner. */
 extern const char *modem_dp_name(enum DP_ID id);
+/* Validate the complete set before changing any binding. */
+extern int modem_dp_register_set(const struct dp_binding *bindings, size_t count);
+extern int modem_dp_deregister_set(const struct dp_binding *bindings, size_t count);
 extern int  modem_dp_register(enum DP_ID id, struct dp_operations *op);
 extern int modem_dp_deregister(enum DP_ID id, struct dp_operations *op);
 extern struct dp_operations *modem_dp_get_registered_ops(enum DP_ID id);

@@ -452,27 +452,21 @@ static int process_fsk300(struct dp *dp, void *receive_buffer,
 		       DPSTAT_ERROR : DPSTAT_OK;
 }
 
+static const struct dp_binding fsk300_bindings[] = {
+	{ DP_V21, &fsk300_operations },
+	{ DP_B103, &fsk300_operations },
+};
+
 int fsk300_datapump_register(void)
 {
-	if (modem_dp_register(DP_V21, &fsk300_operations) != 0)
-		return -1;
-	if (modem_dp_register(DP_B103, &fsk300_operations) == 0)
-		return 0;
-	(void)modem_dp_deregister(DP_V21, &fsk300_operations);
-	return -1;
+	return modem_dp_register_set(
+		fsk300_bindings, sizeof(fsk300_bindings) / sizeof(fsk300_bindings[0]));
 }
 
 int fsk300_datapump_unregister(void)
 {
-	if (fsk300_operations.use_count != 0 ||
-	    modem_dp_get_registered_ops(DP_V21) != &fsk300_operations ||
-	    modem_dp_get_registered_ops(DP_B103) != &fsk300_operations ||
-	    modem_dp_deregister(DP_B103, &fsk300_operations) != 0)
-		return -1;
-	if (modem_dp_deregister(DP_V21, &fsk300_operations) == 0)
-		return 0;
-	(void)modem_dp_register(DP_B103, &fsk300_operations);
-	return -1;
+	return modem_dp_deregister_set(
+		fsk300_bindings, sizeof(fsk300_bindings) / sizeof(fsk300_bindings[0]));
 }
 
 bool fsk300_datapump_is_busy(void)

@@ -161,7 +161,11 @@ static struct dp_operations v22bis_operations = {
 	.retrain = retrain_v22,
 };
 
-static const enum DP_ID v22_ids[] = { DP_V22, DP_V22BIS, DP_B212 };
+static const struct dp_binding v22_bindings[] = {
+	{ DP_V22, &v22_operations },
+	{ DP_V22BIS, &v22bis_operations },
+	{ DP_B212, &v22_operations },
+};
 
 static struct dp_operations *operations_for_id(enum DP_ID id)
 {
@@ -1724,39 +1728,14 @@ static int process_v22(
 
 int v22_datapump_register(void)
 {
-	for (size_t index = 0; index < sizeof(v22_ids) / sizeof(v22_ids[0]);
-	     ++index) {
-		struct dp_operations *operations =
-			operations_for_id(v22_ids[index]);
-
-		if (modem_dp_register(v22_ids[index], operations) == 0)
-			continue;
-		while (index > 0) {
-			index--;
-			(void)modem_dp_deregister(
-				v22_ids[index], operations_for_id(v22_ids[index]));
-		}
-		return -1;
-	}
-	return 0;
+	return modem_dp_register_set(
+		v22_bindings, sizeof(v22_bindings) / sizeof(v22_bindings[0]));
 }
 
 int v22_datapump_unregister(void)
 {
-	size_t count = sizeof(v22_ids) / sizeof(v22_ids[0]);
-
-	for (size_t index = count; index > 0; --index) {
-		if (modem_dp_deregister(
-			    v22_ids[index - 1],
-			    operations_for_id(v22_ids[index - 1])) == 0)
-			continue;
-		for (size_t restore = index; restore < count; ++restore)
-			(void)modem_dp_register(
-				v22_ids[restore],
-				operations_for_id(v22_ids[restore]));
-		return -1;
-	}
-	return 0;
+	return modem_dp_deregister_set(
+		v22_bindings, sizeof(v22_bindings) / sizeof(v22_bindings[0]));
 }
 
 bool v22_datapump_is_busy(void)

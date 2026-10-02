@@ -1628,27 +1628,21 @@ failure:
 	return DPSTAT_ERROR;
 }
 
+static const struct dp_binding v32_bindings[] = {
+	{ DP_V32, &v32_operations },
+	{ DP_V32BIS, &v32_operations },
+};
+
 int v32_datapump_register(void)
 {
-	if (modem_dp_register(DP_V32, &v32_operations) != 0)
-		return -1;
-	if (modem_dp_register(DP_V32BIS, &v32_operations) == 0)
-		return 0;
-	(void)modem_dp_deregister(DP_V32, &v32_operations);
-	return -1;
+	return modem_dp_register_set(
+		v32_bindings, sizeof(v32_bindings) / sizeof(v32_bindings[0]));
 }
 
 int v32_datapump_unregister(void)
 {
-	if (v32_operations.use_count != 0 ||
-	    modem_dp_get_registered_ops(DP_V32) != &v32_operations ||
-	    modem_dp_get_registered_ops(DP_V32BIS) != &v32_operations ||
-	    modem_dp_deregister(DP_V32BIS, &v32_operations) != 0)
-		return -1;
-	if (modem_dp_deregister(DP_V32, &v32_operations) == 0)
-		return 0;
-	(void)modem_dp_register(DP_V32BIS, &v32_operations);
-	return -1;
+	return modem_dp_deregister_set(
+		v32_bindings, sizeof(v32_bindings) / sizeof(v32_bindings[0]));
 }
 
 bool v32_datapump_is_busy(void)

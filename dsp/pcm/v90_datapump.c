@@ -962,27 +962,21 @@ failure:
 	return DPSTAT_ERROR;
 }
 
+static const struct dp_binding v90_bindings[] = {
+	{ DP_V90, &v90_operations },
+	{ DP_V92, &v90_operations },
+};
+
 int v90_datapump_register(void)
 {
-	if (modem_dp_register(DP_V90, &v90_operations) != 0)
-		return -1;
-	if (modem_dp_register(DP_V92, &v90_operations) == 0)
-		return 0;
-	(void)modem_dp_deregister(DP_V90, &v90_operations);
-	return -1;
+	return modem_dp_register_set(
+		v90_bindings, sizeof(v90_bindings) / sizeof(v90_bindings[0]));
 }
 
 int v90_datapump_unregister(void)
 {
-	if (v90_operations.use_count != 0 ||
-	    modem_dp_get_registered_ops(DP_V90) != &v90_operations ||
-	    modem_dp_get_registered_ops(DP_V92) != &v90_operations ||
-	    modem_dp_deregister(DP_V92, &v90_operations) != 0)
-		return -1;
-	if (modem_dp_deregister(DP_V90, &v90_operations) == 0)
-		return 0;
-	(void)modem_dp_register(DP_V92, &v90_operations);
-	return -1;
+	return modem_dp_deregister_set(
+		v90_bindings, sizeof(v90_bindings) / sizeof(v90_bindings[0]));
 }
 
 bool v90_datapump_is_busy(void)

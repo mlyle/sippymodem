@@ -77,25 +77,55 @@ const char *modem_dp_name(enum DP_ID id)
 	return driver != NULL ? driver->name : NULL;
 }
 
+static int update_bindings(
+	const struct dp_binding *bindings, size_t count, bool registering)
+{
+	if (bindings == NULL || count == 0 ||
+	    count >= sizeof(modem_dp_drivers) / sizeof(modem_dp_drivers[0]))
+		return -1;
+	for (size_t i = 0; i < count; i++) {
+		struct dp_driver *driver = get_dp_driver(bindings[i].id);
+		struct dp_operations *op = bindings[i].op;
+
+		if (driver == NULL || op == NULL || op->use_count != 0)
+			return -1;
+		if (registering) {
+			if (driver->op != NULL || op->create == NULL ||
+			    op->delete == NULL || op->process == NULL)
+				return -1;
+		} else if (driver->op != op)
+			return -1;
+		for (size_t previous = 0; previous < i; previous++)
+			if (bindings[previous].id == bindings[i].id)
+				return -1;
+	}
+	for (size_t i = 0; i < count; i++)
+		get_dp_driver(bindings[i].id)->op = registering ? bindings[i].op : NULL;
+	return 0;
+}
+
+int modem_dp_register_set(const struct dp_binding *bindings, size_t count)
+{
+	return update_bindings(bindings, count, true);
+}
+
+int modem_dp_deregister_set(const struct dp_binding *bindings, size_t count)
+{
+	return update_bindings(bindings, count, false);
+}
+
 int modem_dp_register(enum DP_ID id, struct dp_operations *op)
 {
-	struct dp_driver *driver = get_dp_driver(id);
+	const struct dp_binding binding = { id, op };
 
-	if (!op || op->use_count != 0 || !op->create || !op->delete ||
-	    !op->process || driver == NULL || driver->op != NULL)
-		return -1;
-	driver->op = op;
-	return 0;
+	return modem_dp_register_set(&binding, 1);
 }
 
 int modem_dp_deregister(enum DP_ID id, struct dp_operations *op)
 {
-	struct dp_driver *driver = get_dp_driver(id);
+	const struct dp_binding binding = { id, op };
 
-	if (!op || op->use_count != 0 || driver == NULL || driver->op != op)
-		return -1;
-	driver->op = NULL;
-	return 0;
+	return modem_dp_deregister_set(&binding, 1);
 }
 
 struct dp_operations *modem_dp_get_registered_ops(enum DP_ID id)
