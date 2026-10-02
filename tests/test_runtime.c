@@ -3,7 +3,6 @@
 #include <runtime.h>
 
 #include <modem.h>
-#include <datapumps.h>
 #include <host.h>
 #include <slmodem_adapter.h>
 #include <slmodem_calls.h>
@@ -33,8 +32,6 @@ struct runtime_capture {
 	struct audio_levels levels;
 	unsigned int modem_creates;
 	unsigned int modem_deletes;
-	unsigned int datapump_starts;
-	unsigned int datapump_stops;
 	unsigned int host_creates;
 	unsigned int host_destroys;
 	unsigned int recording_creates;
@@ -53,8 +50,6 @@ struct runtime_capture {
 	char teardown_order[8];
 	size_t teardown_count;
 	bool fail_modem;
-	bool fail_datapumps;
-	bool retain_datapumps_on_failure;
 	bool fail_adapter;
 	bool fail_calls;
 	bool fail_recording;
@@ -110,30 +105,6 @@ static int unused_driver_control(
 	(void)command;
 	(void)argument;
 	return 0;
-}
-
-enum datapumps_result datapumps_start(
-	struct datapumps *datapumps)
-{
-	capture.datapump_starts++;
-	if (datapumps == NULL)
-		return DATAPUMPS_INVALID_ARGUMENT;
-	if (capture.fail_datapumps) {
-		datapumps->registered_families = capture.retain_datapumps_on_failure ? 1 : 0;
-		return DATAPUMPS_REGISTRATION_CONFLICT;
-	}
-	datapumps->registered_families = 1;
-	return DATAPUMPS_OK;
-}
-
-enum datapumps_result datapumps_stop(
-	struct datapumps *datapumps)
-{
-	capture.datapump_stops++;
-	if (datapumps == NULL || datapumps->registered_families == 0)
-		return DATAPUMPS_NOT_STARTED;
-	datapumps->registered_families = 0;
-	return DATAPUMPS_OK;
 }
 
 bool slmodem_driver_init(
@@ -509,8 +480,7 @@ static bool test_owns_closed_runtime(void)
 	name[0] = 'x';
 	CHECK(runtime != NULL && modem != NULL &&
 		      strcmp(modem->name, "runtime-test") == 0 &&
-		      modem->dev_data != NULL && capture.datapump_starts == 1 &&
-		      capture.modem_creates == 1 &&
+		      modem->dev_data != NULL && capture.modem_creates == 1 &&
 		      capture.host_creates == 1 &&
 		      capture.recording_creates == 1 &&
 		      capture.host_received_recorder &&
@@ -521,7 +491,6 @@ static bool test_owns_closed_runtime(void)
 	      "runtime did not own its complete closed graph");
 	modem_runtime_destroy(runtime);
 	CHECK(strcmp(capture.teardown_order, "HRM") == 0 &&
-		      capture.datapump_stops == 1 &&
 		      capture.driver_detaches == 1 && capture.host_destroys == 1 &&
 		      capture.recording_destroys == 1 &&
 		      capture.modem_deletes == 1 &&
@@ -546,24 +515,9 @@ static bool test_creation_rolls_back(void)
 	      "runtime accepted invalid construction arguments");
 
 	memset(&capture, 0, sizeof(capture));
-	capture.fail_datapumps = true;
-	CHECK(modem_runtime_create(&config, "busy-datapumps") == NULL &&
-		      errno == EBUSY && capture.datapump_starts == 1 &&
-		      capture.datapump_stops == 1 && capture.modem_creates == 0,
-	      "runtime hid a data-pump registration conflict");
-
-	memset(&capture, 0, sizeof(capture));
-	capture.fail_datapumps = capture.retain_datapumps_on_failure = true;
-	CHECK(modem_runtime_create(&config, "partial-datapumps") == NULL &&
-		      errno == EBUSY && capture.datapump_stops == 1 &&
-		      capture.modem_creates == 0,
-	      "runtime did not release retained registrations after failed startup");
-
-	memset(&capture, 0, sizeof(capture));
 	capture.fail_adapter = true;
 	CHECK(modem_runtime_create(&config, "bad-adapter") == NULL &&
-		      capture.modem_deletes == 1 && capture.datapump_stops == 1 &&
-		      capture.host_creates == 0,
+		      capture.modem_deletes == 1 && capture.host_creates == 0,
 	      "runtime retained an incompatible modem adapter");
 	memset(&capture, 0, sizeof(capture));
 	capture.fail_recording = true;

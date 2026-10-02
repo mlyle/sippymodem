@@ -17,15 +17,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* This standalone fixture has no automatic-negotiation owner. Real handoffs
- * are exercised by the native-core and paired-media integration tests. */
-bool v8_datapump_v32_handoff(const struct dp *dp, struct single_tone_detector *carrier)
-{
-	(void)dp;
-	(void)carrier;
-	return false;
-}
-
 enum {
 	TEST_TONE_AMPLITUDE = 12000,
 	TEST_SILENCE_RUN = 24,
@@ -198,8 +189,6 @@ static bool test_long_round_trip_line_startup(void)
 	uint32_t minimum_turnaround_samples =
 		2u * TEST_LONG_ONE_WAY_DELAY_SAMPLES;
 
-	CHECK(v32_datapump_register() == 0,
-	      "V.32 long round-trip registration failed");
 	operations = modem_dp_get_registered_ops(DP_V32);
 	CHECK(operations != NULL,
 	      "V.32 long round-trip operations are unavailable");
@@ -234,8 +223,6 @@ static bool test_long_round_trip_line_startup(void)
 		      "V.32 long round-trip cleanup failed");
 		modem_delete(modem);
 	}
-	CHECK(v32_datapump_unregister() == 0,
-	      "V.32 long round-trip deregistration failed");
 	return true;
 }
 
@@ -352,8 +339,6 @@ static bool test_answerer_requires_fresh_conditioning(void)
 	unsigned int quiet_samples = 0;
 	int16_t answerer_transmit = 0;
 
-	CHECK(v32_datapump_register() == 0,
-	      "V.32 answerer conditioning registration failed");
 	operations = modem_dp_get_registered_ops(DP_V32);
 	modem = modem_create(
 		&driver, "V.32 fresh answerer conditioning test");
@@ -506,8 +491,6 @@ static bool test_answerer_requires_fresh_conditioning(void)
 	CHECK(operations->delete(datapump) == 0,
 	      "V.32 answerer conditioning cleanup failed");
 	modem_delete(modem);
-	CHECK(v32_datapump_unregister() == 0,
-	      "V.32 answerer conditioning deregistration failed");
 	return true;
 }
 
@@ -525,8 +508,6 @@ static bool test_training_deadline(void)
 	int16_t receive[MODEM_FRAG] = { 0 };
 	int16_t transmit[MODEM_FRAG];
 
-	CHECK(v32_datapump_register() == 0,
-	      "V.32 deadline registration failed");
 	operations = modem_dp_get_registered_ops(DP_V32);
 	modem = modem_create(&driver, "V.32 training deadline test");
 	CHECK(operations != NULL && modem != NULL,
@@ -556,8 +537,6 @@ static bool test_training_deadline(void)
 	CHECK(operations->delete(datapump) == 0,
 	      "failed V.32 training retained ownership");
 	modem_delete(modem);
-	CHECK(v32_datapump_unregister() == 0,
-	      "V.32 deadline deregistration failed");
 	return true;
 }
 

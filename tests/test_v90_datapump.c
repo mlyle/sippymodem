@@ -107,6 +107,12 @@ long modem_set_param(struct modem *modem, unsigned int name, int value)
 	return 0;
 }
 
+/* This fixture supplies host bits directly; it has no async byte framer. */
+void modem_async_retrain(struct modem *modem)
+{
+	(void)modem;
+}
+
 int modem_get_bits(
 	struct modem *modem, int bits_per_value, uint8_t *bits, int count)
 {
@@ -261,8 +267,6 @@ static bool check_qc_adapter(enum g711_law law, bool digital_caller, bool pcm_up
 	uint8_t channel[2][MODEM_FRAG];
 	bool linked[2] = { false, false };
 
-	CHECK(v8_datapump_register() == 0 && v90_datapump_register() == 0,
-	      "QC adapter registrations failed");
 	for (unsigned side = 0; side < 2; ++side) {
 		struct modem *m = &modems[side];
 		struct dp_operations *v8 = modem_dp_get_registered_ops(DP_V8);
@@ -308,8 +312,6 @@ static bool check_qc_adapter(enum g711_law law, bool digital_caller, bool pcm_up
 		      (unsigned long long)bits[side].received_bits, bits[side].mismatch, modems[side].dsp_info.startup);
 		CHECK(modems[side].dp->op->delete(modems[side].dp) == 0, "QC owner deletion failed");
 	}
-	CHECK(v8_datapump_unregister() == 0 && v90_datapump_unregister() == 0,
-	      "QC adapter leaked registrations");
 	return true;
 }
 
@@ -338,8 +340,6 @@ static bool check_qc_adapter_timeout(enum g711_law law, bool digital_answerer)
 	bool accepted = false, restarted = false, failed = false;
 	unsigned clock;
 
-	CHECK(v8_datapump_register() == 0 && v90_datapump_register() == 0,
-	      "QC timeout registrations failed");
 	struct dp_operations *v8 = modem_dp_get_registered_ops(DP_V8);
 	for (unsigned side = 0; side < 2; ++side) {
 		modems[side].caller = side == 0;
@@ -374,8 +374,6 @@ static bool check_qc_adapter_timeout(enum g711_law law, bool digital_answerer)
 	      law, digital_answerer, clock, accepted, restarted, failed);
 	for (unsigned side = 0; side < 2; ++side)
 		CHECK(modems[side].dp->op->delete(modems[side].dp) == 0, "QC timeout retained owner");
-	CHECK(v8_datapump_unregister() == 0 && v90_datapump_unregister() == 0,
-	      "QC timeout leaked registrations");
 	return true;
 }
 
@@ -604,7 +602,6 @@ static bool test_training_cleardown(void)
 {
 	const enum DP_ID protocols[] = { DP_V90, DP_V92 };
 
-	CHECK(v90_datapump_register() == 0, "training cleardown registration failed");
 	for (size_t p = 0u; p < ARRAY_LENGTH(protocols); ++p)
 		for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 			for (unsigned int side = 0; side < 2u; ++side) {
@@ -615,7 +612,6 @@ static bool test_training_cleardown(void)
 				      "protocol %u law %u side %u training cleardown failed",
 				      protocols[p], law, side);
 			}
-	CHECK(v90_datapump_unregister() == 0, "training cleardown registration leaked");
 	return true;
 }
 
@@ -708,7 +704,7 @@ static bool run_pcm_pair(
 	digital_dp = operations->create(
 		&digital, protocol, 0, MODEM_RATE, MODEM_FRAG, operations);
 	CHECK(analog_dp != NULL && digital_dp != NULL &&
-	      operations->use_count == 2 && v90_datapump_is_busy(),
+	      operations->use_count == 2,
 	      "V.90 peers did not own independent data pumps");
 	for (size_t octet = 0;
 	     octet < (require_online ? sample_limit : 30000u);
@@ -964,7 +960,7 @@ static bool run_pcm_pair(
 	}
 	CHECK(operations->delete(analog_dp) == 0 &&
 	      operations->delete(digital_dp) == 0 &&
-	      operations->use_count == 0 && !v90_datapump_is_busy(),
+	      operations->use_count == 0,
 	      "V.90 data pumps did not release their call state");
 	return true;
 }
@@ -999,8 +995,6 @@ static bool test_upstream_quality_recovery(void)
 		{ 56000, 31200, 3429 },
 	};
 
-	CHECK(v90_datapump_register() == 0,
-	      "quality-recovery V.90 registration failed");
 	/* Quality thresholds depend on constellation density, not just baud. */
 	for (size_t index = 0; index < ARRAY_LENGTH(profiles); ++index) {
 		uint32_t upstream_rate = profiles[index].upstream_rate;
@@ -1016,8 +1010,6 @@ static bool test_upstream_quality_recovery(void)
 			      "law %u did not recover %u bit/s upstream at %u symbols/s after noise",
 			      (unsigned int)law, upstream_rate, profiles[index].symbol_rate);
 	}
-	CHECK(v90_datapump_unregister() == 0,
-	      "quality-recovery V.90 registration remained busy");
 	return true;
 }
 
@@ -1066,9 +1058,6 @@ static bool run_pair(
 
 static bool test_generated_pairs(void)
 {
-	CHECK(v90_datapump_register() == 0 &&
-	      v90_datapump_register() != 0,
-	      "V.90 registration did not reject a duplicate owner");
 	for (uint8_t rate_index = PCM_DOWNSTREAM_MIN_DATA_RATE_NUMBER;
 	     rate_index <= PCM_DOWNSTREAM_MAX_DATA_RATE_NUMBER; ++rate_index) {
 		uint32_t bit_rate =
@@ -1082,16 +1071,11 @@ static bool test_generated_pairs(void)
 			      bit_rate, 0, 0, true, MODEM_PCM_ROLE_NONE),
 		      "generated V.90 pair failed at %u bit/s", bit_rate);
 	}
-	CHECK(v90_datapump_unregister() == 0 &&
-	      modem_dp_get_registered_ops(DP_V90) == NULL,
-	      "V.90 registration did not stop cleanly");
 	return true;
 }
 
 static bool test_forced_upstream_pairs(void)
 {
-	CHECK(v90_datapump_register() == 0,
-	      "forced-upstream V.90 registration failed");
 	CHECK(run_pair(
 		      G711_LAW_PCMU,
 		      28000, 19200, 3000, true, MODEM_PCM_ROLE_NONE) &&
@@ -1107,8 +1091,6 @@ static bool test_forced_upstream_pairs(void)
 			      42667, 26400, 3200, true,
 			      MODEM_PCM_ROLE_NONE),
 	      "V.90 data pump did not honor a forced upstream profile");
-	CHECK(v90_datapump_unregister() == 0,
-	      "forced-upstream V.90 registration remained busy");
 	return true;
 }
 
@@ -1116,8 +1098,6 @@ static bool test_sustained_maximum_rate_pairs(void)
 {
 	static const uint32_t SYMBOL_RATES[] = { 3200, 3429 };
 
-	CHECK(v90_datapump_register() == 0,
-	      "sustained maximum-rate V.90 registration failed");
 	/* 31200 at 3200 symbols/s uses a denser upstream constellation than
 	 * at 3429. A short payload can miss errors after an intact prefix. */
 	for (size_t index = 0; index < ARRAY_LENGTH(SYMBOL_RATES); ++index) {
@@ -1129,8 +1109,6 @@ static bool test_sustained_maximum_rate_pairs(void)
 			      "law %u maximum-rate V.90 payload failed at %u symbols/s",
 			      (unsigned int)law, SYMBOL_RATES[index]);
 	}
-	CHECK(v90_datapump_unregister() == 0,
-	      "sustained maximum-rate V.90 registration remained busy");
 	return true;
 }
 
@@ -1142,8 +1120,6 @@ static bool test_attenuated_upstream(void)
 		1600u,
 	};
 
-	CHECK(v90_datapump_register() == 0,
-	      "attenuated-upstream V.90 registration failed");
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
 		for (size_t index = 0; index < ARRAY_LENGTH(GAINS_Q15); ++index) {
 			CHECK(run_pair_with_rate_window(
@@ -1164,15 +1140,11 @@ static bool test_attenuated_upstream(void)
 			      "law %u role %u weak upstream lost retraining",
 			      (unsigned int)law, (unsigned int)initiator);
 	}
-	CHECK(v90_datapump_unregister() == 0,
-	      "attenuated-upstream V.90 registration remained busy");
 	return true;
 }
 
 static bool test_delayed_upstream_channel(void)
 {
-	CHECK(v90_datapump_register() == 0,
-	      "delayed-channel V.90 registration failed");
 	CHECK(run_pair_with_rate_window(
 		      G711_LAW_PCMU,
 		      56000, 31200, 31200, 31200, 3429,
@@ -1180,30 +1152,22 @@ static bool test_delayed_upstream_channel(void)
 		      MODEM_PCM_ROLE_NONE, false, UNITY_GAIN_Q15,
 		      RETURNED_ECHO_NONE, UPSTREAM_CHANNEL_DELAYED_ECHO),
 	      "V.90 upstream did not sustain data through a delayed channel");
-	CHECK(v90_datapump_unregister() == 0,
-	      "delayed-channel V.90 registration remained busy");
 	return true;
 }
 
 static bool test_upstream_uses_media_samples(void)
 {
-	CHECK(v90_datapump_register() == 0,
-	      "sample-owned V.90 registration failed");
 	CHECK(run_pair_with_input_contract(
 		      G711_LAW_PCMA,
 		      42667, 26400, 3200, true,
 		      MODEM_PCM_ROLE_NONE, true, false),
 	      "digital upstream receiver used the PCMA codeword instead of "
 	      "the media sample");
-	CHECK(v90_datapump_unregister() == 0,
-	      "sample-owned V.90 registration remained busy");
 	return true;
 }
 
 static bool test_delayed_host_echo(void)
 {
-	CHECK(v90_datapump_register() == 0,
-	      "host-echo V.90 registration failed");
 	CHECK(run_pair_with_input_contract(
 		      G711_LAW_PCMU,
 		      28000, 14400, 3000, true,
@@ -1213,8 +1177,6 @@ static bool test_delayed_host_echo(void)
 		      28000, 14400, 3000, true,
 		      MODEM_PCM_ROLE_NONE, false, true),
 	      "V.90 digital answerer did not cancel delayed host echo");
-	CHECK(v90_datapump_unregister() == 0,
-	      "host-echo V.90 registration remained busy");
 	return true;
 }
 
@@ -1222,8 +1184,6 @@ static bool test_dc_biased_host_echo(void)
 {
 	static const uint32_t MINIMUM_RATES[] = { 28800, 33600 };
 
-	CHECK(v90_datapump_register() == 0,
-	      "DC-biased V.90 registration failed");
 	/* The conditioned receiver supports 33.6 despite the earlier Ri-era
 	 * residual error. Verify both an open and fixed rate window, with enough
 	 * exact data to cross several online quality windows after B1. */
@@ -1237,15 +1197,11 @@ static bool test_dc_biased_host_echo(void)
 			      RETURNED_ECHO_DC_BIASED, UPSTREAM_CHANNEL_CLEAN),
 		      "DC-biased digital host echo lost exact data with minimum %u",
 		      MINIMUM_RATES[index]);
-	CHECK(v90_datapump_unregister() == 0,
-	      "DC-biased V.90 registration remained busy");
 	return true;
 }
 
 static bool test_quantized_host_echo(void)
 {
-	CHECK(v90_datapump_register() == 0,
-	      "quantized host-echo V.90 registration failed");
 	/* PCMA quantization of the biased return produces a false S candidate
 	 * during Sd/TRN1d. It cannot acknowledge the not-yet-transmitted Jd.
 	 * The calibrated -12 dBm0 probe selects 31.2 kbit/s. Require exact
@@ -1256,15 +1212,11 @@ static bool test_quantized_host_echo(void)
 		      UNITY_GAIN_Q15, RETURNED_ECHO_DC_BIASED_G711,
 		      UPSTREAM_CHANNEL_CLEAN),
 	      "quantized PCMA host echo lost training or sustained data");
-	CHECK(v90_datapump_unregister() == 0,
-	      "quantized host-echo V.90 registration remained busy");
 	return true;
 }
 
 static bool test_full_retrain_pairs(void)
 {
-	CHECK(v90_datapump_register() == 0,
-	      "full-retrain V.90 registration failed");
 	for (enum g711_law law = G711_LAW_PCMU;
 	     law <= G711_LAW_PCMA; ++law) {
 		CHECK(run_pair(
@@ -1275,15 +1227,11 @@ static bool test_full_retrain_pairs(void)
 			      MODEM_PCM_ROLE_DIGITAL),
 		      "law %u V.90 retrain roles failed", (unsigned int)law);
 	}
-	CHECK(v90_datapump_unregister() == 0,
-	      "full-retrain V.90 registration remained busy");
 	return true;
 }
 
 static bool test_retrain_tone_dropout(void)
 {
-	CHECK(v90_datapump_register() == 0,
-	      "retrain-dropout V.90 registration failed");
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		CHECK(run_pair_with_rate_window(
 			      law, 28000, 14400, 14400, 14400, 3000,
@@ -1291,15 +1239,11 @@ static bool test_retrain_tone_dropout(void)
 			      false, UNITY_GAIN_Q15, RETURNED_ECHO_NONE,
 			      UPSTREAM_CHANNEL_RETRAIN_DROPOUT),
 		      "law %u did not recover from retrain Tone A loss", (unsigned int)law);
-	CHECK(v90_datapump_unregister() == 0,
-	      "retrain-dropout V.90 registration remained busy");
 	return true;
 }
 
 static bool test_host_echo_retrain_pairs(void)
 {
-	CHECK(v90_datapump_register() == 0,
-	      "host-echo retrain V.90 registration failed");
 	CHECK(run_pair_with_input_contract(
 		      G711_LAW_PCMU,
 		      56000, 31200, 3429, true,
@@ -1309,15 +1253,11 @@ static bool test_host_echo_retrain_pairs(void)
 		      56000, 31200, 3429, true,
 		      MODEM_PCM_ROLE_DIGITAL, false, true),
 	      "V.90 retrain did not recover through returned host echo");
-	CHECK(v90_datapump_unregister() == 0,
-	      "host-echo retrain V.90 registration remained busy");
 	return true;
 }
 
 static bool test_sustained_maximum_rate_retrains(void)
 {
-	CHECK(v90_datapump_register() == 0,
-	      "sustained-retrain V.90 registration failed");
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
 		for (enum modem_pcm_role initiator = MODEM_PCM_ROLE_ANALOG;
 		     initiator <= MODEM_PCM_ROLE_DIGITAL; ++initiator)
@@ -1329,8 +1269,6 @@ static bool test_sustained_maximum_rate_retrains(void)
 			      "law %u role %u lost sustained data through retrain",
 			      (unsigned int)law, (unsigned int)initiator);
 	}
-	CHECK(v90_datapump_unregister() == 0,
-	      "sustained-retrain V.90 registration remained busy");
 	return true;
 }
 
@@ -1350,8 +1288,6 @@ static bool test_training_deadline(void)
 	memset(receive_octets, silence, sizeof(receive_octets));
 	for (size_t index = 0; index < ARRAY_LENGTH(receive_samples); ++index)
 		receive_samples[index] = g711_decode_pcmu(silence);
-	CHECK(v90_datapump_register() == 0,
-	      "V.90 deadline registration failed");
 	operations = modem_dp_get_registered_ops(DP_V90);
 	datapump = operations != NULL ? operations->create(
 		&modem, DP_V90, 0, MODEM_RATE, MODEM_FRAG, operations) : NULL;
@@ -1386,15 +1322,13 @@ static bool test_training_deadline(void)
 			      1, &exact) == DPSTAT_ERROR && !exact,
 		      "V.90 training failure was not latched");
 	}
-	CHECK(operations->delete(datapump) == 0 &&
-	      v90_datapump_unregister() == 0,
+	CHECK(operations->delete(datapump) == 0,
 	      "failed V.90 training retained ownership");
 	return true;
 }
 
 static bool test_v92_pcm_upstream_selection(void)
 {
-	struct dp_operations conflict = { 0 };
 	struct bit_endpoint analog_bits = { 0 };
 	struct bit_endpoint digital_bits = { 0 };
 	struct modem analog = endpoint_modem(
@@ -1407,19 +1341,7 @@ static bool test_v92_pcm_upstream_selection(void)
 	uint8_t analog_to_digital = g711_encode_pcmu(0);
 	uint8_t digital_to_analog = g711_encode_pcmu(0);
 
-	CHECK(v90_datapump_register() == 0,
-	      "PCM conflict fixture did not register");
-	conflict = *modem_dp_get_registered_ops(DP_V90);
-	CHECK(v90_datapump_unregister() == 0,
-	      "PCM conflict fixture did not release its operations");
-	CHECK(modem_dp_register(DP_V92, &conflict) == 0 &&
-	      v90_datapump_register() != 0 &&
-	      modem_dp_get_registered_ops(DP_V90) == NULL &&
-	      modem_dp_get_registered_ops(DP_V92) == &conflict &&
-	      modem_dp_deregister(DP_V92, &conflict) == 0,
-	      "PCM family registration did not roll back transactionally");
-	CHECK(v90_datapump_register() == 0 &&
-	      modem_dp_get_registered_ops(DP_V90) != NULL &&
+	CHECK(modem_dp_get_registered_ops(DP_V90) != NULL &&
 	      modem_dp_get_registered_ops(DP_V90) ==
 		      modem_dp_get_registered_ops(DP_V92),
 	      "V.90 and V.92 did not share one operation owner");
@@ -1481,17 +1403,13 @@ static bool test_v92_pcm_upstream_selection(void)
 		digital_to_analog = next_digital;
 	}
 	CHECK(operations->delete(analog_dp) == 0 &&
-	      operations->delete(digital_dp) == 0 &&
-	      v90_datapump_unregister() == 0 &&
-	      modem_dp_get_registered_ops(DP_V90) == NULL &&
-	      modem_dp_get_registered_ops(DP_V92) == NULL,
+	      operations->delete(digital_dp) == 0,
 	      "V.92 PCM-upstream selection retained shared ownership");
 	return true;
 }
 
 static bool test_v92_pcm_host_data(void)
 {
-	CHECK(v90_datapump_register() == 0, "V.92 host-data registration failed");
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
 		/* PCM upstream receives the physical sample, not an accidentally
 		 * parallel pristine octet. Cover sustained twelve-symbol frames. */
@@ -1508,13 +1426,11 @@ static bool test_v92_pcm_host_data(void)
 			      law, role);
 		}
 	}
-	CHECK(v90_datapump_unregister() == 0, "V.92 host data leaked ownership");
 	return true;
 }
 
 static bool test_v92_pcm_host_echo(void)
 {
-	CHECK(v90_datapump_register() == 0, "V.92 echo registration failed");
 	/* The 700 ms, three-tap returned downstream is independent of the
 	 * upstream source. Require exact PCM host bits, not a V.34 fallback or
 	 * CONNECT alone. Exercise both fresh training and each retrain origin. */
@@ -1530,13 +1446,11 @@ static bool test_v92_pcm_host_echo(void)
 				RETURNED_ECHO_STABLE, UPSTREAM_CHANNEL_CLEAN),
 			      "law %u role %u V.92 echo retrain lost PCM host data", law, role);
 	}
-	CHECK(v90_datapump_unregister() == 0, "V.92 echo registration leaked");
 	return true;
 }
 
 static bool test_v92_quantized_host_echo(void)
 {
-	CHECK(v90_datapump_register() == 0, "V.92 quantized echo registration failed");
 	/* Quantize the combined upstream and independent returned echo, then
 	 * apply host gain. Re-quantizing the echo-cleaned sample cannot recover
 	 * these original wire cells. Keep exact bits and B1 quality unchanged. */
@@ -1553,13 +1467,11 @@ static bool test_v92_quantized_host_echo(void)
 				RETURNED_ECHO_WEAK_G711, UPSTREAM_CHANNEL_CLEAN),
 			      "law %u role %u scaled quantized echo lost retrained PCM data", law, role);
 	}
-	CHECK(v90_datapump_unregister() == 0, "V.92 quantized echo registration leaked");
 	return true;
 }
 
 static bool test_v92_spread_host_echo(void)
 {
-	CHECK(v90_datapump_register() == 0, "V.92 spread echo registration failed");
 	/* Ranging and the echo return have different delays. The strongest
 	 * correlation can be a later tap: both reacting peers must negotiate
 	 * usable PCM parameters and pass arbitrary bits after quantization. */
@@ -1575,13 +1487,11 @@ static bool test_v92_spread_host_echo(void)
 				RETURNED_ECHO_SPREAD_G711, UPSTREAM_CHANNEL_CLEAN),
 			      "law %u role %u spread echo lost retrained PCM data", law, role);
 	}
-	CHECK(v90_datapump_unregister() == 0, "V.92 spread echo leaked ownership");
 	return true;
 }
 
 static bool test_v92_conventional_host_data(void)
 {
-	CHECK(v90_datapump_register() == 0, "V.92 conventional registration failed");
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (enum modem_pcm_role role = MODEM_PCM_ROLE_ANALOG;
 		     role <= MODEM_PCM_ROLE_DIGITAL; ++role)
@@ -1590,13 +1500,11 @@ static bool test_v92_conventional_host_data(void)
 				RETURNED_ECHO_NONE, UPSTREAM_CHANNEL_CLEAN),
 			      "law %u role %u conventional V.92 data/retrain/cleardown failed",
 			      law, role);
-	CHECK(v90_datapump_unregister() == 0, "V.92 conventional data leaked ownership");
 	return true;
 }
 
 static bool test_v92_upstream_quality_recovery(void)
 {
-	CHECK(v90_datapump_register() == 0, "V.92 quality registration failed");
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
 		/* A qualified upstream data failure lowers the automatic selection
 		 * by one rate; the downstream selection and configured cap stay put. */
@@ -1606,7 +1514,6 @@ static bool test_v92_upstream_quality_recovery(void)
 			UPSTREAM_CHANNEL_NOISE_BURST),
 		      "law %u V.92 did not recover from sustained upstream noise", law);
 	}
-	CHECK(v90_datapump_unregister() == 0, "V.92 quality recovery leaked ownership");
 	return true;
 }
 
@@ -1622,8 +1529,6 @@ static bool test_validation(void)
 	int16_t transmit_sample = INT16_MAX;
 	bool exact = true;
 
-	CHECK(v90_datapump_register() == 0,
-	      "V.90 validation registration failed");
 	operations = modem_dp_get_registered_ops(DP_V90);
 	CHECK(operations != NULL && operations->create != NULL &&
 	      operations->delete != NULL && operations->process != NULL &&
@@ -1661,8 +1566,6 @@ static bool test_validation(void)
 		      DPSTAT_ERROR && !exact && transmit_sample == 0 &&
 	      operations->delete(datapump) == 0,
 	      "V.90 invalid media input changed ownership or exactness");
-	CHECK(v90_datapump_unregister() == 0,
-	      "V.90 validation registration remained busy");
 	return true;
 }
 
@@ -1954,8 +1857,6 @@ static bool run_fallback_restart(
 
 static bool run_fallback_restarts(bool after_online)
 {
-	CHECK(v90_datapump_register() == 0 && v34_datapump_register() == 0,
-	      "fallback datapumps did not register");
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (unsigned int mode = 0; mode < 3u; ++mode) {
 			enum DP_ID protocol = mode == 0 ? DP_V90 : DP_V92;
@@ -1966,8 +1867,6 @@ static bool run_fallback_restarts(bool after_online)
 			      "fallback retrain failed for law %u mode %u online %u",
 			      law, mode, after_online);
 		}
-	CHECK(v90_datapump_unregister() == 0 && v34_datapump_unregister() == 0,
-	      "fallback datapumps leaked ownership");
 	return true;
 }
 
@@ -2029,7 +1928,7 @@ int main(void)
 		{ "generated PCMU and PCMA data-pump pairs",
 		  test_generated_pairs },
 		{ "training deadline", test_training_deadline },
-		{ "registration and media validation", test_validation },
+		{ "factory and media validation", test_validation },
 	};
 	int failed = 0;
 

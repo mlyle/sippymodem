@@ -2,7 +2,6 @@
 
 #include <modem.h>
 #include <baudot.h>
-#include <datapumps.h>
 #include <fsk300_datapump.h>
 #include <fsk.h>
 #include <fractional_delay.h>
@@ -2048,7 +2047,6 @@ static bool run_media_call(
 	};
 	static const char dial_command[] = "ATDpeer\r";
 	static const char auto_answer_command[] = "ATS0=1\r";
-	struct datapumps datapumps = { 0 };
 	struct integration_endpoint caller;
 	struct integration_endpoint answerer;
 	struct media_frame_delay caller_delay = { 0 };
@@ -2105,9 +2103,6 @@ static bool run_media_call(
 		test_case->id == DP_V22 || test_case->id == DP_V22BIS ||
 		test_case->id == DP_B212;
 
-	CHECK(datapumps_start(&datapumps) ==
-		      DATAPUMPS_OK,
-	      "%s integration registrations did not start", test_case->name);
 	CHECK(endpoint_init(&caller, "FSK caller") &&
 		      endpoint_init(&answerer, "FSK answerer") &&
 		      endpoint_prepare_media(&caller, codec) &&
@@ -2498,10 +2493,6 @@ static bool run_media_call(
 		      (caller.exact_frames != 0 && answerer.exact_frames != 0),
 	      "%s did not exercise exact G.711 media in both directions",
 	      test_case->name);
-	CHECK(datapumps_stop(&datapumps) ==
-		      DATAPUMPS_BUSY,
-	      "live %s calls did not protect their process-global registration",
-	      test_case->name);
 	if (test_case->carrier_loss_samples != 0) {
 		CHECK(exercise_carrier_loss_limit(
 			      &caller, connected_id,
@@ -2537,9 +2528,6 @@ static bool run_media_call(
 
 	endpoint_destroy(&answerer);
 	endpoint_destroy(&caller);
-	CHECK(datapumps_stop(&datapumps) ==
-		      DATAPUMPS_OK,
-	      "%s integration registrations remained busy", test_case->name);
 	return true;
 }
 
@@ -2563,7 +2551,6 @@ static bool run_baudot_media_call(
 	const char *selection_command =
 		rate == BAUDOT_RATE_50 ?
 			"AT+MS=45,0,50,50\r" : "AT+MS=45,0,45,45\r";
-	struct datapumps datapumps = { 0 };
 	struct integration_endpoint caller;
 	struct integration_endpoint answerer;
 	struct recording_capture capture = { 0 };
@@ -2580,9 +2567,7 @@ static bool run_baudot_media_call(
 	int reported_rate = rate == BAUDOT_RATE_50 ? 50 : 45;
 	int selection_length = (int)strlen(selection_command);
 
-	CHECK(datapumps_start(&datapumps) ==
-		      DATAPUMPS_OK &&
-		      endpoint_init(&caller, "Baudot caller") &&
+	CHECK(endpoint_init(&caller, "Baudot caller") &&
 		      endpoint_init(&answerer, "Baudot answerer") &&
 		      endpoint_prepare_media(&caller, codec) &&
 		      endpoint_prepare_media(&answerer, codec),
@@ -2680,14 +2665,8 @@ static bool run_baudot_media_call(
 			      RECORD_RX_RTP_PAYLOAD_PLAYOUT] != 0 &&
 		      capture.blocks[RECORD_RX_LINE_PCM] != 0,
 	      "Baudot SIP turn-taking or recording evidence was incomplete");
-	CHECK(datapumps_stop(&datapumps) ==
-		      DATAPUMPS_BUSY,
-	      "live Baudot calls did not protect their registration");
 	endpoint_destroy(&answerer);
 	endpoint_destroy(&caller);
-	CHECK(datapumps_stop(&datapumps) ==
-		      DATAPUMPS_OK,
-	      "Baudot SIP registration did not stop cleanly");
 	return true;
 }
 
@@ -2877,15 +2856,13 @@ static bool run_v22_answer_response_deadline(void)
 		V22_RESPONSE_TEST_SAMPLES =
 			V22_PROBE_START_SAMPLES + V22_RESPONSE_MAX_SAMPLES,
 	};
-	struct datapumps datapumps = { 0 };
 	struct integration_endpoint endpoint;
 	struct v22_signal_generator probe;
 	struct v22_signal_generator answer_mark;
 	int16_t expected[SIP_FRAME_SAMPLES];
 	size_t response_at = SIZE_MAX;
 
-	CHECK(datapumps_start(&datapumps) == DATAPUMPS_OK &&
-		      start_v22_answer_replay(&endpoint) &&
+	CHECK(start_v22_answer_replay(&endpoint) &&
 		      v22_signal_generator_init(&probe, 1200) &&
 		      v22_signal_generator_init(&answer_mark, 2400),
 	      "V.22 answer-response replay did not initialize");
@@ -2933,8 +2910,6 @@ static bool run_v22_answer_response_deadline(void)
 	      response_at);
 
 	endpoint_destroy(&endpoint);
-	CHECK(datapumps_stop(&datapumps) == DATAPUMPS_OK,
-	      "V.22 answer-response registrations remained busy");
 	return true;
 }
 
@@ -2965,13 +2940,11 @@ static bool run_v22_abandoned_probe(void)
 		V22_PROBE_ACTIVE_SAMPLES = MODEM_RATE * 4 / 5,
 		V22_PROBE_TOTAL_SAMPLES = MODEM_RATE * 2,
 	};
-	struct datapumps datapumps = { 0 };
 	struct integration_endpoint endpoint;
 	struct v22_signal_generator generator;
 	bool connected = false;
 
-	CHECK(datapumps_start(&datapumps) == DATAPUMPS_OK &&
-		      start_v22_answer_replay(&endpoint) &&
+	CHECK(start_v22_answer_replay(&endpoint) &&
 		      v22_signal_generator_init(&generator, 1200),
 	      "V.22 abandoned-probe replay did not initialize");
 	endpoint.output_count = 0;
@@ -3007,8 +2980,6 @@ static bool run_v22_abandoned_probe(void)
 	      "V.22 answerer connected after the calling probe disappeared");
 
 	endpoint_destroy(&endpoint);
-	CHECK(datapumps_stop(&datapumps) == DATAPUMPS_OK,
-	      "V.22 abandoned-probe registrations remained busy");
 	return true;
 }
 
@@ -3024,7 +2995,6 @@ static bool run_v32_recording_replay(const char *path, const char *expected_text
 		"AT+MS=32,0,9600,9600\r",
 	};
 	struct channel_bench_recording recording = { 0 };
-	struct datapumps datapumps = { 0 };
 	struct integration_endpoint endpoint;
 	size_t connected_at = SIZE_MAX;
 	bool expected_text_seen = false;
@@ -3036,8 +3006,7 @@ static bool run_v32_recording_replay(const char *path, const char *expected_text
 		      path, REPLAY_MAX_SAMPLES, &recording) ==
 		      CHANNEL_BENCH_OK,
 	      "optional V.32 recording could not be loaded");
-	CHECK(datapumps_start(&datapumps) == DATAPUMPS_OK &&
-		      endpoint_init(&endpoint, "V.32 recording replay"),
+	CHECK(endpoint_init(&endpoint, "V.32 recording replay"),
 	      "V.32 recording replay did not initialize");
 	CHECK(configure_recording_replay(
 		      &endpoint, commands, ARRAY_LENGTH(commands)),
@@ -3082,8 +3051,6 @@ static bool run_v32_recording_replay(const char *path, const char *expected_text
 		expected_text_seen ? ", expected text received" : "");
 
 	endpoint_destroy(&endpoint);
-	CHECK(datapumps_stop(&datapumps) == DATAPUMPS_OK,
-	      "V.32 recording replay registrations remained busy");
 	channel_bench_recording_release(&recording);
 	return true;
 }
@@ -3197,7 +3164,6 @@ static bool run_v34_recording_replay(
 		"AT\\N4\r",
 	};
 	struct channel_bench_recording recording = { 0 };
-	struct datapumps datapumps = { 0 };
 	struct integration_endpoint endpoint;
 	const char *role = answerer ? "answer" : "originator";
 	char bit_rate_command[40];
@@ -3232,8 +3198,7 @@ static bool run_v34_recording_replay(
 		      path, REPLAY_MAX_SAMPLES, &recording) ==
 		      CHANNEL_BENCH_OK,
 	      "optional V.34 recording could not be loaded");
-	CHECK(datapumps_start(&datapumps) == DATAPUMPS_OK &&
-		      endpoint_init(&endpoint, "V.34 recording replay"),
+	CHECK(endpoint_init(&endpoint, "V.34 recording replay"),
 	      "V.34 recording replay did not initialize");
 	CHECK(configure_recording_replay(
 		      &endpoint, commands, ARRAY_LENGTH(commands)),
@@ -3380,8 +3345,6 @@ static bool run_v34_recording_replay(
 		retrained_at, endpoint.output_count);
 
 	endpoint_destroy(&endpoint);
-	CHECK(datapumps_stop(&datapumps) == DATAPUMPS_OK,
-	      "V.34 recording replay registrations remained busy");
 	channel_bench_recording_release(&recording);
 	return true;
 }
@@ -3398,7 +3361,6 @@ static bool run_v22bis_recording_replay(
 		"AT+MS=122,0,2400,2400\r",
 	};
 	struct channel_bench_recording recording = { 0 };
-	struct datapumps datapumps = { 0 };
 	struct integration_endpoint endpoint;
 	size_t connected_at = SIZE_MAX;
 
@@ -3406,8 +3368,7 @@ static bool run_v22bis_recording_replay(
 		      path, REPLAY_MAX_SAMPLES, &recording) ==
 		      CHANNEL_BENCH_OK,
 	      "optional V.22bis recording could not be loaded");
-	CHECK(datapumps_start(&datapumps) == DATAPUMPS_OK &&
-		      endpoint_init(&endpoint, "V.22bis recording replay"),
+	CHECK(endpoint_init(&endpoint, "V.22bis recording replay"),
 	      "V.22bis recording replay did not initialize");
 	CHECK(configure_recording_replay(
 		      &endpoint, commands, ARRAY_LENGTH(commands)),
@@ -3454,8 +3415,6 @@ static bool run_v22bis_recording_replay(
 		connected_at, endpoint.output_count);
 
 	endpoint_destroy(&endpoint);
-	CHECK(datapumps_stop(&datapumps) == DATAPUMPS_OK,
-	      "V.22bis recording replay registrations remained busy");
 	channel_bench_recording_release(&recording);
 	return true;
 }
@@ -3471,7 +3430,6 @@ static bool run_v22_raw_answer_recording_replay(const char *path)
 		"AT+MS=22,0,1200,1200\r",
 	};
 	struct channel_bench_recording recording = { 0 };
-	struct datapumps datapumps = { 0 };
 	struct integration_endpoint endpoint;
 	size_t connected_at = SIZE_MAX;
 
@@ -3479,8 +3437,7 @@ static bool run_v22_raw_answer_recording_replay(const char *path)
 		      path, REPLAY_MAX_SAMPLES, &recording) ==
 		      CHANNEL_BENCH_OK,
 	      "optional raw V.22 answer recording could not be loaded");
-	CHECK(datapumps_start(&datapumps) == DATAPUMPS_OK &&
-		      endpoint_init(&endpoint, "raw V.22 answer replay"),
+	CHECK(endpoint_init(&endpoint, "raw V.22 answer replay"),
 	      "raw V.22 answer recording replay did not initialize");
 	CHECK(configure_recording_replay(
 		      &endpoint, commands, ARRAY_LENGTH(commands)) &&
@@ -3518,8 +3475,6 @@ static bool run_v22_raw_answer_recording_replay(const char *path)
 		recording.count, connected_at);
 
 	endpoint_destroy(&endpoint);
-	CHECK(datapumps_stop(&datapumps) == DATAPUMPS_OK,
-	      "raw V.22 answer recording replay registrations remained busy");
 	channel_bench_recording_release(&recording);
 	return true;
 }
@@ -3755,7 +3710,6 @@ static bool run_v90_recording_replay(
 	char upstream_command[48];
 	int downstream_command_length;
 	int upstream_command_length;
-	struct datapumps datapumps = { 0 };
 	struct integration_endpoint endpoint;
 	struct v90_replay_profile profile;
 	enum g711_law law;
@@ -3811,8 +3765,7 @@ static bool run_v90_recording_replay(
 		downstream_command;
 	commands[ARRAY_LENGTH(common_commands) + ARRAY_LENGTH(raw_commands) + 2u] =
 		upstream_command;
-	CHECK(datapumps_start(&datapumps) == DATAPUMPS_OK &&
-		      endpoint_init(&endpoint, "V.90 recording replay") &&
+	CHECK(endpoint_init(&endpoint, "V.90 recording replay") &&
 		      configure_recording_replay(
 			      &endpoint, commands, ARRAY_LENGTH(commands)),
 	      "V.90 recording replay did not initialize");
@@ -3926,8 +3879,6 @@ static bool run_v90_recording_replay(
 			codec_name(codec), recording_count, connected_at);
 	}
 	endpoint_destroy(&endpoint);
-	CHECK(datapumps_stop(&datapumps) == DATAPUMPS_OK,
-	      "V.90 recording replay registrations remained busy");
 	free(recording);
 	return true;
 }
@@ -4063,7 +4014,6 @@ static bool test_fsk300_mark_qualification(void)
 	const unsigned int fragments[] = { 1, 7, MODEM_FRAG };
 	bool valid = true;
 
-	CHECK(fsk300_datapump_register() == 0, "FSK registration failed");
 	for (size_t mode = 0; mode < ARRAY_LENGTH(ids); ++mode)
 		for (int caller = 0; caller <= 1; ++caller)
 			for (size_t fragment = 0; fragment < ARRAY_LENGTH(fragments);
@@ -4076,7 +4026,6 @@ static bool test_fsk300_mark_qualification(void)
 						    ids[mode], caller, fragments[fragment],
 						    fixture))
 						valid = false;
-	CHECK(fsk300_datapump_unregister() == 0, "FSK deregistration failed");
 	return valid;
 }
 

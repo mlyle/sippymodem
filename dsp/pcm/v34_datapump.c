@@ -671,17 +671,7 @@ static int process_v34(
 	return DPSTAT_OK;
 }
 
-int v34_datapump_register(void)
+struct dp_operations *v34_datapump_operations(enum DP_ID id)
 {
-	return modem_dp_register(DP_V34, &v34_operations);
-}
-
-int v34_datapump_unregister(void)
-{
-	return modem_dp_deregister(DP_V34, &v34_operations);
-}
-
-bool v34_datapump_is_busy(void)
-{
-	return v34_operations.use_count != 0;
+	return id == DP_V34 ? &v34_operations : NULL;
 }

@@ -89,8 +89,6 @@ extern const char modem_name[];
 extern const char modem_version[];
 extern const char modem_date[];
 
-extern struct dp_driver modem_dp_drivers[];
-
 extern int  modem_send_to_tty(struct modem *m, const char *buf, int n);
 extern int  modem_answer(struct modem *m);
 extern int  modem_dial(struct modem *m);
@@ -523,7 +521,7 @@ static int process_plus_GCI(struct modem *m, char *p, int *len)
 static int process_plus_MS(struct modem *m, char *p, int *len)
 {
 	char strval[32];
-	struct dp_driver *drv;
+	enum DP_ID selectable_id;
 	char *end;
 	unsigned long n;
 	unsigned int dp_id;
@@ -538,10 +536,10 @@ static int process_plus_MS(struct modem *m, char *p, int *len)
 		if (*p == '?') {
 			*len += 1;
 			modem_send_to_tty(m,"(",1);
-			for(drv = modem_dp_drivers ; drv->id ; drv++ ) {
-				if(!drv->code || !drv->op) continue;
+			for (size_t index = 0;
+			     (selectable_id = modem_dp_selectable_id(index)) != 0; index++) {
 				if(is_found++>0) modem_send_to_tty(m,",",1);
-				sprintf(strval,"%d",drv->id);
+				sprintf(strval,"%d",selectable_id);
 				modem_send_to_tty(m,strval,strlen(strval));
 			}
 			modem_send_to_tty(m,"),(0,1),",1+7);
@@ -570,15 +568,8 @@ static int process_plus_MS(struct modem *m, char *p, int *len)
 		PARSE_MS_ITEM(p,len,min_rate);
 		PARSE_MS_ITEM(p,len,max_rate);
 	setup_ms:
-		if(dp_id != MODEM_DP(m)) {
-			for(drv = modem_dp_drivers ; drv->id ; drv++ ) {
-				if(drv->op && drv->code && drv->id == dp_id) {
-					is_found++;
-					break;
-				}
-			}
-			if(!is_found) return -1;
-		}
+		if (dp_id != MODEM_DP(m) && !modem_dp_is_selectable(dp_id))
+			return -1;
 		if((auto_mode != 0 && auto_mode != 1) || min_rate > max_rate ||
 		   min_rate < MODEM_MIN_RATE || max_rate > MODEM_MAX_RATE )
 			return -1;

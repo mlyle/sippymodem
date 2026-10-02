@@ -961,24 +961,7 @@ failure:
 	return DPSTAT_ERROR;
 }
 
-static const struct dp_binding v90_bindings[] = {
-	{ DP_V90, &v90_operations },
-	{ DP_V92, &v90_operations },
-};
-
-int v90_datapump_register(void)
+struct dp_operations *v90_datapump_operations(enum DP_ID id)
 {
-	return modem_dp_register_set(
-		v90_bindings, sizeof(v90_bindings) / sizeof(v90_bindings[0]));
-}
-
-int v90_datapump_unregister(void)
-{
-	return modem_dp_deregister_set(
-		v90_bindings, sizeof(v90_bindings) / sizeof(v90_bindings[0]));
-}
-
-bool v90_datapump_is_busy(void)
-{
-	return v90_operations.use_count != 0;
+	return id == DP_V90 || id == DP_V92 ? &v90_operations : NULL;
 }

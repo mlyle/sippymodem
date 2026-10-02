@@ -1627,24 +1627,7 @@ failure:
 	return DPSTAT_ERROR;
 }
 
-static const struct dp_binding v32_bindings[] = {
-	{ DP_V32, &v32_operations },
-	{ DP_V32BIS, &v32_operations },
-};
-
-int v32_datapump_register(void)
+struct dp_operations *v32_datapump_operations(enum DP_ID id)
 {
-	return modem_dp_register_set(
-		v32_bindings, sizeof(v32_bindings) / sizeof(v32_bindings[0]));
-}
-
-int v32_datapump_unregister(void)
-{
-	return modem_dp_deregister_set(
-		v32_bindings, sizeof(v32_bindings) / sizeof(v32_bindings[0]));
-}
-
-bool v32_datapump_is_busy(void)
-{
-	return v32_operations.use_count != 0;
+	return id == DP_V32 || id == DP_V32BIS ? &v32_operations : NULL;
 }

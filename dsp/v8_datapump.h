@@ -59,9 +59,7 @@ static inline bool v8_datapump_uses_pcm(enum DP_ID id)
 	return id == DP_V90 || id == DP_V90_NO_V8BIS || id == DP_V92;
 }
 
-int v8_datapump_register(void);
-int v8_datapump_unregister(void);
-bool v8_datapump_is_busy(void);
+struct dp_operations *v8_datapump_operations(enum DP_ID id);
 /* True only while a completed PCM-mode V.8 exchange is handing this modem
  * to conventional V.34 because the joint menu selected no PCM roles. */
 bool v8_datapump_selected_v34_fallback(const struct dp *dp);

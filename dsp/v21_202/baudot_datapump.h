@@ -3,10 +3,12 @@
 #ifndef BAUDOT_DATAPUMP_H
 #define BAUDOT_DATAPUMP_H
 
+#include <modem_defs.h>
+
+struct dp_operations;
+
 #include <stdbool.h>
 
-int baudot_datapump_register(void);
-int baudot_datapump_unregister(void);
-bool baudot_datapump_is_busy(void);
+struct dp_operations *baudot_datapump_operations(enum DP_ID id);
 
 #endif /* BAUDOT_DATAPUMP_H */

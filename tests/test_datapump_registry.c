@@ -4,139 +4,77 @@
 #include "test.h"
 
 #include <stdint.h>
+#include <string.h>
 
-static struct dp *unused_create(
-	struct modem *modem, enum DP_ID id, int caller, int rate,
-	int fragment, struct dp_operations *op)
+static bool test_selectable_modulations(void)
 {
-	(void)modem;
-	(void)id;
-	(void)caller;
-	(void)rate;
-	(void)fragment;
-	(void)op;
-	return NULL;
-}
-
-static int unused_delete(struct dp *dp)
-{
-	(void)dp;
-	return 0;
-}
-
-static int unused_process(struct dp *dp, void *rx, void *tx, int count)
-{
-	(void)dp;
-	(void)rx;
-	(void)tx;
-	(void)count;
-	return DPSTAT_ERROR;
-}
-
-static struct dp_operations operations(void)
-{
-	return (struct dp_operations){
-		.create = unused_create,
-		.delete = unused_delete,
-		.process = unused_process,
+	static const enum DP_ID expected[] = {
+		DP_V21, DP_V22, DP_V23, DP_V22BIS, DP_V32, DP_V32BIS,
+		DP_V34, DP_BAUDOT, DP_B103, DP_B212, DP_V90, DP_V92,
 	};
-}
 
-static bool test_invalid_sets(void)
-{
-	struct dp_operations op = operations(), invalid;
-	struct dp_binding bindings[] = { { DP_V90, &op }, { DP_V92, &op } };
+	for (size_t i = 0; i < ARRAY_LENGTH(expected); i++) {
+		enum DP_ID id = modem_dp_selectable_id(i);
+		struct dp_operations *op = modem_dp_get_registered_ops(id);
 
-	CHECK(modem_dp_register_set(NULL, 2) != 0 &&
-	      modem_dp_register_set(bindings, 0) != 0 &&
-	      modem_dp_register_set(bindings, SIZE_MAX) != 0 &&
-	      modem_dp_deregister_set(NULL, 2) != 0 &&
-	      modem_dp_deregister_set(bindings, 0) != 0 &&
-	      modem_dp_deregister_set(bindings, SIZE_MAX) != 0,
-	      "invalid set extent was accepted");
-	for (unsigned failure = 0; failure < 7; failure++) {
-		invalid = operations();
-		bindings[1] = (struct dp_binding){ DP_V92, &op };
-		switch (failure) {
-		case 0: bindings[1].id = (enum DP_ID)-1; break;
-		case 1: bindings[1].op = NULL; break;
-		case 2: invalid.create = NULL; bindings[1].op = &invalid; break;
-		case 3: invalid.delete = NULL; bindings[1].op = &invalid; break;
-		case 4: invalid.process = NULL; bindings[1].op = &invalid; break;
-		case 5: bindings[1].id = DP_V90; break;
-		case 6: invalid.use_count = -1; bindings[1].op = &invalid; break;
-		}
-		CHECK(modem_dp_register_set(bindings, 2) != 0 &&
-		      modem_dp_get_registered_ops(DP_V90) == NULL &&
-		      modem_dp_get_registered_ops(DP_V92) == NULL,
-		      "invalid late binding changed an earlier alias (case %u)", failure);
+		CHECK(id == expected[i] && modem_dp_is_selectable(id),
+		      "AT+MS selection %zu changed or is unavailable", i);
+		CHECK(modem_dp_name(id) != NULL && op != NULL &&
+		      op->name != NULL && op->create != NULL &&
+		      op->delete != NULL && op->process != NULL,
+		      "modulation %u has incomplete built-in operations", id);
 	}
-	bindings[1] = (struct dp_binding){ DP_V92, &op };
-	CHECK(modem_dp_register_set(bindings, 2) == 0,
-	      "removal validation fixture did not register");
-	for (unsigned failure = 0; failure < 3; failure++) {
-		bindings[1] = (struct dp_binding){ DP_V92, &op };
-		if (failure == 0)
-			bindings[1].id = (enum DP_ID)-1;
-		if (failure == 1)
-			bindings[1].op = NULL;
-		if (failure == 2)
-			bindings[1].id = DP_V90;
-		CHECK(modem_dp_deregister_set(bindings, 2) != 0 &&
-		      modem_dp_get_registered_ops(DP_V90) == &op &&
-		      modem_dp_get_registered_ops(DP_V92) == &op,
-		      "invalid late removal changed an earlier alias (case %u)", failure);
-	}
-	bindings[1] = (struct dp_binding){ DP_V92, &op };
-	CHECK(modem_dp_deregister_set(bindings, 2) == 0,
-	      "removal validation fixture did not release");
+	CHECK(modem_dp_selectable_id(ARRAY_LENGTH(expected)) == 0 &&
+	      modem_dp_selectable_id(SIZE_MAX) == 0,
+	      "modulation enumeration did not end at the catalog boundary");
 	return true;
 }
 
-static bool test_foreign_ownership(void)
+static bool test_shared_families(void)
 {
-	struct dp_operations op = operations(), foreign = operations();
-	const struct dp_binding bindings[] = { { DP_V90, &op }, { DP_V92, &op } };
-	const struct dp_binding wrong[] = { { DP_V90, &op }, { DP_V92, &foreign } };
+	static const enum DP_ID aliases[][2] = {
+		{ DP_V21, DP_B103 }, { DP_V22, DP_B212 },
+		{ DP_V32, DP_V32BIS }, { DP_V90, DP_V92 },
+	};
 
-	CHECK(modem_dp_register(DP_V92, &foreign) == 0 &&
-	      modem_dp_register_set(bindings, 2) != 0 &&
-	      modem_dp_get_registered_ops(DP_V90) == NULL &&
-	      modem_dp_get_registered_ops(DP_V92) == &foreign &&
-	      modem_dp_deregister(DP_V92, &foreign) == 0,
-	      "registration set changed a foreign owner or retained its prefix");
-	CHECK(modem_dp_register_set(bindings, 2) == 0,
-	      "valid alias set failed to register");
-	CHECK(modem_dp_deregister_set(wrong, 2) != 0 &&
-	      modem_dp_get_registered_ops(DP_V90) == &op &&
-	      modem_dp_get_registered_ops(DP_V92) == &op &&
-	      modem_dp_deregister_set(bindings, 2) == 0,
-	      "removal set changed a binding before rejecting foreign ownership");
+	for (size_t i = 0; i < ARRAY_LENGTH(aliases); i++)
+		CHECK(modem_dp_get_registered_ops(aliases[i][0]) ==
+		      modem_dp_get_registered_ops(aliases[i][1]),
+		      "protocol aliases %u and %u lost their shared family",
+		      aliases[i][0], aliases[i][1]);
+	CHECK(modem_dp_get_registered_ops(DP_V22) !=
+	      modem_dp_get_registered_ops(DP_V22BIS),
+	      "V.22bis lost its separate modulation capabilities");
+	CHECK(strcmp(modem_dp_name(DP_V90), "V90") == 0 &&
+	      strcmp(modem_dp_name(DP_V92), "V92") == 0 &&
+	      modem_dp_get_registered_ops(DP_V90)->process_g711 != NULL,
+	      "shared PCM operations lost the selected protocol names or exact media");
 	return true;
 }
 
-static bool test_busy_sets(void)
+static bool test_internal_and_unknown_ids(void)
 {
-	struct dp_operations first = operations(), second = operations();
-	const struct dp_binding bindings[] = { { DP_V22, &first }, { DP_V22BIS, &second } };
+	static const enum DP_ID internal[] = { DP_CALLPROG, DP_V8 };
+	static const enum DP_ID unavailable[] = {
+		0, (enum DP_ID)-1, (enum DP_ID)INT32_MAX,
+		DP_DUMMY, DP_AUTOMODE, DP_V17, DP_FAX, DP_K56, DP_V8BIS, DP_SINUS,
+	};
 
-	second.use_count = 1;
-	CHECK(modem_dp_register_set(bindings, 2) != 0 &&
-	      modem_dp_get_registered_ops(DP_V22) == NULL,
-	      "busy late operation retained an earlier binding");
-	second.use_count = 0;
-	CHECK(modem_dp_register_set(bindings, 2) == 0,
-	      "inactive operations failed to register");
-	second.use_count = 1;
-	CHECK(modem_dp_deregister_set(bindings, 2) != 0 &&
-	      modem_dp_get_registered_ops(DP_V22) == &first &&
-	      modem_dp_get_registered_ops(DP_V22BIS) == &second,
-	      "busy late operation allowed partial removal");
-	second.use_count = 0;
-	CHECK(modem_dp_deregister_set(bindings, 2) == 0 &&
-	      modem_dp_get_registered_ops(DP_V22) == NULL &&
-	      modem_dp_get_registered_ops(DP_V22BIS) == NULL,
-	      "inactive alias set did not release all ownership");
+	for (size_t i = 0; i < ARRAY_LENGTH(internal); i++) {
+		struct dp_operations *op = modem_dp_get_registered_ops(internal[i]);
+
+		CHECK(!modem_dp_is_selectable(internal[i]) && op != NULL &&
+		      op->create != NULL && op->delete != NULL && op->process != NULL,
+		      "internal datapump %u was missing or selectable", internal[i]);
+	}
+	for (size_t i = 0; i < ARRAY_LENGTH(unavailable); i++)
+		CHECK(!modem_dp_is_selectable(unavailable[i]) &&
+		      modem_dp_get_registered_ops(unavailable[i]) == NULL,
+		      "unavailable datapump %u became callable", unavailable[i]);
+	CHECK(modem_dp_name(0) == NULL &&
+	      modem_dp_name((enum DP_ID)-1) == NULL &&
+	      modem_dp_name((enum DP_ID)INT32_MAX) == NULL,
+	      "an unknown datapump inherited another protocol's name");
 	return true;
 }
 
@@ -146,17 +84,18 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
-		{ "invalid registration sets", test_invalid_sets },
-		{ "registration set ownership", test_foreign_ownership },
-		{ "busy registration sets", test_busy_sets },
+		{ "selectable modulations", test_selectable_modulations },
+		{ "shared families", test_shared_families },
+		{ "internal and unknown IDs", test_internal_and_unknown_ids },
 	};
-	unsigned failed = 0;
+	unsigned failures = 0;
 
 	for (size_t i = 0; i < ARRAY_LENGTH(tests); i++) {
 		fprintf(stderr, "[ RUN      ] %s\n", tests[i].name);
 		bool passed = tests[i].run();
-		fprintf(stderr, passed ? "[       OK ] %s\n" : "[  FAILED  ] %s\n", tests[i].name);
-		failed += !passed;
+
+		fprintf(stderr, "[ %s ] %s\n", passed ? "      OK" : " FAILED ", tests[i].name);
+		failures += !passed;
 	}
-	return failed != 0;
+	return failures != 0;
 }

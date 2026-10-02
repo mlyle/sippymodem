@@ -3,7 +3,6 @@
 #include <modem.h>
 #include <modem_param.h>
 #include <modem_timer.h>
-#include <datapumps.h>
 #include <fsk.h>
 #include <single_tone.h>
 #include <v21.h>
@@ -30,6 +29,15 @@
 extern int process_at_command(struct modem *modem, char *command);
 extern int modem_dial(struct modem *modem);
 extern int modem_recv_from_tty(struct modem *modem, char *buffer, int count);
+
+/* Host lifecycle tests substitute call progress without mutating the catalog. */
+static struct dp_operations *call_progress_override;
+struct dp_operations *__real_modem_dp_get_registered_ops(enum DP_ID id);
+struct dp_operations *__wrap_modem_dp_get_registered_ops(enum DP_ID id)
+{
+	return id == DP_CALLPROG && call_progress_override != NULL ?
+		call_progress_override : __real_modem_dp_get_registered_ops(id);
+}
 
 static int unused_start(struct modem *modem)
 {
@@ -345,35 +353,6 @@ static int scripted_lapm_sink(
 	return consumed;
 }
 
-static struct dp *unused_dp_create(
-	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
-	int max_fragment, struct dp_operations *operations)
-{
-	(void)modem;
-	(void)id;
-	(void)caller;
-	(void)sample_rate;
-	(void)max_fragment;
-	(void)operations;
-	return NULL;
-}
-
-static int unused_dp_delete(struct dp *dp)
-{
-	(void)dp;
-	return 0;
-}
-
-static int unused_dp_process(
-	struct dp *dp, void *receive, void *transmit, int count)
-{
-	(void)dp;
-	(void)receive;
-	(void)transmit;
-	(void)count;
-	return DPSTAT_ERROR;
-}
-
 static struct {
 	struct dp datapump;
 	unsigned int retrain_calls;
@@ -504,8 +483,7 @@ static bool test_ato1_waits_for_datapump_retrain(void)
 	int fallback_pipe[2];
 
 	memset(&retrain_dp, 0, sizeof(retrain_dp));
-	CHECK(modem_dp_register(DP_CALLPROG, &operations) == 0,
-	      "ATO1 test data pump did not register");
+	call_progress_override = &operations;
 	modem = modem_create(&driver, "ATO1 lifecycle test");
 	CHECK(modem != NULL && modem_dial(modem) == 0,
 	      "ATO1 test call did not start");
@@ -579,8 +557,7 @@ static bool test_ato1_waits_for_datapump_retrain(void)
 	CHECK(modem_stop_now(modem) == 0 && operations.use_count == 0,
 	      "ATO1 test data pump did not stop");
 	modem_delete(modem);
-	CHECK(modem_dp_deregister(DP_CALLPROG, &operations) == 0,
-	      "ATO1 test data pump did not deregister");
+	call_progress_override = NULL;
 	return true;
 }
 
@@ -654,8 +631,7 @@ static bool run_ath0_cleardown(
 	memset(&retrain_dp, 0, sizeof(retrain_dp));
 	hangup_driver_stop_calls = 0;
 	retrain_dp.process_result = DPSTAT_OK;
-	CHECK(modem_dp_register(DP_CALLPROG, &operations) == 0,
-	      "ATH0 test data pump did not register");
+	call_progress_override = &operations;
 	modem = modem_create(&driver, "ATH0 cleardown test");
 	CHECK(modem != NULL && modem_dial(modem) == 0,
 	      "ATH0 test call did not start");
@@ -892,8 +868,7 @@ stopped:
 	close(result_pipe[0]);
 	close(result_pipe[1]);
 	modem_delete(modem);
-	CHECK(modem_dp_deregister(DP_CALLPROG, &operations) == 0,
-	      "ATH0 test data pump did not deregister");
+	call_progress_override = NULL;
 	return true;
 }
 
@@ -932,7 +907,6 @@ static int capture_call_cancel(struct modem *modem)
 
 static bool test_call_progress_cancels_without_media(void)
 {
-	struct datapumps datapumps = { 0 };
 	struct modem_driver driver = {
 		.name = "unclocked call cancellation",
 		.start = unused_start,
@@ -940,8 +914,6 @@ static bool test_call_progress_cancels_without_media(void)
 		.ioctl = unused_control,
 	};
 
-	CHECK(datapumps_start(&datapumps) == DATAPUMPS_OK,
-	      "call cancellation registrations did not start");
 	for (unsigned int action = 0; action < 4; ++action)
 	for (unsigned int failure = 0; failure < 2; ++failure) {
 		struct call_cancel_capture capture = { .stop_result = failure ? -1 : 0 };
@@ -1003,8 +975,6 @@ static bool test_call_progress_cancels_without_media(void)
 		close(result_pipe[1]);
 		modem_delete(modem);
 	}
-	CHECK(datapumps_stop(&datapumps) == DATAPUMPS_OK,
-	      "cancelled calls retained datapump registrations");
 	return true;
 }
 
@@ -1108,8 +1078,7 @@ static bool test_g711_datapump_input(void)
 	memset(codewords, 0x7f, sizeof(codewords));
 	for (size_t index = 0; index < ARRAY_LENGTH(received_mask); ++index)
 		received_mask[index] = index != 0 && index != MODEM_FRAG;
-	CHECK(modem_dp_register(DP_CALLPROG, &operations) == 0,
-	      "G.711 test data pump did not register");
+	call_progress_override = &operations;
 	modem = modem_create(&driver, "G.711 data pump test");
 	CHECK(modem != NULL && modem_dial(modem) == 0,
 	      "G.711 test call did not start");
@@ -1141,8 +1110,7 @@ static bool test_g711_datapump_input(void)
 	CHECK(modem_stop_now(modem) == 0 && operations.use_count == 0,
 	      "G.711 test data pump did not stop cleanly");
 	modem_delete(modem);
-	CHECK(modem_dp_deregister(DP_CALLPROG, &operations) == 0,
-	      "G.711 test data pump did not deregister");
+	call_progress_override = NULL;
 	return true;
 }
 
@@ -1187,8 +1155,7 @@ static bool test_receive_dc_frontend(void)
 	bool exact_output;
 
 	memset(&g711_dp, 0, sizeof(g711_dp));
-	CHECK(modem_dp_register(DP_CALLPROG, &operations) == 0,
-	      "DC front-end data pump did not register");
+	call_progress_override = &operations;
 	modem = modem_create(&driver, "receive DC front-end test");
 	CHECK(modem != NULL && modem_dial(modem) == 0,
 	      "DC front-end call did not start");
@@ -1214,8 +1181,7 @@ static bool test_receive_dc_frontend(void)
 	CHECK(modem_stop_now(modem) == 0 && operations.use_count == 0,
 	      "DC front-end data pump did not stop cleanly");
 	modem_delete(modem);
-	CHECK(modem_dp_deregister(DP_CALLPROG, &operations) == 0,
-	      "DC front-end data pump did not deregister");
+	call_progress_override = NULL;
 	return true;
 }
 
@@ -1378,7 +1344,6 @@ static bool test_datapump_error_control_policy(void)
 
 static bool test_v92_negotiated_lapm_bypasses_detection(void)
 {
-	struct datapumps datapumps = { 0 };
 	struct modem_driver driver = {
 		.name = "negotiated LAPM test",
 		.start = unused_start,
@@ -1396,8 +1361,6 @@ static bool test_v92_negotiated_lapm_bypasses_detection(void)
 		{ DP_V34, true, false },
 	};
 
-	CHECK(datapumps_start(&datapumps) == DATAPUMPS_OK,
-	      "negotiated LAPM registrations did not start");
 	for (size_t i = 0; i < ARRAY_LENGTH(cases); ++i) {
 		for (unsigned caller = 0; caller <= 1; ++caller) {
 			struct modem *modem = modem_create(&driver, "negotiated LAPM");
@@ -1439,8 +1402,6 @@ static bool test_v92_negotiated_lapm_bypasses_detection(void)
 			modem_delete(modem);
 		}
 	}
-	CHECK(datapumps_stop(&datapumps) == DATAPUMPS_OK,
-	      "negotiated LAPM registrations did not stop");
 	return true;
 }
 
@@ -1670,7 +1631,6 @@ static bool test_v8_handoff(void)
 		.stop = unused_stop,
 		.ioctl = unused_control,
 	};
-	struct datapumps datapumps = { 0 };
 	struct modem *caller;
 	struct modem *answerer;
 	struct dp_operations *operations;
@@ -1682,8 +1642,6 @@ static bool test_v8_handoff(void)
 	int calling_status = DPSTAT_OK;
 	int answering_status = DPSTAT_OK;
 
-	CHECK(datapumps_start(&datapumps) == DATAPUMPS_OK,
-	      "V.8 handoff registrations did not start");
 	operations = modem_dp_get_registered_ops(DP_V8);
 	CHECK(operations != NULL,
 	      "V.8 handoff operation did not initialize");
@@ -1778,8 +1736,6 @@ static bool test_v8_handoff(void)
 		modem_delete(caller);
 		modem_delete(answerer);
 	}
-	CHECK(datapumps_stop(&datapumps) == DATAPUMPS_OK,
-	      "V.8 handoff registrations did not stop");
 	return true;
 }
 
@@ -1789,10 +1745,7 @@ static bool test_v8_fallback_limits(void)
 		.name = "V.8 fallback limits",
 		.start = unused_start, .stop = unused_stop, .ioctl = unused_control,
 	};
-	struct datapumps datapumps = { 0 };
 
-	CHECK(datapumps_start(&datapumps) == DATAPUMPS_OK,
-	      "fallback limit registrations failed");
 	for (unsigned int restricted = 0; restricted < 3; ++restricted) {
 		struct modem *caller = modem_create(&driver, "restricted caller");
 		struct modem *answerer = modem_create(&driver, "automatic answerer");
@@ -1827,8 +1780,6 @@ static bool test_v8_fallback_limits(void)
 		modem_delete(caller);
 		modem_delete(answerer);
 	}
-	CHECK(datapumps_stop(&datapumps) == DATAPUMPS_OK,
-	      "fallback limit registrations leaked");
 	return true;
 }
 
@@ -1838,10 +1789,7 @@ static bool test_v8_legacy_v32(void)
 		.name = "legacy V.32 selection",
 		.start = unused_start, .stop = unused_stop, .ioctl = unused_control,
 	};
-	struct datapumps datapumps = { 0 };
 
-	CHECK(datapumps_start(&datapumps) == DATAPUMPS_OK,
-	      "legacy V.32 registrations failed");
 	for (unsigned int scenario = 0; scenario < 8; ++scenario) {
 		struct modem *modem = modem_create(&driver, "automatic answerer");
 		struct dp_operations *ops = modem_dp_get_registered_ops(DP_V8);
@@ -1901,8 +1849,6 @@ static bool test_v8_legacy_v32(void)
 		CHECK(ops->delete(dp) == 0, "legacy negotiation state leaked");
 		modem_delete(modem);
 	}
-	CHECK(datapumps_stop(&datapumps) == DATAPUMPS_OK,
-	      "legacy V.32 registrations leaked");
 	return true;
 }
 
@@ -1956,7 +1902,6 @@ static bool test_at_dial_destinations_are_bounded(void)
 		{ "ATDPsip:Peer@example.invalid", "sip:Peer@example.invalid", 0 },
 		{ "ATDsip:Test@example.invalid", "sip:Test@example.invalid", -1 },
 	};
-	struct datapumps datapumps = { 0 };
 	struct modem_driver driver = {
 		.name = "AT dial test",
 		.start = unused_start,
@@ -1964,9 +1909,6 @@ static bool test_at_dial_destinations_are_bounded(void)
 		.ioctl = unused_control,
 	};
 
-	CHECK(datapumps_start(&datapumps) ==
-		      DATAPUMPS_OK,
-	      "AT dial test registrations did not start");
 	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
 		struct modem *modem = modem_create(&driver, "AT dial test");
 
@@ -2002,9 +1944,6 @@ static bool test_at_dial_destinations_are_bounded(void)
 		      "oversized AT destination was truncated or started a call");
 		modem_delete(modem);
 	}
-	CHECK(datapumps_stop(&datapumps) ==
-		      DATAPUMPS_OK,
-	      "AT dial test registrations did not stop");
 	return true;
 }
 
@@ -5426,8 +5365,7 @@ static bool test_lapm_stalled_retrain(void)
 		};
 		memset(&retrain_dp, 0, sizeof(retrain_dp));
 		retrain_dp.retrain_result = result;
-		CHECK(modem_dp_register(DP_CALLPROG, &operations) == 0,
-		      "stall datapump registration failed");
+		call_progress_override = &operations;
 		struct modem *m = modem_create(&driver, driver.name);
 		CHECK(m != NULL && modem_dial(m) == 0, "stall fixture did not start");
 		m->state = ONLINE;
@@ -5510,7 +5448,7 @@ static bool test_lapm_stalled_retrain(void)
 		      "absent peer was not bounded by normal LAPM retry exhaustion");
 		CHECK(modem_stop_now(m) == 0 && operations.use_count == 0, "stall fixture did not stop");
 		modem_delete(m);
-		CHECK(modem_dp_deregister(DP_CALLPROG, &operations) == 0, "stall deregistration failed");
+		call_progress_override = NULL;
 	}
 	memset(&lapm_source, 0, sizeof(lapm_source));
 	return true;
@@ -6283,7 +6221,6 @@ static bool test_v21_originator_answers_brief_mark(void)
 		ORIGINATOR_GUARD_SAMPLES = MODEM_RATE * 160 / 1000,
 		TEST_FSK_AMPLITUDE = 8192,
 	};
-	struct datapumps datapumps = { 0 };
 	struct modem_driver driver = {
 		.name = "V.21 mark acquisition test",
 		.start = unused_start,
@@ -6297,9 +6234,6 @@ static bool test_v21_originator_answers_brief_mark(void)
 	int16_t receive[MODEM_FRAG] = { 0 };
 	int16_t transmit[MODEM_FRAG];
 
-	CHECK(datapumps_start(&datapumps) ==
-		      DATAPUMPS_OK,
-	      "V.21 mark acquisition registrations did not start");
 	operations = modem_dp_get_registered_ops(DP_V21);
 	modem = modem_create(&driver, "V.21 mark acquisition test");
 	CHECK(operations != NULL && modem != NULL &&
@@ -6351,127 +6285,6 @@ static bool test_v21_originator_answers_brief_mark(void)
 	CHECK(operations->delete(datapump) == 0,
 	      "V.21 originator did not release its data pump");
 	modem_delete(modem);
-	CHECK(datapumps_stop(&datapumps) ==
-		      DATAPUMPS_OK,
-	      "V.21 mark acquisition registrations did not stop");
-	return true;
-}
-
-static struct {
-	bool start_v8;
-	bool stop_fsk;
-	bool stop_v8;
-	bool start_v23;
-} registration_fault;
-
-#define REGISTRATION_WRAPPER(name, fault) \
-	int __real_##name(void); \
-	int __wrap_##name(void) \
-	{ \
-		if (registration_fault.fault) { \
-			registration_fault.fault = false; \
-			return -1; \
-		} \
-		return __real_##name(); \
-	}
-
-REGISTRATION_WRAPPER(v8_datapump_register, start_v8)
-REGISTRATION_WRAPPER(fsk300_datapump_unregister, stop_fsk)
-REGISTRATION_WRAPPER(v8_datapump_unregister, stop_v8)
-REGISTRATION_WRAPPER(v23_datapump_register, start_v23)
-
-static const enum DP_ID registered_ids[] = {
-	DP_CALLPROG, DP_V21, DP_B103, DP_V8, DP_V23,
-	DP_V22, DP_V22BIS, DP_B212, DP_V32, DP_V32BIS,
-	DP_V34, DP_V90, DP_V92, DP_BAUDOT,
-};
-
-static bool registrations_match(enum DP_ID foreign_id, struct dp_operations *foreign)
-{
-	for (size_t i = 0; i < ARRAY_LENGTH(registered_ids); ++i)
-		CHECK(modem_dp_get_registered_ops(registered_ids[i]) ==
-			      (registered_ids[i] == foreign_id ? foreign : NULL),
-		      "modulation %u has an unexpected registration", registered_ids[i]);
-	return true;
-}
-
-static bool test_registration_conflicts_preserve_foreign_owners(void)
-{
-	struct dp_operations foreign = {
-		.name = "foreign registration",
-		.create = unused_dp_create,
-		.delete = unused_dp_delete,
-		.process = unused_dp_process,
-	};
-
-	for (size_t occupied = 0; occupied < ARRAY_LENGTH(registered_ids); ++occupied) {
-		struct datapumps owner = { 0 };
-
-		CHECK(modem_dp_register(registered_ids[occupied], &foreign) == 0 &&
-			      datapumps_start(&owner) == DATAPUMPS_REGISTRATION_CONFLICT &&
-			      !datapumps_are_started(&owner),
-		      "occupied modulation %u did not reject startup", registered_ids[occupied]);
-		CHECK(registrations_match(registered_ids[occupied], &foreign),
-		      "failed startup altered foreign registrations");
-		CHECK(datapumps_stop(&owner) == DATAPUMPS_NOT_STARTED &&
-			      modem_dp_deregister(registered_ids[occupied], &foreign) == 0 &&
-			      datapumps_start(&owner) == DATAPUMPS_OK &&
-			      datapumps_stop(&owner) == DATAPUMPS_OK,
-		      "registration owner did not recover after modulation %u was released",
-		      registered_ids[occupied]);
-	}
-	return true;
-}
-
-static bool test_registration_rollback_retains_ownership(void)
-{
-	struct datapumps owner = { 0 };
-	struct modem modem = { 0 };
-	struct dp_operations *progress;
-	struct dp *call;
-
-	registration_fault.start_v8 = registration_fault.stop_fsk = true;
-	CHECK(datapumps_start(&owner) == DATAPUMPS_REGISTRATION_CONFLICT &&
-		      !datapumps_are_started(&owner) &&
-		      modem_dp_get_registered_ops(DP_CALLPROG) != NULL &&
-		      modem_dp_get_registered_ops(DP_V21) != NULL &&
-		      modem_dp_get_registered_ops(DP_V8) == NULL,
-	      "failed startup did not retain its incomplete registration prefix");
-	progress = modem_dp_get_registered_ops(DP_CALLPROG);
-	call = progress->create(&modem, DP_CALLPROG, 1, MODEM_RATE, MODEM_FRAG, progress);
-	CHECK(call != NULL && datapumps_stop(&owner) == DATAPUMPS_BUSY &&
-		      progress->delete(call) == 0 && datapumps_stop(&owner) == DATAPUMPS_OK,
-	      "startup rollback lost ownership or bypassed a live datapump");
-	CHECK(registrations_match(DP_CALLPROG, NULL),
-	      "startup rollback retained registrations");
-
-	CHECK(datapumps_start(&owner) == DATAPUMPS_OK,
-	      "shutdown restoration fixture did not start");
-	registration_fault.stop_v8 = true;
-	CHECK(datapumps_stop(&owner) == DATAPUMPS_REGISTRATION_CONFLICT &&
-		      datapumps_are_started(&owner),
-	      "failed shutdown did not restore its full registration set");
-	for (size_t i = 0; i < ARRAY_LENGTH(registered_ids); ++i)
-		CHECK(modem_dp_get_registered_ops(registered_ids[i]) != NULL,
-		      "shutdown restoration lost modulation %u", registered_ids[i]);
-	CHECK(datapumps_stop(&owner) == DATAPUMPS_OK,
-	      "restored registration owner did not stop");
-
-	CHECK(datapumps_start(&owner) == DATAPUMPS_OK,
-	      "shutdown rollback fixture did not start");
-	registration_fault.stop_v8 = registration_fault.start_v23 = true;
-	CHECK(datapumps_stop(&owner) == DATAPUMPS_REGISTRATION_CONFLICT &&
-		      !datapumps_are_started(&owner) &&
-		      modem_dp_get_registered_ops(DP_V8) != NULL &&
-		      modem_dp_get_registered_ops(DP_V23) == NULL &&
-		      modem_dp_get_registered_ops(DP_V22) == NULL &&
-		      datapumps_stop(&owner) == DATAPUMPS_OK,
-	      "failed shutdown rollback did not retain the families still owned");
-	CHECK(registrations_match(DP_CALLPROG, NULL),
-	      "shutdown rollback retained registrations");
-	CHECK(datapumps_start(&owner) == DATAPUMPS_OK &&
-		      datapumps_stop(&owner) == DATAPUMPS_OK,
-	      "registration owner could not restart after incomplete rollback");
 	return true;
 }
 
@@ -6529,7 +6342,6 @@ static bool test_datapump_factory_count_bounds(void)
 	};
 	static const int valid_counts[] = { 0, 1, INT_MAX - 1 };
 	static const int invalid_counts[] = { INT_MIN, -1, INT_MAX };
-	struct datapumps owner = { 0 };
 	struct modem_driver driver = {
 		.name = "factory count test",
 		.start = unused_start,
@@ -6539,8 +6351,6 @@ static bool test_datapump_factory_count_bounds(void)
 	struct modem *modem;
 	bool valid = true;
 
-	CHECK(datapumps_start(&owner) == DATAPUMPS_OK,
-	      "factory count registrations did not start");
 	modem = modem_create(&driver, "factory count test");
 	CHECK(modem != NULL &&
 	      modem_set_param(modem, MDMPRM_V92_QUICK_CONNECT, 0) == 0,
@@ -6564,22 +6374,17 @@ static bool test_datapump_factory_count_bounds(void)
 		}
 	}
 	modem_delete(modem);
-	CHECK(datapumps_stop(&owner) == DATAPUMPS_OK,
-	      "factory count registrations did not stop");
 	return valid;
 }
 
 static bool test_call_progress_supports_independent_modems(void)
 {
-	struct datapumps owner = { 0 };
 	struct modem modems[2] = { 0 };
 	struct dp *calls[2];
 	struct dp_operations *operations;
 	int16_t receive[MODEM_FRAG] = { 0 };
 	int16_t transmit[MODEM_FRAG];
 
-	CHECK(datapumps_start(&owner) == DATAPUMPS_OK,
-	      "independent call-progress registrations did not start");
 	operations = modem_dp_get_registered_ops(DP_CALLPROG);
 	for (unsigned i = 0; i < 2; ++i)
 		calls[i] = operations->create(
@@ -6588,10 +6393,8 @@ static bool test_call_progress_supports_independent_modems(void)
 		      calls[0]->modem == &modems[0] && calls[1]->modem == &modems[1] &&
 		      operations->use_count == 2,
 	      "one modem's call progress prevented another independent instance");
-	CHECK(datapumps_stop(&owner) == DATAPUMPS_BUSY &&
-		      operations->delete(calls[0]) == 0 && operations->use_count == 1 &&
-		      datapumps_stop(&owner) == DATAPUMPS_BUSY,
-	      "deleting one call progress released another modem's registration");
+	CHECK(operations->delete(calls[0]) == 0 && operations->use_count == 1,
+	      "call progress did not release one owned instance");
 	memset(transmit, 1, sizeof(transmit));
 	CHECK(operations->process(calls[1], receive, transmit, MODEM_FRAG) == DPSTAT_OK &&
 		      samples_are_silent(transmit, MODEM_FRAG),
@@ -6600,27 +6403,56 @@ static bool test_call_progress_supports_independent_modems(void)
 		&modems[0], DP_CALLPROG, 1, MODEM_RATE, MODEM_FRAG, operations);
 	CHECK(calls[0] != NULL && operations->use_count == 2 &&
 		      operations->delete(calls[1]) == 0 && operations->use_count == 1 &&
-		      operations->delete(calls[0]) == 0 && operations->use_count == 0 &&
-		      datapumps_stop(&owner) == DATAPUMPS_OK,
-	      "call progress did not support replacement and final deregistration");
+		      operations->delete(calls[0]) == 0 && operations->use_count == 0,
+	      "call progress did not support independent replacement and deletion");
 	return true;
 }
 
-static bool test_owns_source_built_datapump_registrations(void)
+static bool test_at_ms_uses_builtin_catalog(void)
 {
-	struct datapumps datapumps = { 0 };
-	struct datapumps rival = { 0 };
+	struct modem_driver driver = {
+		.name = "modulation selection test",
+		.start = unused_start,
+		.stop = unused_stop,
+		.ioctl = unused_control,
+	};
+	struct modem *modem = modem_create(&driver, "modulation selection test");
+	char query[] = "AT+MS=?";
+	char response[256];
+	int output[2];
+	ssize_t count;
+
+	CHECK(modem != NULL && pipe(output) == 0,
+	      "modulation selection fixture did not initialize");
+	modem->pty = output[1];
+	CHECK(process_at_command(modem, query) == 0,
+	      "AT+MS did not enumerate the built-in catalog");
+	close(output[1]);
+	modem->pty = -1;
+	count = read(output[0], response, sizeof(response) - 1);
+	close(output[0]);
+	CHECK(count > 0, "AT+MS returned no modulation choices");
+	response[count] = '\0';
+	CHECK(strstr(response,
+	      "(21,22,23,122,32,132,34,45,103,212,90,92),(0,1),") != NULL,
+	      "AT+MS choices changed: %s", response);
+	char unsupported[] = "AT+MS=56";
+	unsigned selected = MODEM_DP(modem);
+
+	CHECK(process_at_command(modem, unsupported) == -1 &&
+	      MODEM_DP(modem) == selected,
+	      "AT+MS accepted an unavailable modulation or changed the selection");
+	modem_delete(modem);
+	return true;
+}
+
+static bool test_builtin_datapump_lifecycle(void)
+{
 	struct modem_driver driver = {
 		.name = "call progress test",
 		.start = unused_start,
 		.stop = unused_stop,
 		.ioctl = unused_control,
-	};
-	struct dp_operations conflict_operations = {
-		.name = "registration conflict",
-		.create = unused_dp_create,
-		.delete = unused_dp_delete,
-		.process = unused_dp_process,
 	};
 	struct modem *modem;
 	struct dp_operations *operations;
@@ -6654,16 +6486,6 @@ static bool test_owns_source_built_datapump_registrations(void)
 	int16_t transmit[MODEM_FRAG];
 	uint64_t v32_calling_power = 0;
 
-	CHECK(registrations_match(DP_V90, NULL) &&
-		      modem_dp_register(DP_V90, &conflict_operations) == 0 &&
-		      datapumps_start(&datapumps) ==
-			      DATAPUMPS_REGISTRATION_CONFLICT &&
-		      registrations_match(DP_V90, &conflict_operations) &&
-		      modem_dp_deregister(DP_V90, &conflict_operations) == 0 &&
-		      datapumps_start(&datapumps) ==
-			      DATAPUMPS_OK &&
-		      datapumps_are_started(&datapumps),
-	      "source-built data-pump registration did not start cleanly");
 	operations = modem_dp_get_registered_ops(DP_CALLPROG);
 	v8_operations = modem_dp_get_registered_ops(DP_V8);
 	v21_operations = modem_dp_get_registered_ops(DP_V21);
@@ -6752,11 +6574,6 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      baudot_operations->process != NULL &&
 		      baudot_operations->use_count == 0,
 	      "source-built modem operations were incomplete");
-	CHECK(datapumps_start(&datapumps) ==
-		      DATAPUMPS_ALREADY_STARTED &&
-		      datapumps_start(&rival) ==
-			      DATAPUMPS_REGISTRATION_CONFLICT,
-	      "process-global call-progress ownership was ambiguous");
 	modem = modem_create(&driver, "call progress test");
 	CHECK(modem != NULL, "call-progress modem could not be created");
 	v8 = v8_operations->create(
@@ -6766,8 +6583,6 @@ static bool test_owns_source_built_datapump_registrations(void)
 	CHECK(v8 != NULL && v8->id == DP_V8 &&
 		      v8_operations->process(
 			      v8, receive, transmit, MODEM_FRAG) == DPSTAT_OK &&
-		      datapumps_stop(&datapumps) ==
-			      DATAPUMPS_BUSY &&
 		      v8_operations->delete(v8) == 0 &&
 		      v8_operations->use_count == 0,
 	      "V.8 did not own and release its calling handshake");
@@ -6795,8 +6610,6 @@ static bool test_owns_source_built_datapump_registrations(void)
 	CHECK(v22 != NULL &&
 		      v22_operations->process(
 			      v22, receive, transmit, MODEM_FRAG) == DPSTAT_OK &&
-		      datapumps_stop(&datapumps) ==
-			      DATAPUMPS_BUSY &&
 		      v22_operations->delete(v22) == 0 &&
 		      v22_operations->use_count == 0,
 	      "V.22 data pump did not wait silently and release cleanly");
@@ -6841,10 +6654,8 @@ static bool test_owns_source_built_datapump_registrations(void)
 			      &v32_answer_tone,
 			      V32_ANSWER_TONE_HZ, 12000) ==
 			      SINGLE_TONE_OK &&
-		      v32_operations->use_count == 1 &&
-		      datapumps_stop(&datapumps) ==
-			      DATAPUMPS_BUSY,
-		      "V.32 data pump did not retain its registration");
+		      v32_operations->use_count == 1,
+		      "V.32 data pump did not initialize its line startup");
 	for (size_t presented = 0; presented < MODEM_RATE * 3u / 20u;) {
 		size_t remaining = MODEM_RATE * 3u / 20u - presented;
 		size_t count = remaining < MODEM_FRAG ? remaining : MODEM_FRAG;
@@ -6938,7 +6749,6 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      v34_operations->use_count == 1 &&
 		      v34_operations->process(
 			      v34, receive, transmit, MODEM_FRAG) == DPSTAT_OK &&
-		      datapumps_stop(&datapumps) == DATAPUMPS_BUSY &&
 		      v34_operations->delete(v34) == 0 &&
 		      v34_operations->use_count == 0,
 	      "V.34 data pump did not retain and release its call state");
@@ -6958,7 +6768,6 @@ static bool test_owns_source_built_datapump_registrations(void)
 		modem, DP_V90, 1, MODEM_RATE, MODEM_FRAG, v90_operations);
 	CHECK(v90 != NULL && v90->id == DP_V90 &&
 		      v90_operations->use_count == 1 &&
-		      datapumps_stop(&datapumps) == DATAPUMPS_BUSY &&
 		      v90_operations->delete(v90) == 0 &&
 		      v90_operations->use_count == 0,
 	      "V.90 data pump did not retain and release its call state");
@@ -6975,7 +6784,6 @@ static bool test_owns_source_built_datapump_registrations(void)
 		modem, DP_V92, 1, MODEM_RATE, MODEM_FRAG, v92_operations);
 	CHECK(v92 != NULL && v92->id == DP_V92 &&
 		      v92_operations->use_count == 1 &&
-		      datapumps_stop(&datapumps) == DATAPUMPS_BUSY &&
 		      v92_operations->delete(v92) == 0 &&
 		      v92_operations->use_count == 0,
 	      "V.92 did not retain the shared PCM call state");
@@ -6999,8 +6807,6 @@ static bool test_owns_source_built_datapump_registrations(void)
 			      DPSTAT_CONNECT &&
 		      baudot->status == DPSTAT_CONNECT && modem->tx_rate == 45 &&
 		      modem->rx_rate == 45 &&
-		      datapumps_stop(&datapumps) ==
-			      DATAPUMPS_BUSY &&
 		      baudot_operations->delete(baudot) == 0 &&
 		      baudot_operations->use_count == 0,
 	      "Baudot data pump did not link and release cleanly");
@@ -7023,22 +6829,10 @@ static bool test_owns_source_built_datapump_registrations(void)
 	for (size_t index = 0; index < ARRAY_LENGTH(transmit); ++index)
 		CHECK(transmit[index] == 0,
 		      "SIP call progress leaked audio while awaiting signaling");
-	CHECK(datapumps_stop(&datapumps) ==
-		      DATAPUMPS_BUSY &&
-		      operations->delete(call_progress) == 0 &&
+	CHECK(operations->delete(call_progress) == 0 &&
 		      operations->use_count == 0,
-	      "live call progress did not protect its registration");
+	      "call progress did not release its owned instance");
 	modem_delete(modem);
-	CHECK(datapumps_stop(&datapumps) ==
-		      DATAPUMPS_OK &&
-		      registrations_match(DP_V90, NULL) &&
-		      !datapumps_are_started(&datapumps) &&
-		      datapumps_stop(&datapumps) ==
-			      DATAPUMPS_NOT_STARTED &&
-		      strcmp(datapumps_result_name(
-			     DATAPUMPS_BUSY),
-			     "data pump is active") == 0,
-	      "SIP call-progress registration did not stop cleanly");
 	return true;
 }
 
@@ -7128,18 +6922,16 @@ int main(void)
 		{ "V.21 brief answer mark",
 		  test_v21_originator_answers_brief_mark },
 		{ "datapump factory count bounds", test_datapump_factory_count_bounds },
+		{ "AT+MS built-in catalog", test_at_ms_uses_builtin_catalog },
 		{ "source-built data-pump ownership",
-		  test_owns_source_built_datapump_registrations },
-		{ "registration conflicts preserve foreign owners",
-		  test_registration_conflicts_preserve_foreign_owners },
-		{ "registration rollback retains ownership",
-		  test_registration_rollback_retains_ownership },
+		  test_builtin_datapump_lifecycle },
 		{ "independent call-progress modems",
 		  test_call_progress_supports_independent_modems },
 	};
 	unsigned int failures = 0;
 
 	for (size_t index = 0; index < ARRAY_LENGTH(tests); ++index) {
+		call_progress_override = NULL;
 		fprintf(stderr, "[ RUN      ] %s\n", tests[index].name);
 		if (!tests[index].run()) {
 			fprintf(stderr, "[  FAILED  ] %s\n", tests[index].name);

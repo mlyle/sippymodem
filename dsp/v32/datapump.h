@@ -3,6 +3,10 @@
 #ifndef V32_DATAPUMP_H
 #define V32_DATAPUMP_H
 
+#include <modem_defs.h>
+
+struct dp_operations;
+
 #include <stdbool.h>
 
 enum {
@@ -13,8 +17,6 @@ enum {
 	V32_14400_BIT_RATE = 14400,
 };
 
-int v32_datapump_register(void);
-int v32_datapump_unregister(void);
-bool v32_datapump_is_busy(void);
+struct dp_operations *v32_datapump_operations(enum DP_ID id);
 
 #endif

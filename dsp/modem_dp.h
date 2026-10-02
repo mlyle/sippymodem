@@ -90,19 +90,6 @@ static inline bool modem_dp_has_capacity(const struct dp_operations *operations)
 	       operations->use_count < INT_MAX;
 }
 
-/* modem data pumps driver struct */
-struct dp_driver {
-	const enum DP_ID id;
-	const char *name;
-	const char *code;
-	struct dp_operations *op;
-};
-
-struct dp_binding {
-	enum DP_ID id;
-	struct dp_operations *op;
-};
-
 /* data pump structure */
 struct dp {
         enum DP_ID id;
@@ -122,13 +109,11 @@ struct dp {
 extern int modem_get_bits(struct modem *m, int nbits, u8 *buf, int n);
 extern int modem_put_bits(struct modem *m, int nbits, u8 *buf, int n);
 
-/* Registration changes and datapump lifetimes use one serialized owner. */
+/* The built-in catalog is fixed for the lifetime of the program. */
 extern const char *modem_dp_name(enum DP_ID id);
-/* Validate the complete set before changing any binding. */
-extern int modem_dp_register_set(const struct dp_binding *bindings, size_t count);
-extern int modem_dp_deregister_set(const struct dp_binding *bindings, size_t count);
-extern int  modem_dp_register(enum DP_ID id, struct dp_operations *op);
-extern int modem_dp_deregister(enum DP_ID id, struct dp_operations *op);
+/* Enumerate the modulation IDs accepted by AT+MS; zero ends the list. */
+extern enum DP_ID modem_dp_selectable_id(size_t index);
+extern bool modem_dp_is_selectable(enum DP_ID id);
 extern struct dp_operations *modem_dp_get_registered_ops(enum DP_ID id);
 
 

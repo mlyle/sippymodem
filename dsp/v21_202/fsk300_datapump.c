@@ -451,24 +451,7 @@ static int process_fsk300(struct dp *dp, void *receive_buffer,
 		       DPSTAT_ERROR : DPSTAT_OK;
 }
 
-static const struct dp_binding fsk300_bindings[] = {
-	{ DP_V21, &fsk300_operations },
-	{ DP_B103, &fsk300_operations },
-};
-
-int fsk300_datapump_register(void)
+struct dp_operations *fsk300_datapump_operations(enum DP_ID id)
 {
-	return modem_dp_register_set(
-		fsk300_bindings, sizeof(fsk300_bindings) / sizeof(fsk300_bindings[0]));
-}
-
-int fsk300_datapump_unregister(void)
-{
-	return modem_dp_deregister_set(
-		fsk300_bindings, sizeof(fsk300_bindings) / sizeof(fsk300_bindings[0]));
-}
-
-bool fsk300_datapump_is_busy(void)
-{
-	return fsk300_operations.use_count != 0;
+	return id == DP_V21 || id == DP_B103 ? &fsk300_operations : NULL;
 }

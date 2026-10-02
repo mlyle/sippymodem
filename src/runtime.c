@@ -3,7 +3,6 @@
 #include "runtime.h"
 
 #include "modem.h"
-#include "datapumps.h"
 #include "host.h"
 #include "slmodem_adapter.h"
 #include "slmodem_calls.h"
@@ -20,7 +19,6 @@ enum { MODEM_RUNTIME_TERMINAL_READ_MAX = 4096 };
 
 struct modem_runtime {
 	char modem_name[MODEM_RUNTIME_NAME_MAX];
-	struct datapumps datapumps;
 	struct slmodem_driver driver;
 	struct modem *modem;
 	struct slmodem_adapter adapter;
@@ -48,7 +46,6 @@ static void destroy_incomplete_runtime(struct modem_runtime *runtime)
 	recording_files_destroy(runtime->recording_files);
 	if (runtime->modem != NULL)
 		modem_delete(runtime->modem);
-	(void)datapumps_stop(&runtime->datapumps);
 	pty_terminal_destroy(runtime->terminal);
 	free(runtime);
 }
@@ -126,11 +123,6 @@ struct modem_runtime *modem_runtime_create(
 		return NULL;
 	memcpy(runtime->modem_name, modem_name, name_length + 1);
 	runtime->trace_enabled = config->sip.trace_enabled;
-	if (datapumps_start(&runtime->datapumps) !=
-	    DATAPUMPS_OK) {
-		errno = EBUSY;
-		goto fail;
-	}
 	if (!slmodem_driver_init(&runtime->driver))
 		goto fail;
 	modem_driver = slmodem_driver_interface(&runtime->driver);
@@ -467,7 +459,6 @@ void modem_runtime_destroy(struct modem_runtime *runtime)
 	recording_files_destroy(runtime->recording_files);
 	(void)slmodem_terminal_unbind(&runtime->modem_terminal);
 	modem_delete(runtime->modem);
-	(void)datapumps_stop(&runtime->datapumps);
 	pty_terminal_destroy(runtime->terminal);
 	free(runtime);
 }

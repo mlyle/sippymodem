@@ -35,102 +35,86 @@
 /* Data pump registration. Author: Sasha K (sashak@smlink.com). */
 
 #include <modem_dp.h>
-#include <stddef.h>
+#include "datapumps.h"
+#include "baudot_datapump.h"
+#include "fsk300_datapump.h"
+#include "v8_datapump.h"
+#include "v23_datapump.h"
+#include "v22_datapump.h"
+#include "datapump.h"
+#include "v34_datapump.h"
+#include "v90_datapump.h"
 
-struct dp_driver modem_dp_drivers[] = {
-	{ .id = DP_CALLPROG, .name = "CallProg" },
-	{ .id = DP_DUMMY, .name = "Dummy" },
-	{ .id = DP_AUTOMODE, .name = "Automode" },
-	{ .id = DP_V8, .name = "V8" },
-	{ .id = DP_V17, .name = "V17" },
-	{ .id = DP_V21, .name = "V21", .code = "21" },
-	{ .id = DP_V22, .name = "V22", .code = "22" },
-	{ .id = DP_V23, .name = "V23", .code = "23" },
-	{ .id = DP_V22BIS, .name = "V22bis", .code = "122" },
-	{ .id = DP_V32, .name = "V32", .code = "32" },
-	{ .id = DP_V32BIS, .name = "V32bis", .code = "132" },
-	{ .id = DP_V34, .name = "V34", .code = "34" },
-	{ .id = DP_BAUDOT, .name = "Baudot TTY/TDD", .code = "45" },
-	{ .id = DP_B103, .name = "Bell103", .code = "103" },
-	{ .id = DP_B212, .name = "Bell212A", .code = "212" },
-	{ .id = DP_FAX, .name = "VFax" },
-	{ .id = DP_K56, .name = "K56Flex", .code = "56" },
-	{ .id = DP_V8BIS, .name = "V8bis" },
-	{ .id = DP_V90, .name = "V90", .code = "90" },
-	{ .id = DP_V92, .name = "V92", .code = "92" },
-	{ .id = DP_SINUS, .name = "Sinus" },
+struct dp_driver {
+	enum DP_ID id;
+	const char *name;
+	bool selectable;
+	struct dp_operations *(*operations)(enum DP_ID id);
+};
+
+static const struct dp_driver drivers[] = {
+	{ DP_CALLPROG, "CallProg", false, call_progress_datapump_operations },
+	{ DP_DUMMY, "Dummy", false, NULL },
+	{ DP_AUTOMODE, "Automode", false, NULL },
+	{ DP_V8, "V8", false, v8_datapump_operations },
+	{ DP_V17, "V17", false, NULL },
+	{ DP_V21, "V21", true, fsk300_datapump_operations },
+	{ DP_V22, "V22", true, v22_datapump_operations },
+	{ DP_V23, "V23", true, v23_datapump_operations },
+	{ DP_V22BIS, "V22bis", true, v22_datapump_operations },
+	{ DP_V32, "V32", true, v32_datapump_operations },
+	{ DP_V32BIS, "V32bis", true, v32_datapump_operations },
+	{ DP_V34, "V34", true, v34_datapump_operations },
+	{ DP_BAUDOT, "Baudot TTY/TDD", true, baudot_datapump_operations },
+	{ DP_B103, "Bell103", true, fsk300_datapump_operations },
+	{ DP_B212, "Bell212A", true, v22_datapump_operations },
+	{ DP_FAX, "VFax", false, NULL },
+	{ DP_K56, "K56Flex", false, NULL },
+	{ DP_V8BIS, "V8bis", false, NULL },
+	{ DP_V90, "V90", true, v90_datapump_operations },
+	{ DP_V92, "V92", true, v90_datapump_operations },
+	{ DP_SINUS, "Sinus", false, NULL },
 	{ 0 }
 };
 
-static struct dp_driver *get_dp_driver(enum DP_ID id)
+static const struct dp_driver *get_dp_driver(enum DP_ID id)
 {
-	struct dp_driver *p;
-	for(p = modem_dp_drivers ; p->id > 0 ; p++)
-		if (p->id == id) return p;
+	for (const struct dp_driver *driver = drivers; driver->id != 0; driver++)
+		if (driver->id == id)
+			return driver;
 	return NULL;
 }
 
 const char *modem_dp_name(enum DP_ID id)
 {
-	struct dp_driver *driver = get_dp_driver(id);
+	const struct dp_driver *driver = get_dp_driver(id);
 
 	return driver != NULL ? driver->name : NULL;
 }
 
-static int update_bindings(
-	const struct dp_binding *bindings, size_t count, bool registering)
+bool modem_dp_is_selectable(enum DP_ID id)
 {
-	if (bindings == NULL || count == 0 ||
-	    count >= sizeof(modem_dp_drivers) / sizeof(modem_dp_drivers[0]))
-		return -1;
-	for (size_t i = 0; i < count; i++) {
-		struct dp_driver *driver = get_dp_driver(bindings[i].id);
-		struct dp_operations *op = bindings[i].op;
+	const struct dp_driver *driver = get_dp_driver(id);
 
-		if (driver == NULL || op == NULL || op->use_count != 0)
-			return -1;
-		if (registering) {
-			if (driver->op != NULL || op->create == NULL ||
-			    op->delete == NULL || op->process == NULL)
-				return -1;
-		} else if (driver->op != op)
-			return -1;
-		for (size_t previous = 0; previous < i; previous++)
-			if (bindings[previous].id == bindings[i].id)
-				return -1;
+	return driver != NULL && driver->selectable;
+}
+
+enum DP_ID modem_dp_selectable_id(size_t index)
+{
+	for (const struct dp_driver *driver = drivers; driver->id != 0; driver++) {
+		if (!driver->selectable)
+			continue;
+		if (index == 0)
+			return driver->id;
+		index--;
 	}
-	for (size_t i = 0; i < count; i++)
-		get_dp_driver(bindings[i].id)->op = registering ? bindings[i].op : NULL;
 	return 0;
-}
-
-int modem_dp_register_set(const struct dp_binding *bindings, size_t count)
-{
-	return update_bindings(bindings, count, true);
-}
-
-int modem_dp_deregister_set(const struct dp_binding *bindings, size_t count)
-{
-	return update_bindings(bindings, count, false);
-}
-
-int modem_dp_register(enum DP_ID id, struct dp_operations *op)
-{
-	const struct dp_binding binding = { id, op };
-
-	return modem_dp_register_set(&binding, 1);
-}
-
-int modem_dp_deregister(enum DP_ID id, struct dp_operations *op)
-{
-	const struct dp_binding binding = { id, op };
-
-	return modem_dp_deregister_set(&binding, 1);
 }
 
 struct dp_operations *modem_dp_get_registered_ops(enum DP_ID id)
 {
-	struct dp_driver *driver = get_dp_driver(id);
+	const struct dp_driver *driver = get_dp_driver(id);
 
-	return driver != NULL ? driver->op : NULL;
+	return driver != NULL && driver->operations != NULL ?
+		driver->operations(id) : NULL;
 }

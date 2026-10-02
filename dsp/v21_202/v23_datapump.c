@@ -410,17 +410,7 @@ static int process_v23(struct dp *dp, void *receive_buffer,
 		       DPSTAT_ERROR : DPSTAT_OK;
 }
 
-int v23_datapump_register(void)
+struct dp_operations *v23_datapump_operations(enum DP_ID id)
 {
-	return modem_dp_register(DP_V23, &v23_operations);
-}
-
-int v23_datapump_unregister(void)
-{
-	return modem_dp_deregister(DP_V23, &v23_operations);
-}
-
-bool v23_datapump_is_busy(void)
-{
-	return v23_operations.use_count != 0;
+	return id == DP_V23 ? &v23_operations : NULL;
 }

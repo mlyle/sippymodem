@@ -160,13 +160,7 @@ static struct dp_operations v22bis_operations = {
 	.retrain = retrain_v22,
 };
 
-static const struct dp_binding v22_bindings[] = {
-	{ DP_V22, &v22_operations },
-	{ DP_V22BIS, &v22bis_operations },
-	{ DP_B212, &v22_operations },
-};
-
-static struct dp_operations *operations_for_id(enum DP_ID id)
+struct dp_operations *v22_datapump_operations(enum DP_ID id)
 {
 	if (id == DP_V22BIS)
 		return &v22bis_operations;
@@ -230,7 +224,7 @@ static struct v22_datapump *v22_from_dp(struct dp *dp)
 	struct v22_datapump *datapump;
 
 	if (dp == NULL || !id_uses_v22_carrier(dp->id) ||
-	    dp->op != operations_for_id(dp->id) ||
+	    dp->op != v22_datapump_operations(dp->id) ||
 	    dp->modem == NULL || dp->dp_data == NULL)
 		return NULL;
 	datapump = dp->dp_data;
@@ -357,7 +351,7 @@ static struct dp *create_v22(
 	if (modem == NULL || !id_uses_v22_carrier(id) ||
 	    (caller != 0 && caller != 1) ||
 	    sample_rate != MODEM_RATE || max_fragment != MODEM_FRAG ||
-	    operations != operations_for_id(id) ||
+	    operations != v22_datapump_operations(id) ||
 	    !modem_dp_has_capacity(operations) ||
 	    bit_rate == 0)
 		return NULL;
@@ -1723,22 +1717,4 @@ static int process_v22(
 	}
 	return datapump->missing_carrier_samples >= carrier_loss_limit ?
 		       DPSTAT_ERROR : DPSTAT_OK;
-}
-
-int v22_datapump_register(void)
-{
-	return modem_dp_register_set(
-		v22_bindings, sizeof(v22_bindings) / sizeof(v22_bindings[0]));
-}
-
-int v22_datapump_unregister(void)
-{
-	return modem_dp_deregister_set(
-		v22_bindings, sizeof(v22_bindings) / sizeof(v22_bindings[0]));
-}
-
-bool v22_datapump_is_busy(void)
-{
-	return v22_operations.use_count != 0 ||
-	       v22bis_operations.use_count != 0;
 }

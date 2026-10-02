@@ -3,6 +3,10 @@
 #ifndef V90_DATAPUMP_H
 #define V90_DATAPUMP_H
 
+#include <modem_defs.h>
+
+struct dp_operations;
+
 #include "training_session.h"
 #include "pcm_call.h"
 
@@ -16,9 +20,7 @@ struct pcm_v34_fallback_handoff {
 	struct training_session training;
 };
 
-int v90_datapump_register(void);
-int v90_datapump_unregister(void);
-bool v90_datapump_is_busy(void);
+struct dp_operations *v90_datapump_operations(enum DP_ID id);
 
 /* Request an online PCM-upstream rate exchange without changing
  * terminal command mode. Ordinary media processing owns Ru/Rd and reconnects

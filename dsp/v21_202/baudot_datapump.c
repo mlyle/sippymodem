@@ -269,17 +269,7 @@ static int process_baudot(
 	return datapump->linked ? DPSTAT_OK : enter_link(datapump);
 }
 
-int baudot_datapump_register(void)
+struct dp_operations *baudot_datapump_operations(enum DP_ID id)
 {
-	return modem_dp_register(DP_BAUDOT, &baudot_operations);
-}
-
-int baudot_datapump_unregister(void)
-{
-	return modem_dp_deregister(DP_BAUDOT, &baudot_operations);
-}
-
-bool baudot_datapump_is_busy(void)
-{
-	return baudot_operations.use_count != 0;
+	return id == DP_BAUDOT ? &baudot_operations : NULL;
 }

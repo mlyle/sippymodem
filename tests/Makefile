@@ -420,12 +420,11 @@ SELF_SYNC_SCRAMBLER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_self_sync_scrambler.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT)
 DATAPUMP_REGISTRY_TEST_BINARY := $(BUILD_DIR)/test_datapump_registry
-DATAPUMP_REGISTRY_TEST_OBJECTS := $(BUILD_DIR)/test_datapump_registry.o \
-	$(BUILD_DIR)/datapump_registry.o
+DATAPUMP_REGISTRY_TEST_OBJECTS = $(BUILD_DIR)/test_datapump_registry.o \
+	$(NATIVE_CORE_OBJECTS) $(BUILTIN_DATAPUMP_OBJECTS)
 NATIVE_CORE_TEST_BINARY := $(BUILD_DIR)/test_native_core
-NATIVE_CORE_WRAP_FLAGS := -Wl,--wrap=v8_datapump_register \
-	-Wl,--wrap=fsk300_datapump_unregister -Wl,--wrap=v8_datapump_unregister \
-	-Wl,--wrap=v23_datapump_register -Wl,--wrap=v44_character_path_destroy
+NATIVE_CORE_WRAP_FLAGS := -Wl,--wrap=modem_dp_get_registered_ops \
+	-Wl,--wrap=v44_character_path_destroy
 NATIVE_CORE_DEBUG_TEST_BINARY := $(BUILD_DIR)/test_native_core_debug
 NATIVE_CORE_SOURCE_NAMES := homolog_data modem modem_at modem_comp \
 	modem_debug modem_ec modem_pack modem_param modem_timer sysdep_common
@@ -465,8 +464,7 @@ V32_FIXED_RECEIVE_OBJECTS := \
 	$(BUILD_DIR)/trellis_receiver.o \
 	$(BUILD_DIR)/b1_path.o \
 	$(BUILD_DIR)/data_path.o
-NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_native_core.o \
-	$(NATIVE_CORE_OBJECTS) \
+BUILTIN_DATAPUMP_OBJECTS := \
 	$(V34_NATIVE_OBJECTS) \
 	$(PCM_RUNTIME_OBJECTS) \
 	$(V32_FIXED_RECEIVE_OBJECTS) \
@@ -509,6 +507,8 @@ NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_native_core.o \
 	$(BUILD_DIR)/startup.o \
 	$(BUILD_DIR)/trellis.o \
 	$(BUILD_DIR)/v23_datapump.o
+NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_native_core.o \
+	$(NATIVE_CORE_OBJECTS) $(BUILTIN_DATAPUMP_OBJECTS)
 FSK_TEST_BINARY := $(BUILD_DIR)/test_fsk
 FSK_TEST_OBJECTS := $(BUILD_DIR)/test_fsk.o \
 	$(BUILD_DIR)/fsk.o \
@@ -577,12 +577,7 @@ BAUDOT_TEST_OBJECTS := $(BUILD_DIR)/test_baudot.o \
 	$(BUILD_DIR)/fixed_phase.o
 V23_TEST_BINARY := $(BUILD_DIR)/test_v23
 V23_TEST_OBJECTS := $(BUILD_DIR)/test_v23.o \
-	$(NATIVE_CORE_OBJECTS) \
-	$(BUILD_DIR)/fsk.o \
-	$(BUILD_DIR)/fixed_phase.o \
-	$(BUILD_DIR)/training_session.o \
-	$(BUILD_DIR)/v21.o \
-	$(BUILD_DIR)/v23_datapump.o
+	$(NATIVE_CORE_OBJECTS) $(BUILTIN_DATAPUMP_OBJECTS)
 V22_FRAMING_TEST_BINARY := $(BUILD_DIR)/test_v22_framing
 V22_FRAMING_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v22_framing.o \
@@ -821,26 +816,8 @@ V32_LINE_STARTUP_TEST_OBJECTS := \
 	$(BUILD_DIR)/g711.o
 V32_DATAPUMP_CONDITIONING_TEST_BINARY := \
 	$(BUILD_DIR)/test_v32_datapump_conditioning
-V32_DATAPUMP_CONDITIONING_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_v32_datapump_conditioning.o \
-	$(NATIVE_CORE_OBJECTS) \
-	$(V32_FIXED_RECEIVE_OBJECTS) \
-	$(BUILD_DIR)/differential_qpsk.o \
-	$(BUILD_DIR)/qam.o \
-	$(BUILD_DIR)/single_tone.o \
-	$(BUILD_DIR)/training_session.o \
-	$(BUILD_DIR)/carrier.o \
-	$(BUILD_DIR)/datapump.o \
-	$(BUILD_DIR)/conditioning.o \
-	$(BUILD_DIR)/conditioning_receiver.o \
-	$(BUILD_DIR)/constellation.o \
-	$(BUILD_DIR)/v32_decision.o \
-	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/framing.o \
-	$(BUILD_DIR)/line_startup.o \
-	$(BUILD_DIR)/rate_signal.o \
-	$(BUILD_DIR)/startup.o \
-	$(BUILD_DIR)/trellis.o
+V32_DATAPUMP_CONDITIONING_TEST_OBJECTS := $(BUILD_DIR)/test_v32_datapump_conditioning.o \
+	$(NATIVE_CORE_OBJECTS) $(BUILTIN_DATAPUMP_OBJECTS)
 V32_TRELLIS_TEST_BINARY := $(BUILD_DIR)/test_v32_trellis
 V32_TRELLIS_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v32_trellis.o \
@@ -2937,28 +2914,10 @@ V92_PROFILE_TEST_OBJECTS := $(sort \
 		$(PCM_CALL_TEST_OBJECTS)))
 V90_DATAPUMP_TEST_BINARY := $(BUILD_DIR)/test_v90_datapump
 V90_DATAPUMP_TEST_OBJECTS = $(sort \
-	$(BUILD_DIR)/datapump_registry.o \
-	$(BUILD_DIR)/v8_datapump.o \
-	$(filter-out $(BUILD_DIR)/test_v8_calling.o,$(V8_CALLING_TEST_OBJECTS)) \
-	$(BUILD_DIR)/dc_remover.o \
-	$(BUILD_DIR)/modem_stubs.o \
-	$(BUILD_DIR)/test_v90_datapump.o \
-	$(BUILD_DIR)/training_session.o \
-	$(BUILD_DIR)/v34_data_quality.o \
-	$(BUILD_DIR)/v34_rate_profile.o \
-	$(BUILD_DIR)/v34_datapump.o \
-	$(BUILD_DIR)/v34_profile.o \
-	$(BUILD_DIR)/v90_datapump.o \
-	$(BUILD_DIR)/v92_data_quality.o \
-	$(BUILD_DIR)/pcm_host_echo.o \
-	$(BUILD_DIR)/pcm_echo_reference.o \
-	$(BUILD_DIR)/pcm_rate.o \
-	$(BUILD_DIR)/v90_profile.o \
-	$(BUILD_DIR)/v92_profile.o \
-	$(filter-out $(BUILD_DIR)/test_v34_call.o, \
-		$(V34_CALL_TEST_OBJECTS)) \
-	$(filter-out $(BUILD_DIR)/test_pcm_call.o, \
-		$(PCM_CALL_TEST_OBJECTS)))
+	$(BUILTIN_DATAPUMP_OBJECTS) \
+	$(BUILD_DIR)/datapump_registry.o $(BUILD_DIR)/dc_remover.o \
+	$(BUILD_DIR)/modem_stubs.o $(BUILD_DIR)/test_v90_datapump.o \
+	$(BUILD_DIR)/v90_phase4_line_fixture.o)
 V34_PHASE2_DPSK_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_phase2_dpsk
 V34_PHASE2_DPSK_TEST_OBJECTS := \
@@ -3815,7 +3774,7 @@ $(SELF_SYNC_SCRAMBLER_TEST_BINARY): $(SELF_SYNC_SCRAMBLER_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(DATAPUMP_REGISTRY_TEST_BINARY): $(DATAPUMP_REGISTRY_TEST_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^
+	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(NATIVE_CORE_TEST_BINARY): $(NATIVE_CORE_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) $(NATIVE_CORE_WRAP_FLAGS) -o $@ $^ -lm

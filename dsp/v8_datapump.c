@@ -477,19 +477,9 @@ bool v8_datapump_pcm_handoff(const struct dp *dp, struct v8_pcm_handoff *handoff
 	return true;
 }
 
-int v8_datapump_register(void)
+struct dp_operations *v8_datapump_operations(enum DP_ID id)
 {
-	return modem_dp_register(DP_V8, &v8_operations);
-}
-
-int v8_datapump_unregister(void)
-{
-	return modem_dp_deregister(DP_V8, &v8_operations);
-}
-
-bool v8_datapump_is_busy(void)
-{
-	return v8_operations.use_count != 0;
+	return id == DP_V8 ? &v8_operations : NULL;
 }
 
 bool v8_datapump_selected_v34_fallback(const struct dp *dp)

@@ -3,14 +3,16 @@
 #ifndef FSK300_DATAPUMP_H
 #define FSK300_DATAPUMP_H
 
+#include <modem_defs.h>
+
+struct dp_operations;
+
 #include <stdbool.h>
 
 enum {
 	FSK300_BIT_RATE = 300,
 };
 
-int fsk300_datapump_register(void);
-int fsk300_datapump_unregister(void);
-bool fsk300_datapump_is_busy(void);
+struct dp_operations *fsk300_datapump_operations(enum DP_ID id);
 
 #endif /* FSK300_DATAPUMP_H */
