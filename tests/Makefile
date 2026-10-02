@@ -61,6 +61,9 @@ PACK_TEST_BINARY := $(BUILD_DIR)/test_modem_pack
 PACK_TEST_SOURCES := test_modem_pack.c modem_stubs.c
 PACK_TEST_OBJECTS := $(PACK_TEST_SOURCES:%.c=$(BUILD_DIR)/%.o)
 MODEM_OBJECT := $(BUILD_DIR)/modem_pack.o
+TIMER_TEST_BINARY := $(BUILD_DIR)/test_modem_timer
+TIMER_TEST_OBJECTS := $(BUILD_DIR)/test_modem_timer.o \
+	$(BUILD_DIR)/native_modem_timer.o
 CONFIG_TEST_BINARY := $(BUILD_DIR)/test_config
 CONFIG_TEST_OBJECTS := $(BUILD_DIR)/test_config.o \
 	$(BUILD_DIR)/config.o $(BUILD_DIR)/media.o \
@@ -3274,6 +3277,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(PACKED_BITS_TEST_BINARY) \
 	$(PHASE_TEST_BINARY) $(FIXED_PHASE_TEST_BINARY) \
 	$(SELF_SYNC_SCRAMBLER_TEST_BINARY) \
+	$(TIMER_TEST_BINARY) \
 	$(NATIVE_CORE_TEST_BINARY) $(NATIVE_CORE_DEBUG_TEST_BINARY) \
 	$(FSK_TEST_BINARY) $(V8_ANSAM_TEST_BINARY) \
 	$(V8_ANSWERING_TEST_BINARY) \
@@ -3589,6 +3593,9 @@ $(V34_MATRIX_RUNS): run-integration-v34-%: \
 
 $(PACK_TEST_BINARY): $(PACK_TEST_OBJECTS) $(MODEM_OBJECT)
 	$(CC) $(LDFLAGS) -o $@ $^
+
+$(TIMER_TEST_BINARY): $(TIMER_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -Wl,--wrap=clock_gettime -Wl,--wrap=gettimeofday -o $@ $^
 
 $(CONFIG_TEST_BINARY): $(CONFIG_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^

@@ -34,7 +34,7 @@
 
 /*
  *
- *    modem_timer.h  --  definitions for simple timer.
+ *    modem_timer.h  --  monotonic modem deadline ticks.
  *
  *    Author: Sasha K (sashak@smlink.com)
  *
@@ -47,24 +47,11 @@
 
 #define MODEM_HZ 100
 
-struct timer {
-	struct timer *next;
-	unsigned added;
-	unsigned expires;
-	void (*func)(void *);
-	void *data;
-};
-
-
 #define time_before(t1,t2) ((long)((t2)-(t1)) > 0)
 #define time_after(t1,t2)  (!time_before(t1,t2))
 
+/* Monotonic ticks modulo ULONG_MAX + 1, with no initialization or shared state.
+ * Clock failure is fatal: it cannot be represented as a valid deadline tick. */
 unsigned long get_time(void);
-
-extern void timer_init(struct timer *t);
-extern int timer_add(struct timer *t);
-extern int timer_del(struct timer *t);
-
-extern int modem_timer_init(void);
 
 #endif /* __MODEM_TIMER_H__ */
