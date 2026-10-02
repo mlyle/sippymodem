@@ -1080,8 +1080,10 @@ static void push_rest_data(struct modem *m, int bits)
 	if (pending)
 		return;
 	l->rx_head = 0;
+	/* V.42 8.4.7: retain the retry until busy clearance can be announced. */
+	if (TX_RR(l,l->cmd_addr,0) != 0)
+		return;
 	l->busy = 0;
-	TX_RR(l,l->cmd_addr,0);
 	l->modem->packer_process = NULL;
 }
 

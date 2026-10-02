@@ -3370,6 +3370,18 @@ static bool test_lapm_v42bis_decoder_failure(void)
 	return true;
 }
 
+static bool fill_lapm_control_queue(struct modem *m)
+{
+	struct lapm_state *l = &m->ec.lapm;
+	uint8_t wire[] = { l->rsp_addr, 5, (uint8_t)((l->va << 1) | 1) };
+	frame_t poll = { .buf = wire, .count = sizeof(wire) };
+
+	for (unsigned request = 0; request < LAPM_CTRL_FRAMES &&
+	     l->ctrl_list->next != l->tx_ctrl; ++request)
+		m->packer.hdlc.rx_complete(l, &poll);
+	return l->ctrl_list->next == l->tx_ctrl;
+}
+
 static bool test_lapm_v42bis_receive_pressure(void)
 {
 	static const char *const payloads[] = { "B", "BA", "BAC" };
@@ -3413,7 +3425,19 @@ static bool test_lapm_v42bis_receive_pressure(void)
 		m->packer_process(m, 0);
 		CHECK(m->ec.lapm.busy && m->comp.count == 1,
 		      "compressed receive resumed before output became available");
+		CHECK(fill_lapm_control_queue(m), "compressed receive control queue did not fill");
 		while (read(pipe_fds[0], filler, sizeof(filler)) > 0) {}
+		for (unsigned retry = 0; retry < 3; ++retry) {
+			CHECK(m->packer_process != NULL, "compressed receive lost its ready retry");
+			m->packer_process(m, 0);
+			CHECK(m->ec.lapm.busy && m->ec.lapm.rx_count == 0 &&
+			      m->comp.count == 0 && m->comp.decoder.str_len == 0,
+			      "compressed receive did not drain once while awaiting a control slot");
+		}
+		frame_t *outgoing = m->packer.hdlc.get_tx_frame(&m->ec.lapm);
+		CHECK(outgoing != NULL && outgoing->buf[1] == 5,
+		      "compressed receive lost its queued busy response");
+		m->packer.hdlc.tx_complete(&m->ec.lapm, outgoing);
 		m->packer_process(m, 0);
 		CHECK(read(pipe_fds[0], output, sizeof(output)) == (ssize_t)length &&
 			      memcmp(output, payloads[scenario], length) == 0 &&
@@ -3421,6 +3445,16 @@ static bool test_lapm_v42bis_receive_pressure(void)
 			      m->comp.count == 0 && m->comp.decoder.str_len == 0 &&
 			      m->packer_process == NULL,
 		      "compressed receive case %zu stalled or reordered bytes after pressure cleared", scenario);
+		unsigned ready = 0;
+		while ((outgoing = m->packer.hdlc.get_tx_frame(&m->ec.lapm)) != NULL) {
+			CHECK(outgoing->size == 3 && outgoing->buf[2] >> 1 == 1 &&
+			      (outgoing->buf[1] == 5 || outgoing->buf[1] == 1),
+			      "compressed receive queued an invalid status frame");
+			ready += outgoing->buf[1] == 1;
+			m->packer.hdlc.tx_complete(&m->ec.lapm, outgoing);
+		}
+		CHECK(ready == 1 && read(pipe_fds[0], output, sizeof(output)) < 0 && errno == EAGAIN,
+		      "compressed receive lost its ready frame or repeated decoded output");
 		m->pty = original_pty;
 		close(pipe_fds[0]);
 		close(pipe_fds[1]);
@@ -3511,15 +3545,32 @@ static bool test_lapm_v44_receive_pressure(void)
 			m->packer_process(m, 0);
 			CHECK(m->ec.lapm.busy && m->ec.lapm.rx_count == 0 && lapm_sink.length == 0,
 			      "zero-input retry lost blocked V.44 output");
+			CHECK(fill_lapm_control_queue(m), "V.44 control queue did not fill");
 			lapm_sink.result = 1;
+			for (unsigned retry = 0; retry < 3; ++retry) {
+				CHECK(m->packer_process != NULL, "V.44 lost its ready retry");
+				m->packer_process(m, 0);
+				CHECK(m->ec.lapm.busy && m->ec.lapm.rx_count == 0 &&
+				      lapm_sink.length == 1 && lapm_sink.data[0] == payload[0],
+				      "V.44 did not drain once while awaiting a control slot");
+			}
+			outgoing = m->packer.hdlc.get_tx_frame(&m->ec.lapm);
+			CHECK(outgoing != NULL && outgoing->buf[1] == 5,
+			      "V.44 lost its queued busy response");
+			m->packer.hdlc.tx_complete(&m->ec.lapm, outgoing);
 			m->packer_process(m, 0);
 			CHECK(!m->ec.lapm.busy && m->ec.lapm.rx_count == 0 && m->packer_process == NULL &&
 			      lapm_sink.length == 1 && lapm_sink.data[0] == payload[0],
 			      "V.44 output did not drain once and clear busy");
-			outgoing = m->packer.hdlc.get_tx_frame(&m->ec.lapm);
-			CHECK(outgoing != NULL && outgoing->buf[1] == 1,
-			      "V.44 drained output did not publish RR");
-			m->packer.hdlc.tx_complete(&m->ec.lapm, outgoing);
+			unsigned ready = 0;
+			while ((outgoing = m->packer.hdlc.get_tx_frame(&m->ec.lapm)) != NULL) {
+				CHECK(outgoing->size == 3 && outgoing->buf[2] >> 1 == m->ec.lapm.vr &&
+				      (outgoing->buf[1] == 5 || outgoing->buf[1] == 1),
+				      "V.44 queued an invalid status frame");
+				ready += outgoing->buf[1] == 1;
+				m->packer.hdlc.tx_complete(&m->ec.lapm, outgoing);
+			}
+			CHECK(ready == 1, "V.44 drained output did not publish exactly one RR");
 			checked = true;
 		}
 		while ((outgoing = m->packer.hdlc.get_tx_frame(&m->ec.lapm)) != NULL)
@@ -5799,6 +5850,147 @@ static bool test_lapm_acknowledgement_queue_consistency(void)
 	      "inconsistent acknowledgement resumed transmission or retained the link");
 	modem_delete(m);
 	memset(&lapm_source, 0, sizeof(lapm_source));
+	return true;
+}
+
+struct lapm_ready_capture {
+	uint8_t data[4];
+	unsigned length, limit, ready_frames, busy_frames;
+	uint8_t command_address, response_address;
+	bool invalid_frame;
+};
+
+static int capture_ready_characters(struct modem *m, const char *input, int length)
+{
+	struct lapm_ready_capture *capture = m->dev_data;
+	unsigned consumed = (unsigned)length < capture->limit ? (unsigned)length : capture->limit;
+
+	if (length < 0 || consumed > sizeof(capture->data) - capture->length)
+		return -1;
+	memcpy(capture->data + capture->length, input, consumed);
+	capture->length += consumed;
+	return (int)consumed;
+}
+
+static void capture_ready_frame(void *context, frame_t *frame)
+{
+	struct lapm_ready_capture *capture = context;
+
+	if (frame->count != 3 || frame->buf[2] >> 1 != 1) {
+		capture->invalid_frame = true;
+		return;
+	}
+	if (frame->buf[0] == capture->response_address && frame->buf[1] == 5)
+		capture->busy_frames++;
+	else if (frame->buf[0] == capture->command_address &&
+		 frame->buf[1] == 1 && frame->buf[2] == 2)
+		capture->ready_frames++;
+	else
+		capture->invalid_frame = true;
+}
+
+static bool test_lapm_receiver_ready_queue_pressure(void)
+{
+	struct modem_driver driver = {
+		.name = "LAPM receiver-ready pressure", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+
+	for (unsigned caller = 0; caller < 2; ++caller)
+	for (unsigned poll = 0; poll < 2; ++poll)
+	for (unsigned borrowed = 0; borrowed < 2; ++borrowed)
+	for (unsigned partial = 0; partial < 3; ++partial) {
+		struct lapm_ready_capture capture = { .limit = partial };
+		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *decoder = modem_create(&driver, driver.name);
+		uint8_t wire[] = { 0, 0x0f, 0, 'a', 'b', 'c' };
+		frame_t incoming = { .buf = wire, .count = 2 };
+		frame_t *outgoing, *active = NULL;
+		uint8_t retained[3], bit;
+		void (*retry)(struct modem *, int);
+		int active_count = 0;
+
+		CHECK(m != NULL && decoder != NULL, "receiver-ready allocation failed");
+		m->caller = caller;
+		m->cfg.ec = 1;
+		m->cfg.comp = 0;
+		m->rx_rate = m->tx_rate = 4800;
+		m->state = 4;
+		m->dev_data = &capture;
+		CHECK(modem_ec_init(m) == 0, "receiver-ready initialization failed");
+		m->caller = 0; /* Preserve addresses while bypassing initial XID. */
+		modem_update_status(m, STATUS_PACK_LINK);
+		m->caller = caller;
+		struct lapm_state *l = &m->ec.lapm;
+		wire[0] = l->cmd_addr;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		outgoing = m->packer.hdlc.get_tx_frame(l);
+		CHECK(outgoing != NULL && outgoing->buf[1] == 0x7f,
+		      "receiver-ready fixture did not initiate SABME");
+		m->packer.hdlc.tx_complete(l, outgoing);
+		wire[1] = 0x73;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(l->state == 2 && m->state == 5, "receiver-ready fixture did not connect");
+		m->get_chars = NULL;
+		m->put_chars = capture_ready_characters;
+		capture.command_address = l->cmd_addr;
+		capture.response_address = l->rsp_addr;
+		modem_hdlc_start(decoder);
+		decoder->packer.hdlc.framer = &capture;
+		decoder->packer.hdlc.rx_complete = capture_ready_frame;
+		decoder->put_bits = modem_hdlc_put_bits;
+		wire[0] = l->rsp_addr;
+		wire[1] = 0;
+		wire[2] = (uint8_t)poll;
+		incoming.count = sizeof(wire);
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(l->busy && l->rx_count == (int)(3 - partial) &&
+		      capture.length == partial && m->packer_process != NULL,
+		      "receiver-ready fixture did not retain blocked input");
+		if (borrowed) {
+			capture.limit = 0;
+			CHECK(modem_get_bits(m, 1, &bit, 1) == 1 &&
+			      modem_put_bits(decoder, 1, &bit, 1) == 1 &&
+			      (active = m->packer.hdlc.tx_frame) != NULL,
+			      "receiver-ready fixture did not borrow a wire frame");
+			memcpy(retained, active->buf, sizeof(retained));
+			active_count = active->count;
+		}
+		/* The peer's polls occupy the remaining slots with genuine RNR replies. */
+		CHECK(fill_lapm_control_queue(m), "receiver-ready queue did not fill");
+		capture.limit = 3;
+		retry = m->packer_process;
+		for (unsigned attempt = 0; attempt < 3; ++attempt) {
+			retry(m, 0);
+			CHECK(capture.length == 3 && memcmp(capture.data, "abc", 3) == 0 &&
+			      l->busy && !l->rx_head && !l->rx_count && m->packer_process == retry &&
+			      (!active || (active->count == active_count && active->size == 3 &&
+			       memcmp(active->buf, retained, sizeof(retained)) == 0)),
+			      "drained receive data lost its ready announcement or borrowed frame: role %u P%u borrowed %u partial %u",
+			      caller, poll, borrowed, partial);
+		}
+		for (unsigned bits = 0; bits < 2048 && !capture.ready_frames; ++bits) {
+			CHECK(modem_get_bits(m, 1, &bit, 1) == 1 &&
+			      modem_put_bits(decoder, 1, &bit, 1) == 1,
+			      "receiver-ready wire did not progress");
+		}
+		CHECK(!capture.invalid_frame && capture.ready_frames == 1 &&
+		      capture.busy_frames == LAPM_CTRL_FRAMES - 1 + borrowed &&
+		      !l->busy && m->packer_process == NULL && l->state == 2 && m->state == 5 &&
+		      l->vr == 1 && capture.length == 3,
+		      "receiver-ready retry did not publish one valid RR after old RNR replies");
+		wire[1] = 2; /* Next sequenced I frame, no new peer poll. */
+		wire[2] = 0;
+		wire[3] = 'd';
+		incoming.count = 4;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(capture.length == 4 && memcmp(capture.data, "abcd", 4) == 0 &&
+		      l->vr == 2 && !l->busy && m->packer_process == NULL,
+		      "receiver-ready recovery duplicated bytes or blocked new input");
+		CHECK(modem_stop_now(m) == 0, "receiver-ready cleanup failed");
+		modem_delete(m);
+		modem_delete(decoder);
+	}
 	return true;
 }
 
@@ -8383,6 +8575,7 @@ int main(void)
 		{ "LAPM directional preamble", test_lapm_directional_preamble },
 		{ "LAPM peer-flag preamble", test_lapm_peer_flag_preamble },
 		{ "LAPM receive backpressure", test_lapm_receive_backpressure },
+		{ "LAPM receiver-ready queue pressure", test_lapm_receiver_ready_queue_pressure },
 		{ "LAPM fatal information failure", test_lapm_information_failure },
 		{ "LAPM fatal control failure", test_lapm_control_failure },
 		{ "LAPM receive frame boundaries", test_lapm_receive_frame_boundaries },
