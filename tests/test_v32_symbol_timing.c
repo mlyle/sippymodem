@@ -226,12 +226,12 @@ static bool test_fragmentation_and_golden(void)
 		     whole_count * sizeof(whole_output[0])) == 0 &&
 	      memcmp(&whole, &split, sizeof(whole)) == 0,
 	      "timing output or owner depended on caller fragmentation");
-	/* Filled from an independent exact timing oracle. */
+	/* Corrected full-width detector trace; direction is tested separately. */
 	CHECK(whole_count == 723 &&
 	      hash_i16(whole_output, whole_count) ==
-		      UINT64_C(0x4052e9d51556f4b5) &&
-	      hash_state(&whole) == UINT64_C(0xe754ffeae26f8bce),
-	      "timing output or terminal state diverged from its oracle");
+		      UINT64_C(0x2f1911c24cc3ec74) &&
+	      hash_state(&whole) == UINT64_C(0x7149c7cb30d13253),
+	      "timing output or terminal state diverged from its snapshot");
 	return true;
 }
 
@@ -257,6 +257,47 @@ static bool clock_once(struct v32_symbol_timing *timing)
 		       timing, &input, 1, output, ARRAY_LENGTH(output),
 		       &produced) == V32_SYMBOL_TIMING_OK &&
 	       produced >= 1;
+}
+
+static bool test_detector_direction(void)
+{
+	struct v32_symbol_timing empty;
+
+	for (enum v32_symbol_timing_mode mode =
+		     V32_SYMBOL_TIMING_ACQUISITION;
+	     mode <= V32_SYMBOL_TIMING_COARSE; ++mode) {
+		struct v32_symbol_timing weak;
+		struct v32_symbol_timing strong;
+
+		CHECK(v32_symbol_timing_init(&weak) == V32_SYMBOL_TIMING_OK,
+		      "detector direction owner did not initialize");
+		prepare_detector_boundary(&weak, 2);
+		weak.mode = mode;
+		weak.acquisition_groups = mode == V32_SYMBOL_TIMING_COARSE ? 71 : 0;
+		/* Both high words are zero, although the vector has a direction.
+		 * Scaling it must not change acquisition or the phase correction. */
+		weak.detector_i_accumulator = 32768;
+		weak.detector_q_accumulator = 49152;
+		strong = weak;
+		strong.detector_i_accumulator *= 1000;
+		strong.detector_q_accumulator *= 1000;
+		CHECK(clock_once(&weak) && clock_once(&strong) &&
+		      memcmp(&weak, &strong, sizeof(weak)) == 0,
+		      "timing direction changed with detector magnitude in mode %d",
+		      mode);
+	}
+	CHECK(v32_symbol_timing_init(&empty) == V32_SYMBOL_TIMING_OK,
+	      "empty detector owner did not initialize");
+	prepare_detector_boundary(&empty, 2);
+	empty.detector_i_accumulator = 0;
+	empty.detector_q_accumulator = 0;
+	empty.smoothed_error = 100;
+	empty.loop_integral = 200;
+	CHECK(clock_once(&empty) && empty.smoothed_error == 100 &&
+	      empty.loop_integral == 200 && empty.acquisition_groups == 0 &&
+	      empty.fractional_phase_q11 == 0 && empty.polyphase_index == 0,
+	      "empty detector advanced phase acquisition");
+	return true;
 }
 
 static bool test_modes_and_hysteresis(void)
@@ -436,8 +477,9 @@ static bool test_contracts(void)
 
 int main(void)
 {
-	if (!test_profiles_and_impulse() || !test_fragmentation_and_golden() ||
-	    !test_modes_and_hysteresis() || !test_output_bound() ||
+	if (!test_profiles_and_impulse() || !test_detector_direction() ||
+	    !test_fragmentation_and_golden() || !test_modes_and_hysteresis() ||
+	    !test_output_bound() ||
 	    !test_contracts())
 		return 1;
 	puts("V.32 symbol timing tests passed");

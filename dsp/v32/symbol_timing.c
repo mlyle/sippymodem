@@ -193,8 +193,6 @@ static void update_loop(
 {
 	int16_t i = wrap_s16_from_s32(
 		arithmetic_shift_right_u32((uint32_t)detector_i, 16));
-	int16_t q = wrap_s16_from_s32(
-		arithmetic_shift_right_u32((uint32_t)detector_q, 16));
 	uint16_t angle;
 	int16_t angle_error;
 	int16_t absolute_error;
@@ -206,7 +204,11 @@ static void update_loop(
 	if (timing->mode == V32_SYMBOL_TIMING_FINE &&
 	    (uint16_t)(i + 0x31) <= 0x62)
 		return;
-	angle = fixed_phase_atan2_u15(q, i);
+	/* Keep the detector's low bits: narrowing a weak vector before atan2
+	 * can turn its direction into a quadrant jump during acquisition. */
+	if (detector_i == 0 && detector_q == 0)
+		return;
+	angle = fixed_phase_atan2_u15(detector_q, detector_i);
 	if (angle > 0x4000)
 		angle = (uint16_t)(angle - 0x8000);
 	angle_error = wrap_s16_from_s32(arithmetic_shift_right_u32(

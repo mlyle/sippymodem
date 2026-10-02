@@ -472,10 +472,13 @@ static bool test_composed_echo_line_owner(void)
 		}
 	}
 	CHECK(normalized_total == 360 &&
-	      normalized_hash == UINT64_C(0x9e65841b1ba0c145) &&
 	      receiver.gain.signal_present && any_normalized,
-	      "composed post-echo line path produced %zu useful samples",
-	      normalized_total);
+	      "composed post-echo line path: samples=%zu signal=%d nonzero=%d",
+	      normalized_total, receiver.gain.signal_present, any_normalized);
+	/* Corrected full-width timing trace after echo cancellation. */
+	CHECK(normalized_hash == UINT64_C(0x6c450ae27ce4467f),
+	      "composed post-echo line snapshot changed: %#llx",
+	      (unsigned long long)normalized_hash);
 	return true;
 }
 

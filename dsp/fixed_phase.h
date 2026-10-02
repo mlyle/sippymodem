@@ -5,8 +5,10 @@
 
 #include <stdint.h>
 
-/* One full turn is 0x8000 phase units. */
-uint16_t fixed_phase_atan2_u15(int16_t x, int16_t y);
+/* atan2(quadrature, in-phase), with one turn spanning 0..0x7fff.
+ * Nonzero vectors have at most 22 phase units of error; integer scaling
+ * keeps their phase. The zero vector retains the quarter-turn convention. */
+uint16_t fixed_phase_atan2_u15(int32_t q, int32_t i);
 
 struct fixed_phase_q14 {
 	int16_t sine;

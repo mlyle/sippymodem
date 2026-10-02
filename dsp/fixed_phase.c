@@ -20,47 +20,38 @@ static uint16_t atan_profile_u15(uint16_t ratio_q8)
 		atan((double)ratio_q8 / 256.0) * 32768.0);
 }
 
-uint16_t fixed_phase_atan2_u15(int16_t x, int16_t y)
+uint16_t fixed_phase_atan2_u15(int32_t q, int32_t i)
 {
-	uint16_t absolute_x;
-	uint16_t absolute_y;
-	uint16_t mantissa;
-	uint16_t exponent;
-	uint32_t scale;
-	uint16_t index;
+	uint32_t absolute_q;
+	uint32_t absolute_i;
+	uint32_t smaller;
+	uint32_t larger;
+	uint16_t ratio_q15;
 	int32_t angle_input;
 	int32_t angle;
 
-	if (y == 0)
-		return (uint16_t)(x < 0 ? 0x6000u : 0x2000u);
-	if (x == 0)
-		return (uint16_t)(y < 0 ? 0x4000u : 0);
-	absolute_x = (uint16_t)magnitude_s16(x);
-	absolute_y = (uint16_t)magnitude_s16(y);
-	if (absolute_x < absolute_y) {
-		mantissa = normalized_reciprocal_q15(absolute_y, &exponent);
-		scale = (uint32_t)mantissa * absolute_x;
-	} else {
-		mantissa = normalized_reciprocal_q15(absolute_x, &exponent);
-		scale = (uint32_t)mantissa * absolute_y;
-	}
-	index = (uint16_t)(((scale >> 15) << (exponent & 0x1fu)) &
-			     UINT16_MAX);
-	angle_input = wrap_s16_from_s32(index);
-	if (index > 0x7eu)
-		angle_input = (int16_t)atan_profile_u15(index >> 7);
-	angle = arithmetic_shift_right_u32(
-		(uint32_t)(angle_input * 0x145f + 0x4000), 15);
-	if (absolute_x < absolute_y) {
-		if (y < 0)
-			return (uint16_t)(x >= 0 ? 0x4000 - angle :
-						 angle + 0x4000);
-		return (uint16_t)(x < 0 ? 0x7fff - angle : angle);
-	}
-	if (x < 0)
-		return (uint16_t)(y < 0 ? 0x6000 - angle :
-					 angle + 0x6000);
-	return (uint16_t)(y >= 0 ? 0x2000 - angle : angle + 0x2000);
+	if (i == 0)
+		return (uint16_t)(q < 0 ? 0x6000u : 0x2000u);
+	if (q == 0)
+		return (uint16_t)(i < 0 ? 0x4000u : 0);
+	absolute_q = q < 0 ? 0u - (uint32_t)q : (uint32_t)q;
+	absolute_i = i < 0 ? 0u - (uint32_t)i : (uint32_t)i;
+	smaller = absolute_q < absolute_i ? absolute_q : absolute_i;
+	larger = absolute_q < absolute_i ? absolute_i : absolute_q;
+	/* The numerator is at most 2^46; the ratio is 0..32768.
+	 * Divide before reducing precision so scaling a vector keeps its angle. */
+	ratio_q15 = (uint16_t)(((uint64_t)smaller << 15) / larger);
+	angle_input = ratio_q15;
+	if (ratio_q15 >= 128u)
+		angle_input = atan_profile_u15(ratio_q15 >> 7);
+	angle = (angle_input * 0x145f + 0x4000) >> 15;
+	if (absolute_q >= absolute_i)
+		angle = 0x2000 - angle;
+	if (i < 0)
+		angle = 0x4000 - angle;
+	if (q < 0)
+		angle = -angle;
+	return (uint16_t)((uint32_t)angle & 0x7fffu);
 }
 
 static int16_t sine_u16_q14(uint16_t phase, bool round_nearest)

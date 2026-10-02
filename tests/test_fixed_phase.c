@@ -178,8 +178,82 @@ static bool test_atan_axes_and_perimeter(void)
 		hash = hash_word(
 			hash, fixed_phase_atan2_u15(INT16_MIN, value));
 	}
-	CHECK(hash == UINT32_C(0xc3be1f43),
+	CHECK(hash == UINT32_C(0xa10ef8c5),
 	      "fixed atan perimeter changed: %#x", hash);
+	return true;
+}
+
+static bool check_atan_accuracy(int32_t q, int32_t i)
+{
+	uint16_t phase;
+	double expected;
+	double error;
+
+	if (q == 0 && i == 0)
+		return true;
+	phase = fixed_phase_atan2_u15(q, i);
+	expected = atan2((double)q, (double)i) * 32768.0 / (2.0 * PI);
+	if (expected < 0)
+		expected += 32768.0;
+	error = fabs(phase - expected);
+	if (error > 16384.0)
+		error = 32768.0 - error;
+	CHECK(phase < 0x8000 && error <= 22.0,
+	      "atan(%d,%d) phase %u differs by %.9f units from %.9f",
+	      q, i, phase, error, expected);
+	return true;
+}
+
+static bool test_atan_angle_accuracy(void)
+{
+	CHECK(fixed_phase_atan2_u15(3, 3) == 0x1000 &&
+	      fixed_phase_atan2_u15(-3, -3) == 0x5000,
+	      "small equal components must yield diagonal phases");
+	for (int q = -512; q <= 512; ++q)
+		for (int i = -512; i <= 512; ++i)
+			CHECK(check_atan_accuracy((int16_t)q, (int16_t)i),
+			      "small-vector atan accuracy failed");
+	for (uint32_t word = 0; word <= UINT16_MAX; ++word) {
+		int16_t value = word_to_s16((uint16_t)word);
+		int32_t wide = (int32_t)(INT64_C(65537) * word + INT32_MIN);
+
+		CHECK(check_atan_accuracy(value, INT16_MAX) &&
+		      check_atan_accuracy(value, INT16_MIN) &&
+		      check_atan_accuracy(INT16_MAX, value) &&
+		      check_atan_accuracy(INT16_MIN, value) &&
+		      check_atan_accuracy(wide, INT32_MAX) &&
+		      check_atan_accuracy(wide, INT32_MIN) &&
+		      check_atan_accuracy(INT32_MAX, wide) &&
+		      check_atan_accuracy(INT32_MIN, wide),
+		      "atan accuracy failed on the signed perimeter");
+	}
+	return true;
+}
+
+static bool test_atan_scaling_invariance(void)
+{
+	for (int q = -16; q <= 16; ++q) {
+		for (int i = -16; i <= 16; ++i) {
+			uint16_t phase = fixed_phase_atan2_u15((int16_t)q, (int16_t)i);
+
+			for (int scale = 2; scale <= 2047; ++scale) {
+				uint16_t scaled = fixed_phase_atan2_u15(
+					(int16_t)(q * scale), (int16_t)(i * scale));
+
+				CHECK(scaled == phase,
+				      "scaling (%d,%d) by %d changes phase %u to %u",
+				      q, i, scale, phase, scaled);
+			}
+		}
+	}
+	for (int32_t ratio = 0; ratio <= 32768; ++ratio) {
+		uint16_t phase = fixed_phase_atan2_u15(ratio, 32768);
+
+		CHECK(check_atan_accuracy(ratio, 32768) &&
+		      fixed_phase_atan2_u15(ratio * 65535, INT32_C(2147450880)) ==
+			      phase,
+		      "wide atan scaling changed at ratio %d", ratio);
+	}
 	return true;
 }
 
@@ -196,6 +270,8 @@ int main(void)
 		  test_complete_unsigned_carrier_profile },
 		{ "compact cosine profile", test_compact_cosine_profile },
 		{ "atan axes and perimeter", test_atan_axes_and_perimeter },
+		{ "atan angle accuracy", test_atan_angle_accuracy },
+		{ "atan scaling invariance", test_atan_scaling_invariance },
 	};
 	unsigned int failures = 0;
 

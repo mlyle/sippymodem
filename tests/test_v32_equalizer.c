@@ -10,7 +10,7 @@
 #include <string.h>
 
 enum {
-	ORACLE_DECISIONS = 96,
+	TRACE_DECISIONS = 96,
 	EQUIVALENCE_DECISIONS = 32,
 };
 
@@ -161,7 +161,7 @@ static bool test_initial_profile(void)
 	return true;
 }
 
-static bool test_exact_oracle(void)
+static bool test_trace_snapshot(void)
 {
 	struct v32_equalizer equalizer;
 	uint32_t generator = UINT32_C(0x4d595df4);
@@ -169,10 +169,10 @@ static bool test_exact_oracle(void)
 	uint64_t initial_coefficients;
 
 	CHECK(v32_equalizer_init(&equalizer) == V32_EQUALIZER_OK,
-	      "oracle owner did not initialize");
+	      "trace owner did not initialize");
 	initial_coefficients = coefficient_hash(&equalizer);
 	for (size_t decision_index = 0;
-	     decision_index < ORACLE_DECISIONS; ++decision_index) {
+	     decision_index < TRACE_DECISIONS; ++decision_index) {
 		struct v32_equalizer_observation observation;
 		struct v32_equalizer_decision decision;
 		int16_t samples[3];
@@ -184,19 +184,19 @@ static bool test_exact_oracle(void)
 				      &equalizer,
 				      V32_EQUALIZER_ADAPTATION_FINE) ==
 				      V32_EQUALIZER_OK,
-			      "oracle fine adaptation transition failed");
+			      "trace fine adaptation transition failed");
 		if (decision_index == 48)
 			CHECK(v32_equalizer_set_carrier_tracking(
 				      &equalizer, false) == V32_EQUALIZER_OK,
-			      "oracle carrier freeze failed");
+			      "trace carrier freeze failed");
 		if (decision_index == 56)
 			CHECK(v32_equalizer_set_carrier_tracking(
 				      &equalizer, true) == V32_EQUALIZER_OK,
-			      "oracle carrier resume failed");
+			      "trace carrier resume failed");
 		if (decision_index == 64)
 			CHECK(v32_equalizer_restart_carrier_acquisition(
 				      &equalizer) == V32_EQUALIZER_OK,
-			      "oracle carrier reacquisition failed");
+			      "trace carrier reacquisition failed");
 		for (size_t index = 0; index < need; ++index)
 			samples[index] = next_sample(&generator);
 		CHECK(v32_equalizer_process(
@@ -205,23 +205,24 @@ static bool test_exact_oracle(void)
 			      V32_EQUALIZER_OBSERVATION_READY &&
 		      consumed == need && observation.phase <= INT16_MAX &&
 		      observation.magnitude <= INT16_MAX,
-		      "oracle observation %zu failed", decision_index);
+		      "trace observation %zu failed", decision_index);
 		observations = hash_observation(observations, &observation);
 		decision = make_decision(&observation, decision_index);
 		CHECK(v32_equalizer_commit(&equalizer, &decision) ==
 			      V32_EQUALIZER_OK,
-		      "oracle decision %zu failed", decision_index);
+		      "trace decision %zu failed", decision_index);
 		if (decision_index == 0)
 			CHECK(coefficient_hash(&equalizer) != initial_coefficients,
 			      "first new-error decision did not adapt");
 	}
-	CHECK(observations == UINT64_C(0x7242a666a4b41478),
-	      "equalizer observation oracle changed: %#llx",
+	/* Corrected angle trace; analytic phase accuracy is tested separately. */
+	CHECK(observations == UINT64_C(0x0f6126e7053b07b8),
+	      "equalizer observation snapshot changed: %#llx",
 	      (unsigned long long)observations);
 	CHECK(coefficient_hash(&equalizer) ==
-		      UINT64_C(0xf8dba282d0ed5efb) &&
-	      state_hash(&equalizer) == UINT64_C(0xf8b9cd7cb8ccba01),
-	      "equalizer terminal oracle changed: %#llx/%#llx",
+		      UINT64_C(0x17cafc92a4a26082) &&
+	      state_hash(&equalizer) == UINT64_C(0x393d3c09decae204),
+	      "equalizer terminal snapshot changed: %#llx/%#llx",
 	      (unsigned long long)coefficient_hash(&equalizer),
 	      (unsigned long long)state_hash(&equalizer));
 	return true;
@@ -692,7 +693,7 @@ int main(void)
 	} tests[] = {
 		{ "observation comparison", test_observation_comparison },
 		{ "initial profile", test_initial_profile },
-		{ "exact oracle", test_exact_oracle },
+		{ "trace snapshot", test_trace_snapshot },
 		{ "fragment equivalence", test_fragment_equivalence },
 		{ "lineage and pending", test_lineage_and_pending_contract },
 		{ "lifecycle and adaptation", test_lifecycle_and_adaptation_gates },
