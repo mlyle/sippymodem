@@ -5,20 +5,12 @@
 #include "integer_math.h"
 #include <phase_profile.h>
 
-#include <limits.h>
-#include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
 
 enum {
 	FIXED_PHASE_QUARTER_STEPS = 256,
 };
-
-static uint16_t atan_profile_u15(uint16_t ratio_q8)
-{
-	return (uint16_t)lround(
-		atan((double)ratio_q8 / 256.0) * 32768.0);
-}
 
 uint16_t fixed_phase_atan2_u15(int32_t q, int32_t i)
 {
@@ -43,7 +35,7 @@ uint16_t fixed_phase_atan2_u15(int32_t q, int32_t i)
 	ratio_q15 = (uint16_t)(((uint64_t)smaller << 15) / larger);
 	angle_input = ratio_q15;
 	if (ratio_q15 >= 128u)
-		angle_input = atan_profile_u15(ratio_q15 >> 7);
+		angle_input = FIXED_PHASE_ATAN_Q15[ratio_q15 >> 7];
 	angle = (angle_input * 0x145f + 0x4000) >> 15;
 	if (absolute_q >= absolute_i)
 		angle = 0x2000 - angle;

@@ -35,24 +35,18 @@ static bool test_generated_endpoints(void)
 {
 	uint32_t atan_hash = UINT32_C(2166136261);
 	uint32_t sine_hash = UINT32_C(2166136261);
-	uint32_t cosine_hash = UINT32_C(2166136261);
 
 	for (unsigned int index = 0; index <= 256; ++index) {
-		uint16_t atan_word = (uint16_t)lround(
-			atan((double)index / 256.0) * 32768.0);
+		uint16_t atan_word = FIXED_PHASE_ATAN_Q15[index];
 		uint16_t sine_word = FIXED_PHASE_QUARTER_Q15[index];
-		uint16_t cosine_word = (uint16_t)(uint32_t)(
-			cos(PI * (double)index / 512.0) * 32768.0);
 
 		atan_hash = hash_word(atan_hash, atan_word);
 		sine_hash = hash_word(sine_hash, sine_word);
-		cosine_hash = hash_word(cosine_hash, cosine_word);
 	}
 	CHECK(atan_hash == UINT32_C(0x319ca829) &&
-		      sine_hash == UINT32_C(0x22a0d741) &&
-		      cosine_hash == UINT32_C(0x014b0f41),
-	      "generated fixed-phase profiles changed: %#x/%#x/%#x",
-	      atan_hash, sine_hash, cosine_hash);
+		      sine_hash == UINT32_C(0x22a0d741),
+	      "generated fixed-phase profiles changed: %#x/%#x",
+	      atan_hash, sine_hash);
 	return true;
 }
 

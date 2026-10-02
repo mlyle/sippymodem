@@ -105,21 +105,8 @@ static bool test_profiles_and_impulse(void)
 	struct v32_symbol_timing timing;
 	int16_t input[V32_SYMBOL_TIMING_MAX_INPUT_SAMPLES] = {0};
 	int16_t output[V32_SYMBOL_TIMING_MAX_OUTPUT_SAMPLES] = {0};
-	uint64_t atan_hash = UINT64_C(14695981039346656037);
 	size_t produced;
 
-	/* Exhaustively lock the private generated 257-word atan profile. */
-	for (unsigned index = 0; index <= 256; ++index) {
-		uint16_t word = (uint16_t)lround(
-			atan((double)index / 256.0) * 32768.0);
-
-		atan_hash ^= word & UINT16_C(0xff);
-		atan_hash *= UINT64_C(1099511628211);
-		atan_hash ^= word >> 8;
-		atan_hash *= UINT64_C(1099511628211);
-	}
-	CHECK(atan_hash == UINT64_C(0x7c49943f7a8914b5),
-	      "generated timing atan profile changed");
 	CHECK(v32_symbol_timing_init(&timing) == V32_SYMBOL_TIMING_OK &&
 	      hash_i16(timing.interpolator,
 		       V32_SYMBOL_TIMING_COEFFICIENTS) ==
