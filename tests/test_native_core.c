@@ -6132,6 +6132,83 @@ static bool test_lapm_peer_busy_acknowledgement(void)
 	return true;
 }
 
+static bool test_lapm_supervisory_polls(void)
+{
+	enum { DATA = 2, ONLINE = 5, RR = 1, RNR = 5, REJ = 9 };
+	static const uint8_t controls[] = { RR, RNR, REJ };
+	static const uint8_t sequences[] = { 0, 127 };
+	static const uint8_t payload = 'X';
+	struct modem_driver driver = {
+		.name = "LAPM supervisory polls", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+
+	for (unsigned caller = 0; caller < 2; ++caller)
+	for (int busy = 0; busy < 2; ++busy)
+	for (unsigned recovery = 0; recovery < 2; ++recovery)
+	for (unsigned pending = 0; pending < 2; ++pending)
+	for (size_t sequence = 0; sequence < ARRAY_LENGTH(sequences); ++sequence)
+	for (size_t control = 0; control < ARRAY_LENGTH(controls); ++control) {
+		struct modem *m = modem_create(&driver, driver.name);
+		frame_t *retained = NULL, *outgoing;
+		bool replay = pending && controls[control] == REJ && !recovery;
+		unsigned base = sequences[sequence];
+
+		CHECK(m != NULL, "supervisory poll allocation failed");
+		m->cfg.ec = 1;
+		m->cfg.comp = 0;
+		CHECK(start_lapm_compression_fixture(m, caller), "supervisory poll fixture failed");
+		struct lapm_state *l = &m->ec.lapm;
+		l->config = 0;
+		l->state = DATA;
+		l->va = l->vs = base;
+		l->vr = 17;
+		l->busy = busy;
+		m->state = ONLINE;
+		m->rx_rate = 48000;
+		m->tx_rate = 26400;
+		m->get_chars = scripted_lapm_source;
+		memset(&lapm_source, 0, sizeof(lapm_source));
+		lapm_source.data = &payload;
+		lapm_source.length = pending;
+		if (pending) {
+			retained = m->packer.hdlc.get_tx_frame(l);
+			CHECK(retained != NULL && retained->size == 4 && retained->buf[3] == payload,
+			      "supervisory poll information fixture failed");
+			m->packer.hdlc.tx_complete(l, retained);
+		}
+		l->rtx_count = recovery;
+		l->retrain_poll = recovery;
+		m->bit_timer = 1234;
+		uint8_t wire[] = { l->rsp_addr, controls[control], (uint8_t)((base << 1) | 1) };
+		frame_t incoming = { .buf = wire, .count = sizeof(wire) };
+		m->packer.hdlc.rx_complete(l, &incoming);
+		outgoing = m->packer.hdlc.get_tx_frame(l);
+		CHECK(outgoing != NULL && outgoing->size == 3 && outgoing->buf[0] == l->rsp_addr &&
+		      outgoing->buf[1] == (busy ? RNR : RR) && outgoing->buf[2] == 35 &&
+		      l->busy == busy && l->peer_busy == (controls[control] == RNR) &&
+		      l->va == base && l->vs == ((base + (pending && !replay)) & 127) && l->vr == 17,
+		      "incorrect poll reply: caller=%u busy=%d recovery=%u pending=%u control=%u base=%u",
+		      caller, busy, recovery, pending, controls[control], base);
+		CHECK(!recovery || (l->rtx_count == 1 && l->retrain_poll && m->bit_timer == 1234),
+		      "peer poll completed or postponed our outstanding enquiry");
+		m->packer.hdlc.tx_complete(l, outgoing);
+		outgoing = m->packer.hdlc.get_tx_frame(l);
+		if (replay) {
+			CHECK(outgoing == retained && outgoing->size == 4 &&
+			      outgoing->buf[1] == base << 1 && outgoing->buf[3] == payload,
+			      "REJ poll did not retransmit the retained information");
+			m->packer.hdlc.tx_complete(l, outgoing);
+			outgoing = m->packer.hdlc.get_tx_frame(l);
+		}
+		CHECK(outgoing == NULL && lapm_source.offset == pending,
+		      "peer poll duplicated its reply or released information during our enquiry");
+		modem_delete(m);
+	}
+	memset(&lapm_source, 0, sizeof(lapm_source));
+	return true;
+}
+
 static bool test_lapm_peer_busy_timer(void)
 {
 	enum { LAPM_DATA_STATE = 2, RR = 1, RNR = 5 };
@@ -7583,6 +7660,7 @@ int main(void)
 		{ "LAPM acknowledgement window", test_lapm_acknowledgement_window },
 		{ "LAPM repeated sequence error poll", test_lapm_repeated_sequence_error_poll },
 		{ "LAPM peer-busy acknowledgement", test_lapm_peer_busy_acknowledgement },
+		{ "LAPM supervisory command polls", test_lapm_supervisory_polls },
 		{ "LAPM peer-busy timer", test_lapm_peer_busy_timer },
 		{ "LAPM idle supervision", test_lapm_idle_supervision },
 		{ "LAPM acknowledgement progress", test_lapm_acknowledgement_progress },

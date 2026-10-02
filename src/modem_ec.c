@@ -362,6 +362,12 @@ static int tx_super(struct lapm_state *l, u8 addr, u8 ctrl, u8 pf_mask)
 }
 
 
+/* V.42 8.4.6/8.4.7: status enquiries and replies reflect own-receiver busy. */
+static int tx_status(struct lapm_state *l, u8 addr, u8 pf_mask)
+{
+	return tx_super(l, addr, l->busy ? FRAME_S_RNR : FRAME_S_RR, pf_mask);
+}
+
 /* V.42 9.2: select within the interval between the request and the default. */
 static bool select_xid_parameter(
 	unsigned int proposed, unsigned int received, unsigned int default_value,
@@ -895,10 +901,7 @@ static void t401_timeout(struct modem *m)
 			TX_DISC(l);
 			break;
 		case LAPM_DATA:
-			if (l->busy)
-				TX_RNR(l,l->cmd_addr,1);
-			else
-				TX_RR(l,l->cmd_addr,1);
+			tx_status(l, l->cmd_addr, 1);
 			break;
 		}
 	}
@@ -1199,22 +1202,19 @@ static int rx_info(struct lapm_state *l, frame_t *f)
 
 static void rx_super_cmd(struct lapm_state *l, frame_t *f)
 {
-
-	/* note 8.4.7:
-	   if l->busy each RR,RNR,REJ with p=1 should be replied by RNR with f=1 */
+	/* V.42 8.4.7: answer a poll with our current receive status. */
 	switch(FRAME_CTRL(f)) {
 	case FRAME_S_RR:
-		/* clear peer_busy state */
+	case FRAME_S_REJ:
 		l->peer_busy = 0;
-		if (!ack_info(l,FRAME_NR(f)))
+		if (!ack_info(l, FRAME_NR(f)))
 			return;
-		/* p=1 may be used for status checking */
-		if (FRAME_S_PF(f) || !tx_info(l)) {
-			if (l->busy)
-				TX_RNR(l,FRAME_ADDR(f),FRAME_S_PF(f));
-			else
-				TX_RR(l,FRAME_ADDR(f),FRAME_S_PF(f));
+		if (FRAME_CTRL(f) == FRAME_S_REJ && !l->rtx_count) {
+			TIMER_STOP(l);
+			reject_info(l);
 		}
+		if (FRAME_S_PF(f) || !tx_info(l))
+			tx_status(l, FRAME_ADDR(f), FRAME_S_PF(f));
 		break;
 	case FRAME_S_RNR:
 		/* going to peer_busy state */
@@ -1227,30 +1227,8 @@ static void rx_super_cmd(struct lapm_state *l, frame_t *f)
 		 * but do not postpone an already transmitted status poll. */
 		if (!l->rtx_count)
 			TIMER_START(l);
-		/* if p=1 may be used for status checking ?? */
-		if (FRAME_S_PF(f)) {
-			if (l->busy)
-				TX_RNR(l,l->rsp_addr,FRAME_S_PF(f));
-			else
-				TX_RR(l,l->rsp_addr,FRAME_S_PF(f));
-		}
-		break;
-	case FRAME_S_REJ:
-		/* clear peer_busy state */
-		l->peer_busy = 0;
-		if (!ack_info(l,FRAME_NR(f)))
-			return;
-		if (!l->rtx_count) {
-			TIMER_STOP(l);
-			reject_info(l);
-		}
-		/* p=1 may be used for status checking */
-		if (FRAME_S_PF(f) || !tx_info(l)) {
-			if (l->busy)
-				TX_RNR(l,FRAME_ADDR(f),FRAME_S_PF(f));
-			else
-				TX_RR(l,FRAME_ADDR(f),FRAME_S_PF(f));
-		}
+		if (FRAME_S_PF(f))
+			tx_status(l, l->rsp_addr, FRAME_S_PF(f));
 		break;
 	}
 }
@@ -1932,8 +1910,7 @@ int modem_ec_resume_after_retrain(struct modem *m)
 	if (l->ctrl_list->next == l->tx_ctrl)
 		return -1;
 	l->peer_busy = 1;
-	if ((l->busy ? TX_RNR(l, l->cmd_addr, 1) :
-		      TX_RR(l, l->cmd_addr, 1)) != 0)
+	if (tx_status(l, l->cmd_addr, 1) != 0)
 		return -1;
 	T401_START(l);
 	/* The first poll is already queued; its F=1 response is solicited. */
