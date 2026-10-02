@@ -1005,7 +1005,7 @@ static int tx_info(struct lapm_state *l)
 		n = read_info_payload(l, f->buf + 3, capacity);
 		if (n < 0) { /* error */
 			EC_ERR("tx_info: get chars error.\n");
-			modem_update_status(l->modem,STATUS_EC_ERROR);
+			complete_link_release(l);
 			return 0;
 		}
 		if ( n == 0) { /* no data */
@@ -1066,14 +1066,6 @@ static bool ack_info(struct lapm_state *l, u8 nr)
 }
 
 
-static void fail_receive_data(struct lapm_state *l)
-{
-	l->rx_head = l->rx_count = 0;
-	l->busy = 0;
-	l->modem->packer_process = NULL;
-	modem_update_status(l->modem, STATUS_EC_ERROR);
-}
-
 /* Keep accepted input and pending codec output separate: NEED_OUTPUT can
  * persist after the final information octet has been consumed. */
 static int write_info_payload(struct lapm_state *l, const uint8_t *input,
@@ -1108,7 +1100,7 @@ static void push_rest_data(struct modem *m, int bits)
 		return;
 	int consumed = write_info_payload(l, l->rx_buf + l->rx_head, l->rx_count, &pending);
 	if (consumed < 0) {
-		fail_receive_data(l);
+		complete_link_release(l);
 		return;
 	}
 	l->rx_head += consumed;
@@ -1174,7 +1166,7 @@ static int rx_info(struct lapm_state *l, frame_t *f)
 	bool pending;
 	int ret = write_info_payload(l, f->buf + 3, payload_length, &pending);
 	if (ret < 0) {
-		modem_update_status(l->modem, STATUS_EC_ERROR);
+		complete_link_release(l);
 		return -1;
 	}
 	if (pending || l->modem->comp.count != 0) {

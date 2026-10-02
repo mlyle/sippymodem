@@ -5417,12 +5417,91 @@ static bool test_lapm_receive_backpressure(void)
 	lapm_sink.result = -1;
 	modem->packer.hdlc.rx_complete(
 		modem->packer.hdlc.framer, &incoming);
-	CHECK(lapm_sink.calls == 3 && modem->ec.lapm.vr == 1 &&
+	CHECK(lapm_sink.calls == 3 && modem->ec.lapm.state == 0 &&
+		      modem->ec.lapm.vr == 0 &&
 		      modem->ec.lapm.rx_count == 0 &&
 		      modem->packer_process == NULL,
-	      "failed LAPM sink advanced sequence or buffered invalid data");
+	      "failed LAPM sink retained a link or invalid output");
 	modem_ec_exit(modem);
 	modem_delete(modem);
+	return true;
+}
+
+static bool test_lapm_information_failure(void)
+{
+	enum { IDLE = 0, DATA = 2, ONLINE = 5 };
+	enum { RECEIVE, DEFERRED, TRANSMIT };
+	static const int failures[] = { -1, 2 };
+	struct modem_driver driver = {
+		.name = "LAPM information failure", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+
+	for (unsigned caller = 0; caller < 2; ++caller)
+	for (unsigned pending = 0; pending < 2; ++pending)
+	for (unsigned scenario = RECEIVE; scenario <= TRANSMIT; ++scenario)
+	for (size_t failure = 0; failure < ARRAY_LENGTH(failures); ++failure) {
+		struct modem *m = modem_create(&driver, driver.name);
+		struct lapm_host_read source = { .count = 1 };
+		CHECK(m != NULL, "information failure allocation failed");
+		m->cfg.ec = 1;
+		m->cfg.comp = 0;
+		m->cfg.ec_tx_info_size = 1;
+		m->cfg.ec_tx_win_size = 2;
+		CHECK(start_lapm_compression_fixture(m, caller), "information failure fixture failed");
+		struct lapm_state *l = &m->ec.lapm;
+		l->config = 0;
+		l->state = DATA;
+		m->state = ONLINE;
+		m->get_chars = counted_lapm_source;
+		m->put_chars = scripted_lapm_sink;
+		m->dev_data = &source;
+		memset(&lapm_sink, 0, sizeof(lapm_sink));
+		if (pending) {
+			if (scenario == TRANSMIT) {
+				frame_t *sent = m->packer.hdlc.get_tx_frame(l);
+				CHECK(sent != NULL && sent->size == 4, "information failure send fixture failed");
+				m->packer.hdlc.tx_complete(l, sent);
+			} else {
+				uint8_t ready[] = { l->rsp_addr, 1, 0 };
+				frame_t command = { .buf = ready, .count = sizeof(ready) };
+				m->packer.hdlc.rx_complete(l, &command);
+				CHECK(l->tx_info != l->info_list, "information failure queue fixture failed");
+			}
+		}
+		uint8_t wire[] = { l->rsp_addr, 0, 0, 'R' };
+		frame_t incoming = { .buf = wire, .count = sizeof(wire) };
+		if (scenario == TRANSMIT) {
+			source.count = failures[failure];
+			CHECK(m->packer.hdlc.get_tx_frame(l) == NULL, "invalid source returned information");
+		} else {
+			lapm_sink.result = scenario == DEFERRED ? 0 : failures[failure];
+			m->packer.hdlc.rx_complete(l, &incoming);
+			if (scenario == DEFERRED) {
+				CHECK(l->busy && l->rx_count == 1 && m->packer_process != NULL,
+				      "information failure deferred fixture failed");
+				frame_t *reply = m->packer.hdlc.get_tx_frame(l);
+				CHECK(reply != NULL && reply->buf[1] == 5, "deferred fixture RNR missing");
+				m->packer.hdlc.tx_complete(l, reply);
+				lapm_sink.result = failures[failure];
+				m->packer_process(m, 0);
+			}
+		}
+		CHECK(l->state == IDLE && l->va == 0 && l->vs == 0 && l->vr == 0 &&
+		      !l->busy && !l->peer_busy && !l->rx_count && !m->bit_timer &&
+		      m->packer_process == NULL && strcmp(modem_call_phase(m), "cleardown") == 0 &&
+		      m->packer.hdlc.get_tx_frame(l) == NULL,
+		      "fatal information error retained a link: role=%u pending=%u scenario=%u failure=%d",
+		      caller, pending, scenario, failures[failure]);
+		unsigned source_calls = source.calls, sink_calls = lapm_sink.calls;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(l->state == IDLE && l->vr == 0 && !l->rx_count && !l->busy &&
+		      m->packer_process == NULL && source.calls == source_calls &&
+		      lapm_sink.calls == sink_calls && m->packer.hdlc.get_tx_frame(l) == NULL,
+		      "late information reactivated a failed link");
+		modem_delete(m);
+	}
+	memset(&lapm_sink, 0, sizeof(lapm_sink));
 	return true;
 }
 
@@ -7644,6 +7723,7 @@ int main(void)
 		{ "LAPM directional preamble", test_lapm_directional_preamble },
 		{ "LAPM peer-flag preamble", test_lapm_peer_flag_preamble },
 		{ "LAPM receive backpressure", test_lapm_receive_backpressure },
+		{ "LAPM fatal information failure", test_lapm_information_failure },
 		{ "LAPM receive frame boundaries", test_lapm_receive_frame_boundaries },
 		{ "LAPM receive information limit", test_lapm_receive_information_limit },
 		{ "LAPM transmit information limit", test_lapm_transmit_information_limit },
