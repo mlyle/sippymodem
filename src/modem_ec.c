@@ -216,7 +216,7 @@ static bool v44_offer_has_direction(
 	return offer->transmit.enabled || offer->receive.enabled;
 }
 
-static int v44_read_characters(
+static int read_host_characters(
 	void *context, uint8_t *output, size_t output_capacity)
 {
 	struct lapm_state *l = context;
@@ -226,8 +226,9 @@ static int v44_read_characters(
 		return -1;
 	if (l->modem->get_chars == NULL)
 		return 0;
-	return l->modem->get_chars(
+	int count = l->modem->get_chars(
 		l->modem, (char *)output, (int)output_capacity);
+	return count >= 0 && (size_t)count <= output_capacity ? count : -1;
 }
 
 static int v44_write_characters(
@@ -265,7 +266,7 @@ static struct v44_character_path *create_v44_path(
 			offer->receive.parameters.max_string_length :
 			LAPM_MAX_INFO_SIZE,
 		.context = l,
-		.read = v44_read_characters,
+		.read = read_host_characters,
 		.write = v44_write_characters,
 	};
 	return v44_character_path_create(&config);
@@ -977,10 +978,7 @@ static int read_info_payload(
 			return -1;
 		return (int)output_length;
 	}
-	if (l->modem->get_chars == NULL || output_capacity > INT_MAX)
-		return 0;
-	return l->modem->get_chars(
-		l->modem, (char *)output, (int)output_capacity);
+	return read_host_characters(l, output, output_capacity);
 }
 
 static int tx_info(struct lapm_state *l)
@@ -998,7 +996,10 @@ static int tx_info(struct lapm_state *l)
 			return 0;
 		}
 		f = l->info_list;
-		n = read_info_payload(l, f->buf + 3, l->tx_info_size);
+		/* N401 cannot grant the host more than the retained frame owns. */
+		size_t capacity = l->tx_info_size < LAPM_MAX_INFO_SIZE ?
+			l->tx_info_size : LAPM_MAX_INFO_SIZE;
+		n = read_info_payload(l, f->buf + 3, capacity);
 		if (n < 0) { /* error */
 			EC_ERR("tx_info: get chars error.\n");
 			modem_update_status(l->modem,STATUS_EC_ERROR);

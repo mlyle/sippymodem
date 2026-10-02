@@ -4381,6 +4381,78 @@ static bool test_lapm_receive_frame_boundaries(void)
 	return true;
 }
 
+struct lapm_host_read {
+	int count;
+	int capacity;
+	unsigned calls;
+};
+
+static int counted_lapm_source(struct modem *modem, char *output, int capacity)
+{
+	struct lapm_host_read *source = modem->dev_data;
+
+	source->capacity = capacity;
+	source->calls++;
+	/* Even a source with a bad return count writes only the offered buffer. */
+	if (source->count > 0)
+		memset(output, 'X', (size_t)(source->count < capacity ? source->count : capacity));
+	return source->count;
+}
+
+static bool test_lapm_transmit_information_limit(void)
+{
+	struct modem_driver driver = {
+		.name = "LAPM host source limit", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	static const unsigned limits[] = { 8, LAPM_MAX_INFO_SIZE, LAPM_MAX_INFO_SIZE + 1u, UINT_MAX };
+
+	for (size_t limit = 0; limit < ARRAY_LENGTH(limits); ++limit) {
+		int capacity = limits[limit] < LAPM_MAX_INFO_SIZE ? (int)limits[limit] : LAPM_MAX_INFO_SIZE;
+		const int counts[] = { -1, 0, 1, capacity, capacity + 1, INT_MAX };
+
+		for (size_t index = 0; index < ARRAY_LENGTH(counts); ++index) {
+			struct lapm_host_read source = { .count = counts[index] };
+			struct modem *m = modem_create(&driver, driver.name);
+
+			CHECK(m != NULL, "host source allocation failed");
+			m->cfg.comp = 0;
+			CHECK(modem_ec_init(m) == 0, "host source initialization failed");
+			modem_ec_start(m);
+			struct lapm_state *l = &m->ec.lapm;
+			l->state = 2;
+			l->tx_info_size = limits[limit];
+			m->state = 5;
+			m->dev_data = &source;
+			m->get_chars = counted_lapm_source;
+			frame_t *available = l->info_list;
+			int saved_size = available->size;
+			frame_t *outgoing = m->packer.hdlc.get_tx_frame(l);
+			bool invalid = source.count < 0 || source.count > capacity;
+
+			CHECK(source.calls == 1 && source.capacity == capacity,
+			      "host buffer exceeded the retained information limit: limit=%u capacity=%d",
+			      limits[limit], source.capacity);
+			if (invalid || source.count == 0) {
+				CHECK(outgoing == NULL && l->info_list == available && l->tx_info == available &&
+				      l->vs == 0 && available->size == saved_size &&
+				      strcmp(modem_call_phase(m), invalid ? "cleardown" : "online") == 0,
+				      "invalid or empty host read queued information: limit=%u count=%d",
+				      limits[limit], source.count);
+			} else {
+				CHECK(outgoing == available && outgoing->size == source.count + 3 &&
+				      l->info_list == available->next && l->tx_info == available->next && l->vs == 1,
+				      "legal host read did not queue exactly its payload");
+				for (int byte = 3; byte < outgoing->size; ++byte)
+					CHECK(outgoing->buf[byte] == 'X', "legal host payload changed");
+			}
+			modem_ec_exit(m);
+			modem_delete(m);
+		}
+	}
+	return true;
+}
+
 static bool test_lapm_receive_information_limit(void)
 {
 	struct modem_driver driver = {
@@ -7392,6 +7464,7 @@ int main(void)
 		{ "LAPM receive backpressure", test_lapm_receive_backpressure },
 		{ "LAPM receive frame boundaries", test_lapm_receive_frame_boundaries },
 		{ "LAPM receive information limit", test_lapm_receive_information_limit },
+		{ "LAPM transmit information limit", test_lapm_transmit_information_limit },
 		{ "LAPM peer-ready DM establishment", test_lapm_peer_ready_dm },
 		{ "LAPM SABME establishment readiness", test_lapm_sabme_readiness },
 		{ "LAPM defaults without negotiation", test_lapm_default_establishment },
