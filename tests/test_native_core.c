@@ -6562,7 +6562,7 @@ static bool test_lapm_idle_supervision(void)
 		      modem_ec_take_retrain_request(m) && !modem_ec_take_retrain_request(m),
 		      "unanswered idle polls did not request one physical recovery");
 		CHECK(modem_ec_resume_after_retrain(m) == 0 && l->retrain_poll &&
-		      l->peer_busy && l->rtx_count == 1 && l->stalled_retrain,
+		      l->peer_busy && l->rtx_count == 2 && l->stalled_retrain,
 		      "idle retrain did not resynchronize its outstanding enquiry");
 		wire[0] = l->cmd_addr;
 		wire[2] = 1; /* RR response F=1 */
@@ -6720,6 +6720,122 @@ static bool test_lapm_acknowledgement_progress(void)
 		modem_delete(m);
 	}
 	memset(&lapm_source, 0, sizeof(lapm_source));
+	return true;
+}
+
+static bool test_lapm_retrain_recovery_budget(void)
+{
+	struct modem_driver driver = {
+		.name = "LAPM retrain recovery budget", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+
+	for (unsigned caller = 0; caller < 2; ++caller)
+	for (unsigned information = 0; information < 2; ++information)
+	for (unsigned first_retry = !information; first_retry <= 5; ++first_retry)
+	for (unsigned full = 0; full < (first_retry ? 2u : 1u); ++full)
+	for (unsigned answered = 0; answered < (first_retry == 5 ? 2u : 1u); ++answered) {
+		struct modem *m = modem_create(&driver, driver.name);
+		struct lapm_host_read source = { .count = 1 };
+		uint8_t wire[] = { 0, 0x0f }, bit;
+		frame_t incoming = { .buf = wire, .count = sizeof(wire) };
+		frame_t *outgoing;
+		unsigned enquiries = first_retry;
+
+		CHECK(m != NULL, "retrain budget allocation failed");
+		m->caller = caller;
+		m->cfg.ec = 1;
+		m->cfg.comp = 0;
+		m->rx_rate = m->tx_rate = 4800;
+		m->state = 4;
+		CHECK(modem_ec_init(m) == 0, "retrain budget initialization failed");
+		m->caller = 0;
+		modem_update_status(m, STATUS_PACK_LINK);
+		m->caller = caller;
+		struct lapm_state *l = &m->ec.lapm;
+		wire[0] = l->cmd_addr;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		outgoing = m->packer.hdlc.get_tx_frame(l);
+		CHECK(outgoing != NULL && outgoing->buf[1] == 0x7f,
+		      "retrain budget fixture did not send SABME");
+		m->packer.hdlc.tx_complete(l, outgoing);
+		wire[1] = 0x73;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(l->state == 2 && m->state == 5, "retrain budget fixture did not connect");
+		if (information) {
+			m->dev_data = &source;
+			m->get_chars = counted_lapm_source;
+			outgoing = m->packer.hdlc.get_tx_frame(l);
+			CHECK(outgoing != NULL && outgoing->size == 4 && outgoing->buf[1] == 0,
+			      "retrain budget fixture did not send information");
+			m->packer.hdlc.tx_complete(l, outgoing);
+		}
+		m->get_chars = NULL;
+		for (unsigned retry = 1; retry <= first_retry; ++retry) {
+			m->bit_timer_func(m);
+			if (retry == first_retry) {
+				CHECK(modem_get_bits(m, 1, &bit, 1) == 1 &&
+				      m->packer.hdlc.tx_frame != NULL,
+				      "retrain budget fixture did not interrupt a wire poll");
+			} else {
+				outgoing = m->packer.hdlc.get_tx_frame(l);
+				CHECK(outgoing != NULL && outgoing->buf[1] == 1 && outgoing->buf[2] == 1,
+				      "retrain budget fixture did not send its enquiry");
+				m->packer.hdlc.tx_complete(l, outgoing);
+			}
+		}
+		if (full)
+			CHECK(fill_lapm_control_queue(m), "retrain budget control queue did not fill");
+		frame_t *queued = l->ctrl_list, *next = l->tx_ctrl, *retained = l->sent_info;
+		void (*timeout)(struct modem *) = m->bit_timer_func;
+		m->bit_timer = 1;
+		for (unsigned resume = 0; resume < 3; ++resume) {
+			CHECK(modem_ec_resume_after_retrain(m) == 0 &&
+			      m->bit_timer == 1 && m->bit_timer_func == timeout &&
+			      l->rtx_count == (int)(first_retry ? first_retry : 1) &&
+			      l->retrain_poll && l->peer_busy && l->state == 2 && m->state == 5 &&
+			      l->sent_info == retained && l->va == 0 && l->vs == information &&
+			      source.calls == information && m->packer.hdlc.tx_frame == NULL &&
+			      (!first_retry || (l->ctrl_list == queued && l->tx_ctrl == next)),
+			      "retrain renewed recovery or lost the retained window: role %u info %u retry %u full %u",
+			      caller, information, first_retry, full);
+		}
+		/* A ready command releases peer flow control without completing our
+		 * enquiry. Its retained count must not trigger another physical retrain. */
+		uint8_t ready[] = { l->rsp_addr, 1, 0 };
+		frame_t command = { .buf = ready, .count = sizeof(ready) };
+		m->packer.hdlc.rx_complete(l, &command);
+		CHECK(!l->peer_busy && l->retrain_poll && !modem_ec_take_retrain_request(m),
+		      "unfinished post-retrain enquiry requested another physical recovery");
+		if (answered) {
+			uint8_t final[] = { l->cmd_addr, 1, (uint8_t)((information << 1) | 1) };
+			frame_t response = { .buf = final, .count = sizeof(final) };
+			m->packer.hdlc.rx_complete(l, &response);
+			CHECK(l->state == 2 && m->state == 5 && !l->rtx_count && !l->retrain_poll &&
+			      !l->peer_busy && l->va == l->vs && m->bit_timer == 96000 &&
+			      m->bit_timer_func != timeout && source.calls == information,
+			      "retrain rejected the last permitted final response");
+			CHECK(modem_stop_now(m) == 0, "retrain budget cleanup failed");
+			modem_delete(m);
+			continue;
+		}
+		for (unsigned expiry = 0; l->state == 2 && expiry < 6; ++expiry) {
+			while ((outgoing = m->packer.hdlc.get_tx_frame(l)) != NULL) {
+				CHECK(outgoing->size == 3 && outgoing->buf[1] == 1 && outgoing->buf[2] <= 1 &&
+				      (outgoing->buf[0] == l->rsp_addr || outgoing->buf[2] == 1),
+				      "retrain recovery queued an unexpected frame");
+				enquiries += outgoing->buf[0] == l->cmd_addr;
+				m->packer.hdlc.tx_complete(l, outgoing);
+			}
+			m->bit_timer_func(m);
+		}
+		CHECK(enquiries == 5 && l->state == 0 && !m->bit_timer &&
+		      m->packer_process == NULL && source.calls == information &&
+		      strcmp(modem_call_phase(m), "cleardown") == 0,
+		      "retrain extended the five-enquiry recovery budget: role %u info %u retry %u full %u enquiries %u",
+		      caller, information, first_retry, full, enquiries);
+		modem_delete(m);
+	}
 	return true;
 }
 
@@ -8599,6 +8715,7 @@ int main(void)
 		{ "LAPM supervisory command polls", test_lapm_supervisory_polls },
 		{ "LAPM peer-busy timer", test_lapm_peer_busy_timer },
 		{ "LAPM idle supervision", test_lapm_idle_supervision },
+		{ "LAPM retrain recovery budget", test_lapm_retrain_recovery_budget },
 		{ "LAPM acknowledgement progress", test_lapm_acknowledgement_progress },
 		{ "bounded LAPM stalled retrain", test_lapm_stalled_retrain },
 		{ "LAPM retrain preserves link state",

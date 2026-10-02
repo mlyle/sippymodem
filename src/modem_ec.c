@@ -1793,6 +1793,7 @@ bool modem_ec_take_retrain_request(struct modem *m)
 		return false;
 	l = &m->ec.lapm;
 	if (l->state != LAPM_DATA || l->config || l->busy || l->peer_busy ||
+	    l->retrain_poll ||
 	    m->bit_timer <= 0 || m->bit_timer_func != t401_timeout ||
 	    (l->rtx_count < LAPM_RETRAIN_POLLS &&
 	     l->stalled_polls < LAPM_RETRAIN_POLLS) ||
@@ -1843,18 +1844,20 @@ int modem_ec_resume_after_retrain(struct modem *m)
 	 * receive sequence uncertain only while flow control or unacknowledged
 	 * information or a status enquiry remains. A clean retained window can
 	 * continue directly. */
-	if (l->retrain_poll) {
+	/* Continue an outstanding enquiry under its retained T401/N400. */
+	if (l->retrain_poll || l->rtx_count) {
 		l->peer_busy = 1;
+		l->retrain_poll = 1;
 		return 0;
 	}
 	if (!l->busy && !l->peer_busy && l->va == l->vs && !l->rtx_count)
 		return 0;
-	if (l->ctrl_list->next == l->tx_ctrl)
-		return -1;
-	l->peer_busy = 1;
 	if (tx_status(l, l->cmd_addr, 1) != 0)
 		return -1;
-	T401_START(l);
+	l->peer_busy = 1;
+	/* V.42 7.10.2/7.11: resume an existing T401 without renewing it. */
+	if (m->bit_timer <= 0 || m->bit_timer_func != t401_timeout)
+		T401_START(l);
 	/* The first poll is already queued; its F=1 response is solicited. */
 	l->rtx_count = 1;
 	l->retrain_poll = 1;
