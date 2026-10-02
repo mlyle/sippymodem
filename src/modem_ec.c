@@ -203,7 +203,7 @@ static void complete_link_release(struct lapm_state *l);
 static void start_idle_timer(struct lapm_state *l);
 static void t403_timeout(struct modem *m);
 static int lapm_disconnect(struct lapm_state *l);
-static void reset_lapm_sequence(struct lapm_state *l);
+static void reset_lapm_link(struct lapm_state *l);
 
 /*
  * service functions
@@ -1334,7 +1334,8 @@ static void rx_unnum_cmd(struct lapm_state *l, frame_t *f)
 		else { /* going to disconnected state,
 			  discard unacked I frames, reset all  */
 			l->state = LAPM_IDLE;
-			reset_lapm_sequence(l);
+			l->ctrl_list = l->tx_ctrl;
+			reset_lapm_link(l);
 			T401_STOP(l);
 			if (TX_UA(l,FRAME_U_PF(f)) != 0) {
 				complete_link_release(l);
@@ -1367,10 +1368,7 @@ static bool complete_link_establishment(struct lapm_state *l)
 static void complete_link_release(struct lapm_state *l)
 {
 	l->state = LAPM_IDLE;
-	l->config = 0;
-	reset_lapm_sequence(l);
-	l->rx_head = l->rx_count = 0;
-	l->modem->packer_process = NULL;
+	reset_lapm_link(l);
 	T401_STOP(l);
 	modem_update_status(l->modem, STATUS_EC_RELEASE);
 }
@@ -1616,9 +1614,7 @@ static int reinitialize_for_link_establishment(struct lapm_state *l)
 	/* V.42bis 5.6: a new LAPM sequence initializes both compression histories. */
 	if (l->modem->cfg.comp && modem_comp_reinitialize(l->modem) != 0)
 		return -1;
-	l->rx_head = l->rx_count = 0;
-	l->modem->packer_process = NULL;
-	reset_lapm_sequence(l);
+	reset_lapm_link(l);
 	l->accept_sabme_retry = !l->modem->caller;
 	return 0;
 }
@@ -1660,8 +1656,7 @@ static int lapm_disconnect(struct lapm_state *l)
 	/* Discard queued control traffic without reusing the frame that HDLC
 	 * may still be serializing. DISC takes the next available wire slot. */
 	l->ctrl_list = l->tx_ctrl;
-	l->config = 0;
-	l->rtx_count = 0;
+	reset_lapm_link(l);
 	l->state = LAPM_DISC;
 	TX_DISC(l);
 	/* start T401 (and not T403) */
@@ -1670,8 +1665,11 @@ static int lapm_disconnect(struct lapm_state *l)
 }
 
 
-static void reset_lapm_sequence(struct lapm_state *l)
+/* Discard stream work and recovery state. The caller owns control slots
+ * and the frame already borrowed by HDLC. */
+static void reset_lapm_link(struct lapm_state *l)
 {
+	l->config = 0;
 	l->busy = 0;
 	l->peer_busy = 0;
 	l->retrain_poll = 0;
@@ -1682,14 +1680,11 @@ static void reset_lapm_sequence(struct lapm_state *l)
 	l->va = 0;
 	l->vr = 0;
 	l->rtx_count = 0;
-	/* discard pended data */
-	// l->rx_head = l->rx_count = 0;
-	/* discard info frames */
+	l->rx_head = l->rx_count = 0;
+	l->modem->packer_process = NULL;
 	l->sent_info = l->info_list;
 	l->tx_info   = l->info_list;
 	l->stalled_polls = 0;
-	/* discard ctrl frames */
-	// TBD ???
 }
 
 /* fixme: optimize mem usage */
@@ -1759,7 +1754,6 @@ static int lapm_init(struct lapm_state *l, struct modem *m)
 		return -1;
 
 	alloc_frames(l);
-	reset_lapm_sequence(l);
 	return 0;
 }
 
@@ -1801,10 +1795,8 @@ void modem_ec_stop(struct modem *m)
 	struct hdlc_state *h = &m->packer.hdlc;
 	struct lapm_state *l = &m->ec.lapm;
 	EC_DBG("modem_ec_stop...\n");
-	m->bit_timer = 0;
 	h->tx_preamble_flags = 0;
 	h->tx_preamble_complete = NULL;
-	m->packer_process = NULL;
 	lapm_disconnect(l);
 }
 

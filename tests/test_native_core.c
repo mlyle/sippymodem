@@ -5080,6 +5080,139 @@ static bool test_lapm_unnumbered_responses(void)
 	return true;
 }
 
+static bool test_lapm_orderly_release(void)
+{
+	enum { IDLE = 0, DISC = 3, EC_DISC = 7, DP_DISC = 9 };
+	struct modem_driver driver = {
+		.name = "LAPM orderly release", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+
+	for (unsigned caller = 0; caller < 2; ++caller)
+	for (unsigned local = 0; local < 2; ++local)
+	for (unsigned poll = 0; poll < (local ? 1u : 2u); ++poll)
+	for (unsigned pending = 0; pending < 4; ++pending)
+	for (unsigned borrowed = 0; borrowed < 2; ++borrowed)
+	for (unsigned pressure = 0; pressure < 2; ++pressure) {
+		struct modem *m = modem_create(&driver, driver.name);
+		struct lapm_host_read source = { .count = 1 };
+		uint8_t wire[] = { 0, 0x7f, 0, 'a', 'b', 'c' }, bit;
+		uint8_t active_bytes[LAPM_MAX_INFO_SIZE + 3];
+		frame_t incoming = { .buf = wire, .count = 2 }, *active = NULL, *reply;
+		int active_size = 0, active_count = 0;
+
+		CHECK(m != NULL, "orderly release allocation failed");
+		m->caller = caller;
+		m->cfg.ec = 1;
+		m->cfg.comp = 0;
+		m->tx_rate = m->rx_rate = 4800;
+		CHECK(modem_ec_init(m) == 0, "orderly release initialization failed");
+		struct lapm_state *l = &m->ec.lapm;
+		modem_hdlc_start(m);
+		m->get_bits = modem_hdlc_get_bits;
+		m->put_bits = modem_hdlc_put_bits;
+		m->caller = 0;
+		modem_ec_start(m);
+		m->caller = caller;
+		m->state = 4;
+		wire[0] = l->rsp_addr;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		reply = m->packer.hdlc.get_tx_frame(l);
+		CHECK(reply != NULL && reply->buf[1] == 0x73 && l->state == 2 && m->state == 5,
+		      "orderly release fixture did not establish LAPM");
+		m->packer.hdlc.tx_complete(l, reply);
+		m->dev_data = &source;
+		m->get_chars = counted_lapm_source;
+		m->put_chars = scripted_lapm_sink;
+		memset(&lapm_sink, 0, sizeof(lapm_sink));
+		if (pending & 1) {
+			reply = m->packer.hdlc.get_tx_frame(l);
+			CHECK(reply != NULL && !(reply->buf[1] & 1) && l->vs == 1,
+			      "orderly release fixture did not retain information");
+			m->packer.hdlc.tx_complete(l, reply);
+		}
+		if (pending & 2) {
+			wire[1] = 0;
+			incoming.count = sizeof(wire);
+			m->packer.hdlc.rx_complete(l, &incoming);
+			CHECK(l->rx_count == 3 && l->busy && m->packer_process != NULL,
+			      "orderly release fixture did not defer receive work");
+		}
+		/* A polled status reply supplies a real borrowed wire frame. */
+		wire[1] = 1;
+		wire[2] = 1;
+		incoming.count = 3;
+		if (borrowed) {
+			m->packer.hdlc.rx_complete(l, &incoming);
+			CHECK(modem_hdlc_get_bits(m, 1, &bit, 1) == 1 &&
+			      m->packer.hdlc.tx_frame != NULL,
+			      "orderly release fixture did not borrow a frame");
+			active = m->packer.hdlc.tx_frame;
+			active_size = active->size;
+			active_count = active->count;
+			CHECK(active_size > 0 && active_size <= (int)sizeof(active_bytes),
+			      "borrowed release fixture exceeded snapshot capacity");
+			memcpy(active_bytes, active->buf, (size_t)active_size);
+		}
+		if (pressure) {
+			/* Fill every available slot without attempting overflow. */
+			for (unsigned i = 0; i < LAPM_CTRL_FRAMES - 1; ++i)
+				if (l->ctrl_list->next != l->tx_ctrl)
+					m->packer.hdlc.rx_complete(l, &incoming);
+			CHECK(l->ctrl_list->next == l->tx_ctrl && l->state == 2,
+			      "orderly release fixture did not fill its control queue");
+		}
+		m->bit_timer = 17;
+		if (local) {
+			modem_hangup(m);
+		} else {
+			wire[1] = 0x43 | poll << 4;
+			incoming.count = 2;
+			m->packer.hdlc.rx_complete(l, &incoming);
+		}
+		CHECK(l->state == (local ? DISC : IDLE) && !l->config &&
+		      !l->busy && !l->peer_busy && !l->vs && !l->va && !l->vr && !l->rx_count &&
+		      !l->rx_head && !l->rtx_count && l->sent_info == l->info_list &&
+		      l->tx_info == l->info_list && m->packer_process == NULL &&
+		      m->state == (local ? EC_DISC : DP_DISC) &&
+		      (local ? m->bit_timer > 17 : m->bit_timer == 0),
+		      "release retained stream work: role %u local %u P %u pending %u borrowed %u pressure %u",
+		      caller, local, poll, pending, borrowed, pressure);
+		if (active != NULL) {
+			CHECK(m->packer.hdlc.tx_frame == active && active->size == active_size &&
+			      active->count == active_count &&
+			      memcmp(active->buf, active_bytes, (size_t)active_size) == 0,
+			      "release overwrote HDLC's borrowed frame");
+			for (unsigned i = 0; i < (LAPM_MAX_INFO_SIZE + 8) * 10 &&
+			     m->packer.hdlc.tx_frame != NULL; ++i)
+				CHECK(modem_get_bits(m, 1, &bit, 1) == 1,
+				      "release could not finish its borrowed frame");
+			CHECK(m->packer.hdlc.tx_frame == NULL,
+			      "borrowed release frame did not finish within its bound");
+		}
+		reply = m->packer.hdlc.get_tx_frame(l);
+		CHECK(reply != NULL && reply->size == 2 &&
+		      reply->buf[0] == (local ? l->cmd_addr : l->rsp_addr) &&
+		      reply->buf[1] == (local ? 0x53 : (0x63 | poll << 4)),
+		      "release did not prioritize DISC/UA: role %u local %u P %u pending %u borrowed %u pressure %u",
+		      caller, local, poll, pending, borrowed, pressure);
+		m->packer.hdlc.tx_complete(l, reply);
+		unsigned source_calls = source.calls, sink_calls = lapm_sink.calls;
+		int remaining = m->bit_timer;
+		unsigned long deadline = m->sample_timer;
+		wire[1] = wire[2] = 0;
+		incoming.count = sizeof(wire);
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(m->packer.hdlc.get_tx_frame(l) == NULL && !l->rx_count && !l->vr &&
+		      m->packer_process == NULL && source.calls == source_calls &&
+		      lapm_sink.calls == sink_calls && m->bit_timer == remaining &&
+		      m->sample_timer == deadline,
+		      "late information resumed or delayed orderly release");
+		modem_delete(m);
+	}
+	return true;
+}
+
 static bool test_lapm_disconnected_disc(void)
 {
 	struct modem_driver driver = {
@@ -7993,6 +8126,7 @@ int main(void)
 		{ "LAPM connected SABME", test_lapm_connected_sabme },
 		{ "LAPM unnumbered response states", test_lapm_unnumbered_responses },
 		{ "LAPM disconnected DISC response", test_lapm_disconnected_disc },
+		{ "LAPM orderly release discards stream work", test_lapm_orderly_release },
 		{ "LAPM mode command collisions", test_lapm_mode_command_collisions },
 		{ "LAPM numbered frame rejection", test_lapm_numbered_frame_rejection },
 		{ "LAPM unnumbered frame rejection", test_lapm_unnumbered_frame_rejection },
