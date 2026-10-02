@@ -2,6 +2,7 @@
 
 #include <modem.h>
 #include <modem_param.h>
+#include <modem_timer.h>
 #include <datapumps.h>
 #include <fsk.h>
 #include <single_tone.h>
@@ -603,7 +604,9 @@ enum ath0_test_completion {
 	HANGUP_WITHOUT_COMMAND,
 };
 
-static bool run_ath0_cleardown(enum ath0_test_completion completion, enum g711_law law)
+static bool run_ath0_cleardown(
+	enum ath0_test_completion completion, enum g711_law law,
+	unsigned long initial_count)
 {
 	enum {
 		TEST_STATE_MODEM_IDLE = 1,
@@ -678,6 +681,7 @@ static bool run_ath0_cleardown(enum ath0_test_completion completion, enum g711_l
 	modem->state = TEST_STATE_COMMAND_ONLINE;
 	modem->command = 1;
 	modem->hook = MODEM_HOOK_OFF;
+	modem->count = initial_count;
 	if (peer) {
 		uint8_t serialized[32];
 		response_bytes[0] = modem->ec.lapm.rsp_addr;
@@ -686,7 +690,7 @@ static bool run_ath0_cleardown(enum ath0_test_completion completion, enum g711_l
 		CHECK(modem->state == TEST_STATE_DP_DISC && modem->ec.lapm.state == 0 &&
 		      modem->get_bits == modem_hdlc_get_bits && modem->put_bits == modem_hdlc_put_bits &&
 		      retrain_dp.hangup_calls == 0 && hangup_driver_stop_calls == 0 &&
-		      modem->sample_timer > modem->count &&
+		      time_before(modem->count, modem->sample_timer) &&
 		      modem->ec.lapm.tx_ctrl != modem->ec.lapm.ctrl_list &&
 		      modem->ec.lapm.tx_ctrl->buf[1] == UA_CONTROL,
 		      "peer DISC lost its queued UA or prematurely cleared the modem");
@@ -723,7 +727,7 @@ static bool run_ath0_cleardown(enum ath0_test_completion completion, enum g711_l
 		      retrain_dp.hangup_calls == 0 &&
 		      hangup_driver_stop_calls == 0 &&
 		      modem->hook == MODEM_HOOK_OFF &&
-		      modem->sample_timer > modem->count,
+		      time_before(modem->count, modem->sample_timer),
 	      "ATH0 did not wait for LAPM disconnect");
 	CHECK(read(result_pipe[0], result_text, sizeof(result_text)) == -1 &&
 	      errno == EAGAIN,
@@ -831,7 +835,7 @@ static bool run_ath0_cleardown(enum ath0_test_completion completion, enum g711_l
 		      retrain_dp.hangup_calls == 1 &&
 		      hangup_driver_stop_calls == 0 &&
 		      modem->hook == MODEM_HOOK_OFF &&
-		      modem->sample_timer > modem->count,
+		      time_before(modem->count, modem->sample_timer),
 	      "LAPM UA did not begin datapump cleardown");
 wait_datapump:
 	modem_process(modem, receive, transmit, ARRAY_LENGTH(receive));
@@ -895,10 +899,21 @@ stopped:
 
 static bool test_ath0_drains_link_cleardown(void)
 {
-	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
-		for (enum ath0_test_completion completion = ATH0_ACKNOWLEDGED;
-		     completion <= HANGUP_WITHOUT_COMMAND; ++completion)
-			CHECK(run_ath0_cleardown(completion, law), "ATH0 law %u case %u failed", law, completion);
+	const unsigned long initial_counts[] = {
+		0, ULONG_MAX - MODEM_FRAG / 2,
+		/* LAPM's 1.5-second disconnect deadline is exactly zero. */
+		ULONG_MAX - MODEM_RATE * 3 / 2 + 1,
+		/* The datapump's 3-second disconnect deadline is exactly zero. */
+		ULONG_MAX - MODEM_RATE * 3 + 1,
+	};
+
+	for (size_t i = 0; i < ARRAY_LENGTH(initial_counts); ++i)
+		for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+			for (enum ath0_test_completion completion = ATH0_ACKNOWLEDGED;
+			     completion <= HANGUP_WITHOUT_COMMAND; ++completion)
+				CHECK(run_ath0_cleardown(completion, law, initial_counts[i]),
+				      "ATH0 law %u case %u count %lu failed",
+				      law, completion, initial_counts[i]);
 	return true;
 }
 

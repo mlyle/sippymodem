@@ -537,10 +537,7 @@ static void schedule_modem_timer(
 	struct modem *m, void (*function)(struct modem *),
 	unsigned int delay_samples)
 {
-	unsigned long maximum_delay = ULONG_MAX - m->count;
-
-	if ((unsigned long)delay_samples > maximum_delay)
-		delay_samples = (unsigned int)maximum_delay;
+	/* These short delays may cross the unsigned sample counter boundary. */
 	m->sample_timer_func = function;
 	m->sample_timer = m->count + delay_samples;
 }
@@ -1016,11 +1013,11 @@ static void modem_process_frame(struct modem *m, enum g711_law law,
 	else  /* mute output */
 		memset(out,0,count<<MFMT_SHIFT(m->format));
 	m->count+=count;
-	if( m->sample_timer && m->count >= m->sample_timer ) {
+	if (m->sample_timer_func != NULL && time_after(m->count, m->sample_timer)) {
 		void (*f)(struct modem *) = m->sample_timer_func ;
                 m->sample_timer = 0;
 		m->sample_timer_func = NULL;
-		if(f) f(m);
+		f(m);
 	}
 }
 
