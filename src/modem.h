@@ -232,6 +232,12 @@ typedef struct hdlc_frame {
 #define LAPM_INFO_FRAMES    LAPM_MAX_WIN_SIZE + 1 /* number of info frames */
 #define LAPM_CTRL_FRAMES      8  /* number of ctrl frames */
 
+/* Retain the HDLC header and payload in one owned byte buffer. */
+struct lapm_frame {
+	frame_t frame;
+	u8 data[3 + LAPM_MAX_INFO_SIZE];
+};
+
 /* lapm state */
 struct lapm_state {
         /* modem link */
@@ -269,17 +275,8 @@ struct lapm_state {
         int rx_count;
         int rx_head;
         u8  rx_buf[LAPM_MAX_INFO_SIZE];
-        /* temporary: frames bufs */
-        struct {
-                frame_t frame;
-                u8 ctrl[4];
-                u8 info[LAPM_MAX_INFO_SIZE];
-        } info_buf[LAPM_INFO_FRAMES];
-        struct {
-                frame_t frame;
-                u8 ctrl[4];
-                u8 info[LAPM_MAX_INFO_SIZE];
-        } ctrl_buf[LAPM_CTRL_FRAMES];
+	struct lapm_frame info_buf[LAPM_INFO_FRAMES];
+	struct lapm_frame ctrl_buf[LAPM_CTRL_FRAMES];
 };
 
 

@@ -1668,34 +1668,12 @@ static void reset_lapm_link(struct lapm_state *l)
 	l->stalled_polls = 0;
 }
 
-/* fixme: optimize mem usage */
-static int alloc_frames(struct lapm_state *l)
+static void initialize_frame_ring(struct lapm_frame *frames, size_t count)
 {
-#define arrsize(a) (sizeof(a)/sizeof((a)[0]))
-	frame_t *f;
-	size_t i;
-	EC_DBG("alloc_frames: lapm size %zu (info %zu, ctrl %zu).\n",
-	       sizeof(*l), sizeof(l->info_buf), sizeof(l->ctrl_buf));
-	/* init info list */
-	l->info_list = &l->info_buf[0].frame;
-	for (i=0;i<arrsize(l->info_buf);i++) {
-		f = &l->info_buf[i].frame;
-		f->next = &l->info_buf[(i + 1) % arrsize(l->info_buf)].frame;
-		f->buf  = l->info_buf[i].ctrl;
-		f->size = sizeof(l->info_buf[0]) - sizeof(frame_t);
+	for (size_t i = 0; i < count; ++i) {
+		frames[i].frame.next = &frames[(i + 1) % count].frame;
+		frames[i].frame.buf = frames[i].data;
 	}
-	l->tx_info   = l->info_list;
-	l->sent_info = l->info_list;
-	/* init  ctrl list */
-	l->ctrl_list = &l->ctrl_buf[0].frame;
-	for (i=0;i<arrsize(l->ctrl_buf);i++) {
-		f = &l->ctrl_buf[i].frame;
-		f->next = &l->ctrl_buf[(i + 1) % arrsize(l->ctrl_buf)].frame;
-		f->buf  = l->ctrl_buf[i].ctrl;
-		f->size = sizeof(l->ctrl_buf[0]) - sizeof(frame_t);
-	}
-	l->tx_ctrl   = l->ctrl_list;
-	return 0;
 }
 
 
@@ -1734,7 +1712,12 @@ static int lapm_init(struct lapm_state *l, struct modem *m)
 			LAPM_V44_OK)
 		return -1;
 
-	alloc_frames(l);
+	_Static_assert(sizeof(l->ctrl_buf[0].data) >= 2 + LAPM_V44_MAX_XID_SIZE,
+		"control frames must hold the complete XID information field");
+	initialize_frame_ring(l->info_buf, LAPM_INFO_FRAMES);
+	initialize_frame_ring(l->ctrl_buf, LAPM_CTRL_FRAMES);
+	l->sent_info = l->tx_info = l->info_list = &l->info_buf[0].frame;
+	l->tx_ctrl = l->ctrl_list = &l->ctrl_buf[0].frame;
 	return 0;
 }
 
