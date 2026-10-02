@@ -173,39 +173,6 @@ static int modem_skip_ec_detection(const struct modem *m)
  *
  */
 
-struct dp_driver modem_dp_drivers[] = {
-        {DP_CALLPROG,"CallProg"},
-        {DP_DUMMY,"Dummy"},
-        {DP_AUTOMODE,"Automode"},
-        {DP_V8,"V8"},
-        {DP_V17,"V17"},
-        {DP_V21,"V21","21"},
-        {DP_V22,"V22","22"},
-        {DP_V23,"V23","23"},
-        {DP_V22BIS,"V22bis","122"},
-        {DP_V32,"V32","32"},
-        {DP_V32BIS,"V32bis","132"},
-        {DP_V34,"V34","34"},
-        {DP_BAUDOT,"Baudot TTY/TDD","45"},
-        {DP_B103,"Bell103","103"},
-        {DP_B212,"Bell212A","212"},
-        {DP_FAX,"VFax"},
-        {DP_K56,"K56Flex","56"},
-        {DP_V8BIS,"V8bis"},
-        {DP_V90,"V90","90"},
-        {DP_V92,"V92","92"},
-        {DP_SINUS,"Sinus"},
-        {}
-};
-
-static struct dp_driver *get_dp_driver(enum DP_ID id)
-{
-	struct dp_driver *p;
-	for(p = modem_dp_drivers ; p->id > 0 ; p++)
-		if (p->id == id) return p;
-	return NULL;
-}
-
 static int rate_uses_v32bis(unsigned int rate)
 {
 	return rate == 7200 || rate == 12000 || rate == 14400;
@@ -213,8 +180,6 @@ static int rate_uses_v32bis(unsigned int rate)
 
 const char *modem_active_modulation_name(const struct modem *m)
 {
-	struct dp_driver *driver;
-
 	if (m == NULL || m->dp == NULL)
 		return NULL;
 	/* V.32 and V.32bis share one family datapump. The negotiated rate
@@ -222,37 +187,9 @@ const char *modem_active_modulation_name(const struct modem *m)
 	if (m->dp->id == DP_V32 &&
 	    (rate_uses_v32bis(m->rx_rate) || rate_uses_v32bis(m->tx_rate)))
 		return "V32bis";
-	driver = get_dp_driver(m->dp->id);
-	return driver != NULL ? driver->name : NULL;
+	return modem_dp_name(m->dp->id);
 }
 
-int modem_dp_register(enum DP_ID id, struct dp_operations *op)
-{
-	struct dp_driver *driver = get_dp_driver(id);
-
-	if (!op || op->use_count != 0 || !op->create || !op->delete ||
-	    !op->process || driver == NULL || driver->op != NULL)
-		return -1;
-	driver->op = op;
-	return 0;
-}
-
-int modem_dp_deregister(enum DP_ID id, struct dp_operations *op)
-{
-	struct dp_driver *driver = get_dp_driver(id);
-
-	if (!op || op->use_count != 0 || driver == NULL || driver->op != op)
-		return -1;
-	driver->op = NULL;
-	return 0;
-}
-
-struct dp_operations *modem_dp_get_registered_ops(enum DP_ID id)
-{
-	struct dp_driver *driver = get_dp_driver(id);
-
-	return driver != NULL ? driver->op : NULL;
-}
 
 
 

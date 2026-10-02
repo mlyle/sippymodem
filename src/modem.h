@@ -127,13 +127,6 @@ struct modem_driver {
 	int (*ioctl)(struct modem *m,unsigned cmd, unsigned long arg);
 };
 
-/* modem data pumps driver struct */
-struct dp_driver {
-	const enum DP_ID id;
-	const char *name;
-	const char *code;
-	struct dp_operations *op;
-};
 
 
 /*

@@ -81,6 +81,14 @@ struct dp_operations {
 	int (*hangup)(struct dp *);
 };
 
+/* modem data pumps driver struct */
+struct dp_driver {
+	const enum DP_ID id;
+	const char *name;
+	const char *code;
+	struct dp_operations *op;
+};
+
 /* data pump structure */
 struct dp {
         enum DP_ID id;
@@ -100,7 +108,8 @@ struct dp {
 extern int modem_get_bits(struct modem *m, int nbits, u8 *buf, int n);
 extern int modem_put_bits(struct modem *m, int nbits, u8 *buf, int n);
 
-/* modem dp registration */
+/* Registration changes and datapump lifetimes use one serialized owner. */
+extern const char *modem_dp_name(enum DP_ID id);
 extern int  modem_dp_register(enum DP_ID id, struct dp_operations *op);
 extern int modem_dp_deregister(enum DP_ID id, struct dp_operations *op);
 extern struct dp_operations *modem_dp_get_registered_ops(enum DP_ID id);

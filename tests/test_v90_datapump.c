@@ -72,65 +72,6 @@ struct bit_endpoint {
 	uint64_t first_mismatch_bit_plus_one;
 };
 
-static struct dp_operations *registered_v90;
-static struct dp_operations *registered_v92;
-static struct dp_operations *registered_v34;
-static struct dp_operations *registered_v8;
-
-int modem_dp_register(enum DP_ID id, struct dp_operations *operations)
-{
-	struct dp_operations **registered;
-
-	if (id == DP_V90)
-		registered = &registered_v90;
-	else if (id == DP_V92)
-		registered = &registered_v92;
-	else if (id == DP_V34)
-		registered = &registered_v34;
-	else if (id == DP_V8)
-		registered = &registered_v8;
-	else
-		return -1;
-	if (operations == NULL || *registered != NULL)
-		return -1;
-	*registered = operations;
-	return 0;
-}
-
-int modem_dp_deregister(enum DP_ID id, struct dp_operations *operations)
-{
-	struct dp_operations **registered;
-
-	if (id == DP_V90)
-		registered = &registered_v90;
-	else if (id == DP_V92)
-		registered = &registered_v92;
-	else if (id == DP_V34)
-		registered = &registered_v34;
-	else if (id == DP_V8)
-		registered = &registered_v8;
-	else
-		return -1;
-	if (operations == NULL || *registered != operations ||
-	    operations->use_count != 0)
-		return -1;
-	*registered = NULL;
-	return 0;
-}
-
-struct dp_operations *modem_dp_get_registered_ops(enum DP_ID id)
-{
-	if (id == DP_V90)
-		return registered_v90;
-	if (id == DP_V92)
-		return registered_v92;
-	if (id == DP_V34)
-		return registered_v34;
-	if (id == DP_V8)
-		return registered_v8;
-	return NULL;
-}
-
 int modem_get_sreg(struct modem *modem, unsigned int number)
 {
 	if (modem == NULL || number >= sizeof(modem->sregs))
@@ -324,6 +265,7 @@ static bool check_qc_adapter(enum g711_law law, bool digital_caller, bool pcm_up
 	      "QC adapter registrations failed");
 	for (unsigned side = 0; side < 2; ++side) {
 		struct modem *m = &modems[side];
+		struct dp_operations *v8 = modem_dp_get_registered_ops(DP_V8);
 
 		m->caller = (side == 1) == digital_caller;
 		m->min_rate = m->max_rate = 52000;
@@ -332,8 +274,8 @@ static bool check_qc_adapter(enum g711_law law, bool digital_caller, bool pcm_up
 		m->sregs[SREG_V92_QUICK_CONNECT] = !decline || m->caller;
 		/* Single-sample cases also exercise asymmetric LAPM capability. */
 		m->sregs[SREG_EC] = pcm_upstream && (side == 1 || block != 1);
-		m->dp = registered_v8->create(m, DP_V92, m->caller,
-			MODEM_RATE, MODEM_FRAG, registered_v8);
+		m->dp = v8->create(m, DP_V92, m->caller,
+			MODEM_RATE, MODEM_FRAG, v8);
 		CHECK(m->dp != NULL, "QC V.8 owner creation failed");
 		memset(channel[side], encode(law, 0), sizeof(channel[side]));
 	}
@@ -398,12 +340,13 @@ static bool check_qc_adapter_timeout(enum g711_law law, bool digital_answerer)
 
 	CHECK(v8_datapump_register() == 0 && v90_datapump_register() == 0,
 	      "QC timeout registrations failed");
+	struct dp_operations *v8 = modem_dp_get_registered_ops(DP_V8);
 	for (unsigned side = 0; side < 2; ++side) {
 		modems[side].caller = side == 0;
 		modems[side].sregs[SREG_V92_QUICK_CONNECT] = 1;
 		modems[side].sregs[SREG_WAIT_CARRIER_AFTER_DIAL] = 8;
-		modems[side].dp = registered_v8->create(&modems[side], DP_V92, side == 0,
-			MODEM_RATE, MODEM_FRAG, registered_v8);
+		modems[side].dp = v8->create(&modems[side], DP_V92, side == 0,
+			MODEM_RATE, MODEM_FRAG, v8);
 		CHECK(modems[side].dp != NULL, "QC timeout owner creation failed");
 		memset(channel[side], encode(law, 0), sizeof(channel[side]));
 	}
@@ -1464,6 +1407,11 @@ static bool test_v92_pcm_upstream_selection(void)
 	uint8_t analog_to_digital = g711_encode_pcmu(0);
 	uint8_t digital_to_analog = g711_encode_pcmu(0);
 
+	CHECK(v90_datapump_register() == 0,
+	      "PCM conflict fixture did not register");
+	conflict = *modem_dp_get_registered_ops(DP_V90);
+	CHECK(v90_datapump_unregister() == 0,
+	      "PCM conflict fixture did not release its operations");
 	CHECK(modem_dp_register(DP_V92, &conflict) == 0 &&
 	      v90_datapump_register() != 0 &&
 	      modem_dp_get_registered_ops(DP_V90) == NULL &&

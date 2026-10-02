@@ -428,6 +428,7 @@ NATIVE_CORE_SOURCE_NAMES := homolog_data modem modem_at modem_comp \
 	modem_debug modem_ec modem_pack modem_param modem_timer sysdep_common
 NATIVE_CORE_OBJECTS := $(addprefix $(BUILD_DIR)/native_, \
 	$(addsuffix .o, $(NATIVE_CORE_SOURCE_NAMES))) \
+	$(BUILD_DIR)/datapump_registry.o \
 	$(BUILD_DIR)/dc_remover.o \
 	$(BUILD_DIR)/lapm_v44_session.o \
 	$(BUILD_DIR)/v42_xid.o \
@@ -2933,6 +2934,7 @@ V92_PROFILE_TEST_OBJECTS := $(sort \
 		$(PCM_CALL_TEST_OBJECTS)))
 V90_DATAPUMP_TEST_BINARY := $(BUILD_DIR)/test_v90_datapump
 V90_DATAPUMP_TEST_OBJECTS = $(sort \
+	$(BUILD_DIR)/datapump_registry.o \
 	$(BUILD_DIR)/v8_datapump.o \
 	$(filter-out $(BUILD_DIR)/test_v8_calling.o,$(V8_CALLING_TEST_OBJECTS)) \
 	$(BUILD_DIR)/dc_remover.o \
@@ -4854,6 +4856,10 @@ $(SELF_SYNC_SCRAMBLER_OBJECT): \
 
 $(CRC16_CCITT_FALSE_OBJECT): \
 	$(DSP_SOURCE_DIR)/crc16_ccitt_false.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/datapump_registry.o: \
+	$(DSP_SOURCE_DIR)/datapump_registry.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/datapumps.o: \
