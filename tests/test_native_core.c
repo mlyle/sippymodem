@@ -2129,6 +2129,78 @@ static bool test_at_pcm_profile_controls(void)
 	return true;
 }
 
+static bool test_at_pcm_rejects_invalid_numbers(void)
+{
+	static const struct {
+		const char *command;
+		unsigned long value;
+	} fields[] = {
+		{ "AT+V90D=%s", 1 }, { "AT+V92Q=%s", 1 },
+		{ "AT+V34B=%s", 2400 },
+		{ "AT+V90U=%s,31200", 14400 },
+		{ "AT+V90U=14400,%s", 28800 },
+		{ "AT+V90U=14400,31200,%s", 2400 },
+		{ "AT+V92U=%s,28000", 1 },
+		{ "AT+V92U=1,%s", 28000 },
+		{ "AT+V92U=1,40000,%s", 70 },
+	};
+	struct modem_driver driver = {
+		.name = "AT PCM numeric validation",
+		.start = unused_start, .stop = unused_stop, .ioctl = unused_control,
+	};
+	struct modem *m = modem_create(&driver, driver.name);
+	char number[64], command[128];
+
+	CHECK(m != NULL && process_at_command(m,
+		"AT+V90D=0+V92Q=0+V34B=3429+V90U=14400,31200,3429"
+		"+V92U=1,40000,69") == 0,
+	      "PCM validation profile could not be configured");
+	for (size_t index = 0; index < ARRAY_LENGTH(fields); ++index) {
+		for (unsigned int form = 0; form < 3; ++form) {
+			if (form == 2)
+				snprintf(number, sizeof(number), "%lu0", ULONG_MAX);
+			else
+				snprintf(number, sizeof(number), "%s-%lu",
+					 form ? " " : "",
+					 ULONG_MAX - fields[index].value + 1ul);
+			snprintf(command, sizeof(command), fields[index].command, number);
+			CHECK(process_at_command(m, command) == -1 &&
+			      modem_get_param(m, MDMPRM_V90_DIGITAL_INDICATION) == 0 &&
+			      modem_get_param(m, MDMPRM_V92_QUICK_CONNECT) == 0 &&
+			      m->v34_symbol_rate == 3429 &&
+			      m->v90_upstream_min_rate == 14400 &&
+			      m->v90_upstream_max_rate == 31200 &&
+			      m->v90_upstream_max_baud == 3429 &&
+			      modem_get_param(m, MDMPRM_V92_PCM_UPSTREAM) == 1 &&
+			      modem_get_sreg(m, SREG_V92_PCM_UPSTREAM_MAX_DRN) == 13 &&
+			      m->v92_upstream_lu_ucode == 69,
+			      "invalid PCM number changed the profile: %s", command);
+		}
+	}
+	CHECK(process_at_command(m, "AT+V34B=2400,2800") == -1 &&
+	      m->v34_symbol_rate == 3429,
+	      "surplus V.34 symbol-rate field changed the selected cadence");
+	CHECK(process_at_command(m, "AT+V90D=-0") == -1 &&
+	      process_at_command(m, "AT+V90D=") == -1 &&
+	      process_at_command(m, "AT+V90U=,31200") == -1 &&
+	      process_at_command(m, "AT+V92U=1,") == -1,
+	      "unsigned PCM controls accepted a sign or omitted required value");
+	CHECK(process_at_command(m,
+		"AT+V34B=02400+V90U=0x3840,0x79e0,0xd65+V90D=01"
+		"+V92Q=0x1+V92U=01,0x9c40,0x45") == 0 &&
+	      m->v34_symbol_rate == 2400 &&
+	      m->v90_upstream_min_rate == 14400 &&
+	      m->v90_upstream_max_rate == 31200 &&
+	      m->v90_upstream_max_baud == 3429 &&
+	      modem_get_param(m, MDMPRM_V90_DIGITAL_INDICATION) == 1 &&
+	      modem_get_param(m, MDMPRM_V92_QUICK_CONNECT) == 1 &&
+	      modem_get_sreg(m, SREG_V92_PCM_UPSTREAM_MAX_DRN) == 13 &&
+	      m->v92_upstream_lu_ucode == 69,
+	      "shared parsing changed numeric bases or concatenated commands");
+	modem_delete(m);
+	return true;
+}
+
 static bool test_at_v34_symbol_rate(void)
 {
 	static const unsigned int supported[] = {
@@ -6971,6 +7043,7 @@ int main(void)
 		  test_at_dial_destinations_are_bounded },
 		{ "AT compression profile", test_at_compression_profile },
 		{ "AT PCM profile controls", test_at_pcm_profile_controls },
+		{ "AT PCM numeric validation", test_at_pcm_rejects_invalid_numbers },
 		{ "AT V.34 symbol rate", test_at_v34_symbol_rate },
 		{ "LAPM XID parameter encoding", test_lapm_xid_parameters },
 		{ "LAPM V.42bis negotiation", test_lapm_v42bis_negotiation },

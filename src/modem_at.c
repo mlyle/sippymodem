@@ -70,6 +70,7 @@
  *
  *****************************************************************************/
 
+#include <errno.h>
 #include <limits.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -519,11 +520,29 @@ static int process_plus_GCI(struct modem *m, char *p, int *len)
 }
 
 
+/* Return one for a value, zero for an omitted field, or -1 for invalid input.
+ * Rejected or omitted fields leave the cursor and value unchanged. */
+static int parse_unsigned(char **p, int *len, unsigned long *value, int base)
+{
+	char *end;
+	unsigned long parsed;
+
+	errno = 0;
+	parsed = strtoul(*p, &end, base);
+	if (end == *p)
+		return 0;
+	if (errno == ERANGE || memchr(*p, '-', (size_t)(end - *p)) != NULL)
+		return -1;
+	*value = parsed;
+	*len += (int)(end - *p);
+	*p = end;
+	return 1;
+}
+
 static int process_plus_MS(struct modem *m, char *p, int *len)
 {
 	char strval[32];
 	enum DP_ID selectable_id;
-	char *end;
 	unsigned long n;
 	unsigned long values[4];
 	int is_found=0;
@@ -555,14 +574,8 @@ static int process_plus_MS(struct modem *m, char *p, int *len)
 		values[2] = m->min_rate;
 		values[3] = m->max_rate;
 		for (size_t index = 0; index < 4; index++) {
-			n = strtoul(p, &end, 0);
-			if (end != p) {
-				if (memchr(p, '-', (size_t)(end - p)) != NULL)
-					return -1;
-				values[index] = n;
-			}
-			*len += (int)(end - p);
-			p = end;
+			if (parse_unsigned(&p, len, &values[index], 0) < 0)
+				return -1;
 			if (*p != ',')
 				break;
 			if (index == 3)
@@ -597,7 +610,7 @@ static int process_plus_MS(struct modem *m, char *p, int *len)
 }
 
 
-static int v34_symbol_rate_is_valid(unsigned long value)
+static int v34_baud_is_valid(unsigned long value)
 {
 	switch (value) {
 	case 0:
@@ -616,7 +629,6 @@ static int v34_symbol_rate_is_valid(unsigned long value)
 static int process_plus_V34B(struct modem *m, char *p, int *len)
 {
 	char response[16];
-	char *end;
 	unsigned long value;
 
 	switch (*p) {
@@ -633,10 +645,9 @@ static int process_plus_V34B(struct modem *m, char *p, int *len)
 			*len += 1;
 			return 0;
 		}
-		value = strtoul(p, &end, 10);
-		if (p == end || !v34_symbol_rate_is_valid(value))
+		if (parse_unsigned(&p, len, &value, 10) != 1 ||
+		    !v34_baud_is_valid(value) || *p == ',')
 			return -1;
-		*len += (int)(end - p);
 		m->v34_symbol_rate = (unsigned)value;
 		return 0;
 	case '?':
@@ -655,7 +666,6 @@ static int process_plus_boolean_param(
 	struct modem *m, char *p, int *len, unsigned int parameter)
 {
 	char response[8];
-	char *end;
 	unsigned long value;
 
 	switch (*p) {
@@ -671,10 +681,9 @@ static int process_plus_boolean_param(
 			*len += 1;
 			return 0;
 		}
-		value = strtoul(p, &end, 0);
-		if (p == end || value > 1 || *end == ',')
+		if (parse_unsigned(&p, len, &value, 0) != 1 ||
+		    value > 1 || *p == ',')
 			return -1;
-		*len += (int)(end - p);
 		return (int)modem_set_param(m, parameter, (int)value);
 	case '?':
 		*len = 1;
@@ -694,34 +703,6 @@ static int v90_upstream_rate_is_valid(unsigned long value)
 	return value == 0 ||
 	       (value >= MODEM_V90_UPSTREAM_MIN_RATE &&
 		value <= MODEM_V90_UPSTREAM_MAX_RATE);
-}
-
-static int v90_upstream_baud_is_valid(unsigned long value)
-{
-	switch (value) {
-	case 0:
-	case 2400:
-	case 2743:
-	case 2800:
-	case 3000:
-	case 3200:
-	case 3429:
-		return 1;
-	default:
-		return 0;
-	}
-}
-
-static int parse_unsigned(char **p, int *len, unsigned long *value)
-{
-	char *end;
-
-	*value = strtoul(*p, &end, 0);
-	if (end == *p)
-		return -1;
-	*len += (int)(end - *p);
-	*p = end;
-	return 0;
 }
 
 static int process_plus_V90U(struct modem *m, char *p, int *len)
@@ -748,23 +729,23 @@ static int process_plus_V90U(struct modem *m, char *p, int *len)
 			*len += 1;
 			return 0;
 		}
-		if (parse_unsigned(&p, len, &min_rate) < 0 || *p != ',')
+		if (parse_unsigned(&p, len, &min_rate, 0) != 1 || *p != ',')
 			return -1;
 		p++;
 		*len += 1;
-		if (parse_unsigned(&p, len, &max_rate) < 0)
+		if (parse_unsigned(&p, len, &max_rate, 0) != 1)
 			return -1;
 		max_baud = (unsigned long)modem_get_param(
 			m, MDMPRM_V90_UPSTREAM_MAX_BAUD);
 		if (*p == ',') {
 			p++;
 			*len += 1;
-			if (parse_unsigned(&p, len, &max_baud) < 0 || *p == ',')
+			if (parse_unsigned(&p, len, &max_baud, 0) != 1 || *p == ',')
 				return -1;
 		}
 		if (!v90_upstream_rate_is_valid(min_rate) ||
 		    !v90_upstream_rate_is_valid(max_rate) ||
-		    !v90_upstream_baud_is_valid(max_baud) ||
+		    !v34_baud_is_valid(max_baud) ||
 		    (min_rate != 0 && max_rate != 0 && min_rate > max_rate))
 			return -1;
 		m->v90_upstream_min_rate = (unsigned)min_rate;
@@ -799,7 +780,6 @@ static unsigned int v92_pcm_upstream_drn(unsigned long rate)
 static int process_plus_V92U(struct modem *m, char *p, int *len)
 {
 	char response[24];
-	char *end;
 	unsigned long enabled;
 	unsigned long rate;
 	unsigned long lu_ucode = 0;
@@ -818,26 +798,20 @@ static int process_plus_V92U(struct modem *m, char *p, int *len)
 			*len += 1;
 			return 0;
 		}
-		enabled = strtoul(p, &end, 0);
-		if (p == end || enabled > 1)
+		if (parse_unsigned(&p, len, &enabled, 0) != 1 || enabled > 1)
 			return -1;
-		*len += (int)(end - p);
-		p = end;
 		if (*p == ',') {
 			p++;
 			*len += 1;
-			rate = strtoul(p, &end, 0);
-			if (p == end || enabled == 0)
+			if (parse_unsigned(&p, len, &rate, 0) != 1 || enabled == 0)
 				return -1;
-			*len += (int)(end - p);
-			p = end;
 			max_drn = v92_pcm_upstream_drn(rate);
 			if (max_drn == 0)
 				return -1;
 			if (*p == ',') {
 				p++;
 				*len += 1;
-				if (parse_unsigned(&p, len, &lu_ucode) < 0 ||
+				if (parse_unsigned(&p, len, &lu_ucode, 0) != 1 ||
 				    lu_ucode > 127 || *p == ',')
 					return -1;
 			}
