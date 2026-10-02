@@ -132,10 +132,28 @@ static int set_sreg(struct modem *m, int num, char c, int low, int hi, int *len)
 
 /* ------------------------------------------------------------ */
 
+/* Return one for a value, zero for an omitted field, or -1 for invalid input.
+ * Rejected or omitted fields leave the cursor and value unchanged. */
+static int parse_unsigned(char **p, int *len, unsigned long *value, int base)
+{
+	char *end;
+	unsigned long parsed;
+
+	errno = 0;
+	parsed = strtoul(*p, &end, base);
+	if (end == *p)
+		return 0;
+	if (errno == ERANGE || memchr(*p, '-', (size_t)(end - *p)) != NULL)
+		return -1;
+	*value = parsed;
+	*len += (int)(end - *p);
+	*p = end;
+	return 1;
+}
+
 static int process_plus_DSC(struct modem *m, char *p, int *len)
 {
 	char response[16];
-	char *end;
 	unsigned long mask;
 
 	switch (*p) {
@@ -151,10 +169,9 @@ static int process_plus_DSC(struct modem *m, char *p, int *len)
 			*len += 1;
 			return 0;
 		}
-		mask = strtoul(p, &end, 0);
-		if (p == end || mask > MODEM_COMP_TYPE_ALL)
+		if (parse_unsigned(&p, len, &mask, 0) != 1 ||
+		    mask > MODEM_COMP_TYPE_ALL || *p == ',')
 			return -1;
-		*len += (int)(end - p);
 		return modem_set_sreg(m, SREG_COMP_TYPES, (int)mask);
 	case '?':
 		*len = 1;
@@ -173,7 +190,6 @@ static int process_plus_DSC(struct modem *m, char *p, int *len)
 static int process_plus_DS(struct modem *m, char *p, int *len)
 {
 	char response[24];
-	char *end;
 	unsigned long direction;
 	unsigned long mask;
 
@@ -190,20 +206,16 @@ static int process_plus_DS(struct modem *m, char *p, int *len)
 			*len += 1;
 			return 0;
 		}
-		direction = strtoul(p, &end, 0);
-		if (p == end || direction > 3)
+		if (parse_unsigned(&p, len, &direction, 0) != 1 || direction > 3)
 			return -1;
-		*len += (int)(end - p);
-		p = end;
 		mask = (unsigned long)modem_get_sreg(m, SREG_COMP_TYPES) &
 		       MODEM_COMP_TYPE_ALL;
 		if (*p == ',') {
 			p++;
 			*len += 1;
-			mask = strtoul(p, &end, 0);
-			if (p == end || mask > MODEM_COMP_TYPE_ALL || *end == ',')
+			if (parse_unsigned(&p, len, &mask, 0) != 1 ||
+			    mask > MODEM_COMP_TYPE_ALL || *p == ',')
 				return -1;
-			*len += (int)(end - p);
 		}
 		if (modem_set_sreg(m, SREG_COMP, (int)direction) < 0 ||
 		    modem_set_sreg(m, SREG_COMP_TYPES, (int)mask) < 0)
@@ -520,25 +532,6 @@ static int process_plus_GCI(struct modem *m, char *p, int *len)
 	return 0;
 }
 
-
-/* Return one for a value, zero for an omitted field, or -1 for invalid input.
- * Rejected or omitted fields leave the cursor and value unchanged. */
-static int parse_unsigned(char **p, int *len, unsigned long *value, int base)
-{
-	char *end;
-	unsigned long parsed;
-
-	errno = 0;
-	parsed = strtoul(*p, &end, base);
-	if (end == *p)
-		return 0;
-	if (errno == ERANGE || memchr(*p, '-', (size_t)(end - *p)) != NULL)
-		return -1;
-	*value = parsed;
-	*len += (int)(end - *p);
-	*p = end;
-	return 1;
-}
 
 static int process_plus_MS(struct modem *m, char *p, int *len)
 {

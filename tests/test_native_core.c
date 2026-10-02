@@ -2014,6 +2014,56 @@ static bool test_at_compression_profile(void)
 	return true;
 }
 
+static bool test_at_compression_rejects_invalid_numbers(void)
+{
+	static const char *const fields[] = {
+		"AT+DSC=%s", "AT+DS=%s,1", "AT+DS=3,%s",
+	};
+	static const char *const invalid[] = {
+		"AT+DSC=1,2", "AT+DSC=-0", "AT+DSC=", "AT+DS=",
+		"AT+DS=1,", "AT+DS=1,1,2", "AT+DS=4,1", "AT+DS=1,4",
+	};
+	struct modem_driver driver = {
+		.name = "AT compression numeric validation", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	struct modem *m = modem_create(&driver, driver.name);
+	char number[64], command[128];
+
+	CHECK(m != NULL && process_at_command(m, "AT+DS=3,2") == 0,
+	      "compression validation fixture could not be configured");
+	for (size_t field = 0; field < ARRAY_LENGTH(fields); ++field) {
+		for (unsigned int form = 0; form < 3; ++form) {
+			if (form == 2)
+				snprintf(number, sizeof(number), "%lu0", ULONG_MAX);
+			else
+				snprintf(number, sizeof(number), "%s-%lu",
+					 form ? " " : "", ULONG_MAX);
+			snprintf(command, sizeof(command), fields[field], number);
+			CHECK(process_at_command(m, command) == -1 &&
+			      modem_get_sreg(m, SREG_COMP) == 3 &&
+			      modem_get_sreg(m, SREG_COMP_TYPES) == MODEM_COMP_TYPE_V44,
+			      "invalid compression number changed the policy: %s", command);
+		}
+	}
+	for (size_t index = 0; index < ARRAY_LENGTH(invalid); ++index) {
+		snprintf(command, sizeof(command), "%s", invalid[index]);
+		CHECK(process_at_command(m, command) == -1 &&
+		      modem_get_sreg(m, SREG_COMP) == 3 &&
+		      modem_get_sreg(m, SREG_COMP_TYPES) == MODEM_COMP_TYPE_V44,
+		      "malformed compression setting changed the policy: %s", command);
+	}
+	CHECK(process_at_command(m, "AT+DSC=0x1+DS=02,0x2") == 0 &&
+	      modem_get_sreg(m, SREG_COMP) == 2 &&
+	      modem_get_sreg(m, SREG_COMP_TYPES) == MODEM_COMP_TYPE_V44 &&
+	      process_at_command(m, "AT+DS=1") == 0 &&
+	      modem_get_sreg(m, SREG_COMP) == 1 &&
+	      modem_get_sreg(m, SREG_COMP_TYPES) == MODEM_COMP_TYPE_V44,
+	      "compression parsing changed numeric bases, chaining or optional mask");
+	modem_delete(m);
+	return true;
+}
+
 static bool test_at_pcm_profile_controls(void)
 {
 	struct modem_driver driver = {
@@ -7087,6 +7137,8 @@ int main(void)
 		{ "bounded AT dial destinations",
 		  test_at_dial_destinations_are_bounded },
 		{ "AT compression profile", test_at_compression_profile },
+		{ "AT compression numeric validation",
+		  test_at_compression_rejects_invalid_numbers },
 		{ "AT PCM profile controls", test_at_pcm_profile_controls },
 		{ "AT PCM numeric validation", test_at_pcm_rejects_invalid_numbers },
 		{ "AT PCM upstream rate queries", test_at_pcm_upstream_rate_queries },
