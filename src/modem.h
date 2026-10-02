@@ -245,8 +245,6 @@ struct lapm_state {
         struct lapm_v44_session v44_session;
         struct v44_character_path *v44_path;
         int state;
-        /* sub-states: may be optimized */
-        int config;
         /* those DATA sub-states may be optimized */
         int reject;
         int busy;

@@ -2392,15 +2392,15 @@ static bool run_media_call(
 		      output_contains_connect(
 			      &answerer, test_case->answerer_rx_rate),
 	      "%s connection did not reach both terminal interfaces "
-	      "(caller state=%u ec=%u lapm=%d/%d control pending=%d timer=%d; "
-	      "answerer state=%u ec=%u lapm=%d/%d control pending=%d timer=%d)",
+	      "(caller state=%u ec=%u lapm=%d xid=%d control pending=%d timer=%d; "
+	      "answerer state=%u ec=%u lapm=%d xid=%d control pending=%d timer=%d)",
 	      test_case->name, caller.modem->state, caller.modem->cfg.ec,
-	      caller.modem->ec.lapm.state, caller.modem->ec.lapm.config,
+	      caller.modem->ec.lapm.state, caller.modem->ec.lapm.v44_session.phase,
 	      caller.modem->ec.lapm.tx_ctrl != caller.modem->ec.lapm.ctrl_list,
 	      caller.modem->bit_timer,
 	      answerer.modem->state, answerer.modem->cfg.ec,
 	      answerer.modem->ec.lapm.state,
-	      answerer.modem->ec.lapm.config,
+	      answerer.modem->ec.lapm.v44_session.phase,
 	      answerer.modem->ec.lapm.tx_ctrl != answerer.modem->ec.lapm.ctrl_list,
 	      answerer.modem->bit_timer);
 	if (connected_id == DP_V90 || connected_id == DP_V92) {

@@ -216,6 +216,11 @@ static bool v44_offer_has_direction(
 	return offer->transmit.enabled || offer->receive.enabled;
 }
 
+static bool xid_pending(const struct lapm_state *l)
+{
+	return l->v44_session.phase == LAPM_V44_COMMAND_PENDING;
+}
+
 static int read_host_characters(
 	void *context, uint8_t *output, size_t output_capacity)
 {
@@ -703,7 +708,7 @@ static int tx_xid_command(struct lapm_state *l)
 	struct lapm_v44_prepared prepared;
 	enum lapm_v44_result result;
 
-	if (l->v44_session.phase == LAPM_V44_COMMAND_PENDING)
+	if (xid_pending(l))
 		result = lapm_v44_prepare_retransmission(
 			&l->v44_session, &prepared);
 	else {
@@ -732,7 +737,7 @@ static int rx_xid_command(struct lapm_state *l, frame_t *f)
 	struct v42_xid_fields fields;
 	frame_t *queued = l->ctrl_list;
 	bool duplicate = l->v44_session.response_length != 0;
-	bool pending = l->v44_session.phase == LAPM_V44_COMMAND_PENDING;
+	bool pending = xid_pending(l);
 	enum xid_decode_result decoded;
 
 	if (!duplicate && l->state == LAPM_DATA)
@@ -838,15 +843,13 @@ static void t401_timeout(struct modem *m)
 	 * another request. Data recovery terminates the physical connection
 	 * immediately (8.4.9.2), without starting a new DISC transaction. */
 	if (l->rtx_count >= LAPM_MAX_RTX) {
-		if (l->config)
-			lapm_v44_session_call_reset(&l->v44_session);
 		complete_link_release(l);
 		return;
 	}
 	/* A final RR can complete every enquiry while acknowledging no data.
 	 * Keep a separate local progress budget across those recovery episodes;
 	 * the ordinary N400 counter still governs unanswered polls. */
-	if (l->state == LAPM_DATA && !l->config) {
+	if (l->state == LAPM_DATA && !xid_pending(l)) {
 		if (l->busy || l->peer_busy)
 			l->stalled_polls = 0;
 		else if (l->sent_info != l->info_list &&
@@ -857,7 +860,7 @@ static void t401_timeout(struct modem *m)
 		}
 	}
 	l->rtx_count++;
-	if (l->config) {
+	if (xid_pending(l)) {
 		result = tx_xid_command(l);
 	}
 	else {
@@ -909,7 +912,7 @@ static void t403_timeout(struct modem *m)
 {
 	struct lapm_state *l = &m->ec.lapm;
 
-	if (l->state == LAPM_DATA && !l->config && !l->rtx_count)
+	if (l->state == LAPM_DATA && !xid_pending(l) && !l->rtx_count)
 		t401_timeout(m);
 }
 
@@ -919,7 +922,7 @@ static void start_idle_timer(struct lapm_state *l)
 	uint64_t timeout;
 
 	T401_STOP(l);
-	if (l->state != LAPM_DATA || l->config)
+	if (l->state != LAPM_DATA || xid_pending(l))
 		return;
 	if (l->sent_info == l->info_list) {
 		l->stalled_polls = 0;
@@ -1251,7 +1254,7 @@ static void rx_super_rsp(struct lapm_state *l, frame_t *f)
 
 static bool lapm_can_establish(const struct lapm_state *l)
 {
-	return !l->config && modem_ec_can_establish(l->modem) &&
+	return !xid_pending(l) && modem_ec_can_establish(l->modem) &&
 	       l->modem->packer.hdlc.tx_preamble_complete == NULL;
 }
 
@@ -1374,7 +1377,7 @@ static void rx_unnum_rsp(struct lapm_state *l, frame_t *f)
 			break; /* Both locally initiated mode commands set P=1. */
 		switch(l->state) {
 		case LAPM_ESTAB:
-			if (!l->config)
+			if (!xid_pending(l))
 				complete_link_establishment(l);
 			break;
 		case LAPM_DISC:
@@ -1394,12 +1397,11 @@ static void rx_unnum_rsp(struct lapm_state *l, frame_t *f)
 			complete_link_release(l);
 		break;
 	case FRAME_U_XID:
-		if (l->config) {
+		if (xid_pending(l)) {
 			enum rx_xid_response_result result =
 				rx_xid_response(l, f);
 
 			if (result == RX_XID_RESPONSE_ACCEPTED) {
-				l->config = 0;
 				TIMER_STOP(l);
 				if (lapm_connect(l) != 0)
 					complete_link_release(l);
@@ -1428,7 +1430,7 @@ static frame_t *lapm_get_tx_frame(void *framer)
 	/* get info frame */
 	/* V.42 8.4.6/8.4.8: clearing peer busy with an ordinary RR/REJ must
 	 * not release information while our recovery enquiry is outstanding. */
-	if (l->peer_busy || l->rtx_count || l->config || l->state != LAPM_DATA)
+	if (l->peer_busy || l->rtx_count || xid_pending(l) || l->state != LAPM_DATA)
 		return 0;
 	if ( l->tx_info == l->info_list && !tx_info(l) )
 		return 0;
@@ -1531,7 +1533,7 @@ static void lapm_rx_complete(void *framer, frame_t *f)
 	/* V.42 (2002) 8.3.2.1 permits valid I/S traffic after a lost UA.
 	 * Validate it before completing SABME, and never bypass pending XID. */
 	if (type != FRAME_U && l->state == LAPM_ESTAB &&
-	    (l->config || !complete_link_establishment(l)))
+	    (xid_pending(l) || !complete_link_establishment(l)))
 		return;
 	/* Valid numbered traffic proves the peer has left establishment. This
 	 * history must survive sequence wrap and physical retraining. */
@@ -1561,7 +1563,7 @@ static void lapm_rx_complete(void *framer, frame_t *f)
 	/* Valid I/S traffic restarts idle supervision, without postponing an
 	 * outstanding acknowledgement, enquiry, or peer-busy timer. */
 	if (type != FRAME_U &&
-	    l->state == LAPM_DATA && !l->config &&
+	    l->state == LAPM_DATA && !xid_pending(l) &&
 	    (!l->modem->bit_timer || l->modem->bit_timer_func == t403_timeout))
 		start_idle_timer(l);
 }
@@ -1626,11 +1628,12 @@ static int lapm_disconnect(struct lapm_state *l)
 }
 
 
-/* Discard stream work and recovery state. The caller owns control slots
- * and the frame already borrowed by HDLC. */
+/* Cancel pending XID and stream work; keep negotiated codec parameters.
+ * The caller owns control slots and the frame already borrowed by HDLC. */
 static void reset_lapm_link(struct lapm_state *l)
 {
-	l->config = 0;
+	if (xid_pending(l))
+		lapm_v44_session_call_reset(&l->v44_session);
 	l->busy = 0;
 	l->peer_busy = 0;
 	l->retrain_poll = 0;
@@ -1712,7 +1715,6 @@ static void modem_ec_negotiate(struct modem *m)
 		complete_link_release(l);
 		return;
 	}
-	l->config = 1;
 	T401_START(l);
 }
 
@@ -1761,7 +1763,7 @@ bool modem_ec_take_retrain_request(struct modem *m)
 	    m->put_bits != modem_hdlc_put_bits)
 		return false;
 	l = &m->ec.lapm;
-	if (l->state != LAPM_DATA || l->config || l->busy || l->peer_busy ||
+	if (l->state != LAPM_DATA || xid_pending(l) || l->busy || l->peer_busy ||
 	    l->retrain_poll ||
 	    m->bit_timer <= 0 || m->bit_timer_func != t401_timeout ||
 	    (l->rtx_count < LAPM_RETRAIN_POLLS &&

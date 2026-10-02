@@ -982,12 +982,17 @@ static bool test_hangup_uses_active_framing(void)
 	for (unsigned mode = DETECTION; mode <= ASYNC; ++mode)
 	for (unsigned caller = 0; caller < 2; ++caller)
 	for (unsigned local = 0; local < 2; ++local)
-	for (unsigned failure = 0; failure < 2; ++failure) {
+	for (unsigned failure = 0; failure < 2; ++failure)
+	for (unsigned pending = 0; pending <= (mode == LAPM && caller); ++pending)
+	for (unsigned crossed = 0; crossed <= pending; ++crossed) {
 		struct framing_cancel_capture capture = { .hangup_result = failure ? -1 : 0 };
 		struct modem *m = modem_create(&driver, driver.name);
 		struct dp dp = { .id = DP_V34, .modem = m, .op = &operations,
 			.status = DPSTAT_CONNECT };
 		uint8_t bits[32] = { 0 };
+		uint8_t retained[LAPM_MAX_INFO_SIZE + 3];
+		frame_t *active = NULL;
+		int active_size = 0, active_count = 0;
 		unsigned long deadline;
 
 		CHECK(m != NULL, "framing cancellation allocation failed");
@@ -1009,6 +1014,32 @@ static bool test_hangup_uses_active_framing(void)
 		      mode == LAPM ? m->get_bits == modem_hdlc_get_bits :
 		                     m->get_bits == modem_async_get_bits,
 		      "framing cancellation did not select mode %u", mode);
+		if (pending) {
+			struct lapm_state *l = &m->ec.lapm;
+
+			for (unsigned bit = 0; bit < 10000 &&
+			     l->v44_session.phase != LAPM_V44_COMMAND_PENDING; ++bit)
+				CHECK(modem_get_bits(m, 1, bits, 1) == 1,
+				      "cancellation fixture did not transmit its preamble");
+			active = m->packer.hdlc.tx_frame;
+			CHECK(l->v44_session.phase == LAPM_V44_COMMAND_PENDING &&
+			      active != NULL && active->size <= (int)sizeof(retained),
+			      "cancellation fixture did not borrow XID");
+			active_size = active->size;
+			active_count = active->count;
+			memcpy(retained, active->buf, (size_t)active_size);
+			if (crossed) {
+				uint8_t wire[LAPM_MAX_INFO_SIZE + 2] = { l->rsp_addr, 0xaf };
+				frame_t command = { .buf = wire,
+					.count = 2 + (int)l->v44_session.command_length };
+
+				memcpy(wire + 2, l->v44_session.command, l->v44_session.command_length);
+				m->packer.hdlc.rx_complete(l, &command);
+				CHECK(l->v44_session.response_length != 0 &&
+				      l->v44_session.phase == LAPM_V44_COMMAND_PENDING,
+				      "crossed command did not cache an independent response");
+			}
+		}
 		m->bit_timer = 8;
 		m->bit_timer_func = bit_timer_expired;
 		m->packer_process = capture_framing_retry;
@@ -1024,8 +1055,16 @@ static bool test_hangup_uses_active_framing(void)
 			      m->bit_timer > 8 && m->bit_timer_func != bit_timer_expired &&
 			      m->packer_process == NULL && deadline - m->count == MODEM_RATE * 3 / 2 &&
 			      m->packer.hdlc.tx_preamble_flags == 0 &&
-			      m->packer.hdlc.tx_preamble_complete == NULL,
+			      m->packer.hdlc.tx_preamble_complete == NULL &&
+			      m->ec.lapm.v44_session.phase == LAPM_V44_READY &&
+			      m->ec.lapm.v44_session.command_length == 0 &&
+			      m->ec.lapm.v44_session.response_length == 0,
 			      "active LAPM release lost its frame route or timeout");
+			if (active != NULL)
+				CHECK(m->packer.hdlc.tx_frame == active && active->size == active_size &&
+				      active->count == active_count &&
+				      memcmp(active->buf, retained, (size_t)active_size) == 0,
+				      "cancelling negotiation overwrote its borrowed XID frame");
 			CHECK(modem_get_bits(m, 8, bits, sizeof(bits)) == sizeof(bits) &&
 			      m->ec.lapm.tx_ctrl == m->ec.lapm.ctrl_list,
 			      "LAPM release could not serialize DISC: caller %u", caller);
@@ -2759,7 +2798,7 @@ static bool test_lapm_dual_compression_retry(void)
 		CHECK(unchanged, "retry queue pressure changed the command or its deadline");
 	}
 	caller->packer.hdlc.rx_complete(caller->packer.hdlc.framer, &incoming);
-	CHECK(caller->ec.lapm.config == 1 && caller->ec.lapm.v44_path == NULL &&
+	CHECK(caller->ec.lapm.v44_path == NULL &&
 	      caller->ec.lapm.v44_session.phase == LAPM_V44_COMMAND_PENDING &&
 	      caller->bit_timer == 14400 && caller->ec.lapm.rtx_count == 0 &&
 	      caller->ec.lapm.tx_info_size == 128,
@@ -2781,7 +2820,7 @@ static bool test_lapm_dual_compression_retry(void)
 	      "malformed response restarted negotiation");
 	incoming.count++;
 	caller->packer.hdlc.rx_complete(caller->packer.hdlc.framer, &incoming);
-	CHECK(caller->ec.lapm.config == 0 && caller->ec.lapm.v44_path == NULL &&
+	CHECK(caller->ec.lapm.v44_path == NULL &&
 	      caller->ec.lapm.v44_session.phase == LAPM_V44_DECLINED &&
 	      caller->cfg.comp == 3 && caller->bit_timer == 14400,
 	      "cached reply to a V.42bis-only command did not finish XID negotiation");
@@ -3085,7 +3124,7 @@ static bool test_lapm_v42bis_negotiation(void)
 		incoming.count = (int)length + 2;
 		m->packer.hdlc.rx_complete(m->packer.hdlc.framer, &incoming);
 		if (invalid_response) {
-			CHECK(m->ec.lapm.config && m->bit_timer == timer && m->cfg.comp == local &&
+			CHECK(m->bit_timer == timer && m->cfg.comp == local &&
 				      m->ec.lapm.v44_session.phase == LAPM_V44_COMMAND_PENDING,
 			      "compression response %u accepted a direction we did not offer", scenario);
 		} else {
@@ -3173,7 +3212,8 @@ static bool test_lapm_v42bis_frozen_offer(void)
 		m->packer.hdlc.rx_complete(l, &incoming);
 		outgoing = m->packer.hdlc.get_tx_frame(l);
 		if (invalid) {
-			CHECK(outgoing == NULL && l->config && m->bit_timer == timer &&
+			CHECK(outgoing == NULL && l->v44_session.phase == LAPM_V44_COMMAND_PENDING &&
+			      m->bit_timer == timer &&
 			      m->cfg.comp == (expanded ? 3u : 0u) &&
 			      memcmp(&l->v44_session, &before, sizeof(before)) == 0,
 			      "frozen offer accepted unoffered directions: limit=%zu case=%u", limit, scenario);
@@ -3183,7 +3223,8 @@ static bool test_lapm_v42bis_frozen_offer(void)
 			      memcmp(outgoing->buf + 2, before.command, before.command_length) == 0,
 			      "rejected compression response changed the frozen retry");
 		} else {
-			CHECK(outgoing != NULL && outgoing->buf[1] == 0x7f && !l->config &&
+			CHECK(outgoing != NULL && outgoing->buf[1] == 0x7f &&
+			      l->v44_session.phase != LAPM_V44_COMMAND_PENDING &&
 			      m->cfg.comp == selected && m->state == 4,
 			      "frozen compression reply used current policy: limit=%zu case=%u", limit, scenario);
 			if (selected) {
@@ -3240,7 +3281,7 @@ static bool test_lapm_v42bis_configuration_failure(void)
 		/* A failed response must also be absent from the duplicate cache. */
 		for (unsigned attempt = 0; attempt < 2; ++attempt) {
 			m->packer.hdlc.rx_complete(l, &incoming);
-			CHECK(!modem_ec_can_establish(m) && !l->config && !m->bit_timer &&
+			CHECK(!modem_ec_can_establish(m) && !m->bit_timer &&
 			      strcmp(modem_call_phase(m), "cleardown") == 0 &&
 			      m->packer.hdlc.get_tx_frame(l) == NULL &&
 			      l->v44_session.phase == LAPM_V44_READY &&
@@ -3315,10 +3356,11 @@ static bool test_lapm_v42bis_invalid_parameters(void)
 			      "invalid compression limit %zu did not disconnect", scenario);
 		} else if (cases[index].ignored) {
 			CHECK(m->state == 4 && m->cfg.comp == 3 && m->bit_timer == timer &&
-				      (!response || m->ec.lapm.config),
+				      (!response || m->ec.lapm.v44_session.phase == LAPM_V44_COMMAND_PENDING),
 			      "malformed compression parameter %zu changed negotiation", scenario);
 		} else {
-			CHECK(m->cfg.comp == 0 && (!response || !m->ec.lapm.config),
+			CHECK(m->cfg.comp == 0 &&
+			      (!response || m->ec.lapm.v44_session.phase != LAPM_V44_COMMAND_PENDING),
 			      "unknown private parameter set %zu selected V.42bis", scenario);
 		}
 		modem_ec_exit(m);
@@ -3352,7 +3394,6 @@ static bool test_lapm_v42bis_decoder_failure(void)
 		m->cfg.comp_max_string = 6;
 		CHECK(start_lapm_compression_fixture(m, false), "decoder failure fixture failed");
 		m->ec.lapm.state = 2; /* Established LAPM data state. */
-		m->ec.lapm.config = 0;
 		modem_update_status(m, STATUS_EC_LINK);
 		CHECK(m->state == 5 && (m->modem_info & TIOCM_CD) && m->put_chars != NULL,
 		      "decoder failure fixture did not go online");
@@ -3405,7 +3446,6 @@ static bool test_lapm_v42bis_receive_pressure(void)
 		m->cfg.comp_max_string = 34;
 		CHECK(start_lapm_compression_fixture(m, false), "receive-pressure fixture failed");
 		m->ec.lapm.state = 2;
-		m->ec.lapm.config = 0;
 		modem_update_status(m, STATUS_EC_LINK);
 		CHECK(pipe(pipe_fds) == 0 &&
 			      fcntl(pipe_fds[0], F_SETFL, O_NONBLOCK) == 0 &&
@@ -3609,7 +3649,6 @@ static bool test_lapm_v42bis_transmit_pressure(void)
 		m->cfg.comp_max_string = strings[limit];
 		CHECK(start_lapm_compression_fixture(m, false), "transmit-pressure fixture failed");
 		m->ec.lapm.state = 2;
-		m->ec.lapm.config = 0;
 		modem_update_status(m, STATUS_EC_LINK);
 		for (size_t index = 0; index < sizeof(expected); ++index)
 			expected[index] = (uint8_t)(index * 23 + 7);
@@ -3713,7 +3752,8 @@ static bool test_lapm_xid_directions(void)
 		outgoing = modem->packer.hdlc.get_tx_frame(modem->packer.hdlc.framer);
 		CHECK(outgoing != NULL, "directional XID did not queue its reply");
 		if (response) {
-			CHECK(outgoing->buf[1] == 0x7f && modem->ec.lapm.config == 0,
+			CHECK(outgoing->buf[1] == 0x7f &&
+			      modem->ec.lapm.v44_session.phase != LAPM_V44_COMMAND_PENDING,
 			      "directional XID response did not finish negotiation");
 		} else {
 			CHECK(outgoing->buf[1] == 0xaf &&
@@ -3817,7 +3857,7 @@ static bool test_lapm_xid_numeric_values(void)
 		outgoing = m->packer.hdlc.get_tx_frame(m->packer.hdlc.framer);
 		if (!valid) {
 			CHECK(outgoing == NULL && m->bit_timer == timer &&
-				      (m->ec.lapm.config != 0) == (response != 0) &&
+				      (m->ec.lapm.v44_session.phase == LAPM_V44_COMMAND_PENDING) == (response != 0) &&
 				      m->ec.lapm.tx_info_size == (response ? 128u : 70u) &&
 				      m->ec.lapm.rx_info_size == (response ? 128u : 70u) &&
 				      m->ec.lapm.tx_win_size == (response ? 15u : 2u) &&
@@ -3833,7 +3873,7 @@ static bool test_lapm_xid_numeric_values(void)
 			}
 		} else {
 			CHECK(outgoing != NULL && outgoing->buf[1] == (response ? 0x7f : 0xaf) &&
-				      m->ec.lapm.config == 0 &&
+				      m->ec.lapm.v44_session.phase != LAPM_V44_COMMAND_PENDING &&
 				      m->ec.lapm.tx_info_size == (info && direction ? value : 128u) &&
 				      m->ec.lapm.rx_info_size == (info && !direction ? value : 128u) &&
 				      m->ec.lapm.tx_win_size == (!info && direction ? value : 15u) &&
@@ -3952,7 +3992,7 @@ static bool test_lapm_xid_collisions(void)
 			      (size_t)response_size - 2u) == LAPM_V44_OK,
 		      "peer rejected the collision response");
 		if (!early_response) {
-			CHECK(m->ec.lapm.config && m->ec.lapm.v44_path == NULL &&
+			CHECK(m->ec.lapm.v44_path == NULL &&
 			      m->ec.lapm.tx_info_size == 70 && m->ec.lapm.rx_info_size == 70 &&
 			      m->ec.lapm.v44_session.phase == LAPM_V44_COMMAND_PENDING,
 			      "peer command applied configuration before our response");
@@ -3979,7 +4019,8 @@ static bool test_lapm_xid_collisions(void)
 			      "completed collision did not start establishment");
 			m->packer.hdlc.tx_complete(m->packer.hdlc.framer, outgoing);
 		}
-		CHECK(!m->ec.lapm.config && m->ec.lapm.tx_info_size == 119 &&
+		CHECK(m->ec.lapm.v44_session.phase != LAPM_V44_COMMAND_PENDING &&
+		      m->ec.lapm.tx_info_size == 119 &&
 		      m->ec.lapm.rx_info_size == 83 && m->ec.lapm.tx_win_size == 11 &&
 		      m->ec.lapm.rx_win_size == 7 &&
 		      (m->ec.lapm.v44_path != NULL) == (compression == 2) &&
@@ -3995,7 +4036,8 @@ static bool test_lapm_xid_collisions(void)
 			outgoing = m->packer.hdlc.get_tx_frame(m->packer.hdlc.framer);
 			CHECK(outgoing != NULL && outgoing->size == response_size &&
 			      memcmp(outgoing->buf, response, (size_t)response_size) == 0 &&
-			      m->ec.lapm.v44_path == path && !m->ec.lapm.config,
+			      m->ec.lapm.v44_path == path &&
+			      m->ec.lapm.v44_session.phase != LAPM_V44_COMMAND_PENDING,
 			      "late duplicate reset codec ownership or negotiation");
 			m->packer.hdlc.tx_complete(m->packer.hdlc.framer, outgoing);
 		}
@@ -4148,9 +4190,7 @@ static bool test_lapm_xid_envelopes(void)
 		incoming.count = 2 + sizeof(truncated);
 		caller->packer.hdlc.rx_complete(
 			caller->packer.hdlc.framer, &incoming);
-		CHECK(caller->ec.lapm.config == 1 &&
-			      caller->ec.lapm.v44_session.phase ==
-				      LAPM_V44_COMMAND_PENDING,
+		CHECK(caller->ec.lapm.v44_session.phase == LAPM_V44_COMMAND_PENDING,
 		      "malformed XID response completed LAPM negotiation");
 	}
 	caller->rx_rate = caller->tx_rate = 300;
@@ -4215,9 +4255,7 @@ static bool test_lapm_xid_envelopes(void)
 		answerer->packer.hdlc.framer, outgoing);
 	caller->packer.hdlc.rx_complete(
 		caller->packer.hdlc.framer, &incoming);
-	CHECK(caller->ec.lapm.config == 0 &&
-		      caller->ec.lapm.v44_session.phase ==
-			      LAPM_V44_NEGOTIATED &&
+	CHECK(caller->ec.lapm.v44_session.phase == LAPM_V44_NEGOTIATED &&
 		      caller->ec.lapm.v44_path != NULL && caller->cfg.comp == 0 &&
 		      modem_ec_active_compression(caller) ==
 			      MODEM_EC_COMPRESSION_V44,
@@ -4626,7 +4664,7 @@ static bool test_lapm_receive_frame_boundaries(void)
 		}
 		/* Pending XID and rejected payloads cannot supply a missing UA. */
 		l->state = 1;
-		l->config = 1;
+		l->v44_session.phase = LAPM_V44_COMMAND_PENDING;
 		wire[0] = l->rsp_addr;
 		wire[1] = wire[2] = 0;
 		incoming.count = sizeof(wire);
@@ -4636,7 +4674,7 @@ static bool test_lapm_receive_frame_boundaries(void)
 		CHECK(memcmp(l, &before, sizeof(before)) == 0 &&
 		      m->bit_timer == 1234 && m->new_event == event,
 		      "early information bypassed XID negotiation");
-		l->config = 0;
+		l->v44_session.phase = LAPM_V44_READY;
 		l->rx_info_size = 0;
 		before = *l;
 		m->packer.hdlc.rx_complete(l, &incoming);
@@ -4878,7 +4916,8 @@ static bool test_lapm_sabme_readiness(void)
 			if (pressure && repeat == LAPM_CTRL_FRAMES - 1)
 				break;
 			CHECK(l->state == 0 && m->state == host && l->rtx_count == 2 &&
-			      l->config == (scenario == PENDING) && m->bit_timer == 1234 &&
+			      (l->v44_session.phase == LAPM_V44_COMMAND_PENDING) == (scenario == PENDING) &&
+			      m->bit_timer == 1234 &&
 			      m->bit_timer_func == timeout &&
 			      m->packer.hdlc.tx_preamble_complete == preamble &&
 			      memcmp(&l->v44_session, &session, sizeof(session)) == 0 &&
@@ -4907,7 +4946,7 @@ static bool test_lapm_sabme_readiness(void)
 			outgoing = m->packer.hdlc.get_tx_frame(l);
 			CHECK(outgoing != NULL && outgoing->size == command_size &&
 			      memcmp(outgoing->buf, command, (size_t)command_size) == 0 &&
-			      l->config && l->rtx_count == 3,
+			      l->v44_session.phase == LAPM_V44_COMMAND_PENDING && l->rtx_count == 3,
 			      "premature SABME replaced the frozen XID retry");
 			m->packer.hdlc.tx_complete(l, outgoing);
 		}
@@ -5105,12 +5144,13 @@ static bool test_lapm_peer_ready_dm(void)
 	m->state = 4; /* Host is waiting for error-control establishment. */
 	struct lapm_state *l = &m->ec.lapm;
 	wire[0] = l->cmd_addr;
-	l->config = 1;
+	l->v44_session.phase = LAPM_V44_COMMAND_PENDING;
 	m->bit_timer = 1234;
 	m->packer.hdlc.rx_complete(l, &incoming);
-	CHECK(l->state == 0 && l->config && m->state == 4 && m->bit_timer == 1234 &&
+	CHECK(l->state == 0 && l->v44_session.phase == LAPM_V44_COMMAND_PENDING && m->state == 4 &&
+	      m->bit_timer == 1234 &&
 	      l->tx_ctrl == l->ctrl_list, "peer-ready DM bypassed pending XID");
-	l->config = 0;
+	l->v44_session.phase = LAPM_V44_READY;
 	m->packer.hdlc.rx_complete(l, &incoming);
 	CHECK(l->state == 1 && m->state == 4 && m->bit_timer > 1234,
 	      "peer-ready DM reported CONNECT without establishing LAPM");
@@ -5328,7 +5368,8 @@ static bool test_lapm_orderly_release(void)
 			incoming.count = 2;
 			m->packer.hdlc.rx_complete(l, &incoming);
 		}
-		CHECK(l->state == (local ? DISC : IDLE) && !l->config &&
+		CHECK(l->state == (local ? DISC : IDLE) &&
+		      l->v44_session.phase != LAPM_V44_COMMAND_PENDING &&
 		      !l->busy && !l->peer_busy && !l->vs && !l->va && !l->vr && !l->rx_count &&
 		      !l->rx_head && !l->rtx_count && l->sent_info == l->info_list &&
 		      l->tx_info == l->info_list && m->packer_process == NULL &&
@@ -5524,7 +5565,9 @@ static bool test_lapm_recovery_boundaries(void)
 				incoming.count = mode <= DISC ? (mode == XID ? expected_size : 2) : 3;
 				m->packer.hdlc.rx_complete(l, &incoming);
 				if (mode != DISC) {
-					CHECK(l->state == (mode == XID ? 1 : 2) && !l->config && !l->rtx_count &&
+					CHECK(l->state == (mode == XID ? 1 : 2) &&
+					      l->v44_session.phase != LAPM_V44_COMMAND_PENDING &&
+					      !l->rtx_count &&
 					      m->bit_timer > 0 && m->get_bits == modem_hdlc_get_bits,
 					      "last allowed response failed to recover mode %u role %u", mode, caller);
 					modem_ec_exit(m);
@@ -5538,13 +5581,19 @@ static bool test_lapm_recovery_boundaries(void)
 				      mode, caller);
 			}
 		}
-		CHECK(l->state == 0 && !l->config && !l->rtx_count && !l->rx_count &&
+		CHECK(l->state == 0 && l->v44_session.phase != LAPM_V44_COMMAND_PENDING && !l->rtx_count &&
+		      !l->rx_count &&
 		      l->sent_info == l->info_list && l->tx_info == l->info_list &&
 		      m->bit_timer == 0 && m->bit_timer_func == NULL && m->packer_process == NULL &&
 		      m->get_bits == NULL && m->put_bits == NULL && source.calls == source_calls &&
 		      strcmp(modem_call_phase(m), "cleardown") == 0 && m->sample_timer - m->count == 48,
 		      "failed recovery retained an online link: mode %u role %u outcome %u",
 		      mode, caller, outcome);
+		CHECK(mode != XID ||
+		      (l->v44_session.phase == LAPM_V44_READY &&
+		       l->v44_session.command_length == 0 && l->v44_session.response_length == 0),
+		      "failed XID recovery retained its negotiation transaction: role %u outcome %u",
+		      caller, outcome);
 		modem_ec_exit(m);
 		modem_delete(m);
 	}
@@ -6142,7 +6191,8 @@ static bool test_lapm_control_failure(void)
 		incoming.buf = xid;
 		incoming.count = (int)length + 2;
 		m->packer.hdlc.rx_complete(l, &incoming);
-		CHECK(l->state == 0 && !l->config && !l->vs && !l->va && !l->vr &&
+		CHECK(l->state == 0 && l->v44_session.phase != LAPM_V44_COMMAND_PENDING && !l->vs &&
+		      !l->va && !l->vr &&
 		      l->sent_info == l->info_list && l->tx_info == l->info_list &&
 		      !l->busy && !l->peer_busy && !l->rx_count && !m->bit_timer &&
 		      m->packer_process == NULL && strcmp(modem_call_phase(m), "cleardown") == 0,
@@ -6185,7 +6235,8 @@ static bool test_lapm_information_failure(void)
 		m->cfg.ec_tx_win_size = 2;
 		CHECK(start_lapm_compression_fixture(m, caller), "information failure fixture failed");
 		struct lapm_state *l = &m->ec.lapm;
-		l->config = 0;
+		CHECK(lapm_v44_session_call_reset(&l->v44_session) == LAPM_V44_OK,
+		      "data fixture did not retire its startup transaction");
 		l->state = DATA;
 		m->state = ONLINE;
 		m->get_chars = counted_lapm_source;
@@ -6501,7 +6552,7 @@ static bool test_lapm_idle_supervision(void)
 			response[0] = l->cmd_addr;
 			m->packer.hdlc.tx_complete(l, outgoing);
 			m->packer.hdlc.rx_complete(l, &xid);
-			CHECK(!l->config, "originator idle fixture did not complete XID");
+			CHECK(l->v44_session.phase != LAPM_V44_COMMAND_PENDING, "originator idle fixture did not complete XID");
 			outgoing = m->packer.hdlc.get_tx_frame(l);
 			CHECK(outgoing != NULL && outgoing->buf[1] == 0x7f,
 			      "originator idle fixture did not send SABME");
@@ -6890,7 +6941,7 @@ static bool test_lapm_stalled_retrain(void)
 			l->rtx_count = excluded == 7 ? 1 : 2;
 			l->busy = excluded == 0;
 			l->peer_busy = excluded == 1;
-			l->config = excluded == 2;
+			l->v44_session.phase = excluded == 2 ? LAPM_V44_COMMAND_PENDING : LAPM_V44_READY;
 			l->state = excluded == 3 ? 1 : LAPM_DATA_STATE;
 			m->cfg.ec = excluded != 4;
 			m->state = excluded == 5 ? 7 : ONLINE;
@@ -7097,7 +7148,8 @@ static bool test_lapm_supervisory_polls(void)
 		m->cfg.comp = 0;
 		CHECK(start_lapm_compression_fixture(m, caller), "supervisory poll fixture failed");
 		struct lapm_state *l = &m->ec.lapm;
-		l->config = 0;
+		CHECK(lapm_v44_session_call_reset(&l->v44_session) == LAPM_V44_OK,
+		      "data fixture did not retire its startup transaction");
 		l->state = DATA;
 		l->va = l->vs = base;
 		l->vr = 17;
@@ -7552,7 +7604,7 @@ static bool test_retrain_preserves_detection(void)
 		timeout = modem->bit_timer_func;
 		modem_dp_reconnected(modem);
 		CHECK(modem->state == TEST_STATE_EC_ESTAB &&
-		      lapm->state == 0 && lapm->config == 0 &&
+		      lapm->state == 0 && lapm->v44_session.phase != LAPM_V44_COMMAND_PENDING &&
 		      modem->get_bits == modem_detector_get_bits &&
 		      modem->put_bits == modem_detector_put_bits &&
 		      modem->packer.detector.tx_count == retained.tx_count &&
@@ -7608,7 +7660,7 @@ static bool test_lapm_timer_follows_rate_changes(void)
 	modem_ec_start(m);
 	for (unsigned i = 0; m->bit_timer == 0 && i < 10000; ++i)
 		modem_get_bits(m, 1, bits, 1);
-	CHECK(m->bit_timer == 28800 && m->ec.lapm.config &&
+	CHECK(m->bit_timer == 28800 && m->ec.lapm.v44_session.phase == LAPM_V44_COMMAND_PENDING &&
 	      m->ec.lapm.rtx_count == 0, "XID did not start its response timer");
 	timeout = m->bit_timer_func;
 	for (size_t i = 0; i < sizeof(changes) / sizeof(changes[0]); ++i) {
@@ -7847,12 +7899,12 @@ static bool test_retrain_preserves_lapm_establishment(void)
 					struct lapm_state *l = &resuming->ec.lapm;
 					struct lapm_v44_session session = l->v44_session;
 					struct v44_character_path *path = l->v44_path;
-					int state = l->state, config = l->config;
+					int state = l->state;
 					int retries = l->rtx_count, remaining = resuming->bit_timer;
 					void (*timeout)(struct modem *) = resuming->bit_timer_func;
 
 					modem_dp_reconnected(resuming);
-					CHECK(l->state == state && l->config == config &&
+					CHECK(l->state == state &&
 					      l->rtx_count == retries && l->v44_path == path &&
 					      memcmp(&l->v44_session, &session, sizeof(session)) == 0 &&
 					      resuming->bit_timer == remaining &&
