@@ -6,6 +6,7 @@
 #include "datapump_media.h"
 #include "datapump_timing.h"
 #include "modem.h"
+#include "v8_datapump.h"
 #include "fsk.h"
 #include "fsk_online_source.h"
 #include "training_session.h"
@@ -169,6 +170,8 @@ static struct dp *create_v23(
 	};
 	datapump->phase = datapump->answerer ? V23_PHASE_ANSWER_TONE :
 						 V23_PHASE_WAIT_MARK;
+	if (datapump->answerer && v8_datapump_answer_tone_complete(modem->dp))
+		datapump->phase = V23_PHASE_WAIT_MARK;
 	if (training_session_init(
 		    &datapump->training,
 		    datapump_carrier_wait_ticks(modem)) != TRAINING_SESSION_OK) {

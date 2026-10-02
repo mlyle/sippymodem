@@ -380,6 +380,12 @@ enum v32_line_startup_result v32_answerer_line_startup_init(
 		startup, transmit_amplitude, V32_ANSWERER_LINE_ANSWER_TONE);
 }
 
+enum v32_line_startup_result v32_answerer_line_after_answer_init(
+	struct v32_answerer_line_startup *startup, int16_t amplitude)
+{
+	return answerer_init(startup, amplitude, V32_ANSWERER_LINE_SILENCE);
+}
+
 enum v32_line_startup_result v32_answerer_line_retrain_init(
 	struct v32_answerer_line_startup *startup,
 	int16_t transmit_amplitude)
@@ -585,6 +591,15 @@ enum v32_line_startup_result v32_answerer_line_startup_process(
 	*startup = next;
 	*transmit_sample = generated;
 	*complete = next.state == V32_ANSWERER_LINE_COMPLETE;
+	return V32_LINE_STARTUP_OK;
+}
+
+enum v32_line_startup_result v32_line_startup_resume(
+	struct v32_line_startup *startup, int16_t amplitude)
+{
+	if (v32_line_startup_init(startup, amplitude) != V32_LINE_STARTUP_OK)
+		return V32_LINE_STARTUP_INVALID_ARGUMENT;
+	startup->state = V32_LINE_SEND_CALLING_CARRIER;
 	return V32_LINE_STARTUP_OK;
 }
 

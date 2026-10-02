@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "v22_datapump.h"
+#include "single_tone.h"
 
 #include "datapump_link.h"
 #include "datapump_media.h"
@@ -84,6 +85,7 @@ enum v22_training_state {
 enum v22_transmit_mode {
 	V22_TRANSMIT_SILENCE,
 	V22_TRANSMIT_UNSCRAMBLED_MARK,
+	V22_TRANSMIT_BELL_ANSWER_TONE,
 	V22_TRANSMIT_V22BIS_RATE_SIGNAL,
 	V22_TRANSMIT_SCRAMBLED_MARK,
 	V22_TRANSMIT_V22BIS_MARK,
@@ -94,6 +96,8 @@ enum v22_transmit_mode {
 struct v22_datapump {
 	struct dp dp;
 	struct qam_modulator modulator;
+	struct single_tone_transmitter bell_answer_tone;
+	struct single_tone_detector answer_mark;
 	struct qam_demodulator demodulator;
 	struct v22_symbol_encoder encoder;
 	struct v22_symbol_decoder decoder;
@@ -232,6 +236,10 @@ static struct v22_datapump *v22_from_dp(struct dp *dp)
 	    !bit_rate_matches_id(datapump->dp.id, datapump->bit_rate) ||
 	    datapump->training_state > V22_TRAINING_ONLINE ||
 	    datapump->transmit_mode > V22_TRANSMIT_DATA ||
+	    (datapump->originator && !single_tone_detector_is_valid(&datapump->answer_mark)) ||
+	    (datapump->transmit_mode == V22_TRANSMIT_BELL_ANSWER_TONE &&
+	     (dp->id != DP_B212 || datapump->originator ||
+	      !single_tone_transmitter_is_valid(&datapump->bell_answer_tone))) ||
 	    datapump->transmit_quadrant > 3 ||
 	    datapump->training_timeout_samples == 0 ||
 	    datapump->training_samples > datapump->training_timeout_samples ||
@@ -381,6 +389,17 @@ static struct dp *create_v22(
 		free(datapump);
 		return NULL;
 	}
+	if (id == DP_B212 && !datapump->originator &&
+	    single_tone_transmitter_init(&datapump->bell_answer_tone, 2225,
+		    V22_TRANSMIT_AMPLITUDE) != SINGLE_TONE_OK) {
+		free(datapump);
+		return NULL;
+	}
+	if (datapump->originator &&
+	    single_tone_detector_init(&datapump->answer_mark, 2250) != SINGLE_TONE_OK) {
+		free(datapump);
+		return NULL;
+	}
 	datapump->bit_rate = bit_rate;
 	datapump->dp = (struct dp){
 		.id = id,
@@ -397,7 +416,8 @@ static struct dp *create_v22(
 		datapump->transmit_mode = V22_TRANSMIT_SILENCE;
 	} else {
 		datapump->training_state = V22_TRAINING_WAIT_SCRAMBLED_MARK;
-		datapump->transmit_mode = V22_TRANSMIT_UNSCRAMBLED_MARK;
+		datapump->transmit_mode = id == DP_B212 ?
+			V22_TRANSMIT_BELL_ANSWER_TONE : V22_TRANSMIT_UNSCRAMBLED_MARK;
 	}
 	return &datapump->dp;
 }
@@ -513,6 +533,9 @@ static int generate_sample(
 		*sample = 0;
 		return 0;
 	}
+	if (datapump->transmit_mode == V22_TRANSMIT_BELL_ANSWER_TONE)
+		return single_tone_transmitter_sample(&datapump->bell_answer_tone,
+			sample) == SINGLE_TONE_OK ? 0 : -1;
 	can_accept = qam_modulator_can_accept_symbol(
 		&datapump->modulator);
 	if (transmit_uses_v22bis_symbols(datapump)) {
@@ -618,7 +641,7 @@ static void observe_answer_mark(
 {
 	if (datapump->training_state ==
 	    V22_TRAINING_ORIGINATE_WAIT_ANSWER_MARK) {
-		if (quarter_turns == 3)
+		if (quarter_turns == 3 && datapump->answer_mark.tone_present)
 			datapump->answer_mark_symbols++;
 		else
 			datapump->answer_mark_symbols = 0;
@@ -674,7 +697,11 @@ static int observe_bits(
 	if ((datapump->training_state ==
 		     V22_TRAINING_WAIT_SCRAMBLED_MARK ||
 	     datapump->training_state == V22_TRAINING_CONNECT_HOLD) &&
-	    !datapump_uses_v22bis(datapump)) {
+	    (!datapump_uses_v22bis(datapump) ||
+	     (datapump->training_state == V22_TRAINING_WAIT_SCRAMBLED_MARK &&
+	      MODEM_AUTOMODE(datapump->dp.modem) &&
+	      datapump->dp.modem->min_rate <= V22_1200_BIT_RATE &&
+	      datapump->dp.modem->max_rate >= V22_1200_BIT_RATE))) {
 		uint32_t target = scrambled_confirmation_target(datapump);
 
 		for (size_t index = 0; index < bit_count; ++index) {
@@ -685,8 +712,22 @@ static int observe_bits(
 				datapump->scrambled_mark_bits = 0;
 			if (datapump->training_state ==
 				    V22_TRAINING_WAIT_SCRAMBLED_MARK &&
-			    datapump->scrambled_mark_bits >= target)
+			    datapump->scrambled_mark_bits >= target) {
+				/* V.22bis 6.3.1.1: scrambled ones without S1
+				 * select 1200 bit/s. Retain the acquired carrier,
+				 * descrambler and transmit history. */
+				if (datapump_uses_v22bis(datapump)) {
+					datapump->bit_rate = V22_1200_BIT_RATE;
+					datapump->dp.id = DP_V22;
+					datapump->dp.op = &v22_operations;
+					datapump->rate_signal_wait_samples = 0;
+					datapump->rate_signal_late_candidate = false;
+					datapump->rate_signal_reply_sent = false;
+					v22bis_rate_signal_detector_reset(
+						&datapump->rate_signal_detector);
+				}
 				return begin_connect_hold(datapump);
+			}
 		}
 	} else if (datapump->training_state == V22_TRAINING_ONLINE) {
 		return output_received_bits(datapump, bits, bit_count);
@@ -1672,8 +1713,22 @@ static int process_v22(
 	return_hold_was_active =
 		datapump->carrier_return_hold_samples != 0;
 	for (int index = 0; index < count; ++index) {
+		bool receive_active = line_power_present;
+		if (datapump->originator && datapump->training_state ==
+		    V22_TRAINING_ORIGINATE_WAIT_ANSWER_MARK) {
+			struct single_tone_event event;
+			if (single_tone_detector_sample(&datapump->answer_mark,
+				    receive[index], &event) != SINGLE_TONE_OK)
+				return DPSTAT_ERROR;
+			receive_active = receive_active && datapump->answer_mark.tone_present;
+			if (event.kind == SINGLE_TONE_ENDED) {
+				datapump->answer_mark_symbols = 0;
+				if (reset_v22_receive_path(datapump) != 0)
+					return DPSTAT_ERROR;
+			}
+		}
 		if (generate_sample(datapump, &transmit[index]) != 0 ||
-		    (line_power_present && receive_sample(
+		    (receive_active && receive_sample(
 			    datapump, receive[index], discard_receive,
 			    &linked) != 0) ||
 		    advance_training_timer(datapump, &linked) != 0) {
@@ -1714,4 +1769,17 @@ static int process_v22(
 	}
 	return datapump->missing_carrier_samples >= carrier_loss_limit ?
 		       DPSTAT_ERROR : DPSTAT_OK;
+}
+
+/* Keep a validated S1 or scrambled-mark exchange through its own training
+ * interval; an automatic answer-tone probe may expire only before that. */
+bool v22_datapump_has_peer(struct dp *dp)
+{
+	struct v22_datapump *datapump = v22_from_dp(dp);
+
+	return datapump != NULL &&
+		(datapump->rate_signal_detector.present ||
+		 datapump->training_state == V22_TRAINING_CONNECT_HOLD ||
+		 datapump->training_state == V22_TRAINING_V22BIS_CONFIRM ||
+		 datapump->training_state == V22_TRAINING_ONLINE);
 }

@@ -295,7 +295,9 @@ static int receive_samples(
 				datapump->missing_carrier_samples = 0;
 			}
 		}
-		if (datapump->training_state == FSK300_TRAINING_GUARD &&
+		if ((datapump->training_state == FSK300_TRAINING_GUARD ||
+		     (datapump->profile->id == DP_B103 && !datapump->originator &&
+		      datapump->training_state == FSK300_TRAINING_SEND_MARK)) &&
 		    datapump->previous_sample <= 0 && receive[index] > 0)
 			datapump->guard_crossings++;
 		datapump->previous_sample = receive[index];
@@ -306,6 +308,18 @@ static int receive_samples(
 		bits[produced++] = bit;
 	}
 	return (int)produced;
+}
+
+/* Count cycles over the existing guard, allowing one crossing of phase
+ * uncertainty in addition to the Bell mark frequency tolerance. */
+static bool bell_mark_matches(const struct fsk300_datapump *datapump, unsigned frequency)
+{
+	int64_t error = (int64_t)datapump->guard_crossings * MODEM_RATE -
+		(int64_t)datapump->training_state_samples * frequency;
+	int64_t limit = MODEM_RATE + (int64_t)datapump->training_state_samples *
+		BELL103_MARK_TOLERANCE_HZ;
+
+	return error >= -limit && error <= limit;
 }
 
 static int advance_training(
@@ -336,12 +350,7 @@ static int advance_training(
 			 * 2250 Hz answer probe. Use the existing silent guard to
 			 * check mark frequency, allowing one crossing of phase
 			 * uncertainty as well as the frequency tolerance. */
-			int64_t error = (int64_t)datapump->guard_crossings * MODEM_RATE -
-				(int64_t)datapump->training_state_samples * BELL103_ANSWERER_MARK_HZ;
-			int64_t limit = MODEM_RATE + (int64_t)datapump->training_state_samples *
-				BELL103_MARK_TOLERANCE_HZ;
-
-			if (error < -limit || error > limit) {
+			if (!bell_mark_matches(datapump, BELL103_ANSWERER_MARK_HZ)) {
 				datapump->training_state = FSK300_TRAINING_WAIT_MARK;
 				datapump->remote_mark_samples = 0;
 				return DPSTAT_OK;
@@ -361,6 +370,17 @@ static int advance_training(
 		if (datapump->training_state_samples < required ||
 		    datapump->missing_carrier_samples != 0)
 			return DPSTAT_OK;
+		if (datapump->profile->id == DP_B103 && !datapump->originator) {
+			/* The short FSK window also admits parts of a V.22
+			 * calling signal. Qualify the Bell calling frequency over
+			 * the response guard before committing a 300-bit/s link. */
+			if (!bell_mark_matches(datapump, BELL103_ORIGINATOR_MARK_HZ)) {
+				datapump->training_state = FSK300_TRAINING_WAIT_MARK;
+				datapump->training_state_samples = 0;
+				datapump->remote_mark_samples = 0;
+				return DPSTAT_OK;
+			}
+		}
 		if (!datapump_set_link_rates(
 			    &datapump->dp, FSK300_BIT_RATE, FSK300_BIT_RATE))
 			return DPSTAT_ERROR;

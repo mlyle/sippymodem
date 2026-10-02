@@ -44,6 +44,22 @@ baud instead of the North American 45.45-baud mode. Its bounded text path uses
 explicit half-duplex turns and preserves the complete mark-hold interval before
 listening again.
 
+`ATZ` restores automatic V.92 selection (`AT+MS=92,1,300,56000`) and
+unrestricted conventional upstream rate and symbol-rate negotiation. The caller
+prefers V.8 negotiation and recognizes legacy answer tones when V.8 is absent.
+It tries Bell 212A before Bell 103 on their shared answer tone and permits
+V.22bis to negotiate 1200 bit/s or retry at 600 bit/s within the selected range.
+The answerer begins with ANSam; without a call menu it continues through V.32,
+V.22bis/V.22, Bell 103/212A, V.21, V.22 at 600 bit/s, and V.23. These probes
+share the normal datapumps and one carrier-wait deadline (`S7`). Baudot and
+ISDN DOVBS require explicit selection. The final rate depends on the peer and
+channel; a fixed family or rate range still limits automatic fallback.
+
+The answer sequence follows ITU-T V.8 (11/2000), 8.1.1 and 8.2.2: five seconds
+of unanswered ANSam and a 75 ms silent transition. V.22bis 6.3.1.1 supplies
+the 2400/1200-bit/s decision. Optional V.92 PCM upstream is selected with
+`AT+V92U=1`.
+
 When LAPM compression is requested, XID may offer both V.44 and the legacy
 method but selects exactly one in the response. A negotiated V.44 session owns
 bounded transmit and receive codecs at the I-frame character boundary, including

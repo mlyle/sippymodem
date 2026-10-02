@@ -1735,6 +1735,76 @@ static bool test_v8_handoff(void)
 	return true;
 }
 
+static bool test_automatic_factory_profile(void)
+{
+	struct modem_driver driver = {
+		.name = "automatic factory profile",
+		.start = unused_start, .stop = unused_stop, .ioctl = unused_control,
+	};
+	struct modem *modem = modem_create(&driver, driver.name);
+
+	CHECK(modem != NULL, "factory profile allocation failed");
+	for (unsigned reset = 0; reset < 2; ++reset) {
+		CHECK(MODEM_DP(modem) == DP_V92 && MODEM_AUTOMODE(modem) == 1 &&
+		      modem->min_rate == 300 && modem->max_rate == 56000 &&
+		      modem->v90_upstream_min_rate == 0 && modem->v90_upstream_max_rate == 0 &&
+		      modem->v34_symbol_rate == 0 && modem->v90_upstream_max_baud == 0 &&
+		      modem_get_param(modem, MDMPRM_V92_PCM_UPSTREAM) == 0,
+		      "factory profile restricted automatic mode or rate");
+		CHECK(process_at_command(modem, "AT+MS=21,0,300,300+V34B=2400+V90U=9600,9600,3000+V92U=1") == 0 &&
+		      process_at_command(modem, "ATZ") == 0,
+		      "ATZ did not clear fixed family and directional rate settings");
+	}
+	modem_delete(modem);
+	return true;
+}
+
+static bool test_automatic_startup_deadline(void)
+{
+	struct modem_driver driver = {
+		.name = "automatic startup deadline",
+		.start = unused_start, .stop = unused_stop, .ioctl = unused_control,
+	};
+	const struct dp_operations *ops = modem_dp_get_registered_ops(DP_V8);
+
+	for (unsigned scenario = 0; scenario < 4; ++scenario) {
+		struct modem *modem = modem_create(&driver, driver.name);
+		struct single_tone_transmitter tone;
+		struct dp *dp;
+		unsigned seconds = scenario == 0 ? 7 : scenario == 1 ? 1 : 4;
+		unsigned samples = 0;
+		int result = DPSTAT_OK;
+
+		CHECK(modem != NULL && ops != NULL, "deadline fixture allocation failed");
+		modem_set_sreg(modem, SREG_WAIT_CARRIER_AFTER_DIAL, seconds);
+		if (scenario == 2)
+			modem->min_rate = 4800;
+		if (scenario == 3)
+			MODEM_AUTOMODE(modem) = 0;
+		CHECK(single_tone_transmitter_init(&tone, 2250, 12000) == SINGLE_TONE_OK,
+		      "deadline tone failed");
+		dp = ops->create(modem, DP_V92, scenario != 0, MODEM_RATE, MODEM_FRAG, ops);
+		CHECK(dp != NULL && v8_datapump_take_legacy(dp) == NULL,
+		      "untrained probe was transferable");
+		while (result == DPSTAT_OK && samples <= (seconds + 1) * MODEM_RATE) {
+			int16_t rx[MODEM_FRAG] = { 0 }, tx[MODEM_FRAG];
+			for (unsigned i = 0; scenario >= 2 && i < MODEM_FRAG; ++i)
+				CHECK(single_tone_transmitter_sample(&tone, &rx[i]) == SINGLE_TONE_OK,
+				      "deadline tone generation failed");
+			result = ops->process(dp, rx, tx, MODEM_FRAG);
+			samples += MODEM_FRAG;
+		}
+		CHECK(result == DPSTAT_NOANSWER && samples <= seconds * MODEM_RATE + MODEM_FRAG &&
+		      modem->dp_requested == 0 && v8_datapump_take_legacy(dp) == NULL,
+		      "startup escaped deadline or rate policy in scenario %u (%u samples, %d)",
+		      scenario, samples, result);
+		CHECK((scenario != 0 || v8_datapump_answer_tone_complete(dp)) && ops->delete(dp) == 0,
+		      "silent answerer did not finish ANSam or release its probe");
+		modem_delete(modem);
+	}
+	return true;
+}
+
 static bool test_v8_fallback_limits(void)
 {
 	struct modem_driver driver = {
@@ -1754,6 +1824,7 @@ static bool test_v8_fallback_limits(void)
 		      "fallback limit endpoints failed");
 		/* V.21 must not bypass a fixed family or a 1200-bit/s floor.
 		 * Conversely, selecting V.21 must not offer the higher V.32 family. */
+		MODEM_AUTOMODE(caller) = 0;
 		MODEM_AUTOMODE(answerer) = restricted != 0;
 		answerer->min_rate = restricted == 1 ? 1200 : 300;
 		calling = ops->create(caller, restricted == 2 ? DP_V32 : DP_V21,
@@ -7179,6 +7250,8 @@ int main(void)
 		{ "escape holds candidate bytes", test_escape_holds_candidate_bytes },
 		{ "V.8 datapump mapping", test_v8_datapump_mapping },
 		{ "V.8 handoff", test_v8_handoff },
+		{ "automatic factory profile", test_automatic_factory_profile },
+		{ "automatic startup deadline", test_automatic_startup_deadline },
 		{ "V.8 fallback limits", test_v8_fallback_limits },
 		{ "V.8 legacy V.32 selection", test_v8_legacy_v32 },
 		{ "modulation report identity", test_modulation_report_identity },

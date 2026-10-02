@@ -1343,8 +1343,9 @@ static void do_modem_change_dp (struct modem *m)
 
 		MODEM_DBG("%ld: change dp: --> %d...\n", m->count, id);
 
+		dp = v8_datapump_take_legacy(old);
 		op = modem_dp_get_registered_ops(id);
-		if (op && op->create)
+		if (dp == NULL && op && op->create)
 			dp = op->create(m,dp_id,
 					m->caller,m->srate,
 					m->frag,op);
@@ -1363,6 +1364,8 @@ static void do_modem_change_dp (struct modem *m)
         if ( old ) {
                 old->op->delete(old);
         }
+	if (m->dp != NULL && m->dp->status == DPSTAT_CONNECT)
+		modem_dp_connected(m);
 
 }
 
@@ -2054,7 +2057,7 @@ int modem_reset(struct modem *m)
 		modem_set_hook(m,MODEM_HOOK_ON);
 	modem_set_state(m, STATE_MODEM_IDLE);
 	m->command = 1;
-	m->min_rate = MODEM_MIN_RATE;
+	m->min_rate = 300;
 	m->max_rate = MODEM_MAX_RATE;
 	m->v90_upstream_min_rate = 0;
 	m->v90_upstream_max_rate = 0;
@@ -2097,8 +2100,8 @@ static int sregs_init(unsigned char sregs[])
 
         sregs[SREG_SPEAKER_CONTROL] =  1; /* yes */
         sregs[SREG_SPEAKER_VOLUME]  =  3; /* max */
-        sregs[SREG_AUTOMODE]        =  0;
-        sregs[SREG_DP]              =  DP_V21;
+        sregs[SREG_AUTOMODE]        =  1;
+        sregs[SREG_DP]              =  DP_V92;
 
         sregs[SREG_ANS_DELAY]       =  2; /* seconds */
 
@@ -2277,7 +2280,7 @@ struct modem *modem_create(struct modem_driver *drv, const char *name)
 	m->command= 1;
         m->hook   = MODEM_HOOK_ON;
         m->caller = 0;
-	m->min_rate = MODEM_MIN_RATE;
+	m->min_rate = 300;
 	m->max_rate = MODEM_MAX_RATE;
 
 	m->modem_info |= (TIOCM_DSR|TIOCM_CTS);

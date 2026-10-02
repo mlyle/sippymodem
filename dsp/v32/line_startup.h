@@ -129,6 +129,11 @@ enum v32_line_startup_result v32_line_startup_init(
 enum v32_line_startup_result v32_line_retrain_init(
 	struct v32_line_startup *startup,
 	int16_t transmit_amplitude);
+/* Continue after an already qualified unmodulated answer tone. */
+enum v32_line_startup_result v32_line_startup_resume(
+	struct v32_line_startup *startup, int16_t transmit_amplitude);
+enum v32_line_startup_result v32_answerer_line_after_answer_init(
+	struct v32_answerer_line_startup *startup, int16_t transmit_amplitude);
 bool v32_line_startup_is_valid(
 	const struct v32_line_startup *startup);
 bool v32_line_startup_is_complete(

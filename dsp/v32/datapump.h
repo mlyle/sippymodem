@@ -6,6 +6,7 @@
 #include <modem_defs.h>
 
 struct dp_operations;
+struct dp;
 
 #include <stdbool.h>
 
@@ -18,5 +19,7 @@ enum {
 };
 
 const struct dp_operations *v32_datapump_operations(enum DP_ID id);
+
+bool v32_datapump_has_peer(struct dp *dp);
 
 #endif

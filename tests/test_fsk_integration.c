@@ -131,6 +131,7 @@ struct modem_test_case {
 	unsigned int minimum_caller_rate_signal_sample;
 	bool automode;
 	bool answerer_automode;
+	bool answerer_fixed;
 	bool requires_v8;
 	bool requires_exact_g711;
 	bool test_prelink;
@@ -1699,6 +1700,9 @@ static bool exercise_low_speed_carrier_recovery(
 	static const uint8_t answerer_payload[] = {
 		'c', 'a', 'r', 'r', 'i', 'e', 'r', '-', 'a', 0x5a,
 	};
+	enum DP_ID caller_id = caller->modem->dp->id;
+	enum DP_ID answerer_id = answerer->modem->dp->id;
+
 	if (!preserves_link_across_carrier_return(id) && id != DP_V22BIS)
 		return false;
 	for (unsigned int recovery =
@@ -1754,8 +1758,8 @@ static bool exercise_low_speed_carrier_recovery(
 				    !endpoint_drain(answerer) ||
 				    caller->output_count != 0 ||
 				    answerer->output_count != 0 ||
-				    !modem_is_online(caller->modem, id) ||
-				    !modem_is_online(answerer->modem, id))
+				    !modem_is_online(caller->modem, caller_id) ||
+				    !modem_is_online(answerer->modem, answerer_id))
 					return false;
 			}
 			for (unsigned int samples = 0;
@@ -1768,8 +1772,8 @@ static bool exercise_low_speed_carrier_recovery(
 				    (!link_uses_lapm &&
 				     (caller->output_count != 0 ||
 				      answerer->output_count != 0)) ||
-				    !modem_is_online(caller->modem, id) ||
-				    !modem_is_online(answerer->modem, id))
+				    !modem_is_online(caller->modem, caller_id) ||
+				    !modem_is_online(answerer->modem, answerer_id))
 					return false;
 			}
 			if (link_uses_lapm) {
@@ -1784,8 +1788,8 @@ static bool exercise_low_speed_carrier_recovery(
 						    caller, answerer, codec, recorder) ||
 					    !endpoint_drain(caller) ||
 					    !endpoint_drain(answerer) ||
-					    !modem_is_online(caller->modem, id) ||
-					    !modem_is_online(answerer->modem, id))
+					    !modem_is_online(caller->modem, caller_id) ||
+					    !modem_is_online(answerer->modem, answerer_id))
 						return false;
 				}
 				if (caller->output_count !=
@@ -2070,7 +2074,8 @@ static bool run_media_call(
 			test_case->answerer_selection_command :
 			test_case->selection_command;
 	bool answerer_requires_v8 =
-		(test_case->automode || test_case->answerer_automode || test_case->requires_v8) &&
+		((!test_case->answerer_fixed && test_case->automode) ||
+		 test_case->answerer_automode || test_case->requires_v8) &&
 		v8_datapump_modulation(answerer_id) != V8_MODULATION_NONE;
 	bool online = false;
 	bool answerer_used_v8 = !answerer_requires_v8;
@@ -2133,10 +2138,10 @@ static bool run_media_call(
 		      "%s integration endpoints did not accept PCM roles",
 		      test_case->name);
 	}
-	CHECK(MODEM_DP(caller.modem) == DP_V21 &&
-		      MODEM_DP(answerer.modem) == DP_V21 &&
-		      MODEM_AUTOMODE(caller.modem) == 0 &&
-		      MODEM_AUTOMODE(answerer.modem) == 0,
+	CHECK(MODEM_DP(caller.modem) == DP_V92 &&
+		      MODEM_DP(answerer.modem) == DP_V92 &&
+		      MODEM_AUTOMODE(caller.modem) == 1 &&
+		      MODEM_AUTOMODE(answerer.modem) == 1,
 	      "source-built modem did not default to its available capability");
 	if (test_case->raw_transport) {
 		CHECK(modem_write(
@@ -2199,7 +2204,8 @@ static bool run_media_call(
 		      MODEM_DP(answerer.modem) == answerer_id &&
 		      MODEM_AUTOMODE(caller.modem) == test_case->automode &&
 		      MODEM_AUTOMODE(answerer.modem) ==
-			      (test_case->automode || test_case->answerer_automode) &&
+			      (!test_case->answerer_fixed &&
+			       (test_case->automode || test_case->answerer_automode)) &&
 		      endpoint_drain(&caller) && endpoint_drain(&answerer) &&
 		      output_contains(&caller, "OK") &&
 		      output_contains(&answerer, "OK"),
@@ -2236,11 +2242,13 @@ static bool run_media_call(
 			      &caller, &answerer, codec, &recorder,
 			      &caller_delay,
 			      test_case->caller_delay_frames) &&
+		      endpoint_drain(&caller) && endpoint_drain(&answerer) &&
 		      (!monitor_caller_rate ||
 		       v22_rate_monitor_observe(
 			       &caller_rate_monitor, caller.transmit)),
 		      "%s training failed at the SIP media boundary",
 		      test_case->name);
+
 		CHECK(!impair_answerer_precarrier ||
 			      endpoint_replace_precarrier_silence(
 				      &answerer, codec,
@@ -4029,6 +4037,70 @@ static bool test_fsk300_mark_qualification(void)
 	return valid;
 }
 
+/* Exercise actual factory settings against fixed, non-V.8 peers. Each
+ * case must negotiate and carry exact binary bytes in both directions. */
+static bool run_factory_startup_cases(const char *filter, bool *selected)
+{
+	static const struct {
+		enum DP_ID id;
+		const char *name;
+		unsigned code, rate;
+	} peers[] = {
+		{ DP_V21, "V.21", 21, 300 },
+		{ DP_B103, "Bell103", 103, 300 },
+		{ DP_V23, "V.23", 23, 1200 },
+		{ DP_V22, "V.22-600", 22, 600 },
+		{ DP_V22, "V.22-1200", 22, 1200 },
+		{ DP_V22BIS, "V.22bis", 122, 2400 },
+		{ DP_V32, "V.32", 32, 9600 },
+		{ DP_V32BIS, "V.32bis", 132, 14400 },
+		{ DP_B212, "Bell212", 212, 1200 },
+	};
+	static const enum media_codec codecs[] = { MEDIA_CODEC_PCMU, MEDIA_CODEC_PCMA };
+
+	for (size_t peer = 0; peer < ARRAY_LENGTH(peers); ++peer) {
+		for (unsigned answering = 0; answering < 2; ++answering) {
+			char name[80], fixed[80];
+			enum DP_ID modern_id = peers[peer].id == DP_V32 ? DP_V32BIS :
+				answering && peers[peer].id == DP_B212 ? DP_V22 : peers[peer].id;
+			unsigned caller_rate = peers[peer].id == DP_V23 ? 75 : peers[peer].rate;
+			unsigned answerer_rate = peers[peer].rate;
+			struct modem_test_case test = {
+				.id = answering ? peers[peer].id : DP_V92,
+				.answerer_id = answering ? DP_V92 : peers[peer].id,
+				.connected_id = answering ? peers[peer].id : modern_id,
+				.answerer_connected_id = answering ? modern_id : peers[peer].id,
+				.name = name,
+				.selection_command = answering ? fixed : "AT\r",
+				.answerer_selection_command = answering ? "AT\r" : fixed,
+				.caller_tx_rate = caller_rate, .caller_rx_rate = answerer_rate,
+				.answerer_tx_rate = answerer_rate, .answerer_rx_rate = caller_rate,
+				.carrier_loss_samples = MODEM_RATE * 7 / 10,
+				.training_frame_limit = 2000,
+				.automode = !answering, .answerer_fixed = !answering,
+				.answerer_automode = answering, .raw_transport = true,
+			};
+
+			snprintf(name, sizeof(name), "legacy startup %s %s",
+				answering ? "answering" : "calling", peers[peer].name);
+			snprintf(fixed, sizeof(fixed), "AT+MS=%u,0,%u,%u\r",
+				peers[peer].code, peers[peer].rate, peers[peer].rate);
+			if (filter != NULL && filter[0] != '\0' && strstr(name, filter) == NULL)
+				continue;
+			*selected = true;
+			for (size_t codec = 0; codec < ARRAY_LENGTH(codecs); ++codec) {
+				fprintf(stderr, "[ RUN      ] %s over %s SIP media\n",
+					name, codec_name(codecs[codec]));
+				if (!run_media_call(&test, codecs[codec]))
+					return false;
+				fprintf(stderr, "[       OK ] %s over %s SIP media\n",
+					name, codec_name(codecs[codec]));
+			}
+		}
+	}
+	return true;
+}
+
 int main(void)
 {
 	const char *v32_recording_path =
@@ -4098,6 +4170,31 @@ int main(void)
 	enum v90_modem_role v90_replay_pcm_role;
 	bool integration_case_selected = false;
 	static const struct modem_test_case test_cases[] = {
+		{
+			.id = DP_V22BIS, .answerer_id = DP_V22,
+			.name = "automatic V.22bis caller to legacy V.22",
+			.connected_id = DP_V22,
+			.selection_command = "AT+MS=122,1,300,2400\r",
+			.answerer_selection_command = "AT+MS=22,0,1200,1200\r",
+			.caller_tx_rate = 1200, .caller_rx_rate = 1200,
+			.answerer_tx_rate = 1200, .answerer_rx_rate = 1200,
+			.carrier_loss_samples = MODEM_RATE * 7 / 10,
+			.automode = true, .answerer_fixed = true, .raw_transport = true,
+			.training_frame_limit = 2000,
+		},
+		{
+			.id = DP_V22, .answerer_id = DP_V22BIS,
+			.name = "legacy V.22 caller to automatic V.22bis",
+			.answerer_connected_id = DP_V22,
+			.selection_command = "AT+MS=22,0,1200,1200\r",
+			.answerer_selection_command = "AT+MS=122,1,300,2400\r",
+			.caller_tx_rate = 1200, .caller_rx_rate = 1200,
+			.answerer_tx_rate = 1200, .answerer_rx_rate = 1200,
+			.carrier_loss_samples = MODEM_RATE * 7 / 10,
+			.answerer_automode = true, .raw_transport = true,
+			.training_frame_limit = 2000,
+		},
+
 		{
 			.id = DP_V32, .answerer_id = DP_V92,
 			.name = "legacy auto-answer V.32 raw",
@@ -4838,6 +4935,8 @@ int main(void)
 			   v90_recording_expected_text)) {
 		return 1;
 	}
+	if (!run_factory_startup_cases(integration_filter, &integration_case_selected))
+		return 1;
 	for (size_t standard = 0; standard < ARRAY_LENGTH(test_cases);
 	     ++standard) {
 		if (integration_filter != NULL && integration_filter[0] != '\0' &&

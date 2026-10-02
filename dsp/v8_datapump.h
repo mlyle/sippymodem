@@ -25,8 +25,13 @@ struct v8_pcm_handoff {
 };
 
 bool v8_datapump_pcm_handoff(const struct dp *dp, struct v8_pcm_handoff *handoff);
-/* An automatic answerer's legacy V.32 selection transfers the already
- * acquired calling carrier before the negotiation owner is deleted. */
+/* Transfer the independently owned trained legacy probe once. The caller
+ * owns deletion after this succeeds; deleting V.8 releases unselected probes. */
+struct dp *v8_datapump_take_legacy(struct dp *dp);
+bool v8_datapump_answer_tone_complete(const struct dp *dp);
+
+/* Transfer the qualified 2100-Hz answer to a caller, or the 1800-Hz
+ * calling carrier to an answerer, before deleting the negotiation owner. */
 bool v8_datapump_v32_handoff(const struct dp *dp, struct single_tone_detector *carrier);
 
 /* Returns the classic V.8 mode carried with the requested datapump. */

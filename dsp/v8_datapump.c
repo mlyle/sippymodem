@@ -2,12 +2,14 @@
 
 #include "v8_datapump.h"
 
+#include "datapump.h"
 #include "datapump_media.h"
 #include "datapump_timing.h"
 #include "memory_region.h"
 #include "modem.h"
 #include "modem_param.h"
 #include "single_tone.h"
+#include "v22_datapump.h"
 #include "v8_answering.h"
 #include "v8_calling.h"
 #include "v90_datapump.h"
@@ -15,6 +17,34 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+
+enum {
+	LEGACY_TONE_COUNT = 5,
+	LEGACY_ANSWER_SAMPLES = 5 * MODEM_RATE,
+	LEGACY_GAP_SAMPLES = MODEM_RATE * 75 / 1000,
+};
+
+static const struct {
+	unsigned frequency;
+	enum DP_ID id;
+} legacy_tones[LEGACY_TONE_COUNT] = {
+	{ 2100, DP_V32BIS }, { 2250, DP_V22BIS }, { 2225, DP_B103 },
+	{ 1650, DP_V21 }, { 1300, DP_V23 },
+};
+
+static const struct {
+	enum DP_ID id;
+	unsigned samples;
+	bool rate600;
+} legacy_stages[] = {
+	{ DP_V32BIS, 3 * MODEM_RATE, false },
+	{ DP_V22BIS, 3 * MODEM_RATE, false },
+	{ DP_B103, MODEM_RATE * 3 / 5, false },
+	{ DP_B212, 2 * MODEM_RATE, false },
+	{ DP_V21, 2 * MODEM_RATE, false },
+	{ DP_V22, 3 * MODEM_RATE, true },
+	{ DP_V23, 2 * MODEM_RATE, false },
+};
 
 struct v8_datapump {
 	struct dp dp;
@@ -24,6 +54,17 @@ struct v8_datapump {
 	} handshake;
 	struct v8_pcm_handoff handoff;
 	struct single_tone_detector legacy_carrier;
+	struct single_tone_detector answer_tones[LEGACY_TONE_COUNT];
+	struct dp *legacy;
+	uint32_t elapsed_samples;
+	uint32_t legacy_samples;
+	uint32_t answer_tone_samples;
+	uint32_t high_tone_samples;
+	uint32_t high_tone_crossings;
+	int16_t previous_receive;
+	unsigned legacy_stage;
+	bool legacy_answer;
+	bool legacy_selected;
 	unsigned int legacy_carrier_samples;
 	enum DP_ID requested_datapump;
 	uint16_t offered_modulations;
@@ -165,6 +206,15 @@ static struct dp *create_v8(
 	}
 	datapump->requested_datapump = id;
 	datapump->offered_modulations = offered;
+	if (caller && MODEM_AUTOMODE(modem)) {
+		for (unsigned i = 0; i < LEGACY_TONE_COUNT; ++i) {
+			if (single_tone_detector_init(&datapump->answer_tones[i],
+				    legacy_tones[i].frequency) != SINGLE_TONE_OK) {
+				free(datapump);
+				return NULL;
+			}
+		}
+	}
 	if (!caller && MODEM_AUTOMODE(modem) &&
 	    (offered & V8_MODULATION_V32) != 0 &&
 	    fallback_datapump(modem, V8_MODULATION_V32) != 0 &&
@@ -218,6 +268,8 @@ static int delete_v8(struct dp *dp)
 
 	if (datapump == NULL)
 		return -1;
+	if (datapump->legacy != NULL)
+		datapump->legacy->op->delete(datapump->legacy);
 	datapump->dp.dp_data = NULL;
 	free(datapump);
 	return 0;
@@ -399,6 +451,187 @@ static int process_handshake(struct dp *dp, void *receive_buffer, void *transmit
 	return DPSTAT_OK;
 }
 
+/* Legacy probes use the same family datapumps as fixed-mode calls. Transfer
+ * the trained instance to the host instead of repeating carrier acquisition. */
+static enum DP_ID legacy_id(const struct v8_datapump *datapump, enum DP_ID id)
+{
+	const struct modem *modem = datapump->dp.modem;
+	enum v8_modulation family = v8_datapump_modulation(id);
+
+	if (!MODEM_AUTOMODE(modem))
+		return 0;
+	if (id == DP_B212)
+		return (datapump->offered_modulations & V8_MODULATION_V22) != 0 &&
+			modem->min_rate <= 1200 && modem->max_rate >= 1200 ? id : 0;
+	if (id == DP_B103)
+		return (datapump->offered_modulations & V8_MODULATION_V21) != 0 &&
+			modem->min_rate <= 300 && modem->max_rate >= 300 ? id : 0;
+	if ((datapump->offered_modulations & family) == 0)
+		return 0;
+	if (family == v8_datapump_modulation(datapump->requested_datapump))
+		return datapump->requested_datapump;
+	return fallback_datapump(modem, family);
+}
+
+static bool start_legacy(struct v8_datapump *datapump, enum DP_ID id, bool rate600)
+{
+	struct modem *modem = datapump->dp.modem;
+	const struct dp_operations *ops = modem_dp_get_registered_ops(id);
+	unsigned min_rate = modem->min_rate, max_rate = modem->max_rate;
+	struct dp *next;
+
+	if (ops == NULL || (rate600 && (min_rate > 600 || max_rate < 600)))
+		return false;
+	if (rate600)
+		modem->min_rate = modem->max_rate = 600;
+	next = ops->create(modem, id, datapump->caller, MODEM_RATE, MODEM_FRAG, ops);
+	modem->min_rate = min_rate;
+	modem->max_rate = max_rate;
+	if (next == NULL)
+		return false;
+	if (datapump->legacy != NULL)
+		datapump->legacy->op->delete(datapump->legacy);
+	datapump->legacy = next;
+	datapump->legacy_samples = 0;
+	return true;
+}
+
+static int select_legacy(struct v8_datapump *datapump)
+{
+	struct modem *modem = datapump->dp.modem;
+
+	if (modem_set_param(modem, MDMPRM_DP_REQUESTED, datapump->legacy->id) != 0)
+		return DPSTAT_ERROR;
+	modem->dsp_info.startup = MODEM_STARTUP_UNKNOWN;
+	modem->dsp_info.v8_lapm = false;
+	modem->dsp_info.pcm_role = MODEM_PCM_ROLE_NONE;
+	datapump->legacy_selected = true;
+	datapump->handoff_requested = true;
+	datapump->dp.status = DPSTAT_CHANGEDP;
+	return DPSTAT_CHANGEDP;
+}
+
+static int next_answer_probe(struct v8_datapump *datapump)
+{
+	while (datapump->legacy_stage < sizeof(legacy_stages) / sizeof(legacy_stages[0])) {
+		unsigned stage = datapump->legacy_stage++;
+		enum DP_ID id = legacy_id(datapump, legacy_stages[stage].id);
+		bool rate600 = legacy_stages[stage].rate600;
+
+		if (id == 0 || (rate600 && (datapump->dp.modem->min_rate > 600 ||
+		    datapump->dp.modem->max_rate < 600)))
+			continue;
+		if (start_legacy(datapump, rate600 ? DP_V22 : id, rate600))
+			return DPSTAT_OK;
+		return DPSTAT_ERROR;
+	}
+	return DPSTAT_NOANSWER;
+}
+
+static int observe_legacy_answer(struct v8_datapump *datapump, const int16_t *receive, int count)
+{
+	if (!datapump->caller || !MODEM_AUTOMODE(datapump->dp.modem) ||
+	    datapump->handshake.calling.state != V8_CALLING_WAIT_ANSWER_SIGNAL)
+		return DPSTAT_OK;
+	for (int sample = 0; sample < count; ++sample) {
+		for (unsigned tone = 0; tone < LEGACY_TONE_COUNT; ++tone) {
+			struct single_tone_event event;
+			if (single_tone_detector_sample(&datapump->answer_tones[tone],
+				    receive[sample], &event) != SINGLE_TONE_OK)
+				return DPSTAT_ERROR;
+		}
+		/* Bell 103's 2225-Hz answer and the V.22 2250-Hz mark fit
+		 * the same short tone window. Count cycles over 160 ms before
+		 * choosing, as the fixed Bell caller does in its silent guard. */
+		bool high = datapump->answer_tones[1].tone_present ||
+			datapump->answer_tones[2].tone_present;
+		if (!high) {
+			datapump->high_tone_samples = 0;
+			datapump->high_tone_crossings = 0;
+		} else {
+			datapump->high_tone_samples++;
+			if (datapump->previous_receive <= 0 && receive[sample] > 0)
+				datapump->high_tone_crossings++;
+		}
+		datapump->previous_receive = receive[sample];
+		datapump->answer_tone_samples = datapump->answer_tones[0].tone_present ?
+			datapump->answer_tone_samples + 1 : 0;
+	}
+	unsigned tone = LEGACY_TONE_COUNT;
+	if (datapump->answer_tones[3].tone_present)
+		tone = 3;
+	else if (datapump->answer_tones[4].tone_present)
+		tone = 4;
+	else if (datapump->high_tone_samples >= MODEM_RATE * 160 / 1000) {
+		uint64_t cycles = (uint64_t)datapump->high_tone_crossings * MODEM_RATE;
+		tone = cycles < (uint64_t)datapump->high_tone_samples * 2238 ? 2 : 1;
+	} else if (datapump->answer_tone_samples >= 2 * MODEM_RATE)
+		tone = 0;
+	if (tone != LEGACY_TONE_COUNT) {
+		enum DP_ID id = legacy_id(datapump, legacy_tones[tone].id);
+		if (tone == 2 && legacy_id(datapump, DP_B212) != 0)
+			id = DP_B212;
+		if (id != 0 && (datapump->legacy == NULL ||
+		    (tone != 0 && v8_datapump_modulation(datapump->legacy->id) !=
+			v8_datapump_modulation(id)))) {
+			if (!start_legacy(datapump, id, false))
+				return DPSTAT_ERROR;
+		}
+	}
+	return DPSTAT_OK;
+}
+
+static int process_legacy(struct v8_datapump *datapump, const int16_t *receive, void *transmit, int count)
+{
+	int result = datapump->legacy->op->process(datapump->legacy, (void *)receive, transmit, count);
+
+	datapump->legacy_samples += (unsigned)count;
+	if (result == DPSTAT_CONNECT)
+		return select_legacy(datapump);
+	if (datapump->caller) {
+		if (result == DPSTAT_OK && datapump->legacy->id == DP_B212 &&
+		    datapump->legacy_samples >= 3 * MODEM_RATE &&
+		    !v22_datapump_has_peer(datapump->legacy) &&
+		    legacy_id(datapump, DP_B103) != 0)
+			return start_legacy(datapump, DP_B103, false) ? DPSTAT_OK : DPSTAT_ERROR;
+		if (result == DPSTAT_OK && datapump->legacy->id == DP_V22BIS &&
+		    datapump->legacy_samples >= 3 * MODEM_RATE &&
+		    !v22_datapump_has_peer(datapump->legacy) &&
+		    datapump->dp.modem->min_rate <= 600 &&
+		    datapump->dp.modem->max_rate >= 600)
+			return start_legacy(datapump, DP_V22, true) ? DPSTAT_OK : DPSTAT_ERROR;
+		return result;
+	}
+	unsigned limit = legacy_stages[datapump->legacy_stage - 1].samples;
+	if (result == DPSTAT_OK && (datapump->legacy_samples < limit ||
+	    v22_datapump_has_peer(datapump->legacy) ||
+	    (v8_datapump_modulation(datapump->legacy->id) == V8_MODULATION_V32 &&
+	     v32_datapump_has_peer(datapump->legacy))))
+		return DPSTAT_OK;
+	if (result != DPSTAT_OK && result != DPSTAT_ERROR)
+		return result;
+	return next_answer_probe(datapump);
+}
+
+struct dp *v8_datapump_take_legacy(struct dp *dp)
+{
+	struct v8_datapump *datapump = v8_from_dp(dp);
+	struct dp *legacy;
+
+	if (datapump == NULL || !datapump->legacy_selected)
+		return NULL;
+	legacy = datapump->legacy;
+	datapump->legacy = NULL;
+	return legacy;
+}
+
+bool v8_datapump_answer_tone_complete(const struct dp *dp)
+{
+	const struct v8_datapump *datapump = v8_from_dp_const(dp);
+
+	return datapump != NULL && datapump->legacy_answer;
+}
+
 static int process_v8(struct dp *dp, void *receive_buffer, void *transmit_buffer, int count)
 {
 	struct v8_datapump *datapump = v8_from_dp(dp);
@@ -409,6 +642,29 @@ static int process_v8(struct dp *dp, void *receive_buffer, void *transmit_buffer
 
 	if (!datapump_linear_fragment_is_ready(datapump, receive, transmit_buffer, count))
 		return DPSTAT_ERROR;
+	if (datapump->handoff_requested) {
+		memset(transmit_buffer, 0, (size_t)count * sizeof(*receive));
+		return DPSTAT_CHANGEDP;
+	}
+	{
+		uint32_t limit = datapump_carrier_wait_ticks(dp->modem);
+		if (datapump->elapsed_samples >= limit ||
+		    (unsigned)count > limit - datapump->elapsed_samples) {
+			memset(transmit_buffer, 0, (size_t)count * sizeof(*receive));
+			return DPSTAT_NOANSWER;
+		}
+		datapump->elapsed_samples += (unsigned)count;
+	}
+	if (observe_legacy_answer(datapump, receive, count) != DPSTAT_OK)
+		return DPSTAT_ERROR;
+	if (datapump->legacy != NULL)
+		return process_legacy(datapump, receive, transmit_buffer, count);
+	if (datapump->legacy_answer) {
+		memset(transmit_buffer, 0, (size_t)count * sizeof(*receive));
+		datapump->legacy_samples += (unsigned)count;
+		return datapump->legacy_samples < LEGACY_GAP_SAMPLES ? DPSTAT_OK :
+			next_answer_probe(datapump);
+	}
 	listening = datapump->legacy_carrier.profile.frequency_hz != 0 &&
 		datapump->handshake.answering.state == V8_ANSWERING_WAIT_CALL_MENU;
 	/* A legacy V.32 caller answers ANSam with sustained 1800-Hz carrier.
@@ -429,6 +685,15 @@ static int process_v8(struct dp *dp, void *receive_buffer, void *transmit_buffer
 			datapump->legacy_carrier_samples = 0;
 		else if (datapump->legacy_carrier_samples < MODEM_RATE / 2)
 			datapump->legacy_carrier_samples++;
+	}
+	if (!datapump->caller && MODEM_AUTOMODE(dp->modem) &&
+	    datapump->handshake.answering.state == V8_ANSWERING_WAIT_CALL_MENU &&
+	    datapump->handshake.answering.state_samples >=
+		V8_ANSWERING_QUIET_SAMPLES + LEGACY_ANSWER_SAMPLES) {
+		datapump->legacy_answer = true;
+		datapump->legacy_samples = 0;
+		memset(transmit_buffer, 0, (size_t)count * sizeof(*receive));
+		return DPSTAT_OK;
 	}
 	result = process_handshake(dp, receive_buffer, transmit_buffer, count);
 	if (result != DPSTAT_OK || !listening ||
@@ -454,11 +719,12 @@ bool v8_datapump_v32_handoff(const struct dp *dp, struct single_tone_detector *c
 {
 	const struct v8_datapump *datapump = v8_from_dp_const(dp);
 
-	if (datapump == NULL || carrier == NULL || !datapump->legacy_v32 ||
-	    !datapump->handoff_requested ||
+	if (datapump == NULL || carrier == NULL || (!datapump->legacy_v32 &&
+	     !(datapump->caller && datapump->answer_tone_samples >= 2 * MODEM_RATE)) ||
+	    (!datapump->handoff_requested && !datapump->caller) ||
 	    memory_regions_overlap(datapump, sizeof(*datapump), carrier, sizeof(*carrier)))
 		return false;
-	*carrier = datapump->legacy_carrier;
+	*carrier = datapump->caller ? datapump->answer_tones[0] : datapump->legacy_carrier;
 	return true;
 }
 
@@ -467,7 +733,7 @@ bool v8_datapump_pcm_handoff(const struct dp *dp, struct v8_pcm_handoff *handoff
 	const struct v8_datapump *datapump = v8_from_dp_const(dp);
 
 	if (datapump == NULL || handoff == NULL || !datapump->handoff_requested ||
-	    datapump->requested_datapump != DP_V92 || datapump->v34_fallback || datapump->legacy_v32 ||
+	    datapump->requested_datapump != DP_V92 || datapump->v34_fallback || datapump->legacy_v32 || datapump->legacy_selected ||
 	    training_session_has_failed(&datapump->handoff.training) ||
 	    memory_regions_overlap(datapump, sizeof(*datapump), handoff, sizeof(*handoff)))
 		return false;

@@ -551,6 +551,18 @@ static struct dp *create_v32(
 		free(datapump);
 		return NULL;
 	}
+	if (is_caller && v8_datapump_v32_handoff(modem->dp, &calling_carrier) &&
+	    v32_line_startup_resume(&datapump->line_startup,
+		    V32_TRANSMIT_AMPLITUDE) != V32_LINE_STARTUP_OK) {
+		free(datapump);
+		return NULL;
+	}
+	if (!is_caller && v8_datapump_answer_tone_complete(modem->dp) &&
+	    v32_answerer_line_after_answer_init(&datapump->answerer_line_startup,
+		    V32_TRANSMIT_AMPLITUDE) != V32_LINE_STARTUP_OK) {
+		free(datapump);
+		return NULL;
+	}
 	datapump->dp = (struct dp){
 		.id = id,
 		.modem = modem,
@@ -1628,4 +1640,15 @@ failure:
 const struct dp_operations *v32_datapump_operations(enum DP_ID id)
 {
 	return id == DP_V32 || id == DP_V32BIS ? &v32_operations : NULL;
+}
+
+/* Automatic answering may stop an unanswered AC probe, but it must retain
+ * the full family training interval once the calling carrier has arrived. */
+bool v32_datapump_has_peer(struct dp *dp)
+{
+	struct v32_datapump *datapump = v32_from_dp(dp);
+
+	return datapump != NULL && !datapump->caller &&
+		(datapump->answerer_line_startup.calling_carrier.tone_present ||
+		 v32_answerer_line_startup_is_complete(&datapump->answerer_line_startup));
 }
