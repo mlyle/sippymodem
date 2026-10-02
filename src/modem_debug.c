@@ -34,122 +34,35 @@
  */
 
 /*
- *
- *	modem_debug.c  --  modem debug module (dummy).
- *
- *	Author: Sasha K (sashak@smlink.com)
- *
- *
+ *    modem_debug.c -- modem debug printing.
+ *    Author: Sasha K (sashak@smlink.com)
  */
 
-/*****************************************************************************/
-
 #include <stdarg.h>
-#include <unistd.h>
 #include <stdio.h>
-#include <errno.h>
-#include <sys/types.h>
-#include <sys/stat.h>
 #include <sys/time.h>
-#include <fcntl.h>
-#include <limits.h>
 
-#include <modem.h>
 #define CONFIG_DEBUG_MODEM 1
 #include <modem_debug.h>
 
-unsigned int modem_debug_level;
-unsigned int modem_debug_logging;
-
-static const char *modem_debug_logfile = "slmodem.log";
-
-static int modem_log_fd;
-
-/* logging */
-
-int modem_debug_log_data(struct modem *m, unsigned id, const void *data, int count)
-{
-	struct sllog_header hdr;
-	int ret = 0;
-	if(id <= modem_debug_logging && modem_log_fd > 0) {
-		hdr.modem_id = (unsigned)m ;
-                hdr.id = id;
-                hdr.length = count;
-		ret = write(modem_log_fd,&hdr,sizeof(hdr));
-		if(ret < 0) {
-			fprintf(stderr,"log_data: cannot write header: %s\n",
-				strerror(errno));
-			return ret;
-		}
-		ret = write(modem_log_fd,data,count);
-		if(ret < 0) {
-			fprintf(stderr,"log_data: cannot write data: %s\n",
-				strerror(errno));
-			return ret;
-		}
-	}
-	return ret;
-}
-
-
-
-/* printing */
-
-static int debug_vprintf(unsigned level, const char *fmt, va_list args)
-{
-	static char debug_temp[512];
-        struct timeval tv;
-        int i, len;
-	gettimeofday(&tv,NULL);
-	i = snprintf(debug_temp,sizeof(debug_temp),"<%03ld.%06ld> ",
-		     (tv.tv_sec % 1000), tv.tv_usec);
-        len = vsnprintf(debug_temp + i, sizeof(debug_temp) - i, fmt, args);
-	if(modem_debug_logging)
-		modem_debug_log_data(0,
-				     MODEM_DBG_PRINT_MSG,debug_temp,len + i);
-	if(level <= modem_debug_level)
-		fprintf( stderr, "%s", debug_temp);
-        return len;
-}
-
+unsigned modem_debug_level;
 
 int modem_debug_printf(const char *fmt, ...)
 {
-        va_list args;
-        int len;
+	struct timeval now = { 0 };
+	va_list args;
+	int length;
+
+	if (modem_debug_level == 0)
+		return 0;
+	flockfile(stderr);
+	(void)gettimeofday(&now, NULL);
 	va_start(args, fmt);
-	len = debug_vprintf(1, fmt, args);
-        va_end(args);
-        return len;
-}
-
-
-int modem_debug_init(const char *suffix)
-{
-	if(modem_debug_logging) {
-		char path_name[PATH_MAX];
-		const char *name;
-		if(suffix) {
-			snprintf(path_name, sizeof(path_name),
-				"%s.%s", modem_debug_logfile, suffix);
-			name = path_name;
-		}
-		else
-			name = modem_debug_logfile;
-		modem_log_fd = creat(name, S_IRUSR | S_IWUSR);
-		if(modem_log_fd < 0) {
-			fprintf(stderr,"cannot create `%s': %s\n",
-				name,strerror(errno));
-			return -1;
-		}
-	}
-	return 0;
-}
-
-void modem_debug_exit()
-{
-	if(modem_log_fd > 0) {
-		close(modem_log_fd);
-		modem_log_fd = 0;
-	}
+	length = fprintf(stderr, "<%03ld.%06ld> ",
+			 (long)(now.tv_sec % 1000), (long)now.tv_usec);
+	if (length >= 0)
+		length = vfprintf(stderr, fmt, args);
+	va_end(args);
+	funlockfile(stderr);
+	return length;
 }

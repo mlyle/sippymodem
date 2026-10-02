@@ -798,7 +798,6 @@ int modem_get_bits(struct modem *m, int nbits, u8 *buf, int n)
 		n = m->get_bits(m,nbits,buf,n);
 	else
 		memset(buf,0xff,n);
-	modem_debug_log_data(m,MODEM_DBG_TX_BITS,buf,n);
 	/* process bit timer and packer */
 	bits = nbits * n;
 	if (m->bit_timer == timer && m->bit_timer_func == timer_func)
@@ -816,7 +815,6 @@ int modem_put_bits(struct modem *m, int nbits, u8 *buf, int n)
 
 	if(m->put_bits)
 		n = m->put_bits(m,nbits,buf,n);
-	modem_debug_log_data(m,MODEM_DBG_RX_BITS,buf,n);	
 	if (m->bit_timer == timer && m->bit_timer_func == timer_func)
 		modem_tick_bit_timer(m, nbits * n);
 	return n;
@@ -1007,7 +1005,6 @@ static void modem_process_frame(struct modem *m, enum g711_law law,
 		memset(out, 0, (size_t)count << MFMT_SHIFT(m->format));
 		return;
 	}
-	modem_debug_log_data(m,MODEM_DBG_RX_SAMPLES,in,count<<MFMT_SHIFT(m->format));
 	if(m->process) {
 		if (receive_codewords != NULL && m->process == modem_dp_process)
 			modem_dp_process_frame(
@@ -1018,7 +1015,6 @@ static void modem_process_frame(struct modem *m, enum g711_law law,
 	}
 	else  /* mute output */
 		memset(out,0,count<<MFMT_SHIFT(m->format));
-	modem_debug_log_data(m,MODEM_DBG_TX_SAMPLES,out,count<<MFMT_SHIFT(m->format));
 	m->count+=count;
 	if( m->sample_timer && m->count >= m->sample_timer ) {
 		void (*f)(struct modem *) = m->sample_timer_func ;
@@ -1342,10 +1338,6 @@ static int modem_comp_get_chars(struct modem *m, char *buf, int n)
 		cnt =  modem_comp_flush_encoder(m,buf+ret,n-ret);
 		ret += cnt;
 	}
-	if(ret > 0) {
-		//MODEM_DBG("modem_comp_get_chars: %d(%d)...\n",ret,count);
-		modem_debug_log_data(m,MODEM_DBG_TX_DATA,buf,ret);
-	}
 	return ret;
 }
 
@@ -1386,10 +1378,6 @@ static int modem_comp_put_chars(struct modem *m, const char *buf, int n)
 		cnt = modem_comp_flush_decoder(m,m->comp.buf,sizeof(m->comp.buf));
 		m->comp.count += cnt;
 		comp_send_output(m);
-	}
-	if(i>0) {
-		//MODEM_DBG("modem_comp_put_chars: %d...\n",i);
-		modem_debug_log_data(m,MODEM_DBG_RX_DATA,buf,i);
 	}
 	return i;
 }

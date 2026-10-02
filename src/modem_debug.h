@@ -45,59 +45,23 @@
 #define __MODEM_DEBUG_H__
 
 
-/* constant definitions */
-enum MODEM_LOG_CATEGORIES {
-	/* 0-3 */
-        MODEM_DBG_PRINT_MSG = 0,
-        MODEM_DBG_RX_SAMPLES,
-        MODEM_DBG_TX_SAMPLES,
-        MODEM_DBG_ECHOC_SAMPLES,
-	/* 4-5 */
-        MODEM_DBG_MISC_DATA,
-        MODEM_DBG_MISC1_DATA,
-	/* 6-9 */
-        MODEM_DBG_RX_BITS,
-        MODEM_DBG_TX_BITS,
-        MODEM_DBG_RX_DATA,
-        MODEM_DBG_TX_DATA,
-	/* 10-11 */
-        MODEM_DBG_RX_CHARS,
-        MODEM_DBG_TX_CHARS,
-        /* 'overflow marker' */
-        MODEM_DBG_OVERFLOW
-};
-
-
-struct sllog_header {
-        unsigned modem_id;
-        unsigned id;
-        unsigned length;
-        char     data[0];
-};
-
-struct modem;
-
 #ifdef CONFIG_DEBUG_MODEM
 
+/* Configure before starting writers; leave unchanged while they run. */
 extern unsigned modem_debug_level;
+/* Return body characters written, zero when disabled, or negative on error. */
 extern int modem_debug_printf(const char *fmt,...)
      __attribute__ ((format (printf, 1, 2)));
 
 #define eprintf(args...) { modem_debug_printf("err: " args) ; }
 #define dprintf(args...) { modem_debug_printf(args) ; }
 
-extern int modem_debug_log_data(struct modem *m, unsigned id, const void *, int);
-
 #else /* not CONFIG_DEBUG_MODEM */
 
 #define eprintf(fmt...)
 #define dprintf(fmt...)
-#define modem_debug_log_data(m,id,data,cnt)
 
 #endif /* not CONFIG_DEBUG_MODEM */
-
-extern int  modem_debug_init(const char *suffix);
-extern void modem_debug_exit();
 
 
 #endif /* __MODEM_DEBUG_H__ */
