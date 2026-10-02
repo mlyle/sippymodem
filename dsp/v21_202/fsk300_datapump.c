@@ -11,7 +11,6 @@
 #include "training_session.h"
 #include "v21.h"
 
-#include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -168,7 +167,7 @@ static struct dp *create_fsk300(
 	if (modem == NULL || profile == NULL ||
 	    (caller != 0 && caller != 1) || sample_rate != MODEM_RATE ||
 	    max_fragment != MODEM_FRAG || operations != &fsk300_operations ||
-	    operations->use_count == INT_MAX)
+	    !modem_dp_has_capacity(operations))
 		return NULL;
 	datapump = calloc(1, sizeof(*datapump));
 	if (datapump == NULL)

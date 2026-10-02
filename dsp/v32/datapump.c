@@ -23,7 +23,6 @@
 #include "trellis.h"
 #include "v8_datapump.h"
 
-#include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -531,7 +530,7 @@ static struct dp *create_v32(
 	    (id != DP_V32 && id != DP_V32BIS) ||
 	    (caller != 0 && caller != 1) ||
 	    sample_rate != MODEM_RATE || max_fragment != MODEM_FRAG ||
-	    operations != &v32_operations || operations->use_count == INT_MAX ||
+	    operations != &v32_operations || !modem_dp_has_capacity(operations) ||
 	    rates == 0)
 		return NULL;
 	datapump = calloc(1, sizeof(*datapump));

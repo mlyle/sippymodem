@@ -44,6 +44,7 @@
 #include <g711.h>
 #include <modem_defs.h>
 
+#include <limits.h>
 #include <stdbool.h>
 #include <stddef.h>
 
@@ -81,6 +82,13 @@ struct dp_operations {
 	 * DPSTAT_DISCONNECT after its final line symbol has drained. */
 	int (*hangup)(struct dp *);
 };
+
+/* Factories publish an instance only when its shared count can grow. */
+static inline bool modem_dp_has_capacity(const struct dp_operations *operations)
+{
+	return operations != NULL && operations->use_count >= 0 &&
+	       operations->use_count < INT_MAX;
+}
 
 /* modem data pumps driver struct */
 struct dp_driver {

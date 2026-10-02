@@ -18,7 +18,6 @@
 #include "v90_profile.h"
 #include "v92_profile.h"
 
-#include <limits.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -232,7 +231,7 @@ static struct dp *create_v90(
 	if (modem == NULL || !protocol_from_id(id, &protocol) ||
 	    (caller != 0 && caller != 1) ||
 	    sample_rate != MODEM_RATE || max_fragment != MODEM_FRAG ||
-	    operations != &v90_operations || operations->use_count == INT_MAX ||
+	    operations != &v90_operations || !modem_dp_has_capacity(operations) ||
 	    !role_from_modem(modem, &role) ||
 	    (protocol == PCM_PROTOCOL_V92 &&
 	     !v92_profile_requested(

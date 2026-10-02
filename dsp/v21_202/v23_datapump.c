@@ -10,7 +10,6 @@
 #include "fsk_online_source.h"
 #include "training_session.h"
 
-#include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -143,7 +142,7 @@ static struct dp *create_v23(
 
 	if (modem == NULL || id != DP_V23 || (caller != 0 && caller != 1) ||
 	    sample_rate != MODEM_RATE || max_fragment != MODEM_FRAG ||
-	    operations != &v23_operations || operations->use_count == INT_MAX)
+	    operations != &v23_operations || !modem_dp_has_capacity(operations))
 		return NULL;
 	datapump = calloc(1, sizeof(*datapump));
 	if (datapump == NULL)

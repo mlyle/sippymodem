@@ -12,7 +12,6 @@
 #include "v34_datapump.h"
 #include "v90_datapump.h"
 
-#include <limits.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -47,7 +46,7 @@ static struct dp *create_call_progress(
 	if (modem == NULL || id != DP_CALLPROG || caller != 1 ||
 	    sample_rate != MODEM_RATE || max_fragment != MODEM_FRAG ||
 	    operations != &call_progress_operations ||
-	    operations->use_count == INT_MAX)
+	    !modem_dp_has_capacity(operations))
 		return NULL;
 	call_progress = calloc(1, sizeof(*call_progress));
 	if (call_progress == NULL)

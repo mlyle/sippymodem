@@ -12,7 +12,6 @@
 #include "v8_calling.h"
 #include "v90_datapump.h"
 
-#include <limits.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -126,7 +125,7 @@ static struct dp *create_v8(
 
 	if (modem == NULL || (caller != 0 && caller != 1) ||
 	    sample_rate != MODEM_RATE || max_fragment != MODEM_FRAG ||
-	    operations != &v8_operations || operations->use_count == INT_MAX ||
+	    operations != &v8_operations || !modem_dp_has_capacity(operations) ||
 	    modulation == V8_MODULATION_NONE)
 		return NULL;
 

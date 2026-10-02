@@ -7,7 +7,6 @@
 #include "modem_param.h"
 #include "baudot.h"
 
-#include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -91,7 +90,7 @@ static struct dp *create_baudot(
 	if (modem == NULL || id != DP_BAUDOT ||
 	    (caller != 0 && caller != 1) || sample_rate != MODEM_RATE ||
 	    max_fragment != MODEM_FRAG || operations != &baudot_operations ||
-	    operations->use_count == INT_MAX || !selected_rate(modem, &rate))
+	    !modem_dp_has_capacity(operations) || !selected_rate(modem, &rate))
 		return NULL;
 	datapump = calloc(1, sizeof(*datapump));
 	if (datapump == NULL)

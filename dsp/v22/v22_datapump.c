@@ -11,7 +11,6 @@
 #include "v22bis_receiver.h"
 #include "v22bis_symbols.h"
 
-#include <limits.h>
 #include <math.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -359,7 +358,7 @@ static struct dp *create_v22(
 	    (caller != 0 && caller != 1) ||
 	    sample_rate != MODEM_RATE || max_fragment != MODEM_FRAG ||
 	    operations != operations_for_id(id) ||
-	    operations->use_count == INT_MAX ||
+	    !modem_dp_has_capacity(operations) ||
 	    bit_rate == 0)
 		return NULL;
 	datapump = calloc(1, sizeof(*datapump));

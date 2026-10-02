@@ -6475,6 +6475,100 @@ static bool test_registration_rollback_retains_ownership(void)
 	return true;
 }
 
+static bool check_datapump_factory_count(
+	struct modem *modem, struct dp_operations *operations,
+	enum DP_ID requested_id, int caller, int initial_count, bool permitted)
+{
+	struct dp *dp;
+	int acquired_count;
+	bool valid;
+
+	operations->use_count = initial_count;
+	dp = operations->create(modem, requested_id, caller,
+		MODEM_RATE, MODEM_FRAG, operations);
+	acquired_count = operations->use_count;
+	valid = permitted ? dp != NULL && acquired_count == initial_count + 1 :
+		dp == NULL && acquired_count == initial_count;
+	if (dp != NULL) {
+		/* Clean up even when the old factory accepted an invalid count. */
+		if (acquired_count <= 0)
+			operations->use_count = 1;
+		int count_before_delete = operations->use_count;
+
+		valid &= operations->delete(dp) == 0 &&
+			operations->use_count == count_before_delete - 1;
+	}
+	operations->use_count = 0;
+	CHECK(valid, "%s factory count %d (caller %d): expected %s, count became %d",
+	      operations->name, initial_count, caller,
+	      permitted ? "one owned instance" : "rejection", acquired_count);
+	return true;
+}
+
+static bool test_datapump_factory_count_bounds(void)
+{
+	static const struct {
+		enum DP_ID registered_id;
+		enum DP_ID requested_id;
+		unsigned rate;
+	} profiles[] = {
+		{ DP_CALLPROG, DP_CALLPROG, 300 },
+		{ DP_V8, DP_V21, 300 },
+		{ DP_V21, DP_V21, 300 },
+		{ DP_B103, DP_B103, 300 },
+		{ DP_V23, DP_V23, 1200 },
+		{ DP_V22, DP_V22, 1200 },
+		{ DP_B212, DP_B212, 1200 },
+		{ DP_V22BIS, DP_V22BIS, 2400 },
+		{ DP_V32, DP_V32, 9600 },
+		{ DP_V32BIS, DP_V32BIS, 14400 },
+		{ DP_V34, DP_V34, V34_MAX_BIT_RATE },
+		{ DP_V90, DP_V90, 28000 },
+		{ DP_V92, DP_V92, 28000 },
+		{ DP_BAUDOT, DP_BAUDOT, 45 },
+	};
+	static const int valid_counts[] = { 0, 1, INT_MAX - 1 };
+	static const int invalid_counts[] = { INT_MIN, -1, INT_MAX };
+	struct datapumps owner = { 0 };
+	struct modem_driver driver = {
+		.name = "factory count test",
+		.start = unused_start,
+		.stop = unused_stop,
+		.ioctl = unused_control,
+	};
+	struct modem *modem;
+	bool valid = true;
+
+	CHECK(datapumps_start(&owner) == DATAPUMPS_OK,
+	      "factory count registrations did not start");
+	modem = modem_create(&driver, "factory count test");
+	CHECK(modem != NULL &&
+	      modem_set_param(modem, MDMPRM_V92_QUICK_CONNECT, 0) == 0,
+	      "factory count modem did not initialize");
+	for (size_t i = 0; i < ARRAY_LENGTH(profiles); ++i) {
+		struct dp_operations *operations =
+			modem_dp_get_registered_ops(profiles[i].registered_id);
+
+		CHECK(operations != NULL, "factory %u was not registered",
+		      profiles[i].registered_id);
+		modem->min_rate = modem->max_rate = profiles[i].rate;
+		modem->dsp_info.pcm_role = MODEM_PCM_ROLE_ANALOG;
+		for (int caller = profiles[i].registered_id == DP_CALLPROG; caller <= 1;
+		     ++caller) {
+			for (size_t j = 0; j < ARRAY_LENGTH(valid_counts); ++j)
+				valid &= check_datapump_factory_count(modem, operations,
+					profiles[i].requested_id, caller, valid_counts[j], true);
+			for (size_t j = 0; j < ARRAY_LENGTH(invalid_counts); ++j)
+				valid &= check_datapump_factory_count(modem, operations,
+					profiles[i].requested_id, caller, invalid_counts[j], false);
+		}
+	}
+	modem_delete(modem);
+	CHECK(datapumps_stop(&owner) == DATAPUMPS_OK,
+	      "factory count registrations did not stop");
+	return valid;
+}
+
 static bool test_call_progress_supports_independent_modems(void)
 {
 	struct datapumps owner = { 0 };
@@ -7033,6 +7127,7 @@ int main(void)
 		{ "LAPM timer follows rate changes", test_lapm_timer_follows_rate_changes },
 		{ "V.21 brief answer mark",
 		  test_v21_originator_answers_brief_mark },
+		{ "datapump factory count bounds", test_datapump_factory_count_bounds },
 		{ "source-built data-pump ownership",
 		  test_owns_source_built_datapump_registrations },
 		{ "registration conflicts preserve foreign owners",
