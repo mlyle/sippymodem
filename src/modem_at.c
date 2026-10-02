@@ -790,7 +790,8 @@ static int process_plus_V92U(struct modem *m, char *p, int *len)
 			    enabled == 0 || rate > UINT32_MAX)
 				return -1;
 			max_drn = pcm_upstream_data_rate_number((uint32_t)rate);
-			if (max_drn == 0)
+			/* A zero host limit selects automatic rates; wire zero is cleardown. */
+			if (rate != 0 && max_drn == 0)
 				return -1;
 			if (*p == ',') {
 				p++;
@@ -811,19 +812,19 @@ static int process_plus_V92U(struct modem *m, char *p, int *len)
 		*len = 1;
 		max_drn = (unsigned int)modem_get_sreg(
 			m, SREG_V92_PCM_UPSTREAM_MAX_DRN);
-		if (max_drn == 0) {
+		if (max_drn == 0 && m->v92_upstream_lu_ucode == 0) {
 			snprintf(response, sizeof(response), "%ld",
 				 modem_get_param(m, MDMPRM_V92_PCM_UPSTREAM));
 		} else {
 			rate = pcm_upstream_bit_rate((uint8_t)max_drn);
 			snprintf(response, sizeof(response), "%ld,%lu",
 				 modem_get_param(m, MDMPRM_V92_PCM_UPSTREAM), rate);
-			if (m->v92_upstream_lu_ucode != 0) {
-				size_t used = strlen(response);
+		}
+		if (m->v92_upstream_lu_ucode != 0) {
+			size_t used = strlen(response);
 
-				snprintf(response + used, sizeof(response) - used,
-					 ",%u", m->v92_upstream_lu_ucode);
-			}
+			snprintf(response + used, sizeof(response) - used,
+				 ",%u", m->v92_upstream_lu_ucode);
 		}
 		modem_send_to_tty(m, response, (int)strlen(response));
 		modem_send_to_tty(m, CRLF_CHARS(m), 2);

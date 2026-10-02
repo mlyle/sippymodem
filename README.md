@@ -129,7 +129,9 @@ this topology. Native direct-codec interoperability runs should opt in explicitl
 
 `AT+V92U=1,40000` caps PCM upstream at 40000 bit/s. An optional third field
 selects the analogue transmitter's training level as a V.92 U-code, for example
-`AT+V92U=1,40000,69`. Valid levels are 1–127; zero or omission uses the profile
+`AT+V92U=1,40000,69`. A zero or omitted rate allows automatic selection through
+48000 bit/s; `AT+V92U=1,0,69` combines that policy with a chosen training level.
+Valid levels are 1–127; zero or omission uses the profile
 default (91). This also sets the upstream data reference level; the peer's CPd
 gain and filters still apply. The downstream training request is independent.
 `AT+V92U?` reports the selection, and `ATZ` clears it. Level selection applies
