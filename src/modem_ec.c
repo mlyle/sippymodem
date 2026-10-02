@@ -751,9 +751,7 @@ static int rx_xid_command(struct lapm_state *l, frame_t *f)
 		return -1;
 	decoded = decode_xid(l, f, &config);
 	if (decoded == XID_INVALID_COMPRESSION) {
-		l->config = 0;
-		T401_STOP(l);
-		modem_update_status(l->modem, STATUS_EC_ERROR);
+		complete_link_release(l);
 		return -1;
 	}
 	if (decoded != XID_VALID)
@@ -782,9 +780,7 @@ static int rx_xid_command(struct lapm_state *l, frame_t *f)
 		l->ctrl_list = queued;
 		lapm_v44_session_call_reset(&l->v44_session);
 		v44_character_path_destroy(candidate);
-		l->config = 0;
-		T401_STOP(l);
-		modem_update_status(l->modem, STATUS_EC_ERROR);
+		complete_link_release(l);
 		return -1;
 	}
 	v44_character_path_destroy(l->v44_path);
@@ -866,19 +862,16 @@ static void t401_timeout(struct modem *m)
 		EC_DBG("t401: max retransmission count was reached.\n");
 		l->rtx_count = 0;
 		if (l->config) {
-			l->config = 0;
-			l->state = LAPM_IDLE;
 			lapm_v44_session_call_reset(
 				&l->v44_session);
-			modem_update_status(l->modem, STATUS_EC_RELEASE);
+			complete_link_release(l);
 			return;
 		}
 		// TBD
 		switch(l->state) {
 		case LAPM_ESTAB:
 		case LAPM_DISC:
-			l->state = LAPM_IDLE;
-			modem_update_status(l->modem,STATUS_EC_RELEASE);
+			complete_link_release(l);
 			break;
 		case LAPM_DATA:
 			// TBD: disconnect
@@ -1320,12 +1313,11 @@ static void rx_unnum_cmd(struct lapm_state *l, frame_t *f)
 		   reset vs,vr,va, clear exceptions */
 		if (reinitialize_for_link_establishment(l) != 0) {
 			TX_DM(l,FRAME_U_PF(f));
-			modem_update_status(l->modem, STATUS_EC_ERROR);
+			complete_link_release(l);
 			return;
 		}
 		if (TX_UA(l,FRAME_U_PF(f)) != 0) {
-			l->state = LAPM_IDLE;
-			modem_update_status(l->modem, STATUS_EC_ERROR);
+			complete_link_release(l);
 			return;
 		}
 		/* going to connected state */
@@ -1345,7 +1337,7 @@ static void rx_unnum_cmd(struct lapm_state *l, frame_t *f)
 			reset_lapm_sequence(l);
 			T401_STOP(l);
 			if (TX_UA(l,FRAME_U_PF(f)) != 0) {
-				modem_update_status(l->modem, STATUS_EC_ERROR);
+				complete_link_release(l);
 				return;
 			}
 			/* UA is queued, not yet serialized. Keep HDLC and the modem
@@ -1363,9 +1355,7 @@ static void rx_unnum_cmd(struct lapm_state *l, frame_t *f)
 static bool complete_link_establishment(struct lapm_state *l)
 {
 	if (reinitialize_for_link_establishment(l) != 0) {
-		l->state = LAPM_IDLE;
-		T401_STOP(l);
-		modem_update_status(l->modem, STATUS_EC_ERROR);
+		complete_link_release(l);
 		return false;
 	}
 	l->state = LAPM_DATA;
@@ -1377,6 +1367,7 @@ static bool complete_link_establishment(struct lapm_state *l)
 static void complete_link_release(struct lapm_state *l)
 {
 	l->state = LAPM_IDLE;
+	l->config = 0;
 	reset_lapm_sequence(l);
 	l->rx_head = l->rx_count = 0;
 	l->modem->packer_process = NULL;
@@ -1392,7 +1383,7 @@ static void rx_unnum_rsp(struct lapm_state *l, frame_t *f)
 			/* V.42 8.8: establish with SABME before indicating a link. */
 			if (!FRAME_U_PF(f) && lapm_can_establish(l) &&
 			    lapm_connect(l) != 0)
-				modem_update_status(l->modem, STATUS_EC_ERROR);
+				complete_link_release(l);
 		} else if ((l->state == LAPM_DATA && (l->rtx_count || !FRAME_U_PF(f))) ||
 			   ((l->state == LAPM_ESTAB || l->state == LAPM_DISC) && FRAME_U_PF(f))) {
 			complete_link_release(l);
@@ -1433,7 +1424,7 @@ static void rx_unnum_rsp(struct lapm_state *l, frame_t *f)
 				TIMER_STOP(l);
 				if (l->state == LAPM_IDLE) {
 					if (lapm_connect(l) != 0)
-						modem_update_status(l->modem, STATUS_EC_ERROR);
+						complete_link_release(l);
 				}
 				else if (l->state == LAPM_DATA) {
 					l->busy = 0;
@@ -1441,9 +1432,7 @@ static void rx_unnum_rsp(struct lapm_state *l, frame_t *f)
 				}
 			}
 			else if (result == RX_XID_RESPONSE_FATAL) {
-				l->config = 0;
-				T401_STOP(l);
-				modem_update_status(l->modem, STATUS_EC_ERROR);
+				complete_link_release(l);
 			}
 		}
 		break;
@@ -1780,7 +1769,7 @@ static void modem_ec_negotiate(struct modem *m)
 	m->packer.hdlc.tx_complete  = lapm_tx_complete;
 	m->packer.hdlc.get_tx_frame = lapm_get_tx_frame;
 	if (lapm_config(&m->ec.lapm) != 0)
-		modem_update_status(m, STATUS_EC_ERROR);
+		complete_link_release(&m->ec.lapm);
 }
 
 void modem_ec_start(struct modem *m)

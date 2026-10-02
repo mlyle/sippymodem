@@ -5467,6 +5467,117 @@ static bool test_lapm_receive_backpressure(void)
 	return true;
 }
 
+static bool test_lapm_control_failure(void)
+{
+	struct modem_driver driver = {
+		.name = "LAPM fatal control error", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+
+	for (unsigned caller = 0; caller < 2; ++caller)
+	for (unsigned pending = 0; pending < 4; ++pending)
+	for (unsigned invalid = 0; invalid < 3; ++invalid) {
+		struct modem *m = modem_create(&driver, driver.name);
+		struct lapm_host_read source = { .count = 1 };
+		uint8_t parameters[] = {
+			0, 3, 'V', '4', '2', 1, 1, 0, 2, 2, 2, 0, 3, 1, 6,
+		};
+		struct v42_xid_fields fields = {
+			.private_negotiation = parameters,
+			.private_negotiation_length = sizeof(parameters),
+		};
+		uint8_t xid[64], wire[] = { 0, 0x7f, 0, 'p' };
+		size_t length;
+		frame_t incoming = { .buf = xid }, *outgoing;
+
+		CHECK(m != NULL, "control failure allocation failed");
+		m->caller = caller;
+		m->cfg.comp = 3;
+		m->cfg.comp_types = MODEM_COMP_TYPE_V42BIS;
+		m->cfg.comp_dict_size = 512;
+		m->cfg.comp_max_string = 6;
+		CHECK(modem_comp_init(m) == 0 && modem_ec_init(m) == 0,
+		      "control failure initialization failed");
+		struct lapm_state *l = &m->ec.lapm;
+		modem_hdlc_start(m);
+		m->caller = 0;
+		modem_ec_start(m);
+		m->caller = caller;
+		m->state = 4;
+		xid[0] = l->rsp_addr;
+		xid[1] = 0xaf;
+		CHECK(v42_xid_encode(&fields, xid + 2, sizeof(xid) - 2, &length) == V42_XID_OK,
+		      "control failure XID encoding failed");
+		incoming.count = (int)length + 2;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		outgoing = m->packer.hdlc.get_tx_frame(l);
+		CHECK(outgoing != NULL && outgoing->buf[1] == 0xaf &&
+		      l->v44_session.response_length && m->cfg.comp == 0,
+		      "control failure fixture did not cache negotiation");
+		m->packer.hdlc.tx_complete(l, outgoing);
+		wire[0] = l->rsp_addr;
+		incoming.buf = wire;
+		incoming.count = 2;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		outgoing = m->packer.hdlc.get_tx_frame(l);
+		CHECK(outgoing != NULL && outgoing->buf[1] == 0x73 && l->state == 2 && m->state == 5,
+		      "control failure fixture did not establish LAPM");
+		m->packer.hdlc.tx_complete(l, outgoing);
+		m->dev_data = &source;
+		m->get_chars = counted_lapm_source;
+		m->put_chars = scripted_lapm_sink;
+		memset(&lapm_sink, 0, sizeof(lapm_sink));
+		if (pending & 1) {
+			outgoing = m->packer.hdlc.get_tx_frame(l);
+			CHECK(outgoing != NULL && !(outgoing->buf[1] & 1) && l->vs == 1,
+			      "control failure fixture did not retain information");
+			m->packer.hdlc.tx_complete(l, outgoing);
+		}
+		if (pending & 2) {
+			wire[1] = 0;
+			incoming.count = sizeof(wire);
+			m->packer.hdlc.rx_complete(l, &incoming);
+			CHECK(l->rx_count && l->busy && m->packer_process != NULL,
+			      "control failure fixture did not defer input");
+			outgoing = m->packer.hdlc.get_tx_frame(l);
+			CHECK(outgoing != NULL && (outgoing->buf[1] & 0xf) == 5,
+			      "control failure fixture did not report receive pressure");
+			m->packer.hdlc.tx_complete(l, outgoing);
+		}
+		/* A later XID with an impossible compression limit is fatal even
+		 * when a valid command previously populated the response cache. */
+		parameters[7] = 3;
+		if (invalid < 2) {
+			parameters[10] = invalid == 0 ? 0 : 1;
+			parameters[11] = invalid == 0 ? 0 : 255;
+		} else {
+			parameters[14] = 5;
+		}
+		CHECK(v42_xid_encode(&fields, xid + 2, sizeof(xid) - 2, &length) == V42_XID_OK,
+		      "fatal control XID encoding failed");
+		incoming.buf = xid;
+		incoming.count = (int)length + 2;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(l->state == 0 && !l->config && !l->vs && !l->va && !l->vr &&
+		      l->sent_info == l->info_list && l->tx_info == l->info_list &&
+		      !l->busy && !l->peer_busy && !l->rx_count && !m->bit_timer &&
+		      m->packer_process == NULL && strcmp(modem_call_phase(m), "cleardown") == 0,
+		      "fatal control retained LAPM: caller %u pending %u limit %u",
+		      caller, pending, invalid);
+		unsigned source_calls = source.calls, sink_calls = lapm_sink.calls;
+		wire[1] = wire[2] = 0;
+		incoming.buf = wire;
+		incoming.count = sizeof(wire);
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(m->packer.hdlc.get_tx_frame(l) == NULL && !l->vr && !l->rx_count &&
+		      m->packer_process == NULL && source.calls == source_calls &&
+		      lapm_sink.calls == sink_calls,
+		      "late information ran after a fatal control error");
+		modem_delete(m);
+	}
+	return true;
+}
+
 static bool test_lapm_information_failure(void)
 {
 	enum { IDLE = 0, DATA = 2, ONLINE = 5 };
@@ -7872,6 +7983,7 @@ int main(void)
 		{ "LAPM peer-flag preamble", test_lapm_peer_flag_preamble },
 		{ "LAPM receive backpressure", test_lapm_receive_backpressure },
 		{ "LAPM fatal information failure", test_lapm_information_failure },
+		{ "LAPM fatal control failure", test_lapm_control_failure },
 		{ "LAPM receive frame boundaries", test_lapm_receive_frame_boundaries },
 		{ "LAPM receive information limit", test_lapm_receive_information_limit },
 		{ "LAPM transmit information limit", test_lapm_transmit_information_limit },
