@@ -20,7 +20,7 @@ struct pcm_v34_fallback_handoff {
 	struct training_session training;
 };
 
-struct dp_operations *v90_datapump_operations(enum DP_ID id);
+const struct dp_operations *v90_datapump_operations(enum DP_ID id);
 
 /* Request an online PCM-upstream rate exchange without changing
  * terminal command mode. Ordinary media processing owns Ru/Rd and reconnects

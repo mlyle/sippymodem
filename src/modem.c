@@ -1311,7 +1311,7 @@ static bool datapump_requires_v8(enum DP_ID id)
 
 static void do_modem_change_dp (struct modem *m)
 {
-	struct dp_operations *op;
+	const struct dp_operations *op;
         struct dp *old;
 
 	old = m->dp;
@@ -1885,7 +1885,7 @@ int modem_answer(struct modem *m)
 
 static int modem_dial_start(struct modem *m)
 {
-	struct dp_operations *op;
+	const struct dp_operations *op;
         struct dp *dp = NULL;
         MODEM_DBG("modem_dial_start...\n");
 	if(m->dp) {

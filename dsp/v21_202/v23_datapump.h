@@ -14,6 +14,6 @@ enum {
 	V23_BACKWARD_BIT_RATE = 75,
 };
 
-struct dp_operations *v23_datapump_operations(enum DP_ID id);
+const struct dp_operations *v23_datapump_operations(enum DP_ID id);
 
 #endif /* V23_DATAPUMP_H */

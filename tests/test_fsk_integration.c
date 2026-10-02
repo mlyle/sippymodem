@@ -3901,7 +3901,7 @@ static bool run_fsk300_mark_qualification(
 {
 	enum { MARK_LENGTH = MODEM_RATE * 15 / 1000 };
 	struct modem modem = { 0 };
-	struct dp_operations *operations = modem_dp_get_registered_ops(id);
+	const struct dp_operations *operations = modem_dp_get_registered_ops(id);
 	struct fsk_channel channel = caller ? v21_channel_2 : v21_channel_1;
 	struct fsk_tone_generator tones;
 	struct fsk_tone_generator probe;

@@ -36,12 +36,12 @@ struct v8_datapump {
 
 static struct dp *create_v8(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
-	int max_fragment, struct dp_operations *operations);
+	int max_fragment, const struct dp_operations *operations);
 static int delete_v8(struct dp *dp);
 static int process_v8(
 	struct dp *dp, void *receive, void *transmit, int count);
 
-static struct dp_operations v8_operations = {
+static const struct dp_operations v8_operations = {
 	.name = "V.8 negotiation",
 	.create = create_v8,
 	.delete = delete_v8,
@@ -110,7 +110,7 @@ static enum DP_ID fallback_datapump(
 
 static struct dp *create_v8(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
-	int max_fragment, struct dp_operations *operations)
+	int max_fragment, const struct dp_operations *operations)
 {
 	struct v8_datapump *datapump;
 	struct v8_menu local_menu;
@@ -125,7 +125,7 @@ static struct dp *create_v8(
 
 	if (modem == NULL || (caller != 0 && caller != 1) ||
 	    sample_rate != MODEM_RATE || max_fragment != MODEM_FRAG ||
-	    operations != &v8_operations || !modem_dp_has_capacity(operations) ||
+	    operations != &v8_operations ||
 	    modulation == V8_MODULATION_NONE)
 		return NULL;
 
@@ -209,7 +209,6 @@ static struct dp *create_v8(
 		.op = operations,
 		.dp_data = datapump,
 	};
-	operations->use_count++;
 	return &datapump->dp;
 }
 
@@ -217,9 +216,8 @@ static int delete_v8(struct dp *dp)
 {
 	struct v8_datapump *datapump = v8_from_dp(dp);
 
-	if (datapump == NULL || v8_operations.use_count <= 0)
+	if (datapump == NULL)
 		return -1;
-	v8_operations.use_count--;
 	datapump->dp.dp_data = NULL;
 	free(datapump);
 	return 0;
@@ -477,7 +475,7 @@ bool v8_datapump_pcm_handoff(const struct dp *dp, struct v8_pcm_handoff *handoff
 	return true;
 }
 
-struct dp_operations *v8_datapump_operations(enum DP_ID id)
+const struct dp_operations *v8_datapump_operations(enum DP_ID id)
 {
 	return id == DP_V8 ? &v8_operations : NULL;
 }

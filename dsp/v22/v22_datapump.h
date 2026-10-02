@@ -15,6 +15,6 @@ enum {
 	V22BIS_BIT_RATE = 2400,
 };
 
-struct dp_operations *v22_datapump_operations(enum DP_ID id);
+const struct dp_operations *v22_datapump_operations(enum DP_ID id);
 
 #endif /* V22_DATAPUMP_H */

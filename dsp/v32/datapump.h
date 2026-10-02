@@ -17,6 +17,6 @@ enum {
 	V32_14400_BIT_RATE = 14400,
 };
 
-struct dp_operations *v32_datapump_operations(enum DP_ID id);
+const struct dp_operations *v32_datapump_operations(enum DP_ID id);
 
 #endif

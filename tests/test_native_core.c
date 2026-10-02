@@ -21,6 +21,9 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <pthread.h>
+#include <sched.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <string.h>
 #include <sys/ioctl.h>
@@ -31,9 +34,9 @@ extern int modem_dial(struct modem *modem);
 extern int modem_recv_from_tty(struct modem *modem, char *buffer, int count);
 
 /* Host lifecycle tests substitute call progress without mutating the catalog. */
-static struct dp_operations *call_progress_override;
-struct dp_operations *__real_modem_dp_get_registered_ops(enum DP_ID id);
-struct dp_operations *__wrap_modem_dp_get_registered_ops(enum DP_ID id)
+static const struct dp_operations *call_progress_override;
+const struct dp_operations *__real_modem_dp_get_registered_ops(enum DP_ID id);
+const struct dp_operations *__wrap_modem_dp_get_registered_ops(enum DP_ID id)
 {
 	return id == DP_CALLPROG && call_progress_override != NULL ?
 		call_progress_override : __real_modem_dp_get_registered_ops(id);
@@ -364,11 +367,11 @@ static struct {
 
 static struct dp *create_retrain_dp(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
-	int max_fragment, struct dp_operations *operations)
+	int max_fragment, const struct dp_operations *operations)
 {
 	if (modem == NULL || id != DP_CALLPROG || caller != 1 ||
 	    sample_rate != MODEM_RATE || max_fragment != MODEM_FRAG ||
-	    operations == NULL || operations->use_count != 0)
+	    operations == NULL || retrain_dp.datapump.op != NULL)
 		return NULL;
 	retrain_dp.datapump = (struct dp){
 		.id = id,
@@ -376,16 +379,13 @@ static struct dp *create_retrain_dp(
 		.status = DPSTAT_CONNECT,
 		.op = operations,
 	};
-	operations->use_count++;
 	return &retrain_dp.datapump;
 }
 
 static int delete_retrain_dp(struct dp *datapump)
 {
-	if (datapump != &retrain_dp.datapump || datapump->op == NULL ||
-	    datapump->op->use_count != 1)
+	if (datapump != &retrain_dp.datapump || datapump->op == NULL)
 		return -1;
-	datapump->op->use_count--;
 	memset(&retrain_dp.datapump, 0, sizeof(retrain_dp.datapump));
 	return 0;
 }
@@ -554,7 +554,7 @@ static bool test_ato1_waits_for_datapump_retrain(void)
 		      modem->state == TEST_STATE_MODEM_ONLINE &&
 		      modem->retrain_pending == 0,
 	      "ATO0 incorrectly invoked retraining");
-	CHECK(modem_stop_now(modem) == 0 && operations.use_count == 0,
+	CHECK(modem_stop_now(modem) == 0 && retrain_dp.datapump.op == NULL,
 	      "ATO1 test data pump did not stop");
 	modem_delete(modem);
 	call_progress_override = NULL;
@@ -849,11 +849,11 @@ stopped:
 	CHECK(modem->state == TEST_STATE_MODEM_IDLE &&
 		      hangup_driver_stop_calls == 1 &&
 		      modem->sample_timer == 0 && modem->sample_timer_func == NULL &&
-		      modem->hook == MODEM_HOOK_ON && operations.use_count == 0,
+		      modem->hook == MODEM_HOOK_ON && retrain_dp.datapump.op == NULL,
 	      "datapump cleardown did not complete ATH0: state=%u stop=%u "
-	      "hook=%u uses=%d timer=%lu count=%lu process=%p",
+	      "hook=%u active=%u timer=%lu count=%lu process=%p",
 	      modem->state, hangup_driver_stop_calls, modem->hook,
-	      operations.use_count, modem->sample_timer, modem->count,
+	      (unsigned)(retrain_dp.datapump.op != NULL), modem->sample_timer, modem->count,
 	      (void *)modem->process);
 	CHECK(modem->hangup_command_pending == 0 &&
 	      modem->result_code == 0 &&
@@ -991,27 +991,24 @@ static struct {
 
 static struct dp *create_g711_dp(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
-	int max_fragment, struct dp_operations *operations)
+	int max_fragment, const struct dp_operations *operations)
 {
 	if (modem == NULL || id != DP_CALLPROG || caller != 1 ||
 	    sample_rate != MODEM_RATE || max_fragment != MODEM_FRAG ||
-	    operations == NULL || operations->use_count != 0)
+	    operations == NULL || g711_dp.datapump.op != NULL)
 		return NULL;
 	g711_dp.datapump = (struct dp){
 		.id = id,
 		.modem = modem,
 		.op = operations,
 	};
-	operations->use_count++;
 	return &g711_dp.datapump;
 }
 
 static int delete_g711_dp(struct dp *datapump)
 {
-	if (datapump != &g711_dp.datapump || datapump->op == NULL ||
-	    datapump->op->use_count != 1)
+	if (datapump != &g711_dp.datapump || datapump->op == NULL)
 		return -1;
-	datapump->op->use_count--;
 	memset(&g711_dp.datapump, 0, sizeof(g711_dp.datapump));
 	return 0;
 }
@@ -1107,7 +1104,7 @@ static bool test_g711_datapump_input(void)
 	modem_process(modem, receive, transmit, MODEM_FRAG);
 	CHECK(g711_dp.g711_calls == 2 && g711_dp.linear_calls == 1,
 	      "linear processing did not retain its legacy path");
-	CHECK(modem_stop_now(modem) == 0 && operations.use_count == 0,
+	CHECK(modem_stop_now(modem) == 0 && g711_dp.datapump.op == NULL,
 	      "G.711 test data pump did not stop cleanly");
 	modem_delete(modem);
 	call_progress_override = NULL;
@@ -1178,7 +1175,7 @@ static bool test_receive_dc_frontend(void)
 		      cases[index].name, receive, cases[index].expected);
 	}
 	modem->dp->id = DP_CALLPROG;
-	CHECK(modem_stop_now(modem) == 0 && operations.use_count == 0,
+	CHECK(modem_stop_now(modem) == 0 && g711_dp.datapump.op == NULL,
 	      "DC front-end data pump did not stop cleanly");
 	modem_delete(modem);
 	call_progress_override = NULL;
@@ -1633,7 +1630,7 @@ static bool test_v8_handoff(void)
 	};
 	struct modem *caller;
 	struct modem *answerer;
-	struct dp_operations *operations;
+	const struct dp_operations *operations;
 	struct dp *calling_dp;
 	struct dp *answering_dp;
 	struct single_tone_detector legacy_carrier;
@@ -1681,8 +1678,7 @@ static bool test_v8_handoff(void)
 		answering_dp = operations->create(
 			answerer, answerer_requested, 0, MODEM_RATE, MODEM_FRAG,
 			operations);
-		CHECK(calling_dp != NULL && answering_dp != NULL &&
-			      operations->use_count == 2,
+		CHECK(calling_dp != NULL && answering_dp != NULL,
 		      "V.8 PCM handshakes were not independently owned");
 		memset(calling_audio, 0, sizeof(calling_audio));
 		memset(answering_audio, 0, sizeof(answering_audio));
@@ -1730,8 +1726,7 @@ static bool test_v8_handoff(void)
 		      "V.8 peers did not agree on handoff %u",
 		      (unsigned int)selections[selection].handoff);
 		CHECK(operations->delete(calling_dp) == 0 &&
-			      operations->delete(answering_dp) == 0 &&
-			      operations->use_count == 0,
+			      operations->delete(answering_dp) == 0,
 		      "V.8 PCM handshakes did not release their state");
 		modem_delete(caller);
 		modem_delete(answerer);
@@ -1749,7 +1744,7 @@ static bool test_v8_fallback_limits(void)
 	for (unsigned int restricted = 0; restricted < 3; ++restricted) {
 		struct modem *caller = modem_create(&driver, "restricted caller");
 		struct modem *answerer = modem_create(&driver, "automatic answerer");
-		struct dp_operations *ops = modem_dp_get_registered_ops(DP_V8);
+		const struct dp_operations *ops = modem_dp_get_registered_ops(DP_V8);
 		int16_t tx[MODEM_FRAG] = { 0 }, rx[MODEM_FRAG] = { 0 };
 		int result = DPSTAT_OK;
 		struct dp *calling, *answering;
@@ -1792,7 +1787,7 @@ static bool test_v8_legacy_v32(void)
 
 	for (unsigned int scenario = 0; scenario < 8; ++scenario) {
 		struct modem *modem = modem_create(&driver, "automatic answerer");
-		struct dp_operations *ops = modem_dp_get_registered_ops(DP_V8);
+		const struct dp_operations *ops = modem_dp_get_registered_ops(DP_V8);
 		struct single_tone_transmitter tone;
 		struct single_tone_detector carrier;
 		struct v8_pcm_handoff pcm;
@@ -5446,7 +5441,7 @@ static bool test_lapm_stalled_retrain(void)
 			modem_process(m, receive, transmit, MODEM_FRAG);
 		CHECK(retrain_dp.retrain_calls == 2 && l->state == LAPM_DISC_STATE,
 		      "absent peer was not bounded by normal LAPM retry exhaustion");
-		CHECK(modem_stop_now(m) == 0 && operations.use_count == 0, "stall fixture did not stop");
+		CHECK(modem_stop_now(m) == 0 && retrain_dp.datapump.op == NULL, "stall fixture did not stop");
 		modem_delete(m);
 		call_progress_override = NULL;
 	}
@@ -6228,7 +6223,7 @@ static bool test_v21_originator_answers_brief_mark(void)
 		.ioctl = unused_control,
 	};
 	struct fsk_transmitter answerer;
-	struct dp_operations *operations;
+	const struct dp_operations *operations;
 	struct modem *modem;
 	struct dp *datapump;
 	int16_t receive[MODEM_FRAG] = { 0 };
@@ -6288,40 +6283,32 @@ static bool test_v21_originator_answers_brief_mark(void)
 	return true;
 }
 
-static bool check_datapump_factory_count(
-	struct modem *modem, struct dp_operations *operations,
-	enum DP_ID requested_id, int caller, int initial_count, bool permitted)
+static bool process_owned_datapump(struct dp *dp)
 {
-	struct dp *dp;
-	int acquired_count;
-	bool valid;
+	int16_t receive[MODEM_FRAG] = { 0 }, transmit[MODEM_FRAG];
+	int status;
 
-	operations->use_count = initial_count;
-	dp = operations->create(modem, requested_id, caller,
-		MODEM_RATE, MODEM_FRAG, operations);
-	acquired_count = operations->use_count;
-	valid = permitted ? dp != NULL && acquired_count == initial_count + 1 :
-		dp == NULL && acquired_count == initial_count;
-	if (dp != NULL) {
-		/* Clean up even when the old factory accepted an invalid count. */
-		if (acquired_count <= 0)
-			operations->use_count = 1;
-		int count_before_delete = operations->use_count;
+	if (dp->op->process_g711 != NULL) {
+		uint8_t receive_codewords[MODEM_FRAG], transmit_codewords[MODEM_FRAG];
+		bool exact = false;
 
-		valid &= operations->delete(dp) == 0 &&
-			operations->use_count == count_before_delete - 1;
+		memset(receive_codewords, g711_encode_pcmu(0), sizeof(receive_codewords));
+		status = dp->op->process_g711(dp, G711_LAW_PCMU,
+			receive_codewords, receive, NULL, transmit_codewords, transmit,
+			MODEM_FRAG, &exact);
+	} else {
+		status = dp->op->process(dp, receive, transmit, MODEM_FRAG);
 	}
-	operations->use_count = 0;
-	CHECK(valid, "%s factory count %d (caller %d): expected %s, count became %d",
-	      operations->name, initial_count, caller,
-	      permitted ? "one owned instance" : "rejection", acquired_count);
+	CHECK(status == DPSTAT_OK || status == DPSTAT_CONNECT,
+	      "%s stopped after another modem changed ownership (status %d)",
+	      dp->op->name, status);
 	return true;
 }
 
-static bool test_datapump_factory_count_bounds(void)
+static bool test_datapump_factory_instances(void)
 {
 	static const struct {
-		enum DP_ID registered_id;
+		enum DP_ID catalog_id;
 		enum DP_ID requested_id;
 		unsigned rate;
 	} profiles[] = {
@@ -6340,48 +6327,147 @@ static bool test_datapump_factory_count_bounds(void)
 		{ DP_V92, DP_V92, 28000 },
 		{ DP_BAUDOT, DP_BAUDOT, 45 },
 	};
-	static const int valid_counts[] = { 0, 1, INT_MAX - 1 };
-	static const int invalid_counts[] = { INT_MIN, -1, INT_MAX };
 	struct modem_driver driver = {
-		.name = "factory count test",
+		.name = "factory ownership test",
 		.start = unused_start,
 		.stop = unused_stop,
 		.ioctl = unused_control,
 	};
+	struct modem *modems[3];
+	struct dp *calls[3];
+
+	for (size_t i = 0; i < ARRAY_LENGTH(modems); i++) {
+		modems[i] = modem_create(&driver, "factory ownership test");
+		CHECK(modems[i] != NULL &&
+		      modem_set_param(modems[i], MDMPRM_V92_QUICK_CONNECT, 0) == 0,
+		      "independent modem %zu did not initialize", i);
+	}
+	for (size_t i = 0; i < ARRAY_LENGTH(profiles); i++) {
+		const struct dp_operations *op =
+			modem_dp_get_registered_ops(profiles[i].catalog_id);
+		enum DP_ID id = profiles[i].requested_id;
+
+		CHECK(op != NULL, "factory %u is unavailable", profiles[i].catalog_id);
+		for (int caller = profiles[i].catalog_id == DP_CALLPROG; caller <= 1; caller++) {
+			for (size_t j = 0; j < ARRAY_LENGTH(modems); j++) {
+				modems[j]->min_rate = modems[j]->max_rate = profiles[i].rate;
+				modems[j]->dsp_info.pcm_role = j == 1 ?
+					MODEM_PCM_ROLE_DIGITAL : MODEM_PCM_ROLE_ANALOG;
+				calls[j] = op->create(modems[j], id, caller, MODEM_RATE, MODEM_FRAG, op);
+				CHECK(calls[j] != NULL && calls[j]->modem == modems[j] &&
+				      calls[j]->op == op,
+				      "%s role %d did not own modem %zu", op->name, caller, j);
+				for (size_t k = 0; k < j; k++)
+					CHECK(calls[j] != calls[k], "%s shared a mutable instance", op->name);
+			}
+			CHECK(op->delete(calls[0]) == 0,
+			      "%s failed to release its first modem", op->name);
+			CHECK(process_owned_datapump(calls[1]),
+			      "%s deletion stopped another modem", op->name);
+			calls[0] = op->create(modems[0], id, caller, MODEM_RATE, MODEM_FRAG, op);
+			CHECK(calls[0] != NULL && calls[0] != calls[1] && calls[0] != calls[2],
+			      "%s failed to replace its first modem", op->name);
+			CHECK(process_owned_datapump(calls[2]),
+			      "%s replacement stopped another modem", op->name);
+			for (size_t j = ARRAY_LENGTH(calls); j > 0; j--)
+				CHECK(op->delete(calls[j - 1]) == 0,
+				      "%s failed to release modem %zu", op->name, j - 1);
+		}
+		/* Callback identity is part of factory ownership, even when every
+		 * method in a foreign copy happens to match the built-in family. */
+		struct dp_operations foreign = *op;
+		int caller = 1;
+		struct modem *m = modems[0];
+
+		CHECK(op->create(m, id, caller, MODEM_RATE, MODEM_FRAG, &foreign) == NULL &&
+		      op->create(m, id, caller, MODEM_RATE, MODEM_FRAG, NULL) == NULL &&
+		      op->create(NULL, id, caller, MODEM_RATE, MODEM_FRAG, op) == NULL &&
+		      op->create(m, DP_DUMMY, caller, MODEM_RATE, MODEM_FRAG, op) == NULL &&
+		      op->create(m, id, -1, MODEM_RATE, MODEM_FRAG, op) == NULL &&
+		      op->create(m, id, 2, MODEM_RATE, MODEM_FRAG, op) == NULL &&
+		      op->create(m, id, caller, MODEM_RATE - 1, MODEM_FRAG, op) == NULL &&
+		      op->create(m, id, caller, MODEM_RATE, MODEM_FRAG - 1, op) == NULL,
+		      "%s accepted foreign operations or invalid factory arguments", op->name);
+	}
+	for (size_t i = 0; i < ARRAY_LENGTH(modems); i++)
+		modem_delete(modems[i]);
+	return true;
+}
+
+struct factory_thread {
 	struct modem *modem;
+	atomic_bool *started;
+	unsigned failures;
+};
+
+static void *run_factory_thread(void *opaque)
+{
+	struct factory_thread *thread = opaque;
+	const struct dp_operations *op = modem_dp_get_registered_ops(DP_V21);
+
+	while (!atomic_load_explicit(thread->started, memory_order_acquire))
+		sched_yield();
+	for (unsigned i = 0; i < 1000; i++) {
+		struct dp *dp = op->create(thread->modem, DP_V21, 1, MODEM_RATE, MODEM_FRAG, op);
+
+		if (dp == NULL) {
+			thread->failures++;
+			continue;
+		}
+		if (dp->modem != thread->modem || !process_owned_datapump(dp))
+			thread->failures++;
+		if (op->delete(dp) != 0)
+			thread->failures++;
+	}
+	return NULL;
+}
+
+static bool test_concurrent_datapump_lifetimes(void)
+{
+	struct modem_driver driver = {
+		.name = "concurrent factory test",
+		.start = unused_start,
+		.stop = unused_stop,
+		.ioctl = unused_control,
+	};
+	struct factory_thread workers[8] = { 0 };
+	pthread_t threads[ARRAY_LENGTH(workers)];
+	atomic_bool started = false;
+	size_t created = 0;
 	bool valid = true;
 
-	modem = modem_create(&driver, "factory count test");
-	CHECK(modem != NULL &&
-	      modem_set_param(modem, MDMPRM_V92_QUICK_CONNECT, 0) == 0,
-	      "factory count modem did not initialize");
-	for (size_t i = 0; i < ARRAY_LENGTH(profiles); ++i) {
-		struct dp_operations *operations =
-			modem_dp_get_registered_ops(profiles[i].registered_id);
-
-		CHECK(operations != NULL, "factory %u was not registered",
-		      profiles[i].registered_id);
-		modem->min_rate = modem->max_rate = profiles[i].rate;
-		modem->dsp_info.pcm_role = MODEM_PCM_ROLE_ANALOG;
-		for (int caller = profiles[i].registered_id == DP_CALLPROG; caller <= 1;
-		     ++caller) {
-			for (size_t j = 0; j < ARRAY_LENGTH(valid_counts); ++j)
-				valid &= check_datapump_factory_count(modem, operations,
-					profiles[i].requested_id, caller, valid_counts[j], true);
-			for (size_t j = 0; j < ARRAY_LENGTH(invalid_counts); ++j)
-				valid &= check_datapump_factory_count(modem, operations,
-					profiles[i].requested_id, caller, invalid_counts[j], false);
+	for (size_t i = 0; i < ARRAY_LENGTH(workers); i++) {
+		workers[i].modem = modem_create(&driver, "concurrent factory test");
+		workers[i].started = &started;
+		if (workers[i].modem == NULL) {
+			valid = false;
+			break;
 		}
+		workers[i].modem->min_rate = workers[i].modem->max_rate = 300;
+		if (pthread_create(&threads[i], NULL, run_factory_thread, &workers[i]) != 0) {
+			valid = false;
+			break;
+		}
+		created++;
 	}
-	modem_delete(modem);
-	return valid;
+	/* Also release and join an incomplete fixture before reporting failure. */
+	atomic_store_explicit(&started, true, memory_order_release);
+	for (size_t i = 0; i < created; i++) {
+		valid &= pthread_join(threads[i], NULL) == 0;
+		valid &= workers[i].failures == 0;
+	}
+	for (size_t i = 0; i < ARRAY_LENGTH(workers); i++)
+		if (workers[i].modem != NULL)
+			modem_delete(workers[i].modem);
+	CHECK(valid, "independent concurrent datapump lifetimes failed");
+	return true;
 }
 
 static bool test_call_progress_supports_independent_modems(void)
 {
 	struct modem modems[2] = { 0 };
 	struct dp *calls[2];
-	struct dp_operations *operations;
+	const struct dp_operations *operations;
 	int16_t receive[MODEM_FRAG] = { 0 };
 	int16_t transmit[MODEM_FRAG];
 
@@ -6390,10 +6476,9 @@ static bool test_call_progress_supports_independent_modems(void)
 		calls[i] = operations->create(
 			&modems[i], DP_CALLPROG, 1, MODEM_RATE, MODEM_FRAG, operations);
 	CHECK(calls[0] != NULL && calls[1] != NULL && calls[0] != calls[1] &&
-		      calls[0]->modem == &modems[0] && calls[1]->modem == &modems[1] &&
-		      operations->use_count == 2,
+		      calls[0]->modem == &modems[0] && calls[1]->modem == &modems[1],
 	      "one modem's call progress prevented another independent instance");
-	CHECK(operations->delete(calls[0]) == 0 && operations->use_count == 1,
+	CHECK(operations->delete(calls[0]) == 0,
 	      "call progress did not release one owned instance");
 	memset(transmit, 1, sizeof(transmit));
 	CHECK(operations->process(calls[1], receive, transmit, MODEM_FRAG) == DPSTAT_OK &&
@@ -6401,9 +6486,8 @@ static bool test_call_progress_supports_independent_modems(void)
 	      "remaining call progress stopped processing silently");
 	calls[0] = operations->create(
 		&modems[0], DP_CALLPROG, 1, MODEM_RATE, MODEM_FRAG, operations);
-	CHECK(calls[0] != NULL && operations->use_count == 2 &&
-		      operations->delete(calls[1]) == 0 && operations->use_count == 1 &&
-		      operations->delete(calls[0]) == 0 && operations->use_count == 0,
+	CHECK(calls[0] != NULL && operations->delete(calls[1]) == 0 &&
+		      operations->delete(calls[0]) == 0,
 	      "call progress did not support independent replacement and deletion");
 	return true;
 }
@@ -6455,20 +6539,20 @@ static bool test_builtin_datapump_lifecycle(void)
 		.ioctl = unused_control,
 	};
 	struct modem *modem;
-	struct dp_operations *operations;
-	struct dp_operations *v8_operations;
-	struct dp_operations *v21_operations;
-	struct dp_operations *bell103_operations;
-	struct dp_operations *v23_operations;
-	struct dp_operations *v22_operations;
-	struct dp_operations *v22bis_operations;
-	struct dp_operations *bell212_operations;
-	struct dp_operations *v32_operations;
-	struct dp_operations *v32bis_operations;
-	struct dp_operations *v34_operations;
-	struct dp_operations *v90_operations;
-	struct dp_operations *v92_operations;
-	struct dp_operations *baudot_operations;
+	const struct dp_operations *operations;
+	const struct dp_operations *v8_operations;
+	const struct dp_operations *v21_operations;
+	const struct dp_operations *bell103_operations;
+	const struct dp_operations *v23_operations;
+	const struct dp_operations *v22_operations;
+	const struct dp_operations *v22bis_operations;
+	const struct dp_operations *bell212_operations;
+	const struct dp_operations *v32_operations;
+	const struct dp_operations *v32bis_operations;
+	const struct dp_operations *v34_operations;
+	const struct dp_operations *v90_operations;
+	const struct dp_operations *v92_operations;
+	const struct dp_operations *baudot_operations;
 	struct dp *call_progress;
 	struct dp *v8;
 	struct dp *baudot;
@@ -6502,18 +6586,15 @@ static bool test_builtin_datapump_lifecycle(void)
 	baudot_operations = modem_dp_get_registered_ops(DP_BAUDOT);
 	CHECK(operations != NULL && operations->create != NULL &&
 		      operations->delete != NULL && operations->process != NULL &&
-		      operations->hangup == NULL && operations->use_count == 0 &&
-		      v8_operations != NULL &&
+		      operations->hangup == NULL && v8_operations != NULL &&
 		      v8_operations != operations &&
 		      v8_operations->create != NULL &&
 		      v8_operations->delete != NULL &&
 		      v8_operations->process != NULL &&
-		      v8_operations->use_count == 0 &&
 		      v21_operations != NULL && v21_operations->create != NULL &&
 		      v21_operations->delete != NULL &&
 		      v21_operations->process != NULL &&
 		      v21_operations->retrain == NULL &&
-		      v21_operations->use_count == 0 &&
 		      bell103_operations == v21_operations &&
 		      v23_operations != NULL &&
 		      v23_operations != v21_operations &&
@@ -6521,7 +6602,6 @@ static bool test_builtin_datapump_lifecycle(void)
 		      v23_operations->delete != NULL &&
 		      v23_operations->process != NULL &&
 		      v23_operations->retrain == NULL &&
-		      v23_operations->use_count == 0 &&
 		      v22_operations != NULL &&
 		      v22_operations != v21_operations &&
 		      v22_operations != v23_operations &&
@@ -6529,14 +6609,12 @@ static bool test_builtin_datapump_lifecycle(void)
 		      v22_operations->delete != NULL &&
 		      v22_operations->process != NULL &&
 		      v22_operations->retrain == NULL &&
-		      v22_operations->use_count == 0 &&
 		      v22bis_operations != NULL &&
 		      v22bis_operations != v22_operations &&
 		      v22bis_operations->create == v22_operations->create &&
 		      v22bis_operations->delete == v22_operations->delete &&
 		      v22bis_operations->process == v22_operations->process &&
 		      v22bis_operations->retrain != NULL &&
-		      v22bis_operations->use_count == 0 &&
 		      bell212_operations == v22_operations &&
 		      bell212_operations->retrain == NULL &&
 		      v32_operations != NULL &&
@@ -6546,7 +6624,6 @@ static bool test_builtin_datapump_lifecycle(void)
 		      v32_operations->create != NULL &&
 		      v32_operations->delete != NULL &&
 		      v32_operations->process != NULL &&
-		      v32_operations->use_count == 0 &&
 		      v32bis_operations == v32_operations &&
 		      v34_operations != NULL &&
 		      v34_operations != v21_operations &&
@@ -6556,14 +6633,12 @@ static bool test_builtin_datapump_lifecycle(void)
 		      v34_operations->create != NULL &&
 		      v34_operations->delete != NULL &&
 		      v34_operations->process != NULL &&
-		      v34_operations->use_count == 0 &&
 		      v90_operations != NULL &&
 		      v90_operations != v34_operations &&
 		      v90_operations->create != NULL &&
 		      v90_operations->delete != NULL &&
 		      v90_operations->process != NULL &&
 		      v90_operations->process_g711 != NULL &&
-		      v90_operations->use_count == 0 &&
 		      v92_operations == v90_operations &&
 		      baudot_operations != NULL &&
 		      baudot_operations != v21_operations &&
@@ -6571,8 +6646,7 @@ static bool test_builtin_datapump_lifecycle(void)
 		      baudot_operations != v22_operations &&
 		      baudot_operations->create != NULL &&
 		      baudot_operations->delete != NULL &&
-		      baudot_operations->process != NULL &&
-		      baudot_operations->use_count == 0,
+		      baudot_operations->process != NULL,
 	      "source-built modem operations were incomplete");
 	modem = modem_create(&driver, "call progress test");
 	CHECK(modem != NULL, "call-progress modem could not be created");
@@ -6583,8 +6657,7 @@ static bool test_builtin_datapump_lifecycle(void)
 	CHECK(v8 != NULL && v8->id == DP_V8 &&
 		      v8_operations->process(
 			      v8, receive, transmit, MODEM_FRAG) == DPSTAT_OK &&
-		      v8_operations->delete(v8) == 0 &&
-		      v8_operations->use_count == 0,
+		      v8_operations->delete(v8) == 0,
 	      "V.8 did not own and release its calling handshake");
 	for (size_t index = 0; index < ARRAY_LENGTH(transmit); ++index)
 		CHECK(transmit[index] == 0,
@@ -6599,8 +6672,7 @@ static bool test_builtin_datapump_lifecycle(void)
 		      v22_operations->process(
 			      v22, receive, transmit, MODEM_FRAG) == DPSTAT_OK &&
 		      samples_are_silent(transmit, MODEM_FRAG) &&
-		      v22_operations->delete(v22) == 0 &&
-		      v22_operations->use_count == 0,
+		      v22_operations->delete(v22) == 0,
 	      "V.22 600 data pump did not wait silently and release cleanly");
 	modem->min_rate = modem->max_rate = 1200;
 	v22 = v22_operations->create(
@@ -6610,8 +6682,7 @@ static bool test_builtin_datapump_lifecycle(void)
 	CHECK(v22 != NULL &&
 		      v22_operations->process(
 			      v22, receive, transmit, MODEM_FRAG) == DPSTAT_OK &&
-		      v22_operations->delete(v22) == 0 &&
-		      v22_operations->use_count == 0,
+		      v22_operations->delete(v22) == 0,
 	      "V.22 data pump did not wait silently and release cleanly");
 	for (size_t index = 0; index < ARRAY_LENGTH(transmit); ++index)
 		CHECK(transmit[index] == 0,
@@ -6620,9 +6691,7 @@ static bool test_builtin_datapump_lifecycle(void)
 		modem, DP_B212, 1, MODEM_RATE, MODEM_FRAG,
 		bell212_operations);
 	CHECK(bell212 != NULL && bell212->id == DP_B212 &&
-		      bell212_operations->use_count == 1 &&
-		      bell212_operations->delete(bell212) == 0 &&
-		      bell212_operations->use_count == 0,
+		      bell212_operations->delete(bell212) == 0,
 	      "Bell 212A did not preserve its registered modem identity");
 	modem->min_rate = modem->max_rate = 1200;
 	CHECK(v22bis_operations->create(
@@ -6634,9 +6703,7 @@ static bool test_builtin_datapump_lifecycle(void)
 		modem, DP_V22BIS, 1, MODEM_RATE, MODEM_FRAG,
 		v22bis_operations);
 	CHECK(v22bis != NULL && v22bis->id == DP_V22BIS &&
-		      v22bis_operations->use_count == 1 &&
-		      v22bis_operations->delete(v22bis) == 0 &&
-		      v22bis_operations->use_count == 0,
+		      v22bis_operations->delete(v22bis) == 0,
 	      "V.22bis did not preserve its registered modem identity");
 	modem->min_rate = modem->max_rate = 2400;
 	CHECK(v32_operations->create(
@@ -6653,8 +6720,7 @@ static bool test_builtin_datapump_lifecycle(void)
 		      single_tone_transmitter_init(
 			      &v32_answer_tone,
 			      V32_ANSWER_TONE_HZ, 12000) ==
-			      SINGLE_TONE_OK &&
-		      v32_operations->use_count == 1,
+			      SINGLE_TONE_OK,
 		      "V.32 data pump did not initialize its line startup");
 	for (size_t presented = 0; presented < MODEM_RATE * 3u / 20u;) {
 		size_t remaining = MODEM_RATE * 3u / 20u - presented;
@@ -6708,16 +6774,14 @@ static bool test_builtin_datapump_lifecycle(void)
 	CHECK(v32_calling_power > UINT64_C(1000000000),
 	      "V.32 caller omitted its guarded carrier (%llu)",
 	      (unsigned long long)v32_calling_power);
-	CHECK(v32_operations->delete(v32) == 0 &&
-		      v32_operations->use_count == 0,
+	CHECK(v32_operations->delete(v32) == 0,
 	      "V.32 data pump did not release after line startup");
 	/* The shared DSP must retain the selected protocol's rate set. */
 	static const unsigned int bis_rates[] = { 7200, 12000, 14400 };
 	for (size_t index = 0; index < ARRAY_LENGTH(bis_rates); ++index) {
 		modem->min_rate = modem->max_rate = bis_rates[index];
 		CHECK(v32_operations->create(modem, DP_V32, 1, MODEM_RATE,
-			      MODEM_FRAG, v32_operations) == NULL &&
-			      v32_operations->use_count == 0,
+			      MODEM_FRAG, v32_operations) == NULL,
 		      "V.32 accepted the V.32bis-only rate %u", bis_rates[index]);
 		v32bis = v32bis_operations->create(modem, DP_V32BIS, 1,
 			MODEM_RATE, MODEM_FRAG, v32bis_operations);
@@ -6729,16 +6793,13 @@ static bool test_builtin_datapump_lifecycle(void)
 		modem, DP_V32BIS, 1, MODEM_RATE, MODEM_FRAG,
 		v32bis_operations);
 	CHECK(v32bis != NULL && v32bis->id == DP_V32BIS &&
-		      v32bis_operations->use_count == 1 &&
-		      v32bis_operations->delete(v32bis) == 0 &&
-		      v32bis_operations->use_count == 0,
+		      v32bis_operations->delete(v32bis) == 0,
 	      "V.32bis did not share the V.32 data pump");
 	modem->min_rate = V34_MAX_BIT_RATE + 1;
 	modem->max_rate = V34_MAX_BIT_RATE + V34_RATE_STEP;
 	CHECK(v34_operations->create(
 		      modem, DP_V34, 1, MODEM_RATE, MODEM_FRAG,
-		      v34_operations) == NULL &&
-		      v34_operations->use_count == 0,
+		      v34_operations) == NULL,
 	      "V.34 accepted a range above its implemented rates");
 	modem->min_rate = modem->max_rate = V34_MAX_BIT_RATE;
 	v34 = v34_operations->create(
@@ -6746,11 +6807,9 @@ static bool test_builtin_datapump_lifecycle(void)
 	memset(receive, 0, sizeof(receive));
 	memset(transmit, 1, sizeof(transmit));
 	CHECK(v34 != NULL && v34->id == DP_V34 &&
-		      v34_operations->use_count == 1 &&
 		      v34_operations->process(
 			      v34, receive, transmit, MODEM_FRAG) == DPSTAT_OK &&
-		      v34_operations->delete(v34) == 0 &&
-		      v34_operations->use_count == 0,
+		      v34_operations->delete(v34) == 0,
 	      "V.34 data pump did not retain and release its call state");
 	{
 		char command[] = "AT+MS=90,0,28000,28000";
@@ -6767,9 +6826,7 @@ static bool test_builtin_datapump_lifecycle(void)
 	v90 = v90_operations->create(
 		modem, DP_V90, 1, MODEM_RATE, MODEM_FRAG, v90_operations);
 	CHECK(v90 != NULL && v90->id == DP_V90 &&
-		      v90_operations->use_count == 1 &&
-		      v90_operations->delete(v90) == 0 &&
-		      v90_operations->use_count == 0,
+		      v90_operations->delete(v90) == 0,
 	      "V.90 data pump did not retain and release its call state");
 	{
 		char pcm_upstream[] = "AT+V92Q=0+V92U=1,24000";
@@ -6783,17 +6840,14 @@ static bool test_builtin_datapump_lifecycle(void)
 	v92 = v92_operations->create(
 		modem, DP_V92, 1, MODEM_RATE, MODEM_FRAG, v92_operations);
 	CHECK(v92 != NULL && v92->id == DP_V92 &&
-		      v92_operations->use_count == 1 &&
-		      v92_operations->delete(v92) == 0 &&
-		      v92_operations->use_count == 0,
+		      v92_operations->delete(v92) == 0,
 	      "V.92 did not retain the shared PCM call state");
 	modem->dsp_info.pcm_role = MODEM_PCM_ROLE_NONE;
 	modem->min_rate = 46;
 	modem->max_rate = 49;
 	CHECK(baudot_operations->create(
 		      modem, DP_BAUDOT, 1, MODEM_RATE, MODEM_FRAG,
-		      baudot_operations) == NULL &&
-		      baudot_operations->use_count == 0,
+		      baudot_operations) == NULL,
 	      "Baudot accepted a range containing neither supported rate");
 	modem->min_rate = modem->max_rate = 45;
 	baudot = baudot_operations->create(
@@ -6807,8 +6861,7 @@ static bool test_builtin_datapump_lifecycle(void)
 			      DPSTAT_CONNECT &&
 		      baudot->status == DPSTAT_CONNECT && modem->tx_rate == 45 &&
 		      modem->rx_rate == 45 &&
-		      baudot_operations->delete(baudot) == 0 &&
-		      baudot_operations->use_count == 0,
+		      baudot_operations->delete(baudot) == 0,
 	      "Baudot data pump did not link and release cleanly");
 	for (size_t index = 0; index < ARRAY_LENGTH(transmit); ++index)
 		CHECK(transmit[index] == 0,
@@ -6816,8 +6869,7 @@ static bool test_builtin_datapump_lifecycle(void)
 	call_progress = operations->create(
 		modem, DP_CALLPROG, 1, MODEM_RATE, MODEM_FRAG, operations);
 	CHECK(call_progress != NULL && call_progress->modem == modem &&
-		      call_progress->status == DPSTAT_OK &&
-		      operations->use_count == 1,
+		      call_progress->status == DPSTAT_OK,
 	      "SIP call-progress instance was not owned by its modem");
 	for (size_t index = 0; index < ARRAY_LENGTH(receive); ++index) {
 		receive[index] = (int16_t)(index + 1);
@@ -6829,8 +6881,7 @@ static bool test_builtin_datapump_lifecycle(void)
 	for (size_t index = 0; index < ARRAY_LENGTH(transmit); ++index)
 		CHECK(transmit[index] == 0,
 		      "SIP call progress leaked audio while awaiting signaling");
-	CHECK(operations->delete(call_progress) == 0 &&
-		      operations->use_count == 0,
+	CHECK(operations->delete(call_progress) == 0,
 	      "call progress did not release its owned instance");
 	modem_delete(modem);
 	return true;
@@ -6921,7 +6972,8 @@ int main(void)
 		{ "LAPM timer follows rate changes", test_lapm_timer_follows_rate_changes },
 		{ "V.21 brief answer mark",
 		  test_v21_originator_answers_brief_mark },
-		{ "datapump factory count bounds", test_datapump_factory_count_bounds },
+		{ "independent datapump factory instances", test_datapump_factory_instances },
+		{ "concurrent datapump lifetimes", test_concurrent_datapump_lifetimes },
 		{ "AT+MS built-in catalog", test_at_ms_uses_builtin_catalog },
 		{ "source-built data-pump ownership",
 		  test_builtin_datapump_lifecycle },

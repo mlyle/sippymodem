@@ -50,14 +50,14 @@ struct v34_datapump {
 
 static struct dp *create_v34(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
-	int max_fragment, struct dp_operations *operations);
+	int max_fragment, const struct dp_operations *operations);
 static int delete_v34(struct dp *dp);
 static int process_v34(
 	struct dp *dp, void *receive, void *transmit, int count);
 static int retrain_v34(struct dp *dp);
 static int hangup_v34(struct dp *dp);
 
-static struct dp_operations v34_operations = {
+static const struct dp_operations v34_operations = {
 	.name = "V.34",
 	.create = create_v34,
 	.delete = delete_v34,
@@ -181,7 +181,7 @@ bool v34_datapump_pcm_retrain_handoff(
 
 static struct dp *create_v34(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
-	int max_fragment, struct dp_operations *operations)
+	int max_fragment, const struct dp_operations *operations)
 {
 	struct v34_call_configuration configuration;
 	struct v34_datapump *datapump;
@@ -200,7 +200,7 @@ static struct dp *create_v34(
 		station_role(caller != 0);
 	if (modem == NULL || id != DP_V34 || (caller != 0 && caller != 1) ||
 	    sample_rate != MODEM_RATE || max_fragment != MODEM_FRAG ||
-	    operations != &v34_operations || !modem_dp_has_capacity(operations))
+	    operations != &v34_operations)
 		return NULL;
 	if (from_pcm)
 		profile_result = fallback_profile(
@@ -255,7 +255,6 @@ static struct dp *create_v34(
 		.op = operations,
 		.dp_data = datapump,
 	};
-	operations->use_count++;
 	return &datapump->dp;
 }
 
@@ -263,9 +262,8 @@ static int delete_v34(struct dp *dp)
 {
 	struct v34_datapump *datapump = v34_from_dp(dp);
 
-	if (datapump == NULL || v34_operations.use_count <= 0)
+	if (datapump == NULL)
 		return -1;
-	v34_operations.use_count--;
 	datapump->dp.dp_data = NULL;
 	free(datapump->pcm_restart);
 	free(datapump);
@@ -671,7 +669,7 @@ static int process_v34(
 	return DPSTAT_OK;
 }
 
-struct dp_operations *v34_datapump_operations(enum DP_ID id)
+const struct dp_operations *v34_datapump_operations(enum DP_ID id)
 {
 	return id == DP_V34 ? &v34_operations : NULL;
 }

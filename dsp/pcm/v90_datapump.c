@@ -50,7 +50,7 @@ struct v90_datapump {
 
 static struct dp *create_v90(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
-	int max_fragment, struct dp_operations *operations);
+	int max_fragment, const struct dp_operations *operations);
 static int delete_v90(struct dp *dp);
 static int process_v90(
 	struct dp *dp, void *receive, void *transmit, int count);
@@ -63,7 +63,7 @@ static int process_v90_g711(
 static int retrain_v90(struct dp *dp);
 static int hangup_v90(struct dp *dp);
 
-static struct dp_operations v90_operations = {
+static const struct dp_operations v90_operations = {
 	.name = "PCM V.90/V.92",
 	.create = create_v90,
 	.delete = delete_v90,
@@ -218,7 +218,7 @@ bool v90_datapump_v8_fallback_handoff(struct dp *dp, struct training_session *tr
 
 static struct dp *create_v90(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
-	int max_fragment, struct dp_operations *operations)
+	int max_fragment, const struct dp_operations *operations)
 {
 	struct v90_datapump *datapump;
 	struct pcm_downstream_rate_selection downstream;
@@ -231,7 +231,7 @@ static struct dp *create_v90(
 	if (modem == NULL || !protocol_from_id(id, &protocol) ||
 	    (caller != 0 && caller != 1) ||
 	    sample_rate != MODEM_RATE || max_fragment != MODEM_FRAG ||
-	    operations != &v90_operations || !modem_dp_has_capacity(operations) ||
+	    operations != &v90_operations ||
 	    !role_from_modem(modem, &role) ||
 	    (protocol == PCM_PROTOCOL_V92 &&
 	     !v92_profile_requested(
@@ -296,7 +296,6 @@ static struct dp *create_v90(
 		.op = operations,
 		.dp_data = datapump,
 	};
-	operations->use_count++;
 	return &datapump->dp;
 }
 
@@ -304,9 +303,8 @@ static int delete_v90(struct dp *dp)
 {
 	struct v90_datapump *datapump = v90_from_dp(dp);
 
-	if (datapump == NULL || v90_operations.use_count <= 0)
+	if (datapump == NULL)
 		return -1;
-	v90_operations.use_count--;
 	datapump->dp.dp_data = NULL;
 	free(datapump->host_echo);
 	free(datapump);
@@ -961,7 +959,7 @@ failure:
 	return DPSTAT_ERROR;
 }
 
-struct dp_operations *v90_datapump_operations(enum DP_ID id)
+const struct dp_operations *v90_datapump_operations(enum DP_ID id)
 {
 	return id == DP_V90 || id == DP_V92 ? &v90_operations : NULL;
 }

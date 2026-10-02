@@ -49,7 +49,7 @@ struct dp_driver {
 	enum DP_ID id;
 	const char *name;
 	bool selectable;
-	struct dp_operations *(*operations)(enum DP_ID id);
+	const struct dp_operations *(*operations)(enum DP_ID id);
 };
 
 static const struct dp_driver drivers[] = {
@@ -111,7 +111,7 @@ enum DP_ID modem_dp_selectable_id(size_t index)
 	return 0;
 }
 
-struct dp_operations *modem_dp_get_registered_ops(enum DP_ID id)
+const struct dp_operations *modem_dp_get_registered_ops(enum DP_ID id)
 {
 	const struct dp_driver *driver = get_dp_driver(id);
 

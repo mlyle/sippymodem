@@ -104,14 +104,14 @@ struct v32_datapump {
 
 static struct dp *create_v32(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
-	int max_fragment, struct dp_operations *operations);
+	int max_fragment, const struct dp_operations *operations);
 static int delete_v32(struct dp *dp);
 static int retrain_v32(struct dp *dp);
 static int process_v32(
 	struct dp *dp, void *receive, void *transmit, int count);
 static int enter_link(struct v32_datapump *datapump);
 
-static struct dp_operations v32_operations = {
+static const struct dp_operations v32_operations = {
 	.name = "V.32",
 	.create = create_v32,
 	.delete = delete_v32,
@@ -519,7 +519,7 @@ static int initialize_protocol(
 
 static struct dp *create_v32(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
-	int max_fragment, struct dp_operations *operations)
+	int max_fragment, const struct dp_operations *operations)
 {
 	struct v32_datapump *datapump;
 	struct single_tone_detector calling_carrier;
@@ -530,7 +530,7 @@ static struct dp *create_v32(
 	    (id != DP_V32 && id != DP_V32BIS) ||
 	    (caller != 0 && caller != 1) ||
 	    sample_rate != MODEM_RATE || max_fragment != MODEM_FRAG ||
-	    operations != &v32_operations || !modem_dp_has_capacity(operations) ||
+	    operations != &v32_operations ||
 	    rates == 0)
 		return NULL;
 	datapump = calloc(1, sizeof(*datapump));
@@ -558,7 +558,6 @@ static struct dp *create_v32(
 		.op = operations,
 		.dp_data = datapump,
 	};
-	operations->use_count++;
 	return &datapump->dp;
 }
 
@@ -598,9 +597,8 @@ static int delete_v32(struct dp *dp)
 {
 	struct v32_datapump *datapump = v32_from_dp(dp);
 
-	if (datapump == NULL || v32_operations.use_count <= 0)
+	if (datapump == NULL)
 		return -1;
-	v32_operations.use_count--;
 	datapump->dp.dp_data = NULL;
 	free(datapump);
 	return 0;
@@ -1627,7 +1625,7 @@ failure:
 	return DPSTAT_ERROR;
 }
 
-struct dp_operations *v32_datapump_operations(enum DP_ID id)
+const struct dp_operations *v32_datapump_operations(enum DP_ID id)
 {
 	return id == DP_V32 || id == DP_V32BIS ? &v32_operations : NULL;
 }

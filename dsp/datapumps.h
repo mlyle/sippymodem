@@ -6,6 +6,6 @@
 #include <modem_defs.h>
 
 struct dp_operations;
-struct dp_operations *call_progress_datapump_operations(enum DP_ID id);
+const struct dp_operations *call_progress_datapump_operations(enum DP_ID id);
 
 #endif

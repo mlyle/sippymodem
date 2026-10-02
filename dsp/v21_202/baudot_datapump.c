@@ -32,12 +32,12 @@ struct baudot_datapump {
 
 static struct dp *create_baudot(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
-	int max_fragment, struct dp_operations *operations);
+	int max_fragment, const struct dp_operations *operations);
 static int delete_baudot(struct dp *dp);
 static int process_baudot(
 	struct dp *dp, void *receive, void *transmit, int count);
 
-static struct dp_operations baudot_operations = {
+static const struct dp_operations baudot_operations = {
 	.name = "Baudot TTY/TDD",
 	.create = create_baudot,
 	.delete = delete_baudot,
@@ -82,7 +82,7 @@ static bool selected_rate(
 
 static struct dp *create_baudot(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
-	int max_fragment, struct dp_operations *operations)
+	int max_fragment, const struct dp_operations *operations)
 {
 	struct baudot_datapump *datapump;
 	enum baudot_rate rate;
@@ -90,7 +90,7 @@ static struct dp *create_baudot(
 	if (modem == NULL || id != DP_BAUDOT ||
 	    (caller != 0 && caller != 1) || sample_rate != MODEM_RATE ||
 	    max_fragment != MODEM_FRAG || operations != &baudot_operations ||
-	    !modem_dp_has_capacity(operations) || !selected_rate(modem, &rate))
+	    !selected_rate(modem, &rate))
 		return NULL;
 	datapump = calloc(1, sizeof(*datapump));
 	if (datapump == NULL)
@@ -109,7 +109,6 @@ static struct dp *create_baudot(
 		.op = operations,
 		.dp_data = datapump,
 	};
-	operations->use_count++;
 	return &datapump->dp;
 }
 
@@ -117,9 +116,8 @@ static int delete_baudot(struct dp *dp)
 {
 	struct baudot_datapump *datapump = baudot_from_dp(dp);
 
-	if (datapump == NULL || baudot_operations.use_count <= 0)
+	if (datapump == NULL)
 		return -1;
-	baudot_operations.use_count--;
 	datapump->dp.dp_data = NULL;
 	free(datapump);
 	return 0;
@@ -269,7 +267,7 @@ static int process_baudot(
 	return datapump->linked ? DPSTAT_OK : enter_link(datapump);
 }
 
-struct dp_operations *baudot_datapump_operations(enum DP_ID id)
+const struct dp_operations *baudot_datapump_operations(enum DP_ID id)
 {
 	return id == DP_BAUDOT ? &baudot_operations : NULL;
 }

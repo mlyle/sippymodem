@@ -44,7 +44,6 @@
 #include <g711.h>
 #include <modem_defs.h>
 
-#include <limits.h>
 #include <stdbool.h>
 #include <stddef.h>
 
@@ -58,11 +57,10 @@
 /* data pump operations structure */
 struct dp_operations {
 	const char *name;
-	int use_count;
 	/* dp interface */
 	struct dp *(*create)(struct modem *, enum DP_ID id,
 			     int caller, int srate, int max_frag,
-			     struct dp_operations *);
+			     const struct dp_operations *);
 	int (*delete)(struct dp *);
 	int (*process)(struct dp *, void *in, void *out, int cnt);
 	/* The caller initializes exact_output to false. An implementation may
@@ -83,19 +81,12 @@ struct dp_operations {
 	int (*hangup)(struct dp *);
 };
 
-/* Factories publish an instance only when its shared count can grow. */
-static inline bool modem_dp_has_capacity(const struct dp_operations *operations)
-{
-	return operations != NULL && operations->use_count >= 0 &&
-	       operations->use_count < INT_MAX;
-}
-
 /* data pump structure */
 struct dp {
         enum DP_ID id;
         struct modem *modem;
         unsigned status;
-	struct dp_operations *op;
+	const struct dp_operations *op;
         void *dp_data;
 };
 
@@ -114,7 +105,7 @@ extern const char *modem_dp_name(enum DP_ID id);
 /* Enumerate the modulation IDs accepted by AT+MS; zero ends the list. */
 extern enum DP_ID modem_dp_selectable_id(size_t index);
 extern bool modem_dp_is_selectable(enum DP_ID id);
-extern struct dp_operations *modem_dp_get_registered_ops(enum DP_ID id);
+extern const struct dp_operations *modem_dp_get_registered_ops(enum DP_ID id);
 
 
 #endif /* __MODEM_DP_H__ */

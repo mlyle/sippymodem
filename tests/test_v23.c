@@ -24,7 +24,7 @@ struct v23_pair {
 	struct modem answerer_modem;
 	struct dp *originator;
 	struct dp *answerer;
-	struct dp_operations *operations;
+	const struct dp_operations *operations;
 	int16_t answerer_to_originator[FRAME_SAMPLES];
 	int16_t originator_output[FRAME_SAMPLES];
 	int16_t answerer_output[FRAME_SAMPLES];

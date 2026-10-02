@@ -112,12 +112,12 @@ struct fsk300_datapump {
 
 static struct dp *create_fsk300(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
-	int max_fragment, struct dp_operations *operations);
+	int max_fragment, const struct dp_operations *operations);
 static int delete_fsk300(struct dp *dp);
 static int process_fsk300(
 	struct dp *dp, void *receive, void *transmit, int count);
 
-static struct dp_operations fsk300_operations = {
+static const struct dp_operations fsk300_operations = {
 	.name = "300-bit/s FSK",
 	.create = create_fsk300,
 	.delete = delete_fsk300,
@@ -157,7 +157,7 @@ static struct fsk300_datapump *fsk300_from_dp(struct dp *dp)
 
 static struct dp *create_fsk300(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
-	int max_fragment, struct dp_operations *operations)
+	int max_fragment, const struct dp_operations *operations)
 {
 	struct fsk300_datapump *datapump;
 	const struct fsk300_profile *profile = find_profile(id);
@@ -166,8 +166,7 @@ static struct dp *create_fsk300(
 
 	if (modem == NULL || profile == NULL ||
 	    (caller != 0 && caller != 1) || sample_rate != MODEM_RATE ||
-	    max_fragment != MODEM_FRAG || operations != &fsk300_operations ||
-	    !modem_dp_has_capacity(operations))
+	    max_fragment != MODEM_FRAG || operations != &fsk300_operations)
 		return NULL;
 	datapump = calloc(1, sizeof(*datapump));
 	if (datapump == NULL)
@@ -201,7 +200,6 @@ static struct dp *create_fsk300(
 		free(datapump);
 		return NULL;
 	}
-	operations->use_count++;
 	return &datapump->dp;
 }
 
@@ -209,9 +207,8 @@ static int delete_fsk300(struct dp *dp)
 {
 	struct fsk300_datapump *datapump = fsk300_from_dp(dp);
 
-	if (datapump == NULL || fsk300_operations.use_count <= 0)
+	if (datapump == NULL)
 		return -1;
-	fsk300_operations.use_count--;
 	datapump->dp.dp_data = NULL;
 	free(datapump);
 	return 0;
@@ -451,7 +448,7 @@ static int process_fsk300(struct dp *dp, void *receive_buffer,
 		       DPSTAT_ERROR : DPSTAT_OK;
 }
 
-struct dp_operations *fsk300_datapump_operations(enum DP_ID id)
+const struct dp_operations *fsk300_datapump_operations(enum DP_ID id)
 {
 	return id == DP_V21 || id == DP_B103 ? &fsk300_operations : NULL;
 }

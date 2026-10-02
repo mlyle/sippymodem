@@ -134,7 +134,7 @@ struct v22_datapump {
 
 static struct dp *create_v22(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
-	int max_fragment, struct dp_operations *operations);
+	int max_fragment, const struct dp_operations *operations);
 static int delete_v22(struct dp *dp);
 static int process_v22(
 	struct dp *dp, void *receive, void *transmit, int count);
@@ -145,14 +145,14 @@ static int flush_retrain_candidate(struct v22_datapump *datapump);
 /* V.22 6.3.1.2 keeps the established carrier instead of repeating a
  * handshake.  Bell 212A has the same carrier-preserving ATO1 behavior, so
  * only V.22bis advertises the reciprocal retrain operation. */
-static struct dp_operations v22_operations = {
+static const struct dp_operations v22_operations = {
 	.name = "V.22/Bell 212A",
 	.create = create_v22,
 	.delete = delete_v22,
 	.process = process_v22,
 };
 
-static struct dp_operations v22bis_operations = {
+static const struct dp_operations v22bis_operations = {
 	.name = "V.22bis",
 	.create = create_v22,
 	.delete = delete_v22,
@@ -160,7 +160,7 @@ static struct dp_operations v22bis_operations = {
 	.retrain = retrain_v22,
 };
 
-struct dp_operations *v22_datapump_operations(enum DP_ID id)
+const struct dp_operations *v22_datapump_operations(enum DP_ID id)
 {
 	if (id == DP_V22BIS)
 		return &v22bis_operations;
@@ -341,7 +341,7 @@ static unsigned int selected_bit_rate(
 
 static struct dp *create_v22(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
-	int max_fragment, struct dp_operations *operations)
+	int max_fragment, const struct dp_operations *operations)
 {
 	struct v22_datapump *datapump;
 	const struct qam_channel *transmit_channel;
@@ -352,7 +352,6 @@ static struct dp *create_v22(
 	    (caller != 0 && caller != 1) ||
 	    sample_rate != MODEM_RATE || max_fragment != MODEM_FRAG ||
 	    operations != v22_datapump_operations(id) ||
-	    !modem_dp_has_capacity(operations) ||
 	    bit_rate == 0)
 		return NULL;
 	datapump = calloc(1, sizeof(*datapump));
@@ -400,7 +399,6 @@ static struct dp *create_v22(
 		datapump->training_state = V22_TRAINING_WAIT_SCRAMBLED_MARK;
 		datapump->transmit_mode = V22_TRANSMIT_UNSCRAMBLED_MARK;
 	}
-	operations->use_count++;
 	return &datapump->dp;
 }
 
@@ -408,9 +406,8 @@ static int delete_v22(struct dp *dp)
 {
 	struct v22_datapump *datapump = v22_from_dp(dp);
 
-	if (datapump == NULL || dp->op->use_count <= 0)
+	if (datapump == NULL)
 		return -1;
-	dp->op->use_count--;
 	datapump->dp.dp_data = NULL;
 	free(datapump);
 	return 0;

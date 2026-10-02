@@ -13,6 +13,6 @@ enum {
 	FSK300_BIT_RATE = 300,
 };
 
-struct dp_operations *fsk300_datapump_operations(enum DP_ID id);
+const struct dp_operations *fsk300_datapump_operations(enum DP_ID id);
 
 #endif /* FSK300_DATAPUMP_H */

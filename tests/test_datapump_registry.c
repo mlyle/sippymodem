@@ -15,7 +15,7 @@ static bool test_selectable_modulations(void)
 
 	for (size_t i = 0; i < ARRAY_LENGTH(expected); i++) {
 		enum DP_ID id = modem_dp_selectable_id(i);
-		struct dp_operations *op = modem_dp_get_registered_ops(id);
+		const struct dp_operations *op = modem_dp_get_registered_ops(id);
 
 		CHECK(id == expected[i] && modem_dp_is_selectable(id),
 		      "AT+MS selection %zu changed or is unavailable", i);
@@ -61,7 +61,7 @@ static bool test_internal_and_unknown_ids(void)
 	};
 
 	for (size_t i = 0; i < ARRAY_LENGTH(internal); i++) {
-		struct dp_operations *op = modem_dp_get_registered_ops(internal[i]);
+		const struct dp_operations *op = modem_dp_get_registered_ops(internal[i]);
 
 		CHECK(!modem_dp_is_selectable(internal[i]) && op != NULL &&
 		      op->create != NULL && op->delete != NULL && op->process != NULL,

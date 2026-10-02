@@ -242,7 +242,7 @@ static bool qc_adapter_step(struct modem *modem, enum g711_law law,
 			output[i] = encode(law, transmit[i]);
 	if (*status == DPSTAT_CHANGEDP) {
 		enum DP_ID target = modem->dp_requested;
-		struct dp_operations *ops = modem_dp_get_registered_ops(target == 0 ? DP_V8 : target);
+		const struct dp_operations *ops = modem_dp_get_registered_ops(target == 0 ? DP_V8 : target);
 		struct dp *next = ops == NULL ? NULL : ops->create(modem,
 			target == 0 ? DP_V92 : target, modem->caller, MODEM_RATE, MODEM_FRAG, ops);
 
@@ -269,7 +269,7 @@ static bool check_qc_adapter(enum g711_law law, bool digital_caller, bool pcm_up
 
 	for (unsigned side = 0; side < 2; ++side) {
 		struct modem *m = &modems[side];
-		struct dp_operations *v8 = modem_dp_get_registered_ops(DP_V8);
+		const struct dp_operations *v8 = modem_dp_get_registered_ops(DP_V8);
 
 		m->caller = (side == 1) == digital_caller;
 		m->min_rate = m->max_rate = 52000;
@@ -340,7 +340,7 @@ static bool check_qc_adapter_timeout(enum g711_law law, bool digital_answerer)
 	bool accepted = false, restarted = false, failed = false;
 	unsigned clock;
 
-	struct dp_operations *v8 = modem_dp_get_registered_ops(DP_V8);
+	const struct dp_operations *v8 = modem_dp_get_registered_ops(DP_V8);
 	for (unsigned side = 0; side < 2; ++side) {
 		modems[side].caller = side == 0;
 		modems[side].sregs[SREG_V92_QUICK_CONNECT] = 1;
@@ -517,7 +517,7 @@ static bool run_training_cleardown(
 		endpoint_modem(MODEM_PCM_ROLE_ANALOG, &bits[0]),
 		endpoint_modem(MODEM_PCM_ROLE_DIGITAL, &bits[1]),
 	};
-	struct dp_operations *operations = modem_dp_get_registered_ops(protocol);
+	const struct dp_operations *operations = modem_dp_get_registered_ops(protocol);
 	struct dp *pumps[2];
 	struct dc_remover frontend;
 	uint8_t received[2] = { encode(law, 0), encode(law, 0) };
@@ -592,8 +592,7 @@ static bool run_training_cleardown(
 	      bits[0].supplied_bits == 0u && bits[1].supplied_bits == 0u,
 	      "training cleardown did not close before host data (near deadline=%u)",
 	      near_deadline);
-	CHECK(operations->delete(pumps[0]) == 0 && operations->delete(pumps[1]) == 0 &&
-	      operations->use_count == 0,
+	CHECK(operations->delete(pumps[0]) == 0 && operations->delete(pumps[1]) == 0,
 	      "training cleardown retained a datapump owner");
 	return true;
 }
@@ -644,7 +643,7 @@ static bool run_pcm_pair(
 	struct modem digital = endpoint_modem(
 		MODEM_PCM_ROLE_DIGITAL, &digital_bits);
 	struct dc_remover digital_frontend;
-	struct dp_operations *operations =
+	const struct dp_operations *operations =
 		modem_dp_get_registered_ops(protocol);
 	struct dp *analog_dp;
 	struct dp *digital_dp;
@@ -703,8 +702,7 @@ static bool run_pcm_pair(
 		&analog, protocol, 1, MODEM_RATE, MODEM_FRAG, operations);
 	digital_dp = operations->create(
 		&digital, protocol, 0, MODEM_RATE, MODEM_FRAG, operations);
-	CHECK(analog_dp != NULL && digital_dp != NULL &&
-	      operations->use_count == 2,
+	CHECK(analog_dp != NULL && digital_dp != NULL,
 	      "V.90 peers did not own independent data pumps");
 	for (size_t octet = 0;
 	     octet < (require_online ? sample_limit : 30000u);
@@ -890,8 +888,7 @@ static bool run_pcm_pair(
 		      (digital_dp->status == DPSTAT_OK ||
 		       digital_dp->status == DPSTAT_CONNECT) &&
 		      operations->delete(analog_dp) == 0 &&
-		      operations->delete(digital_dp) == 0 &&
-		      operations->use_count == 0,
+		      operations->delete(digital_dp) == 0,
 		      "V.90 media-law boundary did not remain live through Phase 2");
 		return true;
 	}
@@ -959,8 +956,7 @@ static bool run_pcm_pair(
 		      "PCM cleardown failed or consumed new host payload");
 	}
 	CHECK(operations->delete(analog_dp) == 0 &&
-	      operations->delete(digital_dp) == 0 &&
-	      operations->use_count == 0,
+	      operations->delete(digital_dp) == 0,
 	      "V.90 data pumps did not release their call state");
 	return true;
 }
@@ -1276,7 +1272,7 @@ static bool test_training_deadline(void)
 {
 	struct bit_endpoint bits = { 0 };
 	struct modem modem = endpoint_modem(MODEM_PCM_ROLE_DIGITAL, &bits);
-	struct dp_operations *operations;
+	const struct dp_operations *operations;
 	struct dp *datapump;
 	uint8_t receive_octets[MODEM_FRAG];
 	uint8_t transmit_octets[MODEM_FRAG];
@@ -1335,7 +1331,7 @@ static bool test_v92_pcm_upstream_selection(void)
 		MODEM_PCM_ROLE_ANALOG, &analog_bits);
 	struct modem digital = endpoint_modem(
 		MODEM_PCM_ROLE_DIGITAL, &digital_bits);
-	struct dp_operations *operations;
+	const struct dp_operations *operations;
 	struct dp *analog_dp;
 	struct dp *digital_dp;
 	uint8_t analog_to_digital = g711_encode_pcmu(0);
@@ -1368,8 +1364,7 @@ static bool test_v92_pcm_upstream_selection(void)
 	digital_dp = operations->create(
 		&digital, DP_V92, 0, MODEM_RATE, MODEM_FRAG, operations);
 	CHECK(analog_dp != NULL && digital_dp != NULL &&
-	      analog_dp->id == DP_V92 && digital_dp->id == DP_V92 &&
-	      operations->use_count == 2,
+	      analog_dp->id == DP_V92 && digital_dp->id == DP_V92,
 	      "V.92 PCM-upstream peers did not share the PCM call owner");
 	CHECK(!v90_datapump_start_rate_renegotiation(analog_dp, true) &&
 	      !v90_datapump_start_rate_renegotiation(digital_dp, false),
@@ -1521,7 +1516,7 @@ static bool test_validation(void)
 {
 	struct bit_endpoint bits = { 0 };
 	struct modem modem = endpoint_modem(MODEM_PCM_ROLE_ANALOG, &bits);
-	struct dp_operations *operations;
+	const struct dp_operations *operations;
 	struct dp *datapump;
 	uint8_t receive_octet = g711_encode_pcmu(0);
 	uint8_t transmit_octet = 0xa5;
@@ -1554,8 +1549,7 @@ static bool test_validation(void)
 	CHECK(!v90_datapump_start_rate_renegotiation(NULL, true) &&
 	      !v90_datapump_start_rate_renegotiation(datapump, false),
 	      "invalid or unstarted datapump accepted a rate exchange");
-	CHECK(datapump != NULL && operations->use_count == 1 &&
-	      operations->process(
+	CHECK(datapump != NULL && operations->process(
 		      datapump, &receive_sample, &transmit_sample, 1) ==
 		      DPSTAT_ERROR && transmit_sample == 0,
 	      "V.90 accepted lossy linear-PCM processing");

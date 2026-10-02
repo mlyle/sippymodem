@@ -15,7 +15,7 @@ struct dp;
 struct pcm_call;
 struct training_session;
 
-struct dp_operations *v34_datapump_operations(enum DP_ID id);
+const struct dp_operations *v34_datapump_operations(enum DP_ID id);
 
 /* Copy a pending fallback retrain before the modem deletes this owner. */
 bool v34_datapump_pcm_retrain_handoff(

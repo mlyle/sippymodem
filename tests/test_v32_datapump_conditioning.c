@@ -74,7 +74,7 @@ static int unused_control(
 }
 
 static bool process_sample(
-	struct dp_operations *operations, struct dp *datapump, int16_t receive,
+	const struct dp_operations *operations, struct dp *datapump, int16_t receive,
 	int16_t *transmit)
 {
 	return operations->process(datapump, &receive, transmit, 1) == DPSTAT_OK;
@@ -108,7 +108,7 @@ static int16_t delay_sample(
 }
 
 static bool drive_long_line_startup(
-	struct dp_operations *operations, struct dp *datapump,
+	const struct dp_operations *operations, struct dp *datapump,
 	bool candidate_is_caller, uint32_t *measured_round_trip,
 	uint64_t *post_startup_power)
 {
@@ -185,7 +185,7 @@ static bool test_long_round_trip_line_startup(void)
 		.stop = unused_stop,
 		.ioctl = unused_control,
 	};
-	struct dp_operations *operations;
+	const struct dp_operations *operations;
 	uint32_t minimum_turnaround_samples =
 		2u * TEST_LONG_ONE_WAY_DELAY_SAMPLES;
 
@@ -284,7 +284,7 @@ static bool conditioning_signal_sample(
 }
 
 static bool drive_answerer_line_startup(
-	struct dp_operations *operations, struct dp *datapump,
+	const struct dp_operations *operations, struct dp *datapump,
 	int16_t *answerer_transmit)
 {
 	struct v32_line_startup caller;
@@ -332,7 +332,7 @@ static bool test_answerer_requires_fresh_conditioning(void)
 	};
 	struct test_conditioning_signal caller;
 	struct single_tone_transmitter residual_carrier;
-	struct dp_operations *operations;
+	const struct dp_operations *operations;
 	struct modem *modem;
 	struct dp *datapump;
 	uint64_t offer_power = 0;
@@ -502,7 +502,7 @@ static bool test_training_deadline(void)
 		.stop = unused_stop,
 		.ioctl = unused_control,
 	};
-	struct dp_operations *operations;
+	const struct dp_operations *operations;
 	struct modem *modem;
 	struct dp *datapump;
 	int16_t receive[MODEM_FRAG] = { 0 };

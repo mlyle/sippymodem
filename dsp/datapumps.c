@@ -10,12 +10,12 @@
 
 static struct dp *create_call_progress(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
-	int max_fragment, struct dp_operations *operations);
+	int max_fragment, const struct dp_operations *operations);
 static int delete_call_progress(struct dp *dp);
 static int process_call_progress(
 	struct dp *dp, void *receive, void *transmit, int count);
 
-static struct dp_operations call_progress_operations = {
+static const struct dp_operations call_progress_operations = {
 	.name = "SIP call progress",
 	.create = create_call_progress,
 	.delete = delete_call_progress,
@@ -31,14 +31,13 @@ static bool call_progress_is_valid(const struct dp *dp)
 
 static struct dp *create_call_progress(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
-	int max_fragment, struct dp_operations *operations)
+	int max_fragment, const struct dp_operations *operations)
 {
 	struct dp *call_progress;
 
 	if (modem == NULL || id != DP_CALLPROG || caller != 1 ||
 	    sample_rate != MODEM_RATE || max_fragment != MODEM_FRAG ||
-	    operations != &call_progress_operations ||
-	    !modem_dp_has_capacity(operations))
+	    operations != &call_progress_operations)
 		return NULL;
 	call_progress = calloc(1, sizeof(*call_progress));
 	if (call_progress == NULL)
@@ -50,15 +49,13 @@ static struct dp *create_call_progress(
 		.op = operations,
 		.dp_data = call_progress,
 	};
-	operations->use_count++;
 	return call_progress;
 }
 
 static int delete_call_progress(struct dp *dp)
 {
-	if (!call_progress_is_valid(dp) || call_progress_operations.use_count <= 0)
+	if (!call_progress_is_valid(dp))
 		return -1;
-	call_progress_operations.use_count--;
 	free(dp);
 	return 0;
 }
@@ -74,7 +71,7 @@ static int process_call_progress(
 	return DPSTAT_OK;
 }
 
-struct dp_operations *call_progress_datapump_operations(enum DP_ID id)
+const struct dp_operations *call_progress_datapump_operations(enum DP_ID id)
 {
 	return id == DP_CALLPROG ? &call_progress_operations : NULL;
 }
