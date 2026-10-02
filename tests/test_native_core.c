@@ -5348,6 +5348,158 @@ static bool test_lapm_disconnected_disc(void)
 	return true;
 }
 
+static bool test_lapm_recovery_boundaries(void)
+{
+	enum { XID, SABME, DISC, INFORMATION, IDLE, PEER_BUSY, OWN_BUSY };
+	enum { EXHAUSTION, QUEUE_FAILURE, FINAL_RESPONSE, N400 = 5 };
+	struct modem_driver driver = {
+		.name = "LAPM recovery boundary", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+
+	for (unsigned mode = XID; mode <= OWN_BUSY; ++mode)
+	for (unsigned caller = 0; caller < 2; ++caller)
+	for (unsigned outcome = EXHAUSTION; outcome <= FINAL_RESPONSE; ++outcome) {
+		struct modem *m = modem_create(&driver, driver.name);
+		struct lapm_host_read source = { .count = 1 };
+		uint8_t wire[LAPM_MAX_INFO_SIZE + 2] = { 0 };
+		frame_t incoming = { .buf = wire, .count = 2 };
+		frame_t *outgoing;
+		uint8_t expected[LAPM_MAX_INFO_SIZE + 2];
+		int expected_size;
+		unsigned source_calls;
+
+		CHECK(m != NULL, "recovery boundary allocation failed");
+		m->cfg.ec = 1;
+		m->cfg.comp = 0;
+		m->caller = caller;
+		m->rx_rate = m->tx_rate = 4800;
+		m->state = 4;
+		m->count = 1234;
+		m->dev_data = &source;
+		CHECK(modem_ec_init(m) == 0, "recovery boundary initialization failed");
+		struct lapm_state *l = &m->ec.lapm;
+		/* Preserve each role's addresses while selecting the initial request. */
+		m->caller = mode == XID;
+		modem_update_status(m, STATUS_PACK_LINK);
+		m->caller = caller;
+		if (mode == XID) {
+			void (*complete)(struct modem *) = m->packer.hdlc.tx_preamble_complete;
+
+			m->packer.hdlc.tx_preamble_flags = 0;
+			m->packer.hdlc.tx_preamble_complete = NULL;
+			complete(m);
+		} else {
+			wire[0] = l->cmd_addr;
+			wire[1] = 0x0f; /* Peer-ready DM initiates SABME. */
+			m->packer.hdlc.rx_complete(l, &incoming);
+		}
+		outgoing = m->packer.hdlc.get_tx_frame(l);
+		CHECK(outgoing != NULL && outgoing->buf[1] == (mode == XID ? 0xaf : 0x7f),
+		      "recovery boundary did not initiate XID/SABME");
+		expected_size = outgoing->size;
+		memcpy(expected, outgoing->buf, (size_t)expected_size);
+		m->packer.hdlc.tx_complete(l, outgoing);
+		if (mode >= DISC) {
+			wire[0] = l->cmd_addr;
+			wire[1] = 0x73; /* UA F=1 establishes the link. */
+			m->packer.hdlc.rx_complete(l, &incoming);
+			CHECK(l->state == 2 && m->state == 5, "recovery boundary did not connect");
+			m->get_chars = NULL;
+			if (mode == DISC) {
+				m->state = 7;
+				modem_ec_stop(m);
+				outgoing = m->packer.hdlc.get_tx_frame(l);
+				CHECK(outgoing != NULL && outgoing->buf[1] == 0x53,
+				      "recovery boundary did not initiate DISC");
+				expected_size = outgoing->size;
+				memcpy(expected, outgoing->buf, (size_t)expected_size);
+				m->packer.hdlc.tx_complete(l, outgoing);
+			} else if (mode == INFORMATION) {
+				m->get_chars = counted_lapm_source;
+				outgoing = m->packer.hdlc.get_tx_frame(l);
+				CHECK(outgoing != NULL && outgoing->size == 4,
+				      "recovery boundary lacks unacknowledged information");
+				m->packer.hdlc.tx_complete(l, outgoing);
+			} else if (mode == PEER_BUSY || mode == OWN_BUSY) {
+				wire[0] = l->rsp_addr;
+				wire[1] = mode == PEER_BUSY ? 5 : 0;
+				wire[2] = 0;
+				wire[3] = 'R';
+				incoming.count = mode == PEER_BUSY ? 3 : 4;
+				m->put_chars = NULL;
+				m->packer.hdlc.rx_complete(l, &incoming);
+				while ((outgoing = m->packer.hdlc.get_tx_frame(l)) != NULL)
+					m->packer.hdlc.tx_complete(l, outgoing);
+				CHECK(mode == PEER_BUSY ? l->peer_busy : l->busy && l->rx_count == 1,
+				      "recovery boundary did not enter receiver busy");
+			}
+			if (mode >= INFORMATION) {
+				expected_size = 3;
+				expected[0] = l->cmd_addr;
+				expected[1] = mode == OWN_BUSY ? 5 : 1;
+				expected[2] = (uint8_t)((l->vr << 1) | 1);
+			}
+		}
+		source_calls = source.calls;
+		if (outcome == QUEUE_FAILURE) {
+			wire[0] = l->rsp_addr;
+			wire[1] = mode >= INFORMATION ? (mode == PEER_BUSY ? 5 : 1) : 0x7f;
+			wire[2] = 1;
+			incoming.count = mode >= INFORMATION ? 3 : 2;
+			for (unsigned request = 0; request < LAPM_CTRL_FRAMES - 1; ++request)
+				m->packer.hdlc.rx_complete(l, &incoming);
+			CHECK(l->ctrl_list->next == l->tx_ctrl &&
+			      strcmp(modem_call_phase(m), "cleardown") != 0,
+			      "recovery boundary did not fill the control queue");
+			m->bit_timer_func(m);
+		} else {
+			for (unsigned expiry = 1; expiry <= N400; ++expiry) {
+				m->bit_timer_func(m);
+				outgoing = m->packer.hdlc.get_tx_frame(l);
+				CHECK(outgoing != NULL && outgoing->size == expected_size &&
+				      memcmp(outgoing->buf, expected, (size_t)expected_size) == 0 &&
+				      l->rtx_count == (int)expiry && m->bit_timer > 0 && source.calls == source_calls,
+				      "recovery changed its request or ended early: mode %u role %u expiry %u",
+				      mode, caller, expiry);
+				m->packer.hdlc.tx_complete(l, outgoing);
+			}
+			if (outcome == FINAL_RESPONSE) {
+				memcpy(wire, expected, (size_t)expected_size);
+				wire[0] = l->cmd_addr;
+				wire[1] = mode <= DISC ? (mode == XID ? 0xaf : 0x73) : 1;
+				if (mode >= INFORMATION)
+					wire[2] = (uint8_t)((l->vs << 1) | 1);
+				incoming.count = mode <= DISC ? (mode == XID ? expected_size : 2) : 3;
+				m->packer.hdlc.rx_complete(l, &incoming);
+				if (mode != DISC) {
+					CHECK(l->state == (mode == XID ? 1 : 2) && !l->config && !l->rtx_count &&
+					      m->bit_timer > 0 && m->get_bits == modem_hdlc_get_bits,
+					      "last allowed response failed to recover mode %u role %u", mode, caller);
+					modem_ec_exit(m);
+					modem_delete(m);
+					continue;
+				}
+			} else {
+				m->bit_timer_func(m);
+				CHECK(m->packer.hdlc.get_tx_frame(l) == NULL,
+				      "recovery exceeded N400 or started another transaction: mode %u role %u",
+				      mode, caller);
+			}
+		}
+		CHECK(l->state == 0 && !l->config && !l->rtx_count && !l->rx_count &&
+		      l->sent_info == l->info_list && l->tx_info == l->info_list &&
+		      m->bit_timer == 0 && m->bit_timer_func == NULL && m->packer_process == NULL &&
+		      m->get_bits == NULL && m->put_bits == NULL && source.calls == source_calls &&
+		      strcmp(modem_call_phase(m), "cleardown") == 0 && m->sample_timer - m->count == 48,
+		      "failed recovery retained an online link: mode %u role %u outcome %u",
+		      mode, caller, outcome);
+		modem_ec_exit(m);
+		modem_delete(m);
+	}
+	return true;
+}
+
 static bool test_lapm_mode_command_collisions(void)
 {
 	struct modem_driver driver = {
@@ -6381,7 +6533,7 @@ static bool test_lapm_acknowledgement_progress(void)
 
 static bool test_lapm_stalled_retrain(void)
 {
-	enum { ONLINE = 5, LAPM_DATA_STATE = 2, LAPM_DISC_STATE = 3 };
+	enum { ONLINE = 5, LAPM_DATA_STATE = 2, LAPM_IDLE_STATE = 0 };
 	struct modem_driver driver = {
 		.name = "LAPM stalled retrain", .start = unused_start,
 		.stop = unused_stop, .ioctl = unused_control,
@@ -6476,8 +6628,16 @@ static bool test_lapm_stalled_retrain(void)
 		operations.process = process_stalled_lapm_dp;
 		for (unsigned expiry = 0; expiry < 8 && l->state == LAPM_DATA_STATE; ++expiry)
 			modem_process(m, receive, transmit, MODEM_FRAG);
-		CHECK(retrain_dp.retrain_calls == 2 && l->state == LAPM_DISC_STATE,
-		      "absent peer was not bounded by normal LAPM retry exhaustion");
+		CHECK(retrain_dp.retrain_calls == 2 && l->state == LAPM_IDLE_STATE &&
+		      strcmp(modem_call_phase(m), "cleardown") == 0 && !m->bit_timer &&
+		      m->sample_timer - m->count <= 48,
+		      "absent peer retained LAPM after retry exhaustion");
+		/* Physical cleardown no longer owns an LAPM timeout to force. */
+		operations.process = process_retrain_dp;
+		for (unsigned tail = 0; tail < 2 && m->dp != NULL; ++tail)
+			modem_process(m, receive, transmit, MODEM_FRAG);
+		CHECK(m->dp == NULL && strcmp(modem_call_phase(m), "idle") == 0,
+		      "exhausted LAPM did not finish physical release");
 		CHECK(modem_stop_now(m) == 0 && retrain_dp.datapump.op == NULL, "stall fixture did not stop");
 		modem_delete(m);
 		call_progress_override = NULL;
@@ -8235,6 +8395,7 @@ int main(void)
 		{ "LAPM unnumbered response states", test_lapm_unnumbered_responses },
 		{ "LAPM disconnected DISC response", test_lapm_disconnected_disc },
 		{ "LAPM orderly release discards stream work", test_lapm_orderly_release },
+		{ "LAPM recovery retry boundaries", test_lapm_recovery_boundaries },
 		{ "LAPM mode command collisions", test_lapm_mode_command_collisions },
 		{ "LAPM numbered frame rejection", test_lapm_numbered_frame_rejection },
 		{ "LAPM unnumbered frame rejection", test_lapm_unnumbered_frame_rejection },

@@ -844,7 +844,17 @@ static enum rx_xid_response_result rx_xid_response(
 static void t401_timeout(struct modem *m)
 {
 	struct lapm_state *l = &m->ec.lapm;
+	int result = -1;
 	EC_DBG("t401_timeout: %d...\n",l->rtx_count);
+	/* V.42 8.3.2.2/8.4.8/8.7.3/8.10.3: exhaust N400 before
+	 * another request. Data recovery terminates the physical connection
+	 * immediately (8.4.9.2), without starting a new DISC transaction. */
+	if (l->rtx_count >= LAPM_MAX_RTX) {
+		if (l->config)
+			lapm_v44_session_call_reset(&l->v44_session);
+		complete_link_release(l);
+		return;
+	}
 	/* A final RR can complete every enquiry while acknowledging no data.
 	 * Keep a separate local progress budget across those recovery episodes;
 	 * the ordinary N400 counter still governs unanswered polls. */
@@ -858,45 +868,26 @@ static void t401_timeout(struct modem *m)
 			return;
 		}
 	}
-	if (l->rtx_count > LAPM_MAX_RTX ) {
-		EC_DBG("t401: max retransmission count was reached.\n");
-		l->rtx_count = 0;
-		if (l->config) {
-			lapm_v44_session_call_reset(
-				&l->v44_session);
-			complete_link_release(l);
-			return;
-		}
-		// TBD
-		switch(l->state) {
-		case LAPM_ESTAB:
-		case LAPM_DISC:
-			complete_link_release(l);
-			break;
-		case LAPM_DATA:
-			// TBD: disconnect
-			EC_DBG("t401: max data rtx was reached: disconnect\n");
-			lapm_disconnect(l);
-			break;
-		}
-		return ;
-	}
 	l->rtx_count++;
 	if (l->config) {
-		tx_xid_command(l);
+		result = tx_xid_command(l);
 	}
 	else {
 		switch(l->state) {
 		case LAPM_ESTAB:
-			TX_SABME(l);
+			result = TX_SABME(l);
 			break;
 		case LAPM_DISC:
-			TX_DISC(l);
+			result = TX_DISC(l);
 			break;
 		case LAPM_DATA:
-			tx_status(l, l->cmd_addr, 1);
+			result = tx_status(l, l->cmd_addr, 1);
 			break;
 		}
+	}
+	if (result != 0) {
+		complete_link_release(l);
+		return;
 	}
 	m->bit_timer      = lapm_timer_timeout(l);
 	m->bit_timer_func = t401_timeout;
