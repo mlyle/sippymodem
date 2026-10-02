@@ -1,11 +1,11 @@
+.DEFAULT_GOAL := all
+
 include build/compiler.mk
 include build/pjsip.mk
 
 .PHONY: all clean install-hooks live-call slmodemd test
 
-all: pjsip-required
-	$(MAKE) -C src CC="$(CC)" CXX="$(CXX)" CCACHE="$(CCACHE)" \
-		$(PJSIP_SUBMAKE_OPTIONS) all
+all: slmodemd
 
 slmodemd: pjsip-required
 	$(MAKE) -C src CC="$(CC)" CXX="$(CXX)" CCACHE="$(CCACHE)" \

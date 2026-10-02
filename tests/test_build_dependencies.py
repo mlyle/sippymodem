@@ -11,6 +11,23 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 
 
+class DefaultBuildTests(unittest.TestCase):
+    def plan(self, *targets: str) -> str:
+        return subprocess.run(
+            ["make", "--no-print-directory", "--dry-run",
+             "PJSIP_PROVIDER=none", "PKG_CONFIG=false", "CCACHE=", *targets],
+            cwd=ROOT, capture_output=True, text=True, check=True, timeout=10,
+        ).stdout
+
+    def test_default_build_reaches_the_modem(self) -> None:
+        explicit = self.plan("all")
+        self.assertIn("-C src", explicit)
+        self.assertEqual(self.plan(), explicit)
+
+    def test_aliases_share_one_modem_build(self) -> None:
+        self.assertEqual(self.plan("all", "slmodemd").count("-C src"), 1)
+
+
 class HeaderDependencyTests(unittest.TestCase):
     def test_phase_profile_is_required_and_generator_changes_rebuild(self) -> None:
         for directory in (ROOT / "src", ROOT / "tests"):
