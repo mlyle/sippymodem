@@ -7,6 +7,7 @@
 #include <single_tone.h>
 #include <v21.h>
 #include <v42_xid.h>
+#include <v44_character_path.h>
 #include <datapump.h>
 #include <line_startup.h>
 #include <v8_datapump.h>
@@ -6145,6 +6146,16 @@ static bool test_lapm_timer_follows_rate_changes(void)
 	return true;
 }
 
+static unsigned destroyed_v44_paths;
+
+void __real_v44_character_path_destroy(struct v44_character_path *path);
+void __wrap_v44_character_path_destroy(struct v44_character_path *path)
+{
+	if (path != NULL)
+		destroyed_v44_paths++;
+	__real_v44_character_path_destroy(path);
+}
+
 static bool test_retrain_preserves_lapm_establishment(void)
 {
 	enum { LAPM_DATA_STATE = 2 };
@@ -6230,8 +6241,14 @@ static bool test_retrain_preserves_lapm_establishment(void)
 	      "LAPM did not establish after interrupted preamble, XID, reply and SABME (%u)",
 	      interrupted);
 	for (unsigned side = 0; side < 2; ++side) {
+		unsigned destroyed = destroyed_v44_paths;
+
+		CHECK(!peers[side]->started && peers[side]->ec.lapm.v44_path != NULL,
+		      "partial modem fixture did not retain negotiated V.44 memory");
 		peers[side]->dp = NULL;
 		modem_delete(peers[side]);
+		CHECK(destroyed_v44_paths == destroyed + 1,
+		      "modem destruction retained its V.44 path without a started datapump");
 	}
 	return true;
 }

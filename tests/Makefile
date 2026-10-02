@@ -417,9 +417,9 @@ SELF_SYNC_SCRAMBLER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_self_sync_scrambler.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT)
 NATIVE_CORE_TEST_BINARY := $(BUILD_DIR)/test_native_core
-NATIVE_CORE_REGISTRATION_WRAP := -Wl,--wrap=v8_datapump_register \
+NATIVE_CORE_WRAP_FLAGS := -Wl,--wrap=v8_datapump_register \
 	-Wl,--wrap=fsk300_datapump_unregister -Wl,--wrap=v8_datapump_unregister \
-	-Wl,--wrap=v23_datapump_register
+	-Wl,--wrap=v23_datapump_register -Wl,--wrap=v44_character_path_destroy
 NATIVE_CORE_DEBUG_TEST_BINARY := $(BUILD_DIR)/test_native_core_debug
 NATIVE_CORE_SOURCE_NAMES := homolog_data modem modem_at modem_comp \
 	modem_debug modem_ec modem_pack modem_param modem_timer sysdep_common
@@ -3804,7 +3804,7 @@ $(SELF_SYNC_SCRAMBLER_TEST_BINARY): $(SELF_SYNC_SCRAMBLER_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(NATIVE_CORE_TEST_BINARY): $(NATIVE_CORE_TEST_OBJECTS)
-	$(CC) $(LDFLAGS) $(NATIVE_CORE_REGISTRATION_WRAP) -o $@ $^ -lm
+	$(CC) $(LDFLAGS) $(NATIVE_CORE_WRAP_FLAGS) -o $@ $^ -lm
 
 $(V42BIS_CODEC_TEST_BINARY): $(V42BIS_CODEC_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
@@ -3812,7 +3812,7 @@ $(V42BIS_CODEC_TEST_BINARY): $(V42BIS_CODEC_TEST_OBJECTS)
 $(NATIVE_CORE_DEBUG_TEST_BINARY): \
 	$(filter-out $(BUILD_DIR)/native_modem_ec.o,$(NATIVE_CORE_TEST_OBJECTS)) \
 	$(BUILD_DIR)/native_modem_ec_debug.o
-	$(CC) $(LDFLAGS) $(NATIVE_CORE_REGISTRATION_WRAP) -o $@ $^ -lm
+	$(CC) $(LDFLAGS) $(NATIVE_CORE_WRAP_FLAGS) -o $@ $^ -lm
 
 $(FSK_TEST_BINARY): $(FSK_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm

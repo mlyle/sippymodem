@@ -2436,6 +2436,9 @@ void modem_delete(struct modem *m)
 			m->result_code = RESULT_NOCARRIER;
 		modem_stop(m);		
 	}
+	/* Link allocations can exist before the device or datapump starts. */
+	modem_ec_exit(m);
+	modem_comp_exit(m);
 	m->xmit.size = 0;
 	m->xmit.count = m->xmit.tail = m->xmit.head = 0;
 	free(m->xmit.buf);
