@@ -824,8 +824,8 @@ static bool test_control_initialization(void)
 				      memcmp(&control.signal.line, &signal.line, sizeof(signal.line)) == 0 &&
 				      control.signal.training_tail_remaining == signal.training_tail_remaining &&
 				      control.signal.failed == signal.failed &&
-				      control.cpu_repeat_symbols == 0u && control.cpu_repeat_remaining == 0u &&
-				      !control.cpu_repeat_confirmed,
+				      control.repeat_symbols == 0u && control.repeat_remaining == 0u &&
+				      !control.repeat_confirmed,
 				      "fresh control parser did not reset framing");
 				struct v92_upstream_control_line_rx saved_control = control;
 				control.signal.failed = true;
@@ -1106,13 +1106,13 @@ static bool test_contracts(void)
 		untouched = receiver;
 		untouched.signal.failed = true;
 		switch (fault) {
-		case 0: untouched.cpu_repeat_symbols = 1u; break;
-		case 1: untouched.cpu_repeat_symbols = UINT16_MAX - UINT16_MAX % V92_CPU_SYMBOLS_PER_FRAME; break;
-		case 2: untouched.cpu_repeat_remaining = 1u; break;
-		case 3: untouched.cpu_repeat_confirmed = true; break;
+		case 0: untouched.repeat_symbols = 1u; break;
+		case 1: untouched.repeat_symbols = UINT16_MAX - UINT16_MAX % V92_CPU_SYMBOLS_PER_FRAME; break;
+		case 2: untouched.repeat_remaining = 1u; break;
+		case 3: untouched.repeat_confirmed = true; break;
 		case 4:
-			untouched.cpu_repeat_symbols = V92_CPU_SYMBOLS_PER_FRAME;
-			untouched.cpu_repeat_remaining = V92_CPU_SYMBOLS_PER_FRAME + 1u;
+			untouched.repeat_symbols = V92_CPU_SYMBOLS_PER_FRAME;
+			untouched.repeat_remaining = V92_CPU_SYMBOLS_PER_FRAME + 1u;
 			break;
 		case 5: untouched.signal.line.demodulator.lu = 0; break;
 		case 6: untouched.control.alignment_bits = 0u; break;

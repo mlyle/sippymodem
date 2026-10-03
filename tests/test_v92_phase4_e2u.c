@@ -597,38 +597,50 @@ static bool test_guarded_handoff(enum g711_law law, bool extended, unsigned pref
 	return true;
 }
 
-static bool test_damaged_cpu_repetition(enum g711_law law,
+static bool test_damaged_record_repetition(enum g711_law law,
 	enum v92_constellation_size constellation, bool extended, unsigned intact,
-	bool false_status)
+	enum upstream_tail kind, unsigned status_tail_symbols)
 {
 	struct v92_upstream_control_line_rx line;
 	struct v92_phase4_record_tx wire;
 	struct v92_phase4_modulator modulator;
 	struct v92_e2u_rx e2u;
 	struct v92_cpu_parameters cpu = cpu_parameters(law);
+	const struct v92_suvu_parameters suvu = { .acknowledges_cpd = true };
 	uint8_t frame[V92_CPU_MAX_FRAME_BYTES];
 	size_t frame_bits;
 	unsigned bits = v92_phase4_modulator_bits_per_symbol(constellation);
 
 	CHECK(upstream_line(law, constellation, &wire, &line) &&
 	      v92_phase4_record_tx_handoff(&wire, &modulator) == V92_PHASE4_RECORD_TX_OK &&
-	      v92_cpu_encode(&cpu, bits * V92_CPU_SYMBOLS_PER_FRAME,
-		      frame, sizeof(frame), &frame_bits) == V92_CPU_OK &&
+	      (kind == SUVU_TAIL ?
+	       v92_suvu_encode(&suvu, bits * V92_CPU_SYMBOLS_PER_FRAME,
+		       frame, sizeof(frame), &frame_bits) == V92_SUVU_OK :
+	       v92_cpu_encode(&cpu, bits * V92_CPU_SYMBOLS_PER_FRAME,
+		       frame, sizeof(frame), &frame_bits) == V92_CPU_OK) &&
 	      v92_e2u_rx_init(&e2u, &line.signal, extended) == V92_E2U_RX_OK,
-	      "repeated CPu fixture failed");
+	      "repeated control fixture failed");
+	/* The common line fixture already consumed one startup SUVu. Count
+	 * only the records below when testing repetition admission. */
+	line.repeat_symbols = 0u;
+	line.repeat_remaining = 0u;
+	line.repeat_confirmed = false;
 	for (unsigned repeat = 0; repeat < intact + 2; ++repeat) {
-		if (repeat == intact) {
+		if (kind == SUVU_TAIL && repeat == intact)
+			frame[5] ^= 0x40; /* Lose the CRC of the first status repeat. */
+		if (repeat == intact + (kind == SUVU_TAIL ? 1u : 0u)) {
 			/* Lose both sync and a fixed header bit. The record still has
-			 * the confirmed CPu period, including zero-filled interior
+			 * the confirmed record period, including zero-filled interior
 			 * frames that must never be treated as E2u. */
 			frame[0] ^= 0x84;
 			frame[1] ^= 0x04;
 			frame[4] ^= 0x20;
-			memset(frame + 9, 0, 6);
-			if (false_status) {
-				/* A damaged CPu can resemble a complete SUVu ending off
-				 * the established twelve-symbol frame epoch. Its zero
-				 * tail must not become an early, misaligned E2u. */
+			if (kind == CPU_TAIL)
+				memset(frame + 9, 0, 6);
+			if (status_tail_symbols) {
+				/* A damaged CPu can resemble a complete SUVu ending before
+				 * the established record period, possibly on a twelve-symbol
+				 * frame. Its zero tail must not become an early E2u. */
 				struct v92_suvu_parameters status = { .acknowledges_cpd = true };
 				uint8_t status_frame[V92_SUVU_FRAME_BYTES];
 				size_t status_bits;
@@ -636,7 +648,7 @@ static bool test_damaged_cpu_repetition(enum g711_law law,
 					status_frame, sizeof(status_frame), &status_bits) == V92_SUVU_OK,
 					"false SUVu failed to encode");
 				status_frame[4] ^= 0x80; /* Retain the original CRC. */
-				size_t begin = frame_bits - status_bits - 15u * bits;
+				size_t begin = frame_bits - status_bits - status_tail_symbols * bits;
 				for (size_t bit = begin; bit < frame_bits; ++bit) {
 					unsigned value = bit - begin < status_bits ?
 						(status_frame[(bit - begin) / 8u] >> (7u - (bit - begin) % 8u)) & 1u : 0u;
@@ -646,23 +658,24 @@ static bool test_damaged_cpu_repetition(enum g711_law law,
 			}
 		}
 		CHECK(v92_phase4_record_tx_init(&wire, &modulator, frame, sizeof(frame), frame_bits) ==
-		      V92_PHASE4_RECORD_TX_OK, "CPu repeat did not start");
+		      V92_PHASE4_RECORD_TX_OK, "control repeat did not start");
 		unsigned accepted = 0, rejected = 0;
 		while (!v92_phase4_record_tx_is_complete(&wire)) {
 			struct v92_control_event event;
 			int16_t sample;
 			CHECK(v92_phase4_record_tx_next(&wire, &sample) == V92_PHASE4_RECORD_TX_OK &&
 			      v92_e2u_rx_search(&e2u, &line, true, quantize(law, sample), &event) == V92_E2U_RX_OK,
-			      "CPu interior falsely ended E2u search, repeat %u", repeat);
-			accepted += event.type == V92_CONTROL_EVENT_CPU;
+			      "control interior falsely ended E2u search, repeat %u", repeat);
+			accepted += event.type == (kind == SUVU_TAIL ? V92_CONTROL_EVENT_SUVU : V92_CONTROL_EVENT_CPU);
 			rejected += event.type == V92_CONTROL_EVENT_SUVU_REJECTED;
 		}
 		CHECK(accepted == (repeat < intact ? 1u : 0u) &&
-		      (!false_status || rejected == (repeat < intact ? 0u : 1u)) &&
+		      (kind != SUVU_TAIL || rejected == (repeat == intact ? 1u : 0u)) &&
+		      (!status_tail_symbols || rejected == (repeat < intact ? 0u : 1u)) &&
 		      v92_phase4_record_tx_handoff(&wire, &modulator) == V92_PHASE4_RECORD_TX_OK,
-		      "damaged CPu changed admitted parameters");
+		      "damaged control changed admitted parameters");
 	}
-	CHECK(line.cpu_repeat_confirmed == (intact == 2) &&
+	CHECK(line.repeat_confirmed == (intact == 2) &&
 	      !line.control.record_boundary &&
 	      v92_phase4_record_tx_init_e2u(&wire, &modulator, extended) == V92_PHASE4_RECORD_TX_OK,
 	      "damaged header unexpectedly yielded a decoded boundary");
@@ -675,13 +688,13 @@ static bool test_damaged_cpu_repetition(enum g711_law law,
 			&e2u, &line, true, quantize(law, sample), &event);
 		CHECK(result == (intact == 2 && v92_phase4_record_tx_is_complete(&wire) ?
 		      V92_E2U_RX_COMPLETE : V92_E2U_RX_OK),
-		      "E2u repetition guard failed: law=%u size=%u extended=%u intact=%u result=%u",
-		      law, constellation, extended, intact, result);
+		      "E2u repetition guard failed: law=%u size=%u extended=%u intact=%u kind=%u result=%u",
+		      law, constellation, extended, intact, kind, result);
 	}
 	return true;
 }
 
-static bool test_cpu_repetition_clock(enum g711_law law,
+static bool test_control_repetition_clock(enum g711_law law,
 	enum v92_constellation_size constellation)
 {
 	struct v92_upstream_control_line_rx line;
@@ -691,32 +704,38 @@ static bool test_cpu_repetition_clock(enum g711_law law,
 	struct v92_cpu_parameters cpu = cpu_parameters(law);
 	CHECK(upstream_line(law, constellation, &wire, &line) &&
 	      v92_e2u_rx_init(&e2u, &line.signal, false) == V92_E2U_RX_OK,
-	      "CPu repetition clock fixture failed");
+	      "control repetition clock fixture failed");
+	/* The common line fixture already consumed one startup SUVu. Count
+	 * only the records below when testing repetition admission. */
+	line.repeat_symbols = 0u;
+	line.repeat_remaining = 0u;
+	line.repeat_confirmed = false;
 	/* Two short records establish a clock; a longer valid CPu must own
 	 * its whole payload, even across those old (now interior) boundaries.
-	 * Confirm its new period, then end the repetition group with SUVu. */
-	for (unsigned record = 0; record < 5; ++record) {
+	 * Confirm its new period, repeat SUVu, then return to a long CPu. */
+	for (unsigned record = 0; record < 7; ++record) {
+		bool status = record == 4u || record == 5u;
 		CHECK(v92_phase4_record_tx_handoff(&wire, &modulator) == V92_PHASE4_RECORD_TX_OK &&
-		      (record < 2 ? start_cpus_record(&wire, &modulator, &cpu) : record < 4 ?
-		       start_cpu_record(&wire, &modulator, &cpu, true) : start_suvu_record(&wire, &modulator, true)),
-		      "CPu repetition clock record %u did not start", record);
+		      (record < 2 ? start_cpus_record(&wire, &modulator, &cpu) : status ?
+		       start_suvu_record(&wire, &modulator, true) : start_cpu_record(&wire, &modulator, &cpu, true)),
+		      "control repetition clock record %u did not start", record);
 		unsigned accepted = 0;
 		while (!v92_phase4_record_tx_is_complete(&wire)) {
 			int16_t sample;
 			struct v92_control_event event;
 			CHECK(v92_phase4_record_tx_next(&wire, &sample) == V92_PHASE4_RECORD_TX_OK &&
 			      v92_e2u_rx_search(&e2u, &line, true, quantize(law, sample), &event) == V92_E2U_RX_OK,
-			      "old CPu clock accepted E2u inside record %u", record);
+			      "old control clock accepted E2u inside record %u", record);
 			accepted += event.type == (record < 2 ? V92_CONTROL_EVENT_CPUS :
-				record < 4 ? V92_CONTROL_EVENT_CPU : V92_CONTROL_EVENT_SUVU);
+				status ? V92_CONTROL_EVENT_SUVU : V92_CONTROL_EVENT_CPU);
 		}
 		unsigned width = line.control.alignment_bits;
-		size_t expected = record < 2 ? v92_cpus_frame_bits(width) : record < 4 ?
-			v92_cpu_frame_bits(&cpu, width) : 0u;
-		CHECK(accepted == 1 && line.cpu_repeat_confirmed == (record == 1 || record == 3) &&
-		      !line.cpu_repeat_remaining && line.cpu_repeat_symbols ==
+		size_t expected = record < 2 ? v92_cpus_frame_bits(width) : status ?
+			v92_suvu_frame_bits(width) : v92_cpu_frame_bits(&cpu, width);
+		CHECK(accepted == 1 && line.repeat_confirmed == (record == 1 || record == 3 || record == 5) &&
+		      !line.repeat_remaining && line.repeat_symbols ==
 		      expected / v92_phase4_modulator_bits_per_symbol(constellation),
-		      "CPu repetition clock did not follow record %u", record);
+		      "control repetition clock did not follow record %u", record);
 	}
 	return true;
 }
@@ -2030,12 +2049,15 @@ int main(void)
 		for (unsigned size = 0; size < 2; ++size) {
 			enum v92_constellation_size constellation = size ? V92_CONSTELLATION_8_POINT :
 				V92_CONSTELLATION_4_POINT;
-			if (!test_cpu_repetition_clock(law, constellation))
+			if (!test_control_repetition_clock(law, constellation))
 				return 1;
 			for (unsigned extended = 0; extended < 2; ++extended)
 				for (unsigned intact = 1; intact <= 2; ++intact)
-					if (!test_damaged_cpu_repetition(law, constellation, extended, intact, false) ||
-					    (intact == 2 && !test_damaged_cpu_repetition(law, constellation, extended, intact, true)))
+					if (!test_damaged_record_repetition(law, constellation, extended, intact, CPU_TAIL, 0u) ||
+					    !test_damaged_record_repetition(law, constellation, extended, intact, SUVU_TAIL, 0u) ||
+					    (intact == 2 &&
+					     (!test_damaged_record_repetition(law, constellation, extended, intact, CPU_TAIL, 12u) ||
+					      !test_damaged_record_repetition(law, constellation, extended, intact, CPU_TAIL, 15u))))
 						return 1;
 		}
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)

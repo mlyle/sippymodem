@@ -26,12 +26,12 @@ enum v92_upstream_control_line_rx_result {
 struct v92_upstream_control_line_rx {
 	struct v92_upstream_rx signal;
 	struct v92_control_rx control;
-	/* Two CRC-valid CPu records at the same period confirm repetition.
+	/* Two CRC-valid control records at the same period confirm repetition.
 	 * Preserve that clock through damaged repeats, never their parameters.
-	 * A received SUVu ends the repetition group. */
-	uint16_t cpu_repeat_symbols;
-	uint16_t cpu_repeat_remaining;
-	bool cpu_repeat_confirmed;
+	 * A valid record with a different length establishes a new period. */
+	uint16_t repeat_symbols;
+	uint16_t repeat_remaining;
+	bool repeat_confirmed;
 };
 
 enum v92_upstream_control_line_rx_result

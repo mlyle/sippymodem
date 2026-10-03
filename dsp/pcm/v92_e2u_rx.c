@@ -187,12 +187,13 @@ enum v92_e2u_rx_result v92_e2u_rx_search(
 	struct v92_upstream_control_line_rx line = *control;
 	struct v92_control_event emitted = { 0 };
 	bool extended = receiver->expected_symbols == V92_PHASE4_E2U_EXTENDED_SYMBOLS;
-	/* V.92 9.6.2.1.4 finishes the current CPu before E2u. Once repeated
-	 * CPu timing is confirmed, a damaged header must not erase its end.
+	/* V.92 9.6.2.1.4 finishes CPu before E2u; SUVu repeats also
+	 * end on control frame boundaries. Once repetition is confirmed,
+	 * a damaged header must not erase the next boundary.
 	 * A newly parsed record still owns its full length; never search its
 	 * zero-filled interior at the old repetition period. */
 	bool boundary = control->control.record_boundary ||
-		(control->cpu_repeat_confirmed && !control->cpu_repeat_remaining &&
+		(control->repeat_confirmed && !control->repeat_remaining &&
 		 control->control.stage == V92_CONTROL_RX_SEARCH_SYNC);
 	if (eligible && boundary &&
 	    v92_e2u_rx_init(&next, &control->signal, extended) != V92_E2U_RX_OK)
