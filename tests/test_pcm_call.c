@@ -7939,9 +7939,16 @@ static bool capture_v92_duplex_data(
 			V92_PCM_FRAME_FILTER_OUTPUT : V92_PCM_FRAME_CONSTELLATION),
 		      "V.92 selected the wrong receive coordinates for its measured channel");
 		if (channel_memory) {
-			CHECK(rx->decoder.mapping.cpd.filter[V92_CPD_PRECODER_FEEDBACK].count == 90u &&
-			      rx->decoder.mapping.cpd.filter[V92_CPD_PREFILTER_FEED_FORWARD].count == 85u,
-			      "V.92 distorted channel did not receive compensating CPd");
+			for (size_t section = V92_CPD_PRECODER_FEEDBACK;
+			     section <= V92_CPD_PREFILTER_FEED_FORWARD; ++section) {
+				const struct v92_cpd_filter *filter = &rx->decoder.mapping.cpd.filter[section];
+				size_t capacity = section == V92_CPD_PRECODER_FEEDBACK ?
+					V92_UPSTREAM_CHANNEL_P1_TAPS : V92_UPSTREAM_CHANNEL_Z2_TAPS;
+
+				CHECK(filter->count > 0u && filter->count <= capacity &&
+				      filter->coefficient[filter->count - 1u] != 0,
+				      "V.92 distorted channel did not receive compact compensating CPd");
+			}
 			memcpy(expected.filter, rx->decoder.mapping.cpd.filter, sizeof(expected.filter));
 			expected.four_times_gain_q0_16 = rx->decoder.mapping.cpd.four_times_gain_q0_16;
 			if (offer->expected >= 9u && expected.trellis == V92_CPD_TRELLIS_16_STATE) {

@@ -57,6 +57,62 @@ static __uint128_t distance(__uint128_t left, __uint128_t right)
 	return left >= right ? left - right : right - left;
 }
 
+static bool test_filter_padding(void)
+{
+	struct v92_upstream_channel channel = { 0 };
+	uint32_t random = 0x2468aceu;
+	int16_t previous = 0, older = 0;
+
+	for (unsigned n = 0; n < V92_UPSTREAM_CHANNEL_SYMBOLS; ++n) {
+		int16_t target = (int16_t)(8 * ((int)(random_word(&random) % 2048u) - 1024));
+
+		CHECK(v92_upstream_channel_sample(&channel, target,
+			target + previous / 4 - older / 8), "short channel measurement failed");
+		older = previous;
+		previous = target;
+	}
+	const uint8_t rates[] = { 1, 13, 16, 19 };
+	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		for (size_t rate = 0; rate < ARRAY_LENGTH(rates); ++rate) {
+			struct v92_cpd_parameters compact, padded;
+			struct v92_upstream_plan plan;
+			struct v92_pcm_mapping mapping[2];
+			struct v92_pcm_frame_tx transmitter[2];
+			uint8_t wire[V92_CPD_MAX_FRAME_BYTES], bits[V92_PCM_MAPPING_MAX_BITS];
+			size_t compact_bits, padded_bits;
+
+			CHECK(v92_cpd_direct_select(&compact, law, rates[rate], LEVEL, false) == V92_CPD_OK &&
+				v92_cpd_channel_design(&compact, &channel, law, LEVEL, &plan), "short design failed");
+			CHECK(compact.filter[V92_CPD_PRECODER_FEEDBACK].count == 2u &&
+				compact.filter[V92_CPD_PREFILTER_FEED_FORWARD].count == 61u && plan.delay == 60u,
+				"short filter retained padding or lost its delay");
+			padded = compact;
+			padded.filter[V92_CPD_PRECODER_FEEDBACK].count = V92_UPSTREAM_CHANNEL_P1_TAPS;
+			padded.filter[V92_CPD_PREFILTER_FEED_FORWARD].count = V92_UPSTREAM_CHANNEL_Z2_TAPS;
+			CHECK(v92_cpd_encode(&compact, 17u, wire, sizeof(wire), &compact_bits) == V92_CPD_OK &&
+				v92_cpd_encode(&padded, 17u, wire, sizeof(wire), &padded_bits) == V92_CPD_OK &&
+				padded_bits - compact_bits == 112u * V92_CPD_WORD_BITS, "CPd did not lose zero tap words");
+			CHECK(v92_pcm_mapping_init(&mapping[0], law, &compact) == V92_PCM_MAPPING_OK &&
+				v92_pcm_mapping_init(&mapping[1], law, &padded) == V92_PCM_MAPPING_OK &&
+				v92_pcm_frame_tx_init(&transmitter[0], &mapping[0]) == V92_PCM_FRAME_OK &&
+				v92_pcm_frame_tx_init(&transmitter[1], &mapping[1]) == V92_PCM_FRAME_OK,
+				"equivalent filter mappings failed");
+			for (unsigned frame = 0; frame < V92_B1U_FRAMES + 64u; ++frame) {
+				struct v92_pcm_frame output[2];
+
+				for (size_t bit = 0; bit < mapping[0].data_bits_per_frame; ++bit)
+					bits[bit] = frame < V92_B1U_FRAMES ? 1u : random_word(&random) & 1u;
+				CHECK(v92_pcm_frame_encode(&transmitter[0], bits, mapping[0].data_bits_per_frame,
+					&output[0]) == V92_PCM_FRAME_OK &&
+					v92_pcm_frame_encode(&transmitter[1], bits, mapping[1].data_bits_per_frame,
+					&output[1]) == V92_PCM_FRAME_OK && memcmp(&output[0], &output[1], sizeof(output[0])) == 0,
+					"padding changed B1u/data frame %u at law %u rate %u", frame, law, rates[rate]);
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_channel_model(enum g711_law law, double main, double post, double second, uint8_t rate, int32_t phase)
 {
 	/* Intermediate power-of-two moduli concentrated large points in some
@@ -157,10 +213,16 @@ static bool test_channel_model(enum g711_law law, double main, double post, doub
 	CHECK(memcmp(&original, &cpd, sizeof(cpd)) == 0,
 		"channel design changed unrelated CPd selection");
 	CHECK(cpd.filter[V92_CPD_PRECODER_FEED_FORWARD].count == 0u &&
-		cpd.filter[V92_CPD_PRECODER_FEEDBACK].count == 90u &&
-		cpd.filter[V92_CPD_PREFILTER_FEED_FORWARD].count == 85u &&
+		cpd.filter[V92_CPD_PRECODER_FEEDBACK].count <= V92_UPSTREAM_CHANNEL_P1_TAPS &&
+		cpd.filter[V92_CPD_PREFILTER_FEED_FORWARD].count <= V92_UPSTREAM_CHANNEL_Z2_TAPS &&
 		cpd.filter[V92_CPD_PREFILTER_FEEDBACK].count == 0u,
-		"design changed minimum-capability filter geometry");
+		"design exceeded its filter geometry");
+	for (size_t section = 0; section < V92_CPD_FILTER_SECTION_COUNT; ++section) {
+		const struct v92_cpd_filter *filter = &cpd.filter[section];
+
+		CHECK(!filter->count || filter->coefficient[filter->count - 1u] != 0,
+			"design retained a zero filter tail");
+	}
 	{
 		uint8_t wire[V92_CPD_MAX_FRAME_BYTES];
 		struct v92_cpd_parameters decoded;
@@ -584,7 +646,7 @@ static bool test_training_changes(void)
 
 int main(void)
 {
-	if (!test_training_changes() || !test_rejections() || !test_receive_plan() || !test_short_channel_selection() ||
+	if (!test_filter_padding() || !test_training_changes() || !test_rejections() || !test_receive_plan() || !test_short_channel_selection() ||
 	    !test_quantized_stability() || !test_finite_window_inverse(false) ||
 	    !test_finite_window_inverse(true))
 		return 1;

@@ -1559,7 +1559,9 @@ static bool test_channel_plan(
 		/* A small residual prefilter tap exercises the general-coordinate
 		 * path, outside the optional pure-delay codec-model fitter. */
 		struct v92_cpd_filter *filter = &cpd.filter[V92_CPD_PREFILTER_FEED_FORWARD];
-		CHECK(plan.delay + 1u < filter->count, "prefilter has no postcursor tap");
+		CHECK(plan.delay + 1u < ARRAY_LENGTH(filter->coefficient), "prefilter has no postcursor capacity");
+		if (filter->count < plan.delay + 2u)
+			filter->count = plan.delay + 2u;
 		filter->coefficient[plan.delay + 1u] = filter->coefficient[plan.delay] / 256;
 	}
 	CHECK(v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK &&
@@ -2658,6 +2660,7 @@ static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer, boo
 	}
 	/* A multi-tap prefilter is outside this model, not a one-tap fit with
 	 * silently ignored coefficients. Keep the existing linear receiver. */
+	cpd.filter[V92_CPD_PREFILTER_FEED_FORWARD].count = plan.delay + 2u;
 	cpd.filter[V92_CPD_PREFILTER_FEED_FORWARD].coefficient[plan.delay + 1u] = 1;
 	CHECK(v92_pcm_mapping_init(&mapping, G711_LAW_PCMU, &cpd) == V92_PCM_MAPPING_OK &&
 	      v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping, &plan) ==

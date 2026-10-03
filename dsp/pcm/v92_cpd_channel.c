@@ -423,6 +423,15 @@ bool v92_cpd_channel_design(struct v92_cpd_parameters *parameters,
 			return false;
 		next.filter[V92_CPD_PRECODER_FEEDBACK].coefficient[tap] = (int16_t)value;
 	}
+	/* Table 30 carries the actual filter lengths. Trailing zero taps add
+	 * no response but consume peer capacity and CPd wire time. Preserve
+	 * leading zeros: they own the selected prefilter delay. */
+	for (size_t section = 0; section < V92_CPD_FILTER_SECTION_COUNT; ++section) {
+		struct v92_cpd_filter *filter = &next.filter[section];
+
+		while (filter->count && filter->coefficient[filter->count - 1u] == 0)
+			--filter->count;
+	}
 	/* Balance 16-state channel mappings from 34.667k upward. Concentrating
 	 * large points in some trellis intervals can clip after B1u normalization
 	 * or erase payload distinctions during companding. Keep the low-rate
