@@ -33,8 +33,8 @@ enum v92_data_quality_result {
  * request full retraining. A window is bad on excess residual or low-margin
  * sequence disagreement; a single uncertain window cannot force recovery.
  * A decoder-reported ambiguous payload or loss of all decoder paths requests
- * recovery immediately. Fixed mappings also use this budget for lost paths
- * during B1u; automatic initial selection instead lowers its rate ceiling.
+ * recovery immediately. Fixed mappings and missing media use this budget
+ * during B1u; automatic mapping failures instead lower the rate ceiling.
  * Unusable TRN2u measurements and unrepresentable peer B1u selections
  * share the same retry budget.
  * None of these conditions licenses delivering ambiguous bits to the host. */

@@ -404,13 +404,10 @@ struct pcm_call_v92_digital_data {
 	/* Quality-score residual over post-acquisition B1u validation only,
 	 * with identified post-codec host gain removed. */
 	double b1u_squared_error;
-	/* Freeze a quality-triggering observation while peer control qualifies.
-	 * Already in quality-score units: a timeout charges the original failure
-	 * without scaling it again or forgiving lost data. */
-	double pending_squared_error;
+	/* An established failure awaits bounded peer-control detection. Freeze
+	 * quality until the guard expires or accepted control replaces it;
+	 * expiry charges one retry without scoring the same frame again. */
 	uint16_t quality_guard_samples;
-	bool pending_ambiguous;
-	bool pending_uncertain;
 	/* A known media hole requires recovery, not a lower mapping rate. */
 	bool pending_media_loss;
 	/* Missing media can reject B1u before the first delayed decision. */

@@ -7040,7 +7040,6 @@ static bool v92_data_error_contracts(const struct pcm_call *online)
 			      PCM_CALL_OK &&
 		      memcmp(&checked, &owned, sizeof(checked)) == 0 &&
 		      checked_event.kind == PCM_CALL_DATA_NONE && owned_event.kind == PCM_CALL_DATA_NONE &&
-		      checked.state.data_path.v92_digital.pending_ambiguous &&
 		      checked.state.data_path.v92_digital.pending_media_loss &&
 		      checked.state.data_path.v92_digital.quality_guard_samples != 0 &&
 		      pcm_call_is_valid(&checked), "known loss did not clamp delayed PCM payload");
@@ -7049,7 +7048,6 @@ static bool v92_data_error_contracts(const struct pcm_call *online)
 		CHECK(!pcm_call_is_valid(&checked), "unowned media-loss recovery accepted");
 		checked = *online;
 		checked.state.data_path.v92_digital.quality_guard_samples = 64u;
-		checked.state.data_path.v92_digital.pending_ambiguous = true;
 		CHECK(pcm_call_is_valid(&checked) &&
 		      pcm_call_data_octet(&checked, silence, 0, false, NULL, &checked_octet, &checked_event) ==
 			      PCM_CALL_OK && !checked.state.data_path.v92_digital.pending_media_loss &&
@@ -8232,20 +8230,28 @@ static bool test_v92_delayed_duplex_data(void)
 	return true;
 }
 
-static void arm_v92_quality_failure(struct pcm_call *call, bool ambiguous)
+static bool arm_v92_quality_failure(struct pcm_call *call, unsigned reason)
 {
-	/* Isolate the policy boundary from the frame scorer: a qualified bad
-	 * observation is waiting for the last sample of the control guard. */
-	struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
-	path->quality_guard_samples = 1u;
-	path->pending_ambiguous = ambiguous;
+	/* Isolate the policy boundary: qualify the observation using the shared
+	 * scorer, then retain only the last sample of its control guard. The
+	 * owned quality state must not consume the retry during qualification. */
+	bool ambiguous = reason == 1u || reason == 3u;
+	double error = 0.0;
 	call->pcm_upstream_quality.good_windows = 0u;
 	if (!ambiguous) {
 		call->pcm_upstream_quality.frames = V92_DATA_QUALITY_WINDOW_FRAMES - 1u;
 		call->pcm_upstream_quality.bad_windows = V92_DATA_QUALITY_BAD_WINDOWS - 1u;
-		path->pending_squared_error = 2.0 * V92_DATA_QUALITY_WINDOW_FRAMES *
-			V92_PCM_MAPPING_FRAME_SYMBOLS * V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR;
+		if (reason == 0u)
+			error = 2.0 * V92_DATA_QUALITY_WINDOW_FRAMES * V92_PCM_MAPPING_FRAME_SYMBOLS *
+				V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR;
 	}
+	struct v92_data_quality probe = call->pcm_upstream_quality;
+	enum v92_data_quality_result result = v92_data_quality_observe(&probe, error, ambiguous, reason == 2u);
+	CHECK(result == (call->pcm_upstream_quality.automatic_retrains < V92_DATA_QUALITY_MAX_RETRAINS ?
+		V92_DATA_QUALITY_RETRAIN : V92_DATA_QUALITY_EXHAUSTED), "guard fixture did not qualify its failure");
+	call->state.data_path.v92_digital.quality_guard_samples = 1u;
+	call->state.data_path.v92_digital.pending_media_loss = reason == 3u;
+	return true;
 }
 
 static bool v92_quality_backoff_contracts(const struct pcm_call *online)
@@ -8266,18 +8272,13 @@ static bool v92_quality_backoff_contracts(const struct pcm_call *online)
 			uint8_t octet;
 
 			call.pcm_upstream_quality.automatic_retrains = budget;
-			arm_v92_quality_failure(&call, reason == 1u || reason == 3u);
-			call.state.data_path.v92_digital.pending_media_loss = reason == 3u;
-			/* A pending observation is already in quality units. Applying
-			 * host gain again here would incorrectly forgive the error. */
+			CHECK(arm_v92_quality_failure(&call, reason), "quality failure did not qualify");
+			/* Changing host gain during the guard must not requalify a
+			 * failure or forgive its already-established recovery. */
 			if (call.state.data_path.v92_digital.upstream.line.plan.observation == V92_PCM_FRAME_CONSTELLATION) {
 				call.state.data_path.v92_digital.upstream.line.host.gain = 2.0;
 				call.state.data_path.v92_digital.upstream.line.host.lower = 2.0;
 				call.state.data_path.v92_digital.upstream.line.host.upper = 2.0;
-			}
-			if (reason == 2u) {
-				call.state.data_path.v92_digital.pending_squared_error = 0.0;
-				call.state.data_path.v92_digital.pending_uncertain = true;
 			}
 			CHECK(pcm_call_is_valid(&call), "quality boundary fixture is invalid");
 			enum pcm_call_result result = pcm_call_data_octet(&call,
@@ -8332,7 +8333,6 @@ static bool v92_no_path_recovery_contracts(const struct pcm_call *before, uint8_
 					CHECK(result == PCM_CALL_OK && owned_result == result &&
 					      pcm_call_is_valid(&checked) && checked.state.data_path.v92_digital.upstream.failed &&
 					      checked.state.data_path.v92_digital.quality_guard_samples &&
-					      checked.state.data_path.v92_digital.pending_ambiguous &&
 					      checked.pcm_upstream_quality.automatic_retrains == budget &&
 					      checked.v92_upstream_retry_ceiling == before->v92_upstream_retry_ceiling,
 					      "lost paths bypassed the control guard");
@@ -8632,7 +8632,7 @@ static bool test_v92_quality_rate_recovery(void)
 				if (epoch == 2u)
 					break;
 				if (epoch != 0u)
-					arm_v92_quality_failure(&pair.digital, false);
+					CHECK(arm_v92_quality_failure(&pair.digital, 0u), "rate recovery failure did not qualify");
 				struct pcm_payload_source sources[2] = { { .reject = true }, { .reject = true } };
 				uint32_t frames[2] = { 0u, 0u };
 				bool started[2] = { false, false };
