@@ -202,8 +202,7 @@ static bool reject_data_frame(
 	void *context, uint8_t *bits, size_t bit_count)
 {
 	(void)context;
-	(void)bits;
-	(void)bit_count;
+	memset(bits, 1, bit_count);
 	return false;
 }
 

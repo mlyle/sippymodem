@@ -3,6 +3,7 @@
 #ifndef V90_DOWNSTREAM_DATA_STREAM_H
 #define V90_DOWNSTREAM_DATA_STREAM_H
 
+#include "pcm_frame_source.h"
 #include "v90_downstream_data_handoff.h"
 
 #include <stdbool.h>
@@ -20,12 +21,6 @@ enum v90_downstream_data_stream_result {
 	V90_DOWNSTREAM_DATA_STREAM_NUMERIC_FAILURE,
 	V90_DOWNSTREAM_DATA_STREAM_INTERNAL_ERROR,
 };
-
-/* Supply one complete post-B1d PCM data frame. The source must initialize all
- * requested bits to zero or one. Returning false rejects the frame. A NULL
- * source deliberately transmits idle ones. */
-typedef bool (*v90_downstream_frame_source)(
-	void *context, uint8_t *bits, size_t bit_count);
 
 /* Adapt the six-symbol PCM frame encoder to the authoritative 8 ksymbol/s
  * network clock. The fixed queue owns one frame in its unconsumed suffix;
@@ -65,7 +60,7 @@ enum v90_downstream_data_stream_result v90_downstream_data_stream_finish(
  * and is called at most once. */
 enum v90_downstream_data_stream_result v90_downstream_data_stream_next(
 	struct v90_downstream_data_stream *stream,
-	v90_downstream_frame_source source, void *source_context,
+	pcm_frame_source source, void *source_context,
 	struct v90_pcm_symbol *symbol);
 
 /* Call-owner path: a valid stream was established at the epoch boundary.
@@ -73,7 +68,7 @@ enum v90_downstream_data_stream_result v90_downstream_data_stream_next(
  * complete mapping and queue for each network character. */
 enum v90_downstream_data_stream_result v90_downstream_data_stream_next_owned(
 	struct v90_downstream_data_stream *stream,
-	v90_downstream_frame_source source, void *source_context,
+	pcm_frame_source source, void *source_context,
 	struct v90_pcm_symbol *symbol);
 
 const char *v90_downstream_data_stream_result_name(

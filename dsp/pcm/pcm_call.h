@@ -449,10 +449,10 @@ struct pcm_call_data_sources {
 	v34_mapping_frame_source upstream;
 	void *upstream_context;
 	/* PCM downstream frames originate at the digital station. */
-	v90_downstream_frame_source downstream;
+	pcm_frame_source downstream;
 	void *downstream_context;
 	/* PCM upstream has no conventional mapping request or auxiliary bit. */
-	v92_upstream_frame_source pcm_upstream;
+	pcm_frame_source pcm_upstream;
 	void *pcm_upstream_context;
 };
 

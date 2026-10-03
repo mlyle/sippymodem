@@ -115,18 +115,6 @@ bool v90_downstream_data_stream_is_online(
 	       stream->transmitted_symbols >= V90_B1D_SYMBOLS;
 }
 
-static bool acquire_frame(
-	v90_downstream_frame_source source, void *context,
-	uint8_t *bits, size_t bit_count)
-{
-	if (source == NULL) {
-		memset(bits, 1, bit_count);
-		return true;
-	}
-	memset(bits, 2, bit_count);
-	return source(context, bits, bit_count);
-}
-
 static bool fill_queue(
 	struct v90_downstream_data_stream *stream,
 	const struct v90_pcm_frame_output *output)
@@ -155,7 +143,7 @@ static bool fill_queue(
 
 static enum v90_downstream_data_stream_result generate_frame(
 	struct v90_downstream_data_stream *stream,
-	v90_downstream_frame_source source, void *source_context)
+	pcm_frame_source source, void *source_context)
 {
 	struct v90_pcm_frame_output output;
 	enum v90_downstream_data_tx_result result;
@@ -171,7 +159,7 @@ static enum v90_downstream_data_stream_result generate_frame(
 		uint8_t bits[V90_PCM_FRAME_MAX_BITS];
 		size_t bit_count = stream->transmitter.encoder.mapping.frame_bits;
 
-		if (!acquire_frame(source, source_context, bits, bit_count))
+		if (!pcm_frame_source_read(source, source_context, bits, bit_count))
 			return V90_DOWNSTREAM_DATA_STREAM_SOURCE_FAILURE;
 		result = v90_downstream_data_tx_process(
 			&stream->transmitter, bits, bit_count, &output);
@@ -204,7 +192,7 @@ static struct v90_pcm_symbol pop_symbol(
 
 static enum v90_downstream_data_stream_result next_symbol(
 	struct v90_downstream_data_stream *stream,
-	v90_downstream_frame_source source, void *source_context,
+	pcm_frame_source source, void *source_context,
 	struct v90_pcm_symbol *symbol, bool owned)
 {
 	struct v90_downstream_data_stream next;
@@ -252,7 +240,7 @@ static enum v90_downstream_data_stream_result next_symbol(
 
 enum v90_downstream_data_stream_result v90_downstream_data_stream_next(
 	struct v90_downstream_data_stream *stream,
-	v90_downstream_frame_source source, void *source_context,
+	pcm_frame_source source, void *source_context,
 	struct v90_pcm_symbol *symbol)
 {
 	return next_symbol(stream, source, source_context, symbol, false);
@@ -260,7 +248,7 @@ enum v90_downstream_data_stream_result v90_downstream_data_stream_next(
 
 enum v90_downstream_data_stream_result v90_downstream_data_stream_next_owned(
 	struct v90_downstream_data_stream *stream,
-	v90_downstream_frame_source source, void *source_context,
+	pcm_frame_source source, void *source_context,
 	struct v90_pcm_symbol *symbol)
 {
 	return next_symbol(stream, source, source_context, symbol, true);

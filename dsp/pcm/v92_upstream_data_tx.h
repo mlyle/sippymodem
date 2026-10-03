@@ -3,6 +3,7 @@
 #ifndef V92_UPSTREAM_DATA_TX_H
 #define V92_UPSTREAM_DATA_TX_H
 
+#include "pcm_frame_source.h"
 #include "v92_pcm_frame.h"
 
 enum v92_upstream_data_tx_result {
@@ -16,13 +17,6 @@ enum v92_upstream_data_tx_result {
 	V92_UPSTREAM_DATA_TX_RM_COMPLETE,
 	V92_UPSTREAM_DATA_TX_FB1U_COMPLETE,
 };
-
-/* Supply one complete post-B1u frame, in earliest-bit-first order. Initialize
- * every requested bit to zero or one; false rejects the frame. NULL emits
- * idle ones. The source owns its external read side effects; it must not
- * modify or reenter the transmitter while its frame is being fetched. */
-typedef bool (*v92_upstream_frame_source)(
-	void *context, uint8_t *bits, size_t bit_count);
 
 /* Adapt the twelve-symbol upstream encoder to the 8 kHz media clock. Coding
  * histories reset once at B1u and continue unchanged into ordinary data. */
@@ -83,13 +77,13 @@ enum v92_upstream_data_tx_result v92_upstream_data_tx_start_e2u(
  * Rejected calls leave transmitter and sample unchanged. */
 enum v92_upstream_data_tx_result v92_upstream_data_tx_next(
 	struct v92_upstream_data_tx *transmitter,
-	v92_upstream_frame_source source, void *context, int16_t *sample);
+	pcm_frame_source source, void *context, int16_t *sample);
 
 /* Call-owner sample clock for a transmitter validated at the current media
  * block boundary. Skip only its recursive state scan; argument, alias,
  * source-failure and frame-coding checks remain in force. */
 enum v92_upstream_data_tx_result v92_upstream_data_tx_next_owned(
 	struct v92_upstream_data_tx *transmitter,
-	v92_upstream_frame_source source, void *context, int16_t *sample);
+	pcm_frame_source source, void *context, int16_t *sample);
 
 #endif /* V92_UPSTREAM_DATA_TX_H */

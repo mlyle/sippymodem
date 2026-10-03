@@ -36,7 +36,7 @@ static bool source(void *context, uint8_t *bits, size_t count)
 	pattern(bits, count, state->calls - 1u);
 	if (state->invalid == 3u)
 		bits[count - 1u] = 2u;
-	return true;
+	return state->invalid != 4u;
 }
 
 static bool mapping_init(
@@ -168,7 +168,7 @@ static bool test_rejected_sources_and_idle(void)
 			      V92_UPSTREAM_DATA_TX_OK && input.calls == 0u,
 		      "B1u consumed or rejected a payload source");
 	saved = transmit;
-	for (unsigned int invalid = 1u; invalid <= 3u; ++invalid) {
+	for (unsigned int invalid = 1u; invalid <= 4u; ++invalid) {
 		input = (struct source_state){ .invalid = invalid };
 		output = 12345;
 		CHECK(v92_upstream_data_tx_next(&transmit, source, &input, &output) ==
@@ -535,7 +535,7 @@ static bool test_owned_frame_rollback(void)
 			invalid.encoder.mapping.cpd.four_times_gain_q0_16 = 0u;
 		else
 			invalid.encoder.state.differential = 2u;
-		for (unsigned source_fault = 0u; source_fault < 4u; ++source_fault) {
+		for (unsigned source_fault = 0u; source_fault < 5u; ++source_fault) {
 			struct v92_upstream_data_tx saved = invalid;
 			struct source_state input = { .invalid = source_fault };
 			int16_t sample = 12345;

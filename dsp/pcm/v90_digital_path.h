@@ -142,7 +142,7 @@ enum v90_digital_path_result v90_digital_path_start_cleardown(
  * while it qualifies an incoming full-retrain preamble. */
 enum v90_digital_path_result v90_digital_path_transmit(
 	struct v90_digital_path *path,
-	v90_downstream_frame_source source, void *source_context,
+	pcm_frame_source source, void *source_context,
 	uint8_t *transmit_octet);
 enum v90_digital_path_result v90_digital_path_receive_sample(
 	struct v90_digital_path *path, int16_t received_sample,
@@ -160,7 +160,7 @@ enum v90_digital_path_result v90_digital_path_receive_sample(
  * expose the output already generated for the accepted clock character. */
 enum v90_digital_path_result v90_digital_path_sample(
 	struct v90_digital_path *path, int16_t received_sample,
-	v90_downstream_frame_source source, void *source_context,
+	pcm_frame_source source, void *source_context,
 	uint8_t *transmit_octet,
 	struct v34_received_mapping_frame *received);
 
@@ -169,7 +169,7 @@ enum v90_digital_path_result v90_digital_path_sample(
  * owner must validate the path again before releasing that block. */
 enum v90_digital_path_result v90_digital_path_sample_owned(
 	struct v90_digital_path *path, int16_t received_sample,
-	v90_downstream_frame_source source, void *source_context,
+	pcm_frame_source source, void *source_context,
 	uint8_t *transmit_octet,
 	struct v34_received_mapping_frame *received);
 

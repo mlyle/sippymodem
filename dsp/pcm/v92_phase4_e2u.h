@@ -152,7 +152,7 @@ enum v90_downstream_data_stream_result v92_downstream_transmit_owned(
 	union v92_phase4_e2u_digital_downstream *downstream,
 	enum v92_phase4_e2u_downstream_stage *stage,
 	const struct v92_cpu_parameters *cpu,
-	v90_downstream_frame_source source, void *context, uint8_t *octet);
+	pcm_frame_source source, void *context, uint8_t *octet);
 
 const char *v92_phase4_e2u_result_name(enum v92_phase4_e2u_result result);
 

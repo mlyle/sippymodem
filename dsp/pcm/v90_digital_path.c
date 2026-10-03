@@ -351,7 +351,7 @@ static bool select_initial_receive_rate(struct v90_digital_path *path)
 
 static enum v90_digital_path_result emit_downstream(
 	struct v90_digital_path *path,
-	v90_downstream_frame_source source, void *source_context,
+	pcm_frame_source source, void *source_context,
 	uint8_t *octet)
 {
 	if (path->downstream_stage ==
@@ -404,7 +404,7 @@ static enum v90_digital_path_result emit_downstream(
 		{
 			struct v90_downstream_data_stream data;
 			struct v90_pcm_symbol pcm;
-			v90_downstream_frame_source effective_source = source;
+			pcm_frame_source effective_source = source;
 			void *effective_context = source_context;
 			enum v90_downstream_data_stream_result data_result =
 				v90_downstream_data_stream_start_after_ed(
@@ -543,7 +543,7 @@ static enum v90_digital_path_result emit_downstream(
 	}
 	{
 		struct v90_pcm_symbol pcm;
-		v90_downstream_frame_source effective_source =
+		pcm_frame_source effective_source =
 			path->rate_renegotiation_active ? NULL : source;
 		void *effective_context =
 			path->rate_renegotiation_active ? NULL : source_context;
@@ -838,7 +838,7 @@ static bool output_overlaps_path(
 
 enum v90_digital_path_result v90_digital_path_transmit(
 	struct v90_digital_path *path,
-	v90_downstream_frame_source source, void *source_context,
+	pcm_frame_source source, void *source_context,
 	uint8_t *transmit_octet)
 {
 	uint8_t generated;
@@ -897,7 +897,7 @@ enum v90_digital_path_result v90_digital_path_receive_sample(
 
 static enum v90_digital_path_result sample_owned(
 	struct v90_digital_path *path, int16_t received_sample,
-	v90_downstream_frame_source source, void *source_context,
+	pcm_frame_source source, void *source_context,
 	uint8_t *transmit_octet,
 	struct v34_received_mapping_frame *received)
 {
@@ -930,7 +930,7 @@ static enum v90_digital_path_result sample_owned(
 
 enum v90_digital_path_result v90_digital_path_sample(
 	struct v90_digital_path *path, int16_t received_sample,
-	v90_downstream_frame_source source, void *source_context,
+	pcm_frame_source source, void *source_context,
 	uint8_t *transmit_octet,
 	struct v34_received_mapping_frame *received)
 {
@@ -966,7 +966,7 @@ enum v90_digital_path_result v90_digital_path_sample(
 
 enum v90_digital_path_result v90_digital_path_sample_owned(
 	struct v90_digital_path *path, int16_t received_sample,
-	v90_downstream_frame_source source, void *source_context,
+	pcm_frame_source source, void *source_context,
 	uint8_t *transmit_octet,
 	struct v34_received_mapping_frame *received)
 {

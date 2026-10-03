@@ -108,7 +108,7 @@ enum v92_upstream_data_tx_result v92_upstream_data_tx_start_e2u(
 
 static enum v92_upstream_data_tx_result generate_frame(
 	struct v92_upstream_data_tx *transmitter,
-	v92_upstream_frame_source source, void *context)
+	pcm_frame_source source, void *context)
 {
 	const struct v92_pcm_mapping *mapping = &transmitter->encoder.mapping;
 	struct v92_pcm_frame_tx_state state = transmitter->encoder.state;
@@ -127,13 +127,12 @@ static enum v92_upstream_data_tx_result generate_frame(
 	} else {
 		if (transmitter->finish_symbols_remaining != 0u) {
 			memset(bits, transmitter->finish_symbols_remaining <= V92_B1U_SYMBOLS, count);
-		} else if (transmitter->b1u_symbols_remaining != 0u || source == NULL) {
+		} else if (transmitter->b1u_symbols_remaining != 0u) {
 			memset(bits, 1, count);
 		} else {
-			memset(bits, 2, count);
-			if (!source(context, bits, count))
+			if (!pcm_frame_source_read(source, context, bits, count))
 				return V92_UPSTREAM_DATA_TX_SOURCE_FAILURE;
-			sourced = true;
+			sourced = source != NULL;
 		}
 		enum v92_pcm_frame_result result =
 			v92_pcm_frame_encode_owned(mapping, &state, bits, count, &frame);
@@ -157,7 +156,7 @@ static enum v92_upstream_data_tx_result generate_frame(
 
 static enum v92_upstream_data_tx_result next_sample(
 	struct v92_upstream_data_tx *transmitter,
-	v92_upstream_frame_source source, void *context, int16_t *sample,
+	pcm_frame_source source, void *context, int16_t *sample,
 	bool owned)
 {
 	if (transmitter == NULL || sample == NULL ||
@@ -193,14 +192,14 @@ static enum v92_upstream_data_tx_result next_sample(
 
 enum v92_upstream_data_tx_result v92_upstream_data_tx_next(
 	struct v92_upstream_data_tx *transmitter,
-	v92_upstream_frame_source source, void *context, int16_t *sample)
+	pcm_frame_source source, void *context, int16_t *sample)
 {
 	return next_sample(transmitter, source, context, sample, false);
 }
 
 enum v92_upstream_data_tx_result v92_upstream_data_tx_next_owned(
 	struct v92_upstream_data_tx *transmitter,
-	v92_upstream_frame_source source, void *context, int16_t *sample)
+	pcm_frame_source source, void *context, int16_t *sample)
 {
 	return next_sample(transmitter, source, context, sample, true);
 }
