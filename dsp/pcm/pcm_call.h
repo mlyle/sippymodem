@@ -530,6 +530,8 @@ struct pcm_call {
 	bool v92_peer_jd_stored;
 	bool round_trip_delay_stored;
 	bool b1_deadline_armed;
+	/* One bounded completion allowance after a late, validated data CP. */
+	bool b1_completion_grace;
 	bool rate_renegotiation_deadline_armed;
 	bool v92_rate_renegotiation_active;
 	bool retrain_active;

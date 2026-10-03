@@ -28,6 +28,7 @@ enum {
 	V92_PHASE3_JD_DEADLINE_SAMPLES = V34_PHASE2_SAMPLE_RATE * 9 / 2,
 	V90_B1_BASE_DEADLINE_SAMPLES = V34_PHASE2_SAMPLE_RATE * 15,
 	V90_B1_ROUND_TRIP_ALLOWANCES = 5,
+	V90_B1_COMPLETION_GRACE_SAMPLES = V34_PHASE2_SAMPLE_RATE * 2,
 	V92_B1_BASE_DEADLINE_SAMPLES = V34_PHASE2_SAMPLE_RATE * 20,
 	V92_B1_ROUND_TRIP_ALLOWANCES = 6,
 	V90_RATE_RENEGOTIATION_BASE_DEADLINE_SAMPLES =
@@ -896,6 +897,10 @@ static bool call_is_valid(
 	     call->round_trip_delay_samples != 0u) ||
 	    (!call->b1_deadline_armed &&
 	     call->b1_deadline_remaining_samples != 0u) ||
+	    (call->b1_completion_grace &&
+	     (!call->b1_deadline_armed || call->stage != PCM_CALL_DATA_PATH ||
+	      call->local_role != V90_DIGITAL_MODEM || uses_pcm_upstream(call) ||
+	      call->b1_deadline_remaining_samples > V90_B1_COMPLETION_GRACE_SAMPLES)) ||
 	    (call->b1_deadline_armed &&
 	     (call->stage == PCM_CALL_RETRAIN_SILENCE ||
 	      !call->peer_info0_stored || !call->round_trip_delay_stored ||
@@ -1304,6 +1309,7 @@ static enum pcm_call_result begin_retrain(
 	next.phase3_entry_stored = false;
 	next.v92_peer_jd_stored = false;
 	next.b1_deadline_armed = false;
+	next.b1_completion_grace = false;
 	next.rate_renegotiation_deadline_armed = false;
 	next.v92_rate_renegotiation_active = false;
 	next.retrain_active = true;
@@ -1347,6 +1353,7 @@ static enum pcm_call_result arm_b1_deadline(
 		return PCM_CALL_SEQUENCE_MISMATCH;
 	call->b1_deadline_remaining_samples = b1_deadline_limit(call);
 	call->b1_deadline_armed = true;
+	call->b1_completion_grace = false;
 	return PCM_CALL_OK;
 }
 
@@ -1506,6 +1513,7 @@ static enum pcm_call_result advance_b1_deadline(struct pcm_call *call)
 	if (peer_b1_received(call)) {
 		call->b1_deadline_remaining_samples = 0u;
 		call->b1_deadline_armed = false;
+		call->b1_completion_grace = false;
 		return PCM_CALL_OK;
 	}
 	if (call->stage == PCM_CALL_DATA_PATH && call->local_role == V90_ANALOG_MODEM) {
@@ -1553,6 +1561,19 @@ static enum pcm_call_result advance_b1_deadline(struct pcm_call *call)
 	    (call->stage != PCM_CALL_PHASE4 &&
 	     call->stage != PCM_CALL_DATA_PATH))
 		return PCM_CALL_OK;
+	/* Compatibility exception to V.90 9.4.1's 15 s + 5 RTD deadline:
+	 * some peers deliver a valid data CP just before it expires, but need
+	 * another control exchange to reach B1. Allow that exchange two seconds
+	 * once. CPt, silence, malformed records and repeated CP cannot renew it.
+	 * Keep the original deadline for calls that have not reached data CP. */
+	if (!call->b1_completion_grace && call->stage == PCM_CALL_DATA_PATH &&
+	    call->local_role == V90_DIGITAL_MODEM && !uses_pcm_upstream(call) &&
+	    call->state.data_path.digital.upstream_stage == V90_DIGITAL_PATH_UPSTREAM_STARTUP &&
+	    call->state.data_path.digital.upstream.startup.data_cp_received) {
+		call->b1_completion_grace = true;
+		call->b1_deadline_remaining_samples = V90_B1_COMPLETION_GRACE_SAMPLES;
+		return PCM_CALL_OK;
+	}
 	return begin_retrain(call, false);
 }
 
@@ -4115,6 +4136,7 @@ enum pcm_call_result pcm_call_start_cleardown(struct pcm_call *call)
 	}
 	if (result == PCM_CALL_OK) {
 		call->b1_deadline_armed = false;
+		call->b1_completion_grace = false;
 		call->b1_deadline_remaining_samples = 0u;
 		call->rate_renegotiation_deadline_armed = false;
 		call->rate_renegotiation_deadline_remaining_samples = 0u;
@@ -4404,6 +4426,7 @@ static void complete_cleardown(struct pcm_call *call)
 	call->retrain_active = false;
 	call->v92_rate_renegotiation_active = false;
 	call->b1_deadline_armed = false;
+	call->b1_completion_grace = false;
 	call->b1_deadline_remaining_samples = 0u;
 	call->rate_renegotiation_deadline_armed = false;
 	call->rate_renegotiation_deadline_remaining_samples = 0u;
@@ -5391,6 +5414,7 @@ static enum pcm_call_result call_octet(
 	result = recover_rate_renegotiation_failure(call, result);
 	if (cleardown_is_active_owned(call)) {
 		call->b1_deadline_armed = false;
+		call->b1_completion_grace = false;
 		call->b1_deadline_remaining_samples = 0u;
 	}
 	if (result == PCM_CALL_OK && emitted.processed != call->stage &&

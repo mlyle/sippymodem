@@ -3055,6 +3055,96 @@ static bool run_b1_timeout(
 	return true;
 }
 
+static bool test_b1_completion_grace(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		struct channel channel;
+		struct endpoint analog, digital;
+		bool checked_without_cp = false, completed = false;
+		struct pcm_call stalled;
+		bool saved = false;
+
+		CHECK(channel_init(&channel, law, 3u) &&
+		      endpoint_init(&analog, V90_ANALOG_MODEM, law, UINT32_C(1), 1u) &&
+		      endpoint_init(&digital, V90_DIGITAL_MODEM, law,
+			      V90_JD_RATE_CAPABILITY_MASK, 0u),
+		      "completion grace endpoints did not initialize");
+		for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT; ++clock) {
+			CHECK(step_endpoints(&channel, &analog, &digital, law),
+			      "completion grace exchange stopped at %zu", clock);
+			if (!digital.data_path_started || digital.call.stage != PCM_CALL_DATA_PATH)
+				continue;
+			const struct v90_digital_path *path = &digital.call.state.data_path.digital;
+			if (path->upstream_stage != V90_DIGITAL_PATH_UPSTREAM_STARTUP)
+				break;
+			if (!path->upstream.startup.data_cp_received && !checked_without_cp) {
+				struct pcm_call no_cp = digital.call;
+				struct pcm_call_data_event event;
+				uint8_t octet;
+
+				no_cp.b1_deadline_remaining_samples = 1u;
+				CHECK(pcm_call_data_octet_owned(&no_cp, silence_octet(law),
+					      0, 0, false, NULL, &octet, &event) == PCM_CALL_OK &&
+				      no_cp.stage == PCM_CALL_RETRAIN_SILENCE &&
+				      !no_cp.b1_completion_grace && pcm_call_is_valid(&no_cp),
+				      "missing data CP received a completion allowance");
+				checked_without_cp = true;
+			}
+			if (path->upstream.startup.data_cp_received && !saved) {
+				stalled = digital.call;
+				digital.call.b1_deadline_remaining_samples = 1u;
+				saved = true;
+			} else if (saved) {
+				CHECK(digital.call.b1_completion_grace &&
+				      digital.call.b1_deadline_remaining_samples == 16000u &&
+				      pcm_call_is_valid(&digital.call),
+				      "late validated CP did not receive bounded completion time");
+				completed = true;
+				break;
+			}
+		}
+		CHECK(checked_without_cp && saved && completed,
+		      "completion grace boundaries were not exercised");
+		/* Keep a valid CP-bearing child frozen while the call clock runs.
+		 * Continued eligibility must never restart the allowance. */
+		stalled.b1_deadline_remaining_samples = 1u;
+		for (unsigned int tick = 0; tick <= 16000u; ++tick) {
+			union pcm_call_state state = stalled.state;
+			struct pcm_call_data_event event;
+			uint8_t octet;
+
+			CHECK(pcm_call_data_octet_owned(&stalled, silence_octet(law),
+				      0, 0, false, NULL, &octet, &event) == PCM_CALL_OK,
+			      "completion stall tick failed");
+			if (tick == 16000u) {
+				CHECK(stalled.stage == PCM_CALL_RETRAIN_SILENCE &&
+				      !stalled.b1_deadline_armed && !stalled.b1_completion_grace &&
+				      pcm_call_is_valid(&stalled),
+				      "completion allowance renewed or survived retrain");
+			} else {
+				CHECK(stalled.stage == PCM_CALL_DATA_PATH &&
+				      stalled.b1_completion_grace &&
+				      stalled.b1_deadline_remaining_samples == 16000u - tick,
+				      "completion allowance lost its fixed bound at %u", tick);
+				stalled.state = state;
+			}
+		}
+		completed = false;
+		for (size_t clock = 0; clock < 16000u; ++clock) {
+			CHECK(step_endpoints(&channel, &analog, &digital, law),
+			      "late CP could not complete online training");
+			if (pcm_call_is_online(&digital.call) && pcm_call_is_online(&analog.call)) {
+				CHECK(!digital.call.b1_deadline_armed && !digital.call.b1_completion_grace,
+				      "online call retained completion allowance");
+				completed = true;
+				break;
+			}
+		}
+		CHECK(completed, "completion allowance did not permit B1");
+	}
+	return true;
+}
+
 static bool test_b1_timeout(void)
 {
 	for (enum g711_law law = G711_LAW_PCMU;
@@ -12197,6 +12287,7 @@ int main(int argc, char **argv)
 		{ "unusable retrain selection restarts full training",
 		  test_unusable_retrain_selection },
 		{ "standards-timed V.90 B1 retrain", test_b1_timeout },
+		{ "bounded late CP completion", test_b1_completion_grace },
 		{ "lost Ri-bar recovers online data", test_missing_ri_bar },
 		{ "standards-timed V.90 Phase 3 return", test_phase3_return_timeout },
 		{ "standards-timed V.92 digital Phase 3 responses", test_v92_phase3_deadlines },
