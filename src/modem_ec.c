@@ -349,10 +349,13 @@ static int tx_control(struct lapm_state *l, u8 addr, u8 ctrl, u8 pf_mask)
 }
 
 
-/* V.42 8.4.6/8.4.7: status enquiries and replies reflect own-receiver busy. */
+/* V.42 8.4.6 note 2/8.4.7: report an unsent REJ or own-receiver busy. */
 static int tx_status(struct lapm_state *l, u8 addr, u8 pf_mask)
 {
-	return tx_control(l, addr, l->busy ? FRAME_S_RNR : FRAME_S_RR, pf_mask);
+	u8 control = l->busy ? FRAME_S_RNR :
+		l->reject == LAPM_REJECT_PENDING ? FRAME_S_REJ : FRAME_S_RR;
+
+	return tx_control(l, addr, control, pf_mask);
 }
 
 /* V.42 9.2: select within the interval between the request and the default. */
@@ -1106,23 +1109,19 @@ static int rx_info(struct lapm_state *l, frame_t *f)
 		EC_DBG("seq.error: ns %d, vr %d\n",FRAME_NS(f),l->vr);
 		// reject should be sent
 		if (l->reject) {
-			/* V.42 8.5.1: even a repeated sequence error carries a
-			 * valid poll. Reply without repeating REJ or accepting
-			 * its payload; own-receiver busy is handled above. */
+			/* V.42 8.4.6 note 2/8.5.1: answer every poll. A pending
+			 * REJ must be reported before RR can acknowledge the
+			 * established reject condition. Discard the payload. */
 			if (FRAME_I_PF(f))
-				TX_RR(l, l->rsp_addr, 1);
+				tx_status(l, l->rsp_addr, 1);
 			return -1;
 		}
 		EC_DBG("tx reject...\n");
+		l->reject = LAPM_REJECT_PENDING;
 		TX_REJ(l,l->rsp_addr,FRAME_I_PF(f));
-		/* TX_REJ(l,l->cmd_addr,1); */
-		l->reject = 1;
-		// fixme: why to start timer
-		//if (!l->timer)
-		//	TIMER_START(l);
 		return -1;
 	}
-	l->reject = 0;
+	l->reject = LAPM_REJECT_NONE;
 	retrain_progress = l->retrain_poll && l->rtx_count;
 	if (retrain_progress) {
 		/* Some peers resume with sequenced information instead of the
@@ -1411,6 +1410,15 @@ static void rx_unnum_rsp(struct lapm_state *l, frame_t *f)
 
 /* lapm framer interface functions */
 
+static bool reject_is_queued(const struct lapm_state *l)
+{
+	for (const frame_t *frame = l->tx_ctrl; frame != l->ctrl_list;
+	     frame = frame->next)
+		if (FRAME_CTRL(frame) == FRAME_S_REJ)
+			return true;
+	return false;
+}
+
 static frame_t *lapm_get_tx_frame(void *framer)
 {
 	struct lapm_state *l = framer;
@@ -1421,8 +1429,21 @@ static frame_t *lapm_get_tx_frame(void *framer)
 		l->tx_ctrl = l->tx_ctrl->next;
 		/* V.42 8.4.3.1: acknowledge the current receive state when
 		 * HDLC borrows the frame; preserve its poll/final bit. */
-		if (FRAME_TYPE(f) == FRAME_S)
+		if (FRAME_TYPE(f) == FRAME_S) {
+			/* V.42 8.5.1: one REJ establishes the exception. A later
+			 * queued poll reply uses RR once that REJ has started. */
+			if (FRAME_CTRL(f) == FRAME_S_REJ) {
+				if (l->reject == LAPM_REJECT_PENDING)
+					l->reject = LAPM_REJECT_SENT;
+				else if (l->reject == LAPM_REJECT_SENT)
+					f->buf[1] = FRAME_S_RR;
+			}
 			f->buf[2] = (l->vr << 1) | (f->buf[2] & 1);
+		}
+		/* A borrowed frame frees one control slot. Preserve an unreported
+		 * sequence error until its REJ can use that slot. */
+		if (l->reject == LAPM_REJECT_PENDING && !reject_is_queued(l))
+			TX_REJ(l, l->rsp_addr, 0);
 		return f;
 	}
 	/* get info frame */
@@ -1637,7 +1658,7 @@ static void reset_lapm_link(struct lapm_state *l)
 	l->retrain_poll = 0;
 	l->accept_sabme_retry = false;
 	l->stalled_retrain = false;
-	l->reject = 0;
+	l->reject = LAPM_REJECT_NONE;
 	l->vs = 0;
 	l->va = 0;
 	l->vr = 0;

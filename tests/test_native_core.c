@@ -6061,6 +6061,159 @@ static bool test_lapm_acknowledgment_publication(void)
 	return true;
 }
 
+struct lapm_reject_capture {
+	uint8_t frame[16][3];
+	unsigned count;
+	unsigned rejects;
+	bool final_seen;
+	bool invalid;
+};
+
+static void capture_lapm_reject(void *context, frame_t *frame)
+{
+	struct lapm_reject_capture *capture = context;
+
+	if (frame->count != 3 || capture->count == ARRAY_LENGTH(capture->frame)) {
+		capture->invalid = true;
+		return;
+	}
+	memcpy(capture->frame[capture->count++], frame->buf, 3);
+	capture->rejects += frame->buf[1] == 9;
+	capture->final_seen |= (frame->buf[2] & 1) != 0;
+}
+
+static bool test_lapm_reject_queue_pressure(void)
+{
+	struct modem_driver driver = {
+		.name = "LAPM reject queue pressure", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	const uint8_t controls[] = { 0, 1, 5, 9 }; /* I, RR, RNR, REJ polls */
+	const uint8_t bases[] = { 0, 126 };
+
+	for (unsigned caller = 0; caller < 2; ++caller)
+	for (unsigned borrowed = 0; borrowed < 2; ++borrowed)
+	for (unsigned early = 0; early < 2; ++early)
+	for (unsigned kind = 0; kind < ARRAY_LENGTH(controls); ++kind)
+	for (unsigned wrap = 0; wrap < ARRAY_LENGTH(bases); ++wrap) {
+		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *decoder = modem_create(&driver, driver.name);
+		struct lapm_reject_capture capture = { 0 };
+		uint8_t wire[] = { 0, 0x0f, 0, 'a' }, bit, retained[3];
+		frame_t incoming = { .buf = wire, .count = 2 }, *active = NULL;
+		int active_count = 0;
+
+		CHECK(m != NULL && decoder != NULL, "reject-pressure allocation failed");
+		m->caller = caller;
+		m->cfg.ec = 1;
+		m->cfg.comp = 0;
+		m->rx_rate = m->tx_rate = 4800;
+		m->state = 4;
+		CHECK(modem_ec_init(m) == 0, "reject-pressure initialization failed");
+		m->caller = 0; /* Preserve addresses while bypassing initial XID. */
+		modem_update_status(m, STATUS_PACK_LINK);
+		m->caller = caller;
+		struct lapm_state *l = &m->ec.lapm;
+		wire[0] = l->cmd_addr;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		frame_t *outgoing = m->packer.hdlc.get_tx_frame(l);
+		CHECK(outgoing != NULL && outgoing->buf[1] == 0x7f,
+		      "reject-pressure fixture lacks SABME");
+		m->packer.hdlc.tx_complete(l, outgoing);
+		wire[1] = 0x73;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(l->state == 2 && m->state == 5, "reject-pressure fixture did not connect");
+		m->get_chars = NULL;
+		m->put_chars = scripted_lapm_sink;
+		memset(&lapm_sink, 0, sizeof(lapm_sink));
+		lapm_sink.result = 1;
+		l->vr = bases[wrap];
+		modem_hdlc_start(decoder);
+		decoder->packer.hdlc.framer = &capture;
+		decoder->packer.hdlc.rx_complete = capture_lapm_reject;
+		decoder->put_bits = modem_hdlc_put_bits;
+		unsigned burst = LAPM_CTRL_FRAMES - 1;
+		unsigned accepted = burst + borrowed;
+		CHECK(l->rx_win_size >= accepted + 2,
+		      "receive burst and sequence gap exceed the accepted window");
+		wire[0] = l->rsp_addr;
+		wire[2] = 0;
+		incoming.count = sizeof(wire);
+		for (unsigned frame = 0; frame < accepted; ++frame) {
+			if (frame == burst) {
+				CHECK(modem_get_bits(m, 1, &bit, 1) == 1 &&
+				      modem_put_bits(decoder, 1, &bit, 1) == 1 &&
+				      (active = m->packer.hdlc.tx_frame) != NULL,
+				      "reject-pressure fixture did not borrow a frame");
+				memcpy(retained, active->buf, 3);
+				active_count = active->count;
+			}
+			wire[1] = (uint8_t)(((bases[wrap] + frame) & 127) << 1);
+			wire[3] = (uint8_t)('a' + frame);
+			m->packer.hdlc.rx_complete(l, &incoming);
+		}
+		unsigned nr = (bases[wrap] + accepted) & 127;
+		CHECK(l->ctrl_list->next == l->tx_ctrl && l->vr == nr &&
+		      lapm_sink.length == accepted, "valid receive burst did not fill the queue");
+		wire[1] = (uint8_t)(((nr + 1) & 127) << 1);
+		wire[3] = 'x';
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(l->reject == LAPM_REJECT_PENDING && l->vr == nr &&
+		      lapm_sink.length == accepted &&
+		      (!active || (active == m->packer.hdlc.tx_frame &&
+		       active->count == active_count && memcmp(active->buf, retained, 3) == 0)),
+		      "unreported reject lost its state, payload boundary or borrowed frame");
+		for (unsigned clock = 0; clock < 2048 &&
+		     (early ? capture.count < 2 : capture.rejects == 0); ++clock) {
+			CHECK(modem_get_bits(m, 1, &bit, 1) == 1 &&
+			      modem_put_bits(decoder, 1, &bit, 1) == 1,
+			      "reject-pressure wire did not progress");
+		}
+		CHECK(early ? (capture.count == 2 && capture.rejects == 0 &&
+		      l->reject == LAPM_REJECT_PENDING) :
+		      (capture.rejects == 1 && l->reject == LAPM_REJECT_SENT),
+		      "REJ did not follow the freed control slot without a peer retry");
+		wire[1] = kind == 0 ? (uint8_t)(((nr + 1) & 127) << 1) : controls[kind];
+		wire[2] = 1;
+		incoming.count = kind == 0 ? 4 : 3;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		for (unsigned clock = 0; clock < 2048 && !capture.final_seen; ++clock) {
+			CHECK(modem_get_bits(m, 1, &bit, 1) == 1 &&
+			      modem_put_bits(decoder, 1, &bit, 1) == 1,
+			      "reject-pressure final response did not progress");
+		}
+		CHECK(!capture.invalid && capture.final_seen && capture.count == accepted + 2 &&
+		      capture.rejects == 1 && l->reject == LAPM_REJECT_SENT && l->vr == nr &&
+		      lapm_sink.length == accepted,
+		      "reject-pressure recovery duplicated REJ, accepted an error or lost the final reply");
+		for (unsigned frame = 0; frame < capture.count; ++frame) {
+			uint8_t *header = capture.frame[frame];
+			unsigned expected_nr = borrowed && frame == 0 ?
+				(bases[wrap] + burst) & 127 : nr;
+			CHECK(header[0] == l->rsp_addr &&
+			      header[1] == (frame == accepted ? 9 : 1) &&
+			      (header[2] & 1) == (frame == accepted + 1) &&
+			      (header[2] >> 1) == expected_nr,
+			      "reject-pressure wire mismatch: role %u borrowed %u early %u kind %u wrap %u frame %u",
+			      caller, borrowed, early, kind, wrap, frame);
+		}
+		/* The missing frame resolves the exception and is delivered once. */
+		wire[1] = (uint8_t)(nr << 1);
+		wire[2] = 0;
+		wire[3] = (uint8_t)('a' + accepted);
+		incoming.count = 4;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(l->reject == LAPM_REJECT_NONE && l->vr == ((nr + 1) & 127) &&
+		      lapm_sink.length == accepted + 1 &&
+		      memcmp(lapm_sink.data, "abcdefghij", accepted + 1) == 0,
+		      "missing information frame did not resume ordered input once");
+		CHECK(modem_stop_now(m) == 0, "reject-pressure cleanup failed");
+		modem_delete(m);
+		modem_delete(decoder);
+	}
+	return true;
+}
+
 static bool test_lapm_receiver_ready_queue_pressure(void)
 {
 	struct modem_driver driver = {
@@ -8868,6 +9021,7 @@ int main(void)
 		{ "LAPM receive backpressure", test_lapm_receive_backpressure },
 		{ "LAPM receiver-ready queue pressure", test_lapm_receiver_ready_queue_pressure },
 		{ "LAPM acknowledgment publication", test_lapm_acknowledgment_publication },
+		{ "LAPM reject queue pressure", test_lapm_reject_queue_pressure },
 		{ "LAPM fatal information failure", test_lapm_information_failure },
 		{ "LAPM fatal control failure", test_lapm_control_failure },
 		{ "LAPM receive frame boundaries", test_lapm_receive_frame_boundaries },

@@ -238,6 +238,12 @@ struct lapm_frame {
 	u8 data[3 + LAPM_MAX_INFO_SIZE];
 };
 
+enum lapm_reject_state {
+	LAPM_REJECT_NONE,
+	LAPM_REJECT_PENDING,
+	LAPM_REJECT_SENT,
+};
+
 /* lapm state */
 struct lapm_state {
         /* modem link */
@@ -246,7 +252,7 @@ struct lapm_state {
         struct v44_character_path *v44_path;
         int state;
         /* those DATA sub-states may be optimized */
-        int reject;
+        enum lapm_reject_state reject;
         int busy;
         int peer_busy;
         int retrain_poll;
