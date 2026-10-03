@@ -6562,7 +6562,8 @@ static bool v92_bad_b1_stays_clamped(const struct pcm_call *boundary)
 	CHECK(pcm_call_data_octet(&erased, silence, 0, false, NULL, &transmitted, &event) ==
 		      PCM_CALL_OK && pcm_call_is_valid(&erased) && !pcm_call_is_online(&erased) &&
 	      event.kind == PCM_CALL_DATA_NONE && erased.state.data_path.v92_digital.b1u_decode_failed &&
-	      erased.state.data_path.v92_digital.quality_guard_samples == 0,
+	      erased.state.data_path.v92_digital.pending_media_loss &&
+	      erased.state.data_path.v92_digital.quality_guard_samples != 0,
 	      "first missing B1u sample did not reject training before delayed decisions");
 
 	for (size_t sample = 0u; sample < (size_t)V92_B1U_SYMBOLS +
@@ -8418,75 +8419,127 @@ static bool test_v92_no_path_recovery(void)
 	return run_v92_no_path_recovery(G711_LAW_PCMU) && run_v92_no_path_recovery(G711_LAW_PCMA);
 }
 
-static bool run_v92_b1_no_path_recovery(enum g711_law law)
+static bool run_v92_b1_recovery(enum g711_law law, uint8_t rate,
+	unsigned missing_epochs, bool acquisition)
 {
 	struct pcm_call_configuration ac = v92_configuration(V90_ANALOG_MODEM, law);
 	struct pcm_call_configuration dc = v92_configuration(V90_DIGITAL_MODEM, law);
 	struct pcm_call calls[2];
 	struct channel wire;
+	struct pcm_payload_source sources[2] = { { .reject = true }, { .reject = true } };
+	uint32_t frames[2] = { 0u, 0u };
+	uint64_t idle[2] = { 0u, 0u };
 	uint32_t noise = UINT32_C(0x81374aef);
-	unsigned injected = 0u;
-	bool recovered = false;
+	unsigned injected = 0u, retrains = 0u;
+	bool recovered = false, payload = false;
 
-	ac.phase3.v92_analog.upstream_rate_mask = (UINT32_C(1) << 19u) - 1u;
-	CHECK(codec_v92_profile_init(&dc, V90_DIGITAL_MODEM, law, 28000u, 56000u, 19u, NULL) == V92_PROFILE_OK &&
+	ac.phase3.v92_analog.upstream_rate_mask = missing_epochs ?
+		UINT32_C(1) << (rate - 1u) : (UINT32_C(1) << 19u) - 1u;
+	CHECK(codec_v92_profile_init(&dc, V90_DIGITAL_MODEM, law, 28000u, 56000u, rate, NULL) == V92_PROFILE_OK &&
 	      channel_init(&wire, law, 3u) && pcm_call_init(&calls[0], &ac) == PCM_CALL_OK &&
-	      pcm_call_init(&calls[1], &dc) == PCM_CALL_OK, "B1 no-path setup failed");
-	for (unsigned clock = 0u; clock < 2u * CALL_SAMPLE_LIMIT; ++clock) {
+	      pcm_call_init(&calls[1], &dc) == PCM_CALL_OK, "B1 recovery setup failed");
+	for (unsigned clock = 0u; clock < 4u * CALL_SAMPLE_LIMIT; ++clock) {
 		uint8_t received[2], transmitted[2];
 		channel_receive(&wire, &received[0], &received[1]);
 		for (unsigned side = 0u; side < 2u; ++side) {
 			struct pcm_call *call = &calls[side];
-			if (pcm_call_phase4_is_ready(call))
-				CHECK(v92_data_boundary(call), "B1 no-path handoff failed");
+			if (pcm_call_phase4_is_ready(call)) {
+				CHECK(v92_data_boundary(call), "B1 recovery handoff failed");
+				if (side == 1u)
+					injected = 0u;
+			}
 			if (call->stage != PCM_CALL_DATA_PATH) {
 				struct pcm_call_observation observation;
 				CHECK(pcm_call_octet(call, received[side], decode_octet(law, received[side]),
-					&transmitted[side], &observation) == PCM_CALL_OK, "B1 no-path training failed");
+					&transmitted[side], &observation) == PCM_CALL_OK, "B1 recovery training failed");
+				continue;
+			}
+			if (payload) {
+				CHECK(v92_payload_sample_with_idle(call, received[side], decode_octet(law, received[side]),
+					&sources[side], &frames[side], &transmitted[side], &idle[side]),
+				      "B1 recovery changed payload");
 				continue;
 			}
 			struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
-			bool damage = side == 1u && !recovered &&
-				path->upstream.line.received_frames >= V92_B1U_ACQUISITION_FRAMES;
+			bool damage = side == 1u &&
+				(missing_epochs ? retrains < missing_epochs && injected < 80u : !recovered) &&
+				path->upstream.line.received_frames >=
+					(acquisition ? 1u : V92_B1U_ACQUISITION_FRAMES);
 			if (damage) {
-				/* A bounded unannounced noise burst, not injected decoder
-				 * state: the delayed B1 decisions must stay clamped. */
-				noise = noise * UINT32_C(1664525) + UINT32_C(1013904223);
-				int32_t n = (int32_t)(noise >> 16);
-				received[side] = encode_octet(law, (int16_t)(n > INT16_MAX ? n - 65536 : n));
-				CHECK(++injected <= 512u && !pcm_call_is_online(call), "B1 burst escaped training");
-				struct v92_upstream_data_rx probe = path->upstream;
-				struct v92_upstream_data_frame frame;
-				enum v92_upstream_data_rx_result rx = v92_upstream_data_rx_octet(
-					&probe, received[side], decode_octet(law, received[side]), true, &frame);
-				if (rx == V92_UPSTREAM_DATA_RX_NO_PATH) {
-					CHECK(v92_no_path_recovery_contracts(call, received[side]), "B1 no-path recovery contract failed");
-					recovered = true;
+				if (missing_epochs) {
+					received[side] = silence_octet(law);
+				} else {
+					/* A bounded unannounced noise burst, not decoder state. */
+					noise = noise * UINT32_C(1664525) + UINT32_C(1013904223);
+					int32_t n = (int32_t)(noise >> 16);
+					received[side] = encode_octet(law, (int16_t)(n > INT16_MAX ? n - 65536 : n));
+					struct v92_upstream_data_rx probe = path->upstream;
+					struct v92_upstream_data_frame frame;
+					if (v92_upstream_data_rx_octet(&probe, received[side], decode_octet(law, received[side]),
+					    true, &frame) == V92_UPSTREAM_DATA_RX_NO_PATH) {
+						CHECK(v92_no_path_recovery_contracts(call, received[side]), "B1 no-path recovery contract failed");
+						recovered = true;
+					}
 				}
+				CHECK(++injected <= 512u && !pcm_call_is_online(call), "B1 burst escaped training");
 			}
 			struct pcm_call_data_event event;
-			CHECK(pcm_call_data_octet(call, received[side], decode_octet(law, received[side]), true,
-				NULL, &transmitted[side], &event) == PCM_CALL_OK && pcm_call_is_valid(call) &&
-			      (!damage || event.kind == PCM_CALL_DATA_NONE), "B1 no-path call failed or released payload");
+			enum pcm_call_result result = pcm_call_data_octet(call, received[side], decode_octet(law, received[side]),
+				!(damage && missing_epochs), NULL, &transmitted[side], &event);
+			CHECK(pcm_call_is_valid(call) && (side == 0u || event.kind == PCM_CALL_DATA_NONE),
+			      "B1 recovery released unqualified upstream payload");
+			if (result == PCM_CALL_FAILED && missing_epochs > V92_DATA_QUALITY_MAX_RETRAINS) {
+				CHECK(side == 1u && retrains == V92_DATA_QUALITY_MAX_RETRAINS && call->failed &&
+				      call->pcm_upstream_quality.automatic_retrains == retrains &&
+				      call->v92_upstream_retry_ceiling == 0u && !pcm_call_is_online(call),
+				      "persistent B1 media loss escaped its budget or changed rate");
+				return true;
+			}
+			CHECK(result == PCM_CALL_OK, "B1 recovery returned %s: law=%u rate=%u epochs=%u retrains=%u",
+			      pcm_call_result_name(result), law, rate, missing_epochs, retrains);
+			if (side == 1u && call->stage == PCM_CALL_RETRAIN_SILENCE)
+				++retrains;
 		}
 		channel_transmit(&wire, transmitted[0], transmitted[1]);
-		if (recovered && pcm_call_is_online(&calls[0]) && pcm_call_is_online(&calls[1])) {
-			CHECK(calls[1].v92_upstream_retry_ceiling == 18u && calls[1].pcm_upstream_quality.automatic_retrains == 0u &&
-			      calls[1].state.data_path.v92_digital.upstream.decoder.mapping.cpd.data_rate_number == 18u &&
-			      calls[0].state.data_path.v92_analog.upstream.encoder.mapping.cpd.data_rate_number == 18u,
-			      "B1 no-path recovery did not negotiate the lower rate: law=%u ceiling=%u budget=%u digital=%u analog=%u",
-			      law, calls[1].v92_upstream_retry_ceiling, calls[1].pcm_upstream_quality.automatic_retrains,
-			      calls[1].state.data_path.v92_digital.upstream.decoder.mapping.cpd.data_rate_number,
-			      calls[0].state.data_path.v92_analog.upstream.encoder.mapping.cpd.data_rate_number);
-			return true;
+		if (!payload && pcm_call_is_online(&calls[0]) && pcm_call_is_online(&calls[1])) {
+			unsigned expected_retrains = missing_epochs ? missing_epochs : 1u;
+			uint8_t expected_rate = missing_epochs ? rate : rate - 1u;
+			CHECK(retrains == expected_retrains &&
+			      calls[1].v92_upstream_retry_ceiling == (missing_epochs ? 0u : expected_rate) &&
+			      calls[1].pcm_upstream_quality.automatic_retrains == (missing_epochs ? retrains : 0u) &&
+			      calls[1].state.data_path.v92_digital.upstream.decoder.mapping.cpd.data_rate_number == expected_rate &&
+			      calls[0].state.data_path.v92_analog.upstream.encoder.mapping.cpd.data_rate_number == expected_rate,
+			      "B1 recovery changed its rate policy or budget: law=%u rate=%u epochs=%u retrains=%u",
+			      law, rate, missing_epochs, retrains);
+			payload = true;
 		}
+		if (frames[0] >= 64u && frames[1] >= 64u)
+			return true;
 	}
-	CHECK(false, "B1 no-path recovery did not return online");
+	CHECK(false, "B1 recovery did not complete duplex payload");
 }
 
 static bool test_v92_b1_no_path_recovery(void)
 {
-	return run_v92_b1_no_path_recovery(G711_LAW_PCMU) && run_v92_b1_no_path_recovery(G711_LAW_PCMA);
+	return run_v92_b1_recovery(G711_LAW_PCMU, 19u, 0u, false) &&
+	       run_v92_b1_recovery(G711_LAW_PCMA, 19u, 0u, false);
+}
+
+static bool test_v92_b1_media_loss(void)
+{
+	/* One 10 ms media erasure in acquisition or held-out B1u must recover
+	 * at the same rate, including 24k. Repeated incidents exhaust the shared
+	 * budget; neither missing training nor its delayed bits may reach data. */
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		for (uint8_t rate = 1u; rate <= 19u; rate += 18u)
+			for (unsigned acquisition = 0u; acquisition < 2u; ++acquisition)
+				for (unsigned epochs = 1u; epochs <= 2u; ++epochs)
+					CHECK(run_v92_b1_recovery(law, rate, epochs, acquisition),
+					      "B1 media loss did not retain rate and payload");
+		CHECK(run_v92_b1_recovery(law, 1u, V92_DATA_QUALITY_MAX_RETRAINS + 1u, false),
+		      "persistent B1 media loss did not stop");
+	}
+	return true;
 }
 
 static bool v92_peer_retrain_quality_guard(const struct pcm_call *boundary, int16_t amplitude)
@@ -12153,6 +12206,7 @@ int main(int argc, char **argv)
 		{ "V.92 lost decoder paths recover within budget", test_v92_no_path_recovery },
 		{ "V.92 peer retrain outranks lost PCM paths", test_v92_peer_retrain_lost_paths },
 		{ "V.92 lost B1 decoder paths retrain", test_v92_b1_no_path_recovery },
+		{ "V.92 B1 media loss preserves rate", test_v92_b1_media_loss },
 		{ "V.92 online Ru/Rd control exchange", test_v92_remote_rate_request },
 		{ "V.92 digital fast-exchange response", test_v92_fast_response },
 		{ "V.92 paired fast exchange", test_v92_fast_pair },
