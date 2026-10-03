@@ -264,16 +264,30 @@ v34_descramble_differential_dibit(
 	uint8_t previous_clockwise_quarter_turns,
 	uint8_t current_clockwise_quarter_turns, uint8_t *output_dibit)
 {
-	uint8_t increment;
+	return v34_descramble_control_symbol(
+		descrambler, previous_clockwise_quarter_turns,
+		current_clockwise_quarter_turns, 0, 2u, output_dibit);
+}
 
-	if (previous_clockwise_quarter_turns > 3u ||
-	    current_clockwise_quarter_turns > 3u)
+enum v34_framing_result v34_descramble_control_symbol(
+	struct v34_scrambler *descrambler,
+	uint8_t previous_clockwise_quarter_turns,
+	uint8_t current_clockwise_quarter_turns, uint8_t quarter_point,
+	unsigned int bit_count, uint8_t *output)
+{
+	uint8_t wire;
+
+	if ((bit_count != 2u && bit_count != 4u) ||
+	    previous_clockwise_quarter_turns > 3u ||
+	    current_clockwise_quarter_turns > 3u ||
+	    quarter_point > (bit_count == 2u ? 0u : 3u))
 		return V34_FRAMING_INVALID_ARGUMENT;
-	increment = (uint8_t)((current_clockwise_quarter_turns + 4u -
-			       previous_clockwise_quarter_turns) &
-			      3u);
-	return v34_descramble_mapped_dibit(
-		descrambler, increment, output_dibit);
+	wire = swap_dibit_bits((uint8_t)(
+		(current_clockwise_quarter_turns + 4u -
+		 previous_clockwise_quarter_turns) & 3u));
+	if (bit_count == 4u)
+		wire = (uint8_t)((wire << 2u) | swap_dibit_bits(quarter_point));
+	return v34_descramble_group(descrambler, wire, bit_count, output);
 }
 
 enum v34_framing_result

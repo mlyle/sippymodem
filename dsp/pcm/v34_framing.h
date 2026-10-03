@@ -102,6 +102,16 @@ v34_descramble_differential_dibit(
 	uint8_t previous_clockwise_quarter_turns,
 	uint8_t current_clockwise_quarter_turns, uint8_t *output_dibit);
 
+/* Decode one MP, CP or E symbol in transmission order: differential I1/I2
+ * followed by mapped Q1/Q2 for the sixteen-point constellation. bit_count
+ * is two or four; quarter_point must be zero for a four-point symbol.
+ * Rejected calls leave state and output unchanged. */
+enum v34_framing_result v34_descramble_control_symbol(
+	struct v34_scrambler *descrambler,
+	uint8_t previous_clockwise_quarter_turns,
+	uint8_t current_clockwise_quarter_turns, uint8_t quarter_point,
+	unsigned int bit_count, uint8_t *output);
+
 enum v34_framing_result
 v34_superframe_inversion_bit(
 	enum v34_inversion_pattern pattern,

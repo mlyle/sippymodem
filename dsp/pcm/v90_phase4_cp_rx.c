@@ -83,42 +83,39 @@ enum v90_cp_result v90_phase4_cp_rx_receive_decision(
 	struct v90_cp_receive_event *event)
 {
 	struct v90_phase4_cp_rx next;
-	struct v90_cp_receive_event differential_event = { 0 };
-	struct v90_cp_receive_event mapped_event = { 0 };
-	struct v90_cp_receive_event emitted;
-	uint8_t dibit;
+	struct v90_cp_receive_event emitted = { 0 };
+	uint8_t bits;
 
 	if (!v90_phase4_cp_rx_is_valid(rx) ||
 	    !v34_training_decision_is_valid(
 		    rx->constellation, quarter_point, clockwise_quarter_turns) ||
 	    event == NULL)
 		return V90_CP_INVALID_ARGUMENT;
+
 	next = *rx;
-	if (v34_descramble_differential_dibit(
+	unsigned int count = v34_constellation_bits_per_symbol(next.constellation);
+
+	if (v34_descramble_control_symbol(
 		    &next.descrambler,
 		    next.previous_clockwise_quarter_turns,
-		    clockwise_quarter_turns, &dibit) != V34_FRAMING_OK ||
-	    receive_dibit(
-		    &next.records, dibit, &differential_event) != V90_CP_OK)
+		    clockwise_quarter_turns, quarter_point, count,
+		    &bits) != V34_FRAMING_OK)
 		return V90_CP_INVALID_ARGUMENT;
-	if (next.constellation == V34_CONSTELLATION_16_POINT) {
+	for (; count != 0u; count -= 2u) {
+		struct v90_cp_receive_event received = { 0 };
+		uint8_t dibit = (uint8_t)((bits >> (count - 2u)) & 3u);
+
 		/* One noisy symbol can terminate two rejected CP candidates. */
-		if (v34_descramble_mapped_dibit(
-			    &next.descrambler, quarter_point,
-			    &dibit) != V34_FRAMING_OK ||
-		    receive_dibit(
-			    &next.records, dibit, &mapped_event) != V90_CP_OK ||
-		    (differential_event.type != V90_CP_RECEIVE_NO_EVENT &&
-		     mapped_event.type != V90_CP_RECEIVE_NO_EVENT &&
-		     (differential_event.type != V90_CP_RECEIVE_REJECTED ||
-		      mapped_event.type != V90_CP_RECEIVE_REJECTED)))
+		if (receive_dibit(&next.records, dibit, &received) != V90_CP_OK ||
+		    (emitted.type != V90_CP_RECEIVE_NO_EVENT &&
+		     received.type != V90_CP_RECEIVE_NO_EVENT &&
+		     (emitted.type != V90_CP_RECEIVE_REJECTED ||
+		      received.type != V90_CP_RECEIVE_REJECTED)))
 			return V90_CP_INVALID_ARGUMENT;
+		if (emitted.type == V90_CP_RECEIVE_NO_EVENT)
+			emitted = received;
 	}
-	emitted = differential_event.type != V90_CP_RECEIVE_NO_EVENT ?
-			  differential_event :
-			  mapped_event;
-	next.previous_clockwise_quarter_turns =
-		clockwise_quarter_turns;
+	next.previous_clockwise_quarter_turns = clockwise_quarter_turns;
 	if (!v90_phase4_cp_rx_is_valid(&next))
 		return V90_CP_INVALID_ARGUMENT;
 	*rx = next;

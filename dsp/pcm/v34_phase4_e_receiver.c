@@ -54,21 +54,21 @@ static enum v34_phase4_e_receiver_result search_decision(
 	uint8_t quarter_point, uint8_t clockwise_quarter_turns)
 {
 	struct v34_phase4_e_receiver next = *receiver;
-	uint8_t dibit;
+	unsigned int count = v34_constellation_bits_per_symbol(next.constellation);
+	uint8_t bits;
 
-	if (v34_descramble_differential_dibit(
+	if (v34_descramble_control_symbol(
 		    &next.descrambler,
 		    next.previous_clockwise_quarter_turns,
-		    clockwise_quarter_turns, &dibit) != V34_FRAMING_OK)
+		    clockwise_quarter_turns, quarter_point, count,
+		    &bits) != V34_FRAMING_OK)
 		return V34_PHASE4_E_RECEIVER_INVALID_ARGUMENT;
-	next.received_bits = v34_phase4_e_extend_one_run(next.received_bits, dibit);
-	if (next.constellation == V34_CONSTELLATION_16_POINT) {
-		if (v34_descramble_mapped_dibit(
-			    &next.descrambler, quarter_point, &dibit) !=
-		    V34_FRAMING_OK)
-			return V34_PHASE4_E_RECEIVER_INVALID_ARGUMENT;
-		next.received_bits = v34_phase4_e_extend_one_run(next.received_bits, dibit);
-	}
+
+	for (; count != 0u; count -= 2u)
+		next.received_bits = v34_phase4_e_extend_one_run(
+			next.received_bits,
+			(uint8_t)((bits >> (count - 2u)) & 3u));
+
 	next.previous_clockwise_quarter_turns = clockwise_quarter_turns;
 	if (!v34_phase4_e_receiver_is_valid(&next))
 		return V34_PHASE4_E_RECEIVER_INVALID_ARGUMENT;

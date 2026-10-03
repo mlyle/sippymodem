@@ -12,18 +12,18 @@ static uint32_t fixture_random(uint32_t *state)
 	return *state;
 }
 
+static const uint8_t polynomial_start_dibits[][15] = {
+	[V34_POLYNOMIAL_GPC] = {
+		3, 3, 3, 3, 3, 3, 3, 3, 3, 0, 0, 1, 3, 3, 3,
+	},
+	[V34_POLYNOMIAL_GPA] = {
+		3, 3, 2, 0, 0, 3, 3, 2, 0, 0, 3, 2, 1, 3, 3,
+	},
+};
+
 static bool test_polynomial_starts(void)
 {
-	static const uint8_t expected[][15] = {
-		[V34_POLYNOMIAL_GPC] = {
-			3, 3, 3, 3, 3, 3, 3, 3, 3, 0, 0, 1, 3, 3, 3,
-		},
-		[V34_POLYNOMIAL_GPA] = {
-			3, 3, 2, 0, 0, 3, 3, 2, 0, 0, 3, 2, 1, 3, 3,
-		},
-	};
-
-	for (size_t polynomial = 0; polynomial < ARRAY_LENGTH(expected);
+	for (size_t polynomial = 0; polynomial < ARRAY_LENGTH(polynomial_start_dibits);
 	     ++polynomial) {
 		struct v34_scrambler scrambler;
 
@@ -36,14 +36,14 @@ static bool test_polynomial_starts(void)
 			      (enum v34_scrambler_polynomial)
 				      polynomial,
 		      "V.34 polynomial fixture did not initialize");
-		for (size_t index = 0; index < ARRAY_LENGTH(expected[polynomial]);
+		for (size_t index = 0; index < ARRAY_LENGTH(polynomial_start_dibits[polynomial]);
 		     ++index) {
 			uint8_t output;
 
 			CHECK(v34_scramble_group(
 				      &scrambler, 3, 2, &output) ==
 				      V34_FRAMING_OK &&
-			      output == expected[polynomial][index],
+			      output == polynomial_start_dibits[polynomial][index],
 			      "V.34 polynomial start changed at %zu/%zu",
 			      polynomial, index);
 		}
@@ -353,6 +353,87 @@ static bool test_mapped_dibit_round_trip(void)
 	return true;
 }
 
+static bool test_control_symbols(void)
+{
+	/* Clause 7's zero-seeded scramblers driven by ones, before the
+	 * 10.1.3.9 differential and quarter-point bit mapping. */
+	static const uint8_t mapped_dibits[] = { 0, 2, 1, 3 };
+
+	for (unsigned int polynomial = 0; polynomial < ARRAY_LENGTH(polynomial_start_dibits);
+	     ++polynomial) {
+		for (unsigned int count = 2; count <= 4; count += 2) {
+			for (uint8_t start = 0; start < 4; ++start) {
+				struct v34_scrambler receiver;
+				uint8_t previous = start;
+				unsigned int stride = count / 2;
+
+				CHECK(v34_scrambler_init(&receiver,
+					      (enum v34_scrambler_polynomial)polynomial) ==
+					      V34_FRAMING_OK,
+				      "control symbol fixture did not initialize");
+				for (size_t i = 0; i + stride <= ARRAY_LENGTH(polynomial_start_dibits[0]);
+				     i += stride) {
+					uint8_t current = (uint8_t)((previous +
+						mapped_dibits[polynomial_start_dibits[polynomial][i]]) & 3u);
+					uint8_t quarter = count == 4 ?
+						mapped_dibits[polynomial_start_dibits[polynomial][i + 1]] : 0;
+					uint8_t output = 0;
+
+					CHECK(v34_descramble_control_symbol(&receiver,
+						      previous, current, quarter, count, &output) ==
+						      V34_FRAMING_OK &&
+					      output == (uint8_t)((1u << count) - 1u),
+					      "control symbol bit order changed at %u/%u/%u/%zu",
+					      polynomial, count, start, i);
+					previous = current;
+				}
+			}
+		}
+	}
+	return true;
+}
+
+static bool test_control_symbol_rejection(void)
+{
+	static const struct {
+		uint8_t previous, current, quarter;
+		unsigned int bits;
+	} cases[] = {
+		{ 4, 0, 0, 2 }, { 0, 4, 0, 2 }, { 0, 0, 1, 2 },
+		{ 0, 0, 4, 4 }, { 0, 0, 0, 0 }, { 0, 0, 0, 3 },
+		{ 0, 0, 0, 8 },
+	};
+	struct v34_scrambler receiver, saved;
+	uint8_t output = UINT8_MAX;
+
+	CHECK(v34_scrambler_init(&receiver, V34_POLYNOMIAL_GPA) == V34_FRAMING_OK,
+	      "control symbol rejection fixture did not initialize");
+	receiver.history = UINT32_C(0x5a327);
+	saved = receiver;
+	for (size_t i = 0; i < ARRAY_LENGTH(cases); ++i)
+		CHECK(v34_descramble_control_symbol(&receiver, cases[i].previous,
+			      cases[i].current, cases[i].quarter, cases[i].bits,
+			      &output) == V34_FRAMING_INVALID_ARGUMENT &&
+		      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
+		      output == UINT8_MAX,
+		      "invalid control symbol %zu changed state or output", i);
+	CHECK(v34_descramble_control_symbol(NULL, 0, 0, 0, 2, &output) ==
+		      V34_FRAMING_INVALID_ARGUMENT &&
+	      v34_descramble_control_symbol(&receiver, 0, 0, 0, 4, NULL) ==
+		      V34_FRAMING_INVALID_ARGUMENT &&
+	      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
+	      output == UINT8_MAX,
+	      "null control symbol argument changed state or output");
+	receiver.history = UINT32_C(1) << V34_SCRAMBLER_BITS;
+	saved = receiver;
+	CHECK(v34_descramble_control_symbol(&receiver, 0, 0, 0, 4, &output) ==
+		      V34_FRAMING_INVALID_ARGUMENT &&
+	      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
+	      output == UINT8_MAX,
+	      "corrupt control descrambler changed state or output");
+	return true;
+}
+
 static bool test_superframe_inversion_patterns(void)
 {
 	static const uint8_t expected_j7[] = {
@@ -552,6 +633,8 @@ int main(void)
 		{ "differential dibits", test_differential_dibits },
 		{ "differential dibit round trip",
 		  test_differential_dibit_round_trip },
+		{ "control symbols", test_control_symbols },
+		{ "control symbol rejection", test_control_symbol_rejection },
 		{ "superframe inversion patterns",
 		  test_superframe_inversion_patterns },
 		{ "scrambler state rejection", test_state_rejection },

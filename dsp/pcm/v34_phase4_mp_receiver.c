@@ -103,55 +103,44 @@ v34_phase4_mp_receive_decision(
 	struct v34_mp_receive_event *event)
 {
 	struct v34_phase4_mp_receiver next;
-	struct v34_mp_receive_event differential_event = { 0 };
-	struct v34_mp_receive_event mapped_event = { 0 };
 	struct v34_mp_receive_event emitted = { 0 };
-	uint8_t dibit;
+	uint8_t bits;
 
 	if (!v34_phase4_mp_receiver_is_valid(receiver) ||
 	    !v34_training_decision_is_valid(receiver->constellation,
 		    quarter_point, clockwise_quarter_turns) ||
 	    event == NULL)
 		return V34_PHASE4_MP_RECEIVER_INVALID_ARGUMENT;
+
 	next = *receiver;
 	if (!next.has_previous_symbol) {
-		next.previous_clockwise_quarter_turns =
-			clockwise_quarter_turns;
 		next.has_previous_symbol = true;
 	} else {
-		if (v34_descramble_differential_dibit(
+		unsigned int count = v34_constellation_bits_per_symbol(
+			next.constellation);
+
+		if (v34_descramble_control_symbol(
 			    &next.descrambler,
 			    next.previous_clockwise_quarter_turns,
-			    clockwise_quarter_turns, &dibit) !=
-			    V34_FRAMING_OK ||
-		    receive_dibit(
-			    &next.records, dibit, &differential_event) !=
-			    V34_PHASE4_MP_RECEIVER_OK)
+			    clockwise_quarter_turns, quarter_point, count,
+			    &bits) != V34_FRAMING_OK)
 			return V34_PHASE4_MP_RECEIVER_INVALID_ARGUMENT;
-		next.consecutive_ones = v34_phase4_e_extend_one_run(
-			next.consecutive_ones, dibit);
-		if (next.constellation ==
-		    V34_CONSTELLATION_16_POINT) {
-			if (v34_descramble_mapped_dibit(
-				    &next.descrambler, quarter_point,
-				    &dibit) != V34_FRAMING_OK ||
-			    receive_dibit(
-				    &next.records, dibit, &mapped_event) !=
+		for (; count != 0u; count -= 2u) {
+			struct v34_mp_receive_event received = { 0 };
+			uint8_t dibit = (uint8_t)((bits >> (count - 2u)) & 3u);
+
+			if (receive_dibit(&next.records, dibit, &received) !=
 				    V34_PHASE4_MP_RECEIVER_OK ||
-			    (differential_event.type !=
-				     V34_MP_RECEIVE_NO_EVENT &&
-			     mapped_event.type !=
-				     V34_MP_RECEIVE_NO_EVENT))
+			    (emitted.type != V34_MP_RECEIVE_NO_EVENT &&
+			     received.type != V34_MP_RECEIVE_NO_EVENT))
 				return V34_PHASE4_MP_RECEIVER_INVALID_ARGUMENT;
+			if (received.type != V34_MP_RECEIVE_NO_EVENT)
+				emitted = received;
 			next.consecutive_ones = v34_phase4_e_extend_one_run(
 				next.consecutive_ones, dibit);
 		}
-		emitted = differential_event.type !=
-				  V34_MP_RECEIVE_NO_EVENT ?
-				  differential_event : mapped_event;
-		next.previous_clockwise_quarter_turns =
-			clockwise_quarter_turns;
 	}
+	next.previous_clockwise_quarter_turns = clockwise_quarter_turns;
 	if (!v34_phase4_mp_receiver_is_valid(&next))
 		return V34_PHASE4_MP_RECEIVER_INVALID_ARGUMENT;
 	*receiver = next;
