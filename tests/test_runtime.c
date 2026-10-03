@@ -198,6 +198,12 @@ const char *sip_call_state_name(enum sip_call_state state)
 	return state == SIP_CALL_CONNECTED ? "connected" : "idle";
 }
 
+const char *modem_host_result_name(enum modem_host_result result)
+{
+	return result == MODEM_HOST_MEDIA_TIMEOUT ? "remote RTP clock stopped" :
+		"host processing failed";
+}
+
 struct audio_levels modem_host_take_audio_levels(struct modem_host *host)
 {
 	struct audio_levels levels = capture.levels;
@@ -207,11 +213,25 @@ struct audio_levels modem_host_take_audio_levels(struct modem_host *host)
 	return levels;
 }
 
+void modem_note_disconnect(struct modem *modem, bool local, const char *reason)
+{
+	if (modem->disconnect_reason != NULL)
+		return;
+	modem->disconnect_reason = reason;
+	modem->disconnect_phase = modem_call_phase(modem);
+	modem->disconnect_step = modem_protocol_step(modem);
+	modem->disconnect_local = local;
+	++modem->disconnect_sequence;
+}
+
 int modem_report_remote_call_end(struct modem *modem)
 {
 	capture.remote_ends++;
-	if (capture.remote_end_result == 0)
+	if (capture.remote_end_result == 0) {
+		if (modem->started)
+			modem_note_disconnect(modem, false, "remote SIP call ended");
 		modem->started = 0;
+	}
 	return capture.remote_end_result;
 }
 
@@ -314,7 +334,6 @@ slmodem_calls_callbacks(
 enum slmodem_calls_result slmodem_calls_drain(
 	struct slmodem_calls *calls)
 {
-	(void)calls;
 	capture.calls_drained++;
 	if (capture.drain_never_idle)
 		return SLMODEM_CALLS_OK;
@@ -324,6 +343,9 @@ enum slmodem_calls_result slmodem_calls_drain(
 	if (capture.call.direction != SIP_CALL_DIRECTION_INCOMING &&
 	    capture.call.direction != SIP_CALL_DIRECTION_OUTGOING)
 		return SLMODEM_CALLS_INVALID_EVENT;
+	if (capture.call.state == SIP_CALL_IDLE)
+		return modem_report_remote_call_end(calls->modem) == 0 ?
+			SLMODEM_CALLS_OK : SLMODEM_CALLS_MODEM_ERROR;
 	return capture.call_result;
 }
 
@@ -1001,6 +1023,53 @@ static bool test_protocol_trace_bounds_and_retained_failure(void)
 	return true;
 }
 
+static bool test_local_host_disconnect_attribution(void)
+{
+	struct app_config config = runtime_config(false);
+	config.sip.trace_enabled = true;
+	memset(&capture, 0, sizeof(capture));
+	struct modem_runtime *runtime = modem_runtime_create(&config, "local-end");
+	CHECK(runtime != NULL && modem_runtime_open(runtime) == MODEM_RUNTIME_OK,
+	      "local disconnect fixture failed");
+	struct modem *modem = modem_runtime_modem(runtime);
+	FILE *stream = tmpfile();
+	CHECK(stream != NULL, "local disconnect trace capture failed");
+	fflush(stderr);
+	int saved = dup(STDERR_FILENO);
+	CHECK(saved >= 0 && dup2(fileno(stream), STDERR_FILENO) >= 0,
+	      "cannot redirect local disconnect trace");
+	modem->started = 1;
+	capture.host_step_result = MODEM_HOST_MEDIA_TIMEOUT;
+	capture.emit_call = true;
+	capture.call.direction = SIP_CALL_DIRECTION_OUTGOING;
+	capture.call.state = SIP_CALL_IDLE;
+	enum modem_runtime_result result = modem_runtime_step(runtime, 20, NULL, NULL, NULL);
+	bool timeout_local = modem->disconnect_local &&
+		strcmp(modem->disconnect_reason, "remote RTP clock stopped") == 0;
+	/* Simulate a new active call, then close without another owner poll. */
+	modem->disconnect_reason = NULL;
+	modem->started = 1;
+	enum modem_runtime_result closed = modem_runtime_close(runtime);
+	bool shutdown_local = modem->disconnect_local &&
+		strcmp(modem->disconnect_reason, "local runtime shutdown") == 0;
+	modem_runtime_destroy(runtime);
+	fflush(stderr);
+	int restored = dup2(saved, STDERR_FILENO);
+	close(saved);
+	rewind(stream);
+	char output[2048] = { 0 };
+	size_t size = fread(output, 1, sizeof(output) - 1, stream);
+	fclose(stream);
+	CHECK(restored >= 0 && result == MODEM_RUNTIME_OK && closed == MODEM_RUNTIME_OK &&
+	      timeout_local && shutdown_local,
+	      "SIP cleanup replaced the local host or shutdown cause");
+	CHECK(size > 0 && strstr(output, "reason=remote RTP clock stopped") &&
+	      strstr(output, "reason=local runtime shutdown") &&
+	      !strstr(output, "origin=remote") && capture.level_reads == 1,
+	      "local shutdown lost its trace or emitted another heartbeat");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -1015,6 +1084,7 @@ int main(void)
 		{ "opt-in signaling trace", test_opt_in_signaling_trace },
 		{ "rate-limited call trace", test_call_trace_is_rate_limited },
 		{ "bounded protocol trace and retained disconnect", test_protocol_trace_bounds_and_retained_failure },
+		{ "local host disconnect attribution", test_local_host_disconnect_attribution },
 	};
 	unsigned int failures = 0;
 

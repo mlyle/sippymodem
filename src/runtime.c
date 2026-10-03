@@ -102,6 +102,29 @@ static void trace_signaling(void *context, const struct sip_trace_record *record
 		fputc('\n', stderr);
 }
 
+/* Emit the retained first cause once, including when shutdown has no next tick. */
+static void trace_disconnect(struct modem_runtime *runtime)
+{
+	const char *reason = runtime->modem->disconnect_reason;
+	if (!runtime->trace_enabled || reason == NULL ||
+	    runtime->modem->disconnect_sequence == runtime->trace_disconnect_sequence)
+		return;
+	char text[384];
+	int length = snprintf(text, sizeof(text),
+		"DISCONNECT origin=%s phase=%s step=%s reason=%s\n",
+		runtime->modem->disconnect_local ? "local" : "remote",
+		runtime->modem->disconnect_phase,
+		runtime->modem->disconnect_step, reason);
+	if (length > 0 && (size_t)length < sizeof(text)) {
+		struct sip_trace_record record = {
+			.origin = SIP_TRACE_ADAPTER, .level = 3,
+			.data = text, .size = (size_t)length,
+		};
+		trace_signaling(NULL, &record);
+	}
+	runtime->trace_disconnect_sequence = runtime->modem->disconnect_sequence;
+}
+
 struct modem_runtime *modem_runtime_create(
 	const struct app_config *config, const char *modem_name)
 {
@@ -238,9 +261,12 @@ enum modem_runtime_result modem_runtime_close(
 
 	if (runtime == NULL)
 		return MODEM_RUNTIME_INVALID_ARGUMENT;
+	if (runtime->modem->started)
+		modem_note_disconnect(runtime->modem, true, "local runtime shutdown");
 	stop_result = modem_report_remote_call_end(runtime->modem);
 	if (runtime->modem->started)
 		stop_result = modem_stop_now(runtime->modem);
+	trace_disconnect(runtime);
 	if (modem_host_is_open(runtime->host))
 		runtime->last_session_result =
 			modem_host_close(runtime->host);
@@ -369,7 +395,6 @@ static void trace_call(struct modem_runtime *runtime, uint64_t now_ns)
 	const struct dp *dp = runtime->modem->dp;
 	const char *phase = modem_call_phase(runtime->modem);
 	const char *step = modem_protocol_step(runtime->modem);
-	const char *reason = runtime->modem->disconnect_reason;
 	char text[384];
 	struct sip_trace_record record = {
 		.origin = SIP_TRACE_ADAPTER,
@@ -412,21 +437,7 @@ static void trace_call(struct modem_runtime *runtime, uint64_t now_ns)
 			runtime->trace_step = step;
 		}
 	}
-	/* The first cause is retained by the modem even after its datapump and
-	 * media are gone. Emit it once immediately, independently of the tick. */
-	if (reason != NULL && runtime->modem->disconnect_sequence !=
-	    runtime->trace_disconnect_sequence) {
-		length = snprintf(text, sizeof(text),
-			"DISCONNECT origin=%s phase=%s step=%s reason=%s\n",
-			runtime->modem->disconnect_local ? "local" : "remote",
-			runtime->modem->disconnect_phase,
-			runtime->modem->disconnect_step, reason);
-		if (length > 0 && (size_t)length < sizeof(text)) {
-			record.size = (size_t)length;
-			trace_signaling(NULL, &record);
-		}
-		runtime->trace_disconnect_sequence = runtime->modem->disconnect_sequence;
-	}
+	trace_disconnect(runtime);
 }
 
 enum modem_runtime_result modem_runtime_step(
@@ -448,6 +459,11 @@ enum modem_runtime_result modem_runtime_step(
 	terminal_result = advance_terminal(runtime, terminal_bytes_received);
 	runtime->last_host_result = modem_host_step(
 		runtime->host, now_ns, datagrams_received, frames_processed);
+	/* Retain our decision before the resulting SIP idle event is drained. */
+	if (runtime->last_host_result != MODEM_HOST_OK &&
+	    runtime->last_host_result != MODEM_HOST_IDLE)
+		modem_note_disconnect(runtime->modem, true,
+			modem_host_result_name(runtime->last_host_result));
 	calls_result = drain_call_transitions(runtime);
 	trace_call(runtime, now_ns);
 	if (runtime->recording_files != NULL &&
