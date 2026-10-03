@@ -170,6 +170,22 @@ class LiveCampaignProfileTests(unittest.TestCase):
         self.assertEqual(raw.feature, "v34-rate-ceiling")
         self.assertEqual(lapm.feature, "v34-rate-ceiling")
 
+    def test_v32_profiles_select_the_datapump_for_their_rates(self) -> None:
+        for family, datapump, rates in (
+            ("v32", 32, (4800, 9600)),
+            ("v32bis", 132, (7200, 12000, 14400)),
+        ):
+            for rate in rates:
+                for role in ROLES:
+                    for link_mode in LINK_MODES:
+                        case = CASES_BY_NAME[
+                            f"{family}-{rate}-{link_mode}-{role}"
+                        ]
+                        self.assertIn(
+                            f"AT+MS={datapump},0,{rate},{rate}",
+                            case.at_commands,
+                        )
+
     def test_pcm_cells_negotiate_below_their_rate_ceilings(self) -> None:
         for link_mode in (LINK_RAW, LINK_LAPM):
             case = CASES_BY_NAME[

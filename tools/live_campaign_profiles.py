@@ -379,7 +379,7 @@ def _build_cases() -> tuple[CampaignCase, ...]:
     add(_fixed("v32-4800", "v32", 32, 4800, 2400))
     add(_fixed("v32-9600", "v32", 32, 9600, 2400, level=0))
     for rate in (7200, 12000, 14400):
-        add(_fixed(f"v32bis-{rate}", "v32bis", 32, rate, 2400))
+        add(_fixed(f"v32bis-{rate}", "v32bis", 132, rate, 2400))
 
     v34_points = (
         # The interoperability peer advertises V.34 capability bits for
