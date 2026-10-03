@@ -1465,12 +1465,12 @@ static enum pcm_call_result retry_v92_upstream(struct pcm_call *call, bool backo
 	uint8_t previous = call->v92_upstream_retry_ceiling;
 	uint8_t rate = path->upstream.decoder.mapping.cpd.data_rate_number;
 	enum pcm_call_result result;
-	bool lower = backoff && (path->fast.stage == PCM_CALL_V92_FAST_IDLE || path->fast.b1_started) &&
+	bool lower = backoff && rate > 1u && (path->fast.stage == PCM_CALL_V92_FAST_IDLE || path->fast.b1_started) &&
 		call->v92_digital_phase4_configuration.upstream_selection == PCM_CALL_V92_UPSTREAM_DIRECT;
 
 	/* Automatic B1 mapping failures have a decreasing rate ceiling. Missing
-	 * media, fixed mappings and online failures share the bounded retry
-	 * allowance instead; every caller must charge it exactly once. */
+	 * media, fixed mappings, minimum-rate and online failures share the
+	 * bounded retry allowance; every caller must charge it exactly once. */
 	if (!call->b1_deadline_armed || !lower) {
 		enum v92_data_quality_result quality = v92_data_quality_retrain(
 			&call->pcm_upstream_quality);
@@ -1479,12 +1479,10 @@ static enum pcm_call_result retry_v92_upstream(struct pcm_call *call, bool backo
 	}
 
 	/* Preserve earlier rate ceilings. Fast exchange can lower the rate only
-	 * after its new B1u starts. A bad minimum-rate mapping cannot recover
-	 * during initial training; online calls retain their retry allowance. */
+	 * after its new B1u starts. At the minimum rate, retraining can still
+	 * replace a transiently damaged fit without changing caller policy. */
 	if (lower) {
-		if (rate <= 1u && call->b1_deadline_armed)
-			return PCM_CALL_UNUSABLE_SELECTION;
-		if (rate > 1u && (previous == 0u || rate <= previous))
+		if (previous == 0u || rate <= previous)
 			call->v92_upstream_retry_ceiling = rate - 1u;
 	}
 	result = begin_retrain(call, false);
