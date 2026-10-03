@@ -44,11 +44,6 @@ struct v92_upstream_channel {
 	/* Retain short-window gain evidence so a fit across a clock slip,
 	 * dropout or gain change cannot hide that change in a long filter. */
 	struct v92_upstream_channel_window window[V92_UPSTREAM_CHANNEL_WINDOWS];
-	/* Delayed-target moments over the same window as yy and xy. Shifting
-	 * the ordinary autocorrelations would introduce endpoint errors. */
-	int64_t previous_expected_energy;
-	int64_t second_expected_energy;
-	int64_t previous_expected_cross;
 	int64_t observed_autocorrelation[V92_UPSTREAM_CHANNEL_Z2_TAPS];
 	int64_t expected_autocorrelation[V92_UPSTREAM_CHANNEL_P1_TAPS + 1];
 	int64_t cross_correlation[V92_UPSTREAM_CHANNEL_CROSS_LAGS];

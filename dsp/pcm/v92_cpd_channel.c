@@ -29,6 +29,9 @@ static double cross(const struct v92_upstream_channel *channel, int lag, double 
 	return (double)channel->cross_correlation[V92_UPSTREAM_CHANNEL_PRECURSOR_LAGS + lag] / scale;
 }
 
+static int64_t moment(const struct v92_upstream_channel *channel,
+	bool left_observed, unsigned left, bool right_observed, unsigned right);
+
 static bool short_inverse(double main, double post, double second,
 	double error, double observed, double coefficients[TAPS])
 {
@@ -58,12 +61,12 @@ static bool short_inverse(double main, double post, double second,
 static bool solve_short_channel(const struct v92_upstream_channel *channel, double coefficients[TAPS])
 {
 	double scale = fmax(channel->expected_autocorrelation[0],
-		fmax(channel->previous_expected_energy, channel->observed_autocorrelation[0]));
+		fmax(moment(channel, false, 1u, false, 1u), channel->observed_autocorrelation[0]));
 
 	if (!(scale > 0.0))
 		return false;
 	double xx = channel->expected_autocorrelation[0] / scale;
-	double pp = channel->previous_expected_energy / scale;
+	double pp = moment(channel, false, 1u, false, 1u) / scale;
 	double xp = channel->expected_autocorrelation[1] / scale;
 	double yy = channel->observed_autocorrelation[0] / scale;
 	double xy = cross(channel, 0, scale), py = cross(channel, 1, scale);
@@ -82,9 +85,9 @@ static bool solve_short_channel(const struct v92_upstream_channel *channel, doub
 	/* Add a second delayed target only when the simpler fit was inadequate.
 	 * Eliminate its projection onto the first two columns, using exact
 	 * same-window moments rather than assuming stationarity at the edges. */
-	double ss = channel->second_expected_energy / scale;
+	double ss = moment(channel, false, 2u, false, 2u) / scale;
 	double xs = channel->expected_autocorrelation[2] / scale;
-	double ps = channel->previous_expected_cross / scale;
+	double ps = moment(channel, false, 1u, false, 2u) / scale;
 	double sy = cross(channel, 2, scale);
 	double x_projection = (xs * pp - ps * xp) / determinant;
 	double p_projection = (ps * xx - xs * xp) / determinant;

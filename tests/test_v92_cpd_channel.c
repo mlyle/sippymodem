@@ -319,7 +319,7 @@ static bool test_channel(enum g711_law law, double main, double post, double sec
 	return test_channel_model(law, main, post, second, rate, 0);
 }
 
-static bool test_short_channel_selection(void)
+static bool test_short_channel_selection(bool strong_boundaries)
 {
 	static const struct {
 		double main, post, second, third, noise;
@@ -355,6 +355,13 @@ static bool test_short_channel_selection(void)
 		for (unsigned n = 0; n < V92_UPSTREAM_CHANNEL_SYMBOLS; ++n) {
 			int16_t target = (int16_t)((int)(random_word(&random) % 8192u) - 4096);
 			int noise = (int)(random_word(&noise_random) % 8192u) - 4096;
+			/* Unequal prefix/tail energy exposes shifted-window errors in
+			 * the short fits, independently of the general Gram oracle. */
+			if (strong_boundaries && n >= V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS &&
+			    n < V92_UPSTREAM_CHANNEL_SYMBOLS - V92_UPSTREAM_CHANNEL_MAX_LAG) {
+				target /= 8;
+				noise /= 8;
+			}
 			int32_t input = (int32_t)lround(cases[index].main * target +
 				cases[index].post * previous + cases[index].second * second +
 				cases[index].third * third + cases[index].noise * noise);
@@ -413,7 +420,6 @@ static bool test_quantized_stability(void)
 		double energy = 4294967296.0, b = channels[i][0], c = channels[i][1];
 
 		channel.expected_autocorrelation[0] = (int64_t)energy;
-		channel.previous_expected_energy = channel.second_expected_energy = (int64_t)energy;
 		channel.cross_correlation[V92_UPSTREAM_CHANNEL_PRECURSOR_LAGS] = (int64_t)energy;
 		channel.cross_correlation[V92_UPSTREAM_CHANNEL_PRECURSOR_LAGS + 1u] = (int64_t)(energy * b);
 		channel.cross_correlation[V92_UPSTREAM_CHANNEL_PRECURSOR_LAGS + 2u] = (int64_t)(energy * c);
@@ -646,7 +652,8 @@ static bool test_training_changes(void)
 
 int main(void)
 {
-	if (!test_filter_padding() || !test_training_changes() || !test_rejections() || !test_receive_plan() || !test_short_channel_selection() ||
+	if (!test_filter_padding() || !test_training_changes() || !test_rejections() || !test_receive_plan() ||
+	    !test_short_channel_selection(false) || !test_short_channel_selection(true) ||
 	    !test_quantized_stability() || !test_finite_window_inverse(false) ||
 	    !test_finite_window_inverse(true))
 		return 1;
