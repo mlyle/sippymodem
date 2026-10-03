@@ -11121,13 +11121,18 @@ static bool test_initial_info1_loss(void)
 }
 
 static bool check_missing_probe_boundary(
-	enum pcm_protocol protocol, enum g711_law law, enum v90_modem_role role)
+	enum pcm_protocol protocol, enum g711_law law, enum v90_modem_role role,
+	bool peer_declines_v92)
 {
 	struct pcm_call_configuration analog_configuration =
-		protocol == PCM_PROTOCOL_V90 ? configuration(V90_ANALOG_MODEM, law) :
+		protocol == PCM_PROTOCOL_V90 ||
+		(peer_declines_v92 && role == V90_DIGITAL_MODEM) ?
+			configuration(V90_ANALOG_MODEM, law) :
 			v92_configuration(V90_ANALOG_MODEM, law);
 	struct pcm_call_configuration digital_configuration =
-		protocol == PCM_PROTOCOL_V90 ? configuration(V90_DIGITAL_MODEM, law) :
+		protocol == PCM_PROTOCOL_V90 ||
+		(peer_declines_v92 && role == V90_ANALOG_MODEM) ?
+			configuration(V90_DIGITAL_MODEM, law) :
 			v92_configuration(V90_DIGITAL_MODEM, law);
 	struct pcm_call analog, digital, waiting;
 	struct pcm_call *receiver = role == V90_DIGITAL_MODEM ? &digital : &analog;
@@ -11164,6 +11169,10 @@ static bool check_missing_probe_boundary(
 	}
 	CHECK(probe_started && receiver->round_trip_delay_stored &&
 	      receiver->peer_info0_stored, "missing-probe test missed the receive boundary");
+	CHECK(!peer_declines_v92 ||
+	      (receiver->protocol == PCM_PROTOCOL_V92 &&
+	       receiver->state.phase2.startup.protocol == PCM_PROTOCOL_V90),
+	      "mixed-protocol probe boundary did not retain the pending V.90 selection");
 	waiting = *receiver;
 	/* The reciprocal receiver searches successive L1 capture windows up to
 	 * the reversal deadline; the initial receiver uses one capture window. */
@@ -11218,8 +11227,14 @@ static bool test_missing_probe_recovery(void)
 		for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 			for (enum v90_modem_role role = V90_ANALOG_MODEM;
 			     role <= V90_DIGITAL_MODEM; ++role)
-				CHECK(check_missing_probe_boundary(protocol, law, role),
+				CHECK(check_missing_probe_boundary(protocol, law, role, false),
 				      "missing-probe retrain boundary failed");
+	/* A V.90 peer can decline V.92 in INFO0 before either L1 probe. */
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (enum v90_modem_role role = V90_ANALOG_MODEM;
+		     role <= V90_DIGITAL_MODEM; ++role)
+			CHECK(check_missing_probe_boundary(PCM_PROTOCOL_V92, law, role, true),
+			      "V.92-declining peer stopped full-retrain recovery");
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (enum call_impairment loss = CALL_INITIAL_L1_LOST;
 		     loss <= CALL_RECIPROCAL_L1_LOST; ++loss)

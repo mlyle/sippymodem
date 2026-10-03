@@ -128,7 +128,10 @@ static bool stored_peer_info0_is_valid(const struct pcm_call *call)
 	return pcm_info0_is_valid(call->protocol,
 		       call->local_role == V90_ANALOG_MODEM ?
 			       V90_DIGITAL_MODEM : V90_ANALOG_MODEM, &call->peer_info0) &&
+	       /* INFO0 can decline V.92 before INFO1 selects V.90. Retain that
+	        * pending selection through Phase 2 full-retrain recovery, too. */
 	       (call->protocol == PCM_PROTOCOL_V90 || call->stage == PCM_CALL_PHASE2 ||
+		call->stage == PCM_CALL_RETRAIN_SILENCE ||
 		(call->local_role == V90_ANALOG_MODEM ?
 			call->peer_info0.v92_digital.v92_capable :
 			call->peer_info0.v92_analog.v92_capable));
