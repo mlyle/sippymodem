@@ -140,8 +140,10 @@ V.92 are registered. V.90 can select every standard PCM downstream rate from
 allows 33600 bit/s, selecting a usable peer-offered symbol rate below the local
 ceiling; the final rate still depends on the peer's MP and measured quality.
 V.90 and V.92 share one PCM call state machine. V.92 supports PCM or conventional
-upstream and optional QC1/QCA1 Quick Connect startup (`AT+V92Q=1`). These experimental profiles
-can carry native duplex host data and perform full retrains. Sustained excessive
+upstream. Full V.8 startup is the default; enable optional QC1/QCA1 Quick Connect
+with `AT+V92Q=1` for compatible peers. Full startup avoids answerers that ignore
+the CM menu following QC1. These experimental profiles can carry native duplex
+host data and perform full retrains. Sustained excessive
 PCM-upstream residuals or ambiguous payload trigger up to two automatic full
 retrains per call; ambiguous bits are never delivered. Generated-channel tests
 are not evidence of robust operation on a physical line.

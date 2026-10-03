@@ -2444,7 +2444,7 @@ static bool test_at_pcm_profile_controls(void)
 
 	CHECK(modem != NULL &&
 		      modem_get_param(modem, MDMPRM_V90_DIGITAL_INDICATION) == MODEM_PCM_POLICY_AUTO &&
-		      modem_get_param(modem, MDMPRM_V92_QUICK_CONNECT) == 1 &&
+		      modem_get_param(modem, MDMPRM_V92_QUICK_CONNECT) == 0 &&
 		      modem_get_param(modem, MDMPRM_V92_PCM_UPSTREAM) == 0 &&
 		      modem->v90_upstream_min_rate == 0 &&
 		      modem->v90_upstream_max_rate == 0 &&
@@ -2538,10 +2538,12 @@ static bool test_at_pcm_profile_controls(void)
 	close(response_pipe[0]);
 	CHECK(response_length > 0 && strstr(response, "1,40000,69\r\n") != NULL,
 	      "PCM upstream query omitted the selected training level");
-	CHECK(process_at_command(modem, "ATZ") == 0 &&
+	CHECK(process_at_command(modem, "AT+V92Q=1") == 0 &&
+		      modem_get_param(modem, MDMPRM_V92_QUICK_CONNECT) == 1 &&
+		      process_at_command(modem, "ATZ") == 0 &&
 		      modem_get_param(
 			      modem, MDMPRM_V90_DIGITAL_INDICATION) == MODEM_PCM_POLICY_AUTO &&
-		      modem_get_param(modem, MDMPRM_V92_QUICK_CONNECT) == 1 &&
+		      modem_get_param(modem, MDMPRM_V92_QUICK_CONNECT) == 0 &&
 		      modem_get_param(modem, MDMPRM_V92_PCM_UPSTREAM) == 0 &&
 		      modem->v90_upstream_min_rate == 0 &&
 		      modem->v90_upstream_max_rate == 0 &&
