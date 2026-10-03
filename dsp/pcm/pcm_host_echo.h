@@ -119,9 +119,9 @@ uint32_t pcm_host_echo_window_delay_samples(
 /* Prediction is pure. TRAIN retains raw input while learning. FILTER keeps
  * coefficients frozen; independently qualified timing changes may reposition
  * the model, but cannot learn the peer's signal as a new echo response.
- * FILTER_DATA requires fresh support for a weak fitting margin; an
- * unsupported model is monitored without subtraction until its prediction
- * qualifies again. */
+ * FILTER_DATA suspends unsupported marginal fits and predictions that
+ * independently increase input energy. A suspended model is monitored without
+ * subtraction until fresh evidence qualifies it again. */
 enum pcm_host_echo_result pcm_host_echo_predict(
 	const struct pcm_host_echo *echo, enum pcm_host_echo_mode mode,
 	int16_t received_sample, int16_t *cleaned_sample);

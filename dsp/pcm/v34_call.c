@@ -826,7 +826,7 @@ enum v34_call_result v34_call_sample(
 	emitted.processed = call->stage;
 	/* Every consumed host sample retains its actual transmit reference,
 	 * including Phase 2 and silence. TRAIN preserves raw receive input;
-	 * Each duplex phase requires current confidence for a weak model. */
+	 * Each duplex phase monitors the frozen model. */
 	echo_mode = echo_is_training(call) ? PCM_HOST_ECHO_TRAIN :
 		(call->stage == V34_CALL_PHASE2 ||
 		 call->stage == V34_CALL_RETRAIN_SILENCE) ?

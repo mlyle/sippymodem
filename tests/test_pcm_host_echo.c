@@ -353,13 +353,13 @@ static bool test_near_window_seed(void)
 		int16_t returned = scale_q15(transmit_sample(index - 32u), 11000);
 		int16_t remote = remote_sample(index);
 
-		CHECK(echo_step(&echo, PCM_HOST_ECHO_FILTER, index,
+		CHECK(echo_step(&echo, PCM_HOST_ECHO_FILTER_DATA, index,
 			add_s16(returned + remote), &cleaned),
 		      "qualified near-return filtering failed");
 		returned_energy = energy_add(returned_energy, returned);
 		residual_energy = energy_add(residual_energy, (int32_t)cleaned - remote);
 	}
-	CHECK(residual_energy * 64u < returned_energy,
+	CHECK(!echo.filter_suspended && residual_energy * 64u < returned_energy,
 	      "near-return model failed the independent residual measurement");
 	return true;
 }
@@ -396,34 +396,37 @@ static bool test_negligible_return_does_not_qualify(void)
 	return true;
 }
 
-static bool test_runtime_model_confidence(void)
+static bool test_runtime_model_confidence(bool strong_fit)
 {
 	struct pcm_host_echo echo;
 	float coefficients[PCM_HOST_ECHO_FILTER_TAPS];
 	int16_t cleaned;
 	uint64_t returned_energy = 0, residual_energy = 0;
+	int16_t return_gain = strong_fit ? 11000 : 512;
 
 	CHECK(pcm_host_echo_init(&echo) == PCM_HOST_ECHO_OK &&
 	      pcm_host_echo_seed_window_delay(&echo, 1) == PCM_HOST_ECHO_OK,
 	      "runtime-confidence owner did not initialize");
 	for (size_t index = 0; index < 34000; ++index) {
 		int16_t returned = index >= 32 ?
-			scale_q15(transmit_sample(index - 32), 512) : 0;
-		int16_t received = index < 9500 ? add_s16(returned +
+			scale_q15(transmit_sample(index - 32), return_gain) : 0;
+		int16_t received = !strong_fit && index < 9500 ? add_s16(returned +
 			generated_sample(index, UINT32_C(0x5a177202), 160)) : returned;
 
 		CHECK(echo_step(&echo, index < 14000 ? PCM_HOST_ECHO_TRAIN :
 			PCM_HOST_ECHO_FILTER_DATA, index, received, &cleaned),
 		      "runtime-confidence acquisition failed at %zu", index);
 	}
-	CHECK(pcm_host_echo_is_ready(&echo) && pcm_host_echo_has_weak_margin(&echo) &&
+	CHECK(pcm_host_echo_is_ready(&echo) &&
+	      pcm_host_echo_has_weak_margin(&echo) == !strong_fit &&
 	      !echo.filter_suspended,
 	      "independently useful quiet-return prediction was suspended");
 	memcpy(coefficients, echo.coefficients, sizeof(coefficients));
-	/* A tiny return cannot establish current timing through a much stronger
-	 * independent peer. Stop altering receive samples, but retain the model. */
+	/* A tiny or absent return cannot establish current timing through a much
+	 * stronger independent peer. Retain the model without altering samples. */
 	for (size_t index = 34000; index < 74000; ++index) {
-		int16_t returned = scale_q15(transmit_sample(index - 32), 512);
+		int16_t returned = strong_fit ? 0 :
+			scale_q15(transmit_sample(index - 32), return_gain);
 		int16_t received = add_s16(returned +
 			generated_sample(index, UINT32_C(0x3450a107), 12000));
 
@@ -438,7 +441,7 @@ static bool test_runtime_model_confidence(void)
 	      memcmp(coefficients, echo.coefficients, sizeof(coefficients)) == 0,
 	      "runtime monitoring discarded or adapted the trained model");
 	{
-		int16_t returned = scale_q15(transmit_sample(74000 - 32), 512);
+		int16_t returned = scale_q15(transmit_sample(74000 - 32), return_gain);
 		int16_t training_cleaned;
 
 		CHECK(pcm_host_echo_predict(&echo, PCM_HOST_ECHO_FILTER,
@@ -449,7 +452,7 @@ static bool test_runtime_model_confidence(void)
 	/* With the peer quiet again, shadow predictions must independently
 	 * restore subtraction without another training interval. */
 	for (size_t index = 74000; index < 108000; ++index) {
-		int16_t returned = scale_q15(transmit_sample(index - 32), 512);
+		int16_t returned = scale_q15(transmit_sample(index - 32), return_gain);
 
 		CHECK(echo_step(&echo, PCM_HOST_ECHO_FILTER_DATA, index, returned, &cleaned),
 		      "shadow prediction failed at %zu", index);
@@ -1067,7 +1070,8 @@ int main(void)
 	    !test_prediction_energy_saturation() ||
 	    !test_long_delay_cancellation() ||
 	    !test_near_window_seed() || !test_negligible_return_does_not_qualify() ||
-	    !test_runtime_model_confidence() ||
+	    !test_runtime_model_confidence(false) ||
+	    !test_runtime_model_confidence(true) ||
 	    !test_phase2_delay_seed() ||
 	    !test_long_phase2_delay_seed() ||
 	    !test_weak_joint_margin() ||

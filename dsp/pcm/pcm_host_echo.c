@@ -503,15 +503,29 @@ static bool prediction_is_qualified(
 		       (__uint128_t)strength * input * energy;
 }
 
+static bool prediction_is_harmful(
+	int64_t cross, uint64_t energy, uint64_t input,
+	unsigned samples, unsigned strength)
+{
+	/* Subtraction changes energy by prediction_energy - 2 * cross.
+	 * Require that increase to exceed the uncertainty of the cross term;
+	 * its factor of two contributes four to the variance bound. */
+	__int128 excess = (__int128)energy - 2 * (__int128)cross;
+
+	return energy != 0 && excess > 0 &&
+	       (__uint128_t)excess * excess * samples >=
+		       (__uint128_t)4 * strength * input * energy;
+}
+
 static bool timing_is_qualified(
 	const struct pcm_host_echo_timing_evidence *e,
 	unsigned samples, unsigned strength)
 {
 	/* Require useful cancellation as well as correlation. Compare against
 	 * the current delay on the same input, including the peer's signal.
-	 * Strength is sample_count * r-squared. The long monitor uses 9 in
-	 * each window and 36 together; short windows use 3 and 12 for material
-	 * returns only. Agreement and a half-prediction-energy improvement are
+	 * Strength is sample_count * r-squared. Both monitors use 9 in
+	 * each window and 36 together; short windows require material returns
+	 * too. Agreement and a half-prediction-energy improvement are
 	 * required so unrelated input cannot win just by choosing another bin. */
 	__int128 improvement = 2 * ((__int128)e->cross - e->current_cross) -
 		((__int128)e->energy - e->current_energy);
@@ -522,8 +536,7 @@ static bool timing_is_qualified(
 }
 
 static bool finish_timing_window(struct pcm_host_echo *echo,
-	struct pcm_host_echo_timing_window *t, unsigned samples,
-	unsigned strength, unsigned combined_strength)
+	struct pcm_host_echo_timing_window *t, unsigned samples)
 {
 	const unsigned bins = PCM_HOST_ECHO_TIMING_BINS;
 	const unsigned radius = PCM_HOST_ECHO_TIMING_RADIUS;
@@ -537,14 +550,23 @@ static bool finish_timing_window(struct pcm_host_echo *echo,
 		.energy = t->energy[best], .current_energy = t->energy[radius],
 		.input = t->input,
 	};
-	bool qualified = timing_is_qualified(
-		&evidence, samples, strength);
+	bool qualified = timing_is_qualified(&evidence, samples, 9);
 	if (echo->weak_margin && !prediction_is_qualified(evidence.current_cross,
 		evidence.current_energy, evidence.input,
 		samples, 9))
 		echo->filter_suspended = true;
-	if (echo->weak_margin && t->second) {
-		/* A marginal training fit needs continued support in data.
+	if (t->second &&
+	    prediction_is_harmful(t->first.current_cross,
+		    t->first.current_energy, t->first.input, samples, 9) &&
+	    prediction_is_harmful(evidence.current_cross,
+		    evidence.current_energy, evidence.input, samples, 9) &&
+	    prediction_is_harmful(
+		    evidence.current_cross + t->first.current_cross,
+		    evidence.current_energy + t->first.current_energy,
+		    evidence.input + t->first.input, 2 * samples, 36))
+		echo->filter_suspended = true;
+	if ((echo->weak_margin || echo->filter_suspended) && t->second) {
+		/* A marginal or harmful prediction needs fresh support in data.
 		 * Reuse the timing monitor's independent confidence bounds at the
 		 * current delay. One unsupported window suspends subtraction;
 		 * two fresh windows are required to restore it. Keep testing the
@@ -581,7 +603,7 @@ static bool finish_timing_window(struct pcm_host_echo *echo,
 
 		/* Two disjoint windows must choose the same useful delay, and
 		 * the combined normalized correlation must be stronger still. */
-		if (timing_is_qualified(&combined, 2 * samples, combined_strength) &&
+		if (timing_is_qualified(&combined, 2 * samples, 36) &&
 		    delay > 0 && delay <= PCM_ECHO_REFERENCE_MAX_WINDOW_DELAY_SAMPLES &&
 		    (uint64_t)delay + PCM_HOST_ECHO_FILTER_TAPS - 1 <= echo->reference.fill &&
 		    pcm_echo_reference_start_scan(&echo->reference, (uint32_t)delay,
@@ -638,11 +660,11 @@ static void track_timing(
 	}
 	if (++t->fast.count == PCM_HOST_ECHO_FAST_TIMING_WINDOW &&
 	    finish_timing_window(echo, &t->fast,
-				 PCM_HOST_ECHO_FAST_TIMING_WINDOW, 3, 12))
+				 PCM_HOST_ECHO_FAST_TIMING_WINDOW))
 		return;
 	if (++t->slow.count == PCM_HOST_ECHO_TIMING_WINDOW)
 		finish_timing_window(echo, &t->slow,
-				     PCM_HOST_ECHO_TIMING_WINDOW, 9, 36);
+				     PCM_HOST_ECHO_TIMING_WINDOW);
 }
 
 static enum pcm_host_echo_result advance_predicted(
