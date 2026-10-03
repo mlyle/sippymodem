@@ -440,7 +440,8 @@ static bool test_info_interrupted_reversal(void)
 }
 
 static bool check_response_after_repeat(
-	enum test_codec codec, enum pcm_protocol protocol, bool acknowledge)
+	enum test_codec codec, enum pcm_protocol protocol, bool acknowledge,
+	bool late_first_ack)
 {
 	struct pcm_phase2_ranging ranging = { 0 };
 	struct phase2_info0_exchange peer;
@@ -481,14 +482,14 @@ static bool check_response_after_repeat(
 			    &ranging.info0_exchange) &&
 		    ranging.control.phase == PHASE2_WAIT_FIRST_REMOTE_REVERSAL &&
 		    peer.transmit_phase == PHASE2_INFO0_TONE) {
-			if (acknowledge && !initial_ack_started) {
+			if (acknowledge && !late_first_ack && !initial_ack_started) {
 				CHECK(encode_peer_info0(payload, V90_ANALOG_MODEM,
 					      protocol, codec, true) &&
 				      phase2_info0_exchange_restart_info(&peer, payload,
 					      payload_bits) == PHASE2_INFO0_EXCHANGE_OK,
 				      "peer initial acknowledgment did not start");
 				initial_ack_started = true;
-			} else if (!acknowledge || initial_ack_received) {
+			} else if (!acknowledge || late_first_ack || initial_ack_received) {
 				CHECK(v34_phase2_tone_transmitter_reverse(
 					      &peer.tone_transmitter) == V34_PHASE2_TONE_OK,
 				      "peer first reversal did not start");
@@ -559,9 +560,17 @@ static bool check_response_after_repeat(
 			repeat_started = true;
 		}
 		if (event.exchange_event.recovery_event == PCM_INFO0_LATE_ACK_RECEIVED) {
-			CHECK(!first_edge_started && ranging.control.phase == phase_before,
-			      "late acknowledgment restarted the original ranging turn");
-			initial_ack_received = true;
+			if (late_first_ack && response_started) {
+				recovery_accepted = true;
+				CHECK((ranging.control.phase == PHASE2_RANGING_INFO0_EXCHANGE ||
+				       ranging.control.phase == PHASE2_WAIT_FIRST_REMOTE_REVERSAL) &&
+				      ranging.control.measurement_elapsed_samples == 0,
+				      "first ACK after a response retained the old second-reversal wait");
+			} else {
+				CHECK(!first_edge_started && ranging.control.phase == phase_before,
+				      "late acknowledgment restarted the original ranging turn");
+				initial_ack_received = true;
+			}
 		}
 		if (repeat_started && event.exchange_event.recovery_event ==
 		    PCM_INFO0_RECOVERY_STARTED) {
@@ -612,7 +621,7 @@ static bool test_response_after_repeat(void)
 		for (enum pcm_protocol protocol = PCM_PROTOCOL_V90;
 		     protocol <= PCM_PROTOCOL_V92; ++protocol)
 			for (unsigned int ack = 0; ack < 2; ++ack)
-				CHECK(check_response_after_repeat(codec, protocol, ack != 0),
+				CHECK(check_response_after_repeat(codec, protocol, ack != 0, false),
 				      "response-after-repeat failed for %d/%d/%u",
 				      codec, protocol, ack);
 	return true;
@@ -1383,6 +1392,17 @@ static bool test_validation(void)
 	return true;
 }
 
+static bool test_response_after_late_first_ack(void)
+{
+	for (enum test_codec codec = TEST_CODEC_PCMU;
+	     codec <= TEST_CODEC_PCMA; ++codec)
+		for (enum pcm_protocol protocol = PCM_PROTOCOL_V90;
+		     protocol <= PCM_PROTOCOL_V92; ++protocol)
+			CHECK(check_response_after_repeat(codec, protocol, true, true),
+			      "response after late first ACK failed for %d/%d", codec, protocol);
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -1404,6 +1424,7 @@ int main(void)
 		{ "completed INFO0 repeat ordering",
 		  test_completed_exchange_repeat },
 		{ "validation", test_validation },
+		{ "response after late first ACK", test_response_after_late_first_ack },
 	};
 	unsigned int failures = 0;
 

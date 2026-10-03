@@ -302,7 +302,14 @@ enum pcm_phase2_ranging_result pcm_phase2_ranging_sample(
 			    &generated, &short_step))
 			return PCM_PHASE2_RANGING_INVALID_ARGUMENT;
 	} else {
-		if (exchange_event.recovery_event == PCM_INFO0_RECOVERY_ACCEPTED &&
+		/* A first ACK before ranging merely completes INFO0. Once we have
+		 * answered the first reversal, however, that verified record
+		 * interrupts the turn: the peer's next edge is a fresh first
+		 * reversal, not permission to receive L1. Restart only the ranging
+		 * controller; acknowledging the ACK would create an INFO0 loop. */
+		if ((exchange_event.recovery_event == PCM_INFO0_RECOVERY_ACCEPTED ||
+		     (exchange_event.recovery_event == PCM_INFO0_LATE_ACK_RECEIVED &&
+		      next.control.phase == PHASE2_SIGNAL_B_WAIT_SECOND_REMOTE_REVERSAL)) &&
 		    !restart_after_repeated_info0(&next))
 			return PCM_PHASE2_RANGING_INVALID_ARGUMENT;
 		if (phase2_ranging_finish_sample(
