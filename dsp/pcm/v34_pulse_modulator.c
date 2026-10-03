@@ -26,7 +26,7 @@ struct pulse_profile {
 };
 
 #include "v34_pulse_profiles.inc"
-#include "v34_preemphasis_profiles.inc"
+#include "v34_preemphasis_profiles.h"
 
 static const int16_t V34_PREEMPHASIS_IDENTITY[V34_PREEMPHASIS_TAPS] = {
 	[7] = V34_PULSE_OUTPUT_SCALE,
@@ -146,33 +146,12 @@ static bool channel_matches_profile(
 static const int16_t *selected_preemphasis(
 	enum v34_symbol_rate symbol_rate, uint8_t filter_index)
 {
-	const int16_t (*bank)[V34_PREEMPHASIS_TAPS] = NULL;
-
-	if (filter_index > V34_PREEMPHASIS_MAX_FILTER_INDEX)
+	if ((unsigned int)symbol_rate >= V34_SYMBOL_RATE_COUNT ||
+	    filter_index > V34_PREEMPHASIS_MAX_FILTER_INDEX)
 		return NULL;
 	if (filter_index == 0)
 		return V34_PREEMPHASIS_IDENTITY;
-	switch (symbol_rate) {
-	case V34_SYMBOL_RATE_2400:
-		bank = V34_PREEMPHASIS_2400;
-		break;
-	case V34_SYMBOL_RATE_2743:
-	case V34_SYMBOL_RATE_2800:
-		bank = V34_PREEMPHASIS_2800;
-		break;
-	case V34_SYMBOL_RATE_3000:
-		bank = V34_PREEMPHASIS_3000;
-		break;
-	case V34_SYMBOL_RATE_3200:
-		bank = V34_PREEMPHASIS_3200;
-		break;
-	case V34_SYMBOL_RATE_3429:
-		bank = V34_PREEMPHASIS_3429;
-		break;
-	case V34_SYMBOL_RATE_COUNT:
-		return NULL;
-	}
-	return bank != NULL ? bank[filter_index - 1u] : NULL;
+	return V34_PREEMPHASIS_PROFILES[symbol_rate][filter_index - 1u];
 }
 
 static bool point_range_is_representable(double maximum_power)

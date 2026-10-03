@@ -188,9 +188,9 @@ static bool test_tracked_onset_confirmation(void)
 	return true;
 }
 
-static bool feed_implicit_return(
+static bool feed_first_return(
 	struct v90_phase3_return_marker *rx, unsigned int offset,
-	bool expect_implicit_end)
+	bool distinct_s_bar)
 {
 	for (size_t symbol = 0; symbol < 192u; ++symbol) {
 		enum v90_phase3_return_rx_result expected =
@@ -199,17 +199,18 @@ static bool feed_implicit_return(
 
 		CHECK(v90_phase3_return_marker_observe(rx, s_rotation(symbol, offset)) ==
 			      expected,
-		      "implicit-return S changed at symbol %zu", symbol);
+		      "first-return S changed at symbol %zu", symbol);
 	}
-	for (size_t symbol = 0; symbol < V90_PHASE3_RETURN_RX_EXIT_SYMBOLS;
-	     ++symbol) {
-		enum v90_phase3_return_rx_result expected = expect_implicit_end &&
-			symbol + 1u == V90_PHASE3_RETURN_RX_EXIT_SYMBOLS ?
-				V90_PHASE3_RETURN_RX_S_ENDED : V90_PHASE3_RETURN_RX_OK;
+	for (size_t symbol = 0; symbol < V34_PHASE3_S_BAR_SYMBOLS; ++symbol) {
+		uint8_t rotation = distinct_s_bar ?
+			(uint8_t)((s_rotation(symbol, offset) + 2u) & 3u) :
+			(uint8_t)((offset + 1u) & 3u);
+		enum v90_phase3_return_rx_result expected = distinct_s_bar &&
+			symbol + 1u == V34_PHASE3_S_BAR_SYMBOLS ?
+				V90_PHASE3_RETURN_RX_S_BAR_DETECTED : V90_PHASE3_RETURN_RX_OK;
 
-		CHECK(v90_phase3_return_marker_observe(
-			      rx, (uint8_t)((offset + 1u) & 3u)) == expected,
-		      "implicit-return exit changed at symbol %zu", symbol);
+		CHECK(v90_phase3_return_marker_observe(rx, rotation) == expected,
+		      "first-return boundary changed at symbol %zu", symbol);
 	}
 	return true;
 }
@@ -218,22 +219,30 @@ static bool prepare_second_return(
 	unsigned int offset, struct v90_phase3_return_marker *rx)
 {
 	return v90_phase3_return_marker_init(rx, false) == V90_PHASE3_RETURN_RX_OK &&
-	       v90_phase3_return_marker_allow_implicit_s_end(rx) ==
-		       V90_PHASE3_RETURN_RX_OK &&
-	       feed_implicit_return(rx, offset, true) &&
+	       feed_first_return(rx, offset, true) &&
 	       v90_phase3_return_marker_restart(rx) == V90_PHASE3_RETURN_RX_OK &&
-	       rx->second_return && !rx->allow_implicit_s_end;
+	       rx->second_return;
 }
 
-static bool test_implicit_permission_reset(void)
+static bool test_missing_s_bar(void)
 {
 	struct v90_phase3_return_marker rx;
+	struct v90_phase3_return_marker saved;
 
+	CHECK(v90_phase3_return_marker_init(&rx, false) == V90_PHASE3_RETURN_RX_OK &&
+	      feed_first_return(&rx, 1, false) &&
+	      !v90_phase3_return_marker_is_complete(&rx),
+	      "first return accepted an arbitrary S ending");
+	saved = rx;
+	CHECK(v90_phase3_return_marker_restart(&rx) ==
+		      V90_PHASE3_RETURN_RX_INVALID_STATE &&
+	      memcmp(&rx, &saved, sizeof(rx)) == 0,
+	      "first return restarted before its complete S-bar");
 	CHECK(prepare_second_return(1, &rx) &&
-	      feed_implicit_return(&rx, 1, false) &&
+	      feed_first_return(&rx, 1, false) &&
 	      rx.stage == V90_PHASE3_RETURN_RX_STAGE_S &&
 	      !v90_phase3_return_marker_is_complete(&rx),
-	      "restart did not restore strict second-return detection");
+	      "second return accepted an arbitrary S ending");
 	return true;
 }
 
@@ -293,7 +302,7 @@ static bool test_second_return_bounds(void)
 	return true;
 }
 
-static bool run_marker_timeline(bool confirm_onset, bool implicit_first)
+static bool run_marker_timeline(bool confirm_onset)
 {
 	struct v90_phase3_return_marker rx;
 	struct v90_phase3_return_marker saved;
@@ -303,10 +312,8 @@ static bool run_marker_timeline(bool confirm_onset, bool implicit_first)
 		V90_PHASE3_RETURN_RX_ONSET_SYMBOLS;
 
 	CHECK(v90_phase3_return_marker_init(&rx, confirm_onset) ==
-		      V90_PHASE3_RETURN_RX_OK &&
-	      v90_phase3_return_marker_allow_implicit_s_end(&rx) ==
 		      V90_PHASE3_RETURN_RX_OK,
-	      "return marker did not initialize its first-return permission");
+	      "return marker did not initialize");
 	for (unsigned int epoch = 0; epoch < 2u; ++epoch) {
 		for (unsigned int symbol = 0; symbol < V34_PHASE3_S_SYMBOLS;
 		     ++symbol) {
@@ -318,23 +325,13 @@ static bool run_marker_timeline(bool confirm_onset, bool implicit_first)
 			CHECK(v90_phase3_return_marker_observe(&rx, rotation) ==
 				      expected,
 			      "epoch %u onset changed at symbol %u", epoch, symbol);
-			if (symbol + 1u == onset) {
-				saved = rx;
-				CHECK(v90_phase3_return_marker_allow_implicit_s_end(&rx) ==
-					      V90_PHASE3_RETURN_RX_INVALID_STATE &&
-				      memcmp(&rx, &saved, sizeof(rx)) == 0,
-				      "qualified S changed implicit-end permission");
-			}
 		}
 		for (unsigned int symbol = 0;
 		     symbol < V34_PHASE3_S_BAR_SYMBOLS; ++symbol) {
-			bool implicit = epoch == 0u && implicit_first;
-			uint8_t rotation = implicit ? 1u :
-				(uint8_t)((6u - (symbol & 1u)) & 3u);
+			uint8_t rotation = (uint8_t)((6u - (symbol & 1u)) & 3u);
 			enum v90_phase3_return_rx_result expected =
 				symbol + 1u != V34_PHASE3_S_BAR_SYMBOLS ?
 					V90_PHASE3_RETURN_RX_OK :
-				implicit ? V90_PHASE3_RETURN_RX_S_ENDED :
 					V90_PHASE3_RETURN_RX_S_BAR_DETECTED;
 
 			CHECK(v90_phase3_return_marker_observe(&rx, rotation) ==
@@ -343,19 +340,16 @@ static bool run_marker_timeline(bool confirm_onset, bool implicit_first)
 		}
 		saved = rx;
 		CHECK(v90_phase3_return_marker_observe(&rx, 0) ==
-			      (epoch == 0u && implicit_first ?
-				       V90_PHASE3_RETURN_RX_INVALID_STATE :
-				       V90_PHASE3_RETURN_RX_COMPLETE) &&
+			      V90_PHASE3_RETURN_RX_COMPLETE &&
 		      memcmp(&rx, &saved, sizeof(rx)) == 0,
 		      "epoch %u terminal marker consumed the next decision", epoch);
-		CHECK(v90_phase3_return_marker_get_detection(&rx, &detection) ==
-			      !(epoch == 0u && implicit_first),
-		      "epoch %u marker handoff confused implicit end and S-bar", epoch);
+		CHECK(v90_phase3_return_marker_get_detection(&rx, &detection),
+		      "epoch %u marker handoff lost S-bar", epoch);
 		if (epoch == 0u)
 			CHECK(v90_phase3_return_marker_restart(&rx) ==
 				      V90_PHASE3_RETURN_RX_OK && rx.second_return &&
 			      rx.confirm_onset == confirm_onset &&
-			      !rx.allow_implicit_s_end && rx.confirmed_s_symbols == 0,
+			      rx.confirmed_s_symbols == 0,
 			      "first return did not restart with strict second semantics");
 	}
 	CHECK(detection.clockwise_quarter_turn_offset == 0 &&
@@ -372,10 +366,7 @@ static bool test_marker_semantics(void)
 	struct v34_phase3_s_detection detection = { 2, 1, 1 };
 	struct v34_phase3_s_detection saved_detection = detection;
 
-	CHECK(run_marker_timeline(false, false) &&
-	      run_marker_timeline(false, true) &&
-	      run_marker_timeline(true, false) &&
-	      run_marker_timeline(true, true),
+	CHECK(run_marker_timeline(false) && run_marker_timeline(true),
 	      "return marker timelines failed");
 	CHECK(v90_phase3_return_marker_init(&rx, true) ==
 		      V90_PHASE3_RETURN_RX_OK,
@@ -457,7 +448,7 @@ int main(void)
 	} tests[] = {
 		{ "generated marker timelines", test_generated_timelines },
 		{ "tracked onset confirmation", test_tracked_onset_confirmation },
-		{ "implicit permission reset", test_implicit_permission_reset },
+		{ "missing S-bar", test_missing_s_bar },
 		{ "second-return bounds", test_second_return_bounds },
 		{ "marker semantics", test_marker_semantics },
 		{ "marker confirmation tail", test_marker_confirmation_tail },

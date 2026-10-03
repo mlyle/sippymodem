@@ -46,6 +46,9 @@ struct v90_upstream_training_rx {
 	uint16_t next_recent_decision;
 	uint16_t recent_decision_count;
 	enum v90_upstream_training_rx_stage stage;
+	/* Initial TRN and return S use four points. The protocol owner selects
+	 * Jd's negotiated SCR constellation while waiting through DIL. */
+	enum v34_constellation_size tracking_constellation;
 	bool failed;
 };
 

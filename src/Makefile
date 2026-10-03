@@ -36,6 +36,7 @@ DSP_V32_SOURCE_DIR := $(DSP_SOURCE_DIR)/v32
 DSP_PCM_SOURCE_DIR := $(DSP_SOURCE_DIR)/pcm
 
 PHASE_PROFILE_HEADER := ../.build/generated/phase_profile.h
+PREEMPHASIS_PROFILE_HEADER := ../.build/generated/v34_preemphasis_profiles.h
 CPPFLAGS += -D_POSIX_C_SOURCE=200809L -I. -I$(DSP_SOURCE_DIR) \
 	-I$(dir $(PHASE_PROFILE_HEADER)) \
 	-I$(DSP_V21_202_SOURCE_DIR) -I$(DSP_V22_SOURCE_DIR) \
@@ -451,11 +452,16 @@ $(DSP_SOURCE_DIR)/fixed_phase.o: $(PHASE_PROFILE_HEADER)
 $(PHASE_PROFILE_HEADER): $(DSP_SOURCE_DIR)/generate_phase_profile.py
 	$(PYTHON) $< $@
 
+$(DSP_PCM_SOURCE_DIR)/v34_pulse_modulator.o: $(PREEMPHASIS_PROFILE_HEADER)
+
+$(PREEMPHASIS_PROFILE_HEADER): $(DSP_PCM_SOURCE_DIR)/generate_preemphasis_profiles.py
+	$(PYTHON) $< $@
+
 clean:
 	rm -f slmodemd $(SOURCES:.c=.o) $(DEPENDENCIES)
 	rm -f modem_test modem_main.o modem_cmdline.o modem_test.o
 	rm -f modem_datafile.o dp_dummy.o dp_sinus.o
 	rm -f .build_profile .depend
-	rm -f $(PHASE_PROFILE_HEADER)
+	rm -f $(PHASE_PROFILE_HEADER) $(PREEMPHASIS_PROFILE_HEADER)
 
 -include $(DEPENDENCIES)

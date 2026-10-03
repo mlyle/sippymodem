@@ -17,7 +17,8 @@ enum {
 static bool semantic_state_is_valid(
 	const struct v90_upstream_training_rx *receiver)
 {
-	if (!v34_phase3_decision_receiver_is_valid(&receiver->initial) ||
+	if (!v34_constellation_size_is_valid(receiver->tracking_constellation) ||
+	    !v34_phase3_decision_receiver_is_valid(&receiver->initial) ||
 	    receiver->initial.transmitting_role !=
 		    receiver->transmitting_profile.local_role ||
 	    receiver->initial.md_symbols !=
@@ -106,6 +107,7 @@ enum v90_upstream_training_rx_result v90_upstream_training_rx_init(
 	memset(&initialized, 0, sizeof(initialized));
 	initialized.transmitting_profile = *transmitting_profile;
 	initialized.stage = V90_UPSTREAM_TRAINING_RX_INITIAL;
+	initialized.tracking_constellation = V34_CONSTELLATION_4_POINT;
 	if (v34_line_receiver_init(
 		    &initialized.line, transmitting_profile,
 		    initial_receive_gain, false,
@@ -216,7 +218,7 @@ static enum v90_upstream_training_rx_result receive_tracking(
 	}
 	/* Silence between return intervals cannot train a constellation point. */
 	if (!v34_training_constellation_has_signal(
-		    V34_CONSTELLATION_4_POINT, observation->decision)) {
+		    receiver->tracking_constellation, observation->decision)) {
 		if (v34_receive_timing_set_feedback_held(
 			    &receiver->line.timing, true) != V34_RECEIVE_TIMING_OK)
 			return V90_UPSTREAM_TRAINING_RX_NUMERIC_FAILURE;
@@ -230,7 +232,7 @@ static enum v90_upstream_training_rx_result receive_tracking(
 		struct v34_fixed_training_decision hard;
 
 		if (v34_training_constellation_fixed_slice(
-			    V34_CONSTELLATION_4_POINT, observation->decision,
+			    receiver->tracking_constellation, observation->decision,
 			    &hard) != V34_CONSTELLATION_OK)
 			return V90_UPSTREAM_TRAINING_RX_NUMERIC_FAILURE;
 		action = v34_receive_action_commit(

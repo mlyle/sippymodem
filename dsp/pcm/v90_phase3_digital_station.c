@@ -193,10 +193,6 @@ static enum v90_phase3_digital_station_result receive_initial(
 			    &station->jd, &handoff.ja.dil) !=
 			    PCM_PHASE3_DIGITAL_TX_OK)
 			return V90_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE;
-		if (handoff.ja.dil.segment_count != 0u &&
-		    v90_phase3_return_line_rx_allow_implicit_s_end(
-			    &returning) != V90_PHASE3_RETURN_LINE_RX_OK)
-			return V90_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE;
 		station->receive =
 			(union v90_phase3_digital_station_receive){ 0 };
 		station->receive.returning = returning;
@@ -244,7 +240,6 @@ static enum v90_phase3_digital_station_result receive_return(
 	switch (result) {
 	case V90_PHASE3_RETURN_LINE_RX_OK:
 		return V90_PHASE3_DIGITAL_STATION_OK;
-	case V90_PHASE3_RETURN_LINE_RX_S_ENDED:
 	case V90_PHASE3_RETURN_LINE_RX_S_BAR_DETECTED:
 		if (station->receive_stage ==
 			    V90_PHASE3_DIGITAL_RECEIVE_RETURN &&
@@ -258,6 +253,10 @@ static enum v90_phase3_digital_station_result receive_return(
 				return V90_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE;
 			station->receive_stage =
 				V90_PHASE3_DIGITAL_RECEIVE_DIL_RETURN;
+			/* V.90 8.4.2: Jd selects the SCR constellation during DIL.
+			 * Keep the trained line, and adapt to the points actually sent. */
+			station->receive.returning.upstream.tracking_constellation =
+				station->jd.training_constellation;
 			return V90_PHASE3_DIGITAL_STATION_OK;
 		}
 		if (station->receive_stage ==

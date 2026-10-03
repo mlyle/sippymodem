@@ -38,12 +38,11 @@ static bool onset_history_is_valid(
 
 static bool s_exit_is_valid(const struct v90_phase3_return_marker *rx)
 {
-	if (rx->exit_symbols > V90_PHASE3_RETURN_RX_EXIT_SYMBOLS ||
-	    rx->exit_errors > rx->exit_symbols)
+	if (rx->exit_symbols > V90_PHASE3_RETURN_RX_EXIT_SYMBOLS)
 		return false;
 	if (rx->exit_symbols != 0 &&
 	    rx->confirmed_s_symbols <
-		    V90_PHASE3_RETURN_RX_MIN_IMPLICIT_S_SYMBOLS)
+		    V90_PHASE3_RETURN_RX_MIN_SECOND_S_SYMBOLS)
 		return false;
 	return true;
 }
@@ -61,7 +60,6 @@ bool v90_phase3_return_marker_is_valid(
 			return rx->onset_offset == 0 &&
 			       rx->onset_errors == 0 &&
 			       rx->exit_symbols == 0 &&
-			       rx->exit_errors == 0 &&
 			       rx->marker.buffered_decisions == 0 &&
 			       !v34_phase3_s_receiver_is_complete(
 				       &rx->marker);
@@ -77,7 +75,7 @@ bool v90_phase3_return_marker_is_valid(
 			       V90_PHASE3_RETURN_RX_MAX_ONSET_ERRORS &&
 		       rx->marker.buffered_decisions ==
 			       rx->confirmed_s_symbols &&
-		       rx->exit_symbols == 0 && rx->exit_errors == 0 &&
+		       rx->exit_symbols == 0 &&
 		       !v34_phase3_s_receiver_is_complete(&rx->marker);
 	case V90_PHASE3_RETURN_RX_STAGE_S:
 		return rx->buffered_onset_decisions ==
@@ -90,14 +88,6 @@ bool v90_phase3_return_marker_is_valid(
 			       V90_PHASE3_RETURN_RX_MAX_ONSET_ERRORS &&
 		       rx->marker.buffered_decisions >=
 			       V90_PHASE3_RETURN_RX_ONSET_SYMBOLS &&
-		       !v34_phase3_s_receiver_is_complete(&rx->marker);
-	case V90_PHASE3_RETURN_RX_STAGE_IMPLICIT_END:
-		return !rx->allow_implicit_s_end &&
-		       rx->confirmed_s_symbols >=
-			       V90_PHASE3_RETURN_RX_MIN_IMPLICIT_S_SYMBOLS &&
-		       rx->exit_symbols == V90_PHASE3_RETURN_RX_EXIT_SYMBOLS &&
-		       rx->exit_errors >=
-			       V90_PHASE3_RETURN_RX_MIN_EXIT_ERRORS &&
 		       !v34_phase3_s_receiver_is_complete(&rx->marker);
 	case V90_PHASE3_RETURN_RX_STAGE_COMPLETE:
 		return rx->buffered_onset_decisions ==
@@ -137,24 +127,6 @@ enum v90_phase3_return_rx_result v90_phase3_return_marker_init(
 	return V90_PHASE3_RETURN_RX_OK;
 }
 
-enum v90_phase3_return_rx_result
-v90_phase3_return_marker_allow_implicit_s_end(
-	struct v90_phase3_return_marker *rx)
-{
-	struct v90_phase3_return_marker next;
-
-	if (!v90_phase3_return_marker_is_valid(rx))
-		return V90_PHASE3_RETURN_RX_INVALID_ARGUMENT;
-	if (rx->stage != V90_PHASE3_RETURN_RX_STAGE_SEARCH_S)
-		return V90_PHASE3_RETURN_RX_INVALID_STATE;
-	next = *rx;
-	next.allow_implicit_s_end = true;
-	if (!v90_phase3_return_marker_is_valid(&next))
-		return V90_PHASE3_RETURN_RX_NUMERIC_FAILURE;
-	*rx = next;
-	return V90_PHASE3_RETURN_RX_OK;
-}
-
 enum v90_phase3_return_rx_result v90_phase3_return_marker_restart(
 	struct v90_phase3_return_marker *rx)
 {
@@ -162,8 +134,7 @@ enum v90_phase3_return_rx_result v90_phase3_return_marker_restart(
 
 	if (!v90_phase3_return_marker_is_valid(rx))
 		return V90_PHASE3_RETURN_RX_INVALID_ARGUMENT;
-	if (rx->stage != V90_PHASE3_RETURN_RX_STAGE_COMPLETE &&
-	    rx->stage != V90_PHASE3_RETURN_RX_STAGE_IMPLICIT_END)
+	if (rx->stage != V90_PHASE3_RETURN_RX_STAGE_COMPLETE)
 		return V90_PHASE3_RETURN_RX_INVALID_STATE;
 	if (v90_phase3_return_marker_init(&restarted, rx->confirm_onset) !=
 	    V90_PHASE3_RETURN_RX_OK)
@@ -256,7 +227,6 @@ static bool reset_onset_candidate(
 	rx->onset_errors = 0;
 	rx->confirmed_s_symbols = 0;
 	rx->exit_symbols = 0;
-	rx->exit_errors = 0;
 	rx->stage = V90_PHASE3_RETURN_RX_STAGE_SEARCH_S;
 	(void)remember_onset(rx, rotation);
 	return true;
@@ -283,29 +253,20 @@ static enum v90_phase3_return_rx_result observe_s_exit(
 			V90_PHASE3_RETURN_RX_NUMERIC_FAILURE;
 	if (rx->exit_symbols == 0 &&
 	    (rx->confirmed_s_symbols <
-		     V90_PHASE3_RETURN_RX_MIN_IMPLICIT_S_SYMBOLS ||
+		     V90_PHASE3_RETURN_RX_MIN_SECOND_S_SYMBOLS ||
 	     matches)) {
 		if (rx->confirmed_s_symbols != UINT16_MAX)
 			rx->confirmed_s_symbols++;
 		return V90_PHASE3_RETURN_RX_OK;
 	}
 	rx->exit_symbols++;
-	if (!matches)
-		rx->exit_errors++;
 	if (rx->exit_symbols < V90_PHASE3_RETURN_RX_EXIT_SYMBOLS)
 		return V90_PHASE3_RETURN_RX_OK;
-	if (rx->allow_implicit_s_end &&
-	    rx->exit_errors >= V90_PHASE3_RETURN_RX_MIN_EXIT_ERRORS) {
-		rx->allow_implicit_s_end = false;
-		rx->stage = V90_PHASE3_RETURN_RX_STAGE_IMPLICIT_END;
-		return V90_PHASE3_RETURN_RX_S_ENDED;
-	}
 	if (UINT16_MAX - rx->confirmed_s_symbols < rx->exit_symbols)
 		rx->confirmed_s_symbols = UINT16_MAX;
 	else
 		rx->confirmed_s_symbols += rx->exit_symbols;
 	rx->exit_symbols = 0;
-	rx->exit_errors = 0;
 	return V90_PHASE3_RETURN_RX_OK;
 }
 
@@ -366,7 +327,6 @@ static bool result_commits(enum v90_phase3_return_rx_result result)
 {
 	return result == V90_PHASE3_RETURN_RX_OK ||
 	       result == V90_PHASE3_RETURN_RX_S_DETECTED ||
-	       result == V90_PHASE3_RETURN_RX_S_ENDED ||
 	       result == V90_PHASE3_RETURN_RX_S_BAR_DETECTED;
 }
 
@@ -380,8 +340,6 @@ enum v90_phase3_return_rx_result v90_phase3_return_marker_observe(
 		return V90_PHASE3_RETURN_RX_INVALID_ARGUMENT;
 	if (rx->stage == V90_PHASE3_RETURN_RX_STAGE_COMPLETE)
 		return V90_PHASE3_RETURN_RX_COMPLETE;
-	if (rx->stage == V90_PHASE3_RETURN_RX_STAGE_IMPLICIT_END)
-		return V90_PHASE3_RETURN_RX_INVALID_STATE;
 	next = *rx;
 	result = receive_decision(&next, rotation);
 	if (!result_commits(result))

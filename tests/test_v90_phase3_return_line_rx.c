@@ -117,13 +117,46 @@ static bool receive_return(
 	unsigned int post_points = 0;
 	bool started_s = false;
 	bool finished_s = false;
+	const unsigned int idle_symbols = tx->scr_during_idle ? 6000u :
+		RETURN_SILENCE_SYMBOLS;
 
 	for (uint32_t index = 0; index < SAMPLE_LIMIT; ++index) {
 		int16_t sample;
 		enum v90_phase3_return_line_rx_result result;
 
 		if (!started_s &&
-		    tx->points.silence_symbols == RETURN_SILENCE_SYMBOLS) {
+		    tx->points.silence_symbols == idle_symbols) {
+			if (tx->scr_during_idle) {
+				uint64_t error = 0, power = 0;
+
+				/* On this clean codec path, long SCR must preserve the
+				 * negotiated constellation, not converge to four points. */
+				for (size_t symbol = 0;
+				     symbol < rx->upstream.recent_decision_count;
+				     ++symbol) {
+					struct v34_analytic_sample decision;
+					struct v34_fixed_training_decision hard;
+
+					CHECK(v90_upstream_training_rx_recent_decision(
+						      &rx->upstream, symbol, &decision) &&
+					      v34_training_constellation_fixed_slice(
+						      tx->idle_scr.constellation, decision, &hard) ==
+						      V34_CONSTELLATION_OK,
+					      "SCR decision unavailable");
+					int64_t i = (int32_t)decision.in_phase -
+						hard.target.in_phase;
+					int64_t q = (int32_t)decision.quadrature -
+						hard.target.quadrature;
+
+					error += (uint64_t)(i * i + q * q);
+					power += (uint64_t)(
+						(int64_t)hard.target.in_phase * hard.target.in_phase +
+						(int64_t)hard.target.quadrature * hard.target.quadrature);
+				}
+				CHECK(power > 0 && 100u * error < power,
+				      "law %u SCR error %.4f exceeds clean-line bound", law,
+				      power ? (double)error / power : 1.0);
+			}
 			CHECK(v90_phase3_return_line_tx_start_s(tx) ==
 				      V90_PHASE3_RETURN_LINE_TX_OK,
 			      "law %d could not start return S", law);
@@ -143,9 +176,11 @@ static bool receive_return(
 		      "law %d return line stopped", law);
 		result = v90_phase3_return_line_rx_sample(
 			rx, quantize(law, (int16_t)((int32_t)sample * gain_q15 / 32768)));
-		if (result == V90_PHASE3_RETURN_LINE_RX_S_DETECTED)
+		if (result == V90_PHASE3_RETURN_LINE_RX_S_DETECTED) {
+			CHECK(rx->upstream.tracking_constellation == V34_CONSTELLATION_4_POINT,
+			      "return S retained the SCR constellation");
 			s_events++;
-		else
+		} else
 			CHECK(result == V90_PHASE3_RETURN_LINE_RX_OK,
 			      "law %d return line reported %s early", law,
 			      v90_phase3_return_line_rx_result_name(result));
@@ -196,7 +231,7 @@ static bool receive_return(
 	return true;
 }
 
-static bool run_line(enum g711_law law)
+static bool run_line(enum g711_law law, bool scr)
 {
 	struct v90_phase3_analog_line_tx prefix_tx;
 	struct v90_phase3_analog_line_handoff prefix_handoff;
@@ -287,8 +322,12 @@ static bool run_line(enum g711_law law)
 	      "law %d did not reach the second-return boundary", law);
 	/* Change the physical receive level before the second return, without
 	 * replacing any learned timing, carrier, equalizer, or sample history. */
+	if (scr)
+		return_rx.upstream.tracking_constellation = V34_CONSTELLATION_16_POINT;
 	CHECK(v90_phase3_return_line_rx_is_valid(&return_rx) &&
-	      v90_phase3_return_line_tx_init(&return_tx, &line) ==
+	      (scr ? v90_phase3_return_line_tx_init_scr(
+		      &return_tx, &line, V34_CONSTELLATION_16_POINT) :
+		      v90_phase3_return_line_tx_init(&return_tx, &line)) ==
 		      V90_PHASE3_RETURN_LINE_TX_OK &&
 	      receive_return(
 		      law, &return_tx, &return_rx, &line, &return_handoff, 24576),
@@ -374,8 +413,15 @@ static bool run_line(enum g711_law law)
 
 static bool test_g711_lines(void)
 {
-	CHECK(run_line(G711_LAW_PCMU) && run_line(G711_LAW_PCMA),
+	CHECK(run_line(G711_LAW_PCMU, false) && run_line(G711_LAW_PCMA, false),
 	      "G.711 return lines failed");
+	return true;
+}
+
+static bool test_negotiated_scr(void)
+{
+	CHECK(run_line(G711_LAW_PCMU, true) && run_line(G711_LAW_PCMA, true),
+	      "negotiated SCR corrupted the continuous return receiver");
 	return true;
 }
 
@@ -428,8 +474,6 @@ static bool run_fixed_returns(enum g711_law law, unsigned int silence_symbols)
 	CHECK(v90_phase3_analog_line_tx_handoff(&prefix, &tx) ==
 		      V90_PHASE3_ANALOG_LINE_TX_OK &&
 	      v90_phase3_return_marker_init(&marker, true) ==
-		      V90_PHASE3_RETURN_RX_OK &&
-	      v90_phase3_return_marker_allow_implicit_s_end(&marker) ==
 		      V90_PHASE3_RETURN_RX_OK,
 	      "law %d fixed return did not initialize", law);
 	for (unsigned int index = 0;
@@ -459,8 +503,11 @@ static bool run_fixed_returns(enum g711_law law, unsigned int silence_symbols)
 		else if (supplied >= second_s_start)
 			point = v34_rotated_point_zero(
 				(int)((supplied - second_s_start) & 1u));
-		else if (supplied >= first_s_end)
+		else if (supplied >= first_s_end + V34_PHASE3_S_BAR_SYMBOLS)
 			point = v34_rotated_point_zero(2);
+		else if (supplied >= first_s_end)
+			point = v34_rotated_point_zero(
+				(int)(2u + ((supplied - first_s_end) & 1u)));
 		else if (supplied >= silence_symbols)
 			point = v34_rotated_point_zero(
 				(int)((supplied - silence_symbols) & 1u));
@@ -542,15 +589,15 @@ static bool run_fixed_returns(enum g711_law law, unsigned int silence_symbols)
 			&marker, hard.clockwise_quarter_turns);
 		if (result == V90_PHASE3_RETURN_RX_S_DETECTED)
 			onset_events++;
-		else if (result == V90_PHASE3_RETURN_RX_S_ENDED) {
-			CHECK(!first_ended && onset_events == 1u &&
-			      marker.confirmed_s_symbols >=
-				      V90_PHASE3_RETURN_RX_MIN_IMPLICIT_S_SYMBOLS &&
-			      v90_phase3_return_marker_restart(&marker) ==
-				      V90_PHASE3_RETURN_RX_OK,
-			      "law %d fixed first return did not end implicitly", law);
-			first_ended = true;
-		} else if (result == V90_PHASE3_RETURN_RX_S_BAR_DETECTED) {
+		else if (result == V90_PHASE3_RETURN_RX_S_BAR_DETECTED) {
+			if (!first_ended) {
+				CHECK(onset_events == 1u &&
+				      v90_phase3_return_marker_restart(&marker) ==
+					      V90_PHASE3_RETURN_RX_OK,
+				      "law %d fixed first return lost its S-bar", law);
+				first_ended = true;
+				continue;
+			}
 			CHECK(first_ended && onset_events == 2u &&
 			      marker.confirmed_s_symbols == V34_PHASE3_S_SYMBOLS &&
 			      marker.marker.post_marker_symbols == 0u &&
@@ -651,6 +698,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "G.711 lines", test_g711_lines },
+		{ "negotiated SCR", test_negotiated_scr },
 		{ "fixed return decisions", test_fixed_returns },
 		{ "validation", test_validation },
 	};

@@ -50,22 +50,6 @@ enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_init(
 	return V90_PHASE3_RETURN_LINE_RX_OK;
 }
 
-enum v90_phase3_return_line_rx_result
-v90_phase3_return_line_rx_allow_implicit_s_end(
-	struct v90_phase3_return_line_rx *rx)
-{
-	enum v90_phase3_return_rx_result result;
-
-	if (!v90_phase3_return_line_rx_is_valid(rx))
-		return V90_PHASE3_RETURN_LINE_RX_INVALID_ARGUMENT;
-	result = v90_phase3_return_marker_allow_implicit_s_end(&rx->marker);
-	if (result == V90_PHASE3_RETURN_RX_OK)
-		return V90_PHASE3_RETURN_LINE_RX_OK;
-	if (result == V90_PHASE3_RETURN_RX_INVALID_STATE)
-		return V90_PHASE3_RETURN_LINE_RX_INVALID_STATE;
-	return V90_PHASE3_RETURN_LINE_RX_NUMERIC_FAILURE;
-}
-
 enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_restart(
 	struct v90_phase3_return_line_rx *rx)
 {
@@ -97,8 +81,6 @@ static enum v90_phase3_return_line_rx_result marker_result(
 		return V90_PHASE3_RETURN_LINE_RX_OK;
 	case V90_PHASE3_RETURN_RX_S_DETECTED:
 		return V90_PHASE3_RETURN_LINE_RX_S_DETECTED;
-	case V90_PHASE3_RETURN_RX_S_ENDED:
-		return V90_PHASE3_RETURN_LINE_RX_S_ENDED;
 	case V90_PHASE3_RETURN_RX_S_BAR_DETECTED:
 		return V90_PHASE3_RETURN_LINE_RX_S_BAR_DETECTED;
 	case V90_PHASE3_RETURN_RX_COMPLETE:
@@ -126,8 +108,6 @@ enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_sample(
 		return V90_PHASE3_RETURN_LINE_RX_FAILED;
 	if (v90_phase3_return_marker_is_complete(&rx->marker))
 		return V90_PHASE3_RETURN_LINE_RX_COMPLETE;
-	if (rx->marker.stage == V90_PHASE3_RETURN_RX_STAGE_IMPLICIT_END)
-		return V90_PHASE3_RETURN_LINE_RX_INVALID_STATE;
 	next = *rx;
 	upstream_result = v90_upstream_training_rx_sample(
 		&next.upstream, sample, &decision);
@@ -144,6 +124,10 @@ enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_sample(
 	} else if (upstream_result != V90_UPSTREAM_TRAINING_RX_OK) {
 		result = V90_PHASE3_RETURN_LINE_RX_NUMERIC_FAILURE;
 	}
+	/* SCR can use Jd's sixteen-point constellation; S/S-bar always use
+	 * four points. Resume their adaptation after the qualified S onset. */
+	if (result == V90_PHASE3_RETURN_LINE_RX_S_DETECTED)
+		next.upstream.tracking_constellation = V34_CONSTELLATION_4_POINT;
 	if (result == V90_PHASE3_RETURN_LINE_RX_NUMERIC_FAILURE) {
 		next.failed = true;
 		if (v90_phase3_return_line_rx_is_valid(&next))
@@ -237,8 +221,6 @@ const char *v90_phase3_return_line_rx_result_name(
 		return "ok";
 	case V90_PHASE3_RETURN_LINE_RX_S_DETECTED:
 		return "S detected";
-	case V90_PHASE3_RETURN_LINE_RX_S_ENDED:
-		return "S ended without S-bar";
 	case V90_PHASE3_RETURN_LINE_RX_S_BAR_DETECTED:
 		return "S-bar detected";
 	case V90_PHASE3_RETURN_LINE_RX_COMPLETE:

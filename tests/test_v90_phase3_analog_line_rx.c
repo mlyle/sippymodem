@@ -207,6 +207,10 @@ static bool check_fixed_sample_rejection(
 	      memcmp(&rx, &saved, sizeof(rx)) == 0 &&
 	      memcmp(&decision, &saved_decision, sizeof(decision)) == 0,
 	      "invalid or aliased fixed sample changed owner or output");
+	rx.tracking_constellation = (enum v34_constellation_size)8;
+	CHECK(!v90_upstream_training_rx_is_valid(&rx),
+	      "invalid tracking constellation was accepted");
+	rx = saved;
 	rx.line.initialized = false;
 	saved = rx;
 	CHECK(v90_upstream_training_rx_sample(&rx, 0, &decision) ==

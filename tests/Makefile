@@ -16,6 +16,7 @@ PJSIP_LDLIBS := $(shell \
 	$(PKG_CONFIG) --static --libs $(PJSIP_PACKAGE) 2>/dev/null)
 
 PHASE_PROFILE_HEADER := ../.build/generated/phase_profile.h
+PREEMPHASIS_PROFILE_HEADER := ../.build/generated/v34_preemphasis_profiles.h
 CPPFLAGS += -D_POSIX_C_SOURCE=200809L -I../src -I../dsp \
 	-I$(dir $(PHASE_PROFILE_HEADER)) \
 	-I../dsp/v21_202 -I../dsp/v22 -I../dsp/v32 -I../dsp/pcm
@@ -4801,6 +4802,11 @@ $(BUILD_DIR)/fixed_phase.o: \
 $(BUILD_DIR)/test_fixed_phase.o: $(PHASE_PROFILE_HEADER)
 
 $(PHASE_PROFILE_HEADER): $(DSP_SOURCE_DIR)/generate_phase_profile.py
+	$(PYTHON) $< $@
+
+$(BUILD_DIR)/v34_pulse_modulator.o: $(PREEMPHASIS_PROFILE_HEADER)
+
+$(PREEMPHASIS_PROFILE_HEADER): $(DSP_PCM_SOURCE_DIR)/generate_preemphasis_profiles.py
 	$(PYTHON) $< $@
 
 $(BUILD_DIR)/fractional_delay.o: \

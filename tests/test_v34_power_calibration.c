@@ -352,8 +352,8 @@ static bool test_generated_line_power(void)
 	      emphasized.mean_squared_amplitude !=
 		      unfiltered.mean_squared_amplitude &&
 	      mean_powers_are_equal(emphasized.mean_squared_amplitude,
-				   0x1.bcba7167b1fbfp-4) &&
-	      emphasized.peak_amplitude == 0x1.072p+0,
+				   0x1.6a8bc546d1addp-4) &&
+	      emphasized.peak_amplitude == 0x1.e07p-1,
 	      "line-power calibration ignored pre-emphasis");
 	return true;
 }

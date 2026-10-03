@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <v34_pulse_modulator.h>
+#include <integer_math.h>
 
 #include "test.h"
 
@@ -217,39 +218,112 @@ static bool test_all_profiles(void)
 	return true;
 }
 
-static bool test_fixed_line_oracle(void)
-{
-	uint32_t accepted = 0;
-	uint64_t hash = waveform_hash(
-		V34_SYMBOL_RATE_2400, true, 1, &accepted);
+enum { SPECTRUM_PHASES = 12, SPECTRUM_SAMPLES = 256 };
 
-	CHECK(hash == UINT64_C(0xa58931810ae8059e) && accepted == 1229,
-	      "fixed 2400-baud line oracle changed (%016llx/%u)",
-	      (unsigned long long)hash, accepted);
+static bool capture_impulses(
+	const struct v34_phase3_profile *profile, unsigned phases,
+	double samples[SPECTRUM_PHASES][2][SPECTRUM_SAMPLES])
+{
+	struct qam_channel channel = channel_for(profile);
+
+	for (unsigned phase = 0; phase < phases; ++phase) {
+		for (unsigned quadrature = 0; quadrature < 2; ++quadrature) {
+			struct v34_pulse_modulator modulator;
+			unsigned symbols = 0;
+
+			CHECK(v34_pulse_modulator_init(
+				      &modulator, profile, &channel, 1.0) ==
+				      V34_PULSE_MODULATOR_OK,
+			      "spectral impulse did not initialize");
+			for (unsigned sample = 0; sample < SPECTRUM_SAMPLES; ++sample) {
+				struct qam_point point = { 0 };
+				const struct qam_point *input = NULL;
+				bool accepted;
+
+				if (v34_pulse_modulator_needs_point(&modulator)) {
+					if (symbols++ == phase) {
+						point.in_phase = quadrature == 0;
+						point.quadrature = quadrature != 0;
+					}
+					input = &point;
+				}
+				CHECK(v34_pulse_modulator_sample(
+					      &modulator, input,
+					      &samples[phase][quadrature][sample],
+					      &accepted) == V34_PULSE_MODULATOR_OK,
+				      "spectral impulse did not transmit");
+			}
+		}
+	}
 	return true;
 }
 
 static bool test_preemphasis_profiles(void)
 {
-	uint64_t hash = UINT64_C(1469598103934665603);
+	/* V.34 5.4, Figures 1/2 and Tables 3/4: +/-1 dB about the
+	 * specified magnitude, with absolute power set separately. Measure
+	 * both I/Q impulses at multiple symbol phases to include the complete
+	 * pulse shaper, carrier and fixed-point FIR, without random PSD noise. */
+	for (unsigned rate = 0; rate < V34_SYMBOL_RATE_COUNT; ++rate) {
+		for (unsigned high = 0; high < 2; ++high) {
+			struct v34_phase3_profile profile = profile_for(rate, high);
+			double symbol_rate = (double)profile.symbol_rate_numerator /
+				profile.symbol_rate_denominator;
+			unsigned phases = (unsigned)(profile.symbol_rate_numerator /
+				gcd_u64(profile.symbol_rate_numerator,
+					(uint64_t)TEST_SAMPLE_RATE * profile.symbol_rate_denominator));
+			double carrier = (double)profile.carrier_frequency_numerator /
+				profile.carrier_frequency_denominator / symbol_rate;
 
-	for (unsigned int rate = 0; rate < V34_SYMBOL_RATE_COUNT; ++rate) {
-		for (uint8_t filter = 1;
-		     filter <= V34_PREEMPHASIS_MAX_FILTER_INDEX; ++filter) {
-			uint32_t accepted = 0;
-			uint64_t waveform = waveform_hash(
-				(enum v34_symbol_rate)rate,
-				rate == V34_SYMBOL_RATE_3429, filter, &accepted);
+			CHECK(phases > 0 && phases <= SPECTRUM_PHASES,
+			      "spectral clock has too many symbol phases");
+			for (unsigned filter = 0; filter <= 10; ++filter) {
+				double samples[SPECTRUM_PHASES][2][SPECTRUM_SAMPLES];
+				double minimum = INFINITY, maximum = -INFINITY;
 
-			CHECK(waveform != 0 && accepted != 0,
-			      "pre-emphasis profile %u/%u did not run",
-			      rate, filter);
-			hash = hash_u64(hash, waveform);
+				profile.preemphasis_filter_index = (uint8_t)filter;
+				CHECK(capture_impulses(&profile, phases, samples),
+				      "spectral capture failed at %u/%u/%u", rate, high, filter);
+				for (unsigned bin = 0; bin <= 128; ++bin) {
+					double normalized = carrier - 0.45 + 0.9 * bin / 128;
+					double magnitude, error, power = 0.0;
+					double cosine[SPECTRUM_SAMPLES], sine[SPECTRUM_SAMPLES];
+
+					if (filter > 5 && normalized > 0.4 && normalized < 0.8)
+						continue; /* The template leaves this transition free. */
+					magnitude = filter <= 5 ?
+						2 * filter * fmax(0, normalized - 0.2) :
+						normalized <= 0.4 ? 0 :
+						(filter - 5) * (0.5 + (normalized - 0.8) / 0.4);
+					for (unsigned sample = 0; sample < SPECTRUM_SAMPLES; ++sample) {
+						double angle = 2 * acos(-1.0) * normalized * symbol_rate *
+							sample / TEST_SAMPLE_RATE;
+						cosine[sample] = cos(angle);
+						sine[sample] = sin(angle);
+					}
+					for (unsigned phase = 0; phase < phases; ++phase) {
+						for (unsigned quadrature = 0; quadrature < 2; ++quadrature) {
+							double real = 0.0, imaginary = 0.0;
+
+							for (unsigned sample = 0; sample < SPECTRUM_SAMPLES; ++sample) {
+								real += samples[phase][quadrature][sample] * cosine[sample];
+								imaginary += samples[phase][quadrature][sample] * sine[sample];
+							}
+							power += real * real + imaginary * imaginary;
+						}
+					}
+					CHECK(isfinite(power) && power > 0,
+					      "transmit spectrum lost a passband frequency");
+					error = 10 * log10(power) - magnitude;
+					minimum = fmin(minimum, error);
+					maximum = fmax(maximum, error);
+				}
+				CHECK(maximum - minimum <= 2.0,
+				      "V.34 spectrum %u/%u/%u needs +/-%.3f dB", rate, high,
+				      filter, (maximum - minimum) / 2);
+			}
 		}
 	}
-	CHECK(hash == UINT64_C(0x00e51937842ca4e8),
-	      "integrated pre-emphasis profiles changed (%016llx)",
-	      (unsigned long long)hash);
 	return true;
 }
 
@@ -526,7 +600,6 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "all profiles", test_all_profiles },
-		{ "fixed line oracle", test_fixed_line_oracle },
 		{ "pre-emphasis profiles", test_preemphasis_profiles },
 		{ "transactional contract", test_transactional_contract },
 		{ "initialization and copy", test_initialization_and_copy },
