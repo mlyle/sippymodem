@@ -20,11 +20,14 @@ enum {
 		PCM_ECHO_REFERENCE_HISTORY_SAMPLES -
 		PCM_ECHO_REFERENCE_MAX_WINDOW_SAMPLES + 1,
 	PCM_ECHO_REFERENCE_SCAN_SPAN = 4096,
-	PCM_ECHO_REFERENCE_SCAN_STEP = 2,
+	/* Adjacent-delay averaging can cancel a QAM echo's correlation.
+	 * Preserve every sample phase throughout the bounded search. */
+	PCM_ECHO_REFERENCE_SCAN_STEP = 1,
 	PCM_ECHO_REFERENCE_SCAN_MIN_SAMPLES =
 		PCM_ECHO_REFERENCE_SAMPLE_RATE / 8,
 	PCM_ECHO_REFERENCE_SCAN_CADENCE = 512,
-	PCM_ECHO_REFERENCE_SCAN_MAX_CANDIDATES = 4097,
+	PCM_ECHO_REFERENCE_SCAN_MAX_CANDIDATES =
+		PCM_ECHO_REFERENCE_MAX_WINDOW_DELAY_SAMPLES,
 };
 
 _Static_assert(PCM_ECHO_REFERENCE_MAX_WINDOW_DELAY_SAMPLES +
@@ -53,9 +56,8 @@ struct pcm_echo_reference_scan_result {
  * Own the host-rate transmit history and one bounded delay-correlation scan.
  * Zero-initialize before use or to reset to empty history with no scan.
  * Delay candidates identify the start of a later adaptive-filter window;
- * pre_samples selects the known reference point within that window.  Each
- * correlation bin covers scan_step consecutive sample delays so a bounded
- * coarse scan has no unsampled delay phases.
+ * pre_samples selects the known reference point within that window. Each
+ * correlation bin measures one sample delay, without filtering the reference.
  */
 struct pcm_echo_reference {
 	int16_t samples[PCM_ECHO_REFERENCE_HISTORY_SAMPLES];

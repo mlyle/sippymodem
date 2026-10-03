@@ -225,9 +225,9 @@ static bool test_long_delay_scan(void)
 		index++;
 	}
 	CHECK(acquired, "700 ms return delay was not acquired");
-	CHECK(result.best_window_delay_samples == LONG_FILTER_DELAY - 1u,
+	CHECK(result.best_window_delay_samples == LONG_FILTER_DELAY,
 	      "long-delay scan selected %u instead of %u",
-	      result.best_window_delay_samples, LONG_FILTER_DELAY - 1u);
+	      result.best_window_delay_samples, LONG_FILTER_DELAY);
 	CHECK(result.current_window_delay_samples ==
 		      SHORT_FILTER_DELAY,
 	      "scan lost current delay: %u",
@@ -257,7 +257,7 @@ static bool test_long_delay_scan(void)
 			      report.sample_count ==
 				      PCM_ECHO_REFERENCE_SCAN_CADENCE * 2u &&
 			      report.best_window_delay_samples ==
-				      LONG_FILTER_DELAY - 1u,
+				      LONG_FILTER_DELAY,
 			      "cadenced scan report changed: result=%d samples=%u "
 			      "best=%u scan=%u",
 			      scan_result, report.sample_count,
@@ -305,6 +305,44 @@ static bool test_cluster_scan(uint32_t first_return, uint32_t pre_samples)
 	return true;
 }
 
+static bool test_opposite_adjacent_returns(void)
+{
+	struct pcm_echo_reference reference = { 0 };
+	struct pcm_echo_reference_scan_result scan;
+	const uint32_t delay = 2679u;
+	const size_t history = PCM_ECHO_REFERENCE_HISTORY_SAMPLES;
+
+	CHECK(pcm_echo_reference_start_scan(&reference, 1u, FILTER_PRE_SAMPLES) ==
+		      PCM_ECHO_REFERENCE_OK,
+	      "opposite return scan did not initialize");
+	for (size_t index = 0; index < history; ++index)
+		CHECK(pcm_echo_reference_push(&reference, reference_sample(index)) ==
+			      PCM_ECHO_REFERENCE_OK, "history did not fill");
+	for (size_t index = history;
+	     index < history + PCM_ECHO_REFERENCE_SCAN_MIN_SAMPLES; ++index) {
+		/* A two-tap high-pass return cancels against the average of the
+		 * same adjacent TX samples, despite having a strong linear echo. */
+		int16_t received = (int16_t)(
+			(reference_sample(index - delay) -
+			 reference_sample(index - delay - 1u)) / 4);
+		enum pcm_echo_reference_result result =
+			pcm_echo_reference_scan_observe(&reference, received, &scan);
+
+		CHECK(result == (index + 1u == history +
+			      PCM_ECHO_REFERENCE_SCAN_MIN_SAMPLES ?
+			      PCM_ECHO_REFERENCE_SCAN_READY : PCM_ECHO_REFERENCE_OK) &&
+		      pcm_echo_reference_push(&reference, reference_sample(index)) ==
+			      PCM_ECHO_REFERENCE_OK,
+		      "opposite return scan failed at %zu", index);
+	}
+	CHECK(scan.best_window_delay_samples <= delay &&
+	      scan.best_window_delay_samples + PCM_ECHO_REFERENCE_MAX_WINDOW_SAMPLES >
+		      delay + 1u && scan.best_correlation_ppm > 400000u,
+	      "adjacent returns were hidden: window=%u strength=%u",
+	      scan.best_window_delay_samples, scan.best_correlation_ppm);
+	return true;
+}
+
 int main(void)
 {
 	if (!test_ring_and_contracts() || !test_long_delay_scan() ||
@@ -312,7 +350,8 @@ int main(void)
 	    !test_cluster_scan(2967u, FILTER_PRE_SAMPLES) ||
 	    !test_cluster_scan(11424u, FILTER_PRE_SAMPLES) ||
 	    !test_cluster_scan(2u, 0u) ||
-	    !test_cluster_scan(2967u, PCM_ECHO_REFERENCE_MAX_WINDOW_SAMPLES - 1u))
+	    !test_cluster_scan(2967u, PCM_ECHO_REFERENCE_MAX_WINDOW_SAMPLES - 1u) ||
+	    !test_opposite_adjacent_returns())
 		return 1;
 	puts("PCM echo reference tests passed");
 	return 0;
