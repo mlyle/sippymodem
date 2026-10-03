@@ -231,7 +231,6 @@ static enum v90_upstream_rx_result accept_cp_record(
 	bool *event_ready)
 {
 	struct v90_cp_parameters parameters;
-	struct v90_pcm_mapping mapping;
 	enum v90_upstream_rx_result result;
 
 	if (!v90_phase4_cp_line_rx_pending_record_is_valid(
@@ -251,13 +250,13 @@ static enum v90_upstream_rx_result accept_cp_record(
 	}
 	if (parameters.kind == V90_CP_TRAINING) {
 		if (receiver->stage != V90_UPSTREAM_RX_STAGE_CP ||
-		    receiver->data_cp_received ||
-		    v90_pcm_mapping_init_transmit(
-			    &mapping, &parameters, receiver->training_mapping.law) !=
-			    V90_PCM_MAPPING_OK ||
-		    !v90_pcm_mapping_equal(
-			    &mapping, &receiver->training_mapping))
+		    receiver->data_cp_received)
 			return V90_UPSTREAM_RX_SEQUENCE_MISMATCH;
+		/* Ri has already acknowledged the original CPt and its mapping
+		 * owns our running training transmitter. Some peers send a final
+		 * CPt with revised constellations before their data CP. Consume
+		 * that record without changing the mapping or acknowledging data;
+		 * the call's existing training deadline still bounds this wait. */
 		return continue_cp(receiver);
 	}
 	/* CPs controls echo reconditioning, not a data-rate selection. In

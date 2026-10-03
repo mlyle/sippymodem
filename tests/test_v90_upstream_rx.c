@@ -334,6 +334,7 @@ static bool run_line(
 			V90_CP_DATA, codec_law, false,
 			rate_2400_bps_units);
 	struct v90_cp_parameters unadvertised = data;
+	struct v90_cp_parameters late_training = training;
 	struct v90_cp_parameters prime = data;
 	struct v90_cp_parameters expected_data;
 	struct v90_mp_record mp = local_mp(rate_2400_bps_units);
@@ -348,6 +349,7 @@ static bool run_line(
 	struct v34_data_line_receiver data_handoff;
 	bool data_started = false;
 	bool unadvertised_started = false;
+	bool late_training_started = false;
 	bool prime_started = false;
 	bool cp_finished = false;
 	bool e_started = false;
@@ -368,6 +370,10 @@ static bool run_line(
 	expected_data = data;
 	expected_data.acknowledges_peer = false;
 	unadvertised.selected_rate_index = 2;
+	/* A peer can finish training with a different, still CPt-marked
+	 * constellation before sending its actual data CP. Keep the original
+	 * training map and wait for an explicit data selection. */
+	add_ucode(&late_training.transmit_constellations[0], 25u);
 	CHECK(line_profile(symbol_rate, rate_2400_bps_units, &profile) &&
 	      v90_phase4_line_fixture_init_for_profile(
 		      &profile, law, constellation, &training, &cp_tx,
@@ -396,6 +402,9 @@ static bool run_line(
 		int16_t sample = 0;
 		bool sample_ready = false;
 
+		CHECK(v90_pcm_mapping_equal(&receiver.training_mapping, &training_mapping),
+		      "late CPt replaced the active training mapping");
+
 		if (!scr_complete && v90_phase4_cp_line_tx_record_is_complete(&cp_tx)) {
 			enum v90_phase4_cp_line_tx_result result =
 				v90_phase4_cp_line_tx_scr_sample(&cp_tx, scr_samples >= 128u, &sample);
@@ -409,7 +418,13 @@ static bool run_line(
 		}
 		if (!sample_ready && !e_started &&
 		    v90_phase4_cp_line_tx_record_is_complete(&cp_tx)) {
-			if (!unadvertised_started) {
+			if (!late_training_started) {
+				CHECK(v90_phase4_cp_line_tx_start_next_record(
+					      &cp_tx, &late_training) ==
+					      V90_PHASE4_CP_LINE_TX_OK,
+				      "late CPt did not start");
+				late_training_started = true;
+			} else if (!unadvertised_started) {
 				CHECK(v90_phase4_cp_line_tx_start_next_record(
 					      &cp_tx, &unadvertised) ==
 					      V90_PHASE4_CP_LINE_TX_OK,
