@@ -1,4 +1,10 @@
 {
+  "ata": {
+    "SIP_TARGET": "sip:modem@ata.example.invalid:5060",
+    "SIP_REGISTER": "0",
+    "SIP_PORT": "5060",
+    "SIP_CODEC": "PCMU/8000/1"
+  },
   "2600": {
     "SIP_LOGIN": "account:password@private-registrar.example.invalid:5060",
     "SIP_REGISTER": "1",

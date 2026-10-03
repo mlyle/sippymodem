@@ -167,7 +167,7 @@ def main() -> int:
         except KeyboardInterrupt:
             return 130
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("profile", choices=("2600", "pstn"))
+    parser.add_argument("profile", help="profile name from the configuration (e.g. pstn or ata)")
     parser.add_argument("--config", type=Path, default=ROOT / ".sip-terminal.json")
     parser.add_argument("--modem", type=Path, default=ROOT / "src/slmodemd")
     args = parser.parse_args()

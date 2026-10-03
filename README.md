@@ -238,15 +238,18 @@ identify files that do not already exist.
 For an interactive modem console, install `splitvt` and C-Kermit, copy
 `tools/sip-terminal.example.json` to the ignored `.sip-terminal.json`, make it
 owner-only (`chmod 600 .sip-terminal.json`), and fill in the private provider
-settings. Then run either:
+settings. Select any profile by name:
 
 ```
 python3 tools/modem_terminal.py 2600
 python3 tools/modem_terminal.py pstn
+python3 tools/modem_terminal.py ata
 ```
 
-These commands start the local `src/slmodemd` and register the selected account;
-they do not dial or set auto-answer. The top half shows live SIP trace and modem
+These commands start the local `src/slmodemd` with the selected profile. The
+example `ata` profile uses a direct SIP target with registration disabled;
+provider profiles register their selected account. The console waits for AT
+commands to dial or set auto-answer. The top half shows live SIP trace and modem
 errors, and the bottom half starts C-Kermit connected to the modem's PTY. Enter
 AT commands directly. `Ctrl-W` switches panes; `Ctrl-O` then `q` quits both and
 stops the modem. Kermit's `Ctrl-\` then `Q` also quits the console and stops the
