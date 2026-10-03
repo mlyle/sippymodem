@@ -361,7 +361,7 @@ static int tx_status(struct lapm_state *l, u8 addr, u8 pf_mask)
 /* V.42 9.2: select within the interval between the request and the default. */
 static bool select_xid_parameter(
 	unsigned int proposed, unsigned int received, unsigned int default_value,
-	unsigned int capacity, bool command, unsigned int *selected)
+	unsigned int capacity, bool command, bool *counteroffer, unsigned int *selected)
 {
 	unsigned int requested = command ? received : proposed;
 	unsigned int value = command ? proposed : received;
@@ -374,8 +374,15 @@ static bool select_xid_parameter(
 		if (value > maximum)
 			value = maximum;
 	}
-	if (value == 0 || value > capacity || value < minimum || value > maximum)
+	if (value == 0 || value > capacity)
 		return false;
+	if (value < minimum || value > maximum) {
+		/* A smaller peer window is a usable counterproposal, not a valid
+		 * response to our frozen request. Negotiate it in one new command. */
+		if (counteroffer == NULL || value >= requested || value >= default_value)
+			return false;
+		*counteroffer = true;
+	}
 	*selected = value;
 	return true;
 }
@@ -404,6 +411,7 @@ enum xid_decode_result {
 	XID_VALID = 0,
 	XID_MALFORMED = -1,
 	XID_INVALID_COMPRESSION = -2,
+	XID_COUNTEROFFER = 1,
 };
 
 /* The XID envelope has already validated each parameter's extent.
@@ -522,7 +530,7 @@ static enum xid_decode_result decode_xid(
 	struct lapm_xid_config peer;
 	struct modem_config local = l->modem->cfg;
 	unsigned int allowed;
-	bool command;
+	bool command, counteroffer = false;
 	size_t length;
 
 	if (f == NULL || f->buf == NULL || f->count < 2 || config == NULL)
@@ -561,13 +569,13 @@ static enum xid_decode_result decode_xid(
 	}
 	/* Table 11a directions are relative to the sending DCE. */
 	if (!select_xid_parameter(config->tx_info_size, peer.rx_info_size,
-		LAPM_DFLT_INFO_SIZE, LAPM_MAX_INFO_SIZE, command, &config->tx_info_size) ||
+		LAPM_DFLT_INFO_SIZE, LAPM_MAX_INFO_SIZE, command, NULL, &config->tx_info_size) ||
 	    !select_xid_parameter(config->rx_info_size, peer.tx_info_size,
-		LAPM_DFLT_INFO_SIZE, LAPM_MAX_INFO_SIZE, command, &config->rx_info_size) ||
+		LAPM_DFLT_INFO_SIZE, LAPM_MAX_INFO_SIZE, command, NULL, &config->rx_info_size) ||
 	    !select_xid_parameter(config->tx_win_size, peer.rx_win_size,
-		LAPM_DFLT_WIN_SIZE, LAPM_MAX_WIN_SIZE, command, &config->tx_win_size) ||
+		LAPM_DFLT_WIN_SIZE, LAPM_MAX_WIN_SIZE, command, &counteroffer, &config->tx_win_size) ||
 	    !select_xid_parameter(config->rx_win_size, peer.tx_win_size,
-		LAPM_DFLT_WIN_SIZE, LAPM_MAX_WIN_SIZE, command, &config->rx_win_size))
+		LAPM_DFLT_WIN_SIZE, LAPM_MAX_WIN_SIZE, command, &counteroffer, &config->rx_win_size))
 		return XID_MALFORMED;
 	if (fields.private_negotiation != NULL) {
 		enum xid_decode_result result = parse_xid_private_params(
@@ -594,7 +602,7 @@ static enum xid_decode_result decode_xid(
 		config->modem.comp_dict_size = local.comp_dict_size;
 	if (config->modem.comp_max_string > local.comp_max_string)
 		config->modem.comp_max_string = local.comp_max_string;
-	return XID_VALID;
+	return counteroffer ? XID_COUNTEROFFER : XID_VALID;
 }
 
 static bool apply_xid_config(
@@ -795,6 +803,19 @@ static enum rx_xid_response_result rx_xid_response(
 
 	if (decoded == XID_INVALID_COMPRESSION)
 		return RX_XID_RESPONSE_FATAL;
+	if (decoded == XID_COUNTEROFFER) {
+		struct lapm_v44_prepared retry;
+		struct v42_xid_fields fields;
+		u8 parameters[XID_PARAMETER_LENGTH], private_parameters[XID_PRIVATE_LENGTH];
+
+		build_xid_fields(&config, false, parameters, private_parameters, &fields);
+		if (lapm_v44_prepare_parameter_retry(&l->v44_session,
+			f->buf + 2, (size_t)f->count - 2U,
+			parameters, sizeof(parameters), &retry) == LAPM_V44_OK &&
+		    queue_xid(l, l->cmd_addr, &retry) == 0)
+			T401_START(l);
+		return RX_XID_RESPONSE_IGNORED;
+	}
 	if (decoded != XID_VALID)
 		return RX_XID_RESPONSE_IGNORED;
 	if (lapm_v44_accept_response(

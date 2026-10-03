@@ -68,6 +68,7 @@ struct lapm_v44_session {
 	enum lapm_v44_phase phase;
 	uint64_t revision;
 	bool initialized;
+	bool parameters_retried;
 	struct v44_offer command_offer;
 	struct v44_offer negotiated_offer;
 	struct v44_offer response_offer;
@@ -107,6 +108,15 @@ enum lapm_v44_result lapm_v44_prepare_retransmission(
 enum lapm_v44_result lapm_v44_prepare_retry_without_v44(
 	const struct lapm_v44_session *session,
 	const uint8_t *response, size_t response_length,
+	struct lapm_v44_prepared *prepared);
+
+/* Prepare one new proposal with caller-validated LAPM parameters. Compression
+ * groups remain owned by the frozen command. Queue before committing so
+ * backpressure cannot spend the retry or replace the pending proposal. */
+enum lapm_v44_result lapm_v44_prepare_parameter_retry(
+	const struct lapm_v44_session *session,
+	const uint8_t *response, size_t response_length,
+	const uint8_t *parameters, size_t parameters_length,
 	struct lapm_v44_prepared *prepared);
 
 /* Exact duplicate commands replay the committed response; base_fields is ignored. */

@@ -515,6 +515,61 @@ static bool test_dual_compression_retry(void)
 	return true;
 }
 
+static bool test_parameter_retry(void)
+{
+	const struct lapm_v44_config config = config_for(v44_default_offer());
+	struct lapm_v44_session session, before;
+	struct lapm_v44_prepared command, retry, retransmission;
+	struct v42_xid_fields base, decoded;
+	uint8_t parameters[19];
+	uint8_t malformed[sizeof(lapm_dual_compression_response)];
+	size_t request_offset;
+
+	CHECK(v42_xid_decode(lapm_dual_compression_response,
+		      sizeof(lapm_dual_compression_response), &base) == V42_XID_OK,
+	      "parameter retry fixture did not decode");
+	request_offset = (size_t)(base.user_data - lapm_dual_compression_response) + 11u;
+	base.user_data = NULL;
+	base.user_data_length = 0;
+	CHECK(lapm_v44_session_init(&session, &config) == LAPM_V44_OK &&
+	      lapm_v44_prepare_command(&session, &base, &command) == LAPM_V44_OK &&
+	      lapm_v44_commit(&session, &command) == LAPM_V44_OK,
+	      "parameter retry command did not initialize");
+	memcpy(parameters, base.parameter_negotiation, sizeof(parameters));
+	parameters[15] = 9;
+	before = session;
+	memcpy(malformed, lapm_dual_compression_response, sizeof(malformed));
+	malformed[request_offset] = 0xff;
+	CHECK(lapm_v44_prepare_parameter_retry(&session, malformed, sizeof(malformed),
+		      parameters, sizeof(parameters), &retry) == LAPM_V44_MALFORMED &&
+	      lapm_v44_prepare_parameter_retry(&session, lapm_dual_compression_response,
+		      sizeof(lapm_dual_compression_response) - 1u,
+		      parameters, sizeof(parameters), &retry) == LAPM_V44_MALFORMED &&
+	      memcmp(&before, &session, sizeof(before)) == 0,
+	      "malformed compression response spent the parameter retry");
+	CHECK(lapm_v44_prepare_parameter_retry(&session, lapm_dual_compression_response,
+		      sizeof(lapm_dual_compression_response), parameters, sizeof(parameters),
+		      &retry) == LAPM_V44_OK && memcmp(&before, &session, sizeof(before)) == 0 &&
+	      v42_xid_decode(retry.data, retry.length, &decoded) == V42_XID_OK &&
+	      decoded.parameter_negotiation_length == sizeof(parameters) &&
+	      memcmp(decoded.parameter_negotiation, parameters, sizeof(parameters)) == 0 &&
+	      decoded.private_negotiation_length == base.private_negotiation_length &&
+	      memcmp(decoded.private_negotiation, base.private_negotiation,
+		      base.private_negotiation_length) == 0 && decoded.user_data != NULL,
+	      "unqueued parameter retry changed the session or compression proposal");
+	CHECK(lapm_v44_commit(&session, &retry) == LAPM_V44_OK && session.parameters_retried &&
+	      lapm_v44_commit(&session, &retry) == LAPM_V44_STALE_TRANSACTION &&
+	      lapm_v44_prepare_parameter_retry(&session, lapm_dual_compression_response,
+		      sizeof(lapm_dual_compression_response), parameters, sizeof(parameters),
+		      &command) == LAPM_V44_INVALID_STATE &&
+	      lapm_v44_prepare_retransmission(&session, &retransmission) == LAPM_V44_OK &&
+	      retransmission.length == retry.length &&
+	      memcmp(retransmission.data, retry.data, retry.length) == 0 &&
+	      lapm_v44_session_call_reset(&session) == LAPM_V44_OK && !session.parameters_retried,
+	      "parameter retry repeated, changed on retransmit, or survived a new call");
+	return true;
+}
+
 static bool test_readiness_interlock(void)
 {
 	struct lapm_v44_config config =
@@ -564,6 +619,7 @@ int main(void)
 		{ "response errors and reset", test_response_errors_and_reset },
 		{ "readiness interlock", test_readiness_interlock },
 		{ "bounded dual compression recovery", test_dual_compression_retry },
+		{ "bounded parameter counterproposal", test_parameter_retry },
 	};
 	unsigned int failures = 0;
 

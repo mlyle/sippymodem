@@ -2747,7 +2747,7 @@ static bool test_at_v34_symbol_rate(void)
 	return true;
 }
 
-static bool test_lapm_dual_compression_retry(void)
+static bool exercise_lapm_dual_compression_retry(bool counteroffer)
 {
 	struct modem_driver driver = {
 		.name = "LAPM compression retry test",
@@ -2763,9 +2763,10 @@ static bool test_lapm_dual_compression_retry(void)
 	CHECK(caller != NULL, "compression retry caller could not be created");
 	caller->caller = 1;
 	caller->rx_rate = caller->tx_rate = 2400;
-	/* The fixture selects peer TX=12, RX=13; offer an interval containing them. */
-	caller->cfg.ec_tx_win_size = 13;
-	caller->cfg.ec_rx_win_size = 12;
+	if (!counteroffer) {
+		caller->cfg.ec_tx_win_size = 13;
+		caller->cfg.ec_rx_win_size = 12;
+	}
 	CHECK(modem_comp_init(caller) == 0 && modem_ec_init(caller) == 0,
 	      "compression retry initialization failed");
 	modem_ec_start(caller);
@@ -2796,6 +2797,33 @@ static bool test_lapm_dual_compression_retry(void)
 			caller->bit_timer == 1234 && caller->ec.lapm.rtx_count == 3;
 		caller->ec.lapm.ctrl_list->next = saved_next;
 		CHECK(unchanged, "retry queue pressure changed the command or its deadline");
+	}
+	if (counteroffer) {
+		caller->packer.hdlc.rx_complete(caller->packer.hdlc.framer, &incoming);
+		outgoing = caller->packer.hdlc.get_tx_frame(caller->packer.hdlc.framer);
+		CHECK(outgoing != NULL && outgoing->buf[1] == 0xaf &&
+		      caller->ec.lapm.v44_session.parameters_retried &&
+		      v42_xid_decode(outgoing->buf + 2, outgoing->size - 2, &fields) == V42_XID_OK &&
+		      fields.parameter_negotiation_length == 19 &&
+		      fields.parameter_negotiation[15] == 13 &&
+		      fields.parameter_negotiation[18] == 12 &&
+		      fields.private_negotiation != NULL && fields.user_data != NULL &&
+		      caller->ec.lapm.tx_win_size == 15 && caller->ec.lapm.rx_win_size == 15 &&
+		      caller->bit_timer == 14400,
+		      "smaller response windows were applied instead of counterproposed");
+		caller->packer.hdlc.tx_complete(caller->packer.hdlc.framer, outgoing);
+		before = caller->ec.lapm.v44_session;
+		caller->bit_timer = 1234;
+		caller->ec.lapm.rtx_count = 3;
+		received[21] = 10;
+		received[24] = 11;
+		caller->packer.hdlc.rx_complete(caller->packer.hdlc.framer, &incoming);
+		CHECK(memcmp(&before, &caller->ec.lapm.v44_session, sizeof(before)) == 0 &&
+		      caller->bit_timer == 1234 && caller->ec.lapm.rtx_count == 3 &&
+		      caller->packer.hdlc.get_tx_frame(caller->packer.hdlc.framer) == NULL,
+		      "a second window counterproposal extended negotiation");
+		received[21] = 12;
+		received[24] = 13;
 	}
 	caller->packer.hdlc.rx_complete(caller->packer.hdlc.framer, &incoming);
 	CHECK(caller->ec.lapm.v44_path == NULL &&
@@ -2837,6 +2865,16 @@ static bool test_lapm_dual_compression_retry(void)
 	modem_comp_exit(caller);
 	modem_delete(caller);
 	return true;
+}
+
+static bool test_lapm_dual_compression_retry(void)
+{
+	return exercise_lapm_dual_compression_retry(false);
+}
+
+static bool test_lapm_xid_window_counteroffer(void)
+{
+	return exercise_lapm_dual_compression_retry(true);
 }
 
 static bool test_lapm_xid_parameters(void)
@@ -3815,6 +3853,8 @@ static bool test_lapm_xid_numeric_values(void)
 		int command_size = 0, timer;
 		bool info = cases[index].parameter == 5;
 		bool valid = response ? cases[index].response_ok : cases[index].command_ok;
+		bool counteroffer = response && cases[index].parameter == 7 &&
+			cases[index].length == 1 && cases[index].bytes[0] == 1;
 		unsigned int value = response ? cases[index].response_value : cases[index].command_value;
 		struct v42_xid_fields fields = {
 			.parameter_negotiation = cases[index].parameter ? parameters : NULL,
@@ -3855,6 +3895,17 @@ static bool test_lapm_xid_numeric_values(void)
 		incoming.count = 2 + length;
 		m->packer.hdlc.rx_complete(m->packer.hdlc.framer, &incoming);
 		outgoing = m->packer.hdlc.get_tx_frame(m->packer.hdlc.framer);
+		if (counteroffer) {
+			CHECK(outgoing != NULL && outgoing->buf[1] == 0xaf &&
+			      m->ec.lapm.v44_session.parameters_retried &&
+			      m->ec.lapm.tx_win_size == 15 && m->ec.lapm.rx_win_size == 15,
+			      "smaller window response bypassed a new proposal");
+			m->packer.hdlc.tx_complete(m->packer.hdlc.framer, outgoing);
+			m->packer.hdlc.rx_complete(m->packer.hdlc.framer, &incoming);
+			outgoing = m->packer.hdlc.get_tx_frame(m->packer.hdlc.framer);
+			valid = true;
+			value = 1;
+		}
 		if (!valid) {
 			CHECK(outgoing == NULL && m->bit_timer == timer &&
 				      (m->ec.lapm.v44_session.phase == LAPM_V44_COMMAND_PENDING) == (response != 0) &&
@@ -9012,6 +9063,7 @@ int main(void)
 		{ "LAPM V.42bis small transmit buffers", test_lapm_v42bis_transmit_pressure },
 		{ "LAPM XID negotiation directions", test_lapm_xid_directions },
 		{ "LAPM XID numeric values", test_lapm_xid_numeric_values },
+		{ "LAPM XID window counterproposal", test_lapm_xid_window_counteroffer },
 		{ "LAPM simultaneous XID negotiation", test_lapm_xid_collisions },
 		{ "LAPM repeated XID parameters", test_lapm_repeated_xid_parameters },
 		{ "bounded LAPM XID envelopes", test_lapm_xid_envelopes },

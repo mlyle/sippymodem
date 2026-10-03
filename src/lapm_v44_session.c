@@ -10,6 +10,7 @@ enum prepared_action {
 	PREPARED_RESPONSE,
 	PREPARED_DUPLICATE_RESPONSE,
 	PREPARED_RETRY_WITHOUT_V44,
+	PREPARED_PARAMETER_RETRY,
 };
 
 static bool session_is_valid(
@@ -302,6 +303,48 @@ enum lapm_v44_result lapm_v44_prepare_retry_without_v44(
 	return LAPM_V44_OK;
 }
 
+enum lapm_v44_result lapm_v44_prepare_parameter_retry(
+	const struct lapm_v44_session *session,
+	const uint8_t *response, size_t response_length,
+	const uint8_t *parameters, size_t parameters_length,
+	struct lapm_v44_prepared *prepared)
+{
+	struct lapm_v44_prepared candidate = { 0 };
+	struct v42_xid_fields fields;
+	struct v44_offer peer, selected;
+	bool present, private_present, include_v44;
+	enum lapm_v44_result result;
+
+	if (!session_is_valid(session) || parameters == NULL ||
+	    parameters_length == 0 || prepared == NULL)
+		return LAPM_V44_INVALID_ARGUMENT;
+	if (session->phase != LAPM_V44_COMMAND_PENDING || session->parameters_retried)
+		return LAPM_V44_INVALID_STATE;
+	result = decode_peer_offer(response, response_length,
+		&present, &private_present, &peer);
+	if (result != LAPM_V44_OK)
+		return result;
+	if (present && v44_xid_negotiate(&session->command_offer, &peer, &selected) != V44_XID_OK)
+		return LAPM_V44_MALFORMED;
+	if (v42_xid_decode(session->command, session->command_length, &fields) != V42_XID_OK)
+		return LAPM_V44_MALFORMED;
+	include_v44 = fields.user_data != NULL;
+	fields.user_data = NULL;
+	fields.user_data_length = 0;
+	fields.parameter_negotiation = parameters;
+	fields.parameter_negotiation_length = parameters_length;
+	candidate.owner = session;
+	candidate.revision = session->revision;
+	candidate.action = PREPARED_PARAMETER_RETRY;
+	candidate.offer = session->command_offer;
+	result = encode_envelope(&fields, &candidate.offer, include_v44,
+		candidate.data, &candidate.length);
+	if (result != LAPM_V44_OK)
+		return result;
+	*prepared = candidate;
+	return LAPM_V44_OK;
+}
+
 enum lapm_v44_result lapm_v44_commit(
 	struct lapm_v44_session *session,
 	const struct lapm_v44_prepared *prepared)
@@ -314,13 +357,18 @@ enum lapm_v44_result lapm_v44_commit(
 	if (prepared->owner != session || prepared->revision != session->revision)
 		return LAPM_V44_STALE_TRANSACTION;
 	switch (prepared->action) {
+	case PREPARED_PARAMETER_RETRY:
 	case PREPARED_RETRY_WITHOUT_V44:
 	case PREPARED_COMMAND:
-		if ((prepared->action == PREPARED_COMMAND && session->phase != LAPM_V44_READY) ||
+		if ((prepared->action == PREPARED_PARAMETER_RETRY &&
+		     (session->phase != LAPM_V44_COMMAND_PENDING || session->parameters_retried)) ||
+		    (prepared->action == PREPARED_COMMAND && session->phase != LAPM_V44_READY) ||
 		    (prepared->action == PREPARED_RETRY_WITHOUT_V44 &&
 		     (session->phase != LAPM_V44_COMMAND_PENDING ||
 		      !v44_offer_has_direction(&session->command_offer))))
 			return LAPM_V44_STALE_TRANSACTION;
+		if (prepared->action == PREPARED_PARAMETER_RETRY)
+			session->parameters_retried = true;
 		session->command_offer = prepared->offer;
 		session->command_length = prepared->length;
 		memcpy(session->command, prepared->data, prepared->length);
