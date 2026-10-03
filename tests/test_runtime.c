@@ -1002,6 +1002,12 @@ static bool test_protocol_trace_bounds_and_retained_failure(void)
 	/* A second call can end with the same literal between owner polls. */
 	modem->disconnect_sequence = 2;
 	(void)modem_runtime_step(runtime, UINT64_C(1060000000), NULL, NULL, NULL);
+	/* A peer hangup must remain unmistakable after releasing the datapump. */
+	modem->disconnect_sequence = 3;
+	modem->disconnect_local = false;
+	modem->disconnect_reason = "remote SIP call ended";
+	(void)modem_runtime_step(runtime, UINT64_C(1080000000), NULL, NULL, NULL);
+	(void)modem_runtime_step(runtime, UINT64_C(1100000000), NULL, NULL, NULL);
 	fflush(stderr);
 	int restored = dup2(saved, STDERR_FILENO);
 	close(saved);
@@ -1017,8 +1023,9 @@ static bool test_protocol_trace_bounds_and_retained_failure(void)
 		++updates;
 	for (char *p = output; (p = strstr(p, "DISCONNECT ")) != NULL; ++p)
 		++failures;
-	CHECK(updates == 1 && failures == 2 && strstr(output, "step=phase2/INFO0") &&
-	      strstr(output, "DISCONNECT origin=local phase=training step=V.8/CM-wait-JM reason=menu exchange timeout"),
+	CHECK(updates == 1 && failures == 3 && strstr(output, "step=phase2/INFO0") &&
+	      strstr(output, "DISCONNECT origin=local phase=training step=V.8/CM-wait-JM reason=menu exchange timeout; we ended the call") &&
+	      strstr(output, "DISCONNECT origin=remote phase=training step=V.8/CM-wait-JM reason=remote SIP call ended; the peer ended the call"),
 	      "protocol trace flooded, lost its current step, or missed the retained cause");
 	return true;
 }

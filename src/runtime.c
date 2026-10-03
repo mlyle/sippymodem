@@ -111,10 +111,12 @@ static void trace_disconnect(struct modem_runtime *runtime)
 		return;
 	char text[384];
 	int length = snprintf(text, sizeof(text),
-		"DISCONNECT origin=%s phase=%s step=%s reason=%s\n",
+		"DISCONNECT origin=%s phase=%s step=%s reason=%s; %s\n",
 		runtime->modem->disconnect_local ? "local" : "remote",
 		runtime->modem->disconnect_phase,
-		runtime->modem->disconnect_step, reason);
+		runtime->modem->disconnect_step, reason,
+		runtime->modem->disconnect_local ?
+			"we ended the call" : "the peer ended the call");
 	if (length > 0 && (size_t)length < sizeof(text)) {
 		struct sip_trace_record record = {
 			.origin = SIP_TRACE_ADAPTER, .level = 3,
