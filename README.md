@@ -139,7 +139,9 @@ Smart Link sample processor to that host at the exact 8 kHz SIP media clock. The
 daemon now owns that runtime directly, publishes its pseudoterminal path on
 standard output, and shuts down cleanly on SIGINT or SIGTERM. V.21, V.22, Bell
 103, Bell 212A, V.23, V.22bis, V.32/V.32bis, Baudot TTY/TDD, V.34, V.90, and
-V.92 are registered. V.90 can select every standard PCM downstream rate from
+V.92 are registered. V.34 permits independent transmit and receive bit rates
+when the peer supports them, retaining a common rate for symmetric-only peers.
+V.90 can select every standard PCM downstream rate from
 28000 through 56000 bit/s and a conventional V.34 upstream from 4800 through
 33600 bit/s at 3000, 3200, or 3429 symbol/s. Automatic conventional upstream
 allows 33600 bit/s, selecting a usable peer-offered symbol rate below the local

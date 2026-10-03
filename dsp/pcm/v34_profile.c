@@ -171,6 +171,7 @@ static struct v34_mp_record local_mp(
 				 * comparable interoperability coverage. */
 				.remote_transmitter_trellis = V34_TRELLIS_16_STATE,
 				.data_rate_capability_mask = rate_mask,
+				.asymmetric_rates_enabled = true,
 			},
 		},
 	};

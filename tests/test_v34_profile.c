@@ -204,6 +204,40 @@ static bool test_validation(void)
 	return true;
 }
 
+static bool test_independent_direction_rates(void)
+{
+	struct v34_call_configuration caller;
+	struct v34_call_configuration answerer;
+	struct v34_mp_rates rates;
+	uint16_t caller_mask, answerer_mask;
+
+	CHECK(v34_profile_init(&caller, &caller_mask, V34_CALLING_STATION,
+		      V34_MIN_BIT_RATE, V34_MAX_BIT_RATE, 0) == V34_PROFILE_OK &&
+	      v34_profile_init(&answerer, &answerer_mask, V34_ANSWERING_STATION,
+		      V34_MIN_BIT_RATE, V34_MAX_BIT_RATE, 0) == V34_PROFILE_OK,
+	      "directional profiles did not initialize");
+	/* Each receiver limits only its own direction after training. */
+	caller.phase4.transmit_mp.parameters.type1.common
+		.maximum_answer_to_call_rate_2400_bps_units = 8;
+	answerer.phase4.transmit_mp.parameters.type1.common
+		.maximum_call_to_answer_rate_2400_bps_units = 9;
+	CHECK(v34_mp_select_rates(&caller.phase4.transmit_mp,
+		      &answerer.phase4.transmit_mp, &rates) == V34_MP_RATE_OK &&
+	      rates.asymmetric_rates_enabled &&
+	      rates.call_to_answer_2400_bps_units == 9 &&
+	      rates.answer_to_call_2400_bps_units == 8,
+	      "one receiver's ceiling limited both directions");
+	answerer.phase4.transmit_mp.parameters.type1.common
+		.asymmetric_rates_enabled = false;
+	CHECK(v34_mp_select_rates(&caller.phase4.transmit_mp,
+		      &answerer.phase4.transmit_mp, &rates) == V34_MP_RATE_OK &&
+	      !rates.asymmetric_rates_enabled &&
+	      rates.call_to_answer_2400_bps_units == 8 &&
+	      rates.answer_to_call_2400_bps_units == 8,
+	      "symmetric-only peer did not retain a common rate");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -213,6 +247,7 @@ int main(void)
 		{ "fixed symbol rates", test_fixed_symbol_rates },
 		{ "caller forced selection", test_caller_forces_remote_selection },
 		{ "automatic profile", test_automatic_profile },
+		{ "independent direction rates", test_independent_direction_rates },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

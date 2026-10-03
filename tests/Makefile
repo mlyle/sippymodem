@@ -1273,6 +1273,7 @@ V34_PHASE2_SELECTION_TEST_OBJECTS := \
 V34_PROFILE_TEST_BINARY := $(BUILD_DIR)/test_v34_profile
 V34_PROFILE_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v34_profile.o \
+	$(BUILD_DIR)/v34_mp.o \
 	$(BUILD_DIR)/v34_phase2_probe.o \
 	$(BUILD_DIR)/v34_phase2_probe_receiver.o \
 	$(BUILD_DIR)/v34_phase2_probe_spectrum.o \
