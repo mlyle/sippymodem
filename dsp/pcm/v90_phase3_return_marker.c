@@ -40,10 +40,21 @@ static bool s_exit_is_valid(const struct v90_phase3_return_marker *rx)
 {
 	if (rx->exit_symbols > V90_PHASE3_RETURN_RX_EXIT_SYMBOLS)
 		return false;
+	for (unsigned phase = 0; phase < 4u; ++phase)
+		if (rx->exit_errors[phase] > rx->exit_symbols)
+			return false;
 	if (rx->exit_symbols != 0 &&
 	    rx->confirmed_s_symbols <
-		    V90_PHASE3_RETURN_RX_MIN_SECOND_S_SYMBOLS)
+		    V90_PHASE3_RETURN_RX_MIN_IMPLICIT_S_SYMBOLS)
 		return false;
+	return true;
+}
+
+static bool s_exit_is_nonperiodic(const struct v90_phase3_return_marker *rx)
+{
+	for (unsigned phase = 0; phase < 4u; ++phase)
+		if (rx->exit_errors[phase] < V90_PHASE3_RETURN_RX_MIN_EXIT_ERRORS)
+			return false;
 	return true;
 }
 
@@ -52,7 +63,8 @@ bool v90_phase3_return_marker_is_valid(
 {
 	if (rx == NULL || !v34_phase3_s_receiver_is_valid(&rx->marker) ||
 	    rx->marker.s_symbols != V90_PHASE3_RETURN_RX_MARKER_SUFFIX_SYMBOLS ||
-	    !onset_history_is_valid(rx) || !s_exit_is_valid(rx))
+	    !onset_history_is_valid(rx) || !s_exit_is_valid(rx) ||
+	    (rx->allow_implicit_s_end && rx->second_return))
 		return false;
 	switch (rx->stage) {
 	case V90_PHASE3_RETURN_RX_STAGE_SEARCH_S:
@@ -88,6 +100,13 @@ bool v90_phase3_return_marker_is_valid(
 			       V90_PHASE3_RETURN_RX_MAX_ONSET_ERRORS &&
 		       rx->marker.buffered_decisions >=
 			       V90_PHASE3_RETURN_RX_ONSET_SYMBOLS &&
+		       !v34_phase3_s_receiver_is_complete(&rx->marker);
+	case V90_PHASE3_RETURN_RX_STAGE_IMPLICIT_END:
+		return !rx->allow_implicit_s_end &&
+		       rx->confirmed_s_symbols >=
+			       V90_PHASE3_RETURN_RX_MIN_IMPLICIT_S_SYMBOLS &&
+		       rx->exit_symbols == V90_PHASE3_RETURN_RX_EXIT_SYMBOLS &&
+		       s_exit_is_nonperiodic(rx) &&
 		       !v34_phase3_s_receiver_is_complete(&rx->marker);
 	case V90_PHASE3_RETURN_RX_STAGE_COMPLETE:
 		return rx->buffered_onset_decisions ==
@@ -127,6 +146,24 @@ enum v90_phase3_return_rx_result v90_phase3_return_marker_init(
 	return V90_PHASE3_RETURN_RX_OK;
 }
 
+enum v90_phase3_return_rx_result
+v90_phase3_return_marker_allow_implicit_s_end(
+	struct v90_phase3_return_marker *rx)
+{
+	struct v90_phase3_return_marker next;
+
+	if (!v90_phase3_return_marker_is_valid(rx))
+		return V90_PHASE3_RETURN_RX_INVALID_ARGUMENT;
+	if (rx->stage != V90_PHASE3_RETURN_RX_STAGE_SEARCH_S || rx->second_return)
+		return V90_PHASE3_RETURN_RX_INVALID_STATE;
+	next = *rx;
+	next.allow_implicit_s_end = true;
+	if (!v90_phase3_return_marker_is_valid(&next))
+		return V90_PHASE3_RETURN_RX_NUMERIC_FAILURE;
+	*rx = next;
+	return V90_PHASE3_RETURN_RX_OK;
+}
+
 enum v90_phase3_return_rx_result v90_phase3_return_marker_restart(
 	struct v90_phase3_return_marker *rx)
 {
@@ -134,7 +171,8 @@ enum v90_phase3_return_rx_result v90_phase3_return_marker_restart(
 
 	if (!v90_phase3_return_marker_is_valid(rx))
 		return V90_PHASE3_RETURN_RX_INVALID_ARGUMENT;
-	if (rx->stage != V90_PHASE3_RETURN_RX_STAGE_COMPLETE)
+	if (rx->stage != V90_PHASE3_RETURN_RX_STAGE_COMPLETE &&
+	    rx->stage != V90_PHASE3_RETURN_RX_STAGE_IMPLICIT_END)
 		return V90_PHASE3_RETURN_RX_INVALID_STATE;
 	if (v90_phase3_return_marker_init(&restarted, rx->confirm_onset) !=
 	    V90_PHASE3_RETURN_RX_OK)
@@ -227,6 +265,8 @@ static bool reset_onset_candidate(
 	rx->onset_errors = 0;
 	rx->confirmed_s_symbols = 0;
 	rx->exit_symbols = 0;
+	for (unsigned phase = 0; phase < 4u; ++phase)
+		rx->exit_errors[phase] = 0;
 	rx->stage = V90_PHASE3_RETURN_RX_STAGE_SEARCH_S;
 	(void)remember_onset(rx, rotation);
 	return true;
@@ -253,20 +293,34 @@ static enum v90_phase3_return_rx_result observe_s_exit(
 			V90_PHASE3_RETURN_RX_NUMERIC_FAILURE;
 	if (rx->exit_symbols == 0 &&
 	    (rx->confirmed_s_symbols <
-		     V90_PHASE3_RETURN_RX_MIN_SECOND_S_SYMBOLS ||
+		     V90_PHASE3_RETURN_RX_MIN_IMPLICIT_S_SYMBOLS ||
 	     matches)) {
 		if (rx->confirmed_s_symbols != UINT16_MAX)
 			rx->confirmed_s_symbols++;
 		return V90_PHASE3_RETURN_RX_OK;
 	}
+	/* A carrier quarter-turn can change S's absolute phase without ending
+	 * its alternating pattern. Only an exit from every phase can permit
+	 * the legacy first-return fallback; the complete S-bar remains preferred. */
+	for (uint8_t phase = 0; phase < 4u; ++phase)
+		if (rotation != expected_s_rotation(
+			    (size_t)rx->confirmed_s_symbols + rx->exit_symbols, phase))
+			rx->exit_errors[phase]++;
 	rx->exit_symbols++;
 	if (rx->exit_symbols < V90_PHASE3_RETURN_RX_EXIT_SYMBOLS)
 		return V90_PHASE3_RETURN_RX_OK;
+	if (rx->allow_implicit_s_end && s_exit_is_nonperiodic(rx)) {
+		rx->allow_implicit_s_end = false;
+		rx->stage = V90_PHASE3_RETURN_RX_STAGE_IMPLICIT_END;
+		return V90_PHASE3_RETURN_RX_S_ENDED;
+	}
 	if (UINT16_MAX - rx->confirmed_s_symbols < rx->exit_symbols)
 		rx->confirmed_s_symbols = UINT16_MAX;
 	else
 		rx->confirmed_s_symbols += rx->exit_symbols;
 	rx->exit_symbols = 0;
+	for (unsigned phase = 0; phase < 4u; ++phase)
+		rx->exit_errors[phase] = 0;
 	return V90_PHASE3_RETURN_RX_OK;
 }
 
@@ -327,6 +381,7 @@ static bool result_commits(enum v90_phase3_return_rx_result result)
 {
 	return result == V90_PHASE3_RETURN_RX_OK ||
 	       result == V90_PHASE3_RETURN_RX_S_DETECTED ||
+	       result == V90_PHASE3_RETURN_RX_S_ENDED ||
 	       result == V90_PHASE3_RETURN_RX_S_BAR_DETECTED;
 }
 
@@ -340,6 +395,8 @@ enum v90_phase3_return_rx_result v90_phase3_return_marker_observe(
 		return V90_PHASE3_RETURN_RX_INVALID_ARGUMENT;
 	if (rx->stage == V90_PHASE3_RETURN_RX_STAGE_COMPLETE)
 		return V90_PHASE3_RETURN_RX_COMPLETE;
+	if (rx->stage == V90_PHASE3_RETURN_RX_STAGE_IMPLICIT_END)
+		return V90_PHASE3_RETURN_RX_INVALID_STATE;
 	next = *rx;
 	result = receive_decision(&next, rotation);
 	if (!result_commits(result))

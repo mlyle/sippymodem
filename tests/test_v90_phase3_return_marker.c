@@ -246,6 +246,79 @@ static bool test_missing_s_bar(void)
 	return true;
 }
 
+static bool test_legacy_return_phase_change(void)
+{
+	struct v90_phase3_return_marker rx;
+	struct v90_phase3_return_marker saved;
+	struct v34_phase3_s_detection detection;
+
+	CHECK(v90_phase3_return_marker_init(&rx, false) == V90_PHASE3_RETURN_RX_OK &&
+	      v90_phase3_return_marker_allow_implicit_s_end(&rx) ==
+		      V90_PHASE3_RETURN_RX_OK,
+	      "legacy first-return receiver did not initialize");
+	for (unsigned symbol = 0; symbol < 320u; ++symbol) {
+		unsigned offset = symbol < 160u ? 0u : 1u;
+		enum v90_phase3_return_rx_result expected =
+			symbol + 1u == V90_PHASE3_RETURN_RX_ONSET_SYMBOLS ?
+				V90_PHASE3_RETURN_RX_S_DETECTED : V90_PHASE3_RETURN_RX_OK;
+
+		CHECK(v90_phase3_return_marker_observe(
+			      &rx, s_rotation(symbol, offset)) == expected,
+		      "carrier phase change ended S at symbol %u", symbol);
+	}
+	for (unsigned symbol = 0; symbol < V34_PHASE3_S_BAR_SYMBOLS; ++symbol)
+		CHECK(v90_phase3_return_marker_observe(
+			      &rx, (uint8_t)((s_rotation(symbol, 1u) + 2u) & 3u)) ==
+			      (symbol + 1u == V34_PHASE3_S_BAR_SYMBOLS ?
+			       V90_PHASE3_RETURN_RX_S_BAR_DETECTED : V90_PHASE3_RETURN_RX_OK),
+		      "carrier phase change displaced S-bar at symbol %u", symbol);
+	CHECK(v90_phase3_return_marker_get_detection(&rx, &detection) &&
+	      detection.clockwise_quarter_turn_offset == 1u &&
+	      v90_phase3_return_marker_restart(&rx) == V90_PHASE3_RETURN_RX_OK &&
+	      rx.second_return && !rx.allow_implicit_s_end,
+	      "legacy permission changed the distinct second-return contract");
+	saved = rx;
+	CHECK(v90_phase3_return_marker_allow_implicit_s_end(&rx) ==
+		      V90_PHASE3_RETURN_RX_INVALID_STATE &&
+	      memcmp(&rx, &saved, sizeof(rx)) == 0,
+	      "legacy permission was enabled for the second return");
+	rx.allow_implicit_s_end = true;
+	CHECK(!v90_phase3_return_marker_is_valid(&rx),
+	      "second return accepted legacy compatibility state");
+	return true;
+}
+
+static bool test_legacy_return_nonperiodic_end(void)
+{
+	struct v90_phase3_return_marker rx;
+	struct v90_phase3_return_marker saved;
+	struct v34_phase3_s_detection detection;
+
+	CHECK(v90_phase3_return_marker_init(&rx, false) == V90_PHASE3_RETURN_RX_OK &&
+	      v90_phase3_return_marker_allow_implicit_s_end(&rx) == V90_PHASE3_RETURN_RX_OK,
+	      "legacy nonperiodic receiver did not initialize");
+	for (unsigned symbol = 0; symbol < V34_PHASE3_S_SYMBOLS; ++symbol)
+		CHECK(v90_phase3_return_marker_observe(&rx, s_rotation(symbol, 0u)) ==
+			      (symbol + 1u == V90_PHASE3_RETURN_RX_ONSET_SYMBOLS ?
+			       V90_PHASE3_RETURN_RX_S_DETECTED : V90_PHASE3_RETURN_RX_OK),
+		      "legacy S changed at symbol %u", symbol);
+	for (unsigned symbol = 0; symbol < V90_PHASE3_RETURN_RX_EXIT_SYMBOLS; ++symbol)
+		CHECK(v90_phase3_return_marker_observe(&rx, 1u) ==
+			      (symbol + 1u == V90_PHASE3_RETURN_RX_EXIT_SYMBOLS ?
+			       V90_PHASE3_RETURN_RX_S_ENDED : V90_PHASE3_RETURN_RX_OK),
+		      "legacy nonperiodic exit changed at symbol %u", symbol);
+	saved = rx;
+	CHECK(!v90_phase3_return_marker_get_detection(&rx, &detection) &&
+	      v90_phase3_return_marker_observe(&rx, 0u) == V90_PHASE3_RETURN_RX_INVALID_STATE &&
+	      memcmp(&rx, &saved, sizeof(rx)) == 0 &&
+	      v90_phase3_return_marker_restart(&rx) == V90_PHASE3_RETURN_RX_OK &&
+	      rx.second_return && !rx.allow_implicit_s_end &&
+	      feed_first_return(&rx, 0u, false) &&
+	      !v90_phase3_return_marker_is_complete(&rx),
+	      "legacy first end relaxed the second S-bar or published a handoff");
+	return true;
+}
+
 static bool feed_second_marker(
 	struct v90_phase3_return_marker *rx, unsigned int offset,
 	size_t s_symbols, unsigned int *s_events, unsigned int *s_bar_events)
@@ -449,6 +522,8 @@ int main(void)
 		{ "generated marker timelines", test_generated_timelines },
 		{ "tracked onset confirmation", test_tracked_onset_confirmation },
 		{ "missing S-bar", test_missing_s_bar },
+		{ "legacy return carrier phase", test_legacy_return_phase_change },
+		{ "legacy nonperiodic return", test_legacy_return_nonperiodic_end },
 		{ "second-return bounds", test_second_return_bounds },
 		{ "marker semantics", test_marker_semantics },
 		{ "marker confirmation tail", test_marker_confirmation_tail },

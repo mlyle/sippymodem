@@ -81,6 +81,8 @@ static enum v90_phase3_return_line_rx_result marker_result(
 		return V90_PHASE3_RETURN_LINE_RX_OK;
 	case V90_PHASE3_RETURN_RX_S_DETECTED:
 		return V90_PHASE3_RETURN_LINE_RX_S_DETECTED;
+	case V90_PHASE3_RETURN_RX_S_ENDED:
+		return V90_PHASE3_RETURN_LINE_RX_S_ENDED;
 	case V90_PHASE3_RETURN_RX_S_BAR_DETECTED:
 		return V90_PHASE3_RETURN_LINE_RX_S_BAR_DETECTED;
 	case V90_PHASE3_RETURN_RX_COMPLETE:
@@ -108,6 +110,8 @@ enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_sample(
 		return V90_PHASE3_RETURN_LINE_RX_FAILED;
 	if (v90_phase3_return_marker_is_complete(&rx->marker))
 		return V90_PHASE3_RETURN_LINE_RX_COMPLETE;
+	if (rx->marker.stage == V90_PHASE3_RETURN_RX_STAGE_IMPLICIT_END)
+		return V90_PHASE3_RETURN_LINE_RX_INVALID_STATE;
 	next = *rx;
 	upstream_result = v90_upstream_training_rx_sample(
 		&next.upstream, sample, &decision);
@@ -221,6 +225,8 @@ const char *v90_phase3_return_line_rx_result_name(
 		return "ok";
 	case V90_PHASE3_RETURN_LINE_RX_S_DETECTED:
 		return "S detected";
+	case V90_PHASE3_RETURN_LINE_RX_S_ENDED:
+		return "S ended without S-bar";
 	case V90_PHASE3_RETURN_LINE_RX_S_BAR_DETECTED:
 		return "S-bar detected";
 	case V90_PHASE3_RETURN_LINE_RX_COMPLETE:

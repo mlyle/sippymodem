@@ -193,6 +193,10 @@ static enum v90_phase3_digital_station_result receive_initial(
 			    &station->jd, &handoff.ja.dil) !=
 			    PCM_PHASE3_DIGITAL_TX_OK)
 			return V90_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE;
+		if (handoff.ja.dil.segment_count != 0u &&
+		    v90_phase3_return_marker_allow_implicit_s_end(
+			    &returning.marker) != V90_PHASE3_RETURN_RX_OK)
+			return V90_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE;
 		station->receive =
 			(union v90_phase3_digital_station_receive){ 0 };
 		station->receive.returning = returning;
@@ -240,6 +244,7 @@ static enum v90_phase3_digital_station_result receive_return(
 	switch (result) {
 	case V90_PHASE3_RETURN_LINE_RX_OK:
 		return V90_PHASE3_DIGITAL_STATION_OK;
+	case V90_PHASE3_RETURN_LINE_RX_S_ENDED:
 	case V90_PHASE3_RETURN_LINE_RX_S_BAR_DETECTED:
 		if (station->receive_stage ==
 			    V90_PHASE3_DIGITAL_RECEIVE_RETURN &&
