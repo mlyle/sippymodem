@@ -84,13 +84,55 @@ static struct dp *create_v8(
 static int delete_v8(struct dp *dp);
 static int process_v8(
 	struct dp *dp, void *receive, void *transmit, int count);
+static const char *progress_v8(const struct dp *dp);
 
 static const struct dp_operations v8_operations = {
 	.name = "V.8 negotiation",
 	.create = create_v8,
 	.delete = delete_v8,
 	.process = process_v8,
+	.progress = progress_v8,
 };
+
+static const char *progress_v8(const struct dp *dp)
+{
+	const struct v8_datapump *datapump = dp->dp_data;
+	if (datapump == NULL)
+		return "V.8/initializing";
+	if (datapump->legacy != NULL)
+		return datapump->legacy->op->progress != NULL ?
+			datapump->legacy->op->progress(datapump->legacy) : "legacy/training";
+	if (datapump->legacy_answer)
+		return "legacy/answer-probes";
+	if (datapump->handoff_requested)
+		return "V.8/modulation-selected";
+	if (datapump->caller) {
+		switch (datapump->handshake.calling.state) {
+		case V8_CALLING_WAIT_ANSWER_SIGNAL: return "V.8/wait-ANSam";
+		case V8_CALLING_EXCHANGE_MENUS: return "V.8/CM-wait-JM";
+		case V8_CALLING_SEND_CJ: return "V.8/send-CJ";
+		case V8_CALLING_SEND_QC1:
+		case V8_CALLING_QC_TX_TAIL:
+		case V8_CALLING_QC_COMPLETE: return "V.92/QC1";
+		case V8_CALLING_COMPLETE: return "V.8/complete";
+		case V8_CALLING_FAILED:
+			return datapump->handshake.calling.terminal_result == V8_CALLING_ANSWER_TIMEOUT ?
+				"V.8/wait-ANSam" : "V.8/CM-wait-JM";
+		}
+	} else {
+		switch (datapump->handshake.answering.state) {
+		case V8_ANSWERING_WAIT_CALL_MENU: return "V.8/ANSam-wait-CM";
+		case V8_ANSWERING_SEND_JOINT_MENU: return "V.8/JM-wait-CJ";
+		case V8_ANSWERING_SEND_QCA1:
+		case V8_ANSWERING_QC_COMPLETE: return "V.92/QCA1";
+		case V8_ANSWERING_COMPLETE: return "V.8/complete";
+		case V8_ANSWERING_FAILED:
+			return datapump->handshake.answering.terminal_result == V8_ANSWERING_CJ_TIMEOUT ?
+				"V.8/JM-wait-CJ" : "V.8/ANSam-wait-CM";
+		}
+	}
+	return "V.8/unknown";
+}
 
 static const struct v8_datapump *v8_from_dp_const(const struct dp *dp)
 {
@@ -410,6 +452,8 @@ static int process_v8_samples(
 				(size_t)count);
 
 		failed = result != V8_CALLING_OK;
+		if (failed)
+			modem_note_disconnect(dp->modem, true, v8_calling_result_name(result));
 		complete = v8_calling_is_complete(
 			&datapump->handshake.calling);
 		if (result == V8_CALLING_ANSWER_TIMEOUT) {
@@ -417,9 +461,12 @@ static int process_v8_samples(
 			return DPSTAT_NOANSWER;
 		}
 	} else {
-		failed = v8_answering_process(
+		enum v8_answering_result result = v8_answering_process(
 				 &datapump->handshake.answering, receive, transmit,
-				 (size_t)count) != V8_ANSWERING_OK;
+				 (size_t)count);
+		failed = result != V8_ANSWERING_OK;
+		if (failed)
+			modem_note_disconnect(dp->modem, true, v8_answering_result_name(result));
 		complete = v8_answering_is_complete(
 			&datapump->handshake.answering);
 	}

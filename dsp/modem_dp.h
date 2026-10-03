@@ -79,6 +79,9 @@ struct dp_operations {
 	 * datapump runnable until process() or process_g711() returns
 	 * DPSTAT_DISCONNECT after its final line symbol has drained. */
 	int (*hangup)(struct dp *);
+	/* Borrow a process-lifetime protocol-step literal without changing state.
+	 * Optional: the host phase remains useful for older datapumps. */
+	const char *(*progress)(const struct dp *);
 };
 
 /* data pump structure */

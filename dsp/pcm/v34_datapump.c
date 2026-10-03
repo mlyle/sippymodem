@@ -56,6 +56,7 @@ static int process_v34(
 	struct dp *dp, void *receive, void *transmit, int count);
 static int retrain_v34(struct dp *dp);
 static int hangup_v34(struct dp *dp);
+static const char *progress_v34(const struct dp *dp);
 
 static const struct dp_operations v34_operations = {
 	.name = "V.34",
@@ -64,7 +65,52 @@ static const struct dp_operations v34_operations = {
 	.process = process_v34,
 	.retrain = retrain_v34,
 	.hangup = hangup_v34,
+	.progress = progress_v34,
 };
+
+static const char *progress_v34(const struct dp *dp)
+{
+	const struct v34_datapump *datapump = dp->dp_data;
+	if (datapump == NULL)
+		return "V.34/initializing";
+	const struct v34_call *call = &datapump->call;
+	switch (call->stage) {
+	case V34_CALL_RETRAIN_SILENCE: return "retrain/silence-tone";
+	case V34_CALL_CLEARDOWN: return "cleardown/zero-rate-MP";
+	case V34_CALL_PHASE2:
+		switch (call->state.phase2.stage) {
+		case V34_PHASE2_RANGING:
+			return call->state.phase2.state.ranging.control.phase ==
+				PHASE2_RANGING_INFO0_EXCHANGE ? "phase2/INFO0" : "phase2/ranging";
+		case V34_PHASE2_INITIAL_PROBE: return "phase2/L1-L2-probe";
+		case V34_PHASE2_PROBE_TURNAROUND: return "phase2/probe-turnaround";
+		case V34_PHASE2_RECIPROCAL_PROBE: return "phase2/reciprocal-probe";
+		case V34_PHASE2_INFO1: return "phase2/INFO1";
+		}
+		break;
+	case V34_CALL_PHASE3:
+		switch (call->state.phase3.receive.semantic.phase3.stage) {
+		case V34_PHASE3_DECISION_RECEIVER_S: return "phase3/wait-S-Sbar";
+		case V34_PHASE3_DECISION_RECEIVER_MD: return "phase3/MD";
+		case V34_PHASE3_DECISION_RECEIVER_REPEATED_S: return "phase3/repeated-S";
+		case V34_PHASE3_DECISION_RECEIVER_PP: return "phase3/PP";
+		case V34_PHASE3_DECISION_RECEIVER_J: return "phase3/TRN-wait-J";
+		case V34_PHASE3_DECISION_RECEIVER_COMPLETE: return "phase3/finish-J";
+		}
+		break;
+	case V34_CALL_PHASE4:
+		if (call->state.phase4.online_announced)
+			return "data/V.34";
+		if (call->state.phase4.receive_data_active)
+			return "phase4/B1-data-validation";
+		if (call->state.phase4.peer_mp_prime_received)
+			return "phase4/E";
+		if (call->state.phase4.peer_mp_received)
+			return "phase4/MP-prime";
+		return call->state.phase4.transmit_mp_started ? "phase4/MP" : "phase4/S-TRN";
+	}
+	return "V.34/unknown";
+}
 
 static enum v34_station_role station_role(bool caller)
 {
@@ -552,6 +598,7 @@ static int process_v34(
 			    &datapump->training,
 			    (uint64_t)(unsigned int)count) !=
 		    TRAINING_SESSION_OK) {
+			modem_note_disconnect(dp->modem, true, "V.34 training deadline expired");
 			memset(transmit, 0, (size_t)count * sizeof(*transmit));
 			return DPSTAT_ERROR;
 		}
@@ -564,6 +611,10 @@ static int process_v34(
 			datapump, &transmit[index], &observation, &received);
 
 		if (result != V34_CALL_OK) {
+			modem_note_disconnect(dp->modem, true,
+				result == V34_CALL_NO_COMMON_RATE ? "no common V.34 rate" :
+				result == V34_CALL_SEQUENCE_MISMATCH ? "V.34 sequence mismatch" :
+				result == V34_CALL_NUMERIC_FAILURE ? "V.34 numeric failure" : "V.34 protocol failed");
 			fail_training(datapump);
 			memset(transmit, 0, (size_t)count * sizeof(*transmit));
 			return DPSTAT_ERROR;

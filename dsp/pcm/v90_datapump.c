@@ -62,6 +62,7 @@ static int process_v90_g711(
 	int count, bool *exact_output);
 static int retrain_v90(struct dp *dp);
 static int hangup_v90(struct dp *dp);
+static const char *progress_v90(const struct dp *dp);
 
 static const struct dp_operations v90_operations = {
 	.name = "PCM V.90/V.92",
@@ -71,7 +72,107 @@ static const struct dp_operations v90_operations = {
 	.process_g711 = process_v90_g711,
 	.retrain = retrain_v90,
 	.hangup = hangup_v90,
+	.progress = progress_v90,
 };
+
+static const char *progress_v90(const struct dp *dp)
+{
+	const struct v90_datapump *datapump = dp->dp_data;
+	if (datapump == NULL || !datapump->call_started)
+		return "PCM/initializing";
+	const struct pcm_call *call = &datapump->call;
+	bool digital = call->local_role == V90_DIGITAL_MODEM;
+	bool conventional = pcm_call_uses_conventional_upstream(call);
+	switch (call->stage) {
+	case PCM_CALL_QC: return "phase1/Quick-Connect";
+	case PCM_CALL_RETRAIN_SILENCE: return "retrain/silence-tone";
+	case PCM_CALL_CLOSED: return "cleardown/complete";
+	case PCM_CALL_PHASE2:
+		switch (call->state.phase2.stage) {
+		case PCM_PHASE2_RANGING:
+			return call->state.phase2.state.ranging.info0_exchange.state <
+				PCM_PHASE2_INFO0_COMPLETE ? "phase2/INFO0" : "phase2/ranging";
+		case PCM_PHASE2_INITIAL_PROBE: return "phase2/L1-L2-probe";
+		case PCM_PHASE2_PROBE_TURNAROUND: return "phase2/probe-turnaround";
+		case PCM_PHASE2_RECIPROCAL_PROBE: return "phase2/reciprocal-probe";
+		case PCM_PHASE2_INFO1: return "phase2/INFO1";
+		}
+		break;
+	case PCM_CALL_PHASE3:
+		if (conventional && digital) {
+			const struct v90_phase3_digital_station *station = &call->state.phase3.digital;
+			if (station->receive_stage != V90_PHASE3_DIGITAL_RECEIVE_INITIAL)
+				return "phase3/Jd-DIL/S-Sbar-return";
+			return station->receive.initial.upstream.stage == V90_UPSTREAM_TRAINING_RX_INITIAL ?
+				"phase3/S-PP-TRN" : "phase3/wait-Ja";
+		}
+		if (conventional)
+			return call->state.phase3.analog.receive_stage == V90_PHASE3_ANALOG_RECEIVE_SD ?
+				"phase3/wait-Sd" : "phase3/TRN1d-Jd-DIL";
+		if (digital) {
+			switch (call->state.phase3.v92_digital.receive_stage) {
+			case V92_PHASE3_DIGITAL_RECEIVE_INITIAL: return "phase3/Su-PPu-TRN1u-Ja";
+			case V92_PHASE3_DIGITAL_RECEIVE_SU_PHASE:
+			case V92_PHASE3_DIGITAL_RECEIVE_SU_RESPONSE: return "phase3/Jd-Jp/Su";
+			case V92_PHASE3_DIGITAL_RECEIVE_SECOND_TRN1U: return "phase3/TRN1u-DIL";
+			case V92_PHASE3_DIGITAL_RECEIVE_CPT: return "phase3/wait-CPt-E1u";
+			case V92_PHASE3_DIGITAL_RECEIVE_COMPLETE: return "phase3/complete";
+			}
+		} else {
+			switch (call->state.phase3.v92_analog.receive_stage) {
+			case V92_PHASE3_ANALOG_RECEIVE_SD: return "phase3/wait-Sd";
+			case V92_PHASE3_ANALOG_RECEIVE_J: return "phase3/TRN1d-Jd-Jp-DIL";
+			case V92_PHASE3_ANALOG_RECEIVE_RI: return "phase3/CPt-wait-Ri";
+			case V92_PHASE3_ANALOG_RECEIVE_COMPLETE: return "phase3/complete";
+			}
+		}
+		break;
+	case PCM_CALL_PHASE3_MIXED: return "phase3/finish-DIL-Ri";
+	case PCM_CALL_PHASE4:
+		if (conventional)
+			return "phase4/CPt-Ri";
+		switch (call->state.phase4.v92.child) {
+		case PCM_CALL_V92_PHASE4_CONTROL:
+			return digital && call->state.phase4.v92.owner.digital.receive.stage ==
+				V92_PHASE4_DIGITAL_RX_TRN2U ? "phase4/TRN2u" : "phase4/CPu-CPd-SUV";
+		case PCM_CALL_V92_PHASE4_E2U: return "phase4/E2u-Ed";
+		case PCM_CALL_V92_PHASE4_RU: return "rate-change/Ru-Rd";
+		case PCM_CALL_V92_PHASE4_PAUSE: return "rate-change/pause";
+		}
+		break;
+	case PCM_CALL_DATA_PATH:
+		if (pcm_call_is_online_owned(call))
+			return conventional ? "data/PCM-downstream-V34-upstream" : "data/PCM-both-directions";
+		if (conventional && digital && call->state.data_path.digital.upstream_stage ==
+		    V90_DIGITAL_PATH_UPSTREAM_STARTUP) {
+			switch (call->state.data_path.digital.upstream.startup.stage) {
+			case V90_UPSTREAM_RX_STAGE_CP: return "phase4/CP-MP";
+			case V90_UPSTREAM_RX_STAGE_CPS: return "phase4/CPs";
+			case V90_UPSTREAM_RX_STAGE_RECONDITION: return "phase4/echo-reconditioning";
+			case V90_UPSTREAM_RX_STAGE_E: return "phase4/E-Ed";
+			case V90_UPSTREAM_RX_STAGE_B1: return "phase4/B1";
+			case V90_UPSTREAM_RX_STAGE_COMPLETE: return "phase4/finish-B1d";
+			}
+		}
+		return "phase4/B1-data-validation";
+	}
+	return "PCM/unknown";
+}
+
+static const char *failure_v90(const struct pcm_call *call, enum pcm_call_result result)
+{
+	if (call->stage == PCM_CALL_PHASE2) {
+		switch (call->state.phase2.failure) {
+		case PCM_PHASE2_FAILURE_REMOTE_PROBE_NOT_FOUND: return "remote line probe not found";
+		case PCM_PHASE2_FAILURE_LOCAL_PROBE_LIMIT: return "local line probe limit exceeded";
+		case PCM_PHASE2_FAILURE_REMOTE_REVERSAL_TIMEOUT: return "remote tone reversal timed out";
+		case PCM_PHASE2_FAILURE_INFO1_TIMEOUT: return "INFO1 exchange timed out";
+		case PCM_PHASE2_FAILURE_INTERNAL: return "internal Phase 2 failure";
+		case PCM_PHASE2_FAILURE_NONE: break;
+		}
+	}
+	return pcm_call_result_name(result);
+}
 
 static bool protocol_from_id(enum DP_ID id, enum pcm_protocol *protocol)
 {
@@ -705,12 +806,15 @@ static bool process_octet(
 		return true;
 	}
 	if (result == PCM_CALL_CLEARDOWN_COMPLETE) {
+		modem_note_disconnect(datapump->dp.modem, false, "peer PCM cleardown");
 		datapump->dp.status = DPSTAT_DISCONNECT;
 		*disconnected = true;
 		return true;
 	}
-	if (result != PCM_CALL_OK)
+	if (result != PCM_CALL_OK) {
+		modem_note_disconnect(datapump->dp.modem, true, failure_v90(&datapump->call, result));
 		return false;
+	}
 	if (datapump->protocol == PCM_PROTOCOL_V92 && datapump->call.protocol == PCM_PROTOCOL_V90) {
 		datapump->protocol = PCM_PROTOCOL_V90;
 		datapump->dp.id = DP_V90;
@@ -857,8 +961,10 @@ static int process_v90_g711(
 		mute_output(law, transmit_codewords, transmit_samples, count);
 		return DPSTAT_ERROR;
 	}
-	if (!start_call(datapump, law))
+	if (!start_call(datapump, law)) {
+		modem_note_disconnect(dp->modem, true, "PCM initialization rejected");
 		goto failure;
+	}
 	if (datapump->call.stage == PCM_CALL_CLOSED) {
 		mute_output(law, transmit_codewords, transmit_samples, count);
 		*exact_output = true;
@@ -875,8 +981,10 @@ static int process_v90_g711(
 		if (!pcm_call_is_disconnecting(&datapump->call) &&
 		    !training_session_is_online(&datapump->training) &&
 		    training_session_advance(&datapump->training, 1) !=
-			    TRAINING_SESSION_OK)
+			    TRAINING_SESSION_OK) {
+			modem_note_disconnect(dp->modem, true, "PCM training deadline expired");
 			goto failure;
+		}
 		if (datapump->host_echo != NULL &&
 		    pcm_host_echo_predict(
 			    datapump->host_echo, echo_mode,
@@ -958,6 +1066,7 @@ static int process_v90_g711(
 	return connected ? DPSTAT_CONNECT : DPSTAT_OK;
 
 failure:
+	modem_note_disconnect(dp->modem, true, "PCM media or host contract failed");
 	(void)training_session_fail(&datapump->training);
 	mute_output(law, transmit_codewords, transmit_samples, count);
 	return DPSTAT_ERROR;

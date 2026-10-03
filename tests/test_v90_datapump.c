@@ -108,6 +108,14 @@ long modem_set_param(struct modem *modem, unsigned int name, int value)
 }
 
 /* This fixture supplies host bits directly; it has no async byte framer. */
+void modem_note_disconnect(struct modem *modem, bool local, const char *reason)
+{
+	if (modem->disconnect_reason == NULL) {
+		modem->disconnect_reason = reason;
+		modem->disconnect_local = local;
+	}
+}
+
 void modem_async_retrain(struct modem *modem)
 {
 	(void)modem;

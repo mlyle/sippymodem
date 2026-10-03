@@ -363,6 +363,28 @@ const char *modem_call_phase(const struct modem *m)
 }
 
 
+const char *modem_protocol_step(const struct modem *m)
+{
+	if (m != NULL && m->dp != NULL && m->dp->op != NULL &&
+	    m->dp->op->progress != NULL) {
+		const char *step = m->dp->op->progress(m->dp);
+		if (step != NULL)
+			return step;
+	}
+	return modem_call_phase(m);
+}
+
+void modem_note_disconnect(struct modem *m, bool local, const char *reason)
+{
+	if (m == NULL || reason == NULL || m->disconnect_reason != NULL)
+		return;
+	m->disconnect_step = modem_protocol_step(m);
+	m->disconnect_phase = modem_call_phase(m);
+	m->disconnect_reason = reason;
+	m->disconnect_local = local;
+	++m->disconnect_sequence;
+}
+
 bool modem_ec_can_establish(const struct modem *m)
 {
 	return m != NULL && m->cfg.ec &&
@@ -512,6 +534,8 @@ static void expire_ec_disconnect(struct modem *m)
 static void modem_hup(struct modem *m, unsigned local)
 {
 	MODEM_DBG("modem_hup...\n");
+	if (!IS_STATE_IDLE(m->state) && local)
+		modem_note_disconnect(m, true, "local hangup");
 	m->retrain_pending = 0;
 	switch(m->state) {
 	case STATE_MODEM_IDLE:
@@ -639,6 +663,7 @@ void modem_update_status(struct modem *m, unsigned status)
 		modem_report_result(m, RESULT_CONNECT);
 		break;
 	case STATUS_EC_PEER_DISC:
+		modem_note_disconnect(m, false, "peer LAPM DISC");
 		m->result_code = RESULT_NOCARRIER;
 		/* With simultaneous DISC, both ends have queued UA. Keep the
 		 * local disconnect deadline: it gives UA time to drain, then
@@ -660,6 +685,8 @@ void modem_update_status(struct modem *m, unsigned status)
 		break;
 	case STATUS_EC_RELEASE:
 	case STATUS_EC_ERROR:
+		modem_note_disconnect(m, status == STATUS_EC_ERROR,
+			status == STATUS_EC_ERROR ? "LAPM negotiation or recovery failed" : "LAPM released");
 		MODEM_DBG("--> EC UNLINK\n");
 		m->result_code = RESULT_NOCARRIER;
 		if (m->state == STATE_EC_DISC)
@@ -675,6 +702,12 @@ void modem_update_status(struct modem *m, unsigned status)
 	case STATUS_NOANSWER:
 	default:
 		MODEM_DBG("--> FINISH.\n");
+		modem_note_disconnect(m, status != STATUS_BUSY,
+			status == STATUS_NOANSWER ? "carrier wait expired" :
+			status == STATUS_NODIALTONE ? "no dial tone" :
+			status == STATUS_BUSY ? "busy" :
+			status == STATUS_NOCARRIER ? "carrier lost" :
+			status == STATUS_DP_ERROR ? "datapump failed" : "modem processing failed");
 		if(status == STATUS_NODIALTONE)
 			m->result_code = RESULT_NODIALTONE;
 		else if(status == STATUS_BUSY)
@@ -1357,6 +1390,7 @@ static void do_modem_change_dp (struct modem *m)
 					m->frag,op);
 		if (!dp) {
 			MODEM_ERR("change dp -> %d error.\n", id);
+			modem_note_disconnect(m, true, "cannot create selected datapump");
 			modem_hup(m,1);
 			return;
 		}
@@ -1435,6 +1469,10 @@ static int modem_start (struct modem *m)
 	m->result_code = 0;
 	m->retrain_pending = 0;
 	modem_setup_config(m);
+	m->disconnect_reason = NULL;
+	m->disconnect_step = NULL;
+	m->disconnect_phase = NULL;
+	m->disconnect_local = false;
 	if (dc_remover_init(&m->receive_dc) != DC_REMOVER_OK)
 		return -1;
         modem_set_state(m, STATE_ESTAB);
@@ -2060,8 +2098,10 @@ int modem_reset(struct modem *m)
 	m->hangup_command_pending = 0;
 	/* Reset invalidates the data-link configuration immediately. It cannot
 	 * leave an asynchronous disconnect using that configuration behind. */
-	if(m->state != STATE_MODEM_IDLE || m->started)
+	if(m->state != STATE_MODEM_IDLE || m->started) {
+		modem_note_disconnect(m, true, "AT reset");
 		modem_stop(m);
+	}
 	else if(m->hook)
 		modem_set_hook(m,MODEM_HOOK_ON);
 	modem_set_state(m, STATE_MODEM_IDLE);
@@ -2158,6 +2198,8 @@ int modem_report_remote_call_end(struct modem *m)
 {
 	if (m == NULL)
 		return -1;
+	if (!IS_STATE_IDLE(m->state))
+		modem_note_disconnect(m, false, "remote SIP call ended");
 	TOTAL_RINGS_COUNT(m) = 0;
 	m->ring_count = 0;
 	modem_hup(m, 0);

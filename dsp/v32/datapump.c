@@ -110,6 +110,7 @@ static int retrain_v32(struct dp *dp);
 static int process_v32(
 	struct dp *dp, void *receive, void *transmit, int count);
 static int enter_link(struct v32_datapump *datapump);
+static const char *progress_v32(const struct dp *dp);
 
 static const struct dp_operations v32_operations = {
 	.name = "V.32",
@@ -117,7 +118,35 @@ static const struct dp_operations v32_operations = {
 	.delete = delete_v32,
 	.process = process_v32,
 	.retrain = retrain_v32,
+	.progress = progress_v32,
 };
+
+static const char *progress_v32(const struct dp *dp)
+{
+	const struct v32_datapump *datapump = dp->dp_data;
+	if (datapump == NULL)
+		return "V.32/initializing";
+	switch (datapump->fixed_path.stage) {
+	case V32_FIXED_OFF: return "V.32/answer-tone-carrier-turnaround";
+	case V32_FIXED_CALLER_CONDITIONING:
+	case V32_FIXED_ANSWERER_CONDITIONING: return "V.32/S-TRN";
+	case V32_FIXED_CALLER_RATE_OFFER:
+	case V32_FIXED_CALLER_RATE_DRAIN:
+	case V32_FIXED_ANSWERER_RATE: return "V.32/R1-rate-offer";
+	case V32_FIXED_CALLER_ECHO:
+	case V32_FIXED_ANSWERER_INITIAL_ECHO: return "V.32/echo-training";
+	case V32_FIXED_CALLER_SECOND_CONDITIONING:
+	case V32_FIXED_ANSWERER_SECOND_CONDITIONING: return "V.32/second-S-TRN";
+	case V32_FIXED_CALLER_SELECTION: return "V.32/R3-rate-selection";
+	case V32_FIXED_CALLER_END:
+	case V32_FIXED_ANSWERER_END: return "V.32/E";
+	case V32_FIXED_ANSWERER_CLEARDOWN_CONDITIONING:
+	case V32_FIXED_ANSWERER_CLEARDOWN: return "V.32/cleardown";
+	case V32_FIXED_B1: return "V.32/B1";
+	case V32_FIXED_DATA: return "data/V.32";
+	}
+	return "V.32/unknown";
+}
 
 static enum v32_transmitter_role local_role(bool caller)
 {

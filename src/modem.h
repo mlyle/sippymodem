@@ -445,6 +445,13 @@ struct modem {
 	void (*sample_timer_func)(struct modem *);
         /* data pump */
         struct dp *dp;
+	/* First call-end cause survives datapump deletion until the next call.
+	 * Strings are borrowed process-lifetime literals. */
+	const char *disconnect_reason;
+	const char *disconnect_step;
+	const char *disconnect_phase;
+	unsigned int disconnect_sequence;
+	bool disconnect_local;
 	/* dsp info data */
 	struct dsp_info dsp_info;
 	/* voice info */
@@ -474,6 +481,9 @@ extern int modem_answer(struct modem *m);
 extern int modem_online(struct modem *m, int retrain);
 /* Borrowed static name of the host call phase; no state is changed. */
 extern const char *modem_call_phase(const struct modem *m);
+extern const char *modem_protocol_step(const struct modem *m);
+/* Retain the earliest cause; reason must be a process-lifetime literal. */
+extern void modem_note_disconnect(struct modem *m, bool local, const char *reason);
 extern int modem_report_incoming_call(struct modem *m);
 extern int modem_report_outgoing_call_connected(struct modem *m);
 extern int modem_report_remote_call_end(struct modem *m);

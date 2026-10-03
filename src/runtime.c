@@ -36,6 +36,10 @@ struct modem_runtime {
 	bool trace_enabled;
 	bool trace_started;
 	uint64_t trace_time_ns;
+	uint64_t progress_time_ns;
+	const char *trace_step;
+	const char *trace_phase;
+	unsigned int trace_disconnect_sequence;
 };
 
 static void destroy_incomplete_runtime(struct modem_runtime *runtime)
@@ -360,8 +364,13 @@ static enum modem_runtime_result advance_terminal(
 static void trace_call(struct modem_runtime *runtime, uint64_t now_ns)
 {
 	struct audio_levels levels;
+	if (!runtime->trace_enabled || !modem_host_is_open(runtime->host))
+		return;
 	const struct dp *dp = runtime->modem->dp;
-	char text[256];
+	const char *phase = modem_call_phase(runtime->modem);
+	const char *step = modem_protocol_step(runtime->modem);
+	const char *reason = runtime->modem->disconnect_reason;
+	char text[384];
 	struct sip_trace_record record = {
 		.origin = SIP_TRACE_ADAPTER,
 		.level = 3,
@@ -369,24 +378,54 @@ static void trace_call(struct modem_runtime *runtime, uint64_t now_ns)
 	};
 	int length;
 
-	if (!runtime->trace_enabled || !modem_host_is_open(runtime->host))
-		return;
-	if (runtime->trace_started &&
-	    (now_ns <= runtime->trace_time_ns ||
-	     now_ns - runtime->trace_time_ns < UINT64_C(1000000000)))
-		return;
-	runtime->trace_started = true;
-	runtime->trace_time_ns = now_ns;
-	levels = modem_host_take_audio_levels(runtime->host);
-	length = snprintf(text, sizeof(text),
-		"CALL sip=%s phase=%s datapump=%s TX-peak=%u/32768 RX-peak=%u/32768\n",
-		sip_call_state_name(runtime->calls.state),
-		modem_call_phase(runtime->modem),
-		dp != NULL && dp->op != NULL && dp->op->name != NULL ? dp->op->name : "none",
-		levels.transmit_peak, levels.receive_peak);
-	if (length > 0 && (size_t)length < sizeof(text)) {
-		record.size = (size_t)length;
-		trace_signaling(NULL, &record);
+	bool heartbeat = !runtime->trace_started ||
+		(now_ns > runtime->trace_time_ns &&
+		 now_ns - runtime->trace_time_ns >= UINT64_C(1000000000));
+	bool changed = runtime->trace_step == NULL ||
+		strcmp(step, runtime->trace_step) != 0 ||
+		strcmp(phase, runtime->trace_phase) != 0;
+	bool progress = runtime->trace_started && changed &&
+		now_ns > runtime->progress_time_ns &&
+		now_ns - runtime->progress_time_ns >= UINT64_C(500000000);
+
+	if (heartbeat || progress) {
+		if (heartbeat) {
+			runtime->trace_started = true;
+			runtime->trace_time_ns = now_ns;
+			levels = modem_host_take_audio_levels(runtime->host);
+			length = snprintf(text, sizeof(text),
+				"CALL sip=%s phase=%s datapump=%s step=%s TX-peak=%u/32768 RX-peak=%u/32768\n",
+				sip_call_state_name(runtime->calls.state), phase,
+				dp != NULL && dp->op != NULL && dp->op->name != NULL ? dp->op->name : "none",
+				step, levels.transmit_peak, levels.receive_peak);
+		} else {
+			length = snprintf(text, sizeof(text),
+				"TRAIN phase=%s step=%s\n", phase, step);
+		}
+		if (length > 0 && (size_t)length < sizeof(text)) {
+			record.size = (size_t)length;
+			trace_signaling(NULL, &record);
+		}
+		if (changed) {
+			runtime->progress_time_ns = now_ns;
+			runtime->trace_phase = phase;
+			runtime->trace_step = step;
+		}
+	}
+	/* The first cause is retained by the modem even after its datapump and
+	 * media are gone. Emit it once immediately, independently of the tick. */
+	if (reason != NULL && runtime->modem->disconnect_sequence !=
+	    runtime->trace_disconnect_sequence) {
+		length = snprintf(text, sizeof(text),
+			"DISCONNECT origin=%s phase=%s step=%s reason=%s\n",
+			runtime->modem->disconnect_local ? "local" : "remote",
+			runtime->modem->disconnect_phase,
+			runtime->modem->disconnect_step, reason);
+		if (length > 0 && (size_t)length < sizeof(text)) {
+			record.size = (size_t)length;
+			trace_signaling(NULL, &record);
+		}
+		runtime->trace_disconnect_sequence = runtime->modem->disconnect_sequence;
 	}
 }
 

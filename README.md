@@ -268,7 +268,12 @@ continue even when incoming RTP stops. The rebuilt daemon does not accept the
 old `-d3` option; use `SIP_TRACE=1` instead.
 `CALL` status lines also appear at most once per second, including before media
 arrives: they show the SIP state, host modem phase (training, error-control
-negotiation, online, local retrain, or cleardown), and active datapump.
+negotiation, online, local retrain, or cleardown), active datapump, and protocol
+step. V.8, V.32, V.34, and PCM report their current menu, probe, training, or
+parameter exchange. `TRAIN` adds changed steps at most twice per second without
+draining the audio meters. `DISCONNECT` reports the first retained cause, its
+phase and step, and whether the local modem or peer ended the call; it appears
+even when the failed datapump has already been released.
 `TX-peak` and `RX-peak` are absolute signed-16-bit audio peaks for the interval,
 with 32768 representing full scale. RX is before receive gain and excludes
 generated playout silence; TX is successfully sent audio after transmit gain,

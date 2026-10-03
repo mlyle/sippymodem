@@ -132,6 +132,34 @@ static bool test_bit_timers_follow_duplex_time(void)
 	return true;
 }
 
+static bool test_disconnect_cause_survives_call_teardown(void)
+{
+	struct modem_driver driver = {
+		.name = "disconnect cause", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	struct modem *m = modem_create(&driver, driver.name);
+	struct modem *other = modem_create(&driver, driver.name);
+	CHECK(m != NULL && other != NULL && modem_answer(m) == 0,
+	      "disconnect diagnostic fixture failed");
+	modem_note_disconnect(m, true, "protocol rejection");
+	modem_update_status(m, STATUS_DP_ERROR);
+	CHECK(modem_report_remote_call_end(m) == 0 && modem_stop_now(m) == 0 &&
+	      strcmp(m->disconnect_reason, "protocol rejection") == 0 &&
+	      strcmp(m->disconnect_step, "training") == 0 && m->disconnect_local &&
+	      other->disconnect_reason == NULL,
+	      "teardown replaced, discarded, or shared the first failure");
+	CHECK(modem_answer(m) == 0 && m->disconnect_reason == NULL &&
+	      m->disconnect_step == NULL, "new call inherited the previous failure");
+	CHECK(modem_report_remote_call_end(m) == 0 &&
+	      strcmp(m->disconnect_reason, "remote SIP call ended") == 0 &&
+	      !m->disconnect_local, "peer release became a local failure");
+	modem_stop_now(m);
+	modem_delete(m);
+	modem_delete(other);
+	return true;
+}
+
 static bool test_modem_events_are_instance_owned(void)
 {
 	struct modem_driver driver = {
@@ -9109,6 +9137,7 @@ int main(void)
 		{ "LAPM timer follows rate changes", test_lapm_timer_follows_rate_changes },
 		{ "V.21 brief answer mark",
 		  test_v21_originator_answers_brief_mark },
+		{ "retained call-end cause", test_disconnect_cause_survives_call_teardown },
 		{ "independent datapump factory instances", test_datapump_factory_instances },
 		{ "concurrent datapump lifetimes", test_concurrent_datapump_lifetimes },
 		{ "AT+MS built-in catalog", test_at_ms_uses_builtin_catalog },

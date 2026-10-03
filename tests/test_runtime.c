@@ -73,6 +73,7 @@ struct runtime_capture {
 	char terminal_input[64];
 	size_t terminal_input_count;
 	bool short_modem_write;
+	const char *protocol_step;
 	struct sip_signaling_callbacks callbacks;
 };
 
@@ -184,6 +185,12 @@ const char *modem_call_phase(const struct modem *modem)
 {
 	(void)modem;
 	return "training";
+}
+
+const char *modem_protocol_step(const struct modem *modem)
+{
+	(void)modem;
+	return capture.protocol_step != NULL ? capture.protocol_step : "training";
 }
 
 const char *sip_call_state_name(enum sip_call_state state)
@@ -932,9 +939,65 @@ static bool test_call_trace_is_rate_limited(void)
 	modem_runtime_destroy(runtime);
 	CHECK(reads == 2, "call trace exceeded once per second or missed the boundary");
 	CHECK(output_size != 0, "call trace emitted no output");
-	CHECK(strstr(output, "CALL sip=idle phase=training datapump=none TX-peak=32768/32768 RX-peak=1000/32768") &&
-	      strstr(output, "CALL sip=connected phase=training datapump=none TX-peak=0/32768 RX-peak=0/32768"),
+	CHECK(strstr(output, "CALL sip=idle phase=training datapump=none step=training TX-peak=32768/32768 RX-peak=1000/32768") &&
+	      strstr(output, "CALL sip=connected phase=training datapump=none step=training TX-peak=0/32768 RX-peak=0/32768"),
 	      "call trace lost state or retained peaks when no frames arrived");
+	return true;
+}
+
+static bool test_protocol_trace_bounds_and_retained_failure(void)
+{
+	struct app_config config = runtime_config(false);
+	char output[4096] = { 0 };
+	FILE *stream = tmpfile();
+	CHECK(stream != NULL, "protocol trace capture failed");
+	memset(&capture, 0, sizeof(capture));
+	config.sip.trace_enabled = true;
+	struct modem_runtime *runtime = modem_runtime_create(&config, "protocol-trace");
+	CHECK(runtime != NULL && modem_runtime_open(runtime) == MODEM_RUNTIME_OK,
+	      "protocol trace fixture failed");
+	fflush(stderr);
+	int saved = dup(STDERR_FILENO);
+	CHECK(saved >= 0 && dup2(fileno(stream), STDERR_FILENO) >= 0,
+	      "cannot redirect protocol trace");
+	capture.protocol_step = "V.8/wait-ANSam";
+	(void)modem_runtime_step(runtime, 0, NULL, NULL, NULL);
+	for (uint64_t ms = 20; ms <= 980; ms += 20) {
+		capture.protocol_step = ms < 500 ? "V.8/CM-wait-JM" : "phase2/INFO0";
+		(void)modem_runtime_step(runtime, ms * UINT64_C(1000000), NULL, NULL, NULL);
+	}
+	(void)modem_runtime_step(runtime, UINT64_C(1000000000), NULL, NULL, NULL);
+	struct modem *modem = modem_runtime_modem(runtime);
+	/* The actual datapump has already been released before the owner polls.
+	 * Its static reason must still appear, even just after a heartbeat. */
+	modem->disconnect_step = "V.8/CM-wait-JM";
+	modem->disconnect_phase = "training";
+	modem->disconnect_reason = "menu exchange timeout";
+	modem->disconnect_local = true;
+	modem->disconnect_sequence = 1;
+	(void)modem_runtime_step(runtime, UINT64_C(1020000000), NULL, NULL, NULL);
+	(void)modem_runtime_step(runtime, UINT64_C(1040000000), NULL, NULL, NULL);
+	/* A second call can end with the same literal between owner polls. */
+	modem->disconnect_sequence = 2;
+	(void)modem_runtime_step(runtime, UINT64_C(1060000000), NULL, NULL, NULL);
+	fflush(stderr);
+	int restored = dup2(saved, STDERR_FILENO);
+	close(saved);
+	CHECK(restored >= 0, "cannot restore protocol trace");
+	rewind(stream);
+	size_t size = fread(output, 1, sizeof(output) - 1, stream);
+	fclose(stream);
+	unsigned int reads = capture.level_reads;
+	modem_runtime_destroy(runtime);
+	CHECK(size > 0 && reads == 2, "progress drained heartbeat audio levels");
+	unsigned int updates = 0, failures = 0;
+	for (char *p = output; (p = strstr(p, "TRAIN ")) != NULL; ++p)
+		++updates;
+	for (char *p = output; (p = strstr(p, "DISCONNECT ")) != NULL; ++p)
+		++failures;
+	CHECK(updates == 1 && failures == 2 && strstr(output, "step=phase2/INFO0") &&
+	      strstr(output, "DISCONNECT origin=local phase=training step=V.8/CM-wait-JM reason=menu exchange timeout"),
+	      "protocol trace flooded, lost its current step, or missed the retained cause");
 	return true;
 }
 
@@ -951,6 +1014,7 @@ int main(void)
 		{ "bounded host step", test_steps_bounded_host_and_evidence_work },
 		{ "opt-in signaling trace", test_opt_in_signaling_trace },
 		{ "rate-limited call trace", test_call_trace_is_rate_limited },
+		{ "bounded protocol trace and retained disconnect", test_protocol_trace_bounds_and_retained_failure },
 	};
 	unsigned int failures = 0;
 
