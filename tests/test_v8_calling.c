@@ -203,6 +203,53 @@ static bool test_call_negotiation(void)
 	return true;
 }
 
+static bool test_empty_pcm_refusal_negotiation(void)
+{
+	static const uint8_t information[] = {
+		0xc1, 0x45, 0x13, 0x94, 0x2a, 0x07, 0x10,
+	};
+
+	for (unsigned int digital = 0; digital < 2; ++digital) {
+		struct v8_calling calling;
+		struct v8_menu local, negotiated;
+		struct remote_answerer answerer;
+		enum v8_modulation modulation;
+		int16_t receive = 0, transmit = 0;
+		bool replaced = false;
+
+		CHECK(v8_pcm_call_menu_init(&local,
+				digital ? V8_PCM_DIGITAL : V8_PCM_ANALOG,
+				digital ? V8_PSTN_DIGITAL : 0, true) == V8_MENU_OK &&
+		      v8_calling_init(&calling, &local) == V8_CALLING_OK &&
+		      remote_answerer_init(&answerer, V8_MODULATION_V34_DUPLEX),
+		      "empty-refusal waveform fixture did not initialize");
+		for (size_t sample = 0; sample < 12u * V8_ANSAM_SAMPLE_RATE; ++sample) {
+			CHECK(remote_answerer_transmit(&answerer, &receive) &&
+			      v8_calling_process(&calling, &receive, &transmit, 1) ==
+				      V8_CALLING_OK &&
+			      remote_answerer_receive(&answerer, transmit),
+			      "empty PCM refusal stopped caller %u at sample %zu",
+			      digital, sample);
+			if (answerer.call_menu_confirmed && !replaced) {
+				CHECK(v8_control_generator_init(&answerer.joint_menu_bits,
+						information, ARRAY_LENGTH(information)) ==
+						V8_FRAMING_OK,
+				      "could not substitute empty PCM refusal");
+				replaced = true;
+			}
+			if (v8_calling_is_complete(&calling) && answerer.cj_detected)
+				break;
+		}
+		CHECK(replaced && answerer.cj_detected && v8_calling_is_complete(&calling) &&
+		      v8_calling_selection(&calling, &negotiated, &modulation) ==
+			      V8_CALLING_OK && modulation == V8_MODULATION_V34_DUPLEX &&
+		      negotiated.lapm && !negotiated.pcm_present &&
+		      negotiated.pcm_availability == 0,
+		      "empty PCM refusal did not finish conventional V.34 negotiation");
+	}
+	return true;
+}
+
 static bool test_no_common_modulation(void)
 {
 	struct v8_calling calling;
@@ -666,6 +713,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "call negotiation", test_call_negotiation },
+		{ "empty PCM refusal negotiation", test_empty_pcm_refusal_negotiation },
 		{ "Quick Connect and V.8 fallback", test_quick_connect },
 		{ "Quick Connect validation", test_quick_connect_validation },
 		{ "no common modulation", test_no_common_modulation },

@@ -315,12 +315,12 @@ enum v8_menu_result v8_menu_decode(
 			decoded.pstn_access_present = true;
 		}
 	}
-	/* Some peers clear the PCM indicator but retain an empty availability
-	 * category when declining PCM. It grants no PCM role; keep validating
-	 * positive capabilities and the accompanying PSTN access category. */
-	if (!modulation_seen ||
-	    (pcm_indicator != decoded.pcm_present &&
-	     (pcm_indicator || decoded.pcm_availability != 0)) ||
+	/* Some peers clear the PCM indicator but retain an empty category when
+	 * declining PCM, even without PSTN access. Treat that category as absent
+	 * before validating the PCM/PSTN coupling. Positive offers stay strict. */
+	if (!pcm_indicator && decoded.pcm_availability == 0)
+		decoded.pcm_present = false;
+	if (!modulation_seen || pcm_indicator != decoded.pcm_present ||
 	    !menu_is_valid(&decoded))
 		return V8_MENU_MALFORMED;
 	*menu = decoded;
