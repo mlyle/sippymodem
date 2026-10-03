@@ -65,9 +65,14 @@ channel; a fixed family or rate range still limits automatic fallback.
 The answer sequence follows ITU-T V.8 (11/2000), 8.1.1 and 8.2.2: five seconds
 of unanswered ANSam and a 75 ms silent transition. V.22bis 6.3.1.1 supplies
 the 2400/1200-bit/s decision. Optional V.92 PCM upstream is selected with
-`AT+V92U=1`. V.34 upload is the default. V.42 detection uses its 750 ms
-T400 deadline in either role, then falls back to raw data when error correction
-is optional and the peer does not respond.
+`AT+V92U=1`. V.34 upload is the default. V.42 detection retains the 750 ms
+T400 default when answering. Outgoing calls allow up to 1.5 seconds for legacy
+peers with late replies, an interoperability allowance beyond the standard
+default. Clear asynchronous text (paired line endings, a newline-terminated
+text line, or 32 printable characters) selects raw mode early when error
+correction is optional; the received text is delivered to the terminal.
+Without a reply, detection falls back to raw data when error correction is
+optional.
 
 When LAPM compression is requested, XID may offer both V.44 and the legacy
 method but selects exactly one in the response. A negotiated V.44 session owns

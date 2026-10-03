@@ -393,7 +393,7 @@ static bool test_v42_starts_detection_immediately(void)
 	};
 
 	modem_detector_start(&originator);
-	CHECK(originator.bit_timer == 7200 &&
+	CHECK(originator.bit_timer == 14400 &&
 		      originator.packer.detector.tx_count == 1,
 	      "V.42 originator did not arm T400 and begin ODP immediately");
 	CHECK(modem_detector_get_bits(&originator, 1, bits, 37) == 37 &&
@@ -606,6 +606,43 @@ static bool test_v42_rejects_bad_detection_stops(void)
 	return true;
 }
 
+static bool test_v42_text_requires_framing(void)
+{
+	static const struct {
+		uint8_t characters[6];
+		unsigned count;
+		int bad_stop;
+	} cases[] = {
+		{ { '\r' }, 1, -1 },
+		{ { '\r', '\n' }, 2, 0 },
+		{ { '\r', '\n' }, 2, 1 },
+		{ { ' ', '\b', 0, ' ', '\b', 0 }, 6, -1 },
+	};
+
+	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
+		for (unsigned width = 1; width <= 8; ++width) {
+			struct modem m = {
+				.caller = 1, .tx_rate = 2400, .rx_rate = 2400,
+				.cfg = { .ec = 1, .ec_detector = 1 },
+			};
+			uint8_t bits[128];
+			size_t count = 0;
+
+			memset(bits, 1, sizeof(bits));
+			for (unsigned i = 0; i < cases[index].count; ++i)
+				CHECK(append_async_character(bits, sizeof(bits), &count,
+				      cases[index].characters[i], (int)i != cases[index].bad_stop),
+				      "text noise fixture overflow");
+			modem_detector_start(&m);
+			CHECK(receive_detection_bits(&m, bits, sizeof(bits), width) &&
+			      !m.packer.detector.text_confirmed &&
+			      m.packer.detector.tx_limit == 0 && m.bit_timer == 7200,
+			      "noise ended detection: case %zu width %u", index, width);
+		}
+	}
+	return true;
+}
+
 struct hdlc_fixture {
 	struct hdlc_frame transmit_frame;
 	const uint8_t *payload;
@@ -806,6 +843,7 @@ int main(void)
 		{ "HDLC transmit preamble", test_hdlc_transmit_preamble },
 		{ "HDLC round trip", test_hdlc_round_trip },
 		{ "HDLC minimum frame size", test_hdlc_minimum_frame_size },
+		{ "V.42 text framing", test_v42_text_requires_framing },
 	};
 	unsigned int failures = 0;
 

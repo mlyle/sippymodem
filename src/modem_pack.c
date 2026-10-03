@@ -72,6 +72,7 @@ enum {
 	ASYNC_DATA_BITS = 8,
 	ASYNC_FRAME_BITS = 10,
 	V42_T400_MS = 750,
+	V42_ORIGINATOR_DETECTION_MS = 1500,
 };
 
 enum async_receive_state {
@@ -407,6 +408,12 @@ static void detector_finish(struct modem *m)
 	 * It arms the residue filter; four characters still select V.42. */
 	int discard_residue = !m->packer.detector.ec_enable &&
 		m->packer.detector.rx_count >= 2;
+	u8 text[sizeof(m->packer.detector.text)];
+	unsigned int text_length = m->packer.detector.text_confirmed ?
+		m->packer.detector.text_length : 0;
+
+	if (text_length != 0)
+		memcpy(text, m->packer.detector.text, text_length);
 
 	PACK_DBG("detector finished.\n");
 	m->packer.detector.tx_count = 0;
@@ -431,6 +438,11 @@ static void detector_finish(struct modem *m)
 				residue_pattern[1];
 			m->packer.async.detection_residue_state =
 				ASYNC_DETECTION_RESIDUE_WAIT;
+		}
+		if (text_length != 0)
+			for (unsigned int i = 0; i < text_length; ++i)
+				async_deliver_character(m, text[i]);
+		if (discard_residue || text_length != 0) {
 			/* The detector has consumed every complete character. Seed
 			 * the raw receiver with its partial next character so a
 			 * fragment boundary cannot turn ADP/ODP residue into data. */
@@ -468,6 +480,39 @@ static int detector_accept_pattern_character(struct modem *m,
 
 	detector->rx_count =
 		character == detector->rx_pattern[0] ? 1 : 0;
+	return 0;
+}
+
+static int detector_observe_text(struct modem *m, u8 character)
+{
+	struct detect_state *d = &m->packer.detector;
+	bool newline;
+
+	/* Detection patterns use the opposite bit order to DTE characters. */
+	REVERSE_BITS(character);
+	newline = character == '\r' || character == '\n';
+	if (!d->text_confirmed && !newline && character != '\t' &&
+	    (character < 0x20 || character > 0x7e)) {
+		d->text_length = 0;
+		return 0;
+	}
+	if (d->text_length == sizeof(d->text))
+		return -1; /* Receive ran ahead of the final transmitted ODP. */
+	d->text[d->text_length++] = character;
+	if (d->text_confirmed)
+		return 0;
+	/* A lone CR could be noise. Accept adjacent line endings, a short
+	 * text line, or a full printable prompt. EC/ODP and HDLC detection
+	 * take precedence and cannot accumulate such a text prefix. */
+	if ((newline && (d->text_length >= 4 ||
+	     (d->text_length >= 2 &&
+	      (d->text[d->text_length - 2] == '\r' ||
+	       d->text[d->text_length - 2] == '\n')))) ||
+	    d->text_length == 32) {
+		d->text_confirmed = true;
+		d->rx_count = 0;
+		detector_timeout(m);
+	}
 	return 0;
 }
 
@@ -539,7 +584,8 @@ int modem_detector_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 		 * Require adjacent flags and inspect every newly received bit end. */
 		for (int bit = nbits - 1; bit >= 0; --bit) {
 			if (((s->data >> bit) & 0xffffu) != 0x7e7eu ||
-			    d->ec_enable || (!m->caller && d->tx_count != 0))
+			    d->ec_enable || d->text_confirmed ||
+			    (!m->caller && d->tx_count != 0))
 				continue;
 			if (!m->caller)
 				detector_start_adp_reply(m);
@@ -556,11 +602,20 @@ int modem_detector_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 			/* V.42 7.2.1 requires correctly received adjacent pattern
 			 * characters. A bad stop breaks an unfinished match. */
 			if (!(s->data & ((u32)1 << s->bit))) {
+				if (!d->text_confirmed)
+					d->text_length = 0;
 				if (d->rx_count < DETECTOR_MATCH_CHARACTERS)
 					d->rx_count = 0;
 				continue;
 			}
 			PACK_DBG("rx pattern: 0x%02x.\n",ch);
+			if (m->caller && !d->ec_enable && !finish &&
+			    detector_observe_text(m, ch) != 0) {
+				modem_update_status(m, STATUS_ERROR);
+				return ret;
+			}
+			if (d->text_confirmed)
+				continue;
 			if (!detector_accept_pattern_character(m, d, ch))
 				continue;
 
@@ -587,11 +642,15 @@ int modem_detector_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 void modem_detector_start(struct modem *m)
 {
 	struct detect_state *d = &m->packer.detector;
-	uint64_t timeout = detector_rate(m) * V42_T400_MS / 1000;
+	unsigned int duration = m->caller ?
+		V42_ORIGINATOR_DETECTION_MS : V42_T400_MS;
+	uint64_t timeout = detector_rate(m) * duration / 1000;
 	d->tx_count = 0; /* mute transmitter */
 	d->rx_count = 0;
 	d->tx_limit = m->caller ? 0 : 2 * V42_ANSWER_REPLY_PATTERNS;
 	d->ec_enable = 0;
+	d->text_length = 0;
+	d->text_confirmed = false;
 	if (m->caller) {
 		detector_set_pattern(d->tx_pattern, ODP0, ODP1);
 		detector_set_pattern(d->rx_pattern, ADP0, ADP1_V42);
@@ -603,8 +662,11 @@ void modem_detector_start(struct modem *m)
 			m->cfg.ec ? ADP1_V42 : ADP1_V14);
 		detector_set_pattern(d->rx_pattern, ODP0, ODP1);
 	}
-	/* V.42 7.2.1 and 9.1.1: start detection immediately and bound
-	 * either role by the default 750 ms T400. */
+	/* V.42 7.2.1: start detection immediately. The answerer retains the
+	 * 9.1.1 default of 750 ms. Allow the originator one extra 750 ms for
+	 * legacy peers whose ADP arrives just beyond that deadline over SIP.
+	 * This is an interoperability allowance beyond the standard default;
+	 * incoming data never renews it, and a valid reply completes early. */
 	m->bit_timer_func = detector_timeout;
 	m->bit_timer = timeout > INT_MAX ? INT_MAX : timeout > 0 ? (int)timeout : 1;
 	m->pack.bit  = m->unpack.bit  = 0;
@@ -617,6 +679,8 @@ void modem_detector_reframe(struct modem *m)
 	/* Retraining interrupts adjacency and physical bit alignment, not the
 	 * selected reply or the suspended detection timer (V.42 7.10/7.11). */
 	m->packer.detector.rx_count = 0;
+	if (!m->packer.detector.text_confirmed)
+		m->packer.detector.text_length = 0;
 	m->pack.bit = m->unpack.bit = 0;
 	m->pack.data = 0;
 	m->unpack.data = 0xffffu; /* No flag history before this carrier epoch. */

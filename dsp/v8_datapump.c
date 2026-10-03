@@ -87,7 +87,7 @@ static int process_v8(
 static const char *progress_v8(const struct dp *dp);
 
 static const struct dp_operations v8_operations = {
-	.name = "V.8 negotiation",
+	.name = "V.8/legacy negotiation",
 	.create = create_v8,
 	.delete = delete_v8,
 	.process = process_v8,

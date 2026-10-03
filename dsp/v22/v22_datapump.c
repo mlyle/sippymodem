@@ -146,6 +146,27 @@ static int delete_v22(struct dp *dp);
 static int process_v22(
 	struct dp *dp, void *receive, void *transmit, int count);
 static int retrain_v22(struct dp *dp);
+static const char *progress_v22(const struct dp *dp)
+{
+	const struct v22_datapump *datapump = dp->dp_data;
+
+	if (datapump == NULL)
+		return "V.22/initializing";
+	switch (datapump->training_state) {
+	case V22_TRAINING_ORIGINATE_WAIT_ANSWER_MARK: return "V.22/wait-answer-mark";
+	case V22_TRAINING_ORIGINATE_SILENCE: return "V.22/answer-mark-guard";
+	case V22_TRAINING_V22BIS_RATE_SIGNAL: return "V.22bis/send-S1";
+	case V22_TRAINING_WAIT_SCRAMBLED_MARK: return "V.22/wait-scrambled-mark";
+	case V22_TRAINING_CONNECT_HOLD: return "V.22/mark-exchange";
+	case V22_TRAINING_V22BIS_CONFIRM: return "V.22bis/confirm-2400";
+	case V22_TRAINING_RETRAIN_SIGNAL: return "V.22bis/retrain-S1";
+	case V22_TRAINING_RETRAIN_WAIT_PEER: return "V.22bis/retrain-wait-peer";
+	case V22_TRAINING_RETRAIN_MARK: return "V.22bis/retrain-mark";
+	case V22_TRAINING_ONLINE: return "online";
+	}
+	return "V.22/unknown";
+}
+
 static int enter_link(struct v22_datapump *datapump);
 static int flush_retrain_candidate(struct v22_datapump *datapump);
 
@@ -157,6 +178,7 @@ static const struct dp_operations v22_operations = {
 	.create = create_v22,
 	.delete = delete_v22,
 	.process = process_v22,
+	.progress = progress_v22,
 };
 
 static const struct dp_operations v22bis_operations = {
@@ -165,6 +187,7 @@ static const struct dp_operations v22bis_operations = {
 	.delete = delete_v22,
 	.process = process_v22,
 	.retrain = retrain_v22,
+	.progress = progress_v22,
 };
 
 const struct dp_operations *v22_datapump_operations(enum DP_ID id)

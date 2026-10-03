@@ -400,6 +400,10 @@ struct modem {
 			int rx_count;
 			u8 rx_pattern[2];
 			int ec_enable;
+			/* Hold a short text prefix until raw mode is unambiguous. */
+			u8 text[128];
+			unsigned int text_length;
+			bool text_confirmed;
 		} detector;
 		struct hdlc_state {
 			struct hdlc_frame *tx_frame;
