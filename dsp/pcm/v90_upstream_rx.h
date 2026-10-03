@@ -62,9 +62,6 @@ struct v90_upstream_rx {
 	 * rate renegotiation can reset only the frame parser. While searching CP,
 	 * this checkpoints the state before the current possible E run. */
 	struct v90_phase4_cp_rx control_symbols;
-	/* Search alongside CP only after admitting normal DATA CP. CPt and
-	 * echo-reconditioning SCR must not be mistaken for E. */
-	struct v34_phase4_e_receiver e_search;
 	struct v90_pcm_mapping training_mapping;
 	/* Retain CPs for matching its prime; only data_cp_received publishes a
 	 * final data selection. CPs never installs a data mapping. */

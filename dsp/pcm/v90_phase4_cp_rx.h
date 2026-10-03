@@ -18,6 +18,7 @@ struct v90_phase4_cp_rx {
 	enum v34_station_role transmitting_role;
 	enum v34_constellation_size constellation;
 	uint8_t previous_clockwise_quarter_turns;
+	uint8_t consecutive_ones;
 };
 
 /* Initialize immediately before the peer's first CPt. That sequence starts
@@ -36,7 +37,8 @@ bool v90_phase4_cp_rx_equal(
 
 /* Consume one exact training-constellation decision and emit at most one
  * alignment-free CP parser event. Rejected calls leave state and event
- * unchanged; accepted calls preserve modulation history across records. */
+ * unchanged; accepted calls preserve modulation history across records and
+ * count the bounded one-run for E in the same decoded bitstream. */
 enum v90_cp_result v90_phase4_cp_rx_receive_decision(
 	struct v90_phase4_cp_rx *rx,
 	uint8_t quarter_point, uint8_t clockwise_quarter_turns,

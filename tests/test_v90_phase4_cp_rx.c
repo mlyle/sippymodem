@@ -2,6 +2,7 @@
 
 #include <v90_phase4_cp_rx.h>
 #include <v90_phase4_cp_tx.h>
+#include <v34_phase4_e_sequence.h>
 
 #include "test.h"
 
@@ -353,6 +354,63 @@ static bool test_two_rejections_in_one_symbol(void)
 	return true;
 }
 
+static bool test_cp_to_e_continuity(void)
+{
+	static const enum v34_station_role roles[] = {
+		V34_CALLING_STATION, V34_ANSWERING_STATION,
+	};
+	static const enum v34_constellation_size constellations[] = {
+		V34_CONSTELLATION_4_POINT, V34_CONSTELLATION_16_POINT,
+	};
+	struct v90_cp_parameters training = parameters(V90_CP_TRAINING, 1, false, 0);
+	struct v90_cp_parameters data = parameters(V90_CP_DATA, 1, false, 0);
+
+	for (size_t role = 0; role < ARRAY_LENGTH(roles); ++role)
+		for (size_t size = 0; size < ARRAY_LENGTH(constellations); ++size) {
+			struct v90_phase4_cp_tx tx;
+			struct v90_phase4_cp_rx rx;
+			struct v90_cp_receive_event event;
+			unsigned int width = v34_constellation_bits_per_symbol(
+				constellations[size]);
+
+			CHECK(v90_phase4_cp_tx_init(&tx, roles[role],
+				      constellations[size], &training) == V90_PHASE4_CP_TX_OK &&
+			      v90_phase4_cp_rx_init(&rx, roles[role],
+				      constellations[size]) == V90_CP_OK &&
+			      transfer_record(&tx, &rx, false, SIZE_MAX, 0, &event) &&
+			      event.type == V90_CP_RECEIVE_FRAME &&
+			      event.frame_result == V90_CP_OK &&
+			      v90_phase4_cp_tx_start_next_record(&tx, &data) ==
+				      V90_PHASE4_CP_TX_OK &&
+			      transfer_record(&tx, &rx, false, SIZE_MAX, 0, &event) &&
+			      event.type == V90_CP_RECEIVE_FRAME &&
+			      event.frame_result == V90_CP_OK && rx.consecutive_ones == 0u,
+			      "CP fill bits did not delimit E for %zu/%zu", role, size);
+			/* V.90 E continues CP's modulation with twenty binary ones.
+			 * Feed its wire symbols through the same CP receiver. */
+			for (unsigned int bits = 0; bits < V34_PHASE4_E_BITS; bits += width) {
+				uint8_t rotation, quarter = 0u;
+
+				CHECK(v34_scramble_differential_dibit(&tx.scrambler, 3u,
+					      tx.previous_clockwise_quarter_turns,
+					      &rotation) == V34_FRAMING_OK &&
+				      (width == 2u || v34_scramble_mapped_dibit(
+					      &tx.scrambler, 3u, &quarter) == V34_FRAMING_OK) &&
+				      v90_phase4_cp_rx_receive_decision(&rx, quarter,
+					      rotation, &event) == V90_CP_OK &&
+				      event.type == V90_CP_RECEIVE_NO_EVENT &&
+				      rx.consecutive_ones == bits + width &&
+				      rx.descrambler.history == tx.scrambler.history,
+				      "continuous E count or history changed at %zu/%zu/%u",
+				      role, size, bits);
+				tx.previous_clockwise_quarter_turns = rotation;
+			}
+			CHECK(v90_phase4_cp_rx_is_valid(&rx),
+			      "complete E left an invalid symbol receiver");
+		}
+	return true;
+}
+
 static bool test_logical_state_equality(void)
 {
 	struct v90_phase4_cp_rx left;
@@ -387,6 +445,11 @@ static bool test_logical_state_equality(void)
 	      !v90_phase4_cp_rx_equal(&left, &right) &&
 	      !v90_phase4_cp_rx_equal(NULL, &right),
 	      "CP receiver equality ignored parser state");
+	right = left;
+	right.consecutive_ones = 1u;
+	CHECK(v90_phase4_cp_rx_is_valid(&right) &&
+	      !v90_phase4_cp_rx_equal(&left, &right),
+	      "CP receiver equality ignored E history");
 	return true;
 }
 
@@ -436,6 +499,15 @@ static bool test_transactional_contracts(void)
 	      memcmp(&rx, &saved, sizeof(rx)) == 0 &&
 	      memcmp(&event, &saved_event, sizeof(event)) == 0,
 	      "rejected CP receive call was not transactional");
+	rx.consecutive_ones = V34_PHASE4_E_BITS + 1u;
+	saved = rx;
+	CHECK(!v90_phase4_cp_rx_is_valid(&rx) &&
+	      v90_phase4_cp_rx_receive_decision(&rx, 0, 0, &event) ==
+		      V90_CP_INVALID_ARGUMENT &&
+	      memcmp(&rx, &saved, sizeof(rx)) == 0 &&
+	      memcmp(&event, &saved_event, sizeof(event)) == 0,
+	      "CP receiver accepted or changed a corrupt E history");
+	rx.consecutive_ones = 0u;
 	rx.previous_clockwise_quarter_turns = 4;
 	CHECK(!v90_phase4_cp_rx_is_valid(&rx) &&
 	      v90_phase4_cp_rx_receive_decision(
@@ -458,6 +530,7 @@ int main(void)
 		  test_corruption_and_reacquisition },
 		{ "fixed phase ambiguity", test_fixed_phase_ambiguity },
 		{ "two rejections in one symbol", test_two_rejections_in_one_symbol },
+		{ "CP-to-E continuity", test_cp_to_e_continuity },
 		{ "logical state equality", test_logical_state_equality },
 		{ "transactional contracts", test_transactional_contracts },
 	};

@@ -2,6 +2,8 @@
 
 #include "v90_phase4_cp_rx.h"
 
+#include "v34_phase4_e_sequence.h"
+
 #include <stddef.h>
 #include <string.h>
 
@@ -13,7 +15,8 @@ bool v90_phase4_cp_rx_is_valid(
 	       v34_transmit_scrambler_is_valid(
 		       &rx->descrambler, rx->transmitting_role) &&
 	       v90_cp_receiver_is_valid(&rx->records) &&
-	       rx->previous_clockwise_quarter_turns <= 3u;
+	       rx->previous_clockwise_quarter_turns <= 3u &&
+	       rx->consecutive_ones <= V34_PHASE4_E_BITS;
 }
 
 bool v90_phase4_cp_rx_equal(
@@ -32,7 +35,8 @@ bool v90_phase4_cp_rx_equal(
 	       left->transmitting_role == right->transmitting_role &&
 	       left->constellation == right->constellation &&
 	       left->previous_clockwise_quarter_turns ==
-		       right->previous_clockwise_quarter_turns;
+		       right->previous_clockwise_quarter_turns &&
+	       left->consecutive_ones == right->consecutive_ones;
 }
 
 enum v90_cp_result v90_phase4_cp_rx_init(
@@ -114,6 +118,8 @@ enum v90_cp_result v90_phase4_cp_rx_receive_decision(
 			return V90_CP_INVALID_ARGUMENT;
 		if (emitted.type == V90_CP_RECEIVE_NO_EVENT)
 			emitted = received;
+		next.consecutive_ones = v34_phase4_e_extend_one_run(
+			next.consecutive_ones, dibit);
 	}
 	next.previous_clockwise_quarter_turns = clockwise_quarter_turns;
 	if (!v90_phase4_cp_rx_is_valid(&next))

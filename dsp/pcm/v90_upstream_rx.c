@@ -88,22 +88,6 @@ static enum v90_upstream_rx_result validate_data_parameters(
 	return V90_UPSTREAM_RX_NUMERIC_FAILURE;
 }
 
-static bool e_search_is_valid(const struct v90_upstream_rx *receiver)
-{
-	const struct v34_phase4_e_receiver *e = &receiver->e_search;
-	const struct v90_phase4_cp_rx *cp = &receiver->state.cp.symbols;
-
-	return receiver->state.cp.boundary_complete &&
-	       v34_phase4_e_receiver_is_valid(e) &&
-	       !v34_phase4_e_receiver_is_complete(e) &&
-	       e->descrambler.history == cp->descrambler.history &&
-	       e->descrambler.polynomial == cp->descrambler.polynomial &&
-	       e->transmitting_role == cp->transmitting_role &&
-	       e->constellation == cp->constellation &&
-	       e->previous_clockwise_quarter_turns ==
-		       cp->previous_clockwise_quarter_turns;
-}
-
 bool v90_upstream_rx_is_valid(const struct v90_upstream_rx *receiver)
 {
 	if (receiver == NULL ||
@@ -141,9 +125,11 @@ bool v90_upstream_rx_is_valid(const struct v90_upstream_rx *receiver)
 		/* fall through */
 	case V90_UPSTREAM_RX_STAGE_CP:
 		return v90_phase4_cp_line_rx_is_valid(&receiver->state.cp) &&
-		       (!receiver->data_cp_received || e_search_is_valid(receiver)) &&
+		       (!receiver->data_cp_received ||
+			(receiver->state.cp.boundary_complete &&
+			 receiver->state.cp.symbols.consecutive_ones < V34_PHASE4_E_BITS)) &&
 		       ((receiver->data_cp_received &&
-			 receiver->e_search.received_bits != 0u) ||
+			 receiver->state.cp.symbols.consecutive_ones != 0u) ||
 			v90_phase4_cp_rx_equal(&receiver->control_symbols,
 					       &receiver->state.cp.symbols)) &&
 		       !v90_phase4_cp_line_rx_has_pending_record(
@@ -324,13 +310,6 @@ static enum v90_upstream_rx_result accept_cp_record(
 		receiver->data_parameters = parameters;
 		receiver->data_parameters.acknowledges_peer = false;
 		receiver->stage = V90_UPSTREAM_RX_STAGE_CP;
-		receiver->e_search = (struct v34_phase4_e_receiver){
-			.descrambler = receiver->state.cp.symbols.descrambler,
-			.transmitting_role = receiver->state.cp.symbols.transmitting_role,
-			.constellation = receiver->state.cp.symbols.constellation,
-			.previous_clockwise_quarter_turns =
-				receiver->state.cp.symbols.previous_clockwise_quarter_turns,
-		};
 		result = continue_cp(receiver);
 		if (result != V90_UPSTREAM_RX_OK)
 			return result;
@@ -380,38 +359,37 @@ static enum v90_upstream_rx_result receive_cp_sample(
 	struct v90_cp_parameters *emitted, bool *event_ready)
 {
 	struct v90_cp_receive_event event = { 0 };
-	struct v34_fixed_training_decision decision;
 	enum v90_phase4_cp_line_rx_result result =
 		v90_phase4_cp_line_rx_sample(
-			&receiver->state.cp, sample, &event, &decision);
+			&receiver->state.cp, sample, &event, NULL);
 
+	/* CPt and echo-reconditioning SCR are not E. Only a normal data CP
+	 * authorizes the 20-one marker in the continuous CP decoder. */
 	if (receiver->data_cp_received &&
 	    (result == V90_PHASE4_CP_LINE_RX_SYMBOL ||
-	     result == V90_PHASE4_CP_LINE_RX_RECORD_READY)) {
-		enum v34_phase4_e_receiver_result e_result =
-			v34_phase4_e_receive_decision(
-				&receiver->e_search, decision.quarter_point,
-				decision.clockwise_quarter_turns);
+	     result == V90_PHASE4_CP_LINE_RX_RECORD_READY) &&
+	    receiver->state.cp.symbols.consecutive_ones == V34_PHASE4_E_BITS) {
+		/* V.90 9.4.1.4: E acknowledges MP even if no CP-prime survived.
+		 * Keep the physical receiver at the exact E/B1 symbol boundary. */
+		const struct v90_phase4_cp_line_rx *cp = &receiver->state.cp;
+		struct v90_phase4_e_line_rx e = {
+			.line = cp->line,
+			.symbols = {
+				.descrambler = cp->symbols.descrambler,
+				.transmitting_role = cp->symbols.transmitting_role,
+				.constellation = cp->symbols.constellation,
+				.previous_clockwise_quarter_turns =
+					cp->symbols.previous_clockwise_quarter_turns,
+				.received_bits = cp->symbols.consecutive_ones,
+			},
+			.transmitting_profile = cp->transmitting_profile,
+			.cp = receiver->data_parameters,
+			.decoder_power_q15 = cp->decoder_power_q15,
+			.adaptation = cp->adaptation,
+		};
 
-		if (e_result == V34_PHASE4_E_RECEIVER_COMPLETE) {
-			/* V.90 9.4.1.4: E acknowledges MP even if no CP-prime
-			 * survived. Keep the same physical receiver at the exact
-			 * end of E; the following symbol belongs to B1. */
-			const struct v90_phase4_cp_line_rx *cp = &receiver->state.cp;
-			struct v90_phase4_e_line_rx e = {
-				.line = cp->line,
-				.symbols = receiver->e_search,
-				.transmitting_profile = cp->transmitting_profile,
-				.cp = receiver->data_parameters,
-				.decoder_power_q15 = cp->decoder_power_q15,
-				.adaptation = cp->adaptation,
-			};
-
-			e.cp.acknowledges_peer = true;
-			return start_b1(receiver, &e);
-		}
-		if (e_result != V34_PHASE4_E_RECEIVER_OK)
-			return V90_UPSTREAM_RX_NUMERIC_FAILURE;
+		e.cp.acknowledges_peer = true;
+		return start_b1(receiver, &e);
 	}
 
 	/* Preserve the CP state preceding a possible E run. CP frames end in
@@ -420,7 +398,7 @@ static enum v90_upstream_rx_result receive_cp_sample(
 	if ((result == V90_PHASE4_CP_LINE_RX_OK ||
 	     result == V90_PHASE4_CP_LINE_RX_SYMBOL ||
 	     result == V90_PHASE4_CP_LINE_RX_RECORD_READY) &&
-	    (!receiver->data_cp_received || receiver->e_search.received_bits == 0u))
+	    (!receiver->data_cp_received || receiver->state.cp.symbols.consecutive_ones == 0u))
 		receiver->control_symbols = receiver->state.cp.symbols;
 
 	switch (result) {

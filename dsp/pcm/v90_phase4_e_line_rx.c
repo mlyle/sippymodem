@@ -82,6 +82,7 @@ enum v90_phase4_e_line_rx_result v90_phase4_e_line_rx_init(
 		.previous_clockwise_quarter_turns =
 			completed_cp->symbols
 				.previous_clockwise_quarter_turns,
+		.received_bits = completed_cp->symbols.consecutive_ones,
 	};
 	if (!v90_phase4_e_line_rx_is_valid(&initialized))
 		return V90_PHASE4_E_LINE_RX_INVALID_ARGUMENT;
