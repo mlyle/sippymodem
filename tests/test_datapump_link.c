@@ -14,6 +14,47 @@ static int sink_calls;
 static int sink_wrapper_calls;
 static int sink_result;
 static u8 sink_bits[DATAPUMP_LINK_MAX_BITS];
+static unsigned int initial_links, resumed_links;
+
+void modem_dp_connected(struct modem *modem)
+{
+	(void)modem;
+	++initial_links;
+}
+
+void modem_dp_reconnected(struct modem *modem)
+{
+	(void)modem;
+	++resumed_links;
+}
+
+static bool test_training_completion_ownership(void)
+{
+	struct modem modem = { 0 };
+	struct dp parent = { .id = DP_V8, .modem = &modem };
+	struct dp child = { .id = DP_V32, .modem = &modem };
+	struct training_session training;
+
+	modem.dp = &parent;
+	CHECK(training_session_init(&training, MODEM_RATE) == TRAINING_SESSION_OK &&
+	      datapump_complete_training(&child, &training) &&
+	      training_session_is_online(&training) && child.status == DPSTAT_CONNECT &&
+	      initial_links == 0 && resumed_links == 0,
+	      "unadopted legacy child published its parent's connection");
+	modem.dp = &child;
+	CHECK(training_session_start_retrain(&training, TRAINING_REMOTE_RETRAIN) ==
+		      TRAINING_SESSION_OK &&
+	      datapump_complete_training(&child, &training) &&
+	      resumed_links == 1 && initial_links == 0,
+	      "adopted physical retrain did not resume the retained host link");
+	CHECK(training_session_init(&training, MODEM_RATE) == TRAINING_SESSION_OK &&
+	      datapump_complete_training(&child, &training) &&
+	      initial_links == 1 && resumed_links == 1 &&
+	      !datapump_complete_training(&child, &training) && initial_links == 1 &&
+	      resumed_links == 1,
+	      "initial training resumed an old link or announced completion twice");
+	return true;
+}
 
 static int test_get_bits(struct modem *modem, int nbits, u8 *bits, int count)
 {
@@ -223,6 +264,6 @@ static bool test_deliver_bits(void)
 
 int main(void)
 {
-	return test_link_rates() && test_source_bits() &&
+	return test_training_completion_ownership() && test_link_rates() && test_source_bits() &&
 	       test_source_split_bits() && test_deliver_bits() ? 0 : 1;
 }

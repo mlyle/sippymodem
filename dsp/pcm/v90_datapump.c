@@ -632,7 +632,6 @@ static bool deliver_event(
 
 static bool enter_link(struct v90_datapump *datapump)
 {
-	bool retrained;
 	uint32_t transmit_rate;
 	uint32_t receive_rate;
 
@@ -641,19 +640,10 @@ static bool enter_link(struct v90_datapump *datapump)
 	    !datapump_set_link_rates(
 		    &datapump->dp, transmit_rate, receive_rate))
 		return false;
-	retrained = training_session_is_retraining(&datapump->training);
-	if (training_session_connect(&datapump->training) !=
-	    TRAINING_SESSION_OK)
-		return false;
 	datapump->dp.modem->dsp_info.upstream_mode =
 		pcm_call_uses_conventional_upstream(&datapump->call) ?
 		MODEM_UPSTREAM_V34 : MODEM_UPSTREAM_PCM;
-	datapump->dp.status = DPSTAT_CONNECT;
-	if (retrained)
-		modem_dp_reconnected(datapump->dp.modem);
-	else
-		modem_dp_connected(datapump->dp.modem);
-	return true;
+	return datapump_complete_training(&datapump->dp, &datapump->training);
 }
 
 static int hangup_v90(struct dp *dp)

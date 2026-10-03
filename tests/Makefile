@@ -403,7 +403,8 @@ DATAPUMP_TIMING_TEST_BINARY := $(BUILD_DIR)/test_datapump_timing
 DATAPUMP_TIMING_TEST_OBJECTS := $(BUILD_DIR)/test_datapump_timing.o \
 	$(BUILD_DIR)/training_session.o
 DATAPUMP_LINK_TEST_BINARY := $(BUILD_DIR)/test_datapump_link
-DATAPUMP_LINK_TEST_OBJECTS := $(BUILD_DIR)/test_datapump_link.o
+DATAPUMP_LINK_TEST_OBJECTS := $(BUILD_DIR)/test_datapump_link.o \
+	$(BUILD_DIR)/training_session.o
 DATAPUMP_MEDIA_TEST_BINARY := $(BUILD_DIR)/test_datapump_media
 DATAPUMP_MEDIA_TEST_OBJECTS := $(BUILD_DIR)/test_datapump_media.o
 MEMORY_REGION_TEST_BINARY := $(BUILD_DIR)/test_memory_region

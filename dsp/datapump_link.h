@@ -7,6 +7,7 @@
 #include "modem.h"
 #include "modem_param.h"
 #include "packed_bits.h"
+#include "training_session.h"
 
 #include <limits.h>
 #include <stddef.h>
@@ -16,6 +17,27 @@
 
 /* Largest current host mapping burst: V.34 primary frame plus auxiliary bit. */
 enum { DATAPUMP_LINK_MAX_BITS = 80 };
+
+/* Publish a completed physical link before delivering its first data bits.
+ * Retraining resumes retained HDLC/LAPM state through the common host path. */
+static inline bool datapump_complete_training(
+	struct dp *dp, struct training_session *training)
+{
+	if (dp == NULL || dp->modem == NULL)
+		return false;
+	bool retrained = training_session_is_retraining(training);
+	if (training_session_connect(training) != TRAINING_SESSION_OK)
+		return false;
+	dp->status = DPSTAT_CONNECT;
+	/* A negotiation parent publishes the child after adopting it. */
+	if (dp->modem->dp != dp)
+		return true;
+	if (retrained)
+		modem_dp_reconnected(dp->modem);
+	else
+		modem_dp_connected(dp->modem);
+	return true;
+}
 
 /* Set the host-facing link rates before reporting CONNECT.  Validate both
  * values before changing either rate; modem_set_param updates the modem's

@@ -480,8 +480,7 @@ static struct v32_datapump *v32_from_dp(struct dp *dp)
 		    local_role(datapump->caller) ||
 	    !point_is_finite(&datapump->transmit_point) ||
 	    (!training_session_has_failed(&datapump->training) &&
-	     (training_session_is_online(&datapump->training) ||
-	      training_session_is_retraining(&datapump->training)) !=
+	     training_session_is_online(&datapump->training) !=
 		     (dp->status == DPSTAT_CONNECT)) ||
 	    (training_session_is_online(&datapump->training) &&
 	     trellis_data_bits != 0 &&
@@ -611,6 +610,7 @@ static int prepare_retrain(
 	    training_session_start_retrain(
 		    &datapump->training, origin) != TRAINING_SESSION_OK)
 		return -1;
+	datapump->dp.status = DPSTAT_OK;
 	return 0;
 }
 
@@ -1213,12 +1213,8 @@ static int enter_link(struct v32_datapump *datapump)
 		return -1;
 	if (!datapump_set_link_rates(&datapump->dp, bit_rate, bit_rate))
 		return -1;
-	if (training_session_connect(&datapump->training) !=
-	    TRAINING_SESSION_OK)
-		return -1;
 	datapump->missing_carrier_samples = 0;
-	datapump->dp.status = DPSTAT_CONNECT;
-	return 0;
+	return datapump_complete_training(&datapump->dp, &datapump->training) ? 0 : -1;
 }
 
 static int deliver_fixed_batch(

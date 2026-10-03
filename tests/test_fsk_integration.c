@@ -942,6 +942,8 @@ static bool exercise_retrain(
 	int pending_transmit_bits = 0;
 	int pending_transmit_chars = 0;
 	bool interrupt_exchange = id == DP_V92 && !raw_transport;
+	bool check_v32_resume = (id == DP_V32 || id == DP_V32BIS) && !raw_transport;
+	bool resume_poll_seen = false;
 	unsigned retrain_quiet = 0, longest_retrain_quiet = 0;
 
 	if (caller == NULL || answerer == NULL || initiator == NULL ||
@@ -1008,14 +1010,14 @@ static bool exercise_retrain(
 			return false;
 		}
 	}
-	/* The V.92 LAPM case must interrupt a real outstanding information frame,
+	/* LAPM recovery must interrupt a real outstanding information frame,
 	 * not merely queue terminal bytes behind an idle link or resume without
 	 * retraining.  Exact delivery of this payload is checked after recovery. */
-	if (id == DP_V92 && !raw_transport &&
+	if ((interrupt_exchange || check_v32_resume) &&
 	    (!initiator_retrains || !peer_retrains ||
 	     initiator->modem->ec.lapm.va == initiator->modem->ec.lapm.vs)) {
 		fprintf(stderr,
-			"V.92 retrain fixture did not interrupt pending LAPM data\n");
+			"retrain fixture did not interrupt pending LAPM data\n");
 		return false;
 	}
 	/* ATO1 must request a full retrain even while a shorter exchange is
@@ -1151,6 +1153,7 @@ static bool exercise_retrain(
 				return false;
 			}
 		}
+		resume_poll_seen |= initiator->modem->ec.lapm.retrain_poll != 0;
 		if (initiator->modem->retrain_pending == 0 &&
 		    (!peer_requested || peer->modem->retrain_pending == 0) &&
 		    modem_is_online(caller->modem, id) &&
@@ -1159,6 +1162,10 @@ static bool exercise_retrain(
 			completion_frames = frame + 1u;
 			break;
 		}
+	}
+	if (check_v32_resume && !resume_poll_seen) {
+		fprintf(stderr, "V.32 retrain did not resume outstanding LAPM data\n");
+		return false;
 	}
 	if (!completed ||
 	    !output_contains_connect(initiator, bit_rate) ||
