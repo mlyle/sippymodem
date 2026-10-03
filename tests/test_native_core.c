@@ -5938,6 +5938,129 @@ static void capture_ready_frame(void *context, frame_t *frame)
 		capture->invalid_frame = true;
 }
 
+struct lapm_ack_capture {
+	uint8_t frame[8][3];
+	unsigned count;
+	bool invalid;
+};
+
+static void capture_lapm_acknowledgment(void *context, frame_t *frame)
+{
+	struct lapm_ack_capture *capture = context;
+
+	if (frame->count != 3 || capture->count == ARRAY_LENGTH(capture->frame)) {
+		capture->invalid = true;
+		return;
+	}
+	memcpy(capture->frame[capture->count++], frame->buf, 3);
+}
+
+static bool test_lapm_acknowledgment_publication(void)
+{
+	struct modem_driver driver = {
+		.name = "LAPM acknowledgment publication", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	const uint8_t controls[] = { 1, 5, 9 }; /* RR, RNR, REJ */
+	const uint8_t bases[] = { 0, 126 };
+
+	for (unsigned caller = 0; caller < 2; ++caller)
+	for (unsigned kind = 0; kind < ARRAY_LENGTH(controls); ++kind)
+	for (unsigned poll = 0; poll < 2; ++poll)
+	for (unsigned borrowed = 0; borrowed < 2; ++borrowed)
+	for (unsigned wrap = 0; wrap < ARRAY_LENGTH(bases); ++wrap) {
+		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *decoder = modem_create(&driver, driver.name);
+		struct lapm_ack_capture capture = { 0 };
+		uint8_t wire[] = { 0, 0x0f, 0, 'a' }, bit, retained[3];
+		frame_t incoming = { .buf = wire, .count = 2 }, *active = NULL;
+		int active_count = 0;
+
+		CHECK(m != NULL && decoder != NULL, "acknowledgment allocation failed");
+		m->caller = caller;
+		m->cfg.ec = 1;
+		m->cfg.comp = 0;
+		m->rx_rate = m->tx_rate = 4800;
+		m->state = 4;
+		CHECK(modem_ec_init(m) == 0, "acknowledgment initialization failed");
+		m->caller = 0; /* Preserve addresses while bypassing initial XID. */
+		modem_update_status(m, STATUS_PACK_LINK);
+		m->caller = caller;
+		struct lapm_state *l = &m->ec.lapm;
+		wire[0] = l->cmd_addr;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		frame_t *outgoing = m->packer.hdlc.get_tx_frame(l);
+		CHECK(outgoing != NULL && outgoing->buf[1] == 0x7f,
+		      "acknowledgment fixture lacks SABME");
+		m->packer.hdlc.tx_complete(l, outgoing);
+		wire[1] = 0x73;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(l->state == 2 && m->state == 5, "acknowledgment fixture did not connect");
+		m->get_chars = NULL;
+		m->put_chars = scripted_lapm_sink;
+		memset(&lapm_sink, 0, sizeof(lapm_sink));
+		lapm_sink.result = kind == 1 ? 0 : 1;
+		l->vr = bases[wrap]; /* Continue a valid receive epoch near wraparound. */
+		modem_hdlc_start(decoder);
+		decoder->packer.hdlc.framer = &capture;
+		decoder->packer.hdlc.rx_complete = capture_lapm_acknowledgment;
+		decoder->put_bits = modem_hdlc_put_bits;
+		wire[0] = l->rsp_addr;
+		wire[1] = (uint8_t)(((bases[wrap] + (kind == 2)) & 127) << 1);
+		wire[2] = (uint8_t)poll;
+		incoming.count = sizeof(wire);
+		m->packer.hdlc.rx_complete(l, &incoming);
+		unsigned first_nr = l->vr;
+		if (borrowed) {
+			CHECK(modem_get_bits(m, 1, &bit, 1) == 1 &&
+			      modem_put_bits(decoder, 1, &bit, 1) == 1 &&
+			      (active = m->packer.hdlc.tx_frame) != NULL,
+			      "acknowledgment fixture did not borrow a wire frame");
+			memcpy(retained, active->buf, sizeof(retained));
+			active_count = active->count;
+		}
+		if (kind == 1) {
+			CHECK(l->busy && m->packer_process != NULL, "RNR fixture did not block");
+			lapm_sink.result = 1;
+			m->packer_process(m, 0);
+			CHECK(!l->busy && lapm_sink.length == 1, "RNR fixture did not clear busy");
+		}
+		wire[2] = 0;
+		for (unsigned frame = kind == 2 ? 0 : 1; frame < 3; ++frame) {
+			wire[1] = (uint8_t)(((bases[wrap] + frame) & 127) << 1);
+			wire[3] = (uint8_t)('a' + frame);
+			m->packer.hdlc.rx_complete(l, &incoming);
+		}
+		unsigned nr = (bases[wrap] + 3) & 127;
+		CHECK(l->vr == nr && !l->busy && !l->reject &&
+		      lapm_sink.length == 3 && memcmp(lapm_sink.data, "abc", 3) == 0 &&
+		      (!active || (active == m->packer.hdlc.tx_frame &&
+		       active->count == active_count && memcmp(active->buf, retained, 3) == 0)),
+		      "new input changed a borrowed frame or lost receive progress");
+		unsigned expected = kind == 0 ? 3 : 4;
+		for (unsigned clock = 0; clock < 2048 && capture.count < expected; ++clock) {
+			CHECK(modem_get_bits(m, 1, &bit, 1) == 1 &&
+			      modem_put_bits(decoder, 1, &bit, 1) == 1,
+			      "acknowledgment wire did not progress");
+		}
+		CHECK(!capture.invalid && capture.count == expected,
+		      "acknowledgment wire did not publish all queued replies");
+		for (unsigned frame = 0; frame < capture.count; ++frame) {
+			uint8_t *header = capture.frame[frame];
+			CHECK(header[0] == (kind == 1 && frame == 1 ? l->cmd_addr : l->rsp_addr) &&
+			      header[1] == (frame == 0 ? controls[kind] : 1) &&
+			      (header[2] & 1) == (frame == 0 ? poll : 0) &&
+			      (header[2] >> 1) == (borrowed && frame == 0 ? first_nr : nr),
+			      "stale or altered acknowledgment: role %u kind %u P%u borrowed %u wrap %u frame %u N(R)=%u V(R)=%u",
+			      caller, kind, poll, borrowed, wrap, frame, header[2] >> 1, nr);
+		}
+		CHECK(modem_stop_now(m) == 0, "acknowledgment cleanup failed");
+		modem_delete(m);
+		modem_delete(decoder);
+	}
+	return true;
+}
+
 static bool test_lapm_receiver_ready_queue_pressure(void)
 {
 	struct modem_driver driver = {
@@ -8744,6 +8867,7 @@ int main(void)
 		{ "LAPM peer-flag preamble", test_lapm_peer_flag_preamble },
 		{ "LAPM receive backpressure", test_lapm_receive_backpressure },
 		{ "LAPM receiver-ready queue pressure", test_lapm_receiver_ready_queue_pressure },
+		{ "LAPM acknowledgment publication", test_lapm_acknowledgment_publication },
 		{ "LAPM fatal information failure", test_lapm_information_failure },
 		{ "LAPM fatal control failure", test_lapm_control_failure },
 		{ "LAPM receive frame boundaries", test_lapm_receive_frame_boundaries },

@@ -1425,6 +1425,10 @@ static frame_t *lapm_get_tx_frame(void *framer)
 	if ( l->tx_ctrl != l->ctrl_list ) {
 		f = l->tx_ctrl;
 		l->tx_ctrl = l->tx_ctrl->next;
+		/* V.42 8.4.3.1: acknowledge the current receive state when
+		 * HDLC borrows the frame; preserve its poll/final bit. */
+		if (FRAME_TYPE(f) == FRAME_S)
+			f->buf[2] = (l->vr << 1) | (f->buf[2] & 1);
 		return f;
 	}
 	/* get info frame */
