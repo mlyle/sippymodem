@@ -18,6 +18,8 @@ _Static_assert(offsetof(struct v92_upstream_model, alternate) +
 static bool calibrated_gain_is_valid(const struct v92_upstream_data_line *line)
 {
 	return isfinite(line->calibration.gain) &&
+	       isfinite(line->calibration.offset) &&
+	       fabs(line->calibration.offset) <= V92_DATA_MAX_RMS_ERROR &&
 	       isfinite(line->calibration.minimum) && isfinite(line->calibration.maximum) &&
 	       line->calibration.minimum >= 1.0 / 32768.0 && line->calibration.maximum <= 32768.0 &&
 	       line->calibration.minimum <= line->plan.gain && line->calibration.maximum >= line->plan.gain &&
@@ -57,8 +59,16 @@ bool v92_upstream_data_rx_is_valid(
 		    !calibrated_gain_is_valid(line) ||
 		    !isfinite(line->calibration.correlation) ||
 		    !isfinite(line->calibration.energy) ||
+		    !isfinite(line->calibration.raw_sum) || !isfinite(line->calibration.target_sum) ||
+		    line->calibration.samples > V92_B1U_ACQUISITION_FRAMES * V92_PCM_MAPPING_FRAME_SYMBOLS ||
+		    line->calibration.samples % V92_PCM_MAPPING_FRAME_SYMBOLS != 0u ||
+		    line->calibration.samples > line->received_frames * V92_PCM_MAPPING_FRAME_SYMBOLS ||
+		    fabs(line->calibration.raw_sum) > line->calibration.samples * 32768.0 ||
+		    fabs(line->calibration.target_sum) > line->calibration.samples * 32768.0 ||
 		    line->calibration.energy < 0.0 ||
-		    (line->received_frames == 0u &&
+		    line->calibration.energy > line->calibration.samples * 1073741824.0 ||
+		    fabs(line->calibration.correlation) > line->calibration.samples * 1073741824.0 ||
+		    (line->calibration.samples == 0u &&
 		     (line->calibration.correlation != 0.0 || line->calibration.energy != 0.0)) ||
 		    line->delay_remaining > line->plan.delay - V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY ||
 		    (line->delay_remaining != 0u && (line->received_frames != 0u || line->symbol_count != 0u)))
@@ -220,6 +230,8 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_start_b1u(
 		line.calibration.minimum = fmin(plan->gain, line.calibration.minimum * ratio);
 		line.calibration.maximum = fmax(plan->gain, line.calibration.maximum * ratio);
 		line.calibration.correlation = line.calibration.energy = 0.0;
+		line.calibration.raw_sum = line.calibration.target_sum = 0.0;
+		line.calibration.samples = 0u;
 		pcm_gain_init(&line.host.fit);
 		line.host.gain = line.host.lower = line.host.upper = 0.0;
 		if (!calibrated_gain_is_valid(&line))
@@ -268,6 +280,30 @@ static void observe_host_gain(struct v92_upstream_data_line *line)
 	}
 }
 
+static void fit_offset(struct v92_upstream_data_line *line)
+{
+	if (line->received_frames + 1u != V92_B1U_ACQUISITION_FRAMES ||
+	    line->host.gain <= 0.0 || line->calibration.samples == 0u)
+		return;
+	double mean = line->calibration.raw_sum / line->calibration.samples;
+	double target = line->calibration.target_sum / line->calibration.samples;
+	double energy = line->calibration.energy - mean * line->calibration.raw_sum;
+	double correlation = line->calibration.correlation - mean * line->calibration.target_sum;
+	if (energy <= 0.0 || correlation <= 0.0)
+		return;
+	double gain = fmax(line->calibration.minimum,
+		fmin(line->calibration.maximum, correlation / energy));
+	double offset = mean - target / gain;
+	/* Complete wire/host evidence identifies the conditioning independently.
+	 * Bound the extra analogue degree of freedom by the existing quality
+	 * ceiling; constant or badly damaged input must not be fitted into B1u.
+	 * Later frames must independently pass both decoding and residual checks. */
+	if (isfinite(offset) && fabs(offset) <= V92_DATA_MAX_RMS_ERROR) {
+		line->calibration.gain = gain;
+		line->calibration.offset = offset;
+	}
+}
+
 static enum v92_upstream_data_rx_result receive_frame(
 	struct v92_upstream_data_rx *receiver, struct v92_upstream_data_line *line,
 	struct v92_upstream_data_frame *frame)
@@ -310,7 +346,10 @@ static enum v92_upstream_data_rx_result receive_frame(
 
 			line->calibration.correlation += sample * decision.predicted_samples[symbol];
 			line->calibration.energy += sample * sample;
+			line->calibration.raw_sum += sample;
+			line->calibration.target_sum += decision.predicted_samples[symbol];
 		}
+		line->calibration.samples += V92_PCM_MAPPING_FRAME_SYMBOLS;
 		if (!isfinite(line->calibration.correlation) || !isfinite(line->calibration.energy))
 			return fail(receiver, V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE);
 		if (line->calibration.energy > 0.0 && line->calibration.correlation > 0.0)
@@ -334,7 +373,8 @@ static enum v92_upstream_data_rx_result receive_frame(
 			 * units. G.711 conversion preceded any host conditioning: a
 			 * second quantization here would invent different wire cells.
 			 * Retain actual companding noise and unclipped prediction error. */
-			double error = line->raw[symbol] - predictions[symbol] / line->calibration.gain;
+			double error = line->raw[symbol] - line->calibration.offset -
+				predictions[symbol] / line->calibration.gain;
 
 			generated.squared_error += error * error;
 			if (!isfinite(generated.squared_error))
@@ -381,6 +421,8 @@ static enum v92_upstream_data_rx_result receive_frame(
 		generated.ambiguous = decision.ambiguous;
 	}
 	observe_host_gain(line);
+	if (raw && !model.acquiring)
+		fit_offset(line);
 	v92_upstream_model_fit(&model, line, &decoder);
 	line->received_frames++;
 	line->symbol_count = 0u;
@@ -441,7 +483,8 @@ static enum v92_upstream_data_rx_result receive_sample(
 		line->wire_known[line->symbol_count] = wire_known;
 		line->host_samples[line->symbol_count] = wire_known ? host_sample : 0;
 		line->received[line->symbol_count] = wire_known && available;
-		line->samples[line->symbol_count] = sample_round_s16(line->raw[line->symbol_count] * line->calibration.gain);
+		line->samples[line->symbol_count] = sample_round_s16(
+			(line->raw[line->symbol_count] - line->calibration.offset) * line->calibration.gain);
 		if (++line->symbol_count == V92_PCM_MAPPING_FRAME_SYMBOLS)
 			return receive_frame(receiver, line, frame);
 		return V92_UPSTREAM_DATA_RX_OK;

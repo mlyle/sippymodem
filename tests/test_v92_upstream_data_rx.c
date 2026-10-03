@@ -31,6 +31,7 @@ struct channel {
 	double postcursor;
 	/* Zero keeps the original codec output; nonzero scales after G.711. */
 	double receive_gain;
+	int16_t offset;
 	int16_t previous;
 	enum g711_law law;
 	int8_t polarity;
@@ -40,7 +41,7 @@ struct channel {
 static int16_t wire_sample(struct channel *channel, int16_t sample)
 {
 	int16_t mixed = (int16_t)lround(channel->gain * sample +
-		channel->postcursor * channel->previous);
+		channel->postcursor * channel->previous + channel->offset);
 
 	channel->previous = sample;
 	int16_t decoded = channel->law == G711_LAW_PCMU ?
@@ -1038,6 +1039,8 @@ static bool b1u_switch_contracts(const struct v92_upstream_data_rx *initial,
 					expected.line.calibration.minimum = proposed.gain;
 					expected.line.calibration.maximum = proposed.gain;
 					expected.line.calibration.correlation = expected.line.calibration.energy = 0;
+					expected.line.calibration.raw_sum = expected.line.calibration.target_sum = 0;
+					expected.line.calibration.samples = 0;
 					pcm_gain_init(&expected.line.host.fit);
 					expected.line.host.gain = expected.line.host.lower = expected.line.host.upper = 0;
 					CHECK(v92_pcm_frame_rx_init_constellation(&expected.decoder, mapping) == V92_PCM_FRAME_OK,
@@ -1166,6 +1169,8 @@ static bool test_fast_finish(enum g711_law law, uint8_t old_rate, uint8_t new_ra
 				line.calibration.minimum = fmin(new_plan.gain, line.calibration.minimum * ratio);
 				line.calibration.maximum = fmax(new_plan.gain, line.calibration.maximum * ratio);
 				line.calibration.correlation = line.calibration.energy = 0;
+				line.calibration.raw_sum = line.calibration.target_sum = 0;
+				line.calibration.samples = 0;
 				pcm_gain_init(&line.host.fit);
 				line.host.gain = line.host.lower = line.host.upper = 0.0;
 				CHECK(!rx.model.valid && rx.model.acquiring, "new B1u retained the old codec model");
@@ -1458,7 +1463,7 @@ static bool test_rejection_and_failure(void)
 	receiver.decoder.observation = V92_PCM_FRAME_FILTER_OUTPUT;
 	CHECK(!v92_upstream_data_rx_is_valid(&receiver), "conflicting receive coordinates accepted");
 	saved_frame = frame;
-	for (unsigned int mutation = 0u; mutation < 8u; ++mutation) {
+	for (unsigned int mutation = 0u; mutation < 15u; ++mutation) {
 		receiver = saved;
 		switch (mutation) {
 		case 0: receiver.line.calibration.gain = NAN; break;
@@ -1469,6 +1474,13 @@ static bool test_rejection_and_failure(void)
 		case 5: receiver.line.calibration.energy = -1.0; break;
 		case 6: receiver.line.calibration.energy = 1.0; break;
 		case 7: receiver.line.calibration.correlation = 1.0; break;
+		case 8: receiver.line.calibration.offset = NAN; break;
+		case 9: receiver.line.calibration.offset = V92_DATA_MAX_RMS_ERROR + 1.0; break;
+		case 10: receiver.line.calibration.raw_sum = INFINITY; break;
+		case 11: receiver.line.calibration.target_sum = NAN; break;
+		case 12: receiver.line.calibration.samples = 1u; break;
+		case 13: receiver.line.calibration.samples = V92_B1U_SYMBOLS; break;
+		case 14: receiver.line.calibration.raw_sum = 1.0; break;
 		}
 		struct v92_upstream_data_rx invalid = receiver;
 
@@ -1518,13 +1530,23 @@ static bool test_rejection_and_failure(void)
 	return true;
 }
 
+enum channel_fault {
+	CHANNEL_OK,
+	CHANNEL_NOISE,
+	CHANNEL_WRONG_B1,
+	CHANNEL_LOSS,
+	CHANNEL_EXCESSIVE_OFFSET,
+};
+
 /* E2u recognizes its last control symbol after already consuming ten B1u
  * samples. The channel-compensating filter has a different causal delay:
  * receive its remaining prefix exactly once, not as B1u or payload. */
 static bool test_channel_plan(
 	enum g711_law law, int polarity, bool extended, bool biased, bool conditioned,
-	bool changed_history, bool wire)
+	bool changed_history, bool wire, int offset, enum channel_fault fault)
 {
+	/* Match the captured marginal B1u's training amplitude. */
+	int16_t lu = offset ? TEST_LU / 2 : TEST_LU;
 	struct channel channel = {
 		.gain = 1.0, .law = law, .polarity = polarity,
 		.receive_gain = conditioned ? 0.75 : 0.0,
@@ -1543,6 +1565,7 @@ static bool test_channel_plan(
 	unsigned int source_frames = 0u, leading = 0u, delivered = 0u;
 	double b1_error = 0.0, comparison_error = 0.0;
 	unsigned comparison_bad_bits = 0u, comparison_payload = 0u;
+	bool bad_b1 = false;
 	uint32_t random = UINT32_C(9376271);
 
 	for (unsigned int i = 0u; i < V92_UPSTREAM_CHANNEL_SYMBOLS; ++i) {
@@ -1553,7 +1576,7 @@ static bool test_channel_plan(
 			    polarity * wire_sample(&channel, sample)), "channel measurement failed");
 	}
 	CHECK(v92_cpd_direct_init(&cpd, law, 1u, extended) == V92_CPD_OK &&
-	      v92_cpd_channel_design(&cpd, &measured, law, TEST_LU, &plan),
+	      v92_cpd_channel_design(&cpd, &measured, law, lu, &plan),
 	      "channel-plan design failed");
 	if (wire) {
 		/* A small residual prefilter tap exercises the general-coordinate
@@ -1565,8 +1588,9 @@ static bool test_channel_plan(
 		filter->coefficient[plan.delay + 1u] = filter->coefficient[plan.delay] / 256;
 	}
 	CHECK(v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK &&
-	      v92_upstream_data_tx_init(&transmitter, &mapping, TEST_LU) == V92_UPSTREAM_DATA_TX_OK &&
-	      prepare_e2u(&channel, extended, &e2u_tx, &e2u_rx), "channel-plan fixture failed");
+	      v92_upstream_data_tx_init(&transmitter, &mapping, lu) == V92_UPSTREAM_DATA_TX_OK &&
+	      prepare_e2u_at_level(&channel, extended, &e2u_tx, &e2u_rx,
+		      lu, lu, 0.002, V92_CONSTELLATION_4_POINT), "channel-plan fixture failed");
 	/* A receive-side coding-context mismatch must settle without poisoning
 	 * the gain fit. This tests acquisition, not a different normative seed. */
 	transmitter.encoder.state.scrambler.history = changed_history;
@@ -1594,6 +1618,7 @@ static bool test_channel_plan(
 	      v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping, &plan) == V92_UPSTREAM_DATA_RX_OK &&
 	      receiver.line.delay_remaining == plan.delay - leading, "E2u/data delay lost");
 	CHECK(!wire || !receiver.model.acquiring, "wire fixture entered pure-delay fitter");
+	channel.offset = offset;
 	comparison_rx = receiver;
 	if (biased)
 		comparison_rx.line.calibration.minimum = comparison_rx.line.calibration.maximum = plan.gain;
@@ -1605,8 +1630,31 @@ static bool test_channel_plan(
 		int16_t sample;
 		struct v92_upstream_data_frame frame;
 
-		CHECK(v92_upstream_data_tx_next(&transmitter, source, &source_frames, &sample) ==
+		bool injected = false;
+		if (fault == CHANNEL_WRONG_B1 && transmitter.b1u_symbols_remaining == V92_PCM_MAPPING_FRAME_SYMBOLS &&
+		    transmitter.queue_count == 0u) {
+			uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
+			struct v92_pcm_frame wrong;
+			memset(bits, 1, mapping.data_bits_per_frame);
+			bits[mapping.data_bits_per_frame - 1u] = 0u;
+			CHECK(v92_pcm_frame_encode(&transmitter.encoder, bits, mapping.data_bits_per_frame, &wrong) ==
+			      V92_PCM_FRAME_OK, "wrong held-out B1u encode failed");
+			for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
+				CHECK(v92_pcm_frame_scale(mapping.cpd.four_times_gain_q0_16, lu,
+				      wrong.v[i], &transmitter.queue[i]) == V92_PCM_FRAME_OK, "wrong B1u scale failed");
+			sample = transmitter.queue[0];
+			transmitter.queue[0] = 0;
+			transmitter.queue_count = V92_PCM_MAPPING_FRAME_SYMBOLS - 1u;
+			--transmitter.b1u_symbols_remaining;
+			injected = true;
+		}
+		CHECK(injected || v92_upstream_data_tx_next(&transmitter, source, &source_frames, &sample) ==
 			      V92_UPSTREAM_DATA_TX_OK, "channel-plan data transmit failed");
+		if (fault == CHANNEL_NOISE && receiver.line.received_frames >= V92_B1U_ACQUISITION_FRAMES &&
+		    receiver.line.received_frames < V92_B1U_FRAMES) {
+			random = random * UINT32_C(1664525) + UINT32_C(1013904223);
+			sample += (int)(random >> 24) - 128;
+		}
 		int16_t input = wire_sample(&channel, sample);
 		bool first_frame = receiver.line.received_frames == 0u &&
 			receiver.line.symbol_count == V92_PCM_MAPPING_FRAME_SYMBOLS - 1u;
@@ -1633,9 +1681,10 @@ static bool test_channel_plan(
 			struct v92_upstream_data_frame output;
 
 			memset(&frame, 0xa5, sizeof(frame)); output = frame;
-			result = v92_upstream_data_rx_octet(&receiver, channel.code, input, true, &frame);
+			bool available = fault != CHANNEL_LOSS || receiver.line.received_frames != 20u;
+			result = v92_upstream_data_rx_octet(&receiver, channel.code, input, available, &frame);
 			CHECK(v92_upstream_data_rx_octet_owned(&owned, channel.code, input, input,
-			      true, &output) == result && !memcmp(&owned, &receiver, sizeof(owned)) &&
+			      available, &output) == result && !memcmp(&owned, &receiver, sizeof(owned)) &&
 			      !memcmp(&output, &frame, sizeof(output)) && v92_upstream_data_rx_is_valid(&receiver),
 			      "owned wire-cell stream diverged");
 		} else {
@@ -1675,8 +1724,8 @@ static bool test_channel_plan(
 				if (comparison.bit_count && !comparison.b1u) {
 					uint8_t wanted[V92_PCM_MAPPING_MAX_BITS];
 					payload(wanted, mapping.data_bits_per_frame, comparison_payload++);
-					CHECK(!comparison.ambiguous && comparison.bit_count == mapping.data_bits_per_frame &&
-					      memcmp(wanted, comparison.bits, comparison.bit_count) == 0,
+					CHECK(offset || (!comparison.ambiguous && comparison.bit_count == mapping.data_bits_per_frame &&
+					      memcmp(wanted, comparison.bits, comparison.bit_count) == 0),
 					      "comparison channel lost payload");
 				}
 			}
@@ -1693,7 +1742,7 @@ static bool test_channel_plan(
 		if (!wire)
 			CHECK(memory_region_is_zero(&receiver.line.host, sizeof(receiver.line.host)),
 			      "sample-only input invented host gain");
-		else if (receiver.line.received_frames >= V92_B1U_ACQUISITION_FRAMES)
+		else if (receiver.line.received_frames >= V92_B1U_ACQUISITION_FRAMES && fault != CHANNEL_LOSS)
 			CHECK(fabs(receiver.line.host.gain - (conditioned ? .75 : 1.0)) < 0.001,
 			      "wire cells confused host gain with analogue calibration");
 		if (receiver.line.received_frames > V92_B1U_ACQUISITION_FRAMES &&
@@ -1711,6 +1760,25 @@ static bool test_channel_plan(
 			CHECK(memcmp(&receiver.line.calibration, &trained.calibration, sizeof(trained.calibration)) == 0 &&
 			      memcmp(&receiver.line.host, &trained.host, sizeof(trained.host)) == 0,
 			      "B1u validation or payload continued analogue/host gain calibration");
+		if (frame.bit_count && frame.b1u &&
+		    receiver.line.received_frames > V92_B1U_ACQUISITION_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
+			bad_b1 |= frame.ambiguous;
+			for (unsigned i = 0; i < frame.bit_count; ++i)
+				bad_b1 |= frame.bits[i] != 1u;
+		}
+		if (fault && receiver.line.received_frames == V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
+			double host_gain = conditioned ? .75 : 1.0;
+			if (fault == CHANNEL_NOISE)
+				CHECK(b1_error / (host_gain * host_gain) >
+				      V92_B1U_VALIDATION_SYMBOLS * V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
+				      "frozen offset hid held-out noise");
+			if (fault == CHANNEL_WRONG_B1)
+				CHECK(bad_b1, "offset fitting hid a validly coded wrong B1u bit");
+			if (fault == CHANNEL_LOSS || fault == CHANNEL_EXCESSIVE_OFFSET)
+				CHECK(receiver.line.calibration.offset == 0.0,
+				      "missing media or excessive bias supplied an offset fit");
+			return true;
+		}
 		if (frame.bit_count == 0u || frame.b1u)
 			continue;
 		payload(expected, mapping.data_bits_per_frame, delivered);
@@ -1725,16 +1793,29 @@ static bool test_channel_plan(
 	CHECK(delivered == DATA_FRAMES, "channel-plan data did not arrive");
 	/* Qualify the same held-out window as the call owner. Acquisition
 	 * residual is still reported and independently checked above. */
-	CHECK(b1_error < V92_B1U_VALIDATION_SYMBOLS * V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
-	      "channel-plan B1u residual too large: %g", sqrt(b1_error / V92_B1U_VALIDATION_SYMBOLS));
+	double quality_gain = wire ? receiver.line.host.gain : 1.0;
+	CHECK(b1_error / (quality_gain * quality_gain) <
+	      V92_B1U_VALIDATION_SYMBOLS * V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
+	      "channel-plan B1u residual too large: %g law=%u polarity=%d conditioned=%u offset=%d fit=%g gain=%g [%g,%g] nominal=%g",
+	      sqrt(b1_error / V92_B1U_VALIDATION_SYMBOLS), law, polarity, conditioned, offset,
+	      receiver.line.calibration.offset, receiver.line.calibration.gain,
+	      receiver.line.calibration.minimum, receiver.line.calibration.maximum, plan.gain);
 	CHECK(comparison_payload == DATA_FRAMES, "comparison channel shortened payload");
+	if (offset) {
+		CHECK(fabs(receiver.line.calibration.offset - offset * (conditioned ? .75 : 1.0)) < 16.0,
+		      "offset fit missed the physical bias: %g expected %g", receiver.line.calibration.offset,
+		      offset * (conditioned ? .75 : 1.0));
+		CHECK(!bad_b1 && b1_error < comparison_error / 2.0,
+		      "offset correction did not improve independently validated B1u");
+	}
 	if (biased) {
-		CHECK(comparison_error > V92_B1U_VALIDATION_SYMBOLS * V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
+		CHECK(comparison_error / (quality_gain * quality_gain) >
+		      V92_B1U_VALIDATION_SYMBOLS * V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
 		      "fixed gain hid bad training: %g", sqrt(comparison_error / V92_B1U_VALIDATION_SYMBOLS));
 		CHECK(receiver.line.calibration.gain < plan.gain &&
 		      receiver.line.calibration.gain >= receiver.line.calibration.minimum,
 		      "gain fixture did not recover rejected B1u within training bounds");
-	} else {
+	} else if (!offset) {
 		/* Unconstrained coding can acquire the inverted constellation too:
 		 * polarity alone is not damage. Require its independent B1u and all
 		 * payload to pass, not a large forced-history acquisition residual. */
@@ -2868,8 +2949,18 @@ int main(void)
 				for (unsigned int fixture = 0u; fixture < 8u; ++fixture)
 					if (!test_channel_plan((enum g711_law)law, polarity, extended,
 							fixture % 4u == 1u, fixture % 4u == 2u,
-							fixture % 4u == 3u, fixture >= 4u))
+							fixture % 4u == 3u, fixture >= 4u, 0, CHANNEL_OK))
 						return 1;
+	fprintf(stderr, "[ RUN      ] bounded PCM upstream offset acquisition\n");
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (int polarity = -1; polarity <= 1; polarity += 2)
+			for (unsigned conditioned = 0; conditioned < 2; ++conditioned)
+				for (int sign = -1; sign <= 1; sign += 2)
+					for (enum channel_fault fault = CHANNEL_OK; fault <= CHANNEL_EXCESSIVE_OFFSET; ++fault)
+						if (!test_channel_plan(law, polarity, false, true, conditioned,
+						      false, true, sign * (fault == CHANNEL_EXCESSIVE_OFFSET ? 96 : 48), fault))
+							return 1;
+	fprintf(stderr, "[       OK ] bounded PCM upstream offset acquisition\n");
 	if (!test_quantized_level_tracking(G711_LAW_PCMU, 19u, false, TEST_LU, false, 0u, 0u) ||
 	    !test_quantized_level_tracking(G711_LAW_PCMA, 19u, false, TEST_LU, false, 0u, 0u) ||
 	    !test_quantized_level_tracking(G711_LAW_PCMU, 13u, false, TEST_LU, false, 0u, 0u) ||

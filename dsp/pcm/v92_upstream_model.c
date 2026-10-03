@@ -132,14 +132,14 @@ void v92_upstream_model_observe(struct v92_upstream_model *model,
 
 /* Echo subtraction is independent of the decoded candidate. Identify gain
  * from the unmodified host sample, then translate the actual wire cell into
- * decoder coordinates by only the independently subtracted echo. Clipping
+ * decoder coordinates by the subtracted echo and frozen B1u offset. Clipping
  * loses that affine contract; a changed host gain must not become an echo
  * correction. Unqualified acquisition retains the linear receiver, while
  * loss of this contract after fitting takes the ordinary no-path recovery. */
 static bool observation_offset(const struct v92_upstream_data_line *line,
 	int32_t raw, int16_t wire, int16_t host, double *offset)
 {
-	double sample = raw * line->calibration.gain;
+	double sample = (raw - line->calibration.offset) * line->calibration.gain;
 	int32_t physical = raw * line->polarity;
 	/* Test containment using the acquired rounding interval, not the
 	 * chosen point estimate. Do not narrow it using held-out data. */
@@ -149,9 +149,8 @@ static bool observation_offset(const struct v92_upstream_data_line *line,
 	    sample <= INT16_MIN || sample >= INT16_MAX ||
 	    !pcm_gain_observe(&gain, wire * line->polarity, host))
 		return false;
-	/* Rounding the calibrated sample does not shift the codec interval.
-	 * In particular, no echo subtraction must leave exactly zero offset. */
-	*offset = (raw - (int32_t)host * line->polarity) * line->calibration.gain;
+	/* Rounding the calibrated sample does not shift the codec interval. */
+	*offset = (raw - (int32_t)host * line->polarity - line->calibration.offset) * line->calibration.gain;
 	return isfinite(*offset);
 }
 
@@ -172,7 +171,7 @@ void v92_upstream_model_fit(struct v92_upstream_model *model,
 			close_acquisition(model);
 			return;
 		}
-		samples[i] = sample_round_s16(model->raw[i] * line->calibration.gain);
+		samples[i] = sample_round_s16((model->raw[i] - line->calibration.offset) * line->calibration.gain);
 	}
 	const struct v92_cpd_filter *feedback = &decoder->mapping.cpd.filter[V92_CPD_PRECODER_FEEDBACK];
 	const struct v92_observation_training training = {
@@ -242,7 +241,7 @@ static bool wire_cells(const struct v92_upstream_data_line *line, enum g711_law 
 		    !pcm_gain_observe(&checked, line->wire[i] * line->polarity, host) ||
 		    !g711_quantization_interval(law, line->wire[i] * line->polarity, &cell))
 			return false;
-		double offset = line->raw[i] - (int32_t)host * line->polarity;
+		double offset = line->raw[i] - (int32_t)host * line->polarity - line->calibration.offset;
 		double lower = line->polarity > 0 ? cell.lower : -(double)cell.upper;
 		double upper = line->polarity > 0 ? cell.upper : -(double)cell.lower;
 

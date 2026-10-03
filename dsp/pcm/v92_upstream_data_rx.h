@@ -29,11 +29,14 @@ struct v92_upstream_data_line {
 		int32_t raw[V92_PCM_MAPPING_FRAME_SYMBOLS];
 	};
 	struct v92_upstream_plan plan;
-	/* Raw-coordinate calibration from known B1u only. Bounds come from
-	 * the training LU cell; the CPd's nominal receive plan stays intact. */
+	/* Raw-coordinate calibration from known B1u only. Gain bounds come from
+	 * the training LU cell; offset is in polarity-normalized input units.
+	 * Sums count acquisition decisions only. The nominal plan stays intact. */
 	struct {
 		double gain, minimum, maximum;
 		double correlation, energy;
+		double raw_sum, target_sum, offset;
+		uint16_t samples;
 	} calibration;
 	/* Actual wire/sample pairs identify only post-codec host conditioning,
 	 * not analogue channel or mapping gain. Freeze before B1u validation;
@@ -100,6 +103,9 @@ struct v92_upstream_data_frame {
  * decodes raw line samples without another FIR or G.711 quantization. The
  * gain is refined within training LU uncertainty during initial B1u
  * acquisition, then remains fixed through B1u validation and data/control.
+ * A linear channel path with complete wire/host evidence also fits a bounded
+ * constant offset at the end of acquisition. Subtract it in decoding, wire
+ * cells and residuals; validation and payload never update the fit.
  * When actual wire codes are supplied, the same acquisition interval fits
  * post-codec host gain for call-level quality scoring, independently of the
  * mapping's calibration gain. Missing or inconsistent pairs close this fit.
