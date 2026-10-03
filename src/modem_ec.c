@@ -210,12 +210,6 @@ static void reset_lapm_link(struct lapm_state *l);
  *
  */
 
-static bool v44_offer_has_direction(
-	const struct v44_offer *offer)
-{
-	return offer->transmit.enabled || offer->receive.enabled;
-}
-
 static bool xid_pending(const struct lapm_state *l)
 {
 	return l->v44_session.phase == LAPM_V44_COMMAND_PENDING;

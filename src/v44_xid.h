@@ -24,6 +24,11 @@ struct v44_offer {
 	struct v44_direction_offer receive;
 };
 
+static inline bool v44_offer_has_direction(const struct v44_offer *offer)
+{
+	return offer->transmit.enabled || offer->receive.enabled;
+}
+
 enum v44_xid_result {
 	V44_XID_OK = 0,
 	V44_XID_NEED_OUTPUT,

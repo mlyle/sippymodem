@@ -18,12 +18,6 @@ static bool session_is_valid(
 	return session != NULL && session->initialized;
 }
 
-static bool has_enabled_direction(
-	const struct v44_offer *offer)
-{
-	return offer->transmit.enabled || offer->receive.enabled;
-}
-
 static struct v44_offer effective_offer(
 	const struct lapm_v44_session *session)
 {
@@ -248,7 +242,7 @@ enum lapm_v44_result lapm_v44_prepare_response(
 		candidate.offer.transmit.enabled = false;
 		candidate.offer.receive.enabled = false;
 	}
-	select_v44 = peer_present && has_enabled_direction(&candidate.offer);
+	select_v44 = peer_present && v44_offer_has_direction(&candidate.offer);
 	selected_fields = base_fields != NULL ? *base_fields :
 		(struct v42_xid_fields) { 0 };
 	if (select_v44) {
@@ -279,7 +273,7 @@ enum lapm_v44_result lapm_v44_prepare_retry_without_v44(
 	if (!session_is_valid(session) || prepared == NULL)
 		return LAPM_V44_INVALID_ARGUMENT;
 	if (session->phase != LAPM_V44_COMMAND_PENDING ||
-	    !has_enabled_direction(&session->command_offer))
+	    !v44_offer_has_direction(&session->command_offer))
 		return LAPM_V44_INVALID_STATE;
 	result = decode_peer_offer(response, response_length, &present,
 		&private_present, &peer);
@@ -325,7 +319,7 @@ enum lapm_v44_result lapm_v44_commit(
 		if ((prepared->action == PREPARED_COMMAND && session->phase != LAPM_V44_READY) ||
 		    (prepared->action == PREPARED_RETRY_WITHOUT_V44 &&
 		     (session->phase != LAPM_V44_COMMAND_PENDING ||
-		      !has_enabled_direction(&session->command_offer))))
+		      !v44_offer_has_direction(&session->command_offer))))
 			return LAPM_V44_STALE_TRANSACTION;
 		session->command_offer = prepared->offer;
 		session->command_length = prepared->length;
@@ -349,7 +343,7 @@ enum lapm_v44_result lapm_v44_commit(
 		memcpy(session->response, prepared->data, prepared->length);
 		if (session->phase != LAPM_V44_COMMAND_PENDING) {
 			session->negotiated_offer = prepared->offer;
-			session->phase = has_enabled_direction(&prepared->offer) ?
+			session->phase = v44_offer_has_direction(&prepared->offer) ?
 				LAPM_V44_NEGOTIATED : LAPM_V44_DECLINED;
 		}
 		break;
@@ -388,11 +382,11 @@ enum lapm_v44_result lapm_v44_accept_response(
 	if (result != LAPM_V44_OK)
 		return result;
 	if (peer_present && private_present &&
-	    has_enabled_direction(&session->command_offer))
+	    v44_offer_has_direction(&session->command_offer))
 		return LAPM_V44_MALFORMED;
 	/* Once only V.42bis was requested, an unsolicited V.44 group cannot
 	 * select that codec. Some peers retain it in a cached XID response. */
-	if (private_present && !has_enabled_direction(&session->command_offer))
+	if (private_present && !v44_offer_has_direction(&session->command_offer))
 		peer_present = false;
 	if (peer_present &&
 	    v44_xid_negotiate(
@@ -404,7 +398,7 @@ enum lapm_v44_result lapm_v44_accept_response(
 		selected.receive.enabled = false;
 	}
 	session->negotiated_offer = selected;
-	session->phase = has_enabled_direction(&selected) ?
+	session->phase = v44_offer_has_direction(&selected) ?
 		LAPM_V44_NEGOTIATED :
 		LAPM_V44_DECLINED;
 	session->revision++;
