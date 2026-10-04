@@ -161,6 +161,18 @@ static void receive_bit(
 		return;
 	}
 
+	/* Some peers start the next sync after only one fill zero. The
+	 * payload, CRC and first fill bit are already complete here. Validate
+	 * with the omitted padding still zero, then retain this first sync one
+	 * even on CRC rejection. Standard three-zero padding is unchanged. */
+	if (receiver->stage == V90_CP_RECEIVER_READ_FRAME && bit != 0 &&
+	    receiver->bit_index >= receiver->frame_bit_count - 2u) {
+		complete_frame(receiver, event);
+		receiver->sync_one_count = 1u;
+		++event->observed_bits;
+		return;
+	}
+
 	packed_msb_set_bit(
 		receiver->frame, receiver->bit_index, bit != 0);
 	receiver->bit_index++;

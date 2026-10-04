@@ -40,8 +40,10 @@ struct v90_cp_receiver {
 
 /* Search a continuous descrambled bit stream for the 17-one prefix, derive
  * the variable record length from the six constellation indices and codec
- * flag, then emit only a validated typed frame. A rejected call changes
- * neither receiver state nor the caller's event. */
+ * flag, then emit only a validated typed frame. Accept a peer starting the
+ * next sync after one or two fill zeros; the CRC and first fill zero remain
+ * mandatory. observed_bits then includes that retained first sync bit.
+ * A rejected call changes neither receiver state nor the caller's event. */
 enum v90_cp_result v90_cp_receiver_init(
 	struct v90_cp_receiver *receiver);
 bool v90_cp_receiver_is_valid(
