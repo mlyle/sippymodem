@@ -18,7 +18,9 @@ struct endpoint {
 	struct v34_phase3_exchange_handoff handoff;
 	struct v34_phase4_exchange_configuration phase4_configuration;
 	struct v34_phase4_exchange preparation_snapshot;
+	struct v34_data_startup_preparation preparation;
 	unsigned int data_preparation_count;
+	unsigned int preparation_samples;
 	unsigned int mapping_frames_supplied;
 	unsigned int mapping_frames_received;
 	uint32_t trn_symbols_at_mp;
@@ -30,6 +32,7 @@ struct endpoint {
 	bool constellations_routed;
 	bool has_preparation_snapshot;
 	bool phase4_active;
+	bool incremental_preparation;
 };
 
 static bool supply_mapping_frame(
@@ -292,6 +295,25 @@ static bool endpoint_sample(
 		if (!endpoint->has_preparation_snapshot) {
 			endpoint->preparation_snapshot = endpoint->phase4;
 			endpoint->has_preparation_snapshot = true;
+		}
+		if (endpoint->incremental_preparation) {
+			struct v34_data_startup startup;
+			enum v34_data_startup_result prepared;
+
+			if (!endpoint->phase4.data_preparation_active) {
+				endpoint->data_preparation_count++;
+				if (v34_phase4_exchange_begin_data_preparation(&endpoint->phase4,
+					&endpoint->preparation) != V34_PHASE4_EXCHANGE_OK)
+					return false;
+			}
+			endpoint->preparation_samples++;
+			prepared = v34_data_startup_step_preparation(&endpoint->preparation, 1, &startup);
+			if (prepared == V34_DATA_STARTUP_IN_PROGRESS)
+				return !endpoint->phase4.transmit_mp_prime_started &&
+				       !endpoint->phase4.transmit_data_active;
+			return prepared == V34_DATA_STARTUP_OK &&
+			       v34_phase4_exchange_complete_data_preparation(&endpoint->phase4,
+				       &startup) == V34_PHASE4_EXCHANGE_OK;
 		}
 		endpoint->data_preparation_count++;
 		result = v34_phase4_exchange_prepare_data_startup(
@@ -801,6 +823,32 @@ static bool test_mp_transition_schedule(void)
 	      !v34_phase4_mp_transition_symbols(&caller, 0u, NULL) &&
 	      symbols == UINT32_C(0xa55a5aa5),
 	      "invalid MP transition arguments changed the output");
+	return true;
+}
+
+static bool test_incremental_exchange(void)
+{
+	for (unsigned int variant = 1; variant <= 3; ++variant) {
+		struct endpoint caller, answerer;
+		uint32_t caller_seen, answerer_seen;
+
+		CHECK(endpoint_init(&caller, V34_CALLING_STATION) &&
+		      endpoint_init(&answerer, V34_ANSWERING_STATION),
+		      "incremental endpoints did not initialize");
+		caller.incremental_preparation = (variant & 1u) != 0;
+		answerer.incremental_preparation = (variant & 2u) != 0;
+		CHECK(run_initialized_pair(&caller, &answerer, &caller_seen, &answerer_seen),
+		      "incremental exchange failed against a synchronous peer: %u", variant);
+		struct endpoint *ends[] = { &caller, &answerer };
+		for (size_t i = 0; i < ARRAY_LENGTH(ends); ++i) {
+			CHECK(ends[i]->data_preparation_count == 1 &&
+			      (!ends[i]->incremental_preparation ||
+			       (ends[i]->preparation_samples > 160 && ends[i]->preparation_samples < 3000)),
+			      "calibration did not span bounded line samples");
+			CHECK(v34_phase4_exchange_is_online(&ends[i]->phase4),
+			      "incremental exchange did not deliver both data directions");
+		}
+	}
 	return true;
 }
 
@@ -1478,6 +1526,7 @@ int main(void)
 		  test_mp_transition_schedule },
 		{ "generated online exchange",
 		  test_generated_online_exchange },
+		{ "incremental exchange with synchronous peers", test_incremental_exchange },
 		{ "online rate renegotiation in either direction",
 		  test_online_rate_renegotiation },
 		{ "unconfirmed control frames retain data", test_control_frame_deferral },

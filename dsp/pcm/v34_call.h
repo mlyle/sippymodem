@@ -78,6 +78,7 @@ struct v34_call_observation {
 struct v34_call {
 	union v34_call_state state;
 	struct pcm_host_echo echo;
+	struct v34_data_startup_preparation data_preparation;
 	union v34_local_info1 local_info1;
 	struct v34_info0 local_info0;
 	struct v34_info0 peer_info0;

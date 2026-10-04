@@ -80,8 +80,9 @@ static enum v34_data_mapping_result calibration_result(
 	return V34_DATA_MAPPING_NUMERIC_FAILURE;
 }
 
-enum v34_data_mapping_result v34_data_mapping_prepare(
+enum v34_data_mapping_result v34_data_mapping_begin_calibration(
 	struct v34_data_mapping *mapping,
+	struct v34_mapping_power_calibration *calibration,
 	const struct v34_phase3_profile *transmitting_profile,
 	const struct v34_data_direction_parameters *parameters,
 	bool auxiliary_channel_enabled)
@@ -91,7 +92,7 @@ enum v34_data_mapping_result v34_data_mapping_prepare(
 	struct v34_mapping_parameters mapping_parameters;
 	enum v34_data_mapping_result result;
 
-	if (mapping == NULL ||
+	if (mapping == NULL || calibration == NULL ||
 	    !v34_phase3_profile_is_valid(transmitting_profile) ||
 	    !v34_data_direction_parameters_are_valid(parameters))
 		return V34_DATA_MAPPING_INVALID_ARGUMENT;
@@ -116,12 +117,36 @@ enum v34_data_mapping_result v34_data_mapping_prepare(
 		    parameters->precoder_coefficients,
 		    parameters->trellis_selection) != V34_4D_ENCODER_OK)
 		return V34_DATA_MAPPING_INVALID_ARGUMENT;
-	result = calibration_result(v34_calibrate_mapping_power(
-		&prepared.schedule, &prepared.scrambler, &prepared.encoder,
-		parameters->nonlinear_parameter, &prepared.normalizer));
+	result = calibration_result(v34_mapping_power_calibration_begin(
+		calibration, &prepared.schedule, &prepared.scrambler,
+		&prepared.encoder, parameters->nonlinear_parameter));
 	if (result != V34_DATA_MAPPING_OK)
 		return result;
 	prepared.transmitting_profile = *transmitting_profile;
+	*mapping = prepared;
+	return V34_DATA_MAPPING_OK;
+}
+
+enum v34_data_mapping_result v34_data_mapping_prepare(
+	struct v34_data_mapping *mapping,
+	const struct v34_phase3_profile *transmitting_profile,
+	const struct v34_data_direction_parameters *parameters,
+	bool auxiliary_channel_enabled)
+{
+	struct v34_data_mapping prepared;
+	struct v34_mapping_power_calibration calibration;
+	enum v34_data_mapping_result result;
+
+	if (mapping == NULL)
+		return V34_DATA_MAPPING_INVALID_ARGUMENT;
+	result = v34_data_mapping_begin_calibration(&prepared, &calibration,
+		transmitting_profile, parameters, auxiliary_channel_enabled);
+	if (result != V34_DATA_MAPPING_OK)
+		return result;
+	result = calibration_result(v34_mapping_power_calibration_step(
+		&calibration, UINT32_MAX, &prepared.normalizer));
+	if (result != V34_DATA_MAPPING_OK)
+		return result;
 	if (!v34_data_mapping_is_valid(&prepared))
 		return V34_DATA_MAPPING_NUMERIC_FAILURE;
 	*mapping = prepared;

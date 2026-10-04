@@ -184,6 +184,8 @@ static bool data_state_is_valid(
 {
 	bool record_pending;
 
+	if (exchange->data_preparation_active && !exchange->data_preparation_required)
+		return false;
 	if (!exchange->peer_mp_received)
 		return !exchange->data_preparation_required &&
 		       !exchange->data_startup_prepared &&
@@ -195,7 +197,11 @@ static bool data_state_is_valid(
 		       !exchange->online_announced;
 	if (exchange->data_preparation_required) {
 		record_pending = receive_record_pending(exchange);
-		return !exchange->data_startup_prepared && record_pending &&
+		return !exchange->data_startup_prepared &&
+		       (exchange->data_preparation_active ?
+			       ((!record_pending || exchange->failed) &&
+				exchange->receive.stage == V34_PHASE34_RECEIVER_PHASE4 &&
+				exchange->receive.semantic.phase4.mp_received) : record_pending) &&
 		       !exchange->transmit_data_active &&
 		       !exchange->receive_data_active;
 	}
@@ -621,12 +627,13 @@ static enum v34_phase4_exchange_result prepare_transmitter(
 			    &exchange->transmit.training)) {
 		bool acknowledged;
 
-		/* V.34 11.4.1: acknowledge at the current record boundary.
-		 * Finish local MP-prime after receiving reciprocal MP-prime or E,
-		 * as required by 11.4.1 and 11.6.1. */
+		/* Keep every record complete. Bounded calibration may require extra
+		 * ordinary MP repetitions before acknowledging the selected mapping.
+		 * Once ready, finish MP-prime after reciprocal MP-prime or E before
+		 * starting E/B1 (V.34 11.4.1 and 11.6.1). */
 		if (exchange->transmit_mp_prime_started)
 			exchange->transmit_mp_prime_complete = true;
-		acknowledged = exchange->peer_mp_received;
+		acknowledged = exchange->peer_mp_received && exchange->data_startup_prepared;
 
 		if (exchange->transmit_mp_prime_started &&
 		    exchange->transmit_mp_prime_complete &&
@@ -710,64 +717,110 @@ static enum v34_phase4_exchange_result latch_failure(
 	return result;
 }
 
-enum v34_phase4_exchange_result v34_phase4_exchange_prepare_data_startup(
-	struct v34_phase4_exchange *exchange)
+static enum v34_phase4_exchange_result select_data_mode(
+	const struct v34_phase4_exchange *exchange, struct v34_data_mode *mode)
 {
-	struct v34_phase4_exchange next;
+	enum v34_data_mode_result result = exchange->rate_renegotiation ?
+		v34_data_mode_select_update(local_role(exchange), &exchange->transmit_mp,
+			&exchange->peer_mp, &exchange->data_startup.mode, mode) :
+		v34_data_mode_select_startup(local_role(exchange), &exchange->transmit_mp,
+			&exchange->peer_mp, mode);
+
+	return result == V34_DATA_MODE_OK ? V34_PHASE4_EXCHANGE_OK :
+		result == V34_DATA_MODE_NO_COMMON_RATE ? V34_PHASE4_EXCHANGE_NO_COMMON_RATE :
+			V34_PHASE4_EXCHANGE_NUMERIC_FAILURE;
+}
+
+static enum v34_phase4_exchange_result startup_result(
+	enum v34_data_startup_result result)
+{
+	return result == V34_DATA_STARTUP_OK ? V34_PHASE4_EXCHANGE_OK :
+		result == V34_DATA_STARTUP_OUT_OF_RANGE ? V34_PHASE4_EXCHANGE_OUT_OF_RANGE :
+		result == V34_DATA_STARTUP_INVALID_ARGUMENT ? V34_PHASE4_EXCHANGE_SEQUENCE_MISMATCH :
+			V34_PHASE4_EXCHANGE_NUMERIC_FAILURE;
+}
+
+enum v34_phase4_exchange_result v34_phase4_exchange_begin_data_preparation(
+	struct v34_phase4_exchange *exchange,
+	struct v34_data_startup_preparation *preparation)
+{
 	struct v34_data_mode mode;
-	struct v34_data_startup startup;
-	enum v34_data_mode_result mode_result;
-	enum v34_data_startup_result startup_result;
+	struct v34_data_startup_preparation prepared;
+	struct v34_phase4_exchange next;
 	enum v34_phase4_exchange_result result;
 
-	if (!v34_phase4_exchange_is_valid(exchange))
+	if (!v34_phase4_exchange_is_valid(exchange) || preparation == NULL)
 		return V34_PHASE4_EXCHANGE_INVALID_ARGUMENT;
 	if (exchange->failed)
 		return V34_PHASE4_EXCHANGE_FAILED;
-	if (!exchange->data_preparation_required)
+	if (!exchange->data_preparation_required || exchange->data_preparation_active)
 		return V34_PHASE4_EXCHANGE_INVALID_STATE;
-	mode_result = exchange->rate_renegotiation ? v34_data_mode_select_update(
-		local_role(exchange), &exchange->transmit_mp,
-		&exchange->peer_mp, &exchange->data_startup.mode, &mode) :
-		v34_data_mode_select_startup(
-		local_role(exchange), &exchange->transmit_mp,
-		&exchange->peer_mp, &mode);
-	if (mode_result == V34_DATA_MODE_NO_COMMON_RATE)
-		return latch_failure(
-			exchange, V34_PHASE4_EXCHANGE_NO_COMMON_RATE);
-	if (mode_result != V34_DATA_MODE_OK)
-		return latch_failure(
-			exchange, V34_PHASE4_EXCHANGE_NUMERIC_FAILURE);
-	startup_result = v34_data_startup_prepare(
-		&startup, &mode, &exchange->transmit.training.line.profile,
-		peer_transmit_profile(exchange),
-		exchange->transmit.training.line.carrier.channel.sample_rate);
-	if (startup_result != V34_DATA_STARTUP_OK) {
-		result = startup_result == V34_DATA_STARTUP_OUT_OF_RANGE ?
-			V34_PHASE4_EXCHANGE_OUT_OF_RANGE :
-			startup_result == V34_DATA_STARTUP_INVALID_ARGUMENT ?
-				V34_PHASE4_EXCHANGE_SEQUENCE_MISMATCH :
-				V34_PHASE4_EXCHANGE_NUMERIC_FAILURE;
+	result = select_data_mode(exchange, &mode);
+	if (result != V34_PHASE4_EXCHANGE_OK)
 		return latch_failure(exchange, result);
-	}
+	result = startup_result(v34_data_startup_begin_preparation(&prepared, &mode,
+		&exchange->transmit.training.line.profile, peer_transmit_profile(exchange),
+		exchange->transmit.training.line.carrier.channel.sample_rate));
+	if (result != V34_PHASE4_EXCHANGE_OK)
+		return latch_failure(exchange, result);
 	next = *exchange;
-	next.data_startup = startup;
+	result = continue_mp_receiver(&next);
+	if (result != V34_PHASE4_EXCHANGE_OK)
+		return latch_failure(exchange, result);
+	next.data_preparation_active = true;
+	if (!v34_phase4_exchange_is_valid(&next))
+		return latch_failure(exchange, V34_PHASE4_EXCHANGE_NUMERIC_FAILURE);
+	*exchange = next;
+	*preparation = prepared;
+	return V34_PHASE4_EXCHANGE_OK;
+}
+
+enum v34_phase4_exchange_result v34_phase4_exchange_complete_data_preparation(
+	struct v34_phase4_exchange *exchange, const struct v34_data_startup *startup)
+{
+	struct v34_data_mode mode;
+	struct v34_phase4_exchange next;
+	enum v34_phase4_exchange_result result;
+
+	if (!v34_phase4_exchange_is_valid(exchange) || !v34_data_startup_is_valid(startup))
+		return V34_PHASE4_EXCHANGE_INVALID_ARGUMENT;
+	if (exchange->failed)
+		return V34_PHASE4_EXCHANGE_FAILED;
+	if (!exchange->data_preparation_active)
+		return V34_PHASE4_EXCHANGE_INVALID_STATE;
+	result = select_data_mode(exchange, &mode);
+	if (result != V34_PHASE4_EXCHANGE_OK)
+		return latch_failure(exchange, result);
+	if (!v34_data_startup_matches_mode(startup, &mode))
+		return V34_PHASE4_EXCHANGE_INVALID_ARGUMENT;
+	next = *exchange;
+	next.data_startup = *startup;
+	next.data_preparation_active = false;
 	next.data_preparation_required = false;
 	next.data_startup_prepared = true;
-	result = continue_mp_receiver(&next);
-	if (result != V34_PHASE4_EXCHANGE_OK) {
-		next.failed = true;
-		if (v34_phase4_exchange_is_valid(&next))
-			*exchange = next;
-		else
-			exchange->failed = true;
-		return result;
-	}
 	if (!v34_phase4_exchange_is_valid(&next))
-		return latch_failure(
-			exchange, V34_PHASE4_EXCHANGE_NUMERIC_FAILURE);
+		return V34_PHASE4_EXCHANGE_INVALID_ARGUMENT;
 	*exchange = next;
 	return V34_PHASE4_EXCHANGE_OK;
+}
+
+enum v34_phase4_exchange_result v34_phase4_exchange_prepare_data_startup(
+	struct v34_phase4_exchange *exchange)
+{
+	struct v34_data_startup_preparation preparation;
+	struct v34_data_startup startup;
+	enum v34_phase4_exchange_result result =
+		v34_phase4_exchange_begin_data_preparation(exchange, &preparation);
+	enum v34_data_startup_result prepared;
+
+	if (result != V34_PHASE4_EXCHANGE_OK)
+		return result;
+	do {
+		prepared = v34_data_startup_step_preparation(&preparation, UINT32_MAX, &startup);
+	} while (prepared == V34_DATA_STARTUP_IN_PROGRESS);
+	if (prepared != V34_DATA_STARTUP_OK)
+		return latch_failure(exchange, startup_result(prepared));
+	return v34_phase4_exchange_complete_data_preparation(exchange, &startup);
 }
 
 static enum v34_phase4_exchange_result accept_mp_record(
@@ -802,8 +855,6 @@ static enum v34_phase4_exchange_result accept_mp_record(
 		return V34_PHASE4_EXCHANGE_SEQUENCE_MISMATCH;
 	}
 	if (acknowledged && !exchange->peer_mp_prime_received) {
-		if (!exchange->data_startup_prepared)
-			return V34_PHASE4_EXCHANGE_SEQUENCE_MISMATCH;
 		exchange->peer_mp_prime_received = true;
 		*events |= V34_PHASE4_EXCHANGE_EVENT_PEER_MP_PRIME_RECEIVED;
 	}
@@ -815,8 +866,11 @@ static enum v34_phase4_exchange_result start_receive_data(
 {
 	const struct v34_data_line_receiver_configuration *configuration =
 		&exchange->data_startup.receive;
-	enum v34_phase34_receiver_result result =
-		v34_phase34_receiver_start_data(
+	enum v34_phase34_receiver_result result;
+
+	if (!exchange->data_startup_prepared)
+		return V34_PHASE4_EXCHANGE_SEQUENCE_MISMATCH;
+	result = v34_phase34_receiver_start_data(
 			&exchange->receive, &configuration->normalizer,
 			&configuration->geometry,
 			configuration->expanded_shaping,
@@ -985,7 +1039,7 @@ enum v34_phase4_exchange_result v34_phase4_exchange_sample(
 		return V34_PHASE4_EXCHANGE_INVALID_ARGUMENT;
 	if (exchange->failed)
 		return V34_PHASE4_EXCHANGE_FAILED;
-	if (exchange->data_preparation_required)
+	if (exchange->data_preparation_required && !exchange->data_preparation_active)
 		return V34_PHASE4_EXCHANGE_INVALID_STATE;
 	next = *exchange;
 	result = prepare_transmitter(&next, &emitted);

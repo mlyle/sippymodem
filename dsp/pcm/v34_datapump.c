@@ -140,6 +140,18 @@ static const char *progress_v34(const struct dp *dp)
 	case V34_CALL_PHASE4:
 		if (call->state.phase4.online_announced)
 			return "data/V.34";
+		if (call->state.phase4.data_preparation_active) {
+			switch (call->data_preparation.stage) {
+			case V34_DATA_PREPARATION_TRANSMIT_MAPPING:
+				return "phase4/calibrate-TX-mapping";
+			case V34_DATA_PREPARATION_TRANSMIT_LINE:
+				return "phase4/calibrate-TX-line";
+			case V34_DATA_PREPARATION_RECEIVE_MAPPING:
+				return "phase4/calibrate-RX-mapping";
+			case V34_DATA_PREPARATION_COMPLETE:
+				return "phase4/finish-calibration";
+			}
+		}
 		if (call->state.phase4.receive_data_active)
 			return "phase4/B1-data-validation";
 		if (call->state.phase4.peer_mp_prime_received)

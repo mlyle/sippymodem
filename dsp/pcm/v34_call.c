@@ -678,8 +678,25 @@ static enum v34_call_result sample_phase4(
 	if (!v34_phase4_exchange_needs_data_preparation(
 		    &call->state.phase4))
 		return V34_CALL_OK;
-	result = v34_phase4_exchange_prepare_data_startup(
-		&call->state.phase4);
+	if (!call->state.phase4.data_preparation_active) {
+		result = v34_phase4_exchange_begin_data_preparation(
+			&call->state.phase4, &call->data_preparation);
+		if (result != V34_PHASE4_EXCHANGE_OK)
+			return phase4_result(result);
+	}
+	/* One generated frame per real line sample bounds preparation work in
+	 * every host fragment, independently of its packet size. Keep transmitting
+	 * ordinary MP until both directions and the clipping preflight are ready. */
+	struct v34_data_startup startup;
+	enum v34_data_startup_result prepared = v34_data_startup_step_preparation(
+		&call->data_preparation, 1, &startup);
+
+	if (prepared == V34_DATA_STARTUP_IN_PROGRESS)
+		return V34_CALL_OK;
+	if (prepared != V34_DATA_STARTUP_OK)
+		return prepared == V34_DATA_STARTUP_OUT_OF_RANGE ? V34_CALL_OUT_OF_RANGE :
+			V34_CALL_NUMERIC_FAILURE;
+	result = v34_phase4_exchange_complete_data_preparation(&call->state.phase4, &startup);
 	return phase4_result(result);
 }
 

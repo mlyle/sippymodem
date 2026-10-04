@@ -77,9 +77,10 @@ union v34_phase4_transmit_path {
  * feedback training, but says nothing about completion of the peer's receiver.
  * The caller ends J only after
  * receiving the answerer's complete S/S-bar marker and reaching a J-pattern
- * boundary. Receipt of the first valid peer MP pauses
- * the sample path until prepare_data_startup() performs the negotiated mapping
- * and line-peak calibration at a separate preparation boundary, before E/B1.
+ * boundary. The first valid peer MP exposes a preparation boundary. The call
+ * can begin bounded mapping and line-peak calibration while ordinary MP
+ * records continue on the line. Acknowledgment waits for completed preparation,
+ * before E/B1.
  * After a valid peer MP, the continuous receiver accepts MP-prime or E as the
  * reciprocal acknowledgment. Transmit and receive
  * enter B1 independently, retaining early mapped data in the sample-call
@@ -100,6 +101,7 @@ struct v34_phase4_exchange {
 	bool peer_mp_received;
 	bool peer_mp_prime_received;
 	bool data_preparation_required;
+	bool data_preparation_active;
 	bool data_startup_prepared;
 	bool transmit_data_active;
 	bool receive_data_active;
@@ -124,6 +126,16 @@ bool v34_phase4_exchange_has_failed(
 bool v34_phase4_exchange_needs_data_preparation(
 	const struct v34_phase4_exchange *exchange);
 
+/* Begin owned calibration and resume unacknowledged MP samples. Complete
+ * only with a valid startup matching the current negotiated directions.
+ * Destinations must be distinct and calls serialized. */
+enum v34_phase4_exchange_result v34_phase4_exchange_begin_data_preparation(
+	struct v34_phase4_exchange *exchange,
+	struct v34_data_startup_preparation *preparation);
+enum v34_phase4_exchange_result v34_phase4_exchange_complete_data_preparation(
+	struct v34_phase4_exchange *exchange,
+	const struct v34_data_startup *startup);
+
 /* Resolve the pending first peer MP, selecting and calibrating both negotiated
  * data directions. Rejected calls leave the exchange unchanged. A terminal
  * preparation failure is latched because the paused line sample cannot be
@@ -141,8 +153,9 @@ bool v34_phase4_exchange_get_data_startup(
 /* Consume and produce one simultaneous line sample. `source` supplies local
  * post-B1 mapping frames; NULL deliberately emits idle ones. `received` changes
  * only with MAPPING_FRAME_RECEIVED and never exposes the peer's B1 frame.
- * Calls while data preparation is required return INVALID_STATE without
- * consuming or producing anything. Receive events affect the next unconsumed
+ * The initial preparation boundary returns INVALID_STATE until calibration
+ * begins. Once active, samples and repeated MP records continue; acknowledgment
+ * and E require completed calibration. Receive events affect the next unconsumed
  * transmit symbol.
  * SOURCE_FAILURE consumes neither the input nor any output. Terminal receive
  * errors still commit the consumed input, generated output, and event bits. */

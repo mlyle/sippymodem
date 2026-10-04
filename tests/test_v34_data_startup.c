@@ -237,6 +237,46 @@ static bool test_validation_and_transactionality(void)
 	return true;
 }
 
+static bool test_incremental_startup(void)
+{
+	struct v34_phase3_profile profiles[] = { caller_profile(), answerer_profile() };
+	struct v34_data_mode modes[] = { caller_mode(), answerer_mode() };
+	static const uint32_t BUDGETS[] = { 1, 23, UINT32_MAX };
+
+	for (unsigned int role = 0; role < 2; ++role) {
+		struct v34_data_startup expected;
+		CHECK(v34_data_startup_prepare(&expected, &modes[role], &profiles[role],
+			&profiles[role ^ 1u], 8000) == V34_DATA_STARTUP_OK,
+			"startup reference failed");
+		for (size_t i = 0; i < ARRAY_LENGTH(BUDGETS); ++i) {
+			struct v34_data_startup_preparation job;
+			struct v34_data_startup actual, saved;
+			enum v34_data_startup_result result;
+			unsigned int steps = 0;
+
+			CHECK(v34_data_startup_begin_preparation(&job, &modes[role],
+				&profiles[role], &profiles[role ^ 1u], 8000) == V34_DATA_STARTUP_OK,
+				"startup job did not begin");
+			memset(&actual, 0xa5, sizeof(actual));
+			saved = actual;
+			do {
+				result = v34_data_startup_step_preparation(&job, BUDGETS[i], &actual);
+				CHECK(++steps < 4000, "startup did not finish its bounded work");
+				if (result == V34_DATA_STARTUP_IN_PROGRESS)
+					CHECK(memcmp(&actual, &saved, sizeof(actual)) == 0,
+						"startup exposed an incomplete preparation");
+			} while (result == V34_DATA_STARTUP_IN_PROGRESS);
+			CHECK(result == V34_DATA_STARTUP_OK && v34_data_startup_is_valid(&actual) &&
+			      normalizers_are_equal(&actual.transmit.mapping.normalizer,
+				&expected.transmit.mapping.normalizer) &&
+			      actual.transmit.line_peak == expected.transmit.line_peak &&
+			      normalizers_are_equal(&actual.receive.normalizer, &expected.receive.normalizer),
+			      "incremental preparation changed negotiated power");
+		}
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -244,6 +284,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "complementary paths", test_complementary_paths },
+		{ "incremental startup", test_incremental_startup },
 		{ "validation and transactionality",
 		  test_validation_and_transactionality },
 	};

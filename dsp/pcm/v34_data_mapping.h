@@ -9,6 +9,7 @@
 #include "v34_framing.h"
 #include "v34_phase3_profile.h"
 #include "v34_symbol_power.h"
+#include "v34_power_calibration.h"
 
 #include <stdbool.h>
 
@@ -26,6 +27,16 @@ struct v34_data_mapping {
 	struct v34_4d_encoder encoder;
 	struct v34_power_normalizer normalizer;
 };
+
+/* Initialize the B1 schedule and encoder plus an owned calibration job.
+ * The mapping becomes valid only after its completed normalizer is stored.
+ * Destinations must be distinct; rejected arguments change neither. */
+enum v34_data_mapping_result v34_data_mapping_begin_calibration(
+	struct v34_data_mapping *mapping,
+	struct v34_mapping_power_calibration *calibration,
+	const struct v34_phase3_profile *transmitting_profile,
+	const struct v34_data_direction_parameters *parameters,
+	bool auxiliary_channel_enabled);
 
 bool v34_data_mapping_is_valid(
 	const struct v34_data_mapping *mapping);
