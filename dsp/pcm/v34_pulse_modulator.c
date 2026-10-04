@@ -171,6 +171,7 @@ bool v34_pulse_modulator_is_valid(
 	struct pulse_profile profile;
 	uint64_t expected_period;
 	uint64_t expected_phase;
+	uint32_t expected_divisor;
 	uint32_t expected_carrier_phase;
 
 	if (modulator == NULL ||
@@ -192,7 +193,11 @@ bool v34_pulse_modulator_is_valid(
 		return false;
 	expected_period = (uint64_t)modulator->channel.sample_rate *
 		modulator->channel.symbol_rate_denominator;
-	if (modulator->symbol_period_units != expected_period ||
+	expected_divisor = (uint32_t)gcd_u64(
+		modulator->channel.symbol_rate_numerator, expected_period);
+	if (modulator->pulse_phase_divisor != expected_divisor ||
+	    modulator->pulse_phase_count != expected_period / expected_divisor ||
+	    modulator->symbol_period_units != expected_period ||
 	    modulator->carrier_phase_step != phase_step_u32(
 		    modulator->channel.sample_rate,
 		    modulator->channel.carrier_frequency_numerator,
@@ -235,6 +240,10 @@ enum v34_pulse_modulator_result v34_pulse_modulator_init(
 	initialized.carrier_phase_step = phase_step_u32(
 		channel->sample_rate, channel->carrier_frequency_numerator,
 		channel->carrier_frequency_denominator);
+	initialized.pulse_phase_divisor = (uint32_t)gcd_u64(
+		channel->symbol_rate_numerator, initialized.symbol_period_units);
+	initialized.pulse_phase_count = (uint32_t)(initialized.symbol_period_units /
+		initialized.pulse_phase_divisor);
 	initialized.maximum_point_power = maximum_point_power;
 	initialized.symbol_rate = profile->symbol_rate;
 	initialized.preemphasis_filter_index =
@@ -325,18 +334,16 @@ static bool outputs_are_disjoint(
 	return !memory_region_set_overlaps(regions, count);
 }
 
-enum v34_pulse_modulator_result v34_pulse_modulator_sample(
+static enum v34_pulse_modulator_result pulse_sample(
 	struct v34_pulse_modulator *modulator,
 	const struct qam_point *point, double *sample,
-	bool *point_accepted)
+	bool *point_accepted, bool validate)
 {
 	struct pulse_profile profile;
 	struct fixed_phase_q14 phasor;
 	int16_t interpolated[V34_PULSE_TAPS];
 	const int16_t *coefficients;
 	const int16_t *preemphasis;
-	uint32_t divisor;
-	uint32_t row_count;
 	uint32_t row;
 	uint32_t in_phase = 0x1000u;
 	uint32_t quadrature = 0x1000u;
@@ -352,7 +359,7 @@ enum v34_pulse_modulator_result v34_pulse_modulator_sample(
 
 	if (modulator == NULL || sample == NULL || point_accepted == NULL ||
 	    !outputs_are_disjoint(modulator, point, sample, point_accepted) ||
-	    !v34_pulse_modulator_is_valid(modulator))
+	    (validate && !v34_pulse_modulator_is_valid(modulator)))
 		return V34_PULSE_MODULATOR_INVALID_ARGUMENT;
 	accepting = modulator->symbol_phase_units <
 		modulator->channel.symbol_rate_numerator;
@@ -365,6 +372,7 @@ enum v34_pulse_modulator_result v34_pulse_modulator_sample(
 				     &fixed_quadrature))))
 		return V34_PULSE_MODULATOR_INVALID_ARGUMENT;
 	if (modulator->generated_samples == UINT64_MAX ||
+	    modulator->pulse_phase_divisor == 0 || modulator->pulse_phase_count == 0 ||
 	    !selected_profile(modulator->symbol_rate, &profile) ||
 	    (preemphasis = selected_preemphasis(
 		     modulator->symbol_rate,
@@ -390,12 +398,9 @@ enum v34_pulse_modulator_result v34_pulse_modulator_sample(
 		modulator->in_phase_history[0] = fixed_in_phase;
 		modulator->quadrature_history[0] = fixed_quadrature;
 	}
-	divisor = (uint32_t)gcd_u64(
-		modulator->channel.symbol_rate_numerator,
-		modulator->symbol_period_units);
-	row_count = (uint32_t)(modulator->symbol_period_units / divisor);
-	row = (uint32_t)(modulator->symbol_phase_units / divisor);
-	coefficients = phase_coefficients(&profile, row, row_count, interpolated);
+	row = (uint32_t)(modulator->symbol_phase_units / modulator->pulse_phase_divisor);
+	coefficients = phase_coefficients(
+		&profile, row, modulator->pulse_phase_count, interpolated);
 	for (size_t index = 0; index < V34_PULSE_TAPS; ++index) {
 		int16_t coefficient = coefficients[V34_PULSE_TAPS - 1u - index];
 
@@ -421,4 +426,20 @@ enum v34_pulse_modulator_result v34_pulse_modulator_sample(
 	*sample = generated;
 	*point_accepted = accepting;
 	return V34_PULSE_MODULATOR_OK;
+}
+
+enum v34_pulse_modulator_result v34_pulse_modulator_sample(
+	struct v34_pulse_modulator *modulator,
+	const struct qam_point *point, double *sample,
+	bool *point_accepted)
+{
+	return pulse_sample(modulator, point, sample, point_accepted, true);
+}
+
+enum v34_pulse_modulator_result v34_pulse_modulator_sample_owned(
+	struct v34_pulse_modulator *modulator,
+	const struct qam_point *point, double *sample,
+	bool *point_accepted)
+{
+	return pulse_sample(modulator, point, sample, point_accepted, false);
 }

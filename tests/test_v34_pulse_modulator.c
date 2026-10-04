@@ -593,6 +593,44 @@ static bool test_clock_boundaries(void)
 	return true;
 }
 
+static bool test_owned_emission(void)
+{
+	for (unsigned int rate = 0; rate < V34_SYMBOL_RATE_COUNT; ++rate) {
+		for (unsigned int filter = 0; filter <= V34_PREEMPHASIS_MAX_FILTER_INDEX; ++filter) {
+			struct v34_phase3_profile profile = profile_for((enum v34_symbol_rate)rate, true);
+			struct qam_channel channel = channel_for(&profile);
+			struct v34_pulse_modulator checked, owned;
+			uint32_t random = 0x34b19f2d;
+			profile.preemphasis_filter_index = (uint8_t)filter;
+			CHECK(v34_pulse_modulator_init(&checked, &profile, &channel, 2.0) ==
+			      V34_PULSE_MODULATOR_OK, "owned fixture initialization");
+			owned = checked;
+			for (unsigned int index = 0; index < 1024; ++index) {
+				struct qam_point point;
+				const struct qam_point *supplied = NULL;
+				double a, b;
+				bool accepted_a, accepted_b;
+				if (v34_pulse_modulator_needs_point(&checked)) {
+					point = generated_point(&random);
+					supplied = &point;
+				}
+				CHECK(v34_pulse_modulator_sample(&checked, supplied, &a, &accepted_a) ==
+				      V34_PULSE_MODULATOR_OK &&
+				      v34_pulse_modulator_sample_owned(&owned, supplied, &b, &accepted_b) ==
+				      V34_PULSE_MODULATOR_OK && a == b && accepted_a == accepted_b &&
+				      memcmp(&checked, &owned, sizeof(checked)) == 0,
+				      "owned waveform differs: rate %u filter %u sample %u", rate, filter, index);
+			}
+			checked.pulse_phase_divisor++;
+			CHECK(!v34_pulse_modulator_is_valid(&checked), "invalid phase divisor accepted");
+			checked = owned;
+			checked.pulse_phase_count++;
+			CHECK(!v34_pulse_modulator_is_valid(&checked), "invalid phase count accepted");
+		}
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -605,6 +643,7 @@ int main(void)
 		{ "initialization and copy", test_initialization_and_copy },
 		{ "clock profile mismatch", test_clock_profile_mismatch },
 		{ "clock boundaries", test_clock_boundaries },
+		{ "owned emission", test_owned_emission },
 	};
 	unsigned int failures = 0;
 

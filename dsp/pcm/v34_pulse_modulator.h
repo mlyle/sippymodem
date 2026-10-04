@@ -51,6 +51,8 @@ struct v34_pulse_modulator {
 	uint64_t generated_samples;
 	uint32_t carrier_phase;
 	uint32_t carrier_phase_step;
+	uint32_t pulse_phase_divisor;
+	uint32_t pulse_phase_count;
 	double maximum_point_power;
 	enum v34_symbol_rate symbol_rate;
 	uint8_t preemphasis_filter_index;
@@ -70,6 +72,15 @@ bool v34_pulse_modulator_needs_point(
  * point exactly when needs_point() is true. Rejected calls preserve owner and
  * outputs. */
 enum v34_pulse_modulator_result v34_pulse_modulator_sample(
+	struct v34_pulse_modulator *modulator,
+	const struct qam_point *point, double *sample,
+	bool *point_accepted);
+
+/* For an owner initialized and validated at its integration boundary. The
+ * pulse clock and immutable channel must remain exclusively owned between
+ * calls. Point bounds, output aliasing and counter overflow are still checked;
+ * the full channel/history consistency scan is skipped. */
+enum v34_pulse_modulator_result v34_pulse_modulator_sample_owned(
 	struct v34_pulse_modulator *modulator,
 	const struct qam_point *point, double *sample,
 	bool *point_accepted);

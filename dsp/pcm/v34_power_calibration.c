@@ -64,7 +64,7 @@ static enum v34_power_calibration_result generate_mapping_frame(
 	struct v34_4d_encoder *encoder,
 	enum v34_nonlinear_parameter nonlinear_parameter,
 	double mean_squared_magnitude, uint32_t *random_state,
-	struct v34_transmitted_mapping_frame *transmitted)
+	struct v34_transmitted_mapping_frame *transmitted, bool project)
 {
 	struct v34_frame_schedule preview;
 	struct v34_mapping_frame mapping_frame;
@@ -86,10 +86,12 @@ static enum v34_power_calibration_result generate_mapping_frame(
 		auxiliary_bit = next_generated_bit(random_state);
 		auxiliary_pointer = &auxiliary_bit;
 	}
-	result = v34_transmit_mapping_frame(
+	result = project ? v34_transmit_mapping_frame(
 		schedule, scrambler, encoder, primary_bits,
 		mapping_frame.primary_bits, auxiliary_pointer,
-		nonlinear_parameter, mean_squared_magnitude, transmitted);
+		nonlinear_parameter, mean_squared_magnitude, transmitted) :
+		v34_transmit_mapping_frame_q7(schedule, scrambler, encoder, primary_bits,
+			mapping_frame.primary_bits, auxiliary_pointer, transmitted);
 	return mapping_transmitter_result(result);
 }
 
@@ -134,7 +136,7 @@ static enum v34_power_calibration_result observe_mapping_frame(
 			V34_NONLINEAR_THETA_ZERO,
 		calibration->measuring_projected ?
 			calibration->precoded.mean_squared_magnitude : 1.0,
-		&calibration->random_state, &transmitted);
+		&calibration->random_state, &transmitted, calibration->measuring_projected);
 
 	if (result != V34_POWER_CALIBRATION_OK)
 		return result;
@@ -406,7 +408,8 @@ enum v34_power_calibration_result v34_line_power_calibration_step(
 	uint32_t frame_budget, struct v34_line_power_measurement *measurement)
 {
 	if (calibration == NULL || measurement == NULL || frame_budget == 0 ||
-	    calibration->frame_count == 0 || calibration->frame > calibration->frame_count)
+	    calibration->frame_count == 0 || calibration->frame > calibration->frame_count ||
+	    !v34_pulse_modulator_is_valid(&calibration->carrier))
 		return V34_POWER_CALIBRATION_INVALID_ARGUMENT;
 	for (; calibration->frame < calibration->frame_count && frame_budget != 0;
 	     ++calibration->frame, --frame_budget) {
@@ -424,14 +427,15 @@ enum v34_power_calibration_result v34_line_power_calibration_step(
 
 			if (++frame_samples > calibration->maximum_frame_samples)
 				return V34_POWER_CALIBRATION_NUMERIC_FAILURE;
-			if (v34_pulse_modulator_needs_point(&calibration->carrier)) {
+			if (calibration->carrier.symbol_phase_units <
+			    calibration->carrier.channel.symbol_rate_numerator) {
 				result = data_points_result(v34_data_points_next(
 					&calibration->points, &point));
 				if (result != V34_POWER_CALIBRATION_OK)
 					return result;
 				point_pointer = &point;
 			}
-			result = pulse_result(v34_pulse_modulator_sample(
+			result = pulse_result(v34_pulse_modulator_sample_owned(
 				&calibration->carrier, point_pointer, &line_sample,
 				&symbol_accepted));
 			if (result != V34_POWER_CALIBRATION_OK)

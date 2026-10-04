@@ -50,8 +50,8 @@ project_mapping_frame(
 	return V34_MAPPING_FRAME_TRANSMITTER_OK;
 }
 
-enum v34_mapping_frame_transmitter_result
-v34_transmit_mapping_frame(
+static enum v34_mapping_frame_transmitter_result
+transmit_mapping_frame(
 	struct v34_frame_schedule *schedule,
 	struct v34_scrambler *scrambler,
 	struct v34_4d_encoder *mapping_encoder,
@@ -59,7 +59,7 @@ v34_transmit_mapping_frame(
 	const uint8_t *auxiliary_bit,
 	enum v34_nonlinear_parameter nonlinear_parameter,
 	double mean_squared_magnitude,
-	struct v34_transmitted_mapping_frame *transmitted)
+	struct v34_transmitted_mapping_frame *transmitted, bool project)
 {
 	struct v34_frame_schedule next_schedule;
 	struct v34_scrambler next_scrambler;
@@ -103,7 +103,7 @@ v34_transmit_mapping_frame(
 		if (result != V34_MAPPING_FRAME_ENCODER_OK)
 			return mapping_encoder_result(result);
 	}
-	{
+	if (project) {
 		enum v34_mapping_frame_transmitter_result result =
 			project_mapping_frame(
 				&generated.encoded, nonlinear_parameter,
@@ -118,4 +118,27 @@ v34_transmit_mapping_frame(
 	*mapping_encoder = next_encoder;
 	*transmitted = generated;
 	return V34_MAPPING_FRAME_TRANSMITTER_OK;
+}
+
+enum v34_mapping_frame_transmitter_result v34_transmit_mapping_frame(
+	struct v34_frame_schedule *schedule, struct v34_scrambler *scrambler,
+	struct v34_4d_encoder *encoder, const uint8_t *primary_bits,
+	size_t primary_bit_count, const uint8_t *auxiliary_bit,
+	enum v34_nonlinear_parameter parameter, double mean_squared_magnitude,
+	struct v34_transmitted_mapping_frame *transmitted)
+{
+	return transmit_mapping_frame(schedule, scrambler, encoder, primary_bits,
+		primary_bit_count, auxiliary_bit, parameter, mean_squared_magnitude,
+		transmitted, true);
+}
+
+enum v34_mapping_frame_transmitter_result v34_transmit_mapping_frame_q7(
+	struct v34_frame_schedule *schedule, struct v34_scrambler *scrambler,
+	struct v34_4d_encoder *encoder, const uint8_t *primary_bits,
+	size_t primary_bit_count, const uint8_t *auxiliary_bit,
+	struct v34_transmitted_mapping_frame *transmitted)
+{
+	return transmit_mapping_frame(schedule, scrambler, encoder, primary_bits,
+		primary_bit_count, auxiliary_bit, V34_NONLINEAR_THETA_ZERO, 1.0,
+		transmitted, false);
 }

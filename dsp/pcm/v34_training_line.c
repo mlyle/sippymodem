@@ -51,7 +51,7 @@ static enum v34_training_line_result calibrate_power(
 	uint16_t tail_symbols = 0;
 	uint8_t filter_tail_samples = 0;
 
-	if (expected_samples == 0 ||
+	if (expected_samples == 0 || !v34_pulse_modulator_is_valid(&carrier) ||
 	    v34_phase3_s_sequence_init(&sequence) !=
 		    V34_PHASE3_S_SEQUENCE_OK)
 		return V34_TRAINING_LINE_INVALID_ARGUMENT;
@@ -60,7 +60,8 @@ static enum v34_training_line_result calibrate_power(
 		enum v34_phase3_s_section section;
 		double line_sample;
 		double magnitude;
-		bool accepting = v34_pulse_modulator_needs_point(&carrier);
+		bool accepting = carrier.symbol_phase_units <
+			carrier.channel.symbol_rate_numerator;
 		bool sequence_symbol = false;
 		bool accepted;
 		bool draining_filter = stage == CALIBRATE_FILTER_TAIL;
@@ -78,7 +79,7 @@ static enum v34_training_line_result calibrate_power(
 				stage = CALIBRATE_PULSE_TAIL;
 			}
 		}
-		if (v34_pulse_modulator_sample(
+		if (v34_pulse_modulator_sample_owned(
 			    &carrier, accepting ? &point : NULL,
 			    &line_sample, &accepted) !=
 			    V34_PULSE_MODULATOR_OK ||
@@ -211,7 +212,8 @@ bool v34_training_line_needs_point(
 	const struct v34_training_line *line)
 {
 	return v34_training_line_is_valid(line) &&
-	       v34_pulse_modulator_needs_point(&line->carrier);
+	       line->carrier.symbol_phase_units <
+		       line->carrier.channel.symbol_rate_numerator;
 }
 
 enum v34_training_line_result v34_training_line_sample(
@@ -242,7 +244,7 @@ enum v34_training_line_result v34_training_line_sample(
 	if (line->generated_samples == UINT64_MAX)
 		return V34_TRAINING_LINE_OUT_OF_RANGE;
 	next = line->carrier;
-	if (v34_pulse_modulator_sample(
+	if (v34_pulse_modulator_sample_owned(
 		    &next, point,
 		    &line_sample, &accepted) != V34_PULSE_MODULATOR_OK)
 		return point != NULL ? V34_TRAINING_LINE_INVALID_ARGUMENT :

@@ -49,4 +49,14 @@ v34_transmit_mapping_frame(
 	double mean_squared_magnitude,
 	struct v34_transmitted_mapping_frame *transmitted);
 
+/* Stop at the encoded Q7 precoder boundary. The schedule, scrambler and
+ * encoder have exactly the ordinary transmit evolution; projected_symbol
+ * remains zero. This avoids unused radial projections in raw-power sampling.
+ * State and destination are unchanged on failure. */
+enum v34_mapping_frame_transmitter_result v34_transmit_mapping_frame_q7(
+	struct v34_frame_schedule *schedule, struct v34_scrambler *scrambler,
+	struct v34_4d_encoder *encoder, const uint8_t *primary_bits,
+	size_t primary_bit_count, const uint8_t *auxiliary_bit,
+	struct v34_transmitted_mapping_frame *transmitted);
+
 #endif

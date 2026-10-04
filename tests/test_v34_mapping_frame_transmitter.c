@@ -726,12 +726,40 @@ static bool test_completion(void)
 	return true;
 }
 
+static bool test_q7_boundary(void)
+{
+	for (unsigned int auxiliary = 0; auxiliary < 2; ++auxiliary) {
+		struct transmitter_fixture projected, raw;
+		struct v34_transmitted_mapping_frame a, b;
+		CHECK(initialize_transmitter_fixture(&projected, auxiliary != 0), "Q7 fixture");
+		raw = projected;
+		CHECK(v34_transmit_mapping_frame(&projected.schedule, &projected.scrambler,
+			&projected.encoder, projected.primary_bits, projected.mapping_frame.primary_bits,
+			auxiliary ? &projected.auxiliary_bit : NULL, V34_NONLINEAR_THETA_ZERO, 1.0, &a) ==
+		      V34_MAPPING_FRAME_TRANSMITTER_OK &&
+		      v34_transmit_mapping_frame_q7(&raw.schedule, &raw.scrambler, &raw.encoder,
+			raw.primary_bits, raw.mapping_frame.primary_bits,
+			auxiliary ? &raw.auxiliary_bit : NULL, &b) == V34_MAPPING_FRAME_TRANSMITTER_OK &&
+		      mapping_frames_are_equal(&a.mapping_frame, &b.mapping_frame) &&
+		      v34_test_encoded_frames_are_equal(&a.encoded, &b.encoded) &&
+		      schedules_are_equal(&projected.schedule, &raw.schedule) &&
+		      scramblers_are_equal(&projected.scrambler, &raw.scrambler) &&
+		      v34_test_encoders_are_equal(&projected.encoder, &raw.encoder),
+		      "Q7 boundary changed encoder evolution");
+		for (size_t symbol = 0; symbol < V34_SYMBOLS_PER_MAPPING_FRAME; ++symbol)
+			CHECK(b.projected_symbol[symbol].in_phase == 0 &&
+			      b.projected_symbol[symbol].quadrature == 0, "Q7 projection was not skipped");
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "Q7 boundary", test_q7_boundary },
 		{ "composed transmission", test_composition },
 		{ "transactional validation", test_transactional_validation },
 		{ "late failure rollback", test_late_failure_rollback },
