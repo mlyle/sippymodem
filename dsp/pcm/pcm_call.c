@@ -606,11 +606,13 @@ static bool rate_renegotiation_response_is_pending_owned(
 	{
 		const struct v90_digital_path *path = &call->state.data_path.digital;
 
-		return path->upstream_stage == V90_DIGITAL_PATH_UPSTREAM_STARTUP &&
+		return (path->upstream_stage == V90_DIGITAL_PATH_UPSTREAM_DATA &&
+			!path->data_mapping_ready) ||
+		       (path->upstream_stage == V90_DIGITAL_PATH_UPSTREAM_STARTUP &&
 		       (path->upstream.startup.stage == V90_UPSTREAM_RX_STAGE_CP ||
 			path->upstream.startup.stage == V90_UPSTREAM_RX_STAGE_CPS ||
 			path->upstream.startup.stage == V90_UPSTREAM_RX_STAGE_RECONDITION ||
-			path->upstream.startup.stage == V90_UPSTREAM_RX_STAGE_E);
+			path->upstream.startup.stage == V90_UPSTREAM_RX_STAGE_E));
 	}
 }
 
@@ -4536,6 +4538,34 @@ static enum pcm_call_result begin_v92_analog_rate_request(struct pcm_call *call)
 	call->retrain_active = true;
 	call->v92_rate_renegotiation_active = true;
 	return reset_retrain_detector(call);
+}
+
+enum pcm_call_result pcm_call_downshift_upstream(struct pcm_call *call)
+{
+	if (!pcm_call_is_valid(call))
+		return PCM_CALL_INVALID_ARGUMENT;
+	if (!pcm_call_uses_conventional_upstream(call) ||
+	    call->local_role != V90_DIGITAL_MODEM || !pcm_call_is_online(call) ||
+	    call->retrain_active || rate_renegotiation_is_active_owned(call) ||
+	    cleardown_is_active_owned(call))
+		return PCM_CALL_INVALID_STATE;
+	struct pcm_call next = *call;
+	enum v90_digital_path_result path_result =
+		v90_digital_path_downshift_upstream(&next.state.data_path.digital);
+	if (path_result == V90_DIGITAL_PATH_NO_COMMON_RATE)
+		return PCM_CALL_UNUSABLE_SELECTION;
+	if (path_result != V90_DIGITAL_PATH_OK)
+		return PCM_CALL_NUMERIC_FAILURE;
+	/* Keep a later full retrain from selecting the withdrawn rate again. */
+	uint8_t maximum = v90_mp_record_common(
+		&next.state.data_path.digital.local_mp)->maximum_upstream_rate_2400_bps_units;
+	if (!v90_mp_record_limit_maximum_upstream_rate(
+		    &next.digital_phase4_configuration.initial_mp, maximum) ||
+	    begin_rate_renegotiation_control(&next) != PCM_CALL_OK ||
+	    !pcm_call_is_valid(&next))
+		return PCM_CALL_NUMERIC_FAILURE;
+	*call = next;
+	return PCM_CALL_OK;
 }
 
 enum pcm_call_result pcm_call_start_rate_renegotiation(struct pcm_call *call)

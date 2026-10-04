@@ -141,6 +141,14 @@ static const char *progress_v90(const struct dp *dp)
 		}
 		break;
 	case PCM_CALL_DATA_PATH:
+		if (conventional && (digital ?
+		    call->state.data_path.digital.rate_renegotiation_active :
+		    call->state.data_path.analog.rate_renegotiation_active)) {
+			if (digital && !call->state.data_path.digital.data_mapping_ready &&
+			    call->state.data_path.digital.upstream_stage == V90_DIGITAL_PATH_UPSTREAM_DATA)
+				return "rate-change/Rd-wait-S-Sbar";
+			return "rate-change/CP-MP-E-B1";
+		}
 		if (pcm_call_is_online_owned(call))
 			return conventional ? "data/PCM-downstream-V34-upstream" : "data/PCM-both-directions";
 		if (conventional && digital && call->state.data_path.digital.upstream_stage ==
@@ -531,8 +539,15 @@ static bool observe_upstream_quality(struct v90_datapump *datapump)
 			    V34_RECEIVE_TIMING_OK)
 				return false;
 		} else if (result == V34_DATA_QUALITY_RETRAIN) {
-			if (retrain_v90(&datapump->dp) != 0)
+			enum pcm_call_result recovery =
+				pcm_call_downshift_upstream(&datapump->call);
+			if (recovery == PCM_CALL_UNUSABLE_SELECTION) {
+				if (retrain_v90(&datapump->dp) != 0)
+					return false;
+			} else if (recovery != PCM_CALL_OK) {
 				return false;
+			}
+			datapump->upstream_quality_ready = false;
 		} else if (result != V34_DATA_QUALITY_OK) {
 			return false;
 		}
@@ -757,6 +772,11 @@ static bool process_octet(
 	enum pcm_call_result result;
 	bool was_online = training_session_is_online(&datapump->training);
 	bool was_qc = datapump->call.stage == PCM_CALL_QC;
+	bool was_rate_exchange = pcm_call_uses_conventional_upstream(&datapump->call) &&
+		datapump->call.stage == PCM_CALL_DATA_PATH &&
+		(datapump->role == V90_ANALOG_MODEM ?
+		 datapump->call.state.data_path.analog.rate_renegotiation_active :
+		 datapump->call.state.data_path.digital.rate_renegotiation_active);
 
 	/* The datapump is the serialized owner of a call that every public
 	 * transition validates.  Consult its stage directly here instead of
@@ -824,6 +844,16 @@ static bool process_octet(
 		if (!enter_link(datapump))
 			return false;
 		*connected = true;
+	}
+	if (was_rate_exchange && datapump->call.stage == PCM_CALL_DATA_PATH &&
+	    !(datapump->role == V90_ANALOG_MODEM ?
+	      datapump->call.state.data_path.analog.rate_renegotiation_active :
+	      datapump->call.state.data_path.digital.rate_renegotiation_active)) {
+		uint32_t transmit_rate, receive_rate;
+
+		if (!pcm_call_get_data_rates(&datapump->call, &transmit_rate, &receive_rate) ||
+		    !datapump_set_link_rates(&datapump->dp, transmit_rate, receive_rate))
+			return false;
 	}
 	return deliver_event(datapump, &event) && observe_upstream_quality(datapump);
 }

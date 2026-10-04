@@ -557,9 +557,16 @@ enum pcm_call_result pcm_call_init_qc(
 /* Start a full retrain while retaining the negotiated PCM protocol and INFO0
  * records. The following line character begins the 70 ms silence interval. */
 enum pcm_call_result pcm_call_start_retrain(struct pcm_call *call);
+
 /* Excludes rate renegotiation and fast parameter exchange, which a local
  * full-retrain request may replace. */
 bool pcm_call_is_full_retraining(const struct pcm_call *call);
+
+/* Digital V.90/V.92 with conventional upstream: request the next lower
+ * common rate through Rd/CP/MP. Preserve the lower ceiling for later retrains.
+ * Continue data_octet(); the call stays online while host frames are withheld.
+ * UNUSABLE_SELECTION means no lower permitted rate. Rejection changes nothing. */
+enum pcm_call_result pcm_call_downshift_upstream(struct pcm_call *call);
 
 /* Initiate a PCM-upstream rate exchange from either online endpoint.
  * Drain the accepted data frame before Ru/Rd; subsequent media uses octet()

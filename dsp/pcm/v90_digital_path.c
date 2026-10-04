@@ -125,7 +125,9 @@ static bool upstream_is_valid(const struct v90_digital_path *path)
 		       (path->failed || !v90_upstream_rx_is_complete(startup));
 	}
 	if (path->upstream_stage == V90_DIGITAL_PATH_UPSTREAM_DATA)
-		return path->data_mapping_ready &&
+		return (path->data_mapping_ready ||
+			(path->rate_renegotiation_active &&
+			 path->pending_upstream_count == 0u)) &&
 		       path->upstream_rate_2400_bps_units != 0u &&
 		       v34_data_line_receiver_is_valid(&path->upstream.data) &&
 		       path->upstream.data.geometry
@@ -281,6 +283,49 @@ enum v90_digital_path_result v90_digital_path_start_cleardown(
 	path->pending_upstream_head = 0u;
 	path->rate_renegotiation_active = true;
 	path->cleardown_requested = true;
+	return V90_DIGITAL_PATH_OK;
+}
+
+enum v90_digital_path_result v90_digital_path_downshift_upstream(
+	struct v90_digital_path *path)
+{
+	struct v90_pcm_mapping control;
+	struct v90_mp_record mp;
+	const struct v90_mp_parameters *parameters;
+	int rate;
+
+	if (!v90_digital_path_is_valid(path) || path->failed)
+		return V90_DIGITAL_PATH_INVALID_ARGUMENT;
+	if (!v90_digital_path_is_online(path) || path->rate_renegotiation_active ||
+	    path->cleardown_requested)
+		return V90_DIGITAL_PATH_SEQUENCE_MISMATCH;
+	mp = path->local_mp;
+	parameters = v90_mp_record_common(&mp);
+	for (rate = path->upstream_rate_2400_bps_units - 1;
+	     rate >= V90_MP_MINIMUM_RATE_2400_BPS_UNITS; --rate) {
+		uint16_t bit = (uint16_t)(1u <<
+			(rate - V90_MP_MINIMUM_RATE_2400_BPS_UNITS));
+		if (rate <= parameters->maximum_upstream_rate_2400_bps_units &&
+		    (parameters->upstream_rate_capability_mask &
+		     path->peer_upstream_rate_mask & bit) != 0u)
+			break;
+	}
+	if (rate < V90_MP_MINIMUM_RATE_2400_BPS_UNITS)
+		return V90_DIGITAL_PATH_NO_COMMON_RATE;
+	if (!v90_mp_record_limit_maximum_upstream_rate(&mp, (uint8_t)rate) ||
+	    v90_pcm_mapping_init_rate_renegotiation(
+		    &control, &path->training_mapping,
+		    &path->data_mapping) != V90_PCM_MAPPING_OK)
+		return V90_DIGITAL_PATH_INVALID_PARAMETERS;
+	path->local_mp = mp;
+	path->control_mapping = control;
+	path->downstream_stage = V90_DIGITAL_PATH_DOWNSTREAM_DATA_DRAIN;
+	path->pending_upstream_count = 0u;
+	path->pending_upstream_head = 0u;
+	/* Keep the trained receiver hunting S/S-bar. The old mapping is not
+	 * a CP acknowledgement for this exchange, nor is old data host payload. */
+	path->data_mapping_ready = false;
+	path->rate_renegotiation_active = true;
 	return V90_DIGITAL_PATH_OK;
 }
 
@@ -699,15 +744,17 @@ static enum v90_digital_path_result begin_rate_renegotiation(
 	struct v90_phase4_cp_line_rx cp;
 	struct v90_upstream_rx startup;
 	const struct v90_pcm_mapping *preceding_data;
+	bool requested = path->rate_renegotiation_active;
 
-	if (path->rate_renegotiation_active ||
-	    path->downstream_stage != V90_DIGITAL_PATH_DOWNSTREAM_DATA ||
+	if ((requested ? path->data_mapping_ready :
+	     path->downstream_stage != V90_DIGITAL_PATH_DOWNSTREAM_DATA) ||
 	    path->upstream_stage != V90_DIGITAL_PATH_UPSTREAM_DATA ||
 	    path->upstream_rate_2400_bps_units == 0u)
 		return V90_DIGITAL_PATH_SEQUENCE_MISMATCH;
+	control_mapping = path->control_mapping;
 	preceding_data =
 		&path->downstream.data.transmitter.encoder.mapping;
-	if (v90_pcm_mapping_init_rate_renegotiation(
+	if (!requested && v90_pcm_mapping_init_rate_renegotiation(
 		    &control_mapping, &path->training_mapping,
 		    preceding_data) != V90_PCM_MAPPING_OK)
 		return V90_DIGITAL_PATH_INVALID_PARAMETERS;
@@ -727,12 +774,13 @@ static enum v90_digital_path_result begin_rate_renegotiation(
 	path->upstream = (union v90_digital_path_upstream){ 0 };
 	path->upstream.startup = startup;
 	path->upstream_stage = V90_DIGITAL_PATH_UPSTREAM_STARTUP;
-	path->downstream_stage = V90_DIGITAL_PATH_DOWNSTREAM_DATA_DRAIN;
+	if (!requested)
+		path->downstream_stage = V90_DIGITAL_PATH_DOWNSTREAM_DATA_DRAIN;
 	path->pending_upstream_head = 0u;
 	path->pending_upstream_count = 0u;
 	path->data_mapping_ready = false;
 	path->rate_renegotiation_active = true;
-	return V90_DIGITAL_PATH_RATE_RENEGOTIATION;
+	return requested ? V90_DIGITAL_PATH_OK : V90_DIGITAL_PATH_RATE_RENEGOTIATION;
 }
 
 static enum v90_digital_path_result receive_upstream(
@@ -788,6 +836,10 @@ static enum v90_digital_path_result receive_upstream(
 		case V34_DATA_RECEIVE_RATE_RENEGOTIATION:
 			return V90_DIGITAL_PATH_INTERNAL_ERROR;
 		}
+		/* A local request clamps old host data while waiting for S/S-bar.
+		 * It must not fill the bounded post-B1/candidate queue. */
+		if (path->rate_renegotiation_active && !path->data_mapping_ready)
+			return V90_DIGITAL_PATH_OK;
 		/* Survivor traceback hides the complete early S/S-bar prefix. Also
 		 * retain post-B1 frames when the upstream half finishes RRN first;
 		 * neither kind belongs to the host until its control epoch resolves. */

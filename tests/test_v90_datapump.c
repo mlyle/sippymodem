@@ -667,6 +667,8 @@ static bool run_pcm_pair(
 	bool digital_reconnected = false;
 	bool post_retrain_data_enabled = false;
 	bool automatic_retrain = upstream_channel == UPSTREAM_CHANNEL_NOISE_BURST;
+	bool automatic_downshift = automatic_retrain && pcm_upstream_max_drn == 0 &&
+		upstream_min_rate < upstream_max_rate;
 	bool exercise_retrain = retrain_role != MODEM_PCM_ROLE_NONE || automatic_retrain;
 	/* Reserve payload time at the slowest supported upstream rate separately
 	 * from each training budget, which now includes nonzero DIL. */
@@ -839,6 +841,13 @@ static bool run_pcm_pair(
 		      "analogue V.90 path failed at octet %zu", octet);
 		analog_to_digital = next_analog;
 		if (retrain_requested) {
+			if (automatic_downshift) {
+				CHECK(analog_dp->status == DPSTAT_CONNECT &&
+				      digital_dp->status == DPSTAT_CONNECT,
+				      "quality downshift entered full retrain at %zu", octet);
+				analog_reconnected |= analog.tx_rate == expected_upstream_rate;
+				digital_reconnected |= digital.rx_rate == expected_upstream_rate;
+			}
 			analog_reconnected |= analog_result == DPSTAT_CONNECT;
 			digital_reconnected |= digital_result == DPSTAT_CONNECT;
 			if (analog_reconnected && digital_reconnected &&
@@ -1014,6 +1023,19 @@ static bool test_upstream_quality_recovery(void)
 			      "law %u did not recover %u bit/s upstream at %u symbols/s after noise",
 			      (unsigned int)law, upstream_rate, profiles[index].symbol_rate);
 	}
+	return true;
+}
+
+static bool test_upstream_quality_downshift(void)
+{
+	static const enum DP_ID protocols[] = { DP_V90, DP_V92 };
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (size_t index = 0; index < ARRAY_LENGTH(protocols); ++index)
+			CHECK(run_pcm_pair(protocols[index], 0, law, 45333,
+				26400, 28800, 26400, 3200, SUSTAINED_RECEIVED_BITS,
+				true, MODEM_PCM_ROLE_NONE, false, UNITY_GAIN_Q15,
+				RETURNED_ECHO_NONE, UPSTREAM_CHANNEL_NOISE_BURST),
+			      "law %u protocol %u did not downshift after noise", law, protocols[index]);
 	return true;
 }
 
@@ -1897,6 +1919,7 @@ int main(void)
 		{ "online PCM retrain through V.34 fallback", test_online_fallback_restart },
 		{ "cleardown before CONNECT", test_training_cleardown },
 		{ "automatic upstream quality recovery", test_upstream_quality_recovery },
+		{ "automatic upstream quality downshift", test_upstream_quality_downshift },
 		{ "long-delay upstream channel",
 		  test_delayed_upstream_channel },
 		{ "attenuated maximum-rate upstream",
