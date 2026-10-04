@@ -18,7 +18,10 @@ enum {
 		12 * V8_ANSAM_SAMPLE_RATE,
 	V8_CALLING_MENU_TIMEOUT_SAMPLES =
 		7 * V8_ANSAM_SAMPLE_RATE,
-	V8_CALLING_CJ_FILTER_DRAIN_SAMPLES = V8_FSK_TRANSMIT_FILTER_TAPS,
+	/* V.8 8.1.2: leave 75 ms of silence after CJ has left the filter. */
+	V8_CALLING_POST_CJ_SILENCE_SAMPLES = V8_ANSAM_SAMPLE_RATE * 75 / 1000,
+	V8_CALLING_CJ_TAIL_SAMPLES = V8_FSK_TRANSMIT_FILTER_TAPS +
+		V8_CALLING_POST_CJ_SILENCE_SAMPLES,
 };
 
 enum v8_calling_state {
@@ -72,7 +75,7 @@ enum v8_calling_result v8_calling_init(
 enum v8_calling_result v8_calling_enable_quick_connect(
 	struct v8_calling *calling, const struct v92_qc1_message *request);
 /* COMPLETE transfers the next sample to the selected datapump after the CJ
- * tail has left the V.21 transmit filter. */
+ * tail and following 75-ms quiet interval have completed. */
 enum v8_calling_result v8_calling_process(
 	struct v8_calling *calling, const int16_t *receive,
 	int16_t *transmit, size_t count);

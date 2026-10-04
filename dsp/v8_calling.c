@@ -105,7 +105,7 @@ static bool calling_is_valid(const struct v8_calling *calling)
 			       calling->state_samples < V8_FSK_TRANSMIT_FILTER_TAPS);
 	case V8_CALLING_SEND_CJ:
 		return calling->negotiated && calling->state_samples <
-		       V8_CALLING_CJ_FILTER_DRAIN_SAMPLES;
+		       V8_CALLING_CJ_TAIL_SAMPLES;
 	case V8_CALLING_COMPLETE:
 		return calling->negotiated &&
 		       calling->cj_bit_index == V8_CJ_BITS &&
@@ -339,17 +339,29 @@ static enum v8_calling_result send_cj_sample(
 			return V8_CALLING_INVALID_ARGUMENT;
 		calling->state_samples++;
 		if (calling->state_samples ==
-		    V8_CALLING_CJ_FILTER_DRAIN_SAMPLES)
+		    V8_CALLING_CJ_TAIL_SAMPLES)
 			enter_state(calling, V8_CALLING_COMPLETE);
 		return V8_CALLING_OK;
 	}
 	if (v8_fsk_can_accept_bit(&calling->fsk) &&
 	    calling->cj_bit_index < V8_CJ_BITS) {
-		if (v8_cj_bit(
-			    calling->cj_bit_index, &calling->transmit_bit) !=
-		    V8_FRAMING_OK)
-			return V8_CALLING_INVALID_ARGUMENT;
-		calling->cj_bit_index++;
+		/* V.8 8.1.2: finish CM's current framed octet before CJ so an
+		 * asynchronous peer cannot consume CJ as the remainder of CM. */
+		if (calling->cj_bit_index == 0 &&
+		    calling->call_menu_bits.bit_index % V8_FRAMED_OCTET_BITS != 0) {
+			bool sequence_complete;
+
+			if (v8_control_next_bit(
+				    &calling->call_menu_bits, &calling->transmit_bit,
+				    &sequence_complete) != V8_FRAMING_OK)
+				return V8_CALLING_INVALID_ARGUMENT;
+		} else {
+			if (v8_cj_bit(
+				    calling->cj_bit_index, &calling->transmit_bit) !=
+			    V8_FRAMING_OK)
+				return V8_CALLING_INVALID_ARGUMENT;
+			calling->cj_bit_index++;
+		}
 	}
 	if (v8_fsk_transmit_sample(
 		    &calling->fsk, calling->transmit_bit, transmit,

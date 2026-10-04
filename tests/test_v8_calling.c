@@ -137,9 +137,10 @@ static bool remote_answerer_receive(
 	return true;
 }
 
-static bool test_call_negotiation(void)
+static bool call_negotiation(size_t jm_delay)
 {
 	struct v8_calling calling;
+	size_t quiet_samples = 0;
 	struct v8_menu local_menu;
 	struct v8_menu negotiated_menu;
 	struct remote_answerer answerer;
@@ -162,11 +163,26 @@ static bool test_call_negotiation(void)
 		int16_t transmit;
 		enum v8_calling_state before = calling.state;
 
-		CHECK(remote_answerer_transmit(&answerer, &receive) &&
-		      v8_calling_process(
+		if (answerer.state == REMOTE_JOINT_MENU && jm_delay != 0) {
+			--jm_delay;
+			receive = 0;
+		} else {
+			CHECK(remote_answerer_transmit(&answerer, &receive),
+			      "answerer transmit failed");
+		}
+		CHECK(v8_calling_process(
 			      &calling, &receive, &transmit, 1) ==
 		      V8_CALLING_OK,
 		      "V.8 calling station failed at sample %zu", sample_index);
+		quiet_samples = transmit == 0 ? quiet_samples + 1 : 0;
+		CHECK(calling.cj_bit_index == 0 ||
+		      calling.call_menu_bits.bit_index % V8_FRAMED_OCTET_BITS == 0,
+		      "CJ interrupted a CM octet at bit %zu",
+		      calling.call_menu_bits.bit_index);
+		if (v8_calling_is_complete(&calling))
+			CHECK(quiet_samples >= V8_CALLING_POST_CJ_SILENCE_SAMPLES &&
+			      quiet_samples <= V8_ANSAM_SAMPLE_RATE * 80u / 1000u,
+			      "V.8 handoff violated the post-CJ quiet interval (%zu samples)", quiet_samples);
 		CHECK(remote_answerer_receive(&answerer, transmit),
 		      "V.8 answering station failed at sample %zu", sample_index);
 		if (before == V8_CALLING_WAIT_ANSWER_SIGNAL ||
@@ -200,6 +216,15 @@ static bool test_call_negotiation(void)
 	      negotiated_menu.modulations == V8_MODULATION_V21 &&
 	      negotiated_menu.lapm,
 	      "V.8 calling station did not expose the selected V.21 menu");
+	return true;
+}
+
+static bool test_call_negotiation(void)
+{
+	/* Confirm JM at every position within the outgoing CM octet. */
+	for (size_t bit = 0; bit < V8_FRAMED_OCTET_BITS; ++bit)
+		if (!call_negotiation(bit * V8_ANSAM_SAMPLE_RATE / 300u))
+			return false;
 	return true;
 }
 
