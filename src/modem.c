@@ -2165,6 +2165,7 @@ static int sregs_init(unsigned char sregs[])
 	sregs[SREG_COMP] = 0x3;
 	sregs[SREG_COMP_TYPES] = MODEM_COMP_TYPE_DEFAULT;
 	sregs[SREG_V90_DIGITAL_INDICATION] = MODEM_PCM_POLICY_AUTO;
+	sregs[SREG_V91_ENABLED] = 1;
 	sregs[SREG_V92_QUICK_CONNECT] = 0;
 	sregs[SREG_V92_PCM_UPSTREAM] = 0;
 	sregs[SREG_V92_PCM_UPSTREAM_MAX_DRN] = 0;

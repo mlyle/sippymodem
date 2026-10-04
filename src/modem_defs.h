@@ -176,6 +176,7 @@ enum S_REGISTER {
 	SREG_V92_QUICK_CONNECT            = 224,
 	SREG_V92_PCM_UPSTREAM             = 225,
 	SREG_V92_PCM_UPSTREAM_MAX_DRN     = 226,
+	SREG_V91_ENABLED                 = 227,
 #else
         SREG_REQUESTED_DP                 = SREG_DP,
         SREG_REQUESTED_MIN_SPEED          = 33,

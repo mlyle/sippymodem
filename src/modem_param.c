@@ -85,6 +85,8 @@ long modem_get_param(struct modem *m, unsigned param_name)
 		return (long)(m->dp);
 	case MDMPRM_V90_DIGITAL_INDICATION:
 		return m->sregs[SREG_V90_DIGITAL_INDICATION];
+	case MDMPRM_V91_ENABLED:
+		return m->sregs[SREG_V91_ENABLED] != 0;
 	case MDMPRM_V92_QUICK_CONNECT:
 		return m->sregs[SREG_V92_QUICK_CONNECT] != 0;
 	case MDMPRM_V92_PCM_UPSTREAM:
@@ -217,6 +219,11 @@ long modem_set_param(struct modem *m, unsigned name, int val)
 		if (val < MODEM_PCM_POLICY_ANALOG || val > MODEM_PCM_POLICY_AUTO)
 			return -1;
 		m->sregs[SREG_V90_DIGITAL_INDICATION] = val;
+		break;
+	case MDMPRM_V91_ENABLED:
+		if (val < 0 || val > 1)
+			return -1;
+		m->sregs[SREG_V91_ENABLED] = val;
 		break;
 	case MDMPRM_V92_QUICK_CONNECT:
 		m->sregs[SREG_V92_QUICK_CONNECT] = val != 0;

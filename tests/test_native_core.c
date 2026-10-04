@@ -1942,7 +1942,7 @@ static bool test_v8_handoff(void)
 	operations = modem_dp_get_registered_ops(DP_V8);
 	CHECK(operations != NULL,
 	      "V.8 handoff operation did not initialize");
-	for (size_t run = 0; run < 2 * ARRAY_LENGTH(selections); ++run) {
+	for (size_t run = 0; run < 5 * ARRAY_LENGTH(selections); ++run) {
 		size_t selection = run % ARRAY_LENGTH(selections);
 		enum DP_ID caller_requested =
 			selections[selection].caller_requested;
@@ -1955,7 +1955,13 @@ static bool test_v8_handoff(void)
 		      "V.8 handoff endpoints did not initialize");
 		MODEM_AUTOMODE(caller) = run >= ARRAY_LENGTH(selections);
 		MODEM_AUTOMODE(answerer) = MODEM_AUTOMODE(caller);
-		bool duplex = MODEM_AUTOMODE(caller) && selections[selection].duplex_automode;
+		unsigned disabled = run / ARRAY_LENGTH(selections);
+		disabled = disabled > 1 ? disabled - 1 : 0;
+		CHECK(process_at_command(caller, disabled & 1 ? "AT+V91=0" : "AT+V91=1") == 0 &&
+		      process_at_command(answerer, disabled & 2 ? "AT+V91=0" : "AT+V91=1") == 0,
+		      "V.8 endpoints did not accept V.91 policy");
+		bool duplex = MODEM_AUTOMODE(caller) && !disabled &&
+			selections[selection].duplex_automode;
 		enum DP_ID expected = duplex ? DP_V91 : selections[selection].handoff;
 		enum modem_pcm_role caller_role = duplex ? MODEM_PCM_ROLE_DIGITAL : selections[selection].caller_role;
 		enum modem_pcm_role answerer_role = duplex ? MODEM_PCM_ROLE_DIGITAL : selections[selection].answerer_role;
@@ -2458,6 +2464,59 @@ static bool test_at_compression_rejects_invalid_numbers(void)
 	return true;
 }
 
+static bool test_at_v91_policy(void)
+{
+	struct modem_driver driver = {
+		.name = "AT V.91 policy", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	struct modem *m = modem_create(&driver, driver.name);
+	const struct dp_operations *v8 = modem_dp_get_registered_ops(DP_V8);
+	const struct dp_operations *v91 = modem_dp_get_registered_ops(DP_V91);
+	int response_pipe[2];
+	char response[64] = { 0 };
+	static char invalid[][32] = {
+		"AT+V91=2", "AT+V91=-1", "AT+V91=-0", "AT+V91=",
+		"AT+V91=0,1", "AT+V91=4294967296",
+	};
+
+	CHECK(m != NULL && v8 != NULL && v91 != NULL && pipe(response_pipe) == 0,
+	      "V.91 policy fixture failed");
+	m->pty = response_pipe[1];
+	CHECK(process_at_command(m, "AT+V91?+V91=?+V91=0+V91?") == 0,
+	      "V.91 policy set/query failed");
+	close(response_pipe[1]);
+	m->pty = -1;
+	ssize_t length = read(response_pipe[0], response, sizeof(response) - 1u);
+	close(response_pipe[0]);
+	CHECK(length > 0 && strcmp(response, "1\r\n(0,1)\r\n0\r\n") == 0,
+	      "V.91 query did not report its default, bounds and disabled state");
+	for (size_t i = 0; i < ARRAY_LENGTH(invalid); ++i)
+		CHECK(process_at_command(m, invalid[i]) == -1 &&
+		      modem_get_param(m, MDMPRM_V91_ENABLED) == 0,
+		      "invalid V.91 setting changed policy: %s", invalid[i]);
+	CHECK(modem_set_param(m, MDMPRM_V91_ENABLED, -1) == -1 &&
+	      modem_set_param(m, MDMPRM_V91_ENABLED, 2) == -1 &&
+	      MODEM_DP(m) == DP_V92 && MODEM_AUTOMODE(m) == 1 &&
+	      modem_get_param(m, MDMPRM_V90_DIGITAL_INDICATION) == MODEM_PCM_POLICY_AUTO &&
+	      process_at_command(m, "AT+MS=91") == 0,
+	      "V.91 switch changed other negotiation controls");
+	for (unsigned caller = 0; caller < 2; ++caller)
+		CHECK(v8->create(m, DP_V91, caller, MODEM_RATE, MODEM_FRAG, v8) == NULL &&
+		      v91->create(m, DP_V91, caller, MODEM_RATE, MODEM_FRAG, v91) == NULL,
+		      "disabled V.91 could start an explicit call");
+	CHECK(process_at_command(m, "AT+V91=1") == 0,
+	      "V.91 could not be re-enabled");
+	struct dp *dp = v8->create(m, DP_V91, 1, MODEM_RATE, MODEM_FRAG, v8);
+	CHECK(dp != NULL && v8->delete(dp) == 0,
+	      "re-enabled V.91 could not negotiate");
+	CHECK(process_at_command(m, "AT+V91=0Z") == 0 &&
+	      modem_get_param(m, MDMPRM_V91_ENABLED) == 1,
+	      "reset did not restore factory V.91 policy");
+	modem_delete(m);
+	return true;
+}
+
 static bool test_at_pcm_profile_controls(void)
 {
 	struct modem_driver driver = {
@@ -2587,7 +2646,7 @@ static bool test_at_pcm_rejects_invalid_numbers(void)
 		const char *command;
 		unsigned long value;
 	} fields[] = {
-		{ "AT+V90D=%s", 1 }, { "AT+V92Q=%s", 1 },
+		{ "AT+V90D=%s", 1 }, { "AT+V92Q=%s", 1 }, { "AT+V91=%s", 1 },
 		{ "AT+V34B=%s", 2400 },
 		{ "AT+V90U=%s,31200", 14400 },
 		{ "AT+V90U=14400,%s", 28800 },
@@ -9217,6 +9276,7 @@ int main(void)
 		{ "AT compression profile", test_at_compression_profile },
 		{ "AT compression numeric validation",
 		  test_at_compression_rejects_invalid_numbers },
+		{ "AT V.91 policy", test_at_v91_policy },
 		{ "AT PCM profile controls", test_at_pcm_profile_controls },
 		{ "AT PCM numeric validation", test_at_pcm_rejects_invalid_numbers },
 		{ "AT PCM upstream rate queries", test_at_pcm_upstream_rate_queries },

@@ -51,7 +51,7 @@
  *	AT&: C D E F H P R S F W
  *	AT\: A N
  * 	AT%: C E
- * 	AT+: DS DSC MS V34B V90D V90U V92Q V92U FCLASS GCI GMI GMM GMR
+ * 	AT+: DS DSC MS V34B V90D V90U V91 V92Q V92U FCLASS GCI GMI GMM GMR
  *      AT#: CID
  *	
  ********************************************************************
@@ -1490,6 +1490,12 @@ int process_at_command(struct modem *m, char *cmd)
 				if (!toupper_strncmp(p, "90U", 3)) {
 					p += 3;
 					ret = process_plus_V90U(m, p, &len);
+					break;
+				}
+				if (!toupper_strncmp(p, "91", 2)) {
+					p += 2;
+					ret = process_plus_choice_param(
+						m, p, &len, MDMPRM_V91_ENABLED);
 					break;
 				}
 				if (!toupper_strncmp(p, "92Q", 3)) {

@@ -163,6 +163,12 @@ rate. `AT+MS=91` selects this capability explicitly; fixed V.90 or V.92
 (`+MS=90,0` or `+MS=92,0`) retain their requested protocols. Peers without V.91
 continue to use ordinary PCM role selection or conventional fallback.
 
+`AT+V91=0` disables V.91 for subsequent calls while preserving V.90/V.92
+role selection and automatic fallback. `AT+V91=1` re-enables it (the factory
+default); `AT+V91?` reports the setting and `AT+V91=?` reports `(0,1)`.
+The switch also blocks explicit `AT+MS=91` calls until re-enabled. It does not
+change an established call; `ATZ` restores the enabled default.
+
 V.91 shares PCM impairment-training sequences, framing, mapping, scrambling,
 and power limits. Its optional control channel consumes 125 bit/s per direction.
 `AT&A7` reports `Modulation: V91`, the transmit rate in `TxRate`, and the receive

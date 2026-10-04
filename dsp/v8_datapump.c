@@ -213,7 +213,8 @@ static struct dp *create_v8(
 	if (modem == NULL || (caller != 0 && caller != 1) ||
 	    sample_rate != MODEM_RATE || max_fragment != MODEM_FRAG ||
 	    operations != &v8_operations ||
-	    modulation == V8_MODULATION_NONE)
+	    modulation == V8_MODULATION_NONE ||
+	    (id == DP_V91 && !modem_get_param(modem, MDMPRM_V91_ENABLED)))
 		return NULL;
 
 	lapm = modem_get_sreg(modem, SREG_EC) != 0;
@@ -243,6 +244,7 @@ static struct dp *create_v8(
 			local_menu.pcm_availability = V8_PCM_V91;
 			local_menu.pstn_access = V8_PSTN_DIGITAL;
 		} else if (id == DP_V92 && MODEM_AUTOMODE(modem) &&
+			   modem_get_param(modem, MDMPRM_V91_ENABLED) &&
 			   role_policy != MODEM_PCM_POLICY_ANALOG && modem->max_rate >= 28000) {
 			local_menu.pcm_availability |= V8_PCM_V91;
 		}
