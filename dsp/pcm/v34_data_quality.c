@@ -83,10 +83,31 @@ static bool measurement_is_valid(
 	       measurement->feedback_metric >= 0;
 }
 
+static uint8_t loss_windows(enum v34_symbol_rate symbol_rate)
+{
+	/* ceil(1.8 * baud / 1024), using exact fractional symbol rates.
+	 * In particular, six windows at 24000/7 baud last only 1.792 s. */
+	switch (symbol_rate) {
+	case V34_SYMBOL_RATE_2400:
+	case V34_SYMBOL_RATE_2743:
+	case V34_SYMBOL_RATE_2800:
+		return 5;
+	case V34_SYMBOL_RATE_3000:
+	case V34_SYMBOL_RATE_3200:
+		return 6;
+	case V34_SYMBOL_RATE_3429:
+		return 7;
+	default:
+		return 0;
+	}
+}
+
 bool v34_data_quality_is_valid(const struct v34_data_quality *quality)
 {
 	if (quality == NULL ||
-	    quality->bad_windows > V34_DATA_QUALITY_LOSS_WINDOWS ||
+	    (quality->loss_windows != 0 &&
+	     (quality->loss_windows < 5 || quality->loss_windows > 7)) ||
+	    quality->bad_windows > quality->loss_windows ||
 	    quality->automatic_retrains > V34_DATA_QUALITY_MAX_RETRAINS ||
 	    quality->good_windows >= V34_DATA_QUALITY_REARM_WINDOWS ||
 	    (quality->good_windows != 0 &&
@@ -100,7 +121,7 @@ bool v34_data_quality_is_valid(const struct v34_data_quality *quality)
 	      quality->threshold == INT16_MAX)))
 		return false;
 	if (quality->active)
-		return true;
+		return quality->loss_windows != 0;
 	return quality->baseline == 0 && quality->threshold == 0 &&
 	       quality->bad_windows == 0 && quality->window_position == 0 &&
 	       !quality->timing_frozen;
@@ -175,6 +196,7 @@ enum v34_data_quality_result v34_data_quality_start(
 {
 	struct v34_data_quality next;
 	int16_t threshold;
+	int32_t relaxed_threshold;
 
 	if (quality == NULL || measurement == NULL ||
 	    memory_regions_overlap(
@@ -188,7 +210,13 @@ enum v34_data_quality_result v34_data_quality_start(
 		return V34_DATA_QUALITY_INVALID_STATE;
 	next = *quality;
 	next.baseline = measurement->decision_metric;
-	next.threshold = threshold;
+	/* Give online recovery 5% headroom, rounded upward. Training rate
+	 * selection retains its original thresholds. Preserve disabled recovery
+	 * and saturate high minimum-rate baselines instead of overflowing. */
+	relaxed_threshold = ((int32_t)threshold * 105 + 99) / 100;
+	next.threshold = (int16_t)(relaxed_threshold > INT16_MAX ?
+				   INT16_MAX : relaxed_threshold);
+	next.loss_windows = loss_windows(symbol_rate);
 	next.bad_windows = 0;
 	next.good_windows = 0;
 	next.window_position = measurement->window_position;
@@ -244,7 +272,7 @@ enum v34_data_quality_result v34_data_quality_observe(
 		if (next.threshold == 0 ||
 		    measurement->decision_metric < next.threshold) {
 			next.bad_windows = 0;
-		} else if (next.bad_windows < V34_DATA_QUALITY_LOSS_WINDOWS) {
+		} else if (next.bad_windows < next.loss_windows) {
 			next.bad_windows++;
 		}
 		if (next.threshold == 0 || next.bad_windows != 0 || next.timing_frozen) {
@@ -256,7 +284,7 @@ enum v34_data_quality_result v34_data_quality_observe(
 		}
 	}
 	next.window_position = measurement->window_position;
-	if (next.bad_windows == V34_DATA_QUALITY_LOSS_WINDOWS &&
+	if (next.bad_windows == next.loss_windows &&
 	    next.automatic_retrains < V34_DATA_QUALITY_MAX_RETRAINS) {
 		next.automatic_retrains++;
 		next.baseline = 0;

@@ -38,7 +38,8 @@ enum {
 	UPSTREAM_ECHO_DELAY = 49,
 	UPSTREAM_ECHO_HISTORY = UPSTREAM_ECHO_DELAY,
 	UPSTREAM_ECHO_GAIN_Q15 = 8000,
-	UPSTREAM_NOISE_SAMPLES = 16000,
+	PCM_UPSTREAM_NOISE_SAMPLES = 16000,
+	V34_UPSTREAM_NOISE_SAMPLES = 24000,
 	RETRAIN_DROPOUT_START = V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES +
 		V34_RETRAIN_TONE_SAMPLES + 2u * V34_PHASE2_TONE_WINDOW_SAMPLES,
 	RETRAIN_DROPOUT_SAMPLES = 3u * V34_PHASE2_TONE_LOSS_SAMPLES,
@@ -676,6 +677,9 @@ static bool run_pcm_pair(
 		(minimum_received_bits * MODEM_RATE + 4799u) / 4800u) *
 		(exercise_retrain ? 2u : 1u);
 	uint32_t noise_state = UINT32_C(0x197bc485);
+	/* V.34 recovery now needs at least 1.8 s of complete bad windows. */
+	const unsigned int noise_limit = pcm_upstream_max_drn == 0 ?
+		V34_UPSTREAM_NOISE_SAMPLES : PCM_UPSTREAM_NOISE_SAMPLES;
 	unsigned int noise_samples = 0;
 	unsigned int dropout_samples = 0;
 	size_t retrain_start = 0;
@@ -768,7 +772,7 @@ static bool run_pcm_pair(
 			dropout_samples++;
 		}
 		if (automatic_retrain && retrain_requested &&
-		    noise_samples < UPSTREAM_NOISE_SAMPLES) {
+		    noise_samples < noise_limit) {
 			/* A bounded physical disturbance after verified initial data.
 			 * Preserve network sample time and require automatic recovery;
 			 * neither peer's retrain operation is called by this case. */
@@ -947,7 +951,7 @@ static bool run_pcm_pair(
 	       digital_bits.received_bits >= minimum_received_bits),
 	      "V.90 role %u did not complete local and remote retrain",
 	      (unsigned int)retrain_role);
-	CHECK(!automatic_retrain || noise_samples == UPSTREAM_NOISE_SAMPLES,
+	CHECK(!automatic_retrain || noise_samples == noise_limit,
 	      "quality recovery did not consume the complete noise burst");
 	CHECK(upstream_channel != UPSTREAM_CHANNEL_RETRAIN_DROPOUT ||
 	      dropout_samples == RETRAIN_DROPOUT_SAMPLES,

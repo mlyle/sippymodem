@@ -10,10 +10,9 @@
 #include <stdint.h>
 
 enum {
-	V34_DATA_QUALITY_LOSS_WINDOWS = 3,
 	V34_DATA_QUALITY_MAX_RETRAINS = 2,
-	/* Local policy: require over ten times the loss interval before treating
-	 * a later fault as a separate incident. These are measurement windows,
+	/* Local policy: require 32 clean windows before treating a later fault
+	 * as a separate incident. These are measurement windows,
 	 * not wall-clock ticks; skipped equalizer decisions contribute nothing. */
 	V34_DATA_QUALITY_REARM_WINDOWS = 32,
 };
@@ -34,6 +33,7 @@ struct v34_data_quality {
 	int16_t baseline;
 	int16_t threshold;
 	uint16_t window_position;
+	uint8_t loss_windows;
 	uint8_t bad_windows;
 	uint8_t automatic_retrains;
 	uint8_t good_windows;
@@ -68,9 +68,10 @@ enum v34_data_quality_result v34_data_quality_start(
  * the two decisions, so completion is a counter wrap, not an exact zero.
  * A completed window can first request that the trained sample clock be
  * frozen as quality approaches the rate-down threshold, then resume its
- * low-gain tracking profile after recovery.  Return RETRAIN once after three
- * consecutive complete bad windows.  The owner becomes inactive in that
- * result and is restarted after retraining.  Once its two-retrain budget is
+ * low-gain tracking profile after recovery. Return RETRAIN once consecutive
+ * complete bad windows cover at least 1.8 seconds at the selected symbol rate.
+ * The owner becomes inactive in that result and is restarted after retraining.
+ * Once its two-retrain budget is
  * exhausted, later windows remain observable but cannot request recovery
  * until sustained clean measurements rearm the allowance. A disabled
  * threshold, bad window, or frozen timing breaks healthy credit. */
