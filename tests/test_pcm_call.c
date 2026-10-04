@@ -5466,10 +5466,18 @@ static bool run_paired_remote_rate_renegotiation(
 		CHECK(pcm_call_downshift_upstream(&limited) == PCM_CALL_UNUSABLE_SELECTION &&
 		      memcmp(&before, &limited, sizeof(before)) == 0,
 		      "minimum-rate downshift mutated the call");
+		CHECK(v34_receive_timing_set_data_frozen(
+			      &digital.call.state.data_path.digital.upstream.data.line.timing,
+			      true) == V34_RECEIVE_TIMING_OK &&
+		      digital.call.state.data_path.digital.upstream.data.line.timing.timing.mode ==
+			      V34_TIMING_CONTROL_LOCKED,
+		      "could not model the quality policy's frozen data clock");
 		before = analog.call;
 		CHECK(pcm_call_downshift_upstream(&analog.call) == PCM_CALL_INVALID_STATE &&
 		      memcmp(&before, &analog.call, sizeof(before)) == 0 &&
-		      pcm_call_downshift_upstream(&digital.call) == PCM_CALL_OK,
+		      pcm_call_downshift_upstream(&digital.call) == PCM_CALL_OK &&
+		      digital.call.state.data_path.digital.upstream.data.line.timing.timing.mode !=
+			      V34_TIMING_CONTROL_LOCKED,
 		      "digital downshift failed or analogue request changed state");
 		before = digital.call;
 		CHECK(pcm_call_downshift_upstream(&digital.call) == PCM_CALL_INVALID_STATE &&

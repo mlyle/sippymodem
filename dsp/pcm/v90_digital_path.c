@@ -317,6 +317,12 @@ enum v90_digital_path_result v90_digital_path_downshift_upstream(
 		    &control, &path->training_mapping,
 		    &path->data_mapping) != V90_PCM_MAPPING_OK)
 		return V90_DIGITAL_PATH_INVALID_PARAMETERS;
+	/* Quality recovery may have frozen the data clock. S/S-bar and CP
+	 * need live tracking, and the new data epoch must not inherit that
+	 * temporary hold after the host resets its quality baseline. */
+	if (v34_receive_timing_set_data_frozen(
+		    &path->upstream.data.line.timing, false) != V34_RECEIVE_TIMING_OK)
+		return V90_DIGITAL_PATH_INTERNAL_ERROR;
 	path->local_mp = mp;
 	path->control_mapping = control;
 	path->downstream_stage = V90_DIGITAL_PATH_DOWNSTREAM_DATA_DRAIN;
