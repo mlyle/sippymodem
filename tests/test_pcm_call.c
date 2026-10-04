@@ -4406,6 +4406,91 @@ static bool test_full_retrain(void)
 	return true;
 }
 
+static bool unusable_dil_recovery(enum pcm_protocol protocol, enum g711_law law)
+{
+	struct channel channel;
+	struct endpoint analog, digital;
+	struct pcm_call_configuration profile;
+	bool measured = false;
+
+	CHECK(channel_init(&channel, law, 3u) &&
+	      (protocol == PCM_PROTOCOL_V92 ?
+		      endpoint_init_conventional_v92(&analog, V90_ANALOG_MODEM, law) &&
+		      endpoint_init_conventional_v92(&digital, V90_DIGITAL_MODEM, law) :
+		      endpoint_init(&analog, V90_ANALOG_MODEM, law, UINT32_C(1), 1u) &&
+		      endpoint_init(&digital, V90_DIGITAL_MODEM, law,
+			      V90_JD_RATE_CAPABILITY_MASK, 0u)) &&
+	      v90_profile_init(&profile, V90_ANALOG_MODEM, law, 28000u, 28000u, NULL) ==
+		      V90_PROFILE_OK, "DIL recovery setup failed");
+	analog.call.analog_phase4_configuration = profile.analog_phase4;
+	analog.call.phase3_configuration.analog.dil_profile = V90_DIL_PROFILE_CONVENTIONAL;
+	analog.call.local_info1.pcm_upstream_enabled = false;
+	for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT; ++clock) {
+		CHECK(step_endpoints(&channel, &analog, &digital, law),
+		      "DIL recovery setup stopped at %zu", clock);
+		if (analog.call.stage == PCM_CALL_PHASE3_MIXED &&
+		    analog.call.state.mixed.analog.phase3.dil_result.measured) {
+			measured = true;
+			break;
+		}
+	}
+	CHECK(measured, "DIL recovery missed the completed measurement");
+	bool retry_used = false;
+	for (unsigned trial = 0; trial < 3u; ++trial) {
+		struct pcm_call call = analog.call;
+		enum pcm_call_result result = PCM_CALL_OK;
+		uint8_t transmit;
+		struct pcm_call_observation observed;
+
+		call.downstream_dil_retried = retry_used;
+		if (trial != 0u)
+			memset(call.state.mixed.analog.phase3.dil_result.usable, 0,
+			       sizeof(call.state.mixed.analog.phase3.dil_result.usable));
+		/* The peer's DIL is complete; finish our return marker. Compare a
+		 * usable fit, one empty fit, then an empty fit with its retry spent. */
+		for (size_t clock = 0; clock < 4000u && result == PCM_CALL_OK &&
+		     call.stage == PCM_CALL_PHASE3_MIXED; ++clock)
+			result = pcm_call_octet(&call, silence_octet(law), 0,
+				&transmit, &observed);
+		if (trial == 0u) {
+			CHECK(result == PCM_CALL_OK && call.stage == PCM_CALL_PHASE4 &&
+			      !call.downstream_dil_retried,
+			      "usable DIL did not enter Phase 4");
+		} else if (trial == 1u) {
+			CHECK(result == PCM_CALL_OK && call.stage == PCM_CALL_RETRAIN_SILENCE &&
+			      call.retrain_active && call.downstream_dil_retried &&
+			      !call.downstream_dil.measured && !call.b1_deadline_armed &&
+			      !call.phase3_entry_stored && call.protocol == protocol &&
+			      call.peer_info0_stored && call.round_trip_delay_stored &&
+			      call.enabled_downstream_rate_mask == analog.call.enabled_downstream_rate_mask &&
+			      memcmp(&call.peer_info0, &analog.call.peer_info0, sizeof(call.peer_info0)) == 0,
+			      "unusable DIL did not start a fresh, bounded training epoch");
+			for (size_t clock = 0; clock < 8000u &&
+			     call.stage == PCM_CALL_RETRAIN_SILENCE; ++clock)
+				CHECK(pcm_call_octet(&call, silence_octet(law), 0,
+					      &transmit, &observed) == PCM_CALL_OK,
+				      "DIL recovery could not restart Phase 2");
+			CHECK(call.stage == PCM_CALL_PHASE2 && call.downstream_dil_retried,
+			      "fresh Phase 2 lost the DIL retry budget");
+			retry_used = call.downstream_dil_retried;
+		} else {
+			CHECK(result == PCM_CALL_UNUSABLE_SELECTION && call.failed &&
+			      call.downstream_dil_retried,
+			      "repeated unusable DIL renewed the retry allowance");
+		}
+	}
+	return true;
+}
+
+static bool test_unusable_dil_recovery(void)
+{
+	for (enum pcm_protocol protocol = PCM_PROTOCOL_V90; protocol <= PCM_PROTOCOL_V92; ++protocol)
+		for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+			CHECK(unusable_dil_recovery(protocol, law),
+			      "unusable DIL recovery protocol %u law %u", protocol, law);
+	return true;
+}
+
 static bool test_conventional_dil_polarity(void)
 {
 	for (enum pcm_protocol protocol = PCM_PROTOCOL_V90; protocol <= PCM_PROTOCOL_V92; ++protocol)
@@ -12329,6 +12414,7 @@ int main(int argc, char **argv)
 		{ "V.92 learns robbed bits in each frame interval", test_v92_dil_data },
 		{ "V.92 reversed DIL with robbed bits", test_v92_dil_polarity },
 		{ "V.90/V.92 conventional DIL and retrain", test_conventional_dil_retrain },
+		{ "V.90/V.92 unusable DIL recovery is bounded", test_unusable_dil_recovery },
 		{ "V.90/V.92 reversed DIL and polarity relearning", test_conventional_dil_polarity },
 		{ "V.92 checked and owned phase octets", test_v92_owned_phase_octets },
 		{ "V.90 peer CPs echo reconditioning", test_echo_reconditioning },

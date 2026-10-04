@@ -2762,8 +2762,17 @@ static enum pcm_call_result enter_phase4(struct pcm_call *call)
 			.selected_rate_index = selected_rate_index;
 		next.downstream_dil = mixed->phase3.dil_result;
 		if (!select_analog_constellations(&next, downstream_selection_mask(call) &
-			    receive_handoff.jd.data_rate_capability_mask))
-			return PCM_CALL_UNUSABLE_SELECTION;
+			    receive_handoff.jd.data_rate_capability_mask)) {
+			/* A truncated or damaged DIL traversal can leave no usable
+			 * constellation. Request fresh training once, without
+			 * inventing unmeasured levels or relaxing the rate policy. */
+			if (!next.downstream_dil.measured || call->downstream_dil_retried)
+				return PCM_CALL_UNUSABLE_SELECTION;
+			result = begin_retrain(call, false);
+			if (result == PCM_CALL_OK)
+				call->downstream_dil_retried = true;
+			return result;
+		}
 		if (!call->round_trip_delay_stored)
 			return PCM_CALL_INVALID_STATE;
 		result = analog_phase4_result(v90_phase4_analog_station_init(

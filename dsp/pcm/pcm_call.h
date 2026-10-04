@@ -521,6 +521,9 @@ struct pcm_call {
 	/* Failed B1d lowers only generated downstream selections. Zero means
 	 * no restriction beyond the configured mask and the current peer Jd. */
 	uint8_t downstream_retry_ceiling;
+	/* One fresh DIL traversal after an unusable measured constellation.
+	 * Retained across retrains so a bad channel cannot loop indefinitely. */
+	bool downstream_dil_retried;
 	/* Carry QTS's six-symbol phase through Phase 2 and the wait for Ja.
 	 * The continuous downstream transmitter takes ownership at the first Sd. */
 	uint8_t qc_frame_interval;
