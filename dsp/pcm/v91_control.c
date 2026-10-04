@@ -3,14 +3,6 @@
 #include "pcm_control_frame.h"
 #include <string.h>
 
-static uint16_t info_crc(const uint8_t *frame)
-{
-	uint16_t crc = CRC16_CCITT_FALSE_INITIAL_REMAINDER;
-	for (unsigned bit = 12; bit < 42; ++bit)
-		crc = crc16_ccitt_false_step(crc, packed_msb_bit(frame, bit));
-	return crc;
-}
-
 bool v91_info_encode(const struct v91_info *p, uint8_t frame[V91_INFO_BYTES])
 {
 	uint8_t next[V91_INFO_BYTES] = { 0 };
@@ -26,7 +18,8 @@ bool v91_info_encode(const struct v91_info *p, uint8_t frame[V91_INFO_BYTES])
 	packed_msb_set_bit(next, 39, p->law == G711_LAW_PCMA);
 	packed_msb_set_bit(next, 40, p->transparent);
 	packed_msb_set_bit(next, 41, p->require_transparent);
-	packed_msb_write_msb_field(next, 42, 16, info_crc(next));
+	packed_msb_write_msb_field(next, 42, 16,
+		crc16_ccitt_false_packed_range(next, 12, 42));
 	packed_msb_write_msb_field(next, 58, 4, 15);
 	memcpy(frame, next, sizeof(next));
 	return true;
@@ -36,7 +29,8 @@ bool v91_info_decode(const uint8_t frame[V91_INFO_BYTES], struct v91_info *p)
 {
 	if (frame == NULL || p == NULL || packed_msb_read_msb_field(frame, 0, 12) != 0xf72 ||
 	    packed_msb_read_msb_field(frame, 58, 4) != 15 ||
-	    packed_msb_read_msb_field(frame, 42, 16) != info_crc(frame))
+	    packed_msb_read_msb_field(frame, 42, 16) !=
+		crc16_ccitt_false_packed_range(frame, 12, 42))
 		return false;
 	struct v91_info next = {
 		.law = packed_msb_bit(frame, 39) ? G711_LAW_PCMA : G711_LAW_PCMU,
@@ -130,14 +124,6 @@ bool v91_cp_decode(const uint8_t *frame, size_t bits, struct v91_cp *p)
 	return true;
 }
 
-static uint16_t control_crc(const uint8_t frame[12])
-{
-	uint16_t crc = CRC16_CCITT_FALSE_INITIAL_REMAINDER;
-	for (unsigned bit = 16; bit < 78; ++bit)
-		crc = crc16_ccitt_false_step(crc, packed_msb_bit(frame, bit));
-	return crc;
-}
-
 bool v91_control_encode(uint8_t frame[12], bool retrain, bool cleardown)
 {
 	if (frame == NULL)
@@ -146,7 +132,8 @@ bool v91_control_encode(uint8_t frame[12], bool retrain, bool cleardown)
 	packed_msb_write_msb_field(frame, 0, 16, 0x77fa);
 	packed_msb_set_bit(frame, 16, cleardown);
 	packed_msb_set_bit(frame, 17, retrain);
-	packed_msb_write_msb_field(frame, 78, 16, control_crc(frame));
+	packed_msb_write_msb_field(frame, 78, 16,
+		crc16_ccitt_false_packed_range(frame, 16, 78));
 	return true;
 }
 
@@ -154,7 +141,8 @@ bool v91_control_decode(const uint8_t frame[12], bool *retrain, bool *cleardown)
 {
 	if (frame == NULL || retrain == NULL || cleardown == NULL ||
 	    packed_msb_read_msb_field(frame, 0, 16) != 0x77fa ||
-	    packed_msb_read_msb_field(frame, 78, 16) != control_crc(frame) ||
+	    packed_msb_read_msb_field(frame, 78, 16) !=
+		crc16_ccitt_false_packed_range(frame, 16, 78) ||
 	    !packed_msb_bits_are_zero(frame, 94, 2))
 		return false;
 	*cleardown = packed_msb_bit(frame, 16);

@@ -20,18 +20,6 @@ static bool payload_arguments_are_valid(
 	       (payload != NULL || payload_bit_count == 0);
 }
 
-static uint16_t payload_crc(
-	const uint8_t *payload, size_t payload_bit_count)
-{
-	uint16_t crc =
-		CRC16_CCITT_FALSE_INITIAL_REMAINDER;
-
-	for (size_t index = 0; index < payload_bit_count; ++index)
-		crc = crc16_ccitt_false_step(
-			crc, packed_msb_bit(payload, index) != 0);
-	return crc;
-}
-
 size_t v34_phase2_info_frame_bit_count(
 	size_t payload_bit_count)
 {
@@ -58,9 +46,8 @@ bool v34_phase2_info_generator_is_valid(
 	       packed_msb_tail_is_zero(
 		       generator->payload, generator->payload_bit_count,
 		       sizeof(generator->payload)) &&
-	       generator->crc == payload_crc(
-				 generator->payload,
-				 generator->payload_bit_count);
+	       generator->crc == crc16_ccitt_false_packed_range(
+		       generator->payload, 0, generator->payload_bit_count);
 }
 
 enum v34_phase2_info_result
@@ -79,7 +66,8 @@ v34_phase2_info_generator_init(
 		packed_msb_set_bit(
 			initialized.payload, index,
 			packed_msb_bit(payload, index) != 0u);
-	initialized.crc = payload_crc(initialized.payload, payload_bit_count);
+	initialized.crc = crc16_ccitt_false_packed_range(
+		initialized.payload, 0, payload_bit_count);
 	if (!v34_phase2_info_generator_is_valid(&initialized))
 		return V34_PHASE2_INFO_INVALID_ARGUMENT;
 	*generator = initialized;
@@ -172,18 +160,16 @@ bool v34_phase2_info_receiver_is_valid(
 		return receiver->expected_payload_bit_count != 0 &&
 		       receiver->payload_bit_index <
 			       receiver->expected_payload_bit_count &&
-		       receiver->crc == payload_crc(
-				       receiver->payload,
-				       receiver->payload_bit_index) &&
+		       receiver->crc == crc16_ccitt_false_packed_range(
+			       receiver->payload, 0, receiver->payload_bit_index) &&
 		       receiver->received_crc == 0 &&
 		       receiver->crc_bit_count == 0 &&
 		       receiver->tail_bit_count == 0;
 	case V34_PHASE2_INFO_RECEIVE_CRC:
 		return receiver->payload_bit_index ==
 			       receiver->expected_payload_bit_count &&
-		       receiver->crc == payload_crc(
-				       receiver->payload,
-				       receiver->payload_bit_index) &&
+		       receiver->crc == crc16_ccitt_false_packed_range(
+			       receiver->payload, 0, receiver->payload_bit_index) &&
 		       receiver->crc_bit_count <
 			       V34_PHASE2_INFO_CRC_BITS &&
 		       (uint32_t)receiver->received_crc <
@@ -192,9 +178,8 @@ bool v34_phase2_info_receiver_is_valid(
 	case V34_PHASE2_INFO_RECEIVE_TAIL:
 		return receiver->payload_bit_index ==
 			       receiver->expected_payload_bit_count &&
-		       receiver->crc == payload_crc(
-				       receiver->payload,
-				       receiver->payload_bit_index) &&
+		       receiver->crc == crc16_ccitt_false_packed_range(
+			       receiver->payload, 0, receiver->payload_bit_index) &&
 		       receiver->received_crc == receiver->crc &&
 		       receiver->crc_bit_count ==
 			       V34_PHASE2_INFO_CRC_BITS;

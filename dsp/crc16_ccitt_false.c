@@ -8,18 +8,9 @@ enum crc16_ccitt_false_result
 crc16_ccitt_false_packed_bits(
 	const uint8_t *packed, size_t bit_count, uint16_t *remainder)
 {
-	uint16_t calculated =
-		CRC16_CCITT_FALSE_INITIAL_REMAINDER;
-
 	if ((packed == NULL && bit_count != 0) || remainder == NULL)
 		return CRC16_CCITT_FALSE_INVALID_ARGUMENT;
-	for (size_t index = 0; index < bit_count; ++index) {
-		bool bit = packed_msb_bit(packed, index) != 0;
-
-		calculated = crc16_ccitt_false_step(
-			calculated, bit);
-	}
-	*remainder = calculated;
+	*remainder = crc16_ccitt_false_packed_range(packed, 0, bit_count);
 	return CRC16_CCITT_FALSE_OK;
 }
 

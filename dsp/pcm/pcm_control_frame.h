@@ -69,7 +69,7 @@ static inline bool pcm_control_frame_starts_are_zero(
 	return true;
 }
 
-/* MP and CP-family records carry 16 information bits after each zero start
+/* J, MP and CP-family records carry 16 information bits after each zero start
  * bit. Exclude the 17-bit sync prefix and start bits from the unreflected CRC.
  * The caller validates storage and supplies the exclusive payload end; this
  * may point at the CRC word's start bit or its first information bit. DIL

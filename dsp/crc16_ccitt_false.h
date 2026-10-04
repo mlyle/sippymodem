@@ -3,6 +3,8 @@
 #ifndef CRC16_CCITT_FALSE_H
 #define CRC16_CCITT_FALSE_H
 
+#include "packed_bits.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -24,6 +26,18 @@ static inline uint16_t crc16_ccitt_false_step(
 	if ((((remainder >> 15) ^ (uint16_t)bit) & 1u) != 0)
 		next ^= 0x1021;
 	return next;
+}
+
+/* Unreflected CRC of [first_bit, end_bit) in transmission order. Callers
+ * validate the range and backing storage; an empty range reads no octet. */
+static inline uint16_t crc16_ccitt_false_packed_range(
+	const uint8_t *packed, size_t first_bit, size_t end_bit)
+{
+	uint16_t remainder = CRC16_CCITT_FALSE_INITIAL_REMAINDER;
+
+	for (size_t bit = first_bit; bit < end_bit; ++bit)
+		remainder = crc16_ccitt_false_step(remainder, packed_msb_bit(packed, bit));
+	return remainder;
 }
 
 /* Bits are consumed in transmission order, most-significant bit first within

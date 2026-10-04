@@ -97,6 +97,24 @@ static bool test_exact_bit_bound(void)
 	return true;
 }
 
+static bool test_packed_ranges(void)
+{
+	static const uint8_t text[] = "123456789";
+	uint8_t frame[11];
+
+	for (size_t first = 0; first < 16; ++first) {
+		memset(frame, 0xa5, sizeof(frame));
+		for (size_t bit = 0; bit < 72; ++bit)
+			packed_msb_set_bit(frame, first + bit,
+				(text[bit / 8] >> (7 - bit % 8)) & 1);
+		CHECK(crc16_ccitt_false_packed_range(frame, first, first + 72) == 0x29b1,
+		      "CRC included surrounding bits or changed bit order at offset %zu", first);
+	}
+	CHECK(crc16_ccitt_false_packed_range(NULL, 7, 7) == 0xffff,
+	      "empty CRC range did not retain the initial remainder");
+	return true;
+}
+
 static bool test_validation(void)
 {
 	static const uint8_t byte = 0;
@@ -136,6 +154,7 @@ int main(void)
 		{ "bit traversal", test_bit_traversal },
 		{ "exact bit bound", test_exact_bit_bound },
 		{ "validation", test_validation },
+		{ "packed ranges", test_packed_ranges },
 	};
 	unsigned int failures = 0;
 

@@ -91,12 +91,15 @@ static bool test_rejection(void)
 		      UINT32_C(0xa5c33ca5), frame, sizeof(frame)) ==
 		      PCM_J_FRAME_OK,
 	      "rejection fixture did not encode");
-	memcpy(malformed, frame, sizeof(malformed));
-	flip_bit(malformed, 18);
-	CHECK(pcm_j_frame_decode(malformed, sizeof(malformed), &decoded) ==
-		      PCM_J_FRAME_CRC_MISMATCH &&
-	      decoded == saved,
-	      "corrupt payload was accepted or published");
+	for (size_t bit = 18; bit < 68; ++bit) {
+		if (bit == 34 || bit == 51)
+			continue;
+		memcpy(malformed, frame, sizeof(malformed));
+		flip_bit(malformed, bit);
+		CHECK(pcm_j_frame_decode(malformed, sizeof(malformed), &decoded) ==
+			      PCM_J_FRAME_CRC_MISMATCH && decoded == saved,
+		      "corrupt payload/CRC bit %zu was accepted or published", bit);
+	}
 	for (size_t index = 0; index < ARRAY_LENGTH(framing_bits); ++index) {
 		memcpy(malformed, frame, sizeof(malformed));
 		flip_bit(malformed, framing_bits[index]);
