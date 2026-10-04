@@ -200,9 +200,6 @@ static bool test_pcm_categories(void)
 
 static bool test_pcm_category_rejection(void)
 {
-	static const uint8_t missing_indicator[] = {
-		UINT8_C(0xc1), UINT8_C(0x45), UINT8_C(0x0d), UINT8_C(0x27),
-	};
 	static const uint8_t orphan_indicator[] = {
 		UINT8_C(0xc1), UINT8_C(0x65),
 	};
@@ -226,9 +223,6 @@ static bool test_pcm_category_rejection(void)
 	struct v8_menu saved = unchanged;
 
 	CHECK(decode_has_result(
-		      missing_indicator, ARRAY_LENGTH(missing_indicator),
-		      V8_MENU_MALFORMED) &&
-	      decode_has_result(
 		      orphan_indicator, ARRAY_LENGTH(orphan_indicator),
 		      V8_MENU_MALFORMED) &&
 	      decode_has_result(
@@ -683,6 +677,36 @@ static bool test_empty_pcm_refusal(void)
 	return true;
 }
 
+static bool test_unindicated_pcm_roles(void)
+{
+	/* A repeated deployed JM retains a digital-role category even though
+	 * modn0 declines PCM. Conventional modes remain usable. */
+	uint8_t information[] = { 0xc1, 0x45, 0x12, 0x10, 0x2a, 0x0d, 0x47 };
+	static const uint8_t duplicate[] = { 0xc1, 0x45, 0x0d, 0x47, 0x47 };
+	struct v8_menu decoded, caller, joint;
+	struct v8_pcm_roles roles;
+
+	for (unsigned availability = 0; availability <= V8_PCM_ALL; ++availability) {
+		information[6] = (uint8_t)(0x07 | availability << 5);
+		CHECK(v8_menu_decode(information, ARRAY_LENGTH(information), &decoded) == V8_MENU_OK &&
+		      decoded.modulations == (V8_MODULATION_V34_DUPLEX | V8_MODULATION_V22) &&
+		      decoded.lapm && !decoded.pcm_present && decoded.pcm_availability == 0,
+		      "unindicated PCM role %u blocked conventional negotiation", availability);
+		for (unsigned digital = 0; digital < 2; ++digital) {
+			CHECK(v8_pcm_call_menu_init(&caller,
+				      digital ? V8_PCM_DIGITAL : V8_PCM_ANALOG,
+				      digital ? V8_PSTN_DIGITAL : 0, true) == V8_MENU_OK &&
+			      v8_joint_menu_select(&caller, &decoded, &joint) == V8_MENU_OK &&
+			      v8_pcm_select_roles(&caller, &joint, &roles) == V8_MENU_OK &&
+			      roles.caller == V8_PCM_ROLE_NONE && roles.answerer == V8_PCM_ROLE_NONE,
+			      "unindicated PCM category granted a role");
+		}
+	}
+	CHECK(decode_has_result(duplicate, ARRAY_LENGTH(duplicate), V8_MENU_MALFORMED),
+	      "unindicated PCM normalization hid a duplicate category");
+	return true;
+}
+
 static bool test_empty_pcm_refusal_without_access(void)
 {
 	static const uint8_t information[] = {
@@ -951,6 +975,7 @@ int main(void)
 		{ "no common modulation", test_no_common_modulation },
 		{ "joint validation", test_joint_validation },
 		{ "empty PCM refusal", test_empty_pcm_refusal },
+		{ "unindicated PCM roles", test_unindicated_pcm_roles },
 		{ "empty PCM refusal without access", test_empty_pcm_refusal_without_access },
 		{ "repeated menu confirmation", test_repeated_menu_confirmation },
 		{ "mismatched menu restart", test_mismatched_menu_restart },

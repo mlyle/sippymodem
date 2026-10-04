@@ -315,11 +315,14 @@ enum v8_menu_result v8_menu_decode(
 			decoded.pstn_access_present = true;
 		}
 	}
-	/* Some peers clear the PCM indicator but retain an empty category when
-	 * declining PCM, even without PSTN access. Treat that category as absent
-	 * before validating the PCM/PSTN coupling. Positive offers stay strict. */
-	if (!pcm_indicator && decoded.pcm_availability == 0)
+	/* Some peers clear modn0's PCM indicator but retain a PCM category,
+	 * including stale role bits. Honor the refusal: the extra category must
+	 * never authorize PCM. Structural checks above still reject conflicting
+	 * or duplicated categories; indicated PCM offers retain normal checks. */
+	if (!pcm_indicator) {
 		decoded.pcm_present = false;
+		decoded.pcm_availability = 0;
+	}
 	if (!modulation_seen || pcm_indicator != decoded.pcm_present ||
 	    !menu_is_valid(&decoded))
 		return V8_MENU_MALFORMED;

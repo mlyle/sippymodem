@@ -203,11 +203,8 @@ static bool test_call_negotiation(void)
 	return true;
 }
 
-static bool test_empty_pcm_refusal_negotiation(void)
+static bool pcm_refusal_negotiation(const uint8_t *information, size_t count)
 {
-	static const uint8_t information[] = {
-		0xc1, 0x45, 0x13, 0x94, 0x2a, 0x07, 0x10,
-	};
 
 	for (unsigned int digital = 0; digital < 2; ++digital) {
 		struct v8_calling calling;
@@ -222,19 +219,19 @@ static bool test_empty_pcm_refusal_negotiation(void)
 				digital ? V8_PSTN_DIGITAL : 0, true) == V8_MENU_OK &&
 		      v8_calling_init(&calling, &local) == V8_CALLING_OK &&
 		      remote_answerer_init(&answerer, V8_MODULATION_V34_DUPLEX),
-		      "empty-refusal waveform fixture did not initialize");
+		      "PCM-refusal waveform fixture did not initialize");
 		for (size_t sample = 0; sample < 12u * V8_ANSAM_SAMPLE_RATE; ++sample) {
 			CHECK(remote_answerer_transmit(&answerer, &receive) &&
 			      v8_calling_process(&calling, &receive, &transmit, 1) ==
 				      V8_CALLING_OK &&
 			      remote_answerer_receive(&answerer, transmit),
-			      "empty PCM refusal stopped caller %u at sample %zu",
+			      "PCM refusal stopped caller %u at sample %zu",
 			      digital, sample);
 			if (answerer.call_menu_confirmed && !replaced) {
 				CHECK(v8_control_generator_init(&answerer.joint_menu_bits,
-						information, ARRAY_LENGTH(information)) ==
+						information, count) ==
 						V8_FRAMING_OK,
-				      "could not substitute empty PCM refusal");
+				      "could not substitute PCM refusal");
 				replaced = true;
 			}
 			if (v8_calling_is_complete(&calling) && answerer.cj_detected)
@@ -245,9 +242,18 @@ static bool test_empty_pcm_refusal_negotiation(void)
 			      V8_CALLING_OK && modulation == V8_MODULATION_V34_DUPLEX &&
 		      negotiated.lapm && !negotiated.pcm_present &&
 		      negotiated.pcm_availability == 0,
-		      "empty PCM refusal did not finish conventional V.34 negotiation");
+		      "PCM refusal did not finish conventional V.34 negotiation");
 	}
 	return true;
+}
+
+static bool test_empty_pcm_refusal_negotiation(void)
+{
+	static const uint8_t empty[] = { 0xc1, 0x45, 0x13, 0x94, 0x2a, 0x07, 0x10 };
+	static const uint8_t stale_roles[] = { 0xc1, 0x45, 0x12, 0x10, 0x2a, 0x0d, 0x47 };
+
+	return pcm_refusal_negotiation(empty, ARRAY_LENGTH(empty)) &&
+	       pcm_refusal_negotiation(stale_roles, ARRAY_LENGTH(stale_roles));
 }
 
 static bool test_no_common_modulation(void)
