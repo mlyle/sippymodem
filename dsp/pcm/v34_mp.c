@@ -2,7 +2,7 @@
 
 #include "v34_mp.h"
 
-#include "integer_math.h"
+#include "pcm_mp.h"
 #include "pcm_control_frame.h"
 #include "packed_bits.h"
 
@@ -23,9 +23,6 @@ enum {
 	V34_MP_ACKNOWLEDGMENT_BIT = 33,
 	V34_MP_RATE_CAPABILITY_FIRST_BIT = 35,
 	V34_MP_ASYMMETRIC_RATES_BIT = 50,
-	V34_MP_TYPE1_FIRST_COEFFICIENT_BIT = 52,
-	V34_MP_COEFFICIENT_COMPONENT_BITS = 16,
-	V34_MP_FIELD_STRIDE_BITS = 17,
 	V34_MP_TYPE0_CRC_FIRST_BIT = 69,
 	V34_MP_TYPE0_FILL_FIRST_BIT = 85,
 	V34_MP_TYPE0_FILL_BITS = 3,
@@ -288,14 +285,6 @@ enum v34_mp_result v34_mp_type0_decode(
 	return V34_MP_OK;
 }
 
-static size_t coefficient_component_first_bit(
-	size_t tap_index, bool imaginary)
-{
-	return V34_MP_TYPE1_FIRST_COEFFICIENT_BIT +
-	       (tap_index * 2u + (imaginary ? 1u : 0u)) *
-		       V34_MP_FIELD_STRIDE_BITS;
-}
-
 enum v34_mp_result v34_mp_type1_encode(
 	const struct v34_mp_type1_parameters *parameters,
 	uint8_t *frame, size_t frame_capacity)
@@ -310,17 +299,7 @@ enum v34_mp_result v34_mp_type1_encode(
 		return V34_MP_INVALID_PARAMETERS;
 
 	encode_common_parameters(encoded, &parameters->common, true);
-	for (size_t index = 0; index < V34_PRECODER_TAP_COUNT;
-	     ++index) {
-		packed_msb_write_lsb_field(
-			encoded, coefficient_component_first_bit(index, false),
-			V34_MP_COEFFICIENT_COMPONENT_BITS,
-			(uint16_t)parameters->precoder_coefficients[index].real);
-		packed_msb_write_lsb_field(
-			encoded, coefficient_component_first_bit(index, true),
-			V34_MP_COEFFICIENT_COMPONENT_BITS,
-			(uint16_t)parameters->precoder_coefficients[index].imaginary);
-	}
+	pcm_mp_write_precoder(encoded, parameters->precoder_coefficients);
 	crc = pcm_control_frame_crc(encoded, V34_MP_TYPE1_CRC_FIRST_BIT);
 	packed_msb_write_msb_field(
 		encoded, V34_MP_TYPE1_CRC_FIRST_BIT,
@@ -351,19 +330,7 @@ enum v34_mp_result v34_mp_type1_decode(
 		return V34_MP_CRC_MISMATCH;
 
 	decode_common_parameters(frame, &decoded.common);
-	for (size_t index = 0; index < V34_PRECODER_TAP_COUNT;
-	     ++index) {
-		decoded.precoder_coefficients[index].real =
-			wrap_s16_from_s32((int32_t)packed_msb_read_lsb_field(
-				frame,
-				coefficient_component_first_bit(index, false),
-				V34_MP_COEFFICIENT_COMPONENT_BITS));
-		decoded.precoder_coefficients[index].imaginary =
-			wrap_s16_from_s32((int32_t)packed_msb_read_lsb_field(
-				frame,
-				coefficient_component_first_bit(index, true),
-				V34_MP_COEFFICIENT_COMPONENT_BITS));
-	}
+	pcm_mp_read_precoder(frame, decoded.precoder_coefficients);
 	if (!v34_mp_type1_parameters_are_valid(&decoded))
 		return V34_MP_INVALID_FRAME;
 	*parameters = decoded;

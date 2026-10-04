@@ -2,7 +2,7 @@
 
 #include "v90_mp.h"
 
-#include "integer_math.h"
+#include "pcm_mp.h"
 #include "pcm_control_frame.h"
 #include "packed_bits.h"
 
@@ -19,9 +19,6 @@ enum {
 	V90_MP_EXPANDED_SHAPING_BIT = 32,
 	V90_MP_ACKNOWLEDGMENT_BIT = 33,
 	V90_MP_RATE_CAPABILITY_FIRST_BIT = 36,
-	V90_MP_TYPE1_FIRST_COEFFICIENT_BIT = 52,
-	V90_MP_COEFFICIENT_COMPONENT_BITS = 16,
-	V90_MP_FIELD_STRIDE_BITS = 17,
 	V90_MP_TYPE0_CRC_START_BIT = 68,
 	V90_MP_TYPE1_CRC_START_BIT = 170,
 };
@@ -243,14 +240,6 @@ static void encode_common(
 		parameters->upstream_rate_capability_mask);
 }
 
-static size_t coefficient_component_first_bit(
-	size_t tap, bool imaginary)
-{
-	return V90_MP_TYPE1_FIRST_COEFFICIENT_BIT +
-	       (tap * 2u + (imaginary ? 1u : 0u)) *
-		       V90_MP_FIELD_STRIDE_BITS;
-}
-
 enum v90_mp_result v90_mp_encode(
 	const struct v90_mp_record *record, uint8_t training_frame_bits,
 	uint8_t *sequence, size_t sequence_capacity,
@@ -278,20 +267,7 @@ enum v90_mp_result v90_mp_encode(
 		encoded, v90_mp_record_common(record),
 		record->type == V90_MP_RECORD_TYPE1);
 	if (record->type == V90_MP_RECORD_TYPE1) {
-		for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap) {
-			packed_msb_write_lsb_field(
-				encoded,
-				coefficient_component_first_bit(tap, false),
-				V90_MP_COEFFICIENT_COMPONENT_BITS,
-				(uint16_t)record->parameters.type1
-					.precoder_coefficients[tap].real);
-			packed_msb_write_lsb_field(
-				encoded,
-				coefficient_component_first_bit(tap, true),
-				V90_MP_COEFFICIENT_COMPONENT_BITS,
-				(uint16_t)record->parameters.type1
-					.precoder_coefficients[tap].imaginary);
-		}
+		pcm_mp_write_precoder(encoded, record->parameters.type1.precoder_coefficients);
 		crc_start_bit = V90_MP_TYPE1_CRC_START_BIT;
 	} else {
 		crc_start_bit = V90_MP_TYPE0_CRC_START_BIT;
@@ -375,25 +351,8 @@ enum v90_mp_result v90_mp_decode(
 		return V90_MP_CRC_MISMATCH;
 
 	decode_common(sequence, v90_mp_record_mutable_common(&decoded));
-	if (decoded.type == V90_MP_RECORD_TYPE1) {
-		for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap) {
-			decoded.parameters.type1.precoder_coefficients[tap].real =
-				wrap_s16_from_s32(
-					(int32_t)packed_msb_read_lsb_field(
-						sequence,
-						coefficient_component_first_bit(
-							tap, false),
-						V90_MP_COEFFICIENT_COMPONENT_BITS));
-			decoded.parameters.type1.precoder_coefficients[tap]
-				.imaginary =
-				wrap_s16_from_s32(
-					(int32_t)packed_msb_read_lsb_field(
-						sequence,
-						coefficient_component_first_bit(
-							tap, true),
-						V90_MP_COEFFICIENT_COMPONENT_BITS));
-		}
-	}
+	if (decoded.type == V90_MP_RECORD_TYPE1)
+		pcm_mp_read_precoder(sequence, decoded.parameters.type1.precoder_coefficients);
 	if (!v90_mp_record_is_valid(&decoded))
 		return V90_MP_INVALID_FRAME;
 	*record = decoded;
