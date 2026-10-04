@@ -63,6 +63,7 @@ static int process_v90_g711(
 static int retrain_v90(struct dp *dp);
 static int hangup_v90(struct dp *dp);
 static const char *progress_v90(const struct dp *dp);
+static struct dp_link_rates link_rates_v90(const struct dp *dp);
 
 static const struct dp_operations v90_operations = {
 	.name = "PCM V.90/V.92",
@@ -73,7 +74,38 @@ static const struct dp_operations v90_operations = {
 	.retrain = retrain_v90,
 	.hangup = hangup_v90,
 	.progress = progress_v90,
+	.link_rates = link_rates_v90,
 };
+
+static struct dp_link_rates link_rates_v90(const struct dp *dp)
+{
+	const struct v90_datapump *datapump = dp->dp_data;
+	struct dp_link_rates rates = { 0 };
+
+	if (datapump == NULL || !datapump->call_started)
+		return rates;
+	const struct pcm_call *call = &datapump->call;
+	if (!call->phase3_entry_stored || call->stage == PCM_CALL_PHASE2 ||
+	    call->stage == PCM_CALL_QC || call->stage == PCM_CALL_RETRAIN_SILENCE ||
+	    call->stage == PCM_CALL_CLOSED)
+		return rates;
+	double upstream_baud = 8000;
+	if (pcm_call_uses_conventional_upstream(call)) {
+		const struct v34_phase3_profile *profile = &call->phase3_entry.conventional_profile;
+
+		upstream_baud = profile->symbol_rate_denominator == 0 ? 0 :
+			(double)profile->symbol_rate_numerator / profile->symbol_rate_denominator;
+	}
+	bool digital = call->local_role == V90_DIGITAL_MODEM;
+	rates.transmit_baud = digital ? 8000 : upstream_baud;
+	rates.receive_baud = digital ? upstream_baud : 8000;
+	uint32_t transmit_bps, receive_bps;
+	if (pcm_call_get_data_rates(call, &transmit_bps, &receive_bps)) {
+		rates.transmit_bps = transmit_bps;
+		rates.receive_bps = receive_bps;
+	}
+	return rates;
+}
 
 static const char *progress_v90(const struct dp *dp)
 {

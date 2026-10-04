@@ -14,6 +14,7 @@
 #include <v22_framing.h>
 #include <v23_datapump.h>
 #include <datapump.h>
+#include <datapump_link.h>
 #include <v8_datapump.h>
 #include <v34_datapump.h>
 #include <v34_frame_schedule.h>
@@ -2361,6 +2362,18 @@ static bool run_media_call(
 	      caller.modem->tx_rate, caller.modem->rx_rate,
 	      modem_is_online(answerer.modem, answerer_connected_id),
 	      answerer.modem->tx_rate, answerer.modem->rx_rate);
+	{
+		struct dp_link_rates c = datapump_get_link_rates(caller.modem->dp);
+		struct dp_link_rates a = datapump_get_link_rates(answerer.modem->dp);
+
+		CHECK(c.transmit_bps == caller.modem->tx_rate &&
+		      c.receive_bps == caller.modem->rx_rate &&
+		      a.transmit_bps == answerer.modem->tx_rate &&
+		      a.receive_bps == answerer.modem->rx_rate &&
+		      c.transmit_baud > 0 && c.receive_baud > 0 &&
+		      c.transmit_baud == a.receive_baud && c.receive_baud == a.transmit_baud,
+		      "%s diagnostics lost negotiated or reciprocal rates", test_case->name);
+	}
 	CHECK(!monitor_caller_rate ||
 		      caller_rate_monitor.starts >=
 			      test_case->minimum_caller_rate_signals,

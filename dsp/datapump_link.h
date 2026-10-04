@@ -18,6 +18,46 @@
 /* Largest current host mapping burst: V.34 primary frame plus auxiliary bit. */
 enum { DATAPUMP_LINK_MAX_BITS = 80 };
 
+static inline struct dp_link_rates datapump_get_link_rates(const struct dp *dp)
+{
+	struct dp_link_rates rates = { 0 };
+
+	if (dp == NULL || dp->modem == NULL || dp->op == NULL)
+		return rates;
+	if (dp->op->link_rates != NULL)
+		return dp->op->link_rates(dp);
+	/* Fixed-symbol-rate families publish their bit rates at CONNECT.
+	 * Do not expose a previous call's host rates during fresh training. */
+	if (dp->status != DPSTAT_CONNECT)
+		return rates;
+	rates.transmit_bps = dp->modem->tx_rate;
+	rates.receive_bps = dp->modem->rx_rate;
+	switch (dp->id) {
+	case DP_V21:
+	case DP_B103:
+	case DP_V23:
+		rates.transmit_baud = rates.transmit_bps;
+		rates.receive_baud = rates.receive_bps;
+		break;
+	case DP_V22:
+	case DP_V22BIS:
+	case DP_B212:
+		rates.transmit_baud = rates.receive_baud = 600;
+		break;
+	case DP_V32:
+	case DP_V32BIS:
+		rates.transmit_baud = rates.receive_baud = 2400;
+		break;
+	case DP_BAUDOT:
+		rates.transmit_baud = rates.receive_baud =
+			rates.transmit_bps == 50 ? 50.0 : 500.0 / 11.0;
+		break;
+	default:
+		break;
+	}
+	return rates;
+}
+
 /* Publish a completed physical link before delivering its first data bits.
  * Retraining resumes retained HDLC/LAPM state through the common host path. */
 static inline bool datapump_complete_training(

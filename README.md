@@ -283,6 +283,11 @@ parameter exchange. `TRAIN` adds changed steps at most twice per second without
 draining the audio meters. `DISCONNECT` reports the first retained cause, its
 phase and step, and whether the local modem or peer ended the call; it appears
 even when the failed datapump has already been released.
+`TX` and `RX` show the local transmit and receive bit rates and symbol rates,
+for example `TX=45333bps/8000baud RX=26400bps/3200baud`. Bit rates describe the
+physical link before framing and compression. V.34 and PCM report their symbol
+clocks during training once selected; `?` means a rate is still unknown. The
+values follow negotiated rate changes and retain fractional baud rates.
 `TX-peak` and `RX-peak` are absolute signed-16-bit audio peaks for the interval,
 with 32768 representing full scale. RX is before receive gain and excludes
 generated playout silence; TX is successfully sent audio after transmit gain,

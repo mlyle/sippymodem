@@ -57,6 +57,7 @@ static int process_v34(
 static int retrain_v34(struct dp *dp);
 static int hangup_v34(struct dp *dp);
 static const char *progress_v34(const struct dp *dp);
+static struct dp_link_rates link_rates_v34(const struct dp *dp);
 
 static const struct dp_operations v34_operations = {
 	.name = "V.34",
@@ -66,7 +67,45 @@ static const struct dp_operations v34_operations = {
 	.retrain = retrain_v34,
 	.hangup = hangup_v34,
 	.progress = progress_v34,
+	.link_rates = link_rates_v34,
 };
+
+static struct dp_link_rates link_rates_v34(const struct dp *dp)
+{
+	const struct v34_datapump *datapump = dp->dp_data;
+	struct dp_link_rates rates = { 0 };
+	const struct v34_phase3_profile *transmit, *receive;
+
+	if (datapump == NULL || datapump->call.failed)
+		return rates;
+	const struct v34_call *call = &datapump->call;
+	if (call->stage == V34_CALL_PHASE3) {
+		transmit = &call->state.phase3.transmit.line.profile;
+		receive = &call->state.phase3.receive.transmitting_profile;
+	} else if (call->stage == V34_CALL_PHASE4) {
+		const struct v34_phase4_exchange *phase4 = &call->state.phase4;
+
+		transmit = phase4->transmit_data_active ?
+			&phase4->transmit.data.line.profile :
+			&phase4->transmit.training.line.profile;
+		receive = &phase4->receive.transmitting_profile;
+		if (phase4->data_startup_prepared) {
+			rates.transmit_bps = phase4->data_startup.mode.transmit
+				.primary_data_rate_2400_bps_units * V34_RATE_STEP;
+			rates.receive_bps = phase4->data_startup.mode.receive
+				.primary_data_rate_2400_bps_units * V34_RATE_STEP;
+		}
+	} else {
+		return rates;
+	}
+	if (transmit->symbol_rate_denominator != 0)
+		rates.transmit_baud = (double)transmit->symbol_rate_numerator /
+			transmit->symbol_rate_denominator;
+	if (receive->symbol_rate_denominator != 0)
+		rates.receive_baud = (double)receive->symbol_rate_numerator /
+			receive->symbol_rate_denominator;
+	return rates;
+}
 
 static const char *progress_v34(const struct dp *dp)
 {

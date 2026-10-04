@@ -54,6 +54,15 @@
  */
 
 
+struct dp_link_rates {
+	/* Zero means unknown. Symbol rates retain fractional baud; bit rates
+	 * describe the negotiated physical link, before framing/compression. */
+	unsigned transmit_bps;
+	unsigned receive_bps;
+	double transmit_baud;
+	double receive_baud;
+};
+
 /* data pump operations structure */
 struct dp_operations {
 	const char *name;
@@ -82,6 +91,9 @@ struct dp_operations {
 	/* Borrow a process-lifetime protocol-step literal without changing state.
 	 * Optional: the host phase remains useful for older datapumps. */
 	const char *(*progress)(const struct dp *);
+	/* Optional read-only view of currently negotiated rates, including
+	 * symbol clocks available before the final bit-rate selection. */
+	struct dp_link_rates (*link_rates)(const struct dp *);
 };
 
 /* data pump structure */

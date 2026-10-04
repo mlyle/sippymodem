@@ -262,8 +262,49 @@ static bool test_deliver_bits(void)
 	return true;
 }
 
+static struct dp_link_rates negotiated_rates(const struct dp *dp)
+{
+	(void)dp;
+	return (struct dp_link_rates){ 45333, 26400, 8000, 3200 };
+}
+
+static bool test_rate_diagnostics(void)
+{
+	struct modem modem = { .tx_rate = 1200, .rx_rate = 75 };
+	struct dp_operations operations = { 0 };
+	struct dp dp = { .id = DP_V23, .modem = &modem, .op = &operations };
+	struct dp_link_rates rates = datapump_get_link_rates(&dp);
+
+	CHECK(rates.transmit_bps == 0 && rates.receive_bps == 0 &&
+	      rates.transmit_baud == 0 && rates.receive_baud == 0 &&
+	      datapump_get_link_rates(NULL).transmit_bps == 0,
+	      "training diagnostics exposed stale host rates");
+	dp.status = DPSTAT_CONNECT;
+	rates = datapump_get_link_rates(&dp);
+	CHECK(rates.transmit_bps == 1200 && rates.receive_bps == 75 &&
+	      rates.transmit_baud == 1200 && rates.receive_baud == 75,
+	      "V.23 diagnostics lost their asymmetric directions");
+	dp.id = DP_V22BIS;
+	modem.tx_rate = modem.rx_rate = 2400;
+	rates = datapump_get_link_rates(&dp);
+	CHECK(rates.transmit_bps == 2400 && rates.transmit_baud == 600 &&
+	      rates.receive_baud == 600, "V.22bis confused bits and symbols");
+	dp.id = DP_V32BIS;
+	modem.tx_rate = modem.rx_rate = 14400;
+	rates = datapump_get_link_rates(&dp);
+	CHECK(rates.transmit_bps == 14400 && rates.transmit_baud == 2400 &&
+	      rates.receive_baud == 2400, "V.32bis confused bits and symbols");
+	dp.status = DPSTAT_OK;
+	operations.link_rates = negotiated_rates;
+	rates = datapump_get_link_rates(&dp);
+	CHECK(rates.transmit_bps == 45333 && rates.receive_bps == 26400 &&
+	      rates.transmit_baud == 8000 && rates.receive_baud == 3200,
+	      "negotiated rates were replaced by stale host rates");
+	return true;
+}
+
 int main(void)
 {
-	return test_training_completion_ownership() && test_link_rates() && test_source_bits() &&
+	return test_rate_diagnostics() && test_training_completion_ownership() && test_link_rates() && test_source_bits() &&
 	       test_source_split_bits() && test_deliver_bits() ? 0 : 1;
 }

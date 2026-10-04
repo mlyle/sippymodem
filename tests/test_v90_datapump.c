@@ -5,6 +5,7 @@
 #include <v92_profile.h>
 #include <v34_datapump.h>
 #include <v34_call.h>
+#include <datapump_link.h>
 
 #include <dc_remover.h>
 #include <g711.h>
@@ -663,6 +664,7 @@ static bool run_pcm_pair(
 					     g711_encode_pcma(0) :
 					     g711_encode_pcmu(0);
 	bool data_enabled = false;
+	bool training_rates_seen = false;
 	bool retrain_requested = false;
 	bool analog_reconnected = false;
 	bool digital_reconnected = false;
@@ -718,6 +720,9 @@ static bool run_pcm_pair(
 		&digital, protocol, 0, MODEM_RATE, MODEM_FRAG, operations);
 	CHECK(analog_dp != NULL && digital_dp != NULL,
 	      "V.90 peers did not own independent data pumps");
+	CHECK(datapump_get_link_rates(analog_dp).transmit_bps == 0 &&
+	      datapump_get_link_rates(digital_dp).receive_baud == 0,
+	      "untrained PCM diagnostics published selected rates");
 	for (size_t octet = 0;
 	     octet < (require_online ? sample_limit : 30000u);
 	     ++octet) {
@@ -844,6 +849,12 @@ static bool run_pcm_pair(
 		      analog_transmit == decode(law, next_analog),
 		      "analogue V.90 path failed at octet %zu", octet);
 		analog_to_digital = next_analog;
+		if (!training_rates_seen && octet % MODEM_FRAG == 0) {
+			struct dp_link_rates rates = datapump_get_link_rates(digital_dp);
+
+			training_rates_seen = rates.transmit_baud == 8000 &&
+				rates.receive_baud > 0 && rates.transmit_bps == 0 && rates.receive_bps == 0;
+		}
 		if (retrain_requested) {
 			if (automatic_downshift) {
 				CHECK(analog_dp->status == DPSTAT_CONNECT &&
@@ -871,6 +882,18 @@ static bool run_pcm_pair(
 		}
 		if (!data_enabled && analog_dp->status == DPSTAT_CONNECT &&
 		    digital_dp->status == DPSTAT_CONNECT) {
+			struct dp_link_rates a = datapump_get_link_rates(analog_dp);
+			struct dp_link_rates d = datapump_get_link_rates(digital_dp);
+			double baud = pcm_upstream_max_drn != 0 ? 8000 :
+				upstream_symbol_rate == 3429 ? 24000.0 / 7.0 : upstream_symbol_rate;
+
+			CHECK(a.transmit_bps == analog.tx_rate && a.receive_bps == analog.rx_rate &&
+			      d.transmit_bps == digital.tx_rate && d.receive_bps == digital.rx_rate &&
+			      a.receive_baud == 8000 && d.transmit_baud == 8000 &&
+			      a.transmit_baud > 0 && a.transmit_baud == d.receive_baud &&
+			      (baud == 0 || a.transmit_baud == baud),
+			      "PCM diagnostics lost negotiated directional rates: %g/%g expected %g",
+			      a.transmit_baud, d.receive_baud, baud);
 			analog_bits.enabled = true;
 			digital_bits.enabled = true;
 			data_enabled = true;
@@ -925,6 +948,15 @@ static bool run_pcm_pair(
 	      downstream_rate, expected_upstream_rate,
 	      analog.rx_rate, analog.tx_rate,
 	      digital.tx_rate, digital.rx_rate);
+	{
+		struct dp_link_rates a = datapump_get_link_rates(analog_dp);
+		struct dp_link_rates d = datapump_get_link_rates(digital_dp);
+
+		CHECK(training_rates_seen && a.transmit_bps == analog.tx_rate &&
+		      a.receive_bps == analog.rx_rate && d.transmit_bps == digital.tx_rate &&
+		      d.receive_bps == digital.rx_rate,
+		      "PCM diagnostics missed training clocks or retained pre-recovery bit rates");
+	}
 	CHECK(analog.dsp_info.upstream_mode ==
 		      (pcm_upstream_max_drn != 0 ? MODEM_UPSTREAM_PCM : MODEM_UPSTREAM_V34) &&
 	      digital.dsp_info.upstream_mode == analog.dsp_info.upstream_mode,

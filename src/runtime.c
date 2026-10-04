@@ -3,6 +3,7 @@
 #include "runtime.h"
 
 #include "modem.h"
+#include "datapump_link.h"
 #include "host.h"
 #include "slmodem_adapter.h"
 #include "slmodem_calls.h"
@@ -389,6 +390,18 @@ static enum modem_runtime_result advance_terminal(
 	return MODEM_RUNTIME_OK;
 }
 
+static void format_link_rate(char *text, size_t size, unsigned bps, double baud)
+{
+	char bits[16] = "?";
+	char symbols[24] = "?";
+
+	if (bps != 0)
+		snprintf(bits, sizeof(bits), "%u", bps);
+	if (baud > 0)
+		snprintf(symbols, sizeof(symbols), "%.6g", baud);
+	snprintf(text, size, "%sbps/%sbaud", bits, symbols);
+}
+
 static void trace_call(struct modem_runtime *runtime, uint64_t now_ns)
 {
 	struct audio_levels levels;
@@ -417,14 +430,19 @@ static void trace_call(struct modem_runtime *runtime, uint64_t now_ns)
 
 	if (heartbeat || progress) {
 		if (heartbeat) {
+			struct dp_link_rates rates = datapump_get_link_rates(dp);
+			char transmit[64], receive[64];
+
+			format_link_rate(transmit, sizeof(transmit), rates.transmit_bps, rates.transmit_baud);
+			format_link_rate(receive, sizeof(receive), rates.receive_bps, rates.receive_baud);
 			runtime->trace_started = true;
 			runtime->trace_time_ns = now_ns;
 			levels = modem_host_take_audio_levels(runtime->host);
 			length = snprintf(text, sizeof(text),
-				"CALL sip=%s phase=%s datapump=%s step=%s TX-peak=%u/32768 RX-peak=%u/32768\n",
+				"CALL sip=%s phase=%s datapump=%s step=%s TX=%s RX=%s TX-peak=%u/32768 RX-peak=%u/32768\n",
 				sip_call_state_name(runtime->calls.state), phase,
 				dp != NULL && dp->op != NULL && dp->op->name != NULL ? dp->op->name : "none",
-				step, levels.transmit_peak, levels.receive_peak);
+				step, transmit, receive, levels.transmit_peak, levels.receive_peak);
 		} else {
 			length = snprintf(text, sizeof(text),
 				"TRAIN phase=%s step=%s\n", phase, step);
