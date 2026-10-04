@@ -40,7 +40,7 @@ V34_NATIVE_OBJECTS := \
 	$(V34_NATIVE_SOURCE_NAMES:%.c=$(BUILD_DIR)/%.o)
 PCM_RUNTIME_SOURCE_NAMES := \
 	pcm_gain.c \
-	pcm_octet_probe.c v91_profile.c \
+	pcm_octet_probe.c v91_profile.c v91_control.c \
 	pcm_dil_descriptor.c pcm_downstream_rx.c pcm_downstream_tx.c pcm_downstream_equalizer.c \
 	pcm_echo_reference.c pcm_host_echo.c \
 	pcm_info1.c pcm_j_frame.c pcm_r.c \
@@ -2164,6 +2164,8 @@ PCM_DOWNSTREAM_RX_TEST_OBJECTS := \
 	$(BUILD_DIR)/v90_cp.o $(CRC16_CCITT_FALSE_OBJECT) \
 	$(BUILD_DIR)/v34_framing.o $(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/g711.o
+V91_CONTROL_TEST_BINARY := $(BUILD_DIR)/test_v91_control
+V91_CONTROL_TEST_OBJECTS := $(BUILD_DIR)/test_v91_control.o $(BUILD_DIR)/v91_control.o
 V90_CP_TEST_BINARY := $(BUILD_DIR)/test_v90_cp
 V90_CP_TEST_OBJECTS := $(BUILD_DIR)/test_v90_cp.o \
 	$(BUILD_DIR)/v90_cp.o $(CRC16_CCITT_FALSE_OBJECT)
@@ -3424,6 +3426,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(PCM_DOWNSTREAM_RX_TEST_BINARY) \
 	$(PCM_DOWNSTREAM_EQUALIZER_TEST_BINARY) \
 	$(V90_CP_TEST_BINARY) \
+	$(V91_CONTROL_TEST_BINARY) \
 	$(V90_PCM_MAPPING_TEST_BINARY) \
 	$(V90_PCM_FRAME_ENCODER_TEST_BINARY) \
 	$(V90_PCM_FRAME_DECODER_TEST_BINARY) \
@@ -4354,6 +4357,9 @@ $(V90_MP_RECEIVER_TEST_BINARY): $(V90_MP_RECEIVER_TEST_OBJECTS)
 
 $(PCM_OCTET_PROBE_TEST_BINARY): $(PCM_OCTET_PROBE_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
+
+$(V91_CONTROL_TEST_BINARY): $(V91_CONTROL_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^
 
 $(V90_CP_TEST_BINARY): $(V90_CP_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
@@ -5484,6 +5490,9 @@ $(BUILD_DIR)/v92_data_quality.o: \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/pcm_octet_probe.o: $(DSP_PCM_SOURCE_DIR)/pcm_octet_probe.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v91_control.o: $(DSP_PCM_SOURCE_DIR)/v91_control.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v91_profile.o: $(DSP_PCM_SOURCE_DIR)/v91_profile.c | $(BUILD_DIR)
