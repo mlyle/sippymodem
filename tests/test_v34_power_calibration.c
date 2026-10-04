@@ -524,6 +524,81 @@ static bool test_configuration_sweep(void)
 	return true;
 }
 
+static bool test_resumable_calibration(void)
+{
+	static const uint32_t BUDGETS[] = { 1, 17, UINT32_MAX };
+	struct calibration_fixture fixture;
+	struct v34_phase3_profile profile = {
+		.symbol_rate_numerator = 3000, .symbol_rate_denominator = 1,
+		.carrier_frequency_numerator = 2000, .carrier_frequency_denominator = 1,
+		.symbol_rate = V34_SYMBOL_RATE_3000,
+		.local_role = V34_CALLING_STATION,
+		.projected_data_rate_2400_bps_units = 8, .high_carrier = true,
+	};
+
+	CHECK(initialize_fixture(&fixture, V34_CALLING_STATION,
+		V34_TRELLIS_32_STATE, 3, 15), "resumable fixture failed");
+	for (unsigned int nonlinear = 0; nonlinear < 2; ++nonlinear) {
+		enum v34_nonlinear_parameter parameter = nonlinear ?
+			V34_NONLINEAR_THETA_5_OVER_16 : V34_NONLINEAR_THETA_ZERO;
+		struct v34_power_normalizer expected;
+		struct v34_line_power_measurement expected_line;
+
+		CHECK(v34_calibrate_mapping_power(&fixture.schedule, &fixture.scrambler,
+			&fixture.encoder, parameter, &expected) == V34_POWER_CALIBRATION_OK &&
+		      v34_calibrate_line_power(&fixture.schedule, &fixture.scrambler,
+			&fixture.encoder, &expected, &profile, 8000, &expected_line) ==
+			V34_POWER_CALIBRATION_OK, "reference calibration failed");
+		for (size_t i = 0; i < ARRAY_LENGTH(BUDGETS); ++i) {
+			struct v34_mapping_power_calibration mapping;
+			struct v34_line_power_calibration line;
+			struct v34_power_normalizer actual;
+			struct v34_line_power_measurement actual_line;
+			enum v34_power_calibration_result result;
+			uint32_t previous = 0, steps = 0;
+
+			CHECK(v34_mapping_power_calibration_begin(&mapping, &fixture.schedule,
+				&fixture.scrambler, &fixture.encoder, parameter) ==
+				V34_POWER_CALIBRATION_OK, "mapping job failed to begin");
+			memset(&actual, 0xa5, sizeof(actual));
+			do {
+				result = v34_mapping_power_calibration_step(&mapping, BUDGETS[i], &actual);
+				uint32_t symbols = mapping.precoded.symbol_count + mapping.projected.symbol_count;
+				CHECK(symbols - previous <= (uint64_t)BUDGETS[i] *
+					V34_SYMBOLS_PER_MAPPING_FRAME && ++steps <= 1000,
+					"mapping step exceeded budget or failed to progress");
+				previous = symbols;
+				if (result == V34_POWER_CALIBRATION_IN_PROGRESS)
+					CHECK(bytes_are_filled(&actual, sizeof(actual), 0xa5),
+						"pending mapping exposed partial output");
+			} while (result == V34_POWER_CALIBRATION_IN_PROGRESS);
+			CHECK(result == V34_POWER_CALIBRATION_OK &&
+			      normalizers_are_equal(&actual, &expected),
+			      "resuming changed mapping calibration");
+			CHECK(v34_line_power_calibration_begin(&line, &fixture.schedule,
+				&fixture.scrambler, &fixture.encoder, &actual, &profile, 8000) ==
+				V34_POWER_CALIBRATION_OK, "line job failed to begin");
+			memset(&actual_line, 0xa5, sizeof(actual_line));
+			steps = 0;
+			do {
+				uint32_t frame = line.frame;
+				result = v34_line_power_calibration_step(&line, BUDGETS[i], &actual_line);
+				CHECK(line.frame - frame <= BUDGETS[i] && ++steps <= 1000,
+					"line step exceeded budget or failed to progress");
+				if (result == V34_POWER_CALIBRATION_IN_PROGRESS)
+					CHECK(bytes_are_filled(&actual_line, sizeof(actual_line), 0xa5),
+						"pending line job exposed partial output");
+			} while (result == V34_POWER_CALIBRATION_IN_PROGRESS);
+			CHECK(result == V34_POWER_CALIBRATION_OK &&
+			      actual_line.mean_squared_amplitude == expected_line.mean_squared_amplitude &&
+			      actual_line.peak_amplitude == expected_line.peak_amplitude &&
+			      actual_line.sample_count == expected_line.sample_count,
+			      "resuming changed line calibration");
+		}
+	}
+	return true;
+}
+
 static bool test_transactional_validation(void)
 {
 	struct calibration_fixture fixture;
@@ -642,6 +717,7 @@ int main(void)
 		{ "generated line power", test_generated_line_power },
 		{ "line validation", test_line_validation },
 		{ "configuration sweep", test_configuration_sweep },
+		{ "resumable calibration", test_resumable_calibration },
 		{ "transactional validation", test_transactional_validation },
 	};
 	unsigned int failures = 0;

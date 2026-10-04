@@ -4,6 +4,8 @@
 #define V34_POWER_CALIBRATION_H
 
 #include "v34_mapping_frame_transmitter.h"
+#include "v34_data_points.h"
+#include "v34_pulse_modulator.h"
 #include "v34_phase3_profile.h"
 #include "v34_symbol_power.h"
 
@@ -22,7 +24,32 @@ enum v34_power_calibration_result {
 	V34_POWER_CALIBRATION_INVALID_ARGUMENT,
 	V34_POWER_CALIBRATION_OUT_OF_RANGE,
 	V34_POWER_CALIBRATION_NUMERIC_FAILURE,
+	V34_POWER_CALIBRATION_IN_PROGRESS,
 };
+
+/* Resumable, instance-owned calibration. A step visits at most frame_budget
+ * mapping frames, preserving the exact generated sequence and accumulation
+ * order of the synchronous interface. Outputs change only on completion;
+ * discard the job after a terminal failure. */
+struct v34_mapping_power_calibration {
+	struct v34_frame_schedule initial_schedule, schedule;
+	struct v34_scrambler initial_scrambler, scrambler;
+	struct v34_4d_encoder initial_encoder, encoder;
+	struct v34_symbol_power_measurement precoded, projected;
+	uint32_t random_state, frame, frame_count;
+	enum v34_nonlinear_parameter nonlinear_parameter;
+	bool measuring_projected;
+};
+
+enum v34_power_calibration_result v34_mapping_power_calibration_begin(
+	struct v34_mapping_power_calibration *calibration,
+	const struct v34_frame_schedule *schedule,
+	const struct v34_scrambler *scrambler,
+	const struct v34_4d_encoder *encoder,
+	enum v34_nonlinear_parameter nonlinear_parameter);
+enum v34_power_calibration_result v34_mapping_power_calibration_step(
+	struct v34_mapping_power_calibration *calibration,
+	uint32_t frame_budget, struct v34_power_normalizer *normalizer);
 
 /* Measure a generated data stream at the exact Q7 precoder boundary, then
  * after nonlinear projection using that raw mean. Linear encoding reuses
@@ -48,6 +75,25 @@ struct v34_line_power_measurement {
 	double peak_amplitude;
 	uint32_t sample_count;
 };
+
+struct v34_line_power_calibration {
+	struct v34_data_points points;
+	struct v34_pulse_modulator carrier;
+	struct v34_line_power_measurement measured;
+	uint64_t maximum_frame_samples;
+	uint32_t random_state, frame, frame_count, warmup_frames;
+};
+
+enum v34_power_calibration_result v34_line_power_calibration_begin(
+	struct v34_line_power_calibration *calibration,
+	const struct v34_frame_schedule *schedule,
+	const struct v34_scrambler *scrambler,
+	const struct v34_4d_encoder *encoder,
+	const struct v34_power_normalizer *normalizer,
+	const struct v34_phase3_profile *profile, uint32_t sample_rate);
+enum v34_power_calibration_result v34_line_power_calibration_step(
+	struct v34_line_power_calibration *calibration,
+	uint32_t frame_budget, struct v34_line_power_measurement *measurement);
 
 bool v34_line_power_measurement_is_valid(
 	const struct v34_line_power_measurement *measurement);
