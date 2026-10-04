@@ -3220,7 +3220,7 @@ FSK_INTEGRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/channel_bench.o \
 	$(BUILD_DIR)/media.o \
 	$(BUILD_DIR)/g711.o
-TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
+TEST_BINARIES := $(BUILD_DIR)/test_packet_stats $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(SIP_URI_TEST_BINARY) $(SDP_TEST_BINARY) $(G711_TEST_BINARY) \
 	$(SAMPLE_MATH_TEST_BINARY) \
 	$(PCM_GAIN_TEST_BINARY) \
@@ -6134,3 +6134,12 @@ clean:
 
 # Load every compiler-generated dependency file, including newly added tests.
 -include $(wildcard $(BUILD_DIR)/*.d)
+
+# Opt-in hardware-counter benchmark, sharing the native media fixture.
+PACKET_BENCH_OBJECTS := $(filter-out $(BUILD_DIR)/test_fsk_integration.o,$(FSK_INTEGRATION_TEST_OBJECTS))
+$(BUILD_DIR)/bench_packets.o: bench_packets.c packet_counter.h packet_stats.h test_fsk_integration.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -I. -MMD -MP -c -o $@ $<
+$(BUILD_DIR)/bench_packets: $(BUILD_DIR)/bench_packets.o $(PACKET_BENCH_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^ -lm
+$(BUILD_DIR)/test_packet_stats: $(BUILD_DIR)/test_packet_stats.o
+	$(CC) $(LDFLAGS) -o $@ $^
