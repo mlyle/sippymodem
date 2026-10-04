@@ -24,7 +24,7 @@ enum v90_pcm_stream_rx_result {
 /* Descrambled bits are in transmission order. Inferred shaping rules are
  * retained as a compact recording seam. */
 struct v90_pcm_stream_frame {
-	uint8_t bits[V90_PCM_FRAME_MAX_BITS];
+	uint8_t bits[PCM_FRAME_MAX_BITS];
 	enum v90_spectral_rule rules[3];
 	uint8_t bit_count;
 	uint8_t rule_count;

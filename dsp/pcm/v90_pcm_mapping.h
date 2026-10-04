@@ -14,6 +14,12 @@ struct v92_cpu_parameters;
 
 enum {
 	V90_PCM_FRAME_MAX_BITS = 42,
+	PCM_FRAME_MAX_BITS = 48,
+};
+
+enum pcm_mapping_format {
+	PCM_MAPPING_V90,
+	PCM_MAPPING_V91,
 };
 
 enum v90_pcm_mapping_plane {
@@ -37,6 +43,7 @@ struct v90_pcm_mapping {
 	struct pcm_constellation
 		codec[V90_CP_FRAME_INTERVALS];
 	enum v90_cp_kind kind;
+	enum pcm_mapping_format format;
 	enum g711_law law;
 	uint8_t modulus[V90_CP_FRAME_INTERVALS];
 	uint8_t frame_bits;
@@ -50,6 +57,13 @@ struct v90_pcm_mapping {
 	int8_t shaping_b2_q1_6;
 	bool codec_plane_differs;
 };
+
+/* V.91 6.3: six differential sign bits and 15..42 modulus bits, with no
+ * spectral shaping. Each interval supplies the peer-selected transmit set.
+ * V.90/V.92 constructors retain their narrower rate limits. */
+enum v90_pcm_mapping_result v90_pcm_mapping_init_v91(
+	struct v90_pcm_mapping *mapping, enum g711_law law, uint8_t frame_bits,
+	const struct pcm_constellation constellations[PCM_CONSTELLATION_FRAME_INTERVALS]);
 
 enum v90_pcm_mapping_result v90_pcm_mapping_init(
 	struct v90_pcm_mapping *mapping,

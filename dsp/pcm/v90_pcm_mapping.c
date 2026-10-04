@@ -80,15 +80,26 @@ bool v90_pcm_mapping_is_valid(const struct v90_pcm_mapping *mapping)
 		    V90_CP_FRAME_INTERVALS ||
 	    mapping->spectral_lookahead > 3 ||
 	    !shaping_coefficients_are_valid(mapping) ||
-	    !modulus_bits_are_valid(
-		    mapping->kind, mapping->modulus_bits))
+	    (mapping->format != PCM_MAPPING_V90 &&
+	     mapping->format != PCM_MAPPING_V91))
 		return false;
+	if (mapping->format == PCM_MAPPING_V91) {
+		if (mapping->kind != V90_CP_DATA || mapping->sign_redundancy != 0 ||
+		    mapping->spectral_lookahead != 0 ||
+		    mapping->shaping_a1_q1_6 != 0 || mapping->shaping_a2_q1_6 != 0 ||
+		    mapping->shaping_b1_q1_6 != 0 || mapping->shaping_b2_q1_6 != 0 ||
+		    mapping->modulus_bits < 15 || mapping->modulus_bits > 42)
+			return false;
+	} else if (!modulus_bits_are_valid(mapping->kind, mapping->modulus_bits)) {
+		return false;
+	}
 	base = mapping->kind == V90_CP_TRAINING ?
 		       V90_PHASE4_RATE_BASE : V90_DATA_RATE_BASE;
 	if (mapping->frame_bits !=
 		    mapping->modulus_bits + mapping->sign_bits ||
 	    mapping->frame_bits < base + 1u ||
-	    mapping->frame_bits > base + V90_CP_RATE_INDEX_MAX)
+	    mapping->frame_bits > (mapping->format == PCM_MAPPING_V91 ?
+		PCM_FRAME_MAX_BITS : base + V90_CP_RATE_INDEX_MAX))
 		return false;
 	for (size_t interval = 0;
 	     interval < V90_CP_FRAME_INTERVALS; ++interval) {
@@ -110,6 +121,7 @@ bool v90_pcm_mapping_equal(
 	return v90_pcm_mapping_is_valid(left) &&
 	       v90_pcm_mapping_is_valid(right) &&
 	       left->kind == right->kind && left->law == right->law &&
+	       left->format == right->format &&
 	       left->frame_bits == right->frame_bits &&
 	       left->modulus_bits == right->modulus_bits &&
 	       left->sign_bits == right->sign_bits &&
@@ -172,10 +184,10 @@ enum v90_pcm_mapping_result v90_pcm_mapping_power(
 				occurrences = stride * next;
 			label++;
 			square = (uint32_t)((int32_t)level * level);
-			/* K <= 39, square < 2^30: their product may exceed 64
+			/* K <= 42, square < 2^30: their product may exceed 64
 			 * bits. Split square into 16-bit limbs and divide by 2^K
-			 * before accumulating. Upper < 2^53, lower < 2^56,
-			 * total fraction < 6*128*2^39; no precision is lost. */
+			 * before accumulating. Upper < 2^56, lower < 2^59,
+			 * total fraction < 6*128*2^42; no precision is lost. */
 			upper = occurrences * (square >> 16);
 			lower = occurrences * (square & UINT16_MAX) +
 				((upper & (words - 1u)) << 16);
@@ -192,6 +204,30 @@ enum v90_pcm_mapping_result v90_pcm_mapping_power(
 	*floor_power = floor;
 	*ceiling_power = floor +
 		(whole % V90_CP_FRAME_INTERVALS != 0u || fraction != 0u);
+	return V90_PCM_MAPPING_OK;
+}
+
+enum v90_pcm_mapping_result v90_pcm_mapping_init_v91(
+	struct v90_pcm_mapping *mapping, enum g711_law law, uint8_t frame_bits,
+	const struct pcm_constellation constellations[PCM_CONSTELLATION_FRAME_INTERVALS])
+{
+	struct v90_pcm_mapping next = {
+		.kind = V90_CP_DATA, .format = PCM_MAPPING_V91, .law = law,
+		.frame_bits = frame_bits, .sign_bits = 6,
+	};
+
+	if (mapping == NULL || constellations == NULL)
+		return V90_PCM_MAPPING_INVALID_ARGUMENT;
+	if (!g711_law_is_valid(law) || frame_bits < 21 || frame_bits > PCM_FRAME_MAX_BITS)
+		return V90_PCM_MAPPING_INVALID_PARAMETERS;
+	next.modulus_bits = frame_bits - next.sign_bits;
+	for (unsigned i = 0; i < PCM_CONSTELLATION_FRAME_INTERVALS; ++i) {
+		next.transmit[i] = next.codec[i] = constellations[i];
+		next.modulus[i] = pcm_constellation_count(&constellations[i]);
+	}
+	if (!v90_pcm_mapping_is_valid(&next))
+		return V90_PCM_MAPPING_INVALID_PARAMETERS;
+	*mapping = next;
 	return V90_PCM_MAPPING_OK;
 }
 

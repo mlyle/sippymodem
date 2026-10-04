@@ -75,7 +75,7 @@ enum v90_pcm_frame_decoder_result v90_pcm_frame_decoder_decode(
 	struct v90_sign_decoder next_signs;
 	struct v90_pcm_frame_decode_output generated = { 0 };
 	struct v90_sign_decode_output sign_output;
-	uint8_t modulus_bits[V90_PCM_FRAME_MAX_BITS];
+	uint8_t modulus_bits[PCM_FRAME_MAX_BITS];
 	uint8_t labels[V90_CP_FRAME_INTERVALS];
 	enum v90_pcm_mapping_result mapping_result;
 

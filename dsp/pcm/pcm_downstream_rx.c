@@ -142,6 +142,7 @@ enum pcm_downstream_rx_result pcm_downstream_rx_init(
 	    !pcm_protocol_is_valid(protocol))
 		return PCM_DOWNSTREAM_RX_INVALID_ARGUMENT;
 	if (!v90_pcm_mapping_is_valid(mapping) ||
+	    mapping->format != PCM_MAPPING_V90 ||
 	    (mapping->kind != V90_CP_TRAINING &&
 	     protocol != PCM_PROTOCOL_V92))
 		return PCM_DOWNSTREAM_RX_INVALID_PARAMETERS;

@@ -19,6 +19,7 @@ static bool b1d_state_is_valid(
 
 	if (receiver == NULL || !stage_is_valid(receiver->stage) ||
 	    receiver->stream.decoder.mapping.kind != V90_CP_DATA ||
+	    receiver->stream.decoder.mapping.format != PCM_MAPPING_V90 ||
 	    receiver->b1d_frames > V90_PHASE4_B1D_FRAMES ||
 	    receiver->b1d_clean_frames > receiver->b1d_frames ||
 	    receiver->stream.received_frames < receiver->b1d_frames)
@@ -51,7 +52,8 @@ enum v90_downstream_data_rx_result v90_downstream_data_rx_init(
 	if (receiver == NULL || data_mapping == NULL)
 		return V90_DOWNSTREAM_DATA_RX_INVALID_ARGUMENT;
 	if (!v90_pcm_mapping_is_valid(data_mapping) ||
-	    data_mapping->kind != V90_CP_DATA)
+	    data_mapping->kind != V90_CP_DATA ||
+	    data_mapping->format != PCM_MAPPING_V90)
 		return V90_DOWNSTREAM_DATA_RX_INVALID_PARAMETERS;
 	stream_result = v90_pcm_stream_rx_init(
 		&initialized.stream, data_mapping, decision_plane);

@@ -13,6 +13,7 @@ bool v90_downstream_data_tx_is_valid(
 	if (transmitter == NULL ||
 	    !v90_pcm_frame_encoder_is_valid(&transmitter->encoder) ||
 	    transmitter->encoder.mapping.kind != V90_CP_DATA ||
+	    transmitter->encoder.mapping.format != PCM_MAPPING_V90 ||
 	    !v34_scrambler_is_valid(&transmitter->scrambler) ||
 	    transmitter->scrambler.polynomial != V34_POLYNOMIAL_GPC)
 		return false;
@@ -45,7 +46,8 @@ enum v90_downstream_data_tx_result v90_downstream_data_tx_init(
 	if (transmitter == NULL || data_mapping == NULL)
 		return V90_DOWNSTREAM_DATA_TX_INVALID_ARGUMENT;
 	if (!v90_pcm_mapping_is_valid(data_mapping) ||
-	    data_mapping->kind != V90_CP_DATA)
+	    data_mapping->kind != V90_CP_DATA ||
+	    data_mapping->format != PCM_MAPPING_V90)
 		return V90_DOWNSTREAM_DATA_TX_INVALID_PARAMETERS;
 	if (v90_pcm_frame_encoder_init(
 		    &initialized.encoder, data_mapping) !=

@@ -23,7 +23,7 @@ enum v90_pcm_frame_decoder_result {
  * by K LSB-first modulus bits. Inferred shaping rules form a compact recording
  * seam and are absent when Sr is zero. */
 struct v90_pcm_frame_decode_output {
-	uint8_t bits[V90_PCM_FRAME_MAX_BITS];
+	uint8_t bits[PCM_FRAME_MAX_BITS];
 	enum v90_spectral_rule rules[3];
 	uint8_t bit_count;
 	uint8_t rule_count;

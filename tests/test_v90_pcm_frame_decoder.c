@@ -418,6 +418,85 @@ static bool test_contracts(void)
 	return true;
 }
 
+/* Independent scalar modulus/sign calculation, including both G.711 zeros.
+ * V.91 reuses the coder, but cannot relax the V.90 wire-record rate limits. */
+static bool test_v91_frames(void)
+{
+	uint32_t random = 0x12345678u;
+	for (unsigned law = 0; law < 2; ++law) {
+		for (unsigned bits = 21; bits <= PCM_FRAME_MAX_BITS; ++bits) {
+			struct pcm_constellation sets[6];
+			struct v90_pcm_mapping mapping, saved;
+			struct v90_pcm_frame_encoder encoder;
+			struct v90_pcm_frame_decoder decoder;
+			bool seen[256] = { false };
+			uint8_t previous = 0;
+			memset(sets, 0xff, sizeof(sets));
+			CHECK(v90_pcm_mapping_init_v91(&mapping, law, bits, sets) ==
+			      V90_PCM_MAPPING_OK &&
+			      v90_pcm_frame_encoder_init(&encoder, &mapping) ==
+			      V90_PCM_FRAME_ENCODER_OK &&
+			      v90_pcm_frame_decoder_init(&decoder, &mapping,
+			      V90_PCM_MAPPING_TRANSMIT) == V90_PCM_FRAME_DECODER_OK,
+			      "V.91 frame initialization failed at %u bits", bits);
+			for (unsigned frame = 0; frame < 1024; ++frame) {
+				uint8_t source[PCM_FRAME_MAX_BITS], ucodes[6], signs[6];
+				struct v90_pcm_frame_output encoded;
+				struct v90_pcm_frame_decode_output decoded;
+				uint64_t value = 0;
+				for (unsigned bit = 0; bit < bits; ++bit) {
+					random ^= random << 13;
+					random ^= random >> 17;
+					random ^= random << 5;
+					source[bit] = random & 1u;
+					if (bit >= 6) value |= (uint64_t)source[bit] << (bit - 6);
+				}
+				CHECK(v90_pcm_frame_encoder_process(&encoder, source, bits,
+				      &encoded) == V90_PCM_FRAME_ENCODER_SYMBOLS_READY &&
+				      encoded.symbol_count == 6 && encoded.rule_count == 0,
+				      "V.91 encode failed");
+				for (unsigned i = 0; i < 6; ++i) {
+					struct v90_pcm_symbol parsed;
+					previous ^= source[i];
+					CHECK(encoded.symbols[i].ucode == 127u - (value % 128u) &&
+					      encoded.symbols[i].positive == (previous != 0),
+					      "V.91 differs from scalar modulus/sign mapping");
+					value /= 128;
+					seen[encoded.symbols[i].octet] = true;
+					CHECK(v90_pcm_symbol_parse(&parsed, law, encoded.symbols[i].octet),
+					      "network octet rejected");
+					ucodes[i] = parsed.ucode;
+					signs[i] = parsed.positive;
+				}
+				CHECK(v90_pcm_frame_decoder_decode(&decoder, ucodes, signs, 6,
+				      &decoded) == V90_PCM_FRAME_DECODER_OK &&
+				      decoded.bit_count == bits && memcmp(source, decoded.bits, bits) == 0,
+				      "V.91 payload differs at %u bits", bits);
+			}
+			if (bits == PCM_FRAME_MAX_BITS)
+				for (unsigned octet = 0; octet < 256; ++octet)
+					CHECK(seen[octet], "64k test missed octet %u", octet);
+			saved = mapping;
+			CHECK(v90_pcm_mapping_init_v91(&mapping, law, 49, sets) ==
+			      V90_PCM_MAPPING_INVALID_PARAMETERS &&
+			      memcmp(&mapping, &saved, sizeof(mapping)) == 0,
+			      "invalid V.91 rate changed destination");
+			mapping.format = PCM_MAPPING_V90;
+			if (bits > V90_PCM_FRAME_MAX_BITS)
+				CHECK(!v90_pcm_mapping_is_valid(&mapping), "V.90 accepted >56k");
+			mapping = saved;
+			mapping.sign_redundancy = 1;
+			mapping.sign_bits = 5;
+			mapping.modulus_bits++;
+			CHECK(!v90_pcm_mapping_is_valid(&mapping), "V.91 accepted shaping");
+			memset(sets, 0, sizeof(sets));
+			CHECK(v90_pcm_mapping_init_v91(&mapping, law, bits, sets) ==
+			      V90_PCM_MAPPING_INVALID_PARAMETERS, "empty mapping accepted");
+		}
+	}
+	return true;
+}
+
 struct test_case {
 	const char *name;
 	bool (*run)(void);
@@ -428,6 +507,7 @@ int main(void)
 	static const struct test_case tests[] = {
 		{ "generated round trips", test_generated_round_trips },
 		{ "contracts", test_contracts },
+		{ "V.91 shared frames", test_v91_frames },
 	};
 	unsigned int failures = 0;
 
