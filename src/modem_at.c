@@ -437,7 +437,6 @@ static int process_S(struct modem *m, char *p, int *len)
 static int process_Z(struct modem *m, char *p, int *len)
 {
 	AT_DBG("AT Z command...\n");
-#if 1
 	switch(*p) {
 	case '1':
 	case '2':
@@ -451,32 +450,6 @@ static int process_Z(struct modem *m, char *p, int *len)
 	}
 	modem_reset(m);
 	return 0;
-#else
-	char *s;
-	int set_num;
-	set_num = strtoul (p,&s,0);
-	*len = s-p;
-	if (set_num < 0 || set_num > 4 )
-		return -1;
-	
-	if (set_num == 0) { /* ATZ0 - load value defined by ATYn */
-		set_num = m->sregs[SREG_DEFAULT_SETTING];
-	}
-	else {
-		set_num--;
-	}
-	
-	AT_DBG("AT Z command - going to load set %d\n",set_num);
-	s = load_profile (m,set_num);
-	AT_DBG("AT Z command - done\n");
-	if (s != NULL) {
-		/* FIXME: modem reset must be done instead */
-		/* ... */
-		memcpy (m->sregs,s,sizeof (m->sregs));
-		return 0;
-	}
-	return -1;
-#endif
 }
 
 
