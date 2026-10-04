@@ -40,6 +40,7 @@ V34_NATIVE_OBJECTS := \
 	$(V34_NATIVE_SOURCE_NAMES:%.c=$(BUILD_DIR)/%.o)
 PCM_RUNTIME_SOURCE_NAMES := \
 	pcm_gain.c \
+	pcm_octet_probe.c v91_profile.c \
 	pcm_dil_descriptor.c pcm_downstream_rx.c pcm_downstream_tx.c pcm_downstream_equalizer.c \
 	pcm_echo_reference.c pcm_host_echo.c \
 	pcm_info1.c pcm_j_frame.c pcm_r.c \
@@ -2200,6 +2201,13 @@ V90_PCM_FRAME_DECODER_TEST_OBJECTS := \
 	$(BUILD_DIR)/v90_pcm_symbol.o \
 	$(BUILD_DIR)/v90_cp.o $(CRC16_CCITT_FALSE_OBJECT) \
 	$(BUILD_DIR)/g711.o
+PCM_OCTET_PROBE_TEST_BINARY := $(BUILD_DIR)/test_pcm_octet_probe
+PCM_OCTET_PROBE_TEST_OBJECTS := $(BUILD_DIR)/test_pcm_octet_probe.o \
+	$(BUILD_DIR)/pcm_octet_probe.o $(BUILD_DIR)/v91_profile.o \
+	$(BUILD_DIR)/v90_dil.o $(BUILD_DIR)/v90_dil_sequence.o \
+	$(BUILD_DIR)/pcm_dil_descriptor.o \
+	$(filter-out $(BUILD_DIR)/test_v90_pcm_frame_decoder.o, \
+		$(V90_PCM_FRAME_DECODER_TEST_OBJECTS))
 V90_DOWNSTREAM_DATA_TX_TEST_BINARY := \
 	$(BUILD_DIR)/test_v90_downstream_data_tx
 V90_DOWNSTREAM_DATA_TX_TEST_OBJECTS := \
@@ -3419,6 +3427,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V90_PCM_MAPPING_TEST_BINARY) \
 	$(V90_PCM_FRAME_ENCODER_TEST_BINARY) \
 	$(V90_PCM_FRAME_DECODER_TEST_BINARY) \
+	$(PCM_OCTET_PROBE_TEST_BINARY) \
 	$(V90_DOWNSTREAM_DATA_TX_TEST_BINARY) \
 	$(V90_DOWNSTREAM_DATA_RX_TEST_BINARY) \
 	$(V90_SIGN_DECODER_TEST_BINARY) \
@@ -4342,6 +4351,9 @@ $(V90_MP_TEST_BINARY): $(V90_MP_TEST_OBJECTS)
 
 $(V90_MP_RECEIVER_TEST_BINARY): $(V90_MP_RECEIVER_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
+
+$(PCM_OCTET_PROBE_TEST_BINARY): $(PCM_OCTET_PROBE_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V90_CP_TEST_BINARY): $(V90_CP_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
@@ -5469,6 +5481,12 @@ $(BUILD_DIR)/v92_upstream_model.o: \
 
 $(BUILD_DIR)/v92_data_quality.o: \
 	$(DSP_PCM_SOURCE_DIR)/v92_data_quality.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/pcm_octet_probe.o: $(DSP_PCM_SOURCE_DIR)/pcm_octet_probe.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v91_profile.o: $(DSP_PCM_SOURCE_DIR)/v91_profile.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v90_pcm_frame_encoder.o: \
