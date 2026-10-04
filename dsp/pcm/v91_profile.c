@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #include "v91_profile.h"
+#include "v90_pcm_symbol.h"
 #include <string.h>
 
 bool v91_profile_dil(struct v90_dil_parameters *parameters)
@@ -24,16 +25,35 @@ bool v91_profile_dil(struct v90_dil_parameters *parameters)
 }
 
 bool v91_profile_learn(const struct pcm_octet_probe *probe, enum g711_law law,
-	uint32_t maximum_power, struct v90_pcm_mapping *mapping,
+	const struct v91_profile_limits *limits, struct v90_pcm_mapping *mapping,
 	struct pcm_octet_channel *channel)
 {
 	struct pcm_constellation sets[6];
 	struct pcm_octet_channel learned;
 	struct v90_pcm_mapping next;
 
-	if (mapping == NULL || channel == NULL || maximum_power == 0 ||
+	if (mapping == NULL || channel == NULL || limits == NULL || limits->maximum_power == 0 ||
+	    limits->maximum_frame_bits < 21 || limits->maximum_frame_bits > 48 ||
+	    (limits->receiver_power && !g711_law_is_valid(limits->receive_law)) ||
 	    !pcm_octet_probe_finish(probe, law, sets, &learned))
 		return false;
+	if (limits->receiver_power) {
+		/* A received octet belongs to at most one retained transmit code.
+		 * Peak bounding remains safe for either sign and all observed robbed
+		 * bit outcomes, without assuming their probabilities during data. */
+		for (unsigned i = 0; i < 6; ++i)
+			for (unsigned octet = 0; octet < 256; ++octet) {
+				if (!(learned.known[i][octet / 8] & (1u << (octet % 8))))
+					continue;
+				int32_t sample = g711_decode(limits->receive_law, octet);
+				if ((uint32_t)(sample * sample) <= limits->maximum_power)
+					continue;
+				struct v90_pcm_symbol symbol;
+				if (!v90_pcm_symbol_parse(&symbol, law, learned.decoded[i][octet]))
+					return false;
+				sets[i].ucode_mask[symbol.ucode / 8] &= ~(1u << (symbol.ucode % 8));
+			}
+	}
 	for (;;) {
 		uint64_t capacity = 1;
 		unsigned frame_bits = 6;
@@ -45,12 +65,14 @@ bool v91_profile_learn(const struct pcm_octet_probe *probe, enum g711_law law,
 			capacity >>= 1;
 			++frame_bits;
 		}
+		if (frame_bits > limits->maximum_frame_bits)
+			frame_bits = limits->maximum_frame_bits;
 		if (frame_bits < 21 || v90_pcm_mapping_init_v91(&next, law,
 			frame_bits, sets) != V90_PCM_MAPPING_OK ||
 		    v90_pcm_mapping_power(&next, V90_PCM_MAPPING_TRANSMIT,
 			law, &floor, &ceiling) != V90_PCM_MAPPING_OK)
 			return false;
-		if (ceiling <= maximum_power) {
+		if (limits->receiver_power || ceiling <= limits->maximum_power) {
 			*mapping = next;
 			*channel = learned;
 			return true;

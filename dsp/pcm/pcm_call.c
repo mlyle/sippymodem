@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "pcm_call.h"
+#include "pcm_power.h"
 
 #include "memory_region.h"
 #include "packed_bits.h"
@@ -1873,18 +1874,9 @@ static enum pcm_call_result entry_result(
 static uint32_t downstream_power_limit(
 	const struct pcm_call *call, const struct v90_pcm_mapping *training)
 {
-	/* V.90 Table 15, in 16-bit linear RMS units. V.92 INFO0d retains
-	 * the same power code and measurement-point fields. */
-	static const uint16_t rms[] = {
-		15124, 14276, 13480, 12724, 12012, 11340, 10708, 10108,
-		9544, 9008, 8504, 8028, 7580, 7156, 6756, 6380,
-		6020, 5684, 5368, 5068, 4784, 4516, 4264, 4024,
-		3800, 3588, 3388, 3196, 3020, 2852, 2692, 2540,
-	};
 	const struct v90_info0d *peer = call->protocol == PCM_PROTOCOL_V92 ?
 		&call->peer_info0.v92_digital.v90 : &call->peer_info0.digital;
-	uint32_t level = rms[peer->maximum_transmit_power];
-	uint32_t limit = level * level;
+	uint32_t limit = pcm_power_limit(peer->maximum_transmit_power);
 
 	if (training != NULL) {
 		uint32_t lower, upper;

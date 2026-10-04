@@ -7,6 +7,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+static bool learn(const struct pcm_octet_probe *probe, enum g711_law law,
+	uint32_t maximum_power, struct v90_pcm_mapping *mapping, struct pcm_octet_channel *channel)
+{
+	struct v91_profile_limits limits = { .maximum_power = maximum_power, .maximum_frame_bits = 48 };
+	return v91_profile_learn(probe, law, &limits, mapping, channel);
+}
+
 static uint8_t impairment(unsigned kind, enum g711_law law, unsigned interval,
 	unsigned epoch, uint8_t octet)
 {
@@ -56,7 +63,7 @@ static bool test_channel(unsigned kind, enum g711_law law)
 		free(probe);
 		return true;
 	}
-	CHECK(v91_profile_learn(probe, law, UINT32_MAX, &mapping, &channel),
+	CHECK(learn(probe, law, UINT32_MAX, &mapping, &channel),
 	      "no usable inferred rate");
 	free(probe);
 	unsigned bits = mapping.frame_bits;
@@ -107,7 +114,7 @@ static bool test_contracts(void)
 	saved_mapping = mapping;
 	CHECK(!pcm_octet_probe_observe(NULL, 0, 0, 0) &&
 	      !pcm_octet_probe_observe(probe, 6, 0, 0) &&
-	      !v91_profile_learn(probe, G711_LAW_PCMU, UINT32_MAX, &mapping, &channel) &&
+	      !learn(probe, G711_LAW_PCMU, UINT32_MAX, &mapping, &channel) &&
 	      memcmp(&mapping, &saved_mapping, sizeof(mapping)) == 0 &&
 	      memcmp(&channel, &saved_channel, sizeof(channel)) == 0,
 	      "invalid observation or failed learning changed state");
@@ -119,19 +126,42 @@ static bool test_contracts(void)
 	for (unsigned i = 0; i < 6; ++i)
 		for (unsigned octet = 0; octet < 256; ++octet)
 			CHECK(pcm_octet_probe_observe(probe, i, octet, octet), "observation failed");
-	CHECK(v91_profile_learn(probe, G711_LAW_PCMU, 1000000, &mapping, &channel),
+	CHECK(learn(probe, G711_LAW_PCMU, 1000000, &mapping, &channel),
 	      "power-limited rate was not inferred");
 	uint32_t floor, ceiling;
 	CHECK(mapping.frame_bits < 48 &&
 	      v90_pcm_mapping_power(&mapping, V90_PCM_MAPPING_TRANSMIT,
 		G711_LAW_PCMU, &floor, &ceiling) == V90_PCM_MAPPING_OK && ceiling <= 1000000,
 	      "selected profile exceeds requested power");
+	struct v91_profile_limits limits = {
+		.maximum_power = UINT32_MAX, .maximum_frame_bits = 41,
+		.receive_law = G711_LAW_PCMU,
+	};
+	CHECK(v91_profile_learn(probe, G711_LAW_PCMU, &limits, &mapping, &channel) &&
+	      mapping.frame_bits == 41, "receive rate cap was ignored");
+	limits.maximum_frame_bits = 48;
+	limits.maximum_power = 1000000;
+	limits.receiver_power = true;
+	CHECK(v91_profile_learn(probe, G711_LAW_PCMU, &limits, &mapping, &channel),
+	      "receiver power bound rejected usable channel");
+	for (unsigned interval = 0; interval < 6; ++interval)
+		for (unsigned code = 0; code < 128; ++code) {
+			if (!pcm_constellation_contains(&mapping.transmit[interval], code))
+				continue;
+			int16_t sample;
+			CHECK(g711_ucode_sample(G711_LAW_PCMU, code, true, &sample) &&
+			      (uint32_t)((int32_t)sample * sample) <= limits.maximum_power,
+			      "receiver power bound admitted an excessive codeword");
+		}
 	saved_channel = channel;
 	saved_mapping = mapping;
-	CHECK(!v91_profile_learn(probe, G711_LAW_PCMU, 1, &mapping, &channel) &&
+	CHECK(!learn(probe, G711_LAW_PCMU, 1, &mapping, &channel) &&
 	      memcmp(&mapping, &saved_mapping, sizeof(mapping)) == 0 &&
 	      memcmp(&channel, &saved_channel, sizeof(channel)) == 0,
 	      "unusable channel changed accepted profile");
+	limits.maximum_frame_bits = 20;
+	CHECK(!v91_profile_learn(probe, G711_LAW_PCMU, &limits, &mapping, &channel),
+	      "invalid rate limit accepted");
 	pcm_octet_probe_init(probe);
 	CHECK(!pcm_octet_probe_finish(probe, G711_LAW_PCMU, sets, &channel),
 	      "previous call observations survived reset");
