@@ -38,9 +38,9 @@ static int16_t codec_round_trip(int16_t sample, enum test_codec codec)
 		       g711_decode_pcma(g711_encode_pcma(sample));
 }
 
-static struct v90_info0 analog_capabilities(void)
+static struct v34_info0 analog_capabilities(void)
 {
-	return (struct v90_info0){
+	return (struct v34_info0){
 		.symbol_rate_2743_supported = true,
 		.symbol_rate_3429_supported = true,
 		.low_carrier_3000_supported = true,
@@ -77,9 +77,9 @@ static struct v90_info0d digital_capabilities(enum test_codec codec)
 }
 
 static bool analog_equal(
-	const struct v90_info0 *left, const struct v90_info0 *right)
+	const struct v34_info0 *left, const struct v34_info0 *right)
 {
-	struct v90_info0 expected = *right;
+	struct v34_info0 expected = *right;
 	uint8_t left_payload[V90_INFO0A_PAYLOAD_BYTES];
 	uint8_t right_payload[V90_INFO0A_PAYLOAD_BYTES];
 
@@ -777,7 +777,7 @@ static bool test_info0_following_tone_orderings(void)
 
 static bool check_retrain_record_is_immutable(bool mismatch)
 {
-	struct v90_info0 analog = analog_capabilities();
+	struct v34_info0 analog = analog_capabilities();
 	struct v90_info0d retained =
 		digital_capabilities(TEST_CODEC_PCMU);
 	struct v90_info0d changed = retained;
@@ -857,7 +857,7 @@ static bool test_retrain_record_is_immutable(void)
 static bool test_rejected_initial_level(void)
 {
 	for (unsigned int bad_crc = 0; bad_crc < 2; ++bad_crc) {
-		struct v90_info0 analog = analog_capabilities();
+		struct v34_info0 analog = analog_capabilities();
 		struct v90_info0d digital = digital_capabilities(TEST_CODEC_PCMU);
 		struct pcm_phase2_info0_exchange exchange;
 		struct phase2_info0_exchange peer;
@@ -927,7 +927,7 @@ static bool test_record_validation(void)
 				bool capable = (flags & 2u) != 0;
 				bool short_requested = (flags & 4u) != 0;
 				union pcm_info0_record record;
-				struct v90_info0 *common;
+				struct v34_info0 *common;
 				struct v90_info0d *digital = NULL;
 
 				memset(&record, 0xa5, sizeof(record));
@@ -989,7 +989,7 @@ static bool test_record_validation(void)
 
 static bool test_validation(void)
 {
-	struct v90_info0 analog = analog_capabilities();
+	struct v34_info0 analog = analog_capabilities();
 	struct v90_info0d digital = digital_capabilities(TEST_CODEC_PCMU);
 	struct v92_info0a v92_analog = {
 		.v90 = analog,

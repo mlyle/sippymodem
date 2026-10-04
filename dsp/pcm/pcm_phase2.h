@@ -101,7 +101,7 @@ struct pcm_phase2 {
  * Phase 1 and does not itself enable Quick Connect or retain call policy. */
 enum pcm_phase2_result pcm_phase2_init_v90_analog(
 	struct pcm_phase2 *phase2, int16_t nominal_amplitude,
-	const struct v90_info0 *local_info0a);
+	const struct v34_info0 *local_info0a);
 enum pcm_phase2_result pcm_phase2_init_v90_digital(
 	struct pcm_phase2 *phase2, int16_t nominal_amplitude,
 	const struct v90_info0d *local_info0d);
@@ -117,13 +117,13 @@ enum pcm_phase2_result pcm_phase2_init_v92_digital(
  * supplies the required silence. */
 enum pcm_phase2_result pcm_phase2_init_retrain_v90_analog(
 	struct pcm_phase2 *phase2, int16_t nominal_amplitude,
-	const struct v90_info0 *local_info0a,
+	const struct v34_info0 *local_info0a,
 	const struct v90_info0d *peer_info0d,
 	uint16_t prior_round_trip_delay_samples);
 enum pcm_phase2_result pcm_phase2_init_retrain_v90_digital(
 	struct pcm_phase2 *phase2, int16_t nominal_amplitude,
 	const struct v90_info0d *local_info0d,
-	const struct v90_info0 *peer_info0a,
+	const struct v34_info0 *peer_info0a,
 	uint16_t prior_round_trip_delay_samples);
 enum pcm_phase2_result pcm_phase2_init_retrain_v92_analog(
 	struct pcm_phase2 *phase2, int16_t nominal_amplitude,
@@ -153,7 +153,7 @@ bool pcm_phase2_is_ready_for_v34_fallback(
 /* Typed access prevents interpreting the role-dependent union through the
  * wrong member. Failed calls leave the destination unchanged. */
 enum pcm_phase2_result pcm_phase2_peer_info0a(
-	const struct pcm_phase2 *phase2, struct v90_info0 *peer_info0a);
+	const struct pcm_phase2 *phase2, struct v34_info0 *peer_info0a);
 enum pcm_phase2_result pcm_phase2_peer_info0d(
 	const struct pcm_phase2 *phase2, struct v90_info0d *peer_info0d);
 enum pcm_phase2_result pcm_phase2_peer_v92_info0a(

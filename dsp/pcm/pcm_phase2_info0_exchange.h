@@ -76,7 +76,7 @@ enum pcm_phase2_info0_exchange_result
 pcm_phase2_info0_exchange_init_v90_analog(
 	struct pcm_phase2_info0_exchange *exchange,
 	int16_t nominal_amplitude,
-	const struct v90_info0 *local_info0a);
+	const struct v34_info0 *local_info0a);
 enum pcm_phase2_info0_exchange_result
 pcm_phase2_info0_exchange_init_v90_digital(
 	struct pcm_phase2_info0_exchange *exchange,

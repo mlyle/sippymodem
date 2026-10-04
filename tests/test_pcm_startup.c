@@ -6,9 +6,9 @@
 
 #include <string.h>
 
-static struct v90_info0 common(void)
+static struct v34_info0 common(void)
 {
-	return (struct v90_info0){
+	return (struct v34_info0){
 		.symbol_rate_2743_supported = true,
 		.symbol_rate_2800_supported = true,
 		.symbol_rate_3429_supported = true,

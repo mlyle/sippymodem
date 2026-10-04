@@ -114,9 +114,9 @@ static uint8_t encode_octet(enum g711_law law, int16_t sample)
 		       g711_encode_pcma(sample) : g711_encode_pcmu(sample);
 }
 
-static struct v90_info0 analog_info0(void)
+static struct v34_info0 analog_info0(void)
 {
-	return (struct v90_info0){
+	return (struct v34_info0){
 		.symbol_rate_2743_supported = true,
 		.symbol_rate_3429_supported = true,
 		.low_carrier_3000_supported = true,
@@ -710,7 +710,7 @@ static void channel_transmit(
 	channel->cursor = (channel->cursor + 1u) % channel->delay;
 }
 
-static bool v34_capabilities(const struct v90_info0 *info0, struct v34_info0 *capabilities)
+static bool v34_capabilities(const struct v34_info0 *info0, struct v34_info0 *capabilities)
 {
 	uint8_t payload[V90_INFO0A_PAYLOAD_BYTES];
 
@@ -852,7 +852,7 @@ static bool run_info1d_peer_capabilities(enum pcm_protocol protocol, enum g711_l
 	struct pcm_call_configuration digital_configuration = v92 ?
 		v92_configuration(V90_DIGITAL_MODEM, law) :
 		configuration(V90_DIGITAL_MODEM, law);
-	struct v90_info0 *peer = v92 ? &analog_configuration.local_info0.v92_analog.v90 :
+	struct v34_info0 *peer = v92 ? &analog_configuration.local_info0.v92_analog.v90 :
 		&analog_configuration.local_info0.analog;
 	struct pcm_call analog, digital;
 	struct channel channel;

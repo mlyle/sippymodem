@@ -19,9 +19,9 @@ static int16_t codec_round_trip(int16_t sample, enum test_codec codec)
 		       g711_decode_pcma(g711_encode_pcma(sample));
 }
 
-static struct v90_info0 analog_capabilities(void)
+static struct v34_info0 analog_capabilities(void)
 {
-	return (struct v90_info0){
+	return (struct v34_info0){
 		.symbol_rate_2743_supported = true,
 		.symbol_rate_3429_supported = true,
 		.low_carrier_3000_supported = true,

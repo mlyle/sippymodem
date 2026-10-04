@@ -47,9 +47,9 @@ static void delay_line_transmit(
 	line->cursor = (line->cursor + 1u) % TEST_LINE_DELAY_SAMPLES;
 }
 
-static struct v90_info0 analog_capabilities(void)
+static struct v34_info0 analog_capabilities(void)
 {
-	return (struct v90_info0){
+	return (struct v34_info0){
 		.symbol_rate_2743_supported = true,
 		.symbol_rate_3429_supported = true,
 		.low_carrier_3000_supported = true,
@@ -90,7 +90,7 @@ static bool check_ranging(
 	enum test_codec codec, int16_t amplitude,
 	uint16_t analog_gain_q15, uint16_t digital_gain_q15)
 {
-	struct v90_info0 analog = analog_capabilities();
+	struct v34_info0 analog = analog_capabilities();
 	struct v90_info0d digital = digital_capabilities(codec);
 	struct pcm_phase2_ranging analog_end;
 	struct pcm_phase2_ranging digital_end;
@@ -236,7 +236,7 @@ static enum pcm_phase2_info0_exchange_result initialize_info0_exchange(
 	enum v90_modem_role role, enum pcm_protocol protocol,
 	enum test_codec codec)
 {
-	struct v90_info0 analog = analog_capabilities();
+	struct v34_info0 analog = analog_capabilities();
 	struct v90_info0d digital = digital_capabilities(codec);
 
 	if (protocol == PCM_PROTOCOL_V90)
@@ -264,7 +264,7 @@ static bool encode_peer_info0(
 	enum v90_modem_role role, enum pcm_protocol protocol,
 	enum test_codec codec, bool acknowledge)
 {
-	struct v90_info0 analog = analog_capabilities();
+	struct v34_info0 analog = analog_capabilities();
 	struct v90_info0d digital = digital_capabilities(codec);
 
 	if (role == V90_ANALOG_MODEM) {
@@ -1208,7 +1208,7 @@ static bool test_rejected_edge_before_info(void)
 static bool check_completed_exchange_repeat(
 	enum test_codec codec, bool reject_repeat, bool after_first_reversal)
 {
-	struct v90_info0 analog = analog_capabilities();
+	struct v34_info0 analog = analog_capabilities();
 	struct v90_info0d digital = digital_capabilities(codec);
 	struct v90_info0d repeated = digital;
 	struct pcm_phase2_ranging ranging;
@@ -1361,7 +1361,7 @@ static bool test_completed_exchange_repeat(void)
 
 static bool test_validation(void)
 {
-	struct v90_info0 analog = analog_capabilities();
+	struct v34_info0 analog = analog_capabilities();
 	struct pcm_phase2_ranging ranging;
 	struct pcm_phase2_ranging before;
 	struct pcm_phase2_ranging_event event = {

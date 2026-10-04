@@ -1554,10 +1554,11 @@ V34_PHASE2_INFO_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_info0.o \
 	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(BUILD_DIR)/v34_phase2_info.o
+V90_INFO0_OBJECTS := $(BUILD_DIR)/v90_info0.o $(BUILD_DIR)/v34_info0.o
 V90_INFO0_TEST_BINARY := $(BUILD_DIR)/test_v90_info0
 V90_INFO0_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v90_info0.o \
-	$(BUILD_DIR)/v90_info0.o \
+	$(V90_INFO0_OBJECTS) \
 	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(BUILD_DIR)/v34_phase2_info.o
 V92_QC1_TEST_BINARY := $(BUILD_DIR)/test_v92_qc1
@@ -1585,20 +1586,20 @@ V92_INFO0_TEST_BINARY := $(BUILD_DIR)/test_v92_info0
 V92_INFO0_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v92_info0.o \
 	$(BUILD_DIR)/v92_info0.o \
-	$(BUILD_DIR)/v90_info0.o
+	$(V90_INFO0_OBJECTS)
 PCM_STARTUP_TEST_BINARY := $(BUILD_DIR)/test_pcm_startup
 PCM_STARTUP_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_pcm_startup.o \
 	$(BUILD_DIR)/pcm_startup.o \
 	$(BUILD_DIR)/v92_info0.o \
-	$(BUILD_DIR)/v90_info0.o
+	$(V90_INFO0_OBJECTS)
 PCM_INFO1_TEST_BINARY := $(BUILD_DIR)/test_pcm_info1
 PCM_INFO1_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_pcm_info1.o \
 	$(BUILD_DIR)/pcm_info1.o \
 	$(BUILD_DIR)/pcm_startup.o \
 	$(BUILD_DIR)/v92_info0.o \
-	$(BUILD_DIR)/v90_info0.o \
+	$(V90_INFO0_OBJECTS) \
 	$(BUILD_DIR)/v90_info1.o \
 	$(BUILD_DIR)/v92_info1d.o \
 	$(BUILD_DIR)/v92_pcm_info1a.o \
@@ -1612,7 +1613,7 @@ PCM_PHASE3_PROFILE_TEST_OBJECTS := \
 	$(BUILD_DIR)/pcm_info1.o \
 	$(BUILD_DIR)/pcm_startup.o \
 	$(BUILD_DIR)/v92_info0.o \
-	$(BUILD_DIR)/v90_info0.o \
+	$(V90_INFO0_OBJECTS) \
 	$(BUILD_DIR)/v90_info1.o \
 	$(BUILD_DIR)/v92_info1d.o \
 	$(BUILD_DIR)/v92_pcm_info1a.o \
@@ -2793,7 +2794,7 @@ PCM_PHASE2_INFO0_EXCHANGE_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_gain_control.o \
 	$(BUILD_DIR)/g711.o \
 	$(BUILD_DIR)/qam.o \
-	$(BUILD_DIR)/v90_info0.o \
+	$(V90_INFO0_OBJECTS) \
 	$(BUILD_DIR)/v92_info0.o \
 	$(BUILD_DIR)/v34_phase2_dpsk.o \
 	$(CRC16_CCITT_FALSE_OBJECT) \
@@ -2817,7 +2818,7 @@ PCM_PHASE2_RANGING_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_gain_control.o \
 	$(BUILD_DIR)/g711.o \
 	$(BUILD_DIR)/qam.o \
-	$(BUILD_DIR)/v90_info0.o \
+	$(V90_INFO0_OBJECTS) \
 	$(BUILD_DIR)/v92_info0.o \
 	$(BUILD_DIR)/v34_phase2_dpsk.o \
 	$(CRC16_CCITT_FALSE_OBJECT) \
@@ -2845,7 +2846,7 @@ V90_PHASE2_INITIAL_PROBE_TEST_OBJECTS := \
 	$(BUILD_DIR)/qam.o \
 	$(BUILD_DIR)/pcm_startup.o \
 	$(BUILD_DIR)/pcm_info1.o \
-	$(BUILD_DIR)/v90_info0.o \
+	$(V90_INFO0_OBJECTS) \
 	$(BUILD_DIR)/v92_info0.o \
 	$(BUILD_DIR)/v90_info1.o \
 	$(BUILD_DIR)/v92_info1d.o \

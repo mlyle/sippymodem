@@ -21,7 +21,7 @@ enum v92_info0_result {
  * bit positions. A decoded record may deliberately report no V.92 capability
  * so the session controller can fall back to V.90. */
 struct v92_info0a {
-	struct v90_info0 v90;
+	struct v34_info0 v90;
 	bool v92_capable;
 	bool short_phase2_requested;
 };

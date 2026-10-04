@@ -64,9 +64,9 @@ static void delay_line_transmit(
 	line->cursor = (line->cursor + 1u) % TEST_LINE_DELAY_SAMPLES;
 }
 
-static struct v90_info0 analog_capabilities(void)
+static struct v34_info0 analog_capabilities(void)
 {
-	return (struct v90_info0){
+	return (struct v34_info0){
 		.symbol_rate_2743_supported = true,
 		.symbol_rate_3429_supported = true,
 		.low_carrier_3000_supported = true,
@@ -813,7 +813,7 @@ static bool endpoint_sample(
 
 static bool check_initial_probe(enum test_codec codec)
 {
-	struct v90_info0 analog_info = analog_capabilities();
+	struct v34_info0 analog_info = analog_capabilities();
 	struct v90_info0d digital_info = digital_capabilities(codec);
 	struct test_endpoint analog = { .analog = true };
 	struct test_endpoint digital = { 0 };
@@ -1121,7 +1121,7 @@ static bool check_initial_probe(enum test_codec codec)
 static bool check_phase2_controller(
 	enum test_codec codec, enum test_info1_mode mode, unsigned short_offer)
 {
-	struct v90_info0 analog_info = analog_capabilities();
+	struct v34_info0 analog_info = analog_capabilities();
 	struct v90_info0d digital_info = digital_capabilities(codec);
 	struct v92_info0a v92_analog_info = {
 		.v90 = analog_info,
@@ -1143,7 +1143,7 @@ static bool check_phase2_controller(
 	struct test_delay_line digital_to_analog = { 0 };
 	struct v34_phase2_probe_receiver_measurement analog_measurement;
 	struct v34_phase2_probe_receiver_measurement digital_measurement;
-	struct v90_info0 peer_info0a;
+	struct v34_info0 peer_info0a;
 	struct v90_info0d peer_info0d;
 	struct v92_info0a peer_v92_info0a;
 	struct v92_info0d peer_v92_info0d;

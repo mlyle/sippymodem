@@ -238,7 +238,7 @@ enum pcm_phase2_info0_exchange_result
 pcm_phase2_info0_exchange_init_v90_analog(
 	struct pcm_phase2_info0_exchange *exchange,
 	int16_t nominal_amplitude,
-	const struct v90_info0 *local_info0a)
+	const struct v34_info0 *local_info0a)
 {
 	union pcm_info0_record local = { 0 };
 
@@ -467,7 +467,7 @@ static bool restart_local_info0(
 	uint8_t payload[V90_INFO0D_PAYLOAD_BYTES] = { 0 };
 	const struct v34_phase2_info_generator *frame =
 		&exchange->transport.info_transmitter.frame;
-	struct v90_info0 *common;
+	struct v34_info0 *common;
 
 	if (!decode_record(
 		    exchange->protocol, exchange->local_role,

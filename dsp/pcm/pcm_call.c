@@ -1677,28 +1677,12 @@ enum pcm_call_stage pcm_call_current_stage(const struct pcm_call *call)
 }
 
 static struct v34_info0 v34_info0_from_v90(
-	const struct v90_info0 *info0)
+	const struct v34_info0 *info0)
 {
-	return (struct v34_info0){
-		.symbol_rate_2743_supported = info0->symbol_rate_2743_supported,
-		.symbol_rate_2800_supported = info0->symbol_rate_2800_supported,
-		.symbol_rate_3429_supported = info0->symbol_rate_3429_supported,
-		.low_carrier_3000_supported = info0->low_carrier_3000_supported,
-		.high_carrier_3000_supported = info0->high_carrier_3000_supported,
-		.low_carrier_3200_supported = info0->low_carrier_3200_supported,
-		.high_carrier_3200_supported = info0->high_carrier_3200_supported,
-		.symbol_rate_3429_transmit_permitted =
-			info0->symbol_rate_3429_transmit_permitted,
-		.transmit_power_reduction_supported =
-			info0->transmit_power_reduction_supported,
-		.maximum_symbol_rate_difference_steps =
-			info0->maximum_symbol_rate_difference_steps,
-		.cme_modem = info0->cme_modem,
-		.constellation_1664_supported =
-			info0->constellation_1664_supported,
-		.transmit_clock_source = V34_INFO0_CLOCK_INTERNAL,
-		.acknowledges_peer_info0 = info0->acknowledges_peer_info0,
-	};
+	struct v34_info0 capabilities = *info0;
+
+	capabilities.transmit_clock_source = V34_INFO0_CLOCK_INTERNAL;
+	return capabilities;
 }
 
 enum pcm_call_result pcm_call_v34_fallback_handoff(
@@ -1707,8 +1691,8 @@ enum pcm_call_result pcm_call_v34_fallback_handoff(
 	struct pcm_fallback_restart *restart)
 {
 	struct v34_phase2_handoff selected;
-	const struct v90_info0 *local_info0;
-	const struct v90_info0 *peer_info0;
+	const struct v34_info0 *local_info0;
+	const struct v34_info0 *peer_info0;
 	int16_t receive_gain;
 
 	if (!pcm_call_is_valid(call) || handoff == NULL || restart == NULL ||
@@ -2038,7 +2022,7 @@ static enum pcm_call_result start_digital_info1(struct pcm_call *call)
 	bool v92 = call->protocol == PCM_PROTOCOL_V92;
 	const struct v34_info1c *configured = v92 ?
 		&call->local_info1.v92_digital.v34 : &call->local_info1.digital;
-	const struct v90_info0 *peer = v92 ?
+	const struct v34_info0 *peer = v92 ?
 		&call->peer_info0.v92_analog.v90 : &call->peer_info0.analog;
 	struct v34_info0 capabilities = v34_info0_from_v90(peer);
 	struct v34_phase2_probe_receiver_measurement measurement;

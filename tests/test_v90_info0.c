@@ -7,9 +7,9 @@
 
 #include <string.h>
 
-static struct v90_info0 common_capabilities(bool acknowledged)
+static struct v34_info0 common_capabilities(bool acknowledged)
 {
-	return (struct v90_info0){
+	return (struct v34_info0){
 		.symbol_rate_2743_supported = true,
 		.symbol_rate_2800_supported = true,
 		.symbol_rate_3429_supported = true,
@@ -25,7 +25,7 @@ static struct v90_info0 common_capabilities(bool acknowledged)
 }
 
 static bool common_equal(
-	const struct v90_info0 *left, const struct v90_info0 *right)
+	const struct v34_info0 *left, const struct v34_info0 *right)
 {
 	return left->symbol_rate_2743_supported ==
 		       right->symbol_rate_2743_supported &&
@@ -107,7 +107,7 @@ static bool test_wire_images(void)
 	static const uint8_t expected_d_frame[] = {
 		0xf7, 0x2f, 0xf8, 0x44, 0xa7, 0x92, 0x54, 0x3c,
 	};
-	struct v90_info0 analogue = common_capabilities(false);
+	struct v34_info0 analogue = common_capabilities(false);
 	struct v90_info0d digital = {
 		.common = common_capabilities(false),
 		.nominal_transmit_power = 9,
@@ -116,7 +116,7 @@ static bool test_wire_images(void)
 		.pcm_law = V90_PCM_A_LAW,
 		.upstream_symbol_rate_3429_supported = true,
 	};
-	struct v90_info0 decoded_a;
+	struct v34_info0 decoded_a;
 	struct v90_info0d decoded_d;
 	uint8_t a_payload[V90_INFO0A_PAYLOAD_BYTES];
 	uint8_t d_payload[V90_INFO0D_PAYLOAD_BYTES];
@@ -150,16 +150,41 @@ static bool test_wire_images(void)
 	return true;
 }
 
+static bool test_shared_v34_capabilities(void)
+{
+	struct v34_info0 source = common_capabilities(true), decoded;
+	uint8_t pcm[V90_INFO0A_PAYLOAD_BYTES], expected[sizeof(pcm)];
+	uint8_t ordinary[V34_INFO0_PAYLOAD_BYTES];
+
+	CHECK(v90_info0a_encode(&source, expected, sizeof(expected)) == V90_INFO0_OK,
+	      "shared capability fixture failed");
+	for (unsigned clock = 0; clock < 4; ++clock) {
+		source.transmit_clock_source = (enum v34_info0_clock_source)clock;
+		CHECK(v90_info0a_encode(&source, pcm, sizeof(pcm)) == V90_INFO0_OK &&
+		      memcmp(pcm, expected, sizeof(pcm)) == 0 &&
+		      (unsigned)source.transmit_clock_source == clock,
+		      "V.90 used or changed the V.34-only clock field");
+		if (clock == 3)
+			continue;
+		CHECK(v34_info0_encode(&source, ordinary, sizeof(ordinary)) == V34_INFO0_OK &&
+		      v90_info0a_decode(ordinary, sizeof(ordinary), V90_INFO0A_PAYLOAD_BITS,
+			&decoded) == V90_INFO0_OK && common_equal(&source, &decoded) &&
+		      decoded.transmit_clock_source == V34_INFO0_CLOCK_INTERNAL,
+		      "V.90 interpreted received reserved clock bits");
+	}
+	return true;
+}
+
 static bool test_reserved_bits(void)
 {
-	struct v90_info0 analogue = common_capabilities(true);
+	struct v34_info0 analogue = common_capabilities(true);
 	struct v90_info0d digital = {
 		.common = common_capabilities(true),
 		.nominal_transmit_power = 15,
 		.maximum_transmit_power = 31,
 		.pcm_law = V90_PCM_MU_LAW,
 	};
-	struct v90_info0 decoded_a;
+	struct v34_info0 decoded_a;
 	struct v90_info0d decoded_d;
 	uint8_t a_payload[V90_INFO0A_PAYLOAD_BYTES];
 	uint8_t d_payload[V90_INFO0D_PAYLOAD_BYTES];
@@ -194,10 +219,10 @@ static bool test_reserved_bits(void)
 
 static bool test_validation(void)
 {
-	struct v90_info0 valid = common_capabilities(false);
-	struct v90_info0 invalid = valid;
-	struct v90_info0 decoded = common_capabilities(true);
-	struct v90_info0 saved_decoded = decoded;
+	struct v34_info0 valid = common_capabilities(false);
+	struct v34_info0 invalid = valid;
+	struct v34_info0 decoded = common_capabilities(true);
+	struct v34_info0 saved_decoded = decoded;
 	struct v90_info0d valid_d = {
 		.common = valid,
 		.pcm_law = V90_PCM_MU_LAW,
@@ -269,6 +294,7 @@ int main(void)
 	} tests[] = {
 		{ "wire images", test_wire_images },
 		{ "reserved bits", test_reserved_bits },
+		{ "shared V.34 capabilities", test_shared_v34_capabilities },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

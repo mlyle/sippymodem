@@ -7,14 +7,14 @@
 #include "v92_info0.h"
 
 union pcm_info0_record {
-	struct v90_info0 analog;
+	struct v34_info0 analog;
 	struct v90_info0d digital;
 	struct v92_info0a v92_analog;
 	struct v92_info0d v92_digital;
 };
 
 /* The caller supplies valid protocol/role tags and the selected record. */
-static inline const struct v90_info0 *pcm_info0_common(
+static inline const struct v34_info0 *pcm_info0_common(
 	const union pcm_info0_record *record, enum pcm_protocol protocol,
 	enum v90_modem_role role)
 {
@@ -25,12 +25,12 @@ static inline const struct v90_info0 *pcm_info0_common(
 		       &record->v92_analog.v90 : &record->v92_digital.v90.common;
 }
 
-static inline struct v90_info0 *pcm_info0_mutable_common(
+static inline struct v34_info0 *pcm_info0_mutable_common(
 	union pcm_info0_record *record, enum pcm_protocol protocol,
 	enum v90_modem_role role)
 {
 	/* The record is mutable; only the const view's qualifier is removed. */
-	return (struct v90_info0 *)pcm_info0_common(record, protocol, role);
+	return (struct v34_info0 *)pcm_info0_common(record, protocol, role);
 }
 
 /* A received V.92-format record may decline V.92 so startup can fall back.

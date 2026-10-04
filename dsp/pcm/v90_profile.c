@@ -34,9 +34,9 @@ struct v90_upstream_selection {
 	bool suppress_optional_info1d_3429;
 };
 
-static struct v90_info0 analog_info0(void)
+static struct v34_info0 analog_info0(void)
 {
-	return (struct v90_info0){
+	return (struct v34_info0){
 		.symbol_rate_2743_supported = true,
 		.symbol_rate_3429_supported = true,
 		.low_carrier_3000_supported = true,

@@ -233,7 +233,7 @@ static enum pcm_phase2_ranging_result finish_initialization(
 enum pcm_phase2_ranging_result pcm_phase2_ranging_init_analog(
 	struct pcm_phase2_ranging *ranging,
 	int16_t nominal_amplitude,
-	const struct v90_info0 *local_info0a)
+	const struct v34_info0 *local_info0a)
 {
 	struct pcm_phase2_ranging initialized = { 0 };
 	enum pcm_phase2_info0_exchange_result result;

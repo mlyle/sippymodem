@@ -328,7 +328,7 @@ static enum pcm_phase2_result initialize(
 
 enum pcm_phase2_result pcm_phase2_init_v90_analog(
 	struct pcm_phase2 *phase2, int16_t nominal_amplitude,
-	const struct v90_info0 *local_info0a)
+	const struct v34_info0 *local_info0a)
 {
 	struct pcm_phase2_info0_exchange exchange;
 	union pcm_info0_record local = { 0 };
@@ -431,7 +431,7 @@ static enum pcm_phase2_result initialize_retrain(
 
 enum pcm_phase2_result pcm_phase2_init_retrain_v90_analog(
 	struct pcm_phase2 *phase2, int16_t nominal_amplitude,
-	const struct v90_info0 *local_info0a,
+	const struct v34_info0 *local_info0a,
 	const struct v90_info0d *peer_info0d,
 	uint16_t prior_round_trip_delay_samples)
 {
@@ -450,7 +450,7 @@ enum pcm_phase2_result pcm_phase2_init_retrain_v90_analog(
 enum pcm_phase2_result pcm_phase2_init_retrain_v90_digital(
 	struct pcm_phase2 *phase2, int16_t nominal_amplitude,
 	const struct v90_info0d *local_info0d,
-	const struct v90_info0 *peer_info0a,
+	const struct v34_info0 *peer_info0a,
 	uint16_t prior_round_trip_delay_samples)
 {
 	struct pcm_phase2 initial;
@@ -502,7 +502,7 @@ enum pcm_phase2_result pcm_phase2_init_retrain_v92_digital(
 }
 
 enum pcm_phase2_result pcm_phase2_peer_info0a(
-	const struct pcm_phase2 *phase2, struct v90_info0 *peer_info0a)
+	const struct pcm_phase2 *phase2, struct v34_info0 *peer_info0a)
 {
 	if (!pcm_phase2_is_valid(phase2) || peer_info0a == NULL)
 		return PCM_PHASE2_INVALID_ARGUMENT;
