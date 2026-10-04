@@ -80,6 +80,8 @@ struct integration_endpoint {
 	size_t stops;
 	size_t erased_samples;
 	bool delay_codewords;
+	bool robbed_bits;
+	unsigned robbed_position;
 	bool profile_cpu;
 	bool delay_one_sample;
 	uint8_t prior_codeword;
@@ -145,6 +147,7 @@ struct modem_test_case {
 	bool require_v44;
 	bool digital_caller;
 	bool automatic_pcm_roles;
+	bool startup_robbed_bits;
 	bool conventional_upstream;
 	bool factory_transport;
 	enum integration_impairment impairment;
@@ -603,6 +606,12 @@ static bool deliver_media_frame(
 			destination->receive_codewords[index] =
 				encode_codeword(law, destination->receive[index]);
 	}
+	if (destination->robbed_bits)
+		for (unsigned i = 0; i < SIP_FRAME_SAMPLES; ++i) {
+			destination->receive_codewords[i] = (destination->receive_codewords[i] & ~1u) |
+				((destination->robbed_position / 6) & 1u);
+			destination->robbed_position = (destination->robbed_position + 1u) % 24;
+		}
 	return media_decode(
 		       codec, destination->receive_codewords,
 		       SIP_FRAME_SAMPLES, destination->receive,
@@ -2085,6 +2094,86 @@ static bool present_legacy_answer_tone(struct integration_endpoint *caller,
 	return true;
 }
 
+static bool exercise_v91_payload(
+	struct integration_endpoint *caller, struct integration_endpoint *answerer,
+	enum media_codec codec, const struct media_recorder *recorder)
+{
+	struct integration_endpoint *ends[] = { caller, answerer };
+	uint32_t random = UINT32_C(0x91345678);
+	for (unsigned epoch = 0; epoch < 32; ++epoch) {
+		uint8_t payload[2][512];
+		for (unsigned side = 0; side < 2; ++side) {
+			ends[side]->output_count = 0;
+			for (unsigned i = 0; i < sizeof(payload[side]); ++i)
+				payload[side][i] = noise_state_next(&random);
+			CHECK(modem_write(ends[side]->modem, (char *)payload[side], sizeof(payload[side])) ==
+			      sizeof(payload[side]), "V.91 payload queue rejected data");
+		}
+		for (unsigned frame = 0; frame < 100; ++frame) {
+			CHECK(process_sip_frame(caller, answerer, codec, recorder) &&
+			      endpoint_drain(caller) && endpoint_drain(answerer) &&
+			      modem_is_online(caller->modem, DP_V91) && modem_is_online(answerer->modem, DP_V91),
+			      "V.91 stable channel retrained or lost carrier");
+			if (caller->output_count >= sizeof(payload[1]) && answerer->output_count >= sizeof(payload[0]))
+				break;
+		}
+		for (unsigned side = 0; side < 2; ++side)
+			CHECK(ends[side]->output_count == sizeof(payload[side]) &&
+			      memcmp(ends[side]->output, payload[1 - side], sizeof(payload[side])) == 0,
+			      "V.91 payload differed at epoch=%u side=%u", epoch, side);
+	}
+	return true;
+}
+
+static bool exercise_v91_recovery(
+	struct integration_endpoint *caller, struct integration_endpoint *answerer,
+	enum media_codec codec, const struct media_recorder *recorder, bool change_channel)
+{
+	struct integration_endpoint *ends[] = { caller, answerer };
+	struct dp *owned[] = { caller->modem->dp, answerer->modem->dp };
+	uint8_t payload[2][512];
+	bool retrained = false;
+	/* Rearm the bounded automatic recovery budget after prior ATO1 tests. */
+	for (unsigned frame = 0; frame < 650; ++frame)
+		CHECK(process_sip_frame(caller, answerer, codec, recorder) &&
+		      endpoint_drain(caller) && endpoint_drain(answerer), "V.91 healthy interval failed");
+	for (unsigned side = 0; side < 2; ++side) {
+		ends[side]->output_count = 0;
+		uint32_t random = UINT32_C(0x91928374) + side;
+		for (unsigned i = 0; i < sizeof(payload[side]); ++i)
+			payload[side][i] = noise_state_next(&random);
+		CHECK(modem_write(ends[side]->modem, (char *)payload[side], sizeof(payload[side])) ==
+		      sizeof(payload[side]), "V.91 recovery queue rejected data");
+	}
+	if (change_channel)
+		caller->robbed_bits = true;
+	else
+		caller->erased_samples = 80;
+	for (unsigned frame = 0; frame < 2000; ++frame) {
+		CHECK(process_sip_frame(caller, answerer, codec, recorder) &&
+		      endpoint_drain(caller) && endpoint_drain(answerer), "V.91 recovery media failed");
+		for (unsigned side = 0; side < 2; ++side) {
+			CHECK(ends[side]->modem->dp == owned[side] && ends[side]->modem->cfg.ec &&
+			      !ends[side]->modem->command, "V.91 recovery replaced the connected data link");
+			retrained |= owned[side]->status == DPSTAT_OK;
+		}
+		if (retrained && caller->output_count == sizeof(payload[1]) &&
+		    answerer->output_count == sizeof(payload[0]) &&
+		    modem_is_online(caller->modem, DP_V91) && modem_is_online(answerer->modem, DP_V91))
+			break;
+	}
+	for (unsigned side = 0; side < 2; ++side)
+		CHECK(retrained && ends[side]->output_count == sizeof(payload[side]) &&
+		      memcmp(ends[side]->output, payload[1 - side], sizeof(payload[side])) == 0,
+		      "V.91 recovery lost queued data, channel change=%u side=%u count=%zu retrained=%u",
+		      change_channel, side, ends[side]->output_count, retrained);
+	CHECK(caller->modem->tx_rate == 64000 && answerer->modem->rx_rate == 64000 &&
+	      caller->modem->rx_rate == (change_channel ? 56000u : 64000u) &&
+	      answerer->modem->tx_rate == caller->modem->rx_rate,
+	      "V.91 recovery did not relearn reciprocal rates");
+	return exercise_v91_payload(caller, answerer, codec, recorder);
+}
+
 static bool run_media_call(
 	const struct modem_test_case *test_case,
 	enum media_codec codec)
@@ -2172,6 +2261,7 @@ static bool run_media_call(
 			       &caller_rate_monitor,
 			       test_case->minimum_caller_rate_signal_sample)),
 	      "%s integration endpoints did not initialize", test_case->name);
+	caller.robbed_bits = answerer.robbed_bits = test_case->startup_robbed_bits;
 	if (v8_datapump_uses_pcm(test_case->id) ||
 	    v8_datapump_uses_pcm(answerer_id)) {
 		CHECK(modem_set_sreg(caller.modem, SREG_CONNNECT_MSG_FORMAT, 1) == 0 &&
@@ -2423,6 +2513,16 @@ static bool run_media_call(
 	      answerer.modem->ec.lapm.v44_session.phase,
 	      answerer.modem->ec.lapm.tx_ctrl != answerer.modem->ec.lapm.ctrl_list,
 	      answerer.modem->bit_timer);
+	if (connected_id == DP_V91) {
+		CHECK(output_contains(&caller, "Modulation: V91\r\n") &&
+		      output_contains(&caller, "Startup: V8\r\n") &&
+		      output_contains(&caller, "TxRate:") &&
+		      output_contains(&answerer, "Modulation: V91\r\n"),
+		      "%s lost negotiated AT&A7 details", test_case->name);
+		fprintf(stderr, "[ CONNECT  ] %s caller over %s:\n%.*s\n",
+			test_case->name, codec == MEDIA_CODEC_PCMU ? "PCMU" : "PCMA",
+			(int)caller.output_count, caller.output);
+	}
 	if (connected_id == DP_V90 || connected_id == DP_V92) {
 		const char *upstream = connected_id == DP_V92 && !test_case->conventional_upstream ?
 			"Upstream: PCM\r\n" : "Upstream: V34\r\n";
@@ -2583,6 +2683,15 @@ static bool run_media_call(
 	if ((connected_id == DP_V90 || connected_id == DP_V92) && !test_case->raw_transport)
 		CHECK(exercise_pcm_sample_slip(&caller, &answerer, codec, &recorder, true),
 		      "%s downstream slip did not preserve outstanding LAPM data", test_case->name);
+	if (connected_id == DP_V91) {
+		CHECK(exercise_v91_payload(&caller, &answerer, codec, &recorder),
+		      "%s sustained payload failed", test_case->name);
+		if (!test_case->raw_transport && test_case->caller_rx_rate == 64000) {
+			CHECK(exercise_v91_recovery(&caller, &answerer, codec, &recorder, false) &&
+			      exercise_v91_recovery(&caller, &answerer, codec, &recorder, true),
+			      "%s automatic recovery failed", test_case->name);
+		}
+	}
 	if (test_case->cleardown_initiators)
 		CHECK(exercise_cleardown(
 			      &caller, &answerer, connected_id, test_case->cleardown_initiators, codec, &recorder),
@@ -4296,6 +4405,77 @@ int main(void)
 	enum v90_modem_role v90_replay_pcm_role;
 	bool integration_case_selected = false;
 	static const struct modem_test_case test_cases[] = {
+		{
+			.id = DP_V92, .connected_id = DP_V91,
+			.name = "automatic V.91 robbed bits raw",
+			.selection_command = "AT&A7\r",
+			.caller_tx_rate = 56000, .caller_rx_rate = 56000,
+			.answerer_tx_rate = 56000, .answerer_rx_rate = 56000,
+			.automode = true, .automatic_pcm_roles = true, .startup_robbed_bits = true,
+			.requires_v8 = true, .requires_exact_g711 = true,
+			.raw_transport = true, .training_frame_limit = 1000,
+		},
+		{
+			.id = DP_V91, .connected_id = DP_V91,
+			.name = "explicit V.91 asymmetric cap",
+			.selection_command = "AT&A7+MS=91,1,28000,54667\r",
+			.answerer_selection_command = "AT&A7+MS=91,1,28000,64000\r",
+			.caller_tx_rate = 64000, .caller_rx_rate = 54667,
+			.answerer_tx_rate = 54667, .answerer_rx_rate = 64000,
+			.automode = true, .automatic_pcm_roles = true,
+			.requires_v8 = true, .requires_exact_g711 = true,
+			.require_lapm = true, .require_v44 = true, .training_frame_limit = 1000,
+			.cleardown_initiators = 1u,
+		},
+		{
+			.id = DP_V92, .connected_id = DP_V91,
+			.name = "automatic V.91 raw",
+			.selection_command = "AT&A7\r",
+			.caller_tx_rate = 64000, .caller_rx_rate = 64000,
+			.answerer_tx_rate = 64000, .answerer_rx_rate = 64000,
+			.automode = true, .automatic_pcm_roles = true,
+			.requires_v8 = true, .requires_exact_g711 = true,
+			.raw_transport = true, .test_retrain = false, .require_v44 = false,
+			.training_frame_limit = 1000,
+			.impairment = INTEGRATION_IMPAIRMENT_NONE,
+		},
+		{
+			.id = DP_V92, .connected_id = DP_V91,
+			.name = "automatic V.91 LAPM retrain",
+			.selection_command = "AT&A7\r",
+			.caller_tx_rate = 64000, .caller_rx_rate = 64000,
+			.answerer_tx_rate = 64000, .answerer_rx_rate = 64000,
+			.automode = true, .automatic_pcm_roles = true,
+			.requires_v8 = true, .requires_exact_g711 = true,
+			.raw_transport = false, .test_retrain = true, .require_v44 = false,
+			.training_frame_limit = 1000,
+			.impairment = INTEGRATION_IMPAIRMENT_DIGITAL_DELAY,
+		},
+		{
+			.id = DP_V92, .connected_id = DP_V91,
+			.name = "automatic V.91 default V44",
+			.selection_command = "AT&A7\r",
+			.caller_tx_rate = 64000, .caller_rx_rate = 64000,
+			.answerer_tx_rate = 64000, .answerer_rx_rate = 64000,
+			.automode = true, .automatic_pcm_roles = true,
+			.requires_v8 = true, .requires_exact_g711 = true,
+			.raw_transport = false, .test_retrain = false, .require_v44 = true,
+			.training_frame_limit = 1000,
+			.impairment = INTEGRATION_IMPAIRMENT_NONE,
+			.cleardown_initiators = 2u,
+		},
+		{
+			.id = DP_V91, .connected_id = DP_V91,
+			.name = "explicit V.91 capped",
+			.selection_command = "AT&A7+MS=91,1,28000,56000\r",
+			.caller_tx_rate = 56000, .caller_rx_rate = 56000,
+			.answerer_tx_rate = 56000, .answerer_rx_rate = 56000,
+			.automode = true, .automatic_pcm_roles = true,
+			.requires_v8 = true, .requires_exact_g711 = true,
+			.raw_transport = false, .test_retrain = true, .require_v44 = false,
+			.training_frame_limit = 1000,
+			.impairment = INTEGRATION_IMPAIRMENT_NONE,
+		},
 		{
 			.id = DP_V22BIS, .answerer_id = DP_V22,
 			.name = "automatic V.22bis caller to legacy V.22",

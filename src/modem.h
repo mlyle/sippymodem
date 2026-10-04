@@ -107,7 +107,7 @@ enum modem_ec_compression {
 
 
 #define MODEM_MIN_RATE 45
-#define MODEM_MAX_RATE 56000
+#define MODEM_MAX_RATE 64000
 #define MODEM_V90_UPSTREAM_MIN_RATE 4800
 #define MODEM_V90_UPSTREAM_MAX_RATE 33600
 

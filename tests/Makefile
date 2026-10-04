@@ -40,7 +40,7 @@ V34_NATIVE_OBJECTS := \
 	$(V34_NATIVE_SOURCE_NAMES:%.c=$(BUILD_DIR)/%.o)
 PCM_RUNTIME_SOURCE_NAMES := \
 	pcm_gain.c \
-	pcm_octet_probe.c v91_profile.c v91_control.c v91_call.c \
+	pcm_octet_probe.c v91_profile.c v91_control.c v91_call.c v91_datapump.c \
 	pcm_dil_descriptor.c pcm_downstream_rx.c pcm_downstream_tx.c pcm_downstream_equalizer.c \
 	pcm_echo_reference.c pcm_host_echo.c \
 	pcm_info1.c pcm_j_frame.c pcm_r.c \
@@ -5499,6 +5499,9 @@ $(BUILD_DIR)/v92_data_quality.o: \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/pcm_octet_probe.o: $(DSP_PCM_SOURCE_DIR)/pcm_octet_probe.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v91_datapump.o: $(DSP_PCM_SOURCE_DIR)/v91_datapump.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v91_call.o: $(DSP_PCM_SOURCE_DIR)/v91_call.c | $(BUILD_DIR)

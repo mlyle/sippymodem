@@ -274,6 +274,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v91_profile.c \
 	$(DSP_PCM_SOURCE_DIR)/v91_control.c \
 	$(DSP_PCM_SOURCE_DIR)/v91_call.c \
+	$(DSP_PCM_SOURCE_DIR)/v91_datapump.c \
 	$(DSP_PCM_SOURCE_DIR)/pcm_downstream_equalizer.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_cp.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_cp_receiver.c \

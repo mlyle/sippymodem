@@ -51,7 +51,7 @@ v8_datapump_modulation(enum DP_ID id)
 		return V8_MODULATION_V32;
 	case DP_V34:
 	case DP_V90:
-	case DP_V90_NO_V8BIS:
+	case DP_V91:
 	case DP_V92:
 		return V8_MODULATION_V34_DUPLEX;
 	default:
@@ -61,7 +61,7 @@ v8_datapump_modulation(enum DP_ID id)
 
 static inline bool v8_datapump_uses_pcm(enum DP_ID id)
 {
-	return id == DP_V90 || id == DP_V90_NO_V8BIS || id == DP_V92;
+	return id == DP_V90 || id == DP_V91 || id == DP_V92;
 }
 
 const struct dp_operations *v8_datapump_operations(enum DP_ID id);

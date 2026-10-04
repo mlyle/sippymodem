@@ -1856,7 +1856,7 @@ static bool test_v8_datapump_mapping(void)
 		      v8_datapump_modulation(DP_V92) ==
 			      V8_MODULATION_V34_DUPLEX &&
 		      v8_datapump_uses_pcm(DP_V90) &&
-		      v8_datapump_uses_pcm(DP_V90_NO_V8BIS) &&
+		      v8_datapump_uses_pcm(DP_V91) &&
 		      v8_datapump_uses_pcm(DP_V92) &&
 		      !v8_datapump_uses_pcm(DP_V34),
 	      "V.8 datapump modulation mapping changed");
@@ -1876,50 +1876,51 @@ static bool test_v8_handoff(void)
 		bool caller_v34_fallback;
 		bool caller_lapm;
 		bool answerer_lapm;
+		bool duplex_automode;
 	} selections[] = {
 		{ DP_V90, DP_V90, DP_V90,
 		  2, 0, MODEM_PCM_ROLE_DIGITAL, MODEM_PCM_ROLE_ANALOG,
-		  false, true, true },
+		  false, true, true, false },
 		{ DP_V92, DP_V92, DP_V92,
 		  0, 2, MODEM_PCM_ROLE_ANALOG, MODEM_PCM_ROLE_DIGITAL,
-		  false, true, true },
+		  false, true, true, false },
 		{ DP_V92, DP_V92, DP_V92,
 		  2, 1, MODEM_PCM_ROLE_ANALOG, MODEM_PCM_ROLE_DIGITAL,
-		  false, true, true },
+		  false, true, true, true },
 		{ DP_V92, DP_V92, DP_V92,
 		  1, 2, MODEM_PCM_ROLE_DIGITAL, MODEM_PCM_ROLE_ANALOG,
-		  false, true, true },
+		  false, true, true, true },
 		{ DP_V92, DP_V92, DP_V92,
 		  2, 2, MODEM_PCM_ROLE_ANALOG, MODEM_PCM_ROLE_DIGITAL,
-		  false, true, true },
+		  false, true, true, true },
 		{ DP_V92, DP_V34, DP_V34,
 		  2, 0, MODEM_PCM_ROLE_NONE, MODEM_PCM_ROLE_NONE,
-		  true, true, true },
+		  true, true, true, false },
 
 		{ DP_V34, DP_V34, DP_V34,
 		  false, false, MODEM_PCM_ROLE_NONE, MODEM_PCM_ROLE_NONE,
-		  false, true, true },
+		  false, true, true, false },
 		{ DP_V90, DP_V90, DP_V90,
 		  false, true, MODEM_PCM_ROLE_ANALOG, MODEM_PCM_ROLE_DIGITAL,
-		  false, true, true },
+		  false, true, true, false },
 		{ DP_V90, DP_V90, DP_V90,
 		  true, false, MODEM_PCM_ROLE_DIGITAL, MODEM_PCM_ROLE_ANALOG,
-		  false, true, true },
+		  false, true, true, false },
 		{ DP_V92, DP_V92, DP_V92,
 		  false, true, MODEM_PCM_ROLE_ANALOG, MODEM_PCM_ROLE_DIGITAL,
-		  false, true, true },
+		  false, true, true, false },
 		{ DP_V92, DP_V92, DP_V92,
 		  true, false, MODEM_PCM_ROLE_DIGITAL, MODEM_PCM_ROLE_ANALOG,
-		  false, true, true },
+		  false, true, true, false },
 		{ DP_V92, DP_V92, DP_V92,
 		  false, true, MODEM_PCM_ROLE_ANALOG, MODEM_PCM_ROLE_DIGITAL,
-		  false, false, true },
+		  false, false, true, false },
 		{ DP_V90, DP_V34, DP_V34,
 		  true, false, MODEM_PCM_ROLE_NONE, MODEM_PCM_ROLE_NONE,
-		  true, true, true },
+		  true, true, true, false },
 		{ DP_V90, DP_V90, DP_V90,
 		  false, true, MODEM_PCM_ROLE_ANALOG, MODEM_PCM_ROLE_DIGITAL,
-		  false, true, false },
+		  false, true, false, false },
 	};
 	struct modem_driver driver = {
 		.name = "V.8 handoff test",
@@ -1954,6 +1955,10 @@ static bool test_v8_handoff(void)
 		      "V.8 handoff endpoints did not initialize");
 		MODEM_AUTOMODE(caller) = run >= ARRAY_LENGTH(selections);
 		MODEM_AUTOMODE(answerer) = MODEM_AUTOMODE(caller);
+		bool duplex = MODEM_AUTOMODE(caller) && selections[selection].duplex_automode;
+		enum DP_ID expected = duplex ? DP_V91 : selections[selection].handoff;
+		enum modem_pcm_role caller_role = duplex ? MODEM_PCM_ROLE_DIGITAL : selections[selection].caller_role;
+		enum modem_pcm_role answerer_role = duplex ? MODEM_PCM_ROLE_DIGITAL : selections[selection].answerer_role;
 		CHECK(modem_set_param(caller, MDMPRM_V90_DIGITAL_INDICATION,
 			      selections[selection].caller_policy) == 0 &&
 		      modem_set_param(answerer, MDMPRM_V90_DIGITAL_INDICATION,
@@ -2002,12 +2007,10 @@ static bool test_v8_handoff(void)
 			      answering_status == DPSTAT_CHANGEDP &&
 			      !v8_datapump_v32_handoff(calling_dp, &legacy_carrier) &&
 			      !v8_datapump_v32_handoff(answering_dp, &legacy_carrier) &&
-			      caller->dp_requested == selections[selection].handoff &&
-			      answerer->dp_requested == selections[selection].handoff &&
-			      caller->dsp_info.pcm_role ==
-				      selections[selection].caller_role &&
-			      answerer->dsp_info.pcm_role ==
-				      selections[selection].answerer_role &&
+			      caller->dp_requested == expected &&
+			      answerer->dp_requested == expected &&
+			      caller->dsp_info.pcm_role == caller_role &&
+			      answerer->dsp_info.pcm_role == answerer_role &&
 			      caller->cfg.ec == selections[selection].caller_lapm &&
 			      answerer->cfg.ec == selections[selection].answerer_lapm &&
 			      caller->dsp_info.v8_lapm ==
@@ -2021,6 +2024,28 @@ static bool test_v8_handoff(void)
 			      !v8_datapump_selected_v34_fallback(answering_dp),
 		      "V.8 peers did not agree on handoff %u",
 		      (unsigned int)selections[selection].handoff);
+		if (expected == DP_V91) {
+			const struct dp_operations *pcm = modem_dp_get_registered_ops(DP_V91);
+			struct modem *ends[] = { caller, answerer };
+			struct dp *parents[] = { calling_dp, answering_dp };
+			for (unsigned side = 0; side < 2; ++side) {
+				ends[side]->dp = parents[side];
+				struct dp *child = pcm->create(ends[side], DP_V91, side == 0,
+					MODEM_RATE, MODEM_FRAG, pcm);
+				uint8_t rx[MODEM_FRAG], tx[MODEM_FRAG];
+				int16_t input[MODEM_FRAG] = { 0 }, output[MODEM_FRAG];
+				bool exact = false;
+				memset(rx, 0xff, sizeof(rx));
+				CHECK(child != NULL && pcm->process_g711(child, G711_LAW_PCMU,
+					rx, input, NULL, tx, output, MODEM_FRAG, &exact) == DPSTAT_OK && exact,
+				      "V.91 did not adopt its completed V.8 handoff");
+				for (unsigned i = 0; i < MODEM_FRAG; ++i)
+					CHECK(side ? output[i] == 0 : abs(output[i]) > 1000,
+					      "V.91 duplicated caller silence or omitted answerer silence");
+				CHECK(pcm->delete(child) == 0, "V.91 handoff child leaked");
+				ends[side]->dp = NULL;
+			}
+		}
 		CHECK(operations->delete(calling_dp) == 0 &&
 			      operations->delete(answering_dp) == 0,
 		      "V.8 PCM handshakes did not release their state");
@@ -2041,7 +2066,7 @@ static bool test_automatic_factory_profile(void)
 	CHECK(modem != NULL, "factory profile allocation failed");
 	for (unsigned reset = 0; reset < 2; ++reset) {
 		CHECK(MODEM_DP(modem) == DP_V92 && MODEM_AUTOMODE(modem) == 1 &&
-		      modem->min_rate == 300 && modem->max_rate == 56000 &&
+		      modem->min_rate == 300 && modem->max_rate == 64000 &&
 		      modem->v90_upstream_min_rate == 0 && modem->v90_upstream_max_rate == 0 &&
 		      modem->v34_symbol_rate == 0 && modem->v90_upstream_max_baud == 0 &&
 		      modem_get_param(modem, MDMPRM_V92_PCM_UPSTREAM) == 0 &&
@@ -8618,7 +8643,7 @@ static bool test_at_ms_uses_builtin_catalog(void)
 	CHECK(count > 0, "AT+MS returned no modulation choices");
 	response[count] = '\0';
 	CHECK(strstr(response,
-	      "(21,22,23,122,32,132,34,45,103,212,90,92),(0,1),") != NULL,
+	      "(21,22,23,122,32,132,34,45,103,212,90,91,92),(0,1),") != NULL,
 	      "AT+MS choices changed: %s", response);
 	char unsupported[] = "AT+MS=56";
 	unsigned selected = MODEM_DP(modem);

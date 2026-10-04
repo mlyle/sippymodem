@@ -44,7 +44,7 @@ baud instead of the North American 45.45-baud mode. Its bounded text path uses
 explicit half-duplex turns and preserves the complete mark-hold interval before
 listening again.
 
-`ATZ` restores automatic V.92 selection (`AT+MS=92,1,300,56000`) and
+`ATZ` restores automatic V.92 selection (`AT+MS=92,1,300,64000`) and
 unrestricted conventional upstream rate and symbol-rate negotiation.
 `AT+V90D=2` is the default: V.8 negotiates either PCM role with the peer.
 Use `AT+V90D=0` to pin the analog role or `AT+V90D=1` to pin the digital role.
@@ -138,8 +138,8 @@ cannot leave the terminal stuck online. A guarded adapter presents the transitio
 Smart Link sample processor to that host at the exact 8 kHz SIP media clock. The foreground
 daemon now owns that runtime directly, publishes its pseudoterminal path on
 standard output, and shuts down cleanly on SIGINT or SIGTERM. V.21, V.22, Bell
-103, Bell 212A, V.23, V.22bis, V.32/V.32bis, Baudot TTY/TDD, V.34, V.90, and
-V.92 are registered. V.34 permits independent transmit and receive bit rates
+103, Bell 212A, V.23, V.22bis, V.32/V.32bis, Baudot TTY/TDD, V.34, V.90,
+V.91, and V.92 are registered. V.34 permits independent transmit and receive bit rates
 when the peer supports them, retaining a common rate for symmetric-only peers.
 V.90 can select every standard PCM downstream rate from
 28000 through 56000 bit/s and a conventional V.34 upstream from 4800 through
@@ -154,6 +154,24 @@ host data and perform full retrains. Sustained excessive
 PCM-upstream residuals or ambiguous payload trigger up to two automatic full
 retrains per call; ambiguous bits are never delivered. Generated-channel tests
 are not evidence of robust operation on a physical line.
+
+Automatic digital peers that both advertise V.91 in V.8 select bidirectional
+PCM. Each receiver measures the channel and chooses its own unambiguous
+constellation and rate, from 28000 through 64000 bit/s at 8000 symbols/s.
+Stable robbed bits, digital attenuation, and G.711 conversion can lower that
+rate. `AT+MS=91` selects this capability explicitly; fixed V.90 or V.92
+(`+MS=90,0` or `+MS=92,0`) retain their requested protocols. Peers without V.91
+continue to use ordinary PCM role selection or conventional fallback.
+
+V.91 shares PCM impairment-training sequences, framing, mapping, scrambling,
+and power limits. Its optional control channel consumes 125 bit/s per direction.
+`AT&A7` reports `Modulation: V91`, the transmit rate in `TxRate`, and the receive
+rate after `CONNECT`. Missing samples, unknown codewords, and control alignment
+or CRC failures trigger bounded retraining. At 64000 bit/s every octet can be
+valid, so some channel changes are detected by LAPM's stalled-link recovery.
+Use LAPM for reliable delivery across retraining; raw mode cannot recover bytes
+lost during a channel change. Native tests verify exact duplex payloads and
+recovery with retained LAPM/V.44 data; external V.91 interoperability is untested.
 
 For V.92 PCM upstream, the analogue transmitter retains the phase requested
 by Jp through training and data. Set `SIP_PCM_CODEC_GRID=1` only when that

@@ -44,6 +44,7 @@
 #include "datapump.h"
 #include "v34_datapump.h"
 #include "v90_datapump.h"
+#include "v91_datapump.h"
 
 struct dp_driver {
 	enum DP_ID id;
@@ -72,6 +73,7 @@ static const struct dp_driver drivers[] = {
 	{ DP_K56, "K56Flex", false, NULL },
 	{ DP_V8BIS, "V8bis", false, NULL },
 	{ DP_V90, "V90", true, v90_datapump_operations },
+	{ DP_V91, "V91", true, v91_datapump_operations },
 	{ DP_V92, "V92", true, v90_datapump_operations },
 	{ DP_SINUS, "Sinus", false, NULL },
 	{ 0 }

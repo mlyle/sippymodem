@@ -150,7 +150,7 @@ static const struct v8_datapump *v8_from_dp_const(const struct dp *dp)
 	    (modulation & datapump->offered_modulations) == 0 ||
 	    datapump->handoff.tail_count >= MODEM_FRAG ||
 	    (!datapump->handoff.quick_connect && datapump->handoff.tail_count != 0) ||
-	    (datapump->requested_datapump == DP_V92 &&
+	    ((datapump->requested_datapump == DP_V92 || datapump->requested_datapump == DP_V91) &&
 	     !training_session_is_valid(&datapump->handoff.training)))
 		return NULL;
 	return datapump;
@@ -237,6 +237,15 @@ static struct dp *create_v8(
 		local_menu.pcm_availability = role_policy == MODEM_PCM_POLICY_AUTO ?
 			V8_PCM_ANALOG | V8_PCM_DIGITAL : digital ? V8_PCM_DIGITAL : V8_PCM_ANALOG;
 		local_menu.pstn_access = role_policy != MODEM_PCM_POLICY_ANALOG ? V8_PSTN_DIGITAL : 0;
+		/* Nailed V.90/V.92 retain their requested protocol. Automatic
+		 * digital peers may select the standard bidirectional PCM mode. */
+		if (id == DP_V91) {
+			local_menu.pcm_availability = V8_PCM_V91;
+			local_menu.pstn_access = V8_PSTN_DIGITAL;
+		} else if (id == DP_V92 && MODEM_AUTOMODE(modem) &&
+			   role_policy != MODEM_PCM_POLICY_ANALOG && modem->max_rate >= 28000) {
+			local_menu.pcm_availability |= V8_PCM_V91;
+		}
 	}
 	datapump = calloc(1, sizeof(*datapump));
 	if (datapump == NULL)
@@ -271,7 +280,7 @@ static struct dp *create_v8(
 		free(datapump);
 		return NULL;
 	}
-	if (id == DP_V92) {
+	if (id == DP_V92 || id == DP_V91) {
 		if (restarting ?
 		    !v90_datapump_v8_fallback_handoff(modem->dp, &datapump->handoff.training) :
 		    training_session_init(&datapump->handoff.training,
@@ -283,7 +292,7 @@ static struct dp *create_v8(
 		if (restarting && !caller)
 			datapump->handshake.answering.quiet_samples = 0;
 		/* QC1 commits to a PCM role before menus; automatic roles need CM/JM. */
-		if (!restarting && role_policy != MODEM_PCM_POLICY_AUTO &&
+		if (id == DP_V92 && !restarting && role_policy != MODEM_PCM_POLICY_AUTO &&
 		    modem_get_param(modem, MDMPRM_V92_QUICK_CONNECT)) {
 			struct v92_qc1_message local = {
 				.sender = digital ? V90_DIGITAL_MODEM : V90_ANALOG_MODEM,
@@ -329,7 +338,7 @@ static int delete_v8(struct dp *dp)
 static bool selected_pcm_role(
 	const struct v8_datapump *datapump,
 	const struct v8_menu *joint_menu,
-	enum modem_pcm_role *role)
+	enum modem_pcm_role *role, bool *duplex)
 {
 	const struct v8_menu *call_menu;
 	struct v8_pcm_roles roles;
@@ -341,6 +350,7 @@ static bool selected_pcm_role(
 		call_menu = &datapump->handshake.answering.call_menu;
 	if (v8_pcm_select_roles(call_menu, joint_menu, &roles) != V8_MENU_OK)
 		return false;
+	*duplex = roles.caller == V8_PCM_ROLE_DIGITAL && roles.answerer == V8_PCM_ROLE_DIGITAL;
 	local_role = datapump->caller ? roles.caller : roles.answerer;
 	if (local_role == V8_PCM_ROLE_ANALOG)
 		*role = MODEM_PCM_ROLE_ANALOG;
@@ -359,6 +369,7 @@ static int request_handoff(struct v8_datapump *datapump)
 	enum DP_ID handoff = datapump->requested_datapump;
 	bool selected;
 	bool v34_fallback = false;
+	bool duplex = false;
 	bool lapm;
 	bool qc = datapump->caller ?
 		datapump->handshake.calling.state == V8_CALLING_QC_COMPLETE :
@@ -398,9 +409,11 @@ static int request_handoff(struct v8_datapump *datapump)
 			return DPSTAT_ERROR;
 	}
 	if (v8_datapump_uses_pcm(handoff)) {
-		if (!selected_pcm_role(datapump, &menu, &pcm_role))
+		if (!selected_pcm_role(datapump, &menu, &pcm_role, &duplex))
 			return DPSTAT_ERROR;
-		if (!menu.pcm_present) {
+		if (duplex) {
+			handoff = DP_V91;
+		} else if (!menu.pcm_present) {
 			handoff = DP_V34;
 			v34_fallback = true;
 		} else if (pcm_role == MODEM_PCM_ROLE_NONE) {
@@ -483,7 +496,7 @@ static int process_handshake(struct dp *dp, void *receive_buffer, void *transmit
 	const int16_t *receive = receive_buffer;
 	int16_t *transmit = transmit_buffer;
 
-	if (datapump == NULL || datapump->requested_datapump != DP_V92 ||
+	if (datapump == NULL || (datapump->requested_datapump != DP_V92 && datapump->requested_datapump != DP_V91) ||
 	    receive == NULL || transmit == NULL || count <= 0 || count > MODEM_FRAG ||
 	    datapump->handoff_requested)
 		return process_v8_samples(dp, receive_buffer, transmit_buffer, count);
@@ -794,7 +807,7 @@ bool v8_datapump_pcm_handoff(const struct dp *dp, struct v8_pcm_handoff *handoff
 	const struct v8_datapump *datapump = v8_from_dp_const(dp);
 
 	if (datapump == NULL || handoff == NULL || !datapump->handoff_requested ||
-	    datapump->requested_datapump != DP_V92 || datapump->v34_fallback || datapump->legacy_v32 || datapump->legacy_selected ||
+	    (datapump->requested_datapump != DP_V92 && datapump->requested_datapump != DP_V91) || datapump->v34_fallback || datapump->legacy_v32 || datapump->legacy_selected ||
 	    training_session_has_failed(&datapump->handoff.training) ||
 	    memory_regions_overlap(datapump, sizeof(*datapump), handoff, sizeof(*handoff)))
 		return false;

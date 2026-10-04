@@ -46,6 +46,7 @@ CONNECT_MODULATIONS = {
     b"V32BIS": "V.32bis",
     b"V34": "V.34",
     b"V90": "V.90",
+    b"V91": "V.91",
     b"V92": "V.92",
     b"BELL103": "Bell 103",
     b"BELL212A": "Bell 212A",

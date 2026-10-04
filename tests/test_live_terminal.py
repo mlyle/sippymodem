@@ -181,6 +181,7 @@ class LiveTerminalTests(unittest.TestCase):
         for wire_name, expected in (
             (b"V34", "V.34"),
             (b"V90", "V.90"),
+            (b"V91", "V.91"),
             (b"V92", "V.92"),
         ):
             with self.subTest(wire_name=wire_name):

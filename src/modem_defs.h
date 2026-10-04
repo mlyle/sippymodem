@@ -351,7 +351,7 @@ enum DP_ID {
         DP_K56_OR_V90 = 65,
         DP_V8BIS = 108,
         DP_V90 = 90,
-        DP_V90_NO_V8BIS = 91,
+        DP_V91 = 91,
         DP_V92 = 92,
         DP_TEST  = 126,
         DP_SINUS = 127,

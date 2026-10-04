@@ -52,7 +52,7 @@ static bool menu_is_valid(const struct v8_menu *menu)
 	       (!menu->pcm_present || menu->pstn_access_present) &&
 	       (!menu->pcm_present ||
 		(menu->pcm_availability &
-		 (V8_PCM_ANALOG | V8_PCM_DIGITAL)) == 0 ||
+		 (V8_PCM_ANALOG | V8_PCM_DIGITAL | V8_PCM_V91)) == 0 ||
 		(menu->modulations & V8_MODULATION_V34_DUPLEX) != 0) &&
 	       menu->modulation_octets != 0 &&
 	       menu->modulation_octets <=
@@ -95,7 +95,7 @@ enum v8_menu_result v8_pcm_call_menu_init(
 	};
 
 	if (menu == NULL ||
-	    (pcm_availability & (V8_PCM_ANALOG | V8_PCM_DIGITAL)) == 0 ||
+	    (pcm_availability & (V8_PCM_ANALOG | V8_PCM_DIGITAL | V8_PCM_V91)) == 0 ||
 	    !menu_is_valid(&initialized))
 		return V8_MENU_INVALID_ARGUMENT;
 	*menu = initialized;
@@ -350,7 +350,9 @@ enum v8_menu_result v8_joint_menu_select(
 		.call_function = call_menu->call_function,
 		.modulations = call_menu->modulations & answer_menu->modulations,
 		.modulation_octets = call_menu->modulation_octets,
-		.pcm_availability = roles.answerer == V8_PCM_ROLE_DIGITAL ? V8_PCM_DIGITAL :
+		.pcm_availability = roles.caller == V8_PCM_ROLE_DIGITAL &&
+			roles.answerer == V8_PCM_ROLE_DIGITAL ? V8_PCM_V91 :
+			roles.answerer == V8_PCM_ROLE_DIGITAL ? V8_PCM_DIGITAL :
 			roles.answerer == V8_PCM_ROLE_ANALOG ? V8_PCM_ANALOG : 0,
 		.pstn_access =
 			(call_menu->pstn_access & V8_PSTN_CALL_CELLULAR) |
@@ -393,7 +395,10 @@ enum v8_menu_result v8_pcm_select_roles(
 		(call_menu->pcm_availability & V8_PCM_DIGITAL) != 0 &&
 		(call_menu->pstn_access & V8_PSTN_DIGITAL) != 0 &&
 		(joint_menu->pcm_availability & V8_PCM_ANALOG) != 0;
-	if (answer_can_be_digital) {
+	if ((call_menu->pcm_availability & joint_menu->pcm_availability & V8_PCM_V91) &&
+	    (call_menu->pstn_access & joint_menu->pstn_access & V8_PSTN_DIGITAL)) {
+		selected.caller = selected.answerer = V8_PCM_ROLE_DIGITAL;
+	} else if (answer_can_be_digital) {
 		selected.caller = V8_PCM_ROLE_ANALOG;
 		selected.answerer = V8_PCM_ROLE_DIGITAL;
 	} else if (caller_can_be_digital) {

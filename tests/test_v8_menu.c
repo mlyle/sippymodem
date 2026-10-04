@@ -241,7 +241,7 @@ static bool test_pcm_category_rejection(void)
 		      &unchanged, 0, 0, false) == V8_MENU_INVALID_ARGUMENT &&
 	      memcmp(&unchanged, &saved, sizeof(unchanged)) == 0 &&
 	      v8_pcm_call_menu_init(
-		      &unchanged, V8_PCM_V91, 0, false) ==
+		      &unchanged, V8_PCM_ALL + 1u, 0, false) ==
 		      V8_MENU_INVALID_ARGUMENT &&
 	      v8_pcm_call_menu_init(
 		      &unchanged, V8_PCM_ANALOG,
@@ -953,6 +953,40 @@ static bool test_validation(void)
 	return true;
 }
 
+static bool test_bidirectional_pcm_roles(void)
+{
+	struct v8_menu caller, answerer, joint, decoded;
+	struct v8_pcm_roles roles;
+	uint8_t information[V8_MAX_INFORMATION_OCTETS];
+	size_t count;
+	for (unsigned mask = 0; mask < 16; ++mask) {
+		CHECK(v8_pcm_call_menu_init(&caller,
+		      V8_PCM_ANALOG | V8_PCM_DIGITAL | ((mask & 1) ? V8_PCM_V91 : 0),
+		      (mask & 4) ? V8_PSTN_DIGITAL : 0, true) == V8_MENU_OK &&
+		      v8_pcm_call_menu_init(&answerer,
+		      V8_PCM_ANALOG | V8_PCM_DIGITAL | ((mask & 2) ? V8_PCM_V91 : 0),
+		      (mask & 8) ? V8_PSTN_DIGITAL : 0, true) == V8_MENU_OK &&
+		      v8_joint_menu_select(&caller, &answerer, &joint) == V8_MENU_OK &&
+		      v8_menu_encode(&joint, information, sizeof(information), &count) == V8_MENU_OK &&
+		      v8_menu_decode(information, count, &decoded) == V8_MENU_OK &&
+		      v8_pcm_select_roles(&caller, &decoded, &roles) == V8_MENU_OK,
+		      "digital PCM menu did not round trip, mask=%u", mask);
+		bool duplex = roles.caller == V8_PCM_ROLE_DIGITAL && roles.answerer == V8_PCM_ROLE_DIGITAL;
+		CHECK(duplex == (mask == 15), "V.91 selected without mutual digital capability, mask=%u", mask);
+		if (mask == 15)
+			CHECK(decoded.pcm_availability == V8_PCM_V91, "joint menu retained ambiguous legacy roles");
+		else if (mask & 8)
+			CHECK(roles.caller == V8_PCM_ROLE_ANALOG && roles.answerer == V8_PCM_ROLE_DIGITAL,
+			      "legacy digital answerer preference changed");
+	}
+	CHECK(v8_pcm_call_menu_init(&caller, V8_PCM_V91, V8_PSTN_DIGITAL, false) == V8_MENU_OK &&
+	      v8_joint_menu_select(&caller, &caller, &joint) == V8_MENU_OK &&
+	      v8_pcm_select_roles(&caller, &joint, &roles) == V8_MENU_OK &&
+	      roles.caller == V8_PCM_ROLE_DIGITAL && roles.answerer == V8_PCM_ROLE_DIGITAL,
+	      "explicit V.91 menus require an unrelated PCM role");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -970,6 +1004,7 @@ int main(void)
 		{ "decode rejection", test_decode_rejection },
 		{ "joint menu selection", test_joint_menu_selection },
 		{ "PCM role selection", test_pcm_role_selection },
+		{ "bidirectional digital PCM", test_bidirectional_pcm_roles },
 		{ "PCM role fallback", test_pcm_role_fallback },
 		{ "PCM with non-PCM peer", test_pcm_with_non_pcm_peer },
 		{ "no common modulation", test_no_common_modulation },
