@@ -238,6 +238,43 @@ static bool test_independent_direction_rates(void)
 	return true;
 }
 
+static bool test_peer_power_reduction(void)
+{
+	struct v34_call_configuration caller;
+	struct v34_call_configuration answerer;
+	struct v34_phase3_profile transmit;
+	uint16_t mask;
+
+	CHECK(v34_profile_init(&caller, &mask, V34_CALLING_STATION,
+		      V34_MIN_BIT_RATE, V34_MAX_BIT_RATE, 3200) == V34_PROFILE_OK &&
+	      v34_profile_init(&answerer, &mask, V34_ANSWERING_STATION,
+		      V34_MIN_BIT_RATE, V34_MAX_BIT_RATE, 3200) == V34_PROFILE_OK,
+	      "power reduction profiles did not initialize");
+	for (uint8_t reduction = 1;
+	     reduction <= V34_INFO1_MAX_POWER_REDUCTION_DB; ++reduction) {
+		caller.local_info1.calling.common.minimum_peer_power_reduction_db =
+			reduction;
+		answerer.local_info1.answering.common.minimum_peer_power_reduction_db =
+			reduction;
+		CHECK(v34_phase2_info1a_is_consistent(
+			      &caller.local_info0, &answerer.local_info0,
+			      &caller.local_info1.calling,
+			      &answerer.local_info1.answering),
+		      "profile rejected a supported %u dB peer request", reduction);
+		CHECK(v34_phase3_caller_profile(&transmit,
+			      &caller.local_info1.calling,
+			      &answerer.local_info1.answering) == V34_PHASE3_PROFILE_OK &&
+		      transmit.transmit_power_reduction_db == reduction,
+		      "caller lost the peer's power reduction");
+		CHECK(v34_phase3_answerer_profile(&transmit,
+			      &answerer.local_info1.answering,
+			      &caller.local_info1.calling) == V34_PHASE3_PROFILE_OK &&
+		      transmit.transmit_power_reduction_db == reduction,
+		      "answerer lost the peer's power reduction");
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -248,6 +285,7 @@ int main(void)
 		{ "caller forced selection", test_caller_forces_remote_selection },
 		{ "automatic profile", test_automatic_profile },
 		{ "independent direction rates", test_independent_direction_rates },
+		{ "peer power reduction", test_peer_power_reduction },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

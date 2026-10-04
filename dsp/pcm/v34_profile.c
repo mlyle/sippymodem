@@ -111,6 +111,7 @@ static struct v34_info0 local_info0(void)
 		.low_carrier_3200_supported = true,
 		.high_carrier_3200_supported = true,
 		.symbol_rate_3429_transmit_permitted = true,
+		.transmit_power_reduction_supported = true,
 		.constellation_1664_supported = true,
 		.maximum_symbol_rate_difference_steps = 0,
 		.transmit_clock_source = V34_INFO0_CLOCK_INTERNAL,
