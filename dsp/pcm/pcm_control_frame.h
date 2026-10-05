@@ -69,11 +69,12 @@ static inline bool pcm_control_frame_starts_are_zero(
 	return true;
 }
 
-/* J, MP and CP-family records carry 16 information bits after each zero start
- * bit. Exclude the 17-bit sync prefix and start bits from the unreflected CRC.
+/* J, MP, CP and DIL records carry 16 information bits after each zero start
+ * bit and use the V.34 10.1.2.3.2 CRC generator. Exclude frame sync, start
+ * and fill bits. The unreflected numeric representation holds the first CRC
+ * output in its most-significant bit, including for LSB-first DIL fields.
  * The caller validates storage and supplies the exclusive payload end; this
- * may point at the CRC word's start bit or its first information bit. DIL
- * descriptors use a different, reflected CRC and do not use this helper. */
+ * may point at the CRC word's start bit or its first information bit. */
 static inline uint16_t pcm_control_frame_crc(
 	const uint8_t *frame, size_t payload_end)
 {

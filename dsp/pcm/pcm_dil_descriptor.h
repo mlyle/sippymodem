@@ -34,7 +34,8 @@ size_t pcm_dil_descriptor_storage_bytes(
 	const struct pcm_dil_descriptor_layout *layout);
 
 /* Initialize a zero-valued descriptor with the common 17-one frame sync.
- * Finalize verifies framing, then writes the reflected CRC transactionally. */
+ * Finalize verifies framing, then writes the common PCM control CRC
+ * transactionally. */
 enum pcm_dil_descriptor_result pcm_dil_descriptor_initialize(
 	uint8_t *descriptor, size_t capacity,
 	const struct pcm_dil_descriptor_layout *layout);

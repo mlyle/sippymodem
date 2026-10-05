@@ -12,8 +12,6 @@
 
 enum {
 	FRAME_START_FIRST_BIT = 17,
-	CRC_INITIAL_REMAINDER = 0xffff,
-	CRC_REFLECTED_POLYNOMIAL = 0x8408,
 };
 
 bool pcm_dil_descriptor_layout_is_valid(
@@ -85,13 +83,6 @@ bool pcm_dil_descriptor_write_lsb_field(
 	return true;
 }
 
-static bool is_start_bit(size_t index)
-{
-	return index >= FRAME_START_FIRST_BIT &&
-	       (index - FRAME_START_FIRST_BIT) %
-		       PCM_DIL_FIELD_STRIDE_BITS == 0u;
-}
-
 enum pcm_dil_descriptor_result pcm_dil_descriptor_validate_framing(
 	const uint8_t *descriptor, size_t capacity,
 	const struct pcm_dil_descriptor_layout *layout)
@@ -112,39 +103,6 @@ enum pcm_dil_descriptor_result pcm_dil_descriptor_validate_framing(
 	return PCM_DIL_DESCRIPTOR_OK;
 }
 
-static uint16_t crc_step(uint16_t remainder, bool bit)
-{
-	uint16_t next = (uint16_t)(remainder >> 1);
-
-	if (((remainder ^ (uint16_t)bit) & 1u) != 0u)
-		next ^= CRC_REFLECTED_POLYNOMIAL;
-	return next;
-}
-
-static uint16_t descriptor_crc(
-	const uint8_t *descriptor,
-	const struct pcm_dil_descriptor_layout *layout)
-{
-	uint16_t remainder = CRC_INITIAL_REMAINDER;
-
-	for (size_t bit = PCM_DIL_INFORMATION_FIRST_BIT;
-	     bit < layout->crc_start_bit; ++bit) {
-		if (!is_start_bit(bit))
-			remainder = crc_step(
-				remainder, packed_msb_bit(descriptor, bit) != 0u);
-	}
-	return remainder;
-}
-
-static uint16_t encoded_crc(
-	const uint8_t *descriptor,
-	const struct pcm_dil_descriptor_layout *layout)
-{
-	return (uint16_t)packed_msb_read_lsb_field(
-		descriptor, layout->crc_start_bit + 1u,
-		PCM_DIL_CRC_BITS);
-}
-
 enum pcm_dil_descriptor_result pcm_dil_descriptor_validate_crc(
 	const uint8_t *descriptor, size_t capacity,
 	const struct pcm_dil_descriptor_layout *layout)
@@ -155,8 +113,10 @@ enum pcm_dil_descriptor_result pcm_dil_descriptor_validate_crc(
 
 	if (framing != PCM_DIL_DESCRIPTOR_OK)
 		return framing;
-	return descriptor_crc(descriptor, layout) ==
-		       encoded_crc(descriptor, layout) ?
+	return pcm_control_frame_crc(descriptor, layout->crc_start_bit) ==
+		       packed_msb_read_msb_field(
+			       descriptor, layout->crc_start_bit + 1u,
+			       PCM_DIL_CRC_BITS) ?
 		       PCM_DIL_DESCRIPTOR_OK :
 		       PCM_DIL_DESCRIPTOR_CRC_MISMATCH;
 }
@@ -186,8 +146,8 @@ enum pcm_dil_descriptor_result pcm_dil_descriptor_finalize(
 
 	if (framing != PCM_DIL_DESCRIPTOR_OK)
 		return framing;
-	remainder = descriptor_crc(descriptor, layout);
-	packed_msb_write_lsb_field(
+	remainder = pcm_control_frame_crc(descriptor, layout->crc_start_bit);
+	packed_msb_write_msb_field(
 		descriptor, layout->crc_start_bit + 1u,
 		PCM_DIL_CRC_BITS, remainder);
 	return PCM_DIL_DESCRIPTOR_OK;
