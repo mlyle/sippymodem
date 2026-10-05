@@ -64,6 +64,9 @@ static bool test_owned_loopback(void)
 	config.domain = "127.0.0.1";
 	struct sippymodem_server *server = sippymodem_server_create(&config);
 	EXPECT(server != NULL);
+	EXPECT(sippymodem_default_endpoint(server) != NULL && sippymodem_default_huntgroup(server) != NULL);
+	EXPECT(sippymodem_endpoint_destroy(sippymodem_default_endpoint(server)) == SIPPYMODEM_BUSY);
+	EXPECT(sippymodem_huntgroup_destroy(sippymodem_default_huntgroup(server)) == SIPPYMODEM_BUSY);
 	struct sippymodem_line_config line_config;
 	sippymodem_line_config_init(&line_config);
 	line_config.modulation = 21;
@@ -101,6 +104,7 @@ static bool test_owned_loopback(void)
 	struct sippymodem_call_facts facts;
 	EXPECT(sippymodem_get_call_facts(answerer, &facts) == SIPPYMODEM_OK);
 	EXPECT(strcmp(facts.called_number, "1234") == 0);
+	EXPECT(facts.endpoint_id == sippymodem_endpoint_id(sippymodem_default_endpoint(server)));
 	EXPECT(strcmp(facts.caller_number, "+12025550123") == 0);
 	EXPECT(sippymodem_get_call_facts(caller, &facts) == SIPPYMODEM_OK && !facts.caller_number[0]);
 	EXPECT(sippymodem_answer(answerer, remote.generation) == SIPPYMODEM_OK);
@@ -625,7 +629,350 @@ static bool test_timeout_and_bounds(void)
 	return true;
 }
 
+static bool answer_registration(int socket_fd, const char *request,
+	const struct sockaddr_in *remote, socklen_t remote_size)
+{
+	char response[4096] = "SIP/2.0 200 OK\r\n";
+	size_t used = strlen(response);
+	const char *names[] = { "Via:", "From:", "To:", "Call-ID:", "CSeq:", "Contact:" };
+	for (unsigned int index = 0; index < 6; ++index) {
+		char prefix[32];
+		snprintf(prefix, sizeof(prefix), "\r\n%s", names[index]);
+		const char *begin = strstr(request, prefix);
+		EXPECT(begin != NULL);
+		begin += 2;
+		const char *end = strstr(begin, "\r\n");
+		EXPECT(end != NULL && (size_t)(end - begin) < sizeof(response) - used - 64);
+		memcpy(response + used, begin, (size_t)(end - begin));
+		used += (size_t)(end - begin);
+		if (index == 2) {
+			memcpy(response + used, ";tag=owned", 10);
+			used += 10;
+		}
+		memcpy(response + used, "\r\n", 2);
+		used += 2;
+	}
+	const char *tail = strstr(request, "\r\nExpires: 0\r\n") != NULL ?
+		"Expires: 0\r\nContent-Length: 0\r\n\r\n" : "Expires: 60\r\nContent-Length: 0\r\n\r\n";
+	EXPECT(strlen(tail) < sizeof(response) - used);
+	memcpy(response + used, tail, strlen(tail));
+	used += strlen(tail);
+	EXPECT(sendto(socket_fd, response, used, 0, (const struct sockaddr *)remote, remote_size) == (ssize_t)used);
+	return true;
+}
+
+static bool test_endpoint_registrations(void)
+{
+	struct sippymodem_server_config sc;
+	sippymodem_server_config_init(&sc);
+	sc.omit_default_endpoint = true;
+	struct sippymodem_server *server = sippymodem_server_create(&sc);
+	EXPECT(server != NULL);
+	struct sippymodem_huntgroup *group = sippymodem_huntgroup_create(server);
+	EXPECT(group != NULL);
+	struct sippymodem_endpoint *endpoints[2];
+	int sinks[2];
+	for (unsigned int index = 0; index < 2; ++index) {
+		sinks[index] = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, 0);
+		struct sockaddr_in address = { .sin_family = AF_INET, .sin_addr.s_addr = htonl(INADDR_LOOPBACK) };
+		EXPECT(sinks[index] >= 0 && bind(sinks[index], (struct sockaddr *)&address, sizeof(address)) == 0);
+		socklen_t size = sizeof(address);
+		EXPECT(getsockname(sinks[index], (struct sockaddr *)&address, &size) == 0);
+		struct sippymodem_endpoint_config ec;
+		sippymodem_endpoint_config_init(&ec);
+		ec.bound_address = ec.public_address = ec.domain = "127.0.0.1";
+		ec.username = "authentication-user";
+		ec.password = "secret";
+		ec.register_account = true;
+		/* Derive the incoming key from the canonical bare identity, not the
+		 * deliberately different authentication username. */
+		ec.identity_uri = index == 0 ? "101" : "sip:102@127.0.0.1";
+		char registrar[128];
+		snprintf(registrar, sizeof(registrar), "sip:127.0.0.1:%u", ntohs(address.sin_port));
+		ec.registrar_uri = registrar;
+		endpoints[index] = sippymodem_endpoint_create(server, group, &ec);
+		EXPECT(endpoints[index] != NULL);
+	}
+	EXPECT(sippymodem_server_start(server) == SIPPYMODEM_OK);
+	for (unsigned int index = 0; index < 2; ++index)
+		EXPECT(sippymodem_endpoint_start(endpoints[index]) == SIPPYMODEM_OK);
+	uint64_t now = UINT64_C(1000000000);
+	for (unsigned int index = 0; index < 2; ++index) {
+		struct sippymodem_endpoint_status status = { 0 };
+		bool replied = false;
+		for (unsigned int tick = 0; tick < 1000 && status.registration != SIPPYMODEM_REG_REGISTERED; ++tick) {
+			EXPECT(step(server, &now));
+			char request[4096];
+			struct sockaddr_in remote;
+			socklen_t remote_size = sizeof(remote);
+			ssize_t size = recvfrom(sinks[index], request, sizeof(request) - 1, 0,
+				(struct sockaddr *)&remote, &remote_size);
+			if (size > 0) {
+				request[size] = '\0';
+				EXPECT(strncmp(request, "REGISTER ", 9) == 0);
+				const char *contact = strstr(request, "\r\nContact:");
+				if (contact != NULL)
+					contact += 2;
+				const char *expected = index == 0 ? "sip:101@127.0.0.1" : "sip:102@127.0.0.1";
+				EXPECT(contact != NULL && strstr(contact, expected) != NULL &&
+					strstr(contact, expected) < strstr(contact, "\r\n"));
+				EXPECT(answer_registration(sinks[index], request, &remote, remote_size));
+				replied = true;
+			}
+			EXPECT(sippymodem_endpoint_get_status(endpoints[index], &status) == SIPPYMODEM_OK);
+		}
+		EXPECT(replied && status.started && status.registration == SIPPYMODEM_REG_REGISTERED &&
+			status.registration_code == 200 && status.library_status == 0);
+		if (index == 0) {
+			EXPECT(sippymodem_endpoint_get_status(endpoints[1], &status) == SIPPYMODEM_OK);
+			EXPECT(status.registration == SIPPYMODEM_REG_REGISTERING);
+		}
+	}
+	EXPECT(sippymodem_endpoint_stop(endpoints[0]) == SIPPYMODEM_OK);
+	struct sippymodem_endpoint_status status;
+	EXPECT(sippymodem_endpoint_get_status(endpoints[0], &status) == SIPPYMODEM_OK &&
+		!status.started && status.registration == SIPPYMODEM_REG_UNREGISTERED);
+	EXPECT(sippymodem_endpoint_get_status(endpoints[1], &status) == SIPPYMODEM_OK &&
+		status.started && status.registration == SIPPYMODEM_REG_REGISTERED);
+	EXPECT(sippymodem_endpoint_start(endpoints[0]) == SIPPYMODEM_OK);
+	EXPECT(sippymodem_endpoint_get_status(endpoints[0], &status) == SIPPYMODEM_OK &&
+		status.started && status.registration == SIPPYMODEM_REG_REGISTERING);
+	EXPECT(sippymodem_endpoint_stop(endpoints[0]) == SIPPYMODEM_OK);
+	EXPECT(sippymodem_endpoint_get_status(endpoints[0], &status) == SIPPYMODEM_OK &&
+		!status.started && status.registration == SIPPYMODEM_REG_UNREGISTERED);
+	sippymodem_server_destroy(server);
+	for (unsigned int index = 0; index < 2; ++index)
+		close(sinks[index]);
+	return true;
+}
+
+static bool test_huntgroups(void)
+{
+	struct sippymodem_server_config config;
+	sippymodem_server_config_init(&config);
+	config.max_lines = 16;
+	config.public_address = config.bound_address = "127.0.0.1";
+	config.omit_default_endpoint = true;
+	struct sippymodem_server *server = sippymodem_server_create(&config);
+	EXPECT(server != NULL && sippymodem_default_endpoint(server) == NULL);
+	struct sippymodem_huntgroup *pool = sippymodem_huntgroup_create(server);
+	struct sippymodem_huntgroup *isolated = sippymodem_huntgroup_create(server);
+	struct sippymodem_huntgroup *originators = sippymodem_huntgroup_create(server);
+	EXPECT(pool != NULL && isolated != NULL && originators != NULL);
+	struct sippymodem_line_config lc;
+	sippymodem_line_config_init(&lc);
+	lc.modulation = 21;
+	lc.automode = false;
+	lc.ec_policy = SIPPYMODEM_EC_RAW;
+	lc.compression_types = 0;
+	struct sippymodem_line *callers[6], *answerers[5];
+	for (unsigned int index = 0; index < 6; ++index)
+		EXPECT((callers[index] = sippymodem_line_create(server, &lc)) != NULL);
+	for (unsigned int index = 0; index < 5; ++index) {
+		EXPECT((answerers[index] = sippymodem_line_create(server, &lc)) != NULL);
+		EXPECT(sippymodem_huntgroup_add(pool, answerers[index]) == SIPPYMODEM_OK);
+	}
+	lc.modulation = 122;
+	lc.min_bps = lc.max_bps = 2400;
+	struct sippymodem_line *slow_caller = sippymodem_line_create(server, &lc);
+	struct sippymodem_line *slow_answerer = sippymodem_line_create(server, &lc);
+	EXPECT(slow_caller != NULL && slow_answerer != NULL);
+	EXPECT(sippymodem_huntgroup_add(isolated, slow_answerer) == SIPPYMODEM_OK);
+	struct sippymodem_endpoint_config ec;
+	sippymodem_endpoint_config_init(&ec);
+	ec.public_address = ec.bound_address = ec.domain = "127.0.0.1";
+	ec.request_host = "127.0.0.1";
+	ec.identity_uri = "sip:out@127.0.0.1";
+	struct sippymodem_endpoint *out = sippymodem_endpoint_create(server, originators, &ec);
+	ec.identity_uri = "100"; /* Identity-only bare user shares canonical route derivation. */
+	struct sippymodem_endpoint *first = sippymodem_endpoint_create(server, pool, &ec);
+	ec.identity_uri = "sip:200@127.0.0.1";
+	struct sippymodem_endpoint *second = sippymodem_endpoint_create(server, pool, &ec);
+	/* Keep the distinct transport port reserved until the shared one starts. */
+	int reserved_socket = socket(AF_INET, SOCK_DGRAM, 0);
+	struct sockaddr_in reserved_address = { .sin_family = AF_INET, .sin_addr.s_addr = htonl(INADDR_LOOPBACK) };
+	EXPECT(reserved_socket >= 0 && bind(reserved_socket, (struct sockaddr *)&reserved_address, sizeof(reserved_address)) == 0);
+	socklen_t reserved_size = sizeof(reserved_address);
+	EXPECT(getsockname(reserved_socket, (struct sockaddr *)&reserved_address, &reserved_size) == 0);
+	ec.listen_port = ntohs(reserved_address.sin_port);
+	ec.identity_uri = "sip:300@127.0.0.1";
+	struct sippymodem_endpoint *third = sippymodem_endpoint_create(server, isolated, &ec);
+	EXPECT(out != NULL && first != NULL && second != NULL && third != NULL);
+	EXPECT(sippymodem_huntgroup_destroy(pool) == SIPPYMODEM_BUSY);
+	EXPECT(sippymodem_endpoint_start(first) == SIPPYMODEM_CLOSED);
+	EXPECT(sippymodem_server_start(server) == SIPPYMODEM_OK);
+	EXPECT(sippymodem_endpoint_start(out) == SIPPYMODEM_OK);
+	EXPECT(sippymodem_endpoint_start(first) == SIPPYMODEM_OK);
+	EXPECT(sippymodem_endpoint_start(second) == SIPPYMODEM_OK);
+	close(reserved_socket);
+	EXPECT(sippymodem_endpoint_start(third) == SIPPYMODEM_OK);
+	unsigned int separate_port = sippymodem_endpoint_listen_port(third);
+	unsigned int port = sippymodem_endpoint_listen_port(first);
+	EXPECT(port != 0 && port == sippymodem_endpoint_listen_port(second) && port != separate_port);
+	struct sippymodem_endpoint_status endpoint_status;
+	EXPECT(sippymodem_endpoint_get_status(first, &endpoint_status) == SIPPYMODEM_OK);
+	EXPECT(endpoint_status.started && endpoint_status.listen_port == port && endpoint_status.registration == SIPPYMODEM_REG_DISABLED);
+	EXPECT(sippymodem_huntgroup_remove(pool, answerers[0]) == SIPPYMODEM_BUSY);
+	EXPECT(sippymodem_huntgroup_add(pool, callers[0]) == SIPPYMODEM_BUSY);
+	/* The owned transport cannot have two overlapping Request-URI policies. */
+	ec.listen_port = 0;
+	ec.identity_uri = "sip:100@127.0.0.1";
+	struct sippymodem_endpoint *ambiguous = sippymodem_endpoint_create(server, pool, &ec);
+	EXPECT(ambiguous != NULL && sippymodem_endpoint_start(ambiguous) == SIPPYMODEM_BUSY);
+	EXPECT(sippymodem_endpoint_destroy(ambiguous) == SIPPYMODEM_OK);
+	for (unsigned int index = 0; index < 6; ++index)
+		EXPECT(sippymodem_line_start(callers[index]) == SIPPYMODEM_OK);
+	for (unsigned int index = 0; index < 5; ++index)
+		EXPECT(sippymodem_line_start(answerers[index]) == SIPPYMODEM_OK);
+	EXPECT(sippymodem_line_start(slow_caller) == SIPPYMODEM_OK);
+	EXPECT(sippymodem_line_start(slow_answerer) == SIPPYMODEM_OK);
+	uint64_t now = UINT64_C(1000000000), next, generations[6];
+	EXPECT(sippymodem_process(server, now, &next) == SIPPYMODEM_OK);
+	char target[128];
+	snprintf(target, sizeof(target), "sip:100@127.0.0.1:%u", port);
+	EXPECT(sippymodem_dial(callers[0], target, &generations[0]) == SIPPYMODEM_CLOSED);
+	for (unsigned int index = 0; index < 5; ++index)
+		EXPECT(sippymodem_dial_from(callers[index], out, target, &generations[index]) == SIPPYMODEM_OK);
+	struct sippymodem_status remote[5] = { 0 }, local[6] = { 0 };
+	bool answered[5] = { 0 }, ready = false;
+	for (unsigned int tick = 0; tick < 20000 && !ready; ++tick) {
+		EXPECT(step(server, &now));
+		ready = true;
+		for (unsigned int index = 0; index < 5; ++index) {
+			EXPECT(sippymodem_get_status(answerers[index], &remote[index]) == SIPPYMODEM_OK);
+			EXPECT(sippymodem_get_status(callers[index], &local[index]) == SIPPYMODEM_OK);
+			if (remote[index].phase == SIPPYMODEM_RINGING && !answered[index]) {
+				struct sippymodem_call_facts facts;
+				EXPECT(sippymodem_get_call_facts(answerers[index], &facts) == SIPPYMODEM_OK);
+				EXPECT(facts.endpoint_id == sippymodem_endpoint_id(first));
+				EXPECT(strcmp(facts.called_number, "100") == 0);
+				EXPECT(sippymodem_answer(answerers[index], remote[index].generation) == SIPPYMODEM_OK);
+				answered[index] = true;
+			}
+			ready = ready && remote[index].ready && local[index].ready;
+		}
+	}
+	if (!ready)
+		for (unsigned int index = 0; index < 5; ++index)
+			fprintf(stderr, "hunt %u: answered=%u caller=%u/%u sip=%u disc=%s remote=%u/%u sip=%u disc=%s\n", index, answered[index], local[index].phase, local[index].ready, local[index].sip_state, local[index].disconnect_reason, remote[index].phase, remote[index].ready, remote[index].sip_state, remote[index].disconnect_reason);
+	EXPECT(ready);
+	/* Distinct markers prove five simultaneous calls are routed independently. */
+	size_t accepted;
+	for (unsigned int index = 0; index < 5; ++index) {
+		unsigned char marker = (unsigned char)('a' + index);
+		EXPECT(sippymodem_send(callers[index], &marker, 1, &accepted) == SIPPYMODEM_OK && accepted == 1);
+	}
+	for (unsigned int tick = 0; tick < 2000; ++tick)
+		EXPECT(step(server, &now));
+	for (unsigned int index = 1; index < 5; ++index) {
+		unsigned char marker;
+		size_t received;
+		EXPECT(sippymodem_receive(answerers[index], &marker, 1, &received) == SIPPYMODEM_OK);
+		EXPECT(received == 1 && marker == (unsigned char)('a' + index));
+	}
+	EXPECT(sippymodem_hangup(callers[0], generations[0]) == SIPPYMODEM_OK);
+	for (unsigned int tick = 0; tick < 2000; ++tick)
+		EXPECT(step(server, &now));
+	EXPECT(sippymodem_get_status(answerers[0], &remote[0]) == SIPPYMODEM_OK);
+	EXPECT(remote[0].phase == SIPPYMODEM_IDLE && remote[0].rx_ready == 1);
+	/* Retained RX blocks the only idle member: do not spill into isolated pool. */
+	EXPECT(sippymodem_dial_from(callers[5], out, target, &generations[5]) == SIPPYMODEM_OK);
+	for (unsigned int tick = 0; tick < 1000; ++tick)
+		EXPECT(step(server, &now));
+	EXPECT(sippymodem_get_status(callers[5], &local[5]) == SIPPYMODEM_OK && local[5].phase == SIPPYMODEM_IDLE);
+	struct sippymodem_status separate;
+	EXPECT(sippymodem_get_status(slow_answerer, &separate) == SIPPYMODEM_OK && separate.generation == 0);
+	unsigned char marker;
+	size_t received;
+	EXPECT(sippymodem_receive(answerers[0], &marker, 1, &received) == SIPPYMODEM_OK && received == 1 && marker == 'a');
+	/* Both endpoints share the same five-line pool, with exact owner facts. */
+	snprintf(target, sizeof(target), "sip:200@127.0.0.1:%u", port);
+	EXPECT(sippymodem_dial_from(callers[0], out, target, &generations[0]) == SIPPYMODEM_OK);
+	bool second_answered = false;
+	ready = false;
+	for (unsigned int tick = 0; tick < 20000 && !ready; ++tick) {
+		EXPECT(step(server, &now));
+		EXPECT(sippymodem_get_status(answerers[0], &remote[0]) == SIPPYMODEM_OK);
+		EXPECT(sippymodem_get_status(callers[0], &local[0]) == SIPPYMODEM_OK);
+		if (remote[0].phase == SIPPYMODEM_RINGING && !second_answered) {
+			struct sippymodem_call_facts facts;
+			EXPECT(sippymodem_get_call_facts(answerers[0], &facts) == SIPPYMODEM_OK);
+			EXPECT(facts.endpoint_id == sippymodem_endpoint_id(second));
+			EXPECT(sippymodem_answer(answerers[0], remote[0].generation) == SIPPYMODEM_OK);
+			second_answered = true;
+		}
+		ready = remote[0].ready && local[0].ready;
+	}
+	EXPECT(ready);
+	fail_native_stop = true;
+	EXPECT(sippymodem_endpoint_stop(first) == SIPPYMODEM_ERROR);
+	EXPECT(sippymodem_endpoint_stop(first) == SIPPYMODEM_OK);
+	uint64_t previous_sequence = endpoint_status.state_sequence;
+	EXPECT(sippymodem_endpoint_get_status(first, &endpoint_status) == SIPPYMODEM_OK);
+	EXPECT(!endpoint_status.started && endpoint_status.listen_port == 0 && endpoint_status.state_sequence > previous_sequence);
+	for (unsigned int tick = 0; tick < 1000; ++tick)
+		EXPECT(step(server, &now));
+	EXPECT(sippymodem_get_status(answerers[0], &remote[0]) == SIPPYMODEM_OK && remote[0].ready);
+	for (unsigned int index = 1; index < 5; ++index)
+		EXPECT(sippymodem_get_status(answerers[index], &remote[index]) == SIPPYMODEM_OK && remote[index].phase == SIPPYMODEM_IDLE);
+	marker = 'z';
+	EXPECT(sippymodem_send(callers[0], &marker, 1, &accepted) == SIPPYMODEM_OK);
+	for (unsigned int tick = 0; tick < 1500; ++tick)
+		EXPECT(step(server, &now));
+	EXPECT(sippymodem_receive(answerers[0], &marker, 1, &received) == SIPPYMODEM_OK && received == 1 && marker == 'z');
+	/* Unknown users and unknown URI hosts cannot reach another account's pool. */
+	const char *bad[] = { "sip:999@127.0.0.1", "sip:200@localhost", "sip:200@127.0.0.1" };
+	for (unsigned int test = 0; test < 3; ++test) {
+		snprintf(target, sizeof(target), "%s:%u", bad[test], test == 2 ? separate_port : port);
+		EXPECT(sippymodem_dial_from(callers[5], out, target, &generations[5]) == SIPPYMODEM_OK);
+		for (unsigned int tick = 0; tick < 1000; ++tick)
+			EXPECT(step(server, &now));
+		EXPECT(sippymodem_get_status(callers[5], &local[5]) == SIPPYMODEM_OK && local[5].phase == SIPPYMODEM_IDLE);
+		for (unsigned int index = 1; index < 5; ++index)
+			EXPECT(sippymodem_get_status(answerers[index], &remote[index]) == SIPPYMODEM_OK && remote[index].generation == 1);
+	}
+	/* A separate group keeps its own modem settings even with idle faster lines. */
+	snprintf(target, sizeof(target), "sip:300@127.0.0.1:%u", separate_port);
+	uint64_t slow_generation;
+	EXPECT(sippymodem_dial_from(slow_caller, out, target, &slow_generation) == SIPPYMODEM_OK);
+	struct sippymodem_status slow_local = { 0 };
+	bool slow_answered = false;
+	ready = false;
+	for (unsigned int tick = 0; tick < 20000 && !ready; ++tick) {
+		EXPECT(step(server, &now));
+		EXPECT(sippymodem_get_status(slow_answerer, &separate) == SIPPYMODEM_OK);
+		EXPECT(sippymodem_get_status(slow_caller, &slow_local) == SIPPYMODEM_OK);
+		if (separate.phase == SIPPYMODEM_RINGING && !slow_answered) {
+			EXPECT(sippymodem_answer(slow_answerer, separate.generation) == SIPPYMODEM_OK);
+			slow_answered = true;
+		}
+		ready = separate.ready && slow_local.ready;
+	}
+	EXPECT(ready && separate.modulation == 122 && separate.rx_bps == 2400);
+	unsigned int old_id = sippymodem_endpoint_id(second);
+	EXPECT(sippymodem_endpoint_destroy(second) == SIPPYMODEM_OK);
+	struct sippymodem_call_facts retained;
+	EXPECT(sippymodem_get_call_facts(answerers[0], &retained) == SIPPYMODEM_OK && retained.endpoint_id == old_id);
+	EXPECT(sippymodem_get_status(slow_answerer, &separate) == SIPPYMODEM_OK && separate.ready);
+	ec.identity_uri = "sip:200@127.0.0.1";
+	second = sippymodem_endpoint_create(server, pool, &ec);
+	EXPECT(second != NULL && sippymodem_endpoint_id(second) > old_id);
+	EXPECT(sippymodem_endpoint_start(second) == SIPPYMODEM_OK);
+	for (unsigned int tick = 0; tick < 1000; ++tick)
+		EXPECT(step(server, &now));
+	snprintf(target, sizeof(target), "sip:200@127.0.0.1:%u", port);
+	EXPECT(sippymodem_dial_from(callers[0], out, target, &generations[0]) == SIPPYMODEM_OK);
+	for (unsigned int tick = 0; tick < 1000 && remote[0].phase != SIPPYMODEM_RINGING; ++tick) {
+		EXPECT(step(server, &now));
+		EXPECT(sippymodem_get_status(answerers[0], &remote[0]) == SIPPYMODEM_OK);
+	}
+	EXPECT(remote[0].phase == SIPPYMODEM_RINGING);
+	EXPECT(sippymodem_get_call_facts(answerers[0], &retained) == SIPPYMODEM_OK && retained.endpoint_id == sippymodem_endpoint_id(second));
+	sippymodem_server_destroy(server);
+	return true;
+}
+
 int main(void)
 {
-	return test_typed_credentials() && test_typed_accounts() && test_owned_loopback() && test_compressed_command_and_fd_eof() && test_timeout_and_bounds() ? 0 : 1;
+	return test_endpoint_registrations() && test_huntgroups() && test_typed_credentials() && test_typed_accounts() && test_owned_loopback() && test_compressed_command_and_fd_eof() && test_timeout_and_bounds() ? 0 : 1;
 }

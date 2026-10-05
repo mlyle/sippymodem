@@ -95,6 +95,7 @@ bool sip_media_bridge_init(
 	initialized.source.context = bridge;
 	initialized.source.ready = forward_ready;
 	initialized.source.admit = forward_admit;
+	initialized.source.line_owner = initialized.destination.line_owner;
 	initialized.source.error = forward_error;
 	initialized.source.trace = forward_trace;
 	initialized.source.registration_changed = forward_registration;

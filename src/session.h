@@ -47,6 +47,8 @@ enum sip_session_result sip_session_step(
 	size_t *datagrams_received);
 void sip_session_trace_media(struct sip_session *session, uint64_t now_ns);
 
+enum sip_signaling_result sip_session_set_endpoint(struct sip_session *session,
+	struct sip_endpoint *endpoint);
 enum sip_signaling_result sip_session_dial(
 	struct sip_session *session, const char *target);
 enum sip_signaling_result sip_session_answer(

@@ -52,6 +52,8 @@ enum sip_session_result modem_host_open(
 enum sip_session_result modem_host_close(
 	struct modem_host *host);
 
+enum sip_signaling_result modem_host_set_endpoint(struct modem_host *host,
+	struct sip_endpoint *endpoint);
 enum sip_signaling_result modem_host_dial(
 	struct modem_host *host, const char *target);
 enum sip_signaling_result modem_host_answer(

@@ -12,6 +12,8 @@ extern "C" {
 
 struct sippymodem_server;
 struct sippymodem_line;
+struct sippymodem_endpoint;
+struct sippymodem_huntgroup;
 
 enum sippymodem_result {
 	SIPPYMODEM_OK,
@@ -69,6 +71,45 @@ struct sippymodem_server_config {
 	const char *default_target;
 	unsigned int listen_port;
 	unsigned int max_lines;
+	bool register_account;
+	/* Explicit endpoint configurations can omit the legacy default endpoint. */
+	bool omit_default_endpoint;
+};
+
+enum sippymodem_registration_state {
+	SIPPYMODEM_REG_DISABLED, SIPPYMODEM_REG_REGISTERING, SIPPYMODEM_REG_REGISTERED,
+	SIPPYMODEM_REG_UNREGISTERING, SIPPYMODEM_REG_UNREGISTERED, SIPPYMODEM_REG_FAILED,
+	SIPPYMODEM_REG_UNREGISTER_FAILED,
+};
+struct sippymodem_endpoint_status {
+	unsigned int endpoint_id, listen_port;
+	uint64_t state_sequence;
+	bool started;
+	enum sippymodem_registration_state registration;
+	unsigned int registration_code;
+	int library_status;
+};
+
+/* SIP accounts and transports are separate from modem settings. Strings are
+ * copied, at most 255 bytes. Up to eight endpoints, including the default,
+ * belong to one server.
+ * request_user/host match the initial INVITE Request-URI on this endpoint's
+ * owned UDP transport. "*" explicitly accepts any value. NULL user derives
+ * the canonical identity user; NULL host accepts any host on the owned transport (needed
+ * for registered Contact/NAT aliases). Overlapping policies are rejected. */
+struct sippymodem_endpoint_config {
+	const char *bound_address;
+	const char *public_address;
+	const char *identity_uri;
+	const char *registrar_uri;
+	const char *proxy_uri;
+	const char *username;
+	const char *password;
+	const char *domain;
+	const char *default_target;
+	const char *request_user;
+	const char *request_host;
+	unsigned int listen_port;
 	bool register_account;
 };
 
@@ -135,6 +176,7 @@ struct sippymodem_status {
  * display the caller number alongside its incoming result text. */
 struct sippymodem_call_facts {
 	uint64_t generation;
+	unsigned int endpoint_id; /* Stable native owner ID, never a recycled SIP account ID. */
 	char called_number[128];
 	/* Incoming telephone From user normalized to digits and optional '+'. Withheld, invalid,
 	 * or oversized identities and every outgoing attempt remain empty. */
@@ -157,9 +199,36 @@ struct sippymodem_server *sippymodem_server_create(
 	const struct sippymodem_server_config *config);
 enum sippymodem_result sippymodem_server_start(struct sippymodem_server *server);
 enum sippymodem_result sippymodem_server_stop(struct sippymodem_server *server);
-/* Destroy stops the server and frees every remaining line; all child handles
- * become invalid. Destroy a line first when its server must remain usable. */
+/* Destroy stops the server and frees remaining lines, endpoints and groups;
+ * all child handles become invalid. Destroy a line first when its server must
+ * remain usable. */
 void sippymodem_server_destroy(struct sippymodem_server *server);
+/* Default handles are borrowed and owned by the server; they cannot be
+ * destroyed separately. Its default huntgroup automatically contains all lines.
+ * Explicit groups are configured before their endpoints start. A line may
+ * belong to several groups; one active reservation always excludes it from all. */
+struct sippymodem_endpoint *sippymodem_default_endpoint(struct sippymodem_server *server);
+struct sippymodem_huntgroup *sippymodem_default_huntgroup(struct sippymodem_server *server);
+void sippymodem_endpoint_config_init(struct sippymodem_endpoint_config *config);
+struct sippymodem_huntgroup *sippymodem_huntgroup_create(struct sippymodem_server *server);
+enum sippymodem_result sippymodem_huntgroup_add(struct sippymodem_huntgroup *group,
+	struct sippymodem_line *line);
+enum sippymodem_result sippymodem_huntgroup_remove(struct sippymodem_huntgroup *group,
+	struct sippymodem_line *line);
+enum sippymodem_result sippymodem_huntgroup_destroy(struct sippymodem_huntgroup *group);
+struct sippymodem_endpoint *sippymodem_endpoint_create(struct sippymodem_server *server,
+	struct sippymodem_huntgroup *group, const struct sippymodem_endpoint_config *config);
+/* Start requires a started server; server_start starts only the default endpoint.
+ * Stop terminates only calls selected through this endpoint, including when
+ * another endpoint shares its group. All operations use the owner thread. */
+enum sippymodem_result sippymodem_endpoint_start(struct sippymodem_endpoint *endpoint);
+enum sippymodem_result sippymodem_endpoint_stop(struct sippymodem_endpoint *endpoint);
+enum sippymodem_result sippymodem_endpoint_destroy(struct sippymodem_endpoint *endpoint);
+unsigned int sippymodem_endpoint_id(const struct sippymodem_endpoint *endpoint);
+unsigned int sippymodem_endpoint_listen_port(const struct sippymodem_endpoint *endpoint);
+enum sippymodem_result sippymodem_endpoint_get_status(const struct sippymodem_endpoint *endpoint,
+	struct sippymodem_endpoint_status *status);
+
 struct sippymodem_line *sippymodem_line_create(struct sippymodem_server *server,
 	const struct sippymodem_line_config *config);
 enum sippymodem_result sippymodem_line_start(struct sippymodem_line *line);
@@ -187,6 +256,8 @@ enum sippymodem_result sippymodem_set_dte_mode(struct sippymodem_line *line,
  * BUSY also covers retained RX and pending bounded cleanup of old RTP. */
 enum sippymodem_result sippymodem_dial(struct sippymodem_line *line,
 	const char *target, uint64_t *generation);
+enum sippymodem_result sippymodem_dial_from(struct sippymodem_line *line,
+	struct sippymodem_endpoint *endpoint, const char *target, uint64_t *generation);
 enum sippymodem_result sippymodem_answer(struct sippymodem_line *line,
 	uint64_t generation);
 enum sippymodem_result sippymodem_hangup(struct sippymodem_line *line,

@@ -5,6 +5,7 @@
 #include "datapump_link.h"
 #include "line.h"
 #include "modem_state.h"
+#include "sip_uri.h"
 
 #include <errno.h>
 #include <stdlib.h>
@@ -14,7 +15,7 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 
-enum { LINE_LIMIT = 32, EVENT_LIMIT = 128, QUEUE_LIMIT = 1048576 };
+enum { LINE_LIMIT = 32, EVENT_LIMIT = 128, QUEUE_LIMIT = 1048576, ENDPOINT_LIMIT = 8 };
 struct sippymodem_line {
 	struct sippymodem_server *server;
 	struct modem_line *core;
@@ -32,9 +33,24 @@ struct sippymodem_line {
 	bool stopping;
 };
 
+struct sippymodem_huntgroup {
+	struct sippymodem_server *server;
+	struct sippymodem_line *members[LINE_LIMIT];
+};
+struct sippymodem_endpoint {
+	struct sippymodem_server *server;
+	struct sippymodem_huntgroup *group;
+	struct sip_endpoint *sip;
+	unsigned int id;
+	char target[APP_CONFIG_TEXT_MAX];
+	bool started;
+};
+
 struct sippymodem_server {
 	struct app_config config;
 	struct sip_server *sip;
+	struct sippymodem_endpoint *endpoints[ENDPOINT_LIMIT], *default_endpoint;
+	struct sippymodem_huntgroup *groups[LINE_LIMIT], *default_group;
 	struct sippymodem_line *lines[LINE_LIMIT];
 	struct sippymodem_event events[EVENT_LIMIT];
 	unsigned int max_lines, event_head, event_count, next_id;
@@ -242,6 +258,7 @@ static void call_changed(void *context, const struct sip_call_event *event)
 			return;
 		begin_call(line);
 		line->incoming = true;
+		line->facts.endpoint_id = event->endpoint_id;
 		line->sip_generation = event->generation;
 		if (event->called_number != NULL && strlen(event->called_number) < sizeof(line->facts.called_number))
 			memcpy(line->facts.called_number, event->called_number,
@@ -309,6 +326,261 @@ static bool copy_setting(char *destination, const char *source)
 	return true;
 }
 
+static bool group_locked(const struct sippymodem_huntgroup *group)
+{
+	for (unsigned int index = 0; index < ENDPOINT_LIMIT; ++index) {
+		struct sippymodem_endpoint *endpoint = group->server->endpoints[index];
+		if (endpoint != NULL && endpoint->group == group && endpoint->started)
+			return true;
+	}
+	return false;
+}
+
+static bool endpoint_accepts_line(void *context, void *line_context)
+{
+	struct sippymodem_endpoint *endpoint = context;
+	struct sippymodem_line *line = line_context;
+	if (!endpoint->started || line == NULL || line->server != endpoint->server)
+		return false;
+	for (unsigned int index = 0; index < LINE_LIMIT; ++index)
+		if (endpoint->group->members[index] == line)
+			return true;
+	return false;
+}
+
+void sippymodem_endpoint_config_init(struct sippymodem_endpoint_config *config)
+{
+	if (config != NULL)
+		*config = (struct sippymodem_endpoint_config){ 0 };
+}
+
+struct sippymodem_endpoint *sippymodem_default_endpoint(struct sippymodem_server *server)
+{
+	return server != NULL ? server->default_endpoint : NULL;
+}
+
+struct sippymodem_huntgroup *sippymodem_default_huntgroup(struct sippymodem_server *server)
+{
+	return server != NULL ? server->default_group : NULL;
+}
+
+struct sippymodem_huntgroup *sippymodem_huntgroup_create(struct sippymodem_server *server)
+{
+	if (server == NULL || server->processing) {
+		errno = EINVAL;
+		return NULL;
+	}
+	unsigned int slot = 0;
+	while (slot < LINE_LIMIT && server->groups[slot] != NULL)
+		++slot;
+	if (slot == LINE_LIMIT) {
+		errno = ENOSPC;
+		return NULL;
+	}
+	struct sippymodem_huntgroup *group = calloc(1, sizeof(*group));
+	if (group != NULL) {
+		group->server = server;
+		server->groups[slot] = group;
+	}
+	return group;
+}
+
+enum sippymodem_result sippymodem_huntgroup_add(struct sippymodem_huntgroup *group,
+	struct sippymodem_line *line)
+{
+	if (group == NULL || line == NULL || group->server != line->server || group->server->processing)
+		return SIPPYMODEM_INVALID;
+	if (group == group->server->default_group || group_locked(group) || line->active)
+		return SIPPYMODEM_BUSY;
+	for (unsigned int index = 0; index < LINE_LIMIT; ++index)
+		if (group->members[index] == line)
+			return SIPPYMODEM_OK;
+	for (unsigned int index = 0; index < LINE_LIMIT; ++index)
+		if (group->members[index] == NULL) {
+			group->members[index] = line;
+			return SIPPYMODEM_OK;
+		}
+	return SIPPYMODEM_BUSY;
+}
+
+enum sippymodem_result sippymodem_huntgroup_remove(struct sippymodem_huntgroup *group,
+	struct sippymodem_line *line)
+{
+	if (group == NULL || line == NULL || group->server != line->server || group->server->processing)
+		return SIPPYMODEM_INVALID;
+	if (group == group->server->default_group || group_locked(group) || line->active)
+		return SIPPYMODEM_BUSY;
+	for (unsigned int index = 0; index < LINE_LIMIT; ++index)
+		if (group->members[index] == line)
+			group->members[index] = NULL;
+	return SIPPYMODEM_OK;
+}
+
+enum sippymodem_result sippymodem_huntgroup_destroy(struct sippymodem_huntgroup *group)
+{
+	if (group == NULL || group->server->processing)
+		return SIPPYMODEM_INVALID;
+	if (group == group->server->default_group)
+		return SIPPYMODEM_BUSY;
+	for (unsigned int index = 0; index < ENDPOINT_LIMIT; ++index)
+		if (group->server->endpoints[index] != NULL && group->server->endpoints[index]->group == group)
+			return SIPPYMODEM_BUSY;
+	for (unsigned int index = 0; index < LINE_LIMIT; ++index)
+		if (group->server->groups[index] == group)
+			group->server->groups[index] = NULL;
+	free(group);
+	return SIPPYMODEM_OK;
+}
+
+struct sippymodem_endpoint *sippymodem_endpoint_create(struct sippymodem_server *server,
+	struct sippymodem_huntgroup *group, const struct sippymodem_endpoint_config *config)
+{
+	if (server == NULL || group == NULL || group->server != server || config == NULL ||
+	    server->processing || config->listen_port > 65535) {
+		errno = EINVAL;
+		return NULL;
+	}
+	unsigned int slot = 0;
+	while (slot < ENDPOINT_LIMIT && server->endpoints[slot] != NULL)
+		++slot;
+	if (slot == ENDPOINT_LIMIT) {
+		errno = ENOSPC;
+		return NULL;
+	}
+	struct sippymodem_endpoint *endpoint = calloc(1, sizeof(*endpoint));
+	if (endpoint == NULL)
+		return NULL;
+	endpoint->server = server;
+	endpoint->group = group;
+	struct app_config owned = server->config;
+	struct sip_config *sip = &owned.sip;
+	memset(sip, 0, sizeof(*sip));
+	sip->listen_port = config->listen_port;
+	sip->registration_enabled = config->register_account;
+	if (!copy_setting(sip->bound_address, config->bound_address) ||
+	    !copy_setting(sip->public_address, config->public_address) ||
+	    !copy_setting(sip->identity_uri, config->identity_uri) ||
+	    !copy_setting(sip->registrar_uri, config->registrar_uri) ||
+	    !copy_setting(sip->proxy_uri, config->proxy_uri) || !copy_setting(sip->user, config->username) ||
+	    !copy_setting(sip->password, config->password) || !copy_setting(sip->domain, config->domain) ||
+	    !copy_setting(sip->target, config->default_target))
+		goto invalid;
+	char request_user[APP_CONFIG_TEXT_MAX] = { 0 }, request_host[APP_CONFIG_TEXT_MAX] = { 0 };
+	if (config->request_user == NULL) {
+		char identity[APP_CONFIG_TEXT_MAX * 2 + 16];
+		const char *configured = sip->identity_uri[0] != '\0' ? sip->identity_uri : sip->user;
+		if (sip_uri_format_target(identity, sizeof(identity), configured, NULL, sip->domain) != SIP_URI_OK)
+			goto invalid;
+		const char *user = strchr(identity, ':') + 1;
+		const char *at = strchr(user, '@');
+		if (at != NULL && at != user && (size_t)(at - user) < sizeof(request_user)) {
+			memcpy(request_user, user, (size_t)(at - user));
+		} else if (!copy_setting(request_user, config->username) || request_user[0] == '\0') {
+			goto invalid;
+		}
+	} else if (!copy_setting(request_user, config->request_user)) {
+		goto invalid;
+	}
+	if (!copy_setting(request_host, config->request_host != NULL ? config->request_host : "*"))
+		goto invalid;
+	errno = 0;
+	endpoint->sip = sip_endpoint_create(server->sip, &owned, request_user, request_host,
+		endpoint_accepts_line, endpoint);
+	if (endpoint->sip == NULL) {
+		int error = errno != 0 ? errno : EINVAL;
+		free(endpoint);
+		errno = error;
+		return NULL;
+	}
+	endpoint->id = sip_endpoint_id(endpoint->sip);
+	memcpy(endpoint->target, sip->target, sizeof(endpoint->target));
+	server->endpoints[slot] = endpoint;
+	return endpoint;
+invalid:
+	free(endpoint);
+	errno = EINVAL;
+	return NULL;
+}
+
+enum sippymodem_result sippymodem_endpoint_start(struct sippymodem_endpoint *endpoint)
+{
+	if (endpoint == NULL || endpoint->server->processing)
+		return SIPPYMODEM_INVALID;
+	if (!endpoint->server->started)
+		return SIPPYMODEM_CLOSED;
+	if (endpoint->started)
+		return SIPPYMODEM_OK;
+	enum sip_signaling_result result = sip_endpoint_open(endpoint->sip);
+	if (result != SIP_SIGNALING_OK)
+		return result == SIP_SIGNALING_BUSY ? SIPPYMODEM_BUSY :
+			result == SIP_SIGNALING_INVALID_ARGUMENT ? SIPPYMODEM_INVALID : SIPPYMODEM_ERROR;
+	endpoint->started = true;
+	return SIPPYMODEM_OK;
+}
+
+enum sippymodem_result sippymodem_endpoint_stop(struct sippymodem_endpoint *endpoint)
+{
+	if (endpoint == NULL || endpoint->server->processing)
+		return SIPPYMODEM_INVALID;
+	endpoint->started = false;
+	enum sippymodem_result result = SIPPYMODEM_OK;
+	for (unsigned int index = 0; index < endpoint->server->max_lines; ++index) {
+		struct sippymodem_line *line = endpoint->server->lines[index];
+		if (line != NULL && line->active && line->facts.endpoint_id == endpoint->id) {
+			enum sippymodem_result stopped = end_call(line, SIPPYMODEM_DISCONNECT_SHUTDOWN);
+			if (stopped != SIPPYMODEM_OK)
+				result = stopped;
+		}
+	}
+	if (sip_endpoint_close(endpoint->sip) != SIP_SIGNALING_OK)
+		result = SIPPYMODEM_ERROR;
+	return result;
+}
+
+enum sippymodem_result sippymodem_endpoint_destroy(struct sippymodem_endpoint *endpoint)
+{
+	if (endpoint == NULL || endpoint->server->processing)
+		return SIPPYMODEM_INVALID;
+	if (endpoint == endpoint->server->default_endpoint)
+		return SIPPYMODEM_BUSY;
+	enum sippymodem_result result = sippymodem_endpoint_stop(endpoint);
+	if (result != SIPPYMODEM_OK)
+		return result;
+	struct sippymodem_server *server = endpoint->server;
+	for (unsigned int index = 0; index < ENDPOINT_LIMIT; ++index)
+		if (server->endpoints[index] == endpoint)
+			server->endpoints[index] = NULL;
+	sip_endpoint_destroy(endpoint->sip);
+	free(endpoint);
+	return SIPPYMODEM_OK;
+}
+
+unsigned int sippymodem_endpoint_id(const struct sippymodem_endpoint *endpoint)
+{
+	return endpoint != NULL ? endpoint->id : 0;
+}
+
+unsigned int sippymodem_endpoint_listen_port(const struct sippymodem_endpoint *endpoint)
+{
+	return endpoint != NULL ? sip_endpoint_local_port(endpoint->sip) : 0;
+}
+
+enum sippymodem_result sippymodem_endpoint_get_status(const struct sippymodem_endpoint *endpoint,
+	struct sippymodem_endpoint_status *status)
+{
+	if (endpoint == NULL || status == NULL)
+		return SIPPYMODEM_INVALID;
+	struct sip_endpoint_status current;
+	sip_endpoint_get_status(endpoint->sip, &current);
+	*status = (struct sippymodem_endpoint_status){
+		.endpoint_id = current.id, .listen_port = current.local_port,
+		.state_sequence = current.sequence, .started = endpoint->started,
+		.registration = (enum sippymodem_registration_state)current.registration_state,
+		.registration_code = current.registration_code, .library_status = current.library_status,
+	};
+	return SIPPYMODEM_OK;
+}
+
 struct sippymodem_server *sippymodem_server_create(const struct sippymodem_server_config *config)
 {
 	if (config == NULL || config->max_lines == 0 || config->max_lines > LINE_LIMIT ||
@@ -341,6 +613,24 @@ struct sippymodem_server *sippymodem_server_create(const struct sippymodem_serve
 	server->event_fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK | EFD_SEMAPHORE);
 	if (server->sip == NULL || server->event_fd < 0)
 		goto fail;
+	if (config->omit_default_endpoint) {
+		if (sip_server_disable_default(server->sip) != SIP_SIGNALING_OK)
+			goto fail;
+	} else {
+		server->default_group = sippymodem_huntgroup_create(server);
+		if (server->default_group == NULL)
+			goto fail;
+		server->default_endpoint = calloc(1, sizeof(*server->default_endpoint));
+		if (server->default_endpoint == NULL)
+			goto fail;
+		struct sippymodem_endpoint *endpoint = server->default_endpoint;
+		endpoint->server = server;
+		endpoint->group = server->default_group;
+		endpoint->sip = sip_server_default_endpoint(server->sip);
+		endpoint->id = sip_endpoint_id(endpoint->sip);
+		memcpy(endpoint->target, sip->target, sizeof(endpoint->target));
+		server->endpoints[0] = endpoint;
+	}
 	return server;
 fail:
 	sippymodem_server_destroy(server);
@@ -357,6 +647,8 @@ enum sippymodem_result sippymodem_server_start(struct sippymodem_server *server)
 	if (result != SIP_SIGNALING_OK)
 		return result == SIP_SIGNALING_BUSY ? SIPPYMODEM_BUSY : SIPPYMODEM_ERROR;
 	server->started = true;
+	if (server->default_endpoint != NULL)
+		server->default_endpoint->started = true;
 	server->have_now = false;
 	return SIPPYMODEM_OK;
 }
@@ -412,7 +704,7 @@ struct sippymodem_line *sippymodem_line_create(struct sippymodem_server *server,
 	if (!copy_setting(owned.recording.prefix, config->recording_prefix))
 		goto fail;
 	const struct sip_signaling_callbacks callbacks = {
-		.context = line, .admit = admit, .call_changed = call_changed,
+		.context = line, .line_owner = line, .admit = admit, .call_changed = call_changed,
 	};
 	line->core = modem_line_create_shared(server->sip, &owned, "native line", &callbacks);
 	if (line->rx.storage == NULL || line->core == NULL)
@@ -445,6 +737,8 @@ struct sippymodem_line *sippymodem_line_create(struct sippymodem_server *server,
 	modem->data_output = receive_output;
 	line->status.dte_mode = SIPPYMODEM_COMMAND;
 	server->lines[id] = line;
+	if (server->default_group != NULL)
+		server->default_group->members[id] = line;
 	return line;
 fail:
 	modem_line_destroy(line->core);
@@ -490,6 +784,13 @@ void sippymodem_line_destroy(struct sippymodem_line *line)
 	if (line == NULL || line->server->processing)
 		return;
 	(void)sippymodem_line_stop(line);
+	for (unsigned int index = 0; index < LINE_LIMIT; ++index) {
+		struct sippymodem_huntgroup *group = line->server->groups[index];
+		if (group != NULL)
+			for (unsigned int member = 0; member < LINE_LIMIT; ++member)
+				if (group->members[member] == line)
+					group->members[member] = NULL;
+	}
 	line->server->lines[line->slot] = NULL;
 	modem_line_destroy(line->core);
 	free(line->rx.storage);
@@ -509,6 +810,9 @@ enum sippymodem_result sippymodem_server_stop(struct sippymodem_server *server)
 		}
 	if (sip_server_close(server->sip) != SIP_SIGNALING_OK && result == SIPPYMODEM_OK)
 		result = SIPPYMODEM_ERROR;
+	for (unsigned int index = 0; index < ENDPOINT_LIMIT; ++index)
+		if (server->endpoints[index] != NULL)
+			server->endpoints[index]->started = false;
 	server->started = false;
 	return result;
 }
@@ -521,6 +825,10 @@ void sippymodem_server_destroy(struct sippymodem_server *server)
 	for (unsigned int id = 0; id < server->max_lines; ++id)
 		sippymodem_line_destroy(server->lines[id]);
 	sip_server_destroy(server->sip);
+	for (unsigned int index = 0; index < ENDPOINT_LIMIT; ++index)
+		free(server->endpoints[index]);
+	for (unsigned int index = 0; index < LINE_LIMIT; ++index)
+		free(server->groups[index]);
 	if (server->event_fd >= 0)
 		close(server->event_fd);
 	free(server);
@@ -604,22 +912,25 @@ enum sippymodem_result sippymodem_set_dte_mode(struct sippymodem_line *line,
 	return SIPPYMODEM_OK;
 }
 
-enum sippymodem_result sippymodem_dial(struct sippymodem_line *line,
-	const char *target, uint64_t *generation)
+enum sippymodem_result sippymodem_dial_from(struct sippymodem_line *line,
+	struct sippymodem_endpoint *endpoint, const char *target, uint64_t *generation)
 {
-	if (line == NULL || generation == NULL || line->server->processing)
+	if (line == NULL || endpoint == NULL || line->server != endpoint->server || generation == NULL || line->server->processing)
 		return SIPPYMODEM_INVALID;
-	if (!line->started)
+	if (!line->started || !endpoint->started)
 		return SIPPYMODEM_CLOSED;
 	if (line->active || line->rx.count != 0 || line_modem(line)->started || modem_host_media_cleanup_pending(line_host(line)) || !line->server->have_now || line->status.generation == UINT64_MAX || line->server->event_overflow)
 		return SIPPYMODEM_BUSY;
 	struct modem *modem = line_modem(line);
-	const char *destination = target != NULL ? target : line->server->config.sip.target;
+	const char *destination = target != NULL ? target : endpoint->target;
 	size_t length = strnlen(destination, sizeof(modem->dial_string));
 	if (length == 0 || length >= sizeof(modem->dial_string))
 		return SIPPYMODEM_INVALID;
+	if (modem_host_set_endpoint(line_host(line), endpoint->sip) != SIP_SIGNALING_OK)
+		return SIPPYMODEM_BUSY;
 	memcpy(modem->dial_string, destination, length + 1);
 	begin_call(line);
+	line->facts.endpoint_id = endpoint->id;
 	line->incoming = false;
 	*generation = line->status.generation;
 	if (modem_dial(modem) != 0) {
@@ -628,6 +939,14 @@ enum sippymodem_result sippymodem_dial(struct sippymodem_line *line,
 	}
 	synchronize(line);
 	return SIPPYMODEM_OK;
+}
+
+enum sippymodem_result sippymodem_dial(struct sippymodem_line *line,
+	const char *target, uint64_t *generation)
+{
+	return line == NULL ? SIPPYMODEM_INVALID :
+		line->server->default_endpoint == NULL ? SIPPYMODEM_CLOSED :
+		sippymodem_dial_from(line, line->server->default_endpoint, target, generation);
 }
 
 enum sippymodem_result sippymodem_answer(struct sippymodem_line *line, uint64_t generation)

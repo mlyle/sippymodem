@@ -205,6 +205,11 @@ static enum sip_signaling_result not_open_result(
 			       SIP_SIGNALING_NOT_OPEN;
 }
 
+enum sip_signaling_result sip_session_set_endpoint(struct sip_session *session, struct sip_endpoint *endpoint)
+{
+	return session != NULL ? sip_signaling_set_endpoint(session->signaling, endpoint) : SIP_SIGNALING_INVALID_ARGUMENT;
+}
+
 enum sip_signaling_result sip_session_dial(
 	struct sip_session *session, const char *target)
 {

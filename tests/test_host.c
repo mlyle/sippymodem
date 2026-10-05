@@ -133,6 +133,13 @@ static void emit_media(
 			signaling->callbacks.context, &event);
 }
 
+enum sip_signaling_result sip_signaling_set_endpoint(struct sip_signaling *signaling,
+	struct sip_endpoint *endpoint)
+{
+	return signaling == NULL || endpoint == NULL ? SIP_SIGNALING_INVALID_ARGUMENT :
+		!signaling->opened ? SIP_SIGNALING_NOT_OPEN : SIP_SIGNALING_OK;
+}
+
 enum sip_signaling_result sip_signaling_dial(
 	struct sip_signaling *signaling, const char *target)
 {

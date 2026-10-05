@@ -174,6 +174,11 @@ enum sip_session_result modem_host_close(
 	return host->last_session_result;
 }
 
+enum sip_signaling_result modem_host_set_endpoint(struct modem_host *host, struct sip_endpoint *endpoint)
+{
+	return host != NULL ? sip_session_set_endpoint(host->session, endpoint) : SIP_SIGNALING_INVALID_ARGUMENT;
+}
+
 enum sip_signaling_result modem_host_dial(
 	struct modem_host *host, const char *target)
 {
