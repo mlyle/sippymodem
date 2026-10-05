@@ -507,6 +507,58 @@ static bool test_typed_credentials(void)
 	return true;
 }
 
+static bool test_typed_accounts(void)
+{
+	/* Use owned loopback peers for registration and direct-account calls. */
+	for (unsigned int account_case = 0; account_case < 2; ++account_case) {
+		bool registered = account_case == 0;
+		int sink = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, 0);
+		struct sockaddr_in bound = { .sin_family = AF_INET,
+			.sin_addr.s_addr = htonl(INADDR_LOOPBACK) };
+		EXPECT(sink >= 0 && bind(sink, (struct sockaddr *)&bound, sizeof(bound)) == 0);
+		socklen_t size = sizeof(bound);
+		EXPECT(getsockname(sink, (struct sockaddr *)&bound, &size) == 0);
+		char target[128];
+		snprintf(target, sizeof(target), "sip:127.0.0.1:%u", ntohs(bound.sin_port));
+		struct sippymodem_server_config config;
+		sippymodem_server_config_init(&config);
+		config.max_lines = 1;
+		config.public_address = config.bound_address = "127.0.0.1";
+		config.identity_uri = "sip:native@127.0.0.1";
+		if (registered) {
+			config.username = "native";
+			config.password = "secret";
+			config.domain = "127.0.0.1";
+			config.registrar_uri = target;
+			config.register_account = true;
+		}
+		struct sippymodem_server *server = sippymodem_server_create(&config);
+		EXPECT(server != NULL && sippymodem_server_start(server) == SIPPYMODEM_OK);
+		struct sippymodem_line_config lc;
+		sippymodem_line_config_init(&lc);
+		struct sippymodem_line *line = sippymodem_line_create(server, &lc);
+		EXPECT(line != NULL && sippymodem_line_start(line) == SIPPYMODEM_OK);
+		uint64_t now = 1000000000, next, generation;
+		EXPECT(sippymodem_process(server, now, &next) == SIPPYMODEM_OK);
+		if (!registered)
+			EXPECT(sippymodem_dial(line, target, &generation) == SIPPYMODEM_OK);
+		char packet[4096];
+		ssize_t received = -1;
+		for (unsigned int i = 0; i < 1000 && received < 0; ++i) {
+			EXPECT(step(server, &now));
+			received = recv(sink, packet, sizeof(packet) - 1, 0);
+		}
+		EXPECT(received > 0);
+		packet[received] = '\0';
+		EXPECT(strncmp(packet, registered ? "REGISTER " : "INVITE ", registered ? 9 : 7) == 0);
+		EXPECT(strstr(packet, "sip:native@127.0.0.1") != NULL);
+		EXPECT(sippymodem_server_stop(server) == SIPPYMODEM_OK);
+		sippymodem_server_destroy(server);
+		close(sink);
+	}
+	return true;
+}
+
 static bool test_timeout_and_bounds(void)
 {
 	struct sippymodem_server_config config;
@@ -575,5 +627,5 @@ static bool test_timeout_and_bounds(void)
 
 int main(void)
 {
-	return test_typed_credentials() && test_owned_loopback() && test_compressed_command_and_fd_eof() && test_timeout_and_bounds() ? 0 : 1;
+	return test_typed_credentials() && test_typed_accounts() && test_owned_loopback() && test_compressed_command_and_fd_eof() && test_timeout_and_bounds() ? 0 : 1;
 }
