@@ -482,6 +482,25 @@ static bool test_compressed_command_and_fd_eof(void)
 	return true;
 }
 
+static bool test_typed_credentials(void)
+{
+	struct sippymodem_server_config config;
+	sippymodem_server_config_init(&config);
+	config.max_lines = 1;
+	config.bound_address = config.public_address = "127.0.0.1";
+	config.identity_uri = "sip:native@127.0.0.1";
+	config.username = "native";
+	config.password = "secret";
+	config.domain = "127.0.0.1";
+	config.register_account = false;
+	struct sippymodem_server *server = sippymodem_server_create(&config);
+	EXPECT(server != NULL);
+	enum sippymodem_result result = sippymodem_server_start(server);
+	sippymodem_server_destroy(server);
+	EXPECT(result == SIPPYMODEM_OK);
+	return true;
+}
+
 static bool test_timeout_and_bounds(void)
 {
 	struct sippymodem_server_config config;
@@ -550,5 +569,5 @@ static bool test_timeout_and_bounds(void)
 
 int main(void)
 {
-	return test_owned_loopback() && test_compressed_command_and_fd_eof() && test_timeout_and_bounds() ? 0 : 1;
+	return test_typed_credentials() && test_owned_loopback() && test_compressed_command_and_fd_eof() && test_timeout_and_bounds() ? 0 : 1;
 }

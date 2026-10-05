@@ -328,7 +328,7 @@ struct sippymodem_server *sippymodem_server_create(const struct sippymodem_serve
 	    !copy_setting(sip->identity_uri, config->identity_uri) ||
 	    !copy_setting(sip->registrar_uri, config->registrar_uri) ||
 	    !copy_setting(sip->proxy_uri, config->proxy_uri) ||
-	    !copy_setting(sip->user, config->username) || !copy_setting(sip->login, config->username) ||
+	    !copy_setting(sip->user, config->username) ||
 	    !copy_setting(sip->password, config->password) || !copy_setting(sip->domain, config->domain) ||
 	    !copy_setting(sip->target, config->default_target)) {
 		errno = EINVAL;
