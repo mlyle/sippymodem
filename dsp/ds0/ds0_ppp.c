@@ -2,7 +2,6 @@
 #include "ds0_ppp.h"
 #include "hdlc_fcs.h"
 #include <string.h>
-#define DS0_MIN_FCS_FRAME_OCTETS 3u
 #define DS0_ASYNC_FLAG 0x7eu
 #define DS0_ASYNC_ESCAPE 0x7du
 #define DS0_ASYNC_ESCAPE_XOR 0x20u
@@ -139,7 +138,7 @@ static void ds0_async_host_finish_frame(struct ds0_ppp *ds0)
 	}
 
 	if (!rx->frame_error && rx->frame_len) {
-		if (rx->frame_len < DS0_MIN_FCS_FRAME_OCTETS) {
+		if (rx->frame_len < HDLC_FCS16_MIN_FRAME_OCTETS) {
 			ds0->counters.async_tx_short++;
 		} else if (hdlc_fcs16(rx->frame, rx->frame_len) !=
 			   HDLC_FCS16_GOOD) {
@@ -266,7 +265,7 @@ void ds0_ppp_receive_frame(void *user, const uint8_t *frame,
 
 	(void)rate;
 
-	if (!ds0)
+	if (!ds0 || len < HDLC_FCS16_MIN_FRAME_OCTETS - 2u)
 		return;
 	if (ds0->rx_async_pending_len) {
 		ds0->counters.async_rx_overflow++;

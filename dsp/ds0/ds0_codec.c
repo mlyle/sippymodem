@@ -3,7 +3,6 @@
 #include "hdlc_fcs.h"
 #include <limits.h>
 #include <string.h>
-#define DS0_MIN_FCS_FRAME_OCTETS 3u
 #define DS0_HDLC_FLAG_BITS 8u
 #define DS0_HDLC_FLAG_MASK 7u
 static const uint8_t ds0_hdlc_flag_bits[8] = { 0,1,1,1,1,1,1,0 };
@@ -213,9 +212,9 @@ static void ds0_rx_finish_frame(struct ds0 *ds0,
 	bool valid = !rx->frame_len && !rx->bit_count;
 	if ((rx->frame_len || rx->bit_count)) {
 		if (rx->bit_count) {
-			if (rx->frame_len >= DS0_MIN_FCS_FRAME_OCTETS)
+			if (rx->frame_len >= HDLC_FCS16_MIN_FRAME_OCTETS)
 				ds0_count_invalid(ds0, rx->rate);
-		} else if (rx->frame_len < DS0_MIN_FCS_FRAME_OCTETS) {
+		} else if (rx->frame_len < HDLC_FCS16_MIN_FRAME_OCTETS) {
 			ds0_count_short(ds0, rx->rate);
 		} else if (hdlc_fcs16(rx->frame, rx->frame_len) !=
 			   HDLC_FCS16_GOOD) {
@@ -373,7 +372,8 @@ static size_t ds0_tx_frame_bound(size_t frame_len, enum ds0_rate rate)
 
 	if (!ds0_rate_valid(rate))
 		return 0;
-	if (frame_len > DS0_MAX_FRAME_OCTETS)
+	if (frame_len < HDLC_FCS16_MIN_FRAME_OCTETS - 2u ||
+	    frame_len > DS0_MAX_FRAME_OCTETS)
 		return 0;
 
 	bits_per_octet = ds0_rate_bits_per_octet(rate);

@@ -62,6 +62,33 @@ static bool invalid_and_overflow(void)
 	return true;
 }
 
+static bool short_frames(void)
+{
+	const uint8_t body[] = {0x21, 0};
+	uint8_t async[32], wire[32]; size_t used;
+	for (unsigned rate = 0; rate < 2; ++rate) {
+		struct ds0_config cfg; ds0_config_default(&cfg);
+		cfg.rate_policy = rate ? DS0_RATE_FORCE_64000 : DS0_RATE_FORCE_56000;
+		struct ds0_ppp p; CHECK(ds0_ppp_init(&p, &cfg) == 0, "init");
+		for (size_t length = 0; length < 2; ++length) {
+			size_t n = async_frame(body, length, async);
+			CHECK(ds0_ppp_encode(&p, async, n, wire, sizeof(wire), &used) == 0 && used == n,
+			      "short frame consumed without transmission");
+		}
+		CHECK(p.counters.async_tx_short == 2 && !p.counters.async_tx_fcs_fail &&
+		      !p.counters.async_tx_valid_frames && !p.overflow, "short frames classified before FCS");
+		size_t n = async_frame(body, sizeof(body), async);
+		CHECK(ds0_ppp_encode(&p, async, n, wire, sizeof(wire), &used) > 0 && used == n &&
+		      p.counters.async_tx_valid_frames == 1, "minimum frame accepted after rejection");
+		ds0_ppp_receive_frame(&p, body, sizeof(body), DS0_RATE_64000);
+		size_t pending = p.rx_async_pending_len;
+		ds0_ppp_receive_frame(&p, body, 1, DS0_RATE_64000);
+		CHECK(p.rx_async_pending_len == pending && !p.overflow && p.counters.async_rx_frames == 1,
+		      "short received frame preserves queued valid bytes");
+	}
+	return true;
+}
+
 static bool assembly_without_idle(void)
 {
 	struct ds0_ppp p; CHECK(ds0_ppp_init(&p, NULL) == 0, "init");
@@ -110,7 +137,7 @@ static bool opening_flag_and_rate_change(void)
 }
 int main(void)
 {
-	if (!partial_frames() || !invalid_and_overflow() || !oversized_frame() || !assembly_without_idle() || !opening_flag_and_rate_change()) return 1;
+	if (!partial_frames() || !invalid_and_overflow() || !short_frames() || !oversized_frame() || !assembly_without_idle() || !opening_flag_and_rate_change()) return 1;
 	puts("DS0 PPP: partial byte I/O, both rates, escapes, FCS and explicit overflow passed");
 	return 0;
 }

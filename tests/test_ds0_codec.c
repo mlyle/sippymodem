@@ -77,6 +77,34 @@ static bool both_rates(void)
 	return true;
 }
 
+static bool short_frame_recovery(void)
+{
+	const uint8_t body[] = {0x21, 0}; uint8_t wire[64];
+	for (unsigned bits = 7; bits <= 8; ++bits) {
+		struct ds0_config cfg; ds0_config_default(&cfg);
+		cfg.rate_policy = bits == 7 ? DS0_RATE_FORCE_56000 : DS0_RATE_FORCE_64000;
+		struct ds0 tx, rx; struct capture c = {0};
+		CHECK(ds0_init(&tx, &cfg) == 0 && ds0_init(&rx, &cfg) == 0, "init");
+		memset(wire, 0xa5, sizeof(wire));
+		CHECK(ds0_tx_frame(&tx, body, 0, wire, sizeof(wire)) == 0 &&
+		      ds0_tx_frame(&tx, body, 1, wire, sizeof(wire)) == 0 && wire[0] == 0xa5,
+		      "short transmission rejected before changing output");
+		struct modem m = {0}; struct oracle o = {.bytes = body, .length = 1};
+		modem_hdlc_start(&m); m.packer.hdlc.framer = &o;
+		m.packer.hdlc.get_tx_frame = next; m.packer.hdlc.tx_complete = completed;
+		CHECK(modem_hdlc_get_bits(&m, bits, wire, sizeof(wire)) == sizeof(wire), "short oracle");
+		if (bits == 7) for (size_t i = 0; i < sizeof(wire); ++i) wire[i] <<= 1;
+		CHECK(ds0_rx_codec(&rx, wire, sizeof(wire), received, &c) == 0 &&
+		      !rx.saw_valid_frame && !c.count, "CRC-valid runt cannot select a rate or deliver bytes");
+		const struct ds0_rx_counters *counts = bits == 7 ? &rx.counters.rx56 : &rx.counters.rx64;
+		CHECK(counts->short_frame == 1 && !counts->fcs_fail, "runt is not an FCS failure");
+		size_t n = ds0_tx_frame(&tx, body, sizeof(body), wire, sizeof(wire));
+		CHECK(n > 0 && ds0_rx_codec(&rx, wire, n, received, &c) == 1 &&
+		      c.length == sizeof(body) && !memcmp(body, c.bytes, sizeof(body)), "minimum frame recovers");
+	}
+	return true;
+}
+
 static bool recovery_and_bounds(void)
 {
 	const uint8_t payload[] = { 0xff, 3, 0xc0, 0x21, 1, 2, 3, 4, 5, 6 };
@@ -108,7 +136,7 @@ static bool recovery_and_bounds(void)
 
 int main(void)
 {
-	if (!fcs_vectors() || !both_rates() || !recovery_and_bounds()) return 1;
+	if (!fcs_vectors() || !both_rates() || !short_frame_recovery() || !recovery_and_bounds()) return 1;
 	puts("DS0 codec: both rates, HDLC interop, FCS, bounds and recovery passed");
 	return 0;
 }
