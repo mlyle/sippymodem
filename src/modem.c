@@ -99,7 +99,6 @@ extern void FAX_delete(void *obj);
 
 /* local prototypes */
 int modem_answer(struct modem *m);
-static int sregs_init(unsigned char sregs[]);
 static void do_modem_change_dp(struct modem *);
 static int modem_start(struct modem *);
 static int modem_stop (struct modem *);
@@ -2054,17 +2053,7 @@ int modem_reset(struct modem *m)
 		modem_set_hook(m,MODEM_HOOK_ON);
 	modem_set_state(m, STATE_MODEM_IDLE);
 	m->command = 1;
-	m->min_rate = 300;
-	m->max_rate = MODEM_MAX_RATE;
-	m->v90_upstream_min_rate = 0;
-	m->v90_upstream_max_rate = 0;
-	m->v90_upstream_max_baud = 0;
-	m->v92_upstream_lu_ucode = 0;
-	m->v34_symbol_rate = 0;
-	sregs_init(m->sregs);
-	modem_homolog_init(m,m->homolog->id,NULL);
-	modem_set_mode(m, MODEM_MODE_DATA);
-	return 0;
+	return modem_factory_defaults(m);
 }
 
 
@@ -2074,8 +2063,19 @@ int modem_reset(struct modem *m)
  */
 
 /* set default init values */
-static int sregs_init(unsigned char sregs[])
+int modem_factory_defaults(struct modem *m)
 {
+	if (m == NULL)
+		return -1;
+	unsigned char *sregs = m->sregs;
+	memset(sregs, 0, sizeof(m->sregs));
+	m->min_rate = 300;
+	m->max_rate = MODEM_MAX_RATE;
+	m->v90_upstream_min_rate = 0;
+	m->v90_upstream_max_rate = 0;
+	m->v90_upstream_max_baud = 0;
+	m->v92_upstream_lu_ucode = 0;
+	m->v34_symbol_rate = 0;
         sregs[SREG_ESCAPE_CHAR]                  = '+' ; /* escape char */
         sregs[SREG_CR_CHAR]                      = '\r'; /* cr char */
         sregs[SREG_LF_CHAR]                      = '\n'; /* lf char */
@@ -2119,7 +2119,10 @@ static int sregs_init(unsigned char sregs[])
 	sregs[SREG_V92_PCM_UPSTREAM] = 0;
 	sregs[SREG_V92_PCM_UPSTREAM_MAX_DRN] = 0;
 
-        return 0;
+	if (modem_homolog_init(m, m->homolog != NULL ? m->homolog->id :
+	    MODEM_DEFAULT_COUNTRY_CODE, NULL) != 0)
+		return -1;
+	return modem_set_mode(m, MODEM_MODE_DATA);
 }
 
 
@@ -2214,14 +2217,10 @@ struct modem *modem_create(struct modem_driver *drv, const char *name)
 	m->command= 1;
         m->hook   = MODEM_HOOK_ON;
         m->caller = 0;
-	m->min_rate = 300;
-	m->max_rate = MODEM_MAX_RATE;
 
 	m->modem_info |= (TIOCM_DSR|TIOCM_CTS);
 
-        sregs_init(m->sregs);
-
-	if(modem_homolog_init(m, MODEM_DEFAULT_COUNTRY_CODE, NULL)) {
+	if (modem_factory_defaults(m) != 0) {
 		MODEM_ERR("bad default country code `%x'!\n",
 			  MODEM_DEFAULT_COUNTRY_CODE);
 		free(m);

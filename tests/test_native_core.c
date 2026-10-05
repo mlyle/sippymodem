@@ -2,6 +2,7 @@
 
 #include <modem.h>
 #include <modem_frontend.h>
+#include <modem_state.h>
 #include <modem_param.h>
 #include <modem_timer.h>
 #include <fsk.h>
@@ -2094,6 +2095,109 @@ static bool test_automatic_factory_profile(void)
 		      "ATZ did not clear fixed family and directional rate settings");
 	}
 	modem_delete(modem);
+	return true;
+}
+
+struct factory_reply {
+	char bytes[128];
+	size_t count;
+};
+
+static int factory_reply_output(void *context, const char *bytes, int count)
+{
+	struct factory_reply *reply = context;
+	if (count < 0 || (size_t)count > sizeof(reply->bytes) - reply->count)
+		return 0;
+	memcpy(reply->bytes + reply->count, bytes, count);
+	reply->count += (size_t)count;
+	return count;
+}
+
+static bool test_factory_defaults(void)
+{
+	struct modem_driver driver = {
+		.name = "factory defaults", .start = unused_start,
+		.stop = capture_call_cancel, .ioctl = unused_control,
+	};
+	struct call_cancel_capture capture = {0};
+	struct modem *m = create_compat_modem(&driver, driver.name);
+	CHECK(m != NULL, "factory allocation failed");
+	m->dev_data = &capture;
+	m->call_report.available = true;
+	m->call_report.tx_dte_bytes = 73;
+	strcpy(m->call_report.reason, "previous");
+	struct modem_call_report previous = m->call_report;
+	unsigned char expected[sizeof(m->sregs)];
+	memcpy(expected, m->sregs, sizeof(expected));
+	const char *commands[] = { "AT&F", "AT&F0", "AT&F00", "ATZ", "ATZ3" };
+	for (size_t i = 0; i < ARRAY_LENGTH(commands); ++i) {
+		CHECK(process_at_command(m,
+		      "AT+MS=21,0,300,300+V90D=1+V92U=1+V34B=2400+V90U=9600,9600,3000") == 0,
+		      "factory override failed");
+		memset(m->sregs, 0xa5, sizeof(m->sregs));
+		CHECK(process_at_command(m, (char *)commands[i]) == 0 &&
+		      !memcmp(expected, m->sregs, sizeof(expected)) &&
+		      !memcmp(&previous, &m->call_report, sizeof(previous)) &&
+		      m->min_rate == 300 && m->max_rate == MODEM_MAX_RATE &&
+		      m->v90_upstream_min_rate == 0 && m->v90_upstream_max_rate == 0 &&
+		      m->v90_upstream_max_baud == 0 && m->v34_symbol_rate == 0,
+		      "factory mismatch for %s", commands[i]);
+	}
+	CHECK(process_at_command(m, "AT+MS=21,0,300,300E0Q1V0") == 0,
+	      "unsupported profile fixture failed");
+	memcpy(expected, m->sregs, sizeof(expected));
+	const char *unsupported[] = {
+		"AT&F1", "AT&F255", "AT&F-0", "AT&F18446744073709551616",
+	};
+	for (size_t i = 0; i < ARRAY_LENGTH(unsupported); ++i)
+		CHECK(process_at_command(m, (char *)unsupported[i]) < 0 &&
+		      !memcmp(expected, m->sregs, sizeof(expected)) && m->max_rate == 300,
+		      "unsupported profile changed settings: %s", unsupported[i]);
+	CHECK(process_at_command(m, "AT&F0V0E0Q1") == 0 &&
+	      m->sregs[SREG_ECHO] == 0 && m->sregs[SREG_VERBOSE] == 0 && m->sregs[SREG_QUIET] == 1,
+	      "commands after factory restoration lost");
+	CHECK(process_at_command(m, "AT+GCI=00") == 0, "country fixture failed");
+	const struct homolog_set *country = m->homolog;
+	unsigned pause = m->sregs[SREG_DIAL_PAUSE_TIME], flash = m->sregs[SREG_FLASH_TIMER];
+	CHECK(process_at_command(m, "AT&F") == 0 && m->homolog == country &&
+	      m->sregs[SREG_DIAL_PAUSE_TIME] == pause && m->sregs[SREG_FLASH_TIMER] == flash,
+	      "country lost on factory restoration");
+	struct factory_reply reply = {0};
+	m->control_output = factory_reply_output;
+	m->control_output_context = &reply;
+	CHECK(process_at_command(m, "ATE0Q1V0S3=59") == 0, "result format fixture failed");
+	CHECK(modem_write(m, "AT&F;", 5) == 5 && reply.count >= 4 &&
+	      !memcmp(reply.bytes + reply.count - 4, "OK\r\n", 4),
+	      "factory result did not use restored controls");
+	reply.count = 0;
+	CHECK(process_at_command(m, "ATE0") == 0 && modem_write(m, "AT&F0V0E0\r", 10) == 10 &&
+	      (reply.count == 2 || reply.count == 3) && !memcmp(reply.bytes, "0\r", 2),
+	      "following numeric result control lost");
+	reply.count = 0;
+	CHECK(modem_write(m, "AT&FQ1E0\r", 9) == 9 && reply.count == 0,
+	      "following quiet result control lost");
+	m->state = STATE_COMMAND_ONLINE;
+	m->command = 1;
+	m->started = 1;
+	m->hook = MODEM_HOOK_OFF;
+	m->modem_info |= TIOCM_CD;
+	m->xmit.head = m->xmit.count = 7;
+	m->xmit.tail = 0;
+	memcpy(m->xmit.buf, "pending", 7);
+	m->bit_timer = 123;
+	m->bit_timer_func = bit_timer_expired;
+	unsigned char negotiated[sizeof(m->cfg)];
+	memcpy(negotiated, &m->cfg, sizeof(negotiated));
+	CHECK(process_at_command(m, "AT&F") == 0 && m->state == STATE_COMMAND_ONLINE &&
+	      m->command && m->started && m->hook == MODEM_HOOK_OFF && (m->modem_info & TIOCM_CD) &&
+	      m->xmit.head == 7 && m->xmit.count == 7 && !memcmp(m->xmit.buf, "pending", 7) &&
+	      m->bit_timer == 123 && m->bit_timer_func == bit_timer_expired &&
+	      !memcmp(negotiated, &m->cfg, sizeof(negotiated)) && capture.stops == 0,
+	      "factory restoration disturbed the active call");
+	m->started = 0;
+	m->state = STATE_MODEM_IDLE;
+	m->hook = MODEM_HOOK_ON;
+	modem_delete(m);
 	return true;
 }
 
@@ -9279,6 +9383,7 @@ int main(void)
 		{ "V.8 handoff", test_v8_handoff },
 		{ "V.42 detection deadline", test_v42_detection_deadline },
 		{ "automatic factory profile", test_automatic_factory_profile },
+		{ "factory defaults", test_factory_defaults },
 		{ "automatic startup deadline", test_automatic_startup_deadline },
 		{ "V.8 fallback limits", test_v8_fallback_limits },
 		{ "V.8 legacy V.32 selection", test_v8_legacy_v32 },

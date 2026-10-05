@@ -87,7 +87,8 @@ ATDT<destination>
 | `ATH1` | `1` | Set off-hook state |
 | `ATO0`, `ATO` | `0` | Resume data on the existing carrier without requesting a retrain |
 | `ATO1` | `1` | Resume through a full physical retrain; unsupported datapumps resume without one |
-| `ATZ`, `ATZ0` through `ATZ3` | All select the same reset | Hang up, reset the implemented modem controls, and enter command mode |
+| `ATZ`, `ATZ0` through `ATZ3` | All select the same reset | Hang up, restore the default profile, and enter command mode |
+| `AT&F`, `AT&F0` | Factory profile `0` | Restore the default profile while preserving an active call |
 | `ATE<n>` | `0,1`; default `1` | Command echo |
 | `ATQ<n>` | `0,1`; default `0` | `1` suppresses result codes |
 | `ATV<n>` | `0,1`; default `1` | `0` numeric results, `1` text results |
@@ -101,12 +102,12 @@ SIP dialing does not generate analog pulse dialing, DTMF, pauses, or hook
 flashes. Other Hayes dial modifiers are not interpreted as such; they remain
 part of the destination text. The active SIP driver has no physical speaker.
 
-`ATZ` restores the implemented modulation, rate, compression, output, and
-legacy control defaults. It retains the chosen country profile and the last
-call report.
-It does not load a stored profile or clear every arbitrary S-register:
-registers that reset does not explicitly initialize retain their values,
-including `S0`.
+`ATZ` and `AT&F` restore the modulation, rate, compression, output, and
+legacy control defaults. They clear all S-registers before applying those
+defaults, including resetting `S0` to `0`. Both retain the chosen country
+profile and the last call report. `AT&F` preserves carrier, queued payload,
+and the active negotiated data path. Only factory profile `0` is supported;
+other `&F` values return ERROR. No stored profiles are implemented.
 
 ## Modulation and rate selection
 
@@ -412,7 +413,6 @@ owned configuration fields rather than individual S-registers.
 | --- | --- |
 | `ATB` | Select fixed V.22 at 1200 bit/s; use `+MS` for normal modulation selection |
 | `ATB0`, `ATB1` | Not implemented; the digit causes ERROR after the bare B selection |
-| `AT&F[<digit>]` | Accepted no-op; use `ATZ` to reset implemented controls |
 | `AT&D[<digit>]`, `AT&R[<digit>]`, `AT&S[<digit>]` | Accepted no-ops; no DTR/RTS/DSR policy is applied |
 | `AT&C<n>` | `0,1`, default 0; stores S60 without overriding actual carrier indication |
 | `AT&E<n>` | `0,1`, default 0; stores S71 without changing CONNECT's physical receive rate |

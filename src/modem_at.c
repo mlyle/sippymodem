@@ -1376,9 +1376,14 @@ int process_at_command(struct modem *m, char *cmd)
 			case 'E': /* AT&E */
 				ret = set_sreg(m,SREG_CONNNECT_MSG_SPEED_SRC,*p,0,1,&len);
 				break;
-			case 'F': /* AT&F */
-				len = isdigit(*p)?1:0; ret = 0;
+			case 'F': { /* AT&F */
+				char *parameters = p;
+				unsigned long profile = 0;
+				if (parse_unsigned(&parameters, &len, &profile, 10) < 0 || profile != 0)
+					return -1;
+				ret = modem_factory_defaults(m);
 				break;
+			}
 			case 'H':  /* AT&H */
 				ret = set_sreg(m,SREG_FLOW_CONTROL,*p,0,1,&len);
 				break;

@@ -507,6 +507,8 @@ extern void modem_delete(struct modem *m);
 extern int modem_write(struct modem *m, const char *buf, int n);
 extern int modem_data_write(struct modem *m, const void *bytes, size_t length);
 extern int modem_set_dte_command(struct modem *m, bool command);
+/* Restore the profile while preserving carrier, buffers and country. */
+extern int modem_factory_defaults(struct modem *m);
 extern void modem_schedule_escape(struct modem *m);
 extern int modem_send_to_tty(struct modem *m, const char *bytes, int count);
 extern int modem_recv_from_tty(struct modem *m, char *bytes, int count);
