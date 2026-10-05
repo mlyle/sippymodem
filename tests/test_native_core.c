@@ -706,6 +706,9 @@ static bool run_ath0_cleardown(
 		      modem->ec.lapm.tx_ctrl != modem->ec.lapm.ctrl_list &&
 		      modem->ec.lapm.tx_ctrl->buf[1] == UA_CONTROL,
 		      "peer DISC lost its queued UA or prematurely cleared the modem");
+		CHECK(modem->disconnect_reason != NULL && !modem->disconnect_local &&
+		      strcmp(modem->disconnect_reason, "peer LAPM DISC") == 0,
+		      "peer DISC was attributed to our local recovery");
 		CHECK(modem_hdlc_get_bits(modem, 8, serialized, sizeof(serialized)) == sizeof(serialized) &&
 		      modem->packer.hdlc.tx_frame == NULL &&
 		      modem->ec.lapm.tx_ctrl == modem->ec.lapm.ctrl_list,
@@ -3623,6 +3626,8 @@ static bool test_lapm_v42bis_receive_pressure(void)
 			      m->comp.count == 1 && m->comp.buf[m->comp.head] == 'B' &&
 			      m->ec.lapm.vr == 1 && m->ec.lapm.rx_count == (length > 2 ? 1 : 0),
 		      "compressed receive case %zu lost its blocked output or retry", scenario);
+		m->frontend_report = NULL;
+		CHECK(modem_set_dte_command(m, true) == 0, "blocked compressor did not enter command mode");
 		m->packer_process(m, 0);
 		CHECK(m->ec.lapm.busy && m->comp.count == 1,
 		      "compressed receive resumed before output became available");
@@ -3656,6 +3661,8 @@ static bool test_lapm_v42bis_receive_pressure(void)
 		}
 		CHECK(ready == 1 && read(pipe_fds[0], output, sizeof(output)) < 0 && errno == EAGAIN,
 		      "compressed receive lost its ready frame or repeated decoded output");
+		CHECK(m->command && modem_set_dte_command(m, false) == 0 && !m->retrain_pending,
+		      "compressed command receive lost mode or retrained");
 		m->pty = original_pty;
 		close(pipe_fds[0]);
 		close(pipe_fds[1]);
@@ -3743,6 +3750,9 @@ static bool test_lapm_v44_receive_pressure(void)
 			      outgoing->buf[2] >> 1 == m->ec.lapm.vr,
 			      "V.44 blocked output did not acknowledge its input with RNR");
 			m->packer.hdlc.tx_complete(&m->ec.lapm, outgoing);
+			m->frontend_report = NULL;
+			m->cfg.ec = 1;
+			CHECK(modem_set_dte_command(m, true) == 0, "blocked V44 did not enter command mode");
 			m->packer_process(m, 0);
 			CHECK(m->ec.lapm.busy && m->ec.lapm.rx_count == 0 && lapm_sink.length == 0,
 			      "zero-input retry lost blocked V.44 output");
@@ -3777,6 +3787,8 @@ static bool test_lapm_v44_receive_pressure(void)
 		while ((outgoing = m->packer.hdlc.get_tx_frame(&m->ec.lapm)) != NULL)
 			m->packer.hdlc.tx_complete(&m->ec.lapm, outgoing);
 	}
+	CHECK(m->command && modem_set_dte_command(m, false) == 0 && !m->retrain_pending,
+	      "V44 command receive lost mode or retrained");
 	CHECK(checked && lapm_sink.length == sizeof(payload) - 1 &&
 	      memcmp(lapm_sink.data, payload, sizeof(payload) - 1) == 0 &&
 	      v44_character_path_finish_receive(m->ec.lapm.v44_path) == V44_CHARACTER_PATH_OK,

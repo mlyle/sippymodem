@@ -861,6 +861,8 @@ static void t401_timeout(struct modem *m)
 	 * another request. Data recovery terminates the physical connection
 	 * immediately (8.4.9.2), without starting a new DISC transaction. */
 	if (l->rtx_count >= LAPM_MAX_RTX) {
+		modem_note_disconnect(m, true, xid_pending(l) ?
+			"LAPM XID retry budget exhausted" : "LAPM T401 retry budget exhausted");
 		complete_link_release(l);
 		return;
 	}
@@ -873,6 +875,7 @@ static void t401_timeout(struct modem *m)
 		else if (l->sent_info != l->info_list &&
 			 ++l->stalled_polls > LAPM_MAX_RTX) {
 			EC_DBG("no information progress after status enquiries: disconnect\n");
+			modem_note_disconnect(m, true, "LAPM information progress budget exhausted");
 			lapm_disconnect(l);
 			return;
 		}
@@ -895,6 +898,7 @@ static void t401_timeout(struct modem *m)
 		}
 	}
 	if (result != 0) {
+		modem_note_disconnect(m, true, "LAPM retry control queue failed");
 		complete_link_release(l);
 		return;
 	}
@@ -1365,6 +1369,7 @@ static bool complete_link_establishment(struct lapm_state *l)
 
 static void complete_link_release(struct lapm_state *l)
 {
+	modem_note_disconnect(l->modem, true, "LAPM processing or recovery failed");
 	l->state = LAPM_IDLE;
 	reset_lapm_link(l);
 	T401_STOP(l);
@@ -1382,6 +1387,7 @@ static void rx_unnum_rsp(struct lapm_state *l, frame_t *f)
 				complete_link_release(l);
 		} else if ((l->state == LAPM_DATA && (l->rtx_count || !FRAME_U_PF(f))) ||
 			   ((l->state == LAPM_ESTAB || l->state == LAPM_DISC) && FRAME_U_PF(f))) {
+			modem_note_disconnect(l->modem, false, "peer LAPM disconnected mode");
 			complete_link_release(l);
 		}
 		break;
@@ -1407,8 +1413,10 @@ static void rx_unnum_rsp(struct lapm_state *l, frame_t *f)
 		break;
 	case FRAME_U_FRMR:
 		/* V.42 8.5.6: retransmission cannot repair a rejected frame. */
-		if (l->state == LAPM_DATA)
+		if (l->state == LAPM_DATA) {
+			modem_note_disconnect(l->modem, false, "peer LAPM frame reject");
 			complete_link_release(l);
+		}
 		break;
 	case FRAME_U_XID:
 		if (xid_pending(l)) {

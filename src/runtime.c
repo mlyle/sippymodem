@@ -7,6 +7,7 @@
 #include "datapump_link.h"
 #include "host.h"
 #include "line.h"
+#include "byte_queue.h"
 #include "slmodem_adapter.h"
 #include "slmodem_calls.h"
 #include "slmodem_driver.h"
@@ -17,11 +18,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+#include <sys/ioctl.h>
 
 enum { MODEM_RUNTIME_TERMINAL_READ_MAX = 4096 };
 
 struct modem_runtime {
 	struct modem_line *line;
+	struct byte_queue rx_output, control_output;
+	unsigned char rx_storage[16384], control_storage[4096];
+	bool control_overflow;
+	uint64_t attempt_deadline;
 	/* Borrowed views of the line owner; the compatibility frontend owns PTY. */
 	struct modem *modem;
 	struct slmodem_calls *calls;
@@ -126,6 +133,36 @@ static void trace_disconnect(struct modem_runtime *runtime)
 	runtime->trace_disconnect_sequence = runtime->modem->disconnect_sequence;
 }
 
+static int capture_payload(void *context, const char *bytes, int count)
+{
+	struct modem_runtime *runtime = context;
+	return count <= 0 ? 0 : (int)byte_queue_write(&runtime->rx_output, bytes, (size_t)count);
+}
+
+static int capture_control(void *context, const char *bytes, int count)
+{
+	struct modem_runtime *runtime = context;
+	int accepted = count <= 0 ? 0 : (int)byte_queue_write(&runtime->control_output, bytes, (size_t)count);
+	if (accepted != count)
+		runtime->control_overflow = true;
+	return accepted;
+}
+
+static bool flush_output(struct modem_runtime *runtime, struct byte_queue *queue)
+{
+	if (queue->count == 0)
+		return true;
+	size_t count = queue->capacity - queue->head;
+	if (count > queue->count)
+		count = queue->count;
+	ssize_t sent = write(pty_terminal_master_fd(runtime->terminal), queue->storage + queue->head, count);
+	if (sent < 0)
+		return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR || errno == EIO;
+	queue->head = (queue->head + (size_t)sent) % queue->capacity;
+	queue->count -= (size_t)sent;
+	return true;
+}
+
 struct modem_runtime *modem_runtime_create(
 	const struct app_config *config, const char *modem_name)
 {
@@ -151,6 +188,12 @@ struct modem_runtime *modem_runtime_create(
 	runtime->recording_files = modem_line_recording(runtime->line);
 	if (!slmodem_terminal_init(&runtime->modem_terminal, runtime->modem))
 		goto fail;
+	runtime->rx_output = (struct byte_queue){ .storage = runtime->rx_storage, .capacity = sizeof(runtime->rx_storage) };
+	runtime->control_output = (struct byte_queue){ .storage = runtime->control_storage, .capacity = sizeof(runtime->control_storage) };
+	runtime->modem->data_output = capture_payload;
+	runtime->modem->data_output_context = runtime;
+	runtime->modem->control_output = capture_control;
+	runtime->modem->control_output_context = runtime;
 	modem_frontend_init(runtime->modem);
 	runtime->terminal = pty_terminal_create();
 	if (runtime->terminal == NULL)
@@ -450,6 +493,30 @@ enum modem_runtime_result modem_runtime_step(
 		modem_note_disconnect(runtime->modem, true,
 			modem_host_result_name(runtime->last_host_result));
 	calls_result = drain_call_transitions(runtime);
+	if (!runtime->modem->started || (runtime->modem->modem_info & TIOCM_CD))
+		runtime->attempt_deadline = 0;
+	else if (runtime->attempt_deadline == 0) {
+		uint64_t delay = (uint64_t)runtime->modem->sregs[SREG_WAIT_CARRIER_AFTER_DIAL] * UINT64_C(1000000000);
+		runtime->attempt_deadline = delay > UINT64_MAX - now_ns ? UINT64_MAX : now_ns + delay;
+	} else if (now_ns >= runtime->attempt_deadline) {
+		modem_note_disconnect(runtime->modem, true, "whole call attempt expired");
+		modem_update_status(runtime->modem, STATUS_NOCARRIER);
+		(void)modem_stop_now(runtime->modem);
+		runtime->attempt_deadline = 0;
+	}
+	/* Raw async cannot apply receive flow control. Fail in this safe owner
+	 * boundary, after the RX callback and datapump processing have returned. */
+	if (runtime->modem->started && (runtime->modem->dte_overflow || runtime->control_overflow)) {
+		modem_note_disconnect(runtime->modem, true, runtime->control_overflow ?
+			"terminal control output overflow" : "raw DTE receive overflow");
+		(void)modem_stop_now(runtime->modem);
+	}
+	if (runtime->control_overflow)
+		terminal_result = MODEM_RUNTIME_TERMINAL_ERROR;
+	if (!flush_output(runtime, &runtime->control_output) ||
+	    ((!runtime->modem->command || !(runtime->modem->modem_info & TIOCM_CD)) && runtime->control_output.count == 0 &&
+	     !flush_output(runtime, &runtime->rx_output)))
+		terminal_result = MODEM_RUNTIME_TERMINAL_ERROR;
 	trace_call(runtime, now_ns);
 	if (runtime->recording_files != NULL &&
 	    recording_files_last_result(runtime->recording_files) !=
@@ -482,9 +549,15 @@ enum modem_runtime_result modem_runtime_step(
 uint64_t modem_runtime_wait_ns(
 	const struct modem_runtime *runtime, uint64_t now_ns)
 {
-	return runtime != NULL ?
-		       modem_host_wait_ns(runtime->host, now_ns) :
-		       UINT64_MAX;
+	if (runtime == NULL)
+		return UINT64_MAX;
+	uint64_t wait = modem_host_wait_ns(runtime->host, now_ns);
+	if (runtime->attempt_deadline != 0) {
+		uint64_t remaining = runtime->attempt_deadline <= now_ns ? 0 : runtime->attempt_deadline - now_ns;
+		if (remaining < wait)
+			wait = remaining;
+	}
+	return wait;
 }
 
 void modem_runtime_destroy(struct modem_runtime *runtime)

@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/ioctl.h>
 
 struct modem_host {
 	unsigned int marker;
@@ -1094,12 +1095,55 @@ static bool test_local_host_disconnect_attribution(void)
 	return true;
 }
 
+static bool test_output_queues_and_call_deadline(void)
+{
+	struct app_config config = runtime_config(false);
+	memset(&capture, 0, sizeof(capture));
+	struct modem_runtime *runtime = modem_runtime_create(&config, "queues-test");
+	CHECK(runtime != NULL && modem_runtime_open(runtime) == MODEM_RUNTIME_OK, "cannot open queued terminal");
+	int peer = open(modem_runtime_device_path(runtime), O_RDWR | O_NOCTTY | O_NONBLOCK);
+	CHECK(peer >= 0, "cannot open terminal peer");
+	struct modem *modem = modem_runtime_modem(runtime);
+	modem->command = 1;
+	modem->modem_info |= TIOCM_CD;
+	CHECK(modem->data_output(modem->data_output_context, "payload", 7) == 7 &&
+	      modem->control_output(modem->control_output_context, "OK\r\n", 4) == 4,
+	      "queue sinks rejected bytes");
+	CHECK(modem_runtime_step(runtime, 1000000000, NULL, NULL, NULL) == MODEM_RUNTIME_OK,
+	      "queued control step failed");
+	char output[16];
+	CHECK(read(peer, output, sizeof(output)) == 4 && memcmp(output, "OK\r\n", 4) == 0,
+	      "control response mixed with paused payload");
+	CHECK(read(peer, output, sizeof(output)) < 0 && errno == EAGAIN, "paused payload escaped");
+	modem->command = 0;
+	CHECK(modem_runtime_step(runtime, 2000000000, NULL, NULL, NULL) == MODEM_RUNTIME_OK &&
+	      read(peer, output, sizeof(output)) == 7 && memcmp(output, "payload", 7) == 0,
+	      "data resume lost held payload");
+	modem->modem_info &= ~TIOCM_CD;
+	modem->started = 1;
+	modem->sregs[SREG_WAIT_CARRIER_AFTER_DIAL] = 2;
+	CHECK(modem_runtime_step(runtime, 3000000000, NULL, NULL, NULL) == MODEM_RUNTIME_OK &&
+	      capture.forced_stops == 0, "attempt timeout fired early");
+	CHECK(modem_runtime_step(runtime, 5000000000, NULL, NULL, NULL) == MODEM_RUNTIME_OK &&
+	      capture.forced_stops == 1 && !modem->started && modem->disconnect_local &&
+	      strcmp(modem->disconnect_reason, "whole call attempt expired") == 0,
+	      "continuous call progress escaped the whole-attempt deadline");
+	modem->dte_overflow = true;
+	modem->started = 1;
+	CHECK(modem_runtime_step(runtime, 5000000001, NULL, NULL, NULL) == MODEM_RUNTIME_OK &&
+	      capture.forced_stops == 2, "raw overflow did not stop at owner boundary");
+	close(peer);
+	modem_runtime_destroy(runtime);
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "queued output and call deadline", test_output_queues_and_call_deadline },
 		{ "closed ownership", test_owns_closed_runtime },
 		{ "creation rollback", test_creation_rolls_back },
 		{ "open and close", test_opens_and_closes_in_dependency_order },
@@ -1122,4 +1166,10 @@ int main(void)
 		}
 	}
 	return failures == 0 ? 0 : 1;
+}
+
+void modem_update_status(struct modem *modem, unsigned int status)
+{
+	(void)modem;
+	(void)status;
 }

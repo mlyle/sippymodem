@@ -277,6 +277,8 @@ static int modem_set_state(struct modem *m, unsigned new_state)
 	switch(new_state) {
 	case STATE_MODEM_IDLE:
 		MODEM_DBG("new state: MODEM_IDLE\n");
+		m->modem_info &= ~TIOCM_CD;
+		m->xmit.head = m->xmit.tail = m->xmit.count = 0;
 		m->command = 1;
 		m->get_chars = 0;
 		m->put_chars = 0;
@@ -2010,7 +2012,9 @@ int modem_report_remote_call_end(struct modem *m)
 int modem_data_write(struct modem *m, const void *input, size_t length)
 {
 	if (m == NULL || (length != 0 && input == NULL) || length > INT_MAX ||
-	    !IS_STATE_ONLINE(m->state) || m->command)
+	    !IS_STATE_ONLINE(m->state) || m->command || m->xmit.buf == NULL ||
+	    m->xmit.size == 0 || m->xmit.head >= m->xmit.size || m->xmit.count < 0 ||
+	    (unsigned int)m->xmit.count > m->xmit.size)
 		return -1;
 	const unsigned char *bytes = input;
 	size_t count = length;

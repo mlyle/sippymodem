@@ -353,7 +353,7 @@ SLMODEM_TERMINAL_TEST_OBJECTS := \
 	$(BUILD_DIR)/slmodem_terminal.o
 RUNTIME_TEST_BINARY := $(BUILD_DIR)/test_runtime
 RUNTIME_TEST_OBJECTS := $(BUILD_DIR)/test_runtime.o \
-	$(BUILD_DIR)/line.o $(BUILD_DIR)/runtime.o \
+	$(BUILD_DIR)/byte_queue.o $(BUILD_DIR)/line.o $(BUILD_DIR)/runtime.o \
 	$(BUILD_DIR)/slmodem_terminal.o \
 	$(BUILD_DIR)/terminal.o
 TERMINAL_TEST_BINARY := $(BUILD_DIR)/test_terminal
@@ -6152,4 +6152,7 @@ $(BUILD_DIR)/line.o: ../src/line.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/config_defaults.o: ../src/config_defaults.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/byte_queue.o: ../src/byte_queue.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<

@@ -4,6 +4,7 @@
 #include <modem_frontend.h>
 #include "test.h"
 
+#include <limits.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/ioctl.h>
@@ -128,8 +129,33 @@ static bool at_replies_are_separate(void)
 	return true;
 }
 
+static bool local_lapm_retry_cause(void)
+{
+	struct capture data = { .limit = 4096 }, commands = { .limit = 4096 };
+	struct modem *modem = create(&data, &commands);
+	EXPECT(modem != NULL);
+	modem->caller = 1;
+	modem->state = STATE_EC_ESTAB;
+	modem->rx_rate = modem->tx_rate = 9600;
+	modem->cfg.ec = 1;
+	modem->cfg.comp = 0;
+	modem->cfg.ec_tx_win_size = modem->cfg.ec_rx_win_size = 15;
+	modem->cfg.ec_tx_info_size = modem->cfg.ec_rx_info_size = 128;
+	EXPECT(modem_ec_init(modem) == 0);
+	modem_ec_start(modem);
+	EXPECT(modem->packer.hdlc.tx_preamble_complete != NULL);
+	modem->packer.hdlc.tx_preamble_complete(modem);
+	EXPECT(modem->bit_timer_func != NULL);
+	modem->ec.lapm.rtx_count = INT_MAX;
+	modem->bit_timer_func(modem);
+	EXPECT(modem->disconnect_local && modem->disconnect_reason != NULL);
+	EXPECT(strcmp(modem->disconnect_reason, "LAPM XID retry budget exhausted") == 0);
+	modem_delete(modem);
+	return true;
+}
+
 int main(void)
 {
 	return literal_and_partial() && command_preserves_receive() &&
-		raw_overflow_is_reported() && at_replies_are_separate() ? 0 : 1;
+		raw_overflow_is_reported() && at_replies_are_separate() && local_lapm_retry_cause() ? 0 : 1;
 }

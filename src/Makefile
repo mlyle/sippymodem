@@ -426,7 +426,7 @@ PCM_SOURCES := \
 DSP_SOURCES := $(SHARED_DSP_SOURCES) \
 	$(V21_202_SOURCES) $(V22_SOURCES) \
 	$(V32_SOURCES) $(PCM_SOURCES)
-SOURCES := config_defaults.c line.c modem_frontend.c $(MODEM_CORE_SOURCES) $(APP_SOURCES) \
+SOURCES := byte_queue.c config_defaults.c line.c modem_frontend.c $(MODEM_CORE_SOURCES) $(APP_SOURCES) \
 	$(DSP_SOURCES)
 FRONTEND_SOURCES := modem_frontend.c modem_at.c main.c loop.c runtime.c terminal.c slmodem_terminal.c config.c
 CORE_SOURCES := $(filter-out $(FRONTEND_SOURCES),$(SOURCES))
