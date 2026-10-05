@@ -919,7 +919,7 @@ enum sippymodem_result sippymodem_dial_from(struct sippymodem_line *line,
 		return SIPPYMODEM_INVALID;
 	if (!line->started || !endpoint->started)
 		return SIPPYMODEM_CLOSED;
-	if (line->active || line->rx.count != 0 || line_modem(line)->started || modem_host_media_cleanup_pending(line_host(line)) || !line->server->have_now || line->status.generation == UINT64_MAX || line->server->event_overflow)
+	if (!admit(line) || !line->server->have_now)
 		return SIPPYMODEM_BUSY;
 	struct modem *modem = line_modem(line);
 	const char *destination = target != NULL ? target : endpoint->target;
