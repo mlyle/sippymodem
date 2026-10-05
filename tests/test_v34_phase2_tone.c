@@ -947,6 +947,108 @@ static bool check_full_retrain_request(
 	return true;
 }
 
+static bool check_retrain_quiet_tolerance(
+	enum v34_station_role local_role, enum test_codec codec)
+{
+	struct v34_phase2_tone_transmitter tone;
+	struct v34_retrain_detector detector;
+	bool seen = false;
+	const size_t quiet_60ms = V34_PHASE2_SAMPLE_RATE * 60u / 1000u;
+	const size_t quiet_59ms = V34_PHASE2_SAMPLE_RATE * 59u / 1000u;
+
+	for (unsigned shortened = 0; shortened < 2; ++shortened) {
+		size_t quiet = shortened ? quiet_59ms : quiet_60ms;
+		CHECK(v34_retrain_detector_init(&detector, local_role) ==
+			      V34_PHASE2_TONE_OK &&
+		      v34_phase2_tone_transmitter_init(&tone,
+			      v34_station_peer_role(local_role), TEST_AMPLITUDE) ==
+			      V34_PHASE2_TONE_OK,
+		      "short-preamble fixture did not initialize");
+		seen = false;
+		/* Seed the sliding window with active signal before quiet begins. */
+		for (size_t index = 0; index < 128; ++index)
+			CHECK(feed_retrain_sample(&detector, 8000, codec, &seen),
+			      "active prefix failed");
+		for (size_t index = 0; index < quiet; ++index)
+			CHECK(feed_retrain_sample(&detector, 0, codec, &seen),
+			      "short quiet failed");
+		for (size_t index = 0;
+		     index < V34_RETRAIN_TONE_SAMPLES + V34_RETRAIN_EDGE_SAMPLES;
+		     ++index) {
+			int16_t sample;
+			bool before = seen;
+			CHECK(v34_phase2_tone_transmitter_sample(&tone, &sample) ==
+				      V34_PHASE2_TONE_OK &&
+			      feed_retrain_sample(&detector, sample, codec, &seen),
+			      "short-preamble tone failed");
+			CHECK(!seen || before || index + 2u >= V34_RETRAIN_TONE_SAMPLES,
+			      "short preamble weakened continuous tone duration");
+		}
+		CHECK(seen == !shortened,
+		      "%zu quiet samples: expected %s, got %s",
+		      quiet, shortened ? "rejection" : "detection",
+		      seen ? "detection" : "rejection");
+	}
+
+	CHECK(v34_retrain_detector_init(&detector, local_role) ==
+		      V34_PHASE2_TONE_OK &&
+	      v34_phase2_tone_transmitter_init(&tone,
+		      v34_station_peer_role(local_role), TEST_AMPLITUDE) ==
+		      V34_PHASE2_TONE_OK,
+	      "broken-tone fixture did not initialize");
+	seen = false;
+	for (size_t index = 0; index < quiet_60ms; ++index)
+		CHECK(feed_retrain_sample(&detector, 0, codec, &seen),
+		      "broken-tone quiet failed");
+	for (size_t index = 0; index < V34_PHASE2_SAMPLE_RATE * 55u / 1000u; ++index) {
+		int16_t sample;
+		CHECK(v34_phase2_tone_transmitter_sample(&tone, &sample) ==
+			      V34_PHASE2_TONE_OK &&
+		      feed_retrain_sample(&detector, sample, codec, &seen),
+		      "short correct tone failed");
+	}
+	CHECK(!seen, "55 ms tone passed the retained 80 ms guard");
+	for (size_t index = 0; index < V34_PHASE2_SAMPLE_RATE / 50u; ++index)
+		CHECK(feed_retrain_sample(&detector, 8000, codec, &seen),
+		      "tone interruption failed");
+	for (size_t index = 0;
+	     index < V34_RETRAIN_TONE_SAMPLES + V34_RETRAIN_EDGE_SAMPLES; ++index) {
+		int16_t sample;
+		CHECK(v34_phase2_tone_transmitter_sample(&tone, &sample) ==
+			      V34_PHASE2_TONE_OK &&
+		      feed_retrain_sample(&detector, sample, codec, &seen),
+		      "tone after interruption failed");
+	}
+	CHECK(!seen, "broken tone fragments accumulated into a retrain");
+
+	CHECK(v34_retrain_detector_init(&detector, local_role) ==
+		      V34_PHASE2_TONE_OK,
+	      "quiet-to-data fixture did not initialize");
+	seen = false;
+	for (size_t index = 0; index < quiet_60ms; ++index)
+		CHECK(feed_retrain_sample(&detector, 0, codec, &seen),
+		      "quiet-to-data preamble failed");
+	uint32_t random = UINT32_C(0x42f7139b);
+	for (size_t index = 0; index < 8000; ++index) {
+		random = random * UINT32_C(1664525) + UINT32_C(1013904223);
+		int16_t sample = (int16_t)((int32_t)(random >> 16) % 16001 - 8000);
+		CHECK(feed_retrain_sample(&detector, sample, codec, &seen),
+		      "quiet-to-data sample failed");
+	}
+	CHECK(!seen, "quiet followed by ordinary signal requested retraining");
+	return true;
+}
+
+static bool test_retrain_quiet_tolerance(void)
+{
+	for (enum test_codec codec = TEST_CODEC_LINEAR; codec <= TEST_CODEC_PCMA; ++codec)
+		for (enum v34_station_role role = V34_CALLING_STATION;
+		     role <= V34_ANSWERING_STATION; ++role)
+			CHECK(check_retrain_quiet_tolerance(role, codec),
+			      "quiet tolerance failed for role %d codec %d", role, codec);
+	return true;
+}
+
 static bool test_full_retrain_request(void)
 {
 	for (enum test_codec codec = TEST_CODEC_LINEAR;
@@ -1434,6 +1536,7 @@ int main(void)
 		{ "wrong tone rejection", test_wrong_tone_rejection },
 		{ "frequency tolerance", test_frequency_tolerance },
 		{ "full-retrain request", test_full_retrain_request },
+		{ "short retrain quiet guard", test_retrain_quiet_tolerance },
 		{ "trained receiver silence ceiling", test_receiver_silence_ceiling },
 		{ "full-retrain response", test_full_retrain_response },
 		{ "receive gain handoff", test_receive_gain_handoff },
