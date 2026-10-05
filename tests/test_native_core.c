@@ -2201,6 +2201,52 @@ static bool test_factory_defaults(void)
 	return true;
 }
 
+static bool test_sreg_numeric_validation(void)
+{
+	struct modem_driver driver = {
+		.name = "S-register validation", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	struct modem *m = create_compat_modem(&driver, driver.name);
+	CHECK(m != NULL, "S-register allocation failed");
+	unsigned char expected[sizeof(m->sregs)];
+	memcpy(expected, m->sregs, sizeof(expected));
+	const char *invalid[] = {
+		"ATS0=256", "ATS0=4294967296", "ATS0=18446744073709551616",
+		"ATS256=1", "ATS4294967296=1", "ATS18446744073709551616=1",
+		"ATS0=-1", "ATS0=-0", "ATS-0=1", "ATS-1?",
+		"ATS3=128", "ATS4=255", "ATS5=128", "ATS228=2",
+	};
+	for (size_t i = 0; i < ARRAY_LENGTH(invalid); ++i)
+		CHECK(process_at_command(m, (char *)invalid[i]) < 0 &&
+		      !memcmp(expected, m->sregs, sizeof(expected)),
+		      "invalid register input changed settings: %s", invalid[i]);
+	const struct { unsigned number; int value; } rejected[] = {
+		{ 0, -1 }, { 0, 256 }, { 256, 0 },
+		{ SREG_CR_CHAR, 128 }, { SREG_LF_CHAR, 128 }, { SREG_BS_CHAR, 128 },
+	};
+	for (size_t i = 0; i < ARRAY_LENGTH(rejected); ++i)
+		CHECK(modem_set_sreg(m, rejected[i].number, rejected[i].value) < 0 &&
+		      !memcmp(expected, m->sregs, sizeof(expected)),
+		      "direct register bounds failed at %zu", i);
+	CHECK(process_at_command(m, "ATS0=255S1=0xffS2=0377S255=255") == 0 &&
+	      m->sregs[0] == 255 && m->sregs[1] == 255 &&
+	      m->sregs[2] == 255 && m->sregs[255] == 255,
+	      "byte bounds or numeric bases changed");
+	CHECK(process_at_command(m, "ATS3=0S4=0S5=0") == 0 &&
+	      m->sregs[3] == 0 && m->sregs[4] == 0 && m->sregs[5] == 0 &&
+	      process_at_command(m, "ATS3=127S4=127S5=127") == 0 &&
+	      m->sregs[3] == 127 && m->sregs[4] == 127 && m->sregs[5] == 127,
+	      "IA5 endpoints rejected");
+	CHECK(process_at_command(m, "ATS0=E0Q1V0S=1") == 0 &&
+	      m->sregs[0] == 1 && !m->sregs[SREG_ECHO] &&
+	      m->sregs[SREG_QUIET] && !m->sregs[SREG_VERBOSE] &&
+	      process_at_command(m, "ATS0=") == 0 && !m->sregs[0],
+	      "omitted fields or chained commands changed");
+	modem_delete(m);
+	return true;
+}
+
 static bool test_automatic_startup_deadline(void)
 {
 	struct modem_driver driver = {
@@ -9385,6 +9431,7 @@ int main(void)
 		{ "V.42 detection deadline", test_v42_detection_deadline },
 		{ "automatic factory profile", test_automatic_factory_profile },
 		{ "factory defaults", test_factory_defaults },
+		{ "S-register numeric validation", test_sreg_numeric_validation },
 		{ "automatic startup deadline", test_automatic_startup_deadline },
 		{ "V.8 fallback limits", test_v8_fallback_limits },
 		{ "V.8 legacy V.32 selection", test_v8_legacy_v32 },

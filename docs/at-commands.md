@@ -348,11 +348,13 @@ preserves the selected country.
 ## S-registers
 
 Use `ATS<n>?` to read a register and `ATS<n>=<value>` to write it. All indices
-`0..255` are accessible. Storage is one byte; most writes keep the low eight
-bits without the validation performed by named AT commands. S228 is an
-exception: it rejects values other than 0 and 1. Prefer the named controls
-for modulation and
-protocol configuration.
+`0..255` are accessible. Values must fit in one byte (`0..255`); S3, S4, and
+S5 accept only `0..127`, as required by V.250 for interface characters. S228
+accepts only 0 or 1. Negative numbers, overflow, and values outside these
+ranges produce `ERROR` and leave the register unchanged. An omitted index
+or value means zero. Queries return three decimal digits, including leading
+zeroes. Other registers do not apply the validation performed by named AT
+commands; prefer those controls for modulation and protocol configuration.
 
 The defaults below apply to a newly created modem with the USA country profile.
 Legacy hardware timing fields are retained for compatibility; most are not

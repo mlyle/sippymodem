@@ -427,35 +427,29 @@ static int process_O(struct modem *m, char *p, int *len)
 
 static int process_S(struct modem *m, char *p, int *len)
 {
-	unsigned n = 0;
-	int val;
-	char *end;
-	AT_DBG("AT S command...\n");
-	n = strtoul(p,&end,0);
-	*len = end - p + 1;
-	p = end;
-	if ( n >= sizeof(m->sregs)/sizeof(m->sregs[0]) )
+	unsigned long number = 0, value = 0;
+
+	*len = 0;
+	if (parse_unsigned(&p, len, &number, 0) < 0 || number >= sizeof(m->sregs))
 		return -1;
-	switch(*p++) {
-	case '?':
-		val = modem_get_sreg(m,n);
-		if (val < 0)
+	(*len)++;
+	switch (*p++) {
+	case '?': {
+		int current = modem_get_sreg(m, (unsigned)number);
+		char response[16];
+		if (current < 0)
 			return -1;
-		else {
-			char strval[8];
-			int l = sprintf(strval,"%d",val);
-			modem_frontend_info(m, strval,l);
-		}
+		snprintf(response, sizeof(response), "%03d", current);
+		modem_frontend_info(m, response, (int)strlen(response));
 		return 0;
+	}
 	case '=':
-		val = strtoul(p, &end, 0);
-		*len += end - p;
-		return modem_set_sreg(m,n,val);
-		break;
+		if (parse_unsigned(&p, len, &value, 0) < 0 || value > UCHAR_MAX)
+			return -1;
+		return modem_set_sreg(m, (unsigned)number, (int)value);
 	default:
 		return -1;
 	}
-	return 0;
 }
 
 static int process_Z(struct modem *m, char *p, int *len)

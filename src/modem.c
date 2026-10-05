@@ -1995,9 +1995,12 @@ int modem_get_sreg(struct modem *m, unsigned int num)
 
 int modem_set_sreg(struct modem *m, unsigned int num, int val)
 {
-	if (num == SREG_DS0_FRAMING && (val < 0 || val > 1))
+	if (num >= sizeof(m->sregs) || val < 0 || val > UCHAR_MAX)
 		return -1;
-	if (num >= sizeof(m->sregs))
+	/* V.250 6.2.1..6.2.3: command interface characters are IA5 values. */
+	if ((num == SREG_CR_CHAR || num == SREG_LF_CHAR || num == SREG_BS_CHAR) && val > 127)
+		return -1;
+	if (num == SREG_DS0_FRAMING && val > 1)
 		return -1;
 	m->sregs[num] = val;
 	return 0;
