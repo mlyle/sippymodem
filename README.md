@@ -7,6 +7,11 @@ blobs, and its scope exceeds the original modem with features including
 V.90/V.92 digital head-end operation, V.44 compression, V.92 PCM upstream,
 Baudot RTTY, and raw ISDN data over voice bearer service (DOVBS).
 
+The build also exposes a native byte API in `libsippymodem`, with shared SIP
+ownership, independent modem lines, bounded queues, and a native PPP fd adapter.
+See [native integration](docs/library-api.md) for its lifecycle and scheduling
+contract. The existing `slmodemd` terminal frontend remains available.
+
 The active implementation is split between the application under `src/` and
 the modem signal processing and datapumps under `dsp/`. The top-level `make`
 builds only that implementation and no longer builds or installs Linux kernel

@@ -80,6 +80,7 @@ SDP_TEST_BINARY := $(BUILD_DIR)/test_sdp
 SDP_TEST_OBJECTS := $(BUILD_DIR)/test_sdp.o \
 	$(BUILD_DIR)/sdp.o $(BUILD_DIR)/media.o \
 	$(BUILD_DIR)/g711.o
+LIBRARY_TEST_BINARY := $(BUILD_DIR)/test_library
 PJSIP_TEST_BINARY := $(BUILD_DIR)/test_sip_signaling
 PJSIP_TEST_OBJECTS := $(BUILD_DIR)/test_sip_signaling.o \
 	$(BUILD_DIR)/sip_signaling_pjsip.o \
@@ -3516,7 +3517,7 @@ TEST_BINARIES := $(BUILD_DIR)/test_packet_stats $(PACK_TEST_BINARY) $(CONFIG_TES
 	$(BINARY_EQUALIZER_TEST_BINARY) \
 	$(FSK_INTEGRATION_TEST_BINARY)
 ifeq ($(PJSIP_AVAILABLE),yes)
-TEST_BINARIES += $(PJSIP_TEST_BINARY)
+TEST_BINARIES += $(PJSIP_TEST_BINARY) $(LIBRARY_TEST_BINARY)
 endif
 PYTHON_TESTS := \
 	test_live_profiles.py \
@@ -6156,3 +6157,13 @@ $(BUILD_DIR)/config_defaults.o: ../src/config_defaults.c | $(BUILD_DIR)
 
 $(BUILD_DIR)/byte_queue.o: ../src/byte_queue.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+# The public integration test uses the actual reusable core, not PTY mocks.
+LIBRARY_INPUTS := $(wildcard ../src/*.c ../src/*.h ../dsp/*.c ../dsp/*.h ../dsp/*.py \
+ ../dsp/v21_202/*.c ../dsp/v21_202/*.h ../dsp/v22/*.c ../dsp/v22/*.h \
+ ../dsp/v32/*.c ../dsp/v32/*.h ../dsp/pcm/*.c ../dsp/pcm/*.h ../dsp/pcm/*.py)
+../src/libsippymodem.a: $(LIBRARY_INPUTS) ../src/Makefile ../build/compiler.mk $(PJSIP_DEPENDENCY)
+	$(MAKE) -C ../src CC="$(CC)" CXX="$(CXX)" CCACHE="$(CCACHE)" \
+	 PJSIP_PACKAGE="$(PJSIP_PACKAGE)" PJSIP_DEPENDENCY="$(PJSIP_DEPENDENCY)" libsippymodem.a
+$(LIBRARY_TEST_BINARY): $(BUILD_DIR)/test_library.o ../src/libsippymodem.a $(PJSIP_DEPENDENCY)
+	$(CC) $(LDFLAGS) -Wl,--wrap=modem_stop_now -Wl,--wrap=pjsua_destroy2 -o $@ $(BUILD_DIR)/test_library.o ../src/libsippymodem.a $(PJSIP_LDLIBS) -lm

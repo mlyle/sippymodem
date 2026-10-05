@@ -496,6 +496,7 @@ extern int modem_recv_from_tty(struct modem *m, char *bytes, int count);
 extern void modem_hangup(struct modem *m);
 extern int modem_stop_now(struct modem *m);
 extern int modem_answer(struct modem *m);
+extern int modem_dial(struct modem *m);
 extern int modem_online(struct modem *m, int retrain);
 /* Borrowed static name of the host call phase; no state is changed. */
 extern const char *modem_call_phase(const struct modem *m);

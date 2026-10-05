@@ -426,7 +426,7 @@ PCM_SOURCES := \
 DSP_SOURCES := $(SHARED_DSP_SOURCES) \
 	$(V21_202_SOURCES) $(V22_SOURCES) \
 	$(V32_SOURCES) $(PCM_SOURCES)
-SOURCES := byte_queue.c config_defaults.c line.c modem_frontend.c $(MODEM_CORE_SOURCES) $(APP_SOURCES) \
+SOURCES := byte_queue.c config_defaults.c fd_adapter.c library.c line.c modem_frontend.c $(MODEM_CORE_SOURCES) $(APP_SOURCES) \
 	$(DSP_SOURCES)
 FRONTEND_SOURCES := modem_frontend.c modem_at.c main.c loop.c runtime.c terminal.c slmodem_terminal.c config.c
 CORE_SOURCES := $(filter-out $(FRONTEND_SOURCES),$(SOURCES))
@@ -444,8 +444,8 @@ libsippymodem.a: $(CORE_OBJECTS)
 	rm -f $@
 	$(AR) rcs $@ $(CORE_OBJECTS)
 
-libsippymodem.so: $(CORE_OBJECTS) $(PJSIP_DEPENDENCY)
-	$(CC) -shared -Wl,-z,defs $(LDFLAGS) -o $@ $(CORE_OBJECTS) $(LDLIBS)
+libsippymodem.so: $(CORE_OBJECTS) $(PJSIP_DEPENDENCY) ../build/library.map
+	$(CC) -shared -Wl,-z,defs -Wl,--version-script=../build/library.map $(LDFLAGS) -o $@ $(CORE_OBJECTS) $(LDLIBS)
 
 slmodemd: $(FRONTEND_OBJECTS) libsippymodem.a $(PJSIP_DEPENDENCY)
 	$(CC) $(LDFLAGS) -o $@ $(FRONTEND_OBJECTS) libsippymodem.a $(LDLIBS)
