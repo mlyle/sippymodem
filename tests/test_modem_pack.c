@@ -813,6 +813,46 @@ static bool test_hdlc_minimum_frame_size(void)
 	return true;
 }
 
+static bool test_hdlc_wire_fragments(void)
+{
+	/* Literal wire bits for "123456789", FCS 6e:90, and a closing flag.
+	 * Octets are bit-reversed because this interface takes wire-order groups. */
+	static const uint8_t wire[] = {
+		0x7e, 0x8c, 0x4c, 0xcc, 0x2c, 0xac, 0x6c,
+		0xec, 0x1c, 0x9c, 0x76, 0x09, 0x7e,
+	};
+	for (unsigned width = 1; width <= 8; ++width)
+	for (unsigned prefix = 0; prefix < 8; ++prefix)
+	for (unsigned corrupt = 0; corrupt < 2; ++corrupt) {
+		struct modem m = { .name = "fragmented HDLC wire" };
+		struct hdlc_fixture fixture = {0};
+		uint8_t bits[256]; size_t count = prefix;
+		memset(bits, 1, sizeof(bits));
+		if (corrupt) {
+			for (size_t i = 0; i < sizeof(wire); ++i)
+				for (int bit = 7; bit >= 0; --bit)
+					bits[count++] = ((wire[i] ^ (i == 5 ? 1u : 0u)) >> bit) & 1u;
+		}
+		/* After a corrupt frame, its closing flag also opens the good one. */
+		for (size_t i = corrupt ? 1 : 0; i < sizeof(wire); ++i)
+			for (int bit = 7; bit >= 0; --bit) bits[count++] = (wire[i] >> bit) & 1u;
+		for (unsigned i = 0; i < 24; ++i) bits[count++] = (0x7e >> (7 - i % 8)) & 1u;
+		modem_hdlc_start(&m);
+		m.packer.hdlc.framer = &fixture;
+		m.packer.hdlc.rx_complete = receive_complete;
+		for (size_t at = 0; at < count; at += width) {
+			uint8_t group = 0;
+			for (unsigned bit = 0; bit < width; ++bit)
+				group = (uint8_t)((group << 1) | bits[at + bit]);
+			CHECK(modem_hdlc_put_bits(&m, width, &group, 1) == 1, "exact group consumption");
+		}
+		CHECK(fixture.receive_completions == 1 && !fixture.receive_overflow &&
+		      fixture.received_length == 9 && !memcmp(fixture.received, "123456789", 9),
+		      "wire recovery width=%u prefix=%u corrupt=%u", width, prefix, corrupt);
+	}
+	return true;
+}
+
 struct test_case {
 	const char *name;
 	bool (*run)(void);
@@ -843,6 +883,7 @@ int main(void)
 		{ "HDLC transmit preamble", test_hdlc_transmit_preamble },
 		{ "HDLC round trip", test_hdlc_round_trip },
 		{ "HDLC minimum frame size", test_hdlc_minimum_frame_size },
+		{ "HDLC literal wire fragments and FCS recovery", test_hdlc_wire_fragments },
 		{ "V.42 text framing", test_v42_text_requires_framing },
 	};
 	unsigned int failures = 0;

@@ -4766,16 +4766,15 @@ static bool test_lapm_peer_flag_preamble(void)
 	modem_ec_start(m);
 	CHECK(m->packer.hdlc.tx_preamble_flags == 109,
 	      "wrong conservative LAPM preamble");
-	/* The HDLC decoder holds 18 bits of lookahead. Five wire flags
-	 * expose at least two complete, consecutive peer flags to it. */
-	for (unsigned i = 0; i < 3 * 8; ++i) {
+	/* One complete peer flag cannot release ADP waiting; two can. */
+	for (unsigned i = 0; i < 8; ++i) {
 		bit = (0x7e >> (i % 8)) & 1;
 		CHECK(modem_hdlc_put_bits(m, 1, &bit, 1) == 1,
 		      "peer flag input failed");
 	}
 	CHECK(m->packer.hdlc.tx_preamble_flags == 109,
 	      "one peer flag prematurely released the ADP wait");
-	for (unsigned i = 3 * 8; i < 5 * 8; ++i) {
+	for (unsigned i = 8; i < 2 * 8; ++i) {
 		bit = (0x7e >> (i % 8)) & 1;
 		CHECK(modem_hdlc_put_bits(m, 1, &bit, 1) == 1,
 		      "peer flag input failed");
@@ -7838,8 +7837,11 @@ static bool test_lapm_retrain_preserves_link_state(void)
 			modem->pack.bit = 3;
 			modem->unpack.bit = 5;
 			modem->packer.hdlc.tx_ones = 2;
-			modem->packer.hdlc.rx_ones = 4;
-			modem->packer.hdlc.rx_error = 0;
+			modem->packer.hdlc.rx.ones = 4;
+			modem->packer.hdlc.rx.in_frame = true;
+			modem->packer.hdlc.rx.frame_len = 2;
+			modem->packer.hdlc.rx.raw_len = 6;
+			modem->packer.hdlc.rx.bit_count = 3;
 			modem->packer.hdlc.rx_frame->count = 2;
 			modem->retrain_pending = 1;
 			modem_dp_reconnected(modem);
@@ -7854,8 +7856,11 @@ static bool test_lapm_retrain_preserves_link_state(void)
 				      modem->pack.bit == 0 &&
 				      modem->unpack.bit == 0 &&
 				      modem->packer.hdlc.tx_ones == 0 &&
-				      modem->packer.hdlc.rx_ones == 0 &&
-				      modem->packer.hdlc.rx_error == 1 &&
+				      modem->packer.hdlc.rx.ones == 0 &&
+				      !modem->packer.hdlc.rx.in_frame &&
+				      modem->packer.hdlc.rx.frame_len == 0 &&
+				      modem->packer.hdlc.rx.raw_len == 0 &&
+				      modem->packer.hdlc.rx.bit_count == 0 &&
 				      modem->packer.hdlc.rx_frame->count == 0,
 			      "repeated LAPM retrain did not reframe the retained link");
 			modem->pack.bit = 3;
@@ -7941,8 +7946,11 @@ static bool test_lapm_retrain_preserves_link_state(void)
 	lapm->peer_busy = 0;
 	modem->unpack.bit = 11;
 	modem->unpack.data = 0x5a5;
-	modem->packer.hdlc.rx_error = 0;
-	modem->packer.hdlc.rx_ones = 3;
+	modem->packer.hdlc.rx.in_frame = true;
+	modem->packer.hdlc.rx.frame_len = 2;
+	modem->packer.hdlc.rx.ones = 3;
+	modem->packer.hdlc.rx.raw_len = 6;
+	modem->packer.hdlc.rx.bit_count = 3;
 	modem->packer.hdlc.rx_frame->count = 2;
 	modem->retrain_pending = 1;
 	modem->bit_timer = 0;
@@ -7954,8 +7962,11 @@ static bool test_lapm_retrain_preserves_link_state(void)
 		      modem->packer.hdlc.tx_frame == NULL &&
 		      modem->pack.bit == 0 && modem->unpack.bit == 0 &&
 		      modem->packer.hdlc.tx_ones == 0 &&
-		      modem->packer.hdlc.rx_ones == 0 &&
-		      modem->packer.hdlc.rx_error == 1 &&
+		      modem->packer.hdlc.rx.ones == 0 &&
+		      !modem->packer.hdlc.rx.in_frame &&
+		      modem->packer.hdlc.rx.frame_len == 0 &&
+		      modem->packer.hdlc.rx.raw_len == 0 &&
+		      modem->packer.hdlc.rx.bit_count == 0 &&
 		      modem->packer.hdlc.rx_frame->count == 0 &&
 		      retained_frame->size == 3 + sizeof(retained_payload) &&
 		      memcmp(retained_frame->buf + 3, retained_payload,

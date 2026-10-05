@@ -50,28 +50,9 @@ static size_t ds0_rx_storage_limit(const struct ds0 *ds0)
 	return limit + 2u;
 }
 
-static void ds0_rx_reset_frame(struct ds0_hdlc_rx *rx)
+static void ds0_rx_reset_detector(struct ds0_hdlc_rx *rx, enum ds0_rate rate)
 {
-	rx->ones = 0;
-	rx->bit_count = 0;
-	rx->current_byte = 0;
-	rx->frame_len = 0;
-}
-
-static void ds0_rx_reset_detector(struct ds0_hdlc_rx *rx,
-				     enum ds0_rate rate)
-{
-	*rx = (struct ds0_hdlc_rx) {
-		.rate = rate,
-	};
-}
-
-static void ds0_rx_abort_frame(struct ds0_hdlc_rx *rx)
-{
-	rx->in_frame = 0;
-	rx->clean_bits = rx->verified_bits = 0;
-	rx->clean_frame = false;
-	ds0_rx_reset_frame(rx);
+	*rx = (struct ds0_hdlc_rx){ .rate = rate };
 }
 
 static struct ds0_rx_counters *ds0_rx_counts(struct ds0 *ds0, enum ds0_rate rate)
@@ -106,144 +87,49 @@ static void ds0_note_valid_frame(struct ds0 *ds0, enum ds0_rate rate)
 	ds0->counters.auto_switches++;
 }
 
-static void ds0_rx_put_data_bit(struct ds0 *ds0,
-				   struct ds0_hdlc_rx *rx,
-				   unsigned bit)
+static void ds0_rx_raw_bit(struct ds0 *ds0, struct ds0_hdlc_rx *rx,
+	unsigned bit, ds0_rx_frame_cb frame_cb, void *user, int *delivered)
 {
-	if (!rx->in_frame)
-		return;
-
-	if (bit)
-		rx->current_byte = (uint8_t)(rx->current_byte |
-					    (uint8_t)(1u << rx->bit_count));
-	if (++rx->bit_count < 8)
-		return;
-
-	if (rx->frame_len < ds0_rx_storage_limit(ds0)) {
-		rx->frame[rx->frame_len++] = rx->current_byte;
-	} else {
-		ds0_rx_counts(ds0, rx->rate)->overflow++;
-		ds0_rx_abort_frame(rx);
-		return;
-	}
-	rx->bit_count = 0;
-	rx->current_byte = 0;
-}
-
-static void ds0_rx_destuff_bit(struct ds0 *ds0,
-				  struct ds0_hdlc_rx *rx,
-				  unsigned bit)
-{
-	if (!rx->in_frame)
-		return;
-
-	if (bit) {
-		ds0_rx_put_data_bit(ds0, rx, 1);
-		if (++rx->ones > 6) {
-			ds0_rx_counts(ds0, rx->rate)->invalid++;
-			ds0_rx_abort_frame(rx);
-		}
-		return;
-	}
-
-	if (rx->ones == 5) {
-		rx->ones = 0;
-		return;
-	}
-	if (rx->ones >= 6) {
-		ds0_rx_counts(ds0, rx->rate)->invalid++;
-		ds0_rx_abort_frame(rx);
-		return;
-	}
-
-	ds0_rx_put_data_bit(ds0, rx, 0);
-	rx->ones = 0;
-}
-
-static void ds0_rx_finish_frame(struct ds0 *ds0,
-				   struct ds0_hdlc_rx *rx,
-				   ds0_rx_frame_cb frame_cb,
-				   void *user, int *delivered)
-{
-	if (!rx->in_frame) {
-		rx->in_frame = 1;
-		rx->clean_bits = rx->verified_bits = 8;
+	if (rx->clean_bits && rx->clean_bits < UINT32_MAX) rx->clean_bits++;
+	unsigned events = hdlc_rx_bit(&rx->framing, bit, rx->frame,
+		ds0_rx_storage_limit(ds0));
+	if (!events) return;
+	struct ds0_rx_counters *counts = ds0_rx_counts(ds0, rx->rate);
+	if (events & HDLC_RX_ABORT) counts->invalid++;
+	if (events & HDLC_RX_OVERFLOW) counts->overflow++;
+	if (events & (HDLC_RX_ABORT | HDLC_RX_OVERFLOW)) {
+		rx->clean_bits = rx->verified_bits = 0;
 		rx->clean_frame = false;
-		ds0_rx_reset_frame(rx);
-		return;
 	}
-
-	bool valid = !rx->frame_len && !rx->bit_count;
-	if ((rx->frame_len || rx->bit_count)) {
-		if (rx->bit_count) {
-			if (rx->frame_len >= HDLC_FCS16_MIN_FRAME_OCTETS)
-				ds0_rx_counts(ds0, rx->rate)->invalid++;
-		} else if (rx->frame_len < HDLC_FCS16_MIN_FRAME_OCTETS) {
-			ds0_rx_counts(ds0, rx->rate)->short_frame++;
-		} else if (hdlc_fcs16(rx->frame, rx->frame_len) !=
-			   HDLC_FCS16_GOOD) {
-			ds0_rx_counts(ds0, rx->rate)->fcs_fail++;
-		} else {
-			size_t body_len = rx->frame_len - 2u;
-
-			valid = true;
-			rx->clean_frame = true;
-			ds0_note_valid_frame(ds0, rx->rate);
-			if (frame_cb)
-				frame_cb(user, rx->frame, body_len, rx->rate);
-			if (delivered)
-				(*delivered)++;
-		}
-	}
-
-	if (!valid) {
+	if (!(events & HDLC_RX_FLAG)) return;
+	if (events & HDLC_RX_FRAME) {
+		rx->clean_frame = true;
+		ds0_note_valid_frame(ds0, rx->rate);
+		if (frame_cb) frame_cb(user, rx->frame, rx->framing.flag_octets - 2u, rx->rate);
+		if (delivered) (*delivered)++;
+	} else if (!(events & HDLC_RX_IDLE)) {
+		if (events & HDLC_RX_BAD_FCS) counts->fcs_fail++;
+		if (events & HDLC_RX_SHORT) counts->short_frame++;
+		if ((events & HDLC_RX_PARTIAL) &&
+		    rx->framing.flag_octets >= HDLC_FCS16_MIN_FRAME_OCTETS) counts->invalid++;
 		rx->clean_bits = 8;
 		rx->clean_frame = false;
 	}
 	rx->verified_bits = rx->clean_bits;
-	rx->in_frame = 1;
-	ds0_rx_reset_frame(rx);
 }
 
-static void ds0_rx_raw_bit(struct ds0 *ds0,
-			      struct ds0_hdlc_rx *rx,
-			      unsigned bit, ds0_rx_frame_cb frame_cb,
-			      void *user, int *delivered)
+static void ds0_rx_bits(struct ds0 *ds0, struct ds0_hdlc_rx *rx,
+	unsigned bits, unsigned nbits, ds0_rx_frame_cb frame_cb, void *user, int *delivered)
 {
-	if (rx->clean_bits && rx->clean_bits < UINT32_MAX)
-		rx->clean_bits++;
-	uint8_t oldest = 0;
-	int have_oldest = 0;
-
-	if (rx->raw_len < DS0_HDLC_FLAG_BITS) {
-		rx->raw_len++;
-	} else {
-		oldest = rx->raw_bits >> 7;
-		have_oldest = 1;
-	}
-	rx->raw_bits = (uint8_t)((rx->raw_bits << 1) | (bit != 0));
-
-	if (rx->raw_len == DS0_HDLC_FLAG_BITS &&
-	    rx->raw_bits == 0x7eu) {
-		if (have_oldest) {
-			if (rx->raw_skip)
-				rx->raw_skip--;
-			else
-				ds0_rx_destuff_bit(ds0, rx, oldest);
+	if (hdlc_rx_bits(&rx->framing, bits, nbits, rx->frame, ds0_rx_storage_limit(ds0))) {
+		if (rx->clean_bits) {
+			uint32_t room = UINT32_MAX - rx->clean_bits;
+			rx->clean_bits += nbits < room ? nbits : room;
 		}
-		ds0_rx_finish_frame(ds0, rx, frame_cb, user, delivered);
-		rx->raw_bits = 0;
-		rx->raw_len = 1;
-		rx->raw_skip = 1;
 		return;
 	}
-
-	if (have_oldest) {
-		if (rx->raw_skip)
-			rx->raw_skip--;
-		else
-			ds0_rx_destuff_bit(ds0, rx, oldest);
-	}
+	for (int bit = (int)nbits - 1; bit >= 0; --bit)
+		ds0_rx_raw_bit(ds0, rx, (bits >> bit) & 1u, frame_cb, user, delivered);
 }
 
 static void ds0_maybe_rate_timeout(struct ds0 *ds0)
@@ -303,20 +189,10 @@ int ds0_rx_codec(struct ds0 *ds0, const uint8_t *codec_octets,
 		uint8_t octet = codec_octets[i];
 
 		if (ds0_detector_active(ds0, DS0_RATE_64000)) {
-			for (int bit = 7; bit >= 0; --bit) {
-				ds0_rx_raw_bit(ds0, &ds0->rx64,
-						  (octet >> bit) & 1u,
-						  frame_cb, user,
-						  &delivered);
-			}
+			ds0_rx_bits(ds0, &ds0->rx64, octet, 8, frame_cb, user, &delivered);
 		}
 		if (ds0_detector_active(ds0, DS0_RATE_56000)) {
-			for (int bit = 7; bit >= 1; --bit) {
-				ds0_rx_raw_bit(ds0, &ds0->rx56,
-						  (octet >> bit) & 1u,
-						  frame_cb, user,
-						  &delivered);
-			}
+			ds0_rx_bits(ds0, &ds0->rx56, octet >> 1, 7, frame_cb, user, &delivered);
 		}
 	}
 

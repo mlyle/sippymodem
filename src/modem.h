@@ -53,6 +53,7 @@
 #include <modem_timer.h>
 #include <dc_remover.h>
 #include <lapm_v44_session.h>
+#include <hdlc_rx.h>
 
 struct v44_character_path;
 
@@ -432,8 +433,8 @@ struct modem {
 		struct hdlc_state {
 			struct hdlc_frame *tx_frame;
 			struct hdlc_frame *rx_frame;
-			int rx_error;
-			int rx_ones,tx_ones;
+			struct hdlc_rx rx;
+			int tx_ones;
 			unsigned int tx_preamble_flags;
 			void (*tx_preamble_complete)(struct modem *m);
 			/* framer interface */

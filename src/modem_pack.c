@@ -701,7 +701,6 @@ void modem_detector_reframe(struct modem *m)
 
 /* Shared PPP/LAPM reflected FCS, RFC 1662. */
 #define INIT_FCS HDLC_FCS16_INITIAL
-#define GOOD_FCS HDLC_FCS16_GOOD
 #define GET_FCS(fcs, c) hdlc_fcs16_update((fcs), (c))
 
 /* hdlc bit generators */
@@ -792,121 +791,47 @@ int modem_hdlc_get_bits(struct modem *m, int nbits,
 }
 
 
-int modem_hdlc_put_bits(struct modem *m, int nbits,
-			u8 *bit_buf, int bit_cnt)
+int modem_hdlc_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt)
 {
+	if (m == NULL || nbits < 1 || nbits > 8 || bit_cnt < 0 ||
+	    (bit_buf == NULL && bit_cnt != 0)) return -1;
 	struct hdlc_state *h = &m->packer.hdlc;
-	register struct bits_state *s = &m->unpack;
-	register int ret = 0;
-	register int i;
-	register u8 in, out, mask = ((0x1<<nbits)-1);
-	while(bit_cnt > 0) {
-		s->data <<= nbits;
-		s->data |= *bit_buf++ & mask;
-		s->bit += nbits;
-		bit_cnt--;
-		ret++;
-
-		/* 8 char, 2 possible escapes, +8 estimated flag */
-		if ( s->bit < 8 + 8 + 2)
-			continue;
-
-		out = 0;
-		// fixme: probably may be optimized by handling whole
-		// byte with masking
-		/* mask = 0x80; */
-		for ( i=0 ; i<8 ; i++ ) {
-			in = s->data >> (s->bit-8) ;
-			/* flag: finish frame */
-			if (in == HDLC_FLAG) {
-				/* Two idle flags mean the peer has left ADP. The
-				 * originator can stop waiting for the longest ADP reply,
-				 * but must still send 16 flags before its first XID. */
-				if (i == 0 && !h->rx_error &&
-				    h->rx_frame->count == 0 &&
-				    h->tx_preamble_complete != NULL &&
-				    h->tx_preamble_flags > V42_PROTOCOL_PREAMBLE_FLAGS)
-					h->tx_preamble_flags = V42_PROTOCOL_PREAMBLE_FLAGS;
-				/* end of frame */;
-				if ( !h->rx_frame->count ) {
-					//HDLC_DBG("empty.\n");
-				}
-				/* check frame for errors */
-				else if (h->rx_error) {
-					PACK_DBG("hdlc frame error.\n");
-				}
-				else if (i) {
-					PACK_DBG("hdlc frame integrity error.\n");
-				}
-				else if ( h->rx_frame->count < HDLC_FCS16_MIN_FRAME_OCTETS ) {
-					PACK_DBG("hdlc frame size error.\n");
-				}
-				else if ( h->rx_frame->fcs != GOOD_FCS ) {
-					PACK_DBG("hdlc frame fcs error.\n");
-				}
-				/* good frame */
-				else if ( h->rx_complete ) {
-					/* reduce fcs size */
-					h->rx_frame->count -= 2;
-					h->rx_complete(h->framer,h->rx_frame);
-				}
-				s->bit -= 8;
-				h->rx_ones = 0;
-				h->rx_error = 0;
-				h->rx_frame->fcs   = INIT_FCS;
-				h->rx_frame->count = 0;
-				break;
+	if (h->rx_frame == NULL || h->rx_frame->buf == NULL || h->rx_frame->size <= 0)
+		return -1;
+	for (int group = 0; group < bit_cnt; ++group) {
+		if (hdlc_rx_bits(&h->rx, bit_buf[group] & ((1u << nbits) - 1u), nbits,
+		    h->rx_frame->buf, h->rx_frame->size)) continue;
+		for (int bit = nbits - 1; bit >= 0; --bit) {
+			unsigned events = hdlc_rx_bit(&h->rx,
+				(bit_buf[group] >> bit) & 1u, h->rx_frame->buf, h->rx_frame->size);
+			if (!events) continue;
+			if (events & (HDLC_RX_PARTIAL | HDLC_RX_SHORT | HDLC_RX_BAD_FCS |
+				HDLC_RX_ABORT | HDLC_RX_OVERFLOW)) {
+				PACK_DBG("HDLC rejected: flags=%x\n", events);
 			}
-			else if(h->rx_error) {
-				s->bit--;
-				continue;
-			}
-			/* put reversed data bit */
-			out >>= 1;
-			if (in&0x80) {
-				out |= 0x80;
-				h->rx_ones++;
-				/* escape or idle reached */
-				if (h->rx_ones == 5) {
-					if (in&0x40) {
-						h->rx_error++;
-						h->rx_frame->count = 0;
-					}
-					s->bit--;
-					h->rx_ones = 0;
-				}
-			}
-			else
-				h->rx_ones = 0;
-			s->bit--;
-		}
-
-		/* finish char */
-		if(i==8 && !h->rx_error) {
-			if (h->rx_frame->count < h->rx_frame->size) {
-				h->rx_frame->buf[h->rx_frame->count] = out;
-				h->rx_frame->count++;
-				h->rx_frame->fcs = GET_FCS(h->rx_frame->fcs,out);
-			}
-			else { /* overflow */
-				PACK_DBG("hdlc rx frame overflow.\n");
-				h->rx_error++;
-				h->rx_frame->count = 0;
+			/* Adjacent idle flags finish ADP waiting, while preserving
+			 * the required sixteen transmitted flags before XID. */
+			if ((events & HDLC_RX_IDLE) && h->tx_preamble_complete != NULL &&
+			    h->tx_preamble_flags > V42_PROTOCOL_PREAMBLE_FLAGS)
+				h->tx_preamble_flags = V42_PROTOCOL_PREAMBLE_FLAGS;
+			if ((events & HDLC_RX_FRAME) && h->rx_complete != NULL) {
+				h->rx_frame->count = (int)h->rx.flag_octets - 2;
+				h->rx_frame->fcs = HDLC_FCS16_GOOD;
+				h->rx_complete(h->framer, h->rx_frame);
 			}
 		}
 	}
-
-	return ret;
+	h->rx_frame->count = (int)h->rx.frame_len;
+	h->rx_frame->fcs = h->rx.fcs;
+	return bit_cnt;
 }
-
 
 static void hdlc_reset_physical_framing(
 	struct modem *m, struct hdlc_state *h)
 {
 	h->tx_frame = NULL;
 	h->tx_ones = 0;
-	h->rx_ones = 0;
-	h->rx_error = 1;
+	hdlc_rx_reset(&h->rx);
 	h->rx_frame->count = 0;
 	h->rx_frame->fcs = INIT_FCS;
 	m->pack.bit = m->unpack.bit = 0;

@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "hdlc_rx.h"
 #define DS0_SAMPLE_RATE 8000u
 #define DS0_RATE_TIMEOUT_SAMPLES (8u * DS0_SAMPLE_RATE)
 #define DS0_MAX_FRAME_OCTETS 2048u
@@ -22,13 +23,10 @@ struct ds0_counters {
 };
 struct ds0_hdlc_rx {
     enum ds0_rate rate;
-    uint8_t in_frame, raw_len, raw_skip, ones, bit_count, current_byte;
-    /* Delay eight wire bits so a flag never enters the frame body. */
-    uint8_t raw_bits;
+    struct hdlc_rx framing;
     /* Clean run ends only at a verified flag/frame boundary. */
     uint32_t clean_bits, verified_bits;
     bool clean_frame;
-    size_t frame_len;
     uint8_t frame[DS0_MAX_FRAME_OCTETS + 2u];
 };
 struct ds0 {
