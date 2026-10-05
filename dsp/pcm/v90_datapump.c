@@ -2,6 +2,8 @@
 
 #include "v90_datapump.h"
 
+#include "v90_phase4_owned.h"
+
 #include "datapump_link.h"
 #include "datapump_timing.h"
 #include "memory_region.h"
@@ -827,7 +829,7 @@ static bool process_octet(
 	 * recursively validating the complete PCM graph several times per
 	 * network character. */
 	if (datapump->call.stage == PCM_CALL_PHASE4 &&
-	    pcm_call_phase4_is_ready(&datapump->call) &&
+	    pcm_call_phase4_is_ready_owned(&datapump->call) &&
 	    pcm_call_start_data_path(&datapump->call) != PCM_CALL_OK)
 		return false;
 	if (datapump->call.stage == PCM_CALL_DATA_PATH) {

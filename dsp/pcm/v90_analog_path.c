@@ -2,6 +2,8 @@
 
 #include "v90_analog_path.h"
 
+#include "v90_phase4_owned.h"
+
 #include "g711.h"
 #include "memory_region.h"
 #include "v90_downstream_data_handoff.h"
@@ -280,7 +282,7 @@ static enum v90_analog_path_result prepare_cp_record(
 {
 	struct v90_cp_parameters parameters;
 
-	if (!v90_phase4_cp_line_tx_record_is_complete(&path->upstream.cp) ||
+	if (!v90_phase4_cp_line_tx_record_is_complete_owned(&path->upstream.cp) ||
 	    path->finishing_cp)
 		return V90_ANALOG_PATH_OK;
 	if (path->cleardown_requested) {
@@ -345,7 +347,7 @@ static enum v90_analog_path_result emit_cp(
 		*ready = true;
 		return V90_ANALOG_PATH_OK;
 	}
-	result = v90_phase4_cp_line_tx_sample(&path->upstream.cp, sample);
+	result = v90_phase4_cp_line_tx_sample_owned(&path->upstream.cp, sample);
 	if (result == V90_PHASE4_CP_LINE_TX_OK) {
 		*ready = true;
 		return V90_ANALOG_PATH_OK;

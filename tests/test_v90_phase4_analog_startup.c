@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <v90_phase4_analog_startup.h>
+#include <v90_phase4_owned.h>
 #include <v90_phase4_digital_station.h>
 
 #include <g711.h>
@@ -11,11 +12,45 @@
 #include "v90_phase4_station_fixture.h"
 
 #include <string.h>
+#include <stdlib.h>
+#include "memory_region.h"
 
 enum {
 	TRAINING_UCODE = 91,
 	CHARACTER_LIMIT = 12000,
 };
+
+/* The public operation owns validation; the PCM continuation must preserve
+ * the same waveform and complete state for every accepted training sample. */
+static enum v90_phase4_startup_result checked_octet(
+	struct v90_phase4_analog_startup *startup,
+	uint8_t received, uint8_t *transmitted)
+{
+	struct v90_phase4_analog_startup owned;
+	uint8_t expected = 0;
+	bool compare = v90_phase4_analog_startup_is_valid(startup) &&
+		transmitted != NULL && !memory_regions_overlap(
+			startup, sizeof(*startup), transmitted, sizeof(*transmitted));
+	enum v90_phase4_startup_result expected_result;
+	enum v90_phase4_startup_result result;
+
+	if (compare) {
+		owned = *startup;
+		expected_result = v90_phase4_analog_startup_octet_owned(
+			&owned, received, &expected);
+	}
+	result = v90_phase4_analog_startup_octet(startup, received, transmitted);
+	if (compare && (result != expected_result ||
+	    memcmp(startup, &owned, sizeof(owned)) != 0 ||
+	    (result == V90_PHASE4_STARTUP_OK && *transmitted != expected))) {
+		fprintf(stderr, "owned Phase 4 continuation changed output or state\n");
+		abort();
+	}
+	return result;
+}
+
+#define v90_phase4_analog_startup_octet checked_octet
+
 
 static void add_ucode(
 	struct pcm_constellation *constellation, uint8_t ucode)
@@ -406,6 +441,20 @@ static bool test_contracts(void)
 		      &startup, &analog_station) == V90_PHASE4_STARTUP_OK,
 	      "valid startup did not initialize");
 	saved = startup;
+	{
+		struct v90_phase4_analog_startup invalid = startup;
+		struct v90_phase4_analog_startup before;
+
+		invalid.state.initial.transmit.symbols.frame[4] ^= 1u;
+		before = invalid;
+		CHECK(!v90_phase4_analog_startup_is_valid(&invalid) &&
+		      !v90_phase4_analog_startup_is_complete(&invalid) &&
+		      !v90_phase4_analog_startup_has_failed(&invalid) &&
+		      v90_phase4_analog_startup_octet(&invalid, 0, &output) ==
+			      V90_PHASE4_STARTUP_INVALID_ARGUMENT &&
+		      memcmp(&invalid, &before, sizeof(before)) == 0 && output == 0xa5,
+		      "public startup accepted a corrupt CP record");
+	}
 	CHECK(v90_phase4_analog_startup_octet(
 		      &startup, 0, (uint8_t *)&startup) ==
 		      V90_PHASE4_STARTUP_INVALID_ARGUMENT &&

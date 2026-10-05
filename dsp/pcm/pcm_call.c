@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "pcm_call.h"
+
+#include "v90_phase4_owned.h"
 #include "pcm_power.h"
 
 #include "memory_region.h"
@@ -1607,9 +1609,9 @@ bool pcm_call_has_failed(const struct pcm_call *call)
 	return pcm_call_is_valid(call) && call->failed;
 }
 
-bool pcm_call_phase4_is_ready(const struct pcm_call *call)
+bool pcm_call_phase4_is_ready_owned(const struct pcm_call *call)
 {
-	if (!pcm_call_is_valid(call) || call->failed ||
+	if (!pcm_call_owned_state_is_valid(call) || call->failed ||
 	    call->stage != PCM_CALL_PHASE4)
 		return false;
 	if (uses_pcm_upstream(call))
@@ -1618,10 +1620,15 @@ bool pcm_call_phase4_is_ready(const struct pcm_call *call)
 		       v92_phase4_e2u_is_data_ready(
 			       &call->state.phase4.v92.owner.e2u);
 	return call->local_role == V90_ANALOG_MODEM ?
-		       v90_phase4_analog_startup_is_complete(
+		       v90_phase4_analog_startup_is_complete_owned(
 			       &call->state.phase4.analog) :
 		       v90_phase4_digital_startup_is_complete(
 			       &call->state.phase4.digital);
+}
+
+bool pcm_call_phase4_is_ready(const struct pcm_call *call)
+{
+	return pcm_call_is_valid(call) && pcm_call_phase4_is_ready_owned(call);
 }
 
 bool pcm_call_is_online(const struct pcm_call *call)
@@ -4000,7 +4007,7 @@ static enum pcm_call_result sample_phase4(
 	}
 	enum v90_phase4_startup_result result =
 		call->local_role == V90_ANALOG_MODEM ?
-			v90_phase4_analog_startup_octet(
+			v90_phase4_analog_startup_octet_owned(
 				&call->state.phase4.analog,
 				received_octet, transmit_octet) :
 			v90_phase4_digital_startup_sample(
@@ -5379,7 +5386,7 @@ static enum pcm_call_result call_octet(
 	if (call->stage == PCM_CALL_PHASE2 &&
 	    pcm_phase2_is_ready_for_v34_fallback(&call->state.phase2))
 		return PCM_CALL_V34_FALLBACK_READY;
-	if (call->stage == PCM_CALL_PHASE4 && pcm_call_phase4_is_ready(call))
+	if (call->stage == PCM_CALL_PHASE4 && pcm_call_phase4_is_ready_owned(call))
 		return PCM_CALL_PHASE4_READY;
 	if (call->local_role == V90_DIGITAL_MODEM && uses_pcm_upstream(call) &&
 	    (call->stage == PCM_CALL_PHASE3 || call->stage == PCM_CALL_PHASE3_MIXED) &&

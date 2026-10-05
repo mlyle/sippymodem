@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <pcm_call.h>
+#include <v90_phase4_owned.h>
 
 #include <g711.h>
 #include <v34_constellation.h>
@@ -1227,6 +1228,21 @@ static bool phase4_boundary_is_transactional(
 	struct pcm_call_observation observation_before;
 	uint8_t output = 0xa5;
 
+	CHECK(pcm_call_phase4_is_ready(call) &&
+	      pcm_call_phase4_is_ready_owned(call),
+	      "checked and owned Phase 4 boundaries disagreed");
+	if (call->local_role == V90_ANALOG_MODEM &&
+	    pcm_call_uses_conventional_upstream(call)) {
+		struct pcm_call invalid = *call;
+		struct pcm_call saved;
+
+		invalid.state.phase4.analog.state.complete.transmit.symbols.frame[4] ^= 1u;
+		saved = invalid;
+		CHECK(!pcm_call_phase4_is_ready(&invalid) &&
+		      pcm_call_start_data_path(&invalid) == PCM_CALL_INVALID_ARGUMENT &&
+		      memcmp(&invalid, &saved, sizeof(saved)) == 0,
+		      "public Phase 4 boundary accepted a corrupt CP record");
+	}
 	memset(&observation, 0x5a, sizeof(observation));
 	observation_before = observation;
 	return pcm_call_octet(

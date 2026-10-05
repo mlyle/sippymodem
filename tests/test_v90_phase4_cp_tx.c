@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <v90_phase4_cp_tx.h>
+#include <v90_phase4_owned.h>
 
 #include "test.h"
 
@@ -484,6 +485,77 @@ static bool test_transactional_contracts(void)
 	return true;
 }
 
+static bool test_owned_continuation(void)
+{
+	for (unsigned int role = 0; role < 2u; ++role) {
+		for (unsigned int size = 0; size < 2u; ++size) {
+			struct v90_cp_parameters record = parameters(V90_CP_TRAINING, 1, false, 0);
+			struct v90_phase4_cp_tx full;
+			struct v90_phase4_cp_tx owned;
+			enum v34_constellation_size constellation = size == 0u ?
+				V34_CONSTELLATION_4_POINT : V34_CONSTELLATION_16_POINT;
+
+			CHECK(v90_phase4_cp_tx_init(&full, role, constellation, &record) ==
+				      V90_PHASE4_CP_TX_OK, "owned CP fixture failed");
+			owned = full;
+			for (unsigned int repetition = 0; repetition < 3u; ++repetition) {
+				while (!v90_phase4_cp_tx_record_is_complete(&full)) {
+					struct qam_point point, expected_point;
+					uint8_t quarter, rotation, expected_quarter, expected_rotation;
+					bool complete, expected_complete;
+
+					CHECK(v90_phase4_cp_tx_next(&full, &point, &quarter, &rotation, &complete) ==
+						      V90_PHASE4_CP_TX_OK &&
+					      v90_phase4_cp_tx_next_owned(&owned, &expected_point,
+						      &expected_quarter, &expected_rotation, &expected_complete) ==
+						      V90_PHASE4_CP_TX_OK &&
+					      memcmp(&full, &owned, sizeof(full)) == 0 &&
+					      memcmp(&point, &expected_point, sizeof(point)) == 0 &&
+					      quarter == expected_quarter && rotation == expected_rotation &&
+					      complete == expected_complete, "owned CP changed symbol or state");
+				}
+				for (unsigned int index = 0; index < 8u; ++index) {
+					struct qam_point point, expected_point;
+					uint8_t quarter, rotation, expected_quarter, expected_rotation;
+
+					CHECK(v90_phase4_cp_tx_scr_next(&full, &point, &quarter, &rotation) ==
+						      V90_PHASE4_CP_TX_OK &&
+					      v90_phase4_cp_tx_scr_next_owned(&owned, &expected_point,
+						      &expected_quarter, &expected_rotation) == V90_PHASE4_CP_TX_OK &&
+					      memcmp(&full, &owned, sizeof(full)) == 0 &&
+					      memcmp(&point, &expected_point, sizeof(point)) == 0 &&
+					      quarter == expected_quarter && rotation == expected_rotation,
+					      "owned SCR changed symbol or state");
+				}
+				record = parameters(V90_CP_DATA, 1, false, repetition + 1u);
+				CHECK(v90_phase4_cp_tx_start_next_record(&full, &record) == V90_PHASE4_CP_TX_OK &&
+				      v90_phase4_cp_tx_start_next_record(&owned, &record) == V90_PHASE4_CP_TX_OK,
+				      "owned CP replacement failed");
+			}
+			{
+				struct v90_phase4_cp_tx saved = full;
+				struct qam_point point = { 1, 2 };
+				uint8_t quarter = 0, rotation = 0;
+				bool complete = false;
+
+				CHECK(v90_phase4_cp_tx_next(&full, &point, full.frame, &rotation, &complete) ==
+					      V90_PHASE4_CP_TX_INVALID_ARGUMENT &&
+				      v90_phase4_cp_tx_next_owned(&full, &point, &quarter, &quarter, &complete) ==
+					      V90_PHASE4_CP_TX_INVALID_ARGUMENT &&
+				      memcmp(&full, &saved, sizeof(full)) == 0,
+				      "aliased CP outputs changed the owner");
+				full.bit_index = full.frame_bit_count + 4u;
+				saved = full;
+				CHECK(v90_phase4_cp_tx_next_owned(&full, &point, &quarter, &rotation, &complete) ==
+					      V90_PHASE4_CP_TX_INVALID_ARGUMENT &&
+				      memcmp(&full, &saved, sizeof(full)) == 0,
+				      "owned CP accepted an out-of-range cursor");
+			}
+		}
+	}
+	return true;
+}
+
 struct test_case {
 	const char *name;
 	bool (*run)(void);
@@ -495,6 +567,7 @@ int main(void)
 		{ "roles, constellations, and continuity",
 		  test_roles_constellations_and_continuity },
 		{ "transactional contracts", test_transactional_contracts },
+		{ "owned continuation", test_owned_continuation },
 	};
 	unsigned int failures = 0;
 
