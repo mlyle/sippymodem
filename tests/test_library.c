@@ -58,6 +58,10 @@ static bool test_owned_loopback(void)
 	config.max_lines = 4;
 	config.public_address = "127.0.0.1";
 	config.bound_address = "127.0.0.1";
+	config.identity_uri = "sip:+12025550123@127.0.0.1";
+	config.username = "+12025550123";
+	config.password = "unused-loopback-password";
+	config.domain = "127.0.0.1";
 	struct sippymodem_server *server = sippymodem_server_create(&config);
 	EXPECT(server != NULL);
 	struct sippymodem_line_config line_config;
@@ -97,6 +101,8 @@ static bool test_owned_loopback(void)
 	struct sippymodem_call_facts facts;
 	EXPECT(sippymodem_get_call_facts(answerer, &facts) == SIPPYMODEM_OK);
 	EXPECT(strcmp(facts.called_number, "1234") == 0);
+	EXPECT(strcmp(facts.caller_number, "+12025550123") == 0);
+	EXPECT(sippymodem_get_call_facts(caller, &facts) == SIPPYMODEM_OK && !facts.caller_number[0]);
 	EXPECT(sippymodem_answer(answerer, remote.generation) == SIPPYMODEM_OK);
 	for (unsigned int index = 0; index < 15000 && (!remote.ready || !local.ready); ++index) {
 		EXPECT(step(server, &now));

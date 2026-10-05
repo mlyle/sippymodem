@@ -252,9 +252,65 @@ static bool unanswered_call_report(void)
 	return true;
 }
 
+static bool caller_identity_results(void)
+{
+	struct capture data = { .limit = 4096 }, commands = { .limit = 4096 };
+	struct modem *modem = create(&data, &commands), *other = create(&data, &commands);
+	EXPECT(modem != NULL && other != NULL);
+	modem_frontend_init(modem);
+	modem_set_caller_number(modem, "+1(202)555-0123");
+	modem_set_caller_number(other, "1.202.555.0124");
+	EXPECT(modem_report_incoming_call(modem) == 0);
+	EXPECT(strstr((char *)commands.bytes, "CallerID: +12025550123\r\nRING\r\n"));
+	EXPECT(strcmp(other->caller_number, "12025550124") == 0);
+	EXPECT(modem_answer(modem) == 0 && strcmp(modem->caller_number, "+12025550123") == 0);
+	commands.count = 0;
+	memset(commands.bytes, 0, sizeof(commands.bytes));
+	modem->cfg.ec = modem->cfg.comp = 0;
+	modem->rx_rate = modem->tx_rate = 9600;
+	modem_update_status(modem, STATUS_EC_LINK);
+	EXPECT(strstr((char *)commands.bytes, "CallerID: +12025550123\r\nCONNECT 9600\r\n"));
+	modem_note_disconnect(modem, false, "peer ended call");
+	EXPECT(modem_stop_now(modem) == 0 && !modem->caller_number[0]);
+	EXPECT(strcmp(modem->call_report.caller_number, "+12025550123") == 0);
+	commands.count = 0;
+	memset(commands.bytes, 0, sizeof(commands.bytes));
+	EXPECT(modem_write(modem, "ATI11\r", 6) == 6);
+	EXPECT(strstr((char *)commands.bytes, "CallerID: +12025550123\r\n"));
+	char oversized[129];
+	memset(oversized, '1', sizeof(oversized) - 1);
+	oversized[sizeof(oversized) - 1] = '\0';
+	char maximum[128];
+	memset(maximum, '1', sizeof(maximum) - 1);
+	maximum[sizeof(maximum) - 1] = '\0';
+	modem_set_caller_number(modem, maximum);
+	EXPECT(strlen(modem->caller_number) == sizeof(maximum) - 1);
+	const char *invalid[] = { NULL, "", "+", "().-", "1+2", "anonymous", "123\r\nRING", "123\x1b[2J", oversized };
+	for (size_t index = 0; index < sizeof(invalid) / sizeof(invalid[0]); ++index) {
+		modem_set_caller_number(modem, "1234");
+		modem_set_caller_number(modem, invalid[index]);
+		EXPECT(!modem->caller_number[0]);
+	}
+	EXPECT(modem_report_incoming_call(modem) == 0 && !modem->call_report.caller_number[0]);
+	modem_finish_call_report(modem, true, "native unanswered cancellation", RESULT_NOCARRIER);
+	EXPECT(!modem->call_report.active && modem->call_report.disconnect_local);
+	EXPECT(strcmp(modem->call_report.reason, "native unanswered cancellation") == 0);
+	modem_set_caller_number(modem, "1234");
+	EXPECT(modem_report_incoming_call(modem) == 0);
+	modem->sregs[SREG_VERBOSE] = 0;
+	commands.count = 0;
+	memset(commands.bytes, 0, sizeof(commands.bytes));
+	EXPECT(modem_report_incoming_call(modem) == 0);
+	EXPECT(strcmp((char *)commands.bytes, "2\r\n") == 0);
+	modem_hangup(modem);
+	modem_delete(other);
+	modem_delete(modem);
+	return true;
+}
+
 int main(void)
 {
 	return literal_and_partial() && command_preserves_receive() &&
 		raw_overflow_is_reported() && at_replies_are_separate() && local_lapm_retry_cause() &&
-		retained_call_report() && unanswered_call_report() ? 0 : 1;
+		retained_call_report() && unanswered_call_report() && caller_identity_results() ? 0 : 1;
 }

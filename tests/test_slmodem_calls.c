@@ -19,6 +19,7 @@ struct transition_capture {
 	int outgoing_connected_result;
 	int remote_end_result;
 	int answer_result;
+	char caller_number[128];
 	struct slmodem_calls *emit_during_incoming;
 };
 
@@ -64,6 +65,12 @@ int modem_report_incoming_call(struct modem *modem)
 			  SIP_CALL_DIRECTION_INCOMING,
 			  SIP_CALL_CONNECTED);
 	return capture.incoming_result;
+}
+
+void modem_set_caller_number(struct modem *modem, const char *number)
+{
+	(void)modem;
+	snprintf(capture.caller_number, sizeof(capture.caller_number), "%s", number);
 }
 
 int modem_report_outgoing_call_connected(struct modem *modem)
@@ -145,6 +152,18 @@ static bool test_maps_incoming_lifecycle(void)
 	memset(&capture, 0, sizeof(capture));
 	CHECK(slmodem_calls_init(&calls, &modem),
 	      "incoming call fixture failed");
+	char identity[] = "+12025550123";
+	struct sip_call_event incoming = {
+		.generation = 1, .direction = SIP_CALL_DIRECTION_INCOMING,
+		.state = SIP_CALL_INCOMING_PENDING, .caller_number = identity,
+	};
+	const struct sip_signaling_callbacks *callbacks = slmodem_calls_callbacks(&calls);
+	callbacks->call_changed(callbacks->context, &incoming);
+	memset(identity, '9', sizeof(identity) - 1);
+	CHECK(slmodem_calls_drain(&calls) == SLMODEM_CALLS_OK &&
+	      strcmp(capture.caller_number, "+12025550123") == 0,
+	      "caller identity retained a signaling pointer");
+	capture.incoming_calls = 0;
 	emit_call(&calls, SIP_CALL_DIRECTION_INCOMING,
 		  SIP_CALL_INCOMING_PENDING);
 	CHECK(slmodem_calls_drain(&calls) ==

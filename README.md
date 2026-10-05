@@ -257,6 +257,17 @@ SIP waiting without media. TX-consumed counts local DTE bytes taken into framing
 or compression; RX-delivered counts bytes accepted by the local DTE output.
 Those counters do not measure peer acknowledgments or bit errors.
 
+Incoming SIP calls with a telephone `From` user display `CallerID: <number>`
+immediately before the verbose `RING` and `CONNECT` result lines, and retain
+that identity in `ATI11`. The standard result lines and numeric result codes
+are unchanged. Caller identity is separate from the Request-URI called number.
+Missing, anonymous, invalid, oversized, and withheld identities are omitted.
+`Privacy: user` and `Privacy: id` suppress caller display; this modem also
+suppresses it for `Privacy: header` as a conservative display policy.
+Visual separators (`-`, `.`, `(`, `)`) are removed, leaving digits and an
+optional leading `+`. Outgoing calls do not derive caller identity from local
+SIP account names.
+
 Initialize the pinned pjproject submodule once, then build with `make`:
 
 ```

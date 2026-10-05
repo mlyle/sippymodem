@@ -190,6 +190,8 @@ static enum sippymodem_result end_call(struct sippymodem_line *line, enum sippym
 	calls->overflowed = false;
 	struct modem *modem = line_modem(line);
 	enum sippymodem_result result = SIPPYMODEM_OK;
+	modem_finish_call_report(modem, line->status.disconnect_local,
+		line->status.disconnect_reason, RESULT_NOCARRIER);
 	if (modem->started) {
 		if (modem_stop_now(modem) != 0)
 			result = SIPPYMODEM_ERROR;
@@ -225,8 +227,7 @@ static void begin_call(struct sippymodem_line *line)
 	line_modem(line)->disconnect_reason = NULL;
 	line_modem(line)->disconnect_local = false;
 	line_modem(line)->dte_overflow = false;
-	line->facts.generation = line->status.generation;
-	line->facts.called_number[0] = '\0';
+	line->facts = (struct sippymodem_call_facts){ .generation = line->status.generation };
 	line->attempt_deadline = deadline_after(line->server->now,
 		(uint64_t)line->config.call_timeout_ms * UINT64_C(1000000));
 }
@@ -245,6 +246,8 @@ static void call_changed(void *context, const struct sip_call_event *event)
 		if (event->called_number != NULL && strlen(event->called_number) < sizeof(line->facts.called_number))
 			memcpy(line->facts.called_number, event->called_number,
 				strlen(event->called_number) + 1);
+		if (event->caller_number != NULL && strnlen(event->caller_number, sizeof(line->facts.caller_number)) < sizeof(line->facts.caller_number))
+			memcpy(line->facts.caller_number, event->caller_number, strlen(event->caller_number) + 1);
 	} else if (event->state == SIP_CALL_DIALING) {
 		line->sip_generation = event->generation;
 	} else if (!line->active || event->generation != line->sip_generation) {

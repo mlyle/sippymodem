@@ -92,6 +92,8 @@ void modem_frontend_call_report(struct modem *m)
 		report->outgoing ? "outgoing" : "incoming",
 		report->active ? "active" : "completed",
 		report->connected ? "yes" : "no");
+	if (report->caller_number[0])
+		report_line(m, "CallerID: %s", report->caller_number);
 	report_line(m, "Modulation: %s", report->modulation[0] ? report->modulation : "unknown");
 	report_line(m, "Rates: TX=%u bit/s %.2f baud RX=%u bit/s %.2f baud",
 		report->rates.transmit_bps, report->rates.transmit_baud,
@@ -211,6 +213,8 @@ static void report_result(struct modem *m, unsigned int code)
 				modem_send_to_tty(m,CRLF_CHARS(m),2);
 			}
 		}
+		if ((code == RESULT_RING || code == RESULT_CONNECT) && m->caller_number[0])
+			report_line(m, "CallerID: %s", m->caller_number);
                 msg = MODEM_RESPONSE_TEXT(code);
 		modem_send_to_tty(m,msg,strlen(msg));
 		if (code==RESULT_CONNECT && m->mode == MODEM_MODE_DATA

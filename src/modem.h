@@ -294,6 +294,7 @@ struct modem_call_report {
 	uint64_t media_samples, tx_dte_bytes, rx_dte_bytes;
 	unsigned sample_rate, retrains;
 	char modulation[24], phase[48], step[96], reason[128];
+	char caller_number[128];
 	unsigned result;
 };
 
@@ -325,6 +326,7 @@ struct modem {
 	unsigned result_code;
         unsigned hook;
         unsigned caller;
+	char caller_number[128]; /* Current incoming identity; cleared at call end. */
 	unsigned rx_rate;
 	unsigned tx_rate;
 	enum MODEM_MODE mode; /* data,fax,voice */
@@ -519,6 +521,9 @@ extern const char *modem_protocol_step(const struct modem *m);
 extern void modem_note_disconnect(struct modem *m, bool local, const char *reason);
 /* Refresh active negotiated facts; completed reports remain immutable. */
 extern bool modem_get_call_report(struct modem *m, struct modem_call_report *report);
+extern void modem_set_caller_number(struct modem *m, const char *number);
+/* Copy a native owner's final cause, including calls still ringing. */
+extern void modem_finish_call_report(struct modem *m, bool local, const char *reason, unsigned result);
 extern int modem_report_incoming_call(struct modem *m);
 extern int modem_report_outgoing_call_connected(struct modem *m);
 extern int modem_report_remote_call_end(struct modem *m);

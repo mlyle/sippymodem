@@ -70,6 +70,7 @@ struct sip_media_event {
 struct sip_call_event {
 	uint64_t generation;
 	const char *called_number;
+	const char *caller_number; /* Bounded numeric From user; private identity fact. */
 	enum sip_call_direction direction;
 	enum sip_call_state state;
 	unsigned int status_code;

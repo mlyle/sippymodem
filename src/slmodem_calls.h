@@ -24,6 +24,7 @@ enum {
 
 struct slmodem_call_transition {
 	uint64_t generation;
+	char caller_number[128];
 	enum sip_call_direction direction;
 	enum sip_call_state state;
 	unsigned int status_code;

@@ -44,6 +44,7 @@ struct callback_capture {
 	unsigned int call_status_codes[TEST_CALL_EVENTS];
 	uint64_t call_generations[TEST_CALL_EVENTS];
 	char called_numbers[TEST_CALL_EVENTS][128];
+	char caller_numbers[TEST_CALL_EVENTS][128];
 	char call_reasons[TEST_CALL_EVENTS][32];
 	char call_remote_identities[TEST_CALL_EVENTS][128];
 	enum sip_media_state media_states[TEST_MEDIA_EVENTS];
@@ -131,6 +132,7 @@ static void capture_call(
 	capture->call_status_codes[index] = event->status_code;
 	capture->call_generations[index] = event->generation;
 	(void)snprintf(capture->called_numbers[index], sizeof(capture->called_numbers[index]), "%s", event->called_number != NULL ? event->called_number : "");
+	(void)snprintf(capture->caller_numbers[index], sizeof(capture->caller_numbers[index]), "%s", event->caller_number != NULL ? event->caller_number : "");
 	(void)snprintf(capture->call_reasons[index],
 		       sizeof(capture->call_reasons[index]), "%s",
 		       event->reason != NULL ? event->reason : "");
@@ -706,6 +708,9 @@ struct loopback_incoming_peer {
 	int socket_fd;
 	unsigned int port;
 	unsigned int destination_port;
+	const char *caller;
+	const char *called;
+	const char *privacy;
 	bool invite_sent;
 	bool ringing_received;
 	bool answer_received;
@@ -757,18 +762,19 @@ static void *serve_incoming_call(void *context)
 	destination.sin_port = htons((uint16_t)peer->destination_port);
 	invite_size = snprintf(
 		invite, sizeof(invite),
-		"INVITE sip:modem@127.0.0.1:%u SIP/2.0\r\n"
-		"Via: SIP/2.0/UDP 127.0.0.1:%u;branch=z9hG4bK-inbound\r\n"
+		"INVITE sip:%s@127.0.0.1:%u SIP/2.0\r\n"
+		"Via: SIP/2.0/UDP 127.0.0.1:%u;branch=z9hG4bK-inbound-%u\r\n"
 		"Max-Forwards: 70\r\n"
-		"From: <sip:caller@127.0.0.1>;tag=caller\r\n"
+		"From: <sip:%s@127.0.0.1>;tag=caller\r\n"
 		"To: <sip:modem@127.0.0.1:%u>\r\n"
-		"Call-ID: incoming-loopback\r\n"
+		"Call-ID: incoming-loopback-%u\r\n"
 		"CSeq: 1 INVITE\r\n"
+		"%s"
 		"Contact: <sip:caller@127.0.0.1:%u>\r\n"
 		"Content-Type: application/sdp\r\n"
 		"Content-Length: %zu\r\n\r\n%s",
-		peer->destination_port, peer->port, peer->destination_port,
-		peer->port, sizeof(offer) - 1, offer);
+		peer->called, peer->destination_port, peer->port, peer->port, peer->caller,
+		peer->destination_port, peer->port, peer->privacy, peer->port, sizeof(offer) - 1, offer);
 	if (invite_size < 0 || (size_t)invite_size >= sizeof(invite) ||
 	    sendto(peer->socket_fd, invite, (size_t)invite_size, 0,
 		   (const struct sockaddr *)&destination, sizeof(destination)) !=
@@ -815,12 +821,12 @@ static void *serve_incoming_call(void *context)
 		"ACK sip:modem@127.0.0.1:%u SIP/2.0\r\n"
 		"Via: SIP/2.0/UDP 127.0.0.1:%u;branch=z9hG4bK-ack\r\n"
 		"Max-Forwards: 70\r\n"
-		"From: <sip:caller@127.0.0.1>;tag=caller\r\n"
+		"From: <sip:%s@127.0.0.1>;tag=caller\r\n"
 		"%s\r\n"
-		"Call-ID: incoming-loopback\r\n"
+		"Call-ID: incoming-loopback-%u\r\n"
 		"CSeq: 1 ACK\r\n"
 		"Content-Length: 0\r\n\r\n",
-		peer->destination_port, peer->port, to_header);
+		peer->destination_port, peer->port, peer->caller, to_header, peer->port);
 	if (ack_size < 0 || (size_t)ack_size >= sizeof(ack) ||
 	    sendto(peer->socket_fd, ack, (size_t)ack_size, 0,
 		   (const struct sockaddr *)&destination, sizeof(destination)) !=
@@ -832,11 +838,14 @@ static void *serve_incoming_call(void *context)
 	return NULL;
 }
 
-static bool start_incoming_call(struct loopback_incoming_peer *peer,
-				unsigned int destination_port)
+static bool start_incoming_identity(struct loopback_incoming_peer *peer,
+	unsigned int destination_port, const char *caller, const char *called, const char *privacy)
 {
 	memset(peer, 0, sizeof(*peer));
 	peer->destination_port = destination_port;
+	peer->caller = caller;
+	peer->called = called;
+	peer->privacy = privacy;
 	peer->socket_fd = open_loopback_listener(&peer->port);
 	if (peer->socket_fd < 0)
 		return false;
@@ -846,6 +855,11 @@ static bool start_incoming_call(struct loopback_incoming_peer *peer,
 		return false;
 	}
 	return true;
+}
+
+static bool start_incoming_call(struct loopback_incoming_peer *peer, unsigned int destination_port)
+{
+	return start_incoming_identity(peer, destination_port, "caller", "modem", "");
 }
 
 static bool finish_incoming_call(struct loopback_incoming_peer *peer)
@@ -1219,6 +1233,73 @@ static bool test_incoming_call_lifecycle(void)
 	return true;
 }
 
+static bool test_incoming_caller_facts(void)
+{
+	char oversized[129];
+	memset(oversized, '1', sizeof(oversized) - 1);
+	oversized[sizeof(oversized) - 1] = '\0';
+	const struct { const char *caller, *privacy, *expected; } cases[] = {
+		{ "+12025550123", "", "+12025550123" },
+		{ "12025550124", "", "12025550124" },
+		{ "202-555-0123", "", "2025550123" },
+		{ "+1(202)555.0123", "", "+12025550123" },
+		{ "anonymous", "", "" }, { "+", "", "" }, { "().-", "", "" },
+		{ "123%1B%5B2J", "", "" }, { oversized, "", "" },
+		{ "1234", "Privacy: none\r\n", "1234" },
+		{ "1234", "Privacy: uSeR;critical\r\n", "" },
+		{ "1234", "Privacy: id\r\n", "" },
+		{ "1234", "Privacy: header\r\n", "" },
+		{ "1234", "Privacy: none\r\nPrivacy: user\r\n", "" },
+		{ "+1-202-555-0125", "", "+12025550125" },
+	};
+	struct callback_capture capture = { 0 };
+	struct app_config config;
+	config_init(&config);
+	config.sip.listen_port = 0;
+	config.sip.registration_enabled = false;
+	config.sip.log_level = 0;
+	strcpy(config.sip.public_address, "127.0.0.1");
+	config.media.rtp_listen_port = TEST_MODEM_RTP_PORT;
+	struct sip_signaling *signaling = create_signaling(&config, &capture);
+	CHECK(signaling != NULL && sip_signaling_open(signaling) == SIP_SIGNALING_OK,
+	      "caller identity server did not open");
+	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
+		memset(&capture, 0, sizeof(capture));
+		struct loopback_incoming_peer peer;
+		CHECK(start_incoming_identity(&peer, sip_signaling_local_port(signaling),
+		      cases[index].caller, "5678", cases[index].privacy), "caller fixture did not start");
+		for (unsigned int attempt = 0; attempt < 100 && sip_signaling_call_state(signaling) != SIP_CALL_EARLY; ++attempt)
+			CHECK(sip_signaling_step(signaling, 10) == SIP_SIGNALING_OK, "caller fixture poll failed");
+		CHECK(capture.call_count > 0 && capture.call_generations[0] == index + 1 &&
+		      strcmp(capture.caller_numbers[0], cases[index].expected) == 0 &&
+		      strcmp(capture.called_numbers[0], "5678") == 0,
+		      "caller/called facts wrong for case %zu", index);
+		CHECK(sip_signaling_answer(signaling) == SIP_SIGNALING_OK, "caller fixture answer failed");
+		for (unsigned int attempt = 0; attempt < 100 && sip_signaling_call_state(signaling) != SIP_CALL_CONNECTED; ++attempt)
+			CHECK(sip_signaling_step(signaling, 10) == SIP_SIGNALING_OK, "caller connect poll failed");
+		CHECK(sip_signaling_call_state(signaling) == SIP_CALL_CONNECTED && finish_incoming_call(&peer),
+		      "caller fixture failed to connect");
+		CHECK(sip_signaling_hangup(signaling) == SIP_SIGNALING_OK, "caller fixture hangup failed");
+		for (unsigned int event = 0; event < capture.call_count && event < TEST_CALL_EVENTS; ++event)
+			CHECK(strcmp(capture.caller_numbers[event], cases[index].expected) == 0,
+			      "caller changed across one dialog");
+	}
+	memset(&capture, 0, sizeof(capture));
+	unsigned int unused_port;
+	int unused = open_loopback_listener(&unused_port);
+	CHECK(unused >= 0, "outgoing identity fixture failed");
+	close(unused);
+	char target[128];
+	snprintf(target, sizeof(target), "sip:1234@127.0.0.1:%u", unused_port);
+	CHECK(sip_signaling_dial(signaling, target) == SIP_SIGNALING_OK,
+	      "outgoing identity reset failed");
+	CHECK(capture.call_count > 0 && !capture.caller_numbers[0][0],
+	      "outgoing call inherited incoming caller identity");
+	CHECK(sip_signaling_hangup(signaling) == SIP_SIGNALING_OK, "outgoing identity fixture cleanup failed");
+	sip_signaling_destroy(signaling);
+	return true;
+}
+
 static unsigned int open_fd_count(void)
 {
 	DIR *directory = opendir("/proc/self/fd");
@@ -1468,6 +1549,7 @@ int main(void)
 		  test_loopback_registration_lifecycle },
 		{ "outgoing call lifecycle", test_outgoing_call_lifecycle },
 		{ "incoming call lifecycle", test_incoming_call_lifecycle },
+		{ "bounded incoming caller facts", test_incoming_caller_facts },
 		{ "external SDK owner", test_external_endpoint_owner },
 		{ "two calls on shared server", test_shared_two_calls },
 		{ "incoming SDK slot reuse", test_incoming_slot_reuse },

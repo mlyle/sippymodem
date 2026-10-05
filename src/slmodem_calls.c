@@ -31,6 +31,10 @@ static void capture_call(
 	tail = (calls->pending_head + calls->pending_count) %
 	       SLMODEM_CALL_EVENT_CAPACITY;
 	calls->pending[tail].generation = event->generation;
+	calls->pending[tail].caller_number[0] = '\0';
+	if (event->direction == SIP_CALL_DIRECTION_INCOMING && event->caller_number != NULL &&
+	    strnlen(event->caller_number, sizeof(calls->pending[tail].caller_number)) < sizeof(calls->pending[tail].caller_number))
+		strcpy(calls->pending[tail].caller_number, event->caller_number);
 	calls->pending[tail].direction = event->direction;
 	calls->pending[tail].state = event->state;
 	calls->pending[tail].status_code = event->status_code;
@@ -103,6 +107,7 @@ enum slmodem_calls_result slmodem_calls_drain(
 		if (transition.direction !=
 		    SIP_CALL_DIRECTION_INCOMING)
 			return SLMODEM_CALLS_INVALID_EVENT;
+		modem_set_caller_number(calls->modem, transition.caller_number);
 		result = modem_report_incoming_call(calls->modem);
 		break;
 	case SIP_CALL_CONNECTED:

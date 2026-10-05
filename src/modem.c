@@ -55,6 +55,7 @@
 #include <modem_debug.h>
 #include <v8_datapump.h>
 #include <datapump_link.h>
+#include "call_number.h"
 
 
 #define XMIT_SIZE 4096
@@ -204,6 +205,16 @@ static void modem_report_result(struct modem *m, unsigned int code)
 		m->frontend_report(m, code);
 }
 
+void modem_set_caller_number(struct modem *m, const char *number)
+{
+	if (m == NULL)
+		return;
+	char normalized[sizeof(m->caller_number)];
+	call_number_copy(normalized, sizeof(normalized), number,
+		number != NULL ? strnlen(number, sizeof(normalized)) : 0);
+	memcpy(m->caller_number, normalized, sizeof(normalized));
+}
+
 static void call_report_begin(struct modem *m, bool outgoing)
 {
 	m->disconnect_reason = NULL;
@@ -214,6 +225,10 @@ static void call_report_begin(struct modem *m, bool outgoing)
 		.available = true, .active = true, .outgoing = outgoing,
 		.sample_rate = m->srate,
 	};
+	if (outgoing)
+		memset(m->caller_number, 0, sizeof(m->caller_number));
+	else
+		memcpy(m->call_report.caller_number, m->caller_number, sizeof(m->caller_number));
 }
 
 static void call_report_refresh(struct modem *m)
@@ -246,6 +261,22 @@ bool modem_get_call_report(struct modem *m, struct modem_call_report *report)
 	call_report_refresh(m);
 	*report = m->call_report;
 	return true;
+}
+
+void modem_finish_call_report(struct modem *m, bool local, const char *reason, unsigned result)
+{
+	if (m == NULL || !m->call_report.active)
+		return;
+	call_report_refresh(m);
+	if (!m->call_report.reason[0]) {
+		m->call_report.disconnect_local = local;
+		snprintf(m->call_report.reason, sizeof(m->call_report.reason), "%s", reason ? reason : "unknown");
+		snprintf(m->call_report.phase, sizeof(m->call_report.phase), "%s", modem_call_phase(m));
+		snprintf(m->call_report.step, sizeof(m->call_report.step), "%s", modem_protocol_step(m));
+	}
+	m->call_report.result = result;
+	m->call_report.active = false;
+	memset(m->caller_number, 0, sizeof(m->caller_number));
 }
 
 /* TDB: state lifecycle description */
@@ -1388,8 +1419,8 @@ static int modem_stop (struct modem *m)
 		call_report_refresh(m);
 		if (m->disconnect_reason == NULL)
 			modem_note_disconnect(m, true, "local stop");
-		m->call_report.result = m->result_code ? m->result_code : RESULT_OK;
-		m->call_report.active = false;
+		modem_finish_call_report(m, m->disconnect_local, m->disconnect_reason,
+			m->result_code ? m->result_code : RESULT_OK);
 	}
 
 	m->process = NULL;
@@ -2087,8 +2118,7 @@ int modem_report_remote_call_end(struct modem *m)
 	if (!IS_STATE_IDLE(m->state) || m->call_report.active)
 		modem_note_disconnect(m, false, "remote SIP call ended");
 	if (IS_STATE_IDLE(m->state) && m->call_report.active) {
-		m->call_report.result = RESULT_NOCARRIER;
-		m->call_report.active = false;
+		modem_finish_call_report(m, false, "remote SIP call ended", RESULT_NOCARRIER);
 	}
 	TOTAL_RINGS_COUNT(m) = 0;
 	m->ring_count = 0;

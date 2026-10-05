@@ -4,6 +4,7 @@
 #include "sip_uri.h"
 #include "sdp.h"
 #include "sdp_pjsip.h"
+#include "call_number.h"
 
 #include <pjsua-lib/pjsua.h>
 
@@ -29,6 +30,7 @@ struct sip_signaling {
 	pjsua_call_id call_id;
 	uint64_t call_generation;
 	char called_number[128];
+	char caller_number[128];
 	int last_library_status;
 	unsigned int callback_depth;
 	char login_buffer[APP_CONFIG_TEXT_MAX];
@@ -181,6 +183,7 @@ static struct sip_signaling *owner_from_call(pjsua_call_id call_id, bool incomin
 			line->incoming_response_code = 0;
 			line->call_generation++;
 			line->called_number[0] = '\0';
+			line->caller_number[0] = '\0';
 		}
 		line->call_id = call_id;
 		(void)pjsua_call_set_user_data(call_id, line);
@@ -286,6 +289,7 @@ static void emit_call_event(struct sip_signaling *signaling,
 		return;
 	event.generation = signaling->call_generation;
 	event.called_number = signaling->called_number;
+	event.caller_number = signaling->caller_number;
 	event.direction = signaling->call_direction;
 	event.state = state;
 	event.status_code =
@@ -454,6 +458,46 @@ static void pjsip_sdp_created(pjsua_call_id call_id,
 		emit_library_error(signaling, "apply modem audio SDP", status);
 }
 
+static void copy_called_number(char *number, size_t capacity, const pj_str_t *user)
+{
+	number[0] = '\0';
+	if (user == NULL || user->ptr == NULL || user->slen <= 0 ||
+	    (size_t)user->slen >= capacity || (user->slen == 1 && user->ptr[0] == '+'))
+		return;
+	for (pj_ssize_t index = 0; index < user->slen; ++index) {
+		char ch = user->ptr[index];
+		if (!((ch >= '0' && ch <= '9') || (index == 0 && ch == '+')))
+			return;
+	}
+	copy_pj_text(number, capacity, user);
+}
+
+static bool caller_withheld(const pjsip_msg *message)
+{
+	pj_str_t name = pj_str((char *)"Privacy");
+	pjsip_generic_string_hdr *header = pjsip_msg_find_hdr_by_name(message, &name, NULL);
+	for (; header != NULL; header = pjsip_msg_find_hdr_by_name(message, &name, header->next)) {
+		if (header->type != PJSIP_H_OTHER)
+			return true;
+		const pj_str_t *value = &header->hvalue;
+		for (pj_ssize_t index = 0; index < value->slen;) {
+			while (index < value->slen && (value->ptr[index] == ' ' || value->ptr[index] == '\t' ||
+			       value->ptr[index] == ';' || value->ptr[index] == ','))
+				index++;
+			pj_ssize_t begin = index;
+			while (index < value->slen && value->ptr[index] != ';' && value->ptr[index] != ',' &&
+			       value->ptr[index] != ' ' && value->ptr[index] != '\t')
+				index++;
+			pj_str_t token = { value->ptr + begin, index - begin };
+			/* 'header' suppression is a conservative local display policy. */
+			if (pj_stricmp2(&token, "user") == 0 || pj_stricmp2(&token, "id") == 0 ||
+			    pj_stricmp2(&token, "header") == 0)
+				return true;
+		}
+	}
+	return false;
+}
+
 static void pjsip_incoming_call(pjsua_acc_id account_id,
 				pjsua_call_id call_id,
 				pjsip_rx_data *request)
@@ -487,18 +531,21 @@ static void pjsip_incoming_call(pjsua_acc_id account_id,
 	/* Request-URI user is a private routing fact. Never route on a truncated
 	 * value or an unsupported spelling; missing facts select a default route. */
 	signaling->called_number[0] = '\0';
+	signaling->caller_number[0] = '\0';
 	if (request != NULL && request->msg_info.msg != NULL) {
 		pjsip_uri *uri = pjsip_uri_get_uri(request->msg_info.msg->line.req.uri);
 		if (uri != NULL && (PJSIP_URI_SCHEME_IS_SIP(uri) || PJSIP_URI_SCHEME_IS_SIPS(uri))) {
+			copy_called_number(signaling->called_number, sizeof(signaling->called_number),
+				&((pjsip_sip_uri *)uri)->user);
+		}
+		pjsip_from_hdr *from = request->msg_info.from;
+		uri = from != NULL ? pjsip_uri_get_uri(from->uri) : NULL;
+		if (!caller_withheld(request->msg_info.msg) && uri != NULL &&
+		    (PJSIP_URI_SCHEME_IS_SIP(uri) || PJSIP_URI_SCHEME_IS_SIPS(uri))) {
 			const pj_str_t *user = &((pjsip_sip_uri *)uri)->user;
-			bool valid = user->slen > 0 && (size_t)user->slen < sizeof(signaling->called_number) &&
-				!(user->slen == 1 && user->ptr[0] == '+');
-			for (pj_ssize_t index = 0; valid && index < user->slen; ++index) {
-				char ch = user->ptr[index];
-				valid = (ch >= '0' && ch <= '9') || (index == 0 && ch == '+');
-			}
-			if (valid)
-				copy_pj_text(signaling->called_number, sizeof(signaling->called_number), user);
+			if (user->slen > 0)
+				call_number_copy(signaling->caller_number, sizeof(signaling->caller_number),
+					user->ptr, (size_t)user->slen);
 		}
 	}
 	signaling->call_direction = SIP_CALL_DIRECTION_INCOMING;
@@ -1286,6 +1333,7 @@ enum sip_signaling_result sip_signaling_dial(
 	signaling->call_direction = SIP_CALL_DIRECTION_OUTGOING;
 	signaling->call_generation++;
 	signaling->called_number[0] = '\0';
+	signaling->caller_number[0] = '\0';
 	signaling->call_starting = true;
 	status = pjsua_call_make_call(signaling->server->account_id, &target_uri, NULL,
 				      signaling, NULL, &call_id);

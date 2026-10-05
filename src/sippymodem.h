@@ -127,12 +127,16 @@ struct sippymodem_status {
 	size_t rx_ready;
 };
 
-/* Private routing facts. Request-URI user is the called-number policy;
+/* Private call facts. Request-URI user is the called-number policy;
  * absent, invalid, or oversized users remain empty rather than truncating.
- * Do not put these strings in public diagnostics. */
+ * Keep these strings out of public logs. The AT compatibility frontend may
+ * display the caller number alongside its incoming result text. */
 struct sippymodem_call_facts {
 	uint64_t generation;
 	char called_number[128];
+	/* Incoming telephone From user normalized to digits and optional '+'. Withheld, invalid,
+	 * or oversized identities and every outgoing attempt remain empty. */
+	char caller_number[128];
 };
 
 struct sippymodem_event {
