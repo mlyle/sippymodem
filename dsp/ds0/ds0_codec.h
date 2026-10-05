@@ -5,21 +5,20 @@
 #include <stddef.h>
 #include <stdint.h>
 #define DS0_SAMPLE_RATE 8000u
-#define DS0_ANSWER_TIMEOUT_SAMPLES (8u * DS0_SAMPLE_RATE)
+#define DS0_RATE_TIMEOUT_SAMPLES (8u * DS0_SAMPLE_RATE)
 #define DS0_MAX_FRAME_OCTETS 2048u
 
 enum ds0_rate { DS0_RATE_NONE, DS0_RATE_56000 = 56000, DS0_RATE_64000 = 64000 };
 enum ds0_rate_policy { DS0_RATE_AUTO, DS0_RATE_FORCE_56000, DS0_RATE_FORCE_64000 };
 struct ds0_config {
     enum ds0_rate_policy rate_policy;
-    bool answerer;
     size_t rx_frame_limit;
     uint8_t robbed_bit_fill;
 };
 struct ds0_rx_counters { uint32_t valid, fcs_fail, short_frame, invalid, overflow; };
 struct ds0_counters {
     struct ds0_rx_counters rx56, rx64;
-    uint32_t auto_switches, answerer_timeout_fallbacks, media_gaps;
+    uint32_t auto_switches, rate_timeout_fallbacks, media_gaps;
 };
 struct ds0_hdlc_rx {
     enum ds0_rate rate;
@@ -34,7 +33,7 @@ struct ds0 {
     struct ds0_hdlc_rx rx64, rx56;
     enum ds0_rate tx_rate, selected_rate;
     uint64_t samples_since_start;
-    bool saw_valid_frame, answerer_timeout_done;
+    bool saw_valid_frame, rate_timeout_done;
 };
 typedef void (*ds0_rx_frame_cb)(void *, const uint8_t *, size_t, enum ds0_rate);
 void ds0_config_default(struct ds0_config *cfg);

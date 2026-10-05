@@ -93,12 +93,12 @@ static bool recovery_and_bounds(void)
 	CHECK(ds0_init(&rx, &cfg) == 0, "bounded RX init"); wire[n / 2] ^= 0x20;
 	CHECK(ds0_rx_codec(&rx, wire, n, received, &c) == 0 && rx.counters.rx64.overflow > 0, "RX bound");
 	CHECK(ds0_tx_frame(&tx, payload, DS0_MAX_FRAME_OCTETS + 1, wire, sizeof(wire)) == 0, "TX bound");
-	cfg.rx_frame_limit = 0; cfg.answerer = true;
+	cfg.rx_frame_limit = 0;
 	CHECK(ds0_init(&rx, &cfg) == 0, "auto answer init");
-	ds0_advance_samples(&rx, DS0_ANSWER_TIMEOUT_SAMPLES - 1);
+	ds0_advance_samples(&rx, DS0_RATE_TIMEOUT_SAMPLES - 1);
 	CHECK(rx.tx_rate == DS0_RATE_64000, "fallback premature");
 	ds0_advance_samples(&rx, 1);
-	CHECK(rx.tx_rate == DS0_RATE_56000 && rx.counters.answerer_timeout_fallbacks == 1, "fallback");
+	CHECK(rx.tx_rate == DS0_RATE_56000 && rx.counters.rate_timeout_fallbacks == 1, "fallback");
 	CHECK(ds0_rx_codec(&rx, wire, n, received, &c) == 1 && rx.tx_rate == DS0_RATE_64000, "64k recovery");
 	cfg.rate_policy = DS0_RATE_FORCE_56000;
 	CHECK(ds0_init(&rx, &cfg) == 0 && ds0_rx_codec(&rx, wire, n, received, &c) == 0, "forced restriction");

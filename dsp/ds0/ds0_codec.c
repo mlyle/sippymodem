@@ -270,19 +270,19 @@ static void ds0_rx_raw_bit(struct ds0 *ds0,
 	}
 }
 
-static void ds0_maybe_answerer_timeout(struct ds0 *ds0)
+static void ds0_maybe_rate_timeout(struct ds0 *ds0)
 {
-	if (ds0->cfg.rate_policy != DS0_RATE_AUTO || !ds0->cfg.answerer)
+	if (ds0->cfg.rate_policy != DS0_RATE_AUTO)
 		return;
-	if (ds0->saw_valid_frame || ds0->answerer_timeout_done)
+	if (ds0->saw_valid_frame || ds0->rate_timeout_done)
 		return;
-	if (ds0->samples_since_start < DS0_ANSWER_TIMEOUT_SAMPLES)
+	if (ds0->samples_since_start < DS0_RATE_TIMEOUT_SAMPLES)
 		return;
 
 	ds0->tx_rate = DS0_RATE_56000;
 	ds0->selected_rate = DS0_RATE_56000;
-	ds0->answerer_timeout_done = 1;
-	ds0->counters.answerer_timeout_fallbacks++;
+	ds0->rate_timeout_done = 1;
+	ds0->counters.rate_timeout_fallbacks++;
 }
 
 void ds0_advance_samples(struct ds0 *ds0, size_t sample_count)
@@ -296,7 +296,7 @@ void ds0_advance_samples(struct ds0 *ds0, size_t sample_count)
 	if (samples < ds0->samples_since_start)
 		samples = UINT64_MAX;
 	ds0->samples_since_start = samples;
-	ds0_maybe_answerer_timeout(ds0);
+	ds0_maybe_rate_timeout(ds0);
 }
 
 static int ds0_detector_active(const struct ds0 *ds0,

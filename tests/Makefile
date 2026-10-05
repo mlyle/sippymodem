@@ -3223,9 +3223,10 @@ FSK_INTEGRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/channel_bench.o \
 	$(BUILD_DIR)/media.o \
 	$(BUILD_DIR)/g711.o
+DS0_PPP_TEST_BINARY := $(BUILD_DIR)/test_ds0_ppp
 DS0_CODEC_TEST_BINARY := $(BUILD_DIR)/test_ds0_codec
 
-TEST_BINARIES := $(DS0_CODEC_TEST_BINARY) $(BUILD_DIR)/test_packet_stats $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
+TEST_BINARIES := $(DS0_PPP_TEST_BINARY) $(DS0_CODEC_TEST_BINARY) $(BUILD_DIR)/test_packet_stats $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(SIP_URI_TEST_BINARY) $(SDP_TEST_BINARY) $(G711_TEST_BINARY) \
 	$(SAMPLE_MATH_TEST_BINARY) \
 	$(PCM_GAIN_TEST_BINARY) \
@@ -6167,7 +6168,7 @@ $(BUILD_DIR)/byte_queue.o: ../src/byte_queue.c | $(BUILD_DIR)
 
 # The public integration test uses the actual reusable core, not PTY mocks.
 LIBRARY_INPUTS := $(wildcard ../src/*.c ../src/*.h ../dsp/*.c ../dsp/*.h ../dsp/*.py \
- ../dsp/v21_202/*.c ../dsp/v21_202/*.h ../dsp/v22/*.c ../dsp/v22/*.h \
+ ../dsp/ds0/*.c ../dsp/ds0/*.h ../dsp/v21_202/*.c ../dsp/v21_202/*.h ../dsp/v22/*.c ../dsp/v22/*.h \
  ../dsp/v32/*.c ../dsp/v32/*.h ../dsp/pcm/*.c ../dsp/pcm/*.h ../dsp/pcm/*.py)
 ../src/libsippymodem.a: $(LIBRARY_INPUTS) ../src/Makefile ../build/compiler.mk $(PJSIP_DEPENDENCY)
 	$(MAKE) -C ../src CC="$(CC)" CXX="$(CXX)" CCACHE="$(CCACHE)" \
@@ -6179,3 +6180,6 @@ $(DS0_CODEC_TEST_BINARY): $(BUILD_DIR)/test_ds0_codec.o $(BUILD_DIR)/ds0_codec.o
 	$(CC) $(LDFLAGS) -o $@ $^
 $(BUILD_DIR)/ds0_%.o: $(DSP_SOURCE_DIR)/ds0/ds0_%.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(DS0_PPP_TEST_BINARY): $(BUILD_DIR)/test_ds0_ppp.o $(BUILD_DIR)/ds0_ppp.o $(BUILD_DIR)/ds0_codec.o
+	$(CC) $(LDFLAGS) -o $@ $^
