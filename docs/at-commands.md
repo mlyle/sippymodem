@@ -441,6 +441,10 @@ Other command names produce ERROR in the normal build.
 | BUSY | 7 |
 | NO ANSWER | 8 |
 
+Verbose replies (`V1`) begin and end with `S3 S4` (default CR LF). Numeric
+results (`V0`) end with `S3` alone; information responses still end with
+`S3 S4`. Command echo is independent of reply formatting.
+
 `Q0` shows results; `Q1` suppresses them. CONNECT is reported after modem
 training and any selected error-control establishment are ready. With `X1`
 through `X4`, verbose CONNECT appends the receive bitrate. Numeric CONNECT

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #include <modem.h>
 #include <modem_state.h>
+#include <modem_param.h>
 #include <modem_frontend.h>
 #include "test.h"
 
@@ -125,6 +126,87 @@ static bool at_replies_are_separate(void)
 	modem_frontend_init(modem);
 	EXPECT(modem_write(modem, "AT\r", 3) == 3);
 	EXPECT(commands.count != 0 && data.count == 0 && modem->xmit.count == 0);
+	modem_delete(modem);
+	return true;
+}
+
+static bool at_response_formats(void)
+{
+	/* Literal V.250 Table 3 bytes, including custom S3/S4 and changes made
+	 * within the command line. Q1 suppresses only the final result. */
+	static const struct {
+		unsigned echo, verbose, quiet, cr, lf;
+		const char *input, *expected;
+	} cases[] = {
+		{0,1,0,13,10, "AT\r", "\r\nOK\r\n"},
+		{1,1,0,13,10, "AT\r", "AT\r\r\nOK\r\n"},
+		{0,0,0,13,10, "AT\r", "0\r"},
+		{1,0,0,13,10, "AT\r", "AT\r0\r"},
+		{0,1,1,13,10, "AT\r", ""},
+		{1,1,1,13,10, "AT\r", "AT\r"},
+		{0,1,0,13,10, "ATS0?\r", "\r\n0\r\n\r\nOK\r\n"},
+		{0,0,0,13,10, "ATS0?\r", "0\r\n0\r"},
+		{0,1,1,13,10, "ATS0?\r", "\r\n0\r\n"},
+		{0,0,1,13,10, "ATS0?\r", "0\r\n"},
+		{0,1,0,59,58, "AT;", ";:OK;:"},
+		{0,0,0,59,58, "AT;", "0;"},
+		{0,1,0,59,58, "ATS0?;", ";:0;:;:OK;:"},
+		{0,0,0,59,58, "ATS0?;", "0;:0;"},
+		{0,1,0,13,10, "ATV0S0?\r", "0\r\n0\r"},
+		{0,0,0,13,10, "ATV1S0?\r", "\r\n0\r\n\r\nOK\r\n"},
+		{0,1,0,13,10, "AT+V91?+V91=?\r", "\r\n1\r\n\r\n(0,1)\r\n\r\nOK\r\n"},
+		{0,0,0,13,10, "AT+V91?+V91=?\r", "1\r\n(0,1)\r\n0\r"},
+		{0,1,0,13,10, "AT+V91=2\r", "\r\nERROR\r\n"},
+		{0,0,0,13,10, "AT+V91=2\r", "4\r"},
+		{0,1,0,13,10, "AT+V34B=?\r", "\r\n(0,2400,2743,2800,3000,3200,3429)\r\n\r\nOK\r\n"},
+		{0,1,0,13,10, "AT+FCLASS?+DS0?\r", "\r\n0\r\n\r\n0\r\n\r\nOK\r\n"},
+		{0,1,0,13,10, "AT+FCLASS=?\r", "\r\n0\r\n\r\nOK\r\n"},
+		{0,1,0,13,10, "AT+GCI=00+GCI?\r", "\r\n+GCI:0\r\n\r\nOK\r\n"},
+		{0,0,0,13,10, "AT+GCI=00+GCI?\r", "+GCI:0\r\n0\r"},
+		{0,1,0,13,10, "AT+MS=21,0,300,300+MS?\r", "\r\n21,0,300,300\r\n\r\nOK\r\n"},
+	};
+	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+		struct capture data = { .limit = 4096 }, commands = { .limit = 4096 };
+		struct modem *modem = create(&data, &commands);
+		EXPECT(modem != NULL);
+		modem_frontend_init(modem);
+		modem_set_sreg(modem, SREG_ECHO, cases[i].echo);
+		modem_set_sreg(modem, SREG_VERBOSE, cases[i].verbose);
+		modem_set_sreg(modem, SREG_QUIET, cases[i].quiet);
+		modem_set_sreg(modem, SREG_CR_CHAR, cases[i].cr);
+		modem_set_sreg(modem, SREG_LF_CHAR, cases[i].lf);
+		size_t count = strlen(cases[i].input), expected = strlen(cases[i].expected);
+		EXPECT(modem_write(modem, cases[i].input, (int)count) == (int)count);
+		CHECK(commands.count == expected && !memcmp(commands.bytes, cases[i].expected, expected),
+		      "AT response format case %zu", i);
+		EXPECT(data.count == 0 && modem->xmit.count == 0);
+		modem_delete(modem);
+	}
+	const char *streamed[] = { "AT+MS=?\r", "AT+GCI=?\r" };
+	for (size_t i = 0; i < ARRAY_LENGTH(streamed); ++i) {
+		struct capture data = { .limit = 4096 }, commands = { .limit = 4096 };
+		struct modem *modem = create(&data, &commands);
+		EXPECT(modem != NULL);
+		modem_frontend_init(modem);
+		modem_set_sreg(modem, SREG_ECHO, 0);
+		size_t count = strlen(streamed[i]);
+		EXPECT(modem_write(modem, streamed[i], (int)count) == (int)count);
+		EXPECT(commands.count > 10 && !memcmp(commands.bytes, "\r\n", 2));
+		char *body = (char *)commands.bytes + 2;
+		char *trailer = body + strcspn(body, "\r\n");
+		/* A streamed query has one uninterrupted body and one final result. */
+		EXPECT(trailer > body && strcmp(trailer, "\r\n\r\nOK\r\n") == 0);
+		EXPECT(data.count == 0);
+		modem_delete(modem);
+	}
+	/* Ring headers are frontend syntax; a library line emits no AT bytes. */
+	struct capture data = { .limit = 4096 }, commands = { .limit = 4096 };
+	struct modem *modem = create(&data, &commands);
+	EXPECT(modem != NULL && modem_report_incoming_call(modem) == 0);
+	EXPECT(data.count == 0 && commands.count == 0);
+	modem_frontend_init(modem);
+	EXPECT(modem_report_incoming_call(modem) == 0);
+	EXPECT(commands.count == 8 && !memcmp(commands.bytes, "\r\nRING\r\n", 8));
 	modem_delete(modem);
 	return true;
 }
@@ -261,7 +343,7 @@ static bool caller_identity_results(void)
 	modem_set_caller_number(modem, "+1(202)555-0123");
 	modem_set_caller_number(other, "1.202.555.0124");
 	EXPECT(modem_report_incoming_call(modem) == 0);
-	EXPECT(strstr((char *)commands.bytes, "CallerID: +12025550123\r\nRING\r\n"));
+	EXPECT(strstr((char *)commands.bytes, "CallerID: +12025550123\r\n\r\nRING\r\n"));
 	EXPECT(strcmp(other->caller_number, "12025550124") == 0);
 	EXPECT(modem_answer(modem) == 0 && strcmp(modem->caller_number, "+12025550123") == 0);
 	commands.count = 0;
@@ -269,7 +351,7 @@ static bool caller_identity_results(void)
 	modem->cfg.ec = modem->cfg.comp = 0;
 	modem->rx_rate = modem->tx_rate = 9600;
 	modem_update_status(modem, STATUS_EC_LINK);
-	EXPECT(strstr((char *)commands.bytes, "CallerID: +12025550123\r\nCONNECT 9600\r\n"));
+	EXPECT(strstr((char *)commands.bytes, "CallerID: +12025550123\r\n\r\nCONNECT 9600\r\n"));
 	modem_note_disconnect(modem, false, "peer ended call");
 	EXPECT(modem_stop_now(modem) == 0 && !modem->caller_number[0]);
 	EXPECT(strcmp(modem->call_report.caller_number, "+12025550123") == 0);
@@ -301,7 +383,7 @@ static bool caller_identity_results(void)
 	commands.count = 0;
 	memset(commands.bytes, 0, sizeof(commands.bytes));
 	EXPECT(modem_report_incoming_call(modem) == 0);
-	EXPECT(strcmp((char *)commands.bytes, "2\r\n") == 0);
+	EXPECT(strcmp((char *)commands.bytes, "2\r") == 0);
 	modem_hangup(modem);
 	modem_delete(other);
 	modem_delete(modem);
@@ -311,6 +393,6 @@ static bool caller_identity_results(void)
 int main(void)
 {
 	return literal_and_partial() && command_preserves_receive() &&
-		raw_overflow_is_reported() && at_replies_are_separate() && local_lapm_retry_cause() &&
+		raw_overflow_is_reported() && at_replies_are_separate() && at_response_formats() && local_lapm_retry_cause() &&
 		retained_call_report() && unanswered_call_report() && caller_identity_results() ? 0 : 1;
 }

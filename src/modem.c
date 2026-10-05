@@ -1089,8 +1089,6 @@ int modem_report_incoming_call(struct modem *m)
 		call_report_begin(m, false);
 	if (TOTAL_RINGS_COUNT(m) < UCHAR_MAX)
 		TOTAL_RINGS_COUNT(m)++;
-	if (TOTAL_RINGS_COUNT(m) == 1)
-		modem_put_chars(m, CRLF_CHARS(m), 2);
 	modem_report_result(m, RESULT_RING);
 	if (ANSWER_AFTER_RINGS(m) && !m->started &&
 	    TOTAL_RINGS_COUNT(m) >= ANSWER_AFTER_RINGS(m)) {

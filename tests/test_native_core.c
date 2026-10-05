@@ -664,7 +664,7 @@ static bool run_ath0_cleardown(
 	bool peer = completion == PEER_DISC || completion == PEER_DISC_TIMEOUT;
 	const char *expected_result =
 		peer || completion == ATH0_RESET || completion == HANGUP_WITHOUT_COMMAND ?
-			"NO CARRIER\r\n" : "OK\r\n";
+			"\r\nNO CARRIER\r\n" : "\r\nOK\r\n";
 
 	memset(&retrain_dp, 0, sizeof(retrain_dp));
 	hangup_driver_stop_calls = 0;
@@ -1147,7 +1147,7 @@ static bool test_call_progress_cancels_without_media(void)
 		struct modem *modem = create_compat_modem(&driver, driver.name);
 		int result_pipe[2];
 		char result_text[32];
-		const char *expected = action == 1 ? "OK\r\n" : "NO CARRIER\r\n";
+		const char *expected = action == 1 ? "\r\nOK\r\n" : "\r\nNO CARRIER\r\n";
 
 		CHECK(modem != NULL && pipe(result_pipe) == 0 &&
 			      fcntl(result_pipe[0], F_SETFL, O_NONBLOCK) == 0,
@@ -2166,12 +2166,12 @@ static bool test_factory_defaults(void)
 	m->control_output = factory_reply_output;
 	m->control_output_context = &reply;
 	CHECK(process_at_command(m, "ATE0Q1V0S3=59") == 0, "result format fixture failed");
-	CHECK(modem_write(m, "AT&F;", 5) == 5 && reply.count >= 4 &&
-	      !memcmp(reply.bytes + reply.count - 4, "OK\r\n", 4),
+	CHECK(modem_write(m, "AT&F;", 5) == 5 && reply.count == 6 &&
+	      !memcmp(reply.bytes, "\r\nOK\r\n", 6),
 	      "factory result did not use restored controls");
 	reply.count = 0;
 	CHECK(process_at_command(m, "ATE0") == 0 && modem_write(m, "AT&F0V0E0\r", 10) == 10 &&
-	      (reply.count == 2 || reply.count == 3) && !memcmp(reply.bytes, "0\r", 2),
+	      reply.count == 2 && !memcmp(reply.bytes, "0\r", 2),
 	      "following numeric result control lost");
 	reply.count = 0;
 	CHECK(modem_write(m, "AT&FQ1E0\r", 9) == 9 && reply.count == 0,
@@ -2604,7 +2604,7 @@ static bool test_at_v91_policy(void)
 	m->pty = -1;
 	ssize_t length = read(response_pipe[0], response, sizeof(response) - 1u);
 	close(response_pipe[0]);
-	CHECK(length > 0 && strcmp(response, "1\r\n(0,1)\r\n0\r\n") == 0,
+	CHECK(length > 0 && strcmp(response, "\r\n1\r\n\r\n(0,1)\r\n\r\n0\r\n") == 0,
 	      "V.91 query did not report its default, bounds and disabled state");
 	for (size_t i = 0; i < ARRAY_LENGTH(invalid); ++i)
 		CHECK(process_at_command(m, invalid[i]) == -1 &&
@@ -2879,12 +2879,12 @@ static bool test_at_pcm_automatic_upstream_policy(void)
 		unsigned int maximum_number;
 		unsigned int level;
 	} cases[] = {
-		{ "AT+V92U=1,0", "1\r\n", 0, 0 },
-		{ "AT+V92U=1,0,69", "1,0,69\r\n", 0, 69 },
-		{ "AT+V92U=1,0,0", "1\r\n", 0, 0 },
-		{ "AT+V92U=1,0,127", "1,0,127\r\n", 0, 127 },
-		{ "AT+V92U=1,40000,69", "1,40000,69\r\n", 13, 69 },
-		{ "AT+V92U=1", "1\r\n", 0, 0 },
+		{ "AT+V92U=1,0", "\r\n1\r\n", 0, 0 },
+		{ "AT+V92U=1,0,69", "\r\n1,0,69\r\n", 0, 69 },
+		{ "AT+V92U=1,0,0", "\r\n1\r\n", 0, 0 },
+		{ "AT+V92U=1,0,127", "\r\n1,0,127\r\n", 0, 127 },
+		{ "AT+V92U=1,40000,69", "\r\n1,40000,69\r\n", 13, 69 },
+		{ "AT+V92U=1", "\r\n1\r\n", 0, 0 },
 	};
 	struct modem_driver driver = {
 		.name = "AT automatic PCM upstream", .start = unused_start,
@@ -2902,7 +2902,7 @@ static bool test_at_pcm_automatic_upstream_policy(void)
 	ssize_t length = read(response_pipe[0], response, sizeof(response) - 1u);
 	CHECK(length > 0, "PCM upstream capabilities produced no response");
 	response[length] = '\0';
-	CHECK(strcmp(response, "(0,1),(0,24000-48000),(0-127)\r\n") == 0,
+	CHECK(strcmp(response, "\r\n(0,1),(0,24000-48000),(0-127)\r\n") == 0,
 	      "PCM upstream capabilities do not advertise automatic selection");
 	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
 		snprintf(command, sizeof(command), "%s", cases[index].command);
@@ -2914,8 +2914,9 @@ static bool test_at_pcm_automatic_upstream_policy(void)
 		response[length] = '\0';
 		CHECK(strcmp(response, cases[index].response) == 0,
 		      "PCM upstream query lost its automatic policy or level");
-		response[strcspn(response, "\r\n")] = '\0';
-		snprintf(command, sizeof(command), "AT+V92U=%s", response);
+		char *value = response + strspn(response, "\r\n");
+		value[strcspn(value, "\r\n")] = '\0';
+		snprintf(command, sizeof(command), "AT+V92U=%s", value);
 		CHECK(process_at_command(m, command) == 0 &&
 		      modem_get_param(m, MDMPRM_V92_PCM_UPSTREAM) == 1 &&
 		      (unsigned)modem_get_sreg(m, SREG_V92_PCM_UPSTREAM_MAX_DRN) ==

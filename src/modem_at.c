@@ -164,9 +164,7 @@ static int process_plus_DSC(struct modem *m, char *p, int *len)
 		if (*p == '?') {
 			const char capabilities[] = "(0-3)";
 
-			modem_send_to_tty(m, capabilities,
-					  (int)strlen(capabilities));
-			modem_send_to_tty(m, CRLF_CHARS(m), 2);
+			modem_frontend_info(m, capabilities, (int)strlen(capabilities));
 			*len += 1;
 			return 0;
 		}
@@ -179,8 +177,7 @@ static int process_plus_DSC(struct modem *m, char *p, int *len)
 		snprintf(response, sizeof(response), "%d",
 			 modem_get_sreg(m, SREG_COMP_TYPES) &
 				 MODEM_COMP_TYPE_ALL);
-		modem_send_to_tty(m, response, (int)strlen(response));
-		modem_send_to_tty(m, CRLF_CHARS(m), 2);
+		modem_frontend_info(m, response, (int)strlen(response));
 		return 0;
 	default:
 		*len = 0;
@@ -209,8 +206,7 @@ static int process_plus_DS0(struct modem *m, char *p, int *len)
 	} else {
 		return -1;
 	}
-	modem_send_to_tty(m, reply, (int)strlen(reply));
-	modem_send_to_tty(m, CRLF_CHARS(m), 2);
+	modem_frontend_info(m, reply, (int)strlen(reply));
 	return 0;
 }
 
@@ -227,9 +223,7 @@ static int process_plus_DS(struct modem *m, char *p, int *len)
 		if (*p == '?') {
 			const char capabilities[] = "(0-3),(0-3)";
 
-			modem_send_to_tty(m, capabilities,
-					  (int)strlen(capabilities));
-			modem_send_to_tty(m, CRLF_CHARS(m), 2);
+			modem_frontend_info(m, capabilities, (int)strlen(capabilities));
 			*len += 1;
 			return 0;
 		}
@@ -254,8 +248,7 @@ static int process_plus_DS(struct modem *m, char *p, int *len)
 			 modem_get_sreg(m, SREG_COMP),
 			 modem_get_sreg(m, SREG_COMP_TYPES) &
 				 MODEM_COMP_TYPE_ALL);
-		modem_send_to_tty(m, response, (int)strlen(response));
-		modem_send_to_tty(m, CRLF_CHARS(m), 2);
+		modem_frontend_info(m, response, (int)strlen(response));
 		return 0;
 	default:
 		*len = 0;
@@ -304,11 +297,12 @@ static int process_D(struct modem *m, char *p, int *len)
 		break;
 	case 'L':
 		if(m->dial_string[0] != '\0') {
-			modem_send_to_tty(m,"Dialing ",8);
+			modem_frontend_info_header(m);
+			modem_send_to_tty(m,"Dialing ",7);
 			modem_send_to_tty(m,m->dial_string,
 						strlen(m->dial_string));
-			modem_send_to_tty(m,"...",3);
-			modem_send_to_tty(m,CRLF_CHARS(m),2);
+			modem_send_to_tty(m, "...", 3);
+			modem_send_to_tty(m, CRLF_CHARS(m), 2);
 		}
 		p = 0;
 		break;
@@ -360,6 +354,7 @@ static int process_I(struct modem *m, char *p, int *len)
 	switch(c) {
 	case 1:
 	case 2:
+		modem_frontend_info_header(m);
 		modem_send_to_tty(m,modem_name,strlen(modem_name));
 		modem_send_to_tty(m,", ",2);
 		modem_send_to_tty(m,modem_version,strlen(modem_version));
@@ -368,6 +363,7 @@ static int process_I(struct modem *m, char *p, int *len)
 		modem_send_to_tty(m,CRLF_CHARS(m),2);
 		break;
 	case 3:
+		modem_frontend_info_header(m);
 		s = m->dev_name ? m->dev_name : "unknown";
 		modem_send_to_tty(m, s, strlen(s));
 		modem_send_to_tty(m, CRLF_CHARS(m),2);
@@ -376,6 +372,7 @@ static int process_I(struct modem *m, char *p, int *len)
 		modem_send_to_tty(m, CRLF_CHARS(m),2);
 		break;
 	case 4:
+		modem_frontend_info_header(m);
 		for (i=0;i<24;i++) {
 			char str[10];
 			sprintf(str,"s%.2d=%.3d ",i,m->sregs[i]);
@@ -386,14 +383,13 @@ static int process_I(struct modem *m, char *p, int *len)
 		modem_send_to_tty(m,CRLF_CHARS(m),2);
 		break;
 	case 5:
-		modem_send_to_tty(m,"Stored Profile 0:",17);
-		modem_send_to_tty(m,CRLF_CHARS(m),2);
+		modem_frontend_info(m, "Stored Profile 0:", 17);
 		break;
 	case 6:
-		modem_send_to_tty(m, "Stored Profile 1:",17);
-		modem_send_to_tty(m, CRLF_CHARS(m),2);
+		modem_frontend_info(m, "Stored Profile 1:", 17);
 		break;
 	case 7:
+		modem_frontend_info_header(m);
 		s = m->homolog->name;
 		modem_send_to_tty(m,"Country: ",9);
 		modem_send_to_tty(m,s,strlen(s));
@@ -403,8 +399,7 @@ static int process_I(struct modem *m, char *p, int *len)
 		modem_frontend_call_report(m);
 		break;
 	case 0:
-		modem_send_to_tty(m,modem_name,strlen(modem_name));
-		modem_send_to_tty(m,CRLF_CHARS(m),2);
+		modem_frontend_info(m, modem_name, strlen(modem_name));
 		break;
 	default:
 		return -1;
@@ -449,8 +444,7 @@ static int process_S(struct modem *m, char *p, int *len)
 		else {
 			char strval[8];
 			int l = sprintf(strval,"%d",val);
-			modem_send_to_tty(m, strval,l);
-			modem_send_to_tty(m, CRLF_CHARS(m),2);
+			modem_frontend_info(m, strval,l);
 		}
 		return 0;
 	case '=':
@@ -501,6 +495,7 @@ static int process_plus_GCI(struct modem *m, char *p, int *len)
 		*len = 1;
 		if (*p == '?') { /* show all country codes */
 			*len += 1;
+			modem_frontend_info_header(m);
 			modem_send_to_tty(m,gci_string,strlen(gci_string));
 			modem_send_to_tty(m,"(",1);
 			for(h=homolog_set;h->name;h++) {
@@ -523,6 +518,7 @@ static int process_plus_GCI(struct modem *m, char *p, int *len)
 		break;
 	case '?':
 		n = sprintf(strval,"%x",m->homolog->id);
+		modem_frontend_info_header(m);
 		modem_send_to_tty(m, "+GCI:",5);
 		modem_send_to_tty(m, strval, n);
 		modem_send_to_tty(m, CRLF_CHARS(m), 2);
@@ -551,6 +547,7 @@ static int process_plus_MS(struct modem *m, char *p, int *len)
 		*len = 1;
 		if (*p == '?') {
 			*len += 1;
+			modem_frontend_info_header(m);
 			modem_send_to_tty(m,"(",1);
 			for (size_t index = 0;
 			     (selectable_id = modem_dp_selectable_id(index)) != 0; index++) {
@@ -599,8 +596,7 @@ static int process_plus_MS(struct modem *m, char *p, int *len)
 	case '?':
 		n = sprintf(strval,"%d,%d,%u,%u",MODEM_DP(m),MODEM_AUTOMODE(m),
 			    m->min_rate,m->max_rate);
-		modem_send_to_tty(m, strval, n);
-		modem_send_to_tty(m, CRLF_CHARS(m), 2);
+		modem_frontend_info(m, strval, n);
 		*len = 1;
 		break;
 	default:
@@ -640,9 +636,7 @@ static int process_plus_V34B(struct modem *m, char *p, int *len)
 			const char capabilities[] =
 				"(0,2400,2743,2800,3000,3200,3429)";
 
-			modem_send_to_tty(
-				m, capabilities, (int)strlen(capabilities));
-			modem_send_to_tty(m, CRLF_CHARS(m), 2);
+			modem_frontend_info(m, capabilities, (int)strlen(capabilities));
 			*len += 1;
 			return 0;
 		}
@@ -654,8 +648,7 @@ static int process_plus_V34B(struct modem *m, char *p, int *len)
 	case '?':
 		*len = 1;
 		snprintf(response, sizeof(response), "%u", m->v34_symbol_rate);
-		modem_send_to_tty(m, response, (int)strlen(response));
-		modem_send_to_tty(m, CRLF_CHARS(m), 2);
+		modem_frontend_info(m, response, (int)strlen(response));
 		return 0;
 	default:
 		*len = 0;
@@ -678,9 +671,7 @@ static int process_plus_choice_param(
 		if (*p == '?') {
 			const char *capabilities = maximum == MODEM_PCM_POLICY_AUTO ? "(0,1,2)" : "(0,1)";
 
-			modem_send_to_tty(m, capabilities,
-					  (int)strlen(capabilities));
-			modem_send_to_tty(m, CRLF_CHARS(m), 2);
+			modem_frontend_info(m, capabilities, (int)strlen(capabilities));
 			*len += 1;
 			return 0;
 		}
@@ -692,8 +683,7 @@ static int process_plus_choice_param(
 		*len = 1;
 		snprintf(response, sizeof(response), "%ld",
 			 modem_get_param(m, parameter));
-		modem_send_to_tty(m, response, (int)strlen(response));
-		modem_send_to_tty(m, CRLF_CHARS(m), 2);
+		modem_frontend_info(m, response, (int)strlen(response));
 		return 0;
 	default:
 		*len = 0;
@@ -727,8 +717,7 @@ static int process_plus_V90U(struct modem *m, char *p, int *len)
 				 MODEM_V90_UPSTREAM_MAX_RATE,
 				 MODEM_V90_UPSTREAM_MIN_RATE,
 				 MODEM_V90_UPSTREAM_MAX_RATE);
-			modem_send_to_tty(m, response, (int)strlen(response));
-			modem_send_to_tty(m, CRLF_CHARS(m), 2);
+			modem_frontend_info(m, response, (int)strlen(response));
 			*len += 1;
 			return 0;
 		}
@@ -760,8 +749,7 @@ static int process_plus_V90U(struct modem *m, char *p, int *len)
 		snprintf(response, sizeof(response), "%u,%u,%u",
 			 m->v90_upstream_min_rate, m->v90_upstream_max_rate,
 			 m->v90_upstream_max_baud);
-		modem_send_to_tty(m, response, (int)strlen(response));
-		modem_send_to_tty(m, CRLF_CHARS(m), 2);
+		modem_frontend_info(m, response, (int)strlen(response));
 		return 0;
 	default:
 		*len = 0;
@@ -784,9 +772,7 @@ static int process_plus_V92U(struct modem *m, char *p, int *len)
 		if (*p == '?') {
 			const char capabilities[] = "(0,1),(0,24000-48000),(0-127)";
 
-			modem_send_to_tty(m, capabilities,
-					  (int)strlen(capabilities));
-			modem_send_to_tty(m, CRLF_CHARS(m), 2);
+			modem_frontend_info(m, capabilities, (int)strlen(capabilities));
 			*len += 1;
 			return 0;
 		}
@@ -835,8 +821,7 @@ static int process_plus_V92U(struct modem *m, char *p, int *len)
 			snprintf(response + used, sizeof(response) - used,
 				 ",%u", m->v92_upstream_lu_ucode);
 		}
-		modem_send_to_tty(m, response, (int)strlen(response));
-		modem_send_to_tty(m, CRLF_CHARS(m), 2);
+		modem_frontend_info(m, response, (int)strlen(response));
 		return 0;
 	default:
 		*len = 0;
@@ -852,6 +837,7 @@ static int process_plus_FCLASS(struct modem *m, char *p, int *len)
 		p++;
 		*len += 2;
 		if(*p == '?') {
+			modem_frontend_info_header(m);
 			modem_send_to_tty(m, "0" , 1);
 #ifdef MODEM_CONFIG_FAX_CLASS1
 			modem_send_to_tty(m, ",1" , 2);
@@ -880,8 +866,7 @@ static int process_plus_FCLASS(struct modem *m, char *p, int *len)
 	else if (*p == '?') {
 		*len += 1;
 		ch = '0' + m->mode;
-		modem_send_to_tty(m, &ch , 1);
-		modem_send_to_tty(m, CRLF_CHARS(m), 2);
+		modem_frontend_info(m, &ch, 1);
 	}
 	else
 		return -1;
@@ -900,8 +885,7 @@ static int process_CID(struct modem *m,  char *p, int *len)
 		p++;
 		*len += 2;
 		if(*p == '?') {
-			modem_send_to_tty(m, "0,1,2" , 5);
-			modem_send_to_tty(m, CRLF_CHARS(m), 2);
+			modem_frontend_info(m, "0,1,2" , 5);
 		}
 		else if (isdigit(*p) && *p - '0' < 3) {
 			m->cid_requested = *p - '0';
@@ -912,8 +896,7 @@ static int process_CID(struct modem *m,  char *p, int *len)
 	else if (*p == '?') {
 		*len += 1;
 		ch = '0' + m->cid_requested;
-		modem_send_to_tty(m, &ch , 1);
-		modem_send_to_tty(m, CRLF_CHARS(m), 2);
+		modem_frontend_info(m, &ch , 1);
 	}
 	else
 		return -1;
@@ -955,6 +938,7 @@ static int set_voice_params(struct modem *m, char *p, const char *cmd,
 		if(*p == '?') {
 			*len += 1;
 			sprintf(strval, "+%s=", cmd);
+			modem_frontend_info_header(m);
 			modem_send_to_tty(m, strval, strlen(strval));
 			if(prefix)
 				modem_send_to_tty(m, prefix, strlen(prefix));
@@ -1011,6 +995,7 @@ static int set_voice_params(struct modem *m, char *p, const char *cmd,
 	}
 	else if ( *p == '?' ) {
 		sprintf(strval, "+%s=", cmd);
+		modem_frontend_info_header(m);
 		modem_send_to_tty(m, strval, strlen(strval));
 		if(prefix)
 			modem_send_to_tty(m, prefix, strlen(prefix));
@@ -1188,8 +1173,7 @@ static int process_fax_command(struct modem *m, char *p, int *len)
 		*len += 2;
 		p+= 3;
 		if(*p == '?') {
-			modem_send_to_tty(m,"24,48,72,73,74,96,97,98,121,122,145,146",39);
-			modem_send_to_tty(m, CRLF_CHARS(m), 2);
+			modem_frontend_info(m, "24,48,72,73,74,96,97,98,121,122,145,146",39);
 			return 0;
 		}
 		else {
@@ -1206,8 +1190,7 @@ static int process_fax_command(struct modem *m, char *p, int *len)
 		*len += 2;
 		p+= 3;
 		if(*p == '?') {
-			modem_send_to_tty(m,"24,48,72,73,74,96,97,98,121,122,145,146",39);
-			modem_send_to_tty(m, CRLF_CHARS(m), 2);
+			modem_frontend_info(m, "24,48,72,73,74,96,97,98,121,122,145,146",39);
 		}
 		else {
 			val = strtoul(p,&end,0);
@@ -1224,8 +1207,7 @@ static int process_fax_command(struct modem *m, char *p, int *len)
 		*len += 2;
 		p+= 3;
 		if(*p == '?') {
-			modem_send_to_tty(m,"3",1);
-			modem_send_to_tty(m, CRLF_CHARS(m), 2);
+			modem_frontend_info(m, "3",1);
 			return 0;
 		}
 		else if (isdigit(*p))
@@ -1237,8 +1219,7 @@ static int process_fax_command(struct modem *m, char *p, int *len)
 		*len += 2;
 		p+= 3;
 		if(*p == '?') {
-			modem_send_to_tty(m,"3",1);
-			modem_send_to_tty(m, CRLF_CHARS(m), 2);
+			modem_frontend_info(m, "3",1);
 			return 0;
 		}
 		else if (isdigit(*p))
@@ -1444,16 +1425,13 @@ int process_at_command(struct modem *m, char *cmd)
 					c = toupper(*p++);
 					switch (c) {
 					case 'I': /* AT+GMI */
-						modem_send_to_tty(m,modem_author,strlen(modem_author));
-						modem_send_to_tty(m,CRLF_CHARS(m),2);
+						modem_frontend_info(m, modem_author,strlen(modem_author));
 						break;
 					case 'M': /* AT+GMM */
-						modem_send_to_tty(m,modem_name,strlen(modem_name));
-						modem_send_to_tty(m,CRLF_CHARS(m),2);
+						modem_frontend_info(m, modem_name,strlen(modem_name));
 						break;
 					case 'R': /* AT+GMR */
-						modem_send_to_tty(m,modem_version,strlen(modem_version));
-						modem_send_to_tty(m,CRLF_CHARS(m),2);
+						modem_frontend_info(m, modem_version,strlen(modem_version));
 						break;
 					default:
 						return -1;

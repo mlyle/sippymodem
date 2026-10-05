@@ -67,6 +67,21 @@
 
 extern int process_at_command(struct modem *modem, char *command);
 
+/* V.250 Table 3: information trailers always use S3/S4. Quiet mode
+ * suppresses result codes, not information responses. */
+void modem_frontend_info_header(struct modem *m)
+{
+	if (IS_VERBOSE(m))
+		modem_send_to_tty(m, CRLF_CHARS(m), 2);
+}
+
+void modem_frontend_info(struct modem *m, const char *text, int length)
+{
+	modem_frontend_info_header(m);
+	modem_send_to_tty(m, text, length);
+	modem_send_to_tty(m, CRLF_CHARS(m), 2);
+}
+
 static void report_line(struct modem *m, const char *format, ...)
 {
 	char text[384];
@@ -74,10 +89,8 @@ static void report_line(struct modem *m, const char *format, ...)
 	va_start(arguments, format);
 	int length = vsnprintf(text, sizeof(text), format, arguments);
 	va_end(arguments);
-	if (length > 0 && (size_t)length < sizeof(text)) {
-		modem_send_to_tty(m, text, length);
-		modem_send_to_tty(m, CRLF_CHARS(m), 2);
-	}
+	if (length > 0 && (size_t)length < sizeof(text))
+		modem_frontend_info(m, text, length);
 }
 
 void modem_frontend_call_report(struct modem *m)
@@ -126,49 +139,40 @@ void modem_frontend_call_report(struct modem *m)
 
 static void report_result(struct modem *m, unsigned int code)
 {
-#define MODEM_RESPONSE_TEXT(id) modem_responses[id].text
-#define MODEM_RESPONSE_CODE(id) modem_responses[id].code
-	/* response codes : FIXME */
 	static const struct modem_response {
-		enum MODEM_RESULT id;
-		char *code;
-		char *text;
+		const char *code;
+		const char *text;
 	} modem_responses[] = {
-		{RESULT_OK,         "0", "OK"},
-		{RESULT_CONNECT,    "1", "CONNECT"},
-		{RESULT_RING,       "2", "RING"},
-		{RESULT_NOCARRIER,  "3", "NO CARRIER"},
-		{RESULT_ERROR,      "4", "ERROR"},
-		{RESULT_UNUSED_5,   "" , ""},
-		{RESULT_NODIALTONE, "6", "NO DIALTONE"},
-		{RESULT_BUSY,       "7", "BUSY"},
-		{RESULT_NOANSWER,   "8", "NO ANSWER"},
+		{"0", "OK"},
+		{"1", "CONNECT"},
+		{"2", "RING"},
+		{"3", "NO CARRIER"},
+		{"4", "ERROR"},
+		{"" , ""},
+		{"6", "NO DIALTONE"},
+		{"7", "BUSY"},
+		{"8", "NO ANSWER"},
 	};
 	static const char none_str[] = "NONE";
         const char *msg;
 	u8 msg_mask;
 
-        MODEM_DBG("modem report result: %d (%s)\n",code,MODEM_RESPONSE_TEXT(code));
+	if (code >= sizeof(modem_responses) / sizeof(modem_responses[0]))
+		return;
+        MODEM_DBG("modem report result: %d (%s)\n",code,modem_responses[code].text);
         if (IS_QUIET(m))
                 return;
         if (IS_VERBOSE(m)) {
 		if(code==RESULT_CONNECT) {
 			msg_mask = modem_get_sreg(m,SREG_CONNNECT_MSG_FORMAT);
 			if(msg_mask&1) {
-				modem_send_to_tty(m,"Modulation: ",12);
 				msg = modem_active_modulation_name(m);
-				if (msg == NULL)
-					msg = none_str;
-				modem_send_to_tty(m,msg,strlen(msg));
-				modem_send_to_tty(m,CRLF_CHARS(m),2);
+				report_line(m, "Modulation: %s", msg ? msg : none_str);
 				msg = m->dsp_info.startup == MODEM_STARTUP_QC ? "QC" :
 					m->dsp_info.startup == MODEM_STARTUP_V8 ? "V8" :
 					m->dsp_info.startup == MODEM_STARTUP_V8_FALLBACK ? "V8-FALLBACK" : NULL;
-				if (msg != NULL) {
-					modem_send_to_tty(m,"Startup: ",9);
-					modem_send_to_tty(m,msg,strlen(msg));
-					modem_send_to_tty(m,CRLF_CHARS(m),2);
-				}
+				if (msg != NULL)
+					report_line(m, "Startup: %s", msg);
 				if (m->dp != NULL &&
 				    (m->dp->id == DP_V90 || m->dp->id == DP_V92)) {
 					msg = NULL;
@@ -176,21 +180,13 @@ static void report_result(struct modem *m, unsigned int code)
 						msg = "V34";
 					else if (m->dsp_info.upstream_mode == MODEM_UPSTREAM_PCM)
 						msg = "PCM";
-					if (msg != NULL) {
-						modem_send_to_tty(m,"Upstream: ",10);
-						modem_send_to_tty(m,msg,strlen(msg));
-						modem_send_to_tty(m,CRLF_CHARS(m),2);
-					}
+					if (msg != NULL)
+						report_line(m, "Upstream: %s", msg);
 				}
 			}
-			if(msg_mask&2) {
-				modem_send_to_tty(m,"Protocol: ",10);
-				msg = m->cfg.ec ? "LAPM" : none_str;
-				modem_send_to_tty(m,msg,strlen(msg));
-				modem_send_to_tty(m,CRLF_CHARS(m),2);
-			}
+			if (msg_mask & 2)
+				report_line(m, "Protocol: %s", m->cfg.ec ? "LAPM" : none_str);
 			if((msg_mask&3) == 3) {
-				modem_send_to_tty(m,"Compression: ",13);
 				switch (modem_ec_active_compression(m)) {
 				case MODEM_EC_COMPRESSION_V44:
 					msg = "V44";
@@ -202,33 +198,28 @@ static void report_result(struct modem *m, unsigned int code)
 					msg = none_str;
 					break;
 				}
-				modem_send_to_tty(m,msg,strlen(msg));
-				modem_send_to_tty(m,CRLF_CHARS(m),2);
+				report_line(m, "Compression: %s", msg);
 			}
-			if(msg_mask&4 && m->tx_rate) {
-				char rate_str[16];
-				modem_send_to_tty(m,"TxRate: ",8);
-				sprintf(rate_str,"%d",m->tx_rate);
-				modem_send_to_tty(m,rate_str,strlen(rate_str));
-				modem_send_to_tty(m,CRLF_CHARS(m),2);
-			}
+			if ((msg_mask & 4) && m->tx_rate)
+				report_line(m, "TxRate: %u", m->tx_rate);
 		}
 		if ((code == RESULT_RING || code == RESULT_CONNECT) && m->caller_number[0])
 			report_line(m, "CallerID: %s", m->caller_number);
-                msg = MODEM_RESPONSE_TEXT(code);
+		modem_frontend_info_header(m);
+                msg = modem_responses[code].text;
 		modem_send_to_tty(m,msg,strlen(msg));
 		if (code==RESULT_CONNECT && m->mode == MODEM_MODE_DATA
 		    && m->rx_rate && modem_get_sreg(m,SREG_X_CODE) != 0) {
 			char rate_str[16];
-			sprintf(rate_str," %d",m->rx_rate);
+			snprintf(rate_str, sizeof(rate_str), " %u", m->rx_rate);
 			modem_send_to_tty(m,rate_str,strlen(rate_str));
 		}
         }
         else {
-                msg = MODEM_RESPONSE_CODE(code);
+                msg = modem_responses[code].code;
 		modem_send_to_tty(m,msg,strlen(msg));
         }
-        modem_send_to_tty(m,CRLF_CHARS(m),2);
+        modem_send_to_tty(m, CRLF_CHARS(m), IS_VERBOSE(m) ? 2 : 1);
 }
 
 static void process_input(void *data)
@@ -273,8 +264,6 @@ static void process_input(void *data)
 				m->at_count = 0;
 				continue;
 			}
-			if (echo)
-				modem_send_to_tty(m,CRLF_CHARS(m),2);
 			MODEM_DBG("run cmd: %s\n",m->at_cmd);
 			ret = process_at_command(m, m->at_cmd);
 			if (ret < 0)
@@ -295,8 +284,6 @@ static void process_input(void *data)
 			}
 		}
 		else if (m->at_count == sizeof(m->at_line) - 1) {
-			if (echo)
-				modem_send_to_tty(m,CRLF_CHARS(m),2);
 			m->at_count   = 0;
 			m->at_line[1] = '\0';
 			report_result(m,RESULT_ERROR);
@@ -394,7 +381,6 @@ static void escape_event(struct modem *m)
 		/* The confirmed escape is compatibility syntax, not payload. */
 		m->xmit.head = m->xmit.tail = m->xmit.count = 0;
 		(void)modem_set_dte_command(m, true);
-		modem_send_to_tty(m, CRLF_CHARS(m), 2);
 		report_result(m, RESULT_OK);
 	}
 	m->escape_count = 0;
