@@ -49,7 +49,7 @@
  * 	
  * 	AT : A B C D E H I L M N O P Q S T V X Y Z
  *	AT&: C D E F H P R S F W
- *	AT\: A N
+ *	AT\: N
  * 	AT%: C E
  * 	AT+: DS DSC MS V34B V90D V90U V91 V92Q V92U FCLASS GCI GMI GMM GMR
  *      AT#: CID
@@ -61,7 +61,7 @@
  * 	AT+: DS44 DR
  *           FAE FTS FRS FTM FRM FRH FTH
  * 	AT&: A K V Z
- * 	AT\: B K
+ * 	AT\: A B K
  * 	AT*: B
  * 	AT#: BDR RG TL CLS SPK UD
  * 	     VBS VBT VIP VIT VLS VRA VRN 
@@ -1017,6 +1017,7 @@ int process_at_command(struct modem *m, char *cmd)
 	while(*p) {
 		c = toupper(*p++);
 		len = 0;
+		ret = -1;
 		switch(c) {
 
 		case 'A': /* ATA */
@@ -1146,15 +1147,6 @@ int process_at_command(struct modem *m, char *cmd)
 				return -1;
 			}
 			break;
-		case '*': /* AT* */
-			c = toupper(*p++);
-			switch(c) {
-			case 'B': /* AT*B */
-				break;
-			default:
-				return -1;
-			}
-			break;
 		case '+':
 			c = toupper(*p++);
 			switch (c) {
@@ -1263,10 +1255,6 @@ int process_at_command(struct modem *m, char *cmd)
 		case '\\':
 			c = toupper(*p++);
 			switch (c) {
-			case 'A': /* AT\A */
-				if(isdigit(*p)) len++;
-				// ret = set_sreg(m,SREG_V42_BASEREG,*p,0,5,&len);
-				break;
 			case 'N': /* AT\N */
 				ret = set_sreg(m,SREG_EC,*p,0,5,&len);
 				break;

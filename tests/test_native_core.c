@@ -2277,6 +2277,37 @@ static bool test_country_numeric_validation(void)
 	return true;
 }
 
+static bool test_at_command_results(void)
+{
+	struct modem_driver driver = {
+		.name = "command results", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	struct modem *m = create_compat_modem(&driver, driver.name);
+	CHECK(m != NULL, "command result allocation failed");
+	const char *unsupported[] = { "+MA", "+MI", "+M", "*B", "\\A", "\\A0" };
+	const char *prefix[] = { "AT", "ATE0Q1S0=1" };
+	for (size_t i = 0; i < ARRAY_LENGTH(unsupported); ++i) {
+		for (size_t j = 0; j < ARRAY_LENGTH(prefix); ++j) {
+			char line[32];
+			snprintf(line, sizeof(line), "%s%s", prefix[j], unsupported[i]);
+			/* An exact allocation also exposes reads past an incomplete prefix. */
+			char *command = strdup(line);
+			CHECK(command != NULL, "command result fixture allocation failed");
+			int result = process_at_command(m, command);
+			free(command);
+			CHECK(result < 0, "unsupported command inherited success: %s", line);
+		}
+	}
+	CHECK(m->sregs[SREG_ECHO] == 0 && m->sregs[SREG_QUIET] == 1 &&
+	      m->sregs[0] == 1, "an error changed preceding valid commands");
+	CHECK(process_at_command(m, "AT") == 0 &&
+	      process_at_command(m, "ATE0+MS=92+V90D=2") == 0,
+	      "supported command chaining changed");
+	modem_delete(m);
+	return true;
+}
+
 static bool test_at_decimal_numbers(void)
 {
 	struct modem_driver driver = {
@@ -9536,6 +9567,7 @@ int main(void)
 		{ "factory defaults", test_factory_defaults },
 		{ "S-register numeric validation", test_sreg_numeric_validation },
 		{ "country numeric validation", test_country_numeric_validation },
+		{ "AT command results", test_at_command_results },
 		{ "AT decimal numbers", test_at_decimal_numbers },
 		{ "automatic startup deadline", test_automatic_startup_deadline },
 		{ "V.8 fallback limits", test_v8_fallback_limits },

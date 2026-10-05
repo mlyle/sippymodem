@@ -426,7 +426,7 @@ owned configuration fields rather than individual S-registers.
 | `AT%E<n>` | `0..2`, default 0; stored S39 flag; does not control automatic DSP quality recovery |
 | `ATY<n>` | `0..3`, initially 0; stored S161 flag; does not select a persisted profile |
 | `AT&V`, `AT&W` | ERROR; profile display/storage is unavailable |
-| `AT*B`, `AT\A` | Unimplemented placeholders; no supported behavior |
+| `AT*B`, `AT\A` | Unsupported; produce `ERROR` |
 | Six-field `+MS` or four-field `+DS` legacy forms | ERROR; use the implemented four-field `+MS` and two-field `+DS` forms above |
 | `AT+DS44`, `AT+DR`, `AT+IFC`, `AT+VCID`, `AT#CID` | Unsupported in the normal build |
 | Fax class 1 and voice class 8 commands | Unavailable in the normal build |
