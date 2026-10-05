@@ -342,7 +342,9 @@ training trace for intermediate negotiation steps.
 
 Other ATI selectors produce ERROR. `+GMI`, `+GMM`, and `+GMR` are bare commands,
 without `?` or `=`. Country selection changes the retained legacy regional
-timing parameters; it does not select SIP destinations or codecs. `ATZ`
+timing parameters; it does not select SIP destinations or codecs. Codes above
+`ff` are retained legacy regional profile identifiers. Negative, overflowing,
+unsupported, or extra values produce `ERROR` without changing the profile. `ATZ`
 preserves the selected country.
 
 ## S-registers

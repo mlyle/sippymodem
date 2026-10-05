@@ -208,6 +208,7 @@ static bool at_response_formats(void)
 		char *trailer = body + strcspn(body, "\r\n");
 		/* A streamed query has one uninterrupted body and one final result. */
 		EXPECT(trailer > body && strcmp(trailer, "\r\n\r\nOK\r\n") == 0);
+		EXPECT(strstr(body, ",)") == NULL);
 		EXPECT(data.count == 0);
 		modem_delete(modem);
 	}

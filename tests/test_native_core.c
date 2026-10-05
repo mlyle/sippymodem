@@ -2247,6 +2247,36 @@ static bool test_sreg_numeric_validation(void)
 	return true;
 }
 
+static bool test_country_numeric_validation(void)
+{
+	struct modem_driver driver = {
+		.name = "country validation", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	struct modem *m = create_compat_modem(&driver, driver.name);
+	CHECK(m != NULL, "country allocation failed");
+	const struct homolog_set *initial = m->homolog;
+	unsigned char expected[sizeof(m->sregs)];
+	memcpy(expected, m->sregs, sizeof(expected));
+	const char *invalid[] = {
+		"AT+GCI=1000000b5", "AT+GCI=10000", "AT+GCI=10000000000000000",
+		"AT+GCI=-0", "AT+GCI=-b5", "AT+GCI=", "AT+GCI=ff",
+		"AT+GCI=00,b5", "AT+GCI=00,",
+	};
+	for (size_t i = 0; i < ARRAY_LENGTH(invalid); ++i)
+		CHECK(process_at_command(m, (char *)invalid[i]) < 0 && m->homolog == initial &&
+		      !memcmp(expected, m->sregs, sizeof(expected)),
+		      "invalid country input changed settings: %s", invalid[i]);
+	for (const struct homolog_set *h = homolog_set; h->name; ++h) {
+		char command[32];
+		snprintf(command, sizeof(command), "AT+GCI=%x", h->id);
+		CHECK(process_at_command(m, command) == 0 && m->homolog == h,
+		      "supported country profile rejected: %s", h->name);
+	}
+	modem_delete(m);
+	return true;
+}
+
 static bool test_automatic_startup_deadline(void)
 {
 	struct modem_driver driver = {
@@ -9432,6 +9462,7 @@ int main(void)
 		{ "automatic factory profile", test_automatic_factory_profile },
 		{ "factory defaults", test_factory_defaults },
 		{ "S-register numeric validation", test_sreg_numeric_validation },
+		{ "country numeric validation", test_country_numeric_validation },
 		{ "automatic startup deadline", test_automatic_startup_deadline },
 		{ "V.8 fallback limits", test_v8_fallback_limits },
 		{ "V.8 legacy V.32 selection", test_v8_legacy_v32 },

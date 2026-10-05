@@ -477,54 +477,43 @@ static int process_Z(struct modem *m, char *p, int *len)
 
 static int process_plus_GCI(struct modem *m, char *p, int *len)
 {
-	static const char gci_string[] = "+GCI:";
-	char strval[8];
-	const struct homolog_set *h;
-	char *end;
-	unsigned long n;
-	AT_DBG ("AT+GCI...\n");
+	char response[16];
+	unsigned long country;
+
 	switch (*p) {
 	case '=':
 		p++;
 		*len = 1;
-		if (*p == '?') { /* show all country codes */
-			*len += 1;
+		if (*p == '?') {
+			(*len)++;
 			modem_frontend_info_header(m);
-			modem_send_to_tty(m,gci_string,strlen(gci_string));
-			modem_send_to_tty(m,"(",1);
-			for(h=homolog_set;h->name;h++) {
-				n = sprintf(strval,"%x,",h->id);
-				modem_send_to_tty(m,strval,n);
+			modem_send_to_tty(m, "+GCI:(", 6);
+			for (const struct homolog_set *h = homolog_set; h->name; ++h) {
+				snprintf(response, sizeof(response), "%s%x",
+				         h == homolog_set ? "" : ",", h->id);
+				modem_send_to_tty(m, response, (int)strlen(response));
 			}
-			modem_send_to_tty(m,")",1);
-			modem_send_to_tty(m, CRLF_CHARS(m),2);
+			modem_send_to_tty(m, ")", 1);
+			modem_send_to_tty(m, CRLF_CHARS(m), 2);
+		} else {
+			/* The retained regional profile table also has 16-bit IDs. */
+			if (parse_unsigned(&p, len, &country, 16) != 1 ||
+			    country > UINT16_MAX || *p == ',')
+				return -1;
+			if (modem_homolog_init(m, (int)country, NULL) != 0)
+				return -1;
 		}
-		else {
-			n = strtoul (p,&end,16);
-			if(end == p) {
-				return -1;
-			}
-			*len += end - p; p = end;
-			/* set country n */
-			if(modem_homolog_init(m,n,NULL))
-				return -1;
-                }
-		break;
+		return 0;
 	case '?':
-		n = sprintf(strval,"%x",m->homolog->id);
-		modem_frontend_info_header(m);
-		modem_send_to_tty(m, "+GCI:",5);
-		modem_send_to_tty(m, strval, n);
-		modem_send_to_tty(m, CRLF_CHARS(m), 2);
+		snprintf(response, sizeof(response), "+GCI:%x", m->homolog->id);
+		modem_frontend_info(m, response, (int)strlen(response));
 		*len = 1;
-		break;
+		return 0;
 	default:
 		*len = 0;
 		return -1;
 	}
-	return 0;
 }
-
 
 static int process_plus_MS(struct modem *m, char *p, int *len)
 {
