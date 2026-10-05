@@ -421,6 +421,7 @@ static enum v34_phase4_exchange_result data_transmit_result(
 	case V34_DATA_STREAM_CLIPPING_RISK:
 		return V34_PHASE4_EXCHANGE_CLIPPING_RISK;
 	case V34_DATA_STREAM_INVALID_ARGUMENT:
+	case V34_DATA_STREAM_IN_PROGRESS:
 	case V34_DATA_STREAM_NUMERIC_FAILURE:
 		break;
 	}

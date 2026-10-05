@@ -715,12 +715,79 @@ static bool test_transactional_boundaries(void)
 	return true;
 }
 
+static bool test_incremental_preparation(void)
+{
+	static const uint32_t BUDGETS[] = { 1, 23, UINT32_MAX };
+	for (unsigned int nonlinear = 0; nonlinear < 2; ++nonlinear) {
+		struct v34_data_stream_configuration config = configuration_fixture();
+		struct v34_data_direction_parameters direction = { 0 };
+		struct v34_data_mapping mapping;
+		struct v34_data_stream_preparation expected;
+		struct v34_training_line line;
+		config.nonlinear_parameter = nonlinear ? V34_NONLINEAR_THETA_5_OVER_16 :
+			V34_NONLINEAR_THETA_ZERO;
+		memcpy(direction.precoder_coefficients, config.precoder_coefficients,
+		       sizeof(direction.precoder_coefficients));
+		direction.trellis_selection = config.trellis_selection;
+		direction.nonlinear_parameter = config.nonlinear_parameter;
+		direction.primary_data_rate_2400_bps_units = config.primary_data_rate_2400_bps_units;
+		direction.expanded_shaping = config.expanded_shaping;
+		CHECK(prepare_mapping(&config, &mapping) &&
+		      v34_data_stream_prepare(&expected, &mapping, 8000) == V34_DATA_STREAM_OK &&
+		      v34_training_line_init(&line, &config.profile, 8000, config.nominal_peak_amplitude) ==
+		      V34_TRAINING_LINE_OK, "shared preparation fixture");
+		for (size_t trial = 0; trial < ARRAY_LENGTH(BUDGETS); ++trial) {
+			struct v34_data_stream_preparation_job job;
+			struct v34_data_stream_preparation prepared;
+			struct v34_data_stream a, b;
+			enum v34_data_stream_result result;
+			unsigned int steps = 0;
+			CHECK(v34_data_stream_begin_preparation(&job, &config.profile, &direction,
+				config.auxiliary_channel_enabled, 8000) == V34_DATA_STREAM_OK,
+			      "shared preparation begin");
+			memset(&prepared, 0xa5, sizeof(prepared));
+			CHECK(v34_data_stream_step_preparation(&job, 0, &prepared) ==
+			      V34_DATA_STREAM_INVALID_ARGUMENT && bytes_are_filled(&prepared, sizeof(prepared), 0xa5),
+			      "zero budget changed output");
+			CHECK(v34_data_stream_step_preparation(&job, 1, &job.preparation) ==
+			      V34_DATA_STREAM_INVALID_ARGUMENT, "active job aliases its output");
+			do {
+				result = v34_data_stream_step_preparation(&job, BUDGETS[trial], &prepared);
+				CHECK(result == V34_DATA_STREAM_OK || result == V34_DATA_STREAM_IN_PROGRESS,
+				      "shared preparation step failed");
+				if (result == V34_DATA_STREAM_IN_PROGRESS)
+					CHECK(bytes_are_filled(&prepared, sizeof(prepared), 0xa5), "partial output escaped");
+				CHECK(++steps < 2000, "shared preparation did not complete");
+			} while (result == V34_DATA_STREAM_IN_PROGRESS);
+			CHECK(prepared.line_peak == expected.line_peak &&
+			      prepared.mapping.normalizer.precoded_mean_squared_magnitude ==
+				expected.mapping.normalizer.precoded_mean_squared_magnitude &&
+			      prepared.mapping.normalizer.projected_mean_squared_magnitude ==
+				expected.mapping.normalizer.projected_mean_squared_magnitude &&
+			      v34_data_stream_continue_prepared_b1(&a, &line, &expected) == V34_DATA_STREAM_OK &&
+			      v34_data_stream_continue_prepared_b1(&b, &line, &prepared) == V34_DATA_STREAM_OK,
+			      "shared power preparation differs");
+			for (unsigned int sample = 0; sample < 1000; ++sample) {
+				int16_t left, right;
+				bool accepted_left, accepted_right;
+				CHECK(v34_data_stream_sample(&a, NULL, NULL, &left, &accepted_left) == V34_DATA_STREAM_OK &&
+				      v34_data_stream_sample(&b, NULL, NULL, &right, &accepted_right) == V34_DATA_STREAM_OK &&
+				      left == right && accepted_left == accepted_right, "shared waveform differs");
+			}
+			CHECK(v34_data_stream_step_preparation(&job, 1, &job.preparation) == V34_DATA_STREAM_OK,
+			      "completed job cannot return its owned preparation");
+		}
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "incremental preparation", test_incremental_preparation },
 		{ "selected continuation", test_selected_continuation },
 		{ "preparation boundaries", test_preparation_boundaries },
 		{ "word-aligned host handoff", test_word_aligned_host_handoff },

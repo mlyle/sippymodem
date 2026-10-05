@@ -6,6 +6,7 @@
 #include "v90_phase4_e_line_rx.h"
 #include "v90_pcm_mapping.h"
 #include "v90_upstream_data.h"
+#include "v34_data_mapping.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -21,7 +22,7 @@ enum v90_upstream_rx_stage {
 
 enum v90_upstream_rx_result {
 	V90_UPSTREAM_RX_OK,
-	/* The first data CP or CPs authorizes MP prime. */
+	/* Data CP authorizes MP prime after mapping preparation; CPs is immediate. */
 	V90_UPSTREAM_RX_REQUEST_MP_PRIME,
 	/* CP prime authorizes Ed and starts continuous E reception. */
 	V90_UPSTREAM_RX_REQUEST_ED,
@@ -52,9 +53,9 @@ union v90_upstream_rx_state {
 };
 
 /* Own the digital modem's continuous conventional-upstream receive path from
- * the initial CP handoff through E and B1. Record events pause internally so a
- * controller can request MP prime and Ed at their exact boundaries without
- * exposing a replayable half-transition. */
+ * the initial CP handoff through E and B1. Calibrate one mapping frame per
+ * received sample while CP repeats, then request MP prime. E hands the cached
+ * mapping to B1 without replaying or pausing the physical receive clock. */
 struct v90_upstream_rx {
 	union v90_upstream_rx_state state;
 	/* CP modulation is initialized only before the first CPt. Preserve its
@@ -67,6 +68,13 @@ struct v90_upstream_rx {
 	 * final data selection. CPs never installs a data mapping. */
 	struct v90_cp_parameters data_parameters;
 	struct v90_mp_record local_mp;
+	struct v34_data_mapping data_mapping;
+	struct v34_mapping_power_calibration calibration;
+	enum v90_upstream_rx_result preparation_request;
+	bool mapping_prepared;
+	/* The initial digital transmitter may still lower MP's receive rate.
+	 * Its owner defers calibration until selecting the first immutable MP. */
+	bool mp_selection_pending;
 	/* Data CP rate indices admitted by the Jd sent on this call. */
 	uint32_t enabled_downstream_rate_mask;
 	enum v90_upstream_rx_stage stage;
@@ -80,6 +88,10 @@ enum v90_upstream_rx_result v90_upstream_rx_init(
 	const struct v90_pcm_mapping *training_mapping,
 	const struct v90_mp_record *local_mp,
 	uint32_t enabled_downstream_rate_mask);
+/* Finalize a deferred initial MP before any acknowledgment is released.
+ * Retained CP is reselected against it; rejection leaves the owner unchanged. */
+enum v90_upstream_rx_result v90_upstream_rx_select_mp(
+	struct v90_upstream_rx *receiver, const struct v90_mp_record *mp);
 bool v90_upstream_rx_is_valid(const struct v90_upstream_rx *receiver);
 bool v90_upstream_rx_has_failed(const struct v90_upstream_rx *receiver);
 bool v90_upstream_rx_is_complete(const struct v90_upstream_rx *receiver);

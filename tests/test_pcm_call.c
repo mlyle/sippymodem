@@ -1366,7 +1366,9 @@ static bool check_training_cleardown(
 	CHECK(check_peer_cleardown(analog, digital, line, 0u) &&
 	      check_peer_cleardown(analog, digital, line, 1u),
 	      "initial control cancellation failed");
-	for (size_t clock = 0; clock < 16000u && checked != 3u; ++clock) {
+	/* Allow the bounded mapping/line calibration and a repeated CP/MP
+	 * record after the existing conditioning interval. */
+	for (size_t clock = 0; clock < 20000u && checked != 3u; ++clock) {
 		uint8_t received[2], transmitted[2];
 		const struct v90_digital_path *path = &calls[1].state.data_path.digital;
 		const struct pcm_downstream_tx *tx = &path->downstream.training;
@@ -3096,7 +3098,7 @@ static bool test_b1_completion_grace(void)
 				saved = true;
 			} else if (saved) {
 				CHECK(digital.call.b1_completion_grace &&
-				      digital.call.b1_deadline_remaining_samples == 16000u &&
+				      digital.call.b1_deadline_remaining_samples == 18000u &&
 				      pcm_call_is_valid(&digital.call),
 				      "late validated CP did not receive bounded completion time");
 				completed = true;
@@ -3108,7 +3110,7 @@ static bool test_b1_completion_grace(void)
 		/* Keep a valid CP-bearing child frozen while the call clock runs.
 		 * Continued eligibility must never restart the allowance. */
 		stalled.b1_deadline_remaining_samples = 1u;
-		for (unsigned int tick = 0; tick <= 16000u; ++tick) {
+		for (unsigned int tick = 0; tick <= 18000u; ++tick) {
 			union pcm_call_state state = stalled.state;
 			struct pcm_call_data_event event;
 			uint8_t octet;
@@ -3116,7 +3118,7 @@ static bool test_b1_completion_grace(void)
 			CHECK(pcm_call_data_octet_owned(&stalled, silence_octet(law),
 				      0, 0, false, NULL, &octet, &event) == PCM_CALL_OK,
 			      "completion stall tick failed");
-			if (tick == 16000u) {
+			if (tick == 18000u) {
 				CHECK(stalled.stage == PCM_CALL_RETRAIN_SILENCE &&
 				      !stalled.b1_deadline_armed && !stalled.b1_completion_grace &&
 				      pcm_call_is_valid(&stalled),
@@ -3124,13 +3126,13 @@ static bool test_b1_completion_grace(void)
 			} else {
 				CHECK(stalled.stage == PCM_CALL_DATA_PATH &&
 				      stalled.b1_completion_grace &&
-				      stalled.b1_deadline_remaining_samples == 16000u - tick,
+				      stalled.b1_deadline_remaining_samples == 18000u - tick,
 				      "completion allowance lost its fixed bound at %u", tick);
 				stalled.state = state;
 			}
 		}
 		completed = false;
-		for (size_t clock = 0; clock < 16000u; ++clock) {
+		for (size_t clock = 0; clock < 18000u; ++clock) {
 			CHECK(step_endpoints(&channel, &analog, &digital, law),
 			      "late CP could not complete online training");
 			if (pcm_call_is_online(&digital.call) && pcm_call_is_online(&analog.call)) {
@@ -5114,7 +5116,9 @@ static bool run_rate_renegotiation_case(
 	 * event here so this boundary tests only host suppression and call-state
 	 * recovery, without duplicating the line receiver's waveform fixture.
 	 * Keep stepping both endpoints until the seeded event is observed so the
-	 * peer transmit line and receiver sample clock remain synchronized. */
+	 * peer transmit line and receiver sample clock remain synchronized. The
+	 * handoff must wait for an observation boundary before changing carrier
+	 * adaptation, even when the seeded marker precedes a partial input. */
 	sources = (struct pcm_call_data_sources){
 		.upstream = source_upstream_frame,
 		.upstream_context = &digital.upstream_source,

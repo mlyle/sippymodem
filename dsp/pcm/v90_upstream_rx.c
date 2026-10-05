@@ -12,6 +12,25 @@
 #include <stdint.h>
 #include <string.h>
 
+static enum v90_upstream_rx_result begin_mapping_preparation(
+	struct v90_upstream_rx *receiver)
+{
+	struct v34_data_direction_parameters direction;
+	struct v90_cp_parameters final = receiver->data_parameters;
+
+	final.acknowledges_peer = true;
+	if (v90_upstream_mode_select(
+		    &final, &receiver->local_mp,
+		    &receiver->state.cp.transmitting_profile, &direction) !=
+	    V90_UPSTREAM_MODE_OK ||
+	    v34_data_mapping_begin_calibration(
+		    &receiver->data_mapping, &receiver->calibration,
+		    &receiver->state.cp.transmitting_profile, &direction, false) !=
+	    V34_DATA_MAPPING_OK)
+		return V90_UPSTREAM_RX_NUMERIC_FAILURE;
+	return V90_UPSTREAM_RX_OK;
+}
+
 static bool downstream_rate_is_enabled(
 	const struct v90_upstream_rx *receiver,
 	const struct v90_cp_parameters *parameters)
@@ -95,6 +114,14 @@ bool v90_upstream_rx_is_valid(const struct v90_upstream_rx *receiver)
 	    !v90_pcm_mapping_is_valid(&receiver->training_mapping) ||
 	    receiver->training_mapping.kind != V90_CP_TRAINING ||
 	    !v90_mp_record_is_initial(&receiver->local_mp) ||
+	    (receiver->mapping_prepared &&
+	     (!receiver->data_cp_received || receiver->mp_selection_pending)) ||
+	    (receiver->preparation_request != V90_UPSTREAM_RX_OK &&
+	     receiver->preparation_request != V90_UPSTREAM_RX_REQUEST_MP_PRIME &&
+	     receiver->preparation_request != V90_UPSTREAM_RX_REQUEST_RT) ||
+	    (!receiver->mapping_prepared && receiver->data_cp_received &&
+	     receiver->preparation_request == V90_UPSTREAM_RX_OK) ||
+	    (receiver->mapping_prepared && receiver->preparation_request != V90_UPSTREAM_RX_OK) ||
 	    !pcm_downstream_rate_mask_is_usable(
 		    receiver->enabled_downstream_rate_mask) ||
 	    (receiver->stage != V90_UPSTREAM_RX_STAGE_CP &&
@@ -224,6 +251,28 @@ static enum v90_upstream_rx_result continue_cp(
 		       V90_UPSTREAM_RX_NUMERIC_FAILURE;
 }
 
+enum v90_upstream_rx_result v90_upstream_rx_select_mp(
+	struct v90_upstream_rx *receiver, const struct v90_mp_record *mp)
+{
+	struct v90_upstream_rx next;
+
+	if (!v90_upstream_rx_is_valid(receiver) || !v90_mp_record_is_initial(mp))
+		return V90_UPSTREAM_RX_INVALID_ARGUMENT;
+	if (receiver->failed || !receiver->mp_selection_pending ||
+	    receiver->stage != V90_UPSTREAM_RX_STAGE_CP)
+		return V90_UPSTREAM_RX_INVALID_STATE;
+	next = *receiver;
+	next.local_mp = *mp;
+	if (next.data_cp_received &&
+	    begin_mapping_preparation(&next) != V90_UPSTREAM_RX_OK)
+		return V90_UPSTREAM_RX_NUMERIC_FAILURE;
+	next.mp_selection_pending = false;
+	if (!v90_upstream_rx_is_valid(&next))
+		return V90_UPSTREAM_RX_INVALID_STATE;
+	*receiver = next;
+	return V90_UPSTREAM_RX_OK;
+}
+
 static enum v90_upstream_rx_result accept_cp_record(
 	struct v90_upstream_rx *receiver,
 	const struct v90_cp_receive_event *event,
@@ -312,15 +361,17 @@ static enum v90_upstream_rx_result accept_cp_record(
 		result = continue_cp(receiver);
 		if (result != V90_UPSTREAM_RX_OK)
 			return result;
-		*emitted = receiver->data_parameters;
-		*event_ready = true;
-		return reconditioned ? V90_UPSTREAM_RX_REQUEST_RT :
+		if (!receiver->mp_selection_pending &&
+		    begin_mapping_preparation(receiver) != V90_UPSTREAM_RX_OK)
+			return V90_UPSTREAM_RX_NUMERIC_FAILURE;
+		receiver->preparation_request = reconditioned ? V90_UPSTREAM_RX_REQUEST_RT :
 			V90_UPSTREAM_RX_REQUEST_MP_PRIME;
+		return V90_UPSTREAM_RX_OK;
 	}
 	if (!data_parameters_are_equal(
 		    &parameters, &receiver->data_parameters))
 		return V90_UPSTREAM_RX_SEQUENCE_MISMATCH;
-	if (!parameters.acknowledges_peer)
+	if (!parameters.acknowledges_peer || !receiver->mapping_prepared)
 		return continue_cp(receiver);
 	{
 		struct v90_phase4_e_line_rx e;
@@ -344,8 +395,19 @@ static enum v90_upstream_rx_result start_b1(
 {
 	struct v34_data_line_receiver data;
 
-	if (v90_upstream_rx_start_after_e(&data, e, &receiver->local_mp) !=
-	    V90_UPSTREAM_DATA_OK)
+	struct v34_data_line_receiver_configuration configuration = {
+		.transmitting_profile = receiver->data_mapping.transmitting_profile,
+		.geometry = receiver->data_mapping.schedule.geometry,
+		.normalizer = receiver->data_mapping.normalizer,
+		.trellis_selection = receiver->data_mapping.encoder.convolutional_encoder.selection,
+		.expanded_shaping = receiver->data_mapping.encoder.parameters.expanded_shaping,
+		.detect_rate_renegotiation = true,
+	};
+	memcpy(configuration.precoder_coefficients,
+		receiver->data_mapping.encoder.precoder.coefficients,
+		sizeof(configuration.precoder_coefficients));
+	if (!receiver->mapping_prepared ||
+	    v90_phase4_e_line_rx_start_data(e, &data, &configuration) != V90_PHASE4_E_LINE_RX_OK)
 		return V90_UPSTREAM_RX_NUMERIC_FAILURE;
 	receiver->state = (union v90_upstream_rx_state){ 0 };
 	receiver->state.data = data;
@@ -387,6 +449,8 @@ static enum v90_upstream_rx_result receive_cp_sample(
 			.adaptation = cp->adaptation,
 		};
 
+		if (!receiver->mapping_prepared)
+			return V90_UPSTREAM_RX_SEQUENCE_MISMATCH;
 		e.cp.acknowledges_peer = true;
 		return start_b1(receiver, &e);
 	}
@@ -508,6 +572,20 @@ enum v90_upstream_rx_result v90_upstream_rx_sample(
 		return V90_UPSTREAM_RX_COMPLETE;
 	default:
 		return V90_UPSTREAM_RX_INVALID_ARGUMENT;
+	}
+	if (result == V90_UPSTREAM_RX_OK && next.data_cp_received &&
+	    !next.mp_selection_pending && !next.mapping_prepared) {
+		enum v34_power_calibration_result step = v34_mapping_power_calibration_step(
+			&next.calibration, 1, &next.data_mapping.normalizer);
+		if (step == V34_POWER_CALIBRATION_OK) {
+			next.mapping_prepared = true;
+			result = next.preparation_request;
+			next.preparation_request = V90_UPSTREAM_RX_OK;
+			emitted = next.data_parameters;
+			event_ready = true;
+		} else if (step != V34_POWER_CALIBRATION_IN_PROGRESS) {
+			result = V90_UPSTREAM_RX_NUMERIC_FAILURE;
+		}
 	}
 	if (result == V90_UPSTREAM_RX_FAILED ||
 	    result == V90_UPSTREAM_RX_SEQUENCE_MISMATCH ||

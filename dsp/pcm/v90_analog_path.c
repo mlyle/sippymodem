@@ -5,7 +5,7 @@
 #include "g711.h"
 #include "memory_region.h"
 #include "v90_downstream_data_handoff.h"
-#include "v90_upstream_data.h"
+#include "v90_upstream_mode.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -75,7 +75,7 @@ static bool upstream_is_valid(const struct v90_analog_path *path)
 	if (path->upstream_stage == V90_ANALOG_PATH_UPSTREAM_CP)
 		return v90_phase4_cp_line_tx_is_valid(&path->upstream.cp);
 	if (path->upstream_stage == V90_ANALOG_PATH_UPSTREAM_E)
-		return path->finishing_cp && path->cp_prime_sent &&
+		return path->upstream_prepared && path->finishing_cp && path->cp_prime_sent &&
 		       path->peer_mp_prime_received &&
 		       v90_phase4_e_line_tx_is_valid(&path->upstream.e) &&
 		       path->upstream.e.cp.law == path->law &&
@@ -83,7 +83,7 @@ static bool upstream_is_valid(const struct v90_analog_path *path)
 			       &path->data_mapping, &path->upstream.e.cp,
 			       path->law);
 	if (path->upstream_stage == V90_ANALOG_PATH_UPSTREAM_DATA)
-		return path->finishing_cp && path->cp_prime_sent &&
+		return path->upstream_prepared && path->finishing_cp && path->cp_prime_sent &&
 		       path->peer_mp_prime_received &&
 		       path->upstream_rate_2400_bps_units != 0u &&
 		       v34_data_stream_is_valid(&path->upstream.data) &&
@@ -160,6 +160,8 @@ bool v90_analog_path_is_valid(const struct v90_analog_path *path)
 	     !path->peer_mp_received) ||
 	    (path->peer_mp_received &&
 	     !v90_mp_record_is_valid(&path->peer_mp)) ||
+	    (path->upstream_prepared && !path->peer_mp_received) ||
+	    (path->cp_prime_sent && !path->upstream_prepared) ||
 	    (path->peer_mp_prime_received && !path->peer_mp_received) ||
 	    (path->cp_prime_sent &&
 	     !path->data_parameters.acknowledges_peer) ||
@@ -309,7 +311,7 @@ static enum v90_analog_path_result prepare_cp_record(
 		return V90_ANALOG_PATH_OK;
 	}
 	parameters = path->data_parameters;
-	parameters.acknowledges_peer = path->peer_mp_received;
+	parameters.acknowledges_peer = path->peer_mp_received && path->upstream_prepared;
 	if (v90_phase4_cp_line_tx_start_next_record(
 		    &path->upstream.cp, &parameters) !=
 	    V90_PHASE4_CP_LINE_TX_OK)
@@ -372,23 +374,19 @@ static enum v90_analog_path_result e_line_failure(
 	return V90_ANALOG_PATH_INTERNAL_ERROR;
 }
 
-static enum v90_analog_path_result upstream_start_result(
-	enum v90_upstream_data_result result)
+static enum v90_analog_path_result upstream_mode_result(
+	enum v90_upstream_mode_result result)
 {
-	if (result == V90_UPSTREAM_DATA_OK)
-		return V90_ANALOG_PATH_OK;
-	if (result == V90_UPSTREAM_DATA_INVALID_PARAMETERS)
-		return V90_ANALOG_PATH_INVALID_PARAMETERS;
-	if (result == V90_UPSTREAM_DATA_NO_COMMON_RATE)
-		return V90_ANALOG_PATH_NO_COMMON_RATE;
-	if (result == V90_UPSTREAM_DATA_OUT_OF_RANGE)
-		return V90_ANALOG_PATH_OUT_OF_RANGE;
-	if (result == V90_UPSTREAM_DATA_CLIPPING_RISK)
-		return V90_ANALOG_PATH_CLIPPING_RISK;
-	if (result == V90_UPSTREAM_DATA_NUMERIC_FAILURE)
-		return V90_ANALOG_PATH_NUMERIC_FAILURE;
+	switch (result) {
+	case V90_UPSTREAM_MODE_OK: return V90_ANALOG_PATH_OK;
+	case V90_UPSTREAM_MODE_NO_COMMON_RATE: return V90_ANALOG_PATH_NO_COMMON_RATE;
+	case V90_UPSTREAM_MODE_INVALID_PARAMETERS: return V90_ANALOG_PATH_INVALID_PARAMETERS;
+	case V90_UPSTREAM_MODE_INVALID_ARGUMENT: break;
+	}
 	return V90_ANALOG_PATH_INTERNAL_ERROR;
 }
+
+static enum v90_analog_path_result data_stream_result(enum v34_data_stream_result result);
 
 static enum v90_analog_path_result emit_e(
 	struct v90_analog_path *path, int16_t *sample, bool *ready)
@@ -404,9 +402,9 @@ static enum v90_analog_path_result emit_e(
 	if (result != V90_PHASE4_E_LINE_TX_COMPLETE)
 		return e_line_failure(result);
 	{
-		enum v90_analog_path_result start = upstream_start_result(
-			v90_upstream_data_start_after_e(
-				&data, &path->upstream.e, &path->peer_mp));
+		enum v90_analog_path_result start = data_stream_result(
+			v34_data_stream_continue_prepared_b1(&data, &path->upstream.e.line,
+				&path->upstream_preparation.preparation));
 
 		if (start != V90_ANALOG_PATH_OK)
 			return start;
@@ -548,6 +546,16 @@ static enum v90_analog_path_result transmit_clock(
 		return V90_ANALOG_PATH_FAILED;
 	if (path->receive_pending)
 		return V90_ANALOG_PATH_INVALID_STATE;
+	if (path->upstream_stage == V90_ANALOG_PATH_UPSTREAM_CP &&
+	    path->peer_mp_received && !path->upstream_prepared && !path->cleardown_requested) {
+		struct v34_data_stream_preparation preparation;
+		enum v34_data_stream_result step = v34_data_stream_step_preparation(
+			&path->upstream_preparation, 1, &preparation);
+		if (step == V34_DATA_STREAM_OK)
+			path->upstream_prepared = true;
+		else if (step != V34_DATA_STREAM_IN_PROGRESS)
+			return fail_path(path, data_stream_result(step));
+	}
 	result = emit_upstream(path, source, source_context, &sample);
 	if (result == V90_ANALOG_PATH_SOURCE_FAILURE)
 		return result;
@@ -600,8 +608,25 @@ static enum v90_analog_path_result accept_mp(
 	/* MP-prime contains the complete MP parameters (V.90 8.6.3), even
 	 * when no plain MP was decoded. Keep the first CRC-checked record;
 	 * prepare_cp_record still sends a complete CP-prime before E. */
-	if (!path->peer_mp_received)
+	if (!path->peer_mp_received) {
+		struct v34_data_direction_parameters direction;
+		struct v90_cp_parameters final = path->data_parameters;
+		if (path->upstream_stage != V90_ANALOG_PATH_UPSTREAM_CP)
+			return V90_ANALOG_PATH_SEQUENCE_MISMATCH;
+		/* Select from the immutable record contents before sending CP prime. */
+		final.acknowledges_peer = true;
+		enum v90_upstream_mode_result selected = v90_upstream_mode_select(
+			&final, record, &path->upstream.cp.line.profile, &direction);
+		enum v90_analog_path_result result = upstream_mode_result(selected);
+		if (result != V90_ANALOG_PATH_OK)
+			return result;
+		result = data_stream_result(v34_data_stream_begin_preparation(
+			&path->upstream_preparation, &path->upstream.cp.line.profile,
+			&direction, false, path->upstream.cp.line.carrier.channel.sample_rate));
+		if (result != V90_ANALOG_PATH_OK)
+			return result;
 		path->peer_mp = *record;
+	}
 	path->peer_mp_received = true;
 	path->peer_mp_prime_received = prime;
 	return V90_ANALOG_PATH_OK;
@@ -701,6 +726,7 @@ static enum v90_analog_path_result begin_rate_renegotiation(
 	path->upstream_stage = V90_ANALOG_PATH_UPSTREAM_RRN_RETURN;
 	path->data_parameters.acknowledges_peer = false;
 	path->peer_mp_received = false;
+	path->upstream_prepared = false;
 	path->peer_mp_prime_received = false;
 	path->cp_prime_sent = false;
 	path->finishing_cp = false;

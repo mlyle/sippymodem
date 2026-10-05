@@ -15,8 +15,11 @@
 enum {
 	TRAINING_UCODE = 91,
 	SAMPLE_LIMIT = 36000,
+	/* RX mapping has two power passes; TX mapping/line has three. The
+	 * largest V.34 period has 8 * 15 frames, prepared one per line sample. */
 	DOWNSTREAM_TRAINING_CHARACTER_LIMIT =
-		V90_PHASE4_TRN2D_WAIT_CP_SYMBOLS + 2048,
+		V90_PHASE4_TRN2D_WAIT_CP_SYMBOLS + 2048 +
+		5 * V34_POWER_CALIBRATION_SUPERFRAMES * 8 * 15,
 	DATA_FRAMES_TO_RECEIVE = 4,
 	UPSTREAM_FRAMES_TO_RECEIVE = 64,
 };
@@ -436,6 +439,7 @@ static bool verify_final_downstream_exchange(
 	bool unadvertised_candidate_seen = false;
 	bool prime_damaged = false;
 	bool mp_damaged = false;
+	bool current_mp_damaged = false;
 	bool first_mp_seen = false;
 	bool e_acknowledged = false;
 
@@ -617,13 +621,18 @@ static bool verify_final_downstream_exchange(
 			upstream_data_frames++;
 		}
 
-		/* Lose the plain MP on the wire, but preserve the scrambler and
+		/* Lose every plain MP, including calibration repeats, while keeping
 		 * framing so the first intact parameter record is MP-prime. */
-		if (damage_mp && !mp_damaged && training_active) {
+		if (damage_mp && training_active) {
 			const struct pcm_downstream_rx *receiver =
 				&analog_path.downstream.training;
 
-			if (receiver->stage == PCM_DOWNSTREAM_RX_MP_SEARCH &&
+			if (receiver->control.mp.stage != V90_MP_RECEIVE_SEQUENCE)
+				current_mp_damaged = false;
+			if (!current_mp_damaged && digital_path.downstream_stage ==
+				    V90_DIGITAL_PATH_DOWNSTREAM_TRAINING &&
+			    digital_path.downstream.training.stage == PCM_DOWNSTREAM_TX_MP &&
+			    receiver->stage == PCM_DOWNSTREAM_RX_MP_SEARCH &&
 			    receiver->stream.pending_count == V90_CP_FRAME_INTERVALS - 1u &&
 			    receiver->control.mp.stage == V90_MP_RECEIVE_SEQUENCE &&
 			    receiver->control.mp.bit_index > V90_MP_FRAME_SYNC_BITS + 1u &&
@@ -633,6 +642,7 @@ static bool verify_final_downstream_exchange(
 				CHECK(alter_last_modulus_symbol(receiver, &digital_octet),
 				      "could not damage the first MP");
 				mp_damaged = true;
+				current_mp_damaged = true;
 			}
 		}
 		memset(&downstream_frame, 0x5a, sizeof(downstream_frame));
@@ -707,7 +717,7 @@ static bool verify_final_downstream_exchange(
 	      v90_pcm_mapping_equal(
 		      &digital_path.data_mapping, &analog_path.data_mapping),
 	      "paired path stopped: CP/MP=%d/%d/%d Ed=%d TRN=%d/%llu "
-	      "data=%zu/%zu B1d=%u source=%d/%d online=%d/%d",
+	      "data=%zu/%zu B1d=%u source=%d/%d online=%d/%d training=%zu/%u",
 	      analog_path.peer_mp_received,
 	      analog_path.peer_mp_prime_received,
 	      analog_path.cp_prime_sent, analog_path.ed_armed,
@@ -717,7 +727,9 @@ static bool verify_final_downstream_exchange(
 	      downstream_source_failure_checked,
 	      upstream_source_failure_checked,
 	      v90_analog_path_is_online(&analog_path),
-	      v90_digital_path_is_online(&digital_path));
+	      v90_digital_path_is_online(&digital_path),
+	      downstream_training_characters,
+	      (unsigned int)DOWNSTREAM_TRAINING_CHARACTER_LIMIT);
 	return true;
 }
 

@@ -36,8 +36,8 @@ struct v34_data_startup_preparation {
 	struct v34_data_startup startup;
 	struct v34_data_mapping receive_mapping;
 	union {
-		struct v34_mapping_power_calibration mapping;
-		struct v34_line_power_calibration line;
+		struct v34_data_stream_preparation_job transmit;
+		struct v34_mapping_power_calibration receive;
 	} calibration;
 	enum v34_data_preparation_stage stage;
 };

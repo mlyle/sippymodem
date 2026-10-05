@@ -100,8 +100,8 @@ static bool upstream_is_valid(const struct v90_digital_path *path)
 	if (path->upstream_stage == V90_DIGITAL_PATH_UPSTREAM_STARTUP) {
 		const struct v90_upstream_rx *startup = &path->upstream.startup;
 		bool mapping_state_is_valid =
-			(startup->data_cp_received == path->data_mapping_ready &&
-			 (!startup->data_cp_received ||
+			((startup->data_cp_received && startup->mapping_prepared) == path->data_mapping_ready &&
+			 (!path->data_mapping_ready ||
 			  v90_pcm_mapping_matches_transmit(
 				  &path->data_mapping,
 				  &startup->data_parameters,
@@ -215,6 +215,7 @@ enum v90_digital_path_result v90_digital_path_init(
 		    enabled_downstream_rate_mask) !=
 	    V90_UPSTREAM_RX_OK)
 		return V90_DIGITAL_PATH_INVALID_PARAMETERS;
+	initialized.upstream.startup.mp_selection_pending = true;
 	if (!v90_digital_path_is_valid(&initialized))
 		return V90_DIGITAL_PATH_INTERNAL_ERROR;
 	*path = initialized;
@@ -378,25 +379,24 @@ static bool select_initial_receive_rate(struct v90_digital_path *path)
 	 * After the next frame MP is immutable, including spectral look-ahead.
 	 * Online renegotiation retains its preceding MP and receive geometry. */
 	if (path->rate_renegotiation_active ||
-	    !pcm_downstream_tx_mp_starts_next_frame(transmit) ||
 	    path->upstream_stage != V90_DIGITAL_PATH_UPSTREAM_STARTUP ||
-	    receive->stage != V90_UPSTREAM_RX_STAGE_CP || maximum == 0u ||
-	    common_mask == 0u)
+	    !receive->mp_selection_pending ||
+	    !pcm_downstream_tx_mp_starts_next_frame(transmit) ||
+	    receive->stage != V90_UPSTREAM_RX_STAGE_CP)
 		return true;
 	/* V.90's mask starts at 4800; the shared QAM quality policy starts
-	 * at 2400. Do not invent a rate if there is no usable intersection. */
-	if (v34_data_quality_select_receive_rate(
+	 * at 2400. Keep the existing offer when quality cannot select a rate. */
+	if (maximum != 0u && common_mask != 0u &&
+	    v34_data_quality_select_receive_rate(
 		    receive->state.cp.transmitting_profile.symbol_rate,
 		    (uint16_t)(common_mask << 1u), maximum,
-		    &receive->state.cp.line.equalizer.quality, &rate) !=
-	    V34_DATA_QUALITY_OK)
-		return true;
-	if (!v90_mp_record_limit_maximum_upstream_rate(&selected, rate) ||
-	    pcm_downstream_tx_start_mp(transmit, &selected) !=
-		    PCM_DOWNSTREAM_TX_OK)
+		    &receive->state.cp.line.equalizer.quality, &rate) == V34_DATA_QUALITY_OK &&
+	    !v90_mp_record_limit_maximum_upstream_rate(&selected, rate))
+		return false;
+	if (pcm_downstream_tx_start_mp(transmit, &selected) != PCM_DOWNSTREAM_TX_OK ||
+	    v90_upstream_rx_select_mp(receive, &selected) != V90_UPSTREAM_RX_OK)
 		return false;
 	path->local_mp = selected;
-	receive->local_mp = selected;
 	return true;
 }
 

@@ -17,6 +17,7 @@ enum v34_data_stream_result {
 	V34_DATA_STREAM_OUT_OF_RANGE,
 	V34_DATA_STREAM_CLIPPING_RISK,
 	V34_DATA_STREAM_NUMERIC_FAILURE,
+	V34_DATA_STREAM_IN_PROGRESS,
 };
 
 /* Supply one complete post-B1 mapping frame. The source must initialize every
@@ -63,6 +64,30 @@ struct v34_data_stream_preparation {
 	double line_peak;
 	uint32_t sample_rate;
 };
+
+/* Own the same transmit preparation used by standalone V.34 and PCM calls.
+ * Each step visits at most frame_budget mapping frames in one power pass. */
+struct v34_data_stream_preparation_job {
+	struct v34_data_stream_preparation preparation;
+	union {
+		struct v34_mapping_power_calibration mapping;
+		struct v34_line_power_calibration line;
+	} calibration;
+	bool calibrating_line;
+	bool complete;
+};
+
+enum v34_data_stream_result v34_data_stream_begin_preparation(
+	struct v34_data_stream_preparation_job *job,
+	const struct v34_phase3_profile *profile,
+	const struct v34_data_direction_parameters *direction,
+	bool auxiliary_channel_enabled, uint32_t sample_rate);
+/* Output changes only on completion. It must be disjoint from the active
+ * job; a completed job may return its preparation in place. Discard a job
+ * after any terminal failure. */
+enum v34_data_stream_result v34_data_stream_step_preparation(
+	struct v34_data_stream_preparation_job *job, uint32_t frame_budget,
+	struct v34_data_stream_preparation *preparation);
 
 bool v34_data_stream_preparation_is_valid(
 	const struct v34_data_stream_preparation *preparation);

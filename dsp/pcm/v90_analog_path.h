@@ -72,6 +72,7 @@ struct v90_analog_path {
 	struct v90_phase4_cp_tx control_symbols;
 	struct pcm_r_rx rate_renegotiation;
 	struct v90_mp_record peer_mp;
+	struct v34_data_stream_preparation_job upstream_preparation;
 	enum g711_law law;
 	enum v34_constellation_size rate_renegotiation_constellation;
 	enum v90_pcm_mapping_plane decision_plane;
@@ -81,6 +82,7 @@ struct v90_analog_path {
 	uint8_t cleardown_records;
 	uint16_t cleardown_tail_samples;
 	bool peer_mp_received;
+	bool upstream_prepared;
 	bool peer_mp_prime_received;
 	bool cp_prime_sent;
 	bool finishing_cp;

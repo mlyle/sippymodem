@@ -454,6 +454,12 @@ static enum pcm_downstream_rx_result receive_ed_frame(
 			return result;
 		}
 	}
+	/* A first nonzero frame has no Ed boundary evidence. It may be a
+	 * damaged repeated MP or the onset of the peer's retrain silence.
+	 * Keep searching; after a zero frame, retain second-frame rejection. */
+	if (receiver->ed_frames == 0u &&
+	    v90_pcm_stream_frame_bit_errors(frame, 0u) != 0u)
+		return PCM_DOWNSTREAM_RX_BUFFERING;
 	receiver->ed_frames++;
 	receiver->ed_bit_errors += v90_pcm_stream_frame_bit_errors(frame, 0u);
 	if (receiver->ed_frames < V90_PHASE4_ED_FRAMES)

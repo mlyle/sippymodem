@@ -353,9 +353,9 @@ enum v34_data_receive_result v34_data_line_receiver_sample(
 		&line, sample, &observation);
 	if (line_result == V34_LINE_RECEIVER_OK) {
 		receiver->line = line;
-		return receiver->rate_renegotiation.enabled &&
-			v34_phase3_s_hunt_is_complete(&receiver->rate_renegotiation.s) ?
-			V34_DATA_RECEIVE_RATE_RENEGOTIATION : V34_DATA_RECEIVE_OK;
+		/* Control changes carrier adaptation at an observation boundary.
+		 * A latched marker must retain any partial input until then. */
+		return V34_DATA_RECEIVE_OK;
 	}
 	if (line_result != V34_LINE_RECEIVER_OBSERVATION_READY) {
 		receiver->failed = true;

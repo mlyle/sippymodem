@@ -3,6 +3,7 @@
 #include "v34_data_stream.h"
 
 #include "packed_bits.h"
+#include "memory_region.h"
 #include "v34_data_mapping.h"
 #include "v34_power_calibration.h"
 
@@ -59,6 +60,7 @@ static enum v34_data_stream_result calibration_result(
 	case V34_POWER_CALIBRATION_OUT_OF_RANGE:
 		return V34_DATA_STREAM_OUT_OF_RANGE;
 	case V34_POWER_CALIBRATION_IN_PROGRESS:
+		return V34_DATA_STREAM_IN_PROGRESS;
 	case V34_POWER_CALIBRATION_NUMERIC_FAILURE:
 		return V34_DATA_STREAM_NUMERIC_FAILURE;
 	}
@@ -151,6 +153,67 @@ bool v34_data_stream_preparation_is_valid(
 	       v34_data_mapping_is_valid(&preparation->mapping) &&
 	       preparation->sample_rate != 0 &&
 	       isfinite(preparation->line_peak) && preparation->line_peak > 0.0;
+}
+
+enum v34_data_stream_result v34_data_stream_begin_preparation(
+	struct v34_data_stream_preparation_job *job,
+	const struct v34_phase3_profile *profile,
+	const struct v34_data_direction_parameters *direction,
+	bool auxiliary_channel_enabled, uint32_t sample_rate)
+{
+	struct v34_data_stream_preparation_job prepared = { 0 };
+	enum v34_data_stream_result result;
+
+	if (job == NULL || sample_rate != 8000)
+		return V34_DATA_STREAM_INVALID_ARGUMENT;
+	result = mapping_result(v34_data_mapping_begin_calibration(&prepared.preparation.mapping,
+		&prepared.calibration.mapping, profile, direction, auxiliary_channel_enabled));
+	if (result != V34_DATA_STREAM_OK)
+		return result;
+	prepared.preparation.sample_rate = sample_rate;
+	*job = prepared;
+	return V34_DATA_STREAM_OK;
+}
+
+enum v34_data_stream_result v34_data_stream_step_preparation(
+	struct v34_data_stream_preparation_job *job, uint32_t frame_budget,
+	struct v34_data_stream_preparation *preparation)
+{
+	enum v34_power_calibration_result result;
+	struct v34_data_mapping *mapping;
+
+	if (job == NULL || preparation == NULL || frame_budget == 0 ||
+	    (!(job->complete && preparation == &job->preparation) && memory_regions_overlap(
+		job, sizeof(*job), preparation, sizeof(*preparation))))
+		return V34_DATA_STREAM_INVALID_ARGUMENT;
+	mapping = &job->preparation.mapping;
+	if (!job->complete && !job->calibrating_line) {
+		result = v34_mapping_power_calibration_step(&job->calibration.mapping,
+			frame_budget, &mapping->normalizer);
+		if (result != V34_POWER_CALIBRATION_OK)
+			return calibration_result(result);
+		result = v34_line_power_calibration_begin(&job->calibration.line,
+			&mapping->schedule, &mapping->scrambler, &mapping->encoder,
+			&mapping->normalizer, &mapping->transmitting_profile,
+			job->preparation.sample_rate);
+		if (result != V34_POWER_CALIBRATION_OK)
+			return calibration_result(result);
+		job->calibrating_line = true;
+		return V34_DATA_STREAM_IN_PROGRESS;
+	}
+	if (!job->complete) {
+		struct v34_line_power_measurement measurement;
+		result = v34_line_power_calibration_step(&job->calibration.line,
+			frame_budget, &measurement);
+		if (result != V34_POWER_CALIBRATION_OK)
+			return calibration_result(result);
+		job->preparation.line_peak = measurement.peak_amplitude;
+		job->complete = true;
+	}
+	if (!v34_data_stream_preparation_is_valid(&job->preparation))
+		return V34_DATA_STREAM_NUMERIC_FAILURE;
+	*preparation = job->preparation;
+	return V34_DATA_STREAM_OK;
 }
 
 enum v34_data_stream_result v34_data_stream_prepare(

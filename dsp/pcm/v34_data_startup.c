@@ -123,15 +123,17 @@ enum v34_data_startup_result v34_data_startup_begin_preparation(
 	    receive_profile->local_role != v34_station_peer_role(transmit_profile->local_role))
 		return V34_DATA_STARTUP_INVALID_ARGUMENT;
 	result = v34_data_mapping_begin_calibration(&prepared.receive_mapping,
-		&prepared.calibration.mapping, receive_profile, &mode->receive,
+		&prepared.calibration.receive, receive_profile, &mode->receive,
 		mode->auxiliary_channel_enabled);
 	if (result != V34_DATA_MAPPING_OK)
 		return mapping_result(result);
-	result = v34_data_mapping_begin_calibration(&prepared.startup.transmit.mapping,
-		&prepared.calibration.mapping, transmit_profile, &mode->transmit,
-		mode->auxiliary_channel_enabled);
-	if (result != V34_DATA_MAPPING_OK)
-		return mapping_result(result);
+	switch (v34_data_stream_begin_preparation(&prepared.calibration.transmit,
+		transmit_profile, &mode->transmit, mode->auxiliary_channel_enabled, sample_rate)) {
+	case V34_DATA_STREAM_OK: break;
+	case V34_DATA_STREAM_OUT_OF_RANGE: return V34_DATA_STARTUP_OUT_OF_RANGE;
+	case V34_DATA_STREAM_INVALID_ARGUMENT: return V34_DATA_STARTUP_INVALID_ARGUMENT;
+	default: return V34_DATA_STARTUP_NUMERIC_FAILURE;
+	}
 	prepared.startup.mode = *mode;
 	prepared.startup.transmit.sample_rate = sample_rate;
 	*preparation = prepared;
@@ -143,37 +145,28 @@ enum v34_data_startup_result v34_data_startup_step_preparation(
 	uint32_t frame_budget, struct v34_data_startup *startup)
 {
 	enum v34_power_calibration_result result;
-	struct v34_data_mapping *transmit;
 	struct v34_data_mapping *receive;
 
 	if (preparation == NULL || startup == NULL || frame_budget == 0)
 		return V34_DATA_STARTUP_INVALID_ARGUMENT;
-	transmit = &preparation->startup.transmit.mapping;
 	receive = &preparation->receive_mapping;
 	switch (preparation->stage) {
 	case V34_DATA_PREPARATION_TRANSMIT_MAPPING:
-		result = v34_mapping_power_calibration_step(&preparation->calibration.mapping,
-			frame_budget, &transmit->normalizer);
-		if (result != V34_POWER_CALIBRATION_OK)
-			return power_result(result);
-		result = v34_line_power_calibration_begin(&preparation->calibration.line,
-			&transmit->schedule, &transmit->scrambler, &transmit->encoder,
-			&transmit->normalizer, &transmit->transmitting_profile,
-			preparation->startup.transmit.sample_rate);
-		if (result != V34_POWER_CALIBRATION_OK)
-			return power_result(result);
-		preparation->stage = V34_DATA_PREPARATION_TRANSMIT_LINE;
-		return V34_DATA_STARTUP_IN_PROGRESS;
 	case V34_DATA_PREPARATION_TRANSMIT_LINE:
 		{
-			struct v34_line_power_measurement measurement;
-			result = v34_line_power_calibration_step(&preparation->calibration.line,
-				frame_budget, &measurement);
-			if (result != V34_POWER_CALIBRATION_OK)
-				return power_result(result);
-			preparation->startup.transmit.line_peak = measurement.peak_amplitude;
+			enum v34_data_stream_result step = v34_data_stream_step_preparation(
+				&preparation->calibration.transmit, frame_budget,
+				&preparation->startup.transmit);
+			if (step == V34_DATA_STREAM_IN_PROGRESS) {
+				preparation->stage = preparation->calibration.transmit.calibrating_line ?
+					V34_DATA_PREPARATION_TRANSMIT_LINE : V34_DATA_PREPARATION_TRANSMIT_MAPPING;
+				return V34_DATA_STARTUP_IN_PROGRESS;
+			}
+			if (step != V34_DATA_STREAM_OK)
+				return step == V34_DATA_STREAM_OUT_OF_RANGE ? V34_DATA_STARTUP_OUT_OF_RANGE :
+					V34_DATA_STARTUP_NUMERIC_FAILURE;
 		}
-		result = v34_mapping_power_calibration_begin(&preparation->calibration.mapping,
+		result = v34_mapping_power_calibration_begin(&preparation->calibration.receive,
 			&receive->schedule, &receive->scrambler, &receive->encoder,
 			preparation->startup.mode.receive.nonlinear_parameter);
 		if (result != V34_POWER_CALIBRATION_OK)
@@ -181,7 +174,7 @@ enum v34_data_startup_result v34_data_startup_step_preparation(
 		preparation->stage = V34_DATA_PREPARATION_RECEIVE_MAPPING;
 		return V34_DATA_STARTUP_IN_PROGRESS;
 	case V34_DATA_PREPARATION_RECEIVE_MAPPING:
-		result = v34_mapping_power_calibration_step(&preparation->calibration.mapping,
+		result = v34_mapping_power_calibration_step(&preparation->calibration.receive,
 			frame_budget, &receive->normalizer);
 		if (result != V34_POWER_CALIBRATION_OK)
 			return power_result(result);

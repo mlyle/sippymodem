@@ -711,11 +711,16 @@ static bool run_ed_transition(
 			      PCM_DOWNSTREAM_RX_OK,
 		      "mid-record Ed request was not idempotent");
 	}
-	if (corrupt)
+	if (corrupt) {
 		ed[7] = 1;
-	CHECK(push_frame(&source, ed, &receiver, &observer) &&
-	      push_frame(&source, (uint8_t[FRAME_BITS]){ 0 },
+		/* Corruption before a zero frame is not an Ed boundary. A bad
+		 * second frame after that boundary must still be rejected. */
+		CHECK(push_frame(&source, ed, &receiver, &observer),
+		      "damaged prefix did not retain Ed search");
+	}
+	CHECK(push_frame(&source, (uint8_t[FRAME_BITS]){ 0 },
 			 &receiver, &observer) &&
+	      push_frame(&source, ed, &receiver, &observer) &&
 	      finish_source(&source, &receiver, &observer),
 	      "Ed stream did not drain");
 
@@ -724,7 +729,7 @@ static bool run_ed_transition(
 				   V90_CP_FRAME_INTERVALS +
 			   2u * sequence_bits / FRAME_BITS *
 				   V90_CP_FRAME_INTERVALS +
-			   V90_PHASE4_ED_FRAMES *
+			   (V90_PHASE4_ED_FRAMES + (corrupt ? 1u : 0u)) *
 				   V90_CP_FRAME_INTERVALS;
 	CHECK(observer.training_frames == V90_PHASE4_TRN2D_MINIMUM_FRAMES &&
 	      observer.event_count == 3 &&
@@ -770,6 +775,8 @@ static bool test_ed_transition(void)
 	      "PCMA mid-record Ed transition failed");
 	CHECK(run_ed_transition(G711_LAW_PCMU, true, true),
 	      "corrupt Ed transition failed");
+	CHECK(run_ed_transition(G711_LAW_PCMA, false, true),
+	      "PCMA corrupt Ed transition failed");
 	return true;
 }
 

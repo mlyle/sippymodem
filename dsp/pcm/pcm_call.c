@@ -29,7 +29,9 @@ enum {
 	V92_PHASE3_JD_DEADLINE_SAMPLES = V34_PHASE2_SAMPLE_RATE * 9 / 2,
 	V90_B1_BASE_DEADLINE_SAMPLES = V34_PHASE2_SAMPLE_RATE * 15,
 	V90_B1_ROUND_TRIP_ALLOWANCES = 5,
-	V90_B1_COMPLETION_GRACE_SAMPLES = V34_PHASE2_SAMPLE_RATE * 2,
+	/* Two seconds for the exchange plus 250 ms for bounded preparation
+	 * (at most three 480-frame passes for the conventional transmitter). */
+	V90_B1_COMPLETION_GRACE_SAMPLES = V34_PHASE2_SAMPLE_RATE * 9 / 4,
 	V92_B1_BASE_DEADLINE_SAMPLES = V34_PHASE2_SAMPLE_RATE * 20,
 	V92_B1_ROUND_TRIP_ALLOWANCES = 6,
 	V90_RATE_RENEGOTIATION_BASE_DEADLINE_SAMPLES =
@@ -1566,8 +1568,9 @@ static enum pcm_call_result advance_b1_deadline(struct pcm_call *call)
 		return PCM_CALL_OK;
 	/* Compatibility exception to V.90 9.4.1's 15 s + 5 RTD deadline:
 	 * some peers deliver a valid data CP just before it expires, but need
-	 * another control exchange to reach B1. Allow that exchange two seconds
-	 * once. CPt, silence, malformed records and repeated CP cannot renew it.
+	 * another control exchange and bounded calibration to reach B1. Allow
+	 * that exchange 2.25 seconds once. CPt, silence, malformed records and
+	 * repeated CP cannot renew it.
 	 * Keep the original deadline for calls that have not reached data CP. */
 	if (!call->b1_completion_grace && call->stage == PCM_CALL_DATA_PATH &&
 	    call->local_role == V90_DIGITAL_MODEM && !uses_pcm_upstream(call) &&

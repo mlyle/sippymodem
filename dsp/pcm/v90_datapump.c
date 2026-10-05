@@ -181,6 +181,18 @@ static const char *progress_v90(const struct dp *dp)
 				return "rate-change/Rd-wait-S-Sbar";
 			return "rate-change/CP-MP-E-B1";
 		}
+		if (conventional && !digital) {
+			const struct v90_analog_path *path = &call->state.data_path.analog;
+			if (path->upstream_stage == V90_ANALOG_PATH_UPSTREAM_CP &&
+			    path->peer_mp_received && !path->upstream_prepared)
+				return path->upstream_preparation.calibrating_line ?
+					"phase4/calibrate-TX-line" : "phase4/calibrate-TX-mapping";
+		}
+		if (conventional && digital && call->state.data_path.digital.upstream_stage ==
+		    V90_DIGITAL_PATH_UPSTREAM_STARTUP &&
+		    call->state.data_path.digital.upstream.startup.data_cp_received &&
+		    !call->state.data_path.digital.upstream.startup.mapping_prepared)
+			return "phase4/calibrate-RX-mapping";
 		if (pcm_call_is_online_owned(call))
 			return conventional ? "data/PCM-downstream-V34-upstream" : "data/PCM-both-directions";
 		if (conventional && digital && call->state.data_path.digital.upstream_stage ==

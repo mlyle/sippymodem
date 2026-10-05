@@ -355,6 +355,8 @@ static bool run_line(
 	bool e_started = false;
 	bool b1_started = false;
 	bool mp_prime_requested = false;
+	bool deferred_mp_selected = false;
+	unsigned int preparation_samples = 0;
 	bool ed_requested = false;
 	bool e_received = false;
 	bool b1_received = false;
@@ -396,6 +398,7 @@ static bool run_line(
 	      "upstream owner did not initialize law=%d constellation=%d",
 	      law, constellation);
 
+	receiver.mp_selection_pending = true;
 	for (size_t clock = 0;
 	     clock < SAMPLE_LIMIT && !v90_upstream_rx_is_complete(&receiver);
 	     ++clock) {
@@ -523,6 +526,30 @@ static bool run_line(
 			      "symbol_rate=%d rate=%u",
 			      clock, v90_upstream_rx_result_name(result),
 			      symbol_rate, rate_2400_bps_units);
+			if (receiver.data_cp_received && !receiver.mapping_prepared) {
+				CHECK(!mp_prime_requested && !ed_requested,
+				      "upstream acknowledged before mapping preparation");
+				preparation_samples++;
+				if (preparation_samples == 160u) {
+					struct v90_upstream_rx saved = receiver;
+
+					CHECK(receiver.mp_selection_pending &&
+					      receiver.calibration.frame == 0 &&
+					      v90_upstream_rx_select_mp(&receiver, NULL) ==
+						      V90_UPSTREAM_RX_INVALID_ARGUMENT &&
+					      memcmp(&receiver, &saved, sizeof(saved)) == 0 &&
+					      v90_upstream_rx_select_mp(&receiver, &mp) ==
+						      V90_UPSTREAM_RX_OK &&
+					      !receiver.mp_selection_pending,
+					      "MP selection did not release calibration");
+					saved = receiver;
+					CHECK(v90_upstream_rx_select_mp(&receiver, &mp) ==
+						      V90_UPSTREAM_RX_INVALID_STATE &&
+					      memcmp(&receiver, &saved, sizeof(saved)) == 0,
+					      "final MP selection was mutable");
+					deferred_mp_selected = true;
+				}
+			}
 			if (receiver.stage == V90_UPSTREAM_RX_STAGE_B1) {
 				const struct v34_data_receiver *b1 =
 					&receiver.state.data.decisions.data_receiver.data_receiver;
@@ -536,6 +563,7 @@ static bool run_line(
 			} else if (result ==
 				   V90_UPSTREAM_RX_REQUEST_MP_PRIME) {
 				CHECK(!mp_prime_requested && !ed_requested &&
+				      receiver.mapping_prepared && deferred_mp_selected && preparation_samples >= 320u &&
 				      parameters_match(&event, &expected_data),
 				      "first data CP event changed");
 				mp_prime_requested = true;
