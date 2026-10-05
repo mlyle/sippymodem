@@ -43,17 +43,11 @@
 
 
 #include <modem.h>
-#include <modem_homolog.h>
 #include <modem_param.h>
 
 
 
 /* param access services */
-long modem_get_sreg_param(struct modem *m,unsigned sreg_num)
-{
-	return modem_get_sreg(m,sreg_num);
-}
-
 long modem_get_param(struct modem *m, unsigned param_name)
 {
 	int val;
@@ -93,90 +87,6 @@ long modem_get_param(struct modem *m, unsigned param_name)
 		return m->v90_upstream_max_rate;
 	case MDMPRM_V90_UPSTREAM_MAX_BAUD:
 		return m->v90_upstream_max_baud;
-	case GetPulseDialMakeTime:
-		return m->homolog->params->PulseDialMakeTime;
-	case GetPulseDialBreakTime:
-		return m->homolog->params->PulseDialBreakTime;
-	case GetPulseDialDigitPattern:
-		return m->homolog->params->PulseDialDigitPattern;
-	case GetDTMFHighToneLevel:
-		return m->homolog->params->DTMFHighToneLevel;
-	case GetDTMFDialSpeed:
-		return modem_get_sreg(m,SREG_DTMF_DURATION);
-	case GetMinBusyCadenceOnTime:
-		return m->homolog->params->MinBusyCadenceOnTime;
-	case GetMaxBusyCadenceOnTime:
-		return m->homolog->params->MaxBusyCadenceOnTime;
-	case GetBusyDetectionCyclesNumber:
-		return m->homolog->params->BusyDetectionCyclesNumber;
-	case GetMinBusyCadenceOffTime:
-		return m->homolog->params->MinBusyCadenceOffTime;
-	case GetMaxBusyCadenceOffTime:
-		return m->homolog->params->MaxBusyCadenceOffTime;
-	case GetCallingToneFlag:
-		return m->homolog->params->CallingToneFlag;
-	case GetHookFlashTime:
-		return m->homolog->params->HookFlashTime;
-	case GetBlindDialPause:
-		return modem_get_sreg(m,SREG_DIAL_TONE_WAIT_TIME);
-	case GetNoAnswerTimeOut:
-		return modem_get_sreg(m,SREG_WAIT_CARRIER_AFTER_DIAL);
-	case GetDialPauseTime:
-		return modem_get_sreg(m,SREG_DIAL_PAUSE_TIME);
-	case GetTransmitLevel:
-		return m->homolog->params->TransmitLevel;
-	case GetDialModifierValidation:
-		return m->homolog->params->DialModifierValidation;
-	case GetDialToneValidationTime:
-		return m->homolog->params->DialToneValidationTime;
-	case GetBusyToneDiffTime:
-		return 0;
-	case GetDTMFHighAndLowToneLevelDifference:
-		return m->homolog->params->DTMFHighAndLowToneLevelDifference;
-	case GetPulseDialingFlag:
-		return !modem_get_sreg(m,SREG_TONE_OR_PULSE);
-	case GetDialToneCallProgressFilterIndex:
-		return m->homolog->params->DialToneCallProgressFilterIndex;
-	case GetDialToneDetectionThreshold:
-		return m->homolog->params->DialToneDetectionThreshold;
-	case GetABCDDialingPermittedFlag:
-		return m->homolog->params->ABCDDialingPermittedFlag;
-	case GetComaPauseDurationLimit:
-		return m->homolog->params->ComaPauseDurationLimit;
-	case GetPulseAndToneDialInSameDialStringPermittedFlag:
-		return 0;
-	case GetBusyToneCallProgressFilterIndex:
-		return m->homolog->params->BusyToneCallProgressFilterIndex;
-	case GetPulseBetweenDigitsInterval:
-		return m->homolog->params->PulseBetweenDigitsInterval;
-	case GetDialToneWaitTime:
-		return modem_get_sreg(m,SREG_DIAL_TONE_WAIT_TIME);
-	case GetMinRingbackCadenceOnTime:
-		return m->homolog->params->MinRingbackCadenceOnTime;
-	case GetMaxRingbackCadenceOnTime:
-		return m->homolog->params->MaxRingbackCadenceOnTime;
-	case GetRingbackDetectionCyclesNumber:
-		return m->homolog->params->RingbackDetectionCyclesNumber;
-	case GetMinRingbackCadenceOffTime:
-	case GetMaxRingbackCadenceOffTime:
-	case GetRingbackToneCallProgressFilterIndex:
-	case GetMinCongestionCadenceOnTime:
-	case GetMaxCongestionCadenceOnTime:
-	case GetCongestionDetectionCyclesNumber:
-	case GetMinCongestionCadenceOffTime:
-	case GetMaxCongestionCadenceOffTime:
-	case GetCongestionToneCallProgressFilterIndex:
-		return 0;
-	case GetCallProgressSamplesBufferLength:
-		return m->homolog->params->CallProgressSamplesBufferLength;
-	case MustNoiseFilterBeApplied:
-		return m->homolog->params->MustNoiseFilterBeApplied;
-	case GetAdditAttenToBeepgenVoice:
-		return 0;
-	case GetDialToneFilterSubindex:
-		return 0;
-	case GetBusyToneLooseDetectionEnabled:
-		return 0;
 	}
 	return -1;
 }
