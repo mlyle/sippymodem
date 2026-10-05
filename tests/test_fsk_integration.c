@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <modem.h>
+#include <modem_frontend.h>
 #include <baudot.h>
 #include <fsk300_datapump.h>
 #include <fsk.h>
@@ -155,6 +156,13 @@ struct modem_test_case {
 
 extern int process_at_command(struct modem *modem, char *command);
 
+static struct modem *create_compat_modem(struct modem_driver *driver, const char *name)
+{
+	struct modem *modem = modem_create(driver, name);
+	modem_frontend_init(modem);
+	return modem;
+}
+
 static int start_modem(struct modem *modem)
 {
 	(void)modem;
@@ -204,7 +212,7 @@ static bool endpoint_init(
 		close(sockets[0]);
 		return false;
 	}
-	endpoint->modem = modem_create(&integration_driver, name);
+	endpoint->modem = create_compat_modem(&integration_driver, name);
 	if (endpoint->modem == NULL) {
 		close(sockets[1]);
 		close(sockets[0]);

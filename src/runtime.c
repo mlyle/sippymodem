@@ -3,6 +3,7 @@
 #include "runtime.h"
 
 #include "modem.h"
+#include "modem_frontend.h"
 #include "datapump_link.h"
 #include "host.h"
 #include "slmodem_adapter.h"
@@ -166,6 +167,7 @@ struct modem_runtime *modem_runtime_create(
 	    !slmodem_terminal_init(
 		    &runtime->modem_terminal, runtime->modem))
 		goto fail;
+	modem_frontend_init(runtime->modem);
 	runtime->modem->pcm_codec_grid = config->media.pcm_codec_grid;
 	runtime->terminal = pty_terminal_create();
 	if (runtime->terminal == NULL)

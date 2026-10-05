@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <modem.h>
+#include <modem_frontend.h>
 #include <qam.h>
 #include <single_tone.h>
 #include <carrier.h>
@@ -51,6 +52,13 @@ struct test_conditioning_signal {
 	struct v32_symbol_encoder encoder;
 	unsigned int rate_dibits;
 };
+
+static struct modem *create_compat_modem(struct modem_driver *driver, const char *name)
+{
+	struct modem *modem = modem_create(driver, name);
+	modem_frontend_init(modem);
+	return modem;
+}
 
 static int unused_start(struct modem *modem)
 {
@@ -194,7 +202,7 @@ static bool test_long_round_trip_line_startup(void)
 	      "V.32 long round-trip operations are unavailable");
 	for (unsigned int candidate_is_caller = 0;
 	     candidate_is_caller <= 1; ++candidate_is_caller) {
-		struct modem *modem = modem_create(
+		struct modem *modem = create_compat_modem(
 			&driver, candidate_is_caller ?
 					"V.32 long caller" :
 					"V.32 long answerer");
@@ -340,7 +348,7 @@ static bool test_answerer_requires_fresh_conditioning(void)
 	int16_t answerer_transmit = 0;
 
 	operations = modem_dp_get_registered_ops(DP_V32);
-	modem = modem_create(
+	modem = create_compat_modem(
 		&driver, "V.32 fresh answerer conditioning test");
 	CHECK(operations != NULL && modem != NULL,
 	      "V.32 answerer conditioning fixture did not initialize");
@@ -509,7 +517,7 @@ static bool test_training_deadline(void)
 	int16_t transmit[MODEM_FRAG];
 
 	operations = modem_dp_get_registered_ops(DP_V32);
-	modem = modem_create(&driver, "V.32 training deadline test");
+	modem = create_compat_modem(&driver, "V.32 training deadline test");
 	CHECK(operations != NULL && modem != NULL,
 	      "V.32 deadline fixture did not initialize");
 	modem->min_rate = modem->max_rate = V32_4800_BIT_RATE;

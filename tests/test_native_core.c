@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <modem.h>
+#include <modem_frontend.h>
 #include <modem_param.h>
 #include <modem_timer.h>
 #include <fsk.h>
@@ -35,6 +36,13 @@ extern int modem_dial(struct modem *modem);
 extern int modem_recv_from_tty(struct modem *modem, char *buffer, int count);
 
 /* Host lifecycle tests substitute call progress without mutating the catalog. */
+static struct modem *create_compat_modem(struct modem_driver *driver, const char *name)
+{
+	struct modem *modem = modem_create(driver, name);
+	modem_frontend_init(modem);
+	return modem;
+}
+
 static const struct dp_operations *call_progress_override;
 const struct dp_operations *__real_modem_dp_get_registered_ops(enum DP_ID id);
 const struct dp_operations *__wrap_modem_dp_get_registered_ops(enum DP_ID id)
@@ -138,8 +146,8 @@ static bool test_disconnect_cause_survives_call_teardown(void)
 		.name = "disconnect cause", .start = unused_start,
 		.stop = unused_stop, .ioctl = unused_control,
 	};
-	struct modem *m = modem_create(&driver, driver.name);
-	struct modem *other = modem_create(&driver, driver.name);
+	struct modem *m = create_compat_modem(&driver, driver.name);
+	struct modem *other = create_compat_modem(&driver, driver.name);
 	CHECK(m != NULL && other != NULL && modem_answer(m) == 0,
 	      "disconnect diagnostic fixture failed");
 	modem_note_disconnect(m, true, "protocol rejection");
@@ -168,8 +176,8 @@ static bool test_modem_events_are_instance_owned(void)
 		.stop = unused_stop,
 		.ioctl = unused_control,
 	};
-	struct modem *first = modem_create(&driver, "first event modem");
-	struct modem *second = modem_create(&driver, "second event modem");
+	struct modem *first = create_compat_modem(&driver, "first event modem");
+	struct modem *second = create_compat_modem(&driver, "second event modem");
 	const unsigned test_event = 1u << 31;
 
 	CHECK(first != NULL && second != NULL,
@@ -203,7 +211,7 @@ static bool test_escape_discards_async_transmit_fragment(void)
 		.stop = unused_stop,
 		.ioctl = unused_control,
 	};
-	struct modem *modem = modem_create(&driver, "escape framing test");
+	struct modem *modem = create_compat_modem(&driver, "escape framing test");
 	static const char escape[] = "+++";
 
 	CHECK(modem != NULL, "escape framing modem could not be created");
@@ -245,7 +253,7 @@ static bool test_escape_holds_candidate_bytes(void)
 		.stop = unused_stop,
 		.ioctl = unused_control,
 	};
-	struct modem *modem = modem_create(&driver, "escape hold test");
+	struct modem *modem = create_compat_modem(&driver, "escape hold test");
 	char received[8];
 	uint8_t bits[32];
 
@@ -513,7 +521,7 @@ static bool test_ato1_waits_for_datapump_retrain(void)
 
 	memset(&retrain_dp, 0, sizeof(retrain_dp));
 	call_progress_override = &operations;
-	modem = modem_create(&driver, "ATO1 lifecycle test");
+	modem = create_compat_modem(&driver, "ATO1 lifecycle test");
 	CHECK(modem != NULL && modem_dial(modem) == 0,
 	      "ATO1 test call did not start");
 	CHECK(strcmp(modem_call_phase(modem), "call-progress") == 0,
@@ -661,7 +669,7 @@ static bool run_ath0_cleardown(
 	hangup_driver_stop_calls = 0;
 	retrain_dp.process_result = DPSTAT_OK;
 	call_progress_override = &operations;
-	modem = modem_create(&driver, "ATH0 cleardown test");
+	modem = create_compat_modem(&driver, "ATH0 cleardown test");
 	CHECK(modem != NULL && modem_dial(modem) == 0,
 	      "ATH0 test call did not start");
 	CHECK(pipe(result_pipe) == 0 &&
@@ -944,7 +952,7 @@ static bool test_stop_cancels_link_detection(void)
 	for (unsigned failure = 0; failure < 2; ++failure)
 	for (unsigned transmit = 0; transmit < 2; ++transmit) {
 		struct call_cancel_capture capture = { .stop_result = failure ? -1 : 0 };
-		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
 		uint8_t bits[32] = { 0 };
 
 		CHECK(m != NULL, "stopped detection allocation failed");
@@ -1014,7 +1022,7 @@ static bool test_hangup_uses_active_framing(void)
 	for (unsigned pending = 0; pending <= (mode == LAPM && caller); ++pending)
 	for (unsigned crossed = 0; crossed <= pending; ++crossed) {
 		struct framing_cancel_capture capture = { .hangup_result = failure ? -1 : 0 };
-		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
 		struct dp dp = { .id = DP_V34, .modem = m, .op = &operations,
 			.status = DPSTAT_CONNECT };
 		uint8_t bits[32] = { 0 };
@@ -1132,7 +1140,7 @@ static bool test_call_progress_cancels_without_media(void)
 	for (unsigned int action = 0; action < 4; ++action)
 	for (unsigned int failure = 0; failure < 2; ++failure) {
 		struct call_cancel_capture capture = { .stop_result = failure ? -1 : 0 };
-		struct modem *modem = modem_create(&driver, driver.name);
+		struct modem *modem = create_compat_modem(&driver, driver.name);
 		int result_pipe[2];
 		char result_text[32];
 		const char *expected = action == 1 ? "OK\r\n" : "NO CARRIER\r\n";
@@ -1291,7 +1299,7 @@ static bool test_g711_datapump_input(void)
 	for (size_t index = 0; index < ARRAY_LENGTH(received_mask); ++index)
 		received_mask[index] = index != 0 && index != MODEM_FRAG;
 	call_progress_override = &operations;
-	modem = modem_create(&driver, "G.711 data pump test");
+	modem = create_compat_modem(&driver, "G.711 data pump test");
 	CHECK(modem != NULL && modem_dial(modem) == 0,
 	      "G.711 test call did not start");
 	modem_process_g711(
@@ -1368,7 +1376,7 @@ static bool test_receive_dc_frontend(void)
 
 	memset(&g711_dp, 0, sizeof(g711_dp));
 	call_progress_override = &operations;
-	modem = modem_create(&driver, "receive DC front-end test");
+	modem = create_compat_modem(&driver, "receive DC front-end test");
 	CHECK(modem != NULL && modem_dial(modem) == 0,
 	      "DC front-end call did not start");
 	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
@@ -1416,7 +1424,7 @@ static bool test_connect_reports_observed_startup(void)
 	};
 
 	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
-		struct modem *modem = modem_create(&driver, driver.name);
+		struct modem *modem = create_compat_modem(&driver, driver.name);
 		char response[256];
 		int result_pipe[2];
 		ssize_t length;
@@ -1469,7 +1477,7 @@ static bool test_datapump_error_control_policy(void)
 	};
 
 	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
-		struct modem *modem = modem_create(
+		struct modem *modem = create_compat_modem(
 			&driver, "data-pump error-control test");
 		struct dp datapump = {
 			.id = cases[index].id,
@@ -1517,7 +1525,7 @@ static bool test_datapump_error_control_policy(void)
 		modem->dp = NULL;
 		modem_delete(modem);
 
-		modem = modem_create(
+		modem = create_compat_modem(
 			&driver, "raw-answerer error-control test");
 		CHECK(modem != NULL,
 		      "raw-answerer modem %zu could not be created", index);
@@ -1575,7 +1583,7 @@ static bool test_v92_negotiated_lapm_bypasses_detection(void)
 
 	for (size_t i = 0; i < ARRAY_LENGTH(cases); ++i) {
 		for (unsigned caller = 0; caller <= 1; ++caller) {
-			struct modem *modem = modem_create(&driver, "negotiated LAPM");
+			struct modem *modem = create_compat_modem(&driver, "negotiated LAPM");
 			struct dp datapump = { .id = cases[i].id, .modem = modem };
 
 			CHECK(modem != NULL, "negotiated LAPM modem allocation failed");
@@ -1630,7 +1638,7 @@ static bool test_v42_detection_deadline(void)
 
 	for (size_t i = 0; i < ARRAY_LENGTH(rates); ++i) {
 		for (unsigned caller = 0; caller <= 1; ++caller) {
-			struct modem *m = modem_create(&driver, "V.42 detection deadline");
+			struct modem *m = create_compat_modem(&driver, "V.42 detection deadline");
 			struct dp dp = { .id = DP_V34, .modem = m };
 			unsigned tx_phase = 0, rx_phase = 0, tick;
 			unsigned deadline = caller ? 1500 : 750;
@@ -1762,7 +1770,7 @@ static bool test_raw_answerer_discards_detection_residue(void)
 	};
 
 	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
-		struct modem *answerer = modem_create(
+		struct modem *answerer = create_compat_modem(
 			&driver, "raw detection residue test");
 		struct dp datapump = {
 			.id = DP_V34,
@@ -1949,8 +1957,8 @@ static bool test_v8_handoff(void)
 		enum DP_ID answerer_requested =
 			selections[selection].answerer_requested;
 
-		caller = modem_create(&driver, "V.8 caller");
-		answerer = modem_create(&driver, "V.8 answerer");
+		caller = create_compat_modem(&driver, "V.8 caller");
+		answerer = create_compat_modem(&driver, "V.8 answerer");
 		CHECK(caller != NULL && answerer != NULL,
 		      "V.8 handoff endpoints did not initialize");
 		MODEM_AUTOMODE(caller) = run >= ARRAY_LENGTH(selections);
@@ -2067,7 +2075,7 @@ static bool test_automatic_factory_profile(void)
 		.name = "automatic factory profile",
 		.start = unused_start, .stop = unused_stop, .ioctl = unused_control,
 	};
-	struct modem *modem = modem_create(&driver, driver.name);
+	struct modem *modem = create_compat_modem(&driver, driver.name);
 
 	CHECK(modem != NULL, "factory profile allocation failed");
 	for (unsigned reset = 0; reset < 2; ++reset) {
@@ -2097,7 +2105,7 @@ static bool test_automatic_startup_deadline(void)
 	/* The final case admits 600 bit/s: a constant answer mark must still
 	 * expire without becoming scrambled training or resetting S7. */
 	for (unsigned scenario = 0; scenario < 5; ++scenario) {
-		struct modem *modem = modem_create(&driver, driver.name);
+		struct modem *modem = create_compat_modem(&driver, driver.name);
 		struct single_tone_transmitter tone;
 		struct dp *dp;
 		unsigned seconds = scenario == 0 ? 7 : scenario == 1 ? 1 : 4;
@@ -2142,8 +2150,8 @@ static bool test_v8_fallback_limits(void)
 	};
 
 	for (unsigned int restricted = 0; restricted < 3; ++restricted) {
-		struct modem *caller = modem_create(&driver, "restricted caller");
-		struct modem *answerer = modem_create(&driver, "automatic answerer");
+		struct modem *caller = create_compat_modem(&driver, "restricted caller");
+		struct modem *answerer = create_compat_modem(&driver, "automatic answerer");
 		const struct dp_operations *ops = modem_dp_get_registered_ops(DP_V8);
 		int16_t tx[MODEM_FRAG] = { 0 }, rx[MODEM_FRAG] = { 0 };
 		int result = DPSTAT_OK;
@@ -2187,7 +2195,7 @@ static bool test_v8_legacy_v32(void)
 	};
 
 	for (unsigned int scenario = 0; scenario < 8; ++scenario) {
-		struct modem *modem = modem_create(&driver, "automatic answerer");
+		struct modem *modem = create_compat_modem(&driver, "automatic answerer");
 		const struct dp_operations *ops = modem_dp_get_registered_ops(DP_V8);
 		struct single_tone_transmitter tone;
 		struct single_tone_detector carrier;
@@ -2256,7 +2264,7 @@ static bool test_core_has_no_external_dsp_owner(void)
 		.stop = unused_stop,
 		.ioctl = unused_control,
 	};
-	struct modem *modem = modem_create(&driver, "native core test");
+	struct modem *modem = create_compat_modem(&driver, "native core test");
 	int16_t receive[MODEM_FRAG];
 	int16_t transmit[MODEM_FRAG];
 
@@ -2306,7 +2314,7 @@ static bool test_at_dial_destinations_are_bounded(void)
 	};
 
 	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
-		struct modem *modem = modem_create(&driver, "AT dial test");
+		struct modem *modem = create_compat_modem(&driver, "AT dial test");
 
 		CHECK(modem != NULL,
 		      "AT dial modem %zu could not be created", index);
@@ -2329,7 +2337,7 @@ static bool test_at_dial_destinations_are_bounded(void)
 		modem_delete(modem);
 	}
 	{
-		struct modem *modem = modem_create(&driver, "AT dial bound test");
+		struct modem *modem = create_compat_modem(&driver, "AT dial bound test");
 
 		CHECK(modem != NULL, "bounded AT dial modem could not be created");
 		memcpy(oversized, "ATD", 3);
@@ -2351,7 +2359,7 @@ static bool test_at_compression_profile(void)
 		.stop = unused_stop,
 		.ioctl = unused_control,
 	};
-	struct modem *modem = modem_create(&driver, "AT compression test");
+	struct modem *modem = create_compat_modem(&driver, "AT compression test");
 	char enable[] = "AT+DS=3,1";
 	char disable[] = "AT+DS=0,0";
 	char disable_ec[] = "AT\\N0";
@@ -2427,7 +2435,7 @@ static bool test_at_compression_rejects_invalid_numbers(void)
 		.name = "AT compression numeric validation", .start = unused_start,
 		.stop = unused_stop, .ioctl = unused_control,
 	};
-	struct modem *m = modem_create(&driver, driver.name);
+	struct modem *m = create_compat_modem(&driver, driver.name);
 	char number[64], command[128];
 
 	CHECK(m != NULL && process_at_command(m, "AT+DS=3,2") == 0,
@@ -2470,7 +2478,7 @@ static bool test_at_v91_policy(void)
 		.name = "AT V.91 policy", .start = unused_start,
 		.stop = unused_stop, .ioctl = unused_control,
 	};
-	struct modem *m = modem_create(&driver, driver.name);
+	struct modem *m = create_compat_modem(&driver, driver.name);
 	const struct dp_operations *v8 = modem_dp_get_registered_ops(DP_V8);
 	const struct dp_operations *v91 = modem_dp_get_registered_ops(DP_V91);
 	int response_pipe[2];
@@ -2525,7 +2533,7 @@ static bool test_at_pcm_profile_controls(void)
 		.stop = unused_stop,
 		.ioctl = unused_control,
 	};
-	struct modem *modem = modem_create(&driver, driver.name);
+	struct modem *modem = create_compat_modem(&driver, driver.name);
 
 	CHECK(modem != NULL &&
 		      modem_get_param(modem, MDMPRM_V90_DIGITAL_INDICATION) == MODEM_PCM_POLICY_AUTO &&
@@ -2659,7 +2667,7 @@ static bool test_at_pcm_rejects_invalid_numbers(void)
 		.name = "AT PCM numeric validation",
 		.start = unused_start, .stop = unused_stop, .ioctl = unused_control,
 	};
-	struct modem *m = modem_create(&driver, driver.name);
+	struct modem *m = create_compat_modem(&driver, driver.name);
 	char number[64], command[128];
 
 	CHECK(m != NULL && process_at_command(m,
@@ -2718,7 +2726,7 @@ static bool test_at_pcm_upstream_rate_queries(void)
 		.name = "AT PCM upstream rates", .start = unused_start,
 		.stop = unused_stop, .ioctl = unused_control,
 	};
-	struct modem *m = modem_create(&driver, driver.name);
+	struct modem *m = create_compat_modem(&driver, driver.name);
 	int response_pipe[2];
 	char command[64], response[64], expected[32];
 
@@ -2775,7 +2783,7 @@ static bool test_at_pcm_automatic_upstream_policy(void)
 		.name = "AT automatic PCM upstream", .start = unused_start,
 		.stop = unused_stop, .ioctl = unused_control,
 	};
-	struct modem *m = modem_create(&driver, driver.name);
+	struct modem *m = create_compat_modem(&driver, driver.name);
 	int response_pipe[2];
 	char command[96], response[64];
 
@@ -2832,7 +2840,7 @@ static bool test_at_v34_symbol_rate(void)
 		.stop = unused_stop,
 		.ioctl = unused_control,
 	};
-	struct modem *modem = modem_create(&driver, driver.name);
+	struct modem *modem = create_compat_modem(&driver, driver.name);
 	char command[64];
 
 	CHECK(modem != NULL && modem->v34_symbol_rate == 0,
@@ -2868,7 +2876,7 @@ static bool exercise_lapm_dual_compression_retry(bool counteroffer)
 		.name = "LAPM compression retry test",
 		.start = unused_start, .stop = unused_stop, .ioctl = unused_control,
 	};
-	struct modem *caller = modem_create(&driver, "LAPM compression retry caller");
+	struct modem *caller = create_compat_modem(&driver, "LAPM compression retry caller");
 	struct lapm_v44_session before;
 	struct v42_xid_fields fields;
 	uint8_t preamble[109], received[LAPM_MAX_INFO_SIZE + 4];
@@ -3023,7 +3031,7 @@ static bool test_lapm_xid_parameters(void)
 	for (size_t scenario = 0; scenario < 3 * ARRAY_LENGTH(compression_types); ++scenario) {
 		size_t index = scenario / 3;
 		unsigned int directions = scenario % 3 + 1;
-		struct modem *modem = modem_create(&driver, "LAPM XID parameters");
+		struct modem *modem = create_compat_modem(&driver, "LAPM XID parameters");
 		struct v42_xid_fields fields;
 		uint8_t preamble[109];
 		frame_t *outgoing;
@@ -3105,8 +3113,8 @@ static bool test_lapm_v42bis_reinitialization(void)
 		payload[i] = (uint8_t)(i % 7); /* Includes transparent-mode escapes. */
 	for (unsigned response = 0; response < 2; ++response)
 	for (size_t limit = 0; limit < ARRAY_LENGTH(strings); ++limit) {
-		struct modem *m = modem_create(&driver, driver.name);
-		struct modem *peer = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
+		struct modem *peer = create_compat_modem(&driver, driver.name);
 		uint8_t wire[] = {
 			0, 0xaf, 0x82, 0xf0, 0, 15,
 			0, 3, 'V', '4', '2', 1, 1, 3, 2, 2, 2, 0, 3, 1, strings[limit],
@@ -3183,7 +3191,7 @@ static bool test_lapm_v42bis_reinitialization(void)
 	}
 	/* C-INIT failure cannot leave a healthy carrier with unusable compression. */
 	for (unsigned response = 0; response < 2; ++response) {
-		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
 		uint8_t wire[] = {
 			0, 0xaf, 0x82, 0xf0, 0, 15,
 			0, 3, 'V', '4', '2', 1, 1, 3, 2, 2, 2, 0, 3, 1, 6,
@@ -3256,7 +3264,7 @@ static bool test_lapm_v42bis_negotiation(void)
 			.private_negotiation = parameters,
 			.private_negotiation_length = sizeof(parameters),
 		};
-		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
 		uint8_t wire[64];
 		size_t length;
 		frame_t incoming = { .buf = wire };
@@ -3338,7 +3346,7 @@ static bool test_lapm_v42bis_frozen_offer(void)
 		bool expanded = (scenario & 32) != 0;
 		unsigned selected = ((peer & 1) << 1) | ((peer & 2) >> 1);
 		bool invalid = (selected & ~(supported ? local : 0)) != 0;
-		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
 		uint8_t wire[] = {
 			0, 0xaf, 0x82, 0xf0, 0, 15,
 			0, 3, 'V', '4', '2', 1, 1, peer, 2, 2, 16, 0, 3, 1, 32,
@@ -3408,7 +3416,7 @@ static bool test_lapm_v42bis_configuration_failure(void)
 
 	for (unsigned response = 0; response < 2; ++response)
 	for (unsigned missing = 0; missing < 2; ++missing) {
-		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
 		uint8_t wire[] = {
 			0, 0xaf, 0x82, 0xf0, 0, 15,
 			0, 3, 'V', '4', '2', 1, 1, 3, 2, 2, 4, 0, 3, 1, 12,
@@ -3481,7 +3489,7 @@ static bool test_lapm_v42bis_invalid_parameters(void)
 	for (size_t scenario = 0; scenario < 2 * ARRAY_LENGTH(cases); ++scenario) {
 		size_t index = scenario / 2;
 		bool response = (scenario & 1) != 0;
-		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
 		struct v42_xid_fields fields = {
 			.private_negotiation = cases[index].field,
 			.private_negotiation_length = cases[index].length,
@@ -3536,7 +3544,7 @@ static bool test_lapm_v42bis_decoder_failure(void)
 	};
 
 	for (size_t scenario = 0; scenario < ARRAY_LENGTH(payloads); ++scenario) {
-		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
 		uint8_t wire[8] = { 0 };
 		frame_t incoming = { .buf = wire, .count = 3 + lengths[scenario] };
 
@@ -3585,7 +3593,7 @@ static bool test_lapm_v42bis_receive_pressure(void)
 	};
 
 	for (size_t scenario = 0; scenario < ARRAY_LENGTH(payloads); ++scenario) {
-		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
 		int pipe_fds[2], original_pty;
 		char filler[4096] = { 0 }, output[8];
 		uint8_t wire[6] = { 0 };
@@ -3682,7 +3690,7 @@ static bool test_lapm_v44_receive_pressure(void)
 		.name = "LAPM V.44 output pressure", .start = unused_start,
 		.stop = unused_stop, .ioctl = unused_control,
 	};
-	struct modem *m = modem_create(&driver, driver.name);
+	struct modem *m = create_compat_modem(&driver, driver.name);
 	uint8_t wire[512];
 	size_t wire_length = 0;
 	bool idle = false, checked = false;
@@ -3790,7 +3798,7 @@ static bool test_lapm_v42bis_transmit_pressure(void)
 
 	for (size_t limit = 0; limit < ARRAY_LENGTH(strings); ++limit)
 	for (size_t capacity = 0; capacity < ARRAY_LENGTH(capacities); ++capacity) {
-		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
 		uint8_t expected[1024];
 		char output[2048], wire[128];
 		size_t received = 0;
@@ -3862,7 +3870,7 @@ static bool test_lapm_xid_directions(void)
 
 	/* Initial command reception and response confirmation use peer directions. */
 	for (unsigned int response = 0; response < 2; ++response) {
-		struct modem *modem = modem_create(&driver, driver.name);
+		struct modem *modem = create_compat_modem(&driver, driver.name);
 		uint8_t preamble[109];
 		uint8_t wire[26] = { 0, 0xaf, 0x82, 0x80, 0, 0 };
 		const uint8_t *parameters = response ? local_parameters : peer_parameters;
@@ -3962,7 +3970,7 @@ static bool test_lapm_xid_numeric_values(void)
 	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index)
 	for (unsigned direction = 0; direction < 2; ++direction)
 	for (unsigned response = 0; response < 2; ++response) {
-		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
 		uint8_t preamble[109], command[130], parameters[7], wire[32];
 		size_t length;
 		int command_size = 0, timer;
@@ -4071,7 +4079,7 @@ static bool test_lapm_xid_collisions(void)
 	for (unsigned int scenario = 0; scenario < 2 * ARRAY_LENGTH(compression_types); ++scenario) {
 		unsigned int early_response = scenario / ARRAY_LENGTH(compression_types);
 		unsigned int compression = scenario % ARRAY_LENGTH(compression_types);
-		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
 		struct lapm_v44_session peer;
 		struct lapm_v44_prepared peer_command, peer_response;
 		struct v44_offer offer = v44_default_offer();
@@ -4223,7 +4231,7 @@ static bool test_lapm_repeated_xid_parameters(void)
 		.stop = unused_stop,
 		.ioctl = unused_control,
 	};
-	struct modem *modem = modem_create(&driver, driver.name);
+	struct modem *modem = create_compat_modem(&driver, driver.name);
 	/* A 127-octet information field containing 41 valid parameter items. */
 	uint8_t wire[129] = { 0, 0xaf, 0x82, 0x80, 0, 123 };
 	frame_t incoming = { .buf = wire, .count = sizeof(wire) };
@@ -4281,8 +4289,8 @@ static bool test_lapm_xid_envelopes(void)
 		.stop = unused_stop,
 		.ioctl = unused_control,
 	};
-	struct modem *caller = modem_create(&driver, "LAPM XID caller");
-	struct modem *answerer = modem_create(&driver, "LAPM XID answerer");
+	struct modem *caller = create_compat_modem(&driver, "LAPM XID caller");
+	struct modem *answerer = create_compat_modem(&driver, "LAPM XID answerer");
 	struct v42_xid_fields fields;
 	struct v44_offer v44_offer;
 	uint8_t command[LAPM_MAX_INFO_SIZE + 4];
@@ -4595,7 +4603,7 @@ static bool run_lapm_startup_pair(unsigned tx_rate, unsigned rx_rate, bool long_
 		.ioctl = unused_control,
 	};
 	struct modem *peers[] = {
-		modem_create(&driver, "caller"), modem_create(&driver, "answerer"),
+		create_compat_modem(&driver, "caller"), create_compat_modem(&driver, "answerer"),
 	};
 	struct dp pumps[] = {
 		{ .id = DP_V90, .modem = peers[0] },
@@ -4686,7 +4694,7 @@ static bool test_lapm_directional_preamble(void)
 	};
 
 	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
-		struct modem *m = modem_create(&driver, "LAPM preamble bounds");
+		struct modem *m = create_compat_modem(&driver, "LAPM preamble bounds");
 
 		CHECK(m != NULL, "LAPM preamble allocation failed");
 		m->caller = 1;
@@ -4732,7 +4740,7 @@ static bool test_lapm_peer_flag_preamble(void)
 		.stop = unused_stop,
 		.ioctl = unused_control,
 	};
-	struct modem *m = modem_create(&driver, "LAPM peer flags");
+	struct modem *m = create_compat_modem(&driver, "LAPM peer flags");
 	uint8_t bit;
 
 	CHECK(m != NULL, "LAPM peer-flag allocation failed");
@@ -4783,7 +4791,7 @@ static bool test_lapm_receive_frame_boundaries(void)
 	static const uint8_t controls[] = { 0, 1, 5, 9, 0x73 };
 
 	for (unsigned caller = 0; caller < 2; ++caller) {
-		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
 		uint8_t wire[] = { 0, 0, 254, 'X' };
 		frame_t incoming = { .buf = wire };
 
@@ -4919,7 +4927,7 @@ static bool test_lapm_transmit_information_limit(void)
 
 		for (size_t index = 0; index < ARRAY_LENGTH(counts); ++index) {
 			struct lapm_host_read source = { .count = counts[index] };
-			struct modem *m = modem_create(&driver, driver.name);
+			struct modem *m = create_compat_modem(&driver, driver.name);
 
 			CHECK(m != NULL, "host source allocation failed");
 			m->cfg.comp = 0;
@@ -4970,7 +4978,7 @@ static bool test_lapm_receive_information_limit(void)
 	for (unsigned caller = 0; caller < 2; ++caller)
 	for (size_t limit = 0; limit < ARRAY_LENGTH(limits); ++limit)
 	for (unsigned oversized = 0; oversized < 2; ++oversized) {
-		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
 		unsigned capacity = limits[limit] < LAPM_MAX_INFO_SIZE ?
 			limits[limit] : LAPM_MAX_INFO_SIZE;
 		uint8_t wire[LAPM_MAX_INFO_SIZE + 4];
@@ -5034,7 +5042,7 @@ static bool test_lapm_sabme_readiness(void)
 	for (unsigned poll = 0; poll < 2; ++poll)
 	for (unsigned scenario = PENDING; scenario <= DISABLED; ++scenario)
 	for (unsigned pressure = 0; pressure < 2; ++pressure) {
-		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
 		uint8_t wire[] = { 0, 0x6f | poll << 4 };
 		uint8_t command[LAPM_MAX_INFO_SIZE + 2];
 		int command_size = 0;
@@ -5130,7 +5138,7 @@ static bool test_lapm_default_establishment(void)
 
 	for (unsigned peer_ready = 0; peer_ready < 2; ++peer_ready)
 	for (unsigned poll = 0; poll < 2; ++poll) {
-		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
 		uint8_t wire[] = { 0, peer_ready ? 0x0f : 0x6f | poll << 4, 0, 'B' };
 		frame_t incoming = { .buf = wire, .count = 2 };
 		frame_t *outgoing;
@@ -5197,7 +5205,7 @@ static bool test_lapm_connected_sabme(void)
 	for (unsigned caller = 0; caller < 2; ++caller)
 	for (unsigned poll = 0; poll < 2; ++poll)
 	for (unsigned scenario = INITIAL; scenario <= RETRAIN; ++scenario) {
-		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
 		uint8_t wire[] = { 0, 0x7f, 0 };
 		frame_t incoming = { .buf = wire, .count = 2 };
 		frame_t *outgoing;
@@ -5293,7 +5301,7 @@ static bool test_lapm_peer_ready_dm(void)
 		.name = "LAPM peer-ready DM", .start = unused_start,
 		.stop = unused_stop, .ioctl = unused_control,
 	};
-	struct modem *m = modem_create(&driver, driver.name);
+	struct modem *m = create_compat_modem(&driver, driver.name);
 	uint8_t wire[] = { 0, 0x0f, 0 };
 	frame_t incoming = { .buf = wire, .count = 2 };
 	frame_t *outgoing;
@@ -5347,7 +5355,7 @@ static bool test_lapm_peer_ready_dm(void)
 	modem_delete(m);
 
 	/* An originator must finish its wire preamble and XID first. */
-	m = modem_create(&driver, driver.name);
+	m = create_compat_modem(&driver, driver.name);
 	CHECK(m != NULL, "originator peer-ready allocation failed");
 	m->caller = 1;
 	m->cfg.comp = 0;
@@ -5369,7 +5377,7 @@ static bool test_lapm_peer_ready_dm(void)
 		{ 0, 1 }, { 7, 1 }, { 8, 1 }, { 4, 0 },
 	};
 	for (size_t i = 0; i < ARRAY_LENGTH(unwilling); ++i) {
-		m = modem_create(&driver, driver.name);
+		m = create_compat_modem(&driver, driver.name);
 		CHECK(m != NULL, "closing peer-ready allocation failed");
 		m->cfg.ec = unwilling[i].ec;
 		m->cfg.comp = 0;
@@ -5408,7 +5416,7 @@ static bool test_lapm_unnumbered_responses(void)
 
 	for (unsigned caller = 0; caller < 2; ++caller)
 	for (size_t i = 0; i < ARRAY_LENGTH(cases); ++i) {
-		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
 		uint8_t wire[7] = { 0 };
 		bool frmr = (cases[i].control & 0xef) == 0x87;
 		frame_t incoming = { .buf = wire, .count = frmr ? 7 : 2 };
@@ -5458,7 +5466,7 @@ static bool test_lapm_orderly_release(void)
 	for (unsigned pending = 0; pending < 4; ++pending)
 	for (unsigned borrowed = 0; borrowed < 2; ++borrowed)
 	for (unsigned pressure = 0; pressure < 2; ++pressure) {
-		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
 		struct lapm_host_read source = { .count = 1 };
 		uint8_t wire[] = { 0, 0x7f, 0, 'a', 'b', 'c' }, bit;
 		uint8_t active_bytes[LAPM_MAX_INFO_SIZE + 3];
@@ -5587,7 +5595,7 @@ static bool test_lapm_disconnected_disc(void)
 
 	for (unsigned caller = 0; caller < 2; ++caller)
 	for (unsigned poll = 0; poll < 2; ++poll) {
-		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
 		CHECK(m != NULL, "disconnected DISC allocation failed");
 		m->caller = caller;
 		m->cfg.comp = 0;
@@ -5618,7 +5626,7 @@ static bool test_lapm_recovery_boundaries(void)
 	for (unsigned mode = XID; mode <= OWN_BUSY; ++mode)
 	for (unsigned caller = 0; caller < 2; ++caller)
 	for (unsigned outcome = EXHAUSTION; outcome <= FINAL_RESPONSE; ++outcome) {
-		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
 		struct lapm_host_read source = { .count = 1 };
 		uint8_t wire[LAPM_MAX_INFO_SIZE + 2] = { 0 };
 		frame_t incoming = { .buf = wire, .count = 2 };
@@ -5778,7 +5786,7 @@ static bool test_lapm_mode_command_collisions(void)
 	for (unsigned identical = 0; identical < 2; ++identical)
 	for (unsigned poll = 0; poll < 2; ++poll)
 	for (unsigned pressure = 0; pressure < 2; ++pressure) {
-		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
 		uint8_t wire[LAPM_MAX_INFO_SIZE + 2] = { 0 };
 		frame_t incoming = { .buf = wire, .count = 2 };
 		frame_t *outgoing;
@@ -5912,7 +5920,7 @@ static bool test_lapm_numbered_frame_rejection(void)
 	for (size_t i = 0; i < ARRAY_LENGTH(cases); ++i) {
 		if (cases[i].response_only && !response)
 			continue;
-		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
 		uint8_t wire[] = { 0, cases[i].control, 0, 'X' };
 		frame_t incoming = { .buf = wire, .count = cases[i].length };
 
@@ -5993,7 +6001,7 @@ static bool test_lapm_unnumbered_frame_rejection(void)
 			continue;
 		if (control == 0xe3 && !response)
 			continue; /* Optional TEST has a variable information field. */
-		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
 		uint8_t wire[8] = { 0, control, 0x82 };
 		frame_t incoming = { .buf = wire, .count = length };
 
@@ -6041,7 +6049,7 @@ static bool test_lapm_acknowledgement_queue_consistency(void)
 		.name = "LAPM acknowledgement consistency", .start = unused_start,
 		.stop = unused_stop, .ioctl = unused_control,
 	};
-	struct modem *m = modem_create(&driver, driver.name);
+	struct modem *m = create_compat_modem(&driver, driver.name);
 	static const uint8_t payload = 'A';
 
 	CHECK(m != NULL, "acknowledgement consistency allocation failed");
@@ -6135,8 +6143,8 @@ static bool test_lapm_acknowledgment_publication(void)
 	for (unsigned poll = 0; poll < 2; ++poll)
 	for (unsigned borrowed = 0; borrowed < 2; ++borrowed)
 	for (unsigned wrap = 0; wrap < ARRAY_LENGTH(bases); ++wrap) {
-		struct modem *m = modem_create(&driver, driver.name);
-		struct modem *decoder = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
+		struct modem *decoder = create_compat_modem(&driver, driver.name);
 		struct lapm_ack_capture capture = { 0 };
 		uint8_t wire[] = { 0, 0x0f, 0, 'a' }, bit, retained[3];
 		frame_t incoming = { .buf = wire, .count = 2 }, *active = NULL;
@@ -6262,8 +6270,8 @@ static bool test_lapm_reject_queue_pressure(void)
 	for (unsigned early = 0; early < 2; ++early)
 	for (unsigned kind = 0; kind < ARRAY_LENGTH(controls); ++kind)
 	for (unsigned wrap = 0; wrap < ARRAY_LENGTH(bases); ++wrap) {
-		struct modem *m = modem_create(&driver, driver.name);
-		struct modem *decoder = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
+		struct modem *decoder = create_compat_modem(&driver, driver.name);
 		struct lapm_reject_capture capture = { 0 };
 		uint8_t wire[] = { 0, 0x0f, 0, 'a' }, bit, retained[3];
 		frame_t incoming = { .buf = wire, .count = 2 }, *active = NULL;
@@ -6392,8 +6400,8 @@ static bool test_lapm_receiver_ready_queue_pressure(void)
 	for (unsigned borrowed = 0; borrowed < 2; ++borrowed)
 	for (unsigned partial = 0; partial < 3; ++partial) {
 		struct lapm_ready_capture capture = { .limit = partial };
-		struct modem *m = modem_create(&driver, driver.name);
-		struct modem *decoder = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
+		struct modem *decoder = create_compat_modem(&driver, driver.name);
 		uint8_t wire[] = { 0, 0x0f, 0, 'a', 'b', 'c' };
 		frame_t incoming = { .buf = wire, .count = 2 };
 		frame_t *outgoing, *active = NULL;
@@ -6494,7 +6502,7 @@ static bool test_lapm_receive_backpressure(void)
 		.stop = unused_stop,
 		.ioctl = unused_control,
 	};
-	struct modem *modem = modem_create(&driver, "LAPM receive test");
+	struct modem *modem = create_compat_modem(&driver, "LAPM receive test");
 	uint8_t wire[] = { 0, 0, 0, 'a', 'b', 'c' };
 	frame_t incoming = {
 		.buf = wire,
@@ -6552,7 +6560,7 @@ static bool test_lapm_control_failure(void)
 	for (unsigned caller = 0; caller < 2; ++caller)
 	for (unsigned pending = 0; pending < 4; ++pending)
 	for (unsigned invalid = 0; invalid < 3; ++invalid) {
-		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
 		struct lapm_host_read source = { .count = 1 };
 		uint8_t parameters[] = {
 			0, 3, 'V', '4', '2', 1, 1, 0, 2, 2, 2, 0, 3, 1, 6,
@@ -6668,7 +6676,7 @@ static bool test_lapm_information_failure(void)
 	for (unsigned pending = 0; pending < 2; ++pending)
 	for (unsigned scenario = RECEIVE; scenario <= TRANSMIT; ++scenario)
 	for (size_t failure = 0; failure < ARRAY_LENGTH(failures); ++failure) {
-		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
 		struct lapm_host_read source = { .count = 1 };
 		CHECK(m != NULL, "information failure allocation failed");
 		m->cfg.ec = 1;
@@ -6750,7 +6758,7 @@ static bool test_lapm_acknowledgement_window(void)
 	for (unsigned int pending = 0; pending <= 3; pending += 3)
 	for (size_t kind = 0; kind < ARRAY_LENGTH(controls); ++kind)
 	for (size_t index = 0; index < ARRAY_LENGTH(distances); ++index) {
-		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
 		struct lapm_state *l;
 		frame_t *outgoing;
 		uint8_t retained[sizeof(m->ec.lapm.info_buf)];
@@ -6853,7 +6861,7 @@ static bool test_lapm_repeated_sequence_error_poll(void)
 	for (size_t start = 0; start < ARRAY_LENGTH(receive_starts); ++start)
 	for (unsigned int recovery = 0; recovery < 2; ++recovery)
 	for (unsigned int busy = 0; busy < 2; ++busy) {
-		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
 		struct lapm_state *l;
 		frame_t *retained, *outgoing;
 		unsigned int vr = receive_starts[start];
@@ -6957,7 +6965,7 @@ static bool test_lapm_idle_supervision(void)
 	};
 
 	for (unsigned caller = 0; caller < 2; ++caller) {
-		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
 		frame_t *outgoing;
 		uint8_t wire[] = { 0, 0x7f, 0 }; /* SABME P=1 */
 		frame_t incoming = { .buf = wire, .count = 2 };
@@ -7094,7 +7102,7 @@ static bool test_lapm_acknowledgement_progress(void)
 
 	for (size_t start = 0; start < ARRAY_LENGTH(starts); ++start)
 	for (unsigned scenario = STALL; scenario <= LOCAL_BUSY; ++scenario) {
-		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
 		frame_t *outgoing;
 		unsigned base = starts[start];
 		uint8_t wire[] = { 0, 0x7f, 0 }; /* SABME P=1 */
@@ -7228,7 +7236,7 @@ static bool test_lapm_retrain_recovery_budget(void)
 	for (unsigned first_retry = !information; first_retry <= 5; ++first_retry)
 	for (unsigned full = 0; full < (first_retry ? 2u : 1u); ++full)
 	for (unsigned answered = 0; answered < (first_retry == 5 ? 2u : 1u); ++answered) {
-		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
 		struct lapm_host_read source = { .count = 1 };
 		uint8_t wire[] = { 0, 0x0f }, bit;
 		frame_t incoming = { .buf = wire, .count = sizeof(wire) };
@@ -7351,7 +7359,7 @@ static bool test_lapm_stalled_retrain(void)
 		memset(&retrain_dp, 0, sizeof(retrain_dp));
 		retrain_dp.retrain_result = result;
 		call_progress_override = &operations;
-		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
 		CHECK(m != NULL && modem_dial(m) == 0, "stall fixture did not start");
 		m->state = ONLINE;
 		m->caller = 0;
@@ -7461,7 +7469,7 @@ static bool test_lapm_peer_busy_acknowledgement(void)
 	for (unsigned int acknowledged = 1; acknowledged <= 2; ++acknowledged)
 	for (unsigned int recovery = 0; recovery < 2; ++recovery)
 	for (unsigned int sequenced = 0; sequenced < 2; ++sequenced) {
-		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
 		struct lapm_state *l;
 		frame_t *outgoing;
 		unsigned int base = starts[start];
@@ -7580,7 +7588,7 @@ static bool test_lapm_supervisory_polls(void)
 	for (unsigned pending = 0; pending < 2; ++pending)
 	for (size_t sequence = 0; sequence < ARRAY_LENGTH(sequences); ++sequence)
 	for (size_t control = 0; control < ARRAY_LENGTH(controls); ++control) {
-		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
 		frame_t *retained = NULL, *outgoing;
 		bool replay = pending && controls[control] == REJ && !recovery;
 		unsigned base = sequences[sequence];
@@ -7665,7 +7673,7 @@ static bool test_lapm_peer_busy_timer(void)
 		/* A final response is solicited only during timer recovery. */
 		if ((!command && poll && !recovery) || (!pending && recovery))
 			continue;
-		m = modem_create(&driver, driver.name);
+		m = create_compat_modem(&driver, driver.name);
 		CHECK(m != NULL, "LAPM busy-timer allocation failed");
 		m->cfg.ec = 1;
 		m->cfg.ec_tx_info_size = 1;
@@ -7736,7 +7744,7 @@ static bool test_lapm_retrain_preserves_link_state(void)
 		.stop = unused_stop,
 		.ioctl = unused_control,
 	};
-	struct modem *modem = modem_create(&driver, "LAPM retrain resume test");
+	struct modem *modem = create_compat_modem(&driver, "LAPM retrain resume test");
 	struct lapm_state *lapm;
 	uint8_t response[3];
 	frame_t incoming = { .buf = response, .count = sizeof(response) };
@@ -8004,7 +8012,7 @@ static bool test_retrain_preserves_detection(void)
 		.stop = unused_stop,
 		.ioctl = unused_control,
 	};
-	struct modem *modem = modem_create(&driver, "pre-link retrain test");
+	struct modem *modem = create_compat_modem(&driver, "pre-link retrain test");
 	struct dp datapump = {
 		.id = DP_V34,
 		.modem = modem,
@@ -8077,7 +8085,7 @@ static bool test_lapm_timer_follows_rate_changes(void)
 		.name = "LAPM timer rate change", .start = unused_start,
 		.stop = unused_stop, .ioctl = unused_control,
 	};
-	struct modem *m = modem_create(&driver, "LAPM timer rate change");
+	struct modem *m = create_compat_modem(&driver, "LAPM timer rate change");
 	uint8_t bits[480];
 	void (*timeout)(struct modem *);
 	static const struct {
@@ -8201,7 +8209,7 @@ static bool test_lapm_exit_retires_framing(void)
 	for (unsigned phase = INITIALIZED; phase <= DEFERRED_INPUT; ++phase)
 	for (unsigned caller = 0; caller < 2; ++caller)
 	for (unsigned compressed = 0; compressed < 2; ++compressed) {
-		struct modem *m = modem_create(&driver, driver.name);
+		struct modem *m = create_compat_modem(&driver, driver.name);
 		uint8_t bits[32], wire[] = { 0, 0x7f, 0, 'x' };
 		frame_t incoming = { .buf = wire, .count = 2 };
 		unsigned destroyed = destroyed_v44_paths;
@@ -8298,7 +8306,7 @@ static bool test_retrain_preserves_lapm_establishment(void)
 		.ioctl = unused_control,
 	};
 	struct modem *peers[] = {
-		modem_create(&driver, "caller"), modem_create(&driver, "answerer"),
+		create_compat_modem(&driver, "caller"), create_compat_modem(&driver, "answerer"),
 	};
 	struct dp datapumps[] = {
 		{ .id = DP_V92, .modem = peers[0] },
@@ -8414,7 +8422,7 @@ static bool test_v21_originator_answers_brief_mark(void)
 	int16_t transmit[MODEM_FRAG];
 
 	operations = modem_dp_get_registered_ops(DP_V21);
-	modem = modem_create(&driver, "V.21 mark acquisition test");
+	modem = create_compat_modem(&driver, "V.21 mark acquisition test");
 	CHECK(operations != NULL && modem != NULL &&
 		      fsk_transmitter_init(
 			      &answerer, &v21_channel_2,
@@ -8521,7 +8529,7 @@ static bool test_datapump_factory_instances(void)
 	struct dp *calls[3];
 
 	for (size_t i = 0; i < ARRAY_LENGTH(modems); i++) {
-		modems[i] = modem_create(&driver, "factory ownership test");
+		modems[i] = create_compat_modem(&driver, "factory ownership test");
 		CHECK(modems[i] != NULL &&
 		      modem_set_param(modems[i], MDMPRM_V92_QUICK_CONNECT, 0) == 0,
 		      "independent modem %zu did not initialize", i);
@@ -8621,7 +8629,7 @@ static bool test_concurrent_datapump_lifetimes(void)
 	bool valid = true;
 
 	for (size_t i = 0; i < ARRAY_LENGTH(workers); i++) {
-		workers[i].modem = modem_create(&driver, "concurrent factory test");
+		workers[i].modem = create_compat_modem(&driver, "concurrent factory test");
 		workers[i].started = &started;
 		if (workers[i].modem == NULL) {
 			valid = false;
@@ -8684,7 +8692,7 @@ static bool test_at_ms_uses_builtin_catalog(void)
 		.stop = unused_stop,
 		.ioctl = unused_control,
 	};
-	struct modem *modem = modem_create(&driver, "modulation selection test");
+	struct modem *modem = create_compat_modem(&driver, "modulation selection test");
 	char query[] = "AT+MS=?";
 	char response[256];
 	int output[2];
@@ -8730,7 +8738,7 @@ static bool test_at_ms_rejects_wrapped_values(void)
 		.stop = unused_stop,
 		.ioctl = unused_control,
 	};
-	struct modem *m = modem_create(&driver, "modulation input test");
+	struct modem *m = create_compat_modem(&driver, "modulation input test");
 	char initial[] = "AT+MS=34,0,2400,33600";
 	char omitted[] = "AT+MS=90";
 	char sparse[] = "AT+MS=,1,,56000";
@@ -8877,7 +8885,7 @@ static bool test_builtin_datapump_lifecycle(void)
 		      baudot_operations->delete != NULL &&
 		      baudot_operations->process != NULL,
 	      "source-built modem operations were incomplete");
-	modem = modem_create(&driver, "call progress test");
+	modem = create_compat_modem(&driver, "call progress test");
 	CHECK(modem != NULL, "call-progress modem could not be created");
 	v8 = v8_operations->create(
 		modem, DP_V21, 1, MODEM_RATE, MODEM_FRAG, v8_operations);
@@ -9122,7 +9130,7 @@ static bool test_v42_late_answer_detection(void)
 		.name = "late V.42 reply", .start = unused_start,
 		.stop = unused_stop, .ioctl = unused_control,
 	};
-	struct modem *m = modem_create(&driver, "late V.42 reply");
+	struct modem *m = create_compat_modem(&driver, "late V.42 reply");
 	struct dp dp = { .id = DP_V22BIS, .modem = m };
 	struct modem answerer = { .name = "ADP source" };
 	uint8_t bits[73], marks[12];
@@ -9175,7 +9183,7 @@ static bool test_v42_raw_text_detection(void)
 
 	for (unsigned width = 1; width <= 8; width *= 2) {
 		for (size_t line = 0; line < ARRAY_LENGTH(lines); ++line) {
-			struct modem *m = modem_create(&driver, "V.42 text reply");
+			struct modem *m = create_compat_modem(&driver, "V.42 text reply");
 			struct dp dp = { .id = DP_V22BIS, .modem = m };
 			struct modem source = { .get_chars = scripted_lapm_source };
 			uint8_t bits[512], output, received[128];

@@ -47,10 +47,10 @@
 #include <string.h>
 #include <ctype.h>
 #include <limits.h>
-#include <termios.h>
 #include <sys/ioctl.h>
 
 #include <modem.h>
+#include "modem_state.h"
 #include <modem_param.h>
 #include <modem_debug.h>
 #include <v8_datapump.h>
@@ -68,12 +68,10 @@
 #define MDMEVENT_ESCAPE        0x02
 
 /* debug prints */
-#define MODEM_INFO(fmt,arg...) printf(fmt , ##arg) ; dprintf(fmt , ##arg)
 #define MODEM_DBG(fmt,arg...) dprintf("%s: " fmt , m->name , ##arg)
 #define MODEM_ERR(fmt,arg...) eprintf("%s: " fmt , m->name , ##arg)
 
 /* external symbols */
-extern int process_at_command(struct modem *m, char *buf);
 #ifdef MODEM_CONFIG_RING_DETECTOR
 extern void *RD_create(struct modem *m, unsigned rate);
 extern void RD_delete(void *obj);
@@ -105,6 +103,7 @@ static int modem_start(struct modem *);
 static int modem_stop (struct modem *);
 static int modem_get_chars(struct modem *m, char *buf, int n);
 static int modem_put_chars(struct modem *m, const char *buf, int n);
+static int modem_put_data(struct modem *m, const char *buf, int n);
 static int modem_comp_get_chars(struct modem *m, char *buf, int n);
 static int modem_comp_put_chars(struct modem *m, const char *buf, int n);
 #ifdef MODEM_CONFIG_CID
@@ -115,7 +114,6 @@ static int modem_fax_start(struct modem *m);
 #endif
 
 /* global config data */
-const char *modem_default_country = NULL;
 
 
 /* data definitions */
@@ -199,134 +197,13 @@ const char *modem_active_modulation_name(const struct modem *m)
  *
  */
 
-enum MODEM_RESULT {
-	RESULT_OK         = 0,
-	RESULT_CONNECT    = 1,
-	RESULT_RING       = 2,
-	RESULT_NOCARRIER  = 3,
-	RESULT_ERROR      = 4,
-	RESULT_UNUSED_5   = 5,
-	RESULT_NODIALTONE = 6,
-	RESULT_BUSY       = 7,
-	RESULT_NOANSWER   = 8,
-};
-
-static void modem_report_result(struct modem *m, enum MODEM_RESULT code)
+static void modem_report_result(struct modem *m, unsigned int code)
 {
-#define MODEM_RESPONSE_TEXT(id) modem_responses[id].text
-#define MODEM_RESPONSE_CODE(id) modem_responses[id].code
-	/* response codes : FIXME */
-	static const struct modem_response {
-		enum MODEM_RESULT id;
-		char *code;
-		char *text;
-	} modem_responses[] = {
-		{RESULT_OK,         "0", "OK"},
-		{RESULT_CONNECT,    "1", "CONNECT"},
-		{RESULT_RING,       "2", "RING"},
-		{RESULT_NOCARRIER,  "3", "NO CARRIER"},
-		{RESULT_ERROR,      "4", "ERROR"},
-		{RESULT_UNUSED_5,   "" , ""},
-		{RESULT_NODIALTONE, "6", "NO DIALTONE"},
-		{RESULT_BUSY,       "7", "BUSY"},
-		{RESULT_NOANSWER,   "8", "NO ANSWER"},
-	};
-	static const char none_str[] = "NONE";
-        const char *msg;
-	u8 msg_mask;
-
-        MODEM_DBG("modem report result: %d (%s)\n",code,MODEM_RESPONSE_TEXT(code));
-        if (IS_QUIET(m))
-                return;
-        if (IS_VERBOSE(m)) {
-		if(code==RESULT_CONNECT) {
-			msg_mask = modem_get_sreg(m,SREG_CONNNECT_MSG_FORMAT);
-			if(msg_mask&1) {
-				modem_put_chars(m,"Modulation: ",12);
-				msg = modem_active_modulation_name(m);
-				if (msg == NULL)
-					msg = none_str;
-				modem_put_chars(m,msg,strlen(msg));
-				modem_put_chars(m,CRLF_CHARS(m),2);
-				msg = m->dsp_info.startup == MODEM_STARTUP_QC ? "QC" :
-					m->dsp_info.startup == MODEM_STARTUP_V8 ? "V8" :
-					m->dsp_info.startup == MODEM_STARTUP_V8_FALLBACK ? "V8-FALLBACK" : NULL;
-				if (msg != NULL) {
-					modem_put_chars(m,"Startup: ",9);
-					modem_put_chars(m,msg,strlen(msg));
-					modem_put_chars(m,CRLF_CHARS(m),2);
-				}
-				if (m->dp != NULL &&
-				    (m->dp->id == DP_V90 || m->dp->id == DP_V92)) {
-					msg = NULL;
-					if (m->dsp_info.upstream_mode == MODEM_UPSTREAM_V34)
-						msg = "V34";
-					else if (m->dsp_info.upstream_mode == MODEM_UPSTREAM_PCM)
-						msg = "PCM";
-					if (msg != NULL) {
-						modem_put_chars(m,"Upstream: ",10);
-						modem_put_chars(m,msg,strlen(msg));
-						modem_put_chars(m,CRLF_CHARS(m),2);
-					}
-				}
-			}
-			if(msg_mask&2) {
-				modem_put_chars(m,"Protocol: ",10);
-				msg = m->cfg.ec ? "LAPM" : none_str;
-				modem_put_chars(m,msg,strlen(msg));
-				modem_put_chars(m,CRLF_CHARS(m),2);
-			}
-			if((msg_mask&3) == 3) {
-				modem_put_chars(m,"Compression: ",13);
-				switch (modem_ec_active_compression(m)) {
-				case MODEM_EC_COMPRESSION_V44:
-					msg = "V44";
-					break;
-				case MODEM_EC_COMPRESSION_V42BIS:
-					msg = "V42bis";
-					break;
-				default:
-					msg = none_str;
-					break;
-				}
-				modem_put_chars(m,msg,strlen(msg));
-				modem_put_chars(m,CRLF_CHARS(m),2);
-			}
-			if(msg_mask&4 && m->tx_rate) {
-				char rate_str[16];
-				modem_put_chars(m,"TxRate: ",8);
-				sprintf(rate_str,"%d",m->tx_rate);
-				modem_put_chars(m,rate_str,strlen(rate_str));
-				modem_put_chars(m,CRLF_CHARS(m),2);
-			}
-		}
-                msg = MODEM_RESPONSE_TEXT(code);
-		modem_put_chars(m,msg,strlen(msg));
-		if (code==RESULT_CONNECT && m->mode == MODEM_MODE_DATA
-		    && m->rx_rate && modem_get_sreg(m,SREG_X_CODE) != 0) {
-			char rate_str[16];
-			sprintf(rate_str," %d",m->rx_rate);
-			modem_put_chars(m,rate_str,strlen(rate_str));
-		}
-        }
-        else {
-                msg = MODEM_RESPONSE_CODE(code);
-		modem_put_chars(m,msg,strlen(msg));
-        }
-        modem_put_chars(m,CRLF_CHARS(m),2);
+	if (m->frontend_report != NULL)
+		m->frontend_report(m, code);
 }
 
-
 /* TDB: state lifecycle description */
-
-/* modem state constants */
-#define STATE_MODEM_IDLE      0x1
-#define STATE_DP_ESTAB        0x2
-#define STATE_EC_ESTAB        0x4
-#define STATE_MODEM_ONLINE    0x5
-#define STATE_COMMAND_ONLINE  0x6
-#define STATE_EC_DISC         0x7
-#define STATE_DP_DISC         0x9
 
 #define STATE_DISC 0x100
 
@@ -424,7 +301,7 @@ static int modem_set_state(struct modem *m, unsigned new_state)
 		MODEM_DBG("new state: MODEM_ONLINE\n");
 		m->command = 0;
 		m->put_chars = (m->cfg.ec && m->cfg.comp&0x1)
-			? modem_comp_put_chars : modem_put_chars;
+			? modem_comp_put_chars : modem_put_data;
 		m->get_chars = (m->cfg.ec && m->cfg.comp&0x2)
 			? modem_comp_get_chars : modem_get_chars;
 		m->modem_info |= TIOCM_CD;
@@ -432,8 +309,12 @@ static int modem_set_state(struct modem *m, unsigned new_state)
 	case STATE_COMMAND_ONLINE:
 		MODEM_DBG("new state: COMMAND_ONLINE\n");
 		m->command = 1;
-		m->get_chars = 0;
-		m->put_chars = 0;
+		/* Literal callers have no AT input sharing the transmit queue. Keep
+		 * compression/framing and decoded receive output alive while paused. */
+		if (m->frontend_report != NULL)
+			m->get_chars = NULL;
+		m->put_chars = (m->cfg.ec && (m->cfg.comp & 0x1)) ?
+			modem_comp_put_chars : modem_put_data;
 		break;
 	case STATE_EC_DISC:
 		MODEM_DBG("new state: EC_DISC\n");
@@ -1055,21 +936,8 @@ void modem_event(struct modem *m)
 			}
 		}
 	}
-	if(event&MDMEVENT_ESCAPE) {
-		MODEM_DBG("modem_escape (count %d)...\n", m->escape_count);
-		if (m->state == STATE_MODEM_ONLINE && m->escape_count == 3) {
-			/* Async framing may already contain confirmed escape
-			 * characters.  They are command syntax, not line data. */
-			if (!m->cfg.ec)
-				modem_async_discard_transmit(m);
-			modem_set_state(m, STATE_COMMAND_ONLINE);
-			m->xmit.head = m->xmit.tail = m->xmit.count = 0;
-			modem_put_chars(m,CRLF_CHARS(m),2);
-			modem_report_result(m,RESULT_OK);
-			m->command = 1;
-		}
-		m->escape_count = 0;
-	}
+	if ((event & MDMEVENT_ESCAPE) && m->frontend_escape != NULL)
+		m->frontend_escape(m);
 }
 
 int modem_service_event(struct modem *m)
@@ -1140,83 +1008,6 @@ void modem_error(struct modem *m)
 
 
 /* command mode processing */
-static void modem_at_process(void *data)
-{
-	struct modem *m = (struct modem *)data;
-	int echo = IS_ECHO(m);
-	char lf = LF_CHAR(m), cr = CR_CHAR(m), bs = BS_CHAR(m);
-        int ret;
-	char ch;
-	while(1) {
-		if(modem_get_chars(m,&ch,1) <= 0)
-			break;
-		if (ch == '/' && m->at_count == 1 &&
-		    toupper(m->at_line[0]) == 'A') {
-			m->at_count = strlen(m->at_line);
-			if(echo)
-				modem_put_chars(m,m->at_line+1,m->at_count-1);
-			ch = cr;
-		}
-		if (echo)
-			modem_put_chars(m,&ch,1);
-		if (ch == cr || ch == lf) {
-			int i;
-			char *p = m->at_cmd;
-			m->at_line[m->at_count] = '\0';
-			for(i = 0 ; i < m->at_count ; i++) {
-				if( m->at_line[i] == ' ' ||
-				    m->at_line[i] == '\t' )
-					continue;
-				*p++ = m->at_line[i];
-			}
-			*p = '\0';
-			if (strlen(m->at_cmd) < 2 ||
-			    toupper(m->at_cmd[0]) != 'A' ||
-			    toupper(m->at_cmd[1]) != 'T' ) {
-				memset(m->at_line,' ',m->at_count);
-				if(echo) {
-					modem_put_chars(m,&cr,1);
-					modem_put_chars(m,m->at_line,m->at_count);
-					modem_put_chars(m,&cr,1);
-				}
-				m->at_count = 0;
-				continue;
-			}
-			if (echo)
-				modem_put_chars(m,CRLF_CHARS(m),2);
-			MODEM_DBG("run cmd: %s\n",m->at_cmd);
-			ret = process_at_command(m, m->at_cmd);
-			if (ret < 0)
-				modem_report_result(m,RESULT_ERROR);
-			else if (ret==0)
-				modem_report_result(m,RESULT_OK);
-			m->at_line[m->at_count] = '\0';
-			m->at_count = 0;
-			echo = IS_ECHO(m);
-			cr = CR_CHAR(m), lf = LF_CHAR(m), bs = BS_CHAR(m);
-		}
-		else if (ch == bs && m->at_count) {
-			m->at_count--;
-			if(echo) {
-				ch = ' ';
-				modem_put_chars(m,&ch,1);
-				modem_put_chars(m,&bs,1);
-			}
-		}
-		else if (m->at_count == sizeof(m->at_line) - 1) {
-			if (echo)
-				modem_put_chars(m,CRLF_CHARS(m),2);
-			m->at_count   = 0;
-			m->at_line[1] = '\0';
-			modem_report_result(m,RESULT_ERROR);
-		}
-		else {
-			m->at_line[m->at_count++] = ch;
-		}
-	}
-}
-
-
 /*
  *    TTY procedures
  *
@@ -1256,12 +1047,19 @@ static int modem_get_chars(struct modem *m, char *buf, int n)
 /* put chars */
 static int modem_put_chars(struct modem *m, const char *buf, int n)
 {
-	int ret = write(m->pty,buf,n);
-	if(ret < 0) {
-		/* perror("write"); */
-		ret = 0;
+	return m->control_output != NULL ?
+		m->control_output(m->control_output_context, buf, n) : n;
+}
+
+static int modem_put_data(struct modem *m, const char *buf, int n)
+{
+	int consumed = m->data_output != NULL ?
+		m->data_output(m->data_output_context, buf, n) : 0;
+	if (consumed < 0 || consumed > n) {
+		m->dte_overflow = true;
+		return 0;
 	}
-	return ret;
+	return consumed;
 }
 
 /* compressor get/put chars */
@@ -1297,7 +1095,7 @@ static int comp_send_output(struct modem *m)
 {
 	int cnt;
 	if(m->comp.count > 0) {
-		cnt = modem_put_chars(m,m->comp.buf+m->comp.head,m->comp.count);
+		cnt = modem_put_data(m,m->comp.buf+m->comp.head,m->comp.count);
 		m->comp.count -= cnt;
 		m->comp.head += cnt;
 		if(m->comp.count > 0)
@@ -1470,6 +1268,7 @@ static int modem_start (struct modem *m)
 	m->retrain_pending = 0;
 	modem_setup_config(m);
 	m->disconnect_reason = NULL;
+	m->dte_overflow = false;
 	m->disconnect_step = NULL;
 	m->disconnect_phase = NULL;
 	m->disconnect_local = false;
@@ -2208,113 +2007,40 @@ int modem_report_remote_call_end(struct modem *m)
 }
 
 
-void modem_update_termios(struct modem *m, const struct termios *tios)
+int modem_data_write(struct modem *m, const void *input, size_t length)
 {
-        MODEM_DBG("update termios...\n");
-        if( cfgetispeed(tios) == B0 ||
-	    cfgetospeed(tios) == B0 ) {
-                MODEM_DBG("modem_update_termios: hangup.\n");
-                if(m->state!=STATE_MODEM_IDLE)
-                        modem_hup(m,1);
-		// TBD: drop DTR?
-        }
-        else
-                m->modem_info |= TIOCM_DTR;
-	m->termios = *tios;
+	if (m == NULL || (length != 0 && input == NULL) || length > INT_MAX ||
+	    !IS_STATE_ONLINE(m->state) || m->command)
+		return -1;
+	const unsigned char *bytes = input;
+	size_t count = length;
+	if (count > m->xmit.size - (unsigned int)m->xmit.count)
+		count = m->xmit.size - (unsigned int)m->xmit.count;
+	if (count == 0)
+		return 0;
+	size_t first = count < m->xmit.size - m->xmit.head ? count : m->xmit.size - m->xmit.head;
+	memcpy(m->xmit.buf + m->xmit.head, bytes, first);
+	memcpy(m->xmit.buf, bytes + first, count - first);
+	m->xmit.head = (m->xmit.head + count) % m->xmit.size;
+	m->xmit.count += (int)count;
+	return (int)count;
 }
 
-
-/*
- *
- *    modem_write()
- *
- */
-
-
-static int modem_check_escape(struct modem *m, const char *buf, int count)
+int modem_set_dte_command(struct modem *m, bool command)
 {
-	unsigned long now = get_time();
-        int i;
-        if(count + m->escape_count > 3 )
-		goto noescape_out;
-        for( i = 0 ; i < count ; i++) {
-                if(buf[i] != ESCAPE_CHAR(m))
-			goto noescape_out;
-        }
-
-        if(m->escape_count == 0) {
-                if(time_before(now, m->last_esc_check + ESCAPE_TIMEOUT(m)))
-                        goto noescape_out;
-	}
-	else if (time_after(now, m->last_esc_check + ESCAPE_TIMEOUT(m)))
-		goto noescape_out;
-
-	m->escape_count += count;
-	/* One or two held characters also need an expiry: they become line
-	 * data when no third escape character arrives. */
-	schedule_event(m,MDMEVENT_ESCAPE,ESCAPE_TIMEOUT(m));
-
-	m->last_esc_check = now;
-	return m->escape_count;
-
- noescape_out:
-	m->escape_count = 0;
-        m->last_esc_check = now;
-        return 0;
+	if (m == NULL || !IS_STATE_ONLINE(m->state) || m->xmit.count != 0)
+		return -1;
+	return modem_set_state(m, command ? STATE_COMMAND_ONLINE : STATE_MODEM_ONLINE);
 }
 
-
-
-int modem_write(struct modem *m, const char *buffer, int count)
+void modem_schedule_escape(struct modem *m)
 {
-	const char *buf;
-	const char *written = buffer;
-	int cnt, ret = 0;
-	if(IS_STATE_CONNECTING(m->state)) {
-		MODEM_DBG("modem_tty_write: hangup...\n");
-		modem_hup(m,1);
-		return count;
-	}
-
-	while(count) {
-		cnt = count;
-		if(cnt > m->xmit.size - m->xmit.count)
-			cnt = m->xmit.size - m->xmit.count;
-		if(cnt > m->xmit.size - m->xmit.head)
-			cnt = m->xmit.size - m->xmit.head;
-		if(cnt <= 0) {
-			MODEM_DBG("modem_write: overflow!\n");
-			break;
-		}
-		buf = buffer;
-                memcpy(m->xmit.buf + m->xmit.head, buf, cnt);
-                m->xmit.count += cnt;
-                m->xmit.head = (m->xmit.head + cnt)%m->xmit.size;
-		ret += cnt;
-		buffer += cnt;
-		count -= cnt;
-	}
-	if (m->state == STATE_MODEM_ONLINE && ret > 0)
-		modem_check_escape(m, written, ret);
-	if(m->command)
-		modem_at_process(m);
-	return ret;
+	schedule_event(m, MDMEVENT_ESCAPE, ESCAPE_TIMEOUT(m));
 }
-
-
-
-void modem_print_version()
-{
-	MODEM_INFO("%s: version %s %s\n",
-		   modem_name,modem_version,modem_date);
-}
-
 
 struct modem *modem_create(struct modem_driver *drv, const char *name)
 {
 	struct modem *m;
-
-	modem_print_version();
 
 	m = malloc(sizeof(*m));
 	if (!m)
@@ -2326,6 +2052,7 @@ struct modem *modem_create(struct modem_driver *drv, const char *name)
 	}
 
 	m->name = name;
+	m->pty = -1;
 	m->driver = *drv;
         m->modem_info = 0;
 	m->state  = STATE_MODEM_IDLE;
@@ -2344,11 +2071,6 @@ struct modem *modem_create(struct modem_driver *drv, const char *name)
 			  MODEM_DEFAULT_COUNTRY_CODE);
 		free(m);
 		return NULL;
-	}
-	if(modem_default_country &&
-	   modem_homolog_init(m, -1, modem_default_country)) {
-		MODEM_INFO("bad country name `%s', using default by code!\n",
-			   modem_default_country);
 	}
 
 	m->ring_last = get_time();

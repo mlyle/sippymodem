@@ -95,8 +95,11 @@ enum async_detection_residue_state {
 
 static void async_deliver_character(struct modem *m, u8 character)
 {
-	if (m->put_chars != NULL)
-		(void)m->put_chars(m, (const char *)&character, 1);
+	if (m->put_chars != NULL &&
+	    m->put_chars(m, (const char *)&character, 1) != 1) {
+		m->dte_overflow = true;
+		modem_note_disconnect(m, true, "raw DTE receive overflow");
+	}
 }
 
 static int async_is_detection_character(

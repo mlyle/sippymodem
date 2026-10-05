@@ -293,6 +293,15 @@ struct modem {
 	/* device driver */
 	struct modem_driver driver;
 	void *dev_data;
+	/* Instance-owned byte sinks. Control replies and payload never share the
+	 * library's receive queue. Return an exact accepted prefix count. */
+	void *control_output_context;
+	int (*control_output)(void *, const char *, int);
+	void *data_output_context;
+	int (*data_output)(void *, const char *, int);
+	void (*frontend_report)(struct modem *, unsigned int);
+	void (*frontend_escape)(struct modem *);
+	bool dte_overflow;
         /* modem states */
         unsigned modem_info;
         unsigned state;
@@ -479,6 +488,11 @@ struct modem {
 extern struct modem *modem_create(struct modem_driver *drv, const char *dev_name);
 extern void modem_delete(struct modem *m);
 extern int modem_write(struct modem *m, const char *buf, int n);
+extern int modem_data_write(struct modem *m, const void *bytes, size_t length);
+extern int modem_set_dte_command(struct modem *m, bool command);
+extern void modem_schedule_escape(struct modem *m);
+extern int modem_send_to_tty(struct modem *m, const char *bytes, int count);
+extern int modem_recv_from_tty(struct modem *m, char *bytes, int count);
 extern void modem_hangup(struct modem *m);
 extern int modem_stop_now(struct modem *m);
 extern int modem_answer(struct modem *m);

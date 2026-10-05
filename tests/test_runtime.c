@@ -3,6 +3,7 @@
 #include <runtime.h>
 
 #include <modem.h>
+#include <modem_frontend.h>
 #include <host.h>
 #include <slmodem_adapter.h>
 #include <slmodem_calls.h>
@@ -76,6 +77,11 @@ struct runtime_capture {
 	const char *protocol_step;
 	struct sip_signaling_callbacks callbacks;
 };
+
+void modem_frontend_init(struct modem *modem)
+{
+	(void)modem;
+}
 
 static struct runtime_capture capture;
 
