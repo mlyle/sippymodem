@@ -78,6 +78,7 @@
 #include <string.h>
 
 #include <modem.h>
+#include <modem_frontend.h>
 #include <modem_debug.h>
 #include <modem_param.h>
 #include <pcm_rate.h>
@@ -371,6 +372,9 @@ static int process_I(struct modem *m, char *p, int *len)
 		modem_send_to_tty(m,"Country: ",9);
 		modem_send_to_tty(m,s,strlen(s));
 		modem_send_to_tty(m, CRLF_CHARS(m),2);
+		break;
+	case 11:
+		modem_frontend_call_report(m);
 		break;
 	case 0:
 		modem_send_to_tty(m,modem_name,strlen(modem_name));

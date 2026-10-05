@@ -154,8 +154,107 @@ static bool local_lapm_retry_cause(void)
 	return true;
 }
 
+static int report_dp_delete(struct dp *dp) { (void)dp; return 0; }
+static char report_progress[96];
+static const char *report_dp_progress(const struct dp *dp)
+{ (void)dp; return report_progress; }
+
+static bool retained_call_report(void)
+{
+	struct capture data = { .limit = 1 }, commands = { .limit = 4096 };
+	struct modem *modem = create(&data, &commands), *other = create(&data, &commands);
+	EXPECT(modem != NULL && other != NULL);
+	modem_frontend_init(modem);
+	EXPECT(modem_write(modem, "ATI11\r", 6) == 6);
+	EXPECT(strstr((char *)commands.bytes, "Last call: none\r\n") != NULL);
+	EXPECT(modem_answer(modem) == 0);
+	modem->cfg.ec = modem->cfg.comp = 0;
+	modem->sample_timer_func = NULL;
+	const struct dp_operations ops = {
+		.delete = report_dp_delete, .progress = report_dp_progress,
+	};
+	struct dp dp = { .id = DP_V32, .status = DPSTAT_CONNECT,
+		.modem = modem, .op = &ops };
+	modem->dp = &dp;
+	modem->tx_rate = 14400;
+	modem->rx_rate = 9600;
+	modem_update_status(modem, STATUS_EC_LINK);
+	EXPECT(modem->call_report.connected && modem->call_report.rates.transmit_baud == 2400);
+	/* A successful rate exchange need not invoke the full-retrain callback. */
+	struct modem_call_report active;
+	modem->tx_rate = 12000;
+	EXPECT(modem_get_call_report(modem, &active) && active.rates.transmit_bps == 12000);
+	EXPECT(!modem_get_call_report(NULL, &active) && !modem_get_call_report(modem, NULL));
+	EXPECT(modem_data_write(modem, "abc", 3) == 3);
+	char consumed[3];
+	EXPECT(modem->get_chars(modem, consumed, 3) == 3);
+	EXPECT(modem->put_chars(modem, "xy", 2) == 1);
+	int16_t receive[160] = { 0 }, transmit[160];
+	modem_process(modem, receive, transmit, 160);
+	modem_dp_reconnected(modem);
+	modem->tx_rate = 14400;
+	strcpy(report_progress, "online/receiver");
+	modem_note_disconnect(modem, false, "peer ended call");
+	EXPECT(modem->call_report.rates.transmit_bps == 14400);
+	modem->result_code = RESULT_NOCARRIER;
+	EXPECT(modem_stop_now(modem) == 0 && modem_stop_now(modem) == 0);
+	strcpy(report_progress, "deleted");
+	const struct modem_call_report saved = modem->call_report;
+	EXPECT(saved.available && !saved.active && saved.connected && !saved.outgoing);
+	EXPECT(saved.tx_dte_bytes == 3 && saved.rx_dte_bytes == 1 && saved.media_samples == 160);
+	EXPECT(saved.retrains == 1 && strcmp(saved.step, "online/receiver") == 0);
+	EXPECT(!saved.disconnect_local && !other->call_report.available);
+	commands.count = 0;
+	memset(commands.bytes, 0, sizeof(commands.bytes));
+	EXPECT(modem_write(modem, "ATI11\r", 6) == 6);
+	EXPECT(strstr((char *)commands.bytes, "Rates: TX=14400 bit/s 2400.00 baud RX=9600 bit/s 2400.00 baud\r\n"));
+	EXPECT(strstr((char *)commands.bytes, "Media time: 20 ms\r\n"));
+	EXPECT(strstr((char *)commands.bytes, "Disconnect: remote reason=peer ended call\r\n"));
+	EXPECT(strstr((char *)commands.bytes, "End: NO CARRIER phase=online step=online/receiver\r\n"));
+	EXPECT(modem_write(modem, "ATZ\r", 4) == 4);
+	EXPECT(memcmp(&saved, &modem->call_report, sizeof(saved)) == 0);
+	EXPECT(modem_answer(modem) == 0 && modem->call_report.active && !modem->call_report.connected);
+	EXPECT(!modem->call_report.step[0] && !modem->call_report.reason[0] && !modem->call_report.tx_dte_bytes);
+	modem_update_status(modem, STATUS_DP_ERROR);
+	EXPECT(modem_stop_now(modem) == 0);
+	EXPECT(!modem->call_report.connected && modem->call_report.disconnect_local);
+	EXPECT(strcmp(modem->call_report.phase, "training") == 0);
+	EXPECT(strcmp(modem->call_report.reason, "datapump failed") == 0);
+	modem_delete(other);
+	modem_delete(modem);
+	return true;
+}
+
+static bool unanswered_call_report(void)
+{
+	struct capture data = { .limit = 4096 }, commands = { .limit = 4096 };
+	struct modem *modem = create(&data, &commands);
+	EXPECT(modem != NULL && modem_report_incoming_call(modem) == 0);
+	EXPECT(modem->call_report.active && !modem->started);
+	EXPECT(modem_report_remote_call_end(modem) == 0);
+	EXPECT(!modem->call_report.active && !modem->call_report.connected);
+	EXPECT(modem->call_report.result == RESULT_NOCARRIER && !modem->call_report.disconnect_local);
+	EXPECT(strcmp(modem->call_report.reason, "remote SIP call ended") == 0);
+	EXPECT(modem_report_incoming_call(modem) == 0);
+	modem_hangup(modem);
+	EXPECT(!modem->call_report.active && modem->call_report.disconnect_local);
+	EXPECT(strcmp(modem->call_report.reason, "local hangup") == 0);
+	EXPECT(modem_report_incoming_call(modem) == 0);
+	modem_frontend_init(modem);
+	EXPECT(modem_write(modem, "ATZ\r", 4) == 4);
+	EXPECT(!modem->call_report.active && modem->call_report.disconnect_local);
+	EXPECT(strcmp(modem->call_report.reason, "AT reset") == 0);
+	EXPECT(modem_report_incoming_call(modem) == 0);
+	EXPECT(modem_write(modem, "ATH0\r", 5) == 5);
+	EXPECT(!modem->call_report.active && modem->call_report.disconnect_local);
+	EXPECT(strcmp(modem->call_report.reason, "local hangup") == 0);
+	modem_delete(modem);
+	return true;
+}
+
 int main(void)
 {
 	return literal_and_partial() && command_preserves_receive() &&
-		raw_overflow_is_reported() && at_replies_are_separate() && local_lapm_retry_cause() ? 0 : 1;
+		raw_overflow_is_reported() && at_replies_are_separate() && local_lapm_retry_cause() &&
+		retained_call_report() && unanswered_call_report() ? 0 : 1;
 }

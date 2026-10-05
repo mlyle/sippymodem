@@ -48,6 +48,8 @@
 
 #include <ctype.h>
 #include <stdio.h>
+#include <inttypes.h>
+#include <stdarg.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include "modem_debug.h"
@@ -64,6 +66,61 @@
 #define IS_STATE_CONNECTING(state) ((state) > STATE_MODEM_IDLE && (state) < STATE_MODEM_ONLINE)
 
 extern int process_at_command(struct modem *modem, char *command);
+
+static void report_line(struct modem *m, const char *format, ...)
+{
+	char text[384];
+	va_list arguments;
+	va_start(arguments, format);
+	int length = vsnprintf(text, sizeof(text), format, arguments);
+	va_end(arguments);
+	if (length > 0 && (size_t)length < sizeof(text)) {
+		modem_send_to_tty(m, text, length);
+		modem_send_to_tty(m, CRLF_CHARS(m), 2);
+	}
+}
+
+void modem_frontend_call_report(struct modem *m)
+{
+	struct modem_call_report snapshot;
+	if (!modem_get_call_report(m, &snapshot)) {
+		report_line(m, "Last call: none");
+		return;
+	}
+	const struct modem_call_report *report = &snapshot;
+	report_line(m, "Last call: %s %s connected=%s",
+		report->outgoing ? "outgoing" : "incoming",
+		report->active ? "active" : "completed",
+		report->connected ? "yes" : "no");
+	report_line(m, "Modulation: %s", report->modulation[0] ? report->modulation : "unknown");
+	report_line(m, "Rates: TX=%u bit/s %.2f baud RX=%u bit/s %.2f baud",
+		report->rates.transmit_bps, report->rates.transmit_baud,
+		report->rates.receive_bps, report->rates.receive_baud);
+	report_line(m, "Error control: %s Compression: %s",
+		report->connected ? (report->error_control ? "LAPM" : "NONE") : "unknown",
+		report->connected ? (report->compression == MODEM_EC_COMPRESSION_V44 ? "V44" :
+			report->compression == MODEM_EC_COMPRESSION_V42BIS ? "V42bis" : "NONE") : "unknown");
+	report_line(m, "Media time: %" PRIu64 " ms", report->sample_rate ?
+		report->media_samples * 1000 / report->sample_rate : 0);
+	report_line(m, "DTE bytes: TX-consumed=%" PRIu64 " RX-delivered=%" PRIu64,
+		report->tx_dte_bytes, report->rx_dte_bytes);
+	report_line(m, "Completed physical retrains: %u", report->retrains);
+	const char *result = "HANGUP";
+	switch (report->result) {
+	case RESULT_NOCARRIER: result = "NO CARRIER"; break;
+	case RESULT_BUSY: result = "BUSY"; break;
+	case RESULT_NOANSWER: result = "NO ANSWER"; break;
+	case RESULT_NODIALTONE: result = "NO DIALTONE"; break;
+	case RESULT_ERROR: result = "ERROR"; break;
+	default: break;
+	}
+	report_line(m, "End: %s phase=%s step=%s", report->active ? "ACTIVE" : result,
+		report->phase[0] ? report->phase : modem_call_phase(m),
+		report->step[0] ? report->step : modem_protocol_step(m));
+	report_line(m, "Disconnect: %s reason=%s", report->reason[0] ?
+		(report->disconnect_local ? "local" : "remote") : "pending",
+		report->reason[0] ? report->reason : "none");
+}
 
 static void report_result(struct modem *m, unsigned int code)
 {

@@ -284,6 +284,19 @@ struct lapm_state {
 };
 
 
+/* Latest accepted attempt, retained after teardown and reset. Diagnostic text
+ * is copied while its datapump still exists; this owns no signaling pointers. */
+struct modem_call_report {
+	bool available, active, connected, outgoing;
+	bool error_control, disconnect_local;
+	enum modem_ec_compression compression;
+	struct dp_link_rates rates;
+	uint64_t media_samples, tx_dte_bytes, rx_dte_bytes;
+	unsigned sample_rate, retrains;
+	char modulation[24], phase[48], step[96], reason[128];
+	unsigned result;
+};
+
 /* modem struct */
 struct modem {
 	const char *name;
@@ -465,6 +478,7 @@ struct modem {
 	const char *disconnect_phase;
 	unsigned int disconnect_sequence;
 	bool disconnect_local;
+	struct modem_call_report call_report;
 	/* dsp info data */
 	struct dsp_info dsp_info;
 	/* voice info */
@@ -503,6 +517,8 @@ extern const char *modem_call_phase(const struct modem *m);
 extern const char *modem_protocol_step(const struct modem *m);
 /* Retain the earliest cause; reason must be a process-lifetime literal. */
 extern void modem_note_disconnect(struct modem *m, bool local, const char *reason);
+/* Refresh active negotiated facts; completed reports remain immutable. */
+extern bool modem_get_call_report(struct modem *m, struct modem_call_report *report);
 extern int modem_report_incoming_call(struct modem *m);
 extern int modem_report_outgoing_call_connected(struct modem *m);
 extern int modem_report_remote_call_end(struct modem *m);

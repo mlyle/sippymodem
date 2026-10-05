@@ -246,6 +246,17 @@ recognizes 600-bit/s scrambled training in its acquired QAM points, sharing
 the normal decoder while retaining timing and carrier state. Unconfirmed
 higher-rate probes yield to the next answer tone within the same `S7` deadline.
 
+`ATI11` reports the latest accepted call attempt, including failed training.
+It retains the negotiated directional bit and symbol rates, error control,
+compression, completed physical retrains, and the phase, step, and local or
+remote reason that ended the call. The report survives hangup and `ATZ`.
+A new accepted incoming or outgoing attempt replaces it; during that attempt,
+`ATI11` describes the active call. No previous attempt is reported as active.
+Unknown rates are zero. Media time counts processed audio samples and excludes
+SIP waiting without media. TX-consumed counts local DTE bytes taken into framing
+or compression; RX-delivered counts bytes accepted by the local DTE output.
+Those counters do not measure peer acknowledgments or bit errors.
+
 Initialize the pinned pjproject submodule once, then build with `make`:
 
 ```

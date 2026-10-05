@@ -54,6 +54,7 @@
 #include <modem_param.h>
 #include <modem_debug.h>
 #include <v8_datapump.h>
+#include <datapump_link.h>
 
 
 #define XMIT_SIZE 4096
@@ -203,6 +204,50 @@ static void modem_report_result(struct modem *m, unsigned int code)
 		m->frontend_report(m, code);
 }
 
+static void call_report_begin(struct modem *m, bool outgoing)
+{
+	m->disconnect_reason = NULL;
+	m->disconnect_step = NULL;
+	m->disconnect_phase = NULL;
+	m->disconnect_local = false;
+	m->call_report = (struct modem_call_report){
+		.available = true, .active = true, .outgoing = outgoing,
+		.sample_rate = m->srate,
+	};
+}
+
+static void call_report_refresh(struct modem *m)
+{
+	struct modem_call_report *report = &m->call_report;
+	if (!report->active || !report->connected)
+		return;
+	const char *name = modem_active_modulation_name(m);
+	struct dp_link_rates rates = datapump_get_link_rates(m->dp);
+	/* Bit rates are published at link readiness even when a datapump has no
+	 * symbol-rate accessor. Preserve the last known values during retrain. */
+	if (rates.transmit_bps || m->tx_rate)
+		report->rates.transmit_bps = rates.transmit_bps ? rates.transmit_bps : m->tx_rate;
+	if (rates.receive_bps || m->rx_rate)
+		report->rates.receive_bps = rates.receive_bps ? rates.receive_bps : m->rx_rate;
+	if (rates.transmit_baud > 0)
+		report->rates.transmit_baud = rates.transmit_baud;
+	if (rates.receive_baud > 0)
+		report->rates.receive_baud = rates.receive_baud;
+	if (name != NULL)
+		snprintf(report->modulation, sizeof(report->modulation), "%s", name);
+	report->error_control = m->cfg.ec != 0;
+	report->compression = modem_ec_active_compression(m);
+}
+
+bool modem_get_call_report(struct modem *m, struct modem_call_report *report)
+{
+	if (m == NULL || report == NULL || !m->call_report.available)
+		return false;
+	call_report_refresh(m);
+	*report = m->call_report;
+	return true;
+}
+
 /* TDB: state lifecycle description */
 
 #define STATE_DISC 0x100
@@ -255,11 +300,19 @@ void modem_note_disconnect(struct modem *m, bool local, const char *reason)
 {
 	if (m == NULL || reason == NULL || m->disconnect_reason != NULL)
 		return;
+	call_report_refresh(m);
 	m->disconnect_step = modem_protocol_step(m);
 	m->disconnect_phase = modem_call_phase(m);
 	m->disconnect_reason = reason;
 	m->disconnect_local = local;
 	++m->disconnect_sequence;
+	if (m->call_report.active) {
+		struct modem_call_report *report = &m->call_report;
+		report->disconnect_local = local;
+		snprintf(report->reason, sizeof(report->reason), "%s", reason);
+		snprintf(report->phase, sizeof(report->phase), "%s", m->disconnect_phase);
+		snprintf(report->step, sizeof(report->step), "%s", m->disconnect_step);
+	}
 }
 
 bool modem_ec_can_establish(const struct modem *m)
@@ -417,11 +470,13 @@ static void expire_ec_disconnect(struct modem *m)
 static void modem_hup(struct modem *m, unsigned local)
 {
 	MODEM_DBG("modem_hup...\n");
-	if (!IS_STATE_IDLE(m->state) && local)
+	if ((!IS_STATE_IDLE(m->state) || m->call_report.active) && local)
 		modem_note_disconnect(m, true, "local hangup");
 	m->retrain_pending = 0;
 	switch(m->state) {
 	case STATE_MODEM_IDLE:
+		if (m->call_report.active)
+			modem_stop(m);
 		return;
 	case STATE_DP_ESTAB:
 		if (m->result_code == 0)
@@ -535,6 +590,9 @@ void modem_update_status(struct modem *m, unsigned status)
 	case STATUS_EC_LINK:
 		MODEM_DBG("--> EC LINK\n");
 		modem_set_state(m,STATE_MODEM_ONLINE);
+		if (m->call_report.active)
+			m->call_report.connected = true;
+		call_report_refresh(m);
 		modem_report_result(m,RESULT_CONNECT); // fixme
 		if(SPEAKER_CONTROL(m) == 1)
 			m->driver.ioctl(m,MDMCTL_SPEAKERVOL,0);
@@ -689,6 +747,11 @@ void modem_dp_reconnected(struct modem *m)
 {
 	if (m == NULL)
 		return;
+	if (m->call_report.active && m->call_report.connected &&
+	    (IS_STATE_ONLINE(m->state) || m->state == STATE_EC_ESTAB)) {
+		m->call_report.retrains++;
+		call_report_refresh(m);
+	}
 	if ((IS_STATE_ONLINE(m->state) || m->state == STATE_EC_ESTAB) &&
 	    modem_ec_resume_after_retrain(m) != 0) {
 		modem_update_status(m, STATUS_EC_ERROR);
@@ -833,6 +896,8 @@ static void modem_process_frame(struct modem *m, enum g711_law law,
 {
 	if (exact_output != NULL)
 		*exact_output = false;
+	if (count > 0 && m->call_report.active)
+		m->call_report.media_samples += (unsigned int)count;
 	if (count > 0 && !modem_preserve_pcm_input(m) &&
 	    dc_remover_process(&m->receive_dc, in, (size_t)count) !=
 		    DC_REMOVER_OK) {
@@ -988,6 +1053,8 @@ int modem_report_incoming_call(struct modem *m)
 {
 	if (m == NULL || m->state != STATE_MODEM_IDLE)
 		return -1;
+	if (!m->call_report.active)
+		call_report_begin(m, false);
 	if (TOTAL_RINGS_COUNT(m) < UCHAR_MAX)
 		TOTAL_RINGS_COUNT(m)++;
 	if (TOTAL_RINGS_COUNT(m) == 1)
@@ -1042,7 +1109,8 @@ static int modem_get_chars(struct modem *m, char *buf, int n)
                 m->xmit.count -= cnt;
                 m->xmit.tail = (m->xmit.tail+cnt)%m->xmit.size;
         }
-	//MODEM_DBG("modem_get_chars: %d...\n", n);
+	if (m->call_report.active && m->state == STATE_MODEM_ONLINE && !m->command)
+		m->call_report.tx_dte_bytes += (unsigned int)ret;
 	return ret;
 }
 
@@ -1061,6 +1129,8 @@ static int modem_put_data(struct modem *m, const char *buf, int n)
 		m->dte_overflow = true;
 		return 0;
 	}
+	if (m->call_report.active)
+		m->call_report.rx_dte_bytes += (unsigned int)consumed;
 	return consumed;
 }
 
@@ -1269,11 +1339,7 @@ static int modem_start (struct modem *m)
 	m->result_code = 0;
 	m->retrain_pending = 0;
 	modem_setup_config(m);
-	m->disconnect_reason = NULL;
 	m->dte_overflow = false;
-	m->disconnect_step = NULL;
-	m->disconnect_phase = NULL;
-	m->disconnect_local = false;
 	if (dc_remover_init(&m->receive_dc) != DC_REMOVER_OK)
 		return -1;
         modem_set_state(m, STATE_ESTAB);
@@ -1307,6 +1373,7 @@ static int modem_start (struct modem *m)
 
  error:
 	MODEM_ERR("modem start = %d: cannot start device.\n",ret);
+	modem_note_disconnect(m, true, "cannot start modem");
 	m->result_code = RESULT_NOCARRIER;
 	modem_stop(m);
 	return ret;
@@ -1317,6 +1384,13 @@ static int modem_stop (struct modem *m)
 {
         int ret = 0;
         MODEM_DBG("modem_stop..\n");
+	if (m->call_report.active) {
+		call_report_refresh(m);
+		if (m->disconnect_reason == NULL)
+			modem_note_disconnect(m, true, "local stop");
+		m->call_report.result = m->result_code ? m->result_code : RESULT_OK;
+		m->call_report.active = false;
+	}
 
 	m->process = NULL;
 	m->retrain_pending = 0;
@@ -1725,6 +1799,8 @@ int modem_answer(struct modem *m)
         }
 	if(m->started)
 		modem_stop(m);
+	if (!m->call_report.active)
+		call_report_begin(m, false);
 	m->dp_requested = 0;
 	m->automode_requested = 0; /* MODEM_AUTOMODE(m) */
 	m->sample_timer = ANSWER_DELAY(m) ?
@@ -1744,6 +1820,7 @@ static int modem_dial_start(struct modem *m)
 	}
 	if (m->started)
 		modem_stop(m);
+	call_report_begin(m, true);
 	m->caller = 1;
 	op = modem_dp_get_registered_ops(DP_CALLPROG);
 	if (op && op->create)
@@ -1752,6 +1829,9 @@ static int modem_dial_start(struct modem *m)
 				m->frag,op);
 	if (!dp) {
 		MODEM_ERR("cannot create CALLPROG.\n");
+		modem_note_disconnect(m, true, "cannot create call-progress datapump");
+		m->call_report.result = RESULT_ERROR;
+		m->call_report.active = false;
 		return -1;
 	}
         m->dp = dp;
@@ -1787,6 +1867,10 @@ int modem_report_outgoing_call_connected(struct modem *m)
 int modem_hook(struct modem *m, unsigned hook_state)
 {
 	MODEM_DBG("modem hook...\n");
+	if (IS_STATE_IDLE(m->state) && m->call_report.active && hook_state == MODEM_HOOK_ON) {
+		modem_hup(m, 1);
+		return 0;
+	}
 	if (!IS_STATE_IDLE(m->state) && hook_state == MODEM_HOOK_ON) {
 		m->hangup_command_pending = 1;
 		modem_hup(m, 1);
@@ -1899,7 +1983,7 @@ int modem_reset(struct modem *m)
 	m->hangup_command_pending = 0;
 	/* Reset invalidates the data-link configuration immediately. It cannot
 	 * leave an asynchronous disconnect using that configuration behind. */
-	if(m->state != STATE_MODEM_IDLE || m->started) {
+	if(m->state != STATE_MODEM_IDLE || m->started || m->call_report.active) {
 		modem_note_disconnect(m, true, "AT reset");
 		modem_stop(m);
 	}
@@ -2000,8 +2084,12 @@ int modem_report_remote_call_end(struct modem *m)
 {
 	if (m == NULL)
 		return -1;
-	if (!IS_STATE_IDLE(m->state))
+	if (!IS_STATE_IDLE(m->state) || m->call_report.active)
 		modem_note_disconnect(m, false, "remote SIP call ended");
+	if (IS_STATE_IDLE(m->state) && m->call_report.active) {
+		m->call_report.result = RESULT_NOCARRIER;
+		m->call_report.active = false;
+	}
 	TOTAL_RINGS_COUNT(m) = 0;
 	m->ring_count = 0;
 	modem_hup(m, 0);
