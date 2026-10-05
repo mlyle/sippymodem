@@ -402,6 +402,108 @@ static bool test_fixed_handoff_contract(void)
 	return true;
 }
 
+/* Build marker decisions independently of the line receiver. The second
+ * marker may be newer but incomplete or beyond the detector's error bound. */
+static bool put_history_marker(
+	struct v34_analytic_sample *history, size_t first, size_t count,
+	uint8_t rotation, uint8_t damage)
+{
+	const size_t s = V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS;
+
+	for (size_t index = 0; index < s + V34_PHASE3_S_BAR_SYMBOLS &&
+	     first + index < count; ++index) {
+		uint8_t turn = (rotation + (index < s ? 0u : 2u) +
+			       4u - (index & 1u)) & 3u;
+
+		if (index >= s && index < s + damage)
+			turn = (turn + 1u) & 3u;
+		CHECK(v34_training_constellation_fixed_point(
+			      V34_CONSTELLATION_4_POINT, 0, turn,
+			      &history[first + index]) == V34_CONSTELLATION_OK,
+		      "history marker point was invalid");
+	}
+	return true;
+}
+
+static bool test_latest_history_boundary(void)
+{
+	static const size_t counts[] = { 128u, 256u };
+	static const size_t cursors[] = { 0u, 17u, 255u };
+
+	for (unsigned int law = 0; law < 2u; ++law) {
+		for (unsigned int size = 0; size < 2u; ++size) {
+			enum v34_constellation_size constellation = size == 0u ?
+				V34_CONSTELLATION_4_POINT : V34_CONSTELLATION_16_POINT;
+			struct v90_cp_parameters training =
+				parameters(V90_CP_TRAINING, law, 0);
+			struct v90_phase3_return_line_handoff base;
+			struct v90_phase4_cp_line_tx tx;
+
+			CHECK(v90_phase4_line_fixture_init(
+				      law, constellation, &training, &tx, &base),
+			      "history fixture did not reach CPt");
+			for (size_t ci = 0; ci < ARRAY_LENGTH(counts); ++ci) {
+				for (size_t wrap = 0; wrap < ARRAY_LENGTH(cursors); ++wrap) {
+					for (unsigned int mode = 0; mode < 5u; ++mode) {
+						struct v90_phase3_return_line_handoff handoff = base;
+						struct v90_phase3_return_line_handoff saved;
+						struct v34_analytic_sample history[256];
+						struct v90_phase4_cp_line_rx rx;
+						struct v90_phase4_cp_rx expected;
+						size_t count = counts[ci];
+						size_t cursor = count < 256u ? count : cursors[wrap];
+						size_t boundary = mode == 1u ? count : mode == 4u ? count - 4u : 48u;
+						uint8_t rotation = mode == 1u || mode == 4u ? 3u : 0u;
+
+						for (size_t index = 0; index < count; ++index)
+							CHECK(v34_training_constellation_fixed_point(
+								      V34_CONSTELLATION_4_POINT, 0, 2,
+								      &history[index]) == V34_CONSTELLATION_OK,
+							      "history filler point was invalid");
+						CHECK(put_history_marker(history, 0, count, 0, 0),
+						      "older history marker failed");
+						if (mode != 0u)
+							CHECK(put_history_marker(history,
+								      count - (mode == 2u ? 40u : mode == 4u ? 52u : 48u), count,
+								      3, mode == 3u ? 6u : mode == 4u ? 4u : 0u),
+							      "newer history marker failed");
+						handoff.upstream.recent_decision_count = count;
+						handoff.upstream.next_recent_decision = cursor;
+						for (size_t index = 0; index < count; ++index)
+							handoff.upstream.recent_decisions[
+								(cursor + 256u - count + index) % 256u] = history[index];
+						saved = handoff;
+						CHECK(v90_phase4_cp_rx_init(&expected,
+							      handoff.upstream.transmitting_profile.local_role,
+							      constellation) == V90_CP_OK,
+						      "expected CP symbol receiver failed");
+						expected.previous_clockwise_quarter_turns = rotation;
+						for (size_t index = boundary; index < count; ++index) {
+							struct v34_fixed_training_decision hard;
+							struct v90_cp_receive_event event;
+
+							CHECK(v34_training_constellation_fixed_slice(
+								      constellation, history[index], &hard) == V34_CONSTELLATION_OK &&
+							      v90_phase4_cp_rx_receive_decision(&expected,
+								      hard.quarter_point, hard.clockwise_quarter_turns,
+								      &event) == V90_CP_OK &&
+							      event.type == V90_CP_RECEIVE_NO_EVENT,
+							      "expected historical CP replay failed");
+						}
+						CHECK(v90_phase4_cp_line_rx_init(&rx, &handoff, constellation) ==
+							      V90_PHASE4_CP_LINE_RX_OK && rx.boundary_complete &&
+							      memcmp(&rx.symbols, &expected, sizeof(expected)) == 0 &&
+							      memcmp(&handoff, &saved, sizeof(saved)) == 0,
+						      "wrong history boundary law=%u size=%u mode=%u count=%zu cursor=%zu",
+						      law, size, mode, count, cursor);
+					}
+				}
+			}
+		}
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -411,6 +513,7 @@ int main(void)
 		{ "continuous G.711 lines", test_continuous_g711_lines },
 		{ "transactional contracts", test_transactional_contracts },
 		{ "fixed handoff contract", test_fixed_handoff_contract },
+		{ "latest history boundary", test_latest_history_boundary },
 	};
 	unsigned int failures = 0;
 

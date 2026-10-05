@@ -139,8 +139,43 @@ static bool receive_fixed_decision(
 	return true;
 }
 
+/* Borrow the immutable handoff history only during construction. Validate its
+ * owned receiver once; every subsequent lookup still checks scalar bounds. */
+struct decision_history_view {
+	const struct v34_analytic_sample *decisions;
+	size_t count;
+	size_t oldest;
+};
+
+static bool decision_history_view_init(
+	struct decision_history_view *view,
+	const struct v90_upstream_training_rx *upstream)
+{
+	if (!v90_upstream_training_rx_is_valid(upstream))
+		return false;
+	view->decisions = upstream->recent_decisions;
+	view->count = upstream->recent_decision_count;
+	view->oldest = (upstream->next_recent_decision +
+		V90_UPSTREAM_TRAINING_RX_HISTORY_SYMBOLS - view->count) %
+		V90_UPSTREAM_TRAINING_RX_HISTORY_SYMBOLS;
+	return true;
+}
+
+static bool history_decision(
+	const struct decision_history_view *view, size_t index,
+	struct v34_analytic_sample *decision)
+{
+	if (view->count > V90_UPSTREAM_TRAINING_RX_HISTORY_SYMBOLS ||
+	    view->oldest >= V90_UPSTREAM_TRAINING_RX_HISTORY_SYMBOLS ||
+	    index >= view->count)
+		return false;
+	*decision = view->decisions[(view->oldest + index) %
+		V90_UPSTREAM_TRAINING_RX_HISTORY_SYMBOLS];
+	return true;
+}
+
 static bool historical_boundary_at(
-	const struct v90_upstream_training_rx *upstream, size_t first,
+	const struct decision_history_view *history, size_t first,
 	struct v34_phase3_s_detection *detection, size_t *boundary)
 {
 	struct v34_phase3_s_receiver marker;
@@ -149,8 +184,8 @@ static bool historical_boundary_at(
 	size_t end = first + window +
 		V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS;
 
-	if (end > upstream->recent_decision_count)
-		end = upstream->recent_decision_count;
+	if (end > history->count)
+		end = history->count;
 	if (v34_phase3_s_receiver_init_fixed_suffix(
 		    &marker,
 		    V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS) !=
@@ -162,8 +197,8 @@ static bool historical_boundary_at(
 		struct v34_phase3_s_adaptation ignored;
 		enum v34_phase3_s_receiver_result result;
 
-		if (!v90_upstream_training_rx_recent_decision(
-			    upstream, index, &decision) ||
+		if (!history_decision(
+			    history, index, &decision) ||
 		    v34_training_constellation_fixed_slice(
 			    V34_CONSTELLATION_4_POINT, decision, &hard) !=
 			    V34_CONSTELLATION_OK)
@@ -185,16 +220,16 @@ static bool historical_boundary_at(
 
 static bool replay_historical_cp(
 	struct v90_phase4_cp_line_rx *rx,
-	const struct v90_upstream_training_rx *upstream, size_t first)
+	const struct decision_history_view *history, size_t first)
 {
 	for (size_t index = first;
-	     index < upstream->recent_decision_count; ++index) {
+	     index < history->count; ++index) {
 		struct v34_analytic_sample decision;
 		struct v34_fixed_training_decision hard;
 		struct v90_cp_receive_event event = { 0 };
 
-		if (!v90_upstream_training_rx_recent_decision(
-			    upstream, index, &decision) ||
+		if (!history_decision(
+			    history, index, &decision) ||
 		    v34_training_constellation_fixed_slice(
 			    rx->symbols.constellation, decision, &hard) !=
 			    V34_CONSTELLATION_OK ||
@@ -217,31 +252,37 @@ static bool seed_initial_boundary(
 	size_t latest_boundary = 0u;
 	bool found = false;
 	size_t first;
+	struct decision_history_view history;
 
-	if (upstream->recent_decision_count < 64u ||
-	    upstream->recent_decision_count < window)
+	if (!decision_history_view_init(&history, upstream))
+		return false;
+	if (history.count < 64u ||
+	    history.count < window)
 		return false;
 	/* The semantic receiver can finish before or after this fixed decision
 	 * path. Select the latest complete marker still in bounded history; an
 	 * earlier V.90 return must not become the Phase 4 boundary. */
-	for (first = 0u;
-	     first + window <= upstream->recent_decision_count; ++first) {
+	/* Each accepted candidate ends at first + window. Search newest first
+	 * so the first match is exactly the latest boundary, without replaying
+	 * older candidates after it. Candidate detectors own no live state. */
+	for (first = history.count - window + 1u;
+	     first-- != 0u;) {
 		struct v34_phase3_s_detection detection;
 		size_t boundary;
 
 		if (historical_boundary_at(
-			    upstream, first, &detection, &boundary) &&
-		    (!found || boundary > latest_boundary)) {
+			    &history, first, &detection, &boundary)) {
 			latest_detection = detection;
 			latest_boundary = boundary;
 			found = true;
+			break;
 		}
 	}
 	if (found) {
 		rx->symbols.previous_clockwise_quarter_turns =
 			latest_detection.clockwise_quarter_turn_offset;
 		rx->boundary_complete = true;
-		return replay_historical_cp(rx, upstream, latest_boundary);
+		return replay_historical_cp(rx, &history, latest_boundary);
 	}
 	/* The fixed path can still be inside S-bar when the semantic path reports
 	 * it. Prime one suffix near that known boundary and finish it on live
@@ -251,16 +292,16 @@ static bool seed_initial_boundary(
 		    V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS) !=
 	    V34_PHASE3_S_RECEIVER_OK)
 		return false;
-	first = upstream->recent_decision_count - 64u;
+	first = history.count - 64u;
 	for (size_t index = first;
-	     index < upstream->recent_decision_count; ++index) {
+	     index < history.count; ++index) {
 		struct v34_analytic_sample decision;
 		struct v34_fixed_training_decision hard;
 		struct v34_phase3_s_adaptation adaptation;
 		struct v90_cp_receive_event event;
 
-		if (!v90_upstream_training_rx_recent_decision(
-			    upstream, index, &decision) ||
+		if (!history_decision(
+			    &history, index, &decision) ||
 		    !receive_fixed_decision(
 			    rx, decision, &hard, &adaptation, &event) ||
 		    event.type != V90_CP_RECEIVE_NO_EVENT)
