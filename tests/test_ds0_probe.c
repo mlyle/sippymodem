@@ -27,6 +27,73 @@ static bool candidate(enum ds0_rate rate, bool robbed)
 	}
 	CHECK(false, "did not recognize rate%u", rate); return false;
 }
+/* No stuffing is needed in this normative FCS check vector. */
+static const uint8_t frame_wire[] = {
+	0x7e, 0x8c, 0x4c, 0xcc, 0x2c, 0xac, 0x6c,
+	0xec, 0x1c, 0x9c, 0x76, 0x09, 0x7e,
+};
+
+static bool mark_idle(enum ds0_rate rate)
+{
+	unsigned width = rate == DS0_RATE_56000 ? 7 : 8;
+	uint8_t bits[13000]; size_t count = 0;
+	for (size_t i = 0; i < sizeof(frame_wire); ++i)
+		for (int bit = 7; bit >= 0; --bit) bits[count++] = (frame_wire[i] >> bit) & 1u;
+	for (unsigned i = 0; i < 1250 * width; ++i) bits[count++] = 1;
+	/* Mark idle must be followed by an opening flag, then a frame. */
+	for (size_t i = 0; i < sizeof(frame_wire); ++i)
+		for (int bit = 7; bit >= 0; --bit) bits[count++] = (frame_wire[i] >> bit) & 1u;
+	for (unsigned bit = 0; bit < 24; ++bit)
+		bits[count++] = (0x7e >> (7 - bit % 8)) & 1u;
+	struct ds0_probe p; CHECK(ds0_probe_init(&p, true, true) == 0, "mark probe");
+	uint8_t history[DS0_PROBE_HISTORY];
+	bool selected = false;
+	for (size_t at = 0; at + width <= count; at += width) {
+		uint8_t codeword = 0;
+		for (unsigned bit = 0; bit < width; ++bit)
+			codeword |= bits[at + bit] << (7 - bit);
+		if (width == 7 && (at / width) % 6 == 0) codeword |= 1;
+		enum ds0_rate result = ds0_probe_sample(&p, codeword, true);
+		if (at / width < 1199) CHECK(result == DS0_RATE_NONE, "early mark selection");
+		if (result != DS0_RATE_NONE) {
+			CHECK(result == rate && (selected || at / width < 1220), "mark threshold/rate");
+			selected = true;
+		}
+	}
+	CHECK(selected, "valid frame plus mark idle not recognized: %u", rate);
+	size_t n = ds0_probe_copy(&p, history, sizeof(history));
+	struct ds0_config cfg; ds0_config_default(&cfg);
+	cfg.rate_policy = width == 7 ? DS0_RATE_FORCE_56000 : DS0_RATE_FORCE_64000;
+	struct ds0 rx; CHECK(ds0_init(&rx, &cfg) == 0, "mark replay");
+	CHECK(n >= 1200 && ds0_rx_codec(&rx, history, n, NULL, NULL) == 2,
+	      "mark handoff lost proving or following frame");
+	const struct ds0_rx_counters *counts = width == 7 ? &rx.counters.rx56 : &rx.counters.rx64;
+	CHECK(!counts->invalid && !counts->fcs_fail, "legal mark counted as damaged frame");
+	return true;
+}
+
+static bool mark_boundaries(void)
+{
+	for (unsigned ones = 7; ones <= 20; ++ones)
+	for (unsigned data = 0; data <= 1; ++data) {
+		struct hdlc_rx rx; hdlc_rx_reset(&rx);
+		uint8_t storage[16]; unsigned events = 0;
+		for (unsigned bit = 0; bit < 8; ++bit)
+			hdlc_rx_bit(&rx, (0x7e >> (7 - bit)) & 1u, storage, sizeof(storage));
+		if (data) for (unsigned bit = 0; bit < 8; ++bit)
+			events |= hdlc_rx_bit(&rx, 0, storage, sizeof(storage));
+		for (unsigned bit = 0; bit < ones; ++bit)
+			events |= hdlc_rx_bit(&rx, 1, storage, sizeof(storage));
+		for (unsigned bit = 0; bit < 8; ++bit)
+			events |= hdlc_rx_bit(&rx, (0x7e >> (7 - bit)) & 1u, storage, sizeof(storage));
+		bool legal = !data && ones >= 15;
+		CHECK(!!(events & HDLC_RX_MARK_IDLE) == legal &&
+		      !!(events & HDLC_RX_ABORT) == !legal,
+		      "mark/abort classification ones=%u data=%u events=%u", ones, data, events);
+	}
+	return true;
+}
+
 static bool rejection(void)
 {
 	struct ds0_probe p; CHECK(ds0_probe_init(&p,true,true) == 0, "probe");
@@ -109,6 +176,8 @@ static bool invalid_resets_proof(bool bad_fcs)
 		wire[5] ^= 0x10;
 		for (size_t i = 0; i < n; ++i) CHECK(ds0_probe_sample(&p, wire[i], true) == DS0_RATE_NONE, "bad FCS");
 	} else {
+		/* Abort an actual frame body, rather than a legal empty-frame mark. */
+		CHECK(ds0_probe_sample(&p, 0, true) == DS0_RATE_NONE, "data before abort");
 		for (unsigned i = 0; i < 4; ++i) CHECK(ds0_probe_sample(&p, 0xff, true) == DS0_RATE_NONE, "invalid stuffing/abort");
 	}
 	for (unsigned i = 0; i < 1500; ++i) CHECK(ds0_probe_sample(&p, 0x7e, true) == DS0_RATE_NONE, "old FCS cannot qualify a new clean run");
@@ -117,7 +186,8 @@ static bool invalid_resets_proof(bool bad_fcs)
 }
 int main(void)
 {
-	if (!candidate(DS0_RATE_64000, false) || !candidate(DS0_RATE_56000, true) ||
+	if (!mark_boundaries() || !mark_idle(DS0_RATE_56000) || !mark_idle(DS0_RATE_64000) ||
+	    !candidate(DS0_RATE_64000, false) || !candidate(DS0_RATE_56000, true) ||
 	    !rejection() || !history_wrap(DS0_RATE_56000) || !history_wrap(DS0_RATE_64000) ||
 	    !invalid_resets_proof(true) || !invalid_resets_proof(false)) return 1;
 	puts("DS0 probe: 1200 clean codewords, valid FCS, robbed bits, retained maximum frames and rejection passed");

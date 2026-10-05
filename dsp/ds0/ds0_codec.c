@@ -101,13 +101,17 @@ static void ds0_rx_raw_bit(struct ds0 *ds0, struct ds0_hdlc_rx *rx,
 		rx->clean_bits = rx->verified_bits = 0;
 		rx->clean_frame = false;
 	}
+	if (events & HDLC_RX_MARK_IDLE)
+		/* The raw lookahead has not yet been classified as idle. */
+		rx->verified_bits = rx->clean_bits > rx->framing.raw_len ?
+			rx->clean_bits - rx->framing.raw_len : 0;
 	if (!(events & HDLC_RX_FLAG)) return;
 	if (events & HDLC_RX_FRAME) {
 		rx->clean_frame = true;
 		ds0_note_valid_frame(ds0, rx->rate);
 		if (frame_cb) frame_cb(user, rx->frame, rx->framing.flag_octets - 2u, rx->rate);
 		if (delivered) (*delivered)++;
-	} else if (!(events & HDLC_RX_IDLE)) {
+	} else if (!(events & (HDLC_RX_IDLE | HDLC_RX_MARK_IDLE))) {
 		if (events & HDLC_RX_BAD_FCS) counts->fcs_fail++;
 		if (events & HDLC_RX_SHORT) counts->short_frame++;
 		if ((events & HDLC_RX_PARTIAL) &&

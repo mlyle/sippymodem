@@ -823,11 +823,17 @@ static bool test_hdlc_wire_fragments(void)
 	};
 	for (unsigned width = 1; width <= 8; ++width)
 	for (unsigned prefix = 0; prefix < 8; ++prefix)
-	for (unsigned corrupt = 0; corrupt < 2; ++corrupt) {
+	for (unsigned corrupt = 0; corrupt < 2; ++corrupt)
+	for (unsigned mark = 0; mark < 2; ++mark) {
 		struct modem m = { .name = "fragmented HDLC wire" };
 		struct hdlc_fixture fixture = {0};
-		uint8_t bits[256]; size_t count = prefix;
+		uint8_t bits[288]; size_t count = prefix;
 		memset(bits, 1, sizeof(bits));
+		if (mark) {
+			for (unsigned bit = 0; bit < 8; ++bit)
+				bits[count++] = (0x7e >> (7 - bit)) & 1u;
+			for (unsigned bit = 0; bit < 32; ++bit) bits[count++] = 1;
+		}
 		if (corrupt) {
 			for (size_t i = 0; i < sizeof(wire); ++i)
 				for (int bit = 7; bit >= 0; --bit)
@@ -848,7 +854,7 @@ static bool test_hdlc_wire_fragments(void)
 		}
 		CHECK(fixture.receive_completions == 1 && !fixture.receive_overflow &&
 		      fixture.received_length == 9 && !memcmp(fixture.received, "123456789", 9),
-		      "wire recovery width=%u prefix=%u corrupt=%u", width, prefix, corrupt);
+		      "wire recovery width=%u prefix=%u corrupt=%u mark=%u", width, prefix, corrupt, mark);
 	}
 	return true;
 }

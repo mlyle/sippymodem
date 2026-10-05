@@ -24,7 +24,7 @@ struct ds0_counters {
 struct ds0_hdlc_rx {
     enum ds0_rate rate;
     struct hdlc_rx framing;
-    /* Clean run ends only at a verified flag/frame boundary. */
+    /* Verified prefix ends at a flag/frame boundary or legal mark idle. */
     uint32_t clean_bits, verified_bits;
     bool clean_frame;
     uint8_t frame[DS0_MAX_FRAME_OCTETS + 2u];
