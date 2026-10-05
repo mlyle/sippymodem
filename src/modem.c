@@ -1251,6 +1251,8 @@ static bool datapump_requires_v8(enum DP_ID id)
 	return id == DP_V34 || v8_datapump_uses_pcm(id);
 }
 
+static void modem_setup_link_config(struct modem *m, enum DP_ID id);
+
 static void do_modem_change_dp (struct modem *m)
 {
 	const struct dp_operations *op;
@@ -1298,6 +1300,23 @@ static void do_modem_change_dp (struct modem *m)
 			return;
 		}
 
+		if (dp->id == DP_DS0) {
+			modem_setup_link_config(m, DP_DS0);
+			/* V.8 may have started under a stored raw policy. Rebuild
+			 * the per-call LAPM offer and allocate its dictionaries
+			 * before replaying the proving frame into the receiver. */
+			modem_ec_exit(m);
+			if (m->cfg.ec &&
+			    ((m->cfg.comp &&
+			      (m->cfg.comp_types & MODEM_COMP_TYPE_V42BIS) != 0 &&
+			      m->comp.encoder.dict == NULL && modem_comp_init(m)) ||
+			     modem_ec_init(m))) {
+				dp->op->delete(dp);
+				modem_note_disconnect(m, true, "cannot initialize DS0 error control");
+				modem_hup(m, 1);
+				return;
+			}
+		}
 		m->dp = dp;
 		m->process = modem_dp_process;
 #ifdef MODEM_CONFIG_FAX
@@ -1325,11 +1344,11 @@ static int modem_set_hook(struct modem *m, unsigned hook_state)
         return ret;
 }
 
-static void modem_setup_config(struct modem *m)
+static void modem_setup_link_config(struct modem *m, enum DP_ID id)
 {
 	m->cfg.ec = MODEM_EC_ENABLE(m);
 	m->cfg.ec_detector = MODEM_EC_DETECTOR(m);
-	if (MODEM_DP(m) == DP_DS0) {
+	if (id == DP_DS0) {
 		m->cfg.ec = m->sregs[SREG_DS0_FRAMING] != 0;
 		m->cfg.ec_detector = 0;
 	}
@@ -1345,6 +1364,11 @@ static void modem_setup_config(struct modem *m)
 	m->cfg.comp_dict_size  = COMP_MAX_CODEWORDS;
 	m->cfg.comp_max_string = COMP_DEFAULT_STRING;
 
+}
+
+static void modem_setup_config(struct modem *m)
+{
+	modem_setup_link_config(m, MODEM_DP(m));
 	/* setup dsp data */
 	/* An exchanged V.8 selection belongs only to this physical call. */
 	m->dsp_info.v8_lapm = 0;

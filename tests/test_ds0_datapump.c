@@ -154,9 +154,74 @@ static bool at_contract(void)
 	CHECK(process_at_command(m, "ATZ") == 0 && m->sregs[SREG_DS0_FRAMING] == 0 && m->sregs[SREG_DP] == DP_V92, "reset");
 	modem_delete(m); return true;
 }
+
+static bool automatic_startup(bool answerer_auto, bool lapm, unsigned rate, enum g711_law law)
+{
+	struct capture a_rx = {0}, b_rx = {0};
+	struct modem *a = make(&a_rx, lapm, rate), *b = make(&b_rx, lapm, rate);
+	CHECK(a && b, "automatic fixture");
+	struct modem *automatic = answerer_auto ? b : a;
+	struct modem *peer = answerer_auto ? a : b;
+	automatic->sregs[SREG_DP] = DP_V92;
+	automatic->sregs[SREG_AUTOMODE] = 1;
+	/* Stored raw policy must also initialize detected LAPM/compression. */
+	automatic->sregs[SREG_EC] = 0;
+	automatic->min_rate = MODEM_MIN_RATE; automatic->max_rate = MODEM_MAX_RATE;
+	CHECK(modem_answer(b) == 0 && modem_dial(a) == 0 &&
+	      modem_report_outgoing_call_connected(a) == 0, "automatic start");
+	/* 20-ms media crosses four DSP fragments, including V.8 -> DS0. */
+	uint8_t previous[160], wire[160]; int16_t rx[160], tx[160]; bool exact;
+	memset(previous, 0x7e, sizeof(previous));
+	const uint8_t body[] = {0xff,3,0xc0,0x21,1,3,0,4,0x7f,'+','+','+',0x11,0x13};
+	uint8_t payload[64]; size_t n = lapm ? sizeof(body) : async_frame(body,sizeof(body),payload);
+	if (lapm) memcpy(payload,body,n);
+	bool sent = false;
+	for (unsigned tick = 0; tick < 500 &&
+	     (automatic->dp == NULL || automatic->dp->id != DP_DS0 ||
+	      automatic->state != STATE_MODEM_ONLINE || peer->state != STATE_MODEM_ONLINE ||
+	      (!lapm && !(answerer_auto ? b_rx.count : a_rx.count))); ++tick) {
+		for (unsigned i=0;i<160;++i) rx[i]=g711_decode(law,previous[i]);
+		modem_process_g711(a,law,previous,rx,NULL,wire,tx,160,&exact);
+		if (!exact) for(unsigned i=0;i<160;++i) wire[i]=g711_encode(law,tx[i]);
+		for(unsigned i=0;i<160;++i) rx[i]=g711_decode(law,wire[i]);
+		modem_process_g711(b,law,wire,rx,NULL,previous,tx,160,&exact);
+		if (!exact) for(unsigned i=0;i<160;++i) previous[i]=g711_encode(law,tx[i]);
+		CHECK(a->started && b->started, "automatic disconnect A=%s B=%s",a->disconnect_reason,b->disconnect_reason);
+		if (!lapm && !sent && peer->state == STATE_MODEM_ONLINE) {
+			CHECK(modem_data_write(peer,payload,n)==(int)n &&
+			      modem_data_write(peer,payload,n)==(int)n,"two proving PPP frames"); sent=true;
+		}
+	}
+	CHECK(automatic->dp && automatic->dp->id == DP_DS0 && automatic->state==STATE_MODEM_ONLINE &&
+	      peer->state==STATE_MODEM_ONLINE && automatic->tx_rate==rate && automatic->rx_rate==rate,
+	      "autodetect role=%d lapm=%d rate=%u law=%d selected=%d states=%d/%d",
+	      answerer_auto,lapm,rate,law,automatic->dp?automatic->dp->id:0,automatic->state,peer->state);
+	CHECK(automatic->sregs[SREG_DP]==DP_V92 && automatic->sregs[SREG_EC]==0 && automatic->cfg.ec==lapm,
+	      "stored modulation/raw policy retained and actual framing applied");
+	CHECK(modem_ec_active_compression(automatic) ==
+	      (lapm ? MODEM_EC_COMPRESSION_V44 : MODEM_EC_COMPRESSION_NONE),
+	      "detected LAPM initializes the default compression offer");
+	if (!lapm) {
+		struct capture *received = answerer_auto ? &b_rx : &a_rx;
+		CHECK(received->count==2*n && !memcmp(received->bytes,payload,n) &&
+		      !memcmp(received->bytes+n,payload,n), "two proving frames preserved");
+	}
+	CHECK(modem_data_write(automatic,payload,n)==(int)n,"post-handoff send");
+	for(unsigned i=0;i<4000 && (answerer_auto?a_rx.count:b_rx.count)<n;++i)
+		CHECK(tick(a,b,previous,law),"post-handoff data");
+	struct capture *received = answerer_auto ? &a_rx : &b_rx;
+	CHECK(received->count==n && !memcmp(received->bytes,payload,n), "post-handoff exact payload");
+	modem_delete(a); modem_delete(b); return true;
+}
 int main(void)
 {
 	if (!at_contract() || !passive_ppp_server() || !transmit_overflow_disconnect()) return 1;
+	for (unsigned role=0;role<2;++role)
+		for(unsigned lapm=0;lapm<2;++lapm)
+			for(unsigned rate=56000;rate<=64000;rate+=8000)
+				for(unsigned law=0;law<2;++law)
+					/* A LAPM answerer waits for the caller XID: no frame proof. */
+					if((!lapm || role) && !automatic_startup(role,lapm,rate,law)) return 1;
 	for (unsigned lapm = 0; lapm <= 1; ++lapm)
 		for (unsigned rate = 56000; rate <= 64000; rate += 8000)
 			for (unsigned law = 0; law <= 1; ++law)

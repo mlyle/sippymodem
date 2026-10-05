@@ -70,6 +70,8 @@ static void ds0_rx_reset_detector(struct ds0_hdlc_rx *rx,
 static void ds0_rx_abort_frame(struct ds0_hdlc_rx *rx)
 {
 	rx->in_frame = 0;
+	rx->clean_bits = rx->verified_bits = 0;
+	rx->clean_frame = false;
 	ds0_rx_reset_frame(rx);
 }
 
@@ -131,6 +133,7 @@ static void ds0_note_valid_frame(struct ds0 *ds0, enum ds0_rate rate)
 		return;
 
 	ds0->tx_rate = rate;
+	ds0->tx_flag_phase = 0;
 	ds0->counters.auto_switches++;
 }
 
@@ -201,10 +204,13 @@ static void ds0_rx_finish_frame(struct ds0 *ds0,
 {
 	if (!rx->in_frame) {
 		rx->in_frame = 1;
+		rx->clean_bits = rx->verified_bits = 8;
+		rx->clean_frame = false;
 		ds0_rx_reset_frame(rx);
 		return;
 	}
 
+	bool valid = !rx->frame_len && !rx->bit_count;
 	if ((rx->frame_len || rx->bit_count)) {
 		if (rx->bit_count) {
 			if (rx->frame_len >= DS0_MIN_FCS_FRAME_OCTETS)
@@ -217,6 +223,8 @@ static void ds0_rx_finish_frame(struct ds0 *ds0,
 		} else {
 			size_t body_len = rx->frame_len - 2u;
 
+			valid = true;
+			rx->clean_frame = true;
 			ds0_note_valid_frame(ds0, rx->rate);
 			if (frame_cb)
 				frame_cb(user, rx->frame, body_len, rx->rate);
@@ -225,6 +233,11 @@ static void ds0_rx_finish_frame(struct ds0 *ds0,
 		}
 	}
 
+	if (!valid) {
+		rx->clean_bits = 8;
+		rx->clean_frame = false;
+	}
+	rx->verified_bits = rx->clean_bits;
 	rx->in_frame = 1;
 	ds0_rx_reset_frame(rx);
 }
@@ -234,6 +247,8 @@ static void ds0_rx_raw_bit(struct ds0 *ds0,
 			      unsigned bit, ds0_rx_frame_cb frame_cb,
 			      void *user, int *delivered)
 {
+	if (rx->clean_bits && rx->clean_bits < UINT32_MAX)
+		rx->clean_bits++;
 	uint8_t oldest = 0;
 	int have_oldest = 0;
 
@@ -280,6 +295,7 @@ static void ds0_maybe_rate_timeout(struct ds0 *ds0)
 		return;
 
 	ds0->tx_rate = DS0_RATE_56000;
+	ds0->tx_flag_phase = 0;
 	ds0->selected_rate = DS0_RATE_56000;
 	ds0->rate_timeout_done = 1;
 	ds0->counters.rate_timeout_fallbacks++;
@@ -455,13 +471,15 @@ size_t ds0_tx_frame(struct ds0 *ds0, const uint8_t *frame,
 	enum ds0_rate rate;
 	uint16_t fcs;
 	size_t bound;
-	unsigned flag_phase = 0;
+	unsigned flag_phase = ds0 != NULL ? ds0->tx_flag_phase : 0;
 
 	if (!ds0 || (!frame && frame_len) || !codec_octets)
 		return 0;
 
 	rate = ds0->tx_rate;
 	bound = ds0_tx_frame_bound(frame_len, rate);
+	if (bound && ds0->tx_flag_phase)
+		bound++;
 	if (!bound || codec_capacity < bound)
 		return 0;
 
@@ -471,6 +489,11 @@ size_t ds0_tx_frame(struct ds0 *ds0, const uint8_t *frame,
 	wr.rate = rate;
 	wr.fill_bit = ds0->cfg.robbed_bit_fill;
 
+	while (flag_phase) {
+		if (ds0_tx_emit_bit(&wr, ds0_hdlc_flag_bits[flag_phase]) < 0)
+			return 0;
+		flag_phase = (flag_phase + 1u) & DS0_HDLC_FLAG_MASK;
+	}
 	if (ds0_tx_emit_flag(&wr, NULL) < 0)
 		return 0;
 
@@ -494,6 +517,7 @@ size_t ds0_tx_frame(struct ds0 *ds0, const uint8_t *frame,
 		flag_phase = (flag_phase + 1u) & DS0_HDLC_FLAG_MASK;
 	}
 
+	ds0->tx_flag_phase = (uint8_t)flag_phase;
 	return wr.len;
 }
 
@@ -501,7 +525,7 @@ size_t ds0_tx_idle(struct ds0 *ds0, uint8_t *codec_octets,
 		      size_t codec_count)
 {
 	struct ds0_tx_writer wr;
-	unsigned flag_phase = 0;
+	unsigned flag_phase = ds0 != NULL ? ds0->tx_flag_phase : 0;
 
 	if (!ds0 || (!codec_octets && codec_count))
 		return 0;
@@ -519,6 +543,7 @@ size_t ds0_tx_idle(struct ds0 *ds0, uint8_t *codec_octets,
 		flag_phase = (flag_phase + 1u) & DS0_HDLC_FLAG_MASK;
 	}
 
+	ds0->tx_flag_phase = (uint8_t)flag_phase;
 	return wr.len;
 }
 

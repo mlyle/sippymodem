@@ -41,7 +41,7 @@ static size_t ppp_frame(uint8_t *out)
 	}
 	out[n++] = 0x7e; return n;
 }
-static bool pair(bool lapm, unsigned rate, bool alaw)
+static bool pair(bool lapm, unsigned rate, bool alaw, bool auto_a, bool auto_b)
 {
 	struct sippymodem_server_config config; sippymodem_server_config_init(&config);
 	config.max_lines = 2; config.bound_address = config.public_address = "127.0.0.1";
@@ -53,7 +53,11 @@ static bool pair(bool lapm, unsigned rate, bool alaw)
 	/* PPP per-call framing also overrides a stored REQUIRED policy. */
 	cfg.ec_policy = SIPPYMODEM_EC_REQUIRED;
 	cfg.compression_types = 0; cfg.rx_capacity = 256;
-	struct sippymodem_line *a = sippymodem_line_create(server, &cfg), *b = sippymodem_line_create(server, &cfg);
+	if (auto_a) { cfg.modulation = 92; cfg.min_bps = 45; cfg.max_bps = 64000; }
+	struct sippymodem_line *a = sippymodem_line_create(server, &cfg);
+	cfg.modulation = auto_b ? 92 : 64; cfg.min_bps = auto_b ? 45 : rate;
+	cfg.max_bps = auto_b ? 64000 : rate;
+	struct sippymodem_line *b = sippymodem_line_create(server, &cfg);
 	CHECK(a && b && sippymodem_server_start(server) == SIPPYMODEM_OK &&
 	      sippymodem_line_start(a) == SIPPYMODEM_OK && sippymodem_line_start(b) == SIPPYMODEM_OK, "start");
 	CHECK(process(server), "owner initial clock");
@@ -69,20 +73,30 @@ static bool pair(bool lapm, unsigned rate, bool alaw)
 	uint8_t payload[64]; size_t n;
 	if (lapm) { const uint8_t bytes[] = {0, '+','+','+','A','T','\r',0x11,0x13,0xff}; n = sizeof(bytes); memcpy(payload, bytes, n); }
 	else n = ppp_frame(payload);
-	bool sent_b = false; limit = now_ns() + 8000000000ull;
+	struct sippymodem_line *bootstrap = auto_b ? a : b;
+	bool bootstrap_sent = false;
+	uint64_t bootstrap_retry = 0;
+	limit = now_ns() + 8000000000ull;
 	while (now_ns() < limit && (!sa.ready || !sb.ready)) {
 		CHECK(process(server), "training tick");
 		sippymodem_get_status(a, &sa); sippymodem_get_status(b, &sb);
-		if (!lapm && sb.ready && !sent_b) {
+		/* PPP startup retries are needed if the first frame precedes the
+		 * answerer's normal two-second delay before entering V.8. */
+		if (!lapm && now_ns() >= bootstrap_retry && (auto_b ? sa.ready : sb.ready) &&
+		    ((!auto_a && !auto_b && !bootstrap_sent) ||
+		     (auto_b ? sb.phase : sa.phase) == SIPPYMODEM_TRAINING)) {
 			size_t accepted;
-			CHECK(sippymodem_send(b, payload, n, &accepted) == SIPPYMODEM_OK && accepted == n, "PPP bootstrap"); sent_b = true;
+			CHECK(sippymodem_send(bootstrap, payload, n, &accepted) == SIPPYMODEM_OK && accepted == n, "PPP bootstrap");
+			bootstrap_sent = true; bootstrap_retry = now_ns() + 3000000000ull;
 		}
 	}
-	CHECK(sa.ready && sb.ready && sa.modulation == 64 && sb.modulation == 64 && sa.tx_bps == rate && sa.rx_bps == rate, "native DS0 ready lapm=%d rate=%u alaw=%d phases=%d/%d", lapm,rate,alaw,sa.phase,sb.phase);
+	CHECK(sa.ready && sb.ready && sa.modulation == 64 && sb.modulation == 64 && sa.tx_bps == rate && sa.rx_bps == rate, "native DS0 ready lapm=%d rate=%u alaw=%d auto=%d/%d phases=%d/%d modulation=%u/%u", lapm,rate,alaw,auto_a,auto_b,sa.phase,sb.phase,sa.modulation,sb.modulation);
 	CHECK(sa.tx_baud == 8000 && sa.rx_baud == 8000 && sa.error_control == (lapm ? SIPPYMODEM_LAPM : SIPPYMODEM_RAW) && sa.compression == SIPPYMODEM_COMP_NONE, "native status");
 	size_t accepted;
-	CHECK(sippymodem_send(a, payload, n, &accepted) == SIPPYMODEM_OK && accepted == n, "send A");
-	if (lapm) CHECK(sippymodem_send(b, payload, n, &accepted) == SIPPYMODEM_OK && accepted == n, "send B");
+	if (!bootstrap_sent || bootstrap != a)
+		CHECK(sippymodem_send(a, payload, n, &accepted) == SIPPYMODEM_OK && accepted == n, "send A");
+	if (!bootstrap_sent || bootstrap != b)
+		CHECK(sippymodem_send(b, payload, n, &accepted) == SIPPYMODEM_OK && accepted == n, "send B");
 	uint8_t a_rx[64], b_rx[64]; size_t a_n = 0, b_n = 0; limit = now_ns() + 4000000000ull;
 	while (now_ns() < limit && (a_n < n || b_n < n)) {
 		CHECK(process(server), "data tick"); size_t count;
@@ -107,7 +121,12 @@ int main(void)
 	for (unsigned lapm = 0; lapm < 2; ++lapm)
 		for (unsigned rate = 56000; rate <= 64000; rate += 8000)
 			for (unsigned alaw = 0; alaw < 2; ++alaw)
-				if (!pair(lapm, rate, alaw)) return 1;
+				if (!pair(lapm, rate, alaw, false, false)) return 1;
+	for (unsigned role=0;role<2;++role)
+		for (unsigned lapm=0;lapm<2;++lapm)
+			for(unsigned rate=56000;rate<=64000;rate+=8000)
+				for(unsigned alaw=0;alaw<2;++alaw)
+					if((!lapm || role) && !pair(lapm,rate,alaw,!role,role)) return 1;
 	puts("DS0 SIP: PPP/LAPM at56/64, both laws, literal byte queues and command preservation passed");
 	return 0;
 }

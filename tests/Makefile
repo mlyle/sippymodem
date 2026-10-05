@@ -471,7 +471,7 @@ V32_FIXED_RECEIVE_OBJECTS := \
 	$(BUILD_DIR)/b1_path.o \
 	$(BUILD_DIR)/data_path.o
 DS0_DATAPUMP_OBJECTS := \
-	$(BUILD_DIR)/ds0_codec.o $(BUILD_DIR)/ds0_ppp.o $(BUILD_DIR)/ds0_datapump.o
+	$(BUILD_DIR)/ds0_codec.o $(BUILD_DIR)/ds0_ppp.o $(BUILD_DIR)/ds0_datapump.o $(BUILD_DIR)/ds0_probe.o
 BUILTIN_DATAPUMP_OBJECTS := \
 	$(DS0_DATAPUMP_OBJECTS) \
 	$(V34_NATIVE_OBJECTS) \
@@ -3232,7 +3232,7 @@ DS0_SIP_TEST_BINARY := $(BUILD_DIR)/test_ds0_sip
 DS0_PPP_TEST_BINARY := $(BUILD_DIR)/test_ds0_ppp
 DS0_CODEC_TEST_BINARY := $(BUILD_DIR)/test_ds0_codec
 
-TEST_BINARIES := $(DS0_DATAPUMP_TEST_BINARY) $(DS0_PPP_TEST_BINARY) $(DS0_CODEC_TEST_BINARY) $(BUILD_DIR)/test_packet_stats $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
+TEST_BINARIES := $(BUILD_DIR)/test_ds0_probe $(DS0_DATAPUMP_TEST_BINARY) $(DS0_PPP_TEST_BINARY) $(DS0_CODEC_TEST_BINARY) $(BUILD_DIR)/test_packet_stats $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(SIP_URI_TEST_BINARY) $(SDP_TEST_BINARY) $(G711_TEST_BINARY) \
 	$(SAMPLE_MATH_TEST_BINARY) \
 	$(PCM_GAIN_TEST_BINARY) \
@@ -6195,3 +6195,6 @@ $(DS0_DATAPUMP_TEST_BINARY): $(BUILD_DIR)/test_ds0_datapump.o $(NATIVE_CORE_OBJE
 
 $(DS0_SIP_TEST_BINARY): $(BUILD_DIR)/test_ds0_sip.o ../src/libsippymodem.a $(PJSIP_DEPENDENCY)
 	$(CC) $(LDFLAGS) -o $@ $(BUILD_DIR)/test_ds0_sip.o ../src/libsippymodem.a $(PJSIP_LDLIBS) -lm
+
+$(BUILD_DIR)/test_ds0_probe: $(BUILD_DIR)/test_ds0_probe.o $(BUILD_DIR)/ds0_probe.o $(BUILD_DIR)/ds0_codec.o
+	$(CC) $(LDFLAGS) -o $@ $^

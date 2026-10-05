@@ -3,6 +3,7 @@
 #include "v8_datapump.h"
 
 #include "datapump.h"
+#include "ds0/ds0_datapump.h"
 #include "datapump_media.h"
 #include "datapump_timing.h"
 #include "memory_region.h"
@@ -59,6 +60,7 @@ struct v8_datapump {
 	struct single_tone_detector legacy_carrier;
 	struct single_tone_detector answer_tones[LEGACY_TONE_COUNT];
 	struct dp *legacy;
+	struct ds0_probe *ds0_probe;
 	uint32_t elapsed_samples;
 	uint32_t legacy_samples;
 	uint32_t answer_tone_samples;
@@ -85,12 +87,15 @@ static int delete_v8(struct dp *dp);
 static int process_v8(
 	struct dp *dp, void *receive, void *transmit, int count);
 static const char *progress_v8(const struct dp *dp);
+static int process_v8_g711(struct dp *, enum g711_law, const uint8_t *, void *,
+	const bool *, uint8_t *, void *, int, bool *);
 
 static const struct dp_operations v8_operations = {
 	.name = "V.8/legacy negotiation",
 	.create = create_v8,
 	.delete = delete_v8,
 	.process = process_v8,
+	.process_g711 = process_v8_g711,
 	.progress = progress_v8,
 };
 
@@ -314,6 +319,17 @@ static struct dp *create_v8(
 			}
 		}
 	}
+	bool allow56 = modem->min_rate <= 56000 && modem->max_rate >= 56000;
+	bool allow64 = modem->min_rate <= 64000 && modem->max_rate >= 64000;
+	if (MODEM_AUTOMODE(modem) && (allow56 || allow64)) {
+		datapump->ds0_probe = malloc(sizeof(*datapump->ds0_probe));
+		if (datapump->ds0_probe == NULL ||
+		    ds0_probe_init(datapump->ds0_probe, allow56, allow64) != 0) {
+			free(datapump->ds0_probe);
+			free(datapump);
+			return NULL;
+		}
+	}
 	datapump->dp = (struct dp){
 		.id = DP_V8,
 		.modem = modem,
@@ -332,6 +348,7 @@ static int delete_v8(struct dp *dp)
 		return -1;
 	if (datapump->legacy != NULL)
 		datapump->legacy->op->delete(datapump->legacy);
+	free(datapump->ds0_probe);
 	datapump->dp.dp_data = NULL;
 	free(datapump);
 	return 0;
@@ -828,4 +845,50 @@ bool v8_datapump_selected_v34_fallback(const struct dp *dp)
 
 	return datapump != NULL && datapump->handoff_requested &&
 	       datapump->v34_fallback;
+}
+
+static int process_v8_g711(struct dp *dp, enum g711_law law, const uint8_t *codewords,
+	void *receive, const bool *available, uint8_t *output, void *transmit, int count, bool *exact)
+{
+	struct v8_datapump *p = v8_from_dp(dp);
+	if (exact != NULL) *exact = false;
+	if (!datapump_linear_fragment_is_ready(p, receive, transmit, count))
+		return DPSTAT_ERROR;
+	if (!g711_law_is_valid(law) || codewords == NULL || output == NULL || exact == NULL) {
+		memset(transmit, 0, (size_t)count * sizeof(int16_t));
+		return DPSTAT_ERROR;
+	}
+	_Static_assert(MODEM_FRAG <= DS0_PROBE_TAIL_CODEWORDS, "bounded handoff tail");
+	int result;
+	if (p->ds0_probe != NULL && !p->handoff_requested) {
+		for (int i = 0; i < count; ++i)
+			ds0_probe_sample(p->ds0_probe, codewords[i], available == NULL || available[i]);
+		if (p->ds0_probe->selected != DS0_RATE_NONE) {
+			struct dp *next = ds0_datapump_create_handoff(dp->modem, p->caller, p->ds0_probe);
+			if (next == NULL || modem_set_param(dp->modem, MDMPRM_DP_REQUESTED, DP_DS0) != 0) {
+				if (next != NULL) next->op->delete(next);
+				memset(transmit, 0, (size_t)count * sizeof(int16_t));
+				return DPSTAT_ERROR;
+			}
+			if (p->legacy != NULL) p->legacy->op->delete(p->legacy);
+			p->legacy = next;
+			p->legacy_selected = p->handoff_requested = true;
+			dp->modem->dsp_info.startup = MODEM_STARTUP_UNKNOWN;
+			dp->modem->dsp_info.v8_lapm = false;
+			dp->modem->dsp_info.pcm_role = MODEM_PCM_ROLE_NONE;
+			memset(transmit, 0, (size_t)count * sizeof(int16_t));
+			dp->status = DPSTAT_CHANGEDP;
+			result = DPSTAT_CHANGEDP;
+		} else result = process_v8(dp, receive, transmit, count);
+	} else result = process_v8(dp, receive, transmit, count);
+	/* A packet can cross from V.8 into DS0 between DSP fragments. Keep
+	 * every codeword exact so re-encoding the whole packet cannot alter
+	 * a subsequent raw DS0 fragment (notably the PCMU negative zero). */
+	int16_t *samples = transmit;
+	for (int i = 0; i < count; ++i) {
+		output[i] = g711_encode(law, samples[i]);
+		samples[i] = g711_decode(law, output[i]);
+	}
+	*exact = true;
+	return result;
 }

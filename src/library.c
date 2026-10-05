@@ -688,7 +688,8 @@ enum sippymodem_result sippymodem_process(struct sippymodem_server *server,
 			next = now_ns;
 		(void)modem_service_event(line_modem(line));
 		if (line->config.ec_policy == SIPPYMODEM_EC_REQUIRED &&
-		    !(line->config.modulation == DP_DS0 && !line->config.ds0_lapm) && line->active &&
+		    !(line_modem(line)->dp != NULL && line_modem(line)->dp->id == DP_DS0 &&
+		      !line->config.ds0_lapm) && line->active &&
 		    (line_modem(line)->state == STATE_MODEM_ONLINE || line_modem(line)->state == STATE_COMMAND_ONLINE) &&
 		    !line_modem(line)->cfg.ec)
 			end_call(line, SIPPYMODEM_DISCONNECT_MODEM);

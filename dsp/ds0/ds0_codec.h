@@ -24,6 +24,9 @@ struct ds0_hdlc_rx {
     enum ds0_rate rate;
     uint8_t in_frame, raw_len, raw_skip, ones, bit_count, current_byte;
     uint8_t raw_delay[8];
+    /* Clean run ends only at a verified flag/frame boundary. */
+    uint32_t clean_bits, verified_bits;
+    bool clean_frame;
     size_t frame_len;
     uint8_t frame[DS0_MAX_FRAME_OCTETS + 2u];
 };
@@ -34,6 +37,7 @@ struct ds0 {
     enum ds0_rate tx_rate, selected_rate;
     uint64_t samples_since_start;
     bool saw_valid_frame, rate_timeout_done;
+    uint8_t tx_flag_phase;
 };
 typedef void (*ds0_rx_frame_cb)(void *, const uint8_t *, size_t, enum ds0_rate);
 void ds0_config_default(struct ds0_config *cfg);

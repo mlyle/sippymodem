@@ -12,6 +12,8 @@ struct ds0_datapump {
 	bool lapm, connected, closing, gap;
 	size_t input_pos, input_len;
 	uint8_t input[512];
+	uint8_t *startup;
+	size_t startup_count;
 };
 static const struct dp_operations operations;
 
@@ -49,6 +51,7 @@ static int destroy(struct dp *dp)
 {
 	struct ds0_datapump *pump = owner(dp);
 	if (pump == NULL) return -1;
+	free(pump->startup);
 	free(pump); return 0;
 }
 static int hangup(struct dp *dp)
@@ -165,6 +168,14 @@ static int process_g711(struct dp *dp, enum g711_law law, const uint8_t *input,
 	/* Raw DS0 has no training handshake: let either PPP endpoint initiate
 	 * LCP. LAPM still reports online only after its normal XID exchange. */
 	connect(pump);
+	if (pump->startup != NULL) {
+		/* Bounded qualifying prefix, including the proving frame. Never
+		 * reconstruct these codewords from their decoded audio samples. */
+		ds0_rx_codec(codec, pump->startup, pump->startup_count, received, pump);
+		free(pump->startup);
+		pump->startup = NULL;
+		pump->startup_count = 0;
+	}
 	for (int i = 0; i < count && !pump->closing; ++i) {
 		bool missing = available != NULL && !available[i];
 		if (missing) {
@@ -215,4 +226,23 @@ static const struct dp_operations operations = {
 const struct dp_operations *ds0_datapump_operations(enum DP_ID id)
 {
 	return id == DP_DS0 ? &operations : NULL;
+}
+
+struct dp *ds0_datapump_create_handoff(struct modem *m, int caller, const struct ds0_probe *probe)
+{
+	if (m == NULL || probe == NULL || probe->selected == DS0_RATE_NONE ||
+	    (unsigned)probe->selected < m->min_rate || (unsigned)probe->selected > m->max_rate)
+		return NULL;
+	struct dp *dp = create(m, DP_DS0, caller, MODEM_RATE, MODEM_FRAG, &operations);
+	if (dp == NULL) return NULL;
+	struct ds0_datapump *pump = owner(dp);
+	pump->startup = malloc(DS0_PROBE_HISTORY);
+	if (pump->startup == NULL ||
+	    (pump->startup_count = ds0_probe_copy(probe, pump->startup, DS0_PROBE_HISTORY)) == 0) {
+		destroy(dp); return NULL;
+	}
+	pump->ppp.codec.cfg.rate_policy = probe->selected == DS0_RATE_56000 ?
+		DS0_RATE_FORCE_56000 : DS0_RATE_FORCE_64000;
+	pump->ppp.codec.tx_rate = pump->ppp.codec.selected_rate = probe->selected;
+	return dp;
 }

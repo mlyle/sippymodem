@@ -3,8 +3,8 @@
 Datapump 64 carries framed data in an octet-transparent, 8000-codeword/s
 G.711 bearer. It requires a digital path that preserves the codewords;
 analog conversion, transcoding and ordinary voice processing corrupt it.
-It bypasses V.8 and must be selected explicitly. Factory V.92 negotiation
-does not offer raw DS0.
+Explicit selection bypasses V.8. Automatic V.8 startup can also recognize a
+peer already transmitting raw DS0; it does not advertise DS0 in a V.8 menu.
 
 | Command | Selection |
 | --- | --- |
@@ -20,6 +20,22 @@ bits 7 through 1 and ignores the low bit. The 56 variant tolerates robbed
 low bits, including one codeword in six; the 64 variant requires all bits.
 The reported bitrate is the nominal bearer rate. Wall-clock throughput also
 depends on the media clock and framing overhead; see [media clock](media-clock.md).
+
+## Automatic recognition
+
+With automode enabled and the configured rate range admitting 56000 or 64000,
+V.8 observes exact received G.711 codewords in both call roles. A candidate
+requires at least 1200 consecutive whole codewords that parse cleanly as HDLC,
+including a complete frame with a correct FCS. Only verified flag/frame
+boundaries count; speculative data does not. Bad FCS, invalid stuffing, runt
+or oversized frames, and media gaps reset that candidate. Idle flags and
+all-one silence alone cannot select DS0. The 56 candidate ignores robbed low
+bits. The accepted prefix, including the proving frames, survives handoff.
+
+Each line retains its configured PPP or LAPM framing policy. Stored modulation
+settings remain unchanged. Peers that wait without sending a frame require
+explicit `AT+MS=64`; a passive LAPM answerer waiting for caller XID is one such
+case. A fixed protocol selection with automode disabled does not probe DS0.
 
 ## Framing and startup
 
