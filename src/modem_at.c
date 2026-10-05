@@ -842,9 +842,6 @@ static int process_plus_FCLASS(struct modem *m, char *p, int *len)
 #ifdef MODEM_CONFIG_FAX_CLASS1
 			modem_send_to_tty(m, ",1" , 2);
 #endif
-#ifdef MODEM_CONFIG_VOICE
-			modem_send_to_tty(m, ",8" , 2);
-#endif
 			modem_send_to_tty(m, CRLF_CHARS(m), 2);
 		}
 		else if (isdigit(*p)) {
@@ -852,9 +849,6 @@ static int process_plus_FCLASS(struct modem *m, char *p, int *len)
 			if ( val != 0
 #ifdef MODEM_CONFIG_FAX_CLASS1
 			     && val != 1
-#endif
-#ifdef MODEM_CONFIG_VOICE
-			     && val != 8
 #endif
 				)
 				return -1;
@@ -903,234 +897,6 @@ static int process_CID(struct modem *m,  char *p, int *len)
 	return 0;
 }
 #endif
-
-
-/*
- *    Voice commands
- */
-
-#ifdef MODEM_CONFIG_VOICE
-
-extern int modem_voice_set_device(struct modem *m, unsigned device);
-extern int modem_voice_command(struct modem *m, enum VOICE_CMD cmd);
-extern int modem_voice_init(struct modem *m);
-
-
-
-struct voice_param {
-	unsigned *val;
-	unsigned min, max;
-};
-
-static int set_voice_params(struct modem *m, char *p, const char *cmd,
-			    struct voice_param *param, int *len,
-			    const char *prefix, const char *suffix)
-{
-	char strval[32];
-	unsigned val[3];
-	struct voice_param *prm;
-	int i;
-	char *end;
-
-	*len += 1;
-	if( *p == '=' ) {
-		p++;
-		if(*p == '?') {
-			*len += 1;
-			sprintf(strval, "+%s=", cmd);
-			modem_frontend_info_header(m);
-			modem_send_to_tty(m, strval, strlen(strval));
-			if(prefix)
-				modem_send_to_tty(m, prefix, strlen(prefix));
-			prm = param;
-			while(prm->val) {
-				sprintf(strval, "%d-%d", prm->min, prm->max);
-				modem_send_to_tty(m, strval, strlen(strval));
-				prm++;
-				if(prm->val)
-					modem_send_to_tty(m, ",", 1);
-			}
-			if(suffix)
-				modem_send_to_tty(m, suffix, strlen(suffix));
-			modem_send_to_tty(m, CRLF_CHARS(m), 2);
-			return 0;
-		}
-
-		if(prefix) {
-			if(strncmp(p,prefix,strlen(prefix)))
-				return -1;
-			p += strlen(prefix);
-			*len += strlen(prefix);
-		}
-
-		prm = param;
-		for (i = 0; prm->val && i < sizeof(val)/sizeof(val[0]) ; i++ ) {
-			val[i] = strtoul(p,&end,0);
-			if( (prm->min && val[i] < prm->min) ||
-			    (prm->max && val[i] > prm->max) )
-				return -1;
-			*len += end - p;
-			p = end;
-			prm++;
-			if(prm->val) {
-				if(*p != ',')
-					return -1;
-				*len += 1;
-				p++;
-			}
-		}
-
-		if(suffix) {
-			if(strncmp(p,suffix,strlen(suffix)))
-				return -1;
-			*len += strlen(suffix);
-		}
-
-		prm = param;
-		for (i = 0; prm->val && i < sizeof(val)/sizeof(val[0]) ; i++ ) {
-			*prm->val = val[i];
-			prm++;
-		}
-		return 0;
-	}
-	else if ( *p == '?' ) {
-		sprintf(strval, "+%s=", cmd);
-		modem_frontend_info_header(m);
-		modem_send_to_tty(m, strval, strlen(strval));
-		if(prefix)
-			modem_send_to_tty(m, prefix, strlen(prefix));
-		prm = param;
-		while(prm->val) {
-			sprintf(strval, "%d", *prm->val);
-			modem_send_to_tty(m, strval, strlen(strval));
-			prm++;
-			if(prm->val)
-				modem_send_to_tty(m, ",", 1);
-		}
-		if(suffix)
-			modem_send_to_tty(m, suffix, strlen(suffix));
-		modem_send_to_tty(m, CRLF_CHARS(m), 2);
-		return 0;
-	}
-	else
-		return -1;
-}
-
-
-
-static int process_voice_command(struct modem *m, char *p, int *len)
-{
-	AT_DBG("voice cmd: %s\n", p);
-	*len += 2;
-	/* AT+VIP */
-	if(!toupper_strncmp(p,"IP",2)) {
-		return modem_voice_init(m);
-	}
-	/* AT+VNH=0,1 */
-	else if(!toupper_strncmp(p,"NH",2)) {
-		unsigned val = 0;
-		struct voice_param params[] = {
-			{&val,0,1}, {} };
-		return set_voice_params(m,p+2,"VNH",params,len,NULL,NULL);
-	}
-	/* AT+VGT=127 */
-	else if(!toupper_strncmp(p,"GT",2)) {
-		struct voice_param params[] = {
-			{&m->voice_info.tx_gain,0,128}, {} };
-		return set_voice_params(m,p+2,"VGT",params,len,NULL,NULL);
-	}
-	/* AT+VGR=127 */
-	else if(!toupper_strncmp(p,"GR",2)) {
-		struct voice_param params[] = {
-			{&m->voice_info.rx_gain,0,128}, {} };
-		return set_voice_params(m,p+2,"VGR",params,len,NULL,NULL);
-	}
-	/* AT+VIT= */
-	else if(!toupper_strncmp(p,"IT",2)) {
-		struct voice_param params[] = {
-			{&m->voice_info.inactivity_timer,0,255}, {} };
-		return set_voice_params(m,p+2,"VIT",params,len,NULL,NULL);
-	}
-	/* AT+VSD=128,50 */
-	else if(!toupper_strncmp(p,"SD",2)) {
-		struct voice_param params[] = {
-			{&m->voice_info.silence_detect_sensitivity,0,255},
-			{&m->voice_info.silence_detect_period,0,255},
-			{}
-		};
-		return set_voice_params(m,p+2,"VSD",params,len,NULL,NULL);
-	}
-	/* AT+VSM=1,8000 */
-	else if(!toupper_strncmp(p,"SM",2)) {
-		struct voice_param params[] = {
-			{&m->voice_info.comp_method,0,1},
-			{&m->voice_info.sample_rate,8000,8000},
-			{}
-		};
-		return set_voice_params(m,p+2,"VSM",params,len,NULL,NULL);
-	}
-	/* AT+VLS=1 */
-	else if(!toupper_strncmp(p,"LS",2)) {
-		unsigned dev = (m->voice_obj != NULL);
-		struct voice_param params[] = {
-			{&dev,0,1}, {} };
-		int ret = set_voice_params(m,p+2,"VLS",params,len,NULL,NULL);
-		if(ret)
-			return ret;
-		return modem_voice_set_device(m, dev);
-	}
-	/* AT +VRX, +VTX, +VTR */
-	else if(!toupper_strncmp(p,"TX",2))
-		return modem_voice_command(m,VOICE_CMD_STATE_TX);
-	else if(!toupper_strncmp(p,"RX",2))
-		return modem_voice_command(m,VOICE_CMD_STATE_RX);
-	else if(!toupper_strncmp(p,"TR",2))
-		return modem_voice_command(m,VOICE_CMD_STATE_DUPLEX);
-	/* AT+VTS=[933,,150] */
-	else if(!toupper_strncmp(p,"TS",2)) {
-		unsigned orig_len;
-		int ret;
-		p += 2;
-		orig_len = *len;
-		{
-			struct voice_param params[] = {
-				{&m->voice_info.tone1_freq,0,0},
-				{&m->voice_info.tone2_freq,0,0},
-				{&m->voice_info.tone_duration,0,6000},
-				{} };
-			if(*p == '?' || (*p == '=' && *(p+1) == '?' ))
-				return set_voice_params(m,p,"VTS",params,len,NULL,NULL);
-
-			ret = set_voice_params(m,p,"VTS",params,len,"[","]");
-			if(!ret)
-				return modem_voice_command(m, VOICE_CMD_BEEP);
-		}
-		{
-			struct voice_param params[] = {
-				{&m->voice_info.dtmf_symbol,0,0},
-				{&m->voice_info.tone_duration,0,100},
-				{} };
-			*len = orig_len;
-			ret = set_voice_params(m,p,"VTS",params,len,"{","}");
-			if(!ret)
-				return modem_voice_command(m, VOICE_CMD_DTMF);
-		}
-		{
-			struct voice_param params[] = {
-				{&m->voice_info.dtmf_symbol,0,0}, {} };
-			*len = orig_len;
-			ret = set_voice_params(m,p,"VTS",params,len,NULL,NULL);
-			if(!ret)
-				return modem_voice_command(m, VOICE_CMD_DTMF);
-		}
-		return -1;
-	}
-	else
-		return -1;
-}
-#else
-#define process_voice_command(m,p,plen) (-1)
-#endif /* MODEM_CONFIG_VOICE */
 
 
 /*
@@ -1450,18 +1216,6 @@ int process_at_command(struct modem *m, char *cmd)
 				else
 					ret = process_fax_command(m, p, &len);
 				break;
-#ifdef MODEM_CONFIG_VOICE
-				/* AT+IFC=2,2 */ /* TBD: flow control - not voice command */
-			case 'I':
-				// FIXME
-				if(!toupper_strncmp(p,"FC=2,2",6)) {
-					p+= 6;
-					ret = 0;
-				}
-				else
-					ret = -1;
-				break;
-#endif
 			case 'M': /* AT+M */
 				c = toupper (*p++);
 				if (c == 'S')
@@ -1503,17 +1257,7 @@ int process_at_command(struct modem *m, char *cmd)
 					ret = process_plus_V92U(m, p, &len);
 					break;
 				}
-				if(m->mode != MODEM_MODE_VOICE)
-					return -1;
-#ifdef MODEM_CONFIG_CID
-				if(!toupper_strncmp(p,"CID",3)) {
-					p+= 3;
-					ret = process_CID(m, p, &len);
-				}
-				else
-#endif
-					ret = process_voice_command(m, p, &len);
-				break;
+				return -1;
 			default:
 				return -1;
 			}
