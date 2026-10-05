@@ -53,8 +53,7 @@ MODEM_CORE_SOURCES := \
 	modem_ec.c \
 	modem_pack.c \
 	modem_param.c \
-	modem_timer.c \
-	sysdep_common.c
+	modem_timer.c
 APP_SOURCES := \
 	audio_path.c \
 	audio_scheduler.c \
