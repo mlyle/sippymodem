@@ -71,7 +71,7 @@ TIMER_TEST_OBJECTS := $(BUILD_DIR)/test_modem_timer.o \
 	$(BUILD_DIR)/native_modem_timer.o
 CONFIG_TEST_BINARY := $(BUILD_DIR)/test_config
 CONFIG_TEST_OBJECTS := $(BUILD_DIR)/test_config.o \
-	$(BUILD_DIR)/config.o $(BUILD_DIR)/media.o \
+	$(BUILD_DIR)/config.o $(BUILD_DIR)/config_defaults.o $(BUILD_DIR)/media.o \
 	$(BUILD_DIR)/g711.o
 SIP_URI_TEST_BINARY := $(BUILD_DIR)/test_sip_uri
 SIP_URI_TEST_OBJECTS := $(BUILD_DIR)/test_sip_uri.o \
@@ -85,7 +85,7 @@ PJSIP_TEST_OBJECTS := $(BUILD_DIR)/test_sip_signaling.o \
 	$(BUILD_DIR)/sip_signaling_pjsip.o \
 	$(BUILD_DIR)/sdp_pjsip.o $(BUILD_DIR)/sdp.o \
 	$(BUILD_DIR)/sip_uri.o \
-	$(BUILD_DIR)/config.o $(BUILD_DIR)/media.o \
+	$(BUILD_DIR)/config.o $(BUILD_DIR)/config_defaults.o $(BUILD_DIR)/media.o \
 	$(BUILD_DIR)/g711.o
 G711_TEST_BINARY := $(BUILD_DIR)/test_g711
 G711_TEST_OBJECTS := $(BUILD_DIR)/test_g711.o \
@@ -275,7 +275,7 @@ RTP_RUNTIME_TEST_OBJECTS := $(BUILD_DIR)/test_rtp_runtime.o \
 	$(BUILD_DIR)/rtp_endpoint.o \
 	$(BUILD_DIR)/rtp_stream.o \
 	$(BUILD_DIR)/rtp_receiver.o $(BUILD_DIR)/rtp.o \
-	$(BUILD_DIR)/config.o \
+	$(BUILD_DIR)/config.o $(BUILD_DIR)/config_defaults.o \
 	$(BUILD_DIR)/media.o $(BUILD_DIR)/g711.o
 SIP_MEDIA_BRIDGE_TEST_BINARY := \
 	$(BUILD_DIR)/test_sip_media_bridge
@@ -296,7 +296,7 @@ SESSION_TEST_OBJECTS := $(BUILD_DIR)/test_session.o \
 	$(BUILD_DIR)/rtp_endpoint.o \
 	$(BUILD_DIR)/rtp_stream.o \
 	$(BUILD_DIR)/rtp_receiver.o $(BUILD_DIR)/rtp.o \
-	$(BUILD_DIR)/config.o \
+	$(BUILD_DIR)/config.o $(BUILD_DIR)/config_defaults.o \
 	$(BUILD_DIR)/media.o $(BUILD_DIR)/g711.o
 AUDIO_PATH_TEST_BINARY := $(BUILD_DIR)/test_audio_path
 AUDIO_PATH_TEST_OBJECTS := $(BUILD_DIR)/test_audio_path.o \
@@ -324,7 +324,7 @@ HOST_TEST_OBJECTS := $(BUILD_DIR)/test_host.o \
 	$(BUILD_DIR)/audio_path.o \
 	$(BUILD_DIR)/audio_scheduler.o \
 	$(BUILD_DIR)/frame_clock.o \
-	$(BUILD_DIR)/config.o \
+	$(BUILD_DIR)/config.o $(BUILD_DIR)/config_defaults.o \
 	$(BUILD_DIR)/media.o \
 	$(BUILD_DIR)/g711.o
 RECORDING_FILES_TEST_BINARY := \
@@ -353,7 +353,7 @@ SLMODEM_TERMINAL_TEST_OBJECTS := \
 	$(BUILD_DIR)/slmodem_terminal.o
 RUNTIME_TEST_BINARY := $(BUILD_DIR)/test_runtime
 RUNTIME_TEST_OBJECTS := $(BUILD_DIR)/test_runtime.o \
-	$(BUILD_DIR)/runtime.o \
+	$(BUILD_DIR)/line.o $(BUILD_DIR)/runtime.o \
 	$(BUILD_DIR)/slmodem_terminal.o \
 	$(BUILD_DIR)/terminal.o
 TERMINAL_TEST_BINARY := $(BUILD_DIR)/test_terminal
@@ -6147,3 +6147,9 @@ $(BUILD_DIR)/bench_packets: $(BUILD_DIR)/bench_packets.o $(PACKET_BENCH_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 $(BUILD_DIR)/test_packet_stats: $(BUILD_DIR)/test_packet_stats.o
 	$(CC) $(LDFLAGS) -o $@ $^
+
+$(BUILD_DIR)/line.o: ../src/line.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/config_defaults.o: ../src/config_defaults.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<

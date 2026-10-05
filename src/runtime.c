@@ -6,6 +6,7 @@
 #include "modem_frontend.h"
 #include "datapump_link.h"
 #include "host.h"
+#include "line.h"
 #include "slmodem_adapter.h"
 #include "slmodem_calls.h"
 #include "slmodem_driver.h"
@@ -20,14 +21,13 @@
 enum { MODEM_RUNTIME_TERMINAL_READ_MAX = 4096 };
 
 struct modem_runtime {
-	char modem_name[MODEM_RUNTIME_NAME_MAX];
-	struct slmodem_driver driver;
+	struct modem_line *line;
+	/* Borrowed views of the line owner; the compatibility frontend owns PTY. */
 	struct modem *modem;
-	struct slmodem_adapter adapter;
-	struct slmodem_calls calls;
+	struct slmodem_calls *calls;
 	struct slmodem_terminal modem_terminal;
 	struct pty_terminal *terminal;
-	struct recording_files *recording_files;
+	const struct recording_files *recording_files;
 	struct modem_host *host;
 	enum modem_host_result last_host_result;
 	enum sip_session_result last_session_result;
@@ -48,10 +48,7 @@ static void destroy_incomplete_runtime(struct modem_runtime *runtime)
 {
 	if (runtime == NULL)
 		return;
-	modem_host_destroy(runtime->host);
-	recording_files_destroy(runtime->recording_files);
-	if (runtime->modem != NULL)
-		modem_delete(runtime->modem);
+	modem_line_destroy(runtime->line);
 	pty_terminal_destroy(runtime->terminal);
 	free(runtime);
 }
@@ -132,70 +129,36 @@ static void trace_disconnect(struct modem_runtime *runtime)
 struct modem_runtime *modem_runtime_create(
 	const struct app_config *config, const char *modem_name)
 {
-	struct modem_runtime *runtime;
-	const struct media_recorder *recorder = NULL;
-	struct modem_driver *modem_driver;
-	struct sip_signaling_callbacks callbacks;
-	size_t name_length;
-	int saved_error;
-
 	if (config == NULL || modem_name == NULL || modem_name[0] == '\0') {
 		errno = EINVAL;
 		return NULL;
 	}
-	name_length = strlen(modem_name);
-	if (name_length >= MODEM_RUNTIME_NAME_MAX) {
+	if (strlen(modem_name) >= MODEM_RUNTIME_NAME_MAX) {
 		errno = ENAMETOOLONG;
 		return NULL;
 	}
-	errno = 0;
-	runtime = calloc(1, sizeof(*runtime));
+	struct modem_runtime *runtime = calloc(1, sizeof(*runtime));
 	if (runtime == NULL)
 		return NULL;
-	memcpy(runtime->modem_name, modem_name, name_length + 1);
 	runtime->trace_enabled = config->sip.trace_enabled;
-	if (!slmodem_driver_init(&runtime->driver))
+	runtime->line = modem_line_create(config, modem_name,
+		config->sip.trace_enabled ? trace_signaling : NULL);
+	if (runtime->line == NULL)
 		goto fail;
-	modem_driver = slmodem_driver_interface(&runtime->driver);
-	if (modem_driver == NULL)
-		goto fail;
-	runtime->modem = modem_create(modem_driver, runtime->modem_name);
-	if (runtime->modem == NULL ||
-	    !slmodem_adapter_init(
-		    &runtime->adapter, runtime->modem) ||
-	    !slmodem_calls_init(&runtime->calls, runtime->modem) ||
-	    !slmodem_terminal_init(
-		    &runtime->modem_terminal, runtime->modem))
+	runtime->modem = modem_line_modem(runtime->line);
+	runtime->host = modem_line_host(runtime->line);
+	runtime->calls = modem_line_calls(runtime->line);
+	runtime->recording_files = modem_line_recording(runtime->line);
+	if (!slmodem_terminal_init(&runtime->modem_terminal, runtime->modem))
 		goto fail;
 	modem_frontend_init(runtime->modem);
-	runtime->modem->pcm_codec_grid = config->media.pcm_codec_grid;
 	runtime->terminal = pty_terminal_create();
 	if (runtime->terminal == NULL)
 		goto fail;
-	if (config->recording.prefix[0] != '\0') {
-		runtime->recording_files = recording_files_create(
-			config->recording.prefix);
-		if (runtime->recording_files == NULL)
-			goto fail;
-		recorder = recording_files_recorder(
-			runtime->recording_files);
-		if (recorder == NULL)
-			goto fail;
-	}
-	callbacks = *slmodem_calls_callbacks(&runtime->calls);
-	if (config->sip.trace_enabled)
-		callbacks.trace = trace_signaling;
-	runtime->host = modem_host_create(
-		config, recorder, &callbacks,
-		slmodem_adapter_core(&runtime->adapter));
-	if (runtime->host == NULL ||
-	    !slmodem_driver_attach(
-		    &runtime->driver, runtime->modem, runtime->host))
-		goto fail;
 	return runtime;
 
-fail:
-	saved_error = errno != 0 ? errno : EINVAL;
+fail:;
+	int saved_error = errno != 0 ? errno : EINVAL;
 	destroy_incomplete_runtime(runtime);
 	errno = saved_error;
 	return NULL;
@@ -303,7 +266,7 @@ static enum modem_runtime_result drain_call_transitions(
 	for (unsigned int count = 0;
 	     count < MODEM_RUNTIME_MAX_CALL_TRANSITIONS; ++count) {
 		runtime->last_calls_result =
-			slmodem_calls_drain(&runtime->calls);
+			slmodem_calls_drain(runtime->calls);
 		if (runtime->last_calls_result ==
 		    SLMODEM_CALLS_IDLE)
 			return MODEM_RUNTIME_OK;
@@ -442,7 +405,7 @@ static void trace_call(struct modem_runtime *runtime, uint64_t now_ns)
 			levels = modem_host_take_audio_levels(runtime->host);
 			length = snprintf(text, sizeof(text),
 				"CALL sip=%s phase=%s datapump=%s step=%s TX=%s RX=%s TX-peak=%u/32768 RX-peak=%u/32768\n",
-				sip_call_state_name(runtime->calls.state), phase,
+				sip_call_state_name(runtime->calls->state), phase,
 				dp != NULL && dp->op != NULL && dp->op->name != NULL ? dp->op->name : "none",
 				step, transmit, receive, levels.transmit_peak, levels.receive_peak);
 		} else {
@@ -531,11 +494,8 @@ void modem_runtime_destroy(struct modem_runtime *runtime)
 	(void)modem_runtime_close(runtime);
 	if (runtime->modem->started)
 		(void)modem_stop_now(runtime->modem);
-	(void)slmodem_driver_detach(&runtime->driver);
-	modem_host_destroy(runtime->host);
-	recording_files_destroy(runtime->recording_files);
 	(void)slmodem_terminal_unbind(&runtime->modem_terminal);
-	modem_delete(runtime->modem);
+	modem_line_destroy(runtime->line);
 	pty_terminal_destroy(runtime->terminal);
 	free(runtime);
 }
