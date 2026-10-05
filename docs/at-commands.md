@@ -56,9 +56,10 @@ ATDT<destination>
 - Extended commands below support `?` for the current value and `=?` for
   accepted values unless a row says otherwise. Query replies are followed by
   the normal result code. `Q1` suppresses result codes, not explicit query text.
-- Most numeric extended fields, S-register values, and ATI selectors accept
-  C-style decimal, `0x` hexadecimal, or leading-zero octal notation.
-  `+V34B` uses decimal; `+GCI` uses hexadecimal. The examples use decimal.
+- Numeric extended fields, S-register values, and ATI selectors use decimal;
+  leading zeroes do not change the base. Most also accept explicit `0x`
+  hexadecimal inputs as an extension. `+V34B` uses decimal; `+GCI` uses
+  hexadecimal. The examples use decimal.
 - The terminal command buffer holds at most 63 characters before the line
   terminator. Overflow produces ERROR. Commands are not transactional: an
   earlier command can take effect before a later command produces ERROR.

@@ -138,13 +138,27 @@ static int set_sreg(struct modem *m, int num, char c, int low, int hi, int *len)
 static int parse_unsigned(char **p, int *len, unsigned long *value, int base)
 {
 	char *end;
+	const char *digits = *p;
 	unsigned long parsed;
+	int positive;
 
+	while (isspace((unsigned char)*digits)) digits++;
+	positive = *digits == '+';
+	if (positive) digits++;
+	if (*digits == '-') return -1;
+	/* V.250 numbers are decimal. Retain explicit hexadecimal extensions. */
+	if (base == 0)
+		base = digits[0] == '0' && toupper((unsigned char)digits[1]) == 'X' ? 16 : 10;
+	if (base == 16 && digits[0] == '0' &&
+	    toupper((unsigned char)digits[1]) == 'X' &&
+	    !isxdigit((unsigned char)digits[2]))
+		return -1;
 	errno = 0;
 	parsed = strtoul(*p, &end, base);
 	if (end == *p)
-		return 0;
-	if (errno == ERANGE || memchr(*p, '-', (size_t)(end - *p)) != NULL)
+		/* With an omitted value, +<letter> begins the next command. */
+		return positive && !isalpha((unsigned char)*digits) ? -1 : 0;
+	if (errno == ERANGE)
 		return -1;
 	*value = parsed;
 	*len += (int)(end - *p);
@@ -346,12 +360,13 @@ static int process_H(struct modem *m, char *p, int *len)
 static int process_I(struct modem *m, char *p, int *len)
 {
 	const char *s;
-	int c,i;
-	char *end;
-	AT_DBG("AT I command...\n");
-	c = strtoul (p,&end,0);
-	*len = end - p;
-	switch(c) {
+	unsigned long selector = 0;
+	int i;
+
+	*len = 0;
+	if (parse_unsigned(&p, len, &selector, 0) < 0)
+		return -1;
+	switch (selector) {
 	case 1:
 	case 2:
 		modem_frontend_info_header(m);

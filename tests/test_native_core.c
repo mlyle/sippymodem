@@ -2229,7 +2229,7 @@ static bool test_sreg_numeric_validation(void)
 		CHECK(modem_set_sreg(m, rejected[i].number, rejected[i].value) < 0 &&
 		      !memcmp(expected, m->sregs, sizeof(expected)),
 		      "direct register bounds failed at %zu", i);
-	CHECK(process_at_command(m, "ATS0=255S1=0xffS2=0377S255=255") == 0 &&
+	CHECK(process_at_command(m, "ATS0=255S1=0xffS2=0255S255=255") == 0 &&
 	      m->sregs[0] == 255 && m->sregs[1] == 255 &&
 	      m->sregs[2] == 255 && m->sregs[255] == 255,
 	      "byte bounds or numeric bases changed");
@@ -2273,6 +2273,79 @@ static bool test_country_numeric_validation(void)
 		CHECK(process_at_command(m, command) == 0 && m->homolog == h,
 		      "supported country profile rejected: %s", h->name);
 	}
+	modem_delete(m);
+	return true;
+}
+
+static bool test_at_decimal_numbers(void)
+{
+	struct modem_driver driver = {
+		.name = "decimal numbers", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	struct modem *m = create_compat_modem(&driver, driver.name);
+	CHECK(m != NULL, "decimal allocation failed");
+	struct factory_reply reply = {0};
+	m->control_output = factory_reply_output;
+	m->control_output_context = &reply;
+	CHECK(process_at_command(m, "ATE0Q1V0") == 0, "decimal reply fixture failed");
+	reply.count = 0;
+	CHECK(process_at_command(m, "ATI+GMI") == 0 && reply.count > 0,
+	      "omitted ATI selector blocked a following extended command");
+	reply.count = 0;
+	CHECK(process_at_command(m, "ATS0=99S0=+FCLASS?") == 0 && m->sregs[0] == 0 &&
+	      reply.count == 3 && !memcmp(reply.bytes, "0\r\n", 3),
+	      "omitted register value blocked a following extended command");
+	/* Write the actual query text back, including its leading zeroes. */
+	for (unsigned value = 0; value <= 255; ++value) {
+		char command[24];
+		snprintf(command, sizeof(command), "ATS0=%u", value);
+		CHECK(process_at_command(m, command) == 0, "decimal setup failed at %u", value);
+		reply.count = 0;
+		CHECK(process_at_command(m, "ATS0?") == 0 && reply.count == 5,
+		      "decimal query failed at %u", value);
+		memcpy(command, "ATS0=", 5);
+		memcpy(command + 5, reply.bytes, 3);
+		command[8] = 0;
+		CHECK(process_at_command(m, command) == 0 && m->sregs[0] == value,
+		      "query/write roundtrip changed %u via %s", value, command);
+	}
+	CHECK(process_at_command(m, "ATS0255=008S0x2=0Xff") == 0 &&
+	      m->sregs[255] == 8 && m->sregs[2] == 255,
+	      "decimal register index or explicit hexadecimal changed");
+	const char *malformed[] = {
+		"ATS0=-", "ATS0=+", "ATS0=++1", "ATS0=0x", "ATS0=+0X",
+	};
+	for (size_t i = 0; i < ARRAY_LENGTH(malformed); ++i)
+		CHECK(process_at_command(m, (char *)malformed[i]) < 0 && m->sregs[0] == 255,
+		      "malformed value changed the register: %s", malformed[i]);
+	CHECK(process_at_command(m, "ATS0=+008S2=+0xFF") == 0 &&
+	      m->sregs[0] == 8 && m->sregs[2] == 255,
+	      "explicit positive decimal or hexadecimal extension changed");
+	CHECK(process_at_command(m, "AT+MS=092,01,000300,056000") == 0 &&
+	      MODEM_DP(m) == DP_V92 && MODEM_AUTOMODE(m) == 1 &&
+	      m->min_rate == 300 && m->max_rate == 56000 &&
+	      process_at_command(m, "AT+V90U=009600,031200,003429+DS=03,03") == 0 &&
+	      m->v90_upstream_min_rate == 9600 && m->v90_upstream_max_rate == 31200 &&
+	      m->v90_upstream_max_baud == 3429 && m->sregs[SREG_COMP] == 3 &&
+	      m->sregs[SREG_COMP_TYPES] == MODEM_COMP_TYPE_ALL,
+	      "leading zeroes changed extended numeric values");
+	const char *invalid[] = {
+		"ATI4294967296", "ATI18446744073709551616", "ATI-0", "ATI-1", "ATI-",
+	};
+	for (size_t i = 0; i < ARRAY_LENGTH(invalid); ++i) {
+		reply.count = 0;
+		CHECK(process_at_command(m, (char *)invalid[i]) < 0 && reply.count == 0,
+		      "invalid ATI selector emitted information: %s", invalid[i]);
+	}
+	reply.count = 0;
+	CHECK(process_at_command(m, "ATI0011") == 0 && reply.count == 17 &&
+	      !memcmp(reply.bytes, "Last call: none\r\n", 17), "ATI decimal selector changed");
+	CHECK(process_at_command(m, "AT&F0X1") == 0 && m->sregs[SREG_X_CODE] == 1,
+	      "decimal profile zero blocked the following X command");
+	CHECK(process_at_command(m, "AT+V34B=3429+V34B=0X1") == 0 &&
+	      m->v34_symbol_rate == 0 && m->sregs[SREG_X_CODE] == 1,
+	      "decimal baud zero blocked the following X command");
 	modem_delete(m);
 	return true;
 }
@@ -9463,6 +9536,7 @@ int main(void)
 		{ "factory defaults", test_factory_defaults },
 		{ "S-register numeric validation", test_sreg_numeric_validation },
 		{ "country numeric validation", test_country_numeric_validation },
+		{ "AT decimal numbers", test_at_decimal_numbers },
 		{ "automatic startup deadline", test_automatic_startup_deadline },
 		{ "V.8 fallback limits", test_v8_fallback_limits },
 		{ "V.8 legacy V.32 selection", test_v8_legacy_v32 },
