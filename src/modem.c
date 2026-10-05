@@ -164,6 +164,8 @@ static int modem_skip_ec_detection(const struct modem *m)
 	 * V.8 LAPM selection, including conventional-upstream operation.
 	 * Keep detection for other modes: V.8 permits legacy peers that still
 	 * require it despite advertising LAPM in their menu. */
+	if (m->dp != NULL && m->dp->id == DP_DS0)
+		return 1;
 	return m->dp != NULL && m->dp->id == DP_V92 &&
 	       m->dsp_info.v8_lapm;
 }
@@ -591,7 +593,7 @@ void modem_update_status(struct modem *m, unsigned status)
 		if ((m->cfg.ec && m->cfg.ec_detector &&
 		     !modem_skip_ec_detection(m)) ||
 		    (!m->caller && !m->cfg.ec &&
-		     modem_link_supports_v42(m))) {
+		     !modem_skip_ec_detection(m) && modem_link_supports_v42(m))) {
 			modem_detector_start(m);
 			m->get_bits = modem_detector_get_bits;
 			m->put_bits = modem_detector_put_bits;
@@ -1327,12 +1329,16 @@ static void modem_setup_config(struct modem *m)
 {
 	m->cfg.ec = MODEM_EC_ENABLE(m);
 	m->cfg.ec_detector = MODEM_EC_DETECTOR(m);
+	if (MODEM_DP(m) == DP_DS0) {
+		m->cfg.ec = m->sregs[SREG_DS0_FRAMING] != 0;
+		m->cfg.ec_detector = 0;
+	}
 	m->cfg.ec_tx_win_size  = LAPM_MAX_WIN_SIZE;
 	m->cfg.ec_rx_win_size  = LAPM_MAX_WIN_SIZE;
 	m->cfg.ec_tx_info_size = LAPM_MAX_INFO_SIZE;
 	m->cfg.ec_rx_info_size = LAPM_MAX_INFO_SIZE;
 	m->cfg.comp_types = MODEM_COMP_TYPES(m);
-	if(m->cfg.ec && MODEM_COMP_ENABLE(m) && m->cfg.comp_types != 0)
+	if(m->cfg.ec && m->sregs[SREG_COMP] && m->cfg.comp_types != 0)
 		m->cfg.comp = 0x3; /* bidirectional compression */
 	else
 		m->cfg.comp = 0;
@@ -1968,6 +1974,8 @@ int modem_get_sreg(struct modem *m, unsigned int num)
 
 int modem_set_sreg(struct modem *m, unsigned int num, int val)
 {
+	if (num == SREG_DS0_FRAMING && (val < 0 || val > 1))
+		return -1;
 	if (num >= sizeof(m->sregs))
 		return -1;
 	m->sregs[num] = val;
@@ -2082,6 +2090,7 @@ static int sregs_init(unsigned char sregs[])
 	sregs[SREG_COMP_TYPES] = MODEM_COMP_TYPE_DEFAULT;
 	sregs[SREG_V90_DIGITAL_INDICATION] = MODEM_PCM_POLICY_AUTO;
 	sregs[SREG_V91_ENABLED] = 1;
+	sregs[SREG_DS0_FRAMING] = 0;
 	sregs[SREG_V92_QUICK_CONNECT] = 0;
 	sregs[SREG_V92_PCM_UPSTREAM] = 0;
 	sregs[SREG_V92_PCM_UPSTREAM_MAX_DRN] = 0;

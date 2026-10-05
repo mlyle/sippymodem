@@ -36,6 +36,7 @@
 
 #include <modem_dp.h>
 #include "datapumps.h"
+#include "ds0/ds0_datapump.h"
 #include "baudot_datapump.h"
 #include "fsk300_datapump.h"
 #include "v8_datapump.h"
@@ -70,6 +71,7 @@ static const struct dp_driver drivers[] = {
 	{ DP_B103, "Bell103", true, fsk300_datapump_operations },
 	{ DP_B212, "Bell212A", true, v22_datapump_operations },
 	{ DP_FAX, "VFax", false, NULL },
+	{ DP_DS0, "DS0", true, ds0_datapump_operations },
 	{ DP_K56, "K56Flex", false, NULL },
 	{ DP_V8BIS, "V8bis", false, NULL },
 	{ DP_V90, "V90", true, v90_datapump_operations },

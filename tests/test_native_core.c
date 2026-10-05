@@ -8722,7 +8722,7 @@ static bool test_at_ms_uses_builtin_catalog(void)
 	CHECK(count > 0, "AT+MS returned no modulation choices");
 	response[count] = '\0';
 	CHECK(strstr(response,
-	      "(21,22,23,122,32,132,34,45,103,212,90,91,92),(0,1),") != NULL,
+	      "(21,22,23,122,32,132,34,45,103,212,64,90,91,92),(0,1),") != NULL,
 	      "AT+MS choices changed: %s", response);
 	char unsupported[] = "AT+MS=56";
 	unsigned selected = MODEM_DP(modem);

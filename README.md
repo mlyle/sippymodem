@@ -12,6 +12,10 @@ ownership, independent modem lines, bounded queues, and a native PPP fd adapter.
 See [native integration](docs/library-api.md) for its lifecycle and scheduling
 contract. The existing `slmodemd` terminal frontend remains available.
 
+Explicit `AT+MS=64` selects raw digital DS0 at 56 or 64 kbit/s, with PPP
+conversion or shared LAPM/HDLC through `AT+DS0`. See [raw digital calls](docs/ds0.md)
+for bearer requirements, rate detection and framing.
+
 The active implementation is split between the application under `src/` and
 the modem signal processing and datapumps under `dsp/`. The top-level `make`
 builds only that implementation and no longer builds or installs Linux kernel

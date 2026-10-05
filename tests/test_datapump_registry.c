@@ -10,7 +10,7 @@ static bool test_selectable_modulations(void)
 {
 	static const enum DP_ID expected[] = {
 		DP_V21, DP_V22, DP_V23, DP_V22BIS, DP_V32, DP_V32BIS,
-		DP_V34, DP_BAUDOT, DP_B103, DP_B212, DP_V90, DP_V91, DP_V92,
+		DP_V34, DP_BAUDOT, DP_B103, DP_B212, DP_DS0, DP_V90, DP_V91, DP_V92,
 	};
 
 	for (size_t i = 0; i < ARRAY_LENGTH(expected); i++) {

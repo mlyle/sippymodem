@@ -176,6 +176,7 @@ enum S_REGISTER {
 	SREG_V92_PCM_UPSTREAM             = 225,
 	SREG_V92_PCM_UPSTREAM_MAX_DRN     = 226,
 	SREG_V91_ENABLED                 = 227,
+	SREG_DS0_FRAMING                 = 228,
 };
 
 
@@ -199,6 +200,7 @@ enum DP_ID {
         DP_B212 = 212,
         DP_FAX = 100,
         DP_K56 = 56,
+        DP_DS0 = 64,
         DP_K56_OR_V90 = 65,
         DP_V8BIS = 108,
         DP_V90 = 90,

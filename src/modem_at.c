@@ -188,6 +188,32 @@ static int process_plus_DSC(struct modem *m, char *p, int *len)
 	}
 }
 
+static int process_plus_DS0(struct modem *m, char *p, int *len)
+{
+	const char *reply;
+	unsigned long value;
+	if (*p == '?') {
+		*len = 1;
+		reply = modem_get_sreg(m, SREG_DS0_FRAMING) ? "1" : "0";
+	} else if (*p == '=') {
+		p++;
+		*len = 1;
+		if (*p == '?') {
+			(*len)++;
+			reply = "(0,1)";
+		} else {
+			if (parse_unsigned(&p, len, &value, 0) != 1 || value > 1 || *p == ',')
+				return -1;
+			return modem_set_sreg(m, SREG_DS0_FRAMING, (int)value);
+		}
+	} else {
+		return -1;
+	}
+	modem_send_to_tty(m, reply, (int)strlen(reply));
+	modem_send_to_tty(m, CRLF_CHARS(m), 2);
+	return 0;
+}
+
 static int process_plus_DS(struct modem *m, char *p, int *len)
 {
 	char response[24];
@@ -560,6 +586,10 @@ static int process_plus_MS(struct modem *m, char *p, int *len)
 		    values[3] > MODEM_MAX_RATE ||
 		    (values[0] != MODEM_DP(m) &&
 		     !modem_dp_is_selectable((enum DP_ID)values[0])))
+			return -1;
+		if (values[0] == DP_DS0 &&
+		    !((values[2] <= 56000 && values[3] >= 56000) ||
+		      (values[2] <= 64000 && values[3] >= 64000)))
 			return -1;
 		MODEM_DP(m) = (unsigned)values[0];
 		MODEM_AUTOMODE(m) = (unsigned)values[1];
@@ -1381,8 +1411,11 @@ int process_at_command(struct modem *m, char *cmd)
 			case 'D': /* AT+D */
 				c = toupper(*p++);
 				switch (c) {
-				case 'S': /* AT+DS, AT+DSC */
-					if (toupper(*p) == 'C') {
+				case 'S': /* AT+DS, AT+DSC, AT+DS0 */
+					if (*p == '0') {
+						p++;
+						ret = process_plus_DS0(m, p, &len);
+					} else if (toupper(*p) == 'C') {
 						p++;
 						ret = process_plus_DSC(m, p, &len);
 					} else {

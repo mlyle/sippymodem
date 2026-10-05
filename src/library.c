@@ -378,6 +378,13 @@ struct sippymodem_line *sippymodem_line_create(struct sippymodem_server *server,
 		errno = EINVAL;
 		return NULL;
 	}
+	unsigned int minimum = config->min_bps ? config->min_bps : MODEM_MIN_RATE;
+	unsigned int maximum = config->max_bps ? config->max_bps : MODEM_MAX_RATE;
+	if (config->modulation == DP_DS0 &&
+	    !((minimum <= 56000 && maximum >= 56000) || (minimum <= 64000 && maximum >= 64000))) {
+		errno = EINVAL;
+		return NULL;
+	}
 	unsigned int id = 0;
 	while (id < server->max_lines && server->lines[id] != NULL)
 		id++;
@@ -425,6 +432,7 @@ struct sippymodem_line *sippymodem_line_create(struct sippymodem_server *server,
 	modem->sregs[SREG_V90_DIGITAL_INDICATION] = (unsigned char)config->digital_role;
 	modem->sregs[SREG_V92_PCM_UPSTREAM] = config->pcm_upstream;
 	modem->sregs[SREG_V91_ENABLED] = config->v91_enabled;
+	modem->sregs[SREG_DS0_FRAMING] = config->ds0_lapm;
 	modem->sregs[SREG_EC] = config->ec_policy == SIPPYMODEM_EC_RAW ? 0 :
 		config->ec_policy == SIPPYMODEM_EC_REQUIRED ? 2 : 1;
 	modem->sregs[SREG_COMP] = config->compression_types != 0 ? 3 : 0;
@@ -679,7 +687,8 @@ enum sippymodem_result sippymodem_process(struct sippymodem_server *server,
 		if (datagrams >= RTP_ENDPOINT_MAX_DRAIN)
 			next = now_ns;
 		(void)modem_service_event(line_modem(line));
-		if (line->config.ec_policy == SIPPYMODEM_EC_REQUIRED && line->active &&
+		if (line->config.ec_policy == SIPPYMODEM_EC_REQUIRED &&
+		    !(line->config.modulation == DP_DS0 && !line->config.ds0_lapm) && line->active &&
 		    (line_modem(line)->state == STATE_MODEM_ONLINE || line_modem(line)->state == STATE_COMMAND_ONLINE) &&
 		    !line_modem(line)->cfg.ec)
 			end_call(line, SIPPYMODEM_DISCONNECT_MODEM);

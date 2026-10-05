@@ -80,6 +80,7 @@ struct sippymodem_line_config {
 	unsigned int max_bps;
 	unsigned int digital_role; /* +V90D: 0 analog, 1 digital, 2 automatic. */
 	bool pcm_upstream;
+	bool ds0_lapm; /* +MS=64: false PPP conversion; true LAPM/HDLC. */
 	bool v91_enabled;
 	/* AUTOMATIC offers LAPM with raw fallback; REQUIRED never falls back. */
 	enum sippymodem_ec_policy ec_policy;
