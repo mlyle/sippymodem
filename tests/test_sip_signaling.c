@@ -43,6 +43,7 @@ struct callback_capture {
 	enum sip_call_state call_states[TEST_CALL_EVENTS];
 	unsigned int call_status_codes[TEST_CALL_EVENTS];
 	uint64_t call_generations[TEST_CALL_EVENTS];
+	unsigned int endpoint_ids[TEST_CALL_EVENTS];
 	char called_numbers[TEST_CALL_EVENTS][128];
 	char caller_numbers[TEST_CALL_EVENTS][128];
 	char call_reasons[TEST_CALL_EVENTS][32];
@@ -131,6 +132,7 @@ static void capture_call(
 	capture->call_states[index] = event->state;
 	capture->call_status_codes[index] = event->status_code;
 	capture->call_generations[index] = event->generation;
+	capture->endpoint_ids[index] = event->endpoint_id;
 	(void)snprintf(capture->called_numbers[index], sizeof(capture->called_numbers[index]), "%s", event->called_number != NULL ? event->called_number : "");
 	(void)snprintf(capture->caller_numbers[index], sizeof(capture->caller_numbers[index]), "%s", event->caller_number != NULL ? event->caller_number : "");
 	(void)snprintf(capture->call_reasons[index],
@@ -1534,6 +1536,100 @@ static bool test_incoming_slot_reuse(void)
 	return true;
 }
 
+static bool accepts_owner(void *context, void *line_owner)
+{
+	return context != NULL && context == line_owner;
+}
+
+static bool test_endpoint_routes(void)
+{
+	struct app_config config;
+	config_init(&config);
+	config.sip.listen_port = 0;
+	config.sip.registration_enabled = false;
+	config.sip.log_level = 0;
+	strcpy(config.sip.public_address, "127.0.0.1");
+	strcpy(config.sip.bound_address, "127.0.0.1");
+	struct sip_server *server = sip_server_create(&config, 4);
+	CHECK(server != NULL && sip_server_disable_default(server) == SIP_SIGNALING_OK,
+		"explicit signaling owner create failed");
+	struct callback_capture captures[4] = { 0 };
+	struct sip_signaling *lines[4];
+	for (unsigned int index = 0; index < 4; ++index) {
+		config.media.rtp_listen_port = TEST_MODEM_RTP_PORT + 2 * index;
+		struct sip_signaling_callbacks callbacks = {
+			.context = &captures[index], .line_owner = &captures[index],
+			.call_changed = capture_call, .media_changed = capture_media, .error = capture_error,
+		};
+		lines[index] = sip_signaling_create_shared(server, &config, &callbacks);
+		CHECK(lines[index] != NULL, "explicit line allocation failed");
+	}
+	struct sip_endpoint *endpoints[4];
+	const char *users[] = { "out", "111", "222", "333" };
+	for (unsigned int index = 0; index < 4; ++index) {
+		snprintf(config.sip.identity_uri, sizeof(config.sip.identity_uri), "sip:%s@127.0.0.1", users[index]);
+		endpoints[index] = sip_endpoint_create(server, &config, users[index], "127.0.0.1",
+			accepts_owner, index == 0 ? NULL : &captures[index == 2 ? 3 : 2]);
+		CHECK(endpoints[index] != NULL, "explicit endpoint %u allocation failed", index);
+	}
+	CHECK(sip_server_open(server) == SIP_SIGNALING_OK, "explicit server open failed");
+	for (unsigned int index = 0; index < 4; ++index) {
+		CHECK(sip_endpoint_open(endpoints[index]) == SIP_SIGNALING_OK, "explicit endpoint open failed");
+		CHECK(sip_signaling_open(lines[index]) == SIP_SIGNALING_OK, "explicit line open failed");
+	}
+	CHECK(sip_signaling_set_endpoint(lines[0], endpoints[0]) == SIP_SIGNALING_OK &&
+		sip_signaling_set_endpoint(lines[1], endpoints[0]) == SIP_SIGNALING_OK, "originating endpoint assignment failed");
+	unsigned int port = sip_endpoint_local_port(endpoints[1]);
+	CHECK(port != 0 && port == sip_endpoint_local_port(endpoints[2]), "shared transport ownership failed");
+	char target[128];
+	for (unsigned int call = 0; call < 2; ++call) {
+		snprintf(target, sizeof(target), "sip:%s@127.0.0.1:%u", users[call + 1], port);
+		CHECK(sip_signaling_dial(lines[call], target) == SIP_SIGNALING_OK, "endpoint dial failed");
+		for (unsigned int tick = 0; tick < 100 && sip_signaling_call_state(lines[call + 2]) == SIP_CALL_IDLE; ++tick)
+			CHECK(sip_server_step(server, 1) == SIP_SIGNALING_OK, "endpoint poll failed");
+		CHECK(sip_signaling_call_state(lines[call + 2]) == SIP_CALL_INCOMING_PENDING ||
+			sip_signaling_call_state(lines[call + 2]) == SIP_CALL_EARLY, "account spilled into the wrong pool");
+		CHECK(captures[call + 2].endpoint_ids[0] == sip_endpoint_id(endpoints[call + 1]),
+			"native endpoint owner fact missing");
+		CHECK(sip_signaling_answer(lines[call + 2]) == SIP_SIGNALING_OK, "endpoint answer failed");
+		for (unsigned int tick = 0; tick < 100 && (sip_signaling_call_state(lines[call]) != SIP_CALL_CONNECTED ||
+		    sip_signaling_call_state(lines[call + 2]) != SIP_CALL_CONNECTED); ++tick)
+			CHECK(sip_server_step(server, 1) == SIP_SIGNALING_OK, "endpoint connect poll failed");
+		CHECK(sip_signaling_call_state(lines[call]) == SIP_CALL_CONNECTED &&
+			sip_signaling_call_state(lines[call + 2]) == SIP_CALL_CONNECTED, "endpoint call failed to connect");
+	}
+	CHECK(sip_endpoint_close(endpoints[1]) == SIP_SIGNALING_OK, "own endpoint stop failed");
+	for (unsigned int tick = 0; tick < 100; ++tick)
+		CHECK(sip_server_step(server, 1) == SIP_SIGNALING_OK, "endpoint shutdown poll failed");
+	CHECK(sip_signaling_call_state(lines[0]) == SIP_CALL_IDLE && sip_signaling_call_state(lines[2]) == SIP_CALL_IDLE,
+		"endpoint stop retained its call");
+	CHECK(sip_signaling_call_state(lines[1]) == SIP_CALL_CONNECTED && sip_signaling_call_state(lines[3]) == SIP_CALL_CONNECTED,
+		"endpoint stop affected another account");
+	/* CANCEL of a pending call must still reach the owning transaction. */
+	snprintf(target, sizeof(target), "sip:333@127.0.0.1:%u", port);
+	CHECK(sip_signaling_dial(lines[0], target) == SIP_SIGNALING_OK, "shared pool retry failed");
+	for (unsigned int tick = 0; tick < 100 && sip_signaling_call_state(lines[2]) == SIP_CALL_IDLE; ++tick)
+		CHECK(sip_server_step(server, 1) == SIP_SIGNALING_OK, "pending retry poll failed");
+	CHECK(sip_signaling_call_state(lines[2]) != SIP_CALL_IDLE, "shared pool reservation missing");
+	CHECK(sip_signaling_hangup(lines[0]) == SIP_SIGNALING_OK, "pending call cancellation failed");
+	for (unsigned int tick = 0; tick < 100 && sip_signaling_call_state(lines[2]) != SIP_CALL_IDLE; ++tick)
+		CHECK(sip_server_step(server, 1) == SIP_SIGNALING_OK, "CANCEL poll failed");
+	CHECK(sip_signaling_call_state(lines[2]) == SIP_CALL_IDLE, "initial INVITE filter blocked CANCEL");
+	const char *unmatched[] = { "sip:999@127.0.0.1", "sip:333@localhost" };
+	for (unsigned int route = 0; route < 2; ++route) {
+		snprintf(target, sizeof(target), "%s:%u", unmatched[route], port);
+		CHECK(sip_signaling_dial(lines[0], target) == SIP_SIGNALING_OK, "unmatched fixture dial failed");
+		for (unsigned int tick = 0; tick < 100 && sip_signaling_call_state(lines[0]) != SIP_CALL_IDLE; ++tick)
+			CHECK(sip_server_step(server, 1) == SIP_SIGNALING_OK, "unmatched route poll failed");
+		CHECK(sip_signaling_call_state(lines[0]) == SIP_CALL_IDLE && sip_signaling_call_state(lines[2]) == SIP_CALL_IDLE,
+			"unmatched Request-URI reached a pool");
+	}
+	for (unsigned int index = 0; index < 4; ++index)
+		sip_signaling_destroy(lines[index]);
+	sip_server_destroy(server);
+	return true;
+}
+
 struct test_case {
 	const char *name;
 	bool (*run)(void);
@@ -1553,6 +1649,7 @@ int main(void)
 		{ "external SDK owner", test_external_endpoint_owner },
 		{ "two calls on shared server", test_shared_two_calls },
 		{ "incoming SDK slot reuse", test_incoming_slot_reuse },
+		{ "endpoint routing and isolated stop", test_endpoint_routes },
 	};
 	unsigned int failures = 0;
 

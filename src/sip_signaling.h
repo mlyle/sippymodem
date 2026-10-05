@@ -69,6 +69,7 @@ struct sip_media_event {
 
 struct sip_call_event {
 	uint64_t generation;
+	unsigned int endpoint_id;
 	const char *called_number;
 	const char *caller_number; /* Bounded numeric From user; private identity fact. */
 	enum sip_call_direction direction;
@@ -96,6 +97,15 @@ struct sip_registration_event {
 	const char *reason;
 };
 
+struct sip_endpoint_status {
+	unsigned int id, local_port;
+	uint64_t sequence;
+	enum sip_registration_state registration_state;
+	unsigned int registration_code;
+	int library_status;
+	bool opened;
+};
+
 struct sip_trace_record {
 	enum sip_trace_origin origin;
 	int level;
@@ -109,6 +119,8 @@ struct sip_trace_record {
  */
 struct sip_signaling_callbacks {
 	void *context;
+	/* Stable owner identity forwarded through callback adapters for admission. */
+	void *line_owner;
 	/* Checked before assigning an incoming call, including early SDP. */
 	bool (*admit)(void *context);
 	void (*ready)(void *context);
@@ -127,9 +139,10 @@ struct sip_signaling_callbacks {
 
 struct sip_signaling;
 struct sip_server;
+struct sip_endpoint;
 
-/* One process-wide PJSUA endpoint, explicitly owned by a server. Shared lines
- * have one account/transport and separate call/media state. Closing a line
+/* One process-wide PJSUA endpoint, explicitly owned by a server. Endpoints own
+ * accounts/transports; shared lines have separate call/media state. Closing a line
  * leaves its server and other lines running. Destroy lines before the server. */
 struct sip_server *sip_server_create(const struct app_config *config,
 	unsigned int max_lines);
@@ -142,6 +155,22 @@ unsigned int sip_server_local_port(const struct sip_server *server);
 struct sip_signaling *sip_signaling_create_shared(struct sip_server *server,
 	const struct app_config *config, const struct sip_signaling_callbacks *callbacks);
 
+
+/* Endpoint settings and incoming matching keys are copied. A wildcard key must
+ * be explicit; the default convenience account accepts any Request-URI. */
+struct sip_endpoint *sip_server_default_endpoint(struct sip_server *server);
+enum sip_signaling_result sip_server_disable_default(struct sip_server *server);
+struct sip_endpoint *sip_endpoint_create(struct sip_server *server,
+	const struct app_config *config, const char *request_user, const char *request_host,
+	bool (*accept_line)(void *context, void *line_context), void *context);
+enum sip_signaling_result sip_endpoint_open(struct sip_endpoint *endpoint);
+enum sip_signaling_result sip_endpoint_close(struct sip_endpoint *endpoint);
+void sip_endpoint_destroy(struct sip_endpoint *endpoint);
+unsigned int sip_endpoint_id(const struct sip_endpoint *endpoint);
+unsigned int sip_endpoint_local_port(const struct sip_endpoint *endpoint);
+void sip_endpoint_get_status(const struct sip_endpoint *endpoint, struct sip_endpoint_status *status);
+enum sip_signaling_result sip_signaling_set_endpoint(struct sip_signaling *line,
+	struct sip_endpoint *endpoint);
 
 struct sip_signaling *sip_signaling_create(
 	const struct app_config *config,
