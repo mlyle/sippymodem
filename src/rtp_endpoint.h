@@ -12,6 +12,7 @@
 
 enum {
 	RTP_ENDPOINT_MAX_DATAGRAM = 2048,
+	RTP_ENDPOINT_MAX_DRAIN = 64,
 };
 
 enum rtp_endpoint_result {
@@ -53,6 +54,7 @@ struct rtp_endpoint {
 	struct sockaddr_in learned_address;
 	bool remote_configured;
 	bool remote_learned;
+	bool discard_pending; /* Bounded cleanup of the previous media incarnation. */
 	struct rtp_endpoint_stats stats;
 };
 
@@ -83,7 +85,8 @@ bool rtp_endpoint_transmit_remote(
 	struct sockaddr_in *remote_address,
 	bool *learned);
 
-/* Drain every currently queued datagram without blocking. */
+/* Drain at most MAX_DRAIN datagrams without blocking. An unfinished call
+ * boundary flush remains pending; those old bytes are never routed as media. */
 enum rtp_endpoint_result rtp_endpoint_drain(
 	struct rtp_endpoint *endpoint,
 	size_t *datagrams_received);

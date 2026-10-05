@@ -531,6 +531,29 @@ static bool test_packet_timeline(void)
 	return true;
 }
 
+static bool test_bounded_drain_and_call_cleanup(void)
+{
+	struct endpoint_fixture sender, receiver;
+	CHECK(open_fixture(&sender, 1, false, false) && open_fixture(&receiver, 2, false, false), "cannot open bounded drain fixtures");
+	struct sockaddr_in source = fixture_address(&sender), target = fixture_address(&receiver);
+	CHECK(rtp_endpoint_set_remote(&receiver.endpoint, &source) == RTP_ENDPOINT_OK, "cannot bind receiver");
+	const unsigned char malformed[4] = { 0 };
+	for (unsigned int i = 0; i < 100; ++i)
+		CHECK(send_raw(rtp_endpoint_fd(&sender.endpoint), &target, malformed, sizeof(malformed)), "cannot queue burst");
+	size_t drained;
+	CHECK(rtp_endpoint_drain(&receiver.endpoint, &drained) == RTP_ENDPOINT_OK && drained == RTP_ENDPOINT_MAX_DRAIN, "first drain exceeded its work bound");
+	CHECK(rtp_endpoint_drain(&receiver.endpoint, &drained) == RTP_ENDPOINT_OK && drained == 100 - RTP_ENDPOINT_MAX_DRAIN, "bounded drain lost remaining packets");
+	for (unsigned int i = 0; i < 100; ++i)
+		CHECK(send_raw(rtp_endpoint_fd(&sender.endpoint), &target, malformed, sizeof(malformed)), "cannot queue old call burst");
+	rtp_endpoint_clear_remote(&receiver.endpoint);
+	CHECK(receiver.endpoint.discard_pending, "old call cleanup was unbounded");
+	CHECK(rtp_endpoint_drain(&receiver.endpoint, &drained) == RTP_ENDPOINT_OK && drained == 100 - RTP_ENDPOINT_MAX_DRAIN && !receiver.endpoint.discard_pending, "old call cleanup did not finish bounded work");
+	CHECK(receiver.endpoint.stats.receive_datagrams == 100, "old call packets were routed in a new incarnation");
+	rtp_endpoint_close(&receiver.endpoint);
+	rtp_endpoint_close(&sender.endpoint);
+	return true;
+}
+
 struct test_case {
 	const char *name;
 	bool (*run)(void);
@@ -546,6 +569,7 @@ int main(void)
 		{ "symmetric remote learning", test_symmetric_remote_learning },
 		{ "lifecycle validation", test_lifecycle_validation },
 		{ "packet timeline", test_packet_timeline },
+		{ "bounded drain and call cleanup", test_bounded_drain_and_call_cleanup },
 	};
 	unsigned int failures = 0;
 

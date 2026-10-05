@@ -24,14 +24,13 @@ enum {
 struct sip_signaling {
 	struct app_config config;
 	struct sip_signaling_callbacks callbacks;
-	pjsua_transport_id transport_id;
-	pjsua_acc_id account_id;
+	struct sip_server *server;
+	bool owns_server;
 	pjsua_call_id call_id;
+	uint64_t call_generation;
+	char called_number[128];
 	int last_library_status;
-	unsigned int local_port;
 	unsigned int callback_depth;
-	pj_log_func *previous_log_writer;
-	int previous_log_level;
 	char login_buffer[APP_CONFIG_TEXT_MAX];
 	char identity_uri[SIP_ACCOUNT_URI_MAX];
 	char registrar_uri[SIP_ACCOUNT_URI_MAX];
@@ -55,14 +54,150 @@ struct sip_signaling {
 	bool call_starting;
 	bool registration_may_exist;
 	bool account_configured;
-	bool library_created;
-	bool log_writer_installed;
 	bool opened;
 	bool closing;
 	bool close_requested;
 };
 
-static struct sip_signaling *active_signaling;
+/* PJSUA has process callbacks and one endpoint. This bridge selects the owned
+ * server; call/account ids select a line within that server. */
+struct sip_server {
+	struct sip_signaling *administrative;
+	struct sip_signaling *lines[32];
+	unsigned int max_lines;
+	pjsua_transport_id transport_id;
+	pjsua_acc_id account_id;
+	unsigned int local_port;
+	bool library_created;
+	bool opened;
+	bool closing;
+	bool retired[PJSUA_MAX_CALLS];
+};
+
+static struct sip_server *pjsua_owner;
+static void pjsip_trace(int level, const char *data, int length);
+
+/* PJSUA logging is process-global. Scope it to each native SDK entry and
+ * restore the embedding logger on every return, including failure/unwind.
+ * The owned endpoint has no SDK worker threads. */
+struct sdk_log_scope { pj_log_func *writer; int level; bool active; };
+static struct sdk_log_scope enter_log_scope(const struct sip_server *server)
+{
+	struct sdk_log_scope scope = { 0 };
+	if (server == NULL || (pjsua_owner != NULL && pjsua_owner != server))
+		return scope;
+	scope.writer = pj_log_get_log_func();
+	scope.level = pj_log_get_level();
+	scope.active = true;
+	pj_log_set_log_func(pjsip_trace);
+	pj_log_set_level((int)server->administrative->config.sip.log_level);
+	return scope;
+}
+static void leave_log_scope(struct sdk_log_scope *scope)
+{
+	if (scope->active) {
+		pj_log_set_log_func(scope->writer);
+		pj_log_set_level(scope->level);
+	}
+}
+#define SDK_LOG_SCOPE(server) \
+	struct sdk_log_scope log_scope __attribute__((cleanup(leave_log_scope))) = enter_log_scope(server)
+
+
+static bool line_is_owned(const struct sip_server *server,
+	const struct sip_signaling *line)
+{
+	if (server == NULL || line == NULL)
+		return false;
+	for (unsigned int index = 0; index < server->max_lines; ++index)
+		if (server->lines[index] == line)
+			return true;
+	return false;
+}
+
+static bool incoming_allowed(struct sip_signaling *line)
+{
+	if (line->callbacks.admit == NULL)
+		return true;
+	line->callback_depth++;
+	bool allowed = line->callbacks.admit(line->callbacks.context);
+	line->callback_depth--;
+	return allowed && line->opened && !line->closing && !line->close_requested;
+}
+
+static bool callback_active(const struct sip_server *server)
+{
+	if (server->administrative->callback_depth != 0)
+		return true;
+	for (unsigned int index = 0; index < server->max_lines; ++index)
+		if (server->lines[index] != NULL && server->lines[index]->callback_depth != 0)
+			return true;
+	return false;
+}
+
+static struct sip_signaling *owner_from_call(pjsua_call_id call_id, bool incoming_creation)
+{
+	struct sip_server *server = pjsua_owner;
+	if (server == NULL || server->closing)
+		return NULL;
+	struct sip_signaling *line = pjsua_call_get_user_data(call_id);
+	if (line_is_owned(server, line)) {
+		if (!line->opened || (line->call_id != call_id && !line->call_starting))
+			return NULL;
+		line->call_id = call_id;
+		return line;
+	}
+	pjsua_call_info info;
+	if (pjsua_call_get_info(call_id, &info) != PJ_SUCCESS ||
+	    info.acc_id != server->account_id ||
+	    info.state == PJSIP_INV_STATE_DISCONNECTED)
+		return NULL;
+	/* An unowned UAS call can only be attached by its creation callbacks.
+	 * Rejected calls and late media/state changes must not claim an idle line. */
+	if (info.role == PJSIP_ROLE_UAS && (!incoming_creation ||
+	    (info.state != PJSIP_INV_STATE_NULL && info.state != PJSIP_INV_STATE_INCOMING)))
+		return NULL;
+	if (call_id >= 0 && (unsigned int)call_id < PJSUA_MAX_CALLS && server->retired[call_id]) {
+		/* SDK slots are reused. Only the fresh UAS creation callbacks may
+		 * admit a NULL-userdata slot again; late state/media callbacks from
+		 * the retired incarnation cannot assign it to an idle line. */
+		if (!incoming_creation || info.role != PJSIP_ROLE_UAS ||
+		    (info.state != PJSIP_INV_STATE_NULL && info.state != PJSIP_INV_STATE_INCOMING))
+			return NULL;
+		server->retired[call_id] = false;
+	}
+	for (unsigned int index = 0; index < server->max_lines; ++index) {
+		line = server->lines[index];
+		if (line == NULL || !line->opened || line->closing || line->close_requested)
+			continue;
+		if (info.role == PJSIP_ROLE_UAC) {
+			if (!line->call_starting)
+				continue;
+		} else {
+			if (line->call_id != PJSUA_INVALID_ID || line->call_starting ||
+			    !incoming_allowed(line))
+				continue;
+			line->call_direction = SIP_CALL_DIRECTION_INCOMING;
+			line->incoming_response_code = 0;
+			line->call_generation++;
+			line->called_number[0] = '\0';
+		}
+		line->call_id = call_id;
+		(void)pjsua_call_set_user_data(call_id, line);
+		return line;
+	}
+	return NULL;
+}
+
+static struct sip_signaling *owner_from_account(pjsua_acc_id account_id)
+{
+	struct sip_server *server = pjsua_owner;
+	if (server == NULL || server->closing ||
+	    (server->account_id != account_id && server->account_id != PJSUA_INVALID_ID))
+		return NULL;
+	return server->administrative;
+}
+
 
 static void callback_enter(struct sip_signaling *signaling)
 {
@@ -115,7 +250,7 @@ static void emit_trace(
 static void pjsip_trace(int level, const char *data, int length)
 {
 	if (length > 0)
-		emit_trace(active_signaling, SIP_TRACE_LIBRARY, level,
+		emit_trace(pjsua_owner != NULL ? pjsua_owner->administrative : NULL, SIP_TRACE_LIBRARY, level,
 			   data, (size_t)length);
 }
 
@@ -149,6 +284,8 @@ static void emit_call_event(struct sip_signaling *signaling,
 	signaling->call_state = state;
 	if (signaling->callbacks.call_changed == NULL)
 		return;
+	event.generation = signaling->call_generation;
+	event.called_number = signaling->called_number;
 	event.direction = signaling->call_direction;
 	event.state = state;
 	event.status_code =
@@ -219,7 +356,7 @@ static void emit_media_inactive(struct sip_signaling *signaling)
 
 static void pjsip_call_changed(pjsua_call_id call_id, pjsip_event *event)
 {
-	struct sip_signaling *signaling = active_signaling;
+	struct sip_signaling *signaling = owner_from_call(call_id, false);
 	pjsua_call_info info;
 
 	(void)event;
@@ -256,7 +393,7 @@ static void pjsip_call_changed(pjsua_call_id call_id, pjsip_event *event)
 static void pjsip_stream_precreate(
 	pjsua_call_id call_id, pjsua_on_stream_precreate_param *parameters)
 {
-	struct sip_signaling *signaling = active_signaling;
+	struct sip_signaling *signaling = owner_from_call(call_id, false);
 	const pj_sockaddr *remote;
 	enum sip_media_address_family family;
 	char address[SIP_MEDIA_ADDRESS_MAX];
@@ -296,11 +433,10 @@ static void pjsip_sdp_created(pjsua_call_id call_id,
 			      pj_pool_t *pool,
 			      const pjmedia_sdp_session *remote_sdp)
 {
-	struct sip_signaling *signaling = active_signaling;
+	struct sip_signaling *signaling = owner_from_call(call_id, remote_sdp != NULL);
 	struct sdp_audio_description description;
 	pj_status_t status;
 
-	(void)call_id;
 	if (signaling == NULL || signaling->config.media.rtp_listen_port == 0)
 		return;
 	if (sdp_audio_description_init(
@@ -322,17 +458,18 @@ static void pjsip_incoming_call(pjsua_acc_id account_id,
 				pjsua_call_id call_id,
 				pjsip_rx_data *request)
 {
-	struct sip_signaling *signaling = active_signaling;
+	struct sip_signaling *signaling = owner_from_call(call_id, true);
 	pjsua_call_info info;
 	pj_status_t status;
 	unsigned int response_code;
 
 	(void)account_id;
-	(void)request;
-	if (signaling == NULL)
+	if (signaling == NULL) {
+		(void)pjsua_call_answer(call_id, 486, NULL, NULL);
 		return;
+	}
 	if (signaling->closing || signaling->close_requested ||
-	    signaling->call_id != PJSUA_INVALID_ID || signaling->call_starting) {
+	    (signaling->call_id != PJSUA_INVALID_ID && signaling->call_id != call_id) || signaling->call_starting) {
 		status = pjsua_call_answer(call_id, 486, NULL, NULL);
 		if (status != PJ_SUCCESS)
 			emit_library_error(signaling,
@@ -347,6 +484,23 @@ static void pjsip_incoming_call(pjsua_acc_id account_id,
 	}
 
 	signaling->call_id = call_id;
+	/* Request-URI user is a private routing fact. Never route on a truncated
+	 * value or an unsupported spelling; missing facts select a default route. */
+	signaling->called_number[0] = '\0';
+	if (request != NULL && request->msg_info.msg != NULL) {
+		pjsip_uri *uri = pjsip_uri_get_uri(request->msg_info.msg->line.req.uri);
+		if (uri != NULL && (PJSIP_URI_SCHEME_IS_SIP(uri) || PJSIP_URI_SCHEME_IS_SIPS(uri))) {
+			const pj_str_t *user = &((pjsip_sip_uri *)uri)->user;
+			bool valid = user->slen > 0 && (size_t)user->slen < sizeof(signaling->called_number) &&
+				!(user->slen == 1 && user->ptr[0] == '+');
+			for (pj_ssize_t index = 0; valid && index < user->slen; ++index) {
+				char ch = user->ptr[index];
+				valid = (ch >= '0' && ch <= '9') || (index == 0 && ch == '+');
+			}
+			if (valid)
+				copy_pj_text(signaling->called_number, sizeof(signaling->called_number), user);
+		}
+	}
 	signaling->call_direction = SIP_CALL_DIRECTION_INCOMING;
 	signaling->incoming_response_code = 0;
 	emit_call_event(signaling, SIP_CALL_INCOMING_PENDING, &info);
@@ -378,25 +532,30 @@ static void emit_registration_event(
 		signaling->registration_may_exist = true;
 	else if (state == SIP_REGISTRATION_UNREGISTERED)
 		signaling->registration_may_exist = false;
-	if (signaling->callbacks.registration_changed == NULL)
-		return;
 	event.state = state;
 	event.status_code = status_code;
 	event.library_status = (int)library_status;
 	event.expires_seconds = expires_seconds;
 	event.reason = signaling->registration_reason;
-	callback_enter(signaling);
-	signaling->callbacks.registration_changed(
-		signaling->callbacks.context, &event);
-	callback_leave(signaling);
+	for (unsigned int index = 0; index < signaling->server->max_lines; ++index) {
+		struct sip_signaling *line = signaling->server->lines[index];
+		if (line == NULL)
+			continue;
+		line->registration_state = state;
+		line->registration_may_exist = signaling->registration_may_exist;
+		if (line->callbacks.registration_changed != NULL) {
+			callback_enter(line);
+			line->callbacks.registration_changed(line->callbacks.context, &event);
+			callback_leave(line);
+		}
+	}
 }
 
 static void pjsip_registration_started(pjsua_acc_id account_id,
 				       pj_bool_t renew)
 {
-	(void)account_id;
 	emit_registration_event(
-		active_signaling,
+		owner_from_account(account_id),
 		renew ? SIP_REGISTRATION_REGISTERING
 		      : SIP_REGISTRATION_UNREGISTERING,
 		0, PJ_SUCCESS, 0, NULL);
@@ -412,8 +571,8 @@ static void pjsip_registration_changed(pjsua_acc_id account_id,
 	bool unregistering;
 	bool succeeded;
 
-	(void)account_id;
-	if (active_signaling == NULL || info == NULL || info->cbparam == NULL)
+	struct sip_signaling *signaling = owner_from_account(account_id);
+	if (signaling == NULL || info == NULL || info->cbparam == NULL)
 		return;
 	result = info->cbparam;
 	unregistering = !info->renew || result->is_unreg;
@@ -432,7 +591,7 @@ static void pjsip_registration_changed(pjsua_acc_id account_id,
 		result->expiration == PJSIP_REGC_EXPIRATION_NOT_SPECIFIED
 			? 0
 			: result->expiration;
-	emit_registration_event(active_signaling, state, status_code,
+	emit_registration_event(signaling, state, status_code,
 				result->status, expires_seconds, &result->reason);
 }
 
@@ -588,58 +747,35 @@ static void configure_media(const struct app_config *config,
 	media->jb_discard_algo = PJMEDIA_JB_DISCARD_NONE;
 }
 
-static const char *pjsip_seed_codec(enum media_codec codec)
+static pj_status_t configure_codecs(const struct sip_signaling *signaling)
 {
-	switch (codec) {
-	case MEDIA_CODEC_PCMA:
-		return "PCMA/8000/1";
-	case MEDIA_CODEC_CLEARMODE:
-		/* The SDP callback replaces this library-internal seed mapping. */
-		return "PCMU/8000/1";
-	case MEDIA_CODEC_PCMU:
-		return "PCMU/8000/1";
-	}
-	return NULL;
-}
-
-static pj_status_t configure_codecs(
-	const struct sip_signaling *signaling)
-{
+	(void)signaling;
 	pjsua_codec_info codecs[PJMEDIA_CODEC_MGR_MAX_CODECS];
-	const char *preferred = pjsip_seed_codec(signaling->config.media.codec);
-	pjmedia_codec_param parameters;
-	pj_str_t codec_id;
 	unsigned int count = PJ_ARRAY_SIZE(codecs);
-	bool preferred_found = false;
-	pj_status_t status;
-
-	if (preferred == NULL)
-		return PJ_EINVAL;
-	status = pjsua_enum_codecs(codecs, &count);
+	pj_status_t status = pjsua_enum_codecs(codecs, &count);
 	if (status != PJ_SUCCESS)
 		return status;
+	unsigned int selected_count = 0;
 	for (unsigned int index = 0; index < count; ++index) {
-		bool selected = pj_strcmp2(&codecs[index].codec_id, preferred) == 0;
-
-		status = pjsua_codec_set_priority(
-			&codecs[index].codec_id,
-			selected ? PJMEDIA_CODEC_PRIO_NORMAL :
-				   PJMEDIA_CODEC_PRIO_DISABLED);
+		bool selected = pj_strcmp2(&codecs[index].codec_id, "PCMU/8000/1") == 0 ||
+			pj_strcmp2(&codecs[index].codec_id, "PCMA/8000/1") == 0;
+		status = pjsua_codec_set_priority(&codecs[index].codec_id,
+			selected ? PJMEDIA_CODEC_PRIO_NORMAL : PJMEDIA_CODEC_PRIO_DISABLED);
 		if (status != PJ_SUCCESS)
 			return status;
-		if (selected)
-			preferred_found = true;
+		if (!selected)
+			continue;
+		selected_count++;
+		pjmedia_codec_param parameters;
+		status = pjsua_codec_get_param(&codecs[index].codec_id, &parameters);
+		if (status != PJ_SUCCESS)
+			return status;
+		parameters.setting.vad = parameters.setting.cng = parameters.setting.plc = 0;
+		status = pjsua_codec_set_param(&codecs[index].codec_id, &parameters);
+		if (status != PJ_SUCCESS)
+			return status;
 	}
-	if (!preferred_found)
-		return PJ_ENOTFOUND;
-	codec_id = pj_str((char *)preferred);
-	status = pjsua_codec_get_param(&codec_id, &parameters);
-	if (status != PJ_SUCCESS)
-		return status;
-	parameters.setting.vad = 0;
-	parameters.setting.cng = 0;
-	parameters.setting.plc = 0;
-	return pjsua_codec_set_param(&codec_id, &parameters);
+	return selected_count == 2 ? PJ_SUCCESS : PJ_ENOTFOUND;
 }
 
 static enum sip_signaling_result initialize_library(
@@ -650,23 +786,16 @@ static enum sip_signaling_result initialize_library(
 	pjsua_media_config media;
 	pj_status_t status;
 
-	/* pj_init() logs before pjsua_init() installs the configured callback.
-	 * Own that interval too, so diagnostics never pollute the PTY report. */
-	signaling->previous_log_writer = pj_log_get_log_func();
-	signaling->previous_log_level = pj_log_get_level();
-	pj_log_set_log_func(&pjsip_trace);
-	pj_log_set_level((int)signaling->config.sip.log_level);
-	signaling->log_writer_installed = true;
 	status = pjsua_create();
 	if (status != PJ_SUCCESS) {
 		emit_library_error(signaling, "create signaling library", status);
 		return SIP_SIGNALING_LIBRARY_ERROR;
 	}
-	signaling->library_created = true;
+	signaling->server->library_created = true;
 
 	pjsua_config_default(&user_agent);
 	user_agent.thread_cnt = 0;
-	user_agent.max_calls = 1;
+	user_agent.max_calls = PJSUA_MAX_CALLS;
 	user_agent.user_agent = pj_str((char *)"sippymodem");
 	user_agent.cb.on_call_state = &pjsip_call_changed;
 	user_agent.cb.on_call_sdp_created = &pjsip_sdp_created;
@@ -683,6 +812,8 @@ static enum sip_signaling_result initialize_library(
 	logging.msg_logging = signaling->callbacks.trace != NULL;
 	logging.cb = &pjsip_trace;
 	configure_media(&signaling->config, &media);
+	media.thread_cnt = 0;
+	media.has_ioqueue = PJ_FALSE;
 
 	status = pjsua_init(&user_agent, &logging, &media);
 	if (status != PJ_SUCCESS) {
@@ -713,18 +844,18 @@ static enum sip_signaling_result create_transport(
 	if (signaling->config.sip.bound_address[0] != '\0')
 		transport.bound_addr = pj_str(signaling->config.sip.bound_address);
 	status = pjsua_transport_create(PJSIP_TRANSPORT_UDP, &transport,
-					&signaling->transport_id);
+					&signaling->server->transport_id);
 	if (status != PJ_SUCCESS) {
 		emit_library_error(signaling, "create SIP UDP transport", status);
 		return SIP_SIGNALING_LIBRARY_ERROR;
 	}
-	status = pjsua_transport_get_info(signaling->transport_id, &info);
+	status = pjsua_transport_get_info(signaling->server->transport_id, &info);
 	if (status != PJ_SUCCESS) {
 		emit_library_error(signaling, "inspect SIP UDP transport", status);
 		return SIP_SIGNALING_LIBRARY_ERROR;
 	}
-	signaling->local_port = pj_sockaddr_get_port(&info.local_addr);
-	if (signaling->local_port == 0) {
+	signaling->server->local_port = pj_sockaddr_get_port(&info.local_addr);
+	if (signaling->server->local_port == 0) {
 		emit_library_error(signaling, "resolve SIP UDP transport port",
 				   PJ_EINVAL);
 		return SIP_SIGNALING_LIBRARY_ERROR;
@@ -762,18 +893,18 @@ static enum sip_signaling_result add_account(
 	pj_status_t status;
 
 	if (!signaling->account_configured) {
-		status = pjsua_acc_add_local(signaling->transport_id, PJ_TRUE,
-					     &signaling->account_id);
+		status = pjsua_acc_add_local(signaling->server->transport_id, PJ_TRUE,
+					     &signaling->server->account_id);
 		if (status == PJ_SUCCESS)
 			status = make_local_account_media_ephemeral(
-				signaling->account_id);
+				signaling->server->account_id);
 	} else {
 		pjsua_acc_config_default(&account);
 		account.rtp_cfg.port = 0;
 		account.id = pj_str(signaling->identity_uri);
 		if (signaling->config.sip.registration_enabled)
 			account.reg_uri = pj_str(signaling->registrar_uri);
-		account.transport_id = signaling->transport_id;
+		account.transport_id = signaling->server->transport_id;
 		account.register_on_acc_add =
 			signaling->config.sip.registration_enabled;
 		account.unreg_timeout = SIP_UNREGISTER_TIMEOUT_MS;
@@ -796,12 +927,12 @@ static enum sip_signaling_result add_account(
 			signaling->contact_uri, sizeof(signaling->contact_uri),
 			signaling->account_user,
 			signaling->config.sip.public_address,
-			(uint16_t)signaling->local_port);
+			(uint16_t)signaling->server->local_port);
 		if (contact_result == SIP_URI_OK)
 			account.force_contact = pj_str(signaling->contact_uri);
 		else if (contact_result != SIP_URI_NOT_CONFIGURED)
 			return SIP_SIGNALING_INVALID_ARGUMENT;
-		status = pjsua_acc_add(&account, PJ_TRUE, &signaling->account_id);
+		status = pjsua_acc_add(&account, PJ_TRUE, &signaling->server->account_id);
 	}
 	if (status != PJ_SUCCESS) {
 		emit_library_error(signaling, "add SIP account", status);
@@ -814,86 +945,258 @@ static enum sip_signaling_result add_account(
 	return SIP_SIGNALING_OK;
 }
 
-static enum sip_signaling_result close_now(
-	struct sip_signaling *signaling)
+static enum sip_signaling_result close_now(struct sip_signaling *signaling)
 {
-	pj_status_t status = PJ_SUCCESS;
-	unsigned int destroy_flags = PJSUA_DESTROY_NO_NETWORK;
-
+	SDK_LOG_SCOPE(signaling != NULL ? signaling->server : NULL);
 	if (signaling->closing)
 		return SIP_SIGNALING_OK;
 	signaling->closing = true;
-	if (signaling->opened || signaling->library_created)
-		emit_trace(signaling, SIP_TRACE_ADAPTER, 3,
-			   "SIP signaling closing\n",
-			   sizeof("SIP signaling closing\n") - 1);
-	if (signaling->opened && signaling->account_configured &&
-	    signaling->config.sip.registration_enabled)
-		destroy_flags = signaling->registration_may_exist
-				? 0
-				: PJSUA_DESTROY_NO_RX_MSG;
-	if (signaling->call_id != PJSUA_INVALID_ID &&
-	    destroy_flags == PJSUA_DESTROY_NO_NETWORK)
-		destroy_flags = PJSUA_DESTROY_NO_RX_MSG;
-	emit_media_inactive(signaling);
-	if (signaling->library_created)
-		status = pjsua_destroy2(destroy_flags);
-	if (signaling->log_writer_installed) {
-		pj_log_set_log_func(signaling->previous_log_writer);
-		pj_log_set_level(signaling->previous_log_level);
-		signaling->log_writer_installed = false;
-	}
-	signaling->library_created = false;
+	enum sip_signaling_result result = SIP_SIGNALING_OK;
+	bool was_active = signaling->call_id != PJSUA_INVALID_ID;
+	pjsua_call_id call_id = signaling->call_id;
 	signaling->opened = false;
-	signaling->closing = false;
-	signaling->close_requested = false;
-	signaling->transport_id = PJSUA_INVALID_ID;
-	signaling->account_id = PJSUA_INVALID_ID;
 	signaling->call_id = PJSUA_INVALID_ID;
-	signaling->call_state = SIP_CALL_IDLE;
-	signaling->media_state = SIP_MEDIA_INACTIVE;
-	signaling->media_remote_family =
-		SIP_MEDIA_ADDRESS_UNSPECIFIED;
-	signaling->media_remote_address[0] = '\0';
-	signaling->media_remote_port = 0;
 	signaling->call_starting = false;
 	signaling->incoming_response_code = 0;
-	signaling->local_port = 0;
-	if (active_signaling == signaling)
-		active_signaling = NULL;
+	if (was_active && pjsua_owner == signaling->server) {
+		if (call_id >= 0 && (unsigned int)call_id < PJSUA_MAX_CALLS)
+			signaling->server->retired[call_id] = true;
+		(void)pjsua_call_set_user_data(call_id, NULL);
+		if (pjsua_call_hangup(call_id, 0, NULL, NULL) != PJ_SUCCESS)
+			result = SIP_SIGNALING_LIBRARY_ERROR;
+	}
+	emit_media_inactive(signaling);
+	if (signaling->call_state != SIP_CALL_IDLE)
+		emit_call_event(signaling, SIP_CALL_IDLE, NULL);
+	signaling->close_requested = false;
+	signaling->closing = false;
+	if (signaling->owns_server) {
+		enum sip_signaling_result closed = sip_server_close(signaling->server);
+		if (result == SIP_SIGNALING_OK)
+			result = closed;
+	}
+	return result;
+}
+
+static void administrative_error(void *context, const struct sip_signaling_error *error)
+{
+	struct sip_server *server = context;
+	for (unsigned int index = 0; index < server->max_lines; ++index) {
+		struct sip_signaling *line = server->lines[index];
+		if (line != NULL && line->callbacks.error != NULL) {
+			line->last_library_status = error->library_status;
+			callback_enter(line);
+			line->callbacks.error(line->callbacks.context, error);
+			callback_leave(line);
+		}
+	}
+}
+
+static void administrative_trace(void *context, const struct sip_trace_record *record)
+{
+	struct sip_server *server = context;
+	for (unsigned int index = 0; index < server->max_lines; ++index) {
+		struct sip_signaling *line = server->lines[index];
+		if (line != NULL && line->callbacks.trace != NULL) {
+			callback_enter(line);
+			line->callbacks.trace(line->callbacks.context, record);
+			callback_leave(line);
+		}
+	}
+}
+
+struct sip_server *sip_server_create(const struct app_config *config, unsigned int max_lines)
+{
+	if (config == NULL || max_lines == 0 || max_lines > 32 || max_lines > PJSUA_MAX_CALLS)
+		return NULL;
+	struct sip_server *server = calloc(1, sizeof(*server));
+	if (server == NULL)
+		return NULL;
+	server->administrative = calloc(1, sizeof(*server->administrative));
+	if (server->administrative == NULL) {
+		free(server);
+		return NULL;
+	}
+	server->max_lines = max_lines;
+	server->transport_id = PJSUA_INVALID_ID;
+	server->account_id = PJSUA_INVALID_ID;
+	server->administrative->config = *config;
+	server->administrative->server = server;
+	server->administrative->call_id = PJSUA_INVALID_ID;
+	server->administrative->callbacks.context = server;
+	server->administrative->callbacks.error = administrative_error;
+	server->administrative->callbacks.trace = administrative_trace;
+	server->administrative->registration_state = config->sip.registration_enabled ?
+		SIP_REGISTRATION_UNREGISTERED : SIP_REGISTRATION_DISABLED;
+	return server;
+}
+
+enum sip_signaling_result sip_server_open(struct sip_server *server)
+{
+	SDK_LOG_SCOPE(server);
+	if (server == NULL)
+		return SIP_SIGNALING_INVALID_ARGUMENT;
+	if (server->opened)
+		return SIP_SIGNALING_OK;
+	if (pjsua_owner != NULL || pjsua_get_state() != PJSUA_STATE_NULL) {
+		emit_library_error(server->administrative, "concurrent signaling owner", PJ_EBUSY);
+		return SIP_SIGNALING_BUSY;
+	}
+	struct sip_signaling *administrative = server->administrative;
+	enum sip_signaling_result result = validate_config(&administrative->config);
+	if (result == SIP_SIGNALING_OK)
+		result = resolve_account(administrative);
+	if (result != SIP_SIGNALING_OK)
+		return result;
+	memset(server->retired, 0, sizeof(server->retired));
+	pjsua_owner = server;
+	result = initialize_library(administrative);
+	if (result == SIP_SIGNALING_OK)
+		result = create_transport(administrative);
+	if (result != SIP_SIGNALING_OK)
+		goto fail;
+	pj_status_t status = pjsua_start();
 	if (status != PJ_SUCCESS) {
-		emit_library_error(signaling, "close signaling library", status);
+		emit_library_error(administrative, "start signaling library", status);
+		result = SIP_SIGNALING_LIBRARY_ERROR;
+		goto fail;
+	}
+	result = add_account(administrative);
+	if (result != SIP_SIGNALING_OK)
+		goto fail;
+	server->opened = true;
+	return SIP_SIGNALING_OK;
+fail:
+	(void)sip_server_close(server);
+	return result;
+}
+
+enum sip_signaling_result sip_server_close(struct sip_server *server)
+{
+	SDK_LOG_SCOPE(server);
+	if (server == NULL)
+		return SIP_SIGNALING_INVALID_ARGUMENT;
+	if (server->closing)
+		return SIP_SIGNALING_OK;
+	if (callback_active(server))
+		return SIP_SIGNALING_BUSY;
+	server->closing = true;
+	/* Stop admission before any hangup callbacks; per-line close clears its
+	 * userdata before releasing the line. No network wait belongs in stop. */
+	server->opened = false;
+	enum sip_signaling_result result = SIP_SIGNALING_OK;
+	for (unsigned int index = 0; index < server->max_lines; ++index)
+		if (server->lines[index] != NULL) {
+			enum sip_signaling_result closed = close_now(server->lines[index]);
+			if (result == SIP_SIGNALING_OK)
+				result = closed;
+		}
+	pj_status_t status = PJ_SUCCESS;
+	if (server->library_created) {
+		struct sip_signaling *administrative = server->administrative;
+		bool registered = administrative->registration_may_exist;
+		if (registered)
+			emit_registration_event(administrative, SIP_REGISTRATION_UNREGISTERING,
+				0, PJ_SUCCESS, 0, NULL);
+		if (server->account_id != PJSUA_INVALID_ID)
+			(void)pjsua_acc_del(server->account_id);
+		status = pjsua_destroy2(PJSUA_DESTROY_NO_NETWORK);
+		/* This is retained local ownership state, not a registrar response.
+		 * Shutdown never waits for a network confirmation. */
+		if (registered)
+			emit_registration_event(administrative, SIP_REGISTRATION_UNREGISTERED,
+				0, status, 0, NULL);
+	}
+	server->library_created = false;
+	server->transport_id = server->account_id = PJSUA_INVALID_ID;
+	server->local_port = 0;
+	server->closing = false;
+	if (pjsua_owner == server)
+		pjsua_owner = NULL;
+	if (status != PJ_SUCCESS) {
+		emit_library_error(server->administrative, "close signaling library", status);
 		return SIP_SIGNALING_LIBRARY_ERROR;
+	}
+	return result;
+}
+
+void sip_server_destroy(struct sip_server *server)
+{
+	if (server == NULL || callback_active(server))
+		return;
+	for (unsigned int index = 0; index < server->max_lines; ++index)
+		if (server->lines[index] != NULL)
+			return;
+	(void)sip_server_close(server);
+	free(server->administrative);
+	free(server);
+}
+
+enum sip_signaling_result sip_server_step(struct sip_server *server, unsigned int timeout_ms)
+{
+	SDK_LOG_SCOPE(server);
+	if (server == NULL)
+		return SIP_SIGNALING_INVALID_ARGUMENT;
+	if (!server->opened)
+		return SIP_SIGNALING_NOT_OPEN;
+	int events = pjsua_handle_events(timeout_ms);
+	if (events < 0) {
+		emit_library_error(server->administrative, "poll SIP events", (pj_status_t)-events);
+		return SIP_SIGNALING_LIBRARY_ERROR;
+	}
+	for (unsigned int index = 0; index < server->max_lines; ++index) {
+		struct sip_signaling *line = server->lines[index];
+		if (line != NULL && line->close_requested)
+			(void)close_now(line);
 	}
 	return SIP_SIGNALING_OK;
 }
 
-struct sip_signaling *sip_signaling_create(
-	const struct app_config *config,
-	const struct sip_signaling_callbacks *callbacks)
+unsigned int sip_server_local_port(const struct sip_server *server)
 {
-	struct sip_signaling *signaling;
+	return server != NULL ? server->local_port : 0;
+}
 
-	if (config == NULL)
+struct sip_signaling *sip_signaling_create_shared(struct sip_server *server,
+	const struct app_config *config, const struct sip_signaling_callbacks *callbacks)
+{
+	if (server == NULL || config == NULL)
 		return NULL;
-	signaling = calloc(1, sizeof(*signaling));
+	unsigned int slot = 0;
+	while (slot < server->max_lines && server->lines[slot] != NULL)
+		++slot;
+	if (slot == server->max_lines)
+		return NULL;
+	struct sip_signaling *signaling = calloc(1, sizeof(*signaling));
 	if (signaling == NULL)
 		return NULL;
+	signaling->server = server;
 	signaling->config = *config;
+	signaling->config.sip = server->administrative->config.sip;
 	if (callbacks != NULL)
 		signaling->callbacks = *callbacks;
-	signaling->transport_id = PJSUA_INVALID_ID;
-	signaling->account_id = PJSUA_INVALID_ID;
 	signaling->call_id = PJSUA_INVALID_ID;
-	signaling->call_state = SIP_CALL_IDLE;
-	signaling->registration_state = config->sip.registration_enabled
-						? SIP_REGISTRATION_UNREGISTERED
-						: SIP_REGISTRATION_DISABLED;
+	signaling->registration_state = server->administrative->registration_state;
+	server->lines[slot] = signaling;
 	return signaling;
 }
 
-void sip_signaling_destroy(
-	struct sip_signaling *signaling)
+struct sip_signaling *sip_signaling_create(const struct app_config *config,
+	const struct sip_signaling_callbacks *callbacks)
+{
+	struct sip_server *server = sip_server_create(config, 1);
+	if (server == NULL)
+		return NULL;
+	struct sip_signaling *signaling = sip_signaling_create_shared(server, config, callbacks);
+	if (signaling == NULL) {
+		sip_server_destroy(server);
+		return NULL;
+	}
+	signaling->owns_server = true;
+	return signaling;
+}
+
+void sip_signaling_destroy(struct sip_signaling *signaling)
 {
 	if (signaling == NULL)
 		return;
@@ -902,80 +1205,44 @@ void sip_signaling_destroy(
 		return;
 	}
 	(void)close_now(signaling);
+	struct sip_server *server = signaling->server;
+	bool owned = signaling->owns_server;
+	for (unsigned int index = 0; index < server->max_lines; ++index)
+		if (server->lines[index] == signaling)
+			server->lines[index] = NULL;
 	free(signaling);
+	if (owned)
+		sip_server_destroy(server);
 }
 
-enum sip_signaling_result sip_signaling_open(
-	struct sip_signaling *signaling)
+enum sip_signaling_result sip_signaling_open(struct sip_signaling *signaling)
 {
-	enum sip_signaling_result result;
-	pj_status_t status;
-
 	if (signaling == NULL)
 		return SIP_SIGNALING_INVALID_ARGUMENT;
 	if (signaling->opened)
 		return SIP_SIGNALING_OK;
-	result = validate_config(&signaling->config);
+	enum sip_signaling_result result = validate_config(&signaling->config);
+	if (result == SIP_SIGNALING_OK)
+		result = resolve_account(signaling);
+	if (result == SIP_SIGNALING_OK)
+		result = sip_server_open(signaling->server);
 	if (result != SIP_SIGNALING_OK)
 		return result;
-	result = resolve_account(signaling);
-	if (result != SIP_SIGNALING_OK)
-		return result;
-	if (active_signaling != NULL) {
-		emit_library_error(signaling, "open concurrent signaling instance",
-				   PJ_EBUSY);
-		return SIP_SIGNALING_BUSY;
-	}
-
-	active_signaling = signaling;
-	signaling->close_requested = false;
-	result = initialize_library(signaling);
-	if (result != SIP_SIGNALING_OK)
-		goto fail;
 	if (signaling->close_requested)
-		goto fail;
-	result = create_transport(signaling);
-	if (result != SIP_SIGNALING_OK)
-		goto fail;
-	if (signaling->close_requested)
-		goto fail;
-	status = pjsua_start();
-	if (status != PJ_SUCCESS) {
-		emit_library_error(signaling, "start signaling library", status);
-		result = SIP_SIGNALING_LIBRARY_ERROR;
-		goto fail;
-	}
-	if (signaling->close_requested)
-		goto fail;
-	result = add_account(signaling);
-	if (result != SIP_SIGNALING_OK)
-		goto fail;
-	if (signaling->close_requested)
-		goto fail;
-
+		return close_now(signaling);
 	signaling->opened = true;
 	signaling->last_library_status = PJ_SUCCESS;
 	emit_trace(signaling, SIP_TRACE_ADAPTER, 3,
-		   "SIP signaling ready\n",
-		   sizeof("SIP signaling ready\n") - 1);
-	if (signaling->close_requested)
-		return close_now(signaling);
-	if (signaling->callbacks.ready != NULL) {
+		"SIP signaling ready\n", sizeof("SIP signaling ready\n") - 1);
+	if (signaling->callbacks.ready != NULL && !signaling->close_requested) {
 		callback_enter(signaling);
 		signaling->callbacks.ready(signaling->callbacks.context);
 		callback_leave(signaling);
 	}
-	if (signaling->close_requested)
-		return close_now(signaling);
-	return SIP_SIGNALING_OK;
-
-fail:
-	(void)close_now(signaling);
-	return result;
+	return signaling->close_requested ? close_now(signaling) : SIP_SIGNALING_OK;
 }
 
-enum sip_signaling_result sip_signaling_close(
-	struct sip_signaling *signaling)
+enum sip_signaling_result sip_signaling_close(struct sip_signaling *signaling)
 {
 	if (signaling == NULL)
 		return SIP_SIGNALING_INVALID_ARGUMENT;
@@ -986,30 +1253,17 @@ enum sip_signaling_result sip_signaling_close(
 	return close_now(signaling);
 }
 
-enum sip_signaling_result sip_signaling_step(
-	struct sip_signaling *signaling, unsigned int timeout_ms)
+enum sip_signaling_result sip_signaling_step(struct sip_signaling *signaling, unsigned int timeout_ms)
 {
-	int events;
-
-	if (signaling == NULL)
-		return SIP_SIGNALING_INVALID_ARGUMENT;
-	if (!signaling->opened)
-		return SIP_SIGNALING_NOT_OPEN;
-	events = pjsua_handle_events(timeout_ms);
-	if (events < 0) {
-		emit_library_error(signaling, "poll SIP events", (pj_status_t)-events);
-		if (signaling->close_requested)
-			(void)close_now(signaling);
-		return SIP_SIGNALING_LIBRARY_ERROR;
-	}
-	if (signaling->close_requested)
-		return close_now(signaling);
-	return SIP_SIGNALING_OK;
+	return signaling == NULL ? SIP_SIGNALING_INVALID_ARGUMENT :
+		!signaling->opened ? SIP_SIGNALING_NOT_OPEN :
+		sip_server_step(signaling->server, timeout_ms);
 }
 
 enum sip_signaling_result sip_signaling_dial(
 	struct sip_signaling *signaling, const char *target)
 {
+	SDK_LOG_SCOPE(signaling != NULL ? signaling->server : NULL);
 	enum sip_uri_result uri_result;
 	pjsua_call_info info;
 	pjsua_call_id call_id = PJSUA_INVALID_ID;
@@ -1030,9 +1284,11 @@ enum sip_signaling_result sip_signaling_dial(
 
 	target_uri = pj_str(signaling->target_uri);
 	signaling->call_direction = SIP_CALL_DIRECTION_OUTGOING;
+	signaling->call_generation++;
+	signaling->called_number[0] = '\0';
 	signaling->call_starting = true;
-	status = pjsua_call_make_call(signaling->account_id, &target_uri, NULL,
-				      NULL, NULL, &call_id);
+	status = pjsua_call_make_call(signaling->server->account_id, &target_uri, NULL,
+				      signaling, NULL, &call_id);
 	if (status != PJ_SUCCESS) {
 		signaling->call_starting = false;
 		signaling->call_id = PJSUA_INVALID_ID;
@@ -1067,6 +1323,7 @@ enum sip_signaling_result sip_signaling_dial(
 enum sip_signaling_result sip_signaling_answer(
 	struct sip_signaling *signaling)
 {
+	SDK_LOG_SCOPE(signaling != NULL ? signaling->server : NULL);
 	pjsua_call_id call_id;
 	pj_status_t status;
 	unsigned int previous_response_code;
@@ -1102,6 +1359,7 @@ enum sip_signaling_result sip_signaling_answer(
 enum sip_signaling_result sip_signaling_hangup(
 	struct sip_signaling *signaling)
 {
+	SDK_LOG_SCOPE(signaling != NULL ? signaling->server : NULL);
 	pjsua_call_id call_id;
 	pj_status_t status;
 
@@ -1116,7 +1374,15 @@ enum sip_signaling_result sip_signaling_hangup(
 	    SIP_CALL_DIRECTION_INCOMING &&
 	    signaling->call_state != SIP_CALL_CONNECTED)
 		signaling->incoming_response_code = 603;
+	signaling->call_id = PJSUA_INVALID_ID;
+	signaling->call_starting = false;
+	if (call_id >= 0 && (unsigned int)call_id < PJSUA_MAX_CALLS)
+		signaling->server->retired[call_id] = true;
+	(void)pjsua_call_set_user_data(call_id, NULL);
 	status = pjsua_call_hangup(call_id, 0, NULL, NULL);
+	emit_media_inactive(signaling);
+	if (signaling->call_state != SIP_CALL_IDLE)
+		emit_call_event(signaling, SIP_CALL_IDLE, NULL);
 	if (status != PJ_SUCCESS) {
 		emit_library_error(signaling, "hang up SIP call", status);
 		if (signaling->close_requested)
@@ -1137,7 +1403,7 @@ bool sip_signaling_is_open(
 unsigned int sip_signaling_local_port(
 	const struct sip_signaling *signaling)
 {
-	return signaling != NULL && signaling->opened ? signaling->local_port : 0;
+	return signaling != NULL && signaling->opened ? signaling->server->local_port : 0;
 }
 
 const char *sip_signaling_identity_uri(

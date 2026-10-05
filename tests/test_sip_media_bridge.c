@@ -216,6 +216,21 @@ static bool test_forwards_and_binds_before_media_callback(void)
 	return true;
 }
 
+static bool test_admission_waits_for_media_cleanup(void)
+{
+	struct bridge_fixture fixture;
+	struct callback_capture capture = {0};
+	CHECK(open_fixture(&fixture, &capture), "fixture failed");
+	const struct sip_signaling_callbacks *source = sip_media_bridge_callbacks(&fixture.bridge);
+	CHECK(source->admit(source->context), "clean media rejected admission");
+	fixture.endpoint.discard_pending = true;
+	CHECK(!source->admit(source->context), "old media allowed replacement admission");
+	fixture.endpoint.discard_pending = false;
+	CHECK(source->admit(source->context), "cleanup did not restore admission");
+	rtp_endpoint_close(&fixture.endpoint);
+	return true;
+}
+
 static bool test_validates_initialization(void)
 {
 	struct sip_media_bridge bridge;
@@ -312,6 +327,7 @@ int main(void)
 {
 	static const struct test_case tests[] = {
 		{ "forward and bind", test_forwards_and_binds_before_media_callback },
+		{ "media cleanup admission", test_admission_waits_for_media_cleanup },
 		{ "initialization validation", test_validates_initialization },
 		{ "media trace intervals", test_media_trace_intervals_and_lifecycle },
 	};

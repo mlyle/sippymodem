@@ -5,6 +5,7 @@ PKG_CONFIG ?= pkg-config
 PJSIP_SOURCE_DIR := third_party/pjproject
 PJSIP_BUILD_DIR := .build/pjproject
 PJSIP_PREFIX := $(abspath $(PJSIP_BUILD_DIR)/install)
+PJSIP_CONFIG_HEADER := build/pjsip_config.h
 PJSIP_CONFIGURE_STAMP := $(PJSIP_BUILD_DIR)/configured
 PJSIP_PC_FILE := $(PJSIP_PREFIX)/lib/pkgconfig/libpjproject.pc
 PJSIP_SOURCE_READY := $(if $(wildcard $(PJSIP_SOURCE_DIR)/aconfigure),yes,no)
@@ -73,11 +74,12 @@ pjsip: $(PJSIP_PC_FILE)
 
 pjsip-required: pjsip
 
-$(PJSIP_CONFIGURE_STAMP): build/compiler.mk build/pjsip.mk \
+$(PJSIP_CONFIGURE_STAMP): build/compiler.mk build/pjsip.mk $(PJSIP_CONFIG_HEADER) \
 	$(PJSIP_SOURCE_DIR)/aconfigure | $(PJSIP_BUILD_DIR)
 	@if test -f $(PJSIP_SOURCE_DIR)/build.mak; then \
 		$(MAKE) -C $(PJSIP_SOURCE_DIR) clean; \
 	fi
+	cp $(PJSIP_CONFIG_HEADER) $(PJSIP_SOURCE_DIR)/pjlib/include/pj/config_site.h
 	cd $(PJSIP_SOURCE_DIR) && CC="$(CC)" CXX="$(CXX)" \
 		CFLAGS="$(CFLAGS) -fPIC" CXXFLAGS="$(CXXFLAGS) -fPIC" ./configure \
 		--prefix="$(PJSIP_PREFIX)" $(PJSIP_CONFIGURE_OPTIONS)

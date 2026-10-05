@@ -356,3 +356,9 @@ int main(void)
 	}
 	return failures == 0 ? 0 : 1;
 }
+
+struct sip_signaling *sip_signaling_create_shared(struct sip_server *server, const struct app_config *config, const struct sip_signaling_callbacks *callbacks)
+{
+	(void)server;
+	return sip_signaling_create(config, callbacks);
+}

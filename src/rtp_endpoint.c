@@ -55,22 +55,28 @@ static int make_socket_nonblocking(int socket_fd)
 	return 0;
 }
 
-static void discard_queued_datagrams(struct rtp_endpoint *endpoint)
+static size_t discard_queued_datagrams(struct rtp_endpoint *endpoint)
 {
 	uint8_t packet[RTP_ENDPOINT_MAX_DATAGRAM];
 
 	if (endpoint->socket_fd < 0)
-		return;
-	for (;;) {
+		return 0;
+	size_t drained = 0;
+	for (unsigned int attempt = 0; attempt < RTP_ENDPOINT_MAX_DRAIN; ++attempt) {
 		ssize_t received = recv(endpoint->socket_fd, packet,
 					sizeof(packet), MSG_DONTWAIT);
 
-		if (received >= 0)
+		if (received >= 0) {
+			drained++;
 			continue;
+		}
 		if (errno == EINTR)
 			continue;
-		return;
+		endpoint->discard_pending = false;
+		return drained;
 	}
+	endpoint->discard_pending = true;
+	return drained;
 }
 
 bool rtp_endpoint_init(
@@ -145,6 +151,7 @@ void rtp_endpoint_close(
 	if (endpoint->socket_fd >= 0)
 		close(endpoint->socket_fd);
 	endpoint->socket_fd = -1;
+	endpoint->discard_pending = false;
 	memset(&endpoint->local_address, 0, sizeof(endpoint->local_address));
 	endpoint->remote_configured = false;
 	endpoint->remote_learned = false;
@@ -342,8 +349,14 @@ enum rtp_endpoint_result rtp_endpoint_drain(
 		return RTP_ENDPOINT_INVALID_ARGUMENT;
 	if (endpoint->socket_fd < 0)
 		return RTP_ENDPOINT_NOT_OPEN;
+	if (endpoint->discard_pending) {
+		size_t discarded = discard_queued_datagrams(endpoint);
+		if (datagrams_received != NULL)
+			*datagrams_received = discarded;
+		return RTP_ENDPOINT_OK;
+	}
 
-	for (;;) {
+	for (unsigned int attempt = 0; attempt < RTP_ENDPOINT_MAX_DRAIN; ++attempt) {
 		struct sockaddr_in source = { 0 };
 		struct iovec vector = {
 			.iov_base = packet,
@@ -419,11 +432,13 @@ static enum rtp_endpoint_result send_frame(
 		return RTP_ENDPOINT_MEDIA_ERROR;
 	endpoint->stats.transmit_attempts++;
 
-	do {
+	for (unsigned int attempt = 0; attempt < 4; ++attempt) {
 		sent = sendto(endpoint->socket_fd, packet_workspace, packet_size, 0,
 			      (const struct sockaddr *)&remote_address,
 			      sizeof(remote_address));
-	} while (sent < 0 && errno == EINTR);
+		if (sent >= 0 || errno != EINTR)
+			break;
+	}
 	record_packet(endpoint, packet_workspace, packet_size,
 		sent == (ssize_t)packet_size ? RECORD_PACKET_SENT :
 		RECORD_PACKET_SEND_FAILED);

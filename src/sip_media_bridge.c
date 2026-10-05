@@ -7,6 +7,19 @@
 #include <stdio.h>
 #include <string.h>
 
+static bool forward_admit(void *context)
+{
+	struct sip_media_bridge *bridge = context;
+	if (bridge->endpoint->discard_pending)
+		return false;
+	if (bridge->destination.admit == NULL)
+		return true;
+	bridge->callback_depth++;
+	bool allowed = bridge->destination.admit(bridge->destination.context);
+	bridge->callback_depth--;
+	return allowed;
+}
+
 static void forward_ready(void *context)
 {
 	struct sip_media_bridge *bridge = context;
@@ -81,6 +94,7 @@ bool sip_media_bridge_init(
 		initialized.destination = *destination;
 	initialized.source.context = bridge;
 	initialized.source.ready = forward_ready;
+	initialized.source.admit = forward_admit;
 	initialized.source.error = forward_error;
 	initialized.source.trace = forward_trace;
 	initialized.source.registration_changed = forward_registration;

@@ -23,6 +23,7 @@ enum {
 };
 
 struct slmodem_call_transition {
+	uint64_t generation;
 	enum sip_call_direction direction;
 	enum sip_call_state state;
 	unsigned int status_code;
@@ -36,6 +37,7 @@ struct slmodem_calls {
 	unsigned int pending_head;
 	unsigned int pending_count;
 	enum sip_call_state state;
+	uint64_t generation;
 	bool overflowed;
 };
 

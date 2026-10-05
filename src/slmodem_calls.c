@@ -19,17 +19,18 @@ static void capture_call(
 
 	if (calls == NULL || event == NULL)
 		return;
+	if (event->generation != 0 && event->generation < calls->generation)
+		return;
+	calls->generation = event->generation;
 	calls->state = event->state;
 	if (calls->pending_count == SLMODEM_CALL_EVENT_CAPACITY) {
 		calls->overflowed = true;
-		calls->pending_head = 0;
-		calls->pending_count = 0;
-		/* Never let overflow hide the terminal state. */
-		if (event->state != SIP_CALL_IDLE)
-			return;
+		/* Preserve accepted transitions; owner deliberately fails the call. */
+		return;
 	}
 	tail = (calls->pending_head + calls->pending_count) %
 	       SLMODEM_CALL_EVENT_CAPACITY;
+	calls->pending[tail].generation = event->generation;
 	calls->pending[tail].direction = event->direction;
 	calls->pending[tail].state = event->state;
 	calls->pending[tail].status_code = event->status_code;
@@ -87,6 +88,8 @@ enum slmodem_calls_result slmodem_calls_drain(
 			      SLMODEM_CALL_EVENT_CAPACITY;
 	calls->pending_count--;
 
+	if (transition.generation != 0 && transition.generation != calls->generation)
+		return SLMODEM_CALLS_OK;
 	if (transition.direction != SIP_CALL_DIRECTION_INCOMING &&
 	    transition.direction != SIP_CALL_DIRECTION_OUTGOING)
 		return SLMODEM_CALLS_INVALID_EVENT;

@@ -20,6 +20,7 @@ struct modem_host {
 	bool remote_seed_pending;
 	bool remote_clock_started;
 	uint64_t remote_clock_time_ns;
+	size_t remote_frames_pending;
 };
 
 static void synchronize_audio(struct modem_host *host)
@@ -43,11 +44,13 @@ static void synchronize_audio(struct modem_host *host)
 	if (!audio_scheduler_is_active(&host->audio_scheduler)) {
 		host->remote_seed_pending = false;
 		host->remote_clock_started = false;
+		host->remote_frames_pending = 0;
 	}
 	host->media_was_configured = media_configured;
 }
 
-struct modem_host *modem_host_create(
+struct modem_host *modem_host_create_shared(
+	struct sip_server *server,
 	const struct app_config *config,
 	const struct media_recorder *recorder,
 	const struct sip_signaling_callbacks *callbacks,
@@ -61,7 +64,7 @@ struct modem_host *modem_host_create(
 	if (host == NULL)
 		return NULL;
 	host->remote_clock = config->media.remote_clock;
-	host->session = sip_session_create(config, recorder, callbacks);
+	host->session = sip_session_create_shared(server, config, recorder, callbacks);
 	if (host->session == NULL)
 		goto fail;
 	host->audio_path = audio_path_create(
@@ -80,6 +83,15 @@ fail:
 	sip_session_destroy(host->session);
 	free(host);
 	return NULL;
+}
+
+struct modem_host *modem_host_create(
+	const struct app_config *config,
+	const struct media_recorder *recorder,
+	const struct sip_signaling_callbacks *callbacks,
+	const struct modem_core *modem_core)
+{
+	return modem_host_create_shared(NULL, config, recorder, callbacks, modem_core);
 }
 
 void modem_host_destroy(struct modem_host *host)
@@ -122,6 +134,7 @@ enum sip_session_result modem_host_close(
 	host->audio_suspended = false;
 	host->remote_seed_pending = false;
 	host->remote_clock_started = false;
+	host->remote_frames_pending = 0;
 	host->last_session_result = sip_session_close(host->session);
 	return host->last_session_result;
 }
@@ -196,12 +209,22 @@ enum modem_host_result modem_host_step(
 			}
 		}
 		if (host->remote_seed_pending) {
-			remote_frames++;
+			host->remote_frames_pending++;
 			host->remote_seed_pending = false;
 		}
+		if (audio_scheduler_is_active(&host->audio_scheduler)) {
+			if (remote_frames > SIZE_MAX - host->remote_frames_pending)
+				return suspend_failed_audio(host, MODEM_HOST_AUDIO_ERROR);
+			host->remote_frames_pending += remote_frames;
+		}
+		size_t due = host->remote_frames_pending;
+		if (due > MEDIA_MAX_CATCHUP_FRAMES)
+			due = MEDIA_MAX_CATCHUP_FRAMES;
+		/* DSP may synchronously hang up and reset this credit. Debit the
+		 * bounded batch before entering that callback; teardown retires it. */
+		host->remote_frames_pending -= due;
 		host->last_audio_scheduler_result =
-			audio_scheduler_step_remote(
-				&host->audio_scheduler, remote_frames, &frames);
+			audio_scheduler_step_remote(&host->audio_scheduler, due, &frames);
 	} else {
 		host->last_audio_scheduler_result = audio_scheduler_step(
 			&host->audio_scheduler, now_ns, &frames);
@@ -233,8 +256,10 @@ uint64_t modem_host_wait_ns(
 
 	if (host == NULL || !sip_session_is_open(host->session))
 		return UINT64_MAX;
+	if (sip_session_media_cleanup_pending(host->session))
+		return 0;
 	if (host->remote_clock) {
-		if (host->remote_seed_pending)
+		if (host->remote_seed_pending || host->remote_frames_pending != 0)
 			return 0;
 		return MODEM_HOST_SIGNALING_POLL_NS;
 	}
@@ -343,4 +368,14 @@ const char *modem_host_result_name(enum modem_host_result result)
 		return "remote RTP clock stopped";
 	}
 	return "unknown host result";
+}
+
+unsigned int modem_host_rtp_local_port(const struct modem_host *host)
+{
+	return host != NULL ? sip_session_rtp_local_port(host->session) : 0;
+}
+
+bool modem_host_media_cleanup_pending(const struct modem_host *host)
+{
+	return host != NULL && sip_session_media_cleanup_pending(host->session);
 }

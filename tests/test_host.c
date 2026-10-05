@@ -165,6 +165,8 @@ enum sip_signaling_result sip_signaling_hangup(
 }
 
 struct core_capture {
+	unsigned int stop_after;
+	struct modem_host *hangup_host;
 	enum modem_core_result result;
 	unsigned int calls;
 	bool received_silence;
@@ -208,6 +210,11 @@ static enum modem_core_result process_core(
 	if (capture != NULL) {
 		capture->calls++;
 		capture->received_silence = silence;
+		if (capture->stop_after != 0 && capture->calls >= capture->stop_after) {
+			if (capture->hangup_host != NULL)
+				(void)modem_host_hangup(capture->hangup_host);
+			return MODEM_CORE_STOPPED;
+		}
 	}
 	memset(transmit_samples, 0, count * sizeof(transmit_samples[0]));
 	return capture != NULL ? capture->result : MODEM_CORE_OK;
@@ -521,6 +528,24 @@ static bool test_remote_media_clocks_elapsed_time(void)
 			      datagrams == 1 && frames == part && core.calls == 4 + part,
 		      "partial frame credit did not survive separate socket drains");
 	}
+	/* A burst keeps clock credit but processes at most four frames per pass. */
+	for (unsigned int packet_index = 0; packet_index < 12; ++packet_index) {
+		rtp_header.sequence++;
+		rtp_header.timestamp += packet_index == 0 ? 5 : 8;
+		CHECK(rtp_packet_write(packet, sizeof(packet), &rtp_header,
+			payload, sizeof(payload), &packet_size) == RTP_OK &&
+			sendto(peer_fd, packet, packet_size, 0,
+			(struct sockaddr *)&host_address, sizeof(host_address)) == (ssize_t)packet_size,
+			"burst RTP packet was not sent");
+	}
+	for (unsigned int pass = 0; pass < 3; ++pass) {
+		CHECK(modem_host_step(host, 4000000000, &datagrams, &frames) == MODEM_HOST_OK &&
+			datagrams == (pass == 0 ? 12 : 0) && frames == 4 && core.calls == 9 + 4 * pass,
+			"remote burst exceeded budget or lost clock credit on pass %u", pass);
+		CHECK(modem_host_wait_ns(host, 4000000000) ==
+			(pass < 2 ? 0 : MODEM_HOST_SIGNALING_POLL_NS),
+			"pending remote clock credit did not schedule bounded continuation");
+	}
 	/* Missing RTP must eventually release the call even without SIP BYE.
 	 * Invalid packets are not clock credit and cannot keep it alive. */
 	const uint64_t deadline = UINT64_C(4000000000) +
@@ -561,6 +586,33 @@ static bool test_remote_media_clocks_elapsed_time(void)
 	levels = modem_host_take_audio_levels(host);
 	CHECK(levels.receive_peak == 0 && levels.transmit_peak == 0,
 	      "hangup retained audio peaks for the next call");
+	/* A later frame can synchronously retire the credit during DSP. */
+	fake.defer_hangup_media = false;
+	CHECK(modem_host_hangup(host) == SIP_SIGNALING_OK && !modem_host_media_is_configured(host),
+		"deferred old media did not clear");
+	core.calls = 0;
+	core.stop_after = 3;
+	core.hangup_host = host;
+	CHECK(modem_host_dial(host, "sip:peer@127.0.0.1") == SIP_SIGNALING_OK &&
+		modem_host_step(host, UINT64_MAX, NULL, &frames) == MODEM_HOST_OK && frames == 1,
+		"stop-burst call did not seed");
+	for (unsigned int i = 0; i < 8; ++i) {
+		rtp_header.sequence++;
+		rtp_header.timestamp += 8;
+		CHECK(rtp_packet_write(packet, sizeof(packet), &rtp_header, payload,
+			sizeof(payload), &packet_size) == RTP_OK &&
+			sendto(peer_fd, packet, packet_size, 0, (struct sockaddr *)&host_address,
+			sizeof(host_address)) == (ssize_t)packet_size, "stop-burst packet failed");
+	}
+	CHECK(modem_host_step(host, UINT64_MAX, &datagrams, &frames) == MODEM_HOST_MODEM_STOPPED &&
+		frames == 1 && core.calls == 3 && !modem_host_audio_is_active(host),
+		"later frame did not retire the burst safely");
+	core.stop_after = 0;
+	core.hangup_host = NULL;
+	CHECK(modem_host_dial(host, "sip:peer@127.0.0.1") == SIP_SIGNALING_OK &&
+		modem_host_step(host, UINT64_MAX, NULL, &frames) == MODEM_HOST_OK && frames == 1 &&
+		modem_host_wait_ns(host, UINT64_MAX) == MODEM_HOST_SIGNALING_POLL_NS,
+		"replacement call inherited retired remote clock credit");
 	CHECK(modem_host_close(host) == SIP_SESSION_OK,
 	      "remote-clock host did not close");
 	modem_host_destroy(host);
@@ -686,4 +738,10 @@ int main(void)
 		}
 	}
 	return failures == 0 ? 0 : 1;
+}
+
+struct sip_signaling *sip_signaling_create_shared(struct sip_server *server, const struct app_config *config, const struct sip_signaling_callbacks *callbacks)
+{
+	(void)server;
+	return sip_signaling_create(config, callbacks);
 }

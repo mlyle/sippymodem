@@ -1168,8 +1168,19 @@ int main(void)
 	return failures == 0 ? 0 : 1;
 }
 
+struct modem_host *modem_host_create_shared(struct sip_server *server, const struct app_config *config, const struct media_recorder *recorder, const struct sip_signaling_callbacks *callbacks, const struct modem_core *modem_core)
+{
+	(void)server;
+	return modem_host_create(config, recorder, callbacks, modem_core);
+}
+
 void modem_update_status(struct modem *modem, unsigned int status)
 {
 	(void)modem;
 	(void)status;
+}
+
+enum sip_signaling_result slmodem_driver_last_signaling_result(const struct slmodem_driver *driver)
+{
+	return driver != NULL ? driver->last_signaling_result : SIP_SIGNALING_INVALID_ARGUMENT;
 }

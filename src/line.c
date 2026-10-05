@@ -21,8 +21,10 @@ struct modem_line {
 	struct slmodem_calls calls;
 };
 
-struct modem_line *modem_line_create(const struct app_config *config,
-	const char *name, void (*trace)(void *, const struct sip_trace_record *))
+static struct modem_line *create_line(struct sip_server *server,
+	const struct app_config *config, const char *name,
+	const struct sip_signaling_callbacks *callbacks,
+	void (*trace)(void *, const struct sip_trace_record *))
 {
 	if (config == NULL || name == NULL || name[0] == '\0') {
 		errno = EINVAL;
@@ -54,9 +56,10 @@ struct modem_line *modem_line_create(const struct app_config *config,
 		    (recorder = recording_files_recorder(line->recording)) == NULL)
 			goto fail;
 	}
-	struct sip_signaling_callbacks callbacks = *slmodem_calls_callbacks(&line->calls);
-	callbacks.trace = trace;
-	line->host = modem_host_create(config, recorder, &callbacks,
+	line->calls.callbacks.trace = trace;
+	const struct sip_signaling_callbacks *selected = callbacks != NULL ? callbacks :
+		slmodem_calls_callbacks(&line->calls);
+	line->host = modem_host_create_shared(server, config, recorder, selected,
 		slmodem_adapter_core(&line->adapter));
 	if (line->host == NULL ||
 	    !slmodem_driver_attach(&line->driver, line->modem, line->host))
@@ -68,6 +71,19 @@ fail:;
 	modem_line_destroy(line);
 	errno = saved_error;
 	return NULL;
+}
+
+struct modem_line *modem_line_create(const struct app_config *config,
+	const char *name, void (*trace)(void *, const struct sip_trace_record *))
+{
+	return create_line(NULL, config, name, NULL, trace);
+}
+
+struct modem_line *modem_line_create_shared(struct sip_server *server,
+	const struct app_config *config, const char *name,
+	const struct sip_signaling_callbacks *callbacks)
+{
+	return create_line(server, config, name, callbacks, NULL);
 }
 
 void modem_line_destroy(struct modem_line *line)
@@ -103,4 +119,10 @@ struct slmodem_calls *modem_line_calls(struct modem_line *line)
 const struct recording_files *modem_line_recording(const struct modem_line *line)
 {
 	return line != NULL ? line->recording : NULL;
+}
+
+enum sip_signaling_result modem_line_last_signaling_result(const struct modem_line *line)
+{
+	return line != NULL ? slmodem_driver_last_signaling_result(&line->driver) :
+		SIP_SIGNALING_INVALID_ARGUMENT;
 }

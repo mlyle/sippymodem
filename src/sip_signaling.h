@@ -7,6 +7,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 enum sip_signaling_result {
 	SIP_SIGNALING_OK = 0,
@@ -67,6 +68,8 @@ struct sip_media_event {
 };
 
 struct sip_call_event {
+	uint64_t generation;
+	const char *called_number;
 	enum sip_call_direction direction;
 	enum sip_call_state state;
 	unsigned int status_code;
@@ -105,6 +108,8 @@ struct sip_trace_record {
  */
 struct sip_signaling_callbacks {
 	void *context;
+	/* Checked before assigning an incoming call, including early SDP. */
+	bool (*admit)(void *context);
 	void (*ready)(void *context);
 	void (*error)(void *context,
 		      const struct sip_signaling_error *error);
@@ -120,14 +125,30 @@ struct sip_signaling_callbacks {
 };
 
 struct sip_signaling;
+struct sip_server;
+
+/* One process-wide PJSUA endpoint, explicitly owned by a server. Shared lines
+ * have one account/transport and separate call/media state. Closing a line
+ * leaves its server and other lines running. Destroy lines before the server. */
+struct sip_server *sip_server_create(const struct app_config *config,
+	unsigned int max_lines);
+enum sip_signaling_result sip_server_open(struct sip_server *server);
+enum sip_signaling_result sip_server_close(struct sip_server *server);
+void sip_server_destroy(struct sip_server *server);
+enum sip_signaling_result sip_server_step(struct sip_server *server,
+	unsigned int timeout_ms);
+unsigned int sip_server_local_port(const struct sip_server *server);
+struct sip_signaling *sip_signaling_create_shared(struct sip_server *server,
+	const struct app_config *config, const struct sip_signaling_callbacks *callbacks);
+
 
 struct sip_signaling *sip_signaling_create(
 	const struct app_config *config,
 	const struct sip_signaling_callbacks *callbacks);
 
 /*
- * close() is callback-safe and gives confirmed registrations a bounded
- * graceful unregister. Call destroy() again outside a callback to free.
+ * close() is callback-safe; server teardown never waits for network replies.
+ * Call destroy() again outside a callback to free.
  */
 void sip_signaling_destroy(
 	struct sip_signaling *signaling);

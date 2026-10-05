@@ -300,14 +300,36 @@ static bool test_reports_bounded_queue_overflow(void)
 		      capture.remote_end_calls == 0 &&
 		      capture.status_updates == 0,
 	      "event queue overflow was silent");
-	CHECK(slmodem_calls_drain(&calls) ==
-		      SLMODEM_CALLS_OK &&
-		      capture.remote_end_calls == 1 &&
-		      capture.status_updates == 1 &&
-		      capture.last_status == STATUS_BUSY &&
-		      slmodem_calls_drain(&calls) ==
-			      SLMODEM_CALLS_IDLE,
-	      "event overflow hid the terminal call state or status");
+	CHECK(calls.pending_count == SLMODEM_CALL_EVENT_CAPACITY && calls.state == SIP_CALL_IDLE,
+	      "overflow erased accepted transitions or latest terminal state");
+	for (unsigned int index = 0; index < SLMODEM_CALL_EVENT_CAPACITY; ++index)
+		CHECK(slmodem_calls_drain(&calls) == SLMODEM_CALLS_OK, "accepted event was lost");
+	CHECK(capture.remote_end_calls == 0 && slmodem_calls_drain(&calls) == SLMODEM_CALLS_IDLE,
+	      "overflow injected or replayed a terminal event");
+	return true;
+}
+
+static bool test_stale_generation_is_ignored(void)
+{
+	struct modem modem = { 0 };
+	struct slmodem_calls calls;
+	memset(&capture, 0, sizeof(capture));
+	CHECK(slmodem_calls_init(&calls, &modem), "generation fixture failed");
+	struct sip_call_event event = { .direction = SIP_CALL_DIRECTION_OUTGOING,
+		.state = SIP_CALL_IDLE, .generation = 1 };
+	calls.callbacks.call_changed(&calls, &event);
+	event.state = SIP_CALL_CONNECTED;
+	event.generation = 2;
+	calls.callbacks.call_changed(&calls, &event);
+	CHECK(slmodem_calls_drain(&calls) == SLMODEM_CALLS_OK && capture.remote_end_calls == 0,
+	      "queued stale idle ended the new call");
+	CHECK(slmodem_calls_drain(&calls) == SLMODEM_CALLS_OK && capture.outgoing_connected_calls == 1,
+	      "new generation did not connect");
+	event.state = SIP_CALL_IDLE;
+	event.generation = 1;
+	calls.callbacks.call_changed(&calls, &event);
+	CHECK(calls.state == SIP_CALL_CONNECTED && slmodem_calls_drain(&calls) == SLMODEM_CALLS_IDLE,
+	      "late stale callback changed current state");
 	return true;
 }
 
@@ -319,6 +341,7 @@ struct test_case {
 int main(void)
 {
 	static const struct test_case tests[] = {
+		{ "stale generation", test_stale_generation_is_ignored },
 		{ "event order", test_preserves_event_order },
 		{ "incoming lifecycle", test_maps_incoming_lifecycle },
 		{ "outgoing busy responses", test_maps_outgoing_busy_responses },

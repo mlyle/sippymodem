@@ -7,6 +7,8 @@
 #include "test.h"
 
 #include <arpa/inet.h>
+#include <dirent.h>
+#include <time.h>
 #include <poll.h>
 #include <pthread.h>
 #include <stdint.h>
@@ -24,6 +26,7 @@ enum {
 };
 
 struct callback_capture {
+	bool deny_incoming;
 	struct sip_signaling *signaling;
 	unsigned int ready_count;
 	unsigned int error_count;
@@ -39,6 +42,8 @@ struct callback_capture {
 		call_directions[TEST_CALL_EVENTS];
 	enum sip_call_state call_states[TEST_CALL_EVENTS];
 	unsigned int call_status_codes[TEST_CALL_EVENTS];
+	uint64_t call_generations[TEST_CALL_EVENTS];
+	char called_numbers[TEST_CALL_EVENTS][128];
 	char call_reasons[TEST_CALL_EVENTS][32];
 	char call_remote_identities[TEST_CALL_EVENTS][128];
 	enum sip_media_state media_states[TEST_MEDIA_EVENTS];
@@ -58,6 +63,11 @@ struct callback_capture {
 	unsigned int registration_expirations[TEST_REGISTRATION_EVENTS];
 	char registration_reasons[TEST_REGISTRATION_EVENTS][32];
 };
+
+static bool capture_admit(void *context)
+{
+	return !((struct callback_capture *)context)->deny_incoming;
+}
 
 static void capture_ready(void *context)
 {
@@ -119,6 +129,8 @@ static void capture_call(
 	capture->call_directions[index] = event->direction;
 	capture->call_states[index] = event->state;
 	capture->call_status_codes[index] = event->status_code;
+	capture->call_generations[index] = event->generation;
+	(void)snprintf(capture->called_numbers[index], sizeof(capture->called_numbers[index]), "%s", event->called_number != NULL ? event->called_number : "");
 	(void)snprintf(capture->call_reasons[index],
 		       sizeof(capture->call_reasons[index]), "%s",
 		       event->reason != NULL ? event->reason : "");
@@ -222,6 +234,8 @@ static bool test_local_transport_lifecycle(void)
 	result = sip_signaling_open(signaling);
 	CHECK(result == SIP_SIGNALING_OK, "open failed: %s",
 	      sip_signaling_result_name(result));
+	CHECK(pj_log_get_log_func() == previous_log_writer && pj_log_get_level() == previous_log_level,
+	      "open changed the embedding logger");
 	CHECK(sip_signaling_is_open(signaling) &&
 		      sip_signaling_local_port(signaling) != 0,
 	      "signaling transport did not bind a local port");
@@ -238,6 +252,8 @@ static bool test_local_transport_lifecycle(void)
 	CHECK(sip_signaling_step(signaling, 0) ==
 		      SIP_SIGNALING_OK,
 	      "nonblocking signaling poll failed");
+	CHECK(pj_log_get_log_func() == previous_log_writer && pj_log_get_level() == previous_log_level,
+	      "poll changed the embedding logger");
 	CHECK(sip_signaling_close(signaling) ==
 		      SIP_SIGNALING_OK &&
 		      !sip_signaling_is_open(signaling),
@@ -932,7 +948,7 @@ static bool test_loopback_registration_lifecycle(void)
 			      SIP_REGISTRATION_UNREGISTERED,
 	      "registration lifecycle event order was wrong");
 	CHECK(capture.registration_status_codes[1] == 200 &&
-		      capture.registration_status_codes[3] == 200 &&
+		      capture.registration_status_codes[3] == 0 &&
 		      capture.registration_library_statuses[1] == 0 &&
 		      capture.registration_library_statuses[3] == 0 &&
 		      capture.registration_expirations[1] == 60 &&
@@ -942,7 +958,7 @@ static bool test_loopback_registration_lifecycle(void)
 	CHECK(close_result == SIP_SIGNALING_OK,
 	      "registered account did not close");
 	CHECK(final_state_unregistered,
-	      "graceful close did not retain the unregistered state");
+	      "local shutdown did not retain the unregistered state");
 	CHECK(strcmp(sip_registration_state_name(
 			     SIP_REGISTRATION_REGISTERED),
 		     "registered") == 0,
@@ -1203,6 +1219,240 @@ static bool test_incoming_call_lifecycle(void)
 	return true;
 }
 
+static unsigned int open_fd_count(void)
+{
+	DIR *directory = opendir("/proc/self/fd");
+	if (directory == NULL)
+		return UINT32_MAX;
+	unsigned int count = 0;
+	struct dirent *entry;
+	while ((entry = readdir(directory)) != NULL)
+		if (entry->d_name[0] != '.')
+			count++;
+	closedir(directory);
+	return count;
+}
+
+static uint64_t monotonic_ms(void)
+{
+	struct timespec time;
+	if (clock_gettime(CLOCK_MONOTONIC, &time) != 0)
+		return 0;
+	return (uint64_t)time.tv_sec * 1000 + (unsigned int)time.tv_nsec / 1000000;
+}
+
+static bool test_external_endpoint_owner(void)
+{
+	pj_log_func *writer = pj_log_get_log_func();
+	int level = pj_log_get_level();
+	pj_log_set_level(0);
+	CHECK(pjsua_create() == PJ_SUCCESS, "external SDK endpoint create failed");
+	struct app_config config;
+	config_init(&config);
+	config.sip.listen_port = 0;
+	config.sip.registration_enabled = false;
+	config.sip.log_level = 0;
+	struct sip_server *server = sip_server_create(&config, 1);
+	CHECK(server != NULL && sip_server_open(server) == SIP_SIGNALING_BUSY, "external SDK endpoint was overwritten");
+	CHECK(pjsua_get_state() == PJSUA_STATE_CREATED, "external SDK endpoint state changed");
+	sip_server_destroy(server);
+	CHECK(pjsua_get_state() == PJSUA_STATE_CREATED, "unstarted server destroyed external SDK endpoint");
+	CHECK(pjsua_destroy2(PJSUA_DESTROY_NO_NETWORK) == PJ_SUCCESS, "external endpoint cleanup failed");
+	pj_log_set_log_func(writer);
+	pj_log_set_level(level);
+	return true;
+}
+
+static bool test_shared_two_calls(void)
+{
+	struct app_config config;
+	config_init(&config);
+	config.sip.listen_port = 0;
+	config.sip.registration_enabled = false;
+	config.sip.log_level = 0;
+	strcpy(config.sip.public_address, "127.0.0.1");
+	strcpy(config.sip.bound_address, "127.0.0.1");
+	config.media.frame_duration_ms = 20;
+	struct sip_server *server = sip_server_create(&config, 4);
+	CHECK(server != NULL && sip_server_open(server) == SIP_SIGNALING_OK, "shared server open failed");
+	struct callback_capture captures[4] = { 0 };
+	struct sip_signaling *lines[4];
+	for (unsigned int i = 0; i < 4; ++i) {
+		config.media.rtp_listen_port = TEST_MODEM_RTP_PORT + 2 * i;
+		struct sip_signaling_callbacks callbacks = {
+			.context = &captures[i], .call_changed = capture_call,
+			.media_changed = capture_media, .error = capture_error,
+		};
+		lines[i] = sip_signaling_create_shared(server, &config, &callbacks);
+		CHECK(lines[i] != NULL && sip_signaling_open(lines[i]) == SIP_SIGNALING_OK, "shared line %u open failed", i);
+	}
+	char target[128];
+	snprintf(target, sizeof(target), "sip:1234@127.0.0.1:%u", sip_server_local_port(server));
+	CHECK(sip_signaling_dial(lines[0], target) == SIP_SIGNALING_OK, "first shared dial failed");
+	for (unsigned int i = 0; i < 100 && sip_signaling_call_state(lines[1]) == SIP_CALL_IDLE; ++i)
+		CHECK(sip_server_step(server, 2) == SIP_SIGNALING_OK, "shared poll failed");
+	CHECK((sip_signaling_call_state(lines[1]) == SIP_CALL_INCOMING_PENDING || sip_signaling_call_state(lines[1]) == SIP_CALL_EARLY), "incoming call routed to wrong line");
+	CHECK(strcmp(captures[1].called_numbers[0], "1234") == 0 && captures[1].call_generations[0] == 1, "incoming routing facts/generation missing");
+	CHECK(sip_signaling_answer(lines[1]) == SIP_SIGNALING_OK, "first shared answer failed");
+	for (unsigned int i = 0; i < 100 && (sip_signaling_call_state(lines[0]) != SIP_CALL_CONNECTED || sip_signaling_call_state(lines[1]) != SIP_CALL_CONNECTED); ++i)
+		CHECK(sip_server_step(server, 2) == SIP_SIGNALING_OK, "shared poll failed");
+	CHECK(sip_signaling_call_state(lines[0]) == SIP_CALL_CONNECTED && sip_signaling_call_state(lines[1]) == SIP_CALL_CONNECTED, "first shared call did not connect");
+	snprintf(target, sizeof(target), "sip:5678@127.0.0.1:%u", sip_server_local_port(server));
+	CHECK(sip_signaling_dial(lines[2], target) == SIP_SIGNALING_OK, "second shared dial failed");
+	for (unsigned int i = 0; i < 100 && sip_signaling_call_state(lines[3]) == SIP_CALL_IDLE; ++i)
+		CHECK(sip_server_step(server, 2) == SIP_SIGNALING_OK, "shared poll failed");
+	CHECK((sip_signaling_call_state(lines[3]) == SIP_CALL_INCOMING_PENDING || sip_signaling_call_state(lines[3]) == SIP_CALL_EARLY), "second incoming call routed to wrong line");
+	CHECK(sip_signaling_answer(lines[3]) == SIP_SIGNALING_OK, "second shared answer failed");
+	for (unsigned int i = 0; i < 100 && (sip_signaling_call_state(lines[2]) != SIP_CALL_CONNECTED || sip_signaling_call_state(lines[3]) != SIP_CALL_CONNECTED); ++i)
+		CHECK(sip_server_step(server, 2) == SIP_SIGNALING_OK, "shared poll failed");
+	for (unsigned int i = 0; i < 4; ++i)
+		CHECK(sip_signaling_call_state(lines[i]) == SIP_CALL_CONNECTED && captures[i].media_count == 1 && captures[i].media_local_ports[0] == TEST_MODEM_RTP_PORT + 2 * i, "shared call %u mixed early SDP/media ownership", i);
+	CHECK(sip_signaling_hangup(lines[0]) == SIP_SIGNALING_OK, "first shared hangup failed");
+	sip_signaling_destroy(lines[0]);
+	lines[0] = NULL;
+	for (unsigned int i = 0; i < 50; ++i)
+		CHECK(sip_server_step(server, 1) == SIP_SIGNALING_OK, "shared poll after line destroy failed");
+	CHECK(sip_signaling_call_state(lines[2]) == SIP_CALL_CONNECTED && sip_signaling_call_state(lines[3]) == SIP_CALL_CONNECTED, "one line destroy ended another call");
+	CHECK(sip_signaling_call_state(lines[1]) == SIP_CALL_IDLE, "peer call did not release");
+	/* Delayed SDK callbacks must not end the next call on a reused line. */
+	snprintf(target, sizeof(target), "sip:4321@127.0.0.1:%u", sip_server_local_port(server));
+	CHECK(sip_signaling_dial(lines[1], target) == SIP_SIGNALING_OK, "reused line dial failed");
+	CHECK(sip_signaling_hangup(lines[1]) == SIP_SIGNALING_OK, "reused line cancellation failed");
+	for (unsigned int i = 0; i < 25; ++i)
+		CHECK(sip_server_step(server, 1) == SIP_SIGNALING_OK, "shared poll after reused line failed");
+	CHECK(sip_signaling_call_state(lines[2]) == SIP_CALL_CONNECTED && sip_signaling_call_state(lines[3]) == SIP_CALL_CONNECTED, "retired SDK call affected another line");
+	config.media.rtp_listen_port = TEST_MODEM_RTP_PORT;
+	struct sip_signaling_callbacks callbacks = {
+		.context = &captures[0], .call_changed = capture_call,
+		.media_changed = capture_media, .error = capture_error,
+	};
+	lines[0] = sip_signaling_create_shared(server, &config, &callbacks);
+	CHECK(lines[0] != NULL && sip_signaling_open(lines[0]) == SIP_SIGNALING_OK, "recreated line failed");
+	unsigned int baseline_fds = open_fd_count(), peak_fds = baseline_fds;
+	CHECK(baseline_fds != UINT32_MAX, "could not inspect owned descriptor count");
+	bool capacity_seen = false;
+	unsigned int completed = 0;
+	for (unsigned int cycle = 0; cycle < 160; ++cycle) {
+		memset(&captures[0], 0, sizeof(captures[0]));
+		memset(&captures[1], 0, sizeof(captures[1]));
+		enum sip_signaling_result rc = sip_signaling_dial(lines[1], target);
+		if (rc != SIP_SIGNALING_OK) {
+			CHECK(rc == SIP_SIGNALING_LIBRARY_ERROR || rc == SIP_SIGNALING_BUSY, "capacity returned unexpected result");
+			capacity_seen = true;
+			break;
+		}
+		for (unsigned int i = 0; i < 100 && sip_signaling_call_state(lines[0]) == SIP_CALL_IDLE && sip_signaling_call_state(lines[1]) != SIP_CALL_IDLE; ++i)
+			CHECK(sip_server_step(server, 0) == SIP_SIGNALING_OK, "capacity incoming poll failed");
+		if (sip_signaling_call_state(lines[0]) == SIP_CALL_IDLE) {
+			CHECK(sip_signaling_call_state(lines[1]) == SIP_CALL_IDLE, "capacity did not release failed call");
+			capacity_seen = true;
+			break;
+		}
+		rc = sip_signaling_answer(lines[0]);
+		if (rc != SIP_SIGNALING_OK) {
+			CHECK(rc == SIP_SIGNALING_LIBRARY_ERROR, "capacity answer returned unexpected result");
+			capacity_seen = true;
+			break;
+		}
+		for (unsigned int i = 0; i < 100 && (sip_signaling_call_state(lines[0]) != SIP_CALL_CONNECTED || sip_signaling_call_state(lines[1]) != SIP_CALL_CONNECTED); ++i)
+			CHECK(sip_server_step(server, 0) == SIP_SIGNALING_OK, "capacity connect poll failed");
+		CHECK(sip_signaling_call_state(lines[0]) == SIP_CALL_CONNECTED && sip_signaling_call_state(lines[1]) == SIP_CALL_CONNECTED, "capacity successful call failed to connect");
+		unsigned int fds = open_fd_count();
+		if (fds > peak_fds)
+			peak_fds = fds;
+		CHECK(sip_signaling_hangup(lines[0]) == SIP_SIGNALING_OK, "capacity hangup failed");
+		for (unsigned int i = 0; i < 100 && sip_signaling_call_state(lines[1]) != SIP_CALL_IDLE; ++i)
+			CHECK(sip_server_step(server, 0) == SIP_SIGNALING_OK, "capacity release poll failed");
+		CHECK(sip_signaling_call_state(lines[1]) == SIP_CALL_IDLE, "capacity peer release failed");
+		completed++;
+	}
+	CHECK(capacity_seen, "rapid recycling did not exercise ordinary I/O capacity failure");
+	(void)sip_signaling_hangup(lines[0]);
+	(void)sip_signaling_hangup(lines[1]);
+	CHECK(sip_signaling_call_state(lines[2]) == SIP_CALL_CONNECTED && sip_signaling_call_state(lines[3]) == SIP_CALL_CONNECTED, "capacity failure ended an established call");
+	/* Keys close synchronously, then have a fixed 500ms safe reuse delay. */
+	uint64_t start = monotonic_ms();
+	for (unsigned int i = 0; i < 1200 && monotonic_ms() - start < 600; ++i) {
+		CHECK(sip_server_step(server, 0) == SIP_SIGNALING_OK, "capacity recovery poll failed");
+		usleep(1000);
+	}
+	CHECK(open_fd_count() <= baseline_fds, "closed SDK transports leaked descriptors");
+	CHECK(sip_signaling_dial(lines[1], target) == SIP_SIGNALING_OK, "capacity failed to recover after key retirement");
+	for (unsigned int i = 0; i < 100 && sip_signaling_call_state(lines[0]) == SIP_CALL_IDLE; ++i)
+		CHECK(sip_server_step(server, 1) == SIP_SIGNALING_OK, "recovered incoming poll failed");
+	CHECK(sip_signaling_call_state(lines[0]) != SIP_CALL_IDLE && sip_signaling_answer(lines[0]) == SIP_SIGNALING_OK, "recovered incoming admission failed");
+	for (unsigned int i = 0; i < 100 && (sip_signaling_call_state(lines[0]) != SIP_CALL_CONNECTED || sip_signaling_call_state(lines[1]) != SIP_CALL_CONNECTED); ++i)
+		CHECK(sip_server_step(server, 1) == SIP_SIGNALING_OK, "recovered call poll failed");
+	CHECK(sip_signaling_call_state(lines[0]) == SIP_CALL_CONNECTED && sip_signaling_call_state(lines[1]) == SIP_CALL_CONNECTED, "recovered call failed to connect");
+	printf("SDK recycle: completed=%u fd-baseline=%u fd-peak=%u retirement-ms=500\n", completed, baseline_fds, peak_fds);
+	for (unsigned int i = 0; i < 4; ++i)
+		sip_signaling_destroy(lines[i]);
+	CHECK(sip_server_close(server) == SIP_SIGNALING_OK && sip_server_close(server) == SIP_SIGNALING_OK, "shared server close not idempotent");
+	sip_server_destroy(server);
+	return true;
+}
+
+static bool test_incoming_slot_reuse(void)
+{
+	struct app_config config;
+	config_init(&config);
+	config.sip.listen_port = 0;
+	config.sip.registration_enabled = false;
+	config.sip.log_level = 0;
+	strcpy(config.sip.public_address, "127.0.0.1");
+	strcpy(config.sip.bound_address, "127.0.0.1");
+	struct sip_server *server = sip_server_create(&config, 2);
+	CHECK(server != NULL && sip_server_open(server) == SIP_SIGNALING_OK, "reuse server open failed");
+	struct callback_capture captures[2] = { 0 };
+	struct sip_signaling *lines[2];
+	for (unsigned int i = 0; i < 2; ++i) {
+		config.media.rtp_listen_port = TEST_MODEM_RTP_PORT + 2 * i;
+		struct sip_signaling_callbacks callbacks = {
+			.context = &captures[i], .admit = capture_admit, .call_changed = capture_call,
+			.media_changed = capture_media, .error = capture_error,
+		};
+		lines[i] = sip_signaling_create_shared(server, &config, &callbacks);
+		CHECK(lines[i] != NULL && sip_signaling_open(lines[i]) == SIP_SIGNALING_OK, "reuse line open failed");
+	}
+	char target[128];
+	snprintf(target, sizeof(target), "sip:1234@127.0.0.1:%u", sip_server_local_port(server));
+	/* A rejected call must not attach later when admission becomes available. */
+	captures[1].deny_incoming = true;
+	CHECK(sip_signaling_dial(lines[0], target) == SIP_SIGNALING_OK, "rejected dial failed");
+	for (unsigned int i = 0; i < 100 && sip_signaling_call_state(lines[0]) != SIP_CALL_IDLE; ++i)
+		CHECK(sip_server_step(server, 1) == SIP_SIGNALING_OK, "rejected call poll failed");
+	CHECK(sip_signaling_call_state(lines[0]) == SIP_CALL_IDLE, "rejected call did not end");
+	captures[1].deny_incoming = false;
+	for (unsigned int i = 0; i < 20; ++i)
+		CHECK(sip_server_step(server, 1) == SIP_SIGNALING_OK, "late rejected callback poll failed");
+	CHECK(sip_signaling_call_state(lines[1]) == SIP_CALL_IDLE && captures[1].call_count == 0, "rejected call claimed an idle line");
+	/* More than the complete SDK slot count, without restarting its server. */
+	for (unsigned int cycle = 0; cycle < PJSUA_MAX_CALLS + 4; ++cycle) {
+		memset(captures, 0, sizeof(captures));
+		const char *user = cycle == 0 ? "+" : cycle == 1 ? "+1234" : "1234";
+		snprintf(target, sizeof(target), "sip:%s@127.0.0.1:%u", user, sip_server_local_port(server));
+		CHECK(sip_signaling_dial(lines[0], target) == SIP_SIGNALING_OK, "reuse dial %u failed", cycle);
+		for (unsigned int i = 0; i < 100 && sip_signaling_call_state(lines[1]) == SIP_CALL_IDLE; ++i)
+			CHECK(sip_server_step(server, 1) == SIP_SIGNALING_OK, "reuse poll failed");
+		CHECK(sip_signaling_call_state(lines[1]) == SIP_CALL_EARLY || sip_signaling_call_state(lines[1]) == SIP_CALL_INCOMING_PENDING, "incoming SDK slot reuse failed at %u", cycle);
+		CHECK(captures[1].call_generations[0] == cycle + 1, "reused call generation wrong");
+		CHECK(strcmp(captures[1].called_numbers[0], cycle == 0 ? "" : user) == 0, "invalid or numeric called-number policy wrong");
+		CHECK(sip_signaling_answer(lines[1]) == SIP_SIGNALING_OK, "reuse answer failed");
+		for (unsigned int i = 0; i < 100 && (sip_signaling_call_state(lines[0]) != SIP_CALL_CONNECTED || sip_signaling_call_state(lines[1]) != SIP_CALL_CONNECTED); ++i)
+			CHECK(sip_server_step(server, 1) == SIP_SIGNALING_OK, "reuse connect poll failed");
+		for (unsigned int i = 0; i < 2; ++i)
+			CHECK(sip_signaling_call_state(lines[i]) == SIP_CALL_CONNECTED && captures[i].media_count == 1 && captures[i].media_local_ports[0] == TEST_MODEM_RTP_PORT + 2 * i, "reuse SDP ownership failed at %u/%u", cycle, i);
+		CHECK(sip_signaling_hangup(lines[1]) == SIP_SIGNALING_OK, "local incoming hangup failed");
+		for (unsigned int i = 0; i < 100 && sip_signaling_call_state(lines[0]) != SIP_CALL_IDLE; ++i)
+			CHECK(sip_server_step(server, 1) == SIP_SIGNALING_OK, "reuse release poll failed");
+		CHECK(sip_signaling_call_state(lines[0]) == SIP_CALL_IDLE && sip_signaling_call_state(lines[1]) == SIP_CALL_IDLE, "reuse release failed");
+	}
+	for (unsigned int i = 0; i < 2; ++i)
+		sip_signaling_destroy(lines[i]);
+	sip_server_destroy(server);
+	return true;
+}
+
 struct test_case {
 	const char *name;
 	bool (*run)(void);
@@ -1218,6 +1468,9 @@ int main(void)
 		  test_loopback_registration_lifecycle },
 		{ "outgoing call lifecycle", test_outgoing_call_lifecycle },
 		{ "incoming call lifecycle", test_incoming_call_lifecycle },
+		{ "external SDK owner", test_external_endpoint_owner },
+		{ "two calls on shared server", test_shared_two_calls },
+		{ "incoming SDK slot reuse", test_incoming_slot_reuse },
 	};
 	unsigned int failures = 0;
 

@@ -12,6 +12,7 @@
 
 struct sip_session {
 	struct app_config config;
+	struct sip_server *server;
 	struct rtp_runtime *rtp;
 	struct sip_signaling *signaling;
 	struct sip_media_bridge bridge;
@@ -32,7 +33,8 @@ static void finish_deferred_signaling(struct sip_session *session)
 	session->signaling_destroy_deferred = false;
 }
 
-struct sip_session *sip_session_create(
+struct sip_session *sip_session_create_shared(
+	struct sip_server *server,
 	const struct app_config *config,
 	const struct media_recorder *recorder,
 	const struct sip_signaling_callbacks *callbacks)
@@ -45,6 +47,7 @@ struct sip_session *sip_session_create(
 	if (session == NULL)
 		return NULL;
 	session->config = *config;
+	session->server = server;
 	session->rtp = rtp_runtime_create(&config->media, recorder);
 	if (session->rtp == NULL ||
 	    !sip_media_bridge_init(
@@ -55,6 +58,14 @@ struct sip_session *sip_session_create(
 		return NULL;
 	}
 	return session;
+}
+
+struct sip_session *sip_session_create(
+	const struct app_config *config,
+	const struct media_recorder *recorder,
+	const struct sip_signaling_callbacks *callbacks)
+{
+	return sip_session_create_shared(NULL, config, recorder, callbacks);
 }
 
 void sip_session_destroy(struct sip_session *session)
@@ -93,9 +104,11 @@ enum sip_session_result sip_session_open(
 	signaling_config = session->config;
 	signaling_config.media.rtp_listen_port =
 		rtp_runtime_local_port(session->rtp);
-	session->signaling = sip_signaling_create(
-		&signaling_config,
-		sip_media_bridge_callbacks(&session->bridge));
+	session->signaling = session->server != NULL ?
+		sip_signaling_create_shared(session->server, &signaling_config,
+			sip_media_bridge_callbacks(&session->bridge)) :
+		sip_signaling_create(&signaling_config,
+			sip_media_bridge_callbacks(&session->bridge));
 	if (session->signaling == NULL)
 		goto signaling_error;
 	binding_failures = sip_media_bridge_binding_failures(
@@ -159,8 +172,8 @@ enum sip_session_result sip_session_step(
 		*datagrams_received = 0;
 	binding_failures = sip_media_bridge_binding_failures(
 		&session->bridge);
-	session->last_signaling_result = sip_signaling_step(
-		session->signaling, signaling_timeout_ms);
+	session->last_signaling_result = session->server != NULL ? SIP_SIGNALING_OK :
+		sip_signaling_step(session->signaling, signaling_timeout_ms);
 	finish_deferred_signaling(session);
 	if (session->last_signaling_result != SIP_SIGNALING_OK)
 		return SIP_SESSION_SIGNALING_ERROR;
@@ -197,6 +210,8 @@ enum sip_signaling_result sip_session_dial(
 {
 	if (session == NULL || !session->opened)
 		return not_open_result(session);
+	if (sip_session_media_cleanup_pending(session))
+		return SIP_SIGNALING_BUSY;
 	session->last_signaling_result =
 		sip_signaling_dial(session->signaling, target);
 	finish_deferred_signaling(session);
@@ -338,4 +353,9 @@ const char *sip_session_result_name(
 		return "negotiated media could not be bound";
 	}
 	return "unknown session result";
+}
+
+bool sip_session_media_cleanup_pending(const struct sip_session *session)
+{
+	return session != NULL && rtp_runtime_endpoint(session->rtp)->discard_pending;
 }

@@ -31,6 +31,14 @@ enum modem_host_result {
 
 struct modem_host;
 
+/* The shared server must outlive this object; step drains media only. */
+struct modem_host *modem_host_create_shared(
+	struct sip_server *server,
+	const struct app_config *config,
+	const struct media_recorder *recorder,
+	const struct sip_signaling_callbacks *callbacks,
+	const struct modem_core *modem_core);
+
 struct modem_host *modem_host_create(
 	const struct app_config *config,
 	const struct media_recorder *recorder,
@@ -64,6 +72,8 @@ uint64_t modem_host_wait_ns(
 int modem_host_media_poll_fd(
 	const struct modem_host *host);
 
+unsigned int modem_host_rtp_local_port(const struct modem_host *host);
+bool modem_host_media_cleanup_pending(const struct modem_host *host);
 size_t modem_host_frame_samples(const struct modem_host *host);
 struct audio_levels modem_host_take_audio_levels(struct modem_host *host);
 bool modem_host_is_open(const struct modem_host *host);

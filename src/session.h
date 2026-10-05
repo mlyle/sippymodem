@@ -23,6 +23,13 @@ enum sip_session_result {
 
 struct sip_session;
 
+/* The shared server must outlive this object; step drains media only. */
+struct sip_session *sip_session_create_shared(
+	struct sip_server *server,
+	const struct app_config *config,
+	const struct media_recorder *recorder,
+	const struct sip_signaling_callbacks *callbacks);
+
 struct sip_session *sip_session_create(
 	const struct app_config *config,
 	const struct media_recorder *recorder,
@@ -53,6 +60,8 @@ int sip_session_media_fd(
 	const struct sip_session *session);
 uint16_t sip_session_rtp_local_port(
 	const struct sip_session *session);
+/* Admission waits until old call datagrams have been discarded in bounded batches. */
+bool sip_session_media_cleanup_pending(const struct sip_session *session);
 size_t sip_session_remote_clock_frames(
 	const struct sip_session *session);
 bool sip_session_is_open(const struct sip_session *session);
