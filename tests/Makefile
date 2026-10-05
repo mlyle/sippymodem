@@ -3222,7 +3222,9 @@ FSK_INTEGRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/channel_bench.o \
 	$(BUILD_DIR)/media.o \
 	$(BUILD_DIR)/g711.o
-TEST_BINARIES := $(BUILD_DIR)/test_packet_stats $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
+DS0_CODEC_TEST_BINARY := $(BUILD_DIR)/test_ds0_codec
+
+TEST_BINARIES := $(DS0_CODEC_TEST_BINARY) $(BUILD_DIR)/test_packet_stats $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(SIP_URI_TEST_BINARY) $(SDP_TEST_BINARY) $(G711_TEST_BINARY) \
 	$(SAMPLE_MATH_TEST_BINARY) \
 	$(PCM_GAIN_TEST_BINARY) \
@@ -6167,3 +6169,8 @@ LIBRARY_INPUTS := $(wildcard ../src/*.c ../src/*.h ../dsp/*.c ../dsp/*.h ../dsp/
 	 PJSIP_PACKAGE="$(PJSIP_PACKAGE)" PJSIP_DEPENDENCY="$(PJSIP_DEPENDENCY)" libsippymodem.a
 $(LIBRARY_TEST_BINARY): $(BUILD_DIR)/test_library.o ../src/libsippymodem.a $(PJSIP_DEPENDENCY)
 	$(CC) $(LDFLAGS) -Wl,--wrap=modem_stop_now -Wl,--wrap=pjsua_destroy2 -o $@ $(BUILD_DIR)/test_library.o ../src/libsippymodem.a $(PJSIP_LDLIBS) -lm
+
+$(DS0_CODEC_TEST_BINARY): $(BUILD_DIR)/test_ds0_codec.o $(BUILD_DIR)/ds0_codec.o $(BUILD_DIR)/modem_pack.o $(BUILD_DIR)/modem_stubs.o
+	$(CC) $(LDFLAGS) -o $@ $^
+$(BUILD_DIR)/ds0_%.o: $(DSP_SOURCE_DIR)/ds0/ds0_%.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<

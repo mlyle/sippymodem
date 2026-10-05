@@ -423,7 +423,8 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase4_decision_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase4_mp_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_training_sequence.c
-DSP_SOURCES := $(SHARED_DSP_SOURCES) \
+DS0_SOURCES := $(DSP_SOURCE_DIR)/ds0/ds0_codec.c
+DSP_SOURCES := $(DS0_SOURCES) $(SHARED_DSP_SOURCES) \
 	$(V21_202_SOURCES) $(V22_SOURCES) \
 	$(V32_SOURCES) $(PCM_SOURCES)
 SOURCES := byte_queue.c config_defaults.c fd_adapter.c library.c line.c modem_frontend.c $(MODEM_CORE_SOURCES) $(APP_SOURCES) \
