@@ -74,46 +74,16 @@ static void ds0_rx_abort_frame(struct ds0_hdlc_rx *rx)
 	ds0_rx_reset_frame(rx);
 }
 
-static void ds0_count_fcs_fail(struct ds0 *ds0, enum ds0_rate rate)
+static struct ds0_rx_counters *ds0_rx_counts(struct ds0 *ds0, enum ds0_rate rate)
 {
-	if (rate == DS0_RATE_56000)
-		ds0->counters.rx56.fcs_fail++;
-	else
-		ds0->counters.rx64.fcs_fail++;
-}
-
-static void ds0_count_short(struct ds0 *ds0, enum ds0_rate rate)
-{
-	if (rate == DS0_RATE_56000)
-		ds0->counters.rx56.short_frame++;
-	else
-		ds0->counters.rx64.short_frame++;
-}
-
-static void ds0_count_invalid(struct ds0 *ds0, enum ds0_rate rate)
-{
-	if (rate == DS0_RATE_56000)
-		ds0->counters.rx56.invalid++;
-	else
-		ds0->counters.rx64.invalid++;
-}
-
-static void ds0_count_overflow(struct ds0 *ds0, enum ds0_rate rate)
-{
-	if (rate == DS0_RATE_56000)
-		ds0->counters.rx56.overflow++;
-	else
-		ds0->counters.rx64.overflow++;
+	return rate == DS0_RATE_56000 ? &ds0->counters.rx56 : &ds0->counters.rx64;
 }
 
 static void ds0_note_valid_frame(struct ds0 *ds0, enum ds0_rate rate)
 {
 	int was_locked = ds0->saw_valid_frame;
 
-	if (rate == DS0_RATE_56000)
-		ds0->counters.rx56.valid++;
-	else
-		ds0->counters.rx64.valid++;
+	ds0_rx_counts(ds0, rate)->valid++;
 
 	ds0->saw_valid_frame = 1;
 	ds0->selected_rate = rate;
@@ -152,7 +122,7 @@ static void ds0_rx_put_data_bit(struct ds0 *ds0,
 	if (rx->frame_len < ds0_rx_storage_limit(ds0)) {
 		rx->frame[rx->frame_len++] = rx->current_byte;
 	} else {
-		ds0_count_overflow(ds0, rx->rate);
+		ds0_rx_counts(ds0, rx->rate)->overflow++;
 		ds0_rx_abort_frame(rx);
 		return;
 	}
@@ -170,7 +140,7 @@ static void ds0_rx_destuff_bit(struct ds0 *ds0,
 	if (bit) {
 		ds0_rx_put_data_bit(ds0, rx, 1);
 		if (++rx->ones > 6) {
-			ds0_count_invalid(ds0, rx->rate);
+			ds0_rx_counts(ds0, rx->rate)->invalid++;
 			ds0_rx_abort_frame(rx);
 		}
 		return;
@@ -181,19 +151,13 @@ static void ds0_rx_destuff_bit(struct ds0 *ds0,
 		return;
 	}
 	if (rx->ones >= 6) {
-		ds0_count_invalid(ds0, rx->rate);
+		ds0_rx_counts(ds0, rx->rate)->invalid++;
 		ds0_rx_abort_frame(rx);
 		return;
 	}
 
 	ds0_rx_put_data_bit(ds0, rx, 0);
 	rx->ones = 0;
-}
-
-static int ds0_raw_delay_is_flag(const struct ds0_hdlc_rx *rx)
-{
-	return memcmp(rx->raw_delay, ds0_hdlc_flag_bits,
-		      sizeof(ds0_hdlc_flag_bits)) == 0;
 }
 
 static void ds0_rx_finish_frame(struct ds0 *ds0,
@@ -213,12 +177,12 @@ static void ds0_rx_finish_frame(struct ds0 *ds0,
 	if ((rx->frame_len || rx->bit_count)) {
 		if (rx->bit_count) {
 			if (rx->frame_len >= HDLC_FCS16_MIN_FRAME_OCTETS)
-				ds0_count_invalid(ds0, rx->rate);
+				ds0_rx_counts(ds0, rx->rate)->invalid++;
 		} else if (rx->frame_len < HDLC_FCS16_MIN_FRAME_OCTETS) {
-			ds0_count_short(ds0, rx->rate);
+			ds0_rx_counts(ds0, rx->rate)->short_frame++;
 		} else if (hdlc_fcs16(rx->frame, rx->frame_len) !=
 			   HDLC_FCS16_GOOD) {
-			ds0_count_fcs_fail(ds0, rx->rate);
+			ds0_rx_counts(ds0, rx->rate)->fcs_fail++;
 		} else {
 			size_t body_len = rx->frame_len - 2u;
 
@@ -252,17 +216,15 @@ static void ds0_rx_raw_bit(struct ds0 *ds0,
 	int have_oldest = 0;
 
 	if (rx->raw_len < DS0_HDLC_FLAG_BITS) {
-		rx->raw_delay[rx->raw_len++] = (uint8_t)(bit != 0);
+		rx->raw_len++;
 	} else {
-		oldest = rx->raw_delay[0];
-		memmove(&rx->raw_delay[0], &rx->raw_delay[1],
-			sizeof(rx->raw_delay) - 1u);
-		rx->raw_delay[DS0_HDLC_FLAG_MASK] = (uint8_t)(bit != 0);
+		oldest = rx->raw_bits >> 7;
 		have_oldest = 1;
 	}
+	rx->raw_bits = (uint8_t)((rx->raw_bits << 1) | (bit != 0));
 
 	if (rx->raw_len == DS0_HDLC_FLAG_BITS &&
-	    ds0_raw_delay_is_flag(rx)) {
+	    rx->raw_bits == 0x7eu) {
 		if (have_oldest) {
 			if (rx->raw_skip)
 				rx->raw_skip--;
@@ -270,7 +232,7 @@ static void ds0_rx_raw_bit(struct ds0 *ds0,
 				ds0_rx_destuff_bit(ds0, rx, oldest);
 		}
 		ds0_rx_finish_frame(ds0, rx, frame_cb, user, delivered);
-		rx->raw_delay[0] = 0;
+		rx->raw_bits = 0;
 		rx->raw_len = 1;
 		rx->raw_skip = 1;
 		return;

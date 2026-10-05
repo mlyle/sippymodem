@@ -23,7 +23,8 @@ struct ds0_counters {
 struct ds0_hdlc_rx {
     enum ds0_rate rate;
     uint8_t in_frame, raw_len, raw_skip, ones, bit_count, current_byte;
-    uint8_t raw_delay[8];
+    /* Delay eight wire bits so a flag never enters the frame body. */
+    uint8_t raw_bits;
     /* Clean run ends only at a verified flag/frame boundary. */
     uint32_t clean_bits, verified_bits;
     bool clean_frame;
