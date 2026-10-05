@@ -4,11 +4,13 @@
 
 #include "g711.h"
 #include "pcm_phase3_digital_tx.h"
+#include "pcm_phase3_tx_fixture.h"
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+
 
 struct reference_scrambler {
 	uint8_t history[23];
@@ -399,6 +401,23 @@ static bool test_validation(void)
 	      memcmp(&symbol, &saved_symbol, sizeof(symbol)) == 0 &&
 	      !pcm_phase3_digital_tx_is_valid(NULL),
 	      "invalid digital Phase 3 operation changed state or output");
+	CHECK(pcm_phase3_digital_tx_next_owned(&transmitter,
+		      (struct v90_pcm_symbol *)&transmitter) ==
+		      PCM_PHASE3_DIGITAL_TX_INVALID_ARGUMENT &&
+	      memcmp(&transmitter, &saved, sizeof(saved)) == 0,
+	      "owned Phase 3 accepted an output inside its state");
+	{
+		struct pcm_phase3_digital_tx invalid = saved;
+		struct pcm_phase3_digital_tx before;
+
+		invalid.bit_index = PCM_J_FRAME_BITS;
+		before = invalid;
+		CHECK(pcm_phase3_digital_tx_next_owned(&invalid, &symbol) ==
+			      PCM_PHASE3_DIGITAL_TX_INVALID_ARGUMENT &&
+		      memcmp(&invalid, &before, sizeof(before)) == 0 &&
+		      memcmp(&symbol, &saved_symbol, sizeof(symbol)) == 0,
+		      "owned Phase 3 accepted an invalid cursor");
+	}
 	transmitter.jd_frame[0] = 0;
 	CHECK(!pcm_phase3_digital_tx_is_valid(&transmitter) &&
 	      pcm_phase3_digital_tx_next(&transmitter, &symbol) ==

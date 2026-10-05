@@ -3,6 +3,7 @@
 #include "pcm_call.h"
 
 #include "v90_phase4_owned.h"
+#include "pcm_phase3_owned.h"
 #include "pcm_power.h"
 
 #include "memory_region.h"
@@ -3008,7 +3009,7 @@ static enum pcm_call_result advance_phase3(struct pcm_call *call)
 			call->local_role == V90_ANALOG_MODEM ?
 				v90_phase3_analog_station_receive_complete(
 					&call->state.phase3.analog) :
-				v90_phase3_digital_station_transmit_complete(
+				v90_phase3_digital_station_transmit_complete_owned(
 					&call->state.phase3.digital);
 
 		if (!leading_direction_complete)
@@ -3021,7 +3022,7 @@ static enum pcm_call_result advance_phase3(struct pcm_call *call)
 		if (!v90_phase3_analog_station_transmit_complete(
 			    &call->state.mixed.analog.phase3))
 			return PCM_CALL_OK;
-	} else if (!v90_phase3_digital_station_receive_complete(
+	} else if (!v90_phase3_digital_station_receive_complete_owned(
 			   &call->state.mixed.digital.phase3)) {
 		return PCM_CALL_OK;
 	}
@@ -3210,7 +3211,7 @@ static enum pcm_call_result sample_phase3(
 				&call->state.phase3.analog, received_octet));
 	} else {
 		bool receive_complete =
-			v90_phase3_digital_station_receive_complete(
+			v90_phase3_digital_station_receive_complete_owned(
 				&call->state.phase3.digital);
 
 		/* The second return can finish while the independently owned DIL
@@ -3218,20 +3219,20 @@ static enum pcm_call_result sample_phase3(
 		 * conventional-sample receiver while the completed marker stays frozen. */
 		if (receive_complete) {
 			result = digital_phase3_result(
-				v90_phase3_digital_station_advance_completed_receive(
+				v90_phase3_digital_station_advance_completed_receive_owned(
 					&call->state.phase3.digital,
 					received_sample));
 			if (result != PCM_CALL_OK)
 				return result;
 		}
 		result = qc_wait_for_frame(call) ? PCM_CALL_OK : digital_phase3_result(
-			v90_phase3_digital_station_transmit(
+			v90_phase3_digital_station_transmit_owned(
 				&call->state.phase3.digital, transmit_octet));
 		if (result != PCM_CALL_OK)
 			return result;
 		if (!receive_complete)
 			result = digital_phase3_result(
-				v90_phase3_digital_station_receive(
+				v90_phase3_digital_station_receive_owned(
 					&call->state.phase3.digital,
 					received_sample));
 	}
@@ -3388,7 +3389,7 @@ static enum pcm_call_result sample_mixed_phase3(
 			    &mixed->transmit, transmit_octet) != V90_PHASE4_RI_OK)
 			return PCM_CALL_NUMERIC_FAILURE;
 		result = digital_phase3_result(
-			v90_phase3_digital_station_receive(
+			v90_phase3_digital_station_receive_owned(
 				&mixed->phase3, received_sample));
 	}
 	return result == PCM_CALL_OK ? advance_phase3(call) : result;

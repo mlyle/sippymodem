@@ -2,6 +2,9 @@
 
 #include "v90_phase3_digital_station.h"
 
+#include "pcm_phase3_owned.h"
+#include "memory_region.h"
+
 #include "v90_info1.h"
 #include "v90_phase3_signs.h"
 
@@ -51,7 +54,7 @@ static bool finish_request_is_causal(
 			V90_PHASE3_RETURN_RX_STAGE_S);
 }
 
-bool v90_phase3_digital_station_is_valid(
+bool v90_phase3_digital_station_owned_state_is_valid(
 	const struct v90_phase3_digital_station *station)
 {
 	if (station == NULL || !receive_is_valid(station) ||
@@ -70,7 +73,7 @@ bool v90_phase3_digital_station_is_valid(
 		       station->post_ja_silence_symbols_remaining == 0u;
 	if (station->receive_stage == V90_PHASE3_DIGITAL_RECEIVE_INITIAL ||
 	    station->transmit.protocol != PCM_PROTOCOL_V90 ||
-	    !pcm_phase3_digital_tx_is_valid(&station->transmit))
+	    !pcm_phase3_digital_tx_owned_state_is_valid(&station->transmit))
 		return false;
 	if (station->receive_stage == V90_PHASE3_DIGITAL_RECEIVE_DIL_RETURN)
 		return station->transmit.dil.parameters.segment_count != 0u &&
@@ -78,10 +81,26 @@ bool v90_phase3_digital_station_is_valid(
 	return !station->transmit.dil.finish_requested;
 }
 
+bool v90_phase3_digital_station_is_valid(
+	const struct v90_phase3_digital_station *station)
+{
+	return v90_phase3_digital_station_owned_state_is_valid(station) &&
+	       (!station->transmit_started ||
+		pcm_phase3_digital_tx_is_valid(&station->transmit));
+}
+
 bool v90_phase3_digital_station_has_failed(
 	const struct v90_phase3_digital_station *station)
 {
-	return v90_phase3_digital_station_is_valid(station) && station->failed;
+	if (!v90_phase3_digital_station_is_valid(station))
+		return false;
+	return v90_phase3_digital_station_has_failed_owned(station);
+}
+
+bool v90_phase3_digital_station_has_failed_owned(
+	const struct v90_phase3_digital_station *station)
+{
+	return v90_phase3_digital_station_owned_state_is_valid(station) && station->failed;
 }
 
 enum v90_phase3_digital_station_result v90_phase3_digital_station_init(
@@ -118,7 +137,15 @@ enum v90_phase3_digital_station_result v90_phase3_digital_station_init(
 bool v90_phase3_digital_station_transmit_complete(
 	const struct v90_phase3_digital_station *station)
 {
-	return v90_phase3_digital_station_is_valid(station) &&
+	if (!v90_phase3_digital_station_is_valid(station))
+		return false;
+	return v90_phase3_digital_station_transmit_complete_owned(station);
+}
+
+bool v90_phase3_digital_station_transmit_complete_owned(
+	const struct v90_phase3_digital_station *station)
+{
+	return v90_phase3_digital_station_owned_state_is_valid(station) &&
 	       !station->failed && station->transmit_started &&
 	       station->transmit.stage == PCM_PHASE3_DIGITAL_TX_COMPLETE;
 }
@@ -126,11 +153,20 @@ bool v90_phase3_digital_station_transmit_complete(
 enum v90_phase3_digital_station_result v90_phase3_digital_station_transmit(
 	struct v90_phase3_digital_station *station, uint8_t *network_octet)
 {
+	if (!v90_phase3_digital_station_is_valid(station))
+		return V90_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT;
+	return v90_phase3_digital_station_transmit_owned(station, network_octet);
+}
+
+enum v90_phase3_digital_station_result v90_phase3_digital_station_transmit_owned(
+	struct v90_phase3_digital_station *station, uint8_t *network_octet)
+{
 	struct v90_phase3_digital_station next;
 	struct v90_pcm_symbol symbol;
 
-	if (!v90_phase3_digital_station_is_valid(station) ||
-	    network_octet == NULL)
+	if (!v90_phase3_digital_station_owned_state_is_valid(station) ||
+	    network_octet == NULL ||
+	    memory_regions_overlap(station, sizeof(*station), network_octet, sizeof(*network_octet)))
 		return V90_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT;
 	if (station->failed)
 		return V90_PHASE3_DIGITAL_STATION_FAILED;
@@ -144,7 +180,7 @@ enum v90_phase3_digital_station_result v90_phase3_digital_station_transmit(
 	if (station->post_ja_silence_symbols_remaining != 0u) {
 		next = *station;
 		next.post_ja_silence_symbols_remaining--;
-		if (!v90_phase3_digital_station_is_valid(&next)) {
+		if (!v90_phase3_digital_station_owned_state_is_valid(&next)) {
 			station->failed = true;
 			return V90_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE;
 		}
@@ -153,9 +189,9 @@ enum v90_phase3_digital_station_result v90_phase3_digital_station_transmit(
 		return V90_PHASE3_DIGITAL_STATION_OK;
 	}
 	next = *station;
-	if (pcm_phase3_digital_tx_next(&next.transmit, &symbol) !=
+	if (pcm_phase3_digital_tx_next_owned(&next.transmit, &symbol) !=
 		    PCM_PHASE3_DIGITAL_TX_OK ||
-	    !v90_phase3_digital_station_is_valid(&next)) {
+	    !v90_phase3_digital_station_owned_state_is_valid(&next)) {
 		station->failed = true;
 		return V90_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE;
 	}
@@ -306,7 +342,15 @@ static bool result_is_terminal(
 bool v90_phase3_digital_station_receive_complete(
 	const struct v90_phase3_digital_station *station)
 {
-	return v90_phase3_digital_station_is_valid(station) &&
+	if (!v90_phase3_digital_station_is_valid(station))
+		return false;
+	return v90_phase3_digital_station_receive_complete_owned(station);
+}
+
+bool v90_phase3_digital_station_receive_complete_owned(
+	const struct v90_phase3_digital_station *station)
+{
+	return v90_phase3_digital_station_owned_state_is_valid(station) &&
 	       !station->failed && station->transmit_started &&
 	       v90_phase3_return_marker_is_complete(
 		       &station->receive.returning.marker);
@@ -315,10 +359,18 @@ bool v90_phase3_digital_station_receive_complete(
 enum v90_phase3_digital_station_result v90_phase3_digital_station_receive(
 	struct v90_phase3_digital_station *station, int16_t sample)
 {
+	if (!v90_phase3_digital_station_is_valid(station))
+		return V90_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT;
+	return v90_phase3_digital_station_receive_owned(station, sample);
+}
+
+enum v90_phase3_digital_station_result v90_phase3_digital_station_receive_owned(
+	struct v90_phase3_digital_station *station, int16_t sample)
+{
 	struct v90_phase3_digital_station next;
 	enum v90_phase3_digital_station_result result;
 
-	if (!v90_phase3_digital_station_is_valid(station))
+	if (!v90_phase3_digital_station_owned_state_is_valid(station))
 		return V90_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT;
 	if (station->failed)
 		return V90_PHASE3_DIGITAL_STATION_FAILED;
@@ -331,7 +383,7 @@ enum v90_phase3_digital_station_result v90_phase3_digital_station_receive(
 			 receive_return(&next, sample);
 	if (result_is_terminal(result)) {
 		next.failed = true;
-		if (v90_phase3_digital_station_is_valid(&next))
+		if (v90_phase3_digital_station_owned_state_is_valid(&next))
 			*station = next;
 		else
 			station->failed = true;
@@ -339,7 +391,7 @@ enum v90_phase3_digital_station_result v90_phase3_digital_station_receive(
 	}
 	if (result != V90_PHASE3_DIGITAL_STATION_OK)
 		return result;
-	if (!v90_phase3_digital_station_is_valid(&next)) {
+	if (!v90_phase3_digital_station_owned_state_is_valid(&next)) {
 		station->failed = true;
 		return V90_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE;
 	}
@@ -351,15 +403,24 @@ enum v90_phase3_digital_station_result
 v90_phase3_digital_station_advance_completed_receive(
 	struct v90_phase3_digital_station *station, int16_t sample)
 {
+	if (!v90_phase3_digital_station_is_valid(station))
+		return V90_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT;
+	return v90_phase3_digital_station_advance_completed_receive_owned(station, sample);
+}
+
+enum v90_phase3_digital_station_result
+v90_phase3_digital_station_advance_completed_receive_owned(
+	struct v90_phase3_digital_station *station, int16_t sample)
+{
 	struct v90_phase3_digital_station next;
 	enum v90_phase3_return_line_rx_result result;
 
-	if (!v90_phase3_digital_station_is_valid(station))
+	if (!v90_phase3_digital_station_owned_state_is_valid(station))
 		return V90_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT;
 	if (station->failed)
 		return V90_PHASE3_DIGITAL_STATION_FAILED;
-	if (!v90_phase3_digital_station_receive_complete(station) ||
-	    v90_phase3_digital_station_transmit_complete(station))
+	if (!v90_phase3_digital_station_receive_complete_owned(station) ||
+	    v90_phase3_digital_station_transmit_complete_owned(station))
 		return V90_PHASE3_DIGITAL_STATION_INVALID_STATE;
 	next = *station;
 	result = v90_phase3_return_line_rx_advance_complete(
@@ -368,7 +429,7 @@ v90_phase3_digital_station_advance_completed_receive(
 		if (result == V90_PHASE3_RETURN_LINE_RX_INVALID_STATE)
 			return V90_PHASE3_DIGITAL_STATION_INVALID_STATE;
 		next.failed = true;
-		if (v90_phase3_digital_station_is_valid(&next))
+		if (v90_phase3_digital_station_owned_state_is_valid(&next))
 			*station = next;
 		else
 			station->failed = true;
@@ -376,7 +437,7 @@ v90_phase3_digital_station_advance_completed_receive(
 			V90_PHASE3_DIGITAL_STATION_FAILED :
 			V90_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE;
 	}
-	if (!v90_phase3_digital_station_is_valid(&next)) {
+	if (!v90_phase3_digital_station_owned_state_is_valid(&next)) {
 		station->failed = true;
 		return V90_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE;
 	}

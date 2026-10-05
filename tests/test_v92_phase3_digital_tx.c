@@ -4,6 +4,7 @@
 
 #include "g711.h"
 #include "pcm_phase3_digital_tx.h"
+#include "pcm_phase3_tx_fixture.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -14,6 +15,7 @@ static const struct v90_dil_parameters zero_dil = {
 	.sign_pattern_bits = 1,
 	.training_pattern_bits = 1,
 };
+
 
 struct reference_scrambler {
 	uint8_t history[23];

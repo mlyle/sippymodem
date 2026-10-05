@@ -2,6 +2,8 @@
 
 #include "pcm_phase3_digital_tx.h"
 
+#include "pcm_phase3_owned.h"
+
 #include "memory_region.h"
 #include "packed_bits.h"
 
@@ -170,7 +172,7 @@ static bool counters_are_valid(
 	       transmitter->scr_symbols % 6u == 0;
 }
 
-bool pcm_phase3_digital_tx_is_valid(
+bool pcm_phase3_digital_tx_owned_state_is_valid(
 	const struct pcm_phase3_digital_tx *transmitter)
 {
 	enum g711_law law;
@@ -178,7 +180,6 @@ bool pcm_phase3_digital_tx_is_valid(
 	if (transmitter == NULL ||
 	    !pcm_protocol_is_valid(transmitter->protocol) ||
 	    !stage_is_valid(transmitter->stage) ||
-	    !frames_are_valid(transmitter) ||
 	    !counters_are_valid(transmitter))
 		return false;
 	if (transmitter->stage == PCM_PHASE3_DIGITAL_TX_PREFIX) {
@@ -198,6 +199,13 @@ bool pcm_phase3_digital_tx_is_valid(
 		law = transmitter->sequence.signs.law;
 	}
 	return dil_is_valid(transmitter, law);
+}
+
+bool pcm_phase3_digital_tx_is_valid(
+	const struct pcm_phase3_digital_tx *transmitter)
+{
+	return pcm_phase3_digital_tx_owned_state_is_valid(transmitter) &&
+	       frames_are_valid(transmitter);
 }
 
 static bool initialize_dil(
@@ -393,11 +401,21 @@ enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_next(
 	struct pcm_phase3_digital_tx *transmitter,
 	struct v90_pcm_symbol *symbol)
 {
+	if (!pcm_phase3_digital_tx_is_valid(transmitter))
+		return PCM_PHASE3_DIGITAL_TX_INVALID_ARGUMENT;
+	return pcm_phase3_digital_tx_next_owned(transmitter, symbol);
+}
+
+enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_next_owned(
+	struct pcm_phase3_digital_tx *transmitter,
+	struct v90_pcm_symbol *symbol)
+{
 	struct pcm_phase3_digital_tx next;
 	struct v90_pcm_symbol generated;
 	enum pcm_phase3_digital_tx_result result;
 
-	if (!pcm_phase3_digital_tx_is_valid(transmitter) || symbol == NULL)
+	if (!pcm_phase3_digital_tx_owned_state_is_valid(transmitter) || symbol == NULL ||
+	    memory_regions_overlap(transmitter, sizeof(*transmitter), symbol, sizeof(*symbol)))
 		return PCM_PHASE3_DIGITAL_TX_INVALID_ARGUMENT;
 	if (transmitter->stage == PCM_PHASE3_DIGITAL_TX_COMPLETE)
 		return PCM_PHASE3_DIGITAL_TX_DONE;
@@ -426,7 +444,7 @@ enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_next(
 	}
 	if (result != PCM_PHASE3_DIGITAL_TX_OK)
 		return result;
-	if (!pcm_phase3_digital_tx_is_valid(&next))
+	if (!pcm_phase3_digital_tx_owned_state_is_valid(&next))
 		return PCM_PHASE3_DIGITAL_TX_INTERNAL_ERROR;
 	*transmitter = next;
 	*symbol = generated;
