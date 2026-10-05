@@ -66,3 +66,28 @@ the rate of our replies, while an independent peer must keep its own clock withi
 the sustainable receive rate.
 
 Five seconds without accepted complete RTP clock progress ends the call.
+
+## Measured receive delay
+
+A controlled loopback study sent 64 packets of 160 G.711 samples, with a
+one-millisecond simulated owner loop. Delay below is measured
+from arrival to delivery of received samples. In the reorder case, packet 3
+of every eight arrived 30 ms late, after its successor in a separate drain.
+
+| Remote jitter setting | Ordered mean / maximum delay | Reorder mean / maximum delay | Reorder samples lost |
+| --- | --- | --- | ---: |
+| 0 ms | 0 / 0 ms | 0 / 0 ms | 1,280 |
+| 20 ms | 0 / 0 ms | 1.25 / 10 ms | 0 |
+| 60 ms | 0 / 0 ms | 1.25 / 10 ms | 0 |
+
+The earlier fixed 60-ms prefill added 60 ms on the ordered trace. Gap recovery
+adds delay only on an actual missing interval. A lost packet still
+requires concealment; the hold cannot recover a packet that never arrives.
+This study supports bounded receive storage and a gap hold, while showing
+that ordered remote-clocked audio needs no fixed prefill.
+
+A feedback test using real UDP sockets advances exactly 84 twenty-millisecond
+frames over 1.2 seconds of simulated owner time: four burst frames and
+80 paced frames. Actual native DS0 calls verify that this pacing reaches the
+bearer; their frame-body throughput and framing overhead are documented under
+[raw digital calls](ds0.md).

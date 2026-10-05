@@ -10,7 +10,10 @@ Baudot RTTY, and raw ISDN data over voice bearer service (DOVBS).
 The build also exposes a native byte API in `libsippymodem`, with shared SIP
 ownership, independent modem lines, bounded queues, and a native PPP fd adapter.
 See [native integration](docs/library-api.md) for its lifecycle and scheduling
-contract. The existing `slmodemd` terminal frontend remains available.
+contract, and [terminal-server integration](docs/terminal-server-integration.md)
+for line pools and native application adapters. The existing `slmodemd` terminal
+frontend remains available; its [AT command reference](docs/at-commands.md)
+covers commands, queries and defaults.
 
 Explicit `AT+MS=64` selects raw digital DS0 at 56 or 64 kbit/s, with PPP
 conversion or shared LAPM/HDLC through `AT+DS0`. See [raw digital calls](docs/ds0.md)
@@ -67,9 +70,10 @@ Once a family mark is selected, its datapump owns the changing training
 waveform; an initial ANS may still give way to another family's mark.
 The answerer begins with ANSam; without a call menu it continues through V.32,
 V.22bis/V.22, V.22 at 600 bit/s, Bell 103/212A, V.21, and V.23. These probes
-share the normal datapumps and one carrier-wait deadline (`S7`). Baudot and
-ISDN DOVBS require explicit selection. The final rate depends on the peer and
-channel; a fixed family or rate range still limits automatic fallback.
+share the normal datapumps and one carrier-wait deadline (`S7`). Baudot requires
+explicit selection. Raw DS0 can also be recognized from sustained valid HDLC
+evidence. The final rate depends on the peer and channel; a fixed family or
+rate range still limits automatic fallback.
 
 The answer sequence follows ITU-T V.8 (11/2000), 8.1.1 and 8.2.2: five seconds
 of unanswered ANSam and a 75 ms silent transition. V.22bis 6.3.1.1 supplies
