@@ -484,11 +484,6 @@ struct modem {
 	struct modem_call_report call_report;
 	/* dsp info data */
 	struct dsp_info dsp_info;
-	/* voice info */
-#ifdef MODEM_CONFIG_VOICE
-	void *voice_obj;
-	struct voice_info voice_info;
-#endif
 #ifdef MODEM_CONFIG_FAX
 	void *fax_obj;
 #endif

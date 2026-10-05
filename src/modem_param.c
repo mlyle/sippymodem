@@ -77,10 +77,6 @@ long modem_get_param(struct modem *m, unsigned param_name)
 		return 0 /* MODEM_AUTOMODE(m)*/;
 	case MDMPRM_DSPINFO:
 		return (long)(&m->dsp_info);
-#ifdef MODEM_CONFIG_VOICE
-	case MDMPRM_VOICEINFO:
-		return (long)(&m->voice_info);
-#endif
 	case MDMPRM_DP_ADDR:
 		return (long)(m->dp);
 	case MDMPRM_V90_DIGITAL_INDICATION:

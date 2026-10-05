@@ -85,12 +85,6 @@ extern void *CID_create(struct modem *m, unsigned rate, unsigned cid_val);
 extern void CID_delete(void *cid);
 extern int  CID_process(void *cid, void *in, int count);
 #endif
-#ifdef MODEM_CONFIG_VOICE
-extern void *VOICE_create(struct modem *m, unsigned srate);
-extern void VOICE_delete(void *obj);
-extern int  VOICE_process(void *obj, void *in, void *out, int count);
-extern int  VOICE_command(void *obj, enum VOICE_CMD cmd);
-#endif
 #ifdef MODEM_CONFIG_FAX
 extern void *FAX_create(struct modem *m, unsigned caller, unsigned srate);
 extern int FAX_process(void *obj, void *in, void *out, int count);
@@ -1493,12 +1487,6 @@ static int modem_stop (struct modem *m)
 		m->cid = NULL;
 	}
 #endif
-#ifdef MODEM_CONFIG_VOICE
-	if(m->voice_obj) {
-		VOICE_delete(m->voice_obj);
-		m->voice_obj = NULL;
-	}
-#endif
 #ifdef MODEM_CONFIG_FAX
 	if(m->fax_obj) {
 		FAX_delete(m->fax_obj);
@@ -1642,137 +1630,6 @@ int modem_ring_detector_start(struct modem *m)
 	return do_modem_start(m);
 }
 #endif /* MODEM_CONFIG_RING_DETECTOR */
-
-
-/*
- *    Voice modem
- *
- */
-
-#ifdef MODEM_CONFIG_VOICE
-extern void modem_voice_stop(struct modem *m);
-
-static void modem_voice_process(struct modem *m, void *in, void *out, int count)
-{
-	int status;
-	//MODEM_DBG("modem_voice_process: %d...\n", count);
-	status = VOICE_process(m->voice_obj, in, out, count);
-	if(status) {
-		MODEM_DBG("modem_voice_process: status %d\n", status);
-		switch(status) {
-		case VOICE_STATUS_OK:
-			modem_report_result(m, RESULT_OK);
-			m->command = 1;
-			break;
-		case VOICE_STATUS_CONNECT:
-			modem_report_result(m, RESULT_CONNECT);
-			m->command = 0;
-			break;
-		case VOICE_STATUS_ERROR:
-			modem_report_result(m, RESULT_ERROR);
-			m->command = 1;
-			break;
-		default:
-			break;
-		}
-		if(status < 0) {
-			MODEM_DBG("VOICE failed.\n");
-			modem_voice_stop(m);
-		}
-	}
-}
-
-int modem_voice_command(struct modem *m, enum VOICE_CMD cmd)
-{
-	MODEM_DBG("modem_voice_command: %u...\n", cmd);
-	switch(cmd) {
-	case VOICE_CMD_BEEP:
-	case VOICE_CMD_DTMF:
-	case VOICE_CMD_STATE_RX:
-	case VOICE_CMD_STATE_TX:
-		if(!m->voice_obj)
-			return -1;
-		m->command = 0;
-		VOICE_command(m->voice_obj, cmd);
-		return 1;
-	default:
-		return -1;
-	}
-	return 0;
-}
-
-int modem_voice_start(struct modem *m)
-{
-	MODEM_DBG("modem_voice_start...\n");
-	if(m->voice_obj)
-		return 0;
-	if(m->started) {
-#ifdef MODEM_CONFIG_RING_DETECTOR
-		if(m->rd_obj)
-			modem_stop(m);
-		else
-#endif
-			return -1;
-	}
-	m->voice_obj = VOICE_create(m, m->srate);
-	if(!m->voice_obj)
-		return -1;
-	m->sample_timer = 0 /* m->srate*timeout/MODEM_HZ */ ;
-	m->sample_timer_func = NULL /* modem_voice_stop */ ;
-	m->process = modem_voice_process;
-	modem_set_hook(m, MODEM_HOOK_OFF);	
-	return do_modem_start(m);
-}
-
-void modem_voice_stop(struct modem *m)
-{
-	MODEM_DBG("modem_voice_stop...\n");
-	m->process = NULL;
-	m->sample_timer = 0;
-	m->sample_timer_func = NULL;
-	if(m->voice_obj) {
-		VOICE_delete(m->voice_obj);
-		m->voice_obj = NULL;
-	}
-	modem_stop(m);
-	modem_set_hook(m, MODEM_HOOK_ON);	
-}
-
-int modem_voice_set_device(struct modem *m, unsigned device)
-{
-	MODEM_DBG("modem_voice_set_device: dev = %u...\n", device);
-	if (device == VOICE_DEVICE_NONE) {
-		if(m->voice_obj)
-			modem_voice_stop(m);
-		return 0;
-	}
-	else if (device == VOICE_DEVICE_LINE) {
-		if(m->voice_obj)
-			return 0;
-		else if(modem_voice_start(m))
-			return -1;
-		return 1;
-	}
-	return -1;
-}
-
-int modem_voice_init(struct modem *m)
-{
-	m->voice_info.comp_method = 1;
-	m->voice_info.sample_rate = 8000;
-	m->voice_info.rx_gain = 128;
-	m->voice_info.tx_gain = 128;
-	m->voice_info.dtmf_symbol = 0;
-	m->voice_info.tone1_freq = 933;
-	m->voice_info.tone2_freq = 0;
-	m->voice_info.tone_duration = 150;
-	m->voice_info.inactivity_timer = 0;
-	m->voice_info.silence_detect_sensitivity = 128;
-	m->voice_info.silence_detect_period      = 50;
-	return 0;
-}
-
-#endif /* MODEM_CONFIG_VOICE */
 
 
 /*
@@ -2030,11 +1887,6 @@ int  modem_set_mode(struct modem *m, enum MODEM_MODE mode)
 	MODEM_DBG("modem set mode: -> %d...\n", mode);
 	if (m->mode == mode)
 		return 0;
-#ifdef MODEM_CONFIG_VOICE
-	if (m->mode == MODEM_MODE_VOICE && m->voice_obj) {
-		modem_voice_stop(m);
-	}
-#endif
 	m->mode = mode;
 	return 0;
 }
@@ -2251,9 +2103,6 @@ struct modem *modem_create(struct modem_driver *drv, const char *name)
 	m->xmit.head = m->xmit.tail = m->xmit.count = 0;
 	m->modem_info |= TIOCM_DTR|TIOCM_RTS;
 	// TODO: update speed,DTR according to termios
-#ifdef MODEM_CONFIG_VOICE
-	modem_voice_init(m);
-#endif
 
 	return m;
 }

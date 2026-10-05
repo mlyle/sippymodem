@@ -270,47 +270,6 @@ enum FAX_CMD {
 	FAX_CMD_FRH,
 };
 
-/* voice definitions */
-
-enum VOICE_CMD {
-	VOICE_CMD_STATE_COMMAND,
-	VOICE_CMD_STATE_RX,
-	VOICE_CMD_STATE_TX,
-	VOICE_CMD_STATE_DUPLEX,
-	VOICE_CMD_STATE_SPEAKER,
-	VOICE_CMD_BEEP,
-	VOICE_CMD_DTMF,
-	VOICE_CMD_ABORT,
-};
-
-#define VOICE_STATUS_OK      1
-#define VOICE_STATUS_ERROR   2
-#define VOICE_STATUS_CONNECT 3
-
-#define VOICE_STATE_COMMAND 0x00
-#define VOICE_STATE_RX      0x01
-#define VOICE_STATE_TX      0x02
-#define VOICE_STATE_DUPLEX (VOICE_STATE_TX|VOICE_STATE_RX)
-#define VOICE_STATE_SPEAKER 0x08
-
-#define VOICE_DEVICE_NONE 0
-#define VOICE_DEVICE_LINE 1
-
-struct voice_info {
-	unsigned comp_method;
-	unsigned sample_rate;
-	unsigned rx_gain;
-	unsigned tx_gain;
-	unsigned dtmf_symbol;
-	unsigned tone1_freq;
-	unsigned tone2_freq;
-	unsigned tone_duration;
-	unsigned inactivity_timer;
-	unsigned silence_detect_sensitivity;
-	unsigned silence_detect_period;
-};
-
-
 /*
  *    prototypes
  *
