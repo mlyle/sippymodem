@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <frame_clock.h>
+#include <frame_pacer.h>
 
 #include "test.h"
 
@@ -103,6 +104,58 @@ static bool test_validation_and_integer_overflow(void)
 	return true;
 }
 
+static bool test_exact_four_thirds_pacing(void)
+{
+	struct frame_pacer pacer;
+	unsigned int frames = 0;
+
+	CHECK(frame_pacer_init(&pacer, UINT64_C(20000000) / 4 * 3, 4),
+	      "exact pacing init failed");
+	for (unsigned int tick = 0; tick <= 240; ++tick) {
+		uint64_t now = tick * UINT64_C(5000000);
+
+		while (frame_pacer_take(&pacer, now))
+			frames++;
+		CHECK(frame_pacer_wait_ns(&pacer, now) > 0,
+		      "empty pacing budget exposed a busy wait");
+	}
+	CHECK(frames == 4 + 80 && pacer.interval_ns == UINT64_C(15000000),
+	      "1.2 seconds supplied %u frames instead of four burst plus 80 paced", frames);
+	for (unsigned int frame = 0; frame < 4; ++frame)
+		CHECK(frame_pacer_take(&pacer, UINT64_C(60000000000)),
+		      "idle pacer did not restore its bounded burst");
+	CHECK(!frame_pacer_take(&pacer, UINT64_C(60000000000)) &&
+	      frame_pacer_wait_ns(&pacer, UINT64_C(60000000000)) == UINT64_C(15000000),
+	      "idle time banked more than four frames");
+	return true;
+}
+
+static bool test_pacer_backward_time_and_saturation(void)
+{
+	struct frame_pacer pacer;
+
+	CHECK(frame_pacer_init(&pacer, 15, 4), "overflow pacing init failed");
+	for (unsigned int frame = 0; frame < 4; ++frame)
+		CHECK(frame_pacer_take(&pacer, 100), "initial pacing burst failed");
+	CHECK(!frame_pacer_take(&pacer, 10) &&
+	      frame_pacer_wait_ns(&pacer, 10) == 15 &&
+	      !frame_pacer_take(&pacer, 114) && frame_pacer_take(&pacer, 115),
+	      "backward time minted credit or moved the refill origin");
+	for (unsigned int frame = 0; frame < 4; ++frame)
+		CHECK(frame_pacer_take(&pacer, UINT64_MAX), "saturated-time burst failed");
+	CHECK(!frame_pacer_take(&pacer, UINT64_MAX) &&
+	      frame_pacer_wait_ns(&pacer, UINT64_MAX) == 15,
+	      "time saturation minted unbounded credit or a zero wait");
+	struct frame_pacer original = pacer;
+	CHECK(!frame_pacer_init(&pacer, UINT64_MAX, 4) &&
+	      memcmp(&pacer, &original, sizeof(pacer)) == 0 &&
+	      !frame_pacer_take(NULL, 0) && frame_pacer_wait_ns(NULL, 0) == UINT64_MAX,
+	      "invalid pacing initialization changed state");
+	frame_pacer_reset(&pacer);
+	CHECK(frame_pacer_take(&pacer, 0), "reset retained the previous call's debt");
+	return true;
+}
+
 struct test_case {
 	const char *name;
 	bool (*run)(void);
@@ -115,6 +168,8 @@ int main(void)
 		{ "bounded backlog",
 		  test_large_backlog_is_drained_in_bounded_batches },
 		{ "validation and overflow", test_validation_and_integer_overflow },
+		{ "exact 4/3 pacing", test_exact_four_thirds_pacing },
+		{ "pacing backward time and saturation", test_pacer_backward_time_and_saturation },
 	};
 	unsigned int failures = 0;
 

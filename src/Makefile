@@ -60,6 +60,7 @@ APP_SOURCES := \
 	audio_scheduler.c \
 	config.c \
 	frame_clock.c \
+	frame_pacer.c \
 	host.c \
 	lapm_v44_session.c \
 	loop.c \

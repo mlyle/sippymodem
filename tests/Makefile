@@ -305,7 +305,7 @@ AUDIO_PATH_TEST_OBJECTS := $(BUILD_DIR)/test_audio_path.o \
 	$(BUILD_DIR)/media.o $(BUILD_DIR)/g711.o
 FRAME_CLOCK_TEST_BINARY := $(BUILD_DIR)/test_frame_clock
 FRAME_CLOCK_TEST_OBJECTS := $(BUILD_DIR)/test_frame_clock.o \
-	$(BUILD_DIR)/frame_clock.o
+	$(BUILD_DIR)/frame_clock.o $(BUILD_DIR)/frame_pacer.o
 AUDIO_SCHEDULER_TEST_BINARY := $(BUILD_DIR)/test_audio_scheduler
 AUDIO_SCHEDULER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_audio_scheduler.o \
@@ -314,6 +314,7 @@ AUDIO_SCHEDULER_TEST_OBJECTS := \
 HOST_TEST_BINARY := $(BUILD_DIR)/test_host
 HOST_TEST_OBJECTS := $(BUILD_DIR)/test_host.o \
 	$(BUILD_DIR)/host.o \
+	$(BUILD_DIR)/frame_pacer.o \
 	$(BUILD_DIR)/session.o \
 	$(BUILD_DIR)/sip_media_bridge.o \
 	$(BUILD_DIR)/sip_rtp.o \
@@ -4787,6 +4788,10 @@ $(BUILD_DIR)/audio_path.o: \
 
 $(BUILD_DIR)/frame_clock.o: \
 	../src/frame_clock.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/frame_pacer.o: \
+	../src/frame_pacer.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/audio_scheduler.o: \
