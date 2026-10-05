@@ -270,6 +270,17 @@ size_t sip_session_remote_clock_frames(
 		       0;
 }
 
+struct rtp_playout_status sip_session_playout_status(
+	const struct sip_session *session)
+{
+	return rtp_runtime_playout_status(session != NULL ? session->rtp : NULL);
+}
+
+bool sip_session_pad_clock_frame(struct sip_session *session)
+{
+	return session != NULL && rtp_runtime_pad_clock_frame(session->rtp);
+}
+
 bool sip_session_is_open(const struct sip_session *session)
 {
 	return session != NULL && session->opened;

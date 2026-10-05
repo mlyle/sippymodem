@@ -360,6 +360,82 @@ static bool test_remote_clock_preserves_time_through_repeated_loss(void)
 	return true;
 }
 
+static bool test_playout_gap_cursor(void)
+{
+	struct rtp_jitter_slot slots[TEST_SLOT_COUNT];
+	struct rtp_receiver receiver;
+	const uint8_t payload[] = { 1, 2 };
+	uint8_t output[2];
+	struct rtp_packet_view packet = packet_view(7, 1, UINT32_MAX - 1u,
+		payload, sizeof(payload));
+	struct rtp_playout_status status;
+
+	CHECK(init_receiver(&receiver, slots, 0) &&
+	      !rtp_receiver_playout_status(&receiver, 2).stream_active,
+	      "idle receiver invented a playout gap");
+	CHECK(rtp_receiver_push(&receiver, &packet) == RTP_RECEIVE_ACCEPTED,
+	      "initial gap-cursor packet failed");
+	packet = packet_view(7, 3, 2, payload, sizeof(payload));
+	CHECK(rtp_receiver_push(&receiver, &packet) == RTP_RECEIVE_ACCEPTED,
+	      "future gap-cursor packet failed");
+	struct rtp_receiver saved = receiver;
+	status = rtp_receiver_playout_status(&receiver, 2);
+	CHECK(status.stream_active && !status.gap && status.ssrc == 7 &&
+	      status.timestamp == UINT32_MAX - 1u &&
+	      memcmp(&receiver, &saved, sizeof(saved)) == 0 &&
+	      rtp_receiver_play(&receiver, output, NULL, sizeof(output), NULL),
+	      "contiguous query changed the receiver or held received audio");
+	status = rtp_receiver_playout_status(&receiver, 2);
+	CHECK(status.gap && status.timestamp == 0 && status.ssrc == 7,
+	      "timestamp wrap hid a real gap");
+	packet = packet_view(7, 2, 0, payload, sizeof(payload));
+	CHECK(rtp_receiver_push(&receiver, &packet) == RTP_RECEIVE_ACCEPTED &&
+	      !rtp_receiver_playout_status(&receiver, 2).gap &&
+	      rtp_receiver_play(&receiver, output, NULL, sizeof(output), NULL) &&
+	      rtp_receiver_play(&receiver, output, NULL, sizeof(output), NULL) &&
+	      !rtp_receiver_playout_status(&receiver, 2).gap,
+	      "filled gap or time after the received tail remained blocked");
+	packet = packet_view(8, 1, 100, payload, sizeof(payload));
+	CHECK(rtp_receiver_push(&receiver, &packet) == RTP_RECEIVE_ACCEPTED &&
+	      rtp_receiver_playout_status(&receiver, 2).ssrc == 8 &&
+	      rtp_receiver_playout_status(&receiver, 2).timestamp == 100 &&
+	      !rtp_receiver_playout_status(&receiver, TEST_SLOT_COUNT + 1).stream_active &&
+	      !rtp_receiver_playout_status(NULL, 2).stream_active,
+	      "stream restart or query bounds lost cursor identity");
+	return true;
+}
+
+static bool test_partial_clock_padding_preserves_provenance(void)
+{
+	struct rtp_jitter_slot slots[TEST_SLOT_COUNT];
+	struct rtp_receiver receiver;
+	const uint8_t payload[] = { 1, 2, 3, 4 };
+	uint8_t output[4];
+	bool mask[4];
+	struct rtp_packet_view packet = packet_view(1, 1, UINT32_MAX - 1u, payload, 2);
+
+	CHECK(init_receiver(&receiver, slots, 0) &&
+	      rtp_receiver_push(&receiver, &packet) == RTP_RECEIVE_ACCEPTED &&
+	      rtp_receiver_take_clock_frames(&receiver, 4) == 0 &&
+	      rtp_receiver_playout_status(&receiver, 4).partial_samples == 2 &&
+	      rtp_receiver_pad_clock_frame(&receiver, 4) &&
+	      !rtp_receiver_playout_status(&receiver, 4).gap &&
+	      rtp_receiver_play(&receiver, output, mask, sizeof(output), NULL) &&
+	      memcmp(mask, (bool[]){ true, true, false, false }, sizeof(mask)) == 0 &&
+	      memcmp(output, (uint8_t[]){ 1, 2, TEST_SILENCE, TEST_SILENCE }, sizeof(output)) == 0 &&
+	      receiver.play_timestamp == 2 && rtp_receiver_take_clock_frames(&receiver, 4) == 0,
+	      "padding changed received provenance or doubled credit across timestamp wrap");
+	packet = packet_view(1, 2, 0, payload, 2);
+	CHECK(rtp_receiver_push(&receiver, &packet) == RTP_RECEIVE_LATE &&
+	      rtp_receiver_take_clock_frames(&receiver, 4) == 0,
+	      "late padded tail supplied new clock credit");
+	struct rtp_receiver saved = receiver;
+	CHECK(!rtp_receiver_pad_clock_frame(&receiver, 4) &&
+	      memcmp(&receiver, &saved, sizeof(saved)) == 0,
+	      "padding an empty clock mutated receiver state");
+	return true;
+}
+
 struct test_case {
 	const char *name;
 	bool (*run)(void);
@@ -379,6 +455,8 @@ int main(void)
 		  test_remote_clock_tracks_timestamp_extent },
 		{ "remote clock repeated loss",
 		  test_remote_clock_preserves_time_through_repeated_loss },
+		{ "playout gap cursor", test_playout_gap_cursor },
+		{ "partial clock padding", test_partial_clock_padding_preserves_provenance },
 	};
 	unsigned int failures = 0;
 

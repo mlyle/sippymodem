@@ -64,6 +64,9 @@ uint16_t sip_session_rtp_local_port(
 bool sip_session_media_cleanup_pending(const struct sip_session *session);
 size_t sip_session_remote_clock_frames(
 	const struct sip_session *session);
+struct rtp_playout_status sip_session_playout_status(
+	const struct sip_session *session);
+bool sip_session_pad_clock_frame(struct sip_session *session);
 bool sip_session_is_open(const struct sip_session *session);
 bool sip_session_media_is_configured(
 	const struct sip_session *session);

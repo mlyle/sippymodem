@@ -52,6 +52,7 @@ struct rtp_receiver {
 	uint32_t play_timestamp;
 	size_t prefill_remaining;
 	uint32_t clock_timestamp;
+	uint32_t buffered_timestamp;
 	size_t clock_pending_samples;
 };
 
@@ -70,6 +71,16 @@ struct rtp_playout_report {
 	size_t prefill_samples;
 	size_t received_samples;
 	size_t concealed_samples;
+};
+
+struct rtp_playout_status {
+	bool stream_active;
+	bool gap;
+	bool starts_with_gap;
+	uint32_t ssrc;
+	uint32_t timestamp;
+	uint32_t partial_timestamp;
+	size_t partial_samples;
 };
 
 /* Storage is supplied and owned by the caller.  One slot holds one RTP clock
@@ -101,6 +112,16 @@ enum rtp_receive_result rtp_receiver_receive(
  * bounded by the receive window; callers must consume it each drain. */
 size_t rtp_receiver_take_clock_frames(
 	struct rtp_receiver *receiver, size_t frame_samples);
+
+/* A gap is missing audio before a buffered future timestamp, within the next
+ * count samples. No stream, prefill and time beyond received audio are not
+ * gaps. The cursor identifies the stream and frame being inspected. */
+struct rtp_playout_status rtp_receiver_playout_status(
+	const struct rtp_receiver *receiver, size_t count);
+/* Complete an otherwise stalled partial frame exactly once. Full clock credit
+ * must already be consumed, and playout must be at that partial frame. The
+ * caller supplies its bounded deadline; play preserves received provenance. */
+bool rtp_receiver_pad_clock_frame(struct rtp_receiver *receiver, size_t count);
 
 /* Playout always fills count octets on success.  Missing media and time before
  * the first stream are represented by the configured silence octet. */

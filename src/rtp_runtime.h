@@ -39,6 +39,9 @@ enum rtp_endpoint_result rtp_runtime_drain(
 /* Complete frames of remote RTP time observed by the most recent drain. */
 size_t rtp_runtime_remote_clock_frames(
 	const struct rtp_runtime *runtime);
+struct rtp_playout_status rtp_runtime_playout_status(
+	const struct rtp_runtime *runtime);
+bool rtp_runtime_pad_clock_frame(struct rtp_runtime *runtime);
 enum media_result rtp_runtime_play(
 	struct rtp_runtime *runtime,
 	int16_t *samples,

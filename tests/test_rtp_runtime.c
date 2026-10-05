@@ -279,10 +279,9 @@ static bool test_buffers_remote_clock_backlog(void)
 	}
 	CHECK(receiver->stats.early_samples == 0,
 	      "remote-clock backlog discarded future media");
-	for (size_t prefill = 0; prefill < 2; ++prefill)
-		CHECK(rtp_receiver_play(
-			      receiver, played, NULL, sizeof(played), NULL),
-		      "remote-clock prefill did not play");
+	CHECK(receiver->config.prefill_samples == 0 &&
+	      !rtp_runtime_playout_status(runtime).gap,
+	      "remote-clock storage added fixed playout latency");
 	for (size_t frame = 0; frame < FRAME_COUNT; ++frame) {
 		CHECK(rtp_receiver_play(
 			      receiver, played, NULL, sizeof(played), NULL),

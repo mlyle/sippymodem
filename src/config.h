@@ -33,6 +33,7 @@ struct sip_config {
 struct media_config {
 	enum media_codec codec;
 	unsigned int rtp_listen_port;
+	/* Remote clock: maximum hold for a real RTP gap; local clock: prefill. */
 	unsigned int jitter_buffer_ms;
 	unsigned int frame_duration_ms;
 	bool remote_clock;

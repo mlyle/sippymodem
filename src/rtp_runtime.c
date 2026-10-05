@@ -130,6 +130,7 @@ struct rtp_runtime *rtp_runtime_create(
 	runtime->endpoint.socket_fd = -1;
 	runtime->frame_samples = frame_samples;
 	stream_config.prefill_samples =
+		config->remote_clock ? 0 :
 		config->jitter_buffer_ms * SAMPLES_PER_MILLISECOND;
 	runtime->packet_capacity =
 		RTP_HEADER_SIZE + runtime->frame_samples;
@@ -232,6 +233,20 @@ size_t rtp_runtime_remote_clock_frames(
 	const struct rtp_runtime *runtime)
 {
 	return runtime != NULL ? runtime->remote_clock_frames : 0;
+}
+
+struct rtp_playout_status rtp_runtime_playout_status(
+	const struct rtp_runtime *runtime)
+{
+	return rtp_receiver_playout_status(
+		runtime != NULL ? &runtime->stream.receiver : NULL,
+		runtime != NULL ? runtime->frame_samples : 0);
+}
+
+bool rtp_runtime_pad_clock_frame(struct rtp_runtime *runtime)
+{
+	return runtime != NULL && rtp_receiver_pad_clock_frame(
+		&runtime->stream.receiver, runtime->frame_samples);
 }
 
 enum media_result rtp_runtime_play(

@@ -5,6 +5,7 @@
 #include "test.h"
 
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <math.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -253,6 +254,271 @@ static struct modem_host *create_remote_host(
 	config.media.remote_clock = true;
 	config.sip.trace_enabled = callbacks != NULL && callbacks->trace != NULL;
 	return modem_host_create(&config, NULL, callbacks, &core);
+}
+
+enum { CLOCK_FRAME_SAMPLES = 160, CLOCK_PACKET_COUNT = 64 };
+
+struct clock_capture {
+	unsigned int calls;
+	size_t received_count;
+	size_t generated_count;
+	uint8_t received[CLOCK_FRAME_SAMPLES * CLOCK_PACKET_COUNT];
+};
+
+struct clock_fixture {
+	struct clock_capture capture;
+	struct modem_host *host;
+	struct sockaddr_in address;
+	int peer;
+};
+
+static enum modem_core_result capture_clock_audio(
+	void *context, enum g711_law law, const uint8_t *received,
+	int16_t *receive_samples, const bool *mask, uint8_t *transmitted,
+	int16_t *transmit_samples, size_t count, bool *exact_output)
+{
+	struct clock_capture *capture = context;
+	(void)law;
+	(void)receive_samples;
+	(void)transmitted;
+	(void)exact_output;
+
+	capture->calls++;
+	for (size_t index = 0; index < count; ++index) {
+		if (mask[index]) {
+			if (capture->received_count >= sizeof(capture->received))
+				return MODEM_CORE_ERROR;
+			capture->received[capture->received_count++] = received[index];
+		} else {
+			capture->generated_count++;
+		}
+	}
+	memset(transmit_samples, 0, count * sizeof(*transmit_samples));
+	return MODEM_CORE_OK;
+}
+
+static bool clock_fixture_open(struct clock_fixture *fixture, unsigned int jitter_ms)
+{
+	struct app_config config;
+	struct sockaddr_in peer = {
+		.sin_family = AF_INET, .sin_addr.s_addr = htonl(INADDR_LOOPBACK),
+	};
+	socklen_t size = sizeof(peer);
+	const struct modem_core core = {
+		.context = &fixture->capture,
+		.process = process_core, .process_g711 = capture_clock_audio,
+	};
+
+	memset(&fake, 0, sizeof(fake));
+	memset(fixture, 0, sizeof(*fixture));
+	fixture->peer = socket(AF_INET, SOCK_DGRAM, 0);
+	CHECK(fixture->peer >= 0 && bind(fixture->peer,
+	      (struct sockaddr *)&peer, sizeof(peer)) == 0 &&
+	      getsockname(fixture->peer, (struct sockaddr *)&peer, &size) == 0,
+	      "clock fixture peer failed");
+	fake.remote_port = ntohs(peer.sin_port);
+	config_init(&config);
+	config.media.jitter_buffer_ms = jitter_ms;
+	config.media.frame_duration_ms = 20;
+	fixture->host = modem_host_create(&config, NULL, NULL, &core);
+	size = sizeof(fixture->address);
+	CHECK(fixture->host != NULL &&
+	      modem_host_open(fixture->host) == SIP_SESSION_OK &&
+	      modem_host_dial(fixture->host, "sip:peer@127.0.0.1") == SIP_SIGNALING_OK &&
+	      getsockname(modem_host_media_poll_fd(fixture->host),
+	      (struct sockaddr *)&fixture->address, &size) == 0,
+	      "clock fixture host failed");
+	return true;
+}
+
+static bool clock_fixture_send_part(struct clock_fixture *fixture,
+	uint32_t ssrc, unsigned int frame, unsigned int offset, size_t count)
+{
+	uint8_t payload[CLOCK_FRAME_SAMPLES];
+	uint8_t packet[RTP_HEADER_SIZE + sizeof(payload)];
+	const struct rtp_header header = {
+		.ssrc = ssrc, .sequence = (uint16_t)(frame * 2 + (offset != 0)),
+		.timestamp = frame * CLOCK_FRAME_SAMPLES + offset,
+	};
+	size_t size;
+
+	memset(payload, (int)(frame + 1u), sizeof(payload));
+	CHECK(count <= sizeof(payload) && rtp_packet_write(packet, sizeof(packet), &header, payload,
+	      count, &size) == RTP_OK &&
+	      sendto(fixture->peer, packet, size, 0, (struct sockaddr *)&fixture->address,
+	      sizeof(fixture->address)) == (ssize_t)size, "clock fixture send failed");
+	return true;
+}
+
+static bool clock_fixture_send(struct clock_fixture *fixture, unsigned int frame)
+{
+	return clock_fixture_send_part(fixture, 1, frame, 0, CLOCK_FRAME_SAMPLES);
+}
+
+static void clock_fixture_close(struct clock_fixture *fixture)
+{
+	modem_host_destroy(fixture->host);
+	close(fixture->peer);
+}
+
+static bool test_remote_gap_wait_has_no_fixed_prefill(void)
+{
+	struct clock_fixture fixture;
+	size_t frames;
+
+	CHECK(clock_fixture_open(&fixture, 60) &&
+	      modem_host_step(fixture.host, 0, NULL, &frames) == MODEM_HOST_OK &&
+	      frames == 1 && fixture.capture.generated_count == CLOCK_FRAME_SAMPLES,
+	      "default remote host failed to seed without received RTP");
+	CHECK(clock_fixture_send(&fixture, 0) &&
+	      modem_host_step(fixture.host, 0, NULL, &frames) == MODEM_HOST_OK &&
+	      frames == 1 && fixture.capture.received_count == CLOCK_FRAME_SAMPLES,
+	      "default jitter setting delayed contiguous first audio");
+	CHECK(clock_fixture_send(&fixture, 2) &&
+	      modem_host_step(fixture.host, 20000000, NULL, &frames) == MODEM_HOST_IDLE &&
+	      frames == 0 && modem_host_wait_ns(fixture.host, 20000000) == 20000000,
+	      "real gap was concealed early or exposed a busy wait");
+	CHECK(clock_fixture_send(&fixture, 1) &&
+	      modem_host_step(fixture.host, 30000000, NULL, &frames) == MODEM_HOST_OK &&
+	      frames == 2 && fixture.capture.received_count == 3 * CLOCK_FRAME_SAMPLES &&
+	      fixture.capture.generated_count == CLOCK_FRAME_SAMPLES,
+	      "late predecessor did not release intact retained clock credit");
+	for (size_t index = 0; index < fixture.capture.received_count; ++index)
+		CHECK(fixture.capture.received[index] == index / CLOCK_FRAME_SAMPLES + 1u,
+		      "gap recovery changed sample %zu", index);
+	clock_fixture_close(&fixture);
+	return true;
+}
+
+static bool test_remote_gap_timeout_is_once_per_hole(void)
+{
+	struct clock_fixture fixture;
+	size_t frames;
+
+	CHECK(clock_fixture_open(&fixture, 60) && clock_fixture_send(&fixture, 0) &&
+	      modem_host_step(fixture.host, 0, NULL, &frames) == MODEM_HOST_OK &&
+	      frames == 1 && fixture.capture.generated_count == 0,
+	      "already received startup media was seeded a second time");
+	CHECK(clock_fixture_send(&fixture, 3) &&
+	      modem_host_step(fixture.host, 40000000, NULL, &frames) == MODEM_HOST_IDLE &&
+	      frames == 0 &&
+	      modem_host_step(fixture.host, 99999999, NULL, &frames) == MODEM_HOST_IDLE &&
+	      frames == 0 && modem_host_wait_ns(fixture.host, 99999999) == 1,
+	      "missing run changed its deadline before expiry");
+	CHECK(modem_host_step(fixture.host, 100000000, NULL, &frames) == MODEM_HOST_OK &&
+	      frames == 3 && fixture.capture.generated_count == 2 * CLOCK_FRAME_SAMPLES &&
+	      fixture.capture.received_count == 2 * CLOCK_FRAME_SAMPLES,
+	      "consecutive lost packets restarted the same hole deadline");
+	for (size_t index = CLOCK_FRAME_SAMPLES; index < fixture.capture.received_count; ++index)
+		CHECK(fixture.capture.received[index] == 4,
+		      "loss concealment changed received provenance");
+	clock_fixture_close(&fixture);
+	return true;
+}
+
+static bool test_remote_partial_frame_is_bounded(void)
+{
+	struct clock_fixture fixture;
+	size_t frames;
+
+	CHECK(clock_fixture_open(&fixture, 0) &&
+	      clock_fixture_send_part(&fixture, 1, 0, 0, 40) &&
+	      modem_host_step(fixture.host, 0, NULL, &frames) == MODEM_HOST_IDLE &&
+	      frames == 0 && modem_host_wait_ns(fixture.host, 0) == 20000000 &&
+	      clock_fixture_send_part(&fixture, 1, 0, 40, 120) &&
+	      modem_host_step(fixture.host, 5000000, NULL, &frames) == MODEM_HOST_OK &&
+	      frames == 1 && fixture.capture.received_count == CLOCK_FRAME_SAMPLES &&
+	      fixture.capture.generated_count == 0,
+	      "ordinary partial packets were seeded or flushed before completion");
+	CHECK(clock_fixture_send_part(&fixture, 1, 1, 0, 40) &&
+	      modem_host_step(fixture.host, 20000000, NULL, &frames) == MODEM_HOST_IDLE &&
+	      frames == 0 &&
+	      modem_host_step(fixture.host, 39999999, NULL, &frames) == MODEM_HOST_IDLE &&
+	      modem_host_wait_ns(fixture.host, 39999999) == 1 &&
+	      modem_host_step(fixture.host, 40000000, NULL, &frames) == MODEM_HOST_OK &&
+	      frames == 1 && fixture.capture.received_count == CLOCK_FRAME_SAMPLES + 40 &&
+	      fixture.capture.generated_count == 120,
+	      "stalled partial audio failed to release its bounded feedback deadline");
+	CHECK(clock_fixture_send_part(&fixture, 1, 1, 40, 120) &&
+	      modem_host_step(fixture.host, 40000000, NULL, &frames) == MODEM_HOST_IDLE &&
+	      frames == 0 && clock_fixture_send(&fixture, 2) &&
+	      modem_host_step(fixture.host, 50000000, NULL, &frames) == MODEM_HOST_OK &&
+	      frames == 1 && fixture.capture.received_count == 2 * CLOCK_FRAME_SAMPLES + 40,
+	      "late padded tail supplied a second clock tick or displaced later audio");
+	clock_fixture_close(&fixture);
+	return true;
+}
+
+static bool test_remote_pacing_preserves_credit_and_restart(void)
+{
+	struct clock_fixture fixture;
+	size_t frames;
+
+	CHECK(clock_fixture_open(&fixture, 60), "paced fixture failed");
+	for (unsigned int frame = 0; frame < 8; ++frame)
+		CHECK(clock_fixture_send(&fixture, frame), "paced burst failed");
+	CHECK(modem_host_step(fixture.host, 1000000000, NULL, &frames) == MODEM_HOST_OK &&
+	      frames == 4 &&
+	      modem_host_step(fixture.host, 0, NULL, &frames) == MODEM_HOST_IDLE &&
+	      frames == 0 && modem_host_wait_ns(fixture.host, 0) == 15000000,
+	      "same-time or backward host passes exceeded the four-frame burst");
+	CHECK(clock_fixture_send_part(&fixture, 2, 0, 0, CLOCK_FRAME_SAMPLES) &&
+	      modem_host_step(fixture.host, 1000000000, NULL, &frames) == MODEM_HOST_IDLE &&
+	      frames == 0 &&
+	      modem_host_step(fixture.host, 1015000000, NULL, &frames) == MODEM_HOST_OK &&
+	      frames == 1 && fixture.capture.received_count == 5 * CLOCK_FRAME_SAMPLES &&
+	      fixture.capture.generated_count == 0 &&
+	      modem_host_step(fixture.host, 1030000000, NULL, &frames) == MODEM_HOST_IDLE &&
+	      frames == 0,
+	      "SSRC restart inherited retired RTP credit or renewed its burst allowance");
+	CHECK(modem_host_hangup(fixture.host) == SIP_SIGNALING_OK &&
+	      modem_host_step(fixture.host, UINT64_MAX, NULL, &frames) == MODEM_HOST_IDLE &&
+	      modem_host_dial(fixture.host, "sip:peer@127.0.0.1") == SIP_SIGNALING_OK &&
+	      modem_host_step(fixture.host, 0, NULL, &frames) == MODEM_HOST_OK && frames == 1 &&
+	      clock_fixture_send(&fixture, 0) &&
+	      modem_host_step(fixture.host, 20000000, NULL, &frames) == MODEM_HOST_OK && frames == 1,
+	      "idle media observations leaked the previous call's time origin or debt");
+	clock_fixture_close(&fixture);
+	return true;
+}
+
+static bool test_remote_feedback_clock_is_bounded(void)
+{
+	struct clock_fixture fixture;
+	size_t total = 0;
+
+	CHECK(clock_fixture_open(&fixture, 0) &&
+	      fcntl(fixture.peer, F_SETFL, O_NONBLOCK) == 0,
+	      "feedback fixture failed");
+	for (unsigned int tick = 0; tick <= 1200; ++tick) {
+		uint64_t now = tick * UINT64_C(1000000);
+
+		for (unsigned int pass = 0; pass < 8; ++pass) {
+			size_t frames;
+			enum modem_host_result result = modem_host_step(fixture.host, now, NULL, &frames);
+			uint8_t packet[RTP_HEADER_SIZE + CLOCK_FRAME_SAMPLES];
+			ssize_t size;
+
+			CHECK((result == MODEM_HOST_OK || result == MODEM_HOST_IDLE) && frames <= 4,
+			      "feedback host failed or exceeded its per-pass DSP budget");
+			total += frames;
+			fixture.capture.received_count = 0;
+			while ((size = recv(fixture.peer, packet, sizeof(packet), 0)) >= 0)
+				CHECK(sendto(fixture.peer, packet, (size_t)size, 0,
+				      (struct sockaddr *)&fixture.address, sizeof(fixture.address)) == size,
+				      "feedback packet reflection failed");
+			if (frames == 0) {
+				CHECK(modem_host_wait_ns(fixture.host, now) > 0,
+				      "feedback loop exhausted its budget without a wait");
+				break;
+			}
+			CHECK(pass < 7, "same-time feedback exceeded the pacing burst");
+		}
+	}
+	CHECK(total == 84 && fixture.capture.generated_count == CLOCK_FRAME_SAMPLES,
+	      "feedback produced %zu frames instead of four burst plus 80 paced, or lost audio", total);
+	clock_fixture_close(&fixture);
+	return true;
 }
 
 static bool test_owns_lifecycle_and_call_control(void)
@@ -538,17 +804,24 @@ static bool test_remote_media_clocks_elapsed_time(void)
 			(struct sockaddr *)&host_address, sizeof(host_address)) == (ssize_t)packet_size,
 			"burst RTP packet was not sent");
 	}
-	for (unsigned int pass = 0; pass < 3; ++pass) {
-		CHECK(modem_host_step(host, 4000000000, &datagrams, &frames) == MODEM_HOST_OK &&
-			datagrams == (pass == 0 ? 12 : 0) && frames == 4 && core.calls == 9 + 4 * pass,
-			"remote burst exceeded budget or lost clock credit on pass %u", pass);
-		CHECK(modem_host_wait_ns(host, 4000000000) ==
-			(pass < 2 ? 0 : MODEM_HOST_SIGNALING_POLL_NS),
-			"pending remote clock credit did not schedule bounded continuation");
+	CHECK(modem_host_step(host, 4100000000, &datagrams, &frames) == MODEM_HOST_OK &&
+	      datagrams == 12 && frames == 4 && core.calls == 9 &&
+	      modem_host_step(host, 4100000000, NULL, &frames) == MODEM_HOST_IDLE &&
+	      frames == 0 && modem_host_wait_ns(host, 4100000000) == 750000,
+	      "remote burst exceeded four frames or retried without waiting");
+	for (unsigned int pass = 1; pass <= 8; ++pass) {
+		uint64_t now = UINT64_C(4100000000) + pass * UINT64_C(750000);
+
+		CHECK(modem_host_step(host, now, &datagrams, &frames) == MODEM_HOST_OK &&
+		      datagrams == 0 && frames == 1 && core.calls == 9 + pass,
+		      "paced remote continuation lost clock credit on pass %u", pass);
+		CHECK(modem_host_wait_ns(host, now) ==
+		      (pass < 8 ? 750000 : MODEM_HOST_SIGNALING_POLL_NS),
+		      "pending remote clock credit did not retain its pacing deadline");
 	}
 	/* Missing RTP must eventually release the call even without SIP BYE.
 	 * Invalid packets are not clock credit and cannot keep it alive. */
-	const uint64_t deadline = UINT64_C(4000000000) +
+	const uint64_t deadline = UINT64_C(4100000000) +
 		MODEM_HOST_REMOTE_MEDIA_TIMEOUT_NS;
 
 	fake.defer_hangup_media = true;
@@ -722,6 +995,11 @@ int main(void)
 		{ "recorded frame clock",
 		  test_steps_recorded_media_on_the_frame_clock },
 		{ "remote RTP clock", test_remote_media_clocks_elapsed_time },
+		{ "remote gap without prefill", test_remote_gap_wait_has_no_fixed_prefill },
+		{ "remote gap timeout", test_remote_gap_timeout_is_once_per_hole },
+		{ "remote partial deadline", test_remote_partial_frame_is_bounded },
+		{ "remote pacing and restart", test_remote_pacing_preserves_credit_and_restart },
+		{ "remote feedback ceiling", test_remote_feedback_clock_is_bounded },
 		{ "audio failure lifecycle",
 		  test_audio_failure_waits_for_a_new_media_lifecycle },
 		{ "open destroy", test_destroy_closes_an_open_host },

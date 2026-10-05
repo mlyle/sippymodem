@@ -29,6 +29,7 @@ static void start_stream(struct rtp_receiver *receiver,
 	receiver->play_timestamp = packet->header.timestamp;
 	receiver->prefill_remaining = receiver->config.prefill_samples;
 	receiver->clock_timestamp = packet->header.timestamp;
+	receiver->buffered_timestamp = packet->header.timestamp;
 	receiver->clock_pending_samples = 0;
 }
 
@@ -90,6 +91,7 @@ void rtp_receiver_restart(
 	receiver->play_timestamp = 0;
 	receiver->prefill_remaining = 0;
 	receiver->clock_timestamp = 0;
+	receiver->buffered_timestamp = 0;
 	receiver->clock_pending_samples = 0;
 }
 
@@ -160,6 +162,8 @@ enum rtp_receive_result rtp_receiver_push(
 		buffered = true;
 		buffered_end = timestamp + 1;
 	}
+	if (buffered && timestamp_is_before(receiver->buffered_timestamp, buffered_end))
+		receiver->buffered_timestamp = buffered_end;
 	if (buffered &&
 	    timestamp_is_before(receiver->clock_timestamp, buffered_end)) {
 		uint32_t elapsed = buffered_end - receiver->clock_timestamp;
@@ -194,6 +198,50 @@ size_t rtp_receiver_take_clock_frames(
 	frames = receiver->clock_pending_samples / frame_samples;
 	receiver->clock_pending_samples %= frame_samples;
 	return frames;
+}
+
+struct rtp_playout_status rtp_receiver_playout_status(
+	const struct rtp_receiver *receiver, size_t count)
+{
+	struct rtp_playout_status status = { 0 };
+
+	if (receiver == NULL || receiver->slots == NULL ||
+	    count == 0 || count > receiver->slot_count || !receiver->stream_active)
+		return status;
+	status.stream_active = true;
+	status.ssrc = receiver->ssrc;
+	status.timestamp = receiver->play_timestamp;
+	status.partial_samples = receiver->clock_pending_samples % count;
+	status.partial_timestamp = receiver->clock_timestamp -
+		(uint32_t)status.partial_samples;
+	if (receiver->prefill_remaining != 0)
+		return status;
+	for (size_t index = 0; index < count; ++index) {
+		uint32_t timestamp = receiver->play_timestamp + (uint32_t)index;
+		const struct rtp_jitter_slot *slot =
+			&receiver->slots[timestamp % receiver->slot_count];
+
+		if (timestamp_is_before(timestamp, receiver->buffered_timestamp) &&
+		    (!slot->occupied || slot->timestamp != timestamp)) {
+			status.gap = true;
+			status.starts_with_gap = index == 0;
+			break;
+		}
+	}
+	return status;
+}
+
+bool rtp_receiver_pad_clock_frame(struct rtp_receiver *receiver, size_t count)
+{
+	if (receiver == NULL || receiver->slots == NULL || !receiver->stream_active ||
+	    receiver->prefill_remaining != 0 || count == 0 || count > receiver->slot_count ||
+	    receiver->clock_pending_samples == 0 || receiver->clock_pending_samples >= count ||
+	    receiver->play_timestamp != receiver->clock_timestamp -
+		(uint32_t)receiver->clock_pending_samples)
+		return false;
+	receiver->clock_timestamp += (uint32_t)(count - receiver->clock_pending_samples);
+	receiver->clock_pending_samples = 0;
+	return true;
 }
 
 enum rtp_receive_result rtp_receiver_receive(

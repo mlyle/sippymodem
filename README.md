@@ -137,7 +137,18 @@ and exact sample-derived scheduler. Its nonblocking step records every network,
 line, and modem boundary, performs bounded catch-up, and reports rejected media
 updates without interrupting an established stream. Timing, modem-core,
 playout, or transmit failure suspends audio and requests hangup until a new
-media lifecycle begins. With `SIP_REMOTE_CLOCK=1`, five seconds without accepted
+media lifecycle begins. The default `SIP_REMOTE_CLOCK=1` consumes contiguous
+received RTP without fixed playout delay. `SIP_JB_MS` (default 60) bounds the
+wait only when missing audio precedes buffered future timestamps; expiration
+conceals that gap. The separate two-second receive storage holds scheduling
+backlogs without adding playout delay. With `SIP_REMOTE_CLOCK=0`, `SIP_JB_MS`
+remains the fixed wall-clock playout prefill. Remote DSP processing permits at
+most four thirds of the configured sample rate, with at most four frames in
+an immediate burst; pending audio remains buffered until its next pacing
+deadline. Incomplete frames retain their fragments for at least one nominal frame (or
+the larger configured jitter window). A stalled partial frame then pads only
+its missing tail, preserving which samples were received, so a peer waiting
+for the response cannot freeze the receive clock. Five seconds without accepted
 RTP clock progress ends the call and reports `NO CARRIER`, so missing media
 cannot leave the terminal stuck online. A guarded adapter presents the transitional
 Smart Link sample processor to that host at the exact 8 kHz SIP media clock. The foreground
