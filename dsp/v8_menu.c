@@ -16,20 +16,31 @@ enum {
 	V8_LAPM_PROTOCOL = V8_PROTOCOL_TAG | (1u << 5),
 };
 
+/* V.8 (11/2000), Table 4: modn0, modn1 and modn2, indexed by wire bit.
+ * Category/extension tags and modn0's PCM indicator are not modulations.
+ * Later extension octets have no defined modulation bits (clause 6). */
+static const uint16_t modulation_bits[3][8] = {
+	{ [6] = V8_MODULATION_V34_DUPLEX,
+	  [7] = V8_MODULATION_V34_HALF_DUPLEX },
+	{ [0] = V8_MODULATION_V32,
+	  [1] = V8_MODULATION_V22,
+	  [2] = V8_MODULATION_V17,
+	  [6] = V8_MODULATION_V29_HALF_DUPLEX,
+	  [7] = V8_MODULATION_V27TER },
+	{ [0] = V8_MODULATION_V26TER,
+	  [1] = V8_MODULATION_V26BIS,
+	  [2] = V8_MODULATION_V23_DUPLEX,
+	  [6] = V8_MODULATION_V23_HALF_DUPLEX,
+	  [7] = V8_MODULATION_V21 },
+};
+
 static uint8_t required_modulation_octets(uint16_t modulations)
 {
-	if ((modulations & (V8_MODULATION_V26TER |
-			    V8_MODULATION_V26BIS |
-			    V8_MODULATION_V23_DUPLEX |
-			    V8_MODULATION_V23_HALF_DUPLEX |
-			    V8_MODULATION_V21)) != 0)
-		return 3;
-	if ((modulations & (V8_MODULATION_V32 |
-			    V8_MODULATION_V22 |
-			    V8_MODULATION_V17 |
-			    V8_MODULATION_V29_HALF_DUPLEX |
-			    V8_MODULATION_V27TER)) != 0)
-		return 2;
+	for (size_t octet = sizeof(modulation_bits) / sizeof(modulation_bits[0]);
+	     octet > 0; --octet)
+		for (unsigned bit = 0; bit < 8; ++bit)
+			if ((modulations & modulation_bits[octet - 1u][bit]) != 0)
+				return (uint8_t)octet;
 	return 1;
 }
 
@@ -102,43 +113,15 @@ enum v8_menu_result v8_pcm_call_menu_init(
 	return V8_MENU_OK;
 }
 
-static uint8_t first_modulation_octet(const struct v8_menu *menu)
+static uint8_t encode_modulation_octet(uint16_t modulations, size_t index)
 {
-	return (uint8_t)(
-		V8_MODULATION_TAG |
-		(menu->pcm_present ? 1u << 5 : 0) |
-		((menu->modulations & V8_MODULATION_V34_DUPLEX) != 0 ?
-			 1u << 6 : 0) |
-		((menu->modulations & V8_MODULATION_V34_HALF_DUPLEX) != 0 ?
-			 1u << 7 : 0));
-}
+	uint8_t octet = index == 0 ? V8_MODULATION_TAG : V8_EXTENSION_TAG;
 
-static uint8_t second_modulation_octet(uint16_t modulations)
-{
-	return (uint8_t)(
-		V8_EXTENSION_TAG |
-		((modulations & V8_MODULATION_V32) != 0 ? 1u : 0) |
-		((modulations & V8_MODULATION_V22) != 0 ? 1u << 1 : 0) |
-		((modulations & V8_MODULATION_V17) != 0 ? 1u << 2 : 0) |
-		((modulations & V8_MODULATION_V29_HALF_DUPLEX) != 0 ?
-			 1u << 6 : 0) |
-		((modulations & V8_MODULATION_V27TER) != 0 ?
-			 1u << 7 : 0));
-}
-
-static uint8_t third_modulation_octet(uint16_t modulations)
-{
-	return (uint8_t)(
-		V8_EXTENSION_TAG |
-		((modulations & V8_MODULATION_V26TER) != 0 ? 1u : 0) |
-		((modulations & V8_MODULATION_V26BIS) != 0 ?
-			 1u << 1 : 0) |
-		((modulations & V8_MODULATION_V23_DUPLEX) != 0 ?
-			 1u << 2 : 0) |
-		((modulations & V8_MODULATION_V23_HALF_DUPLEX) != 0 ?
-			 1u << 6 : 0) |
-		((modulations & V8_MODULATION_V21) != 0 ?
-			 1u << 7 : 0));
+	if (index < sizeof(modulation_bits) / sizeof(modulation_bits[0]))
+		for (unsigned bit = 0; bit < 8; ++bit)
+			if ((modulations & modulation_bits[index][bit]) != 0)
+				octet |= (uint8_t)(1u << bit);
+	return octet;
 }
 
 enum v8_menu_result v8_menu_encode(
@@ -157,15 +140,10 @@ enum v8_menu_result v8_menu_encode(
 	if (capacity < count)
 		return V8_MENU_BUFFER_TOO_SMALL;
 	encoded[0] = V8_DATA_CALL_FUNCTION;
-	encoded[1] = first_modulation_octet(menu);
-	for (size_t index = 2; index <= menu->modulation_octets; ++index) {
-		if (index == 2)
-			encoded[index] = second_modulation_octet(menu->modulations);
-		else if (index == 3)
-			encoded[index] = third_modulation_octet(menu->modulations);
-		else
-			encoded[index] = V8_EXTENSION_TAG;
-	}
+	for (size_t index = 0; index < menu->modulation_octets; ++index)
+		encoded[index + 1u] = encode_modulation_octet(menu->modulations, index);
+	if (menu->pcm_present)
+		encoded[1] |= 1u << 5;
 	{
 		size_t index = 1u + menu->modulation_octets;
 
@@ -189,48 +167,14 @@ static bool extension_is_valid(uint8_t octet)
 	return (octet & UINT8_C(0x38)) == V8_EXTENSION_TAG;
 }
 
-static uint16_t decode_first_modulation_octet(uint8_t octet)
+static uint16_t decode_modulation_octet(uint8_t octet, size_t index)
 {
 	uint16_t modulations = 0;
 
-	if ((octet & (1u << 6)) != 0)
-		modulations |= V8_MODULATION_V34_DUPLEX;
-	if ((octet & (1u << 7)) != 0)
-		modulations |= V8_MODULATION_V34_HALF_DUPLEX;
-	return modulations;
-}
-
-static uint16_t decode_second_modulation_octet(uint8_t octet)
-{
-	uint16_t modulations = 0;
-
-	if ((octet & 1u) != 0)
-		modulations |= V8_MODULATION_V32;
-	if ((octet & (1u << 1)) != 0)
-		modulations |= V8_MODULATION_V22;
-	if ((octet & (1u << 2)) != 0)
-		modulations |= V8_MODULATION_V17;
-	if ((octet & (1u << 6)) != 0)
-		modulations |= V8_MODULATION_V29_HALF_DUPLEX;
-	if ((octet & (1u << 7)) != 0)
-		modulations |= V8_MODULATION_V27TER;
-	return modulations;
-}
-
-static uint16_t decode_third_modulation_octet(uint8_t octet)
-{
-	uint16_t modulations = 0;
-
-	if ((octet & 1u) != 0)
-		modulations |= V8_MODULATION_V26TER;
-	if ((octet & (1u << 1)) != 0)
-		modulations |= V8_MODULATION_V26BIS;
-	if ((octet & (1u << 2)) != 0)
-		modulations |= V8_MODULATION_V23_DUPLEX;
-	if ((octet & (1u << 6)) != 0)
-		modulations |= V8_MODULATION_V23_HALF_DUPLEX;
-	if ((octet & (1u << 7)) != 0)
-		modulations |= V8_MODULATION_V21;
+	if (index < sizeof(modulation_bits) / sizeof(modulation_bits[0]))
+		for (unsigned bit = 0; bit < 8; ++bit)
+			if ((octet & (1u << bit)) != 0)
+				modulations |= modulation_bits[index][bit];
 	return modulations;
 }
 
@@ -268,14 +212,9 @@ enum v8_menu_result v8_menu_decode(
 
 			if (!extension_is_valid(extension))
 				return V8_MENU_MALFORMED;
-			if (tag == V8_MODULATION_TAG) {
-				if (extension_count == 0)
-					decoded.modulations |=
-						decode_second_modulation_octet(extension);
-				else if (extension_count == 1)
-					decoded.modulations |=
-						decode_third_modulation_octet(extension);
-			}
+			if (tag == V8_MODULATION_TAG)
+				decoded.modulations |= decode_modulation_octet(
+					extension, extension_count + 1u);
 			extension_count++;
 		}
 		if (tag == V8_CALL_FUNCTION_TAG)
@@ -284,7 +223,7 @@ enum v8_menu_result v8_menu_decode(
 			if (modulation_seen)
 				return V8_MENU_MALFORMED;
 			decoded.modulations |=
-				decode_first_modulation_octet(category);
+				decode_modulation_octet(category, 0);
 			pcm_indicator = (category & (1u << 5)) != 0;
 			decoded.modulation_octets =
 				(uint8_t)(extension_count + 1u);

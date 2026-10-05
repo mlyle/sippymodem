@@ -54,6 +54,58 @@ static bool test_modulation_mapping(void)
 	return true;
 }
 
+static bool test_all_modulation_combinations(void)
+{
+	/* Table 4/V.8 wire masks, ordered by the public capability enum.
+	 * Each value contains modn0:modn1:modn2 in the low 24 bits. These
+	 * literal vectors check the wire result independently of round trips. */
+	static const uint32_t wire_masks[] = {
+		0x400000, 0x800000, 0x000100, 0x000200,
+		0x000400, 0x004000, 0x008000, 0x000001,
+		0x000002, 0x000004, 0x000040, 0x000080,
+	};
+
+	for (unsigned capabilities = 0; capabilities <= V8_MODULATION_ALL;
+	     ++capabilities) {
+		uint32_t wire = 0x051010;
+		uint8_t expected[V8_MAX_INFORMATION_OCTETS] = { 0xc1 };
+		uint8_t encoded[V8_MAX_INFORMATION_OCTETS];
+		struct v8_menu menu = {
+			.call_function = V8_CALL_DATA,
+			.modulations = (uint16_t)capabilities,
+			.modulation_octets = 1,
+		};
+		struct v8_menu decoded;
+		size_t count;
+
+		for (size_t bit = 0; bit < ARRAY_LENGTH(wire_masks); ++bit)
+			if ((capabilities & (1u << bit)) != 0)
+				wire |= wire_masks[bit];
+		expected[1] = (uint8_t)(wire >> 16);
+		expected[2] = (uint8_t)(wire >> 8);
+		expected[3] = (uint8_t)wire;
+		unsigned width = expected[3] != 0x10 ? 3u :
+			(expected[2] != 0x10 ? 2u : 1u);
+		if (capabilities != 0)
+			CHECK(v8_call_menu_init(&menu, capabilities, false) == V8_MENU_OK &&
+			      menu.modulation_octets == width,
+			      "minimal width for capabilities=%x", capabilities);
+		/* Preserve explicit extra extensions, including zero capabilities. */
+		for (unsigned extra = 0; extra <= 2; ++extra) {
+			menu.modulation_octets = (uint8_t)(width + extra);
+			for (unsigned i = width + 1u; i <= width + extra; ++i)
+				expected[i] = 0x10;
+			CHECK(v8_menu_encode(&menu, encoded, sizeof(encoded), &count) == V8_MENU_OK &&
+			      count == 1u + width + extra && !memcmp(encoded, expected, count) &&
+			      v8_menu_decode(expected, count, &decoded) == V8_MENU_OK &&
+			      decoded.modulations == capabilities &&
+			      decoded.modulation_octets == width + extra && !decoded.pcm_present,
+			      "wire mapping capabilities=%x extra=%u", capabilities, extra);
+		}
+	}
+	return true;
+}
+
 static bool test_minimal_modulation_width(void)
 {
 	static const uint8_t v34[] = { UINT8_C(0xc1), UINT8_C(0x45) };
@@ -995,6 +1047,7 @@ int main(void)
 	} tests[] = {
 		{ "V.21 data menu", test_v21_data_menu },
 		{ "modulation mapping", test_modulation_mapping },
+		{ "all modulation combinations", test_all_modulation_combinations },
 		{ "minimal modulation width", test_minimal_modulation_width },
 		{ "extended zero capabilities", test_extended_zero_capabilities },
 		{ "decode round trip", test_decode_round_trip },
