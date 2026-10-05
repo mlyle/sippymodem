@@ -15,3 +15,6 @@ __pycache__/
 /.live-campaign.json
 /.sip-terminal.json
 /live-call-artifacts/
+
+/src/libsippymodem.a
+/src/libsippymodem.so

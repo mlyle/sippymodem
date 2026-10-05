@@ -41,7 +41,7 @@ CPPFLAGS += -D_POSIX_C_SOURCE=200809L -I. -I$(DSP_SOURCE_DIR) \
 	-I$(dir $(PHASE_PROFILE_HEADER)) \
 	-I$(DSP_V21_202_SOURCE_DIR) -I$(DSP_V22_SOURCE_DIR) \
 	-I$(DSP_V32_SOURCE_DIR) -I$(DSP_PCM_SOURCE_DIR)
-CFLAGS += -std=gnu11 -Wall -Wextra
+CFLAGS += -std=gnu11 -Wall -Wextra -fPIC
 LDLIBS += $(PJSIP_LDLIBS) -lm
 
 MODEM_CORE_SOURCES := \
@@ -428,16 +428,27 @@ DSP_SOURCES := $(SHARED_DSP_SOURCES) \
 	$(V32_SOURCES) $(PCM_SOURCES)
 SOURCES := $(MODEM_CORE_SOURCES) $(APP_SOURCES) \
 	$(DSP_SOURCES)
+FRONTEND_SOURCES := main.c loop.c runtime.c terminal.c slmodem_terminal.c config.c
+CORE_SOURCES := $(filter-out $(FRONTEND_SOURCES),$(SOURCES))
+CORE_OBJECTS := $(CORE_SOURCES:.c=.o)
+FRONTEND_OBJECTS := $(FRONTEND_SOURCES:.c=.o)
 OBJECTS := $(SOURCES:.c=.o)
 DEPENDENCIES := $(SOURCES:.c=.d)
 
 .PHONY: all clean
 
 ifeq ($(PJSIP_AVAILABLE),yes)
-all: slmodemd
+all: slmodemd libsippymodem.a libsippymodem.so
 
-slmodemd: $(OBJECTS) $(PJSIP_DEPENDENCY)
-	$(CC) $(LDFLAGS) -o $@ $(OBJECTS) $(LDLIBS)
+libsippymodem.a: $(CORE_OBJECTS)
+	rm -f $@
+	$(AR) rcs $@ $(CORE_OBJECTS)
+
+libsippymodem.so: $(CORE_OBJECTS) $(PJSIP_DEPENDENCY)
+	$(CC) -shared -Wl,-z,defs $(LDFLAGS) -o $@ $(CORE_OBJECTS) $(LDLIBS)
+
+slmodemd: $(FRONTEND_OBJECTS) libsippymodem.a $(PJSIP_DEPENDENCY)
+	$(CC) $(LDFLAGS) -o $@ $(FRONTEND_OBJECTS) libsippymodem.a $(LDLIBS)
 else
 .PHONY: slmodemd
 
@@ -448,6 +459,8 @@ endif
 
 sdp_pjsip.o sip_signaling_pjsip.o: \
 	CPPFLAGS += -D_DEFAULT_SOURCE $(PJSIP_CFLAGS)
+
+$(OBJECTS): Makefile
 
 %.o: %.c
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
@@ -463,7 +476,7 @@ $(PREEMPHASIS_PROFILE_HEADER): $(DSP_PCM_SOURCE_DIR)/generate_preemphasis_profil
 	$(PYTHON) $< $@
 
 clean:
-	rm -f slmodemd $(SOURCES:.c=.o) $(DEPENDENCIES)
+	rm -f slmodemd libsippymodem.a libsippymodem.so $(SOURCES:.c=.o) $(DEPENDENCIES)
 	rm -f modem_test modem_main.o modem_cmdline.o modem_test.o
 	rm -f modem_datafile.o dp_dummy.o dp_sinus.o
 	rm -f .build_profile .depend

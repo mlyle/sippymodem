@@ -25,7 +25,7 @@ class DefaultBuildTests(unittest.TestCase):
         self.assertEqual(self.plan(), explicit)
 
     def test_aliases_share_one_modem_build(self) -> None:
-        self.assertEqual(self.plan("all", "slmodemd").count("-C src"), 1)
+        self.assertEqual(self.plan("all", "slmodemd", "libsippymodem").count("-C src"), 1)
 
 
 class HeaderDependencyTests(unittest.TestCase):
@@ -51,6 +51,7 @@ class HeaderDependencyTests(unittest.TestCase):
                 os.utime(target, (2, 2))
                 command = [
                     "make", "--no-print-directory", "--question",
+                    "--assume-old=Makefile",
                     f"DSP_SOURCE_DIR={dsp}", f"BUILD_DIR={build}",
                     f"PHASE_PROFILE_HEADER={header}",
                     "PJSIP_AVAILABLE=no", "PKG_CONFIG=false", str(target),

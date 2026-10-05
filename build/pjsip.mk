@@ -75,7 +75,11 @@ pjsip-required: pjsip
 
 $(PJSIP_CONFIGURE_STAMP): build/compiler.mk build/pjsip.mk \
 	$(PJSIP_SOURCE_DIR)/aconfigure | $(PJSIP_BUILD_DIR)
-	cd $(PJSIP_SOURCE_DIR) && CC="$(CC)" CXX="$(CXX)" ./configure \
+	@if test -f $(PJSIP_SOURCE_DIR)/build.mak; then \
+		$(MAKE) -C $(PJSIP_SOURCE_DIR) clean; \
+	fi
+	cd $(PJSIP_SOURCE_DIR) && CC="$(CC)" CXX="$(CXX)" \
+		CFLAGS="$(CFLAGS) -fPIC" CXXFLAGS="$(CXXFLAGS) -fPIC" ./configure \
 		--prefix="$(PJSIP_PREFIX)" $(PJSIP_CONFIGURE_OPTIONS)
 	touch "$@"
 
