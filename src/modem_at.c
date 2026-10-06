@@ -118,19 +118,6 @@ static int toupper_strncmp(char *s1, char *s2, int n)
 }
 
 
-static int set_sreg(struct modem *m, int num, char c, int low, int hi, int *len)
-{
-	if (!isdigit(c)) {
-		*len = 0;
-		c = '0';
-	}
-	else
-		*len = 1;
-	if ( c >= low + '0' && c <= hi + '0' )
-		return modem_set_sreg(m,num,c - '0');
-	return -1;
-}
-
 /* ------------------------------------------------------------ */
 
 /* Return one for a value, zero for an omitted field, or -1 for invalid input.
@@ -164,6 +151,28 @@ static int parse_unsigned(char **p, int *len, unsigned long *value, int base)
 	*len += (int)(end - *p);
 	*p = end;
 	return 1;
+}
+
+/* Basic command parameters are one decimal number, not one digit. */
+static int basic_number(char *p, int *len, unsigned int hi)
+{
+	unsigned long value = 0;
+	char *digits = p;
+
+	while (isspace((unsigned char)*digits)) digits++;
+	/* +<letter> starts the next command; a signed basic value is invalid. */
+	if (*digits == '+' && !isalpha((unsigned char)digits[1]))
+		return -1;
+	if (parse_unsigned(&p, len, &value, 10) < 0 || value > hi)
+		return -1;
+	return (int)value;
+}
+
+static int set_sreg(struct modem *m, int num, char *p, int hi, int *len)
+{
+	int value = basic_number(p, len, (unsigned int)hi);
+
+	return value < 0 ? -1 : modem_set_sreg(m, num, value);
 }
 
 static int process_plus_DSC(struct modem *m, char *p, int *len)
@@ -338,23 +347,12 @@ static int process_D(struct modem *m, char *p, int *len)
 
 static int process_H(struct modem *m, char *p, int *len)
 {
-	int ret;
-	AT_DBG("AT H command...\n");
-	switch(*p) {
-	case '1':
-		*len = 1;
-		ret = modem_hook(m, MODEM_HOOK_OFF);
-		break;
-	case '0':
-		*len = 1;
-		p++;
-	default:
-		if (isdigit(*p))
-			return -1;
-		ret = modem_hook(m, MODEM_HOOK_ON);
-		break;
-	}
-	return ret < 0 ? -1 : ret;
+	int value = basic_number(p, len, 1);
+
+	if (value < 0)
+		return -1;
+	int result = modem_hook(m, value ? MODEM_HOOK_OFF : MODEM_HOOK_ON);
+	return result < 0 ? -1 : result;
 }
 
 static int process_I(struct modem *m, char *p, int *len)
@@ -424,18 +422,9 @@ static int process_I(struct modem *m, char *p, int *len)
 
 static int process_O(struct modem *m, char *p, int *len)
 {
-	int retrain = 0;
+	int retrain = basic_number(p, len, 1);
 
-	AT_DBG("AT O command...\n");
-	if (isdigit(*p)) {
-		if (*p != '0' && *p != '1')
-			return -1;
-		retrain = *p - '0';
-		*len = 1;
-	} else {
-		*len = 0;
-	}
-	if (modem_online(m, retrain) != 0)
+	if (retrain < 0 || modem_online(m, retrain) != 0)
 		return -1;
 	return 1;
 }
@@ -469,20 +458,7 @@ static int process_S(struct modem *m, char *p, int *len)
 
 static int process_Z(struct modem *m, char *p, int *len)
 {
-	AT_DBG("AT Z command...\n");
-	switch(*p) {
-	case '1':
-	case '2':
-	case '3':
-	case '0':
-		*len = 1;
-		break;
-	default:
-		*len = 0;
-		break;
-	}
-	modem_reset(m);
-	return 0;
+	return basic_number(p, len, 3) < 0 ? -1 : modem_reset(m);
 }
 
 
@@ -1018,6 +994,9 @@ int process_at_command(struct modem *m, char *cmd)
 		c = toupper(*p++);
 		len = 0;
 		ret = -1;
+		/* These commands take no numeric parameter. Validate before acting. */
+		if (strchr("ABPT", c) != NULL && isdigit((unsigned char)*p))
+			return -1;
 		switch(c) {
 
 		case 'A': /* ATA */
@@ -1030,7 +1009,7 @@ int process_at_command(struct modem *m, char *cmd)
 			ret = process_D(m,p,&len);
 			return ret;
 		case 'E': /* ATE */
-			ret = set_sreg(m,SREG_ECHO,*p,0,1,&len);
+			ret = set_sreg(m,SREG_ECHO,p,1,&len);
 			break;
 		case 'H': /* ATH */
 			ret = process_H(m,p,&len);
@@ -1041,15 +1020,15 @@ int process_at_command(struct modem *m, char *cmd)
 			ret = process_I(m,p,&len);
 			break;
 		case 'L': /* ATL */
-			ret = set_sreg(m,SREG_SPEAKER_VOLUME,*p,0,3,&len);
+			ret = set_sreg(m,SREG_SPEAKER_VOLUME,p,3,&len);
 			if(!ret) modem_update_speaker(m);
 			break;
 		case 'M': /* ATM */
-			ret = set_sreg(m,SREG_SPEAKER_CONTROL,*p,0,2,&len);
+			ret = set_sreg(m,SREG_SPEAKER_CONTROL,p,2,&len);
 			if(!ret) modem_update_speaker(m);
 			break;
 		case 'N': /* ATN */
-			ret = set_sreg(m,SREG_AUTOMODE,*p,0,1,&len);
+			ret = set_sreg(m,SREG_AUTOMODE,p,1,&len);
 			break;
 		case 'O': /* ATO */
 			ret = process_O(m,p,&len);
@@ -1061,7 +1040,7 @@ int process_at_command(struct modem *m, char *cmd)
 			ret = modem_set_sreg(m,SREG_TONE_OR_PULSE,0);
 			break;
 		case 'Q': /* ATQ */
-			ret = set_sreg(m,SREG_QUIET,*p,0,1,&len);
+			ret = set_sreg(m,SREG_QUIET,p,1,&len);
 			break;
 		case 'S': /* ATS */
 			ret = process_S(m,p,&len);
@@ -1070,13 +1049,13 @@ int process_at_command(struct modem *m, char *cmd)
 			ret = modem_set_sreg(m,SREG_TONE_OR_PULSE,1);
 			break;
 		case 'V': /* ATV */
-			ret = set_sreg(m,SREG_VERBOSE,*p,0,1,&len);
+			ret = set_sreg(m,SREG_VERBOSE,p,1,&len);
 			break;
 		case 'X': /* ATX */
-			ret = set_sreg(m,SREG_X_CODE,*p,0,4,&len);
+			ret = set_sreg(m,SREG_X_CODE,p,4,&len);
 			break;
 		case 'Y': /* ATY */
-			ret = set_sreg(m,SREG_DEFAULT_SETTING,*p,0,3,&len);
+			ret = set_sreg(m,SREG_DEFAULT_SETTING,p,3,&len);
 			break;
 		case 'Z': /* ATZ */
 			ret = process_Z(m,p,&len);
@@ -1096,10 +1075,10 @@ int process_at_command(struct modem *m, char *cmd)
 			c = toupper(*p++);
 			switch (c) {
 			case 'C': /* AT%C */
-				ret = set_sreg(m,SREG_COMP,*p,0,3,&len);
+				ret = set_sreg(m,SREG_COMP,p,3,&len);
 				break;
 			case 'E': /* AT%E */
-				ret = set_sreg(m,SREG_LINE_QUALITY_CONTROL,*p,0,2,&len);
+				ret = set_sreg(m,SREG_LINE_QUALITY_CONTROL,p,2,&len);
 				break;
 			default:
 				return -1;
@@ -1109,35 +1088,31 @@ int process_at_command(struct modem *m, char *cmd)
 			c = toupper(*p++);
 			switch (c) {
 			case 'A': /* AT&A */
-				ret = set_sreg(m,SREG_CONNNECT_MSG_FORMAT,*p,0,7,&len);
+				ret = set_sreg(m,SREG_CONNNECT_MSG_FORMAT,p,7,&len);
 				break;
 			case 'C': /* AT&C */
-				ret = set_sreg(m,SREG_CD,*p,0,1,&len);
+				ret = set_sreg(m,SREG_CD,p,1,&len);
 				break;
 			case 'D': /* AT&D */
 			case 'R': /* AT&R */
 			case 'S': /* AT&S */
-				len = isdigit(*p)?1:0; ret = 0;
+				ret = basic_number(p, &len, 9) < 0 ? -1 : 0;
 				break;
 			case 'E': /* AT&E */
-				ret = set_sreg(m,SREG_CONNNECT_MSG_SPEED_SRC,*p,0,1,&len);
+				ret = set_sreg(m,SREG_CONNNECT_MSG_SPEED_SRC,p,1,&len);
 				break;
 			case 'F': { /* AT&F */
-				char *parameters = p;
-				unsigned long profile = 0;
-				if (parse_unsigned(&parameters, &len, &profile, 10) < 0 || profile != 0)
-					return -1;
-				ret = modem_factory_defaults(m);
+				ret = basic_number(p, &len, 0) < 0 ? -1 : modem_factory_defaults(m);
 				break;
 			}
 			case 'H':  /* AT&H */
-				ret = set_sreg(m,SREG_FLOW_CONTROL,*p,0,1,&len);
+				ret = set_sreg(m,SREG_FLOW_CONTROL,p,1,&len);
 				break;
 			case 'K': /* AT&K */
-				ret = set_sreg(m,SREG_COMP,*p,0,3,&len);
+				ret = set_sreg(m,SREG_COMP,p,3,&len);
 				break;
 			case 'P': /* AT&P */
-				ret = set_sreg(m,SREG_PULSE_RATIO,*p,0,3,&len);
+				ret = set_sreg(m,SREG_PULSE_RATIO,p,3,&len);
 				break;
 			case 'V': /* AT&V */
 			case 'W': /* AT&W */
@@ -1256,7 +1231,7 @@ int process_at_command(struct modem *m, char *cmd)
 			c = toupper(*p++);
 			switch (c) {
 			case 'N': /* AT\N */
-				ret = set_sreg(m,SREG_EC,*p,0,5,&len);
+				ret = set_sreg(m,SREG_EC,p,5,&len);
 				break;
 			default:
 				return -1;

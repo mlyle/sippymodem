@@ -51,8 +51,11 @@ ATDT<destination>
 - Commands can usually be joined: `ATE0Q0V1&A7`. `A` and `D` start an
   asynchronous operation and must be last. `Z` also ends processing of the
   line, so issue settings after reset on another line.
-- For basic commands with a single digit, an omitted digit normally means
-  zero: `ATE` means `ATE0`, and `ATH` means `ATH0`.
+- Basic command parameters are decimal numbers. Leading zeroes are ignored:
+  `ATE001` means `ATE1`. An omitted parameter normally means zero: `ATE`
+  means `ATE0`, and `ATH` means `ATH0`. Unsupported values produce ERROR
+  before that command changes settings or call state. Commands with no numeric
+  parameter reject a number, including zero.
 - Extended commands below support `?` for the current value and `=?` for
   accepted values unless a row says otherwise. Query replies are followed by
   the normal result code. `Q1` suppresses result codes, not explicit query text.
@@ -417,8 +420,8 @@ owned configuration fields rather than individual S-registers.
 | Form | Current behavior |
 | --- | --- |
 | `ATB` | Select fixed V.22 at 1200 bit/s; use `+MS` for normal modulation selection |
-| `ATB0`, `ATB1` | Not implemented; the digit causes ERROR after the bare B selection |
-| `AT&D[<digit>]`, `AT&R[<digit>]`, `AT&S[<digit>]` | Accepted no-ops; no DTR/RTS/DSR policy is applied |
+| `ATB0`, `ATB1` | Unsupported; produce ERROR without changing modulation selection |
+| `AT&D[<n>]`, `AT&R[<n>]`, `AT&S[<n>]` | `0..9`, default 0; accepted no-ops; no DTR/RTS/DSR policy is applied |
 | `AT&C<n>` | `0,1`, default 0; stores S60 without overriding actual carrier indication |
 | `AT&E<n>` | `0,1`, default 0; stores S71 without changing CONNECT's physical receive rate |
 | `AT&H<n>` | `0,1`, default 0; stores S62 without enabling RTS/CTS or XON/XOFF handling |

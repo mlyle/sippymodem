@@ -515,8 +515,8 @@ static bool test_ato1_waits_for_datapump_retrain(void)
 	char fallback_response[256];
 	char unsupported[] = "ATO1";
 	char invalid[] = "ATO2";
-	char retrain[] = "ATO1";
-	char resume[] = "ATO0";
+	char retrain[] = "ATO001";
+	char resume[] = "ATO000";
 	ssize_t fallback_length;
 	int fallback_pipe[2];
 
@@ -564,6 +564,12 @@ static bool test_ato1_waits_for_datapump_retrain(void)
 		      retrain_dp.retrain_calls == 1 &&
 		      modem->state == TEST_STATE_COMMAND_ONLINE,
 	      "invalid ATO mode reached the data pump");
+	const char *invalid_values[] = { "ATO10", "ATO0010", "ATO-0", "ATO18446744073709551616" };
+	for (size_t i = 0; i < ARRAY_LENGTH(invalid_values); ++i)
+		CHECK(process_at_command(modem, (char *)invalid_values[i]) == -1 &&
+		      retrain_dp.retrain_calls == 1 && modem->state == TEST_STATE_COMMAND_ONLINE &&
+		      modem->command && !modem->retrain_pending,
+		      "invalid complete ATO value affected the call: %s", invalid_values[i]);
 	retrain_dp.retrain_result = 0;
 	retrain_dp.process_result = DPSTAT_CONNECT;
 	CHECK(process_at_command(modem, retrain) == 1 &&
@@ -2129,7 +2135,7 @@ static bool test_factory_defaults(void)
 	struct modem_call_report previous = m->call_report;
 	unsigned char expected[sizeof(m->sregs)];
 	memcpy(expected, m->sregs, sizeof(expected));
-	const char *commands[] = { "AT&F", "AT&F0", "AT&F00", "ATZ", "ATZ3" };
+	const char *commands[] = { "AT&F", "AT&F0", "AT&F00", "ATZ", "ATZ3", "ATZ0003" };
 	for (size_t i = 0; i < ARRAY_LENGTH(commands); ++i) {
 		CHECK(process_at_command(m,
 		      "AT+MS=21,0,300,300+V90D=1+V92U=1+V34B=2400+V90U=9600,9600,3000") == 0,
@@ -2148,6 +2154,7 @@ static bool test_factory_defaults(void)
 	memcpy(expected, m->sregs, sizeof(expected));
 	const char *unsupported[] = {
 		"AT&F1", "AT&F255", "AT&F-0", "AT&F18446744073709551616",
+		"ATZ4", "ATZ255", "ATZ-0", "ATZ18446744073709551616",
 	};
 	for (size_t i = 0; i < ARRAY_LENGTH(unsupported); ++i)
 		CHECK(process_at_command(m, (char *)unsupported[i]) < 0 &&
@@ -2188,6 +2195,12 @@ static bool test_factory_defaults(void)
 	m->bit_timer_func = bit_timer_expired;
 	unsigned char negotiated[sizeof(m->cfg)];
 	memcpy(negotiated, &m->cfg, sizeof(negotiated));
+	for (size_t i = 0; i < ARRAY_LENGTH(unsupported); ++i)
+		CHECK(process_at_command(m, (char *)unsupported[i]) < 0 &&
+		      m->state == STATE_COMMAND_ONLINE && m->command && m->started &&
+		      m->hook == MODEM_HOOK_OFF && (m->modem_info & TIOCM_CD) &&
+		      m->xmit.count == 7 && m->bit_timer == 123 && capture.stops == 0,
+		      "invalid restoration disrupted a call: %s", unsupported[i]);
 	CHECK(process_at_command(m, "AT&F") == 0 && m->state == STATE_COMMAND_ONLINE &&
 	      m->command && m->started && m->hook == MODEM_HOOK_OFF && (m->modem_info & TIOCM_CD) &&
 	      m->xmit.head == 7 && m->xmit.count == 7 && !memcmp(m->xmit.buf, "pending", 7) &&
@@ -2197,6 +2210,99 @@ static bool test_factory_defaults(void)
 	m->started = 0;
 	m->state = STATE_MODEM_IDLE;
 	m->hook = MODEM_HOOK_ON;
+	modem_delete(m);
+	return true;
+}
+
+static bool test_basic_numeric_parameters(void)
+{
+	struct modem_driver driver = {
+		.name = "basic numeric parameters", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	struct modem *m = create_compat_modem(&driver, driver.name);
+	CHECK(m != NULL, "basic parameter allocation failed");
+	const struct { const char *name; unsigned reg, value; } cases[] = {
+		{ "E", SREG_ECHO, 1 }, { "Q", SREG_QUIET, 1 },
+		{ "V", SREG_VERBOSE, 1 }, { "N", SREG_AUTOMODE, 1 },
+		{ "L", SREG_SPEAKER_VOLUME, 3 }, { "M", SREG_SPEAKER_CONTROL, 2 },
+		{ "X", SREG_X_CODE, 4 }, { "Y", SREG_DEFAULT_SETTING, 3 },
+		{ "%C", SREG_COMP, 3 }, { "%E", SREG_LINE_QUALITY_CONTROL, 2 },
+		{ "&A", SREG_CONNNECT_MSG_FORMAT, 7 }, { "&C", SREG_CD, 1 },
+		{ "&E", SREG_CONNNECT_MSG_SPEED_SRC, 1 }, { "&H", SREG_FLOW_CONTROL, 1 },
+		{ "&K", SREG_COMP, 3 }, { "&P", SREG_PULSE_RATIO, 3 },
+		{ "\\N", SREG_EC, 5 },
+	};
+	for (size_t i = 0; i < ARRAY_LENGTH(cases); ++i) {
+		char command[64];
+		snprintf(command, sizeof(command), "AT%s000%uS0=9", cases[i].name, cases[i].value);
+		CHECK(process_at_command(m, command) == 0 &&
+		      m->sregs[cases[i].reg] == cases[i].value && m->sregs[0] == 9,
+		      "padded or chained basic value rejected: %s", command);
+		unsigned char expected[sizeof(m->sregs)];
+		memcpy(expected, m->sregs, sizeof(expected));
+		snprintf(command, sizeof(command), "AT%s000%u", cases[i].name, cases[i].value + 1);
+		CHECK(process_at_command(m, command) < 0 &&
+		      !memcmp(expected, m->sregs, sizeof(expected)),
+		      "invalid complete basic value changed settings: %s", command);
+	}
+	CHECK(process_at_command(m, "ATE000X4+V91=1&D0002&R0001&S0000") == 0 &&
+	      !m->sregs[SREG_ECHO] && m->sregs[SREG_X_CODE] == 4,
+	      "zero or extended-command chaining failed");
+	const char *invalid[] = { "ATE-0", "ATE+1", "ATE18446744073709551616", "ATH10", "ATH-1", "ATH2" };
+	for (size_t i = 0; i < ARRAY_LENGTH(invalid); ++i) {
+		unsigned char expected[sizeof(m->sregs)];
+		memcpy(expected, m->sregs, sizeof(expected));
+		CHECK(process_at_command(m, (char *)invalid[i]) < 0 && m->hook == MODEM_HOOK_ON &&
+		      !memcmp(expected, m->sregs, sizeof(expected)),
+		      "invalid basic command had side effects: %s", invalid[i]);
+	}
+	CHECK(process_at_command(m, "ATH0001") == 0 && m->hook == MODEM_HOOK_OFF &&
+	      process_at_command(m, "ATH0000") == 0 && m->hook == MODEM_HOOK_ON,
+	      "padded hook values rejected");
+	modem_delete(m);
+	return true;
+}
+
+static bool test_basic_commands_without_parameters(void)
+{
+	struct modem_driver driver = {
+		.name = "parameter-free commands", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	struct modem *m = create_compat_modem(&driver, driver.name);
+	CHECK(m != NULL, "parameter-free command allocation failed");
+	const char *invalid[] = { "ATB0", "ATB1", "ATB001", "ATP0", "ATP001", "ATT0", "ATT001" };
+	for (size_t i = 0; i < ARRAY_LENGTH(invalid); ++i) {
+		m->sregs[SREG_TONE_OR_PULSE] = invalid[i][2] == 'P' ? 1 : 0;
+		unsigned char expected[sizeof(m->sregs)];
+		memcpy(expected, m->sregs, sizeof(expected));
+		unsigned min = m->min_rate, max = m->max_rate;
+		CHECK(process_at_command(m, (char *)invalid[i]) < 0 &&
+		      !memcmp(expected, m->sregs, sizeof(expected)) &&
+		      m->min_rate == min && m->max_rate == max,
+		      "unexpected parameter changed settings: %s", invalid[i]);
+	}
+	struct factory_reply reply = {0};
+	m->control_output = factory_reply_output;
+	m->control_output_context = &reply;
+	m->sregs[SREG_RINGS_TO_AUTO_ANSWER] = 0;
+	CHECK(modem_report_incoming_call(m) == 0 && m->sregs[SREG_RING_COUNTER] == 1,
+	      "incoming answer fixture failed");
+	const char *invalid_answer[] = { "ATA0", "ATA1", "ATA0000" };
+	for (size_t i = 0; i < ARRAY_LENGTH(invalid_answer); ++i)
+		CHECK(process_at_command(m, (char *)invalid_answer[i]) < 0 &&
+		      m->state == STATE_MODEM_IDLE && !m->started &&
+		      m->hook == MODEM_HOOK_ON && m->sample_timer == 0 &&
+		      m->sregs[SREG_RING_COUNTER] == 1,
+		      "unexpected parameter answered a call: %s", invalid_answer[i]);
+	CHECK(process_at_command(m, "ATA") == 1 && m->started &&
+	      m->hook == MODEM_HOOK_OFF && modem_stop_now(m) == 0,
+	      "bare answer command rejected");
+	CHECK(process_at_command(m, "ATPTB") == 0 &&
+	      m->sregs[SREG_TONE_OR_PULSE] == 1 && MODEM_DP(m) == DP_V22 &&
+	      m->min_rate == 1200 && m->max_rate == 1200,
+	      "bare setting commands rejected");
 	modem_delete(m);
 	return true;
 }
@@ -9583,6 +9689,8 @@ int main(void)
 		{ "V.42 detection deadline", test_v42_detection_deadline },
 		{ "automatic factory profile", test_automatic_factory_profile },
 		{ "factory defaults", test_factory_defaults },
+		{ "basic numeric parameters", test_basic_numeric_parameters },
+		{ "parameter-free basic commands", test_basic_commands_without_parameters },
 		{ "S-register numeric validation", test_sreg_numeric_validation },
 		{ "country numeric validation", test_country_numeric_validation },
 		{ "AT command results", test_at_command_results },
