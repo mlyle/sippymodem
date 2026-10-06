@@ -2,6 +2,8 @@
 
 #include "v34_phase4_mp.h"
 
+#include "v34_training_symbol.h"
+
 #include "packed_bits.h"
 
 #include <string.h>
@@ -245,8 +247,7 @@ enum v34_phase4_mp_result v34_phase4_mp_next(
 {
 	struct v34_phase4_mp next;
 	struct qam_point next_point;
-	uint8_t next_quarter_point = 0;
-	uint8_t next_rotation;
+	uint8_t next_quarter_point;
 	bool complete;
 
 	if (!v34_phase4_mp_is_valid(transmitter) ||
@@ -256,32 +257,24 @@ enum v34_phase4_mp_result v34_phase4_mp_next(
 	if (transmitter->bit_index == transmitter->frame_bit_count)
 		return V34_PHASE4_MP_RECORD_COMPLETE;
 	next = *transmitter;
-	if (v34_scramble_differential_dibit(
-		    &next.scrambler,
+	if (!v34_training_encode_symbol(
+		    &next.scrambler, next.constellation,
 		    (uint8_t)packed_msb_read_msb_field(
 			    next.frame, next.bit_index, 2u),
-		    next.previous_clockwise_quarter_turns,
-		    &next_rotation) != V34_FRAMING_OK)
+		    next.constellation == V34_CONSTELLATION_16_POINT ?
+			    (uint8_t)packed_msb_read_msb_field(
+				    next.frame, next.bit_index + 2u, 2u) :
+			    0u,
+		    &next.previous_clockwise_quarter_turns,
+		    &next_point, &next_quarter_point))
 		return V34_PHASE4_MP_INVALID_ARGUMENT;
-	if (next.constellation == V34_CONSTELLATION_16_POINT &&
-	    v34_scramble_mapped_dibit(
-		    &next.scrambler,
-		    (uint8_t)packed_msb_read_msb_field(
-			    next.frame, next.bit_index + 2u, 2u),
-		    &next_quarter_point) != V34_FRAMING_OK)
-		return V34_PHASE4_MP_INVALID_ARGUMENT;
-	if (v34_training_constellation_point(
-		    next.constellation, next_quarter_point, next_rotation,
-		    &next_point) != V34_CONSTELLATION_OK)
-		return V34_PHASE4_MP_INVALID_ARGUMENT;
-	next.previous_clockwise_quarter_turns = next_rotation;
 	/* The record is unchanged; one aligned symbol preserves valid bounds. */
 	next.bit_index += v34_constellation_bits_per_symbol(next.constellation);
 	complete = next.bit_index == next.frame_bit_count;
 	*transmitter = next;
 	*point = next_point;
 	*quarter_point = next_quarter_point;
-	*clockwise_quarter_turns = next_rotation;
+	*clockwise_quarter_turns = next.previous_clockwise_quarter_turns;
 	*record_complete = complete;
 	return V34_PHASE4_MP_OK;
 }

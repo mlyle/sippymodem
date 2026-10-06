@@ -2,6 +2,8 @@
 
 #include "v34_phase4_e_sequence.h"
 
+#include "v34_training_symbol.h"
+
 #include <stddef.h>
 
 _Static_assert(
@@ -85,8 +87,7 @@ v34_phase4_e_sequence_next(
 {
 	struct v34_phase4_e_sequence next;
 	struct qam_point next_point;
-	uint8_t next_quarter_point = 0;
-	uint8_t next_rotation;
+	uint8_t next_quarter_point;
 
 	if (!v34_phase4_e_sequence_is_valid(sequence) ||
 	    point == NULL || quarter_point == NULL ||
@@ -95,21 +96,11 @@ v34_phase4_e_sequence_next(
 	if (sequence->emitted_bits == V34_PHASE4_E_BITS)
 		return V34_PHASE4_E_SEQUENCE_COMPLETE;
 	next = *sequence;
-	if (v34_scramble_differential_dibit(
-		    &next.scrambler, 3u,
-		    next.previous_clockwise_quarter_turns,
-		    &next_rotation) != V34_FRAMING_OK)
+	if (!v34_training_encode_symbol(
+		    &next.scrambler, next.constellation, 3u, 3u,
+		    &next.previous_clockwise_quarter_turns,
+		    &next_point, &next_quarter_point))
 		return V34_PHASE4_E_SEQUENCE_INVALID_ARGUMENT;
-	if (next.constellation == V34_CONSTELLATION_16_POINT &&
-	    v34_scramble_mapped_dibit(
-		    &next.scrambler, 3u, &next_quarter_point) !=
-		    V34_FRAMING_OK)
-		return V34_PHASE4_E_SEQUENCE_INVALID_ARGUMENT;
-	if (v34_training_constellation_point(
-		    next.constellation, next_quarter_point, next_rotation,
-		    &next_point) != V34_CONSTELLATION_OK)
-		return V34_PHASE4_E_SEQUENCE_INVALID_ARGUMENT;
-	next.previous_clockwise_quarter_turns = next_rotation;
 	next.emitted_bits = (uint8_t)(
 		next.emitted_bits +
 		v34_constellation_bits_per_symbol(next.constellation));
@@ -118,6 +109,6 @@ v34_phase4_e_sequence_next(
 	*sequence = next;
 	*point = next_point;
 	*quarter_point = next_quarter_point;
-	*clockwise_quarter_turns = next_rotation;
+	*clockwise_quarter_turns = next.previous_clockwise_quarter_turns;
 	return V34_PHASE4_E_SEQUENCE_OK;
 }

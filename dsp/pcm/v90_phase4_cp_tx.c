@@ -6,6 +6,7 @@
 
 #include "packed_bits.h"
 #include "memory_region.h"
+#include "v34_training_symbol.h"
 
 #include <string.h>
 
@@ -170,38 +171,6 @@ enum v90_phase4_cp_tx_result v90_phase4_cp_tx_start_next_record(
 	return V90_PHASE4_CP_TX_OK;
 }
 
-/* Mapping preserves framing validity and leaves the owned record unchanged. */
-static enum v90_phase4_cp_tx_result map_symbol(
-	struct v90_phase4_cp_tx *tx,
-	uint8_t differential_dibit, uint8_t mapped_dibit,
-	struct qam_point *point, uint8_t *quarter_point,
-	uint8_t *clockwise_quarter_turns)
-{
-	struct qam_point next_point;
-	uint8_t next_quarter_point = 0;
-	uint8_t next_rotation;
-
-	if (v34_scramble_differential_dibit(
-		    &tx->scrambler, differential_dibit,
-		    tx->previous_clockwise_quarter_turns,
-		    &next_rotation) != V34_FRAMING_OK)
-		return V90_PHASE4_CP_TX_INVALID_ARGUMENT;
-	if (tx->constellation == V34_CONSTELLATION_16_POINT &&
-	    v34_scramble_mapped_dibit(
-		    &tx->scrambler, mapped_dibit,
-		    &next_quarter_point) != V34_FRAMING_OK)
-		return V90_PHASE4_CP_TX_INVALID_ARGUMENT;
-	if (v34_training_constellation_point(
-		    tx->constellation, next_quarter_point, next_rotation,
-		    &next_point) != V34_CONSTELLATION_OK)
-		return V90_PHASE4_CP_TX_INVALID_ARGUMENT;
-	tx->previous_clockwise_quarter_turns = next_rotation;
-	*point = next_point;
-	*quarter_point = next_quarter_point;
-	*clockwise_quarter_turns = next_rotation;
-	return V90_PHASE4_CP_TX_OK;
-}
-
 enum v90_phase4_cp_tx_result v90_phase4_cp_tx_next(
 	struct v90_phase4_cp_tx *tx,
 	struct qam_point *point, uint8_t *quarter_point,
@@ -220,7 +189,6 @@ enum v90_phase4_cp_tx_result v90_phase4_cp_tx_next_owned(
 	struct v90_phase4_cp_tx next;
 	struct qam_point next_point;
 	uint8_t next_quarter_point;
-	uint8_t next_rotation;
 	bool complete;
 
 	const struct memory_region regions[] = {
@@ -238,15 +206,16 @@ enum v90_phase4_cp_tx_result v90_phase4_cp_tx_next_owned(
 	if (tx->bit_index == tx->frame_bit_count)
 		return V90_PHASE4_CP_TX_RECORD_COMPLETE;
 	next = *tx;
-	if (map_symbol(
-		    &next, (uint8_t)packed_msb_read_msb_field(
+	if (!v34_training_encode_symbol(
+		    &next.scrambler, next.constellation,
+		    (uint8_t)packed_msb_read_msb_field(
 			    next.frame, next.bit_index, 2u),
 		    next.constellation == V34_CONSTELLATION_16_POINT ?
 			    (uint8_t)packed_msb_read_msb_field(
 				    next.frame, next.bit_index + 2u, 2u) :
 			    0u,
-		    &next_point, &next_quarter_point, &next_rotation) !=
-	    V90_PHASE4_CP_TX_OK)
+		    &next.previous_clockwise_quarter_turns,
+		    &next_point, &next_quarter_point))
 		return V90_PHASE4_CP_TX_INVALID_ARGUMENT;
 	/* The validated record and cursor contain whole symbols. */
 	next.bit_index += v34_constellation_bits_per_symbol(next.constellation);
@@ -254,7 +223,7 @@ enum v90_phase4_cp_tx_result v90_phase4_cp_tx_next_owned(
 	*tx = next;
 	*point = next_point;
 	*quarter_point = next_quarter_point;
-	*clockwise_quarter_turns = next_rotation;
+	*clockwise_quarter_turns = next.previous_clockwise_quarter_turns;
 	*record_complete = complete;
 	return V90_PHASE4_CP_TX_OK;
 }
@@ -277,7 +246,6 @@ enum v90_phase4_cp_tx_result v90_phase4_cp_tx_scr_next_owned(
 	struct v90_phase4_cp_tx next;
 	struct qam_point next_point;
 	uint8_t next_quarter_point;
-	uint8_t next_rotation;
 
 	const struct memory_region regions[] = {
 		{ tx, sizeof(*tx) }, { point, sizeof(*point) },
@@ -292,15 +260,15 @@ enum v90_phase4_cp_tx_result v90_phase4_cp_tx_scr_next_owned(
 	if (tx->bit_index != tx->frame_bit_count)
 		return V90_PHASE4_CP_TX_RECORD_IN_PROGRESS;
 	next = *tx;
-	if (map_symbol(
-		    &next, 3u, 3u, &next_point,
-		    &next_quarter_point, &next_rotation) !=
-	    V90_PHASE4_CP_TX_OK)
+	if (!v34_training_encode_symbol(
+		    &next.scrambler, next.constellation, 3u, 3u,
+		    &next.previous_clockwise_quarter_turns,
+		    &next_point, &next_quarter_point))
 		return V90_PHASE4_CP_TX_INVALID_ARGUMENT;
 	*tx = next;
 	*point = next_point;
 	*quarter_point = next_quarter_point;
-	*clockwise_quarter_turns = next_rotation;
+	*clockwise_quarter_turns = next.previous_clockwise_quarter_turns;
 	return V90_PHASE4_CP_TX_OK;
 }
 
