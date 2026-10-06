@@ -206,31 +206,6 @@ static int process_plus_DSC(struct modem *m, char *p, int *len)
 	}
 }
 
-static int process_plus_DS0(struct modem *m, char *p, int *len)
-{
-	const char *reply;
-	unsigned long value;
-	if (*p == '?') {
-		*len = 1;
-		reply = modem_get_sreg(m, SREG_DS0_FRAMING) ? "1" : "0";
-	} else if (*p == '=') {
-		p++;
-		*len = 1;
-		if (*p == '?') {
-			(*len)++;
-			reply = "(0,1)";
-		} else {
-			if (parse_unsigned(&p, len, &value, 0) != 1 || value > 1 || *p == ',')
-				return -1;
-			return modem_set_sreg(m, SREG_DS0_FRAMING, (int)value);
-		}
-	} else {
-		return -1;
-	}
-	modem_frontend_info(m, reply, (int)strlen(reply));
-	return 0;
-}
-
 static int process_plus_DS(struct modem *m, char *p, int *len)
 {
 	char response[24];
@@ -1049,7 +1024,7 @@ int process_at_command(struct modem *m, char *cmd)
 				case 'S': /* AT+DS, AT+DSC, AT+DS0 */
 					if (*p == '0') {
 						p++;
-						ret = process_plus_DS0(m, p, &len);
+						ret = process_plus_choice_param(m, p, &len, SREG_DS0_FRAMING);
 					} else if (toupper(*p) == 'C') {
 						p++;
 						ret = process_plus_DSC(m, p, &len);
