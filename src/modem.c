@@ -169,6 +169,17 @@ static int modem_skip_ec_detection(const struct modem *m)
  *
  */
 
+int modem_set_link_rates(struct modem *m, uint32_t transmit_rate, uint32_t receive_rate)
+{
+	if (m == NULL || transmit_rate > INT_MAX || receive_rate > INT_MAX)
+		return -1;
+	uint64_t previous_rate = (uint64_t)m->tx_rate + m->rx_rate;
+	m->tx_rate = transmit_rate;
+	m->rx_rate = receive_rate;
+	modem_ec_update_timer_rate(m, previous_rate);
+	return 0;
+}
+
 static int rate_uses_v32bis(unsigned int rate)
 {
 	return rate == 7200 || rate == 12000 || rate == 14400;

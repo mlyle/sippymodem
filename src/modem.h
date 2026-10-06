@@ -510,6 +510,8 @@ extern int modem_stop_now(struct modem *m);
 extern int modem_answer(struct modem *m);
 extern int modem_dial(struct modem *m);
 extern int modem_online(struct modem *m, int retrain);
+/* Publish directional physical rates together, preserving data-link timers. */
+extern int modem_set_link_rates(struct modem *m, uint32_t transmit_rate, uint32_t receive_rate);
 /* Borrowed static name of the host call phase; no state is changed. */
 extern const char *modem_call_phase(const struct modem *m);
 extern const char *modem_protocol_step(const struct modem *m);

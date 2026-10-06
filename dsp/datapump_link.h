@@ -5,7 +5,6 @@
 
 #include "modem_dp.h"
 #include "modem.h"
-#include "modem_param.h"
 #include "packed_bits.h"
 #include "training_session.h"
 
@@ -79,19 +78,12 @@ static inline bool datapump_complete_training(
 	return true;
 }
 
-/* Set the host-facing link rates before reporting CONNECT.  Validate both
- * values before changing either rate; modem_set_param updates the modem's
- * data-link timer after each change. */
+/* Publish both link rates before CONNECT, rescaling data-link timers once. */
 static inline bool datapump_set_link_rates(
 	struct dp *dp, uint32_t transmit_rate, uint32_t receive_rate)
 {
-	if (dp == NULL || dp->modem == NULL || transmit_rate > INT_MAX ||
-	    receive_rate > INT_MAX)
-		return false;
-	return modem_set_param(
-		       dp->modem, MDMPRM_TX_RATE, (int)transmit_rate) == 0 &&
-	       modem_set_param(
-		       dp->modem, MDMPRM_RX_RATE, (int)receive_rate) == 0;
+	return dp != NULL &&
+	       modem_set_link_rates(dp->modem, transmit_rate, receive_rate) == 0;
 }
 
 /* Supply one-bit host data in the online state. A short or unavailable read

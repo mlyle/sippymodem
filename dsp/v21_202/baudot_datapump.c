@@ -4,7 +4,7 @@
 
 #include "datapump_media.h"
 #include "modem.h"
-#include "modem_param.h"
+#include "datapump_link.h"
 #include "baudot.h"
 
 #include <stddef.h>
@@ -237,8 +237,7 @@ static int enter_link(struct baudot_datapump *datapump)
 	int rate = datapump->transmitter.rate == BAUDOT_RATE_50 ?
 			   50 : 45;
 
-	if (modem_set_param(datapump->dp.modem, MDMPRM_RX_RATE, rate) != 0 ||
-	    modem_set_param(datapump->dp.modem, MDMPRM_TX_RATE, rate) != 0)
+	if (!datapump_set_link_rates(&datapump->dp, rate, rate))
 		return DPSTAT_ERROR;
 	datapump->linked = true;
 	datapump->dp.status = DPSTAT_CONNECT;

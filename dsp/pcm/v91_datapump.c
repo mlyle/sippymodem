@@ -5,6 +5,7 @@
 #include "datapump_link.h"
 #include "datapump_media.h"
 #include "datapump_timing.h"
+#include "modem_param.h"
 #include <stdlib.h>
 #include <string.h>
 

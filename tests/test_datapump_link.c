@@ -96,19 +96,17 @@ int modem_put_bits(struct modem *modem, int nbits, u8 *bits, int count)
 	return count;
 }
 
-/* Keep setter effects visible without constructing a complete host modem. */
-long modem_set_param(struct modem *modem, unsigned int name, int value)
+/* Keep host publication failures visible without a complete modem. */
+int modem_set_link_rates(struct modem *modem, uint32_t transmit_rate, uint32_t receive_rate)
 {
+	if (modem == NULL || transmit_rate > INT_MAX || receive_rate > INT_MAX)
+		return -1;
 	unsigned int *setter_calls = modem->dev_data;
 	(*setter_calls)++;
-	if (value == 111)
+	if (transmit_rate == 111 || receive_rate == 111)
 		return -1;
-	if (name == MDMPRM_TX_RATE)
-		modem->tx_rate = (unsigned int)value;
-	else if (name == MDMPRM_RX_RATE)
-		modem->rx_rate = (unsigned int)value;
-	else
-		return -1;
+	modem->tx_rate = transmit_rate;
+	modem->rx_rate = receive_rate;
 	return 0;
 }
 
@@ -130,17 +128,17 @@ static bool test_link_rates(void)
 	      "out-of-range rate changed the modem");
 	CHECK(datapump_set_link_rates(&dp, 9600, 2400) &&
 	      modem.tx_rate == 9600 && modem.rx_rate == 2400 &&
-	      setter_calls == 2,
-	      "asymmetric link rates were not set TX first");
+	      setter_calls == 1,
+	      "asymmetric link rates were not published together");
 	setter_calls = 0;
 	CHECK(!datapump_set_link_rates(&dp, 111, 1200) &&
-	      setter_calls == 1 && modem.rx_rate == 2400,
-	      "failed transmit rate still set receive rate");
+	      setter_calls == 1 && modem.tx_rate == 9600 && modem.rx_rate == 2400,
+	      "failed publication changed either directional rate");
 	setter_calls = 0;
 	CHECK(!datapump_set_link_rates(&dp, 1200, 111) &&
-	      setter_calls == 2 && modem.tx_rate == 1200 &&
+	      setter_calls == 1 && modem.tx_rate == 9600 &&
 	      modem.rx_rate == 2400,
-	      "failed receive rate changed its value or skipped transmit");
+	      "failed receive publication changed either directional rate");
 	CHECK(datapump_set_link_rates(&dp, 0, INT_MAX) &&
 	      modem.tx_rate == 0 && modem.rx_rate == INT_MAX,
 	      "full-width setter values changed");

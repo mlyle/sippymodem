@@ -922,7 +922,7 @@ void modem_ec_update_timer_rate(struct modem *m, uint64_t previous_rate)
 	if (previous_rate == 0)
 		previous_rate = LAPM_TIMER_FALLBACK_BIT_RATE;
 	/* Round up so a positive residual cannot become a disabled timer, and
-	 * a publication of either directional rate cannot expire it early. */
+	 * a rate publication cannot expire it early. */
 	remaining = ((uint64_t)m->bit_timer * rate + previous_rate - 1) /
 		previous_rate;
 	m->bit_timer = remaining > INT_MAX ? INT_MAX : (int)remaining;

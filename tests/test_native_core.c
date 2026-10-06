@@ -7445,8 +7445,7 @@ static bool test_lapm_idle_supervision(void)
 		      "established idle link did not start supervision");
 		idle_timeout = m->bit_timer_func;
 		m->bit_timer = 148800; /* Two seconds remain. */
-		CHECK(modem_set_param(m, MDMPRM_TX_RATE, 4800) == 0 &&
-		      modem_set_param(m, MDMPRM_RX_RATE, 7200) == 0 &&
+		CHECK(modem_set_link_rates(m, 4800, 7200) == 0 &&
 		      m->bit_timer == 24000 && m->bit_timer_func == idle_timeout,
 		      "rate publication changed the remaining idle interval");
 		wire[0] = l->rsp_addr;
@@ -8522,17 +8521,18 @@ static bool test_lapm_timer_follows_rate_changes(void)
 	uint8_t bits[480];
 	void (*timeout)(struct modem *);
 	static const struct {
-		unsigned parameter;
-		int rate;
+		uint32_t transmit_rate, receive_rate;
 		int remaining;
 	} changes[] = {
-		{ MDMPRM_TX_RATE, 24000, 86400 },
-		{ MDMPRM_RX_RATE, 24000, 144000 },
-		{ MDMPRM_TX_RATE, 4800, 86400 },
-		{ MDMPRM_RX_RATE, 4800, 28800 },
+		{ 24000, 4800, 86400 },
+		{ 24000, 24000, 144000 },
+		{ 4800, 24000, 86400 },
+		{ 4800, 4800, 28800 },
 	};
 
 	CHECK(m != NULL, "LAPM timer modem allocation failed");
+	CHECK(modem_set_link_rates(NULL, 1, 1) == -1,
+	      "missing modem accepted physical link rates");
 	m->caller = 1;
 	m->cfg.ec = 1;
 	m->rx_rate = m->tx_rate = 4800;
@@ -8547,17 +8547,16 @@ static bool test_lapm_timer_follows_rate_changes(void)
 	      m->ec.lapm.rtx_count == 0, "XID did not start its response timer");
 	timeout = m->bit_timer_func;
 	for (size_t i = 0; i < sizeof(changes) / sizeof(changes[0]); ++i) {
-		CHECK(modem_set_param(m, changes[i].parameter, changes[i].rate) == 0 &&
+		CHECK(modem_set_link_rates(m, changes[i].transmit_rate, changes[i].receive_rate) == 0 &&
 		      m->bit_timer == changes[i].remaining &&
 		      m->bit_timer_func == timeout && m->ec.lapm.rtx_count == 0,
 		      "rate change %zu altered the remaining LAPM timeout", i);
 	}
 
 	/* Only half a second remains. Preserve that, not a fresh three seconds,
-	 * when both directions change independently to an asymmetric PCM link. */
+	 * when both directions change to an asymmetric PCM link. */
 	m->bit_timer = 4800;
-	CHECK(modem_set_param(m, MDMPRM_RX_RATE, 48000) == 0 &&
-	      modem_set_param(m, MDMPRM_TX_RATE, 14400) == 0 &&
+	CHECK(modem_set_link_rates(m, 14400, 48000) == 0 &&
 	      m->bit_timer == 31200, "partial LAPM timeout was restarted or shortened");
 	for (unsigned tick = 0; tick < 49; ++tick) {
 		CHECK(modem_get_bits(m, 1, bits, 144) == 144,
@@ -8577,35 +8576,41 @@ static bool test_lapm_timer_follows_rate_changes(void)
 	      m->ec.lapm.rtx_count == 1 && m->bit_timer == 187200,
 	      "LAPM retry did not occur at the preserved half-second boundary");
 
+	m->tx_rate = m->rx_rate = 4800;
+	m->bit_timer = 4799;
+	CHECK(modem_set_link_rates(m, 21600, 56000) == 0 &&
+	      m->tx_rate == 21600 && m->rx_rate == 56000 &&
+	      m->bit_timer == 38792 && m->bit_timer_func == timeout,
+	      "paired rate publication rounded the remaining timeout twice");
+
 	m->bit_timer = 1;
-	CHECK(modem_set_param(m, MDMPRM_RX_RATE, 1) == 0 &&
-	      modem_set_param(m, MDMPRM_TX_RATE, 1) == 0 && m->bit_timer == 1,
+	CHECK(modem_set_link_rates(m, 1, 1) == 0 && m->bit_timer == 1,
 	      "rate reduction rounded an active timer down to disabled");
 	m->bit_timer = INT_MAX;
-	CHECK(modem_set_param(m, MDMPRM_TX_RATE, INT_MAX) == 0 &&
+	CHECK(modem_set_link_rates(m, INT_MAX, 1) == 0 &&
 	      m->bit_timer == INT_MAX,
 	      "large rate change overflowed the LAPM timer");
-	CHECK(modem_set_param(m, MDMPRM_RX_RATE, -1) == -1 &&
-	      m->rx_rate == 1 && m->bit_timer == INT_MAX,
-	      "negative receive rate altered the modem or timer");
-	CHECK(modem_set_param(m, MDMPRM_TX_RATE, -1) == -1 &&
-	      m->tx_rate == INT_MAX && m->bit_timer == INT_MAX,
-	      "negative transmit rate altered the modem or timer");
+	CHECK(modem_set_link_rates(m, 4800, UINT32_MAX) == -1 &&
+	      m->tx_rate == INT_MAX && m->rx_rate == 1 && m->bit_timer == INT_MAX,
+	      "invalid receive rate altered the modem or timer");
+	CHECK(modem_set_link_rates(m, UINT32_MAX, 4800) == -1 &&
+	      m->tx_rate == INT_MAX && m->rx_rate == 1 && m->bit_timer == INT_MAX,
+	      "invalid transmit rate altered the modem or timer");
 
 	m->rx_rate = m->tx_rate = 0;
 	m->bit_timer = 57600;
-	CHECK(modem_set_param(m, MDMPRM_TX_RATE, 2400) == 0 &&
-	      m->bit_timer == 2400 && modem_set_param(m, MDMPRM_TX_RATE, 0) == 0 &&
+	CHECK(modem_set_link_rates(m, 2400, 0) == 0 &&
+	      m->bit_timer == 2400 && modem_set_link_rates(m, 0, 0) == 0 &&
 	      m->bit_timer == 57600, "unknown-rate LAPM timer lost its fallback scale");
 	m->bit_timer = 0;
-	CHECK(modem_set_param(m, MDMPRM_RX_RATE, 4800) == 0 && m->bit_timer == 0,
+	CHECK(modem_set_link_rates(m, 0, 4800) == 0 && m->bit_timer == 0,
 	      "rate update restarted a stopped LAPM timer");
 	modem_ec_exit(m);
 	modem_detector_start(m);
 	m->get_bits = modem_detector_get_bits;
 	timeout = m->bit_timer_func;
 	CHECK(m->bit_timer == 7200 &&
-	      modem_set_param(m, MDMPRM_TX_RATE, 24000) == 0 &&
+	      modem_set_link_rates(m, 24000, m->rx_rate) == 0 &&
 	      m->bit_timer == 43200 && m->bit_timer_func == timeout,
 	      "rate update altered the detector's remaining T400 interval");
 	modem_delete(m);
