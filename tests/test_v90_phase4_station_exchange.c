@@ -9,6 +9,7 @@
 
 #include "test.h"
 #include "v90_phase4_station_fixture.h"
+#include "v90_path_state_fixture.h"
 
 #include <string.h>
 
@@ -325,7 +326,7 @@ static bool verify_repeated_mp_recovery(
 				      &owned_path, NULL, NULL, &owned_octet) ==
 				      V90_ANALOG_PATH_OK &&
 			      owned_octet == upstream_octet &&
-			      memcmp(&owned_path, &path, sizeof(path)) == 0,
+			      v90_analog_path_states_equal(&owned_path, &path),
 			      "owned V.90 transmit diverged at clock %zu", clock);
 		}
 		if (!mp_corrupted && !path.peer_mp_received &&
@@ -365,7 +366,7 @@ static bool verify_repeated_mp_recovery(
 					&owned_path, symbol.pcm.octet, &owned_received);
 
 			CHECK(owned_result == result &&
-			      memcmp(&owned_path, &path, sizeof(path)) == 0 &&
+			      v90_analog_path_states_equal(&owned_path, &path) &&
 			      memcmp(&owned_received, &received, sizeof(received)) == 0,
 			      "owned V.90 receive diverged at clock %zu", clock);
 		}
@@ -446,7 +447,7 @@ static bool verify_final_downstream_exchange(
 		CHECK(v90_analog_path_receive(
 			      &analog_path, 0, &frame) ==
 			      V90_ANALOG_PATH_INVALID_STATE &&
-		      memcmp(&analog_path, &saved, sizeof(analog_path)) == 0 &&
+		      v90_analog_path_states_equal(&analog_path, &saved) &&
 		      memcmp(&frame, &saved_frame, sizeof(frame)) == 0,
 		      "receive accepted an interval with no transmitted sample");
 	}
@@ -487,8 +488,8 @@ static bool verify_final_downstream_exchange(
 			&upstream_source, &analog_octet);
 		if (analog_result == V90_ANALOG_PATH_SOURCE_FAILURE) {
 			CHECK(upstream_source.reject_next &&
-			      memcmp(&analog_path, &saved_analog,
-				     sizeof(analog_path)) == 0 &&
+			      v90_analog_path_states_equal(
+				      &analog_path, &saved_analog) &&
 			      analog_octet == saved_octet,
 			      "upstream source failure consumed clock %zu", clock);
 			upstream_source.reject_next = false;
@@ -508,8 +509,7 @@ static bool verify_final_downstream_exchange(
 				      &analog_path, NULL, NULL, &extra) ==
 				      V90_ANALOG_PATH_INVALID_STATE &&
 			      extra == 0x3c &&
-			      memcmp(&analog_path, &saved,
-				     sizeof(analog_path)) == 0,
+			      v90_analog_path_states_equal(&analog_path, &saved),
 			      "transmit accepted two samples in one interval");
 		}
 
@@ -561,8 +561,8 @@ static bool verify_final_downstream_exchange(
 		}
 		if (digital_result == V90_DIGITAL_PATH_SOURCE_FAILURE) {
 			CHECK(downstream_source.reject_next &&
-			      memcmp(&digital_path, &saved_digital,
-				     sizeof(digital_path)) == 0 &&
+			      v90_digital_path_states_equal(
+				      &digital_path, &saved_digital) &&
 			      digital_octet == saved_octet &&
 			      memcmp(&upstream_frame, &saved_upstream_frame,
 				     sizeof(upstream_frame)) == 0,
