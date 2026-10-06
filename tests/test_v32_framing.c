@@ -420,19 +420,23 @@ static bool test_symbol_rejection(void)
 					.transmitter_role = (enum v32_transmitter_role)(
 						bad == 4 ? -1 : bad == 5 ? 2 : (int)role),
 				};
-				struct v32_symbol_encoder encoder = {
-					.scrambler = scrambler,
-					.phase_quadrant = bad == 2 ? 4 : 2,
-				};
-				struct v32_symbol_decoder decoder = {
-					.descrambler = scrambler,
-					.phase_quadrant = encoder.phase_quadrant,
-				};
-				struct v32_symbol_encoder saved_encoder = encoder;
-				struct v32_symbol_decoder saved_decoder = decoder;
+				struct v32_symbol_encoder encoder;
+				struct v32_symbol_decoder decoder;
+				struct v32_symbol_encoder saved_encoder;
+				struct v32_symbol_decoder saved_decoder;
 				uint8_t output = UINT8_MAX;
 				uint8_t input = bad == 0 ? modes[mode].limit + 1u : 0;
 				uint8_t *destination = bad == 1 ? NULL : &output;
+
+				/* Define owner padding, then preserve every rejection byte. */
+				memset(&encoder, 0, sizeof(encoder));
+				encoder.scrambler = scrambler;
+				encoder.phase_quadrant = bad == 2 ? 4 : 2;
+				memset(&decoder, 0, sizeof(decoder));
+				decoder.descrambler = scrambler;
+				decoder.phase_quadrant = encoder.phase_quadrant;
+				memcpy(&saved_encoder, &encoder, sizeof(saved_encoder));
+				memcpy(&saved_decoder, &decoder, sizeof(saved_decoder));
 
 				CHECK(modes[mode].encode(
 					      bad == 6 ? NULL : &encoder, input,
