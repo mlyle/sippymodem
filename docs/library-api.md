@@ -59,7 +59,8 @@ modem debug level, which defaults to zero and is never configured by the native
 API. Datapump registration tables are constant. Modem, DSP, codec, media, and
 recording state are owned instances. SDK logging is scoped to native SDK entry
 and restores the embedding process's logger and level before returning. The
-native API installs no signal handlers and emits no diagnostics by default.
+native API installs no signal handlers and writes no diagnostics to process
+outputs. Each line retains bounded diagnostic records for explicit API reads.
 
 ## SIP endpoints and huntgroups
 
@@ -199,6 +200,50 @@ failure; stop/hangup return the first error while retained status remains
 readable. Repeated stop succeeds after cleanup. Stop/destroy one line leaves the
 other lines alive. Destroy a server frees every remaining line and invalidates
 all child handles. Destroy native adapters before their borrowed line.
+
+## Per-line diagnostics
+
+`sippymodem_read_log(line, &cursor, records, capacity, &count, &missed)`
+copies records from that line's circular buffer. Each line retains its latest
+64 records, with up to 255 text bytes plus a terminator per record. Logging
+uses owned storage; it neither allocates on a packet path nor calls an
+application logger. Ring overwrite has no effect on calls or payload queues.
+
+Start each reader's cursor at zero. Reads return records in sequence order and
+advance only that cursor. Separate readers do not consume each other's records.
+`missed` reports records overwritten since the cursor; `OK` can include a gap.
+`AGAIN` means no new records. A cursor beyond this line's latest sequence is
+`STALE`; zero capacity is a no-op. Records are copies with no borrowed pointers.
+
+Each record includes `line_id`, call `generation`, a lifetime `sequence`, native
+monotonic `time_ns`, severity and a `truncated` flag. Time is the most recent
+`process()` clock, or zero before the first process call. Sequence persists
+across calls; generation zero denotes a line state before its first call.
+Connection and state records report readiness, carrier, modulation, rates,
+error control and compression. Training progress records give the protocol
+phase and step, capped at four per second; unchanged progress appears once per
+second. Disconnect records retain local/remote origin, cause and reason.
+Logs omit payload, called/caller numbers, SIP URIs and credentials. Use private
+call facts separately when routing requires those values.
+
+Read after `process()` on the same owner thread; records do not have their own
+wake fd. The coarse event fd remains the wake source for connection/state
+changes. Logs remain readable after hangup or stop until line destruction.
+Persist copies externally for longer history. For example:
+
+```c
+uint64_t cursor = 0; /* keep one cursor per line and reader */
+struct sippymodem_log_record records[8];
+size_t count;
+uint64_t missed;
+while (sippymodem_read_log(line, &cursor, records, 8, &count, &missed)
+       == SIPPYMODEM_OK) {
+    if (missed) report_log_gap(missed);
+    for (size_t i = 0; i < count; ++i)
+        save_line_log(records[i].line_id, records[i].generation,
+                      records[i].time_ns, records[i].level, records[i].text);
+}
+```
 
 ## PPP and terminal file descriptors
 

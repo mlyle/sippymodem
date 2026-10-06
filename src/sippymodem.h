@@ -183,6 +183,23 @@ struct sippymodem_call_facts {
 	char caller_number[128];
 };
 
+enum sippymodem_log_level {
+	SIPPYMODEM_LOG_DEBUG, SIPPYMODEM_LOG_INFO,
+	SIPPYMODEM_LOG_WARNING, SIPPYMODEM_LOG_ERROR,
+};
+enum { SIPPYMODEM_LOG_CAPACITY = 64, SIPPYMODEM_LOG_TEXT_MAX = 256 };
+
+/* Copied diagnostic records; no payload, phone numbers or SIP credentials.
+ * Sequence belongs to the line lifetime, generation identifies the call.
+ * time_ns uses process()'s monotonic clock; zero means no clock supplied yet. */
+struct sippymodem_log_record {
+	uint64_t sequence, time_ns, generation;
+	unsigned int line_id;
+	enum sippymodem_log_level level;
+	bool truncated;
+	char text[SIPPYMODEM_LOG_TEXT_MAX];
+};
+
 struct sippymodem_event {
 	enum sippymodem_event_type type;
 	unsigned int line_id;
@@ -245,6 +262,15 @@ enum sippymodem_result sippymodem_receive(struct sippymodem_line *line,
 	void *bytes, size_t capacity, size_t *received);
 enum sippymodem_result sippymodem_get_status(const struct sippymodem_line *line,
 	struct sippymodem_status *status);
+/* Non-destructive, nonblocking owner-thread read of the line's latest 64 logs.
+ * Start cursor at zero; it advances to the last copied sequence. Independent
+ * readers use independent cursors. missed reports overwritten records since
+ * that cursor. OK may include missed > 0; AGAIN means no newer records.
+ * Future cursors return STALE. Capacity zero is a no-op; logs survive stop and
+ * hangup until line destruction. Log overwrite never affects a call or DTE I/O. */
+enum sippymodem_result sippymodem_read_log(const struct sippymodem_line *line,
+	uint64_t *cursor, struct sippymodem_log_record *records, size_t capacity,
+	size_t *count, uint64_t *missed);
 enum sippymodem_result sippymodem_get_call_facts(const struct sippymodem_line *line,
 	struct sippymodem_call_facts *facts);
 

@@ -149,6 +149,31 @@ static bool test_owned_loopback(void)
 		CHECK(startup_received[side] == sizeof(startup) &&
 		      memcmp(startup_result[side], startup, sizeof(startup)) == 0,
 		      "immediate V.21 startup banner lost at side %u: %zu bytes", side, startup_received[side]);
+	/* Each reader receives copied, attributed logs without consuming events. */
+	struct sippymodem_log_record logs[SIPPYMODEM_LOG_CAPACITY];
+	uint64_t log_cursor = 0, log_missed, second_cursor = 0;
+	size_t log_count;
+	EXPECT(sippymodem_read_log(caller, &log_cursor, logs, SIPPYMODEM_LOG_CAPACITY, &log_count, &log_missed) == SIPPYMODEM_OK);
+	EXPECT(log_count > 0 && log_missed == 0);
+	bool connected_logged = false, progress_logged = false;
+	for (size_t i = 0; i < log_count; ++i) {
+		EXPECT(logs[i].line_id == local.line_id && (logs[i].generation == 0 || logs[i].generation == generation));
+		EXPECT(logs[i].time_ns <= now && logs[i].sequence == i + 1);
+		EXPECT(strstr(logs[i].text, "unused-loopback-password") == NULL && strstr(logs[i].text, "sip:") == NULL);
+		if (strncmp(logs[i].text, "connected ", 10) == 0) {
+			EXPECT(strstr(logs[i].text, "ready=1 carrier=1") != NULL);
+			connected_logged = true;
+		}
+		if (strncmp(logs[i].text, "progress ", 9) == 0)
+			progress_logged = true;
+	}
+	EXPECT(connected_logged && progress_logged);
+	EXPECT(sippymodem_read_log(caller, &second_cursor, logs, 1, &log_count, &log_missed) == SIPPYMODEM_OK &&
+	       log_count == 1 && second_cursor == 1 && log_cursor > second_cursor);
+	second_cursor = 0;
+	EXPECT(sippymodem_read_log(answerer, &second_cursor, logs, SIPPYMODEM_LOG_CAPACITY, &log_count, &log_missed) == SIPPYMODEM_OK);
+	for (size_t i = 0; i < log_count; ++i)
+		EXPECT(logs[i].line_id == remote.line_id && (logs[i].generation == 0 || logs[i].generation == remote.generation));
 	EXPECT(remote.modulation == 21 && local.modulation == 21);
 	EXPECT(remote.tx_bps == 300 && remote.rx_bps == 300);
 	const unsigned char literal[] = { 0, '+', '+', '+', '\r', 'A', 'T', 0x11, 0x13, 255 };
@@ -305,6 +330,26 @@ static bool test_owned_loopback(void)
 	EXPECT(fd_received == sizeof(literal) && memcmp(fd_result, literal, sizeof(literal)) == 0);
 	sippymodem_fd_destroy(adapter);
 	close(peer_fd);
+	/* A slow diagnostic reader must never make a healthy call fail. */
+	struct sippymodem_event drained;
+	for (unsigned i = 0; i < SIPPYMODEM_LOG_CAPACITY + 10; ++i) {
+		EXPECT(sippymodem_set_dte_mode(other_caller, other_generation,
+			i % 2 ? SIPPYMODEM_DATA : SIPPYMODEM_COMMAND) == SIPPYMODEM_OK);
+		while (sippymodem_poll_event(server, &drained) == SIPPYMODEM_OK) { }
+	}
+	EXPECT(sippymodem_get_status(other_caller, &other_local) == SIPPYMODEM_OK && other_local.ready && other_local.carrier);
+	uint64_t other_cursor = 0;
+	EXPECT(sippymodem_read_log(other_caller, &other_cursor, logs, SIPPYMODEM_LOG_CAPACITY, &log_count, &log_missed) == SIPPYMODEM_OK);
+	EXPECT(log_count == SIPPYMODEM_LOG_CAPACITY && log_missed > 0);
+	/* A stopped line retains evidence for both generations. */
+	EXPECT(sippymodem_read_log(caller, &log_cursor, logs, SIPPYMODEM_LOG_CAPACITY, &log_count, &log_missed) == SIPPYMODEM_OK);
+	bool new_generation_logged = false, disconnected_logged = false;
+	for (size_t i = 0; i < log_count; ++i) {
+		EXPECT(logs[i].line_id == local.line_id);
+		new_generation_logged |= logs[i].generation == reconnected.generation;
+		disconnected_logged |= strncmp(logs[i].text, "disconnected ", 13) == 0;
+	}
+	EXPECT(new_generation_logged && disconnected_logged);
 	/* Excess coarse events fail explicitly, while terminal events survive. */
 	for (unsigned int index = 0; index < 150; ++index)
 		EXPECT(sippymodem_set_dte_mode(other_caller, other_generation,
@@ -326,6 +371,15 @@ static bool test_owned_loopback(void)
 	EXPECT(sippymodem_poll_event(server, &event) == SIPPYMODEM_OVERFLOW);
 	EXPECT(sippymodem_server_stop(server) == SIPPYMODEM_OK);
 	EXPECT(sippymodem_server_stop(server) == SIPPYMODEM_OK);
+	EXPECT(sippymodem_read_log(other_caller, &other_cursor, logs, SIPPYMODEM_LOG_CAPACITY, &log_count, &log_missed) == SIPPYMODEM_OK);
+	disconnected_logged = false;
+	for (size_t i = 0; i < log_count; ++i) {
+		EXPECT(logs[i].line_id == other_local.line_id && logs[i].generation == other_generation);
+		if (strstr(logs[i].text, "disconnected origin=local") != NULL && strstr(logs[i].text, "event queue overflow") != NULL)
+			disconnected_logged = true;
+	}
+	EXPECT(disconnected_logged);
+
 	sippymodem_server_destroy(server);
 	return true;
 }

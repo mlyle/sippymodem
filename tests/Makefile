@@ -3232,7 +3232,7 @@ DS0_SIP_TEST_BINARY := $(BUILD_DIR)/test_ds0_sip
 DS0_PPP_TEST_BINARY := $(BUILD_DIR)/test_ds0_ppp
 DS0_CODEC_TEST_BINARY := $(BUILD_DIR)/test_ds0_codec
 
-TEST_BINARIES := $(BUILD_DIR)/test_ds0_probe $(DS0_DATAPUMP_TEST_BINARY) $(DS0_PPP_TEST_BINARY) $(DS0_CODEC_TEST_BINARY) $(BUILD_DIR)/test_packet_stats $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
+TEST_BINARIES := $(BUILD_DIR)/test_log_buffer $(BUILD_DIR)/test_ds0_probe $(DS0_DATAPUMP_TEST_BINARY) $(DS0_PPP_TEST_BINARY) $(DS0_CODEC_TEST_BINARY) $(BUILD_DIR)/test_packet_stats $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(SIP_URI_TEST_BINARY) $(SDP_TEST_BINARY) $(G711_TEST_BINARY) \
 	$(SAMPLE_MATH_TEST_BINARY) \
 	$(PCM_GAIN_TEST_BINARY) \
@@ -6199,4 +6199,9 @@ $(DS0_SIP_TEST_BINARY): $(BUILD_DIR)/test_ds0_sip.o ../src/libsippymodem.a $(PJS
 	$(CC) $(LDFLAGS) -o $@ $(BUILD_DIR)/test_ds0_sip.o ../src/libsippymodem.a $(PJSIP_LDLIBS) -lm
 
 $(BUILD_DIR)/test_ds0_probe: $(BUILD_DIR)/test_ds0_probe.o $(BUILD_DIR)/ds0_probe.o $(BUILD_DIR)/ds0_codec.o
+	$(CC) $(LDFLAGS) -o $@ $^
+
+$(BUILD_DIR)/log_buffer.o: ../src/log_buffer.c ../src/log_buffer.h ../src/sippymodem.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+$(BUILD_DIR)/test_log_buffer: $(BUILD_DIR)/test_log_buffer.o $(BUILD_DIR)/log_buffer.o
 	$(CC) $(LDFLAGS) -o $@ $^

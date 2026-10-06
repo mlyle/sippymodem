@@ -4,12 +4,14 @@
 #include "byte_queue.h"
 #include "datapump_link.h"
 #include "line.h"
+#include "log_buffer.h"
 #include "modem_state.h"
 #include "sip_uri.h"
 
 #include <errno.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 #include <sys/eventfd.h>
 #include <sys/ioctl.h>
@@ -23,6 +25,11 @@ struct sippymodem_line {
 	struct sippymodem_status status;
 	struct sippymodem_call_facts facts;
 	struct byte_queue rx;
+	struct log_buffer logs;
+	struct sippymodem_log_record log_storage[SIPPYMODEM_LOG_CAPACITY];
+	uint64_t log_time;
+	char log_step[128];
+	char log_phase[48];
 	unsigned int id, slot;
 	uint64_t sip_generation;
 	uint64_t attempt_deadline;
@@ -120,9 +127,71 @@ static void snapshot(const struct sippymodem_line *line, struct sippymodem_statu
 	status->rx_overflow = modem->dte_overflow;
 }
 
+static void log_line(struct sippymodem_line *line, enum sippymodem_log_level level,
+	const char *format, ...) __attribute__((format(printf, 3, 4)));
+static void log_line(struct sippymodem_line *line, enum sippymodem_log_level level,
+	const char *format, ...)
+{
+	struct sippymodem_log_record record = {
+		.time_ns = line->server->have_now ? line->server->now : 0,
+		.generation = line->status.generation, .line_id = line->id, .level = level,
+	};
+	va_list args;
+	va_start(args, format);
+	int length = vsnprintf(record.text, sizeof(record.text), format, args);
+	va_end(args);
+	if (length < 0)
+		return;
+	for (size_t i = 0; record.text[i] != '\0'; ++i)
+		if ((unsigned char)record.text[i] < 32 || record.text[i] == 127)
+			record.text[i] = '?';
+	record.truncated = (size_t)length >= sizeof(record.text);
+	(void)log_buffer_append(&line->logs, &record);
+}
+
+static void log_event(struct sippymodem_line *line, enum sippymodem_event_type type,
+	const struct sippymodem_status *status)
+{
+	static const char *const names[] = { "incoming", "sip-established", "connected", "state", "disconnected" };
+	if (type == SIPPYMODEM_EVENT_DISCONNECTED) {
+		enum sippymodem_log_level level = status->disconnect_cause >= SIPPYMODEM_DISCONNECT_MODEM ?
+			SIPPYMODEM_LOG_WARNING : SIPPYMODEM_LOG_INFO;
+		log_line(line, level, "disconnected origin=%s cause=%u reason=%s",
+			status->disconnect_local ? "local" : "remote", status->disconnect_cause,
+			status->disconnect_reason);
+	} else {
+		log_line(line, SIPPYMODEM_LOG_INFO,
+			"%s phase=%u sip=%u ready=%u carrier=%u mode=%u modulation=%u tx=%u rx=%u tx-baud=%u rx-baud=%u ec=%u compression=%u",
+			names[type], status->phase, status->sip_state, status->ready, status->carrier,
+			status->dte_mode, status->modulation, status->tx_bps, status->rx_bps,
+			status->tx_baud, status->rx_baud, status->error_control, status->compression);
+	}
+}
+
+static void log_progress(struct sippymodem_line *line)
+{
+	if (!line->active || (line->status.phase != SIPPYMODEM_TRAINING &&
+	    line->status.phase != SIPPYMODEM_DIALING))
+		return;
+	const char *phase = modem_call_phase(line_modem(line));
+	const char *step = modem_protocol_step(line_modem(line));
+	bool changed = strcmp(line->log_phase, phase) != 0 || strcmp(line->log_step, step) != 0;
+	uint64_t interval = changed ? UINT64_C(250000000) : UINT64_C(1000000000);
+	if (line->log_phase[0] != '\0' && line->server->now - line->log_time < interval)
+		return;
+	log_line(line, SIPPYMODEM_LOG_DEBUG, "progress phase=%s step=%s tx=%u rx=%u",
+		phase, step, line->status.tx_bps, line->status.rx_bps);
+	snprintf(line->log_phase, sizeof(line->log_phase), "%s", phase);
+	snprintf(line->log_step, sizeof(line->log_step), "%s", step);
+	line->log_time = line->server->now;
+}
+
 static void emit(struct sippymodem_line *line, enum sippymodem_event_type type)
 {
 	struct sippymodem_server *server = line->server;
+	struct sippymodem_status current;
+	snapshot(line, &current);
+	log_event(line, type, &current);
 	struct sippymodem_event *event;
 	if (server->event_count == EVENT_LIMIT) {
 		server->event_overflow = true;
@@ -132,7 +201,7 @@ static void emit(struct sippymodem_line *line, enum sippymodem_event_type type)
 		if (server->terminal_pending[line->slot]) {
 			event->type = type;
 			event->line_id = line->id;
-			snapshot(line, &event->status);
+			event->status = current;
 			return;
 		}
 		server->terminal_pending[line->slot] = true;
@@ -143,7 +212,7 @@ static void emit(struct sippymodem_line *line, enum sippymodem_event_type type)
 	}
 	event->type = type;
 	event->line_id = line->id;
-	snapshot(line, &event->status);
+	event->status = current;
 	uint64_t one = 1;
 	ssize_t written = write(server->event_fd, &one, sizeof(one));
 	if (written != sizeof(one))
@@ -238,6 +307,8 @@ static bool admit(void *context)
 static void begin_call(struct sippymodem_line *line)
 {
 	line->status.generation++;
+	line->log_time = 0;
+	line->log_phase[0] = line->log_step[0] = '\0';
 	line->status.state_sequence++;
 	line->active = true;
 	line_modem(line)->disconnect_reason = NULL;
@@ -691,6 +762,7 @@ struct sippymodem_line *sippymodem_line_create(struct sippymodem_server *server,
 	line->slot = id;
 	line->id = server->next_id++;
 	line->status.line_id = line->id;
+	line->logs = (struct log_buffer){ .storage = line->log_storage, .capacity = SIPPYMODEM_LOG_CAPACITY };
 	line->config = *config;
 	line->config.recording_prefix = NULL;
 	line->rx.capacity = config->rx_capacity;
@@ -877,6 +949,14 @@ enum sippymodem_result sippymodem_get_status(const struct sippymodem_line *line,
 	return SIPPYMODEM_OK;
 }
 
+enum sippymodem_result sippymodem_read_log(const struct sippymodem_line *line,
+	uint64_t *cursor, struct sippymodem_log_record *records, size_t capacity,
+	size_t *count, uint64_t *missed)
+{
+	return log_buffer_read(line != NULL ? &line->logs : NULL,
+		cursor, records, capacity, count, missed);
+}
+
 enum sippymodem_result sippymodem_get_call_facts(const struct sippymodem_line *line,
 	struct sippymodem_call_facts *facts)
 {
@@ -1021,6 +1101,7 @@ enum sippymodem_result sippymodem_process(struct sippymodem_server *server,
 			 !line_modem(line)->started)
 			end_call(line, SIPPYMODEM_DISCONNECT_MODEM);
 		synchronize(line);
+		log_progress(line);
 		if (line->terminal_due && !line_modem(line)->started) {
 			line->terminal_due = false;
 			emit(line, SIPPYMODEM_EVENT_DISCONNECTED);
