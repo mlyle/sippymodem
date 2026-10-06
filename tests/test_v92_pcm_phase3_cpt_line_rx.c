@@ -3,6 +3,7 @@
 #include <v92_pcm_phase3_cpt_line_rx.h>
 #include <v92_pcm_phase3_cpt_tx.h>
 
+#include "binary_state_fixture.h"
 #include "channel_bench.h"
 #include "test.h"
 
@@ -17,6 +18,19 @@ enum {
 	FINISH_BIT = 37,
 	SAMPLE_LIMIT = 12000,
 };
+
+static bool receiver_states_equal(
+	const struct v92_pcm_phase3_cpt_line_rx *left,
+	const struct v92_pcm_phase3_cpt_line_rx *right)
+{
+	struct v92_pcm_phase3_cpt_line_rx left_snapshot, right_snapshot;
+
+	memcpy(&left_snapshot, left, sizeof(left_snapshot));
+	memcpy(&right_snapshot, right, sizeof(right_snapshot));
+	binary_equalizer_snapshot(&left_snapshot.line, &left->line);
+	binary_equalizer_snapshot(&right_snapshot.line, &right->line);
+	return memcmp(&left_snapshot, &right_snapshot, sizeof(left_snapshot)) == 0;
+}
 
 static void add_ucode(
 	struct pcm_constellation *constellation, uint8_t ucode)
@@ -283,7 +297,7 @@ static bool check_line(enum g711_law law, bool impaired)
 		      v92_pcm_phase3_cpt_line_rx_sample(
 			      &receiver, 0, &event) ==
 			      V92_PCM_PHASE3_CPT_LINE_RX_DONE &&
-		      memcmp(&receiver, &before, sizeof(receiver)) == 0 &&
+		      receiver_states_equal(&receiver, &before) &&
 		      memcmp(&event, &before_event, sizeof(event)) == 0,
 		      "complete CPt line receiver was not stable");
 		CHECK(v92_pcm_phase3_cpt_line_rx_handoff(
@@ -401,7 +415,7 @@ static bool test_contracts(void)
 			      V92_PCM_PHASE3_CPT_LINE_RX_INVALID_ARGUMENT &&
 	      v92_pcm_phase3_cpt_line_rx_sample(&receiver, 0, NULL) ==
 			      V92_PCM_PHASE3_CPT_LINE_RX_INVALID_ARGUMENT &&
-	      memcmp(&receiver, &before, sizeof(receiver)) == 0 &&
+	      receiver_states_equal(&receiver, &before) &&
 	      memcmp(&event, &before_event, sizeof(event)) == 0,
 	      "rejected CPt line sample changed state");
 	receiver.input_samples = UINT64_MAX;
@@ -411,7 +425,7 @@ static bool test_contracts(void)
 	CHECK(v92_pcm_phase3_cpt_line_rx_is_valid(&receiver) &&
 	      v92_pcm_phase3_cpt_line_rx_sample(&receiver, 0, &event) ==
 		      V92_PCM_PHASE3_CPT_LINE_RX_INVALID_STATE &&
-	      memcmp(&receiver, &before, sizeof(receiver)) == 0,
+	      receiver_states_equal(&receiver, &before),
 	      "overflowing CPt line sample changed state");
 	for (size_t index = 0; index < ARRAY_LENGTH(names); ++index)
 		CHECK(strcmp(

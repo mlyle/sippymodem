@@ -3,6 +3,7 @@
 #include <v92_pcm_phase3_ja.h>
 #include <v92_pcm_phase3_ja_line_rx.h>
 
+#include "binary_state_fixture.h"
 #include "channel_bench.h"
 #include "test.h"
 
@@ -15,6 +16,19 @@ enum {
 	TEST_UCODE = 91,
 	SAMPLE_LIMIT = 8192,
 };
+
+static bool receiver_states_equal(
+	const struct v92_pcm_phase3_ja_line_rx *left,
+	const struct v92_pcm_phase3_ja_line_rx *right)
+{
+	struct v92_pcm_phase3_ja_line_rx left_snapshot, right_snapshot;
+
+	memcpy(&left_snapshot, left, sizeof(left_snapshot));
+	memcpy(&right_snapshot, right, sizeof(right_snapshot));
+	binary_equalizer_snapshot(&left_snapshot.line, &left->line);
+	binary_equalizer_snapshot(&right_snapshot.line, &right->line);
+	return memcmp(&left_snapshot, &right_snapshot, sizeof(left_snapshot)) == 0;
+}
 
 static bool next_source_symbol(
 	struct v92_pcm_phase3_trn1u *trn1u,
@@ -137,7 +151,7 @@ static bool check_line(
 
 		CHECK(v92_pcm_phase3_ja_line_rx_sample(&receiver, 0) ==
 			      V92_PCM_PHASE3_JA_LINE_RX_DONE &&
-		      memcmp(&receiver, &before, sizeof(receiver)) == 0,
+		      receiver_states_equal(&receiver, &before),
 		      "complete Ja line receiver consumed another sample");
 	}
 	channel_bench_destroy(&channel);
@@ -274,7 +288,7 @@ static bool test_contracts(void)
 	before = receiver;
 	CHECK(v92_pcm_phase3_ja_line_rx_sample(NULL, 0) ==
 		      V92_PCM_PHASE3_JA_LINE_RX_INVALID_ARGUMENT &&
-	      memcmp(&receiver, &before, sizeof(receiver)) == 0,
+	      receiver_states_equal(&receiver, &before),
 	      "invalid Ja line call changed state");
 	receiver.starting_input_samples = 0u;
 	receiver.input_samples = UINT64_MAX;
@@ -283,14 +297,14 @@ static bool test_contracts(void)
 	CHECK(v92_pcm_phase3_ja_line_rx_is_valid(&receiver) &&
 	      v92_pcm_phase3_ja_line_rx_sample(&receiver, 0) ==
 		      V92_PCM_PHASE3_JA_LINE_RX_INVALID_STATE &&
-	      memcmp(&receiver, &before, sizeof(receiver)) == 0,
+	      receiver_states_equal(&receiver, &before),
 	      "Ja line counter overflow was not transactional");
 	receiver.stage = (enum v92_pcm_phase3_ja_line_rx_stage)-1;
 	before = receiver;
 	CHECK(!v92_pcm_phase3_ja_line_rx_is_valid(&receiver) &&
 	      v92_pcm_phase3_ja_line_rx_sample(&receiver, 0) ==
 		      V92_PCM_PHASE3_JA_LINE_RX_INVALID_ARGUMENT &&
-	      memcmp(&receiver, &before, sizeof(receiver)) == 0 &&
+	      receiver_states_equal(&receiver, &before) &&
 	      !v92_pcm_phase3_ja_line_rx_is_complete(NULL) &&
 	      !v92_pcm_phase3_ja_line_rx_has_failed(NULL),
 	      "corrupt Ja line state was not rejected transactionally");
