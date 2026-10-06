@@ -73,20 +73,6 @@ static struct v34_mp_parameters mp_parameters(
 	};
 }
 
-static bool parameters_match(
-	const struct v34_mp_parameters *left,
-	const struct v34_mp_parameters *right)
-{
-	uint8_t left_frame[V34_MP_TYPE0_FRAME_BYTES];
-	uint8_t right_frame[V34_MP_TYPE0_FRAME_BYTES];
-
-	return v34_mp_type0_encode(
-		       left, left_frame, sizeof(left_frame)) == V34_MP_OK &&
-	       v34_mp_type0_encode(
-		       right, right_frame, sizeof(right_frame)) == V34_MP_OK &&
-	       memcmp(left_frame, right_frame, sizeof(left_frame)) == 0;
-}
-
 static bool received_all_ones(
 	const struct v34_received_mapping_frame *received)
 {
@@ -668,7 +654,7 @@ static bool test_training_case(
 				      role, rate);
 			} else if (output.mp.type == V34_MP_RECEIVE_TYPE0 &&
 				   output.mp.frame_result == V34_MP_OK &&
-				   parameters_match(
+				   v34_mp_parameters_are_equal(
 					   &output.mp.parameters.type0,
 					   &source.initial_mp)) {
 				initial_records++;
@@ -680,7 +666,7 @@ static bool test_training_case(
 				CHECK(output.mp.type == V34_MP_RECEIVE_TYPE0 &&
 				      output.mp.frame_result == V34_MP_OK &&
 				      !final_record &&
-				      parameters_match(
+				      v34_mp_parameters_are_equal(
 					      &output.mp.parameters.type0,
 					      &source.final_mp) &&
 				      v34_phase34_receiver_continue_mp(&receiver) ==

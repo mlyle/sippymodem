@@ -44,22 +44,6 @@ static bool encode_record(
 	return result == V34_MP_OK;
 }
 
-static bool records_match(
-	const struct v34_mp_record *left,
-	const struct v34_mp_record *right)
-{
-	uint8_t left_frame[V34_MP_TYPE1_FRAME_BYTES];
-	uint8_t right_frame[V34_MP_TYPE1_FRAME_BYTES];
-	size_t left_bits;
-	size_t right_bits;
-
-	return left->type == right->type &&
-	       encode_record(left, left_frame, &left_bits) &&
-	       encode_record(right, right_frame, &right_bits) &&
-	       left_bits == right_bits &&
-	       memcmp(left_frame, right_frame, sizeof(left_frame)) == 0;
-}
-
 static bool outputs_overlap(
 	const struct v34_phase4_exchange *exchange,
 	const int16_t *sample, const uint32_t *events,
@@ -849,7 +833,7 @@ static enum v34_phase4_exchange_result accept_mp_record(
 				V34_PHASE4_EXCHANGE_EVENT_PEER_MP_PRIME_RECEIVED;
 		}
 		return V34_PHASE4_EXCHANGE_OK;
-	} else if (!records_match(&exchange->peer_mp, &record)) {
+	} else if (!v34_mp_record_equal(&exchange->peer_mp, &record)) {
 		return V34_PHASE4_EXCHANGE_SEQUENCE_MISMATCH;
 	}
 	if (acknowledged && !exchange->peer_mp_prime_received) {

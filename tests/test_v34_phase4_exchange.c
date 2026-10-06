@@ -168,38 +168,6 @@ static struct v34_mp_record mp_record(enum v34_station_role role)
 	return record;
 }
 
-static bool mp_records_are_equal(
-	const struct v34_mp_record *left,
-	const struct v34_mp_record *right)
-{
-	uint8_t left_frame[V34_MP_TYPE1_FRAME_BYTES] = { 0 };
-	uint8_t right_frame[V34_MP_TYPE1_FRAME_BYTES] = { 0 };
-	enum v34_mp_result left_result;
-	enum v34_mp_result right_result;
-
-	if (left->type != right->type)
-		return false;
-	if (left->type == V34_MP_RECORD_TYPE0) {
-		left_result = v34_mp_type0_encode(
-			&left->parameters.type0, left_frame,
-			sizeof(left_frame));
-		right_result = v34_mp_type0_encode(
-			&right->parameters.type0, right_frame,
-			sizeof(right_frame));
-	} else if (left->type == V34_MP_RECORD_TYPE1) {
-		left_result = v34_mp_type1_encode(
-			&left->parameters.type1, left_frame,
-			sizeof(left_frame));
-		right_result = v34_mp_type1_encode(
-			&right->parameters.type1, right_frame,
-			sizeof(right_frame));
-	} else {
-		return false;
-	}
-	return left_result == V34_MP_OK && right_result == V34_MP_OK &&
-	       memcmp(left_frame, right_frame, sizeof(left_frame)) == 0;
-}
-
 static struct v34_phase4_exchange_configuration
 phase4_configuration(enum v34_station_role role)
 {
@@ -945,10 +913,10 @@ static bool test_generated_online_exchange(void)
 	      "Phase 4 prepared incompatible post-E data directions");
 	CHECK(caller.phase4.peer_mp_received &&
 	      answerer.phase4.peer_mp_received &&
-	      mp_records_are_equal(
+	      v34_mp_record_equal(
 		      &caller.phase4.peer_mp,
 		      &answerer.phase4.transmit_mp) &&
-	      mp_records_are_equal(
+	      v34_mp_record_equal(
 		      &answerer.phase4.peer_mp,
 		      &caller.phase4.transmit_mp) &&
 	      caller.phase4.receive.feedback_training_complete &&

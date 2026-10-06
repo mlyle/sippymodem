@@ -55,6 +55,12 @@ struct v34_mp_parameters {
 bool v34_mp_parameters_are_valid(
 	const struct v34_mp_parameters *parameters);
 
+/* Compare validated encoded fields, including acknowledgment, without
+ * inspecting struct padding. Invalid parameters never compare equal. */
+bool v34_mp_parameters_are_equal(
+	const struct v34_mp_parameters *left,
+	const struct v34_mp_parameters *right);
+
 /* Type 1 extends the common modulation parameters with the three complex
  * Q14 precoder taps h(1) through h(3), in transmission order. */
 struct v34_mp_type1_parameters {
@@ -65,6 +71,10 @@ struct v34_mp_type1_parameters {
 
 bool v34_mp_type1_parameters_are_valid(
 	const struct v34_mp_type1_parameters *parameters);
+
+bool v34_mp_type1_parameters_are_equal(
+	const struct v34_mp_type1_parameters *left,
+	const struct v34_mp_type1_parameters *right);
 
 enum v34_mp_receive_event_type {
 	V34_MP_RECEIVE_NO_EVENT,
@@ -111,6 +121,11 @@ v34_mp_record_common_parameters_mutable(struct v34_mp_record *record)
 }
 
 bool v34_mp_record_is_valid(const struct v34_mp_record *record);
+
+/* Record type is significant; inactive union storage is ignored. */
+bool v34_mp_record_equal(
+	const struct v34_mp_record *left,
+	const struct v34_mp_record *right);
 
 enum v34_mp_rate_result {
 	V34_MP_RATE_OK,

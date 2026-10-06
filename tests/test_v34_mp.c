@@ -71,46 +71,6 @@ static struct v34_mp_type1_parameters type1_parameters(void)
 	};
 }
 
-static bool parameters_are_equal(
-	const struct v34_mp_parameters *left,
-	const struct v34_mp_parameters *right)
-{
-	return left->maximum_call_to_answer_rate_2400_bps_units ==
-		       right->maximum_call_to_answer_rate_2400_bps_units &&
-	       left->maximum_answer_to_call_rate_2400_bps_units ==
-		       right->maximum_answer_to_call_rate_2400_bps_units &&
-	       left->auxiliary_channel_enabled ==
-		       right->auxiliary_channel_enabled &&
-	       left->remote_transmitter_trellis ==
-		       right->remote_transmitter_trellis &&
-	       left->remote_transmitter_nonlinear_encoding ==
-		       right->remote_transmitter_nonlinear_encoding &&
-	       left->remote_transmitter_expanded_shaping ==
-		       right->remote_transmitter_expanded_shaping &&
-	       left->acknowledges_peer_mp == right->acknowledges_peer_mp &&
-	       left->data_rate_capability_mask ==
-		       right->data_rate_capability_mask &&
-	       left->asymmetric_rates_enabled ==
-		       right->asymmetric_rates_enabled;
-}
-
-static bool type1_parameters_are_equal(
-	const struct v34_mp_type1_parameters *left,
-	const struct v34_mp_type1_parameters *right)
-{
-	if (!parameters_are_equal(&left->common, &right->common))
-		return false;
-	for (size_t index = 0; index < V34_PRECODER_TAP_COUNT;
-	     ++index) {
-		if (left->precoder_coefficients[index].real !=
-			    right->precoder_coefficients[index].real ||
-		    left->precoder_coefficients[index].imaginary !=
-			    right->precoder_coefficients[index].imaginary)
-			return false;
-	}
-	return true;
-}
-
 static uint8_t reference_frame_bit(
 	const uint8_t *frame, size_t bit_index)
 {
@@ -238,7 +198,7 @@ static bool test_stream_receiver(void)
 		      V34_MP_TYPE0_FRAME_BITS, &event) &&
 	      event.type == V34_MP_RECEIVE_TYPE0 &&
 	      event.frame_result == V34_MP_OK &&
-	      parameters_are_equal(&event.parameters.type0, &type0) &&
+	      v34_mp_parameters_are_equal(&event.parameters.type0, &type0) &&
 	      v34_mp_receiver_is_valid(&receiver) &&
 	      receiver.stage == V34_MP_SEARCH_SYNC,
 	      "MP stream receiver changed a Type 0 record");
@@ -247,7 +207,7 @@ static bool test_stream_receiver(void)
 		      V34_MP_TYPE1_FRAME_BITS, &event) &&
 	      event.type == V34_MP_RECEIVE_TYPE1 &&
 	      event.frame_result == V34_MP_OK &&
-	      type1_parameters_are_equal(&event.parameters.type1, &type1) &&
+	      v34_mp_type1_parameters_are_equal(&event.parameters.type1, &type1) &&
 	      v34_mp_receiver_is_valid(&receiver) &&
 	      receiver.stage == V34_MP_SEARCH_SYNC,
 	      "MP stream receiver changed a Type 1 record");
@@ -281,7 +241,7 @@ static bool test_stream_rejection_and_reacquisition(void)
 		      &receiver, valid, V34_MP_TYPE0_FRAME_BITS,
 		      &event) &&
 	      event.type == V34_MP_RECEIVE_TYPE0 &&
-	      parameters_are_equal(&event.parameters.type0, &parameters),
+	      v34_mp_parameters_are_equal(&event.parameters.type0, &parameters),
 	      "MP stream receiver did not reject and reacquire");
 	return true;
 }
@@ -334,9 +294,9 @@ static bool test_stream_truncation_recovery(void)
 			CHECK(bit + 1u == lengths[next] &&
 			      event.frame_result == V34_MP_OK &&
 			      (next == 0u ? event.type == V34_MP_RECEIVE_TYPE0 &&
-				parameters_are_equal(&event.parameters.type0, &type0) :
+				v34_mp_parameters_are_equal(&event.parameters.type0, &type0) :
 				event.type == V34_MP_RECEIVE_TYPE1 &&
-				type1_parameters_are_equal(&event.parameters.type1, &type1)),
+				v34_mp_type1_parameters_are_equal(&event.parameters.type1, &type1)),
 			      "MP retry accepted the wrong record");
 			accepted++;
 		}
@@ -418,7 +378,7 @@ static bool test_known_wire_images(void)
 	      v34_mp_type0_decode(
 		      frame, sizeof(frame), &decoded) ==
 		      V34_MP_OK &&
-	      parameters_are_equal(&decoded, &parameters),
+	      v34_mp_parameters_are_equal(&decoded, &parameters),
 	      "known Type 0 MP wire image changed");
 
 	parameters.acknowledges_peer_mp = true;
@@ -431,7 +391,7 @@ static bool test_known_wire_images(void)
 	      v34_mp_type0_decode(
 		      frame, sizeof(frame), &decoded) ==
 		      V34_MP_OK &&
-	      parameters_are_equal(&decoded, &parameters),
+	      v34_mp_parameters_are_equal(&decoded, &parameters),
 	      "known Type 0 MP-prime wire image changed");
 	return true;
 }
@@ -463,7 +423,7 @@ static bool test_type1_known_wire_image(void)
 	      v34_mp_type1_decode(
 		      frame, sizeof(frame), &decoded) ==
 		      V34_MP_OK &&
-	      type1_parameters_are_equal(&decoded, &parameters),
+	      v34_mp_type1_parameters_are_equal(&decoded, &parameters),
 	      "known Type 1 MP wire image changed");
 	return true;
 }
@@ -492,7 +452,7 @@ static bool test_selected_fields_round_trip(void)
 	      v34_mp_type0_decode(
 		      frame, sizeof(frame), &decoded) ==
 		      V34_MP_OK &&
-	      parameters_are_equal(&decoded, &parameters),
+	      v34_mp_parameters_are_equal(&decoded, &parameters),
 	      "selected Type 0 MP fields did not round trip");
 	return true;
 }
@@ -515,7 +475,7 @@ static bool test_reserved_bits_are_ignored(void)
 	CHECK(v34_mp_type0_decode(
 		      frame, sizeof(frame), &decoded) ==
 		      V34_MP_OK &&
-	      parameters_are_equal(&decoded, &parameters),
+	      v34_mp_parameters_are_equal(&decoded, &parameters),
 	      "Type 0 MP decoder interpreted reserved information bits");
 	return true;
 }
@@ -555,7 +515,7 @@ static bool test_frame_rejection(void)
 		CHECK(v34_mp_type0_decode(
 			      malformed, sizeof(malformed), &decoded) ==
 			      V34_MP_INVALID_FRAME &&
-		      parameters_are_equal(&decoded, &sentinel),
+		      v34_mp_parameters_are_equal(&decoded, &sentinel),
 		      "Type 0 MP accepted malformed framing bit %zu",
 		      framing_bits[index]);
 	}
@@ -568,7 +528,7 @@ static bool test_frame_rejection(void)
 		CHECK(v34_mp_type0_decode(
 			      corrupt, sizeof(corrupt), &decoded) ==
 			      V34_MP_CRC_MISMATCH &&
-		      parameters_are_equal(&decoded, &sentinel),
+		      v34_mp_parameters_are_equal(&decoded, &sentinel),
 		      "Type 0 MP accepted a corrupt information bit");
 		memcpy(corrupt, valid, sizeof(corrupt));
 		replace_frame_bit(
@@ -577,7 +537,7 @@ static bool test_frame_rejection(void)
 		CHECK(v34_mp_type0_decode(
 			      corrupt, sizeof(corrupt), &decoded) ==
 			      V34_MP_CRC_MISMATCH &&
-		      parameters_are_equal(&decoded, &sentinel),
+		      v34_mp_parameters_are_equal(&decoded, &sentinel),
 		      "Type 0 MP accepted a corrupt CRC bit");
 	}
 	{
@@ -593,7 +553,7 @@ static bool test_frame_rejection(void)
 		CHECK(v34_mp_type0_decode(
 			      malformed, sizeof(malformed), &decoded) ==
 			      V34_MP_INVALID_FRAME &&
-		      parameters_are_equal(&decoded, &sentinel),
+		      v34_mp_parameters_are_equal(&decoded, &sentinel),
 		      "Type 0 MP accepted reserved trellis selection");
 
 		memcpy(malformed, valid, sizeof(malformed));
@@ -604,7 +564,7 @@ static bool test_frame_rejection(void)
 		CHECK(v34_mp_type0_decode(
 			      malformed, sizeof(malformed), &decoded) ==
 			      V34_MP_INVALID_FRAME &&
-		      parameters_are_equal(&decoded, &sentinel),
+		      v34_mp_parameters_are_equal(&decoded, &sentinel),
 		      "Type 0 MP accepted a zero maximum rate");
 	}
 	return true;
@@ -644,7 +604,7 @@ static bool test_type1_reserved_bits_and_frame_rejection(void)
 		CHECK(v34_mp_type1_decode(
 			      with_reserved_bits, sizeof(with_reserved_bits),
 			      &decoded) == V34_MP_OK &&
-		      type1_parameters_are_equal(&decoded, &parameters),
+		      v34_mp_type1_parameters_are_equal(&decoded, &parameters),
 		      "Type 1 MP decoder interpreted reserved bits");
 	}
 
@@ -669,7 +629,7 @@ static bool test_type1_reserved_bits_and_frame_rejection(void)
 		CHECK(v34_mp_type1_decode(
 			      malformed, sizeof(malformed), &decoded) ==
 			      V34_MP_INVALID_FRAME &&
-		      type1_parameters_are_equal(&decoded, &sentinel),
+		      v34_mp_type1_parameters_are_equal(&decoded, &sentinel),
 		      "Type 1 MP accepted malformed framing bit %zu", bit);
 	}
 	{
@@ -692,7 +652,7 @@ static bool test_type1_reserved_bits_and_frame_rejection(void)
 			CHECK(v34_mp_type1_decode(
 				      corrupt, sizeof(corrupt), &decoded) ==
 				      V34_MP_CRC_MISMATCH &&
-			      type1_parameters_are_equal(&decoded, &sentinel),
+			      v34_mp_type1_parameters_are_equal(&decoded, &sentinel),
 			      "Type 1 MP accepted corrupt bit %zu", bit);
 		}
 	}
@@ -767,7 +727,7 @@ static bool test_type1_validation(void)
 			      frame,
 			      V34_MP_TYPE1_FRAME_BYTES - 1u,
 			      &decoded) == V34_MP_INVALID_ARGUMENT &&
-		      type1_parameters_are_equal(&decoded, &sentinel),
+		      v34_mp_type1_parameters_are_equal(&decoded, &sentinel),
 		      "invalid Type 1 MP decoding mutated output");
 	}
 	{
@@ -780,7 +740,7 @@ static bool test_type1_validation(void)
 		CHECK(v34_mp_type1_decode(
 			      frame, sizeof(frame), &decoded) ==
 			      V34_MP_INVALID_FRAME &&
-		      type1_parameters_are_equal(&decoded, &sentinel),
+		      v34_mp_type1_parameters_are_equal(&decoded, &sentinel),
 		      "Type 1 MP decoded the excluded Q14 endpoint");
 	}
 	return true;
@@ -802,6 +762,86 @@ static struct v34_mp_record type1_record(
 		.type = V34_MP_RECORD_TYPE1,
 		.parameters.type1.common = *parameters,
 	};
+}
+
+static bool encode_comparison_record(
+	const struct v34_mp_record *record,
+	uint8_t frame[V34_MP_TYPE1_FRAME_BYTES])
+{
+	memset(frame, 0, V34_MP_TYPE1_FRAME_BYTES);
+	return record->type == V34_MP_RECORD_TYPE0 ?
+		v34_mp_type0_encode(&record->parameters.type0, frame,
+			V34_MP_TYPE1_FRAME_BYTES) == V34_MP_OK :
+		v34_mp_type1_encode(&record->parameters.type1, frame,
+			V34_MP_TYPE1_FRAME_BYTES) == V34_MP_OK;
+}
+
+static bool test_record_comparison(void)
+{
+	struct v34_mp_parameters common = base_parameters(false);
+	struct v34_mp_record value = type0_record(&common), changed = value;
+
+	CHECK(!v34_mp_parameters_are_equal(NULL, &common) &&
+	      !v34_mp_type1_parameters_are_equal(NULL, NULL) &&
+	      !v34_mp_record_equal(NULL, &value) && !v34_mp_record_equal(&value, NULL),
+	      "null MP parameters compared equal");
+	changed.type = (enum v34_mp_record_type)2;
+	CHECK(!v34_mp_record_equal(&changed, &changed), "invalid MP type compared equal");
+	changed = value;
+	memset((uint8_t *)&changed.parameters + sizeof(changed.parameters.type0), 0xa5,
+	       sizeof(changed.parameters) - sizeof(changed.parameters.type0));
+	CHECK(v34_mp_record_equal(&value, &changed), "Type 0 inspected inactive coefficients");
+	changed.parameters.type0.data_rate_capability_mask = UINT16_MAX;
+	CHECK(!v34_mp_record_equal(&changed, &changed), "invalid MP fields compared equal");
+	changed = type1_record(&common);
+	CHECK(!v34_mp_record_equal(&value, &changed), "Type 0 matched zero-coefficient Type 1");
+	changed.parameters.type1.precoder_coefficients[0].real = INT16_MIN;
+	CHECK(!v34_mp_record_equal(&changed, &changed), "invalid Type 1 tap compared equal");
+
+	/* Check every information bit against the encoded record. Reserved bits
+	 * remain in the independent CRC, then disappear from decoded parameters. */
+	for (enum v34_mp_record_type type = V34_MP_RECORD_TYPE0;
+	     type <= V34_MP_RECORD_TYPE1; ++type) {
+		for (unsigned int flags = 0; flags < 4; ++flags) {
+			uint8_t original[V34_MP_TYPE1_FRAME_BYTES];
+			size_t crc_bit = type == V34_MP_RECORD_TYPE0 ?
+				MP_TYPE0_CRC_FIRST_BIT : MP_TYPE1_CRC_FIRST_BIT;
+			struct v34_mp_parameters *parameters;
+
+			value.type = type;
+			if (type == V34_MP_RECORD_TYPE0)
+				value.parameters.type0 = base_parameters(false);
+			else
+				value.parameters.type1 = type1_parameters();
+			parameters = v34_mp_record_common_parameters_mutable(&value);
+			parameters->acknowledges_peer_mp = (flags & 1u) != 0;
+			if ((flags & 2u) != 0) {
+				parameters->maximum_call_to_answer_rate_2400_bps_units = 0;
+				parameters->maximum_answer_to_call_rate_2400_bps_units = 0;
+			}
+			CHECK(encode_comparison_record(&value, original), "MP fixture did not encode");
+			for (size_t bit = MP_TYPE_BIT + 1u; bit < crc_bit; ++bit) {
+				uint8_t mutated[V34_MP_TYPE1_FRAME_BYTES], encoded[V34_MP_TYPE1_FRAME_BYTES];
+				enum v34_mp_result result;
+
+				memcpy(mutated, original, sizeof(mutated));
+				replace_frame_bit(mutated, bit, reference_frame_bit(mutated, bit) ^ 1u);
+				replace_crc(mutated, crc_bit);
+				changed.type = type;
+				result = type == V34_MP_RECORD_TYPE0 ?
+					v34_mp_type0_decode(mutated, sizeof(mutated), &changed.parameters.type0) :
+					v34_mp_type1_decode(mutated, sizeof(mutated), &changed.parameters.type1);
+				if (result != V34_MP_OK)
+					continue;
+				CHECK(encode_comparison_record(&changed, encoded) &&
+				      v34_mp_record_equal(&value, &changed) ==
+					      (memcmp(original, encoded, sizeof(original)) == 0) &&
+				      v34_mp_record_equal(&changed, &value) == v34_mp_record_equal(&value, &changed),
+				      "MP comparison differs from wire: type %d flags %u bit %zu", type, flags, bit);
+			}
+		}
+	}
+	return true;
 }
 
 static bool test_rate_selection(void)
@@ -934,26 +974,26 @@ static bool test_cleardown_records(void)
 		      v34_mp_type0_decode(
 			      frame, V34_MP_TYPE0_FRAME_BYTES, &decoded) ==
 			      V34_MP_OK &&
-		      parameters_are_equal(&zero, &decoded),
+		      v34_mp_parameters_are_equal(&zero, &decoded),
 		      "zero-rate MP/MP-prime did not round trip");
 		CHECK(v34_mp_receiver_init(&receiver) == V34_MP_OK &&
 		      receive_packed_frame(
 			      &receiver, frame, V34_MP_TYPE0_FRAME_BITS, &event) &&
 		      event.type == V34_MP_RECEIVE_TYPE0 &&
-		      parameters_are_equal(&zero, &event.parameters.type0),
+		      v34_mp_parameters_are_equal(&zero, &event.parameters.type0),
 		      "stream receiver rejected a zero-rate MP/MP-prime");
 		CHECK(v34_mp_type1_encode(&extended, frame, sizeof(frame)) ==
 			      V34_MP_OK &&
 		      v34_mp_type1_decode(
 			      frame, sizeof(frame), &decoded_extended) ==
 			      V34_MP_OK &&
-		      type1_parameters_are_equal(&extended, &decoded_extended),
+		      v34_mp_type1_parameters_are_equal(&extended, &decoded_extended),
 		      "zero-rate Type 1 MP/MP-prime did not round trip");
 		CHECK(v34_mp_receiver_init(&receiver) == V34_MP_OK &&
 		      receive_packed_frame(
 			      &receiver, frame, V34_MP_TYPE1_FRAME_BITS, &event) &&
 		      event.type == V34_MP_RECEIVE_TYPE1 &&
-		      type1_parameters_are_equal(&extended, &event.parameters.type1),
+		      v34_mp_type1_parameters_are_equal(&extended, &event.parameters.type1),
 		      "stream receiver rejected a zero-rate Type 1 MP/MP-prime");
 		local = type0_record(&zero);
 		peer = type1_record(&ordinary);
@@ -1019,7 +1059,7 @@ static bool test_validation(void)
 	      v34_mp_type0_decode(
 		      frame, V34_MP_TYPE0_FRAME_BYTES - 1u,
 		      &decoded) == V34_MP_INVALID_ARGUMENT &&
-	      parameters_are_equal(&decoded, &saved_decoded),
+	      v34_mp_parameters_are_equal(&decoded, &saved_decoded),
 	      "invalid Type 0 MP decoding mutated output");
 	return true;
 }
@@ -1030,6 +1070,7 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "wire record comparison", test_record_comparison },
 		{ "stream receiver", test_stream_receiver },
 		{ "stream rejection and reacquisition",
 		  test_stream_rejection_and_reacquisition },

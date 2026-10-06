@@ -48,20 +48,6 @@ static struct v34_mp_parameters parameters(bool acknowledges_peer)
 	};
 }
 
-static bool parameter_records_are_equal(
-	const struct v34_mp_parameters *left,
-	const struct v34_mp_parameters *right)
-{
-	uint8_t left_frame[V34_MP_TYPE0_FRAME_BYTES];
-	uint8_t right_frame[V34_MP_TYPE0_FRAME_BYTES];
-
-	return v34_mp_type0_encode(
-		       left, left_frame, sizeof(left_frame)) == V34_MP_OK &&
-	       v34_mp_type0_encode(
-		       right, right_frame, sizeof(right_frame)) == V34_MP_OK &&
-	       memcmp(left_frame, right_frame, sizeof(left_frame)) == 0;
-}
-
 static struct v34_adaptive_equalizer_observation observation(
 	struct observation_clock *clock, struct v34_analytic_sample point)
 {
@@ -149,7 +135,7 @@ static bool handle_record(
 	      "unexpected MP event type=%d result=%d", event->type,
 	      event->frame_result);
 	if (!event->parameters.type0.acknowledges_peer_mp) {
-		CHECK(parameter_records_are_equal(
+		CHECK(v34_mp_parameters_are_equal(
 			      &event->parameters.type0,
 			      &fixture->unacknowledged),
 		      "unacknowledged MP parameters changed");
@@ -158,7 +144,7 @@ static bool handle_record(
 			       &fixture->receiver) ==
 		       V34_PHASE4_DECISION_RECEIVER_OK;
 	}
-	CHECK(parameter_records_are_equal(
+	CHECK(v34_mp_parameters_are_equal(
 		      &event->parameters.type0, &fixture->acknowledged),
 	      "acknowledged MP parameters changed");
 	fixture->acknowledged_records++;

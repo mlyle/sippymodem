@@ -74,6 +74,53 @@ bool v34_mp_record_is_valid(const struct v34_mp_record *record)
 	       v34_mp_type1_parameters_are_valid(&record->parameters.type1);
 }
 
+bool v34_mp_parameters_are_equal(
+	const struct v34_mp_parameters *left,
+	const struct v34_mp_parameters *right)
+{
+	return v34_mp_parameters_are_valid(left) &&
+	       v34_mp_parameters_are_valid(right) &&
+	       left->maximum_call_to_answer_rate_2400_bps_units ==
+		       right->maximum_call_to_answer_rate_2400_bps_units &&
+	       left->maximum_answer_to_call_rate_2400_bps_units ==
+		       right->maximum_answer_to_call_rate_2400_bps_units &&
+	       left->auxiliary_channel_enabled == right->auxiliary_channel_enabled &&
+	       left->remote_transmitter_trellis == right->remote_transmitter_trellis &&
+	       left->remote_transmitter_nonlinear_encoding ==
+		       right->remote_transmitter_nonlinear_encoding &&
+	       left->remote_transmitter_expanded_shaping ==
+		       right->remote_transmitter_expanded_shaping &&
+	       left->acknowledges_peer_mp == right->acknowledges_peer_mp &&
+	       left->data_rate_capability_mask == right->data_rate_capability_mask &&
+	       left->asymmetric_rates_enabled == right->asymmetric_rates_enabled;
+}
+
+bool v34_mp_type1_parameters_are_equal(
+	const struct v34_mp_type1_parameters *left,
+	const struct v34_mp_type1_parameters *right)
+{
+	return left != NULL && right != NULL &&
+	       v34_mp_parameters_are_equal(&left->common, &right->common) &&
+	       v34_precoder_coefficients_are_valid(left->precoder_coefficients) &&
+	       v34_precoder_coefficients_are_valid(right->precoder_coefficients) &&
+	       v34_precoder_coefficients_are_equal(
+		       left->precoder_coefficients, right->precoder_coefficients);
+}
+
+bool v34_mp_record_equal(
+	const struct v34_mp_record *left,
+	const struct v34_mp_record *right)
+{
+	if (left == NULL || right == NULL || left->type != right->type)
+		return false;
+	if (left->type == V34_MP_RECORD_TYPE0)
+		return v34_mp_parameters_are_equal(
+			&left->parameters.type0, &right->parameters.type0);
+	return left->type == V34_MP_RECORD_TYPE1 &&
+	       v34_mp_type1_parameters_are_equal(
+		       &left->parameters.type1, &right->parameters.type1);
+}
+
 static uint8_t minimum_rate(uint8_t first, uint8_t second)
 {
 	return first < second ? first : second;

@@ -59,38 +59,6 @@ type1_parameters(bool acknowledged)
 	};
 }
 
-static bool parameters_are_equal(
-	const struct v34_mp_parameters *left,
-	const struct v34_mp_parameters *right)
-{
-	uint8_t left_frame[V34_MP_TYPE0_FRAME_BYTES];
-	uint8_t right_frame[V34_MP_TYPE0_FRAME_BYTES];
-
-	return v34_mp_type0_encode(
-		       left, left_frame, sizeof(left_frame)) ==
-		       V34_MP_OK &&
-	       v34_mp_type0_encode(
-		       right, right_frame, sizeof(right_frame)) ==
-		       V34_MP_OK &&
-	       memcmp(left_frame, right_frame, sizeof(left_frame)) == 0;
-}
-
-static bool type1_parameters_are_equal(
-	const struct v34_mp_type1_parameters *left,
-	const struct v34_mp_type1_parameters *right)
-{
-	uint8_t left_frame[V34_MP_TYPE1_FRAME_BYTES];
-	uint8_t right_frame[V34_MP_TYPE1_FRAME_BYTES];
-
-	return v34_mp_type1_encode(
-		       left, left_frame, sizeof(left_frame)) ==
-		       V34_MP_OK &&
-	       v34_mp_type1_encode(
-		       right, right_frame, sizeof(right_frame)) ==
-		       V34_MP_OK &&
-	       memcmp(left_frame, right_frame, sizeof(left_frame)) == 0;
-}
-
 static bool transmitters_are_equal(
 	const struct v34_phase4_mp *left,
 	const struct v34_phase4_mp *right)
@@ -319,7 +287,7 @@ static bool test_decided_symbol_receiver(void)
 				      SIZE_MAX, &event) &&
 			      event.type == V34_MP_RECEIVE_TYPE0 &&
 			      event.frame_result == V34_MP_OK &&
-			      parameters_are_equal(
+			      v34_mp_parameters_are_equal(
 				      &event.parameters.type0, &type0),
 			      "Phase 4 receiver changed Type 0 record %zu/%zu",
 			      role, constellation);
@@ -331,7 +299,7 @@ static bool test_decided_symbol_receiver(void)
 				      SIZE_MAX, &event) &&
 			      event.type == V34_MP_RECEIVE_TYPE1 &&
 			      event.frame_result == V34_MP_OK &&
-			      type1_parameters_are_equal(
+			      v34_mp_type1_parameters_are_equal(
 				      &event.parameters.type1, &type1),
 			      "Phase 4 receiver changed Type 1 record %zu/%zu",
 			      role, constellation);
@@ -371,7 +339,7 @@ static bool test_decision_rejection_and_reacquisition(void)
 	      receive_current_record(
 		      &link.transmitter, &link.receiver, SIZE_MAX, &event) &&
 	      event.type == V34_MP_RECEIVE_TYPE0 &&
-	      parameters_are_equal(&event.parameters.type0, &selected),
+	      v34_mp_parameters_are_equal(&event.parameters.type0, &selected),
 	      "Phase 4 receiver did not reject and reacquire");
 	return true;
 }
@@ -414,9 +382,9 @@ static bool test_decision_type_error_recovery(void)
 		      receive_current_record(&link.transmitter, &link.receiver,
 			      SIZE_MAX, &event) && event.frame_result == V34_MP_OK &&
 		      (next == 0u ? event.type == V34_MP_RECEIVE_TYPE0 &&
-			parameters_are_equal(&event.parameters.type0, &acknowledged) :
+			v34_mp_parameters_are_equal(&event.parameters.type0, &acknowledged) :
 			event.type == V34_MP_RECEIVE_TYPE1 &&
-			type1_parameters_are_equal(&event.parameters.type1, &long_ack)),
+			v34_mp_type1_parameters_are_equal(&event.parameters.type1, &long_ack)),
 		      "symbol type error consumed retry role=%zu type=%u", role, next);
 	}
 	return true;
