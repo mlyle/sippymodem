@@ -4,6 +4,13 @@
 
 #include <stddef.h>
 
+const struct self_sync_scrambler_config self_sync_scrambler_gpc = {
+	.history_bits = 23, .tap_a_delay = 18, .tap_b_delay = 23,
+};
+const struct self_sync_scrambler_config self_sync_scrambler_gpa = {
+	.history_bits = 23, .tap_a_delay = 5, .tap_b_delay = 23,
+};
+
 bool self_sync_scrambler_config_is_valid(
 	const struct self_sync_scrambler_config *config)
 {

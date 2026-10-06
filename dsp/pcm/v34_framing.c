@@ -7,39 +7,14 @@
 
 #include <stddef.h>
 
-enum {
-	V34_GPC_TAP_DELAY = 18,
-	V34_GPA_TAP_DELAY = 5,
-	V34_COMMON_TAP_DELAY = 23,
-};
-
-static const struct self_sync_scrambler_config
-	v34_scrambler_configs[] = {
-		[V34_POLYNOMIAL_GPC] = {
-			.history_bits = V34_SCRAMBLER_BITS,
-			.tap_a_delay = V34_GPC_TAP_DELAY,
-			.tap_b_delay = V34_COMMON_TAP_DELAY,
-		},
-		[V34_POLYNOMIAL_GPA] = {
-			.history_bits = V34_SCRAMBLER_BITS,
-			.tap_a_delay = V34_GPA_TAP_DELAY,
-			.tap_b_delay = V34_COMMON_TAP_DELAY,
-		},
-	};
-
-static bool polynomial_is_valid(
-	enum v34_scrambler_polynomial polynomial)
-{
-	return polynomial == V34_POLYNOMIAL_GPC ||
-	       polynomial == V34_POLYNOMIAL_GPA;
-}
-
 static const struct self_sync_scrambler_config *
 scrambler_config(enum v34_scrambler_polynomial polynomial)
 {
-	if (!polynomial_is_valid(polynomial))
-		return NULL;
-	return &v34_scrambler_configs[(unsigned int)polynomial];
+	switch (polynomial) {
+	case V34_POLYNOMIAL_GPC: return &self_sync_scrambler_gpc;
+	case V34_POLYNOMIAL_GPA: return &self_sync_scrambler_gpa;
+	}
+	return NULL;
 }
 
 static bool transmit_polynomial(

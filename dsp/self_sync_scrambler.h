@@ -18,6 +18,10 @@ struct self_sync_scrambler_config {
 	uint8_t tap_b_delay;
 };
 
+/* V.32 clause 4 and V.34 clause 7 share these 23-bit polynomials. */
+extern const struct self_sync_scrambler_config self_sync_scrambler_gpc;
+extern const struct self_sync_scrambler_config self_sync_scrambler_gpa;
+
 struct self_sync_scrambler {
 	uint32_t history;
 };

@@ -6,39 +6,14 @@
 
 #include <stddef.h>
 
-enum {
-	V32_CALLING_TAP_DELAY = 18,
-	V32_ANSWERING_TAP_DELAY = 5,
-	V32_COMMON_TAP_DELAY = 23,
-};
-
-static const struct self_sync_scrambler_config
-	v32_scrambler_configs[] = {
-		[V32_CALLING_TRANSMITTER] = {
-			.history_bits = V32_SCRAMBLER_BITS,
-			.tap_a_delay = V32_CALLING_TAP_DELAY,
-			.tap_b_delay = V32_COMMON_TAP_DELAY,
-		},
-		[V32_ANSWERING_TRANSMITTER] = {
-			.history_bits = V32_SCRAMBLER_BITS,
-			.tap_a_delay = V32_ANSWERING_TAP_DELAY,
-			.tap_b_delay = V32_COMMON_TAP_DELAY,
-		},
-	};
-
-static bool transmitter_role_is_valid(
-	enum v32_transmitter_role role)
-{
-	return role == V32_CALLING_TRANSMITTER ||
-	       role == V32_ANSWERING_TRANSMITTER;
-}
-
 static const struct self_sync_scrambler_config *
 scrambler_config(enum v32_transmitter_role role)
 {
-	if (!transmitter_role_is_valid(role))
-		return NULL;
-	return &v32_scrambler_configs[(unsigned int)role];
+	switch (role) {
+	case V32_CALLING_TRANSMITTER: return &self_sync_scrambler_gpc;
+	case V32_ANSWERING_TRANSMITTER: return &self_sync_scrambler_gpa;
+	}
+	return NULL;
 }
 
 bool v32_scrambler_is_valid(
@@ -57,7 +32,7 @@ enum v32_framing_result v32_scrambler_init(
 	struct v32_scrambler *scrambler,
 	enum v32_transmitter_role transmitter_role)
 {
-	if (scrambler == NULL || !transmitter_role_is_valid(transmitter_role))
+	if (scrambler == NULL || scrambler_config(transmitter_role) == NULL)
 		return V32_FRAMING_INVALID_ARGUMENT;
 	scrambler->history = 0;
 	scrambler->transmitter_role = transmitter_role;
