@@ -4,6 +4,7 @@
 #include <v92_pcm_phase3_trn1u.h>
 
 #include "test.h"
+#include "pcm_sign_state_fixture.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -12,6 +13,20 @@
 enum {
 	TRN1U_SYMBOLS = V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS,
 };
+
+static bool sync_states_equal(
+	const struct v92_phase3_sync *left, const struct v92_phase3_sync *right)
+{
+	return pcm_binary_sign_states_equal(&left->training, &right->training) &&
+	       pcm_binary_sign_states_equal(
+		       &left->window_start, &right->window_start) &&
+	       left->trained_symbols == right->trained_symbols &&
+	       memcmp(left->marker_signs, right->marker_signs,
+		      sizeof(left->marker_signs)) == 0 &&
+	       left->stage == right->stage &&
+	       left->marker_index == right->marker_index &&
+	       left->marker_count == right->marker_count;
+}
 
 struct sign_source {
 	struct v34_scrambler scrambler;
@@ -122,7 +137,7 @@ static bool run_marker(
 	if (!expect_sync) {
 		CHECK(!v92_phase3_sync_is_complete(sync) &&
 		      !v92_phase3_sync_handoff(sync, &handoff) &&
-		      memcmp(&handoff, &saved, sizeof(handoff)) == 0,
+		      pcm_binary_sign_states_equal(&handoff, &saved),
 		      "rejected Phase 3 marker changed its handoff");
 		return true;
 	}
@@ -137,7 +152,7 @@ static bool run_marker(
 
 		CHECK(v92_phase3_sync_receive(sync, 0u) ==
 			      V92_PHASE3_SYNC_ALREADY_COMPLETE &&
-		      memcmp(sync, &before, sizeof(*sync)) == 0,
+		      sync_states_equal(sync, &before),
 		      "complete Phase 3 synchronization consumed another sign");
 	}
 	return true;
@@ -232,7 +247,7 @@ static bool test_contracts(void)
 		      V92_PHASE3_SYNC_INVALID_ARGUMENT &&
 	      v92_phase3_sync_receive(&sync, 2u) ==
 		      V92_PHASE3_SYNC_INVALID_ARGUMENT &&
-	      memcmp(&sync, &before, sizeof(sync)) == 0,
+	      sync_states_equal(&sync, &before),
 	      "invalid Phase 3 synchronization call changed state");
 	for (size_t index = 0;
 	     index < V92_PHASE3_SYNC_MIN_TRAINING_SYMBOLS; ++index)
@@ -243,20 +258,20 @@ static bool test_contracts(void)
 	      "Phase 3 synchronization did not begin searching");
 	before = sync;
 	CHECK(v92_phase3_sync_train(&sync, 0u) == V92_PHASE3_SYNC_INVALID_STATE &&
-	      memcmp(&sync, &before, sizeof(sync)) == 0,
+	      sync_states_equal(&sync, &before),
 	      "Phase 3 synchronization trained after search began");
 	sync.marker_signs[0] = 2u;
 	before = sync;
 	CHECK(!v92_phase3_sync_is_valid(&sync) &&
 	      v92_phase3_sync_receive(&sync, 0u) == V92_PHASE3_SYNC_INVALID_STATE &&
-	      memcmp(&sync, &before, sizeof(sync)) == 0,
+	      sync_states_equal(&sync, &before),
 	      "corrupt Phase 3 synchronization state was not rejected");
 	CHECK(v92_phase3_sync_init(&sync) == V92_PHASE3_SYNC_OK,
 	      "Phase 3 synchronization overflow fixture did not reset");
 	sync.trained_symbols = UINT64_MAX;
 	before = sync;
 	CHECK(v92_phase3_sync_train(&sync, 0u) == V92_PHASE3_SYNC_INVALID_STATE &&
-	      memcmp(&sync, &before, sizeof(sync)) == 0 &&
+	      sync_states_equal(&sync, &before) &&
 	      !v92_phase3_sync_is_complete(NULL) &&
 	      !v92_phase3_sync_handoff(NULL, NULL),
 	      "Phase 3 synchronization overflow/null contract differed");

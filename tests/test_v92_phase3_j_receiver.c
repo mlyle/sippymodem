@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "test.h"
+#include "pcm_sign_state_fixture.h"
 
 #include "v90_phase3_signs.h"
 #include "pcm_phase3_j_receiver.h"
@@ -26,22 +27,6 @@ static struct v92_jp jp_parameters(void)
 		.rate_renegotiation_constellation =
 			V92_CONSTELLATION_4_POINT,
 	};
-}
-
-static bool jd_equal(const struct v92_jd *left, const struct v92_jd *right)
-{
-	return left->data_rate_capability_mask ==
-		       right->data_rate_capability_mask &&
-	       left->maximum_spectral_shaping_lookahead ==
-		       right->maximum_spectral_shaping_lookahead;
-}
-
-static bool jp_equal(const struct v92_jp *left, const struct v92_jp *right)
-{
-	return left->su_phase_extension_q16 == right->su_phase_extension_q16 &&
-	       left->training_constellation == right->training_constellation &&
-	       left->rate_renegotiation_constellation ==
-		       right->rate_renegotiation_constellation;
 }
 
 static uint8_t frame_bit(const uint8_t *frame, size_t index)
@@ -91,7 +76,7 @@ static bool feed_frame(
 		      "J receiver returned %s at bit %zu",
 		      pcm_phase3_j_receiver_result_name(result), index);
 		CHECK(result != PCM_PHASE3_J_RECEIVER_INVALID_SEQUENCE ||
-		      memcmp(receiver, &saved, sizeof(saved)) == 0,
+		      pcm_j_receivers_equal(receiver, &saved),
 		      "rejected J record changed receiver state");
 	}
 	return true;
@@ -131,7 +116,7 @@ static bool run_round_trip(enum g711_law law)
 		      &transmitter, &receiver, jd_frame,
 		      PCM_PHASE3_J_RECEIVER_JD_DETECTED) &&
 	      pcm_phase3_j_receiver_v92_jd(&receiver, &received_jd) &&
-	      jd_equal(&received_jd, &transmitted_jd),
+	      v92_jd_parameters_equal(&received_jd, &transmitted_jd),
 	      "receiver did not recover Jd for law %u", (unsigned int)law);
 	CHECK(feed_frame(
 		      &transmitter, &receiver, jd_frame,
@@ -152,7 +137,7 @@ static bool run_round_trip(enum g711_law law)
 		      &transmitter, &receiver, jp_frame,
 		      PCM_PHASE3_J_RECEIVER_JP_DETECTED) &&
 	      pcm_phase3_j_receiver_v92_jp(&receiver, &received_jp) &&
-	      jp_equal(&received_jp, &transmitted_jp),
+	      v92_jp_parameters_equal(&received_jp, &transmitted_jp),
 	      "receiver did not recover Jp for law %u", (unsigned int)law);
 	CHECK(feed_frame(
 		      &transmitter, &receiver, jp_frame,
@@ -189,7 +174,7 @@ static bool run_round_trip(enum g711_law law)
 
 		CHECK(pcm_phase3_j_receiver_receive(&receiver, 0xa5) ==
 			      PCM_PHASE3_J_RECEIVER_COMPLETE &&
-		      memcmp(&receiver, &saved, sizeof(saved)) == 0,
+		      pcm_j_receivers_equal(&receiver, &saved),
 		      "completed receiver consumed another character");
 	}
 	return true;
@@ -327,9 +312,9 @@ static bool run_sampled_signs(enum g711_law law)
 		}
 	}
 	CHECK(pcm_phase3_j_receiver_v92_jd(&receiver, &received_jd) &&
-	      jd_equal(&received_jd, &jd) &&
+	      v92_jd_parameters_equal(&received_jd, &jd) &&
 	      pcm_phase3_j_receiver_v92_jp(&receiver, &received_jp) &&
-	      jp_equal(&received_jp, &jp), "sampled J parameters changed");
+	      v92_jp_parameters_equal(&received_jp, &jp), "sampled J parameters changed");
 	for (size_t index = 0; index < V92_PHASE3_JP_PRIME_BITS; ++index) {
 		struct v90_pcm_symbol symbol;
 
@@ -437,7 +422,7 @@ static bool test_parameter_consistency(void)
 		      &transmitter, &receiver, different_jd_frame,
 		      PCM_PHASE3_J_RECEIVER_INVALID_SEQUENCE) &&
 	      pcm_phase3_j_receiver_v92_jd(&receiver, &received_jd) &&
-	      jd_equal(&received_jd, &jd),
+	      v92_jd_parameters_equal(&received_jd, &jd),
 	      "receiver accepted changed Jd parameters");
 	CHECK(start_records(&transmitter, &receiver) &&
 	      feed_frame(
@@ -450,7 +435,7 @@ static bool test_parameter_consistency(void)
 		      &transmitter, &receiver, different_jp_frame,
 		      PCM_PHASE3_J_RECEIVER_INVALID_SEQUENCE) &&
 	      pcm_phase3_j_receiver_v92_jp(&receiver, &received_jp) &&
-	      jp_equal(&received_jp, &jp),
+	      v92_jp_parameters_equal(&received_jp, &jp),
 	      "receiver accepted changed Jp parameters");
 	return true;
 }
@@ -493,13 +478,13 @@ static bool test_boundaries_and_validation(void)
 	saved = receiver;
 	CHECK(pcm_phase3_j_receiver_begin_jd_search(&receiver) ==
 		      PCM_PHASE3_J_RECEIVER_INVALID_STATE &&
-	      memcmp(&receiver, &saved, sizeof(saved)) == 0 &&
+	      pcm_j_receivers_equal(&receiver, &saved) &&
 	      feed_trn1d(&transmitter, &receiver, 2),
 	      "early search was not transactional");
 	saved = receiver;
 	CHECK(pcm_phase3_j_receiver_begin_jd_search(&receiver) ==
 		      PCM_PHASE3_J_RECEIVER_INVALID_STATE &&
-	      memcmp(&receiver, &saved, sizeof(saved)) == 0 &&
+	      pcm_j_receivers_equal(&receiver, &saved) &&
 	      feed_trn1d(&transmitter, &receiver, 5) &&
 	      pcm_phase3_j_receiver_begin_jd_search(&receiver) ==
 		      PCM_PHASE3_J_RECEIVER_OK,
@@ -528,7 +513,7 @@ static bool test_boundaries_and_validation(void)
 	saved = receiver;
 	CHECK(pcm_phase3_j_receiver_receive(&receiver, 0) ==
 		      PCM_PHASE3_J_RECEIVER_INVALID_STATE &&
-	      memcmp(&receiver, &saved, sizeof(saved)) == 0,
+	      pcm_j_receivers_equal(&receiver, &saved),
 	      "invalid receiver changed state");
 	CHECK(strcmp(pcm_phase3_j_receiver_result_name(
 		     PCM_PHASE3_J_RECEIVER_JP_DETECTED),

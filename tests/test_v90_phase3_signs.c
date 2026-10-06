@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "test.h"
+#include "pcm_sign_state_fixture.h"
 
 #include "g711.h"
 #include "v90_jd.h"
@@ -174,19 +175,6 @@ static uint8_t frame_bit(const uint8_t *frame, size_t index)
 			  (7u - index % 8u)) & 1u);
 }
 
-static bool jd_parameters_match(
-	const struct v90_jd_parameters *left,
-	const struct v90_jd_parameters *right)
-{
-	return left->data_rate_capability_mask ==
-		       right->data_rate_capability_mask &&
-	       left->training_constellation == right->training_constellation &&
-	       left->rate_renegotiation_constellation ==
-		       right->rate_renegotiation_constellation &&
-	       left->maximum_spectral_shaping_lookahead ==
-		       right->maximum_spectral_shaping_lookahead;
-}
-
 static bool feed_trn1d(
 	struct v90_phase3_signs *transmitter,
 	struct pcm_phase3_j_receiver *receiver, size_t count)
@@ -230,7 +218,7 @@ static bool feed_jd_record(
 		      "Jd receiver returned %s at bit %zu",
 		      pcm_phase3_j_receiver_result_name(result), index);
 		CHECK(result != PCM_PHASE3_J_RECEIVER_INVALID_SEQUENCE ||
-		      memcmp(receiver, &saved, sizeof(saved)) == 0,
+		      pcm_j_receivers_equal(receiver, &saved),
 		      "rejected Jd changed receiver state");
 	}
 	return true;
@@ -269,7 +257,7 @@ static bool run_sign_receiver(enum g711_law law)
 			      &transmitter, &receiver, frame,
 			      PCM_PHASE3_J_RECEIVER_JD_DETECTED) &&
 		      pcm_phase3_j_receiver_v90_jd(&receiver, &received) &&
-		      jd_parameters_match(&received, &transmitted),
+		      v90_jd_parameters_equal(&received, &transmitted),
 	      "receiver did not recover the first Jd record for law %u",
 	      (unsigned int)law);
 	CHECK(feed_jd_record(
@@ -310,7 +298,7 @@ static bool run_sign_receiver(enum g711_law law)
 
 		CHECK(pcm_phase3_j_receiver_receive(&receiver, 0xa5) ==
 			      PCM_PHASE3_J_RECEIVER_COMPLETE &&
-			      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
+			      pcm_j_receivers_equal(&receiver, &saved),
 		      "completed sign receiver consumed another character");
 	}
 	receiver.stage = PCM_PHASE3_J_RECEIVER_JP;
@@ -321,7 +309,7 @@ static bool run_sign_receiver(enum g711_law law)
 		CHECK(!pcm_phase3_j_receiver_is_valid(&receiver) &&
 		      pcm_phase3_j_receiver_receive(&receiver, 0xa5) ==
 			      PCM_PHASE3_J_RECEIVER_INVALID_STATE &&
-		      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
+		      pcm_j_receivers_equal(&receiver, &saved),
 		      "V.90 accepted a V.92-only Jp state");
 	}
 	return true;
@@ -368,7 +356,7 @@ static bool test_jd_consistency(void)
 			      feed_jd_record(&transmitter, &receiver, frame,
 				      PCM_PHASE3_J_RECEIVER_INVALID_SEQUENCE) &&
 			      pcm_phase3_j_receiver_v90_jd(&receiver, &received) &&
-			      jd_parameters_match(&received, &original),
+			      v90_jd_parameters_equal(&received, &original),
 			      "changed Jd field %u was accepted for law %u", field, law);
 		}
 	return true;
@@ -499,7 +487,7 @@ static bool run_sign_receiver_error_recovery(enum g711_law law)
 	}
 	CHECK(detected &&
 		      pcm_phase3_j_receiver_v90_jd(&receiver, &received) &&
-		      jd_parameters_match(&received, &parameters),
+		      v90_jd_parameters_equal(&received, &parameters),
 	      "receiver did not recover a repeated Jd for law %u",
 	      (unsigned int)law);
 	return true;
@@ -530,13 +518,13 @@ static bool test_sign_receiver_boundaries(void)
 	saved = receiver;
 	CHECK(pcm_phase3_j_receiver_begin_jd_search(&receiver) ==
 		      PCM_PHASE3_J_RECEIVER_INVALID_STATE &&
-		      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
+		      pcm_j_receivers_equal(&receiver, &saved) &&
 		      feed_trn1d(&transmitter, &receiver, 2),
 	      "early Jd search was not transactional");
 	saved = receiver;
 	CHECK(pcm_phase3_j_receiver_begin_jd_search(&receiver) ==
 		      PCM_PHASE3_J_RECEIVER_INVALID_STATE &&
-		      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
+		      pcm_j_receivers_equal(&receiver, &saved) &&
 		      feed_trn1d(&transmitter, &receiver, 5) &&
 		      pcm_phase3_j_receiver_begin_jd_search(&receiver) ==
 			      PCM_PHASE3_J_RECEIVER_OK,
