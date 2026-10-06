@@ -3,6 +3,7 @@
 #include "v92_phase3_sync.h"
 
 #include "memory_region.h"
+#include "packed_bits.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -25,18 +26,13 @@ static bool coding_matches(
 
 static bool marker_is_valid(const struct v92_phase3_sync *sync)
 {
-	if (sync->marker_count > V92_PHASE3_MARKER_BITS ||
-	    sync->marker_index >= V92_PHASE3_MARKER_BITS)
-		return false;
-	for (size_t index = 0; index < V92_PHASE3_MARKER_BITS; ++index) {
-		if (sync->marker_signs[index] > 1u)
-			return false;
-		if (sync->marker_count < V92_PHASE3_MARKER_BITS &&
-		    index >= sync->marker_count && sync->marker_signs[index] != 0u)
-			return false;
-	}
-	return sync->marker_count == V92_PHASE3_MARKER_BITS ||
-	       sync->marker_index == 0u;
+	return sync->marker_count <= V92_PHASE3_MARKER_BITS &&
+	       sync->marker_index < V92_PHASE3_MARKER_BITS &&
+	       unpacked_bits_are_binary(sync->marker_signs, sync->marker_count) &&
+	       memory_region_is_zero(sync->marker_signs + sync->marker_count,
+		V92_PHASE3_MARKER_BITS - sync->marker_count) &&
+	       (sync->marker_count == V92_PHASE3_MARKER_BITS ||
+		sync->marker_index == 0u);
 }
 
 bool v92_phase3_sync_is_valid(const struct v92_phase3_sync *sync)
@@ -46,18 +42,14 @@ bool v92_phase3_sync_is_valid(const struct v92_phase3_sync *sync)
 		return false;
 	switch (sync->stage) {
 	case V92_PHASE3_SYNC_TRAINING:
-		return sync->marker_count == 0u && sync->marker_index == 0u &&
-		       memory_region_is_zero(
-			       sync->marker_signs, sizeof(sync->marker_signs));
+		return sync->marker_count == 0u;
 	case V92_PHASE3_SYNC_SEARCHING:
 		return sync->trained_symbols >=
 		       V92_PHASE3_SYNC_MIN_TRAINING_SYMBOLS;
 	case V92_PHASE3_SYNC_COMPLETE:
 		return sync->trained_symbols >=
 			       V92_PHASE3_SYNC_MIN_TRAINING_SYMBOLS &&
-		       sync->marker_count == 0u && sync->marker_index == 0u &&
-		       memory_region_is_zero(
-			       sync->marker_signs, sizeof(sync->marker_signs)) &&
+		       sync->marker_count == 0u &&
 		       coding_matches(&sync->training, &sync->window_start);
 	}
 	return false;

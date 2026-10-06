@@ -2,6 +2,8 @@
 
 #include "v34_parser.h"
 
+#include "packed_bits.h"
+
 #include <stddef.h>
 #include <string.h>
 
@@ -32,17 +34,6 @@ static bool mapping_frame_matches_parameters(
 	       mapping_frame->primary_bits ==
 		       mapping_frame->data_bits -
 			       mapping_frame->carries_auxiliary_bit;
-}
-
-static bool primary_bits_are_valid(const uint8_t *bits, size_t count)
-{
-	if (bits == NULL && count != 0)
-		return false;
-	for (size_t index = 0; index < count; ++index) {
-		if (bits[index] > 1u)
-			return false;
-	}
-	return true;
 }
 
 static bool take_primary_bit(
@@ -262,8 +253,8 @@ enum v34_parser_result v34_parse_mapping_frame(
 	if (!mapping_frame_matches_parameters(mapping_frame, parameters) ||
 	    parsed == NULL ||
 	    scrambled_primary_bit_count != mapping_frame->primary_bits ||
-	    !primary_bits_are_valid(
-		    scrambled_primary_bits, scrambled_primary_bit_count))
+	    (scrambled_primary_bit_count != 0 && !unpacked_bits_are_binary(
+		    scrambled_primary_bits, scrambled_primary_bit_count)))
 		return V34_PARSER_INVALID_ARGUMENT;
 	auxiliary_expected = mapping_frame->carries_auxiliary_bit;
 	if ((auxiliary_bit != NULL) != auxiliary_expected ||

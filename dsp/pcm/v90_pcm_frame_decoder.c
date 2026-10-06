@@ -3,6 +3,7 @@
 #include "v90_pcm_frame_decoder.h"
 
 #include "memory_region.h"
+#include "packed_bits.h"
 
 #include <string.h>
 
@@ -87,11 +88,8 @@ enum v90_pcm_frame_decoder_result v90_pcm_frame_decoder_decode(
 		return V90_PCM_FRAME_DECODER_INVALID_STATE;
 	if (symbol_count != V90_CP_FRAME_INTERVALS)
 		return V90_PCM_FRAME_DECODER_INVALID_SYMBOLS;
-	for (size_t interval = 0;
-	     interval < V90_CP_FRAME_INTERVALS; ++interval) {
-		if (signs[interval] > 1)
-			return V90_PCM_FRAME_DECODER_INVALID_SYMBOLS;
-	}
+	if (!unpacked_bits_are_binary(signs, symbol_count))
+		return V90_PCM_FRAME_DECODER_INVALID_SYMBOLS;
 	if (!decode_labels(decoder, ucodes, labels))
 		return V90_PCM_FRAME_DECODER_INVALID_SYMBOLS;
 	mapping_result = v90_pcm_mapping_decode_modulus(
