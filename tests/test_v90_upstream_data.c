@@ -5,6 +5,7 @@
 #include <v90_phase3.h>
 
 #include "test.h"
+#include "v34_state_fixture.h"
 
 #include <string.h>
 
@@ -12,6 +13,24 @@ enum {
 	NOMINAL_AMPLITUDE = 5000,
 	SAMPLE_LIMIT = 6000,
 };
+
+static bool e_states_equal(const struct v90_phase4_e_line_tx *left,
+	const struct v90_phase4_e_line_tx *right)
+{
+	return v34_training_lines_equal(&left->line, &right->line) &&
+	       left->sequence.scrambler.history == right->sequence.scrambler.history &&
+	       left->sequence.scrambler.polynomial == right->sequence.scrambler.polynomial &&
+	       left->sequence.role == right->sequence.role &&
+	       left->sequence.constellation == right->sequence.constellation &&
+	       left->sequence.previous_clockwise_quarter_turns ==
+		       right->sequence.previous_clockwise_quarter_turns &&
+	       left->sequence.emitted_bits == right->sequence.emitted_bits &&
+	       v90_cp_parameters_are_equal(&left->cp, &right->cp) &&
+	       memcmp(left->cp.transmit_constellations, right->cp.transmit_constellations,
+		      sizeof(left->cp.transmit_constellations)) == 0 &&
+	       memcmp(left->cp.codec_constellations, right->cp.codec_constellations,
+		      sizeof(left->cp.codec_constellations)) == 0;
+}
 
 static uint16_t rate_bit(uint8_t rate_2400_bps_units)
 {
@@ -234,7 +253,7 @@ static bool test_selected_type1_stream(void)
 	      memcmp(actual.points.encoder.precoder.coefficients,
 		     mp.parameters.type1.precoder_coefficients,
 		     sizeof(mp.parameters.type1.precoder_coefficients)) == 0 &&
-	      memcmp(&e, &saved_e, sizeof(e)) == 0,
+	      e_states_equal(&e, &saved_e),
 	      "final MP did not override the lower Phase 3 projection");
 	CHECK(streams_match_through_b1(&actual, &expected, &samples) &&
 	      samples != 0 && v34_data_stream_is_valid(&actual),

@@ -8,11 +8,49 @@
 #include <v90_upstream_rx.h>
 
 #include "test.h"
+#include "v34_state_fixture.h"
 #include "v90_phase4_line_fixture.h"
 
 #include <string.h>
 
 enum { SAMPLE_LIMIT = 70000 };
+
+static void receiver_snapshot(struct v90_upstream_rx *copy,
+	const struct v90_upstream_rx *receiver)
+{
+	memcpy(copy, receiver, sizeof(*copy));
+	v34_snapshot_geometry(&copy->data_mapping.schedule.geometry);
+	v34_snapshot_geometry(&copy->calibration.initial_schedule.geometry);
+	v34_snapshot_geometry(&copy->calibration.schedule.geometry);
+	v34_snapshot_parameters(&copy->data_mapping.encoder.parameters);
+	v34_snapshot_parameters(&copy->data_mapping.normalizer.parameters);
+	v34_snapshot_parameters(&copy->calibration.initial_encoder.parameters);
+	v34_snapshot_parameters(&copy->calibration.encoder.parameters);
+	if (copy->stage == V90_UPSTREAM_RX_STAGE_B1 ||
+	    copy->stage == V90_UPSTREAM_RX_STAGE_COMPLETE) {
+		struct v34_data_channel_receiver *data =
+			&copy->state.data.decisions.data_receiver;
+		struct v34_channel_frame_decoder *frames =
+			&data->channel_receiver.frame_decoder;
+		v34_snapshot_geometry(&copy->state.data.geometry);
+		v34_snapshot_geometry(&data->data_receiver.schedule.geometry);
+		v34_snapshot_geometry(&frames->channel_schedule.geometry);
+		v34_snapshot_geometry(&frames->channel_decoder.geometry);
+		v34_snapshot_parameters(
+			&data->channel_receiver.conditioner.normalizer.parameters);
+		v34_snapshot_parameters(&frames->channel_decoder.parameters);
+		v34_snapshot_parameters(&data->data_receiver.mapping_decoder.parameters);
+	}
+}
+
+static bool receiver_states_equal(const struct v90_upstream_rx *left,
+	const struct v90_upstream_rx *right)
+{
+	struct v90_upstream_rx a, b;
+	receiver_snapshot(&a, left);
+	receiver_snapshot(&b, right);
+	return memcmp(&a, &b, sizeof(a)) == 0;
+}
 
 static uint16_t rate_bit(uint8_t rate_2400_bps_units)
 {
@@ -517,7 +555,7 @@ static bool run_line(
 					      receiver.calibration.frame == 0 &&
 					      v90_upstream_rx_select_mp(&receiver, NULL) ==
 						      V90_UPSTREAM_RX_INVALID_ARGUMENT &&
-					      memcmp(&receiver, &saved, sizeof(saved)) == 0 &&
+					      receiver_states_equal(&receiver, &saved) &&
 					      v90_upstream_rx_select_mp(&receiver, &mp) ==
 						      V90_UPSTREAM_RX_OK &&
 					      !receiver.mp_selection_pending,
@@ -525,7 +563,7 @@ static bool run_line(
 					saved = receiver;
 					CHECK(v90_upstream_rx_select_mp(&receiver, &mp) ==
 						      V90_UPSTREAM_RX_INVALID_STATE &&
-					      memcmp(&receiver, &saved, sizeof(saved)) == 0,
+					      receiver_states_equal(&receiver, &saved),
 					      "final MP selection was mutable");
 					deferred_mp_selected = true;
 				}
@@ -624,8 +662,7 @@ static bool run_line(
 		saved_event = event;
 		CHECK(v90_upstream_rx_sample(&receiver, 1234, &event) ==
 			      V90_UPSTREAM_RX_COMPLETE &&
-		      memcmp(&receiver, &saved_receiver,
-			     sizeof(receiver)) == 0 &&
+		      receiver_states_equal(&receiver, &saved_receiver) &&
 		      memcmp(&event, &saved_event, sizeof(event)) == 0,
 		      "completed owner consumed another sample");
 	}
