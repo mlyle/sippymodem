@@ -115,7 +115,9 @@ static struct v34_phase2_probe_receiver_measurement flat_probe_measurement(void)
 
 static struct v34_info1c v90_info1d_configuration(void)
 {
-	struct v34_info1c configured = { 0 };
+	struct v34_info1c configured;
+
+	memset(&configured, 0, sizeof(configured));
 
 	for (size_t index = 0; index < V34_SYMBOL_RATE_COUNT; ++index)
 		configured.answer_transmit[index]
@@ -251,12 +253,10 @@ static bool test_v90_info1d_common_fields(void)
 			uint8_t payload[V34_INFO1C_PAYLOAD_BYTES];
 			unsigned int wire_offset = 0;
 
-			configured.common = (struct v34_info1_common){
-				.minimum_peer_power_reduction_db = 7,
-				.additional_peer_power_reduction_db = 6,
-				.local_md_length_35_ms_units = index % 2u ? 127 : 7,
-				.frequency_offset_1_50_hz_units = offsets[index],
-			};
+			configured.common.minimum_peer_power_reduction_db = 7;
+			configured.common.additional_peer_power_reduction_db = 6;
+			configured.common.local_md_length_35_ms_units = index % 2u ? 127 : 7;
+			configured.common.frequency_offset_1_50_hz_units = offsets[index];
 			struct v34_info1c saved = configured;
 
 			peer.transmit_power_reduction_supported = power != 0u;
