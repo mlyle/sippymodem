@@ -17,6 +17,12 @@ enum {
 	PCM_FRAME_MAX_BITS = 48,
 };
 
+/* V.90 5.4.5.6 bounds operational Q1.6 shaping coefficients to +/-1. */
+static inline bool pcm_shaping_coefficient_is_valid(int8_t coefficient)
+{
+	return coefficient >= -64 && coefficient <= 64;
+}
+
 enum pcm_mapping_format {
 	PCM_MAPPING_V90,
 	PCM_MAPPING_V91,

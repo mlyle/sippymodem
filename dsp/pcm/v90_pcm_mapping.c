@@ -15,7 +15,6 @@ enum {
 	V90_PHASE4_MAX_MODULUS_BITS = 24,
 	V90_DATA_MIN_MODULUS_BITS = 15,
 	V90_DATA_MAX_MODULUS_BITS = 39,
-	V90_SHAPING_COEFFICIENT_LIMIT_Q1_6 = 64,
 };
 
 static bool modulus_bits_are_valid(
@@ -53,19 +52,13 @@ static bool mapping_planes_differ(
 		      sizeof(mapping->transmit)) != 0;
 }
 
-static bool shaping_coefficient_is_valid(int8_t coefficient)
-{
-	return coefficient >= -V90_SHAPING_COEFFICIENT_LIMIT_Q1_6 &&
-	       coefficient <= V90_SHAPING_COEFFICIENT_LIMIT_Q1_6;
-}
-
 static bool shaping_coefficients_are_valid(
 	const struct v90_pcm_mapping *mapping)
 {
-	return shaping_coefficient_is_valid(mapping->shaping_a1_q1_6) &&
-	       shaping_coefficient_is_valid(mapping->shaping_a2_q1_6) &&
-	       shaping_coefficient_is_valid(mapping->shaping_b1_q1_6) &&
-	       shaping_coefficient_is_valid(mapping->shaping_b2_q1_6);
+	return pcm_shaping_coefficient_is_valid(mapping->shaping_a1_q1_6) &&
+	       pcm_shaping_coefficient_is_valid(mapping->shaping_a2_q1_6) &&
+	       pcm_shaping_coefficient_is_valid(mapping->shaping_b1_q1_6) &&
+	       pcm_shaping_coefficient_is_valid(mapping->shaping_b2_q1_6);
 }
 
 bool v90_pcm_mapping_is_valid(const struct v90_pcm_mapping *mapping)

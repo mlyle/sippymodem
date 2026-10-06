@@ -6,21 +6,11 @@
 #include <math.h>
 #include <string.h>
 
-enum {
-	SHAPING_COEFFICIENT_LIMIT_Q1_6 = 64,
-};
-
 struct spectral_filter_state {
 	double x;
 	double y;
 	double v;
 };
-
-static bool coefficient_is_valid(int8_t coefficient)
-{
-	return coefficient >= -SHAPING_COEFFICIENT_LIMIT_Q1_6 &&
-	       coefficient <= SHAPING_COEFFICIENT_LIMIT_Q1_6;
-}
 
 static size_t shaping_frame_length(uint8_t sign_redundancy)
 {
@@ -56,10 +46,10 @@ bool v90_spectral_shaper_is_valid(
 	    shaper->sign_redundancy > 3 ||
 	    shaper->lookahead > V90_SPECTRAL_MAX_LOOKAHEAD ||
 	    shaper->pending_count > shaper->lookahead ||
-	    !coefficient_is_valid(shaper->shaping_a1_q1_6) ||
-	    !coefficient_is_valid(shaper->shaping_a2_q1_6) ||
-	    !coefficient_is_valid(shaper->shaping_b1_q1_6) ||
-	    !coefficient_is_valid(shaper->shaping_b2_q1_6) ||
+	    !pcm_shaping_coefficient_is_valid(shaper->shaping_a1_q1_6) ||
+	    !pcm_shaping_coefficient_is_valid(shaper->shaping_a2_q1_6) ||
+	    !pcm_shaping_coefficient_is_valid(shaper->shaping_b1_q1_6) ||
+	    !pcm_shaping_coefficient_is_valid(shaper->shaping_b2_q1_6) ||
 	    !isfinite(shaper->previous_x) ||
 	    !isfinite(shaper->previous_y) ||
 	    !isfinite(shaper->previous_v))
