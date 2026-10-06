@@ -27,14 +27,15 @@ override them; query the modem to check the effective settings.
 | `+V34B` | `0` | Automatic V.34 symbol rate |
 | `\N` | `1` | Attempt LAPM; allow a raw connection if the peer does not support it |
 | `+DS` | `3,3` | Enable compression and offer both V.42bis and V.44 |
-| `&A` | `0` | Standard CONNECT result without additional negotiation lines |
+| `&A` | `7` | Include modulation, protocol, compression, and transmit bitrate before CONNECT |
 | `S0` | `0` | Do not answer automatically |
 | `+FCLASS` | `0` | Data modem |
 | `+DS0` | `0` | PPP conversion when raw DS0 is selected |
 | `+GCI` | `b5` | USA country profile |
 
-For diagnostic connection output, use `AT&A7`. Use `ATI11` after a call to
-inspect its retained report. For a forced 9600-bit/s V.32 raw connection:
+Diagnostic connection output is enabled by default. Use `AT&A0` for a plain
+CONNECT result, and `ATI11` after a call to inspect its retained report.
+For a forced 9600-bit/s V.32 raw connection:
 
 ```text
 AT\N0
@@ -278,7 +279,7 @@ compression is not implemented.
 
 ## Connection output and retained call report
 
-`AT&A<n>` accepts `0..7`, default `0`. Its bits control extra lines before
+`AT&A<n>` accepts `0..7`, default `7`. Its bits control extra lines before
 verbose CONNECT:
 
 | Bit | Output |
@@ -288,9 +289,9 @@ verbose CONNECT:
 | Both `1` and `2` | Negotiated `Compression: V44`, `V42bis`, or `NONE` |
 | `4` | `TxRate: <bit/s>` |
 
-`AT&A7` enables all of these. The rate appended to CONNECT is the receive
-bitrate; `TxRate` is the transmit bitrate. They describe line rates rather
-than PTY baud, compressed throughput, or application transfer speed. Numeric
+`AT&A7`, the default, enables all of these. The rate appended to CONNECT is
+the receive bitrate; `TxRate` is the transmit bitrate. They describe line rates
+rather than PTY baud, compressed throughput, or application transfer speed. Numeric
 results (`V0`) omit these extra lines.
 
 Incoming calls with a usable telephone user in the SIP From header produce a
@@ -398,7 +399,7 @@ SIP timers. Unlisted registers initially contain zero.
 | S56 | 4 | CONNECT result format, `X` |
 | S60 | 0 | Stored carrier-control flag, `&C` |
 | S62 | 0 | Stored flow-control flag, `&H` |
-| S70 | 0 | Extra CONNECT output mask, `&A` |
+| S70 | 7 | Extra CONNECT output mask, `&A` |
 | S71 | 0 | Stored CONNECT-speed-source flag, `&E` |
 | S92 | 2 | Answer-side training delay, seconds |
 | S103 | 1 | Error-control policy, `\N` |

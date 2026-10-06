@@ -2090,13 +2090,14 @@ static bool test_automatic_factory_profile(void)
 	CHECK(modem != NULL, "factory profile allocation failed");
 	for (unsigned reset = 0; reset < 2; ++reset) {
 		CHECK(MODEM_DP(modem) == DP_V92 && MODEM_AUTOMODE(modem) == 1 &&
+		      modem->sregs[SREG_CONNNECT_MSG_FORMAT] == 7 &&
 		      modem->min_rate == 300 && modem->max_rate == 64000 &&
 		      modem->v90_upstream_min_rate == 0 && modem->v90_upstream_max_rate == 0 &&
 		      modem->v34_symbol_rate == 0 && modem->v90_upstream_max_baud == 0 &&
 		      modem_get_param(modem, MDMPRM_V92_PCM_UPSTREAM) == 0 &&
 		      modem_get_param(modem, MDMPRM_V90_DIGITAL_INDICATION) == MODEM_PCM_POLICY_AUTO,
 		      "factory profile restricted automatic mode or rate");
-		CHECK(process_at_command(modem, "AT+MS=21,0,300,300+V34B=2400+V90U=9600,9600,3000+V92U=1") == 0 &&
+		CHECK(process_at_command(modem, "AT+MS=21,0,300,300+V34B=2400+V90U=9600,9600,3000+V92U=1&A0") == 0 &&
 		      process_at_command(modem, "ATZ") == 0,
 		      "ATZ did not clear fixed family and directional rate settings");
 	}

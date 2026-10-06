@@ -1958,7 +1958,7 @@ int modem_factory_defaults(struct modem *m)
         sregs[SREG_LINE_QUALITY_CONTROL]   = 0;
         sregs[SREG_CD]                     = 0;
         sregs[SREG_FLOW_CONTROL]           = 0;
-        sregs[SREG_CONNNECT_MSG_FORMAT]    = 0;
+        sregs[SREG_CONNNECT_MSG_FORMAT]    = 7;
         sregs[SREG_CONNNECT_MSG_SPEED_SRC] = 0;
 
 	/* new sregs */
