@@ -83,6 +83,14 @@ static bool test_wire_image(void)
 	      generate_frame(payload, frame, sizeof(frame)) &&
 	      memcmp(frame, expected_frame, sizeof(frame)) == 0,
 	      "V.90 INFO1a wire image changed");
+	for (int offset = V34_INFO1_FREQUENCY_OFFSET_UNAVAILABLE;
+	     offset <= V34_INFO1_MAX_FREQUENCY_OFFSET_1_50_HZ_UNITS; ++offset) {
+		selected.frequency_offset_1_50_hz_units = offset;
+		CHECK(v90_info1a_encode(&selected, payload, sizeof(payload)) == V90_INFO1_OK &&
+		      v90_info1a_decode(payload, sizeof(payload), V90_INFO1A_PAYLOAD_BITS,
+			      &decoded) == V90_INFO1_OK && selections_equal(&selected, &decoded),
+		      "V.90 INFO1a frequency offset %d did not round trip", offset);
+	}
 	return true;
 }
 

@@ -2,6 +2,7 @@
 
 #include "v34_info1.h"
 
+#include "integer_math.h"
 #include "packed_bits.h"
 
 #include <string.h>
@@ -26,7 +27,6 @@ enum {
 	V34_INFO1_SYMBOL_RATE_BITS = 3,
 	V34_INFO1A_FREQUENCY_OFFSET_FIRST_BIT = 28,
 	V34_INFO1_FREQUENCY_OFFSET_BITS = 10,
-	V34_INFO1_FREQUENCY_OFFSET_MODULUS = 1024,
 };
 
 static bool common_is_valid(
@@ -99,15 +99,10 @@ static void encode_frequency_offset(
 	uint8_t *payload, size_t first_bit,
 	const struct v34_info1_common *common)
 {
-	uint16_t frequency_offset =
-		(uint16_t)(common->frequency_offset_1_50_hz_units < 0 ?
-				   common->frequency_offset_1_50_hz_units +
-					   V34_INFO1_FREQUENCY_OFFSET_MODULUS :
-				   common->frequency_offset_1_50_hz_units);
-
 	packed_msb_write_lsb_field(
 		payload, first_bit,
-		V34_INFO1_FREQUENCY_OFFSET_BITS, frequency_offset);
+		V34_INFO1_FREQUENCY_OFFSET_BITS,
+		(uint16_t)common->frequency_offset_1_50_hz_units);
 }
 
 static void encode_probe_result(
@@ -152,18 +147,6 @@ enum v34_info1_result v34_info1c_encode(
 	return V34_INFO1_OK;
 }
 
-static int16_t decode_frequency_offset(
-	const uint8_t *payload, size_t first_bit)
-{
-	uint16_t encoded = (uint16_t)packed_msb_read_lsb_field(
-		payload, first_bit, V34_INFO1_FREQUENCY_OFFSET_BITS);
-
-	return encoded >= V34_INFO1_FREQUENCY_OFFSET_MODULUS / 2 ?
-		       (int16_t)((int)encoded -
-				 V34_INFO1_FREQUENCY_OFFSET_MODULUS) :
-		       (int16_t)encoded;
-}
-
 static struct v34_info1_common decode_common(
 	const uint8_t *payload, size_t frequency_offset_first_bit)
 {
@@ -181,8 +164,11 @@ static struct v34_info1_common decode_common(
 			(uint8_t)packed_msb_read_lsb_field(
 				payload, V34_INFO1_MD_LENGTH_FIRST_BIT,
 				V34_INFO1_MD_LENGTH_BITS),
-		.frequency_offset_1_50_hz_units = decode_frequency_offset(
-			payload, frequency_offset_first_bit),
+		.frequency_offset_1_50_hz_units = (int16_t)arithmetic_shift_right_u32(
+			packed_msb_read_lsb_field(
+				payload, frequency_offset_first_bit, V34_INFO1_FREQUENCY_OFFSET_BITS) <<
+				(32u - V34_INFO1_FREQUENCY_OFFSET_BITS),
+			32u - V34_INFO1_FREQUENCY_OFFSET_BITS),
 	};
 }
 

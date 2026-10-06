@@ -157,9 +157,8 @@ static bool test_info1a_codec(void)
 
 static bool test_frequency_offsets(void)
 {
-	static const int16_t offsets[] = { -512, -511, -1, 0, 1, 511 };
-
-	for (size_t index = 0; index < ARRAY_LENGTH(offsets); ++index) {
+	for (int offset = V34_INFO1_FREQUENCY_OFFSET_UNAVAILABLE;
+	     offset <= V34_INFO1_MAX_FREQUENCY_OFFSET_1_50_HZ_UNITS; ++offset) {
 		struct v34_info1c info1c = info1c_fixture();
 		struct v34_info1a info1a = info1a_fixture();
 		struct v34_info1c decoded_c;
@@ -167,8 +166,8 @@ static bool test_frequency_offsets(void)
 		uint8_t payload_c[V34_INFO1C_PAYLOAD_BYTES];
 		uint8_t payload_a[V34_INFO1A_PAYLOAD_BYTES];
 
-		info1c.common.frequency_offset_1_50_hz_units = offsets[index];
-		info1a.common.frequency_offset_1_50_hz_units = offsets[index];
+		info1c.common.frequency_offset_1_50_hz_units = offset;
+		info1a.common.frequency_offset_1_50_hz_units = offset;
 		CHECK(v34_info1c_encode(
 			      &info1c, payload_c, sizeof(payload_c)) ==
 			      V34_INFO1_OK &&
@@ -184,11 +183,11 @@ static bool test_frequency_offsets(void)
 			      V34_INFO1A_PAYLOAD_BITS, &decoded_a) ==
 			      V34_INFO1_OK &&
 		      decoded_c.common.frequency_offset_1_50_hz_units ==
-			      offsets[index] &&
+			      offset &&
 		      decoded_a.common.frequency_offset_1_50_hz_units ==
-			      offsets[index],
+			      offset,
 		      "INFO1 frequency offset %d did not round trip",
-		      offsets[index]);
+		      offset);
 	}
 	return true;
 }

@@ -2,6 +2,7 @@
 
 #include "v90_info1.h"
 
+#include "integer_math.h"
 #include "packed_bits.h"
 
 #include <string.h>
@@ -17,7 +18,6 @@ enum {
 	DOWNSTREAM_SYMBOL_RATE_CODE = 6,
 	FREQUENCY_OFFSET_FIRST_BIT = 28,
 	FREQUENCY_OFFSET_BITS = 10,
-	FREQUENCY_OFFSET_MODULUS = 1024,
 };
 
 bool v90_info1a_is_valid(const struct v90_info1a *info1a)
@@ -40,18 +40,12 @@ enum v90_info1_result v90_info1a_encode(
 	size_t payload_capacity)
 {
 	uint8_t encoded[V90_INFO1A_PAYLOAD_BYTES] = { 0 };
-	uint16_t frequency_offset;
 
 	if (info1a == NULL || payload == NULL ||
 	    payload_capacity < sizeof(encoded))
 		return V90_INFO1_INVALID_ARGUMENT;
 	if (!v90_info1a_is_valid(info1a))
 		return V90_INFO1_INVALID_SELECTION;
-	frequency_offset = (uint16_t)(
-		info1a->frequency_offset_1_50_hz_units < 0 ?
-			info1a->frequency_offset_1_50_hz_units +
-				FREQUENCY_OFFSET_MODULUS :
-			info1a->frequency_offset_1_50_hz_units);
 	packed_msb_write_lsb_field(
 		encoded, MD_LENGTH_FIRST_BIT, MD_LENGTH_BITS,
 		info1a->local_md_length_35_ms_units);
@@ -66,19 +60,9 @@ enum v90_info1_result v90_info1a_encode(
 		DOWNSTREAM_SYMBOL_RATE_CODE);
 	packed_msb_write_lsb_field(
 		encoded, FREQUENCY_OFFSET_FIRST_BIT, FREQUENCY_OFFSET_BITS,
-		frequency_offset);
+		(uint16_t)info1a->frequency_offset_1_50_hz_units);
 	memcpy(payload, encoded, sizeof(encoded));
 	return V90_INFO1_OK;
-}
-
-static int16_t decode_frequency_offset(const uint8_t *payload)
-{
-	uint16_t encoded = (uint16_t)packed_msb_read_lsb_field(
-		payload, FREQUENCY_OFFSET_FIRST_BIT, FREQUENCY_OFFSET_BITS);
-
-	return encoded >= FREQUENCY_OFFSET_MODULUS / 2 ?
-		       (int16_t)((int)encoded - FREQUENCY_OFFSET_MODULUS) :
-		       (int16_t)encoded;
 }
 
 enum v90_info1_result v90_info1a_decode(
@@ -109,7 +93,11 @@ enum v90_info1_result v90_info1a_decode(
 				payload, UPSTREAM_SYMBOL_RATE_FIRST_BIT,
 				SYMBOL_RATE_BITS),
 		.frequency_offset_1_50_hz_units =
-			decode_frequency_offset(payload),
+			(int16_t)arithmetic_shift_right_u32(
+				packed_msb_read_lsb_field(
+					payload, FREQUENCY_OFFSET_FIRST_BIT, FREQUENCY_OFFSET_BITS) <<
+					(32u - FREQUENCY_OFFSET_BITS),
+				32u - FREQUENCY_OFFSET_BITS),
 	};
 	if (!v90_info1a_is_valid(&decoded))
 		return V90_INFO1_INVALID_PAYLOAD;
