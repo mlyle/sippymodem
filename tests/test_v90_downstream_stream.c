@@ -7,6 +7,7 @@
 #include <pcm_downstream_tx.h>
 
 #include "test.h"
+#include "pcm_downstream_state_fixture.h"
 
 #include <string.h>
 
@@ -1226,7 +1227,7 @@ static bool run_stream(
 			CHECK(refined &&
 			      pcm_downstream_tx_start_mp(&transmitter, &offered) ==
 				      PCM_DOWNSTREAM_TX_INVALID_STATE &&
-			      memcmp(&transmitter, &saved, sizeof(saved)) == 0,
+			      pcm_downstream_tx_states_equal(&transmitter, &saved),
 			      "MP changed after its first source frame entered the coder");
 			frozen_checked = true;
 		}

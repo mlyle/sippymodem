@@ -4,6 +4,7 @@
 #include <pcm_downstream_tx.h>
 
 #include "test.h"
+#include "pcm_downstream_state_fixture.h"
 
 #include <float.h>
 #include <stdint.h>
@@ -470,7 +471,7 @@ static bool run_v92_width(
 
 				CHECK(pcm_downstream_tx_request_finish(&transmitter) ==
 					      PCM_DOWNSTREAM_TX_INVALID_STATE &&
-				      memcmp(&before, &transmitter, sizeof(before)) == 0,
+				      pcm_downstream_tx_states_equal(&before, &transmitter),
 				      "unsent zero-rate CPd was discarded");
 			}
 		}
@@ -480,7 +481,7 @@ static bool run_v92_width(
 
 			CHECK(pcm_downstream_tx_request_finish(&transmitter) ==
 				      PCM_DOWNSTREAM_TX_INVALID_STATE &&
-			      memcmp(&before, &transmitter, sizeof(before)) == 0,
+			      pcm_downstream_tx_states_equal(&before, &transmitter),
 			      "nonzero CPd was allowed to finish without Ed");
 			CHECK(pcm_downstream_tx_start_suvd(
 				      &transmitter, &acknowledged_suvd) ==
@@ -598,11 +599,11 @@ static bool run_v92_width(
 
 			CHECK(pcm_downstream_tx_request_finish(&transmitter) ==
 				      (boundary ? PCM_DOWNSTREAM_TX_OK : PCM_DOWNSTREAM_TX_INVALID_STATE) &&
-			      (boundary || memcmp(&before, &transmitter, sizeof(before)) == 0),
+			      (boundary || pcm_downstream_tx_states_equal(&before, &transmitter)),
 			      "zero-rate CPd finish lost its record boundary");
 			if (boundary) {
 				before.finish_requested = true;
-				CHECK(memcmp(&before, &transmitter, sizeof(before)) == 0 &&
+				CHECK(pcm_downstream_tx_states_equal(&before, &transmitter) &&
 				      pcm_downstream_tx_request_finish(&transmitter) == PCM_DOWNSTREAM_TX_OK &&
 				      !pcm_downstream_tx_is_v92_control_boundary(&transmitter) &&
 				      pcm_downstream_tx_start_suvd(&transmitter, &acknowledged_suvd) ==
@@ -610,7 +611,7 @@ static bool run_v92_width(
 				      pcm_downstream_tx_start_cpd(&transmitter, &cpd) ==
 					      PCM_DOWNSTREAM_TX_INVALID_STATE &&
 				      pcm_downstream_tx_request_ed(&transmitter) == PCM_DOWNSTREAM_TX_INVALID_STATE &&
-				      memcmp(&before, &transmitter, sizeof(before)) == 0,
+				      pcm_downstream_tx_states_equal(&before, &transmitter),
 				      "zero-rate CPd finish reset coding or restarted transmission");
 			}
 			enum pcm_downstream_tx_result sent = pcm_downstream_tx_next(&transmitter, &symbol);
@@ -813,7 +814,7 @@ static bool invalid_transmitter_is_rejected(
 	return !pcm_downstream_tx_is_valid(&corrupted) &&
 	       pcm_downstream_tx_next(&corrupted, &symbol) ==
 		       PCM_DOWNSTREAM_TX_INVALID_STATE &&
-	       memcmp(&corrupted, &saved, sizeof(corrupted)) == 0 &&
+	       pcm_downstream_tx_states_equal(&corrupted, &saved) &&
 	       memcmp(&symbol, &saved_symbol, sizeof(symbol)) == 0;
 }
 
@@ -854,13 +855,13 @@ static bool test_v92_switch_contracts(void)
 	saved = transmitter;
 	CHECK(pcm_downstream_tx_start_suvd(
 		      &transmitter, &initial_suvd) == PCM_DOWNSTREAM_TX_OK &&
-	      memcmp(&transmitter, &saved, sizeof(transmitter)) == 0 &&
+	      pcm_downstream_tx_states_equal(&transmitter, &saved) &&
 	      pcm_downstream_tx_start_suvd(
 		      &transmitter, &acknowledged_suvd) ==
 		      PCM_DOWNSTREAM_TX_INVALID_STATE &&
 	      pcm_downstream_tx_start_cpd(&transmitter, &cpd) ==
 		      PCM_DOWNSTREAM_TX_INVALID_STATE &&
-	      memcmp(&transmitter, &saved, sizeof(transmitter)) == 0,
+	      pcm_downstream_tx_states_equal(&transmitter, &saved),
 	      "V.92 transmitter replaced a partial SUVd");
 	CHECK(advance_to_v92_position(&transmitter, true) &&
 	      pcm_downstream_tx_start_cpd(&transmitter, &cpd) ==
@@ -872,13 +873,13 @@ static bool test_v92_switch_contracts(void)
 	saved = transmitter;
 	CHECK(pcm_downstream_tx_start_cpd(&transmitter, &cpd) ==
 		      PCM_DOWNSTREAM_TX_OK &&
-	      memcmp(&transmitter, &saved, sizeof(transmitter)) == 0 &&
+	      pcm_downstream_tx_states_equal(&transmitter, &saved) &&
 	      pcm_downstream_tx_start_cpd(&transmitter, &different_cpd) ==
 		      PCM_DOWNSTREAM_TX_INVALID_STATE &&
 	      pcm_downstream_tx_start_suvd(
 		      &transmitter, &acknowledged_suvd) ==
 		      PCM_DOWNSTREAM_TX_INVALID_STATE &&
-	      memcmp(&transmitter, &saved, sizeof(transmitter)) == 0,
+	      pcm_downstream_tx_states_equal(&transmitter, &saved),
 	      "V.92 transmitter replaced a partial CPd");
 	CHECK(advance_to_v92_position(&transmitter, true) &&
 	      pcm_downstream_tx_start_cpd(
@@ -928,7 +929,7 @@ static bool test_v92_switch_contracts(void)
 	CHECK(!transmitter.v92_control_record_accepted &&
 	      pcm_downstream_tx_request_ed(&transmitter) ==
 		      PCM_DOWNSTREAM_TX_INVALID_STATE &&
-	      memcmp(&transmitter, &saved, sizeof(transmitter)) == 0 &&
+	      pcm_downstream_tx_states_equal(&transmitter, &saved) &&
 	      advance_to_v92_position(&transmitter, false) &&
 	      !transmitter.v92_control_record_accepted &&
 	      pcm_downstream_tx_request_ed(&transmitter) ==
@@ -1244,8 +1245,7 @@ static bool test_contracts(void)
 		      PCM_DOWNSTREAM_TX_INVALID_STATE &&
 	      pcm_downstream_tx_request_finish(&transmitter) ==
 		      PCM_DOWNSTREAM_TX_INVALID_STATE &&
-	      memcmp(&transmitter, &saved_transmitter,
-		     sizeof(transmitter)) == 0 &&
+	      pcm_downstream_tx_states_equal(&transmitter, &saved_transmitter) &&
 	      memcmp(&symbol, &saved_symbol, sizeof(symbol)) == 0,
 	      "corrupt queue was accepted or changed");
 
@@ -1362,7 +1362,7 @@ static bool verify_zero_rate_cleardown(unsigned int law, uint8_t lookahead,
 			struct pcm_downstream_tx before = tx;
 
 			CHECK(pcm_downstream_tx_start_mp(&tx, &mp) == PCM_DOWNSTREAM_TX_INVALID_STATE &&
-			      memcmp(&before, &tx, sizeof(tx)) == 0,
+			      pcm_downstream_tx_states_equal(&before, &tx),
 			      "mid-record cleardown changed the current MP");
 			pending = true;
 		}
@@ -1372,7 +1372,7 @@ static bool verify_zero_rate_cleardown(unsigned int law, uint8_t lookahead,
 			CHECK(pcm_downstream_tx_start_mp(&tx, &mp) == PCM_DOWNSTREAM_TX_OK &&
 			      memcmp(&before.encoder, &tx.encoder, sizeof(tx.encoder)) == 0 &&
 			      memcmp(&before.scrambler, &tx.scrambler, sizeof(tx.scrambler)) == 0 &&
-			      memcmp(before.queue, tx.queue, sizeof(tx.queue)) == 0 &&
+			      pcm_downstream_tx_queues_equal(&before, &tx) &&
 			      before.queue_count == tx.queue_count &&
 			      before.accepted_frames == tx.accepted_frames &&
 			      before.transmitted_symbols == tx.transmitted_symbols,
@@ -1471,7 +1471,7 @@ static bool verify_conditioning(enum g711_law law, uint8_t redundancy,
 			CHECK(pcm_downstream_tx_request_mp_prime(&tx) == PCM_DOWNSTREAM_TX_OK &&
 			      memcmp(&before.encoder, &tx.encoder, sizeof(tx.encoder)) == 0 &&
 			      memcmp(&before.scrambler, &tx.scrambler, sizeof(tx.scrambler)) == 0 &&
-			      memcmp(before.queue, tx.queue, sizeof(tx.queue)) == 0 &&
+			      pcm_downstream_tx_queues_equal(&before, &tx) &&
 			      before.queue_count == tx.queue_count &&
 			      before.accepted_frames == tx.accepted_frames,
 			      "CP discarded queued PCM or restarted conditioning");
