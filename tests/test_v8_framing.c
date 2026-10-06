@@ -383,7 +383,7 @@ static bool test_validation(void)
 	CHECK(v8_control_receive_bit(&receiver, 0, &event) ==
 		      V8_FRAMING_INVALID_ARGUMENT &&
 	      memcmp(&receiver, &saved_receiver, sizeof(receiver)) == 0 &&
-	      memcmp(&event, &saved_event, sizeof(event)) == 0 &&
+	      event.type == saved_event.type && event.octet == saved_event.octet &&
 	      v8_control_receive_bit(NULL, 0, &event) ==
 		      V8_FRAMING_INVALID_ARGUMENT &&
 	      v8_control_receive_bit(&saved_receiver, 2, &event) ==

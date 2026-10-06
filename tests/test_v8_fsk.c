@@ -6,6 +6,7 @@
 #include <v8_menu.h>
 
 #include "test.h"
+#include "v8_line_state_fixture.h"
 
 #include <string.h>
 
@@ -194,8 +195,8 @@ static bool menu_round_trip(
 			memcpy(&saved_block, &block, sizeof(block));
 			saved_line = blocked.line;
 			CHECK(v8_fsk_receive_block(&blocked, &block, &blocked_bit, &blocked_ready) == V8_FSK_OK &&
-			      memcmp(&saved_line, &blocked.line, sizeof(saved_line)) == 0 &&
-			      memcmp(&saved_block, &block, sizeof(block)) == 0,
+			      v8_line_states_equal(&saved_line, &blocked.line) &&
+			      v8_line_blocks_equal(&saved_block, &block),
 			      "FSK block processing advanced the line or modified input");
 		}
 		CHECK(blocked_bit == receive_bit && blocked_ready == bit_ready &&
@@ -402,7 +403,7 @@ static bool test_block_validation(void)
 	      v8_fsk_receive_block(&fsk, &block, &bit, (void *)&block) == V8_FSK_INVALID_ARGUMENT &&
 	      v8_fsk_receive_block(&fsk, &block, (void *)&ready, &ready) == V8_FSK_INVALID_ARGUMENT &&
 	      memcmp(&fsk, &saved, sizeof(fsk)) == 0 &&
-	      memcmp(&block, &saved_block, sizeof(block)) == 0 && bit == 7 && ready,
+	      v8_line_blocks_equal(&block, &saved_block) && bit == 7 && ready,
 	      "FSK block rejection changed state, input, or output");
 	fsk.line.role = V8_ANSWERING_STATION;
 	saved = fsk;

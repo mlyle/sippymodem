@@ -3,6 +3,7 @@
 #include <v8_line_conditioner.h>
 
 #include "test.h"
+#include "v8_line_state_fixture.h"
 
 #include <inttypes.h>
 #include <limits.h>
@@ -113,7 +114,7 @@ static bool test_exact_profiles(void)
 			      "V.8 line profile %zu rejected sample %zu",
 			      role, sample_index);
 			if (!ready) {
-				CHECK(memcmp(&block, &untouched, sizeof(block)) == 0,
+				CHECK(v8_line_blocks_equal(&block, &untouched),
 				      "V.8 line changed an unavailable block");
 				continue;
 			}
@@ -206,13 +207,13 @@ static bool test_contracts(void)
 	      v8_line_conditioner_init(
 		      &line, (enum v8_station_role)99) ==
 		      V8_LINE_CONDITIONER_INVALID_ARGUMENT &&
-	      memcmp(&line, &saved, sizeof(line)) == 0,
+	      v8_line_states_equal(&line, &saved),
 	      "V.8 line initialization changed state on rejection");
 	expected = line;
 	expected.gain_mode = V8_LINE_GAIN_FINE;
 	CHECK(v8_line_conditioner_set_gain_mode(
 		      &line, V8_LINE_GAIN_FINE) == V8_LINE_CONDITIONER_OK &&
-	      memcmp(&line, &expected, sizeof(line)) == 0,
+	      v8_line_states_equal(&line, &expected),
 	      "V.8 line gain-mode transition changed unrelated state");
 	saved = line;
 	CHECK(v8_line_conditioner_set_gain_mode(NULL, V8_LINE_GAIN_FINE) ==
@@ -220,7 +221,7 @@ static bool test_contracts(void)
 	      v8_line_conditioner_set_gain_mode(
 		      &line, (enum v8_line_gain_mode)99) ==
 		      V8_LINE_CONDITIONER_INVALID_ARGUMENT &&
-	      memcmp(&line, &saved, sizeof(line)) == 0,
+	      v8_line_states_equal(&line, &saved),
 	      "V.8 line gain mode accepted an invalid transition");
 	CHECK(v8_line_conditioner_process_sample(NULL, 0, &block, &ready) ==
 		      V8_LINE_CONDITIONER_INVALID_ARGUMENT &&
@@ -237,8 +238,8 @@ static bool test_contracts(void)
 	      v8_line_conditioner_process_sample(
 		      &line, 0, &block, (bool *)&block) ==
 		      V8_LINE_CONDITIONER_INVALID_ARGUMENT &&
-	      memcmp(&line, &saved, sizeof(line)) == 0 &&
-	      memcmp(&block, &saved_block, sizeof(block)) == 0 && ready,
+	      v8_line_states_equal(&line, &saved) &&
+	      v8_line_blocks_equal(&block, &saved_block) && ready,
 	      "V.8 line overlap rejection changed state or output");
 	line.gain = 0;
 	saved = line;
@@ -249,8 +250,8 @@ static bool test_contracts(void)
 	      v8_line_conditioner_set_gain_mode(
 		      &line, V8_LINE_GAIN_COARSE) ==
 		      V8_LINE_CONDITIONER_INVALID_ARGUMENT &&
-	      memcmp(&line, &saved, sizeof(line)) == 0 &&
-	      memcmp(&block, &saved_block, sizeof(block)) == 0 && ready,
+	      v8_line_states_equal(&line, &saved) &&
+	      v8_line_blocks_equal(&block, &saved_block) && ready,
 	      "V.8 line accepted corrupt owned state");
 	return true;
 }

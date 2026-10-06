@@ -4,6 +4,7 @@
 #include <v8_ansam.h>
 
 #include "test.h"
+#include "v8_line_state_fixture.h"
 
 #include <math.h>
 #include <string.h>
@@ -205,12 +206,12 @@ static bool detect_generated(enum test_codec codec)
 				memcpy(&saved_block, &block, sizeof(block));
 				CHECK(v8_ansam_observe_block(&observed, &observed_line,
 					      &block, &observed_detected) == V8_ANSAM_OK &&
-				      memcmp(&block, &saved_block, sizeof(block)) == 0,
+				      v8_line_blocks_equal(&block, &saved_block),
 				      "ANSam block observation modified its input");
 			}
 			CHECK(observed_detected == sample_detected &&
 			      memcmp(&observed, &samplewise, sizeof(observed)) == 0 &&
-			      memcmp(&observed_line, &samplewise_line, sizeof(observed_line)) == 0,
+			      v8_line_states_equal(&observed_line, &samplewise_line),
 			      "ANSam block observation changed the samplewise oracle");
 			if (sample_detected && detection_sample == 0)
 				detection_sample = total + index + 1u;
@@ -219,8 +220,7 @@ static bool detect_generated(enum test_codec codec)
 	}
 	CHECK(blocked_detected && sample_detected && detection_sample == 8782 &&
 	      memcmp(&blocked, &samplewise, sizeof(blocked)) == 0 &&
-	      memcmp(&blocked_line, &samplewise_line,
-		     sizeof(blocked_line)) == 0 &&
+	      v8_line_states_equal(&blocked_line, &samplewise_line) &&
 	      blocked.stage == V8_ANSAM_DETECTED &&
 	      blocked.dwell_blocks ==
 		      V8_ANSAM_POST_DETECT_DWELL_BLOCKS + 1u &&
@@ -483,14 +483,14 @@ static bool test_block_validation(void)
 	      v8_ansam_observe_block(&detector, &line, &block, (void *)&detector) == V8_ANSAM_INVALID_ARGUMENT &&
 	      v8_ansam_observe_block(&detector, &line, &block, (void *)&line) == V8_ANSAM_INVALID_ARGUMENT &&
 	      memcmp(&detector, &saved, sizeof(saved)) == 0 &&
-	      memcmp(&line, &saved_line, sizeof(line)) == 0 &&
-	      memcmp(&block, &saved_block, sizeof(block)) == 0 && detected,
+	      v8_line_states_equal(&line, &saved_line) &&
+	      v8_line_blocks_equal(&block, &saved_block) && detected,
 	      "ANSam block rejection changed state, input, or output");
 	line.role = V8_ANSWERING_STATION;
 	saved_line = line;
 	CHECK(v8_ansam_observe_block(&detector, &line, &block, &detected) == V8_ANSAM_INVALID_ARGUMENT &&
 	      memcmp(&detector, &saved, sizeof(saved)) == 0 &&
-	      memcmp(&line, &saved_line, sizeof(line)) == 0 && detected,
+	      v8_line_states_equal(&line, &saved_line) && detected,
 	      "ANSam block accepted the wrong line role");
 	return true;
 }
@@ -558,7 +558,7 @@ static bool test_validation(void)
 		      &detector, &line, &output_sample, 1,
 		      (bool *)&output_sample) == V8_ANSAM_INVALID_ARGUMENT &&
 	      memcmp(&detector, &saved, sizeof(detector)) == 0 &&
-	      memcmp(&line, &saved_line, sizeof(line)) == 0 &&
+	      v8_line_states_equal(&line, &saved_line) &&
 	      output_sample == 123 && detected == false,
 	      "ANSam overlap handling changed state or output");
 	detector.signal_ref_gain = 0;
@@ -571,7 +571,7 @@ static bool test_validation(void)
 	CHECK(!v8_ansam_detector_is_valid(&detector) &&
 	      v8_ansam_detect(&detector, &line, &sample, 1, &detected) ==
 		      V8_ANSAM_INVALID_ARGUMENT && !detected &&
-	      memcmp(&line, &saved_line, sizeof(line)) == 0,
+	      v8_line_states_equal(&line, &saved_line),
 	      "ANSam API accepted an invalid carrier-loss count");
 	detector = saved;
 	line.gain = 0;
