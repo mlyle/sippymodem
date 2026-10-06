@@ -11,18 +11,6 @@
 enum {
 	CPT_RATE_FIRST_BIT = 21,
 	CPT_RATE_BITS = 5,
-	CPT_SIGN_REDUNDANCY_FIRST_BIT = 31,
-	CPT_SIGN_REDUNDANCY_BITS = 2,
-	CPT_ACKNOWLEDGMENT_BIT = 33,
-	CPT_LAW_BIT = 35,
-	CPT_LOOKAHEAD_FIRST_BIT = 49,
-	CPT_LOOKAHEAD_BITS = 2,
-	CPT_RATIO_FIRST_BIT = 52,
-	CPT_RATIO_BITS = 16,
-	CPT_A1_FIRST_BIT = 69,
-	CPT_A2_FIRST_BIT = 77,
-	CPT_B1_FIRST_BIT = 86,
-	CPT_B2_FIRST_BIT = 94,
 	CPT_CODEC_DIFFERENCE_BIT = 128,
 	CPT_CRC_BITS = 16,
 };
@@ -68,17 +56,9 @@ static void encode_header(
 	packed_msb_write_lsb_field(
 		frame, CPT_RATE_FIRST_BIT, CPT_RATE_BITS,
 		parameters->selected_rate_index);
-	packed_msb_write_lsb_field(
-		frame, CPT_SIGN_REDUNDANCY_FIRST_BIT,
-		CPT_SIGN_REDUNDANCY_BITS, parameters->sign_redundancy);
-	packed_msb_set_bit(
-		frame, CPT_ACKNOWLEDGMENT_BIT,
-		parameters->acknowledges_peer);
-	packed_msb_set_bit(
-		frame, CPT_LAW_BIT, parameters->law == G711_LAW_PCMA);
-	packed_msb_write_lsb_field(
-		frame, CPT_LOOKAHEAD_FIRST_BIT, CPT_LOOKAHEAD_BITS,
-		parameters->spectral_lookahead);
+	pcm_control_frame_write_options(frame,
+		parameters->sign_redundancy, parameters->acknowledges_peer,
+		parameters->law, parameters->spectral_lookahead);
 	pcm_control_frame_write_shaping(
 		frame, parameters->trn1d_ratio_q3_13,
 		parameters->shaping_a1_q1_6, parameters->shaping_a2_q1_6,
@@ -133,31 +113,16 @@ static bool framing_is_valid(
 static void decode_header(
 	const uint8_t *frame, struct v92_cpt_parameters *parameters)
 {
-	parameters->law = packed_msb_bit(frame, CPT_LAW_BIT) != 0 ?
-				  G711_LAW_PCMA : G711_LAW_PCMU;
 	parameters->selected_rate_index =
 		(uint8_t)packed_msb_read_lsb_field(
 			frame, CPT_RATE_FIRST_BIT, CPT_RATE_BITS);
-	parameters->sign_redundancy =
-		(uint8_t)packed_msb_read_lsb_field(
-			frame, CPT_SIGN_REDUNDANCY_FIRST_BIT,
-			CPT_SIGN_REDUNDANCY_BITS);
-	parameters->acknowledges_peer =
-		packed_msb_bit(frame, CPT_ACKNOWLEDGMENT_BIT) != 0;
-	parameters->spectral_lookahead =
-		(uint8_t)packed_msb_read_lsb_field(
-			frame, CPT_LOOKAHEAD_FIRST_BIT, CPT_LOOKAHEAD_BITS);
-	parameters->trn1d_ratio_q3_13 =
-		(uint16_t)packed_msb_read_lsb_field(
-			frame, CPT_RATIO_FIRST_BIT, CPT_RATIO_BITS);
-	parameters->shaping_a1_q1_6 =
-		pcm_control_frame_read_q1_6(frame, CPT_A1_FIRST_BIT);
-	parameters->shaping_a2_q1_6 =
-		pcm_control_frame_read_q1_6(frame, CPT_A2_FIRST_BIT);
-	parameters->shaping_b1_q1_6 =
-		pcm_control_frame_read_q1_6(frame, CPT_B1_FIRST_BIT);
-	parameters->shaping_b2_q1_6 =
-		pcm_control_frame_read_q1_6(frame, CPT_B2_FIRST_BIT);
+	pcm_control_frame_read_options(frame,
+		&parameters->sign_redundancy, &parameters->acknowledges_peer,
+		&parameters->law, &parameters->spectral_lookahead);
+	pcm_control_frame_read_shaping(frame,
+		&parameters->trn1d_ratio_q3_13,
+		&parameters->shaping_a1_q1_6, &parameters->shaping_a2_q1_6,
+		&parameters->shaping_b1_q1_6, &parameters->shaping_b2_q1_6);
 }
 
 enum v92_cpt_result v92_cpt_decode(

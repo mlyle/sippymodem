@@ -12,18 +12,7 @@ enum {
 	CPU_TYPE_BITS = 2,
 	CPU_RATE_FIRST_BIT = 21,
 	CPU_RATE_BITS = 5,
-	CPU_SIGN_REDUNDANCY_FIRST_BIT = 31,
-	CPU_SIGN_REDUNDANCY_BITS = 2,
 	CPU_ACKNOWLEDGMENT_BIT = 33,
-	CPU_LAW_BIT = 35,
-	CPU_LOOKAHEAD_FIRST_BIT = 49,
-	CPU_LOOKAHEAD_BITS = 2,
-	CPU_RATIO_FIRST_BIT = 52,
-	CPU_RATIO_BITS = 16,
-	CPU_A1_FIRST_BIT = 69,
-	CPU_A2_FIRST_BIT = 77,
-	CPU_B1_FIRST_BIT = 86,
-	CPU_B2_FIRST_BIT = 94,
 	CPU_CODEC_DIFFERENCE_BIT = 128,
 	CPU_MASKS_FIRST_BIT = V92_CPU_HEADER_BITS,
 	CPU_CRC_BITS = 16,
@@ -83,18 +72,9 @@ static void encode_header(
 	packed_msb_write_lsb_field(
 		frame, CPU_RATE_FIRST_BIT, CPU_RATE_BITS,
 		parameters->data_rate_number);
-	packed_msb_write_lsb_field(
-		frame, CPU_SIGN_REDUNDANCY_FIRST_BIT,
-		CPU_SIGN_REDUNDANCY_BITS,
-		parameters->sign_redundancy);
-	packed_msb_set_bit(
-		frame, CPU_ACKNOWLEDGMENT_BIT,
-		parameters->acknowledges_cpd);
-	packed_msb_set_bit(
-		frame, CPU_LAW_BIT, parameters->law == G711_LAW_PCMA);
-	packed_msb_write_lsb_field(
-		frame, CPU_LOOKAHEAD_FIRST_BIT, CPU_LOOKAHEAD_BITS,
-		parameters->spectral_lookahead_frames);
+	pcm_control_frame_write_options(frame,
+		parameters->sign_redundancy, parameters->acknowledges_cpd,
+		parameters->law, parameters->spectral_lookahead_frames);
 	pcm_control_frame_write_shaping(
 		frame, parameters->trn1d_ratio_q3_13,
 		parameters->shaping_a1_q1_6, parameters->shaping_a2_q1_6,
@@ -233,31 +213,19 @@ static bool decode_header(
 	const uint8_t *frame, struct v92_cpu_parameters *decoded)
 {
 	*decoded = (struct v92_cpu_parameters){
-		.law = packed_msb_bit(frame, CPU_LAW_BIT) != 0u ?
-			G711_LAW_PCMA : G711_LAW_PCMU,
-		.trn1d_ratio_q3_13 =
-			(uint16_t)packed_msb_read_lsb_field(
-				frame, CPU_RATIO_FIRST_BIT, CPU_RATIO_BITS),
-		.shaping_a1_q1_6 = pcm_control_frame_read_q1_6(frame, CPU_A1_FIRST_BIT),
-		.shaping_a2_q1_6 = pcm_control_frame_read_q1_6(frame, CPU_A2_FIRST_BIT),
-		.shaping_b1_q1_6 = pcm_control_frame_read_q1_6(frame, CPU_B1_FIRST_BIT),
-		.shaping_b2_q1_6 = pcm_control_frame_read_q1_6(frame, CPU_B2_FIRST_BIT),
 		.data_rate_number =
 			(uint8_t)packed_msb_read_lsb_field(
 				frame, CPU_RATE_FIRST_BIT, CPU_RATE_BITS),
-		.sign_redundancy =
-			(uint8_t)packed_msb_read_lsb_field(
-				frame, CPU_SIGN_REDUNDANCY_FIRST_BIT,
-				CPU_SIGN_REDUNDANCY_BITS),
-		.spectral_lookahead_frames =
-			(uint8_t)packed_msb_read_lsb_field(
-				frame, CPU_LOOKAHEAD_FIRST_BIT,
-				CPU_LOOKAHEAD_BITS),
-		.acknowledges_cpd =
-			packed_msb_bit(frame, CPU_ACKNOWLEDGMENT_BIT) != 0u,
 		.codec_constellations_differ =
 			packed_msb_bit(frame, CPU_CODEC_DIFFERENCE_BIT) != 0u,
 	};
+	pcm_control_frame_read_options(frame,
+		&decoded->sign_redundancy, &decoded->acknowledges_cpd,
+		&decoded->law, &decoded->spectral_lookahead_frames);
+	pcm_control_frame_read_shaping(frame,
+		&decoded->trn1d_ratio_q3_13,
+		&decoded->shaping_a1_q1_6, &decoded->shaping_a2_q1_6,
+		&decoded->shaping_b1_q1_6, &decoded->shaping_b2_q1_6);
 	decoded->constellation_count =
 		pcm_control_frame_read_map(frame, decoded->frame_constellation);
 	return decoded->constellation_count != 0u;
