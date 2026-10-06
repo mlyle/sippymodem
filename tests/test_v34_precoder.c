@@ -167,6 +167,35 @@ static void model_step(
 	precoder->previous_symbols[0] = symbol->precoded_symbol;
 }
 
+static bool test_coefficient_comparisons(void)
+{
+	static const int16_t values[] = { 1, -1, INT16_MIN + 1, INT16_MAX };
+
+	CHECK(v34_precoder_coefficients_are_zero(ZERO_COEFFICIENTS) &&
+	      v34_precoder_coefficients_are_equal(ZERO_COEFFICIENTS, ZERO_COEFFICIENTS) &&
+	      !v34_precoder_coefficients_are_zero(NULL) &&
+	      !v34_precoder_coefficients_are_equal(NULL, ZERO_COEFFICIENTS) &&
+	      !v34_precoder_coefficients_are_equal(ZERO_COEFFICIENTS, NULL) &&
+	      !v34_precoder_coefficients_are_equal(NULL, NULL),
+	      "zero coefficients or null comparison changed");
+	for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap) {
+		for (size_t component = 0; component < 2; ++component) {
+			for (size_t value = 0; value < ARRAY_LENGTH(values); ++value) {
+				struct v34_q14_coefficient changed[V34_PRECODER_TAP_COUNT] = { 0 };
+				int16_t *selected = component == 0 ?
+					&changed[tap].real : &changed[tap].imaginary;
+				*selected = values[value];
+				CHECK(v34_precoder_coefficients_are_equal(changed, changed) &&
+				      !v34_precoder_coefficients_are_equal(changed, ZERO_COEFFICIENTS) &&
+				      !v34_precoder_coefficients_are_equal(ZERO_COEFFICIENTS, changed) &&
+				      !v34_precoder_coefficients_are_zero(changed),
+				      "tap %zu component %zu value %d was ignored", tap, component, *selected);
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_initialization(void)
 {
 	static const struct v34_q14_coefficient coefficients[] = {
@@ -730,6 +759,7 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "coefficient comparisons", test_coefficient_comparisons },
 		{ "initialization", test_initialization },
 		{ "complex sequences", test_complex_sequences },
 		{ "receive reconstruction", test_receive_reconstruction },

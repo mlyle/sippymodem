@@ -43,6 +43,28 @@ static inline bool v34_precoder_coefficients_are_valid(
 	return true;
 }
 
+/* Compare stored Q14 components; owners validate their range separately. */
+static inline bool v34_precoder_coefficients_are_equal(
+	const struct v34_q14_coefficient left[V34_PRECODER_TAP_COUNT],
+	const struct v34_q14_coefficient right[V34_PRECODER_TAP_COUNT])
+{
+	if (left == NULL || right == NULL)
+		return false;
+	for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap)
+		if (left[tap].real != right[tap].real ||
+		    left[tap].imaginary != right[tap].imaginary)
+			return false;
+	return true;
+}
+
+static inline bool v34_precoder_coefficients_are_zero(
+	const struct v34_q14_coefficient coefficients[V34_PRECODER_TAP_COUNT])
+{
+	static const struct v34_q14_coefficient zero[V34_PRECODER_TAP_COUNT];
+
+	return v34_precoder_coefficients_are_equal(coefficients, zero);
+}
+
 enum v34_precoder_grid_step {
 	V34_PRECODER_GRID_STEP_2 = 2,
 	V34_PRECODER_GRID_STEP_4 = 4,

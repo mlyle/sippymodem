@@ -279,15 +279,12 @@ static bool receiver_feedback_matches_mp(
 		return false;
 	if (!receiver->feedback_training_complete)
 		return true;
-	return exchange->transmit_mp.type == V34_MP_RECORD_TYPE0 ?
-		memcmp(receiver->precoder_coefficients,
-		       exchange->rate_renegotiation ?
-			       exchange->data_startup.mode.receive.precoder_coefficients : zero,
-		       sizeof(zero)) == 0 :
-	       memcmp(receiver->precoder_coefficients,
-		      exchange->transmit_mp.parameters.type1
-			      .precoder_coefficients,
-		      sizeof(receiver->precoder_coefficients)) == 0;
+	return v34_precoder_coefficients_are_equal(
+		receiver->precoder_coefficients,
+		exchange->transmit_mp.type == V34_MP_RECORD_TYPE1 ?
+			exchange->transmit_mp.parameters.type1.precoder_coefficients :
+			exchange->rate_renegotiation ?
+				exchange->data_startup.mode.receive.precoder_coefficients : zero);
 }
 
 static bool transmitter_stage_is_valid(

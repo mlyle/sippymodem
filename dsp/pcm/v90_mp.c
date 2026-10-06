@@ -128,26 +128,6 @@ static bool common_parameters_equal(
 		       right->upstream_rate_capability_mask;
 }
 
-static bool record_coefficients_equal(
-	const struct v90_mp_record *left,
-	const struct v90_mp_record *right)
-{
-	if (left->type == V90_MP_RECORD_TYPE0)
-		return true;
-	for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap) {
-		const struct v34_q14_coefficient *left_coefficient =
-			&left->parameters.type1.precoder_coefficients[tap];
-		const struct v34_q14_coefficient *right_coefficient =
-			&right->parameters.type1.precoder_coefficients[tap];
-
-		if (left_coefficient->real != right_coefficient->real ||
-		    left_coefficient->imaginary !=
-			    right_coefficient->imaginary)
-			return false;
-	}
-	return true;
-}
-
 static bool records_equal(
 	const struct v90_mp_record *left,
 	const struct v90_mp_record *right,
@@ -158,7 +138,10 @@ static bool records_equal(
 	       common_parameters_equal(
 		       v90_mp_record_common(left), v90_mp_record_common(right),
 		       compare_acknowledgement) &&
-	       record_coefficients_equal(left, right);
+	       (left->type == V90_MP_RECORD_TYPE0 ||
+		v34_precoder_coefficients_are_equal(
+			left->parameters.type1.precoder_coefficients,
+			right->parameters.type1.precoder_coefficients));
 }
 
 bool v90_mp_record_equal(

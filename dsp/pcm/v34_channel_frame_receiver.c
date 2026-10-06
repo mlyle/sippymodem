@@ -5,23 +5,6 @@
 #include <stddef.h>
 #include <string.h>
 
-static bool precoders_match_configuration(
-	const struct v34_precoder *left,
-	const struct v34_precoder *right)
-{
-	if (left->grid_step != right->grid_step)
-		return false;
-	for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT;
-	     ++tap) {
-		if (left->coefficients[tap].real !=
-			    right->coefficients[tap].real ||
-		    left->coefficients[tap].imaginary !=
-			    right->coefficients[tap].imaginary)
-			return false;
-	}
-	return true;
-}
-
 bool v34_channel_frame_receiver_is_valid(
 	const struct v34_channel_frame_receiver *receiver)
 {
@@ -42,9 +25,11 @@ bool v34_channel_frame_receiver_is_valid(
 	return v34_mapping_parameters_are_equal(
 		       &receiver->conditioner.normalizer.parameters,
 		       &decoder->parameters) &&
-	       precoders_match_configuration(
-		       &receiver->receive_precoder,
-		       &decoder->inverse_precoder);
+	       receiver->receive_precoder.grid_step ==
+		       decoder->inverse_precoder.grid_step &&
+	       v34_precoder_coefficients_are_equal(
+		       receiver->receive_precoder.coefficients,
+		       decoder->inverse_precoder.coefficients);
 }
 
 enum v34_data_receive_result
@@ -106,16 +91,6 @@ static enum v34_data_receive_result decoder_result(
 		break;
 	}
 	return V34_DATA_RECEIVE_INVALID_ARGUMENT;
-}
-
-static bool precoder_is_zero(const struct v34_precoder *precoder)
-{
-	for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap) {
-		if (precoder->coefficients[tap].real != 0 ||
-		    precoder->coefficients[tap].imaginary != 0)
-			return false;
-	}
-	return true;
 }
 
 static enum v34_data_receive_result
@@ -212,7 +187,8 @@ v34_channel_frame_receiver_advance(
 		return precoder_result(prediction_result);
 	frame_result = next.conditioner.normalizer.nonlinear_parameter ==
 			       V34_NONLINEAR_THETA_5_OVER_16 &&
-		       precoder_is_zero(&next.receive_precoder) ?
+		       v34_precoder_coefficients_are_zero(
+			       next.receive_precoder.coefficients) ?
 		v34_channel_frame_decoder_advance_projected(
 			&next.frame_decoder, channel_estimates, normalized,
 			&next.conditioner.normalizer, &generated_current,

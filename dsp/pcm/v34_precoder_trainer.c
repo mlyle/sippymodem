@@ -17,26 +17,14 @@ static const double V34_PRECODER_MAXIMUM_MAGNITUDE_SUM = 4.0;
 static const double V34_PRECODER_MAXIMUM_DECISION_ERROR_POWER = 0.5;
 static const double V34_PRECODER_MINIMUM_DECISION_ERROR_POWER = 1e-8;
 
-static bool coefficients_are_zero(
-	const struct v34_q14_coefficient
-		coefficients[V34_PRECODER_TAP_COUNT])
-{
-	for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap)
-		if (coefficients[tap].real != 0 ||
-		    coefficients[tap].imaginary != 0)
-			return false;
-	return true;
-}
-
 bool v34_precoder_recommendation_is_valid(
 	const struct v34_precoder_recommendation *recommendation)
 {
 	if (recommendation == NULL ||
 	    !v34_precoder_coefficients_are_valid(recommendation->coefficients))
 		return false;
-	return recommendation->enabled ?
-		       !coefficients_are_zero(recommendation->coefficients) :
-		       coefficients_are_zero(recommendation->coefficients);
+	return recommendation->enabled !=
+	       v34_precoder_coefficients_are_zero(recommendation->coefficients);
 }
 
 bool v34_precoder_trainer_is_valid(
@@ -211,7 +199,7 @@ enum v34_precoder_trainer_result v34_precoder_trainer_finish(
 			    coefficients_unclipped &&
 			    magnitude_sum <
 				    V34_PRECODER_MAXIMUM_MAGNITUDE_SUM &&
-			    !coefficients_are_zero(generated.coefficients);
+			    !v34_precoder_coefficients_are_zero(generated.coefficients);
 	if (!generated.enabled)
 		memset(generated.coefficients, 0,
 		       sizeof(generated.coefficients));

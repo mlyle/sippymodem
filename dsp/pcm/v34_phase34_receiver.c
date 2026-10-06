@@ -57,26 +57,6 @@ static bool semantic_state_is_valid(
 		       .symbol_rate == receiver->transmitting_profile.symbol_rate;
 }
 
-static bool precoder_coefficients_match(
-	const struct v34_q14_coefficient left[V34_PRECODER_TAP_COUNT],
-	const struct v34_q14_coefficient right[V34_PRECODER_TAP_COUNT])
-{
-	for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap)
-		if (left[tap].real != right[tap].real ||
-		    left[tap].imaginary != right[tap].imaginary)
-			return false;
-	return true;
-}
-
-static bool precoder_coefficients_are_zero(
-	const struct v34_q14_coefficient
-		coefficients[V34_PRECODER_TAP_COUNT])
-{
-	static const struct v34_q14_coefficient zero[V34_PRECODER_TAP_COUNT];
-
-	return precoder_coefficients_match(coefficients, zero);
-}
-
 static uint32_t scaled_coefficient_magnitude(int16_t coefficient)
 {
 	int32_t scaled = arithmetic_shift_right_u32(
@@ -182,14 +162,14 @@ bool v34_phase34_receiver_is_valid(
 	    receiver->stage != V34_PHASE34_RECEIVER_DATA)
 		return false;
 	if ((!receiver->feedback_training_complete &&
-	     !precoder_coefficients_are_zero(
+	     !v34_precoder_coefficients_are_zero(
 		     receiver->precoder_coefficients)) ||
 	    (receiver->feedback_training_complete &&
 	     receiver->stage == V34_PHASE34_RECEIVER_PHASE3))
 		return false;
 	if (receiver->stage == V34_PHASE34_RECEIVER_DATA &&
 	    (!receiver->feedback_training_complete ||
-	     !precoder_coefficients_match(
+	     !v34_precoder_coefficients_are_equal(
 		     receiver->precoder_coefficients,
 		     receiver->semantic.data.data_receiver.channel_receiver
 			     .receive_precoder.coefficients)))
@@ -782,7 +762,7 @@ enum v34_phase34_receiver_result v34_phase34_receiver_start_data(
 		return V34_PHASE34_RECEIVER_INVALID_STATE;
 	if (geometry->symbol_rate != receiver->transmitting_profile.symbol_rate)
 		return V34_PHASE34_RECEIVER_INVALID_ARGUMENT;
-	if (!precoder_coefficients_match(
+	if (!v34_precoder_coefficients_are_equal(
 		    receiver->precoder_coefficients, coefficients))
 		return V34_PHASE34_RECEIVER_INVALID_ARGUMENT;
 	if (v34_data_decision_receiver_init(

@@ -22,9 +22,9 @@ static bool mapping_matches_direction(
 		       direction->expanded_shaping &&
 	       mapping->normalizer.nonlinear_parameter ==
 		       direction->nonlinear_parameter &&
-	       memcmp(mapping->encoder.precoder.coefficients,
-		      direction->precoder_coefficients,
-		      sizeof(direction->precoder_coefficients)) == 0;
+	       v34_precoder_coefficients_are_equal(
+		       mapping->encoder.precoder.coefficients,
+		       direction->precoder_coefficients);
 }
 
 static bool receive_matches_direction(
@@ -53,9 +53,9 @@ static bool receive_matches_direction(
 		       &receive->normalizer.parameters, &expected) &&
 	       receive->trellis_selection == direction->trellis_selection &&
 	       receive->expanded_shaping == direction->expanded_shaping &&
-	       memcmp(receive->precoder_coefficients,
-		      direction->precoder_coefficients,
-		      sizeof(direction->precoder_coefficients)) == 0;
+	       v34_precoder_coefficients_are_equal(
+		       receive->precoder_coefficients,
+		       direction->precoder_coefficients);
 }
 
 bool v34_data_startup_is_valid(
