@@ -73,6 +73,11 @@ static bool menu_is_valid(const struct v8_menu *menu)
 	       category_count <= V8_MAX_INFORMATION_OCTETS;
 }
 
+bool v8_menu_is_usable(const struct v8_menu *menu)
+{
+	return menu != NULL && menu->modulations != 0 && menu_is_valid(menu);
+}
+
 enum v8_menu_result v8_call_menu_init(
 	struct v8_menu *menu, uint16_t modulations, bool lapm)
 {

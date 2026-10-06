@@ -8,24 +8,13 @@ enum {
 	V8_ANSWER_SIGNAL_AVERAGE_AMPLITUDE = 16000,
 };
 
-static bool menu_is_usable(const struct v8_menu *menu)
-{
-	uint8_t information[V8_MAX_INFORMATION_OCTETS];
-	size_t information_count;
-
-	return menu != NULL && menu->modulations != 0 &&
-	       v8_menu_encode(
-		       menu, information, sizeof(information),
-		       &information_count) == V8_MENU_OK;
-}
-
 static bool selection_is_valid(
 	const struct v8_answering *answering)
 {
 	unsigned int selected = (unsigned int)answering->selected_modulation;
 
-	return menu_is_usable(&answering->call_menu) &&
-	       menu_is_usable(&answering->negotiated_menu) && selected != 0 &&
+	return v8_menu_is_usable(&answering->call_menu) &&
+	       v8_menu_is_usable(&answering->negotiated_menu) && selected != 0 &&
 	       (selected & ~((unsigned int)V8_MODULATION_ALL)) == 0 &&
 	       (selected & (selected - 1u)) == 0 &&
 	       (answering->negotiated_menu.modulations & selected) != 0 &&
@@ -60,7 +49,7 @@ static bool qc_request_is_usable(const struct v8_answering *answering,
 static bool answering_is_valid(
 	const struct v8_answering *answering)
 {
-	if (answering == NULL || !menu_is_usable(&answering->local_menu) ||
+	if (answering == NULL || !v8_menu_is_usable(&answering->local_menu) ||
 	    (unsigned int)answering->state > V8_ANSWERING_FAILED ||
 	    (unsigned int)answering->terminal_result >
 		    V8_ANSWERING_NO_COMMON_MODULATION ||
@@ -171,7 +160,7 @@ enum v8_answering_result v8_answering_init(
 		.transmit_bit = 1,
 	};
 
-	if (answering == NULL || !menu_is_usable(local_menu) ||
+	if (answering == NULL || !v8_menu_is_usable(local_menu) ||
 	    v8_ansam_generator_init(
 		    &initialized.answer_signal,
 		    V8_ANSWER_SIGNAL_AVERAGE_AMPLITUDE, true) !=

@@ -91,7 +91,8 @@ static bool test_all_modulation_combinations(void)
 			      menu.modulation_octets == width,
 			      "minimal width for capabilities=%x", capabilities);
 		/* Preserve explicit extra extensions, including zero capabilities. */
-		for (unsigned extra = 0; extra <= 2; ++extra) {
+		for (unsigned extra = 0;
+		     extra <= V8_MAX_MODULATION_OCTETS - width; ++extra) {
 			menu.modulation_octets = (uint8_t)(width + extra);
 			for (unsigned i = width + 1u; i <= width + extra; ++i)
 				expected[i] = 0x10;
@@ -99,7 +100,9 @@ static bool test_all_modulation_combinations(void)
 			      count == 1u + width + extra && !memcmp(encoded, expected, count) &&
 			      v8_menu_decode(expected, count, &decoded) == V8_MENU_OK &&
 			      decoded.modulations == capabilities &&
-			      decoded.modulation_octets == width + extra && !decoded.pcm_present,
+			      decoded.modulation_octets == width + extra && !decoded.pcm_present &&
+			      v8_menu_is_usable(&menu) == (capabilities != 0) &&
+			      v8_menu_is_usable(&decoded) == (capabilities != 0),
 			      "wire mapping capabilities=%x extra=%u", capabilities, extra);
 		}
 	}
@@ -148,6 +151,60 @@ static bool test_extended_zero_capabilities(void)
 	      count == ARRAY_LENGTH(expected) &&
 	      memcmp(information, expected, sizeof(expected)) == 0,
 	      "V.8 zero-capability extension width changed");
+	CHECK(!v8_menu_is_usable(&menu),
+	      "V.8 empty refusal menu was usable for negotiation");
+	return true;
+}
+
+static bool test_menu_usability(void)
+{
+	CHECK(!v8_menu_is_usable(NULL), "V.8 null menu was usable");
+	for (unsigned flags = 0; flags < 8; ++flags) {
+		struct v8_menu menu = {
+			.call_function = V8_CALL_DATA,
+			.modulations = V8_MODULATION_V34_DUPLEX | V8_MODULATION_V21,
+			.pcm_availability = (flags & 4u) ? V8_PCM_ANALOG : 0,
+			.pstn_access = (flags & 2u) ? V8_PSTN_DIGITAL : 0,
+			.pcm_present = (flags & 4u) != 0,
+			.pstn_access_present = (flags & 2u) != 0,
+			.lapm = (flags & 1u) != 0,
+		};
+		unsigned categories = 1u + menu.lapm + menu.pcm_present +
+			menu.pstn_access_present;
+
+		for (unsigned width = 0; width <= V8_MAX_MODULATION_OCTETS + 1u; ++width) {
+			bool expected = width >= 3u && width + categories <= 16u &&
+				(!menu.pcm_present || menu.pstn_access_present);
+
+			menu.modulation_octets = (uint8_t)width;
+			CHECK(v8_menu_is_usable(&menu) == expected,
+			      "V.8 menu admission changed at width=%u flags=%u", width, flags);
+		}
+	}
+	for (unsigned mutation = 0; mutation < 8; ++mutation) {
+		struct v8_menu menu = {
+			.call_function = V8_CALL_DATA,
+			.modulations = V8_MODULATION_V34_DUPLEX | V8_MODULATION_V21,
+			.modulation_octets = 3,
+			.pcm_availability = V8_PCM_ANALOG,
+			.pstn_access = V8_PSTN_DIGITAL,
+			.pcm_present = true,
+			.pstn_access_present = true,
+		};
+
+		switch (mutation) {
+		case 0: menu.call_function = (enum v8_call_function)0; break;
+		case 1: menu.modulations |= UINT16_C(0x1000); break;
+		case 2: menu.pcm_availability = UINT8_C(0x08); break;
+		case 3: menu.pstn_access = UINT8_C(0x08); break;
+		case 4: menu.pcm_present = false; break;
+		case 5: menu.pstn_access_present = false; break;
+		case 6: menu.modulations = V8_MODULATION_V21; break;
+		case 7: menu.modulations = 0; break;
+		}
+		CHECK(!v8_menu_is_usable(&menu),
+		      "V.8 malformed menu mutation %u was usable", mutation);
+	}
 	return true;
 }
 
@@ -1050,6 +1107,7 @@ int main(void)
 		{ "all modulation combinations", test_all_modulation_combinations },
 		{ "minimal modulation width", test_minimal_modulation_width },
 		{ "extended zero capabilities", test_extended_zero_capabilities },
+		{ "menu usability", test_menu_usability },
 		{ "decode round trip", test_decode_round_trip },
 		{ "PCM categories", test_pcm_categories },
 		{ "PCM category rejection", test_pcm_category_rejection },

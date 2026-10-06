@@ -99,6 +99,9 @@ enum v8_menu_result v8_call_menu_init(
 enum v8_menu_result v8_pcm_call_menu_init(
 	struct v8_menu *menu, uint8_t pcm_availability,
 	uint8_t pstn_access, bool lapm);
+/* A valid data menu with a nonempty modulation set. Empty refusal menus
+ * remain encodable and decodable. */
+bool v8_menu_is_usable(const struct v8_menu *menu);
 enum v8_menu_result v8_menu_encode(
 	const struct v8_menu *menu, uint8_t *information,
 	size_t capacity, size_t *information_count);

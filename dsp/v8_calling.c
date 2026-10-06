@@ -4,17 +4,6 @@
 
 #include <string.h>
 
-static bool menu_is_usable(const struct v8_menu *menu)
-{
-	uint8_t information[V8_MAX_INFORMATION_OCTETS];
-	size_t information_count;
-
-	return menu != NULL && menu->modulations != 0 &&
-	       v8_menu_encode(
-		       menu, information, sizeof(information),
-		       &information_count) == V8_MENU_OK;
-}
-
 static bool qc_request_is_usable(const struct v8_menu *menu,
 	const struct v92_qc1_message *request)
 {
@@ -40,7 +29,7 @@ static bool calling_is_valid(const struct v8_calling *calling)
 	unsigned int selected;
 	bool selection_is_single;
 
-	if (calling == NULL || !menu_is_usable(&calling->local_menu) ||
+	if (calling == NULL || !v8_menu_is_usable(&calling->local_menu) ||
 	    !v8_ansam_detector_is_valid(&calling->answer_signal) ||
 	    (unsigned int)calling->state > V8_CALLING_FAILED ||
 	    (unsigned int)calling->terminal_result >
@@ -64,7 +53,7 @@ static bool calling_is_valid(const struct v8_calling *calling)
 		(selected & ~((unsigned int)V8_MODULATION_ALL)) == 0 &&
 		(selected & (selected - 1u)) == 0;
 	if (calling->negotiated) {
-		if (!menu_is_usable(&calling->negotiated_menu) ||
+		if (!v8_menu_is_usable(&calling->negotiated_menu) ||
 		    !selection_is_single ||
 		    (calling->negotiated_menu.modulations & selected) == 0 ||
 		    (calling->negotiated_menu.modulations &
@@ -138,7 +127,7 @@ enum v8_calling_result v8_calling_init(
 	uint8_t information[V8_MAX_INFORMATION_OCTETS];
 	size_t information_count;
 
-	if (calling == NULL || !menu_is_usable(local_menu) ||
+	if (calling == NULL || !v8_menu_is_usable(local_menu) ||
 	    v8_menu_encode(
 		    local_menu, information, sizeof(information),
 		    &information_count) != V8_MENU_OK ||
