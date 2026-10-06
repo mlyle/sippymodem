@@ -1717,7 +1717,6 @@ int modem_answer(struct modem *m)
 	if (!m->call_report.active)
 		call_report_begin(m, false);
 	m->dp_requested = 0;
-	m->automode_requested = 0; /* MODEM_AUTOMODE(m) */
 	m->sample_timer = ANSWER_DELAY(m) ?
 		ANSWER_DELAY(m)*m->srate : m->srate/100;
 	m->sample_timer_func = do_modem_change_dp;
@@ -1759,7 +1758,6 @@ int modem_dial(struct modem *m)
 	int ret;
         MODEM_DBG("modem dial: %s...\n", m->dial_string);
 	m->dp_requested = 0;
-	m->automode_requested = 0;
  	ret = modem_dial_start(m);
 	if(ret)
 		return -1;

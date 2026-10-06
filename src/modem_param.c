@@ -59,12 +59,6 @@ long modem_get_param(struct modem *m, unsigned param_name)
 		return m->sregs[SREG_V92_QUICK_CONNECT] != 0;
 	case MDMPRM_V92_PCM_UPSTREAM:
 		return m->sregs[SREG_V92_PCM_UPSTREAM] != 0;
-	case MDMPRM_V90_UPSTREAM_MIN_RATE:
-		return m->v90_upstream_min_rate;
-	case MDMPRM_V90_UPSTREAM_MAX_RATE:
-		return m->v90_upstream_max_rate;
-	case MDMPRM_V90_UPSTREAM_MAX_BAUD:
-		return m->v90_upstream_max_baud;
 	}
 	return -1;
 }
@@ -103,15 +97,6 @@ long modem_set_param(struct modem *m, unsigned name, int val)
 		break;
 	case MDMPRM_V92_PCM_UPSTREAM:
 		m->sregs[SREG_V92_PCM_UPSTREAM] = val != 0;
-		break;
-	case MDMPRM_V90_UPSTREAM_MIN_RATE:
-		m->v90_upstream_min_rate = (unsigned)val;
-		break;
-	case MDMPRM_V90_UPSTREAM_MAX_RATE:
-		m->v90_upstream_max_rate = (unsigned)val;
-		break;
-	case MDMPRM_V90_UPSTREAM_MAX_BAUD:
-		m->v90_upstream_max_baud = (unsigned)val;
 		break;
 	default:
 		return -1;

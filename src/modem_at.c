@@ -701,8 +701,7 @@ static int process_plus_V90U(struct modem *m, char *p, int *len)
 		*len += 1;
 		if (parse_unsigned(&p, len, &max_rate, 0) != 1)
 			return -1;
-		max_baud = (unsigned long)modem_get_param(
-			m, MDMPRM_V90_UPSTREAM_MAX_BAUD);
+		max_baud = m->v90_upstream_max_baud;
 		if (*p == ',') {
 			p++;
 			*len += 1;
