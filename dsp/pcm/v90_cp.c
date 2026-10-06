@@ -107,15 +107,10 @@ bool v90_cp_parameters_are_equal(
 
 size_t v90_cp_frame_bits(const struct v90_cp_parameters *parameters)
 {
-	size_t constellation_sets;
-
 	if (!v90_cp_parameters_are_valid(parameters))
 		return 0;
-	constellation_sets = parameters->codec_constellations_differ ? 2u : 1u;
-	return V90_CP_HEADER_BITS +
-	       constellation_sets * parameters->constellation_count *
-		       V90_CP_CONSTELLATION_BITS +
-	       V90_CP_TRAILER_BITS;
+	return pcm_control_frame_payload_end(parameters->constellation_count,
+		parameters->codec_constellations_differ) + V90_CP_TRAILER_BITS;
 }
 
 size_t v90_cp_frame_bytes(const struct v90_cp_parameters *parameters)
@@ -247,7 +242,6 @@ enum v90_cp_result v90_cp_decode(
 	struct v90_cp_parameters decoded = { 0 };
 	size_t byte_count = (frame_bit_count + 7u) / 8u;
 	size_t constellation_count;
-	size_t set_count;
 	size_t expected_bits;
 	size_t payload_end;
 
@@ -262,15 +256,11 @@ enum v90_cp_result v90_cp_decode(
 		return V90_CP_INVALID_FRAME;
 	decoded.codec_constellations_differ =
 		packed_msb_bit(frame, CP_CODEC_DIFFERENCE_BIT) != 0;
-	set_count = constellation_count *
-		    (decoded.codec_constellations_differ ? 2u : 1u);
-	expected_bits = V90_CP_HEADER_BITS +
-			set_count * V90_CP_CONSTELLATION_BITS +
-			V90_CP_TRAILER_BITS;
+	payload_end = pcm_control_frame_payload_end(
+		constellation_count, decoded.codec_constellations_differ);
+	expected_bits = payload_end + V90_CP_TRAILER_BITS;
 	if (frame_bit_count != expected_bits)
 		return V90_CP_INVALID_FRAME;
-	payload_end = V90_CP_HEADER_BITS +
-		      set_count * V90_CP_CONSTELLATION_BITS;
 	if (!framing_is_valid(frame, payload_end, frame_bit_count))
 		return V90_CP_INVALID_FRAME;
 	if (!pcm_control_frame_read_constellation_payload(

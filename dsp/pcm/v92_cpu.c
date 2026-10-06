@@ -47,20 +47,6 @@ bool v92_cpu_parameters_are_valid(
 		       parameters->codec_constellations_differ);
 }
 
-static size_t frame_bits_for_shape(
-	size_t constellation_count, bool codec_constellations_differ,
-	unsigned int mapping_frame_bits)
-{
-	size_t sets = codec_constellations_differ ? 2u : 1u;
-	size_t unfilled = V92_CPU_HEADER_BITS +
-		sets * constellation_count *
-		V92_CPU_CONSTELLATION_BITS +
-		V92_CPU_MIN_TRAILER_BITS;
-	size_t multiple = mapping_frame_bits;
-
-	return (unfilled + multiple - 1u) / multiple * multiple;
-}
-
 size_t v92_cpu_frame_bits(
 	const struct v92_cpu_parameters *parameters,
 	unsigned int mapping_frame_bits)
@@ -68,9 +54,9 @@ size_t v92_cpu_frame_bits(
 	if (!v92_cpu_parameters_are_valid(parameters) ||
 	    !v92_control_upstream_alignment_is_valid(mapping_frame_bits))
 		return 0u;
-	return frame_bits_for_shape(
-		parameters->constellation_count,
-		parameters->codec_constellations_differ,
+	return pcm_control_frame_align_bits(
+		pcm_control_frame_payload_end(parameters->constellation_count,
+			parameters->codec_constellations_differ) + V92_CPU_MIN_TRAILER_BITS,
 		mapping_frame_bits);
 }
 
@@ -161,8 +147,7 @@ size_t v92_cpus_frame_bits(unsigned int mapping_frame_bits)
 {
 	if (!v92_control_upstream_alignment_is_valid(mapping_frame_bits))
 		return 0u;
-	return (CPUS_UNFILLED_BITS + mapping_frame_bits - 1u) /
-		mapping_frame_bits * mapping_frame_bits;
+	return pcm_control_frame_align_bits(CPUS_UNFILLED_BITS, mapping_frame_bits);
 }
 
 enum v92_cpu_result v92_cpus_encode(
@@ -314,10 +299,10 @@ enum v92_cpu_result v92_cpu_probe_frame_bits(
 	constellation_count = pcm_control_frame_read_map(frame, NULL);
 	if (constellation_count == 0u)
 		return V92_CPU_INVALID_FRAME;
-	inferred = frame_bits_for_shape(
-		constellation_count,
-		packed_msb_bit(frame, CPU_CODEC_DIFFERENCE_BIT) != 0u,
-		mapping_frame_bits);
+	inferred = pcm_control_frame_align_bits(
+		pcm_control_frame_payload_end(constellation_count,
+			packed_msb_bit(frame, CPU_CODEC_DIFFERENCE_BIT) != 0u) +
+			V92_CPU_MIN_TRAILER_BITS, mapping_frame_bits);
 	if (inferred < received_bit_count || inferred > V92_CPU_MAX_FRAME_BITS)
 		return V92_CPU_INVALID_FRAME;
 	*frame_bit_count = inferred;
@@ -332,8 +317,6 @@ enum v92_cpu_result v92_cpu_decode(
 	struct v92_cpu_parameters decoded;
 	size_t multiple;
 	size_t frame_bytes;
-	size_t sets;
-	size_t row_count;
 	size_t payload_end;
 
 	if (frame == NULL || parameters == NULL)
@@ -350,16 +333,12 @@ enum v92_cpu_result v92_cpu_decode(
 		return V92_CPU_INVALID_ARGUMENT;
 	if (!header_framing_is_valid(frame) || !decode_header(frame, &decoded))
 		return V92_CPU_INVALID_FRAME;
-	if (frame_bit_count != frame_bits_for_shape(
-		    decoded.constellation_count,
-		    decoded.codec_constellations_differ,
-		    mapping_frame_bits))
+	payload_end = pcm_control_frame_payload_end(
+		decoded.constellation_count, decoded.codec_constellations_differ);
+	if (frame_bit_count != pcm_control_frame_align_bits(
+		    payload_end + V92_CPU_MIN_TRAILER_BITS, mapping_frame_bits))
 		return V92_CPU_INVALID_FRAME;
 
-	sets = decoded.codec_constellations_differ ? 2u : 1u;
-	row_count = sets * decoded.constellation_count;
-	payload_end = CPU_MASKS_FIRST_BIT +
-		row_count * V92_CPU_CONSTELLATION_BITS;
 	if (!pcm_control_frame_starts_are_zero(
 		    frame, CPU_MASKS_FIRST_BIT, payload_end + 1u) ||
 	    !packed_msb_bits_are_zero(

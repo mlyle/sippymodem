@@ -156,6 +156,22 @@ static inline size_t pcm_control_frame_read_map(
 	return count;
 }
 
+/* Table 14/V.90 and Table 23/V.92 share one 136-bit header followed by
+ * one or two planes of 136-bit constellation rows. The caller validates
+ * the declared row count (1..6) before calculating the CRC start bit. */
+static inline size_t pcm_control_frame_payload_end(size_t count, bool codec_differs)
+{
+	return (1u + count * (codec_differs ? 2u : 1u)) * 136u;
+}
+
+/* Round a bounded control record, including its mandatory trailer, to the
+ * caller's positive frame-bit alignment. Record owners select the trailer
+ * and alignment for their protocol and preceding modulation. */
+static inline size_t pcm_control_frame_align_bits(size_t bits, size_t alignment)
+{
+	return (bits + alignment - 1u) / alignment * alignment;
+}
+
 /* CP, CPt and CPu share 136-bit constellation rows after a 136-bit header.
  * Each row carries eight words: a start bit followed by sixteen Ucode bits,
  * lowest Ucode first. The caller validates row counts and storage bounds.
@@ -196,8 +212,7 @@ static inline void pcm_control_frame_write_constellation_payload(
 	uint8_t *frame, const struct pcm_constellation *transmit,
 	const struct pcm_constellation *codec, size_t count, bool codec_differs)
 {
-	size_t row_count = count * (codec_differs ? 2u : 1u);
-	size_t payload_end = (1u + row_count) * 136u;
+	size_t payload_end = pcm_control_frame_payload_end(count, codec_differs);
 
 	pcm_control_frame_write_constellations(frame, 0u, transmit, count);
 	if (codec_differs)
@@ -211,8 +226,7 @@ static inline bool pcm_control_frame_read_constellation_payload(
 	const uint8_t *frame, struct pcm_constellation *transmit,
 	struct pcm_constellation *codec, size_t count, bool codec_differs)
 {
-	size_t row_count = count * (codec_differs ? 2u : 1u);
-	size_t payload_end = (1u + row_count) * 136u;
+	size_t payload_end = pcm_control_frame_payload_end(count, codec_differs);
 	uint16_t received = (uint16_t)packed_msb_read_msb_field(
 		frame, payload_end + 1u, 16u);
 

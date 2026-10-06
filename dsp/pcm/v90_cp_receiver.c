@@ -18,15 +18,10 @@ static bool infer_frame_bit_count(
 	const uint8_t *frame, size_t *frame_bit_count)
 {
 	size_t constellation_count = pcm_control_frame_read_map(frame, NULL);
-	size_t set_count;
-
 	if (constellation_count == 0)
 		return false;
-	set_count = constellation_count *
-		    (packed_msb_bit(frame, CP_CODEC_DIFFERENCE_BIT) != 0 ? 2u : 1u);
-	*frame_bit_count = V90_CP_HEADER_BITS +
-			   set_count * V90_CP_CONSTELLATION_BITS +
-			   V90_CP_TRAILER_BITS;
+	*frame_bit_count = pcm_control_frame_payload_end(constellation_count,
+		packed_msb_bit(frame, CP_CODEC_DIFFERENCE_BIT) != 0) + V90_CP_TRAILER_BITS;
 	return true;
 }
 

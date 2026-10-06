@@ -17,17 +17,10 @@ enum {
 	CPT_HEADER_LAST_BIT = CPT_CODEC_DIFFERENCE_BIT,
 };
 
-static size_t align_frame(size_t bit_count)
-{
-	return (bit_count + V92_CPT_SYMBOLS_PER_FRAME - 1u) /
-	       V92_CPT_SYMBOLS_PER_FRAME * V92_CPT_SYMBOLS_PER_FRAME;
-}
-
 static bool infer_frame_bit_count(
 	const uint8_t *frame, size_t *frame_bit_count)
 {
 	size_t constellation_count;
-	size_t set_count;
 	size_t inferred;
 
 	if (frame == NULL || frame_bit_count == NULL)
@@ -35,13 +28,10 @@ static bool infer_frame_bit_count(
 	constellation_count = pcm_control_frame_read_map(frame, NULL);
 	if (constellation_count == 0)
 		return false;
-	set_count = constellation_count *
-		(packed_msb_bit(frame, CPT_CODEC_DIFFERENCE_BIT) != 0 ?
-			 2u : 1u);
-	inferred = align_frame(
-		V92_CPT_HEADER_BITS +
-		set_count * V92_CPT_CONSTELLATION_BITS +
-		V92_CPT_MIN_TRAILER_BITS);
+	inferred = pcm_control_frame_align_bits(
+		pcm_control_frame_payload_end(constellation_count,
+			packed_msb_bit(frame, CPT_CODEC_DIFFERENCE_BIT) != 0) +
+			V92_CPT_MIN_TRAILER_BITS, V92_CPT_SYMBOLS_PER_FRAME);
 	if (inferred < V92_CPT_MIN_FRAME_BITS ||
 	    inferred > V92_CPT_MAX_FRAME_BITS)
 		return false;
