@@ -195,6 +195,7 @@ qam_modulator_init_with_point_power_limit(
 {
 	uint64_t period = 0;
 	double normalization;
+	struct qam_channel settings;
 
 	if (modulator == NULL || amplitude <= 0 ||
 	    !isfinite(maximum_point_power) || maximum_point_power <= 0.0 ||
@@ -203,6 +204,8 @@ qam_modulator_init_with_point_power_limit(
 	normalization = pulse_normalization(channel);
 	if (!isfinite(normalization) || normalization <= 0.0)
 		return QAM_INVALID_ARGUMENT;
+	settings = *channel;
+	channel = &settings;
 	memset(modulator, 0, sizeof(*modulator));
 	modulator->channel = *channel;
 	modulator->symbol_period_units = period;
@@ -642,6 +645,7 @@ enum qam_result qam_demodulator_init_with_timing_windows(
 	uint64_t timing_step = 0;
 	uint32_t acquisition_samples = 0;
 	uint32_t tracking_samples = 0;
+	struct qam_channel settings;
 
 	if (demodulator == NULL || !channel_is_valid(channel, &period) ||
 	    !demodulator_shape_is_valid(
@@ -656,6 +660,8 @@ enum qam_result qam_demodulator_init_with_timing_windows(
 		    channel, period, candidate_count, tracking_symbols,
 		    &tracking_samples))
 		return QAM_INVALID_ARGUMENT;
+	settings = *channel;
+	channel = &settings;
 	memset(demodulator, 0, sizeof(*demodulator));
 	demodulator->channel = *channel;
 	demodulator->symbol_period_units = period;
@@ -689,7 +695,6 @@ enum qam_result qam_demodulator_set_timing_power_hysteresis(
 enum qam_result qam_demodulator_reset(
 	struct qam_demodulator *demodulator)
 {
-	struct qam_channel channel;
 	uint32_t acquisition_symbols;
 	uint32_t tracking_symbols;
 	double timing_power_hysteresis;
@@ -697,12 +702,12 @@ enum qam_result qam_demodulator_reset(
 
 	if (!qam_demodulator_is_valid(demodulator))
 		return QAM_INVALID_ARGUMENT;
-	channel = demodulator->channel;
 	acquisition_symbols = demodulator->acquisition_window_symbols;
 	tracking_symbols = demodulator->tracking_window_symbols;
 	timing_power_hysteresis = demodulator->timing_power_hysteresis;
 	result = qam_demodulator_init_with_timing_windows(
-		demodulator, &channel, acquisition_symbols, tracking_symbols);
+		demodulator, &demodulator->channel,
+		acquisition_symbols, tracking_symbols);
 	if (result != QAM_OK)
 		return result;
 	return qam_demodulator_set_timing_power_hysteresis(

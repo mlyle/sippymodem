@@ -1126,6 +1126,60 @@ static bool test_timing_windows(void)
 	return true;
 }
 
+static bool test_owned_channel_reinitialization(void)
+{
+	struct qam_channel channel = v22_channel(1200);
+
+	for (unsigned explicit_policy = 0; explicit_policy < 2; ++explicit_policy) {
+		struct qam_modulator tx, expected_tx, saved_tx;
+		struct qam_demodulator rx, expected_rx, saved_rx;
+		struct qam_point point = { 0.75, 0.0 }, received;
+		int16_t sample;
+		bool accepted, ready;
+
+		CHECK(qam_modulator_init(&tx, &channel, TEST_AMPLITUDE) == QAM_OK &&
+		      qam_demodulator_init(&rx, &channel) == QAM_OK &&
+		      qam_modulator_sample(&tx, &point, &sample, &accepted) == QAM_OK &&
+		      accepted &&
+		      qam_demodulator_sample(&rx, sample, &received, &ready) == QAM_OK,
+		      "owned QAM initialization fixtures did not advance");
+		if (explicit_policy) {
+			CHECK(qam_modulator_init_with_point_power_limit(
+				      &tx, &tx.channel, TEST_AMPLITUDE, 2.0) == QAM_OK &&
+			      qam_modulator_init_with_point_power_limit(
+				      &expected_tx, &channel, TEST_AMPLITUDE, 2.0) == QAM_OK &&
+			      qam_demodulator_init_with_timing_windows(
+				      &rx, &rx.channel, 64, 384) == QAM_OK &&
+			      qam_demodulator_init_with_timing_windows(
+				      &expected_rx, &channel, 64, 384) == QAM_OK,
+			      "owned QAM settings rejected explicit initialization");
+		} else {
+			CHECK(qam_modulator_init(&tx, &tx.channel, TEST_AMPLITUDE) == QAM_OK &&
+			      qam_modulator_init(&expected_tx, &channel, TEST_AMPLITUDE) == QAM_OK &&
+			      qam_demodulator_init(&rx, &rx.channel) == QAM_OK &&
+			      qam_demodulator_init(&expected_rx, &channel) == QAM_OK,
+			      "owned QAM settings rejected default initialization");
+		}
+		CHECK(qam_modulator_is_valid(&tx) && qam_demodulator_is_valid(&rx) &&
+		      qam_modulators_equal(&tx, &expected_tx) &&
+		      qam_demodulators_equal(&rx, &expected_rx),
+		      "owned QAM settings did not preserve initialization, explicit=%u",
+		      explicit_policy);
+
+		tx.channel.symbol_rate_denominator = 0;
+		rx.channel.symbol_rate_denominator = 0;
+		saved_tx = tx;
+		saved_rx = rx;
+		CHECK(qam_modulator_init(&tx, &tx.channel, TEST_AMPLITUDE) ==
+			      QAM_INVALID_ARGUMENT &&
+		      qam_demodulator_init(&rx, &rx.channel) == QAM_INVALID_ARGUMENT &&
+		      qam_modulators_equal(&tx, &saved_tx) &&
+		      qam_demodulators_equal(&rx, &saved_rx),
+		      "invalid owned QAM settings changed initialized state");
+	}
+	return true;
+}
+
 static bool test_configurable_point_power(void)
 {
 	struct qam_channel channel = v22_channel(1200);
@@ -1443,6 +1497,7 @@ int main(void)
 		{ "filtered clock tracking", test_filtered_clock_tracking },
 		{ "silence does not lock", test_silence_does_not_lock },
 		{ "timing windows", test_timing_windows },
+		{ "owned channel reinitialization", test_owned_channel_reinitialization },
 		{ "configurable point power", test_configurable_point_power },
 		{ "validation", test_validation },
 	};

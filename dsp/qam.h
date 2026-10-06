@@ -20,6 +20,7 @@ enum {
 	QAM_MAX_TIMING_WINDOW_SYMBOLS = 4096,
 };
 
+/* Initializers may reuse the channel settings retained in their own state. */
 struct qam_channel {
 	uint32_t sample_rate;
 	uint32_t symbol_rate_numerator;
