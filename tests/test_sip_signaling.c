@@ -25,6 +25,26 @@ enum {
 	TEST_REMOTE_RTP_PORT = 40000,
 };
 
+static pj_status_t next_ioqueue_error;
+
+pj_status_t __real_pj_ioqueue_register_sock2(
+	pj_pool_t *, pj_ioqueue_t *, pj_sock_t, pj_grp_lock_t *, void *,
+	const pj_ioqueue_callback *, pj_ioqueue_key_t **);
+
+pj_status_t __wrap_pj_ioqueue_register_sock2(
+	pj_pool_t *pool, pj_ioqueue_t *queue, pj_sock_t socket,
+	pj_grp_lock_t *lock, void *context, const pj_ioqueue_callback *callbacks,
+	pj_ioqueue_key_t **key)
+{
+	if (next_ioqueue_error != PJ_SUCCESS) {
+		pj_status_t error = next_ioqueue_error;
+		next_ioqueue_error = PJ_SUCCESS;
+		return error;
+	}
+	return __real_pj_ioqueue_register_sock2(
+		pool, queue, socket, lock, context, callbacks, key);
+}
+
 struct callback_capture {
 	bool deny_incoming;
 	struct sip_signaling *signaling;
@@ -1413,6 +1433,20 @@ static bool test_shared_two_calls(void)
 	CHECK(lines[0] != NULL && sip_signaling_open(lines[0]) == SIP_SIGNALING_OK, "recreated line failed");
 	unsigned int baseline_fds = open_fd_count(), peak_fds = baseline_fds;
 	CHECK(baseline_fds != UINT32_MAX, "could not inspect owned descriptor count");
+	/* Instrumentation may give retired SDK keys time to become reusable.
+	 * Inject a real socket-registration failure independently of call speed. */
+	unsigned int errors_before = captures[1].error_count;
+	next_ioqueue_error = PJ_ETOOMANY;
+	CHECK(sip_signaling_dial(lines[1], target) == SIP_SIGNALING_LIBRARY_ERROR &&
+	      next_ioqueue_error == PJ_SUCCESS &&
+	      sip_signaling_call_state(lines[1]) == SIP_CALL_IDLE &&
+	      captures[1].error_count == errors_before + 1 &&
+	      captures[1].last_error_status == PJ_ETOOMANY,
+	      "socket capacity failure did not release the outgoing call");
+	CHECK(open_fd_count() <= baseline_fds &&
+	      sip_signaling_call_state(lines[2]) == SIP_CALL_CONNECTED &&
+	      sip_signaling_call_state(lines[3]) == SIP_CALL_CONNECTED,
+	      "socket capacity failure leaked descriptors or ended another call");
 	bool capacity_seen = false;
 	unsigned int completed = 0;
 	for (unsigned int cycle = 0; cycle < 160; ++cycle) {
@@ -1449,7 +1483,6 @@ static bool test_shared_two_calls(void)
 		CHECK(sip_signaling_call_state(lines[1]) == SIP_CALL_IDLE, "capacity peer release failed");
 		completed++;
 	}
-	CHECK(capacity_seen, "rapid recycling did not exercise ordinary I/O capacity failure");
 	(void)sip_signaling_hangup(lines[0]);
 	(void)sip_signaling_hangup(lines[1]);
 	CHECK(sip_signaling_call_state(lines[2]) == SIP_CALL_CONNECTED && sip_signaling_call_state(lines[3]) == SIP_CALL_CONNECTED, "capacity failure ended an established call");
@@ -1467,7 +1500,8 @@ static bool test_shared_two_calls(void)
 	for (unsigned int i = 0; i < 100 && (sip_signaling_call_state(lines[0]) != SIP_CALL_CONNECTED || sip_signaling_call_state(lines[1]) != SIP_CALL_CONNECTED); ++i)
 		CHECK(sip_server_step(server, 1) == SIP_SIGNALING_OK, "recovered call poll failed");
 	CHECK(sip_signaling_call_state(lines[0]) == SIP_CALL_CONNECTED && sip_signaling_call_state(lines[1]) == SIP_CALL_CONNECTED, "recovered call failed to connect");
-	printf("SDK recycle: completed=%u fd-baseline=%u fd-peak=%u retirement-ms=500\n", completed, baseline_fds, peak_fds);
+	printf("SDK recycle: completed=%u fd-baseline=%u fd-peak=%u retirement-ms=500 capacity-exhausted=%s\n",
+	       completed, baseline_fds, peak_fds, capacity_seen ? "yes" : "no");
 	for (unsigned int i = 0; i < 4; ++i)
 		sip_signaling_destroy(lines[i]);
 	CHECK(sip_server_close(server) == SIP_SIGNALING_OK && sip_server_close(server) == SIP_SIGNALING_OK, "shared server close not idempotent");
