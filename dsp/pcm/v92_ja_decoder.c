@@ -98,20 +98,11 @@ enum v92_ja_decoder_result v92_ja_decoder_receive(
 	if (pcm_binary_sign_decode(&next.coding, sign, &bit) !=
 	    PCM_BINARY_SIGN_OK)
 		return V92_JA_DECODER_INVALID_STATE;
-	if (bit != 0u) {
-		if (next.consecutive_ones < V92_PHASE3_FRAME_SYNC_BITS)
-			next.consecutive_ones++;
-	} else {
-		bool synchronized =
-			next.consecutive_ones == V92_PHASE3_FRAME_SYNC_BITS;
-
-		next.consecutive_ones = 0u;
-		if (synchronized) {
-			if (next.bit_index != 0u)
-				result = V92_JA_DECODER_REJECTED;
-			start_descriptor(&next);
-			goto commit;
-		}
+	if (pcm_control_frame_sync_bit(&next.consecutive_ones, bit != 0u)) {
+		if (next.bit_index != 0u)
+			result = V92_JA_DECODER_REJECTED;
+		start_descriptor(&next);
+		goto commit;
 	}
 	if (next.bit_index == 0u)
 		goto commit;

@@ -133,15 +133,9 @@ static enum v90_ja_search_result receive_bit(
 		return V90_JA_SEARCH_OK;
 	}
 	if (!search->collecting) {
-		if (bit != 0) {
-			if (search->consecutive_ones < V90_DIL_FRAME_SYNC_BITS)
-				search->consecutive_ones++;
-		} else if (search->consecutive_ones ==
-			   V90_DIL_FRAME_SYNC_BITS) {
+		if (pcm_control_frame_sync_bit(
+			    &search->consecutive_ones, bit != 0u))
 			start_descriptor(search);
-		} else {
-			search->consecutive_ones = 0;
-		}
 		return V90_JA_SEARCH_OK;
 	}
 	packed_msb_set_bit(
