@@ -2850,6 +2850,104 @@ static bool test_at_compression_profile(void)
 	return true;
 }
 
+/* Exercise native framing after physical training, keeping AT configuration,
+ * XID negotiation, compression and the literal DTE queues on their real paths. */
+static bool exchange_lapm_bits(struct modem *peers[2])
+{
+	uint8_t bits[160];
+
+	for (unsigned side = 0; side < 2; ++side) {
+		CHECK(modem_get_bits(peers[side], 8, bits, sizeof(bits)) == sizeof(bits) &&
+		      modem_put_bits(peers[side ^ 1], 8, bits, sizeof(bits)) == sizeof(bits),
+		      "compression peers failed to exchange HDLC bits");
+	}
+	return true;
+}
+
+static bool test_at_compression_directions(void)
+{
+	struct modem_driver driver = {
+		.name = "AT compression directions", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	static const struct { unsigned value, direction; } cases[] = {
+		{0, 0}, {1, 1}, {2, 2}, {3, 3}, {4, 0}, {255, 3},
+	};
+	uint8_t payload[96];
+
+	for (unsigned i = 0; i < sizeof(payload); ++i)
+		payload[i] = i % 7; /* Includes codec escapes and compressible runs. */
+	for (unsigned types = 0; types <= MODEM_COMP_TYPE_ALL; ++types)
+	for (unsigned profile = 0; profile < ARRAY_LENGTH(cases); ++profile)
+	for (unsigned configured = 0; configured < 2; ++configured) {
+		unsigned direction = types ? cases[profile].direction : 0;
+		struct modem *peers[2] = {
+			create_compat_modem(&driver, driver.name),
+			create_compat_modem(&driver, driver.name),
+		};
+		struct factory_reply received[2] = {0};
+		char command[32];
+		unsigned tick;
+
+		CHECK(peers[0] != NULL && peers[1] != NULL, "compression peers allocation failed");
+		for (unsigned side = 0; side < 2; ++side) {
+			if (side == configured && cases[profile].value > 3)
+				snprintf(command, sizeof(command), "ATS104=%u+DSC=%u",
+					cases[profile].value, types);
+			else
+				snprintf(command, sizeof(command), "AT+DS=%u,%u",
+					side == configured ? cases[profile].value : 3, types);
+			CHECK(process_at_command(peers[side], command) == 0 &&
+			      (side ? modem_answer(peers[side]) : modem_dial(peers[side])) == 0,
+			      "compression profile did not start");
+			peers[side]->rx_rate = peers[side]->tx_rate = 9600;
+			peers[side]->state = STATE_EC_ESTAB;
+			peers[side]->data_output = factory_reply_output;
+			peers[side]->data_output_context = &received[side];
+			modem_update_status(peers[side], STATUS_PACK_LINK);
+		}
+		for (tick = 0; tick < 100 &&
+		     (peers[0]->state != STATE_MODEM_ONLINE || peers[1]->state != STATE_MODEM_ONLINE);
+		     ++tick)
+			CHECK(exchange_lapm_bits(peers), "compression establishment failed");
+		CHECK(tick < 100, "compression peers did not establish types %u direction %u role %u",
+		      types, direction, configured);
+		for (unsigned side = 0; side < 2; ++side) {
+			bool transmit = (direction & (side == configured ? 1 : 2)) != 0;
+			bool receive = (direction & (side == configured ? 2 : 1)) != 0;
+			struct modem *m = peers[side];
+
+			if (types & MODEM_COMP_TYPE_V44) {
+				struct v44_offer offer;
+				if (direction) {
+					CHECK(lapm_v44_get_negotiated_offer(&m->ec.lapm.v44_session, &offer) == LAPM_V44_OK &&
+					      offer.transmit.enabled == transmit && offer.receive.enabled == receive,
+					      "AT directions were not retained in V.44 negotiation");
+				} else {
+					CHECK(modem_ec_active_compression(m) == MODEM_EC_COMPRESSION_NONE,
+					      "disabled AT direction negotiated compression");
+				}
+			} else {
+				CHECK(m->cfg.comp == ((transmit ? 2 : 0) | (receive ? 1 : 0)),
+				      "AT directions were not retained in V.42bis negotiation");
+			}
+			CHECK(modem_data_write(m, payload, sizeof(payload)) == sizeof(payload),
+			      "compression peers did not accept literal data");
+		}
+		for (tick = 0; tick < 100 &&
+		     (received[0].count < sizeof(payload) || received[1].count < sizeof(payload)); ++tick)
+			CHECK(exchange_lapm_bits(peers), "compression data exchange failed");
+		CHECK(received[0].count == sizeof(payload) && received[1].count == sizeof(payload) &&
+		      !memcmp(received[0].bytes, payload, sizeof(payload)) &&
+		      !memcmp(received[1].bytes, payload, sizeof(payload)),
+		      "compression directions lost duplex data: types %u direction %u role %u",
+		      types, direction, configured);
+		modem_delete(peers[0]);
+		modem_delete(peers[1]);
+	}
+	return true;
+}
+
 static bool test_at_compression_rejects_invalid_numbers(void)
 {
 	static const char *const fields[] = {
@@ -9739,6 +9837,7 @@ int main(void)
 		{ "bounded AT dial destinations",
 		  test_at_dial_destinations_are_bounded },
 		{ "AT compression profile", test_at_compression_profile },
+		{ "AT compression directions", test_at_compression_directions },
 		{ "AT compression numeric validation",
 		  test_at_compression_rejects_invalid_numbers },
 		{ "AT V.91 policy", test_at_v91_policy },

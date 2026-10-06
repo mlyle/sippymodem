@@ -169,6 +169,12 @@ struct comp_state {
 };
 
 
+/* Swap local RX/TX bits with AT or initiator-relative TX/RX bits. */
+static inline unsigned modem_comp_reverse_directions(unsigned directions)
+{
+	return ((directions & 1U) << 1) | ((directions & 2U) >> 1);
+}
+
 extern int  modem_comp_init(struct modem *m);
 /* C-INIT for a fresh LAPM sequence; preserves the selected limits and storage. */
 extern int  modem_comp_reinitialize(struct modem *m);

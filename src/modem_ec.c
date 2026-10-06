@@ -473,11 +473,6 @@ static bool parse_xid_params(
 }
 
 
-static unsigned int reverse_compression_directions(unsigned int directions)
-{
-	return ((directions & 1U) << 1) | ((directions & 2U) >> 1);
-}
-
 static enum xid_decode_result parse_xid_private_params(
 	struct modem_config *cfg, const u8 *buf, int len)
 {
@@ -565,7 +560,7 @@ static enum xid_decode_result decode_xid(
 		if (parse_xid_private_params(&local, offered.private_negotiation,
 			(int)offered.private_negotiation_length) != XID_VALID)
 			return XID_MALFORMED;
-		local.comp = reverse_compression_directions(local.comp);
+		local.comp = modem_comp_reverse_directions(local.comp);
 	}
 	/* Table 11a directions are relative to the sending DCE. */
 	if (!select_xid_parameter(config->tx_info_size, peer.rx_info_size,
@@ -591,7 +586,7 @@ static enum xid_decode_result decode_xid(
 	}
 	/* V.42 Table 11b: translate initiator-relative P0 into local RX/TX. */
 	if (!command)
-		config->modem.comp = reverse_compression_directions(config->modem.comp);
+		config->modem.comp = modem_comp_reverse_directions(config->modem.comp);
 	allowed = (local.comp_types & MODEM_COMP_TYPE_V42BIS) ? local.comp : 0;
 	if (!command && (config->modem.comp & ~allowed) != 0)
 		return XID_MALFORMED;
@@ -663,7 +658,7 @@ static void build_xid_fields(
 	const u8 private_values[XID_PRIVATE_LENGTH] = {
 		PI_PARAMETER_SET_ID, 3, 0x56, 0x34, 0x32,
 		PI_V42BIS_REQUEST, 1, initiator ?
-			reverse_compression_directions(config->modem.comp) : config->modem.comp,
+			modem_comp_reverse_directions(config->modem.comp) : config->modem.comp,
 		PI_V42BIS_CW_NUMBER, 2,
 		(u8)(config->modem.comp_dict_size >> 8),
 		(u8)config->modem.comp_dict_size,

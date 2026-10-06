@@ -237,6 +237,8 @@ static bool at_response_formats(void)
 		{0,1,0,13,10, "AT+FTH=3\r", "\r\nERROR\r\n"},
 		{0,1,0,13,10, "AT+GCI=00+GCI?\r", "\r\n+GCI:0\r\n\r\nOK\r\n"},
 		{0,0,0,13,10, "AT+GCI=00+GCI?\r", "+GCI:0\r\n0\r"},
+		{0,1,0,13,10, "ATS104=255+DS?\r", "\r\n3,3\r\n\r\nOK\r\n"},
+		{0,1,0,13,10, "ATS104=4+DS?\r", "\r\n0,3\r\n\r\nOK\r\n"},
 		{0,1,0,13,10, "AT+MS=21,0,300,300+MS?\r", "\r\n21,0,300,300\r\n\r\nOK\r\n"},
 	};
 	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {

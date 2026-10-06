@@ -1256,10 +1256,8 @@ static void modem_setup_link_config(struct modem *m, enum DP_ID id)
 	m->cfg.ec_tx_info_size = LAPM_MAX_INFO_SIZE;
 	m->cfg.ec_rx_info_size = LAPM_MAX_INFO_SIZE;
 	m->cfg.comp_types = MODEM_COMP_TYPES(m);
-	if(m->cfg.ec && m->sregs[SREG_COMP] && m->cfg.comp_types != 0)
-		m->cfg.comp = 0x3; /* bidirectional compression */
-	else
-		m->cfg.comp = 0;
+	m->cfg.comp = m->cfg.ec && m->cfg.comp_types != 0 ?
+		modem_comp_reverse_directions(m->sregs[SREG_COMP]) : 0;
 	m->cfg.comp_dict_size  = COMP_MAX_CODEWORDS;
 	m->cfg.comp_max_string = COMP_DEFAULT_STRING;
 

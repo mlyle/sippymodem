@@ -273,9 +273,15 @@ is V.42 LAPM. Bell 103, V.21, V.23, and Baudot use their raw paths.
 The compression type field is a mask: `0` none, `1` V.42bis, `2` V.44,
 `3` both. Omitting it from `+DS` retains the prior mask. Compression requires
 LAPM and peer agreement; offering V.44 does not mean a peer will choose it.
-A first-field value of `0` disables compression. Values `1`, `2`, and `3`
-currently all enable bidirectional compression; separate transmit-only or receive-only
-compression is not implemented.
+The direction field is `0` for no compression, `1` for transmit only, `2`
+for receive only, and `3` for both directions. These are local DTE directions;
+XID negotiates compatible directions with the peer for either compression type.
+`S104` uses its low two bits for this direction mask.
+
+This two-field `+DS` form is a compatibility extension. The standard
+[V.250 §6.6.1](https://www.itu.int/rec/T-REC-V.250-200307-I/en) form defines
+V.42bis direction, required negotiation, dictionary size and maximum string
+length. Only the direction field has that meaning in this compatibility form.
 
 ## Connection output and retained call report
 

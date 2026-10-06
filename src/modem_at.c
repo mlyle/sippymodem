@@ -225,7 +225,7 @@ static int process_plus_DS(struct modem *m, char *p, int *len)
 	case '?':
 		*len = 1;
 		snprintf(response, sizeof(response), "%d,%d",
-			 modem_get_sreg(m, SREG_COMP),
+			 modem_get_sreg(m, SREG_COMP) & 3,
 			 modem_get_sreg(m, SREG_COMP_TYPES) &
 				 MODEM_COMP_TYPE_ALL);
 		modem_frontend_info(m, response, (int)strlen(response));
