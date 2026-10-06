@@ -47,62 +47,15 @@
 #ifndef __MODEM_HOMOLOG_H__
 #define __MODEM_HOMOLOG_H__
 
-
-/* homologation parameters struct */
-struct homolog_params {
-	u8 PulseDialMakeTime;
-	u8 PulseDialBreakTime;
-	u8 PulseDialDigitPattern;
-	u8 DTMFHighToneLevel;
-	u8 DTMFDialSpeed;
-	u8 MinBusyCadenceOnTime;
-	u8 MaxBusyCadenceOnTime;
-	u8 BusyDetectionCyclesNumber;
-	u8 MinBusyCadenceOffTime;
-	u8 MaxBusyCadenceOffTime;
-	u8 CallingToneFlag;
-	u8 HookFlashTime;
-	u8 DialPauseTime; // ?
-	u8 TransmitLevel;
-	u8 DialModifierValidation;
-	u8 DialToneValidationTime;
-	//u8 BusyToneDiffTime;
-	u8 DTMFHighAndLowToneLevelDifference;
-	u8 DialToneCallProgressFilterIndex;
-	u8 DialToneDetectionThreshold;
-	u8 ABCDDialingPermittedFlag;
-	u8 ComaPauseDurationLimit;
-	//u8 PulseAndToneDialInSameDialStringPermittedFlag;
-	u8 BusyToneCallProgressFilterIndex;
-	u8 PulseBetweenDigitsInterval;
-	u8 DialToneWaitTime;
-	u8 MinRingbackCadenceOnTime;
-	u8 MaxRingbackCadenceOnTime;
-	u8 RingbackDetectionCyclesNumber;
-	//u8 MinRingbackCadenceOffTime;
-	//u8 MaxRingbackCadenceOffTime;
-	//u8 RingbackToneCallProgressFilterIndex;
-	//u8 MinCongestionCadenceOnTime;
-	//u8 MaxCongestionCadenceOnTime;
-	//u8 CongestionDetectionCyclesNumber;
-	//u8 MinCongestionCadenceOffTime;
-	//u8 MaxCongestionCadenceOffTime;
-	//u8 CongestionToneCallProgressFilterIndex;
-	u16 CallProgressSamplesBufferLength;
-	u8 MustNoiseFilterBeApplied;
-	//u32 DigitalImpairmentsMask;
-	//u8 DialToneFilterSubindex;
-	//u8 BusyToneLooseDetectionEnabled;
-	//u8 CallWaitingIntegrationTimeMiliSec;
-	//u8 CallWaitingThresholdPercentage;
-};
+#include <stdint.h>
 
 
 /* homologation country set */
 struct homolog_set {
-	const u16 id;
+	const uint16_t id;
 	const char *name;
-	const struct homolog_params *params;
+	uint8_t dial_pause_seconds;
+	uint8_t hook_flash_10ms;
 };
 
 /* 'nulled'-terminated homologation array */

@@ -2273,6 +2273,24 @@ static bool test_country_numeric_validation(void)
 		CHECK(process_at_command(m, command) == 0 && m->homolog == h,
 		      "supported country profile rejected: %s", h->name);
 	}
+	/* Country selection and factory restoration use seconds and 10-ms ticks. */
+	const struct { unsigned id, pause, flash; } timings[] = {
+		{ 0xb5, 2, 50 }, { 0x3d, 2, 27 }, { 0xa0, 5, 10 },
+		{ 0x7e, 4, 70 }, { 0x100, 4, 7 },
+	};
+	for (size_t i = 0; i < ARRAY_LENGTH(timings); ++i) {
+		char command[32];
+		snprintf(command, sizeof(command), "AT+GCI=%x", timings[i].id);
+		CHECK(process_at_command(m, command) == 0 &&
+		      m->sregs[SREG_DIAL_PAUSE_TIME] == timings[i].pause &&
+		      m->sregs[SREG_FLASH_TIMER] == timings[i].flash,
+		      "country timer units changed for %x", timings[i].id);
+		CHECK(process_at_command(m, "ATS8=1S24=1&F") == 0 &&
+		      m->homolog->id == timings[i].id &&
+		      m->sregs[SREG_DIAL_PAUSE_TIME] == timings[i].pause &&
+		      m->sregs[SREG_FLASH_TIMER] == timings[i].flash,
+		      "factory restoration lost country timers for %x", timings[i].id);
+	}
 	modem_delete(m);
 	return true;
 }

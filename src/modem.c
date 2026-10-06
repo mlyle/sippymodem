@@ -1872,9 +1872,9 @@ int modem_homolog_init(struct modem *m, int id, const char *name)
 		   (name && *name && !strcmp(name,set->name))) {
 			m->homolog = set;
 			modem_set_sreg(m,SREG_DIAL_PAUSE_TIME,
-				       set->params->DialPauseTime);
+				       set->dial_pause_seconds);
 			modem_set_sreg(m,SREG_FLASH_TIMER,
-				       set->params->HookFlashTime);
+				       set->hook_flash_10ms);
 			return 0;
 		}
 	}
