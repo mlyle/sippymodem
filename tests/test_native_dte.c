@@ -138,6 +138,12 @@ static bool at_response_formats(void)
 		const char *input, *expected;
 	} cases[] = {
 		{0,1,0,13,10, "AT\r", "\r\nOK\r\n"},
+		{0,1,0,13,10, "at+fclass=00+Fclass?\r", "\r\n0\r\n\r\nOK\r\n"},
+		{0,1,0,13,10, "aT+gmI=?+GcAp\r", "\r\n+GCAP: +MS, +DS, +FCLASS\r\n\r\nOK\r\n"},
+		{0,1,0,13,10, "AT\377\r", "\r\nERROR\r\n"},
+		{0,1,0,13,10, "AT+\200\r", "\r\nERROR\r\n"},
+		{0,1,0,13,10, "AT+V9\377\r", "\r\nERROR\r\n"},
+		{0,1,0,13,10, "AT+G\200\r", "\r\nERROR\r\n"},
 		{0,1,0,13,10, "ATS224=200+V92Q?\r", "\r\n1\r\n\r\nOK\r\n"},
 		{0,1,0,13,10, "ATS225=255+V92U?\r", "\r\n1\r\n\r\nOK\r\n"},
 		{0,1,0,13,10, "ATS227=2+V91?\r", "\r\n1\r\n\r\nOK\r\n"},

@@ -238,7 +238,7 @@ static void process_input(void *data)
 		if(modem_recv_from_tty(m,&ch,1) <= 0)
 			break;
 		if (ch == '/' && m->at_count == 1 &&
-		    toupper(m->at_line[0]) == 'A') {
+		    toupper((unsigned char)m->at_line[0]) == 'A') {
 			m->at_count = strlen(m->at_line);
 			if(echo)
 				modem_send_to_tty(m,m->at_line+1,m->at_count-1);
@@ -258,8 +258,8 @@ static void process_input(void *data)
 			}
 			*p = '\0';
 			if (strlen(m->at_cmd) < 2 ||
-			    toupper(m->at_cmd[0]) != 'A' ||
-			    toupper(m->at_cmd[1]) != 'T' ) {
+			    toupper((unsigned char)m->at_cmd[0]) != 'A' ||
+			    toupper((unsigned char)m->at_cmd[1]) != 'T' ) {
 				memset(m->at_line,' ',m->at_count);
 				if(echo) {
 					modem_send_to_tty(m,&cr,1);

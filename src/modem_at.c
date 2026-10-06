@@ -75,6 +75,7 @@
 #include <stdio.h>
 #include <ctype.h>
 #include <string.h>
+#include <strings.h>
 
 #include <modem.h>
 #include <modem_frontend.h>
@@ -98,22 +99,6 @@ extern int  modem_hook(struct modem *m,unsigned hook_state);
 extern int  modem_reset(struct modem *m);
 extern void modem_update_speaker(struct modem *m);
 extern int  modem_homolog_init(struct modem *m, int id, const char *name);
-
-/* ------------------------------------------------------------ */
-/*
- *   local util functions
- */
-
-/* simple toupper + strncmp */
-static int toupper_strncmp(const char *s1, const char *s2, int n)
-{
-	int i;
-	for(i = 0 ; i < n ; i++)
-		if(toupper(s1[i]) != s2[i])
-			return s1[i] - s2[i];
-	return 0;
-}
-
 
 /* ------------------------------------------------------------ */
 
@@ -278,7 +263,7 @@ static int process_D(struct modem *m, char *p, int *len)
 {
 	int ret;
 	AT_DBG("AT D command...\n");
-	switch (toupper(*p)) {
+	switch (toupper((unsigned char)*p)) {
 	case 'T':
 		modem_set_sreg(m,SREG_TONE_OR_PULSE,1);
 		p++; /* Dial modifiers are not part of the SIP destination. */
@@ -807,14 +792,14 @@ static int process_plus_G(struct modem *m, char *p, int *len)
 		{ "CAP", "+GCAP: +MS, +DS, +FCLASS" },
 	};
 
-	if (!toupper_strncmp(p, "CI", 2)) {
+	if (!strncasecmp(p, "CI", 2)) {
 		int result = process_plus_GCI(m, p + 2, len);
 		*len += 2;
 		return result;
 	}
 	for (unsigned i = 0; i < sizeof(actions) / sizeof(actions[0]); ++i) {
 		size_t length = strlen(actions[i].name);
-		if (toupper_strncmp(p, actions[i].name, (int)length))
+		if (strncasecmp(p, actions[i].name, length))
 			continue;
 		p += length;
 		*len = (int)length;
@@ -844,11 +829,11 @@ int process_at_command(struct modem *m, char *cmd)
 	int len = 0, ret = -1;
 
 	/* verify 'AT' */
-	if (toupper(*p++) != 'A' || toupper(*p++) != 'T')
+	if (toupper((unsigned char)*p++) != 'A' || toupper((unsigned char)*p++) != 'T')
 		return -1;
 
 	while(*p) {
-		c = toupper(*p++);
+		c = toupper((unsigned char)*p++);
 		len = 0;
 		ret = -1;
 		/* These commands take no numeric parameter. Validate before acting. */
@@ -922,7 +907,7 @@ int process_at_command(struct modem *m, char *cmd)
 			return ret;
 
 		case '%': /* AT% */
-			c = toupper(*p++);
+			c = toupper((unsigned char)*p++);
 			switch (c) {
 			case 'C': /* AT%C */
 				ret = set_sreg(m,SREG_COMP,p,3,&len);
@@ -935,7 +920,7 @@ int process_at_command(struct modem *m, char *cmd)
 			} /* end AT% */
 			break;
 		case '&':
-			c = toupper(*p++);
+			c = toupper((unsigned char)*p++);
 			switch (c) {
 			case 'A': /* AT&A */
 				ret = set_sreg(m,SREG_CONNNECT_MSG_FORMAT,p,7,&len);
@@ -973,16 +958,16 @@ int process_at_command(struct modem *m, char *cmd)
 			}
 			break;
 		case '+':
-			c = toupper(*p++);
+			c = toupper((unsigned char)*p++);
 			switch (c) {
 			case 'D': /* AT+D */
-				c = toupper(*p++);
+				c = toupper((unsigned char)*p++);
 				switch (c) {
 				case 'S': /* AT+DS, AT+DSC, AT+DS0 */
 					if (*p == '0') {
 						p++;
 						ret = process_plus_choice_param(m, p, &len, SREG_DS0_FRAMING);
-					} else if (toupper(*p) == 'C') {
+					} else if (toupper((unsigned char)*p) == 'C') {
 						p++;
 						ret = process_plus_DSC(m, p, &len);
 					} else {
@@ -997,48 +982,48 @@ int process_at_command(struct modem *m, char *cmd)
 				ret = process_plus_G(m, p, &len);
 				break;
 			case 'F': /* AT+F */
-				if(!toupper_strncmp(p,"CLASS",5)) {
+				if(!strncasecmp(p,"CLASS",5)) {
 					p+= 5;
 					ret = process_plus_FCLASS(m, p, &len);
 				}
 				break;
 			case 'M': /* AT+M */
-				c = toupper (*p++);
+				c = toupper((unsigned char)*p++);
 				if (c == 'S')
 					ret = process_plus_MS(m,p,&len);
 				break;
 			case 'V':
-				if (!toupper_strncmp(p, "34B", 3)) {
+				if (!strncasecmp(p, "34B", 3)) {
 					p += 3;
 					ret = process_plus_V34B(m, p, &len);
 					break;
 				}
-				if (!toupper_strncmp(p, "90D", 3)) {
+				if (!strncasecmp(p, "90D", 3)) {
 					p += 3;
 					ret = process_plus_choice_param(
 						m, p, &len,
 						SREG_V90_DIGITAL_INDICATION);
 					break;
 				}
-				if (!toupper_strncmp(p, "90U", 3)) {
+				if (!strncasecmp(p, "90U", 3)) {
 					p += 3;
 					ret = process_plus_V90U(m, p, &len);
 					break;
 				}
-				if (!toupper_strncmp(p, "91", 2)) {
+				if (!strncasecmp(p, "91", 2)) {
 					p += 2;
 					ret = process_plus_choice_param(
 						m, p, &len, SREG_V91_ENABLED);
 					break;
 				}
-				if (!toupper_strncmp(p, "92Q", 3)) {
+				if (!strncasecmp(p, "92Q", 3)) {
 					p += 3;
 					ret = process_plus_choice_param(
 						m, p, &len,
 						SREG_V92_QUICK_CONNECT);
 					break;
 				}
-				if (!toupper_strncmp(p, "92U", 3)) {
+				if (!strncasecmp(p, "92U", 3)) {
 					p += 3;
 					ret = process_plus_V92U(m, p, &len);
 					break;
@@ -1049,7 +1034,7 @@ int process_at_command(struct modem *m, char *cmd)
 			}
 			break;
 		case '\\':
-			c = toupper(*p++);
+			c = toupper((unsigned char)*p++);
 			switch (c) {
 			case 'N': /* AT\N */
 				ret = set_sreg(m,SREG_EC,p,5,&len);
