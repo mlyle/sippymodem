@@ -500,16 +500,9 @@ static void receive_frame_bit(
 	struct v34_mp_receive_event *event)
 {
 	if (receiver->stage == V34_MP_SEARCH_SYNC) {
-		if (bit != 0) {
-			if (receiver->sync_one_count <
-			    V34_MP_TYPE0_FRAME_SYNC_BITS)
-				receiver->sync_one_count++;
-		} else if (receiver->sync_one_count ==
-			   V34_MP_TYPE0_FRAME_SYNC_BITS) {
+		if (pcm_control_frame_sync_bit(
+			    &receiver->sync_one_count, bit != 0u))
 			begin_receive_frame(receiver);
-		} else {
-			receiver->sync_one_count = 0;
-		}
 		return;
 	}
 
