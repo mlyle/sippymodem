@@ -34,6 +34,7 @@
 #include "main.h"
 
 #include "config.h"
+#include "log_target.h"
 #include "loop.h"
 #include "runtime.h"
 
@@ -42,6 +43,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
+#include <syslog.h>
 
 enum {
 	PROGRAM_EXIT_OK = 0,
@@ -110,9 +112,9 @@ static void restore_signal_handlers(const struct signal_handlers *handlers)
 static void print_usage(FILE *stream, const char *program)
 {
 	fprintf(stream,
-		"Usage: %s [--help]\n"
+		"Usage: %s [--help] [--log-target stderr|syslog]\n"
 		"Run the modem in the foreground; SIP_* environment variables "
-		"provide configuration.\n",
+		"provide configuration; MODEM_LOG_TARGET selects log output.\n",
 		program != NULL ? program : "slmodemd");
 }
 
@@ -122,14 +124,14 @@ static void report_loop_error(
 	const struct modem_loop_error *error)
 {
 	if (result == MODEM_LOOP_RUNTIME_ERROR) {
-		fprintf(stderr, "%s: %s\n", label,
+		log_target_printf(LOG_ERR, "%s: %s\n", label,
 			modem_runtime_result_name(error->runtime_result));
 	} else if (error->system_error != 0) {
-		fprintf(stderr, "%s: %s: %s\n", label,
+		log_target_printf(LOG_ERR, "%s: %s: %s\n", label,
 			modem_loop_result_name(result),
 			strerror(error->system_error));
 	} else {
-		fprintf(stderr, "%s: %s\n", label,
+		log_target_printf(LOG_ERR, "%s: %s\n", label,
 			modem_loop_result_name(result));
 	}
 }
@@ -149,27 +151,39 @@ int program_main(int argc, char *argv[])
 	const char *device_path;
 	int failure;
 	int exit_code = PROGRAM_EXIT_OK;
+	enum log_target cli_target = LOG_TARGET_STDERR;
+	bool have_cli_target = false;
 
 	if (argc == 2 && argv != NULL && argv[1] != NULL &&
 	    strcmp(argv[1], "--help") == 0) {
 		print_usage(stdout, program);
 		return PROGRAM_EXIT_OK;
 	}
-	if (argc != 1 || argv == NULL || argv[0] == NULL) {
+	if (argv != NULL && argc == 3 && argv[1] != NULL &&
+	    strcmp(argv[1], "--log-target") == 0)
+		have_cli_target = log_target_parse(argv[2], &cli_target);
+	else if (argv != NULL && argc == 2 && argv[1] != NULL &&
+	         strncmp(argv[1], "--log-target=", 13) == 0)
+		have_cli_target = log_target_parse(argv[1] + 13, &cli_target);
+	if ((argc != 1 && !have_cli_target) || argv == NULL || argv[0] == NULL) {
 		print_usage(stderr, program);
 		return PROGRAM_EXIT_USAGE;
 	}
 
 	config_init(&config);
 	if (config_apply_environment(&config, &config_error) != 0) {
-		fprintf(stderr, "%s: %s: %s\n", label, config_error.setting,
+		log_target_printf(LOG_ERR, "%s: %s: %s\n", label, config_error.setting,
 			config_error.message);
 		return PROGRAM_EXIT_USAGE;
 	}
+	if (have_cli_target)
+		config.log_target = cli_target;
+	log_target_open(config.log_target, label);
 	running = 1;
 	if (!install_signal_handlers(&handlers)) {
-		fprintf(stderr, "%s: cannot install signal handlers: %s\n",
+		log_target_printf(LOG_ERR, "%s: cannot install signal handlers: %s\n",
 			label, strerror(errno));
+		log_target_close();
 		return PROGRAM_EXIT_FAILURE;
 	}
 
@@ -177,14 +191,15 @@ int program_main(int argc, char *argv[])
 	runtime = modem_runtime_create(&config, label);
 	if (runtime == NULL) {
 		failure = errno != 0 ? errno : EINVAL;
-		fprintf(stderr, "%s: cannot create runtime: %s\n", label,
+		log_target_printf(LOG_ERR, "%s: cannot create runtime: %s\n", label,
 			strerror(failure));
 		restore_signal_handlers(&handlers);
+		log_target_close();
 		return PROGRAM_EXIT_FAILURE;
 	}
 	open_result = modem_runtime_open(runtime);
 	if (open_result != MODEM_RUNTIME_OK) {
-		fprintf(stderr, "%s: cannot open runtime: %s\n", label,
+		log_target_printf(LOG_ERR, "%s: cannot open runtime: %s\n", label,
 			modem_runtime_result_name(open_result));
 		exit_code = PROGRAM_EXIT_FAILURE;
 		goto destroy;
@@ -193,7 +208,7 @@ int program_main(int argc, char *argv[])
 	if (device_path == NULL || fprintf(stdout, "%s\n", device_path) < 0 ||
 	    fflush(stdout) != 0) {
 		failure = errno != 0 ? errno : EIO;
-		fprintf(stderr, "%s: cannot publish modem device: %s\n", label,
+		log_target_printf(LOG_ERR, "%s: cannot publish modem device: %s\n", label,
 			strerror(failure));
 		exit_code = PROGRAM_EXIT_FAILURE;
 		goto close;
@@ -207,7 +222,7 @@ int program_main(int argc, char *argv[])
 close:
 	close_result = modem_runtime_close(runtime);
 	if (close_result != MODEM_RUNTIME_OK) {
-		fprintf(stderr, "%s: cannot close runtime: %s\n", label,
+		log_target_printf(LOG_ERR, "%s: cannot close runtime: %s\n", label,
 			modem_runtime_result_name(close_result));
 		exit_code = PROGRAM_EXIT_FAILURE;
 	}
@@ -215,6 +230,7 @@ close:
 destroy:
 	modem_runtime_destroy(runtime);
 	restore_signal_handlers(&handlers);
+	log_target_close();
 	return exit_code;
 }
 

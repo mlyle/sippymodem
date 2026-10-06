@@ -71,7 +71,7 @@ TIMER_TEST_OBJECTS := $(BUILD_DIR)/test_modem_timer.o \
 	$(BUILD_DIR)/native_modem_timer.o
 CONFIG_TEST_BINARY := $(BUILD_DIR)/test_config
 CONFIG_TEST_OBJECTS := $(BUILD_DIR)/test_config.o \
-	$(BUILD_DIR)/config.o $(BUILD_DIR)/config_defaults.o $(BUILD_DIR)/media.o \
+	$(BUILD_DIR)/config.o $(BUILD_DIR)/config_defaults.o $(BUILD_DIR)/log_target.o $(BUILD_DIR)/media.o \
 	$(BUILD_DIR)/g711.o
 SIP_URI_TEST_BINARY := $(BUILD_DIR)/test_sip_uri
 SIP_URI_TEST_OBJECTS := $(BUILD_DIR)/test_sip_uri.o \
@@ -86,7 +86,7 @@ PJSIP_TEST_OBJECTS := $(BUILD_DIR)/test_sip_signaling.o \
 	$(BUILD_DIR)/sip_signaling_pjsip.o \
 	$(BUILD_DIR)/sdp_pjsip.o $(BUILD_DIR)/sdp.o \
 	$(BUILD_DIR)/sip_uri.o \
-	$(BUILD_DIR)/config.o $(BUILD_DIR)/config_defaults.o $(BUILD_DIR)/media.o \
+	$(BUILD_DIR)/config.o $(BUILD_DIR)/config_defaults.o $(BUILD_DIR)/log_target.o $(BUILD_DIR)/media.o \
 	$(BUILD_DIR)/g711.o
 G711_TEST_BINARY := $(BUILD_DIR)/test_g711
 G711_TEST_OBJECTS := $(BUILD_DIR)/test_g711.o \
@@ -276,7 +276,7 @@ RTP_RUNTIME_TEST_OBJECTS := $(BUILD_DIR)/test_rtp_runtime.o \
 	$(BUILD_DIR)/rtp_endpoint.o \
 	$(BUILD_DIR)/rtp_stream.o \
 	$(BUILD_DIR)/rtp_receiver.o $(BUILD_DIR)/rtp.o \
-	$(BUILD_DIR)/config.o $(BUILD_DIR)/config_defaults.o \
+	$(BUILD_DIR)/config.o $(BUILD_DIR)/config_defaults.o $(BUILD_DIR)/log_target.o \
 	$(BUILD_DIR)/media.o $(BUILD_DIR)/g711.o
 SIP_MEDIA_BRIDGE_TEST_BINARY := \
 	$(BUILD_DIR)/test_sip_media_bridge
@@ -297,7 +297,7 @@ SESSION_TEST_OBJECTS := $(BUILD_DIR)/test_session.o \
 	$(BUILD_DIR)/rtp_endpoint.o \
 	$(BUILD_DIR)/rtp_stream.o \
 	$(BUILD_DIR)/rtp_receiver.o $(BUILD_DIR)/rtp.o \
-	$(BUILD_DIR)/config.o $(BUILD_DIR)/config_defaults.o \
+	$(BUILD_DIR)/config.o $(BUILD_DIR)/config_defaults.o $(BUILD_DIR)/log_target.o \
 	$(BUILD_DIR)/media.o $(BUILD_DIR)/g711.o
 AUDIO_PATH_TEST_BINARY := $(BUILD_DIR)/test_audio_path
 AUDIO_PATH_TEST_OBJECTS := $(BUILD_DIR)/test_audio_path.o \
@@ -326,7 +326,7 @@ HOST_TEST_OBJECTS := $(BUILD_DIR)/test_host.o \
 	$(BUILD_DIR)/audio_path.o \
 	$(BUILD_DIR)/audio_scheduler.o \
 	$(BUILD_DIR)/frame_clock.o \
-	$(BUILD_DIR)/config.o $(BUILD_DIR)/config_defaults.o \
+	$(BUILD_DIR)/config.o $(BUILD_DIR)/config_defaults.o $(BUILD_DIR)/log_target.o \
 	$(BUILD_DIR)/media.o \
 	$(BUILD_DIR)/g711.o
 RECORDING_FILES_TEST_BINARY := \
@@ -355,7 +355,7 @@ SLMODEM_TERMINAL_TEST_OBJECTS := \
 	$(BUILD_DIR)/slmodem_terminal.o
 RUNTIME_TEST_BINARY := $(BUILD_DIR)/test_runtime
 RUNTIME_TEST_OBJECTS := $(BUILD_DIR)/test_runtime.o \
-	$(BUILD_DIR)/byte_queue.o $(BUILD_DIR)/line.o $(BUILD_DIR)/runtime.o \
+	$(BUILD_DIR)/byte_queue.o $(BUILD_DIR)/line.o $(BUILD_DIR)/runtime.o $(BUILD_DIR)/log_target.o \
 	$(BUILD_DIR)/slmodem_terminal.o \
 	$(BUILD_DIR)/terminal.o
 TERMINAL_TEST_BINARY := $(BUILD_DIR)/test_terminal
@@ -366,7 +366,7 @@ LOOP_TEST_OBJECTS := $(BUILD_DIR)/test_loop.o \
 	$(BUILD_DIR)/loop.o
 MAIN_TEST_BINARY := $(BUILD_DIR)/test_main
 MAIN_TEST_OBJECTS := $(BUILD_DIR)/test_main.o \
-	$(BUILD_DIR)/main_testable.o
+	$(BUILD_DIR)/main_testable.o $(BUILD_DIR)/log_target.o
 AGC_TEST_BINARY := $(BUILD_DIR)/test_agc
 AGC_TEST_OBJECTS := $(BUILD_DIR)/test_agc.o \
 	$(BUILD_DIR)/agc.o
@@ -432,7 +432,7 @@ NATIVE_CORE_TEST_BINARY := $(BUILD_DIR)/test_native_core
 NATIVE_CORE_WRAP_FLAGS := -Wl,--wrap=modem_dp_get_registered_ops \
 	-Wl,--wrap=v44_character_path_destroy
 NATIVE_CORE_DEBUG_TEST_BINARY := $(BUILD_DIR)/test_native_core_debug
-NATIVE_CORE_SOURCE_NAMES := homolog_data modem modem_frontend modem_at modem_comp \
+NATIVE_CORE_SOURCE_NAMES := log_target homolog_data modem modem_frontend modem_at modem_comp \
 	modem_debug modem_ec modem_pack modem_timer
 NATIVE_CORE_OBJECTS := $(addprefix $(BUILD_DIR)/native_, \
 	$(addsuffix .o, $(NATIVE_CORE_SOURCE_NAMES))) \
@@ -3232,7 +3232,7 @@ DS0_SIP_TEST_BINARY := $(BUILD_DIR)/test_ds0_sip
 DS0_PPP_TEST_BINARY := $(BUILD_DIR)/test_ds0_ppp
 DS0_CODEC_TEST_BINARY := $(BUILD_DIR)/test_ds0_codec
 
-TEST_BINARIES := $(BUILD_DIR)/test_log_buffer $(BUILD_DIR)/test_ds0_probe $(DS0_DATAPUMP_TEST_BINARY) $(DS0_PPP_TEST_BINARY) $(DS0_CODEC_TEST_BINARY) $(BUILD_DIR)/test_packet_stats $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
+TEST_BINARIES := $(BUILD_DIR)/test_log_target $(BUILD_DIR)/test_log_buffer $(BUILD_DIR)/test_ds0_probe $(DS0_DATAPUMP_TEST_BINARY) $(DS0_PPP_TEST_BINARY) $(DS0_CODEC_TEST_BINARY) $(BUILD_DIR)/test_packet_stats $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(SIP_URI_TEST_BINARY) $(SDP_TEST_BINARY) $(G711_TEST_BINARY) \
 	$(SAMPLE_MATH_TEST_BINARY) \
 	$(PCM_GAIN_TEST_BINARY) \
@@ -3745,7 +3745,7 @@ $(SLMODEM_TERMINAL_TEST_BINARY): $(SLMODEM_TERMINAL_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(RUNTIME_TEST_BINARY): $(RUNTIME_TEST_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^
+	$(CC) $(LDFLAGS) -Wl,--wrap=openlog -Wl,--wrap=closelog -Wl,--wrap=syslog -Wl,--wrap=__syslog_chk -o $@ $^
 
 $(TERMINAL_TEST_BINARY): $(TERMINAL_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
@@ -3754,7 +3754,7 @@ $(LOOP_TEST_BINARY): $(LOOP_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(MAIN_TEST_BINARY): $(MAIN_TEST_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^
+	$(CC) $(LDFLAGS) -Wl,--wrap=openlog -Wl,--wrap=closelog -Wl,--wrap=syslog -Wl,--wrap=__syslog_chk -o $@ $^
 
 $(AGC_TEST_BINARY): $(AGC_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
@@ -6205,3 +6205,9 @@ $(BUILD_DIR)/log_buffer.o: ../src/log_buffer.c ../src/log_buffer.h ../src/sippym
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 $(BUILD_DIR)/test_log_buffer: $(BUILD_DIR)/test_log_buffer.o $(BUILD_DIR)/log_buffer.o
 	$(CC) $(LDFLAGS) -o $@ $^
+
+$(BUILD_DIR)/log_target.o: ../src/log_target.c ../src/log_target.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/test_log_target: $(BUILD_DIR)/test_log_target.o $(BUILD_DIR)/log_target.o
+	$(CC) $(LDFLAGS) -Wl,--wrap=openlog -Wl,--wrap=closelog -Wl,--wrap=syslog -Wl,--wrap=__syslog_chk -o $@ $^

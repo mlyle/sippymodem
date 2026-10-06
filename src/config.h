@@ -4,6 +4,7 @@
 #define APP_CONFIG_H
 
 #include "media.h"
+#include "log_target.h"
 
 #include <stdbool.h>
 
@@ -47,6 +48,7 @@ struct recording_config {
 };
 
 struct app_config {
+	enum log_target log_target; /* Compatibility executable output only. */
 	struct sip_config sip;
 	struct media_config media;
 	struct recording_config recording;

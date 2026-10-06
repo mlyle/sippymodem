@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <runtime.h>
+#include <log_target.h>
 
 #include <modem.h>
 #include <modem_frontend.h>
@@ -10,11 +11,14 @@
 #include <slmodem_driver.h>
 
 #include "test.h"
+#include "syslog_capture.h"
 
 #include <errno.h>
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
+#include <syslog.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
 
@@ -85,6 +89,24 @@ void modem_frontend_init(struct modem *modem)
 }
 
 static struct runtime_capture capture;
+static char syslog_trace[2048];
+static size_t syslog_used;
+static int syslog_priority;
+void __wrap_openlog(const char *identity, int options, int facility)
+{
+	(void)identity; (void)options; (void)facility;
+}
+void __wrap_closelog(void) { }
+static void capture_syslog(int priority, const char *format, va_list args)
+{
+	int length = vsnprintf(syslog_trace + syslog_used, sizeof(syslog_trace) - syslog_used, format, args);
+	if (length > 0) {
+		size_t room = sizeof(syslog_trace) - syslog_used - 1;
+		syslog_used += (size_t)length < room ? (size_t)length : room;
+	}
+	syslog_priority = priority;
+}
+
 
 static void note_teardown(char event)
 {
@@ -919,6 +941,23 @@ static bool test_opt_in_signaling_trace(void)
 	CHECK(strstr(output, "secret") == NULL &&
 	      strchr(output, '\033') == NULL && strchr(output, '\r') == NULL,
 	      "trace exposed credentials or terminal control bytes");
+	/* Target selection must not bypass the existing trace privacy boundary. */
+	runtime = modem_runtime_create(&config, "trace-test");
+	CHECK(runtime != NULL && capture.callbacks.trace != NULL, "syslog trace runtime failed");
+	log_target_open(LOG_TARGET_SYSLOG, "modem-test");
+	for (size_t i = 0; i < ARRAY_LENGTH(messages); ++i) {
+		record.data = messages[i]; record.size = strlen(messages[i]);
+		capture.callbacks.trace(capture.callbacks.context, &record);
+	}
+	record.data = oversized; record.size = sizeof(oversized);
+	capture.callbacks.trace(capture.callbacks.context, &record);
+	log_target_close();
+	modem_runtime_destroy(runtime);
+	CHECK(syslog_used != 0 && syslog_priority == LOG_WARNING &&
+	      strstr(syslog_trace, "SIP/2.0 200 OK") && strstr(syslog_trace, "authentication record omitted") &&
+	      strstr(syslog_trace, "oversized record omitted") && strstr(syslog_trace, "ready ?[31m?") &&
+	      !strstr(syslog_trace, "secret") && !strchr(syslog_trace, '\033') && !strchr(syslog_trace, '\r'),
+	      "syslog routing changed redaction or severity");
 	return true;
 }
 

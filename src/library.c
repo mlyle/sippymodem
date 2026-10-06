@@ -161,7 +161,7 @@ static void log_event(struct sippymodem_line *line, enum sippymodem_event_type t
 			status->disconnect_reason);
 	} else {
 		log_line(line, SIPPYMODEM_LOG_INFO,
-			"%s phase=%u sip=%u ready=%u carrier=%u mode=%u modulation=%u tx=%u rx=%u tx-baud=%u rx-baud=%u ec=%u compression=%u",
+			"%s phase=%u sip=%u ready=%u carrier=%u mode=%u modulation=%u tx=%u rx=%u tx-baud=%.6g rx-baud=%.6g ec=%u compression=%u",
 			names[type], status->phase, status->sip_state, status->ready, status->carrier,
 			status->dte_mode, status->modulation, status->tx_bps, status->rx_bps,
 			status->tx_baud, status->rx_baud, status->error_control, status->compression);

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "runtime.h"
+#include "log_target.h"
 
 #include "modem.h"
 #include "modem_frontend.h"
@@ -20,6 +21,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
+#include <syslog.h>
 
 enum { MODEM_RUNTIME_TERMINAL_READ_MAX = 4096 };
 
@@ -74,7 +76,7 @@ static void trace_signaling(void *context, const struct sip_trace_record *record
 	 * credential-bearing records rather than parsing possibly folded headers.
 	 * Keep traces bounded and remote text unable to control the terminal. */
 	if (record->size >= sizeof(output)) {
-		fputs("[SIP trace: oversized record omitted]\n", stderr);
+		log_target_write(LOG_WARNING, "[SIP trace: oversized record omitted]");
 		return;
 	}
 	for (size_t word = 0; word < sizeof(private_words) / sizeof(*private_words);
@@ -89,7 +91,7 @@ static void trace_signaling(void *context, const struct sip_trace_record *record
 				       private_words[word][matched])
 				++matched;
 			if (matched == length) {
-				fputs("[SIP trace: authentication record omitted]\n", stderr);
+				log_target_write(LOG_INFO, "[SIP trace: authentication record omitted]");
 				return;
 			}
 		}
@@ -103,9 +105,9 @@ static void trace_signaling(void *context, const struct sip_trace_record *record
 			(char)byte : '?';
 	}
 	output[used] = '\0';
-	fputs(output, stderr);
-	if (used != 0 && output[used - 1] != '\n')
-		fputc('\n', stderr);
+	int priority = record->level <= 1 ? LOG_ERR : record->level == 2 ? LOG_WARNING :
+		record->level <= 4 ? LOG_INFO : LOG_DEBUG;
+	log_target_write(priority, output);
 }
 
 /* Emit the retained first cause once, including when shutdown has no next tick. */

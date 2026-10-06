@@ -45,10 +45,13 @@
 #include "modem.h"
 #include "modem_state.h"
 
+#include "log_target.h"
+
 #include <ctype.h>
 #include <stdio.h>
 #include <inttypes.h>
 #include <stdarg.h>
+#include <syslog.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include "modem_debug.h"
@@ -424,5 +427,5 @@ void modem_update_termios(struct modem *m, const struct termios *tios)
 void modem_print_version(void)
 {
 	extern const char modem_name[], modem_version[], modem_date[];
-	printf("%s: version %s %s\n", modem_name, modem_version, modem_date);
+	log_target_printf(LOG_INFO, "%s: version %s %s", modem_name, modem_version, modem_date);
 }

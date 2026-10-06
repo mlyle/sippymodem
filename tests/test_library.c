@@ -162,6 +162,8 @@ static bool test_owned_loopback(void)
 		EXPECT(strstr(logs[i].text, "unused-loopback-password") == NULL && strstr(logs[i].text, "sip:") == NULL);
 		if (strncmp(logs[i].text, "connected ", 10) == 0) {
 			EXPECT(strstr(logs[i].text, "ready=1 carrier=1") != NULL);
+			EXPECT(strstr(logs[i].text, "modulation=21 tx=300 rx=300 tx-baud=300 rx-baud=300 ec=0 compression=0") != NULL);
+			EXPECT(!logs[i].truncated);
 			connected_logged = true;
 		}
 		if (strncmp(logs[i].text, "progress ", 9) == 0)

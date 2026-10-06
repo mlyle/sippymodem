@@ -314,6 +314,20 @@ run `./src/slmodemd` without a hardware-device argument or helper process. Set
 `SIP_RECORD_PREFIX` to enable the bounded recording interface; the prefix must
 identify files that do not already exist.
 
+Diagnostics go to stderr by default. Select POSIX syslog with either
+`./src/slmodemd --log-target syslog` (also `--log-target=syslog`) or
+`MODEM_LOG_TARGET=syslog ./src/slmodemd`. The command-line target overrides the
+environment setting. Syslog uses the executable name, process ID and `daemon`
+facility; startup/runtime errors have error priority. Configuration and usage
+errors detected before log setup still appear on stderr. The PTY path stays on
+stdout, and AT replies and online bytes stay on the PTY.
+
+`SIP_TRACE=1` enables the existing bounded SIP, RTP, training and disconnect
+traces at the selected target. Authentication records remain omitted. Full
+traces can include phone numbers and network addresses; use private log access.
+Library users can instead read [per-line diagnostic rings](docs/library-api.md#per-line-diagnostics)
+without changing their application's logger.
+
 For an interactive modem console, install `splitvt` and C-Kermit, copy
 `tools/sip-terminal.example.json` to the ignored `.sip-terminal.json`, make it
 owner-only (`chmod 600 .sip-terminal.json`), and fill in the private provider

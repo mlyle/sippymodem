@@ -3,6 +3,7 @@
 #include <main.h>
 
 #include "test.h"
+#include "syslog_capture.h"
 
 #include <config.h>
 #include <loop.h>
@@ -11,6 +12,8 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <stdarg.h>
+#include <syslog.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -32,9 +35,26 @@ static struct {
 	bool saw_stop;
 	bool wrong_runtime;
 	char modem_name[32];
+	enum log_target config_target, runtime_target;
+	unsigned log_opens, log_closes, log_writes;
+	int log_priority;
+	char log_text[256];
 } fixture;
 
 static struct modem_runtime runtime;
+void __wrap_openlog(const char *identity, int options, int facility)
+{
+	fixture.log_opens++;
+	if (strcmp(identity, "slmodemd") != 0 || options != LOG_PID || facility != LOG_DAEMON)
+		fixture.wrong_runtime = true;
+}
+void __wrap_closelog(void) { fixture.log_closes++; }
+static void capture_syslog(int priority, const char *format, va_list args)
+{
+	fixture.log_writes++; fixture.log_priority = priority;
+	vsnprintf(fixture.log_text, sizeof(fixture.log_text), format, args);
+}
+
 
 static void record_call(char call)
 {
@@ -91,7 +111,7 @@ void config_init(struct app_config *config)
 int config_apply_environment(
 	struct app_config *config, struct config_error *error)
 {
-	(void)config;
+	config->log_target = fixture.config_target;
 	record_call('a');
 	if (fixture.config_result != 0) {
 		strcpy(error->setting, "SIP_PORT");
@@ -103,7 +123,7 @@ int config_apply_environment(
 struct modem_runtime *modem_runtime_create(
 	const struct app_config *config, const char *modem_name)
 {
-	(void)config;
+	fixture.runtime_target = config->log_target;
 	record_call('c');
 	strncpy(fixture.modem_name, modem_name, sizeof(fixture.modem_name) - 1);
 	if (fixture.create_fails) {
@@ -250,6 +270,33 @@ static bool test_reports_loop_and_close_failures(void)
 	return true;
 }
 
+static bool test_log_selection_and_cleanup(void)
+{
+	char *syslog_args[] = { "slmodemd", "--log-target", "syslog", NULL };
+	char *stderr_args[] = { "slmodemd", "--log-target=stderr", NULL };
+	char *invalid[] = { "slmodemd", "--log-target", "file", NULL };
+	char *missing[] = { "slmodemd", "--log-target", NULL };
+	reset_fixture();
+	fixture.create_fails = true;
+	CHECK(run_program(3, syslog_args) == 1 && fixture.runtime_target == LOG_TARGET_SYSLOG &&
+	      fixture.log_opens == 1 && fixture.log_closes == 1 && fixture.log_writes == 1 &&
+	      fixture.log_priority == LOG_ERR && strstr(fixture.log_text, "cannot create runtime") != NULL &&
+	      !fixture.wrong_runtime, "creation failure did not log and close syslog");
+	reset_fixture();
+	fixture.config_target = LOG_TARGET_SYSLOG;
+	CHECK(run_program(2, stderr_args) == 0 && fixture.runtime_target == LOG_TARGET_STDERR &&
+	      fixture.log_opens == 0 && fixture.log_closes == 0, "CLI did not override environment target");
+	reset_fixture();
+	fixture.open_result = MODEM_RUNTIME_SESSION_ERROR;
+	CHECK(run_program(3, syslog_args) == 1 && fixture.log_opens == 1 && fixture.log_closes == 1 &&
+	      fixture.log_writes == 1 && strstr(fixture.log_text, "cannot open runtime") != NULL,
+	      "open failure did not unwind syslog");
+	reset_fixture();
+	CHECK(run_program(3, invalid) == 2 && run_program(2, missing) == 2 && fixture.call_count == 0,
+	      "invalid target started runtime");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -257,6 +304,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "owned lifecycle", test_runs_owned_lifecycle },
+		{ "log selection and cleanup", test_log_selection_and_cleanup },
 		{ "invocation and configuration",
 		  test_validates_invocation_and_configuration },
 		{ "creation and open failures",

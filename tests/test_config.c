@@ -16,7 +16,7 @@ static const char *const config_environment[] = {
 	"SIP_AUTO_ANSWER", "SIP_CODEC",       "SIP_RTP_PORT",
 	"SIP_JB_MS",       "SIP_FRAME_MS",    "SIP_REMOTE_CLOCK",
 	"SIP_GAIN",        "SIP_TX_GAIN",     "SIP_RX_GAIN",
-	"SIP_RECORD_PREFIX", "SIP_TRACE", "SIP_PCM_CODEC_GRID",
+	"MODEM_LOG_TARGET", "SIP_RECORD_PREFIX", "SIP_TRACE", "SIP_PCM_CODEC_GRID",
 };
 
 static void clear_environment(void)
@@ -30,6 +30,7 @@ static bool test_defaults(void)
 	struct app_config config;
 
 	config_init(&config);
+	CHECK(config.log_target == LOG_TARGET_STDERR, "wrong default log target");
 	CHECK(config.sip.listen_port == 5060, "wrong default SIP port");
 	CHECK(config.sip.log_level == 4, "wrong default SIP log level");
 	CHECK(!config.sip.trace_enabled, "trace should be opt-in");
@@ -58,7 +59,8 @@ static bool test_defaults(void)
 
 static bool set_test_environment(void)
 {
-	return setenv("SIP_USER", "alice", 1) == 0 &&
+	return setenv("MODEM_LOG_TARGET", "syslog", 1) == 0 &&
+	       setenv("SIP_USER", "alice", 1) == 0 &&
 	       setenv("SIP_PASSWORD", "secret", 1) == 0 &&
 	       setenv("SIP_DOMAIN", "sip.example.net", 1) == 0 &&
 	       setenv("SIP_SERVER", "edge.example.net", 1) == 0 &&
@@ -97,6 +99,7 @@ static bool test_environment_overrides(void)
 	      "%s: %s", error.setting, error.message);
 	clear_environment();
 
+	CHECK(config.log_target == LOG_TARGET_SYSLOG, "log target was not applied");
 	CHECK(strcmp(config.sip.user, "alice") == 0, "SIP user was not applied");
 	CHECK(strcmp(config.sip.password, "secret") == 0,
 	      "SIP password was not applied");
@@ -166,7 +169,8 @@ static bool test_invalid_environment(void)
 
 	memset(oversized, 'x', sizeof(oversized) - 1);
 	oversized[sizeof(oversized) - 1] = '\0';
-	return expect_invalid_value("SIP_PORT", "65536") &&
+	return expect_invalid_value("MODEM_LOG_TARGET", "nowhere") &&
+	       expect_invalid_value("SIP_PORT", "65536") &&
 	       expect_invalid_value("SIP_TRACE", "sometimes") &&
 	       expect_invalid_value("SIP_REGISTER", "sometimes") &&
 	       expect_invalid_value("SIP_GAIN", "NaN") &&

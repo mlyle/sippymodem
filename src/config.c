@@ -146,6 +146,9 @@ int config_apply_environment(
 	if (config == NULL)
 		return set_error(error, "config", "configuration is required");
 	updated = *config;
+	const char *target = environment_value("MODEM_LOG_TARGET");
+	if (target != NULL && !log_target_parse(target, &updated.log_target))
+		return set_error(error, "MODEM_LOG_TARGET", "expected stderr or syslog");
 
 #define APPLY(operation)                                                     \
 	do {                                                                   \

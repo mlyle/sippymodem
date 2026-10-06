@@ -96,6 +96,16 @@ apply that timer to the replacement call, so use the original generation.
 Private call facts also carry a generation: compare it before using called or
 caller numbers. Keep those facts out of public logs.
 
+Use `sippymodem_read_log()` for per-line connection and training diagnostics.
+Keep a separate cursor (initially zero) for each line and reader, and copy logs
+on the native owner thread after processing. The 64-record ring reports missed
+records when a reader falls behind; it never interrupts a call. Records carry
+line ID, call generation, sequence, native time, severity and bounded text.
+Forward those copies to the terminal server's logger. Use typed status/events
+to drive call handling; log text is diagnostic and may change. Logs survive hangup/stop
+until line destruction; training logs have no separate wake fd. See the
+[complete log API and example](library-api.md#per-line-diagnostics).
+
 Status is a copied snapshot of hook, carrier, connection/SIP phase, DTE mode,
 negotiated modulation, directional bitrates and symbol rates, error control,
 compression and local queue counts. `state_sequence` identifies changes.

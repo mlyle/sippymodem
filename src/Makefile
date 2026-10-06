@@ -41,7 +41,7 @@ CPPFLAGS += -D_POSIX_C_SOURCE=200809L -I. -I$(DSP_SOURCE_DIR) \
 	-I$(dir $(PHASE_PROFILE_HEADER)) \
 	-I$(DSP_V21_202_SOURCE_DIR) -I$(DSP_V22_SOURCE_DIR) \
 	-I$(DSP_V32_SOURCE_DIR) -I$(DSP_PCM_SOURCE_DIR)
-CFLAGS += -std=gnu11 -Wall -Wextra -fPIC
+CFLAGS += -std=gnu11 -Wall -Wextra -Werror=format -fPIC
 LDLIBS += $(PJSIP_LDLIBS) -lm
 
 MODEM_CORE_SOURCES := \
@@ -61,6 +61,7 @@ APP_SOURCES := \
 	frame_pacer.c \
 	host.c \
 	lapm_v44_session.c \
+	log_target.c \
 	loop.c \
 	main.c \
 	media.c \
@@ -429,7 +430,7 @@ DSP_SOURCES := $(DS0_SOURCES) $(SHARED_DSP_SOURCES) \
 	$(V32_SOURCES) $(PCM_SOURCES)
 SOURCES := byte_queue.c log_buffer.c config_defaults.c fd_adapter.c library.c line.c modem_frontend.c $(MODEM_CORE_SOURCES) $(APP_SOURCES) \
 	$(DSP_SOURCES)
-FRONTEND_SOURCES := modem_frontend.c modem_at.c main.c loop.c runtime.c terminal.c slmodem_terminal.c config.c
+FRONTEND_SOURCES := log_target.c modem_frontend.c modem_at.c main.c loop.c runtime.c terminal.c slmodem_terminal.c config.c
 CORE_SOURCES := $(filter-out $(FRONTEND_SOURCES),$(SOURCES))
 CORE_OBJECTS := $(CORE_SOURCES:.c=.o)
 FRONTEND_OBJECTS := $(FRONTEND_SOURCES:.c=.o)
