@@ -298,8 +298,20 @@ static bool test_contracts(uint8_t bits_per_symbol)
 	      v32_uncoded_receiver_is_valid(&receiver) &&
 	      !v32_uncoded_receiver_is_valid(NULL),
 	      "contract receiver did not initialize");
-	saved_receiver = receiver;
-	invalid = seed;
+	/* Define padding before the bytewise rejection snapshots. Preserve the
+	 * initialized fields, then keep every fixture and snapshot byte intact. */
+	memset(&saved_receiver, 0, sizeof(saved_receiver));
+	memcpy(&saved_receiver.decoder.descrambler.history,
+	       &receiver.decoder.descrambler.history,
+	       sizeof(receiver.decoder.descrambler.history));
+	memcpy(&saved_receiver.decoder.descrambler.transmitter_role,
+	       &receiver.decoder.descrambler.transmitter_role,
+	       sizeof(receiver.decoder.descrambler.transmitter_role));
+	memcpy(&saved_receiver.decoder.phase_quadrant,
+	       &receiver.decoder.phase_quadrant,
+	       sizeof(receiver.decoder.phase_quadrant));
+	memcpy(&receiver, &saved_receiver, sizeof(receiver));
+	memcpy(&invalid, &saved_receiver.decoder, sizeof(invalid));
 	invalid.descrambler.transmitter_role = (enum v32_transmitter_role)99;
 	CHECK(v32_uncoded_receiver_init(NULL, &seed) ==
 		      V32_UNCODED_RECEIVER_INVALID_ARGUMENT &&
@@ -309,15 +321,15 @@ static bool test_contracts(uint8_t bits_per_symbol)
 		      V32_UNCODED_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&receiver, &saved_receiver, sizeof(receiver)) == 0,
 	      "invalid initialization changed its owner");
-	overlap.seed = seed;
-	saved_overlap = overlap;
+	memcpy(&overlap.seed, &saved_receiver.decoder, sizeof(overlap.seed));
+	memcpy(&saved_overlap, &overlap, sizeof(saved_overlap));
 	CHECK(v32_uncoded_receiver_init(
 		      &overlap.receiver, &overlap.seed) ==
 		      V32_UNCODED_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&overlap, &saved_overlap, sizeof(overlap)) == 0,
 	      "overlapping initialization was not transactional");
 	memset(&symbol, 0x3c, sizeof(symbol));
-	saved_symbol = symbol;
+	memcpy(&saved_symbol, &symbol, sizeof(saved_symbol));
 	for (unsigned int bits = 0; bits <= UINT8_MAX; ++bits) {
 		if (bits == V32_4800_BITS_PER_SYMBOL ||
 		    bits == V32_9600_BITS_PER_SYMBOL)
@@ -362,7 +374,7 @@ static bool test_contracts(uint8_t bits_per_symbol)
 		      "invalid observation field %u changed receiver/output",
 		      invalid_field);
 	}
-	overlap.receiver = saved_receiver;
+	memcpy(&overlap.receiver, &saved_receiver, sizeof(overlap.receiver));
 	CHECK(v32_uncoded_receiver_observe(
 		      &overlap.receiver, bits_per_symbol,
 		      &overlap.observation, true, &symbol) ==
@@ -371,7 +383,7 @@ static bool test_contracts(uint8_t bits_per_symbol)
 		     sizeof(saved_receiver)) == 0 &&
 	      memcmp(&symbol, &saved_symbol, sizeof(symbol)) == 0,
 	      "owner/input overlap was not transactional");
-	overlap.receiver = saved_receiver;
+	memcpy(&overlap.receiver, &saved_receiver, sizeof(overlap.receiver));
 	CHECK(v32_uncoded_receiver_observe(
 		      &overlap.receiver, bits_per_symbol,
 		      &observation, true, &overlap.symbol) ==
@@ -390,7 +402,9 @@ static bool test_contracts(uint8_t bits_per_symbol)
 	      "input/output overlap was not transactional");
 	for (unsigned int invalid_field = 0; invalid_field < 4;
 	     ++invalid_field) {
-		struct v32_uncoded_receiver invalid_receiver = saved_receiver;
+		struct v32_uncoded_receiver invalid_receiver;
+
+		memcpy(&invalid_receiver, &saved_receiver, sizeof(invalid_receiver));
 
 		switch (invalid_field) {
 		case 0:
@@ -406,7 +420,7 @@ static bool test_contracts(uint8_t bits_per_symbol)
 				(enum v32_transmitter_role)(invalid_field == 2 ? -1 : 2);
 			break;
 		}
-		receiver = invalid_receiver;
+		memcpy(&receiver, &invalid_receiver, sizeof(receiver));
 		CHECK(!v32_uncoded_receiver_is_valid(&receiver) &&
 		      v32_uncoded_receiver_init(
 			      &receiver, &invalid_receiver.decoder) ==
