@@ -236,6 +236,46 @@ static bool at_response_formats(void)
 	return true;
 }
 
+static bool connection_report_layout(void)
+{
+	static const struct {
+		unsigned verbose, quiet, mask, cr, lf;
+		const char *expected;
+	} cases[] = {
+		{1,0,7,13,10, "\r\nModulation: V34\r\nStartup: V8\r\nProtocol: LAPM\r\nCompression: V42bis\r\nTxRate: 31200\r\nCONNECT 31200\r\n"},
+		{1,0,7,59,58, ";:Modulation: V34;:Startup: V8;:Protocol: LAPM;:Compression: V42bis;:TxRate: 31200;:CONNECT 31200;:"},
+		{1,0,0,13,10, "\r\nCONNECT 31200\r\n"},
+		{1,0,1,13,10, "\r\nModulation: V34\r\nStartup: V8\r\nCONNECT 31200\r\n"},
+		{1,0,4,13,10, "\r\nTxRate: 31200\r\nCONNECT 31200\r\n"},
+		{0,0,7,13,10, "1\r"},
+		{1,1,7,13,10, ""},
+	};
+	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+		struct capture data = { .limit = 4096 }, commands = { .limit = 4096 };
+		struct modem *modem = create(&data, &commands);
+		struct dp dp = { .id = DP_V34, .modem = modem };
+		EXPECT(modem != NULL);
+		modem_frontend_init(modem);
+		modem->dp = &dp;
+		modem->tx_rate = modem->rx_rate = 31200;
+		modem->cfg.ec = modem->cfg.comp = 1;
+		modem->cfg.comp_types = MODEM_COMP_TYPE_V42BIS;
+		modem->dsp_info.startup = MODEM_STARTUP_V8;
+		modem->sregs[SREG_VERBOSE] = cases[i].verbose;
+		modem->sregs[SREG_QUIET] = cases[i].quiet;
+		modem->sregs[SREG_CONNNECT_MSG_FORMAT] = cases[i].mask;
+		modem->sregs[SREG_CR_CHAR] = cases[i].cr;
+		modem->sregs[SREG_LF_CHAR] = cases[i].lf;
+		modem->frontend_report(modem, RESULT_CONNECT);
+		CHECK(commands.count == strlen(cases[i].expected) &&
+		      memcmp(commands.bytes, cases[i].expected, commands.count) == 0 &&
+		      data.count == 0, "CONNECT report layout case %zu", i);
+		modem->dp = NULL;
+		modem_delete(modem);
+	}
+	return true;
+}
+
 static bool local_lapm_retry_cause(void)
 {
 	struct capture data = { .limit = 4096 }, commands = { .limit = 4096 };
@@ -314,7 +354,7 @@ static bool retained_call_report(void)
 	commands.count = 0;
 	memset(commands.bytes, 0, sizeof(commands.bytes));
 	EXPECT(modem_write(modem, "ATI11\r", 6) == 6);
-	EXPECT(strstr((char *)commands.bytes, "Rates: TX=14400 bit/s 2400.00 baud RX=9600 bit/s 2400.00 baud\r\n"));
+	EXPECT(strstr((char *)commands.bytes, "Modulation: V32bis\r\nRates: TX=14400 bit/s 2400.00 baud RX=9600 bit/s 2400.00 baud\r\n"));
 	EXPECT(strstr((char *)commands.bytes, "Media time: 20 ms\r\n"));
 	EXPECT(strstr((char *)commands.bytes, "Disconnect: remote reason=peer ended call\r\n"));
 	EXPECT(strstr((char *)commands.bytes, "End: NO CARRIER phase=online step=online/receiver\r\n"));
@@ -368,7 +408,7 @@ static bool caller_identity_results(void)
 	modem_set_caller_number(modem, "+1(202)555-0123");
 	modem_set_caller_number(other, "1.202.555.0124");
 	EXPECT(modem_report_incoming_call(modem) == 0);
-	EXPECT(strstr((char *)commands.bytes, "CallerID: +12025550123\r\n\r\nRING\r\n"));
+	EXPECT(strstr((char *)commands.bytes, "CallerID: +12025550123\r\nRING\r\n"));
 	EXPECT(strcmp(other->caller_number, "12025550124") == 0);
 	EXPECT(modem_answer(modem) == 0 && strcmp(modem->caller_number, "+12025550123") == 0);
 	commands.count = 0;
@@ -376,7 +416,7 @@ static bool caller_identity_results(void)
 	modem->cfg.ec = modem->cfg.comp = 0;
 	modem->rx_rate = modem->tx_rate = 9600;
 	modem_update_status(modem, STATUS_EC_LINK);
-	EXPECT(strstr((char *)commands.bytes, "CallerID: +12025550123\r\n\r\nCONNECT 9600\r\n"));
+	EXPECT(strstr((char *)commands.bytes, "CallerID: +12025550123\r\nCONNECT 9600\r\n"));
 	modem_note_disconnect(modem, false, "peer ended call");
 	EXPECT(modem_stop_now(modem) == 0 && !modem->caller_number[0]);
 	EXPECT(strcmp(modem->call_report.caller_number, "+12025550123") == 0);
@@ -418,6 +458,6 @@ static bool caller_identity_results(void)
 int main(void)
 {
 	return literal_and_partial() && command_preserves_receive() &&
-		raw_overflow_is_reported() && at_replies_are_separate() && at_response_formats() && local_lapm_retry_cause() &&
+		raw_overflow_is_reported() && at_replies_are_separate() && at_response_formats() && connection_report_layout() && local_lapm_retry_cause() &&
 		retained_call_report() && unanswered_call_report() && caller_identity_results() ? 0 : 1;
 }

@@ -292,7 +292,8 @@ verbose CONNECT:
 `AT&A7`, the default, enables all of these. The rate appended to CONNECT is
 the receive bitrate; `TxRate` is the transmit bitrate. They describe line rates
 rather than PTY baud, compressed throughput, or application transfer speed. Numeric
-results (`V0`) omit these extra lines.
+results (`V0`) omit these extra lines. The diagnostic lines and CONNECT form
+one block, with a single line for each item. `ATI11` reports use the same spacing.
 
 Incoming calls with a usable telephone user in the SIP From header produce a
 separate `CallerID: <number>` line immediately before verbose RING and

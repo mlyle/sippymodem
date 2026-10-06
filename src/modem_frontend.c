@@ -75,13 +75,19 @@ void modem_frontend_info_header(struct modem *m)
 		modem_send_to_tty(m, CRLF_CHARS(m), 2);
 }
 
-void modem_frontend_info(struct modem *m, const char *text, int length)
+static void info_line(struct modem *m, const char *text, int length)
 {
-	modem_frontend_info_header(m);
 	modem_send_to_tty(m, text, length);
 	modem_send_to_tty(m, CRLF_CHARS(m), 2);
 }
 
+void modem_frontend_info(struct modem *m, const char *text, int length)
+{
+	modem_frontend_info_header(m);
+	info_line(m, text, length);
+}
+
+/* A report owns one header; each line supplies only its trailer. */
 static void report_line(struct modem *m, const char *format, ...)
 {
 	char text[384];
@@ -90,12 +96,13 @@ static void report_line(struct modem *m, const char *format, ...)
 	int length = vsnprintf(text, sizeof(text), format, arguments);
 	va_end(arguments);
 	if (length > 0 && (size_t)length < sizeof(text))
-		modem_frontend_info(m, text, length);
+		info_line(m, text, length);
 }
 
 void modem_frontend_call_report(struct modem *m)
 {
 	struct modem_call_report snapshot;
+	modem_frontend_info_header(m);
 	if (!modem_get_call_report(m, &snapshot)) {
 		report_line(m, "Last call: none");
 		return;
@@ -163,6 +170,7 @@ static void report_result(struct modem *m, unsigned int code)
         if (IS_QUIET(m))
                 return;
         if (IS_VERBOSE(m)) {
+		modem_frontend_info_header(m);
 		if(code==RESULT_CONNECT) {
 			msg_mask = modem_get_sreg(m,SREG_CONNNECT_MSG_FORMAT);
 			if(msg_mask&1) {
@@ -205,7 +213,6 @@ static void report_result(struct modem *m, unsigned int code)
 		}
 		if ((code == RESULT_RING || code == RESULT_CONNECT) && m->caller_number[0])
 			report_line(m, "CallerID: %s", m->caller_number);
-		modem_frontend_info_header(m);
                 msg = modem_responses[code].text;
 		modem_send_to_tty(m,msg,strlen(msg));
 		if (code==RESULT_CONNECT && m->mode == MODEM_MODE_DATA
