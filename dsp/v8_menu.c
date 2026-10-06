@@ -63,7 +63,7 @@ static bool menu_is_valid(const struct v8_menu *menu)
 	       (!menu->pcm_present || menu->pstn_access_present) &&
 	       (!menu->pcm_present ||
 		(menu->pcm_availability &
-		 (V8_PCM_ANALOG | V8_PCM_DIGITAL | V8_PCM_V91)) == 0 ||
+		 (V8_PCM_ANALOG | V8_PCM_DIGITAL)) == 0 ||
 		(menu->modulations & V8_MODULATION_V34_DUPLEX) != 0) &&
 	       menu->modulation_octets != 0 &&
 	       menu->modulation_octets <=
@@ -75,7 +75,10 @@ static bool menu_is_valid(const struct v8_menu *menu)
 
 bool v8_menu_is_usable(const struct v8_menu *menu)
 {
-	return menu != NULL && menu->modulations != 0 && menu_is_valid(menu);
+	return menu != NULL &&
+	       (menu->modulations != 0 ||
+		(menu->pcm_present && (menu->pcm_availability & V8_PCM_V91) != 0 &&
+		 (menu->pstn_access & V8_PSTN_DIGITAL) != 0)) && menu_is_valid(menu);
 }
 
 enum v8_menu_result v8_call_menu_init(
@@ -283,8 +286,7 @@ enum v8_menu_result v8_joint_menu_select(
 	struct v8_pcm_roles roles;
 
 	if (joint_menu == NULL ||
-	    v8_pcm_select_roles(call_menu, answer_menu, &roles) != V8_MENU_OK ||
-	    call_menu->modulations == 0 || answer_menu->modulations == 0)
+	    v8_pcm_select_roles(call_menu, answer_menu, &roles) != V8_MENU_OK)
 		return V8_MENU_INVALID_ARGUMENT;
 	/* Resolve PCM availability before constructing JM, including when only
 	 * one endpoint offers PCM. V.8 section 7.4 permits the PCM category in
@@ -354,19 +356,40 @@ enum v8_menu_result v8_pcm_select_roles(
 }
 
 enum v8_menu_result v8_menu_selected_modulation(
-	const struct v8_menu *menu,
+	const struct v8_menu *call_menu, const struct v8_menu *menu,
 	enum v8_modulation *modulation)
 {
 	uint16_t selected = V8_MODULATION_V34_DUPLEX;
+	struct v8_pcm_roles roles;
 
-	if (!menu_is_valid(menu) || modulation == NULL)
+	if (modulation == NULL ||
+	    v8_pcm_select_roles(call_menu, menu, &roles) != V8_MENU_OK ||
+	    (menu->modulations & ~call_menu->modulations) != 0 ||
+	    (menu->lapm && !call_menu->lapm))
 		return V8_MENU_INVALID_ARGUMENT;
-	if (menu->modulations == 0)
+	if (menu->pcm_present && roles.caller == V8_PCM_ROLE_NONE)
 		return V8_MENU_NO_COMMON_MODULATION;
-	while ((menu->modulations & selected) == 0)
-		selected <<= 1;
+	if (menu->modulations == 0) {
+		if (roles.caller != V8_PCM_ROLE_DIGITAL ||
+		    roles.answerer != V8_PCM_ROLE_DIGITAL)
+			return V8_MENU_NO_COMMON_MODULATION;
+		selected = V8_MODULATION_NONE;
+	} else {
+		while ((menu->modulations & selected) == 0)
+			selected <<= 1;
+	}
 	*modulation = (enum v8_modulation)selected;
 	return V8_MENU_OK;
+}
+
+bool v8_menu_selection_is_valid(
+	const struct v8_menu *call_menu, const struct v8_menu *joint_menu,
+	enum v8_modulation modulation)
+{
+	enum v8_modulation expected;
+
+	return v8_menu_selected_modulation(call_menu, joint_menu, &expected) ==
+		       V8_MENU_OK && expected == modulation;
 }
 
 static bool menu_detector_is_valid(

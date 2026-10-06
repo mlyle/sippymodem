@@ -26,9 +26,6 @@ static bool qc_response_is_usable(const struct v8_calling *calling,
 
 static bool calling_is_valid(const struct v8_calling *calling)
 {
-	unsigned int selected;
-	bool selection_is_single;
-
 	if (calling == NULL || !v8_menu_is_usable(&calling->local_menu) ||
 	    !v8_ansam_detector_is_valid(&calling->answer_signal) ||
 	    (unsigned int)calling->state > V8_CALLING_FAILED ||
@@ -47,19 +44,9 @@ static bool calling_is_valid(const struct v8_calling *calling)
 	if (calling->qc_bit_index != 0 && calling->state != V8_CALLING_SEND_QC1 &&
 	    calling->qc_bit_index != v92_qc1_bit_count(&calling->qc_request))
 		return false;
-	selected = (unsigned int)calling->selected_modulation;
-	selection_is_single =
-		selected != 0 &&
-		(selected & ~((unsigned int)V8_MODULATION_ALL)) == 0 &&
-		(selected & (selected - 1u)) == 0;
 	if (calling->negotiated) {
-		if (!v8_menu_is_usable(&calling->negotiated_menu) ||
-		    !selection_is_single ||
-		    (calling->negotiated_menu.modulations & selected) == 0 ||
-		    (calling->negotiated_menu.modulations &
-		     ~calling->local_menu.modulations) != 0 ||
-		    (calling->negotiated_menu.lapm &&
-		     !calling->local_menu.lapm))
+		if (!v8_menu_selection_is_valid(&calling->local_menu,
+			    &calling->negotiated_menu, calling->selected_modulation))
 			return false;
 	} else if (calling->negotiated_menu.call_function != 0 ||
 		   calling->negotiated_menu.modulations != 0 ||
@@ -68,7 +55,7 @@ static bool calling_is_valid(const struct v8_calling *calling)
 		   calling->negotiated_menu.pstn_access != 0 ||
 		   calling->negotiated_menu.pcm_present ||
 		   calling->negotiated_menu.pstn_access_present ||
-		   calling->negotiated_menu.lapm || selected != 0 ||
+		   calling->negotiated_menu.lapm || calling->selected_modulation != 0 ||
 		   calling->cj_bit_index != 0) {
 		return false;
 	}
@@ -261,16 +248,12 @@ static enum v8_calling_result exchange_menu_sample(
 		enum v8_menu_result selection_result;
 
 		calling->qc_enabled = false;
-		if (remote_menu.modulations == 0)
-			return fail(
-				calling,
-				V8_CALLING_NO_COMMON_MODULATION);
 		if (v8_joint_menu_select(
 			    &calling->local_menu, &remote_menu, &joint_menu) !=
 		    V8_MENU_OK)
 			return V8_CALLING_INVALID_ARGUMENT;
 		selection_result = v8_menu_selected_modulation(
-			&joint_menu, &modulation);
+			&calling->local_menu, &joint_menu, &modulation);
 		if (selection_result == V8_MENU_NO_COMMON_MODULATION)
 			return fail(
 				calling,

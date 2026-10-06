@@ -38,7 +38,7 @@ static bool endpoints_init(
 }
 
 static bool negotiate_menus(const struct v8_menu *call_menu,
-	const struct v8_menu *answer_menu, enum v8_modulation expected)
+	const struct v8_menu *answer_menu, enum v8_modulation expected, bool pcm)
 {
 	struct v8_answering answering;
 	struct v8_calling calling;
@@ -91,7 +91,8 @@ static bool negotiate_menus(const struct v8_menu *call_menu,
 	      answering_modulation == calling_modulation &&
 	      answering_selection.modulations ==
 		      calling_selection.modulations &&
-	      !answering_selection.pcm_present && !calling_selection.pcm_present &&
+	      answering_selection.pcm_present == pcm &&
+	      calling_selection.pcm_present == pcm &&
 	      answering_selection.lapm && calling_selection.lapm,
 	      "V.8 endpoints disagreed on the selected data mode");
 	return true;
@@ -103,7 +104,7 @@ static bool test_call_negotiation(void)
 
 	CHECK(v8_call_menu_init(&menu, V8_MODULATION_V21, true) == V8_MENU_OK,
 	      "V.21 menu setup failed");
-	return negotiate_menus(&menu, &menu, V8_MODULATION_V21);
+	return negotiate_menus(&menu, &menu, V8_MODULATION_V21, false);
 }
 
 static bool test_pcm_with_non_pcm_peer(void)
@@ -117,9 +118,35 @@ static bool test_pcm_with_non_pcm_peer(void)
 		CHECK(v8_pcm_call_menu_init(&pcm,
 			      digital ? V8_PCM_DIGITAL : V8_PCM_ANALOG,
 			      digital ? V8_PSTN_DIGITAL : 0, true) == V8_MENU_OK &&
-		      negotiate_menus(&v34, &pcm, V8_MODULATION_V34_DUPLEX) &&
-		      negotiate_menus(&pcm, &v34, V8_MODULATION_V34_DUPLEX),
+		      negotiate_menus(&v34, &pcm, V8_MODULATION_V34_DUPLEX, false) &&
+		      negotiate_menus(&pcm, &v34, V8_MODULATION_V34_DUPLEX, false),
 		      "V.8 did not complete V.34 fallback with one PCM peer");
+	}
+	return true;
+}
+
+static bool test_v91_without_legacy_match(void)
+{
+	const struct { uint16_t modulation; uint8_t width; } fallbacks[] = {
+		{ 0, 1 }, { V8_MODULATION_V21, 3 },
+		{ V8_MODULATION_V32, 2 }, { V8_MODULATION_V34_DUPLEX, 1 },
+	};
+	struct v8_menu call, answer;
+
+	CHECK(v8_pcm_call_menu_init(&call, V8_PCM_V91, V8_PSTN_DIGITAL,
+		      true) == V8_MENU_OK, "V.91 menu setup failed");
+	answer = call;
+	for (size_t i = 0; i < ARRAY_LENGTH(fallbacks); ++i) {
+		for (size_t j = 0; j < ARRAY_LENGTH(fallbacks); ++j) {
+			call.modulations = fallbacks[i].modulation;
+			answer.modulations = fallbacks[j].modulation;
+			call.modulation_octets = fallbacks[i].width;
+			answer.modulation_octets = fallbacks[j].width;
+			CHECK(negotiate_menus(&call, &answer,
+				(enum v8_modulation)(fallbacks[i].modulation &
+					fallbacks[j].modulation), true),
+			      "V.91 handshake depended on legacy match %zu/%zu", i, j);
+		}
 	}
 	return true;
 }
@@ -654,6 +681,7 @@ int main(void)
 		{ "answer signal wire", test_answer_signal_wire },
 		{ "call negotiation", test_call_negotiation },
 		{ "PCM with non-PCM peer", test_pcm_with_non_pcm_peer },
+		{ "V.91 without legacy match", test_v91_without_legacy_match },
 		{ "Quick Connect admission and V.8 fallback", test_quick_connect },
 		{ "Quick Connect configuration validation", test_quick_connect_validation },
 		{ "no common modulation", test_no_common_modulation },

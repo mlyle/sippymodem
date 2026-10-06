@@ -99,8 +99,8 @@ enum v8_menu_result v8_call_menu_init(
 enum v8_menu_result v8_pcm_call_menu_init(
 	struct v8_menu *menu, uint8_t pcm_availability,
 	uint8_t pstn_access, bool lapm);
-/* A valid data menu with a nonempty modulation set. Empty refusal menus
- * remain encodable and decodable. */
+/* Members must be initialized. PCM-only V.91 offers are usable; empty
+ * refusal menus remain encodable and decodable. */
 bool v8_menu_is_usable(const struct v8_menu *menu);
 enum v8_menu_result v8_menu_encode(
 	const struct v8_menu *menu, uint8_t *information,
@@ -116,9 +116,14 @@ enum v8_menu_result v8_pcm_select_roles(
 	const struct v8_menu *call_menu,
 	const struct v8_menu *joint_menu,
 	struct v8_pcm_roles *roles);
+/* PCM selection takes priority; modulation reports the common legacy
+ * fallback, or NONE when V.91 is selected without one. */
 enum v8_menu_result v8_menu_selected_modulation(
-	const struct v8_menu *menu,
+	const struct v8_menu *call_menu, const struct v8_menu *joint_menu,
 	enum v8_modulation *modulation);
+bool v8_menu_selection_is_valid(
+	const struct v8_menu *call_menu, const struct v8_menu *joint_menu,
+	enum v8_modulation modulation);
 
 enum v8_menu_result v8_menu_detector_init(
 	struct v8_menu_detector *detector);

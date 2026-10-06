@@ -492,7 +492,7 @@ static bool test_joint_menu_selection(void)
 	      joint_menu.modulation_octets == call_menu.modulation_octets &&
 	      joint_menu.lapm &&
 	      v8_menu_selected_modulation(
-		      &joint_menu, &selected) == V8_MENU_OK &&
+		      &call_menu, &joint_menu, &selected) == V8_MENU_OK &&
 	      selected == V8_MODULATION_V34_HALF_DUPLEX,
 	      "V.8 joint menu did not select the first common mode");
 	return true;
@@ -621,7 +621,7 @@ static bool test_pcm_with_non_pcm_peer(void)
 				      v8_pcm_select_roles(call, &joint, &roles) == V8_MENU_OK &&
 				      roles.caller == V8_PCM_ROLE_NONE &&
 				      roles.answerer == V8_PCM_ROLE_NONE &&
-				      v8_menu_selected_modulation(&joint, &selected) ==
+				      v8_menu_selected_modulation(call, &joint, &selected) ==
 					      (common ? V8_MENU_OK : V8_MENU_NO_COMMON_MODULATION) &&
 				      selected == (common ? V8_MODULATION_V34_DUPLEX :
 					      V8_MODULATION_NONE),
@@ -664,7 +664,7 @@ static bool test_no_common_modulation(void)
 	      information_count == ARRAY_LENGTH(expected) &&
 	      memcmp(information, expected, sizeof(expected)) == 0 &&
 	      v8_menu_selected_modulation(
-		      &joint_menu, &selected) ==
+		      &call_menu, &joint_menu, &selected) ==
 		      V8_MENU_NO_COMMON_MODULATION &&
 	      selected == V8_MODULATION_V21,
 	      "V.8 no-common-mode joint menu changed");
@@ -689,7 +689,7 @@ static bool test_joint_validation(void)
 		      &local_menu, V8_MODULATION_V21, false) ==
 		      V8_MENU_OK,
 	      "V.8 joint validation fixtures did not initialize");
-	call_menu.modulations = 0;
+	call_menu.modulation_octets = 0;
 	CHECK(v8_joint_menu_select(
 		      &call_menu, &local_menu, &joint_menu) ==
 		      V8_MENU_INVALID_ARGUMENT &&
@@ -698,9 +698,11 @@ static bool test_joint_validation(void)
 		      NULL, &local_menu, &joint_menu) ==
 		      V8_MENU_INVALID_ARGUMENT &&
 	      v8_menu_selected_modulation(
-		      NULL, &selected) == V8_MENU_INVALID_ARGUMENT &&
+		      NULL, &local_menu, &selected) == V8_MENU_INVALID_ARGUMENT &&
 	      v8_menu_selected_modulation(
-		      &local_menu, NULL) == V8_MENU_INVALID_ARGUMENT &&
+		      &local_menu, NULL, &selected) == V8_MENU_INVALID_ARGUMENT &&
+	      v8_menu_selected_modulation(
+		      &local_menu, &local_menu, NULL) == V8_MENU_INVALID_ARGUMENT &&
 	      strcmp(v8_menu_result_name(
 			     V8_MENU_NO_COMMON_MODULATION),
 		     "no common modulation") == 0,
@@ -1096,6 +1098,62 @@ static bool test_bidirectional_pcm_roles(void)
 	return true;
 }
 
+static bool test_v91_wire_without_v34(void)
+{
+	/* V.8 (11/2000), 6.3 and 7.4: V.34 is required for pcm0 b5/b6,
+	 * not b7 (V.91). Zero legacy capabilities can still select V.91. */
+	const uint8_t pcm_only[] = { 0xc1, 0x25, 0x8d, 0x87 };
+	const uint8_t with_v21[] = { 0xc1, 0x25, 0x10, 0x90, 0x8d, 0x87 };
+	const struct { const uint8_t *wire; size_t count; uint16_t fallback; } cases[] = {
+		{ pcm_only, sizeof(pcm_only), 0 },
+		{ with_v21, sizeof(with_v21), V8_MODULATION_V21 },
+	};
+	struct v8_menu call, peer, joint;
+	struct v8_pcm_roles roles;
+	uint8_t encoded[V8_MAX_INFORMATION_OCTETS];
+	size_t count;
+	enum v8_modulation selected;
+
+	for (size_t i = 0; i < ARRAY_LENGTH(cases); ++i) {
+		CHECK(v8_menu_decode(cases[i].wire, cases[i].count, &call) == V8_MENU_OK &&
+		      call.modulations == cases[i].fallback && v8_menu_is_usable(&call) &&
+		      v8_menu_encode(&call, encoded, sizeof(encoded), &count) == V8_MENU_OK &&
+		      count == cases[i].count && !memcmp(encoded, cases[i].wire, count),
+		      "V.91 wire requires an unrelated V.34 bit, case %zu", i);
+		CHECK(v8_joint_menu_select(&call, &call, &joint) == V8_MENU_OK &&
+		      v8_menu_selected_modulation(&call, &joint, &selected) == V8_MENU_OK &&
+		      selected == cases[i].fallback &&
+		      v8_menu_selection_is_valid(&call, &joint, selected) &&
+		      v8_pcm_select_roles(&call, &joint, &roles) == V8_MENU_OK &&
+		      roles.caller == V8_PCM_ROLE_DIGITAL && roles.answerer == V8_PCM_ROLE_DIGITAL,
+		      "V.91 PCM selection lost its legacy fallback");
+		for (unsigned role = V8_PCM_ANALOG; role <= V8_PCM_DIGITAL; role <<= 1) {
+			peer = call;
+			peer.pcm_availability = role;
+			CHECK(v8_menu_encode(&peer, encoded, sizeof(encoded), &count) ==
+			      V8_MENU_INVALID_ARGUMENT, "V.90/V.92 accepted missing V.34 support");
+		}
+	}
+	CHECK(v8_menu_decode(pcm_only, sizeof(pcm_only), &call) == V8_MENU_OK &&
+	      v8_call_menu_init(&peer, V8_MODULATION_V34_DUPLEX, false) == V8_MENU_OK &&
+	      v8_joint_menu_select(&call, &peer, &joint) == V8_MENU_OK &&
+	      !joint.pcm_present && !joint.modulations && !v8_menu_is_usable(&joint),
+	      "non-V.91 peer selected a PCM-only offer");
+	selected = V8_MODULATION_V21;
+	CHECK(v8_menu_selected_modulation(&call, &joint, &selected) ==
+	      V8_MENU_NO_COMMON_MODULATION && selected == V8_MODULATION_V21 &&
+	      !v8_menu_selection_is_valid(&call, &joint, V8_MODULATION_NONE),
+	      "empty refusal became a successful NONE selection");
+	peer = call;
+	peer.pstn_access = 0;
+	CHECK(!v8_menu_is_usable(&peer) &&
+	      v8_joint_menu_select(&call, &peer, &joint) == V8_MENU_OK &&
+	      v8_menu_selected_modulation(&call, &joint, &selected) ==
+	      V8_MENU_NO_COMMON_MODULATION && selected == V8_MODULATION_V21,
+	      "V.91 selected without mutual digital access");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -1116,6 +1174,7 @@ int main(void)
 		{ "joint menu selection", test_joint_menu_selection },
 		{ "PCM role selection", test_pcm_role_selection },
 		{ "bidirectional digital PCM", test_bidirectional_pcm_roles },
+		{ "V.91 wire without V.34", test_v91_wire_without_v34 },
 		{ "PCM role fallback", test_pcm_role_fallback },
 		{ "PCM with non-PCM peer", test_pcm_with_non_pcm_peer },
 		{ "no common modulation", test_no_common_modulation },

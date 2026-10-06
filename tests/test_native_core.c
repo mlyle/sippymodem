@@ -12,6 +12,8 @@
 #include <datapump.h>
 #include <line_startup.h>
 #include <v8_datapump.h>
+#include <v8_calling.h>
+#include <v8_answering.h>
 #include <v34_datapump.h>
 #include <v90_datapump.h>
 #include <v90_profile.h>
@@ -2091,6 +2093,95 @@ static bool test_v8_handoff(void)
 		      "V.8 PCM handshakes did not release their state");
 		modem_delete(caller);
 		modem_delete(answerer);
+	}
+	return true;
+}
+
+static bool test_v91_pcm_handoff_without_v34(void)
+{
+	const struct dp_operations *v8 = modem_dp_get_registered_ops(DP_V8);
+	const struct dp_operations *v91 = modem_dp_get_registered_ops(DP_V91);
+	struct modem_driver driver = {
+		.name = "V.91 selection", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	const struct { uint16_t modulation; uint8_t width; bool enabled; } cases[] = {
+		{ 0, 1, true }, { V8_MODULATION_V21, 3, true },
+		{ V8_MODULATION_V34_DUPLEX, 1, true },
+		{ V8_MODULATION_V34_DUPLEX, 1, false },
+	};
+
+	CHECK(v8 && v91, "V.8/V.91 operations unavailable");
+	for (unsigned caller = 0; caller < 2; ++caller) {
+		for (size_t scenario = 0; scenario < ARRAY_LENGTH(cases); ++scenario) {
+			struct modem *m = create_compat_modem(&driver, "V.91 selection");
+			struct v8_menu peer_menu;
+			struct v8_calling calling;
+			struct v8_answering answering;
+			int16_t local = 0, remote = 0;
+			int status = DPSTAT_OK;
+			bool enabled = cases[scenario].enabled, complete = false;
+
+			CHECK(m && modem_set_sreg(m, SREG_V91_ENABLED, enabled) == 0 &&
+			      modem_set_sreg(m, SREG_V90_DIGITAL_INDICATION,
+				      MODEM_PCM_POLICY_DIGITAL) == 0,
+			      "V.91 local policy setup");
+			MODEM_AUTOMODE(m) = true;
+			CHECK(v8_pcm_call_menu_init(&peer_menu, V8_PCM_V91,
+				      V8_PSTN_DIGITAL, true) == V8_MENU_OK,
+			      "V.91 peer menu setup");
+			peer_menu.modulations = cases[scenario].modulation;
+			peer_menu.modulation_octets = cases[scenario].width;
+			CHECK(caller ? v8_answering_init(&answering, &peer_menu) == V8_ANSWERING_OK :
+			      v8_calling_init(&calling, &peer_menu) == V8_CALLING_OK,
+			      "V.91 peer readiness");
+			struct dp *negotiation = v8->create(m, DP_V92, caller,
+				MODEM_RATE, MODEM_FRAG, v8);
+			CHECK(negotiation, "V.8 owner creation");
+			for (unsigned sample = 0; sample < 7u * MODEM_RATE; ++sample) {
+				if (caller)
+					CHECK(v8_answering_process(&answering, &local, &remote, 1) ==
+					      V8_ANSWERING_OK, "V.91 peer answer failed");
+				status = v8->process(negotiation, &remote, &local, 1);
+				CHECK(status == DPSTAT_OK || status == DPSTAT_CHANGEDP,
+				      "V.91 handoff failed: caller=%u scenario=%zu sample=%u",
+				      caller, scenario, sample);
+				if (!caller)
+					CHECK(v8_calling_process(&calling, &local, &remote, 1) ==
+					      V8_CALLING_OK, "V.91 peer caller failed");
+				complete = caller ? v8_answering_is_complete(&answering) :
+					v8_calling_is_complete(&calling);
+				if (status == DPSTAT_CHANGEDP && complete) break;
+			}
+			CHECK(status == DPSTAT_CHANGEDP && complete &&
+			      m->dp_requested == (enabled ? DP_V91 : DP_V34) &&
+			      m->dsp_info.pcm_role == (enabled ? MODEM_PCM_ROLE_DIGITAL : MODEM_PCM_ROLE_NONE),
+			      "PCM priority or V.91 disable policy lost: caller=%u scenario=%zu",
+			      caller, scenario);
+			if (enabled) {
+				m->dp = negotiation;
+				struct dp *child = v91->create(m, DP_V91, caller,
+					MODEM_RATE, MODEM_FRAG, v91);
+				uint8_t input[MODEM_FRAG], output[MODEM_FRAG];
+				int16_t receive[MODEM_FRAG] = { 0 }, transmit[MODEM_FRAG];
+				bool exact;
+				memset(input, 0xff, sizeof(input));
+				CHECK(child, "V.91 could not adopt the PCM-only V.8 handoff");
+				for (unsigned frame = 0; frame < 3u * MODEM_RATE / MODEM_FRAG; ++frame) {
+					status = v91->process_g711(child, G711_LAW_PCMU, input,
+						receive, NULL, output, transmit, MODEM_FRAG, &exact);
+					if (status != DPSTAT_OK) break;
+				}
+				CHECK(status == DPSTAT_CHANGEDP && m->dp_requested == DP_V34 &&
+				      m->dsp_info.pcm_role == MODEM_PCM_ROLE_NONE &&
+				      strcmp(v91->progress(child), "V.91/fallback-V.34") == 0,
+				      "V.91 INFO timeout lost its V.34 escape");
+				CHECK(v91->delete(child) == 0, "V.91 owner cleanup");
+				m->dp = NULL;
+			}
+			CHECK(v8->delete(negotiation) == 0, "V.8 owner cleanup");
+			modem_delete(m);
+		}
 	}
 	return true;
 }
@@ -9801,6 +9892,7 @@ int main(void)
 		{ "escape holds candidate bytes", test_escape_holds_candidate_bytes },
 		{ "V.8 datapump mapping", test_v8_datapump_mapping },
 		{ "V.8 handoff", test_v8_handoff },
+		{ "V.91 PCM handoff without V.34", test_v91_pcm_handoff_without_v34 },
 		{ "V.42 detection deadline", test_v42_detection_deadline },
 		{ "automatic factory profile", test_automatic_factory_profile },
 		{ "factory defaults", test_factory_defaults },

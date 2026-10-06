@@ -11,19 +11,11 @@ enum {
 static bool selection_is_valid(
 	const struct v8_answering *answering)
 {
-	unsigned int selected = (unsigned int)answering->selected_modulation;
-
-	return v8_menu_is_usable(&answering->call_menu) &&
-	       v8_menu_is_usable(&answering->negotiated_menu) && selected != 0 &&
-	       (selected & ~((unsigned int)V8_MODULATION_ALL)) == 0 &&
-	       (selected & (selected - 1u)) == 0 &&
-	       (answering->negotiated_menu.modulations & selected) != 0 &&
+	return v8_menu_selection_is_valid(&answering->call_menu,
+		       &answering->negotiated_menu, answering->selected_modulation) &&
 	       (answering->negotiated_menu.modulations &
 		~answering->local_menu.modulations) == 0 &&
-	       (answering->negotiated_menu.modulations &
-		~answering->call_menu.modulations) == 0 &&
-	       (!answering->negotiated_menu.lapm ||
-		(answering->local_menu.lapm && answering->call_menu.lapm));
+	       (!answering->negotiated_menu.lapm || answering->local_menu.lapm);
 }
 
 static bool qc_response_is_usable(const struct v8_menu *menu,
@@ -211,7 +203,7 @@ static enum v8_answering_result select_joint_menu(
 	    V8_MENU_OK)
 		return V8_ANSWERING_INVALID_ARGUMENT;
 	selection_result = v8_menu_selected_modulation(
-		&joint_menu, &modulation);
+		call_menu, &joint_menu, &modulation);
 	if (selection_result == V8_MENU_NO_COMMON_MODULATION)
 		return fail(
 			answering, V8_ANSWERING_NO_COMMON_MODULATION);

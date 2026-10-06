@@ -418,27 +418,32 @@ static int request_handoff(struct v8_datapump *datapump)
 			&datapump->handshake.answering, &menu, &modulation) ==
 			V8_ANSWERING_OK;
 	}
-	if (!selected || (modulation & datapump->offered_modulations) == 0 ||
+	if (!selected ||
 	    (menu.modulations & ~datapump->offered_modulations) != 0)
 		return DPSTAT_ERROR;
-	if (modulation != v8_datapump_modulation(handoff)) {
-		handoff = fallback_datapump(datapump->dp.modem, modulation);
-		if (handoff == 0)
+	if (v8_datapump_uses_pcm(handoff) &&
+	    !selected_pcm_role(datapump, &menu, &pcm_role, &duplex))
+		return DPSTAT_ERROR;
+	if (duplex) {
+		handoff = DP_V91;
+	} else {
+		if ((modulation & datapump->offered_modulations) == 0)
 			return DPSTAT_ERROR;
-	}
-	if (v8_datapump_uses_pcm(handoff)) {
-		if (!selected_pcm_role(datapump, &menu, &pcm_role, &duplex))
-			return DPSTAT_ERROR;
-		if (duplex) {
-			handoff = DP_V91;
-		} else if (!menu.pcm_present) {
-			handoff = DP_V34;
-			v34_fallback = true;
-		} else if (pcm_role == MODEM_PCM_ROLE_NONE) {
+		if (modulation != v8_datapump_modulation(handoff)) {
+			handoff = fallback_datapump(datapump->dp.modem, modulation);
+			if (handoff == 0)
+				return DPSTAT_ERROR;
+		}
+		if (v8_datapump_uses_pcm(handoff)) {
+			if (!menu.pcm_present) {
+				handoff = DP_V34;
+				v34_fallback = true;
+			} else if (pcm_role == MODEM_PCM_ROLE_NONE) {
+				return DPSTAT_ERROR;
+			}
+		} else if (menu.pcm_present) {
 			return DPSTAT_ERROR;
 		}
-	} else if (menu.pcm_present) {
-		return DPSTAT_ERROR;
 	}
 	lapm = menu.lapm;
 selected:
