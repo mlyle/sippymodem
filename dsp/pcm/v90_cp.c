@@ -26,7 +26,6 @@ enum {
 	CP_A2_FIRST_BIT = 77,
 	CP_B1_FIRST_BIT = 86,
 	CP_B2_FIRST_BIT = 94,
-	CP_COEFFICIENT_BITS = 8,
 	CP_CODEC_DIFFERENCE_BIT = 128,
 };
 
@@ -151,21 +150,10 @@ static void encode_header(
 	packed_msb_write_lsb_field(
 		frame, CP_LOOKAHEAD_FIRST_BIT, CP_LOOKAHEAD_BITS,
 		parameters->spectral_lookahead);
-	packed_msb_write_lsb_field(
-		frame, CP_RATIO_FIRST_BIT, CP_RATIO_BITS,
-		parameters->trn1d_ratio_q3_13);
-	packed_msb_write_lsb_field(
-		frame, CP_A1_FIRST_BIT, CP_COEFFICIENT_BITS,
-		(uint8_t)parameters->shaping_a1_q1_6);
-	packed_msb_write_lsb_field(
-		frame, CP_A2_FIRST_BIT, CP_COEFFICIENT_BITS,
-		(uint8_t)parameters->shaping_a2_q1_6);
-	packed_msb_write_lsb_field(
-		frame, CP_B1_FIRST_BIT, CP_COEFFICIENT_BITS,
-		(uint8_t)parameters->shaping_b1_q1_6);
-	packed_msb_write_lsb_field(
-		frame, CP_B2_FIRST_BIT, CP_COEFFICIENT_BITS,
-		(uint8_t)parameters->shaping_b2_q1_6);
+	pcm_control_frame_write_shaping(
+		frame, parameters->trn1d_ratio_q3_13,
+		parameters->shaping_a1_q1_6, parameters->shaping_a2_q1_6,
+		parameters->shaping_b1_q1_6, parameters->shaping_b2_q1_6);
 	pcm_control_frame_write_map(frame, parameters->frame_constellation);
 	packed_msb_set_bit(
 		frame, CP_CODEC_DIFFERENCE_BIT,
@@ -213,16 +201,6 @@ static bool framing_is_valid(
 		       (8u - frame_bit_count % 8u) % 8u);
 }
 
-static int8_t decode_signed_q1_6(
-	const uint8_t *frame, size_t first_bit)
-{
-	uint8_t raw = (uint8_t)packed_msb_read_lsb_field(
-		frame, first_bit, CP_COEFFICIENT_BITS);
-
-	return raw <= INT8_MAX ? (int8_t)raw :
-	       (int8_t)(-1 - (int16_t)(UINT8_MAX - raw));
-}
-
 static void decode_header(
 	const uint8_t *frame, struct v90_cp_parameters *parameters)
 {
@@ -252,13 +230,13 @@ static void decode_header(
 		(uint16_t)packed_msb_read_lsb_field(
 			frame, CP_RATIO_FIRST_BIT, CP_RATIO_BITS);
 	parameters->shaping_a1_q1_6 =
-		decode_signed_q1_6(frame, CP_A1_FIRST_BIT);
+		pcm_control_frame_read_q1_6(frame, CP_A1_FIRST_BIT);
 	parameters->shaping_a2_q1_6 =
-		decode_signed_q1_6(frame, CP_A2_FIRST_BIT);
+		pcm_control_frame_read_q1_6(frame, CP_A2_FIRST_BIT);
 	parameters->shaping_b1_q1_6 =
-		decode_signed_q1_6(frame, CP_B1_FIRST_BIT);
+		pcm_control_frame_read_q1_6(frame, CP_B1_FIRST_BIT);
 	parameters->shaping_b2_q1_6 =
-		decode_signed_q1_6(frame, CP_B2_FIRST_BIT);
+		pcm_control_frame_read_q1_6(frame, CP_B2_FIRST_BIT);
 }
 
 enum v90_cp_result v90_cp_decode(

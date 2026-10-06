@@ -24,7 +24,6 @@ enum {
 	CPU_A2_FIRST_BIT = 77,
 	CPU_B1_FIRST_BIT = 86,
 	CPU_B2_FIRST_BIT = 94,
-	CPU_COEFFICIENT_BITS = 8,
 	CPU_CODEC_DIFFERENCE_BIT = 128,
 	CPU_MASKS_FIRST_BIT = V92_CPU_HEADER_BITS,
 	CPU_CRC_BITS = 16,
@@ -110,21 +109,10 @@ static void encode_header(
 	packed_msb_write_lsb_field(
 		frame, CPU_LOOKAHEAD_FIRST_BIT, CPU_LOOKAHEAD_BITS,
 		parameters->spectral_lookahead_frames);
-	packed_msb_write_lsb_field(
-		frame, CPU_RATIO_FIRST_BIT, CPU_RATIO_BITS,
-		parameters->trn1d_ratio_q3_13);
-	packed_msb_write_lsb_field(
-		frame, CPU_A1_FIRST_BIT, CPU_COEFFICIENT_BITS,
-		(uint8_t)parameters->shaping_a1_q1_6);
-	packed_msb_write_lsb_field(
-		frame, CPU_A2_FIRST_BIT, CPU_COEFFICIENT_BITS,
-		(uint8_t)parameters->shaping_a2_q1_6);
-	packed_msb_write_lsb_field(
-		frame, CPU_B1_FIRST_BIT, CPU_COEFFICIENT_BITS,
-		(uint8_t)parameters->shaping_b1_q1_6);
-	packed_msb_write_lsb_field(
-		frame, CPU_B2_FIRST_BIT, CPU_COEFFICIENT_BITS,
-		(uint8_t)parameters->shaping_b2_q1_6);
+	pcm_control_frame_write_shaping(
+		frame, parameters->trn1d_ratio_q3_13,
+		parameters->shaping_a1_q1_6, parameters->shaping_a2_q1_6,
+		parameters->shaping_b1_q1_6, parameters->shaping_b2_q1_6);
 	pcm_control_frame_write_map(frame, parameters->frame_constellation);
 	packed_msb_set_bit(
 		frame, CPU_CODEC_DIFFERENCE_BIT,
@@ -256,12 +244,6 @@ static bool header_framing_is_valid(const uint8_t *frame)
 	       packed_msb_bit(frame, 119u) == 0u;
 }
 
-static int8_t decode_signed_octet(uint8_t value)
-{
-	return value <= INT8_MAX ?
-		(int8_t)value : (int8_t)((int)value - 256);
-}
-
 static bool decode_header(
 	const uint8_t *frame, struct v92_cpu_parameters *decoded)
 {
@@ -271,18 +253,10 @@ static bool decode_header(
 		.trn1d_ratio_q3_13 =
 			(uint16_t)packed_msb_read_lsb_field(
 				frame, CPU_RATIO_FIRST_BIT, CPU_RATIO_BITS),
-		.shaping_a1_q1_6 = decode_signed_octet(
-			(uint8_t)packed_msb_read_lsb_field(
-				frame, CPU_A1_FIRST_BIT, CPU_COEFFICIENT_BITS)),
-		.shaping_a2_q1_6 = decode_signed_octet(
-			(uint8_t)packed_msb_read_lsb_field(
-				frame, CPU_A2_FIRST_BIT, CPU_COEFFICIENT_BITS)),
-		.shaping_b1_q1_6 = decode_signed_octet(
-			(uint8_t)packed_msb_read_lsb_field(
-				frame, CPU_B1_FIRST_BIT, CPU_COEFFICIENT_BITS)),
-		.shaping_b2_q1_6 = decode_signed_octet(
-			(uint8_t)packed_msb_read_lsb_field(
-				frame, CPU_B2_FIRST_BIT, CPU_COEFFICIENT_BITS)),
+		.shaping_a1_q1_6 = pcm_control_frame_read_q1_6(frame, CPU_A1_FIRST_BIT),
+		.shaping_a2_q1_6 = pcm_control_frame_read_q1_6(frame, CPU_A2_FIRST_BIT),
+		.shaping_b1_q1_6 = pcm_control_frame_read_q1_6(frame, CPU_B1_FIRST_BIT),
+		.shaping_b2_q1_6 = pcm_control_frame_read_q1_6(frame, CPU_B2_FIRST_BIT),
 		.data_rate_number =
 			(uint8_t)packed_msb_read_lsb_field(
 				frame, CPU_RATE_FIRST_BIT, CPU_RATE_BITS),

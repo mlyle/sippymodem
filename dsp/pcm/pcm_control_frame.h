@@ -88,6 +88,31 @@ static inline uint16_t pcm_control_frame_crc(
 	return remainder;
 }
 
+/* V.90 Table 14 and V.92 Table 23 share these Q3.13/Q1.6 fields.
+ * Callers provide thirteen header bytes. Start and unrelated bits remain
+ * unchanged; record owners validate storage and coefficient semantics. */
+static inline void pcm_control_frame_write_shaping(
+	uint8_t *frame, uint16_t ratio, int8_t a1, int8_t a2,
+	int8_t b1, int8_t b2)
+{
+	packed_msb_write_lsb_field(frame, 52u, 16u, ratio);
+	packed_msb_write_lsb_field(frame, 69u, 8u, (uint8_t)a1);
+	packed_msb_write_lsb_field(frame, 77u, 8u, (uint8_t)a2);
+	packed_msb_write_lsb_field(frame, 86u, 8u, (uint8_t)b1);
+	packed_msb_write_lsb_field(frame, 94u, 8u, (uint8_t)b2);
+}
+
+/* Read one signed Q1.6 coefficient as eight LSB-first bits. The caller
+ * supplies its bounded first bit; return the exact transmitted integer. */
+static inline int8_t pcm_control_frame_read_q1_6(
+	const uint8_t *frame, size_t first_bit)
+{
+	uint8_t raw = (uint8_t)packed_msb_read_lsb_field(frame, first_bit, 8u);
+
+	return raw <= INT8_MAX ? (int8_t)raw :
+	       (int8_t)(-1 - (int16_t)(UINT8_MAX - raw));
+}
+
 /* CP, CPt and CPu map six frame intervals to constellation rows. Each index
  * is four bits, LSB first; the start bit at 119 splits the first four indices
  * from the last two. Callers provide at least sixteen header bytes and six
