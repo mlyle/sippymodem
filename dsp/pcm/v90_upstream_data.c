@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "v90_upstream_data.h"
-#include "v90_upstream_mode.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -26,7 +25,7 @@ static enum v90_upstream_data_result stream_result(
 	return V90_UPSTREAM_DATA_NUMERIC_FAILURE;
 }
 
-static enum v90_upstream_data_result mode_result(
+enum v90_upstream_data_result v90_upstream_data_mode_result(
 	enum v90_upstream_mode_result result)
 {
 	switch (result) {
@@ -55,7 +54,7 @@ enum v90_upstream_data_result v90_upstream_data_start_after_e(
 		return V90_UPSTREAM_DATA_INVALID_ARGUMENT;
 	if (!v90_phase4_e_line_tx_is_complete(completed_e))
 		return V90_UPSTREAM_DATA_INVALID_STATE;
-	result = mode_result(v90_upstream_mode_select(
+	result = v90_upstream_data_mode_result(v90_upstream_mode_select(
 		&completed_e->cp, peer_mp, &completed_e->line.profile,
 		&direction));
 	if (result != V90_UPSTREAM_DATA_OK)

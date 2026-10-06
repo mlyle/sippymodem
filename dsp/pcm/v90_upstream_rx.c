@@ -616,22 +616,6 @@ static enum v90_upstream_data_result mapping_result(
 	return V90_UPSTREAM_DATA_NUMERIC_FAILURE;
 }
 
-static enum v90_upstream_data_result mode_result(
-	enum v90_upstream_mode_result result)
-{
-	switch (result) {
-	case V90_UPSTREAM_MODE_OK:
-		return V90_UPSTREAM_DATA_OK;
-	case V90_UPSTREAM_MODE_INVALID_ARGUMENT:
-		return V90_UPSTREAM_DATA_INVALID_ARGUMENT;
-	case V90_UPSTREAM_MODE_INVALID_PARAMETERS:
-		return V90_UPSTREAM_DATA_INVALID_PARAMETERS;
-	case V90_UPSTREAM_MODE_NO_COMMON_RATE:
-		return V90_UPSTREAM_DATA_NO_COMMON_RATE;
-	}
-	return V90_UPSTREAM_DATA_NUMERIC_FAILURE;
-}
-
 enum v90_upstream_data_result v90_upstream_rx_start_after_e(
 	struct v34_data_line_receiver *receiver,
 	const struct v90_phase4_e_line_rx *completed_e,
@@ -646,7 +630,7 @@ enum v90_upstream_data_result v90_upstream_rx_start_after_e(
 		return V90_UPSTREAM_DATA_INVALID_ARGUMENT;
 	if (!v90_phase4_e_line_rx_is_complete(completed_e))
 		return V90_UPSTREAM_DATA_INVALID_STATE;
-	result = mode_result(v90_upstream_mode_select(
+	result = v90_upstream_data_mode_result(v90_upstream_mode_select(
 		&completed_e->cp, mp, &completed_e->transmitting_profile,
 		&direction));
 	if (result != V90_UPSTREAM_DATA_OK)
