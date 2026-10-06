@@ -15,6 +15,8 @@
 #include <v8_calling.h>
 #include <v8_answering.h>
 #include <v34_datapump.h>
+#include <v34_phase2_info0_exchange.h>
+#include <v34_phase2_info_audio.h>
 #include <v90_datapump.h>
 #include <v90_profile.h>
 #include <pcm_rate.h>
@@ -2183,6 +2185,137 @@ static bool test_v91_pcm_handoff_without_v34(void)
 			modem_delete(m);
 		}
 	}
+	return true;
+}
+
+enum v91_escape_signal {
+	V91_ESCAPE_REPEATED_INFO0,
+	V91_ESCAPE_BAD_CRC,
+	V91_ESCAPE_ONE_INFO0,
+	V91_ESCAPE_MEDIA_GAP,
+};
+
+static bool run_v91_info0_escape(bool caller, enum g711_law law,
+	enum v91_escape_signal signal)
+{
+	struct modem_driver driver = {
+		.name = "V.91 INFO0 escape", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	const struct dp_operations *v91 = modem_dp_get_registered_ops(DP_V91);
+	const struct dp_operations *v34 = modem_dp_get_registered_ops(DP_V34);
+	struct modem *m = create_compat_modem(&driver, driver.name);
+	CHECK(m && v91 && v34, "V.91 escape allocation/catalog failed");
+	m->min_rate = 0;
+	m->max_rate = 64000;
+	m->caller = !caller; /* The creation argument owns the role. */
+	m->state = STATE_DP_ESTAB;
+	struct dp *dp = v91->create(m, DP_V91, caller, MODEM_RATE, MODEM_FRAG, v91);
+	CHECK(dp, "V.91 escape owner creation failed");
+	m->dp = dp;
+	enum v34_station_role local = caller ? V34_CALLING_STATION : V34_ANSWERING_STATION;
+	enum v34_station_role peer = caller ? V34_ANSWERING_STATION : V34_CALLING_STATION;
+	struct v34_info0 info = { 0 };
+	uint8_t payload[V34_INFO0_PAYLOAD_BYTES];
+	struct v34_phase2_info0_exchange legacy;
+	struct v34_phase2_info_audio_receiver monitor;
+	CHECK(v34_info0_encode(&info, payload, sizeof(payload)) == V34_INFO0_OK &&
+	      v34_phase2_info0_exchange_init(&legacy, peer, 6000, &info) ==
+		      V34_PHASE2_INFO0_EXCHANGE_OK &&
+	      v34_phase2_info_audio_receiver_init(&monitor, local,
+		      V34_INFO0_PAYLOAD_BITS) == V34_PHASE2_INFO_AUDIO_OK,
+	      "V.34 peer/monitor initialization failed");
+	int16_t returned[MODEM_FRAG] = { 0 }, received[MODEM_FRAG], sent[MODEM_FRAG];
+	uint8_t input[MODEM_FRAG], output[MODEM_FRAG];
+	bool available[MODEM_FRAG];
+	unsigned observed = 0, second = 0, repeated = 0, changed = 0;
+	bool corrupt = signal == V91_ESCAPE_BAD_CRC || signal == V91_ESCAPE_ONE_INFO0;
+	unsigned limit = corrupt ? 6000 : 40000;
+	for (unsigned sample = 0; sample < limit; sample += MODEM_FRAG) {
+		for (int i = 0; i < MODEM_FRAG; ++i) {
+			/* Keep the ordinary V.34 transmitter phase continuous while
+			 * repeating INFO0 until it receives our fallback response. */
+			if (!legacy.peer_info0_received &&
+			    legacy.transport.transmit_phase == PHASE2_INFO0_TONE) {
+				CHECK(phase2_info0_exchange_restart_info(&legacy.transport,
+					      payload, V34_INFO0_PAYLOAD_BITS) == PHASE2_INFO0_EXCHANGE_OK,
+				      "V.34 peer repetition failed");
+				++repeated;
+			}
+			struct v34_phase2_info0_exchange_event event;
+			CHECK(v34_phase2_info0_exchange_sample(&legacy, returned[i],
+				      &received[i], &event) == V34_PHASE2_INFO0_EXCHANGE_OK,
+			      "V.34 peer sample failed");
+			/* Corrupt the physical CRC interval without changing the
+			 * generator's valid sync or payload. Monitor actual rejection. */
+			size_t bit = legacy.transport.info_transmitter.frame.bit_index;
+			if (corrupt && (signal == V91_ESCAPE_BAD_CRC || repeated > 0) &&
+			    legacy.transport.transmit_phase == PHASE2_INFO0_SEQUENCE &&
+			    bit >= V34_PHASE2_INFO_PREFIX_BITS + V34_INFO0_PAYLOAD_BITS + 5 &&
+			    bit <= V34_PHASE2_INFO_PREFIX_BITS + V34_INFO0_PAYLOAD_BITS + 11)
+				received[i] = -received[i];
+			available[i] = !(signal == V91_ESCAPE_MEDIA_GAP && sample + (unsigned)i == 1400);
+			if (!available[i]) {
+				CHECK(observed == 1, "media gap did not follow the first INFO0 frame");
+				CHECK(v34_phase2_info_audio_receiver_init(&monitor, local,
+					      V34_INFO0_PAYLOAD_BITS) == V34_PHASE2_INFO_AUDIO_OK,
+				      "INFO0 monitor reset failed");
+				observed = second = 0;
+			}
+			input[i] = g711_encode(law, received[i]);
+			received[i] = g711_decode(law, input[i]);
+			struct v34_phase2_info_event decoded;
+			CHECK(v34_phase2_info_audio_receiver_sample(&monitor, received[i],
+				      &decoded) == V34_PHASE2_INFO_AUDIO_OK, "INFO0 monitor sample failed");
+			if (decoded.type == V34_PHASE2_INFO_FRAME_RECEIVED) {
+				struct v34_info0 facts;
+				CHECK(v34_info0_decode(decoded.payload, sizeof(decoded.payload),
+					      decoded.payload_bit_count, &facts) == V34_INFO0_OK,
+				      "INFO0 monitor received invalid capabilities");
+				if (++observed == 2)
+					second = sample + (unsigned)i + 1;
+			}
+		}
+		bool exact = false;
+		int status = dp->id == DP_V91 ?
+			dp->op->process_g711(dp, law, input, received, available,
+				output, sent, MODEM_FRAG, &exact) :
+			dp->op->process(dp, received, sent, MODEM_FRAG);
+		CHECK(status != DPSTAT_ERROR && status != DPSTAT_DISCONNECT,
+		      "V.91 escape datapump failed: caller=%u law=%u signal=%u sample=%u",
+		      caller, law, signal, sample);
+		memcpy(returned, sent, sizeof(returned));
+		if (status == DPSTAT_CHANGEDP) {
+			CHECK(dp->id == DP_V91 && m->dp_requested == DP_V34 &&
+			      m->dsp_info.pcm_role == MODEM_PCM_ROLE_NONE && exact,
+			      "V.91 INFO0 escape lost handoff/media state");
+			changed = sample + MODEM_FRAG;
+			struct dp *child = v34->create(m, DP_V34, caller, MODEM_RATE, MODEM_FRAG, v34);
+			CHECK(child, "V.34 fallback owner creation failed");
+			dp->op->delete(dp);
+			m->dp = dp = child;
+		}
+		if (changed && legacy.peer_info0_received && legacy.acknowledgements_complete) break;
+	}
+	bool passed = corrupt ? !changed && observed == (signal == V91_ESCAPE_BAD_CRC ? 0u : 1u) :
+		changed && second && changed <= second + MODEM_FRAG &&
+		legacy.peer_info0_received && legacy.acknowledgements_complete;
+	dp->op->delete(dp);
+	m->dp = NULL;
+	m->state = STATE_MODEM_IDLE;
+	modem_delete(m);
+	CHECK(passed, "V.91 INFO0 escape contract: caller=%u law=%u signal=%u valid=%u second=%u escape=%u",
+	      caller, law, signal, observed, second, changed);
+	return true;
+}
+
+static bool test_v91_info0_escape(void)
+{
+	for (unsigned caller = 0; caller < 2; ++caller)
+		for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+			for (enum v91_escape_signal signal = V91_ESCAPE_REPEATED_INFO0;
+			     signal <= V91_ESCAPE_MEDIA_GAP; ++signal)
+				CHECK(run_v91_info0_escape(caller, law, signal), "V.91 escape scenario failed");
 	return true;
 }
 
@@ -9900,6 +10033,7 @@ int main(void)
 		{ "V.8 datapump mapping", test_v8_datapump_mapping },
 		{ "V.8 handoff", test_v8_handoff },
 		{ "V.91 PCM handoff without V.34", test_v91_pcm_handoff_without_v34 },
+		{ "V.91 repeated INFO0 escape", test_v91_info0_escape },
 		{ "V.42 detection deadline", test_v42_detection_deadline },
 		{ "automatic factory profile", test_automatic_factory_profile },
 		{ "factory defaults", test_factory_defaults },

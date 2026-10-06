@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #include "v91_datapump.h"
 #include "v91_call.h"
+#include "v34_phase2_info_audio.h"
+#include "v34_info0.h"
 #include "v8_datapump.h"
 #include "datapump_link.h"
 #include "datapump_media.h"
@@ -12,6 +14,8 @@ struct v91_datapump {
 	struct dp dp;
 	struct v91_call call;
 	struct training_session training;
+	struct v34_phase2_info_audio_receiver info0_receiver;
+	uint8_t peer_info0_count;
 	bool started, ever_connected, closing, fallback, quiet_complete;
 };
 static int tx_tail_samples(const struct dp *dp);
@@ -39,7 +43,10 @@ static struct dp *create(struct modem *modem, enum DP_ID id, int caller,
 		return NULL;
 	pump->dp = (struct dp){ .id = id, .modem = modem, .op = ops, .dp_data = pump };
 	if (training_session_init(&pump->training, datapump_carrier_wait_ticks(modem)) !=
-		TRAINING_SESSION_OK) {
+		TRAINING_SESSION_OK ||
+	    v34_phase2_info_audio_receiver_init(&pump->info0_receiver,
+		caller ? V34_CALLING_STATION : V34_ANSWERING_STATION,
+		V34_INFO0_PAYLOAD_BITS) != V34_PHASE2_INFO_AUDIO_OK) {
 		free(pump);
 		return NULL;
 	}
@@ -134,6 +141,39 @@ static void source(void *context, uint8_t *bits, size_t count)
 	datapump_source_bits(&pump->dp, training_session_is_online(&pump->training) && !pump->closing, bits, count);
 }
 
+/* V.91 8.3: repeated peer INFO0 requests escape before the INFO deadline.
+ * Use the ordinary V.34 carrier/framing/CRC receiver, owned by this call. */
+static int observe_info0(struct v91_datapump *pump, int16_t sample, bool available)
+{
+	if (!available) {
+		pump->peer_info0_count = 0;
+		return v34_phase2_info_audio_receiver_init(&pump->info0_receiver,
+			pump->info0_receiver.modulation.local_role, V34_INFO0_PAYLOAD_BITS) ==
+			V34_PHASE2_INFO_AUDIO_OK ? 0 : -1;
+	}
+	struct v34_phase2_info_event event;
+	if (v34_phase2_info_audio_receiver_sample(&pump->info0_receiver, sample,
+		&event) != V34_PHASE2_INFO_AUDIO_OK)
+		return -1;
+	if (event.type == V34_PHASE2_INFO_FRAME_RECEIVED) {
+		struct v34_info0 info0;
+		if (v34_info0_decode(event.payload, sizeof(event.payload),
+			event.payload_bit_count, &info0) == V34_INFO0_OK &&
+		    pump->peer_info0_count < 2)
+			++pump->peer_info0_count;
+	}
+	return pump->peer_info0_count == 2;
+}
+
+static int escape_to_v34(struct v91_datapump *pump)
+{
+	pump->fallback = true;
+	pump->dp.modem->dsp_info.pcm_role = MODEM_PCM_ROLE_NONE;
+	pump->dp.modem->dp_requested = DP_V34;
+	pump->dp.status = DPSTAT_CHANGEDP;
+	return DPSTAT_CHANGEDP;
+}
+
 static int process_g711(struct dp *dp, enum g711_law law, const uint8_t *input,
 	void *receive_samples, const bool *available, uint8_t *output,
 	void *transmit_samples, int count, bool *exact)
@@ -175,6 +215,19 @@ static int process_g711(struct dp *dp, enum g711_law law, const uint8_t *input,
 			datapump_mute_g711(law, output, linear, count);
 			return DPSTAT_ERROR;
 		}
+		if (!pump->closing && !pump->ever_connected) {
+			int info0 = observe_info0(pump, ((const int16_t *)receive_samples)[i],
+				available == NULL || available[i]);
+			if (info0 != 0) {
+				datapump_mute_g711(law, output + i, linear + i, count - i);
+				*exact = true;
+				if (info0 > 0)
+					return escape_to_v34(pump);
+				modem_note_disconnect(dp->modem, true,
+					"V.91 fallback receiver failed");
+				return DPSTAT_ERROR;
+			}
+		}
 		struct v91_event event;
 		output[i] = g711_encode(law, 0);
 		bool ok = v91_call_process(&pump->call, input[i], available == NULL || available[i],
@@ -189,11 +242,7 @@ static int process_g711(struct dp *dp, enum g711_law law, const uint8_t *input,
 			    (event.failure == V91_FAILURE_INFO_TIMEOUT ||
 			     event.failure == V91_FAILURE_TRAINING_TIMEOUT ||
 		     event.failure == V91_FAILURE_RECOVERY_EXHAUSTED)) {
-				pump->fallback = true;
-				dp->modem->dsp_info.pcm_role = MODEM_PCM_ROLE_NONE;
-				dp->modem->dp_requested = DP_V34;
-				dp->status = DPSTAT_CHANGEDP;
-				return DPSTAT_CHANGEDP;
+				return escape_to_v34(pump);
 			}
 			modem_note_disconnect(dp->modem, !remote, v91_failure_name(event.failure));
 			dp->status = closed ? DPSTAT_DISCONNECT : DPSTAT_ERROR;
