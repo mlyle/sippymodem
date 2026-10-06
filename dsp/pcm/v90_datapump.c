@@ -1118,10 +1118,8 @@ static int process_v90_g711(
 			mute_output(
 				law, transmit_codewords + index + 1,
 				transmit_samples + index + 1, remaining);
-			if (modem_set_param(
-				    datapump->dp.modem, MDMPRM_DP_REQUESTED,
-				    datapump->v8_fallback_ready ? 0 : DP_V34) != 0)
-				goto failure;
+			datapump->dp.modem->dp_requested =
+				datapump->v8_fallback_ready ? 0 : DP_V34;
 			*exact_output = true;
 			return DPSTAT_CHANGEDP;
 		}

@@ -94,17 +94,6 @@ long modem_get_param(struct modem *modem, unsigned int name)
 	return -1;
 }
 
-long modem_set_param(struct modem *modem, unsigned int name, int value)
-{
-	if (modem == NULL || value < 0)
-		return -1;
-	if (name == MDMPRM_DP_REQUESTED)
-		modem->dp_requested = value;
-	else
-		return -1;
-	return 0;
-}
-
 int modem_set_link_rates(struct modem *modem, uint32_t transmit_rate, uint32_t receive_rate)
 {
 	if (modem == NULL || transmit_rate > INT_MAX || receive_rate > INT_MAX)

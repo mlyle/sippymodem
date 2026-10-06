@@ -203,7 +203,7 @@ static int process_g711(struct dp *dp, enum g711_law law, const uint8_t *input,
 		     event.failure == V91_FAILURE_RECOVERY_EXHAUSTED)) {
 				pump->fallback = true;
 				dp->modem->dsp_info.pcm_role = MODEM_PCM_ROLE_NONE;
-				modem_set_param(dp->modem, MDMPRM_DP_REQUESTED, DP_V34);
+				dp->modem->dp_requested = DP_V34;
 				dp->status = DPSTAT_CHANGEDP;
 				return DPSTAT_CHANGEDP;
 			}

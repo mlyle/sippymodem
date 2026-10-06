@@ -66,9 +66,6 @@ long modem_get_param(struct modem *m, unsigned param_name)
 long modem_set_param(struct modem *m, unsigned name, int val)
 {
 	switch(name) {
-	case MDMPRM_DP_REQUESTED:
-		m->dp_requested = val;
-		break;
 	case MDMPRM_V90_DIGITAL_INDICATION:
 		if (val < MODEM_PCM_POLICY_ANALOG || val > MODEM_PCM_POLICY_AUTO)
 			return -1;

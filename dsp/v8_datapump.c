@@ -443,10 +443,7 @@ static int request_handoff(struct v8_datapump *datapump)
 	}
 	lapm = menu.lapm;
 selected:
-	if (modem_set_param(
-		    datapump->dp.modem, MDMPRM_DP_REQUESTED,
-		    handoff) != 0)
-		return DPSTAT_ERROR;
+	datapump->dp.modem->dp_requested = handoff;
 	datapump->dp.modem->dsp_info.pcm_role = pcm_role;
 	/* V.8 prot0 can select LAPM without ODP/ADP, but omitting prot0 does
 	 * not decline later V.42 negotiation.  Retain the local AT\N choice so
@@ -588,8 +585,7 @@ static int select_legacy(struct v8_datapump *datapump)
 {
 	struct modem *modem = datapump->dp.modem;
 
-	if (modem_set_param(modem, MDMPRM_DP_REQUESTED, datapump->legacy->id) != 0)
-		return DPSTAT_ERROR;
+	modem->dp_requested = datapump->legacy->id;
 	modem->dsp_info.startup = MODEM_STARTUP_UNKNOWN;
 	modem->dsp_info.v8_lapm = false;
 	modem->dsp_info.pcm_role = MODEM_PCM_ROLE_NONE;
@@ -795,8 +791,9 @@ static int process_v8(struct dp *dp, void *receive_buffer, void *transmit_buffer
 		return result;
 	handoff = v8_datapump_modulation(datapump->requested_datapump) == V8_MODULATION_V32 ?
 		datapump->requested_datapump : fallback_datapump(dp->modem, V8_MODULATION_V32);
-	if (handoff == 0 || modem_set_param(dp->modem, MDMPRM_DP_REQUESTED, handoff) != 0)
+	if (handoff == 0)
 		return DPSTAT_ERROR;
+	dp->modem->dp_requested = handoff;
 	/* No CM/JM was exchanged: leave error-control detection enabled and do
 	 * not report V.8 negotiation or an agreed PCM role. */
 	dp->modem->dsp_info.startup = MODEM_STARTUP_UNKNOWN;
@@ -865,11 +862,11 @@ static int process_v8_g711(struct dp *dp, enum g711_law law, const uint8_t *code
 			ds0_probe_sample(p->ds0_probe, codewords[i], available == NULL || available[i]);
 		if (p->ds0_probe->selected != DS0_RATE_NONE) {
 			struct dp *next = ds0_datapump_create_handoff(dp->modem, p->caller, p->ds0_probe);
-			if (next == NULL || modem_set_param(dp->modem, MDMPRM_DP_REQUESTED, DP_DS0) != 0) {
-				if (next != NULL) next->op->delete(next);
+			if (next == NULL) {
 				memset(transmit, 0, (size_t)count * sizeof(int16_t));
 				return DPSTAT_ERROR;
 			}
+			dp->modem->dp_requested = DP_DS0;
 			if (p->legacy != NULL) p->legacy->op->delete(p->legacy);
 			p->legacy = next;
 			p->legacy_selected = p->handoff_requested = true;

@@ -743,12 +743,8 @@ static int process_v34(
 	    datapump->call.stage == V34_CALL_RETRAIN_SILENCE) {
 		/* The first media block already consumed part of the shared 70 ms
 		 * response. Transfer that exact epoch into the agreed PCM Phase 2. */
-		if (modem_set_param(
-			    datapump->dp.modem, MDMPRM_DP_REQUESTED,
-			    datapump->pcm_restart->protocol == PCM_PROTOCOL_V92 ? DP_V92 : DP_V90) != 0) {
-			fail_training(datapump);
-			return DPSTAT_ERROR;
-		}
+		datapump->dp.modem->dp_requested =
+			datapump->pcm_restart->protocol == PCM_PROTOCOL_V92 ? DP_V92 : DP_V90;
 		datapump->pcm_retrain_pending = true;
 		return DPSTAT_CHANGEDP;
 	}
