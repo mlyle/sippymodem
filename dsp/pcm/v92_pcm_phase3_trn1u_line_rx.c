@@ -32,10 +32,7 @@ static bool stage_is_valid(
 static bool geometry_is_valid(const struct qam_equalizer *equalizer)
 {
 	return qam_equalizer_is_valid(equalizer) &&
-	       equalizer->tap_count ==
-		       V92_PCM_PHASE3_TRN1U_LINE_EQUALIZER_TAPS &&
-	       equalizer->decision_delay ==
-		       V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY;
+	       v92_pcm_phase3_equalizer_has_geometry(equalizer);
 }
 
 static bool aligned_state_is_valid(
@@ -350,10 +347,7 @@ bool v92_pcm_phase3_trn1u_line_handoff_is_valid(
 {
 	return handoff != NULL &&
 	       qam_equalizer_is_handoff_ready(&handoff->equalizer) &&
-	       handoff->equalizer.tap_count ==
-		       V92_PCM_PHASE3_TRN1U_LINE_EQUALIZER_TAPS &&
-	       handoff->equalizer.decision_delay ==
-		       V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY &&
+	       v92_pcm_phase3_equalizer_has_geometry(&handoff->equalizer) &&
 	       v92_phase3_sync_is_valid(&handoff->sync) &&
 	       handoff->sync.stage == V92_PHASE3_SYNC_TRAINING &&
 	       handoff->sync.trained_symbols ==

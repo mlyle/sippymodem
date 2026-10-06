@@ -3,11 +3,13 @@
 #ifndef V92_PCM_PHASE3_TRN1U_LINE_RX_H
 #define V92_PCM_PHASE3_TRN1U_LINE_RX_H
 
+#include "binary_equalizer.h"
 #include "qam_equalizer.h"
 #include "v92_phase3_sync.h"
 #include "v92_pcm_phase3_trn1u.h"
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 enum {
@@ -16,6 +18,23 @@ enum {
 	V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY = 10,
 	V92_PCM_PHASE3_TRN1U_LINE_MIN_SIGNAL_LEVEL = 512,
 };
+
+/* Training and its Ja/CPt successors retain one equalizer geometry. */
+static inline bool v92_pcm_phase3_equalizer_has_geometry(
+	const struct qam_equalizer *equalizer)
+{
+	return equalizer != NULL &&
+	       equalizer->tap_count == V92_PCM_PHASE3_TRN1U_LINE_EQUALIZER_TAPS &&
+	       equalizer->decision_delay == V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY;
+}
+
+static inline bool v92_pcm_phase3_line_geometry_is_valid(
+	const struct binary_equalizer *line)
+{
+	return binary_equalizer_is_valid(line) &&
+	       v92_pcm_phase3_equalizer_has_geometry(&line->equalizer) &&
+	       line->magnitude >= V92_PCM_PHASE3_TRN1U_LINE_MIN_SIGNAL_LEVEL;
+}
 
 enum v92_pcm_phase3_trn1u_line_rx_stage {
 	V92_PCM_PHASE3_TRN1U_LINE_RX_STAGE_HUNTING,

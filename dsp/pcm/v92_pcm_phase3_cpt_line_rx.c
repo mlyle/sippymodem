@@ -6,33 +6,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
-static bool equalizer_is_continuous(
-	const struct qam_equalizer *equalizer)
-{
-	return qam_equalizer_is_handoff_ready(equalizer) &&
-	       equalizer->tap_count ==
-		       V92_PCM_PHASE3_TRN1U_LINE_EQUALIZER_TAPS &&
-	       equalizer->decision_delay ==
-		       V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY;
-}
-
-static bool line_geometry_is_valid(
-	const struct binary_equalizer *line)
-{
-	return binary_equalizer_is_valid(line) &&
-	       line->equalizer.tap_count ==
-		       V92_PCM_PHASE3_TRN1U_LINE_EQUALIZER_TAPS &&
-	       line->equalizer.decision_delay ==
-		       V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY &&
-	       line->magnitude >=
-		       V92_PCM_PHASE3_TRN1U_LINE_MIN_SIGNAL_LEVEL;
-}
-
 bool v92_pcm_phase3_cpt_line_rx_is_valid(
 	const struct v92_pcm_phase3_cpt_line_rx *receiver)
 {
 	return receiver != NULL &&
-	       line_geometry_is_valid(&receiver->line) &&
+	       v92_pcm_phase3_line_geometry_is_valid(&receiver->line) &&
 	       v92_pcm_phase3_cpt_rx_is_valid(&receiver->signs) &&
 	       receiver->signs.stage != V92_PCM_PHASE3_CPT_RX_TRAINING &&
 	       receiver->starting_input_samples <= receiver->input_samples &&
@@ -154,7 +132,8 @@ bool v92_pcm_phase3_cpt_line_handoff_is_valid(
 	const struct v92_pcm_phase3_cpt_line_handoff *handoff)
 {
 	return handoff != NULL &&
-	       equalizer_is_continuous(&handoff->equalizer) &&
+	       qam_equalizer_is_handoff_ready(&handoff->equalizer) &&
+	       v92_pcm_phase3_equalizer_has_geometry(&handoff->equalizer) &&
 	       v92_cpt_parameters_are_valid(&handoff->parameters) &&
 	       handoff->input_advance_symbols ==
 		       V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY &&

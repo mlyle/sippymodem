@@ -11,21 +11,11 @@ static bool stage_is_valid(enum v92_pcm_phase3_ja_line_rx_stage stage)
 	       stage <= V92_PCM_PHASE3_JA_LINE_RX_COMPLETE;
 }
 
-static bool line_geometry_is_valid(const struct binary_equalizer *line)
-{
-	return binary_equalizer_is_valid(line) &&
-	       line->equalizer.tap_count ==
-		       V92_PCM_PHASE3_TRN1U_LINE_EQUALIZER_TAPS &&
-	       line->equalizer.decision_delay ==
-		       V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY &&
-	       line->magnitude >= V92_PCM_PHASE3_TRN1U_LINE_MIN_SIGNAL_LEVEL;
-}
-
 bool v92_pcm_phase3_ja_line_rx_is_valid(
 	const struct v92_pcm_phase3_ja_line_rx *receiver)
 {
 	if (receiver == NULL || !stage_is_valid(receiver->stage) ||
-	    !line_geometry_is_valid(&receiver->line) ||
+	    !v92_pcm_phase3_line_geometry_is_valid(&receiver->line) ||
 	    receiver->starting_input_samples > receiver->input_samples ||
 	    receiver->input_samples - receiver->starting_input_samples !=
 		    receiver->processed_samples ||
