@@ -43,6 +43,20 @@ static struct modem *create_compat_modem(struct modem_driver *driver, const char
 	return modem;
 }
 
+static bool lapm_states_equal(
+	const struct lapm_state *left, const struct lapm_state *right)
+{
+	if (!lapm_v44_sessions_equal(&left->v44_session, &right->v44_session))
+		return false;
+	struct lapm_state left_copy, right_copy;
+	memcpy(&left_copy, left, sizeof(left_copy));
+	memcpy(&right_copy, right, sizeof(right_copy));
+	/* The remaining owned LAPM storage is cleared by lapm_init. */
+	memset(&left_copy.v44_session, 0, sizeof(left_copy.v44_session));
+	memset(&right_copy.v44_session, 0, sizeof(right_copy.v44_session));
+	return memcmp(&left_copy, &right_copy, sizeof(left_copy)) == 0;
+}
+
 static const struct dp_operations *call_progress_override;
 const struct dp_operations *__real_modem_dp_get_registered_ops(enum DP_ID id);
 const struct dp_operations *__wrap_modem_dp_get_registered_ops(enum DP_ID id)
@@ -3439,7 +3453,7 @@ static bool exercise_lapm_dual_compression_retry(bool counteroffer)
 
 		caller->ec.lapm.ctrl_list->next = caller->ec.lapm.tx_ctrl;
 		caller->packer.hdlc.rx_complete(caller->packer.hdlc.framer, &incoming);
-		unchanged = memcmp(&before, &caller->ec.lapm.v44_session, sizeof(before)) == 0 &&
+		unchanged = lapm_v44_sessions_equal(&before, &caller->ec.lapm.v44_session) &&
 			caller->bit_timer == 1234 && caller->ec.lapm.rtx_count == 3;
 		caller->ec.lapm.ctrl_list->next = saved_next;
 		CHECK(unchanged, "retry queue pressure changed the command or its deadline");
@@ -3464,7 +3478,7 @@ static bool exercise_lapm_dual_compression_retry(bool counteroffer)
 		received[21] = 10;
 		received[24] = 11;
 		caller->packer.hdlc.rx_complete(caller->packer.hdlc.framer, &incoming);
-		CHECK(memcmp(&before, &caller->ec.lapm.v44_session, sizeof(before)) == 0 &&
+		CHECK(lapm_v44_sessions_equal(&before, &caller->ec.lapm.v44_session) &&
 		      caller->bit_timer == 1234 && caller->ec.lapm.rtx_count == 3 &&
 		      caller->packer.hdlc.get_tx_frame(caller->packer.hdlc.framer) == NULL,
 		      "a second window counterproposal extended negotiation");
@@ -3488,7 +3502,7 @@ static bool exercise_lapm_dual_compression_retry(bool counteroffer)
 	caller->ec.lapm.rtx_count = 2;
 	incoming.count--;
 	caller->packer.hdlc.rx_complete(caller->packer.hdlc.framer, &incoming);
-	CHECK(memcmp(&before, &caller->ec.lapm.v44_session, sizeof(before)) == 0 &&
+	CHECK(lapm_v44_sessions_equal(&before, &caller->ec.lapm.v44_session) &&
 	      caller->bit_timer == 2345 && caller->ec.lapm.rtx_count == 2 &&
 	      caller->packer.hdlc.get_tx_frame(caller->packer.hdlc.framer) == NULL,
 	      "malformed response restarted negotiation");
@@ -3681,7 +3695,7 @@ static bool test_lapm_v42bis_reinitialization(void)
 		      !m->comp.decoder.str_len && !m->comp.count && !m->comp.head &&
 		      m->comp.encoder.dict_size == 512 &&
 		      m->comp.encoder.max_string == (int)strings[limit] &&
-		      memcmp(&l->v44_session, &session, sizeof(session)) == 0,
+		      lapm_v44_sessions_equal(&l->v44_session, &session),
 		      "LAPM initialization retained V.42bis history or changed its selection");
 		if (!response) {
 			outgoing = m->packer.hdlc.get_tx_frame(l);
@@ -3899,7 +3913,7 @@ static bool test_lapm_v42bis_frozen_offer(void)
 			CHECK(outgoing == NULL && l->v44_session.phase == LAPM_V44_COMMAND_PENDING &&
 			      m->bit_timer == timer &&
 			      m->cfg.comp == (expanded ? 3u : 0u) &&
-			      memcmp(&l->v44_session, &before, sizeof(before)) == 0,
+			      lapm_v44_sessions_equal(&l->v44_session, &before),
 			      "frozen offer accepted unoffered directions: limit=%zu case=%u", limit, scenario);
 			m->bit_timer_func(m);
 			outgoing = m->packer.hdlc.get_tx_frame(l);
@@ -5346,7 +5360,7 @@ static bool test_lapm_receive_frame_boundaries(void)
 				if (length == 2 && wire[1] == 0x73)
 					continue; /* Complete U header. */
 				m->packer.hdlc.rx_complete(l, &incoming);
-				CHECK(memcmp(l, &before, sizeof(before)) == 0 &&
+				CHECK(lapm_states_equal(l, &before) &&
 				      m->bit_timer == 1234 && m->new_event == event,
 				      "truncated frame changed link state: state=%u control=%u length=%u",
 				      state, wire[1], length);
@@ -5356,12 +5370,12 @@ static bool test_lapm_receive_frame_boundaries(void)
 				wire[0] = 0x05; /* Unimplemented DLCI. */
 				wire[1] = controls[control];
 				m->packer.hdlc.rx_complete(l, &incoming);
-				CHECK(memcmp(l, &before, sizeof(before)) == 0 && m->bit_timer == 1234,
+				CHECK(lapm_states_equal(l, &before) && m->bit_timer == 1234,
 				      "unimplemented address changed link state");
 				if ((state == 0 || state == 3) && wire[1] != 0x73) {
 					wire[0] = l->rsp_addr;
 					m->packer.hdlc.rx_complete(l, &incoming);
-					CHECK(memcmp(l, &before, sizeof(before)) == 0 &&
+					CHECK(lapm_states_equal(l, &before) &&
 					      m->bit_timer == 1234 && m->new_event == event,
 					      "I/S traffic established an idle or releasing link");
 				}
@@ -5376,14 +5390,14 @@ static bool test_lapm_receive_frame_boundaries(void)
 		struct lapm_state before = *l;
 		unsigned event = m->new_event;
 		m->packer.hdlc.rx_complete(l, &incoming);
-		CHECK(memcmp(l, &before, sizeof(before)) == 0 &&
+		CHECK(lapm_states_equal(l, &before) &&
 		      m->bit_timer == 1234 && m->new_event == event,
 		      "early information bypassed XID negotiation");
 		l->v44_session.phase = LAPM_V44_READY;
 		l->rx_info_size = 0;
 		before = *l;
 		m->packer.hdlc.rx_complete(l, &incoming);
-		CHECK(memcmp(l, &before, sizeof(before)) == 0 &&
+		CHECK(lapm_states_equal(l, &before) &&
 		      m->bit_timer == 1234 && m->new_event == event,
 		      "rejected information completed establishment");
 		l->rx_info_size = LAPM_MAX_INFO_SIZE;
@@ -5625,7 +5639,7 @@ static bool test_lapm_sabme_readiness(void)
 			      m->bit_timer == 1234 &&
 			      m->bit_timer_func == timeout &&
 			      m->packer.hdlc.tx_preamble_complete == preamble &&
-			      memcmp(&l->v44_session, &session, sizeof(session)) == 0 &&
+			      lapm_v44_sessions_equal(&l->v44_session, &session) &&
 			      memcmp(&m->cfg, &config, sizeof(config)) == 0 &&
 			      l->tx_info_size == 70 && l->rx_info_size == 80,
 			      "premature SABME changed establishment: role=%u P=%u scenario=%u",
@@ -5900,7 +5914,7 @@ static bool test_lapm_peer_ready_dm(void)
 	incoming.count = 2;
 	m->state = 4;
 	m->packer.hdlc.rx_complete(l, &incoming);
-	CHECK(memcmp(l, &before, sizeof(before)) == 0 && m->state == 4 &&
+	CHECK(lapm_states_equal(l, &before) && m->state == 4 &&
 	      m->packer.hdlc.tx_preamble_complete != NULL && m->bit_timer == 0,
 	      "peer-ready DM bypassed the originator preamble");
 	modem_delete(m);
@@ -6480,7 +6494,7 @@ static bool test_lapm_numbered_frame_rejection(void)
 		m->packer.hdlc.rx_complete(l, &incoming);
 		CHECK(lapm_sink.calls == 0, "rejected numbered frame delivered terminal data");
 		if (state == 1) {
-			CHECK(memcmp(l, &before, sizeof(before)) == 0 && m->state == 4 &&
+			CHECK(lapm_states_equal(l, &before) && m->state == 4 &&
 			      m->bit_timer == 1234,
 			      "rejected frame completed establishment: role=%u response=%u control=%02x length=%u nr=%u",
 			      caller, response, wire[1], cases[i].length, wire[2] >> 1);
@@ -6558,7 +6572,7 @@ static bool test_lapm_unnumbered_frame_rejection(void)
 		CHECK(memcmp(&configuration, &m->cfg, sizeof(configuration)) == 0,
 		      "rejected U frame changed negotiated configuration");
 		if (state != 2) {
-			CHECK(memcmp(l, &before, sizeof(before)) == 0 && m->state == 4 &&
+			CHECK(lapm_states_equal(l, &before) && m->state == 4 &&
 			      m->bit_timer == 1234,
 			      "rejected U frame changed pending link: role=%u state=%u response=%u control=%02x length=%u",
 			      caller, state, response, control, length);
@@ -8491,8 +8505,7 @@ static bool test_lapm_retrain_preserves_link_state(void)
 		      memcmp(retained_frame->buf + 3, retained_payload,
 			     sizeof(retained_payload)) == 0 &&
 		      lapm_source.offset == 0 && lapm->v44_path == v44_path &&
-		      memcmp(&lapm->v44_session, &retained_v44_session,
-			     sizeof(retained_v44_session)) == 0,
+		      lapm_v44_sessions_equal(&lapm->v44_session, &retained_v44_session),
 	      "LAPM retrain changed pending frames or compression state");
 	outgoing = modem->packer.hdlc.get_tx_frame(
 		modem->packer.hdlc.framer);
@@ -8904,7 +8917,7 @@ static bool test_retrain_preserves_lapm_establishment(void)
 					modem_dp_reconnected(resuming);
 					CHECK(l->state == state &&
 					      l->rtx_count == retries && l->v44_path == path &&
-					      memcmp(&l->v44_session, &session, sizeof(session)) == 0 &&
+					      lapm_v44_sessions_equal(&l->v44_session, &session) &&
 					      resuming->bit_timer == remaining &&
 					      resuming->bit_timer_func == timeout &&
 					      resuming->get_bits == modem_hdlc_get_bits &&

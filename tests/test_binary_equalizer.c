@@ -84,6 +84,27 @@ static bool test_decisions(void)
 	return true;
 }
 
+static bool states_equal(
+	const struct binary_equalizer *left, const struct binary_equalizer *right)
+{
+	const struct qam_equalizer *a = &left->equalizer, *b = &right->equalizer;
+	_Static_assert(sizeof(struct qam_point) == 2 * sizeof(double),
+		       "point fields must be contiguous");
+	/* Compare every declared field; floating values retain their exact bits. */
+#define SAME_FIELD(field) (memcmp(&a->field, &b->field, sizeof(a->field)) == 0)
+	bool equal = SAME_FIELD(coefficients) && SAME_FIELD(history) &&
+		SAME_FIELD(last_output) && SAME_FIELD(last_unrotated_output) &&
+		SAME_FIELD(carrier_phase) && SAME_FIELD(carrier_frequency) &&
+		SAME_FIELD(carrier_proportional_gain) && SAME_FIELD(carrier_integral_gain) &&
+		SAME_FIELD(carrier_error_limit) && SAME_FIELD(last_carrier_phase) &&
+		SAME_FIELD(tap_count) && SAME_FIELD(decision_delay) && SAME_FIELD(fill) &&
+		SAME_FIELD(can_adapt) && SAME_FIELD(carrier_tracking);
+#undef SAME_FIELD
+	return equal && left->polarity == right->polarity &&
+		memcmp(&left->magnitude, &right->magnitude, sizeof(left->magnitude)) == 0 &&
+		memcmp(&left->adaptation, &right->adaptation, sizeof(left->adaptation)) == 0;
+}
+
 static bool test_contracts(void)
 {
 	struct qam_equalizer trained;
@@ -136,7 +157,7 @@ static bool test_contracts(void)
 		      BINARY_EQUALIZER_INVALID_ARGUMENT &&
 	      binary_equalizer_receive(&receiver, 0, NULL) ==
 		      BINARY_EQUALIZER_INVALID_ARGUMENT &&
-	      memcmp(&receiver, &before, sizeof(receiver)) == 0 &&
+	      states_equal(&receiver, &before) &&
 	      sign == 0xa5u,
 	      "invalid receive changed state or output");
 	receiver.polarity = 0;
@@ -145,7 +166,7 @@ static bool test_contracts(void)
 	      !binary_equalizer_is_valid(&receiver) &&
 	      binary_equalizer_receive(&receiver, 0, &sign) ==
 		      BINARY_EQUALIZER_INVALID_STATE &&
-	      memcmp(&receiver, &before, sizeof(receiver)) == 0 &&
+	      states_equal(&receiver, &before) &&
 	      sign == 0xa5u,
 	      "corrupt receiver was not rejected transactionally");
 	for (size_t index = 0; index < ARRAY_LENGTH(names); ++index)
@@ -245,7 +266,7 @@ static bool test_failed_adaptation_preserves_owner(void)
 	before = receiver;
 	CHECK(binary_equalizer_receive(&receiver, TEST_MAGNITUDE, &sign) ==
 	      BINARY_EQUALIZER_INTERNAL_ERROR && sign == 0xa5 &&
-	      memcmp(&receiver, &before, sizeof(receiver)) == 0,
+	      states_equal(&receiver, &before),
 	      "failed immediate adaptation changed owner or output");
 	return true;
 }
@@ -262,7 +283,7 @@ static bool test_output_ownership(void)
 	for (size_t byte = 0; byte < sizeof(receiver); ++byte)
 		CHECK(binary_equalizer_receive(&receiver, -TEST_MAGNITUDE,
 			      (uint8_t *)&receiver + byte) == BINARY_EQUALIZER_INVALID_ARGUMENT &&
-		      memcmp(&receiver, &before, sizeof(receiver)) == 0,
+		      states_equal(&receiver, &before),
 		      "sign output changed owner at byte %zu", byte);
 	return true;
 }

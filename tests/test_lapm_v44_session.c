@@ -9,26 +9,6 @@
 #include <stdio.h>
 #include <string.h>
 
-static bool offers_equal(
-	const struct v44_offer *left,
-	const struct v44_offer *right)
-{
-	return left->transmit.enabled == right->transmit.enabled &&
-	       left->transmit.parameters.codeword_limit ==
-		       right->transmit.parameters.codeword_limit &&
-	       left->transmit.parameters.max_string_length ==
-		       right->transmit.parameters.max_string_length &&
-	       left->transmit.parameters.history_size ==
-		       right->transmit.parameters.history_size &&
-	       left->receive.enabled == right->receive.enabled &&
-	       left->receive.parameters.codeword_limit ==
-		       right->receive.parameters.codeword_limit &&
-	       left->receive.parameters.max_string_length ==
-		       right->receive.parameters.max_string_length &&
-	       left->receive.parameters.history_size ==
-		       right->receive.parameters.history_size;
-}
-
 static struct lapm_v44_config config_for(
 	struct v44_offer offer)
 {
@@ -126,7 +106,7 @@ static bool test_asymmetric_exchange(void)
 	      decoded_fields.private_negotiation_length ==
 		      sizeof(private_parameters) &&
 	      decode_v44(command.data, command.length, &decoded) &&
-	      offers_equal(&decoded, &calling_offer),
+	      lapm_v44_offers_equal(&decoded, &calling_offer),
 	      "preparing a command changed state or encoded the wrong offer");
 	CHECK(lapm_v44_commit(&caller, &command) ==
 		      LAPM_V44_OK &&
@@ -141,14 +121,14 @@ static bool test_asymmetric_exchange(void)
 		      V42_XID_OK &&
 	      decoded_fields.private_negotiation == NULL &&
 	      decode_v44(response.data, response.length, &decoded) &&
-	      offers_equal(&decoded, &expected_answer),
+	      lapm_v44_offers_equal(&decoded, &expected_answer),
 	      "answer preparation did not select only V.44 asymmetric minima");
 	CHECK(lapm_v44_commit(&answerer, &response) ==
 		      LAPM_V44_OK &&
 	      answerer.phase == LAPM_V44_NEGOTIATED &&
 	      lapm_v44_get_negotiated_offer(
 		      &answerer, &selected) == LAPM_V44_OK &&
-	      offers_equal(&selected, &expected_answer),
+	      lapm_v44_offers_equal(&selected, &expected_answer),
 	      "queued response did not commit responder selection");
 	decoded_fields.private_negotiation = private_parameters;
 	decoded_fields.private_negotiation_length = sizeof(private_parameters);
@@ -166,7 +146,7 @@ static bool test_asymmetric_exchange(void)
 	      caller.phase == LAPM_V44_NEGOTIATED &&
 	      lapm_v44_get_negotiated_offer(
 		      &caller, &selected) == LAPM_V44_OK &&
-	      offers_equal(&selected, &expected_caller),
+	      lapm_v44_offers_equal(&selected, &expected_caller),
 	      "caller did not invert directions and select asymmetric minima");
 	return true;
 }
@@ -250,7 +230,7 @@ static bool test_simultaneous_commands(void)
 		before = peers[1];
 		CHECK(lapm_v44_prepare_response(&peers[1], commands[0].data,
 			      commands[0].length, NULL, &responses[1]) == LAPM_V44_OK &&
-		      memcmp(&peers[1], &before, sizeof(before)) == 0 &&
+		      lapm_v44_sessions_equal(&peers[1], &before) &&
 		      lapm_v44_commit(&peers[1], &responses[1]) == LAPM_V44_OK &&
 		      peers[1].phase == LAPM_V44_COMMAND_PENDING,
 		      "replying to a peer command replaced our pending transaction");
@@ -271,7 +251,7 @@ static bool test_simultaneous_commands(void)
 			      commands[0].length, NULL, &duplicate) == LAPM_V44_OK &&
 		      duplicate.length == responses[1].length &&
 		      memcmp(duplicate.data, responses[1].data, duplicate.length) == 0 &&
-		      offers_equal(&duplicate.offer, &responses[1].offer) &&
+		      lapm_v44_offers_equal(&duplicate.offer, &responses[1].offer) &&
 		      lapm_v44_commit(&peers[1], &duplicate) == LAPM_V44_OK &&
 		      peers[1].phase == LAPM_V44_COMMAND_PENDING,
 		      "duplicate peer command changed the pending transaction");
@@ -284,7 +264,7 @@ static bool test_simultaneous_commands(void)
 		      "could not finish the second pending transaction");
 		for (unsigned int i = 0; i < 2; ++i) {
 			CHECK(lapm_v44_get_negotiated_offer(&peers[i], &selected) == LAPM_V44_OK &&
-			      offers_equal(&selected, &expected[i]) &&
+			      lapm_v44_offers_equal(&selected, &expected[i]) &&
 			      lapm_v44_prepare_response(&peers[i], commands[1u - i].data,
 				      commands[1u - i].length, NULL, &duplicate) == LAPM_V44_OK &&
 			      duplicate.length == responses[i].length &&
@@ -445,7 +425,7 @@ static bool test_response_errors_and_reset(void)
 	      session.phase == LAPM_V44_READY &&
 	      session.config.enabled == config.enabled &&
 	      session.config.native_v44_ready == config.native_v44_ready &&
-	      offers_equal(&session.config.local_offer, &config.local_offer),
+	      lapm_v44_offers_equal(&session.config.local_offer, &config.local_offer),
 	      "call reset did not retain local V.44 configuration");
 	return true;
 }
@@ -469,10 +449,10 @@ static bool test_dual_compression_retry(void)
 	before = session;
 	CHECK(lapm_v44_accept_response(&session, lapm_dual_compression_response,
 		 sizeof(lapm_dual_compression_response)) == LAPM_V44_MALFORMED &&
-	      memcmp(&session, &before, sizeof(session)) == 0 &&
+	      lapm_v44_sessions_equal(&session, &before) &&
 	      lapm_v44_prepare_retry_without_v44(&session, lapm_dual_compression_response,
 		 sizeof(lapm_dual_compression_response), &retry) == LAPM_V44_OK &&
-	      memcmp(&session, &before, sizeof(session)) == 0,
+	      lapm_v44_sessions_equal(&session, &before),
 	      "rejected response or unqueued retry changed session state");
 	stale = retry;
 	CHECK(v42_xid_decode(retry.data, retry.length, &decoded) == V42_XID_OK &&
@@ -545,11 +525,11 @@ static bool test_parameter_retry(void)
 	      lapm_v44_prepare_parameter_retry(&session, lapm_dual_compression_response,
 		      sizeof(lapm_dual_compression_response) - 1u,
 		      parameters, sizeof(parameters), &retry) == LAPM_V44_MALFORMED &&
-	      memcmp(&before, &session, sizeof(before)) == 0,
+	      lapm_v44_sessions_equal(&before, &session),
 	      "malformed compression response spent the parameter retry");
 	CHECK(lapm_v44_prepare_parameter_retry(&session, lapm_dual_compression_response,
 		      sizeof(lapm_dual_compression_response), parameters, sizeof(parameters),
-		      &retry) == LAPM_V44_OK && memcmp(&before, &session, sizeof(before)) == 0 &&
+		      &retry) == LAPM_V44_OK && lapm_v44_sessions_equal(&before, &session) &&
 	      v42_xid_decode(retry.data, retry.length, &decoded) == V42_XID_OK &&
 	      decoded.parameter_negotiation_length == sizeof(parameters) &&
 	      memcmp(decoded.parameter_negotiation, parameters, sizeof(parameters)) == 0 &&

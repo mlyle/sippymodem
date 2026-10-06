@@ -377,6 +377,8 @@ int modem_write(struct modem *m, const char *buffer, int count)
 static int write_pty(void *context, const char *bytes, int count)
 {
 	struct modem *modem = context;
+	if (modem->pty < 0)
+		return 0;
 	int written = write(modem->pty, bytes, (size_t)count);
 	return written < 0 ? 0 : written;
 }

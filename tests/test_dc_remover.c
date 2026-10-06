@@ -9,6 +9,13 @@
 #include <stdio.h>
 #include <string.h>
 
+static bool states_equal(
+	const struct dc_remover *left, const struct dc_remover *right)
+{
+	return left->sum == right->sum && left->sample_count == right->sample_count &&
+	       left->level == right->level && left->stage == right->stage;
+}
+
 static bool test_calibration_and_tracking(void)
 {
 	enum {
@@ -85,7 +92,7 @@ static bool test_chunk_invariance_and_saturation(void)
 		      "DC remover rejected block at %zu", offset);
 	}
 	CHECK(memcmp(one, chunks, sizeof(one)) == 0 &&
-	      memcmp(&scalar, &blocked, sizeof(scalar)) == 0,
+	      states_equal(&scalar, &blocked),
 	      "DC removal depends on host block size");
 
 	blocked.stage = DC_REMOVER_TRACKING;
@@ -114,7 +121,7 @@ static bool test_contracts(void)
 		      DC_REMOVER_INVALID_ARGUMENT &&
 	      dc_remover_process(&remover, &sample, 0) ==
 		      DC_REMOVER_INVALID_ARGUMENT &&
-	      memcmp(&remover, &saved, sizeof(remover)) == 0 && sample == 123,
+	      states_equal(&remover, &saved) && sample == 123,
 	      "DC remover argument rejection changed its owner");
 	remover.stage = (enum dc_remover_stage)99;
 	CHECK(dc_remover_process(&remover, &sample, 1) ==
