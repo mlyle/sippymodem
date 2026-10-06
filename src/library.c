@@ -975,6 +975,22 @@ static enum sippymodem_result check_call(struct sippymodem_line *line, uint64_t 
 	return line->started && line->active ? SIPPYMODEM_OK : SIPPYMODEM_CLOSED;
 }
 
+enum sippymodem_result sippymodem_finish_tx(struct sippymodem_line *line,
+	uint64_t generation)
+{
+	enum sippymodem_result result = check_call(line, generation);
+	if (result != SIPPYMODEM_OK)
+		return result;
+	struct modem *modem = line_modem(line);
+	/* No input is accepted before modem/error-control readiness. */
+	if (modem->state != STATE_MODEM_ONLINE && modem->state != STATE_COMMAND_ONLINE)
+		return modem->state == STATE_EC_DISC || modem->state == STATE_DP_DISC ?
+			SIPPYMODEM_CLOSED : SIPPYMODEM_AGAIN;
+	int pending = modem_finish_transmit(modem);
+	return pending < 0 ? SIPPYMODEM_ERROR :
+		pending == 0 ? SIPPYMODEM_OK : SIPPYMODEM_AGAIN;
+}
+
 enum sippymodem_result sippymodem_set_dte_mode(struct sippymodem_line *line,
 	uint64_t generation, enum sippymodem_dte_mode mode)
 {

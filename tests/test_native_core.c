@@ -7422,6 +7422,8 @@ static bool test_lapm_acknowledgement_window(void)
 		CHECK(outgoing != NULL && outgoing->buf[1] == 1,
 		      "LAPM acknowledgement fixture lost its poll");
 		m->packer.hdlc.tx_complete(l, outgoing);
+		CHECK(modem_ec_transmit_idle(m) == (pending == 0),
+		      "completion ignored retained information before acknowledgement");
 		memcpy(retained, l->info_buf, sizeof(retained));
 		wire[0] = kind < 4 ? l->rsp_addr : l->cmd_addr;
 		wire[1] = controls[kind];
@@ -7431,6 +7433,9 @@ static bool test_lapm_acknowledgement_window(void)
 			CHECK(l->state == LAPM_DATA_STATE && l->va == nr,
 			      "valid acknowledgement rejected (base=%u pending=%u kind=%zu nr=%u)",
 			      starts[start], pending, kind, nr);
+			CHECK(modem_ec_transmit_idle(m) == (distance == pending),
+			      "completion disagrees with acknowledged payload (base=%u pending=%u nr=%u)",
+			      starts[start], pending, nr);
 			if (kind == 1 || kind == 3) {
 				/* An RR/REJ command clears peer busy, but it is not the
 				 * final response to our outstanding recovery enquiry. */
@@ -7802,6 +7807,7 @@ static bool test_lapm_acknowledgement_progress(void)
 			      l->va == base && lapm_source.offset == 1,
 			      "unchanged acknowledgement lost or consumed pending data");
 			m->packer.hdlc.tx_complete(l, outgoing);
+			CHECK(!modem_ec_transmit_idle(m), "retry or unchanged N(R) falsely completed transmission");
 			if (expiry == 2 && scenario != STALL)
 				break;
 		}
@@ -7835,6 +7841,7 @@ static bool test_lapm_acknowledgement_progress(void)
 				while ((outgoing = m->packer.hdlc.get_tx_frame(l)) != NULL)
 					m->packer.hdlc.tx_complete(l, outgoing);
 			}
+			CHECK(!modem_ec_transmit_idle(m), "flow control falsely completed retained transmission");
 			CHECK(lapm_source.offset == 1 && l->va == base,
 			      "flow control discarded the pending payload");
 		}

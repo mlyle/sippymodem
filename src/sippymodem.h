@@ -260,6 +260,16 @@ enum sippymodem_result sippymodem_send(struct sippymodem_line *line,
 	const void *bytes, size_t length, size_t *accepted);
 enum sippymodem_result sippymodem_receive(struct sippymodem_line *line,
 	void *bytes, size_t capacity, size_t *received);
+/* Finish all accepted TX for this generation without hanging up. After READY,
+ * the first call seals further nonempty sends (AGAIN, accepted=0) until a new
+ * call starts. AGAIN requires continued process(); OK means LAPM payload has
+ * been acknowledged, or a raw encoder/filter tail has been emitted. Raw cannot
+ * promise remote application receipt. RX, carrier and COMMAND remain active.
+ * Before READY, AGAIN has no effect. CLOSED/STALE leave other calls untouched.
+ * ERROR means completion cannot be established; use hangup for cancellation.
+ * Completion is idempotent. The application owns its bounded timeout. */
+enum sippymodem_result sippymodem_finish_tx(struct sippymodem_line *line,
+	uint64_t generation);
 enum sippymodem_result sippymodem_get_status(const struct sippymodem_line *line,
 	struct sippymodem_status *status);
 /* Non-destructive, nonblocking owner-thread read of the line's latest 64 logs.

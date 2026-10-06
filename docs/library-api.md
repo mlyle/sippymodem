@@ -163,6 +163,26 @@ output and use receive backpressure. Raw receive overflow retains the accepted
 prefix, records a cause, and deliberately terminates at the next safe owner
 boundary; it never silently discards overflow bytes while keeping a call alive.
 
+### Completing final output
+
+When an application closes its output, first submit any suffix that `send`
+has not accepted. Then call `sippymodem_finish_tx(line, generation)`. On a ready
+call, this seals further nonempty sends for that generation and returns `AGAIN`
+while transmission remains pending. Keep calling `process`, servicing receive
+bytes and polling completion. `OK` is idempotent: all accepted payload has been
+acknowledged by LAPM, or the raw encoder and modulator tail has been emitted.
+Raw completion cannot guarantee receipt by the remote application.
+
+`tx_pending == 0` is insufficient: compression, framing and unacknowledged data
+are outside that count. Completion preserves carrier, RX and online COMMAND.
+After `OK`, hang up explicitly. Use an application deadline and immediate
+`hangup` to cancel an unfinished transmission or recover from `ERROR`.
+`CLOSED` and `STALE` do not affect another call. Before READY, `AGAIN` leaves input
+unsealed; no payload is accepted before readiness. A replacement call starts
+with input open again. The operation retains no application pointers.
+
+### Modes and readiness
+
 Use `set_dte_mode` with the current generation instead of `+++`. Mode changes
 reject pending TX. Online COMMAND preserves carrier and receive bytes while
 DSP, RTP, LAPM, and compression keep running. Payload receive remains available;

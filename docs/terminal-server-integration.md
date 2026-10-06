@@ -87,7 +87,8 @@ role, LAPM with raw fallback, both compression types, PCMU, 20-ms packets,
 | `sippymodem_answer(line, generation)` | Accepts the current incoming attempt |
 | `EVENT_SIP_ESTABLISHED` | SIP accepted; modem/data readiness is still pending |
 | `EVENT_CONNECTED` / `status.ready` | Modem and configured error control are ready for payload |
-| `sippymodem_hangup(line, generation)` | Ends this call; other lines continue |
+| `sippymodem_finish_tx(line, generation)` | Seals input; poll until acknowledged/emitted, then hang up explicitly |
+| `sippymodem_hangup(line, generation)` | Ends this call immediately; other lines continue |
 | `EVENT_DISCONNECTED` | Record retained cause; drain RX before reusing the line |
 
 Store `(line_id, generation)` with every asynchronous control request. `STALE`
@@ -127,6 +128,38 @@ compressed and unacknowledged link work. `rx_ready` measures decoded local bytes
 A positive `tx_free` alone does not imply a call is ready or in DATA mode.
 LAPM/compression retain blocked decoded output and apply receive backpressure.
 Raw overflow retains the accepted prefix, reports its cause and ends the call.
+
+### BBS EOF and final messages
+
+TCP EOF does not mean the modem has finished transmitting the BBS's final
+message. Submit all remaining application bytes using exact partial counts,
+stop submitting new output, then call `sippymodem_finish_tx(line, generation)`.
+This native operation tracks compression, frames, acknowledgments and the raw
+modulator tail. Further nonempty sends return `AGAIN` with zero accepted bytes.
+
+Poll completion while the owner loop continues `process`, events and receive
+handling. Hang up on `OK` or an application-owned deadline. On LAPM, `OK` means
+the peer acknowledged all accepted payload. Raw modes finish emitting the
+signal and cannot promise that the remote application received it. `CLOSED`
+means the call ended; `STALE` retires the completion request for the old call.
+`ERROR` means completion cannot be established and permits immediate cancellation.
+The operation preserves carrier and RX and also works in online COMMAND.
+Do not use an empty `tx_pending` count or a fixed sleep as a completion test.
+
+```c
+/* Run this after all application output has been accepted, on a ready call. */
+enum sippymodem_result result = sippymodem_finish_tx(line, generation);
+if (result == SIPPYMODEM_OK ||
+    (result == SIPPYMODEM_AGAIN && now_ns >= finish_deadline_ns) ||
+    result == SIPPYMODEM_ERROR) {
+    result = sippymodem_hangup(line, generation);
+    /* Handle result and retire this generation's completion request. */
+}
+/* AGAIN: continue the owner loop and poll completion again.
+ * CLOSED/STALE: retire this request without acting on a replacement call. */
+```
+
+### Command and data mode
 
 `set_dte_mode(line, generation, COMMAND)` requires no pending local TX.
 COMMAND preserves carrier, RX and protocol processing; sends return `AGAIN`.

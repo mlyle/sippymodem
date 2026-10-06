@@ -237,6 +237,20 @@ static bool test_owned_loopback(void)
 	}
 	EXPECT(first_count == 4 && second_count == 4);
 	EXPECT(memcmp(first_rx, first_payload, 4) == 0 && memcmp(second_rx, second_payload, 4) == 0);
+	/* Finishing one line leaves the other call's input and carrier active. */
+	enum sippymodem_result finished = sippymodem_finish_tx(caller, generation);
+	for (unsigned i = 0; i < 1000 && finished == SIPPYMODEM_AGAIN; ++i) {
+		EXPECT(step(server, &now));
+		finished = sippymodem_finish_tx(caller, generation);
+	}
+	EXPECT(finished == SIPPYMODEM_OK);
+	EXPECT(sippymodem_send(other_caller, "q", 1, &accepted) == SIPPYMODEM_OK && accepted == 1);
+	received = 0;
+	for (unsigned i = 0; i < 1000 && received == 0; ++i) {
+		EXPECT(step(server, &now));
+		(void)sippymodem_receive(other_answerer, result, 1, &received);
+	}
+	EXPECT(received == 1 && result[0] == 'q');
 	/* Raw receive pressure must retain its accepted prefix and end deliberately. */
 	unsigned char overflow_payload[320];
 	memset(overflow_payload, 'x', sizeof(overflow_payload));
@@ -1063,7 +1077,147 @@ static bool test_huntgroups(void)
 	return true;
 }
 
+static bool test_transmit_completion(void)
+{
+	const struct {
+		unsigned modulation, compression;
+		enum sippymodem_error_control ec;
+		enum sippymodem_compression negotiated;
+	} profiles[] = {
+		{ 21, 0, SIPPYMODEM_RAW, SIPPYMODEM_COMP_NONE },
+		{ 122, 0, SIPPYMODEM_LAPM, SIPPYMODEM_COMP_NONE },
+		{ 122, 1, SIPPYMODEM_LAPM, SIPPYMODEM_COMP_V42BIS },
+		{ 122, 2, SIPPYMODEM_LAPM, SIPPYMODEM_COMP_V44 },
+	};
+	EXPECT(sippymodem_finish_tx(NULL, 0) == SIPPYMODEM_INVALID);
+	for (unsigned profile = 0; profile < sizeof(profiles) / sizeof(profiles[0]); ++profile) {
+		struct sippymodem_server_config config;
+		sippymodem_server_config_init(&config);
+		config.max_lines = 2;
+		config.public_address = config.bound_address = "127.0.0.1";
+		struct sippymodem_server *server = sippymodem_server_create(&config);
+		EXPECT(server != NULL);
+		struct sippymodem_line_config lc;
+		sippymodem_line_config_init(&lc);
+		lc.modulation = profiles[profile].modulation;
+		lc.automode = false;
+		lc.min_bps = lc.max_bps = lc.modulation == 21 ? 300 : 2400;
+		lc.ec_policy = profiles[profile].ec == SIPPYMODEM_RAW ?
+			SIPPYMODEM_EC_RAW : SIPPYMODEM_EC_REQUIRED;
+		lc.compression_types = profiles[profile].compression;
+		lc.tx_capacity = 256;
+		lc.rx_capacity = 512;
+		struct sippymodem_line *caller = sippymodem_line_create(server, &lc);
+		struct sippymodem_line *answerer = sippymodem_line_create(server, &lc);
+		EXPECT(caller != NULL && answerer != NULL);
+		EXPECT(sippymodem_finish_tx(answerer, 0) == SIPPYMODEM_CLOSED);
+		EXPECT(sippymodem_server_start(server) == SIPPYMODEM_OK);
+		EXPECT(sippymodem_line_start(caller) == SIPPYMODEM_OK);
+		EXPECT(sippymodem_line_start(answerer) == SIPPYMODEM_OK);
+		uint64_t now = 1000000000, next, generation;
+		EXPECT(sippymodem_process(server, now, &next) == SIPPYMODEM_OK);
+		char target[128];
+		snprintf(target, sizeof(target), "sip:5678@127.0.0.1:%u", sippymodem_listen_port(server));
+		EXPECT(sippymodem_dial(caller, target, &generation) == SIPPYMODEM_OK);
+		struct sippymodem_status local = { 0 }, remote = { 0 };
+		for (unsigned i = 0; i < 1000 && remote.phase != SIPPYMODEM_RINGING; ++i) {
+			EXPECT(step(server, &now));
+			EXPECT(sippymodem_get_status(answerer, &remote) == SIPPYMODEM_OK);
+		}
+		EXPECT(remote.phase == SIPPYMODEM_RINGING);
+		EXPECT(sippymodem_finish_tx(answerer, remote.generation) == SIPPYMODEM_AGAIN);
+		EXPECT(sippymodem_answer(answerer, remote.generation) == SIPPYMODEM_OK);
+		for (unsigned i = 0; i < 30000 && (!local.ready || !remote.ready); ++i) {
+			EXPECT(step(server, &now));
+			EXPECT(sippymodem_get_status(caller, &local) == SIPPYMODEM_OK);
+			EXPECT(sippymodem_get_status(answerer, &remote) == SIPPYMODEM_OK);
+		}
+		EXPECT(local.ready && remote.ready);
+		EXPECT(local.error_control == profiles[profile].ec &&
+		       local.compression == profiles[profile].negotiated);
+		/* The BBS's final message is accepted in full immediately before EOF. */
+		unsigned char payload[128], received[128];
+		for (size_t i = 0; i < sizeof(payload); ++i)
+			payload[i] = (unsigned char)(i * 31u);
+		size_t accepted, count = 0;
+		EXPECT(sippymodem_finish_tx(answerer, remote.generation + 1) == SIPPYMODEM_STALE);
+		EXPECT(sippymodem_send(answerer, payload, sizeof(payload), &accepted) == SIPPYMODEM_OK && accepted == sizeof(payload));
+		EXPECT(sippymodem_finish_tx(answerer, remote.generation) == SIPPYMODEM_AGAIN);
+		EXPECT(sippymodem_send(answerer, payload, 1, &accepted) == SIPPYMODEM_AGAIN && accepted == 0);
+		/* The operation leaves receive and carrier active in online COMMAND. */
+		EXPECT(sippymodem_set_dte_mode(caller, generation, SIPPYMODEM_COMMAND) == SIPPYMODEM_OK);
+		enum sippymodem_result completion = SIPPYMODEM_AGAIN;
+		bool empty_but_pending = false, command_during_finish = false;
+		for (unsigned i = 0; i < 30000 && completion == SIPPYMODEM_AGAIN; ++i) {
+			EXPECT(step(server, &now));
+			EXPECT(sippymodem_get_status(answerer, &remote) == SIPPYMODEM_OK);
+			completion = sippymodem_finish_tx(answerer, remote.generation);
+			EXPECT(completion == SIPPYMODEM_OK || completion == SIPPYMODEM_AGAIN);
+			empty_but_pending |= remote.tx_pending == 0 && completion == SIPPYMODEM_AGAIN;
+			if (!command_during_finish && remote.tx_pending == 0 && completion == SIPPYMODEM_AGAIN) {
+				EXPECT(sippymodem_set_dte_mode(answerer, remote.generation, SIPPYMODEM_COMMAND) == SIPPYMODEM_OK);
+				command_during_finish = true;
+			}
+			size_t amount;
+			enum sippymodem_result result = sippymodem_receive(caller, received + count, sizeof(received) - count, &amount);
+			EXPECT(result == SIPPYMODEM_OK || result == SIPPYMODEM_AGAIN);
+			count += amount;
+		}
+		CHECK(completion == SIPPYMODEM_OK && empty_but_pending && command_during_finish,
+		      "finish profile=%u result=%d bytes=%zu pending after local queue emptied=%d",
+		      profile, completion, count, empty_but_pending);
+		EXPECT(sippymodem_finish_tx(answerer, remote.generation) == SIPPYMODEM_OK);
+		EXPECT(sippymodem_get_status(answerer, &remote) == SIPPYMODEM_OK && remote.carrier && remote.dte_mode == SIPPYMODEM_COMMAND);
+		EXPECT(sippymodem_get_status(caller, &local) == SIPPYMODEM_OK &&
+		       local.carrier && local.dte_mode == SIPPYMODEM_COMMAND);
+		/* LAPM completion already has the peer's acknowledgments. Raw only
+		 * guarantees emission: service the peer until its receive tail drains. */
+		if (profiles[profile].ec == SIPPYMODEM_RAW) {
+			for (unsigned i = 0; i < 1000 && count < sizeof(received); ++i) {
+				EXPECT(step(server, &now));
+				size_t amount;
+				enum sippymodem_result result = sippymodem_receive(caller, received + count, sizeof(received) - count, &amount);
+				EXPECT(result == SIPPYMODEM_OK || result == SIPPYMODEM_AGAIN);
+				count += amount;
+			}
+		}
+		EXPECT(sippymodem_hangup(answerer, remote.generation) == SIPPYMODEM_OK);
+		EXPECT(sippymodem_finish_tx(answerer, remote.generation) == SIPPYMODEM_CLOSED);
+		for (unsigned i = 0; i < 1000; ++i)
+			EXPECT(step(server, &now));
+		size_t amount;
+		enum sippymodem_result result = sippymodem_receive(caller, received + count, sizeof(received) - count, &amount);
+		EXPECT(result == SIPPYMODEM_OK || result == SIPPYMODEM_CLOSED);
+		count += amount;
+		CHECK(count == sizeof(payload) && memcmp(received, payload, sizeof(payload)) == 0,
+		      "final message lost at profile=%u: %zu bytes", profile, count);
+		/* Reusing a line clears its seal; an old completion cannot affect it. */
+		uint64_t old_generation = remote.generation;
+		EXPECT(sippymodem_dial(caller, target, &generation) == SIPPYMODEM_OK);
+		bool answered = false;
+		local.ready = remote.ready = false;
+		for (unsigned i = 0; i < 30000 && (!local.ready || !remote.ready); ++i) {
+			EXPECT(step(server, &now));
+			EXPECT(sippymodem_get_status(caller, &local) == SIPPYMODEM_OK);
+			EXPECT(sippymodem_get_status(answerer, &remote) == SIPPYMODEM_OK);
+			if (remote.phase == SIPPYMODEM_RINGING && !answered) {
+				EXPECT(sippymodem_answer(answerer, remote.generation) == SIPPYMODEM_OK);
+				answered = true;
+			}
+		}
+		EXPECT(local.ready && remote.ready && remote.generation > old_generation);
+		EXPECT(sippymodem_finish_tx(answerer, old_generation) == SIPPYMODEM_STALE);
+		EXPECT(sippymodem_send(answerer, payload, sizeof(payload), &accepted) == SIPPYMODEM_OK && accepted == sizeof(payload));
+		EXPECT(sippymodem_finish_tx(answerer, remote.generation) == SIPPYMODEM_AGAIN);
+		/* Cancellation remains immediate even with an unfinished final message. */
+		EXPECT(sippymodem_hangup(answerer, remote.generation) == SIPPYMODEM_OK);
+		EXPECT(sippymodem_finish_tx(answerer, remote.generation) == SIPPYMODEM_CLOSED);
+		sippymodem_server_destroy(server);
+	}
+	return true;
+}
+
 int main(void)
 {
-	return test_endpoint_registrations() && test_huntgroups() && test_typed_credentials() && test_typed_accounts() && test_owned_loopback() && test_compressed_command_and_fd_eof() && test_timeout_and_bounds() ? 0 : 1;
+	return test_transmit_completion() && test_endpoint_registrations() && test_huntgroups() && test_typed_credentials() && test_typed_accounts() && test_owned_loopback() && test_compressed_command_and_fd_eof() && test_timeout_and_bounds() ? 0 : 1;
 }
