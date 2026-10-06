@@ -105,18 +105,6 @@ static void start_scalar_stage(
 	opening->stage = stage;
 }
 
-static bool symbol_is_valid(
-	enum g711_law law, const struct v90_pcm_symbol *symbol)
-{
-	struct v90_pcm_symbol parsed;
-
-	return symbol != NULL &&
-	       v90_pcm_symbol_parse(&parsed, law, symbol->octet) &&
-	       parsed.ucode == symbol->ucode &&
-	       parsed.positive == symbol->positive &&
-	       parsed.sample == symbol->sample;
-}
-
 static bool advance_after_ru(struct v92_pcm_phase3_opening *opening)
 {
 	switch (opening->stage) {
@@ -163,7 +151,7 @@ enum v92_pcm_phase3_opening_result v92_pcm_phase3_opening_next(
 	if (opening->stage == V92_PCM_PHASE3_OPENING_MD && md_symbol == NULL)
 		return V92_PCM_PHASE3_OPENING_NEED_MD_SYMBOL;
 	if (opening->stage == V92_PCM_PHASE3_OPENING_MD &&
-	    !symbol_is_valid(opening->law, md_symbol))
+	    !v90_pcm_symbol_is_valid(md_symbol, opening->law))
 		return V92_PCM_PHASE3_OPENING_INVALID_ARGUMENT;
 
 	next = *opening;
