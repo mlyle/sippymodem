@@ -212,6 +212,13 @@ enum DP_ID {
         MAX_DP = 128
 };
 
+/* AT+V90D policy; V.8 selects complementary roles in automatic mode. */
+enum modem_pcm_policy {
+	MODEM_PCM_POLICY_ANALOG = 0,
+	MODEM_PCM_POLICY_DIGITAL = 1,
+	MODEM_PCM_POLICY_AUTO = 2,
+};
+
 enum modem_pcm_role {
 	MODEM_PCM_ROLE_NONE,
 	MODEM_PCM_ROLE_ANALOG,
@@ -279,6 +286,13 @@ struct modem;
 
 extern int modem_get_sreg(struct modem *m, unsigned int num);
 extern int modem_set_sreg(struct modem *m, unsigned int num, int val);
+
+/* Read a register as a flag while preserving an access error. */
+static inline int modem_get_sreg_flag(struct modem *m, unsigned int num)
+{
+	int value = modem_get_sreg(m, num);
+	return value < 0 ? value : value != 0;
+}
 
 
 #endif /* __MODEM_DEFS_H__ */

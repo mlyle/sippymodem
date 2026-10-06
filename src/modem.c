@@ -51,7 +51,6 @@
 
 #include <modem.h>
 #include "modem_state.h"
-#include <modem_param.h>
 #include <modem_debug.h>
 #include <v8_datapump.h>
 #include <datapump_link.h>

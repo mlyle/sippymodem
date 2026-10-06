@@ -52,7 +52,6 @@ MODEM_CORE_SOURCES := \
 	modem_debug.c \
 	modem_ec.c \
 	modem_pack.c \
-	modem_param.c \
 	modem_timer.c
 APP_SOURCES := \
 	audio_path.c \

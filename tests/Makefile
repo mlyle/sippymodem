@@ -433,7 +433,7 @@ NATIVE_CORE_WRAP_FLAGS := -Wl,--wrap=modem_dp_get_registered_ops \
 	-Wl,--wrap=v44_character_path_destroy
 NATIVE_CORE_DEBUG_TEST_BINARY := $(BUILD_DIR)/test_native_core_debug
 NATIVE_CORE_SOURCE_NAMES := homolog_data modem modem_frontend modem_at modem_comp \
-	modem_debug modem_ec modem_pack modem_param modem_timer
+	modem_debug modem_ec modem_pack modem_timer
 NATIVE_CORE_OBJECTS := $(addprefix $(BUILD_DIR)/native_, \
 	$(addsuffix .o, $(NATIVE_CORE_SOURCE_NAMES))) \
 	$(BUILD_DIR)/datapump_registry.o \

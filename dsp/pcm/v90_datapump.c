@@ -8,7 +8,6 @@
 #include "datapump_timing.h"
 #include "memory_region.h"
 #include "modem.h"
-#include "modem_param.h"
 #include "pcm_call.h"
 #include "training_session.h"
 #include "v8_datapump.h"
@@ -248,7 +247,7 @@ static bool v92_profile_requested(
 
 	if (modem == NULL || maximum_data_rate_number == NULL)
 		return false;
-	enabled = modem_get_param(modem, MDMPRM_V92_PCM_UPSTREAM);
+	enabled = modem_get_sreg_flag(modem, SREG_V92_PCM_UPSTREAM);
 	if (enabled != 0 && enabled != 1)
 		return false;
 	configured = modem_get_sreg(modem, SREG_V92_PCM_UPSTREAM_MAX_DRN);
@@ -401,7 +400,7 @@ static struct dp *create_v90(
 		modem->dp->id == DP_V8;
 	from_v34 = modem->dp != NULL && modem->dp->id == DP_V34;
 	if ((from_v8 && !v8_datapump_pcm_handoff(modem->dp, &datapump->startup)) ||
-	    (protocol == PCM_PROTOCOL_V92 && modem_get_param(modem, MDMPRM_V92_QUICK_CONNECT) &&
+	    (protocol == PCM_PROTOCOL_V92 && modem_get_sreg_flag(modem, SREG_V92_QUICK_CONNECT) &&
 	     !from_v8 && !from_v34)) {
 		free(datapump);
 		return NULL;

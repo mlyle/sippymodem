@@ -10,7 +10,6 @@
 #include <dc_remover.h>
 #include <g711.h>
 #include <modem.h>
-#include <modem_param.h>
 #include <v8_datapump.h>
 
 #include "test.h"
@@ -78,20 +77,9 @@ int modem_get_sreg(struct modem *modem, unsigned int number)
 {
 	if (modem == NULL || number >= sizeof(modem->sregs))
 		return -1;
-	return modem->sregs[number];
-}
-
-long modem_get_param(struct modem *modem, unsigned int name)
-{
-	if (modem == NULL)
-		return -1;
-	if (name == MDMPRM_V92_QUICK_CONNECT)
-		return modem->sregs[SREG_V92_QUICK_CONNECT] != 0;
-	if (name == MDMPRM_V92_PCM_UPSTREAM)
-		return modem->sregs[SREG_V92_PCM_UPSTREAM] != 0;
-	if (name == MDMPRM_V90_DIGITAL_INDICATION)
+	if (number == SREG_V90_DIGITAL_INDICATION)
 		return modem->dsp_info.pcm_role == MODEM_PCM_ROLE_DIGITAL;
-	return -1;
+	return modem->sregs[number];
 }
 
 int modem_set_link_rates(struct modem *modem, uint32_t transmit_rate, uint32_t receive_rate)

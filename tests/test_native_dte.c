@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #include <modem.h>
 #include <modem_state.h>
-#include <modem_param.h>
 #include <modem_frontend.h>
 #include "test.h"
 
@@ -139,6 +138,9 @@ static bool at_response_formats(void)
 		const char *input, *expected;
 	} cases[] = {
 		{0,1,0,13,10, "AT\r", "\r\nOK\r\n"},
+		{0,1,0,13,10, "ATS224=200+V92Q?\r", "\r\n1\r\n\r\nOK\r\n"},
+		{0,1,0,13,10, "ATS225=255+V92U?\r", "\r\n1\r\n\r\nOK\r\n"},
+		{0,1,0,13,10, "ATS227=2+V91?\r", "\r\n1\r\n\r\nOK\r\n"},
 		{0,1,0,13,10, "AT+GMI=?\r", "\r\nOK\r\n"},
 		{0,1,0,13,10, "AT+GMI\r", "\r\nSmart Link Ltd.\r\n\r\nOK\r\n"},
 		{0,1,0,13,10, "AT+GMM\r", "\r\nSmartLink Soft Modem\r\n\r\nOK\r\n"},

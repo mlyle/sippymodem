@@ -5,7 +5,6 @@
 #include "datapump_link.h"
 #include "datapump_media.h"
 #include "datapump_timing.h"
-#include "modem_param.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -32,7 +31,7 @@ static struct dp *create(struct modem *modem, enum DP_ID id, int caller,
 	if (modem == NULL || id != DP_V91 || (caller != 0 && caller != 1) ||
 	    rate != MODEM_RATE || fragment != MODEM_FRAG || ops != &operations ||
 	    modem->max_rate < 28000 || modem->min_rate > 64000 ||
-	    !modem_get_param(modem, MDMPRM_V91_ENABLED))
+	    !modem_get_sreg_flag(modem, SREG_V91_ENABLED))
 		return NULL;
 	struct v91_datapump *pump = calloc(1, sizeof(*pump));
 	if (pump == NULL)

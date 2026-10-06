@@ -3,7 +3,6 @@
 #include <modem.h>
 #include <modem_frontend.h>
 #include <modem_state.h>
-#include <modem_param.h>
 #include <modem_timer.h>
 #include <fsk.h>
 #include <single_tone.h>
@@ -1983,9 +1982,9 @@ static bool test_v8_handoff(void)
 		enum DP_ID expected = duplex ? DP_V91 : selections[selection].handoff;
 		enum modem_pcm_role caller_role = duplex ? MODEM_PCM_ROLE_DIGITAL : selections[selection].caller_role;
 		enum modem_pcm_role answerer_role = duplex ? MODEM_PCM_ROLE_DIGITAL : selections[selection].answerer_role;
-		CHECK(modem_set_param(caller, MDMPRM_V90_DIGITAL_INDICATION,
+		CHECK(modem_set_sreg(caller, SREG_V90_DIGITAL_INDICATION,
 			      selections[selection].caller_policy) == 0 &&
-		      modem_set_param(answerer, MDMPRM_V90_DIGITAL_INDICATION,
+		      modem_set_sreg(answerer, SREG_V90_DIGITAL_INDICATION,
 			      selections[selection].answerer_policy) == 0,
 		      "V.8 endpoints did not accept PCM role configuration");
 		caller->cfg.ec = selections[selection].caller_lapm;
@@ -2094,8 +2093,8 @@ static bool test_automatic_factory_profile(void)
 		      modem->min_rate == 300 && modem->max_rate == 64000 &&
 		      modem->v90_upstream_min_rate == 0 && modem->v90_upstream_max_rate == 0 &&
 		      modem->v34_symbol_rate == 0 && modem->v90_upstream_max_baud == 0 &&
-		      modem_get_param(modem, MDMPRM_V92_PCM_UPSTREAM) == 0 &&
-		      modem_get_param(modem, MDMPRM_V90_DIGITAL_INDICATION) == MODEM_PCM_POLICY_AUTO,
+		      modem_get_sreg_flag(modem, SREG_V92_PCM_UPSTREAM) == 0 &&
+		      modem_get_sreg(modem, SREG_V90_DIGITAL_INDICATION) == MODEM_PCM_POLICY_AUTO,
 		      "factory profile restricted automatic mode or rate");
 		CHECK(process_at_command(modem, "AT+MS=21,0,300,300+V34B=2400+V90U=9600,9600,3000+V92U=1&A0") == 0 &&
 		      process_at_command(modem, "ATZ") == 0,
@@ -2913,12 +2912,10 @@ static bool test_at_v91_policy(void)
 	      "V.91 query did not report its default, bounds and disabled state");
 	for (size_t i = 0; i < ARRAY_LENGTH(invalid); ++i)
 		CHECK(process_at_command(m, invalid[i]) == -1 &&
-		      modem_get_param(m, MDMPRM_V91_ENABLED) == 0,
+		      modem_get_sreg_flag(m, SREG_V91_ENABLED) == 0,
 		      "invalid V.91 setting changed policy: %s", invalid[i]);
-	CHECK(modem_set_param(m, MDMPRM_V91_ENABLED, -1) == -1 &&
-	      modem_set_param(m, MDMPRM_V91_ENABLED, 2) == -1 &&
-	      MODEM_DP(m) == DP_V92 && MODEM_AUTOMODE(m) == 1 &&
-	      modem_get_param(m, MDMPRM_V90_DIGITAL_INDICATION) == MODEM_PCM_POLICY_AUTO &&
+	CHECK(MODEM_DP(m) == DP_V92 && MODEM_AUTOMODE(m) == 1 &&
+	      modem_get_sreg(m, SREG_V90_DIGITAL_INDICATION) == MODEM_PCM_POLICY_AUTO &&
 	      process_at_command(m, "AT+MS=91") == 0,
 	      "V.91 switch changed other negotiation controls");
 	for (unsigned caller = 0; caller < 2; ++caller)
@@ -2931,7 +2928,7 @@ static bool test_at_v91_policy(void)
 	CHECK(dp != NULL && v8->delete(dp) == 0,
 	      "re-enabled V.91 could not negotiate");
 	CHECK(process_at_command(m, "AT+V91=0Z") == 0 &&
-	      modem_get_param(m, MDMPRM_V91_ENABLED) == 1,
+	      modem_get_sreg_flag(m, SREG_V91_ENABLED) == 1,
 	      "reset did not restore factory V.91 policy");
 	modem_delete(m);
 	return true;
@@ -2948,9 +2945,10 @@ static bool test_at_pcm_profile_controls(void)
 	struct modem *modem = create_compat_modem(&driver, driver.name);
 
 	CHECK(modem != NULL &&
-		      modem_get_param(modem, MDMPRM_V90_DIGITAL_INDICATION) == MODEM_PCM_POLICY_AUTO &&
-		      modem_get_param(modem, MDMPRM_V92_QUICK_CONNECT) == 0 &&
-		      modem_get_param(modem, MDMPRM_V92_PCM_UPSTREAM) == 0 &&
+		      modem_get_sreg_flag(modem, sizeof(modem->sregs)) == -1 &&
+		      modem_get_sreg(modem, SREG_V90_DIGITAL_INDICATION) == MODEM_PCM_POLICY_AUTO &&
+		      modem_get_sreg_flag(modem, SREG_V92_QUICK_CONNECT) == 0 &&
+		      modem_get_sreg_flag(modem, SREG_V92_PCM_UPSTREAM) == 0 &&
 		      modem->v90_upstream_min_rate == 0 &&
 		      modem->v90_upstream_max_rate == 0 &&
 		      modem->v90_upstream_max_baud == 0,
@@ -2958,16 +2956,14 @@ static bool test_at_pcm_profile_controls(void)
 	CHECK(modem->v92_upstream_lu_ucode == 0,
 	      "PCM upstream did not default to the profile training level");
 	CHECK(process_at_command(modem, "AT+V90D=2") == 0 &&
-	      modem_get_param(modem, MDMPRM_V90_DIGITAL_INDICATION) == MODEM_PCM_POLICY_AUTO &&
-	      modem_set_param(modem, MDMPRM_V90_DIGITAL_INDICATION, -1) == -1 &&
-	      modem_set_param(modem, MDMPRM_V90_DIGITAL_INDICATION, 3) == -1,
+	      modem_get_sreg(modem, SREG_V90_DIGITAL_INDICATION) == MODEM_PCM_POLICY_AUTO &&
+	      process_at_command(modem, "AT+V90D=-1") == -1 &&
+	      process_at_command(modem, "AT+V90D=3") == -1,
 	      "automatic PCM role was not retained or validated");
 	CHECK(process_at_command(modem, "AT+V90D=1") == 0 &&
-		      modem_get_param(
-			      modem, MDMPRM_V90_DIGITAL_INDICATION) == 1 &&
+		      modem_get_sreg(modem, SREG_V90_DIGITAL_INDICATION) == 1 &&
 		      process_at_command(modem, "AT+V90D=3") == -1 &&
-		      modem_get_param(
-			      modem, MDMPRM_V90_DIGITAL_INDICATION) == 1,
+		      modem_get_sreg(modem, SREG_V90_DIGITAL_INDICATION) == 1,
 	      "AT+V90D was not transactional");
 	CHECK(process_at_command(
 		      modem, "AT+V90U=14400,31200,3429") == 0 &&
@@ -2985,21 +2981,21 @@ static bool test_at_pcm_profile_controls(void)
 		      modem->v90_upstream_max_baud == 3429,
 	      "invalid AT+V90U changed its retained policy");
 	CHECK(process_at_command(modem, "AT+V92Q=0") == 0 &&
-		      modem_get_param(modem, MDMPRM_V92_QUICK_CONNECT) == 0 &&
+		      modem_get_sreg_flag(modem, SREG_V92_QUICK_CONNECT) == 0 &&
 		      process_at_command(modem, "AT+V92Q=2") == -1 &&
-		      modem_get_param(modem, MDMPRM_V92_QUICK_CONNECT) == 0,
+		      modem_get_sreg_flag(modem, SREG_V92_QUICK_CONNECT) == 0,
 	      "AT+V92Q was not transactional");
 	CHECK(process_at_command(modem, "AT+V92U=1,28000") == 0 &&
-		      modem_get_param(modem, MDMPRM_V92_PCM_UPSTREAM) == 1 &&
+		      modem_get_sreg_flag(modem, SREG_V92_PCM_UPSTREAM) == 1 &&
 		      modem_get_sreg(
 			      modem, SREG_V92_PCM_UPSTREAM_MAX_DRN) == 4,
 	      "AT+V92U did not retain its exact PCM-upstream rate");
 	CHECK(process_at_command(modem, "AT+V92U=1,28100") == -1 &&
-		      modem_get_param(modem, MDMPRM_V92_PCM_UPSTREAM) == 1 &&
+		      modem_get_sreg_flag(modem, SREG_V92_PCM_UPSTREAM) == 1 &&
 		      modem_get_sreg(
 			      modem, SREG_V92_PCM_UPSTREAM_MAX_DRN) == 4 &&
 		      process_at_command(modem, "AT+V92U=0") == 0 &&
-		      modem_get_param(modem, MDMPRM_V92_PCM_UPSTREAM) == 0 &&
+		      modem_get_sreg_flag(modem, SREG_V92_PCM_UPSTREAM) == 0 &&
 		      modem_get_sreg(
 			      modem, SREG_V92_PCM_UPSTREAM_MAX_DRN) == 0,
 	      "AT+V92U did not reject invalid rates or reset cleanly");
@@ -3015,7 +3011,7 @@ static bool test_at_pcm_profile_controls(void)
 	for (size_t index = 0; index < ARRAY_LENGTH(invalid_levels); ++index)
 		CHECK(process_at_command(modem, invalid_levels[index]) == -1 &&
 			      modem->v92_upstream_lu_ucode == 69 &&
-			      modem_get_param(modem, MDMPRM_V92_PCM_UPSTREAM) == 1 &&
+			      modem_get_sreg_flag(modem, SREG_V92_PCM_UPSTREAM) == 1 &&
 			      modem_get_sreg(modem, SREG_V92_PCM_UPSTREAM_MAX_DRN) == 13,
 		      "invalid AT+V92U level changed the retained profile");
 	CHECK(process_at_command(modem, "AT+V92U=1,40000,0") == 0 &&
@@ -3044,12 +3040,11 @@ static bool test_at_pcm_profile_controls(void)
 	CHECK(response_length > 0 && strstr(response, "1,40000,69\r\n") != NULL,
 	      "PCM upstream query omitted the selected training level");
 	CHECK(process_at_command(modem, "AT+V92Q=1") == 0 &&
-		      modem_get_param(modem, MDMPRM_V92_QUICK_CONNECT) == 1 &&
+		      modem_get_sreg_flag(modem, SREG_V92_QUICK_CONNECT) == 1 &&
 		      process_at_command(modem, "ATZ") == 0 &&
-		      modem_get_param(
-			      modem, MDMPRM_V90_DIGITAL_INDICATION) == MODEM_PCM_POLICY_AUTO &&
-		      modem_get_param(modem, MDMPRM_V92_QUICK_CONNECT) == 0 &&
-		      modem_get_param(modem, MDMPRM_V92_PCM_UPSTREAM) == 0 &&
+		      modem_get_sreg(modem, SREG_V90_DIGITAL_INDICATION) == MODEM_PCM_POLICY_AUTO &&
+		      modem_get_sreg_flag(modem, SREG_V92_QUICK_CONNECT) == 0 &&
+		      modem_get_sreg_flag(modem, SREG_V92_PCM_UPSTREAM) == 0 &&
 		      modem->v90_upstream_min_rate == 0 &&
 		      modem->v90_upstream_max_rate == 0 &&
 		      modem->v90_upstream_max_baud == 0,
@@ -3096,13 +3091,13 @@ static bool test_at_pcm_rejects_invalid_numbers(void)
 					 ULONG_MAX - fields[index].value + 1ul);
 			snprintf(command, sizeof(command), fields[index].command, number);
 			CHECK(process_at_command(m, command) == -1 &&
-			      modem_get_param(m, MDMPRM_V90_DIGITAL_INDICATION) == 0 &&
-			      modem_get_param(m, MDMPRM_V92_QUICK_CONNECT) == 0 &&
+			      modem_get_sreg(m, SREG_V90_DIGITAL_INDICATION) == 0 &&
+			      modem_get_sreg_flag(m, SREG_V92_QUICK_CONNECT) == 0 &&
 			      m->v34_symbol_rate == 3429 &&
 			      m->v90_upstream_min_rate == 14400 &&
 			      m->v90_upstream_max_rate == 31200 &&
 			      m->v90_upstream_max_baud == 3429 &&
-			      modem_get_param(m, MDMPRM_V92_PCM_UPSTREAM) == 1 &&
+			      modem_get_sreg_flag(m, SREG_V92_PCM_UPSTREAM) == 1 &&
 			      modem_get_sreg(m, SREG_V92_PCM_UPSTREAM_MAX_DRN) == 13 &&
 			      m->v92_upstream_lu_ucode == 69,
 			      "invalid PCM number changed the profile: %s", command);
@@ -3123,8 +3118,8 @@ static bool test_at_pcm_rejects_invalid_numbers(void)
 	      m->v90_upstream_min_rate == 14400 &&
 	      m->v90_upstream_max_rate == 31200 &&
 	      m->v90_upstream_max_baud == 3429 &&
-	      modem_get_param(m, MDMPRM_V90_DIGITAL_INDICATION) == 1 &&
-	      modem_get_param(m, MDMPRM_V92_QUICK_CONNECT) == 1 &&
+	      modem_get_sreg(m, SREG_V90_DIGITAL_INDICATION) == 1 &&
+	      modem_get_sreg_flag(m, SREG_V92_QUICK_CONNECT) == 1 &&
 	      modem_get_sreg(m, SREG_V92_PCM_UPSTREAM_MAX_DRN) == 13 &&
 	      m->v92_upstream_lu_ucode == 69,
 	      "shared parsing changed numeric bases or concatenated commands");
@@ -3223,7 +3218,7 @@ static bool test_at_pcm_automatic_upstream_policy(void)
 		value[strcspn(value, "\r\n")] = '\0';
 		snprintf(command, sizeof(command), "AT+V92U=%s", value);
 		CHECK(process_at_command(m, command) == 0 &&
-		      modem_get_param(m, MDMPRM_V92_PCM_UPSTREAM) == 1 &&
+		      modem_get_sreg_flag(m, SREG_V92_PCM_UPSTREAM) == 1 &&
 		      (unsigned)modem_get_sreg(m, SREG_V92_PCM_UPSTREAM_MAX_DRN) ==
 			      cases[index].maximum_number &&
 		      m->v92_upstream_lu_ucode == cases[index].level,
@@ -8969,7 +8964,7 @@ static bool test_datapump_factory_instances(void)
 	for (size_t i = 0; i < ARRAY_LENGTH(modems); i++) {
 		modems[i] = create_compat_modem(&driver, "factory ownership test");
 		CHECK(modems[i] != NULL &&
-		      modem_set_param(modems[i], MDMPRM_V92_QUICK_CONNECT, 0) == 0,
+		      modem_set_sreg(modems[i], SREG_V92_QUICK_CONNECT, 0) == 0,
 		      "independent modem %zu did not initialize", i);
 	}
 	for (size_t i = 0; i < ARRAY_LENGTH(profiles); i++) {
@@ -9199,7 +9194,7 @@ static bool test_at_ms_rejects_wrapped_values(void)
 	      MODEM_AUTOMODE(m) == 1 && m->min_rate == 2400 && m->max_rate == 56000,
 	      "empty AT+MS fields did not preserve the unrelated settings");
 	CHECK(process_at_command(m, chained) == 0 && MODEM_DP(m) == DP_V92 &&
-	      modem_get_param(m, MDMPRM_V90_DIGITAL_INDICATION) == 1,
+	      modem_get_sreg(m, SREG_V90_DIGITAL_INDICATION) == 1,
 	      "AT+MS did not preserve following PCM configuration commands");
 	modem_delete(m);
 	return true;

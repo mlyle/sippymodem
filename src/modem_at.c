@@ -80,7 +80,6 @@
 #include <modem.h>
 #include <modem_frontend.h>
 #include <modem_debug.h>
-#include <modem_param.h>
 #include <pcm_rate.h>
 
 #define AT_DBG(fmt...) // dprintf("at: " fmt)
@@ -631,11 +630,11 @@ static int process_plus_V34B(struct modem *m, char *p, int *len)
 }
 
 static int process_plus_choice_param(
-	struct modem *m, char *p, int *len, unsigned int parameter)
+	struct modem *m, char *p, int *len, unsigned int sreg)
 {
 	char response[8];
 	unsigned long value;
-	unsigned maximum = parameter == MDMPRM_V90_DIGITAL_INDICATION ?
+	unsigned maximum = sreg == SREG_V90_DIGITAL_INDICATION ?
 		MODEM_PCM_POLICY_AUTO : 1;
 
 	switch (*p) {
@@ -652,11 +651,11 @@ static int process_plus_choice_param(
 		if (parse_unsigned(&p, len, &value, 0) != 1 ||
 		    value > maximum || *p == ',')
 			return -1;
-		return (int)modem_set_param(m, parameter, (int)value);
+		return modem_set_sreg(m, sreg, (int)value);
 	case '?':
 		*len = 1;
-		snprintf(response, sizeof(response), "%ld",
-			 modem_get_param(m, parameter));
+		snprintf(response, sizeof(response), "%d",
+			 maximum == 1 ? modem_get_sreg_flag(m, sreg) : modem_get_sreg(m, sreg));
 		modem_frontend_info(m, response, (int)strlen(response));
 		return 0;
 	default:
@@ -769,8 +768,8 @@ static int process_plus_V92U(struct modem *m, char *p, int *len)
 					return -1;
 			}
 		}
-		if (modem_set_param(
-			    m, MDMPRM_V92_PCM_UPSTREAM, (int)enabled) < 0 ||
+		if (modem_set_sreg(
+			    m, SREG_V92_PCM_UPSTREAM, (int)enabled) < 0 ||
 		    modem_set_sreg(
 			    m, SREG_V92_PCM_UPSTREAM_MAX_DRN, (int)max_drn) < 0)
 			return -1;
@@ -781,12 +780,12 @@ static int process_plus_V92U(struct modem *m, char *p, int *len)
 		max_drn = (unsigned int)modem_get_sreg(
 			m, SREG_V92_PCM_UPSTREAM_MAX_DRN);
 		if (max_drn == 0 && m->v92_upstream_lu_ucode == 0) {
-			snprintf(response, sizeof(response), "%ld",
-				 modem_get_param(m, MDMPRM_V92_PCM_UPSTREAM));
+			snprintf(response, sizeof(response), "%d",
+				 modem_get_sreg_flag(m, SREG_V92_PCM_UPSTREAM));
 		} else {
 			rate = pcm_upstream_bit_rate((uint8_t)max_drn);
-			snprintf(response, sizeof(response), "%ld,%lu",
-				 modem_get_param(m, MDMPRM_V92_PCM_UPSTREAM), rate);
+			snprintf(response, sizeof(response), "%d,%lu",
+				 modem_get_sreg_flag(m, SREG_V92_PCM_UPSTREAM), rate);
 		}
 		if (m->v92_upstream_lu_ucode != 0) {
 			size_t used = strlen(response);
@@ -1206,7 +1205,7 @@ int process_at_command(struct modem *m, char *cmd)
 					p += 3;
 					ret = process_plus_choice_param(
 						m, p, &len,
-						MDMPRM_V90_DIGITAL_INDICATION);
+						SREG_V90_DIGITAL_INDICATION);
 					break;
 				}
 				if (!toupper_strncmp(p, "90U", 3)) {
@@ -1217,14 +1216,14 @@ int process_at_command(struct modem *m, char *cmd)
 				if (!toupper_strncmp(p, "91", 2)) {
 					p += 2;
 					ret = process_plus_choice_param(
-						m, p, &len, MDMPRM_V91_ENABLED);
+						m, p, &len, SREG_V91_ENABLED);
 					break;
 				}
 				if (!toupper_strncmp(p, "92Q", 3)) {
 					p += 3;
 					ret = process_plus_choice_param(
 						m, p, &len,
-						MDMPRM_V92_QUICK_CONNECT);
+						SREG_V92_QUICK_CONNECT);
 					break;
 				}
 				if (!toupper_strncmp(p, "92U", 3)) {

@@ -43,7 +43,6 @@
 
 #include "modem_frontend.h"
 #include "modem.h"
-#include "modem_param.h"
 #include "modem_state.h"
 
 #include <ctype.h>

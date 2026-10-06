@@ -7,7 +7,6 @@
 #include "datapump_timing.h"
 #include "memory_region.h"
 #include "modem.h"
-#include "modem_param.h"
 #include "training_session.h"
 #include "v8_datapump.h"
 #include "v34_call.h"

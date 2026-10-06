@@ -8,7 +8,6 @@
 #include "datapump_timing.h"
 #include "memory_region.h"
 #include "modem.h"
-#include "modem_param.h"
 #include "single_tone.h"
 #include "v22_datapump.h"
 #include "v8_answering.h"
@@ -219,7 +218,7 @@ static struct dp *create_v8(
 	    sample_rate != MODEM_RATE || max_fragment != MODEM_FRAG ||
 	    operations != &v8_operations ||
 	    modulation == V8_MODULATION_NONE ||
-	    (id == DP_V91 && !modem_get_param(modem, MDMPRM_V91_ENABLED)))
+	    (id == DP_V91 && !modem_get_sreg_flag(modem, SREG_V91_ENABLED)))
 		return NULL;
 
 	lapm = modem_get_sreg(modem, SREG_EC) != 0;
@@ -234,7 +233,7 @@ static struct dp *create_v8(
 	if (menu_result != V8_MENU_OK)
 		return NULL;
 	if (v8_datapump_uses_pcm(id)) {
-		role_policy = modem_get_param(modem, MDMPRM_V90_DIGITAL_INDICATION);
+		role_policy = modem_get_sreg(modem, SREG_V90_DIGITAL_INDICATION);
 		if (role_policy > MODEM_PCM_POLICY_AUTO)
 			return NULL;
 		digital = role_policy == MODEM_PCM_POLICY_DIGITAL;
@@ -249,7 +248,7 @@ static struct dp *create_v8(
 			local_menu.pcm_availability = V8_PCM_V91;
 			local_menu.pstn_access = V8_PSTN_DIGITAL;
 		} else if (id == DP_V92 && MODEM_AUTOMODE(modem) &&
-			   modem_get_param(modem, MDMPRM_V91_ENABLED) &&
+			   modem_get_sreg_flag(modem, SREG_V91_ENABLED) &&
 			   role_policy != MODEM_PCM_POLICY_ANALOG && modem->max_rate >= 28000) {
 			local_menu.pcm_availability |= V8_PCM_V91;
 		}
@@ -300,7 +299,7 @@ static struct dp *create_v8(
 			datapump->handshake.answering.quiet_samples = 0;
 		/* QC1 commits to a PCM role before menus; automatic roles need CM/JM. */
 		if (id == DP_V92 && !restarting && role_policy != MODEM_PCM_POLICY_AUTO &&
-		    modem_get_param(modem, MDMPRM_V92_QUICK_CONNECT)) {
+		    modem_get_sreg_flag(modem, SREG_V92_QUICK_CONNECT)) {
 			struct v92_qc1_message local = {
 				.sender = digital ? V90_DIGITAL_MODEM : V90_ANALOG_MODEM,
 				.acknowledgment = !caller,
