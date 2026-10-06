@@ -454,6 +454,13 @@ static bool caller_identity_results(void)
 	EXPECT(modem_report_incoming_call(modem) == 0);
 	EXPECT(strstr((char *)commands.bytes, "CallerID: +12025550123\r\nRING\r\n"));
 	EXPECT(strcmp(other->caller_number, "12025550124") == 0);
+	EXPECT(modem_set_sreg(other, SREG_RINGS_TO_AUTO_ANSWER, 2) == 0);
+	EXPECT(modem_report_incoming_call(other) == 0 && !other->started &&
+	       other->sregs[SREG_RING_COUNTER] == 1);
+	EXPECT(modem_report_incoming_call(other) == 0 && other->started &&
+	       other->hook == MODEM_HOOK_OFF && other->sregs[SREG_RING_COUNTER] == 0);
+	EXPECT(strcmp(other->caller_number, "12025550124") == 0 &&
+	       modem->sregs[SREG_RING_COUNTER] == 1 && !modem->started);
 	EXPECT(modem_answer(modem) == 0 && strcmp(modem->caller_number, "+12025550123") == 0);
 	commands.count = 0;
 	memset(commands.bytes, 0, sizeof(commands.bytes));

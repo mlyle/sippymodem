@@ -322,7 +322,7 @@ struct modem {
 	char caller_number[128]; /* Current incoming identity; cleared at call end. */
 	unsigned rx_rate;
 	unsigned tx_rate;
-	/* modem events (ring,escape,waiting for connect,etc) */
+	/* Pending frontend escape event. */
 	unsigned event;
 	unsigned new_event;
 	unsigned long event_deadline;
@@ -345,18 +345,6 @@ struct modem {
         unsigned int at_count;
         char at_line[64];
         char at_cmd[64];
-	/* ring detector */
-	unsigned int ring_count;
-	unsigned long ring_first;
-	unsigned long ring_last;
-#ifdef MODEM_CONFIG_RING_DETECTOR
-	void *rd_obj;
-#endif
-	/* cid */
-#ifdef MODEM_CONFIG_CID
-	unsigned cid_requested;
-	void *cid;
-#endif
         /* dialer */
         char dial_string[128];
         /* escape counter */
@@ -516,7 +504,6 @@ extern int modem_report_remote_call_end(struct modem *m);
 extern void modem_update_termios(
 	struct modem *m, const struct termios *tios);
 extern void modem_error  (struct modem *m);
-extern void modem_ring   (struct modem *m);
 extern void modem_event  (struct modem *m);
 /* Promote and service one due instance-owned modem event. */
 extern int modem_service_event(struct modem *m);

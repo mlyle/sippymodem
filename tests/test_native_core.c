@@ -72,10 +72,17 @@ static int unused_control(
 	return 0;
 }
 
+static void clear_bit_timer(struct modem *modem)
+{
+	modem->bit_timer = 0;
+}
+
 static void bit_timer_expired(struct modem *modem)
 {
-	modem->ring_count++;
-	modem->bit_timer = 0;
+	unsigned *expirations = modem->dev_data;
+
+	(*expirations)++;
+	clear_bit_timer(modem);
 }
 
 static int arm_bit_timer_on_transmit(
@@ -104,7 +111,8 @@ static int arm_bit_timer_on_receive(
 
 static bool check_bit_timer_transition(bool transmit)
 {
-	struct modem modem = { 0 };
+	unsigned expirations = 0;
+	struct modem modem = { .dev_data = &expirations };
 	uint8_t bits[64] = { 0 };
 
 	if (transmit)
@@ -119,14 +127,14 @@ static bool check_bit_timer_transition(bool transmit)
 		CHECK(modem_put_bits(&modem, 1, bits, (int)sizeof(bits)) ==
 			      (int)sizeof(bits),
 		      "receive timer fixture consumed an unexpected length");
-	CHECK(modem.bit_timer == 32 && modem.ring_count == 0,
+	CHECK(modem.bit_timer == 32 && expirations == 0,
 	      "new %s timer was charged for its transition batch",
 	      transmit ? "transmit" : "receive");
 	if (transmit)
 		modem_get_bits(&modem, 1, bits, (int)sizeof(bits));
 	else
 		modem_put_bits(&modem, 1, bits, (int)sizeof(bits));
-	CHECK(modem.bit_timer == 0 && modem.ring_count == 1,
+	CHECK(modem.bit_timer == 0 && expirations == 1,
 	      "%s timer did not consume the following batch",
 	      transmit ? "transmit" : "receive");
 	return true;
@@ -991,10 +999,19 @@ static bool test_stop_cancels_link_detection(void)
 }
 
 struct framing_cancel_capture {
+	unsigned int timer_expirations;
 	unsigned int hangups;
 	unsigned int retries;
 	int hangup_result;
 };
+
+static void capture_framing_timeout(struct modem *m)
+{
+	struct framing_cancel_capture *capture = m->dev_data;
+
+	capture->timer_expirations++;
+	clear_bit_timer(m);
+}
 
 static int capture_framing_hangup(struct dp *dp)
 {
@@ -1086,7 +1103,7 @@ static bool test_hangup_uses_active_framing(void)
 			}
 		}
 		m->bit_timer = 8;
-		m->bit_timer_func = bit_timer_expired;
+		m->bit_timer_func = capture_framing_timeout;
 		m->packer_process = capture_framing_retry;
 		if (local)
 			modem_hangup(m);
@@ -1097,7 +1114,7 @@ static bool test_hangup_uses_active_framing(void)
 			CHECK(strcmp(modem_call_phase(m), "error-control-disconnect") == 0 &&
 			      capture.hangups == 0 && m->ec.lapm.state == TEST_LAPM_DISC &&
 			      m->get_bits == modem_hdlc_get_bits && m->put_bits == modem_hdlc_put_bits &&
-			      m->bit_timer > 8 && m->bit_timer_func != bit_timer_expired &&
+			      m->bit_timer > 8 && m->bit_timer_func != capture_framing_timeout &&
 			      m->packer_process == NULL && deadline - m->count == MODEM_RATE * 3 / 2 &&
 			      m->packer.hdlc.tx_preamble_flags == 0 &&
 			      m->packer.hdlc.tx_preamble_complete == NULL &&
@@ -1126,7 +1143,7 @@ static bool test_hangup_uses_active_framing(void)
 			      "hangup started LAPM release without HDLC");
 			CHECK(modem_get_bits(m, 8, bits, sizeof(bits)) == sizeof(bits) &&
 			      modem_put_bits(m, 8, bits, sizeof(bits)) == sizeof(bits) &&
-			      m->sample_timer == deadline && m->ring_count == 0 && capture.retries == 0 &&
+			      m->sample_timer == deadline && capture.timer_expirations == 0 && capture.retries == 0 &&
 			      strcmp(modem_call_phase(m), "cleardown") == 0,
 			      "late bits ran old work during physical cleardown");
 		}
@@ -2192,7 +2209,7 @@ static bool test_factory_defaults(void)
 	m->xmit.tail = 0;
 	memcpy(m->xmit.buf, "pending", 7);
 	m->bit_timer = 123;
-	m->bit_timer_func = bit_timer_expired;
+	m->bit_timer_func = clear_bit_timer;
 	unsigned char negotiated[sizeof(m->cfg)];
 	memcpy(negotiated, &m->cfg, sizeof(negotiated));
 	for (size_t i = 0; i < ARRAY_LENGTH(unsupported); ++i)
@@ -2204,7 +2221,7 @@ static bool test_factory_defaults(void)
 	CHECK(process_at_command(m, "AT&F") == 0 && m->state == STATE_COMMAND_ONLINE &&
 	      m->command && m->started && m->hook == MODEM_HOOK_OFF && (m->modem_info & TIOCM_CD) &&
 	      m->xmit.head == 7 && m->xmit.count == 7 && !memcmp(m->xmit.buf, "pending", 7) &&
-	      m->bit_timer == 123 && m->bit_timer_func == bit_timer_expired &&
+	      m->bit_timer == 123 && m->bit_timer_func == clear_bit_timer &&
 	      !memcmp(negotiated, &m->cfg, sizeof(negotiated)) && capture.stops == 0,
 	      "factory restoration disturbed the active call");
 	m->started = 0;

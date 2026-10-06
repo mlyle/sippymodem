@@ -59,7 +59,6 @@ typedef __int32_t s32;
 /* hook states */
 #define MODEM_HOOK_ON       0
 #define MODEM_HOOK_OFF      1
-#define MODEM_HOOK_SNOOPING 2
 
 /* modem device ctrl interface */
 #define MDMCTL_CAPABILITIES  0x01
@@ -80,7 +79,6 @@ typedef __int32_t s32;
 
 /* modem device status mask */
 #define MDMSTAT_ERROR 0x1
-#define MDMSTAT_RING  0x2
 #define MDMSTAT_DATA  0x4
 
 

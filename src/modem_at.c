@@ -52,7 +52,6 @@
  *	AT\: N
  * 	AT%: C E
  * 	AT+: DS DSC MS V34B V90D V90U V91 V92Q V92U FCLASS GCI GMI GMM GMR GCAP
- *      AT#: CID
  *	
  ********************************************************************
  *
@@ -797,38 +796,6 @@ static int process_plus_FCLASS(struct modem *m, char *p, int *len)
 	return 0;
 }
 
-/*
- *    Caller ID
- */
-
-#ifdef MODEM_CONFIG_CID
-static int process_CID(struct modem *m,  char *p, int *len)
-{
-	char ch;
-	if(*p == '=' ) {
-		p++;
-		*len += 2;
-		if(*p == '?') {
-			modem_frontend_info(m, "0,1,2" , 5);
-		}
-		else if (isdigit(*p) && *p - '0' < 3) {
-			m->cid_requested = *p - '0';
-		}
-		else
-			return -1;
-	}
-	else if (*p == '?') {
-		*len += 1;
-		ch = '0' + m->cid_requested;
-		modem_frontend_info(m, &ch , 1);
-	}
-	else
-		return -1;
-	return 0;
-}
-#endif
-
-
 /* ------------------------------------------------------------ */
 
 static int process_plus_G(struct modem *m, char *p, int *len)
@@ -954,16 +921,6 @@ int process_at_command(struct modem *m, char *cmd)
 			ret = process_Z(m,p,&len);
 			return ret;
 
-		case '#': /* AT# */
-#ifdef MODEM_CONFIG_CID
-			if(!toupper_strncmp(p,"CID",3)) {
-				p+= 3;
-				ret = process_CID(m, p, &len);
-			}
-			else
-#endif
-				ret = -1;
-			break;
 		case '%': /* AT% */
 			c = toupper(*p++);
 			switch (c) {
