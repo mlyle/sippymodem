@@ -134,18 +134,6 @@ static void source(void *context, uint8_t *bits, size_t count)
 	datapump_source_bits(&pump->dp, training_session_is_online(&pump->training) && !pump->closing, bits, count);
 }
 
-static void mute(enum g711_law law, uint8_t *octets, int16_t *samples, int count)
-{
-	if (count <= 0 || count > MODEM_FRAG)
-		return;
-	uint8_t zero = g711_encode(law, 0);
-	if (octets != NULL)
-		memset(octets, zero, count);
-	if (samples != NULL)
-		for (int i = 0; i < count; ++i)
-			samples[i] = g711_decode(law, zero);
-}
-
 static int process_g711(struct dp *dp, enum g711_law law, const uint8_t *input,
 	void *receive_samples, const bool *available, uint8_t *output,
 	void *transmit_samples, int count, bool *exact)
@@ -157,11 +145,11 @@ static int process_g711(struct dp *dp, enum g711_law law, const uint8_t *input,
 	if (pump == NULL || !g711_law_is_valid(law) || input == NULL || output == NULL ||
 	    receive_samples == NULL || linear == NULL || exact == NULL ||
 	    count <= 0 || count > MODEM_FRAG) {
-		mute(law, output, linear, count);
+		datapump_mute_g711(law, output, linear, count);
 		return DPSTAT_ERROR;
 	}
 	if (pump->closing && !pump->started) {
-		mute(law, output, linear, count);
+		datapump_mute_g711(law, output, linear, count);
 		*exact = true;
 		dp->status = DPSTAT_DISCONNECT;
 		return DPSTAT_DISCONNECT;
@@ -177,14 +165,14 @@ static int process_g711(struct dp *dp, enum g711_law law, const uint8_t *input,
 	}
 	if (pump->call.local_info.law != law) {
 		modem_note_disconnect(dp->modem, true, "V.91 media law changed");
-		mute(law, output, linear, count);
+		datapump_mute_g711(law, output, linear, count);
 		return DPSTAT_ERROR;
 	}
 	for (int i = 0; i < count; ++i) {
 		if (!pump->closing && !training_session_is_online(&pump->training) &&
 		    training_session_advance(&pump->training, 1) != TRAINING_SESSION_OK) {
 			modem_note_disconnect(dp->modem, true, "V.91 carrier-wait deadline");
-			mute(law, output, linear, count);
+			datapump_mute_g711(law, output, linear, count);
 			return DPSTAT_ERROR;
 		}
 		struct v91_event event;
@@ -195,7 +183,7 @@ static int process_g711(struct dp *dp, enum g711_law law, const uint8_t *input,
 		if (!ok) {
 			bool remote = event.failure == V91_FAILURE_PEER_CLEARDOWN;
 			bool closed = pump->closing || remote;
-			mute(law, output + i + 1, linear + i + 1, count - i - 1);
+			datapump_mute_g711(law, output + i + 1, linear + i + 1, count - i - 1);
 			*exact = true;
 			if (!closed && !pump->ever_connected &&
 			    (event.failure == V91_FAILURE_INFO_TIMEOUT ||
@@ -221,14 +209,14 @@ static int process_g711(struct dp *dp, enum g711_law law, const uint8_t *input,
 			    !datapump_set_link_rates(dp, rates.transmit_bps, rates.receive_bps) ||
 			    !datapump_complete_training(dp, &pump->training)) {
 				modem_note_disconnect(dp->modem, true, "V.91 selected rate rejected");
-				mute(law, output, linear, count);
+				datapump_mute_g711(law, output, linear, count);
 				return DPSTAT_ERROR;
 			}
 			pump->ever_connected = true;
 		}
 		if (event.count && !datapump_deliver_bits(dp,
 			training_session_is_online(&pump->training), event.bits, event.count)) {
-			mute(law, output, linear, count);
+			datapump_mute_g711(law, output, linear, count);
 			return DPSTAT_ERROR;
 		}
 	}

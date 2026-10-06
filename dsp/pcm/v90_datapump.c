@@ -5,6 +5,7 @@
 #include "v90_phase4_owned.h"
 
 #include "datapump_link.h"
+#include "datapump_media.h"
 #include "datapump_timing.h"
 #include "memory_region.h"
 #include "modem.h"
@@ -905,22 +906,6 @@ static bool process_octet(
 	return deliver_event(datapump, &event) && observe_upstream_quality(datapump);
 }
 
-static void mute_output(
-	enum g711_law law, uint8_t *codewords,
-	int16_t *samples, int count)
-{
-	uint8_t silence = g711_encode(law, 0);
-	int16_t linear = g711_decode(law, silence);
-
-	if (count <= 0 || count > MODEM_FRAG)
-		return;
-	if (codewords != NULL)
-		memset(codewords, silence, (size_t)count);
-	if (samples != NULL)
-		for (int index = 0; index < count; ++index)
-			samples[index] = linear;
-}
-
 static enum pcm_host_echo_mode host_echo_mode(
 	const struct v90_datapump *datapump)
 {
@@ -1021,11 +1006,11 @@ static int process_v90_g711(
 	    receive_codewords == NULL || receive_samples == NULL ||
 	    transmit_codewords == NULL || transmit_samples == NULL ||
 	    exact_output == NULL || count <= 0 || count > MODEM_FRAG) {
-		mute_output(law, transmit_codewords, transmit_samples, count);
+		datapump_mute_g711(law, transmit_codewords, transmit_samples, count);
 		return DPSTAT_ERROR;
 	}
 	if (training_session_has_failed(&datapump->training)) {
-		mute_output(law, transmit_codewords, transmit_samples, count);
+		datapump_mute_g711(law, transmit_codewords, transmit_samples, count);
 		return DPSTAT_ERROR;
 	}
 	if (!start_call(datapump, law)) {
@@ -1033,7 +1018,7 @@ static int process_v90_g711(
 		goto failure;
 	}
 	if (datapump->call.stage == PCM_CALL_CLOSED) {
-		mute_output(law, transmit_codewords, transmit_samples, count);
+		datapump_mute_g711(law, transmit_codewords, transmit_samples, count);
 		*exact_output = true;
 		return DPSTAT_DISCONNECT;
 	}
@@ -1066,7 +1051,7 @@ static int process_v90_g711(
 		transmit_codewords[index] = pcm_transmit;
 		transmit_samples[index] = g711_decode(law, transmit_codewords[index]);
 		if (disconnected) {
-			mute_output(law, transmit_codewords + index + 1,
+			datapump_mute_g711(law, transmit_codewords + index + 1,
 				    transmit_samples + index + 1, count - index - 1);
 			*exact_output = true;
 			return DPSTAT_DISCONNECT;
@@ -1116,7 +1101,7 @@ static int process_v90_g711(
 				    TRAINING_SESSION_OK)
 				goto failure;
 			datapump->fallback.training = datapump->training;
-			mute_output(
+			datapump_mute_g711(
 				law, transmit_codewords + index + 1,
 				transmit_samples + index + 1, remaining);
 			datapump->dp.modem->dp_requested =
@@ -1133,7 +1118,7 @@ static int process_v90_g711(
 failure:
 	modem_note_disconnect(dp->modem, true, "PCM media or host contract failed");
 	(void)training_session_fail(&datapump->training);
-	mute_output(law, transmit_codewords, transmit_samples, count);
+	datapump_mute_g711(law, transmit_codewords, transmit_samples, count);
 	return DPSTAT_ERROR;
 }
 

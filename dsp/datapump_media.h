@@ -4,6 +4,7 @@
 #define DATAPUMP_MEDIA_H
 
 #include "modem.h"
+#include "g711.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -23,6 +24,23 @@ static inline bool datapump_linear_fragment_is_ready(
 	if (transmit != NULL && bounded)
 		memset(transmit, 0, (size_t)count * sizeof(*transmit));
 	return false;
+}
+
+/* Canonical codec silence and its matching linear samples. Invalid
+ * callbacks may still own bounded writable output; preserve other storage. */
+static inline void datapump_mute_g711(enum g711_law law,
+	uint8_t *octets, int16_t *samples, int count)
+{
+	if (count <= 0 || count > MODEM_FRAG)
+		return;
+	uint8_t zero = g711_encode(law, 0);
+	int16_t linear = g711_decode(law, zero);
+
+	if (octets != NULL)
+		memset(octets, zero, (size_t)count);
+	if (samples != NULL)
+		for (int i = 0; i < count; ++i)
+			samples[i] = linear;
 }
 
 #endif
