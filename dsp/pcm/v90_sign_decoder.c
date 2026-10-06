@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "v90_sign_decoder.h"
+#include "v90_sign_history.h"
 
 #include "memory_region.h"
 
@@ -9,27 +10,10 @@
 bool v90_sign_decoder_is_valid(
 	const struct v90_sign_decoder *decoder)
 {
-	size_t active_shaping_signs;
-
-	if (decoder == NULL || decoder->sign_redundancy > 3 ||
-	    decoder->previous_odd > 1 ||
-	    decoder->previous_pcm_sign > 1)
-		return false;
-	active_shaping_signs = decoder->sign_redundancy == 0 ?
-				       0 :
-				       V90_CP_FRAME_INTERVALS /
-					       decoder->sign_redundancy;
-	for (size_t index = 0;
-	     index < V90_CP_FRAME_INTERVALS; ++index) {
-		if (decoder->previous_shaping_signs[index] > 1 ||
-		    (index >= active_shaping_signs &&
-		     decoder->previous_shaping_signs[index] != 0))
-			return false;
-	}
-	if (decoder->sign_redundancy == 0)
-		return decoder->previous_odd == 0 &&
-		       !decoder->trellis_state;
-	return decoder->previous_pcm_sign == 0;
+	return decoder != NULL && v90_sign_history_is_valid(
+		decoder->sign_redundancy, decoder->previous_odd,
+		decoder->previous_pcm_sign, decoder->previous_shaping_signs) &&
+	       (decoder->sign_redundancy != 0 || !decoder->trellis_state);
 }
 
 enum v90_sign_decoder_result v90_sign_decoder_init(

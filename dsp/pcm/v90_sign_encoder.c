@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "v90_sign_encoder.h"
+#include "v90_sign_history.h"
 
 #include "packed_bits.h"
 
@@ -9,26 +10,9 @@
 bool v90_sign_encoder_is_valid(
 	const struct v90_sign_encoder *encoder)
 {
-	size_t active_shaping_signs;
-
-	if (encoder == NULL || encoder->sign_redundancy > 3 ||
-	    encoder->previous_odd > 1 ||
-	    encoder->previous_pcm_sign > 1)
-		return false;
-	active_shaping_signs = encoder->sign_redundancy == 0 ?
-				       0 :
-				       V90_CP_FRAME_INTERVALS /
-					       encoder->sign_redundancy;
-	for (size_t index = 0;
-	     index < V90_CP_FRAME_INTERVALS; ++index) {
-		if (encoder->previous_shaping_signs[index] > 1 ||
-		    (index >= active_shaping_signs &&
-		     encoder->previous_shaping_signs[index] != 0))
-			return false;
-	}
-	if (encoder->sign_redundancy == 0)
-		return encoder->previous_odd == 0;
-	return encoder->previous_pcm_sign == 0;
+	return encoder != NULL && v90_sign_history_is_valid(
+		encoder->sign_redundancy, encoder->previous_odd,
+		encoder->previous_pcm_sign, encoder->previous_shaping_signs);
 }
 
 enum v90_sign_encoder_result v90_sign_encoder_init(
