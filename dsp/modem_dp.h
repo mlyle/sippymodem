@@ -94,6 +94,11 @@ struct dp_operations {
 	/* Optional read-only view of currently negotiated rates, including
 	 * symbol clocks available before the final bit-rate selection. */
 	struct dp_link_rates (*link_rates)(const struct dp *);
+	/* Bound the samples still needed to emit data pulled from the packer,
+	 * including encoder queues and filter history. Marks continue normally.
+	 * Return -1 during training or while private input remains unconsumed.
+	 * Used only after a sealed raw DTE queue and its packer are empty. */
+	int (*tx_tail_samples)(const struct dp *);
 };
 
 /* data pump structure */

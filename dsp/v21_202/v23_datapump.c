@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "v23_datapump.h"
+#include "datapump_transmit.h"
 
 #include "datapump_link.h"
 #include "datapump_media.h"
@@ -94,11 +95,13 @@ static int delete_v23(struct dp *dp);
 static int process_v23(
 	struct dp *dp, void *receive, void *transmit, int count);
 
+static int tx_tail_samples(const struct dp *dp);
 static const struct dp_operations v23_operations = {
 	.name = "V.23",
 	.create = create_v23,
 	.delete = delete_v23,
 	.process = process_v23,
+	.tx_tail_samples = tx_tail_samples,
 };
 
 static struct v23_datapump *v23_from_dp(struct dp *dp)
@@ -414,4 +417,14 @@ static int process_v23(struct dp *dp, void *receive_buffer,
 const struct dp_operations *v23_datapump_operations(enum DP_ID id)
 {
 	return id == DP_V23 ? &v23_operations : NULL;
+}
+
+static int tx_tail_samples(const struct dp *dp)
+{
+	const struct v23_datapump *p = v23_from_dp((struct dp *)dp);
+	if (p == NULL || !training_session_is_online(&p->training))
+		return -1;
+	const struct fsk_channel *c = &p->transmitter.channel;
+	return datapump_symbol_tail(c->sample_rate, c->symbol_rate_numerator,
+		c->symbol_rate_denominator, 1);
 }

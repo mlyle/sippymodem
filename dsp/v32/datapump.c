@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "datapump.h"
+#include "datapump_transmit.h"
 
 #include "b1_path.h"
 #include "conditioning_path.h"
@@ -112,6 +113,7 @@ static int process_v32(
 static int enter_link(struct v32_datapump *datapump);
 static const char *progress_v32(const struct dp *dp);
 
+static int tx_tail_samples(const struct dp *dp);
 static const struct dp_operations v32_operations = {
 	.name = "V.32",
 	.create = create_v32,
@@ -119,6 +121,7 @@ static const struct dp_operations v32_operations = {
 	.process = process_v32,
 	.retrain = retrain_v32,
 	.progress = progress_v32,
+	.tx_tail_samples = tx_tail_samples,
 };
 
 static const char *progress_v32(const struct dp *dp)
@@ -1676,4 +1679,11 @@ bool v32_datapump_has_peer(struct dp *dp)
 	return datapump != NULL && !datapump->caller &&
 		(datapump->answerer_line_startup.calling_carrier.tone_present ||
 		 v32_answerer_line_startup_is_complete(&datapump->answerer_line_startup));
+}
+
+static int tx_tail_samples(const struct dp *dp)
+{
+	const struct v32_datapump *p = v32_from_dp((struct dp *)dp);
+	return p != NULL && training_session_is_online(&p->training) ?
+		datapump_qam_tail(&p->modulator) : -1;
 }

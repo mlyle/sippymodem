@@ -39,6 +39,13 @@ static enum v44_character_path_result failed_result(
 		       V44_CHARACTER_PATH_CODEC_ERROR;
 }
 
+bool v44_character_path_transmit_idle(const struct v44_character_path *path)
+{
+	return path != NULL && path->transmit_state == CHARACTER_PATH_READY &&
+	       !path->transmit_has_octet && !path->transmit_dirty &&
+	       !path->transmit_flushing;
+}
+
 struct v44_character_path *v44_character_path_create(
 	const struct v44_character_path_config *config)
 {

@@ -15,6 +15,7 @@ struct ds0_datapump {
 	uint8_t *startup;
 	size_t startup_count;
 };
+static int tx_tail_samples(const struct dp *dp);
 static const struct dp_operations operations;
 
 static struct ds0_datapump *owner(const struct dp *dp)
@@ -222,6 +223,7 @@ static const struct dp_operations operations = {
 	.name = "DS0", .create = create, .delete = destroy, .process = process,
 	.process_g711 = process_g711, .hangup = hangup,
 	.progress = progress, .link_rates = link_rates,
+	.tx_tail_samples = tx_tail_samples,
 };
 const struct dp_operations *ds0_datapump_operations(enum DP_ID id)
 {
@@ -245,4 +247,13 @@ struct dp *ds0_datapump_create_handoff(struct modem *m, int caller, const struct
 		DS0_RATE_FORCE_56000 : DS0_RATE_FORCE_64000;
 	pump->ppp.codec.tx_rate = pump->ppp.codec.selected_rate = probe->selected;
 	return dp;
+}
+
+static int tx_tail_samples(const struct dp *dp)
+{
+	const struct ds0_datapump *p = owner(dp);
+	return p != NULL && p->connected && p->input_pos == p->input_len &&
+		p->ppp.tx_codec_pending_pos == p->ppp.tx_codec_pending_len &&
+		p->ppp.async_host_rx.frame_len == 0 && !p->ppp.async_host_rx.escaped ?
+		0 : -1;
 }

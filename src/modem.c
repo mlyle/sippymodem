@@ -733,6 +733,49 @@ static unsigned dpstat2status(unsigned dpstat)
 	}
 }
 
+int modem_finish_transmit(struct modem *m)
+{
+	if (m == NULL || m->dp == NULL || m->dp->op == NULL || !m->started)
+		return -1;
+	if (!IS_STATE_ONLINE(m->state))
+		return 1;
+	if (m->tx_completion == MODEM_TX_ABORTED)
+		return -1;
+	if (!m->cfg.ec && m->dp->op->tx_tail_samples == NULL)
+		return -1;
+	if (m->tx_completion == MODEM_TX_OPEN) {
+		m->tx_completion = MODEM_TX_FINISHING;
+		m->tx_finish_tail = -1;
+	}
+	if (m->cfg.ec && modem_ec_transmit_idle(m))
+		m->tx_completion = MODEM_TX_FINISHED;
+	return m->tx_completion == MODEM_TX_FINISHED ? 0 : 1;
+}
+
+static void modem_transmit_progress(struct modem *m, unsigned samples)
+{
+	if (m->tx_completion != MODEM_TX_FINISHING || m->cfg.ec)
+		return;
+	if (!IS_STATE_ONLINE(m->state) || m->retrain_pending ||
+	    m->xmit.count != 0 || m->pack.bit != 0 || m->dp == NULL || m->dp->op == NULL ||
+	    m->dp->op->tx_tail_samples == NULL) {
+		if (m->tx_finish_tail >= 0)
+			m->tx_completion = MODEM_TX_ABORTED;
+		return;
+	}
+	int tail = m->dp->op->tx_tail_samples(m->dp);
+	if (tail < 0) {
+		if (m->tx_finish_tail >= 0)
+			m->tx_completion = MODEM_TX_ABORTED;
+	} else if (m->tx_finish_tail < 0)
+		m->tx_finish_tail = tail;
+	else
+		m->tx_finish_tail -= samples < (unsigned)m->tx_finish_tail ?
+			(int)samples : m->tx_finish_tail;
+	if (m->tx_finish_tail == 0)
+		m->tx_completion = MODEM_TX_FINISHED;
+}
+
 
 void modem_dp_connected(struct modem *m)
 {
@@ -840,6 +883,8 @@ static void modem_dp_process_frame(struct modem *m, enum g711_law law,
 			int result = m->dp->op->retrain(m->dp);
 			MODEM_DBG("stalled LAPM retrain: %s\n", result == 0 ? "accepted" : "unavailable");
 		}
+		if (ret == DPSTAT_OK)
+			modem_transmit_progress(m, cnt);
 
 		count -= cnt;
 		out += cnt<<MFMT_SHIFT(m->format);
@@ -1091,13 +1136,16 @@ static int modem_comp_get_chars(struct modem *m, char *buf, int n)
 		if(cnt <= 0)
 			break;
 		cnt = modem_comp_encode(m,ch,buf+ret,n-ret);
-		if(cnt < 0) {
-			break;
-		}
+		if (cnt < 0)
+			return -1;
+		m->comp.transmit_dirty = true;
 		ret += cnt;
 	}
-	if(ret < n) {
+	if (ret < n && m->comp.transmit_dirty) {
 		cnt =  modem_comp_flush_encoder(m,buf+ret,n-ret);
+		if (cnt < 0)
+			return -1;
+		m->comp.transmit_dirty = false;
 		ret += cnt;
 	}
 	return ret;
@@ -1296,6 +1344,8 @@ static int modem_start (struct modem *m)
 
 	m->result_code = 0;
 	m->retrain_pending = 0;
+	m->tx_completion = MODEM_TX_OPEN;
+	m->tx_finish_tail = -1;
 	modem_setup_config(m);
 	m->dte_overflow = false;
 	if (dc_remover_init(&m->receive_dc) != DC_REMOVER_OK)
@@ -1714,6 +1764,8 @@ int modem_data_write(struct modem *m, const void *input, size_t length)
 	    m->xmit.size == 0 || m->xmit.head >= m->xmit.size || m->xmit.count < 0 ||
 	    (unsigned int)m->xmit.count > m->xmit.size)
 		return -1;
+	if (m->tx_completion != MODEM_TX_OPEN)
+		return 0;
 	const unsigned char *bytes = input;
 	size_t count = length;
 	if (count > m->xmit.size - (unsigned int)m->xmit.count)

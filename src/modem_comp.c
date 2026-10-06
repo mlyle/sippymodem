@@ -639,6 +639,7 @@ static int comp_exit(struct comp_state *c)
 int modem_comp_init(struct modem *m)
 {
 	int ret;
+	m->comp.transmit_dirty = false;
 	ret = comp_init(&m->comp.encoder,
 			m->cfg.comp_dict_size,m->cfg.comp_max_string);
 	if(ret)
@@ -678,6 +679,7 @@ int modem_comp_reinitialize(struct modem *m)
 	m->comp.encoder.olen = m->comp.decoder.olen = 0;
 	m->comp.encoder.ohead = m->comp.decoder.ohead = 0;
 	m->comp.head = m->comp.count = 0;
+	m->comp.transmit_dirty = false;
 	return 0;
 }
 
@@ -688,6 +690,7 @@ void modem_comp_exit(struct modem *m)
 	comp_exit(&m->comp.decoder);
 	// temproary
 	m->comp.head = m->comp.count = 0;
+	m->comp.transmit_dirty = false;
 }
 
 

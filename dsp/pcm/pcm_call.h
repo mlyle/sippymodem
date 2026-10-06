@@ -603,6 +603,8 @@ bool pcm_call_phase4_is_ready(const struct pcm_call *call);
 bool pcm_call_is_online(const struct pcm_call *call);
 /* For the serialized datapump media loop after call validation. */
 bool pcm_call_is_online_owned(const struct pcm_call *call);
+/* Remaining transmit encoder/filter sample bound after sealed host input. */
+int pcm_call_transmit_tail_samples(const struct pcm_call *call);
 enum pcm_call_stage pcm_call_current_stage(const struct pcm_call *call);
 
 /* Export the actual V.92 training selection and live receive gain only from

@@ -755,6 +755,46 @@ static bool process_test_frame(
 		process_sip_frame(caller, answerer, codec, recorder);
 }
 
+static bool exercise_transmit_completion(struct integration_endpoint *caller,
+	struct integration_endpoint *answerer, enum media_codec codec,
+	const struct media_recorder *recorder, struct media_frame_delay *delay,
+	size_t delay_frames)
+{
+	struct integration_endpoint *ends[] = { caller, answerer };
+	uint8_t payload[2][128];
+	int result[2] = { 1, 1 };
+
+	for (unsigned side = 0; side < 2; ++side) {
+		CHECK(endpoint_drain(ends[side]), "final message setup");
+		ends[side]->output_count = 0;
+		for (size_t i = 0; i < sizeof(payload[side]); ++i)
+			payload[side][i] = (uint8_t)(i * 31u + 17u * side);
+		CHECK(modem_data_write(ends[side]->modem, payload[side], sizeof(payload[side])) ==
+		      (int)sizeof(payload[side]) && modem_finish_transmit(ends[side]->modem) == 1 &&
+		      modem_data_write(ends[side]->modem, "extra", 5) == 0,
+		      "final message was not queued and sealed");
+	}
+	for (unsigned frame = 0; frame < 30u * MODEM_RATE / SIP_FRAME_SAMPLES; ++frame) {
+		CHECK(process_test_frame(caller, answerer, codec, recorder, delay, delay_frames) &&
+		      endpoint_drain(caller) && endpoint_drain(answerer), "final message media");
+		for (unsigned side = 0; side < 2; ++side) {
+			result[side] = modem_finish_transmit(ends[side]->modem);
+			CHECK(result[side] >= 0, "transmit completion failed on side %u", side);
+		}
+		if (result[0] == 0 && result[1] == 0 &&
+		    caller->output_count == sizeof(payload[0]) &&
+		    answerer->output_count == sizeof(payload[0]))
+			break;
+	}
+	for (unsigned side = 0; side < 2; ++side)
+		CHECK(result[side] == 0 && ends[side]->output_count == sizeof(payload[side]) &&
+		      !memcmp(ends[side]->output, payload[1u - side], sizeof(payload[side])) &&
+		      modem_finish_transmit(ends[side]->modem) == 0,
+		      "final 128-byte message did not complete exactly, side=%u bytes=%zu",
+		      side, ends[side]->output_count);
+	return true;
+}
+
 static bool v22_rate_monitor_init(
 	struct v22_rate_monitor *monitor, size_t minimum_sample)
 {
@@ -2675,6 +2715,9 @@ static bool run_media_call(
 	      "%s did not exercise exact G.711 media in both directions",
 	      test_case->name);
 	if (test_case->carrier_loss_samples != 0) {
+		CHECK(exercise_transmit_completion(&caller, &answerer, codec, &recorder,
+			      &caller_delay, test_case->caller_delay_frames),
+		      "%s lost its final message", test_case->name);
 		CHECK(exercise_carrier_loss_limit(
 			      &caller, connected_id,
 			      test_case->carrier_loss_samples),
@@ -2701,6 +2744,10 @@ static bool run_media_call(
 			      "%s automatic recovery failed", test_case->name);
 		}
 	}
+	if (test_case->carrier_loss_samples == 0)
+		CHECK(exercise_transmit_completion(&caller, &answerer, codec, &recorder,
+			      &caller_delay, test_case->caller_delay_frames),
+		      "%s lost its final message", test_case->name);
 	if (test_case->cleardown_initiators)
 		CHECK(exercise_cleardown(
 			      &caller, &answerer, connected_id, test_case->cleardown_initiators, codec, &recorder),

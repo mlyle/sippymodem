@@ -11,6 +11,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* One queued six-symbol output plus bounded spectral lookahead. */
+enum { V90_PCM_ENCODER_TAIL_SAMPLES = V90_CP_FRAME_INTERVALS *
+	(V90_SPECTRAL_MAX_LOOKAHEAD + 1) };
 enum v90_pcm_frame_encoder_result {
 	V90_PCM_FRAME_ENCODER_OK,
 	V90_PCM_FRAME_ENCODER_SYMBOLS_READY,

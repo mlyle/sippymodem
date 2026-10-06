@@ -1642,6 +1642,18 @@ bool pcm_call_is_online_owned(const struct pcm_call *call)
 	return data_path_is_online_owned(call);
 }
 
+int pcm_call_transmit_tail_samples(const struct pcm_call *call)
+{
+	if (call == NULL || !pcm_call_is_online_owned(call) || call->retrain_active ||
+	    rate_renegotiation_is_active_owned(call) || v92_fast_is_active_owned(call))
+		return -1;
+	if (call->local_role == V90_DIGITAL_MODEM)
+		return V90_PCM_ENCODER_TAIL_SAMPLES;
+	if (pcm_call_uses_conventional_upstream(call))
+		return v34_data_stream_tx_tail_samples(&call->state.data_path.analog.upstream.data);
+	return V92_PCM_MAPPING_FRAME_SYMBOLS;
+}
+
 bool pcm_call_get_short_startup(
 	const struct pcm_call *call, struct pcm_call_short_startup *profile)
 {

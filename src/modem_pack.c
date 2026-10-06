@@ -281,6 +281,8 @@ void modem_async_retrain(struct modem *m)
 
 void modem_async_discard_transmit(struct modem *m)
 {
+	if (m->tx_completion == MODEM_TX_FINISHING)
+		m->tx_completion = MODEM_TX_ABORTED;
 	m->pack.bit = 0;
 	m->pack.data = 0;
 }

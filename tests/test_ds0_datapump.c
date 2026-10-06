@@ -94,6 +94,14 @@ static bool pair(bool lapm, unsigned rate, bool automatic, enum g711_law law)
 	for (unsigned i = 0; i < 4000 && a_rx.count < 2 * n; ++i) CHECK(tick(a, b, previous, law), "command receive tick");
 	CHECK(a_rx.count == 2 * n && memcmp(a_rx.bytes + n, payload, n) == 0 && (a->modem_info & TIOCM_CD), "command carrier and RX");
 	CHECK(modem_set_dte_command(a, false) == 0 && !a->retrain_pending, "resume");
+	CHECK(modem_data_write(a, payload, n) == (int)n &&
+	      modem_finish_transmit(a) == 1 && modem_data_write(a, payload, n) == 0,
+	      "DS0 final message seal");
+	for (unsigned i = 0; i < 4000 &&
+	     (modem_finish_transmit(a) != 0 || b_rx.count < 2 * n); ++i)
+		CHECK(tick(a, b, previous, law), "DS0 completion tick");
+	CHECK(modem_finish_transmit(a) == 0 && b_rx.count == 2 * n &&
+	      !memcmp(b_rx.bytes + n, payload, n), "DS0 final message completion");
 	CHECK(modem_report_remote_call_end(a) == 0 && !a->started && a->dp == NULL && a->disconnect_reason && !a->disconnect_local, "carrier loss");
 	modem_delete(a); modem_delete(b); return true;
 }

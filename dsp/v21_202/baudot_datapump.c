@@ -37,11 +37,13 @@ static int delete_baudot(struct dp *dp);
 static int process_baudot(
 	struct dp *dp, void *receive, void *transmit, int count);
 
+static int tx_tail_samples(const struct dp *dp);
 static const struct dp_operations baudot_operations = {
 	.name = "Baudot TTY/TDD",
 	.create = create_baudot,
 	.delete = delete_baudot,
 	.process = process_baudot,
+	.tx_tail_samples = tx_tail_samples,
 };
 
 static struct baudot_datapump *baudot_from_dp(struct dp *dp)
@@ -269,4 +271,12 @@ static int process_baudot(
 const struct dp_operations *baudot_datapump_operations(enum DP_ID id)
 {
 	return id == DP_BAUDOT ? &baudot_operations : NULL;
+}
+
+static int tx_tail_samples(const struct dp *dp)
+{
+	const struct baudot_datapump *p = baudot_from_dp((struct dp *)dp);
+	return p != NULL && p->linked && !p->held_terminal_character_valid &&
+		!baudot_transmitting(&p->transmitter) &&
+		baudot_pending_codes(&p->transmitter) == 0 ? 0 : -1;
 }

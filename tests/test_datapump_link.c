@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <datapump_link.h>
+#include <datapump_transmit.h>
 #include <modem.h>
 
 #include <string.h>
@@ -303,8 +304,32 @@ static bool test_rate_diagnostics(void)
 	return true;
 }
 
+static bool test_transmit_tail(void)
+{
+	CHECK(datapump_symbol_tail(8000, 300, 1, 1) == 27 &&
+	      datapump_symbol_tail(8000, 75, 1, 1) == 107 &&
+	      datapump_symbol_tail(8000, 24000, 7, 40) == 94,
+	      "tail bound rounded down or lost the fractional symbol clock");
+	CHECK(datapump_symbol_tail(8000, 300, 1, 0) == 0 &&
+	      datapump_symbol_tail(0, 300, 1, 1) == -1 &&
+	      datapump_symbol_tail(8000, 0, 1, 1) == -1 &&
+	      datapump_symbol_tail(8000, 300, 0, 1) == -1 &&
+	      datapump_symbol_tail(UINT32_MAX, 1, UINT32_MAX, UINT_MAX) == -1 &&
+	      datapump_symbol_tail(UINT32_MAX, 1, 1, 1) == -1,
+	      "invalid or overflowing tail bound was accepted");
+	struct qam_modulator modulator = { .channel = {
+		.sample_rate = 8000, .symbol_rate_numerator = 600,
+		.symbol_rate_denominator = 1, .pulse_span_symbols = 6,
+	} };
+	CHECK(datapump_qam_tail(&modulator) == 94 && datapump_qam_tail(NULL) == -1,
+	      "QAM tail omitted the current symbol or finite pulse history");
+	modulator.channel.pulse_span_symbols = UINT_MAX;
+	CHECK(datapump_qam_tail(&modulator) == -1, "QAM pulse span wrapped");
+	return true;
+}
+
 int main(void)
 {
-	return test_rate_diagnostics() && test_training_completion_ownership() && test_link_rates() && test_source_bits() &&
+	return test_transmit_tail() && test_rate_diagnostics() && test_training_completion_ownership() && test_link_rates() && test_source_bits() &&
 	       test_source_split_bits() && test_deliver_bits() ? 0 : 1;
 }

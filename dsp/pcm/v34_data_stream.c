@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "v34_data_stream.h"
+#include "datapump_transmit.h"
+#include "v34_profile.h"
 
 #include "packed_bits.h"
 #include "memory_region.h"
@@ -11,6 +13,22 @@
 #include <math.h>
 #include <stddef.h>
 #include <string.h>
+
+int v34_data_stream_tx_tail_samples(const struct v34_data_stream *stream)
+{
+	if (stream == NULL)
+		return -1;
+	const struct qam_channel *c = &stream->line.carrier.channel;
+	unsigned rate = stream->points.schedule.geometry.primary_data_rate_2400_bps_units * V34_RATE_STEP;
+	int pulse = datapump_symbol_tail(c->sample_rate, c->symbol_rate_numerator,
+		c->symbol_rate_denominator, V34_SYMBOLS_PER_MAPPING_FRAME + V34_PULSE_TAPS);
+	if (pulse < 0 || !rate)
+		return -1;
+	uint64_t delay = (uint64_t)stream->primary_delay_bits * c->sample_rate;
+	uint64_t samples = (unsigned)pulse + delay / rate + (delay % rate != 0) +
+		V34_TRAINING_LINE_FILTER_TAIL_SAMPLES;
+	return samples > INT_MAX ? -1 : (int)samples;
+}
 
 static enum v34_data_stream_result points_result(
 	enum v34_data_points_result result)

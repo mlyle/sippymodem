@@ -976,6 +976,22 @@ static int read_info_payload(
 	return read_host_characters(l, output, output_capacity);
 }
 
+bool modem_ec_transmit_idle(const struct modem *m)
+{
+	if (m == NULL)
+		return false;
+	const struct lapm_state *l = &m->ec.lapm;
+	if (!m->cfg.ec || m->xmit.count != 0 || l->modem != m ||
+	    l->info_list == NULL || l->state != LAPM_DATA ||
+	    l->va != l->vs || l->sent_info != l->info_list || l->tx_info != l->info_list)
+		return false;
+	if (l->v44_path != NULL)
+		return v44_character_path_transmit_idle(l->v44_path);
+	return !(m->cfg.comp & 2) ||
+		(!m->comp.transmit_dirty && m->comp.encoder.olen == 0 &&
+		 m->comp.encoder.bit_len == 0);
+}
+
 static int tx_info(struct lapm_state *l)
 {
 	frame_t *f;

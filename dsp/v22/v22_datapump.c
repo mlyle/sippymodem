@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "v22_datapump.h"
+#include "datapump_transmit.h"
 #include "single_tone.h"
 
 #include "datapump_link.h"
@@ -173,12 +174,14 @@ static int flush_retrain_candidate(struct v22_datapump *datapump);
 /* V.22 6.3.1.2 keeps the established carrier instead of repeating a
  * handshake.  Bell 212A has the same carrier-preserving ATO1 behavior, so
  * only V.22bis advertises the reciprocal retrain operation. */
+static int tx_tail_samples(const struct dp *dp);
 static const struct dp_operations v22_operations = {
 	.name = "V.22/Bell 212A",
 	.create = create_v22,
 	.delete = delete_v22,
 	.process = process_v22,
 	.progress = progress_v22,
+	.tx_tail_samples = tx_tail_samples,
 };
 
 static const struct dp_operations v22bis_operations = {
@@ -188,6 +191,7 @@ static const struct dp_operations v22bis_operations = {
 	.process = process_v22,
 	.retrain = retrain_v22,
 	.progress = progress_v22,
+	.tx_tail_samples = tx_tail_samples,
 };
 
 const struct dp_operations *v22_datapump_operations(enum DP_ID id)
@@ -1876,4 +1880,11 @@ bool v22_datapump_has_peer(struct dp *dp)
 		 datapump->training_state == V22_TRAINING_CONNECT_HOLD ||
 		 datapump->training_state == V22_TRAINING_V22BIS_CONFIRM ||
 		 datapump->training_state == V22_TRAINING_ONLINE);
+}
+
+static int tx_tail_samples(const struct dp *dp)
+{
+	const struct v22_datapump *p = v22_from_dp((struct dp *)dp);
+	return p != NULL && p->training_state == V22_TRAINING_ONLINE ?
+		datapump_qam_tail(&p->modulator) : -1;
 }

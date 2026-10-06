@@ -39,6 +39,8 @@ struct v34_data_stream {
 	uint8_t primary_delay_bits;
 	bool b1_active;
 };
+/* Bound the pending mapping frame, word delay and finite line-filter tail. */
+int v34_data_stream_tx_tail_samples(const struct v34_data_stream *stream);
 
 /* The negotiated settings needed to enter the data phase. The Phase 3
  * profile owns the exact carrier and symbol rates; the remaining fields are

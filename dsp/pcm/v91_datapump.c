@@ -14,6 +14,7 @@ struct v91_datapump {
 	struct training_session training;
 	bool started, ever_connected, closing, fallback, quiet_complete;
 };
+static int tx_tail_samples(const struct dp *dp);
 static const struct dp_operations operations;
 
 static struct v91_datapump *owner(const struct dp *dp)
@@ -252,8 +253,17 @@ static const struct dp_operations operations = {
 	.name = "PCM V.91", .create = create, .delete = destroy,
 	.process = process_linear, .process_g711 = process_g711,
 	.retrain = retrain, .hangup = hangup, .progress = progress, .link_rates = link_rates,
+	.tx_tail_samples = tx_tail_samples,
 };
 const struct dp_operations *v91_datapump_operations(enum DP_ID id)
 {
 	return id == DP_V91 ? &operations : NULL;
+}
+
+static int tx_tail_samples(const struct dp *dp)
+{
+	const struct v91_datapump *p = owner(dp);
+	return p != NULL && training_session_is_online(&p->training) &&
+		p->call.tx_stage == V91_TX_DATA && !p->call.recovering ?
+		V90_PCM_ENCODER_TAIL_SAMPLES : -1;
 }

@@ -66,6 +66,7 @@ static int hangup_v90(struct dp *dp);
 static const char *progress_v90(const struct dp *dp);
 static struct dp_link_rates link_rates_v90(const struct dp *dp);
 
+static int tx_tail_samples(const struct dp *dp);
 static const struct dp_operations v90_operations = {
 	.name = "PCM V.90/V.92",
 	.create = create_v90,
@@ -76,6 +77,7 @@ static const struct dp_operations v90_operations = {
 	.hangup = hangup_v90,
 	.progress = progress_v90,
 	.link_rates = link_rates_v90,
+	.tx_tail_samples = tx_tail_samples,
 };
 
 static struct dp_link_rates link_rates_v90(const struct dp *dp)
@@ -1138,4 +1140,11 @@ failure:
 const struct dp_operations *v90_datapump_operations(enum DP_ID id)
 {
 	return id == DP_V90 || id == DP_V92 ? &v90_operations : NULL;
+}
+
+static int tx_tail_samples(const struct dp *dp)
+{
+	const struct v90_datapump *p = v90_from_dp((struct dp *)dp);
+	return p != NULL && p->call_started && training_session_is_online(&p->training) ?
+		pcm_call_transmit_tail_samples(&p->call) : -1;
 }

@@ -58,6 +58,7 @@ static int hangup_v34(struct dp *dp);
 static const char *progress_v34(const struct dp *dp);
 static struct dp_link_rates link_rates_v34(const struct dp *dp);
 
+static int tx_tail_samples(const struct dp *dp);
 static const struct dp_operations v34_operations = {
 	.name = "V.34",
 	.create = create_v34,
@@ -67,6 +68,7 @@ static const struct dp_operations v34_operations = {
 	.hangup = hangup_v34,
 	.progress = progress_v34,
 	.link_rates = link_rates_v34,
+	.tx_tail_samples = tx_tail_samples,
 };
 
 static struct dp_link_rates link_rates_v34(const struct dp *dp)
@@ -759,4 +761,12 @@ static int process_v34(
 const struct dp_operations *v34_datapump_operations(enum DP_ID id)
 {
 	return id == DP_V34 ? &v34_operations : NULL;
+}
+
+static int tx_tail_samples(const struct dp *dp)
+{
+	const struct v34_datapump *p = dp != NULL ? dp->dp_data : NULL;
+	return p != NULL && training_session_is_online(&p->training) &&
+		p->call.stage == V34_CALL_PHASE4 && p->call.state.phase4.transmit_data_active ?
+		v34_data_stream_tx_tail_samples(&p->call.state.phase4.transmit.data) : -1;
 }

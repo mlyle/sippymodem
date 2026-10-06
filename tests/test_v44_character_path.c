@@ -123,7 +123,7 @@ static bool transmit_until_idle(
 			return false;
 		*wire_length += output_length;
 		if (result == V44_CHARACTER_PATH_IDLE)
-			return true;
+			return v44_character_path_transmit_idle(path);
 		if (result != V44_CHARACTER_PATH_OK)
 			return false;
 	}
@@ -261,6 +261,9 @@ static bool test_generated_round_trip(void)
 		      V44_CHARACTER_PATH_OK &&
 	      output_length == 0 && sender_io.source_offset != 0,
 	      "zero-capacity transmit did not retain bounded codec work");
+	CHECK(!v44_character_path_transmit_idle(sender) &&
+	      !v44_character_path_transmit_idle(NULL),
+	      "V.44 reported completion with retained codec work");
 	CHECK(transmit_until_idle(
 		      sender, wire, sizeof(wire), &wire_length),
 	      "first V.44 character burst did not flush");

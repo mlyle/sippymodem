@@ -7,6 +7,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 struct v44_character_path;
 
@@ -48,6 +49,9 @@ struct v44_character_path *v44_character_path_create(
 	const struct v44_character_path_config *config);
 void v44_character_path_destroy(
 	struct v44_character_path *path);
+/* True after the last accepted input and its C-FLUSH output have drained.
+ * Does not read the host or change the compression stream. */
+bool v44_character_path_transmit_idle(const struct v44_character_path *path);
 
 /*
  * Reinitialize both codec directions to their negotiated C-INIT state and

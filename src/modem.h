@@ -106,6 +106,10 @@ enum modem_ec_compression {
 
 #define MODEM_DEFAULT_COUNTRY_CODE 0xb5 /* USA */
 
+enum modem_tx_completion {
+	MODEM_TX_OPEN, MODEM_TX_FINISHING, MODEM_TX_FINISHED, MODEM_TX_ABORTED,
+};
+
 /*
  *    type definitions
  *
@@ -391,6 +395,9 @@ struct modem {
 		int bit;
 		u32 data;
 	} pack,unpack;
+	/* Per-call transmit completion; progressed by emitted samples. */
+	enum modem_tx_completion tx_completion;
+	int tx_finish_tail; /* -1 until the raw encoder/filter bound is latched */
         int (*get_bits)(struct modem *m, int nbits, u8 *buf, int n);
         int (*put_bits)(struct modem *m, int nbits, u8 *buf, int n);
 	union packer_union {
@@ -440,6 +447,7 @@ struct modem {
 	struct comp_struct {
 		// fixme: redo interface
 		int head,count;
+		bool transmit_dirty;
 		char buf[256];
 		struct comp_state encoder;
 		struct comp_state decoder;
@@ -481,6 +489,8 @@ extern struct modem *modem_create(struct modem_driver *drv, const char *dev_name
 extern void modem_delete(struct modem *m);
 extern int modem_write(struct modem *m, const char *buf, int n);
 extern int modem_data_write(struct modem *m, const void *bytes, size_t length);
+/* Seal literal input. 0 complete, 1 pending, -1 unavailable/invalid. */
+extern int modem_finish_transmit(struct modem *m);
 extern int modem_set_dte_command(struct modem *m, bool command);
 /* Restore the profile while preserving carrier, buffers and country. */
 extern int modem_factory_defaults(struct modem *m);
@@ -548,6 +558,7 @@ extern bool modem_ec_can_establish(const struct modem *m);
 /* Consume a bounded request; the host invokes retrain outside DSP callbacks. */
 extern bool modem_ec_take_retrain_request(struct modem *m);
 extern int modem_ec_resume_after_retrain(struct modem *m);
+extern bool modem_ec_transmit_idle(const struct modem *m);
 extern void modem_ec_update_timer_rate(struct modem *m, uint64_t previous_rate);
 extern enum modem_ec_compression
 modem_ec_active_compression(const struct modem *m);

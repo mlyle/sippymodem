@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "fsk300_datapump.h"
+#include "datapump_transmit.h"
 
 #include "datapump_link.h"
 #include "datapump_media.h"
@@ -124,11 +125,13 @@ static int delete_fsk300(struct dp *dp);
 static int process_fsk300(
 	struct dp *dp, void *receive, void *transmit, int count);
 
+static int tx_tail_samples(const struct dp *dp);
 static const struct dp_operations fsk300_operations = {
 	.name = "300-bit/s FSK",
 	.create = create_fsk300,
 	.delete = delete_fsk300,
 	.process = process_fsk300,
+	.tx_tail_samples = tx_tail_samples,
 };
 
 static const struct fsk300_profile *find_profile(enum DP_ID id)
@@ -505,4 +508,14 @@ static int process_fsk300(struct dp *dp, void *receive_buffer,
 const struct dp_operations *fsk300_datapump_operations(enum DP_ID id)
 {
 	return id == DP_V21 || id == DP_B103 ? &fsk300_operations : NULL;
+}
+
+static int tx_tail_samples(const struct dp *dp)
+{
+	const struct fsk300_datapump *p = fsk300_from_dp((struct dp *)dp);
+	if (p == NULL || !training_session_is_online(&p->training))
+		return -1;
+	const struct fsk_channel *c = &p->transmitter.channel;
+	return datapump_symbol_tail(c->sample_rate, c->symbol_rate_numerator,
+		c->symbol_rate_denominator, 1);
 }
