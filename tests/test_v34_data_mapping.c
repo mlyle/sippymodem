@@ -3,6 +3,7 @@
 #include <v34_data_mapping.h>
 
 #include "test.h"
+#include "v34_power_fixture.h"
 #include "v34_encoder_test_helpers.h"
 
 #include <limits.h>
@@ -41,28 +42,6 @@ static struct v34_data_direction_parameters parameters_fixture(void)
 		.primary_data_rate_2400_bps_units = 8,
 		.expanded_shaping = true,
 	};
-}
-
-static bool normalizers_are_equal(
-	const struct v34_power_normalizer *left,
-	const struct v34_power_normalizer *right)
-{
-	return v34_mapping_parameters_are_equal(
-		       &left->parameters, &right->parameters) &&
-	       left->precoded_mean_squared_magnitude ==
-		       right->precoded_mean_squared_magnitude &&
-	       left->projected_mean_squared_magnitude ==
-		       right->projected_mean_squared_magnitude &&
-	       left->normalization_gain == right->normalization_gain &&
-	       left->maximum_precoded_point_power ==
-		       right->maximum_precoded_point_power &&
-	       left->maximum_projected_point_power ==
-		       right->maximum_projected_point_power &&
-	       left->maximum_normalized_point_power ==
-		       right->maximum_normalized_point_power &&
-	       left->calibration_symbol_count ==
-		       right->calibration_symbol_count &&
-	       left->nonlinear_parameter == right->nonlinear_parameter;
 }
 
 static bool test_prepared_b1_mapping(void)
@@ -109,7 +88,7 @@ static bool test_prepared_b1_mapping(void)
 	      first.normalizer.nonlinear_parameter ==
 		      parameters.nonlinear_parameter &&
 	      v34_test_encoders_are_equal(&first.encoder, &repeated.encoder) &&
-	      normalizers_are_equal(&first.normalizer, &repeated.normalizer),
+	      v34_normalizers_equal(&first.normalizer, &repeated.normalizer),
 	      "directional mapping state or deterministic calibration changed");
 	return true;
 }

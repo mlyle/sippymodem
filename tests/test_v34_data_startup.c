@@ -3,6 +3,7 @@
 #include <v34_data_startup.h>
 
 #include "test.h"
+#include "v34_power_fixture.h"
 #include "v34_encoder_test_helpers.h"
 
 #include <stddef.h>
@@ -73,28 +74,6 @@ static struct v34_data_mode answerer_mode(void)
 	return answerer;
 }
 
-static bool normalizers_are_equal(
-	const struct v34_power_normalizer *left,
-	const struct v34_power_normalizer *right)
-{
-	return v34_mapping_parameters_are_equal(
-		       &left->parameters, &right->parameters) &&
-	       left->precoded_mean_squared_magnitude ==
-		       right->precoded_mean_squared_magnitude &&
-	       left->projected_mean_squared_magnitude ==
-		       right->projected_mean_squared_magnitude &&
-	       left->normalization_gain == right->normalization_gain &&
-	       left->maximum_precoded_point_power ==
-		       right->maximum_precoded_point_power &&
-	       left->maximum_projected_point_power ==
-		       right->maximum_projected_point_power &&
-	       left->maximum_normalized_point_power ==
-		       right->maximum_normalized_point_power &&
-	       left->calibration_symbol_count ==
-		       right->calibration_symbol_count &&
-	       left->nonlinear_parameter == right->nonlinear_parameter;
-}
-
 static bool mapping_matches_receiver(
 	const struct v34_data_mapping *mapping,
 	const struct v34_data_line_receiver_configuration *receiver)
@@ -105,7 +84,7 @@ static bool mapping_matches_receiver(
 		       receiver->transmitting_profile.symbol_rate &&
 	       v34_frame_geometry_is_equal(
 		       &mapping->schedule.geometry, &receiver->geometry) &&
-	       normalizers_are_equal(&mapping->normalizer, &receiver->normalizer) &&
+	       v34_normalizers_equal(&mapping->normalizer, &receiver->normalizer) &&
 	       mapping->encoder.convolutional_encoder.selection ==
 		       receiver->trellis_selection &&
 	       mapping->encoder.parameters.expanded_shaping ==
@@ -267,10 +246,10 @@ static bool test_incremental_startup(void)
 						"startup exposed an incomplete preparation");
 			} while (result == V34_DATA_STARTUP_IN_PROGRESS);
 			CHECK(result == V34_DATA_STARTUP_OK && v34_data_startup_is_valid(&actual) &&
-			      normalizers_are_equal(&actual.transmit.mapping.normalizer,
+			      v34_normalizers_equal(&actual.transmit.mapping.normalizer,
 				&expected.transmit.mapping.normalizer) &&
 			      actual.transmit.line_peak == expected.transmit.line_peak &&
-			      normalizers_are_equal(&actual.receive.normalizer, &expected.receive.normalizer),
+			      v34_normalizers_equal(&actual.receive.normalizer, &expected.receive.normalizer),
 			      "incremental preparation changed negotiated power");
 		}
 	}

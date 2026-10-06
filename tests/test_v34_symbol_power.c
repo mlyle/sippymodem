@@ -3,6 +3,7 @@
 #include <v34_symbol_power.h>
 
 #include "test.h"
+#include "v34_power_fixture.h"
 
 #include <float.h>
 #include <math.h>
@@ -476,7 +477,7 @@ static bool test_normalizer_validation(void)
 		      V34_SYMBOL_POWER_INVALID_ARGUMENT &&
 	      v34_power_normalizer_set_gain(&normalizer, NAN) ==
 		      V34_SYMBOL_POWER_INVALID_ARGUMENT &&
-	      memcmp(&normalizer, &saved, sizeof(normalizer)) == 0 &&
+	      v34_normalizers_equal(&normalizer, &saved) &&
 	      v34_power_normalizer_set_gain(&normalizer, 0.25) ==
 		      V34_SYMBOL_POWER_OK &&
 	      v34_power_normalizer_is_valid(&normalizer) &&

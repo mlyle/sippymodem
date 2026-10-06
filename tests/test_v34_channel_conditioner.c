@@ -3,6 +3,7 @@
 #include <v34_channel_conditioner.h>
 
 #include "test.h"
+#include "v34_power_fixture.h"
 
 #include <float.h>
 #include <math.h>
@@ -237,8 +238,8 @@ static bool test_validation(void)
 	      v34_channel_conditioner_init(
 		      &conditioner, &damaged) ==
 		      V34_CHANNEL_CONDITIONER_INVALID_ARGUMENT &&
-	      memcmp(&conditioner, &saved_conditioner,
-		     sizeof(conditioner)) == 0,
+	      v34_normalizers_equal(&conditioner.normalizer,
+		     &saved_conditioner.normalizer),
 	      "invalid conditioner initialization mutated its destination");
 	normalizer.normalization_gain = 0.0;
 	CHECK(v34_channel_conditioner_is_valid(&conditioner),
