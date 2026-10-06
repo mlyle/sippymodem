@@ -4,6 +4,7 @@
 #include <qam_gain.h>
 
 #include "test.h"
+#include "qam_state_fixture.h"
 
 #include <float.h>
 #include <math.h>
@@ -644,7 +645,7 @@ static bool test_floating_transmit_path(void)
 			      &integer_accepted) == QAM_OK &&
 		      isfinite(floating_sample) &&
 		      floating_accepted == integer_accepted &&
-		      memcmp(&floating, &integer, sizeof(floating)) == 0,
+		      qam_modulators_equal(&floating, &integer),
 		      "QAM floating transmit path diverged at sample %u", index);
 		expected = lround(floating_sample * TEST_AMPLITUDE);
 		if (expected > TEST_AMPLITUDE)
@@ -1120,7 +1121,7 @@ static bool test_timing_windows(void)
 		      &demodulator, 0.99) == QAM_INVALID_ARGUMENT &&
 	      qam_demodulator_set_timing_power_hysteresis(
 		      &demodulator, NAN) == QAM_INVALID_ARGUMENT &&
-	      memcmp(&demodulator, &saved, sizeof(saved)) == 0,
+	      qam_demodulators_equal(&demodulator, &saved),
 	      "invalid QAM timing policy changed the receiver");
 	return true;
 }
@@ -1149,7 +1150,7 @@ static bool test_configurable_point_power(void)
 	CHECK(qam_modulator_sample_f64(
 		      &bounded, &wider_point, &sample, &accepted) ==
 		      QAM_INVALID_ARGUMENT &&
-		      memcmp(&bounded, &before, sizeof(bounded)) == 0 &&
+		      qam_modulators_equal(&bounded, &before) &&
 		      sample == -99.0 && !accepted,
 	      "default QAM bound accepted a wider constellation point");
 	CHECK(qam_modulator_sample_f64(
@@ -1163,7 +1164,7 @@ static bool test_configurable_point_power(void)
 	CHECK(qam_modulator_sample_f64(
 		      &wider, &excessive_point, &sample, &accepted) ==
 		      QAM_INVALID_ARGUMENT &&
-		      memcmp(&wider, &before, sizeof(wider)) == 0 &&
+		      qam_modulators_equal(&wider, &before) &&
 		      sample == -99.0 && !accepted,
 	      "explicit QAM bound accepted an excessive point");
 	before = wider;
@@ -1176,7 +1177,7 @@ static bool test_configurable_point_power(void)
 	      qam_modulator_init_with_point_power_limit(
 		      &wider, &channel, TEST_AMPLITUDE, INFINITY) ==
 		      QAM_INVALID_ARGUMENT &&
-		      memcmp(&wider, &before, sizeof(wider)) == 0,
+		      qam_modulators_equal(&wider, &before),
 	      "invalid QAM point-power limit mutated state");
 	wider.maximum_point_power = NAN;
 	CHECK(!qam_modulator_is_valid(&wider),
@@ -1385,7 +1386,7 @@ static bool test_validation(void)
 		      qam_modulator_sample_f64(
 			      &modulator, &point, &floating_sample, NULL) ==
 			      QAM_INVALID_ARGUMENT &&
-		      memcmp(&modulator, &before, sizeof(modulator)) == 0 &&
+		      qam_modulators_equal(&modulator, &before) &&
 		      floating_sample == -99.0 && !floating_accepted,
 		      "invalid QAM floating sample mutated state");
 	}
