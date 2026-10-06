@@ -396,9 +396,9 @@ static bool test_logical_state_equality(void)
 	struct v90_phase4_cp_rx left;
 	struct v90_phase4_cp_rx right;
 	size_t padding_start =
-		offsetof(struct v90_cp_receiver, sync_one_count) +
-		sizeof(left.records.sync_one_count);
-	size_t padding_end = offsetof(struct v90_cp_receiver, stage);
+		offsetof(struct v90_cp_receiver, wire.sync_one_count) +
+		sizeof(left.records.wire.sync_one_count);
+	size_t padding_end = offsetof(struct v90_cp_receiver, wire.stage);
 
 	CHECK(v90_phase4_cp_rx_init(&left, V34_ANSWERING_STATION,
 				  V34_CONSTELLATION_4_POINT) == V90_CP_OK,
@@ -420,7 +420,7 @@ static bool test_logical_state_equality(void)
 	      !v90_phase4_cp_rx_equal(&left, &right),
 	      "CP receiver equality ignored differential phase");
 	right = left;
-	right.records.sync_one_count = 1u;
+	right.records.wire.sync_one_count = 1u;
 	CHECK(v90_phase4_cp_rx_is_valid(&right) &&
 	      !v90_phase4_cp_rx_equal(&left, &right) &&
 	      !v90_phase4_cp_rx_equal(NULL, &right),

@@ -4,6 +4,7 @@
 #define V92_CPT_RECEIVER_H
 
 #include "v92_cpt.h"
+#include "pcm_control_receiver.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -24,18 +25,8 @@ struct v92_cpt_receive_event {
 	struct v92_cpt_parameters parameters;
 };
 
-enum v92_cpt_receive_stage {
-	V92_CPT_RECEIVER_SEARCH_SYNC,
-	V92_CPT_RECEIVER_READ_HEADER,
-	V92_CPT_RECEIVER_READ_FRAME,
-};
-
 struct v92_cpt_receiver {
-	uint8_t frame[V92_CPT_MAX_FRAME_BYTES];
-	size_t frame_bit_count;
-	size_t bit_index;
-	uint8_t sync_one_count;
-	enum v92_cpt_receive_stage stage;
+	struct pcm_control_receiver wire;
 };
 
 /* Search a continuous descrambled bit stream for a CPt frame, infer its

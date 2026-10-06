@@ -203,7 +203,7 @@ static bool test_variable_frames_and_noise(void)
 		}
 	}
 	CHECK(v90_cp_receiver_is_valid(&receiver) &&
-	      receiver.stage == V90_CP_RECEIVER_SEARCH_SYNC,
+	      receiver.wire.stage == PCM_CONTROL_SEARCH_SYNC,
 	      "CP receiver did not return to search");
 	return true;
 }
@@ -317,8 +317,8 @@ static bool test_overlapping_prefix_recovery(void)
 	      event.type == V90_CP_RECEIVE_REJECTED &&
 	      event.frame_result == V90_CP_INVALID_FRAME &&
 	      event.observed_bits == 154 &&
-	      receiver.stage == V90_CP_RECEIVER_SEARCH_SYNC &&
-	      receiver.sync_one_count == 17,
+	      receiver.wire.stage == PCM_CONTROL_SEARCH_SYNC &&
+	      receiver.wire.sync_one_count == 17,
 	      "CP receiver lost an overlapping prefix");
 	/* The retained ones replace bits 0:16 of the next valid frame. */
 	CHECK(feed_frame(
@@ -374,8 +374,8 @@ static bool short_fill_case(uint8_t count, unsigned int omitted, bool corrupt)
 	CHECK(feed_without_event(&receiver, sent, 0, bits - omitted) &&
 	      v90_cp_receiver_receive_bit(&receiver, 1, &event) == V90_CP_OK &&
 	      event.observed_bits == bits - omitted + 1u &&
-	      (omitted == 3u ? receiver.sync_one_count >= 1u :
-	       receiver.sync_one_count == 1u),
+	      (omitted == 3u ? receiver.wire.sync_one_count >= 1u :
+	       receiver.wire.sync_one_count == 1u),
 	      "short fill lost the next frame's first sync bit");
 	if (corrupt || omitted == 3u) {
 		CHECK(event.type == V90_CP_RECEIVE_REJECTED &&
@@ -430,19 +430,19 @@ static bool test_api_transactionality(void)
 	      "invalid CP receiver call changed state or event");
 
 	changed = receiver;
-	changed.stage = (enum v90_cp_receive_stage)99;
+	changed.wire.stage = (enum pcm_control_receive_stage)99;
 	CHECK(!v90_cp_receiver_is_valid(&changed),
 	      "CP receiver accepted an unknown stage");
 	changed = receiver;
-	changed.sync_one_count = 18;
+	changed.wire.sync_one_count = 18;
 	CHECK(!v90_cp_receiver_is_valid(&changed),
 	      "CP receiver accepted an excessive prefix");
 	changed = receiver;
-	changed.bit_index = 1;
+	changed.wire.bit_index = 1;
 	CHECK(!v90_cp_receiver_is_valid(&changed),
 	      "CP receiver accepted a search cursor");
 	changed = receiver;
-	changed.frame[0] = 1;
+	changed.wire.frame[0] = 1;
 	CHECK(!v90_cp_receiver_is_valid(&changed),
 	      "CP receiver accepted stale frame storage");
 	return true;

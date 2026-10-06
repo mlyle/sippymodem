@@ -4,6 +4,7 @@
 #define V90_CP_RECEIVER_H
 
 #include "v90_cp.h"
+#include "pcm_control_receiver.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -24,18 +25,8 @@ struct v90_cp_receive_event {
 	struct v90_cp_parameters parameters;
 };
 
-enum v90_cp_receive_stage {
-	V90_CP_RECEIVER_SEARCH_SYNC,
-	V90_CP_RECEIVER_READ_HEADER,
-	V90_CP_RECEIVER_READ_FRAME,
-};
-
 struct v90_cp_receiver {
-	uint8_t frame[V90_CP_MAX_FRAME_BYTES];
-	size_t frame_bit_count;
-	size_t bit_index;
-	uint8_t sync_one_count;
-	enum v90_cp_receive_stage stage;
+	struct pcm_control_receiver wire;
 };
 
 /* Search a continuous descrambled bit stream for the 17-one prefix, derive

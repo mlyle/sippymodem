@@ -196,7 +196,7 @@ static bool test_variable_frames_and_handoff(void)
 		}
 	}
 	CHECK(v92_cpt_receiver_is_valid(&receiver) &&
-	      receiver.stage == V92_CPT_RECEIVER_SEARCH_SYNC,
+	      receiver.wire.stage == PCM_CONTROL_SEARCH_SYNC,
 	      "CPt receiver did not return to search");
 	return true;
 }
@@ -263,7 +263,7 @@ static bool test_header_and_overlap_recovery(void)
 		      V92_CPT_OK &&
 	      event.type == V92_CPT_RECEIVE_REJECTED &&
 	      event.observed_bits == 154u &&
-	      receiver.sync_one_count == 17u &&
+	      receiver.wire.sync_one_count == 17u &&
 	      feed_frame(&receiver, valid, 17u, frame_bits, &event) &&
 	      event_reencodes_frame(&event, valid, frame_bits),
 	      "CPt receiver lost an overlapping frame sync");
@@ -296,7 +296,7 @@ static bool test_received_framing_validation(void)
 
 			if (bit % 17u != 0u && (bit < 18u || bit > 20u))
 				continue;
-			replace_bit(changed.frame, bit, 1u);
+			replace_bit(changed.wire.frame, bit, 1u);
 			before = changed;
 			memset(&event, 0xa5, sizeof(event));
 			event_before = event;
@@ -346,7 +346,7 @@ static bool test_contracts(void)
 		      V92_CPT_INVALID_FRAME &&
 	      memcmp(&receiver, &before, sizeof(receiver)) == 0,
 	      "duplicate CPt sync handoff changed state");
-	receiver.stage = (enum v92_cpt_receive_stage)-1;
+	receiver.wire.stage = (enum pcm_control_receive_stage)-1;
 	before = receiver;
 	CHECK(!v92_cpt_receiver_is_valid(&receiver) &&
 	      v92_cpt_receiver_receive_bit(&receiver, 0u, &event) ==

@@ -165,7 +165,7 @@ static bool check_rejected_cpt_continuation(
 		      event.type == V90_CP_RECEIVE_NO_EVENT,
 		      "repeated CPt rejected before its suffix");
 	}
-	records->frame[(bits - 8u) / 8u] ^=
+	records->wire.frame[(bits - 8u) / 8u] ^=
 		(uint8_t)(1u << (7u - (bits - 8u) % 8u));
 	for (size_t clock = 0u; clock < 16u; ++clock) {
 		struct v90_phase4_cp_line_rx expected = trial.state.continuing.receive;

@@ -26,12 +26,12 @@ bool v90_phase4_cp_rx_equal(
 	return left != NULL && right != NULL &&
 	       left->descrambler.history == right->descrambler.history &&
 	       left->descrambler.polynomial == right->descrambler.polynomial &&
-	       memcmp(left->records.frame, right->records.frame,
-		      sizeof(left->records.frame)) == 0 &&
-	       left->records.frame_bit_count == right->records.frame_bit_count &&
-	       left->records.bit_index == right->records.bit_index &&
-	       left->records.sync_one_count == right->records.sync_one_count &&
-	       left->records.stage == right->records.stage &&
+	       memcmp(left->records.wire.frame, right->records.wire.frame,
+		      sizeof(left->records.wire.frame)) == 0 &&
+	       left->records.wire.frame_bit_count == right->records.wire.frame_bit_count &&
+	       left->records.wire.bit_index == right->records.wire.bit_index &&
+	       left->records.wire.sync_one_count == right->records.wire.sync_one_count &&
+	       left->records.wire.stage == right->records.wire.stage &&
 	       left->transmitting_role == right->transmitting_role &&
 	       left->constellation == right->constellation &&
 	       left->previous_clockwise_quarter_turns ==

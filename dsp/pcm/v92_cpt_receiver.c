@@ -10,6 +10,9 @@
 #include <stdint.h>
 #include <string.h>
 
+_Static_assert((unsigned)V92_CPT_MAX_FRAME_BYTES == PCM_CONTROL_MAX_FRAME_BYTES,
+	"control receive storage must cover the complete frame");
+
 enum {
 	CPT_SYNC_BITS = 17,
 	CPT_INFORMATION_FIRST_BIT = 18,
@@ -39,10 +42,10 @@ static bool infer_frame_bit_count(
 	return true;
 }
 
-static bool stage_is_valid(enum v92_cpt_receive_stage stage)
+static bool stage_is_valid(enum pcm_control_receive_stage stage)
 {
-	return stage >= V92_CPT_RECEIVER_SEARCH_SYNC &&
-	       stage <= V92_CPT_RECEIVER_READ_FRAME;
+	return stage >= PCM_CONTROL_SEARCH_SYNC &&
+	       stage <= PCM_CONTROL_READ_FRAME;
 }
 
 static bool bit_must_be_zero(size_t bit_index)
@@ -54,13 +57,13 @@ static bool bit_must_be_zero(size_t bit_index)
 static bool received_bits_are_valid(
 	const struct v92_cpt_receiver *receiver)
 {
-	size_t type_end = receiver->bit_index < 21u ? receiver->bit_index : 21u;
+	size_t type_end = receiver->wire.bit_index < 21u ? receiver->wire.bit_index : 21u;
 
 	return packed_msb_bits_are_zero(
-		       receiver->frame, CPT_INFORMATION_FIRST_BIT,
+		       receiver->wire.frame, CPT_INFORMATION_FIRST_BIT,
 		       type_end - CPT_INFORMATION_FIRST_BIT) &&
 	       pcm_control_frame_starts_are_zero(
-		       receiver->frame, 34u, receiver->bit_index);
+		       receiver->wire.frame, 34u, receiver->wire.bit_index);
 }
 
 bool v92_cpt_receiver_is_valid(
@@ -68,37 +71,37 @@ bool v92_cpt_receiver_is_valid(
 {
 	size_t inferred_bits;
 
-	if (receiver == NULL || !stage_is_valid(receiver->stage) ||
-	    receiver->sync_one_count > CPT_SYNC_BITS ||
-	    receiver->bit_index > V92_CPT_MAX_FRAME_BITS ||
+	if (receiver == NULL || !stage_is_valid(receiver->wire.stage) ||
+	    receiver->wire.sync_one_count > CPT_SYNC_BITS ||
+	    receiver->wire.bit_index > V92_CPT_MAX_FRAME_BITS ||
 	    !packed_msb_tail_is_zero(
-		    receiver->frame, receiver->bit_index,
-		    sizeof(receiver->frame)))
+		    receiver->wire.frame, receiver->wire.bit_index,
+		    sizeof(receiver->wire.frame)))
 		return false;
-	switch (receiver->stage) {
-	case V92_CPT_RECEIVER_SEARCH_SYNC:
-		return receiver->frame_bit_count == 0u &&
-		       receiver->bit_index == 0u;
-	case V92_CPT_RECEIVER_READ_HEADER:
-		return receiver->frame_bit_count == 0u &&
-		       receiver->bit_index >= CPT_INFORMATION_FIRST_BIT &&
-		       receiver->bit_index <= CPT_HEADER_LAST_BIT &&
-		       receiver->sync_one_count == 0u &&
-		       pcm_control_frame_prefix_is_valid(receiver->frame) &&
+	switch (receiver->wire.stage) {
+	case PCM_CONTROL_SEARCH_SYNC:
+		return receiver->wire.frame_bit_count == 0u &&
+		       receiver->wire.bit_index == 0u;
+	case PCM_CONTROL_READ_HEADER:
+		return receiver->wire.frame_bit_count == 0u &&
+		       receiver->wire.bit_index >= CPT_INFORMATION_FIRST_BIT &&
+		       receiver->wire.bit_index <= CPT_HEADER_LAST_BIT &&
+		       receiver->wire.sync_one_count == 0u &&
+		       pcm_control_frame_prefix_is_valid(receiver->wire.frame) &&
 		       received_bits_are_valid(receiver);
-	case V92_CPT_RECEIVER_READ_FRAME:
-		return receiver->frame_bit_count >= V92_CPT_MIN_FRAME_BITS &&
-		       receiver->frame_bit_count <= V92_CPT_MAX_FRAME_BITS &&
-		       receiver->frame_bit_count %
+	case PCM_CONTROL_READ_FRAME:
+		return receiver->wire.frame_bit_count >= V92_CPT_MIN_FRAME_BITS &&
+		       receiver->wire.frame_bit_count <= V92_CPT_MAX_FRAME_BITS &&
+		       receiver->wire.frame_bit_count %
 			       V92_CPT_SYMBOLS_PER_FRAME == 0u &&
-		       receiver->bit_index > CPT_HEADER_LAST_BIT &&
-		       receiver->bit_index < receiver->frame_bit_count &&
-		       receiver->sync_one_count == 0u &&
-		       pcm_control_frame_prefix_is_valid(receiver->frame) &&
+		       receiver->wire.bit_index > CPT_HEADER_LAST_BIT &&
+		       receiver->wire.bit_index < receiver->wire.frame_bit_count &&
+		       receiver->wire.sync_one_count == 0u &&
+		       pcm_control_frame_prefix_is_valid(receiver->wire.frame) &&
 		       received_bits_are_valid(receiver) &&
 		       infer_frame_bit_count(
-			       receiver->frame, &inferred_bits) &&
-		       inferred_bits == receiver->frame_bit_count;
+			       receiver->wire.frame, &inferred_bits) &&
+		       inferred_bits == receiver->wire.frame_bit_count;
 	}
 	return false;
 }
@@ -107,7 +110,7 @@ enum v92_cpt_result v92_cpt_receiver_init(
 	struct v92_cpt_receiver *receiver)
 {
 	struct v92_cpt_receiver initialized = {
-		.stage = V92_CPT_RECEIVER_SEARCH_SYNC,
+		.wire.stage = PCM_CONTROL_SEARCH_SYNC,
 	};
 
 	if (receiver == NULL || !v92_cpt_receiver_is_valid(&initialized))
@@ -118,19 +121,19 @@ enum v92_cpt_result v92_cpt_receiver_init(
 
 static void clear_frame(struct v92_cpt_receiver *receiver)
 {
-	memset(receiver->frame, 0, sizeof(receiver->frame));
-	receiver->frame_bit_count = 0u;
-	receiver->bit_index = 0u;
-	receiver->sync_one_count = 0u;
-	receiver->stage = V92_CPT_RECEIVER_SEARCH_SYNC;
+	memset(receiver->wire.frame, 0, sizeof(receiver->wire.frame));
+	receiver->wire.frame_bit_count = 0u;
+	receiver->wire.bit_index = 0u;
+	receiver->wire.sync_one_count = 0u;
+	receiver->wire.stage = PCM_CONTROL_SEARCH_SYNC;
 }
 
 static void begin_frame(struct v92_cpt_receiver *receiver)
 {
 	clear_frame(receiver);
-	pcm_control_frame_write_prefix(receiver->frame);
-	receiver->bit_index = CPT_INFORMATION_FIRST_BIT;
-	receiver->stage = V92_CPT_RECEIVER_READ_HEADER;
+	pcm_control_frame_write_prefix(receiver->wire.frame);
+	receiver->wire.bit_index = CPT_INFORMATION_FIRST_BIT;
+	receiver->wire.stage = PCM_CONTROL_READ_HEADER;
 }
 
 enum v92_cpt_result v92_cpt_receiver_begin_after_sync(
@@ -140,7 +143,7 @@ enum v92_cpt_result v92_cpt_receiver_begin_after_sync(
 
 	if (!v92_cpt_receiver_is_valid(receiver))
 		return V92_CPT_INVALID_ARGUMENT;
-	if (receiver->stage != V92_CPT_RECEIVER_SEARCH_SYNC)
+	if (receiver->wire.stage != PCM_CONTROL_SEARCH_SYNC)
 		return V92_CPT_INVALID_FRAME;
 	next = *receiver;
 	begin_frame(&next);
@@ -156,11 +159,11 @@ static void reject_frame(
 	enum v92_cpt_result result)
 {
 	uint8_t suffix_ones = pcm_control_frame_trailing_ones(
-		receiver->frame, receiver->bit_index);
-	size_t observed_bits = receiver->bit_index;
+		receiver->wire.frame, receiver->wire.bit_index);
+	size_t observed_bits = receiver->wire.bit_index;
 
 	clear_frame(receiver);
-	receiver->sync_one_count = suffix_ones;
+	receiver->wire.sync_one_count = suffix_ones;
 	event->type = V92_CPT_RECEIVE_REJECTED;
 	event->frame_result = result;
 	event->observed_bits = observed_bits;
@@ -172,9 +175,9 @@ static void complete_frame(
 {
 	struct v92_cpt_parameters parameters;
 	enum v92_cpt_result result = v92_cpt_decode(
-		receiver->frame, sizeof(receiver->frame),
-		receiver->frame_bit_count, &parameters);
-	size_t observed_bits = receiver->bit_index;
+		receiver->wire.frame, sizeof(receiver->wire.frame),
+		receiver->wire.frame_bit_count, &parameters);
+	size_t observed_bits = receiver->wire.bit_index;
 
 	clear_frame(receiver);
 	event->frame_result = result;
@@ -191,31 +194,31 @@ static void receive_bit(
 	struct v92_cpt_receiver *receiver, uint8_t bit,
 	struct v92_cpt_receive_event *event)
 {
-	if (receiver->stage == V92_CPT_RECEIVER_SEARCH_SYNC) {
+	if (receiver->wire.stage == PCM_CONTROL_SEARCH_SYNC) {
 		if (pcm_control_frame_sync_bit(
-			    &receiver->sync_one_count, bit != 0u))
+			    &receiver->wire.sync_one_count, bit != 0u))
 			begin_frame(receiver);
 		return;
 	}
 
 	packed_msb_set_bit(
-		receiver->frame, receiver->bit_index, bit != 0u);
-	receiver->bit_index++;
-	if (bit != 0u && bit_must_be_zero(receiver->bit_index - 1u)) {
+		receiver->wire.frame, receiver->wire.bit_index, bit != 0u);
+	receiver->wire.bit_index++;
+	if (bit != 0u && bit_must_be_zero(receiver->wire.bit_index - 1u)) {
 		reject_frame(receiver, event, V92_CPT_INVALID_FRAME);
 		return;
 	}
-	if (receiver->stage == V92_CPT_RECEIVER_READ_HEADER &&
-	    receiver->bit_index == CPT_HEADER_LAST_BIT + 1u) {
+	if (receiver->wire.stage == PCM_CONTROL_READ_HEADER &&
+	    receiver->wire.bit_index == CPT_HEADER_LAST_BIT + 1u) {
 		if (!infer_frame_bit_count(
-			    receiver->frame, &receiver->frame_bit_count)) {
+			    receiver->wire.frame, &receiver->wire.frame_bit_count)) {
 			reject_frame(receiver, event, V92_CPT_INVALID_FRAME);
 			return;
 		}
-		receiver->stage = V92_CPT_RECEIVER_READ_FRAME;
+		receiver->wire.stage = PCM_CONTROL_READ_FRAME;
 	}
-	if (receiver->stage == V92_CPT_RECEIVER_READ_FRAME &&
-	    receiver->bit_index == receiver->frame_bit_count)
+	if (receiver->wire.stage == PCM_CONTROL_READ_FRAME &&
+	    receiver->wire.bit_index == receiver->wire.frame_bit_count)
 		complete_frame(receiver, event);
 }
 

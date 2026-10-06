@@ -52,12 +52,12 @@ bool v92_pcm_phase3_cpt_rx_is_valid(
 	switch (receiver->stage) {
 	case V92_PCM_PHASE3_CPT_RX_TRAINING:
 		return receiver->sync.stage == V92_PHASE3_SYNC_TRAINING &&
-		       receiver->records.stage == V92_CPT_RECEIVER_SEARCH_SYNC &&
+		       receiver->records.wire.stage == PCM_CONTROL_SEARCH_SYNC &&
 		       receiver->matching_records == 0u &&
 		       receiver->boundary_count == 0u;
 	case V92_PCM_PHASE3_CPT_RX_SEARCHING:
 		return receiver->sync.stage == V92_PHASE3_SYNC_SEARCHING &&
-		       receiver->records.stage == V92_CPT_RECEIVER_SEARCH_SYNC &&
+		       receiver->records.wire.stage == PCM_CONTROL_SEARCH_SYNC &&
 		       receiver->matching_records == 0u &&
 		       receiver->boundary_count == 0u;
 	case V92_PCM_PHASE3_CPT_RX_RECORDS:
@@ -65,13 +65,13 @@ bool v92_pcm_phase3_cpt_rx_is_valid(
 		       receiver->boundary_count == 0u;
 	case V92_PCM_PHASE3_CPT_RX_E1U_CANDIDATE:
 		return receiver->sync.stage == V92_PHASE3_SYNC_COMPLETE &&
-		       receiver->records.stage == V92_CPT_RECEIVER_SEARCH_SYNC &&
+		       receiver->records.wire.stage == PCM_CONTROL_SEARCH_SYNC &&
 		       receiver->matching_records != 0u &&
 		       receiver->boundary_count < V92_CPT_SYMBOLS_PER_FRAME &&
 		       receiver->boundary_ones <= 1u;
 	case V92_PCM_PHASE3_CPT_RX_COMPLETE:
 		return receiver->sync.stage == V92_PHASE3_SYNC_COMPLETE &&
-		       receiver->records.stage == V92_CPT_RECEIVER_SEARCH_SYNC &&
+		       receiver->records.wire.stage == PCM_CONTROL_SEARCH_SYNC &&
 		       receiver->matching_records != 0u &&
 		       receiver->boundary_count == V92_CPT_SYMBOLS_PER_FRAME &&
 		       receiver->boundary_ones <= 1u;

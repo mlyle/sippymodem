@@ -544,11 +544,11 @@ static bool verify_final_downstream_exchange(
 			const struct v90_cp_receiver *records =
 				&digital_path.upstream.startup.state.cp.symbols.records;
 
-			if (records->stage == V90_CP_RECEIVER_READ_FRAME)
+			if (records->wire.stage == PCM_CONTROL_READ_FRAME)
 				unadvertised_candidate_seen = true;
 			if (unadvertised_candidate_seen &&
-			    records->stage == V90_CP_RECEIVER_SEARCH_SYNC &&
-			    records->sync_one_count == 0) {
+			    records->wire.stage == PCM_CONTROL_SEARCH_SYNC &&
+			    records->wire.sync_one_count == 0) {
 				CHECK(digital_result == V90_DIGITAL_PATH_OK &&
 				      v90_digital_path_is_valid(&digital_path) &&
 				      !v90_digital_path_has_failed(&digital_path) &&
