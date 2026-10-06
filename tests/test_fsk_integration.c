@@ -2186,7 +2186,7 @@ static bool run_media_call(
 	const struct modem_test_case *test_case,
 	enum media_codec codec)
 {
-	static const char prelink_payload[] = "early-v23";
+	static const char prelink_payload[] = "early-banner\r\n";
 	static const uint8_t caller_payload[] = {
 		0x00, 0x01, 0x55, 0xaa, 0x7f, 0x80, 0xfe, 0xff,
 		'V', '2', '1', 'A',
@@ -4197,6 +4197,89 @@ static bool run_fsk300_mark_qualification(
 	return true;
 }
 
+struct fsk_startup_output {
+	uint8_t bytes[8];
+	size_t count;
+};
+
+static int capture_fsk_startup(struct modem *modem, const char *input, int count)
+{
+	struct fsk_startup_output *output = modem->dev_data;
+	if (count < 0 || (size_t)count > sizeof(output->bytes) - output->count)
+		return 0;
+	memcpy(output->bytes + output->count, input, (size_t)count);
+	output->count += (size_t)count;
+	return count;
+}
+
+static bool test_fsk_startup_carrier_withdrawal(void)
+{
+	const unsigned int fragments[] = { 1, 7, MODEM_FRAG };
+	const uint8_t stale[] = { 'x' }, fresh[] = { 'n', 0, 255 };
+	for (size_t case_index = 0; case_index < ARRAY_LENGTH(fragments); ++case_index) {
+		struct modem modem = { 0 };
+		struct fsk_startup_output output = { 0 };
+		struct fsk_tone_generator tones;
+		const struct dp_operations *ops = modem_dp_get_registered_ops(DP_V21);
+		int16_t receive[MODEM_FRAG], transmit[MODEM_FRAG];
+		bool connected = false;
+
+		CHECK(ops != NULL, "V.21 startup datapump is unavailable");
+		modem.dev_data = &output;
+		modem.sregs[SREG_WAIT_CARRIER_AFTER_DIAL] = 3;
+		modem.sregs[SREG_CARRIER_LOSS_DISCONNECT_TIME] = 7;
+		modem.dp = ops->create(&modem, DP_V21, 1, MODEM_RATE, MODEM_FRAG, ops);
+		CHECK(modem.dp != NULL &&
+		      fsk_tone_generator_init(&tones, &v21_channel_2, 8192) == FSK_OK,
+		      "withdrawn startup fixture failed");
+		for (unsigned int at = 0; at < MODEM_RATE * 2; at += fragments[case_index]) {
+			unsigned int count = fragments[case_index];
+			if (count > MODEM_RATE * 2 - at)
+				count = MODEM_RATE * 2 - at;
+			for (unsigned int i = 0; i < count; ++i) {
+				unsigned int sample = at + i;
+				unsigned int start = MODEM_RATE * (sample < MODEM_RATE ? 320 : 1040) / 1000;
+				const uint8_t *payload = sample < MODEM_RATE ? stale : fresh;
+				size_t size = sample < MODEM_RATE ? sizeof(stale) : sizeof(fresh);
+				unsigned int bit_index = sample >= start ? (sample - start) * 300 / MODEM_RATE : 30;
+				uint8_t bit = 1;
+				if (bit_index < size * 10) {
+					unsigned int cell = bit_index % 10;
+					bit = cell == 0 ? 0 : cell == 9 ? 1 :
+						(payload[bit_index / 10] >> (cell - 1)) & 1u;
+				}
+				CHECK(fsk_tone_generator_sample(&tones, bit, &receive[i]) == FSK_OK,
+				      "withdrawn startup tone failed");
+				/* Withdraw the first carrier after its early byte, then
+				 * offer a new carrier and a different pre-CONNECT payload. */
+				if (sample >= MODEM_RATE * 450 / 1000 && sample < MODEM_RATE * 650 / 1000)
+					receive[i] = 0;
+				if (fragments[case_index] == 1)
+					receive[i] = g711_decode_pcmu(g711_encode_pcmu(receive[i]));
+				if (fragments[case_index] == 7)
+					receive[i] = g711_decode_pcma(g711_encode_pcma(receive[i]));
+			}
+			int status = ops->process(modem.dp, receive, transmit, (int)count);
+			CHECK(status == DPSTAT_OK || status == DPSTAT_CONNECT,
+			      "withdrawn startup failed at sample %u", at);
+			if (status == DPSTAT_CONNECT) {
+				CHECK(!connected && at > MODEM_RATE,
+				      "withdrawn startup connected prematurely");
+				connected = true;
+				modem_async_start(&modem);
+				modem.put_bits = modem_async_put_bits;
+				modem.put_chars = capture_fsk_startup;
+			}
+		}
+		CHECK(connected && output.count == sizeof(fresh) &&
+		      memcmp(output.bytes, fresh, sizeof(fresh)) == 0,
+		      "withdrawn startup leaked or lost data with %u-sample fragments: %zu bytes",
+		      fragments[case_index], output.count);
+		CHECK(ops->delete(modem.dp) == 0, "withdrawn startup cleanup failed");
+	}
+	return true;
+}
+
 static bool test_fsk300_mark_qualification(void)
 {
 	const enum DP_ID ids[] = { DP_V21, DP_B103 };
@@ -4536,6 +4619,7 @@ int main(void)
 		{
 			.id = DP_V21, .answerer_id = DP_V92,
 			.name = "subset auto-answer V.21",
+			.test_prelink = true,
 			.selection_command = "AT+MS=21,1,300,300\r",
 			.answerer_selection_command = "AT+MS=92,1,300,56000\r",
 			.caller_tx_rate = 300, .caller_rx_rate = 300,
@@ -4589,6 +4673,7 @@ int main(void)
 		{
 			.id = DP_V21,
 			.name = "forced V.21 raw ATO1 resume",
+			.test_prelink = true,
 			.selection_command = "AT+MS=21,0,300,300\r",
 			.caller_tx_rate = FSK300_BIT_RATE,
 			.caller_rx_rate = FSK300_BIT_RATE,
@@ -4601,6 +4686,7 @@ int main(void)
 		{
 			.id = DP_V21,
 			.name = "V.21 automode",
+			.test_prelink = true,
 			.selection_command = "AT+MS=21,1,300,300\r",
 			.caller_tx_rate = FSK300_BIT_RATE,
 			.caller_rx_rate = FSK300_BIT_RATE,
@@ -4612,6 +4698,7 @@ int main(void)
 		{
 			.id = DP_B103,
 			.name = "Bell 103 raw ATO1 resume",
+			.test_prelink = true,
 			.selection_command = "AT+MS=103,1,300,300\r",
 			.caller_tx_rate = FSK300_BIT_RATE,
 			.caller_rx_rate = FSK300_BIT_RATE,
@@ -5152,6 +5239,10 @@ int main(void)
 	if (!test_fsk300_mark_qualification())
 		return 1;
 	fprintf(stderr, "[       OK ] continuous 300-bit/s FSK mark qualification\n");
+	fprintf(stderr, "[ RUN      ] raw FSK startup carrier withdrawal\n");
+	if (!test_fsk_startup_carrier_withdrawal())
+		return 1;
+	fprintf(stderr, "[       OK ] raw FSK startup carrier withdrawal\n");
 	fprintf(stderr, "[ RUN      ] bounded recording replay output\n");
 	if (!run_recording_replay_output()) {
 		fprintf(stderr, "[  FAILED  ] bounded recording replay output\n");

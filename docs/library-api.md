@@ -171,6 +171,7 @@ while the terminal is in online command mode.
 
 `EVENT_SIP_ESTABLISHED` means SIP accepted the call. `EVENT_CONNECTED` and
 `status.ready` mean modem training and configured error control are ready.
+Send payload immediately at this event; no application startup delay is needed.
 Status reports hook, carrier, phase, DTE mode, Hayes modulation number,
 directional bit/symbol rates, negotiated compression, and local queue counts.
 Default error control offers LAPM with raw fallback; REQUIRED refuses raw.

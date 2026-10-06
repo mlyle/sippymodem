@@ -108,12 +108,47 @@ static bool test_owned_loopback(void)
 	EXPECT(strcmp(facts.caller_number, "+12025550123") == 0);
 	EXPECT(sippymodem_get_call_facts(caller, &facts) == SIPPYMODEM_OK && !facts.caller_number[0]);
 	EXPECT(sippymodem_answer(answerer, remote.generation) == SIPPYMODEM_OK);
+	/* A terminal server sends its banner at its own READY, without knowing
+	 * the other line's readiness or inserting an application delay. */
+	const unsigned char startup[] = { 'b', 'a', 'n', 'n', 'e', 'r', '\r', '\n', 0, '+', 255 };
+	bool startup_sent[2] = { false, false };
+	struct sippymodem_line *peers[] = { answerer, caller };
 	for (unsigned int index = 0; index < 15000 && (!remote.ready || !local.ready); ++index) {
 		EXPECT(step(server, &now));
 		EXPECT(sippymodem_get_status(answerer, &remote) == SIPPYMODEM_OK);
 		EXPECT(sippymodem_get_status(caller, &local) == SIPPYMODEM_OK);
+		bool ready[] = { remote.ready, local.ready };
+		for (unsigned int side = 0; side < 2; ++side) {
+			if (ready[side] && !startup_sent[side]) {
+				if (side == 0)
+					EXPECT(!local.ready);
+				size_t count = 0;
+				EXPECT(sippymodem_send(peers[side], startup, sizeof(startup), &count) == SIPPYMODEM_OK);
+				EXPECT(count == sizeof(startup));
+				startup_sent[side] = true;
+			}
+		}
 	}
-	EXPECT(remote.ready && local.ready);
+	EXPECT(remote.ready && local.ready && startup_sent[0] && startup_sent[1]);
+	unsigned char startup_result[2][sizeof(startup)];
+	size_t startup_received[2] = { 0, 0 };
+	for (unsigned int index = 0; index < 5000 &&
+	     (startup_received[0] < sizeof(startup) || startup_received[1] < sizeof(startup)); ++index) {
+		EXPECT(step(server, &now));
+		for (unsigned int side = 0; side < 2; ++side) {
+			if (startup_received[side] == sizeof(startup))
+				continue;
+			size_t count = 0;
+			enum sippymodem_result rc = sippymodem_receive(peers[side], startup_result[side] + startup_received[side],
+				sizeof(startup) - startup_received[side], &count);
+			EXPECT(rc == SIPPYMODEM_OK || rc == SIPPYMODEM_AGAIN);
+			startup_received[side] += count;
+		}
+	}
+	for (unsigned int side = 0; side < 2; ++side)
+		CHECK(startup_received[side] == sizeof(startup) &&
+		      memcmp(startup_result[side], startup, sizeof(startup)) == 0,
+		      "immediate V.21 startup banner lost at side %u: %zu bytes", side, startup_received[side]);
 	EXPECT(remote.modulation == 21 && local.modulation == 21);
 	EXPECT(remote.tx_bps == 300 && remote.rx_bps == 300);
 	const unsigned char literal[] = { 0, '+', '+', '+', '\r', 'A', 'T', 0x11, 0x13, 255 };

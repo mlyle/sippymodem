@@ -26,6 +26,11 @@ enum {
 	FSK300_GUARD_SAMPLES = MODEM_RATE * 160 / 1000,
 	FSK300_ORIGINATE_MARK_SAMPLES = 6400,
 	FSK300_TRAINING_LOSS_SAMPLES = MODEM_RATE * 60 / 1000,
+	/* Retain receive symbols while the caller finishes its startup mark.
+	 * Include carrier-loss qualification and one native block of rounding. */
+	FSK300_STARTUP_BITS = (FSK300_ORIGINATE_MARK_SAMPLES +
+		FSK300_TRAINING_LOSS_SAMPLES + MODEM_FRAG) *
+		FSK300_BIT_RATE / MODEM_RATE + 1,
 	/* Qualify 60 ms of carrier, including data, after an online interruption. */
 	FSK300_CARRIER_RETURN_SAMPLES = MODEM_RATE * 60 / 1000,
 	FSK300_MIN_LINE_POWER = 10000000,
@@ -107,6 +112,8 @@ struct fsk300_datapump {
 	uint32_t guard_crossings;
 	int16_t previous_sample;
 	struct fsk_online_source online_source;
+	uint8_t startup_bits[FSK300_STARTUP_BITS];
+	unsigned int startup_count;
 	bool originator;
 };
 
@@ -144,6 +151,7 @@ static struct fsk300_datapump *fsk300_from_dp(struct dp *dp)
 	datapump = dp->dp_data;
 	if (&datapump->dp != dp || datapump->profile == NULL ||
 	    datapump->profile->id != dp->id ||
+	    datapump->startup_count > sizeof(datapump->startup_bits) ||
 	    datapump->carrier_return_samples >
 		    FSK300_CARRIER_RETURN_SAMPLES ||
 	    (datapump->carrier_return_samples != 0 &&
@@ -409,6 +417,17 @@ static int process_fsk300(struct dp *dp, void *receive_buffer,
 
 	if (!datapump_linear_fragment_is_ready(datapump, receive, transmit, count))
 		return DPSTAT_ERROR;
+	/* The previous block can complete training after receiving early raw
+	 * data. Deliver those symbols through the newly installed packer first. */
+	if (datapump->training_state == FSK300_TRAINING_ONLINE &&
+	    datapump->startup_count != 0) {
+		if (dp->modem->put_bits == NULL ||
+		    modem_put_bits(dp->modem, 1, datapump->startup_bits,
+				   (int)datapump->startup_count) !=
+		    (int)datapump->startup_count)
+			return DPSTAT_ERROR;
+		datapump->startup_count = 0;
+	}
 	if ((datapump->training_state == FSK300_TRAINING_WAIT_MARK ||
 	     datapump->training_state == FSK300_TRAINING_GUARD) &&
 	    datapump->originator) {
@@ -422,14 +441,29 @@ static int process_fsk300(struct dp *dp, void *receive_buffer,
 	}
 	received_count = receive_samples(
 		datapump, receive, count,
-		datapump->training_state == FSK300_TRAINING_ONLINE ?
+		datapump->training_state == FSK300_TRAINING_ONLINE ||
+		(datapump->originator &&
+		 datapump->training_state == FSK300_TRAINING_SEND_MARK) ?
 			received_bits : NULL,
 		sizeof(received_bits));
 	if (received_count < 0)
 		return DPSTAT_ERROR;
 
-	if (datapump->training_state != FSK300_TRAINING_ONLINE)
+	if (datapump->training_state != FSK300_TRAINING_ONLINE) {
+		if (datapump->originator &&
+		    datapump->training_state == FSK300_TRAINING_SEND_MARK) {
+			if ((unsigned int)received_count >
+			    sizeof(datapump->startup_bits) - datapump->startup_count)
+				return DPSTAT_ERROR;
+			memcpy(datapump->startup_bits + datapump->startup_count,
+			       received_bits, (size_t)received_count);
+			datapump->startup_count += (unsigned int)received_count;
+		} else {
+			/* A withdrawn carrier must not leak an earlier attempt. */
+			datapump->startup_count = 0;
+		}
 		return advance_training(datapump, (unsigned int)count);
+	}
 	measurement = fsk_receiver_measure(&datapump->receiver);
 	carrier_loss_limit =
 		datapump_carrier_loss_ticks(datapump->dp.modem);
