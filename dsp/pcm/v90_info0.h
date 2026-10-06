@@ -49,6 +49,11 @@ struct v90_info0d {
 bool v90_info0_is_valid(const struct v34_info0 *info0);
 bool v90_info0d_is_valid(const struct v90_info0d *info0d);
 
+/* Compare validated encoded fields, including acknowledgment. Clock source is
+ * reserved in V.90 and ignored, along with padding. Invalid records differ. */
+bool v90_info0a_equal(const struct v34_info0 *left, const struct v34_info0 *right);
+bool v90_info0d_equal(const struct v90_info0d *left, const struct v90_info0d *right);
+
 enum v90_info0_result v90_info0a_encode(
 	const struct v34_info0 *info0a, uint8_t *payload,
 	size_t payload_capacity);

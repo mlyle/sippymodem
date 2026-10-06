@@ -99,18 +99,10 @@ static bool info0_semantics_match(
 {
 	struct v34_info0 left_without_ack = *left;
 	struct v34_info0 right_without_ack = *right;
-	uint8_t left_payload[V34_INFO0_PAYLOAD_BYTES];
-	uint8_t right_payload[V34_INFO0_PAYLOAD_BYTES];
 
 	left_without_ack.acknowledges_peer_info0 = false;
 	right_without_ack.acknowledges_peer_info0 = false;
-	return v34_info0_encode(
-		       &left_without_ack, left_payload,
-		       sizeof(left_payload)) == V34_INFO0_OK &&
-	       v34_info0_encode(
-		       &right_without_ack, right_payload,
-		       sizeof(right_payload)) == V34_INFO0_OK &&
-	       memcmp(left_payload, right_payload, sizeof(left_payload)) == 0;
+	return v34_info0_equal(&left_without_ack, &right_without_ack);
 }
 
 static bool decode_event(

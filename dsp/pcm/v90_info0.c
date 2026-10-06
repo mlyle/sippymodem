@@ -36,6 +36,31 @@ bool v90_info0d_is_valid(const struct v90_info0d *info0d)
 		info0d->pcm_law == V90_PCM_A_LAW);
 }
 
+bool v90_info0a_equal(const struct v34_info0 *left, const struct v34_info0 *right)
+{
+	if (left == NULL || right == NULL)
+		return false;
+	struct v34_info0 normalized_left = *left, normalized_right = *right;
+
+	normalized_left.transmit_clock_source = V34_INFO0_CLOCK_INTERNAL;
+	normalized_right.transmit_clock_source = V34_INFO0_CLOCK_INTERNAL;
+	return v34_info0_equal(&normalized_left, &normalized_right);
+}
+
+bool v90_info0d_equal(
+	const struct v90_info0d *left, const struct v90_info0d *right)
+{
+	return v90_info0d_is_valid(left) && v90_info0d_is_valid(right) &&
+	       v90_info0a_equal(&left->common, &right->common) &&
+	       left->nominal_transmit_power == right->nominal_transmit_power &&
+	       left->maximum_transmit_power == right->maximum_transmit_power &&
+	       left->measure_power_at_codec_output ==
+		       right->measure_power_at_codec_output &&
+	       left->pcm_law == right->pcm_law &&
+	       left->upstream_symbol_rate_3429_supported ==
+		       right->upstream_symbol_rate_3429_supported;
+}
+
 static bool encode_common(const struct v34_info0 *info0, uint8_t *payload)
 {
 	struct v34_info0 common = *info0;

@@ -78,22 +78,6 @@ static struct v34_info0 answering_capabilities(void)
 	};
 }
 
-static bool info0_matches(
-	const struct v34_info0 *left,
-	const struct v34_info0 *right)
-{
-	uint8_t left_payload[V34_INFO0_PAYLOAD_BYTES];
-	uint8_t right_payload[V34_INFO0_PAYLOAD_BYTES];
-
-	return v34_info0_encode(
-		       left, left_payload, sizeof(left_payload)) ==
-		       V34_INFO0_OK &&
-	       v34_info0_encode(
-		       right, right_payload, sizeof(right_payload)) ==
-		       V34_INFO0_OK &&
-	       memcmp(left_payload, right_payload, sizeof(left_payload)) == 0;
-}
-
 static bool observe_event(
 	const struct v34_phase2_info0_exchange_event *event,
 	size_t sample_index, struct exchange_observation *observation)
@@ -249,10 +233,10 @@ static bool check_exchange(
 		      caller_observation.info_rejected_count == 0 &&
 		      answer_observation.info_received_count == 1 &&
 		      answer_observation.info_rejected_count == 0 &&
-		      info0_matches(
+		      v34_info0_equal(
 			      &caller_observation.peer_info0,
 			      &expected_answering) &&
-		      info0_matches(
+		      v34_info0_equal(
 			      &answer_observation.peer_info0,
 			      &expected_calling),
 	      "INFO0 capabilities changed across codec %d", codec);
@@ -404,7 +388,7 @@ static bool test_retained_receive_level(void)
 			CHECK(exchange.transport.tone_detector.carrier.profile
 				.minimum_line_power == 1024.0 &&
 			      (initial ? !exchange.peer_info0_received :
-				info0_matches(&exchange.peer_info0, &retained)),
+				v34_info0_equal(&exchange.peer_info0, &retained)),
 			      "unqualified INFO0 changed receive level or record");
 			received = event.peer_info0_event == (test_case == REPEAT ?
 				V34_PHASE2_PEER_INFO0_RECEIVED :

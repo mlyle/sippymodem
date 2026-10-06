@@ -35,6 +35,11 @@ struct v92_info0d {
 bool v92_info0a_is_valid(const struct v92_info0a *info0a);
 bool v92_info0d_is_valid(const struct v92_info0d *info0d);
 
+/* Include both V.92 extension bits and acknowledgment; ignore the reserved
+ * V.34 clock-source member. Invalid records never compare equal. */
+bool v92_info0a_equal(const struct v92_info0a *left, const struct v92_info0a *right);
+bool v92_info0d_equal(const struct v92_info0d *left, const struct v92_info0d *right);
+
 enum v92_info0_result v92_info0a_encode(
 	const struct v92_info0a *info0a, uint8_t *payload,
 	size_t payload_capacity);

@@ -305,10 +305,7 @@ static bool info0_semantics_match(
 {
 	union pcm_info0_record left_without_ack = *left;
 	union pcm_info0_record right_without_ack = *right;
-	uint8_t left_payload[V90_INFO0D_PAYLOAD_BYTES] = { 0 };
-	uint8_t right_payload[V90_INFO0D_PAYLOAD_BYTES] = { 0 };
 	enum v90_modem_role role = opposite_role(exchange->local_role);
-	size_t payload_bytes = (payload_bits_for_role(role) + 7u) / 8u;
 
 	pcm_info0_mutable_common(
 		&left_without_ack, exchange->protocol,
@@ -316,13 +313,8 @@ static bool info0_semantics_match(
 	pcm_info0_mutable_common(
 		&right_without_ack, exchange->protocol,
 		role)->acknowledges_peer_info0 = false;
-	return encode_record(
-		       exchange->protocol, role, &left_without_ack,
-		       left_payload, sizeof(left_payload)) &&
-	       encode_record(
-		       exchange->protocol, role, &right_without_ack,
-		       right_payload, sizeof(right_payload)) &&
-	       memcmp(left_payload, right_payload, payload_bytes) == 0;
+	return pcm_info0_records_are_equal(exchange->protocol, role,
+		&left_without_ack, &right_without_ack);
 }
 
 static bool peer_acknowledges_local(

@@ -49,6 +49,10 @@ struct v34_info0 {
 bool v34_info0_is_valid(
 	const struct v34_info0 *info0);
 
+/* Compare validated encoded fields, including clock source and acknowledgment,
+ * without inspecting padding. Invalid records never compare equal. */
+bool v34_info0_equal(const struct v34_info0 *left, const struct v34_info0 *right);
+
 /* payload_capacity is measured in octets. Encoded fields are packed in
  * transmission order, most-significant bit first in each octet. */
 enum v34_info0_result v34_info0_encode(

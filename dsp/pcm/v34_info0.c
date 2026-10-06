@@ -42,6 +42,39 @@ bool v34_info0_is_valid(
 	       clock_source_is_valid(info0->transmit_clock_source);
 }
 
+bool v34_info0_equal(
+	const struct v34_info0 *left,
+	const struct v34_info0 *right)
+{
+	return v34_info0_is_valid(left) && v34_info0_is_valid(right) &&
+	       left->symbol_rate_2743_supported ==
+		       right->symbol_rate_2743_supported &&
+	       left->symbol_rate_2800_supported ==
+		       right->symbol_rate_2800_supported &&
+	       left->symbol_rate_3429_supported ==
+		       right->symbol_rate_3429_supported &&
+	       left->low_carrier_3000_supported ==
+		       right->low_carrier_3000_supported &&
+	       left->high_carrier_3000_supported ==
+		       right->high_carrier_3000_supported &&
+	       left->low_carrier_3200_supported ==
+		       right->low_carrier_3200_supported &&
+	       left->high_carrier_3200_supported ==
+		       right->high_carrier_3200_supported &&
+	       left->symbol_rate_3429_transmit_permitted ==
+		       right->symbol_rate_3429_transmit_permitted &&
+	       left->transmit_power_reduction_supported ==
+		       right->transmit_power_reduction_supported &&
+	       left->maximum_symbol_rate_difference_steps ==
+		       right->maximum_symbol_rate_difference_steps &&
+	       left->cme_modem == right->cme_modem &&
+	       left->constellation_1664_supported ==
+		       right->constellation_1664_supported &&
+	       left->transmit_clock_source == right->transmit_clock_source &&
+	       left->acknowledges_peer_info0 ==
+		       right->acknowledges_peer_info0;
+}
+
 enum v34_info0_result v34_info0_encode(
 	const struct v34_info0 *info0, uint8_t *payload,
 	size_t payload_capacity)

@@ -58,22 +58,6 @@ static struct v34_info1a answerer_info1a(bool zero_md)
 	};
 }
 
-static bool info0_equal(
-	const struct v34_info0 *first, const struct v34_info0 *second)
-{
-	uint8_t first_payload[V34_INFO0_PAYLOAD_BYTES];
-	uint8_t second_payload[V34_INFO0_PAYLOAD_BYTES];
-
-	return v34_info0_encode(
-		       first, first_payload, sizeof(first_payload)) ==
-		       V34_INFO0_OK &&
-	       v34_info0_encode(
-		       second, second_payload, sizeof(second_payload)) ==
-		       V34_INFO0_OK &&
-	       memcmp(first_payload, second_payload,
-		      sizeof(first_payload)) == 0;
-}
-
 static bool info1c_equal(
 	const struct v34_info1c *first, const struct v34_info1c *second)
 {
@@ -293,8 +277,8 @@ static bool check_timeline(
 		      &pair.caller, &caller_peer_info0) == V34_PHASE2_OK &&
 	      v34_phase2_peer_info0(
 		      &pair.answerer, &answerer_peer_info0) == V34_PHASE2_OK &&
-	      info0_equal(&caller_peer_info0, &expected_answerer_info0) &&
-	      info0_equal(&answerer_peer_info0, &expected_caller_info0),
+	      v34_info0_equal(&caller_peer_info0, &expected_answerer_info0) &&
+	      v34_info0_equal(&answerer_peer_info0, &expected_caller_info0),
 	      "Phase 2 did not retain reciprocal INFO0 records");
 	CHECK(v34_phase2_measure_remote_probe(
 		      &pair.caller, &caller_measurement) == V34_PHASE2_OK &&
@@ -609,8 +593,8 @@ static bool check_retrain_timeline(bool late_alias)
 		      &pair.caller, &caller_peer_info0) == V34_PHASE2_OK &&
 	      v34_phase2_peer_info0(
 		      &pair.answerer, &answerer_peer_info0) == V34_PHASE2_OK &&
-	      info0_equal(&caller_peer_info0, &answerer_info0) &&
-	      info0_equal(&answerer_peer_info0, &caller_info0),
+	      v34_info0_equal(&caller_peer_info0, &answerer_info0) &&
+	      v34_info0_equal(&answerer_peer_info0, &caller_info0),
 	      "Phase 2 retrain did not preserve INFO0 through ranging");
 	return true;
 }

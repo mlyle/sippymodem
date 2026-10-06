@@ -50,6 +50,24 @@ static inline bool pcm_info0_is_valid(enum pcm_protocol protocol,
 		       v92_info0d_is_valid(&record->v92_digital);
 }
 
+/* Compare encoded fields of the selected role/protocol, including ACK. Other
+ * union members and padding are ignored; invalid tags or records differ. */
+static inline bool pcm_info0_records_are_equal(enum pcm_protocol protocol,
+	enum v90_modem_role role, const union pcm_info0_record *left,
+	const union pcm_info0_record *right)
+{
+	if (left == NULL || right == NULL || !pcm_protocol_is_valid(protocol) ||
+	    !pcm_modem_role_is_valid(role))
+		return false;
+	if (protocol == PCM_PROTOCOL_V90)
+		return role == V90_ANALOG_MODEM ?
+			       v90_info0a_equal(&left->analog, &right->analog) :
+			       v90_info0d_equal(&left->digital, &right->digital);
+	return role == V90_ANALOG_MODEM ?
+		       v92_info0a_equal(&left->v92_analog, &right->v92_analog) :
+		       v92_info0d_equal(&left->v92_digital, &right->v92_digital);
+}
+
 /* Retained local offers precede acknowledgment and must advertise the
  * selected protocol. The call and Phase 2 owners keep the same invariant. */
 static inline bool pcm_info0_offer_is_valid(enum pcm_protocol protocol,

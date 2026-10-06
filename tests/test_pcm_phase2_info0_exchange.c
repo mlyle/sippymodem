@@ -80,63 +80,39 @@ static bool analog_equal(
 	const struct v34_info0 *left, const struct v34_info0 *right)
 {
 	struct v34_info0 expected = *right;
-	uint8_t left_payload[V90_INFO0A_PAYLOAD_BYTES];
-	uint8_t right_payload[V90_INFO0A_PAYLOAD_BYTES];
 
 	expected.acknowledges_peer_info0 = left->acknowledges_peer_info0;
-	return v90_info0a_encode(left, left_payload, sizeof(left_payload)) ==
-		       V90_INFO0_OK &&
-	       v90_info0a_encode(&expected, right_payload, sizeof(right_payload)) ==
-		       V90_INFO0_OK &&
-	       memcmp(left_payload, right_payload, sizeof(left_payload)) == 0;
+	return v90_info0a_equal(left, &expected);
 }
 
 static bool digital_equal(
 	const struct v90_info0d *left, const struct v90_info0d *right)
 {
 	struct v90_info0d expected = *right;
-	uint8_t left_payload[V90_INFO0D_PAYLOAD_BYTES];
-	uint8_t right_payload[V90_INFO0D_PAYLOAD_BYTES];
 
 	expected.common.acknowledges_peer_info0 =
 		left->common.acknowledges_peer_info0;
-	return v90_info0d_encode(left, left_payload, sizeof(left_payload)) ==
-		       V90_INFO0_OK &&
-	       v90_info0d_encode(&expected, right_payload, sizeof(right_payload)) ==
-		       V90_INFO0_OK &&
-	       memcmp(left_payload, right_payload, sizeof(left_payload)) == 0;
+	return v90_info0d_equal(left, &expected);
 }
 
 static bool v92_analog_equal(
 	const struct v92_info0a *left, const struct v92_info0a *right)
 {
 	struct v92_info0a expected = *right;
-	uint8_t left_payload[V90_INFO0A_PAYLOAD_BYTES];
-	uint8_t right_payload[V90_INFO0A_PAYLOAD_BYTES];
 
 	expected.v90.acknowledges_peer_info0 =
 		left->v90.acknowledges_peer_info0;
-	return v92_info0a_encode(left, left_payload, sizeof(left_payload)) ==
-		       V92_INFO0_OK &&
-	       v92_info0a_encode(&expected, right_payload, sizeof(right_payload)) ==
-		       V92_INFO0_OK &&
-	       memcmp(left_payload, right_payload, sizeof(left_payload)) == 0;
+	return v92_info0a_equal(left, &expected);
 }
 
 static bool v92_digital_equal(
 	const struct v92_info0d *left, const struct v92_info0d *right)
 {
 	struct v92_info0d expected = *right;
-	uint8_t left_payload[V90_INFO0D_PAYLOAD_BYTES];
-	uint8_t right_payload[V90_INFO0D_PAYLOAD_BYTES];
 
 	expected.v90.common.acknowledges_peer_info0 =
 		left->v90.common.acknowledges_peer_info0;
-	return v92_info0d_encode(left, left_payload, sizeof(left_payload)) ==
-		       V92_INFO0_OK &&
-	       v92_info0d_encode(&expected, right_payload, sizeof(right_payload)) ==
-		       V92_INFO0_OK &&
-	       memcmp(left_payload, right_payload, sizeof(left_payload)) == 0;
+	return v92_info0d_equal(left, &expected);
 }
 
 static enum pcm_protocol protocol_for_mode(enum test_info0_mode mode)
@@ -1019,11 +995,14 @@ static bool test_validation(void)
 		      PCM_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT,
 	      "V.92 exchange accepted a local record without capability");
 	v92_analog.v92_capable = true;
-	CHECK(pcm_phase2_info0_exchange_init_v92_analog(
+	CHECK(!pcm_info0_records_are_equal(PCM_PROTOCOL_V90, V90_ANALOG_MODEM, NULL, NULL) &&
+	      pcm_phase2_info0_exchange_init_v92_analog(
 		      &exchange, TEST_AMPLITUDE, &v92_analog) ==
 		      PCM_PHASE2_INFO0_EXCHANGE_OK,
 	      "V.92 validation fixture did not initialize");
 	exchange.protocol = (enum pcm_protocol)9;
+	CHECK(!pcm_info0_records_are_equal(exchange.protocol, exchange.local_role,
+		&exchange.peer_info0, &exchange.peer_info0), "invalid INFO0 protocol compared equal");
 	before = exchange;
 	CHECK(pcm_phase2_info0_exchange_sample(
 		      &exchange, 0, &sample, &event) ==

@@ -31,6 +31,22 @@ bool v92_info0d_is_valid(const struct v92_info0d *info0d)
 		       info0d->v92_capable, info0d->short_phase2_requested);
 }
 
+bool v92_info0a_equal(const struct v92_info0a *left, const struct v92_info0a *right)
+{
+	return v92_info0a_is_valid(left) && v92_info0a_is_valid(right) &&
+	       v90_info0a_equal(&left->v90, &right->v90) &&
+	       left->v92_capable == right->v92_capable &&
+	       left->short_phase2_requested == right->short_phase2_requested;
+}
+
+bool v92_info0d_equal(const struct v92_info0d *left, const struct v92_info0d *right)
+{
+	return v92_info0d_is_valid(left) && v92_info0d_is_valid(right) &&
+	       v90_info0d_equal(&left->v90, &right->v90) &&
+	       left->v92_capable == right->v92_capable &&
+	       left->short_phase2_requested == right->short_phase2_requested;
+}
+
 static enum v92_info0_result map_v90_result(enum v90_info0_result result)
 {
 	switch (result) {

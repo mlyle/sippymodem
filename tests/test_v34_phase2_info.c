@@ -33,38 +33,6 @@ static struct v34_info0 base_info0(bool acknowledged)
 	};
 }
 
-static bool info0_equal(
-	const struct v34_info0 *left,
-	const struct v34_info0 *right)
-{
-	return left->symbol_rate_2743_supported ==
-		       right->symbol_rate_2743_supported &&
-	       left->symbol_rate_2800_supported ==
-		       right->symbol_rate_2800_supported &&
-	       left->symbol_rate_3429_supported ==
-		       right->symbol_rate_3429_supported &&
-	       left->low_carrier_3000_supported ==
-		       right->low_carrier_3000_supported &&
-	       left->high_carrier_3000_supported ==
-		       right->high_carrier_3000_supported &&
-	       left->low_carrier_3200_supported ==
-		       right->low_carrier_3200_supported &&
-	       left->high_carrier_3200_supported ==
-		       right->high_carrier_3200_supported &&
-	       left->symbol_rate_3429_transmit_permitted ==
-		       right->symbol_rate_3429_transmit_permitted &&
-	       left->transmit_power_reduction_supported ==
-		       right->transmit_power_reduction_supported &&
-	       left->maximum_symbol_rate_difference_steps ==
-		       right->maximum_symbol_rate_difference_steps &&
-	       left->cme_modem == right->cme_modem &&
-	       left->constellation_1664_supported ==
-		       right->constellation_1664_supported &&
-	       left->transmit_clock_source == right->transmit_clock_source &&
-	       left->acknowledges_peer_info0 ==
-		       right->acknowledges_peer_info0;
-}
-
 struct receive_capture {
 	struct v34_phase2_info_event last;
 	size_t received_bit;
@@ -201,8 +169,10 @@ static bool test_info0_codec(void)
 		      payload, sizeof(payload),
 		      V34_INFO0_PAYLOAD_BITS, &decoded) ==
 		      V34_INFO0_OK &&
-	      info0_equal(&decoded, &selected),
+	      v34_info0_equal(&decoded, &selected),
 	      "INFO0 fields did not round trip");
+	decoded.transmit_clock_source = V34_INFO0_CLOCK_INTERNAL;
+	CHECK(!v34_info0_equal(&decoded, &selected), "V.34 comparison ignored clock source");
 
 	selected = base_info0(true);
 	CHECK(v34_info0_encode(
@@ -214,7 +184,7 @@ static bool test_info0_codec(void)
 		      payload, V34_INFO0_PAYLOAD_BYTES,
 		      V34_INFO0_PAYLOAD_BITS, &decoded) ==
 		      V34_INFO0_OK &&
-	      info0_equal(&decoded, &selected),
+	      v34_info0_equal(&decoded, &selected),
 	      "base INFO0 acknowledgment did not round trip");
 	return true;
 }
@@ -273,7 +243,7 @@ static bool test_info0_validation(void)
 		      payload, sizeof(payload),
 		      V34_INFO0_PAYLOAD_BITS - 1u, &decoded) ==
 		      V34_INFO0_INVALID_PAYLOAD &&
-	      info0_equal(&decoded, &saved_decoded),
+	      v34_info0_equal(&decoded, &saved_decoded),
 	      "INFO0 decoding mutated output after invalid input");
 
 	payload[2] = 1;
@@ -294,7 +264,7 @@ static bool test_info0_validation(void)
 		      payload, sizeof(payload),
 		      V34_INFO0_PAYLOAD_BITS, &decoded) ==
 		      V34_INFO0_INVALID_PAYLOAD &&
-	      info0_equal(&decoded, &saved_decoded) &&
+	      v34_info0_equal(&decoded, &saved_decoded) &&
 	      !v34_info0_is_valid(NULL),
 	      "INFO0 accepted a reserved clock source");
 	return true;

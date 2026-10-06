@@ -127,12 +127,8 @@ static bool test_capability_matrix(void)
 			      v92_info0d_decode(
 				      d, sizeof(d), V90_INFO0D_PAYLOAD_BITS,
 				      &decoded_d) == V92_INFO0_OK &&
-			      decoded_a.v92_capable == (capable != 0) &&
-			      decoded_d.v92_capable == (capable != 0) &&
-			      decoded_a.short_phase2_requested ==
-				      (short_requested != 0) &&
-			      decoded_d.short_phase2_requested ==
-				      (short_requested != 0) &&
+			      v92_info0a_equal(&analog, &decoded_a) &&
+			      v92_info0d_equal(&headend, &decoded_d) &&
 			      v92_info0a_encode(
 				      &decoded_a, repeated_a,
 				      sizeof(repeated_a)) == V92_INFO0_OK &&
@@ -143,6 +139,14 @@ static bool test_capability_matrix(void)
 			      memcmp(d, repeated_d, sizeof(d)) == 0,
 			      "capability matrix %u/%u did not round trip",
 			      capable, short_requested);
+			decoded_a.v92_capable = decoded_d.v92_capable = !analog.v92_capable;
+			CHECK(!v92_info0a_equal(&analog, &decoded_a) && !v92_info0d_equal(&headend, &decoded_d),
+			      "INFO0 comparison ignored V.92 capability");
+			decoded_a.v92_capable = decoded_d.v92_capable = analog.v92_capable;
+			decoded_a.short_phase2_requested = !analog.short_phase2_requested;
+			decoded_d.short_phase2_requested = !headend.short_phase2_requested;
+			CHECK(!v92_info0a_equal(&analog, &decoded_a) && !v92_info0d_equal(&headend, &decoded_d),
+			      "INFO0 comparison ignored short Phase 2");
 		}
 	}
 	return true;
@@ -177,7 +181,7 @@ static bool test_validation(void)
 	CHECK(v92_info0a_decode(
 		      payload, sizeof(payload), V90_INFO0A_PAYLOAD_BITS,
 		      &decoded) == V92_INFO0_INVALID_PAYLOAD &&
-	      memcmp(&decoded, &saved, sizeof(decoded)) == 0,
+	      v92_info0a_equal(&decoded, &saved),
 	      "malformed extension changed the decoded record");
 	CHECK(v92_info0a_encode(NULL, payload, sizeof(payload)) ==
 		      V92_INFO0_INVALID_ARGUMENT &&

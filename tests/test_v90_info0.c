@@ -24,49 +24,6 @@ static struct v34_info0 common_capabilities(bool acknowledged)
 	};
 }
 
-static bool common_equal(
-	const struct v34_info0 *left, const struct v34_info0 *right)
-{
-	return left->symbol_rate_2743_supported ==
-		       right->symbol_rate_2743_supported &&
-	       left->symbol_rate_2800_supported ==
-		       right->symbol_rate_2800_supported &&
-	       left->symbol_rate_3429_supported ==
-		       right->symbol_rate_3429_supported &&
-	       left->low_carrier_3000_supported ==
-		       right->low_carrier_3000_supported &&
-	       left->high_carrier_3000_supported ==
-		       right->high_carrier_3000_supported &&
-	       left->low_carrier_3200_supported ==
-		       right->low_carrier_3200_supported &&
-	       left->high_carrier_3200_supported ==
-		       right->high_carrier_3200_supported &&
-	       left->symbol_rate_3429_transmit_permitted ==
-		       right->symbol_rate_3429_transmit_permitted &&
-	       left->transmit_power_reduction_supported ==
-		       right->transmit_power_reduction_supported &&
-	       left->maximum_symbol_rate_difference_steps ==
-		       right->maximum_symbol_rate_difference_steps &&
-	       left->cme_modem == right->cme_modem &&
-	       left->constellation_1664_supported ==
-		       right->constellation_1664_supported &&
-	       left->acknowledges_peer_info0 ==
-		       right->acknowledges_peer_info0;
-}
-
-static bool digital_equal(
-	const struct v90_info0d *left, const struct v90_info0d *right)
-{
-	return common_equal(&left->common, &right->common) &&
-	       left->nominal_transmit_power == right->nominal_transmit_power &&
-	       left->maximum_transmit_power == right->maximum_transmit_power &&
-	       left->measure_power_at_codec_output ==
-		       right->measure_power_at_codec_output &&
-	       left->pcm_law == right->pcm_law &&
-	       left->upstream_symbol_rate_3429_supported ==
-		       right->upstream_symbol_rate_3429_supported;
-}
-
 static bool generate_frame(
 	const uint8_t *payload, size_t payload_bits,
 	uint8_t *frame, size_t frame_capacity)
@@ -129,7 +86,7 @@ static bool test_wire_images(void)
 	      v90_info0a_decode(
 		      a_payload, sizeof(a_payload), V90_INFO0A_PAYLOAD_BITS,
 		      &decoded_a) == V90_INFO0_OK &&
-	      common_equal(&analogue, &decoded_a) &&
+	      v90_info0a_equal(&analogue, &decoded_a) &&
 	      generate_frame(
 		      a_payload, V90_INFO0A_PAYLOAD_BITS,
 		      a_frame, sizeof(a_frame)) &&
@@ -141,7 +98,7 @@ static bool test_wire_images(void)
 	      v90_info0d_decode(
 		      d_payload, sizeof(d_payload), V90_INFO0D_PAYLOAD_BITS,
 		      &decoded_d) == V90_INFO0_OK &&
-	      digital_equal(&digital, &decoded_d) &&
+	      v90_info0d_equal(&digital, &decoded_d) &&
 	      generate_frame(
 		      d_payload, V90_INFO0D_PAYLOAD_BITS,
 		      d_frame, sizeof(d_frame)) &&
@@ -168,9 +125,31 @@ static bool test_shared_v34_capabilities(void)
 			continue;
 		CHECK(v34_info0_encode(&source, ordinary, sizeof(ordinary)) == V34_INFO0_OK &&
 		      v90_info0a_decode(ordinary, sizeof(ordinary), V90_INFO0A_PAYLOAD_BITS,
-			&decoded) == V90_INFO0_OK && common_equal(&source, &decoded) &&
+			&decoded) == V90_INFO0_OK && v90_info0a_equal(&source, &decoded) &&
 		      decoded.transmit_clock_source == V34_INFO0_CLOCK_INTERNAL,
 		      "V.90 interpreted received reserved clock bits");
+	}
+	return true;
+}
+
+static bool test_comparison(void)
+{
+	struct v90_info0d source = { .common = common_capabilities(false) }, decoded;
+	uint8_t original[V90_INFO0D_PAYLOAD_BYTES], mutated[V90_INFO0D_PAYLOAD_BYTES];
+	uint8_t canonical[V90_INFO0D_PAYLOAD_BYTES];
+
+	CHECK(!v90_info0a_equal(NULL, &source.common) && !v90_info0d_equal(&source, NULL) &&
+	      v90_info0d_encode(&source, original, sizeof(original)) == V90_INFO0_OK,
+	      "INFO0 comparison fixture did not encode or accepted null");
+	for (size_t bit = 0; bit < V90_INFO0D_PAYLOAD_BITS; ++bit) {
+		memcpy(mutated, original, sizeof(mutated));
+		mutated[bit / 8u] ^= (uint8_t)(1u << (7u - bit % 8u));
+		CHECK(v90_info0d_decode(mutated, sizeof(mutated), V90_INFO0D_PAYLOAD_BITS,
+			      &decoded) == V90_INFO0_OK &&
+		      v90_info0d_encode(&decoded, canonical, sizeof(canonical)) == V90_INFO0_OK &&
+		      v90_info0d_equal(&source, &decoded) ==
+			      (memcmp(original, canonical, sizeof(original)) == 0),
+		      "INFO0 comparison differs from encoded fields at bit %zu", bit);
 	}
 	return true;
 }
@@ -200,11 +179,11 @@ static bool test_reserved_bits(void)
 	CHECK(v90_info0a_decode(
 		      a_payload, sizeof(a_payload), V90_INFO0A_PAYLOAD_BITS,
 		      &decoded_a) == V90_INFO0_OK &&
-	      common_equal(&decoded_a, &analogue) &&
+	      v90_info0a_equal(&decoded_a, &analogue) &&
 	      v90_info0d_decode(
 		      d_payload, sizeof(d_payload), V90_INFO0D_PAYLOAD_BITS,
 		      &decoded_d) == V90_INFO0_OK &&
-	      digital_equal(&decoded_d, &digital),
+	      v90_info0d_equal(&decoded_d, &digital),
 	      "V.90 reserved bits were interpreted");
 	CHECK(v90_info0a_encode(&decoded_a, a_payload, sizeof(a_payload)) ==
 		      V90_INFO0_OK &&
@@ -233,7 +212,7 @@ static bool test_validation(void)
 	memcpy(saved_payload, payload, sizeof(payload));
 	invalid.maximum_symbol_rate_difference_steps =
 		V90_INFO0_MAX_SYMBOL_RATE_DIFFERENCE_STEPS + 1u;
-	CHECK(!v90_info0_is_valid(&invalid) &&
+	CHECK(!v90_info0_is_valid(&invalid) && !v90_info0a_equal(&invalid, &invalid) &&
 	      v90_info0a_encode(&invalid, payload, sizeof(payload)) ==
 		      V90_INFO0_INVALID_CAPABILITIES &&
 	      memcmp(payload, saved_payload, sizeof(payload)) == 0,
@@ -264,7 +243,7 @@ static bool test_validation(void)
 	      v90_info0a_decode(
 		      payload, sizeof(payload), V90_INFO0A_PAYLOAD_BITS - 1u,
 		      &decoded) == V90_INFO0_INVALID_PAYLOAD &&
-	      common_equal(&decoded, &saved_decoded),
+	      v90_info0a_equal(&decoded, &saved_decoded),
 	      "INFO0a decoding mutated output after invalid input");
 	payload[2] = 1;
 	CHECK(v90_info0a_decode(
@@ -276,7 +255,7 @@ static bool test_validation(void)
 	CHECK(v90_info0a_decode(
 		      payload, sizeof(payload), V90_INFO0A_PAYLOAD_BITS,
 		      &decoded) == V90_INFO0_INVALID_PAYLOAD &&
-	      common_equal(&decoded, &saved_decoded) &&
+	      v90_info0a_equal(&decoded, &saved_decoded) &&
 	      !v90_info0_is_valid(NULL) && !v90_info0d_is_valid(NULL) &&
 	      strcmp(v90_info0_result_name(V90_INFO0_INVALID_PAYLOAD),
 		     "invalid payload") == 0 &&
@@ -294,6 +273,7 @@ int main(void)
 	} tests[] = {
 		{ "wire images", test_wire_images },
 		{ "reserved bits", test_reserved_bits },
+		{ "field comparison", test_comparison },
 		{ "shared V.34 capabilities", test_shared_v34_capabilities },
 		{ "validation", test_validation },
 	};
