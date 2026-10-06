@@ -51,7 +51,7 @@
  *	AT&: C D E F H P R S F W
  *	AT\: N
  * 	AT%: C E
- * 	AT+: DS DSC MS V34B V90D V90U V91 V92Q V92U FCLASS GCI GMI GMM GMR
+ * 	AT+: DS DSC MS V34B V90D V90U V91 V92Q V92U FCLASS GCI GMI GMM GMR GCAP
  *      AT#: CID
  *	
  ********************************************************************
@@ -108,7 +108,7 @@ extern int  modem_set_mode(struct modem *m, enum MODEM_MODE mode);
  */
 
 /* simple toupper + strncmp */
-static int toupper_strncmp(char *s1, char *s2, int n)
+static int toupper_strncmp(const char *s1, const char *s2, int n)
 {
 	int i;
 	for(i = 0 ; i < n ; i++)
@@ -975,6 +975,41 @@ static int process_fax_command(struct modem *m, char *p, int *len)
 
 /* ------------------------------------------------------------ */
 
+static int process_plus_G(struct modem *m, char *p, int *len)
+{
+	static const struct {
+		const char *name, *information;
+	} actions[] = {
+		{ "MI", modem_author }, { "MM", modem_name }, { "MR", modem_version },
+		{ "CAP", "+GCAP: +MS, +DS, +FCLASS" },
+	};
+
+	if (!toupper_strncmp(p, "CI", 2)) {
+		int result = process_plus_GCI(m, p + 2, len);
+		*len += 2;
+		return result;
+	}
+	for (unsigned i = 0; i < sizeof(actions) / sizeof(actions[0]); ++i) {
+		size_t length = strlen(actions[i].name);
+		if (toupper_strncmp(p, actions[i].name, (int)length))
+			continue;
+		p += length;
+		*len = (int)length;
+		int test = p[0] == '=' && p[1] == '?';
+		if (test) {
+			p += 2;
+			*len += 2;
+		}
+		if (*p && *p != ';' && *p != '+')
+			return -1;
+		if (!test)
+			modem_frontend_info(m, actions[i].information,
+				(int)strlen(actions[i].information));
+		return 0;
+	}
+	return -1;
+}
+
 /*
  *   Main AT processor
  *
@@ -998,6 +1033,9 @@ int process_at_command(struct modem *m, char *cmd)
 			return -1;
 		switch(c) {
 
+		case ';': /* Extended command separator. */
+			ret = 0;
+			break;
 		case 'A': /* ATA */
 			ret = process_A(m,p,&len);
 			return ret;
@@ -1142,35 +1180,8 @@ int process_at_command(struct modem *m, char *cmd)
 					return -1;
 				}
 				break;
-			case 'G': /* AT+G - generic DCE cntrl */
-				c = toupper(*p++);
-				switch (c) {
-				case 'C': /* AT+GCI[=|?|=?] */
-					if (toupper(*p++) == 'I')
-						ret = process_plus_GCI(m,p,&len);
-					else
-						return -1;
-					break;
-				case 'M': /* AT+GM[I|M|R]   */
-					c = toupper(*p++);
-					switch (c) {
-					case 'I': /* AT+GMI */
-						modem_frontend_info(m, modem_author,strlen(modem_author));
-						break;
-					case 'M': /* AT+GMM */
-						modem_frontend_info(m, modem_name,strlen(modem_name));
-						break;
-					case 'R': /* AT+GMR */
-						modem_frontend_info(m, modem_version,strlen(modem_version));
-						break;
-					default:
-						return -1;
-					}
-					ret = 0;
-					break;
-				default:
-					return -1;
-				}
+			case 'G': /* AT+G - generic DCE control */
+				ret = process_plus_G(m, p, &len);
 				break;
 			case 'F': /* AT+F */
 				if(!toupper_strncmp(p,"CLASS",5)) {

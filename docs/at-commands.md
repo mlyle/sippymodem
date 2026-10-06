@@ -340,14 +340,21 @@ training trace for intermediate negotiation steps.
 | `AT+GMI` | Author/manufacturer identification |
 | `AT+GMM` | Product identification |
 | `AT+GMR` | Version |
+| `AT+GCAP` | Supported capability groups: `+MS`, `+DS`, and the `+FCLASS=0` stub |
 | `AT+GCI=<hex>` | Choose a supported country code |
 | `AT+GCI?` | Current code, prefixed `+GCI:` |
 | `AT+GCI=?` | Available codes |
 | `AT+FCLASS=0` | Select data mode |
 | `AT+FCLASS?`, `AT+FCLASS=?` | `0` in the normal build |
 
-Other ATI selectors produce ERROR. `+GMI`, `+GMM`, and `+GMR` are bare commands,
-without `?` or `=`. Country selection changes the retained legacy regional
+Other ATI selectors produce ERROR. `+GMI`, `+GMM`, `+GMR`, and `+GCAP` are
+information actions: bare execution returns information, and the `=?` test
+returns OK without information. They accept no parameters or `?` read form.
+Use `;` between an extended command and a following command, for example
+`AT+GMI=?;+GMM=?;+GCAP=?`. Direct `+` chaining remains supported for compatibility.
+These forms follow [V.250 sections 5.4.3 and 5.4.5](https://www.itu.int/rec/T-REC-V.250-200307-I/en).
+
+Country selection changes the retained legacy regional
 timing parameters; it does not select SIP destinations or codecs. Codes above
 `ff` are retained legacy regional profile identifiers. Negative, overflowing,
 unsupported, or extra values produce `ERROR` without changing the profile. `ATZ`
