@@ -90,26 +90,6 @@ static int16_t quantize(enum g711_law law, int16_t sample)
 		       g711_decode_pcmu(g711_encode_pcmu(sample));
 }
 
-static bool parameters_match(
-	const struct v90_cp_parameters *left,
-	const struct v90_cp_parameters *right)
-{
-	uint8_t left_frame[V90_CP_MAX_FRAME_BYTES] = { 0 };
-	uint8_t right_frame[V90_CP_MAX_FRAME_BYTES] = { 0 };
-	size_t left_bits = 0;
-	size_t right_bits = 0;
-
-	return v90_cp_encode(
-		       left, left_frame, sizeof(left_frame), &left_bits) ==
-		       V90_CP_OK &&
-	       v90_cp_encode(
-		       right, right_frame, sizeof(right_frame), &right_bits) ==
-		       V90_CP_OK &&
-	       left_bits == right_bits &&
-	       memcmp(left_frame, right_frame,
-		      (left_bits + 7u) / 8u) == 0;
-}
-
 static bool check_cleardown(
 	enum g711_law law, enum v34_constellation_size constellation,
 	enum v90_cp_kind kind)
@@ -564,12 +544,12 @@ static bool run_line(
 				   V90_UPSTREAM_RX_REQUEST_MP_PRIME) {
 				CHECK(!mp_prime_requested && !ed_requested &&
 				      receiver.mapping_prepared && deferred_mp_selected && preparation_samples >= 320u &&
-				      parameters_match(&event, &expected_data),
+				      v90_cp_parameters_are_equal(&event, &expected_data),
 				      "first data CP event changed");
 				mp_prime_requested = true;
 			} else if (result == V90_UPSTREAM_RX_REQUEST_ED) {
 				CHECK(!damage_prime && mp_prime_requested && !ed_requested &&
-				      parameters_match(&event, &prime),
+				      v90_cp_parameters_are_equal(&event, &prime),
 				      "CP-prime event changed or arrived early");
 				ed_requested = true;
 			} else if (result == V90_UPSTREAM_RX_E_COMPLETE) {

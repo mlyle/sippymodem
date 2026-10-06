@@ -69,25 +69,6 @@ static struct v90_mp_record peer_mp(void)
 	};
 }
 
-static bool parameters_match(
-	const struct v90_cp_parameters *left,
-	const struct v90_cp_parameters *right)
-{
-	uint8_t left_frame[V90_CP_MAX_FRAME_BYTES] = { 0 };
-	uint8_t right_frame[V90_CP_MAX_FRAME_BYTES] = { 0 };
-	size_t left_bits = 0;
-	size_t right_bits = 0;
-
-	return v90_cp_encode(
-		       left, left_frame, sizeof(left_frame), &left_bits) ==
-		       V90_CP_OK &&
-	       v90_cp_encode(
-		       right, right_frame, sizeof(right_frame), &right_bits) ==
-		       V90_CP_OK &&
-	       left_bits == right_bits &&
-	       memcmp(left_frame, right_frame, sizeof(left_frame)) == 0;
-}
-
 static bool fixed_data_handoff_matches(
 	const struct v34_line_receiver *data,
 	const struct v34_line_receiver *control)
@@ -345,8 +326,8 @@ static bool run_line(
 				CHECK(v90_phase4_cp_line_rx_pending_parameters(
 					      &cp_rx, &pending) ==
 					      V90_PHASE4_CP_LINE_RX_OK &&
-				      parameters_match(&pending, expected) &&
-				      parameters_match(&event.parameters, expected),
+				      v90_cp_parameters_are_equal(&pending, expected) &&
+				      v90_cp_parameters_are_equal(&event.parameters, expected),
 				      "pending CP record changed at sample %zu",
 				      clock);
 				if (!training_received) {
@@ -543,7 +524,7 @@ static bool test_contracts(void)
 		      V90_PHASE4_CP_LINE_RX_INVALID_ARGUMENT &&
 	      v90_phase4_cp_line_rx_pending_parameters(&cp_rx, &pending) ==
 		      V90_PHASE4_CP_LINE_RX_INVALID_STATE &&
-	      parameters_match(&pending, &training),
+	      v90_cp_parameters_are_equal(&pending, &training),
 	      "rejected pending-parameter read changed its output");
 	CHECK(strcmp(v90_phase4_e_line_rx_result_name(
 		     V90_PHASE4_E_LINE_RX_E_COMPLETE),

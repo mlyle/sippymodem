@@ -75,6 +75,12 @@ struct v90_cp_parameters {
 bool v90_cp_parameters_are_valid(
 	const struct v90_cp_parameters *parameters);
 
+/* Compare encoded fields, including acknowledgment. Reject invalid records;
+ * ignore struct padding, undeclared rows and an absent codec constellation set. */
+bool v90_cp_parameters_are_equal(
+	const struct v90_cp_parameters *left,
+	const struct v90_cp_parameters *right);
+
 /* Return zero for invalid parameters. The final octet may contain unused
  * low-order storage bits; frame_bits is the authoritative wire length. */
 size_t v90_cp_frame_bits(const struct v90_cp_parameters *parameters);

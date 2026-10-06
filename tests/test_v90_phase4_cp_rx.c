@@ -62,26 +62,6 @@ static struct v90_cp_parameters parameters(
 	return selected;
 }
 
-static bool parameters_are_equal(
-	const struct v90_cp_parameters *left,
-	const struct v90_cp_parameters *right)
-{
-	uint8_t left_frame[V90_CP_MAX_FRAME_BYTES];
-	uint8_t right_frame[V90_CP_MAX_FRAME_BYTES];
-	size_t left_bits = 0;
-	size_t right_bits = 0;
-
-	return v90_cp_encode(
-		       left, left_frame, sizeof(left_frame), &left_bits) ==
-		       V90_CP_OK &&
-	       v90_cp_encode(
-		       right, right_frame, sizeof(right_frame), &right_bits) ==
-		       V90_CP_OK &&
-	       left_bits == right_bits &&
-	       memcmp(left_frame, right_frame,
-		      (left_bits + 7u) / 8u) == 0;
-}
-
 static bool transfer_record(
 	struct v90_phase4_cp_tx *tx,
 	struct v90_phase4_cp_rx *rx,
@@ -171,7 +151,7 @@ static bool test_first_symbol_and_continuous_records(void)
 			      event.type == V90_CP_RECEIVE_FRAME &&
 			      event.frame_result == V90_CP_OK &&
 			      event.observed_bits == V90_CP_MIN_FRAME_BITS &&
-			      parameters_are_equal(&event.parameters, &training),
+			      v90_cp_parameters_are_equal(&event.parameters, &training),
 			      "first CPt changed for role/constellation %zu/%zu",
 			      role, constellation);
 			CHECK(v90_phase4_cp_tx_start_next_record(
@@ -181,7 +161,7 @@ static bool test_first_symbol_and_continuous_records(void)
 			      event.type == V90_CP_RECEIVE_FRAME &&
 			      event.frame_result == V90_CP_OK &&
 			      event.observed_bits == V90_CP_MAX_FRAME_BITS &&
-			      parameters_are_equal(&event.parameters, &data) &&
+			      v90_cp_parameters_are_equal(&event.parameters, &data) &&
 			      v90_phase4_cp_rx_is_valid(&rx),
 			      "continuous CP changed for role/constellation %zu/%zu",
 			      role, constellation);
@@ -230,7 +210,7 @@ static bool test_corruption_and_reacquisition(void)
 			      &tx, &rx, false, SIZE_MAX, 0, &event) &&
 		      event.type == V90_CP_RECEIVE_FRAME &&
 		      event.frame_result == V90_CP_OK &&
-		      parameters_are_equal(&event.parameters, &training),
+		      v90_cp_parameters_are_equal(&event.parameters, &training),
 		      "CP receiver did not reacquire constellation %zu",
 		      constellation);
 	}
@@ -267,7 +247,7 @@ static bool test_fixed_phase_ambiguity(void)
 				      &tx, &rx, false, SIZE_MAX, offset, &event) &&
 			      event.type == V90_CP_RECEIVE_FRAME &&
 			      event.frame_result == V90_CP_OK &&
-			      parameters_are_equal(&event.parameters, &training),
+			      v90_cp_parameters_are_equal(&event.parameters, &training),
 			      "CP fixed phase offset %zu/%u changed the record",
 			      constellation, offset);
 		}
@@ -345,7 +325,7 @@ static bool test_two_rejections_in_one_symbol(void)
 				      &tx, &rx, points != 0u, SIZE_MAX, 0u, &event) &&
 			      event.type == V90_CP_RECEIVE_FRAME &&
 			      event.frame_result == V90_CP_OK &&
-			      parameters_are_equal(&event.parameters, &retry),
+			      v90_cp_parameters_are_equal(&event.parameters, &retry),
 			      "noisy symbol prevented clean retry");
 			CHECK(rx.descrambler.history == tx.scrambler.history,
 			      "noisy symbol lost continuous history");

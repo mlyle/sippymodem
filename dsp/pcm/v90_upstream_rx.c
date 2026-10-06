@@ -40,26 +40,6 @@ static bool downstream_rate_is_enabled(
 		(UINT32_C(1) << (parameters->selected_rate_index - 1u))) != 0;
 }
 
-static bool parameters_are_equal(
-	const struct v90_cp_parameters *left,
-	const struct v90_cp_parameters *right)
-{
-	uint8_t left_frame[V90_CP_MAX_FRAME_BYTES] = { 0 };
-	uint8_t right_frame[V90_CP_MAX_FRAME_BYTES] = { 0 };
-	size_t left_bits = 0;
-	size_t right_bits = 0;
-
-	return v90_cp_encode(
-		       left, left_frame, sizeof(left_frame), &left_bits) ==
-		       V90_CP_OK &&
-	       v90_cp_encode(
-		       right, right_frame, sizeof(right_frame), &right_bits) ==
-		       V90_CP_OK &&
-	       left_bits == right_bits &&
-	       memcmp(left_frame, right_frame,
-		      (left_bits + 7u) / 8u) == 0;
-}
-
 static bool data_parameters_are_equal(
 	const struct v90_cp_parameters *left,
 	const struct v90_cp_parameters *right)
@@ -69,7 +49,7 @@ static bool data_parameters_are_equal(
 
 	normalized_left.acknowledges_peer = false;
 	normalized_right.acknowledges_peer = false;
-	return parameters_are_equal(&normalized_left, &normalized_right);
+	return v90_cp_parameters_are_equal(&normalized_left, &normalized_right);
 }
 
 static enum v90_upstream_rx_result validate_data_parameters(
@@ -288,7 +268,7 @@ static enum v90_upstream_rx_result accept_cp_record(
 	if (v90_phase4_cp_line_rx_pending_parameters(
 		    &receiver->state.cp, &parameters) !=
 		    V90_PHASE4_CP_LINE_RX_OK ||
-	    !parameters_are_equal(&parameters, &event->parameters))
+	    !v90_cp_parameters_are_equal(&parameters, &event->parameters))
 		return V90_UPSTREAM_RX_NUMERIC_FAILURE;
 	/* V.90 9.7: zero rate is a hangup, not a data selection. Its
 	 * constellation and capability fields do not constrain cleardown. */

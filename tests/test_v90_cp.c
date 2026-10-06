@@ -104,39 +104,6 @@ static struct v90_cp_parameters variable_parameters(
 	return parameters;
 }
 
-static bool parameters_are_equal(
-	const struct v90_cp_parameters *left,
-	const struct v90_cp_parameters *right)
-{
-	return memcmp(
-		       left->transmit_constellations,
-		       right->transmit_constellations,
-		       sizeof(left->transmit_constellations)) == 0 &&
-	       memcmp(
-		       left->codec_constellations,
-		       right->codec_constellations,
-		       sizeof(left->codec_constellations)) == 0 &&
-	       left->kind == right->kind && left->law == right->law &&
-	       left->upstream_rate_mask == right->upstream_rate_mask &&
-	       left->trn1d_ratio_q3_13 == right->trn1d_ratio_q3_13 &&
-	       left->shaping_a1_q1_6 == right->shaping_a1_q1_6 &&
-	       left->shaping_a2_q1_6 == right->shaping_a2_q1_6 &&
-	       left->shaping_b1_q1_6 == right->shaping_b1_q1_6 &&
-	       left->shaping_b2_q1_6 == right->shaping_b2_q1_6 &&
-	       left->selected_rate_index == right->selected_rate_index &&
-	       left->sign_redundancy == right->sign_redundancy &&
-	       left->spectral_lookahead == right->spectral_lookahead &&
-	       left->constellation_count == right->constellation_count &&
-	       memcmp(
-		       left->frame_constellation,
-		       right->frame_constellation,
-		       sizeof(left->frame_constellation)) == 0 &&
-	       left->request_silence == right->request_silence &&
-	       left->acknowledges_peer == right->acknowledges_peer &&
-	       left->codec_constellations_differ ==
-		       right->codec_constellations_differ;
-}
-
 static uint8_t reference_frame_bit(
 	const uint8_t *frame, size_t bit_index)
 {
@@ -424,7 +391,7 @@ static bool test_known_wire_image(void)
 	CHECK(v90_cp_decode(
 		      frame, sizeof(expected), frame_bits, &decoded) ==
 		      V90_CP_OK &&
-	      parameters_are_equal(&decoded, &parameters),
+	      v90_cp_parameters_are_equal(&decoded, &parameters),
 	      "CP minimum wire image did not round-trip");
 	return true;
 }
@@ -456,7 +423,7 @@ static bool test_variable_round_trip(void)
 			      v90_cp_decode(
 				      frame, (frame_bits + 7u) / 8u,
 				      frame_bits, &decoded) == V90_CP_OK &&
-			      parameters_are_equal(&decoded, &parameters),
+			      v90_cp_parameters_are_equal(&decoded, &parameters),
 			      "CP count %u codec-copy %u did not round-trip",
 			      count, codec_copy);
 		}
@@ -498,7 +465,7 @@ static bool test_cleardown(void)
 	CHECK(v90_cp_parameters_are_valid(&parameters) &&
 	      v90_cp_encode(&parameters, frame, sizeof(frame), &bits) == V90_CP_OK &&
 	      v90_cp_decode(frame, sizeof(frame), bits, &decoded) == V90_CP_OK &&
-	      parameters_are_equal(&parameters, &decoded),
+	      v90_cp_parameters_are_equal(&parameters, &decoded),
 	      "zero-rate CP interpreted its unused constellations");
 	/* Neither zero rate nor ignored constellation contents bypass integrity. */
 	replace_frame_bit(frame, CP_MASKS_FIRST_BIT + 1u, 1u);
@@ -677,6 +644,71 @@ static bool test_corrupt_frames(void)
 	return true;
 }
 
+static bool wire_records_equal(
+	const struct v90_cp_parameters *left,
+	const struct v90_cp_parameters *right)
+{
+	uint8_t left_frame[V90_CP_MAX_FRAME_BYTES];
+	uint8_t right_frame[V90_CP_MAX_FRAME_BYTES];
+	size_t left_bits, right_bits;
+
+	return v90_cp_encode(left, left_frame, sizeof(left_frame), &left_bits) == V90_CP_OK &&
+	       v90_cp_encode(right, right_frame, sizeof(right_frame), &right_bits) == V90_CP_OK &&
+	       left_bits == right_bits &&
+	       memcmp(left_frame, right_frame, (left_bits + 7u) / 8u) == 0;
+}
+
+static bool test_record_comparison(void)
+{
+	struct v90_cp_parameters value = baseline(), changed = value;
+
+	CHECK(!v90_cp_parameters_are_equal(NULL, NULL) &&
+	      !v90_cp_parameters_are_equal(NULL, &value) &&
+	      !v90_cp_parameters_are_equal(&value, NULL),
+	      "null CP records compared equal");
+	changed.selected_rate_index = V90_CP_RATE_INDEX_MAX + 1u;
+	CHECK(!v90_cp_parameters_are_equal(&changed, &changed),
+	      "invalid CP record compared equal to itself");
+	value.selected_rate_index = changed.selected_rate_index = 0u;
+	memset(changed.codec_constellations, 0xa5, sizeof(changed.codec_constellations));
+	memset(changed.transmit_constellations + 1, 0x5a,
+	       sizeof(changed.transmit_constellations) - sizeof(changed.transmit_constellations[0]));
+	CHECK(v90_cp_parameters_are_equal(&value, &changed) && wire_records_equal(&value, &changed),
+	      "comparison interpreted undeclared cleardown rows or an absent codec set");
+
+	/* Independently re-CRC each single-bit mutation, including reserved bits.
+	 * Compare accepted, normalized records against their actual encoded bytes. */
+	for (uint8_t count = 1; count <= V90_CP_MAX_CONSTELLATIONS; ++count) {
+		for (unsigned int codec = 0; codec < 2; ++codec) {
+			for (unsigned int cleardown = 0; cleardown < 2; ++cleardown) {
+				uint8_t frame[V90_CP_MAX_FRAME_BYTES];
+				size_t bits;
+
+				value = variable_parameters(count, codec != 0);
+				if (cleardown != 0)
+					value.selected_rate_index = 0u;
+				CHECK(v90_cp_encode(&value, frame, sizeof(frame), &bits) == V90_CP_OK,
+				      "comparison fixture did not encode");
+				for (size_t bit = CP_INFORMATION_FIRST_BIT;
+				     bit < bits - V90_CP_TRAILER_BITS; ++bit) {
+					uint8_t mutated[V90_CP_MAX_FRAME_BYTES];
+
+					memcpy(mutated, frame, (bits + 7u) / 8u);
+					replace_frame_bit(mutated, bit, reference_frame_bit(frame, bit) ^ 1u);
+					replace_crc(mutated, bits - V90_CP_TRAILER_BITS);
+					if (v90_cp_decode(mutated, sizeof(mutated), bits, &changed) != V90_CP_OK)
+						continue;
+					CHECK(v90_cp_parameters_are_equal(&value, &changed) ==
+					      wire_records_equal(&value, &changed),
+					      "comparison differs from wire: count %u codec %u cleardown %u bit %zu",
+					      count, codec, cleardown, bit);
+				}
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_reserved_bits(void)
 {
 	/* Table 14: the sender clears these bits; the receiver does not
@@ -711,7 +743,7 @@ static bool test_reserved_bits(void)
 				}
 				replace_crc(changed, bits - V90_CP_TRAILER_BITS);
 				CHECK(v90_cp_decode(changed, bytes, bits, &decoded) == V90_CP_OK &&
-				      parameters_are_equal(&decoded, &parameters),
+				      v90_cp_parameters_are_equal(&decoded, &parameters),
 				      "CP interpreted reserved pattern %zu, count %u, codec %u",
 				      pattern, count, codec_copy);
 				CHECK(v90_cp_encode(&decoded, encoded, sizeof(encoded), &encoded_bits) ==
@@ -796,6 +828,7 @@ static bool test_sparse_wire_maps(void)
 int main(void)
 {
 	static const struct test_case tests[] = {
+		{ "wire record comparison", test_record_comparison },
 		{ "sparse wire maps", test_sparse_wire_maps },
 		{ "dimensions and boundaries", test_dimensions_and_boundaries },
 		{ "constellation membership", test_constellation_membership },

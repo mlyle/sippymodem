@@ -70,6 +70,42 @@ bool v90_cp_parameters_are_valid(
 		       parameters->codec_constellations_differ);
 }
 
+bool v90_cp_parameters_are_equal(
+	const struct v90_cp_parameters *left,
+	const struct v90_cp_parameters *right)
+{
+	if (!v90_cp_parameters_are_valid(left) ||
+	    !v90_cp_parameters_are_valid(right) ||
+	    left->kind != right->kind || left->law != right->law ||
+	    left->upstream_rate_mask != right->upstream_rate_mask ||
+	    left->trn1d_ratio_q3_13 != right->trn1d_ratio_q3_13 ||
+	    left->shaping_a1_q1_6 != right->shaping_a1_q1_6 ||
+	    left->shaping_a2_q1_6 != right->shaping_a2_q1_6 ||
+	    left->shaping_b1_q1_6 != right->shaping_b1_q1_6 ||
+	    left->shaping_b2_q1_6 != right->shaping_b2_q1_6 ||
+	    left->selected_rate_index != right->selected_rate_index ||
+	    left->sign_redundancy != right->sign_redundancy ||
+	    left->spectral_lookahead != right->spectral_lookahead ||
+	    left->constellation_count != right->constellation_count ||
+	    left->request_silence != right->request_silence ||
+	    left->acknowledges_peer != right->acknowledges_peer ||
+	    left->codec_constellations_differ != right->codec_constellations_differ ||
+	    memcmp(left->frame_constellation, right->frame_constellation,
+		   sizeof(left->frame_constellation)) != 0)
+		return false;
+	for (size_t row = 0; row < left->constellation_count; ++row) {
+		if (memcmp(left->transmit_constellations[row].ucode_mask,
+			   right->transmit_constellations[row].ucode_mask,
+			   V90_CP_CONSTELLATION_MASK_BYTES) != 0 ||
+		    (left->codec_constellations_differ &&
+		     memcmp(left->codec_constellations[row].ucode_mask,
+			    right->codec_constellations[row].ucode_mask,
+			    V90_CP_CONSTELLATION_MASK_BYTES) != 0))
+			return false;
+	}
+	return true;
+}
+
 size_t v90_cp_frame_bits(const struct v90_cp_parameters *parameters)
 {
 	size_t constellation_sets;

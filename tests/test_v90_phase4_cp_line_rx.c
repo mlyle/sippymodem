@@ -53,25 +53,6 @@ static struct v90_cp_parameters parameters(
 	return selected;
 }
 
-static bool parameters_match(
-	const struct v90_cp_parameters *left,
-	const struct v90_cp_parameters *right)
-{
-	uint8_t left_frame[V90_CP_MAX_FRAME_BYTES] = { 0 };
-	uint8_t right_frame[V90_CP_MAX_FRAME_BYTES] = { 0 };
-	size_t left_bits = 0;
-	size_t right_bits = 0;
-
-	return v90_cp_encode(
-		       left, left_frame, sizeof(left_frame), &left_bits) ==
-		       V90_CP_OK &&
-	       v90_cp_encode(
-		       right, right_frame, sizeof(right_frame), &right_bits) ==
-		       V90_CP_OK &&
-	       left_bits == right_bits &&
-	       memcmp(left_frame, right_frame, sizeof(left_frame)) == 0;
-}
-
 static bool verify_line(
 	enum g711_law law, enum v34_constellation_size constellation)
 {
@@ -173,7 +154,7 @@ static bool verify_line(
 		      event.frame_result == V90_CP_OK &&
 		      event.observed_bits ==
 			      v90_cp_frame_bits(expected[received_records]) &&
-		      parameters_match(
+		      v90_cp_parameters_are_equal(
 			      &event.parameters,
 			      expected[received_records]) &&
 		      v90_phase4_cp_line_rx_has_pending_record(&rx) &&
