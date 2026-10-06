@@ -24,6 +24,7 @@
 
 #include "channel_bench.h"
 #include "test.h"
+#include "lapm_state_fixture.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -1446,7 +1447,7 @@ static bool exercise_v92_rate_exchange(
 			      "simultaneous pause request or duplicate rejection failed");
 		for (unsigned side = 0; side < 2; ++side) {
 			struct modem *m = endpoints[side]->modem;
-			CHECK(memcmp(&m->ec.lapm, &retained[side], sizeof(retained[side])) == 0 && !m->command,
+			CHECK(lapm_states_equal(&m->ec.lapm, &retained[side]) && !m->command,
 			      "rate request changed retained LAPM or terminal mode");
 			CHECK(modem_write(m, (const char *)payload[side] + PAYLOAD, PAYLOAD) == PAYLOAD,
 			      "rate exchange did not retain following host data");
@@ -1464,8 +1465,8 @@ static bool exercise_v92_rate_exchange(
 					     "retraining" : "online") == 0 && m->cfg.ec && !m->command &&
 				      m->ec.lapm.state == retained[side].state &&
 				      m->ec.lapm.v44_path == retained[side].v44_path &&
-				      memcmp(&m->ec.lapm.v44_session, &retained[side].v44_session,
-					     sizeof(retained[side].v44_session)) == 0,
+				      lapm_v44_sessions_equal(&m->ec.lapm.v44_session,
+						     &retained[side].v44_session),
 				      "rate exchange replaced side %u's online link", side);
 				poll_seen[side] |= m->ec.lapm.retrain_poll != 0;
 				for (unsigned sample = 0; sample < SIP_FRAME_SAMPLES; ++sample) {
@@ -1612,8 +1613,8 @@ static bool exercise_v92_media_loss(
 			CHECK(m->dp == owned[side] && m->cfg.ec && !m->command &&
 			      m->ec.lapm.state == retained[side].state &&
 			      m->ec.lapm.v44_path == retained[side].v44_path &&
-			      memcmp(&m->ec.lapm.v44_session, &retained[side].v44_session,
-				     sizeof(retained[side].v44_session)) == 0,
+			      lapm_v44_sessions_equal(&m->ec.lapm.v44_session,
+					     &retained[side].v44_session),
 			      "media loss replaced side %u's data link", side);
 			poll_seen[side] |= m->ec.lapm.retrain_poll != 0;
 		}

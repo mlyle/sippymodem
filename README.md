@@ -130,6 +130,9 @@ handling. The same boundary check exchanges Baudot text in both directions
 without overlapping the half-duplex turns and preserves exact G.711 codewords
 for PCM datapumps.
 
+For repeatable Valgrind runs, including library lifecycle and paired modem
+calls, see [Memory checks](docs/memory-check.md).
+
 The SIP adapter owns one validated incoming or outgoing call, supports ringing,
 answer, and hangup, and reports bounded call-progress events. Offers and answers
 advertise one configured modem-safe audio format and RTP port, and negotiated

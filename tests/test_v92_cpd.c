@@ -550,7 +550,8 @@ static bool test_wire_rejection_and_contracts(void)
 	struct v92_cpd_parameters decoded;
 	struct v92_cpd_parameters saved;
 	uint8_t optional[64];
-	uint8_t frame[16];
+	/* The overlong-frame case also supplies initialized trailing bytes. */
+	uint8_t frame[16] = { 0 };
 	uint8_t changed[16];
 	uint8_t untouched[16];
 	uint8_t untouched_saved[16];

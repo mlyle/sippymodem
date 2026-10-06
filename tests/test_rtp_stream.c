@@ -5,6 +5,7 @@
 #include <g711.h>
 
 #include "test.h"
+#include "rtp_state_fixture.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -74,6 +75,25 @@ static bool init_stream(struct rtp_stream *stream,
 		prefill_samples, MEDIA_CODEC_PCMU);
 }
 
+static bool stream_states_equal(
+	const struct rtp_stream *left, const struct rtp_stream *right)
+{
+	return rtp_receiver_states_equal(&left->receiver, &right->receiver) &&
+	       left->codec == right->codec &&
+	       left->recorder.context == right->recorder.context &&
+	       left->recorder.write == right->recorder.write &&
+	       left->recorder.packet == right->recorder.packet &&
+	       left->receive_workspace == right->receive_workspace &&
+	       left->receive_workspace_size == right->receive_workspace_size &&
+	       left->transmit_header.payload_type == right->transmit_header.payload_type &&
+	       left->transmit_header.marker == right->transmit_header.marker &&
+	       left->transmit_header.sequence == right->transmit_header.sequence &&
+	       left->transmit_header.timestamp == right->transmit_header.timestamp &&
+	       left->transmit_header.ssrc == right->transmit_header.ssrc &&
+	       left->stats.transmit_packets == right->stats.transmit_packets &&
+	       left->stats.transmit_samples == right->stats.transmit_samples;
+}
+
 static bool test_receive_playout_and_recording(void)
 {
 	static const uint8_t payload[] = { 0x7f, 0xfe, 0x7e, 0x80 };
@@ -114,7 +134,7 @@ static bool test_receive_playout_and_recording(void)
 		ARRAY_LENGTH(samples), &report) == MEDIA_INVALID_ARGUMENT &&
 	      rtp_stream_play(&stream, samples, source_octets, (bool *)source_octets,
 		ARRAY_LENGTH(samples), &report) == MEDIA_INVALID_ARGUMENT &&
-	      memcmp(&stream, &before, sizeof(stream)) == 0 && capture.calls == 0,
+	      stream_states_equal(&stream, &before) && capture.calls == 0,
 	      "overlapping provenance output consumed playout");
 	CHECK(rtp_stream_play(&stream, samples, source_octets, received_mask,
 				  ARRAY_LENGTH(samples), &report) ==

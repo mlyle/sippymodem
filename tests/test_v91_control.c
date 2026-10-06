@@ -4,6 +4,18 @@
 #include "test.h"
 #include <string.h>
 
+static bool info_equal(const struct v91_info *left, const struct v91_info *right)
+{
+	return left->law == right->law &&
+	       left->maximum_power == right->maximum_power &&
+	       left->custom_dil == right->custom_dil &&
+	       left->control_channel == right->control_channel &&
+	       left->acknowledges_peer == right->acknowledges_peer &&
+	       left->receiver_power == right->receiver_power &&
+	       left->transparent == right->transparent &&
+	       left->require_transparent == right->require_transparent;
+}
+
 static bool test_info(void)
 {
 	for (unsigned law = 0; law < 2; ++law) {
@@ -20,7 +32,7 @@ static bool test_info(void)
 		struct v91_info saved = q;
 		for (unsigned bit = 0; bit < V91_INFO_BITS; ++bit) {
 			frame[bit / 8] ^= 0x80u >> (bit % 8);
-			CHECK(!v91_info_decode(frame, &q) && memcmp(&q, &saved, sizeof(q)) == 0,
+			CHECK(!v91_info_decode(frame, &q) && info_equal(&q, &saved),
 			      "corrupt INFO bit %u accepted", bit);
 			frame[bit / 8] ^= 0x80u >> (bit % 8);
 		}

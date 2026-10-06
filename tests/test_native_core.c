@@ -18,7 +18,7 @@
 #include <pcm_rate.h>
 
 #include "test.h"
-#include "lapm_xid_fixture.h"
+#include "lapm_state_fixture.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -41,20 +41,6 @@ static struct modem *create_compat_modem(struct modem_driver *driver, const char
 	struct modem *modem = modem_create(driver, name);
 	modem_frontend_init(modem);
 	return modem;
-}
-
-static bool lapm_states_equal(
-	const struct lapm_state *left, const struct lapm_state *right)
-{
-	if (!lapm_v44_sessions_equal(&left->v44_session, &right->v44_session))
-		return false;
-	struct lapm_state left_copy, right_copy;
-	memcpy(&left_copy, left, sizeof(left_copy));
-	memcpy(&right_copy, right, sizeof(right_copy));
-	/* The remaining owned LAPM storage is cleared by lapm_init. */
-	memset(&left_copy.v44_session, 0, sizeof(left_copy.v44_session));
-	memset(&right_copy.v44_session, 0, sizeof(right_copy.v44_session));
-	return memcmp(&left_copy, &right_copy, sizeof(left_copy)) == 0;
 }
 
 static const struct dp_operations *call_progress_override;

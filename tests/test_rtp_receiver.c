@@ -3,6 +3,7 @@
 #include <rtp_receiver.h>
 
 #include "test.h"
+#include "rtp_state_fixture.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -103,7 +104,7 @@ static bool test_received_sample_provenance(void)
 	CHECK(rtp_receiver_push(&receiver, &packet) == RTP_RECEIVE_ACCEPTED, "future packet failed");
 	struct rtp_receiver saved = receiver;
 	CHECK(!rtp_receiver_play(&receiver, output, (bool *)output, 6, &report) &&
-	      memcmp(&receiver, &saved, sizeof(receiver)) == 0, "overlapping mask advanced playout");
+	      rtp_receiver_states_equal(&receiver, &saved), "overlapping mask advanced playout");
 	CHECK(rtp_receiver_play(&receiver, output, received, 6, &report) &&
 	      memcmp(received, (bool[]){ false, true, true, false, true, false }, sizeof(received)) == 0 &&
 	      memcmp(output, (uint8_t[]){ 0xff, 0xff, 0x7f, 0xff, 0xff, 0xff }, sizeof(output)) == 0 &&
@@ -382,7 +383,7 @@ static bool test_playout_gap_cursor(void)
 	status = rtp_receiver_playout_status(&receiver, 2);
 	CHECK(status.stream_active && !status.gap && status.ssrc == 7 &&
 	      status.timestamp == UINT32_MAX - 1u &&
-	      memcmp(&receiver, &saved, sizeof(saved)) == 0 &&
+	      rtp_receiver_states_equal(&receiver, &saved) &&
 	      rtp_receiver_play(&receiver, output, NULL, sizeof(output), NULL),
 	      "contiguous query changed the receiver or held received audio");
 	status = rtp_receiver_playout_status(&receiver, 2);
@@ -431,7 +432,7 @@ static bool test_partial_clock_padding_preserves_provenance(void)
 	      "late padded tail supplied new clock credit");
 	struct rtp_receiver saved = receiver;
 	CHECK(!rtp_receiver_pad_clock_frame(&receiver, 4) &&
-	      memcmp(&receiver, &saved, sizeof(saved)) == 0,
+	      rtp_receiver_states_equal(&receiver, &saved),
 	      "padding an empty clock mutated receiver state");
 	return true;
 }
