@@ -50,29 +50,7 @@
 /* param access services */
 long modem_get_param(struct modem *m, unsigned param_name)
 {
-	int val;
 	switch (param_name) {
-	case MDMPRM_NONE:
-		break;
-	case MDMPRM_MIN_RATE:
-		return m->min_rate;
-	case MDMPRM_MAX_RATE:
-		return m->max_rate;
-	case MDMPRM_IODELAY:
-		return m->driver.ioctl(m,MDMCTL_IODELAY,0);
-	case MDMPRM_CODECTYPE:
-		val = m->driver.ioctl(m,MDMCTL_CODECTYPE,0);
-		if(val<0)
-			return CODEC_UNKNOWN; /* unknown */
-		return val;
-	case MDMPRM_DIALSTR:
-		return (long)m->dial_string;
-	case MDMPRM_AUTOMODE:
-		return 0 /* MODEM_AUTOMODE(m)*/;
-	case MDMPRM_DSPINFO:
-		return (long)(&m->dsp_info);
-	case MDMPRM_DP_ADDR:
-		return (long)(m->dp);
 	case MDMPRM_V90_DIGITAL_INDICATION:
 		return m->sregs[SREG_V90_DIGITAL_INDICATION];
 	case MDMPRM_V91_ENABLED:
@@ -94,8 +72,6 @@ long modem_get_param(struct modem *m, unsigned param_name)
 long modem_set_param(struct modem *m, unsigned name, int val)
 {
 	switch(name) {
-	case MDMPRM_NONE:
-		break;
 	case MDMPRM_RX_RATE:
 	case MDMPRM_TX_RATE: {
 		uint64_t previous_rate = (uint64_t)m->rx_rate + m->tx_rate;
@@ -112,15 +88,6 @@ long modem_set_param(struct modem *m, unsigned name, int val)
 	case MDMPRM_DP_REQUESTED:
 		m->dp_requested = val;
 		break;
-	case MDMPRM_UPDATE_DELAY:
-		m->update_delay = val;
-		break;
-	case MDMPRM_HOOK_ON:
-		return m->driver.ioctl(m, MDMCTL_HOOKSTATE,
-				       val ? MODEM_HOOK_ON : MODEM_HOOK_OFF );
-	case MDMPRM_PULSE_DIAL:
-		// bla-bla
-		return m->driver.ioctl(m, MDMCTL_PULSEDIAL, val);
 	case MDMPRM_V90_DIGITAL_INDICATION:
 		if (val < MODEM_PCM_POLICY_ANALOG || val > MODEM_PCM_POLICY_AUTO)
 			return -1;

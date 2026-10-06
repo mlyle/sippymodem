@@ -99,7 +99,8 @@ int modem_put_bits(struct modem *modem, int nbits, u8 *bits, int count)
 /* Keep setter effects visible without constructing a complete host modem. */
 long modem_set_param(struct modem *modem, unsigned int name, int value)
 {
-	modem->update_delay++;
+	unsigned int *setter_calls = modem->dev_data;
+	(*setter_calls)++;
 	if (value == 111)
 		return -1;
 	if (name == MDMPRM_TX_RATE)
@@ -113,7 +114,8 @@ long modem_set_param(struct modem *modem, unsigned int name, int value)
 
 static bool test_link_rates(void)
 {
-	struct modem modem = { 0 };
+	unsigned int setter_calls = 0;
+	struct modem modem = { .dev_data = &setter_calls };
 	struct dp dp = { .modem = &modem };
 
 	CHECK(!datapump_set_link_rates(NULL, 1, 1),
@@ -124,19 +126,19 @@ static bool test_link_rates(void)
 	dp.modem = &modem;
 	CHECK(!datapump_set_link_rates(&dp, (uint32_t)INT_MAX + 1u, 1) &&
 	      !datapump_set_link_rates(&dp, 1, (uint32_t)INT_MAX + 1u) &&
-	      modem.update_delay == 0,
+	      setter_calls == 0,
 	      "out-of-range rate changed the modem");
 	CHECK(datapump_set_link_rates(&dp, 9600, 2400) &&
 	      modem.tx_rate == 9600 && modem.rx_rate == 2400 &&
-	      modem.update_delay == 2,
+	      setter_calls == 2,
 	      "asymmetric link rates were not set TX first");
-	modem.update_delay = 0;
+	setter_calls = 0;
 	CHECK(!datapump_set_link_rates(&dp, 111, 1200) &&
-	      modem.update_delay == 1 && modem.rx_rate == 2400,
+	      setter_calls == 1 && modem.rx_rate == 2400,
 	      "failed transmit rate still set receive rate");
-	modem.update_delay = 0;
+	setter_calls = 0;
 	CHECK(!datapump_set_link_rates(&dp, 1200, 111) &&
-	      modem.update_delay == 2 && modem.tx_rate == 1200 &&
+	      setter_calls == 2 && modem.tx_rate == 1200 &&
 	      modem.rx_rate == 2400,
 	      "failed receive rate changed its value or skipped transmit");
 	CHECK(datapump_set_link_rates(&dp, 0, INT_MAX) &&

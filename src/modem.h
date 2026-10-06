@@ -465,7 +465,6 @@ struct modem {
         unsigned frag;
         unsigned dp_requested;
         unsigned automode_requested;
-	int update_delay;
 	struct dc_remover receive_dc;
 	void (*process)(struct modem *m,void *in,void *out,int cnt);
         /* process counter and sample timer */
