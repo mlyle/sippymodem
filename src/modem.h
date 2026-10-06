@@ -58,14 +58,6 @@
 struct v44_character_path;
 
 
-/* modem modes */
-enum MODEM_MODE {
-	MODEM_MODE_DATA = 0,
-	MODEM_MODE_FAX  = 1,
-	MODEM_MODE_VOICE = 8
-};
-
-
 /* modem status */
 #define STATUS_OK         0x0
 #define STATUS_NOCARRIER  0x0002 // 3
@@ -330,7 +322,6 @@ struct modem {
 	char caller_number[128]; /* Current incoming identity; cleared at call end. */
 	unsigned rx_rate;
 	unsigned tx_rate;
-	enum MODEM_MODE mode; /* data,fax,voice */
 	/* modem events (ring,escape,waiting for connect,etc) */
 	unsigned event;
 	unsigned new_event;
@@ -482,9 +473,6 @@ struct modem {
 	struct modem_call_report call_report;
 	/* dsp info data */
 	struct dsp_info dsp_info;
-#ifdef MODEM_CONFIG_FAX
-	void *fax_obj;
-#endif
 };
 
 

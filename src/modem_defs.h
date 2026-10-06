@@ -261,22 +261,6 @@ struct dsp_info {
 };
 
 
-/* fax definitions */
-
-#define FAX_STATUS_OK        1
-#define FAX_STATUS_ERROR     2
-#define FAX_STATUS_CONNECT   3
-#define FAX_STATUS_NOCARRIER 4
-
-enum FAX_CMD {
-	FAX_CMD_FTS,
-	FAX_CMD_FRS,
-	FAX_CMD_FTM,
-	FAX_CMD_FRM,
-	FAX_CMD_FTH,
-	FAX_CMD_FRH,
-};
-
 /*
  *    prototypes
  *

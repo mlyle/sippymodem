@@ -214,8 +214,7 @@ static void report_result(struct modem *m, unsigned int code)
 			report_line(m, "CallerID: %s", m->caller_number);
                 msg = modem_responses[code].text;
 		modem_send_to_tty(m,msg,strlen(msg));
-		if (code==RESULT_CONNECT && m->mode == MODEM_MODE_DATA
-		    && m->rx_rate && modem_get_sreg(m,SREG_X_CODE) != 0) {
+		if (code==RESULT_CONNECT && m->rx_rate && modem_get_sreg(m,SREG_X_CODE) != 0) {
 			char rate_str[16];
 			snprintf(rate_str, sizeof(rate_str), " %u", m->rx_rate);
 			modem_send_to_tty(m,rate_str,strlen(rate_str));

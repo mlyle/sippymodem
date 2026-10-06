@@ -344,8 +344,11 @@ training trace for intermediate negotiation steps.
 | `AT+GCI=<hex>` | Choose a supported country code |
 | `AT+GCI?` | Current code, prefixed `+GCI:` |
 | `AT+GCI=?` | Available codes |
-| `AT+FCLASS=0` | Select data mode |
-| `AT+FCLASS?`, `AT+FCLASS=?` | `0` in the normal build |
+| `AT+FCLASS=0` | Data modem class (`0` only) |
+| `AT+FCLASS?`, `AT+FCLASS=?` | `0` |
+
+The data class accepts the shared numeric syntax: `AT+FCLASS=00` selects
+class zero. Unsupported classes and fax operation commands produce ERROR.
 
 Other ATI selectors produce ERROR. `+GMI`, `+GMM`, `+GMR`, and `+GCAP` are
 information actions: bare execution returns information, and the `=?` test

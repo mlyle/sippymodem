@@ -99,7 +99,6 @@ extern int  modem_hook(struct modem *m,unsigned hook_state);
 extern int  modem_reset(struct modem *m);
 extern void modem_update_speaker(struct modem *m);
 extern int  modem_homolog_init(struct modem *m, int id, const char *name);
-extern int  modem_set_mode(struct modem *m, enum MODEM_MODE mode);
 
 /* ------------------------------------------------------------ */
 /*
@@ -802,40 +801,24 @@ static int process_plus_V92U(struct modem *m, char *p, int *len)
 }
 
 
+/* The data modem retains the class-zero compatibility command. */
 static int process_plus_FCLASS(struct modem *m, char *p, int *len)
 {
-	char ch;
-	if(*p == '=' ) {
+	unsigned long value;
+
+	if (*p == '=') {
 		p++;
-		*len += 2;
-		if(*p == '?') {
-			modem_frontend_info_header(m);
-			modem_send_to_tty(m, "0" , 1);
-#ifdef MODEM_CONFIG_FAX_CLASS1
-			modem_send_to_tty(m, ",1" , 2);
-#endif
-			modem_send_to_tty(m, CRLF_CHARS(m), 2);
-		}
-		else if (isdigit(*p)) {
-			int val = *p - '0';
-			if ( val != 0
-#ifdef MODEM_CONFIG_FAX_CLASS1
-			     && val != 1
-#endif
-				)
-				return -1;
-			return modem_set_mode(m, val);
-		}
-		else
-			return -1;
-	}
-	else if (*p == '?') {
+		*len = 1;
+		if (*p != '?')
+			return parse_unsigned(&p, len, &value, 0) == 1 &&
+			       value == 0 && *p != ',' ? 0 : -1;
 		*len += 1;
-		ch = '0' + m->mode;
-		modem_frontend_info(m, &ch, 1);
-	}
-	else
+	} else if (*p == '?') {
+		*len = 1;
+	} else {
 		return -1;
+	}
+	modem_frontend_info(m, "0", 1);
 	return 0;
 }
 
@@ -869,107 +852,6 @@ static int process_CID(struct modem *m,  char *p, int *len)
 	return 0;
 }
 #endif
-
-
-/*
- *    Fax commands
- */
-
-#ifdef MODEM_CONFIG_FAX
-extern int FAX_class1_command(void *obj, unsigned cmd, unsigned param);
-
-
-static int process_fax_command(struct modem *m, char *p, int *len)
-{
-	unsigned val; char *end;
-	AT_DBG("fax cmd: %s\n", p);
-	*len += 2;
-	/* +FTS= */
-	if(!toupper_strncmp(p,"TS=",3)) {
-		*len += 1;
-		p += 3;
-		val = strtoul(p,&end,0);
-		if(p == end)
-			return -1;
-		*len += end - p;
-		p = end;
-		return FAX_class1_command(m->fax_obj, FAX_CMD_FTS, val);
-	}
-	/* +FRS= */
-	else if(!toupper_strncmp(p,"RS=",3)) { // FIXME: abort on tty input
-		*len += 1;
-		p += 3;
-		val = strtoul(p,&end,0);
-		if(p == end)
-			return -1;
-		*len += end - p;
-		p = end;
-		return FAX_class1_command(m->fax_obj, FAX_CMD_FRS, val);
-	}
-	/* +FTM= */
-	else if(!toupper_strncmp(p,"TM=",3)) {
-		*len += 2;
-		p+= 3;
-		if(*p == '?') {
-			modem_frontend_info(m, "24,48,72,73,74,96,97,98,121,122,145,146",39);
-			return 0;
-		}
-		else {
-			val = strtoul(p,&end,0);
-			if(p == end)
-				return -1;
-			*len += end - p - 1;
-			p = end;
-			return FAX_class1_command(m->fax_obj, FAX_CMD_FTM, val);
-		}
-	}
-	/* +FRM= */
-	else if(!toupper_strncmp(p,"RM=",3)) {
-		*len += 2;
-		p+= 3;
-		if(*p == '?') {
-			modem_frontend_info(m, "24,48,72,73,74,96,97,98,121,122,145,146",39);
-		}
-		else {
-			val = strtoul(p,&end,0);
-			if(p == end)
-				return -1;
-			*len += end - p - 1;
-			p = end;
-			return FAX_class1_command(m->fax_obj, FAX_CMD_FRM, val);
-		}
-		return 0;
-	}
-	/* +FRH= */
-	else if(!toupper_strncmp(p,"RH=",3)) {
-		*len += 2;
-		p+= 3;
-		if(*p == '?') {
-			modem_frontend_info(m, "3",1);
-			return 0;
-		}
-		else if (isdigit(*p))
-			return FAX_class1_command(m->fax_obj, FAX_CMD_FRH, *p - '0');
-		return -1;
-	}
-	/* +FTH= */
-	else if(!toupper_strncmp(p,"TH=",3)) {
-		*len += 2;
-		p+= 3;
-		if(*p == '?') {
-			modem_frontend_info(m, "3",1);
-			return 0;
-		}
-		else if (isdigit(*p))
-			return FAX_class1_command(m->fax_obj, FAX_CMD_FTH, *p - '0');
-		return -1;
-	}
-	else
-		return -1;
-}
-#else
-#define process_fax_command(m,p,plen) (-1)
-#endif /* MODEM_CONFIG_FAX */
 
 
 /* ------------------------------------------------------------ */
@@ -1187,8 +1069,6 @@ int process_at_command(struct modem *m, char *cmd)
 					p+= 5;
 					ret = process_plus_FCLASS(m, p, &len);
 				}
-				else
-					ret = process_fax_command(m, p, &len);
 				break;
 			case 'M': /* AT+M */
 				c = toupper (*p++);

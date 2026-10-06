@@ -84,11 +84,6 @@ extern void *CID_create(struct modem *m, unsigned rate, unsigned cid_val);
 extern void CID_delete(void *cid);
 extern int  CID_process(void *cid, void *in, int count);
 #endif
-#ifdef MODEM_CONFIG_FAX
-extern void *FAX_create(struct modem *m, unsigned caller, unsigned srate);
-extern int FAX_process(void *obj, void *in, void *out, int count);
-extern void FAX_delete(void *obj);
-#endif
 
 /* local prototypes */
 int modem_answer(struct modem *m);
@@ -102,9 +97,6 @@ static int modem_comp_get_chars(struct modem *m, char *buf, int n);
 static int modem_comp_put_chars(struct modem *m, const char *buf, int n);
 #ifdef MODEM_CONFIG_CID
 static int  modem_cid_start(struct modem *, unsigned timeout);
-#endif
-#ifdef MODEM_CONFIG_FAX
-static int modem_fax_start(struct modem *m);
 #endif
 
 /* global config data */
@@ -1261,13 +1253,7 @@ static void do_modem_change_dp (struct modem *m)
 
 	old = m->dp;
 
-#ifdef MODEM_CONFIG_FAX
-	if (m->mode == MODEM_MODE_FAX) {
-		modem_fax_start(m);
-		m->dp = NULL;
-	}
-	else {
-#endif
+	{
 		struct dp *dp = NULL;
 		int dp_id,id;
 		dp_id = m->dp_requested;
@@ -1320,9 +1306,7 @@ static void do_modem_change_dp (struct modem *m)
 		}
 		m->dp = dp;
 		m->process = modem_dp_process;
-#ifdef MODEM_CONFIG_FAX
 	}
-#endif
 
         if ( old ) {
                 old->op->delete(old);
@@ -1497,12 +1481,6 @@ static int modem_stop (struct modem *m)
 		m->cid = NULL;
 	}
 #endif
-#ifdef MODEM_CONFIG_FAX
-	if(m->fax_obj) {
-		FAX_delete(m->fax_obj);
-		m->fax_obj = NULL;
-	}
-#endif
         modem_set_state(m, STATE_MODEM_IDLE);
 	if (m->hangup_command_pending) {
 		m->hangup_command_pending = 0;
@@ -1640,64 +1618,6 @@ int modem_ring_detector_start(struct modem *m)
 	return do_modem_start(m);
 }
 #endif /* MODEM_CONFIG_RING_DETECTOR */
-
-
-/*
- *    Fax modem
- *
- */
-
-#ifdef MODEM_CONFIG_FAX
-
-static void modem_fax_process(struct modem *m, void *in, void *out, int count)
-{
-	int ret;
-	//MODEM_DBG("modem_fax_process: %d...\n", count);
-	ret = FAX_process(m->fax_obj, in, out, count);
-	if(ret) {
-		MODEM_DBG("fax_process: %d\n", ret);
-		switch(ret) {
-		case FAX_STATUS_OK:
-			modem_set_state(m, STATE_COMMAND_ONLINE);
-			modem_report_result(m, RESULT_OK);
-			m->command = 1;
-			break;
-		case FAX_STATUS_CONNECT:
-			modem_set_state(m,STATE_MODEM_ONLINE);
-			modem_report_result(m, RESULT_CONNECT);
-			m->command = 0;
-			break;
-		case FAX_STATUS_NOCARRIER:
-			modem_set_state(m, STATE_COMMAND_ONLINE);
-			modem_report_result(m, RESULT_NOCARRIER);
-			m->command = 1;
-			break;
-		case FAX_STATUS_ERROR:
-			modem_update_status(m, STATUS_ERROR);
-			break;
-		default:
-			break;
-		}
-		if(ret < 0) {
-			MODEM_DBG("FAX failed.\n");
-			modem_stop(m);
-		}
-	}
-}
-
-static int modem_fax_start(struct modem *m)
-{
-	MODEM_DBG("modem_fax_start...\n");
-	m->fax_obj = FAX_create(m, m->caller, m->srate);
-	if(!m->fax_obj)
-		return -1;
-	m->sample_timer = 0;
-	m->sample_timer_func = NULL;
-	m->process = modem_fax_process;
-	return 0;
-}
-
-#endif /* MODEM_CONFIG_FAX */
 
 
 /*
@@ -1890,16 +1810,6 @@ int modem_homolog_init(struct modem *m, int id, const char *name)
 }
 
 
-int  modem_set_mode(struct modem *m, enum MODEM_MODE mode)
-{
-	MODEM_DBG("modem set mode: -> %d...\n", mode);
-	if (m->mode == mode)
-		return 0;
-	m->mode = mode;
-	return 0;
-}
-
-
 int modem_reset(struct modem *m)
 {
 	MODEM_DBG("modem reset...\n");
@@ -1983,7 +1893,7 @@ int modem_factory_defaults(struct modem *m)
 	if (modem_homolog_init(m, m->homolog != NULL ? m->homolog->id :
 	    MODEM_DEFAULT_COUNTRY_CODE, NULL) != 0)
 		return -1;
-	return modem_set_mode(m, MODEM_MODE_DATA);
+	return 0;
 }
 
 
