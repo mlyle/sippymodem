@@ -113,19 +113,19 @@ bool v92_control_rx_is_valid(
 	}
 }
 
-enum v92_control_rx_result v92_control_rx_init_downstream(
-	struct v92_control_rx *receiver, uint8_t mapping_frame_bits)
+static enum v92_control_rx_result initialize(
+	struct v92_control_rx *receiver, uint8_t mapping_frame_bits,
+	enum v92_control_direction direction)
 {
 	struct v92_control_rx initialized = {
 		.alignment_bits = mapping_frame_bits,
-		.direction = V92_CONTROL_DOWNSTREAM,
+		.direction = direction,
 		.stage = V92_CONTROL_RX_SEARCH_SYNC,
 	};
 
 	if (receiver == NULL)
 		return V92_CONTROL_RX_INVALID_ARGUMENT;
-	if (mapping_frame_bits < V92_CPD_DOWNSTREAM_FRAME_MIN_BITS ||
-	    mapping_frame_bits > V92_CPD_DOWNSTREAM_DATA_MAX_BITS)
+	if (!configuration_is_valid(&initialized))
 		return V92_CONTROL_RX_INVALID_PARAMETERS;
 	if (!v92_control_rx_is_valid(&initialized))
 		return V92_CONTROL_RX_INTERNAL_ERROR;
@@ -133,24 +133,17 @@ enum v92_control_rx_result v92_control_rx_init_downstream(
 	return V92_CONTROL_RX_OK;
 }
 
+enum v92_control_rx_result v92_control_rx_init_downstream(
+	struct v92_control_rx *receiver, uint8_t mapping_frame_bits)
+{
+	return initialize(receiver, mapping_frame_bits, V92_CONTROL_DOWNSTREAM);
+}
+
 enum v92_control_rx_result v92_control_rx_init_upstream(
 	struct v92_control_rx *receiver,
 	uint8_t mapping_frame_bits)
 {
-	struct v92_control_rx initialized = {
-		.alignment_bits = mapping_frame_bits,
-		.direction = V92_CONTROL_UPSTREAM,
-		.stage = V92_CONTROL_RX_SEARCH_SYNC,
-	};
-
-	if (receiver == NULL)
-		return V92_CONTROL_RX_INVALID_ARGUMENT;
-	if (!v92_control_upstream_alignment_is_valid(mapping_frame_bits))
-		return V92_CONTROL_RX_INVALID_PARAMETERS;
-	if (!v92_control_rx_is_valid(&initialized))
-		return V92_CONTROL_RX_INTERNAL_ERROR;
-	*receiver = initialized;
-	return V92_CONTROL_RX_OK;
+	return initialize(receiver, mapping_frame_bits, V92_CONTROL_UPSTREAM);
 }
 
 static void clear_candidate(struct v92_control_rx *receiver)
@@ -203,46 +196,6 @@ static void reject_cpu(
 		event->record.cpu.frame_result = result;
 	}
 	finish_candidate(receiver, false);
-}
-
-static void finish_suvd(
-	struct v92_control_rx *receiver,
-	struct v92_control_event *event)
-{
-	struct v92_suvd_parameters parameters;
-	enum v92_suvd_result result = v92_suvd_decode(
-		receiver->frame, sizeof(receiver->frame),
-		receiver->frame_bit_count, receiver->alignment_bits,
-		&parameters);
-
-	event->record.suvd.frame_result = result;
-	if (result == V92_SUVD_OK) {
-		event->type = V92_CONTROL_EVENT_SUVD;
-		event->record.suvd.parameters = parameters;
-	} else {
-		event->type = V92_CONTROL_EVENT_SUVD_REJECTED;
-	}
-	finish_candidate(receiver, result == V92_SUVD_OK);
-}
-
-static void finish_suvu(
-	struct v92_control_rx *receiver,
-	struct v92_control_event *event)
-{
-	struct v92_suvu_parameters parameters;
-	enum v92_suvu_result result = v92_suvu_decode(
-		receiver->frame, sizeof(receiver->frame),
-		receiver->frame_bit_count, receiver->alignment_bits,
-		&parameters);
-
-	event->record.suvu.frame_result = result;
-	if (result == V92_SUVU_OK) {
-		event->type = V92_CONTROL_EVENT_SUVU;
-		event->record.suvu.parameters = parameters;
-	} else {
-		event->type = V92_CONTROL_EVENT_SUVU_REJECTED;
-	}
-	finish_candidate(receiver, result == V92_SUVU_OK);
 }
 
 static void finish_cpd(
@@ -309,10 +262,36 @@ static void finish_status(
 	struct v92_control_rx *receiver,
 	struct v92_control_event *event)
 {
-	if (receiver->direction == V92_CONTROL_DOWNSTREAM)
-		finish_suvd(receiver, event);
-	else
-		finish_suvu(receiver, event);
+	bool accepted;
+
+	if (receiver->direction == V92_CONTROL_DOWNSTREAM) {
+		struct v92_suvd_parameters parameters;
+		enum v92_suvd_result result = v92_suvd_decode(
+			receiver->frame, sizeof(receiver->frame),
+			receiver->frame_bit_count, receiver->alignment_bits,
+			&parameters);
+
+		event->record.suvd.frame_result = result;
+		accepted = result == V92_SUVD_OK;
+		event->type = accepted ? V92_CONTROL_EVENT_SUVD :
+			V92_CONTROL_EVENT_SUVD_REJECTED;
+		if (accepted)
+			event->record.suvd.parameters = parameters;
+	} else {
+		struct v92_suvu_parameters parameters;
+		enum v92_suvu_result result = v92_suvu_decode(
+			receiver->frame, sizeof(receiver->frame),
+			receiver->frame_bit_count, receiver->alignment_bits,
+			&parameters);
+
+		event->record.suvu.frame_result = result;
+		accepted = result == V92_SUVU_OK;
+		event->type = accepted ? V92_CONTROL_EVENT_SUVU :
+			V92_CONTROL_EVENT_SUVU_REJECTED;
+		if (accepted)
+			event->record.suvu.parameters = parameters;
+	}
+	finish_candidate(receiver, accepted);
 }
 
 static void finish_parameters(
