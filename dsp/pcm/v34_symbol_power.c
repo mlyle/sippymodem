@@ -112,7 +112,7 @@ static bool maximum_precoded_point_power(
 	/* c(n) is the nearest grid multiple to p(n), so each component of
 	 * c(n) - p(n) is bounded by half a grid step. Enumerating the mapper
 	 * labels and adding that residual outward gives a data-independent
-	 * envelope for x(n) without retaining a constellation table. */
+	 * envelope for x(n). */
 	for (size_t label = 0; label < quarter_point_count; ++label) {
 		struct v34_grid_point point;
 		int64_t in_phase;

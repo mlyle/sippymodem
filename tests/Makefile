@@ -17,6 +17,7 @@ PJSIP_LDLIBS := $(shell \
 
 PHASE_PROFILE_HEADER := ../.build/generated/phase_profile.h
 PREEMPHASIS_PROFILE_HEADER := ../.build/generated/v34_preemphasis_profiles.h
+CONSTELLATION_HEADER := ../.build/generated/v34_constellation_points.h
 CPPFLAGS += -D_POSIX_C_SOURCE=200809L -I../src -I../dsp \
 	-I$(dir $(PHASE_PROFILE_HEADER)) \
 	-I../dsp/v21_202 -I../dsp/v22 -I../dsp/v32 -I../dsp/pcm
@@ -4864,6 +4865,11 @@ $(PHASE_PROFILE_HEADER): $(DSP_SOURCE_DIR)/generate_phase_profile.py
 $(BUILD_DIR)/v34_pulse_modulator.o: $(PREEMPHASIS_PROFILE_HEADER)
 
 $(PREEMPHASIS_PROFILE_HEADER): $(DSP_PCM_SOURCE_DIR)/generate_preemphasis_profiles.py
+	$(PYTHON) $< $@
+
+$(BUILD_DIR)/v34_constellation.o: $(CONSTELLATION_HEADER)
+
+$(CONSTELLATION_HEADER): $(DSP_PCM_SOURCE_DIR)/generate_constellation.py
 	$(PYTHON) $< $@
 
 $(BUILD_DIR)/fractional_delay.o: \

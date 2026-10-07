@@ -93,15 +93,15 @@ enum v34_constellation_result
 v34_quarter_superconstellation_generate(
 	struct v34_grid_point *points, size_t point_count);
 
-/* Generate one Figure 5 point by label without retaining the constellation as
- * a lookup table. The destination is unchanged for an invalid label. */
+/* Return one Figure 5 point by label. The destination is unchanged for an
+ * invalid label. */
 enum v34_constellation_result
 v34_quarter_superconstellation_point(
 	size_t label, struct v34_grid_point *point);
 
 /* Recover the exact Figure 5 label for an unrotated quarter-
- * superconstellation point. No inverse lookup table is retained, and the
- * destination is unchanged when the point is outside the defined prefix. */
+ * superconstellation point. The destination is unchanged when the point is
+ * outside the defined prefix. */
 enum v34_constellation_result
 v34_quarter_superconstellation_label(
 	const struct v34_grid_point *point, size_t *label);

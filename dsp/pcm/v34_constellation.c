@@ -1,28 +1,15 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "v34_constellation.h"
+#include "v34_constellation_points.h"
 
 #include <float.h>
 #include <math.h>
 #include <stddef.h>
+#include <string.h>
 
-enum {
-	/* Figure 5 uses the lattice coordinate 1 modulo 4 on both axes. The
-	 * first 416 points fit in this square; the next lattice coordinate
-	 * outside it has greater magnitude than point 415. */
-	V34_QUARTER_GRID_MIN = -43,
-	V34_QUARTER_GRID_MAX = 45,
-	V34_QUARTER_GRID_STEP = 4,
-	V34_QUARTER_FIRST_SQUARED_MAGNITUDE = 2,
-	V34_QUARTER_SQUARED_MAGNITUDE_STEP = 8,
-	V34_QUARTER_GRID_MAX_SQUARED_MAGNITUDE =
-		2 * V34_QUARTER_GRID_MAX * V34_QUARTER_GRID_MAX,
-	V34_QUARTER_MAGNITUDE_BUCKET_COUNT =
-		(V34_QUARTER_GRID_MAX_SQUARED_MAGNITUDE -
-		 V34_QUARTER_FIRST_SQUARED_MAGNITUDE) /
-			V34_QUARTER_SQUARED_MAGNITUDE_STEP +
-		1,
-};
+_Static_assert(sizeof(V34_QUARTER_POINTS) / sizeof(V34_QUARTER_POINTS[0]) ==
+	V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT, "generated constellation size");
 
 static const double V34_POINT_ZERO_COORDINATE =
 	0.70710678118654752440084436210485;
@@ -35,123 +22,25 @@ bool v34_constellation_size_is_valid(
 	return v34_constellation_bits_per_symbol(constellation) != 0u;
 }
 
-static int squared_magnitude(int in_phase, int quadrature)
-{
-	return in_phase * in_phase + quadrature * quadrature;
-}
-
 enum v34_constellation_result
 v34_quarter_superconstellation_generate(
 	struct v34_grid_point *points, size_t point_count)
 {
-	struct v34_grid_point
-		generated[V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT];
-	size_t generated_count = 0;
-
 	if (points == NULL || point_count == 0 ||
-	    point_count >
-		    V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT)
+	    point_count > V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT)
 		return V34_CONSTELLATION_INVALID_ARGUMENT;
-
-	/* Odd-coordinate squared magnitudes are 2 modulo 8. Scanning only
-	 * those magnitudes and visiting quadrature coordinates from greatest
-	 * to least implements the normative label ordering directly. */
-	for (int magnitude = V34_QUARTER_FIRST_SQUARED_MAGNITUDE;
-	     magnitude <= V34_QUARTER_GRID_MAX_SQUARED_MAGNITUDE &&
-	     generated_count < point_count;
-	     magnitude += V34_QUARTER_SQUARED_MAGNITUDE_STEP) {
-		for (int quadrature = V34_QUARTER_GRID_MAX;
-		     quadrature >= V34_QUARTER_GRID_MIN;
-		     quadrature -= V34_QUARTER_GRID_STEP) {
-			for (int in_phase = V34_QUARTER_GRID_MIN;
-			     in_phase <= V34_QUARTER_GRID_MAX;
-			     in_phase += V34_QUARTER_GRID_STEP) {
-				if (squared_magnitude(in_phase, quadrature) !=
-				    magnitude)
-					continue;
-				generated[generated_count++] =
-					(struct v34_grid_point){
-						.in_phase = (int16_t)in_phase,
-						.quadrature = (int16_t)quadrature,
-					};
-				if (generated_count == point_count)
-					break;
-			}
-			if (generated_count == point_count)
-				break;
-		}
-	}
-	if (generated_count != point_count)
-		return V34_CONSTELLATION_INVALID_ARGUMENT;
-	for (size_t index = 0; index < point_count; ++index)
-		points[index] = generated[index];
+	memcpy(points, V34_QUARTER_POINTS, point_count * sizeof(*points));
 	return V34_CONSTELLATION_OK;
-}
-
-static size_t magnitude_bucket(int in_phase, int quadrature)
-{
-	return (size_t)(
-		(squared_magnitude(in_phase, quadrature) -
-		 V34_QUARTER_FIRST_SQUARED_MAGNITUDE) /
-		V34_QUARTER_SQUARED_MAGNITUDE_STEP);
 }
 
 enum v34_constellation_result
 v34_quarter_superconstellation_point(
 	size_t label, struct v34_grid_point *point)
 {
-	uint16_t magnitude_counts[V34_QUARTER_MAGNITUDE_BUCKET_COUNT] = { 0 };
-	size_t rank = label;
-	size_t selected_bucket = V34_QUARTER_MAGNITUDE_BUCKET_COUNT;
-	int selected_magnitude;
-
-	if (point == NULL ||
-	    label >= V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT)
+	if (point == NULL || label >= V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT)
 		return V34_CONSTELLATION_INVALID_ARGUMENT;
-	/* A generated histogram finds the label's magnitude in one lattice
-	 * pass, avoiding both a retained table and the bulk generator's scan
-	 * across every empty squared magnitude. */
-	for (int quadrature = V34_QUARTER_GRID_MAX;
-	     quadrature >= V34_QUARTER_GRID_MIN;
-	     quadrature -= V34_QUARTER_GRID_STEP) {
-		for (int in_phase = V34_QUARTER_GRID_MIN;
-		     in_phase <= V34_QUARTER_GRID_MAX;
-		     in_phase += V34_QUARTER_GRID_STEP)
-			magnitude_counts[magnitude_bucket(in_phase, quadrature)]++;
-	}
-	for (size_t bucket = 0;
-	     bucket < V34_QUARTER_MAGNITUDE_BUCKET_COUNT; ++bucket) {
-		if (rank < magnitude_counts[bucket]) {
-			selected_bucket = bucket;
-			break;
-		}
-		rank -= magnitude_counts[bucket];
-	}
-	if (selected_bucket == V34_QUARTER_MAGNITUDE_BUCKET_COUNT)
-		return V34_CONSTELLATION_INVALID_ARGUMENT;
-	selected_magnitude = V34_QUARTER_FIRST_SQUARED_MAGNITUDE +
-		(int)selected_bucket * V34_QUARTER_SQUARED_MAGNITUDE_STEP;
-	for (int quadrature = V34_QUARTER_GRID_MAX;
-	     quadrature >= V34_QUARTER_GRID_MIN;
-	     quadrature -= V34_QUARTER_GRID_STEP) {
-		for (int in_phase = V34_QUARTER_GRID_MIN;
-		     in_phase <= V34_QUARTER_GRID_MAX;
-		     in_phase += V34_QUARTER_GRID_STEP) {
-			if (squared_magnitude(in_phase, quadrature) !=
-			    selected_magnitude)
-				continue;
-			if (rank != 0) {
-				--rank;
-				continue;
-			}
-			*point = (struct v34_grid_point){
-				.in_phase = (int16_t)in_phase,
-				.quadrature = (int16_t)quadrature,
-			};
-			return V34_CONSTELLATION_OK;
-		}
-	}
-	return V34_CONSTELLATION_INVALID_ARGUMENT;
+	*point = V34_QUARTER_POINTS[label];
+	return V34_CONSTELLATION_OK;
 }
 
 static bool quarter_grid_coordinate_is_valid(int16_t coordinate)
@@ -165,38 +54,16 @@ enum v34_constellation_result
 v34_quarter_superconstellation_label(
 	const struct v34_grid_point *point, size_t *label)
 {
-	size_t rank = 0;
-	int selected_magnitude;
-
 	if (point == NULL || label == NULL ||
 	    !quarter_grid_coordinate_is_valid(point->in_phase) ||
 	    !quarter_grid_coordinate_is_valid(point->quadrature))
 		return V34_CONSTELLATION_INVALID_ARGUMENT;
-	selected_magnitude = squared_magnitude(
-		point->in_phase, point->quadrature);
-	/* Labels are ordered first by magnitude, then by descending
-	 * quadrature and ascending in-phase coordinate. Counting preceding
-	 * lattice points reconstructs that order without the 416-word table
-	 * traditionally used by a demapper. */
-	for (int quadrature = V34_QUARTER_GRID_MAX;
-	     quadrature >= V34_QUARTER_GRID_MIN;
-	     quadrature -= V34_QUARTER_GRID_STEP) {
-		for (int in_phase = V34_QUARTER_GRID_MIN;
-		     in_phase <= V34_QUARTER_GRID_MAX;
-		     in_phase += V34_QUARTER_GRID_STEP) {
-			int magnitude = squared_magnitude(in_phase, quadrature);
-
-			if (magnitude < selected_magnitude ||
-			    (magnitude == selected_magnitude &&
-			     (quadrature > point->quadrature ||
-			      (quadrature == point->quadrature &&
-			       in_phase < point->in_phase))))
-				rank++;
-		}
-	}
-	if (rank >= V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT)
+	uint16_t selected = V34_QUARTER_LABELS
+		[(point->quadrature - V34_QUARTER_GRID_MIN) / V34_QUARTER_GRID_STEP]
+		[(point->in_phase - V34_QUARTER_GRID_MIN) / V34_QUARTER_GRID_STEP];
+	if (selected >= V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT)
 		return V34_CONSTELLATION_INVALID_ARGUMENT;
-	*label = rank;
+	*label = selected;
 	return V34_CONSTELLATION_OK;
 }
 
