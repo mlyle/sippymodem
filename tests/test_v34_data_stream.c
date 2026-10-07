@@ -4,6 +4,7 @@
 #include <v34_power_calibration.h>
 
 #include "test.h"
+#include "v34_power_fixture.h"
 #include "v34_state_fixture.h"
 #include "v34_stream_fixture.h"
 #include "v34_mapping_fixture.h"
@@ -23,24 +24,20 @@ struct stream_configuration {
 
 static unsigned int line_calibrations;
 
-enum v34_power_calibration_result __real_v34_calibrate_line_power(
-	const struct v34_frame_schedule *, const struct v34_scrambler *,
-	const struct v34_4d_encoder *, const struct v34_power_normalizer *,
-	const struct v34_phase3_profile *, uint32_t,
-	struct v34_line_power_measurement *);
+enum v34_power_calibration_result __real_v34_line_power_calibration_begin(
+	struct v34_line_power_calibration *, const struct v34_frame_schedule *,
+	const struct v34_scrambler *, const struct v34_4d_encoder *,
+	const struct v34_power_normalizer *, const struct v34_phase3_profile *, uint32_t);
 
-enum v34_power_calibration_result __wrap_v34_calibrate_line_power(
-	const struct v34_frame_schedule *schedule,
-	const struct v34_scrambler *scrambler,
-	const struct v34_4d_encoder *encoder,
-	const struct v34_power_normalizer *normalizer,
-	const struct v34_phase3_profile *profile, uint32_t sample_rate,
-	struct v34_line_power_measurement *measurement)
+enum v34_power_calibration_result __wrap_v34_line_power_calibration_begin(
+	struct v34_line_power_calibration *job,
+	const struct v34_frame_schedule *schedule, const struct v34_scrambler *scrambler,
+	const struct v34_4d_encoder *encoder, const struct v34_power_normalizer *normalizer,
+	const struct v34_phase3_profile *profile, uint32_t sample_rate)
 {
 	line_calibrations++;
-	return __real_v34_calibrate_line_power(schedule, scrambler, encoder,
-					     normalizer, profile, sample_rate,
-					     measurement);
+	return __real_v34_line_power_calibration_begin(job, schedule, scrambler,
+		encoder, normalizer, profile, sample_rate);
 }
 
 static struct stream_configuration
@@ -321,14 +318,14 @@ static bool streams_match_through_b1(
 	return false;
 }
 
-/* Independent synchronous reference for the bounded production calibration. */
+/* Complete the comparison calibration before advancing the stream media clock. */
 static bool prepare_reference(
 	struct v34_data_stream_preparation *preparation,
 	const struct v34_data_mapping *mapping, uint32_t sample_rate)
 {
 	struct v34_line_power_measurement measurement;
 
-	if (v34_calibrate_line_power(&mapping->schedule, &mapping->scrambler,
+	if (v34_calibrate_line_fixture(&mapping->schedule, &mapping->scrambler,
 		    &mapping->encoder, &mapping->normalizer,
 		    &mapping->transmitting_profile, sample_rate, &measurement) !=
 	    V34_POWER_CALIBRATION_OK)
@@ -413,7 +410,7 @@ static bool test_selected_continuation(void)
 			      V34_DATA_STREAM_OK &&
 		      v34_data_stream_continue_prepared_b1(
 			      &actual, &line, &incremental) == V34_DATA_STREAM_OK &&
-		      line_calibrations == 1 &&
+		      line_calibrations == 2 &&
 		      v34_training_lines_equal(&expected.line, &expected_line) &&
 		      v34_training_lines_equal(&actual.line, &expected_line) &&
 		      v34_data_stream_is_transmitting_b1(&actual) &&
@@ -442,7 +439,7 @@ static bool test_preparation_boundaries(void)
 		      configuration.auxiliary_channel_enabled,
 		      configuration.sample_rate) == V34_DATA_STREAM_OK &&
 	      v34_data_stream_preparation_is_valid(&preparation) &&
-	      v34_calibrate_line_power(&mapping.schedule, &mapping.scrambler,
+	      v34_calibrate_line_fixture(&mapping.schedule, &mapping.scrambler,
 		      &mapping.encoder, &mapping.normalizer,
 		      &mapping.transmitting_profile, 8000, &measurement) ==
 		      V34_POWER_CALIBRATION_OK &&

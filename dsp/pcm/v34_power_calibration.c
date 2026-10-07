@@ -230,24 +230,6 @@ enum v34_power_calibration_result v34_mapping_power_calibration_step(
 	return V34_POWER_CALIBRATION_IN_PROGRESS;
 }
 
-enum v34_power_calibration_result v34_calibrate_mapping_power(
-	const struct v34_frame_schedule *initial_schedule,
-	const struct v34_scrambler *initial_scrambler,
-	const struct v34_4d_encoder *initial_encoder,
-	enum v34_nonlinear_parameter nonlinear_parameter,
-	struct v34_power_normalizer *normalizer)
-{
-	struct v34_mapping_power_calibration calibration;
-	enum v34_power_calibration_result result;
-
-	if (normalizer == NULL)
-		return V34_POWER_CALIBRATION_INVALID_ARGUMENT;
-	result = v34_mapping_power_calibration_begin(&calibration, initial_schedule,
-		initial_scrambler, initial_encoder, nonlinear_parameter);
-	return result == V34_POWER_CALIBRATION_OK ?
-		v34_mapping_power_calibration_step(&calibration, UINT32_MAX, normalizer) : result;
-}
-
 bool v34_line_power_measurement_is_valid(
 	const struct v34_line_power_measurement *measurement)
 {
@@ -456,23 +438,4 @@ enum v34_power_calibration_result v34_line_power_calibration_step(
 		return V34_POWER_CALIBRATION_NUMERIC_FAILURE;
 	*measurement = calibration->measured;
 	return V34_POWER_CALIBRATION_OK;
-}
-
-enum v34_power_calibration_result v34_calibrate_line_power(
-	const struct v34_frame_schedule *initial_schedule,
-	const struct v34_scrambler *initial_scrambler,
-	const struct v34_4d_encoder *initial_encoder,
-	const struct v34_power_normalizer *normalizer,
-	const struct v34_phase3_profile *profile,
-	uint32_t sample_rate, struct v34_line_power_measurement *measurement)
-{
-	struct v34_line_power_calibration calibration;
-	enum v34_power_calibration_result result;
-
-	if (measurement == NULL)
-		return V34_POWER_CALIBRATION_INVALID_ARGUMENT;
-	result = v34_line_power_calibration_begin(&calibration, initial_schedule,
-		initial_scrambler, initial_encoder, normalizer, profile, sample_rate);
-	return result == V34_POWER_CALIBRATION_OK ?
-		v34_line_power_calibration_step(&calibration, UINT32_MAX, measurement) : result;
 }

@@ -4055,7 +4055,7 @@ $(V34_DATA_STARTUP_TEST_BINARY): $(V34_DATA_STARTUP_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V34_DATA_STREAM_TEST_BINARY): $(V34_DATA_STREAM_TEST_OBJECTS)
-	$(CC) $(LDFLAGS) -Wl,--wrap=v34_calibrate_line_power -o $@ $^ -lm
+	$(CC) $(LDFLAGS) -Wl,--wrap=v34_line_power_calibration_begin -o $@ $^ -lm
 
 $(V34_ANALYTIC_FILTER_TEST_BINARY): \
 	$(V34_ANALYTIC_FILTER_TEST_OBJECTS)

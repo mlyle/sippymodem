@@ -181,11 +181,11 @@ static bool test_rate_profile(void)
 	      v34_4d_encoder_init(
 		      &expanded.encoder, &expanded_parameters, COEFFICIENTS,
 		      V34_TRELLIS_32_STATE) == V34_4D_ENCODER_OK &&
-	      v34_calibrate_mapping_power(
+	      v34_calibrate_mapping_fixture(
 		      &ordinary.schedule, &ordinary.scrambler,
 		      &ordinary.encoder, V34_NONLINEAR_THETA_ZERO,
 		      &ordinary_normalizer) == V34_POWER_CALIBRATION_OK &&
-	      v34_calibrate_mapping_power(
+	      v34_calibrate_mapping_fixture(
 		      &expanded.schedule, &expanded.scrambler,
 		      &expanded.encoder, V34_NONLINEAR_THETA_ZERO,
 		      &expanded_normalizer) == V34_POWER_CALIBRATION_OK &&
@@ -222,15 +222,15 @@ static bool test_generated_calibration(void)
 		fixture.geometry.data_frames_per_superframe *
 		fixture.geometry.mapping_frames_per_data_frame *
 		V34_SYMBOLS_PER_MAPPING_FRAME;
-	CHECK(v34_calibrate_mapping_power(
+	CHECK(v34_calibrate_mapping_fixture(
 		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,
 		      V34_NONLINEAR_THETA_5_OVER_16, &normalizer) ==
 		      V34_POWER_CALIBRATION_OK &&
-	      v34_calibrate_mapping_power(
+	      v34_calibrate_mapping_fixture(
 		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,
 		      V34_NONLINEAR_THETA_5_OVER_16, &repeated) ==
 		      V34_POWER_CALIBRATION_OK &&
-	      v34_calibrate_mapping_power(
+	      v34_calibrate_mapping_fixture(
 		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,
 		      V34_NONLINEAR_THETA_ZERO, &linear) ==
 		      V34_POWER_CALIBRATION_OK &&
@@ -290,7 +290,7 @@ static bool test_generated_line_power(void)
 	CHECK(initialize_fixture(
 		      &fixture, V34_CALLING_STATION,
 		      V34_TRELLIS_32_STATE, 3, 7) &&
-	      v34_calibrate_mapping_power(
+	      v34_calibrate_mapping_fixture(
 		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,
 		      V34_NONLINEAR_THETA_5_OVER_16,
 		      &normalizer) == V34_POWER_CALIBRATION_OK,
@@ -300,11 +300,11 @@ static bool test_generated_line_power(void)
 	saved_encoder = fixture.encoder;
 	/* Phase 4 may exceed the earlier Phase 2 projection. */
 	profile.projected_data_rate_2400_bps_units = 7;
-	CHECK(v34_calibrate_line_power(
+	CHECK(v34_calibrate_line_fixture(
 		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,
 		      &normalizer, &profile, 8000, &unfiltered) ==
 		      V34_POWER_CALIBRATION_OK &&
-	      v34_calibrate_line_power(
+	      v34_calibrate_line_fixture(
 		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,
 		      &normalizer, &profile, 8000, &repeated) ==
 		      V34_POWER_CALIBRATION_OK &&
@@ -322,7 +322,7 @@ static bool test_generated_line_power(void)
 	      v34_test_encoders_are_equal(&fixture.encoder, &saved_encoder),
 	      "generated line-power calibration changed");
 	profile.preemphasis_filter_index = 5;
-	CHECK(v34_calibrate_line_power(
+	CHECK(v34_calibrate_line_fixture(
 		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,
 		      &normalizer, &profile, 8000, &emphasized) ==
 		      V34_POWER_CALIBRATION_OK &&
@@ -357,7 +357,7 @@ static bool test_line_validation(void)
 
 	CHECK(initialize_fixture(&fixture, V34_CALLING_STATION,
 				 V34_TRELLIS_16_STATE, 0, 0) &&
-	      v34_calibrate_mapping_power(
+	      v34_calibrate_mapping_fixture(
 		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,
 		      V34_NONLINEAR_THETA_ZERO, &normalizer) ==
 		      V34_POWER_CALIBRATION_OK &&
@@ -376,41 +376,41 @@ static bool test_line_validation(void)
 	invalid_normalizer = normalizer;
 	invalid_normalizer.maximum_normalized_point_power = NAN;
 	memset(&measurement, 0xa5, sizeof(measurement));
-	CHECK(v34_calibrate_line_power(NULL, &fixture.scrambler,
+	CHECK(v34_calibrate_line_fixture(NULL, &fixture.scrambler,
 		      &fixture.encoder, &normalizer, &profile, 8000,
 		      &measurement) == V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
-	      v34_calibrate_line_power(&fixture.schedule, NULL,
+	      v34_calibrate_line_fixture(&fixture.schedule, NULL,
 		      &fixture.encoder, &normalizer, &profile, 8000,
 		      &measurement) == V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
-	      v34_calibrate_line_power(&fixture.schedule, &fixture.scrambler,
+	      v34_calibrate_line_fixture(&fixture.schedule, &fixture.scrambler,
 		      NULL, &normalizer, &profile, 8000,
 		      &measurement) == V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
-	      v34_calibrate_line_power(&fixture.schedule, &fixture.scrambler,
+	      v34_calibrate_line_fixture(&fixture.schedule, &fixture.scrambler,
 		      &fixture.encoder, NULL, &profile, 8000,
 		      &measurement) == V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
-	      v34_calibrate_line_power(&fixture.schedule, &fixture.scrambler,
+	      v34_calibrate_line_fixture(&fixture.schedule, &fixture.scrambler,
 		      &fixture.encoder, &normalizer, NULL, 8000,
 		      &measurement) == V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
-	      v34_calibrate_line_power(&fixture.schedule, &fixture.scrambler,
+	      v34_calibrate_line_fixture(&fixture.schedule, &fixture.scrambler,
 		      &fixture.encoder, &normalizer, &profile, 8000,
 		      NULL) == V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
-	      v34_calibrate_line_power(&fixture.schedule, &fixture.scrambler,
+	      v34_calibrate_line_fixture(&fixture.schedule, &fixture.scrambler,
 		      &fixture.encoder, &normalizer, &other_rate, 8000,
 		      &measurement) == V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
-	      v34_calibrate_line_power(&fixture.schedule, &fixture.scrambler,
+	      v34_calibrate_line_fixture(&fixture.schedule, &fixture.scrambler,
 		      &fixture.encoder, &normalizer, &other_role, 8000,
 		      &measurement) == V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
-	      v34_calibrate_line_power(&fixture.schedule, &fixture.scrambler,
+	      v34_calibrate_line_fixture(&fixture.schedule, &fixture.scrambler,
 		      &fixture.encoder, &normalizer, &invalid_profile, 8000,
 		      &measurement) == V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
-	      v34_calibrate_line_power(&fixture.schedule, &fixture.scrambler,
+	      v34_calibrate_line_fixture(&fixture.schedule, &fixture.scrambler,
 		      &fixture.encoder, &invalid_normalizer, &profile, 8000,
 		      &measurement) == V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
 	      bytes_are_filled(&measurement, sizeof(measurement), 0xa5),
 	      "invalid line calibration changed its destination");
 	for (size_t index = 0; index < ARRAY_LENGTH(INVALID_SAMPLE_RATES);
 	     ++index) {
-		CHECK(v34_calibrate_line_power(&fixture.schedule,
+		CHECK(v34_calibrate_line_fixture(&fixture.schedule,
 			      &fixture.scrambler, &fixture.encoder, &normalizer,
 			      &profile, INVALID_SAMPLE_RATES[index], &measurement) ==
 			      V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
@@ -463,7 +463,7 @@ static bool test_configuration_sweep(void)
 					      &fixture, ROLES[role_index],
 					      TRELLISES[trellis_index], data_frame,
 					      mapping_frame_offset) &&
-				      v34_calibrate_mapping_power(
+				      v34_calibrate_mapping_fixture(
 					      &fixture.schedule, &fixture.scrambler,
 					      &fixture.encoder, parameter,
 					      &normalizer) ==
@@ -523,9 +523,9 @@ static bool test_resumable_calibration(void)
 		struct v34_power_normalizer expected;
 		struct v34_line_power_measurement expected_line;
 
-		CHECK(v34_calibrate_mapping_power(&fixture.schedule, &fixture.scrambler,
+		CHECK(v34_calibrate_mapping_fixture(&fixture.schedule, &fixture.scrambler,
 			&fixture.encoder, parameter, &expected) == V34_POWER_CALIBRATION_OK &&
-		      v34_calibrate_line_power(&fixture.schedule, &fixture.scrambler,
+		      v34_calibrate_line_fixture(&fixture.schedule, &fixture.scrambler,
 			&fixture.encoder, &expected, &profile, 8000, &expected_line) ==
 			V34_POWER_CALIBRATION_OK, "reference calibration failed");
 		for (size_t i = 0; i < ARRAY_LENGTH(BUDGETS); ++i) {
@@ -540,6 +540,14 @@ static bool test_resumable_calibration(void)
 				&fixture.scrambler, &fixture.encoder, parameter) ==
 				V34_POWER_CALIBRATION_OK, "mapping job failed to begin");
 			memset(&actual, 0xa5, sizeof(actual));
+			CHECK(v34_mapping_power_calibration_step(NULL, 1, &actual) ==
+				      V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
+			      v34_mapping_power_calibration_step(&mapping, 0, &actual) ==
+				      V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
+			      v34_mapping_power_calibration_step(&mapping, 1, NULL) ==
+				      V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
+			      bytes_are_filled(&actual, sizeof(actual), 0xa5),
+			      "rejected mapping step exposed output");
 			do {
 				result = v34_mapping_power_calibration_step(&mapping, BUDGETS[i], &actual);
 				uint32_t symbols = mapping.precoded.symbol_count + mapping.projected.symbol_count;
@@ -558,6 +566,14 @@ static bool test_resumable_calibration(void)
 				&fixture.scrambler, &fixture.encoder, &actual, &profile, 8000) ==
 				V34_POWER_CALIBRATION_OK, "line job failed to begin");
 			memset(&actual_line, 0xa5, sizeof(actual_line));
+			CHECK(v34_line_power_calibration_step(NULL, 1, &actual_line) ==
+				      V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
+			      v34_line_power_calibration_step(&line, 0, &actual_line) ==
+				      V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
+			      v34_line_power_calibration_step(&line, 1, NULL) ==
+				      V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
+			      bytes_are_filled(&actual_line, sizeof(actual_line), 0xa5),
+			      "rejected line step exposed output");
 			steps = 0;
 			do {
 				uint32_t frame = line.frame;
@@ -635,47 +651,47 @@ static bool test_transactional_validation(void)
 	invalid_encoder = fixture.encoder;
 	invalid_encoder.previous_differential_output = 4;
 	memset(&normalizer, 0xa5, sizeof(normalizer));
-	CHECK(v34_calibrate_mapping_power(
+	CHECK(v34_calibrate_mapping_fixture(
 		      NULL, &fixture.scrambler, &fixture.encoder,
 		      V34_NONLINEAR_THETA_ZERO, &normalizer) ==
 		      V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
-	      v34_calibrate_mapping_power(
+	      v34_calibrate_mapping_fixture(
 		      &fixture.schedule, NULL, &fixture.encoder,
 		      V34_NONLINEAR_THETA_ZERO, &normalizer) ==
 		      V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
-	      v34_calibrate_mapping_power(
+	      v34_calibrate_mapping_fixture(
 		      &fixture.schedule, &fixture.scrambler, NULL,
 		      V34_NONLINEAR_THETA_ZERO, &normalizer) ==
 		      V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
-	      v34_calibrate_mapping_power(
+	      v34_calibrate_mapping_fixture(
 		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,
 		      V34_NONLINEAR_THETA_ZERO, NULL) ==
 		      V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
-	      v34_calibrate_mapping_power(
+	      v34_calibrate_mapping_fixture(
 		      &invalid_schedule, &fixture.scrambler, &fixture.encoder,
 		      V34_NONLINEAR_THETA_ZERO, &normalizer) ==
 		      V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
-	      v34_calibrate_mapping_power(
+	      v34_calibrate_mapping_fixture(
 		      &fixture.schedule, &invalid_scrambler, &fixture.encoder,
 		      V34_NONLINEAR_THETA_ZERO, &normalizer) ==
 		      V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
-	      v34_calibrate_mapping_power(
+	      v34_calibrate_mapping_fixture(
 		      &fixture.schedule, &fixture.scrambler, &invalid_encoder,
 		      V34_NONLINEAR_THETA_ZERO, &normalizer) ==
 		      V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
-	      v34_calibrate_mapping_power(
+	      v34_calibrate_mapping_fixture(
 		      &fixture.schedule, &fixture.scrambler,
 		      &mismatched.encoder,
 		      V34_NONLINEAR_THETA_ZERO, &normalizer) ==
 		      V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
-	      v34_calibrate_mapping_power(
+	      v34_calibrate_mapping_fixture(
 		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,
 		      (enum v34_nonlinear_parameter)2,
 		      &normalizer) ==
 		      V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
 	      bytes_are_filled(&normalizer, sizeof(normalizer), 0xa5),
 	      "invalid calibration changed its destination");
-	CHECK(v34_calibrate_mapping_power(
+	CHECK(v34_calibrate_mapping_fixture(
 		      &out_of_range.schedule, &out_of_range.scrambler,
 		      &out_of_range.encoder,
 		      V34_NONLINEAR_THETA_ZERO, &normalizer) ==

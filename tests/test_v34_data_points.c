@@ -2,6 +2,7 @@
 
 #include <v34_data_points.h>
 #include <v34_power_calibration.h>
+#include "v34_power_fixture.h"
 
 #include "test.h"
 #include "v34_state_fixture.h"
@@ -48,7 +49,7 @@ static bool initialize_fixture(
 	    v34_4d_encoder_init(
 		    &generated.encoder, &generated.parameters, COEFFICIENTS,
 		    V34_TRELLIS_32_STATE) != V34_4D_ENCODER_OK ||
-	    v34_calibrate_mapping_power(
+	    v34_calibrate_mapping_fixture(
 		    &generated.schedule, &generated.scrambler,
 		    &generated.encoder, V34_NONLINEAR_THETA_5_OVER_16,
 		    &generated.normalizer) != V34_POWER_CALIBRATION_OK)
