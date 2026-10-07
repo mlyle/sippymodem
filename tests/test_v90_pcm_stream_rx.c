@@ -157,8 +157,8 @@ static bool run_sequence(
 			result = v90_pcm_stream_rx_receive_octet(
 				&receivers[plane], octet, &frame);
 			CHECK(result == expected_result,
-			      "plane %zu symbol %zu returned %s", plane, index,
-			      v90_pcm_stream_rx_result_name(result));
+			      "plane %zu symbol %zu returned %d", plane, index,
+			      (int)result);
 			if (result == V90_PCM_STREAM_RX_FRAME_READY) {
 				/* The shared GPC descrambler and sign histories must
 				 * recover the data after damaged decisions, without an
@@ -248,8 +248,8 @@ static bool test_descrambled_bits(void)
 		CHECK(result == (index == V90_CP_FRAME_INTERVALS - 1u ?
 					 V90_PCM_STREAM_RX_FRAME_READY :
 					 V90_PCM_STREAM_RX_BUFFERING),
-		      "error symbol %zu returned %s", index,
-		      v90_pcm_stream_rx_result_name(result));
+		      "error symbol %zu returned %d", index,
+		      (int)result);
 	}
 	bool changed = false;
 	for (size_t bit = 0; bit < frame.bit_count; ++bit)
@@ -486,13 +486,8 @@ static bool test_contracts(void)
 	CHECK(!v90_pcm_stream_rx_is_valid(&receiver) &&
 	      !v90_pcm_stream_rx_is_valid(NULL) &&
 	      v90_pcm_stream_rx_receive_octet(&receiver, 0, &frame) ==
-		      V90_PCM_STREAM_RX_INVALID_STATE &&
-	      strcmp(v90_pcm_stream_rx_result_name(V90_PCM_STREAM_RX_FRAME_READY),
-		     "frame ready") == 0 &&
-	      strcmp(v90_pcm_stream_rx_result_name(
-		     (enum v90_pcm_stream_rx_result)99),
-		     "unknown") == 0,
-	      "state or result-name contract changed");
+		      V90_PCM_STREAM_RX_INVALID_STATE,
+	      "state contract changed");
 	return true;
 }
 

@@ -74,7 +74,4 @@ enum v90_pcm_stream_rx_result v90_pcm_stream_rx_receive_octet(
 	struct v90_pcm_stream_rx *receiver, uint8_t network_octet,
 	struct v90_pcm_stream_frame *frame);
 
-const char *v90_pcm_stream_rx_result_name(
-	enum v90_pcm_stream_rx_result result);
-
 #endif /* V90_PCM_STREAM_RX_H */

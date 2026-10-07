@@ -72,7 +72,4 @@ enum v90_downstream_data_tx_result v90_downstream_data_tx_finish(
 	struct v90_downstream_data_tx *transmitter,
 	struct v90_pcm_frame_output *output);
 
-const char *v90_downstream_data_tx_result_name(
-	enum v90_downstream_data_tx_result result);
-
 #endif /* V90_DOWNSTREAM_DATA_TX_H */

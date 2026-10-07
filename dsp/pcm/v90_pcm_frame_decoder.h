@@ -55,7 +55,4 @@ enum v90_pcm_frame_decoder_result v90_pcm_frame_decoder_decode(
 	const uint8_t signs[V90_CP_FRAME_INTERVALS], size_t symbol_count,
 	struct v90_pcm_frame_decode_output *output);
 
-const char *v90_pcm_frame_decoder_result_name(
-	enum v90_pcm_frame_decoder_result result);
-
 #endif /* V90_PCM_FRAME_DECODER_H */

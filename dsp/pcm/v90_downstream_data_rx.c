@@ -172,33 +172,3 @@ enum v90_downstream_data_rx_result v90_downstream_data_rx_receive_octet(
 	return commit_stream_result(
 		receiver, stream_result, &decoded, frame);
 }
-
-const char *v90_downstream_data_rx_result_name(
-	enum v90_downstream_data_rx_result result)
-{
-	switch (result) {
-	case V90_DOWNSTREAM_DATA_RX_OK:
-		return "ok";
-	case V90_DOWNSTREAM_DATA_RX_BUFFERING:
-		return "buffering";
-	case V90_DOWNSTREAM_DATA_RX_B1D_FRAME:
-		return "B1d frame";
-	case V90_DOWNSTREAM_DATA_RX_B1D_COMPLETE:
-		return "B1d complete";
-	case V90_DOWNSTREAM_DATA_RX_DATA_FRAME:
-		return "data frame";
-	case V90_DOWNSTREAM_DATA_RX_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V90_DOWNSTREAM_DATA_RX_INVALID_PARAMETERS:
-		return "invalid parameters";
-	case V90_DOWNSTREAM_DATA_RX_INVALID_STATE:
-		return "invalid state";
-	case V90_DOWNSTREAM_DATA_RX_INVALID_SYMBOL:
-		return "invalid symbol";
-	case V90_DOWNSTREAM_DATA_RX_OUT_OF_RANGE:
-		return "out of range";
-	case V90_DOWNSTREAM_DATA_RX_INTERNAL_ERROR:
-		return "internal error";
-	}
-	return "unknown";
-}

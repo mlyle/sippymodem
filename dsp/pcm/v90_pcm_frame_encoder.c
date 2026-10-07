@@ -228,31 +228,3 @@ enum v90_pcm_frame_encoder_result v90_pcm_frame_encoder_finish(
 	*output = generated;
 	return V90_PCM_FRAME_ENCODER_SYMBOLS_READY;
 }
-
-const char *v90_pcm_frame_encoder_result_name(
-	enum v90_pcm_frame_encoder_result result)
-{
-	switch (result) {
-	case V90_PCM_FRAME_ENCODER_OK:
-		return "ok";
-	case V90_PCM_FRAME_ENCODER_SYMBOLS_READY:
-		return "symbols ready";
-	case V90_PCM_FRAME_ENCODER_BUFFERING:
-		return "buffering";
-	case V90_PCM_FRAME_ENCODER_COMPLETE:
-		return "complete";
-	case V90_PCM_FRAME_ENCODER_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V90_PCM_FRAME_ENCODER_INVALID_PARAMETERS:
-		return "invalid parameters";
-	case V90_PCM_FRAME_ENCODER_INVALID_STATE:
-		return "invalid state";
-	case V90_PCM_FRAME_ENCODER_INVALID_BITS:
-		return "invalid bits";
-	case V90_PCM_FRAME_ENCODER_NUMERIC_FAILURE:
-		return "numeric failure";
-	case V90_PCM_FRAME_ENCODER_INTERNAL_ERROR:
-		return "internal error";
-	}
-	return "unknown";
-}

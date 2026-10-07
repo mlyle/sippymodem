@@ -298,29 +298,3 @@ enum v90_downstream_data_stream_result v90_downstream_data_stream_finish(
 	*symbol = generated;
 	return V90_DOWNSTREAM_DATA_STREAM_OK;
 }
-
-const char *v90_downstream_data_stream_result_name(
-	enum v90_downstream_data_stream_result result)
-{
-	switch (result) {
-	case V90_DOWNSTREAM_DATA_STREAM_OK:
-		return "ok";
-	case V90_DOWNSTREAM_DATA_STREAM_COMPLETE:
-		return "complete";
-	case V90_DOWNSTREAM_DATA_STREAM_SOURCE_FAILURE:
-		return "frame source failure";
-	case V90_DOWNSTREAM_DATA_STREAM_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V90_DOWNSTREAM_DATA_STREAM_INVALID_PARAMETERS:
-		return "invalid parameters";
-	case V90_DOWNSTREAM_DATA_STREAM_INVALID_STATE:
-		return "invalid state";
-	case V90_DOWNSTREAM_DATA_STREAM_OUT_OF_RANGE:
-		return "out of range";
-	case V90_DOWNSTREAM_DATA_STREAM_NUMERIC_FAILURE:
-		return "numeric failure";
-	case V90_DOWNSTREAM_DATA_STREAM_INTERNAL_ERROR:
-		return "internal error";
-	}
-	return "unknown";
-}

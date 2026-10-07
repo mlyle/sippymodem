@@ -119,23 +119,3 @@ enum v90_pcm_frame_decoder_result v90_pcm_frame_decoder_decode(
 	*output = generated;
 	return V90_PCM_FRAME_DECODER_OK;
 }
-
-const char *v90_pcm_frame_decoder_result_name(
-	enum v90_pcm_frame_decoder_result result)
-{
-	switch (result) {
-	case V90_PCM_FRAME_DECODER_OK:
-		return "ok";
-	case V90_PCM_FRAME_DECODER_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V90_PCM_FRAME_DECODER_INVALID_PARAMETERS:
-		return "invalid parameters";
-	case V90_PCM_FRAME_DECODER_INVALID_STATE:
-		return "invalid state";
-	case V90_PCM_FRAME_DECODER_INVALID_SYMBOLS:
-		return "invalid symbols";
-	case V90_PCM_FRAME_DECODER_INTERNAL_ERROR:
-		return "internal error";
-	}
-	return "unknown";
-}

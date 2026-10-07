@@ -300,8 +300,8 @@ static bool verify_data_stream(
 		      frame.bit_count == data_mapping->frame_bits &&
 		      memcmp(frame.bits, source.frames[data_frames],
 			     frame.bit_count) == 0,
-		      "data frame %zu changed: %s", data_frames,
-		      v90_downstream_data_rx_result_name(result));
+		      "data frame %zu changed: %d", data_frames,
+		      (int)result);
 		data_frames++;
 	}
 	CHECK(symbols < MAXIMUM_DATA_SYMBOLS &&

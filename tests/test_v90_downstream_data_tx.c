@@ -167,8 +167,8 @@ static bool run_stream(
 			&transmitter, &output);
 		CHECK(result == V90_DOWNSTREAM_DATA_TX_BUFFERING ||
 		      result == V90_DOWNSTREAM_DATA_TX_SYMBOLS_READY,
-		      "B1d frame %zu failed: %s", frame,
-		      v90_downstream_data_tx_result_name(result));
+		      "B1d frame %zu failed: %d", frame,
+		      (int)result);
 		accepted++;
 		if (result == V90_DOWNSTREAM_DATA_TX_BUFFERING)
 			CHECK(memcmp(&output, &untouched, sizeof(output)) == 0,
@@ -193,8 +193,8 @@ static bool run_stream(
 			&transmitter, data, mapping.frame_bits, &output);
 		CHECK(result == V90_DOWNSTREAM_DATA_TX_BUFFERING ||
 		      result == V90_DOWNSTREAM_DATA_TX_SYMBOLS_READY,
-		      "DATA frame %zu failed: %s", frame,
-		      v90_downstream_data_tx_result_name(result));
+		      "DATA frame %zu failed: %d", frame,
+		      (int)result);
 		accepted++;
 		if (result == V90_DOWNSTREAM_DATA_TX_BUFFERING)
 			CHECK(memcmp(&output, &untouched, sizeof(output)) == 0,
@@ -213,8 +213,8 @@ static bool run_stream(
 			break;
 		CHECK(result == V90_DOWNSTREAM_DATA_TX_SYMBOLS_READY &&
 		      receive_output(&receiver, &output),
-		      "tail output failed: %s",
-		      v90_downstream_data_tx_result_name(result));
+		      "tail output failed: %d",
+		      (int)result);
 	}
 	CHECK(v90_downstream_data_tx_is_complete(&transmitter) &&
 	      receiver.pending_count == 0 &&

@@ -222,8 +222,8 @@ static bool run_round_trip(
 			&output);
 		CHECK(result == V90_PCM_FRAME_ENCODER_BUFFERING ||
 		      result == V90_PCM_FRAME_ENCODER_SYMBOLS_READY,
-		      "frame %zu returned %s", frame,
-		      v90_pcm_frame_encoder_result_name(result));
+		      "frame %zu returned %d", frame,
+		      (int)result);
 		if (result == V90_PCM_FRAME_ENCODER_SYMBOLS_READY)
 			CHECK(collect_output(
 				      collectors, &mapping, &output,
@@ -407,14 +407,8 @@ static bool test_contracts(void)
 	      memcmp(&output, &saved_output, sizeof(output)) == 0 &&
 	      v90_pcm_frame_decoder_init(
 		      NULL, &mapping, V90_PCM_MAPPING_TRANSMIT) ==
-		      V90_PCM_FRAME_DECODER_INVALID_ARGUMENT &&
-	      strcmp(v90_pcm_frame_decoder_result_name(
-		     V90_PCM_FRAME_DECODER_INVALID_SYMBOLS),
-		     "invalid symbols") == 0 &&
-	      strcmp(v90_pcm_frame_decoder_result_name(
-		     (enum v90_pcm_frame_decoder_result)99),
-		     "unknown") == 0,
-	      "state or result-name contract changed");
+		      V90_PCM_FRAME_DECODER_INVALID_ARGUMENT,
+	      "state contract changed");
 	return true;
 }
 

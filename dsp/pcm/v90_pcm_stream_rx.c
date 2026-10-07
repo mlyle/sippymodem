@@ -233,29 +233,3 @@ enum v90_pcm_stream_rx_result v90_pcm_stream_rx_receive_octet(
 	return receive_valid_decision(
 		receiver, decision, symbol.positive, frame);
 }
-
-const char *v90_pcm_stream_rx_result_name(
-	enum v90_pcm_stream_rx_result result)
-{
-	switch (result) {
-	case V90_PCM_STREAM_RX_OK:
-		return "ok";
-	case V90_PCM_STREAM_RX_BUFFERING:
-		return "buffering";
-	case V90_PCM_STREAM_RX_FRAME_READY:
-		return "frame ready";
-	case V90_PCM_STREAM_RX_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V90_PCM_STREAM_RX_INVALID_PARAMETERS:
-		return "invalid parameters";
-	case V90_PCM_STREAM_RX_INVALID_STATE:
-		return "invalid state";
-	case V90_PCM_STREAM_RX_INVALID_SYMBOL:
-		return "invalid symbol";
-	case V90_PCM_STREAM_RX_OUT_OF_RANGE:
-		return "out of range";
-	case V90_PCM_STREAM_RX_INTERNAL_ERROR:
-		return "internal error";
-	}
-	return "unknown";
-}

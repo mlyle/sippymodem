@@ -202,31 +202,3 @@ enum v90_downstream_data_tx_result v90_downstream_data_tx_finish(
 	transmitter->stage = V90_DOWNSTREAM_DATA_TX_STAGE_COMPLETE;
 	return V90_DOWNSTREAM_DATA_TX_COMPLETE;
 }
-
-const char *v90_downstream_data_tx_result_name(
-	enum v90_downstream_data_tx_result result)
-{
-	switch (result) {
-	case V90_DOWNSTREAM_DATA_TX_OK:
-		return "ok";
-	case V90_DOWNSTREAM_DATA_TX_BUFFERING:
-		return "buffering";
-	case V90_DOWNSTREAM_DATA_TX_SYMBOLS_READY:
-		return "symbols ready";
-	case V90_DOWNSTREAM_DATA_TX_COMPLETE:
-		return "complete";
-	case V90_DOWNSTREAM_DATA_TX_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V90_DOWNSTREAM_DATA_TX_INVALID_PARAMETERS:
-		return "invalid parameters";
-	case V90_DOWNSTREAM_DATA_TX_INVALID_STATE:
-		return "invalid state";
-	case V90_DOWNSTREAM_DATA_TX_INVALID_BITS:
-		return "invalid bits";
-	case V90_DOWNSTREAM_DATA_TX_NUMERIC_FAILURE:
-		return "numeric failure";
-	case V90_DOWNSTREAM_DATA_TX_INTERNAL_ERROR:
-		return "internal error";
-	}
-	return "unknown";
-}

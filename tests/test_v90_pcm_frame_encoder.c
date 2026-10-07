@@ -367,11 +367,10 @@ static bool test_shaped_pipeline(void)
 					expected_result = component_process(
 						&components, bits, &expected);
 					CHECK(actual_result == expected_result,
-					      "pipeline %u/%u/%u frame %zu returned %s",
+					      "pipeline %u/%u/%u frame %zu returned %d",
 					      law_index, redundancy, lookahead,
 					      frame,
-					      v90_pcm_frame_encoder_result_name(
-						      actual_result));
+					      (int)actual_result);
 					if (actual_result !=
 					    V90_PCM_FRAME_ENCODER_SYMBOLS_READY)
 						continue;
@@ -562,14 +561,8 @@ static bool test_contracts(void)
 		      V90_PCM_FRAME_ENCODER_INVALID_PARAMETERS &&
 	      v90_pcm_frame_encoder_init(NULL, &mapping) ==
 		      V90_PCM_FRAME_ENCODER_INVALID_ARGUMENT &&
-	      !v90_pcm_frame_encoder_is_valid(NULL) &&
-	      strcmp(v90_pcm_frame_encoder_result_name(
-			     V90_PCM_FRAME_ENCODER_SYMBOLS_READY),
-		     "symbols ready") == 0 &&
-	      strcmp(v90_pcm_frame_encoder_result_name(
-			     (enum v90_pcm_frame_encoder_result)99),
-		     "unknown") == 0,
-	      "initialization or result-name contract changed");
+	      !v90_pcm_frame_encoder_is_valid(NULL),
+	      "initialization contract changed");
 	return true;
 }
 

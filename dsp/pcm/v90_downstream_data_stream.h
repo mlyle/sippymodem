@@ -71,7 +71,4 @@ enum v90_downstream_data_stream_result v90_downstream_data_stream_next_owned(
 	pcm_frame_source source, void *source_context,
 	struct v90_pcm_symbol *symbol);
 
-const char *v90_downstream_data_stream_result_name(
-	enum v90_downstream_data_stream_result result);
-
 #endif /* V90_DOWNSTREAM_DATA_STREAM_H */

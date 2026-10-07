@@ -351,8 +351,8 @@ static bool push_v92_frame(
 	if (result == V90_PCM_FRAME_ENCODER_BUFFERING)
 		return true;
 	CHECK(result == V90_PCM_FRAME_ENCODER_SYMBOLS_READY,
-	      "V.92 source encoder returned %s",
-	      v90_pcm_frame_encoder_result_name(result));
+	      "V.92 source encoder returned %d",
+	      (int)result);
 	return observe_v92_output(receiver, &output, observer);
 }
 
@@ -448,8 +448,8 @@ static bool push_frame(
 	if (result == V90_PCM_FRAME_ENCODER_BUFFERING)
 		return true;
 	CHECK(result == V90_PCM_FRAME_ENCODER_SYMBOLS_READY,
-	      "source encoder returned %s",
-	      v90_pcm_frame_encoder_result_name(result));
+	      "source encoder returned %d",
+	      (int)result);
 	return observe_output(receiver, &output, observer);
 }
 
@@ -465,8 +465,8 @@ static bool finish_source(
 		if (result == V90_PCM_FRAME_ENCODER_COMPLETE)
 			return true;
 		CHECK(result == V90_PCM_FRAME_ENCODER_SYMBOLS_READY,
-		      "source finish returned %s",
-		      v90_pcm_frame_encoder_result_name(result));
+		      "source finish returned %d",
+		      (int)result);
 		CHECK(observe_output(receiver, &output, observer),
 		      "source finish output was rejected");
 	}

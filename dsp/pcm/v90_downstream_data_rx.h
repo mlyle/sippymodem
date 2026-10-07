@@ -77,7 +77,4 @@ enum v90_downstream_data_rx_result v90_downstream_data_rx_receive_octet(
 	struct v90_downstream_data_rx *receiver, uint8_t network_octet,
 	struct v90_pcm_stream_frame *frame);
 
-const char *v90_downstream_data_rx_result_name(
-	enum v90_downstream_data_rx_result result);
-
 #endif /* V90_DOWNSTREAM_DATA_RX_H */

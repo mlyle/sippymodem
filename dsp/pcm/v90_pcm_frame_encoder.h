@@ -67,7 +67,4 @@ enum v90_pcm_frame_encoder_result v90_pcm_frame_encoder_finish(
 	struct v90_pcm_frame_encoder *encoder,
 	struct v90_pcm_frame_output *output);
 
-const char *v90_pcm_frame_encoder_result_name(
-	enum v90_pcm_frame_encoder_result result);
-
 #endif /* V90_PCM_FRAME_ENCODER_H */

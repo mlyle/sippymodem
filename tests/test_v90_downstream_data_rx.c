@@ -117,8 +117,8 @@ static bool observe_output(
 			expected_result = V90_DOWNSTREAM_DATA_RX_DATA_FRAME;
 		}
 		CHECK(result == expected_result,
-		      "frame %zu returned %s", observer->received_frames,
-		      v90_downstream_data_rx_result_name(result));
+		      "frame %zu returned %d", observer->received_frames,
+		      (int)result);
 		CHECK(v90_downstream_data_rx_b1d_complete(&observer->receiver) ==
 			      (observer->received_frames + 1u >= V90_PHASE4_B1D_FRAMES),
 		      "B1d readiness changed at frame %zu", observer->received_frames);
@@ -174,8 +174,8 @@ static bool run_stream(
 			&transmitter, &output);
 		CHECK(result == V90_DOWNSTREAM_DATA_TX_BUFFERING ||
 		      result == V90_DOWNSTREAM_DATA_TX_SYMBOLS_READY,
-		      "B1d source frame %zu returned %s", source_frame,
-		      v90_downstream_data_tx_result_name(result));
+		      "B1d source frame %zu returned %d", source_frame,
+		      (int)result);
 		if (result == V90_DOWNSTREAM_DATA_TX_SYMBOLS_READY)
 			CHECK(observe_output(&observer, &output),
 			      "B1d output was rejected");
@@ -195,8 +195,8 @@ static bool run_stream(
 			&transmitter, bits, mapping.frame_bits, &output);
 		CHECK(result == V90_DOWNSTREAM_DATA_TX_BUFFERING ||
 		      result == V90_DOWNSTREAM_DATA_TX_SYMBOLS_READY,
-		      "DATA source frame %zu returned %s", source_frame,
-		      v90_downstream_data_tx_result_name(result));
+		      "DATA source frame %zu returned %d", source_frame,
+		      (int)result);
 		if (result == V90_DOWNSTREAM_DATA_TX_SYMBOLS_READY)
 			CHECK(observe_output(&observer, &output),
 			      "DATA output was rejected");
@@ -210,8 +210,8 @@ static bool run_stream(
 			break;
 		CHECK(result == V90_DOWNSTREAM_DATA_TX_SYMBOLS_READY &&
 		      observe_output(&observer, &output),
-		      "tail output returned %s",
-		      v90_downstream_data_tx_result_name(result));
+		      "tail output returned %d",
+		      (int)result);
 	}
 	CHECK(observer.received_frames == observer.accepted_frames &&
 	      observer.received_frames == TOTAL_FRAMES &&
@@ -314,14 +314,8 @@ static bool test_contracts(void)
 	CHECK(!v90_downstream_data_rx_is_valid(&receiver) &&
 	      !v90_downstream_data_rx_is_valid(NULL) &&
 	      !v90_downstream_data_rx_b1d_complete(NULL) &&
-	      !v90_downstream_data_rx_b1d_qualified(NULL) &&
-	      strcmp(v90_downstream_data_rx_result_name(
-		     V90_DOWNSTREAM_DATA_RX_B1D_COMPLETE),
-		     "B1d complete") == 0 &&
-	      strcmp(v90_downstream_data_rx_result_name(
-		     (enum v90_downstream_data_rx_result)99),
-		     "unknown") == 0,
-	      "state or result-name contract changed");
+	      !v90_downstream_data_rx_b1d_qualified(NULL),
+	      "state contract changed");
 	return true;
 }
 
