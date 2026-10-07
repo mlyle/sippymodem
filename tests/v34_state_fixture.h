@@ -147,44 +147,24 @@ static inline void v34_snapshot_data_receiver(
 	v34_snapshot_data_decisions(&receiver->decisions);
 }
 
-static inline bool v34_data_channel_receivers_equal(
-	const struct v34_data_channel_receiver *left,
-	const struct v34_data_channel_receiver *right)
-{
-	struct v34_data_channel_receiver snapshots[2];
-
-	memcpy(&snapshots[0], left, sizeof(*left));
-	memcpy(&snapshots[1], right, sizeof(*right));
-	v34_snapshot_data_channel_receiver(&snapshots[0]);
-	v34_snapshot_data_channel_receiver(&snapshots[1]);
-	return memcmp(&snapshots[0], &snapshots[1], sizeof(*left)) == 0;
+#define RECEIVER_EQUAL(name, type, snapshot) \
+static inline bool name(const struct type *left, const struct type *right) \
+{ \
+	struct type snapshots[2]; \
+	memcpy(&snapshots[0], left, sizeof(*left)); \
+	memcpy(&snapshots[1], right, sizeof(*right)); \
+	snapshot(&snapshots[0]); \
+	snapshot(&snapshots[1]); \
+	return memcmp(&snapshots[0], &snapshots[1], sizeof(*left)) == 0; \
 }
 
-static inline bool v34_data_decision_receivers_equal(
-	const struct v34_data_decision_receiver *left,
-	const struct v34_data_decision_receiver *right)
-{
-	struct v34_data_decision_receiver snapshots[2];
-
-	memcpy(&snapshots[0], left, sizeof(*left));
-	memcpy(&snapshots[1], right, sizeof(*right));
-	v34_snapshot_data_decisions(&snapshots[0]);
-	v34_snapshot_data_decisions(&snapshots[1]);
-	return memcmp(&snapshots[0], &snapshots[1], sizeof(*left)) == 0;
-}
-
-static inline bool v34_data_line_receivers_equal(
-	const struct v34_data_line_receiver *left,
-	const struct v34_data_line_receiver *right)
-{
-	struct v34_data_line_receiver snapshots[2];
-
-	memcpy(&snapshots[0], left, sizeof(*left));
-	memcpy(&snapshots[1], right, sizeof(*right));
-	v34_snapshot_data_receiver(&snapshots[0]);
-	v34_snapshot_data_receiver(&snapshots[1]);
-	return memcmp(&snapshots[0], &snapshots[1], sizeof(*left)) == 0;
-}
+RECEIVER_EQUAL(v34_data_channel_receivers_equal, v34_data_channel_receiver,
+	v34_snapshot_data_channel_receiver)
+RECEIVER_EQUAL(v34_data_decision_receivers_equal, v34_data_decision_receiver,
+	v34_snapshot_data_decisions)
+RECEIVER_EQUAL(v34_data_line_receivers_equal, v34_data_line_receiver,
+	v34_snapshot_data_receiver)
+#undef RECEIVER_EQUAL
 
 static inline bool v34_pulse_states_equal(
 	const struct v34_pulse_modulator *left,
