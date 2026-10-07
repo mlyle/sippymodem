@@ -160,6 +160,87 @@ static bool test_validation_and_transactionality(void)
 	return true;
 }
 
+static bool test_calibration_output_ownership(void)
+{
+	struct v34_phase3_profile profile = profile_fixture(V34_CALLING_STATION);
+	struct v34_data_direction_parameters parameters = parameters_fixture();
+	union {
+		struct v34_data_mapping mapping;
+		struct v34_mapping_power_calibration calibration;
+		struct { max_align_t prefix; struct v34_data_mapping value; } shifted_mapping;
+		struct { max_align_t prefix; struct v34_mapping_power_calibration value; } shifted_job;
+	} storage;
+	unsigned char saved[sizeof(storage)];
+
+	for (unsigned placement = 0; placement < 3; ++placement) {
+		struct v34_data_mapping *mapping = placement == 1 ?
+			&storage.shifted_mapping.value : &storage.mapping;
+		struct v34_mapping_power_calibration *calibration = placement == 2 ?
+			&storage.shifted_job.value : &storage.calibration;
+
+		memset(&storage, 0xa5, sizeof(storage));
+		memcpy(saved, &storage, sizeof(saved));
+		CHECK(v34_data_mapping_begin_calibration(mapping, calibration,
+			      &profile, &parameters, true) ==
+			      V34_DATA_MAPPING_INVALID_ARGUMENT &&
+		      memcmp(saved, &storage, sizeof(saved)) == 0,
+		      "overlapping mapping/calibration outputs were not rejected unchanged");
+	}
+	return true;
+}
+
+static bool test_calibration_input_snapshot(void)
+{
+	struct v34_phase3_profile profile = profile_fixture(V34_ANSWERING_STATION);
+	struct v34_data_direction_parameters parameters = parameters_fixture();
+	struct v34_data_mapping reference;
+	struct {
+		struct v34_data_mapping mapping;
+		union {
+			struct v34_mapping_power_calibration calibration;
+			struct {
+				struct v34_phase3_profile profile;
+				struct v34_data_direction_parameters parameters;
+			} inputs;
+		} job;
+	} storage;
+
+	CHECK(v34_data_mapping_prepare(&reference, &profile, &parameters, true) ==
+		      V34_DATA_MAPPING_OK, "reference mapping did not initialize");
+	/* Adjacent outputs, then profile in the mapping, then both inputs in the job. */
+	for (unsigned placement = 0; placement < 3; ++placement) {
+		const struct v34_phase3_profile *input_profile = &profile;
+		const struct v34_data_direction_parameters *input_parameters = &parameters;
+
+		memset(&storage, 0xa5, sizeof(storage));
+		if (placement == 1) {
+			storage.mapping.transmitting_profile = profile;
+			input_profile = &storage.mapping.transmitting_profile;
+		} else if (placement == 2) {
+			storage.job.inputs.profile = profile;
+			storage.job.inputs.parameters = parameters;
+			input_profile = &storage.job.inputs.profile;
+			input_parameters = &storage.job.inputs.parameters;
+		}
+		CHECK(v34_data_mapping_begin_calibration(&storage.mapping,
+			      &storage.job.calibration, input_profile, input_parameters, true) ==
+			      V34_DATA_MAPPING_OK &&
+		      v34_phase3_profile_is_equal(
+			      &storage.mapping.transmitting_profile, &profile),
+		      "calibration output overwrote a profile input before its snapshot");
+		CHECK(v34_mapping_power_calibration_step(&storage.job.calibration, 1,
+			      &storage.mapping.normalizer) == V34_POWER_CALIBRATION_IN_PROGRESS &&
+		      storage.job.calibration.frame == 1 &&
+		      v34_mapping_power_calibration_step(&storage.job.calibration, UINT32_MAX,
+			      &storage.mapping.normalizer) == V34_POWER_CALIBRATION_OK &&
+		      v34_data_mapping_is_valid(&storage.mapping) &&
+		      v34_test_encoders_are_equal(&storage.mapping.encoder, &reference.encoder) &&
+		      v34_normalizers_equal(&storage.mapping.normalizer, &reference.normalizer),
+		      "input/output placement changed bounded calibration or the prepared mapping");
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -167,6 +248,8 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "prepared B1 mapping", test_prepared_b1_mapping },
+		{ "calibration output ownership", test_calibration_output_ownership },
+		{ "calibration input snapshot", test_calibration_input_snapshot },
 		{ "validation and transactionality",
 		  test_validation_and_transactionality },
 	};

@@ -2,6 +2,7 @@
 
 #include "v34_data_mapping.h"
 
+#include "memory_region.h"
 #include "v34_mapping_parameters.h"
 #include "v34_power_calibration.h"
 #include "v34_training_line.h"
@@ -93,6 +94,8 @@ enum v34_data_mapping_result v34_data_mapping_begin_calibration(
 	enum v34_data_mapping_result result;
 
 	if (mapping == NULL || calibration == NULL ||
+	    memory_regions_overlap(mapping, sizeof(*mapping),
+				   calibration, sizeof(*calibration)) ||
 	    !v34_phase3_profile_is_valid(transmitting_profile) ||
 	    !v34_data_direction_parameters_are_valid(parameters))
 		return V34_DATA_MAPPING_INVALID_ARGUMENT;
@@ -117,12 +120,12 @@ enum v34_data_mapping_result v34_data_mapping_begin_calibration(
 		    parameters->precoder_coefficients,
 		    parameters->trellis_selection) != V34_4D_ENCODER_OK)
 		return V34_DATA_MAPPING_INVALID_ARGUMENT;
+	prepared.transmitting_profile = *transmitting_profile;
 	result = calibration_result(v34_mapping_power_calibration_begin(
 		calibration, &prepared.schedule, &prepared.scrambler,
 		&prepared.encoder, parameters->nonlinear_parameter));
 	if (result != V34_DATA_MAPPING_OK)
 		return result;
-	prepared.transmitting_profile = *transmitting_profile;
 	*mapping = prepared;
 	return V34_DATA_MAPPING_OK;
 }

@@ -30,7 +30,8 @@ struct v34_data_mapping {
 
 /* Initialize the B1 schedule and encoder plus an owned calibration job.
  * The mapping becomes valid only after its completed normalizer is stored.
- * Destinations must be distinct; rejected arguments change neither. */
+ * Output storage must not overlap. Inputs are copied before outputs
+ * are written; rejected arguments change neither destination. */
 enum v34_data_mapping_result v34_data_mapping_begin_calibration(
 	struct v34_data_mapping *mapping,
 	struct v34_mapping_power_calibration *calibration,
