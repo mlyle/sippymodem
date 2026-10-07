@@ -108,23 +108,29 @@ static inline bool v34_data_points_equal(
 	return equal;
 }
 
+static inline void v34_snapshot_data_channel_receiver(
+	struct v34_data_channel_receiver *receiver)
+{
+	struct v34_channel_frame_decoder *decoder =
+		&receiver->channel_receiver.frame_decoder;
+
+	v34_snapshot_geometry(&decoder->channel_decoder.geometry);
+	v34_snapshot_geometry(&decoder->channel_schedule.geometry);
+	v34_snapshot_geometry(&receiver->data_receiver.schedule.geometry);
+	v34_snapshot_parameters(&decoder->channel_decoder.parameters);
+	v34_snapshot_parameters(
+		&receiver->channel_receiver.conditioner.normalizer.parameters);
+	v34_snapshot_parameters(&receiver->data_receiver.mapping_decoder.parameters);
+}
+
 static inline void v34_snapshot_data_decisions(
 	struct v34_data_decision_receiver *receiver)
 {
-	struct v34_data_channel_receiver *data = &receiver->data_receiver;
-	struct v34_channel_frame_decoder *decoder =
-		&data->channel_receiver.frame_decoder;
 	struct v34_adaptive_equalizer_observation *observation =
 		&receiver->first_observation;
 	unsigned char bytes[sizeof(*observation)] = { 0 };
 
-	v34_snapshot_geometry(&decoder->channel_decoder.geometry);
-	v34_snapshot_geometry(&decoder->channel_schedule.geometry);
-	v34_snapshot_geometry(&data->data_receiver.schedule.geometry);
-	v34_snapshot_parameters(&decoder->channel_decoder.parameters);
-	v34_snapshot_parameters(
-		&data->channel_receiver.conditioner.normalizer.parameters);
-	v34_snapshot_parameters(&data->data_receiver.mapping_decoder.parameters);
+	v34_snapshot_data_channel_receiver(&receiver->data_receiver);
 #define COPY(field) memcpy(bytes + offsetof(struct v34_adaptive_equalizer_observation, field), \
 	&observation->field, sizeof(observation->field))
 	COPY(decision);
@@ -139,6 +145,19 @@ static inline void v34_snapshot_data_receiver(
 {
 	v34_snapshot_geometry(&receiver->geometry);
 	v34_snapshot_data_decisions(&receiver->decisions);
+}
+
+static inline bool v34_data_channel_receivers_equal(
+	const struct v34_data_channel_receiver *left,
+	const struct v34_data_channel_receiver *right)
+{
+	struct v34_data_channel_receiver snapshots[2];
+
+	memcpy(&snapshots[0], left, sizeof(*left));
+	memcpy(&snapshots[1], right, sizeof(*right));
+	v34_snapshot_data_channel_receiver(&snapshots[0]);
+	v34_snapshot_data_channel_receiver(&snapshots[1]);
+	return memcmp(&snapshots[0], &snapshots[1], sizeof(*left)) == 0;
 }
 
 static inline bool v34_data_decision_receivers_equal(

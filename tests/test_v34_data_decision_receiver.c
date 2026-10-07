@@ -6,6 +6,7 @@
 #include <v34_symbol_power.h>
 
 #include "test.h"
+#include "v34_state_fixture.h"
 
 #include <limits.h>
 #include <math.h>
@@ -191,13 +192,16 @@ static bool make_observation(
 	return true;
 }
 
-static bool observations_match(
-	const struct v34_adaptive_equalizer_observation *left,
-	const struct v34_adaptive_equalizer_observation *right)
+static bool equalizer_decisions_match(
+	const struct v34_adaptive_equalizer_decision *left,
+	const struct v34_adaptive_equalizer_decision *right)
 {
-	return left->decision.in_phase == right->decision.in_phase &&
-	       left->decision.quadrature == right->decision.quadrature &&
-	       left->epoch == right->epoch && left->lineage == right->lineage;
+	return v34_adaptive_equalizer_observations_are_equal(
+		       &left->observation, &right->observation) &&
+	       left->target.in_phase == right->target.in_phase &&
+	       left->target.quadrature == right->target.quadrature &&
+	       left->decoder_power_q15 == right->decoder_power_q15 &&
+	       left->adaptation == right->adaptation;
 }
 
 static bool current_matches(
@@ -313,14 +317,12 @@ static bool test_generated_pair_path(void)
 				CHECK(result == V34_DATA_RECEIVE_OK,
 				      "mode %zu frame %zu interval %zu first result %d",
 				      mode, frame_index, interval, result);
-				CHECK(memcmp(
-					      output.equalizer,
-					      (const struct
-					       v34_adaptive_equalizer_decision[2]){
-						      [0] = { .observation = input[0],
-							.adaptation =
-								V34_ADAPTIVE_EQUALIZER_SKIP } },
-					      sizeof(output.equalizer)) == 0,
+				CHECK(equalizer_decisions_match(&output.equalizer[0],
+					      &(struct v34_adaptive_equalizer_decision){
+						      .observation = input[0],
+						      .adaptation = V34_ADAPTIVE_EQUALIZER_SKIP }) &&
+				      equalizer_decisions_match(&output.equalizer[1],
+					      &(struct v34_adaptive_equalizer_decision){ 0 }),
 				      "mode %zu frame %zu interval %zu first decision changed",
 				      mode, frame_index, interval);
 				CHECK(memcmp(
@@ -333,9 +335,8 @@ static bool test_generated_pair_path(void)
 					      sizeof(output.received)) == 0,
 				      "mode %zu frame %zu interval %zu first outputs changed",
 				      mode, frame_index, interval);
-				CHECK(memcmp(&fixture.receiver.data_receiver,
-					     &fixture.model,
-					     sizeof(fixture.model)) == 0,
+				CHECK(v34_data_channel_receivers_equal(
+					      &fixture.receiver.data_receiver, &fixture.model),
 				      "mode %zu frame %zu interval %zu model state changed",
 				      mode, frame_index, interval);
 				model_result = v34_data_channel_receiver_advance(
@@ -359,10 +360,10 @@ static bool test_generated_pair_path(void)
 					      (model_result == V34_DATA_RECEIVE_OK ?
 						       V34_DATA_RECEIVE_INTERVAL_READY :
 						       model_result) &&
-				      observations_match(
+				      v34_adaptive_equalizer_observations_are_equal(
 					      &output.equalizer[0].observation,
 					      &input[0]) &&
-				      observations_match(
+				      v34_adaptive_equalizer_observations_are_equal(
 					      &output.equalizer[1].observation,
 					      &input[1]) &&
 				      output.equalizer[0].target.in_phase ==
@@ -383,9 +384,8 @@ static bool test_generated_pair_path(void)
 					      V34_ADAPTIVE_EQUALIZER_FULL &&
 				      current_matches(
 					      &output.current, &model_current) &&
-				      memcmp(&fixture.receiver.data_receiver,
-					     &fixture.model,
-					     sizeof(fixture.model)) == 0 &&
+				      v34_data_channel_receivers_equal(
+					      &fixture.receiver.data_receiver, &fixture.model) &&
 				      !fixture.receiver.has_first_symbol,
 				      "mode %zu frame %zu interval %zu second symbol changed",
 				      mode, frame_index, interval);
@@ -433,7 +433,7 @@ static bool rejected_call_preserves_outputs(
 
 	return v34_data_decision_receiver_observe(
 		       receiver, input, output) == expected &&
-	       memcmp(receiver, &saved_receiver, sizeof(*receiver)) == 0 &&
+	       v34_data_decision_receivers_equal(receiver, &saved_receiver) &&
 	       memcmp(output, &saved_output, sizeof(*output)) == 0;
 }
 
@@ -455,7 +455,7 @@ static bool test_cancel_interval(void)
 		      V34_DATA_RECEIVE_INVALID_STATE &&
 	      v34_data_decision_receiver_cancel_interval(&fixture.receiver) ==
 		      V34_DATA_RECEIVE_INVALID_STATE &&
-	      memcmp(&fixture.receiver, &saved, sizeof(saved)) == 0,
+	      v34_data_decision_receivers_equal(&fixture.receiver, &saved),
 	      "empty-interval cancellation changed the receiver");
 	CHECK(v34_data_decision_receiver_observe(
 		      &fixture.receiver, &input, &output) == V34_DATA_RECEIVE_OK &&
@@ -463,13 +463,13 @@ static bool test_cancel_interval(void)
 	      v34_data_decision_receiver_is_valid(&fixture.receiver) &&
 	      v34_data_decision_receiver_cancel_interval(&fixture.receiver) ==
 		      V34_DATA_RECEIVE_OK &&
-	      memcmp(&fixture.receiver, &saved, sizeof(saved)) == 0,
+	      v34_data_decision_receivers_equal(&fixture.receiver, &saved),
 	      "cancellation retained a partial symbol or advanced the decoder");
 	fixture.receiver.first_observation.epoch = 1u;
 	saved = fixture.receiver;
 	CHECK(v34_data_decision_receiver_cancel_interval(&fixture.receiver) ==
 		      V34_DATA_RECEIVE_INVALID_STATE &&
-	      memcmp(&fixture.receiver, &saved, sizeof(saved)) == 0,
+	      v34_data_decision_receivers_equal(&fixture.receiver, &saved),
 	      "invalid-interval cancellation changed the receiver");
 	return true;
 }
@@ -499,8 +499,8 @@ static bool test_validation_and_transactionality(void)
 		      CONFIGURATIONS[0].trellis,
 		      CONFIGURATIONS[0].transmitting_role) ==
 		      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
-	      memcmp(&fixture.receiver, &saved_receiver,
-		     sizeof(fixture.receiver)) == 0,
+	      v34_data_decision_receivers_equal(
+		      &fixture.receiver, &saved_receiver),
 	      "invalid initialization changed the receiver");
 	memset(&output, 0xa5, sizeof(output));
 	input.epoch = 0u;
@@ -525,8 +525,8 @@ static bool test_validation_and_transactionality(void)
 		      &fixture.receiver, &input,
 		      (struct v34_data_decision_output *)&input) ==
 		      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
-	      memcmp(&fixture.receiver, &saved_receiver,
-		     sizeof(fixture.receiver)) == 0,
+	      v34_data_decision_receivers_equal(
+		      &fixture.receiver, &saved_receiver),
 	      "overlapping regions changed the receiver");
 	corrupt = fixture.receiver;
 	corrupt.first_observation.epoch = 1u;
