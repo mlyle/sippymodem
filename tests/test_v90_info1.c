@@ -2,6 +2,7 @@
 
 #include <v34_phase2_info.h>
 #include <v90_info1.h>
+#include <v90_phase3.h>
 
 #include "test.h"
 
@@ -215,6 +216,60 @@ static bool test_validation(void)
 	return true;
 }
 
+static bool test_upstream_symbol_rates(void)
+{
+	/* V.90 6.2 excludes the three lower V.34 clocks. Codes 6/7 are
+	 * reserved by INFO1a's upstream symbol-rate field. */
+	static const bool allowed[] = {
+		false, false, false, true, true, true, false, false,
+	};
+	struct v90_info1a valid = selection();
+	const struct v34_info1_probe_result probe = {
+		.high_carrier = true,
+		.projected_data_rate_2400_bps_units = 8,
+	};
+
+	for (size_t code = 0; code < ARRAY_LENGTH(allowed); ++code) {
+		struct v90_info1a selected = valid;
+		struct v90_info1a decoded = valid;
+		uint8_t payload[V90_INFO1A_PAYLOAD_BYTES];
+		uint8_t saved[sizeof(payload)];
+
+		selected.upstream_symbol_rate = (enum v34_symbol_rate)code;
+		memset(payload, 0xa5, sizeof(payload));
+		memcpy(saved, payload, sizeof(saved));
+		CHECK(v90_info1a_is_valid(&selected) == allowed[code] &&
+		      v90_info1a_encode(&selected, payload, sizeof(payload)) ==
+			      (allowed[code] ? V90_INFO1_OK : V90_INFO1_INVALID_SELECTION) &&
+		      (allowed[code] || memcmp(payload, saved, sizeof(payload)) == 0),
+		      "INFO1a upstream code %zu encoding policy changed", code);
+		CHECK(v90_info1a_encode(&valid, payload, sizeof(payload)) == V90_INFO1_OK,
+		      "upstream rate fixture did not encode");
+		replace_field(payload, 22, 3, (uint16_t)code);
+		CHECK(v90_info1a_decode(payload, sizeof(payload), V90_INFO1A_PAYLOAD_BITS,
+				       &decoded) ==
+			      (allowed[code] ? V90_INFO1_OK : V90_INFO1_INVALID_PAYLOAD) &&
+		      selections_equal(&decoded, allowed[code] ? &selected : &valid),
+		      "INFO1a upstream code %zu decoding policy changed", code);
+	}
+	for (unsigned code = 0; code < V34_SYMBOL_RATE_COUNT; ++code) {
+		struct v34_phase3_profile profile;
+
+		CHECK(v34_phase3_profile_init(&profile, V34_ANSWERING_STATION,
+			      (enum v34_symbol_rate)code, &probe, 0, 0) == V34_PHASE3_PROFILE_OK &&
+		      v34_phase3_profile_is_valid(&profile),
+		      "canonical V.34 profile %u did not initialize", code);
+		CHECK(v90_phase3_analog_profile_is_valid(&profile) == allowed[code],
+		      "V.90 accepted forbidden upstream profile %u", code);
+		profile.local_role = V34_CALLING_STATION;
+		CHECK(!v90_phase3_analog_profile_is_valid(&profile),
+		      "V.90 analogue profile selected the caller scrambler");
+	}
+	CHECK(!v90_phase3_analog_profile_is_valid(NULL),
+	      "V.90 accepted a missing upstream profile");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -224,6 +279,7 @@ int main(void)
 		{ "wire image", test_wire_image },
 		{ "reserved bits", test_reserved_bits },
 		{ "validation", test_validation },
+		{ "upstream symbol rates", test_upstream_symbol_rates },
 	};
 	unsigned int failures = 0;
 

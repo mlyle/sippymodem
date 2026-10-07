@@ -24,6 +24,12 @@ enum v90_info1_result {
 	V90_INFO1_INVALID_PAYLOAD,
 };
 
+/* V.90 6.2 permits only these three conventional upstream clocks. */
+static inline bool v90_upstream_symbol_rate_is_valid(enum v34_symbol_rate rate)
+{
+	return rate >= V34_SYMBOL_RATE_3000 && rate <= V34_SYMBOL_RATE_3429;
+}
+
 /* This is the INFO1a shape that selects V.90 rather than the V.34 fallback.
  * The digital modem's downstream symbol rate is fixed at 8000 and therefore
  * is not exposed as mutable state. Frequency offset is in exact 0.02 Hz units;

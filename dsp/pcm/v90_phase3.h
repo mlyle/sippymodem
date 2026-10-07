@@ -4,6 +4,7 @@
 #define V90_PHASE3_H
 
 #include "v34_training_line.h"
+#include "v90_info1.h"
 
 #include <stdbool.h>
 
@@ -17,6 +18,7 @@ static inline bool v90_phase3_analog_profile_is_valid(
 	const struct v34_phase3_profile *profile)
 {
 	return v34_phase3_profile_is_valid(profile) &&
+	       v90_upstream_symbol_rate_is_valid(profile->symbol_rate) &&
 	       profile->local_role == V34_ANSWERING_STATION;
 }
 

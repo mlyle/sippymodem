@@ -514,13 +514,16 @@ static bool test_fixed_ja_lines(void)
 static bool test_peer_md_lines(void)
 {
 	static const uint8_t md_units[] = { 1, 9, 127 };
+	static const enum v34_symbol_rate rates[] = {
+		V34_SYMBOL_RATE_3000, V34_SYMBOL_RATE_3200, V34_SYMBOL_RATE_3429,
+	};
 
-	for (unsigned int rate = 0; rate < V34_SYMBOL_RATE_COUNT; ++rate)
+	for (size_t rate = 0; rate < ARRAY_LENGTH(rates); ++rate)
 		for (size_t index = 0; index < ARRAY_LENGTH(md_units); ++index)
-			CHECK(run_fixed_ja_line(G711_LAW_PCMU, rate, md_units[index]) &&
-			      run_fixed_ja_line(G711_LAW_PCMA, rate, md_units[index]),
+			CHECK(run_fixed_ja_line(G711_LAW_PCMU, rates[rate], md_units[index]) &&
+			      run_fixed_ja_line(G711_LAW_PCMA, rates[rate], md_units[index]),
 			      "peer MD %u rate %u G.711 Ja timelines failed",
-			      md_units[index], rate);
+			      md_units[index], (unsigned)rates[rate]);
 	return true;
 }
 
@@ -531,9 +534,29 @@ static bool test_validation_and_transactionality(void)
 	struct v90_phase3_analog_line_rx saved;
 	struct v90_phase3_analog_line_handoff handoff;
 	struct v90_phase3_analog_line_handoff saved_handoff;
+	const struct v34_info1_probe_result probe = {
+		.high_carrier = true,
+		.projected_data_rate_2400_bps_units = 8,
+	};
+	struct v90_phase3_analog_line_tx tx;
+	unsigned char saved_tx[sizeof(tx)];
 
 	memset(&rx, 0xa5, sizeof(rx));
 	saved = rx;
+	memset(&tx, 0x5a, sizeof(tx));
+	memcpy(saved_tx, &tx, sizeof(tx));
+	for (unsigned rate = 0; rate < V34_SYMBOL_RATE_3000; ++rate) {
+		CHECK(v34_phase3_profile_init(&selected, V34_ANSWERING_STATION,
+			      (enum v34_symbol_rate)rate, &probe, 0, 0) == V34_PHASE3_PROFILE_OK &&
+		      v90_phase3_analog_line_tx_init(&tx, &selected, NOMINAL_AMPLITUDE) ==
+			      V90_PHASE3_ANALOG_LINE_TX_INVALID_ARGUMENT &&
+		      v90_phase3_analog_line_rx_init(&rx, &selected, TEST_INITIAL_RECEIVE_GAIN) ==
+			      V90_PHASE3_ANALOG_LINE_RX_INVALID_ARGUMENT &&
+		      memcmp(&tx, saved_tx, sizeof(tx)) == 0 &&
+		      memcmp(&rx, &saved, sizeof(rx)) == 0,
+		      "V.90 accepted forbidden upstream clock %u or changed state", rate);
+	}
+	selected = profile();
 	selected.local_role = V34_CALLING_STATION;
 	CHECK(v90_phase3_analog_line_rx_init(
 		      &rx, &selected, TEST_INITIAL_RECEIVE_GAIN) ==

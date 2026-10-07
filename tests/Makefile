@@ -1628,6 +1628,8 @@ V90_INFO1_TEST_BINARY := $(BUILD_DIR)/test_v90_info1
 V90_INFO1_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v90_info1.o \
 	$(BUILD_DIR)/v90_info1.o \
+	$(BUILD_DIR)/v34_phase3_profile.o \
+	$(BUILD_DIR)/v34_info1.o \
 	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(BUILD_DIR)/v34_phase2_info.o
 V92_INFO1D_TEST_BINARY := $(BUILD_DIR)/test_v92_info1d

@@ -27,8 +27,7 @@ bool v90_info1a_is_valid(const struct v90_info1a *info1a)
 		       V34_INFO1_MAX_MD_LENGTH_35_MS_UNITS &&
 	       info1a->training_ucode >= V90_INFO1A_MIN_TRAINING_UCODE &&
 	       info1a->training_ucode <= V90_INFO1A_MAX_TRAINING_UCODE &&
-	       info1a->upstream_symbol_rate >= V34_SYMBOL_RATE_3000 &&
-	       info1a->upstream_symbol_rate <= V34_SYMBOL_RATE_3429 &&
+	       v90_upstream_symbol_rate_is_valid(info1a->upstream_symbol_rate) &&
 	       info1a->frequency_offset_1_50_hz_units >=
 		       V34_INFO1_FREQUENCY_OFFSET_UNAVAILABLE &&
 	       info1a->frequency_offset_1_50_hz_units <=
