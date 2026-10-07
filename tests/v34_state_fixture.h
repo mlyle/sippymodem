@@ -3,6 +3,7 @@
 #define V34_STATE_FIXTURE_H
 
 #include <v34_data_line_receiver.h>
+#include <v34_data_stream.h>
 #include <v34_mapping_parameters.h>
 #include <v34_training_line.h>
 #include "qam_state_fixture.h"
@@ -43,6 +44,68 @@ static inline void v34_snapshot_parameters(
 	COPY(expanded_shaping);
 #undef COPY
 	memcpy(parameters, bytes, sizeof(bytes));
+}
+
+static inline void v34_snapshot_points(struct v34_data_points *points)
+{
+	v34_snapshot_geometry(&points->schedule.geometry);
+	v34_snapshot_parameters(&points->encoder.parameters);
+	v34_snapshot_parameters(&points->normalizer.parameters);
+}
+
+static inline bool v34_data_points_equal(
+	const struct v34_data_points *left, const struct v34_data_points *right)
+{
+	for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap) {
+		const struct v34_q7_point *a =
+			&left->encoder.precoder.previous_symbols[tap];
+		const struct v34_q7_point *b =
+			&right->encoder.precoder.previous_symbols[tap];
+
+		if (a->in_phase != b->in_phase || a->quadrature != b->quadrature)
+			return false;
+	}
+	for (size_t point = 0; point < V34_SYMBOLS_PER_MAPPING_FRAME; ++point)
+		if (!qam_points_equal(&left->point[point], &right->point[point]))
+			return false;
+#define SAME(field) (memcmp(&left->field, &right->field, sizeof(left->field)) == 0)
+	bool equal = v34_frame_geometry_is_equal(
+			&left->schedule.geometry, &right->schedule.geometry) &&
+		left->schedule.data_frame_in_superframe ==
+			right->schedule.data_frame_in_superframe &&
+		left->schedule.next_mapping_frame ==
+			right->schedule.next_mapping_frame &&
+		left->scrambler.history == right->scrambler.history &&
+		left->scrambler.polynomial == right->scrambler.polynomial &&
+		v34_mapping_parameters_are_equal(
+			&left->encoder.parameters, &right->encoder.parameters) &&
+		v34_precoder_coefficients_are_equal(
+			left->encoder.precoder.coefficients,
+			right->encoder.precoder.coefficients) &&
+		left->encoder.precoder.grid_step ==
+			right->encoder.precoder.grid_step &&
+		left->encoder.convolutional_encoder.state ==
+			right->encoder.convolutional_encoder.state &&
+		left->encoder.convolutional_encoder.selection ==
+			right->encoder.convolutional_encoder.selection &&
+		left->encoder.previous_differential_output ==
+			right->encoder.previous_differential_output &&
+		v34_mapping_parameters_are_equal(
+			&left->normalizer.parameters, &right->normalizer.parameters) &&
+		SAME(normalizer.precoded_mean_squared_magnitude) &&
+		SAME(normalizer.projected_mean_squared_magnitude) &&
+		SAME(normalizer.normalization_gain) &&
+		SAME(normalizer.maximum_precoded_point_power) &&
+		SAME(normalizer.maximum_projected_point_power) &&
+		SAME(normalizer.maximum_normalized_point_power) &&
+		left->normalizer.calibration_symbol_count ==
+			right->normalizer.calibration_symbol_count &&
+		left->normalizer.nonlinear_parameter ==
+			right->normalizer.nonlinear_parameter &&
+		left->local_role == right->local_role &&
+		left->next_point == right->next_point;
+#undef SAME
+	return equal;
 }
 
 static inline void v34_snapshot_data_receiver(
@@ -122,6 +185,16 @@ static inline bool v34_training_lines_equal(
 	       memcmp(&left->target_rms, &right->target_rms, sizeof(left->target_rms)) == 0 &&
 	       left->generated_samples == right->generated_samples &&
 	       left->nominal_peak_amplitude == right->nominal_peak_amplitude;
+}
+
+static inline bool v34_data_streams_equal(
+	const struct v34_data_stream *left, const struct v34_data_stream *right)
+{
+	return v34_data_points_equal(&left->points, &right->points) &&
+	       v34_training_lines_equal(&left->line, &right->line) &&
+	       left->delayed_primary_bits == right->delayed_primary_bits &&
+	       left->primary_delay_bits == right->primary_delay_bits &&
+	       left->b1_active == right->b1_active;
 }
 
 #endif

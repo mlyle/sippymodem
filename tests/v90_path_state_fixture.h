@@ -26,13 +26,6 @@ static inline void v90_snapshot_channel(struct qam_channel *channel)
 	memcpy(channel, bytes, sizeof(bytes));
 }
 
-static inline void v90_snapshot_points(struct v34_data_points *points)
-{
-	v34_snapshot_geometry(&points->schedule.geometry);
-	v34_snapshot_parameters(&points->encoder.parameters);
-	v34_snapshot_parameters(&points->normalizer.parameters);
-}
-
 static inline bool v90_snapshot_analog_path(struct v90_analog_path *path)
 {
 	struct v34_data_stream_preparation_job *job =
@@ -61,7 +54,7 @@ static inline bool v90_snapshot_analog_path(struct v90_analog_path *path)
 		COPY(b1_active);
 #undef COPY
 		memcpy(stream, bytes, sizeof(bytes));
-		v90_snapshot_points(&stream->points);
+		v34_snapshot_points(&stream->points);
 		v90_snapshot_channel(&stream->line.carrier.channel);
 		upstream_size = sizeof(*stream);
 		break;
@@ -76,7 +69,7 @@ static inline bool v90_snapshot_analog_path(struct v90_analog_path *path)
 	v34_snapshot_parameters(&job->preparation.mapping.encoder.parameters);
 	v34_snapshot_parameters(&job->preparation.mapping.normalizer.parameters);
 	if (job->calibrating_line) {
-		v90_snapshot_points(&job->calibration.line.points);
+		v34_snapshot_points(&job->calibration.line.points);
 		v90_snapshot_channel(&job->calibration.line.carrier.channel);
 	} else {
 		v34_snapshot_geometry(

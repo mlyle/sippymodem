@@ -4,6 +4,7 @@
 #include <v34_power_calibration.h>
 
 #include "test.h"
+#include "v34_state_fixture.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -246,10 +247,8 @@ static bool test_b1_and_host_handoff(void)
 		      stream.delayed_primary_bits ==
 			      model_delayed_primary_bits &&
 		      stream.primary_delay_bits == model_delay_bits &&
-		      memcmp(&stream.points, &model_points,
-			     sizeof(model_points)) == 0 &&
-		      memcmp(&stream.line, &model_line,
-			     sizeof(model_line)) == 0,
+		      v34_data_points_equal(&stream.points, &model_points) &&
+		      v34_training_lines_equal(&stream.line, &model_line),
 		      "stream diverged at sample %zu", samples - 1u);
 	}
 	CHECK(!v34_data_stream_is_transmitting_b1(&stream) &&
@@ -392,10 +391,8 @@ static bool test_selected_continuation(void)
 			      &actual, &line, &configuration) ==
 			      V34_DATA_STREAM_OK &&
 		      line_calibrations == 2 &&
-		      memcmp(&expected.line, &expected_line,
-			     sizeof(expected_line)) == 0 &&
-		      memcmp(&actual.line, &expected_line,
-			     sizeof(expected_line)) == 0 &&
+		      v34_training_lines_equal(&expected.line, &expected_line) &&
+		      v34_training_lines_equal(&actual.line, &expected_line) &&
 		      v34_data_stream_is_transmitting_b1(&actual) &&
 		      streams_match_through_b1(&actual, &expected),
 		      "continued stream mismatch for role %u", role);
@@ -675,14 +672,14 @@ static bool test_transactional_boundaries(void)
 	CHECK(v34_data_stream_sample(
 		      &stream, generated_source, &source, &sample, &accepted) ==
 		      V34_DATA_STREAM_SOURCE_FAILURE &&
-	      source.calls == 1u && memcmp(&stream, &before, sizeof(stream)) == 0 &&
+	      source.calls == 1u && v34_data_streams_equal(&stream, &before) &&
 	      sample == 1234 && accepted,
 	      "failed source changed stream state or output");
 	source.mode = SOURCE_MALFORMED;
 	CHECK(v34_data_stream_sample(
 		      &stream, generated_source, &source, &sample, &accepted) ==
 		      V34_DATA_STREAM_SOURCE_FAILURE &&
-	      source.calls == 2u && memcmp(&stream, &before, sizeof(stream)) == 0 &&
+	      source.calls == 2u && v34_data_streams_equal(&stream, &before) &&
 	      sample == 1234 && accepted,
 	      "malformed source changed stream state or output");
 	CHECK(v34_data_stream_sample(
@@ -702,7 +699,7 @@ static bool test_transactional_boundaries(void)
 	      v34_data_stream_sample(
 		      &stream, NULL, NULL, &sample, NULL) ==
 		      V34_DATA_STREAM_INVALID_ARGUMENT &&
-	      memcmp(&stream, &before, sizeof(stream)) == 0,
+	      v34_data_streams_equal(&stream, &before),
 	      "invalid stream call changed state");
 	corrupt = stream;
 	corrupt.line.carrier.maximum_point_power =
