@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
+#include <v34_frame_schedule.h>
 #include <v34_phase2_selection.h>
 
 #include "test.h"
@@ -664,7 +665,7 @@ static bool test_cross_record_constraints(void)
 static bool test_answerer_fallback_selection(void)
 {
 	static const uint8_t expected_limits[V34_SYMBOL_RATE_COUNT] = {
-		9, 10, 11, 12, 13, 14,
+		9, 11, 11, 12, 13, 14,
 	};
 	struct v34_info0 caller = full_capabilities();
 	struct v34_info0 answerer = full_capabilities();
@@ -681,11 +682,11 @@ static bool test_answerer_fallback_selection(void)
 	struct v34_info1a saved;
 
 	for (unsigned int rate = 0; rate < V34_SYMBOL_RATE_COUNT; ++rate)
-		CHECK(v34_phase2_projected_rate_limit(
+		CHECK(v34_frame_geometry_maximum_rate(
 			      (enum v34_symbol_rate)rate) ==
 			      expected_limits[rate],
 		      "rate %u has the wrong projected-rate limit", rate);
-	CHECK(v34_phase2_projected_rate_limit(V34_SYMBOL_RATE_COUNT) == 0,
+	CHECK(v34_frame_geometry_maximum_rate(V34_SYMBOL_RATE_COUNT) == 0,
 	      "invalid symbol rate has a projected-rate limit");
 
 	info1c.answer_transmit[V34_SYMBOL_RATE_3429] =

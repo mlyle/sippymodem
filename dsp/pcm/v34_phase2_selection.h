@@ -40,11 +40,6 @@ enum v34_phase2_selection_result v34_phase2_handoff_profiles(
 	struct v34_phase3_profile *caller_transmit,
 	struct v34_phase3_profile *answerer_transmit);
 
-/* Bound the projected data rate to the implemented modulation profile for
- * one symbol rate. Zero denotes an invalid symbol rate. */
-uint8_t v34_phase2_projected_rate_limit(
-	enum v34_symbol_rate symbol_rate);
-
 /* Select the peer transmitter's pre-emphasis from the received L2 spectrum.
  * The four source bands and their per-filter slopes are the V.34 probe
  * profiles; 2743 and 2800 symbol/s share one pulse-shaping geometry. */

@@ -31,6 +31,10 @@ struct v34_frame_geometry {
 	bool auxiliary_channel_enabled;
 };
 
+/* Highest implemented primary rate for this cadence, in 2400 bit/s units.
+ * Zero denotes an invalid symbol rate. Uses the same limits as frame geometry. */
+uint8_t v34_frame_geometry_maximum_rate(enum v34_symbol_rate symbol_rate);
+
 /* Derive clause 8 frame geometry using its counter construction rather than
  * storing the rate-by-symbol-rate switching table. */
 enum v34_frame_schedule_result

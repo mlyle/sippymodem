@@ -4,6 +4,7 @@
 
 #include "memory_region.h"
 #include "phase2_ranging.h"
+#include "v34_frame_schedule.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -68,17 +69,6 @@ struct preemphasis_probe_profile {
 	uint8_t source_bin;
 	uint16_t slope_q14;
 };
-
-uint8_t v34_phase2_projected_rate_limit(
-	enum v34_symbol_rate symbol_rate)
-{
-	static const uint8_t limits[V34_SYMBOL_RATE_COUNT] = {
-		9, 10, 11, 12, 13, 14,
-	};
-
-	return (unsigned int)symbol_rate < V34_SYMBOL_RATE_COUNT ?
-		       limits[symbol_rate] : 0;
-}
 
 static bool preemphasis_probe_profile(
 	enum v34_symbol_rate symbol_rate,
@@ -504,7 +494,7 @@ enum v34_phase2_selection_result v34_phase2_select_answerer_info1a(
 			  preferred->call_to_answer_symbol_rate;
 	for (unsigned int index = V34_SYMBOL_RATE_COUNT; index-- != 0u;) {
 		enum v34_symbol_rate rate = (enum v34_symbol_rate)index;
-		uint8_t limit = v34_phase2_projected_rate_limit(rate);
+		uint8_t limit = v34_frame_geometry_maximum_rate(rate);
 
 		if (index > ceiling)
 			continue;

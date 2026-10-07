@@ -42,6 +42,14 @@ static bool symbol_rate_geometry(
 	return false;
 }
 
+uint8_t v34_frame_geometry_maximum_rate(enum v34_symbol_rate symbol_rate)
+{
+	struct symbol_rate_geometry geometry;
+
+	return symbol_rate_geometry(symbol_rate, &geometry) ?
+		       geometry.maximum_primary_rate_2400_bps_units : 0;
+}
+
 static enum v34_frame_schedule_result derive_geometry(
 	enum v34_symbol_rate symbol_rate,
 	uint8_t primary_data_rate_2400_bps_units,

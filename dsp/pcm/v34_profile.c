@@ -77,7 +77,7 @@ static uint16_t enabled_rates(
 			   requested_symbol_rate, &selected)) {
 		return 0;
 	}
-	limit = v34_phase2_projected_rate_limit(selected);
+	limit = v34_frame_geometry_maximum_rate(selected);
 	if (limit == 0)
 		return 0;
 	for (uint8_t units = 1; units <= limit; ++units) {
@@ -131,7 +131,7 @@ static union v34_local_info1 local_info1(
 			 * other probe result before the answerer selects INFO1a. */
 			if (fixed_symbol_rate && index != (unsigned int)symbol_rate)
 				continue;
-			limit = v34_phase2_projected_rate_limit(
+			limit = v34_frame_geometry_maximum_rate(
 				(enum v34_symbol_rate)index);
 			probe = &info1.calling.answer_transmit[index];
 			probe->high_carrier = index == V34_SYMBOL_RATE_2743;

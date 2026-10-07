@@ -1273,6 +1273,9 @@ V34_PHASE2_SELECTION_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_phase2_probe.o \
 	$(BUILD_DIR)/v34_phase2_probe_receiver.o \
 	$(BUILD_DIR)/v34_phase2_probe_spectrum.o \
+	$(SELF_SYNC_SCRAMBLER_OBJECT) \
+	$(BUILD_DIR)/v34_frame_schedule.o \
+	$(BUILD_DIR)/v34_framing.o \
 	$(BUILD_DIR)/v34_info0.o \
 	$(BUILD_DIR)/v34_info1.o \
 	$(BUILD_DIR)/v34_phase2_selection.o \
@@ -3035,6 +3038,7 @@ V34_PHASE2_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v34_phase2.o \
 	$(BUILD_DIR)/v34_info1.o \
 	$(BUILD_DIR)/v34_phase2.o \
+	$(BUILD_DIR)/v34_frame_schedule.o \
 	$(BUILD_DIR)/phase2_info1_exchange.o \
 	$(BUILD_DIR)/v34_phase2_info1_exchange.o \
 	$(BUILD_DIR)/v34_phase2_selection.o \

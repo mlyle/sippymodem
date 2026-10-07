@@ -2924,7 +2924,7 @@ static bool run_v34_rate_matrix(const char *filter)
 		unsigned int maximum_bit_rate;
 	} symbol_rates[] = {
 		{ V34_SYMBOL_RATE_2400, 2400, 21600 },
-		{ V34_SYMBOL_RATE_2743, 2743, 24000 },
+		{ V34_SYMBOL_RATE_2743, 2743, 26400 },
 		{ V34_SYMBOL_RATE_2800, 2800, 26400 },
 		{ V34_SYMBOL_RATE_3000, 3000, 28800 },
 		{ V34_SYMBOL_RATE_3200, 3200, 31200 },
@@ -2992,7 +2992,7 @@ static bool run_v34_rate_matrix(const char *filter)
 		}
 	}
 	CHECK((filter == NULL || filter[0] == '\0') ?
-		      profiles == 64 && cases == 128 :
+		      profiles == 65 && cases == 130 :
 		      profiles != 0 && cases == profiles * 2u,
 	      "V.34 matrix covered an unexpected %u profiles/%u cases",
 	      profiles, cases);

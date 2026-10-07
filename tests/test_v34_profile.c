@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
+#include <v34_frame_schedule.h>
 #include <v34_profile.h>
 
 #include "test.h"
@@ -10,15 +11,16 @@
 struct symbol_rate_case {
 	unsigned int symbols_per_second;
 	enum v34_symbol_rate symbol_rate;
+	uint8_t maximum_rate;
 };
 
 static const struct symbol_rate_case symbol_rates[] = {
-	{ 2400, V34_SYMBOL_RATE_2400 },
-	{ 2743, V34_SYMBOL_RATE_2743 },
-	{ 2800, V34_SYMBOL_RATE_2800 },
-	{ 3000, V34_SYMBOL_RATE_3000 },
-	{ 3200, V34_SYMBOL_RATE_3200 },
-	{ 3429, V34_SYMBOL_RATE_3429 },
+	{ 2400, V34_SYMBOL_RATE_2400, 9 },
+	{ 2743, V34_SYMBOL_RATE_2743, 11 },
+	{ 2800, V34_SYMBOL_RATE_2800, 11 },
+	{ 3000, V34_SYMBOL_RATE_3000, 12 },
+	{ 3200, V34_SYMBOL_RATE_3200, 13 },
+	{ 3429, V34_SYMBOL_RATE_3429, 14 },
 };
 
 static bool profile_common_is_expected(
@@ -61,8 +63,7 @@ static bool profile_common_is_expected(
 static bool test_fixed_symbol_rates(void)
 {
 	for (size_t rate = 0; rate < ARRAY_LENGTH(symbol_rates); ++rate) {
-		uint8_t maximum = v34_phase2_projected_rate_limit(
-			symbol_rates[rate].symbol_rate);
+		uint8_t maximum = symbol_rates[rate].maximum_rate;
 		unsigned int bit_rate = (unsigned int)maximum * V34_RATE_STEP;
 
 		for (unsigned int role_index = V34_CALLING_STATION;
@@ -153,7 +154,7 @@ static bool test_automatic_profile(void)
 	for (unsigned int rate = 0; rate < V34_SYMBOL_RATE_COUNT; ++rate)
 		CHECK(caller.local_info1.calling.answer_transmit[rate]
 			      .projected_data_rate_2400_bps_units ==
-			      v34_phase2_projected_rate_limit(
+			      v34_frame_geometry_maximum_rate(
 				      (enum v34_symbol_rate)rate),
 		      "automatic caller withdrew rate %u", rate);
 	CHECK(answerer.local_info1.answering.answer_to_call_symbol_rate ==

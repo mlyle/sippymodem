@@ -3,6 +3,7 @@
 #include "v34_call.h"
 
 #include "memory_region.h"
+#include "v34_frame_schedule.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -163,7 +164,7 @@ static bool add_caller_retrain_fallbacks(struct v34_call *call)
 		if (selected.answer_transmit[index]
 			    .projected_data_rate_2400_bps_units != 0)
 			continue;
-		limit = v34_phase2_projected_rate_limit(
+		limit = v34_frame_geometry_maximum_rate(
 			(enum v34_symbol_rate)index);
 		if (limit == 0)
 			continue;
