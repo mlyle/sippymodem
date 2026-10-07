@@ -1001,8 +1001,8 @@ static bool test_transactionality(void)
 		      V34_ADAPTIVE_EQUALIZER_INVALID_STATE &&
 	      v34_adaptive_equalizer_observe(&invalid, &observation) ==
 		      V34_ADAPTIVE_EQUALIZER_INVALID_STATE &&
-	      memcmp(&observation, &saved_observation,
-		     sizeof(observation)) == 0,
+	      v34_adaptive_equalizer_observations_are_equal(
+		      &observation, &saved_observation),
 	      "invalid owner handling changed");
 
 	CHECK(v34_adaptive_equalizer_init(&equalizer) ==
