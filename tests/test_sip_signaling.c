@@ -3,6 +3,7 @@
 #include <sip_signaling.h>
 
 #include <pjsua-lib/pjsua.h>
+#include <pj/guid.h>
 
 #include "test.h"
 
@@ -367,11 +368,11 @@ static bool test_singleton_and_account_boundary(void)
 	return true;
 }
 
-static int open_loopback_listener(unsigned int *port)
+static int open_loopback_listener(unsigned int source_port, unsigned int *port)
 {
 	struct sockaddr_in address = {
 		.sin_family = AF_INET,
-		.sin_port = 0,
+		.sin_port = htons((uint16_t)source_port),
 		.sin_addr.s_addr = htonl(INADDR_LOOPBACK),
 	};
 	socklen_t address_size = sizeof(address);
@@ -565,7 +566,7 @@ static void *serve_loopback_registrar(void *context)
 static bool start_loopback_registrar(struct loopback_registrar *registrar)
 {
 	memset(registrar, 0, sizeof(*registrar));
-	registrar->socket_fd = open_loopback_listener(&registrar->port);
+	registrar->socket_fd = open_loopback_listener(0, &registrar->port);
 	if (registrar->socket_fd < 0)
 		return false;
 	if (pthread_create(&registrar->worker, NULL, serve_loopback_registrar,
@@ -705,7 +706,7 @@ static void *serve_loopback_call(void *context)
 static bool start_loopback_call(struct loopback_call_peer *peer)
 {
 	memset(peer, 0, sizeof(*peer));
-	peer->socket_fd = open_loopback_listener(&peer->port);
+	peer->socket_fd = open_loopback_listener(0, &peer->port);
 	if (peer->socket_fd < 0)
 		return false;
 	if (pthread_create(&peer->worker, NULL, serve_loopback_call, peer) != 0) {
@@ -726,6 +727,7 @@ static bool finish_loopback_call(struct loopback_call_peer *peer)
 }
 
 struct loopback_incoming_peer {
+	char dialog_id[PJ_GUID_MAX_LENGTH + 1];
 	pthread_t worker;
 	int socket_fd;
 	unsigned int port;
@@ -785,18 +787,20 @@ static void *serve_incoming_call(void *context)
 	invite_size = snprintf(
 		invite, sizeof(invite),
 		"INVITE sip:%s@127.0.0.1:%u SIP/2.0\r\n"
-		"Via: SIP/2.0/UDP 127.0.0.1:%u;branch=z9hG4bK-inbound-%u\r\n"
+		"Via: SIP/2.0/UDP 127.0.0.1:%u;branch=z9hG4bK-inbound-%s\r\n"
 		"Max-Forwards: 70\r\n"
-		"From: <sip:%s@127.0.0.1>;tag=caller\r\n"
+		"From: <sip:%s@127.0.0.1>;tag=%s\r\n"
 		"To: <sip:modem@127.0.0.1:%u>\r\n"
-		"Call-ID: incoming-loopback-%u\r\n"
+		"Call-ID: incoming-loopback-%s\r\n"
 		"CSeq: 1 INVITE\r\n"
 		"%s"
 		"Contact: <sip:caller@127.0.0.1:%u>\r\n"
 		"Content-Type: application/sdp\r\n"
 		"Content-Length: %zu\r\n\r\n%s",
-		peer->called, peer->destination_port, peer->port, peer->port, peer->caller,
-		peer->destination_port, peer->port, peer->privacy, peer->port, sizeof(offer) - 1, offer);
+		peer->called, peer->destination_port, peer->port,
+		peer->dialog_id, peer->caller, peer->dialog_id,
+		peer->destination_port, peer->dialog_id,
+		peer->privacy, peer->port, sizeof(offer) - 1, offer);
 	if (invite_size < 0 || (size_t)invite_size >= sizeof(invite) ||
 	    sendto(peer->socket_fd, invite, (size_t)invite_size, 0,
 		   (const struct sockaddr *)&destination, sizeof(destination)) !=
@@ -841,14 +845,15 @@ static void *serve_incoming_call(void *context)
 	ack_size = snprintf(
 		ack, sizeof(ack),
 		"ACK sip:modem@127.0.0.1:%u SIP/2.0\r\n"
-		"Via: SIP/2.0/UDP 127.0.0.1:%u;branch=z9hG4bK-ack\r\n"
+		"Via: SIP/2.0/UDP 127.0.0.1:%u;branch=z9hG4bK-ack-%s\r\n"
 		"Max-Forwards: 70\r\n"
-		"From: <sip:%s@127.0.0.1>;tag=caller\r\n"
+		"From: <sip:%s@127.0.0.1>;tag=%s\r\n"
 		"%s\r\n"
-		"Call-ID: incoming-loopback-%u\r\n"
+		"Call-ID: incoming-loopback-%s\r\n"
 		"CSeq: 1 ACK\r\n"
 		"Content-Length: 0\r\n\r\n",
-		peer->destination_port, peer->port, peer->caller, to_header, peer->port);
+		peer->destination_port, peer->port, peer->dialog_id,
+		peer->caller, peer->dialog_id, to_header, peer->dialog_id);
 	if (ack_size < 0 || (size_t)ack_size >= sizeof(ack) ||
 	    sendto(peer->socket_fd, ack, (size_t)ack_size, 0,
 		   (const struct sockaddr *)&destination, sizeof(destination)) !=
@@ -861,14 +866,16 @@ static void *serve_incoming_call(void *context)
 }
 
 static bool start_incoming_identity(struct loopback_incoming_peer *peer,
-	unsigned int destination_port, const char *caller, const char *called, const char *privacy)
+	unsigned int destination_port, const char *caller, const char *called, const char *privacy, unsigned int source_port)
 {
 	memset(peer, 0, sizeof(*peer));
 	peer->destination_port = destination_port;
 	peer->caller = caller;
 	peer->called = called;
 	peer->privacy = privacy;
-	peer->socket_fd = open_loopback_listener(&peer->port);
+	pj_str_t dialog_id = { peer->dialog_id, 0 };
+	pj_generate_unique_string(&dialog_id);
+	peer->socket_fd = open_loopback_listener(source_port, &peer->port);
 	if (peer->socket_fd < 0)
 		return false;
 	if (pthread_create(&peer->worker, NULL, serve_incoming_call, peer) != 0) {
@@ -881,7 +888,7 @@ static bool start_incoming_identity(struct loopback_incoming_peer *peer,
 
 static bool start_incoming_call(struct loopback_incoming_peer *peer, unsigned int destination_port)
 {
-	return start_incoming_identity(peer, destination_port, "caller", "modem", "");
+	return start_incoming_identity(peer, destination_port, "caller", "modem", "", 0);
 }
 
 static bool finish_incoming_call(struct loopback_incoming_peer *peer)
@@ -1285,17 +1292,22 @@ static bool test_incoming_caller_facts(void)
 	struct sip_signaling *signaling = create_signaling(&config, &capture);
 	CHECK(signaling != NULL && sip_signaling_open(signaling) == SIP_SIGNALING_OK,
 	      "caller identity server did not open");
+	/* Reuse a UDP source port while changing the dialog and transaction IDs. */
+	unsigned int source_port = 0;
 	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
 		memset(&capture, 0, sizeof(capture));
 		struct loopback_incoming_peer peer;
 		CHECK(start_incoming_identity(&peer, sip_signaling_local_port(signaling),
-		      cases[index].caller, "5678", cases[index].privacy), "caller fixture did not start");
+		      cases[index].caller, "5678", cases[index].privacy, source_port), "caller fixture did not start");
+		source_port = peer.port;
 		for (unsigned int attempt = 0; attempt < 100 && sip_signaling_call_state(signaling) != SIP_CALL_EARLY; ++attempt)
 			CHECK(sip_signaling_step(signaling, 10) == SIP_SIGNALING_OK, "caller fixture poll failed");
 		CHECK(capture.call_count > 0 && capture.call_generations[0] == index + 1 &&
 		      strcmp(capture.caller_numbers[0], cases[index].expected) == 0 &&
 		      strcmp(capture.called_numbers[0], "5678") == 0,
-		      "caller/called facts wrong for case %zu", index);
+		      "caller/called facts wrong for case %zu: port=%u events=%u generation=%llu caller=%s called=%s state=%d", index,
+		      peer.port, capture.call_count, (unsigned long long)capture.call_generations[0],
+		      capture.caller_numbers[0], capture.called_numbers[0], sip_signaling_call_state(signaling));
 		CHECK(sip_signaling_answer(signaling) == SIP_SIGNALING_OK, "caller fixture answer failed");
 		for (unsigned int attempt = 0; attempt < 100 && sip_signaling_call_state(signaling) != SIP_CALL_CONNECTED; ++attempt)
 			CHECK(sip_signaling_step(signaling, 10) == SIP_SIGNALING_OK, "caller connect poll failed");
@@ -1308,7 +1320,7 @@ static bool test_incoming_caller_facts(void)
 	}
 	memset(&capture, 0, sizeof(capture));
 	unsigned int unused_port;
-	int unused = open_loopback_listener(&unused_port);
+	int unused = open_loopback_listener(0, &unused_port);
 	CHECK(unused >= 0, "outgoing identity fixture failed");
 	close(unused);
 	char target[128];
