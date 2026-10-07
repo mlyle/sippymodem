@@ -28,18 +28,9 @@ static void receiver_snapshot(struct v90_upstream_rx *copy,
 	v34_snapshot_parameters(&copy->calibration.encoder.parameters);
 	if (copy->stage == V90_UPSTREAM_RX_STAGE_B1 ||
 	    copy->stage == V90_UPSTREAM_RX_STAGE_COMPLETE) {
-		struct v34_data_channel_receiver *data =
-			&copy->state.data.decisions.data_receiver;
-		struct v34_channel_frame_decoder *frames =
-			&data->channel_receiver.frame_decoder;
 		v34_snapshot_geometry(&copy->state.data.geometry);
-		v34_snapshot_geometry(&data->data_receiver.schedule.geometry);
-		v34_snapshot_geometry(&frames->channel_schedule.geometry);
-		v34_snapshot_geometry(&frames->channel_decoder.geometry);
-		v34_snapshot_parameters(
-			&data->channel_receiver.conditioner.normalizer.parameters);
-		v34_snapshot_parameters(&frames->channel_decoder.parameters);
-		v34_snapshot_parameters(&data->data_receiver.mapping_decoder.parameters);
+		v34_snapshot_data_channel_receiver(
+			&copy->state.data.decisions.data_receiver);
 	}
 }
 

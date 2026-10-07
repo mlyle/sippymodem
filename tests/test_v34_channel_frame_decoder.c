@@ -5,6 +5,7 @@
 #include <v34_data_receiver.h>
 
 #include "test.h"
+#include "v34_state_fixture.h"
 
 #include <float.h>
 #include <limits.h>
@@ -190,11 +191,25 @@ static bool survivor_decision_matches(
 		return false;
 	for (uint8_t symbol = 0;
 	     symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
-		if (memcmp(
+		if (!v34_test_grid_points_are_equal(
 			    &decision->channel_output[symbol],
-			    &encoded->precoded[symbol].channel_output,
-			    sizeof(decision->channel_output[symbol])) != 0)
+			    &encoded->precoded[symbol].channel_output))
 			return false;
+	}
+	return true;
+}
+
+static bool decided_frames_are_equal(
+	const struct v34_decided_4d_interval left[V34_4D_INTERVALS_PER_MAPPING_FRAME],
+	const struct v34_decided_4d_interval right[V34_4D_INTERVALS_PER_MAPPING_FRAME])
+{
+	for (size_t interval = 0; interval < V34_4D_INTERVALS_PER_MAPPING_FRAME; ++interval) {
+		if (left[interval].trellis_output != right[interval].trellis_output)
+			return false;
+		for (size_t symbol = 0; symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol)
+			if (!v34_test_grid_points_are_equal(&left[interval].mapper_output[symbol],
+				    &right[interval].mapper_output[symbol]))
+				return false;
 	}
 	return true;
 }
@@ -317,9 +332,8 @@ static bool test_generated_b1_and_data_round_trip(void)
 						continue;
 					}
 					CHECK(received_frames < frame &&
-					      memcmp(decided,
-						     expected[received_frames].decided,
-						     sizeof(decided)) == 0,
+					      decided_frames_are_equal(decided,
+						     expected[received_frames].decided),
 					      "channel frame %zu/%u/%zu decisions changed",
 					      configuration, selection, received_frames);
 					{
@@ -387,7 +401,7 @@ static bool rejected_advance_is_transactional(
 	return v34_channel_frame_decoder_advance(
 		       decoder, estimates, &current, decided, &ready) ==
 		       expected_result &&
-	       memcmp(decoder, &saved, sizeof(saved)) == 0 &&
+	       v34_channel_frame_decoders_equal(decoder, &saved) &&
 	       memcmp(&current, &saved_current, sizeof(current)) == 0 &&
 	       memcmp(decided, saved_decided, sizeof(decided)) == 0 && ready;
 }
@@ -470,7 +484,7 @@ static bool test_transactional_boundaries(void)
 	      v34_channel_frame_decoder_advance(
 		      &decoder, estimates, &current, decided, NULL) ==
 		      V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT &&
-	      memcmp(&decoder, &saved, sizeof(saved)) == 0,
+	      v34_channel_frame_decoders_equal(&decoder, &saved),
 	      "null channel frame arguments changed state");
 	malformed_estimates[0] = estimates[0];
 	malformed_estimates[1] = estimates[1];
@@ -626,8 +640,8 @@ static bool test_disjoint_regions(void)
 		      &fixture.channel_decoder, estimates, saved_estimates, &normalizer,
 		      &current, fixture.channel_decoder.pending_frame, &ready) ==
 		      V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT &&
-	      memcmp(&fixture.channel_decoder, &saved, sizeof(saved)) == 0 &&
-	      memcmp(&normalizer, &saved_normalizer, sizeof(normalizer)) == 0 &&
+	      v34_channel_frame_decoders_equal(&fixture.channel_decoder, &saved) &&
+	      v34_normalizers_equal(&normalizer, &saved_normalizer) &&
 	      memcmp(estimates, saved_estimates, sizeof(estimates)) == 0 &&
 	      memcmp(&current, &saved_current, sizeof(current)) == 0 &&
 	      memcmp(decided, saved_decided, sizeof(decided)) == 0 && ready,
