@@ -3,8 +3,9 @@
 #include <v34_data_startup.h>
 
 #include "test.h"
+#include "v34_startup_fixture.h"
+#include "v34_startup_state_fixture.h"
 #include "v34_power_fixture.h"
-#include "v34_encoder_test_helpers.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -78,10 +79,8 @@ static bool mapping_matches_receiver(
 	const struct v34_data_mapping *mapping,
 	const struct v34_data_line_receiver_configuration *receiver)
 {
-	return mapping->transmitting_profile.local_role ==
-		       receiver->transmitting_profile.local_role &&
-	       mapping->transmitting_profile.symbol_rate ==
-		       receiver->transmitting_profile.symbol_rate &&
+	return v34_phase3_profile_is_equal(
+		       &mapping->transmitting_profile, &receiver->transmitting_profile) &&
 	       v34_frame_geometry_is_equal(
 		       &mapping->schedule.geometry, &receiver->geometry) &&
 	       v34_normalizers_equal(&mapping->normalizer, &receiver->normalizer) &&
@@ -89,9 +88,8 @@ static bool mapping_matches_receiver(
 		       receiver->trellis_selection &&
 	       mapping->encoder.parameters.expanded_shaping ==
 		       receiver->expanded_shaping &&
-	       memcmp(mapping->encoder.precoder.coefficients,
-		      receiver->precoder_coefficients,
-		      sizeof(receiver->precoder_coefficients)) == 0;
+	       v34_precoder_coefficients_are_equal(
+		       mapping->encoder.precoder.coefficients, receiver->precoder_coefficients);
 }
 
 static bool test_complementary_paths(void)
@@ -103,12 +101,10 @@ static bool test_complementary_paths(void)
 	struct v34_data_startup caller_startup;
 	struct v34_data_startup answerer_startup;
 
-	CHECK(v34_data_startup_prepare(
-		      &caller_startup, &caller_selection, &caller, &answerer, 8000) ==
-		      V34_DATA_STARTUP_OK &&
-	      v34_data_startup_prepare(
-		      &answerer_startup, &answerer_selection, &answerer, &caller, 8000) ==
-		      V34_DATA_STARTUP_OK &&
+	CHECK(v34_prepare_startup_fixture(
+		      &caller_startup, &caller_selection, &caller, &answerer, 8000) &&
+	      v34_prepare_startup_fixture(
+		      &answerer_startup, &answerer_selection, &answerer, &caller, 8000) &&
 	      v34_data_startup_is_valid(&caller_startup) &&
 	      v34_data_startup_is_valid(&answerer_startup),
 	      "complementary startup paths did not initialize");
@@ -142,14 +138,13 @@ static bool test_validation_and_transactionality(void)
 	struct v34_phase3_profile caller = caller_profile();
 	struct v34_phase3_profile answerer = answerer_profile();
 	struct v34_data_mode mode = caller_mode();
-	struct v34_data_startup destination;
+	struct v34_data_startup_preparation destination;
 	struct v34_data_startup prepared;
 
 	caller.projected_data_rate_2400_bps_units = 4;
 	answerer.projected_data_rate_2400_bps_units = 5;
-	CHECK(v34_data_startup_prepare(
-		      &prepared, &mode, &caller, &answerer, 8000) ==
-		      V34_DATA_STARTUP_OK &&
+	CHECK(v34_prepare_startup_fixture(
+		      &prepared, &mode, &caller, &answerer, 8000) &&
 	      v34_data_startup_is_valid(&prepared) &&
 	      prepared.transmit.mapping.schedule.geometry
 			      .primary_data_rate_2400_bps_units == 8 &&
@@ -159,29 +154,29 @@ static bool test_validation_and_transactionality(void)
 	caller = caller_profile();
 	answerer = answerer_profile();
 	memset(&destination, 0xa5, sizeof(destination));
-	CHECK(v34_data_startup_prepare(
+	CHECK(v34_data_startup_begin_preparation(
 		      NULL, &mode, &caller, &answerer, 8000) ==
 		      V34_DATA_STARTUP_INVALID_ARGUMENT &&
-	      v34_data_startup_prepare(
+	      v34_data_startup_begin_preparation(
 		      &destination, NULL, &caller, &answerer, 8000) ==
 		      V34_DATA_STARTUP_INVALID_ARGUMENT &&
-	      v34_data_startup_prepare(
+	      v34_data_startup_begin_preparation(
 		      &destination, &mode, NULL, &answerer, 8000) ==
 		      V34_DATA_STARTUP_INVALID_ARGUMENT &&
-	      v34_data_startup_prepare(
+	      v34_data_startup_begin_preparation(
 		      &destination, &mode, &caller, NULL, 8000) ==
 		      V34_DATA_STARTUP_INVALID_ARGUMENT &&
-	      v34_data_startup_prepare(
+	      v34_data_startup_begin_preparation(
 		      &destination, &mode, &caller, &caller, 8000) ==
 		      V34_DATA_STARTUP_INVALID_ARGUMENT &&
-	      v34_data_startup_prepare(
+	      v34_data_startup_begin_preparation(
 		      &destination, &mode, &caller, &answerer, 0) ==
 		      V34_DATA_STARTUP_INVALID_ARGUMENT &&
 	      object_is_filled(&destination, sizeof(destination), 0xa5),
 	      "invalid startup input changed the destination");
 	mode.transmit.primary_data_rate_2400_bps_units = 14;
 	caller.projected_data_rate_2400_bps_units = 14;
-	CHECK(v34_data_startup_prepare(
+	CHECK(v34_data_startup_begin_preparation(
 		      &destination, &mode, &caller, &answerer, 8000) ==
 		      V34_DATA_STARTUP_OUT_OF_RANGE &&
 	      object_is_filled(&destination, sizeof(destination), 0xa5),
@@ -189,7 +184,7 @@ static bool test_validation_and_transactionality(void)
 	mode = caller_mode();
 	mode.receive.primary_data_rate_2400_bps_units = 14;
 	answerer.projected_data_rate_2400_bps_units = 14;
-	CHECK(v34_data_startup_prepare(
+	CHECK(v34_data_startup_begin_preparation(
 		      &destination, &mode, &caller, &answerer, 8000) ==
 		      V34_DATA_STARTUP_OUT_OF_RANGE &&
 	      object_is_filled(&destination, sizeof(destination), 0xa5),
@@ -198,17 +193,15 @@ static bool test_validation_and_transactionality(void)
 	mode = caller_mode();
 	caller = caller_profile();
 	answerer = answerer_profile();
-	CHECK(v34_data_startup_prepare(
-		      &prepared, &mode, &caller, &answerer, 8000) ==
-		      V34_DATA_STARTUP_OK,
+	CHECK(v34_prepare_startup_fixture(
+		      &prepared, &mode, &caller, &answerer, 8000),
 	      "startup validation fixture did not initialize");
 	prepared.receive.geometry.symbol_rate = V34_SYMBOL_RATE_2400;
 	CHECK(!v34_data_startup_is_valid(NULL) &&
 	      !v34_data_startup_is_valid(&prepared),
 	      "mismatched receive geometry was accepted");
-	CHECK(v34_data_startup_prepare(
-		      &prepared, &mode, &caller, &answerer, 8000) ==
-		      V34_DATA_STARTUP_OK,
+	CHECK(v34_prepare_startup_fixture(
+		      &prepared, &mode, &caller, &answerer, 8000),
 	      "startup validation fixture did not reinitialize");
 	prepared.transmit.mapping.encoder.previous_differential_output = 1;
 	CHECK(!v34_data_startup_is_valid(&prepared),
@@ -224,12 +217,12 @@ static bool test_incremental_startup(void)
 
 	for (unsigned int role = 0; role < 2; ++role) {
 		struct v34_data_startup expected;
-		CHECK(v34_data_startup_prepare(&expected, &modes[role], &profiles[role],
-			&profiles[role ^ 1u], 8000) == V34_DATA_STARTUP_OK,
+		CHECK(v34_prepare_startup_fixture(&expected, &modes[role], &profiles[role],
+			&profiles[role ^ 1u], 8000),
 			"startup reference failed");
 		for (size_t i = 0; i < ARRAY_LENGTH(BUDGETS); ++i) {
 			struct v34_data_startup_preparation job;
-			struct v34_data_startup actual, saved;
+			struct v34_data_startup actual;
 			enum v34_data_startup_result result;
 			unsigned int steps = 0;
 
@@ -237,19 +230,23 @@ static bool test_incremental_startup(void)
 				&profiles[role], &profiles[role ^ 1u], 8000) == V34_DATA_STARTUP_OK,
 				"startup job did not begin");
 			memset(&actual, 0xa5, sizeof(actual));
-			saved = actual;
+			CHECK(v34_data_startup_step_preparation(NULL, 1, &actual) ==
+				      V34_DATA_STARTUP_INVALID_ARGUMENT &&
+			      v34_data_startup_step_preparation(&job, 1, NULL) ==
+				      V34_DATA_STARTUP_INVALID_ARGUMENT &&
+			      v34_data_startup_step_preparation(&job, 0, &actual) ==
+				      V34_DATA_STARTUP_INVALID_ARGUMENT &&
+			      object_is_filled(&actual, sizeof(actual), 0xa5),
+			      "invalid preparation step changed the destination");
 			do {
 				result = v34_data_startup_step_preparation(&job, BUDGETS[i], &actual);
 				CHECK(++steps < 4000, "startup did not finish its bounded work");
 				if (result == V34_DATA_STARTUP_IN_PROGRESS)
-					CHECK(memcmp(&actual, &saved, sizeof(actual)) == 0,
+					CHECK(object_is_filled(&actual, sizeof(actual), 0xa5),
 						"startup exposed an incomplete preparation");
 			} while (result == V34_DATA_STARTUP_IN_PROGRESS);
 			CHECK(result == V34_DATA_STARTUP_OK && v34_data_startup_is_valid(&actual) &&
-			      v34_normalizers_equal(&actual.transmit.mapping.normalizer,
-				&expected.transmit.mapping.normalizer) &&
-			      actual.transmit.line_peak == expected.transmit.line_peak &&
-			      v34_normalizers_equal(&actual.receive.normalizer, &expected.receive.normalizer),
+			      v34_data_startups_equal(&actual, &expected),
 			      "incremental preparation changed negotiated power");
 		}
 	}

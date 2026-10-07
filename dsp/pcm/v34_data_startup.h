@@ -42,6 +42,8 @@ struct v34_data_startup_preparation {
 	enum v34_data_preparation_stage stage;
 };
 
+/* Prepare complementary B1 mappings and transmit line power before E.
+ * The trained receive line attaches later; rejected begin calls leave the job intact. */
 enum v34_data_startup_result v34_data_startup_begin_preparation(
 	struct v34_data_startup_preparation *preparation,
 	const struct v34_data_mode *mode,
@@ -57,16 +59,5 @@ bool v34_data_startup_matches_mode(
 
 bool v34_data_startup_is_valid(
 	const struct v34_data_startup *startup);
-
-/* Prepare both negotiated directions before starting E. Transmit mapping and
- * line-peak calibration are ready for B1; the receive configuration describes the
- * peer's complementary B1 mapping and can be combined later with the trained
- * demodulator/equalizer handoff. Rejected calls leave the destination intact. */
-enum v34_data_startup_result v34_data_startup_prepare(
-	struct v34_data_startup *startup,
-	const struct v34_data_mode *mode,
-	const struct v34_phase3_profile *transmit_profile,
-	const struct v34_phase3_profile *receive_profile,
-	uint32_t sample_rate);
 
 #endif /* V34_DATA_STARTUP_H */

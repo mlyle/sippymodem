@@ -200,23 +200,3 @@ enum v34_data_startup_result v34_data_startup_step_preparation(
 	*startup = preparation->startup;
 	return V34_DATA_STARTUP_OK;
 }
-
-enum v34_data_startup_result v34_data_startup_prepare(
-	struct v34_data_startup *startup, const struct v34_data_mode *mode,
-	const struct v34_phase3_profile *transmit_profile,
-	const struct v34_phase3_profile *receive_profile, uint32_t sample_rate)
-{
-	struct v34_data_startup_preparation preparation;
-	enum v34_data_startup_result result;
-
-	if (startup == NULL)
-		return V34_DATA_STARTUP_INVALID_ARGUMENT;
-	result = v34_data_startup_begin_preparation(&preparation, mode,
-		transmit_profile, receive_profile, sample_rate);
-	if (result != V34_DATA_STARTUP_OK)
-		return result;
-	do {
-		result = v34_data_startup_step_preparation(&preparation, UINT32_MAX, startup);
-	} while (result == V34_DATA_STARTUP_IN_PROGRESS);
-	return result;
-}

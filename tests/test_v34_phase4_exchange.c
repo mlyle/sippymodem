@@ -3,6 +3,7 @@
 #include <v34_phase4_exchange.h>
 
 #include "test.h"
+#include "v34_startup_fixture.h"
 #include "v34_phase4_state_fixture.h"
 
 #include <string.h>
@@ -456,9 +457,9 @@ static bool renegotiating_peer_sample(
 
 			CHECK(v34_data_mode_select_startup(peer->training.line.profile.local_role,
 				      &peer->local_mp, &remote, &mode) == V34_DATA_MODE_OK &&
-			      v34_data_startup_prepare(&peer->startup, &mode,
+			      v34_prepare_startup_fixture(&peer->startup, &mode,
 				      &peer->training.line.profile,
-				      &peer->receive.transmitting_profile, SAMPLE_RATE) == V34_DATA_STARTUP_OK,
+				      &peer->receive.transmitting_profile, SAMPLE_RATE),
 			      "rate renegotiation peer could not select data");
 			peer->peer_mp_received = true;
 		}
