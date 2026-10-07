@@ -7,6 +7,7 @@
 #include <v34_training_transmitter.h>
 
 #include "test.h"
+#include "v34_phase34_state_fixture.h"
 
 #include <string.h>
 
@@ -94,7 +95,7 @@ static bool sample_preserves_state(
 	memset(&output, 0xa5, sizeof(output));
 	saved_output = output;
 	CHECK(v34_phase34_receiver_sample(&next, 123, &output) == expected &&
-	      memcmp(&next, receiver, sizeof(next)) == 0 &&
+	      v34_phase34_receivers_equal(&next, receiver) &&
 	      memcmp(&output, &saved_output, sizeof(output)) == 0,
 	      "terminal sample changed state or output (expected %u)", expected);
 	return true;
@@ -251,7 +252,7 @@ static bool test_validation(void)
 		      &receiver, &invalid, V34_CONSTELLATION_16_POINT,
 		      TEST_INITIAL_RECEIVE_GAIN) ==
 		      V34_PHASE34_RECEIVER_INVALID_ARGUMENT &&
-	      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
+	      v34_phase34_receivers_equal(&receiver, &saved) &&
 	      v34_phase34_receiver_init(
 		      &receiver, &valid, (enum v34_constellation_size)8,
 		      TEST_INITIAL_RECEIVE_GAIN) ==
@@ -259,7 +260,7 @@ static bool test_validation(void)
 	      v34_phase34_receiver_init(
 		      &receiver, &valid, V34_CONSTELLATION_16_POINT, 0) ==
 		      V34_PHASE34_RECEIVER_INVALID_ARGUMENT &&
-	      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
+	      v34_phase34_receivers_equal(&receiver, &saved),
 	      "invalid initialization changed its destination");
 	CHECK(v34_phase34_receiver_init(
 		      &receiver, &valid, V34_CONSTELLATION_16_POINT,
@@ -311,7 +312,7 @@ static bool test_validation(void)
 		      V34_PHASE34_RECEIVER_INVALID_STATE &&
 	      v34_phase34_receiver_continue_mp(&receiver) ==
 		      V34_PHASE34_RECEIVER_INVALID_STATE &&
-	      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
+	      v34_phase34_receivers_equal(&receiver, &saved),
 	      "invalid controls changed an incomplete receiver");
 	return true;
 }
@@ -329,7 +330,7 @@ static bool test_data_erasure(
 	saved = *receiver;
 	CHECK(v34_phase34_receiver_set_data_erasure(receiver, false) ==
 		      V34_PHASE34_RECEIVER_OK &&
-	      memcmp(receiver, &saved, sizeof(*receiver)) == 0 &&
+	      v34_phase34_receivers_equal(receiver, &saved) &&
 	      v34_phase34_receiver_set_data_erasure(receiver, true) ==
 		      V34_PHASE34_RECEIVER_OK &&
 	      receiver->data_erasure,
@@ -349,8 +350,8 @@ static bool test_data_erasure(
 		      "role %u rate %u data erasure failed at sample %u", role,
 		      rate, index);
 	}
-	CHECK(memcmp(&receiver->semantic, &saved.semantic,
-		     sizeof(receiver->semantic)) != 0 &&
+	CHECK(!v34_data_decision_receivers_equal(
+		      &receiver->semantic.data, &saved.semantic.data) &&
 	      receiver->tracking_symbols == saved.tracking_symbols &&
 	      memcmp(&receiver->line.equalizer.feedback, &saved.line.equalizer.feedback,
 		     sizeof(receiver->line.equalizer.feedback)) == 0 &&
@@ -431,7 +432,7 @@ static bool test_data_erasure(
 	saved = pending;
 	CHECK(v34_phase34_receiver_set_data_erasure(&pending, true) ==
 		      V34_PHASE34_RECEIVER_INVALID_STATE &&
-	      memcmp(&pending, &saved, sizeof(pending)) == 0,
+	      v34_phase34_receivers_equal(&pending, &saved),
 	      "role %u rate %u pending erasure changed state", role, rate);
 	return true;
 }
@@ -508,7 +509,7 @@ static bool test_tone_owned_acquisition(void)
 		CHECK(!v34_phase34_receiver_is_valid(&receiver) &&
 		      v34_phase34_receiver_sample(&receiver, 400, &output) ==
 			      V34_PHASE34_RECEIVER_INVALID_STATE &&
-		      memcmp(&receiver, &saved, sizeof(saved)) == 0 &&
+		      v34_phase34_receivers_equal(&receiver, &saved) &&
 		      memcmp(&output, &saved_output, sizeof(output)) == 0,
 		      "corrupt timing state was not rejected transactionally");
 	}
@@ -738,7 +739,7 @@ static bool test_training_case(
 				      (const struct v34_q14_coefficient *)&receiver,
 				      source.parameters.trellis_selection) ==
 				      V34_PHASE34_RECEIVER_INVALID_ARGUMENT &&
-			      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
+			      v34_phase34_receivers_equal(&receiver, &saved) &&
 			      v34_phase34_receiver_start_data(
 				      &receiver, &source.mapping.normalizer,
 				      &source.mapping.schedule.geometry,
@@ -746,7 +747,7 @@ static bool test_training_case(
 				      source.parameters.precoder_coefficients,
 				      source.parameters.trellis_selection) ==
 				      V34_PHASE34_RECEIVER_INVALID_STATE &&
-			      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
+			      v34_phase34_receivers_equal(&receiver, &saved) &&
 			      v34_phase34_receiver_finish_feedback_training(
 				      &feedback_receiver, true,
 				      feedback_coefficients) ==
@@ -787,8 +788,7 @@ static bool test_training_case(
 				      changed_coefficients,
 				      source.parameters.trellis_selection) ==
 				      V34_PHASE34_RECEIVER_INVALID_ARGUMENT &&
-			      memcmp(&feedback_receiver, &saved,
-				     sizeof(feedback_receiver)) == 0 &&
+			      v34_phase34_receivers_equal(&feedback_receiver, &saved) &&
 			      v34_phase34_receiver_start_data(
 				      &receiver, &source.mapping.normalizer, &wrong,
 				      source.parameters.expanded_shaping,
@@ -831,7 +831,7 @@ static bool test_training_case(
 				      source.parameters.precoder_coefficients,
 				      source.parameters.trellis_selection) ==
 				      V34_PHASE34_RECEIVER_INVALID_STATE &&
-			      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
+			      v34_phase34_receivers_equal(&receiver, &saved),
 			      "role %u rate %u repeated data start changed state",
 			      role, rate);
 			saved = receiver;
@@ -839,7 +839,7 @@ static bool test_training_case(
 				      &receiver, true) == V34_PHASE34_RECEIVER_OK &&
 			      v34_phase34_receiver_set_data_timing_frozen(
 				      &receiver, false) == V34_PHASE34_RECEIVER_OK &&
-			      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
+			      v34_phase34_receivers_equal(&receiver, &saved),
 			      "role %u rate %u gated active timing acquisition",
 			      role, rate);
 			e_complete = true;
