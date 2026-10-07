@@ -154,6 +154,9 @@ static bool test_rate_profile(void)
 	CHECK(supported == 130u && hash == UINT64_C(0x05ce8ea521c3e614),
 	      "rate profile changed: %zu/0x%016" PRIx64, supported, hash);
 	CHECK(v34_rate_profile_level(
+		      (enum v34_symbol_rate)-1, 8, false, &level) ==
+		      V34_RATE_PROFILE_INVALID_ARGUMENT &&
+	      v34_rate_profile_level(
 		      V34_SYMBOL_RATE_COUNT, 8, false, &level) ==
 		      V34_RATE_PROFILE_INVALID_ARGUMENT &&
 	      v34_rate_profile_level(

@@ -13,8 +13,9 @@ enum rate_profile_index {
 	RATE_PROFILE_COUNT,
 };
 
-/* V.34 data levels are normative.  The first row is ordinary shaping and the
- * second is expanded shaping; 2743 and 2800 symbol/s share one profile. */
+/* Fixed-point amplitude levels for this implementation.  The first row is
+ * ordinary shaping and the second expanded; 2743 and 2800 symbol/s share one
+ * profile. */
 static const uint16_t RATE_LEVELS
 	[RATE_PROFILE_COUNT][2][V34_RATE_PROFILE_UNITS] = {
 	[RATE_PROFILE_2400] = {
@@ -49,45 +50,31 @@ static const uint16_t RATE_LEVELS
 	},
 };
 
-static bool profile_index(
-	enum v34_symbol_rate symbol_rate, enum rate_profile_index *index)
-{
-	switch (symbol_rate) {
-	case V34_SYMBOL_RATE_2400:
-		*index = RATE_PROFILE_2400;
-		return true;
-	case V34_SYMBOL_RATE_2743:
-	case V34_SYMBOL_RATE_2800:
-		*index = RATE_PROFILE_2800;
-		return true;
-	case V34_SYMBOL_RATE_3000:
-		*index = RATE_PROFILE_3000;
-		return true;
-	case V34_SYMBOL_RATE_3200:
-		*index = RATE_PROFILE_3200;
-		return true;
-	case V34_SYMBOL_RATE_3429:
-		*index = RATE_PROFILE_3429;
-		return true;
-	case V34_SYMBOL_RATE_COUNT:
-		break;
-	}
-	return false;
-}
+static const uint8_t RATE_PROFILES[] = {
+	[V34_SYMBOL_RATE_2400] = RATE_PROFILE_2400,
+	[V34_SYMBOL_RATE_2743] = RATE_PROFILE_2800,
+	[V34_SYMBOL_RATE_2800] = RATE_PROFILE_2800,
+	[V34_SYMBOL_RATE_3000] = RATE_PROFILE_3000,
+	[V34_SYMBOL_RATE_3200] = RATE_PROFILE_3200,
+	[V34_SYMBOL_RATE_3429] = RATE_PROFILE_3429,
+};
+
+_Static_assert(sizeof(RATE_PROFILES) / sizeof(RATE_PROFILES[0]) ==
+	       V34_SYMBOL_RATE_COUNT, "Symbol clocks need amplitude profiles");
 
 enum v34_rate_profile_result v34_rate_profile_level(
 	enum v34_symbol_rate symbol_rate,
 	uint8_t primary_data_rate_2400_bps_units, bool expanded_shaping,
 	uint16_t *level)
 {
-	enum rate_profile_index index;
 	uint16_t selected;
 
 	if (level == NULL || primary_data_rate_2400_bps_units == 0 ||
 	    primary_data_rate_2400_bps_units > V34_RATE_PROFILE_UNITS ||
-	    !profile_index(symbol_rate, &index))
+	    (unsigned)symbol_rate >= V34_SYMBOL_RATE_COUNT)
 		return V34_RATE_PROFILE_INVALID_ARGUMENT;
-	selected = RATE_LEVELS[index][expanded_shaping ? 1u : 0u]
+	selected = RATE_LEVELS[RATE_PROFILES[symbol_rate]]
+		[expanded_shaping ? 1u : 0u]
 		[primary_data_rate_2400_bps_units - 1u];
 	if (selected == 0)
 		return V34_RATE_PROFILE_UNSUPPORTED_SELECTION;

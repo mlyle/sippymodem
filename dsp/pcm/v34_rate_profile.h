@@ -18,7 +18,7 @@ enum v34_rate_profile_result {
 	V34_RATE_PROFILE_UNSUPPORTED_SELECTION,
 };
 
-/* Select the normative fixed-point data level for one negotiated direction.
+/* Select the implementation's fixed-point level for one negotiated direction.
  * Zero table entries are unsupported combinations, not usable levels.  The
  * destination remains unchanged on every rejection. */
 enum v34_rate_profile_result v34_rate_profile_level(
