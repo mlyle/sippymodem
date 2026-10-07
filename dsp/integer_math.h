@@ -7,6 +7,14 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/* Count set bits by summing adjacent pairs, then nibbles. */
+static inline uint8_t bit_count_u8(uint8_t bits)
+{
+	bits = (uint8_t)((bits & 0x55u) + ((bits >> 1) & 0x55u));
+	bits = (uint8_t)((bits & 0x33u) + ((bits >> 2) & 0x33u));
+	return (uint8_t)((bits + (bits >> 4)) & 0x0fu);
+}
+
 /* Number of significant bits, including a defined zero result for zero. */
 static inline unsigned int bit_width_unsigned(unsigned int value)
 {

@@ -4,6 +4,19 @@
 
 #include "test.h"
 
+static bool test_byte_bit_count(void)
+{
+	for (unsigned int value = 0; value <= UINT8_MAX; ++value) {
+		unsigned int expected = 0;
+
+		for (unsigned int bit = 0; bit < 8u; ++bit)
+			expected += (value >> bit) & 1u;
+		CHECK(bit_count_u8((uint8_t)value) == expected,
+		      "byte bit count changed for %u", value);
+	}
+	return true;
+}
+
 static bool test_bit_width(void)
 {
 	unsigned int bits = (unsigned int)(sizeof(unsigned int) * CHAR_BIT);
@@ -251,6 +264,7 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "byte bit count", test_byte_bit_count },
 		{ "bit width", test_bit_width },
 		{ "zero and symmetry", test_zero_and_symmetry },
 		{ "full-width values", test_full_width_values },

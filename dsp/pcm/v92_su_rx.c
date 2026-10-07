@@ -24,15 +24,6 @@ static bool stage_is_valid(enum v92_su_rx_stage stage)
 	return stage >= V92_SU_RX_ACQUIRING && stage <= V92_SU_RX_FAILED;
 }
 
-static unsigned bit_count6(uint8_t bits)
-{
-	unsigned count = 0;
-
-	for (unsigned index = 0; index < 6u; ++index)
-		count += (bits >> index) & 1u;
-	return count;
-}
-
 static bool comparison_bits_are_valid(const struct v92_su_rx *receiver)
 {
 	uint8_t classified = (uint8_t)(receiver->comparison_same |
@@ -168,14 +159,14 @@ static enum su_comparison classify_sample(
 	receiver->history_valid = (uint8_t)(
 		((receiver->history_valid << 1u) | (uint8_t)valid) & 0x3fu);
 
-	valid_count = bit_count6(receiver->comparison_valid);
+	valid_count = bit_count_u8(receiver->comparison_valid);
 	if (valid_count < 4u)
 		return SU_COMPARISON_NONE;
-	same_count = bit_count6(
+	same_count = bit_count_u8(
 		receiver->comparison_same & receiver->comparison_valid);
 	if (same_count >= 4u)
 		return SU_COMPARISON_PERIODIC;
-	opposite_count = bit_count6(
+	opposite_count = bit_count_u8(
 		receiver->comparison_opposite & receiver->comparison_valid);
 	/* Three reversed signs identify the transition halfway through a
 	 * six-symbol window. Requiring a strict majority can miss the short

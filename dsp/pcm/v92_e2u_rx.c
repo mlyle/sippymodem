@@ -2,6 +2,7 @@
 
 #include "v92_e2u_rx.h"
 
+#include "integer_math.h"
 #include "memory_region.h"
 #include "v92_phase4_record_tx.h"
 
@@ -63,15 +64,6 @@ enum v92_e2u_rx_result v92_e2u_rx_init(
 		V92_PHASE4_E2U_EXTENDED_SYMBOLS : V92_PHASE4_E2U_SYMBOLS;
 	*receiver = initialized;
 	return V92_E2U_RX_OK;
-}
-
-static uint8_t group_bit_errors(uint8_t group, unsigned int bits)
-{
-	uint8_t errors = 0u;
-
-	for (unsigned int bit = 0u; bit < bits; ++bit)
-		errors += (uint8_t)((group >> bit) & 1u);
-	return errors;
 }
 
 static bool sequence_matches(const struct v92_e2u_rx *receiver)
@@ -150,7 +142,8 @@ enum v92_e2u_rx_result v92_e2u_rx_sample(
 	next.observed_energy +=
 		decision.equalized_level * decision.equalized_level;
 	next.expected_energy += (double)expected * expected;
-	next.bit_errors += group_bit_errors(decision.group, bits);
+	next.bit_errors += bit_count_u8(
+		(uint8_t)(decision.group & ((1u << bits) - 1u)));
 	next.received_symbols++;
 	if (next.received_symbols == next.expected_symbols)
 		next.matched = sequence_matches(&next);

@@ -3,6 +3,8 @@
 #ifndef PCM_CONSTELLATION_H
 #define PCM_CONSTELLATION_H
 
+#include "integer_math.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -29,15 +31,6 @@ static inline bool pcm_constellation_contains(
 		(uint8_t)(1u << (ucode % 8u))) != 0;
 }
 
-/* Sum adjacent bit pairs, then nibbles. This also supplies the descending
- * mapper rank without walking every codeword above a received symbol. */
-static inline uint8_t pcm_constellation_byte_count(uint8_t bits)
-{
-	bits = (uint8_t)((bits & 0x55u) + ((bits >> 1) & 0x55u));
-	bits = (uint8_t)((bits & 0x33u) + ((bits >> 2) & 0x33u));
-	return (uint8_t)((bits + (bits >> 4)) & 0x0fu);
-}
-
 static inline uint8_t pcm_constellation_count(
 	const struct pcm_constellation *constellation)
 {
@@ -46,7 +39,7 @@ static inline uint8_t pcm_constellation_count(
 	if (constellation == NULL)
 		return 0;
 	for (size_t index = 0; index < PCM_CONSTELLATION_MASK_BYTES; ++index)
-		count += pcm_constellation_byte_count(constellation->ucode_mask[index]);
+		count += bit_count_u8(constellation->ucode_mask[index]);
 	return (uint8_t)count;
 }
 
@@ -65,9 +58,9 @@ static inline bool pcm_constellation_descending_rank(
 	byte = ucode / 8u;
 	higher = (uint8_t)(constellation->ucode_mask[byte] &
 			   (uint8_t)(0xffu << ((ucode % 8u) + 1u)));
-	count = pcm_constellation_byte_count(higher);
+	count = bit_count_u8(higher);
 	for (size_t index = byte + 1u; index < PCM_CONSTELLATION_MASK_BYTES; ++index)
-		count += pcm_constellation_byte_count(constellation->ucode_mask[index]);
+		count += bit_count_u8(constellation->ucode_mask[index]);
 	*rank = (uint8_t)count;
 	return true;
 }
@@ -82,7 +75,7 @@ static inline bool pcm_constellation_descending_select(
 		return false;
 	for (size_t byte = PCM_CONSTELLATION_MASK_BYTES; byte-- > 0;) {
 		uint8_t bits = constellation->ucode_mask[byte];
-		uint8_t count = pcm_constellation_byte_count(bits);
+		uint8_t count = bit_count_u8(bits);
 
 		if (label >= count) {
 			label = (uint8_t)(label - count);
