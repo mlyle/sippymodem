@@ -4,6 +4,8 @@
 #include <v34_power_calibration.h>
 
 #include "test.h"
+#include "v34_state_fixture.h"
+#include "v34_encoder_test_helpers.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -133,9 +135,12 @@ static bool queue_and_compare_frame(
 	if (v34_data_points_queue_mapping_frame(
 		    points, primary_bits, expected_request.primary_bits,
 		    auxiliary) != V34_DATA_POINTS_OK ||
-	    memcmp(&points->schedule, schedule, sizeof(*schedule)) != 0 ||
-	    memcmp(&points->scrambler, scrambler, sizeof(*scrambler)) != 0 ||
-	    memcmp(&points->encoder, encoder, sizeof(*encoder)) != 0)
+	    !v34_frame_geometry_is_equal(&points->schedule.geometry, &schedule->geometry) ||
+	    points->schedule.data_frame_in_superframe != schedule->data_frame_in_superframe ||
+	    points->schedule.next_mapping_frame != schedule->next_mapping_frame ||
+	    points->scrambler.history != scrambler->history ||
+	    points->scrambler.polynomial != scrambler->polynomial ||
+	    !v34_test_encoders_are_equal(&points->encoder, encoder))
 		return false;
 	for (size_t index = 0; index < V34_SYMBOLS_PER_MAPPING_FRAME;
 	     ++index) {
@@ -275,7 +280,7 @@ static bool test_transactional_validation(void)
 		      V34_DATA_POINTS_INVALID_ARGUMENT &&
 	      v34_data_points_next(&points, NULL) ==
 		      V34_DATA_POINTS_INVALID_ARGUMENT &&
-	      memcmp(&points, &before, sizeof(points)) == 0 &&
+	      v34_data_points_equal(&points, &before) &&
 	      mapping_frames_are_equal(&request, &saved_request) &&
 	      output.in_phase == 123.0 && output.quadrature == -456.0,
 	      "invalid operation changed state or output");
@@ -297,7 +302,7 @@ static bool test_transactional_validation(void)
 	      v34_data_points_queue_mapping_frame(
 		      &points, bits, request.primary_bits, wrong_auxiliary) ==
 		      V34_DATA_POINTS_INVALID_ARGUMENT &&
-	      memcmp(&points, &before, sizeof(points)) == 0,
+	      v34_data_points_equal(&points, &before),
 	      "rejected frame changed mapping state");
 	CHECK(v34_data_points_queue_mapping_frame(
 		      &points, bits, request.primary_bits, auxiliary) ==
@@ -310,7 +315,7 @@ static bool test_transactional_validation(void)
 	      v34_data_points_queue_mapping_frame(
 		      &points, bits, request.primary_bits, auxiliary) ==
 		      V34_DATA_POINTS_MAPPING_FRAME_PENDING &&
-	      memcmp(&points, &before, sizeof(points)) == 0 &&
+	      v34_data_points_equal(&points, &before) &&
 	      mapping_frames_are_equal(&request, &saved_request),
 	      "pending frame was replaced");
 	for (unsigned int corruption = 0; corruption < 3; ++corruption) {
@@ -331,7 +336,7 @@ static bool test_transactional_validation(void)
 			      V34_DATA_POINTS_INVALID_ARGUMENT &&
 		      v34_data_points_next(&points, &output) ==
 			      V34_DATA_POINTS_INVALID_ARGUMENT &&
-		      memcmp(&points, &rejected, sizeof(points)) == 0 &&
+		      v34_data_points_equal(&points, &rejected) &&
 		      mapping_frames_are_equal(&request, &saved_request) &&
 		      output.in_phase == 123.0 && output.quadrature == -456.0,
 		      "corrupt point state %u was accepted or changed outputs",
