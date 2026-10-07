@@ -3,6 +3,7 @@
 #include <v34_phase4_exchange.h>
 
 #include "test.h"
+#include "v34_phase4_state_fixture.h"
 
 #include <string.h>
 
@@ -320,16 +321,13 @@ static bool endpoint_sample(
 		endpoint->constellations_routed =
 			endpoint->phase4.transmit.training.phase4_constellation ==
 				handoff_detected_constellation(&endpoint->handoff) &&
-			memcmp(&endpoint->phase4.transmit.training,
-			       &endpoint->handoff.transmit,
-			       sizeof(endpoint->handoff.transmit)) == 0 &&
+			v34_training_transmitters_equal(&endpoint->phase4.transmit.training,
+				&endpoint->handoff.transmit) &&
 			receive_constellation_is(
 				&endpoint->phase4,
 				endpoint->handoff.transmit.phase3
 					.remote_constellation) &&
-			memcmp(&endpoint->phase4.receive,
-			       &expected_receive,
-			       sizeof(endpoint->phase4.receive)) == 0;
+			v34_phase34_receivers_equal(&endpoint->phase4.receive, &expected_receive);
 		if (!endpoint->constellations_routed) {
 			fprintf(stderr,
 				"Phase 4 crossed the two J constellation selections\n");
@@ -1183,7 +1181,7 @@ static bool test_source_backpressure(void)
 			reject_mapping_frame, NULL, &caller_transmit,
 			&caller_events, &received);
 		if (result == V34_PHASE4_EXCHANGE_SOURCE_FAILURE) {
-			CHECK(memcmp(&caller.phase4, &before, sizeof(before)) == 0 &&
+			CHECK(v34_phase4_exchanges_equal(&caller.phase4, &before) &&
 			      caller_transmit == 1234 &&
 			      caller_events == UINT32_C(0x5aa5a55a) &&
 			      memcmp(&received, &received_before,
@@ -1364,8 +1362,7 @@ static bool test_validation_and_transactionality(void)
 		      memcmp(&exchange.receive.line.equalizer,
 			     &caller.handoff.receive.line.equalizer,
 			     sizeof(exchange.receive.line.equalizer)) == 0 &&
-		      memcmp(&exchange.receive, &expected_receive,
-			     sizeof(exchange.receive)) == 0,
+		      v34_phase34_receivers_equal(&exchange.receive, &expected_receive),
 		      "caller Phase 4 did not retain the receive lineage");
 		{
 			struct v34_phase3_exchange_handoff partial = caller.handoff;
@@ -1404,8 +1401,7 @@ static bool test_validation_and_transactionality(void)
 			      V34_PHASE4_EXCHANGE_OK &&
 		      !exchange.receive.phase4_s_rearmed &&
 		      !exchange.receive.line.timing.reanchor_at_s &&
-		      memcmp(&exchange.receive, &answerer.handoff.receive,
-			     sizeof(exchange.receive)) == 0,
+		      v34_phase34_receivers_equal(&exchange.receive, &answerer.handoff.receive),
 		      "answerer incorrectly applied the caller-only S rearm");
 	}
 	exchange = caller.phase4;
@@ -1452,7 +1448,7 @@ static bool test_validation_and_transactionality(void)
 		      NULL, NULL, &overlap.samples[1], &overlap.events,
 		      (struct v34_received_mapping_frame[1]){ 0 }) ==
 		      V34_PHASE4_EXCHANGE_INVALID_ARGUMENT &&
-	      memcmp(&caller.phase4, &saved, sizeof(saved)) == 0 &&
+	      v34_phase4_exchanges_equal(&caller.phase4, &saved) &&
 	      sample == 1234 && events == UINT32_C(0x5aa5a55a) &&
 	      overlap.events == UINT32_C(0xa55a5aa5),
 	      "rejected Phase 4 samples were not transactional");
@@ -1463,7 +1459,7 @@ static bool test_validation_and_transactionality(void)
 	      v34_phase4_exchange_prepare_data_startup(
 		      NULL) ==
 		      V34_PHASE4_EXCHANGE_INVALID_ARGUMENT &&
-	      memcmp(&caller.phase4, &saved, sizeof(saved)) == 0 &&
+	      v34_phase4_exchanges_equal(&caller.phase4, &saved) &&
 	      events == UINT32_C(0x5aa5a55a),
 	      "out-of-sequence data preparation changed the exchange");
 	memset(&startup, 0xa5, sizeof(startup));
