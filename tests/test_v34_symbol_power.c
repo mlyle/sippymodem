@@ -403,6 +403,15 @@ static bool test_normalizer_validation(void)
 	memset(&corrupt, 0xa5, sizeof(corrupt));
 	invalid = projected;
 	invalid.symbol_count++;
+	saved = normalizer;
+	CHECK(v34_power_normalizer_init(&normalizer, &normalizer.parameters,
+		      V34_NONLINEAR_THETA_ZERO, &precoded, &projected) ==
+		      V34_SYMBOL_POWER_OK &&
+	      v34_power_normalizer_init(&normalizer, &normalizer.parameters,
+		      V34_NONLINEAR_THETA_ZERO, &precoded, &invalid) ==
+		      V34_SYMBOL_POWER_INVALID_ARGUMENT &&
+	      v34_normalizers_equal(&normalizer, &saved),
+	      "aliased normalizer initialization changed owned fields");
 	CHECK(v34_power_normalizer_init(
 		      NULL, &mapping, V34_NONLINEAR_THETA_ZERO,
 		      &precoded, &projected) ==

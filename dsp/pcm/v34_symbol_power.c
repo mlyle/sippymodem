@@ -69,8 +69,7 @@ v34_symbol_power_observe_point(
 
 	if (!point_is_finite(point))
 		return V34_SYMBOL_POWER_INVALID_ARGUMENT;
-	squared_magnitude = point->in_phase * point->in_phase +
-		point->quadrature * point->quadrature;
+	squared_magnitude = qam_point_power(point);
 	if (!isfinite(squared_magnitude))
 		return V34_SYMBOL_POWER_NUMERIC_FAILURE;
 	return observe_power(measurement, squared_magnitude);
@@ -141,7 +140,7 @@ static bool maximum_precoded_point_power(
 	return isfinite(*maximum) && *maximum > 0.0;
 }
 
-static enum v34_symbol_power_result derive_normalizer(
+enum v34_symbol_power_result v34_power_normalizer_init(
 	struct v34_power_normalizer *normalizer,
 	const struct v34_mapping_parameters *parameters,
 	enum v34_nonlinear_parameter nonlinear_parameter,
@@ -209,29 +208,6 @@ static enum v34_symbol_power_result derive_normalizer(
 		return V34_SYMBOL_POWER_NUMERIC_FAILURE;
 	*normalizer = generated;
 	return V34_SYMBOL_POWER_OK;
-}
-
-enum v34_symbol_power_result
-v34_power_normalizer_init(
-	struct v34_power_normalizer *normalizer,
-	const struct v34_mapping_parameters *parameters,
-	enum v34_nonlinear_parameter nonlinear_parameter,
-	const struct v34_symbol_power_measurement
-		*precoded_measurement,
-	const struct v34_symbol_power_measurement
-		*projected_measurement)
-{
-	struct v34_power_normalizer generated;
-	enum v34_symbol_power_result result;
-
-	if (normalizer == NULL)
-		return V34_SYMBOL_POWER_INVALID_ARGUMENT;
-	result = derive_normalizer(
-		&generated, parameters, nonlinear_parameter,
-		precoded_measurement, projected_measurement);
-	if (result == V34_SYMBOL_POWER_OK)
-		*normalizer = generated;
-	return result;
 }
 
 enum v34_symbol_power_result v34_power_normalizer_set_gain(
@@ -313,9 +289,7 @@ enum v34_symbol_power_result v34_normalize_power(
 	if (!v34_power_normalizer_is_valid(normalizer) ||
 	    !point_is_finite(projected_point) || normalized_point == NULL)
 		return V34_SYMBOL_POWER_INVALID_ARGUMENT;
-	projected_power =
-		projected_point->in_phase * projected_point->in_phase +
-		projected_point->quadrature * projected_point->quadrature;
+	projected_power = qam_point_power(projected_point);
 	if (!isfinite(projected_power))
 		return V34_SYMBOL_POWER_NUMERIC_FAILURE;
 	if (!power_does_not_exceed(
@@ -327,8 +301,7 @@ enum v34_symbol_power_result v34_normalize_power(
 		.quadrature =
 			projected_point->quadrature * normalizer->normalization_gain,
 	};
-	normalized_power = generated.in_phase * generated.in_phase +
-		generated.quadrature * generated.quadrature;
+	normalized_power = qam_point_power(&generated);
 	if (!isfinite(normalized_power))
 		return V34_SYMBOL_POWER_NUMERIC_FAILURE;
 	if (!power_does_not_exceed(
