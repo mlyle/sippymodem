@@ -4,6 +4,7 @@
 
 #include "memory_region.h"
 #include "v34_frame_schedule.h"
+#include "v34_mp.h"
 #include "v34_phase2_selection.h"
 
 #include <stdbool.h>
@@ -55,14 +56,6 @@ static uint16_t requested_rate_mask(
 	return mask;
 }
 
-static uint8_t highest_rate(uint16_t mask)
-{
-	for (uint8_t units = V34_MAX_RATE_UNITS; units != 0; --units)
-		if ((mask & (uint16_t)(1u << (units - 1u))) != 0)
-			return units;
-	return 0;
-}
-
 static uint16_t enabled_rates(
 	unsigned int minimum, unsigned int maximum,
 	unsigned int requested_symbol_rate, enum v34_symbol_rate *symbol_rate,
@@ -70,7 +63,8 @@ static uint16_t enabled_rates(
 {
 	uint16_t requested = requested_rate_mask(minimum, maximum);
 	uint16_t enabled = 0;
-	uint8_t highest = highest_rate(requested);
+	uint8_t highest = v34_mp_highest_enabled_rate(
+		requested, V34_MAX_RATE_UNITS);
 	uint8_t limit;
 	enum v34_symbol_rate selected;
 
@@ -96,7 +90,8 @@ static uint16_t enabled_rates(
 			enabled |= (uint16_t)(1u << (units - 1u));
 	}
 	*symbol_rate = selected;
-	*highest_rate_units = highest_rate(enabled);
+	*highest_rate_units = v34_mp_highest_enabled_rate(
+		enabled, V34_MAX_RATE_UNITS);
 	return enabled;
 }
 

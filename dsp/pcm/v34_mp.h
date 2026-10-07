@@ -28,6 +28,22 @@ enum {
 	V34_MP_MAXIMUM_RATE_2400_BPS_UNITS = 14,
 };
 
+/* Return the highest enabled rate at or below limit, in 2400 bit/s
+ * units. Bit zero represents 2400 bit/s. Zero means no match or an invalid
+ * ceiling. Wire-record callers validate their capability mask separately. */
+static inline uint8_t v34_mp_highest_enabled_rate(
+	uint16_t enabled, uint8_t limit)
+{
+	if (limit > V34_MP_MAXIMUM_RATE_2400_BPS_UNITS)
+		return 0;
+	while (limit != 0) {
+		if ((enabled & (uint16_t)(1u << (limit - 1u))) != 0)
+			return limit;
+		--limit;
+	}
+	return 0;
+}
+
 enum v34_mp_result {
 	V34_MP_OK,
 	V34_MP_INVALID_ARGUMENT,

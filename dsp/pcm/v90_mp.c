@@ -5,6 +5,7 @@
 #include "pcm_mp.h"
 #include "pcm_control_frame.h"
 #include "packed_bits.h"
+#include "v34_mp.h"
 
 #include <string.h>
 
@@ -80,17 +81,11 @@ bool v90_mp_record_limit_maximum_upstream_rate(
 	    parameters->maximum_upstream_rate_2400_bps_units <=
 		    maximum_rate_2400_bps_units)
 		return true;
-	for (int rate = maximum_rate_2400_bps_units;
-	     rate >= V90_MP_MINIMUM_RATE_2400_BPS_UNITS; --rate) {
-		uint16_t bit = (uint16_t)(1u <<
-			(rate - V90_MP_MINIMUM_RATE_2400_BPS_UNITS));
-
-		if ((parameters->upstream_rate_capability_mask & bit) == 0u)
-			continue;
-		parameters->maximum_upstream_rate_2400_bps_units =
-			(uint8_t)rate;
-		break;
-	}
+	uint8_t rate = v34_mp_highest_enabled_rate(
+		(uint16_t)(parameters->upstream_rate_capability_mask << 1),
+		maximum_rate_2400_bps_units);
+	if (rate != 0)
+		parameters->maximum_upstream_rate_2400_bps_units = rate;
 	if (!v90_mp_record_is_valid(&limited))
 		return false;
 	*record = limited;

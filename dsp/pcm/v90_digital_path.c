@@ -6,6 +6,7 @@
 #include "memory_region.h"
 #include "pcm_rate.h"
 #include "v34_data_quality.h"
+#include "v34_mp.h"
 #include "v34_survivor.h"
 
 #include <stddef.h>
@@ -293,7 +294,8 @@ enum v90_digital_path_result v90_digital_path_downshift_upstream(
 	struct v90_pcm_mapping control;
 	struct v90_mp_record mp;
 	const struct v90_mp_parameters *parameters;
-	int rate;
+	uint8_t rate;
+	uint8_t maximum;
 
 	if (!v90_digital_path_is_valid(path) || path->failed)
 		return V90_DIGITAL_PATH_INVALID_ARGUMENT;
@@ -302,18 +304,15 @@ enum v90_digital_path_result v90_digital_path_downshift_upstream(
 		return V90_DIGITAL_PATH_SEQUENCE_MISMATCH;
 	mp = path->local_mp;
 	parameters = v90_mp_record_common(&mp);
-	for (rate = path->upstream_rate_2400_bps_units - 1;
-	     rate >= V90_MP_MINIMUM_RATE_2400_BPS_UNITS; --rate) {
-		uint16_t bit = (uint16_t)(1u <<
-			(rate - V90_MP_MINIMUM_RATE_2400_BPS_UNITS));
-		if (rate <= parameters->maximum_upstream_rate_2400_bps_units &&
-		    (parameters->upstream_rate_capability_mask &
-		     path->peer_upstream_rate_mask & bit) != 0u)
-			break;
-	}
-	if (rate < V90_MP_MINIMUM_RATE_2400_BPS_UNITS)
+	maximum = path->upstream_rate_2400_bps_units - 1u;
+	if (maximum > parameters->maximum_upstream_rate_2400_bps_units)
+		maximum = parameters->maximum_upstream_rate_2400_bps_units;
+	rate = v34_mp_highest_enabled_rate(
+		(uint16_t)((parameters->upstream_rate_capability_mask &
+			    path->peer_upstream_rate_mask) << 1), maximum);
+	if (rate == 0)
 		return V90_DIGITAL_PATH_NO_COMMON_RATE;
-	if (!v90_mp_record_limit_maximum_upstream_rate(&mp, (uint8_t)rate) ||
+	if (!v90_mp_record_limit_maximum_upstream_rate(&mp, rate) ||
 	    v90_pcm_mapping_init_rate_renegotiation(
 		    &control, &path->training_mapping,
 		    &path->data_mapping) != V90_PCM_MAPPING_OK)

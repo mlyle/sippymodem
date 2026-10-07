@@ -126,16 +126,6 @@ static uint8_t minimum_rate(uint8_t first, uint8_t second)
 	return first < second ? first : second;
 }
 
-static uint8_t highest_enabled_rate(uint16_t enabled, uint8_t limit)
-{
-	while (limit != 0) {
-		if ((enabled & (uint16_t)(1u << (limit - 1u))) != 0)
-			return limit;
-		--limit;
-	}
-	return 0;
-}
-
 enum v34_mp_rate_result v34_mp_select_rates(
 	const struct v34_mp_record *first,
 	const struct v34_mp_record *second,
@@ -174,14 +164,14 @@ enum v34_mp_rate_result v34_mp_select_rates(
 			minimum_rate(call_limit, answer_limit);
 
 		selected.call_to_answer_2400_bps_units =
-			highest_enabled_rate(enabled, symmetric_limit);
+			v34_mp_highest_enabled_rate(enabled, symmetric_limit);
 		selected.answer_to_call_2400_bps_units =
 			selected.call_to_answer_2400_bps_units;
 	} else {
 		selected.call_to_answer_2400_bps_units =
-			highest_enabled_rate(enabled, call_limit);
+			v34_mp_highest_enabled_rate(enabled, call_limit);
 		selected.answer_to_call_2400_bps_units =
-			highest_enabled_rate(enabled, answer_limit);
+			v34_mp_highest_enabled_rate(enabled, answer_limit);
 	}
 	if (selected.call_to_answer_2400_bps_units == 0 ||
 	    selected.answer_to_call_2400_bps_units == 0)
