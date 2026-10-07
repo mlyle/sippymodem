@@ -17,6 +17,16 @@ enum {
 	STARTING_INPUT_SAMPLES = 4096,
 };
 
+static bool decisions_equal(
+	const struct v92_upstream_decision *left,
+	const struct v92_upstream_decision *right)
+{
+	return memcmp(&left->equalized_level, &right->equalized_level,
+		       sizeof(left->equalized_level)) == 0 &&
+	       left->nearest_level == right->nearest_level &&
+	       left->group == right->group;
+}
+
 static void add_ucode(
 	struct pcm_constellation *constellation, uint8_t ucode)
 {
@@ -933,7 +943,7 @@ static bool test_e2u_contracts(void)
 		      &ready, 0, 4u, &decision) ==
 		      V92_UPSTREAM_RX_INVALID_ARGUMENT &&
 	      memcmp(&ready, &ready_saved, sizeof(ready)) == 0 &&
-	      memcmp(&decision, &decision_saved, sizeof(decision)) == 0,
+	      decisions_equal(&decision, &decision_saved),
 	      "known upstream decision contracts differed");
 	memset(&untouched, 0xa5, sizeof(untouched));
 	saved = untouched;
@@ -1038,7 +1048,7 @@ static bool test_contracts(void)
 		      (struct v92_upstream_decision *)(void *)&signal) ==
 		      V92_UPSTREAM_RX_INVALID_ARGUMENT &&
 	      memcmp(&signal, &signal_saved, sizeof(signal)) == 0 &&
-	      memcmp(&decision, &decision_before, sizeof(decision)) == 0,
+	      decisions_equal(&decision, &decision_before),
 	      "shared upstream invalid calls changed state");
 	{
 		uint64_t starting_samples = signal.line.input_samples;
@@ -1065,7 +1075,7 @@ static bool test_contracts(void)
 	      v92_upstream_rx_sample(&signal, 0, &decision) ==
 		      V92_UPSTREAM_RX_FAILED &&
 	      memcmp(&signal, &signal_saved, sizeof(signal)) == 0 &&
-	      memcmp(&decision, &decision_before, sizeof(decision)) == 0,
+	      decisions_equal(&decision, &decision_before),
 	      "failed shared upstream receiver was not stable");
 	CHECK(strcmp(v92_upstream_rx_result_name(V92_UPSTREAM_RX_OK), "ok") == 0 &&
 	      strcmp(v92_upstream_rx_result_name(V92_UPSTREAM_RX_FAILED),
