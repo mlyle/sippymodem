@@ -7,6 +7,7 @@
 #include <v90_phase3_sd.h>
 
 #include "test.h"
+#include "pcm_phase3_station_fixture.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -51,19 +52,6 @@ static int16_t quantize(enum g711_law law, int16_t sample)
 	return law == G711_LAW_PCMA ?
 		       g711_decode_pcma(g711_encode_pcma(sample)) :
 		       g711_decode_pcmu(g711_encode_pcmu(sample));
-}
-
-static bool jd_equal(
-	const struct v90_jd_parameters *left,
-	const struct v90_jd_parameters *right)
-{
-	return left->data_rate_capability_mask ==
-		       right->data_rate_capability_mask &&
-	       left->training_constellation == right->training_constellation &&
-	       left->rate_renegotiation_constellation ==
-		       right->rate_renegotiation_constellation &&
-	       left->maximum_spectral_shaping_lookahead ==
-		       right->maximum_spectral_shaping_lookahead;
 }
 
 static bool continue_phase4_line(
@@ -118,7 +106,7 @@ static bool check_digital_protocol_owner(
 		      V90_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
 	      v90_phase3_digital_station_receive(&wrong, 1234) ==
 		      V90_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
-	      octet == 0xa5 && memcmp(&wrong, &saved, sizeof(wrong)) == 0,
+	      octet == 0xa5 && v90_digital_station_states_equal(&wrong, &saved),
 	      "V.90 station accepted a V.92 transmitter");
 	return true;
 }
@@ -273,8 +261,8 @@ static bool run_exchange(
 		      &digital, &transmit_handoff) ==
 		      V90_PHASE3_DIGITAL_STATION_OK &&
 	      v90_phase3_return_line_handoff_is_valid(&return_handoff) &&
-	      jd_equal(&receive_handoff.jd, &parameters) &&
-	      jd_equal(&transmit_handoff.jd, &parameters) &&
+	      v90_jd_parameters_equal(&receive_handoff.jd, &parameters) &&
+	      v90_jd_parameters_equal(&transmit_handoff.jd, &parameters) &&
 	      receive_handoff.descrambler.history ==
 		      transmit_handoff.scrambler.history &&
 	      receive_handoff.last_sign ==
@@ -318,7 +306,7 @@ static bool run_exchange(
 		      v90_phase3_analog_station_receive(&analog, 0xa5) ==
 			      V90_PHASE3_ANALOG_STATION_COMPLETE &&
 		      sample == 1234 &&
-		      memcmp(&analog, &saved, sizeof(analog)) == 0,
+		      v90_analog_station_states_equal(&analog, &saved),
 		      "law %u complete station consumed media",
 		      (unsigned int)law);
 		analog.training_ucode = 0;
@@ -330,7 +318,7 @@ static bool run_exchange(
 		      v90_phase3_analog_station_receive(&analog, 0xa5) ==
 			      V90_PHASE3_ANALOG_STATION_INVALID_ARGUMENT &&
 		      sample == 1234 &&
-		      memcmp(&analog, &saved, sizeof(analog)) == 0,
+		      v90_analog_station_states_equal(&analog, &saved),
 		      "invalid completed analogue state bypassed validation");
 	}
 	{
@@ -342,7 +330,7 @@ static bool run_exchange(
 		      v90_phase3_digital_station_receive(&digital, 1234) ==
 			      V90_PHASE3_DIGITAL_STATION_COMPLETE &&
 		      octet == 0xa5 &&
-		      memcmp(&digital, &saved, sizeof(digital)) == 0,
+		      v90_digital_station_states_equal(&digital, &saved),
 		      "law %u complete digital station consumed media",
 		      (unsigned int)law);
 		digital.training_ucode = 0;
@@ -354,7 +342,7 @@ static bool run_exchange(
 		      v90_phase3_digital_station_receive(&digital, 1234) ==
 			      V90_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
 		      octet == 0xa5 &&
-		      memcmp(&digital, &saved, sizeof(digital)) == 0,
+		      v90_digital_station_states_equal(&digital, &saved),
 		      "invalid completed digital state bypassed validation");
 	}
 	return true;
@@ -450,7 +438,7 @@ static bool test_validation(void)
 		      &station, &selected, G711_LAW_PCMU, 128,
 		      NOMINAL_AMPLITUDE, V90_DIL_PROFILE_NONE) ==
 		      V90_PHASE3_ANALOG_STATION_INVALID_ARGUMENT &&
-	      memcmp(&station, &saved, sizeof(station)) == 0,
+	      v90_analog_station_states_equal(&station, &saved),
 	      "invalid initialization changed station state");
 	CHECK(v90_phase3_analog_station_init(
 		      &station, &selected, G711_LAW_PCMU, 91,
@@ -472,7 +460,7 @@ static bool test_validation(void)
 		      V90_PHASE3_ANALOG_STATION_INVALID_STATE &&
 	      v90_phase3_analog_station_receive_handoff(&station, &handoff) ==
 		      V90_PHASE3_ANALOG_STATION_INVALID_STATE &&
-	      memcmp(&station, &saved, sizeof(station)) == 0 && sample == 777 &&
+	      v90_analog_station_states_equal(&station, &saved) && sample == 777 &&
 	      memcmp(&line, &saved_line, sizeof(line)) == 0 &&
 	      memcmp(&handoff, &saved_handoff, sizeof(handoff)) == 0,
 	      "invalid station calls were not transactional");
@@ -510,7 +498,7 @@ static bool test_validation(void)
 		      &digital, &selected, TEST_INITIAL_RECEIVE_GAIN,
 		      (enum g711_law)99, 91, &parameters) ==
 		      V90_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
-	      memcmp(&digital, &saved_digital, sizeof(digital)) == 0,
+	      v90_digital_station_states_equal(&digital, &saved_digital),
 	      "invalid digital initialization changed state");
 	CHECK(v90_phase3_digital_station_init(
 		      &digital, &selected, TEST_INITIAL_RECEIVE_GAIN, G711_LAW_PCMU, 91,
@@ -520,7 +508,7 @@ static bool test_validation(void)
 	CHECK(v90_phase3_digital_station_transmit(&digital, &octet) ==
 		      V90_PHASE3_DIGITAL_STATION_OK &&
 	      octet == g711_encode_pcmu(0) &&
-	      memcmp(&digital, &saved_digital, sizeof(digital)) == 0,
+	      v90_digital_station_states_equal(&digital, &saved_digital),
 	      "pre-Ja digital silence changed state");
 	memset(&transmit_handoff, 0x5a, sizeof(transmit_handoff));
 	saved_transmit_handoff = transmit_handoff;
@@ -540,7 +528,7 @@ static bool test_validation(void)
 		      &digital, &return_handoff) ==
 		      V90_PHASE3_DIGITAL_STATION_INVALID_STATE &&
 	      octet == 0x3c &&
-	      memcmp(&digital, &saved_digital, sizeof(digital)) == 0 &&
+	      v90_digital_station_states_equal(&digital, &saved_digital) &&
 	      memcmp(&transmit_handoff, &saved_transmit_handoff,
 		     sizeof(transmit_handoff)) == 0 &&
 	      memcmp(&return_handoff, &saved_return_handoff,
