@@ -151,14 +151,8 @@ static bool test_validation_and_transactionality(void)
 	tx.stage = (enum v90_phase3_return_tx_stage)99;
 	CHECK(!v90_phase3_return_tx_is_valid(NULL) &&
 	      !v90_phase3_return_tx_is_valid(&tx) &&
-	      !v90_phase3_return_tx_is_complete(&tx) &&
-	      strcmp(v90_phase3_return_tx_result_name(
-		     V90_PHASE3_RETURN_TX_OUT_OF_RANGE),
-		     "out of range") == 0 &&
-	      strcmp(v90_phase3_return_tx_result_name(
-		     (enum v90_phase3_return_tx_result)99),
-		     "unknown") == 0,
-	      "return validation or result names changed");
+	      !v90_phase3_return_tx_is_complete(&tx),
+	      "return validation changed");
 	return true;
 }
 

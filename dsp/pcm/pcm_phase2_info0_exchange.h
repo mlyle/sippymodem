@@ -104,7 +104,4 @@ pcm_phase2_info0_exchange_sample(
 	int16_t received_sample, int16_t *transmit_sample,
 	struct pcm_phase2_info0_exchange_event *event);
 
-const char *pcm_phase2_info0_exchange_result_name(
-	enum pcm_phase2_info0_exchange_result result);
-
 #endif

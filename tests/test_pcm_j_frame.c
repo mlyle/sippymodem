@@ -134,12 +134,8 @@ static bool test_contracts(void)
 	      pcm_j_frame_decode(
 		      frame, PCM_J_FRAME_BYTES - 1u, &payload) ==
 		      PCM_J_FRAME_INVALID_ARGUMENT &&
-	      payload == UINT32_C(0x12345678) &&
-	      strcmp(pcm_j_frame_result_name(PCM_J_FRAME_CRC_MISMATCH),
-		     "CRC mismatch") == 0 &&
-	      strcmp(pcm_j_frame_result_name(
-			     (enum pcm_j_frame_result)99), "unknown") == 0,
-	      "decode contract or result names changed");
+	      payload == UINT32_C(0x12345678),
+	      "decode contract changed");
 	return true;
 }
 

@@ -124,21 +124,3 @@ enum v90_phase3_return_tx_result v90_phase3_return_tx_next(
 	*point = generated;
 	return V90_PHASE3_RETURN_TX_OK;
 }
-
-const char *v90_phase3_return_tx_result_name(
-	enum v90_phase3_return_tx_result result)
-{
-	switch (result) {
-	case V90_PHASE3_RETURN_TX_OK:
-		return "ok";
-	case V90_PHASE3_RETURN_TX_DONE:
-		return "done";
-	case V90_PHASE3_RETURN_TX_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V90_PHASE3_RETURN_TX_INVALID_STATE:
-		return "invalid state";
-	case V90_PHASE3_RETURN_TX_OUT_OF_RANGE:
-		return "out of range";
-	}
-	return "unknown";
-}

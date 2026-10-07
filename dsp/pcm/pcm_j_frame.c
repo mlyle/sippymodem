@@ -82,18 +82,3 @@ enum pcm_j_frame_result pcm_j_frame_decode(
 	*payload = decoded;
 	return PCM_J_FRAME_OK;
 }
-
-const char *pcm_j_frame_result_name(enum pcm_j_frame_result result)
-{
-	switch (result) {
-	case PCM_J_FRAME_OK:
-		return "ok";
-	case PCM_J_FRAME_INVALID_ARGUMENT:
-		return "invalid argument";
-	case PCM_J_FRAME_INVALID_FRAME:
-		return "invalid frame";
-	case PCM_J_FRAME_CRC_MISMATCH:
-		return "CRC mismatch";
-	}
-	return "unknown";
-}

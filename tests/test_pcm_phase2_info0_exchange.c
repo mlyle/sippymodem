@@ -1024,12 +1024,8 @@ static bool test_validation(void)
 	      memcmp(&exchange, &before, sizeof(exchange)) == 0 &&
 	      sample == 1234 &&
 	      event.peer_info0_event == PCM_PEER_INFO0_REJECTED &&
-	      event.recovery_event == PCM_INFO0_RECOVERY_REJECTED &&
-	      strcmp(pcm_phase2_info0_exchange_result_name(
-		     PCM_PHASE2_INFO0_EXCHANGE_OK), "ok") == 0 &&
-	      strcmp(pcm_phase2_info0_exchange_result_name(
-		     (enum pcm_phase2_info0_exchange_result)9), "unknown") == 0,
-	      "invalid V.90 INFO0 state mutated outputs or result names");
+	      event.recovery_event == PCM_INFO0_RECOVERY_REJECTED,
+	      "invalid V.90 INFO0 state mutated outputs");
 	return true;
 }
 

@@ -33,6 +33,4 @@ enum pcm_j_frame_result pcm_j_frame_encode(
 enum pcm_j_frame_result pcm_j_frame_decode(
 	const uint8_t *frame, size_t frame_capacity, uint32_t *payload);
 
-const char *pcm_j_frame_result_name(enum pcm_j_frame_result result);
-
 #endif /* PCM_J_FRAME_H */

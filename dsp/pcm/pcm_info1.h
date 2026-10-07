@@ -97,6 +97,4 @@ enum pcm_info1_result pcm_info1_encode_short(
 	const struct pcm_info1_selection *selection,
 	uint8_t *payload, size_t payload_capacity);
 
-const char *pcm_info1_result_name(enum pcm_info1_result result);
-
 #endif /* PCM_INFO1_H */

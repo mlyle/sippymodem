@@ -52,7 +52,4 @@ enum v90_phase3_return_tx_result v90_phase3_return_tx_finish_s(
 enum v90_phase3_return_tx_result v90_phase3_return_tx_next(
 	struct v90_phase3_return_tx *tx, struct qam_point *point);
 
-const char *v90_phase3_return_tx_result_name(
-	enum v90_phase3_return_tx_result result);
-
 #endif /* V90_PHASE3_RETURN_TX_H */

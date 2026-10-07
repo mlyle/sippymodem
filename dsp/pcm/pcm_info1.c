@@ -207,22 +207,3 @@ enum pcm_info1_result pcm_info1_encode_short(
 	packed_msb_set_bit(payload, SHORT_HIGH_CARRIER_BIT, high_carrier);
 	return PCM_INFO1_OK;
 }
-
-const char *pcm_info1_result_name(enum pcm_info1_result result)
-{
-	switch (result) {
-	case PCM_INFO1_OK:
-		return "ok";
-	case PCM_INFO1_INVALID_ARGUMENT:
-		return "invalid argument";
-	case PCM_INFO1_INVALID_RECORD:
-		return "invalid record";
-	case PCM_INFO1_PROTOCOL_MISMATCH:
-		return "protocol mismatch";
-	case PCM_INFO1_INVALID_PAYLOAD:
-		return "invalid payload";
-	case PCM_INFO1_PCM_UNAVAILABLE:
-		return "PCM upstream unavailable";
-	}
-	return "unknown";
-}

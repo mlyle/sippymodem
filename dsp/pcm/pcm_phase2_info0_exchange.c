@@ -601,15 +601,3 @@ pcm_phase2_info0_exchange_sample(
 	*event = emitted;
 	return PCM_PHASE2_INFO0_EXCHANGE_OK;
 }
-
-const char *pcm_phase2_info0_exchange_result_name(
-	enum pcm_phase2_info0_exchange_result result)
-{
-	switch (result) {
-	case PCM_PHASE2_INFO0_EXCHANGE_OK:
-		return "ok";
-	case PCM_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}
