@@ -57,15 +57,6 @@ static bool handoff_is_valid(
 		       &handoff->receive.stream.decoder.mapping, &expected);
 }
 
-static bool data_parameters_are_valid(
-	const struct v90_cp_parameters *parameters)
-{
-	return v90_cp_parameters_are_valid(parameters) &&
-	       parameters->kind == V90_CP_DATA &&
-	       parameters->selected_rate_index != 0 &&
-	       !parameters->request_silence;
-}
-
 static bool decision_plane_is_valid(enum v90_pcm_mapping_plane plane)
 {
 	return plane == V90_PCM_MAPPING_TRANSMIT ||
@@ -140,7 +131,7 @@ bool v90_analog_path_is_valid(const struct v90_analog_path *path)
 	    path->control_mapping.kind != V90_CP_TRAINING ||
 	    path->control_mapping.law != path->law ||
 	    !control_mapping_matches(path) ||
-	    !data_parameters_are_valid(&path->data_parameters) ||
+	    !v90_cp_is_data(&path->data_parameters) ||
 	    path->data_parameters.law != path->law ||
 	    !v90_pcm_mapping_is_valid(&path->data_mapping) ||
 	    path->data_mapping.kind != V90_CP_DATA ||
@@ -189,7 +180,7 @@ enum v90_analog_path_result v90_analog_path_init(
 
 	if (path == NULL || handoff == NULL || data_parameters == NULL)
 		return V90_ANALOG_PATH_INVALID_ARGUMENT;
-	if (!data_parameters_are_valid(data_parameters) ||
+	if (!v90_cp_is_data(data_parameters) ||
 	    data_parameters->acknowledges_peer)
 		return V90_ANALOG_PATH_INVALID_PARAMETERS;
 	if (!handoff_is_valid(handoff, data_parameters->law))

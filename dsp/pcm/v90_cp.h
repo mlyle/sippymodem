@@ -75,6 +75,20 @@ struct v90_cp_parameters {
 bool v90_cp_parameters_are_valid(
 	const struct v90_cp_parameters *parameters);
 
+/* Ordinary data parameters exclude CPt, cleardown and silence requests.
+ * CPs uses a separate exchange (V.90 9.6.1.2); acknowledgment is independent. */
+static inline bool v90_cp_is_data(const struct v90_cp_parameters *cp)
+{
+	return v90_cp_parameters_are_valid(cp) && cp->kind == V90_CP_DATA &&
+	       cp->selected_rate_index != 0 && !cp->request_silence;
+}
+
+/* The ordinary E/B1 handoff requires CP prime (V.90 9.4.2.3/4). */
+static inline bool v90_cp_is_final_data(const struct v90_cp_parameters *cp)
+{
+	return v90_cp_is_data(cp) && cp->acknowledges_peer;
+}
+
 /* Compare encoded fields, including acknowledgment. Reject invalid records;
  * ignore struct padding, undeclared rows and an absent codec constellation set. */
 bool v90_cp_parameters_are_equal(

@@ -399,6 +399,31 @@ static bool test_contracts(void)
 	      v90_phase4_e_line_tx_init(&complete, &cp) ==
 		      V90_PHASE4_E_LINE_TX_INVALID_STATE,
 	      "E accepted CPt or an unacknowledged CP");
+	/* A CRC-valid CPs or cleardown may continue the control exchange, but
+	 * neither permits the ordinary E/B1 data handoff. */
+	for (unsigned control = 0; control < 2; ++control) {
+		struct v90_cp_parameters parameters = cp_parameters(
+			V90_CP_DATA, cp_rates, true);
+		struct v90_phase4_e_line_tx saved_complete = complete;
+
+		parameters.request_silence = control == 0;
+		if (control == 1)
+			parameters.selected_rate_index = 0;
+		memset(&untouched_direction, 0xa5, sizeof(untouched_direction));
+		saved_direction = untouched_direction;
+		CHECK(v90_cp_parameters_are_valid(&parameters) &&
+		      v90_phase4_cp_line_tx_start_next_record(&cp, &parameters) ==
+			      V90_PHASE4_CP_LINE_TX_OK && drive_cp_record(&cp) &&
+		      v90_phase4_e_line_tx_init(&complete, &cp) ==
+			      V90_PHASE4_E_LINE_TX_INVALID_STATE &&
+		      e_states_equal(&complete, &saved_complete) &&
+		      v90_upstream_mode_select(
+			      &parameters, &mp, &complete.line.profile,
+			      &untouched_direction) == V90_UPSTREAM_MODE_INVALID_PARAMETERS &&
+		      memcmp(&untouched_direction, &saved_direction,
+			     sizeof(untouched_direction)) == 0,
+		      "control CP %u entered ordinary upstream data or changed output", control);
+	}
 	CHECK(strcmp(v90_upstream_data_result_name(
 		     V90_UPSTREAM_DATA_CLIPPING_RISK),
 		     "clipping risk") == 0 &&

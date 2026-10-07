@@ -8,13 +8,6 @@
 #include <stddef.h>
 #include <string.h>
 
-static bool cp_is_final(const struct v90_cp_parameters *cp)
-{
-	return v90_cp_parameters_are_valid(cp) && cp->kind == V90_CP_DATA &&
-	       cp->selected_rate_index != 0 && cp->acknowledges_peer &&
-	       !cp->request_silence;
-}
-
 enum v90_upstream_mode_result v90_upstream_mode_select(
 	const struct v90_cp_parameters *cp,
 	const struct v90_mp_record *mp,
@@ -28,7 +21,7 @@ enum v90_upstream_mode_result v90_upstream_mode_select(
 	if (cp == NULL || mp == NULL || transmitting_profile == NULL ||
 	    direction == NULL)
 		return V90_UPSTREAM_MODE_INVALID_ARGUMENT;
-	if (!cp_is_final(cp) || !v90_mp_record_is_valid(mp) ||
+	if (!v90_cp_is_final_data(cp) || !v90_mp_record_is_valid(mp) ||
 	    !v90_phase3_analog_profile_is_valid(transmitting_profile))
 		return V90_UPSTREAM_MODE_INVALID_PARAMETERS;
 	common = v90_mp_record_common(mp);

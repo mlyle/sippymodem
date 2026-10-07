@@ -61,10 +61,7 @@ static enum v90_upstream_rx_result validate_data_parameters(
 	struct v34_data_direction_parameters direction;
 	enum v90_upstream_mode_result result;
 
-	if (!v90_cp_parameters_are_valid(parameters) ||
-	    parameters->kind != V90_CP_DATA ||
-	    parameters->selected_rate_index == 0 ||
-	    parameters->request_silence)
+	if (!v90_cp_is_data(parameters))
 		return V90_UPSTREAM_RX_INVALID_PARAMETERS;
 	if (v90_pcm_mapping_init_transmit(
 		    &mapping, parameters, receiver->training_mapping.law) !=
@@ -109,11 +106,8 @@ bool v90_upstream_rx_is_valid(const struct v90_upstream_rx *receiver)
 	     receiver->stage != V90_UPSTREAM_RX_STAGE_RECONDITION &&
 	     !receiver->data_cp_received) ||
 	    (receiver->data_cp_received &&
-	     (!v90_cp_parameters_are_valid(&receiver->data_parameters) ||
-	      receiver->data_parameters.kind != V90_CP_DATA ||
+	     (!v90_cp_is_data(&receiver->data_parameters) ||
 	      receiver->data_parameters.acknowledges_peer ||
-	      receiver->data_parameters.request_silence ||
-	      receiver->data_parameters.selected_rate_index == 0 ||
 	      !downstream_rate_is_enabled(
 		      receiver, &receiver->data_parameters))))
 		return false;

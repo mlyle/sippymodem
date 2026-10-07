@@ -6,13 +6,6 @@
 
 #include <stddef.h>
 
-static bool cp_is_final(const struct v90_cp_parameters *cp)
-{
-	return v90_cp_parameters_are_valid(cp) &&
-	       cp->kind == V90_CP_DATA && cp->selected_rate_index != 0 &&
-	       cp->acknowledges_peer && !cp->request_silence;
-}
-
 bool v90_phase4_e_line_rx_is_valid(
 	const struct v90_phase4_e_line_rx *rx)
 {
@@ -27,7 +20,7 @@ bool v90_phase4_e_line_rx_is_valid(
 	       v34_phase4_e_receiver_is_valid(&rx->symbols) &&
 	       rx->symbols.transmitting_role ==
 		       rx->transmitting_profile.local_role &&
-	       cp_is_final(&rx->cp) && rx->decoder_power_q15 != 0u &&
+	       v90_cp_is_final_data(&rx->cp) && rx->decoder_power_q15 != 0u &&
 	       rx->decoder_power_q15 <= INT16_MAX &&
 	       (rx->adaptation == V34_ADAPTIVE_EQUALIZER_FULL ||
 		rx->adaptation == V34_ADAPTIVE_EQUALIZER_CARRIER);
@@ -67,7 +60,7 @@ enum v90_phase4_e_line_rx_result v90_phase4_e_line_rx_init(
 		return cp_result == V90_PHASE4_CP_LINE_RX_INVALID_STATE ?
 			       V90_PHASE4_E_LINE_RX_INVALID_STATE :
 			       V90_PHASE4_E_LINE_RX_INVALID_ARGUMENT;
-	if (!cp_is_final(&initialized.cp))
+	if (!v90_cp_is_final_data(&initialized.cp))
 		return V90_PHASE4_E_LINE_RX_INVALID_STATE;
 	initialized.line = completed_cp->line;
 	initialized.transmitting_profile =
