@@ -183,8 +183,9 @@ enum v90_phase4_cp_line_tx_result v90_phase4_cp_line_tx_sample(
 	return v90_phase4_cp_line_tx_sample_owned(tx, sample);
 }
 
-enum v90_phase4_cp_line_tx_result v90_phase4_cp_line_tx_sample_owned(
-	struct v90_phase4_cp_line_tx *tx, int16_t *sample)
+static enum v90_phase4_cp_line_tx_result sample_owned(
+	struct v90_phase4_cp_line_tx *tx, bool scr, bool stop_at_boundary,
+	int16_t *sample)
 {
 	struct v90_phase4_cp_line_tx next;
 	struct qam_point point;
@@ -197,7 +198,10 @@ enum v90_phase4_cp_line_tx_result v90_phase4_cp_line_tx_sample_owned(
 	    memory_regions_overlap(tx, sizeof(*tx), sample, sizeof(*sample)))
 		return V90_PHASE4_CP_LINE_TX_INVALID_ARGUMENT;
 	accepting = v34_training_line_needs_point(&tx->line);
-	if (accepting && tx->symbols.bit_index == tx->symbols.frame_bit_count)
+	if (scr && tx->symbols.bit_index != tx->symbols.frame_bit_count)
+		return V90_PHASE4_CP_LINE_TX_RECORD_IN_PROGRESS;
+	if (accepting && (scr ? stop_at_boundary :
+			 tx->symbols.bit_index == tx->symbols.frame_bit_count))
 		return V90_PHASE4_CP_LINE_TX_COMPLETE;
 	next = *tx;
 	if (accepting) {
@@ -205,10 +209,15 @@ enum v90_phase4_cp_line_tx_result v90_phase4_cp_line_tx_sample_owned(
 		uint8_t clockwise_quarter_turns;
 		bool record_complete;
 
-		if (v90_phase4_cp_tx_next_owned(
-			    &next.symbols, &point, &quarter_point,
-			    &clockwise_quarter_turns, &record_complete) !=
-		    V90_PHASE4_CP_TX_OK)
+		enum v90_phase4_cp_tx_result result = scr ?
+			v90_phase4_cp_tx_scr_next_owned(
+				&next.symbols, &point, &quarter_point,
+				&clockwise_quarter_turns) :
+			v90_phase4_cp_tx_next_owned(
+				&next.symbols, &point, &quarter_point,
+				&clockwise_quarter_turns, &record_complete);
+
+		if (result != V90_PHASE4_CP_TX_OK)
 			return V90_PHASE4_CP_LINE_TX_INTERNAL_ERROR;
 		supplied = &point;
 	}
@@ -226,6 +235,12 @@ enum v90_phase4_cp_line_tx_result v90_phase4_cp_line_tx_sample_owned(
 	*tx = next;
 	*sample = generated;
 	return V90_PHASE4_CP_LINE_TX_OK;
+}
+
+enum v90_phase4_cp_line_tx_result v90_phase4_cp_line_tx_sample_owned(
+	struct v90_phase4_cp_line_tx *tx, int16_t *sample)
+{
+	return sample_owned(tx, false, false, sample);
 }
 
 enum v90_phase4_cp_line_tx_result v90_phase4_cp_line_tx_scr_sample(
@@ -241,47 +256,7 @@ enum v90_phase4_cp_line_tx_result v90_phase4_cp_line_tx_scr_sample_owned(
 	struct v90_phase4_cp_line_tx *tx, bool stop_at_boundary,
 	int16_t *sample)
 {
-	struct v90_phase4_cp_line_tx next;
-	struct qam_point point;
-	const struct qam_point *supplied = NULL;
-	int16_t generated;
-	bool accepting;
-	bool accepted;
-
-	if (!v90_phase4_cp_line_tx_owned_state_is_valid(tx) || sample == NULL ||
-	    memory_regions_overlap(tx, sizeof(*tx), sample, sizeof(*sample)))
-		return V90_PHASE4_CP_LINE_TX_INVALID_ARGUMENT;
-	if (tx->symbols.bit_index != tx->symbols.frame_bit_count)
-		return V90_PHASE4_CP_LINE_TX_RECORD_IN_PROGRESS;
-	if (stop_at_boundary && v34_training_line_needs_point(&tx->line))
-		return V90_PHASE4_CP_LINE_TX_COMPLETE;
-	next = *tx;
-	accepting = v34_training_line_needs_point(&next.line);
-	if (accepting) {
-		uint8_t quarter_point;
-		uint8_t clockwise_quarter_turns;
-
-		if (v90_phase4_cp_tx_scr_next_owned(
-			    &next.symbols, &point, &quarter_point,
-			    &clockwise_quarter_turns) !=
-		    V90_PHASE4_CP_TX_OK)
-			return V90_PHASE4_CP_LINE_TX_INTERNAL_ERROR;
-		supplied = &point;
-	}
-	{
-		enum v90_phase4_cp_line_tx_result result = line_result(
-			v34_training_line_sample(
-				&next.line, supplied, &generated, &accepted));
-
-		if (result != V90_PHASE4_CP_LINE_TX_OK)
-			return result;
-	}
-	if (accepted != accepting ||
-	    !v90_phase4_cp_line_tx_owned_state_is_valid(&next))
-		return V90_PHASE4_CP_LINE_TX_INTERNAL_ERROR;
-	*tx = next;
-	*sample = generated;
-	return V90_PHASE4_CP_LINE_TX_OK;
+	return sample_owned(tx, true, stop_at_boundary, sample);
 }
 
 enum v90_phase4_cp_line_tx_result v90_phase4_cp_line_tx_handoff(
