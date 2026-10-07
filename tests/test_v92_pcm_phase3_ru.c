@@ -33,7 +33,7 @@ static bool check_sequence(
 	struct v92_pcm_phase3_ru sequence;
 	struct v90_pcm_symbol symbol;
 	uint8_t symbol_before[sizeof(symbol)];
-	uint8_t sequence_before[sizeof(sequence)];
+	struct v92_pcm_phase3_ru sequence_before;
 	size_t total = kind == V92_PCM_PHASE3_RU ?
 			       V92_PCM_PHASE3_RU_SYMBOLS :
 			       V92_PCM_PHASE3_RU_BAR_SYMBOLS;
@@ -59,11 +59,14 @@ static bool check_sequence(
 	}
 	memset(&symbol, 0xa5, sizeof(symbol));
 	memcpy(symbol_before, &symbol, sizeof(symbol));
-	memcpy(sequence_before, &sequence, sizeof(sequence));
+	sequence_before = sequence;
 	CHECK(v92_pcm_phase3_ru_next(&sequence, &symbol) ==
 		      V92_PCM_PHASE3_RU_COMPLETE &&
 	      memcmp(&symbol, symbol_before, sizeof(symbol)) == 0 &&
-	      memcmp(&sequence, sequence_before, sizeof(sequence)) == 0 &&
+	      sequence.law == sequence_before.law &&
+	      sequence.kind == sequence_before.kind &&
+	      sequence.emitted_symbols == sequence_before.emitted_symbols &&
+	      sequence.lu_ucode == sequence_before.lu_ucode &&
 	      v92_pcm_phase3_ru_remaining(&sequence) == 0u,
 	      "completed Ru sequence was not stable");
 	return true;
