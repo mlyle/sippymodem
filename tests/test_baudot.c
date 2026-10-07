@@ -396,10 +396,7 @@ static bool test_validation(void)
 	      "Baudot transmitter mishandled an empty or missing buffer");
 	transmitter.code_head = BAUDOT_TX_CODE_CAPACITY;
 	CHECK(baudot_generate(&transmitter, &sample, 1) ==
-		      BAUDOT_INVALID_ARGUMENT &&
-		      strcmp(baudot_result_name(
-			     BAUDOT_INVALID_ARGUMENT),
-			     "invalid argument") == 0,
+		      BAUDOT_INVALID_ARGUMENT,
 	      "Baudot transmitter accepted corrupt queue state");
 	CHECK(baudot_receiver_init(
 		      NULL, BAUDOT_RATE_45) ==

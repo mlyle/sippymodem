@@ -647,15 +647,3 @@ size_t baudot_pending_text(
 {
 	return receiver_is_valid(receiver) ? receiver->character_count : 0;
 }
-
-const char *baudot_result_name(
-	enum baudot_result result)
-{
-	switch (result) {
-	case BAUDOT_OK:
-		return "ok";
-	case BAUDOT_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown Baudot result";
-}

@@ -307,15 +307,3 @@ enum v8_fsk_result v8_fsk_receive_sample(
 	*bit_ready = ready;
 	return V8_FSK_OK;
 }
-
-const char *v8_fsk_result_name(
-	enum v8_fsk_result result)
-{
-	switch (result) {
-	case V8_FSK_OK:
-		return "ok";
-	case V8_FSK_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown V.8 FSK result";
-}

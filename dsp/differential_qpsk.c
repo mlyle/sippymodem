@@ -37,15 +37,3 @@ differential_qpsk_decode(
 	*dibit = dibits[quarter_turns];
 	return DIFFERENTIAL_QPSK_OK;
 }
-
-const char *differential_qpsk_result_name(
-	enum differential_qpsk_result result)
-{
-	switch (result) {
-	case DIFFERENTIAL_QPSK_OK:
-		return "ok";
-	case DIFFERENTIAL_QPSK_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

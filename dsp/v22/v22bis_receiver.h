@@ -39,7 +39,4 @@ enum v22bis_receiver_result v22bis_receiver_decode(
 	const struct qam_point *point,
 	uint8_t bits[V22BIS_BITS_PER_SYMBOL]);
 
-const char *v22bis_receiver_result_name(
-	enum v22bis_receiver_result result);
-
 #endif /* V22BIS_RECEIVER_H */

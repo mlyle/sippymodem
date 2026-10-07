@@ -21,7 +21,4 @@ enum differential_qpsk_result
 differential_qpsk_decode(
 	uint8_t previous_quadrant, uint8_t quadrant, uint8_t *dibit);
 
-const char *differential_qpsk_result_name(
-	enum differential_qpsk_result result);
-
 #endif

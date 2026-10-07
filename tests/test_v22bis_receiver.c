@@ -267,10 +267,7 @@ static bool test_validation(void)
 	receiver.gain.channel_gain.in_phase = INFINITY;
 	CHECK(v22bis_receiver_decode(
 		      &receiver, &reference, bits) ==
-		      V22BIS_RECEIVER_INVALID_ARGUMENT &&
-		      strcmp(v22bis_receiver_result_name(
-			     V22BIS_RECEIVER_INVALID_ARGUMENT),
-			     "invalid argument") == 0,
+		      V22BIS_RECEIVER_INVALID_ARGUMENT,
 	      "V.22bis receiver accepted corrupt state");
 	return true;
 }

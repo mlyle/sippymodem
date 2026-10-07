@@ -274,10 +274,7 @@ static bool test_exact_symbol_clock_and_validation(void)
 		      fsk_receiver_sample(
 			      NULL, sample, &bit, &ready) ==
 			      FSK_INVALID_ARGUMENT &&
-		      !fsk_receiver_measure(NULL).ready &&
-		      strcmp(fsk_result_name(
-			     FSK_INVALID_ARGUMENT),
-			     "invalid argument") == 0,
+		      !fsk_receiver_measure(NULL).ready,
 	      "FSK API accepted invalid state");
 	return true;
 }

@@ -380,14 +380,3 @@ struct fsk_measurement fsk_receiver_measure(
 	}
 	return measurement;
 }
-
-const char *fsk_result_name(enum fsk_result result)
-{
-	switch (result) {
-	case FSK_OK:
-		return "ok";
-	case FSK_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown FSK result";
-}

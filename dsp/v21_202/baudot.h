@@ -120,7 +120,4 @@ size_t baudot_drain_text(
 size_t baudot_pending_text(
 	const struct baudot_receiver *receiver);
 
-const char *baudot_result_name(
-	enum baudot_result result);
-
 #endif /* BAUDOT_H */

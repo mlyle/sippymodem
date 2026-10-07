@@ -872,10 +872,7 @@ static bool test_validation(void)
 		      V22_FRAMING_INVALID_ARGUMENT &&
 		      v22_symbol_decode(
 			      &decoder, 0, &value, &value, true) ==
-			      V22_FRAMING_INVALID_ARGUMENT &&
-		      strcmp(v22_framing_result_name(
-			     V22_FRAMING_INVALID_ARGUMENT),
-			     "invalid argument") == 0,
+			      V22_FRAMING_INVALID_ARGUMENT,
 	      "V.22 framing accepted corrupt state");
 	return true;
 }

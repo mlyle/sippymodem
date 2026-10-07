@@ -314,15 +314,3 @@ enum v8_framing_result v8_cj_detect_bit(
 	*detected = next.detected;
 	return V8_FRAMING_OK;
 }
-
-const char *v8_framing_result_name(
-	enum v8_framing_result result)
-{
-	switch (result) {
-	case V8_FRAMING_OK:
-		return "ok";
-	case V8_FRAMING_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

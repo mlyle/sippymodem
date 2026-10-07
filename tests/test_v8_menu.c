@@ -702,10 +702,7 @@ static bool test_joint_validation(void)
 	      v8_menu_selected_modulation(
 		      &local_menu, NULL, &selected) == V8_MENU_INVALID_ARGUMENT &&
 	      v8_menu_selected_modulation(
-		      &local_menu, &local_menu, NULL) == V8_MENU_INVALID_ARGUMENT &&
-	      strcmp(v8_menu_result_name(
-			     V8_MENU_NO_COMMON_MODULATION),
-		     "no common modulation") == 0,
+		      &local_menu, &local_menu, NULL) == V8_MENU_INVALID_ARGUMENT,
 	      "V.8 joint menu accepted invalid state");
 	return true;
 }
@@ -1056,10 +1053,7 @@ static bool test_validation(void)
 	      v8_menu_encode(&invalid, NULL, 5, &count) ==
 		      V8_MENU_INVALID_ARGUMENT &&
 	      v8_menu_encode(&invalid, information, 5, NULL) ==
-		      V8_MENU_INVALID_ARGUMENT &&
-	      strcmp(v8_menu_result_name(
-			     V8_MENU_BUFFER_TOO_SMALL),
-		     "buffer too small") == 0,
+		      V8_MENU_INVALID_ARGUMENT,
 	      "V.8 menu validation was not transactional");
 	return true;
 }

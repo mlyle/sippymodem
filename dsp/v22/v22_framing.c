@@ -270,15 +270,3 @@ enum v22_framing_result v22bis_rate_signal_observe(
 	*event = next_event;
 	return V22_FRAMING_OK;
 }
-
-const char *v22_framing_result_name(
-	enum v22_framing_result result)
-{
-	switch (result) {
-	case V22_FRAMING_OK:
-		return "ok";
-	case V22_FRAMING_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

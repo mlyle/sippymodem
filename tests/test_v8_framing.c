@@ -366,10 +366,7 @@ static bool test_validation(void)
 	      v8_cj_bit(V8_CJ_BITS, &bit) ==
 		      V8_FRAMING_INVALID_ARGUMENT &&
 	      v8_cj_bit(0, NULL) ==
-		      V8_FRAMING_INVALID_ARGUMENT &&
-	      strcmp(v8_framing_result_name(
-			     V8_FRAMING_INVALID_ARGUMENT),
-		     "invalid argument") == 0,
+		      V8_FRAMING_INVALID_ARGUMENT,
 	      "V.8 framing accepted invalid state");
 	CHECK(v8_control_receiver_init(&receiver) ==
 		      V8_FRAMING_OK &&

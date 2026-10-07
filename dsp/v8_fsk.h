@@ -64,7 +64,4 @@ enum v8_fsk_result v8_fsk_receive_block(
 	struct v8_fsk *fsk, const struct v8_line_conditioned_block *block,
 	uint8_t *bit, bool *bit_ready);
 
-const char *v8_fsk_result_name(
-	enum v8_fsk_result result);
-
 #endif

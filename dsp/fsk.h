@@ -137,7 +137,4 @@ enum fsk_result fsk_receiver_sample(
 struct fsk_measurement fsk_receiver_measure(
 	const struct fsk_receiver *receiver);
 
-const char *fsk_result_name(
-	enum fsk_result result);
-
 #endif

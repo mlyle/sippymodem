@@ -133,7 +133,4 @@ enum v8_menu_result v8_menu_detect_bit(
 	struct v8_menu_detector *detector, uint8_t bit,
 	struct v8_menu *menu, bool *confirmed);
 
-const char *v8_menu_result_name(
-	enum v8_menu_result result);
-
 #endif

@@ -48,10 +48,7 @@ static bool test_validation(void)
 		      differential_qpsk_decode(
 			      0, QPSK_QUADRANT_COUNT, &value) ==
 			      DIFFERENTIAL_QPSK_INVALID_ARGUMENT &&
-		      value == UINT8_MAX &&
-		      strcmp(differential_qpsk_result_name(
-			     DIFFERENTIAL_QPSK_INVALID_ARGUMENT),
-			     "invalid argument") == 0,
+		      value == UINT8_MAX,
 	      "differential QPSK accepted invalid input");
 	return true;
 }

@@ -444,10 +444,7 @@ static bool test_validation_and_reset(void)
 		      V8_FSK_INVALID_ARGUMENT &&
 	      bit == 7 && ready &&
 	      v8_fsk_reset(&fsk) ==
-		      V8_FSK_INVALID_ARGUMENT &&
-	      strcmp(v8_fsk_result_name(
-			     V8_FSK_INVALID_ARGUMENT),
-		     "invalid argument") == 0,
+		      V8_FSK_INVALID_ARGUMENT,
 	      "V.8 FSK API accepted invalid state");
 
 	CHECK(v8_fsk_init(

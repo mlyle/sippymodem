@@ -171,15 +171,3 @@ enum v22bis_receiver_result v22bis_receiver_decode(
 		bits[index] = decoded[index];
 	return V22BIS_RECEIVER_OK;
 }
-
-const char *v22bis_receiver_result_name(
-	enum v22bis_receiver_result result)
-{
-	switch (result) {
-	case V22BIS_RECEIVER_OK:
-		return "ok";
-	case V22BIS_RECEIVER_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

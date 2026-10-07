@@ -542,23 +542,3 @@ enum v8_menu_result v8_menu_detect_bit(
 		*menu = next.confirmed_menu;
 	return V8_MENU_OK;
 }
-
-const char *v8_menu_result_name(
-	enum v8_menu_result result)
-{
-	switch (result) {
-	case V8_MENU_OK:
-		return "ok";
-	case V8_MENU_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V8_MENU_BUFFER_TOO_SMALL:
-		return "buffer too small";
-	case V8_MENU_MALFORMED:
-		return "malformed menu";
-	case V8_MENU_UNSUPPORTED_CALL_FUNCTION:
-		return "unsupported call function";
-	case V8_MENU_NO_COMMON_MODULATION:
-		return "no common modulation";
-	}
-	return "unknown";
-}

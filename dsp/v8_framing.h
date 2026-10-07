@@ -89,7 +89,4 @@ enum v8_framing_result v8_cj_detect_bit(
 	struct v8_cj_detector *detector, uint8_t bit,
 	bool *detected);
 
-const char *v8_framing_result_name(
-	enum v8_framing_result result);
-
 #endif

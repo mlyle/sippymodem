@@ -99,7 +99,4 @@ enum v22_framing_result v22bis_rate_signal_observe(
 	uint8_t quarter_turns,
 	enum v22bis_rate_signal_event *event);
 
-const char *v22_framing_result_name(
-	enum v22_framing_result result);
-
 #endif /* V22_FRAMING_H */
