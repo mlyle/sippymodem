@@ -101,68 +101,10 @@ static enum v34_data_stream_result mapping_result(
 	return V34_DATA_STREAM_NUMERIC_FAILURE;
 }
 
-static enum v34_data_stream_result prepare_mapping(
-	const struct v34_data_stream_configuration *configuration,
-	struct v34_data_mapping *mapping)
-{
-	struct v34_data_direction_parameters parameters = { 0 };
-
-	if (configuration == NULL || mapping == NULL ||
-	    configuration->sample_rate == 0 ||
-	    configuration->nominal_peak_amplitude <= 0)
-		return V34_DATA_STREAM_INVALID_ARGUMENT;
-	memcpy(parameters.precoder_coefficients,
-	       configuration->precoder_coefficients,
-	       sizeof(parameters.precoder_coefficients));
-	parameters.trellis_selection = configuration->trellis_selection;
-	parameters.nonlinear_parameter = configuration->nonlinear_parameter;
-	parameters.primary_data_rate_2400_bps_units =
-		configuration->primary_data_rate_2400_bps_units;
-	parameters.expanded_shaping = configuration->expanded_shaping;
-	return mapping_result(v34_data_mapping_prepare(
-		mapping, &configuration->profile, &parameters,
-		configuration->auxiliary_channel_enabled));
-}
-
-static bool configuration_matches_line(
-	const struct v34_data_stream_configuration *configuration,
-	const struct v34_training_line *line)
-{
-	return configuration != NULL && v34_training_line_is_valid(line) &&
-	       v34_phase3_profile_is_equal(
-		       &configuration->profile, &line->profile) &&
-	       configuration->sample_rate == line->carrier.channel.sample_rate &&
-	       configuration->nominal_peak_amplitude ==
-		       line->nominal_peak_amplitude;
-}
-
 static enum v34_data_stream_result initialize_b1(
 	struct v34_data_stream *stream,
 	const struct v34_data_points *points,
 	const struct v34_training_line *line);
-
-enum v34_data_stream_result v34_data_stream_continue_b1(
-	struct v34_data_stream *stream,
-	const struct v34_training_line *active_line,
-	const struct v34_data_stream_configuration *configuration)
-{
-	struct v34_data_mapping mapping;
-	struct v34_data_stream_preparation preparation;
-	enum v34_data_stream_result result;
-
-	if (stream == NULL ||
-	    !configuration_matches_line(configuration, active_line))
-		return V34_DATA_STREAM_INVALID_ARGUMENT;
-	result = prepare_mapping(configuration, &mapping);
-	if (result != V34_DATA_STREAM_OK)
-		return result;
-	result = v34_data_stream_prepare(
-		&preparation, &mapping, configuration->sample_rate);
-	if (result != V34_DATA_STREAM_OK)
-		return result;
-	return v34_data_stream_continue_prepared_b1(
-		stream, active_line, &preparation);
-}
 
 bool v34_data_stream_preparation_is_valid(
 	const struct v34_data_stream_preparation *preparation)
@@ -231,29 +173,6 @@ enum v34_data_stream_result v34_data_stream_step_preparation(
 	if (!v34_data_stream_preparation_is_valid(&job->preparation))
 		return V34_DATA_STREAM_NUMERIC_FAILURE;
 	*preparation = job->preparation;
-	return V34_DATA_STREAM_OK;
-}
-
-enum v34_data_stream_result v34_data_stream_prepare(
-	struct v34_data_stream_preparation *preparation,
-	const struct v34_data_mapping *mapping, uint32_t sample_rate)
-{
-	struct v34_line_power_measurement measurement;
-	enum v34_data_stream_result result;
-
-	if (preparation == NULL || !v34_data_mapping_is_valid(mapping))
-		return V34_DATA_STREAM_INVALID_ARGUMENT;
-	result = calibration_result(v34_calibrate_line_power(
-		&mapping->schedule, &mapping->scrambler, &mapping->encoder,
-		&mapping->normalizer, &mapping->transmitting_profile,
-		sample_rate, &measurement));
-	if (result != V34_DATA_STREAM_OK)
-		return result;
-	*preparation = (struct v34_data_stream_preparation){
-		.mapping = *mapping,
-		.line_peak = measurement.peak_amplitude,
-		.sample_rate = sample_rate,
-	};
 	return V34_DATA_STREAM_OK;
 }
 

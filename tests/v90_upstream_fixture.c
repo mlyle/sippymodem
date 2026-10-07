@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "v90_upstream_fixture.h"
+#include "v34_stream_fixture.h"
 
 #include <stddef.h>
-#include <string.h>
 
 static enum v90_upstream_data_result stream_result(
 	enum v34_data_stream_result result)
@@ -46,7 +46,7 @@ enum v90_upstream_data_result v90_upstream_data_start_after_e(
 	const struct v90_phase4_e_line_tx *completed_e,
 	const struct v90_mp_record *peer_mp)
 {
-	struct v34_data_stream_configuration configuration = { 0 };
+	struct v34_data_stream_preparation preparation;
 	struct v34_data_direction_parameters direction;
 	enum v90_upstream_data_result result;
 
@@ -59,19 +59,11 @@ enum v90_upstream_data_result v90_upstream_data_start_after_e(
 		&direction));
 	if (result != V90_UPSTREAM_DATA_OK)
 		return result;
-	configuration.profile = completed_e->line.profile;
-	configuration.sample_rate =
-		completed_e->line.carrier.channel.sample_rate;
-	configuration.nominal_peak_amplitude =
-		completed_e->line.nominal_peak_amplitude;
-	configuration.trellis_selection = direction.trellis_selection;
-	configuration.nonlinear_parameter = direction.nonlinear_parameter;
-	configuration.primary_data_rate_2400_bps_units =
-		direction.primary_data_rate_2400_bps_units;
-	configuration.expanded_shaping = direction.expanded_shaping;
-	memcpy(configuration.precoder_coefficients,
-	       direction.precoder_coefficients,
-	       sizeof(configuration.precoder_coefficients));
-	return stream_result(v34_data_stream_continue_b1(
-		stream, &completed_e->line, &configuration));
+	result = stream_result(v34_prepare_stream_fixture(
+		&preparation, &completed_e->line.profile, &direction, false,
+		completed_e->line.carrier.channel.sample_rate));
+	if (result != V90_UPSTREAM_DATA_OK)
+		return result;
+	return stream_result(v34_data_stream_continue_prepared_b1(
+		stream, &completed_e->line, &preparation));
 }

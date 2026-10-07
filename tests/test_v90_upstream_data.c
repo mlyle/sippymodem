@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "v90_upstream_fixture.h"
+#include "v34_stream_fixture.h"
 #include <v90_upstream_mode.h>
 #include <v90_phase3.h>
 
@@ -215,31 +216,32 @@ static bool test_selected_type1_stream(void)
 	struct v90_phase4_e_line_tx saved_e;
 	struct v34_data_stream actual;
 	struct v34_data_stream expected;
-	struct v34_data_stream_configuration configuration = { 0 };
+	struct v34_data_stream_preparation preparation;
+	struct v34_data_direction_parameters expected_direction = {
+		.trellis_selection = V34_TRELLIS_64_STATE,
+		.nonlinear_parameter = V34_NONLINEAR_THETA_5_OVER_16,
+		.primary_data_rate_2400_bps_units = 12,
+		.expanded_shaping = true,
+	};
 	struct v34_data_direction_parameters direction;
 	size_t samples = 0;
 
 	CHECK(completed_e_fixture(&e, 10, cp_rates),
 	      "acknowledged CP did not reach E");
 	saved_e = e;
-	configuration.profile = e.line.profile;
-	configuration.sample_rate = e.line.carrier.channel.sample_rate;
-	configuration.nominal_peak_amplitude = e.line.nominal_peak_amplitude;
-	configuration.trellis_selection = V34_TRELLIS_64_STATE;
-	configuration.nonlinear_parameter = V34_NONLINEAR_THETA_5_OVER_16;
-	configuration.primary_data_rate_2400_bps_units = 12;
-	configuration.expanded_shaping = true;
-	memcpy(configuration.precoder_coefficients,
+	memcpy(expected_direction.precoder_coefficients,
 	       mp.parameters.type1.precoder_coefficients,
-	       sizeof(configuration.precoder_coefficients));
+	       sizeof(expected_direction.precoder_coefficients));
 	CHECK(v90_upstream_data_start_after_e(&actual, &e, &mp) ==
 		      V90_UPSTREAM_DATA_OK &&
 	      v90_upstream_mode_select(
 		      &e.cp, &mp, &e.line.profile, &direction) ==
 		      V90_UPSTREAM_MODE_OK &&
-	      v34_data_stream_continue_b1(
-		      &expected, &e.line, &configuration) ==
+	      v34_prepare_stream_fixture(&preparation, &e.line.profile,
+		      &expected_direction, false, e.line.carrier.channel.sample_rate) ==
 		      V34_DATA_STREAM_OK &&
+	      v34_data_stream_continue_prepared_b1(
+		      &expected, &e.line, &preparation) == V34_DATA_STREAM_OK &&
 	      actual.points.schedule.geometry
 			      .primary_data_rate_2400_bps_units == 12 &&
 	      actual.points.encoder.parameters.expanded_shaping &&

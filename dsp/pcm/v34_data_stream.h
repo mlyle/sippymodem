@@ -42,22 +42,6 @@ struct v34_data_stream {
 /* Bound the pending mapping frame, word delay and finite line-filter tail. */
 int v34_data_stream_tx_tail_samples(const struct v34_data_stream *stream);
 
-/* The negotiated settings needed to enter the data phase. The Phase 3
- * profile owns the exact carrier and symbol rates; the remaining fields are
- * the selected Phase 4 transmit settings and local line interface. */
-struct v34_data_stream_configuration {
-	struct v34_phase3_profile profile;
-	struct v34_q14_coefficient
-		precoder_coefficients[V34_PRECODER_TAP_COUNT];
-	uint32_t sample_rate;
-	int16_t nominal_peak_amplitude;
-	enum v34_trellis_selection trellis_selection;
-	enum v34_nonlinear_parameter nonlinear_parameter;
-	uint8_t primary_data_rate_2400_bps_units;
-	bool auxiliary_channel_enabled;
-	bool expanded_shaping;
-};
-
 /* Immutable B1 preparation, including the profile- and sample-rate-specific
  * peak used by the clipping preflight. No carrier/filter history is captured:
  * that remains owned by the active training waveform until the E boundary. */
@@ -93,17 +77,6 @@ enum v34_data_stream_result v34_data_stream_step_preparation(
 
 bool v34_data_stream_preparation_is_valid(
 	const struct v34_data_stream_preparation *preparation);
-enum v34_data_stream_result v34_data_stream_prepare(
-	struct v34_data_stream_preparation *preparation,
-	const struct v34_data_mapping *mapping, uint32_t sample_rate);
-
-/* Derive the first B1 mapping frame while continuing an active training
- * waveform with the exact same profile and line settings. */
-enum v34_data_stream_result v34_data_stream_continue_b1(
-	struct v34_data_stream *stream,
-	const struct v34_training_line *active_line,
-	const struct v34_data_stream_configuration *configuration);
-
 /* Continue an active training waveform with the completed preparation. Only
  * attach live line history and check its gain here: no generated calibration
  * stream may run while the first B1 samples are already due. */

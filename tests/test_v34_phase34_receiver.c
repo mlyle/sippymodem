@@ -7,6 +7,7 @@
 #include <v34_training_transmitter.h>
 
 #include "test.h"
+#include "v34_stream_fixture.h"
 #include "v34_phase34_state_fixture.h"
 
 #include <string.h>
@@ -22,7 +23,6 @@ enum {
 
 struct line_source {
 	struct v34_training_transmitter training;
-	struct v34_data_mapping mapping;
 	struct v34_data_stream_preparation preparation;
 	struct v34_data_stream data;
 	struct v34_data_direction_parameters parameters;
@@ -154,11 +154,10 @@ static bool source_init(
 	    v34_training_transmitter_select_phase4_constellation(
 		    &initialized.training, V34_CONSTELLATION_16_POINT) !=
 		    V34_TRAINING_TRANSMITTER_OK ||
-	    v34_data_mapping_prepare(
-		    &initialized.mapping, transmitting_profile,
-		    &initialized.parameters, false) != V34_DATA_MAPPING_OK ||
-	    v34_data_stream_prepare(&initialized.preparation,
-		    &initialized.mapping, SAMPLE_RATE) != V34_DATA_STREAM_OK)
+	    v34_prepare_stream_fixture(
+		    &initialized.preparation, transmitting_profile,
+		    &initialized.parameters, false, SAMPLE_RATE) !=
+		    V34_DATA_STREAM_OK)
 		return false;
 	*source = initialized;
 	return true;
@@ -692,12 +691,12 @@ static bool test_training_case(
 			struct v34_receive_timing feedback_timing;
 			struct v34_receive_timing zero_timing;
 			struct v34_frame_geometry wrong =
-				source.mapping.schedule.geometry;
+				source.preparation.mapping.schedule.geometry;
 
 			CHECK(test_terminal_samples(&receiver),
 			      "role %u rate %u training terminal checks failed", role, rate);
 			wrong.symbol_rate =
-				source.mapping.schedule.geometry.symbol_rate ==
+				source.preparation.mapping.schedule.geometry.symbol_rate ==
 						V34_SYMBOL_RATE_2800 ?
 					V34_SYMBOL_RATE_3000 :
 					V34_SYMBOL_RATE_2800;
@@ -722,27 +721,27 @@ static bool test_training_case(
 			      v34_phase34_receiver_start_data(
 				      &receiver,
 				      (const struct v34_power_normalizer *)&receiver,
-				      &source.mapping.schedule.geometry, false,
+				      &source.preparation.mapping.schedule.geometry, false,
 				      source.parameters.precoder_coefficients,
 				      source.parameters.trellis_selection) ==
 				      V34_PHASE34_RECEIVER_INVALID_ARGUMENT &&
 			      v34_phase34_receiver_start_data(
-				      &receiver, &source.mapping.normalizer,
+				      &receiver, &source.preparation.mapping.normalizer,
 				      (const struct v34_frame_geometry *)&receiver,
 				      false,
 				      source.parameters.precoder_coefficients,
 				      source.parameters.trellis_selection) ==
 				      V34_PHASE34_RECEIVER_INVALID_ARGUMENT &&
 			      v34_phase34_receiver_start_data(
-				      &receiver, &source.mapping.normalizer,
-				      &source.mapping.schedule.geometry, false,
+				      &receiver, &source.preparation.mapping.normalizer,
+				      &source.preparation.mapping.schedule.geometry, false,
 				      (const struct v34_q14_coefficient *)&receiver,
 				      source.parameters.trellis_selection) ==
 				      V34_PHASE34_RECEIVER_INVALID_ARGUMENT &&
 			      v34_phase34_receivers_equal(&receiver, &saved) &&
 			      v34_phase34_receiver_start_data(
-				      &receiver, &source.mapping.normalizer,
-				      &source.mapping.schedule.geometry,
+				      &receiver, &source.preparation.mapping.normalizer,
+				      &source.preparation.mapping.schedule.geometry,
 				      source.parameters.expanded_shaping,
 				      source.parameters.precoder_coefficients,
 				      source.parameters.trellis_selection) ==
@@ -782,23 +781,23 @@ static bool test_training_case(
 			saved = feedback_receiver;
 			CHECK(v34_phase34_receiver_start_data(
 				      &feedback_receiver,
-				      &source.mapping.normalizer,
-				      &source.mapping.schedule.geometry,
+				      &source.preparation.mapping.normalizer,
+				      &source.preparation.mapping.schedule.geometry,
 				      source.parameters.expanded_shaping,
 				      changed_coefficients,
 				      source.parameters.trellis_selection) ==
 				      V34_PHASE34_RECEIVER_INVALID_ARGUMENT &&
 			      v34_phase34_receivers_equal(&feedback_receiver, &saved) &&
 			      v34_phase34_receiver_start_data(
-				      &receiver, &source.mapping.normalizer, &wrong,
+				      &receiver, &source.preparation.mapping.normalizer, &wrong,
 				      source.parameters.expanded_shaping,
 				      source.parameters.precoder_coefficients,
 				      source.parameters.trellis_selection) ==
 				      V34_PHASE34_RECEIVER_INVALID_ARGUMENT &&
 			      v34_phase34_receiver_start_data(
 				      &feedback_receiver,
-				      &source.mapping.normalizer,
-				      &source.mapping.schedule.geometry,
+				      &source.preparation.mapping.normalizer,
+				      &source.preparation.mapping.schedule.geometry,
 				      source.parameters.expanded_shaping,
 				      feedback_coefficients,
 				      source.parameters.trellis_selection) ==
@@ -811,8 +810,8 @@ static bool test_training_case(
 				      &feedback_receiver) &&
 			      v34_phase34_receiver_start_data(
 				      &receiver,
-				      &source.mapping.normalizer,
-				      &source.mapping.schedule.geometry,
+				      &source.preparation.mapping.normalizer,
+				      &source.preparation.mapping.schedule.geometry,
 				      source.parameters.expanded_shaping,
 				      source.parameters.precoder_coefficients,
 				      source.parameters.trellis_selection) ==
@@ -825,8 +824,8 @@ static bool test_training_case(
 			      rate);
 			saved = receiver;
 			CHECK(v34_phase34_receiver_start_data(
-				      &receiver, &source.mapping.normalizer,
-				      &source.mapping.schedule.geometry,
+				      &receiver, &source.preparation.mapping.normalizer,
+				      &source.preparation.mapping.schedule.geometry,
 				      source.parameters.expanded_shaping,
 				      source.parameters.precoder_coefficients,
 				      source.parameters.trellis_selection) ==
@@ -888,7 +887,7 @@ static bool test_training_case(
 	      role, rate, (unsigned long long)phase3_preroll_epoch);
 	CHECK(e_complete && b1_complete && mapping_frames >= 3u &&
 	      b1_frames ==
-		      source.mapping.schedule.geometry
+		      source.preparation.mapping.schedule.geometry
 			      .mapping_frames_per_data_frame &&
 	      timing_events == 1u &&
 	      phase3_s_events == 1u && pp_events == 1u && j_events == 1u &&

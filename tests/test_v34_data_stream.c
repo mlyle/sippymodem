@@ -5,11 +5,20 @@
 
 #include "test.h"
 #include "v34_state_fixture.h"
+#include "v34_stream_fixture.h"
 
 #include <math.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+
+struct stream_configuration {
+	struct v34_phase3_profile profile;
+	struct v34_data_direction_parameters direction;
+	uint32_t sample_rate;
+	int16_t nominal_peak_amplitude;
+	bool auxiliary_channel_enabled;
+};
 
 static unsigned int line_calibrations;
 
@@ -33,10 +42,10 @@ enum v34_power_calibration_result __wrap_v34_calibrate_line_power(
 					     measurement);
 }
 
-static struct v34_data_stream_configuration
+static struct stream_configuration
 configuration_fixture(void)
 {
-	return (struct v34_data_stream_configuration){
+	return (struct stream_configuration){
 		.profile = {
 			.symbol_rate_numerator = 3000,
 			.symbol_rate_denominator = 1,
@@ -49,48 +58,38 @@ configuration_fixture(void)
 			.projected_data_rate_2400_bps_units = 8,
 			.high_carrier = true,
 		},
-		.precoder_coefficients = {
-			{ 4096, 2048 },
-			{ -2048, 1024 },
-			{ 1024, -2048 },
+		.direction = {
+			.precoder_coefficients = {
+				{ 4096, 2048 },
+				{ -2048, 1024 },
+				{ 1024, -2048 },
+			},
+			.trellis_selection = V34_TRELLIS_32_STATE,
+			.nonlinear_parameter = V34_NONLINEAR_THETA_5_OVER_16,
+			.primary_data_rate_2400_bps_units = 8,
 		},
 		.sample_rate = 8000,
 		.nominal_peak_amplitude = 5000,
-		.trellis_selection = V34_TRELLIS_32_STATE,
-		.nonlinear_parameter =
-			V34_NONLINEAR_THETA_5_OVER_16,
-		.primary_data_rate_2400_bps_units = 8,
 		.auxiliary_channel_enabled = true,
 	};
 }
 
 static bool prepare_mapping(
-	const struct v34_data_stream_configuration *configuration,
+	const struct stream_configuration *configuration,
 	struct v34_data_mapping *mapping)
 {
-	struct v34_data_direction_parameters parameters = { 0 };
-
-	if (configuration == NULL || mapping == NULL)
-		return false;
-	memcpy(parameters.precoder_coefficients,
-	       configuration->precoder_coefficients,
-	       sizeof(parameters.precoder_coefficients));
-	parameters.trellis_selection = configuration->trellis_selection;
-	parameters.nonlinear_parameter = configuration->nonlinear_parameter;
-	parameters.primary_data_rate_2400_bps_units =
-		configuration->primary_data_rate_2400_bps_units;
-	parameters.expanded_shaping = configuration->expanded_shaping;
 	return v34_data_mapping_prepare(
-		       mapping, &configuration->profile, &parameters,
+		       mapping, &configuration->profile, &configuration->direction,
 		       configuration->auxiliary_channel_enabled) ==
 	       V34_DATA_MAPPING_OK;
 }
 
 static bool initialize_stream(
 	struct v34_data_stream *stream,
-	const struct v34_data_stream_configuration *configuration)
+	const struct stream_configuration *configuration)
 {
 	struct v34_training_line line;
+	struct v34_data_stream_preparation preparation;
 
 	return configuration != NULL &&
 	       v34_training_line_init(
@@ -98,8 +97,13 @@ static bool initialize_stream(
 		       configuration->sample_rate,
 		       configuration->nominal_peak_amplitude) ==
 		       V34_TRAINING_LINE_OK &&
-	       v34_data_stream_continue_b1(
-		       stream, &line, configuration) == V34_DATA_STREAM_OK;
+	       v34_prepare_stream_fixture(
+		       &preparation, &configuration->profile,
+		       &configuration->direction,
+		       configuration->auxiliary_channel_enabled,
+		       configuration->sample_rate) == V34_DATA_STREAM_OK &&
+	       v34_data_stream_continue_prepared_b1(
+		       stream, &line, &preparation) == V34_DATA_STREAM_OK;
 }
 
 static void fill_generated_frame(
@@ -149,7 +153,7 @@ static bool generated_source(
 
 static bool test_b1_and_host_handoff(void)
 {
-	struct v34_data_stream_configuration configuration =
+	struct stream_configuration configuration =
 		configuration_fixture();
 	struct v34_data_stream stream;
 	struct v34_data_points model_points;
@@ -316,35 +320,48 @@ static bool streams_match_through_b1(
 	return false;
 }
 
+/* Independent synchronous reference for the bounded production calibration. */
+static bool prepare_reference(
+	struct v34_data_stream_preparation *preparation,
+	const struct v34_data_mapping *mapping, uint32_t sample_rate)
+{
+	struct v34_line_power_measurement measurement;
+
+	if (v34_calibrate_line_power(&mapping->schedule, &mapping->scrambler,
+		    &mapping->encoder, &mapping->normalizer,
+		    &mapping->transmitting_profile, sample_rate, &measurement) !=
+	    V34_POWER_CALIBRATION_OK)
+		return false;
+	*preparation = (struct v34_data_stream_preparation){
+		.mapping = *mapping,
+		.line_peak = measurement.peak_amplitude,
+		.sample_rate = sample_rate,
+	};
+	return true;
+}
+
 static bool initialization_is_rejected(
-	const struct v34_data_stream_configuration *configuration,
+	const struct stream_configuration *configuration,
 	enum v34_data_stream_result expected)
 {
-	struct v34_data_stream_configuration active_configuration =
-		configuration_fixture();
-	struct v34_training_line line;
-	struct v34_data_stream stream;
+	struct v34_data_stream_preparation_job job;
 
-	if (v34_training_line_init(
-		    &line, &active_configuration.profile,
-		    active_configuration.sample_rate,
-		    active_configuration.nominal_peak_amplitude) !=
-	    V34_TRAINING_LINE_OK)
-		return false;
-	memset(&stream, 0xa5, sizeof(stream));
-	return v34_data_stream_continue_b1(&stream, &line, configuration) ==
-		       expected &&
-	       bytes_are_filled(&stream, sizeof(stream), 0xa5);
+	memset(&job, 0xa5, sizeof(job));
+	return v34_data_stream_begin_preparation(&job, &configuration->profile,
+		       &configuration->direction,
+		       configuration->auxiliary_channel_enabled,
+		       configuration->sample_rate) == expected &&
+	       bytes_are_filled(&job, sizeof(job), 0xa5);
 }
 
 static bool test_selected_continuation(void)
 {
 	for (unsigned int role = V34_CALLING_STATION;
 	     role <= V34_ANSWERING_STATION; ++role) {
-		struct v34_data_stream_configuration configuration =
+		struct stream_configuration configuration =
 			configuration_fixture();
 		struct v34_data_mapping mapping;
-		struct v34_data_stream_preparation preparation;
+		struct v34_data_stream_preparation preparation, incremental;
 		struct v34_training_line line;
 		struct v34_training_line expected_line;
 		struct v34_data_stream expected;
@@ -354,8 +371,8 @@ static bool test_selected_continuation(void)
 			(enum v34_station_role)role;
 		line_calibrations = 0;
 		CHECK(prepare_mapping(&configuration, &mapping) &&
-		      v34_data_stream_prepare(&preparation, &mapping,
-			      configuration.sample_rate) == V34_DATA_STREAM_OK &&
+		      prepare_reference(&preparation, &mapping,
+			      configuration.sample_rate) &&
 		      v34_training_line_init(
 			      &line, &configuration.profile,
 			      configuration.sample_rate,
@@ -387,13 +404,19 @@ static bool test_selected_continuation(void)
 			      &expected, &line, &preparation) ==
 			      V34_DATA_STREAM_OK &&
 		      line_calibrations == 1 &&
-		      v34_data_stream_continue_b1(
-			      &actual, &line, &configuration) ==
+		      v34_prepare_stream_fixture(
+			      &incremental, &configuration.profile,
+			      &configuration.direction,
+			      configuration.auxiliary_channel_enabled,
+			      configuration.sample_rate) ==
 			      V34_DATA_STREAM_OK &&
-		      line_calibrations == 2 &&
+		      v34_data_stream_continue_prepared_b1(
+			      &actual, &line, &incremental) == V34_DATA_STREAM_OK &&
+		      line_calibrations == 1 &&
 		      v34_training_lines_equal(&expected.line, &expected_line) &&
 		      v34_training_lines_equal(&actual.line, &expected_line) &&
 		      v34_data_stream_is_transmitting_b1(&actual) &&
+		      v34_data_streams_equal(&actual, &expected) &&
 		      streams_match_through_b1(&actual, &expected),
 		      "continued stream mismatch for role %u", role);
 	}
@@ -402,9 +425,9 @@ static bool test_selected_continuation(void)
 
 static bool test_preparation_boundaries(void)
 {
-	struct v34_data_stream_configuration configuration = configuration_fixture();
-	struct v34_data_mapping mapping, invalid_mapping;
-	struct v34_data_stream_preparation preparation, invalid, rejected;
+	struct stream_configuration configuration = configuration_fixture();
+	struct v34_data_mapping mapping;
+	struct v34_data_stream_preparation preparation, invalid;
 	struct v34_training_line line;
 	struct v34_data_stream stream;
 	struct v34_line_power_measurement measurement;
@@ -412,24 +435,11 @@ static bool test_preparation_boundaries(void)
 	unsigned int clipped = 0, passed = 0;
 
 	CHECK(prepare_mapping(&configuration, &mapping), "mapping failed");
-	memset(&rejected, 0xa5, sizeof(rejected));
 	CHECK(!v34_data_stream_preparation_is_valid(NULL) &&
-	      v34_data_stream_prepare(NULL, &mapping, 8000) ==
-		      V34_DATA_STREAM_INVALID_ARGUMENT &&
-	      v34_data_stream_prepare(&rejected, NULL, 8000) ==
-		      V34_DATA_STREAM_INVALID_ARGUMENT &&
-	      v34_data_stream_prepare(&rejected, &mapping, 0) ==
-		      V34_DATA_STREAM_INVALID_ARGUMENT &&
-	      bytes_are_filled(&rejected, sizeof(rejected), 0xa5),
-	      "invalid preparation changed destination");
-	invalid_mapping = mapping;
-	invalid_mapping.schedule.data_frame_in_superframe = 0;
-	CHECK(v34_data_stream_prepare(&rejected, &invalid_mapping, 8000) ==
-		      V34_DATA_STREAM_INVALID_ARGUMENT &&
-	      bytes_are_filled(&rejected, sizeof(rejected), 0xa5),
-	      "invalid mapping changed preparation");
-	CHECK(v34_data_stream_prepare(&preparation, &mapping, 8000) ==
-		      V34_DATA_STREAM_OK &&
+	      v34_prepare_stream_fixture(&preparation, &configuration.profile,
+		      &configuration.direction,
+		      configuration.auxiliary_channel_enabled,
+		      configuration.sample_rate) == V34_DATA_STREAM_OK &&
 	      v34_data_stream_preparation_is_valid(&preparation) &&
 	      v34_calibrate_line_power(&mapping.schedule, &mapping.scrambler,
 		      &mapping.encoder, &mapping.normalizer,
@@ -495,7 +505,7 @@ static bool initialize_delay_fixture(
 	struct v34_data_stream *stream, enum v34_symbol_rate symbol_rate,
 	uint8_t primary_rate)
 {
-	struct v34_data_stream_configuration configuration =
+	struct stream_configuration configuration =
 		configuration_fixture();
 	struct v34_info1_probe_result probe = {
 		.projected_data_rate_2400_bps_units = primary_rate,
@@ -505,13 +515,13 @@ static bool initialize_delay_fixture(
 		    &configuration.profile, V34_CALLING_STATION, symbol_rate,
 		    &probe, 0, 0) != V34_PHASE3_PROFILE_OK)
 		return false;
-	memset(configuration.precoder_coefficients, 0,
-	       sizeof(configuration.precoder_coefficients));
-	configuration.trellis_selection = V34_TRELLIS_16_STATE;
-	configuration.nonlinear_parameter = V34_NONLINEAR_THETA_ZERO;
-	configuration.primary_data_rate_2400_bps_units = primary_rate;
+	memset(configuration.direction.precoder_coefficients, 0,
+	       sizeof(configuration.direction.precoder_coefficients));
+	configuration.direction.trellis_selection = V34_TRELLIS_16_STATE;
+	configuration.direction.nonlinear_parameter = V34_NONLINEAR_THETA_ZERO;
+	configuration.direction.primary_data_rate_2400_bps_units = primary_rate;
 	configuration.auxiliary_channel_enabled = false;
-	configuration.expanded_shaping = false;
+	configuration.direction.expanded_shaping = false;
 	return initialize_stream(stream, &configuration);
 }
 
@@ -555,77 +565,62 @@ static bool test_word_aligned_host_handoff(void)
 
 static bool test_initialization_failures(void)
 {
-	struct v34_data_stream_configuration configuration =
-		configuration_fixture();
-	struct v34_training_line line;
-	struct v34_data_stream rejected;
+	struct stream_configuration configuration = configuration_fixture();
+	struct v34_data_stream_preparation_job rejected;
+	struct v34_data_stream stream;
 
-	CHECK(v34_training_line_init(
-		      &line, &configuration.profile, configuration.sample_rate,
-		      configuration.nominal_peak_amplitude) ==
-		      V34_TRAINING_LINE_OK,
-	      "validation line did not initialize");
 	memset(&rejected, 0xa5, sizeof(rejected));
-	CHECK(v34_data_stream_continue_b1(NULL, &line, &configuration) ==
+	CHECK(v34_data_stream_begin_preparation(NULL, &configuration.profile,
+		      &configuration.direction,
+		      configuration.auxiliary_channel_enabled, 8000) ==
 		      V34_DATA_STREAM_INVALID_ARGUMENT &&
-	      v34_data_stream_continue_b1(
-		      &rejected, NULL, &configuration) ==
+	      v34_data_stream_begin_preparation(&rejected, NULL,
+		      &configuration.direction,
+		      configuration.auxiliary_channel_enabled, 8000) ==
 		      V34_DATA_STREAM_INVALID_ARGUMENT &&
-	      v34_data_stream_continue_b1(&rejected, &line, NULL) ==
+	      v34_data_stream_begin_preparation(&rejected, &configuration.profile,
+		      NULL, configuration.auxiliary_channel_enabled, 8000) ==
 		      V34_DATA_STREAM_INVALID_ARGUMENT &&
 	      bytes_are_filled(&rejected, sizeof(rejected), 0xa5),
-	      "null initialization input changed the stream");
-	configuration.primary_data_rate_2400_bps_units = 9;
-	CHECK(v34_data_stream_continue_b1(
-		      &rejected, &line, &configuration) ==
-		      V34_DATA_STREAM_OK &&
-	      v34_data_stream_is_valid(&rejected) &&
-	      rejected.points.schedule.geometry
-			      .primary_data_rate_2400_bps_units == 9,
+	      "null preparation input changed the job");
+	configuration.direction.primary_data_rate_2400_bps_units = 9;
+	CHECK(initialize_stream(&stream, &configuration) &&
+	      v34_data_stream_is_valid(&stream) &&
+	      stream.points.schedule.geometry.primary_data_rate_2400_bps_units == 9,
 	      "Phase 2 projection incorrectly limited the Phase 4 stream");
 	configuration = configuration_fixture();
-	configuration.primary_data_rate_2400_bps_units = 1;
+	configuration.direction.primary_data_rate_2400_bps_units = 1;
 	CHECK(initialization_is_rejected(
 		      &configuration, V34_DATA_STREAM_OUT_OF_RANGE),
 	      "unsupported symbol-rate geometry was accepted");
 	configuration = configuration_fixture();
-	configuration.trellis_selection =
-		(enum v34_trellis_selection)99;
+	configuration.direction.trellis_selection = (enum v34_trellis_selection)99;
 	CHECK(initialization_is_rejected(
-		      &configuration,
-		      V34_DATA_STREAM_INVALID_ARGUMENT),
+		      &configuration, V34_DATA_STREAM_INVALID_ARGUMENT),
 	      "invalid trellis selection was accepted");
 	configuration = configuration_fixture();
-	configuration.nonlinear_parameter =
-		(enum v34_nonlinear_parameter)99;
+	configuration.direction.nonlinear_parameter = (enum v34_nonlinear_parameter)99;
 	CHECK(initialization_is_rejected(
-		      &configuration,
-		      V34_DATA_STREAM_INVALID_ARGUMENT),
+		      &configuration, V34_DATA_STREAM_INVALID_ARGUMENT),
 	      "invalid nonlinear selection was accepted");
 	configuration = configuration_fixture();
-	configuration.precoder_coefficients[0].real = INT16_MIN;
+	configuration.direction.precoder_coefficients[0].real = INT16_MIN;
 	CHECK(initialization_is_rejected(
-		      &configuration,
-		      V34_DATA_STREAM_INVALID_ARGUMENT),
+		      &configuration, V34_DATA_STREAM_INVALID_ARGUMENT),
 	      "out-of-domain precoder coefficient was accepted");
 	configuration = configuration_fixture();
-	configuration.sample_rate = 0;
-	CHECK(initialization_is_rejected(
-		      &configuration,
-		      V34_DATA_STREAM_INVALID_ARGUMENT),
-	      "zero sample rate was accepted");
-	configuration = configuration_fixture();
-	configuration.nominal_peak_amplitude = 0;
-	CHECK(initialization_is_rejected(
-		      &configuration,
-		      V34_DATA_STREAM_INVALID_ARGUMENT),
-	      "zero line amplitude was accepted");
+	for (unsigned rate = 0; rate <= 16000; rate += 16000) {
+		configuration.sample_rate = rate;
+		CHECK(initialization_is_rejected(
+			      &configuration, V34_DATA_STREAM_INVALID_ARGUMENT),
+		      "unsupported sample rate %u was accepted", rate);
+	}
 	return true;
 }
 
 static bool test_transactional_boundaries(void)
 {
-	struct v34_data_stream_configuration configuration =
+	struct stream_configuration configuration =
 		configuration_fixture();
 	struct v34_data_mapping mapping;
 	struct v34_data_stream_preparation preparation;
@@ -640,8 +635,8 @@ static bool test_transactional_boundaries(void)
 	bool accepted = true;
 
 	CHECK(prepare_mapping(&configuration, &mapping) &&
-	      v34_data_stream_prepare(&preparation, &mapping,
-		      configuration.sample_rate) == V34_DATA_STREAM_OK &&
+	      prepare_reference(&preparation, &mapping,
+		      configuration.sample_rate) &&
 	      v34_training_line_init(
 		      &line, &configuration.profile, configuration.sample_rate,
 		      configuration.nominal_peak_amplitude) ==
@@ -716,21 +711,14 @@ static bool test_incremental_preparation(void)
 {
 	static const uint32_t BUDGETS[] = { 1, 23, UINT32_MAX };
 	for (unsigned int nonlinear = 0; nonlinear < 2; ++nonlinear) {
-		struct v34_data_stream_configuration config = configuration_fixture();
-		struct v34_data_direction_parameters direction = { 0 };
+		struct stream_configuration config = configuration_fixture();
 		struct v34_data_mapping mapping;
 		struct v34_data_stream_preparation expected;
 		struct v34_training_line line;
-		config.nonlinear_parameter = nonlinear ? V34_NONLINEAR_THETA_5_OVER_16 :
+		config.direction.nonlinear_parameter = nonlinear ? V34_NONLINEAR_THETA_5_OVER_16 :
 			V34_NONLINEAR_THETA_ZERO;
-		memcpy(direction.precoder_coefficients, config.precoder_coefficients,
-		       sizeof(direction.precoder_coefficients));
-		direction.trellis_selection = config.trellis_selection;
-		direction.nonlinear_parameter = config.nonlinear_parameter;
-		direction.primary_data_rate_2400_bps_units = config.primary_data_rate_2400_bps_units;
-		direction.expanded_shaping = config.expanded_shaping;
 		CHECK(prepare_mapping(&config, &mapping) &&
-		      v34_data_stream_prepare(&expected, &mapping, 8000) == V34_DATA_STREAM_OK &&
+		      prepare_reference(&expected, &mapping, 8000) &&
 		      v34_training_line_init(&line, &config.profile, 8000, config.nominal_peak_amplitude) ==
 		      V34_TRAINING_LINE_OK, "shared preparation fixture");
 		for (size_t trial = 0; trial < ARRAY_LENGTH(BUDGETS); ++trial) {
@@ -739,10 +727,16 @@ static bool test_incremental_preparation(void)
 			struct v34_data_stream a, b;
 			enum v34_data_stream_result result;
 			unsigned int steps = 0;
-			CHECK(v34_data_stream_begin_preparation(&job, &config.profile, &direction,
+			CHECK(v34_data_stream_begin_preparation(&job, &config.profile, &config.direction,
 				config.auxiliary_channel_enabled, 8000) == V34_DATA_STREAM_OK,
 			      "shared preparation begin");
 			memset(&prepared, 0xa5, sizeof(prepared));
+			CHECK(v34_data_stream_step_preparation(NULL, 1, &prepared) ==
+			      V34_DATA_STREAM_INVALID_ARGUMENT &&
+			      v34_data_stream_step_preparation(&job, 1, NULL) ==
+			      V34_DATA_STREAM_INVALID_ARGUMENT &&
+			      bytes_are_filled(&prepared, sizeof(prepared), 0xa5),
+			      "null preparation step changed output");
 			CHECK(v34_data_stream_step_preparation(&job, 0, &prepared) ==
 			      V34_DATA_STREAM_INVALID_ARGUMENT && bytes_are_filled(&prepared, sizeof(prepared), 0xa5),
 			      "zero budget changed output");
@@ -764,6 +758,8 @@ static bool test_incremental_preparation(void)
 			      v34_data_stream_continue_prepared_b1(&a, &line, &expected) == V34_DATA_STREAM_OK &&
 			      v34_data_stream_continue_prepared_b1(&b, &line, &prepared) == V34_DATA_STREAM_OK,
 			      "shared power preparation differs");
+			CHECK(v34_data_streams_equal(&a, &b),
+			      "bounded preparation changed named stream state");
 			for (unsigned int sample = 0; sample < 1000; ++sample) {
 				int16_t left, right;
 				bool accepted_left, accepted_right;
