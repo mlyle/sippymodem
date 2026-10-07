@@ -45,11 +45,9 @@ static bool data_parameters_are_equal(
 	const struct v90_cp_parameters *right)
 {
 	struct v90_cp_parameters normalized_left = *left;
-	struct v90_cp_parameters normalized_right = *right;
 
-	normalized_left.acknowledges_peer = false;
-	normalized_right.acknowledges_peer = false;
-	return v90_cp_parameters_are_equal(&normalized_left, &normalized_right);
+	normalized_left.acknowledges_peer = right->acknowledges_peer;
+	return v90_cp_parameters_are_equal(&normalized_left, right);
 }
 
 static enum v90_upstream_rx_result validate_data_parameters(
