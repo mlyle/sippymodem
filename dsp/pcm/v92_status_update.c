@@ -33,8 +33,7 @@ size_t v92_status_update_frame_bits(unsigned int alignment_bits)
 
 	if (!alignment_is_valid(alignment_bits))
 		return 0u;
-	return (unfilled + alignment_bits - 1u) / alignment_bits *
-		alignment_bits;
+	return pcm_control_frame_align_bits(unfilled, alignment_bits);
 }
 
 size_t v92_status_update_frame_bytes(unsigned int alignment_bits)

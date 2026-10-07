@@ -207,13 +207,11 @@ size_t v92_cpd_frame_bits(
 	unsigned int mapping_frame_bits)
 {
 	size_t payload = v92_cpd_payload_bits(parameters);
-	size_t unfilled;
 
 	if (payload == 0u || !alignment_is_valid(mapping_frame_bits))
 		return 0u;
-	unfilled = payload + V92_CPD_TRAILER_BITS;
-	return (unfilled + mapping_frame_bits - 1u) /
-	       mapping_frame_bits * mapping_frame_bits;
+	return pcm_control_frame_align_bits(
+		payload + V92_CPD_TRAILER_BITS, mapping_frame_bits);
 }
 
 size_t v92_cpd_frame_bytes(
@@ -378,9 +376,8 @@ enum v92_cpd_result v92_cpd_probe_frame_bits(
 		if (result != V92_CPD_OK)
 			return result;
 	}
-	expected_bits = (payload_bits + V92_CPD_TRAILER_BITS +
-			 mapping_frame_bits - 1u) /
-		mapping_frame_bits * mapping_frame_bits;
+	expected_bits = pcm_control_frame_align_bits(
+		payload_bits + V92_CPD_TRAILER_BITS, mapping_frame_bits);
 	if (expected_bits > V92_CPD_MAX_FRAME_BITS ||
 	    received_bit_count > expected_bits)
 		return V92_CPD_INVALID_FRAME;
@@ -605,9 +602,8 @@ enum v92_cpd_result v92_cpd_encode_base(
 		return V92_CPD_INVALID_PARAMETERS;
 	if (!alignment_is_valid(mapping_frame_bits))
 		return V92_CPD_INVALID_ALIGNMENT;
-	bit_count = (V92_CPD_FIXED_BITS + V92_CPD_TRAILER_BITS +
-		     mapping_frame_bits - 1u) /
-		    mapping_frame_bits * mapping_frame_bits;
+	bit_count = pcm_control_frame_align_bits(
+		V92_CPD_FIXED_BITS + V92_CPD_TRAILER_BITS, mapping_frame_bits);
 	byte_count = (bit_count + 7u) / 8u;
 	if (frame_capacity < byte_count)
 		return V92_CPD_OUTPUT_TOO_SMALL;
