@@ -105,7 +105,7 @@ struct v22_datapump {
 	struct v22_symbol_decoder rate600_decoder;
 	uint16_t rate600_confirm_bits;
 	uint8_t rate600_turns;
-	struct v22bis_symbol_encoder v22bis_encoder;
+	struct v22_symbol_encoder v22bis_encoder;
 	struct v22bis_receiver v22bis_receiver;
 	struct v22bis_rate_signal_detector rate_signal_detector;
 	enum v22_training_state training_state;
@@ -710,7 +710,7 @@ static int start_v22bis_transmit(
 {
 	if (!datapump_uses_v22bis(datapump) ||
 	    !datapump->v22bis_receiver_initialized ||
-	    v22bis_symbol_encoder_init(
+	    v22_symbol_encoder_init(
 		    &datapump->v22bis_encoder,
 		    datapump->transmit_quadrant) !=
 		    V22_FRAMING_OK)

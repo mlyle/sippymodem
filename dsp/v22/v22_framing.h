@@ -31,6 +31,7 @@ struct v22_scrambler {
 	uint8_t consecutive_ones;
 };
 
+/* V.22 and V.22bis share scrambling and differential-quadrant state. */
 struct v22_symbol_encoder {
 	struct v22_scrambler scrambler;
 	uint8_t phase_quadrant;

@@ -15,7 +15,7 @@ enum v22bis_receiver_result {
 };
 
 struct v22bis_receiver {
-	struct v22bis_symbol_decoder decoder;
+	struct v22_symbol_decoder decoder;
 	struct qam_gain gain;
 	bool v22bis_started;
 };

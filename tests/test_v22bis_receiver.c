@@ -44,7 +44,7 @@ static bool check_rotation(uint8_t initial_quadrant)
 		.in_phase = 1.000002,
 		.quadrature = 0.00004,
 	};
-	struct v22bis_symbol_encoder encoder;
+	struct v22_symbol_encoder encoder;
 	struct v22bis_receiver receiver;
 	struct qam_point channel = { 0.72, -0.31 };
 	struct qam_point reference;
@@ -53,7 +53,7 @@ static bool check_rotation(uint8_t initial_quadrant)
 
 	CHECK(v22bis_1200_constellation_point(
 		      initial_quadrant, &reference) == V22_FRAMING_OK &&
-		      v22bis_symbol_encoder_init(
+		      v22_symbol_encoder_init(
 			      &encoder, initial_quadrant) == V22_FRAMING_OK,
 	      "V.22bis receiver rotation %u reference was not generated",
 	      initial_quadrant);
@@ -154,7 +154,7 @@ static bool test_v22_match_threshold(void)
 static bool test_v22_transition_tracking(void)
 {
 	static const uint8_t turns[] = { 1, 3, 0, 2, 3, 1, 1, 0 };
-	struct v22bis_symbol_encoder encoder;
+	struct v22_symbol_encoder encoder;
 	struct v22bis_receiver receiver;
 	struct qam_point channel = { 0.61, 0.27 };
 	uint8_t quadrant = 2;
@@ -185,7 +185,7 @@ static bool test_v22_transition_tracking(void)
 				      V22BIS_RECEIVER_OK,
 		      "V.22 reference tracking failed at symbol %zu", index);
 	}
-	CHECK(v22bis_symbol_encoder_init(&encoder, quadrant) ==
+	CHECK(v22_symbol_encoder_init(&encoder, quadrant) ==
 		      V22_FRAMING_OK,
 	      "V.22bis transition encoder did not initialize");
 	for (size_t index = 0; index < 64; ++index) {

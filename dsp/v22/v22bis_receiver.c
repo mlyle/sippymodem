@@ -44,7 +44,7 @@ enum v22bis_receiver_result v22bis_receiver_init(
 	    qam_gain_init_from_reference(
 		    &next.gain, reference_point, &ideal,
 		    V22BIS_CHANNEL_ADAPTATION) != QAM_GAIN_OK ||
-	    v22bis_symbol_decoder_init(&next.decoder, 0) !=
+	    v22_symbol_decoder_init(&next.decoder, 0) !=
 		    V22_FRAMING_OK)
 		return V22BIS_RECEIVER_INVALID_ARGUMENT;
 	*receiver = next;

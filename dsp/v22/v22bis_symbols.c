@@ -12,7 +12,7 @@ static const double V22BIS_COORDINATE_SCALE =
 	0.23570226039551584146694812070162; /* 1 / sqrt(18) */
 
 static bool encoder_is_valid(
-	const struct v22bis_symbol_encoder *encoder)
+	const struct v22_symbol_encoder *encoder)
 {
 	return encoder != NULL &&
 	       encoder->phase_quadrant < QPSK_QUADRANT_COUNT &&
@@ -20,31 +20,19 @@ static bool encoder_is_valid(
 }
 
 static bool decoder_is_valid(
-	const struct v22bis_symbol_decoder *decoder)
+	const struct v22_symbol_decoder *decoder)
 {
 	return decoder != NULL &&
 	       decoder->phase_quadrant < QPSK_QUADRANT_COUNT &&
 	       v22_scrambler_is_valid(&decoder->descrambler);
 }
 
-enum v22_framing_result v22bis_symbol_encoder_init(
-	struct v22bis_symbol_encoder *encoder,
-	uint8_t initial_quadrant)
-{
-	if (encoder == NULL ||
-	    initial_quadrant >= QPSK_QUADRANT_COUNT)
-		return V22_FRAMING_INVALID_ARGUMENT;
-	memset(encoder, 0, sizeof(*encoder));
-	encoder->phase_quadrant = initial_quadrant;
-	return V22_FRAMING_OK;
-}
-
 enum v22_framing_result v22bis_symbol_encode(
-	struct v22bis_symbol_encoder *encoder,
+	struct v22_symbol_encoder *encoder,
 	const uint8_t bits[V22BIS_BITS_PER_SYMBOL],
 	uint8_t *symbol)
 {
-	struct v22bis_symbol_encoder next;
+	struct v22_symbol_encoder next;
 	uint8_t scrambled[V22BIS_BITS_PER_SYMBOL];
 	uint8_t quadrant;
 
@@ -69,20 +57,8 @@ enum v22_framing_result v22bis_symbol_encode(
 	return V22_FRAMING_OK;
 }
 
-enum v22_framing_result v22bis_symbol_decoder_init(
-	struct v22bis_symbol_decoder *decoder,
-	uint8_t initial_quadrant)
-{
-	if (decoder == NULL ||
-	    initial_quadrant >= QPSK_QUADRANT_COUNT)
-		return V22_FRAMING_INVALID_ARGUMENT;
-	memset(decoder, 0, sizeof(*decoder));
-	decoder->phase_quadrant = initial_quadrant;
-	return V22_FRAMING_OK;
-}
-
 enum v22_framing_result v22bis_symbol_decode(
-	struct v22bis_symbol_decoder *decoder, uint8_t symbol,
+	struct v22_symbol_decoder *decoder, uint8_t symbol,
 	uint8_t bits[V22BIS_BITS_PER_SYMBOL])
 {
 	uint8_t decoded[V22BIS_BITS_PER_SYMBOL];

@@ -252,8 +252,8 @@ static bool test_v22bis_symbol_mapping(void)
 {
 	for (uint8_t previous = 0; previous < 4; ++previous) {
 		for (uint8_t nibble = 0; nibble < 16; ++nibble) {
-			struct v22bis_symbol_encoder encoder;
-			struct v22bis_symbol_decoder decoder;
+			struct v22_symbol_encoder encoder;
+			struct v22_symbol_decoder decoder;
 			uint8_t decoded[4] = { UINT8_MAX, UINT8_MAX,
 					       UINT8_MAX, UINT8_MAX };
 			uint8_t bits[4];
@@ -261,10 +261,10 @@ static bool test_v22bis_symbol_mapping(void)
 			uint8_t symbol = UINT8_MAX;
 
 			bits_from_nibble(nibble, bits);
-			CHECK(v22bis_symbol_encoder_init(
+			CHECK(v22_symbol_encoder_init(
 				      &encoder, previous) ==
 				      V22_FRAMING_OK &&
-				      v22bis_symbol_decoder_init(
+				      v22_symbol_decoder_init(
 					      &decoder, previous) ==
 					      V22_FRAMING_OK &&
 				      differential_qpsk_encode(
@@ -403,13 +403,13 @@ static bool test_v22bis_1200_constellation(void)
 
 static bool test_v22bis_symbol_round_trip(void)
 {
-	struct v22bis_symbol_encoder encoder;
-	struct v22bis_symbol_decoder decoder;
+	struct v22_symbol_encoder encoder;
+	struct v22_symbol_decoder decoder;
 	uint32_t random = UINT32_C(0x1222400b);
 
-	CHECK(v22bis_symbol_encoder_init(&encoder, 2) ==
+	CHECK(v22_symbol_encoder_init(&encoder, 2) ==
 		      V22_FRAMING_OK &&
-		      v22bis_symbol_decoder_init(&decoder, 2) ==
+		      v22_symbol_decoder_init(&decoder, 2) ==
 			      V22_FRAMING_OK,
 	      "V.22bis symbol endpoints did not initialize");
 	for (size_t index = 0; index < TEST_STREAM_BITS; index += 4) {
@@ -437,23 +437,23 @@ static bool test_v22bis_symbol_round_trip(void)
 
 static bool test_v22bis_validation(void)
 {
-	struct v22bis_symbol_encoder encoder;
-	struct v22bis_symbol_decoder decoder;
-	struct v22bis_symbol_encoder saved_encoder;
+	struct v22_symbol_encoder encoder;
+	struct v22_symbol_decoder decoder;
+	struct v22_symbol_encoder saved_encoder;
 	struct qam_point point = { 7.0, 9.0 };
 	uint8_t invalid_bits[4] = { 0, 1, 2, 0 };
 	uint8_t decoded[4];
 	uint8_t symbol = UINT8_MAX;
 
-	CHECK(v22bis_symbol_encoder_init(&encoder, 1) ==
+	CHECK(v22_symbol_encoder_init(&encoder, 1) ==
 		      V22_FRAMING_OK &&
-		      v22bis_symbol_decoder_init(&decoder, 1) ==
+		      v22_symbol_decoder_init(&decoder, 1) ==
 			      V22_FRAMING_OK,
 	      "V.22bis validation endpoints did not initialize");
 	saved_encoder = encoder;
-	CHECK(v22bis_symbol_encoder_init(NULL, 0) ==
+	CHECK(v22_symbol_encoder_init(NULL, 0) ==
 		      V22_FRAMING_INVALID_ARGUMENT &&
-		      v22bis_symbol_decoder_init(&decoder, 4) ==
+		      v22_symbol_decoder_init(&decoder, 4) ==
 			      V22_FRAMING_INVALID_ARGUMENT &&
 		      v22bis_symbol_encode(
 			      &encoder, invalid_bits, &symbol) ==
@@ -479,11 +479,11 @@ static bool test_v22bis_symbol_aliasing(void)
 	     ones <= V22_SCRAMBLER_ONES_LIMIT; ++ones) {
 		for (uint8_t phase = 0; phase < QPSK_QUADRANT_COUNT; ++phase) {
 			for (size_t offset = 0;
-			     offset < sizeof(struct v22bis_symbol_encoder); ++offset) {
-				struct v22bis_symbol_encoder encoder, expected;
+			     offset < sizeof(struct v22_symbol_encoder); ++offset) {
+				struct v22_symbol_encoder encoder, expected;
 				uint8_t bits[V22BIS_BITS_PER_SYMBOL], symbol;
 
-				CHECK(v22bis_symbol_encoder_init(&encoder, phase) ==
+				CHECK(v22_symbol_encoder_init(&encoder, phase) ==
 					      V22_FRAMING_OK, "alias encoder did not initialize");
 				/* Binary bytes in either byte order; advancing the history
 				 * changes unread input bytes unless the owner is copied. */
@@ -502,10 +502,10 @@ static bool test_v22bis_symbol_aliasing(void)
 				      ones, phase, offset);
 			}
 			for (uint8_t symbol = 0; symbol < V22BIS_SYMBOL_COUNT; ++symbol) {
-				struct v22bis_symbol_decoder initial, finished;
+				struct v22_symbol_decoder initial, finished;
 				uint8_t bits[V22BIS_BITS_PER_SYMBOL];
 
-				CHECK(v22bis_symbol_decoder_init(&initial, phase) ==
+				CHECK(v22_symbol_decoder_init(&initial, phase) ==
 					      V22_FRAMING_OK, "alias decoder did not initialize");
 				initial.descrambler.history =
 					(UINT32_C(1) << V22_SCRAMBLER_BITS) - 1u;
@@ -515,8 +515,8 @@ static bool test_v22bis_symbol_aliasing(void)
 					      V22_FRAMING_OK, "ordinary decoding failed");
 				for (size_t offset = 0;
 				     offset <= sizeof(initial) - sizeof(bits); ++offset) {
-					struct v22bis_symbol_decoder decoder = initial;
-					struct v22bis_symbol_decoder expected = finished;
+					struct v22_symbol_decoder decoder = initial;
+					struct v22_symbol_decoder expected = finished;
 
 					memcpy((uint8_t *)&expected + offset, bits, sizeof(bits));
 					CHECK(v22bis_symbol_decode(&decoder, symbol,
@@ -533,16 +533,16 @@ static bool test_v22bis_symbol_aliasing(void)
 
 static bool test_v22bis_owner_rejection(void)
 {
-	struct v22bis_symbol_encoder encoder, saved_encoder;
-	struct v22bis_symbol_decoder decoder, saved_decoder;
+	struct v22_symbol_encoder encoder, saved_encoder;
+	struct v22_symbol_decoder decoder, saved_decoder;
 	const uint8_t input[V22BIS_BITS_PER_SYMBOL] = { 1, 0, 1, 0 };
 	const uint8_t sentinel[V22BIS_BITS_PER_SYMBOL] = { 7, 8, 9, 10 };
 	uint8_t decoded[V22BIS_BITS_PER_SYMBOL], symbol = UINT8_MAX;
 
 	memcpy(decoded, sentinel, sizeof(decoded));
 	for (unsigned field = 0; field < 3; ++field) {
-		CHECK(v22bis_symbol_encoder_init(&encoder, 0) == V22_FRAMING_OK &&
-		      v22bis_symbol_decoder_init(&decoder, 0) == V22_FRAMING_OK,
+		CHECK(v22_symbol_encoder_init(&encoder, 0) == V22_FRAMING_OK &&
+		      v22_symbol_decoder_init(&decoder, 0) == V22_FRAMING_OK,
 		      "rejection owners did not initialize");
 		if (field == 0) {
 			encoder.scrambler.history = decoder.descrambler.history =
@@ -565,8 +565,8 @@ static bool test_v22bis_owner_rejection(void)
 		      memcmp(&decoder, &saved_decoder, sizeof(decoder)) == 0,
 		      "invalid owner field %u changed state or output", field);
 	}
-	CHECK(v22bis_symbol_encoder_init(&encoder, 0) == V22_FRAMING_OK &&
-	      v22bis_symbol_decoder_init(&decoder, 0) == V22_FRAMING_OK,
+	CHECK(v22_symbol_encoder_init(&encoder, 0) == V22_FRAMING_OK &&
+	      v22_symbol_decoder_init(&decoder, 0) == V22_FRAMING_OK,
 	      "null-argument owners did not initialize");
 	saved_encoder = encoder;
 	saved_decoder = decoder;
