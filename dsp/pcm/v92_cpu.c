@@ -116,8 +116,7 @@ enum v92_cpu_result v92_cpu_encode(
 
 static bool prefix_is_valid(const uint8_t *frame, unsigned int type)
 {
-	return packed_msb_read_msb_field(frame, 0u, 17u) == UINT32_C(0x1ffff) &&
-	       packed_msb_bit(frame, 17u) == 0u &&
+	return pcm_control_frame_prefix_is_valid(frame) &&
 	       packed_msb_bit(frame, 18u) == 0u &&
 	       packed_msb_read_lsb_field(
 		       frame, CPU_TYPE_FIRST_BIT, CPU_TYPE_BITS) == type;
@@ -201,12 +200,7 @@ enum v92_cpu_result v92_cpus_decode(
 static bool header_framing_is_valid(const uint8_t *frame)
 {
 	return prefix_is_valid(frame, 1u) &&
-	       packed_msb_bit(frame, 34u) == 0u &&
-	       packed_msb_bit(frame, 51u) == 0u &&
-	       packed_msb_bit(frame, 68u) == 0u &&
-	       packed_msb_bit(frame, 85u) == 0u &&
-	       packed_msb_bit(frame, 102u) == 0u &&
-	       packed_msb_bit(frame, 119u) == 0u;
+	       pcm_control_frame_starts_are_zero(frame, 34u, 128u);
 }
 
 static bool decode_header(

@@ -309,8 +309,7 @@ enum v92_cpd_result v92_cpd_probe_frame_bits(
 		return V92_CPD_INVALID_ARGUMENT;
 	if (received_bit_count < V92_CPD_FIXED_BITS)
 		return V92_CPD_INCOMPLETE;
-	if (packed_msb_read_msb_field(frame, 0u, 17u) != UINT32_C(0x1ffff) ||
-	    packed_msb_bit(frame, 17u) != 0u ||
+	if (!pcm_control_frame_prefix_is_valid(frame) ||
 	    packed_msb_bit(frame, 34u) != 0u ||
 	    packed_msb_read_lsb_field(
 		    frame, CPD_RATE_FIRST_BIT, CPD_RATE_BITS) >

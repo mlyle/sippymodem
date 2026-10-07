@@ -98,9 +98,8 @@ static bool framing_is_valid(
 	const uint8_t *frame, size_t payload_end,
 	size_t frame_bit_count)
 {
-	if (packed_msb_read_msb_field(frame, 0u, 17u) != UINT32_C(0x1ffff))
-		return false;
-	return pcm_control_frame_starts_are_zero(frame, 17u, payload_end + 1u) &&
+	return pcm_control_frame_prefix_is_valid(frame) &&
+	       pcm_control_frame_starts_are_zero(frame, 34u, payload_end + 1u) &&
 	       packed_msb_bits_are_zero(frame, 18u, 3u) &&
 	       packed_msb_bits_are_zero(
 		       frame, payload_end + 1u + CPT_CRC_BITS,
