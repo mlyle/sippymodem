@@ -5,6 +5,7 @@
 #include <pcm_phase2_info1_handoff.h>
 #include <pcm_phase3_handoff.h>
 
+#include "pcm_phase2_state_fixture.h"
 #include "test.h"
 
 #include <limits.h>
@@ -154,10 +155,10 @@ static bool run_owner(unsigned law, unsigned delay, unsigned skew,
 
 			CHECK(pcm_phase2_start_short_analog_info1(a, NULL) ==
 				      PCM_PHASE2_INVALID_ARGUMENT &&
-			      memcmp(a, &saved, sizeof(saved)) == 0,
+			      pcm_phase2_owners_equal(a, &saved),
 			      "invalid short INFO1 selection mutated owner");
 			CHECK(pcm_phase2_start_analog_info1(a) == PCM_PHASE2_INVALID_STATE &&
-			      memcmp(a, &saved, sizeof(saved)) == 0,
+			      pcm_phase2_owners_equal(a, &saved),
 			      "full analog INFO1 API accepted short-ranging storage");
 			CHECK(pcm_phase2_start_short_analog_info1(a, &selection) == PCM_PHASE2_OK,
 			      "short analog INFO1a boundary");
@@ -167,7 +168,7 @@ static bool run_owner(unsigned law, unsigned delay, unsigned skew,
 
 			CHECK(pcm_phase2_start_short_analog_info1(d, &selection) ==
 				      PCM_PHASE2_INVALID_STATE &&
-			      memcmp(d, &invalid, sizeof(invalid)) == 0,
+			      pcm_phase2_owners_equal(d, &invalid),
 			      "short analog INFO1 API changed digital owner");
 			--invalid.state.info1.control.short_receive_budget_samples;
 			CHECK(!pcm_phase2_is_valid(&invalid),

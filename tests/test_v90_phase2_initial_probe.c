@@ -10,6 +10,7 @@
 #include <v90_phase2_reciprocal_probe.h>
 #include <pcm_phase3_handoff.h>
 
+#include "pcm_phase2_state_fixture.h"
 #include "test.h"
 
 #include <math.h>
@@ -657,9 +658,7 @@ static bool check_info1_exchange(
 				replied = pcm_phase2_info1_reply_pcm(
 						  &analog, &invalid) ==
 						  PHASE2_INFO1_INVALID_ARGUMENT &&
-					  memcmp(
-						  &analog, &before,
-						  sizeof(analog)) == 0 &&
+					  pcm_info1_exchanges_equal(&analog, &before) &&
 					  pcm_phase2_info1_reply_pcm(
 						  &analog, &pcm) == PHASE2_INFO1_OK;
 			} else {
@@ -670,15 +669,11 @@ static bool check_info1_exchange(
 				replied = pcm_phase2_info1_reply_conventional(
 						  &analog, &invalid) ==
 						  PHASE2_INFO1_INVALID_ARGUMENT &&
-					  memcmp(
-						  &analog, &before,
-						  sizeof(analog)) == 0 &&
+					  pcm_info1_exchanges_equal(&analog, &before) &&
 					  pcm_phase2_info1_reply_pcm(
 						  &analog, &pcm) ==
 						  PHASE2_INFO1_INVALID_ARGUMENT &&
-					  memcmp(
-						  &analog, &before,
-						  sizeof(analog)) == 0 &&
+					  pcm_info1_exchanges_equal(&analog, &before) &&
 					  pcm_phase2_info1_reply_conventional(
 						  &analog, &conventional) ==
 						  PHASE2_INFO1_OK;
@@ -1092,7 +1087,7 @@ static bool check_initial_probe(enum test_codec codec)
 		CHECK(v90_phase2_probe_turnaround_sample(
 			      &analog_turnaround, 0, &output, &event) ==
 			      PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT &&
-		      memcmp(&analog_turnaround, &before, sizeof(before)) == 0 &&
+		      v90_probe_turnarounds_equal(&analog_turnaround, &before) &&
 		      output == 1234 &&
 		      event.kind == PHASE2_PROBE_TURNAROUND_EVENT_FAILED,
 		      "invalid V.90 turnaround mutated state or outputs");
@@ -1110,7 +1105,7 @@ static bool check_initial_probe(enum test_codec codec)
 		CHECK(v90_phase2_reciprocal_probe_sample(
 			      &analog_reciprocal, 0, &output, &event) ==
 			      PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT &&
-		      memcmp(&analog_reciprocal, &before, sizeof(before)) == 0 &&
+		      v90_reciprocal_probes_equal(&analog_reciprocal, &before) &&
 		      output == 1234 &&
 		      event.kind == PHASE2_RECIPROCAL_PROBE_EVENT_FAILED,
 		      "invalid V.90 reciprocal probe mutated state or outputs");
@@ -1346,7 +1341,7 @@ static bool check_phase2_controller(
 				&digital, &v90_info1d) ==
 				PCM_PHASE2_INVALID_STATE;
 		bool unchanged_after_rejection =
-			memcmp(&digital, &before, sizeof(digital)) == 0;
+			pcm_phase2_owners_equal(&digital, &before);
 		bool digital_started = mode == TEST_INFO1_V90 ?
 			pcm_phase2_start_v90_digital_info1(
 				&digital, &v90_info1d) == PCM_PHASE2_OK :
@@ -1534,7 +1529,7 @@ static bool check_phase2_controller(
 			struct pcm_phase3_entry before = analog_entry;
 			CHECK(pcm_phase3_entry_from_phase2(&analog_entry, &analog, law,
 				      &stale_policy) == PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
-			      memcmp(&before, &analog_entry, sizeof(before)) == 0,
+			      pcm_phase3_entries_equal(&before, &analog_entry),
 			      "full startup accepted stale short training policy");
 		}
 		parameters_match = upstream == PCM_UPSTREAM_PCM ?
