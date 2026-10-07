@@ -209,7 +209,6 @@ enum pcm_phase2_result pcm_phase2_measure_remote_probe(
 enum pcm_phase2_result pcm_phase2_receive_gain(
 	const struct pcm_phase2 *phase2, int16_t *receive_gain);
 
-const char *pcm_phase2_result_name(enum pcm_phase2_result result);
 const char *pcm_phase2_failure_name(enum pcm_phase2_failure failure);
 
 #endif /* PCM_PHASE2_H */

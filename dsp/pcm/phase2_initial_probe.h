@@ -82,7 +82,4 @@ enum phase2_initial_probe_result phase2_initial_probe_measure(
 	const struct phase2_info0_exchange *exchange,
 	struct v34_phase2_probe_receiver_measurement *measurement);
 
-const char *phase2_initial_probe_result_name(
-	enum phase2_initial_probe_result result);
-
 #endif

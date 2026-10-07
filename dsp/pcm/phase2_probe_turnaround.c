@@ -439,15 +439,3 @@ phase2_probe_turnaround_sample(
 	*event = emitted;
 	return PHASE2_PROBE_TURNAROUND_OK;
 }
-
-const char *phase2_probe_turnaround_result_name(
-	enum phase2_probe_turnaround_result result)
-{
-	switch (result) {
-	case PHASE2_PROBE_TURNAROUND_OK:
-		return "ok";
-	case PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

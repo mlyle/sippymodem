@@ -365,15 +365,3 @@ phase2_initial_probe_measure(
 		return PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
 	return PHASE2_INITIAL_PROBE_OK;
 }
-
-const char *phase2_initial_probe_result_name(
-	enum phase2_initial_probe_result result)
-{
-	switch (result) {
-	case PHASE2_INITIAL_PROBE_OK:
-		return "ok";
-	case PHASE2_INITIAL_PROBE_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

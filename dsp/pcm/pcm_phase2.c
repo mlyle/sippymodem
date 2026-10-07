@@ -1173,19 +1173,6 @@ enum pcm_phase2_result pcm_phase2_receive_gain(
 	return PCM_PHASE2_OK;
 }
 
-const char *pcm_phase2_result_name(enum pcm_phase2_result result)
-{
-	switch (result) {
-	case PCM_PHASE2_OK:
-		return "ok";
-	case PCM_PHASE2_INVALID_ARGUMENT:
-		return "invalid argument";
-	case PCM_PHASE2_INVALID_STATE:
-		return "invalid state";
-	}
-	return "unknown";
-}
-
 const char *pcm_phase2_failure_name(enum pcm_phase2_failure failure)
 {
 	switch (failure) {
