@@ -264,11 +264,7 @@ static bool test_validation(void)
 	      v92_pcm_info1a_equal(&decoded, &saved_decoded) &&
 	      !v92_pcm_info1a_equal(NULL, &valid) &&
 	      !v92_pcm_info1a_equal(&valid, NULL) &&
-	      !v92_pcm_info1a_is_valid(NULL) &&
-	      strcmp(v92_pcm_info1a_result_name(
-		     V92_PCM_INFO1A_INVALID_PAYLOAD), "invalid payload") == 0 &&
-	      strcmp(v92_pcm_info1a_result_name(
-		     (enum v92_pcm_info1a_result)4), "unknown") == 0,
+	      !v92_pcm_info1a_is_valid(NULL),
 	      "INFO1a decoding accepted malformed input or changed output");
 	return true;
 }

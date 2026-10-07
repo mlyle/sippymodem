@@ -222,22 +222,3 @@ enum v92_pcm_dil_result v92_pcm_dil_decode_zero(
 	*upstream_rate_mask = decoded.upstream_rate_mask;
 	return V92_PCM_DIL_OK;
 }
-
-const char *v92_pcm_dil_result_name(enum v92_pcm_dil_result result)
-{
-	switch (result) {
-	case V92_PCM_DIL_OK:
-		return "ok";
-	case V92_PCM_DIL_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V92_PCM_DIL_INVALID_FRAME:
-		return "invalid frame";
-	case V92_PCM_DIL_CRC_MISMATCH:
-		return "CRC mismatch";
-	case V92_PCM_DIL_NONZERO_DESCRIPTOR:
-		return "nonzero descriptor";
-	case V92_PCM_DIL_INCOMPLETE:
-		return "incomplete";
-	}
-	return "unknown";
-}

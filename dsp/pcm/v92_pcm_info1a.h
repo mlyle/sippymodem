@@ -58,7 +58,4 @@ enum v92_pcm_info1a_result v92_pcm_info1a_decode(
 	const uint8_t *payload, size_t payload_capacity,
 	size_t payload_bit_count, struct v92_pcm_info1a *info1a);
 
-const char *v92_pcm_info1a_result_name(
-	enum v92_pcm_info1a_result result);
-
 #endif /* V92_PCM_INFO1A_H */

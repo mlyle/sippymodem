@@ -378,33 +378,12 @@ static bool test_rejection(void)
 	return true;
 }
 
-static bool test_result_names(void)
-{
-	static const char *const names[] = {
-		"ok", "invalid argument", "invalid frame", "CRC mismatch",
-		"nonzero descriptor", "incomplete",
-	};
-
-	for (size_t index = 0; index < ARRAY_LENGTH(names); ++index)
-		CHECK(strcmp(
-			      v92_pcm_dil_result_name(
-				      (enum v92_pcm_dil_result)index),
-			      names[index]) == 0,
-		      "V.92 DIL result name %zu differed", index);
-	CHECK(strcmp(
-		      v92_pcm_dil_result_name((enum v92_pcm_dil_result)-1),
-		      "unknown") == 0,
-	      "unknown V.92 DIL result name differed");
-	return true;
-}
-
 int main(void)
 {
 	fprintf(stderr, "[ RUN      ] V.92 PCM-upstream DIL descriptors\n");
 	if (!test_generated_masks() || !test_rate_masks() ||
 	    !test_variable_descriptors() || !test_peer_descriptor() ||
-	    !test_reserved_bits() || !test_rejection() ||
-	    !test_result_names()) {
+	    !test_reserved_bits() || !test_rejection()) {
 		fprintf(stderr, "[  FAILED  ] V.92 PCM-upstream DIL descriptors\n");
 		return 1;
 	}

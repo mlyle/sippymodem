@@ -62,7 +62,4 @@ bool v92_pcm_phase3_ja_tx_can_stop(
 enum v92_pcm_phase3_ja_result v92_pcm_phase3_ja_tx_next(
 	struct v92_pcm_phase3_ja_tx *tx, struct v90_pcm_symbol *symbol);
 
-const char *v92_pcm_phase3_ja_result_name(
-	enum v92_pcm_phase3_ja_result result);
-
 #endif /* V92_PCM_PHASE3_JA_H */

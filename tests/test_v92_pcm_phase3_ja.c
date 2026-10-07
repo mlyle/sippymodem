@@ -197,9 +197,6 @@ static bool test_contracts(void)
 	uint8_t history[REFERENCE_SYMBOLS] = { 0 };
 	uint8_t tx_before[sizeof(tx)];
 	uint8_t symbol_before[sizeof(symbol)];
-	static const char *const names[] = {
-		"ok", "invalid argument", "invalid state",
-	};
 
 	memset(&tx, 0xa5, sizeof(tx));
 	memcpy(tx_before, &tx, sizeof(tx));
@@ -285,17 +282,6 @@ static bool test_contracts(void)
 	      memcmp(&symbol, symbol_before, sizeof(symbol)) == 0,
 	      "Ja overflow was not rejected transactionally");
 
-	for (size_t index = 0; index < ARRAY_LENGTH(names); ++index)
-		CHECK(strcmp(
-			      v92_pcm_phase3_ja_result_name(
-				      (enum v92_pcm_phase3_ja_result)index),
-			      names[index]) == 0,
-		      "Ja result name %zu differed", index);
-	CHECK(strcmp(
-		      v92_pcm_phase3_ja_result_name(
-			      (enum v92_pcm_phase3_ja_result)-1),
-		      "unknown") == 0,
-	      "unknown Ja result name differed");
 	return true;
 }
 

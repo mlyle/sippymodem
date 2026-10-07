@@ -61,8 +61,8 @@ static bool compare_opening(
 		      v92_pcm_phase3_initial_tx_next(tx, md, &actual) ==
 			      V92_PCM_PHASE3_INITIAL_TX_OK &&
 		      symbols_match(&actual, &expected),
-		      "composed opening differed in stage %s",
-		      v92_pcm_phase3_opening_stage_name(opening->stage));
+		      "composed opening differed in stage %d",
+		      (int)opening->stage);
 	}
 	CHECK(tx->stage == V92_PCM_PHASE3_INITIAL_TX_TRN1U,
 	      "opening did not hand off to TRN1u");

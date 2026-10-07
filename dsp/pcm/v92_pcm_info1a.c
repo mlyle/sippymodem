@@ -176,19 +176,3 @@ enum v92_pcm_info1a_result v92_pcm_info1a_decode(
 	*info1a = decoded;
 	return V92_PCM_INFO1A_OK;
 }
-
-const char *v92_pcm_info1a_result_name(
-	enum v92_pcm_info1a_result result)
-{
-	switch (result) {
-	case V92_PCM_INFO1A_OK:
-		return "ok";
-	case V92_PCM_INFO1A_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V92_PCM_INFO1A_INVALID_SELECTION:
-		return "invalid selection";
-	case V92_PCM_INFO1A_INVALID_PAYLOAD:
-		return "invalid payload";
-	}
-	return "unknown";
-}

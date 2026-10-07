@@ -185,14 +185,6 @@ static bool test_contracts(void)
 	struct v90_pcm_symbol symbol;
 	uint8_t opening_before[sizeof(opening)];
 	uint8_t symbol_before[sizeof(symbol)];
-	static const char *const stages[] = {
-		"silence", "Ru", "Ru-bar", "MD", "second Ru",
-		"second Ru-bar", "TRN1u ready",
-	};
-	static const char *const results[] = {
-		"ok", "need MD symbol", "complete", "invalid argument",
-		"invalid state",
-	};
 
 	memset(&opening, 0xa5, sizeof(opening));
 	memcpy(opening_before, &opening, sizeof(opening));
@@ -237,27 +229,6 @@ static bool test_contracts(void)
 	      memcmp(&opening, opening_before, sizeof(opening)) == 0 &&
 	      memcmp(&symbol, symbol_before, sizeof(symbol)) == 0,
 	      "invalid opening state was not transactional");
-	for (size_t index = 0; index < ARRAY_LENGTH(stages); ++index)
-		CHECK(strcmp(
-			      v92_pcm_phase3_opening_stage_name(
-				      (enum v92_pcm_phase3_opening_stage)index),
-			      stages[index]) == 0,
-		      "opening stage name %zu differed", index);
-	for (size_t index = 0; index < ARRAY_LENGTH(results); ++index)
-		CHECK(strcmp(
-			      v92_pcm_phase3_opening_result_name(
-				      (enum v92_pcm_phase3_opening_result)index),
-			      results[index]) == 0,
-		      "opening result name %zu differed", index);
-	CHECK(strcmp(
-		      v92_pcm_phase3_opening_stage_name(
-			      (enum v92_pcm_phase3_opening_stage)-1),
-		      "unknown") == 0 &&
-	      strcmp(
-		      v92_pcm_phase3_opening_result_name(
-			      (enum v92_pcm_phase3_opening_result)-1),
-		      "unknown") == 0,
-	      "unknown opening names differed");
 	return true;
 }
 

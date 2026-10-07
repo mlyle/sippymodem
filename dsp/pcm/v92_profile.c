@@ -200,16 +200,3 @@ enum v92_profile_result v92_profile_init(
 	*configuration = selected;
 	return V92_PROFILE_OK;
 }
-
-const char *v92_profile_result_name(enum v92_profile_result result)
-{
-	switch (result) {
-	case V92_PROFILE_OK:
-		return "ok";
-	case V92_PROFILE_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V92_PROFILE_UNSUPPORTED_RATE:
-		return "unsupported rate";
-	}
-	return "unknown";
-}

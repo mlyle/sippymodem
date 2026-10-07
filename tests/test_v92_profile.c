@@ -373,32 +373,10 @@ static bool test_transactionality(void)
 	return true;
 }
 
-static bool test_result_names(void)
-{
-	static const char *const expected[] = {
-		"ok",
-		"invalid argument",
-		"unsupported rate",
-	};
-
-	for (size_t index = 0; index < sizeof(expected) / sizeof(expected[0]);
-	     ++index)
-		CHECK(strcmp(
-			      v92_profile_result_name(
-				      (enum v92_profile_result)index),
-			      expected[index]) == 0,
-		      "result name %zu did not match", index);
-	CHECK(strcmp(
-		      v92_profile_result_name((enum v92_profile_result)-1),
-		      "unknown") == 0,
-	      "unknown result name did not match");
-	return true;
-}
-
 int main(void)
 {
 	if (!test_upstream_rates() || !test_generated_profiles() || !test_conventional_policy() ||
-	    !test_transactionality() || !test_result_names())
+	    !test_transactionality())
 		return 1;
 	return 0;
 }

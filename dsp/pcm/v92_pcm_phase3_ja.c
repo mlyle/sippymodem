@@ -127,17 +127,3 @@ enum v92_pcm_phase3_ja_result v92_pcm_phase3_ja_tx_next(
 	*symbol = generated;
 	return V92_PCM_PHASE3_JA_OK;
 }
-
-const char *v92_pcm_phase3_ja_result_name(
-	enum v92_pcm_phase3_ja_result result)
-{
-	switch (result) {
-	case V92_PCM_PHASE3_JA_OK:
-		return "ok";
-	case V92_PCM_PHASE3_JA_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V92_PCM_PHASE3_JA_INVALID_STATE:
-		return "invalid state";
-	}
-	return "unknown";
-}

@@ -79,19 +79,3 @@ size_t v92_pcm_phase3_ru_remaining(
 			sequence->emitted_symbols) :
 		       0u;
 }
-
-const char *v92_pcm_phase3_ru_result_name(
-	enum v92_pcm_phase3_ru_result result)
-{
-	switch (result) {
-	case V92_PCM_PHASE3_RU_OK:
-		return "ok";
-	case V92_PCM_PHASE3_RU_COMPLETE:
-		return "complete";
-	case V92_PCM_PHASE3_RU_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V92_PCM_PHASE3_RU_INVALID_STATE:
-		return "invalid state";
-	}
-	return "unknown";
-}

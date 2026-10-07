@@ -75,6 +75,4 @@ enum v92_pcm_dil_result v92_pcm_dil_decode_zero(
 	const uint8_t *descriptor, size_t descriptor_capacity,
 	uint32_t *upstream_rate_mask);
 
-const char *v92_pcm_dil_result_name(enum v92_pcm_dil_result result);
-
 #endif /* V92_PCM_DIL_H */

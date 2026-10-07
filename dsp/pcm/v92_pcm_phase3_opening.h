@@ -70,10 +70,4 @@ enum v92_pcm_phase3_opening_result v92_pcm_phase3_opening_next(
 	struct v90_pcm_symbol *symbol);
 size_t v92_pcm_phase3_opening_remaining(
 	const struct v92_pcm_phase3_opening *opening);
-
-const char *v92_pcm_phase3_opening_stage_name(
-	enum v92_pcm_phase3_opening_stage stage);
-const char *v92_pcm_phase3_opening_result_name(
-	enum v92_pcm_phase3_opening_result result);
-
 #endif /* V92_PCM_PHASE3_OPENING_H */

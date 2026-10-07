@@ -129,15 +129,6 @@ static bool test_contracts(void)
 	struct v90_pcm_symbol symbol;
 	uint8_t before[sizeof(sequence)];
 	uint8_t symbol_before[sizeof(symbol)];
-	static const struct {
-		enum v92_pcm_phase3_ru_result result;
-		const char *name;
-	} names[] = {
-		{ V92_PCM_PHASE3_RU_OK, "ok" },
-		{ V92_PCM_PHASE3_RU_COMPLETE, "complete" },
-		{ V92_PCM_PHASE3_RU_INVALID_ARGUMENT, "invalid argument" },
-		{ V92_PCM_PHASE3_RU_INVALID_STATE, "invalid state" },
-	};
 
 	memset(&sequence, 0xa5, sizeof(sequence));
 	memcpy(before, &sequence, sizeof(sequence));
@@ -178,16 +169,6 @@ static bool test_contracts(void)
 	      memcmp(&sequence, before, sizeof(sequence)) == 0 &&
 	      memcmp(&symbol, symbol_before, sizeof(symbol)) == 0,
 	      "invalid Ru state was not transactional");
-	for (size_t index = 0; index < ARRAY_LENGTH(names); ++index)
-		CHECK(strcmp(
-			      v92_pcm_phase3_ru_result_name(names[index].result),
-			      names[index].name) == 0,
-		      "Ru result name %zu differed", index);
-	CHECK(strcmp(
-		      v92_pcm_phase3_ru_result_name(
-			      (enum v92_pcm_phase3_ru_result)-1),
-		      "unknown") == 0,
-	      "unknown Ru result name differed");
 	return true;
 }
 

@@ -39,6 +39,4 @@ enum v92_profile_result v92_profile_init(
 	uint8_t maximum_upstream_data_rate_number,
 	const struct v90_upstream_policy *conventional_upstream);
 
-const char *v92_profile_result_name(enum v92_profile_result result);
-
 #endif /* V92_PROFILE_H */
