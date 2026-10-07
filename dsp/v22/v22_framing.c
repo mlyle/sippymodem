@@ -9,8 +9,6 @@
 enum {
 	V22_SCRAMBLER_TAP_14 = 13,
 	V22_SCRAMBLER_TAP_17 = 16,
-	V22_SCRAMBLER_HISTORY_MASK =
-		(UINT32_C(1) << V22_SCRAMBLER_BITS) - 1,
 };
 
 bool v22_scrambler_is_valid(
@@ -32,12 +30,12 @@ static uint8_t scrambler_feedback(
 }
 
 static void remember_scrambled_bit(
-	struct v22_scrambler *scrambler, uint8_t bit)
+	struct v22_scrambler *scrambler, uint8_t bit, bool repair)
 {
 	scrambler->history =
 		((scrambler->history << 1) | bit) &
 		V22_SCRAMBLER_HISTORY_MASK;
-	if (bit == 0)
+	if (!repair || bit == 0)
 		scrambler->consecutive_ones = 0;
 	else
 		scrambler->consecutive_ones++;
@@ -50,47 +48,39 @@ void v22_scrambler_reset(
 		memset(scrambler, 0, sizeof(*scrambler));
 }
 
+static enum v22_framing_result transform_bit(
+	struct v22_scrambler *state, uint8_t input, uint8_t *output,
+	bool repair_enabled, bool descramble)
+{
+	uint8_t transformed;
+	bool repair;
+
+	if (!v22_scrambler_is_valid(state) || input > 1 || output == NULL)
+		return V22_FRAMING_INVALID_ARGUMENT;
+	repair = repair_enabled && state->consecutive_ones == V22_SCRAMBLER_ONES_LIMIT;
+	if (repair) {
+		state->consecutive_ones = 0;
+		if (!descramble)
+			input ^= 1u;
+	}
+	transformed = input ^ scrambler_feedback(state);
+	remember_scrambled_bit(state, descramble ? input : transformed, repair_enabled);
+	*output = transformed ^ (descramble && repair);
+	return V22_FRAMING_OK;
+}
+
 enum v22_framing_result v22_scramble_bit(
 	struct v22_scrambler *scrambler, uint8_t input,
-	uint8_t *output)
+	uint8_t *output, bool repair)
 {
-	uint8_t encoded;
-
-	if (!v22_scrambler_is_valid(scrambler) || input > 1 ||
-	    output == NULL)
-		return V22_FRAMING_INVALID_ARGUMENT;
-	if (scrambler->consecutive_ones ==
-	    V22_SCRAMBLER_ONES_LIMIT) {
-		/* Escape a locked all-mark sequence without changing DTE data. */
-		input ^= 1u;
-		scrambler->consecutive_ones = 0;
-	}
-	encoded = input ^ scrambler_feedback(scrambler);
-	remember_scrambled_bit(scrambler, encoded);
-	*output = encoded;
-	return V22_FRAMING_OK;
+	return transform_bit(scrambler, input, output, repair, false);
 }
 
 enum v22_framing_result v22_descramble_bit(
 	struct v22_scrambler *descrambler, uint8_t input,
-	uint8_t *output)
+	uint8_t *output, bool repair)
 {
-	bool repair;
-	uint8_t decoded;
-
-	if (!v22_scrambler_is_valid(descrambler) || input > 1 ||
-	    output == NULL)
-		return V22_FRAMING_INVALID_ARGUMENT;
-	repair = descrambler->consecutive_ones ==
-		 V22_SCRAMBLER_ONES_LIMIT;
-	if (repair)
-		descrambler->consecutive_ones = 0;
-	decoded = input ^ scrambler_feedback(descrambler);
-	remember_scrambled_bit(descrambler, input);
-	if (repair)
-		decoded ^= 1u;
-	*output = decoded;
-	return V22_FRAMING_OK;
+	return transform_bit(descrambler, input, output, repair, true);
 }
 
 enum v22_framing_result v22_symbol_encoder_init(
@@ -107,7 +97,7 @@ enum v22_framing_result v22_symbol_encoder_init(
 
 enum v22_framing_result v22_symbol_encode(
 	struct v22_symbol_encoder *encoder, uint8_t first_bit,
-	uint8_t second_bit, uint8_t *quadrant)
+	uint8_t second_bit, uint8_t *quadrant, bool repair)
 {
 	uint8_t first_scrambled;
 	uint8_t second_scrambled;
@@ -118,17 +108,11 @@ enum v22_framing_result v22_symbol_encode(
 	    encoder->phase_quadrant >= QPSK_QUADRANT_COUNT ||
 	    !v22_scrambler_is_valid(&encoder->scrambler))
 		return V22_FRAMING_INVALID_ARGUMENT;
-	if (v22_scramble_bit(
-		    &encoder->scrambler, first_bit, &first_scrambled) !=
-		    V22_FRAMING_OK ||
-	    v22_scramble_bit(
-		    &encoder->scrambler, second_bit, &second_scrambled) !=
-		    V22_FRAMING_OK ||
-	    differential_qpsk_encode(
-		    encoder->phase_quadrant,
-		    (uint8_t)((first_scrambled << 1) | second_scrambled),
-		    &next_quadrant) != DIFFERENTIAL_QPSK_OK)
-		return V22_FRAMING_INVALID_ARGUMENT;
+	/* Validated binary steps and quadrant mapping cannot fail. */
+	(void)v22_scramble_bit(&encoder->scrambler, first_bit, &first_scrambled, repair);
+	(void)v22_scramble_bit(&encoder->scrambler, second_bit, &second_scrambled, repair);
+	(void)differential_qpsk_encode(encoder->phase_quadrant,
+		(uint8_t)((first_scrambled << 1) | second_scrambled), &next_quadrant);
 	encoder->phase_quadrant = next_quadrant;
 	*quadrant = next_quadrant;
 	return V22_FRAMING_OK;
@@ -136,7 +120,7 @@ enum v22_framing_result v22_symbol_encode(
 
 enum v22_framing_result v22_600_symbol_encode(
 	struct v22_symbol_encoder *encoder, uint8_t bit,
-	uint8_t *quadrant)
+	uint8_t *quadrant, bool repair)
 {
 	uint8_t scrambled;
 
@@ -144,9 +128,7 @@ enum v22_framing_result v22_600_symbol_encode(
 	    encoder->phase_quadrant >= QPSK_QUADRANT_COUNT ||
 	    !v22_scrambler_is_valid(&encoder->scrambler))
 		return V22_FRAMING_INVALID_ARGUMENT;
-	if (v22_scramble_bit(&encoder->scrambler, bit, &scrambled) !=
-	    V22_FRAMING_OK)
-		return V22_FRAMING_INVALID_ARGUMENT;
+	(void)v22_scramble_bit(&encoder->scrambler, bit, &scrambled, repair);
 	/* V.22 Table 1: zero advances 90 degrees and one advances 270. */
 	encoder->phase_quadrant = (uint8_t)(
 		(encoder->phase_quadrant + (scrambled == 0 ? 1u : 3u)) & 3u);
@@ -168,7 +150,7 @@ enum v22_framing_result v22_symbol_decoder_init(
 
 enum v22_framing_result v22_symbol_decode(
 	struct v22_symbol_decoder *decoder, uint8_t quadrant,
-	uint8_t *first_bit, uint8_t *second_bit)
+	uint8_t *first_bit, uint8_t *second_bit, bool repair)
 {
 	uint8_t dibit;
 	uint8_t first_decoded;
@@ -180,16 +162,12 @@ enum v22_framing_result v22_symbol_decode(
 	    decoder->phase_quadrant >= QPSK_QUADRANT_COUNT ||
 	    !v22_scrambler_is_valid(&decoder->descrambler))
 		return V22_FRAMING_INVALID_ARGUMENT;
-	if (differential_qpsk_decode(
-		    decoder->phase_quadrant, quadrant, &dibit) !=
-		    DIFFERENTIAL_QPSK_OK ||
-	    v22_descramble_bit(
-		    &decoder->descrambler, (uint8_t)(dibit >> 1),
-		    &first_decoded) != V22_FRAMING_OK ||
-	    v22_descramble_bit(
-		    &decoder->descrambler, (uint8_t)(dibit & 1u),
-		    &second_decoded) != V22_FRAMING_OK)
-		return V22_FRAMING_INVALID_ARGUMENT;
+	/* Keep decoded bits local until both validated steps finish. */
+	(void)differential_qpsk_decode(decoder->phase_quadrant, quadrant, &dibit);
+	(void)v22_descramble_bit(&decoder->descrambler, (uint8_t)(dibit >> 1),
+		&first_decoded, repair);
+	(void)v22_descramble_bit(&decoder->descrambler, (uint8_t)(dibit & 1u),
+		&second_decoded, repair);
 	decoder->phase_quadrant = quadrant;
 	*first_bit = first_decoded;
 	*second_bit = second_decoded;
@@ -198,7 +176,7 @@ enum v22_framing_result v22_symbol_decode(
 
 enum v22_framing_result v22_600_symbol_decode(
 	struct v22_symbol_decoder *decoder, uint8_t quadrant,
-	uint8_t *bit)
+	uint8_t *bit, bool repair)
 {
 	uint8_t decoded;
 	uint8_t quarter_turns;
@@ -214,10 +192,7 @@ enum v22_framing_result v22_600_symbol_decode(
 	if (quarter_turns != 1u && quarter_turns != 3u)
 		return V22_FRAMING_INVALID_ARGUMENT;
 	scrambled = quarter_turns == 3u ? 1u : 0u;
-	if (v22_descramble_bit(
-		    &decoder->descrambler, scrambled, &decoded) !=
-	    V22_FRAMING_OK)
-		return V22_FRAMING_INVALID_ARGUMENT;
+	(void)v22_descramble_bit(&decoder->descrambler, scrambled, &decoded, repair);
 	decoder->phase_quadrant = quadrant;
 	*bit = decoded;
 	return V22_FRAMING_OK;

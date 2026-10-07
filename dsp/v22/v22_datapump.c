@@ -231,6 +231,12 @@ static bool datapump_uses_v22bis(
 	return datapump != NULL && datapump->dp.id == DP_V22BIS;
 }
 
+static bool repair_ones(const struct v22_datapump *datapump)
+{
+	return datapump_uses_v22bis(datapump) || datapump->dp.id == DP_B212 ||
+	       datapump->training_state == V22_TRAINING_ONLINE;
+}
+
 static bool datapump_is_retraining(
 	const struct v22_datapump *datapump)
 {
@@ -522,11 +528,11 @@ static int next_transmit_quadrant(
 		return -1;
 	if ((datapump_uses_600(datapump) &&
 	     v22_600_symbol_encode(
-		     &datapump->encoder, bits[0], &quadrant) !=
+		     &datapump->encoder, bits[0], &quadrant, repair_ones(datapump)) !=
 		     V22_FRAMING_OK) ||
 	    (!datapump_uses_600(datapump) &&
 	     v22_symbol_encode(
-		     &datapump->encoder, bits[0], bits[1], &quadrant) !=
+		     &datapump->encoder, bits[0], bits[1], &quadrant, repair_ones(datapump)) !=
 		     V22_FRAMING_OK))
 		return -1;
 	datapump->transmit_quadrant = quadrant;
@@ -607,7 +613,7 @@ static int decode_phase_change(
 		(datapump->decoder.phase_quadrant + quarter_turns) & 3u);
 
 	return v22_symbol_decode(
-		       &datapump->decoder, quadrant, &bits[0], &bits[1]) ==
+		       &datapump->decoder, quadrant, &bits[0], &bits[1], repair_ones(datapump)) ==
 		       V22_FRAMING_OK ?
 		       0 : -1;
 }
@@ -615,7 +621,7 @@ static int decode_phase_change(
 static int decode_600_phase_change(
 	struct v22_symbol_decoder *decoder,
 	const struct qam_point *previous,
-	const struct qam_point *current, uint8_t *bit, uint8_t *quarter_turns)
+	const struct qam_point *current, uint8_t *bit, uint8_t *quarter_turns, bool repair)
 {
 	double cross;
 	uint8_t quadrant;
@@ -633,7 +639,7 @@ static int decode_600_phase_change(
 	quadrant = (uint8_t)(
 		(decoder->phase_quadrant + *quarter_turns) & 3u);
 	return v22_600_symbol_decode(
-		       decoder, quadrant, bit) == V22_FRAMING_OK ?
+		       decoder, quadrant, bit, repair) == V22_FRAMING_OK ?
 		       0 : -1;
 }
 
@@ -675,7 +681,7 @@ static int observe_auto_600(struct v22_datapump *datapump,
 	     datapump->training_state != V22_TRAINING_CONNECT_HOLD))
 		return 0;
 	if (decode_600_phase_change(&datapump->rate600_decoder,
-		    &datapump->previous_receive_point, point, &bit, &turns) != 0)
+		    &datapump->previous_receive_point, point, &bit, &turns, false) != 0)
 		return -1;
 	if (bit == 0) {
 		datapump->rate600_confirm_bits = 0;
@@ -789,6 +795,12 @@ static int observe_bits(
 	      datapump->dp.modem->max_rate >= V22_1200_BIT_RATE))) {
 		uint32_t target = scrambled_confirmation_target(datapump);
 
+		/* Unscrambled mark also descrambles to ones after 17 bits. Reject
+		 * its locked wire history instead of relying on repair to break it. */
+		if (datapump->decoder.descrambler.history == V22_SCRAMBLER_HISTORY_MASK) {
+			datapump->scrambled_mark_bits = 0;
+			return 0;
+		}
 		for (size_t index = 0; index < bit_count; ++index) {
 			if (bits[index] == 1 &&
 			    datapump->scrambled_mark_bits < target)
@@ -840,7 +852,7 @@ static int observe_600_phase_change(
 
 	observe_answer_mark(datapump, quarter_turns);
 	if (decode_600_phase_change(&datapump->decoder, previous, current,
-		    &bit, &quarter_turns) != 0)
+		    &bit, &quarter_turns, repair_ones(datapump)) != 0)
 		return -1;
 	return observe_bits(datapump, &bit, 1);
 }

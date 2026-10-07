@@ -10,6 +10,7 @@
 
 enum {
 	V22_SCRAMBLER_BITS = 17,
+	V22_SCRAMBLER_HISTORY_MASK = (UINT32_C(1) << V22_SCRAMBLER_BITS) - 1,
 	V22_SCRAMBLER_ONES_LIMIT = 64,
 	/* V.22bis sends 100 ms at 600 symbols/s; report a stable 20 ms prefix. */
 	V22BIS_RATE_SIGNAL_SYMBOLS = 60,
@@ -59,31 +60,33 @@ void v22_scrambler_reset(
 	struct v22_scrambler *scrambler);
 bool v22_scrambler_is_valid(
 	const struct v22_scrambler *scrambler);
+/* Disable repair during V.22 handshaking; V.22bis keeps it enabled.
+ * A disabled detector clears its count while preserving polynomial history. */
 enum v22_framing_result v22_scramble_bit(
 	struct v22_scrambler *scrambler, uint8_t input,
-	uint8_t *output);
+	uint8_t *output, bool repair);
 enum v22_framing_result v22_descramble_bit(
 	struct v22_scrambler *descrambler, uint8_t input,
-	uint8_t *output);
+	uint8_t *output, bool repair);
 
 enum v22_framing_result v22_symbol_encoder_init(
 	struct v22_symbol_encoder *encoder,
 	uint8_t initial_quadrant);
 enum v22_framing_result v22_symbol_encode(
 	struct v22_symbol_encoder *encoder, uint8_t first_bit,
-	uint8_t second_bit, uint8_t *quadrant);
+	uint8_t second_bit, uint8_t *quadrant, bool repair);
 enum v22_framing_result v22_600_symbol_encode(
 	struct v22_symbol_encoder *encoder, uint8_t bit,
-	uint8_t *quadrant);
+	uint8_t *quadrant, bool repair);
 enum v22_framing_result v22_symbol_decoder_init(
 	struct v22_symbol_decoder *decoder,
 	uint8_t initial_quadrant);
 enum v22_framing_result v22_symbol_decode(
 	struct v22_symbol_decoder *decoder, uint8_t quadrant,
-	uint8_t *first_bit, uint8_t *second_bit);
+	uint8_t *first_bit, uint8_t *second_bit, bool repair);
 enum v22_framing_result v22_600_symbol_decode(
 	struct v22_symbol_decoder *decoder, uint8_t quadrant,
-	uint8_t *bit);
+	uint8_t *bit, bool repair);
 
 enum v22_framing_result v22bis_rate_signal_turn(
 	uint32_t symbol_index, uint8_t *quarter_turns);

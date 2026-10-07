@@ -3066,7 +3066,7 @@ static bool v22_signal_generate(
 		if (can_accept && scrambled &&
 		    v22_symbol_encode(
 			    &generator->encoder, 1, 1,
-			    &generator->quadrant) != V22_FRAMING_OK)
+			    &generator->quadrant, true) != V22_FRAMING_OK)
 			return false;
 		if (can_accept && !scrambled)
 			generator->quadrant =
@@ -3217,6 +3217,67 @@ static bool run_v22_abandoned_probe(void)
 	      "V.22 answerer connected after the calling probe disappeared");
 
 	endpoint_destroy(&endpoint);
+	return true;
+}
+
+static bool run_v22_mark_replay(unsigned int bit_rate, bool answerer,
+	enum g711_law law, bool switch_to_scrambled)
+{
+	char selection[64];
+	const char *commands[] = {
+		"ATZ\r", "ATE0\r", "ATX3\r", "AT\\N0\r", "AT+DS=0,0\r", selection,
+	};
+	struct integration_endpoint endpoint;
+	struct v22_signal_generator generator;
+	bool connected = false;
+
+	snprintf(selection, sizeof(selection), "AT+MS=22,0,%u,%u\r", bit_rate, bit_rate);
+	CHECK(endpoint_init(&endpoint, "V.22 mark replay") &&
+	      configure_recording_replay(&endpoint, commands, ARRAY_LENGTH(commands)) &&
+	      v22_signal_generator_init(&generator, answerer ? 1200 : 2400),
+	      "V.22 mark replay did not initialize");
+	if (answerer) {
+		CHECK(modem_set_sreg(endpoint.modem, SREG_ANS_DELAY, 0) == 0 &&
+		      modem_report_incoming_call(endpoint.modem) == 0 &&
+		      endpoint_drain(&endpoint) && modem_answer(endpoint.modem) == 0,
+		      "V.22 mark replay did not answer");
+	} else {
+		static const char dial[] = "ATDrecording\r";
+		CHECK(modem_write(endpoint.modem, dial, sizeof(dial) - 1) == sizeof(dial) - 1 &&
+		      modem_report_outgoing_call_connected(endpoint.modem) == 0,
+		      "V.22 mark replay did not originate");
+	}
+	for (size_t offset = 0; offset < MODEM_RATE * 4u; offset += SIP_FRAME_SAMPLES) {
+		CHECK(v22_signal_generate(&generator, endpoint.receive, SIP_FRAME_SAMPLES,
+		      switch_to_scrambled && offset >= MODEM_RATE), "V.22 mark generation failed");
+		for (size_t index = 0; index < SIP_FRAME_SAMPLES; ++index)
+			endpoint.receive[index] = g711_quantize(law, endpoint.receive[index]);
+		modem_process(endpoint.modem, endpoint.receive, endpoint.transmit, SIP_FRAME_SAMPLES);
+		CHECK(endpoint_drain(&endpoint), "V.22 mark replay output overflowed");
+		connected |= modem_is_online(endpoint.modem, DP_V22);
+	}
+	CHECK(connected == switch_to_scrambled && endpoint.modem->started &&
+	      endpoint.modem->dp != NULL && endpoint.modem->dp->id == DP_V22,
+	      "V.22 %u mark qualification failed (answer=%u law=%u scrambled=%u connected=%u)",
+	      bit_rate, answerer, law, switch_to_scrambled, connected);
+	endpoint_destroy(&endpoint);
+	return true;
+}
+
+static bool run_v22_mark_qualification(void)
+{
+	static const enum g711_law laws[] = { G711_LAW_PCMU, G711_LAW_PCMA };
+	static const unsigned int rates[] = { 600, 1200 };
+
+	for (size_t law = 0; law < ARRAY_LENGTH(laws); ++law) {
+		for (unsigned int answerer = 0; answerer < 2; ++answerer) {
+			for (size_t rate = 0; rate < ARRAY_LENGTH(rates); ++rate)
+				CHECK(run_v22_mark_replay(rates[rate], answerer, laws[law], false),
+				      "constant-mark rejection failed");
+			CHECK(run_v22_mark_replay(1200, answerer, laws[law], true),
+			      "scrambled-mark transition failed");
+		}
+	}
 	return true;
 }
 
@@ -5303,6 +5364,10 @@ int main(void)
 		return 1;
 	}
 	fprintf(stderr, "[       OK ] V.22 answer response deadline\n");
+	fprintf(stderr, "[ RUN      ] V.22 scrambled mark qualification\n");
+	if (!run_v22_mark_qualification())
+		return 1;
+	fprintf(stderr, "[       OK ] V.22 scrambled mark qualification\n");
 	fprintf(stderr, "[ RUN      ] abandoned V.22 calling probe\n");
 	if (!run_v22_abandoned_probe()) {
 		fprintf(stderr, "[  FAILED  ] abandoned V.22 calling probe\n");

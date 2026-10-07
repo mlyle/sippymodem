@@ -46,7 +46,7 @@ enum v22_framing_result v22bis_symbol_encode(
 	for (size_t index = 0; index < V22BIS_BITS_PER_SYMBOL;
 	     ++index)
 		(void)v22_scramble_bit(
-			&next.scrambler, bits[index], &scrambled[index]);
+			&next.scrambler, bits[index], &scrambled[index], true);
 	(void)differential_qpsk_encode(
 		next.phase_quadrant,
 		(uint8_t)((scrambled[0] << 1) | scrambled[1]), &quadrant);
@@ -79,7 +79,7 @@ enum v22_framing_result v22bis_symbol_decode(
 	for (size_t index = 0; index < V22BIS_BITS_PER_SYMBOL;
 	     ++index)
 		(void)v22_descramble_bit(
-			&decoder->descrambler, scrambled[index], &decoded[index]);
+			&decoder->descrambler, scrambled[index], &decoded[index], true);
 	decoder->phase_quadrant = quadrant;
 	/* Commit decoded bytes last: the output can overlap the owner. */
 	memcpy(bits, decoded, sizeof(decoded));
