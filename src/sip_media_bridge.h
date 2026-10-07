@@ -20,6 +20,8 @@ struct sip_media_bridge {
 	unsigned int callback_depth;
 	bool media_configured;
 	bool trace_started;
+	bool inactive_pending;
+	bool receive_draining;
 };
 
 /* endpoint and copied callback context must outlive the bridge. */
@@ -32,6 +34,8 @@ bool sip_media_bridge_init(
 const struct sip_signaling_callbacks *
 sip_media_bridge_callbacks(
 	const struct sip_media_bridge *bridge);
+/* Resolve deferred inactivity; true starts one bounded socket drain. */
+bool sip_media_bridge_resolve_inactive(struct sip_media_bridge *bridge);
 void sip_media_bridge_clear_media(
 	struct sip_media_bridge *bridge);
 /* Bounded, once-per-second media diagnostics through the existing trace sink.

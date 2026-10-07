@@ -30,6 +30,8 @@ struct callback_capture {
 	unsigned int registration;
 	unsigned int call;
 	unsigned int media;
+	unsigned int drain_queries;
+	bool drain;
 	bool observed_callback_depth;
 	enum sip_rtp_result observed_binding;
 };
@@ -87,6 +89,75 @@ static void capture_media(
 		sip_media_bridge_last_binding(capture->bridge);
 	capture->observed_callback_depth |=
 		sip_media_bridge_is_in_callback(capture->bridge);
+}
+
+static bool capture_drain(void *context)
+{
+	struct callback_capture *capture = context;
+	capture->drain_queries++;
+	capture->observed_callback_depth |=
+		sip_media_bridge_is_in_callback(capture->bridge);
+	return capture->drain;
+}
+
+static bool open_fixture(struct bridge_fixture *, struct callback_capture *);
+
+static bool test_deferred_receive_tail(void)
+{
+	for (unsigned drain = 0; drain < 2; ++drain) {
+		struct bridge_fixture fixture;
+		struct callback_capture capture = { 0 };
+		CHECK(open_fixture(&fixture, &capture), "fixture failed");
+		capture.bridge = &fixture.bridge;
+		fixture.bridge.destination.drain_received_media = capture_drain;
+		const struct sip_signaling_callbacks *source = sip_media_bridge_callbacks(&fixture.bridge);
+		struct sip_media_event media = {
+			.state = SIP_MEDIA_CONFIGURED, .codec = MEDIA_CODEC_PCMU,
+			.remote_address_family = SIP_MEDIA_ADDRESS_IPV4,
+			.sample_rate = MEDIA_SAMPLE_RATE, .channels = 1,
+			.remote_address = "127.0.0.1", .remote_port = 42000,
+			.local_port = rtp_endpoint_local_port(&fixture.endpoint),
+		};
+		source->media_changed(source->context, &media);
+		const uint8_t payload[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+		struct rtp_packet_view packet = {
+			.header = { .ssrc = 1, .timestamp = UINT32_MAX - 3 },
+			.payload = payload, .payload_size = sizeof(payload),
+		};
+		CHECK(rtp_receiver_push(&fixture.stream.receiver, &packet) == RTP_RECEIVE_ACCEPTED,
+		      "could not buffer the final RTP frame");
+		media.state = SIP_MEDIA_INACTIVE;
+		source->media_changed(source->context, &media);
+		CHECK(capture.media == 2 && capture.drain_queries == 0 &&
+		      fixture.bridge.inactive_pending && fixture.stream.receiver.stream_active,
+		      "media was discarded before the owner could observe call end");
+		CHECK(!source->admit(source->context), "pending retirement allowed a replacement call");
+		/* The following call-IDLE callback can now choose receive retirement. */
+		capture.drain = drain != 0;
+		capture.observed_callback_depth = false;
+		CHECK(sip_media_bridge_resolve_inactive(&fixture.bridge) == capture.drain &&
+		      capture.drain_queries == 1 && !fixture.bridge.inactive_pending &&
+		      fixture.bridge.receive_draining == capture.drain && capture.observed_callback_depth,
+		      "deferred inactivity ignored the owner policy");
+		CHECK(!sip_media_bridge_resolve_inactive(&fixture.bridge) && capture.drain_queries == 1,
+		      "receive retirement started more than once");
+		if (drain) {
+			uint8_t received[8];
+			CHECK(!source->admit(source->context), "active tail allowed a replacement call");
+			CHECK(rtp_receiver_play(&fixture.stream.receiver, received, NULL, sizeof(received), NULL) &&
+			      memcmp(received, payload, sizeof(payload)) == 0,
+			      "retirement discarded accepted audio");
+		} else {
+			CHECK(!fixture.stream.receiver.stream_active && !fixture.endpoint.remote_configured,
+			      "hold/cancellation retained old media");
+		}
+		sip_media_bridge_clear_media(&fixture.bridge);
+		CHECK(!fixture.bridge.receive_draining && !fixture.bridge.inactive_pending &&
+		      !fixture.endpoint.remote_configured && !fixture.stream.receiver.stream_active,
+		      "explicit cleanup retained a receive tail");
+		rtp_endpoint_close(&fixture.endpoint);
+	}
+	return true;
 }
 
 static bool open_fixture(struct bridge_fixture *fixture,
@@ -328,6 +399,7 @@ int main(void)
 	static const struct test_case tests[] = {
 		{ "forward and bind", test_forwards_and_binds_before_media_callback },
 		{ "media cleanup admission", test_admission_waits_for_media_cleanup },
+		{ "deferred receive tail", test_deferred_receive_tail },
 		{ "initialization validation", test_validates_initialization },
 		{ "media trace intervals", test_media_trace_intervals_and_lifecycle },
 	};

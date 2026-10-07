@@ -123,6 +123,11 @@ returns `OK`; no progress normally returns `AGAIN`. Receiving drains retained
 RX after carrier loss before returning `CLOSED`. A zero-length operation succeeds.
 Compare result enum names explicitly; their numeric order is not a success test.
 
+On remote SIP disconnect, the native owner drains accepted receive audio before
+returning `CLOSED` from an empty RX queue. This work is bounded per `process` call;
+keep processing and reading during disconnect. Local `hangup` still cancels
+immediately.
+
 `tx_pending` and `tx_free` measure local unframed DTE bytes, excluding encoded,
 compressed and unacknowledged link work. `rx_ready` measures decoded local bytes.
 A positive `tx_free` alone does not imply a call is ready or in DATA mode.

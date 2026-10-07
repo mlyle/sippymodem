@@ -50,6 +50,38 @@ static bool open_peer(int *socket_fd, struct sockaddr_in *address)
 	return true;
 }
 
+static bool test_receive_tail_frames(void)
+{
+	for (unsigned prefill = 0; prefill <= 2; prefill += 2) {
+		struct app_config config;
+		config_init(&config);
+		config.media.frame_duration_ms = 1;
+		config.media.jitter_buffer_ms = prefill;
+		config.media.remote_clock = false;
+		struct rtp_runtime *runtime = rtp_runtime_create(&config.media, NULL);
+		CHECK(runtime != NULL && rtp_runtime_receive_tail_frames(runtime) == 0,
+		      "empty runtime has a receive tail");
+		struct rtp_receiver *receiver = &rtp_runtime_endpoint(runtime)->stream->receiver;
+		const uint8_t payload[13] = { 0 };
+		struct rtp_packet_view packet = {
+			.header = { .ssrc = 1, .timestamp = UINT32_MAX - 3 },
+			.payload = payload, .payload_size = sizeof(payload),
+		};
+		CHECK(rtp_receiver_push(receiver, &packet) == RTP_RECEIVE_ACCEPTED &&
+		      rtp_runtime_receive_tail_frames(runtime) == prefill + 2,
+		      "partial/wrapped tail or prefill was counted incorrectly");
+		for (unsigned frame = 0; frame < prefill + 2; ++frame) {
+			uint8_t samples[8];
+			CHECK(rtp_receiver_play(receiver, samples, NULL, sizeof(samples), NULL) &&
+			      rtp_runtime_receive_tail_frames(runtime) == prefill + 1 - frame,
+			      "receive tail did not shrink after playout");
+		}
+		rtp_runtime_destroy(runtime);
+	}
+	CHECK(rtp_runtime_receive_tail_frames(NULL) == 0, "NULL runtime has a tail");
+	return true;
+}
+
 static bool test_owns_bounded_media_storage(void)
 {
 	struct app_config config;
@@ -322,6 +354,7 @@ struct test_case {
 int main(void)
 {
 	static const struct test_case tests[] = {
+		{ "receive tail frames", test_receive_tail_frames },
 		{ "bounded media storage", test_owns_bounded_media_storage },
 		{ "scheduler catch-up burst", test_buffers_scheduler_catchup_burst },
 		{ "remote-clock backlog", test_buffers_remote_clock_backlog },

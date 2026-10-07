@@ -135,6 +135,9 @@ struct sip_signaling_callbacks {
 			     const struct sip_call_event *event);
 	void (*media_changed)(void *context,
 			      const struct sip_media_event *event);
+	/* Optional owner policy, evaluated after signaling callbacks have returned.
+	 * Retain received media at remote call end until bounded native playout. */
+	bool (*drain_received_media)(void *context);
 };
 
 struct sip_signaling;

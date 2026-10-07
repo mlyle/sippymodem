@@ -229,6 +229,19 @@ enum rtp_endpoint_result rtp_runtime_drain(
 	return result;
 }
 
+size_t rtp_runtime_receive_tail_frames(const struct rtp_runtime *runtime)
+{
+	if (runtime == NULL || !runtime->stream.receiver.stream_active)
+		return 0;
+	const struct rtp_receiver *receiver = &runtime->stream.receiver;
+	int32_t remaining = (int32_t)(receiver->buffered_timestamp -
+				      receiver->play_timestamp);
+	size_t samples = remaining > 0 ? (size_t)remaining : 0;
+	samples += receiver->prefill_remaining;
+	return samples / runtime->frame_samples +
+	       (samples % runtime->frame_samples != 0);
+}
+
 size_t rtp_runtime_remote_clock_frames(
 	const struct rtp_runtime *runtime)
 {

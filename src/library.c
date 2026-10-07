@@ -34,6 +34,7 @@ struct sippymodem_line {
 	uint64_t sip_generation;
 	uint64_t attempt_deadline;
 	bool active;
+	bool remote_closing;
 	bool terminal_due;
 	bool incoming;
 	bool started;
@@ -91,11 +92,15 @@ static void snapshot(const struct sippymodem_line *line, struct sippymodem_statu
 	status->rtp_port = modem_host_rtp_local_port(line_host(line));
 	status->off_hook = modem->hook != MODEM_HOOK_ON;
 	status->carrier = (modem->modem_info & TIOCM_CD) != 0;
-	status->ready = line->active && (modem->state == STATE_MODEM_ONLINE || modem->state == STATE_COMMAND_ONLINE);
+	bool connected = line->active && (modem->state == STATE_MODEM_ONLINE ||
+					 modem->state == STATE_COMMAND_ONLINE);
+	status->ready = connected && !line->remote_closing;
 	status->dte_mode = modem->command ? SIPPYMODEM_COMMAND : SIPPYMODEM_DATA;
 	status->phase = modem->started ? SIPPYMODEM_DISCONNECTING : SIPPYMODEM_IDLE;
 	if (line->active) {
-		if (status->ready)
+		if (line->remote_closing)
+			status->phase = SIPPYMODEM_DISCONNECTING;
+		else if (status->ready)
 			status->phase = SIPPYMODEM_ONLINE;
 		else if (modem->state == STATE_EC_DISC || modem->state == STATE_DP_DISC)
 			status->phase = SIPPYMODEM_DISCONNECTING;
@@ -111,10 +116,10 @@ static void snapshot(const struct sippymodem_line *line, struct sippymodem_statu
 	status->rx_bps = rates.receive_bps;
 	status->tx_baud = rates.transmit_baud;
 	status->rx_baud = rates.receive_baud;
-	status->modulation = status->ready && modem->dp != NULL ? (unsigned int)modem->dp->id : 0;
-	status->error_control = status->ready && modem->cfg.ec ? SIPPYMODEM_LAPM : SIPPYMODEM_RAW;
+	status->modulation = connected && modem->dp != NULL ? (unsigned int)modem->dp->id : 0;
+	status->error_control = connected && modem->cfg.ec ? SIPPYMODEM_LAPM : SIPPYMODEM_RAW;
 	status->compression = SIPPYMODEM_COMP_NONE;
-	if (status->ready) {
+	if (connected) {
 		int compression = modem_ec_active_compression(modem);
 		if (compression == MODEM_EC_COMPRESSION_V44)
 			status->compression = SIPPYMODEM_COMP_V44;
@@ -246,6 +251,7 @@ static void disconnected(struct sippymodem_line *line, enum sippymodem_disconnec
 	if (!line->active)
 		return;
 	line->active = false;
+	line->remote_closing = false;
 	line->attempt_deadline = 0;
 	line->status.disconnect_sequence++;
 	line->status.disconnect_generation = line->status.generation;
@@ -352,6 +358,13 @@ static void call_changed(void *context, const struct sip_call_event *event)
 		return;
 	line->status.sip_state = states[event->state];
 	line->status.state_sequence++;
+	if (event->state == SIP_CALL_IDLE && line_modem(line)->started &&
+	    (line_modem(line)->state == STATE_MODEM_ONLINE ||
+	     line_modem(line)->state == STATE_COMMAND_ONLINE)) {
+		/* SIP ended; retain carrier/RX until the accepted media tail is played. */
+		line->remote_closing = true;
+		return;
+	}
 	struct sip_call_event owned_event = *event;
 	owned_event.generation = line->status.generation;
 	struct slmodem_calls *calls = modem_line_calls(line->core);
@@ -363,6 +376,12 @@ static void call_changed(void *context, const struct sip_call_event *event)
 	else if (event->state == SIP_CALL_IDLE)
 		disconnected(line, line_modem(line)->disconnect_reason != NULL && line_modem(line)->disconnect_local ?
 			SIPPYMODEM_DISCONNECT_MODEM : SIPPYMODEM_DISCONNECT_REMOTE);
+}
+
+static bool drain_received_media(void *context)
+{
+	const struct sippymodem_line *line = context;
+	return line->active && line->remote_closing && !line->stopping;
 }
 
 static int receive_output(void *context, const char *bytes, int count)
@@ -777,6 +796,7 @@ struct sippymodem_line *sippymodem_line_create(struct sippymodem_server *server,
 		goto fail;
 	const struct sip_signaling_callbacks callbacks = {
 		.context = line, .line_owner = line, .admit = admit, .call_changed = call_changed,
+		.drain_received_media = drain_received_media,
 	};
 	line->core = modem_line_create_shared(server->sip, &owned, "native line", &callbacks);
 	if (line->rx.storage == NULL || line->core == NULL)
@@ -915,7 +935,7 @@ enum sippymodem_result sippymodem_send(struct sippymodem_line *line,
 		return SIPPYMODEM_INVALID;
 	if (length == 0)
 		return SIPPYMODEM_OK;
-	if (!line->started || !line->active)
+	if (!line->started || !line->active || line->remote_closing)
 		return SIPPYMODEM_CLOSED;
 	struct modem *modem = line_modem(line);
 	if (modem->command || (modem->state != STATE_MODEM_ONLINE && modem->state != STATE_COMMAND_ONLINE))
@@ -981,6 +1001,8 @@ enum sippymodem_result sippymodem_finish_tx(struct sippymodem_line *line,
 	enum sippymodem_result result = check_call(line, generation);
 	if (result != SIPPYMODEM_OK)
 		return result;
+	if (line->remote_closing)
+		return SIPPYMODEM_CLOSED;
 	struct modem *modem = line_modem(line);
 	/* No input is accepted before modem/error-control readiness. */
 	if (modem->state != STATE_MODEM_ONLINE && modem->state != STATE_COMMAND_ONLINE)
@@ -1102,6 +1124,8 @@ enum sippymodem_result sippymodem_process(struct sippymodem_server *server,
 		if (datagrams >= RTP_ENDPOINT_MAX_DRAIN)
 			next = now_ns;
 		(void)modem_service_event(line_modem(line));
+		if (line->remote_closing && !modem_host_media_is_configured(line_host(line)))
+			end_call(line, SIPPYMODEM_DISCONNECT_REMOTE);
 		if (line->config.ec_policy == SIPPYMODEM_EC_REQUIRED &&
 		    !(line_modem(line)->dp != NULL && line_modem(line)->dp->id == DP_DS0 &&
 		      !line->config.ds0_lapm) && line->active &&

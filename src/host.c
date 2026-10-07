@@ -299,7 +299,19 @@ enum modem_host_result modem_host_step(
 	    !binding_failed)
 		return MODEM_HOST_SESSION_ERROR;
 
-	if (host->remote_clock) {
+	if (sip_session_receive_draining(host->session)) {
+		/* Retired media needs no wall-clock/gap hold. Keep the usual per-step
+		 * DSP budget, and never generate transport output during this drain. */
+		size_t tail = sip_session_receive_tail_frames(host->session);
+		if (tail > MEDIA_MAX_CATCHUP_FRAMES)
+			tail = MEDIA_MAX_CATCHUP_FRAMES;
+		host->last_audio_scheduler_result = audio_scheduler_step_remote(
+			&host->audio_scheduler, tail, &frames);
+		if (sip_session_receive_tail_frames(host->session) == 0) {
+			sip_session_finish_receive_tail(host->session);
+			synchronize_audio(host);
+		}
+	} else if (host->remote_clock) {
 		if (audio_scheduler_is_active(&host->audio_scheduler)) {
 			if (host->remote_time_valid && now_ns < host->remote_now_ns)
 				now_ns = host->remote_now_ns;
@@ -387,7 +399,8 @@ uint64_t modem_host_wait_ns(
 
 	if (host == NULL || !sip_session_is_open(host->session))
 		return UINT64_MAX;
-	if (sip_session_media_cleanup_pending(host->session))
+	if (sip_session_media_cleanup_pending(host->session) ||
+	    sip_session_receive_draining(host->session))
 		return 0;
 	if (host->remote_clock) {
 		if (host->remote_time_valid && now_ns < host->remote_now_ns)

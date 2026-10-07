@@ -10,7 +10,8 @@
 static bool forward_admit(void *context)
 {
 	struct sip_media_bridge *bridge = context;
-	if (bridge->endpoint->discard_pending)
+	if (bridge->endpoint->discard_pending || bridge->inactive_pending ||
+	    bridge->receive_draining)
 		return false;
 	if (bridge->destination.admit == NULL)
 		return true;
@@ -51,6 +52,8 @@ DEFINE_FORWARDER(forward_registration, registration_changed,
 		 struct sip_registration_event)
 DEFINE_FORWARDER(forward_call, call_changed,
 		 struct sip_call_event)
+DEFINE_FORWARDER(forward_media_changed, media_changed,
+		 struct sip_media_event)
 
 #undef DEFINE_FORWARDER
 
@@ -59,6 +62,16 @@ static void forward_media(
 {
 	struct sip_media_bridge *bridge = context;
 
+	/* SDK owners decide after the following call-IDLE callback. A hold or
+	 * local cancellation therefore still clears media without a receive tail. */
+	if (event->state == SIP_MEDIA_INACTIVE && bridge->media_configured &&
+	    bridge->destination.drain_received_media != NULL) {
+		bridge->last_binding = SIP_RTP_OK;
+		bridge->inactive_pending = true;
+		forward_media_changed(context, event);
+		return;
+	}
+	bridge->inactive_pending = bridge->receive_draining = false;
 	bridge->last_binding =
 		sip_rtp_apply(bridge->endpoint, event);
 	if (bridge->last_binding == SIP_RTP_OK) {
@@ -72,11 +85,7 @@ static void forward_media(
 	} else if (bridge->binding_failures != UINT64_MAX) {
 		bridge->binding_failures++;
 	}
-	if (bridge->destination.media_changed == NULL)
-		return;
-	bridge->callback_depth++;
-	bridge->destination.media_changed(bridge->destination.context, event);
-	bridge->callback_depth--;
+	forward_media_changed(context, event);
 }
 
 bool sip_media_bridge_init(
@@ -112,6 +121,21 @@ sip_media_bridge_callbacks(
 	return bridge != NULL ? &bridge->source : NULL;
 }
 
+bool sip_media_bridge_resolve_inactive(struct sip_media_bridge *bridge)
+{
+	if (bridge == NULL || !bridge->inactive_pending)
+		return false;
+	bridge->inactive_pending = false;
+	bridge->callback_depth++;
+	bool drain = bridge->destination.drain_received_media(bridge->destination.context);
+	bridge->callback_depth--;
+	if (drain)
+		bridge->receive_draining = true;
+	else
+		sip_media_bridge_clear_media(bridge);
+	return drain;
+}
+
 void sip_media_bridge_clear_media(
 	struct sip_media_bridge *bridge)
 {
@@ -119,6 +143,7 @@ void sip_media_bridge_clear_media(
 		return;
 	rtp_endpoint_clear_remote(bridge->endpoint);
 	bridge->media_configured = false;
+	bridge->inactive_pending = bridge->receive_draining = false;
 }
 
 void sip_media_bridge_trace_media(struct sip_media_bridge *bridge, uint64_t now_ns)

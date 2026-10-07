@@ -182,6 +182,10 @@ enum sip_session_result sip_session_step(
 			       &session->bridge) != binding_failures ?
 			       SIP_SESSION_MEDIA_BINDING_ERROR :
 			       SIP_SESSION_OK;
+	bool begin_tail = sip_media_bridge_resolve_inactive(&session->bridge);
+	/* Freeze after one bounded drain. Later RTP cannot extend a retired call. */
+	if (session->bridge.receive_draining && !begin_tail)
+		return SIP_SESSION_OK;
 	session->last_rtp_result =
 		rtp_runtime_drain(session->rtp, datagrams_received);
 	if (session->last_rtp_result != RTP_ENDPOINT_OK)
@@ -239,8 +243,13 @@ enum sip_signaling_result sip_session_hangup(
 {
 	if (session == NULL || !session->opened)
 		return not_open_result(session);
+	/* Explicit cancellation remains immediate, including an active RX tail. */
+	if (session->bridge.receive_draining || session->bridge.inactive_pending)
+		sip_media_bridge_clear_media(&session->bridge);
 	session->last_signaling_result =
 		sip_signaling_hangup(session->signaling);
+	if (session->bridge.inactive_pending)
+		sip_media_bridge_clear_media(&session->bridge);
 	finish_deferred_signaling(session);
 	return session->last_signaling_result;
 }
@@ -286,6 +295,23 @@ bool sip_session_pad_clock_frame(struct sip_session *session)
 	return session != NULL && rtp_runtime_pad_clock_frame(session->rtp);
 }
 
+bool sip_session_receive_draining(const struct sip_session *session)
+{
+	return session != NULL && session->bridge.receive_draining;
+}
+
+size_t sip_session_receive_tail_frames(const struct sip_session *session)
+{
+	return sip_session_receive_draining(session) ?
+		rtp_runtime_receive_tail_frames(session->rtp) : 0;
+}
+
+void sip_session_finish_receive_tail(struct sip_session *session)
+{
+	if (sip_session_receive_draining(session))
+		sip_media_bridge_clear_media(&session->bridge);
+}
+
 bool sip_session_is_open(const struct sip_session *session)
 {
 	return session != NULL && session->opened;
@@ -312,6 +338,9 @@ enum media_result sip_session_play(
 enum rtp_endpoint_result sip_session_send(
 	struct sip_session *session, const int16_t *samples, size_t count)
 {
+	if (sip_session_receive_draining(session))
+		return samples != NULL && count == rtp_runtime_frame_samples(session->rtp) ?
+			RTP_ENDPOINT_OK : RTP_ENDPOINT_INVALID_ARGUMENT;
 	return session != NULL ?
 		       rtp_runtime_send(session->rtp, samples, count) :
 		       RTP_ENDPOINT_INVALID_ARGUMENT;
@@ -321,6 +350,10 @@ enum rtp_endpoint_result sip_session_send_g711(
 	struct sip_session *session, const uint8_t *codewords,
 	const int16_t *decoded_samples, size_t count)
 {
+	if (sip_session_receive_draining(session))
+		return codewords != NULL && decoded_samples != NULL &&
+		       count == rtp_runtime_frame_samples(session->rtp) ?
+			RTP_ENDPOINT_OK : RTP_ENDPOINT_INVALID_ARGUMENT;
 	return session != NULL ?
 		       rtp_runtime_send_g711(
 			       session->rtp, codewords, decoded_samples, count) :

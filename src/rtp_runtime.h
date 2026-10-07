@@ -36,6 +36,8 @@ uint16_t rtp_runtime_local_port(
 enum rtp_endpoint_result rtp_runtime_drain(
 	struct rtp_runtime *runtime,
 	size_t *datagrams_received);
+/* Complete/partial frames of already buffered audio, including prefill. */
+size_t rtp_runtime_receive_tail_frames(const struct rtp_runtime *runtime);
 /* Complete frames of remote RTP time observed by the most recent drain. */
 size_t rtp_runtime_remote_clock_frames(
 	const struct rtp_runtime *runtime);

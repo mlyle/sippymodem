@@ -173,6 +173,11 @@ bytes and polling completion. `OK` is idempotent: all accepted payload has been
 acknowledged by LAPM, or the raw encoder and modulator tail has been emitted.
 Raw completion cannot guarantee receipt by the remote application.
 
+On remote SIP disconnect, the native owner drains accepted receive audio before
+returning `CLOSED` from an empty RX queue. This work is bounded per `process` call;
+keep processing and reading during disconnect. Local `hangup` still cancels
+immediately.
+
 `tx_pending == 0` is insufficient: compression, framing and unacknowledged data
 are outside that count. Completion preserves carrier, RX and online COMMAND.
 After `OK`, hang up explicitly. Use an application deadline and immediate
