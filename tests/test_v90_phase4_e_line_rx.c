@@ -8,6 +8,7 @@
 #include <v90_upstream_rx.h>
 
 #include "test.h"
+#include "v34_state_fixture.h"
 #include "v90_phase4_line_fixture.h"
 
 #include <string.h>
@@ -131,14 +132,14 @@ static bool verify_online_marker(
 		CHECK(v34_data_line_receiver_sample(
 			      &rejected, 123, NULL, &received) ==
 			      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
-		      memcmp(&rejected, &saved, sizeof(rejected)) == 0,
+		      v34_data_line_receivers_equal(&rejected, &saved),
 		      "invalid data sample changed the physical receiver");
 		rejected.failed = true;
 		saved = rejected;
 		CHECK(v34_data_line_receiver_sample(
 			      &rejected, 123, &current, &received) ==
 			      V34_DATA_RECEIVE_FAILED &&
-		      memcmp(&rejected, &saved, sizeof(rejected)) == 0,
+		      v34_data_line_receivers_equal(&rejected, &saved),
 		      "failed data receiver consumed another sample");
 	}
 	CHECK(v90_phase3_return_line_tx_init_rrn(

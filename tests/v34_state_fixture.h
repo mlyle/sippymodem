@@ -2,6 +2,7 @@
 #ifndef V34_STATE_FIXTURE_H
 #define V34_STATE_FIXTURE_H
 
+#include <v34_data_line_receiver.h>
 #include <v34_mapping_parameters.h>
 #include <v34_training_line.h>
 #include "qam_state_fixture.h"
@@ -42,6 +43,46 @@ static inline void v34_snapshot_parameters(
 	COPY(expanded_shaping);
 #undef COPY
 	memcpy(parameters, bytes, sizeof(bytes));
+}
+
+static inline void v34_snapshot_data_receiver(
+	struct v34_data_line_receiver *receiver)
+{
+	struct v34_data_channel_receiver *data = &receiver->decisions.data_receiver;
+	struct v34_channel_frame_decoder *decoder =
+		&data->channel_receiver.frame_decoder;
+	struct v34_adaptive_equalizer_observation *observation =
+		&receiver->decisions.first_observation;
+	unsigned char bytes[sizeof(*observation)] = { 0 };
+
+	v34_snapshot_geometry(&receiver->geometry);
+	v34_snapshot_geometry(&decoder->channel_decoder.geometry);
+	v34_snapshot_geometry(&decoder->channel_schedule.geometry);
+	v34_snapshot_geometry(&data->data_receiver.schedule.geometry);
+	v34_snapshot_parameters(&decoder->channel_decoder.parameters);
+	v34_snapshot_parameters(
+		&data->channel_receiver.conditioner.normalizer.parameters);
+	v34_snapshot_parameters(&data->data_receiver.mapping_decoder.parameters);
+#define COPY(field) memcpy(bytes + offsetof(struct v34_adaptive_equalizer_observation, field), \
+	&observation->field, sizeof(observation->field))
+	COPY(decision);
+	COPY(epoch);
+	COPY(lineage);
+#undef COPY
+	memcpy(observation, bytes, sizeof(bytes));
+}
+
+static inline bool v34_data_line_receivers_equal(
+	const struct v34_data_line_receiver *left,
+	const struct v34_data_line_receiver *right)
+{
+	struct v34_data_line_receiver snapshots[2];
+
+	memcpy(&snapshots[0], left, sizeof(*left));
+	memcpy(&snapshots[1], right, sizeof(*right));
+	v34_snapshot_data_receiver(&snapshots[0]);
+	v34_snapshot_data_receiver(&snapshots[1]);
+	return memcmp(&snapshots[0], &snapshots[1], sizeof(*left)) == 0;
 }
 
 static inline bool v34_pulse_states_equal(

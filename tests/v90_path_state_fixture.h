@@ -101,33 +101,6 @@ static inline bool v90_analog_path_states_equal(
 	       memcmp(&a, &b, sizeof(a)) == 0;
 }
 
-static inline void v90_snapshot_data_receiver(
-	struct v34_data_line_receiver *receiver)
-{
-	struct v34_data_channel_receiver *data = &receiver->decisions.data_receiver;
-	struct v34_channel_frame_decoder *decoder =
-		&data->channel_receiver.frame_decoder;
-	struct v34_adaptive_equalizer_observation *observation =
-		&receiver->decisions.first_observation;
-	unsigned char bytes[sizeof(*observation)] = { 0 };
-
-	v34_snapshot_geometry(&receiver->geometry);
-	v34_snapshot_geometry(&decoder->channel_decoder.geometry);
-	v34_snapshot_geometry(&decoder->channel_schedule.geometry);
-	v34_snapshot_geometry(&data->data_receiver.schedule.geometry);
-	v34_snapshot_parameters(&decoder->channel_decoder.parameters);
-	v34_snapshot_parameters(
-		&data->channel_receiver.conditioner.normalizer.parameters);
-	v34_snapshot_parameters(&data->data_receiver.mapping_decoder.parameters);
-#define COPY(field) memcpy(bytes + offsetof(struct v34_adaptive_equalizer_observation, field), \
-	&observation->field, sizeof(observation->field))
-	COPY(decision);
-	COPY(epoch);
-	COPY(lineage);
-#undef COPY
-	memcpy(observation, bytes, sizeof(bytes));
-}
-
 static inline bool v90_digital_path_states_equal(
 	const struct v90_digital_path *left, const struct v90_digital_path *right)
 {
@@ -152,9 +125,9 @@ static inline bool v90_digital_path_states_equal(
 			v34_snapshot_parameters(&rx->calibration.encoder.parameters);
 			if (rx->stage == V90_UPSTREAM_RX_STAGE_B1 ||
 			    rx->stage == V90_UPSTREAM_RX_STAGE_COMPLETE)
-				v90_snapshot_data_receiver(&rx->state.data);
+				v34_snapshot_data_receiver(&rx->state.data);
 		} else if (path->upstream_stage == V90_DIGITAL_PATH_UPSTREAM_DATA) {
-			v90_snapshot_data_receiver(&path->upstream.data);
+			v34_snapshot_data_receiver(&path->upstream.data);
 			memset((unsigned char *)&path->upstream +
 				       sizeof(path->upstream.data), 0,
 			       sizeof(path->upstream) - sizeof(path->upstream.data));
