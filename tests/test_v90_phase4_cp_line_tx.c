@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
+#include "v34_state_fixture.h"
 #include <v90_phase4_cp_line_tx.h>
 #include <v90_phase4_e_line_tx.h>
 
@@ -67,6 +68,23 @@ static struct qam_point warmup_point(size_t point_index)
 		.in_phase = point_index % 2u == 0 ? 0.5 : -0.5,
 		.quadrature = point_index % 3u == 0 ? 0.5 : -0.5,
 	};
+}
+
+static bool cp_lines_are_equal(
+	const struct v90_phase4_cp_line_tx *left,
+	const struct v90_phase4_cp_line_tx *right)
+{
+	return v34_training_lines_equal(&left->line, &right->line) &&
+	       memcmp(&left->symbols, &right->symbols, sizeof(left->symbols)) == 0;
+}
+
+static bool e_lines_are_equal(
+	const struct v90_phase4_e_line_tx *left,
+	const struct v90_phase4_e_line_tx *right)
+{
+	return v34_training_lines_equal(&left->line, &right->line) &&
+	       memcmp(&left->sequence, &right->sequence, sizeof(left->sequence)) == 0 &&
+	       memcmp(&left->cp, &right->cp, sizeof(left->cp)) == 0;
 }
 
 static bool advance_to_nontrivial_boundary(
@@ -231,7 +249,7 @@ static bool verify_online_resume(
 		      &resumed, &online_line, &control_symbols,
 		      resumed_constellation,
 		      &next_parameters) == V90_PHASE4_CP_LINE_TX_OK &&
-	      memcmp(&resumed.line, &online_line, sizeof(online_line)) == 0 &&
+	      v34_training_lines_equal(&resumed.line, &online_line) &&
 	      memcmp(&resumed.symbols, &model_symbols,
 		     sizeof(model_symbols)) == 0,
 	      "online CP resume did not preserve line and control histories");
@@ -248,8 +266,7 @@ static bool verify_online_resume(
 		      v90_phase4_cp_line_tx_sample(&resumed, &actual) ==
 			      V90_PHASE4_CP_LINE_TX_OK &&
 		      actual == expected &&
-		      memcmp(&resumed.line, &model_line,
-			     sizeof(model_line)) == 0 &&
+		      v34_training_lines_equal(&resumed.line, &model_line) &&
 		      memcmp(&resumed.symbols, &model_symbols,
 			     sizeof(model_symbols)) == 0,
 		      "online CP continuation diverged at sample %zu",
@@ -331,7 +348,7 @@ static bool verify_scr_bridge(
 			      &tx, false, &actual) ==
 			      V90_PHASE4_CP_LINE_TX_OK &&
 		      actual == expected &&
-		      memcmp(&tx.line, &model_line, sizeof(model_line)) == 0 &&
+		      v34_training_lines_equal(&tx.line, &model_line) &&
 		      memcmp(&tx.symbols, &model_symbols,
 			     sizeof(model_symbols)) == 0 &&
 		      !v34_training_line_needs_point(&tx.line),
@@ -350,7 +367,7 @@ static bool verify_scr_bridge(
 			      &tx, true, &actual) ==
 			      V90_PHASE4_CP_LINE_TX_OK &&
 		      actual == expected &&
-		      memcmp(&tx.line, &model_line, sizeof(model_line)) == 0 &&
+		      v34_training_lines_equal(&tx.line, &model_line) &&
 		      memcmp(&tx.symbols, &model_symbols,
 			     sizeof(model_symbols)) == 0,
 		      "SCR tail diverged at sample %zu", sample_index);
@@ -362,7 +379,7 @@ static bool verify_scr_bridge(
 		CHECK(v90_phase4_cp_line_tx_scr_sample(
 			      &tx, true, &sample) ==
 			      V90_PHASE4_CP_LINE_TX_COMPLETE &&
-		      memcmp(&tx, &saved, sizeof(tx)) == 0 && sample == 1234,
+		      cp_lines_are_equal(&tx, &saved) && sample == 1234,
 		      "completed SCR emitted an extra sample");
 	}
 	CHECK(v90_phase4_cp_line_tx_start_next_record(&tx, &data) ==
@@ -378,7 +395,7 @@ static bool verify_scr_bridge(
 		      v90_phase4_cp_line_tx_sample(&tx, &actual) ==
 			      V90_PHASE4_CP_LINE_TX_OK &&
 		      actual == expected &&
-		      memcmp(&tx.line, &model_line, sizeof(model_line)) == 0 &&
+		      v34_training_lines_equal(&tx.line, &model_line) &&
 		      memcmp(&tx.symbols, &model_symbols,
 			     sizeof(model_symbols)) == 0,
 		      "CP after SCR diverged at sample %zu", sample_index);
@@ -426,7 +443,7 @@ static bool verify_continuation(
 	      v90_phase4_cp_line_tx_init(
 		      &tx, &source, constellation, &training) ==
 		      V90_PHASE4_CP_LINE_TX_OK &&
-	      memcmp(&tx.line, &source, sizeof(source)) == 0 &&
+	      v34_training_lines_equal(&tx.line, &source) &&
 	      memcmp(&tx.symbols, &model_symbols,
 		     sizeof(model_symbols)) == 0,
 	      "CP line did not preserve its incoming state");
@@ -444,8 +461,7 @@ static bool verify_continuation(
 		      v90_phase4_cp_line_tx_sample(&tx, &actual) ==
 			      V90_PHASE4_CP_LINE_TX_OK &&
 		      actual == expected &&
-		      memcmp(&tx.line, &model_line,
-			     sizeof(model_line)) == 0 &&
+		      v34_training_lines_equal(&tx.line, &model_line) &&
 		      memcmp(&tx.symbols, &model_symbols,
 			     sizeof(model_symbols)) == 0,
 		      "CP waveform diverged at sample %zu", sample_index);
@@ -473,7 +489,7 @@ static bool verify_continuation(
 	      v90_phase4_cp_line_tx_record_is_complete(&tx) &&
 	      v90_phase4_cp_line_tx_handoff(&tx, &handoff) ==
 		      V90_PHASE4_CP_LINE_TX_OK &&
-	      memcmp(&handoff, &model_line, sizeof(handoff)) == 0,
+	      v34_training_lines_equal(&handoff, &model_line),
 	      "CP line did not preserve its final handoff");
 	CHECK(v34_phase4_e_sequence_init(
 		      &model_e, &model_symbols.scrambler,
@@ -482,7 +498,7 @@ static bool verify_continuation(
 		      V34_PHASE4_E_SEQUENCE_OK &&
 	      v90_phase4_e_line_tx_init(&e, &tx) ==
 		      V90_PHASE4_E_LINE_TX_OK &&
-	      memcmp(&e.line, &model_line, sizeof(model_line)) == 0 &&
+	      v34_training_lines_equal(&e.line, &model_line) &&
 	      memcmp(&e.sequence, &model_e, sizeof(model_e)) == 0 &&
 	      e.cp.kind == V90_CP_DATA && e.cp.acknowledges_peer &&
 	      !e.cp.request_silence,
@@ -497,7 +513,7 @@ static bool verify_continuation(
 		      v90_phase4_e_line_tx_sample(&e, &actual) ==
 			      V90_PHASE4_E_LINE_TX_OK &&
 		      actual == expected &&
-		      memcmp(&e.line, &model_line, sizeof(model_line)) == 0 &&
+		      v34_training_lines_equal(&e.line, &model_line) &&
 		      memcmp(&e.sequence, &model_e, sizeof(model_e)) == 0,
 		      "E waveform diverged at sample %zu", sample_index);
 	}
@@ -505,7 +521,7 @@ static bool verify_continuation(
 	      v34_phase4_e_sequence_is_complete(&model_e) &&
 	      v90_phase4_e_line_tx_handoff(&e, &e_handoff) ==
 		      V90_PHASE4_E_LINE_TX_OK &&
-	      memcmp(&e_handoff, &model_line, sizeof(model_line)) == 0,
+	      v34_training_lines_equal(&e_handoff, &model_line),
 	      "E did not preserve its final line handoff");
 	{
 		struct v90_phase4_cp_line_tx saved = tx;
@@ -514,12 +530,12 @@ static bool verify_continuation(
 
 		CHECK(v90_phase4_cp_line_tx_sample(&tx, &sample) ==
 			      V90_PHASE4_CP_LINE_TX_COMPLETE &&
-		      memcmp(&tx, &saved, sizeof(tx)) == 0 &&
+		      cp_lines_are_equal(&tx, &saved) &&
 		      sample == 1234,
 		      "completed CP line emitted an extra sample");
 		CHECK(v90_phase4_e_line_tx_sample(&e, &sample) ==
 			      V90_PHASE4_E_LINE_TX_COMPLETE &&
-		      memcmp(&e, &saved_e, sizeof(e)) == 0 &&
+		      e_lines_are_equal(&e, &saved_e) &&
 		      sample == 1234,
 		      "completed E line emitted an extra sample");
 	}
@@ -611,7 +627,7 @@ static bool test_transactional_contracts(void)
 			      &resumed, &line, &resumed.symbols,
 			      V34_CONSTELLATION_4_POINT, &data) ==
 			      V90_PHASE4_CP_LINE_TX_INVALID_ARGUMENT &&
-		      memcmp(&resumed, &saved, sizeof(resumed)) == 0,
+		      cp_lines_are_equal(&resumed, &saved),
 		      "overlapping online resume changed its destination");
 		CHECK(v34_training_line_sample(
 			      &mid_point, &point, &sample, &accepted) ==
@@ -668,8 +684,8 @@ static bool test_transactional_contracts(void)
 		      V90_PHASE4_CP_LINE_TX_INVALID_ARGUMENT &&
 	      v90_phase4_cp_line_tx_handoff(&tx, &saved_line) ==
 		      V90_PHASE4_CP_LINE_TX_INVALID_STATE &&
-	      memcmp(&tx, &saved, sizeof(tx)) == 0 &&
-	      memcmp(&saved_line, &line, sizeof(line)) == 0 &&
+	      cp_lines_are_equal(&tx, &saved) &&
+	      v34_training_lines_equal(&saved_line, &line) &&
 	      sample == 777,
 	      "rejected CP line operation changed state or output");
 	CHECK(v34_training_line_sample(
@@ -699,8 +715,8 @@ static bool test_transactional_contracts(void)
 	      v90_phase4_cp_line_tx_handoff(&tx, &line) == V90_PHASE4_CP_LINE_TX_INVALID_ARGUMENT &&
 	      v90_phase4_cp_line_tx_resume_online(&untouched, &tx.line, &tx.symbols,
 		      V34_CONSTELLATION_4_POINT, &data) == V90_PHASE4_CP_LINE_TX_INVALID_ARGUMENT &&
-	      memcmp(&tx, &saved, sizeof(tx)) == 0 && sample == 777 &&
-	      memcmp(&line, &saved_line, sizeof(line)) == 0 &&
+	      cp_lines_are_equal(&tx, &saved) && sample == 777 &&
+	      v34_training_lines_equal(&line, &saved_line) &&
 	      memcmp(&untouched, &untouched_saved, sizeof(untouched)) == 0,
 	      "invalid complete record bypassed CP line validation");
 	tx.symbols.frame[0] ^= 1u;
