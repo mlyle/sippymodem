@@ -424,13 +424,6 @@ static bool test_contracts(void)
 			     sizeof(untouched_direction)) == 0,
 		      "control CP %u entered ordinary upstream data or changed output", control);
 	}
-	CHECK(strcmp(v90_upstream_data_result_name(
-		     V90_UPSTREAM_DATA_CLIPPING_RISK),
-		     "clipping risk") == 0 &&
-	      strcmp(v90_upstream_data_result_name(
-		     (enum v90_upstream_data_result)99),
-		     "unknown") == 0,
-	      "upstream result names changed");
 	return true;
 }
 

@@ -32,9 +32,6 @@ enum v90_upstream_data_result v90_upstream_data_start_after_e(
 	const struct v90_phase4_e_line_tx *completed_e,
 	const struct v90_mp_record *peer_mp);
 
-const char *v90_upstream_data_result_name(
-	enum v90_upstream_data_result result);
-
 /* Start conventional upstream B1/data reception after the analogue modem's
  * E sequence. MP is the record sent by this digital modem. */
 enum v90_upstream_data_result v90_upstream_rx_start_after_e(

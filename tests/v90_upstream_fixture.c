@@ -75,27 +75,3 @@ enum v90_upstream_data_result v90_upstream_data_start_after_e(
 	return stream_result(v34_data_stream_continue_b1(
 		stream, &completed_e->line, &configuration));
 }
-
-const char *v90_upstream_data_result_name(
-	enum v90_upstream_data_result result)
-{
-	switch (result) {
-	case V90_UPSTREAM_DATA_OK:
-		return "ok";
-	case V90_UPSTREAM_DATA_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V90_UPSTREAM_DATA_INVALID_STATE:
-		return "invalid state";
-	case V90_UPSTREAM_DATA_INVALID_PARAMETERS:
-		return "invalid parameters";
-	case V90_UPSTREAM_DATA_NO_COMMON_RATE:
-		return "no common rate";
-	case V90_UPSTREAM_DATA_OUT_OF_RANGE:
-		return "out of range";
-	case V90_UPSTREAM_DATA_CLIPPING_RISK:
-		return "clipping risk";
-	case V90_UPSTREAM_DATA_NUMERIC_FAILURE:
-		return "numeric failure";
-	}
-	return "unknown";
-}
