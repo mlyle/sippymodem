@@ -5,6 +5,7 @@
 #include <g711.h>
 
 #include "v34_phase2_test_pair.h"
+#include "v34_phase2_state_fixture.h"
 #include "test.h"
 
 #include <stdint.h>
@@ -674,10 +675,8 @@ static bool check_probe_turnaround(
 			      PHASE2_PROBE_TURNAROUND_EVENT_NONE &&
 		      event.answerer.turnaround.kind ==
 			      PHASE2_PROBE_TURNAROUND_EVENT_NONE &&
-		      memcmp(&pair.caller.turnaround, &caller_terminal,
-			     sizeof(caller_terminal)) == 0 &&
-		      memcmp(&pair.answerer.turnaround, &answerer_terminal,
-			     sizeof(answerer_terminal)) == 0,
+		      v34_probe_turnarounds_equal(&pair.caller.turnaround, &caller_terminal) &&
+		      v34_probe_turnarounds_equal(&pair.answerer.turnaround, &answerer_terminal),
 		      "ready turnaround was not silent and stable");
 	}
 	return true;
@@ -964,7 +963,7 @@ static bool test_bounded_failures(void)
 		      PHASE2_INITIAL_PROBE_OK &&
 	      transmit == 0 &&
 	      event.kind == PHASE2_INITIAL_PROBE_EVENT_NONE &&
-	      memcmp(&caller, &failed, sizeof(caller)) == 0,
+	      v34_initial_probes_equal(&caller, &failed),
 	      "failed controller did not remain silent and stable");
 
 	CHECK(v34_phase2_initial_probe_init(
@@ -1112,7 +1111,7 @@ static bool test_validation(void)
 	      v34_phase2_initial_probe_sample(
 		      &probe, 0, &transmit, NULL) ==
 		      PHASE2_INITIAL_PROBE_INVALID_ARGUMENT &&
-	      memcmp(&probe, &before, sizeof(probe)) == 0 &&
+	      v34_initial_probes_equal(&probe, &before) &&
 	      memcmp(&event, &event_before, sizeof(event)) == 0 &&
 	      transmit == 1234,
 	      "invalid sample output was not transactional");
@@ -1130,7 +1129,7 @@ static bool test_validation(void)
 		CHECK(!v34_phase2_initial_probe_is_valid(&invalid) &&
 		      v34_phase2_initial_probe_sample(&invalid, 0, &transmit, &event) ==
 			      PHASE2_INITIAL_PROBE_INVALID_ARGUMENT &&
-		      memcmp(&invalid, &before, sizeof(before)) == 0 &&
+		      v34_initial_probes_equal(&invalid, &before) &&
 		      memcmp(&event, &event_before, sizeof(event)) == 0 && transmit == 1234,
 		      "active initial probe accepted failure %d or changed outputs", failure);
 	}
@@ -1201,7 +1200,7 @@ static bool test_turnaround_failures_and_validation(void)
 		      PHASE2_PROBE_TURNAROUND_OK &&
 	      transmit == 0 &&
 	      event.kind == PHASE2_PROBE_TURNAROUND_EVENT_NONE &&
-	      memcmp(&caller, &before, sizeof(caller)) == 0,
+	      v34_probe_turnarounds_equal(&caller, &before),
 	      "probe-ready caller was not silent and stable");
 
 	for (samples = 0;
@@ -1259,7 +1258,7 @@ static bool test_turnaround_failures_and_validation(void)
 	      v34_phase2_probe_turnaround_sample(
 		      &caller, 0, &transmit, NULL) ==
 		      PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT &&
-	      memcmp(&caller, &before, sizeof(caller)) == 0 &&
+	      v34_probe_turnarounds_equal(&caller, &before) &&
 	      memcmp(&event, &event_before, sizeof(event)) == 0 &&
 	      transmit == 1234,
 	      "invalid turnaround sample output was not transactional");

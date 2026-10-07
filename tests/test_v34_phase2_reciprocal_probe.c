@@ -3,6 +3,7 @@
 #include <v34_phase2_reciprocal_probe.h>
 
 #include "v34_phase2_test_pair.h"
+#include "v34_phase2_state_fixture.h"
 #include "test.h"
 
 #include <stdint.h>
@@ -279,8 +280,7 @@ static bool check_reciprocal_probe(
 			      PHASE2_RECIPROCAL_PROBE_EVENT_NONE &&
 		      event.answerer.reciprocal_probe.kind ==
 			      PHASE2_RECIPROCAL_PROBE_EVENT_NONE &&
-		      memcmp(&pair.caller.reciprocal_probe, &caller_terminal,
-			     sizeof(caller_terminal)) == 0,
+		      v34_reciprocal_probes_equal(&pair.caller.reciprocal_probe, &caller_terminal),
 		      "reciprocal-probe terminal behavior changed");
 	}
 	return true;
@@ -570,7 +570,7 @@ static bool test_bounded_failures(void)
 		      PHASE2_RECIPROCAL_PROBE_OK &&
 	      transmit == 0 &&
 	      event.kind == PHASE2_RECIPROCAL_PROBE_EVENT_NONE &&
-	      memcmp(&caller, &terminal, sizeof(caller)) == 0,
+	      v34_reciprocal_probes_equal(&caller, &terminal),
 	      "failed caller was not silent and stable");
 
 	answerer_start_elapsed =
@@ -723,7 +723,7 @@ static bool test_validation(void)
 	      v34_phase2_reciprocal_probe_sample(
 		      &probe, 0, &transmit, NULL) ==
 		      PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT &&
-	      memcmp(&probe, &before, sizeof(probe)) == 0 &&
+	      v34_reciprocal_probes_equal(&probe, &before) &&
 	      memcmp(&event, &event_before, sizeof(event)) == 0 &&
 	      transmit == 1234,
 	      "invalid reciprocal-probe sample output was not transactional");
@@ -737,7 +737,7 @@ static bool test_validation(void)
 		CHECK(!v34_phase2_reciprocal_probe_is_valid(&invalid) &&
 		      v34_phase2_reciprocal_probe_sample(&invalid, 0, &transmit, &event) ==
 			      PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT &&
-		      memcmp(&invalid, &before, sizeof(before)) == 0 &&
+		      v34_reciprocal_probes_equal(&invalid, &before) &&
 		      memcmp(&event, &event_before, sizeof(event)) == 0 && transmit == 1234,
 		      "active reciprocal probe accepted failure %d or changed outputs", failure);
 	}
