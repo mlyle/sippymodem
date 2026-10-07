@@ -3,6 +3,7 @@
 #include "v34_phase4_e_sequence.h"
 
 #include "v34_training_symbol.h"
+#include "memory_region.h"
 
 #include <stddef.h>
 
@@ -89,9 +90,16 @@ v34_phase4_e_sequence_next(
 	struct qam_point next_point;
 	uint8_t next_quarter_point;
 
+	const struct memory_region regions[] = {
+		{ sequence, sizeof(*sequence) }, { point, sizeof(*point) },
+		{ quarter_point, sizeof(*quarter_point) },
+		{ clockwise_quarter_turns, sizeof(*clockwise_quarter_turns) },
+	};
+
 	if (!v34_phase4_e_sequence_is_valid(sequence) ||
 	    point == NULL || quarter_point == NULL ||
-	    clockwise_quarter_turns == NULL)
+	    clockwise_quarter_turns == NULL ||
+	    memory_region_set_overlaps(regions, sizeof(regions) / sizeof(regions[0])))
 		return V34_PHASE4_E_SEQUENCE_INVALID_ARGUMENT;
 	if (sequence->emitted_bits == V34_PHASE4_E_BITS)
 		return V34_PHASE4_E_SEQUENCE_COMPLETE;

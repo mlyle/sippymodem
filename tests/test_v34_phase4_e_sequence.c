@@ -377,6 +377,22 @@ static bool test_validation(void)
 	      quarter == UINT8_MAX && rotation == UINT8_MAX,
 	      "invalid E emission mutated state or outputs");
 
+	CHECK(v34_phase4_e_sequence_next(
+		      &sequence, &point,
+		      (uint8_t *)&point + sizeof(point.in_phase) - 1u,
+		      &rotation) == V34_PHASE4_E_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_phase4_e_sequence_next(
+		      &sequence, &point, &rotation, &rotation) ==
+		      V34_PHASE4_E_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_phase4_e_sequence_next(
+		      &sequence, &point,
+		      &sequence.previous_clockwise_quarter_turns,
+		      &rotation) == V34_PHASE4_E_SEQUENCE_INVALID_ARGUMENT &&
+	      sequences_are_equal(&sequence, &saved) &&
+	      point.in_phase == 7.0 && point.quadrature == -9.0 &&
+	      quarter == UINT8_MAX && rotation == UINT8_MAX,
+	      "overlapping E emission changed state or outputs");
+
 	sequence = saved;
 	sequence.emitted_bits = 1;
 	CHECK(!v34_phase4_e_sequence_is_valid(&sequence),

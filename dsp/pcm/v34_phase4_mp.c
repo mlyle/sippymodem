@@ -3,6 +3,7 @@
 #include "v34_phase4_mp.h"
 
 #include "v34_training_symbol.h"
+#include "memory_region.h"
 
 #include "packed_bits.h"
 
@@ -250,9 +251,17 @@ enum v34_phase4_mp_result v34_phase4_mp_next(
 	uint8_t next_quarter_point;
 	bool complete;
 
+	const struct memory_region regions[] = {
+		{ transmitter, sizeof(*transmitter) }, { point, sizeof(*point) },
+		{ quarter_point, sizeof(*quarter_point) },
+		{ clockwise_quarter_turns, sizeof(*clockwise_quarter_turns) },
+		{ record_complete, sizeof(*record_complete) },
+	};
+
 	if (!v34_phase4_mp_is_valid(transmitter) ||
 	    point == NULL || quarter_point == NULL ||
-	    clockwise_quarter_turns == NULL || record_complete == NULL)
+	    clockwise_quarter_turns == NULL || record_complete == NULL ||
+	    memory_region_set_overlaps(regions, sizeof(regions) / sizeof(regions[0])))
 		return V34_PHASE4_MP_INVALID_ARGUMENT;
 	if (transmitter->bit_index == transmitter->frame_bit_count)
 		return V34_PHASE4_MP_RECORD_COMPLETE;

@@ -71,8 +71,8 @@ v34_phase4_mp_start_next_type1_record(
 	struct v34_phase4_mp *transmitter,
 	const struct v34_mp_type1_parameters *parameters);
 
-/* Emit one 2D symbol. record_complete accompanies the final symbol. Rejected
- * calls leave state and every output unchanged. */
+/* Emit one 2D symbol. record_complete accompanies the final symbol. Owner
+ * and output regions must be disjoint. Rejected calls leave all unchanged. */
 enum v34_phase4_mp_result v34_phase4_mp_next(
 	struct v34_phase4_mp *transmitter,
 	struct qam_point *point, uint8_t *quarter_point,

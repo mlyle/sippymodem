@@ -855,6 +855,25 @@ static bool test_validation(void)
 	      quarter == UINT8_MAX && rotation == UINT8_MAX && complete,
 	      "invalid MP emission mutated state or outputs");
 
+	CHECK(v34_phase4_mp_next(
+		      &transmitter, &point,
+		      (uint8_t *)&point + sizeof(point.in_phase) - 1u,
+		      &rotation, &complete) == V34_PHASE4_MP_INVALID_ARGUMENT &&
+	      v34_phase4_mp_next(
+		      &transmitter, &point, &rotation, &rotation, &complete) ==
+		      V34_PHASE4_MP_INVALID_ARGUMENT &&
+	      v34_phase4_mp_next(
+		      &transmitter, &point,
+		      &transmitter.previous_clockwise_quarter_turns,
+		      &rotation, &complete) == V34_PHASE4_MP_INVALID_ARGUMENT &&
+	      v34_phase4_mp_next(
+		      &transmitter, &point, &quarter, &rotation,
+		      (bool *)&point) == V34_PHASE4_MP_INVALID_ARGUMENT &&
+	      transmitters_are_equal(&transmitter, &saved) &&
+	      point.in_phase == 7.0 && point.quadrature == -9.0 &&
+	      quarter == UINT8_MAX && rotation == UINT8_MAX && complete,
+	      "overlapping MP emission changed state or outputs");
+
 	for (unsigned int position = 0; position < 3u; ++position) {
 		struct v34_phase4_mp corrupt = saved;
 		struct v34_phase4_mp before;

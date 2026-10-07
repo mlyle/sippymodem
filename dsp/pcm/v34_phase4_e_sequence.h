@@ -69,8 +69,8 @@ bool v34_phase4_e_sequence_is_valid(
 bool v34_phase4_e_sequence_is_complete(
 	const struct v34_phase4_e_sequence *sequence);
 
-/* Emit one symbol from the fixed 20-bit sequence. Rejected calls leave state
- * and every output unchanged. */
+/* Emit one symbol from the fixed 20-bit sequence. Owner and output regions
+ * must be disjoint. Rejected calls leave state and every output unchanged. */
 enum v34_phase4_e_sequence_result
 v34_phase4_e_sequence_next(
 	struct v34_phase4_e_sequence *sequence,
