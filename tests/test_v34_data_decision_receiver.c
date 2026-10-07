@@ -6,6 +6,7 @@
 #include <v34_symbol_power.h>
 
 #include "test.h"
+#include "v34_mapping_fixture.h"
 #include "v34_state_fixture.h"
 
 #include <limits.h>
@@ -96,7 +97,7 @@ static bool initialize_fixture(
 		.lineage = UINT64_C(14695981039346656037),
 	};
 
-	if (v34_data_mapping_prepare(
+	if (v34_prepare_mapping_fixture(
 		    &initialized.mapping, &profile, &parameters,
 		    configuration->auxiliary) != V34_DATA_MAPPING_OK ||
 	    v34_data_decision_receiver_init(

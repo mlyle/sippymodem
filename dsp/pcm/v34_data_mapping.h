@@ -42,13 +42,4 @@ enum v34_data_mapping_result v34_data_mapping_begin_calibration(
 bool v34_data_mapping_is_valid(
 	const struct v34_data_mapping *mapping);
 
-/* Prepare the first B1 frame and deterministic constellation normalization
- * for one negotiated direction. No generated calibration vector is retained.
- * Rejected calls leave the destination unchanged. */
-enum v34_data_mapping_result v34_data_mapping_prepare(
-	struct v34_data_mapping *mapping,
-	const struct v34_phase3_profile *transmitting_profile,
-	const struct v34_data_direction_parameters *parameters,
-	bool auxiliary_channel_enabled);
-
 #endif /* V34_DATA_MAPPING_H */

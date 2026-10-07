@@ -6,6 +6,7 @@
 #include "test.h"
 #include "v34_state_fixture.h"
 #include "v34_stream_fixture.h"
+#include "v34_mapping_fixture.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -78,7 +79,7 @@ static bool prepare_mapping(
 	const struct stream_configuration *configuration,
 	struct v34_data_mapping *mapping)
 {
-	return v34_data_mapping_prepare(
+	return v34_prepare_mapping_fixture(
 		       mapping, &configuration->profile, &configuration->direction,
 		       configuration->auxiliary_channel_enabled) ==
 	       V34_DATA_MAPPING_OK;

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "v90_upstream_fixture.h"
+#include "v34_mapping_fixture.h"
 
 #include <string.h>
 
@@ -39,7 +40,7 @@ enum v90_upstream_data_result v90_upstream_rx_start_after_e(
 		&direction));
 	if (result != V90_UPSTREAM_DATA_OK)
 		return result;
-	result = mapping_result(v34_data_mapping_prepare(
+	result = mapping_result(v34_prepare_mapping_fixture(
 		&mapping, &completed_e->transmitting_profile, &direction,
 		false));
 	if (result != V90_UPSTREAM_DATA_OK)

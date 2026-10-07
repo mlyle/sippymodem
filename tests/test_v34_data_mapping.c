@@ -3,6 +3,7 @@
 #include <v34_data_mapping.h>
 
 #include "test.h"
+#include "v34_mapping_fixture.h"
 #include "v34_power_fixture.h"
 #include "v34_encoder_test_helpers.h"
 
@@ -55,13 +56,13 @@ static bool test_prepared_b1_mapping(void)
 	struct v34_data_mapping repeated;
 	struct v34_data_mapping reverse;
 
-	CHECK(v34_data_mapping_prepare(
+	CHECK(v34_prepare_mapping_fixture(
 		      &first, &caller, &parameters, true) ==
 		      V34_DATA_MAPPING_OK &&
-	      v34_data_mapping_prepare(
+	      v34_prepare_mapping_fixture(
 		      &repeated, &caller, &parameters, true) ==
 		      V34_DATA_MAPPING_OK &&
-	      v34_data_mapping_prepare(
+	      v34_prepare_mapping_fixture(
 		      &reverse, &answerer, &parameters, true) ==
 		      V34_DATA_MAPPING_OK &&
 	      v34_data_mapping_is_valid(&first) &&
@@ -99,40 +100,47 @@ static bool test_validation_and_transactionality(void)
 		profile_fixture(V34_CALLING_STATION);
 	struct v34_data_direction_parameters parameters = parameters_fixture();
 	struct v34_data_mapping destination;
+	struct v34_mapping_power_calibration calibration;
 	struct v34_data_mapping prepared;
 	unsigned char saved[sizeof(destination)];
+	unsigned char saved_calibration[sizeof(calibration)];
 
 	memset(&destination, 0xa5, sizeof(destination));
 	memcpy(saved, &destination, sizeof(saved));
-	CHECK(v34_data_mapping_prepare(
-		      NULL, &profile, &parameters, false) ==
+	memset(&calibration, 0xa5, sizeof(calibration));
+	memcpy(saved_calibration, &calibration, sizeof(saved_calibration));
+	CHECK(v34_data_mapping_begin_calibration(
+		      NULL, &calibration, &profile, &parameters, false) ==
 		      V34_DATA_MAPPING_INVALID_ARGUMENT &&
-	      v34_data_mapping_prepare(
-		      &destination, NULL, &parameters, false) ==
+	      v34_data_mapping_begin_calibration(
+		      &destination, &calibration, NULL, &parameters, false) ==
 		      V34_DATA_MAPPING_INVALID_ARGUMENT &&
-	      v34_data_mapping_prepare(
-		      &destination, &profile, NULL, false) ==
+	      v34_data_mapping_begin_calibration(
+		      &destination, &calibration, &profile, NULL, false) ==
 		      V34_DATA_MAPPING_INVALID_ARGUMENT &&
-	      memcmp(&destination, saved, sizeof(destination)) == 0,
+	      memcmp(&destination, saved, sizeof(destination)) == 0 &&
+	      memcmp(&calibration, saved_calibration, sizeof(calibration)) == 0,
 	      "invalid arguments changed the mapping destination");
 	parameters.precoder_coefficients[0].real = INT16_MIN;
-	CHECK(v34_data_mapping_prepare(
-		      &destination, &profile, &parameters, false) ==
+	CHECK(v34_data_mapping_begin_calibration(
+		      &destination, &calibration, &profile, &parameters, false) ==
 		      V34_DATA_MAPPING_INVALID_ARGUMENT &&
-	      memcmp(&destination, saved, sizeof(destination)) == 0,
+	      memcmp(&destination, saved, sizeof(destination)) == 0 &&
+	      memcmp(&calibration, saved_calibration, sizeof(calibration)) == 0,
 	      "invalid direction parameters changed the destination");
 	parameters = parameters_fixture();
 	parameters.primary_data_rate_2400_bps_units = 14;
 	profile.projected_data_rate_2400_bps_units = 14;
-	CHECK(v34_data_mapping_prepare(
-		      &destination, &profile, &parameters, false) ==
+	CHECK(v34_data_mapping_begin_calibration(
+		      &destination, &calibration, &profile, &parameters, false) ==
 		      V34_DATA_MAPPING_OUT_OF_RANGE &&
-	      memcmp(&destination, saved, sizeof(destination)) == 0,
+	      memcmp(&destination, saved, sizeof(destination)) == 0 &&
+	      memcmp(&calibration, saved_calibration, sizeof(calibration)) == 0,
 	      "unsupported symbol-rate geometry changed the destination");
 	parameters = parameters_fixture();
 	profile = profile_fixture(V34_CALLING_STATION);
 	profile.projected_data_rate_2400_bps_units = 4;
-	CHECK(v34_data_mapping_prepare(
+	CHECK(v34_prepare_mapping_fixture(
 		      &prepared, &profile, &parameters, false) ==
 		      V34_DATA_MAPPING_OK &&
 	      v34_data_mapping_is_valid(&prepared) &&
@@ -142,7 +150,7 @@ static bool test_validation_and_transactionality(void)
 
 	parameters = parameters_fixture();
 	profile = profile_fixture(V34_CALLING_STATION);
-	CHECK(v34_data_mapping_prepare(
+	CHECK(v34_prepare_mapping_fixture(
 		      &prepared, &profile, &parameters, false) ==
 		      V34_DATA_MAPPING_OK,
 	      "validation fixture did not initialize");
@@ -150,7 +158,7 @@ static bool test_validation_and_transactionality(void)
 	CHECK(!v34_data_mapping_is_valid(NULL) &&
 	      !v34_data_mapping_is_valid(&prepared),
 	      "advanced scrambler was accepted as a fresh B1 mapping");
-	CHECK(v34_data_mapping_prepare(
+	CHECK(v34_prepare_mapping_fixture(
 		      &prepared, &profile, &parameters, false) ==
 		      V34_DATA_MAPPING_OK,
 	      "validation fixture did not reinitialize");
@@ -205,7 +213,7 @@ static bool test_calibration_input_snapshot(void)
 		} job;
 	} storage;
 
-	CHECK(v34_data_mapping_prepare(&reference, &profile, &parameters, true) ==
+	CHECK(v34_prepare_mapping_fixture(&reference, &profile, &parameters, true) ==
 		      V34_DATA_MAPPING_OK, "reference mapping did not initialize");
 	/* Adjacent outputs, then profile in the mapping, then both inputs in the job. */
 	for (unsigned placement = 0; placement < 3; ++placement) {
