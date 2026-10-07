@@ -5,7 +5,7 @@
 
 #include "v90_phase4_e_line_rx.h"
 #include "v90_pcm_mapping.h"
-#include "v90_upstream_data.h"
+#include "v90_mp.h"
 #include "v34_data_mapping.h"
 
 #include <stdbool.h>
@@ -108,13 +108,6 @@ enum v90_upstream_rx_result v90_upstream_rx_sample(
 enum v90_upstream_rx_result v90_upstream_rx_handoff(
 	const struct v90_upstream_rx *receiver,
 	struct v34_data_line_receiver *data_receiver);
-
-/* Start conventional upstream B1/data reception after the analogue modem's
- * E sequence. MP is the record sent by this digital modem. */
-enum v90_upstream_data_result v90_upstream_rx_start_after_e(
-	struct v34_data_line_receiver *receiver,
-	const struct v90_phase4_e_line_rx *completed_e,
-	const struct v90_mp_record *mp);
 
 const char *v90_upstream_rx_result_name(
 	enum v90_upstream_rx_result result);

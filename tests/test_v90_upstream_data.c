@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include <v90_upstream_data.h>
+#include "v90_upstream_fixture.h"
 #include <v90_upstream_mode.h>
 #include <v90_phase3.h>
 

@@ -304,7 +304,6 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase4_e_line_rx.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase4_e_line_tx.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase4_digital_station.c \
-	$(DSP_PCM_SOURCE_DIR)/v90_upstream_data.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_upstream_mode.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_upstream_rx.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_dil.c \

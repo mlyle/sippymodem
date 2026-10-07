@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#ifndef V90_UPSTREAM_DATA_H
-#define V90_UPSTREAM_DATA_H
+#ifndef V90_UPSTREAM_FIXTURE_H
+#define V90_UPSTREAM_FIXTURE_H
 
 #include "v34_data_stream.h"
 #include "v90_mp.h"
 #include "v90_upstream_mode.h"
 #include "v90_phase4_e_line_tx.h"
+#include "v90_phase4_e_line_rx.h"
 
 enum v90_upstream_data_result {
 	V90_UPSTREAM_DATA_OK,
@@ -34,4 +35,11 @@ enum v90_upstream_data_result v90_upstream_data_start_after_e(
 const char *v90_upstream_data_result_name(
 	enum v90_upstream_data_result result);
 
-#endif /* V90_UPSTREAM_DATA_H */
+/* Start conventional upstream B1/data reception after the analogue modem's
+ * E sequence. MP is the record sent by this digital modem. */
+enum v90_upstream_data_result v90_upstream_rx_start_after_e(
+	struct v34_data_line_receiver *receiver,
+	const struct v90_phase4_e_line_rx *completed_e,
+	const struct v90_mp_record *mp);
+
+#endif /* V90_UPSTREAM_FIXTURE_H */

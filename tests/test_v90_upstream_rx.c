@@ -4,7 +4,7 @@
 #include <v90_phase4_cp_line_rx.h>
 #include <v90_phase4_e_line_tx.h>
 #include <v90_jd.h>
-#include <v90_upstream_data.h>
+#include "v90_upstream_fixture.h"
 #include <v90_upstream_rx.h>
 
 #include "test.h"

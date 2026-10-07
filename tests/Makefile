@@ -2420,7 +2420,7 @@ V90_UPSTREAM_DATA_TEST_BINARY := \
 	$(BUILD_DIR)/test_v90_upstream_data
 V90_UPSTREAM_DATA_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_v90_upstream_data.o \
-	$(BUILD_DIR)/v90_upstream_data.o \
+	$(BUILD_DIR)/v90_upstream_fixture.o \
 	$(BUILD_DIR)/v90_upstream_mode.o \
 	$(BUILD_DIR)/v90_phase4_e_line_tx.o \
 	$(BUILD_DIR)/v90_phase4_cp_line_tx.o \
@@ -2687,6 +2687,7 @@ V90_PHASE4_CP_LINE_RX_TEST_OBJECTS := $(sort \
 V90_PHASE4_E_LINE_RX_TEST_BINARY := \
 	$(BUILD_DIR)/test_v90_phase4_e_line_rx
 V90_PHASE4_E_LINE_RX_TEST_OBJECTS := $(sort \
+	$(BUILD_DIR)/v90_upstream_rx_fixture.o \
 	$(BUILD_DIR)/test_v90_phase4_e_line_rx.o \
 	$(BUILD_DIR)/v90_phase4_e_line_rx.o \
 	$(BUILD_DIR)/v90_upstream_rx.o \
@@ -2733,7 +2734,7 @@ V90_PHASE4_STATION_EXCHANGE_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/v90_analog_path.o \
 	$(BUILD_DIR)/v90_digital_path.o \
 	$(BUILD_DIR)/v90_phase4_e_line_tx.o \
-	$(BUILD_DIR)/v90_upstream_data.o \
+	$(BUILD_DIR)/v90_upstream_fixture.o \
 	$(BUILD_DIR)/v90_upstream_mode.o \
 	$(filter-out $(BUILD_DIR)/test_v34_data_stream.o, \
 		$(V34_DATA_STREAM_TEST_OBJECTS)) \
@@ -5626,10 +5627,6 @@ $(BUILD_DIR)/v90_phase4_e_line_tx.o: \
 
 $(BUILD_DIR)/v90_phase4_e_line_rx.o: \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase4_e_line_rx.c | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
-
-$(BUILD_DIR)/v90_upstream_data.o: \
-	$(DSP_PCM_SOURCE_DIR)/v90_upstream_data.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v90_upstream_mode.o: \

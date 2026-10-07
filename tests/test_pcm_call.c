@@ -10,7 +10,7 @@
 #include <v90_downstream_data_handoff.h>
 #include <v90_phase3_sd.h>
 #include <v90_profile.h>
-#include <v90_upstream_data.h>
+#include "v90_upstream_fixture.h"
 #include <v92_cpd_direct.h>
 #include <v92_profile.h>
 #include <packed_bits.h>
