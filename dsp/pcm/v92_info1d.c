@@ -82,18 +82,3 @@ enum v92_info1d_result v92_info1d_decode(
 	*info1d = decoded;
 	return V92_INFO1D_OK;
 }
-
-const char *v92_info1d_result_name(enum v92_info1d_result result)
-{
-	switch (result) {
-	case V92_INFO1D_OK:
-		return "ok";
-	case V92_INFO1D_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V92_INFO1D_INVALID_PARAMETERS:
-		return "invalid parameters";
-	case V92_INFO1D_INVALID_PAYLOAD:
-		return "invalid payload";
-	}
-	return "unknown";
-}

@@ -207,11 +207,7 @@ static bool test_validation(void)
 		      V90_INFO1A_PAYLOAD_BITS, &decoded) ==
 		      V90_INFO1_INVALID_ARGUMENT &&
 	      selections_equal(&decoded, &saved_decoded) &&
-	      !v90_info1a_is_valid(NULL) &&
-	      strcmp(v90_info1_result_name(V90_INFO1_INVALID_PAYLOAD),
-		     "invalid payload") == 0 &&
-	      strcmp(v90_info1_result_name(
-		     (enum v90_info1_result)4), "unknown") == 0,
+	      !v90_info1a_is_valid(NULL),
 	      "INFO1a decoding accepted malformed input or changed output");
 	return true;
 }

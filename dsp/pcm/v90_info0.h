@@ -67,6 +67,4 @@ enum v90_info0_result v90_info0d_decode(
 	const uint8_t *payload, size_t payload_capacity,
 	size_t payload_bit_count, struct v90_info0d *info0d);
 
-const char *v90_info0_result_name(enum v90_info0_result result);
-
 #endif

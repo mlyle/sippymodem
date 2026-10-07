@@ -193,12 +193,8 @@ static bool test_validation(void)
 	      v92_info0a_decode(
 		      payload, sizeof(payload), V90_INFO0A_PAYLOAD_BITS,
 		      NULL) == V92_INFO0_INVALID_ARGUMENT &&
-	      !v92_info0a_is_valid(NULL) && !v92_info0d_is_valid(NULL) &&
-	      strcmp(v92_info0_result_name(V92_INFO0_INVALID_PAYLOAD),
-		     "invalid payload") == 0 &&
-	      strcmp(v92_info0_result_name((enum v92_info0_result)4),
-		     "unknown") == 0,
-	      "V.92 INFO0 validation or result names changed");
+	      !v92_info0a_is_valid(NULL) && !v92_info0d_is_valid(NULL),
+	      "V.92 INFO0 validation changed");
 	return true;
 }
 

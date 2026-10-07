@@ -179,18 +179,3 @@ enum v90_info0_result v90_info0d_decode(
 	*info0d = decoded;
 	return V90_INFO0_OK;
 }
-
-const char *v90_info0_result_name(enum v90_info0_result result)
-{
-	switch (result) {
-	case V90_INFO0_OK:
-		return "ok";
-	case V90_INFO0_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V90_INFO0_INVALID_CAPABILITIES:
-		return "invalid capabilities";
-	case V90_INFO0_INVALID_PAYLOAD:
-		return "invalid payload";
-	}
-	return "unknown";
-}

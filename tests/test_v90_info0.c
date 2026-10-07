@@ -256,12 +256,8 @@ static bool test_validation(void)
 		      payload, sizeof(payload), V90_INFO0A_PAYLOAD_BITS,
 		      &decoded) == V90_INFO0_INVALID_PAYLOAD &&
 	      v90_info0a_equal(&decoded, &saved_decoded) &&
-	      !v90_info0_is_valid(NULL) && !v90_info0d_is_valid(NULL) &&
-	      strcmp(v90_info0_result_name(V90_INFO0_INVALID_PAYLOAD),
-		     "invalid payload") == 0 &&
-	      strcmp(v90_info0_result_name(
-		     (enum v90_info0_result)4), "unknown") == 0,
-	      "INFO0 accepted a reserved field or result");
+	      !v90_info0_is_valid(NULL) && !v90_info0d_is_valid(NULL),
+	      "INFO0 accepted a reserved field");
 	return true;
 }
 

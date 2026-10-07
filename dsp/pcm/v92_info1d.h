@@ -39,6 +39,4 @@ enum v92_info1d_result v92_info1d_decode(
 	const uint8_t *payload, size_t payload_capacity,
 	size_t payload_bit_count, struct v92_info1d *info1d);
 
-const char *v92_info1d_result_name(enum v92_info1d_result result);
-
 #endif /* V92_INFO1D_H */

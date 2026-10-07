@@ -194,11 +194,7 @@ static bool test_validation(void)
 		      V92_INFO1D_PAYLOAD_BITS, &decoded) ==
 		      V92_INFO1D_INVALID_ARGUMENT &&
 	      records_equal(&decoded, &saved_decoded) &&
-	      !v92_info1d_is_valid(NULL) &&
-	      strcmp(v92_info1d_result_name(
-		     V92_INFO1D_INVALID_PAYLOAD), "invalid payload") == 0 &&
-	      strcmp(v92_info1d_result_name(
-		     (enum v92_info1d_result)4), "unknown") == 0,
+	      !v92_info1d_is_valid(NULL),
 	      "malformed V.92 INFO1d changed output or was accepted");
 	return true;
 }
