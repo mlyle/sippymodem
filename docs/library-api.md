@@ -172,6 +172,9 @@ while transmission remains pending. Keep calling `process`, servicing receive
 bytes and polling completion. `OK` is idempotent: all accepted payload has been
 acknowledged by LAPM, or the raw encoder and modulator tail has been emitted.
 Raw completion cannot guarantee receipt by the remote application.
+V.21 and Bell 103 may accept answer-side input while the caller is still
+starting. That input stays queued until the startup mark interval finishes;
+even an empty completion waits for that interval before permitting hangup.
 
 On remote SIP disconnect, the native owner drains accepted receive audio before
 returning `CLOSED` from an empty RX queue. This work is bounded per `process` call;

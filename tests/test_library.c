@@ -1077,6 +1077,84 @@ static bool test_huntgroups(void)
 	return true;
 }
 
+static bool test_startup_transmit_completion(void)
+{
+	const struct { unsigned modulation, jitter_ms, length; } profiles[] = {
+		{ 21, 0, 7 }, { 21, 60, 7 }, { 103, 60, 7 }, { 21, 60, 0 },
+	};
+	static const unsigned char greeting[] = "login: ";
+	for (unsigned profile = 0; profile < sizeof(profiles) / sizeof(profiles[0]); ++profile) {
+		struct sippymodem_server_config config;
+		sippymodem_server_config_init(&config);
+		config.max_lines = 2;
+		config.public_address = config.bound_address = "127.0.0.1";
+		struct sippymodem_server *server = sippymodem_server_create(&config);
+		EXPECT(server != NULL);
+		struct sippymodem_line_config lc;
+		sippymodem_line_config_init(&lc);
+		lc.modulation = profiles[profile].modulation;
+		lc.automode = false;
+		lc.min_bps = lc.max_bps = 300;
+		lc.ec_policy = SIPPYMODEM_EC_RAW;
+		lc.compression_types = 0;
+		lc.tx_capacity = 16;
+		lc.jitter_ms = profiles[profile].jitter_ms;
+		lc.remote_clock = false;
+		struct sippymodem_line *caller = sippymodem_line_create(server, &lc);
+		lc.remote_clock = true;
+		struct sippymodem_line *answerer = sippymodem_line_create(server, &lc);
+		EXPECT(caller != NULL && answerer != NULL);
+		EXPECT(sippymodem_server_start(server) == SIPPYMODEM_OK);
+		EXPECT(sippymodem_line_start(caller) == SIPPYMODEM_OK);
+		EXPECT(sippymodem_line_start(answerer) == SIPPYMODEM_OK);
+		uint64_t now = 1000000000, next, generation;
+		EXPECT(sippymodem_process(server, now, &next) == SIPPYMODEM_OK);
+		char target[128];
+		snprintf(target, sizeof(target), "sip:5678@127.0.0.1:%u", sippymodem_listen_port(server));
+		EXPECT(sippymodem_dial(caller, target, &generation) == SIPPYMODEM_OK);
+		bool submitted = false, complete = false, caller_ready = false;
+		size_t count = 0;
+		unsigned char received[sizeof(greeting)] = { 0 };
+		for (unsigned i = 0; i < 30000; ++i) {
+			EXPECT(step(server, &now));
+			struct sippymodem_status local, remote;
+			EXPECT(sippymodem_get_status(caller, &local) == SIPPYMODEM_OK);
+			EXPECT(sippymodem_get_status(answerer, &remote) == SIPPYMODEM_OK);
+			caller_ready |= local.ready;
+			if (remote.phase == SIPPYMODEM_RINGING)
+				EXPECT(sippymodem_answer(answerer, remote.generation) == SIPPYMODEM_OK);
+			if (remote.ready && !submitted) {
+				/* A service can close before the caller reports CONNECT. */
+				EXPECT(!local.ready);
+				size_t accepted;
+				EXPECT(sippymodem_send(answerer, greeting, profiles[profile].length, &accepted) == SIPPYMODEM_OK);
+				EXPECT(accepted == profiles[profile].length);
+				submitted = true;
+			}
+			if (submitted && !complete) {
+				enum sippymodem_result result = sippymodem_finish_tx(answerer, remote.generation);
+				EXPECT(result == SIPPYMODEM_OK || result == SIPPYMODEM_AGAIN);
+				if (result == SIPPYMODEM_OK) {
+					EXPECT(caller_ready);
+					/* Teardown immediately, without another media tick. */
+					EXPECT(sippymodem_hangup(answerer, remote.generation) == SIPPYMODEM_OK);
+					complete = true;
+				}
+			}
+			size_t amount;
+			enum sippymodem_result result = sippymodem_receive(caller, received + count, sizeof(received) - count, &amount);
+			EXPECT(result == SIPPYMODEM_OK || result == SIPPYMODEM_AGAIN || result == SIPPYMODEM_CLOSED);
+			count += amount;
+			if (complete && result == SIPPYMODEM_CLOSED)
+				break;
+		}
+		CHECK(complete && count == profiles[profile].length && !memcmp(received, greeting, count),
+		      "startup EOF profile=%u complete=%d received=%zu", profile, complete, count);
+		sippymodem_server_destroy(server);
+	}
+	return true;
+}
+
 static bool test_transmit_completion(void)
 {
 	const struct {
@@ -1241,5 +1319,5 @@ static bool test_transmit_completion(void)
 
 int main(void)
 {
-	return test_transmit_completion() && test_endpoint_registrations() && test_huntgroups() && test_typed_credentials() && test_typed_accounts() && test_owned_loopback() && test_compressed_command_and_fd_eof() && test_timeout_and_bounds() ? 0 : 1;
+	return test_startup_transmit_completion() && test_transmit_completion() && test_endpoint_registrations() && test_huntgroups() && test_typed_credentials() && test_typed_accounts() && test_owned_loopback() && test_compressed_command_and_fd_eof() && test_timeout_and_bounds() ? 0 : 1;
 }

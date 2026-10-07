@@ -232,6 +232,16 @@ static bool line_signal_is_present(
 	       measurement->line_power >= FSK300_MIN_LINE_POWER;
 }
 
+static bool transmit_ready(const struct fsk300_datapump *datapump)
+{
+	/* The answerer can receive before the caller finishes its startup mark.
+	 * Keep accepted DTE bytes queued until that mark can have completed. The
+	 * 800 ms response also lies within V.21's 400–1000 ms sending delay. */
+	return datapump->training_state == FSK300_TRAINING_ONLINE &&
+		(datapump->originator || datapump->training_state_samples >=
+		 FSK300_ORIGINATE_MARK_SAMPLES);
+}
+
 static enum fsk_result generate_samples(
 	struct fsk300_datapump *datapump,
 	int16_t *transmit,
@@ -437,7 +447,7 @@ static int process_fsk300(struct dp *dp, void *receive_buffer,
 		memset(transmit, 0, (size_t)count * sizeof(*transmit));
 	} else if (generate_samples(
 			   datapump, transmit, count,
-			   datapump->training_state == FSK300_TRAINING_ONLINE) !=
+			   transmit_ready(datapump)) !=
 		   FSK_OK) {
 		memset(transmit, 0, (size_t)count * sizeof(*transmit));
 		return DPSTAT_ERROR;
@@ -467,6 +477,8 @@ static int process_fsk300(struct dp *dp, void *receive_buffer,
 		}
 		return advance_training(datapump, (unsigned int)count);
 	}
+	if (datapump->training_state_samples < FSK300_ORIGINATE_MARK_SAMPLES)
+		datapump->training_state_samples += (unsigned int)count;
 	measurement = fsk_receiver_measure(&datapump->receiver);
 	carrier_loss_limit =
 		datapump_carrier_loss_ticks(datapump->dp.modem);
@@ -513,7 +525,7 @@ const struct dp_operations *fsk300_datapump_operations(enum DP_ID id)
 static int tx_tail_samples(const struct dp *dp)
 {
 	const struct fsk300_datapump *p = fsk300_from_dp((struct dp *)dp);
-	if (p == NULL || !training_session_is_online(&p->training))
+	if (p == NULL || !transmit_ready(p))
 		return -1;
 	const struct fsk_channel *c = &p->transmitter.channel;
 	return datapump_symbol_tail(c->sample_rate, c->symbol_rate_numerator,
