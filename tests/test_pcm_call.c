@@ -17,6 +17,9 @@
 
 #include "test.h"
 #include "v92_clipping_fixture.h"
+#include "pcm_phase2_state_fixture.h"
+#include "v34_state_fixture.h"
+#include "v90_path_state_fixture.h"
 
 #include <float.h>
 #include <limits.h>
@@ -1001,6 +1004,9 @@ static bool endpoint_init_conventional_v92(
 	return true;
 }
 
+static bool conventional_call_states_equal(
+	const struct pcm_call *left, const struct pcm_call *right);
+
 static bool phase4_boundary_is_transactional(
 	struct pcm_call *call, enum g711_law law);
 
@@ -1061,8 +1067,7 @@ static bool endpoint_data_octet(
 	if (result == PCM_CALL_SOURCE_FAILURE) {
 		if (!expecting_source_failure || generated != 0xa5 ||
 		    memcmp(&event, &event_before, sizeof(event)) != 0 ||
-		    memcmp(&endpoint->call, &call_before,
-			   sizeof(call_before)) != 0)
+		    !conventional_call_states_equal(&endpoint->call, &call_before))
 			return false;
 		set_source_rejection(endpoint, false);
 		endpoint->source_failure_checked = true;
@@ -1220,6 +1225,105 @@ static bool ri_progress_is_consistent(const struct endpoint *endpoint)
 	return endpoint->phase4_entry_ri_symbols == expected;
 }
 
+/* Rollback checks at conventional Phase 4, data and closed boundaries.
+ * Compare the selected owners and preserve all surrounding call fields. */
+static bool conventional_call_states_equal(
+	const struct pcm_call *left, const struct pcm_call *right)
+{
+	struct pcm_call copies[2];
+	size_t active;
+
+	if (left->stage != right->stage || left->local_role != right->local_role ||
+	    left->protocol != right->protocol)
+		return false;
+	if ((left->stage != PCM_CALL_PHASE4 && left->stage != PCM_CALL_DATA_PATH &&
+	     left->stage != PCM_CALL_CLOSED) ||
+	    !pcm_call_uses_conventional_upstream(left) ||
+	    !pcm_call_uses_conventional_upstream(right))
+		return memcmp(left, right, sizeof(*left)) == 0;
+	if (!pcm_phase3_entries_equal(&left->phase3_entry, &right->phase3_entry))
+		return false;
+	memcpy(&copies[0], left, sizeof(*left));
+	memcpy(&copies[1], right, sizeof(*right));
+	if (left->stage != PCM_CALL_PHASE4) {
+		if (left->local_role == V90_ANALOG_MODEM) {
+			struct v90_analog_path *paths[2] = {
+				&copies[0].state.data_path.analog,
+				&copies[1].state.data_path.analog,
+			};
+			struct v34_training_line *lines[2];
+
+			if (paths[0]->upstream_stage != paths[1]->upstream_stage)
+				return false;
+			for (size_t i = 0; i < 2; ++i) {
+				switch (paths[i]->upstream_stage) {
+				case V90_ANALOG_PATH_UPSTREAM_CP:
+					lines[i] = &paths[i]->upstream.cp.line;
+					break;
+				case V90_ANALOG_PATH_UPSTREAM_E:
+					lines[i] = &paths[i]->upstream.e.line;
+					break;
+				case V90_ANALOG_PATH_UPSTREAM_DATA:
+					lines[i] = &paths[i]->upstream.data.line;
+					break;
+				default:
+					return memcmp(left, right, sizeof(*left)) == 0;
+				}
+			}
+			if (!v34_training_lines_equal(lines[0], lines[1]))
+				return false;
+			memset(lines[0], 0, sizeof(*lines[0]));
+			memset(lines[1], 0, sizeof(*lines[1]));
+			if (!v90_analog_path_states_equal(paths[0], paths[1]))
+				return false;
+		} else if (left->local_role == V90_DIGITAL_MODEM) {
+			if (!v90_digital_path_states_equal(&left->state.data_path.digital,
+				&right->state.data_path.digital))
+				return false;
+		} else {
+			return false;
+		}
+		active = 0; /* Both complete live path owners were compared above. */
+	} else if (left->local_role == V90_ANALOG_MODEM) {
+		if (left->state.phase4.analog.stage != V90_PHASE4_STARTUP_COMPLETE ||
+		    right->state.phase4.analog.stage != V90_PHASE4_STARTUP_COMPLETE ||
+		    !v34_training_lines_equal(&left->state.phase4.analog.state.complete.transmit.line,
+			&right->state.phase4.analog.state.complete.transmit.line))
+			return false;
+		for (size_t i = 0; i < 2; ++i) {
+			struct v90_phase4_analog_startup *startup = &copies[i].state.phase4.analog;
+			memset(&startup->state.complete.transmit.line, 0,
+				sizeof(startup->state.complete.transmit.line));
+			memset((unsigned char *)&startup->state + sizeof(startup->state.complete),
+				0, sizeof(startup->state) - sizeof(startup->state.complete));
+		}
+		active = sizeof(copies[0].state.phase4.analog);
+	} else if (left->local_role == V90_DIGITAL_MODEM) {
+		if (left->state.phase4.digital.stage != V90_PHASE4_STARTUP_COMPLETE ||
+		    right->state.phase4.digital.stage != V90_PHASE4_STARTUP_COMPLETE)
+			return false;
+		for (size_t i = 0; i < 2; ++i) {
+			struct v90_phase4_digital_startup *startup = &copies[i].state.phase4.digital;
+			memset((unsigned char *)&startup->state + sizeof(startup->state.complete),
+				0, sizeof(startup->state) - sizeof(startup->state.complete));
+		}
+		active = sizeof(copies[0].state.phase4.digital);
+	} else {
+		return false;
+	}
+	for (size_t i = 0; i < 2; ++i) {
+		pcm_snapshot_info0(&copies[i].local_info0,
+			copies[i].protocol, copies[i].local_role);
+		pcm_snapshot_info0(&copies[i].peer_info0, copies[i].protocol,
+			copies[i].local_role == V90_ANALOG_MODEM ?
+				V90_DIGITAL_MODEM : V90_ANALOG_MODEM);
+		memset(&copies[i].phase3_entry, 0, sizeof(copies[i].phase3_entry));
+		memset((unsigned char *)&copies[i].state + active, 0,
+			sizeof(copies[i].state) - active);
+	}
+	return memcmp(&copies[0], &copies[1], sizeof(*left)) == 0;
+}
+
 static bool phase4_boundary_is_transactional(
 	struct pcm_call *call, enum g711_law law)
 {
@@ -1240,7 +1344,7 @@ static bool phase4_boundary_is_transactional(
 		saved = invalid;
 		CHECK(!pcm_call_phase4_is_ready(&invalid) &&
 		      pcm_call_start_data_path(&invalid) == PCM_CALL_INVALID_ARGUMENT &&
-		      memcmp(&invalid, &saved, sizeof(saved)) == 0,
+		      conventional_call_states_equal(&invalid, &saved),
 		      "public Phase 4 boundary accepted a corrupt CP record");
 	}
 	memset(&observation, 0x5a, sizeof(observation));
@@ -1251,7 +1355,7 @@ static bool phase4_boundary_is_transactional(
 	       output == 0xa5 &&
 	       memcmp(&observation, &observation_before,
 		      sizeof(observation)) == 0 &&
-	       memcmp(call, &before, sizeof(before)) == 0;
+	       conventional_call_states_equal(call, &before);
 }
 
 enum call_goal {
@@ -1365,7 +1469,7 @@ static bool check_peer_cleardown(
 		      sample_event.next == PCM_CALL_CLOSED &&
 		      pcm_call_start_retrain(&calls[side]) == PCM_CALL_INVALID_STATE &&
 		      pcm_call_start_cleardown(&calls[side]) == PCM_CALL_OK &&
-		      memcmp(&before, &calls[side], sizeof(before)) == 0,
+		      conventional_call_states_equal(&before, &calls[side]),
 		      "closed call consumed input, advanced state, or restarted");
 	}
 	return true;
