@@ -234,22 +234,3 @@ enum v90_ja_result v90_ja_rx_receive(
 		       V90_JA_UNSUPPORTED :
 		       V90_JA_REJECTED;
 }
-
-const char *v90_ja_result_name(enum v90_ja_result result)
-{
-	switch (result) {
-	case V90_JA_OK:
-		return "ok";
-	case V90_JA_DETECTED:
-		return "detected";
-	case V90_JA_REJECTED:
-		return "rejected";
-	case V90_JA_UNSUPPORTED:
-		return "unsupported";
-	case V90_JA_COMPLETE:
-		return "complete";
-	case V90_JA_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

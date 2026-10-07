@@ -59,7 +59,4 @@ enum pcm_phase3_digital_prefix_result pcm_phase3_digital_prefix_handoff(
 	const struct pcm_phase3_digital_prefix *prefix,
 	struct v90_phase3_signs *signs);
 
-const char *pcm_phase3_digital_prefix_result_name(
-	enum pcm_phase3_digital_prefix_result result);
-
 #endif /* PCM_PHASE3_DIGITAL_PREFIX_H */

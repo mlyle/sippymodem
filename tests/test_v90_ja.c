@@ -353,13 +353,8 @@ static bool test_validation(void)
 	rx.descriptor[V90_DIL_ZERO_DESCRIPTOR_BYTES - 1u] = 1;
 	CHECK(!v90_ja_tx_is_valid(&tx) &&
 	      !v90_ja_tx_at_descriptor_boundary(&tx) &&
-	      !v90_ja_rx_is_valid(&rx) &&
-	      strcmp(v90_ja_result_name(V90_JA_DETECTED), "detected") == 0 &&
-	      strcmp(v90_ja_result_name(V90_JA_UNSUPPORTED), "unsupported") ==
-		      0 &&
-	      strcmp(v90_ja_result_name((enum v90_ja_result)99), "unknown") ==
-		      0,
-	      "Ja validation or result names changed");
+	      !v90_ja_rx_is_valid(&rx),
+	      "Ja validation changed");
 	return true;
 }
 

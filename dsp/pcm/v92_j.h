@@ -63,6 +63,4 @@ enum v92_j_result v92_jp_encode(
 enum v92_j_result v92_jp_decode(
 	const uint8_t *frame, size_t frame_capacity, struct v92_jp *jp);
 
-const char *v92_j_result_name(enum v92_j_result result);
-
 #endif /* V92_J_H */

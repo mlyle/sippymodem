@@ -175,13 +175,8 @@ static bool test_validation(void)
 	      pcm_phase3_digital_prefix_handoff(NULL, &signs) ==
 		      PCM_PHASE3_DIGITAL_PREFIX_INVALID_ARGUMENT &&
 	      pcm_phase3_digital_prefix_handoff(&prefix, NULL) ==
-		      PCM_PHASE3_DIGITAL_PREFIX_INVALID_ARGUMENT &&
-	      strcmp(pcm_phase3_digital_prefix_result_name(
-			     PCM_PHASE3_DIGITAL_PREFIX_DONE), "done") == 0 &&
-	      strcmp(pcm_phase3_digital_prefix_result_name(
-			     (enum pcm_phase3_digital_prefix_result)99),
-		     "unknown") == 0,
-	      "prefix validation or result names changed");
+		      PCM_PHASE3_DIGITAL_PREFIX_INVALID_ARGUMENT,
+	      "prefix validation changed");
 	return true;
 }
 

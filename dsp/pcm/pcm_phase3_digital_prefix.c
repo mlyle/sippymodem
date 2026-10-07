@@ -164,19 +164,3 @@ enum pcm_phase3_digital_prefix_result pcm_phase3_digital_prefix_handoff(
 	*signs = prefix->sequence.signs;
 	return PCM_PHASE3_DIGITAL_PREFIX_OK;
 }
-
-const char *pcm_phase3_digital_prefix_result_name(
-	enum pcm_phase3_digital_prefix_result result)
-{
-	switch (result) {
-	case PCM_PHASE3_DIGITAL_PREFIX_OK:
-		return "ok";
-	case PCM_PHASE3_DIGITAL_PREFIX_DONE:
-		return "done";
-	case PCM_PHASE3_DIGITAL_PREFIX_INVALID_ARGUMENT:
-		return "invalid argument";
-	case PCM_PHASE3_DIGITAL_PREFIX_INVALID_STATE:
-		return "invalid state";
-	}
-	return "unknown";
-}

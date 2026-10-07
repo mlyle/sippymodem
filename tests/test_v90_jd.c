@@ -223,12 +223,8 @@ static bool test_validation(void)
 	      v90_jd_decode(frame, V90_JD_FRAME_BYTES - 1u, &decoded) ==
 		      V90_JD_INVALID_ARGUMENT &&
 	      parameters_equal(&decoded, &valid) &&
-	      !v90_jd_parameters_are_valid(NULL) &&
-	      strcmp(v90_jd_result_name(V90_JD_CRC_MISMATCH),
-		     "CRC mismatch") == 0 &&
-	      strcmp(v90_jd_result_name((enum v90_jd_result)5),
-		     "unknown") == 0,
-	      "Jd API validation or result names changed");
+	      !v90_jd_parameters_are_valid(NULL),
+	      "Jd API validation changed");
 	return true;
 }
 

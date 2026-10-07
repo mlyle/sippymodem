@@ -76,6 +76,4 @@ bool v90_ja_rx_is_complete(const struct v90_ja_rx *rx);
 enum v90_ja_result v90_ja_rx_receive(
 	struct v90_ja_rx *rx, uint8_t clockwise_quarter_turns);
 
-const char *v90_ja_result_name(enum v90_ja_result result);
-
 #endif /* V90_JA_H */

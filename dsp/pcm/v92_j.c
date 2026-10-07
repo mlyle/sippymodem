@@ -156,22 +156,3 @@ enum v92_j_result v92_jp_decode(
 	*jp = decoded;
 	return V92_J_OK;
 }
-
-const char *v92_j_result_name(enum v92_j_result result)
-{
-	switch (result) {
-	case V92_J_OK:
-		return "ok";
-	case V92_J_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V92_J_INVALID_PARAMETERS:
-		return "invalid parameters";
-	case V92_J_INVALID_FRAME:
-		return "invalid frame";
-	case V92_J_CRC_MISMATCH:
-		return "CRC mismatch";
-	case V92_J_WRONG_RECORD:
-		return "wrong record";
-	}
-	return "unknown";
-}

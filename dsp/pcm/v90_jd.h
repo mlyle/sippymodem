@@ -50,6 +50,4 @@ enum v90_jd_result v90_jd_decode(
 	const uint8_t *frame, size_t frame_capacity,
 	struct v90_jd_parameters *parameters);
 
-const char *v90_jd_result_name(enum v90_jd_result result);
-
 #endif

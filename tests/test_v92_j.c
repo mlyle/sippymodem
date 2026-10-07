@@ -264,10 +264,6 @@ static bool test_rejection_and_contracts(void)
 	      jp_equal(&decoded_jp, &saved_jp) &&
 	      !v92_jd_is_valid(NULL) && !v92_jp_is_valid(NULL),
 	      "V.92 J argument validation changed state");
-	CHECK(strcmp(v92_j_result_name(V92_J_WRONG_RECORD), "wrong record") ==
-		      0 &&
-	      strcmp(v92_j_result_name((enum v92_j_result)99), "unknown") == 0,
-	      "V.92 J result names changed");
 	return true;
 }
 
