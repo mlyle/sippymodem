@@ -119,9 +119,9 @@ static bool run_exchange(
 	struct v90_phase3_analog_station analog;
 	struct v90_phase3_digital_station digital;
 	struct v34_training_line phase4_line;
-	struct v90_phase3_analog_receive_handoff receive_handoff;
+	struct v90_phase3_downstream_handoff receive_handoff;
 	struct v90_phase3_return_line_handoff return_handoff;
-	struct v90_phase3_digital_transmit_handoff transmit_handoff;
+	struct v90_phase3_downstream_handoff transmit_handoff;
 	struct v90_dil_parameters expected_dil;
 	uint8_t training_ucode = 91;
 	uint32_t expected_dil_symbols;
@@ -263,7 +263,7 @@ static bool run_exchange(
 	      v90_phase3_return_line_handoff_is_valid(&return_handoff) &&
 	      v90_jd_parameters_equal(&receive_handoff.jd, &parameters) &&
 	      v90_jd_parameters_equal(&transmit_handoff.jd, &parameters) &&
-	      receive_handoff.descrambler.history ==
+	      receive_handoff.scrambler.history ==
 		      transmit_handoff.scrambler.history &&
 	      receive_handoff.last_sign ==
 		      transmit_handoff.last_sign &&
@@ -410,10 +410,10 @@ static bool test_validation(void)
 	struct v90_phase3_digital_station saved_digital;
 	struct v34_training_line line;
 	struct v34_training_line saved_line;
-	struct v90_phase3_analog_receive_handoff handoff;
-	struct v90_phase3_analog_receive_handoff saved_handoff;
-	struct v90_phase3_digital_transmit_handoff transmit_handoff;
-	struct v90_phase3_digital_transmit_handoff saved_transmit_handoff;
+	struct v90_phase3_downstream_handoff handoff;
+	struct v90_phase3_downstream_handoff saved_handoff;
+	struct v90_phase3_downstream_handoff transmit_handoff;
+	struct v90_phase3_downstream_handoff saved_transmit_handoff;
 	struct v90_phase3_return_line_handoff return_handoff;
 	struct v90_phase3_return_line_handoff saved_return_handoff;
 	struct v90_pcm_symbol wrong_sd_bar;
@@ -480,7 +480,7 @@ static bool test_validation(void)
 	      v90_phase3_analog_station_has_failed(&station) &&
 	      v90_phase3_analog_station_transmit(&station, &sample) ==
 		      V90_PHASE3_ANALOG_STATION_FAILED &&
-	      !v90_phase3_analog_receive_handoff_is_valid(NULL) &&
+	      !v90_phase3_downstream_handoff_is_valid(NULL) &&
 	      strcmp(v90_phase3_analog_station_result_name(
 		     V90_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH),
 		     "sequence mismatch") == 0 &&
@@ -533,7 +533,7 @@ static bool test_validation(void)
 		     sizeof(transmit_handoff)) == 0 &&
 	      memcmp(&return_handoff, &saved_return_handoff,
 		     sizeof(return_handoff)) == 0 &&
-	      !v90_phase3_digital_transmit_handoff_is_valid(NULL) &&
+	      !v90_phase3_downstream_handoff_is_valid(NULL) &&
 	      strcmp(v90_phase3_digital_station_result_name(
 		     (enum v90_phase3_digital_station_result)99),
 		     "unknown") == 0,

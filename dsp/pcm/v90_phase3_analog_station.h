@@ -4,6 +4,7 @@
 #define V90_PHASE3_ANALOG_STATION_H
 
 #include "v90_phase3_analog_line_tx.h"
+#include "v90_phase3_signs.h"
 #include "v90_phase3_return_line_tx.h"
 #include "pcm_s_pattern_rx.h"
 #include "pcm_dil_receiver.h"
@@ -43,17 +44,6 @@ union v90_phase3_analog_station_transmit {
 union v90_phase3_analog_station_receive {
 	struct pcm_s_pattern_rx sd;
 	struct pcm_phase3_j_receiver signs;
-};
-
-/* State needed to continue decoding the digital network-character stream at
- * the first Phase 4 character. */
-struct v90_phase3_analog_receive_handoff {
-	struct v34_scrambler descrambler;
-	struct v90_jd_parameters jd;
-	enum g711_law law;
-	uint32_t trn1d_symbols;
-	uint8_t training_ucode;
-	uint8_t last_sign;
 };
 
 /* Owns both directions of the analogue modem's Phase 3 exchange. For nonzero
@@ -109,12 +99,10 @@ enum v90_phase3_analog_station_result
 v90_phase3_analog_station_transmit_handoff(
 	const struct v90_phase3_analog_station *station,
 	struct v34_training_line *line);
-bool v90_phase3_analog_receive_handoff_is_valid(
-	const struct v90_phase3_analog_receive_handoff *handoff);
 enum v90_phase3_analog_station_result
 v90_phase3_analog_station_receive_handoff(
 	const struct v90_phase3_analog_station *station,
-	struct v90_phase3_analog_receive_handoff *handoff);
+	struct v90_phase3_downstream_handoff *handoff);
 
 const char *v90_phase3_analog_station_result_name(
 	enum v90_phase3_analog_station_result result);

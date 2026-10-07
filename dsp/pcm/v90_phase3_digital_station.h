@@ -4,6 +4,7 @@
 #define V90_PHASE3_DIGITAL_STATION_H
 
 #include "v90_phase3_analog_line_rx.h"
+#include "v90_phase3_signs.h"
 #include "pcm_phase3_digital_tx.h"
 #include "v90_phase3_return_line_rx.h"
 
@@ -35,17 +36,6 @@ enum v90_phase3_digital_station_result {
 union v90_phase3_digital_station_receive {
 	struct v90_phase3_analog_line_rx initial;
 	struct v90_phase3_return_line_rx returning;
-};
-
-/* State needed to continue generating the digital Phase 4 network-character
- * stream immediately after Jd-prime. */
-struct v90_phase3_digital_transmit_handoff {
-	struct v34_scrambler scrambler;
-	struct v90_jd_parameters jd;
-	enum g711_law law;
-	uint32_t trn1d_symbols;
-	uint8_t training_ucode;
-	uint8_t last_sign;
 };
 
 /* Owns both directions of the digital modem's Phase 3 exchange. Network
@@ -99,12 +89,10 @@ bool v90_phase3_digital_station_transmit_complete(
 bool v90_phase3_digital_station_receive_complete(
 	const struct v90_phase3_digital_station *station);
 
-bool v90_phase3_digital_transmit_handoff_is_valid(
-	const struct v90_phase3_digital_transmit_handoff *handoff);
 enum v90_phase3_digital_station_result
 v90_phase3_digital_station_transmit_handoff(
 	const struct v90_phase3_digital_station *station,
-	struct v90_phase3_digital_transmit_handoff *handoff);
+	struct v90_phase3_downstream_handoff *handoff);
 enum v90_phase3_digital_station_result
 v90_phase3_digital_station_receive_handoff(
 	const struct v90_phase3_digital_station *station,

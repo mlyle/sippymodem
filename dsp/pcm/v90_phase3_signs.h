@@ -4,6 +4,8 @@
 #define V90_PHASE3_SIGNS_H
 
 #include "v34_framing.h"
+#include "v90_info1.h"
+#include "v90_jd.h"
 #include "v90_pcm_symbol.h"
 
 #include <stdbool.h>
@@ -30,6 +32,32 @@ enum v90_phase3_sign_result {
 	V90_PHASE3_SIGNS_INVALID_ARGUMENT,
 	V90_PHASE3_SIGNS_INVALID_STATE,
 };
+
+/* Independent transmit/receive snapshots at the downstream Jd-prime boundary.
+ * The scrambler field holds the endpoint's polynomial history in either role. */
+struct v90_phase3_downstream_handoff {
+	struct v34_scrambler scrambler;
+	struct v90_jd_parameters jd;
+	enum g711_law law;
+	uint32_t trn1d_symbols;
+	uint8_t training_ucode;
+	uint8_t last_sign;
+};
+
+static inline bool v90_phase3_downstream_handoff_is_valid(
+	const struct v90_phase3_downstream_handoff *handoff)
+{
+	return handoff != NULL &&
+	       v34_scrambler_is_valid(&handoff->scrambler) &&
+	       handoff->scrambler.polynomial == V34_POLYNOMIAL_GPC &&
+	       v90_jd_parameters_are_valid(&handoff->jd) &&
+	       g711_law_is_valid(handoff->law) &&
+	       handoff->trn1d_symbols >= V90_PHASE3_TRN1D_MIN_SYMBOLS &&
+	       handoff->trn1d_symbols % V90_PHASE3_TRN1D_ALIGNMENT == 0 &&
+	       handoff->training_ucode >= V90_INFO1A_MIN_TRAINING_UCODE &&
+	       handoff->training_ucode <= V90_INFO1A_MAX_TRAINING_UCODE &&
+	       handoff->last_sign <= 1;
+}
 
 /* Owns the digital modem's GPC scrambler and differential sign continuity
  * from TRN1d through every Jd repetition and the terminating Jd-prime. */

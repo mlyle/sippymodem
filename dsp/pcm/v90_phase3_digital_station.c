@@ -445,27 +445,12 @@ v90_phase3_digital_station_advance_completed_receive_owned(
 	return V90_PHASE3_DIGITAL_STATION_OK;
 }
 
-bool v90_phase3_digital_transmit_handoff_is_valid(
-	const struct v90_phase3_digital_transmit_handoff *handoff)
-{
-	return handoff != NULL &&
-	       v34_scrambler_is_valid(&handoff->scrambler) &&
-	       handoff->scrambler.polynomial == V34_POLYNOMIAL_GPC &&
-	       v90_jd_parameters_are_valid(&handoff->jd) &&
-	       g711_law_is_valid(handoff->law) &&
-	       handoff->trn1d_symbols >= V90_PHASE3_TRN1D_MIN_SYMBOLS &&
-	       handoff->trn1d_symbols % V90_PHASE3_TRN1D_ALIGNMENT == 0 &&
-	       handoff->training_ucode >= V90_INFO1A_MIN_TRAINING_UCODE &&
-	       handoff->training_ucode <= V90_INFO1A_MAX_TRAINING_UCODE &&
-	       handoff->last_sign <= 1;
-}
-
 enum v90_phase3_digital_station_result
 v90_phase3_digital_station_transmit_handoff(
 	const struct v90_phase3_digital_station *station,
-	struct v90_phase3_digital_transmit_handoff *handoff)
+	struct v90_phase3_downstream_handoff *handoff)
 {
-	struct v90_phase3_digital_transmit_handoff generated;
+	struct v90_phase3_downstream_handoff generated;
 	const struct v90_phase3_signs *signs;
 
 	if (!v90_phase3_digital_station_is_valid(station) || handoff == NULL)
@@ -475,7 +460,7 @@ v90_phase3_digital_station_transmit_handoff(
 	if (!v90_phase3_digital_station_transmit_complete(station))
 		return V90_PHASE3_DIGITAL_STATION_INVALID_STATE;
 	signs = &station->transmit.sequence.signs;
-	generated = (struct v90_phase3_digital_transmit_handoff){
+	generated = (struct v90_phase3_downstream_handoff){
 		.scrambler = signs->scrambler,
 		.jd = station->jd,
 		.law = signs->law,
@@ -483,7 +468,7 @@ v90_phase3_digital_station_transmit_handoff(
 		.training_ucode = signs->training_ucode,
 		.last_sign = signs->last_sign,
 	};
-	if (!v90_phase3_digital_transmit_handoff_is_valid(&generated))
+	if (!v90_phase3_downstream_handoff_is_valid(&generated))
 		return V90_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE;
 	*handoff = generated;
 	return V90_PHASE3_DIGITAL_STATION_OK;

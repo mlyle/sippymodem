@@ -2540,7 +2540,7 @@ static enum pcm_call_result enter_mixed_phase3(struct pcm_call *call)
 
 		next.state.mixed.analog = mixed;
 	} else {
-		struct v90_phase3_digital_transmit_handoff handoff;
+		struct v90_phase3_downstream_handoff handoff;
 		struct pcm_call_digital_mixed_state mixed = {
 			.phase3 = call->state.phase3.digital,
 		};
@@ -2734,7 +2734,7 @@ static enum pcm_call_result enter_phase4(struct pcm_call *call)
 	if (call->local_role == V90_ANALOG_MODEM) {
 		const struct pcm_call_analog_mixed_state *mixed =
 			&call->state.mixed.analog;
-		struct v90_phase3_analog_receive_handoff receive_handoff;
+		struct v90_phase3_downstream_handoff receive_handoff;
 		struct v34_training_line transmit_handoff;
 		struct v90_phase4_analog_station station;
 		struct v90_phase4_analog_startup startup;
