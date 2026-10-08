@@ -3,6 +3,7 @@
 #include "sippymodem.h"
 #include "hdlc_fcs.h"
 #include "test.h"
+#include "sdk_io.h"
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
@@ -12,8 +13,9 @@ static uint64_t now_ns(void)
 	struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t);
 	return (uint64_t)t.tv_sec * 1000000000u + t.tv_nsec;
 }
-static bool process(struct sippymodem_server *server)
+static bool process(struct sippymodem_server *server, uint64_t *unused)
 {
+	(void)unused;
 	uint64_t next;
 	CHECK(sippymodem_process(server, now_ns(), &next) == SIPPYMODEM_OK, "native process");
 	struct sippymodem_event e;
@@ -60,14 +62,14 @@ static bool pair(bool lapm, unsigned rate, bool alaw, bool auto_a, bool auto_b)
 	struct sippymodem_line *b = sippymodem_line_create(server, &cfg);
 	CHECK(a && b && sippymodem_server_start(server) == SIPPYMODEM_OK &&
 	      sippymodem_line_start(a) == SIPPYMODEM_OK && sippymodem_line_start(b) == SIPPYMODEM_OK, "start");
-	CHECK(process(server), "owner initial clock");
+	CHECK(process(server, NULL), "owner initial clock");
 	char target[128]; snprintf(target, sizeof(target), "sip:1234@127.0.0.1:%u", sippymodem_listen_port(server));
 	uint64_t generation;
 	CHECK(sippymodem_dial(a, target, &generation) == SIPPYMODEM_OK, "dial");
 	struct sippymodem_status sa = {0}, sb = {0};
 	uint64_t limit = now_ns() + 3000000000ull;
 	while (now_ns() < limit && sb.phase != SIPPYMODEM_RINGING) {
-		CHECK(process(server), "ring tick"); sippymodem_get_status(b, &sb);
+		CHECK(process(server, NULL), "ring tick"); sippymodem_get_status(b, &sb);
 	}
 	CHECK(sb.phase == SIPPYMODEM_RINGING && sippymodem_answer(b, sb.generation) == SIPPYMODEM_OK, "answer");
 	uint8_t payload[64]; size_t n;
@@ -78,7 +80,7 @@ static bool pair(bool lapm, unsigned rate, bool alaw, bool auto_a, bool auto_b)
 	uint64_t bootstrap_retry = 0;
 	limit = now_ns() + 8000000000ull;
 	while (now_ns() < limit && (!sa.ready || !sb.ready)) {
-		CHECK(process(server), "training tick");
+		CHECK(process(server, NULL), "training tick");
 		sippymodem_get_status(a, &sa); sippymodem_get_status(b, &sb);
 		/* PPP startup retries are needed if the first frame precedes the
 		 * answerer's normal two-second delay before entering V.8. */
@@ -86,7 +88,7 @@ static bool pair(bool lapm, unsigned rate, bool alaw, bool auto_a, bool auto_b)
 		    ((!auto_a && !auto_b && !bootstrap_sent) ||
 		     (auto_b ? sb.phase : sa.phase) == SIPPYMODEM_TRAINING)) {
 			size_t accepted;
-			CHECK(sippymodem_send(bootstrap, payload, n, &accepted) == SIPPYMODEM_OK && accepted == n, "PPP bootstrap");
+			CHECK(send_when_available(server, NULL, bootstrap, payload, n, &accepted, process) && accepted == n, "PPP bootstrap");
 			bootstrap_sent = true; bootstrap_retry = now_ns() + 3000000000ull;
 		}
 	}
@@ -94,21 +96,21 @@ static bool pair(bool lapm, unsigned rate, bool alaw, bool auto_a, bool auto_b)
 	CHECK(sa.tx_baud == 8000 && sa.rx_baud == 8000 && sa.error_control == (lapm ? SIPPYMODEM_LAPM : SIPPYMODEM_RAW) && sa.compression == SIPPYMODEM_COMP_NONE, "native status");
 	size_t accepted;
 	if (!bootstrap_sent || bootstrap != a)
-		CHECK(sippymodem_send(a, payload, n, &accepted) == SIPPYMODEM_OK && accepted == n, "send A");
+		CHECK(send_when_available(server, NULL, a, payload, n, &accepted, process) && accepted == n, "send A");
 	if (!bootstrap_sent || bootstrap != b)
-		CHECK(sippymodem_send(b, payload, n, &accepted) == SIPPYMODEM_OK && accepted == n, "send B");
+		CHECK(send_when_available(server, NULL, b, payload, n, &accepted, process) && accepted == n, "send B");
 	uint8_t a_rx[64], b_rx[64]; size_t a_n = 0, b_n = 0; limit = now_ns() + 4000000000ull;
 	while (now_ns() < limit && (a_n < n || b_n < n)) {
-		CHECK(process(server), "data tick"); size_t count;
+		CHECK(process(server, NULL), "data tick"); size_t count;
 		CHECK(receive(a, a_rx + a_n, a_n < n ? 1 : 0, &count), "read A"); a_n += count;
 		CHECK(receive(b, b_rx + b_n, b_n < n ? 1 : 0, &count), "read B"); b_n += count;
 	}
 	CHECK(a_n == n && b_n == n && !memcmp(payload,a_rx,n) && !memcmp(payload,b_rx,n), "exact literal byte payload");
 	CHECK(sippymodem_set_dte_mode(a, generation, SIPPYMODEM_COMMAND) == SIPPYMODEM_OK, "command mode");
-	CHECK(sippymodem_send(b, payload, n, &accepted) == SIPPYMODEM_OK && accepted == n, "send to command peer");
+	CHECK(send_when_available(server, NULL, b, payload, n, &accepted, process) && accepted == n, "send to command peer");
 	a_n = 0; limit = now_ns() + 4000000000ull;
 	while (now_ns() < limit && a_n < n) {
-		CHECK(process(server), "command RX tick"); size_t count;
+		CHECK(process(server, NULL), "command RX tick"); size_t count;
 		CHECK(receive(a, a_rx + a_n, 1, &count), "command receive"); a_n += count;
 	}
 	CHECK(a_n == n && !memcmp(payload,a_rx,n), "command RX preserved");
