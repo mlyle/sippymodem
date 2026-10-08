@@ -10,7 +10,7 @@
 static bool forward_admit(void *context)
 {
 	struct sip_media_bridge *bridge = context;
-	if (bridge->endpoint->discard_pending || bridge->inactive_pending ||
+	if (bridge->deferred || bridge->endpoint->discard_pending || bridge->inactive_pending ||
 	    bridge->receive_draining)
 		return false;
 	if (bridge->destination.admit == NULL)
@@ -50,17 +50,76 @@ DEFINE_FORWARDER(forward_trace, trace,
 		 struct sip_trace_record)
 DEFINE_FORWARDER(forward_registration, registration_changed,
 		 struct sip_registration_event)
-DEFINE_FORWARDER(forward_call, call_changed,
+DEFINE_FORWARDER(deliver_call, call_changed,
 		 struct sip_call_event)
 DEFINE_FORWARDER(forward_media_changed, media_changed,
 		 struct sip_media_event)
 
 #undef DEFINE_FORWARDER
 
+/* The mailbox has no borrowed callback strings and is touched only by the
+ * SIP owner. The worker continues using the established binding unchanged. */
+static bool copy_text(char storage[256], const char **text)
+{
+	if (*text == NULL)
+		return true;
+	size_t length = strnlen(*text, 256);
+	if (length == 256)
+		return false;
+	memcpy(storage, *text, length + 1);
+	*text = storage;
+	return true;
+}
+
+static struct sip_media_pending *pending(struct sip_media_bridge *bridge)
+{
+	if (bridge->pending_count == SIP_MEDIA_PENDING_CAPACITY) {
+		bridge->pending_overflow = true;
+		return NULL;
+	}
+	return &bridge->pending[bridge->pending_count];
+}
+
+static void forward_call(void *context, const struct sip_call_event *event)
+{
+	struct sip_media_bridge *bridge = context;
+	if (!bridge->deferred) {
+		deliver_call(context, event);
+		return;
+	}
+	struct sip_media_pending *record = pending(bridge);
+	if (record == NULL)
+		return;
+	record->media = false;
+	record->call = *event;
+	if (!copy_text(record->text[0], &record->call.called_number) ||
+	    !copy_text(record->text[1], &record->call.caller_number) ||
+	    !copy_text(record->text[2], &record->call.reason) ||
+	    !copy_text(record->text[3], &record->call.remote_identity)) {
+		bridge->pending_overflow = true;
+		return;
+	}
+	bridge->pending_count++;
+}
+
 static void forward_media(
 	void *context, const struct sip_media_event *event)
 {
 	struct sip_media_bridge *bridge = context;
+
+	if (bridge->deferred) {
+		struct sip_media_pending *record = pending(bridge);
+		if (record == NULL)
+			return;
+		record->media = true;
+		record->binding = *event;
+		if (!copy_text(record->text[0], &record->binding.remote_address)) {
+			bridge->pending_overflow = true;
+			return;
+		}
+		bridge->pending_count++;
+		return;
+	}
 
 	/* SDK owners decide after the following call-IDLE callback. A hold or
 	 * local cancellation therefore still clears media without a receive tail. */
@@ -119,6 +178,31 @@ sip_media_bridge_callbacks(
 	const struct sip_media_bridge *bridge)
 {
 	return bridge != NULL ? &bridge->source : NULL;
+}
+
+void sip_media_bridge_begin_deferred(struct sip_media_bridge *bridge)
+{
+	if (bridge != NULL)
+		bridge->deferred = true;
+}
+
+bool sip_media_bridge_finish_deferred(struct sip_media_bridge *bridge)
+{
+	if (bridge == NULL || !bridge->deferred)
+		return false;
+	bridge->deferred = false;
+	bool valid = !bridge->pending_overflow;
+	unsigned int count = bridge->pending_count;
+	bridge->pending_count = 0;
+	bridge->pending_overflow = false;
+	for (unsigned int i = 0; i < count; ++i) {
+		struct sip_media_pending *record = &bridge->pending[i];
+		if (record->media)
+			forward_media(bridge, &record->binding);
+		else
+			deliver_call(bridge, &record->call);
+	}
+	return valid;
 }
 
 bool sip_media_bridge_resolve_inactive(struct sip_media_bridge *bridge)

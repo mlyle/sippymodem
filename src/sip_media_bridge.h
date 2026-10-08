@@ -8,6 +8,16 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+enum { SIP_MEDIA_PENDING_CAPACITY = 8 };
+struct sip_media_pending {
+	bool media;
+	union {
+		struct sip_call_event call;
+		struct sip_media_event binding;
+	};
+	char text[4][256];
+};
+
 struct sip_media_bridge {
 	struct rtp_endpoint *endpoint;
 	struct sip_signaling_callbacks destination;
@@ -22,6 +32,10 @@ struct sip_media_bridge {
 	bool trace_started;
 	bool inactive_pending;
 	bool receive_draining;
+	/* Only the SIP owner accesses this mailbox while DSP owns the media. */
+	bool deferred, pending_overflow;
+	unsigned int pending_count;
+	struct sip_media_pending pending[SIP_MEDIA_PENDING_CAPACITY];
 };
 
 /* endpoint and copied callback context must outlive the bridge. */
@@ -34,6 +48,11 @@ bool sip_media_bridge_init(
 const struct sip_signaling_callbacks *
 sip_media_bridge_callbacks(
 	const struct sip_media_bridge *bridge);
+/* Bound and copy call/media updates while a worker owns the endpoint.
+ * Finish on the native owner after collecting DSP and flushing its RTP.
+ * False reports mailbox overflow or an overlong borrowed string explicitly. */
+void sip_media_bridge_begin_deferred(struct sip_media_bridge *bridge);
+bool sip_media_bridge_finish_deferred(struct sip_media_bridge *bridge);
 /* Resolve deferred inactivity; true starts one bounded socket drain. */
 bool sip_media_bridge_resolve_inactive(struct sip_media_bridge *bridge);
 void sip_media_bridge_clear_media(

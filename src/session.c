@@ -429,6 +429,7 @@ enum sip_session_result sip_session_begin_media_batch(struct sip_session *sessio
 	if (rtp_runtime_begin_transmit_batch(session->rtp) != RTP_ENDPOINT_OK)
 		session->batch_result = SIP_SESSION_RTP_ERROR;
 	session->media_batch = true;
+	sip_media_bridge_begin_deferred(&session->bridge);
 	return session->batch_result;
 }
 
@@ -443,6 +444,8 @@ enum sip_session_result sip_session_finish_media_batch(struct sip_session *sessi
 	if (sip_session_receive_draining(session) &&
 	    sip_session_receive_tail_frames(session) == 0)
 		sip_session_finish_receive_tail(session);
+	if (!sip_media_bridge_finish_deferred(&session->bridge))
+		return SIP_SESSION_MEDIA_BINDING_ERROR;
 	return session->last_rtp_result == RTP_ENDPOINT_OK ?
 		SIP_SESSION_OK : SIP_SESSION_RTP_ERROR;
 }

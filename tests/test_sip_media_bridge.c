@@ -389,6 +389,91 @@ static bool test_media_trace_intervals_and_lifecycle(void)
 	return true;
 }
 
+struct pending_capture {
+	struct sip_media_bridge *bridge;
+	char order[32];
+	unsigned int count;
+	uint64_t generation;
+	enum sip_call_state state;
+	bool copied;
+};
+static void pending_call(void *context, const struct sip_call_event *event)
+{
+	struct pending_capture *capture = context;
+	capture->order[capture->count++] = 'C';
+	capture->generation = event->generation;
+	capture->state = event->state;
+	if (event->called_number != NULL)
+		capture->copied = strcmp(event->called_number, "123") == 0 &&
+			strcmp(event->caller_number, "456") == 0 &&
+			strcmp(event->reason, "reason") == 0 &&
+			strcmp(event->remote_identity, "peer") == 0 &&
+			sip_media_bridge_is_in_callback(capture->bridge);
+}
+static void pending_media(void *context, const struct sip_media_event *event)
+{
+	struct pending_capture *capture = context;
+	capture->order[capture->count++] = 'M';
+	capture->copied &= strcmp(event->remote_address, "127.0.0.1") == 0 &&
+		sip_media_bridge_is_configured(capture->bridge);
+}
+static bool test_worker_owned_media(void)
+{
+	struct bridge_fixture fixture;
+	struct callback_capture unused = { 0 };
+	CHECK(open_fixture(&fixture, &unused), "fixture failed");
+	struct pending_capture capture = { .bridge = &fixture.bridge };
+	fixture.bridge.destination = (struct sip_signaling_callbacks){
+		.context = &capture, .call_changed = pending_call, .media_changed = pending_media,
+	};
+	const struct sip_signaling_callbacks *source = sip_media_bridge_callbacks(&fixture.bridge);
+	char called[] = "123", caller[] = "456", reason[] = "reason", identity[] = "peer";
+	char address[] = "127.0.0.1";
+	struct sip_call_event call = { .generation = 42, .state = SIP_CALL_CONNECTED,
+		.called_number = called, .caller_number = caller, .reason = reason,
+		.remote_identity = identity };
+	struct sip_media_event media = { .state = SIP_MEDIA_CONFIGURED,
+		.remote_address_family = SIP_MEDIA_ADDRESS_IPV4, .codec = MEDIA_CODEC_PCMU,
+		.sample_rate = MEDIA_SAMPLE_RATE, .channels = 1,
+		.local_port = rtp_endpoint_local_port(&fixture.endpoint),
+		.remote_address = address, .remote_port = 42000 };
+	sip_media_bridge_begin_deferred(&fixture.bridge);
+	source->call_changed(source->context, &call);
+	source->media_changed(source->context, &media);
+	call.state = SIP_CALL_IDLE;
+	source->call_changed(source->context, &call);
+	called[0] = caller[0] = reason[0] = identity[0] = address[0] = 'x';
+	call.generation = 99;
+	media.remote_port = 1;
+	CHECK(capture.count == 0 && !fixture.endpoint.remote_configured &&
+	      !source->admit(source->context), "worker-owned media was changed or admitted a call");
+	CHECK(sip_media_bridge_finish_deferred(&fixture.bridge) && capture.count == 3 &&
+	      memcmp(capture.order, "CMC", 3) == 0 && capture.copied &&
+	      capture.generation == 42 && capture.state == SIP_CALL_IDLE && remote_is(&fixture, 42000),
+	      "deferred events lost order, metadata or borrowed strings");
+	capture.count = 0;
+	call = (struct sip_call_event){ .state = SIP_CALL_IDLE };
+	sip_media_bridge_begin_deferred(&fixture.bridge);
+	for (unsigned int i = 0; i <= SIP_MEDIA_PENDING_CAPACITY; ++i)
+		source->call_changed(source->context, &call);
+	CHECK(!sip_media_bridge_finish_deferred(&fixture.bridge) &&
+	      capture.count == SIP_MEDIA_PENDING_CAPACITY, "mailbox overflow was silent");
+	char long_text[257];
+	memset(long_text, 'x', sizeof(long_text) - 1);
+	long_text[sizeof(long_text) - 1] = '\0';
+	call.called_number = long_text;
+	capture.count = 0;
+	sip_media_bridge_begin_deferred(&fixture.bridge);
+	source->call_changed(source->context, &call);
+	CHECK(!sip_media_bridge_finish_deferred(&fixture.bridge) && capture.count == 0,
+	      "overlong borrowed text was truncated or retained");
+	sip_media_bridge_begin_deferred(&fixture.bridge);
+	CHECK(sip_media_bridge_finish_deferred(&fixture.bridge) &&
+	      !sip_media_bridge_finish_deferred(&fixture.bridge), "mailbox did not reset");
+	rtp_endpoint_close(&fixture.endpoint);
+	return true;
+}
+
 struct test_case {
 	const char *name;
 	bool (*run)(void);
@@ -400,6 +485,7 @@ int main(void)
 		{ "forward and bind", test_forwards_and_binds_before_media_callback },
 		{ "media cleanup admission", test_admission_waits_for_media_cleanup },
 		{ "deferred receive tail", test_deferred_receive_tail },
+		{ "worker-owned media updates", test_worker_owned_media },
 		{ "initialization validation", test_validates_initialization },
 		{ "media trace intervals", test_media_trace_intervals_and_lifecycle },
 	};
