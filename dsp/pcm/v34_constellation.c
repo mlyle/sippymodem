@@ -201,19 +201,13 @@ v34_training_constellation_slice(
 	for (uint8_t rotation = 0; rotation < 4u; ++rotation) {
 		for (uint8_t quarter = 0; quarter < quarter_count; ++quarter) {
 			struct qam_point candidate;
-			double in_phase_error;
-			double quadrature_error;
 			double distance;
 
 			if (v34_training_constellation_point(
 				    constellation, quarter, rotation,
 				    &candidate) != V34_CONSTELLATION_OK)
 				return V34_CONSTELLATION_INVALID_ARGUMENT;
-			in_phase_error = point->in_phase - candidate.in_phase;
-			quadrature_error =
-				point->quadrature - candidate.quadrature;
-			distance = in_phase_error * in_phase_error +
-				   quadrature_error * quadrature_error;
+			distance = qam_point_distance_squared(point, &candidate);
 			if (!isfinite(distance) || distance >= best_distance)
 				continue;
 			best_distance = distance;

@@ -109,8 +109,7 @@ enum v32_echo_result v32_echo_reference_init(
 		mapped->in_phase * cosine - mapped->quadrature * sine;
 	initialized.point.quadrature =
 		mapped->in_phase * sine + mapped->quadrature * cosine;
-	power = initialized.point.in_phase * initialized.point.in_phase +
-		initialized.point.quadrature * initialized.point.quadrature;
+	power = qam_point_power(&initialized.point);
 	if (!point_is_finite(&initialized.point) || !isfinite(power))
 		return V32_ECHO_INVALID_ARGUMENT;
 	*reference = initialized;

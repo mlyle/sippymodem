@@ -20,16 +20,6 @@ bool v22bis_receiver_is_valid(
 	       qam_gain_is_valid(&receiver->gain);
 }
 
-static double squared_error(
-	const struct qam_point *left,
-	const struct qam_point *right)
-{
-	double in_phase = left->in_phase - right->in_phase;
-	double quadrature = left->quadrature - right->quadrature;
-
-	return in_phase * in_phase + quadrature * quadrature;
-}
-
 enum v22bis_receiver_result v22bis_receiver_init(
 	struct v22bis_receiver *receiver,
 	const struct qam_point *reference_point)
@@ -77,7 +67,7 @@ v22bis_receiver_matches_v22(
 			    &receiver->gain, &ideal, &predicted) !=
 		    QAM_GAIN_OK)
 			return V22BIS_RECEIVER_INVALID_ARGUMENT;
-		error = squared_error(point, &predicted);
+		error = qam_point_distance_squared(point, &predicted);
 		if (!qam_point_nonzero_power(&predicted, &predicted_power))
 			return V22BIS_RECEIVER_INVALID_ARGUMENT;
 
@@ -150,7 +140,7 @@ enum v22bis_receiver_result v22bis_receiver_decode(
 			    &next.gain, &candidate, &predicted) !=
 		    QAM_GAIN_OK)
 			return V22BIS_RECEIVER_INVALID_ARGUMENT;
-		error = squared_error(point, &predicted);
+		error = qam_point_distance_squared(point, &predicted);
 		if (isfinite(error) && error < best_error) {
 			best_error = error;
 			best_symbol = symbol;

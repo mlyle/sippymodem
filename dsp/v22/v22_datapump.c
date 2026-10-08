@@ -1161,8 +1161,6 @@ static int v22bis_hard_symbol(
 	     ++candidate) {
 		struct qam_point ideal;
 		struct qam_point predicted;
-		double in_phase_error;
-		double quadrature_error;
 		double error;
 
 		if (v22bis_constellation_point(candidate, &ideal) !=
@@ -1171,11 +1169,7 @@ static int v22bis_hard_symbol(
 			    &datapump->v22bis_receiver.gain, &ideal,
 			    &predicted) != QAM_GAIN_OK)
 			return -1;
-		in_phase_error = point->in_phase - predicted.in_phase;
-		quadrature_error =
-			point->quadrature - predicted.quadrature;
-		error = in_phase_error * in_phase_error +
-			quadrature_error * quadrature_error;
+		error = qam_point_distance_squared(point, &predicted);
 		if (isfinite(error) && error < best_error) {
 			best_error = error;
 			best_symbol = candidate;

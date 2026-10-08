@@ -123,8 +123,7 @@ enum v32_echo_result v32_echo_canceller_push_reference(
 		return V32_ECHO_INVALID_ARGUMENT;
 	if (canceller->phase != 0 || canceller->reference_pending)
 		return V32_ECHO_INVALID_STATE;
-	power = reference->in_phase * reference->in_phase +
-		reference->quadrature * reference->quadrature;
+	power = qam_point_power(reference);
 	if (!isfinite(power))
 		return V32_ECHO_INVALID_ARGUMENT;
 	canceller->reference[canceller->reference_write] = *reference;
@@ -175,9 +174,7 @@ static bool prediction_and_energy(
 				return false;
 			predicted += coefficient->in_phase * point.in_phase +
 				     coefficient->quadrature * point.quadrature;
-			reference_energy +=
-				point.in_phase * point.in_phase +
-				point.quadrature * point.quadrature;
+			reference_energy += qam_point_power(&point);
 		}
 	}
 	*prediction = predicted;

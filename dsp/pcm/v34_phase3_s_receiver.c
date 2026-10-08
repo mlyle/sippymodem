@@ -88,8 +88,7 @@ enum v34_phase3_s_prefix_result v34_phase3_s_prefix_init_recurrent(
 static bool point_has_power(
 	const struct qam_point *point, double minimum_point_power)
 {
-	double power = point->in_phase * point->in_phase +
-		       point->quadrature * point->quadrature;
+	double power = qam_point_power(point);
 
 	return isfinite(power) && power >= minimum_point_power;
 }
@@ -100,20 +99,13 @@ static bool points_recur(
 	const struct qam_point *point, double minimum_point_power,
 	double minimum_correlation)
 {
-	double point_power = point->in_phase * point->in_phase +
-			     point->quadrature * point->quadrature;
-	double previous_power = previous->in_phase * previous->in_phase +
-				 previous->quadrature * previous->quadrature;
-	double delayed_power = delayed->in_phase * delayed->in_phase +
-				delayed->quadrature * delayed->quadrature;
+	double point_power = qam_point_power(point);
+	double previous_power = qam_point_power(previous);
+	double delayed_power = qam_point_power(delayed);
 	double point_scale = sqrt(point_power);
 	double delayed_scale = sqrt(delayed_power);
 	double correlation;
-	double delta_in_phase = point->in_phase - previous->in_phase;
-	double delta_quadrature = point->quadrature - previous->quadrature;
-	double transition_power =
-		delta_in_phase * delta_in_phase +
-		delta_quadrature * delta_quadrature;
+	double transition_power = qam_point_distance_squared(point, previous);
 
 	if (!point_has_power(previous, minimum_point_power) ||
 	    !point_has_power(delayed, minimum_point_power) ||

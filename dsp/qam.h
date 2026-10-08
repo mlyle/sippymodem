@@ -61,6 +61,15 @@ static inline double qam_point_power(const struct qam_point *point)
 	       point->quadrature * point->quadrature;
 }
 
+static inline double qam_point_distance_squared(
+	const struct qam_point *left, const struct qam_point *right)
+{
+	double in_phase = left->in_phase - right->in_phase;
+	double quadrature = left->quadrature - right->quadrature;
+
+	return in_phase * in_phase + quadrature * quadrature;
+}
+
 static inline struct qam_point qam_point_multiply(
 	const struct qam_point *left,
 	const struct qam_point *right)
