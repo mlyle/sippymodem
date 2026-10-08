@@ -32,7 +32,8 @@ bool v90_sign_encoder_is_valid(
 
 /* Consume exactly S = 6 - Sr bits in transmission order. With Sr zero the
  * returned signs are final; otherwise they are the initial t assignments
- * that the spectral shaper may invert. Rejected calls change neither object. */
+ * that the spectral shaper may invert. Output must not overlap the encoder;
+ * input/output may overlap. Rejected calls change neither object. */
 enum v90_sign_encoder_result v90_sign_encoder_encode(
 	struct v90_sign_encoder *encoder,
 	const uint8_t *bits, size_t bit_count,

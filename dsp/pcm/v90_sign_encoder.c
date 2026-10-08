@@ -3,6 +3,7 @@
 #include "v90_sign_encoder.h"
 #include "v90_sign_history.h"
 
+#include "memory_region.h"
 #include "packed_bits.h"
 
 #include <string.h>
@@ -86,7 +87,9 @@ enum v90_sign_encoder_result v90_sign_encoder_encode(
 	uint8_t encoded[V90_CP_FRAME_INTERVALS];
 	size_t required;
 
-	if (encoder == NULL || bits == NULL || signs == NULL)
+	if (encoder == NULL || bits == NULL || signs == NULL ||
+	    memory_regions_overlap(encoder, sizeof(*encoder), signs,
+				   V90_CP_FRAME_INTERVALS))
 		return V90_SIGN_ENCODER_INVALID_ARGUMENT;
 	if (!v90_sign_encoder_is_valid(encoder))
 		return V90_SIGN_ENCODER_INVALID_STATE;

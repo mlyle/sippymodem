@@ -4,6 +4,7 @@
 
 #include "test.h"
 
+#include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -253,6 +254,55 @@ static bool test_contracts(void)
 	return true;
 }
 
+static bool test_output_ownership(void)
+{
+	struct sign_fixture {
+		uint8_t prefix[V90_CP_FRAME_INTERVALS];
+		struct v90_sign_encoder encoder;
+		uint8_t suffix[V90_CP_FRAME_INTERVALS];
+	} fixture, saved;
+	const uint8_t bits[V90_CP_FRAME_INTERVALS] = { 1, 1, 1, 1, 1, 1 };
+
+	for (uint8_t redundancy = 0; redundancy <= 3; ++redundancy) {
+		size_t count = V90_CP_FRAME_INTERVALS - redundancy;
+
+		for (int offset = 1 - V90_CP_FRAME_INTERVALS;
+		     offset < (int)sizeof(fixture.encoder); ++offset) {
+			memset(&fixture, 0xa5, sizeof(fixture));
+			CHECK(v90_sign_encoder_init(&fixture.encoder, redundancy) == V90_SIGN_ENCODER_OK,
+			      "alias fixture did not initialize");
+			saved = fixture;
+			uint8_t *output = (uint8_t *)&fixture +
+				offsetof(struct sign_fixture, encoder) + offset;
+			CHECK(v90_sign_encoder_encode(&fixture.encoder, bits, count, output) ==
+				      V90_SIGN_ENCODER_INVALID_ARGUMENT &&
+			      memcmp(&fixture, &saved, sizeof(fixture)) == 0,
+			      "Sr=%u output offset %d overlapped encoder history", redundancy, offset);
+		}
+		for (unsigned side = 0; side < 2; ++side) {
+			struct v90_sign_encoder expected;
+			uint8_t signs[V90_CP_FRAME_INTERVALS];
+			uint8_t *output = side ? fixture.suffix : fixture.prefix;
+
+			CHECK(v90_sign_encoder_init(&fixture.encoder, redundancy) == V90_SIGN_ENCODER_OK &&
+			      v90_sign_encoder_init(&expected, redundancy) == V90_SIGN_ENCODER_OK &&
+			      v90_sign_encoder_encode(&expected, bits, count, signs) == V90_SIGN_ENCODER_OK &&
+			      v90_sign_encoder_encode(&fixture.encoder, bits, count, output) == V90_SIGN_ENCODER_OK &&
+			      memcmp(output, signs, sizeof(signs)) == 0 &&
+			      memcmp(&fixture.encoder, &expected, sizeof(expected)) == 0,
+			      "adjacent output changed Sr=%u encoder", redundancy);
+			/* Input and output may share a buffer: input is consumed before commit. */
+			memcpy(output, bits, sizeof(bits));
+			CHECK(v90_sign_encoder_encode(&expected, bits, count, signs) == V90_SIGN_ENCODER_OK &&
+			      v90_sign_encoder_encode(&fixture.encoder, output, count, output) == V90_SIGN_ENCODER_OK &&
+			      memcmp(output, signs, sizeof(signs)) == 0 &&
+			      memcmp(&fixture.encoder, &expected, sizeof(expected)) == 0,
+			      "in-place sign encoding changed Sr=%u output/history", redundancy);
+		}
+	}
+	return true;
+}
+
 struct test_case {
 	const char *name;
 	bool (*run)(void);
@@ -264,6 +314,7 @@ int main(void)
 		{ "all redundancies", test_all_redundancies },
 		{ "zero initialization", test_zero_initialization },
 		{ "contracts", test_contracts },
+		{ "output ownership", test_output_ownership },
 	};
 	unsigned int failures = 0;
 
