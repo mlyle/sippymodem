@@ -131,6 +131,22 @@ static bool step(struct sippymodem_server *server, uint64_t *now)
 	return true;
 }
 
+/* Successful-write tests must allow a line's current DSP job to finish. */
+static bool send_when_available(struct sippymodem_server *server, uint64_t *now,
+	struct sippymodem_line *line, const void *bytes, size_t length, size_t *accepted)
+{
+	for (unsigned int index = 0; index < 30000; ++index) {
+		enum sippymodem_result result = sippymodem_send(line, bytes, length, accepted);
+		if (result != SIPPYMODEM_AGAIN) {
+			CHECK(result == SIPPYMODEM_OK, "send failed: %d", result);
+			return true;
+		}
+		EXPECT(*accepted == 0);
+		EXPECT(step(server, now));
+	}
+	return false;
+}
+
 /* A watchdog turns a reintroduced process-wide join into a bounded failure. */
 static void *stall_watchdog(void *unused)
 {
@@ -264,7 +280,7 @@ static bool test_owned_loopback(void)
 				if (side == 0)
 					EXPECT(!local.ready);
 				size_t count = 0;
-				EXPECT(sippymodem_send(peers[side], startup, sizeof(startup), &count) == SIPPYMODEM_OK);
+				EXPECT(send_when_available(server, &now, peers[side], startup, sizeof(startup), &count));
 				EXPECT(count == sizeof(startup));
 				startup_sent[side] = true;
 			}
@@ -321,7 +337,7 @@ static bool test_owned_loopback(void)
 	EXPECT(remote.tx_bps == 300 && remote.rx_bps == 300);
 	const unsigned char literal[] = { 0, '+', '+', '+', '\r', 'A', 'T', 0x11, 0x13, 255 };
 	size_t accepted = 0, received = 0;
-	EXPECT(sippymodem_send(caller, literal, sizeof(literal), &accepted) == SIPPYMODEM_OK);
+	EXPECT(send_when_available(server, &now, caller, literal, sizeof(literal), &accepted));
 	EXPECT(accepted == sizeof(literal));
 	EXPECT(sippymodem_set_dte_mode(caller, generation, SIPPYMODEM_COMMAND) == SIPPYMODEM_BUSY);
 	unsigned char result[sizeof(literal)];
@@ -335,7 +351,7 @@ static bool test_owned_loopback(void)
 	}
 	EXPECT(received == sizeof(literal) && memcmp(result, literal, sizeof(literal)) == 0);
 	EXPECT(sippymodem_set_dte_mode(caller, generation, SIPPYMODEM_COMMAND) == SIPPYMODEM_OK);
-	EXPECT(sippymodem_send(answerer, literal, sizeof(literal), &accepted) == SIPPYMODEM_OK);
+	EXPECT(send_when_available(server, &now, answerer, literal, sizeof(literal), &accepted));
 	received = 0;
 	for (unsigned int index = 0; index < 5000 && received < sizeof(result); ++index) {
 		EXPECT(step(server, &now));
@@ -366,8 +382,8 @@ static bool test_owned_loopback(void)
 	EXPECT(check_independent_progress(server, &now, all_lines, 4));
 	const unsigned char first_payload[] = { 1, 3, 5, 7 };
 	const unsigned char second_payload[] = { 2, 4, 6, 8 };
-	EXPECT(sippymodem_send(caller, first_payload, sizeof(first_payload), &accepted) == SIPPYMODEM_OK);
-	EXPECT(sippymodem_send(other_caller, second_payload, sizeof(second_payload), &accepted) == SIPPYMODEM_OK);
+	EXPECT(send_when_available(server, &now, caller, first_payload, sizeof(first_payload), &accepted));
+	EXPECT(send_when_available(server, &now, other_caller, second_payload, sizeof(second_payload), &accepted));
 	unsigned char first_rx[4], second_rx[4];
 	size_t first_count = 0, second_count = 0;
 	for (unsigned int index = 0; index < 5000 && (first_count < 4 || second_count < 4); ++index) {
@@ -387,7 +403,7 @@ static bool test_owned_loopback(void)
 		finished = sippymodem_finish_tx(caller, generation);
 	}
 	EXPECT(finished == SIPPYMODEM_OK);
-	EXPECT(sippymodem_send(other_caller, "q", 1, &accepted) == SIPPYMODEM_OK && accepted == 1);
+	EXPECT(send_when_available(server, &now, other_caller, "q", 1, &accepted) && accepted == 1);
 	received = 0;
 	for (unsigned i = 0; i < 1000 && received == 0; ++i) {
 		EXPECT(step(server, &now));
@@ -439,7 +455,7 @@ static bool test_owned_loopback(void)
 		EXPECT(sippymodem_get_status(answerer, &incoming_origin) == SIPPYMODEM_OK);
 	}
 	EXPECT(reconnected.ready && incoming_origin.ready);
-	EXPECT(sippymodem_send(answerer, literal, sizeof(literal), &accepted) == SIPPYMODEM_OK && accepted == sizeof(literal));
+	EXPECT(send_when_available(server, &now, answerer, literal, sizeof(literal), &accepted) && accepted == sizeof(literal));
 	received = 0;
 	for (unsigned int index = 0; index < 5000 && received < sizeof(result); ++index) {
 		EXPECT(step(server, &now));
@@ -476,7 +492,7 @@ static bool test_owned_loopback(void)
 		fd_received += count;
 	}
 	EXPECT(fd_received == sizeof(fd_payload) && memcmp(fd_result, fd_payload, sizeof(fd_payload)) == 0);
-	EXPECT(sippymodem_send(other_answerer, literal, sizeof(literal), &accepted) == SIPPYMODEM_OK);
+	EXPECT(send_when_available(server, &now, other_answerer, literal, sizeof(literal), &accepted));
 	fd_received = 0;
 	for (unsigned int index = 0; index < 5000 && fd_received < sizeof(literal); ++index) {
 		EXPECT(step(server, &now));
@@ -639,7 +655,7 @@ static bool test_compressed_command_and_fd_eof(void)
 	struct sippymodem_fd *adapter = sippymodem_fd_create(caller, generation, &peer_fd);
 	EXPECT(adapter != NULL);
 	size_t accepted;
-	EXPECT(sippymodem_send(answerer, payload, 8, &accepted) == SIPPYMODEM_OK && accepted == 8);
+	EXPECT(send_when_available(server, &now, answerer, payload, 8, &accepted) && accepted == 8);
 	for (unsigned int i = 0; i < 5000 && local.rx_ready < 8; ++i) {
 		EXPECT(step(server, &now));
 		EXPECT(sippymodem_get_status(caller, &local) == SIPPYMODEM_OK);
@@ -703,7 +719,7 @@ static bool test_compressed_command_and_fd_eof(void)
 			EXPECT(sippymodem_get_status(answerer, &remote) == SIPPYMODEM_OK);
 		}
 		EXPECT(local.ready && remote.ready);
-		EXPECT(sippymodem_send(answerer, payload, 8, &accepted) == SIPPYMODEM_OK && accepted == 8);
+		EXPECT(send_when_available(server, &now, answerer, payload, 8, &accepted) && accepted == 8);
 		received = 0;
 		for (unsigned int i = 0; i < 5000 && received != 8; ++i) {
 			size_t count;
@@ -1115,7 +1131,7 @@ static bool test_huntgroups(void)
 	size_t accepted;
 	for (unsigned int index = 0; index < 5; ++index) {
 		unsigned char marker = (unsigned char)('a' + index);
-		EXPECT(sippymodem_send(callers[index], &marker, 1, &accepted) == SIPPYMODEM_OK && accepted == 1);
+		EXPECT(send_when_available(server, &now, callers[index], &marker, 1, &accepted) && accepted == 1);
 	}
 	for (unsigned int tick = 0; tick < 2000; ++tick)
 		EXPECT(step(server, &now));
@@ -1171,7 +1187,7 @@ static bool test_huntgroups(void)
 	for (unsigned int index = 1; index < 5; ++index)
 		EXPECT(sippymodem_get_status(answerers[index], &remote[index]) == SIPPYMODEM_OK && remote[index].phase == SIPPYMODEM_IDLE);
 	marker = 'z';
-	EXPECT(sippymodem_send(callers[0], &marker, 1, &accepted) == SIPPYMODEM_OK);
+	EXPECT(send_when_available(server, &now, callers[0], &marker, 1, &accepted));
 	for (unsigned int tick = 0; tick < 1500; ++tick)
 		EXPECT(step(server, &now));
 	EXPECT(sippymodem_receive(answerers[0], &marker, 1, &received) == SIPPYMODEM_OK && received == 1 && marker == 'z');
@@ -1281,7 +1297,7 @@ static bool test_startup_transmit_completion(void)
 				/* A service can close before the caller reports CONNECT. */
 				EXPECT(!local.ready);
 				size_t accepted;
-				EXPECT(sippymodem_send(answerer, greeting, profiles[profile].length, &accepted) == SIPPYMODEM_OK);
+				EXPECT(send_when_available(server, &now, answerer, greeting, profiles[profile].length, &accepted));
 				EXPECT(accepted == profiles[profile].length);
 				submitted = true;
 			}
@@ -1461,17 +1477,8 @@ static bool test_transmit_completion(void)
 		}
 		EXPECT(local.ready && remote.ready && remote.generation > old_generation);
 		EXPECT(sippymodem_finish_tx(answerer, old_generation) == SIPPYMODEM_STALE);
-		/* READY does not fence the line's next asynchronous DSP job. */
-		result = SIPPYMODEM_AGAIN;
-		for (unsigned i = 0; i < 30000 && result == SIPPYMODEM_AGAIN; ++i) {
-			result = sippymodem_send(answerer, payload, sizeof(payload), &accepted);
-			if (result == SIPPYMODEM_AGAIN) {
-				EXPECT(accepted == 0);
-				EXPECT(step(server, &now));
-			}
-		}
-		CHECK(result == SIPPYMODEM_OK && accepted == lc.tx_capacity,
-		      "reused finish profile=%u send=%d accepted=%zu", profile, result, accepted);
+		EXPECT(send_when_available(server, &now, answerer, payload, sizeof(payload), &accepted) &&
+		       accepted == lc.tx_capacity);
 		EXPECT(sippymodem_finish_tx(answerer, remote.generation) == SIPPYMODEM_AGAIN);
 		/* Cancellation remains immediate even with an unfinished final message. */
 		EXPECT(sippymodem_hangup(answerer, remote.generation) == SIPPYMODEM_OK);
