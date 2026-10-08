@@ -69,17 +69,3 @@ enum v92_pcm_phase3_trn1u_result v92_pcm_phase3_trn1u_next(
 	*symbol = generated;
 	return V92_PCM_PHASE3_TRN1U_OK;
 }
-
-const char *v92_pcm_phase3_trn1u_result_name(
-	enum v92_pcm_phase3_trn1u_result result)
-{
-	switch (result) {
-	case V92_PCM_PHASE3_TRN1U_OK:
-		return "ok";
-	case V92_PCM_PHASE3_TRN1U_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V92_PCM_PHASE3_TRN1U_INVALID_STATE:
-		return "invalid state";
-	}
-	return "unknown";
-}

@@ -83,9 +83,6 @@ static bool test_contracts(void)
 	struct v90_pcm_symbol symbol;
 	uint8_t trn1u_before[sizeof(trn1u)];
 	uint8_t symbol_before[sizeof(symbol)];
-	static const char *const names[] = {
-		"ok", "invalid argument", "invalid state",
-	};
 
 	memset(&trn1u, 0xa5, sizeof(trn1u));
 	memcpy(trn1u_before, &trn1u, sizeof(trn1u));
@@ -119,17 +116,6 @@ static bool test_contracts(void)
 	      memcmp(&trn1u, trn1u_before, sizeof(trn1u)) == 0 &&
 	      memcmp(&symbol, symbol_before, sizeof(symbol)) == 0,
 	      "invalid TRN1u state was not transactional");
-	for (size_t index = 0; index < ARRAY_LENGTH(names); ++index)
-		CHECK(strcmp(
-			      v92_pcm_phase3_trn1u_result_name(
-				      (enum v92_pcm_phase3_trn1u_result)index),
-			      names[index]) == 0,
-		      "TRN1u result name %zu differed", index);
-	CHECK(strcmp(
-		      v92_pcm_phase3_trn1u_result_name(
-			      (enum v92_pcm_phase3_trn1u_result)-1),
-		      "unknown") == 0,
-	      "unknown TRN1u result name differed");
 	return true;
 }
 

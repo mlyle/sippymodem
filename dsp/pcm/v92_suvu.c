@@ -139,22 +139,3 @@ enum v92_suvu_result v92_suvu_decode(
 	*parameters = decoded;
 	return V92_SUVU_OK;
 }
-
-const char *v92_suvu_result_name(enum v92_suvu_result result)
-{
-	switch (result) {
-	case V92_SUVU_OK:
-		return "ok";
-	case V92_SUVU_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V92_SUVU_INVALID_PARAMETERS:
-		return "invalid parameters";
-	case V92_SUVU_OUTPUT_TOO_SMALL:
-		return "output too small";
-	case V92_SUVU_INVALID_FRAME:
-		return "invalid frame";
-	case V92_SUVU_CRC_MISMATCH:
-		return "CRC mismatch";
-	}
-	return "unknown";
-}

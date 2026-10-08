@@ -591,20 +591,6 @@ static bool test_transactionality(void)
 	      v92_cpt_decode(frame, sizeof(frame), V92_CPT_MIN_FRAME_BITS,
 			     NULL) == V92_CPT_INVALID_ARGUMENT,
 	      "invalid CPt decode arguments were accepted");
-	CHECK(strcmp(v92_cpt_result_name(V92_CPT_OK), "ok") == 0 &&
-	      strcmp(v92_cpt_result_name(V92_CPT_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v92_cpt_result_name(V92_CPT_INVALID_PARAMETERS),
-		     "invalid parameters") == 0 &&
-	      strcmp(v92_cpt_result_name(V92_CPT_OUTPUT_TOO_SMALL),
-		     "output too small") == 0 &&
-	      strcmp(v92_cpt_result_name(V92_CPT_INVALID_FRAME),
-		     "invalid frame") == 0 &&
-	      strcmp(v92_cpt_result_name(V92_CPT_CRC_MISMATCH),
-		     "CRC mismatch") == 0 &&
-	      strcmp(v92_cpt_result_name((enum v92_cpt_result)99),
-		     "unknown") == 0,
-	      "CPt result names changed");
 	return true;
 }
 

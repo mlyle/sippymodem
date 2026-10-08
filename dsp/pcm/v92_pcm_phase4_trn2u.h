@@ -40,7 +40,4 @@ bool v92_pcm_phase4_trn2u_is_valid(
 enum v92_pcm_phase4_trn2u_result v92_pcm_phase4_trn2u_next(
 	struct v92_pcm_phase4_trn2u *trn2u, int16_t *sample);
 
-const char *v92_pcm_phase4_trn2u_result_name(
-	enum v92_pcm_phase4_trn2u_result result);
-
 #endif /* V92_PCM_PHASE4_TRN2U_H */

@@ -324,24 +324,3 @@ enum v92_cpu_result v92_cpu_decode(
 	*parameters = decoded;
 	return V92_CPU_OK;
 }
-
-const char *v92_cpu_result_name(enum v92_cpu_result result)
-{
-	switch (result) {
-	case V92_CPU_OK:
-		return "ok";
-	case V92_CPU_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V92_CPU_INVALID_PARAMETERS:
-		return "invalid parameters";
-	case V92_CPU_OUTPUT_TOO_SMALL:
-		return "output too small";
-	case V92_CPU_INVALID_FRAME:
-		return "invalid frame";
-	case V92_CPU_CRC_MISMATCH:
-		return "CRC mismatch";
-	case V92_CPU_INCOMPLETE:
-		return "incomplete";
-	}
-	return "unknown";
-}

@@ -172,22 +172,3 @@ enum v92_cpt_result v92_cpt_decode(
 	*parameters = decoded;
 	return V92_CPT_OK;
 }
-
-const char *v92_cpt_result_name(enum v92_cpt_result result)
-{
-	switch (result) {
-	case V92_CPT_OK:
-		return "ok";
-	case V92_CPT_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V92_CPT_INVALID_PARAMETERS:
-		return "invalid parameters";
-	case V92_CPT_OUTPUT_TOO_SMALL:
-		return "output too small";
-	case V92_CPT_INVALID_FRAME:
-		return "invalid frame";
-	case V92_CPT_CRC_MISMATCH:
-		return "CRC mismatch";
-	}
-	return "unknown";
-}

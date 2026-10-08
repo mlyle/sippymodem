@@ -42,7 +42,4 @@ enum v92_pcm_phase3_trn1u_result v92_pcm_phase3_trn1u_next(
 	struct v92_pcm_phase3_trn1u *trn1u,
 	struct v90_pcm_symbol *symbol);
 
-const char *v92_pcm_phase3_trn1u_result_name(
-	enum v92_pcm_phase3_trn1u_result result);
-
 #endif /* V92_PCM_PHASE3_TRN1U_H */

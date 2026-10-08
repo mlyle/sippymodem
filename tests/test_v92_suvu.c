@@ -459,25 +459,6 @@ static bool test_bounds_and_transactionality(void)
 	return true;
 }
 
-static bool test_result_names(void)
-{
-	CHECK(strcmp(v92_suvu_result_name(V92_SUVU_OK), "ok") == 0 &&
-	      strcmp(v92_suvu_result_name(V92_SUVU_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v92_suvu_result_name(V92_SUVU_INVALID_PARAMETERS),
-		     "invalid parameters") == 0 &&
-	      strcmp(v92_suvu_result_name(V92_SUVU_OUTPUT_TOO_SMALL),
-		     "output too small") == 0 &&
-	      strcmp(v92_suvu_result_name(V92_SUVU_INVALID_FRAME),
-		     "invalid frame") == 0 &&
-	      strcmp(v92_suvu_result_name(V92_SUVU_CRC_MISMATCH),
-		     "CRC mismatch") == 0 &&
-	      strcmp(v92_suvu_result_name((enum v92_suvu_result)99),
-		     "unknown") == 0,
-	      "SUVu result names changed");
-	return true;
-}
-
 int main(void)
 {
 	static const struct {
@@ -492,7 +473,6 @@ int main(void)
 		{ "data widths", test_data_widths },
 		{ "decode corruption", test_decode_corruption },
 		{ "bounds and transactionality", test_bounds_and_transactionality },
-		{ "result names", test_result_names },
 	};
 	unsigned int failures = 0;
 

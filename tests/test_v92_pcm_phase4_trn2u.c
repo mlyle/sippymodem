@@ -201,9 +201,6 @@ static bool test_contracts(void)
 	struct v92_pcm_phase4_trn2u trn2u;
 	struct v92_pcm_phase4_trn2u before;
 	int16_t sample = 1234;
-	static const char *const names[] = {
-		"ok", "invalid argument", "invalid state",
-	};
 
 	memset(&trn2u, 0xa5, sizeof(trn2u));
 	before = trn2u;
@@ -241,17 +238,6 @@ static bool test_contracts(void)
 		      V92_PCM_PHASE4_TRN2U_INVALID_STATE &&
 	      memcmp(&trn2u, &before, sizeof(trn2u)) == 0 && sample == 1234,
 	      "invalid TRN2u generation was not transactional");
-	for (size_t index = 0; index < ARRAY_LENGTH(names); ++index)
-		CHECK(strcmp(
-			      v92_pcm_phase4_trn2u_result_name(
-				      (enum v92_pcm_phase4_trn2u_result)index),
-			      names[index]) == 0,
-		      "TRN2u result name %zu differed", index);
-	CHECK(strcmp(
-		      v92_pcm_phase4_trn2u_result_name(
-			      (enum v92_pcm_phase4_trn2u_result)-1),
-		      "unknown") == 0,
-	      "unknown TRN2u result name differed");
 	return true;
 }
 

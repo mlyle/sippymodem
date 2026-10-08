@@ -88,6 +88,4 @@ enum v92_cpt_result v92_cpt_decode(
 	size_t frame_bit_count,
 	struct v92_cpt_parameters *parameters);
 
-const char *v92_cpt_result_name(enum v92_cpt_result result);
-
 #endif /* V92_CPT_H */

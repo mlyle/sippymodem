@@ -126,6 +126,4 @@ enum v92_cpu_result v92_cpu_decode(
 	size_t frame_bit_count, unsigned int mapping_frame_bits,
 	struct v92_cpu_parameters *parameters);
 
-const char *v92_cpu_result_name(enum v92_cpu_result result);
-
 #endif /* V92_CPU_H */

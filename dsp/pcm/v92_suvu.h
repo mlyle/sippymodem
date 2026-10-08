@@ -63,6 +63,4 @@ enum v92_suvu_result v92_suvu_decode(
 	unsigned int mapping_frame_bits,
 	struct v92_suvu_parameters *parameters);
 
-const char *v92_suvu_result_name(enum v92_suvu_result result);
-
 #endif /* V92_SUVU_H */

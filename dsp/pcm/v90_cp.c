@@ -243,20 +243,3 @@ enum v90_cp_result v90_cp_decode(
 	*parameters = decoded;
 	return V90_CP_OK;
 }
-
-const char *v90_cp_result_name(enum v90_cp_result result)
-{
-	switch (result) {
-	case V90_CP_OK:
-		return "ok";
-	case V90_CP_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V90_CP_INVALID_PARAMETERS:
-		return "invalid parameters";
-	case V90_CP_INVALID_FRAME:
-		return "invalid frame";
-	case V90_CP_CRC_MISMATCH:
-		return "CRC mismatch";
-	}
-	return "unknown";
-}

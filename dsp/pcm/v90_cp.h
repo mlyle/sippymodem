@@ -114,6 +114,4 @@ enum v90_cp_result v90_cp_decode(
 	size_t frame_bit_count,
 	struct v90_cp_parameters *parameters);
 
-const char *v90_cp_result_name(enum v90_cp_result result);
-
 #endif /* V90_CP_H */

@@ -930,27 +930,6 @@ static bool test_short_rejection(void)
 	return true;
 }
 
-static bool test_result_names(void)
-{
-	CHECK(strcmp(v92_cpu_result_name(V92_CPU_OK), "ok") == 0 &&
-	      strcmp(v92_cpu_result_name(V92_CPU_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v92_cpu_result_name(V92_CPU_INVALID_PARAMETERS),
-		     "invalid parameters") == 0 &&
-	      strcmp(v92_cpu_result_name(V92_CPU_OUTPUT_TOO_SMALL),
-		     "output too small") == 0 &&
-	      strcmp(v92_cpu_result_name(V92_CPU_INVALID_FRAME),
-		     "invalid frame") == 0 &&
-	      strcmp(v92_cpu_result_name(V92_CPU_CRC_MISMATCH),
-		     "CRC mismatch") == 0 &&
-	      strcmp(v92_cpu_result_name(V92_CPU_INCOMPLETE),
-		     "incomplete") == 0 &&
-	      strcmp(v92_cpu_result_name((enum v92_cpu_result)99),
-		     "unknown") == 0,
-	      "CPu result names changed");
-	return true;
-}
-
 static bool test_sparse_wire_maps(void)
 {
 	for (unsigned int differs = 0; differs < 2u; ++differs) {
@@ -1034,7 +1013,6 @@ int main(void)
 		{ "decoder storage padding", test_decoder_storage_padding },
 		{ "short CPu records", test_short_records },
 		{ "short CPu rejection", test_short_rejection },
-		{ "result names", test_result_names },
 	};
 	unsigned int failures = 0u;
 

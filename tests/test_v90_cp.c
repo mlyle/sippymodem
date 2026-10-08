@@ -540,18 +540,6 @@ static bool test_call_contracts(void)
 		      V90_CP_INVALID_ARGUMENT &&
 	      memcmp(&output, &saved_output, sizeof(output)) == 0,
 	      "invalid CP decode arguments mutated output");
-	CHECK(strcmp(v90_cp_result_name(V90_CP_OK), "ok") == 0 &&
-	      strcmp(v90_cp_result_name(V90_CP_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v90_cp_result_name(V90_CP_INVALID_PARAMETERS),
-		     "invalid parameters") == 0 &&
-	      strcmp(v90_cp_result_name(V90_CP_INVALID_FRAME),
-		     "invalid frame") == 0 &&
-	      strcmp(v90_cp_result_name(V90_CP_CRC_MISMATCH),
-		     "CRC mismatch") == 0 &&
-	      strcmp(v90_cp_result_name((enum v90_cp_result)99),
-		     "unknown") == 0,
-	      "CP result names changed");
 	return true;
 }
 
