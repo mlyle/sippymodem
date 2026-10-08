@@ -13,11 +13,6 @@ int ds0_ppp_init(struct ds0_ppp *ppp, const struct ds0_config *cfg)
     return ds0_init(&ppp->codec, cfg);
 }
 
-static int ds0_accm_contains(uint32_t accm, uint8_t octet)
-{
-	return octet < 0x20u && (accm & (1u << octet));
-}
-
 static size_t ds0_drain_pending(uint8_t *pending, size_t *pos, size_t *len,
 				   uint8_t *out, size_t capacity)
 {
@@ -38,13 +33,12 @@ static size_t ds0_drain_pending(uint8_t *pending, size_t *pos, size_t *len,
 	return count;
 }
 
-static int ds0_async_emit_octet(uint8_t octet, uint32_t accm,
-				   uint8_t *out, size_t capacity,
-				   size_t *len)
+static int ds0_async_emit_octet(uint8_t octet, uint8_t *out,
+				 size_t capacity, size_t *len)
 {
-	int escaped = octet == DS0_ASYNC_FLAG ||
-		      octet == DS0_ASYNC_ESCAPE ||
-		      ds0_accm_contains(accm, octet);
+	/* Escaping all controls is valid for every negotiated ACCM. */
+	int escaped = octet < 0x20u || octet == DS0_ASYNC_FLAG ||
+		      octet == DS0_ASYNC_ESCAPE;
 
 	if (*len + (escaped ? 2u : 1u) > capacity)
 		return -1;
@@ -58,33 +52,24 @@ static int ds0_async_emit_octet(uint8_t octet, uint32_t accm,
 	return 0;
 }
 
-static size_t ds0_async_encode_frame(struct ds0_ppp *ds0,
-					const uint8_t *frame,
-					size_t frame_len, uint8_t *out,
-					size_t capacity)
+static size_t ds0_async_encode_frame(const uint8_t *frame,
+				     size_t frame_len, uint8_t *out,
+				     size_t capacity)
 {
 	uint16_t fcs;
 	size_t len = 0;
 
-	if (!ds0 || (!frame && frame_len) || frame_len > DS0_MAX_FRAME_OCTETS || !out || capacity < 2u)
+	if ((!frame && frame_len) || frame_len > DS0_MAX_FRAME_OCTETS || !out || capacity < 2u)
 		return 0;
 
 	out[len++] = DS0_ASYNC_FLAG;
-	fcs = hdlc_fcs16(frame, frame_len);
-	for (size_t i = 0; i < frame_len; ++i) {
-		if (ds0_async_emit_octet(frame[i], UINT32_MAX,
-					    out, capacity, &len) < 0)
+	fcs = (uint16_t)(hdlc_fcs16(frame, frame_len) ^ 0xffffu);
+	for (size_t i = 0; i < frame_len + 2u; ++i) {
+		uint8_t octet = i < frame_len ? frame[i] :
+			(uint8_t)(i == frame_len ? fcs : fcs >> 8);
+		if (ds0_async_emit_octet(octet, out, capacity, &len) < 0)
 			return 0;
 	}
-
-	fcs = (uint16_t)(fcs ^ 0xffffu);
-	if (ds0_async_emit_octet((uint8_t)(fcs & 0xffu),
-				    UINT32_MAX, out, capacity,
-				    &len) < 0 ||
-	    ds0_async_emit_octet((uint8_t)(fcs >> 8),
-				    UINT32_MAX, out, capacity,
-				    &len) < 0)
-		return 0;
 
 	if (len >= capacity)
 		return 0;
@@ -273,9 +258,8 @@ void ds0_ppp_receive_frame(void *user, const uint8_t *frame,
 		return;
 	}
 
-	async_len = ds0_async_encode_frame(ds0, frame, len,
-					      ds0->rx_async_pending,
-					      sizeof(ds0->rx_async_pending));
+	async_len = ds0_async_encode_frame(frame, len, ds0->rx_async_pending,
+					  sizeof(ds0->rx_async_pending));
 	if (!async_len) {
 		ds0->counters.async_rx_overflow++;
 		ds0->overflow = true;
