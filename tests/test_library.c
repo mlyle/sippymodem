@@ -1461,7 +1461,17 @@ static bool test_transmit_completion(void)
 		}
 		EXPECT(local.ready && remote.ready && remote.generation > old_generation);
 		EXPECT(sippymodem_finish_tx(answerer, old_generation) == SIPPYMODEM_STALE);
-		EXPECT(sippymodem_send(answerer, payload, sizeof(payload), &accepted) == SIPPYMODEM_OK && accepted == lc.tx_capacity);
+		/* READY does not fence the line's next asynchronous DSP job. */
+		result = SIPPYMODEM_AGAIN;
+		for (unsigned i = 0; i < 30000 && result == SIPPYMODEM_AGAIN; ++i) {
+			result = sippymodem_send(answerer, payload, sizeof(payload), &accepted);
+			if (result == SIPPYMODEM_AGAIN) {
+				EXPECT(accepted == 0);
+				EXPECT(step(server, &now));
+			}
+		}
+		CHECK(result == SIPPYMODEM_OK && accepted == lc.tx_capacity,
+		      "reused finish profile=%u send=%d accepted=%zu", profile, result, accepted);
 		EXPECT(sippymodem_finish_tx(answerer, remote.generation) == SIPPYMODEM_AGAIN);
 		/* Cancellation remains immediate even with an unfinished final message. */
 		EXPECT(sippymodem_hangup(answerer, remote.generation) == SIPPYMODEM_OK);
