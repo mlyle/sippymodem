@@ -61,6 +61,33 @@ static bool test_cp(void)
 			      "corrupt CP bit %u accepted", bit);
 			frame[bit / 8] ^= 0x80u >> (bit % 8);
 		}
+		/* Table 4 distinguishes fixed compatibility bits from reserved
+		 * fields. Recompute the CRC so it cannot hide either contract. */
+		static const unsigned fixed[] = { 19, 30, 31, 32, 128 };
+		static const unsigned reserved[][2] = {
+			{ 25, 29 }, { 35, 50 }, { 52, 67 }, { 69, 84 },
+			{ 86, 101 }, { 129, 135 },
+		};
+		size_t payload = pcm_control_frame_payload_end(count, false);
+		for (unsigned bit = 18; bit < 136; ++bit) {
+			bool is_fixed = false, is_reserved = false;
+			for (size_t i = 0; i < sizeof(fixed) / sizeof(fixed[0]); ++i)
+				is_fixed |= bit == fixed[i];
+			for (size_t i = 0; i < sizeof(reserved) / sizeof(reserved[0]); ++i)
+				is_reserved |= bit >= reserved[i][0] && bit <= reserved[i][1];
+			if (!is_fixed && !is_reserved)
+				continue;
+			frame[bit / 8] ^= 0x80u >> (bit % 8);
+			packed_msb_write_msb_field(frame, payload + 1, 16,
+				pcm_control_frame_crc(frame, payload));
+			CHECK(v91_cp_length(frame, 136) == (is_fixed ? 0 : bits) &&
+			      v91_cp_decode(frame, bits, &q) == !is_fixed &&
+			      memcmp(&q, &saved, sizeof(q)) == 0,
+			      "CP header bit %u, rows %u violated fixed/reserved contract", bit, count);
+			frame[bit / 8] ^= 0x80u >> (bit % 8);
+			packed_msb_write_msb_field(frame, payload + 1, 16,
+				pcm_control_frame_crc(frame, payload));
+		}
 		p.rate = 28;
 		p.constellations[0].ucode_mask[0] = 0;
 		CHECK(v91_cp_encode(&p, frame) == 0, "insufficient constellation capacity accepted");

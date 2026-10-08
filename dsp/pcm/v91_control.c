@@ -95,6 +95,8 @@ size_t v91_cp_length(const uint8_t *header, size_t bits)
 	uint8_t map[6];
 	size_t count;
 	if (header == NULL || bits < 136 || !pcm_control_frame_prefix_is_valid(header) ||
+	    !packed_msb_bit(header, 19) ||
+	    !packed_msb_bits_are_zero(header, 30, 3) || packed_msb_bit(header, 128) ||
 	    (count = pcm_control_frame_read_map(header, map)) == 0)
 		return 0;
 	return cp_length(count);
