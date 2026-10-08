@@ -7,8 +7,16 @@
 
 struct ds0_async_host_rx {
 	bool in_frame, escaped, frame_error;
+	uint32_t accm;
 	size_t frame_len;
 	uint8_t frame[DS0_MAX_FRAME_OCTETS + 2u];
+};
+struct ds0_lcp_request {
+	size_t length;
+	uint32_t accm;
+	bool acknowledged, replied;
+	/* Identifier, length and options: compare Configure-Ack exactly. */
+	uint8_t bytes[DS0_MAX_FRAME_OCTETS - 5u];
 };
 struct ds0_ppp_counters {
 	uint32_t async_tx_valid_frames, async_tx_fcs_fail, async_tx_short;
@@ -19,6 +27,8 @@ struct ds0_ppp {
 	struct ds0 codec;
 	struct ds0_async_host_rx async_host_rx;
 	struct ds0_ppp_counters counters;
+	struct ds0_lcp_request requests[2]; /* synchronous peer, local host */
+	uint32_t host_accm;
 	bool overflow;
 	size_t tx_codec_pending_pos, tx_codec_pending_len;
 	size_t rx_async_pending_pos, rx_async_pending_len;
@@ -30,8 +40,8 @@ struct ds0_ppp {
 };
 int ds0_ppp_init(struct ds0_ppp *, const struct ds0_config *);
 /* Exact consumed prefix; keeps frame state across partial writes. Output is
- * padded with HDLC flags. RX accepts all unescaped control bytes; TX escapes
- * all controls, plus flag/escape, so it is safe with any negotiated ACCM. */
+ * padded with HDLC flags. Async input discards raw controls in the default
+ * or negotiated receive map; output escapes all controls and flag/escape. */
 size_t ds0_ppp_transmit(struct ds0_ppp *, const uint8_t *, size_t,
 	uint8_t *, size_t, size_t *used);
 /* Same exact prefix contract without idle padding: refill bounded DTE input

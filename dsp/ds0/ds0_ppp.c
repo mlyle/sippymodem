@@ -10,7 +10,101 @@ int ds0_ppp_init(struct ds0_ppp *ppp, const struct ds0_config *cfg)
 {
     if (ppp == NULL) return -1;
     memset(ppp, 0, sizeof(*ppp));
+    ppp->host_accm = UINT32_MAX;
     return ds0_init(&ppp->codec, cfg);
+}
+
+static bool lcp_request_map(const uint8_t *options, size_t length,
+			    uint32_t *map)
+{
+	bool found = false;
+	*map = UINT32_MAX;
+	while (length) {
+		if (length < 2u || options[1] < 2u || options[1] > length)
+			return false;
+		if (options[0] == 2u) {
+			if (found || options[1] != 6u)
+				return false;
+			*map = (uint32_t)options[2] << 24 |
+			       (uint32_t)options[3] << 16 |
+			       (uint32_t)options[4] << 8 | options[5];
+			found = true;
+		}
+		length -= options[1];
+		options += options[1];
+	}
+	return true;
+}
+
+/* RFC 1662 sections 6/7.1: the converter receives the local host's send
+ * map, requested by the synchronous peer. RFC 1661 requires exact Acks
+ * in both directions before opening. Observe only validated, queued frames;
+ * LCP always has its uncompressed address/control and protocol fields. */
+static void observe_lcp(struct ds0_ppp *ppp, const uint8_t *frame,
+			size_t length, bool from_host)
+{
+	struct ds0_lcp_request *request = &ppp->requests[from_host];
+	const uint8_t *packet;
+	size_t packet_length;
+	uint32_t map;
+	bool opened = ppp->requests[0].acknowledged &&
+		      ppp->requests[1].acknowledged;
+
+	if (length < 8u || frame[0] != 0xffu || frame[1] != 3u ||
+	    frame[2] != 0xc0u || frame[3] != 0x21u)
+		return;
+	packet = frame + 4u;
+	packet_length = (size_t)packet[2] << 8 | packet[3];
+	if (packet_length < 4u || packet_length > length - 4u)
+		return;
+
+	if (packet[0] == 1u) {
+		if (!lcp_request_map(packet + 4u, packet_length - 4u, &map))
+			return;
+		if (opened) {
+			ppp->requests[0].acknowledged = false;
+			ppp->requests[1].acknowledged = false;
+		}
+		/* A received restart cannot change bytes already queued by the
+		 * host. Its own Configure-Request shows the host has restarted. */
+		if (from_host)
+			ppp->host_accm = UINT32_MAX;
+		request->length = packet_length - 1u;
+		memcpy(request->bytes, packet + 1u, request->length);
+		request->accm = map;
+		request->acknowledged = false;
+		request->replied = false;
+	} else if (packet[0] == 2u) {
+		request = &ppp->requests[!from_host];
+		if (request->replied || request->length != packet_length - 1u ||
+		    memcmp(request->bytes, packet + 1u, request->length))
+			return;
+		request->replied = true;
+		request->acknowledged = true;
+		if (ppp->requests[0].acknowledged &&
+		    ppp->requests[1].acknowledged)
+			ppp->host_accm = ppp->requests[0].accm;
+	} else if (packet[0] == 5u || packet[0] == 6u) {
+		if (packet[0] == 6u && !from_host && !opened &&
+		    ppp->requests[0].acknowledged)
+			return; /* Terminate-Ack leaves Ack-Sent unchanged. */
+		/* During negotiation a Terminate only resets the Ack states;
+		 * the outstanding request and consumed-reply marker survive. */
+		for (size_t i = 0; i < 2u; ++i)
+			ppp->requests[i].acknowledged = false;
+		if (from_host)
+			ppp->host_accm = UINT32_MAX;
+	} else if (from_host && !opened &&
+		   (packet[0] == 3u || packet[0] == 4u)) {
+		/* The host rejected a peer request, possibly malformed enough
+		 * that this observer did not retain it. */
+		ppp->requests[0].acknowledged = false;
+	} else if (packet[0] == 7u && packet_length >= 8u && !from_host &&
+		   !opened && !ppp->requests[0].acknowledged) {
+		/* Code-Reject moves Ack-Rcvd back to Req-Sent; an already
+		 * consumed Ack remains a duplicate until the host retransmits. */
+		ppp->requests[1].acknowledged = false;
+	}
 }
 
 static size_t ds0_drain_pending(uint8_t *pending, size_t *pos, size_t *len,
@@ -111,6 +205,7 @@ static void ds0_async_host_queue_sync_frame(struct ds0_ppp *ds0,
 	ds0->tx_codec_pending_pos = 0;
 	ds0->tx_codec_pending_len = codec_len;
 	ds0->counters.async_tx_valid_frames++;
+	observe_lcp(ds0, frame, frame_len, true);
 }
 
 static void ds0_async_host_finish_frame(struct ds0_ppp *ds0)
@@ -167,6 +262,13 @@ static void ds0_async_host_octet(struct ds0_ppp *ds0, uint8_t octet)
 
 	if (!rx->in_frame || rx->frame_error)
 		return;
+	/* Remove mapped raw controls before unescaping, including controls
+	 * injected between an escape and its following octet (RFC 1662 4.2).
+	 * Freeze the policy at the first body byte across partial writes. */
+	uint32_t map = rx->frame_len || rx->escaped ? rx->accm : ds0->host_accm;
+	if (octet < 32u && (map & (UINT32_C(1) << octet)))
+		return;
+	rx->accm = map;
 
 	if (rx->escaped) {
 		rx->escaped = 0;
@@ -269,6 +371,7 @@ void ds0_ppp_receive_frame(void *user, const uint8_t *frame,
 	ds0->rx_async_pending_pos = 0;
 	ds0->rx_async_pending_len = async_len;
 	ds0->counters.async_rx_frames++;
+	observe_lcp(ds0, frame, len, false);
 }
 
 size_t ds0_ppp_read(struct ds0_ppp *ppp, uint8_t *out, size_t capacity)

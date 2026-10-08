@@ -41,9 +41,17 @@ case. A fixed protocol selection with automode disabled does not probe DS0.
 ## Framing and startup
 
 `+DS0=0` converts literal asynchronous PPP frames to synchronous HDLC and
-back, using the framing and FCS in [RFC 1662](https://www.rfc-editor.org/rfc/rfc1662.html).
+back, using 16-bit FCS and the framing in [RFC 1662](https://www.rfc-editor.org/rfc/rfc1662.html).
 It escapes all outgoing control bytes. Native DTE bytes are literal; the converter interprets PPP frame flags
 and PPP escaping. It does not interpret AT text or software flow control.
+
+Incoming asynchronous frames start with receive ACCM `FFFFFFFF`. Valid LCP
+negotiation selects the map requested by the remote peer after matching
+Configure-Acks in both directions. Raw controls selected by that map are
+removed before unescaping and FCS checking; escaped controls remain data.
+A partially assembled frame keeps its initial map, and a new call restores
+the default.
+
 The compatibility frontend provides its usual AT and guarded `+++` controls. This selection bypasses modem error control and compression
 for the call without changing the saved `\N`, `+DS` or `+DSC` settings.
 
