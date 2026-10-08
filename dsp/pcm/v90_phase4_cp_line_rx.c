@@ -45,21 +45,6 @@ static void clear_boundary_tail(struct v90_phase4_cp_line_rx *rx)
 			(struct v34_analytic_sample){ 0 };
 }
 
-static void remember_boundary_decision(
-	struct v90_phase4_cp_line_rx *rx,
-	struct v34_analytic_sample decision)
-{
-	if (rx->boundary_tail_count ==
-	    V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS) {
-		for (size_t index = 1u;
-		     index < V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS; ++index)
-			rx->boundary_tail[index - 1u] =
-				rx->boundary_tail[index];
-		rx->boundary_tail_count--;
-	}
-	rx->boundary_tail[rx->boundary_tail_count++] = decision;
-}
-
 static bool replay_post_marker_decisions(
 	struct v90_phase4_cp_line_rx *rx, uint8_t post_marker_symbols,
 	struct v90_cp_receive_event *event)
@@ -110,7 +95,8 @@ static bool receive_fixed_decision(
 		    V34_CONSTELLATION_4_POINT, decision, hard) !=
 	    V34_CONSTELLATION_OK)
 		return false;
-	remember_boundary_decision(rx, decision);
+	rx->boundary_tail_count = v34_phase3_s_append_observation(
+		rx->boundary_tail, rx->boundary_tail_count, decision);
 	{
 		enum v34_phase3_s_receiver_result result =
 			v34_phase3_s_receiver_receive_adaptive(

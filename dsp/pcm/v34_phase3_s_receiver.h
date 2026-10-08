@@ -42,6 +42,22 @@ enum {
 		V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS,
 };
 
+/* Keep the newest observations in time order for the S-bar confirmation
+ * tail. The owner has validated count <= MAX_S_BAR_ERRORS. */
+static inline uint8_t v34_phase3_s_append_observation(
+	struct v34_analytic_sample history[V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS],
+	uint8_t count, struct v34_analytic_sample observation)
+{
+	if (count == V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS) {
+		for (unsigned int index = 1u;
+		     index < V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS; ++index)
+			history[index - 1u] = history[index];
+		--count;
+	}
+	history[count++] = observation;
+	return count;
+}
+
 enum v34_phase3_s_prefix_result {
 	V34_PHASE3_S_PREFIX_OK,
 	V34_PHASE3_S_PREFIX_DETECTED,

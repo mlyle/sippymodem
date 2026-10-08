@@ -885,21 +885,6 @@ static bool prepare_hunt_adaptation(
 	return true;
 }
 
-static void remember_hunt_observation(
-	struct v34_phase3_s_hunt *hunt,
-	struct v34_analytic_sample observation)
-{
-	if (hunt->recent_observation_count ==
-	    V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS) {
-		for (size_t index = 1u;
-		     index < V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS; ++index)
-			hunt->recent_observation[index - 1u] =
-				hunt->recent_observation[index];
-		hunt->recent_observation_count--;
-	}
-	hunt->recent_observation[hunt->recent_observation_count++] = observation;
-}
-
 enum v34_phase3_s_receiver_result v34_phase3_s_hunt_receive(
 	struct v34_phase3_s_hunt *hunt,
 	struct v34_analytic_sample observation,
@@ -931,7 +916,8 @@ enum v34_phase3_s_receiver_result v34_phase3_s_hunt_receive(
 	if (hunt->marker.complete)
 		return V34_PHASE3_S_RECEIVER_COMPLETE;
 	next = *hunt;
-	remember_hunt_observation(&next, observation);
+	next.recent_observation_count = v34_phase3_s_append_observation(
+		next.recent_observation, next.recent_observation_count, observation);
 	if (next.candidate) {
 		if (!prepare_hunt_adaptation(
 			    &next, observation, &generated))
