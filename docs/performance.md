@@ -1,6 +1,6 @@
 # Rates and processing performance
 
-The [README rate table](../README.md#rates-and-performance) lists nominal
+The [README rate table](../README.md#modulations-and-modes) lists nominal
 physical bitrates. Framing consumes some of those bits; compression can make
 application throughput higher or lower depending on the data. Status reports
 transmit and receive bitrates separately, along with their symbol clocks.
@@ -57,6 +57,15 @@ windows never cross endpoints, phases or runs.
 | V.92 with 48-kbit/s PCM upstream | 2.925 | 6.371 | 8.019 | 22.949 |
 | V.91 | 0.292 | 0.764 | 1.023 | 2.888 |
 
+The README expresses selected means as estimated one-core load:
+`mean_ms / 20 ms * 100`. For V.34 that is 14.3% on the Ryzen and 37.5% on the
+Pi; for V.92/33.6k upload, 9.0% and 21.4%; for V.92/48k PCM upload, 14.6% and
+31.9%. The V.92/33.6k profile means are 1.794 and 4.271 ms. These are the largest
+per-endpoint weighted means across measured configurations, including both
+PCM roles. The conversion estimates steady core processing demand; it is
+not a sampled whole-host CPU measurement. Timer durations include interrupts
+and descheduling, and exclude SIP/RTP and application work.
+
 The earlier V.34 33.6-kbit/s training maximum was 47.327 ms, with 66.696 ms
 for three callbacks. This exceeded both processing budgets even though an
 individual call could survive through buffering. Steady-data averages cannot
@@ -76,3 +85,27 @@ tests. They do not establish an eight-line capacity guarantee for the current
 shared server or predict the effect of adding cooling. Raw evidence remains
 in the private development corpus; the reusable measurement procedure is
 checked in under `tests/PERFORMANCE.md`.
+
+## Follow-up Pi capacity: 2026-10-05
+
+After bounded startup calibration and associated optimizations, the study
+ending at `423b2765` completed three staggered waves of five heavy calls per
+profile. Each wave held all five calls for 90 seconds, with LAPM/V.44 and
+checked bidirectional payloads.
+
+| Pi profile | Completed calls | Peak whole-host CPU | Peak modem PSS | Verified received bytes |
+| --- | ---: | ---: | ---: | ---: |
+| V.34, 33.6k both ways | 15 | 58.0% | 11.8 MiB | 21,247,303 |
+| V.92, 56k transmit / 48k PCM receive | 15 | 56.0% | 14.2 MiB | 32,396,817 |
+
+CPU uses the full four-core host as 100%, sampled once per second. PSS apportions
+shared pages. Completed-hold snapshots had zero retrains and zero late/concealed
+samples. The Pi had no active fan, reached 86.5–87.0 °C and reported thermal
+throttling. The eight-V.34 campaign still ended with a second-wave disconnect
+at 99% peak CPU; its exact caller-side datapump failure was not resolved.
+
+These were separate modem processes on LAN SIP. They measured neither the
+current shared-server library nor a complete BBS. Five heavy calls passed
+these workloads; this is a planning result with those limits, rather than a
+measured maximum capacity. Private calibration and wave records retain the
+exact source/build hashes, counters, and failure logs.

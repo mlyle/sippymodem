@@ -10,6 +10,27 @@ are in [modem.c](../src/modem.c). The current build's `AT+MS=?` response is the
 authoritative list of selectable modulations. See [RTP receive clock and
 playout](media-clock.md) for media timing, buffering, and measured receive delay.
 
+## Quick reference
+
+Enter these in command mode and finish each line with Enter. After connecting,
+a guarded `+++` returns to command mode; `ATO0` resumes data on the same carrier.
+
+| Command | What it does |
+| --- | --- |
+| `AT` / `ATI` | Check responsiveness / identify the modem |
+| `ATDT` / `ATDT<number>` / `ATDTsip:user@host` | Dial the configured target / phone number / SIP URI |
+| `ATA` / `ATS0=1` | Answer once / automatically answer incoming calls |
+| `ATH0` | Hang up |
+| `AT+MS?` / `AT+MS=?` | Show the configured modulation and bounds / supported choices |
+| `AT+MS=34` / `AT+MS=92` | Select V.34 / V.92 with the current fallback setting |
+| `AT+V90D=2` / `AT+V92U=1` | Negotiate PCM roles automatically / enable PCM upstream |
+| `AT&A7` / `ATI11` | Verbose connection details (already the default) / current or retained call report |
+| `ATZ` | Hang up and restore defaults, including disabling auto-answer |
+
+This document describes sippymodem’s implementation. The historical
+[Smart Link AT Commands and S-Registers manual](https://bellet.info/laptop/smartlink_v92_12312001.pdf)
+is useful background; its command coverage and defaults differ from this build.
+
 ## Starting settings
 
 A newly created modem starts with these settings. Startup configuration can

@@ -49,10 +49,25 @@ For a direct peer, replace the example URI before dialing:
 SIP_REGISTER=0 SIP_TARGET=sip:modem@peer.example.invalid ./src/slmodemd
 ```
 
-Read the printed PTY path and open it with, for example,
-`kermit -Y -l /dev/pts/<number> -b 115200`. In Kermit, disable carrier watching
-and flow control before entering connect mode. The PTY speed is a terminal
-setting; the negotiated modem bitrate is independent of it.
+After installation, use `slmodemd` in place of `./src/slmodemd`.
+Keep that process running, then start `kermit -Y` in another terminal. At
+Kermit’s prompt, replace `/dev/pts/7` below with the PTY path the modem printed:
+
+```text
+set carrier-watch off
+set flow-control none
+set line /dev/pts/7
+set speed 115200
+connect
+```
+
+Type `AT` followed by Enter; the modem should reply `OK`. `ATDT` calls the
+configured direct peer. With a provider account, `ATDT<number>` calls a
+telephone number. Wait for `CONNECT` before sending application bytes.
+For incoming calls, use `ATS0=1`, or answer a `RING` with `ATA`.
+The PTY speed is a terminal setting; the negotiated bitrate is independent of
+it. `Ctrl-\` followed by `C` returns to Kermit’s prompt, and `exit` quits it.
+Ctrl-C in the modem’s terminal stops the modem.
 
 The executable reads these settings once at startup:
 
