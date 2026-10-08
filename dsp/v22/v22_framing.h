@@ -102,9 +102,10 @@ enum v22_framing_result v22_600_symbol_encode(
 enum v22_framing_result v22_symbol_decoder_init(
 	struct v22_symbol_decoder *decoder,
 	uint8_t initial_quadrant);
+/* Write two binary bytes in transmit order. */
 enum v22_framing_result v22_symbol_decode(
 	struct v22_symbol_decoder *decoder, uint8_t quadrant,
-	uint8_t *first_bit, uint8_t *second_bit, bool repair);
+	uint8_t bits[2], bool repair);
 enum v22_framing_result v22_600_symbol_decode(
 	struct v22_symbol_decoder *decoder, uint8_t quadrant,
 	uint8_t *bit, bool repair);

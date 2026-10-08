@@ -141,19 +141,17 @@ static bool test_symbol_round_trip(void)
 	for (size_t index = 0; index < TEST_STREAM_BITS; index += 2) {
 		uint8_t first = (uint8_t)(fixture_random(&random) >> 31);
 		uint8_t second = (uint8_t)(fixture_random(&random) >> 31);
-		uint8_t decoded_first = UINT8_MAX;
-		uint8_t decoded_second = UINT8_MAX;
+		uint8_t decoded[2] = { UINT8_MAX, UINT8_MAX };
 		uint8_t quadrant = UINT8_MAX;
 
 		CHECK(v22_symbol_encode(
 			      &encoder, first, second, &quadrant, true) ==
 			      V22_FRAMING_OK &&
 			      v22_symbol_decode(
-				      &decoder, quadrant, &decoded_first,
-				      &decoded_second, true) ==
+				      &decoder, quadrant, decoded, true) ==
 				      V22_FRAMING_OK &&
-			      decoded_first == first &&
-			      decoded_second == second,
+			      decoded[0] == first &&
+			      decoded[1] == second,
 		      "V.22 symbol round trip changed bits at %zu", index);
 	}
 	return true;
@@ -977,25 +975,24 @@ static bool test_framing_output_ownership(void)
 					uint8_t bits[2];
 					enum v22_framing_result normal = rate600 ?
 						v22_600_symbol_decode(&expected, quadrant, &bits[0], repair) :
-						v22_symbol_decode(&expected, quadrant, &bits[0], &bits[1], repair);
+						v22_symbol_decode(&expected, quadrant, bits, repair);
 
 					CHECK(normal == V22_FRAMING_OK, "disjoint decoder outputs failed");
-					for (unsigned output_index = 0; output_index < (rate600 ? 1u : 2u); ++output_index) {
-						for (size_t offset = 0; offset < sizeof(decode_initial.owner); ++offset) {
-							memcpy(&decode_fixture, &decode_initial, sizeof(decode_fixture));
-							uint8_t disjoint = 0xa5;
-							uint8_t *overlap = (uint8_t *)&decode_fixture.owner + offset;
-							enum v22_framing_result result = rate600 ?
-								v22_600_symbol_decode(&decode_fixture.owner, quadrant, overlap, repair) :
-								v22_symbol_decode(&decode_fixture.owner, quadrant,
-									output_index ? &disjoint : overlap,
-									output_index ? overlap : &disjoint, repair);
+					/* Include an array starting just before the owner: only its
+					 * second byte overlaps. Scalar outputs start at the owner. */
+					for (size_t offset = rate600 ? 1u : 0u;
+					     offset <= sizeof(decode_initial.owner); ++offset) {
+						memcpy(&decode_fixture, &decode_initial, sizeof(decode_fixture));
+						uint8_t *overlap = (uint8_t *)&decode_fixture +
+							offsetof(struct decode_fixture, owner) + offset - 1u;
+						enum v22_framing_result result = rate600 ?
+							v22_600_symbol_decode(&decode_fixture.owner, quadrant, overlap, repair) :
+							v22_symbol_decode(&decode_fixture.owner, quadrant, overlap, repair);
 
-							CHECK(result == V22_FRAMING_INVALID_ARGUMENT && disjoint == 0xa5 &&
-							      memcmp(&decode_fixture, &decode_initial, sizeof(decode_fixture)) == 0,
-							      "symbol decoder overlap changed storage at %u/%u/%u/%u/%u/%zu",
-							      repair, rate600, phase, quadrant, output_index, offset);
-						}
+						CHECK(result == V22_FRAMING_INVALID_ARGUMENT &&
+						      memcmp(&decode_fixture, &decode_initial, sizeof(decode_fixture)) == 0,
+						      "symbol decoder overlap changed storage at %u/%u/%u/%u/%zu",
+						      repair, rate600, phase, quadrant, offset);
 					}
 					for (unsigned side = 0; side < 2; ++side) {
 						memcpy(&decode_fixture, &decode_initial, sizeof(decode_fixture));
@@ -1003,7 +1000,7 @@ static bool test_framing_output_ownership(void)
 							(uint8_t *)&decode_fixture + offsetof(struct decode_fixture, owner) - 2;
 						enum v22_framing_result result = rate600 ?
 							v22_600_symbol_decode(&decode_fixture.owner, quadrant, output, repair) :
-							v22_symbol_decode(&decode_fixture.owner, quadrant, &output[0], &output[1], repair);
+							v22_symbol_decode(&decode_fixture.owner, quadrant, output, repair);
 
 						CHECK(result == V22_FRAMING_OK &&
 						      memcmp(output, bits, rate600 ? 1u : 2u) == 0 &&
@@ -1026,6 +1023,7 @@ static bool test_validation(void)
 	struct v22_symbol_encoder encoder;
 	struct v22_symbol_decoder decoder;
 	uint8_t value = 0;
+	uint8_t bits[2] = { 0 };
 
 	CHECK(v22_scramble_bit(NULL, 0, &value, true) ==
 		      V22_FRAMING_INVALID_ARGUMENT &&
@@ -1046,7 +1044,7 @@ static bool test_validation(void)
 	CHECK(v22_symbol_encode(&encoder, 0, 0, &value, true) ==
 		      V22_FRAMING_INVALID_ARGUMENT &&
 		      v22_symbol_decode(
-			      &decoder, 0, &value, &value, true) ==
+			      &decoder, 0, bits, true) ==
 			      V22_FRAMING_INVALID_ARGUMENT,
 	      "V.22 framing accepted corrupt state");
 	return true;

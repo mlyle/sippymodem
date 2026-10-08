@@ -140,26 +140,23 @@ enum v22_framing_result v22_symbol_decoder_init(
 
 enum v22_framing_result v22_symbol_decode(
 	struct v22_symbol_decoder *decoder, uint8_t quadrant,
-	uint8_t *first_bit, uint8_t *second_bit, bool repair)
+	uint8_t bits[2], bool repair)
 {
 	uint8_t dibit;
-	uint8_t first_decoded;
-	uint8_t second_decoded;
+	uint8_t decoded[2];
 
 	if (!v22_symbol_decoder_is_valid(decoder) ||
-	    quadrant >= QPSK_QUADRANT_COUNT || first_bit == NULL || second_bit == NULL ||
-	    memory_regions_overlap(decoder, sizeof(*decoder), first_bit, sizeof(*first_bit)) ||
-	    memory_regions_overlap(decoder, sizeof(*decoder), second_bit, sizeof(*second_bit)))
+	    quadrant >= QPSK_QUADRANT_COUNT || bits == NULL ||
+	    memory_regions_overlap(decoder, sizeof(*decoder), bits, sizeof(decoded)))
 		return V22_FRAMING_INVALID_ARGUMENT;
 	/* Keep decoded bits local until both validated steps finish. */
 	(void)differential_qpsk_decode(decoder->phase_quadrant, quadrant, &dibit);
 	(void)v22_descramble_bit(&decoder->descrambler, (uint8_t)(dibit >> 1),
-		&first_decoded, repair);
+		&decoded[0], repair);
 	(void)v22_descramble_bit(&decoder->descrambler, (uint8_t)(dibit & 1u),
-		&second_decoded, repair);
+		&decoded[1], repair);
 	decoder->phase_quadrant = quadrant;
-	*first_bit = first_decoded;
-	*second_bit = second_decoded;
+	memcpy(bits, decoded, sizeof(decoded));
 	return V22_FRAMING_OK;
 }
 

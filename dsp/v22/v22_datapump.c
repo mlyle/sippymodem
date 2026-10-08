@@ -607,7 +607,7 @@ static int decode_phase_change(
 		(datapump->decoder.phase_quadrant + quarter_turns) & 3u);
 
 	return v22_symbol_decode(
-		       &datapump->decoder, quadrant, &bits[0], &bits[1], repair_ones(datapump)) ==
+		       &datapump->decoder, quadrant, bits, repair_ones(datapump)) ==
 		       V22_FRAMING_OK ?
 		       0 : -1;
 }
