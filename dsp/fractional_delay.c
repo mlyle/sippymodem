@@ -202,21 +202,3 @@ enum fractional_delay_result fractional_delay_process(
 	*output = round_shift_s64_to_s16_saturating(filtered, 15u);
 	return FRACTIONAL_DELAY_OK;
 }
-
-const char *fractional_delay_result_name(
-	enum fractional_delay_result result)
-{
-	switch (result) {
-	case FRACTIONAL_DELAY_OK:
-		return "ok";
-	case FRACTIONAL_DELAY_INVALID_ARGUMENT:
-		return "invalid argument";
-	case FRACTIONAL_DELAY_INVALID_STATE:
-		return "invalid fractional delay state";
-	case FRACTIONAL_DELAY_OUT_OF_RANGE:
-		return "fractional delay is out of range";
-	case FRACTIONAL_DELAY_NUMERIC_FAILURE:
-		return "fractional delay coefficient generation failed";
-	}
-	return "unknown fractional delay result";
-}

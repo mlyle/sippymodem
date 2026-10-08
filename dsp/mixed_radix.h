@@ -49,6 +49,5 @@ enum mixed_radix_result mixed_radix_decode_differential(
 	const uint32_t *digits, uint8_t *differential_state,
 	uint8_t *bits, size_t bit_count);
 
-const char *mixed_radix_result_name(enum mixed_radix_result result);
 
 #endif /* MIXED_RADIX_H */

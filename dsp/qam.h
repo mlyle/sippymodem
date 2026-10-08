@@ -292,7 +292,5 @@ enum qam_result qam_demodulator_sample(
 struct qam_measurement qam_demodulator_measure(
 	const struct qam_demodulator *demodulator);
 
-const char *qam_result_name(
-	enum qam_result result);
 
 #endif

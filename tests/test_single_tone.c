@@ -432,10 +432,7 @@ static bool test_validation_is_transactional(void)
 		      SINGLE_TONE_INVALID_ARGUMENT &&
 		      memcmp(&detector, &before, sizeof(detector)) == 0 &&
 		      event.kind == SINGLE_TONE_ENDED &&
-		      event.reversal_delay_samples == 17 &&
-		      strcmp(single_tone_result_name(
-			     SINGLE_TONE_INVALID_ARGUMENT),
-			     "invalid argument") == 0,
+		      event.reversal_delay_samples == 17,
 	      "invalid detector mutation was not transactional");
 	return true;
 }

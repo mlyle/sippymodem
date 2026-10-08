@@ -132,13 +132,7 @@ static bool test_validation(void)
 		      CRC16_CCITT_FALSE_INITIAL_REMAINDER &&
 	      crc16_ccitt_false_packed_bits(
 		      &byte, 8, NULL) ==
-		      CRC16_CCITT_FALSE_INVALID_ARGUMENT &&
-	      strcmp(crc16_ccitt_false_result_name(
-		     CRC16_CCITT_FALSE_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(crc16_ccitt_false_result_name(
-		     (enum crc16_ccitt_false_result)2),
-		     "unknown") == 0,
+		      CRC16_CCITT_FALSE_INVALID_ARGUMENT,
 	      "CRC accepted invalid arguments or mutated output");
 	return true;
 }

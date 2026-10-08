@@ -202,18 +202,3 @@ enum mixed_radix_result mixed_radix_decode_differential(
 	*differential_state = next;
 	return MIXED_RADIX_OK;
 }
-
-const char *mixed_radix_result_name(enum mixed_radix_result result)
-{
-	switch (result) {
-	case MIXED_RADIX_OK:
-		return "ok";
-	case MIXED_RADIX_INVALID_ARGUMENT:
-		return "invalid argument";
-	case MIXED_RADIX_INVALID_CONFIGURATION:
-		return "invalid configuration";
-	case MIXED_RADIX_OUT_OF_RANGE:
-		return "out of range";
-	}
-	return "unknown";
-}

@@ -13,15 +13,3 @@ crc16_ccitt_false_packed_bits(
 	*remainder = crc16_ccitt_false_packed_range(packed, 0, bit_count);
 	return CRC16_CCITT_FALSE_OK;
 }
-
-const char *crc16_ccitt_false_result_name(
-	enum crc16_ccitt_false_result result)
-{
-	switch (result) {
-	case CRC16_CCITT_FALSE_OK:
-		return "ok";
-	case CRC16_CCITT_FALSE_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

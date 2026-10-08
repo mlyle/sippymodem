@@ -102,15 +102,3 @@ enum qam_gain_result qam_gain_track(
 	*tracker = next;
 	return QAM_GAIN_OK;
 }
-
-const char *qam_gain_result_name(
-	enum qam_gain_result result)
-{
-	switch (result) {
-	case QAM_GAIN_OK:
-		return "ok";
-	case QAM_GAIN_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

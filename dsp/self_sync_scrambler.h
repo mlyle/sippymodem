@@ -58,7 +58,5 @@ self_sync_descramble_group(
 	const struct self_sync_scrambler_config *config,
 	uint8_t input, unsigned int bit_count, uint8_t *output);
 
-const char *self_sync_scrambler_result_name(
-	enum self_sync_scrambler_result result);
 
 #endif

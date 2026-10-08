@@ -112,9 +112,6 @@ static bool test_contracts(void)
 	struct binary_equalizer receiver;
 	struct binary_equalizer before;
 	uint8_t sign = 0xa5u;
-	static const char *const names[] = {
-		"ok", "invalid argument", "invalid state", "internal error",
-	};
 
 	CHECK(trained_equalizer(&trained),
 	      "contract equalizer did not initialize");
@@ -169,17 +166,6 @@ static bool test_contracts(void)
 	      states_equal(&receiver, &before) &&
 	      sign == 0xa5u,
 	      "corrupt receiver was not rejected transactionally");
-	for (size_t index = 0; index < ARRAY_LENGTH(names); ++index)
-		CHECK(strcmp(
-			      binary_equalizer_result_name(
-				      (enum binary_equalizer_result)index),
-			      names[index]) == 0,
-		      "result name %zu changed", index);
-	CHECK(strcmp(
-		      binary_equalizer_result_name(
-			      (enum binary_equalizer_result)-1),
-		      "unknown") == 0,
-	      "unknown result name changed");
 	return true;
 }
 

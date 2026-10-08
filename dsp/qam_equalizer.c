@@ -478,17 +478,3 @@ qam_equalizer_adapt_observation(
 		return QAM_EQUALIZER_INVALID_ARGUMENT;
 	return adapt_decision(equalizer, observation, target, adaptation);
 }
-
-const char *qam_equalizer_result_name(
-	enum qam_equalizer_result result)
-{
-	switch (result) {
-	case QAM_EQUALIZER_OK:
-		return "ok";
-	case QAM_EQUALIZER_INVALID_ARGUMENT:
-		return "invalid argument";
-	case QAM_EQUALIZER_INVALID_STATE:
-		return "invalid state";
-	}
-	return "unknown";
-}

@@ -220,14 +220,8 @@ static bool test_validation(void)
 		      self_sync_scramble_group(
 			      &state, &config, 0, 1, &output) ==
 			      SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT &&
-		      memcmp(&state, &saved, sizeof(state)) == 0 &&
-		      strcmp(self_sync_scrambler_result_name(
-			     SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT),
-			     "invalid argument") == 0 &&
-		      strcmp(self_sync_scrambler_result_name(
-			     (enum self_sync_scrambler_result)2),
-			     "unknown") == 0,
-	      "invalid history or result was accepted");
+		      memcmp(&state, &saved, sizeof(state)) == 0,
+	      "invalid history was accepted");
 	return true;
 }
 

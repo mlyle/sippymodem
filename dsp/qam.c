@@ -1268,15 +1268,3 @@ struct qam_measurement qam_demodulator_measure(
 		.timing_locked = demodulator->timing_locked,
 	};
 }
-
-const char *qam_result_name(
-	enum qam_result result)
-{
-	switch (result) {
-	case QAM_OK:
-		return "ok";
-	case QAM_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

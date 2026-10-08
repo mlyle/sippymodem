@@ -169,16 +169,3 @@ enum agc_result agc_process(
 	*control = next;
 	return AGC_OK;
 }
-
-const char *agc_result_name(enum agc_result result)
-{
-	switch (result) {
-	case AGC_OK:
-		return "ok";
-	case AGC_INVALID_ARGUMENT:
-		return "invalid argument";
-	case AGC_INVALID_STATE:
-		return "invalid state";
-	}
-	return "unknown AGC result";
-}

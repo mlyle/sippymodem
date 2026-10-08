@@ -75,19 +75,3 @@ enum binary_equalizer_result binary_equalizer_receive(
 	*sign = decision;
 	return BINARY_EQUALIZER_OK;
 }
-
-const char *binary_equalizer_result_name(
-	enum binary_equalizer_result result)
-{
-	switch (result) {
-	case BINARY_EQUALIZER_OK:
-		return "ok";
-	case BINARY_EQUALIZER_INVALID_ARGUMENT:
-		return "invalid argument";
-	case BINARY_EQUALIZER_INVALID_STATE:
-		return "invalid state";
-	case BINARY_EQUALIZER_INTERNAL_ERROR:
-		return "internal error";
-	}
-	return "unknown";
-}

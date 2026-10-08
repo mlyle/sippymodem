@@ -46,7 +46,5 @@ enum crc16_ccitt_false_result
 crc16_ccitt_false_packed_bits(
 	const uint8_t *packed, size_t bit_count, uint16_t *remainder);
 
-const char *crc16_ccitt_false_result_name(
-	enum crc16_ccitt_false_result result);
 
 #endif

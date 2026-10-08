@@ -105,15 +105,3 @@ self_sync_descramble_group(
 	return transform_group(
 		descrambler, config, input, bit_count, output, true);
 }
-
-const char *self_sync_scrambler_result_name(
-	enum self_sync_scrambler_result result)
-{
-	switch (result) {
-	case SELF_SYNC_SCRAMBLER_OK:
-		return "ok";
-	case SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

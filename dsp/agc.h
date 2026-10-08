@@ -82,6 +82,5 @@ enum agc_result agc_process(
 	struct agc *control, const int16_t *input, size_t count,
 	int16_t *output);
 
-const char *agc_result_name(enum agc_result result);
 
 #endif

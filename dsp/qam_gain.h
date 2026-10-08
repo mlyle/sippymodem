@@ -43,7 +43,5 @@ enum qam_gain_result qam_gain_track(
 	const struct qam_point *received,
 	const struct qam_point *transmitted);
 
-const char *qam_gain_result_name(
-	enum qam_gain_result result);
 
 #endif

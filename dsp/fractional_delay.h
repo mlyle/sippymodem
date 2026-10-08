@@ -89,7 +89,5 @@ fractional_delay_interpolate_cubic(
 	return FRACTIONAL_DELAY_OK;
 }
 
-const char *fractional_delay_result_name(
-	enum fractional_delay_result result);
 
 #endif

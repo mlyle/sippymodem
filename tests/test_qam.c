@@ -440,14 +440,8 @@ static bool test_flat_gain_validation(void)
 	      "QAM gain accepted a zero estimate");
 	tracker = saved;
 	tracker.adaptation = NAN;
-	CHECK(!qam_gain_is_valid(&tracker) &&
-	      strcmp(qam_gain_result_name(
-		     QAM_GAIN_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(qam_gain_result_name(
-		     (enum qam_gain_result)2),
-		     "unknown") == 0,
-	      "QAM gain accepted corrupt state or changed result names");
+	CHECK(!qam_gain_is_valid(&tracker),
+	      "QAM gain accepted corrupt state");
 	return true;
 }
 
@@ -1448,10 +1442,7 @@ static bool test_validation(void)
 	CHECK(!qam_modulator_can_accept_symbol(&modulator) &&
 		      qam_modulator_sample(
 			      &modulator, &point, &sample, &accepted) ==
-			      QAM_INVALID_ARGUMENT &&
-		      strcmp(qam_result_name(
-			     QAM_INVALID_ARGUMENT),
-			     "invalid argument") == 0,
+			      QAM_INVALID_ARGUMENT,
 	      "QAM accepted corrupt active-symbol state");
 	demodulator.history_index = demodulator.matched_filter_count;
 	CHECK(qam_demodulator_sample(

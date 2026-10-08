@@ -144,7 +144,5 @@ struct single_tone_measurement
 single_tone_detector_measure(
 	const struct single_tone_detector *detector);
 
-const char *single_tone_result_name(
-	enum single_tone_result result);
 
 #endif

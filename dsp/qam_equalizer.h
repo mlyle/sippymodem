@@ -164,7 +164,5 @@ qam_equalizer_adapt_observation(
 	struct qam_equalizer_observation *observation,
 	const struct qam_point *target, double adaptation);
 
-const char *qam_equalizer_result_name(
-	enum qam_equalizer_result result);
 
 #endif

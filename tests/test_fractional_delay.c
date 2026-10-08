@@ -223,14 +223,8 @@ static bool test_reconfiguration_is_continuous_and_transactional(void)
 		      fractional_delay_process(NULL, 0, &output) ==
 		      FRACTIONAL_DELAY_INVALID_ARGUMENT &&
 		      fractional_delay_process(&delay, 0, NULL) ==
-		      FRACTIONAL_DELAY_INVALID_ARGUMENT &&
-		      strcmp(fractional_delay_result_name(
-			     FRACTIONAL_DELAY_NUMERIC_FAILURE),
-			     "fractional delay coefficient generation failed") == 0 &&
-		      strcmp(fractional_delay_result_name(
-			     (enum fractional_delay_result)99),
-			     "unknown fractional delay result") == 0,
-	      "fractional delay validation diagnostics were incomplete");
+		      FRACTIONAL_DELAY_INVALID_ARGUMENT,
+	      "fractional delay accepted invalid arguments");
 	return true;
 }
 

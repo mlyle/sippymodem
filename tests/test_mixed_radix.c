@@ -213,18 +213,6 @@ static int test_transactionality(void)
 	return 0;
 }
 
-static int test_result_names(void)
-{
-	CHECK(strcmp(mixed_radix_result_name(MIXED_RADIX_OK), "ok") == 0 &&
-	      strcmp(mixed_radix_result_name(
-		     MIXED_RADIX_INVALID_CONFIGURATION),
-		     "invalid configuration") == 0 &&
-	      strcmp(mixed_radix_result_name(
-		     (enum mixed_radix_result)99), "unknown") == 0,
-	      "mixed-radix result names changed");
-	return 0;
-}
-
 static int test_binary_input_boundaries(void)
 {
 	static const size_t widths[] = { 0, 1, 7, 8, 9, 17, 42, 63, 64, 65, 72, 128 };
@@ -291,6 +279,5 @@ int main(void)
 	      "differential round trip failed");
 	CHECK(test_transactionality() == 0, "transactionality failed");
 	CHECK(test_binary_input_boundaries() == 0, "binary input boundaries failed");
-	CHECK(test_result_names() == 0, "result names failed");
 	return 0;
 }

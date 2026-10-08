@@ -573,15 +573,3 @@ single_tone_detector_measure(
 		return (struct single_tone_measurement){ 0 };
 	return measure_valid_detector(detector);
 }
-
-const char *single_tone_result_name(
-	enum single_tone_result result)
-{
-	switch (result) {
-	case SINGLE_TONE_OK:
-		return "ok";
-	case SINGLE_TONE_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

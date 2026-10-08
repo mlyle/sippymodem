@@ -1267,20 +1267,8 @@ static bool test_validation(void)
 	CHECK(!qam_equalizer_is_valid(&equalizer) &&
 	      !qam_equalizer_is_handoff_ready(&equalizer) &&
 	      !qam_equalizer_is_valid(NULL) &&
-	      !qam_equalizer_is_handoff_ready(NULL) &&
-	      strcmp(qam_equalizer_result_name(
-		     QAM_EQUALIZER_OK),
-		     "ok") == 0 &&
-	      strcmp(qam_equalizer_result_name(
-		     QAM_EQUALIZER_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(qam_equalizer_result_name(
-		     QAM_EQUALIZER_INVALID_STATE),
-		     "invalid state") == 0 &&
-	      strcmp(qam_equalizer_result_name(
-		     (enum qam_equalizer_result)99),
-		     "unknown") == 0,
-	      "equalizer validation or result names changed");
+	      !qam_equalizer_is_handoff_ready(NULL),
+	      "equalizer validation changed");
 	return true;
 }
 

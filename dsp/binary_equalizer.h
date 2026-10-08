@@ -39,7 +39,5 @@ enum binary_equalizer_result binary_equalizer_receive(
 	struct binary_equalizer *receiver, int16_t sample,
 	uint8_t *sign);
 
-const char *binary_equalizer_result_name(
-	enum binary_equalizer_result result);
 
 #endif /* BINARY_EQUALIZER_H */
