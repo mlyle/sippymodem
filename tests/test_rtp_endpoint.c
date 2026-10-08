@@ -2,6 +2,7 @@
 
 #include <rtp_endpoint.h>
 #include <g711.h>
+#include <rtp.h>
 
 #include "test.h"
 
@@ -554,6 +555,60 @@ static bool test_bounded_drain_and_call_cleanup(void)
 	return true;
 }
 
+static bool test_transmit_batch(void)
+{
+	struct endpoint_fixture sender, receiver;
+	CHECK(open_fixture(&sender, 1, false, false) && open_fixture(&receiver, 2, false, false),
+	      "batch endpoints did not open");
+	struct sockaddr_in remote = receiver.endpoint.local_address;
+	CHECK(rtp_endpoint_set_remote(&sender.endpoint, &remote) == RTP_ENDPOINT_OK,
+	      "batch remote did not bind");
+	struct rtp_transmit_batch batch = { 0 };
+	CHECK(rtp_endpoint_begin_transmit_batch(&sender.endpoint, &batch) == RTP_ENDPOINT_OK &&
+	      rtp_endpoint_begin_transmit_batch(&sender.endpoint, &batch) == RTP_ENDPOINT_INVALID_ARGUMENT,
+	      "nested transmit ownership accepted");
+	const uint8_t encoded[] = { 0, 255, 42, 17 };
+	int16_t decoded[ARRAY_LENGTH(encoded)];
+	for (size_t i = 0; i < ARRAY_LENGTH(encoded); ++i)
+		decoded[i] = g711_decode_pcmu(encoded[i]);
+	uint8_t packet[TEST_PACKET_SIZE];
+	for (unsigned int i = 0; i < MEDIA_MAX_CATCHUP_FRAMES; ++i) {
+		CHECK(rtp_endpoint_send_g711(&sender.endpoint, encoded, decoded, ARRAY_LENGTH(encoded),
+		      packet, sizeof(packet)) == RTP_ENDPOINT_OK, "queue frame %u", i);
+		memset(packet, 0, sizeof(packet));
+	}
+	CHECK(sender.endpoint.stats.transmit_attempts == 0 && batch.count == MEDIA_MAX_CATCHUP_FRAMES,
+	      "worker batch performed transport I/O");
+	CHECK(recv(receiver.endpoint.socket_fd, packet, sizeof(packet), 0) < 0 &&
+	      (errno == EAGAIN || errno == EWOULDBLOCK), "packet escaped before owner flush");
+	CHECK(rtp_endpoint_send_g711(&sender.endpoint, encoded, decoded, ARRAY_LENGTH(encoded),
+	      packet, sizeof(packet)) == RTP_ENDPOINT_MEDIA_ERROR && batch.count == MEDIA_MAX_CATCHUP_FRAMES,
+	      "full batch did not reject additional media");
+	CHECK(rtp_endpoint_finish_transmit_batch(&sender.endpoint) == RTP_ENDPOINT_OK &&
+	      sender.endpoint.transmit_batch == NULL && batch.count == 0 &&
+	      sender.endpoint.stats.transmit_sent == MEDIA_MAX_CATCHUP_FRAMES,
+	      "owner did not emit complete batch");
+	for (unsigned int i = 0; i < MEDIA_MAX_CATCHUP_FRAMES; ++i) {
+		CHECK(recv(receiver.endpoint.socket_fd, packet, sizeof(packet), 0) ==
+		      RTP_HEADER_SIZE + (ssize_t)sizeof(encoded) && packet[3] == 1 + i &&
+		      !memcmp(packet + RTP_HEADER_SIZE, encoded, sizeof(encoded)),
+		      "queued packet lost its copied payload/order");
+	}
+	CHECK(rtp_endpoint_finish_transmit_batch(&sender.endpoint) == RTP_ENDPOINT_INVALID_ARGUMENT,
+	      "finished batch flushed twice");
+	CHECK(rtp_endpoint_begin_transmit_batch(&sender.endpoint, &batch) == RTP_ENDPOINT_OK &&
+	      rtp_endpoint_send_g711(&sender.endpoint, encoded, decoded, ARRAY_LENGTH(encoded),
+	      packet, sizeof(packet)) == RTP_ENDPOINT_OK, "new batch did not start");
+	CHECK(close(sender.endpoint.socket_fd) == 0, "close test sender");
+	CHECK(rtp_endpoint_finish_transmit_batch(&sender.endpoint) == RTP_ENDPOINT_SYSTEM_ERROR &&
+	      sender.endpoint.last_system_error == EBADF && sender.endpoint.transmit_batch == NULL &&
+	      batch.count == 0, "failed owner flush lost its cause or retained a batch");
+	sender.endpoint.socket_fd = -1;
+	rtp_endpoint_close(&sender.endpoint);
+	rtp_endpoint_close(&receiver.endpoint);
+	return true;
+}
+
 struct test_case {
 	const char *name;
 	bool (*run)(void);
@@ -568,6 +623,7 @@ int main(void)
 		  test_source_filter_and_malformed_input },
 		{ "symmetric remote learning", test_symmetric_remote_learning },
 		{ "lifecycle validation", test_lifecycle_validation },
+		{ "owner transmit batch", test_transmit_batch },
 		{ "packet timeline", test_packet_timeline },
 		{ "bounded drain and call cleanup", test_bounded_drain_and_call_cleanup },
 	};

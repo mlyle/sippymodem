@@ -43,6 +43,14 @@ struct rtp_endpoint_stats {
 	uint64_t transmit_errors;
 };
 
+/* One host pass emits at most four frames. Owned by the RTP runtime and
+ * borrowed exclusively by its endpoint between owner-side begin/finish. */
+struct rtp_transmit_batch {
+	unsigned int count;
+	struct { size_t size; uint8_t data[RTP_ENDPOINT_MAX_DATAGRAM]; }
+		packets[MEDIA_MAX_CATCHUP_FRAMES];
+};
+
 struct rtp_endpoint {
 	int socket_fd;
 	int last_system_error;
@@ -56,6 +64,7 @@ struct rtp_endpoint {
 	bool remote_learned;
 	bool discard_pending; /* Bounded cleanup of the previous media incarnation. */
 	struct rtp_endpoint_stats stats;
+	struct rtp_transmit_batch *transmit_batch;
 };
 
 void rtp_endpoint_config_init(
@@ -108,5 +117,11 @@ enum rtp_endpoint_result rtp_endpoint_send_g711(
 
 const char *rtp_endpoint_result_name(
 	enum rtp_endpoint_result result);
+
+/* send/send_g711 copy packets without socket I/O; finish emits them.
+ * A full batch is an explicit error. No buffer pointer survives finish. */
+enum rtp_endpoint_result rtp_endpoint_begin_transmit_batch(
+	struct rtp_endpoint *endpoint, struct rtp_transmit_batch *batch);
+enum rtp_endpoint_result rtp_endpoint_finish_transmit_batch(struct rtp_endpoint *endpoint);
 
 #endif

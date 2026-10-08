@@ -401,41 +401,17 @@ enum rtp_endpoint_result rtp_endpoint_drain(
 	return RTP_ENDPOINT_OK;
 }
 
-static enum rtp_endpoint_result send_frame(
-	struct rtp_endpoint *endpoint, const int16_t *samples,
-	const uint8_t *codewords, size_t count,
-	uint8_t *packet_workspace, size_t packet_capacity)
+static enum rtp_endpoint_result send_packet(struct rtp_endpoint *endpoint,
+	const uint8_t *packet_workspace, size_t packet_size,
+	const struct sockaddr_in *remote_address)
 {
-	struct sockaddr_in remote_address;
-	size_t packet_size = 0;
 	ssize_t sent;
-
-	if (endpoint == NULL || endpoint->stream == NULL || samples == NULL ||
-	    count == 0 || packet_workspace == NULL)
-		return RTP_ENDPOINT_INVALID_ARGUMENT;
-	if (endpoint->socket_fd < 0)
-		return RTP_ENDPOINT_NOT_OPEN;
-	if (!rtp_endpoint_transmit_remote(
-		    endpoint, &remote_address, NULL)) {
-		endpoint->stats.transmit_no_remote++;
-		return RTP_ENDPOINT_NO_REMOTE;
-	}
-
-	endpoint->last_media_error = codewords != NULL ?
-		rtp_stream_write_g711(
-			endpoint->stream, codewords, samples, count,
-			packet_workspace, packet_capacity, &packet_size) :
-		rtp_stream_write(
-			endpoint->stream, samples, count, packet_workspace,
-			packet_capacity, &packet_size);
-	if (endpoint->last_media_error != MEDIA_OK)
-		return RTP_ENDPOINT_MEDIA_ERROR;
 	endpoint->stats.transmit_attempts++;
 
 	for (unsigned int attempt = 0; attempt < 4; ++attempt) {
 		sent = sendto(endpoint->socket_fd, packet_workspace, packet_size, 0,
-			      (const struct sockaddr *)&remote_address,
-			      sizeof(remote_address));
+			      (const struct sockaddr *)remote_address,
+			      sizeof(*remote_address));
 		if (sent >= 0 || errno != EINTR)
 			break;
 	}
@@ -453,8 +429,51 @@ static enum rtp_endpoint_result send_frame(
 		&endpoint->stream->recorder,
 		RECORD_TX_RTP_PAYLOAD_SENT,
 		RECORD_OCTETS, MEDIA_SAMPLE_RATE,
-		packet_workspace + RTP_HEADER_SIZE, count);
+		packet_workspace + RTP_HEADER_SIZE, packet_size - RTP_HEADER_SIZE);
 	return RTP_ENDPOINT_OK;
+}
+
+static enum rtp_endpoint_result send_frame(
+	struct rtp_endpoint *endpoint, const int16_t *samples,
+	const uint8_t *codewords, size_t count,
+	uint8_t *packet_workspace, size_t packet_capacity)
+{
+	struct sockaddr_in remote_address;
+	size_t packet_size = 0;
+
+	if (endpoint == NULL || endpoint->stream == NULL || samples == NULL ||
+	    count == 0 || packet_workspace == NULL)
+		return RTP_ENDPOINT_INVALID_ARGUMENT;
+	if (endpoint->socket_fd < 0)
+		return RTP_ENDPOINT_NOT_OPEN;
+	if (!rtp_endpoint_transmit_remote(
+		    endpoint, &remote_address, NULL)) {
+		endpoint->stats.transmit_no_remote++;
+		return RTP_ENDPOINT_NO_REMOTE;
+	}
+
+	if (endpoint->transmit_batch != NULL &&
+	    (endpoint->transmit_batch->count >= MEDIA_MAX_CATCHUP_FRAMES ||
+	     count > RTP_ENDPOINT_MAX_DATAGRAM - RTP_HEADER_SIZE))
+		return RTP_ENDPOINT_MEDIA_ERROR;
+	endpoint->last_media_error = codewords != NULL ?
+		rtp_stream_write_g711(
+			endpoint->stream, codewords, samples, count,
+			packet_workspace, packet_capacity, &packet_size) :
+		rtp_stream_write(
+			endpoint->stream, samples, count, packet_workspace,
+			packet_capacity, &packet_size);
+	if (endpoint->last_media_error != MEDIA_OK)
+		return RTP_ENDPOINT_MEDIA_ERROR;
+	if (endpoint->transmit_batch != NULL) {
+		struct rtp_transmit_batch *batch = endpoint->transmit_batch;
+		if (batch->count >= MEDIA_MAX_CATCHUP_FRAMES || packet_size > RTP_ENDPOINT_MAX_DATAGRAM)
+			return RTP_ENDPOINT_MEDIA_ERROR;
+		batch->packets[batch->count].size = packet_size;
+		memcpy(batch->packets[batch->count++].data, packet_workspace, packet_size);
+		return RTP_ENDPOINT_OK;
+	}
+	return send_packet(endpoint, packet_workspace, packet_size, &remote_address);
 }
 
 enum rtp_endpoint_result rtp_endpoint_send(
@@ -504,4 +523,36 @@ const char *rtp_endpoint_result_name(
 		return "RTP socket operation failed";
 	}
 	return "unknown RTP endpoint result";
+}
+
+enum rtp_endpoint_result rtp_endpoint_begin_transmit_batch(
+	struct rtp_endpoint *endpoint, struct rtp_transmit_batch *batch)
+{
+	if (endpoint == NULL || batch == NULL || endpoint->transmit_batch != NULL)
+		return RTP_ENDPOINT_INVALID_ARGUMENT;
+	batch->count = 0;
+	endpoint->transmit_batch = batch;
+	return RTP_ENDPOINT_OK;
+}
+
+enum rtp_endpoint_result rtp_endpoint_finish_transmit_batch(struct rtp_endpoint *endpoint)
+{
+	if (endpoint == NULL || endpoint->transmit_batch == NULL)
+		return RTP_ENDPOINT_INVALID_ARGUMENT;
+	struct rtp_transmit_batch *batch = endpoint->transmit_batch;
+	endpoint->transmit_batch = NULL;
+	unsigned int count = batch->count;
+	batch->count = 0;
+	if (count > MEDIA_MAX_CATCHUP_FRAMES)
+		return RTP_ENDPOINT_INVALID_ARGUMENT;
+	struct sockaddr_in remote;
+	if (count != 0 && !rtp_endpoint_transmit_remote(endpoint, &remote, NULL))
+		return RTP_ENDPOINT_NO_REMOTE;
+	for (unsigned int i = 0; i < count; ++i) {
+		enum rtp_endpoint_result result = send_packet(endpoint,
+			batch->packets[i].data, batch->packets[i].size, &remote);
+		if (result != RTP_ENDPOINT_OK)
+			return result;
+	}
+	return RTP_ENDPOINT_OK;
 }

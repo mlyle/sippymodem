@@ -17,6 +17,7 @@ struct modem_host {
 	enum audio_scheduler_result last_audio_scheduler_result;
 	bool media_was_configured;
 	bool audio_suspended;
+	bool shared_signaling;
 	bool remote_clock;
 	bool remote_seed_pending;
 	bool remote_clock_started;
@@ -83,6 +84,7 @@ struct modem_host *modem_host_create_shared(
 	if (host == NULL)
 		return NULL;
 	host->remote_clock = config->media.remote_clock;
+	host->shared_signaling = server != NULL;
 	host->remote_gap_window_ns =
 		(uint64_t)config->media.jitter_buffer_ms * UINT64_C(1000000);
 	host->session = sip_session_create_shared(server, config, recorder, callbacks);
@@ -196,7 +198,9 @@ static enum modem_host_result suspend_failed_audio(
 {
 	host->audio_suspended = true;
 	audio_scheduler_set_active(&host->audio_scheduler, false);
-	sip_session_hangup(host->session);
+	/* The SDK owner retires failed shared calls after the media batch joins. */
+	if (!host->shared_signaling)
+		sip_session_hangup(host->session);
 	synchronize_audio(host);
 	return result;
 }
@@ -535,4 +539,16 @@ unsigned int modem_host_rtp_local_port(const struct modem_host *host)
 bool modem_host_media_cleanup_pending(const struct modem_host *host)
 {
 	return host != NULL && sip_session_media_cleanup_pending(host->session);
+}
+
+enum sip_session_result modem_host_prepare_media(struct modem_host *host)
+{
+	return host != NULL ? sip_session_begin_media_batch(host->session) :
+		SIP_SESSION_INVALID_ARGUMENT;
+}
+
+enum sip_session_result modem_host_finish_media(struct modem_host *host)
+{
+	return host != NULL ? sip_session_finish_media_batch(host->session) :
+		SIP_SESSION_INVALID_ARGUMENT;
 }

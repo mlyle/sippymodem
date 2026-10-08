@@ -952,6 +952,34 @@ static bool test_audio_failure_waits_for_a_new_media_lifecycle(void)
 	return true;
 }
 
+static bool test_shared_failure_defers_signaling(void)
+{
+	struct app_config config;
+	struct core_capture capture = { .result = MODEM_CORE_ERROR };
+	const struct modem_core core = { .context = &capture, .process = process_core };
+	/* Fake signaling never dereferences its shared-server identity. */
+	struct sip_server *server = (struct sip_server *)&capture;
+	config_init(&config);
+	config.media.frame_duration_ms = 1;
+	config.media.jitter_buffer_ms = 0;
+	config.media.remote_clock = false;
+	memset(&fake, 0, sizeof(fake));
+	struct modem_host *host = modem_host_create_shared(server, &config, NULL, NULL, &core);
+	CHECK(host != NULL && modem_host_open(host) == SIP_SESSION_OK &&
+	      modem_host_dial(host, "sip:peer@127.0.0.1") == SIP_SIGNALING_OK,
+	      "shared host did not start");
+	CHECK(modem_host_prepare_media(host) == SIP_SESSION_OK &&
+	      modem_host_step(host, 0, NULL, NULL) == MODEM_HOST_AUDIO_ERROR &&
+	      fake.hangups == 0 && !modem_host_audio_is_active(host),
+	      "shared audio failure invoked signaling inside media work");
+	CHECK(modem_host_finish_media(host) == SIP_SESSION_OK &&
+	      modem_host_hangup(host) == SIP_SIGNALING_OK && fake.hangups == 1,
+	      "owner did not finish failed media and hang up");
+	CHECK(modem_host_close(host) == SIP_SESSION_OK, "shared host did not close");
+	modem_host_destroy(host);
+	return true;
+}
+
 static bool test_destroy_closes_an_open_host(void)
 {
 	struct modem_host *host;
@@ -1009,6 +1037,7 @@ int main(void)
 		{ "remote feedback ceiling", test_remote_feedback_clock_is_bounded },
 		{ "audio failure lifecycle",
 		  test_audio_failure_waits_for_a_new_media_lifecycle },
+		{ "shared failure ownership", test_shared_failure_defers_signaling },
 		{ "open destroy", test_destroy_closes_an_open_host },
 	};
 	unsigned int failures = 0;

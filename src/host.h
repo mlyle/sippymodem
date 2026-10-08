@@ -91,4 +91,8 @@ enum audio_path_result modem_host_last_audio_path_result(
 	const struct modem_host *host);
 const char *modem_host_result_name(enum modem_host_result result);
 
+/* Shared SDK lines: owner drains/flushes sockets outside worker DSP batches. */
+enum sip_session_result modem_host_prepare_media(struct modem_host *host);
+enum sip_session_result modem_host_finish_media(struct modem_host *host);
+
 #endif

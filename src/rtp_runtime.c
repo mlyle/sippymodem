@@ -34,6 +34,7 @@ struct rtp_runtime {
 	size_t packet_capacity;
 	struct rtp_stream stream;
 	struct rtp_endpoint endpoint;
+	struct rtp_transmit_batch transmit_batch;
 };
 
 static bool fill_random(void *data, size_t size)
@@ -299,4 +300,16 @@ struct rtp_endpoint *rtp_runtime_endpoint(
 	struct rtp_runtime *runtime)
 {
 	return runtime != NULL ? &runtime->endpoint : NULL;
+}
+
+enum rtp_endpoint_result rtp_runtime_begin_transmit_batch(struct rtp_runtime *runtime)
+{
+	return runtime != NULL ? rtp_endpoint_begin_transmit_batch(
+		&runtime->endpoint, &runtime->transmit_batch) : RTP_ENDPOINT_INVALID_ARGUMENT;
+}
+
+enum rtp_endpoint_result rtp_runtime_finish_transmit_batch(struct rtp_runtime *runtime)
+{
+	return runtime != NULL ? rtp_endpoint_finish_transmit_batch(&runtime->endpoint) :
+		RTP_ENDPOINT_INVALID_ARGUMENT;
 }

@@ -64,4 +64,7 @@ enum rtp_endpoint_result rtp_runtime_send_g711(
 struct rtp_endpoint *rtp_runtime_endpoint(
 	struct rtp_runtime *runtime);
 
+enum rtp_endpoint_result rtp_runtime_begin_transmit_batch(struct rtp_runtime *runtime);
+enum rtp_endpoint_result rtp_runtime_finish_transmit_batch(struct rtp_runtime *runtime);
+
 #endif

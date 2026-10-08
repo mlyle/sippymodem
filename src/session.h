@@ -101,4 +101,8 @@ enum rtp_endpoint_result sip_session_last_rtp_result(
 const char *sip_session_result_name(
 	enum sip_session_result result);
 
+/* Owner-side socket drain/flush around an exclusive worker media job. */
+enum sip_session_result sip_session_begin_media_batch(struct sip_session *session);
+enum sip_session_result sip_session_finish_media_batch(struct sip_session *session);
+
 #endif

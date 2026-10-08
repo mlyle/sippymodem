@@ -20,6 +20,9 @@ struct sip_session {
 	enum rtp_endpoint_result last_rtp_result;
 	bool signaling_destroy_deferred;
 	bool opened;
+	bool media_batch;
+	size_t batch_datagrams;
+	enum sip_session_result batch_result;
 };
 
 static void finish_deferred_signaling(struct sip_session *session)
@@ -168,6 +171,11 @@ enum sip_session_result sip_session_step(
 		return SIP_SESSION_INVALID_ARGUMENT;
 	if (!session->opened)
 		return SIP_SESSION_NOT_OPEN;
+	if (session->media_batch) {
+		if (datagrams_received != NULL)
+			*datagrams_received = session->batch_datagrams;
+		return session->batch_result;
+	}
 	if (datagrams_received != NULL)
 		*datagrams_received = 0;
 	binding_failures = sip_media_bridge_binding_failures(
@@ -308,7 +316,8 @@ size_t sip_session_receive_tail_frames(const struct sip_session *session)
 
 void sip_session_finish_receive_tail(struct sip_session *session)
 {
-	if (sip_session_receive_draining(session))
+	/* Retiring a transport drains its socket; defer that to the owner. */
+	if (sip_session_receive_draining(session) && !session->media_batch)
 		sip_media_bridge_clear_media(&session->bridge);
 }
 
@@ -407,4 +416,33 @@ const char *sip_session_result_name(
 bool sip_session_media_cleanup_pending(const struct sip_session *session)
 {
 	return session != NULL && rtp_runtime_endpoint(session->rtp)->discard_pending;
+}
+
+enum sip_session_result sip_session_begin_media_batch(struct sip_session *session)
+{
+	if (session == NULL || session->media_batch || session->server == NULL)
+		return SIP_SESSION_INVALID_ARGUMENT;
+	if (!session->opened)
+		return SIP_SESSION_NOT_OPEN;
+	session->batch_datagrams = 0;
+	session->batch_result = sip_session_step(session, 0, &session->batch_datagrams);
+	if (rtp_runtime_begin_transmit_batch(session->rtp) != RTP_ENDPOINT_OK)
+		session->batch_result = SIP_SESSION_RTP_ERROR;
+	session->media_batch = true;
+	return session->batch_result;
+}
+
+enum sip_session_result sip_session_finish_media_batch(struct sip_session *session)
+{
+	if (session == NULL)
+		return SIP_SESSION_INVALID_ARGUMENT;
+	if (!session->media_batch)
+		return SIP_SESSION_NOT_OPEN;
+	session->media_batch = false;
+	session->last_rtp_result = rtp_runtime_finish_transmit_batch(session->rtp);
+	if (sip_session_receive_draining(session) &&
+	    sip_session_receive_tail_frames(session) == 0)
+		sip_session_finish_receive_tail(session);
+	return session->last_rtp_result == RTP_ENDPOINT_OK ?
+		SIP_SESSION_OK : SIP_SESSION_RTP_ERROR;
 }
