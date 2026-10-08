@@ -198,7 +198,7 @@ static enum modem_host_result suspend_failed_audio(
 {
 	host->audio_suspended = true;
 	audio_scheduler_set_active(&host->audio_scheduler, false);
-	/* The SDK owner retires failed shared calls after the media batch joins. */
+	/* The SDK owner retires failed shared calls after collecting their media job. */
 	if (!host->shared_signaling)
 		sip_session_hangup(host->session);
 	synchronize_audio(host);

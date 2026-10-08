@@ -59,7 +59,7 @@ enum sippymodem_event_type {
  * NULL means an empty optional setting.
  * Exactly one PJSUA server may be started per process. All operations for that
  * server belong to one native owner thread; internal workers exclusively process
- * distinct lines during process(). The library never calls Python. */
+ * one line each between owner calls. The library never calls Python. */
 struct sippymodem_server_config {
 	const char *bound_address;
 	const char *public_address;
@@ -75,7 +75,7 @@ struct sippymodem_server_config {
 	bool register_account;
 	/* Explicit endpoint configurations can omit the legacy default endpoint. */
 	bool omit_default_endpoint;
-	/* DSP concurrency including the owner: 0 automatic, 1 serial, at most 32. */
+	/* Reserved legacy setting (0..32), ignored. Each started line owns a DSP thread. */
 	unsigned int dsp_threads;
 };
 
@@ -258,7 +258,8 @@ void sippymodem_line_destroy(struct sippymodem_line *line);
 /* Nonblocking copies with exact prefix counts; caller pointers are never
  * retained. tx_pending/free count unframed local DTE bytes. receive drains
  * retained RX after disconnect before returning CLOSED. DATA is always literal,
- * including NUL, +++ and AT text. COMMAND rejects sends and preserves RX. */
+ * including NUL, +++ and AT text. COMMAND rejects sends and preserves RX.
+ * A busy line returns AGAIN with zero bytes; keep servicing process(). */
 enum sippymodem_result sippymodem_send(struct sippymodem_line *line,
 	const void *bytes, size_t length, size_t *accepted);
 enum sippymodem_result sippymodem_receive(struct sippymodem_line *line,
@@ -273,6 +274,7 @@ enum sippymodem_result sippymodem_receive(struct sippymodem_line *line,
  * Completion is idempotent. The application owns its bounded timeout. */
 enum sippymodem_result sippymodem_finish_tx(struct sippymodem_line *line,
 	uint64_t generation);
+/* Coherent last-completed snapshot while this line has a DSP job in flight. */
 enum sippymodem_result sippymodem_get_status(const struct sippymodem_line *line,
 	struct sippymodem_status *status);
 /* Non-destructive, nonblocking owner-thread read of the line's latest 64 logs.
@@ -288,7 +290,10 @@ enum sippymodem_result sippymodem_get_call_facts(const struct sippymodem_line *l
 	struct sippymodem_call_facts *facts);
 
 /* Controls carry the generation read from status; STALE has no effect. Mode
- * changes require tx_pending == 0; DATA resume never requests retraining. */
+ * changes require tx_pending == 0; DATA resume never requests retraining.
+ * Answer, hangup, mode changes and stop may wait for the target line's current
+ * bounded DSP job; they never join other lines' jobs. Endpoint stop collects
+ * its associated lines before closing their calls. */
 enum sippymodem_result sippymodem_set_dte_mode(struct sippymodem_line *line,
 	uint64_t generation, enum sippymodem_dte_mode mode);
 /* Call process() once to establish the monotonic clock before dialing.
@@ -302,10 +307,11 @@ enum sippymodem_result sippymodem_answer(struct sippymodem_line *line,
 enum sippymodem_result sippymodem_hangup(struct sippymodem_line *line,
 	uint64_t generation);
 
-/* Only process advances protocols; now_ns is monotonic and must not move
- * backwards. Each pass polls SIP once, drains RTP in batches of at most 64
- * packets, and processes at most four audio frames per line; it never waits for
- * the network. The returned absolute deadline may equal now_ns when work remains. */
+/* Submit/collect independent line jobs; now_ns is monotonic and must not move
+ * backwards. Each pass polls SIP once and drains at most 64 RTP packets per line.
+ * Each worker job handles at most four audio frames. process() never waits for a
+ * worker or network input. Poll event_fd for completions as well as events, then
+ * call process(); it owns the counter. The absolute deadline may equal now_ns. */
 enum sippymodem_result sippymodem_process(struct sippymodem_server *server,
 	uint64_t now_ns, uint64_t *next_deadline_ns);
 /* Event overflow is fatal and sticky: active calls close, terminal events have
@@ -314,6 +320,8 @@ enum sippymodem_result sippymodem_process(struct sippymodem_server *server,
 enum sippymodem_result sippymodem_poll_event(struct sippymodem_server *server,
 	struct sippymodem_event *event);
 unsigned int sippymodem_listen_port(const struct sippymodem_server *server);
+/* Borrowed poll-only fd: do not read/close it. Readability also wakes process()
+ * for a completed DSP job, even when poll_event() returns AGAIN. */
 int sippymodem_event_fd(const struct sippymodem_server *server);
 
 #ifdef __cplusplus

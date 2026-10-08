@@ -34,31 +34,36 @@ keys have a bounded 500 ms safe-reuse delay; temporary exhaustion returns an
 ordinary resource error, while existing calls keep running. Its release
 assertion policy applies only to the SDK; native test assertions remain enabled.
 
-Each process pass polls SIP once on the native owner, prepares call transitions,
-drains RTP sockets, then processes distinct lines in a bounded worker batch.
-A line's RTP codec, DSP, framing, compression, recording, and DTE queues have
-one exclusive owner during its job. Generated packets are copied into at most
-four per-line slots and flushed by the owner after the batch joins. Socket I/O,
-SIP callbacks, disconnects, status, and events stay on the submitting owner.
-DSP stops request an owner-side SIP hangup after every job has returned.
-No job or borrowed buffer survives `process`, and public calls still belong to
-one native owner thread. No Python callback or payload copy occurs in protocol
-processing.
+Each started line owns one persistent native DSP thread, created by line start
+and joined by line stop. The server owner handles SIP, socket I/O, status and
+coarse events. A line's media decoding, DSP, framing, compression, recording and
+DTE queues have one exclusive owner during its job. At most one copied job and
+four generated RTP packets are outstanding per line. The server collects each
+completion independently and flushes its packets before applying deferred SIP
+updates. A slow line does not delay processing of other lines.
 
-`server_config.dsp_threads` limits concurrency including the submitting owner.
-Zero chooses the online CPU count, capped by `max_lines` and 32; one uses the
-owner alone. Threads start with the server and join on stop, including failed
-partial startup. Rebuild native consumers when updating the public C header.
+`process()` submits and collects without waiting for workers or network input.
+Poll the borrowed `event_fd` as well as respecting the returned deadline, and
+call `process()` when it becomes readable. Do not read that descriptor directly;
+it carries completion wakes as well as coarse events, so `poll_event()` can return
+AGAIN after a wake. Byte I/O is nonblocking and can return AGAIN with a zero count
+while that line is busy. Status returns the coherent last-completed snapshot.
+Answer, hangup, explicit mode changes and stop can wait for the target line's
+current bounded job; they do not wait for other lines. Endpoint stop collects only its associated
+lines before closing their calls.
+
+The legacy `server_config.dsp_threads` field accepts 0..32 for compatibility but
+is ignored. Every started line gets its own thread, regardless of CPU count.
+Public handles still belong to one native owner thread; the library never calls
+Python. No public structure layout or function signature changes are required.
 
 Each pass drains at most 64 RTP packets per line (including call-boundary
-cleanup), and each job processes at most four audio frames. Excess received
-clock credit is retained for later passes. The owner waits for that finite batch, without
-waiting for network input, then returns an absolute monotonic deadline; an
-immediate deadline means more work is due. These work bounds do not guarantee
-that DSP or OS scheduling fits every realtime budget. Backwards timestamps are
-rejected, and deadline addition saturates at `UINT64_MAX`. The call timeout
-covers SIP progress, early media, training, and error-control establishment
-until the line is ready.
+cleanup), and each worker job processes at most four audio frames. Excess
+received clock credit is retained. The returned absolute monotonic deadline can
+be immediate when more work is due. These bounds do not guarantee that DSP or OS
+scheduling fits every realtime budget. Backwards timestamps are rejected, and
+deadline addition saturates at `UINT64_MAX`. The call timeout covers SIP progress,
+early media, training and error-control establishment until the line is ready.
 
 Line admission and dial return BUSY while bounded cleanup of old queued RTP is
 pending. Processing drains those datagrams before a replacement call can start,

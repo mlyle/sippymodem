@@ -4,139 +4,133 @@
 
 #include <errno.h>
 #include <pthread.h>
-#include <semaphore.h>
-#include <stdatomic.h>
 #include <stdlib.h>
+#include <unistd.h>
 
-enum { MEDIA_JOB_LIMIT = 32 };
 struct media_worker {
 	pthread_t thread;
-	sem_t ready;
-	struct media_workers *owner;
+	pthread_mutex_t mutex;
+	pthread_cond_t ready, done;
+	struct modem_line *line;
+	struct media_job job;
+	int wake_fd;
+	bool busy; /* Native owner only. */
+	bool pending, completed, stopping; /* Mailbox mutex. */
 };
-struct media_workers {
-	struct media_worker workers[MEDIA_JOB_LIMIT - 1];
-	unsigned int worker_count;
-	sem_t done;
-	struct media_job *jobs;
-	atomic_size_t next;
-	size_t count;
-	bool stopping;
-};
-
-static void wait_for(sem_t *semaphore)
-{
-	while (sem_wait(semaphore) != 0)
-		if (errno != EINTR)
-			abort();
-}
-
-static void process_job(struct media_job *job)
-{
-	job->datagrams = 0;
-	job->result = modem_line_process_media(job->line, job->now_ns, &job->datagrams);
-}
-
-static void run_jobs(struct media_workers *workers)
-{
-	for (;;) {
-		size_t index = atomic_fetch_add(&workers->next, 1);
-		if (index >= workers->count)
-			return;
-		process_job(&workers->jobs[index]);
-	}
-}
 
 static void *worker_main(void *context)
 {
 	struct media_worker *worker = context;
-	struct media_workers *workers = worker->owner;
+	pthread_mutex_lock(&worker->mutex);
 	for (;;) {
-		wait_for(&worker->ready);
-		if (workers->stopping)
+		while (!worker->pending && !worker->stopping)
+			pthread_cond_wait(&worker->ready, &worker->mutex);
+		if (worker->stopping) {
+			pthread_mutex_unlock(&worker->mutex);
 			return NULL;
-		run_jobs(workers);
-		sem_post(&workers->done);
+		}
+		struct media_job job = worker->job;
+		worker->pending = false;
+		pthread_mutex_unlock(&worker->mutex);
+		job.result = modem_line_process_media(worker->line, job.now_ns, &job.datagrams);
+		pthread_mutex_lock(&worker->mutex);
+		uint64_t one = 1;
+		ssize_t count;
+		do {
+			count = worker->wake_fd < 0 ? 0 : write(worker->wake_fd, &one, sizeof(one));
+		} while (count < 0 && errno == EINTR);
+		job.notified = count == sizeof(one);
+		/* Publish after notifying so collection cannot consume an absent wake. */
+		worker->job = job;
+		worker->completed = true;
+		pthread_cond_signal(&worker->done);
 	}
 }
 
-struct media_workers *media_workers_create(unsigned int threads)
+struct media_worker *media_worker_create(struct modem_line *line, int wake_fd)
 {
-	if (threads == 0 || threads > MEDIA_JOB_LIMIT) {
+	if (line == NULL || wake_fd < -1) {
 		errno = EINVAL;
 		return NULL;
 	}
-	struct media_workers *workers = calloc(1, sizeof(*workers));
-	if (workers == NULL)
+	struct media_worker *worker = calloc(1, sizeof(*worker));
+	if (worker == NULL)
 		return NULL;
-	atomic_init(&workers->next, 0);
-	if (sem_init(&workers->done, 0, 0) != 0) {
-		free(workers);
-		return NULL;
-	}
-	for (unsigned int i = 1; i < threads; ++i) {
-		struct media_worker *worker = &workers->workers[workers->worker_count];
-		worker->owner = workers;
-		int error;
-		if (sem_init(&worker->ready, 0, 0) != 0)
-			error = errno;
-		else {
-			error = pthread_create(&worker->thread, NULL, worker_main, worker);
-			if (error != 0)
-				sem_destroy(&worker->ready);
-		}
-		if (error != 0) {
-			media_workers_destroy(workers);
-			errno = error;
-			return NULL;
-		}
-		workers->worker_count++;
-	}
-	return workers;
+	worker->line = line;
+	worker->wake_fd = wake_fd;
+	int error = pthread_mutex_init(&worker->mutex, NULL);
+	if (error != 0)
+		goto fail;
+	error = pthread_cond_init(&worker->ready, NULL);
+	if (error != 0)
+		goto fail_mutex;
+	error = pthread_cond_init(&worker->done, NULL);
+	if (error != 0)
+		goto fail_ready;
+	error = pthread_create(&worker->thread, NULL, worker_main, worker);
+	if (error == 0)
+		return worker;
+	pthread_cond_destroy(&worker->done);
+fail_ready:
+	pthread_cond_destroy(&worker->ready);
+fail_mutex:
+	pthread_mutex_destroy(&worker->mutex);
+fail:
+	free(worker);
+	errno = error;
+	return NULL;
 }
 
-void media_workers_destroy(struct media_workers *workers)
+bool media_worker_busy(const struct media_worker *worker)
 {
-	if (workers == NULL)
-		return;
-	workers->stopping = true;
-	for (unsigned int i = 0; i < workers->worker_count; ++i)
-		sem_post(&workers->workers[i].ready);
-	for (unsigned int i = 0; i < workers->worker_count; ++i) {
-		pthread_join(workers->workers[i].thread, NULL);
-		sem_destroy(&workers->workers[i].ready);
-	}
-	sem_destroy(&workers->done);
-	free(workers);
+	return worker != NULL && worker->busy;
 }
 
-bool media_workers_run(struct media_workers *workers, struct media_job *jobs,
-	size_t count)
+bool media_worker_submit(struct media_worker *worker, uint64_t now_ns)
 {
-	if (workers == NULL || count > MEDIA_JOB_LIMIT || (count != 0 && jobs == NULL))
+	if (worker == NULL || worker->busy)
 		return false;
-	for (size_t i = 0; i < count; ++i) {
-		if (jobs[i].line == NULL)
-			return false;
-		for (size_t j = 0; j < i; ++j)
-			if (jobs[i].line == jobs[j].line)
-				return false;
-	}
-	if (workers->worker_count == 0 || count < 2) {
-		for (size_t i = 0; i < count; ++i)
-			process_job(&jobs[i]);
-		return true;
-	}
-	workers->jobs = jobs;
-	workers->count = count;
-	atomic_store(&workers->next, 0);
-	unsigned int helpers = count - 1 < workers->worker_count ?
-		(unsigned int)count - 1 : workers->worker_count;
-	for (unsigned int i = 0; i < helpers; ++i)
-		sem_post(&workers->workers[i].ready);
-	run_jobs(workers);
-	for (unsigned int i = 0; i < helpers; ++i)
-		wait_for(&workers->done);
-	workers->jobs = NULL;
+	pthread_mutex_lock(&worker->mutex);
+	worker->job = (struct media_job){ .now_ns = now_ns };
+	worker->pending = worker->busy = true;
+	pthread_cond_signal(&worker->ready);
+	pthread_mutex_unlock(&worker->mutex);
 	return true;
+}
+
+bool media_worker_collect(struct media_worker *worker, bool wait, struct media_job *job)
+{
+	if (worker == NULL || job == NULL || !worker->busy)
+		return false;
+	int error = wait ? pthread_mutex_lock(&worker->mutex) : pthread_mutex_trylock(&worker->mutex);
+	if (error == EBUSY && !wait)
+		return false;
+	if (error != 0)
+		abort();
+	while (wait && !worker->completed)
+		pthread_cond_wait(&worker->done, &worker->mutex);
+	bool completed = worker->completed;
+	if (completed) {
+		*job = worker->job;
+		worker->busy = worker->completed = false;
+	}
+	pthread_mutex_unlock(&worker->mutex);
+	return completed;
+}
+
+void media_worker_destroy(struct media_worker *worker)
+{
+	if (worker == NULL)
+		return;
+	struct media_job job;
+	(void)media_worker_collect(worker, true, &job);
+	pthread_mutex_lock(&worker->mutex);
+	worker->stopping = true;
+	pthread_cond_signal(&worker->ready);
+	pthread_mutex_unlock(&worker->mutex);
+	pthread_join(worker->thread, NULL);
+	pthread_cond_destroy(&worker->done);
+	pthread_cond_destroy(&worker->ready);
+	pthread_mutex_destroy(&worker->mutex);
+	free(worker);
 }

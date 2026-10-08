@@ -4,21 +4,32 @@
 
 #include <errno.h>
 #include <pthread.h>
+#include <semaphore.h>
 #include <stdatomic.h>
-#include <string.h>
+#include <sys/eventfd.h>
+#include <unistd.h>
 
-struct modem_line { unsigned int calls; pthread_t thread; };
-static pthread_barrier_t barrier;
-static bool synchronize_jobs;
+struct modem_line {
+	unsigned int calls;
+	pthread_t thread;
+	bool blocked;
+	sem_t entered, release;
+};
 static atomic_uint active, peak;
-static unsigned int fail_create;
+static bool fail_create;
 int __real_pthread_create(pthread_t *, const pthread_attr_t *, void *(*)(void *), void *);
 int __wrap_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
 	void *(*start)(void *), void *context)
 {
-	if (fail_create != 0 && --fail_create == 0)
+	if (fail_create)
 		return EAGAIN;
 	return __real_pthread_create(thread, attr, start, context);
+}
+static void take(sem_t *semaphore)
+{
+	while (sem_wait(semaphore) != 0)
+		if (errno != EINTR)
+			_exit(2);
 }
 
 enum modem_host_result modem_line_process_media(struct modem_line *line,
@@ -29,71 +40,83 @@ enum modem_host_result modem_line_process_media(struct modem_line *line,
 	unsigned int current = atomic_fetch_add(&active, 1) + 1;
 	unsigned int previous = atomic_load(&peak);
 	while (previous < current && !atomic_compare_exchange_weak(&peak, &previous, current)) {}
-	if (synchronize_jobs)
-		pthread_barrier_wait(&barrier);
+	if (line->blocked) {
+		sem_post(&line->entered);
+		take(&line->release);
+	}
 	*datagrams = (size_t)now_ns;
 	atomic_fetch_sub(&active, 1);
 	return MODEM_HOST_OK;
 }
 
-static bool test_batches(void)
+static bool test_independent_lines(void)
 {
-	const unsigned int counts[] = { 1, 2, 4 };
-	for (unsigned int c = 0; c < sizeof(counts) / sizeof(counts[0]); ++c) {
-		unsigned int threads = counts[c];
-		struct media_workers *workers = media_workers_create(threads);
-		CHECK(workers != NULL, "create %u workers", threads);
-		CHECK(pthread_barrier_init(&barrier, NULL, threads) == 0, "barrier init");
-		synchronize_jobs = true;
-		atomic_store(&peak, 0);
-		for (unsigned int pass = 0; pass < 20; ++pass) {
-			struct modem_line lines[8] = { 0 };
-			struct media_job jobs[8];
-			for (unsigned int i = 0; i < 8; ++i)
-				jobs[i] = (struct media_job){ .line = &lines[i], .now_ns = i + pass };
-			CHECK(media_workers_run(workers, jobs, 8), "run batch");
-			for (unsigned int i = 0; i < 8; ++i)
-				CHECK(lines[i].calls == 1 && jobs[i].result == MODEM_HOST_OK &&
-				      jobs[i].datagrams == i + pass, "job %u was lost or repeated", i);
+	struct modem_line slow = { .blocked = true }, fast = { 0 };
+	CHECK(sem_init(&slow.entered, 0, 0) == 0 && sem_init(&slow.release, 0, 0) == 0,
+	      "line gates failed");
+	int wake = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK | EFD_SEMAPHORE);
+	struct media_worker *a = media_worker_create(&slow, wake);
+	struct media_worker *b = media_worker_create(&fast, wake);
+	CHECK(wake >= 0 && a != NULL && b != NULL, "line startup failed");
+	pthread_t a_thread = pthread_self(), b_thread = pthread_self();
+	for (unsigned pass = 1; pass <= 20; ++pass) {
+		struct media_job job;
+		CHECK(media_worker_submit(a, pass), "slow submission failed");
+		take(&slow.entered);
+		CHECK(media_worker_submit(b, pass + 100), "fast submission failed");
+		CHECK(media_worker_collect(b, true, &job) && job.result == MODEM_HOST_OK &&
+		      job.datagrams == pass + 100 && job.notified, "fast completion failed");
+		CHECK(media_worker_busy(a) && !media_worker_collect(a, false, &job) &&
+		      !media_worker_submit(a, 0), "unfinished job was overwritten or waited on");
+		CHECK(!pthread_equal(fast.thread, pthread_self()), "DSP ran on native owner");
+		sem_post(&slow.release);
+		CHECK(media_worker_collect(a, true, &job) && job.datagrams == pass && job.notified,
+		      "slow completion failed");
+		CHECK(!media_worker_busy(a) && !media_worker_collect(a, false, &job), "completion repeated");
+		CHECK(slow.calls == pass && fast.calls == pass &&
+		      !pthread_equal(slow.thread, fast.thread), "line work was lost or shared a thread");
+		if (pass == 1) {
+			a_thread = slow.thread;
+			b_thread = fast.thread;
 		}
-		CHECK(atomic_load(&peak) >= threads, "jobs did not overlap across %u threads", threads);
-		synchronize_jobs = false;
-		pthread_barrier_destroy(&barrier);
-		CHECK(media_workers_run(workers, NULL, 0), "empty batch");
-		struct modem_line line = { 0 };
-		struct media_job one = { .line = &line };
-		CHECK(media_workers_run(workers, &one, 1) && line.calls == 1 &&
-		      pthread_equal(line.thread, pthread_self()), "single job should stay on owner");
-		struct media_job duplicate[] = { one, one };
-		CHECK(!media_workers_run(workers, duplicate, 2) && line.calls == 1,
-		      "duplicate line ownership was accepted");
-		CHECK(!media_workers_run(workers, NULL, 1) && !media_workers_run(workers, &one, 33),
-		      "invalid batch bounds were accepted");
-		one.line = NULL;
-		CHECK(!media_workers_run(workers, &one, 1), "missing line was accepted");
-		media_workers_destroy(workers);
+		CHECK(pthread_equal(slow.thread, a_thread) && pthread_equal(fast.thread, b_thread),
+		      "line changed DSP thread");
+		uint64_t one;
+		CHECK(read(wake, &one, sizeof(one)) == sizeof(one) && one == 1 &&
+		      read(wake, &one, sizeof(one)) == sizeof(one) && one == 1 &&
+		      read(wake, &one, sizeof(one)) < 0 && errno == EAGAIN,
+		      "completion wake accounting differs");
 	}
+	CHECK(atomic_load(&peak) == 2, "DSP work did not overlap");
+	media_worker_destroy(a);
+	media_worker_destroy(b);
+	sem_destroy(&slow.entered);
+	sem_destroy(&slow.release);
+	close(wake);
 	return true;
 }
 
-static bool test_failed_startup(void)
+static bool test_lifecycle(void)
 {
-	CHECK(media_workers_create(0) == NULL && errno == EINVAL, "zero threads accepted");
-	CHECK(media_workers_create(33) == NULL && errno == EINVAL, "thread bound ignored");
-	for (unsigned int i = 1; i <= 3; ++i) {
-		fail_create = i;
-		CHECK(media_workers_create(4) == NULL && errno == EAGAIN, "partial startup did not unwind");
-		fail_create = 0;
-		struct media_workers *workers = media_workers_create(4);
-		CHECK(workers != NULL, "could not restart after failed creation");
-		media_workers_destroy(workers);
-	}
-	media_workers_destroy(NULL);
-	CHECK(!media_workers_run(NULL, NULL, 0), "missing pool accepted");
+	struct modem_line line = { 0 };
+	CHECK(media_worker_create(NULL, -1) == NULL && errno == EINVAL, "missing line accepted");
+	CHECK(media_worker_create(&line, -2) == NULL && errno == EINVAL, "invalid wake fd accepted");
+	fail_create = true;
+	CHECK(media_worker_create(&line, -1) == NULL && errno == EAGAIN, "failed startup not unwound");
+	fail_create = false;
+	struct media_worker *worker = media_worker_create(&line, -1);
+	CHECK(worker != NULL && !media_worker_busy(worker), "restart failed");
+	CHECK(media_worker_submit(worker, 1), "submission failed");
+	media_worker_destroy(worker);
+	CHECK(line.calls == 1, "destroy returned before work finished");
+	media_worker_destroy(NULL);
+	struct media_job job;
+	CHECK(!media_worker_submit(NULL, 1) && !media_worker_collect(NULL, false, &job),
+	      "missing worker accepted");
 	return true;
 }
 
 int main(void)
 {
-	return test_batches() && test_failed_startup() ? 0 : 1;
+	return test_independent_lines() && test_lifecycle() ? 0 : 1;
 }

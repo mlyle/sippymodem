@@ -10,6 +10,8 @@
 #include <pthread.h>
 #include <stdatomic.h>
 #include <poll.h>
+#include <semaphore.h>
+#include <time.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <string.h>
@@ -43,6 +45,10 @@ ssize_t __wrap_recv(int fd, void *bytes, size_t count, int flags)
 
 struct modem;
 static atomic_uint dsp_epoch, dsp_count;
+static atomic_bool wrong_dsp_thread, stall_enabled, stall_expired;
+static atomic_uintptr_t stalled_modem;
+static atomic_uint other_progress;
+static sem_t stall_entered, stall_release, stall_finished;
 void __real_modem_process_g711(struct modem *, enum g711_law,
 	const uint8_t *, void *, const bool *, uint8_t *, void *, int, bool *);
 void __wrap_modem_process_g711(struct modem *modem, enum g711_law law,
@@ -50,10 +56,25 @@ void __wrap_modem_process_g711(struct modem *modem, enum g711_law law,
 	void *output, int count, bool *exact)
 {
 	static _Thread_local unsigned int seen_epoch;
+	static _Thread_local struct modem *owned_modem;
 	unsigned int epoch = atomic_load(&dsp_epoch);
 	if (epoch != 0 && seen_epoch != epoch) {
 		seen_epoch = epoch;
+		owned_modem = modem;
 		atomic_fetch_add(&dsp_count, 1);
+	}
+	if (epoch != 0 && (owned_modem != modem || pthread_equal(io_owner, pthread_self())))
+		atomic_store(&wrong_dsp_thread, true);
+	if (atomic_load(&stall_enabled)) {
+		uintptr_t empty = 0;
+		if (atomic_compare_exchange_strong(&stalled_modem, &empty, (uintptr_t)modem)) {
+			sem_post(&stall_entered);
+			while (sem_wait(&stall_release) != 0)
+				if (errno != EINTR)
+					_exit(2);
+		} else if (empty != (uintptr_t)modem) {
+			atomic_fetch_add(&other_progress, 1);
+		}
 	}
 	__real_modem_process_g711(modem, law, rx, input, mask, tx, output, count, exact);
 }
@@ -79,17 +100,18 @@ int __wrap_pjsua_destroy2(unsigned int flags)
 	return result;
 }
 
-struct media_workers;
-struct media_workers *__real_media_workers_create(unsigned int threads);
+struct modem_line;
+struct media_worker;
+struct media_worker *__real_media_worker_create(struct modem_line *line, int wake_fd);
 static bool fail_media_start;
-struct media_workers *__wrap_media_workers_create(unsigned int threads)
+struct media_worker *__wrap_media_worker_create(struct modem_line *line, int wake_fd)
 {
 	if (fail_media_start) {
 		fail_media_start = false;
 		errno = EAGAIN;
 		return NULL;
 	}
-	return __real_media_workers_create(threads);
+	return __real_media_worker_create(line, wake_fd);
 }
 
 #define EXPECT(condition) CHECK((condition), "%s", #condition)
@@ -109,6 +131,64 @@ static bool step(struct sippymodem_server *server, uint64_t *now)
 	return true;
 }
 
+/* A watchdog turns a reintroduced process-wide join into a bounded failure. */
+static void *stall_watchdog(void *unused)
+{
+	(void)unused;
+	struct timespec until;
+	clock_gettime(CLOCK_REALTIME, &until);
+	until.tv_sec += 5;
+	while (sem_timedwait(&stall_finished, &until) != 0) {
+		if (errno == EINTR)
+			continue;
+		atomic_store(&stall_expired, true);
+		atomic_store(&stall_enabled, false);
+		sem_post(&stall_release);
+		break;
+	}
+	return NULL;
+}
+
+static bool check_independent_progress(struct sippymodem_server *server, uint64_t *now,
+	struct sippymodem_line **lines, size_t count)
+{
+	EXPECT(sem_init(&stall_entered, 0, 0) == 0);
+	EXPECT(sem_init(&stall_release, 0, 0) == 0);
+	EXPECT(sem_init(&stall_finished, 0, 0) == 0);
+	atomic_store(&stalled_modem, 0);
+	atomic_store(&other_progress, 0);
+	atomic_store(&stall_expired, false);
+	pthread_t watchdog;
+	EXPECT(pthread_create(&watchdog, NULL, stall_watchdog, NULL) == 0);
+	atomic_store(&stall_enabled, true);
+	bool entered = false, passed = true;
+	for (unsigned i = 0; i < 1000 && !entered && !atomic_load(&stall_expired); ++i) {
+		passed = step(server, now);
+		if (!passed)
+			break;
+		entered = sem_trywait(&stall_entered) == 0;
+	}
+	for (unsigned i = 0; i < 100 && entered && passed &&
+	     !atomic_load(&stall_expired) && atomic_load(&other_progress) < 3; ++i)
+		passed = step(server, now);
+	atomic_store(&stall_enabled, false);
+	sem_post(&stall_release);
+	sem_post(&stall_finished);
+	pthread_join(watchdog, NULL);
+	/* Fence every possible gated worker before destroying its semaphores. */
+	for (size_t i = 0; i < count; ++i) {
+		struct sippymodem_status status;
+		passed = sippymodem_get_status(lines[i], &status) == SIPPYMODEM_OK && passed;
+		passed = sippymodem_set_dte_mode(lines[i], status.generation, SIPPYMODEM_DATA) == SIPPYMODEM_OK && passed;
+	}
+	sem_destroy(&stall_entered);
+	sem_destroy(&stall_release);
+	sem_destroy(&stall_finished);
+	EXPECT(passed && entered && !atomic_load(&stall_expired));
+	EXPECT(atomic_load(&other_progress) >= 3);
+	return true;
+}
+
 static bool test_owned_loopback(void)
 {
 	atomic_store(&dsp_count, 0);
@@ -116,7 +196,7 @@ static bool test_owned_loopback(void)
 	struct sippymodem_server_config config;
 	sippymodem_server_config_init(&config);
 	config.max_lines = 4;
-	config.dsp_threads = 4;
+	config.dsp_threads = 1; /* Legacy field cannot serialize distinct lines. */
 	config.public_address = "127.0.0.1";
 	config.bound_address = "127.0.0.1";
 	config.identity_uri = "sip:+12025550123@127.0.0.1";
@@ -282,6 +362,8 @@ static bool test_owned_loopback(void)
 		EXPECT(sippymodem_get_status(other_caller, &other_local) == SIPPYMODEM_OK);
 	}
 	EXPECT(other_remote.ready && other_local.ready);
+	struct sippymodem_line *all_lines[] = { caller, answerer, other_caller, other_answerer };
+	EXPECT(check_independent_progress(server, &now, all_lines, 4));
 	const unsigned char first_payload[] = { 1, 3, 5, 7 };
 	const unsigned char second_payload[] = { 2, 4, 6, 8 };
 	EXPECT(sippymodem_send(caller, first_payload, sizeof(first_payload), &accepted) == SIPPYMODEM_OK);
@@ -459,7 +541,7 @@ static bool test_owned_loopback(void)
 
 	sippymodem_server_destroy(server);
 	atomic_store(&dsp_epoch, 0);
-	EXPECT(config.dsp_threads == 1 ? atomic_load(&dsp_count) == 1 : atomic_load(&dsp_count) > 1);
+	EXPECT(atomic_load(&dsp_count) == 4 && !atomic_load(&wrong_dsp_thread));
 	return true;
 }
 
@@ -762,9 +844,9 @@ static bool test_timeout_and_bounds(void)
 	lc.min_bps = 0;
 	struct sippymodem_line *line = sippymodem_line_create(server, &lc);
 	EXPECT(line != NULL);
-	fail_media_start = true;
-	EXPECT(sippymodem_server_start(server) == SIPPYMODEM_ERROR);
 	EXPECT(sippymodem_server_start(server) == SIPPYMODEM_OK);
+	fail_media_start = true;
+	EXPECT(sippymodem_line_start(line) == SIPPYMODEM_ERROR);
 	EXPECT(sippymodem_line_start(line) == SIPPYMODEM_OK);
 	EXPECT(sippymodem_line_start(line) == SIPPYMODEM_OK);
 	struct sippymodem_status reserved;

@@ -59,8 +59,9 @@ while (sippymodem_poll_event(server, &event) == SIPPYMODEM_OK)
  * until next_deadline_ns. Do not close borrowed fds or consume their bytes. */
 ```
 
-Only `process()` advances protocols. It is nonblocking, polls SIP once, drains
-RTP in batches of at most 64 packets, and runs at most four audio frames per line.
+`process()` drives the native owner and DSP workers. It is nonblocking, polls SIP once, drains
+RTP in batches of at most 64 packets, and submits jobs of at most four audio
+frames per line. It collects completed lines without waiting for busy workers.
 An immediate deadline means native work remains. Continue with another bounded
 pass; otherwise wait for readiness/deadline. Backward timestamps are rejected.
 An event fd is a wakeup interface; it does not replace deadline-driven processing.
@@ -259,7 +260,7 @@ identical ephemeral-port settings (`listen_port == 0`). Different settings creat
 separate transports. The initial limits are eight endpoints, 32 groups, and 32
 lines, including any default handles. One SDK server may be started per process;
 all public operations run on one native owner thread. Internal workers own
-distinct lines exclusively during a bounded `process()` batch.
+one line each, including between calls to `process()`.
 
 ## One direct SIP endpoint and five lines
 
@@ -436,7 +437,8 @@ owns and closes the returned peer fd.
   use the event/status generation; `STALE` has no effect. Compare private facts'
   generation before applying a route. `EVENT_SIP_ESTABLISHED` is not readiness;
   `EVENT_CONNECTED` and `status.ready` include modem and error-control readiness.
-- Only `sippymodem_process(server, now_ns, &next_deadline_ns)` advances protocols.
+- Keep calling `sippymodem_process(server, now_ns, &next_deadline_ns)` to submit
+  and collect native protocol work.
   Establish the monotonic clock with one process pass before dialing. Backwards
   timestamps are rejected. Native processing is bounded and returns an absolute
   deadline, possibly now when work remains; it never waits for network replies.
@@ -455,12 +457,21 @@ owns and closes the returned peer fd.
   before a still-needed server. Server destroy frees remaining children and
   invalidates every child handle.
 
-The shared server spreads media decoding, DSP, framing, and compression across
-native workers while keeping socket I/O, SIP control, and events on the submitting
-owner. Generated RTP packets use a bounded four-frame queue until the batch joins. Set
-`server_config.dsp_threads` to bound concurrency including that owner; zero
-uses the online CPU count capped by `max_lines`, and one is serial. Every media
-batch joins before `process()` returns, so public status and byte queues remain
-coherent between calls. Rebuild native consumers for the updated C header.
-Earlier Pi measurements with separate processes remain useful context;
-measure this shared worker implementation before choosing production capacity.
+Each started modem line has its own persistent native DSP thread. The owner
+keeps SIP, sockets, status and coarse events; it submits at most one job per
+line and collects completions independently. `process()` does not wait for
+workers. Generated RTP packets use a bounded four-frame queue until that line
+is collected. A busy line returns a coherent last-completed status snapshot;
+nonblocking byte I/O can return AGAIN with a zero count. Explicit answer,
+hangup, mode changes and stop may wait for that line's current bounded job.
+Endpoint stop collects its associated lines before closing their calls.
+
+Poll `sippymodem_event_fd()` for both coarse events and DSP completions, and call
+`process()` on readability. The fd is borrowed and poll-only: never read or close
+it. A completion wake need not have a corresponding coarse event. The legacy
+`server_config.dsp_threads` setting is ignored (accepted range 0..32); one thread
+is created for every started line and joined when that line stops. All public
+API calls still belong to the same native owner thread.
+
+Earlier Pi measurements with separate processes remain useful context; measure
+this shared server before choosing production capacity.

@@ -17,11 +17,16 @@
 #include <sys/eventfd.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
+#include <poll.h>
 
 enum { LINE_LIMIT = 32, EVENT_LIMIT = 128, QUEUE_LIMIT = 1048576, ENDPOINT_LIMIT = 8 };
 struct sippymodem_line {
 	struct sippymodem_server *server;
 	struct modem_line *core;
+	struct media_worker *worker;
+	uint64_t media_deadline;
+	bool finish_requested;
+	int finish_pending;
 	struct sippymodem_line_config config;
 	struct sippymodem_status status;
 	struct sippymodem_call_facts facts;
@@ -58,8 +63,6 @@ struct sippymodem_endpoint {
 struct sippymodem_server {
 	struct app_config config;
 	struct sip_server *sip;
-	struct media_workers *workers;
-	unsigned int dsp_threads;
 	struct sippymodem_endpoint *endpoints[ENDPOINT_LIMIT], *default_endpoint;
 	struct sippymodem_huntgroup *groups[LINE_LIMIT], *default_group;
 	struct sippymodem_line *lines[LINE_LIMIT];
@@ -71,6 +74,18 @@ struct sippymodem_server {
 	uint64_t now;
 	bool have_now, time_valid, started, processing, event_overflow;
 };
+
+static bool collect_media(struct sippymodem_line *line, bool wait);
+
+static bool take_wake(int fd)
+{
+	uint64_t one;
+	ssize_t count;
+	do {
+		count = read(fd, &one, sizeof(one));
+	} while (count < 0 && errno == EINTR);
+	return count == sizeof(one);
+}
 
 static uint64_t deadline_after(uint64_t now, uint64_t delay)
 {
@@ -309,13 +324,16 @@ static enum sippymodem_result end_call(struct sippymodem_line *line, enum sippym
 static bool admit(void *context)
 {
 	struct sippymodem_line *line = context;
-	return line->started && !line->stopping && !line->active && line->rx.count == 0 &&
+	return line->started && !media_worker_busy(line->worker) && !line->stopping && !line->active && line->rx.count == 0 &&
 		!line_modem(line)->started && !modem_host_media_cleanup_pending(line_host(line)) && line->status.generation != UINT64_MAX && !line->server->event_overflow;
 }
 
 static void begin_call(struct sippymodem_line *line)
 {
 	line->status.generation++;
+	line->media_deadline = 0;
+	line->finish_requested = false;
+	line->finish_pending = 1;
 	line->log_time = 0;
 	line->log_phase[0] = line->log_step[0] = '\0';
 	line->status.state_sequence++;
@@ -619,7 +637,10 @@ enum sippymodem_result sippymodem_endpoint_stop(struct sippymodem_endpoint *endp
 	enum sippymodem_result result = SIPPYMODEM_OK;
 	for (unsigned int index = 0; index < endpoint->server->max_lines; ++index) {
 		struct sippymodem_line *line = endpoint->server->lines[index];
-		if (line != NULL && line->active && line->facts.endpoint_id == endpoint->id) {
+		if (line != NULL && line->facts.endpoint_id == endpoint->id) {
+			(void)collect_media(line, true);
+			if (!line->active)
+				continue;
 			enum sippymodem_result stopped = end_call(line, SIPPYMODEM_DISCONNECT_SHUTDOWN);
 			if (stopped != SIPPYMODEM_OK)
 				result = stopped;
@@ -686,11 +707,6 @@ struct sippymodem_server *sippymodem_server_create(const struct sippymodem_serve
 		return NULL;
 	server->event_fd = -1;
 	server->max_lines = config->max_lines;
-	long processors = sysconf(_SC_NPROCESSORS_ONLN);
-	server->dsp_threads = config->dsp_threads != 0 ? config->dsp_threads :
-		processors <= 0 ? 1 : processors < LINE_LIMIT ? (unsigned int)processors : LINE_LIMIT;
-	if (server->dsp_threads > server->max_lines)
-		server->dsp_threads = server->max_lines;
 	config_init(&server->config);
 	struct sip_config *sip = &server->config.sip;
 	sip->listen_port = config->listen_port;
@@ -744,11 +760,6 @@ enum sippymodem_result sippymodem_server_start(struct sippymodem_server *server)
 	enum sip_signaling_result result = sip_server_open(server->sip);
 	if (result != SIP_SIGNALING_OK)
 		return result == SIP_SIGNALING_BUSY ? SIPPYMODEM_BUSY : SIPPYMODEM_ERROR;
-	server->workers = media_workers_create(server->dsp_threads);
-	if (server->workers == NULL) {
-		(void)sip_server_close(server->sip);
-		return SIPPYMODEM_ERROR;
-	}
 	server->started = true;
 	if (server->default_endpoint != NULL)
 		server->default_endpoint->started = true;
@@ -862,6 +873,12 @@ enum sippymodem_result sippymodem_line_start(struct sippymodem_line *line)
 		return SIPPYMODEM_CLOSED;
 	if (modem_host_open(line_host(line)) != SIP_SESSION_OK)
 		return SIPPYMODEM_ERROR;
+	line->worker = media_worker_create(line->core, line->server->event_fd);
+	if (line->worker == NULL) {
+		(void)modem_host_close(line_host(line));
+		return SIPPYMODEM_ERROR;
+	}
+	line->media_deadline = 0;
 	line->started = true;
 	synchronize(line);
 	return SIPPYMODEM_OK;
@@ -873,6 +890,9 @@ enum sippymodem_result sippymodem_line_stop(struct sippymodem_line *line)
 		return SIPPYMODEM_INVALID;
 	if (!line->started)
 		return SIPPYMODEM_OK;
+	(void)collect_media(line, true);
+	media_worker_destroy(line->worker);
+	line->worker = NULL;
 	line->stopping = true;
 	enum sippymodem_result result = end_call(line, SIPPYMODEM_DISCONNECT_SHUTDOWN);
 	enum sip_session_result closed = modem_host_close(line_host(line));
@@ -906,9 +926,6 @@ enum sippymodem_result sippymodem_server_stop(struct sippymodem_server *server)
 {
 	if (server == NULL || server->processing)
 		return SIPPYMODEM_INVALID;
-	/* process() returns only after its complete media batch has joined. */
-	media_workers_destroy(server->workers);
-	server->workers = NULL;
 	enum sippymodem_result result = SIPPYMODEM_OK;
 	for (unsigned int id = 0; id < server->max_lines; ++id)
 		if (server->lines[id] != NULL) {
@@ -951,8 +968,11 @@ enum sippymodem_result sippymodem_send(struct sippymodem_line *line,
 		return SIPPYMODEM_INVALID;
 	if (length == 0)
 		return SIPPYMODEM_OK;
+	(void)collect_media(line, false);
 	if (!line->started || !line->active || line->remote_closing)
 		return SIPPYMODEM_CLOSED;
+	if (media_worker_busy(line->worker) || line->finish_requested)
+		return SIPPYMODEM_AGAIN;
 	struct modem *modem = line_modem(line);
 	if (modem->command || (modem->state != STATE_MODEM_ONLINE && modem->state != STATE_COMMAND_ONLINE))
 		return SIPPYMODEM_AGAIN;
@@ -960,6 +980,7 @@ enum sippymodem_result sippymodem_send(struct sippymodem_line *line,
 	if (count < 0)
 		return SIPPYMODEM_ERROR;
 	*accepted = (size_t)count;
+	snapshot(line, &line->status);
 	return count == 0 ? SIPPYMODEM_AGAIN : SIPPYMODEM_OK;
 }
 
@@ -970,8 +991,14 @@ enum sippymodem_result sippymodem_receive(struct sippymodem_line *line,
 		*received = 0;
 	if (line == NULL || received == NULL || (capacity != 0 && bytes == NULL))
 		return SIPPYMODEM_INVALID;
+	if (capacity == 0)
+		return SIPPYMODEM_OK;
+	(void)collect_media(line, false);
+	if (media_worker_busy(line->worker))
+		return SIPPYMODEM_AGAIN;
 	*received = byte_queue_read(&line->rx, bytes, capacity);
-	if (*received != 0 || capacity == 0)
+	snapshot(line, &line->status);
+	if (*received != 0)
 		return SIPPYMODEM_OK;
 	return line->active ? SIPPYMODEM_AGAIN : SIPPYMODEM_CLOSED;
 }
@@ -981,7 +1008,10 @@ enum sippymodem_result sippymodem_get_status(const struct sippymodem_line *line,
 {
 	if (line == NULL || status == NULL)
 		return SIPPYMODEM_INVALID;
-	snapshot(line, status);
+	if (media_worker_busy(line->worker))
+		*status = line->status;
+	else
+		snapshot(line, status);
 	return SIPPYMODEM_OK;
 }
 
@@ -1017,16 +1047,19 @@ enum sippymodem_result sippymodem_finish_tx(struct sippymodem_line *line,
 	enum sippymodem_result result = check_call(line, generation);
 	if (result != SIPPYMODEM_OK)
 		return result;
+	(void)collect_media(line, false);
+	result = check_call(line, generation);
+	if (result != SIPPYMODEM_OK)
+		return result;
 	if (line->remote_closing)
 		return SIPPYMODEM_CLOSED;
-	struct modem *modem = line_modem(line);
-	/* No input is accepted before modem/error-control readiness. */
-	if (modem->state != STATE_MODEM_ONLINE && modem->state != STATE_COMMAND_ONLINE)
-		return modem->state == STATE_EC_DISC || modem->state == STATE_DP_DISC ?
-			SIPPYMODEM_CLOSED : SIPPYMODEM_AGAIN;
-	int pending = modem_finish_transmit(modem);
-	return pending < 0 ? SIPPYMODEM_ERROR :
-		pending == 0 ? SIPPYMODEM_OK : SIPPYMODEM_AGAIN;
+	if (!line->status.ready)
+		return line->status.phase == SIPPYMODEM_DISCONNECTING ? SIPPYMODEM_CLOSED : SIPPYMODEM_AGAIN;
+	line->finish_requested = true;
+	if (!media_worker_busy(line->worker))
+		line->finish_pending = modem_finish_transmit(line_modem(line));
+	return line->finish_pending < 0 ? SIPPYMODEM_ERROR :
+		line->finish_pending == 0 ? SIPPYMODEM_OK : SIPPYMODEM_AGAIN;
 }
 
 enum sippymodem_result sippymodem_set_dte_mode(struct sippymodem_line *line,
@@ -1037,6 +1070,10 @@ enum sippymodem_result sippymodem_set_dte_mode(struct sippymodem_line *line,
 		return result;
 	if (mode != SIPPYMODEM_COMMAND && mode != SIPPYMODEM_DATA)
 		return SIPPYMODEM_INVALID;
+	(void)collect_media(line, true);
+	result = check_call(line, generation);
+	if (result != SIPPYMODEM_OK)
+		return result;
 	struct modem *modem = line_modem(line);
 	if (modem->xmit.count != 0)
 		return SIPPYMODEM_BUSY;
@@ -1088,6 +1125,11 @@ enum sippymodem_result sippymodem_answer(struct sippymodem_line *line, uint64_t 
 	enum sippymodem_result result = check_call(line, generation);
 	if (result != SIPPYMODEM_OK)
 		return result;
+	(void)collect_media(line, true);
+	result = check_call(line, generation);
+	if (result != SIPPYMODEM_OK)
+		return result;
+	line->media_deadline = 0;
 	if (line_modem(line)->started ||
 	    (line->status.sip_state != SIPPYMODEM_SIP_INCOMING && line->status.sip_state != SIPPYMODEM_SIP_EARLY))
 		return SIPPYMODEM_BUSY;
@@ -1099,7 +1141,49 @@ enum sippymodem_result sippymodem_hangup(struct sippymodem_line *line, uint64_t 
 	enum sippymodem_result result = check_call(line, generation);
 	if (result != SIPPYMODEM_OK)
 		return result;
-	return end_call(line, SIPPYMODEM_DISCONNECT_LOCAL);
+	(void)collect_media(line, true);
+	result = check_call(line, generation);
+	return result != SIPPYMODEM_OK ? result : end_call(line, SIPPYMODEM_DISCONNECT_LOCAL);
+}
+
+/* Collect only this line. Normal process and byte I/O never wait; explicit
+ * controls/lifecycle can finish the target's current bounded job. */
+static bool collect_media(struct sippymodem_line *line, bool wait)
+{
+	struct media_job job;
+	if (!media_worker_collect(line->worker, wait, &job))
+		return !media_worker_busy(line->worker);
+	if (!job.notified || !take_wake(line->server->event_fd))
+		line->server->event_overflow = true;
+	if (modem_host_finish_media(line_host(line)) != SIP_SESSION_OK)
+		job.result = MODEM_HOST_SESSION_ERROR;
+	(void)modem_line_flush_signaling(line->core);
+	if (line->remote_closing && !modem_host_media_is_configured(line_host(line)))
+		end_call(line, SIPPYMODEM_DISCONNECT_REMOTE);
+	struct modem *modem = line_modem(line);
+	if (line->config.ec_policy == SIPPYMODEM_EC_REQUIRED &&
+	    !(modem->dp != NULL && modem->dp->id == DP_DS0 && !line->config.ds0_lapm) &&
+	    line->active && (modem->state == STATE_MODEM_ONLINE || modem->state == STATE_COMMAND_ONLINE) &&
+	    !modem->cfg.ec)
+		end_call(line, SIPPYMODEM_DISCONNECT_MODEM);
+	if (line->active && modem->dte_overflow)
+		end_call(line, SIPPYMODEM_DISCONNECT_RX_OVERFLOW);
+	else if (job.result != MODEM_HOST_OK && job.result != MODEM_HOST_IDLE && line->active)
+		end_call(line, job.result == MODEM_HOST_MODEM_STOPPED ?
+			SIPPYMODEM_DISCONNECT_MODEM : SIPPYMODEM_DISCONNECT_MEDIA);
+	else if (line->active && line->status.sip_state == SIPPYMODEM_SIP_CONNECTED && !modem->started)
+		end_call(line, SIPPYMODEM_DISCONNECT_MODEM);
+	synchronize(line);
+	log_progress(line);
+	if (line->finish_requested && line->status.ready)
+		line->finish_pending = modem_finish_transmit(modem);
+	if (line->terminal_due && !modem->started) {
+		line->terminal_due = false;
+		emit(line, SIPPYMODEM_EVENT_DISCONNECTED);
+	}
+	line->media_deadline = job.datagrams >= RTP_ENDPOINT_MAX_DRAIN ? line->server->now :
+		deadline_after(line->server->now, modem_host_wait_ns(line_host(line), line->server->now));
+	return true;
 }
 
 enum sippymodem_result sippymodem_process(struct sippymodem_server *server,
@@ -1116,14 +1200,14 @@ enum sippymodem_result sippymodem_process(struct sippymodem_server *server,
 	if (!server->started)
 		return SIPPYMODEM_CLOSED;
 	server->processing = true;
+	for (unsigned int id = 0; id < server->max_lines; ++id)
+		if (server->lines[id] != NULL)
+			(void)collect_media(server->lines[id], false);
 	enum sip_signaling_result sip_result = sip_server_step(server->sip, 0);
 	uint64_t next = deadline_after(now_ns, MODEM_HOST_SIGNALING_POLL_NS);
-	struct media_job jobs[LINE_LIMIT];
-	struct sippymodem_line *owners[LINE_LIMIT];
-	size_t count = 0;
 	for (unsigned int id = 0; id < server->max_lines; ++id) {
 		struct sippymodem_line *line = server->lines[id];
-		if (line == NULL || !line->started)
+		if (line == NULL || !line->started || media_worker_busy(line->worker))
 			continue;
 		struct slmodem_calls *calls = modem_line_calls(line->core);
 		if (server->event_overflow || calls->overflowed)
@@ -1139,55 +1223,25 @@ enum sippymodem_result sippymodem_process(struct sippymodem_server *server,
 		}
 		if (line->active && line->attempt_deadline != 0 && now_ns >= line->attempt_deadline)
 			end_call(line, SIPPYMODEM_DISCONNECT_TIMEOUT);
-		(void)modem_host_prepare_media(line_host(line));
-		owners[count] = line;
-		jobs[count++] = (struct media_job){ .line = line->core, .now_ns = now_ns };
-	}
-	if (!media_workers_run(server->workers, jobs, count)) {
-		for (size_t i = 0; i < count; ++i)
-			(void)modem_host_finish_media(line_host(owners[i]));
-		server->processing = false;
-		*next_deadline_ns = now_ns;
-		return SIPPYMODEM_ERROR;
-	}
-	/* Flush every transport before a SIP callback can retire another line. */
-	for (size_t i = 0; i < count; ++i)
-		if (modem_host_finish_media(line_host(owners[i])) != SIP_SESSION_OK)
-			jobs[i].result = MODEM_HOST_SESSION_ERROR;
-	/* No worker may hold a line while SIP callbacks or SDK events run. */
-	for (size_t i = 0; i < count; ++i) {
-		struct sippymodem_line *line = owners[i];
-		(void)modem_line_flush_signaling(line->core);
-		if (jobs[i].datagrams >= RTP_ENDPOINT_MAX_DRAIN)
-			next = now_ns;
-		enum modem_host_result result = jobs[i].result;
-		if (line->remote_closing && !modem_host_media_is_configured(line_host(line)))
-			end_call(line, SIPPYMODEM_DISCONNECT_REMOTE);
-		if (line->config.ec_policy == SIPPYMODEM_EC_REQUIRED &&
-		    !(line_modem(line)->dp != NULL && line_modem(line)->dp->id == DP_DS0 &&
-		      !line->config.ds0_lapm) && line->active &&
-		    (line_modem(line)->state == STATE_MODEM_ONLINE || line_modem(line)->state == STATE_COMMAND_ONLINE) &&
-		    !line_modem(line)->cfg.ec)
-			end_call(line, SIPPYMODEM_DISCONNECT_MODEM);
-		if (line->active && line_modem(line)->dte_overflow)
-			end_call(line, SIPPYMODEM_DISCONNECT_RX_OVERFLOW);
-		else if (result != MODEM_HOST_OK && result != MODEM_HOST_IDLE && line->active)
-			end_call(line, result == MODEM_HOST_MODEM_STOPPED ?
-				SIPPYMODEM_DISCONNECT_MODEM : SIPPYMODEM_DISCONNECT_MEDIA);
-		else if (line->active && line->status.sip_state == SIPPYMODEM_SIP_CONNECTED &&
-			 !line_modem(line)->started)
-			end_call(line, SIPPYMODEM_DISCONNECT_MODEM);
-		synchronize(line);
-		log_progress(line);
-		if (line->terminal_due && !line_modem(line)->started) {
-			line->terminal_due = false;
-			emit(line, SIPPYMODEM_EVENT_DISCONNECTED);
+		struct pollfd media = { .fd = modem_host_media_poll_fd(line_host(line)), .events = POLLIN };
+		if (now_ns >= line->media_deadline || poll(&media, 1, 0) > 0) {
+			(void)modem_host_prepare_media(line_host(line));
+			synchronize(line);
+			if (line_modem(line)->started) {
+				if (!media_worker_submit(line->worker, now_ns)) {
+					(void)modem_host_finish_media(line_host(line));
+					server->processing = false;
+					return SIPPYMODEM_ERROR;
+				}
+			} else {
+				(void)modem_host_finish_media(line_host(line));
+				line->media_deadline = deadline_after(now_ns, MODEM_HOST_SIGNALING_POLL_NS);
+			}
 		}
-		uint64_t deadline = deadline_after(now_ns, modem_host_wait_ns(line_host(line), now_ns));
-		if (line->attempt_deadline != 0 && line->attempt_deadline < deadline)
-			deadline = line->attempt_deadline;
-		if (deadline < next)
-			next = deadline;
+		if (!media_worker_busy(line->worker) && line->media_deadline < next)
+			next = line->media_deadline;
+		if (line->attempt_deadline != 0 && line->attempt_deadline < next)
+			next = line->attempt_deadline;
 	}
 	server->processing = false;
 	*next_deadline_ns = next;
@@ -1213,9 +1267,7 @@ enum sippymodem_result sippymodem_poll_event(struct sippymodem_server *server,
 		*event = server->terminal_events[slot];
 		server->terminal_pending[slot] = false;
 	}
-	uint64_t one;
-	ssize_t received = read(server->event_fd, &one, sizeof(one));
-	if (received != sizeof(one))
+	if (!take_wake(server->event_fd))
 		server->event_overflow = true;
 	return SIPPYMODEM_OK;
 }
