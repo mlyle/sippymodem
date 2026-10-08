@@ -270,23 +270,3 @@ v90_phase4_digital_station_receive_handoff(
 	*receive = station->receive;
 	return V90_PHASE4_DIGITAL_STATION_OK;
 }
-
-const char *v90_phase4_digital_station_result_name(
-	enum v90_phase4_digital_station_result result)
-{
-	switch (result) {
-	case V90_PHASE4_DIGITAL_STATION_OK:
-		return "ok";
-	case V90_PHASE4_DIGITAL_STATION_COMPLETE:
-		return "complete";
-	case V90_PHASE4_DIGITAL_STATION_FAILED:
-		return "failed";
-	case V90_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V90_PHASE4_DIGITAL_STATION_INVALID_STATE:
-		return "invalid state";
-	case V90_PHASE4_DIGITAL_STATION_NUMERIC_FAILURE:
-		return "numeric failure";
-	}
-	return "unknown";
-}

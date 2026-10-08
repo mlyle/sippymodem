@@ -94,7 +94,4 @@ v90_phase4_analog_station_receive_handoff(
 	const struct v90_phase4_analog_station *station,
 	struct v90_phase4_analog_receive_handoff *handoff);
 
-const char *v90_phase4_analog_station_result_name(
-	enum v90_phase4_analog_station_result result);
-
 #endif /* V90_PHASE4_ANALOG_STATION_H */

@@ -593,14 +593,8 @@ static bool test_contracts(void)
 	      "failed station accepted more work");
 	CHECK(!v90_phase4_analog_station_is_valid(NULL) &&
 	      !v90_phase4_analog_station_has_failed(NULL) &&
-	      !v90_phase4_analog_receive_handoff_is_valid(NULL) &&
-	      strcmp(v90_phase4_analog_station_result_name(
-		     V90_PHASE4_ANALOG_STATION_SEQUENCE_MISMATCH),
-		     "sequence mismatch") == 0 &&
-	      strcmp(v90_phase4_analog_station_result_name(
-		     (enum v90_phase4_analog_station_result)99),
-		     "unknown") == 0,
-	      "station validation or result names changed");
+	      !v90_phase4_analog_receive_handoff_is_valid(NULL),
+	      "station validation changed");
 	return true;
 }
 

@@ -94,7 +94,5 @@ v90_phase4_digital_station_receive_handoff(
 
 bool v90_phase4_digital_transmit_handoff_is_valid(
 	const struct v90_phase4_digital_transmit_handoff *handoff);
-const char *v90_phase4_digital_station_result_name(
-	enum v90_phase4_digital_station_result result);
 
 #endif /* V90_PHASE4_DIGITAL_STATION_H */

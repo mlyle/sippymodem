@@ -492,14 +492,8 @@ static bool test_contracts(void)
 		      &transmit_handoff) &&
 	      v90_phase4_digital_station_transmit_handoff(
 		      &station, &acknowledged_mp, &transmit_saved) ==
-		      V90_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT &&
-	      strcmp(v90_phase4_digital_station_result_name(
-		     V90_PHASE4_DIGITAL_STATION_NUMERIC_FAILURE),
-		     "numeric failure") == 0 &&
-	      strcmp(v90_phase4_digital_station_result_name(
-		     (enum v90_phase4_digital_station_result)99),
-		     "unknown") == 0,
-	      "digital validation or result names changed");
+		      V90_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT,
+	      "digital validation changed");
 	return true;
 }
 
