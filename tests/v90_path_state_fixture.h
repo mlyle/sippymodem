@@ -10,22 +10,6 @@
 /* Normalize snapshot copies only. Keep every named field's exact bytes and
  * compare retained buffers in full; C padding and retired union storage are
  * not modem state. Do not make undefined named fields appear initialized. */
-static inline void v90_snapshot_channel(struct qam_channel *channel)
-{
-	unsigned char bytes[sizeof(*channel)] = { 0 };
-#define COPY(field) memcpy(bytes + offsetof(struct qam_channel, field), \
-	&channel->field, sizeof(channel->field))
-	COPY(sample_rate);
-	COPY(symbol_rate_numerator);
-	COPY(symbol_rate_denominator);
-	COPY(carrier_frequency_numerator);
-	COPY(carrier_frequency_denominator);
-	COPY(rolloff);
-	COPY(pulse_span_symbols);
-#undef COPY
-	memcpy(channel, bytes, sizeof(bytes));
-}
-
 static inline bool v90_snapshot_analog_path(struct v90_analog_path *path)
 {
 	struct v34_data_stream_preparation_job *job =
@@ -34,11 +18,11 @@ static inline bool v90_snapshot_analog_path(struct v90_analog_path *path)
 
 	switch (path->upstream_stage) {
 	case V90_ANALOG_PATH_UPSTREAM_CP:
-		v90_snapshot_channel(&path->upstream.cp.line.carrier.channel);
+		qam_snapshot_channel(&path->upstream.cp.line.carrier.channel);
 		upstream_size = sizeof(path->upstream.cp);
 		break;
 	case V90_ANALOG_PATH_UPSTREAM_E:
-		v90_snapshot_channel(&path->upstream.e.line.carrier.channel);
+		qam_snapshot_channel(&path->upstream.e.line.carrier.channel);
 		upstream_size = sizeof(path->upstream.e);
 		break;
 	case V90_ANALOG_PATH_UPSTREAM_DATA: {
@@ -55,7 +39,7 @@ static inline bool v90_snapshot_analog_path(struct v90_analog_path *path)
 #undef COPY
 		memcpy(stream, bytes, sizeof(bytes));
 		v34_snapshot_points(&stream->points);
-		v90_snapshot_channel(&stream->line.carrier.channel);
+		qam_snapshot_channel(&stream->line.carrier.channel);
 		upstream_size = sizeof(*stream);
 		break;
 	}
@@ -70,7 +54,7 @@ static inline bool v90_snapshot_analog_path(struct v90_analog_path *path)
 	v34_snapshot_parameters(&job->preparation.mapping.normalizer.parameters);
 	if (job->calibrating_line) {
 		v34_snapshot_points(&job->calibration.line.points);
-		v90_snapshot_channel(&job->calibration.line.carrier.channel);
+		qam_snapshot_channel(&job->calibration.line.carrier.channel);
 	} else {
 		v34_snapshot_geometry(
 			&job->calibration.mapping.initial_schedule.geometry);

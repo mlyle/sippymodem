@@ -4,7 +4,25 @@
 #define QAM_STATE_FIXTURE_H
 
 #include <qam.h>
+#include <stddef.h>
 #include <string.h>
+
+/* Normalize snapshot copies only; preserve every named field byte. */
+static inline void qam_snapshot_channel(struct qam_channel *channel)
+{
+	unsigned char bytes[sizeof(*channel)] = { 0 };
+#define COPY(field) memcpy(bytes + offsetof(struct qam_channel, field), \
+	&channel->field, sizeof(channel->field))
+	COPY(sample_rate);
+	COPY(symbol_rate_numerator);
+	COPY(symbol_rate_denominator);
+	COPY(carrier_frequency_numerator);
+	COPY(carrier_frequency_denominator);
+	COPY(rolloff);
+	COPY(pulse_span_symbols);
+#undef COPY
+	memcpy(channel, bytes, sizeof(bytes));
+}
 
 /* Preserve exact floating-point bits while ignoring struct padding. Arrays
  * are initialized in full, so compare all declared elements, including the
