@@ -81,6 +81,15 @@ struct v8_menu {
 	bool lapm;
 };
 
+/* Pending menus have zero-valued members; padding is not part of state. */
+static inline bool v8_menu_is_unset(const struct v8_menu *menu)
+{
+	return menu != NULL && menu->call_function == 0 &&
+	       menu->modulations == 0 && menu->modulation_octets == 0 &&
+	       menu->pcm_availability == 0 && menu->pstn_access == 0 &&
+	       !menu->pcm_present && !menu->pstn_access_present && !menu->lapm;
+}
+
 struct v8_menu_detector {
 	struct v8_control_receiver framing;
 	uint8_t current[V8_MAX_INFORMATION_OCTETS];
