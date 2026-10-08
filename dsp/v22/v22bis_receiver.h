@@ -26,6 +26,7 @@ enum v22bis_receiver_result v22bis_receiver_init(
 	const struct qam_point *reference_point);
 bool v22bis_receiver_is_valid(
 	const struct v22bis_receiver *receiver);
+/* Output must not overlap the receiver. Rejected calls preserve both. */
 enum v22bis_receiver_result
 v22bis_receiver_matches_v22(
 	const struct v22bis_receiver *receiver,
@@ -34,6 +35,8 @@ enum v22bis_receiver_result
 v22bis_receiver_track_v22(
 	struct v22bis_receiver *receiver, uint8_t quarter_turns,
 	const struct qam_point *point);
+/* Input may overlap the receiver or output; output must not overlap the
+ * receiver. Rejected calls preserve receiver and output. */
 enum v22bis_receiver_result v22bis_receiver_decode(
 	struct v22bis_receiver *receiver,
 	const struct qam_point *point,

@@ -6,6 +6,7 @@
 #include "test.h"
 
 #include <math.h>
+#include <stddef.h>
 #include <string.h>
 
 enum {
@@ -524,55 +525,78 @@ static bool test_v22bis_validation(void)
 
 static bool test_v22bis_symbol_aliasing(void)
 {
+	struct decode_fixture {
+		uint8_t prefix[V22BIS_BITS_PER_SYMBOL];
+		struct v22_symbol_decoder owner;
+		uint8_t suffix[V22BIS_BITS_PER_SYMBOL];
+	} initial, fixture;
+
 	for (uint8_t ones = V22_SCRAMBLER_ONES_LIMIT - 4u;
 	     ones <= V22_SCRAMBLER_ONES_LIMIT; ++ones) {
 		for (uint8_t phase = 0; phase < QPSK_QUADRANT_COUNT; ++phase) {
-			for (size_t offset = 0;
-			     offset < sizeof(struct v22_symbol_encoder); ++offset) {
-				struct v22_symbol_encoder encoder, expected;
-				uint8_t bits[V22BIS_BITS_PER_SYMBOL], symbol;
+			struct v22_symbol_encoder encoder, before, expected;
+			uint8_t bits[V22BIS_BITS_PER_SYMBOL], symbol, expected_symbol;
 
-				CHECK(v22_symbol_encoder_init(&encoder, phase) ==
-					      V22_FRAMING_OK, "alias encoder did not initialize");
-				/* Binary bytes in either byte order; advancing the history
-				 * changes unread input bytes unless the owner is copied. */
-				encoder.scrambler.history = UINT32_C(0x101);
-				encoder.scrambler.consecutive_ones = ones;
-				expected = encoder;
-				memcpy(bits, &encoder.scrambler.history, sizeof(bits));
-				CHECK(v22bis_symbol_encode(&expected, bits, &symbol) ==
-					      V22_FRAMING_OK, "ordinary encoding failed");
-				((uint8_t *)&expected)[offset] = symbol;
-				CHECK(v22bis_symbol_encode(&encoder,
-					      (const uint8_t *)&encoder.scrambler.history,
-					      (uint8_t *)&encoder + offset) == V22_FRAMING_OK &&
-				      memcmp(&encoder, &expected, sizeof(encoder)) == 0,
-				      "encoder alias ordering changed at %u/%u/%zu",
-				      ones, phase, offset);
+			CHECK(v22_symbol_encoder_init(&encoder, phase) == V22_FRAMING_OK,
+			      "alias encoder did not initialize");
+			encoder.scrambler.history = UINT32_C(0x101);
+			encoder.scrambler.consecutive_ones = ones;
+			before = expected = encoder;
+			memcpy(bits, &encoder.scrambler.history, sizeof(bits));
+			CHECK(v22bis_symbol_encode(&expected, bits, &expected_symbol) == V22_FRAMING_OK &&
+			      v22bis_symbol_encode(&encoder,
+				      (const uint8_t *)&encoder.scrambler.history, &symbol) == V22_FRAMING_OK &&
+			      symbol == expected_symbol && memcmp(&encoder, &expected, sizeof(encoder)) == 0,
+			      "input/owner alias changed at %u/%u", ones, phase);
+			for (size_t offset = 0; offset < sizeof(encoder); ++offset) {
+				encoder = before;
+				CHECK(v22bis_symbol_encode(&encoder, bits, (uint8_t *)&encoder + offset) ==
+					      V22_FRAMING_INVALID_ARGUMENT &&
+				      memcmp(&encoder, &before, sizeof(encoder)) == 0,
+				      "encoder output overlap changed state at %u/%u/%zu", ones, phase, offset);
 			}
-			for (uint8_t symbol = 0; symbol < V22BIS_SYMBOL_COUNT; ++symbol) {
-				struct v22_symbol_decoder initial, finished;
-				uint8_t bits[V22BIS_BITS_PER_SYMBOL];
+			for (size_t offset = 0; offset < sizeof(bits); ++offset) {
+				uint8_t inplace[V22BIS_BITS_PER_SYMBOL];
 
-				CHECK(v22_symbol_decoder_init(&initial, phase) ==
-					      V22_FRAMING_OK, "alias decoder did not initialize");
-				initial.descrambler.history =
-					(UINT32_C(1) << V22_SCRAMBLER_BITS) - 1u;
-				initial.descrambler.consecutive_ones = ones;
-				finished = initial;
-				CHECK(v22bis_symbol_decode(&finished, symbol, bits) ==
-					      V22_FRAMING_OK, "ordinary decoding failed");
-				for (size_t offset = 0;
-				     offset <= sizeof(initial) - sizeof(bits); ++offset) {
-					struct v22_symbol_decoder decoder = initial;
-					struct v22_symbol_decoder expected = finished;
+				encoder = before;
+				memcpy(inplace, bits, sizeof(bits));
+				CHECK(v22bis_symbol_encode(&encoder, inplace, &inplace[offset]) == V22_FRAMING_OK &&
+				      inplace[offset] == expected_symbol &&
+				      memcmp(&encoder, &expected, sizeof(encoder)) == 0,
+				      "input/output alias changed at %u/%u/%zu", ones, phase, offset);
+			}
+			for (uint8_t value = 0; value < V22BIS_SYMBOL_COUNT; ++value) {
+				struct v22_symbol_decoder finished;
 
-					memcpy((uint8_t *)&expected + offset, bits, sizeof(bits));
-					CHECK(v22bis_symbol_decode(&decoder, symbol,
-						      (uint8_t *)&decoder + offset) == V22_FRAMING_OK &&
-					      memcmp(&decoder, &expected, sizeof(decoder)) == 0,
-					      "decoder alias ordering changed at %u/%u/%u/%zu",
-					      ones, phase, symbol, offset);
+				memset(&initial, 0xa5, sizeof(initial));
+				CHECK(v22_symbol_decoder_init(&initial.owner, phase) == V22_FRAMING_OK,
+				      "alias decoder did not initialize");
+				initial.owner.descrambler.history = V22_SCRAMBLER_HISTORY_MASK;
+				initial.owner.descrambler.consecutive_ones = ones;
+				finished = initial.owner;
+				CHECK(v22bis_symbol_decode(&finished, value, bits) == V22_FRAMING_OK,
+				      "ordinary decoding failed");
+				for (int offset = 1 - V22BIS_BITS_PER_SYMBOL;
+				     offset < (int)sizeof(initial.owner); ++offset) {
+					fixture = initial;
+					uint8_t *output = (uint8_t *)&fixture +
+						offsetof(struct decode_fixture, owner) + offset;
+
+					CHECK(v22bis_symbol_decode(&fixture.owner, value, output) ==
+						      V22_FRAMING_INVALID_ARGUMENT &&
+					      memcmp(&fixture, &initial, sizeof(fixture)) == 0,
+					      "decoder output overlap changed state at %u/%u/%u/%d",
+					      ones, phase, value, offset);
+				}
+				for (unsigned side = 0; side < 2; ++side) {
+					fixture = initial;
+					uint8_t *output = side ? fixture.suffix : fixture.prefix;
+
+					CHECK(v22bis_symbol_decode(&fixture.owner, value, output) == V22_FRAMING_OK &&
+					      memcmp(output, bits, sizeof(bits)) == 0 &&
+					      memcmp(&fixture.owner, &finished, sizeof(finished)) == 0,
+					      "adjacent decoder output changed state at %u/%u/%u/%u",
+					      ones, phase, value, side);
 				}
 			}
 		}

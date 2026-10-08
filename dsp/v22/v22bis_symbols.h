@@ -13,6 +13,8 @@ enum {
 	V22BIS_SYMBOL_COUNT = 16,
 };
 
+/* Input may overlap the encoder or output. Output must not overlap its
+ * encoder/decoder; rejected calls preserve both owner and output. */
 enum v22_framing_result v22bis_symbol_encode(
 	struct v22_symbol_encoder *encoder,
 	const uint8_t bits[V22BIS_BITS_PER_SYMBOL],

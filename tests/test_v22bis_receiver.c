@@ -6,6 +6,7 @@
 
 #include <float.h>
 #include <math.h>
+#include <stddef.h>
 #include <string.h>
 
 enum {
@@ -272,6 +273,93 @@ static bool test_validation(void)
 	return true;
 }
 
+static bool receiver_states_equal(
+	const struct v22bis_receiver *left, const struct v22bis_receiver *right)
+{
+	return left->decoder.descrambler.history == right->decoder.descrambler.history &&
+	       left->decoder.descrambler.consecutive_ones == right->decoder.descrambler.consecutive_ones &&
+	       left->decoder.phase_quadrant == right->decoder.phase_quadrant &&
+	       memcmp(&left->gain, &right->gain, sizeof(left->gain)) == 0 &&
+	       left->v22bis_started == right->v22bis_started;
+}
+
+static bool test_output_ownership(void)
+{
+	struct fixture {
+		uint8_t prefix[V22BIS_BITS_PER_SYMBOL];
+		struct v22bis_receiver owner;
+		uint8_t suffix[V22BIS_BITS_PER_SYMBOL];
+	} initial = { 0 }, fixture;
+	struct qam_point reference, point;
+
+	CHECK(v22bis_1200_constellation_point(0, &reference) == V22_FRAMING_OK &&
+	      v22bis_receiver_init(&initial.owner, &reference) == V22BIS_RECEIVER_OK,
+	      "receiver ownership fixture did not initialize");
+	for (uint8_t phase = 0; phase < QPSK_QUADRANT_COUNT; ++phase) {
+		initial.owner.decoder.phase_quadrant = phase;
+		for (uint8_t symbol = 0; symbol < V22BIS_SYMBOL_COUNT; ++symbol) {
+			struct v22bis_receiver expected = initial.owner;
+			uint8_t bits[V22BIS_BITS_PER_SYMBOL];
+
+			CHECK(v22bis_constellation_point(symbol, &point) == V22_FRAMING_OK &&
+			      v22bis_receiver_decode(&expected, &point, bits) == V22BIS_RECEIVER_OK,
+			      "receiver ownership reference failed");
+			for (int offset = 1 - V22BIS_BITS_PER_SYMBOL;
+			     offset < (int)sizeof(initial.owner); ++offset) {
+				fixture = initial;
+				uint8_t *output = (uint8_t *)&fixture + offsetof(struct fixture, owner) + offset;
+
+				CHECK(v22bis_receiver_decode(&fixture.owner, &point, output) ==
+					      V22BIS_RECEIVER_INVALID_ARGUMENT &&
+				      receiver_states_equal(&fixture.owner, &initial.owner) &&
+				      memcmp(fixture.prefix, initial.prefix, sizeof(fixture.prefix)) == 0 &&
+				      memcmp(fixture.suffix, initial.suffix, sizeof(fixture.suffix)) == 0,
+				      "receiver output overlap changed state at %u/%u/%d", phase, symbol, offset);
+			}
+			for (size_t offset = 0; offset <= sizeof(point) - sizeof(bits); ++offset) {
+				struct qam_point inplace = point;
+				uint8_t *output = (uint8_t *)&inplace + offset;
+
+				fixture = initial;
+				CHECK(v22bis_receiver_decode(&fixture.owner, &inplace, output) ==
+					      V22BIS_RECEIVER_OK &&
+				      memcmp(output, bits, sizeof(bits)) == 0 &&
+				      receiver_states_equal(&fixture.owner, &expected),
+				      "receiver input/output alias changed decoding at %u/%u/%zu",
+				      phase, symbol, offset);
+			}
+			for (unsigned side = 0; side < 2; ++side) {
+				fixture = initial;
+				uint8_t *output = side ? fixture.suffix : fixture.prefix;
+
+				CHECK(v22bis_receiver_decode(&fixture.owner, &point, output) == V22BIS_RECEIVER_OK &&
+				      memcmp(output, bits, sizeof(bits)) == 0 &&
+				      receiver_states_equal(&fixture.owner, &expected),
+				      "adjacent receiver output changed state at %u/%u/%u", phase, symbol, side);
+			}
+		}
+	}
+	fixture = initial;
+	CHECK(v22bis_receiver_matches_v22(&fixture.owner, &reference,
+		      &fixture.owner.v22bis_started) == V22BIS_RECEIVER_INVALID_ARGUMENT &&
+	      receiver_states_equal(&fixture.owner, &initial.owner),
+	      "matching output changed receiver startup state");
+	{
+		struct v22bis_receiver expected = initial.owner;
+		uint8_t actual_bits[V22BIS_BITS_PER_SYMBOL], expected_bits[V22BIS_BITS_PER_SYMBOL];
+
+		fixture = initial;
+		point = fixture.owner.gain.channel_gain;
+		CHECK(v22bis_receiver_decode(&expected, &point, expected_bits) == V22BIS_RECEIVER_OK &&
+		      v22bis_receiver_decode(&fixture.owner, &fixture.owner.gain.channel_gain,
+			      actual_bits) == V22BIS_RECEIVER_OK &&
+		      memcmp(actual_bits, expected_bits, sizeof(actual_bits)) == 0 &&
+		      receiver_states_equal(&fixture.owner, &expected),
+		      "receiver input/owner alias changed decoding");
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -282,6 +370,7 @@ int main(void)
 		{ "V.22 reference threshold", test_v22_match_threshold },
 		{ "V.22 transition tracking", test_v22_transition_tracking },
 		{ "validation", test_validation },
+		{ "output ownership", test_output_ownership },
 	};
 	unsigned int failures = 0;
 

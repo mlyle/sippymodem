@@ -2,6 +2,8 @@
 
 #include "v22bis_receiver.h"
 
+#include "memory_region.h"
+
 #include <float.h>
 #include <math.h>
 #include <stdbool.h>
@@ -58,7 +60,9 @@ v22bis_receiver_matches_v22(
 
 	if (!v22bis_receiver_is_valid(receiver) ||
 	    receiver->v22bis_started || !qam_point_nonzero_power(point, NULL) ||
-	    matches == NULL)
+	    matches == NULL ||
+	    memory_regions_overlap(receiver, sizeof(*receiver),
+			   matches, sizeof(*matches)))
 		return V22BIS_RECEIVER_INVALID_ARGUMENT;
 	for (uint8_t quadrant = 0;
 	     quadrant < QPSK_QUADRANT_COUNT; ++quadrant) {
@@ -128,7 +132,9 @@ enum v22bis_receiver_result v22bis_receiver_decode(
 	double best_error = DBL_MAX;
 
 	if (!v22bis_receiver_is_valid(receiver) ||
-	    !qam_point_nonzero_power(point, NULL) || bits == NULL)
+	    !qam_point_nonzero_power(point, NULL) || bits == NULL ||
+	    memory_regions_overlap(receiver, sizeof(*receiver),
+			   bits, V22BIS_BITS_PER_SYMBOL))
 		return V22BIS_RECEIVER_INVALID_ARGUMENT;
 	next = *receiver;
 	for (uint8_t symbol = 0; symbol < V22BIS_SYMBOL_COUNT;

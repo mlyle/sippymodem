@@ -2,6 +2,7 @@
 
 #include "v22bis_symbols.h"
 
+#include "memory_region.h"
 #include "packed_bits.h"
 
 #include <stdbool.h>
@@ -22,7 +23,8 @@ enum v22_framing_result v22bis_symbol_encode(
 
 	if (!v22_symbol_encoder_is_valid(encoder) ||
 	    !unpacked_bits_are_binary(bits, V22BIS_BITS_PER_SYMBOL) ||
-	    symbol == NULL)
+	    symbol == NULL ||
+	    memory_regions_overlap(encoder, sizeof(*encoder), symbol, sizeof(*symbol)))
 		return V22_FRAMING_INVALID_ARGUMENT;
 	/* Binary input preserves valid state. The copy keeps overlapping caller
 	 * bits unchanged while the scrambler advances. */
@@ -51,7 +53,8 @@ enum v22_framing_result v22bis_symbol_decode(
 	uint8_t dibit;
 
 	if (!v22_symbol_decoder_is_valid(decoder) ||
-	    symbol >= V22BIS_SYMBOL_COUNT || bits == NULL)
+	    symbol >= V22BIS_SYMBOL_COUNT || bits == NULL ||
+	    memory_regions_overlap(decoder, sizeof(*decoder), bits, V22BIS_BITS_PER_SYMBOL))
 		return V22_FRAMING_INVALID_ARGUMENT;
 	/* Validated quadrants and binary descrambler steps cannot fail. */
 	(void)differential_qpsk_decode(
@@ -65,7 +68,6 @@ enum v22_framing_result v22bis_symbol_decode(
 		(void)v22_descramble_bit(
 			&decoder->descrambler, scrambled[index], &decoded[index], true);
 	decoder->phase_quadrant = quadrant;
-	/* Commit decoded bytes last: the output can overlap the owner. */
 	memcpy(bits, decoded, sizeof(decoded));
 	return V22_FRAMING_OK;
 }
