@@ -244,7 +244,9 @@ static bool missing_short_signal(unsigned law, unsigned delay, unsigned missing)
 	      a.last.kind == PHASE2_PROBE_TRANSMIT_READY && d.last.kind == PHASE2_PROBE_RECEIVE_READY,
 	      "full recovery did not reach real probe boundary");
 	CHECK((missing == 1) == (digital_nonzero_before_resume == 0), "wrong recovery Tone-B behavior");
-	CHECK(memcmp(&original_peer, &d.ranging.info0_exchange.peer_info0, sizeof(original_peer)) == 0,
+	CHECK(pcm_info0_records_are_equal(d.ranging.info0_exchange.protocol,
+		      V90_ANALOG_MODEM, &original_peer,
+		      &d.ranging.info0_exchange.peer_info0),
 	      "full recovery altered received INFO0");
 	return true;
 }
@@ -376,7 +378,9 @@ static bool check_short_repeat(unsigned law, bool digital, enum repeat_kind kind
 	else
 		CHECK(terminal == deadline, "unchanged local INFO0 should retain its deadline");
 	if (kind < REPEAT_LATE_ACK)
-		CHECK(memcmp(&original, &local.ranging.info0_exchange.peer_info0, sizeof(original)) == 0,
+		CHECK(pcm_info0_records_are_equal(local.ranging.info0_exchange.protocol,
+			      digital ? V90_ANALOG_MODEM : V90_DIGITAL_MODEM,
+			      &original, &local.ranging.info0_exchange.peer_info0),
 		      "rejected repeat changed peer record");
 	if (kind == REPEAT_BAD_CRC)
 		CHECK(crc_changed, "bad CRC was not transmitted");
