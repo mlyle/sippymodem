@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #include "ds0/ds0_codec.h"
 #include "hdlc_fcs.h"
+#include "hdlc_tx.h"
 #include "modem.h"
 #include "test.h"
 #include <string.h>
@@ -23,6 +24,34 @@ static bool fcs_vectors(void)
 				expected = (expected >> 1) ^ ((expected & 1) ? 0x8408 : 0);
 			CHECK(hdlc_fcs16_update(initial, byte) == expected, "FCS recurrence");
 		}
+	}
+	return true;
+}
+
+static bool stuffing_vectors(void)
+{
+	static const struct {
+		uint8_t octet;
+		int initial_ones;
+		uint16_t bits;
+		unsigned count;
+		int final_ones;
+	} vectors[] = {
+		{ 0x00, 0, 0x000, 8, 0 },
+		{ 0xff, 0, 0x1f7, 9, 3 },
+		{ 0x1f, 0, 0x1f0, 9, 0 },
+		{ 0xf8, 0, 0x03e, 9, 0 },
+		{ 0x7e, 0, 0x0fa, 9, 0 },
+		{ 0xff, 4, 0x2fb, 10, 2 },
+		{ 0x01, 4, 0x100, 9, 0 },
+	};
+	for (size_t i = 0; i < sizeof(vectors) / sizeof(vectors[0]); ++i) {
+		uint32_t bits = 0xdeadbeefu;
+		int ones = vectors[i].initial_ones;
+		unsigned count = hdlc_tx_append_octet(&bits, &ones, vectors[i].octet);
+		CHECK(count == vectors[i].count && ones == vectors[i].final_ones &&
+		      bits == (0xdeadbeefu << count | vectors[i].bits),
+		      "HDLC stuffing wire vector %zu", i);
 	}
 	return true;
 }
@@ -136,7 +165,7 @@ static bool recovery_and_bounds(void)
 
 int main(void)
 {
-	if (!fcs_vectors() || !both_rates() || !short_frame_recovery() || !recovery_and_bounds()) return 1;
+	if (!fcs_vectors() || !stuffing_vectors() || !both_rates() || !short_frame_recovery() || !recovery_and_bounds()) return 1;
 	puts("DS0 codec: both rates, HDLC interop, FCS, bounds and recovery passed");
 	return 0;
 }

@@ -46,6 +46,7 @@
 
 #include <modem.h>
 #include "hdlc_fcs.h"
+#include "hdlc_tx.h"
 #include <modem_debug.h>
 
 #define PACK_DBG(fmt,arg...) dprintf("%s: " fmt , m->name , ##arg)
@@ -707,24 +708,6 @@ void modem_detector_reframe(struct modem *m)
 
 /* hdlc bit generators */
 
-#define	HDLC_PUT_BYTE  { \
-	for( i = 0 ; i < 8 ; i++ ) { \
-		s->data<<=1; \
-		s->bit++; \
-		if(in&0x1) { \
-			h->tx_ones++; \
-		        s->data |= 0x1; \
-		        if (h->tx_ones==5) { \
-			        s->data<<=1; \
-			        s->bit++; \
-			        h->tx_ones = 0; \
-		        } \
-                } \
-		else { \
-			h->tx_ones = 0; \
-                } \
-		in>>=1; \
-	} }
 
 
 int modem_hdlc_get_bits(struct modem *m, int nbits,
@@ -732,7 +715,7 @@ int modem_hdlc_get_bits(struct modem *m, int nbits,
 {
 	struct hdlc_state *h = &m->packer.hdlc;
 	register struct bits_state *s = &m->pack;
-	register int i, ret = 0;
+	register int ret = 0;
 	register u8 in, mask = ((1<<nbits) - 1);
 
 	do {
@@ -769,9 +752,9 @@ int modem_hdlc_get_bits(struct modem *m, int nbits,
 			/* put fcs */
 			h->tx_frame->fcs ^= 0xffff;
 			in = h->tx_frame->fcs&0xff;
-			HDLC_PUT_BYTE;
+			s->bit += (int)hdlc_tx_append_octet(&s->data, &h->tx_ones, in);
 			in = (h->tx_frame->fcs>>8)&0xff;
-			HDLC_PUT_BYTE;
+			s->bit += (int)hdlc_tx_append_octet(&s->data, &h->tx_ones, in);
 			h->tx_ones = 0;
 			/* frame complete callback */
 			if (h->tx_complete) 
@@ -786,7 +769,7 @@ int modem_hdlc_get_bits(struct modem *m, int nbits,
 			/* fixme: in order to speed up
 			   fcs calc: copy it to local var */
 			h->tx_frame->fcs = GET_FCS(h->tx_frame->fcs,in);
-			HDLC_PUT_BYTE;
+			s->bit += (int)hdlc_tx_append_octet(&s->data, &h->tx_ones, in);
 		}
 	} while (1);
 	return ret;

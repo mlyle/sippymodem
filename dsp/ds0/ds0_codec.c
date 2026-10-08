@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #include "ds0_codec.h"
 #include "hdlc_fcs.h"
+#include "hdlc_tx.h"
 #include <limits.h>
 #include <string.h>
 #define DS0_HDLC_FLAG_BITS 8u
@@ -236,73 +237,51 @@ struct ds0_tx_writer {
 	uint8_t fill_bit;
 	uint8_t octet;
 	unsigned used_bits;
-	unsigned ones;
+	int ones;
 };
 
 
-static int ds0_tx_emit_bit(struct ds0_tx_writer *wr, unsigned bit)
+static int ds0_tx_emit_bits(struct ds0_tx_writer *wr, uint32_t bits, unsigned count)
 {
 	unsigned bits_per_octet = ds0_rate_bits_per_octet(wr->rate);
 
-	if (!wr->used_bits)
-		wr->octet = wr->rate == DS0_RATE_56000 ?
-				    (uint8_t)(wr->fill_bit & 1u) :
-				    0;
+	while (count) {
+		unsigned room = bits_per_octet - wr->used_bits;
+		unsigned take = count < room ? count : room;
 
-	if (bit)
-		wr->octet = (uint8_t)(wr->octet |
-				      (uint8_t)(1u << (7u - wr->used_bits)));
-	if (++wr->used_bits < bits_per_octet)
-		return 0;
-
-	if (wr->len >= wr->capacity)
-		return -1;
-	wr->out[wr->len++] = wr->octet;
-	wr->used_bits = 0;
-	wr->octet = 0;
-	return 0;
-}
-
-static int ds0_tx_emit_flag(struct ds0_tx_writer *wr,
-			       unsigned *flag_phase)
-{
-	for (unsigned i = 0; i < DS0_HDLC_FLAG_BITS; ++i) {
-		unsigned phase = flag_phase ? *flag_phase : i;
-
-		if (ds0_tx_emit_bit(wr, ds0_hdlc_flag_bits[phase]) < 0)
-			return -1;
-		if (flag_phase)
-			*flag_phase = (*flag_phase + 1u) &
-				      DS0_HDLC_FLAG_MASK;
-	}
-	wr->ones = 0;
-	return 0;
-}
-
-static int ds0_tx_emit_data_bit(struct ds0_tx_writer *wr, unsigned bit)
-{
-	if (ds0_tx_emit_bit(wr, bit) < 0)
-		return -1;
-
-	if (bit) {
-		if (++wr->ones == 5) {
-			if (ds0_tx_emit_bit(wr, 0) < 0)
+		if (!wr->used_bits)
+			wr->octet = wr->rate == DS0_RATE_56000 ? wr->fill_bit & 1u : 0;
+		count -= take;
+		wr->octet |= (uint8_t)(((bits >> count) & ((1u << take) - 1u)) <<
+			(8u - wr->used_bits - take));
+		wr->used_bits += take;
+		if (wr->used_bits == bits_per_octet) {
+			if (wr->len >= wr->capacity)
 				return -1;
-			wr->ones = 0;
+			wr->out[wr->len++] = wr->octet;
+			wr->used_bits = 0;
 		}
-	} else {
-		wr->ones = 0;
 	}
 	return 0;
+}
+
+static int ds0_tx_emit_bit(struct ds0_tx_writer *wr, unsigned bit)
+{
+	return ds0_tx_emit_bits(wr, bit, 1);
+}
+
+static int ds0_tx_emit_flag(struct ds0_tx_writer *wr)
+{
+	wr->ones = 0;
+	return ds0_tx_emit_bits(wr, 0x7eu, DS0_HDLC_FLAG_BITS);
 }
 
 static int ds0_tx_emit_byte(struct ds0_tx_writer *wr, uint8_t byte)
 {
-	for (unsigned bit = 0; bit < 8; ++bit) {
-		if (ds0_tx_emit_data_bit(wr, (byte >> bit) & 1u) < 0)
-			return -1;
-	}
-	return 0;
+	uint32_t packed = 0;
+	unsigned count = hdlc_tx_append_octet(&packed, &wr->ones, byte);
+
+	return ds0_tx_emit_bits(wr, packed, count);
 }
 
 size_t ds0_tx_frame(struct ds0 *ds0, const uint8_t *frame,
@@ -336,7 +315,7 @@ size_t ds0_tx_frame(struct ds0 *ds0, const uint8_t *frame,
 			return 0;
 		flag_phase = (flag_phase + 1u) & DS0_HDLC_FLAG_MASK;
 	}
-	if (ds0_tx_emit_flag(&wr, NULL) < 0)
+	if (ds0_tx_emit_flag(&wr) < 0)
 		return 0;
 
 	fcs = hdlc_fcs16(frame, frame_len);
@@ -349,7 +328,7 @@ size_t ds0_tx_frame(struct ds0 *ds0, const uint8_t *frame,
 	if (ds0_tx_emit_byte(&wr, (uint8_t)(fcs & 0xffu)) < 0 ||
 	    ds0_tx_emit_byte(&wr, (uint8_t)(fcs >> 8)) < 0)
 		return 0;
-	if (ds0_tx_emit_flag(&wr, &flag_phase) < 0)
+	if (ds0_tx_emit_flag(&wr) < 0)
 		return 0;
 
 	while (wr.used_bits) {
