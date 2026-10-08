@@ -625,11 +625,6 @@ static bool test_validation(void)
 		      memcmp(&invalid_symbol, &saved_symbol,
 			     sizeof(invalid_symbol)) == 0,
 	      "invalid PCM symbol construction changed output");
-	CHECK(strcmp(v90_phase3_sign_result_name(
-		     V90_PHASE3_SIGNS_INVALID_STATE), "invalid state") == 0 &&
-		      strcmp(v90_phase3_sign_result_name(
-			     (enum v90_phase3_sign_result)3), "unknown") == 0,
-	      "sign-stream result names are wrong");
 	return true;
 }
 

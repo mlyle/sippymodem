@@ -480,14 +480,8 @@ static bool test_validation(void)
 	      v90_phase3_analog_station_has_failed(&station) &&
 	      v90_phase3_analog_station_transmit(&station, &sample) ==
 		      V90_PHASE3_ANALOG_STATION_FAILED &&
-	      !v90_phase3_downstream_handoff_is_valid(NULL) &&
-	      strcmp(v90_phase3_analog_station_result_name(
-		     V90_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH),
-		     "sequence mismatch") == 0 &&
-	      strcmp(v90_phase3_analog_station_result_name(
-		     (enum v90_phase3_analog_station_result)99),
-		     "unknown") == 0,
-	      "failure latch or result names changed");
+	      !v90_phase3_downstream_handoff_is_valid(NULL),
+	      "failure latch changed");
 	memset(&digital, 0xa5, sizeof(digital));
 	saved_digital = digital;
 	CHECK(v90_phase3_digital_station_init(

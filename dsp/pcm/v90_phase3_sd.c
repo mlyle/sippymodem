@@ -97,19 +97,3 @@ size_t v90_phase3_sd_remaining(
 				sequence->emitted_symbols) :
 		       0;
 }
-
-const char *v90_phase3_sd_result_name(
-	enum v90_phase3_sd_result result)
-{
-	switch (result) {
-	case V90_PHASE3_SD_OK:
-		return "ok";
-	case V90_PHASE3_SD_COMPLETE:
-		return "complete";
-	case V90_PHASE3_SD_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V90_PHASE3_SD_INVALID_STATE:
-		return "invalid state";
-	}
-	return "unknown";
-}

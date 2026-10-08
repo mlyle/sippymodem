@@ -64,7 +64,4 @@ enum v90_phase3_analog_line_tx_result v90_phase3_analog_line_tx_handoff(
 	const struct v90_phase3_analog_line_tx *tx,
 	struct v34_training_line *line);
 
-const char *v90_phase3_analog_line_tx_result_name(
-	enum v90_phase3_analog_line_tx_result result);
-
 #endif /* V90_PHASE3_ANALOG_LINE_TX_H */

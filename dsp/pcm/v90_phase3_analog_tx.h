@@ -63,7 +63,4 @@ enum v90_phase3_analog_tx_result v90_phase3_analog_tx_start_dil_ja(
 enum v90_phase3_analog_tx_result v90_phase3_analog_tx_finish_ja(
 	struct v90_phase3_analog_tx *tx);
 
-const char *v90_phase3_analog_tx_result_name(
-	enum v90_phase3_analog_tx_result result);
-
 #endif /* V90_PHASE3_ANALOG_TX_H */

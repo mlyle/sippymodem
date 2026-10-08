@@ -91,7 +91,4 @@ enum v90_phase3_sign_result v90_phase3_signs_next_jd_bit(
 	struct v90_phase3_signs *signs, uint8_t bit,
 	struct v90_pcm_symbol *symbol);
 
-const char *v90_phase3_sign_result_name(
-	enum v90_phase3_sign_result result);
-
 #endif

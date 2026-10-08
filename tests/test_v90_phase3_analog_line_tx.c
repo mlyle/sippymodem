@@ -227,14 +227,8 @@ static bool test_validation(void)
 	tx.leading_silence_samples =
 		V90_PHASE3_ANALOG_LEADING_SILENCE_SAMPLES + 1u;
 	CHECK(!v90_phase3_analog_line_tx_is_valid(&tx) &&
-	      !v90_phase3_analog_line_tx_is_handoff_ready(&tx) &&
-	      strcmp(v90_phase3_analog_line_tx_result_name(
-		      V90_PHASE3_ANALOG_LINE_TX_CLIPPING_RISK),
-		      "clipping risk") == 0 &&
-	      strcmp(v90_phase3_analog_line_tx_result_name(
-		      (enum v90_phase3_analog_line_tx_result)99),
-		      "unknown") == 0,
-	      "analogue line validation or names changed");
+	      !v90_phase3_analog_line_tx_is_handoff_ready(&tx),
+	      "analogue line validation changed");
 	return true;
 }
 

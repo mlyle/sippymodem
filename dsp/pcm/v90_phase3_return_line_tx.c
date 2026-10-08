@@ -231,23 +231,3 @@ enum v90_phase3_return_line_tx_result v90_phase3_return_line_tx_handoff(
 	*line = tx->line;
 	return V90_PHASE3_RETURN_LINE_TX_OK;
 }
-
-const char *v90_phase3_return_line_tx_result_name(
-	enum v90_phase3_return_line_tx_result result)
-{
-	switch (result) {
-	case V90_PHASE3_RETURN_LINE_TX_OK:
-		return "ok";
-	case V90_PHASE3_RETURN_LINE_TX_COMPLETE:
-		return "complete";
-	case V90_PHASE3_RETURN_LINE_TX_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V90_PHASE3_RETURN_LINE_TX_INVALID_STATE:
-		return "invalid state";
-	case V90_PHASE3_RETURN_LINE_TX_OUT_OF_RANGE:
-		return "out of range";
-	case V90_PHASE3_RETURN_LINE_TX_INTERNAL_ERROR:
-		return "internal error";
-	}
-	return "unknown";
-}

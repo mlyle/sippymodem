@@ -191,14 +191,8 @@ static bool test_boundaries_and_overflow(void)
 	      memcmp(&point, &saved_point, sizeof(point)) == 0,
 	      "analogue Ja counter overflow was not transactional");
 	tx.stage = (enum v90_phase3_analog_tx_stage)99;
-	CHECK(!v90_phase3_analog_tx_is_valid(&tx) &&
-	      strcmp(v90_phase3_analog_tx_result_name(
-		      V90_PHASE3_ANALOG_TX_INVALID_STATE),
-		      "invalid state") == 0 &&
-	      strcmp(v90_phase3_analog_tx_result_name(
-		      (enum v90_phase3_analog_tx_result)99),
-		      "unknown") == 0,
-	      "analogue Phase 3 validation or names changed");
+	CHECK(!v90_phase3_analog_tx_is_valid(&tx),
+	      "analogue Phase 3 validation changed");
 	return true;
 }
 

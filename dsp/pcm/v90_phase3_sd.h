@@ -49,7 +49,4 @@ enum v90_phase3_sd_result v90_phase3_sd_next(
 
 size_t v90_phase3_sd_remaining(
 	const struct v90_phase3_sd *sequence);
-const char *v90_phase3_sd_result_name(
-	enum v90_phase3_sd_result result);
-
 #endif

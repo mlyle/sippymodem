@@ -564,11 +564,6 @@ static bool test_validation(void)
 		      v90_phase3_sd_remaining(&sequence) == 0 &&
 		      v90_phase3_sd_remaining(NULL) == 0,
 	      "invalid Sd generation was not transactional");
-	CHECK(strcmp(v90_phase3_sd_result_name(V90_PHASE3_SD_COMPLETE),
-		     "complete") == 0 &&
-		      strcmp(v90_phase3_sd_result_name(
-			     (enum v90_phase3_sd_result)4), "unknown") == 0,
-	      "Sd result names are wrong");
 	return true;
 }
 

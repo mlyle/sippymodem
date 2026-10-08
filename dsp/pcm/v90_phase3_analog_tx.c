@@ -158,21 +158,3 @@ enum v90_phase3_analog_tx_result v90_phase3_analog_tx_finish_ja(
 	*tx = next;
 	return V90_PHASE3_ANALOG_TX_OK;
 }
-
-const char *v90_phase3_analog_tx_result_name(
-	enum v90_phase3_analog_tx_result result)
-{
-	switch (result) {
-	case V90_PHASE3_ANALOG_TX_OK:
-		return "ok";
-	case V90_PHASE3_ANALOG_TX_DONE:
-		return "done";
-	case V90_PHASE3_ANALOG_TX_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V90_PHASE3_ANALOG_TX_INVALID_STATE:
-		return "invalid state";
-	case V90_PHASE3_ANALOG_TX_INTERNAL_ERROR:
-		return "internal error";
-	}
-	return "unknown";
-}

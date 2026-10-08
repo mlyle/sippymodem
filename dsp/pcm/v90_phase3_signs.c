@@ -128,17 +128,3 @@ enum v90_phase3_sign_result v90_phase3_signs_next_jd_bit(
 	*symbol = generated;
 	return V90_PHASE3_SIGNS_OK;
 }
-
-const char *v90_phase3_sign_result_name(
-	enum v90_phase3_sign_result result)
-{
-	switch (result) {
-	case V90_PHASE3_SIGNS_OK:
-		return "ok";
-	case V90_PHASE3_SIGNS_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V90_PHASE3_SIGNS_INVALID_STATE:
-		return "invalid state";
-	}
-	return "unknown";
-}

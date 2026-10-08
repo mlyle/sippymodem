@@ -371,14 +371,8 @@ static bool test_validation(void)
 	      "invalid return-line operation changed state or output");
 	tx.points.stage = (enum v90_phase3_return_tx_stage)99;
 	CHECK(!v90_phase3_return_line_tx_is_valid(&tx) &&
-	      !v90_phase3_return_line_tx_is_handoff_ready(&tx) &&
-	      strcmp(v90_phase3_return_line_tx_result_name(
-		     V90_PHASE3_RETURN_LINE_TX_INTERNAL_ERROR),
-		     "internal error") == 0 &&
-	      strcmp(v90_phase3_return_line_tx_result_name(
-		     (enum v90_phase3_return_line_tx_result)99),
-		     "unknown") == 0,
-	      "return-line validation or names changed");
+	      !v90_phase3_return_line_tx_is_handoff_ready(&tx),
+	      "return-line validation changed");
 	return true;
 }
 
