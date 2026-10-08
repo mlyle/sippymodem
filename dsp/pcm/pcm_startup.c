@@ -44,16 +44,3 @@ enum pcm_startup_result pcm_startup_select(
 	*selection = selected;
 	return PCM_STARTUP_OK;
 }
-
-const char *pcm_startup_result_name(enum pcm_startup_result result)
-{
-	switch (result) {
-	case PCM_STARTUP_OK:
-		return "ok";
-	case PCM_STARTUP_INVALID_ARGUMENT:
-		return "invalid argument";
-	case PCM_STARTUP_INVALID_CAPABILITIES:
-		return "invalid capabilities";
-	}
-	return "unknown";
-}

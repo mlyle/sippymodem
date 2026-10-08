@@ -207,31 +207,3 @@ enum pcm_phase3_entry_result pcm_phase3_entry_start_v90_digital(
 	}
 	return PCM_PHASE3_ENTRY_INTERNAL_ERROR;
 }
-
-const char *pcm_phase3_entry_result_name(
-	enum pcm_phase3_entry_result result)
-{
-	switch (result) {
-	case PCM_PHASE3_ENTRY_OK:
-		return "ok";
-	case PCM_PHASE3_ENTRY_INVALID_ARGUMENT:
-		return "invalid argument";
-	case PCM_PHASE3_ENTRY_INVALID_SELECTION:
-		return "invalid selection";
-	case PCM_PHASE3_ENTRY_INVALID_STATE:
-		return "invalid state";
-	case PCM_PHASE3_ENTRY_UNUSABLE_SELECTION:
-		return "unusable selection";
-	case PCM_PHASE3_ENTRY_ROLE_MISMATCH:
-		return "role mismatch";
-	case PCM_PHASE3_ENTRY_MEDIA_MISMATCH:
-		return "media mismatch";
-	case PCM_PHASE3_ENTRY_OUT_OF_RANGE:
-		return "out of range";
-	case PCM_PHASE3_ENTRY_CLIPPING_RISK:
-		return "clipping risk";
-	case PCM_PHASE3_ENTRY_INTERNAL_ERROR:
-		return "internal error";
-	}
-	return "unknown";
-}

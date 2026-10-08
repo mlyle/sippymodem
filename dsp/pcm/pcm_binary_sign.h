@@ -41,7 +41,4 @@ enum pcm_binary_sign_result pcm_binary_sign_encode(
 enum pcm_binary_sign_result pcm_binary_sign_decode(
 	struct pcm_binary_sign *state, uint8_t sign, uint8_t *bit);
 
-const char *pcm_binary_sign_result_name(
-	enum pcm_binary_sign_result result);
-
 #endif /* PCM_BINARY_SIGN_H */

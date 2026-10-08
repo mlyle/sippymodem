@@ -62,7 +62,4 @@ bool pcm_dil_descriptor_write_lsb_field(
 	const struct pcm_dil_descriptor_layout *layout,
 	size_t first_bit, unsigned int field_bits, uint32_t value);
 
-const char *pcm_dil_descriptor_result_name(
-	enum pcm_dil_descriptor_result result);
-
 #endif /* PCM_DIL_DESCRIPTOR_H */

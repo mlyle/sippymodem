@@ -38,6 +38,4 @@ enum pcm_startup_result pcm_startup_select(
 	const struct v92_info0d *digital,
 	struct pcm_startup_selection *selection);
 
-const char *pcm_startup_result_name(enum pcm_startup_result result);
-
 #endif /* PCM_STARTUP_H */

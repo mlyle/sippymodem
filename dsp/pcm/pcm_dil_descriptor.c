@@ -152,19 +152,3 @@ enum pcm_dil_descriptor_result pcm_dil_descriptor_finalize(
 		PCM_DIL_CRC_BITS, remainder);
 	return PCM_DIL_DESCRIPTOR_OK;
 }
-
-const char *pcm_dil_descriptor_result_name(
-	enum pcm_dil_descriptor_result result)
-{
-	switch (result) {
-	case PCM_DIL_DESCRIPTOR_OK:
-		return "ok";
-	case PCM_DIL_DESCRIPTOR_INVALID_ARGUMENT:
-		return "invalid argument";
-	case PCM_DIL_DESCRIPTOR_INVALID_FRAME:
-		return "invalid frame";
-	case PCM_DIL_DESCRIPTOR_CRC_MISMATCH:
-		return "CRC mismatch";
-	}
-	return "unknown";
-}

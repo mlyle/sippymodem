@@ -111,9 +111,6 @@ static bool test_contracts(void)
 	struct pcm_binary_sign before;
 	struct v34_scrambler scrambler;
 	uint8_t output = UINT8_C(0xa5);
-	static const char *const names[] = {
-		"ok", "invalid argument", "invalid state",
-	};
 
 	memset(&state, 0xa5, sizeof(state));
 	before = state;
@@ -180,17 +177,6 @@ static bool test_contracts(void)
 	      memcmp(&state, &before, sizeof(state)) == 0 &&
 	      output == UINT8_C(0xa5),
 	      "corrupt binary-sign state was not rejected transactionally");
-	for (size_t index = 0; index < ARRAY_LENGTH(names); ++index)
-		CHECK(strcmp(
-			      pcm_binary_sign_result_name(
-				      (enum pcm_binary_sign_result)index),
-			      names[index]) == 0,
-		      "binary-sign result name %zu differed", index);
-	CHECK(strcmp(
-		      pcm_binary_sign_result_name(
-			      (enum pcm_binary_sign_result)-1),
-		      "unknown") == 0,
-	      "unknown binary-sign result name differed");
 	return true;
 }
 

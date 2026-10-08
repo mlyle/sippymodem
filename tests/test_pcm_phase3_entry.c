@@ -846,35 +846,6 @@ static bool test_short_rejection(void)
 	return true;
 }
 
-static bool test_result_names(void)
-{
-	static const char *const expected[] = {
-		"ok",
-		"invalid argument",
-		"invalid selection",
-		"invalid state",
-		"unusable selection",
-		"role mismatch",
-		"media mismatch",
-		"out of range",
-		"clipping risk",
-		"internal error",
-	};
-
-	for (size_t index = 0; index < ARRAY_LENGTH(expected); ++index) {
-		CHECK(strcmp(
-			      pcm_phase3_entry_result_name(
-				      (enum pcm_phase3_entry_result)index),
-			      expected[index]) == 0,
-		      "entry result name %zu changed", index);
-	}
-	CHECK(strcmp(pcm_phase3_entry_result_name(
-		     (enum pcm_phase3_entry_result)99),
-	     "unknown") == 0,
-	      "unknown entry result name changed");
-	return true;
-}
-
 int main(void)
 {
 	static const struct {
@@ -890,7 +861,6 @@ int main(void)
 		{ "V.92 mandatory upstream power", test_v92_upstream_power },
 		{ "short Phase 3 retained training settings", test_short_entries },
 		{ "short Phase 3 rejection", test_short_rejection },
-		{ "result names", test_result_names },
 	};
 	unsigned int failures = 0;
 

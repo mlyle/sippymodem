@@ -333,15 +333,3 @@ enum pcm_phase2_ranging_result pcm_phase2_ranging_sample(
 	*event = emitted;
 	return PCM_PHASE2_RANGING_OK;
 }
-
-const char *pcm_phase2_ranging_result_name(
-	enum pcm_phase2_ranging_result result)
-{
-	switch (result) {
-	case PCM_PHASE2_RANGING_OK:
-		return "ok";
-	case PCM_PHASE2_RANGING_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

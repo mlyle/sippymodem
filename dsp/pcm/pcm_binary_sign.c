@@ -100,17 +100,3 @@ enum pcm_binary_sign_result pcm_binary_sign_decode(
 	*bit = decoded;
 	return PCM_BINARY_SIGN_OK;
 }
-
-const char *pcm_binary_sign_result_name(
-	enum pcm_binary_sign_result result)
-{
-	switch (result) {
-	case PCM_BINARY_SIGN_OK:
-		return "ok";
-	case PCM_BINARY_SIGN_INVALID_ARGUMENT:
-		return "invalid argument";
-	case PCM_BINARY_SIGN_INVALID_STATE:
-		return "invalid state";
-	}
-	return "unknown";
-}

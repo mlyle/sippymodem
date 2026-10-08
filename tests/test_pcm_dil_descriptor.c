@@ -191,9 +191,6 @@ static bool test_contracts(void)
 	};
 	uint8_t descriptor[30];
 	uint8_t saved[sizeof(descriptor)];
-	static const char *const names[] = {
-		"ok", "invalid argument", "invalid frame", "CRC mismatch",
-	};
 
 	memset(descriptor, 0xa5, sizeof(descriptor));
 	memcpy(saved, descriptor, sizeof(descriptor));
@@ -219,17 +216,6 @@ static bool test_contracts(void)
 		      PCM_DIL_DESCRIPTOR_INVALID_ARGUMENT &&
 	      memcmp(descriptor, saved, sizeof(descriptor)) == 0,
 	      "invalid DIL descriptor contracts changed output");
-	for (size_t index = 0; index < ARRAY_LENGTH(names); ++index)
-		CHECK(strcmp(
-			      pcm_dil_descriptor_result_name(
-				      (enum pcm_dil_descriptor_result)index),
-			      names[index]) == 0,
-		      "DIL descriptor result name %zu differed", index);
-	CHECK(strcmp(
-		      pcm_dil_descriptor_result_name(
-			      (enum pcm_dil_descriptor_result)-1),
-		      "unknown") == 0,
-	      "unknown DIL descriptor result name differed");
 	return true;
 }
 

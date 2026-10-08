@@ -116,7 +116,4 @@ bool pcm_r_rx_is_complete(
 enum pcm_r_rx_result pcm_r_rx_receive(
 	struct pcm_r_rx *receiver, uint8_t network_octet);
 
-const char *pcm_r_rx_result_name(
-	enum pcm_r_rx_result result);
-
 #endif /* PCM_R_H */

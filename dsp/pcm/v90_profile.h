@@ -82,6 +82,4 @@ bool v90_profile_generate_measured_constellations(enum g711_law law,
 	struct pcm_constellation rows[V90_CP_MAX_CONSTELLATIONS],
 	uint8_t map[V90_CP_FRAME_INTERVALS], uint8_t *count);
 
-const char *v90_profile_result_name(enum v90_profile_result result);
-
 #endif /* V90_PROFILE_H */

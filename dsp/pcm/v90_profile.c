@@ -557,16 +557,3 @@ enum v90_profile_result v90_profile_init(
 	*configuration = selected;
 	return V90_PROFILE_OK;
 }
-
-const char *v90_profile_result_name(enum v90_profile_result result)
-{
-	switch (result) {
-	case V90_PROFILE_OK:
-		return "ok";
-	case V90_PROFILE_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V90_PROFILE_UNSUPPORTED_RATE:
-		return "unsupported rate";
-	}
-	return "unknown";
-}

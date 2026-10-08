@@ -110,13 +110,8 @@ static bool test_validation(void)
 	      "V.90 accepted short Phase 2");
 	selection.protocol = PCM_PROTOCOL_V92;
 	CHECK(pcm_startup_selection_is_valid(&selection) &&
-	      !pcm_startup_selection_is_valid(NULL) &&
-	      strcmp(pcm_startup_result_name(
-		     PCM_STARTUP_INVALID_CAPABILITIES),
-		     "invalid capabilities") == 0 &&
-	      strcmp(pcm_startup_result_name((enum pcm_startup_result)3),
-		     "unknown") == 0,
-	      "startup selection validation or result names changed");
+	      !pcm_startup_selection_is_valid(NULL),
+	      "startup selection validation changed");
 	return true;
 }
 

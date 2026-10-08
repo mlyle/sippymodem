@@ -71,7 +71,4 @@ enum pcm_phase2_ranging_result pcm_phase2_ranging_sample(
 bool pcm_phase2_ranging_recover_short_info1(
 	struct pcm_phase2_ranging *ranging);
 
-const char *pcm_phase2_ranging_result_name(
-	enum pcm_phase2_ranging_result result);
-
 #endif

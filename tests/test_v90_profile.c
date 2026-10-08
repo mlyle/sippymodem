@@ -851,27 +851,6 @@ static bool test_data_template_capacity(void)
 	return true;
 }
 
-static bool test_result_names(void)
-{
-	static const char *const expected[] = {
-		"ok",
-		"invalid argument",
-		"unsupported rate",
-	};
-
-	for (size_t index = 0; index < ARRAY_LENGTH(expected); ++index)
-		CHECK(strcmp(
-			      v90_profile_result_name(
-				      (enum v90_profile_result)index),
-			      expected[index]) == 0,
-		      "V.90 profile result %zu changed", index);
-	CHECK(strcmp(
-		      v90_profile_result_name((enum v90_profile_result)-1),
-		      "unknown") == 0,
-	      "unknown V.90 profile result changed");
-	return true;
-}
-
 int main(void)
 {
 	static const struct {
@@ -888,7 +867,6 @@ int main(void)
 		{ "measured data capacity", test_measured_data_capacity },
 		{ "upstream policy", test_upstream_policy },
 		{ "rate bounds and transactionality", test_transactionality },
-		{ "result names", test_result_names },
 	};
 	int failed = 0;
 

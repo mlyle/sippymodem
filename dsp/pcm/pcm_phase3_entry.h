@@ -105,7 +105,4 @@ enum pcm_phase3_entry_result pcm_phase3_entry_start_v92_digital(
 	const struct v92_jp *jp,
 	struct v92_phase3_digital_station *station);
 
-const char *pcm_phase3_entry_result_name(
-	enum pcm_phase3_entry_result result);
-
 #endif /* PCM_PHASE3_ENTRY_H */

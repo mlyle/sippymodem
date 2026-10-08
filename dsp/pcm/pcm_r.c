@@ -334,34 +334,6 @@ enum pcm_r_rx_result pcm_r_rx_receive(
 	return result;
 }
 
-const char *pcm_r_rx_result_name(
-	enum pcm_r_rx_result result)
-{
-	switch (result) {
-	case PCM_R_RX_OK:
-		return "ok";
-	case PCM_R_RX_BUFFERING:
-		return "buffering";
-	case PCM_R_RX_SIGNAL_DETECTED:
-		return "R detected";
-	case PCM_R_RX_BAR_STARTED:
-		return "R-bar started";
-	case PCM_R_RX_BAR_COMPLETE:
-		return "R-bar complete";
-	case PCM_R_RX_SEQUENCE_MISMATCH:
-		return "sequence mismatch";
-	case PCM_R_RX_INVALID_ARGUMENT:
-		return "invalid argument";
-	case PCM_R_RX_INVALID_PARAMETERS:
-		return "invalid parameters";
-	case PCM_R_RX_INVALID_STATE:
-		return "invalid state";
-	case PCM_R_RX_INTERNAL_ERROR:
-		return "internal error";
-	}
-	return "unknown";
-}
-
 bool pcm_r_tx_is_valid(const struct pcm_r_tx *transmitter)
 {
 	return transmitter != NULL &&

@@ -1382,13 +1382,6 @@ static bool test_validation(void)
 	      memcmp(&ranging, &before, sizeof(ranging)) == 0 &&
 	      sample == 1234 && event.kind == PHASE2_ROUND_TRIP_DELAY_MEASURED,
 	      "invalid V.90 ranging state mutated state or outputs");
-	CHECK(strcmp(
-		      pcm_phase2_ranging_result_name(PCM_PHASE2_RANGING_OK),
-		      "ok") == 0 &&
-	      strcmp(pcm_phase2_ranging_result_name(
-			     (enum pcm_phase2_ranging_result)99),
-		     "unknown") == 0,
-	      "V.90 ranging result names changed");
 	return true;
 }
 
