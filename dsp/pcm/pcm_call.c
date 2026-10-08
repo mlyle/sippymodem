@@ -4259,33 +4259,16 @@ enum pcm_call_result pcm_call_start_data_path(struct pcm_call *call)
 	return PCM_CALL_OK;
 }
 
-static bool outputs_overlap(
+static inline bool outputs_overlap(
 	const struct pcm_call *call, const uint8_t *transmit_octet,
-	const struct pcm_call_observation *observation)
+	const void *event, size_t event_size)
 {
 	return memory_regions_overlap(
 		       call, sizeof(*call),
 		       transmit_octet, sizeof(*transmit_octet)) ||
+	       memory_regions_overlap(call, sizeof(*call), event, event_size) ||
 	       memory_regions_overlap(
-		       call, sizeof(*call),
-		       observation, sizeof(*observation)) ||
-	       memory_regions_overlap(
-		       transmit_octet, sizeof(*transmit_octet),
-		       observation, sizeof(*observation));
-}
-
-static bool data_outputs_overlap(
-	const struct pcm_call *call, const uint8_t *transmit_octet,
-	const struct pcm_call_data_event *event)
-{
-	return memory_regions_overlap(
-		       call, sizeof(*call),
-		       transmit_octet, sizeof(*transmit_octet)) ||
-	       memory_regions_overlap(
-		       call, sizeof(*call), event, sizeof(*event)) ||
-	       memory_regions_overlap(
-		       transmit_octet, sizeof(*transmit_octet),
-		       event, sizeof(*event));
+		       transmit_octet, sizeof(*transmit_octet), event, event_size);
 }
 
 static const struct v90_pcm_mapping *online_downstream_mapping(
@@ -5334,7 +5317,8 @@ enum pcm_call_result pcm_call_data_octet(
 	enum pcm_call_result result;
 
 	if (!pcm_call_owned_state_is_valid(call) || transmit_octet == NULL ||
-	    event == NULL || data_outputs_overlap(call, transmit_octet, event))
+	    event == NULL ||
+	    outputs_overlap(call, transmit_octet, event, sizeof(*event)))
 		return PCM_CALL_INVALID_ARGUMENT;
 	if (call->failed)
 		return PCM_CALL_FAILED;
@@ -5362,7 +5346,7 @@ enum pcm_call_result pcm_call_data_octet_owned(
 	struct pcm_call_data_event *event)
 {
 	if (call == NULL || transmit_octet == NULL || event == NULL ||
-	    data_outputs_overlap(call, transmit_octet, event))
+	    outputs_overlap(call, transmit_octet, event, sizeof(*event)))
 		return PCM_CALL_INVALID_ARGUMENT;
 	if (call->failed)
 		return PCM_CALL_FAILED;
@@ -5388,7 +5372,7 @@ static enum pcm_call_result call_octet(
 	if (call == NULL || (!owned && !pcm_call_owned_state_is_valid(call)) ||
 	    transmit_octet == NULL ||
 	    observation == NULL ||
-	    outputs_overlap(call, transmit_octet, observation))
+	    outputs_overlap(call, transmit_octet, observation, sizeof(*observation)))
 		return PCM_CALL_INVALID_ARGUMENT;
 	if (call->failed)
 		return PCM_CALL_FAILED;
