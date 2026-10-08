@@ -6,6 +6,7 @@
 #include <v90_pcm_symbol.h>
 
 #include "test.h"
+#include "v90_phase4_state_fixture.h"
 
 #include <string.h>
 
@@ -259,8 +260,7 @@ static bool run_exchange(
 				      &station, &actual) ==
 				      V90_PHASE4_ANALOG_STATION_OK &&
 			      actual == expected &&
-			      memcmp(&station.transmit, &model,
-				     sizeof(model)) == 0,
+			      v90_cp_line_transmit_states_equal(&station.transmit, &model),
 			      "CPt waveform diverged at clock %zu", clock);
 		}
 
@@ -287,11 +287,11 @@ static bool run_exchange(
 		CHECK(v90_phase4_analog_station_transmit_handoff(
 			      &station, &transmit_handoff) ==
 			      V90_PHASE4_ANALOG_STATION_OK &&
-		      memcmp(&transmit_handoff, &model, sizeof(model)) == 0 &&
+		      v90_cp_line_transmit_states_equal(&transmit_handoff, &model) &&
 		      v90_phase4_analog_station_transmit(
 			      &station, &sample) ==
 			      V90_PHASE4_ANALOG_STATION_COMPLETE &&
-		      memcmp(&station, &saved, sizeof(station)) == 0 &&
+		      v90_analog_station_states_equal(&station, &saved) &&
 		      sample == 1234,
 		      "completed CPt direction was not transactional");
 		history = transmit_handoff.symbols.scrambler.history;
@@ -313,7 +313,7 @@ static bool run_exchange(
 
 		CHECK(v90_phase4_analog_station_receive(&station, 0xa5) ==
 			      V90_PHASE4_ANALOG_STATION_COMPLETE &&
-		      memcmp(&station, &saved, sizeof(station)) == 0,
+		      v90_analog_station_states_equal(&station, &saved),
 		      "completed Ri direction consumed another character");
 	}
 	return true;
@@ -498,7 +498,7 @@ static bool test_contracts(void)
 		      v90_phase4_analog_station_receive_handoff(
 			      &station, &receive_handoff) ==
 			      V90_PHASE4_ANALOG_STATION_INVALID_STATE &&
-		      memcmp(&station, &saved, sizeof(station)) == 0 &&
+		      v90_analog_station_states_equal(&station, &saved) &&
 		      memcmp(&transmit_handoff, &transmit_saved,
 			     sizeof(transmit_handoff)) == 0 &&
 		      memcmp(&receive_handoff, &receive_saved,

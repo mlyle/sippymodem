@@ -9,6 +9,7 @@
 #include <v90_phase4_ri.h>
 
 #include "test.h"
+#include "v90_phase4_state_fixture.h"
 #include "v90_phase4_station_fixture.h"
 
 #include <string.h>
@@ -41,7 +42,7 @@ static enum v90_phase4_startup_result checked_octet(
 	}
 	result = v90_phase4_analog_startup_octet(startup, received, transmitted);
 	if (compare && (result != expected_result ||
-	    memcmp(startup, &owned, sizeof(owned)) != 0 ||
+	    !v90_analog_startup_states_equal(startup, &owned) ||
 	    (result == V90_PHASE4_STARTUP_OK && *transmitted != expected))) {
 		fprintf(stderr, "owned Phase 4 continuation changed output or state\n");
 		abort();
@@ -262,7 +263,7 @@ static bool run_exchange(enum g711_law law)
 			      &startup, to_analog, &output) ==
 			      V90_PHASE4_STARTUP_DONE &&
 		      output == 0xa5 &&
-		      memcmp(&startup, &saved, sizeof(startup)) == 0,
+		      v90_analog_startup_states_equal(&startup, &saved),
 		      "law %u completed startup consumed a character",
 		      (unsigned int)law);
 	}
@@ -435,7 +436,7 @@ static bool test_contracts(void)
 		      V90_PHASE4_STARTUP_INVALID_ARGUMENT &&
 	      v90_phase4_analog_startup_init(&startup, NULL) ==
 		      V90_PHASE4_STARTUP_INVALID_ARGUMENT &&
-	      memcmp(&startup, &saved, sizeof(startup)) == 0,
+	      v90_analog_startup_states_equal(&startup, &saved),
 	      "invalid initialization changed the destination");
 	CHECK(v90_phase4_analog_startup_init(
 		      &startup, &analog_station) == V90_PHASE4_STARTUP_OK,
@@ -452,7 +453,7 @@ static bool test_contracts(void)
 		      !v90_phase4_analog_startup_has_failed(&invalid) &&
 		      v90_phase4_analog_startup_octet(&invalid, 0, &output) ==
 			      V90_PHASE4_STARTUP_INVALID_ARGUMENT &&
-		      memcmp(&invalid, &before, sizeof(before)) == 0 && output == 0xa5,
+		      v90_analog_startup_states_equal(&invalid, &before) && output == 0xa5,
 		      "public startup accepted a corrupt CP record");
 	}
 	CHECK(v90_phase4_analog_startup_octet(
@@ -461,7 +462,7 @@ static bool test_contracts(void)
 	      v90_phase4_analog_startup_handoff(
 		      &startup, &handoff) ==
 		      V90_PHASE4_STARTUP_INVALID_STATE &&
-	      memcmp(&startup, &saved, sizeof(startup)) == 0,
+	      v90_analog_startup_states_equal(&startup, &saved),
 	      "invalid active operations changed the startup");
 	for (size_t index = 0; index < V90_PHASE4_RI_SEARCH_SYMBOLS;
 	     ++index) {

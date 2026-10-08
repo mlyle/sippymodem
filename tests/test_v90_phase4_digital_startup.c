@@ -7,6 +7,7 @@
 #include <g711.h>
 
 #include "test.h"
+#include "v90_phase4_state_fixture.h"
 #include "v90_phase4_station_fixture.h"
 
 #include <limits.h>
@@ -344,7 +345,7 @@ static bool run_exchange(
 			      &startup, decode_octet(law, to_digital), &output) ==
 			      V90_PHASE4_STARTUP_DONE &&
 		      output == 0xa5 &&
-		      memcmp(&startup, &saved, sizeof(startup)) == 0,
+		      v90_digital_startup_states_equal(&startup, &saved),
 		      "law %u completed startup consumed a character",
 		      (unsigned int)law);
 	}
@@ -656,7 +657,7 @@ static bool test_contracts(void)
 	      v90_phase4_digital_startup_init(
 		      &startup, &digital_station, &acknowledged) ==
 		      V90_PHASE4_STARTUP_INVALID_ARGUMENT &&
-	      memcmp(&startup, &saved, sizeof(startup)) == 0,
+	      v90_digital_startup_states_equal(&startup, &saved),
 	      "invalid initialization changed the destination");
 	CHECK(v90_phase4_digital_startup_init(
 		      &startup, &digital_station, &mp) ==
@@ -675,7 +676,7 @@ static bool test_contracts(void)
 	      v90_phase4_digital_startup_handoff(
 		      &startup, NULL) ==
 		      V90_PHASE4_STARTUP_INVALID_ARGUMENT &&
-	      memcmp(&startup, &saved, sizeof(startup)) == 0,
+	      v90_digital_startup_states_equal(&startup, &saved),
 	      "invalid active operations changed the startup");
 	failed = startup;
 	failed.failed = true;

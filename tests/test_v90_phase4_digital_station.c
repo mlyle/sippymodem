@@ -6,6 +6,7 @@
 #include <g711.h>
 
 #include "test.h"
+#include "v90_phase4_state_fixture.h"
 #include "v90_phase4_line_fixture.h"
 
 #include <string.h>
@@ -259,7 +260,7 @@ static bool run_exchange(
 			      V90_PHASE4_DIGITAL_STATION_COMPLETE &&
 		      v90_phase4_digital_station_receive(&station, 1234) ==
 			      V90_PHASE4_DIGITAL_STATION_COMPLETE &&
-		      memcmp(&station, &saved, sizeof(station)) == 0 &&
+		      v90_digital_station_states_equal(&station, &saved) &&
 		      octet == 0xa5,
 		      "completed digital station consumed another boundary");
 	}
@@ -460,7 +461,7 @@ static bool test_contracts(void)
 		      v90_phase4_digital_station_transmit_handoff(
 			      &station, &mp, &transmit_handoff) ==
 			      V90_PHASE4_DIGITAL_STATION_INVALID_STATE &&
-		      memcmp(&station, &saved, sizeof(station)) == 0 &&
+		      v90_digital_station_states_equal(&station, &saved) &&
 		      memcmp(&receive_handoff, &receive_saved,
 			     sizeof(receive_handoff)) == 0 &&
 		      memcmp(&transmit_handoff, &transmit_saved,
