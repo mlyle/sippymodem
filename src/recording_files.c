@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "recording_files.h"
+#include "integer_math.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -61,12 +62,6 @@ static bool build_path(
 		stream_contains_pcm(stream) ? "8000hz.s16le" : "8000hz.octets";
 	length = snprintf(path, capacity, "%s.%s.%s", prefix, name, extension);
 	return length >= 0 && (size_t)length < capacity;
-}
-
-static void add_saturated(uint64_t *value, uint64_t increment)
-{
-	*value = increment > UINT64_MAX - *value ? UINT64_MAX :
-						    *value + increment;
 }
 
 static bool write_all(int descriptor, const void *data, size_t size)
@@ -154,8 +149,10 @@ static void record_block(
 		files->system_error = errno;
 		return;
 	}
-	add_saturated(&files->stats.blocks_written, 1);
-	add_saturated(&files->stats.bytes_written, bytes);
+	files->stats.blocks_written = add_u64_saturating(
+		files->stats.blocks_written, 1);
+	files->stats.bytes_written = add_u64_saturating(
+		files->stats.bytes_written, bytes);
 }
 
 static void record_packet(void *context, const struct recording_packet *packet)
@@ -196,8 +193,10 @@ static void record_packet(void *context, const struct recording_packet *packet)
 		files->system_error = errno;
 		return;
 	}
-	add_saturated(&files->stats.blocks_written, 1);
-	add_saturated(&files->stats.bytes_written, (uint64_t)length);
+	files->stats.blocks_written = add_u64_saturating(
+		files->stats.blocks_written, 1);
+	files->stats.bytes_written = add_u64_saturating(
+		files->stats.bytes_written, (uint64_t)length);
 }
 
 static void close_descriptors(struct recording_files *files)

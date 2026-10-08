@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "frame_clock.h"
+#include "integer_math.h"
 
 #include <limits.h>
 #include <stddef.h>
@@ -10,12 +11,6 @@
 enum {
 	NANOSECONDS_PER_SECOND = 1000000000,
 };
-
-static void add_saturated(uint64_t *value, uint64_t increment)
-{
-	*value = increment > UINT64_MAX - *value ? UINT64_MAX :
-						    *value + increment;
-}
 
 enum frame_clock_result frame_clock_init(
 	struct frame_clock *clock, size_t frame_samples,
@@ -82,18 +77,20 @@ enum frame_clock_result frame_clock_take_due(
 	due = elapsed_frames + 1;
 	if (due > clock->maximum_catchup_frames) {
 		due = clock->maximum_catchup_frames;
-		add_saturated(&clock->stats.overruns, 1);
+		clock->stats.overruns = add_u64_saturating(
+			clock->stats.overruns, 1);
 	}
 	if (due > (UINT64_MAX - clock->next_deadline_ns) /
 			  clock->interval_ns)
 		goto overrun;
 	clock->next_deadline_ns += due * clock->interval_ns;
-	add_saturated(&clock->stats.frames_due, due);
+	clock->stats.frames_due = add_u64_saturating(
+		clock->stats.frames_due, due);
 	*frames_due = (size_t)due;
 	return FRAME_CLOCK_OK;
 
 overrun:
-	add_saturated(&clock->stats.overruns, 1);
+	clock->stats.overruns = add_u64_saturating(clock->stats.overruns, 1);
 	frame_clock_stop(clock);
 	return FRAME_CLOCK_OVERRUN;
 }

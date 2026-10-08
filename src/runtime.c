@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "runtime.h"
+#include "integer_math.h"
 #include "log_target.h"
 
 #include "modem.h"
@@ -499,7 +500,7 @@ enum modem_runtime_result modem_runtime_step(
 		runtime->attempt_deadline = 0;
 	else if (runtime->attempt_deadline == 0) {
 		uint64_t delay = (uint64_t)runtime->modem->sregs[SREG_WAIT_CARRIER_AFTER_DIAL] * UINT64_C(1000000000);
-		runtime->attempt_deadline = delay > UINT64_MAX - now_ns ? UINT64_MAX : now_ns + delay;
+		runtime->attempt_deadline = add_u64_saturating(now_ns, delay);
 	} else if (now_ns >= runtime->attempt_deadline) {
 		modem_note_disconnect(runtime->modem, true, "whole call attempt expired");
 		modem_update_status(runtime->modem, STATUS_NOCARRIER);

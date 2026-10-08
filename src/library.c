@@ -2,6 +2,7 @@
 #include "sippymodem.h"
 
 #include "byte_queue.h"
+#include "integer_math.h"
 #include "datapump_link.h"
 #include "line.h"
 #include "media_workers.h"
@@ -85,11 +86,6 @@ static bool take_wake(int fd)
 		count = read(fd, &one, sizeof(one));
 	} while (count < 0 && errno == EINTR);
 	return count == sizeof(one);
-}
-
-static uint64_t deadline_after(uint64_t now, uint64_t delay)
-{
-	return delay > UINT64_MAX - now ? UINT64_MAX : now + delay;
 }
 
 static struct modem *line_modem(const struct sippymodem_line *line)
@@ -342,7 +338,8 @@ static void begin_call(struct sippymodem_line *line)
 	line_modem(line)->disconnect_local = false;
 	line_modem(line)->dte_overflow = false;
 	line->facts = (struct sippymodem_call_facts){ .generation = line->status.generation };
-	line->attempt_deadline = deadline_after(line->server->now,
+	line->attempt_deadline = add_u64_saturating(
+		line->server->now,
 		(uint64_t)line->config.call_timeout_ms * UINT64_C(1000000));
 }
 
@@ -1182,7 +1179,8 @@ static bool collect_media(struct sippymodem_line *line, bool wait)
 		emit(line, SIPPYMODEM_EVENT_DISCONNECTED);
 	}
 	line->media_deadline = job.datagrams >= RTP_ENDPOINT_MAX_DRAIN ? line->server->now :
-		deadline_after(line->server->now, modem_host_wait_ns(line_host(line), line->server->now));
+		add_u64_saturating(line->server->now,
+			modem_host_wait_ns(line_host(line), line->server->now));
 	return true;
 }
 
@@ -1204,7 +1202,7 @@ enum sippymodem_result sippymodem_process(struct sippymodem_server *server,
 		if (server->lines[id] != NULL)
 			(void)collect_media(server->lines[id], false);
 	enum sip_signaling_result sip_result = sip_server_step(server->sip, 0);
-	uint64_t next = deadline_after(now_ns, MODEM_HOST_SIGNALING_POLL_NS);
+	uint64_t next = add_u64_saturating(now_ns, MODEM_HOST_SIGNALING_POLL_NS);
 	for (unsigned int id = 0; id < server->max_lines; ++id) {
 		struct sippymodem_line *line = server->lines[id];
 		if (line == NULL || !line->started || media_worker_busy(line->worker))
@@ -1235,7 +1233,8 @@ enum sippymodem_result sippymodem_process(struct sippymodem_server *server,
 				}
 			} else {
 				(void)modem_host_finish_media(line_host(line));
-				line->media_deadline = deadline_after(now_ns, MODEM_HOST_SIGNALING_POLL_NS);
+				line->media_deadline = add_u64_saturating(
+					now_ns, MODEM_HOST_SIGNALING_POLL_NS);
 			}
 		}
 		if (!media_worker_busy(line->worker) && line->media_deadline < next)

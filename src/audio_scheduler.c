@@ -1,17 +1,12 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "audio_scheduler.h"
+#include "integer_math.h"
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
-
-static void add_saturated(uint64_t *value, uint64_t increment)
-{
-	*value = increment > UINT64_MAX - *value ? UINT64_MAX :
-						    *value + increment;
-}
 
 bool audio_scheduler_init(
 	struct audio_scheduler *scheduler,
@@ -47,10 +42,12 @@ bool audio_scheduler_set_active(
 		return true;
 	scheduler->active = active;
 	if (active) {
-		add_saturated(&scheduler->stats.activations, 1);
+		scheduler->stats.activations = add_u64_saturating(
+			scheduler->stats.activations, 1);
 	} else {
 		frame_clock_stop(&scheduler->clock);
-		add_saturated(&scheduler->stats.deactivations, 1);
+		scheduler->stats.deactivations = add_u64_saturating(
+			scheduler->stats.deactivations, 1);
 	}
 	return true;
 }
@@ -67,7 +64,8 @@ static enum audio_scheduler_result fail_scheduler(
 {
 	scheduler->active = false;
 	frame_clock_stop(&scheduler->clock);
-	add_saturated(&scheduler->stats.failures, 1);
+	scheduler->stats.failures = add_u64_saturating(
+		scheduler->stats.failures, 1);
 	return result;
 }
 
@@ -82,23 +80,24 @@ static enum audio_scheduler_result process_frames(
 			audio_path_process_frame(scheduler->path);
 		if (scheduler->last_path_result ==
 		    AUDIO_PATH_MODEM_STOPPED) {
-			add_saturated(&scheduler->stats.frames_processed,
-				      processed);
+			scheduler->stats.frames_processed = add_u64_saturating(
+				scheduler->stats.frames_processed, processed);
 			*frames_processed = processed;
 			return fail_scheduler(
 				scheduler,
 				AUDIO_SCHEDULER_MODEM_STOPPED);
 		}
 		if (scheduler->last_path_result != AUDIO_PATH_OK) {
-			add_saturated(&scheduler->stats.frames_processed,
-				      processed);
+			scheduler->stats.frames_processed = add_u64_saturating(
+				scheduler->stats.frames_processed, processed);
 			*frames_processed = processed;
 			return fail_scheduler(
 				scheduler,
 				AUDIO_SCHEDULER_PATH_ERROR);
 		}
 	}
-	add_saturated(&scheduler->stats.frames_processed, processed);
+	scheduler->stats.frames_processed = add_u64_saturating(
+		scheduler->stats.frames_processed, processed);
 	*frames_processed = processed;
 	return AUDIO_SCHEDULER_OK;
 }
