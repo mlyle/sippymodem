@@ -78,6 +78,7 @@ static inline bool v22_symbol_decoder_is_valid(
 	       v22_scrambler_is_valid(&decoder->descrambler);
 }
 
+/* Output must not overlap the scrambler. Rejected calls preserve both. */
 /* Disable repair during V.22 handshaking; V.22bis keeps it enabled.
  * A disabled detector clears its count while preserving polynomial history. */
 enum v22_framing_result v22_scramble_bit(
@@ -90,6 +91,8 @@ enum v22_framing_result v22_descramble_bit(
 enum v22_framing_result v22_symbol_encoder_init(
 	struct v22_symbol_encoder *encoder,
 	uint8_t initial_quadrant);
+/* Symbol outputs must not overlap their encoder or decoder.
+ * Rejected calls preserve owner and outputs. */
 enum v22_framing_result v22_symbol_encode(
 	struct v22_symbol_encoder *encoder, uint8_t first_bit,
 	uint8_t second_bit, uint8_t *quadrant, bool repair);

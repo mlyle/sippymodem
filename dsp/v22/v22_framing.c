@@ -2,6 +2,8 @@
 
 #include "v22_framing.h"
 
+#include "memory_region.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <string.h>
@@ -37,7 +39,8 @@ static enum v22_framing_result transform_bit(
 	uint8_t wire_bit;
 	bool repair;
 
-	if (!v22_scrambler_is_valid(state) || input > 1 || output == NULL)
+	if (!v22_scrambler_is_valid(state) || input > 1 || output == NULL ||
+	    memory_regions_overlap(state, sizeof(*state), output, sizeof(*output)))
 		return V22_FRAMING_INVALID_ARGUMENT;
 	repair = repair_enabled && state->consecutive_ones == V22_SCRAMBLER_ONES_LIMIT;
 	if (repair) {
@@ -93,7 +96,8 @@ enum v22_framing_result v22_symbol_encode(
 	uint8_t next_quadrant;
 
 	if (!v22_symbol_encoder_is_valid(encoder) ||
-	    first_bit > 1 || second_bit > 1 || quadrant == NULL)
+	    first_bit > 1 || second_bit > 1 || quadrant == NULL ||
+	    memory_regions_overlap(encoder, sizeof(*encoder), quadrant, sizeof(*quadrant)))
 		return V22_FRAMING_INVALID_ARGUMENT;
 	/* Validated binary steps and quadrant mapping cannot fail. */
 	(void)v22_scramble_bit(&encoder->scrambler, first_bit, &first_scrambled, repair);
@@ -111,7 +115,8 @@ enum v22_framing_result v22_600_symbol_encode(
 {
 	uint8_t scrambled;
 
-	if (!v22_symbol_encoder_is_valid(encoder) || bit > 1 || quadrant == NULL)
+	if (!v22_symbol_encoder_is_valid(encoder) || bit > 1 || quadrant == NULL ||
+	    memory_regions_overlap(encoder, sizeof(*encoder), quadrant, sizeof(*quadrant)))
 		return V22_FRAMING_INVALID_ARGUMENT;
 	(void)v22_scramble_bit(&encoder->scrambler, bit, &scrambled, repair);
 	/* V.22 Table 1: zero advances 90 degrees and one advances 270. */
@@ -142,7 +147,9 @@ enum v22_framing_result v22_symbol_decode(
 	uint8_t second_decoded;
 
 	if (!v22_symbol_decoder_is_valid(decoder) ||
-	    quadrant >= QPSK_QUADRANT_COUNT || first_bit == NULL || second_bit == NULL)
+	    quadrant >= QPSK_QUADRANT_COUNT || first_bit == NULL || second_bit == NULL ||
+	    memory_regions_overlap(decoder, sizeof(*decoder), first_bit, sizeof(*first_bit)) ||
+	    memory_regions_overlap(decoder, sizeof(*decoder), second_bit, sizeof(*second_bit)))
 		return V22_FRAMING_INVALID_ARGUMENT;
 	/* Keep decoded bits local until both validated steps finish. */
 	(void)differential_qpsk_decode(decoder->phase_quadrant, quadrant, &dibit);
@@ -165,7 +172,8 @@ enum v22_framing_result v22_600_symbol_decode(
 	uint8_t scrambled;
 
 	if (!v22_symbol_decoder_is_valid(decoder) ||
-	    quadrant >= QPSK_QUADRANT_COUNT || bit == NULL)
+	    quadrant >= QPSK_QUADRANT_COUNT || bit == NULL ||
+	    memory_regions_overlap(decoder, sizeof(*decoder), bit, sizeof(*bit)))
 		return V22_FRAMING_INVALID_ARGUMENT;
 	quarter_turns = (uint8_t)(
 		(quadrant - decoder->phase_quadrant) & 3u);

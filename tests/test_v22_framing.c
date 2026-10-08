@@ -869,6 +869,157 @@ static bool test_descrambler_resynchronization(void)
 	return true;
 }
 
+static bool test_framing_output_ownership(void)
+{
+	struct bit_fixture {
+		uint8_t prefix;
+		struct v22_scrambler owner;
+		uint8_t suffix;
+	} bit_initial, bit_fixture;
+	struct encode_fixture {
+		uint8_t prefix;
+		struct v22_symbol_encoder owner;
+		uint8_t suffix;
+	} encode_initial, encode_fixture;
+	struct decode_fixture {
+		uint8_t prefix[2];
+		struct v22_symbol_decoder owner;
+		uint8_t suffix[2];
+	} decode_initial, decode_fixture;
+
+	for (unsigned repair = 0; repair < 2; ++repair) {
+		for (unsigned descramble = 0; descramble < 2; ++descramble) {
+			for (uint8_t input = 0; input < 2; ++input) {
+				memset(&bit_initial, 0xa5, sizeof(bit_initial));
+				v22_scrambler_reset(&bit_initial.owner);
+				bit_initial.owner.history = V22_SCRAMBLER_HISTORY_MASK;
+				bit_initial.owner.consecutive_ones = V22_SCRAMBLER_ONES_LIMIT;
+				struct v22_scrambler expected = bit_initial.owner;
+				uint8_t output;
+				enum v22_framing_result (*transform)(struct v22_scrambler *,
+					uint8_t, uint8_t *, bool) = descramble ?
+					v22_descramble_bit : v22_scramble_bit;
+
+				CHECK(transform(&expected, input, &output, repair) == V22_FRAMING_OK,
+				      "disjoint bit output failed");
+				for (size_t offset = 0; offset < sizeof(bit_initial.owner); ++offset) {
+					memcpy(&bit_fixture, &bit_initial, sizeof(bit_fixture));
+					CHECK(transform(&bit_fixture.owner, input,
+						      (uint8_t *)&bit_fixture.owner + offset, repair) ==
+						      V22_FRAMING_INVALID_ARGUMENT &&
+					      memcmp(&bit_fixture, &bit_initial, sizeof(bit_fixture)) == 0,
+					      "bit output overlap changed storage at %u/%u/%u/%zu",
+					      repair, descramble, input, offset);
+				}
+				for (unsigned side = 0; side < 2; ++side) {
+					memcpy(&bit_fixture, &bit_initial, sizeof(bit_fixture));
+					uint8_t *adjacent = side ? &bit_fixture.suffix :
+						(uint8_t *)&bit_fixture + offsetof(struct bit_fixture, owner) - 1;
+
+					CHECK(transform(&bit_fixture.owner, input, adjacent, repair) == V22_FRAMING_OK &&
+					      *adjacent == output && bit_fixture.owner.history == expected.history &&
+					      bit_fixture.owner.consecutive_ones == expected.consecutive_ones,
+					      "adjacent bit output changed result");
+				}
+			}
+		}
+		for (unsigned rate600 = 0; rate600 < 2; ++rate600) {
+			for (uint8_t phase = 0; phase < QPSK_QUADRANT_COUNT; ++phase) {
+				for (uint8_t input = 0; input < (rate600 ? 2u : 4u); ++input) {
+					memset(&encode_initial, 0xa5, sizeof(encode_initial));
+					CHECK(v22_symbol_encoder_init(&encode_initial.owner, phase) == V22_FRAMING_OK,
+					      "ownership encoder did not initialize");
+					encode_initial.owner.scrambler.history = V22_SCRAMBLER_HISTORY_MASK;
+					encode_initial.owner.scrambler.consecutive_ones = V22_SCRAMBLER_ONES_LIMIT;
+					struct v22_symbol_encoder expected = encode_initial.owner;
+					uint8_t symbol;
+					enum v22_framing_result normal = rate600 ?
+						v22_600_symbol_encode(&expected, input, &symbol, repair) :
+						v22_symbol_encode(&expected, input >> 1, input & 1u, &symbol, repair);
+
+					CHECK(normal == V22_FRAMING_OK, "disjoint encoder output failed");
+					for (size_t offset = 0; offset < sizeof(encode_initial.owner); ++offset) {
+						memcpy(&encode_fixture, &encode_initial, sizeof(encode_fixture));
+						uint8_t *output = (uint8_t *)&encode_fixture.owner + offset;
+						enum v22_framing_result result = rate600 ?
+							v22_600_symbol_encode(&encode_fixture.owner, input, output, repair) :
+							v22_symbol_encode(&encode_fixture.owner, input >> 1, input & 1u, output, repair);
+
+						CHECK(result == V22_FRAMING_INVALID_ARGUMENT &&
+						      memcmp(&encode_fixture, &encode_initial, sizeof(encode_fixture)) == 0,
+						      "symbol encoder overlap changed storage at %u/%u/%u/%u/%zu",
+						      repair, rate600, phase, input, offset);
+					}
+					for (unsigned side = 0; side < 2; ++side) {
+						memcpy(&encode_fixture, &encode_initial, sizeof(encode_fixture));
+						uint8_t *output = side ? &encode_fixture.suffix :
+							(uint8_t *)&encode_fixture + offsetof(struct encode_fixture, owner) - 1;
+						enum v22_framing_result result = rate600 ?
+							v22_600_symbol_encode(&encode_fixture.owner, input, output, repair) :
+							v22_symbol_encode(&encode_fixture.owner, input >> 1, input & 1u, output, repair);
+
+						CHECK(result == V22_FRAMING_OK && *output == symbol &&
+						      encode_fixture.owner.scrambler.history == expected.scrambler.history &&
+						      encode_fixture.owner.scrambler.consecutive_ones == expected.scrambler.consecutive_ones &&
+						      encode_fixture.owner.phase_quadrant == expected.phase_quadrant,
+						      "adjacent encoder output changed result");
+					}
+				}
+				for (uint8_t quadrant = 0; quadrant < QPSK_QUADRANT_COUNT; ++quadrant) {
+					if (rate600 && ((quadrant - phase) & 1u) == 0)
+						continue;
+					memset(&decode_initial, 0xa5, sizeof(decode_initial));
+					CHECK(v22_symbol_decoder_init(&decode_initial.owner, phase) == V22_FRAMING_OK,
+					      "ownership decoder did not initialize");
+					decode_initial.owner.descrambler.history = V22_SCRAMBLER_HISTORY_MASK;
+					decode_initial.owner.descrambler.consecutive_ones = V22_SCRAMBLER_ONES_LIMIT;
+					struct v22_symbol_decoder expected = decode_initial.owner;
+					uint8_t bits[2];
+					enum v22_framing_result normal = rate600 ?
+						v22_600_symbol_decode(&expected, quadrant, &bits[0], repair) :
+						v22_symbol_decode(&expected, quadrant, &bits[0], &bits[1], repair);
+
+					CHECK(normal == V22_FRAMING_OK, "disjoint decoder outputs failed");
+					for (unsigned output_index = 0; output_index < (rate600 ? 1u : 2u); ++output_index) {
+						for (size_t offset = 0; offset < sizeof(decode_initial.owner); ++offset) {
+							memcpy(&decode_fixture, &decode_initial, sizeof(decode_fixture));
+							uint8_t disjoint = 0xa5;
+							uint8_t *overlap = (uint8_t *)&decode_fixture.owner + offset;
+							enum v22_framing_result result = rate600 ?
+								v22_600_symbol_decode(&decode_fixture.owner, quadrant, overlap, repair) :
+								v22_symbol_decode(&decode_fixture.owner, quadrant,
+									output_index ? &disjoint : overlap,
+									output_index ? overlap : &disjoint, repair);
+
+							CHECK(result == V22_FRAMING_INVALID_ARGUMENT && disjoint == 0xa5 &&
+							      memcmp(&decode_fixture, &decode_initial, sizeof(decode_fixture)) == 0,
+							      "symbol decoder overlap changed storage at %u/%u/%u/%u/%u/%zu",
+							      repair, rate600, phase, quadrant, output_index, offset);
+						}
+					}
+					for (unsigned side = 0; side < 2; ++side) {
+						memcpy(&decode_fixture, &decode_initial, sizeof(decode_fixture));
+						uint8_t *output = side ? decode_fixture.suffix :
+							(uint8_t *)&decode_fixture + offsetof(struct decode_fixture, owner) - 2;
+						enum v22_framing_result result = rate600 ?
+							v22_600_symbol_decode(&decode_fixture.owner, quadrant, output, repair) :
+							v22_symbol_decode(&decode_fixture.owner, quadrant, &output[0], &output[1], repair);
+
+						CHECK(result == V22_FRAMING_OK &&
+						      memcmp(output, bits, rate600 ? 1u : 2u) == 0 &&
+						      decode_fixture.owner.descrambler.history == expected.descrambler.history &&
+						      decode_fixture.owner.descrambler.consecutive_ones == expected.descrambler.consecutive_ones &&
+						      decode_fixture.owner.phase_quadrant == expected.phase_quadrant,
+						      "adjacent decoder outputs changed result");
+					}
+				}
+			}
+		}
+	}
+	return true;
+}
+
+
 static bool test_validation(void)
 {
 	struct v22_scrambler scrambler = { 0 };
@@ -928,6 +1079,7 @@ int main(void)
 		  test_v22bis_rate_signal_transitions },
 		{ "descrambler resynchronization",
 		  test_descrambler_resynchronization },
+		{ "framing output ownership", test_framing_output_ownership },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;
