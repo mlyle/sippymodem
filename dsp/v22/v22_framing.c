@@ -21,26 +21,6 @@ bool v22_scrambler_is_valid(
 		       V22_SCRAMBLER_ONES_LIMIT;
 }
 
-static uint8_t scrambler_feedback(
-	const struct v22_scrambler *scrambler)
-{
-	return (uint8_t)(((scrambler->history >> V22_SCRAMBLER_TAP_14) ^
-			  (scrambler->history >> V22_SCRAMBLER_TAP_17)) &
-			  1u);
-}
-
-static void remember_scrambled_bit(
-	struct v22_scrambler *scrambler, uint8_t bit, bool repair)
-{
-	scrambler->history =
-		((scrambler->history << 1) | bit) &
-		V22_SCRAMBLER_HISTORY_MASK;
-	if (!repair || bit == 0)
-		scrambler->consecutive_ones = 0;
-	else
-		scrambler->consecutive_ones++;
-}
-
 void v22_scrambler_reset(
 	struct v22_scrambler *scrambler)
 {
@@ -52,7 +32,9 @@ static enum v22_framing_result transform_bit(
 	struct v22_scrambler *state, uint8_t input, uint8_t *output,
 	bool repair_enabled, bool descramble)
 {
+	uint8_t feedback;
 	uint8_t transformed;
+	uint8_t wire_bit;
 	bool repair;
 
 	if (!v22_scrambler_is_valid(state) || input > 1 || output == NULL)
@@ -63,8 +45,15 @@ static enum v22_framing_result transform_bit(
 		if (!descramble)
 			input ^= 1u;
 	}
-	transformed = input ^ scrambler_feedback(state);
-	remember_scrambled_bit(state, descramble ? input : transformed, repair_enabled);
+	feedback = (uint8_t)(((state->history >> V22_SCRAMBLER_TAP_14) ^
+			      (state->history >> V22_SCRAMBLER_TAP_17)) & 1u);
+	transformed = input ^ feedback;
+	wire_bit = descramble ? input : transformed;
+	state->history = ((state->history << 1) | wire_bit) & V22_SCRAMBLER_HISTORY_MASK;
+	if (!repair_enabled || wire_bit == 0)
+		state->consecutive_ones = 0;
+	else
+		state->consecutive_ones++;
 	*output = transformed ^ (descramble && repair);
 	return V22_FRAMING_OK;
 }
