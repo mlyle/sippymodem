@@ -104,7 +104,4 @@ enum v44_character_path_result
 v44_character_path_finish_receive(
 	struct v44_character_path *path);
 
-const char *v44_character_path_result_name(
-	enum v44_character_path_result result);
-
 #endif

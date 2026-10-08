@@ -361,23 +361,3 @@ v44_character_path_finish_receive(
 		return fail_receive(path, CHARACTER_PATH_CODEC_FAILED);
 	}
 }
-
-const char *v44_character_path_result_name(
-	enum v44_character_path_result result)
-{
-	switch (result) {
-	case V44_CHARACTER_PATH_OK:
-		return "ok";
-	case V44_CHARACTER_PATH_IDLE:
-		return "idle";
-	case V44_CHARACTER_PATH_NEED_OUTPUT:
-		return "need output";
-	case V44_CHARACTER_PATH_IO_ERROR:
-		return "I/O error";
-	case V44_CHARACTER_PATH_CODEC_ERROR:
-		return "codec error";
-	case V44_CHARACTER_PATH_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

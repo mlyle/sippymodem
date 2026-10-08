@@ -95,7 +95,4 @@ bool v44_tx_monitor_get_last_sample(
 	const struct v44_tx_monitor *monitor,
 	struct v44_tx_monitor_sample *sample);
 
-const char *v44_tx_monitor_result_name(
-	enum v44_tx_monitor_result result);
-
 #endif

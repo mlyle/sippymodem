@@ -320,7 +320,7 @@ static bool test_extension_lookup(void)
 	return true;
 }
 
-static bool test_creation_and_result_names(void)
+static bool test_creation(void)
 {
 	struct v44_parameters invalid = parameters;
 
@@ -340,19 +340,6 @@ static bool test_creation_and_result_names(void)
 	      v44_dictionary_encoder_history_length(NULL) == 0 &&
 	      v44_dictionary_encoder_next_codeword(NULL) == 0,
 	      "V.44 encoder dictionary accepted an invalid owner");
-	CHECK(strcmp(v44_dictionary_encoder_result_name(
-			     V44_DICTIONARY_ENCODER_OK),
-		     "ok") == 0 &&
-	      strcmp(v44_dictionary_encoder_result_name(
-			     V44_DICTIONARY_ENCODER_FULL),
-		     "full") == 0 &&
-	      strcmp(v44_dictionary_encoder_result_name(
-			     V44_DICTIONARY_ENCODER_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v44_dictionary_encoder_result_name(
-			     (enum v44_dictionary_encoder_result)99),
-		     "unknown") == 0,
-	      "V.44 encoder dictionary result names changed");
 	v44_dictionary_encoder_destroy(NULL);
 	return true;
 }
@@ -370,7 +357,7 @@ int main(void)
 		  test_bounded_exhaustion_and_reset },
 		{ "longest match lookup", test_longest_match_lookup },
 		{ "extension lookup", test_extension_lookup },
-		{ "creation and result names", test_creation_and_result_names },
+		{ "creation", test_creation },
 	};
 	unsigned int failures = 0;
 

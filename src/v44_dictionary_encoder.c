@@ -291,17 +291,3 @@ uint32_t v44_dictionary_encoder_next_codeword(
 {
 	return dictionary_is_valid(encoder) ? encoder->next_codeword : 0;
 }
-
-const char *v44_dictionary_encoder_result_name(
-	enum v44_dictionary_encoder_result result)
-{
-	switch (result) {
-	case V44_DICTIONARY_ENCODER_OK:
-		return "ok";
-	case V44_DICTIONARY_ENCODER_FULL:
-		return "full";
-	case V44_DICTIONARY_ENCODER_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

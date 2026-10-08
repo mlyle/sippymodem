@@ -133,13 +133,6 @@ static bool test_defaults_and_api(void)
 	      v44_tx_monitor_flush(monitor, &decision) ==
 		      V44_TX_MONITOR_OK,
 	      "V.44 monitor API validation was not transactional");
-	CHECK(strcmp(v44_tx_monitor_result_name(
-			     V44_TX_MONITOR_DISABLED),
-		     "disabled") == 0 &&
-	      strcmp(v44_tx_monitor_result_name(
-			     (enum v44_tx_monitor_result)99),
-		     "unknown") == 0,
-	      "V.44 monitor result names changed");
 	v44_tx_monitor_destroy(monitor);
 	v44_tx_monitor_destroy(NULL);
 	return true;

@@ -573,27 +573,3 @@ bool v44_duplex_get_last_transmit_sample(
 	       v44_tx_monitor_get_last_sample(
 		       duplex->transmit_monitor, sample);
 }
-
-const char *v44_duplex_result_name(
-	enum v44_duplex_result result)
-{
-	switch (result) {
-	case V44_DUPLEX_OK:
-		return "ok";
-	case V44_DUPLEX_NEED_INPUT:
-		return "need input";
-	case V44_DUPLEX_NEED_OUTPUT:
-		return "need output";
-	case V44_DUPLEX_FLUSHED:
-		return "flushed";
-	case V44_DUPLEX_ENTER_PARAMETER:
-		return "enter parameter";
-	case V44_DUPLEX_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V44_DUPLEX_INVALID_STATE:
-		return "invalid state";
-	case V44_DUPLEX_PROCEDURAL_ERROR:
-		return "procedural error";
-	}
-	return "unknown";
-}

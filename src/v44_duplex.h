@@ -128,7 +128,4 @@ bool v44_duplex_get_last_transmit_sample(
 	const struct v44_duplex *duplex,
 	struct v44_tx_monitor_sample *sample);
 
-const char *v44_duplex_result_name(
-	enum v44_duplex_result result);
-
 #endif

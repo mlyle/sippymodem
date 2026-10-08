@@ -668,20 +668,6 @@ static bool test_transmit_backpressure_and_flush_state(void)
 static bool test_literal_bypass_and_api(void)
 {
 	static const uint8_t plain[] = { 1, 2, 3, 4, 5 };
-	static const struct {
-		enum v44_duplex_result result;
-		const char *name;
-	} names[] = {
-		{ V44_DUPLEX_OK, "ok" },
-		{ V44_DUPLEX_NEED_INPUT, "need input" },
-		{ V44_DUPLEX_NEED_OUTPUT, "need output" },
-		{ V44_DUPLEX_FLUSHED, "flushed" },
-		{ V44_DUPLEX_ENTER_PARAMETER, "enter parameter" },
-		{ V44_DUPLEX_INVALID_ARGUMENT, "invalid argument" },
-		{ V44_DUPLEX_INVALID_STATE, "invalid state" },
-		{ V44_DUPLEX_PROCEDURAL_ERROR,
-		  "procedural error" },
-	};
 	struct v44_duplex_config config = { 0 };
 	struct v44_duplex_config adaptive_without_transmit = {
 		.transmit_adaptation_enabled = true,
@@ -773,17 +759,6 @@ static bool test_literal_bypass_and_api(void)
 	      v44_duplex_resume_receive_transparent(NULL) ==
 		      V44_DUPLEX_INVALID_ARGUMENT,
 	      "V.44 duplex accepted invalid API arguments");
-	for (size_t index = 0; index < ARRAY_LENGTH(names); ++index)
-		CHECK(strcmp(
-			      v44_duplex_result_name(
-				      names[index].result),
-			      names[index].name) == 0,
-		      "V.44 duplex result name changed");
-	CHECK(strcmp(
-		      v44_duplex_result_name(
-			      (enum v44_duplex_result)99),
-		      "unknown") == 0,
-	      "unknown V.44 duplex result name changed");
 	v44_duplex_destroy(duplex);
 	v44_duplex_destroy(NULL);
 	return true;

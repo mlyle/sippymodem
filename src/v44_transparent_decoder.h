@@ -65,7 +65,4 @@ enum v44_transparent_result
 v44_transparent_decoder_finish(
 	struct v44_transparent_decoder *decoder);
 
-const char *v44_transparent_result_name(
-	enum v44_transparent_result result);
-
 #endif

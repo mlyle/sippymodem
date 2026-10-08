@@ -491,15 +491,6 @@ static bool test_validation_and_callback_failures(void)
 		      path, NULL, 0, &length) ==
 		      V44_CHARACTER_PATH_IO_ERROR,
 	      "writer contract failure did not preserve consumed input");
-	CHECK(strcmp(v44_character_path_result_name(
-		     V44_CHARACTER_PATH_IDLE), "idle") == 0 &&
-	      strcmp(v44_character_path_result_name(
-		     V44_CHARACTER_PATH_NEED_OUTPUT),
-		     "need output") == 0 &&
-	      strcmp(v44_character_path_result_name(
-		     (enum v44_character_path_result)99),
-		     "unknown") == 0,
-	      "V.44 character path result names changed");
 	v44_character_path_destroy(path);
 	io = (struct character_io){
 		.sink = &octet,

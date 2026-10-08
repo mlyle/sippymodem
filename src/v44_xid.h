@@ -69,7 +69,4 @@ enum v44_xid_result v44_xid_negotiate(
 	const struct v44_offer *peer,
 	struct v44_offer *negotiated);
 
-const char *v44_xid_result_name(
-	enum v44_xid_result result);
-
 #endif

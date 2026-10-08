@@ -230,22 +230,6 @@ static bool test_incremental_and_malformed_commands(void)
 
 static bool test_api_contract(void)
 {
-	static const struct {
-		enum v44_transparent_result result;
-		const char *name;
-	} names[] = {
-		{ V44_TRANSPARENT_OK, "ok" },
-		{ V44_TRANSPARENT_NEED_INPUT, "need input" },
-		{ V44_TRANSPARENT_NEED_OUTPUT, "need output" },
-		{ V44_TRANSPARENT_ENTER_COMPRESSED,
-		  "enter compressed" },
-		{ V44_TRANSPARENT_ENTER_PARAMETER,
-		  "enter parameter" },
-		{ V44_TRANSPARENT_INVALID_ARGUMENT,
-		  "invalid argument" },
-		{ V44_TRANSPARENT_PROCEDURAL_ERROR,
-		  "procedural error" },
-	};
 	struct v44_transparent_decoder *decoder =
 		v44_transparent_decoder_create();
 	const uint8_t *input = NULL;
@@ -290,17 +274,6 @@ static bool test_api_contract(void)
 	      v44_transparent_decoder_finish(decoder) ==
 		      V44_TRANSPARENT_OK,
 	      "empty V.44 transparent input changed state or output");
-	for (size_t index = 0; index < ARRAY_LENGTH(names); ++index)
-		CHECK(strcmp(
-			      v44_transparent_result_name(
-				      names[index].result),
-			      names[index].name) == 0,
-		      "V.44 transparent result %zu has the wrong name", index);
-	CHECK(strcmp(
-		      v44_transparent_result_name(
-			      (enum v44_transparent_result)99),
-		      "unknown") == 0,
-	      "unknown V.44 transparent result has the wrong name");
 	v44_transparent_decoder_destroy(decoder);
 	v44_transparent_decoder_destroy(NULL);
 	return true;

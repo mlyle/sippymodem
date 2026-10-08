@@ -305,19 +305,3 @@ bool v44_tx_monitor_get_last_sample(
 	*sample = monitor->last_sample;
 	return true;
 }
-
-const char *v44_tx_monitor_result_name(
-	enum v44_tx_monitor_result result)
-{
-	switch (result) {
-	case V44_TX_MONITOR_OK:
-		return "ok";
-	case V44_TX_MONITOR_DISABLED:
-		return "disabled";
-	case V44_TX_MONITOR_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V44_TX_MONITOR_INVALID_STATE:
-		return "invalid state";
-	}
-	return "unknown";
-}

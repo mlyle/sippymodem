@@ -172,25 +172,3 @@ v44_transparent_decoder_finish(
 	return decoder->escape_pending ? fail_decoder(decoder) :
 					 V44_TRANSPARENT_OK;
 }
-
-const char *v44_transparent_result_name(
-	enum v44_transparent_result result)
-{
-	switch (result) {
-	case V44_TRANSPARENT_OK:
-		return "ok";
-	case V44_TRANSPARENT_NEED_INPUT:
-		return "need input";
-	case V44_TRANSPARENT_NEED_OUTPUT:
-		return "need output";
-	case V44_TRANSPARENT_ENTER_COMPRESSED:
-		return "enter compressed";
-	case V44_TRANSPARENT_ENTER_PARAMETER:
-		return "enter parameter";
-	case V44_TRANSPARENT_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V44_TRANSPARENT_PROCEDURAL_ERROR:
-		return "procedural error";
-	}
-	return "unknown";
-}

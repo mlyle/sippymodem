@@ -92,7 +92,4 @@ size_t v44_dictionary_encoder_history_length(
 uint32_t v44_dictionary_encoder_next_codeword(
 	const struct v44_dictionary_encoder *encoder);
 
-const char *v44_dictionary_encoder_result_name(
-	enum v44_dictionary_encoder_result result);
-
 #endif

@@ -272,19 +272,3 @@ enum v44_xid_result v44_xid_negotiate(
 	*negotiated = selected;
 	return V44_XID_OK;
 }
-
-const char *v44_xid_result_name(
-	enum v44_xid_result result)
-{
-	switch (result) {
-	case V44_XID_OK:
-		return "ok";
-	case V44_XID_NEED_OUTPUT:
-		return "need output";
-	case V44_XID_MALFORMED:
-		return "malformed";
-	case V44_XID_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

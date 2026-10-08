@@ -248,9 +248,6 @@ static bool test_extensions_and_rejection(void)
 
 static bool test_api_contract(void)
 {
-	static const char *const names[] = {
-		"ok", "need output", "malformed", "invalid argument",
-	};
 	struct v44_offer offer = v44_default_offer();
 	struct v44_offer unchanged = offer;
 	uint8_t wire[V44_XID_OFFER_SIZE];
@@ -287,17 +284,6 @@ static bool test_api_contract(void)
 	      v44_xid_negotiate(&unchanged, &unchanged, NULL) ==
 		      V44_XID_INVALID_ARGUMENT,
 	      "V.44 XID parser or selector accepted an invalid argument");
-	for (size_t index = 0; index < ARRAY_LENGTH(names); ++index)
-		CHECK(strcmp(
-			      v44_xid_result_name(
-				      (enum v44_xid_result)index),
-			      names[index]) == 0,
-		      "V.44 XID result %zu has the wrong name", index);
-	CHECK(strcmp(
-		      v44_xid_result_name(
-			      (enum v44_xid_result)99),
-		      "unknown") == 0,
-	      "unknown V.44 XID result has the wrong name");
 	return true;
 }
 
