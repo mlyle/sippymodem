@@ -146,23 +146,3 @@ bool v92_ja_decoder_parameters(
 		       decoder->descriptor, sizeof(decoder->descriptor),
 		       decoder->descriptor_bits, parameters) == V92_PCM_DIL_OK;
 }
-
-const char *v92_ja_decoder_result_name(
-	enum v92_ja_decoder_result result)
-{
-	switch (result) {
-	case V92_JA_DECODER_OK:
-		return "ok";
-	case V92_JA_DECODER_DETECTED:
-		return "detected";
-	case V92_JA_DECODER_REJECTED:
-		return "rejected";
-	case V92_JA_DECODER_COMPLETE:
-		return "complete";
-	case V92_JA_DECODER_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V92_JA_DECODER_INVALID_STATE:
-		return "invalid state";
-	}
-	return "unknown";
-}

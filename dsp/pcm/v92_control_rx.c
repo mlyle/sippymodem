@@ -394,21 +394,3 @@ enum v92_control_rx_result v92_control_rx_receive_bit(
 	*event = emitted;
 	return V92_CONTROL_RX_OK;
 }
-
-const char *v92_control_rx_result_name(
-	enum v92_control_rx_result result)
-{
-	switch (result) {
-	case V92_CONTROL_RX_OK:
-		return "ok";
-	case V92_CONTROL_RX_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V92_CONTROL_RX_INVALID_PARAMETERS:
-		return "invalid parameters";
-	case V92_CONTROL_RX_INVALID_STATE:
-		return "invalid state";
-	case V92_CONTROL_RX_INTERNAL_ERROR:
-		return "internal error";
-	}
-	return "unknown";
-}

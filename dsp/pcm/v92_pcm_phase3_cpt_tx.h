@@ -74,7 +74,4 @@ enum v92_pcm_phase3_cpt_tx_result v92_pcm_phase3_cpt_tx_next(
 	struct v92_pcm_phase3_cpt_tx *transmitter,
 	struct v90_pcm_symbol *symbol);
 
-const char *v92_pcm_phase3_cpt_tx_result_name(
-	enum v92_pcm_phase3_cpt_tx_result result);
-
 #endif /* V92_PCM_PHASE3_CPT_TX_H */

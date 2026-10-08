@@ -263,39 +263,3 @@ v92_pcm_phase3_initial_tx_request_finish(
 	*tx = next;
 	return V92_PCM_PHASE3_INITIAL_TX_OK;
 }
-
-const char *v92_pcm_phase3_initial_tx_stage_name(
-	enum v92_pcm_phase3_initial_tx_stage stage)
-{
-	switch (stage) {
-	case V92_PCM_PHASE3_INITIAL_TX_OPENING:
-		return "opening";
-	case V92_PCM_PHASE3_INITIAL_TX_TRN1U:
-		return "TRN1u";
-	case V92_PCM_PHASE3_INITIAL_TX_JA:
-		return "Ja";
-	case V92_PCM_PHASE3_INITIAL_TX_COMPLETE:
-		return "complete";
-	}
-	return "unknown";
-}
-
-const char *v92_pcm_phase3_initial_tx_result_name(
-	enum v92_pcm_phase3_initial_tx_result result)
-{
-	switch (result) {
-	case V92_PCM_PHASE3_INITIAL_TX_OK:
-		return "ok";
-	case V92_PCM_PHASE3_INITIAL_TX_NEED_MD_SYMBOL:
-		return "need MD symbol";
-	case V92_PCM_PHASE3_INITIAL_TX_DONE:
-		return "done";
-	case V92_PCM_PHASE3_INITIAL_TX_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V92_PCM_PHASE3_INITIAL_TX_INVALID_STATE:
-		return "invalid state";
-	case V92_PCM_PHASE3_INITIAL_TX_INTERNAL_ERROR:
-		return "internal error";
-	}
-	return "unknown";
-}

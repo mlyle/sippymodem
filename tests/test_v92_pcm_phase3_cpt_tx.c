@@ -320,10 +320,6 @@ static bool test_contracts(void)
 	struct v92_pcm_phase3_cpt_tx before;
 	struct v90_pcm_symbol symbol;
 	struct v90_pcm_symbol symbol_before;
-	static const char *const names[] = {
-		"ok", "done", "invalid argument", "invalid state",
-		"internal error",
-	};
 
 	memset(&transmitter, 0xa5, sizeof(transmitter));
 	before = transmitter;
@@ -401,17 +397,6 @@ static bool test_contracts(void)
 	      memcmp(&symbol, &symbol_before, sizeof(symbol)) == 0,
 	      "CPt record overflow was not transactional");
 
-	for (size_t index = 0; index < ARRAY_LENGTH(names); ++index)
-		CHECK(strcmp(
-			      v92_pcm_phase3_cpt_tx_result_name(
-				      (enum v92_pcm_phase3_cpt_tx_result)index),
-			      names[index]) == 0,
-		      "CPt transmitter result name %zu differed", index);
-	CHECK(strcmp(
-		      v92_pcm_phase3_cpt_tx_result_name(
-			      (enum v92_pcm_phase3_cpt_tx_result)-1),
-		      "unknown") == 0,
-	      "unknown CPt transmitter result name differed");
 	return true;
 }
 

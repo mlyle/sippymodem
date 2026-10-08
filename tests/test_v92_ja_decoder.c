@@ -278,10 +278,6 @@ static bool test_contracts(void)
 		.upstream_rate_mask = UINT32_C(0xa5a5a5a5),
 	};
 	struct v92_pcm_dil_parameters parameters = sentinel;
-	static const char *const names[] = {
-		"ok", "detected", "rejected", "complete", "invalid argument",
-		"invalid state",
-	};
 
 	memset(&decoder, 0xa5, sizeof(decoder));
 	before = decoder;
@@ -315,17 +311,6 @@ static bool test_contracts(void)
 		      V92_JA_DECODER_INVALID_STATE &&
 	      memcmp(&decoder, &before, sizeof(decoder)) == 0,
 	      "corrupt Ja decoder state was not rejected transactionally");
-	for (size_t index = 0; index < ARRAY_LENGTH(names); ++index)
-		CHECK(strcmp(
-			      v92_ja_decoder_result_name(
-				      (enum v92_ja_decoder_result)index),
-			      names[index]) == 0,
-		      "Ja decoder result name %zu differed", index);
-	CHECK(strcmp(
-		      v92_ja_decoder_result_name(
-			      (enum v92_ja_decoder_result)-1),
-		      "unknown") == 0,
-	      "unknown Ja decoder result name differed");
 	return true;
 }
 

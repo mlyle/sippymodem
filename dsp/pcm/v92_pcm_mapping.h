@@ -83,7 +83,4 @@ enum v92_pcm_mapping_result v92_pcm_mapping_positive_level(
 	const struct v92_pcm_mapping *mapping, size_t symbol,
 	uint8_t ordinal, int16_t *level);
 
-const char *v92_pcm_mapping_result_name(
-	enum v92_pcm_mapping_result result);
-
 #endif /* V92_PCM_MAPPING_H */

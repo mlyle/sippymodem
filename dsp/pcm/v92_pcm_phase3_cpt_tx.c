@@ -306,21 +306,3 @@ enum v92_pcm_phase3_cpt_tx_result v92_pcm_phase3_cpt_tx_next(
 	*symbol = generated;
 	return V92_PCM_PHASE3_CPT_TX_OK;
 }
-
-const char *v92_pcm_phase3_cpt_tx_result_name(
-	enum v92_pcm_phase3_cpt_tx_result result)
-{
-	switch (result) {
-	case V92_PCM_PHASE3_CPT_TX_OK:
-		return "ok";
-	case V92_PCM_PHASE3_CPT_TX_DONE:
-		return "done";
-	case V92_PCM_PHASE3_CPT_TX_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V92_PCM_PHASE3_CPT_TX_INVALID_STATE:
-		return "invalid state";
-	case V92_PCM_PHASE3_CPT_TX_INTERNAL_ERROR:
-		return "internal error";
-	}
-	return "unknown";
-}

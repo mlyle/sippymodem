@@ -265,19 +265,3 @@ enum v92_pcm_mapping_result v92_pcm_mapping_positive_level(
 	*level = constellation->positive_linear[ordinal];
 	return V92_PCM_MAPPING_OK;
 }
-
-const char *v92_pcm_mapping_result_name(
-	enum v92_pcm_mapping_result result)
-{
-	switch (result) {
-	case V92_PCM_MAPPING_OK:
-		return "ok";
-	case V92_PCM_MAPPING_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V92_PCM_MAPPING_INVALID_PARAMETERS:
-		return "invalid parameters";
-	case V92_PCM_MAPPING_OUT_OF_RANGE:
-		return "out of range";
-	}
-	return "unknown";
-}

@@ -50,7 +50,4 @@ bool v92_ja_decoder_parameters(
 	const struct v92_ja_decoder *decoder,
 	struct v92_pcm_dil_parameters *parameters);
 
-const char *v92_ja_decoder_result_name(
-	enum v92_ja_decoder_result result);
-
 #endif /* V92_JA_DECODER_H */

@@ -437,10 +437,6 @@ static bool test_contracts(void)
 	struct v92_cpt_parameters parameters;
 	struct v92_cpt_parameters before_parameters;
 	uint8_t previous_sign = 0xa5u;
-	static const char *const names[] = {
-		"ok", "done", "invalid argument", "invalid state",
-		"internal error",
-	};
 
 	CHECK(v92_pcm_phase3_cpt_rx_init(NULL) ==
 			      V92_PCM_PHASE3_CPT_RX_INVALID_ARGUMENT &&
@@ -522,17 +518,6 @@ static bool test_contracts(void)
 		      V92_PCM_PHASE3_CPT_RX_INVALID_STATE &&
 	      memcmp(&receiver, &before, sizeof(receiver)) == 0,
 	      "corrupt CPt receiver state was not rejected transactionally");
-	for (size_t index = 0; index < ARRAY_LENGTH(names); ++index)
-		CHECK(strcmp(
-			      v92_pcm_phase3_cpt_rx_result_name(
-				      (enum v92_pcm_phase3_cpt_rx_result)index),
-			      names[index]) == 0,
-		      "CPt receiver result name %zu differed", index);
-	CHECK(strcmp(
-		      v92_pcm_phase3_cpt_rx_result_name(
-			      (enum v92_pcm_phase3_cpt_rx_result)-1),
-		      "unknown") == 0,
-	      "unknown CPt receiver result name differed");
 	return true;
 }
 

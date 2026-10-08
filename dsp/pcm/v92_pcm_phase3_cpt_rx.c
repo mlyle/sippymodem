@@ -369,21 +369,3 @@ bool v92_pcm_phase3_cpt_rx_previous_sign(
 	*previous_sign = receiver->coding.previous_sign;
 	return true;
 }
-
-const char *v92_pcm_phase3_cpt_rx_result_name(
-	enum v92_pcm_phase3_cpt_rx_result result)
-{
-	switch (result) {
-	case V92_PCM_PHASE3_CPT_RX_OK:
-		return "ok";
-	case V92_PCM_PHASE3_CPT_RX_DONE:
-		return "done";
-	case V92_PCM_PHASE3_CPT_RX_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V92_PCM_PHASE3_CPT_RX_INVALID_STATE:
-		return "invalid state";
-	case V92_PCM_PHASE3_CPT_RX_INTERNAL_ERROR:
-		return "internal error";
-	}
-	return "unknown";
-}

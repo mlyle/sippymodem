@@ -97,7 +97,4 @@ bool v92_pcm_phase3_cpt_rx_previous_sign(
 	const struct v92_pcm_phase3_cpt_rx *receiver,
 	uint8_t *previous_sign);
 
-const char *v92_pcm_phase3_cpt_rx_result_name(
-	enum v92_pcm_phase3_cpt_rx_result result);
-
 #endif /* V92_PCM_PHASE3_CPT_RX_H */

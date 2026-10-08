@@ -119,7 +119,4 @@ enum v92_control_rx_result v92_control_rx_receive_bit(
 	struct v92_control_rx *receiver, uint8_t bit,
 	struct v92_control_event *event);
 
-const char *v92_control_rx_result_name(
-	enum v92_control_rx_result result);
-
 #endif /* V92_CONTROL_RX_H */

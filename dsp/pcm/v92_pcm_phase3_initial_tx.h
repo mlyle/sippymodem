@@ -73,9 +73,4 @@ enum v92_pcm_phase3_initial_tx_result
 v92_pcm_phase3_initial_tx_request_finish(
 	struct v92_pcm_phase3_initial_tx *tx);
 
-const char *v92_pcm_phase3_initial_tx_stage_name(
-	enum v92_pcm_phase3_initial_tx_stage stage);
-const char *v92_pcm_phase3_initial_tx_result_name(
-	enum v92_pcm_phase3_initial_tx_result result);
-
 #endif /* V92_PCM_PHASE3_INITIAL_TX_H */

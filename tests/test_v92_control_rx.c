@@ -676,10 +676,6 @@ static bool test_contracts(void)
 	struct v92_control_rx before;
 	struct v92_control_event event;
 	struct v92_control_event event_before;
-	static const char *const names[] = {
-		"ok", "invalid argument", "invalid parameters",
-		"invalid state", "internal error",
-	};
 
 	memset(&receiver, 0xa5, sizeof(receiver));
 	before = receiver;
@@ -730,17 +726,6 @@ static bool test_contracts(void)
 	      memcmp(&receiver, &before, sizeof(receiver)) == 0 &&
 	      memcmp(&event, &event_before, sizeof(event)) == 0,
 	      "invalid control receiver state was not transactional");
-	for (size_t index = 0u; index < ARRAY_LENGTH(names); ++index)
-		CHECK(strcmp(
-			      v92_control_rx_result_name(
-				      (enum v92_control_rx_result)index),
-			      names[index]) == 0,
-		      "control receiver result name %zu changed", index);
-	CHECK(strcmp(
-		      v92_control_rx_result_name(
-			      (enum v92_control_rx_result)-1),
-		      "unknown") == 0,
-	      "unknown control receiver result name changed");
 	return true;
 }
 

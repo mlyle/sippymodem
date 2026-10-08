@@ -333,26 +333,6 @@ static bool test_decode_contracts(void)
 	return true;
 }
 
-static bool test_result_names(void)
-{
-	CHECK(strcmp(v92_pcm_mapping_result_name(V92_PCM_MAPPING_OK), "ok") ==
-		      0 &&
-	      strcmp(v92_pcm_mapping_result_name(
-			     V92_PCM_MAPPING_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v92_pcm_mapping_result_name(
-			     V92_PCM_MAPPING_INVALID_PARAMETERS),
-		     "invalid parameters") == 0 &&
-	      strcmp(v92_pcm_mapping_result_name(
-			     V92_PCM_MAPPING_OUT_OF_RANGE),
-		     "out of range") == 0 &&
-	      strcmp(v92_pcm_mapping_result_name(
-			     (enum v92_pcm_mapping_result)99),
-		     "unknown") == 0,
-	      "mapping result names changed");
-	return true;
-}
-
 struct test_case {
 	const char *name;
 	bool (*run)(void);
@@ -365,7 +345,6 @@ int main(void)
 		{ "phase constellations", test_phase_constellations },
 		{ "rejection and transactionality",
 		  test_rejection_and_transactionality },
-		{ "result names", test_result_names },
 		{ "decode contracts", test_decode_contracts },
 	};
 	unsigned int failures = 0u;
