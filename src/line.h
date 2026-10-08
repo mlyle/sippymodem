@@ -23,4 +23,10 @@ enum sip_signaling_result modem_line_last_signaling_result(const struct modem_li
 struct slmodem_calls *modem_line_calls(struct modem_line *line);
 const struct recording_files *modem_line_recording(const struct modem_line *line);
 
+/* SDK media jobs never enter shared signaling. The owner flushes any DSP stop
+ * only after every line has returned from its bounded media batch. */
+enum modem_host_result modem_line_process_media(struct modem_line *line,
+	uint64_t now_ns, size_t *datagrams);
+enum sip_signaling_result modem_line_flush_signaling(struct modem_line *line);
+
 #endif

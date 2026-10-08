@@ -17,7 +17,8 @@ import time
 
 CORE_TESTS = {
     'test_config', 'test_main', 'test_runtime', 'test_log_buffer', 'test_log_target',
-    'test_host', 'test_session', 'test_loop', 'test_library', 'test_sip_signaling',
+    'test_host', 'test_session', 'test_loop', 'test_library', 'test_media_workers',
+    'test_sip_signaling',
     'test_native_core', 'test_native_core_debug', 'test_native_dte', 'test_terminal',
     'test_slmodem_adapter', 'test_slmodem_driver', 'test_slmodem_calls',
     'test_slmodem_terminal', 'test_audio_path', 'test_audio_scheduler', 'test_rtp',

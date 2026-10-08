@@ -2,16 +2,61 @@
 #define _DEFAULT_SOURCE
 #include <sippymodem.h>
 #include <sippymodem_fd.h>
+#include "g711.h"
 #include "test.h"
 
 #include <stdio.h>
+#include <errno.h>
+#include <pthread.h>
+#include <stdatomic.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <string.h>
 #include <unistd.h>
 
+static pthread_t io_owner;
+static atomic_bool wrong_io_thread;
+ssize_t __real_sendto(int, const void *, size_t, int, const struct sockaddr *, socklen_t);
+ssize_t __wrap_sendto(int fd, const void *bytes, size_t count, int flags,
+	const struct sockaddr *address, socklen_t length)
+{
+	if (!pthread_equal(io_owner, pthread_self()))
+		atomic_store(&wrong_io_thread, true);
+	return __real_sendto(fd, bytes, count, flags, address, length);
+}
+ssize_t __real_recvmsg(int, struct msghdr *, int);
+ssize_t __wrap_recvmsg(int fd, struct msghdr *message, int flags)
+{
+	if (!pthread_equal(io_owner, pthread_self()))
+		atomic_store(&wrong_io_thread, true);
+	return __real_recvmsg(fd, message, flags);
+}
+
+ssize_t __real_recv(int, void *, size_t, int);
+ssize_t __wrap_recv(int fd, void *bytes, size_t count, int flags)
+{
+	if (!pthread_equal(io_owner, pthread_self()))
+		atomic_store(&wrong_io_thread, true);
+	return __real_recv(fd, bytes, count, flags);
+}
+
 struct modem;
+static atomic_uint dsp_epoch, dsp_count;
+void __real_modem_process_g711(struct modem *, enum g711_law,
+	const uint8_t *, void *, const bool *, uint8_t *, void *, int, bool *);
+void __wrap_modem_process_g711(struct modem *modem, enum g711_law law,
+	const uint8_t *rx, void *input, const bool *mask, uint8_t *tx,
+	void *output, int count, bool *exact)
+{
+	static _Thread_local unsigned int seen_epoch;
+	unsigned int epoch = atomic_load(&dsp_epoch);
+	if (epoch != 0 && seen_epoch != epoch) {
+		seen_epoch = epoch;
+		atomic_fetch_add(&dsp_count, 1);
+	}
+	__real_modem_process_g711(modem, law, rx, input, mask, tx, output, count, exact);
+}
 int __real_modem_stop_now(struct modem *modem);
 int __real_pjsua_destroy2(unsigned int flags);
 static bool fail_native_stop, fail_sdk_stop;
@@ -34,6 +79,19 @@ int __wrap_pjsua_destroy2(unsigned int flags)
 	return result;
 }
 
+struct media_workers;
+struct media_workers *__real_media_workers_create(unsigned int threads);
+static bool fail_media_start;
+struct media_workers *__wrap_media_workers_create(unsigned int threads)
+{
+	if (fail_media_start) {
+		fail_media_start = false;
+		errno = EAGAIN;
+		return NULL;
+	}
+	return __real_media_workers_create(threads);
+}
+
 #define EXPECT(condition) CHECK((condition), "%s", #condition)
 
 static bool step(struct sippymodem_server *server, uint64_t *now)
@@ -53,9 +111,12 @@ static bool step(struct sippymodem_server *server, uint64_t *now)
 
 static bool test_owned_loopback(void)
 {
+	atomic_store(&dsp_count, 0);
+	atomic_store(&dsp_epoch, 1);
 	struct sippymodem_server_config config;
 	sippymodem_server_config_init(&config);
 	config.max_lines = 4;
+	config.dsp_threads = 4;
 	config.public_address = "127.0.0.1";
 	config.bound_address = "127.0.0.1";
 	config.identity_uri = "sip:+12025550123@127.0.0.1";
@@ -397,6 +458,8 @@ static bool test_owned_loopback(void)
 	EXPECT(disconnected_logged);
 
 	sippymodem_server_destroy(server);
+	atomic_store(&dsp_epoch, 0);
+	EXPECT(config.dsp_threads == 1 ? atomic_load(&dsp_count) == 1 : atomic_load(&dsp_count) > 1);
 	return true;
 }
 
@@ -673,6 +736,9 @@ static bool test_timeout_and_bounds(void)
 	struct sippymodem_server_config config;
 	sippymodem_server_config_init(&config);
 	config.max_lines = 2;
+	config.dsp_threads = 33;
+	EXPECT(sippymodem_server_create(&config) == NULL && errno == EINVAL);
+	config.dsp_threads = 1;
 	config.public_address = config.bound_address = "127.0.0.1";
 	struct sippymodem_server *server = sippymodem_server_create(&config);
 	EXPECT(server != NULL);
@@ -696,6 +762,8 @@ static bool test_timeout_and_bounds(void)
 	lc.min_bps = 0;
 	struct sippymodem_line *line = sippymodem_line_create(server, &lc);
 	EXPECT(line != NULL);
+	fail_media_start = true;
+	EXPECT(sippymodem_server_start(server) == SIPPYMODEM_ERROR);
 	EXPECT(sippymodem_server_start(server) == SIPPYMODEM_OK);
 	EXPECT(sippymodem_line_start(line) == SIPPYMODEM_OK);
 	EXPECT(sippymodem_line_start(line) == SIPPYMODEM_OK);
@@ -1087,6 +1155,7 @@ static bool test_startup_transmit_completion(void)
 		struct sippymodem_server_config config;
 		sippymodem_server_config_init(&config);
 		config.max_lines = 2;
+		config.dsp_threads = profile == 0 ? 1 : 2;
 		config.public_address = config.bound_address = "127.0.0.1";
 		struct sippymodem_server *server = sippymodem_server_create(&config);
 		EXPECT(server != NULL);
@@ -1112,7 +1181,7 @@ static bool test_startup_transmit_completion(void)
 		char target[128];
 		snprintf(target, sizeof(target), "sip:5678@127.0.0.1:%u", sippymodem_listen_port(server));
 		EXPECT(sippymodem_dial(caller, target, &generation) == SIPPYMODEM_OK);
-		bool submitted = false, complete = false, caller_ready = false;
+		bool answered = false, submitted = false, complete = false, caller_ready = false;
 		size_t count = 0;
 		unsigned char received[sizeof(greeting)] = { 0 };
 		for (unsigned i = 0; i < 30000; ++i) {
@@ -1121,8 +1190,11 @@ static bool test_startup_transmit_completion(void)
 			EXPECT(sippymodem_get_status(caller, &local) == SIPPYMODEM_OK);
 			EXPECT(sippymodem_get_status(answerer, &remote) == SIPPYMODEM_OK);
 			caller_ready |= local.ready;
-			if (remote.phase == SIPPYMODEM_RINGING)
+			if (remote.phase == SIPPYMODEM_RINGING && !answered) {
 				EXPECT(sippymodem_answer(answerer, remote.generation) == SIPPYMODEM_OK);
+				EXPECT(sippymodem_answer(answerer, remote.generation) == SIPPYMODEM_BUSY);
+				answered = true;
+			}
 			if (remote.ready && !submitted) {
 				/* A service can close before the caller reports CONNECT. */
 				EXPECT(!local.ready);
@@ -1319,5 +1391,9 @@ static bool test_transmit_completion(void)
 
 int main(void)
 {
-	return test_startup_transmit_completion() && test_transmit_completion() && test_endpoint_registrations() && test_huntgroups() && test_typed_credentials() && test_typed_accounts() && test_owned_loopback() && test_compressed_command_and_fd_eof() && test_timeout_and_bounds() ? 0 : 1;
+	io_owner = pthread_self();
+	bool passed = test_startup_transmit_completion() && test_transmit_completion() && test_endpoint_registrations() && test_huntgroups() && test_typed_credentials() && test_typed_accounts() && test_owned_loopback() && test_compressed_command_and_fd_eof() && test_timeout_and_bounds();
+	if (atomic_load(&wrong_io_thread))
+		fprintf(stderr, "network I/O escaped the SDK owner thread\n");
+	return passed && !atomic_load(&wrong_io_thread) ? 0 : 1;
 }

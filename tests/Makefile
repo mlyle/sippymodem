@@ -81,6 +81,7 @@ SDP_TEST_BINARY := $(BUILD_DIR)/test_sdp
 SDP_TEST_OBJECTS := $(BUILD_DIR)/test_sdp.o \
 	$(BUILD_DIR)/sdp.o $(BUILD_DIR)/media.o \
 	$(BUILD_DIR)/g711.o
+MEDIA_WORKERS_TEST_BINARY := $(BUILD_DIR)/test_media_workers
 LIBRARY_TEST_BINARY := $(BUILD_DIR)/test_library
 PJSIP_TEST_BINARY := $(BUILD_DIR)/test_sip_signaling
 PJSIP_TEST_OBJECTS := $(BUILD_DIR)/test_sip_signaling.o \
@@ -3240,7 +3241,7 @@ DS0_SIP_TEST_BINARY := $(BUILD_DIR)/test_ds0_sip
 DS0_PPP_TEST_BINARY := $(BUILD_DIR)/test_ds0_ppp
 DS0_CODEC_TEST_BINARY := $(BUILD_DIR)/test_ds0_codec
 
-TEST_BINARIES := $(BUILD_DIR)/test_log_target $(BUILD_DIR)/test_log_buffer $(BUILD_DIR)/test_ds0_probe $(DS0_DATAPUMP_TEST_BINARY) $(DS0_PPP_TEST_BINARY) $(DS0_CODEC_TEST_BINARY) $(BUILD_DIR)/test_packet_stats $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
+TEST_BINARIES := $(MEDIA_WORKERS_TEST_BINARY) $(BUILD_DIR)/test_log_target $(BUILD_DIR)/test_log_buffer $(BUILD_DIR)/test_ds0_probe $(DS0_DATAPUMP_TEST_BINARY) $(DS0_PPP_TEST_BINARY) $(DS0_CODEC_TEST_BINARY) $(BUILD_DIR)/test_packet_stats $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(SIP_URI_TEST_BINARY) $(SDP_TEST_BINARY) $(G711_TEST_BINARY) \
 	$(SAMPLE_MATH_TEST_BINARY) \
 	$(PCM_GAIN_TEST_BINARY) \
@@ -6192,7 +6193,7 @@ LIBRARY_INPUTS := $(wildcard ../src/*.c ../src/*.h ../dsp/*.c ../dsp/*.h ../dsp/
 	$(MAKE) -C ../src CC="$(CC)" CXX="$(CXX)" CCACHE="$(CCACHE)" \
 	 PJSIP_PACKAGE="$(PJSIP_PACKAGE)" PJSIP_DEPENDENCY="$(PJSIP_DEPENDENCY)" libsippymodem.a
 $(LIBRARY_TEST_BINARY): $(BUILD_DIR)/test_library.o ../src/libsippymodem.a $(PJSIP_DEPENDENCY)
-	$(CC) $(LDFLAGS) -Wl,--wrap=modem_stop_now -Wl,--wrap=pjsua_destroy2 -o $@ $(BUILD_DIR)/test_library.o ../src/libsippymodem.a $(PJSIP_LDLIBS) -lm
+	$(CC) $(LDFLAGS) -Wl,--wrap=modem_stop_now -Wl,--wrap=pjsua_destroy2 -Wl,--wrap=media_workers_create -Wl,--wrap=modem_process_g711 -Wl,--wrap=sendto -Wl,--wrap=recvmsg -Wl,--wrap=recv -o $@ $(BUILD_DIR)/test_library.o ../src/libsippymodem.a $(PJSIP_LDLIBS) -lm
 
 $(DS0_CODEC_TEST_BINARY): $(BUILD_DIR)/test_ds0_codec.o $(BUILD_DIR)/ds0_codec.o $(BUILD_DIR)/modem_pack.o $(BUILD_DIR)/modem_stubs.o
 	$(CC) $(LDFLAGS) -o $@ $^
@@ -6221,3 +6222,8 @@ $(BUILD_DIR)/log_target.o: ../src/log_target.c ../src/log_target.h | $(BUILD_DIR
 
 $(BUILD_DIR)/test_log_target: $(BUILD_DIR)/test_log_target.o $(BUILD_DIR)/log_target.o
 	$(CC) $(LDFLAGS) -Wl,--wrap=openlog -Wl,--wrap=closelog -Wl,--wrap=syslog -Wl,--wrap=__syslog_chk -o $@ $^
+
+$(MEDIA_WORKERS_TEST_BINARY): $(BUILD_DIR)/test_media_workers.o $(BUILD_DIR)/media_workers.o
+	$(CC) $(LDFLAGS) -Wl,--wrap=pthread_create -o $@ $^ -pthread
+$(BUILD_DIR)/media_workers.o: ../src/media_workers.c ../src/media_workers.h ../src/line.h
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<

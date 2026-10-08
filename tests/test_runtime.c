@@ -1223,3 +1223,9 @@ enum sip_signaling_result slmodem_driver_last_signaling_result(const struct slmo
 {
 	return driver != NULL ? driver->last_signaling_result : SIP_SIGNALING_INVALID_ARGUMENT;
 }
+
+enum sip_signaling_result slmodem_driver_flush_hangup(struct slmodem_driver *driver)
+{
+	/* This frontend fixture never defers signaling to a media worker. */
+	return slmodem_driver_last_signaling_result(driver);
+}

@@ -258,7 +258,8 @@ Identical bind/public/listen-port settings share one owned transport, including
 identical ephemeral-port settings (`listen_port == 0`). Different settings create
 separate transports. The initial limits are eight endpoints, 32 groups, and 32
 lines, including any default handles. One SDK server may be started per process;
-all of its operations run on one native owner thread.
+all public operations run on one native owner thread. Internal workers own
+distinct lines exclusively during a bounded `process()` batch.
 
 ## One direct SIP endpoint and five lines
 
@@ -454,6 +455,12 @@ owns and closes the returned peer fd.
   before a still-needed server. Server destroy frees remaining children and
   invalidates every child handle.
 
-The initial shared server has one DSP owner loop. Earlier Pi capacity measurements
-using separate modem processes across cores do not establish the same capacity
-for heavy modes in this shared owner. A deliberate worker boundary is future work.
+The shared server spreads media decoding, DSP, framing, and compression across
+native workers while keeping socket I/O, SIP control, and events on the submitting
+owner. Generated RTP packets use a bounded four-frame queue until the batch joins. Set
+`server_config.dsp_threads` to bound concurrency including that owner; zero
+uses the online CPU count capped by `max_lines`, and one is serial. Every media
+batch joins before `process()` returns, so public status and byte queues remain
+coherent between calls. Rebuild native consumers for the updated C header.
+Earlier Pi measurements with separate processes remain useful context;
+measure this shared worker implementation before choosing production capacity.

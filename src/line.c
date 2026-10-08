@@ -92,6 +92,8 @@ void modem_line_destroy(struct modem_line *line)
 		return;
 	if (line->modem != NULL && line->modem->started)
 		(void)modem_stop_now(line->modem);
+	if (line->driver.host != NULL)
+		(void)slmodem_driver_flush_hangup(&line->driver);
 	if (line->modem != NULL && line->modem->dev_data == &line->driver)
 		(void)slmodem_driver_detach(&line->driver);
 	modem_host_destroy(line->host);
@@ -124,5 +126,23 @@ const struct recording_files *modem_line_recording(const struct modem_line *line
 enum sip_signaling_result modem_line_last_signaling_result(const struct modem_line *line)
 {
 	return line != NULL ? slmodem_driver_last_signaling_result(&line->driver) :
+		SIP_SIGNALING_INVALID_ARGUMENT;
+}
+
+enum modem_host_result modem_line_process_media(struct modem_line *line,
+	uint64_t now_ns, size_t *datagrams)
+{
+	if (line == NULL)
+		return MODEM_HOST_INVALID_ARGUMENT;
+	line->driver.defer_hangup = true;
+	enum modem_host_result result = modem_host_step(line->host, now_ns, datagrams, NULL);
+	(void)modem_service_event(line->modem);
+	line->driver.defer_hangup = false;
+	return result;
+}
+
+enum sip_signaling_result modem_line_flush_signaling(struct modem_line *line)
+{
+	return line != NULL ? slmodem_driver_flush_hangup(&line->driver) :
 		SIP_SIGNALING_INVALID_ARGUMENT;
 }

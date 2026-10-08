@@ -174,6 +174,36 @@ static bool test_routes_call_control(void)
 	return true;
 }
 
+static bool test_deferred_hangup(void)
+{
+	struct slmodem_driver driver;
+	struct modem_host host = { .marker = 4 };
+	struct modem modem;
+	CHECK(attach_fixture(&driver, &modem, &host), "deferred stop fixture failed");
+	struct modem_driver *interface = slmodem_driver_interface(&driver);
+	modem.caller = 1;
+	driver.defer_hangup = true;
+	CHECK(interface->start(&modem) == -EBUSY && capture.dials == 0,
+	      "media processing entered SIP start");
+	CHECK(interface->stop(&modem) == 0 && driver.hangup_pending && capture.hangups == 0,
+	      "media processing entered SIP hangup");
+	CHECK(slmodem_driver_flush_hangup(&driver) == SIP_SIGNALING_BUSY && capture.hangups == 0,
+	      "hangup flushed before ownership returned");
+	driver.defer_hangup = false;
+	CHECK(!slmodem_driver_detach(&driver), "pending SIP hangup lost its owner");
+	CHECK(interface->start(&modem) == -EBUSY && capture.dials == 0,
+	      "new call started with stale pending hangup");
+	capture.hangup_result = SIP_SIGNALING_LIBRARY_ERROR;
+	CHECK(slmodem_driver_flush_hangup(&driver) == SIP_SIGNALING_LIBRARY_ERROR &&
+	      !driver.hangup_pending && capture.hangups == 1,
+	      "deferred hangup lost its signaling result");
+	CHECK(slmodem_driver_flush_hangup(&driver) == SIP_SIGNALING_OK && capture.hangups == 1,
+	      "hangup flushed twice");
+	CHECK(slmodem_driver_flush_hangup(NULL) == SIP_SIGNALING_INVALID_ARGUMENT,
+	      "missing driver accepted");
+	return true;
+}
+
 static bool test_validates_media_and_controls(void)
 {
 	struct slmodem_driver driver;
@@ -233,6 +263,7 @@ int main(void)
 	static const struct test_case tests[] = {
 		{ "attachment lifetime", test_attachment_lifetime },
 		{ "call control", test_routes_call_control },
+		{ "deferred hangup", test_deferred_hangup },
 		{ "media controls", test_validates_media_and_controls },
 	};
 	unsigned int failures = 0;

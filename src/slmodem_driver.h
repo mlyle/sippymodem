@@ -15,6 +15,8 @@ struct slmodem_driver {
 	struct modem *modem;
 	struct modem_host *host;
 	enum sip_signaling_result last_signaling_result;
+	/* Exclusively owned during a media job; SIP is serviced by its owner. */
+	bool defer_hangup, hangup_pending;
 };
 
 bool slmodem_driver_init(
@@ -35,5 +37,8 @@ bool slmodem_driver_detach(
 enum sip_signaling_result
 slmodem_driver_last_signaling_result(
 	const struct slmodem_driver *driver);
+
+/* Call only after the media job has returned to its signaling owner. */
+enum sip_signaling_result slmodem_driver_flush_hangup(struct slmodem_driver *driver);
 
 #endif

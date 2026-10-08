@@ -61,6 +61,8 @@ static int start_modem(struct modem *modem)
 
 	if (driver == NULL || !modem_media_is_compatible(modem))
 		return -EINVAL;
+	if (driver->defer_hangup || driver->hangup_pending)
+		return -EBUSY;
 	if (modem->caller) {
 		driver->last_signaling_result = modem_host_dial(
 			driver->host,
@@ -80,6 +82,11 @@ static int stop_modem(struct modem *modem)
 
 	if (driver == NULL)
 		return -EINVAL;
+	if (driver->defer_hangup) {
+		driver->hangup_pending = true;
+		return 0;
+	}
+	driver->hangup_pending = false;
 	driver->last_signaling_result = modem_host_hangup(driver->host);
 	/* The legacy core treats any stop error as "still started" after it has
 	 * already released its DSP state. Preserve the signaling result for the
@@ -168,7 +175,8 @@ bool slmodem_driver_detach(
 	struct slmodem_driver *driver)
 {
 	if (driver == NULL || driver->modem == NULL || driver->host == NULL ||
-	    driver->modem->dev_data != driver || driver->modem->started)
+	    driver->modem->dev_data != driver || driver->modem->started ||
+	    driver->defer_hangup || driver->hangup_pending)
 		return false;
 	driver->modem->dev_data = NULL;
 	driver->modem = NULL;
@@ -182,4 +190,18 @@ slmodem_driver_last_signaling_result(
 {
 	return driver != NULL ? driver->last_signaling_result :
 			      SIP_SIGNALING_INVALID_ARGUMENT;
+}
+
+
+enum sip_signaling_result slmodem_driver_flush_hangup(struct slmodem_driver *driver)
+{
+	if (driver == NULL || driver->modem == NULL || driver->host == NULL)
+		return SIP_SIGNALING_INVALID_ARGUMENT;
+	if (driver->defer_hangup)
+		return SIP_SIGNALING_BUSY;
+	if (!driver->hangup_pending)
+		return SIP_SIGNALING_OK;
+	driver->hangup_pending = false;
+	driver->last_signaling_result = modem_host_hangup(driver->host);
+	return driver->last_signaling_result;
 }

@@ -34,21 +34,31 @@ keys have a bounded 500 ms safe-reuse delay; temporary exhaustion returns an
 ordinary resource error, while existing calls keep running. Its release
 assertion policy applies only to the SDK; native test assertions remain enabled.
 
-The first implementation runs every line's SIP, RTP, DSP, framing, and
-compression on the same native owner thread. Each process pass polls SIP once,
-uses RTP batches of at most 64 packets (including call-boundary cleanup), and
-processes at most four audio frames per line. Excess received clock credit is
-retained for later passes. It returns an absolute monotonic deadline; an immediate deadline means
-more work is due. Backwards timestamps are rejected, and deadline addition
-saturates at `UINT64_MAX`. The call timeout covers SIP progress, early media,
-training, and error-control establishment until the line is ready.
+Each process pass polls SIP once on the native owner, prepares call transitions,
+drains RTP sockets, then processes distinct lines in a bounded worker batch.
+A line's RTP codec, DSP, framing, compression, recording, and DTE queues have
+one exclusive owner during its job. Generated packets are copied into at most
+four per-line slots and flushed by the owner after the batch joins. Socket I/O,
+SIP callbacks, disconnects, status, and events stay on the submitting owner.
+DSP stops request an owner-side SIP hangup after every job has returned.
+No job or borrowed buffer survives `process`, and public calls still belong to
+one native owner thread. No Python callback or payload copy occurs in protocol
+processing.
 
-These bounds limit work per pass; they are not a guarantee that every workload
-fits its realtime budget. Capacity measurements with separate modem processes
-across CPU cores do not establish capacity for this single owner. Future
-parallelism belongs at the server/line scheduling boundary: give whole line
-state to a worker, with explicit ownership transfer, rather than locking DSP
-internals. No Python callback or payload copy occurs in protocol processing.
+`server_config.dsp_threads` limits concurrency including the submitting owner.
+Zero chooses the online CPU count, capped by `max_lines` and 32; one uses the
+owner alone. Threads start with the server and join on stop, including failed
+partial startup. Rebuild native consumers when updating the public C header.
+
+Each pass drains at most 64 RTP packets per line (including call-boundary
+cleanup), and each job processes at most four audio frames. Excess received
+clock credit is retained for later passes. The owner waits for that finite batch, without
+waiting for network input, then returns an absolute monotonic deadline; an
+immediate deadline means more work is due. These work bounds do not guarantee
+that DSP or OS scheduling fits every realtime budget. Backwards timestamps are
+rejected, and deadline addition saturates at `UINT64_MAX`. The call timeout
+covers SIP progress, early media, training, and error-control establishment
+until the line is ready.
 
 Line admission and dial return BUSY while bounded cleanup of old queued RTP is
 pending. Processing drains those datagrams before a replacement call can start,
@@ -174,7 +184,7 @@ acknowledged by LAPM, or the raw encoder and modulator tail has been emitted.
 Raw completion cannot guarantee receipt by the remote application.
 V.21 and Bell 103 may accept answer-side input while the caller is still
 starting. That input stays queued until the startup mark interval finishes;
-even an empty completion waits for that interval before permitting hangup.
+even an empty completion waits for that interval before reporting completion.
 
 On remote SIP disconnect, the native owner drains accepted receive audio before
 returning `CLOSED` from an empty RX queue. This work is bounded per `process` call;

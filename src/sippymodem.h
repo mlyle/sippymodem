@@ -58,7 +58,8 @@ enum sippymodem_event_type {
 /* Strings are copied during create; settings longer than 255 bytes are rejected.
  * NULL means an empty optional setting.
  * Exactly one PJSUA server may be started per process. All operations for that
- * server belong to one native owner thread; the library never calls Python. */
+ * server belong to one native owner thread; internal workers exclusively process
+ * distinct lines during process(). The library never calls Python. */
 struct sippymodem_server_config {
 	const char *bound_address;
 	const char *public_address;
@@ -74,6 +75,8 @@ struct sippymodem_server_config {
 	bool register_account;
 	/* Explicit endpoint configurations can omit the legacy default endpoint. */
 	bool omit_default_endpoint;
+	/* DSP concurrency including the owner: 0 automatic, 1 serial, at most 32. */
+	unsigned int dsp_threads;
 };
 
 enum sippymodem_registration_state {

@@ -428,7 +428,7 @@ DS0_SOURCES := $(DSP_SOURCE_DIR)/ds0/ds0_codec.c $(DSP_SOURCE_DIR)/ds0/ds0_ppp.c
 DSP_SOURCES := $(DS0_SOURCES) $(SHARED_DSP_SOURCES) \
 	$(V21_202_SOURCES) $(V22_SOURCES) \
 	$(V32_SOURCES) $(PCM_SOURCES)
-SOURCES := byte_queue.c log_buffer.c config_defaults.c fd_adapter.c library.c line.c modem_frontend.c $(MODEM_CORE_SOURCES) $(APP_SOURCES) \
+SOURCES := byte_queue.c log_buffer.c config_defaults.c fd_adapter.c library.c line.c media_workers.c modem_frontend.c $(MODEM_CORE_SOURCES) $(APP_SOURCES) \
 	$(DSP_SOURCES)
 FRONTEND_SOURCES := log_target.c modem_frontend.c modem_at.c main.c loop.c runtime.c terminal.c slmodem_terminal.c config.c
 CORE_SOURCES := $(filter-out $(FRONTEND_SOURCES),$(SOURCES))

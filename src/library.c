@@ -4,6 +4,7 @@
 #include "byte_queue.h"
 #include "datapump_link.h"
 #include "line.h"
+#include "media_workers.h"
 #include "log_buffer.h"
 #include "modem_state.h"
 #include "sip_uri.h"
@@ -57,6 +58,8 @@ struct sippymodem_endpoint {
 struct sippymodem_server {
 	struct app_config config;
 	struct sip_server *sip;
+	struct media_workers *workers;
+	unsigned int dsp_threads;
 	struct sippymodem_endpoint *endpoints[ENDPOINT_LIMIT], *default_endpoint;
 	struct sippymodem_huntgroup *groups[LINE_LIMIT], *default_group;
 	struct sippymodem_line *lines[LINE_LIMIT];
@@ -674,7 +677,7 @@ enum sippymodem_result sippymodem_endpoint_get_status(const struct sippymodem_en
 struct sippymodem_server *sippymodem_server_create(const struct sippymodem_server_config *config)
 {
 	if (config == NULL || config->max_lines == 0 || config->max_lines > LINE_LIMIT ||
-	    config->listen_port > 65535) {
+	    config->listen_port > 65535 || config->dsp_threads > LINE_LIMIT) {
 		errno = EINVAL;
 		return NULL;
 	}
@@ -683,6 +686,11 @@ struct sippymodem_server *sippymodem_server_create(const struct sippymodem_serve
 		return NULL;
 	server->event_fd = -1;
 	server->max_lines = config->max_lines;
+	long processors = sysconf(_SC_NPROCESSORS_ONLN);
+	server->dsp_threads = config->dsp_threads != 0 ? config->dsp_threads :
+		processors <= 0 ? 1 : processors < LINE_LIMIT ? (unsigned int)processors : LINE_LIMIT;
+	if (server->dsp_threads > server->max_lines)
+		server->dsp_threads = server->max_lines;
 	config_init(&server->config);
 	struct sip_config *sip = &server->config.sip;
 	sip->listen_port = config->listen_port;
@@ -736,6 +744,11 @@ enum sippymodem_result sippymodem_server_start(struct sippymodem_server *server)
 	enum sip_signaling_result result = sip_server_open(server->sip);
 	if (result != SIP_SIGNALING_OK)
 		return result == SIP_SIGNALING_BUSY ? SIPPYMODEM_BUSY : SIPPYMODEM_ERROR;
+	server->workers = media_workers_create(server->dsp_threads);
+	if (server->workers == NULL) {
+		(void)sip_server_close(server->sip);
+		return SIPPYMODEM_ERROR;
+	}
 	server->started = true;
 	if (server->default_endpoint != NULL)
 		server->default_endpoint->started = true;
@@ -893,6 +906,9 @@ enum sippymodem_result sippymodem_server_stop(struct sippymodem_server *server)
 {
 	if (server == NULL || server->processing)
 		return SIPPYMODEM_INVALID;
+	/* process() returns only after its complete media batch has joined. */
+	media_workers_destroy(server->workers);
+	server->workers = NULL;
 	enum sippymodem_result result = SIPPYMODEM_OK;
 	for (unsigned int id = 0; id < server->max_lines; ++id)
 		if (server->lines[id] != NULL) {
@@ -1072,7 +1088,8 @@ enum sippymodem_result sippymodem_answer(struct sippymodem_line *line, uint64_t 
 	enum sippymodem_result result = check_call(line, generation);
 	if (result != SIPPYMODEM_OK)
 		return result;
-	if (line->status.sip_state != SIPPYMODEM_SIP_INCOMING && line->status.sip_state != SIPPYMODEM_SIP_EARLY)
+	if (line_modem(line)->started ||
+	    (line->status.sip_state != SIPPYMODEM_SIP_INCOMING && line->status.sip_state != SIPPYMODEM_SIP_EARLY))
 		return SIPPYMODEM_BUSY;
 	return modem_answer(line_modem(line)) == 0 ? SIPPYMODEM_OK : SIPPYMODEM_ERROR;
 }
@@ -1101,6 +1118,9 @@ enum sippymodem_result sippymodem_process(struct sippymodem_server *server,
 	server->processing = true;
 	enum sip_signaling_result sip_result = sip_server_step(server->sip, 0);
 	uint64_t next = deadline_after(now_ns, MODEM_HOST_SIGNALING_POLL_NS);
+	struct media_job jobs[LINE_LIMIT];
+	struct sippymodem_line *owners[LINE_LIMIT];
+	size_t count = 0;
 	for (unsigned int id = 0; id < server->max_lines; ++id) {
 		struct sippymodem_line *line = server->lines[id];
 		if (line == NULL || !line->started)
@@ -1119,11 +1139,28 @@ enum sippymodem_result sippymodem_process(struct sippymodem_server *server,
 		}
 		if (line->active && line->attempt_deadline != 0 && now_ns >= line->attempt_deadline)
 			end_call(line, SIPPYMODEM_DISCONNECT_TIMEOUT);
-		size_t datagrams = 0;
-		enum modem_host_result result = modem_host_step(line_host(line), now_ns, &datagrams, NULL);
-		if (datagrams >= RTP_ENDPOINT_MAX_DRAIN)
+		(void)modem_host_prepare_media(line_host(line));
+		owners[count] = line;
+		jobs[count++] = (struct media_job){ .line = line->core, .now_ns = now_ns };
+	}
+	if (!media_workers_run(server->workers, jobs, count)) {
+		for (size_t i = 0; i < count; ++i)
+			(void)modem_host_finish_media(line_host(owners[i]));
+		server->processing = false;
+		*next_deadline_ns = now_ns;
+		return SIPPYMODEM_ERROR;
+	}
+	/* Flush every transport before a SIP callback can retire another line. */
+	for (size_t i = 0; i < count; ++i)
+		if (modem_host_finish_media(line_host(owners[i])) != SIP_SESSION_OK)
+			jobs[i].result = MODEM_HOST_SESSION_ERROR;
+	/* No worker may hold a line while SIP callbacks or SDK events run. */
+	for (size_t i = 0; i < count; ++i) {
+		struct sippymodem_line *line = owners[i];
+		(void)modem_line_flush_signaling(line->core);
+		if (jobs[i].datagrams >= RTP_ENDPOINT_MAX_DRAIN)
 			next = now_ns;
-		(void)modem_service_event(line_modem(line));
+		enum modem_host_result result = jobs[i].result;
 		if (line->remote_closing && !modem_host_media_is_configured(line_host(line)))
 			end_call(line, SIPPYMODEM_DISCONNECT_REMOTE);
 		if (line->config.ec_policy == SIPPYMODEM_EC_REQUIRED &&
