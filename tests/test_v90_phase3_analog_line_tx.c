@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "test.h"
+#include "v34_state_fixture.h"
 
 #include "v90_phase3_analog_line_tx.h"
 
@@ -13,6 +14,17 @@ enum {
 	SAMPLE_LIMIT = 20000,
 	NOMINAL_AMPLITUDE = 6000,
 };
+
+/* Compare successfully initialized owners without training-line padding.
+ * Invalid initialization destinations remain fully defined byte sentinels. */
+static bool states_equal(
+	const struct v90_phase3_analog_line_tx *left,
+	const struct v90_phase3_analog_line_tx *right)
+{
+	return v34_training_lines_equal(&left->line, &right->line) &&
+	       memcmp(&left->symbols, &right->symbols, sizeof(left->symbols)) == 0 &&
+	       left->leading_silence_samples == right->leading_silence_samples;
+}
 
 static struct v34_phase3_profile profile(void)
 {
@@ -153,7 +165,7 @@ static bool test_exact_line_timeline(void)
 
 		CHECK(v90_phase3_analog_line_tx_sample(&tx, &sample) ==
 			      V90_PHASE3_ANALOG_LINE_TX_COMPLETE &&
-		      memcmp(&tx, &saved, sizeof(tx)) == 0 && sample == 1234,
+		      states_equal(&tx, &saved) && sample == 1234,
 		      "complete analogue line consumed another sample");
 	}
 	memset(&handoff, 0xa5, sizeof(handoff));
@@ -209,7 +221,7 @@ static bool test_validation(void)
 		      V90_PHASE3_ANALOG_LINE_TX_INVALID_STATE &&
 	      v90_phase3_analog_line_tx_handoff(&tx, &line) ==
 		      V90_PHASE3_ANALOG_LINE_TX_INVALID_STATE &&
-	      memcmp(&tx, &saved, sizeof(tx)) == 0 && sample == 777 &&
+	      states_equal(&tx, &saved) && sample == 777 &&
 	      memcmp(&line, &saved_line, sizeof(line)) == 0,
 	      "analogue line invalid call was not transactional");
 	tx.leading_silence_samples =

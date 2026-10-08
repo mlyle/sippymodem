@@ -5,6 +5,7 @@
 #include <v90_phase3.h>
 
 #include "test.h"
+#include "v34_state_fixture.h"
 
 #include <string.h>
 
@@ -12,6 +13,20 @@ enum {
 	NOMINAL_AMPLITUDE = 6000,
 	SAMPLE_LIMIT = 10000,
 };
+
+/* Compare successfully initialized owners without training-line padding.
+ * Invalid initialization destinations remain fully defined byte sentinels. */
+static bool states_equal(
+	const struct v90_phase3_return_line_tx *left,
+	const struct v90_phase3_return_line_tx *right)
+{
+	return v34_training_lines_equal(&left->line, &right->line) &&
+	       memcmp(&left->points, &right->points, sizeof(left->points)) == 0 &&
+	       memcmp(&left->idle_scr, &right->idle_scr, sizeof(left->idle_scr)) == 0 &&
+	       left->scr_during_idle == right->scr_during_idle &&
+	       left->automatic_rrn == right->automatic_rrn &&
+	       left->draining_accepted_point == right->draining_accepted_point;
+}
 
 static struct v34_phase3_profile profile(void)
 {
@@ -111,7 +126,7 @@ static bool test_exact_continuation(void)
 		      v90_phase3_return_line_tx_sample(&tx, &actual) ==
 			      V90_PHASE3_RETURN_LINE_TX_OK &&
 		      actual == expected &&
-		      memcmp(&tx.line, &model_line, sizeof(model_line)) == 0 &&
+		      v34_training_lines_equal(&tx.line, &model_line) &&
 		      memcmp(&tx.points, &model_points,
 			     sizeof(model_points)) == 0,
 		      "return waveform diverged at sample %u", sample_index);
@@ -119,7 +134,7 @@ static bool test_exact_continuation(void)
 	CHECK(started && finished && complete &&
 	      v90_phase3_return_line_tx_handoff(&tx, &handoff) ==
 		      V90_PHASE3_RETURN_LINE_TX_OK &&
-	      memcmp(&handoff, &model_line, sizeof(handoff)) == 0,
+	      v34_training_lines_equal(&handoff, &model_line),
 	      "return line did not preserve its exact handoff");
 	{
 		struct v90_phase3_return_line_tx saved = tx;
@@ -127,7 +142,7 @@ static bool test_exact_continuation(void)
 
 		CHECK(v90_phase3_return_line_tx_sample(&tx, &sample) ==
 			      V90_PHASE3_RETURN_LINE_TX_COMPLETE &&
-		      memcmp(&tx, &saved, sizeof(tx)) == 0 && sample == 1234,
+		      states_equal(&tx, &saved) && sample == 1234,
 		      "complete return line consumed another sample");
 	}
 	return true;
@@ -187,7 +202,7 @@ static bool test_scr_idle_continuation(void)
 		      v90_phase3_return_line_tx_sample(&tx, &actual) ==
 			      V90_PHASE3_RETURN_LINE_TX_OK &&
 		      actual == expected &&
-		      memcmp(&tx.line, &model_line, sizeof(model_line)) == 0 &&
+		      v34_training_lines_equal(&tx.line, &model_line) &&
 		      memcmp(&tx.points, &model_points,
 			     sizeof(model_points)) == 0 &&
 		      memcmp(&tx.idle_scr, &model_scr,
@@ -270,7 +285,7 @@ static bool run_rrn_continuation(bool enter_mid_point)
 		CHECK(v90_phase3_return_line_tx_sample(&tx, &actual) ==
 			      V90_PHASE3_RETURN_LINE_TX_OK &&
 		      actual == expected &&
-		      memcmp(&tx.line, &model_line, sizeof(model_line)) == 0 &&
+		      v34_training_lines_equal(&tx.line, &model_line) &&
 		      memcmp(&tx.points, &model_points,
 			     sizeof(model_points)) == 0,
 		      "automatic RRN waveform diverged at sample %u",
@@ -281,7 +296,7 @@ static bool run_rrn_continuation(bool enter_mid_point)
 	      model_points.s_bar_symbols == V34_PHASE3_S_BAR_SYMBOLS &&
 	      v90_phase3_return_line_tx_handoff(&tx, &handoff) ==
 		      V90_PHASE3_RETURN_LINE_TX_OK &&
-	      memcmp(&handoff, &model_line, sizeof(handoff)) == 0 &&
+	      v34_training_lines_equal(&handoff, &model_line) &&
 	      (enter_mid_point ? drained_samples > 0u :
 				 drained_samples == 0u),
 	      "automatic RRN did not preserve its exact 128T/16T handoff");
@@ -295,7 +310,7 @@ static bool run_rrn_continuation(bool enter_mid_point)
 			      V90_PHASE3_RETURN_LINE_TX_INVALID_STATE &&
 		      v90_phase3_return_line_tx_finish_s(&tx) ==
 			      V90_PHASE3_RETURN_LINE_TX_INVALID_STATE &&
-		      memcmp(&tx, &saved, sizeof(tx)) == 0 && sample == 4321,
+		      states_equal(&tx, &saved) && sample == 4321,
 		      "complete automatic RRN changed state or output");
 	}
 	return true;
@@ -352,7 +367,7 @@ static bool test_validation(void)
 		      V90_PHASE3_RETURN_LINE_TX_INVALID_STATE &&
 	      v90_phase3_return_line_tx_handoff(&tx, &line) ==
 		      V90_PHASE3_RETURN_LINE_TX_INVALID_STATE &&
-	      memcmp(&tx, &saved, sizeof(tx)) == 0 && sample == 777,
+	      states_equal(&tx, &saved) && sample == 777,
 	      "invalid return-line operation changed state or output");
 	tx.points.stage = (enum v90_phase3_return_tx_stage)99;
 	CHECK(!v90_phase3_return_line_tx_is_valid(&tx) &&

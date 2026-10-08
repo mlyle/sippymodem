@@ -69,7 +69,10 @@ static bool check_sequence(
 	}
 	CHECK(v90_phase3_sd_next(&sequence, &sentinel) ==
 		      V90_PHASE3_SD_COMPLETE &&
-		      memcmp(&sentinel, &unchanged, sizeof(sentinel)) == 0 &&
+		      sentinel.ucode == unchanged.ucode &&
+		      sentinel.positive == unchanged.positive &&
+		      sentinel.octet == unchanged.octet &&
+		      sentinel.sample == unchanged.sample &&
 		      sequence.emitted_symbols == count,
 	      "completed Sd sequence changed its state or output");
 	return true;
