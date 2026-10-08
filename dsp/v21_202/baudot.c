@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "baudot.h"
+#include "integer_math.h"
 
 #include <string.h>
 
@@ -447,12 +448,6 @@ void baudot_receiver_reset(
 		reset_receive_signal(receiver);
 }
 
-static void increment_counter(uint64_t *counter)
-{
-	if (*counter != UINT64_MAX)
-		(*counter)++;
-}
-
 static size_t received_character_index(uint16_t head, size_t offset)
 {
 	return ((size_t)head + offset) %
@@ -464,13 +459,15 @@ static void queue_received_character(
 {
 	if (receiver->character_count >=
 	    BAUDOT_RX_CHARACTER_CAPACITY) {
-		increment_counter(&receiver->receive_overruns);
+		receiver->receive_overruns = add_u64_saturating(
+			receiver->receive_overruns, 1);
 		return;
 	}
 	receiver->characters[received_character_index(
 		receiver->character_head, receiver->character_count)] = character;
 	receiver->character_count++;
-	increment_counter(&receiver->received_characters);
+	receiver->received_characters = add_u64_saturating(
+		receiver->received_characters, 1);
 }
 
 static void decode_code(
@@ -526,7 +523,8 @@ static void lose_receive_carrier(
 	struct baudot_receiver *receiver)
 {
 	if (receiver->framing)
-		increment_counter(&receiver->framing_errors);
+		receiver->framing_errors = add_u64_saturating(
+			receiver->framing_errors, 1);
 	receiver->carrier = false;
 	receiver->framing = false;
 	receiver->stable_samples = 0;
@@ -550,7 +548,8 @@ static void sample_receive_frame(
 	if (receiver->stable_bit != 0)
 		decode_code(receiver, receiver->code);
 	else
-		increment_counter(&receiver->framing_errors);
+		receiver->framing_errors = add_u64_saturating(
+			receiver->framing_errors, 1);
 	receiver->framing = false;
 	receiver->data_index = 0;
 	receiver->decision_countdown = 0;

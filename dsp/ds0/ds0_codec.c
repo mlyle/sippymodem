@@ -2,7 +2,7 @@
 #include "ds0_codec.h"
 #include "hdlc_fcs.h"
 #include "hdlc_tx.h"
-#include <limits.h>
+#include "integer_math.h"
 #include <string.h>
 #define DS0_HDLC_FLAG_BITS 8u
 #define DS0_HDLC_FLAG_MASK 7u
@@ -155,15 +155,11 @@ static void ds0_maybe_rate_timeout(struct ds0 *ds0)
 
 void ds0_advance_samples(struct ds0 *ds0, size_t sample_count)
 {
-	uint64_t samples;
-
 	if (!ds0)
 		return;
 
-	samples = ds0->samples_since_start + (uint64_t)sample_count;
-	if (samples < ds0->samples_since_start)
-		samples = UINT64_MAX;
-	ds0->samples_since_start = samples;
+	ds0->samples_since_start = add_u64_saturating(
+		ds0->samples_since_start, (uint64_t)sample_count);
 	ds0_maybe_rate_timeout(ds0);
 }
 
