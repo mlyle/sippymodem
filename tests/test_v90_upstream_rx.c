@@ -198,6 +198,9 @@ static bool check_cps_requests(enum g711_law law, unsigned int final_case)
 	cps.request_silence = true;
 	cps.selected_rate_index = V90_CP_RATE_INDEX_MAX;
 	cps.upstream_rate_mask = 0u;
+	/* CPs masks are unused; retain active masks only for the invalid-data case. */
+	if (final_case != 2u)
+		memset(cps.transmit_constellations, 0, sizeof(cps.transmit_constellations));
 	CHECK(v90_cp_parameters_are_valid(&cps) &&
 	      v90_pcm_mapping_init_transmit(&mapping, &cps, law) != V90_PCM_MAPPING_OK &&
 	      line_profile(V34_SYMBOL_RATE_3000, 6u, &profile) &&

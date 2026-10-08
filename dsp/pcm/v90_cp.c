@@ -21,6 +21,12 @@ static bool kind_is_valid(enum v90_cp_kind kind)
 	return kind == V90_CP_TRAINING || kind == V90_CP_DATA;
 }
 
+static bool constellations_are_unused(const struct v90_cp_parameters *parameters)
+{
+	return parameters->selected_rate_index == 0u ||
+	       (parameters->kind == V90_CP_DATA && parameters->request_silence);
+}
+
 bool v90_cp_parameters_are_valid(
 	const struct v90_cp_parameters *parameters)
 {
@@ -31,11 +37,11 @@ bool v90_cp_parameters_are_valid(
 	    parameters->spectral_lookahead > 3 ||
 	    (parameters->upstream_rate_mask & ~V90_CP_UPSTREAM_RATE_MASK) != 0)
 		return false;
-	if (parameters->selected_rate_index == 0u) {
+	if (constellations_are_unused(parameters)) {
 		uint8_t declared_count = 1u;
 
-		/* V.90 9.7 ignores cleardown constellations. Retain the bounds
-		 * needed to frame and CRC-check the declared wire records. */
+		/* V.90 8.5.2/9.7 ignore CPs and cleardown constellations. Keep
+		 * the bounds needed to frame and CRC-check their wire records. */
 		if (parameters->constellation_count == 0u ||
 		    parameters->constellation_count > V90_CP_MAX_CONSTELLATIONS)
 			return false;
@@ -232,7 +238,7 @@ enum v90_cp_result v90_cp_decode(
 		return V90_CP_CRC_MISMATCH;
 	decode_header(frame, &decoded);
 	decoded.constellation_count = (uint8_t)constellation_count;
-	if (decoded.selected_rate_index != 0u &&
+	if (!constellations_are_unused(&decoded) &&
 	    !pcm_constellations_compact(
 		    decoded.transmit_constellations, decoded.codec_constellations,
 		    decoded.frame_constellation, &decoded.constellation_count,

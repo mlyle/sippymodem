@@ -79,6 +79,7 @@ static struct v90_cp_parameters variable_parameters(
 	memset(parameters.transmit_constellations, 0,
 	       sizeof(parameters.transmit_constellations));
 	parameters.constellation_count = count;
+	parameters.request_silence = false;
 	parameters.codec_constellations_differ =
 		codec_constellations_differ;
 	for (size_t index = 0; index < count; ++index) {
@@ -472,6 +473,7 @@ static bool test_cleardown(void)
 	CHECK(rejected_decode_is_transactional(frame, sizeof(frame), bits,
 					      V90_CP_CRC_MISMATCH),
 	      "zero-rate CP bypassed its CRC");
+	parameters.request_silence = false;
 	parameters.selected_rate_index = 1u;
 	CHECK(!v90_cp_parameters_are_valid(&parameters),
 	      "nonzero CP accepted unused cleardown constellations");
@@ -482,6 +484,62 @@ static bool test_cleardown(void)
 	parameters.frame_constellation[0] = 0u;
 	CHECK(!v90_cp_parameters_are_valid(&parameters),
 	      "zero-rate CP accepted a length not declared on the wire");
+	return true;
+}
+
+static bool test_cps_constellations(void)
+{
+	for (uint8_t count = 1; count <= V90_CP_MAX_CONSTELLATIONS; ++count) {
+		for (unsigned int planes = 1; planes <= 2; ++planes) {
+			struct v90_cp_parameters parameters = variable_parameters(count, planes == 2);
+			struct v90_cp_parameters decoded;
+			uint8_t frame[V90_CP_MAX_FRAME_BYTES], encoded[V90_CP_MAX_FRAME_BYTES];
+			size_t bits, encoded_bits;
+
+			parameters.request_silence = true;
+			CHECK(v90_cp_encode(&parameters, frame, sizeof(frame), &bits) == V90_CP_OK,
+			      "CPs wire fixture did not encode");
+			/* V.90 8.5.2: constellation parameters in CPs are not used.
+			 * Build the received frame independently of parameter validation. */
+			memset(frame + V90_CP_HEADER_BITS / 8u, 0,
+			       count * planes * V90_CP_CONSTELLATION_BITS / 8u);
+			/* Sparse declarations still determine the complete wire length. */
+			for (size_t interval = 0; interval < V90_CP_FRAME_INTERVALS; ++interval) {
+				parameters.frame_constellation[interval] = interval ? 0 : count - 1u;
+				replace_lsb_first(frame, 103u + interval * 4u + (interval >= 4u),
+						  4u, parameters.frame_constellation[interval]);
+			}
+			replace_crc(frame, bits - V90_CP_TRAILER_BITS);
+			CHECK(v90_cp_decode(frame, sizeof(frame), bits, &decoded) == V90_CP_OK,
+			      "CPs rejected empty unused constellations: %u rows, %u planes", count, planes);
+			memset(parameters.transmit_constellations, 0, sizeof(parameters.transmit_constellations));
+			memset(parameters.codec_constellations, 0, sizeof(parameters.codec_constellations));
+			CHECK(v90_cp_parameters_are_equal(&parameters, &decoded) &&
+			      !v90_cp_is_data(&decoded) && !v90_cp_is_final_data(&decoded) &&
+			      v90_cp_encode(&decoded, encoded, sizeof(encoded), &encoded_bits) == V90_CP_OK &&
+			      bits == encoded_bits && !memcmp(frame, encoded, (bits + 7u) / 8u),
+			      "CPs installed data or changed its declared wire records");
+			replace_frame_bit(frame, CP_MASKS_FIRST_BIT + 1u, 1u);
+			CHECK(rejected_decode_is_transactional(frame, sizeof(frame), bits, V90_CP_CRC_MISMATCH),
+			      "CPs bypassed constellation CRC coverage");
+			replace_frame_bit(frame, CP_MASKS_FIRST_BIT + 1u, 0u);
+			replace_frame_bit(frame, CP_MASKS_FIRST_BIT, 1u);
+			CHECK(rejected_decode_is_transactional(frame, sizeof(frame), bits, V90_CP_INVALID_FRAME),
+			      "CPs bypassed constellation framing");
+			parameters.request_silence = false;
+			CHECK(!v90_cp_parameters_are_valid(&parameters), "data CP accepted empty active constellations");
+			parameters.request_silence = true;
+			parameters.kind = V90_CP_TRAINING;
+			CHECK(!v90_cp_parameters_are_valid(&parameters), "CPt accepted empty training constellations");
+			parameters.kind = V90_CP_DATA;
+			parameters.frame_constellation[0] = V90_CP_MAX_CONSTELLATIONS;
+			CHECK(!v90_cp_parameters_are_valid(&parameters), "CPs bypassed map bounds");
+			parameters.frame_constellation[0] = 0;
+			parameters.constellation_count = V90_CP_MAX_CONSTELLATIONS;
+			memset(parameters.frame_constellation, 0, sizeof(parameters.frame_constellation));
+			CHECK(!v90_cp_parameters_are_valid(&parameters), "CPs length was not declared by its map");
+		}
+	}
 	return true;
 }
 
@@ -546,11 +604,13 @@ static bool test_call_contracts(void)
 static bool test_corrupt_frames(void)
 {
 	struct v90_cp_parameters parameters = wire_parameters();
+
 	uint8_t valid[V90_CP_MAX_FRAME_BYTES];
 	uint8_t changed[V90_CP_MAX_FRAME_BYTES];
 	size_t frame_bits = 0;
 	size_t frame_bytes;
 
+	parameters.request_silence = false;
 	CHECK(v90_cp_encode(
 		      &parameters, valid, sizeof(valid), &frame_bits) ==
 		      V90_CP_OK,
@@ -826,6 +886,7 @@ int main(void)
 		{ "known wire image", test_known_wire_image },
 		{ "variable round trip", test_variable_round_trip },
 		{ "cleardown ignores unused constellations", test_cleardown },
+		{ "CPs ignores unused constellations", test_cps_constellations },
 		{ "call contracts", test_call_contracts },
 		{ "corrupt frames", test_corrupt_frames },
 		{ "uninterpreted reserved bits", test_reserved_bits },
