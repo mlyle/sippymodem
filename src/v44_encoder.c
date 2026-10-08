@@ -1026,25 +1026,3 @@ bool v44_encoder_get_progress(
 	};
 	return true;
 }
-
-const char *v44_encode_result_name(
-	enum v44_encode_result result)
-{
-	switch (result) {
-	case V44_ENCODE_OK:
-		return "ok";
-	case V44_ENCODE_NEED_INPUT:
-		return "need input";
-	case V44_ENCODE_NEED_OUTPUT:
-		return "need output";
-	case V44_ENCODE_FLUSHED:
-		return "flushed";
-	case V44_ENCODE_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V44_ENCODE_INVALID_STATE:
-		return "invalid state";
-	case V44_ENCODE_PROCEDURAL_ERROR:
-		return "procedural error";
-	}
-	return "unknown";
-}

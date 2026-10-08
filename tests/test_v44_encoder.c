@@ -748,22 +748,6 @@ static bool test_api_and_backpressure(void)
 		      encoder, &input, &input_length) ==
 		      V44_ENCODE_NEED_INPUT,
 	      "V.44 FLUSH completion allowed an early input transition");
-	CHECK(strcmp(v44_encode_result_name(
-			     V44_ENCODE_OK),
-		     "ok") == 0 &&
-	      strcmp(v44_encode_result_name(
-			     V44_ENCODE_NEED_OUTPUT),
-		     "need output") == 0 &&
-	      strcmp(v44_encode_result_name(
-			     V44_ENCODE_INVALID_STATE),
-		     "invalid state") == 0 &&
-	      strcmp(v44_encode_result_name(
-			     V44_ENCODE_PROCEDURAL_ERROR),
-		     "procedural error") == 0 &&
-	      strcmp(v44_encode_result_name(
-			     (enum v44_encode_result)99),
-		     "unknown") == 0,
-	      "V.44 encoder result names changed");
 	v44_encoder_destroy(encoder);
 	v44_encoder_destroy(NULL);
 	return true;

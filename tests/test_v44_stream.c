@@ -58,13 +58,6 @@ static bool test_parameter_defaults_and_bounds(void)
 	CHECK(v44_bit_writer_create(0) == NULL &&
 		      v44_bit_writer_create(1) == NULL,
 	      "undersized V.44 output queue was accepted");
-	CHECK(strcmp(v44_stream_result_name(
-			     V44_STREAM_NEED_INPUT),
-		     "need input") == 0 &&
-		      strcmp(v44_stream_result_name(
-			     (enum v44_stream_result)99),
-		     "unknown") == 0,
-	      "V.44 stream result names changed");
 	return true;
 }
 

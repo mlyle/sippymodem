@@ -87,7 +87,4 @@ bool v44_encoder_get_progress(
 	const struct v44_encoder *encoder,
 	struct v44_encoder_progress *progress);
 
-const char *v44_encode_result_name(
-	enum v44_encode_result result);
-
 #endif

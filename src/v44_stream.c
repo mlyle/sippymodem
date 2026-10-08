@@ -213,19 +213,3 @@ bool v44_bit_reader_at_boundary(
 	return reader != NULL && reader->bit_count == 0 &&
 	       reader->pending_field_bits == 0;
 }
-
-const char *v44_stream_result_name(
-	enum v44_stream_result result)
-{
-	switch (result) {
-	case V44_STREAM_OK:
-		return "ok";
-	case V44_STREAM_NEED_INPUT:
-		return "need input";
-	case V44_STREAM_NEED_OUTPUT:
-		return "need output";
-	case V44_STREAM_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

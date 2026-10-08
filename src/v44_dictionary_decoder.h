@@ -54,7 +54,4 @@ size_t v44_dictionary_decoder_read(
 	uint8_t *output,
 	size_t output_capacity);
 
-const char *v44_dictionary_result_name(
-	enum v44_dictionary_result result);
-
 #endif

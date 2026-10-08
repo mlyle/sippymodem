@@ -333,19 +333,3 @@ size_t v44_dictionary_decoder_read(
 		return 0;
 	return byte_queue_read(&decoder->output, output, output_capacity);
 }
-
-const char *v44_dictionary_result_name(
-	enum v44_dictionary_result result)
-{
-	switch (result) {
-	case V44_DICTIONARY_OK:
-		return "ok";
-	case V44_DICTIONARY_NEED_OUTPUT:
-		return "need output";
-	case V44_DICTIONARY_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V44_DICTIONARY_PROCEDURAL_ERROR:
-		return "procedural error";
-	}
-	return "unknown";
-}

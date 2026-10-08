@@ -298,7 +298,7 @@ static bool test_dictionary_and_history_bounds(void)
 	return true;
 }
 
-static bool test_creation_validation_and_result_names(void)
+static bool test_creation_validation(void)
 {
 	const struct v44_parameters parameters =
 		minimum_parameters();
@@ -306,16 +306,6 @@ static bool test_creation_validation_and_result_names(void)
 	CHECK(v44_dictionary_decoder_create(NULL, 32) == NULL &&
 	      v44_dictionary_decoder_create(&parameters, 31) == NULL,
 	      "V.44 decoder accepted invalid creation arguments");
-	CHECK(strcmp(v44_dictionary_result_name(
-			     V44_DICTIONARY_NEED_OUTPUT),
-		     "need output") == 0 &&
-	      strcmp(v44_dictionary_result_name(
-			     V44_DICTIONARY_PROCEDURAL_ERROR),
-		     "procedural error") == 0 &&
-	      strcmp(v44_dictionary_result_name(
-			     (enum v44_dictionary_result)99),
-		     "unknown") == 0,
-	      "V.44 dictionary result names changed");
 	v44_dictionary_decoder_destroy(NULL);
 	return true;
 }
@@ -332,8 +322,8 @@ int main(void)
 		{ "atomic backpressure and wrap", test_atomic_backpressure_and_wrap },
 		{ "reinitialization and errors", test_reinitialization_and_errors },
 		{ "dictionary and history bounds", test_dictionary_and_history_bounds },
-		{ "creation validation and result names",
-		  test_creation_validation_and_result_names },
+		{ "creation validation",
+		  test_creation_validation },
 	};
 	unsigned int failures = 0;
 

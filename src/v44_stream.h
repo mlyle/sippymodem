@@ -92,7 +92,4 @@ enum v44_stream_result v44_bit_reader_align(
 bool v44_bit_reader_at_boundary(
 	const struct v44_bit_reader *reader);
 
-const char *v44_stream_result_name(
-	enum v44_stream_result result);
-
 #endif
