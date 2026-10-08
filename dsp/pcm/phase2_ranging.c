@@ -610,15 +610,6 @@ static bool advance_measurement(
 	return true;
 }
 
-static bool transmit_phase_is_valid(
-	enum phase2_info0_transmit_phase phase)
-{
-	return phase == PHASE2_INFO0_POST_V8_SILENCE ||
-	       phase == PHASE2_INFO0_SEQUENCE ||
-	       phase == PHASE2_INFO0_CARRIER_TAIL ||
-	       phase == PHASE2_INFO0_TONE;
-}
-
 enum phase2_ranging_result phase2_ranging_finish_sample(
 	struct phase2_ranging_control *control,
 	struct phase2_info0_exchange *exchange,
@@ -633,7 +624,7 @@ enum phase2_ranging_result phase2_ranging_finish_sample(
 
 	if (!prepared_control_is_valid(
 		    control, exchange, peer_info0_received) ||
-	    !transmit_phase_is_valid(transmit_phase_before) ||
+	    !phase2_info0_transmit_phase_is_valid(transmit_phase_before) ||
 	    tone_event == NULL || transmit_sample == NULL || event == NULL ||
 	    (unsigned int)tone_event->kind > V34_PHASE2_TONE_ENDED)
 		return PHASE2_RANGING_INVALID_ARGUMENT;

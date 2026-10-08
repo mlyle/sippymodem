@@ -30,6 +30,16 @@ enum phase2_info0_transmit_phase {
 	PHASE2_INFO0_TONE,
 };
 
+/* INFO0 exchange and ranging share the same four transmit phases. */
+static inline bool phase2_info0_transmit_phase_is_valid(
+	enum phase2_info0_transmit_phase phase)
+{
+	return phase == PHASE2_INFO0_POST_V8_SILENCE ||
+	       phase == PHASE2_INFO0_SEQUENCE ||
+	       phase == PHASE2_INFO0_CARRIER_TAIL ||
+	       phase == PHASE2_INFO0_TONE;
+}
+
 struct phase2_info0_exchange_event {
 	struct v34_phase2_info_event info_event;
 	struct v34_phase2_tone_event tone_event;

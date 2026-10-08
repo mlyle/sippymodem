@@ -2,15 +2,6 @@
 
 #include "phase2_info0_exchange.h"
 
-static bool transmit_phase_is_valid(
-	enum phase2_info0_transmit_phase phase)
-{
-	return phase == PHASE2_INFO0_POST_V8_SILENCE ||
-	       phase == PHASE2_INFO0_SEQUENCE ||
-	       phase == PHASE2_INFO0_CARRIER_TAIL ||
-	       phase == PHASE2_INFO0_TONE;
-}
-
 bool phase2_info0_exchange_is_valid(
 	const struct phase2_info0_exchange *exchange)
 {
@@ -18,7 +9,7 @@ bool phase2_info0_exchange_is_valid(
 
 	if (exchange == NULL ||
 	    !phase2_signal_role_is_valid(exchange->signal_role) ||
-	    !transmit_phase_is_valid(exchange->transmit_phase) ||
+	    !phase2_info0_transmit_phase_is_valid(exchange->transmit_phase) ||
 	    exchange->post_v8_silence_samples >
 		    PHASE2_INFO0_POST_V8_SILENCE_SAMPLES ||
 	    exchange->filter_tail_symbols >
