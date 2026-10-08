@@ -277,16 +277,14 @@ static struct v92_pcm_info1a v92_analog_info1(void)
 	};
 }
 
-static struct v92_info1d v92_digital_info1(void)
+static void v92_digital_info1(struct v92_info1d *info1)
 {
-	struct v92_info1d info1 = {
-		.v34 = digital_info1(),
-		.pcm_upstream_supported = true,
-	};
-
-	info1.v34.answer_transmit[
+	/* Full-call snapshots also inspect this fixture's trailing padding. */
+	memset(info1, 0, sizeof(*info1));
+	info1->v34 = digital_info1();
+	info1->pcm_upstream_supported = true;
+	info1->v34.answer_transmit[
 		V34_SYMBOL_RATE_3429].high_carrier = false;
-	return info1;
 }
 
 static bool v92_digital_info1_equal(
@@ -439,7 +437,7 @@ static struct pcm_call_configuration v92_configuration(
 			.v90 = digital_info0(law),
 			.v92_capable = true,
 		};
-		configuration.local_info1.v92_digital = v92_digital_info1();
+		v92_digital_info1(&configuration.local_info1.v92_digital);
 		configuration.phase3.v92_digital =
 			(struct pcm_call_v92_digital_phase3_configuration){
 				.jd = {
