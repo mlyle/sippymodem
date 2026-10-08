@@ -200,24 +200,25 @@ enum phase2_initial_probe_result v34_phase2_initial_probe_sample(
 	return PHASE2_INITIAL_PROBE_OK;
 }
 
+static const struct v34_phase2_probe_acquisition *receive_acquisition(
+	const struct v34_phase2_initial_probe *probe)
+{
+	if (!v34_phase2_initial_probe_is_valid(probe))
+		return NULL;
+	if (probe->ranging.info0_exchange.transport.signal_role == PHASE2_SIGNAL_B)
+		return &probe->control.path.receive;
+	return probe->concurrent_receive_enabled ? &probe->concurrent_receive : NULL;
+}
+
 enum phase2_initial_probe_result v34_phase2_initial_probe_measure(
 	const struct v34_phase2_initial_probe *probe,
 	struct v34_phase2_probe_receiver_measurement *measurement)
 {
-	const struct phase2_info0_exchange *transport;
-	const struct v34_phase2_probe_acquisition *receive;
+	const struct v34_phase2_probe_acquisition *receive = receive_acquisition(probe);
 
-	if (!v34_phase2_initial_probe_is_valid(probe) || measurement == NULL)
-		return PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
-	transport = &probe->ranging.info0_exchange.transport;
-	if (transport->signal_role == PHASE2_SIGNAL_B)
-		receive = &probe->control.path.receive;
-	else if (probe->concurrent_receive_enabled)
-		receive = &probe->concurrent_receive;
-	else
-		return PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
-	if (v34_phase2_probe_acquisition_measure(receive, measurement) !=
-	    V34_PHASE2_PROBE_ACQUISITION_OK)
+	if (receive == NULL || measurement == NULL ||
+	    v34_phase2_probe_acquisition_measure(receive, measurement) !=
+		    V34_PHASE2_PROBE_ACQUISITION_OK)
 		return PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
 	return PHASE2_INITIAL_PROBE_OK;
 }
@@ -227,21 +228,11 @@ v34_phase2_initial_probe_receive_gain(
 	const struct v34_phase2_initial_probe *probe,
 	int16_t *receive_gain)
 {
-	const struct phase2_info0_exchange *transport;
-	const struct v34_phase2_probe_acquisition *receive;
+	const struct v34_phase2_probe_acquisition *receive = receive_acquisition(probe);
 
-	if (!v34_phase2_initial_probe_is_valid(probe) || receive_gain == NULL)
-		return PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
-	transport = &probe->ranging.info0_exchange.transport;
-	if (transport->signal_role == PHASE2_SIGNAL_B)
-		receive = &probe->control.path.receive;
-	else if (probe->concurrent_receive_enabled)
-		receive = &probe->concurrent_receive;
-	else
-		return PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
-	if (v34_phase2_probe_acquisition_receive_gain(
-		    receive, receive_gain) !=
-	    V34_PHASE2_PROBE_ACQUISITION_OK)
+	if (receive == NULL || receive_gain == NULL ||
+	    v34_phase2_probe_acquisition_receive_gain(receive, receive_gain) !=
+		    V34_PHASE2_PROBE_ACQUISITION_OK)
 		return PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
 	return PHASE2_INITIAL_PROBE_OK;
 }
