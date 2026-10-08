@@ -1947,6 +1947,78 @@ static bool test_phase2_handoff(void)
 	return true;
 }
 
+static bool test_final_tone_timeout(void)
+{
+	const size_t delays[] = { LINE_DELAY_SAMPLES, 800u };
+
+	for (unsigned pcma = 0; pcma < 2u; ++pcma) {
+		for (size_t index = 0; index < ARRAY_LENGTH(delays); ++index) {
+			struct endpoint caller = { 0 }, answerer = { 0 };
+			struct channel channel = { .delay_samples = delays[index], .pcma = pcma };
+			struct v34_call_configuration configurations[] = {
+				configuration(V34_CALLING_STATION), configuration(V34_ANSWERING_STATION),
+			};
+			bool started = false;
+
+			CHECK(v34_call_init(&caller.call, &configurations[0]) == V34_CALL_OK &&
+			      v34_call_init(&answerer.call, &configurations[1]) == V34_CALL_OK,
+			      "final Tone-A deadline endpoints did not initialize");
+			for (size_t sample = 0; sample < SAMPLE_LIMIT; ++sample) {
+				struct v34_call_observation observations[2];
+
+				CHECK(channel_sample_pair(&channel, &caller, &answerer,
+					      &observations[0], &observations[1]),
+				      "final Tone-A deadline setup failed at %zu", sample);
+				if (caller.call.stage == V34_CALL_PHASE2 &&
+				    caller.call.state.phase2.stage == V34_PHASE2_RECIPROCAL_PROBE) {
+					started = true;
+					break;
+				}
+			}
+			CHECK(started && caller.call.round_trip_delay_stored &&
+			      caller.call.state.phase2.state.reciprocal_probe.control.path.transmit.samples_emitted == 0,
+			      "final Tone-A deadline missed the first reciprocal L1 sample");
+			struct v34_info0 peer = caller.call.state.phase2.peer_info0;
+			uint16_t rtd = caller.call.round_trip_delay_samples;
+			uint32_t deadline = (160u + 650u) * 8u + rtd;
+			struct v34_call_observation observation;
+			struct v34_received_mapping_frame received;
+			int16_t transmitted;
+
+			/* Remove the peer naturally at the reciprocal probe boundary. */
+			for (uint32_t elapsed = 1u; elapsed <= deadline; ++elapsed) {
+				enum v34_call_result result = v34_call_sample(&caller.call, 0, NULL, NULL,
+					&transmitted, &observation, &received);
+
+				CHECK(result == V34_CALL_OK && !caller.call.failed && v34_call_is_valid(&caller.call) &&
+				      observation.processed == V34_CALL_PHASE2 &&
+				      observation.next == (elapsed == deadline ? V34_CALL_RETRAIN_SILENCE : V34_CALL_PHASE2),
+				      "law %u delay %zu final Tone-A recovery at %u/%u returned %d",
+				      pcma, delays[index], elapsed, deadline, result);
+				if (elapsed > (160u + 550u) * 8u + rtd)
+					CHECK(transmitted == 0, "reciprocal probe exceeded its wire limit");
+			}
+			CHECK(observation.events.phase2.kind == V34_PHASE2_EVENT_FAILED &&
+			      observation.events.phase2.failure == V34_PHASE2_FAILURE_LOCAL_PROBE_LIMIT &&
+			      caller.call.retrain_active && caller.call.peer_info0_stored &&
+			      caller.call.round_trip_delay_samples == rtd &&
+			      v34_info0_equal(&caller.call.peer_info0, &peer),
+			      "final Tone-A recovery lost the failure observation or call agreement");
+			for (unsigned sample = 0; sample < 70u * 8u; ++sample)
+				CHECK(v34_call_sample(&caller.call, 0, NULL, NULL, &transmitted,
+					      &observation, &received) == V34_CALL_OK && transmitted == 0 &&
+				      observation.processed == V34_CALL_RETRAIN_SILENCE,
+				      "final Tone-A recovery did not retain its complete silence interval");
+			CHECK(caller.call.stage == V34_CALL_PHASE2 && caller.call.retrain_active &&
+			      !caller.call.failed && caller.call.round_trip_delay_samples == rtd &&
+			      v34_info0_equal(&caller.call.peer_info0, &peer),
+			      "final Tone-A recovery did not restart Phase 2 with the call agreement");
+		}
+	}
+	return true;
+}
+
+
 static bool test_initial_e_timeout(void)
 {
 	for (unsigned int role = 0; role < 2u; ++role) {
@@ -2077,6 +2149,7 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "final Tone-A timeout retrain", test_final_tone_timeout },
 		{ "bounded initial E exchange", test_initial_e_timeout },
 		{ "bounded online rate renegotiation", test_rate_renegotiation_timeout },
 		{ "reciprocal zero-rate cleardown", test_cleardown },

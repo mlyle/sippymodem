@@ -582,8 +582,14 @@ static enum v34_call_result advance_phase2(
 {
 	enum v34_phase2_result result;
 
-	if (event->kind == V34_PHASE2_EVENT_FAILED)
+	if (event->kind == V34_PHASE2_EVENT_FAILED) {
+		/* V.34 11.2.2.1.5: missing final Tone A requires full retrain.
+		 * Keep the completed INFO0/ranging agreement and common recovery path. */
+		if (call->local_role == V34_CALLING_STATION &&
+		    event->failure == V34_PHASE2_FAILURE_LOCAL_PROBE_LIMIT)
+			return begin_retrain(call, false);
 		return V34_CALL_FAILED;
+	}
 	/* V.34 11.2.2.2.4: an answerer missing INFO1c must initiate
 	 * full retrain or send INFOMARKSa, not retain Tone A indefinitely. */
 	if (event->kind == V34_PHASE2_EVENT_INFO1_RECOVERY_STARTED &&
