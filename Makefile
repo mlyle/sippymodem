@@ -6,7 +6,9 @@ include build/pjsip.mk
 .PHONY: libsippymodem all clean install-hooks live-call slmodemd test build-modem help
 
 # One recursive build even when several public targets are requested together.
-MODEM_BUILD_TARGETS := $(or $(filter all slmodemd libsippymodem,$(MAKECMDGOALS)),all)
+# Installation always needs the executable and both library products.
+MODEM_BUILD_TARGETS := $(if $(filter install,$(MAKECMDGOALS)),all,\
+	$(or $(filter all slmodemd libsippymodem,$(MAKECMDGOALS)),all))
 all slmodemd libsippymodem: build-modem
 
 build-modem: pjsip-required

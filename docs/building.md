@@ -65,7 +65,8 @@ Run installation with write access to the chosen prefix. It installs:
 - `lib/libsippymodem.so` and `lib/libsippymodem.a`;
 - `include/sippymodem.h` and `include/sippymodem_fd.h`;
 - `lib/pkgconfig/sippymodem.pc`;
-- the license under `share/doc/sippymodem`.
+- the license under `share/doc/sippymodem`;
+- inactive service examples under `share/sippymodem/examples/systemd`.
 
 Override `bindir`, `libdir`, `includedir`, or `docdir` for platform conventions.
 For a package staging tree:

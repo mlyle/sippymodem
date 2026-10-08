@@ -19,7 +19,8 @@ class ModemTerminalTests(unittest.TestCase):
     def test_profile_is_private_data_not_shell(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "profile.json"
-            values = {"SIP_LOGIN": "account:$(false); secret@private.invalid"}
+            values = {"SIP_LOGIN": "account:$(false); secret@private.invalid",
+                      "SIP_PCM_CODEC_GRID": "1"}
             path.write_text(json.dumps({"2600": values, "pstn": {"SIP_PORT": "0"}}))
             path.chmod(0o600)
             self.assertEqual(terminal.load_profile(path, "2600"), values)

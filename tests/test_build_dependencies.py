@@ -27,6 +27,14 @@ class DefaultBuildTests(unittest.TestCase):
     def test_aliases_share_one_modem_build(self) -> None:
         self.assertEqual(self.plan("all", "slmodemd", "libsippymodem").count("-C src"), 1)
 
+    def test_install_with_an_explicit_product_still_builds_all_products(self) -> None:
+        for product in ("slmodemd", "libsippymodem"):
+            with self.subTest(product=product):
+                plan = self.plan("install", product).replace("\\\n", " ")
+                recursive = [line for line in plan.splitlines() if "-C src" in line]
+                self.assertEqual(len(recursive), 1)
+                self.assertEqual(recursive[0].split()[-1], "all")
+
     def test_library_build_excludes_the_compatibility_frontend(self) -> None:
         plan = self.plan("libsippymodem")
         self.assertIn("libsippymodem", plan)

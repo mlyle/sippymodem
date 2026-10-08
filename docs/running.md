@@ -140,3 +140,6 @@ little-endian PCM, and latches write errors. `<prefix>.rtp.packets.tsv` records
 packet events, monotonic time, RTP sequence/timestamp/SSRC, payload type/size,
 and local playout/concealment counters. It contains no payload or addresses;
 associated signaling/media files still require private handling.
+
+For unattended PTY operation, see the
+[systemd template](../examples/systemd/README.md).

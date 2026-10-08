@@ -10,6 +10,7 @@
 - [Rates and processing performance](performance.md)
 - [Testing and interoperability](testing.md)
 - [Memory checks](memory-check.md)
+- [systemd launch example](../examples/systemd/README.md)
 
 [legacy/](legacy/) preserves documentation and ancillary examples from the
 original Smart Link distribution. Its package, kernel-driver and installation

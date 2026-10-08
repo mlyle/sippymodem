@@ -49,7 +49,8 @@ V.92 PCM upstream requires `AT+V92U=1`. `ATI11` reports the current or last call
 
 The [running guide](docs/running.md) covers SIP configuration, the interactive
 console, traces, and dial-in setup. The [AT reference](docs/at-commands.md)
-lists commands and defaults.
+lists commands and defaults. A [systemd template](examples/systemd/README.md)
+is provided for unattended PTY operation.
 
 ## Embed modem lines
 

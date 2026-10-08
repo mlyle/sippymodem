@@ -18,7 +18,7 @@ class InstallTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             work = Path(temporary)
             tree, stage = work / "source", work / "stage"
-            for directory in ("src", "build", "tools"):
+            for directory in ("src", "build", "tools", "examples/systemd"):
                 (tree / directory).mkdir(parents=True)
             for name in ("build/sippymodem.pc.in", "tools/pkg_config.py", "src/modem.c"):
                 shutil.copy2(ROOT / name, tree / name)
@@ -29,6 +29,12 @@ class InstallTests(unittest.TestCase):
                 "include/sippymodem.h": ("src/sippymodem.h", 0o644),
                 "include/sippymodem_fd.h": ("src/sippymodem_fd.h", 0o644),
                 "share/doc/sippymodem/COPYING": ("src/COPYING", 0o644),
+                "share/sippymodem/examples/systemd/sippymodem@.service":
+                    ("examples/systemd/sippymodem@.service", 0o644),
+                "share/sippymodem/examples/systemd/default.env.example":
+                    ("examples/systemd/default.env.example", 0o644),
+                "share/sippymodem/examples/systemd/README.md":
+                    ("examples/systemd/README.md", 0o644),
             }
             for source, _mode in installed.values():
                 (tree / source).write_text(source + "\n", encoding="ascii")

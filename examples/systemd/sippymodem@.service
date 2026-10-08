@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: BSD-3-Clause
+[Unit]
+Description=sippymodem PTY modem (%i)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=sippymodem
+Group=sippymodem
+UMask=0077
+EnvironmentFile=/etc/sippymodem/%i.env
+RuntimeDirectory=sippymodem-%i
+RuntimeDirectoryMode=0700
+ExecStart=/bin/sh -c 'exec /usr/local/bin/slmodemd > "$${RUNTIME_DIRECTORY}/pty"'
+Restart=on-failure
+RestartSec=3s
+TimeoutStopSec=10s
+StandardOutput=null
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
