@@ -14,10 +14,7 @@ bool v22bis_receiver_is_valid(
 	const struct v22bis_receiver *receiver)
 {
 	return receiver != NULL &&
-	       receiver->decoder.phase_quadrant <
-		       QPSK_QUADRANT_COUNT &&
-	       v22_scrambler_is_valid(
-		       &receiver->decoder.descrambler) &&
+	       v22_symbol_decoder_is_valid(&receiver->decoder) &&
 	       qam_gain_is_valid(&receiver->gain);
 }
 

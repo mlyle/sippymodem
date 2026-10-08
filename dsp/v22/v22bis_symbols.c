@@ -11,22 +11,6 @@
 static const double V22BIS_COORDINATE_SCALE =
 	0.23570226039551584146694812070162; /* 1 / sqrt(18) */
 
-static bool encoder_is_valid(
-	const struct v22_symbol_encoder *encoder)
-{
-	return encoder != NULL &&
-	       encoder->phase_quadrant < QPSK_QUADRANT_COUNT &&
-	       v22_scrambler_is_valid(&encoder->scrambler);
-}
-
-static bool decoder_is_valid(
-	const struct v22_symbol_decoder *decoder)
-{
-	return decoder != NULL &&
-	       decoder->phase_quadrant < QPSK_QUADRANT_COUNT &&
-	       v22_scrambler_is_valid(&decoder->descrambler);
-}
-
 enum v22_framing_result v22bis_symbol_encode(
 	struct v22_symbol_encoder *encoder,
 	const uint8_t bits[V22BIS_BITS_PER_SYMBOL],
@@ -36,7 +20,7 @@ enum v22_framing_result v22bis_symbol_encode(
 	uint8_t scrambled[V22BIS_BITS_PER_SYMBOL];
 	uint8_t quadrant;
 
-	if (!encoder_is_valid(encoder) ||
+	if (!v22_symbol_encoder_is_valid(encoder) ||
 	    !unpacked_bits_are_binary(bits, V22BIS_BITS_PER_SYMBOL) ||
 	    symbol == NULL)
 		return V22_FRAMING_INVALID_ARGUMENT;
@@ -66,7 +50,7 @@ enum v22_framing_result v22bis_symbol_decode(
 	uint8_t quadrant = (uint8_t)(symbol >> 2);
 	uint8_t dibit;
 
-	if (!decoder_is_valid(decoder) ||
+	if (!v22_symbol_decoder_is_valid(decoder) ||
 	    symbol >= V22BIS_SYMBOL_COUNT || bits == NULL)
 		return V22_FRAMING_INVALID_ARGUMENT;
 	/* Validated quadrants and binary descrambler steps cannot fail. */

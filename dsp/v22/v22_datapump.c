@@ -286,8 +286,7 @@ static struct v22_datapump *v22_from_dp(struct dp *dp)
 	    datapump->v22bis_confirm_bits > V22BIS_CONFIRM_BITS ||
 	    datapump->rate600_confirm_bits > V22_ORIGINATE_SCRAMBLED_CONFIRM_BITS / 2 ||
 	    (datapump->rate600_turns & ~0xau) != 0 ||
-	    datapump->rate600_decoder.phase_quadrant >= QPSK_QUADRANT_COUNT ||
-	    !v22_scrambler_is_valid(&datapump->rate600_decoder.descrambler) ||
+	    !v22_symbol_decoder_is_valid(&datapump->rate600_decoder) ||
 	    datapump->rate_signal_tx_symbols >
 		    V22BIS_RATE_SIGNAL_SYMBOLS ||
 	    datapump->rate_signal_wait_samples >
@@ -304,10 +303,8 @@ static struct v22_datapump *v22_from_dp(struct dp *dp)
 	     (datapump->training_state != V22_TRAINING_ONLINE ||
 	      datapump->missing_carrier_samples != 0)) ||
 	    datapump->transmit_symbol >= V22BIS_SYMBOL_COUNT ||
-	    datapump->encoder.phase_quadrant >= QPSK_QUADRANT_COUNT ||
-	    !v22_scrambler_is_valid(&datapump->encoder.scrambler) ||
-	    datapump->decoder.phase_quadrant >= QPSK_QUADRANT_COUNT ||
-	    !v22_scrambler_is_valid(&datapump->decoder.descrambler) ||
+	    !v22_symbol_encoder_is_valid(&datapump->encoder) ||
+	    !v22_symbol_decoder_is_valid(&datapump->decoder) ||
 	    !v22bis_rate_signal_detector_is_valid(
 		    &datapump->rate_signal_detector) ||
 	    (datapump->has_previous_receive_point &&
@@ -318,10 +315,7 @@ static struct v22_datapump *v22_from_dp(struct dp *dp)
 	      !v22bis_receiver_is_valid(
 		      &datapump->v22bis_receiver))) ||
 	    (transmit_uses_v22bis_symbols(datapump) &&
-	     (datapump->v22bis_encoder.phase_quadrant >=
-		      QPSK_QUADRANT_COUNT ||
-	      !v22_scrambler_is_valid(
-		      &datapump->v22bis_encoder.scrambler))) ||
+	     !v22_symbol_encoder_is_valid(&datapump->v22bis_encoder)) ||
 	    ((datapump->rate_signal_detector.present ||
 	      datapump->rate_signal_detector.alternating_symbols != 0) &&
 	     (!datapump_uses_v22bis(datapump) ||

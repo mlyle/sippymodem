@@ -6,6 +6,7 @@
 #include "differential_qpsk.h"
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 enum {
@@ -60,6 +61,23 @@ void v22_scrambler_reset(
 	struct v22_scrambler *scrambler);
 bool v22_scrambler_is_valid(
 	const struct v22_scrambler *scrambler);
+
+static inline bool v22_symbol_encoder_is_valid(
+	const struct v22_symbol_encoder *encoder)
+{
+	return encoder != NULL &&
+	       encoder->phase_quadrant < QPSK_QUADRANT_COUNT &&
+	       v22_scrambler_is_valid(&encoder->scrambler);
+}
+
+static inline bool v22_symbol_decoder_is_valid(
+	const struct v22_symbol_decoder *decoder)
+{
+	return decoder != NULL &&
+	       decoder->phase_quadrant < QPSK_QUADRANT_COUNT &&
+	       v22_scrambler_is_valid(&decoder->descrambler);
+}
+
 /* Disable repair during V.22 handshaking; V.22bis keeps it enabled.
  * A disabled detector clears its count while preserving polynomial history. */
 enum v22_framing_result v22_scramble_bit(

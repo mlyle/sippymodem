@@ -103,10 +103,8 @@ enum v22_framing_result v22_symbol_encode(
 	uint8_t second_scrambled;
 	uint8_t next_quadrant;
 
-	if (encoder == NULL || first_bit > 1 || second_bit > 1 ||
-	    quadrant == NULL ||
-	    encoder->phase_quadrant >= QPSK_QUADRANT_COUNT ||
-	    !v22_scrambler_is_valid(&encoder->scrambler))
+	if (!v22_symbol_encoder_is_valid(encoder) ||
+	    first_bit > 1 || second_bit > 1 || quadrant == NULL)
 		return V22_FRAMING_INVALID_ARGUMENT;
 	/* Validated binary steps and quadrant mapping cannot fail. */
 	(void)v22_scramble_bit(&encoder->scrambler, first_bit, &first_scrambled, repair);
@@ -124,9 +122,7 @@ enum v22_framing_result v22_600_symbol_encode(
 {
 	uint8_t scrambled;
 
-	if (encoder == NULL || bit > 1 || quadrant == NULL ||
-	    encoder->phase_quadrant >= QPSK_QUADRANT_COUNT ||
-	    !v22_scrambler_is_valid(&encoder->scrambler))
+	if (!v22_symbol_encoder_is_valid(encoder) || bit > 1 || quadrant == NULL)
 		return V22_FRAMING_INVALID_ARGUMENT;
 	(void)v22_scramble_bit(&encoder->scrambler, bit, &scrambled, repair);
 	/* V.22 Table 1: zero advances 90 degrees and one advances 270. */
@@ -156,11 +152,8 @@ enum v22_framing_result v22_symbol_decode(
 	uint8_t first_decoded;
 	uint8_t second_decoded;
 
-	if (decoder == NULL ||
-	    quadrant >= QPSK_QUADRANT_COUNT ||
-	    first_bit == NULL || second_bit == NULL ||
-	    decoder->phase_quadrant >= QPSK_QUADRANT_COUNT ||
-	    !v22_scrambler_is_valid(&decoder->descrambler))
+	if (!v22_symbol_decoder_is_valid(decoder) ||
+	    quadrant >= QPSK_QUADRANT_COUNT || first_bit == NULL || second_bit == NULL)
 		return V22_FRAMING_INVALID_ARGUMENT;
 	/* Keep decoded bits local until both validated steps finish. */
 	(void)differential_qpsk_decode(decoder->phase_quadrant, quadrant, &dibit);
@@ -182,10 +175,8 @@ enum v22_framing_result v22_600_symbol_decode(
 	uint8_t quarter_turns;
 	uint8_t scrambled;
 
-	if (decoder == NULL || quadrant >= QPSK_QUADRANT_COUNT ||
-	    bit == NULL ||
-	    decoder->phase_quadrant >= QPSK_QUADRANT_COUNT ||
-	    !v22_scrambler_is_valid(&decoder->descrambler))
+	if (!v22_symbol_decoder_is_valid(decoder) ||
+	    quadrant >= QPSK_QUADRANT_COUNT || bit == NULL)
 		return V22_FRAMING_INVALID_ARGUMENT;
 	quarter_turns = (uint8_t)(
 		(quadrant - decoder->phase_quadrant) & 3u);
