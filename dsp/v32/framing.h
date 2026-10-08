@@ -47,6 +47,9 @@ enum v32_framing_result v32_scrambler_init(
 bool v32_scrambler_is_valid(
 	const struct v32_scrambler *scrambler);
 
+/* Data output bytes must be disjoint from their complete owner, including
+ * padding. Invalid arguments leave both owner and output unchanged. */
+
 /* Process between one and eight bits, most-significant bit first. */
 enum v32_framing_result v32_scramble_group(
 	struct v32_scrambler *scrambler, uint8_t input,

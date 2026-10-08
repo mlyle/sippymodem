@@ -4,6 +4,7 @@
 
 #include "test.h"
 
+#include <stddef.h>
 #include <string.h>
 
 enum {
@@ -455,6 +456,153 @@ static bool test_symbol_rejection(void)
 	return true;
 }
 
+static enum v32_framing_result transform_owned_group(
+	struct v32_scrambler *state, unsigned int mode,
+	uint8_t input, unsigned int width, uint8_t *output)
+{
+	switch (mode) {
+	case 0: return v32_scramble_group(state, input, width, output);
+	case 1: return v32_descramble_group(state, input, width, output);
+	case 2: return v32_scramble_dibit(state, input, output);
+	default: return v32_descramble_dibit(state, input, output);
+	}
+}
+
+static bool test_framing_output_ownership(void)
+{
+	struct group_fixture {
+		uint8_t prefix;
+		struct v32_scrambler owner;
+		uint8_t suffix;
+	} group_initial, group_fixture, group_expected;
+	struct encoder_fixture {
+		uint8_t prefix;
+		struct v32_symbol_encoder owner;
+		uint8_t suffix;
+	} encoder_initial, encoder_fixture, encoder_expected;
+	struct decoder_fixture {
+		uint8_t prefix;
+		struct v32_symbol_decoder owner;
+		uint8_t suffix;
+	} decoder_initial, decoder_fixture, decoder_expected;
+	static const struct {
+		enum v32_framing_result (*encode)(
+			struct v32_symbol_encoder *, uint8_t, uint8_t *);
+		enum v32_framing_result (*decode)(
+			struct v32_symbol_decoder *, uint8_t, uint8_t *);
+		unsigned int limit;
+	} modes[] = {
+		{ v32_trn_symbol_encode, v32_trn_symbol_decode, 4 },
+		{ v32_4800_symbol_encode, v32_4800_symbol_decode, 4 },
+		{ v32_9600_symbol_encode, v32_9600_symbol_decode, 16 },
+	};
+
+	for (unsigned int role = 0; role < 2; ++role) {
+		for (unsigned int mode = 0; mode < 4; ++mode) {
+			for (unsigned int width = mode < 2 ? 1u : 2u;
+			     width <= (mode < 2 ? 8u : 2u); ++width) {
+				for (unsigned int input = 0; input < (1u << width); ++input) {
+					uint8_t output;
+
+					memset(&group_initial, 0xa5, sizeof(group_initial));
+					group_initial.owner.history = UINT32_C(0x7fffff);
+					group_initial.owner.transmitter_role = role;
+					memcpy(&group_expected, &group_initial, sizeof(group_expected));
+					CHECK(transform_owned_group(&group_expected.owner, mode,
+						      (uint8_t)input, width, &output) == V32_FRAMING_OK,
+					      "disjoint group output failed");
+					for (size_t offset = 0; offset < sizeof(group_initial.owner); ++offset) {
+						memcpy(&group_fixture, &group_initial, sizeof(group_fixture));
+						CHECK(transform_owned_group(&group_fixture.owner, mode,
+							      (uint8_t)input, width,
+							      (uint8_t *)&group_fixture.owner + offset) ==
+							      V32_FRAMING_INVALID_ARGUMENT &&
+						      memcmp(&group_fixture, &group_initial, sizeof(group_fixture)) == 0,
+						      "group overlap changed storage at %u/%u/%u/%u/%zu",
+						      role, mode, width, input, offset);
+					}
+					for (unsigned int side = 0; side < 2; ++side) {
+						size_t offset = offsetof(struct group_fixture, owner) +
+							(side ? sizeof(group_fixture.owner) : 0) - (side ? 0 : 1);
+
+						memcpy(&group_fixture, &group_initial, sizeof(group_fixture));
+						((uint8_t *)&group_expected)[offset] = output;
+						CHECK(transform_owned_group(&group_fixture.owner, mode,
+							      (uint8_t)input, width, (uint8_t *)&group_fixture + offset) ==
+							      V32_FRAMING_OK &&
+						      memcmp(&group_fixture, &group_expected, sizeof(group_fixture)) == 0,
+						      "adjacent group output changed storage");
+						((uint8_t *)&group_expected)[offset] = 0xa5;
+					}
+				}
+			}
+		}
+		for (size_t mode = 0; mode < ARRAY_LENGTH(modes); ++mode) {
+			for (uint8_t phase = 0; phase < QPSK_QUADRANT_COUNT; ++phase) {
+				for (unsigned int input = 0; input < modes[mode].limit; ++input) {
+					uint8_t symbol, output;
+
+					memset(&encoder_initial, 0xa5, sizeof(encoder_initial));
+					encoder_initial.owner.scrambler.history = UINT32_C(0x7fffff);
+					encoder_initial.owner.scrambler.transmitter_role = role;
+					encoder_initial.owner.phase_quadrant = phase;
+					memset(&decoder_initial, 0xa5, sizeof(decoder_initial));
+					decoder_initial.owner.descrambler.history = UINT32_C(0x7fffff);
+					decoder_initial.owner.descrambler.transmitter_role = role;
+					decoder_initial.owner.phase_quadrant = phase;
+					memcpy(&encoder_expected, &encoder_initial, sizeof(encoder_expected));
+					memcpy(&decoder_expected, &decoder_initial, sizeof(decoder_expected));
+					CHECK(modes[mode].encode(&encoder_expected.owner, (uint8_t)input,
+						      &symbol) == V32_FRAMING_OK &&
+					      modes[mode].decode(&decoder_expected.owner, (uint8_t)input,
+						      &output) == V32_FRAMING_OK,
+					      "disjoint symbol output failed");
+					for (size_t offset = 0; offset < sizeof(encoder_initial.owner); ++offset) {
+						memcpy(&encoder_fixture, &encoder_initial, sizeof(encoder_fixture));
+						CHECK(modes[mode].encode(&encoder_fixture.owner, (uint8_t)input,
+							      (uint8_t *)&encoder_fixture.owner + offset) ==
+							      V32_FRAMING_INVALID_ARGUMENT &&
+						      memcmp(&encoder_fixture, &encoder_initial, sizeof(encoder_fixture)) == 0,
+						      "encoder overlap changed storage at %u/%zu/%u/%u/%zu",
+						      role, mode, phase, input, offset);
+					}
+					for (size_t offset = 0; offset < sizeof(decoder_initial.owner); ++offset) {
+						memcpy(&decoder_fixture, &decoder_initial, sizeof(decoder_fixture));
+						CHECK(modes[mode].decode(&decoder_fixture.owner, (uint8_t)input,
+							      (uint8_t *)&decoder_fixture.owner + offset) ==
+							      V32_FRAMING_INVALID_ARGUMENT &&
+						      memcmp(&decoder_fixture, &decoder_initial, sizeof(decoder_fixture)) == 0,
+						      "decoder overlap changed storage at %u/%zu/%u/%u/%zu",
+						      role, mode, phase, input, offset);
+					}
+					for (unsigned int side = 0; side < 2; ++side) {
+						size_t eo = offsetof(struct encoder_fixture, owner) +
+							(side ? sizeof(encoder_fixture.owner) : 0) - (side ? 0 : 1);
+						size_t doff = offsetof(struct decoder_fixture, owner) +
+							(side ? sizeof(decoder_fixture.owner) : 0) - (side ? 0 : 1);
+
+						memcpy(&encoder_fixture, &encoder_initial, sizeof(encoder_fixture));
+						memcpy(&decoder_fixture, &decoder_initial, sizeof(decoder_fixture));
+						((uint8_t *)&encoder_expected)[eo] = symbol;
+						((uint8_t *)&decoder_expected)[doff] = output;
+						CHECK(modes[mode].encode(&encoder_fixture.owner, (uint8_t)input,
+							      (uint8_t *)&encoder_fixture + eo) == V32_FRAMING_OK &&
+						      modes[mode].decode(&decoder_fixture.owner, (uint8_t)input,
+							      (uint8_t *)&decoder_fixture + doff) == V32_FRAMING_OK &&
+						      memcmp(&encoder_fixture, &encoder_expected, sizeof(encoder_fixture)) == 0 &&
+						      memcmp(&decoder_fixture, &decoder_expected, sizeof(decoder_fixture)) == 0,
+						      "adjacent symbol output changed storage");
+						((uint8_t *)&encoder_expected)[eo] = 0xa5;
+						((uint8_t *)&decoder_expected)[doff] = 0xa5;
+					}
+				}
+			}
+		}
+	}
+	return true;
+}
+
+
 static bool test_validation(void)
 {
 	struct v32_scrambler scrambler;
@@ -520,6 +668,7 @@ int main(void)
 		  test_three_bit_group_round_trip },
 		{ "group state rejection", test_group_state_rejection },
 		{ "symbol rejection", test_symbol_rejection },
+		{ "framing output ownership", test_framing_output_ownership },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

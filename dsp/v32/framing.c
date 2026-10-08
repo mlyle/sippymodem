@@ -2,6 +2,7 @@
 
 #include "framing.h"
 
+#include "memory_region.h"
 #include "self_sync_scrambler.h"
 
 #include <stddef.h>
@@ -48,7 +49,8 @@ static enum v32_framing_result transform_group(
 	enum self_sync_scrambler_result result;
 	uint8_t transformed;
 
-	if (state == NULL || output == NULL)
+	if (state == NULL || output == NULL ||
+	    memory_regions_overlap(state, sizeof(*state), output, sizeof(*output)))
 		return V32_FRAMING_INVALID_ARGUMENT;
 	shared.history = state->history;
 	config = scrambler_config(state->transmitter_role);
@@ -150,7 +152,8 @@ static inline enum v32_framing_result encode_symbol(
 	uint8_t scrambled;
 	uint8_t quadrant;
 
-	if (!symbol_encoder_is_valid(encoder) || output == NULL)
+	if (!symbol_encoder_is_valid(encoder) || output == NULL ||
+	    memory_regions_overlap(encoder, sizeof(*encoder), output, sizeof(*output)))
 		return V32_FRAMING_INVALID_ARGUMENT;
 	if (v32_scramble_group(
 		    &encoder->scrambler, input, bit_count, &scrambled) !=
@@ -220,6 +223,7 @@ static inline enum v32_framing_result decode_symbol(
 	uint8_t scrambled;
 
 	if (!symbol_decoder_is_valid(decoder) || output == NULL ||
+	    memory_regions_overlap(decoder, sizeof(*decoder), output, sizeof(*output)) ||
 	    symbol >= (1u << bit_count))
 		return V32_FRAMING_INVALID_ARGUMENT;
 	if (differential) {
