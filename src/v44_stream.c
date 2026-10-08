@@ -2,9 +2,10 @@
 
 #include "v44_stream.h"
 
+#include "byte_queue.h"
+
 #include <stdint.h>
 #include <stdlib.h>
-#include <string.h>
 
 enum {
 	V44_MAX_FIELD_BITS = 16,
@@ -14,11 +15,7 @@ enum {
 struct v44_bit_writer {
 	uint32_t bits;
 	unsigned int bit_count;
-	uint8_t *output;
-	size_t output_capacity;
-	size_t output_head;
-	size_t output_tail;
-	size_t output_length;
+	struct byte_queue output;
 };
 
 struct v44_bit_reader {
@@ -62,12 +59,12 @@ struct v44_bit_writer *v44_bit_writer_create(
 	writer = calloc(1, sizeof(*writer));
 	if (writer == NULL)
 		return NULL;
-	writer->output = malloc(output_capacity);
-	if (writer->output == NULL) {
+	writer->output.storage = malloc(output_capacity);
+	if (writer->output.storage == NULL) {
 		free(writer);
 		return NULL;
 	}
-	writer->output_capacity = output_capacity;
+	writer->output.capacity = output_capacity;
 	return writer;
 }
 
@@ -76,7 +73,7 @@ void v44_bit_writer_destroy(
 {
 	if (writer == NULL)
 		return;
-	free(writer->output);
+	free(writer->output.storage);
 	free(writer);
 }
 
@@ -85,22 +82,13 @@ static uint32_t v44_low_mask(unsigned int bit_count)
 	return (UINT32_C(1) << bit_count) - UINT32_C(1);
 }
 
-static void v44_writer_emit_byte(
-	struct v44_bit_writer *writer, uint8_t value)
-{
-	writer->output[writer->output_tail] = value;
-	writer->output_tail++;
-	if (writer->output_tail == writer->output_capacity)
-		writer->output_tail = 0;
-	writer->output_length++;
-}
-
 enum v44_stream_result v44_bit_writer_put(
 	struct v44_bit_writer *writer,
 	uint32_t value,
 	unsigned int bit_count)
 {
 	size_t emitted_bytes;
+	uint8_t octets[2];
 
 	if (writer == NULL || bit_count > V44_MAX_FIELD_BITS)
 		return V44_STREAM_INVALID_ARGUMENT;
@@ -108,16 +96,18 @@ enum v44_stream_result v44_bit_writer_put(
 		return V44_STREAM_OK;
 
 	emitted_bytes = (writer->bit_count + bit_count) / 8U;
-	if (emitted_bytes > writer->output_capacity - writer->output_length)
+	if (emitted_bytes > writer->output.capacity - writer->output.count)
 		return V44_STREAM_NEED_OUTPUT;
 
 	writer->bits |= (value & v44_low_mask(bit_count)) << writer->bit_count;
 	writer->bit_count += bit_count;
-	while (writer->bit_count >= 8) {
-		v44_writer_emit_byte(writer, (uint8_t)writer->bits);
+	for (size_t index = 0; index < emitted_bytes; ++index) {
+		octets[index] = (uint8_t)writer->bits;
 		writer->bits >>= 8;
 		writer->bit_count -= 8;
 	}
+	/* The complete field was reserved before changing the bit accumulator. */
+	(void)byte_queue_write(&writer->output, octets, emitted_bytes);
 	return V44_STREAM_OK;
 }
 
@@ -135,7 +125,7 @@ enum v44_stream_result v44_bit_writer_align(
 size_t v44_bit_writer_pending(
 	const struct v44_bit_writer *writer)
 {
-	return writer != NULL ? writer->output_length : 0;
+	return writer != NULL ? writer->output.count : 0;
 }
 
 size_t v44_bit_writer_read(
@@ -143,34 +133,9 @@ size_t v44_bit_writer_read(
 	uint8_t *output,
 	size_t output_capacity)
 {
-	size_t count;
-	size_t first;
-
 	if (writer == NULL || output == NULL || output_capacity == 0)
 		return 0;
-	count = writer->output_length < output_capacity ?
-		writer->output_length : output_capacity;
-	if (count == 0)
-		return 0;
-
-	first = writer->output_capacity - writer->output_head;
-	if (first > count)
-		first = count;
-	memcpy(output, writer->output + writer->output_head, first);
-	if (first < count)
-		memcpy(output + first, writer->output, count - first);
-
-	writer->output_head += first;
-	if (writer->output_head == writer->output_capacity)
-		writer->output_head = 0;
-	if (first < count)
-		writer->output_head = count - first;
-	writer->output_length -= count;
-	if (writer->output_length == 0) {
-		writer->output_head = 0;
-		writer->output_tail = 0;
-	}
-	return count;
+	return byte_queue_read(&writer->output, output, output_capacity);
 }
 
 bool v44_bit_writer_at_octet_boundary(

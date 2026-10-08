@@ -105,11 +105,12 @@ CHANNEL_BENCH_TEST_BINARY := $(BUILD_DIR)/test_channel_bench
 CHANNEL_BENCH_TEST_OBJECTS := $(BUILD_DIR)/test_channel_bench.o \
 	$(BUILD_DIR)/channel_bench.o $(BUILD_DIR)/fractional_delay.o \
 	$(BUILD_DIR)/g711.o
+V44_STREAM_OBJECTS := $(BUILD_DIR)/v44_stream.o $(BUILD_DIR)/byte_queue.o
 V42_XID_TEST_BINARY := $(BUILD_DIR)/test_v42_xid
 V42_XID_TEST_OBJECTS := $(BUILD_DIR)/test_v42_xid.o \
 	$(BUILD_DIR)/v42_xid.o \
 	$(BUILD_DIR)/v44_xid.o \
-	$(BUILD_DIR)/v44_stream.o
+	$(V44_STREAM_OBJECTS)
 V42BIS_CODEC_TEST_BINARY := $(BUILD_DIR)/test_v42bis_codec
 V42BIS_CODEC_TEST_OBJECTS := $(BUILD_DIR)/test_v42bis_codec.o \
 	$(BUILD_DIR)/native_modem_comp.o
@@ -120,21 +121,21 @@ LAPM_V44_SESSION_TEST_OBJECTS := \
 	$(BUILD_DIR)/lapm_v44_session.o \
 	$(BUILD_DIR)/v42_xid.o \
 	$(BUILD_DIR)/v44_xid.o \
-	$(BUILD_DIR)/v44_stream.o
+	$(V44_STREAM_OBJECTS)
 V44_STREAM_TEST_BINARY := $(BUILD_DIR)/test_v44_stream
 V44_STREAM_TEST_OBJECTS := $(BUILD_DIR)/test_v44_stream.o \
-	$(BUILD_DIR)/v44_stream.o
+	$(V44_STREAM_OBJECTS)
 V44_XID_TEST_BINARY := $(BUILD_DIR)/test_v44_xid
 V44_XID_TEST_OBJECTS := $(BUILD_DIR)/test_v44_xid.o \
 	$(BUILD_DIR)/v44_xid.o \
-	$(BUILD_DIR)/v44_stream.o
+	$(V44_STREAM_OBJECTS)
 V44_DECODER_TEST_BINARY := $(BUILD_DIR)/test_v44_decoder
 V44_DECODER_TEST_OBJECTS := $(BUILD_DIR)/test_v44_decoder.o \
 	$(BUILD_DIR)/v44_decoder.o \
 	$(BUILD_DIR)/v44_compressed_decoder.o \
 	$(BUILD_DIR)/v44_transparent_decoder.o \
 	$(BUILD_DIR)/v44_dictionary_decoder.o \
-	$(BUILD_DIR)/v44_stream.o
+	$(V44_STREAM_OBJECTS)
 V44_CHARACTER_PATH_TEST_BINARY := \
 	$(BUILD_DIR)/test_v44_character_path
 V44_CHARACTER_PATH_TEST_OBJECTS := \
@@ -148,7 +149,7 @@ V44_CHARACTER_PATH_TEST_OBJECTS := \
 	$(BUILD_DIR)/v44_compressed_decoder.o \
 	$(BUILD_DIR)/v44_transparent_decoder.o \
 	$(BUILD_DIR)/v44_dictionary_decoder.o \
-	$(BUILD_DIR)/v44_stream.o
+	$(V44_STREAM_OBJECTS)
 V44_DUPLEX_TEST_BINARY := $(BUILD_DIR)/test_v44_duplex
 V44_DUPLEX_TEST_OBJECTS := $(BUILD_DIR)/test_v44_duplex.o \
 	$(BUILD_DIR)/v44_duplex.o \
@@ -159,7 +160,7 @@ V44_DUPLEX_TEST_OBJECTS := $(BUILD_DIR)/test_v44_duplex.o \
 	$(BUILD_DIR)/v44_compressed_decoder.o \
 	$(BUILD_DIR)/v44_transparent_decoder.o \
 	$(BUILD_DIR)/v44_dictionary_decoder.o \
-	$(BUILD_DIR)/v44_stream.o
+	$(V44_STREAM_OBJECTS)
 V44_ENCODER_TEST_BINARY := $(BUILD_DIR)/test_v44_encoder
 V44_ENCODER_TEST_OBJECTS := $(BUILD_DIR)/test_v44_encoder.o \
 	$(BUILD_DIR)/v44_test_wire.o \
@@ -169,7 +170,7 @@ V44_ENCODER_TEST_OBJECTS := $(BUILD_DIR)/test_v44_encoder.o \
 	$(BUILD_DIR)/v44_compressed_decoder.o \
 	$(BUILD_DIR)/v44_transparent_decoder.o \
 	$(BUILD_DIR)/v44_dictionary_decoder.o \
-	$(BUILD_DIR)/v44_stream.o
+	$(V44_STREAM_OBJECTS)
 V44_ENCODER_MODES_TEST_BINARY := \
 	$(BUILD_DIR)/test_v44_encoder_modes
 V44_ENCODER_MODES_TEST_OBJECTS := \
@@ -180,7 +181,7 @@ V44_ENCODER_MODES_TEST_OBJECTS := \
 	$(BUILD_DIR)/v44_compressed_decoder.o \
 	$(BUILD_DIR)/v44_transparent_decoder.o \
 	$(BUILD_DIR)/v44_dictionary_decoder.o \
-	$(BUILD_DIR)/v44_stream.o
+	$(V44_STREAM_OBJECTS)
 V44_TX_MONITOR_TEST_BINARY := \
 	$(BUILD_DIR)/test_v44_tx_monitor
 V44_TX_MONITOR_TEST_OBJECTS := \
@@ -188,13 +189,13 @@ V44_TX_MONITOR_TEST_OBJECTS := \
 	$(BUILD_DIR)/v44_tx_monitor.o \
 	$(BUILD_DIR)/v44_encoder.o \
 	$(BUILD_DIR)/v44_dictionary_encoder.o \
-	$(BUILD_DIR)/v44_stream.o
+	$(V44_STREAM_OBJECTS)
 V44_DICTIONARY_ENCODER_TEST_BINARY := \
 	$(BUILD_DIR)/test_v44_dictionary_encoder
 V44_DICTIONARY_ENCODER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v44_dictionary_encoder.o \
 	$(BUILD_DIR)/v44_dictionary_encoder.o \
-	$(BUILD_DIR)/v44_stream.o
+	$(V44_STREAM_OBJECTS)
 V44_TRANSPARENT_TEST_BINARY := \
 	$(BUILD_DIR)/test_v44_transparent_decoder
 V44_TRANSPARENT_TEST_OBJECTS := \
@@ -205,14 +206,14 @@ V44_DICTIONARY_TEST_BINARY := \
 V44_DICTIONARY_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v44_dictionary_decoder.o \
 	$(BUILD_DIR)/v44_dictionary_decoder.o \
-	$(BUILD_DIR)/v44_stream.o
+	$(V44_STREAM_OBJECTS)
 V44_COMPRESSED_TEST_BINARY := \
 	$(BUILD_DIR)/test_v44_compressed_decoder
 V44_COMPRESSED_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v44_compressed_decoder.o \
 	$(BUILD_DIR)/v44_compressed_decoder.o \
 	$(BUILD_DIR)/v44_dictionary_decoder.o \
-	$(BUILD_DIR)/v44_stream.o
+	$(V44_STREAM_OBJECTS)
 V44_COMPRESSED_CONTROL_TEST_BINARY := \
 	$(BUILD_DIR)/test_v44_compressed_controls
 V44_COMPRESSED_CONTROL_TEST_OBJECTS := \
@@ -220,7 +221,7 @@ V44_COMPRESSED_CONTROL_TEST_OBJECTS := \
 	$(BUILD_DIR)/v44_test_wire.o \
 	$(BUILD_DIR)/v44_compressed_decoder.o \
 	$(BUILD_DIR)/v44_dictionary_decoder.o \
-	$(BUILD_DIR)/v44_stream.o
+	$(V44_STREAM_OBJECTS)
 V44_COMPRESSED_EXTENSION_TEST_BINARY := \
 	$(BUILD_DIR)/test_v44_compressed_extensions
 V44_COMPRESSED_EXTENSION_TEST_OBJECTS := \
@@ -228,7 +229,7 @@ V44_COMPRESSED_EXTENSION_TEST_OBJECTS := \
 	$(BUILD_DIR)/v44_test_wire.o \
 	$(BUILD_DIR)/v44_compressed_decoder.o \
 	$(BUILD_DIR)/v44_dictionary_decoder.o \
-	$(BUILD_DIR)/v44_stream.o
+	$(V44_STREAM_OBJECTS)
 V44_COMPRESSED_INCREMENTAL_TEST_BINARY := \
 	$(BUILD_DIR)/test_v44_compressed_incremental
 V44_COMPRESSED_INCREMENTAL_TEST_OBJECTS := \
@@ -236,7 +237,7 @@ V44_COMPRESSED_INCREMENTAL_TEST_OBJECTS := \
 	$(BUILD_DIR)/v44_test_wire.o \
 	$(BUILD_DIR)/v44_compressed_decoder.o \
 	$(BUILD_DIR)/v44_dictionary_decoder.o \
-	$(BUILD_DIR)/v44_stream.o
+	$(V44_STREAM_OBJECTS)
 V44_COMPRESSED_VALIDATION_TEST_BINARY := \
 	$(BUILD_DIR)/test_v44_compressed_validation
 V44_COMPRESSED_VALIDATION_TEST_OBJECTS := \
@@ -244,7 +245,7 @@ V44_COMPRESSED_VALIDATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/v44_test_wire.o \
 	$(BUILD_DIR)/v44_compressed_decoder.o \
 	$(BUILD_DIR)/v44_dictionary_decoder.o \
-	$(BUILD_DIR)/v44_stream.o
+	$(V44_STREAM_OBJECTS)
 RTP_TEST_BINARY := $(BUILD_DIR)/test_rtp
 RTP_TEST_OBJECTS := $(BUILD_DIR)/test_rtp.o \
 	$(BUILD_DIR)/rtp.o
@@ -452,7 +453,7 @@ NATIVE_CORE_OBJECTS := $(addprefix $(BUILD_DIR)/native_, \
 	$(BUILD_DIR)/v44_transparent_decoder.o \
 	$(BUILD_DIR)/v44_tx_monitor.o \
 	$(BUILD_DIR)/v44_xid.o \
-	$(BUILD_DIR)/v44_stream.o
+	$(V44_STREAM_OBJECTS)
 V32_FIXED_RECEIVE_OBJECTS := \
 	$(BUILD_DIR)/agc.o \
 	$(BUILD_DIR)/fixed_phase.o \

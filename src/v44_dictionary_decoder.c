@@ -2,6 +2,8 @@
 
 #include "v44_dictionary_decoder.h"
 
+#include "byte_queue.h"
+
 #include <stdbool.h>
 #include <stdlib.h>
 
@@ -34,14 +36,10 @@ struct v44_dictionary_decoder {
 	struct v44_parameters parameters;
 	struct v44_decoded_string *strings;
 	uint8_t *history;
-	uint8_t *output;
+	struct byte_queue output;
 	struct v44_previous_code previous;
 	uint32_t next_codeword;
 	size_t history_length;
-	size_t output_capacity;
-	size_t output_head;
-	size_t output_tail;
-	size_t output_length;
 };
 
 static bool previous_code_is_valid(
@@ -76,11 +74,10 @@ static bool decoder_is_valid(
 	return decoder != NULL &&
 	       v44_parameters_are_valid(&decoder->parameters) &&
 	       decoder->strings != NULL && decoder->history != NULL &&
-	       decoder->output != NULL &&
-	       decoder->output_capacity >= decoder->parameters.max_string_length &&
-	       decoder->output_head < decoder->output_capacity &&
-	       decoder->output_tail < decoder->output_capacity &&
-	       decoder->output_length <= decoder->output_capacity &&
+	       decoder->output.storage != NULL &&
+	       decoder->output.capacity >= decoder->parameters.max_string_length &&
+	       decoder->output.head < decoder->output.capacity &&
+	       decoder->output.count <= decoder->output.capacity &&
 	       decoder->history_length <= decoder->parameters.history_size &&
 	       decoder->next_codeword >= V44_FIRST_CODEWORD &&
 	       decoder->next_codeword <= decoder->parameters.codeword_limit &&
@@ -109,13 +106,13 @@ v44_dictionary_decoder_create(
 	if (decoder == NULL)
 		return NULL;
 	decoder->parameters = *parameters;
-	decoder->output_capacity = output_capacity;
+	decoder->output.capacity = output_capacity;
 	decoder->strings = calloc(
 		parameters->codeword_limit, sizeof(*decoder->strings));
 	decoder->history = malloc(parameters->history_size);
-	decoder->output = malloc(output_capacity);
+	decoder->output.storage = malloc(output_capacity);
 	if (decoder->strings == NULL || decoder->history == NULL ||
-	    decoder->output == NULL) {
+	    decoder->output.storage == NULL) {
 		v44_dictionary_decoder_destroy(decoder);
 		return NULL;
 	}
@@ -130,7 +127,7 @@ void v44_dictionary_decoder_destroy(
 		return;
 	free(decoder->strings);
 	free(decoder->history);
-	free(decoder->output);
+	free(decoder->output.storage);
 	free(decoder);
 }
 
@@ -162,20 +159,9 @@ static enum v44_dictionary_result reserve_decoded_string(
 	    (creates_string &&
 	     decoder->next_codeword >= decoder->parameters.codeword_limit))
 		return V44_DICTIONARY_PROCEDURAL_ERROR;
-	if (length > decoder->output_capacity - decoder->output_length)
+	if (length > decoder->output.capacity - decoder->output.count)
 		return V44_DICTIONARY_NEED_OUTPUT;
 	return V44_DICTIONARY_OK;
-}
-
-static void emit_decoded_byte(
-	struct v44_dictionary_decoder *decoder,
-	uint8_t value)
-{
-	decoder->history[decoder->history_length++] = value;
-	decoder->output[decoder->output_tail++] = value;
-	if (decoder->output_tail == decoder->output_capacity)
-		decoder->output_tail = 0;
-	decoder->output_length++;
 }
 
 static void create_appended_string(
@@ -205,7 +191,8 @@ v44_dictionary_decoder_decode_ordinal(
 	if (result != V44_DICTIONARY_OK)
 		return result;
 	start = (uint32_t)decoder->history_length;
-	emit_decoded_byte(decoder, ordinal);
+	decoder->history[decoder->history_length++] = ordinal;
+	(void)byte_queue_write(&decoder->output, &ordinal, 1);
 	if (append)
 		create_appended_string(decoder, start);
 	decoder->previous = (struct v44_previous_code){
@@ -269,12 +256,13 @@ v44_dictionary_decoder_decode_codeword(
 	start = (uint32_t)decoder->history_length;
 	if (next) {
 		for (uint32_t index = 0; index < length - 1; ++index)
-			emit_decoded_byte(decoder, decoder->history[source + index]);
-		emit_decoded_byte(decoder, first);
+			decoder->history[decoder->history_length++] = decoder->history[source + index];
+		decoder->history[decoder->history_length++] = first;
 	} else {
 		for (uint32_t index = 0; index < length; ++index)
-			emit_decoded_byte(decoder, decoder->history[source + index]);
+			decoder->history[decoder->history_length++] = decoder->history[source + index];
 	}
+	(void)byte_queue_write(&decoder->output, decoder->history + start, length);
 	if (append)
 		create_appended_string(decoder, start);
 	decoder->previous = (struct v44_previous_code){
@@ -315,7 +303,9 @@ v44_dictionary_decoder_decode_extension(
 	if (result != V44_DICTIONARY_OK)
 		return result;
 	for (uint32_t index = 0; index < extension_length; ++index)
-		emit_decoded_byte(decoder, decoder->history[source + index]);
+		decoder->history[decoder->history_length++] = decoder->history[source + index];
+	(void)byte_queue_write(&decoder->output,
+		decoder->history + decoder->history_length - extension_length, extension_length);
 	decoder->strings[decoder->next_codeword++] =
 		(struct v44_decoded_string){
 			.last_history_index =
@@ -331,7 +321,7 @@ v44_dictionary_decoder_decode_extension(
 size_t v44_dictionary_decoder_pending(
 	const struct v44_dictionary_decoder *decoder)
 {
-	return decoder_is_valid(decoder) ? decoder->output_length : 0;
+	return decoder_is_valid(decoder) ? decoder->output.count : 0;
 }
 
 size_t v44_dictionary_decoder_read(
@@ -339,24 +329,9 @@ size_t v44_dictionary_decoder_read(
 	uint8_t *output,
 	size_t output_capacity)
 {
-	size_t count;
-
-	if (!decoder_is_valid(decoder) || output == NULL ||
-	    output_capacity == 0)
+	if (!decoder_is_valid(decoder) || output == NULL || output_capacity == 0)
 		return 0;
-	count = decoder->output_length < output_capacity ?
-		decoder->output_length : output_capacity;
-	for (size_t index = 0; index < count; ++index) {
-		output[index] = decoder->output[decoder->output_head++];
-		if (decoder->output_head == decoder->output_capacity)
-			decoder->output_head = 0;
-	}
-	decoder->output_length -= count;
-	if (decoder->output_length == 0) {
-		decoder->output_head = 0;
-		decoder->output_tail = 0;
-	}
-	return count;
+	return byte_queue_read(&decoder->output, output, output_capacity);
 }
 
 const char *v44_dictionary_result_name(
