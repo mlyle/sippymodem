@@ -35,6 +35,18 @@ static inline bool memory_region_set_overlaps(
 {
 	if (regions == NULL)
 		return count != 0;
+	/* Owner/input/output triples are common in sample processing. Explicit
+	 * pairs let the compiler remove fixed caller descriptor arrays. */
+	if (count == 3u)
+		return memory_regions_overlap(
+			       regions[0].data, regions[0].size,
+			       regions[1].data, regions[1].size) ||
+		       memory_regions_overlap(
+			       regions[0].data, regions[0].size,
+			       regions[2].data, regions[2].size) ||
+		       memory_regions_overlap(
+			       regions[1].data, regions[1].size,
+			       regions[2].data, regions[2].size);
 	for (size_t left = 0; left < count; ++left) {
 		for (size_t right = left + 1u; right < count; ++right) {
 			if (memory_regions_overlap(

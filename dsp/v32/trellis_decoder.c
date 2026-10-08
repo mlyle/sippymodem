@@ -102,22 +102,6 @@ static bool observation_is_valid(
 	       observation->magnitude <= INT16_MAX;
 }
 
-static bool decode_arguments_are_separate(
-	const struct v32_trellis_decoder *decoder,
-	const struct v32_equalizer_observation *observation,
-	const struct v32_trellis_decoded_symbol *symbol)
-{
-	return observation != NULL && symbol != NULL &&
-	       !memory_regions_overlap(
-		       decoder, sizeof(*decoder),
-		       observation, sizeof(*observation)) &&
-	       !memory_regions_overlap(
-		       decoder, sizeof(*decoder), symbol, sizeof(*symbol)) &&
-	       !memory_regions_overlap(
-		       observation, sizeof(*observation),
-		       symbol, sizeof(*symbol));
-}
-
 static int16_t branch_metric(
 	const struct v32_equalizer_observation *observation,
 	struct v32_fixed_point point)
@@ -262,6 +246,11 @@ enum v32_trellis_decoder_result v32_trellis_decoder_decode(
 	const struct v32_equalizer_observation *observation,
 	struct v32_trellis_decoded_symbol *symbol)
 {
+	const struct memory_region regions[] = {
+		{ decoder, sizeof(*decoder) },
+		{ observation, sizeof(*observation) },
+		{ symbol, sizeof(*symbol) },
+	};
 	struct v32_trellis_decoder next;
 	struct v32_trellis_decoded_symbol next_symbol = { 0 };
 	uint8_t old_symbols[V32_TRELLIS_STATE_COUNT];
@@ -270,7 +259,8 @@ enum v32_trellis_decoder_result v32_trellis_decoder_decode(
 
 	if (!v32_trellis_decoder_is_valid(decoder))
 		return V32_TRELLIS_DECODER_INVALID_STATE;
-	if (!decode_arguments_are_separate(decoder, observation, symbol) ||
+	if (observation == NULL || symbol == NULL ||
+	    memory_region_set_overlaps(regions, 3) ||
 	    !observation_is_valid(observation))
 		return V32_TRELLIS_DECODER_INVALID_ARGUMENT;
 	next = *decoder;

@@ -31,32 +31,23 @@ enum v32_uncoded_receiver_result v32_uncoded_receiver_init(
 	return V32_UNCODED_RECEIVER_OK;
 }
 
-static bool observe_arguments_are_separate(
-	const struct v32_uncoded_receiver *receiver,
-	const struct v32_equalizer_observation *observation,
-	const struct v32_uncoded_symbol *symbol)
-{
-	return observation != NULL && symbol != NULL &&
-	       !memory_regions_overlap(
-		       receiver, sizeof(*receiver),
-		       observation, sizeof(*observation)) &&
-	       !memory_regions_overlap(
-		       receiver, sizeof(*receiver), symbol, sizeof(*symbol)) &&
-	       !memory_regions_overlap(
-		       observation, sizeof(*observation), symbol, sizeof(*symbol));
-}
-
 enum v32_uncoded_receiver_result v32_uncoded_receiver_observe(
 	struct v32_uncoded_receiver *receiver, uint8_t bits_per_symbol,
 	const struct v32_equalizer_observation *observation,
 	bool adapt_on_error, struct v32_uncoded_symbol *symbol)
 {
+	const struct memory_region regions[] = {
+		{ receiver, sizeof(*receiver) },
+		{ observation, sizeof(*observation) },
+		{ symbol, sizeof(*symbol) },
+	};
 	struct v32_uncoded_symbol next_symbol = { 0 };
 	enum v32_framing_result result;
 
 	if (!v32_uncoded_receiver_is_valid(receiver))
 		return V32_UNCODED_RECEIVER_INVALID_STATE;
-	if (!observe_arguments_are_separate(receiver, observation, symbol))
+	if (observation == NULL || symbol == NULL ||
+	    memory_region_set_overlaps(regions, 3))
 		return V32_UNCODED_RECEIVER_INVALID_ARGUMENT;
 	/* Symbol framing already leaves its owner unchanged on rejection. */
 	switch (bits_per_symbol) {

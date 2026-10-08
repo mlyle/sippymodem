@@ -35,30 +35,38 @@ static bool test_empty_regions(void)
 static bool test_region_sets(void)
 {
 	uint8_t storage[32];
-	struct memory_region regions[] = {
-		{ storage, 4 },
-		{ storage + 8, 4 },
-		{ storage + 16, 4 },
-		{ storage + 24, 4 },
-	};
 
 	CHECK(!memory_region_set_overlaps(NULL, 0) &&
 	      memory_region_set_overlaps(NULL, 1) &&
-	      !memory_region_set_overlaps(regions, 0) &&
-	      !memory_region_set_overlaps(regions, 1) &&
-	      !memory_region_set_overlaps(
-		      regions, ARRAY_LENGTH(regions)),
-	      "disjoint memory-region set changed");
-	regions[2].data = storage + 10;
-	CHECK(memory_region_set_overlaps(regions, ARRAY_LENGTH(regions)),
-	      "middle memory-region overlap was missed");
-	regions[2].data = storage + 16;
-	regions[3] = (struct memory_region){ storage + 2, 0 };
-	CHECK(!memory_region_set_overlaps(regions, ARRAY_LENGTH(regions)),
-	      "empty set member was treated as overlapping");
-	regions[3].size = 1;
-	CHECK(memory_region_set_overlaps(regions, ARRAY_LENGTH(regions)),
-	      "final memory-region overlap was missed");
+	      memory_region_set_overlaps(NULL, 3),
+	      "missing memory-region list validation changed");
+	for (size_t count = 2; count <= 4; ++count) {
+		struct memory_region *regions = malloc(count * sizeof(*regions));
+
+		CHECK(regions != NULL, "memory-region fixture allocation failed");
+		for (size_t i = 0; i < count; ++i)
+			regions[i] = (struct memory_region){ storage + 8 * i, 4 };
+		CHECK(!memory_region_set_overlaps(regions, 0) &&
+		      !memory_region_set_overlaps(regions, 1) &&
+		      !memory_region_set_overlaps(regions, count),
+		      "disjoint memory-region set changed at count %zu", count);
+		for (size_t left = 0; left + 1 < count; ++left) {
+			for (size_t right = left + 1; right < count; ++right) {
+				regions[right].data = storage + 8 * left + 3;
+				CHECK(memory_region_set_overlaps(regions, count),
+				      "set overlap missed at %zu/%zu/%zu", count, left, right);
+				regions[right].size = 0;
+				CHECK(!memory_region_set_overlaps(regions, count),
+				      "empty set member overlapped at %zu/%zu/%zu", count, left, right);
+				regions[right].size = 4;
+				regions[right].data = storage + 8 * left + 4;
+				CHECK(!memory_region_set_overlaps(regions, count),
+				      "adjacent set members overlapped at %zu/%zu/%zu", count, left, right);
+				regions[right].data = storage + 8 * right;
+			}
+		}
+		free(regions);
+	}
 	return true;
 }
 

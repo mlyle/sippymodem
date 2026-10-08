@@ -170,29 +170,22 @@ static enum v32_data_path_result commit_observations(
 					      V32_DATA_PATH_INVALID_STATE;
 }
 
-static bool init_arguments_are_separate(
-	const struct v32_data_path *path,
-	const struct v32_b1_path *b1,
-	const struct v32_data_batch *batch)
-{
-	return path != NULL && b1 != NULL && batch != NULL &&
-	       !memory_regions_overlap(path, sizeof(*path), b1, sizeof(*b1)) &&
-	       !memory_regions_overlap(
-		       path, sizeof(*path), batch, sizeof(*batch)) &&
-	       !memory_regions_overlap(
-		       b1, sizeof(*b1), batch, sizeof(*batch));
-}
-
 enum v32_data_path_result v32_data_path_init(
 	struct v32_data_path *path,
 	const struct v32_b1_path *b1,
 	struct v32_data_batch *batch)
 {
+	const struct memory_region regions[] = {
+		{ path, sizeof(*path) },
+		{ b1, sizeof(*b1) },
+		{ batch, sizeof(*batch) },
+	};
 	struct v32_data_path initialized = { 0 };
 	struct v32_data_batch generated = { 0 };
 	enum v32_data_path_result result = V32_DATA_PATH_OK;
 
-	if (!init_arguments_are_separate(path, b1, batch) ||
+	if (path == NULL || b1 == NULL || batch == NULL ||
+	    memory_region_set_overlaps(regions, 3) ||
 	    !v32_b1_path_is_complete(b1))
 		return V32_DATA_PATH_INVALID_ARGUMENT;
 	initialized.b1 = *b1;
@@ -213,26 +206,17 @@ enum v32_data_path_result v32_data_path_init(
 	return V32_DATA_PATH_OK;
 }
 
-static bool sample_arguments_are_separate(
-	const struct v32_data_path *path,
-	const struct v32_echo_reference *reference,
-	const struct v32_data_batch *batch)
-{
-	return batch != NULL &&
-	       !memory_regions_overlap(
-		       path, sizeof(*path), batch, sizeof(*batch)) &&
-	       (reference == NULL ||
-		(!memory_regions_overlap(
-			reference, sizeof(*reference), path, sizeof(*path)) &&
-		 !memory_regions_overlap(
-			reference, sizeof(*reference), batch, sizeof(*batch))));
-}
-
 enum v32_data_path_result v32_data_path_sample(
 	struct v32_data_path *path, int16_t received,
 	const struct v32_echo_reference *accepted_reference,
 	struct v32_data_batch *batch)
 {
+	const struct memory_region regions[] = {
+		{ path, sizeof(*path) },
+		{ batch, sizeof(*batch) },
+		{ accepted_reference,
+		  accepted_reference != NULL ? sizeof(*accepted_reference) : 0 },
+	};
 	struct v32_equalizer_observation observation;
 	struct v32_data_batch generated = { 0 };
 	enum v32_receive_path_result receive_result;
@@ -240,7 +224,8 @@ enum v32_data_path_result v32_data_path_sample(
 
 	if (!v32_data_path_is_valid(path))
 		return V32_DATA_PATH_INVALID_STATE;
-	if (!sample_arguments_are_separate(path, accepted_reference, batch))
+	if (batch == NULL ||
+	    memory_region_set_overlaps(regions, 3))
 		return V32_DATA_PATH_INVALID_ARGUMENT;
 	receive_result = v32_receive_path_sample(
 		&path->b1.receive, received, accepted_reference, &observation);

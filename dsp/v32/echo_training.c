@@ -172,20 +172,6 @@ bool v32_echo_training_path_is_valid(
 			V32_ECHO_FINE_ADAPTATION);
 }
 
-static bool arguments_are_separate(
-	const struct v32_echo_training *training,
-	const struct v32_receive_path *path, const uint8_t *quadrant)
-{
-	return training != NULL && path != NULL && quadrant != NULL &&
-	       !memory_regions_overlap(
-		       training, sizeof(*training), path, sizeof(*path)) &&
-	       !memory_regions_overlap(
-		       training, sizeof(*training), quadrant,
-		       sizeof(*quadrant)) &&
-	       !memory_regions_overlap(
-		       path, sizeof(*path), quadrant, sizeof(*quadrant));
-}
-
 static enum v32_echo_training_result transition_path(
 	struct v32_receive_path *path, uint16_t symbol)
 {
@@ -234,13 +220,19 @@ enum v32_echo_training_result v32_echo_training_next(
 	struct v32_echo_training *training,
 	struct v32_receive_path *path, uint8_t *quadrant)
 {
+	const struct memory_region regions[] = {
+		{ training, sizeof(*training) },
+		{ path, sizeof(*path) },
+		{ quadrant, sizeof(*quadrant) },
+	};
 	struct v32_echo_training next_training;
 	struct v32_receive_path next_path;
 	uint16_t symbol;
 	uint8_t next_quadrant;
 	bool path_changes;
 
-	if (!arguments_are_separate(training, path, quadrant))
+	if (training == NULL || path == NULL || quadrant == NULL ||
+	    memory_region_set_overlaps(regions, 3))
 		return V32_ECHO_TRAINING_INVALID_ARGUMENT;
 	if (!v32_echo_training_path_is_valid(training, path))
 		return V32_ECHO_TRAINING_INVALID_STATE;

@@ -202,27 +202,17 @@ static enum v32_receive_path_result drain_recovered(
 	return V32_RECEIVE_PATH_OK;
 }
 
-static bool sample_arguments_are_separate(
-	const struct v32_receive_path *path,
-	const struct v32_echo_reference *reference,
-	const struct v32_equalizer_observation *observation)
-{
-	return observation != NULL &&
-	       !memory_regions_overlap(
-		       path, sizeof(*path), observation, sizeof(*observation)) &&
-	       (reference == NULL ||
-		(!memory_regions_overlap(
-			reference, sizeof(*reference), path, sizeof(*path)) &&
-		 !memory_regions_overlap(
-			reference, sizeof(*reference),
-			observation, sizeof(*observation))));
-}
-
 enum v32_receive_path_result v32_receive_path_sample(
 	struct v32_receive_path *path, int16_t received,
 	const struct v32_echo_reference *accepted_reference,
 	struct v32_equalizer_observation *observation)
 {
+	const struct memory_region regions[] = {
+		{ path, sizeof(*path) },
+		{ observation, sizeof(*observation) },
+		{ accepted_reference,
+		  accepted_reference != NULL ? sizeof(*accepted_reference) : 0 },
+	};
 	struct v32_line_receiver next_line;
 	struct v32_equalizer next_equalizer;
 	struct v32_equalizer_observation next_observation;
@@ -238,8 +228,8 @@ enum v32_receive_path_result v32_receive_path_sample(
 		return V32_RECEIVE_PATH_INVALID_STATE;
 	if (path->equalizer.decision_pending)
 		return V32_RECEIVE_PATH_DECISION_PENDING;
-	if (!sample_arguments_are_separate(
-		    path, accepted_reference, observation))
+	if (observation == NULL ||
+	    memory_region_set_overlaps(regions, 3))
 		return V32_RECEIVE_PATH_INVALID_ARGUMENT;
 
 	next_line = path->line;
@@ -335,21 +325,6 @@ enum v32_receive_path_result v32_receive_path_sample_paused(
 	return V32_RECEIVE_PATH_OK;
 }
 
-static bool commit_arguments_are_separate(
-	const struct v32_receive_path *path,
-	const struct v32_equalizer_decision *decision,
-	const struct v32_equalizer_observation *observation)
-{
-	return decision != NULL && observation != NULL &&
-	       !memory_regions_overlap(
-		       path, sizeof(*path), decision, sizeof(*decision)) &&
-	       !memory_regions_overlap(
-		       path, sizeof(*path), observation, sizeof(*observation)) &&
-	       !memory_regions_overlap(
-		       decision, sizeof(*decision),
-		       observation, sizeof(*observation));
-}
-
 static enum v32_receive_path_result commit_decision(
 	struct v32_receive_path *path,
 	const struct v32_equalizer_decision *decision,
@@ -357,6 +332,11 @@ static enum v32_receive_path_result commit_decision(
 	enum v32_equalizer_adaptation adaptation,
 	struct v32_equalizer_observation *observation)
 {
+	const struct memory_region regions[] = {
+		{ path, sizeof(*path) },
+		{ decision, sizeof(*decision) },
+		{ observation, sizeof(*observation) },
+	};
 	struct v32_equalizer next_equalizer;
 	struct v32_equalizer_observation next_observation;
 	size_t next_index;
@@ -366,7 +346,8 @@ static enum v32_receive_path_result commit_decision(
 		return V32_RECEIVE_PATH_INVALID_STATE;
 	if (!path->equalizer.decision_pending)
 		return V32_RECEIVE_PATH_INVALID_STATE;
-	if (!commit_arguments_are_separate(path, decision, observation))
+	if (decision == NULL || observation == NULL ||
+	    memory_region_set_overlaps(regions, 3))
 		return V32_RECEIVE_PATH_INVALID_ARGUMENT;
 	next_equalizer = path->equalizer;
 	next_index = path->recovered_index;
