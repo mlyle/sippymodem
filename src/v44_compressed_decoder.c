@@ -278,18 +278,6 @@ static enum v44_compressed_result process_control(
 	}
 }
 
-static unsigned int extension_value_bits(
-	const struct v44_compressed_decoder *decoder)
-{
-	if (decoder->parameters.max_string_length <= 46)
-		return 5;
-	if (decoder->parameters.max_string_length <= 78)
-		return 6;
-	if (decoder->parameters.max_string_length <= 142)
-		return 7;
-	return 8;
-}
-
 static enum v44_compressed_result queue_extension(
 	struct v44_compressed_decoder *decoder,
 	uint32_t length)
@@ -398,7 +386,8 @@ v44_compressed_decoder_process(
 		case V44_PARSE_EXTENSION_LONG:
 			result = read_bits(
 				decoder, input, input_length,
-				extension_value_bits(decoder), &value);
+				v44_extension_value_bits(
+					decoder->parameters.max_string_length), &value);
 			if (result != V44_COMPRESSED_OK)
 				return result;
 			return queue_extension(decoder, value + 13);

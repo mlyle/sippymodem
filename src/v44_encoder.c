@@ -467,18 +467,6 @@ static void begin_codeword(
 		encoder->phase = V44_ENCODE_CODEWORD_PREFIX;
 }
 
-static unsigned int extension_value_bits(
-	const struct v44_encoder *encoder)
-{
-	if (encoder->parameters.max_string_length <= 46)
-		return 5;
-	if (encoder->parameters.max_string_length <= 78)
-		return 6;
-	if (encoder->parameters.max_string_length <= 142)
-		return 7;
-	return 8;
-}
-
 static void append_field_bits(
 	uint32_t *field,
 	unsigned int *field_bits,
@@ -515,7 +503,8 @@ static bool begin_extension(
 		append_field_bits(&field, &field_bits, 1, 1);
 		append_field_bits(
 			&field, &field_bits, length - 13U,
-			extension_value_bits(encoder));
+			v44_extension_value_bits(
+				encoder->parameters.max_string_length));
 	}
 	encoder->data_action = V44_DATA_EXTENSION;
 	encoder->pending_length = length;

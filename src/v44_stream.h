@@ -29,6 +29,19 @@ struct v44_parameters v44_default_parameters(void);
 bool v44_parameters_are_valid(
 	const struct v44_parameters *parameters);
 
+/* V.44 6.6.2/Table 4: the long extension field is 5..8 bits.
+ * The caller has validated the negotiated maximum string length (32..255). */
+static inline unsigned int v44_extension_value_bits(uint32_t max_string_length)
+{
+	if (max_string_length <= 46)
+		return 5;
+	if (max_string_length <= 78)
+		return 6;
+	if (max_string_length <= 142)
+		return 7;
+	return 8;
+}
+
 enum v44_stream_result {
 	V44_STREAM_OK = 0,
 	V44_STREAM_NEED_INPUT,
