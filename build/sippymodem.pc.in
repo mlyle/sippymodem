@@ -1,0 +1,11 @@
+prefix=@prefix@
+libdir=@libdir@
+includedir=@includedir@
+
+Name: sippymodem
+Description: Native dial-up modem over SIP and RTP
+Version: @version@
+Requires.private: @pjsip_package@
+Libs: -L"${libdir}" -lsippymodem
+Libs.private: -lm
+Cflags: -I"${includedir}"

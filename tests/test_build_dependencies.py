@@ -27,6 +27,19 @@ class DefaultBuildTests(unittest.TestCase):
     def test_aliases_share_one_modem_build(self) -> None:
         self.assertEqual(self.plan("all", "slmodemd", "libsippymodem").count("-C src"), 1)
 
+    def test_library_build_excludes_the_compatibility_frontend(self) -> None:
+        plan = self.plan("libsippymodem")
+        self.assertIn("libsippymodem", plan)
+        command = ["make", "--no-print-directory", "--dry-run", "--always-make",
+                   "PJSIP_AVAILABLE=yes", "PKG_CONFIG=false", "CCACHE=", "libsippymodem"]
+        result = subprocess.run(command, cwd=ROOT / "src", capture_output=True,
+                                text=True, check=True, timeout=10)
+        self.assertIn("library.o", result.stdout)
+        self.assertIn("libsippymodem.so", result.stdout)
+        for frontend in ("main.o", "runtime.o", "terminal.o", "modem_at.o",
+                         "modem_frontend.o", "slmodem_terminal.o", "log_target.o"):
+            self.assertNotIn("-o " + frontend + " ", result.stdout)
+
 
 class HeaderDependencyTests(unittest.TestCase):
     def test_phase_profile_is_required_and_generator_changes_rebuild(self) -> None:

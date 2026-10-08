@@ -3547,6 +3547,7 @@ PYTHON_TESTS := \
 	test_modem_terminal.py \
 	test_build_compiler.py \
 	test_build_dependencies.py \
+	test_install.py \
 	test_revision_build.py \
 	test_live_campaign_profiles.py \
 	test_live_campaign_config.py \

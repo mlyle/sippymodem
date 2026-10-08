@@ -437,10 +437,12 @@ FRONTEND_OBJECTS := $(FRONTEND_SOURCES:.c=.o)
 OBJECTS := $(SOURCES:.c=.o)
 DEPENDENCIES := $(SOURCES:.c=.d)
 
-.PHONY: all clean
+.PHONY: all clean libsippymodem
 
 ifeq ($(PJSIP_AVAILABLE),yes)
-all: slmodemd libsippymodem.a libsippymodem.so
+all: slmodemd libsippymodem
+
+libsippymodem: libsippymodem.a libsippymodem.so
 
 libsippymodem.a: $(CORE_OBJECTS)
 	rm -f $@
@@ -454,8 +456,8 @@ slmodemd: $(FRONTEND_OBJECTS) libsippymodem.a $(PJSIP_DEPENDENCY)
 else
 .PHONY: slmodemd
 
-all slmodemd:
-	@echo "error: $(PJSIP_PACKAGE) development files are required to build slmodemd" >&2
+all slmodemd libsippymodem:
+	@echo "error: $(PJSIP_PACKAGE) development files are required to build slmodemd or libsippymodem" >&2
 	@false
 endif
 
