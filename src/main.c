@@ -113,7 +113,7 @@ static void print_usage(FILE *stream, const char *program)
 {
 	fprintf(stream,
 		"Usage: %s [--help] [--log-target stderr|syslog]\n"
-		"Run the modem in the foreground; SIP_* environment variables "
+		"Run sippymodem in the foreground; SIP_* environment variables "
 		"provide configuration; MODEM_LOG_TARGET selects log output.\n",
 		program != NULL ? program : "slmodemd");
 }

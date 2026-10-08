@@ -60,7 +60,7 @@
 #define XMIT_SIZE 4096
 
 #define MODEM_AUTHOR "Smart Link Ltd."
-#define MODEM_NAME "SmartLink Soft Modem"
+#define MODEM_NAME "sippymodem"
 #define MODEM_VERSION "2.9.11"
 #define MODEM_DATE __DATE__" "__TIME__
 

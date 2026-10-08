@@ -543,7 +543,7 @@ class LiveTerminalTests(unittest.TestCase):
         for published, expected in (
             (b"/dev/pts/17\n", "/dev/pts/17"),
             (
-                b"SmartLink Soft Modem: source-built\n/dev/pts/23\n",
+                b"sippymodem: source-built\n/dev/pts/23\n",
                 "/dev/pts/23",
             ),
             (b"relative-device\n", None),
