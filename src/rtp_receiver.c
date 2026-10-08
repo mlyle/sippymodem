@@ -338,23 +338,3 @@ bool rtp_receiver_play(
 		*report = played;
 	return true;
 }
-
-const char *rtp_receive_result_name(
-	enum rtp_receive_result result)
-{
-	switch (result) {
-	case RTP_RECEIVE_ACCEPTED:
-		return "accepted";
-	case RTP_RECEIVE_INVALID_ARGUMENT:
-		return "invalid argument";
-	case RTP_RECEIVE_MALFORMED_PACKET:
-		return "malformed RTP packet";
-	case RTP_RECEIVE_UNEXPECTED_PAYLOAD:
-		return "unexpected payload type";
-	case RTP_RECEIVE_LATE:
-		return "packet is late";
-	case RTP_RECEIVE_TOO_EARLY:
-		return "packet is outside the playout window";
-	}
-	return "unknown receive result";
-}

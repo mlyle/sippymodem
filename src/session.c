@@ -391,28 +391,6 @@ enum rtp_endpoint_result sip_session_last_rtp_result(
 			       RTP_ENDPOINT_INVALID_ARGUMENT;
 }
 
-const char *sip_session_result_name(
-	enum sip_session_result result)
-{
-	switch (result) {
-	case SIP_SESSION_OK:
-		return "ok";
-	case SIP_SESSION_INVALID_ARGUMENT:
-		return "invalid argument";
-	case SIP_SESSION_ALREADY_OPEN:
-		return "session is already open";
-	case SIP_SESSION_NOT_OPEN:
-		return "session is not open";
-	case SIP_SESSION_RTP_ERROR:
-		return "RTP runtime failed";
-	case SIP_SESSION_SIGNALING_ERROR:
-		return "SIP signaling failed";
-	case SIP_SESSION_MEDIA_BINDING_ERROR:
-		return "negotiated media could not be bound";
-	}
-	return "unknown session result";
-}
-
 bool sip_session_media_cleanup_pending(const struct sip_session *session)
 {
 	return session != NULL && rtp_runtime_endpoint(session->rtp)->discard_pending;

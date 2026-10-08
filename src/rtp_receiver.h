@@ -134,7 +134,4 @@ bool rtp_receiver_play(
 	size_t count,
 	struct rtp_playout_report *report);
 
-const char *rtp_receive_result_name(
-	enum rtp_receive_result result);
-
 #endif

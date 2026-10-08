@@ -115,7 +115,5 @@ const char *media_codec_name(enum media_codec codec);
 int media_codec_default_payload_type(
 	enum media_codec codec);
 int media_codec_silence_octet(enum media_codec codec);
-const char *media_result_name(
-	enum media_result result);
 
 #endif

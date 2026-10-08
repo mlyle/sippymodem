@@ -181,18 +181,3 @@ int media_codec_silence_octet(enum media_codec codec)
 	}
 	return -1;
 }
-
-const char *media_result_name(enum media_result result)
-{
-	switch (result) {
-	case MEDIA_OK:
-		return "ok";
-	case MEDIA_INVALID_ARGUMENT:
-		return "invalid argument";
-	case MEDIA_OUTPUT_TOO_SMALL:
-		return "output buffer too small";
-	case MEDIA_NO_LINEAR_MAPPING:
-		return "codec has no linear PCM mapping";
-	}
-	return "unknown media result";
-}
