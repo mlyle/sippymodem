@@ -14,6 +14,7 @@
 #include "test.h"
 
 #include <math.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -415,6 +416,19 @@ static bool complete_conditioning(
 	      handoff->receive.equalizer.adaptation ==
 		      V32_EQUALIZER_ADAPTATION_FINE,
 	      "conditioning did not expose the first rate observation");
+	/* The imported decoder has unspecified padding. Define fixture storage
+	 * before downstream whole-state snapshots, preserving named bytes. */
+	{
+		unsigned char bytes[sizeof(handoff->decoder)] = { 0 };
+
+#define COPY(field) memcpy(bytes + offsetof(struct v32_symbol_decoder, field), \
+	&handoff->decoder.field, sizeof(handoff->decoder.field))
+		COPY(descrambler.history);
+		COPY(descrambler.transmitter_role);
+		COPY(phase_quadrant);
+#undef COPY
+		memcpy(&handoff->decoder, bytes, sizeof(bytes));
+	}
 	return true;
 }
 
