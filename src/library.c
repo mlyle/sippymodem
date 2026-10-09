@@ -1172,6 +1172,18 @@ static bool collect_media(struct sippymodem_line *line, bool wait)
 	return true;
 }
 
+static bool media_read_ready(const struct sippymodem_line *line)
+{
+#ifdef _WIN32
+	HANDLE event = modem_host_media_read_handle(line_host(line));
+	/* recv() can leave a read notification after the last datagram. Service
+	 * it even on an empty socket; the receive path acknowledges it. */
+	if (event != NULL && WaitForSingleObject(event, 0) == WAIT_OBJECT_0)
+		return true;
+#endif
+	return net_socket_readable(modem_host_media_poll_fd(line_host(line)));
+}
+
 enum sippymodem_result sippymodem_process(struct sippymodem_server *server,
 	uint64_t now_ns, uint64_t *next_deadline_ns)
 {
@@ -1209,8 +1221,7 @@ enum sippymodem_result sippymodem_process(struct sippymodem_server *server,
 		}
 		if (line->active && line->attempt_deadline != 0 && now_ns >= line->attempt_deadline)
 			end_call(line, SIPPYMODEM_DISCONNECT_TIMEOUT);
-		net_socket media = modem_host_media_poll_fd(line_host(line));
-		if (now_ns >= line->media_deadline || net_socket_readable(media)) {
+		if (now_ns >= line->media_deadline || media_read_ready(line)) {
 			(void)modem_host_prepare_media(line_host(line));
 			synchronize(line);
 			if (line_modem(line)->started) {

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #include "sippymodem.h"
+#include "net_socket.h"
 #include "test.h"
 
 #include <string.h>
@@ -28,6 +29,64 @@ static bool tick(struct sippymodem_server *server)
 		      "premature connected event");
 	enum sippymodem_result result = sippymodem_wait(server, now_ns(), 50);
 	CHECK(result == SIPPYMODEM_OK || result == SIPPYMODEM_AGAIN, "wait failed: %d", result);
+	return true;
+}
+
+static bool test_idle_rtp_wait(void)
+{
+	struct sippymodem_server_config config;
+	sippymodem_server_config_init(&config);
+	config.max_lines = 1;
+	config.omit_default_endpoint = true;
+	config.bound_address = config.public_address = "127.0.0.1";
+	struct sippymodem_server *server = sippymodem_server_create(&config);
+	CHECK(server != NULL && sippymodem_server_start(server) == SIPPYMODEM_OK,
+	      "idle server startup failed");
+	struct sippymodem_line_config line_config;
+	sippymodem_line_config_init(&line_config);
+	struct sippymodem_line *line = sippymodem_line_create(server, &line_config);
+	CHECK(line != NULL && sippymodem_line_start(line) == SIPPYMODEM_OK,
+	      "idle line startup failed");
+	struct sippymodem_status status;
+	CHECK(sippymodem_get_status(line, &status) == SIPPYMODEM_OK && status.rtp_port != 0,
+	      "idle line has no RTP port");
+	net_socket sender = net_udp_open();
+	CHECK(sender != NET_INVALID_SOCKET, "UDP sender startup failed");
+	struct sockaddr_in target = { .sin_family = AF_INET,
+		.sin_addr.s_addr = htonl(INADDR_LOOPBACK), .sin_port = htons(status.rtp_port) };
+	uint64_t now = now_ns(), deadline;
+	CHECK(now != 0 && sippymodem_process(server, now, &deadline) == SIPPYMODEM_OK,
+	      "idle process failed");
+	struct sippymodem_event event;
+	while (sippymodem_poll_event(server, &event) == SIPPYMODEM_OK) {}
+	CHECK(deadline > now + UINT64_C(2000000) &&
+	      sippymodem_wait(server, now, 2) == SIPPYMODEM_AGAIN,
+	      "empty idle wait did not sleep");
+	/* Hold the protocol clock fixed: a media deadline must not clear a stale
+	 * read notification and conceal a spinning owner loop. */
+	for (unsigned int burst = 0; burst < 3; ++burst) {
+		const unsigned char packet[] = { 1, 2, 3 };
+		for (unsigned int i = 0; i < 2; ++i)
+			CHECK(net_socket_send(sender, packet, sizeof(packet), &target) == sizeof(packet),
+			      "UDP injection failed");
+		enum sippymodem_result result;
+		unsigned int passes = 0;
+		do {
+			result = sippymodem_wait(server, now, 2);
+		} while (result == SIPPYMODEM_AGAIN && ++passes < 8);
+		CHECK(result == SIPPYMODEM_OK && sippymodem_wait(server, now, 0) == SIPPYMODEM_OK,
+		      "wait did not preserve RTP readiness");
+		passes = 0;
+		do {
+			CHECK(sippymodem_process(server, now, &deadline) == SIPPYMODEM_OK &&
+			      deadline > now + UINT64_C(2000000), "idle process reached a deadline");
+			while (sippymodem_poll_event(server, &event) == SIPPYMODEM_OK) {}
+			result = sippymodem_wait(server, now, 2);
+		} while (result == SIPPYMODEM_OK && ++passes < 8);
+		CHECK(result == SIPPYMODEM_AGAIN, "idle RTP notification kept the owner spinning");
+	}
+	net_socket_close(sender);
+	sippymodem_server_destroy(server);
 	return true;
 }
 
@@ -159,7 +218,7 @@ static bool test_wait_handle_cleanup(void)
 
 int main(void)
 {
-	if (!test_portable_owner_loop())
+	if (!test_idle_rtp_wait() || !test_portable_owner_loop())
 		return 1;
 #ifdef _WIN32
 	if (!test_wait_handle_cleanup())
