@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "mixed_radix.h"
+#include "wide_uint.h"
 
 #include <stdbool.h>
 #include <string.h>
@@ -8,27 +9,24 @@
 static bool configuration_is_valid(
 	const uint32_t *radices, size_t digit_count, size_t bit_count)
 {
-	__uint128_t maximum = 0;
-	__uint128_t required;
+	struct wide_uint maximum = wide_from_u64(0);
+	struct wide_uint required;
 
 	if (radices == NULL || digit_count == 0 ||
 	    digit_count > MIXED_RADIX_MAX_DIGITS ||
 	    bit_count > MIXED_RADIX_MAX_BITS)
 		return false;
-	required = bit_count == MIXED_RADIX_MAX_BITS ?
-			   ~(__uint128_t)0 :
-			   ((__uint128_t)1 << bit_count) - 1;
+	required = wide_subtract(wide_shift_left(wide_from_u64(1), bit_count),
+		wide_from_u64(1));
 	for (size_t index = digit_count; index > 0; --index) {
 		uint32_t radix = radices[index - 1];
 
 		if (radix == 0 ||
-		    __builtin_mul_overflow(
-			    maximum, (__uint128_t)radix, &maximum) ||
-		    __builtin_add_overflow(
-			    maximum, (__uint128_t)(radix - 1), &maximum))
+		    !wide_multiply_u32(maximum, radix, &maximum) ||
+		    !wide_add(maximum, wide_from_u64(radix - 1), &maximum))
 			return false;
 	}
-	return maximum >= required;
+	return wide_compare(maximum, required) >= 0;
 }
 
 static bool digits_are_in_range(
@@ -62,7 +60,7 @@ enum mixed_radix_result mixed_radix_encode(
 	uint32_t *digits)
 {
 	uint32_t encoded[MIXED_RADIX_MAX_DIGITS];
-	__uint128_t value = 0;
+	struct wide_uint value = wide_from_u64(0);
 	uint8_t combined = 0;
 
 	if (digits == NULL || (bits == NULL && bit_count != 0))
@@ -72,15 +70,15 @@ enum mixed_radix_result mixed_radix_encode(
 	/* Keep validity separate: a high non-binary bit may shift out of value. */
 	for (size_t bit = bit_count; bit > 0; --bit) {
 		combined |= bits[bit - 1];
-		value = (value << 1) | bits[bit - 1];
+		value = wide_shift_left(value, 1);
+		value.low |= bits[bit - 1];
 	}
 	if (combined > 1)
 		return MIXED_RADIX_OUT_OF_RANGE;
 	for (size_t digit = 0; digit < digit_count; ++digit) {
-		encoded[digit] = (uint32_t)(value % radices[digit]);
-		value /= radices[digit];
+		encoded[digit] = wide_divide_u32(value, radices[digit], &value);
 	}
-	if (value != 0)
+	if (wide_compare(value, wide_from_u64(0)) != 0)
 		return MIXED_RADIX_OUT_OF_RANGE;
 	memcpy(digits, encoded, digit_count * sizeof(*digits));
 	return MIXED_RADIX_OK;
@@ -92,7 +90,7 @@ static enum mixed_radix_result decode(
 	bool reject_unused, bool validated)
 {
 	uint8_t decoded[MIXED_RADIX_MAX_BITS];
-	__uint128_t value = 0;
+	struct wide_uint value = wide_from_u64(0);
 
 	if (digits == NULL || (bits == NULL && bit_count != 0))
 		return MIXED_RADIX_INVALID_ARGUMENT;
@@ -104,18 +102,16 @@ static enum mixed_radix_result decode(
 		uint32_t radix = radices[index - 1];
 		uint32_t digit = digits[index - 1];
 
-		if (__builtin_mul_overflow(
-			    value, (__uint128_t)radix, &value) ||
-		    __builtin_add_overflow(
-			    value, (__uint128_t)digit, &value))
+		if (!wide_multiply_u32(value, radix, &value) ||
+		    !wide_add(value, wide_from_u64(digit), &value))
 			return MIXED_RADIX_OUT_OF_RANGE;
 	}
 	if (reject_unused && bit_count < MIXED_RADIX_MAX_BITS &&
-	    value >= ((__uint128_t)1 << bit_count))
+	    wide_compare(value, wide_shift_left(wide_from_u64(1), bit_count)) >= 0)
 		return MIXED_RADIX_OUT_OF_RANGE;
 	for (size_t bit = 0; bit < bit_count; ++bit) {
-		decoded[bit] = (uint8_t)(value & 1);
-		value >>= 1;
+		decoded[bit] = (uint8_t)(value.low & 1);
+		value = wide_shift_right(value, 1);
 	}
 	if (bit_count != 0)
 		memcpy(bits, decoded, bit_count);
