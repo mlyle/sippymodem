@@ -82,6 +82,8 @@ SDP_TEST_OBJECTS := $(BUILD_DIR)/test_sdp.o \
 	$(BUILD_DIR)/sdp.o $(BUILD_DIR)/media.o \
 	$(BUILD_DIR)/g711.o
 MEDIA_WORKERS_TEST_BINARY := $(BUILD_DIR)/test_media_workers
+MEDIA_WORKERS_PIPE_TEST_BINARY := $(BUILD_DIR)/test_media_workers_pipe
+WAKE_SIGNAL_TEST_BINARIES := $(BUILD_DIR)/test_wake_signal $(BUILD_DIR)/test_wake_signal_pipe
 LIBRARY_TEST_BINARY := $(BUILD_DIR)/test_library
 PJSIP_TEST_BINARY := $(BUILD_DIR)/test_sip_signaling
 PJSIP_TEST_OBJECTS := $(BUILD_DIR)/test_sip_signaling.o \
@@ -3243,7 +3245,7 @@ DS0_SIP_TEST_BINARY := $(BUILD_DIR)/test_ds0_sip
 DS0_PPP_TEST_BINARY := $(BUILD_DIR)/test_ds0_ppp
 DS0_CODEC_TEST_BINARY := $(BUILD_DIR)/test_ds0_codec
 
-TEST_BINARIES := $(MEDIA_WORKERS_TEST_BINARY) $(BUILD_DIR)/test_log_target $(BUILD_DIR)/test_log_buffer $(BUILD_DIR)/test_ds0_probe $(DS0_DATAPUMP_TEST_BINARY) $(DS0_PPP_TEST_BINARY) $(DS0_CODEC_TEST_BINARY) $(BUILD_DIR)/test_packet_stats $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
+TEST_BINARIES := $(MEDIA_WORKERS_TEST_BINARY) $(MEDIA_WORKERS_PIPE_TEST_BINARY) $(WAKE_SIGNAL_TEST_BINARIES) $(BUILD_DIR)/test_log_target $(BUILD_DIR)/test_log_buffer $(BUILD_DIR)/test_ds0_probe $(DS0_DATAPUMP_TEST_BINARY) $(DS0_PPP_TEST_BINARY) $(DS0_CODEC_TEST_BINARY) $(BUILD_DIR)/test_packet_stats $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(SIP_URI_TEST_BINARY) $(SDP_TEST_BINARY) $(G711_TEST_BINARY) \
 	$(SAMPLE_MATH_TEST_BINARY) \
 	$(PCM_GAIN_TEST_BINARY) \
@@ -6233,7 +6235,18 @@ $(BUILD_DIR)/log_target.o: ../src/log_target.c ../src/log_target.h | $(BUILD_DIR
 $(BUILD_DIR)/test_log_target: $(BUILD_DIR)/test_log_target.o $(BUILD_DIR)/log_target.o
 	$(CC) $(LDFLAGS) -Wl,--wrap=openlog -Wl,--wrap=closelog -Wl,--wrap=syslog -Wl,--wrap=__syslog_chk -o $@ $^
 
-$(MEDIA_WORKERS_TEST_BINARY): $(BUILD_DIR)/test_media_workers.o $(BUILD_DIR)/media_workers.o
-	$(CC) $(LDFLAGS) -Wl,--wrap=pthread_create -o $@ $^ -pthread
-$(BUILD_DIR)/media_workers.o: ../src/media_workers.c ../src/media_workers.h ../src/line.h
+$(MEDIA_WORKERS_TEST_BINARY): $(BUILD_DIR)/test_media_workers.o $(BUILD_DIR)/test_worker.o $(BUILD_DIR)/wake_signal.o
+	$(CC) $(LDFLAGS) -o $@ $^ -pthread
+$(MEDIA_WORKERS_PIPE_TEST_BINARY): $(BUILD_DIR)/test_media_workers.o $(BUILD_DIR)/test_worker.o $(BUILD_DIR)/wake_signal_pipe.o
+	$(CC) $(LDFLAGS) -o $@ $^ -pthread
+$(BUILD_DIR)/test_worker.o: ../src/media_workers.c ../src/media_workers.h ../src/wake_signal.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Dpthread_create=worker_test_thread_create -MMD -MP -c -o $@ $<
+$(BUILD_DIR)/wake_signal.o: ../src/wake_signal.c ../src/wake_signal.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+$(BUILD_DIR)/wake_signal_pipe.o: ../src/wake_signal.c ../src/wake_signal.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DWAKE_SIGNAL_PIPE -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/test_wake_signal: $(BUILD_DIR)/test_wake_signal.o $(BUILD_DIR)/wake_signal.o
+	$(CC) $(LDFLAGS) -o $@ $^ -pthread
+$(BUILD_DIR)/test_wake_signal_pipe: $(BUILD_DIR)/test_wake_signal.o $(BUILD_DIR)/wake_signal_pipe.o
+	$(CC) $(LDFLAGS) -o $@ $^ -pthread

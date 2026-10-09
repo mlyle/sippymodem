@@ -323,6 +323,10 @@ unsigned int sippymodem_listen_port(const struct sippymodem_server *server);
 /* Borrowed poll-only fd: do not read/close it. Readability also wakes process()
  * for a completed DSP job, even when poll_event() returns AGAIN. */
 int sippymodem_event_fd(const struct sippymodem_server *server);
+/* Borrowed Windows manual-reset event for WaitForSingleObject/WaitForMultipleObjects.
+ * Never reset, signal or close it. Returns NULL on POSIX; event_fd returns -1
+ * on Windows. Call process()/poll_event() to consume completed work/events. */
+void *sippymodem_event_handle(const struct sippymodem_server *server);
 
 #ifdef __cplusplus
 }

@@ -103,16 +103,17 @@ int __wrap_pjsua_destroy2(unsigned int flags)
 
 struct modem_line;
 struct media_worker;
-struct media_worker *__real_media_worker_create(struct modem_line *line, int wake_fd);
+struct wake_signal;
+struct media_worker *__real_media_worker_create(struct modem_line *line, struct wake_signal *wake);
 static bool fail_media_start;
-struct media_worker *__wrap_media_worker_create(struct modem_line *line, int wake_fd)
+struct media_worker *__wrap_media_worker_create(struct modem_line *line, struct wake_signal *wake)
 {
 	if (fail_media_start) {
 		fail_media_start = false;
 		errno = EAGAIN;
 		return NULL;
 	}
-	return __real_media_worker_create(line, wake_fd);
+	return __real_media_worker_create(line, wake);
 }
 
 #define EXPECT(condition) CHECK((condition), "%s", #condition)

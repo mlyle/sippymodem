@@ -6,6 +6,7 @@
 
 struct modem_line;
 struct media_worker;
+struct wake_signal;
 struct media_job {
 	uint64_t now_ns;
 	size_t datagrams;
@@ -15,8 +16,8 @@ struct media_job {
 
 /* Each started line owns a persistent thread and one copied job. Collect it
  * before accessing the line. No payload or caller job pointers are retained.
- * wake_fd is borrowed until destroy; -1 disables completion notification. */
-struct media_worker *media_worker_create(struct modem_line *line, int wake_fd);
+ * wake is borrowed until destroy; NULL disables completion notification. */
+struct media_worker *media_worker_create(struct modem_line *line, struct wake_signal *wake);
 bool media_worker_busy(const struct media_worker *worker);
 bool media_worker_submit(struct media_worker *worker, uint64_t now_ns);
 bool media_worker_collect(struct media_worker *worker, bool wait, struct media_job *job);

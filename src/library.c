@@ -6,6 +6,7 @@
 #include "datapump_link.h"
 #include "line.h"
 #include "media_workers.h"
+#include "wake_signal.h"
 #include "log_buffer.h"
 #include "modem_state.h"
 #include "sip_uri.h"
@@ -15,7 +16,6 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
-#include <sys/eventfd.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
 #include <poll.h>
@@ -71,22 +71,12 @@ struct sippymodem_server {
 	unsigned int max_lines, event_head, event_count, next_id;
 	struct sippymodem_event terminal_events[LINE_LIMIT];
 	bool terminal_pending[LINE_LIMIT];
-	int event_fd;
+	struct wake_signal wake;
 	uint64_t now;
 	bool have_now, time_valid, started, processing, event_overflow;
 };
 
 static bool collect_media(struct sippymodem_line *line, bool wait);
-
-static bool take_wake(int fd)
-{
-	uint64_t one;
-	ssize_t count;
-	do {
-		count = read(fd, &one, sizeof(one));
-	} while (count < 0 && errno == EINTR);
-	return count == sizeof(one);
-}
 
 static struct modem *line_modem(const struct sippymodem_line *line)
 {
@@ -232,9 +222,7 @@ static void emit(struct sippymodem_line *line, enum sippymodem_event_type type)
 	event->type = type;
 	event->line_id = line->id;
 	event->status = current;
-	uint64_t one = 1;
-	ssize_t written = write(server->event_fd, &one, sizeof(one));
-	if (written != sizeof(one))
+	if (!wake_signal_send(&server->wake))
 		server->event_overflow = true;
 }
 
@@ -696,7 +684,7 @@ struct sippymodem_server *sippymodem_server_create(const struct sippymodem_serve
 	struct sippymodem_server *server = calloc(1, sizeof(*server));
 	if (server == NULL)
 		return NULL;
-	server->event_fd = -1;
+	server->wake = (struct wake_signal)WAKE_SIGNAL_INITIALIZER;
 	server->max_lines = config->max_lines;
 	config_init(&server->config);
 	struct sip_config *sip = &server->config.sip;
@@ -715,8 +703,7 @@ struct sippymodem_server *sippymodem_server_create(const struct sippymodem_serve
 		goto fail;
 	}
 	server->sip = sip_server_create(&server->config, config->max_lines);
-	server->event_fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK | EFD_SEMAPHORE);
-	if (server->sip == NULL || server->event_fd < 0)
+	if (server->sip == NULL || !wake_signal_open(&server->wake))
 		goto fail;
 	if (config->omit_default_endpoint) {
 		if (sip_server_disable_default(server->sip) != SIP_SIGNALING_OK)
@@ -864,7 +851,7 @@ enum sippymodem_result sippymodem_line_start(struct sippymodem_line *line)
 		return SIPPYMODEM_CLOSED;
 	if (modem_host_open(line_host(line)) != SIP_SESSION_OK)
 		return SIPPYMODEM_ERROR;
-	line->worker = media_worker_create(line->core, line->server->event_fd);
+	line->worker = media_worker_create(line->core, &line->server->wake);
 	if (line->worker == NULL) {
 		(void)modem_host_close(line_host(line));
 		return SIPPYMODEM_ERROR;
@@ -945,8 +932,7 @@ void sippymodem_server_destroy(struct sippymodem_server *server)
 		free(server->endpoints[index]);
 	for (unsigned int index = 0; index < LINE_LIMIT; ++index)
 		free(server->groups[index]);
-	if (server->event_fd >= 0)
-		close(server->event_fd);
+	wake_signal_close(&server->wake);
 	free(server);
 }
 
@@ -1144,7 +1130,7 @@ static bool collect_media(struct sippymodem_line *line, bool wait)
 	struct media_job job;
 	if (!media_worker_collect(line->worker, wait, &job))
 		return !media_worker_busy(line->worker);
-	if (!job.notified || !take_wake(line->server->event_fd))
+	if (!job.notified || !wake_signal_take(&line->server->wake))
 		line->server->event_overflow = true;
 	if (modem_host_finish_media(line_host(line)) != SIP_SESSION_OK)
 		job.result = MODEM_HOST_SESSION_ERROR;
@@ -1260,14 +1246,19 @@ enum sippymodem_result sippymodem_poll_event(struct sippymodem_server *server,
 		*event = server->terminal_events[slot];
 		server->terminal_pending[slot] = false;
 	}
-	if (!take_wake(server->event_fd))
+	if (!wake_signal_take(&server->wake))
 		server->event_overflow = true;
 	return SIPPYMODEM_OK;
 }
 
 int sippymodem_event_fd(const struct sippymodem_server *server)
 {
-	return server != NULL ? server->event_fd : -1;
+	return server != NULL ? wake_signal_fd(&server->wake) : -1;
+}
+
+void *sippymodem_event_handle(const struct sippymodem_server *server)
+{
+	return server != NULL ? wake_signal_handle(&server->wake) : NULL;
 }
 
 unsigned int sippymodem_listen_port(const struct sippymodem_server *server)

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #include "media_workers.h"
 #include "line.h"
+#include "wake_signal.h"
 
 #include <errno.h>
 #include <pthread.h>
 #include <stdlib.h>
-#include <unistd.h>
 
 struct media_worker {
 	pthread_t thread;
@@ -13,7 +13,7 @@ struct media_worker {
 	pthread_cond_t ready, done;
 	struct modem_line *line;
 	struct media_job job;
-	int wake_fd;
+	struct wake_signal *wake;
 	bool busy; /* Native owner only. */
 	bool pending, completed, stopping; /* Mailbox mutex. */
 };
@@ -34,12 +34,7 @@ static void *worker_main(void *context)
 		pthread_mutex_unlock(&worker->mutex);
 		job.result = modem_line_process_media(worker->line, job.now_ns, &job.datagrams);
 		pthread_mutex_lock(&worker->mutex);
-		uint64_t one = 1;
-		ssize_t count;
-		do {
-			count = worker->wake_fd < 0 ? 0 : write(worker->wake_fd, &one, sizeof(one));
-		} while (count < 0 && errno == EINTR);
-		job.notified = count == sizeof(one);
+		job.notified = worker->wake != NULL && wake_signal_send(worker->wake);
 		/* Publish after notifying so collection cannot consume an absent wake. */
 		worker->job = job;
 		worker->completed = true;
@@ -47,9 +42,9 @@ static void *worker_main(void *context)
 	}
 }
 
-struct media_worker *media_worker_create(struct modem_line *line, int wake_fd)
+struct media_worker *media_worker_create(struct modem_line *line, struct wake_signal *wake)
 {
-	if (line == NULL || wake_fd < -1) {
+	if (line == NULL || (wake != NULL && !wake_signal_is_open(wake))) {
 		errno = EINVAL;
 		return NULL;
 	}
@@ -57,7 +52,7 @@ struct media_worker *media_worker_create(struct modem_line *line, int wake_fd)
 	if (worker == NULL)
 		return NULL;
 	worker->line = line;
-	worker->wake_fd = wake_fd;
+	worker->wake = wake;
 	int error = pthread_mutex_init(&worker->mutex, NULL);
 	if (error != 0)
 		goto fail;
@@ -67,9 +62,18 @@ struct media_worker *media_worker_create(struct modem_line *line, int wake_fd)
 	error = pthread_cond_init(&worker->done, NULL);
 	if (error != 0)
 		goto fail_ready;
-	error = pthread_create(&worker->thread, NULL, worker_main, worker);
+	/* PCM call transitions nest large scratch frames; macOS defaults to 512 KiB. */
+	pthread_attr_t attributes;
+	error = pthread_attr_init(&attributes);
+	if (error != 0)
+		goto fail_done;
+	error = pthread_attr_setstacksize(&attributes, 8u * 1024u * 1024u);
+	if (error == 0)
+		error = pthread_create(&worker->thread, &attributes, worker_main, worker);
+	pthread_attr_destroy(&attributes);
 	if (error == 0)
 		return worker;
+fail_done:
 	pthread_cond_destroy(&worker->done);
 fail_ready:
 	pthread_cond_destroy(&worker->ready);

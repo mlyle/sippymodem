@@ -43,14 +43,23 @@ completion independently and flushes its packets before applying deferred SIP
 updates. A slow line does not delay processing of other lines.
 
 `process()` submits and collects without waiting for workers or network input.
-Poll the borrowed `event_fd` as well as respecting the returned deadline, and
-call `process()` when it becomes readable. Do not read that descriptor directly;
+On POSIX, poll the borrowed `sippymodem_event_fd()` as well as respecting the
+returned deadline, and call `process()` when it becomes readable. Do not read
+that descriptor directly;
 it carries completion wakes as well as coarse events, so `poll_event()` can return
 AGAIN after a wake. Byte I/O is nonblocking and can return AGAIN with a zero count
 while that line is busy. Status returns the coherent last-completed snapshot.
 Answer, hangup, explicit mode changes and stop can wait for the target line's
 current bounded job; they do not wait for other lines. Endpoint stop collects only its associated
 lines before closing their calls.
+
+On Windows, `sippymodem_event_fd()` returns -1. Use the borrowed manual-reset
+`HANDLE` from `sippymodem_event_handle()` with `WaitForSingleObject()` or
+`WaitForMultipleObjects()` and the process deadline. Waiting does not consume
+notifications. Never reset, signal, or close the handle; `process()` and
+`poll_event()` consume notifications. POSIX returns NULL from `event_handle()`.
+Each DSP worker has an explicit 8 MiB stack for nested PCM training scratch
+buffers, independent of the host's smaller default thread stack.
 
 The legacy `server_config.dsp_threads` field accepts 0..32 for compatibility but
 is ignored. Every started line gets its own thread, regardless of CPU count.
