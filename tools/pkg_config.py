@@ -14,12 +14,16 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("prefix", "libdir", "includedir", "pjsip-package"):
         parser.add_argument("--" + name, required=True)
+    parser.add_argument("--private-libs", default="-lm")
     args = parser.parse_args()
     values = vars(args)
     if any("\n" in value or "\r" in value for value in values.values()):
         parser.error("pkg-config values must fit on one line")
     if not re.fullmatch(r"[A-Za-z0-9_.+-]+", args.pjsip_package):
         parser.error("invalid PJSIP package name")
+    if not re.fullmatch(r"(?:-l[A-Za-z0-9_+.-]+(?: +|$))*", args.private_libs):
+        parser.error("invalid private library flags")
+    values["private_libs"] = " ".join(args.private_libs.split())
     source = (ROOT / "src/modem.c").read_text(encoding="utf-8")
     versions = re.findall(r'^#define MODEM_VERSION "([0-9.]+)"$', source, re.M)
     if len(versions) != 1:

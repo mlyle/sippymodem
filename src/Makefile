@@ -12,6 +12,7 @@
 ###########################################################################
 
 include ../build/compiler.mk
+include ../build/platform.mk
 
 PYTHON ?= python3
 CPPFLAGS ?=
@@ -43,7 +44,7 @@ CPPFLAGS += -D_POSIX_C_SOURCE=200809L -I. -I$(DSP_SOURCE_DIR) \
 	-I$(DSP_V21_202_SOURCE_DIR) -I$(DSP_V22_SOURCE_DIR) \
 	-I$(DSP_V32_SOURCE_DIR) -I$(DSP_PCM_SOURCE_DIR)
 CFLAGS += -std=gnu11 -Wall -Wextra -Werror=format -fPIC
-LDLIBS += $(PJSIP_LDLIBS) -lm
+LDLIBS += $(PJSIP_LDLIBS) -lm $(PLATFORM_LIBS)
 
 MODEM_CORE_SOURCES := \
 	homolog_data.c \
@@ -440,25 +441,45 @@ DEPENDENCIES := $(SOURCES:.c=.d)
 .PHONY: all clean libsippymodem
 
 ifeq ($(PJSIP_AVAILABLE),yes)
+ifeq ($(TARGET_SYSTEM),Windows)
+all: libsippymodem
+.PHONY: slmodemd
+slmodemd:
+	@echo "error: the PTY frontend requires a POSIX host; use libsippymodem on Windows" >&2
+	@false
+else
 all: slmodemd libsippymodem
+endif
 
-libsippymodem: libsippymodem.a libsippymodem.so
+libsippymodem: libsippymodem.a $(SHARED_LIBRARY) $(SHARED_IMPORT_LIBRARY)
 
 libsippymodem.a: $(CORE_OBJECTS)
 	rm -f $@
 	$(AR) rcs $@ $(CORE_OBJECTS)
 
-libsippymodem.so: $(CORE_OBJECTS) $(PJSIP_DEPENDENCY) ../build/library.map
-	$(CC) -shared -Wl,-z,defs -Wl,--version-script=../build/library.map $(LDFLAGS) -o $@ $(CORE_OBJECTS) $(LDLIBS)
+$(SHARED_LIBRARY): $(CORE_OBJECTS) $(PJSIP_DEPENDENCY) $(SHARED_EXPORTS)
+	$(CC) $(SHARED_LINK_FLAGS) $(LDFLAGS) -o $@ $(CORE_OBJECTS) $(LDLIBS)
 
+ifneq ($(TARGET_SYSTEM),Windows)
 slmodemd: $(FRONTEND_OBJECTS) libsippymodem.a $(PJSIP_DEPENDENCY)
 	$(CC) $(LDFLAGS) -o $@ $(FRONTEND_OBJECTS) libsippymodem.a $(LDLIBS)
+endif
 else
 .PHONY: slmodemd
 
 all slmodemd libsippymodem:
 	@echo "error: $(PJSIP_PACKAGE) development files are required to build slmodemd or libsippymodem" >&2
 	@false
+endif
+
+ifeq ($(TARGET_SYSTEM),Windows)
+$(SHARED_EXPORTS): sippymodem.h sippymodem_fd.h ../tools/library_exports.py
+	@mkdir -p $(dir $@)
+	$(PYTHON) ../tools/library_exports.py sippymodem.h sippymodem_fd.h > $@.tmp
+	mv $@.tmp $@
+
+$(SHARED_IMPORT_LIBRARY): $(SHARED_EXPORTS)
+	$(DLLTOOL) -d $< -D $(SHARED_LIBRARY) -l $@
 endif
 
 sdp_pjsip.o sip_signaling_pjsip.o: \
@@ -485,7 +506,7 @@ $(CONSTELLATION_HEADER): $(DSP_PCM_SOURCE_DIR)/generate_constellation.py
 	$(PYTHON) $< $@
 
 clean:
-	rm -f slmodemd libsippymodem.a libsippymodem.so $(SOURCES:.c=.o) $(DEPENDENCIES)
+	rm -f slmodemd libsippymodem.a libsippymodem.so libsippymodem.dylib libsippymodem.dll libsippymodem.dll.a $(SOURCES:.c=.o) $(DEPENDENCIES)
 	rm -f modem_test modem_main.o modem_cmdline.o modem_test.o
 	rm -f modem_datafile.o dp_dummy.o dp_sinus.o
 	rm -f .build_profile .depend

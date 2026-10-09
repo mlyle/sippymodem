@@ -7,5 +7,5 @@ Description: Native dial-up modem over SIP and RTP
 Version: @version@
 Requires.private: @pjsip_package@
 Libs: -L"${libdir}" -lsippymodem
-Libs.private: -lm
+Libs.private: @private_libs@
 Cflags: -I"${includedir}"

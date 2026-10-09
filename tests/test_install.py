@@ -15,6 +15,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class InstallTests(unittest.TestCase):
     def test_staged_install_and_uninstall_preserve_unrelated_files(self) -> None:
+        for system in ("Linux", "Darwin", "Windows"):
+            with self.subTest(system=system):
+                self.check_staged_install(system)
+
+    def check_staged_install(self, system: str) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             work = Path(temporary)
             tree, stage = work / "source", work / "stage"
@@ -36,6 +41,17 @@ class InstallTests(unittest.TestCase):
                 "share/sippymodem/examples/systemd/README.md":
                     ("examples/systemd/README.md", 0o644),
             }
+            if system != "Linux":
+                installed = {name: value for name, value in installed.items()
+                             if not name.startswith("share/sippymodem/examples/")}
+            if system == "Darwin":
+                del installed["lib/libsippymodem.so"]
+                installed["lib/libsippymodem.dylib"] = ("src/libsippymodem.dylib", 0o755)
+            elif system == "Windows":
+                del installed["bin/slmodemd"]
+                del installed["lib/libsippymodem.so"]
+                installed["bin/libsippymodem.dll"] = ("src/libsippymodem.dll", 0o755)
+                installed["lib/libsippymodem.dll.a"] = ("src/libsippymodem.dll.a", 0o644)
             for source, _mode in installed.values():
                 (tree / source).write_text(source + "\n", encoding="ascii")
             prefix = "/opt/sippy modem"
@@ -45,7 +61,7 @@ class InstallTests(unittest.TestCase):
             unrelated.write_text("local configuration\n", encoding="ascii")
             command = ["make", "--no-print-directory", "-f", str(ROOT / "build/install.mk"),
                        "--eval=all: ; @:", f"PREFIX={prefix}", f"DESTDIR={stage}",
-                       "PJSIP_PACKAGE=libpjproject"]
+                       "PJSIP_PACKAGE=libpjproject", f"TARGET_SYSTEM={system}"]
             result = subprocess.run(command + ["install"], cwd=tree, capture_output=True,
                                     text=True, timeout=10)
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -66,6 +82,9 @@ class InstallTests(unittest.TestCase):
             self.assertIn("-I" + prefix + "/include", shlex.split(flags))
             self.assertIn("-L" + prefix + "/lib", shlex.split(flags))
             self.assertIn("-lpthread", shlex.split(flags))
+            if system == "Windows":
+                self.assertIn("-lws2_32", shlex.split(flags))
+                self.assertIn("-lbcrypt", shlex.split(flags))
             dependency.unlink()
             self.assertEqual(sorted(p.name for p in (destination / "include").iterdir()),
                              ["sippymodem.h", "sippymodem_fd.h"])

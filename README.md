@@ -62,10 +62,11 @@ make pjproject-init
 make -j2
 ```
 
-This builds `src/slmodemd`, `src/libsippymodem.so`, and `src/libsippymodem.a`.
+On Linux, this builds `src/slmodemd`, `src/libsippymodem.so`, and `src/libsippymodem.a`.
 `make libsippymodem` builds only the library; `make test` runs the checks.
 `sudo make install` installs under `/usr/local`. See
-[building and installation](docs/building.md) for other prefixes and SDK linking.
+[building and installation](docs/building.md) for other prefixes, SDK linking,
+and the macOS and native Windows library build paths.
 
 ## Launch and dial with Kermit
 
