@@ -20,9 +20,7 @@ size_t v92_suvu_frame_bits(unsigned int mapping_frame_bits)
 
 size_t v92_suvu_frame_bytes(unsigned int mapping_frame_bits)
 {
-	size_t bits = v92_suvu_frame_bits(mapping_frame_bits);
-
-	return bits == 0u ? 0u : (bits + 7u) / 8u;
+	return (v92_suvu_frame_bits(mapping_frame_bits) + 7u) / 8u;
 }
 
 bool v92_suvu_parameters_are_valid(

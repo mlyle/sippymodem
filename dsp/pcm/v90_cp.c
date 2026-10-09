@@ -108,9 +108,7 @@ size_t v90_cp_frame_bits(const struct v90_cp_parameters *parameters)
 
 size_t v90_cp_frame_bytes(const struct v90_cp_parameters *parameters)
 {
-	size_t bits = v90_cp_frame_bits(parameters);
-
-	return bits == 0 ? 0 : (bits + 7u) / 8u;
+	return (v90_cp_frame_bits(parameters) + 7u) / 8u;
 }
 
 static void encode_header(

@@ -38,9 +38,7 @@ size_t v92_status_update_frame_bits(unsigned int alignment_bits)
 
 size_t v92_status_update_frame_bytes(unsigned int alignment_bits)
 {
-	size_t bits = v92_status_update_frame_bits(alignment_bits);
-
-	return bits == 0u ? 0u : (bits + 7u) / 8u;
+	return (v92_status_update_frame_bits(alignment_bits) + 7u) / 8u;
 }
 
 enum v92_status_update_result v92_status_update_encode(

@@ -44,9 +44,7 @@ size_t v92_cpt_frame_bits(
 size_t v92_cpt_frame_bytes(
 	const struct v92_cpt_parameters *parameters)
 {
-	size_t bits = v92_cpt_frame_bits(parameters);
-
-	return bits == 0 ? 0 : (bits + 7u) / 8u;
+	return (v92_cpt_frame_bits(parameters) + 7u) / 8u;
 }
 
 static void encode_header(

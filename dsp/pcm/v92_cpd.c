@@ -218,9 +218,7 @@ size_t v92_cpd_frame_bytes(
 	const struct v92_cpd_parameters *parameters,
 	unsigned int mapping_frame_bits)
 {
-	size_t bits = v92_cpd_frame_bits(parameters, mapping_frame_bits);
-
-	return bits == 0u ? 0u : (bits + 7u) / 8u;
+	return (v92_cpd_frame_bits(parameters, mapping_frame_bits) + 7u) / 8u;
 }
 
 static bool received_contains(

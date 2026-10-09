@@ -53,9 +53,7 @@ size_t v92_cpu_frame_bytes(
 	const struct v92_cpu_parameters *parameters,
 	unsigned int mapping_frame_bits)
 {
-	size_t bits = v92_cpu_frame_bits(parameters, mapping_frame_bits);
-
-	return bits == 0u ? 0u : (bits + 7u) / 8u;
+	return (v92_cpu_frame_bits(parameters, mapping_frame_bits) + 7u) / 8u;
 }
 
 static void encode_prefix(uint8_t *frame, unsigned int type)
