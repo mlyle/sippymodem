@@ -16,9 +16,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
-#include <sys/ioctl.h>
 #include <unistd.h>
-#include <poll.h>
 
 enum { LINE_LIMIT = 32, EVENT_LIMIT = 128, QUEUE_LIMIT = 1048576, ENDPOINT_LIMIT = 8 };
 struct sippymodem_line {
@@ -95,7 +93,7 @@ static void snapshot(const struct sippymodem_line *line, struct sippymodem_statu
 	status->started = line->started;
 	status->rtp_port = modem_host_rtp_local_port(line_host(line));
 	status->off_hook = modem->hook != MODEM_HOOK_ON;
-	status->carrier = (modem->modem_info & TIOCM_CD) != 0;
+	status->carrier = (modem->modem_info & MODEM_SIGNAL_CD) != 0;
 	bool connected = line->active && (modem->state == STATE_MODEM_ONLINE ||
 					 modem->state == STATE_COMMAND_ONLINE);
 	status->ready = connected && !line->remote_closing;
@@ -1201,8 +1199,8 @@ enum sippymodem_result sippymodem_process(struct sippymodem_server *server,
 		}
 		if (line->active && line->attempt_deadline != 0 && now_ns >= line->attempt_deadline)
 			end_call(line, SIPPYMODEM_DISCONNECT_TIMEOUT);
-		struct pollfd media = { .fd = modem_host_media_poll_fd(line_host(line)), .events = POLLIN };
-		if (now_ns >= line->media_deadline || poll(&media, 1, 0) > 0) {
+		net_socket media = modem_host_media_poll_fd(line_host(line));
+		if (now_ns >= line->media_deadline || net_socket_readable(media)) {
 			(void)modem_host_prepare_media(line_host(line));
 			synchronize(line);
 			if (line_modem(line)->started) {

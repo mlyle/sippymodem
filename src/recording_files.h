@@ -26,8 +26,9 @@ struct recording_files_stats {
 
 struct recording_files;
 
-/* Creates every evidence file exclusively with mode 0600. On failure, returns
- * NULL, removes files created by this call, and leaves errno set. */
+/* Creates evidence files exclusively. POSIX uses mode 0600; Windows uses
+ * binary, noninheritable files with the directory's inherited ACL. On failure,
+ * returns NULL, removes files created by this call, and leaves errno set. */
 struct recording_files *recording_files_create(
 	const char *prefix);
 void recording_files_destroy(

@@ -6,14 +6,11 @@
 #include "rtp.h"
 
 #include <errno.h>
-#include <fcntl.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
-#include <sys/socket.h>
 #include <time.h>
-#include <unistd.h>
 
 static bool address_is_valid(const struct sockaddr_in *address,
 			     bool port_may_be_zero)
@@ -41,36 +38,23 @@ static struct sockaddr_in canonical_address(
 	return canonical;
 }
 
-static int make_socket_nonblocking(int socket_fd)
-{
-	int flags = fcntl(socket_fd, F_GETFL, 0);
-	int descriptor_flags;
-
-	if (flags < 0 || fcntl(socket_fd, F_SETFL, flags | O_NONBLOCK) < 0)
-		return -1;
-	descriptor_flags = fcntl(socket_fd, F_GETFD, 0);
-	if (descriptor_flags < 0 ||
-	    fcntl(socket_fd, F_SETFD, descriptor_flags | FD_CLOEXEC) < 0)
-		return -1;
-	return 0;
-}
-
 static size_t discard_queued_datagrams(struct rtp_endpoint *endpoint)
 {
 	uint8_t packet[RTP_ENDPOINT_MAX_DATAGRAM];
 
-	if (endpoint->socket_fd < 0)
+	if (endpoint->socket_fd == NET_INVALID_SOCKET)
 		return 0;
 	size_t drained = 0;
 	for (unsigned int attempt = 0; attempt < RTP_ENDPOINT_MAX_DRAIN; ++attempt) {
-		ssize_t received = recv(endpoint->socket_fd, packet,
-					sizeof(packet), MSG_DONTWAIT);
+		bool truncated;
+		ptrdiff_t received = net_socket_receive(endpoint->socket_fd, packet,
+			sizeof(packet), NULL, &truncated);
 
 		if (received >= 0) {
 			drained++;
 			continue;
 		}
-		if (errno == EINTR)
+		if (net_socket_interrupted(net_socket_error()))
 			continue;
 		endpoint->discard_pending = false;
 		return drained;
@@ -88,7 +72,7 @@ bool rtp_endpoint_init(
 	    stream->receiver.slots == NULL)
 		return false;
 	memset(endpoint, 0, sizeof(*endpoint));
-	endpoint->socket_fd = -1;
+	endpoint->socket_fd = NET_INVALID_SOCKET;
 	endpoint->stream = stream;
 	endpoint->config = *config;
 	return true;
@@ -109,28 +93,27 @@ enum rtp_endpoint_result rtp_endpoint_open(
 	const struct sockaddr_in *local_address)
 {
 	struct sockaddr_in bound_address;
-	socklen_t bound_size = sizeof(bound_address);
-	int socket_fd;
+	net_socklen bound_size = sizeof(bound_address);
+	net_socket socket_fd;
 
 	if (endpoint == NULL || endpoint->stream == NULL ||
 	    !address_is_valid(local_address, true))
 		return RTP_ENDPOINT_INVALID_ARGUMENT;
-	if (endpoint->socket_fd >= 0)
+	if (endpoint->socket_fd != NET_INVALID_SOCKET)
 		return RTP_ENDPOINT_ALREADY_OPEN;
 
-	socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
-	if (socket_fd < 0)
+	socket_fd = net_udp_open();
+	if (socket_fd == NET_INVALID_SOCKET)
 		goto system_error;
-	if (make_socket_nonblocking(socket_fd) != 0 ||
-	    bind(socket_fd, (const struct sockaddr *)local_address,
+	if (bind(socket_fd, (const struct sockaddr *)local_address,
 		 sizeof(*local_address)) != 0 ||
 	    getsockname(socket_fd, (struct sockaddr *)&bound_address,
 			&bound_size) != 0) {
-		int saved_error = errno;
+		int saved_error = net_socket_error();
 
-		close(socket_fd);
-		errno = saved_error;
-		goto system_error;
+		net_socket_close(socket_fd);
+		endpoint->last_system_error = saved_error;
+		return RTP_ENDPOINT_SYSTEM_ERROR;
 	}
 
 	endpoint->socket_fd = socket_fd;
@@ -139,7 +122,7 @@ enum rtp_endpoint_result rtp_endpoint_open(
 	return RTP_ENDPOINT_OK;
 
 system_error:
-	endpoint->last_system_error = errno;
+	endpoint->last_system_error = net_socket_error();
 	return RTP_ENDPOINT_SYSTEM_ERROR;
 }
 
@@ -148,9 +131,9 @@ void rtp_endpoint_close(
 {
 	if (endpoint == NULL)
 		return;
-	if (endpoint->socket_fd >= 0)
-		close(endpoint->socket_fd);
-	endpoint->socket_fd = -1;
+	if (endpoint->socket_fd != NET_INVALID_SOCKET)
+		net_socket_close(endpoint->socket_fd);
+	endpoint->socket_fd = NET_INVALID_SOCKET;
 	endpoint->discard_pending = false;
 	memset(&endpoint->local_address, 0, sizeof(endpoint->local_address));
 	endpoint->remote_configured = false;
@@ -161,16 +144,16 @@ void rtp_endpoint_close(
 		rtp_receiver_restart(&endpoint->stream->receiver);
 }
 
-int rtp_endpoint_fd(
+net_socket rtp_endpoint_fd(
 	const struct rtp_endpoint *endpoint)
 {
-	return endpoint != NULL ? endpoint->socket_fd : -1;
+	return endpoint != NULL ? endpoint->socket_fd : NET_INVALID_SOCKET;
 }
 
 uint16_t rtp_endpoint_local_port(
 	const struct rtp_endpoint *endpoint)
 {
-	if (endpoint == NULL || endpoint->socket_fd < 0)
+	if (endpoint == NULL || endpoint->socket_fd == NET_INVALID_SOCKET)
 		return 0;
 	return ntohs(endpoint->local_address.sin_port);
 }
@@ -183,7 +166,7 @@ enum rtp_endpoint_result rtp_endpoint_set_remote(
 
 	if (endpoint == NULL || !address_is_valid(remote_address, false))
 		return RTP_ENDPOINT_INVALID_ARGUMENT;
-	if (endpoint->socket_fd < 0)
+	if (endpoint->socket_fd == NET_INVALID_SOCKET)
 		return RTP_ENDPOINT_NOT_OPEN;
 	canonical = canonical_address(remote_address);
 	if (endpoint->remote_configured &&
@@ -204,7 +187,7 @@ void rtp_endpoint_clear_remote(
 {
 	if (endpoint == NULL)
 		return;
-	if (endpoint->socket_fd >= 0)
+	if (endpoint->socket_fd != NET_INVALID_SOCKET)
 		discard_queued_datagrams(endpoint);
 	endpoint->remote_configured = false;
 	endpoint->remote_learned = false;
@@ -347,7 +330,7 @@ enum rtp_endpoint_result rtp_endpoint_drain(
 
 	if (endpoint == NULL || endpoint->stream == NULL)
 		return RTP_ENDPOINT_INVALID_ARGUMENT;
-	if (endpoint->socket_fd < 0)
+	if (endpoint->socket_fd == NET_INVALID_SOCKET)
 		return RTP_ENDPOINT_NOT_OPEN;
 	if (endpoint->discard_pending) {
 		size_t discarded = discard_queued_datagrams(endpoint);
@@ -358,33 +341,23 @@ enum rtp_endpoint_result rtp_endpoint_drain(
 
 	for (unsigned int attempt = 0; attempt < RTP_ENDPOINT_MAX_DRAIN; ++attempt) {
 		struct sockaddr_in source = { 0 };
-		struct iovec vector = {
-			.iov_base = packet,
-			.iov_len = sizeof(packet),
-		};
-		struct msghdr message = {
-			.msg_name = &source,
-			.msg_namelen = sizeof(source),
-			.msg_iov = &vector,
-			.msg_iovlen = 1,
-		};
-		ssize_t received = recvmsg(endpoint->socket_fd, &message,
-					   MSG_DONTWAIT | MSG_TRUNC);
+		bool truncated;
+		ptrdiff_t received = net_socket_receive(endpoint->socket_fd, packet,
+			sizeof(packet), &source, &truncated);
 
 		if (received < 0) {
-			if (errno == EINTR)
+			if (net_socket_interrupted(net_socket_error()))
 				continue;
-			if (errno == EAGAIN || errno == EWOULDBLOCK)
+			if (net_socket_would_block(net_socket_error()))
 				break;
-			endpoint->last_system_error = errno;
+			endpoint->last_system_error = net_socket_error();
 			endpoint->stats.receive_errors++;
 			return RTP_ENDPOINT_SYSTEM_ERROR;
 		}
 
 		drained++;
 		endpoint->stats.receive_datagrams++;
-		if ((message.msg_flags & MSG_TRUNC) != 0 ||
-		    (size_t)received > sizeof(packet)) {
+		if (truncated) {
 			endpoint->stats.receive_oversized++;
 			continue;
 		}
@@ -405,21 +378,22 @@ static enum rtp_endpoint_result send_packet(struct rtp_endpoint *endpoint,
 	const uint8_t *packet_workspace, size_t packet_size,
 	const struct sockaddr_in *remote_address)
 {
-	ssize_t sent;
+	ptrdiff_t sent;
 	endpoint->stats.transmit_attempts++;
 
 	for (unsigned int attempt = 0; attempt < 4; ++attempt) {
-		sent = sendto(endpoint->socket_fd, packet_workspace, packet_size, 0,
-			      (const struct sockaddr *)remote_address,
-			      sizeof(*remote_address));
-		if (sent >= 0 || errno != EINTR)
+		sent = net_socket_send(endpoint->socket_fd, packet_workspace, packet_size,
+			remote_address);
+		if (sent >= 0 || !net_socket_interrupted(net_socket_error()))
 			break;
 	}
+	/* Recording callbacks may change errno or the Windows socket error. */
+	int send_error = sent < 0 ? net_socket_error() : EIO;
 	record_packet(endpoint, packet_workspace, packet_size,
-		sent == (ssize_t)packet_size ? RECORD_PACKET_SENT :
+		sent == (ptrdiff_t)packet_size ? RECORD_PACKET_SENT :
 		RECORD_PACKET_SEND_FAILED);
-	if (sent != (ssize_t)packet_size) {
-		endpoint->last_system_error = sent < 0 ? errno : EIO;
+	if (sent != (ptrdiff_t)packet_size) {
+		endpoint->last_system_error = send_error;
 		endpoint->stats.transmit_errors++;
 		return RTP_ENDPOINT_SYSTEM_ERROR;
 	}
@@ -444,7 +418,7 @@ static enum rtp_endpoint_result send_frame(
 	if (endpoint == NULL || endpoint->stream == NULL || samples == NULL ||
 	    count == 0 || packet_workspace == NULL)
 		return RTP_ENDPOINT_INVALID_ARGUMENT;
-	if (endpoint->socket_fd < 0)
+	if (endpoint->socket_fd == NET_INVALID_SOCKET)
 		return RTP_ENDPOINT_NOT_OPEN;
 	if (!rtp_endpoint_transmit_remote(
 		    endpoint, &remote_address, NULL)) {

@@ -123,7 +123,7 @@ static void dict_init(struct comp_state *c)
 	c->str_len      = 0;
 	c->escape_char  = 0;
 	c->cmp_last     = TEST_SLICE<<3;
-	c->mode         = TRANSPARENT;
+	c->mode         = COMP_TRANSPARENT;
 	c->escape	= 0;
 }
 
@@ -237,7 +237,7 @@ static int comp_decode(struct comp_state *c, u8 *in, int n)
 	u8 ch;
 	for (i = 0 ; i<n ;) {
 		switch (c->mode) {
-		case COMPRESSED:
+		case COMP_COMPRESSED:
 			/* get cw from input */
 			while (c->bit_len < c->cw_size && i<n) {
 				c->bit_data |= *in++ << c->bit_len;
@@ -257,7 +257,7 @@ static int comp_decode(struct comp_state *c, u8 *in, int n)
 			case CCW_ETM: /* enter transparent mode */
 				COMP_DBG("C decoder: ETM\n");
 				c->bit_len = 0;
-				c->mode = TRANSPARENT;
+				c->mode = COMP_TRANSPARENT;
 				c->last_matched = 0;
 				c->last_added = 0;
 				break;
@@ -319,14 +319,14 @@ static int comp_decode(struct comp_state *c, u8 *in, int n)
 			}
 			}
 			break;
-		case TRANSPARENT:
+		case COMP_TRANSPARENT:
 			if (c->escape) { /* command */
 				c->escape = 0;
 				switch(*in) {
 				case CC_ECM: /* enter compressed mode */
 					COMP_DBG("T decoder: ECM\n");
 					ret += send_string(c);
-					c->mode = COMPRESSED;
+					c->mode = COMP_COMPRESSED;
 					c->update_at = c->last_matched;
 					c->last_matched = 0;
 					in++;i++;
@@ -425,7 +425,7 @@ static int send_data(struct comp_state *c, u16 cw)
 	c->cmp_last += c->cw_size - c->cmp_last*c->str_len/TEST_SLICE;
 
 	switch(c->mode) {
-	case TRANSPARENT:
+	case COMP_TRANSPARENT:
 		for (i = 0;i<c->str_len;i++) {
 			c->obuf[c->olen++] = c->str_data[i];
 			ret++;
@@ -437,7 +437,7 @@ static int send_data(struct comp_state *c, u16 cw)
 			}
 		}
 		break;
-	case COMPRESSED:
+	case COMP_COMPRESSED:
 		/* process escape */
 		for (i = 0;i<c->str_len;i++) {
 			if (c->str_data[i] == c->escape_char) {
@@ -468,7 +468,7 @@ static int test_mode(struct comp_state *c)
 {
 	int ret = 0;
 	switch(c->mode) {
-	case TRANSPARENT:
+	case COMP_TRANSPARENT:
 		/* fixme: why 11 ? */
 		if (c->cmp_last < (TEST_SLICE<<3) - 11) {
 			/* switch to compressed mode */
@@ -483,10 +483,10 @@ static int test_mode(struct comp_state *c)
 			c->obuf[c->olen++] = CC_ECM;
 			ret += 2;
 			c->bit_data = 0;
-			c->mode = COMPRESSED;
+			c->mode = COMP_COMPRESSED;
 		}
 		break;
-	case COMPRESSED:
+	case COMP_COMPRESSED:
 		if (c->cmp_last > (TEST_SLICE<<3)) {
 			/* switch to transparent mode */
 			COMP_DBG("encoder %d/%d %d: --> TRANSPARENT mode.\n",
@@ -500,7 +500,7 @@ static int test_mode(struct comp_state *c)
 			SEND_CW(c,CCW_ETM);
 			ALIGN_BITS(c);
 			SEND_BITS(c);
-			c->mode = TRANSPARENT;
+			c->mode = COMP_TRANSPARENT;
 		}
 		break;
 	}
@@ -519,7 +519,7 @@ static int comp_flush_encoder(struct comp_state *c)
 		ret = send_data(c,c->last_matched);
 		c->flushed_len = total_len;
 	}
-	if(c->mode == COMPRESSED) {
+	if(c->mode == COMP_COMPRESSED) {
 		c->update_at = c->last_matched;
 		c->last_matched = 0;
 		c->flushed_len = 0;

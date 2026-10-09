@@ -11,7 +11,7 @@
 struct modem_host;
 
 struct slmodem_driver {
-	struct modem_driver interface;
+	struct modem_driver operations;
 	struct modem *modem;
 	struct modem_host *host;
 	enum sip_signaling_result last_signaling_result;
@@ -21,7 +21,7 @@ struct slmodem_driver {
 
 bool slmodem_driver_init(
 	struct slmodem_driver *driver);
-/* Borrowed interface copied by modem_create(). */
+/* Borrowed operations copied by modem_create(). */
 struct modem_driver *slmodem_driver_interface(
 	struct slmodem_driver *driver);
 

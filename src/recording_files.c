@@ -15,6 +15,13 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#ifdef _WIN32
+/* Exclusive creation rejects an existing final path; keep bytes and handles native. */
+#define RECORDING_OPEN_FLAGS (_O_BINARY | _O_NOINHERIT)
+#else
+#define RECORDING_OPEN_FLAGS (O_CLOEXEC | O_NOFOLLOW)
+#endif
+
 enum {
 	RECORDING_STREAM_COUNT =
 		RECORD_RTP_PACKETS + 1,
@@ -259,14 +266,16 @@ struct recording_files *recording_files_create(
 			goto fail;
 		}
 		files->descriptors[created] = open(
-			path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
+			path, O_WRONLY | O_CREAT | O_EXCL | RECORDING_OPEN_FLAGS,
 			S_IRUSR | S_IWUSR);
 		if (files->descriptors[created] < 0)
 			goto fail;
 		created++;
+#ifndef _WIN32
 		if (fchmod(files->descriptors[created - 1],
 			   S_IRUSR | S_IWUSR) != 0)
 			goto fail;
+#endif
 	}
 	return files;
 

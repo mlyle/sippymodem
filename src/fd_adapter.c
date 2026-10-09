@@ -4,6 +4,35 @@
 #endif
 #include "sippymodem_fd.h"
 
+#ifdef _WIN32
+#include <errno.h>
+
+/* Native pppd fd pumping is a POSIX adapter; Windows uses literal byte I/O. */
+struct sippymodem_fd *sippymodem_fd_create(struct sippymodem_line *line,
+    uint64_t generation, int *peer_fd)
+{
+    (void)line;
+    (void)generation;
+    if (peer_fd != NULL)
+        *peer_fd = -1;
+    errno = peer_fd != NULL ? ENOSYS : EINVAL;
+    return NULL;
+}
+enum sippymodem_result sippymodem_fd_process(struct sippymodem_fd *adapter)
+{
+    (void)adapter;
+    return SIPPYMODEM_INVALID;
+}
+int sippymodem_fd_poll_fd(const struct sippymodem_fd *adapter)
+{
+    (void)adapter;
+    return -1;
+}
+void sippymodem_fd_destroy(struct sippymodem_fd *adapter)
+{
+    (void)adapter;
+}
+#else
 #include <errno.h>
 #include <poll.h>
 #include <stdlib.h>
@@ -152,3 +181,5 @@ void sippymodem_fd_destroy(struct sippymodem_fd *adapter)
 		close(adapter->fd);
 	free(adapter);
 }
+
+#endif

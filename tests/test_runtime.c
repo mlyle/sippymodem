@@ -143,17 +143,17 @@ bool slmodem_driver_init(
 	if (driver == NULL)
 		return false;
 	memset(driver, 0, sizeof(*driver));
-	driver->interface.name = "runtime test driver";
-	driver->interface.start = unused_driver_start;
-	driver->interface.stop = unused_driver_stop;
-	driver->interface.ioctl = unused_driver_control;
+	driver->operations.name = "runtime test driver";
+	driver->operations.start = unused_driver_start;
+	driver->operations.stop = unused_driver_stop;
+	driver->operations.ioctl = unused_driver_control;
 	return true;
 }
 
 struct modem_driver *slmodem_driver_interface(
 	struct slmodem_driver *driver)
 {
-	return driver != NULL ? &driver->interface : NULL;
+	return driver != NULL ? &driver->operations : NULL;
 }
 
 bool slmodem_driver_attach(
@@ -1144,7 +1144,7 @@ static bool test_output_queues_and_call_deadline(void)
 	CHECK(peer >= 0, "cannot open terminal peer");
 	struct modem *modem = modem_runtime_modem(runtime);
 	modem->command = 1;
-	modem->modem_info |= TIOCM_CD;
+	modem->modem_info |= MODEM_SIGNAL_CD;
 	CHECK(modem->data_output(modem->data_output_context, "payload", 7) == 7 &&
 	      modem->control_output(modem->control_output_context, "OK\r\n", 4) == 4,
 	      "queue sinks rejected bytes");
@@ -1158,7 +1158,7 @@ static bool test_output_queues_and_call_deadline(void)
 	CHECK(modem_runtime_step(runtime, 2000000000, NULL, NULL, NULL) == MODEM_RUNTIME_OK &&
 	      read(peer, output, sizeof(output)) == 7 && memcmp(output, "payload", 7) == 0,
 	      "data resume lost held payload");
-	modem->modem_info &= ~TIOCM_CD;
+	modem->modem_info &= ~MODEM_SIGNAL_CD;
 	modem->started = 1;
 	modem->sregs[SREG_WAIT_CARRIER_AFTER_DIAL] = 2;
 	CHECK(modem_runtime_step(runtime, 3000000000, NULL, NULL, NULL) == MODEM_RUNTIME_OK &&

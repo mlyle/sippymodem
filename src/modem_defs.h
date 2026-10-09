@@ -41,20 +41,23 @@
 #ifndef __MODEM_DEFS_H__
 #define __MODEM_DEFS_H__
 
-#ifdef __KERNEL__
-#include <linux/types.h>
-#else
+#include <stdint.h>
 
-#include <sys/types.h>
+typedef uint8_t u8;
+typedef uint16_t u16;
+typedef uint32_t u32;
+typedef int8_t s8;
+typedef int16_t s16;
+typedef int32_t s32;
 
-typedef __uint8_t  u8;
-typedef __uint16_t u16;
-typedef __uint32_t u32;
-
-typedef __int8_t  s8;
-typedef __int16_t s16;
-typedef __int32_t s32;
-#endif /* !__KERNEL__ */
+/* Instance-owned modem signals; independent of an operating system's tty API. */
+enum modem_signal {
+	MODEM_SIGNAL_CD = 1u << 0,
+	MODEM_SIGNAL_DSR = 1u << 1,
+	MODEM_SIGNAL_CTS = 1u << 2,
+	MODEM_SIGNAL_DTR = 1u << 3,
+	MODEM_SIGNAL_RTS = 1u << 4,
+};
 
 /* hook states */
 #define MODEM_HOOK_ON       0

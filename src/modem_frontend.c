@@ -421,7 +421,7 @@ void modem_update_termios(struct modem *m, const struct termios *tios)
 		if (m->state != STATE_MODEM_IDLE)
 			modem_hangup(m);
 	} else {
-		m->modem_info |= TIOCM_DTR;
+		m->modem_info |= MODEM_SIGNAL_DTR;
 	}
 	m->termios = *tios;
 }

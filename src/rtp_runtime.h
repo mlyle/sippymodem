@@ -6,7 +6,7 @@
 #include "config.h"
 #include "rtp_endpoint.h"
 
-#include <netinet/in.h>
+#include "net_socket.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -28,7 +28,7 @@ void rtp_runtime_close(
 
 size_t rtp_runtime_frame_samples(
 	const struct rtp_runtime *runtime);
-int rtp_runtime_fd(
+net_socket rtp_runtime_fd(
 	const struct rtp_runtime *runtime);
 uint16_t rtp_runtime_local_port(
 	const struct rtp_runtime *runtime);

@@ -5,7 +5,7 @@
 #include "rtp_runtime.h"
 #include "sip_media_bridge.h"
 
-#include <arpa/inet.h>
+#include "net_socket.h"
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -270,10 +270,10 @@ size_t sip_session_frame_samples(
 		       0;
 }
 
-int sip_session_media_fd(
+net_socket sip_session_media_fd(
 	const struct sip_session *session)
 {
-	return session != NULL ? rtp_runtime_fd(session->rtp) : -1;
+	return session != NULL ? rtp_runtime_fd(session->rtp) : NET_INVALID_SOCKET;
 }
 
 uint16_t sip_session_rtp_local_port(

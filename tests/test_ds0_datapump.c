@@ -92,7 +92,7 @@ static bool pair(bool lapm, unsigned rate, bool automatic, enum g711_law law)
 	CHECK(modem_set_dte_command(a, true) == 0, "command mode");
 	CHECK(modem_data_write(b, payload, n) == (int)n, "send in peer command mode");
 	for (unsigned i = 0; i < 4000 && a_rx.count < 2 * n; ++i) CHECK(tick(a, b, previous, law), "command receive tick");
-	CHECK(a_rx.count == 2 * n && memcmp(a_rx.bytes + n, payload, n) == 0 && (a->modem_info & TIOCM_CD), "command carrier and RX");
+	CHECK(a_rx.count == 2 * n && memcmp(a_rx.bytes + n, payload, n) == 0 && (a->modem_info & MODEM_SIGNAL_CD), "command carrier and RX");
 	CHECK(modem_set_dte_command(a, false) == 0 && !a->retrain_pending, "resume");
 	CHECK(modem_data_write(a, payload, n) == (int)n &&
 	      modem_finish_transmit(a) == 1 && modem_data_write(a, payload, n) == 0,

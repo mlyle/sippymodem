@@ -71,7 +71,7 @@ enum modem_host_result modem_host_step(
 /* UINT64_MAX means that a closed host has no pending work. */
 uint64_t modem_host_wait_ns(
 	const struct modem_host *host, uint64_t now_ns);
-int modem_host_media_poll_fd(
+net_socket modem_host_media_poll_fd(
 	const struct modem_host *host);
 
 unsigned int modem_host_rtp_local_port(const struct modem_host *host);

@@ -55,7 +55,11 @@ int modem_debug_printf(const char *fmt, ...)
 
 	if (modem_debug_level == 0)
 		return 0;
+#ifdef _WIN32
+	_lock_file(stderr);
+#else
 	flockfile(stderr);
+#endif
 	(void)gettimeofday(&now, NULL);
 	va_start(args, fmt);
 	length = fprintf(stderr, "<%03ld.%06ld> ",
@@ -63,6 +67,10 @@ int modem_debug_printf(const char *fmt, ...)
 	if (length >= 0)
 		length = vfprintf(stderr, fmt, args);
 	va_end(args);
+#ifdef _WIN32
+	_unlock_file(stderr);
+#else
 	funlockfile(stderr);
+#endif
 	return length;
 }

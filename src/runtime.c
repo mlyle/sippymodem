@@ -490,7 +490,7 @@ enum modem_runtime_result modem_runtime_step(
 		modem_note_disconnect(runtime->modem, true,
 			modem_host_result_name(runtime->last_host_result));
 	calls_result = drain_call_transitions(runtime);
-	if (!runtime->modem->started || (runtime->modem->modem_info & TIOCM_CD))
+	if (!runtime->modem->started || (runtime->modem->modem_info & MODEM_SIGNAL_CD))
 		runtime->attempt_deadline = 0;
 	else if (runtime->attempt_deadline == 0) {
 		uint64_t delay = (uint64_t)runtime->modem->sregs[SREG_WAIT_CARRIER_AFTER_DIAL] * UINT64_C(1000000000);
@@ -511,7 +511,7 @@ enum modem_runtime_result modem_runtime_step(
 	if (runtime->control_overflow)
 		terminal_result = MODEM_RUNTIME_TERMINAL_ERROR;
 	if (!flush_output(runtime, &runtime->control_output) ||
-	    ((!runtime->modem->command || !(runtime->modem->modem_info & TIOCM_CD)) && runtime->control_output.count == 0 &&
+	    ((!runtime->modem->command || !(runtime->modem->modem_info & MODEM_SIGNAL_CD)) && runtime->control_output.count == 0 &&
 	     !flush_output(runtime, &runtime->rx_output)))
 		terminal_result = MODEM_RUNTIME_TERMINAL_ERROR;
 	trace_call(runtime, now_ns);

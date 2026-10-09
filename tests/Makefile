@@ -83,6 +83,8 @@ SDP_TEST_OBJECTS := $(BUILD_DIR)/test_sdp.o \
 	$(BUILD_DIR)/g711.o
 MEDIA_WORKERS_TEST_BINARY := $(BUILD_DIR)/test_media_workers
 MEDIA_WORKERS_PIPE_TEST_BINARY := $(BUILD_DIR)/test_media_workers_pipe
+RTP_SOCKET_ERROR_TEST_BINARY := $(BUILD_DIR)/test_rtp_socket_error
+NET_SOCKET_TEST_BINARY := $(BUILD_DIR)/test_net_socket
 WAKE_SIGNAL_TEST_BINARIES := $(BUILD_DIR)/test_wake_signal $(BUILD_DIR)/test_wake_signal_pipe
 LIBRARY_TEST_BINARY := $(BUILD_DIR)/test_library
 PJSIP_TEST_BINARY := $(BUILD_DIR)/test_sip_signaling
@@ -264,21 +266,21 @@ STREAM_TEST_OBJECTS := $(BUILD_DIR)/test_rtp_stream.o \
 	$(BUILD_DIR)/media.o $(BUILD_DIR)/g711.o
 ENDPOINT_TEST_BINARY := $(BUILD_DIR)/test_rtp_endpoint
 ENDPOINT_TEST_OBJECTS := $(BUILD_DIR)/test_rtp_endpoint.o \
-	$(BUILD_DIR)/rtp_endpoint.o \
+	$(BUILD_DIR)/rtp_endpoint.o $(BUILD_DIR)/net_socket.o \
 	$(BUILD_DIR)/rtp_stream.o \
 	$(BUILD_DIR)/rtp_receiver.o $(BUILD_DIR)/rtp.o \
 	$(BUILD_DIR)/media.o $(BUILD_DIR)/g711.o
 SIP_RTP_TEST_BINARY := $(BUILD_DIR)/test_sip_rtp
 SIP_RTP_TEST_OBJECTS := $(BUILD_DIR)/test_sip_rtp.o \
 	$(BUILD_DIR)/sip_rtp.o \
-	$(BUILD_DIR)/rtp_endpoint.o \
+	$(BUILD_DIR)/rtp_endpoint.o $(BUILD_DIR)/net_socket.o \
 	$(BUILD_DIR)/rtp_stream.o \
 	$(BUILD_DIR)/rtp_receiver.o $(BUILD_DIR)/rtp.o \
 	$(BUILD_DIR)/media.o $(BUILD_DIR)/g711.o
 RTP_RUNTIME_TEST_BINARY := $(BUILD_DIR)/test_rtp_runtime
 RTP_RUNTIME_TEST_OBJECTS := $(BUILD_DIR)/test_rtp_runtime.o \
 	$(BUILD_DIR)/rtp_runtime.o \
-	$(BUILD_DIR)/rtp_endpoint.o \
+	$(BUILD_DIR)/rtp_endpoint.o $(BUILD_DIR)/net_socket.o \
 	$(BUILD_DIR)/rtp_stream.o \
 	$(BUILD_DIR)/rtp_receiver.o $(BUILD_DIR)/rtp.o \
 	$(BUILD_DIR)/config.o $(BUILD_DIR)/config_defaults.o $(BUILD_DIR)/log_target.o \
@@ -289,7 +291,7 @@ SIP_MEDIA_BRIDGE_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sip_media_bridge.o \
 	$(BUILD_DIR)/sip_media_bridge.o \
 	$(BUILD_DIR)/sip_rtp.o \
-	$(BUILD_DIR)/rtp_endpoint.o \
+	$(BUILD_DIR)/rtp_endpoint.o $(BUILD_DIR)/net_socket.o \
 	$(BUILD_DIR)/rtp_stream.o \
 	$(BUILD_DIR)/rtp_receiver.o $(BUILD_DIR)/rtp.o \
 	$(BUILD_DIR)/media.o $(BUILD_DIR)/g711.o
@@ -299,7 +301,7 @@ SESSION_TEST_OBJECTS := $(BUILD_DIR)/test_session.o \
 	$(BUILD_DIR)/sip_media_bridge.o \
 	$(BUILD_DIR)/sip_rtp.o \
 	$(BUILD_DIR)/rtp_runtime.o \
-	$(BUILD_DIR)/rtp_endpoint.o \
+	$(BUILD_DIR)/rtp_endpoint.o $(BUILD_DIR)/net_socket.o \
 	$(BUILD_DIR)/rtp_stream.o \
 	$(BUILD_DIR)/rtp_receiver.o $(BUILD_DIR)/rtp.o \
 	$(BUILD_DIR)/config.o $(BUILD_DIR)/config_defaults.o $(BUILD_DIR)/log_target.o \
@@ -324,7 +326,7 @@ HOST_TEST_OBJECTS := $(BUILD_DIR)/test_host.o \
 	$(BUILD_DIR)/sip_media_bridge.o \
 	$(BUILD_DIR)/sip_rtp.o \
 	$(BUILD_DIR)/rtp_runtime.o \
-	$(BUILD_DIR)/rtp_endpoint.o \
+	$(BUILD_DIR)/rtp_endpoint.o $(BUILD_DIR)/net_socket.o \
 	$(BUILD_DIR)/rtp_stream.o \
 	$(BUILD_DIR)/rtp_receiver.o \
 	$(BUILD_DIR)/rtp.o \
@@ -3245,7 +3247,7 @@ DS0_SIP_TEST_BINARY := $(BUILD_DIR)/test_ds0_sip
 DS0_PPP_TEST_BINARY := $(BUILD_DIR)/test_ds0_ppp
 DS0_CODEC_TEST_BINARY := $(BUILD_DIR)/test_ds0_codec
 
-TEST_BINARIES := $(MEDIA_WORKERS_TEST_BINARY) $(MEDIA_WORKERS_PIPE_TEST_BINARY) $(WAKE_SIGNAL_TEST_BINARIES) $(BUILD_DIR)/test_log_target $(BUILD_DIR)/test_log_buffer $(BUILD_DIR)/test_ds0_probe $(DS0_DATAPUMP_TEST_BINARY) $(DS0_PPP_TEST_BINARY) $(DS0_CODEC_TEST_BINARY) $(BUILD_DIR)/test_packet_stats $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
+TEST_BINARIES := $(NET_SOCKET_TEST_BINARY) $(RTP_SOCKET_ERROR_TEST_BINARY) $(MEDIA_WORKERS_TEST_BINARY) $(MEDIA_WORKERS_PIPE_TEST_BINARY) $(WAKE_SIGNAL_TEST_BINARIES) $(BUILD_DIR)/test_log_target $(BUILD_DIR)/test_log_buffer $(BUILD_DIR)/test_ds0_probe $(DS0_DATAPUMP_TEST_BINARY) $(DS0_PPP_TEST_BINARY) $(DS0_CODEC_TEST_BINARY) $(BUILD_DIR)/test_packet_stats $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(SIP_URI_TEST_BINARY) $(SDP_TEST_BINARY) $(G711_TEST_BINARY) \
 	$(SAMPLE_MATH_TEST_BINARY) \
 	$(PCM_GAIN_TEST_BINARY) \
@@ -6250,3 +6252,12 @@ $(BUILD_DIR)/test_wake_signal: $(BUILD_DIR)/test_wake_signal.o $(BUILD_DIR)/wake
 	$(CC) $(LDFLAGS) -o $@ $^ -pthread
 $(BUILD_DIR)/test_wake_signal_pipe: $(BUILD_DIR)/test_wake_signal.o $(BUILD_DIR)/wake_signal_pipe.o
 	$(CC) $(LDFLAGS) -o $@ $^ -pthread
+
+$(NET_SOCKET_TEST_BINARY): $(BUILD_DIR)/test_net_socket.o $(BUILD_DIR)/net_socket.o
+	$(CC) $(LDFLAGS) -o $@ $^
+
+$(BUILD_DIR)/net_socket.o: ../src/net_socket.c ../src/net_socket.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(RTP_SOCKET_ERROR_TEST_BINARY): $(BUILD_DIR)/test_rtp_socket_error.o $(filter-out $(BUILD_DIR)/test_rtp_endpoint.o,$(ENDPOINT_TEST_OBJECTS))
+	$(CC) $(LDFLAGS) -o $@ $^

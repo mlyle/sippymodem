@@ -21,9 +21,9 @@ static struct slmodem_driver *owner_from_modem(
 		return NULL;
 	driver = modem->dev_data;
 	if (driver->modem != modem || driver->host == NULL ||
-	    driver->interface.start != start_modem ||
-	    driver->interface.stop != stop_modem ||
-	    driver->interface.ioctl != control_modem)
+	    driver->operations.start != start_modem ||
+	    driver->operations.stop != stop_modem ||
+	    driver->operations.ioctl != control_modem)
 		return NULL;
 	return driver;
 }
@@ -128,7 +128,7 @@ bool slmodem_driver_init(
 	struct slmodem_driver *driver)
 {
 	const struct slmodem_driver initialized = {
-		.interface = {
+		.operations = {
 			.name = "SIP media",
 			.start = start_modem,
 			.stop = stop_modem,
@@ -145,10 +145,10 @@ bool slmodem_driver_init(
 struct modem_driver *slmodem_driver_interface(
 	struct slmodem_driver *driver)
 {
-	return driver != NULL && driver->interface.start == start_modem &&
-		       driver->interface.stop == stop_modem &&
-		       driver->interface.ioctl == control_modem ?
-		       &driver->interface :
+	return driver != NULL && driver->operations.start == start_modem &&
+		       driver->operations.stop == stop_modem &&
+		       driver->operations.ioctl == control_modem ?
+		       &driver->operations :
 		       NULL;
 }
 

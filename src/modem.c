@@ -41,13 +41,11 @@
  *
  */
 
-#include <unistd.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
 #include <limits.h>
-#include <sys/ioctl.h>
 
 #include <modem.h>
 #include "modem_state.h"
@@ -334,7 +332,7 @@ static int modem_set_state(struct modem *m, unsigned new_state)
 	switch(new_state) {
 	case STATE_MODEM_IDLE:
 		MODEM_DBG("new state: MODEM_IDLE\n");
-		m->modem_info &= ~TIOCM_CD;
+		m->modem_info &= ~MODEM_SIGNAL_CD;
 		m->xmit.head = m->xmit.tail = m->xmit.count = 0;
 		m->command = 1;
 		m->get_chars = 0;
@@ -363,7 +361,7 @@ static int modem_set_state(struct modem *m, unsigned new_state)
 			? modem_comp_put_chars : modem_put_data;
 		m->get_chars = (m->cfg.ec && m->cfg.comp&0x2)
 			? modem_comp_get_chars : modem_get_chars;
-		m->modem_info |= TIOCM_CD;
+		m->modem_info |= MODEM_SIGNAL_CD;
 		break;
 	case STATE_COMMAND_ONLINE:
 		MODEM_DBG("new state: COMMAND_ONLINE\n");
@@ -522,13 +520,13 @@ static void modem_hup(struct modem *m, unsigned local)
 		if (m->result_code == 0)
 			m->result_code = RESULT_NOCARRIER;
 #if ALREADY_DONE
-		if(m->modem_info&TIOCM_CD && m->tty &&
+		if(m->modem_info&MODEM_SIGNAL_CD && m->tty &&
 		   !m->termios->c_cflag&CLOCAL /* !C_CLOCAL(m->tty) */) {
 			MODEM_DBG("tty_hangup...\n");
 			tty_hangup(m->tty);
 		}
 #endif
-		m->modem_info &= ~TIOCM_CD;
+		m->modem_info &= ~MODEM_SIGNAL_CD;
 		break;
 	case STATE_EC_DISC:
 		if (!local) {
@@ -623,7 +621,7 @@ void modem_update_status(struct modem *m, unsigned status)
 			 * a missing peer still cannot hold the line indefinitely. */
 			m->get_bits = modem_hdlc_get_bits;
 			m->put_bits = modem_hdlc_put_bits;
-			m->modem_info &= ~TIOCM_CD;
+			m->modem_info &= ~MODEM_SIGNAL_CD;
 			schedule_modem_timer(m, run_modem_stop,
 				modem_timeout_samples(m, MODEM_DP_DISCONNECT_TIMEOUT_MS));
 		}
@@ -1814,7 +1812,7 @@ struct modem *modem_create(struct modem_driver *drv, const char *name)
         m->hook   = MODEM_HOOK_ON;
         m->caller = 0;
 
-	m->modem_info |= (TIOCM_DSR|TIOCM_CTS);
+	m->modem_info |= (MODEM_SIGNAL_DSR|MODEM_SIGNAL_CTS);
 
 	if (modem_factory_defaults(m) != 0) {
 		MODEM_ERR("bad default country code `%x'!\n",
@@ -1842,7 +1840,7 @@ struct modem *modem_create(struct modem_driver *drv, const char *name)
 	}
 	m->xmit.size = XMIT_SIZE;
 	m->xmit.head = m->xmit.tail = m->xmit.count = 0;
-	m->modem_info |= TIOCM_DTR|TIOCM_RTS;
+	m->modem_info |= MODEM_SIGNAL_DTR|MODEM_SIGNAL_RTS;
 	// TODO: update speed,DTR according to termios
 
 	return m;

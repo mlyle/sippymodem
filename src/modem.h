@@ -45,7 +45,9 @@
 #include <stdint.h>
 #include <string.h>
 #include <sys/types.h>
+#ifndef _WIN32
 #include <termios.h>
+#endif
 
 #include <modem_defs.h>
 #include <modem_homolog.h>
@@ -139,7 +141,7 @@ struct modem_driver {
 /* encoder and decoder states */
 struct comp_state {
 	const char *name;
-	enum COMP_MODE {TRANSPARENT,COMPRESSED} mode;
+	enum COMP_MODE {COMP_TRANSPARENT,COMP_COMPRESSED} mode;
 	int escape;        /* escape state: decoder only */
 	u16 update_at;     /* update dict. at node  */
 	u16 next_free;     /* next free dict entry */
@@ -306,7 +308,9 @@ struct modem {
 	const char *name;
 	int pty; /* pty descriptor */
 	const char *dev_name, *pty_name; /* and names */
+#ifndef _WIN32
 	struct termios termios;
+#endif
 	/* device driver */
 	struct modem_driver driver;
 	void *dev_data;
@@ -517,8 +521,10 @@ extern void modem_finish_call_report(struct modem *m, bool local, const char *re
 extern int modem_report_incoming_call(struct modem *m);
 extern int modem_report_outgoing_call_connected(struct modem *m);
 extern int modem_report_remote_call_end(struct modem *m);
+#ifndef _WIN32
 extern void modem_update_termios(
 	struct modem *m, const struct termios *tios);
+#endif
 extern void modem_error  (struct modem *m);
 extern void modem_event  (struct modem *m);
 /* Promote and service one due instance-owned modem event. */

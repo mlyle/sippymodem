@@ -13,6 +13,9 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <unistd.h>
+#ifdef _WIN32
+#include <bcrypt.h>
+#endif
 
 enum {
 	SAMPLES_PER_MILLISECOND = MEDIA_SAMPLE_RATE / 1000,
@@ -39,6 +42,10 @@ struct rtp_runtime {
 
 static bool fill_random(void *data, size_t size)
 {
+#ifdef _WIN32
+	return size <= ULONG_MAX && BCryptGenRandom(NULL, data, (ULONG)size,
+		BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0;
+#else
 	uint8_t *cursor = data;
 	int descriptor;
 
@@ -59,6 +66,7 @@ static bool fill_random(void *data, size_t size)
 	}
 	close(descriptor);
 	return true;
+#endif
 }
 
 static bool calculate_storage(const struct media_config *config,
@@ -128,7 +136,7 @@ struct rtp_runtime *rtp_runtime_create(
 	runtime = calloc(1, sizeof(*runtime));
 	if (runtime == NULL)
 		return NULL;
-	runtime->endpoint.socket_fd = -1;
+	runtime->endpoint.socket_fd = NET_INVALID_SOCKET;
 	runtime->frame_samples = frame_samples;
 	stream_config.prefill_samples =
 		config->remote_clock ? 0 :
@@ -199,10 +207,10 @@ size_t rtp_runtime_frame_samples(
 	return runtime != NULL ? runtime->frame_samples : 0;
 }
 
-int rtp_runtime_fd(
+net_socket rtp_runtime_fd(
 	const struct rtp_runtime *runtime)
 {
-	return runtime != NULL ? rtp_endpoint_fd(&runtime->endpoint) : -1;
+	return runtime != NULL ? rtp_endpoint_fd(&runtime->endpoint) : NET_INVALID_SOCKET;
 }
 
 uint16_t rtp_runtime_local_port(

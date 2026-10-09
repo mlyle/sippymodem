@@ -8,6 +8,7 @@
 extern "C" {
 #endif
 
+/* POSIX adapter. Native Windows create returns NULL/ENOSYS; use byte I/O there. */
 struct sippymodem_fd;
 
 /* Create a native socket adapter bound to one call generation. peer_fd is a

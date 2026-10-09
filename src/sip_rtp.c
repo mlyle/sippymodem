@@ -2,7 +2,7 @@
 
 #include "sip_rtp.h"
 
-#include <arpa/inet.h>
+#include "net_socket.h"
 #include <stdint.h>
 #include <string.h>
 
@@ -39,7 +39,7 @@ enum sip_rtp_result sip_rtp_apply(
 	    event->remote_address == NULL || event->remote_address[0] == '\0' ||
 	    event->remote_port == 0 || event->remote_port > UINT16_MAX)
 		return SIP_RTP_INVALID_ARGUMENT;
-	if (rtp_endpoint_fd(endpoint) < 0)
+	if (rtp_endpoint_fd(endpoint) == NET_INVALID_SOCKET)
 		return SIP_RTP_ENDPOINT_ERROR;
 	if (!media_is_compatible(endpoint, event))
 		return SIP_RTP_INCOMPATIBLE_MEDIA;

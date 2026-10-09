@@ -5,7 +5,7 @@
 
 #include "rtp_stream.h"
 
-#include <netinet/in.h>
+#include "net_socket.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -52,7 +52,7 @@ struct rtp_transmit_batch {
 };
 
 struct rtp_endpoint {
-	int socket_fd;
+	net_socket socket_fd;
 	int last_system_error;
 	enum media_result last_media_error;
 	struct rtp_stream *stream;
@@ -79,7 +79,7 @@ enum rtp_endpoint_result rtp_endpoint_open(
 void rtp_endpoint_close(
 	struct rtp_endpoint *endpoint);
 
-int rtp_endpoint_fd(
+net_socket rtp_endpoint_fd(
 	const struct rtp_endpoint *endpoint);
 uint16_t rtp_endpoint_local_port(
 	const struct rtp_endpoint *endpoint);

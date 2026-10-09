@@ -431,10 +431,10 @@ uint64_t modem_host_wait_ns(
 		       MODEM_HOST_SIGNALING_POLL_NS;
 }
 
-int modem_host_media_poll_fd(
+net_socket modem_host_media_poll_fd(
 	const struct modem_host *host)
 {
-	return host != NULL ? sip_session_media_fd(host->session) : -1;
+	return host != NULL ? sip_session_media_fd(host->session) : NET_INVALID_SOCKET;
 }
 
 enum sip_signaling_result modem_host_answer(

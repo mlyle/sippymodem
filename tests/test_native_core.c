@@ -2428,7 +2428,7 @@ static bool test_factory_defaults(void)
 	m->command = 1;
 	m->started = 1;
 	m->hook = MODEM_HOOK_OFF;
-	m->modem_info |= TIOCM_CD;
+	m->modem_info |= MODEM_SIGNAL_CD;
 	m->xmit.head = m->xmit.count = 7;
 	m->xmit.tail = 0;
 	memcpy(m->xmit.buf, "pending", 7);
@@ -2439,11 +2439,11 @@ static bool test_factory_defaults(void)
 	for (size_t i = 0; i < ARRAY_LENGTH(unsupported); ++i)
 		CHECK(process_at_command(m, (char *)unsupported[i]) < 0 &&
 		      m->state == STATE_COMMAND_ONLINE && m->command && m->started &&
-		      m->hook == MODEM_HOOK_OFF && (m->modem_info & TIOCM_CD) &&
+		      m->hook == MODEM_HOOK_OFF && (m->modem_info & MODEM_SIGNAL_CD) &&
 		      m->xmit.count == 7 && m->bit_timer == 123 && capture.stops == 0,
 		      "invalid restoration disrupted a call: %s", unsupported[i]);
 	CHECK(process_at_command(m, "AT&F") == 0 && m->state == STATE_COMMAND_ONLINE &&
-	      m->command && m->started && m->hook == MODEM_HOOK_OFF && (m->modem_info & TIOCM_CD) &&
+	      m->command && m->started && m->hook == MODEM_HOOK_OFF && (m->modem_info & MODEM_SIGNAL_CD) &&
 	      m->xmit.head == 7 && m->xmit.count == 7 && !memcmp(m->xmit.buf, "pending", 7) &&
 	      m->bit_timer == 123 && m->bit_timer_func == clear_bit_timer &&
 	      !memcmp(negotiated, &m->cfg, sizeof(negotiated)) && capture.stops == 0,
@@ -3890,7 +3890,7 @@ static bool test_lapm_v42bis_reinitialization(void)
 			      "V.42bis history fixture could not encode");
 		CHECK(modem_comp_flush_encoder(m, encoded, sizeof(encoded)) >= 0 &&
 		      modem_comp_decode(m, 'B', encoded, sizeof(encoded)) >= 0 &&
-		      m->comp.encoder.mode == COMPRESSED && m->comp.decoder.str_len == 1,
+		      m->comp.encoder.mode == COMP_COMPRESSED && m->comp.decoder.str_len == 1,
 		      "V.42bis history fixture did not retain stream state");
 		m->comp.head = m->comp.count = 1;
 		m->comp.buf[1] = 'P';
@@ -3900,7 +3900,7 @@ static bool test_lapm_v42bis_reinitialization(void)
 		m->packer.hdlc.rx_complete(l, &incoming);
 		CHECK(l->state == 2 && m->state == 5 && m->cfg.comp == 3 &&
 		      m->comp.encoder.next_free == 259 && m->comp.decoder.next_free == 259 &&
-		      m->comp.encoder.mode == TRANSPARENT && !m->comp.encoder.raw_bits &&
+		      m->comp.encoder.mode == COMP_TRANSPARENT && !m->comp.encoder.raw_bits &&
 		      !m->comp.encoder.bit_len && !m->comp.encoder.olen &&
 		      !m->comp.decoder.str_len && !m->comp.count && !m->comp.head &&
 		      m->comp.encoder.dict_size == 512 &&
@@ -4303,12 +4303,12 @@ static bool test_lapm_v42bis_decoder_failure(void)
 		CHECK(start_lapm_compression_fixture(m, false), "decoder failure fixture failed");
 		m->ec.lapm.state = 2; /* Established LAPM data state. */
 		modem_update_status(m, STATUS_EC_LINK);
-		CHECK(m->state == 5 && (m->modem_info & TIOCM_CD) && m->put_chars != NULL,
+		CHECK(m->state == 5 && (m->modem_info & MODEM_SIGNAL_CD) && m->put_chars != NULL,
 		      "decoder failure fixture did not go online");
 		wire[0] = m->ec.lapm.rsp_addr;
 		memcpy(wire + 3, payloads[scenario], lengths[scenario]);
 		m->packer.hdlc.rx_complete(m->packer.hdlc.framer, &incoming);
-		CHECK(!modem_ec_can_establish(m) && !(m->modem_info & TIOCM_CD) &&
+		CHECK(!modem_ec_can_establish(m) && !(m->modem_info & MODEM_SIGNAL_CD) &&
 			      m->result_code == 3 && m->sample_timer != 0 &&
 			      m->ec.lapm.vr == 0 && m->ec.lapm.rx_count == 0 && m->packer_process == NULL,
 		      "decoder error %zu was acknowledged or retained instead of releasing the call", scenario);

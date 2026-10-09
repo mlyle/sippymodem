@@ -2,7 +2,7 @@
 
 #include "sip_media_bridge.h"
 
-#include <arpa/inet.h>
+#include "net_socket.h"
 #include <inttypes.h>
 #include <stdio.h>
 #include <string.h>

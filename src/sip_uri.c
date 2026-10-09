@@ -2,7 +2,7 @@
 
 #include "sip_uri.h"
 
-#include <arpa/inet.h>
+#include "net_socket.h"
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
