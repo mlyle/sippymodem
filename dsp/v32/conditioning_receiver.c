@@ -42,14 +42,6 @@ static bool phase_is_valid(
 	       phase <= V32_CONDITIONING_READY;
 }
 
-static bool observation_is_valid(
-	const struct v32_equalizer_observation *observation)
-{
-	return observation != NULL && observation->epoch != 0 &&
-	       observation->phase <= INT16_MAX &&
-	       observation->magnitude <= INT16_MAX;
-}
-
 static bool pattern_is_valid(
 	const struct v32_conditioning_receiver *receiver)
 {
@@ -510,7 +502,7 @@ v32_conditioning_receiver_observe(
 		    sizeof(*decision)))
 		return V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT;
 	if (!v32_conditioning_receiver_is_valid(receiver) ||
-	    !observation_is_valid(observation) ||
+	    !v32_equalizer_observation_is_valid(observation) ||
 	    (receiver->has_previous_quadrant &&
 	     (receiver->observation_epoch == UINT64_MAX ||
 	      observation->epoch != receiver->observation_epoch + 1u)))

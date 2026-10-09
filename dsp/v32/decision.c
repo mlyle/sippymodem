@@ -16,14 +16,6 @@ static const uint16_t PHASE_16[16] = {
 	0x7000, 0x668d, 0x7972, 0x6fff,
 };
 
-static bool observation_is_valid(
-	const struct v32_equalizer_observation *observation)
-{
-	return observation != NULL && observation->epoch != 0 &&
-	       observation->phase <= INT16_MAX &&
-	       observation->magnitude <= INT16_MAX;
-}
-
 static bool output_is_separate(
 	const struct v32_equalizer_observation *observation,
 	const void *output, size_t output_size)
@@ -130,7 +122,7 @@ enum v32_decision_result v32_decide_known_quadrant(
 	struct v32_quadrant_decision next;
 	uint8_t point_index;
 
-	if (!observation_is_valid(observation) ||
+	if (!v32_equalizer_observation_is_valid(observation) ||
 	    quadrant >= V32_4800_SIGNAL_POINTS ||
 	    !output_is_separate(observation, decision, sizeof(*decision)))
 		return V32_DECISION_INVALID_ARGUMENT;
@@ -468,7 +460,7 @@ enum v32_decision_result v32_decide_tcm(
 	uint16_t phase;
 	uint16_t magnitude;
 
-	if (!observation_is_valid(observation) ||
+	if (!v32_equalizer_observation_is_valid(observation) ||
 	    data_bits_per_symbol < 3 || data_bits_per_symbol > 6 ||
 	    !output_is_separate(observation, decision, sizeof(*decision)))
 		return V32_DECISION_INVALID_ARGUMENT;
@@ -511,7 +503,7 @@ enum v32_decision_result v32_decide_4_point(
 	uint64_t best_distance = UINT64_MAX;
 	uint8_t selected = 0;
 
-	if (!observation_is_valid(observation) ||
+	if (!v32_equalizer_observation_is_valid(observation) ||
 	    !output_is_separate(observation, decision, sizeof(*decision)))
 		return V32_DECISION_INVALID_ARGUMENT;
 	for (uint8_t point_index = 0; point_index < 4; ++point_index) {
@@ -542,7 +534,7 @@ enum v32_decision_result v32_decide_uncoded_16(
 	struct v32_uncoded_decision next;
 	uint8_t selected;
 
-	if (!observation_is_valid(observation) ||
+	if (!v32_equalizer_observation_is_valid(observation) ||
 	    !output_is_separate(observation, decision, sizeof(*decision)))
 		return V32_DECISION_INVALID_ARGUMENT;
 	selected = nearest_16(observation);

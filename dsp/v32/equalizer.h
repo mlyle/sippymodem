@@ -37,6 +37,15 @@ struct v32_equalizer_observation {
 	uint64_t lineage;
 };
 
+/* Structural bounds only; each receiver checks its own epoch and lineage. */
+static inline bool v32_equalizer_observation_is_valid(
+	const struct v32_equalizer_observation *observation)
+{
+	return observation != NULL && observation->epoch != 0 &&
+	       observation->phase <= INT16_MAX &&
+	       observation->magnitude <= INT16_MAX;
+}
+
 /* Compare readable observations by their fields, not structure padding. */
 static inline bool v32_equalizer_observation_is_zero(
 	const struct v32_equalizer_observation *observation)

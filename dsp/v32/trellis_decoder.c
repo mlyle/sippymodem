@@ -94,14 +94,6 @@ enum v32_trellis_decoder_result v32_trellis_decoder_init(
 	return V32_TRELLIS_DECODER_OK;
 }
 
-static bool observation_is_valid(
-	const struct v32_equalizer_observation *observation)
-{
-	return observation != NULL && observation->epoch != 0 &&
-	       observation->phase <= INT16_MAX &&
-	       observation->magnitude <= INT16_MAX;
-}
-
 static int16_t branch_metric(
 	const struct v32_equalizer_observation *observation,
 	struct v32_fixed_point point)
@@ -261,7 +253,7 @@ enum v32_trellis_decoder_result v32_trellis_decoder_decode(
 		return V32_TRELLIS_DECODER_INVALID_STATE;
 	if (observation == NULL || symbol == NULL ||
 	    memory_region_set_overlaps(regions, 3) ||
-	    !observation_is_valid(observation))
+	    !v32_equalizer_observation_is_valid(observation))
 		return V32_TRELLIS_DECODER_INVALID_ARGUMENT;
 	next = *decoder;
 	if (advance_paths(
