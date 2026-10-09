@@ -178,7 +178,7 @@ static bool test_point_validation(void)
 	      alias_q.in_phase == 1.0 && alias_q.quadrature == 5.0,
 	      "nonzero power boundary, optional output, or aliasing changed");
 	CHECK(!qam_point_nonzero_power(&rejected_alias, &rejected_alias.in_phase) &&
-	      rejected_alias.in_phase == 1e-6 && rejected_alias.quadrature == 0.0,
+	      rejected_alias.in_phase == (double)1e-6 && rejected_alias.quadrature == 0.0,
 	      "rejected aliased power changed the input point");
 	return true;
 }
@@ -1093,14 +1093,14 @@ static bool test_timing_windows(void)
 	      "QAM did not measure a carrier-relative acquisition window");
 	CHECK(qam_demodulator_set_timing_power_hysteresis(
 		      &demodulator, 1.01) == QAM_OK &&
-	      demodulator.timing_power_hysteresis == 1.01 &&
+	      demodulator.timing_power_hysteresis == (double)1.01 &&
 	      qam_demodulator_reset(&demodulator) == QAM_OK &&
 	      !qam_demodulator_measure(&demodulator).timing_locked &&
 	      !demodulator.acquisition_started &&
 	      demodulator.timing_sample_target == acquisition_samples &&
 	      demodulator.acquisition_window_symbols == 64 &&
 	      demodulator.tracking_window_symbols == 384 &&
-	      demodulator.timing_power_hysteresis == 1.01,
+	      demodulator.timing_power_hysteresis == (double)1.01,
 	      "QAM reset did not preserve its timing-window policy");
 	saved = demodulator;
 	CHECK(qam_demodulator_init_with_timing_windows(
@@ -1188,7 +1188,7 @@ static bool test_configurable_point_power(void)
 	CHECK(qam_modulator_init(
 		      &bounded, &channel, TEST_AMPLITUDE) ==
 		      QAM_OK &&
-		      bounded.maximum_point_power == 9.0 / 5.0 &&
+		      bounded.maximum_point_power == (double)(9.0 / 5.0) &&
 	      qam_modulator_init_with_point_power_limit(
 		      &wider, &channel, TEST_AMPLITUDE, 2.0) ==
 		      QAM_OK &&

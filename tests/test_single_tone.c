@@ -328,7 +328,7 @@ static bool test_configurable_carrier_share(void)
 		CHECK(mixed_reversed == 1 &&
 			      single_tone_detector_reset(&mixed) ==
 				      SINGLE_TONE_OK &&
-			      mixed.profile.minimum_carrier_share == 0.60,
+			      mixed.profile.minimum_carrier_share == (double)0.60,
 		      "mixed-carrier profile did not detect or survive reset");
 	}
 	return true;

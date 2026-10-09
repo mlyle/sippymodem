@@ -418,8 +418,9 @@ static bool test_feedback_hold(void)
 		/* A nonintegral learned frequency must keep accumulating while
 		 * feedback is held, not become a constant rounded increment. */
 		control.integrator = 0x1c001;
-		saved = control;
-		expected = saved;
+		/* Byte snapshots include padding, which struct assignment may omit. */
+		memcpy(&saved, &control, sizeof(saved));
+		memcpy(&expected, &saved, sizeof(expected));
 		expected.feedback_held = true;
 		CHECK(v34_timing_control_set_feedback_held(&control, true) ==
 			      V34_TIMING_CONTROL_OK &&
@@ -435,7 +436,7 @@ static bool test_feedback_hold(void)
 			uint16_t increment;
 
 			generate_observations(&random, step + 1u, observations);
-			expected = control;
+			memcpy(&expected, &control, sizeof(expected));
 			CHECK(v34_timing_control_process(&control, observations,
 				      &increment) == V34_TIMING_CONTROL_OK &&
 			      increment == control.nominal_increment + delta &&
@@ -457,7 +458,7 @@ static bool test_feedback_hold(void)
 		}
 		CHECK(minimum < maximum && control.integrator == saved.integrator,
 		      "held clock did not retain fractional frequency %u", mode);
-		expected = control;
+		memcpy(&expected, &control, sizeof(expected));
 		expected.feedback_held = false;
 		CHECK(v34_timing_control_set_feedback_held(&control, false) ==
 			      V34_TIMING_CONTROL_OK &&
@@ -480,7 +481,7 @@ static bool test_feedback_hold(void)
 		CHECK(v34_timing_control_set_feedback_held(&control, true) ==
 			      V34_TIMING_CONTROL_OK,
 		      "timing feedback fixture could not hold before restart");
-		expected = control;
+		memcpy(&expected, &control, sizeof(expected));
 		expected.mode = V34_TIMING_CONTROL_INITIAL_PHASE;
 		expected.full_pull_in = false;
 		expected.feedback_held = false;

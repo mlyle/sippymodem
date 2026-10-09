@@ -476,7 +476,7 @@ static bool test_carrier_decision_policy(void)
 	      bounded.carrier_error_limit == 0.25 &&
 	      qam_equalizer_set_carrier_proportional_gain(&slowed, 0.05) ==
 		      QAM_EQUALIZER_OK &&
-	      slowed.carrier_proportional_gain == 0.05,
+	      slowed.carrier_proportional_gain == (double)0.05,
 	      "carrier decision policy was rejected");
 	for (unsigned int index = 0;
 	     index <= QAM_EQUALIZER_DELAY; ++index) {
@@ -1246,7 +1246,7 @@ static bool test_validation(void)
 	      carrier.carrier_integral_gain == 0.0 &&
 	      qam_equalizer_set_carrier_proportional_gain(&carrier, 0.05) ==
 		      QAM_EQUALIZER_OK &&
-	      carrier.carrier_proportional_gain == 0.05 &&
+	      carrier.carrier_proportional_gain == (double)0.05 &&
 	      qam_equalizer_hold_carrier_frequency(&carrier) ==
 		      QAM_EQUALIZER_OK && qam_equalizer_is_valid(&carrier),
 	      "carrier frequency hold was not valid and idempotent");

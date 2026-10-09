@@ -220,28 +220,28 @@ static bool run_role(
 			} else if (emitted_trn_symbols(&training) ==
 				   V32_ECHO_TRAINING_PREFILL_SYMBOLS + 1u) {
 				CHECK(path.echo.echo.adapting &&
-				      path.echo.echo.adaptation == 0.65,
+				      path.echo.echo.adaptation == (double)0.65,
 				      "role %d did not enter coarse adaptation", role);
 				saw_coarse = true;
 			} else if (emitted_trn_symbols(&training) ==
 				   V32_ECHO_TRAINING_PREFILL_SYMBOLS +
 					   V32_ECHO_TRAINING_COARSE_SYMBOLS) {
 				CHECK(path.echo.echo.adapting &&
-				      path.echo.echo.adaptation == 0.65,
+				      path.echo.echo.adaptation == (double)0.65,
 				      "role %d shortened coarse adaptation", role);
 				saw_coarse_end = true;
 			} else if (emitted_trn_symbols(&training) ==
 				   V32_ECHO_TRAINING_PREFILL_SYMBOLS +
 					   V32_ECHO_TRAINING_COARSE_SYMBOLS + 1u) {
 				CHECK(path.echo.echo.adapting &&
-				      path.echo.echo.adaptation == 0.065,
+				      path.echo.echo.adaptation == (double)0.065,
 				      "role %d did not reduce adaptation", role);
 				saw_fine = true;
 			}
 			if (!training.complete &&
 			    emitted_trn_symbols(&training) == limit) {
 				CHECK(path.echo.echo.adapting &&
-				      path.echo.echo.adaptation == 0.065,
+				      path.echo.echo.adaptation == (double)0.065,
 				      "role %d changed its final TRN symbol", role);
 				saw_trn_end = true;
 			}

@@ -353,8 +353,8 @@ static bool test_v22bis_constellation(void)
 				      V22_FRAMING_OK,
 			      "V.22bis constellation rejected symbol %u",
 			      (unsigned int)((quadrant << 2) | low_bits));
-		CHECK(points[0].in_phase == base_in_phase * scale &&
-			      points[0].quadrature == base_quadrature * scale &&
+		CHECK(points[0].in_phase == (double)(base_in_phase * scale) &&
+			      points[0].quadrature == (double)(base_quadrature * scale) &&
 			      points[1].in_phase == -points[0].quadrature &&
 			      points[1].quadrature == points[0].in_phase &&
 			      points[2].in_phase == -points[0].in_phase &&

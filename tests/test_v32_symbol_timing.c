@@ -88,9 +88,14 @@ static void fill_stream(int16_t *samples, size_t count)
 
 	for (size_t index = 0; index < count; ++index) {
 		int32_t noise = (int32_t)(fixture_random(&state) >> 17) - 16384;
-		double tone = 10500.0 * sin(
-			2.0 * 3.14159265358979323846 * 1200.0 *
-			(double)index / 7200.0);
+		/* A 1200 Hz tone at 7200 Hz has six exact phases. Keep zero
+		 * crossings exact: sin(pi * n) errors otherwise change half-way
+		 * rounding of the added noise across floating-point targets. */
+		unsigned phase = (unsigned)(index % 6);
+		double tone = phase % 3 == 0 ? 0.0 : 10500.0 * sqrt(3.0) * 0.5;
+
+		if (phase >= 3)
+			tone = -tone;
 
 		samples[index] = (int16_t)lround(tone + noise * 0.125);
 	}
@@ -213,11 +218,13 @@ static bool test_fragmentation_and_golden(void)
 		     whole_count * sizeof(whole_output[0])) == 0 &&
 	      memcmp(&whole, &split, sizeof(whole)) == 0,
 	      "timing output or owner depended on caller fragmentation");
-	/* Corrected full-width detector trace; direction is tested separately. */
-	CHECK(whole_count == 723 &&
+	/* Architecture-independent six-phase input and full-width detector trace. */
+	CHECK(hash_i16(input, ARRAY_LENGTH(input)) ==
+		      UINT64_C(0x6262b2e8979123ff) &&
+	      whole_count == 723 &&
 	      hash_i16(whole_output, whole_count) ==
-		      UINT64_C(0x2f1911c24cc3ec74) &&
-	      hash_state(&whole) == UINT64_C(0x7149c7cb30d13253),
+		      UINT64_C(0xafc10a49cbf62b40) &&
+	      hash_state(&whole) == UINT64_C(0xa9896941536d9728),
 	      "timing output or terminal state diverged from its snapshot");
 	return true;
 }

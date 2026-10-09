@@ -60,9 +60,11 @@ bool v92_phase4_digital_rx_has_failed(
 bool v92_phase4_digital_rx_is_receiving_control(
 	const struct v92_phase4_digital_rx *receiver)
 {
-	return v92_phase4_digital_rx_is_valid(receiver) &&
-	       !state_has_failed(receiver) &&
-	       receiver->stage != V92_PHASE4_DIGITAL_RX_TRN2U;
+	/* Check the stage before consulting the active control union member. */
+	if (!v92_phase4_digital_rx_is_valid(receiver) ||
+	    receiver->stage == V92_PHASE4_DIGITAL_RX_TRN2U)
+		return false;
+	return !state_has_failed(receiver);
 }
 
 enum v92_phase4_digital_rx_result v92_phase4_digital_rx_resume(

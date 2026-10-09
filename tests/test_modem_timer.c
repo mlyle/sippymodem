@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <limits.h>
 #include <signal.h>
+#include <stdint.h>
 #include <sys/resource.h>
 #include <sys/time.h>
 #include <sys/wait.h>
@@ -66,17 +67,30 @@ static bool test_deadlines_ignore_wall_clock(void)
 	return true;
 }
 
+static void advance_ticks(unsigned ticks)
+{
+	uint64_t nanoseconds = (uint64_t)monotonic_time.tv_nsec +
+		(uint64_t)ticks * (1000000000u / MODEM_HZ);
+
+	monotonic_time.tv_sec += (time_t)(nanoseconds / 1000000000u);
+	monotonic_time.tv_nsec = (long)(nanoseconds % 1000000000u);
+}
+
 static bool test_deadline_wrap(void)
 {
-	monotonic_time = (struct timespec){ (time_t)(ULONG_MAX / MODEM_HZ), 0 };
+	/* Begin at ULONG_MAX on either unsigned-long width. */
+	monotonic_time = (struct timespec){
+		(time_t)(ULONG_MAX / MODEM_HZ),
+		(long)((ULONG_MAX % MODEM_HZ) * (1000000000u / MODEM_HZ)),
+	};
 	const unsigned long before = get_time();
 	const unsigned long deadline = before + MODEM_HZ / 2;
 
 	CHECK(deadline < before, "fixture did not cross the unsigned tick limit");
-	monotonic_time.tv_nsec = 490000000;
+	advance_ticks(MODEM_HZ / 2 - 1);
 	CHECK(time_before(get_time(), deadline),
 	      "wrapped deadline expired one tick early");
-	monotonic_time.tv_nsec = 500000000;
+	advance_ticks(1);
 	CHECK(get_time() == deadline && time_after(get_time(), deadline),
 	      "wrapped deadline was not due at its boundary");
 	return true;
