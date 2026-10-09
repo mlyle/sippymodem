@@ -144,7 +144,7 @@ enum v90_pcm_mapping_result v90_pcm_mapping_power(
 
 	if (mapping == NULL || floor_power == NULL || ceiling_power == NULL ||
 	    floor_power == ceiling_power || !g711_law_is_valid(law) ||
-	    (plane != V90_PCM_MAPPING_TRANSMIT && plane != V90_PCM_MAPPING_CODEC))
+	    !v90_pcm_mapping_plane_is_valid(plane))
 		return V90_PCM_MAPPING_INVALID_ARGUMENT;
 	if (!v90_pcm_mapping_is_valid(mapping))
 		return V90_PCM_MAPPING_INVALID_PARAMETERS;
@@ -474,8 +474,7 @@ enum v90_pcm_mapping_result v90_pcm_mapping_ucode(
 	const struct pcm_constellation *constellation;
 
 	if (!v90_pcm_mapping_is_valid(mapping) || ucode == NULL ||
-	    (plane != V90_PCM_MAPPING_TRANSMIT &&
-	     plane != V90_PCM_MAPPING_CODEC))
+	    !v90_pcm_mapping_plane_is_valid(plane))
 		return V90_PCM_MAPPING_INVALID_ARGUMENT;
 	if (interval >= V90_CP_FRAME_INTERVALS ||
 	    label >= mapping->modulus[interval])
@@ -495,8 +494,7 @@ enum v90_pcm_mapping_result v90_pcm_mapping_label(
 	const struct pcm_constellation *constellation;
 
 	if (!v90_pcm_mapping_is_valid(mapping) || label == NULL ||
-	    (plane != V90_PCM_MAPPING_TRANSMIT &&
-	     plane != V90_PCM_MAPPING_CODEC))
+	    !v90_pcm_mapping_plane_is_valid(plane))
 		return V90_PCM_MAPPING_INVALID_ARGUMENT;
 	if (interval >= V90_CP_FRAME_INTERVALS ||
 	    ucode >= V90_CP_CONSTELLATION_UCODES)

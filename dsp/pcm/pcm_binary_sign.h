@@ -30,6 +30,12 @@ enum pcm_binary_sign_result pcm_binary_sign_init_from_scrambler(
 	const struct v34_scrambler *scrambler, uint8_t previous_sign);
 bool pcm_binary_sign_is_valid(const struct pcm_binary_sign *state);
 
+static inline bool pcm_binary_sign_is_gpa(const struct pcm_binary_sign *state)
+{
+	return pcm_binary_sign_is_valid(state) &&
+	       state->scrambler.polynomial == V34_POLYNOMIAL_GPA;
+}
+
 /* Advance across a preceding scrambled but non-differential training sign.
  * Encoding and decoding begin from the resulting history. */
 enum pcm_binary_sign_result pcm_binary_sign_track_scrambler_output(

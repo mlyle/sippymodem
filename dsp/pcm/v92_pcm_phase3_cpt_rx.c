@@ -13,12 +13,6 @@ static bool stage_is_valid(enum v92_pcm_phase3_cpt_rx_stage stage)
 	       stage <= V92_PCM_PHASE3_CPT_RX_COMPLETE;
 }
 
-static bool coding_is_valid(const struct pcm_binary_sign *coding)
-{
-	return pcm_binary_sign_is_valid(coding) &&
-	       coding->scrambler.polynomial == V34_POLYNOMIAL_GPA;
-}
-
 static bool boundary_is_valid(
 	const struct v92_pcm_phase3_cpt_rx *receiver)
 {
@@ -43,7 +37,7 @@ bool v92_pcm_phase3_cpt_rx_is_valid(
 {
 	if (receiver == NULL || !stage_is_valid(receiver->stage) ||
 	    !v92_phase3_sync_is_valid(&receiver->sync) ||
-	    !coding_is_valid(&receiver->coding) ||
+	    !pcm_binary_sign_is_gpa(&receiver->coding) ||
 	    !v92_cpt_receiver_is_valid(&receiver->records) ||
 	    !boundary_is_valid(receiver) ||
 	    (receiver->matching_records != 0u &&

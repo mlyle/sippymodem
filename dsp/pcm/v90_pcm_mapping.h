@@ -33,6 +33,12 @@ enum v90_pcm_mapping_plane {
 	V90_PCM_MAPPING_CODEC,
 };
 
+static inline bool v90_pcm_mapping_plane_is_valid(enum v90_pcm_mapping_plane plane)
+{
+	return plane == V90_PCM_MAPPING_TRANSMIT ||
+	       plane == V90_PCM_MAPPING_CODEC;
+}
+
 enum v90_pcm_mapping_result {
 	V90_PCM_MAPPING_OK,
 	V90_PCM_MAPPING_INVALID_ARGUMENT,

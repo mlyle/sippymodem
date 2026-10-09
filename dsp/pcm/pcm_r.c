@@ -26,12 +26,6 @@ static bool signal_positive(enum pcm_r_signal signal, unsigned phase)
 		phase % V90_CP_FRAME_INTERVALS < V90_CP_FRAME_INTERVALS / 2u;
 }
 
-static bool plane_is_valid(enum v90_pcm_mapping_plane plane)
-{
-	return plane == V90_PCM_MAPPING_TRANSMIT ||
-	       plane == V90_PCM_MAPPING_CODEC;
-}
-
 static bool stage_is_valid(enum pcm_r_rx_stage stage)
 {
 	return stage >= PCM_R_RX_SEARCH &&
@@ -57,7 +51,7 @@ bool pcm_r_rx_is_valid(
 {
 	if (receiver == NULL ||
 	    !mapping_matches_signal(&receiver->mapping, receiver->signal) ||
-	    !plane_is_valid(receiver->decision_plane) ||
+	    !v90_pcm_mapping_plane_is_valid(receiver->decision_plane) ||
 	    !stage_is_valid(receiver->stage) ||
 	    receiver->phase >= signal_period(receiver->signal) ||
 	    (receiver->locked_hypotheses &
@@ -92,7 +86,7 @@ enum pcm_r_rx_result pcm_r_rx_init(
 
 	if (receiver == NULL || mapping == NULL)
 		return PCM_R_RX_INVALID_ARGUMENT;
-	if (!mapping_matches_signal(mapping, signal) || !plane_is_valid(decision_plane))
+	if (!mapping_matches_signal(mapping, signal) || !v90_pcm_mapping_plane_is_valid(decision_plane))
 		return PCM_R_RX_INVALID_PARAMETERS;
 	initialized.mapping = *mapping;
 	initialized.decision_plane = decision_plane;

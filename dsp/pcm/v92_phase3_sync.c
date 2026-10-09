@@ -9,12 +9,6 @@
 #include <stdint.h>
 #include <string.h>
 
-static bool coding_is_gpa(const struct pcm_binary_sign *coding)
-{
-	return pcm_binary_sign_is_valid(coding) &&
-	       coding->scrambler.polynomial == V34_POLYNOMIAL_GPA;
-}
-
 static bool coding_matches(
 	const struct pcm_binary_sign *first,
 	const struct pcm_binary_sign *second)
@@ -37,8 +31,8 @@ static bool marker_is_valid(const struct v92_phase3_sync *sync)
 
 bool v92_phase3_sync_is_valid(const struct v92_phase3_sync *sync)
 {
-	if (sync == NULL || !coding_is_gpa(&sync->training) ||
-	    !coding_is_gpa(&sync->window_start) || !marker_is_valid(sync))
+	if (sync == NULL || !pcm_binary_sign_is_gpa(&sync->training) ||
+	    !pcm_binary_sign_is_gpa(&sync->window_start) || !marker_is_valid(sync))
 		return false;
 	switch (sync->stage) {
 	case V92_PHASE3_SYNC_TRAINING:

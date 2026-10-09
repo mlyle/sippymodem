@@ -7,12 +7,6 @@
 
 #include <string.h>
 
-static bool plane_is_valid(enum v90_pcm_mapping_plane plane)
-{
-	return plane == V90_PCM_MAPPING_TRANSMIT ||
-	       plane == V90_PCM_MAPPING_CODEC;
-}
-
 bool v90_pcm_frame_decoder_is_valid(
 	const struct v90_pcm_frame_decoder *decoder)
 {
@@ -21,7 +15,7 @@ bool v90_pcm_frame_decoder_is_valid(
 	       v90_sign_decoder_is_valid(&decoder->signs) &&
 	       decoder->signs.sign_redundancy ==
 		       decoder->mapping.sign_redundancy &&
-	       plane_is_valid(decoder->decision_plane);
+	       v90_pcm_mapping_plane_is_valid(decoder->decision_plane);
 }
 
 enum v90_pcm_frame_decoder_result v90_pcm_frame_decoder_init(
@@ -32,7 +26,7 @@ enum v90_pcm_frame_decoder_result v90_pcm_frame_decoder_init(
 	struct v90_pcm_frame_decoder initialized = { 0 };
 
 	if (decoder == NULL || mapping == NULL ||
-	    !plane_is_valid(decision_plane))
+	    !v90_pcm_mapping_plane_is_valid(decision_plane))
 		return V90_PCM_FRAME_DECODER_INVALID_ARGUMENT;
 	if (!v90_pcm_mapping_is_valid(mapping))
 		return V90_PCM_FRAME_DECODER_INVALID_PARAMETERS;

@@ -29,8 +29,7 @@ bool v92_pcm_phase3_ja_tx_is_valid(
 {
 	return tx != NULL && g711_law_is_valid(tx->law) &&
 	       tx->lu_ucode > 0u && tx->lu_ucode <= 127u &&
-	       pcm_binary_sign_is_valid(&tx->coding) &&
-	       tx->coding.scrambler.polynomial == V34_POLYNOMIAL_GPA &&
+	       pcm_binary_sign_is_gpa(&tx->coding) &&
 	       tx->descriptor_bits >= V92_PCM_DIL_ZERO_DESCRIPTOR_BITS &&
 	       tx->descriptor_bits <= V92_PCM_DIL_MAX_DESCRIPTOR_BITS &&
 	       tx->descriptor_bits % V92_PCM_PHASE3_JA_ALIGNMENT == 0u &&

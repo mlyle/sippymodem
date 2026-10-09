@@ -80,8 +80,7 @@ static bool state_is_valid(
 	uses_coding = transmitter->stage != V92_PCM_PHASE3_CPT_TX_TRN1U;
 	return !uses_coding ||
 	       (v92_pcm_phase3_trn1u_can_handoff(&transmitter->trn1u) &&
-		pcm_binary_sign_is_valid(&transmitter->coding) &&
-		transmitter->coding.scrambler.polynomial == V34_POLYNOMIAL_GPA);
+		pcm_binary_sign_is_gpa(&transmitter->coding));
 }
 
 static bool frame_is_valid(

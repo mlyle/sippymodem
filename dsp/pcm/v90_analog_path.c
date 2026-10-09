@@ -57,12 +57,6 @@ static bool handoff_is_valid(
 		       &handoff->receive.stream.decoder.mapping, &expected);
 }
 
-static bool decision_plane_is_valid(enum v90_pcm_mapping_plane plane)
-{
-	return plane == V90_PCM_MAPPING_TRANSMIT ||
-	       plane == V90_PCM_MAPPING_CODEC;
-}
-
 static bool upstream_is_valid(const struct v90_analog_path *path)
 {
 	if (path->upstream_stage == V90_ANALOG_PATH_UPSTREAM_CP)
@@ -123,7 +117,7 @@ bool v90_analog_path_is_valid(const struct v90_analog_path *path)
 	      path->cleardown_tail_samples != 0u)) ||
 	    !v34_constellation_size_is_valid(
 		    path->rate_renegotiation_constellation) ||
-	    !decision_plane_is_valid(path->decision_plane) ||
+	    !v90_pcm_mapping_plane_is_valid(path->decision_plane) ||
 	    !v90_pcm_mapping_is_valid(&path->training_mapping) ||
 	    path->training_mapping.kind != V90_CP_TRAINING ||
 	    path->training_mapping.law != path->law ||
