@@ -5,6 +5,7 @@
 #include "integer_math.h"
 #include "memory_region.h"
 #include "sample_math.h"
+#include "wide_uint.h"
 
 #include <float.h>
 #include <limits.h>
@@ -390,15 +391,15 @@ static bool correlation_at_least(
 	int64_t cross_energy)
 {
 	uint64_t cross;
-	__uint128_t left;
-	__uint128_t right;
+	struct wide_uint left, right, threshold;
 
 	if (prediction_energy == 0 || input_energy == 0)
 		return false;
 	cross = magnitude_s64(cross_energy);
-	left = (__uint128_t)cross * cross;
-	right = (__uint128_t)prediction_energy * input_energy;
-	return left >= right / 8u + (right % 8u != 0);
+	left = wide_product_u64(cross, cross);
+	right = wide_product_u64(prediction_energy, input_energy);
+	wide_add(wide_shift_right(right, 3), wide_from_u64((right.low & 7u) != 0), &threshold);
+	return wide_compare(left, threshold) >= 0;
 }
 
 static double coefficient_sum(const struct pcm_host_echo *echo)
@@ -410,6 +411,12 @@ static double coefficient_sum(const struct pcm_host_echo *echo)
 	return sum;
 }
 
+/* Compare value * scale >= bound without overflowing the energy sum. */
+static bool scaled_energy_at_least(uint64_t value, unsigned scale, uint64_t bound)
+{
+	return value >= bound / scale + (bound % scale != 0);
+}
+
 static void maybe_mark_ready(struct pcm_host_echo *echo)
 {
 	uint32_t train_min = echo->delay_acquired ?
@@ -419,23 +426,22 @@ static void maybe_mark_ready(struct pcm_host_echo *echo)
 	/* TRAIN may keep improving a qualified model. Its fitting margin must
 	 * describe the current retained coefficients rather than the first fit. */
 	if (echo->filter_ready) {
-		echo->weak_margin = (__uint128_t)echo->error_energy * 6u >=
-			echo->input_energy;
+		echo->weak_margin = scaled_energy_at_least(echo->error_energy, 6, echo->input_energy);
 		return;
 	}
 	/* A transient peak in otherwise quiet input cannot qualify a useful
 	 * return. Require sustained energy as well as independent correlation. */
 	if (echo->train_samples < train_min ||
 	    echo->train_peak < PCM_HOST_ECHO_READY_MIN_PEAK ||
-	    (__uint128_t)echo->input_energy <
-		    (__uint128_t)echo->train_samples *
+	    echo->input_energy <
+		    (uint64_t)echo->train_samples *
 		    PCM_HOST_ECHO_READY_MIN_RMS * PCM_HOST_ECHO_READY_MIN_RMS ||
 	    coefficient_sum(echo) < PCM_HOST_ECHO_COEFFICIENT_MIN_SUM ||
 	    !correlation_at_least(echo->prediction_energy, echo->input_energy,
 				  echo->prediction_cross_energy) ||
-	    (__uint128_t)echo->error_energy * 2u > echo->input_energy)
+	    echo->error_energy > echo->input_energy / 2u)
 		return;
-	bool weak = (__uint128_t)echo->error_energy * 6u >= echo->input_energy;
+	bool weak = scaled_energy_at_least(echo->error_energy, 6, echo->input_energy);
 
 	/* A newly acquired partial model is not an improvement over the
 	 * qualified one retained for short training. Require stronger margin. */
@@ -497,10 +503,25 @@ static bool prediction_is_qualified(
 	int64_t cross, uint64_t energy, uint64_t input,
 	unsigned samples, unsigned strength)
 {
-	return cross > 0 && energy != 0 &&
-	       (__uint128_t)cross * 2 >= energy &&
-	       (__uint128_t)cross * cross * samples >=
-		       (__uint128_t)strength * input * energy;
+	struct wide_uint explained, required;
+
+	if (cross <= 0 || energy == 0 || (uint64_t)cross * 2u < energy)
+		return false;
+	wide_multiply_u32(wide_product_u64(cross, cross), samples, &explained);
+	wide_multiply_u32(wide_product_u64(input, energy), strength, &required);
+	return wide_compare(explained, required) >= 0;
+}
+
+/* Sign-extend signed evidence into a two's-complement wide value. The
+ * differences below fit in signed 128 bits even at the 64-bit boundaries. */
+static struct wide_uint signed_evidence(int64_t value)
+{
+	return (struct wide_uint){ value < 0 ? UINT64_MAX : 0, (uint64_t)value };
+}
+
+static bool evidence_is_positive(struct wide_uint value)
+{
+	return (value.high >> 63) == 0 && (value.high != 0 || value.low != 0);
 }
 
 static bool prediction_is_harmful(
@@ -510,11 +531,16 @@ static bool prediction_is_harmful(
 	/* Subtraction changes energy by prediction_energy - 2 * cross.
 	 * Require that increase to exceed the uncertainty of the cross term;
 	 * its factor of two contributes four to the variance bound. */
-	__int128 excess = (__int128)energy - 2 * (__int128)cross;
+	struct wide_uint excess = wide_subtract(wide_from_u64(energy),
+		wide_shift_left(signed_evidence(cross), 1));
+	struct wide_uint increase, required;
 
-	return energy != 0 && excess > 0 &&
-	       (__uint128_t)excess * excess * samples >=
-		       (__uint128_t)4 * strength * input * energy;
+	if (energy == 0 || !evidence_is_positive(excess))
+		return false;
+	wide_multiply_u32(wide_multiply(excess, excess), samples, &increase);
+	wide_multiply_u32(wide_product_u64(input, energy), strength, &required);
+	required = wide_shift_left(required, 2);
+	return wide_compare(increase, required) >= 0;
 }
 
 static bool timing_is_qualified(
@@ -527,12 +553,14 @@ static bool timing_is_qualified(
 	 * each window and 36 together; short windows require material returns
 	 * too. Agreement and a half-prediction-energy improvement are
 	 * required so unrelated input cannot win just by choosing another bin. */
-	__int128 improvement = 2 * ((__int128)e->cross - e->current_cross) -
-		((__int128)e->energy - e->current_energy);
+	struct wide_uint improvement = wide_subtract(wide_shift_left(
+		wide_subtract(signed_evidence(e->cross), signed_evidence(e->current_cross)), 1),
+		wide_subtract(wide_from_u64(e->energy), wide_from_u64(e->current_energy)));
 
 	return prediction_is_qualified(e->cross, e->energy, e->input,
 				       samples, strength) &&
-	       improvement > 0 && (__uint128_t)improvement * 2 >= e->energy;
+	       evidence_is_positive(improvement) &&
+	       wide_compare(wide_shift_left(improvement, 1), wide_from_u64(e->energy)) >= 0;
 }
 
 static bool finish_timing_window(struct pcm_host_echo *echo,
@@ -588,8 +616,8 @@ static bool finish_timing_window(struct pcm_host_echo *echo,
 	 * Weak returns retain the long monitor's sensitivity; require at least
 	 * 1/32 of received energy in both short-window predictions. */
 	bool material_return =
-		(__uint128_t)evidence.energy * 32u >= evidence.input &&
-		(__uint128_t)t->first.energy * 32u >= t->first.input;
+		scaled_energy_at_least(evidence.energy, 32, evidence.input) &&
+		scaled_energy_at_least(t->first.energy, 32, t->first.input);
 	if ((samples == PCM_HOST_ECHO_TIMING_WINDOW || material_return) &&
 	    t->second && t->first_qualified && qualified && best == t->candidate) {
 		struct pcm_host_echo_timing_evidence combined = {

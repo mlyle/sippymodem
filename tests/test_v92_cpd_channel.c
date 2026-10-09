@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
+#include "wide_uint.h"
+
 #include <v92_cpd_channel.h>
 #include <v92_cpd_direct.h>
 #include <fractional_delay.h>
@@ -52,9 +54,9 @@ static void training_symbols(int16_t *target, size_t count)
 	}
 }
 
-static __uint128_t distance(__uint128_t left, __uint128_t right)
+static struct wide_uint distance(struct wide_uint left, struct wide_uint right)
 {
-	return left >= right ? left - right : right - left;
+	return wide_compare(left, right) >= 0 ? wide_subtract(left, right) : wide_subtract(right, left);
 }
 
 static bool test_filter_padding(void)
@@ -174,8 +176,8 @@ static bool test_channel_model(enum g711_law law, double main, double post, doub
 	memcpy(original.filter, cpd.filter, sizeof(cpd.filter));
 	if (rate >= 9u && cpd.trellis == V92_CPD_TRELLIS_16_STATE) {
 		unsigned int modulus = cpd.modulus[3];
-		__uint128_t capacity = 1u, smaller = 1u;
-		__uint128_t required = (__uint128_t)1u << pcm_upstream_frame_bits(rate);
+		struct wide_uint capacity = wide_from_u64(1), smaller = wide_from_u64(1);
+		struct wide_uint required = wide_shift_left(wide_from_u64(1), pcm_upstream_frame_bits(rate));
 
 		CHECK(modulus > 1u, "rate %u has no balanced alphabet", rate);
 		for (size_t symbol = 0u; symbol < V92_CPD_MODULUS_COUNT; ++symbol) {
@@ -184,12 +186,12 @@ static bool test_channel_model(enum g711_law law, double main, double post, doub
 			CHECK(cpd.modulus[symbol] <= balanced && cpd.modulus[symbol] + 1u >= balanced,
 				"rate %u did not balance interval %zu", rate, symbol);
 			original.modulus[symbol] = cpd.modulus[symbol];
-			capacity *= cpd.modulus[symbol];
-			smaller *= symbol % 4u == 3u ? modulus - 1u : 2u * (modulus - 1u);
+			wide_multiply_u32(capacity, cpd.modulus[symbol], &capacity);
+			wide_multiply_u32(smaller, symbol % 4u == 3u ? modulus - 1u : 2u * (modulus - 1u), &smaller);
 		}
-		CHECK(capacity >= required && smaller < required,
+		CHECK(wide_compare(capacity, required) >= 0 && wide_compare(smaller, required) < 0,
 			"rate %u did not use minimum balanced capacity", rate);
-		CHECK(capacity < 2u * required,
+		CHECK(wide_compare(capacity, wide_shift_left(required, 1)) < 0,
 			"rate %u modulus capacity encodes an extra bit", rate);
 	}
 	if ((original.trellis == V92_CPD_TRELLIS_32_STATE && original.constellation[0].count == 32u) ||
@@ -277,13 +279,15 @@ static bool test_channel_model(enum g711_law law, double main, double post, doub
 	}
 	/* Check unit mean-square power independently of the receive gain: a
 	 * wrong 4G could otherwise cancel out in the paired coordinate plan. */
-	__uint128_t target = (__uint128_t)V92_B1U_SYMBOLS << 36;
+	struct wide_uint target = wide_shift_left(wide_from_u64(V92_B1U_SYMBOLS), 36);
 	uint32_t gain = cpd.four_times_gain_q0_16;
-	__uint128_t selected = (__uint128_t)gain * gain * energy;
+	struct wide_uint selected = wide_product_u64((uint64_t)gain * gain, energy);
 
 	CHECK(gain > 1u && gain < UINT16_MAX &&
-		distance(selected, target) <= distance((__uint128_t)(gain - 1u) * (gain - 1u) * energy, target) &&
-		distance(selected, target) <= distance((__uint128_t)(gain + 1u) * (gain + 1u) * energy, target),
+		wide_compare(distance(selected, target),
+			distance(wide_product_u64((uint64_t)(gain - 1u) * (gain - 1u), energy), target)) <= 0 &&
+		wide_compare(distance(selected, target),
+			distance(wide_product_u64((uint64_t)(gain + 1u) * (gain + 1u), energy), target)) <= 0,
 		"4G did not normalize the actual B1u filter output");
 	unsigned delivered = 0;
 	for (unsigned frame = 0; frame < frames; ++frame) {

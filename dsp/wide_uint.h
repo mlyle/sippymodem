@@ -85,6 +85,36 @@ static inline struct wide_uint wide_from_native(__uint128_t value)
 }
 #endif
 
+/* A 64-by-64 product is exact. Full-width products retain the low 128 bits. */
+static inline struct wide_uint wide_product_u64(uint64_t left, uint64_t right)
+{
+#if defined(__SIZEOF_INT128__) && !defined(WIDE_UINT_PORTABLE)
+	return wide_from_native((__uint128_t)left * right);
+#else
+	uint64_t a0 = (uint32_t)left, a1 = left >> 32;
+	uint64_t b0 = (uint32_t)right, b1 = right >> 32;
+	uint64_t product = a0 * b0;
+	uint32_t low = (uint32_t)product;
+	uint64_t middle = a1 * b0 + (product >> 32);
+	uint64_t high = middle >> 32;
+	middle = a0 * b1 + (uint32_t)middle;
+	return (struct wide_uint){
+		a1 * b1 + high + (middle >> 32), (middle << 32) | low,
+	};
+#endif
+}
+
+static inline struct wide_uint wide_multiply(struct wide_uint left, struct wide_uint right)
+{
+#if defined(__SIZEOF_INT128__) && !defined(WIDE_UINT_PORTABLE)
+	return wide_from_native(wide_native(left) * wide_native(right));
+#else
+	struct wide_uint result = wide_product_u64(left.low, right.low);
+	result.high += left.high * right.low + left.low * right.high;
+	return result;
+#endif
+}
+
 static inline bool wide_multiply_u32(struct wide_uint value, uint32_t factor,
 	struct wide_uint *result)
 {

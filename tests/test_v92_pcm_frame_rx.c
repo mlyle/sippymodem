@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
+#include "wide_uint.h"
+
 #include <v92_pcm_frame.h>
 #include <v92_cpd_direct.h>
 #include <v92_cpu.h>
@@ -566,10 +568,10 @@ static bool polarity_mapping(struct v92_pcm_mapping *mapping,
 		 * Choose the minimum N with (2N)^9 * N^3 >= 2^K. */
 		unsigned n;
 		for (n = 1u; n <= 64u; ++n) {
-			__uint128_t capacity = 1u;
+			struct wide_uint capacity = wide_from_u64(1);
 			for (unsigned i = 0u; i < V92_CPD_MODULUS_COUNT; ++i)
-				capacity *= i % 4u == 3u ? n : 2u * n;
-			if (capacity >= ((__uint128_t)1u << pcm_upstream_frame_bits(rate)))
+				wide_multiply_u32(capacity, i % 4u == 3u ? n : 2u * n, &capacity);
+			if (wide_compare(capacity, wide_shift_left(wide_from_u64(1), pcm_upstream_frame_bits(rate))) >= 0)
 				break;
 		}
 		CHECK(n <= 64u, "polarity modulus exceeds fixture constellation");

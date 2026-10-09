@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
+#include "wide_uint.h"
+
 #include <pcm_call.h>
 #include <v90_phase4_owned.h>
 
@@ -8329,16 +8331,16 @@ static bool capture_v92_duplex_data(
 			memcpy(expected.filter, rx->decoder.mapping.cpd.filter, sizeof(expected.filter));
 			expected.four_times_gain_q0_16 = rx->decoder.mapping.cpd.four_times_gain_q0_16;
 			if (offer->expected >= 9u && expected.trellis == V92_CPD_TRELLIS_16_STATE) {
-				__uint128_t capacity = 1u;
-				__uint128_t required = (__uint128_t)1u << pcm_upstream_frame_bits(offer->expected);
+				struct wide_uint capacity = wide_from_u64(1);
+				struct wide_uint required = wide_shift_left(wide_from_u64(1), pcm_upstream_frame_bits(offer->expected));
 
 				/* The focused channel test checks the balanced geometry.
 				 * Here require its capacity to agree with the negotiated
 				 * width and verify that both peers exchanged every modulus. */
 				memcpy(expected.modulus, rx->decoder.mapping.cpd.modulus, sizeof(expected.modulus));
 				for (size_t symbol = 0u; symbol < V92_CPD_MODULUS_COUNT; ++symbol)
-					capacity *= expected.modulus[symbol];
-				CHECK(capacity >= required && capacity < 2u * required,
+					wide_multiply_u32(capacity, expected.modulus[symbol], &capacity);
+				CHECK(wide_compare(capacity, required) >= 0 && wide_compare(capacity, wide_shift_left(required, 1)) < 0,
 				      "V.92 exchanged capacity outside the selected frame width");
 			}
 			if ((expected.trellis == V92_CPD_TRELLIS_32_STATE && expected.constellation[0].count == 32u) ||

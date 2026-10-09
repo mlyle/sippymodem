@@ -2,6 +2,8 @@
 
 #include "v92_cpd_channel.h"
 
+#include "wide_uint.h"
+
 #include "memory_region.h"
 #include "v92_cpd_gain.h"
 
@@ -360,14 +362,15 @@ static bool balanced_moduli(uint8_t moduli[V92_CPD_MODULUS_COUNT], unsigned int 
 	/* V.92 6.4.1-6.4.2: an ordinary interval needs M signed points,
 	 * each fourth (trellis) interval needs 2M. Choose the smallest N
 	 * with (2N)^9 * N^3 >= 2^K. Products fit in 128 bits for N<=64. */
-	__uint128_t required = (__uint128_t)1u << data_bits;
+	struct wide_uint required = wide_shift_left(wide_from_u64(1), data_bits);
+	struct wide_uint upper = wide_shift_left(required, 1);
 
 	for (unsigned int points = 1u; points <= 64u; ++points) {
-		__uint128_t capacity = 1u;
+		struct wide_uint capacity = wide_from_u64(1);
 
 		for (size_t symbol = 0u; symbol < V92_CPD_MODULUS_COUNT; ++symbol)
-			capacity *= symbol % 4u == 3u ? points : 2u * points;
-		if (capacity < required)
+			wide_multiply_u32(capacity, symbol % 4u == 3u ? points : 2u * points, &capacity);
+		if (wide_compare(capacity, required) < 0)
 			continue;
 		for (size_t symbol = 0u; symbol < V92_CPD_MODULUS_COUNT; ++symbol)
 			moduli[symbol] = symbol % 4u == 3u ? points : 2u * points;
@@ -375,11 +378,12 @@ static bool balanced_moduli(uint8_t moduli[V92_CPD_MODULUS_COUNT], unsigned int 
 		 * Keep that width equal to the selected rate. At 37.333k the
 		 * balanced product is exactly 2^(K+1); removing one ordinary
 		 * representative avoids an unadvertised extra bit per frame. */
-		while (capacity >= 2u * required && moduli[0] > 1u) {
-			capacity = capacity / moduli[0] * (moduli[0] - 1u);
+		while (wide_compare(capacity, upper) >= 0 && moduli[0] > 1u) {
+			wide_divide_u32(capacity, moduli[0], &capacity);
+			wide_multiply_u32(capacity, moduli[0] - 1u, &capacity);
 			--moduli[0];
 		}
-		return capacity >= required && capacity < 2u * required;
+		return wide_compare(capacity, required) >= 0 && wide_compare(capacity, upper) < 0;
 	}
 	return false;
 }

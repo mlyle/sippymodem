@@ -31,6 +31,13 @@ static bool test_boundaries(void)
 	CHECK(wide_multiply_u32(value, UINT32_MAX, &value) &&
 	      equal(value, UINT32_MAX - 1, UINT64_C(0xffffffff00000001)),
 	      "aliased multiplication lost carry");
+	CHECK(equal(wide_product_u64(UINT64_MAX, UINT64_MAX), UINT64_MAX - 1, 1),
+	      "64-bit product lost its carry");
+	CHECK(equal(wide_multiply(maximum, maximum), 0, 1),
+	      "full-width product does not wrap");
+	CHECK(equal(wide_multiply((struct wide_uint){ 1, 1 },
+	                         (struct wide_uint){ 1, 1 }), 2, 1),
+	      "full-width product lost its cross terms");
 	CHECK(wide_divide_u32(maximum, UINT32_MAX, &quotient) == 0 &&
 	      equal(quotient, UINT64_C(0x100000001), UINT64_C(0x100000001)),
 	      "four-limb division differs");
@@ -80,6 +87,12 @@ static bool test_native_oracle(void)
 		CHECK(equal(wide_subtract(a, b), expected >> 64, expected) &&
 		      wide_compare(a, b) == ((x > y) - (x < y)),
 		      "difference/comparison oracle differs at %u", index);
+		expected = (__uint128_t)a.low * b.low;
+		CHECK(equal(wide_product_u64(a.low, b.low), expected >> 64, expected),
+		      "64-bit product oracle differs at %u", index);
+		expected = x * y;
+		CHECK(equal(wide_multiply(a, b), expected >> 64, expected),
+		      "full-width product oracle differs at %u", index);
 		bool fits = factor == 0 || x <= ~(__uint128_t)0 / factor;
 		expected = x * factor;
 		CHECK(wide_multiply_u32(a, factor, &value) == fits &&

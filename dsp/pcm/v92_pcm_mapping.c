@@ -2,6 +2,8 @@
 
 #include "v92_pcm_mapping.h"
 
+#include "wide_uint.h"
+
 #include "mixed_radix.h"
 
 #include <string.h>
@@ -30,19 +32,15 @@ static bool symbol_geometry_is_valid(
 
 static bool capacity_is_valid(const struct v92_pcm_mapping *mapping)
 {
-	__uint128_t capacity = 1u;
-	__uint128_t required =
-		(__uint128_t)1u << mapping->data_bits_per_frame;
+	struct wide_uint capacity = wide_from_u64(1);
+	struct wide_uint required = wide_shift_left(capacity, mapping->data_bits_per_frame);
 
 	for (size_t symbol = 0u;
 	     symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
-		if (__builtin_mul_overflow(
-			    capacity,
-			    (__uint128_t)mapping->cpd.modulus[symbol],
-			    &capacity))
+		if (!wide_multiply_u32(capacity, mapping->cpd.modulus[symbol], &capacity))
 			return false;
 	}
-	return capacity >= required;
+	return wide_compare(capacity, required) >= 0;
 }
 
 bool v92_pcm_mapping_is_valid(const struct v92_pcm_mapping *mapping)

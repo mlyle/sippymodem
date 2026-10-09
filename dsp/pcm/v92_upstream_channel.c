@@ -2,6 +2,8 @@
 
 #include "v92_upstream_channel.h"
 
+#include "wide_uint.h"
+
 #include <float.h>
 #include <math.h>
 #include <stddef.h>
@@ -161,8 +163,11 @@ bool v92_upstream_channel_fits_gain(const struct v92_upstream_channel *channel)
 	/* The best scalar's unexplained energy is yy - xy*xy/xx. Compare
 	 * without cancellation or division; the bounded training sums and
 	 * their products fit in 128 bits, including the squared 1% bound. */
-	__uint128_t energy = (__uint128_t)expected * observed;
-	__uint128_t explained = (__uint128_t)cross * cross;
+	struct wide_uint energy = wide_product_u64(expected, observed);
+	struct wide_uint explained = wide_product_u64(cross, cross), residual;
 
-	return explained <= energy && (energy - explained) * 10000u <= energy;
+	if (wide_compare(explained, energy) > 0)
+		return false;
+	wide_multiply_u32(wide_subtract(energy, explained), 10000, &residual);
+	return wide_compare(residual, energy) <= 0;
 }

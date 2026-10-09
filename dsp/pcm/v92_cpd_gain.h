@@ -3,6 +3,8 @@
 #ifndef V92_CPD_GAIN_H
 #define V92_CPD_GAIN_H
 
+#include "wide_uint.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -11,14 +13,14 @@
 static inline uint16_t v92_cpd_gain_for_energy(uint64_t energy, size_t symbols)
 {
 	uint32_t low = 0u, high = UINT16_MAX;
-	__uint128_t target = (__uint128_t)symbols << 36;
+	struct wide_uint target = wide_shift_left(wide_from_u64(symbols), 36);
 
 	if (energy == 0u || symbols == 0u)
 		return 0u;
 	while (low < high) {
 		uint32_t middle = low + (high - low + 1u) / 2u;
 
-		if ((__uint128_t)middle * middle * energy <= target)
+		if (wide_compare(wide_product_u64((uint64_t)middle * middle, energy), target) <= 0)
 			low = middle;
 		else
 			high = middle - 1u;
@@ -27,10 +29,12 @@ static inline uint16_t v92_cpd_gain_for_energy(uint64_t energy, size_t symbols)
 		return 1u;
 	if (low < UINT16_MAX) {
 		uint32_t upper = low + 1u;
-		__uint128_t below = target - (__uint128_t)low * low * energy;
-		__uint128_t above = (__uint128_t)upper * upper * energy - target;
+		struct wide_uint below = wide_subtract(target,
+			wide_product_u64((uint64_t)low * low, energy));
+		struct wide_uint above = wide_subtract(
+			wide_product_u64((uint64_t)upper * upper, energy), target);
 
-		if (above < below)
+		if (wide_compare(above, below) < 0)
 			low = upper;
 	}
 	return (uint16_t)low;

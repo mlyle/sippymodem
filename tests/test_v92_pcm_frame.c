@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
+#include "wide_uint.h"
+
 #include <v92_pcm_frame.h>
 
 #include <integer_math.h>
@@ -372,7 +374,7 @@ static bool test_transmitter_equations(uint8_t rate, unsigned trellis,
 	int32_t u[SYMBOLS] = { 0 }, x[SYMBOLS] = { 0 }, v[SYMBOLS] = { 0 };
 	uint8_t history[23] = { 0 }, delay[6] = { 0 }, differential = 0;
 	unsigned cursor = 0, signs = 0, parities = 0;
-	__uint128_t capacity = 1;
+	struct wide_uint capacity = wide_from_u64(1);
 
 	cpd.trellis = (enum v92_cpd_trellis)trellis;
 	/* Six different constellations ensure 6T constellation and 4T trellis
@@ -397,7 +399,7 @@ static bool test_transmitter_equations(uint8_t rate, unsigned trellis,
 		}
 	}
 	for (unsigned i = 0; i < 12; ++i)
-		capacity *= cpd.modulus[i];
+		wide_multiply_u32(capacity, cpd.modulus[i], &capacity);
 	memset(cpd.filter, 0, sizeof(cpd.filter));
 	cpd.filter[V92_CPD_PRECODER_FEED_FORWARD] =
 		(struct v92_cpd_filter){ .count = 3, .coefficient = { 8192, -4096, 2048 } };
@@ -413,7 +415,7 @@ static bool test_transmitter_equations(uint8_t rate, unsigned trellis,
 	for (unsigned f = 0; f < FRAMES; ++f) {
 		uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
 		struct v92_pcm_frame frame;
-		__uint128_t value = 0;
+		struct wide_uint value = wide_from_u64(0);
 		bool rm = f >= RM_START && f < CONTROL_START;
 		bool prime = f >= RM_PRIME_START;
 		uint8_t sign = 0;
@@ -444,11 +446,12 @@ static bool test_transmitter_equations(uint8_t rate, unsigned trellis,
 
 				history[cursor] = scrambled;
 				cursor = (cursor + 1) % 23;
-				value |= (__uint128_t)scrambled << bit;
+				wide_add(value, wide_shift_left(wide_from_u64(scrambled), bit), &value);
 			}
-			sign = (uint8_t)(differential ^ (value > (capacity - 1) / 2));
+			sign = (uint8_t)(differential ^ (wide_compare(value,
+				wide_shift_right(wide_subtract(capacity, wide_from_u64(1)), 1)) > 0));
 			if (differential)
-				value = capacity - 1 - value;
+				value = wide_subtract(wide_subtract(capacity, wide_from_u64(1)), value);
 			differential = sign;
 			CHECK(v92_pcm_frame_encode(&transmitter, bits, mapping.data_bits_per_frame,
 				&frame) == V92_PCM_FRAME_OK, "equation encoding failed");
@@ -457,7 +460,7 @@ static bool test_transmitter_equations(uint8_t rate, unsigned trellis,
 		signs |= 1u << sign;
 		for (unsigned i = 0; i < 12; ++i) {
 			unsigned n = f * 12 + i, modulus = cpd.modulus[i];
-			unsigned digit = (unsigned)(value % modulus), base = i - i % 4;
+			unsigned digit = wide_divide_u32(value, modulus, &value), base = i - i % 4;
 			if (rm)
 				digit = (i % 4u < 2u) != prime ? modulus - 1u : 0u;
 			uint8_t y0 = delay[3 + trellis];
@@ -465,7 +468,6 @@ static bool test_transmitter_equations(uint8_t rate, unsigned trellis,
 			int residue = eta;
 			const struct v92_cpd_constellation *points = &cpd.constellation[i % 6];
 
-			value /= modulus;
 			CHECK(frame.digit[i] == digit && frame.y0[i] == y0,
 			      "mapping/trellis differs: frame %u symbol %u", f, i);
 			parities |= 1u << y0;
@@ -536,7 +538,7 @@ static bool test_transmitter_equations(uint8_t rate, unsigned trellis,
 			if (i % 4 == 3)
 				trellis_step(delay, 16u << trellis, frame.signed_index + base);
 		}
-		CHECK(value == 0, "modulus conversion left high-order data");
+		CHECK(wide_compare(value, wide_from_u64(0)) == 0, "modulus conversion left high-order data");
 	}
 	CHECK(signs == 3 && parities == 3, "equation fixture missed sign/trellis transitions");
 	return true;

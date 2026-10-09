@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
+#include "wide_uint.h"
+
 #include <v92_cpd_direct.h>
 #include <v92_pcm_frame.h>
 #include <integer_math.h>
@@ -45,9 +47,8 @@ static bool direct_sections_are_correct(
 	uint8_t rate)
 {
 	uint8_t point_count = expected_point_count(rate);
-	__uint128_t product = 1u;
-	__uint128_t expected =
-		(__uint128_t)1u << pcm_upstream_frame_bits(rate);
+	struct wide_uint product = wide_from_u64(1);
+	struct wide_uint expected = wide_shift_left(wide_from_u64(1), pcm_upstream_frame_bits(rate));
 
 	CHECK(cpd->modulus_present && cpd->filters_present &&
 	      cpd->constellations_present &&
@@ -81,9 +82,9 @@ static bool direct_sections_are_correct(
 		CHECK(cpd->modulus[symbol] == modulus,
 		      "rate %u law %u symbol %zu modulus changed",
 		      rate, law, symbol);
-		product *= cpd->modulus[symbol];
+		wide_multiply_u32(product, cpd->modulus[symbol], &product);
 	}
-	CHECK(rate == 16u ? product >= expected : product == expected,
+	CHECK(rate == 16u ? wide_compare(product, expected) >= 0 : wide_compare(product, expected) == 0,
 	      "rate %u law %u modulus product changed", rate, law);
 	CHECK(cpd->constellation[0].count == point_count,
 	      "rate %u law %u generated %u rather than %u points",
@@ -116,9 +117,9 @@ static bool direct_sections_are_correct(
 	return true;
 }
 
-static __uint128_t distance(__uint128_t left, __uint128_t right)
+static struct wide_uint distance(struct wide_uint left, struct wide_uint right)
 {
-	return left >= right ? left - right : right - left;
+	return wide_compare(left, right) >= 0 ? wide_subtract(left, right) : wide_subtract(right, left);
 }
 
 static bool gain_is_nearest(
@@ -129,8 +130,8 @@ static bool gain_is_nearest(
 	uint8_t ones[V92_PCM_MAPPING_MAX_BITS];
 	uint64_t energy = 0u;
 	uint32_t gain = cpd->four_times_gain_q0_16;
-	__uint128_t target = (__uint128_t)DIRECT_B1U_SYMBOLS << 36u;
-	__uint128_t selected;
+	struct wide_uint target = wide_shift_left(wide_from_u64(DIRECT_B1U_SYMBOLS), 36);
+	struct wide_uint selected;
 
 	CHECK(v92_pcm_mapping_init(&mapping, law, cpd) ==
 		      V92_PCM_MAPPING_OK &&
@@ -161,20 +162,14 @@ static bool gain_is_nearest(
 			energy += magnitude * magnitude;
 		}
 	}
-	selected = (__uint128_t)gain * gain * energy;
+	selected = wide_product_u64((uint64_t)gain * gain, energy);
 	if (gain > 1u)
-		CHECK(distance(selected, target) <=
-			      distance(
-				      (__uint128_t)(gain - 1u) *
-					      (gain - 1u) * energy,
-				      target),
+		CHECK(wide_compare(distance(selected, target),
+			distance(wide_product_u64((uint64_t)(gain - 1u) * (gain - 1u), energy), target)) <= 0,
 		      "gain %u was farther than its lower neighbor", gain);
 	if (gain < UINT16_MAX)
-		CHECK(distance(selected, target) <=
-			      distance(
-				      (__uint128_t)(gain + 1u) *
-					      (gain + 1u) * energy,
-				      target),
+		CHECK(wide_compare(distance(selected, target),
+			distance(wide_product_u64((uint64_t)(gain + 1u) * (gain + 1u), energy), target)) <= 0,
 		      "gain %u was farther than its upper neighbor", gain);
 	return true;
 }
@@ -258,11 +253,11 @@ static bool test_known_boundaries(void)
 	      cpd.trellis == V92_CPD_TRELLIS_32_STATE &&
 	      cpd.constellation[0].count == V92_CPD_DIRECT_MAX_POINTS,
 	      "DRN13 did not select its expanded 32-state mapping");
-	__uint128_t smaller = 1u;
+	struct wide_uint smaller = wide_from_u64(1);
 
 	for (unsigned symbol = 0u; symbol < V92_CPD_MODULUS_COUNT; ++symbol)
-		smaller *= symbol % 4u == 3u ? 26u : 52u;
-	CHECK(smaller < ((__uint128_t)1u << 66),
+		wide_multiply_u32(smaller, symbol % 4u == 3u ? 26u : 52u, &smaller);
+	CHECK(wide_compare(smaller, wide_shift_left(wide_from_u64(1), 66)) < 0,
 	      "44k allocation is not the smallest even, uniform signed alphabet");
 	return true;
 }
@@ -345,8 +340,8 @@ static bool test_level_selection(void)
 				if (rates[rate] >= 15u && rates[rate] <= 19u) {
 					static const uint8_t minimum_points[] = { 24u, 27u, 31u, 34u, 39u };
 					unsigned points = cpd.constellation[0].count;
-					__uint128_t capacity = 1u, smaller = 1u;
-					__uint128_t required = (__uint128_t)1u << pcm_upstream_frame_bits(rates[rate]);
+					struct wide_uint capacity = wide_from_u64(1), smaller = wide_from_u64(1);
+					struct wide_uint required = wide_shift_left(wide_from_u64(1), pcm_upstream_frame_bits(rates[rate]));
 
 					CHECK(points == minimum_points[rates[rate] - 15u],
 					      "direct selection retained an oversized alphabet");
@@ -355,10 +350,10 @@ static bool test_level_selection(void)
 
 						CHECK(cpd.modulus[symbol] == factor * points,
 						      "direct selection did not balance its intervals");
-						capacity *= cpd.modulus[symbol];
-						smaller *= factor * (points - 1u);
+						wide_multiply_u32(capacity, cpd.modulus[symbol], &capacity);
+						wide_multiply_u32(smaller, factor * (points - 1u), &smaller);
 					}
-					CHECK(smaller < required && capacity >= required,
+					CHECK(wide_compare(smaller, required) < 0 && wide_compare(capacity, required) >= 0,
 					      "balanced alphabet was not minimal or lost data capacity");
 					struct g711_interval interval;
 
