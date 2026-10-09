@@ -10,16 +10,11 @@ _Static_assert(
 		PHASE2_RECIPROCAL_PROBE_TONE_A_WAIT_SAMPLES <= UINT16_MAX,
 	"reciprocal-probe Tone-A deadline must retain its 8 kHz duration");
 
-static bool signal_is_b(const struct phase2_info0_exchange *exchange)
-{
-	return exchange->signal_role == PHASE2_SIGNAL_B;
-}
-
 static bool completed_turnaround_matches_role(
 	const struct phase2_probe_turnaround *turnaround,
 	const struct phase2_info0_exchange *exchange)
 {
-	return signal_is_b(exchange) ?
+	return phase2_info0_signal_is_b(exchange) ?
 		       turnaround->phase ==
 			       PHASE2_PROBE_TURNAROUND_SIGNAL_B_PROBE_READY :
 		       turnaround->phase ==
@@ -126,7 +121,7 @@ bool phase2_reciprocal_probe_is_valid(
 	    (unsigned int)probe->failure >
 		    PHASE2_PROBE_LOCAL_TRANSMIT_LIMIT)
 		return false;
-	if (signal_is_b(exchange))
+	if (phase2_info0_signal_is_b(exchange))
 		return probe->signal_a_reversal_elapsed_samples == 0 &&
 		       signal_b_path_is_valid(probe);
 	return probe->signal_b_tone_wait_samples == 0 &&
@@ -152,7 +147,7 @@ enum phase2_reciprocal_probe_result phase2_reciprocal_probe_init(
 	    !completed_turnaround_matches_role(completed_turnaround, exchange))
 		return PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT;
 	next_exchange = *exchange;
-	if (signal_is_b(&next_exchange)) {
+	if (phase2_info0_signal_is_b(&next_exchange)) {
 		initialized.phase =
 			PHASE2_RECIPROCAL_PROBE_SIGNAL_B_TRANSMITTING;
 		if (v34_phase2_tone_detector_reset(
@@ -379,7 +374,7 @@ enum phase2_reciprocal_probe_result phase2_reciprocal_probe_sample(
 	case PHASE2_RECIPROCAL_PROBE_FAILED:
 		break;
 	}
-	if (!signal_is_b(&next_exchange) &&
+	if (!phase2_info0_signal_is_b(&next_exchange) &&
 	    probe->phase != PHASE2_RECIPROCAL_PROBE_FAILED &&
 	    next.signal_a_reversal_elapsed_samples != UINT32_MAX)
 		next.signal_a_reversal_elapsed_samples++;
@@ -405,7 +400,7 @@ enum phase2_reciprocal_probe_result phase2_reciprocal_probe_measure(
 	if (!phase2_reciprocal_probe_is_valid(
 		    probe, completed_turnaround,
 		    completed_initial_probe, exchange) ||
-	    signal_is_b(exchange) ||
+	    phase2_info0_signal_is_b(exchange) ||
 	    probe->phase != PHASE2_RECIPROCAL_PROBE_SIGNAL_A_TONE ||
 	    measurement == NULL ||
 	    v34_phase2_probe_acquisition_measure(

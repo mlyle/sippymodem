@@ -56,6 +56,12 @@ struct phase2_info0_exchange {
 	enum phase2_signal_role signal_role;
 };
 
+static inline bool phase2_info0_signal_is_b(
+	const struct phase2_info0_exchange *exchange)
+{
+	return exchange->signal_role == PHASE2_SIGNAL_B;
+}
+
 /* The probe stages share the INFO0 exchange's continuing tone state. */
 static inline bool phase2_info0_exchange_observe_tone(
 	struct phase2_info0_exchange *exchange, int16_t sample,

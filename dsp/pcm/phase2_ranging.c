@@ -4,15 +4,10 @@
 
 #include <stddef.h>
 
-static bool signal_is_b(const struct phase2_info0_exchange *exchange)
-{
-	return exchange->signal_role == PHASE2_SIGNAL_B;
-}
-
 static uint16_t completed_initial_tone_samples(
 	const struct phase2_info0_exchange *exchange)
 {
-	return signal_is_b(exchange) ?
+	return phase2_info0_signal_is_b(exchange) ?
 		       0 : PHASE2_RANGING_INITIAL_TONE_SAMPLES;
 }
 
@@ -64,7 +59,7 @@ bool phase2_ranging_control_is_valid(
 	if (!bounds_are_valid(control) ||
 	    !phase2_info0_exchange_is_valid(exchange))
 		return false;
-	side_b = signal_is_b(exchange);
+	side_b = phase2_info0_signal_is_b(exchange);
 	if ((control->probe_reversal_elapsed_samples != 0) !=
 	    (side_b && (control->phase == PHASE2_SIGNAL_B_WAIT_PROBE_START ||
 			control->phase == PHASE2_RANGING_PROBE_READY)))
@@ -226,7 +221,7 @@ static bool prepared_control_is_valid(
 	    !phase2_info0_exchange_is_valid(exchange) ||
 	    !retains_ranging_context(exchange, peer_info0_received))
 		return false;
-	side_b = signal_is_b(exchange);
+	side_b = phase2_info0_signal_is_b(exchange);
 	if (control->phase == PHASE2_WAIT_FIRST_REMOTE_REVERSAL)
 		return !side_b &&
 		       control->local_tone_samples ==
@@ -322,7 +317,7 @@ static void enter_active_ranging(
 	    !retains_ranging_context(exchange, peer_info0_received) ||
 	    !exchange->tone_detector.carrier.tone_present)
 		return;
-	control->phase = signal_is_b(exchange) ?
+	control->phase = phase2_info0_signal_is_b(exchange) ?
 				 PHASE2_WAIT_FIRST_REMOTE_REVERSAL :
 				 PHASE2_SIGNAL_A_WAIT_INITIAL_TONE;
 }
@@ -362,7 +357,7 @@ static bool resume_deferred_response(
 	if (elapsed == 0)
 		return true;
 	if (control->phase == PHASE2_WAIT_FIRST_REMOTE_REVERSAL &&
-	    signal_is_b(exchange))
+	    phase2_info0_signal_is_b(exchange))
 		return schedule_response(control, elapsed);
 	if (control->phase == PHASE2_RANGING_INFO0_EXCHANGE &&
 	    exchange->transmit_phase != PHASE2_INFO0_TONE)
@@ -447,7 +442,7 @@ static bool handle_reversal(
 
 	switch (control->phase) {
 	case PHASE2_RANGING_INFO0_EXCHANGE:
-		if (signal_is_b(exchange) && peer_info0_received &&
+		if (phase2_info0_signal_is_b(exchange) && peer_info0_received &&
 		    transmit_phase_before != PHASE2_INFO0_POST_V8_SILENCE &&
 		    exchange->transmit_phase != PHASE2_INFO0_POST_V8_SILENCE) {
 			accepted = defer_response(
@@ -458,13 +453,13 @@ static bool handle_reversal(
 		/* A peer edge delivered on the final 50 ms Tone A sample cannot
 		 * answer the local reversal, which is prepared on the next call.
 		 * Retain its following-tone phase as the detector baseline. */
-		if (!signal_is_b(exchange) &&
+		if (!phase2_info0_signal_is_b(exchange) &&
 		    control->local_tone_samples ==
 			    PHASE2_RANGING_INITIAL_TONE_SAMPLES)
 			accepted = true;
 		break;
 	case PHASE2_WAIT_FIRST_REMOTE_REVERSAL:
-		if (signal_is_b(exchange)) {
+		if (phase2_info0_signal_is_b(exchange)) {
 			accepted = schedule_response(
 				&next, detector_delay_samples);
 		} else if (measure_round_trip_delay(
@@ -482,7 +477,7 @@ static bool handle_reversal(
 		 * Keep the detector's newly restored phase as the reference and
 		 * wait for a fresh first edge. Rejecting this event would restore
 		 * the false intermediate phase. */
-		if (signal_is_b(exchange)) {
+		if (phase2_info0_signal_is_b(exchange)) {
 			next = (struct phase2_ranging_control){
 				.phase = PHASE2_WAIT_FIRST_REMOTE_REVERSAL,
 			};
@@ -529,7 +524,7 @@ static void finish_tone_tail(
 	if (++control->post_reversal_samples <
 	    PHASE2_RANGING_TONE_TAIL_SAMPLES)
 		return;
-	if (signal_is_b(exchange)) {
+	if (phase2_info0_signal_is_b(exchange)) {
 		control->phase = PHASE2_SIGNAL_B_WAIT_SECOND_REMOTE_REVERSAL;
 	} else {
 		control->phase = PHASE2_RANGING_PROBE_READY;
@@ -544,11 +539,11 @@ static bool measurement_active(
 	const struct phase2_info0_exchange *exchange)
 {
 	return (control->phase == PHASE2_RESPONSE_TONE_TAIL &&
-		signal_is_b(exchange)) ||
+		phase2_info0_signal_is_b(exchange)) ||
 	       control->phase ==
 		       PHASE2_SIGNAL_B_WAIT_SECOND_REMOTE_REVERSAL ||
 	       (control->phase == PHASE2_WAIT_FIRST_REMOTE_REVERSAL &&
-		!signal_is_b(exchange));
+		!phase2_info0_signal_is_b(exchange));
 }
 
 static void recover_signal_b_after_remote_tone(
@@ -583,7 +578,7 @@ static bool advance_measurement(
 	 * is to reacquire Tone A, resume Tone B, and begin a fresh reversal
 	 * exchange.  The owning training-session deadline remains the hard bound
 	 * on repeated attempts. */
-	if (signal_is_b(exchange)) {
+	if (phase2_info0_signal_is_b(exchange)) {
 		if (exchange->tone_detector.carrier.tone_present) {
 			control->phase = PHASE2_WAIT_FIRST_REMOTE_REVERSAL;
 			return true;
@@ -639,13 +634,13 @@ enum phase2_ranging_result phase2_ranging_finish_sample(
 	/* A recovery INFO0 interrupts the continuous local-tone epoch.  The
 	 * analogue modem must transmit a fresh 50 ms of Tone A after the repeated
 	 * record before its first phase reversal. */
-	if (!signal_is_b(exchange) &&
+	if (!phase2_info0_signal_is_b(exchange) &&
 	    (next.phase == PHASE2_RANGING_INFO0_EXCHANGE ||
 	     next.phase == PHASE2_SIGNAL_A_WAIT_INITIAL_TONE) &&
 	    transmit_phase_before == PHASE2_INFO0_TONE &&
 	    exchange->transmit_phase == PHASE2_INFO0_SEQUENCE)
 		next.local_tone_samples = 0;
-	else if (!signal_is_b(exchange) &&
+	else if (!phase2_info0_signal_is_b(exchange) &&
 	    next.local_tone_samples < PHASE2_RANGING_INITIAL_TONE_SAMPLES &&
 	    transmit_phase_before == PHASE2_INFO0_TONE)
 		next.local_tone_samples++;

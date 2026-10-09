@@ -9,11 +9,6 @@ _Static_assert(
 		PHASE2_RANGING_MAXIMUM_WAIT_SAMPLES <= UINT16_MAX,
 	"Initial-probe reversal deadline must fit its sample counter");
 
-static bool signal_is_b(const struct phase2_info0_exchange *exchange)
-{
-	return exchange->signal_role == PHASE2_SIGNAL_B;
-}
-
 static bool signal_b_path_is_valid(
 	const struct phase2_initial_probe *probe)
 {
@@ -111,7 +106,7 @@ bool phase2_initial_probe_is_valid(
 	    (unsigned int)probe->failure >
 		    PHASE2_PROBE_LOCAL_TRANSMIT_LIMIT)
 		return false;
-	return signal_is_b(exchange) ?
+	return phase2_info0_signal_is_b(exchange) ?
 		       signal_b_path_is_valid(probe) :
 		       signal_a_path_is_valid(probe);
 }
@@ -129,7 +124,7 @@ phase2_initial_probe_init(
 	    completed_ranging->phase != PHASE2_RANGING_PROBE_READY ||
 	    exchange->transmit_phase != PHASE2_INFO0_TONE)
 		return PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
-	if (signal_is_b(exchange)) {
+	if (phase2_info0_signal_is_b(exchange)) {
 		uint32_t deadline = PHASE2_INITIAL_PROBE_REVERSAL_WAIT_BASE_SAMPLES +
 			completed_ranging->round_trip_delay_samples;
 		uint32_t elapsed = completed_ranging->probe_reversal_elapsed_samples;
@@ -357,7 +352,7 @@ phase2_initial_probe_measure(
 	struct v34_phase2_probe_receiver_measurement *measurement)
 {
 	if (!phase2_initial_probe_is_valid(probe, exchange) ||
-	    !signal_is_b(exchange) ||
+	    !phase2_info0_signal_is_b(exchange) ||
 	    measurement == NULL ||
 	    v34_phase2_probe_acquisition_measure(
 		    &probe->path.receive, measurement) !=

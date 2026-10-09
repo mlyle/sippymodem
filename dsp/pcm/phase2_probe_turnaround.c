@@ -14,16 +14,11 @@ _Static_assert(
 		(int)PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES,
 	"Probe reception must begin within the reversed-tone tail");
 
-static bool signal_is_b(const struct phase2_info0_exchange *exchange)
-{
-	return exchange->signal_role == PHASE2_SIGNAL_B;
-}
-
 static bool completed_probe_matches_role(
 	const struct phase2_initial_probe *probe,
 	const struct phase2_info0_exchange *exchange)
 {
-	return signal_is_b(exchange) ?
+	return phase2_info0_signal_is_b(exchange) ?
 		       probe->phase ==
 			       PHASE2_INITIAL_PROBE_SIGNAL_B_TONE :
 		       probe->phase ==
@@ -124,7 +119,7 @@ bool phase2_probe_turnaround_is_valid(
 	    (unsigned int)turnaround->failure >
 		    PHASE2_PROBE_TURNAROUND_REMOTE_REVERSAL_TIMEOUT)
 		return false;
-	if (signal_is_b(exchange) &&
+	if (phase2_info0_signal_is_b(exchange) &&
 	    turnaround->signal_a_reversal_elapsed_samples != 0)
 		return false;
 	timed_out = turnaround->phase ==
@@ -133,7 +128,7 @@ bool phase2_probe_turnaround_is_valid(
 	    (turnaround->failure ==
 	     PHASE2_PROBE_TURNAROUND_REMOTE_REVERSAL_TIMEOUT))
 		return false;
-	return signal_is_b(exchange) ?
+	return phase2_info0_signal_is_b(exchange) ?
 		       signal_b_phase_is_valid(turnaround) :
 		       signal_a_phase_is_valid(turnaround);
 }
@@ -150,7 +145,7 @@ phase2_probe_turnaround_init(
 	    !phase2_initial_probe_is_valid(completed_probe, exchange) ||
 	    !completed_probe_matches_role(completed_probe, exchange))
 		return PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT;
-	if (signal_is_b(exchange)) {
+	if (phase2_info0_signal_is_b(exchange)) {
 		initialized.phase =
 			PHASE2_PROBE_TURNAROUND_SIGNAL_B_WAIT_A_REVERSAL;
 		initialized.wait_samples = completed_probe->reversal_wait_samples_remaining;
@@ -213,7 +208,7 @@ static void enter_ready(
 {
 	turnaround->phase_samples_remaining = 0;
 	turnaround->wait_samples = 0;
-	if (signal_is_b(exchange)) {
+	if (phase2_info0_signal_is_b(exchange)) {
 		turnaround->phase =
 			PHASE2_PROBE_TURNAROUND_SIGNAL_B_PROBE_READY;
 		event->kind =
@@ -344,7 +339,7 @@ static void advance_reversal_wait(
 
 	if (!phase_waits_for_reversal(turnaround->phase))
 		return;
-	if (signal_is_b(exchange)) {
+	if (phase2_info0_signal_is_b(exchange)) {
 		if (--turnaround->wait_samples == 0) {
 			/* A missed Tone A or its reversal does not block reciprocal
 			 * probing. Reuse the normal 40 ms response and 10 ms tail. */
