@@ -137,8 +137,8 @@ static bool verify_reduction(
 			      &branch->convolutional_input,
 			      branch->convolutional_output, selection) == index &&
 		      branch->squared_error ==
-			      branch->symbol[0].squared_error +
-				      branch->symbol[1].squared_error,
+			      (double)(branch->symbol[0].squared_error +
+				       branch->symbol[1].squared_error),
 		      "branch set %zu/%u/%u subset %u changed", case_index,
 		      inversion_bit, selection, index);
 	}
@@ -224,6 +224,36 @@ static bool test_generated_reduction(void)
 			CHECK(verify_reduction(
 				      slices, inversion, selection, 96u),
 			      "tie reduction %u/%u failed", inversion, selection);
+	return true;
+}
+
+static bool test_fractional_metrics(void)
+{
+	struct v34_subset_slice slices[2];
+	const struct qam_point estimate = { 1.25, -3.5 };
+	const double errors[] = { 0.1, 0.2 };
+
+	for (size_t symbol = 0; symbol < ARRAY_LENGTH(slices); ++symbol) {
+		CHECK(v34_slice_grid_subsets(&estimate, &slices[symbol]) ==
+			      V34_LATTICE_OK, "fractional metric slice failed");
+		for (size_t label = 0; label < V34_SUBSET_LABEL_COUNT; ++label)
+			slices[symbol].subset[label].squared_error = errors[symbol];
+	}
+	for (uint8_t inversion = 0; inversion < 2u; ++inversion) {
+		for (enum v34_trellis_selection selection = V34_TRELLIS_16_STATE;
+		     selection <= V34_TRELLIS_64_STATE; ++selection) {
+			struct v34_branch_set set;
+
+			CHECK(verify_reduction(slices, inversion, selection, 0),
+			      "fractional metric reduction failed");
+			CHECK(v34_build_branch_set(slices, inversion, selection, &set) ==
+				      V34_BRANCHES_OK, "fractional metric set failed");
+			set.branch[0].squared_error = nextafter(
+				set.branch[0].squared_error, INFINITY);
+			CHECK(!v34_branch_set_is_valid(&set),
+			      "one-ULP metric corruption was accepted");
+		}
+	}
 	return true;
 }
 
@@ -443,6 +473,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "generated subset reduction", test_generated_reduction },
+		{ "fractional metric precision", test_fractional_metrics },
 		{ "encoder agreement", test_encoder_agreement },
 		{ "validation", test_validation },
 	};

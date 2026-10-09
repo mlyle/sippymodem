@@ -18,6 +18,7 @@
 #include "test.h"
 
 #include <stdint.h>
+#include <inttypes.h>
 #include <string.h>
 
 enum {
@@ -1077,7 +1078,7 @@ static bool run_crossing(
 			      V92_PHASE4_E2U_DOWNSTREAM_DATA &&
 		      analog_done.state.analog.downstream.data.stream.received_symbols ==
 			      tail_symbols + symbols,
-		      "early Ed stages %u/%u preserved %zu B1d intervals",
+		      "early Ed stages %u/%u preserved %" PRIu64 " B1d intervals",
 		      (unsigned int)analog_done.state.analog.downstream_stage,
 		      (unsigned int)digital_done.state.digital.downstream_stage,
 		      digital_done.state.digital.downstream.data

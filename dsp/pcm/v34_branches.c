@@ -97,14 +97,15 @@ bool v34_branch_set_is_valid(
 		const struct v34_branch *branch = &set->branch[index];
 		struct v34_convolutional_input derived;
 
+		/* Match the stored double precision even on x87. */
 		if (branch->convolutional_output > 1u ||
 		    !v34_convolutional_input_is_valid(
 			    &branch->convolutional_input) ||
 		    !isfinite(branch->squared_error) ||
 		    branch->squared_error < 0.0 ||
 		    branch->squared_error !=
-			    branch->symbol[0].squared_error +
-				    branch->symbol[1].squared_error)
+			    (double)(branch->symbol[0].squared_error +
+				     branch->symbol[1].squared_error))
 			return false;
 		for (uint8_t symbol = 0;
 		     symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL;

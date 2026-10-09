@@ -74,10 +74,10 @@ static bool test_clipping_and_ties(void)
 	double estimate = -1.;
 
 	CHECK(pcm_gain_observe(&gain, 100, INT16_MAX) &&
-	      gain.lower == 327.665 && isinf(gain.upper) &&
+	      gain.lower == (double)327.665 && isinf(gain.upper) &&
 	      gain.energy == 0. && gain.correlation == 0., "positive clipping");
 	CHECK(pcm_gain_observe(&gain, -100, INT16_MIN) &&
-	      gain.lower == 327.675 && isinf(gain.upper) &&
+	      gain.lower == (double)327.675 && isinf(gain.upper) &&
 	      gain.energy == 0. && gain.correlation == 0., "negative clipping");
 	CHECK(!pcm_gain_estimate(&gain, &estimate) && estimate == -1.,
 	      "all-clipped input invented an estimate");

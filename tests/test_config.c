@@ -134,8 +134,9 @@ static bool test_environment_overrides(void)
 	      "media timing settings were not applied");
 	CHECK(config.media.pcm_codec_grid, "explicit codec topology was not applied");
 	CHECK(!config.media.remote_clock, "remote clock setting was not applied");
+	/* Compare the parsed double with a literal rounded to the same precision. */
 	CHECK(config.media.transmit_gain == 0.75 &&
-		      config.media.receive_gain == 0.80,
+		      config.media.receive_gain == (double)0.80,
 	      "shared and directional gains have wrong precedence");
 	CHECK(strcmp(config.recording.prefix, "/tmp/modem-call") == 0,
 	      "recording prefix was not applied");

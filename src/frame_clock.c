@@ -21,7 +21,7 @@ enum frame_clock_result frame_clock_init(
 
 	if (clock == NULL || frame_samples == 0 || sample_rate == 0 ||
 	    maximum_catchup_frames == 0 ||
-	    frame_samples > UINT64_MAX / NANOSECONDS_PER_SECOND)
+	    NANOSECONDS_PER_SECOND > UINT64_MAX / frame_samples)
 		return FRAME_CLOCK_INVALID_ARGUMENT;
 	duration_numerator =
 		(uint64_t)frame_samples * NANOSECONDS_PER_SECOND;
