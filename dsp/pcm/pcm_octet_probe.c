@@ -45,7 +45,7 @@ bool pcm_octet_probe_finish(const struct pcm_octet_probe *probe, enum g711_law l
 					collision = true;
 			if (collision)
 				continue;
-			next[i].ucode_mask[code / 8] |= 1u << (code % 8);
+			pcm_constellation_add(&next[i], (uint8_t)code);
 			for (unsigned received = 0; received < 256; ++received) {
 				unsigned byte = received / 8, bit = 1u << (received % 8);
 				if ((pos[byte] | neg[byte]) & bit) {

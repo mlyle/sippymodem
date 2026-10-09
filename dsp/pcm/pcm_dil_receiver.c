@@ -4,11 +4,6 @@
 
 #include <math.h>
 
-static void add_code(struct pcm_constellation *set, uint8_t code)
-{
-	set->ucode_mask[code / 8u] |= (uint8_t)(1u << (code % 8u));
-}
-
 bool pcm_dil_receiver_init(struct pcm_dil_receiver *receiver,
 	const struct v90_dil_parameters *parameters, enum g711_law law,
 	uint8_t training_ucode)
@@ -59,7 +54,7 @@ bool pcm_dil_receiver_receive(struct pcm_dil_receiver *receiver,
 	bool inverted = (expected.sample > 0) != (received.sample > 0);
 	for (unsigned polarity = 0; polarity < 2u; ++polarity) {
 		if (expected.ucode != received.ucode || inverted != (polarity != 0u))
-			add_code(&receiver->rejected[polarity][interval], expected.ucode);
+			pcm_constellation_add(&receiver->rejected[polarity][interval], expected.ucode);
 	}
 	/* Raw D/A magnitudes determine the pad and TRN1d RMS ratio. Their sign
 	 * may differ from conditioned evidence when equalization removes the
@@ -157,9 +152,9 @@ bool pcm_dil_receiver_finish(const struct pcm_dil_receiver *receiver,
 					    substitute_lsb(symbol.octet, model) != symbol.octet)
 						changed = true;
 			if (changed)
-				add_code(&rejected, code);
+				pcm_constellation_add(&rejected, code);
 			if (!changed && observed)
-				add_code(&next.usable[interval], code);
+				pcm_constellation_add(&next.usable[interval], code);
 		}
 	}
 	if (!next.interval_model) {

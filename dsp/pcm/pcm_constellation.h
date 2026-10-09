@@ -23,6 +23,14 @@ struct pcm_constellation {
 	uint8_t ucode_mask[PCM_CONSTELLATION_MASK_BYTES];
 };
 
+/* Callers supply owned storage and a validated Ucode below 128. */
+static inline void pcm_constellation_add(
+	struct pcm_constellation *constellation, uint8_t ucode)
+{
+	constellation->ucode_mask[ucode / 8u] |=
+		(uint8_t)(1u << (ucode % 8u));
+}
+
 static inline bool pcm_constellation_contains(
 	const struct pcm_constellation *constellation, uint8_t ucode)
 {

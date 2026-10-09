@@ -15,13 +15,6 @@ enum {
 	V92_SIGN_REDUNDANCY = 1,
 };
 
-static void add_ucode(
-	struct pcm_constellation *constellation, uint8_t ucode)
-{
-	constellation->ucode_mask[ucode / 8u] |=
-		(uint8_t)(1u << (ucode % 8u));
-}
-
 static void generate_cpt_constellation(
 	struct pcm_constellation *constellation, enum g711_law law)
 {
@@ -36,7 +29,7 @@ static void generate_cpt_constellation(
 	 * The mu-law levels and a1=1 below match successful hardware calls;
 	 * retain the A-law map until equivalent evidence is available. */
 	for (size_t index = 0; index < 4u; ++index)
-		add_ucode(constellation, ucodes[law == G711_LAW_PCMA][index]);
+		pcm_constellation_add(constellation, ucodes[law == G711_LAW_PCMA][index]);
 }
 
 static struct v92_pcm_info1a analog_info1(void)

@@ -210,13 +210,6 @@ static struct v90_jd_parameters jd_parameters(uint32_t rate_mask)
 	};
 }
 
-static void add_ucode(
-	struct pcm_constellation *constellation, uint8_t ucode)
-{
-	constellation->ucode_mask[ucode / 8u] |=
-		(uint8_t)(1u << (ucode % 8u));
-}
-
 static uint8_t data_constellation_size(uint8_t rate_index, uint8_t sign_redundancy)
 {
 	uint8_t sign_bits =
@@ -254,7 +247,7 @@ static void generate_constellation(
 			first +
 			(span * ordinal + divisor / 2u) / divisor);
 
-		add_ucode(constellation, ucode);
+		pcm_constellation_add(constellation, ucode);
 	}
 }
 
@@ -291,7 +284,7 @@ static bool spaced_constellation(struct pcm_constellation *constellation,
 		if ((available != NULL && !pcm_constellation_contains(available, (uint8_t)code)) ||
 		    (uint32_t)level < threshold)
 			continue;
-		add_ucode(constellation, (uint8_t)code);
+		pcm_constellation_add(constellation, (uint8_t)code);
 		if (--size == 0)
 			return true;
 		threshold = (uint32_t)level + spacing;
