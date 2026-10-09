@@ -60,6 +60,7 @@ size_t sip_session_frame_samples(
 	const struct sip_session *session);
 net_socket sip_session_media_fd(
 	const struct sip_session *session);
+void *sip_session_media_read_handle(const struct sip_session *session);
 uint16_t sip_session_rtp_local_port(
 	const struct sip_session *session);
 /* Admission waits until old call datagrams have been discarded in bounded batches. */

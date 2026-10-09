@@ -276,6 +276,11 @@ net_socket sip_session_media_fd(
 	return session != NULL ? rtp_runtime_fd(session->rtp) : NET_INVALID_SOCKET;
 }
 
+void *sip_session_media_read_handle(const struct sip_session *session)
+{
+	return session != NULL ? rtp_runtime_read_handle(session->rtp) : NULL;
+}
+
 uint16_t sip_session_rtp_local_port(
 	const struct sip_session *session)
 {

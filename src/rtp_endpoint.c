@@ -38,11 +38,29 @@ static struct sockaddr_in canonical_address(
 	return canonical;
 }
 
+static bool acknowledge_read_event(struct rtp_endpoint *endpoint)
+{
+#ifdef _WIN32
+	WSANETWORKEVENTS events;
+	if (WSAEnumNetworkEvents(endpoint->socket_fd, endpoint->read_event, &events) != 0) {
+		endpoint->last_system_error = WSAGetLastError();
+		return false;
+	}
+	if ((events.lNetworkEvents & FD_READ) && events.iErrorCode[FD_READ_BIT] != 0) {
+		endpoint->last_system_error = events.iErrorCode[FD_READ_BIT];
+		return false;
+	}
+#else
+	(void)endpoint;
+#endif
+	return true;
+}
+
 static size_t discard_queued_datagrams(struct rtp_endpoint *endpoint)
 {
 	uint8_t packet[RTP_ENDPOINT_MAX_DATAGRAM];
 
-	if (endpoint->socket_fd == NET_INVALID_SOCKET)
+	if (endpoint->socket_fd == NET_INVALID_SOCKET || !acknowledge_read_event(endpoint))
 		return 0;
 	size_t drained = 0;
 	for (unsigned int attempt = 0; attempt < RTP_ENDPOINT_MAX_DRAIN; ++attempt) {
@@ -116,6 +134,19 @@ enum rtp_endpoint_result rtp_endpoint_open(
 		return RTP_ENDPOINT_SYSTEM_ERROR;
 	}
 
+#ifdef _WIN32
+	WSAEVENT read_event = WSACreateEvent();
+	if (read_event == WSA_INVALID_EVENT ||
+	    WSAEventSelect(socket_fd, read_event, FD_READ) != 0) {
+		int error = WSAGetLastError();
+		if (read_event != WSA_INVALID_EVENT)
+			WSACloseEvent(read_event);
+		net_socket_close(socket_fd);
+		endpoint->last_system_error = error;
+		return RTP_ENDPOINT_SYSTEM_ERROR;
+	}
+	endpoint->read_event = read_event;
+#endif
 	endpoint->socket_fd = socket_fd;
 	endpoint->local_address = canonical_address(&bound_address);
 	endpoint->last_system_error = 0;
@@ -131,6 +162,13 @@ void rtp_endpoint_close(
 {
 	if (endpoint == NULL)
 		return;
+#ifdef _WIN32
+	if (endpoint->read_event != WSA_INVALID_EVENT) {
+		(void)WSAEventSelect(endpoint->socket_fd, NULL, 0);
+		WSACloseEvent(endpoint->read_event);
+		endpoint->read_event = WSA_INVALID_EVENT;
+	}
+#endif
 	if (endpoint->socket_fd != NET_INVALID_SOCKET)
 		net_socket_close(endpoint->socket_fd);
 	endpoint->socket_fd = NET_INVALID_SOCKET;
@@ -148,6 +186,16 @@ net_socket rtp_endpoint_fd(
 	const struct rtp_endpoint *endpoint)
 {
 	return endpoint != NULL ? endpoint->socket_fd : NET_INVALID_SOCKET;
+}
+
+void *rtp_endpoint_read_handle(const struct rtp_endpoint *endpoint)
+{
+#ifdef _WIN32
+	return endpoint != NULL ? endpoint->read_event : NULL;
+#else
+	(void)endpoint;
+	return NULL;
+#endif
 }
 
 uint16_t rtp_endpoint_local_port(
@@ -332,6 +380,10 @@ enum rtp_endpoint_result rtp_endpoint_drain(
 		return RTP_ENDPOINT_INVALID_ARGUMENT;
 	if (endpoint->socket_fd == NET_INVALID_SOCKET)
 		return RTP_ENDPOINT_NOT_OPEN;
+	if (!acknowledge_read_event(endpoint)) {
+		endpoint->stats.receive_errors++;
+		return RTP_ENDPOINT_SYSTEM_ERROR;
+	}
 	if (endpoint->discard_pending) {
 		size_t discarded = discard_queued_datagrams(endpoint);
 		if (datagrams_received != NULL)

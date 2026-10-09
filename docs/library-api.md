@@ -43,21 +43,16 @@ completion independently and flushes its packets before applying deferred SIP
 updates. A slow line does not delay processing of other lines.
 
 `process()` submits and collects without waiting for workers or network input.
-On POSIX, poll the borrowed `sippymodem_event_fd()` as well as respecting the
-returned deadline, and call `process()` when it becomes readable. Do not read
-that descriptor directly;
-it carries completion wakes as well as coarse events, so `poll_event()` can return
-AGAIN after a wake. Byte I/O is nonblocking and can return AGAIN with a zero count
-while that line is busy. Status returns the coherent last-completed snapshot.
+Use the [portable wait operation](#portable-terminal-server-loop), or observe
+the borrowed native event hook and respect the returned deadline. Call
+`process()` after a wake. Do not consume the hook directly; it carries completion
+wakes as well as coarse events, so `poll_event()` can return AGAIN after a wake.
+Byte I/O is nonblocking and can return AGAIN with a zero count while that line
+is busy. Status returns the coherent last-completed snapshot.
 Answer, hangup, explicit mode changes and stop can wait for the target line's
 current bounded job; they do not wait for other lines. Endpoint stop collects only its associated
 lines before closing their calls.
 
-On Windows, `sippymodem_event_fd()` returns -1. Use the borrowed manual-reset
-`HANDLE` from `sippymodem_event_handle()` with `WaitForSingleObject()` or
-`WaitForMultipleObjects()` and the process deadline. Waiting does not consume
-notifications. Never reset, signal, or close the handle; `process()` and
-`poll_event()` consume notifications. POSIX returns NULL from `event_handle()`.
 Each DSP worker has an explicit 8 MiB stack for nested PCM training scratch
 buffers, independent of the host's smaller default thread stack.
 
@@ -85,6 +80,51 @@ recording state are owned instances. SDK logging is scoped to native SDK entry
 and restores the embedding process's logger and level before returning. The
 native API installs no signal handlers and writes no diagnostics to process
 outputs. Each line retains bounded diagnostic records for explicit API reads.
+
+## Portable terminal-server loop
+
+The byte, status and event API uses C types and works on Linux, macOS and native
+Windows. `poll_event()` is a nonblocking SDK operation; it does not require a
+POSIX poll descriptor. Terminal servers can use `sippymodem_wait(server, now_ns,
+timeout_ms)` to sleep until received RTP, a completed DSP job, a queued event, or
+the most recent `process()` deadline. It covers all lines in that server and
+leaves data and events untouched. `now_ns` uses the same monotonic clock as
+`process()`; an application runtime's monotonic nanosecond clock is sufficient.
+
+```c
+for (;;) {
+    uint64_t deadline;
+    enum sippymodem_result result =
+        sippymodem_process(server, monotonic_now_ns(), &deadline);
+    if (result != SIPPYMODEM_OK)
+        break; /* Handle the error and stop the server. */
+    /* Drain poll_event(), receive() and logs; apply pending controls/TX.
+     * If controls or TX changed, continue to process them before waiting. */
+    result = sippymodem_wait(server, monotonic_now_ns(), 20);
+    if (result != SIPPYMODEM_OK && result != SIPPYMODEM_AGAIN)
+        break;
+}
+```
+
+Call these operations on the server's owner thread. `wait()` does not run modem
+work or call application code. OK means readiness or a modem deadline; AGAIN
+means the application's shorter timeout expired, or a POSIX signal interrupted
+the wait. Call `process()` with a fresh timestamp after either result. A zero
+timeout just checks readiness; a stopped server returns CLOSED. OS errors return
+ERROR. A wait requires one successful process pass and rejects backwards time.
+SIP input is serviced at the existing maximum 20 ms signaling interval. POSIX
+waits round a fractional millisecond up. Windows uses an owned deadline timer,
+requesting high resolution when available. OS scheduling still applies, and DSP
+runs on its line thread.
+
+An application with its own event loop can keep using the borrowed POSIX
+`sippymodem_event_fd()` or Windows `sippymodem_event_handle()` and the process
+deadline. These hooks signal coarse events and DSP completions; the portable
+wait also watches RTP input. Never read, reset, close or signal a borrowed hook.
+Windows provides a manual-reset HANDLE and returns -1 from `event_fd()`;
+POSIX returns NULL from `event_handle()`.
+The optional `sippymodem_fd` adapter is for POSIX socket/pppd integration. Windows
+terminal servers use the same literal byte API and portable wait operation.
 
 ## SIP endpoints and huntgroups
 

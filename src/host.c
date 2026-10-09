@@ -437,6 +437,11 @@ net_socket modem_host_media_poll_fd(
 	return host != NULL ? sip_session_media_fd(host->session) : NET_INVALID_SOCKET;
 }
 
+void *modem_host_media_read_handle(const struct modem_host *host)
+{
+	return host != NULL ? sip_session_media_read_handle(host->session) : NULL;
+}
+
 enum sip_signaling_result modem_host_answer(
 	struct modem_host *host)
 {

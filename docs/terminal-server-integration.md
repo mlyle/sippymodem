@@ -13,6 +13,21 @@ The library exposes server/line byte I/O, a native fd adapter, and explicit
 SIP endpoint/huntgroup ownership. Use the current headers when compiling
 against the library.
 
+## Cross-platform waiting
+
+The terminal-server boundary needs no POSIX sockets or polling functions. Use
+`sippymodem_send()` and `sippymodem_receive()` for literal bytes,
+`sippymodem_poll_event()` and status/log reads for call information, and
+`sippymodem_wait(server, monotonic_now_ns, timeout_ms)` between process passes.
+The wait observes every line's RTP input and DSP completions, retains queued
+events, and honors the last process deadline. Its public types are identical on
+Linux, macOS and Windows. Keep calls on one owner thread; each line retains its
+own native DSP thread. See the [portable loop contract](library-api.md#portable-terminal-server-loop).
+
+Native event-loop hooks remain optional: an fd on POSIX and a wait-only HANDLE
+on Windows. The socket/pppd fd adapter is POSIX-specific. Steady-state PPP fd
+pumping on POSIX stays native, as described below.
+
 ## Application and library responsibilities
 
 | Owner | Responsibilities |
@@ -466,9 +481,9 @@ nonblocking byte I/O can return AGAIN with a zero count. Explicit answer,
 hangup, mode changes and stop may wait for that line's current bounded job.
 Endpoint stop collects its associated lines before closing their calls.
 
-Poll `sippymodem_event_fd()` for both coarse events and DSP completions, and call
-`process()` on readability. The fd is borrowed and poll-only: never read or close
-it. A completion wake need not have a corresponding coarse event. The legacy
+Use `sippymodem_wait()`, or observe the native event hook and the deadline, then
+call `process()` after a wake. Native hooks are borrowed: never read, reset, close
+or signal them. A completion wake need not have a corresponding coarse event. The legacy
 `server_config.dsp_threads` setting is ignored (accepted range 0..32); one thread
 is created for every started line and joined when that line stops. All public
 API calls still belong to the same native owner thread.

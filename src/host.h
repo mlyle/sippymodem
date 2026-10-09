@@ -73,6 +73,7 @@ uint64_t modem_host_wait_ns(
 	const struct modem_host *host, uint64_t now_ns);
 net_socket modem_host_media_poll_fd(
 	const struct modem_host *host);
+void *modem_host_media_read_handle(const struct modem_host *host);
 
 unsigned int modem_host_rtp_local_port(const struct modem_host *host);
 bool modem_host_media_cleanup_pending(const struct modem_host *host);

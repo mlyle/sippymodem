@@ -65,12 +65,18 @@ static bool test_stops_after_bounded_steps(void)
 	struct modem_loop_error error;
 	volatile sig_atomic_t running = 1;
 
-	active_running = &running;
-	CHECK(modem_loop_run(&runtime, &running, &error) ==
-			      MODEM_LOOP_OK &&
-		      runtime.steps == 2 && running == 0 &&
-		      error.system_error == 0,
-	      "loop did not stop after bounded idle work");
+	const uint64_t waits[] = { 0, 1, UINT64_MAX };
+	for (size_t index = 0; index < ARRAY_LENGTH(waits); ++index) {
+		runtime.wait_ns = waits[index];
+		runtime.steps = 0;
+		running = 1;
+		active_running = &running;
+		CHECK(modem_loop_run(&runtime, &running, &error) ==
+				      MODEM_LOOP_OK &&
+			      runtime.steps == 2 && running == 0 &&
+			      error.system_error == 0,
+		      "loop did not stop after bounded idle work");
+	}
 	return true;
 }
 

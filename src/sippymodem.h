@@ -310,10 +310,20 @@ enum sippymodem_result sippymodem_hangup(struct sippymodem_line *line,
 /* Submit/collect independent line jobs; now_ns is monotonic and must not move
  * backwards. Each pass polls SIP once and drains at most 64 RTP packets per line.
  * Each worker job handles at most four audio frames. process() never waits for a
- * worker or network input. Poll event_fd for completions as well as events, then
- * call process(); it owns the counter. The absolute deadline may equal now_ns. */
+ * worker or network input. Use wait() or the native event hook for completions
+ * and events, then call process(); it owns notification consumption. The absolute
+ * deadline may equal now_ns. */
 enum sippymodem_result sippymodem_process(struct sippymodem_server *server,
 	uint64_t now_ns, uint64_t *next_deadline_ns);
+/* Portable owner-thread wait after a successful process() pass. now_ns uses
+ * the same monotonic clock. Waits for any line's RTP input, worker completion,
+ * or queued event, bounded by timeout_ms and process()'s last deadline. Does not
+ * process or consume data/events. OK means readiness/deadline; AGAIN means the
+ * caller's timeout/interruption. Call process() again with a fresh clock value.
+ * Before process(): INVALID; stopped server: CLOSED. OS failure: ERROR.
+ * Run process() after controls/new TX before waiting; never call concurrently. */
+enum sippymodem_result sippymodem_wait(struct sippymodem_server *server,
+	uint64_t now_ns, unsigned int timeout_ms);
 /* Event overflow is fatal and sticky: active calls close, terminal events have
  * reserved delivery, and disconnect status remains readable. Drain evidence
  * and recreate the server to recover. */

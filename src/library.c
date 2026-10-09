@@ -12,6 +12,9 @@
 #include "sip_uri.h"
 
 #include <errno.h>
+#ifndef _WIN32
+#include <poll.h>
+#endif
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdarg.h>
@@ -70,7 +73,10 @@ struct sippymodem_server {
 	struct sippymodem_event terminal_events[LINE_LIMIT];
 	bool terminal_pending[LINE_LIMIT];
 	struct wake_signal wake;
-	uint64_t now;
+#ifdef _WIN32
+	HANDLE wait_timer; /* Lazy, owner-thread-only deadline timer. */
+#endif
+	uint64_t now, next_deadline;
 	bool have_now, time_valid, started, processing, event_overflow;
 };
 
@@ -930,6 +936,10 @@ void sippymodem_server_destroy(struct sippymodem_server *server)
 		free(server->endpoints[index]);
 	for (unsigned int index = 0; index < LINE_LIMIT; ++index)
 		free(server->groups[index]);
+#ifdef _WIN32
+	if (server->wait_timer != NULL)
+		CloseHandle(server->wait_timer);
+#endif
 	wake_signal_close(&server->wake);
 	free(server);
 }
@@ -1221,9 +1231,91 @@ enum sippymodem_result sippymodem_process(struct sippymodem_server *server,
 			next = line->attempt_deadline;
 	}
 	server->processing = false;
+	server->next_deadline = next;
 	*next_deadline_ns = next;
 	return server->event_overflow ? SIPPYMODEM_OVERFLOW :
 		sip_result == SIP_SIGNALING_OK ? SIPPYMODEM_OK : SIPPYMODEM_ERROR;
+}
+
+enum sippymodem_result sippymodem_wait(struct sippymodem_server *server,
+	uint64_t now_ns, unsigned int timeout_ms)
+{
+	if (server == NULL || server->processing ||
+	    (server->time_valid && now_ns < server->now))
+		return SIPPYMODEM_INVALID;
+	if (!server->started)
+		return SIPPYMODEM_CLOSED;
+	if (!server->have_now)
+		return SIPPYMODEM_INVALID;
+	if (now_ns >= server->next_deadline)
+		return SIPPYMODEM_OK;
+	uint64_t until_due = server->next_deadline - now_ns;
+	uint64_t budget = (uint64_t)timeout_ms * UINT64_C(1000000);
+	bool deadline_due = until_due <= budget;
+	if (deadline_due)
+		budget = until_due;
+	/* process() always schedules SIP within 20 ms, so this cast is bounded.
+	 * Round up by less than 1 ms to avoid spinning on a sub-millisecond tail. */
+	unsigned int wait_ms = (unsigned int)((budget + 999999) / 1000000);
+#ifdef _WIN32
+	_Static_assert(LINE_LIMIT + 2 <= MAXIMUM_WAIT_OBJECTS, "native wait capacity");
+	HANDLE handles[LINE_LIMIT + 2] = { wake_signal_handle(&server->wake) };
+	unsigned int count = 1;
+#else
+	struct pollfd handles[LINE_LIMIT + 1] = {
+		{ .fd = wake_signal_fd(&server->wake), .events = POLLIN }
+	};
+	unsigned int count = 1;
+#endif
+	for (unsigned int id = 0; id < server->max_lines; ++id) {
+		struct sippymodem_line *line = server->lines[id];
+		if (line == NULL || !line->started || media_worker_busy(line->worker))
+			continue;
+#ifdef _WIN32
+		HANDLE handle = modem_host_media_read_handle(line_host(line));
+		if (handle != NULL)
+			handles[count++] = handle;
+#else
+		net_socket socket = modem_host_media_poll_fd(line_host(line));
+		if (socket != NET_INVALID_SOCKET)
+			handles[count++] = (struct pollfd){ .fd = socket, .events = POLLIN };
+#endif
+	}
+#ifdef _WIN32
+	unsigned int input_count = count;
+	if (budget != 0) {
+		if (server->wait_timer == NULL) {
+			server->wait_timer = CreateWaitableTimerExW(NULL, NULL,
+				CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_MODIFY_STATE | SYNCHRONIZE);
+			if (server->wait_timer == NULL && GetLastError() == ERROR_INVALID_PARAMETER)
+				server->wait_timer = CreateWaitableTimerExW(NULL, NULL, 0,
+					TIMER_MODIFY_STATE | SYNCHRONIZE);
+			if (server->wait_timer == NULL)
+				return SIPPYMODEM_ERROR;
+		}
+		LARGE_INTEGER due = { .QuadPart = -(LONGLONG)((budget + 99) / 100) };
+		if (!SetWaitableTimer(server->wait_timer, &due, 0, NULL, NULL, FALSE))
+			return SIPPYMODEM_ERROR;
+		handles[count++] = server->wait_timer;
+	}
+	DWORD result = WaitForMultipleObjects(count, handles, FALSE, wait_ms);
+	DWORD error = result == WAIT_FAILED ? GetLastError() : ERROR_SUCCESS;
+	if (budget != 0 && !CancelWaitableTimer(server->wait_timer))
+		return SIPPYMODEM_ERROR;
+	if (result < WAIT_OBJECT_0 + input_count)
+		return SIPPYMODEM_OK;
+	if (result != WAIT_OBJECT_0 + input_count && result != WAIT_TIMEOUT) {
+		SetLastError(error);
+		return SIPPYMODEM_ERROR;
+	}
+#else
+	int result = poll(handles, count, (int)wait_ms);
+	if (result > 0)
+		return SIPPYMODEM_OK;
+	if (result < 0)
+		return errno == EINTR ? SIPPYMODEM_AGAIN : SIPPYMODEM_ERROR;
+#endif
+	return deadline_due ? SIPPYMODEM_OK : SIPPYMODEM_AGAIN;
 }
 
 enum sippymodem_result sippymodem_poll_event(struct sippymodem_server *server,

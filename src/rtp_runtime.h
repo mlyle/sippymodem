@@ -30,6 +30,7 @@ size_t rtp_runtime_frame_samples(
 	const struct rtp_runtime *runtime);
 net_socket rtp_runtime_fd(
 	const struct rtp_runtime *runtime);
+void *rtp_runtime_read_handle(const struct rtp_runtime *runtime);
 uint16_t rtp_runtime_local_port(
 	const struct rtp_runtime *runtime);
 

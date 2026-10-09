@@ -213,6 +213,11 @@ net_socket rtp_runtime_fd(
 	return runtime != NULL ? rtp_endpoint_fd(&runtime->endpoint) : NET_INVALID_SOCKET;
 }
 
+void *rtp_runtime_read_handle(const struct rtp_runtime *runtime)
+{
+	return runtime != NULL ? rtp_endpoint_read_handle(&runtime->endpoint) : NULL;
+}
+
 uint16_t rtp_runtime_local_port(
 	const struct rtp_runtime *runtime)
 {

@@ -53,6 +53,9 @@ struct rtp_transmit_batch {
 
 struct rtp_endpoint {
 	net_socket socket_fd;
+#ifdef _WIN32
+	WSAEVENT read_event; /* Owned, level observation only; drain acknowledges it. */
+#endif
 	int last_system_error;
 	enum media_result last_media_error;
 	struct rtp_stream *stream;
@@ -81,6 +84,9 @@ void rtp_endpoint_close(
 
 net_socket rtp_endpoint_fd(
 	const struct rtp_endpoint *endpoint);
+/* Borrowed Windows FD_READ event; observe only, drain acknowledges it.
+ * NULL on POSIX or while closed. */
+void *rtp_endpoint_read_handle(const struct rtp_endpoint *endpoint);
 uint16_t rtp_endpoint_local_port(
 	const struct rtp_endpoint *endpoint);
 

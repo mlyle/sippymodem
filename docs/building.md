@@ -105,6 +105,7 @@ The build selects Mach-O linking, an `@rpath/libsippymodem.dylib` install name,
 and a public-symbol export list. Set the consuming application's rpath to
 its library directory. PTY creation uses `openpty`; native fd pumping uses
 nonblocking socket pairs and kqueue for command-mode half-close detection.
+The frontend uses `poll()` with waits rounded up by less than 1 ms.
 Each DSP worker requests an 8 MiB stack for nested PCM training scratch.
 These Apple-specific paths have not been executed on a Mac.
 
@@ -124,11 +125,17 @@ Build outputs include `.a`, `.dll`, and `.dll.a`. Install the matching compiler
 runtime DLLs with the application, including winpthreads; inspect the resulting
 DLL's imports for the complete list. The library targets Windows 10 or later.
 MSVC and other Windows toolchains have not been validated.
+The embedding application owns child-process handle inheritance. Disable
+inheritance, or pass an explicit handle list for a service: PJSIP can create
+inheritable internal sockets.
 
-Use `sippymodem_event_handle()` for Windows owner-loop waits, together with the
-next deadline from `sippymodem_process()`. The borrowed handle is wait-only;
-see the [API guide](library-api.md). SIP and socket I/O remain on the native
-owner thread, and each started modem retains its own DSP thread.
+Use `sippymodem_wait()` between owner-loop process passes on every platform;
+it handles media, DSP and event readiness and the most recent process deadline.
+Applications with an existing native event loop can use the borrowed Windows
+`sippymodem_event_handle()` or POSIX `sippymodem_event_fd()` and that deadline.
+See the [API guide](library-api.md#portable-terminal-server-loop). SIP and socket
+I/O remain on the native owner thread, and each started modem retains its own
+DSP thread.
 
 ## 32-bit builds
 

@@ -54,7 +54,6 @@ static enum modem_loop_result wait_for_work(
 	struct modem_loop_error *error)
 {
 	struct pollfd descriptors[2] = { 0 };
-	struct timespec timeout;
 	nfds_t descriptor_count = 0;
 	int result;
 	int terminal_fd = modem_runtime_terminal_poll_fd(runtime);
@@ -71,10 +70,16 @@ static enum modem_loop_result wait_for_work(
 
 	if (wait_ns > MODEM_LOOP_MAXIMUM_WAIT_NS)
 		wait_ns = MODEM_LOOP_MAXIMUM_WAIT_NS;
-	timeout.tv_sec = 0;
-	timeout.tv_nsec = (long)wait_ns;
+#if defined(__linux__) && !defined(MODEM_LOOP_PORTABLE_POLL)
+	struct timespec timeout = { .tv_nsec = (long)wait_ns };
 	result = ppoll(descriptor_count != 0 ? descriptors : NULL,
 		       descriptor_count, &timeout, NULL);
+#else
+	/* poll() is available on macOS; round up by less than 1 ms. */
+	int timeout_ms = (int)((wait_ns + 999999) / 1000000);
+	result = poll(descriptor_count != 0 ? descriptors : NULL,
+		      descriptor_count, timeout_ms);
+#endif
 	if (result < 0) {
 		if (errno == EINTR)
 			return MODEM_LOOP_OK;
