@@ -43,6 +43,8 @@ A runnable binary or library requires PJSIP. A system SDK must be built with
 position-independent code for shared-library linking and have sufficient
 `PJSUA_MAX_CALLS` capacity for the configured server. The bundled settings
 support 32 SIP call slots; retired SIP transactions can occupy slots briefly.
+The SDK must also align pooled atomic owners to at least eight bytes. Bundled
+builds set `PJ_POOL_ALIGNMENT=16`; the SDK's four-byte default faults on s390x.
 
 ## Build targets
 
@@ -151,6 +153,35 @@ make test CC='gcc -m32' CXX='g++ -m32'
 The mixed-radix and PCM paths use exact portable wide arithmetic when the
 compiler has no native 128-bit integer type. Ordinary tests exercise that
 fallback on native builds too.
+
+## Big-endian testing with QEMU
+
+Linux user-mode QEMU runs cross-compiled tests without a guest OS or root
+access. For example, on Debian/Ubuntu install `qemu-user`,
+`gcc-s390x-linux-gnu`, and `g++-s390x-linux-gnu`. Use a separate checkout so
+the big-endian objects and PJSIP configuration cannot mix with native ones:
+
+```sh
+make pjproject-init
+make -j2 CC=s390x-linux-gnu-gcc CXX=s390x-linux-gnu-g++ \
+  AR=s390x-linux-gnu-ar PJSIP_HOST=s390x-linux-gnu
+export PKG_CONFIG_PATH="$PWD/.build/pjproject/install/lib/pkgconfig"
+make -C tests -j2 test-c TEST_JOBS=4 \
+  CC=s390x-linux-gnu-gcc CXX=s390x-linux-gnu-g++ \
+  TEST_RUNNER='qemu-s390x -L /usr/s390x-linux-gnu'
+```
+
+`test-c` runs the compiled unit and integration checks, including local SIP
+calls when the target SDK is available. Host Python checks remain part of the
+ordinary `make test` gate. For a quick check, replace `test-c` with
+`run-test-test_rtp run-test-test_recording_files run-test-test_v92_pcm_frame`.
+The same runner prefix applies to PCM shards and modulation matrices.
+To omit SIP and its dependency, skip the first build and pass
+`PJSIP_AVAILABLE=no PKG_CONFIG=false` to the test command.
+
+QEMU validates the target's byte order, arithmetic, protocol handling, and
+threaded library behavior. Emulation timings do not measure hardware realtime
+headroom. See [QEMU user-mode documentation](https://www.qemu.org/docs/master/user/main.html).
 
 ## Link an application
 

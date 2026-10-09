@@ -1676,6 +1676,40 @@ static bool test_endpoint_routes(void)
 	return true;
 }
 
+static bool test_sdk_pool_atomic_alignment(void)
+{
+	pj_caching_pool cache;
+	pj_pool_t *pool;
+	bool passed;
+
+	CHECK(pj_init() == PJ_SUCCESS, "SDK alignment fixture init failed");
+	pj_caching_pool_init(&cache, NULL, 0);
+	pool = pj_pool_create(&cache.factory, "alignment", 4096, 4096, NULL);
+	passed = pool != NULL;
+	for (size_t size = 1; passed && size <= 16; ++size) {
+		pj_atomic_t *atomic = NULL;
+
+		passed = pj_pool_alloc(pool, size) != NULL &&
+			pj_atomic_create(pool, 0, &atomic) == PJ_SUCCESS;
+		if (!passed)
+			break;
+		/* The SDK declares its opaque atomic owner with eight-byte alignment,
+		 * including on targets whose long is smaller. Check before using it. */
+		passed = (uintptr_t)atomic % 8 == 0;
+		if (passed) {
+			pj_atomic_inc(atomic);
+			passed = pj_atomic_get(atomic) == 1;
+		}
+		pj_atomic_destroy(atomic);
+	}
+	if (pool != NULL)
+		pj_pool_release(pool);
+	pj_caching_pool_destroy(&cache);
+	pj_shutdown();
+	CHECK(passed, "SDK pool misaligned or failed a 64-bit atomic allocation");
+	return true;
+}
+
 struct test_case {
 	const char *name;
 	bool (*run)(void);
@@ -1684,6 +1718,7 @@ struct test_case {
 int main(void)
 {
 	static const struct test_case tests[] = {
+		{ "SDK pool atomic alignment", test_sdk_pool_atomic_alignment },
 		{ "local transport lifecycle", test_local_transport_lifecycle },
 		{ "singleton and account boundary",
 		  test_singleton_and_account_boundary },

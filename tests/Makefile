@@ -10,8 +10,8 @@ PJSIP_PACKAGE ?= libpjproject
 PJSIP_DEPENDENCY ?=
 PJSIP_AVAILABLE := $(shell \
 	$(PKG_CONFIG) --exists $(PJSIP_PACKAGE) 2>/dev/null && echo yes)
-PJSIP_CFLAGS := $(shell \
-	$(PKG_CONFIG) --cflags $(PJSIP_PACKAGE) 2>/dev/null)
+PJSIP_CFLAGS := $(patsubst -I%,-isystem %,$(shell \
+	$(PKG_CONFIG) --cflags $(PJSIP_PACKAGE) 2>/dev/null))
 PJSIP_LDLIBS := $(shell \
 	$(PKG_CONFIG) --static --libs $(PJSIP_PACKAGE) 2>/dev/null)
 
@@ -3566,6 +3566,7 @@ PYTHON_TESTS := \
 	test_interop_endpoint.py \
 	test_local_interop.py
 TEST_JOBS ?= 4
+TEST_RUNNER ?=
 TEST_RUN_BINARIES := \
 	$(filter-out $(FSK_INTEGRATION_TEST_BINARY) $(PCM_CALL_TEST_BINARY),$(TEST_BINARIES))
 BINARY_TEST_RUNS := \
@@ -3585,13 +3586,19 @@ TEST_RUNS := \
 	$(PYTHON_TEST_RUNS) \
 	$(filter-out $(V90_DATAPUMP_RUN),$(BINARY_TEST_RUNS))
 
-.PHONY: all clean test run-tests $(TEST_RUNS)
+.PHONY: all clean test test-c run-tests run-c-tests $(TEST_RUNS)
 
 all: $(TEST_BINARIES)
 
 test: $(TEST_BINARIES)
 	$(MAKE) --no-print-directory -j$(TEST_JOBS) --output-sync=target \
 		run-tests
+
+test-c: $(TEST_BINARIES)
+	$(MAKE) --no-print-directory -j$(TEST_JOBS) --output-sync=target \
+		run-c-tests
+
+run-c-tests: $(PCM_CALL_RUNS) $(INTEGRATION_RUNS) $(BINARY_TEST_RUNS)
 
 run-tests: $(TEST_RUNS)
 ifeq ($(PJSIP_AVAILABLE),no)
@@ -3602,18 +3609,18 @@ $(PYTHON_TEST_RUNS): run-python-%: %
 	MAKEFLAGS= $(PYTHON) $<
 
 $(BINARY_TEST_RUNS): run-test-%: $(BUILD_DIR)/%
-	./$<
+	$(TEST_RUNNER) ./$<
 
 $(PCM_CALL_RUNS): run-pcm-call-%: $(PCM_CALL_TEST_BINARY)
-	./$< --shard $*
+	$(TEST_RUNNER) ./$< --shard $*
 
 run-integration-core: $(FSK_INTEGRATION_TEST_BINARY)
 	MODEM_INTEGRATION_FILTER= V34_MATRIX_FILTER= \
-		MODEM_INTEGRATION_SKIP_V34_MATRIX=1 ./$<
+		MODEM_INTEGRATION_SKIP_V34_MATRIX=1 $(TEST_RUNNER) ./$<
 
 $(V34_MATRIX_RUNS): run-integration-v34-%: \
 	$(FSK_INTEGRATION_TEST_BINARY)
-	MODEM_INTEGRATION_FILTER= V34_MATRIX_FILTER="at $* symbol/s" ./$<
+	MODEM_INTEGRATION_FILTER= V34_MATRIX_FILTER="at $* symbol/s" $(TEST_RUNNER) ./$<
 
 $(PACK_TEST_BINARY): $(PACK_TEST_OBJECTS) $(MODEM_OBJECT)
 	$(CC) $(LDFLAGS) -o $@ $^

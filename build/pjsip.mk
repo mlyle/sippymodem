@@ -66,8 +66,9 @@ PJSIP_CONFIGURE_OPTIONS := \
 	--disable-libwebrtc \
 	--disable-libuuid
 
-ifeq ($(TARGET_SYSTEM),Windows)
-PJSIP_CONFIGURE_OPTIONS += --host=$(TARGET_TRIPLE)
+PJSIP_HOST ?= $(if $(filter Windows,$(TARGET_SYSTEM)),$(TARGET_TRIPLE))
+ifneq ($(strip $(PJSIP_HOST)),)
+PJSIP_CONFIGURE_OPTIONS += --host=$(PJSIP_HOST)
 endif
 
 .PHONY: pjsip pjsip-required pjproject-init clean-pjproject

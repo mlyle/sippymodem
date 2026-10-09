@@ -22,6 +22,8 @@ make -C tests build/test_native_dte
 
 See [memory checks](memory-check.md) for Valgrind coverage and
 [packet benchmarks](../tests/PERFORMANCE.md) for processing measurements.
+The [big-endian build guide](building.md#big-endian-testing-with-qemu) shows
+how to run compiled checks under QEMU with `TEST_RUNNER` and `test-c`.
 Native generated-channel coverage establishes the tested behavior; it does
 not establish interoperability with every modem or robustness on impaired
 physical lines.

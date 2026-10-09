@@ -25,8 +25,8 @@ PJSIP_PACKAGE ?= libpjproject
 PJSIP_DEPENDENCY ?=
 PJSIP_AVAILABLE := $(shell \
 	$(PKG_CONFIG) --exists $(PJSIP_PACKAGE) 2>/dev/null && echo yes)
-PJSIP_CFLAGS := $(shell \
-	$(PKG_CONFIG) --cflags $(PJSIP_PACKAGE) 2>/dev/null)
+PJSIP_CFLAGS := $(patsubst -I%,-isystem %,$(shell \
+	$(PKG_CONFIG) --cflags $(PJSIP_PACKAGE) 2>/dev/null))
 PJSIP_LDLIBS := $(shell \
 	$(PKG_CONFIG) --static --libs $(PJSIP_PACKAGE) 2>/dev/null)
 

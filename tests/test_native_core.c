@@ -487,7 +487,11 @@ static int process_hangup_g711(
 	void *receive, const bool *received_mask, uint8_t *transmit_codewords, void *transmit, int count,
 	bool *exact_output)
 {
-	int result = process_retrain_dp(datapump, receive, transmit, count);
+	int result;
+
+	if (count <= 0)
+		return DPSTAT_ERROR;
+	result = process_retrain_dp(datapump, receive, transmit, count);
 
 	(void)receive_codewords;
 	(void)received_mask;

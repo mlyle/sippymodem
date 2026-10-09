@@ -10,5 +10,9 @@
 /* Release SDK assertions log and return their checked resource error rather
  * than aborting the embedding process on temporary I/O-key exhaustion. */
 #define PJ_DEBUG 0
+/* Pools contain 64-bit atomics and naturally aligned SDK state. The SDK's
+ * four-byte default can fault on architectures with strict atomic alignment. */
+#undef PJ_POOL_ALIGNMENT
+#define PJ_POOL_ALIGNMENT 16
 
 #endif
