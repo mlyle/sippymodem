@@ -28,6 +28,9 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#if defined(__APPLE__) && !defined(_DARWIN_C_SOURCE)
+#define _DARWIN_C_SOURCE
+#endif
 #define _GNU_SOURCE
 
 #include "terminal.h"
@@ -38,6 +41,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <util.h>
+#endif
 
 enum { PTY_TERMINAL_PATH_MAX = 128 };
 
@@ -106,6 +112,15 @@ enum pty_terminal_result pty_terminal_open(
 	if (terminal->master_fd >= 0)
 		return PTY_TERMINAL_ALREADY_OPEN;
 	terminal->system_error = 0;
+#ifdef __APPLE__
+	if (openpty(&master_fd, &device_fd, NULL, NULL, NULL) != 0)
+		return fail_open(terminal, -1, -1, PTY_TERMINAL_OPEN_ERROR, errno);
+	int flags = fcntl(master_fd, F_GETFL);
+	if (flags < 0 || fcntl(master_fd, F_SETFL, flags | O_NONBLOCK) != 0 ||
+	    set_close_on_exec(master_fd) != 0)
+		return fail_open(terminal, master_fd, device_fd, PTY_TERMINAL_OPEN_ERROR, errno);
+	name_error = ttyname_r(device_fd, terminal->device_path, sizeof(terminal->device_path));
+#else
 	master_fd = posix_openpt(O_RDWR | O_NOCTTY | O_NONBLOCK);
 	if (master_fd < 0)
 		return fail_open(terminal, -1, -1,
@@ -116,10 +131,13 @@ enum pty_terminal_result pty_terminal_open(
 			PTY_TERMINAL_OPEN_ERROR, errno);
 	name_error = ptsname_r(master_fd, terminal->device_path,
 			       sizeof(terminal->device_path));
+#endif
 	if (name_error != 0)
-		return fail_open(terminal, master_fd, -1,
+		return fail_open(terminal, master_fd, device_fd,
 			PTY_TERMINAL_NAME_ERROR, name_error);
+#ifndef __APPLE__
 	device_fd = open(terminal->device_path, O_RDWR | O_NOCTTY);
+#endif
 	if (device_fd < 0 || set_close_on_exec(device_fd) != 0 ||
 	    tcgetattr(device_fd, &attributes) != 0)
 		return fail_open(terminal, master_fd, device_fd,
