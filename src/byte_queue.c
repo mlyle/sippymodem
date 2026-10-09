@@ -25,6 +25,11 @@ size_t byte_queue_write(struct byte_queue *queue, const void *bytes, size_t coun
 	return count;
 }
 
+int byte_queue_output(void *context, const char *bytes, int count)
+{
+	return count <= 0 ? 0 : (int)byte_queue_write(context, bytes, (size_t)count);
+}
+
 size_t byte_queue_read(struct byte_queue *queue, void *bytes, size_t capacity)
 {
 	size_t count = capacity < queue->count ? capacity : queue->count;

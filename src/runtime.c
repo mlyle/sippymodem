@@ -136,12 +136,6 @@ static void trace_disconnect(struct modem_runtime *runtime)
 	runtime->trace_disconnect_sequence = runtime->modem->disconnect_sequence;
 }
 
-static int capture_payload(void *context, const char *bytes, int count)
-{
-	struct modem_runtime *runtime = context;
-	return count <= 0 ? 0 : (int)byte_queue_write(&runtime->rx_output, bytes, (size_t)count);
-}
-
 static int capture_control(void *context, const char *bytes, int count)
 {
 	struct modem_runtime *runtime = context;
@@ -193,8 +187,8 @@ struct modem_runtime *modem_runtime_create(
 		goto fail;
 	runtime->rx_output = (struct byte_queue){ .storage = runtime->rx_storage, .capacity = sizeof(runtime->rx_storage) };
 	runtime->control_output = (struct byte_queue){ .storage = runtime->control_storage, .capacity = sizeof(runtime->control_storage) };
-	runtime->modem->data_output = capture_payload;
-	runtime->modem->data_output_context = runtime;
+	runtime->modem->data_output = byte_queue_output;
+	runtime->modem->data_output_context = &runtime->rx_output;
 	runtime->modem->control_output = capture_control;
 	runtime->modem->control_output_context = runtime;
 	modem_frontend_init(runtime->modem);

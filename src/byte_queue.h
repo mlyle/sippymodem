@@ -15,6 +15,10 @@ struct byte_queue {
 };
 
 size_t byte_queue_write(struct byte_queue *queue, const void *bytes, size_t count);
+/* Modem output callback: context is the owned queue; nonpositive counts
+ * transfer nothing. A positive result is the exact accepted byte prefix. */
+int byte_queue_output(void *context, const char *bytes, int count);
+
 size_t byte_queue_read(struct byte_queue *queue, void *bytes, size_t capacity);
 
 #endif

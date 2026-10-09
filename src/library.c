@@ -402,12 +402,6 @@ static bool drain_received_media(void *context)
 	return line->active && line->remote_closing && !line->stopping;
 }
 
-static int receive_output(void *context, const char *bytes, int count)
-{
-	struct sippymodem_line *line = context;
-	return count <= 0 ? 0 : (int)byte_queue_write(&line->rx, bytes, (size_t)count);
-}
-
 void sippymodem_server_config_init(struct sippymodem_server_config *config)
 {
 	if (config != NULL)
@@ -846,8 +840,8 @@ struct sippymodem_line *sippymodem_line_create(struct sippymodem_server *server,
 		modem->min_rate = config->min_bps;
 	if (config->max_bps != 0)
 		modem->max_rate = config->max_bps;
-	modem->data_output_context = line;
-	modem->data_output = receive_output;
+	modem->data_output_context = &line->rx;
+	modem->data_output = byte_queue_output;
 	line->status.dte_mode = SIPPYMODEM_COMMAND;
 	server->lines[id] = line;
 	if (server->default_group != NULL)
