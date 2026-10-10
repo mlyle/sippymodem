@@ -2079,6 +2079,79 @@ static bool test_final_tone_timeout(void)
 }
 
 
+static bool test_late_final_s(void)
+{
+	for (unsigned pcma = 0u; pcma < 2u; ++pcma) {
+		struct endpoint caller = { 0 }, answerer = { 0 }, waiting = { 0 };
+		struct channel channel = { .pcma = pcma };
+		int16_t samples[4000];
+		size_t count = 0u;
+		bool started = false, recorded = false, detected = false;
+
+		CHECK(endpoint_init(&caller, V34_CALLING_STATION) &&
+		      endpoint_init(&answerer, V34_ANSWERING_STATION),
+		      "late S endpoints did not initialize");
+		/* Retain the trained caller at its first J and generate the peer's
+		 * real S/S-bar/TRN waveform over the ordinary companded channel.
+		 * No prerecorded vector or synthetic slicer decisions are needed. */
+		for (size_t sample = 0u; sample < SAMPLE_LIMIT; ++sample) {
+			struct v34_call_observation observations[2];
+			int16_t incoming, unused;
+
+			channel_receive(&channel, &incoming, &unused);
+			if (started) {
+				CHECK(count < ARRAY_LENGTH(samples), "late S waveform overflow");
+				samples[count++] = incoming;
+			}
+			CHECK(channel_sample_pair(&channel, &caller, &answerer,
+				      &observations[0], &observations[1]),
+			      "late S waveform generation failed");
+			if (!started && observations[0].processed == V34_CALL_PHASE3 &&
+			    (observations[0].events.phase3 &
+			     V34_PHASE3_EXCHANGE_EVENT_TRANSMIT_J_STARTED) != 0) {
+				waiting = caller;
+				started = true;
+			}
+			if (started && observations[0].processed == V34_CALL_PHASE4 &&
+			    (observations[0].events.phase4 &
+			     V34_PHASE4_EXCHANGE_EVENT_PEER_S_DETECTED) != 0) {
+				recorded = true;
+				break;
+			}
+		}
+		CHECK(recorded, "late S fixture did not qualify peer S");
+		uint32_t nominal_deadline = 600u * 8u + waiting.call.round_trip_delay_samples;
+		const uint32_t prefix = 600u * 8u;
+
+		/* Delay the peer waveform into the compatibility grace period.
+		 * Qualification must cancel the timer immediately, before the
+		 * caller finishes transmitting J-prime and starts its own TRN. */
+		for (size_t sample = 0u; sample < prefix + count; ++sample) {
+			struct v34_call_observation observation;
+			struct v34_received_mapping_frame received;
+			int16_t transmitted;
+
+			CHECK(v34_call_sample(&waiting.call,
+				      sample < prefix ? 0 : samples[sample - prefix],
+				      NULL, NULL, &transmitted, &observation, &received) == V34_CALL_OK,
+			      "late S reception failed for law %u", pcma);
+			CHECK(waiting.call.stage != V34_CALL_RETRAIN_SILENCE,
+			      "late valid S was abandoned for law %u at %zu", pcma, sample);
+			if (observation.processed == V34_CALL_PHASE4 &&
+			    (observation.events.phase4 &
+			     V34_PHASE4_EXCHANGE_EVENT_PEER_S_DETECTED) != 0) {
+				CHECK(sample + 1u > nominal_deadline &&
+				      waiting.call.phase4_s_remaining_samples == 0u &&
+				      !waiting.call.state.phase4.transmit_trn_started,
+				      "late S did not cancel its deadline before local TRN");
+				detected = true;
+			}
+		}
+		CHECK(detected, "late valid S was not qualified for law %u", pcma);
+	}
+	return true;
+}
+
 static bool test_missing_final_s_recovery(void)
 {
 	const size_t delays[] = { LINE_DELAY_SAMPLES, 800u };
@@ -2110,7 +2183,7 @@ static bool test_missing_final_s_recovery(void)
 			      "final S deadline missed the caller's first J sample");
 			struct v34_info0 peer = caller.call.peer_info0;
 			uint16_t rtd = caller.call.round_trip_delay_samples;
-			uint32_t deadline = 600u * 8u + rtd;
+			uint32_t deadline = 700u * 8u + rtd;
 			struct v34_call_observation observation;
 			struct v34_received_mapping_frame received;
 			int16_t transmitted;
@@ -2277,6 +2350,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "final Tone-A timeout retrain", test_final_tone_timeout },
+		{ "late final S qualification", test_late_final_s },
 		{ "missing final S recovery", test_missing_final_s_recovery },
 		{ "bounded initial E exchange", test_initial_e_timeout },
 		{ "bounded online rate renegotiation", test_rate_renegotiation_timeout },

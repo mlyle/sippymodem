@@ -8,6 +8,10 @@
 #include <stddef.h>
 #include <string.h>
 
+/* 11.4.2.1.1 specifies 600 ms plus RTT. Allow 100 ms of receive
+ * compatibility grace for a late S/S-bar and its TRN confirmation. */
+static const uint32_t PHASE4_S_WAIT_SAMPLES = (600u + 100u) * 8u;
+
 static enum v34_call_result phase3_result(
 	enum v34_phase3_exchange_result result);
 
@@ -229,7 +233,7 @@ bool v34_call_is_valid(const struct v34_call *call)
 	}
 	return child_valid && child_role == call->local_role &&
 	       call->phase4_s_remaining_samples <=
-		       600u * 8u + call->round_trip_delay_samples &&
+		       PHASE4_S_WAIT_SAMPLES + call->round_trip_delay_samples &&
 	       (call->phase4_s_remaining_samples == 0u ||
 		(call->local_role == V34_CALLING_STATION &&
 		 (call->stage == V34_CALL_PHASE3 ||
@@ -732,10 +736,10 @@ static bool phase4_s_has_timed_out(
 	    (observation->events.phase3 &
 	     V34_PHASE3_EXCHANGE_EVENT_TRANSMIT_J_STARTED) != 0) {
 		call->phase4_s_remaining_samples =
-			600u * 8u + call->round_trip_delay_samples;
+			PHASE4_S_WAIT_SAMPLES + call->round_trip_delay_samples;
 	} else if (observation->processed == V34_CALL_PHASE4 &&
 		   (observation->events.phase4 &
-		    V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_TRN_STARTED) != 0) {
+		    V34_PHASE4_EXCHANGE_EVENT_PEER_S_DETECTED) != 0) {
 		call->phase4_s_remaining_samples = 0u;
 	} else if (call->phase4_s_remaining_samples != 0u &&
 		   --call->phase4_s_remaining_samples == 0u) {
