@@ -752,6 +752,7 @@ static int process_v34(
 	if (connected)
 		return DPSTAT_CONNECT;
 	if (datapump->missing_carrier_samples >= V34_CARRIER_LOSS_SAMPLES) {
+		modem_note_disconnect(dp->modem, true, "V.34 carrier lost");
 		fail_training(datapump);
 		return DPSTAT_ERROR;
 	}

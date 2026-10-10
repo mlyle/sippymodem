@@ -919,6 +919,12 @@ static bool exercise_carrier_loss_limit(
 				endpoint->modem, endpoint->receive,
 				endpoint->transmit, SIP_FRAME_SAMPLES);
 		}
+		if (id == DP_V34 && endpoint->modem->process == NULL)
+			CHECK(endpoint->modem->disconnect_local &&
+			      endpoint->modem->disconnect_reason != NULL &&
+			      strcmp(endpoint->modem->disconnect_reason,
+			             "V.34 carrier lost") == 0,
+			      "V.34 carrier loss did not retain its local cause");
 		return endpoint->modem->process == NULL;
 	}
 	while (presented < carrier_loss_samples - 1u) {
