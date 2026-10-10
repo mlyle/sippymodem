@@ -138,26 +138,29 @@ v34_data_decision_receiver_observe(
 	if (result != V34_DATA_RECEIVE_INTERVAL_READY &&
 	    !v34_data_receive_emits_mapping_frame(result))
 		return result;
-	for (size_t symbol = 0; symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL;
-	     ++symbol)
-		if (!fixed_target(&targets[symbol], &fixed_targets[symbol]))
-			return V34_DATA_RECEIVE_OUT_OF_RANGE;
-	generated.equalizer[0] =
-		(struct v34_adaptive_equalizer_decision){
-			.observation = next.first_observation,
-			.target = fixed_targets[0],
-			.decoder_power_q15 =
-				V34_DATA_DECISION_DECODER_POWER_Q15,
-			.adaptation = V34_ADAPTIVE_EQUALIZER_FULL,
-		};
-	generated.equalizer[1] =
-		(struct v34_adaptive_equalizer_decision){
-			.observation = *observation,
-			.target = fixed_targets[1],
-			.decoder_power_q15 =
-				V34_DATA_DECISION_DECODER_POWER_Q15,
-			.adaptation = V34_ADAPTIVE_EQUALIZER_FULL,
-		};
+	for (size_t symbol = 0; symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
+		const struct v34_adaptive_equalizer_observation *input =
+			symbol == 0 ? &next.first_observation : observation;
+		bool representable;
+
+		if (!point_is_finite(&targets[symbol]))
+			return V34_DATA_RECEIVE_NUMERIC_FAILURE;
+		representable = fixed_target(&targets[symbol], &fixed_targets[symbol]);
+		/* The trellis makes present-time decisions on an infinite lattice.
+		 * Noise can select a finite point beyond the equalizer's fixed range.
+		 * Keep decoding and skip carrier/tap adaptation for that symbol.
+		 * Its observed point supplies zero residual to feedback history;
+		 * clipping or wrapping the target would teach a false decision. */
+		generated.equalizer[symbol] =
+			(struct v34_adaptive_equalizer_decision){
+				.observation = *input,
+				.target = representable ? fixed_targets[symbol] : input->decision,
+				.decoder_power_q15 = representable ?
+					V34_DATA_DECISION_DECODER_POWER_Q15 : 0,
+				.adaptation = representable ? V34_ADAPTIVE_EQUALIZER_FULL :
+					V34_ADAPTIVE_EQUALIZER_SKIP,
+			};
+	}
 	next.first_observation =
 		(struct v34_adaptive_equalizer_observation){ 0 };
 	next.has_first_symbol = false;

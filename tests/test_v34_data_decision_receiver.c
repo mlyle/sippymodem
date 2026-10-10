@@ -438,6 +438,72 @@ static bool rejected_call_preserves_outputs(
 	       memcmp(output, &saved_output, sizeof(*output)) == 0;
 }
 
+static bool test_unrepresentable_feedback(void)
+{
+	struct v34_frame_geometry geometry;
+	struct v34_mapping_parameters parameters;
+	struct v34_power_normalizer normalizer;
+	const struct v34_symbol_power_measurement power = {
+		.mean_squared_magnitude = 2.0, .symbol_count = 1u,
+	};
+	const struct v34_q14_coefficient coefficients[V34_PRECODER_TAP_COUNT] = { 0 };
+
+	CHECK(v34_frame_geometry_init(&geometry, V34_SYMBOL_RATE_2400, 2, false) ==
+		      V34_FRAME_SCHEDULE_OK &&
+	      v34_mapping_parameters_init(&parameters, &geometry, false) ==
+		      V34_MAPPING_PARAMETERS_OK &&
+	      v34_power_normalizer_init(&normalizer, &parameters,
+		      V34_NONLINEAR_THETA_ZERO, &power, &power) == V34_SYMBOL_POWER_OK &&
+	      v34_power_normalizer_set_gain(&normalizer, 0.70703125) ==
+		      V34_SYMBOL_POWER_OK,
+	      "low-rate feedback fixture did not initialize");
+	for (unsigned signs = 0; signs < 4; ++signs) {
+		struct v34_data_decision_receiver receiver;
+		struct v34_data_decision_output output;
+		struct v34_adaptive_equalizer_observation input[2] = {
+			{ .decision = { signs & 1u ? INT16_MIN : INT16_MAX,
+					 signs & 2u ? INT16_MIN : INT16_MAX },
+			  .epoch = 1u, .lineage = 1u },
+			{ .decision = { signs & 1u ? INT16_MIN : INT16_MAX,
+					 signs & 2u ? INT16_MIN : INT16_MAX },
+			  .epoch = 2u, .lineage = 2u },
+		};
+		unsigned skipped = 0;
+
+		CHECK(v34_data_decision_receiver_init(&receiver, &normalizer,
+			      &geometry, false, coefficients, V34_TRELLIS_16_STATE,
+			      V34_CALLING_STATION) == V34_DATA_RECEIVE_OK &&
+		      v34_data_decision_receiver_observe(&receiver, &input[0], &output) ==
+			      V34_DATA_RECEIVE_OK &&
+		      v34_data_decision_receiver_observe(&receiver, &input[1], &output) ==
+			      V34_DATA_RECEIVE_INTERVAL_READY &&
+		      v34_data_decision_receiver_is_valid(&receiver) &&
+		      !receiver.has_first_symbol,
+		      "signs %u: finite lattice decision ended reception", signs);
+		for (size_t symbol = 0; symbol < 2; ++symbol) {
+			if (output.equalizer[symbol].adaptation != V34_ADAPTIVE_EQUALIZER_SKIP)
+				continue;
+			skipped++;
+			CHECK(output.equalizer[symbol].decoder_power_q15 == 0 &&
+			      output.equalizer[symbol].target.in_phase == input[symbol].decision.in_phase &&
+			      output.equalizer[symbol].target.quadrature == input[symbol].decision.quadrature,
+			      "signs %u: skipped feedback wrapped or invented a target", signs);
+		}
+		CHECK(skipped != 0, "signs %u did not exercise feedback range", signs);
+		for (size_t symbol = 0; symbol < 2; ++symbol) {
+			input[symbol].decision = (struct v34_analytic_sample){ 2290, 2290 };
+			input[symbol].epoch += 2u;
+			CHECK(v34_data_decision_receiver_observe(&receiver, &input[symbol], &output) ==
+				      (symbol == 0 ? V34_DATA_RECEIVE_OK : V34_DATA_RECEIVE_INTERVAL_READY),
+			      "signs %u: reception did not continue after outlier", signs);
+		}
+		CHECK(output.equalizer[0].adaptation == V34_ADAPTIVE_EQUALIZER_FULL &&
+		      output.equalizer[1].adaptation == V34_ADAPTIVE_EQUALIZER_FULL,
+		      "signs %u: representable feedback did not resume", signs);
+	}
+	return true;
+}
+
 static bool test_cancel_interval(void)
 {
 	struct fixture fixture;
@@ -556,6 +622,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "generated pair path", test_generated_pair_path },
+		{ "unrepresentable feedback", test_unrepresentable_feedback },
 		{ "cancel partial interval", test_cancel_interval },
 		{ "validation and transactionality",
 		  test_validation_and_transactionality },
