@@ -1947,6 +1947,64 @@ static bool test_phase2_handoff(void)
 	return true;
 }
 
+static bool test_missing_probe_recovery(void)
+{
+	for (unsigned int pcma = 0; pcma < 2u; ++pcma) {
+		for (enum v34_station_role role = V34_CALLING_STATION;
+		     role <= V34_ANSWERING_STATION; ++role) {
+			struct endpoint caller, answerer;
+			struct endpoint *waiting = role == V34_CALLING_STATION ? &caller : &answerer;
+			struct channel channel = { .pcma = pcma != 0u };
+			bool erased = false, restarted = false;
+			struct v34_info0 peer = { 0 };
+			uint16_t rtd = 0;
+
+			CHECK(endpoint_init(&caller, V34_CALLING_STATION) &&
+			      endpoint_init(&answerer, V34_ANSWERING_STATION),
+			      "missing-probe endpoints did not initialize");
+			caller.generated_mapping_frames = answerer.generated_mapping_frames = true;
+			caller.mapping_pattern_seed = answerer.peer_mapping_pattern_seed = UINT32_C(0x34c011ab);
+			answerer.mapping_pattern_seed = caller.peer_mapping_pattern_seed = UINT32_C(0x34a05e17);
+			for (size_t clock = 0; clock < SAMPLE_LIMIT && !restarted; ++clock) {
+				int16_t inputs[2], outputs[2];
+				struct v34_call_observation observed[2];
+
+				channel_receive(&channel, &inputs[0], &inputs[1]);
+				if (waiting->call.stage == V34_CALL_PHASE2 &&
+				    waiting->call.state.phase2.stage == (role == V34_CALLING_STATION ?
+					    V34_PHASE2_INITIAL_PROBE : V34_PHASE2_RECIPROCAL_PROBE)) {
+					if (!erased) {
+						CHECK(v34_phase2_peer_info0(&waiting->call.state.phase2, &peer) == V34_PHASE2_OK &&
+						      waiting->call.round_trip_delay_stored,
+						      "missing-probe fixture lost its call agreement");
+						rtd = waiting->call.round_trip_delay_samples;
+					}
+					inputs[role] = 0;
+					erased = true;
+				}
+				note_peer_primary_delays(&caller, &answerer);
+				CHECK(endpoint_sample(&caller, inputs[0], supply_mapping_frame, &outputs[0], &observed[0]) &&
+				      endpoint_sample(&answerer, inputs[1], supply_mapping_frame, &outputs[1], &observed[1]),
+				      "law %u role %u missing probe stopped the pair at %zu", pcma, (unsigned)role, clock);
+				channel_transmit(&channel, outputs[0], outputs[1]);
+				if (observed[role].processed == V34_CALL_PHASE2 &&
+				    observed[role].events.phase2.kind == V34_PHASE2_EVENT_FAILED) {
+					CHECK(erased && observed[role].events.phase2.failure == V34_PHASE2_FAILURE_REMOTE_PROBE_NOT_FOUND &&
+					      waiting->call.stage == V34_CALL_RETRAIN_SILENCE && waiting->call.retrain_active &&
+					      waiting->call.peer_info0_stored && waiting->call.round_trip_delay_samples == rtd &&
+					      v34_info0_equal(&waiting->call.peer_info0, &peer),
+					      "missing-probe recovery lost the failure or completed call agreement");
+					restarted = true;
+				}
+			}
+			CHECK(restarted && run_initialized_pair(&caller, &answerer, &channel) &&
+			      caller.mapping_frames_received >= 4u && answerer.mapping_frames_received >= 4u,
+			      "law %u role %u missing probe did not recover verified data", pcma, (unsigned)role);
+		}
+	}
+	return true;
+}
+
 static bool test_final_tone_timeout(void)
 {
 	const size_t delays[] = { LINE_DELAY_SAMPLES, 800u };
@@ -2166,6 +2224,7 @@ int main(void)
 		{ "retrain selects new INFO1a rate pair",
 		  test_retrain_selects_new_rate },
 		{ "unanswered probe recovery", test_probe_recovery },
+		{ "missing probe recovery", test_missing_probe_recovery },
 		{ "retrain tone guard", test_retrain_tone_guard },
 		{ "INFO1 retrain preamble", test_info1_retrain_preamble },
 		{ "retrain tone stage guard",

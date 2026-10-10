@@ -344,8 +344,8 @@ static enum v34_call_result begin_retrain(
 	}
 	if (!next.round_trip_delay_stored)
 		return V34_CALL_INVALID_STATE;
-	/* A forced initial cadence remains exact.  Once the peer requests a full
-	 * retrain, let it select a compatible slower probe result instead of
+	/* A forced initial cadence remains exact. On full retrain, let the peer
+	 * select a compatible slower probe result instead of
 	 * rejecting an otherwise valid INFO1a fallback. */
 	if (next.local_role == V34_CALLING_STATION &&
 	    !add_caller_retrain_fallbacks(&next))
@@ -583,6 +583,11 @@ static enum v34_call_result advance_phase2(
 	enum v34_phase2_result result;
 
 	if (event->kind == V34_PHASE2_EVENT_FAILED) {
+		/* A missing L1 can leave the stations in different ranging epochs.
+		 * Reuse the PCM call's full-retrain recovery; retain the acquisition
+		 * failure and let the host's whole-call deadline bound retries. */
+		if (event->failure == V34_PHASE2_FAILURE_REMOTE_PROBE_NOT_FOUND)
+			return begin_retrain(call, false);
 		/* V.34 11.2.2.1.5: missing final Tone A requires full retrain.
 		 * Keep the completed INFO0/ranging agreement and common recovery path. */
 		if (call->local_role == V34_CALLING_STATION &&
