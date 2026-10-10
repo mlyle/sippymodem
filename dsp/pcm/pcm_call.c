@@ -28,6 +28,12 @@ enum {
 	PCM_PHASE3_RETURN_BASE_DEADLINE_SAMPLES =
 		V34_PHASE2_SAMPLE_RATE * 51 / 10,
 	PCM_PHASE3_SD_DEADLINE_SAMPLES = V34_PHASE2_SAMPLE_RATE * 3 / 2,
+	/* Compatibility exception to V.90 9.3.2.4 and V.92 9.5.2.2:
+	 * allow 500 ms beyond the 1500 ms Sd reversal deadline. Recorded
+	 * peers return valid Sd/Sd-bar just after the nominal cutoff. Keep
+	 * missing responses bounded, and leave all transmit clocks unchanged. */
+	PCM_PHASE3_SD_RECEIVE_LIMIT_SAMPLES =
+		PCM_PHASE3_SD_DEADLINE_SAMPLES + V34_PHASE2_SAMPLE_RATE / 2,
 	V92_PHASE3_JA_BASE_DEADLINE_SAMPLES = V34_PHASE2_SAMPLE_RATE * 9 / 2,
 	V92_PHASE3_JD_DEADLINE_SAMPLES = V34_PHASE2_SAMPLE_RATE * 9 / 2,
 	V90_B1_BASE_DEADLINE_SAMPLES = V34_PHASE2_SAMPLE_RATE * 15,
@@ -3079,13 +3085,14 @@ static bool phase3_response_timed_out(const struct pcm_call *call)
 				return false;
 			/* V.92 9.5.2.2: Sd reversal within 1500 ms of starting Ja;
 			 * Jd within 4500 ms of ending Ja. Receive runs first, so
-			 * a last-sample response cancels either deadline. */
+			 * a last-sample response cancels either deadline. The Sd
+			 * receive limit includes the bounded compatibility grace. */
 			if (initial->stage == V92_PCM_PHASE3_INITIAL_TX_COMPLETE)
 				return analog->post_ja_silence_samples >= V92_PHASE3_JD_DEADLINE_SAMPLES;
 			return initial->stage == V92_PCM_PHASE3_INITIAL_TX_JA &&
 				analog->receive_stage == V92_PHASE3_ANALOG_RECEIVE_SD &&
 				analog->receive.sd.stage < PCM_S_PATTERN_RX_REVERSED &&
-				initial->sequence.ja.emitted_symbols >= PCM_PHASE3_SD_DEADLINE_SAMPLES;
+				initial->sequence.ja.emitted_symbols >= PCM_PHASE3_SD_RECEIVE_LIMIT_SAMPLES;
 		}
 		station = &call->state.phase3.v92_digital;
 		if (station->receive_stage == V92_PHASE3_DIGITAL_RECEIVE_INITIAL) {
@@ -3130,13 +3137,14 @@ static bool phase3_response_timed_out(const struct pcm_call *call)
 		 * transition. Use the accepted Ja points and shared rational
 		 * line clock, including a crossing reached by this sample whose
 		 * next point has not yet been accepted. No parallel timer or
-		 * rounding of fractional baud is needed. */
+		 * rounding of fractional baud is needed. Apply the bounded receive
+		 * grace after the nominal deadline, as for PCM upstream. */
 		carrier = &initial->line.carrier;
 		elapsed = (uint64_t)(initial->symbols.ja_symbols - 1u) *
 			  carrier->symbol_period_units + carrier->symbol_phase_units;
 		if (carrier->symbol_phase_units < carrier->channel.symbol_rate_numerator)
 			elapsed += carrier->symbol_period_units;
-		return elapsed >= (uint64_t)PCM_PHASE3_SD_DEADLINE_SAMPLES *
+		return elapsed >= (uint64_t)PCM_PHASE3_SD_RECEIVE_LIMIT_SAMPLES *
 				  carrier->channel.symbol_rate_numerator;
 	}
 	transmit = &call->state.phase3.digital.transmit;

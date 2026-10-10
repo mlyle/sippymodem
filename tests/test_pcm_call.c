@@ -3634,7 +3634,7 @@ static bool v92_analog_missing_response(const struct pcm_call *boundary, unsigne
 	struct v90_phase3_sd sd;
 	struct v90_phase3_signs trn1d;
 	uint8_t ucode = call.state.phase3.v92_analog.downstream_training_ucode;
-	unsigned deadline = kind == 2u ? 36000u : 12000u;
+	unsigned deadline = kind == 2u ? 36000u : 16000u;
 	unsigned elapsed = kind == 2u ? call.state.phase3.v92_analog.post_ja_silence_samples :
 		(unsigned)call.state.phase3.v92_analog.transmit.initial.sequence.ja.emitted_symbols;
 	CHECK(v90_phase3_sd_init(&sd, call.law, ucode, V90_PHASE3_SD) == V90_PHASE3_SD_OK &&
@@ -3665,7 +3665,7 @@ static bool v92_analog_missing_response(const struct pcm_call *boundary, unsigne
 }
 
 static bool v92_analog_timely_response(const struct pcm_call *before, uint8_t input,
-	uint8_t next_input, bool sd)
+	uint8_t next_input, bool sd, unsigned sd_deadline)
 {
 	struct pcm_call call = *before;
 	struct v92_phase3_analog_station *station = &call.state.phase3.v92_analog;
@@ -3674,7 +3674,7 @@ static bool v92_analog_timely_response(const struct pcm_call *before, uint8_t in
 	/* Keep the real receiver history and detection sample, changing only
 	 * the elapsed counter. Receive must win on the last allowed tick. */
 	if (sd)
-		station->transmit.initial.sequence.ja.emitted_symbols = 11999u;
+		station->transmit.initial.sequence.ja.emitted_symbols = sd_deadline - 1u;
 	else
 		station->post_ja_silence_samples = 35999u;
 	CHECK(pcm_call_is_valid(&call) &&
@@ -3683,9 +3683,21 @@ static bool v92_analog_timely_response(const struct pcm_call *before, uint8_t in
 		"last-tick analogue response lost to timeout");
 	if (sd) {
 		CHECK(station->receive.sd.stage == PCM_S_PATTERN_RX_REVERSED &&
-			station->transmit.initial.stage == V92_PCM_PHASE3_INITIAL_TX_COMPLETE &&
+			station->transmit.initial.finish_requested &&
 			station->post_ja_silence_samples == 0u,
-			"last-tick Sd reversal did not end Ja on its twelve-symbol boundary");
+			"last-tick Sd reversal did not request Ja completion");
+		/* The two-second receive limit need not land on a twelve-symbol
+		 * Ja boundary. Accept the reversal first, then drain that boundary. */
+		for (unsigned i = 0; i < 12u &&
+		     station->transmit.initial.stage != V92_PCM_PHASE3_INITIAL_TX_COMPLETE; ++i) {
+			int16_t tail_sample;
+			CHECK(v92_phase3_analog_station_transmit(station, NULL, &tail_sample) ==
+			      V92_PHASE3_ANALOG_STATION_OK, "last Ja block did not drain");
+		}
+		CHECK(station->transmit.initial.stage == V92_PCM_PHASE3_INITIAL_TX_COMPLETE &&
+		      station->transmit.initial.sequence.ja.emitted_symbols % 12u == 0u &&
+		      station->post_ja_silence_samples == 0u,
+		      "last-tick Sd reversal did not end Ja on its twelve-symbol boundary");
 		int16_t sample = 1;
 		struct fractional_delay delay = station->transmit_delay;
 		for (unsigned i = 0; i <= FRACTIONAL_DELAY_CENTER; ++i) {
@@ -3766,14 +3778,16 @@ static bool run_v92_analog_phase3_deadlines(enum g711_law law, size_t delay)
 		if (!timely[0] && previous->receive_stage == V92_PHASE3_ANALOG_RECEIVE_SD &&
 		    previous->receive.sd.stage == PCM_S_PATTERN_RX_LOCKED &&
 		    station->receive.sd.stage == PCM_S_PATTERN_RX_REVERSED) {
-			CHECK(v92_analog_timely_response(&before, rx[0], 0u, true), "timely Sd failed");
+			CHECK(v92_analog_timely_response(&before, rx[0], 0u, true, 12000u) &&
+			      v92_analog_timely_response(&before, rx[0], 0u, true, 16000u),
+			      "timely or bounded late Sd failed");
 			timely[0] = true;
 		}
 		if (!timely[1] && previous->transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_INITIAL &&
 		    station->transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_SU) {
 			uint8_t following[2];
 			channel_receive(&wire, &following[0], &following[1]);
-			CHECK(v92_analog_timely_response(&before, rx[0], following[0], false), "timely Jd failed");
+			CHECK(v92_analog_timely_response(&before, rx[0], following[0], false, 0u), "timely Jd failed");
 			timely[1] = true;
 		}
 	}
@@ -3949,18 +3963,20 @@ static bool check_phase3_sd_deadline(
 	struct pcm_call waiting = *started;
 	enum g711_law law = started->law;
 	uint8_t silence = silence_octet(law);
-	const uint32_t deadline = 12000u;
-	const uint32_t first_sd = deadline - V90_PHASE3_SD_SYMBOLS -
-		PCM_S_PATTERN_BAR_QUALIFY_SYMBOLS + 1u + response_delay;
+	const uint32_t nominal_deadline = 12000u;
+	const uint32_t deadline = 16000u;
+	const uint32_t reversal = nominal_deadline + response_delay;
+	const uint32_t first_sd = reversal - V90_PHASE3_SD_SYMBOLS -
+		PCM_S_PATTERN_BAR_QUALIFY_SYMBOLS + 1u;
 	const uint32_t tail = V90_PHASE3_SD_BAR_SYMBOLS -
 		PCM_S_PATTERN_BAR_QUALIFY_SYMBOLS;
-	bool timeout = response_delay != 0u;
+	bool timeout = reversal > deadline;
 
 	/* The source has emitted exactly the first Ja sample. A full generated
 	 * Sd followed by 12 Sd-bar characters qualifies on the final allowed
-	 * sample, one sample late, or not at all within the deadline. */
+	 * sample, within the receive grace, or beyond its bounded deadline. */
 	for (uint32_t elapsed = 2u;
-	     elapsed <= deadline + (timeout ? 0u : tail); ++elapsed) {
+	     elapsed <= (timeout ? deadline : reversal + tail); ++elapsed) {
 		struct pcm_call_observation observed;
 		uint8_t transmitted;
 		uint8_t received = elapsed < first_sd ? silence :
@@ -3976,7 +3992,7 @@ static bool check_phase3_sd_deadline(
 		      "law %u Sd delay %u at sample %u: %s stage %u",
 		      (unsigned int)law, response_delay, elapsed,
 		      pcm_call_result_name(result), (unsigned int)waiting.stage);
-		if (!timeout && elapsed == deadline)
+		if (!timeout && elapsed == reversal)
 			CHECK(waiting.state.phase3.analog.receive_stage ==
 				      V90_PHASE3_ANALOG_RECEIVE_SD &&
 			      waiting.state.phase3.analog.receive.sd.stage ==
@@ -4079,6 +4095,8 @@ static bool run_phase3_sd_timeout(
 	}
 	CHECK(position == sizeof(response) &&
 	      check_phase3_sd_deadline(&analog.call, response, 12000u) &&
+	      check_phase3_sd_deadline(&analog.call, response, 4001u) &&
+	      check_phase3_sd_deadline(&analog.call, response, 4000u) &&
 	      check_phase3_sd_deadline(&analog.call, response, 1u) &&
 	      check_phase3_sd_deadline(&analog.call, response, 0u),
 	      "law %u delay %zu baud %u Sd deadline failed",
@@ -12582,8 +12600,8 @@ int main(int argc, char **argv)
 		{ "lost Ri-bar recovers online data", test_missing_ri_bar },
 		{ "standards-timed V.90 Phase 3 return", test_phase3_return_timeout },
 		{ "standards-timed V.92 digital Phase 3 responses", test_v92_phase3_deadlines },
-		{ "standards-timed V.92 analogue Phase 3 responses", test_v92_analog_phase3_deadlines },
-		{ "standards-timed V.90 Sd response", test_phase3_sd_timeout },
+		{ "bounded V.92 analogue Phase 3 responses", test_v92_analog_phase3_deadlines },
+		{ "bounded V.90 Sd response", test_phase3_sd_timeout },
 		{ "downstream rate negotiation",
 		  test_downstream_rate_negotiation },
 		{ "V.92 role-local Phase 4 handoffs",
