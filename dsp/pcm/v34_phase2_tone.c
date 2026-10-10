@@ -18,7 +18,7 @@ static const double V34_PHASE2_TONE_MIN_ANSWERING_CARRIER_SHARE = 0.30;
 static const double V34_PHASE2_TONE_MAX_CARRIER_SHARE = 1.20;
 static const uint32_t V34_RETRAIN_MAX_SAMPLE_ENERGY =
 	UINT32_C(1) << 30;
-static const double V34_RETRAIN_TONE_A_MAX_CARRIER_SHARE = 0.60;
+static const double V34_RETRAIN_MIN_GUARD_SHARE = 0.10;
 
 _Static_assert(
 	V34_RETRAIN_MIN_SILENCE_SAMPLES == 478 &&
@@ -353,6 +353,36 @@ v34_phase2_tone_detector_measure(
 		       (struct v34_phase2_tone_measurement){ 0 };
 }
 
+static struct single_tone_detector_profile retrain_guard_profile(void)
+{
+	struct single_tone_detector_profile profile =
+		detector_profile(V34_CALLING_STATION);
+
+	profile.frequency_hz = V34_PHASE2_ANSWERING_GUARD_HZ;
+	profile.minimum_carrier_share = V34_RETRAIN_MIN_GUARD_SHARE;
+	profile.retain_reference_on_loss = false;
+	return profile;
+}
+
+static bool retrain_guard_is_valid(
+	const struct single_tone_detector *guard)
+{
+	struct single_tone_detector_profile expected = retrain_guard_profile();
+	const struct single_tone_detector_profile *profile = &guard->profile;
+
+	return single_tone_detector_is_valid(guard) &&
+	       profile->minimum_line_power > 0.0 &&
+	       profile->minimum_line_power <= expected.minimum_line_power &&
+	       profile->minimum_carrier_share == expected.minimum_carrier_share &&
+	       profile->maximum_carrier_share == expected.maximum_carrier_share &&
+	       profile->sample_rate_hz == expected.sample_rate_hz &&
+	       profile->frequency_hz == expected.frequency_hz &&
+	       profile->window_samples == expected.window_samples &&
+	       profile->acquire_samples == expected.acquire_samples &&
+	       profile->loss_samples == expected.loss_samples &&
+	       profile->retain_reference_on_loss == expected.retain_reference_on_loss;
+}
+
 static bool retrain_silence_state_is_valid(
 	const struct v34_retrain_detector *detector)
 {
@@ -392,6 +422,7 @@ bool v34_retrain_detector_is_valid(
 {
 	if (detector == NULL ||
 	    !v34_phase2_tone_detector_is_valid(&detector->tone) ||
+	    !retrain_guard_is_valid(&detector->answer_guard) ||
 	    !retrain_silence_state_is_valid(detector) ||
 	    detector->silence_samples >
 		    V34_RETRAIN_MIN_SILENCE_SAMPLES ||
@@ -457,10 +488,13 @@ enum v34_phase2_tone_result v34_retrain_detector_init(
 	enum v34_station_role local_role)
 {
 	struct v34_retrain_detector initialized = { 0 };
+	struct single_tone_detector_profile guard = retrain_guard_profile();
 
 	if (detector == NULL ||
 	    v34_phase2_tone_detector_init(
 		    &initialized.tone, local_role) != V34_PHASE2_TONE_OK ||
+	    single_tone_detector_init_profile(
+		    &initialized.answer_guard, &guard) != SINGLE_TONE_OK ||
 	    !v34_retrain_detector_is_valid(&initialized))
 		return V34_PHASE2_TONE_INVALID_ARGUMENT;
 	*detector = initialized;
@@ -487,15 +521,21 @@ static bool retrain_tone_matches(
 	const struct v34_retrain_detector *detector,
 	const struct v34_phase2_tone_measurement *measurement)
 {
+	struct single_tone_measurement guard;
+
 	if (!measurement->tone_present)
 		return false;
-	/* Tone A is the -1 dB 2400 Hz carrier plus the continuous 1800 Hz
-	 * answer guard.  A bare 2400 Hz carrier has a share near one and must
-	 * not initiate retraining.  The underlying detector already enforces
-	 * the complementary lower carrier-share bounds for both roles. */
-	return detector->tone.local_role != V34_CALLING_STATION ||
-	       measurement->carrier_share <=
-		       V34_RETRAIN_TONE_A_MAX_CARRIER_SHARE;
+	if (detector->tone.local_role != V34_CALLING_STATION)
+		return true;
+	/* Line filtering can weaken the 1800 Hz answer guard.
+	 * Require that guard itself, rather than inferring it from energy
+	 * missing from the 2400 Hz carrier. Ten percent tolerates guard loss
+	 * while rejecting a bare carrier mixed with unrelated tones. */
+	guard =
+		single_tone_detector_measure(&detector->answer_guard);
+
+	return guard.tone_present &&
+	       guard.carrier_share >= V34_RETRAIN_MIN_GUARD_SHARE;
 }
 
 enum v34_phase2_tone_result v34_retrain_detector_sample(
@@ -513,6 +553,7 @@ enum v34_phase2_tone_result v34_retrain_detector_sample_with_power_limit(
 {
 	struct v34_phase2_tone_measurement measurement;
 	struct v34_phase2_tone_event event;
+	struct single_tone_event guard_event;
 	bool emitted = false;
 
 	if (!v34_retrain_detector_is_valid(detector) || detected == NULL ||
@@ -525,19 +566,27 @@ enum v34_phase2_tone_result v34_retrain_detector_sample_with_power_limit(
 	detector->tone.carrier.profile.minimum_line_power =
 		V34_PHASE2_TONE_MIN_LINE_POWER * maximum_window_energy /
 		V34_RETRAIN_SILENCE_MAX_WINDOW_ENERGY;
+	detector->answer_guard.profile.minimum_line_power =
+		detector->tone.carrier.profile.minimum_line_power;
 	if (detector->silence_samples < V34_RETRAIN_MIN_SILENCE_SAMPLES) {
 		add_retrain_silence_observation(
 			detector, sample, maximum_window_energy);
 		if (detector->silence_samples ==
 		    V34_RETRAIN_MIN_SILENCE_SAMPLES &&
-		    v34_phase2_tone_detector_reset(&detector->tone) !=
-			    V34_PHASE2_TONE_OK)
+		    (v34_phase2_tone_detector_reset(&detector->tone) !=
+			     V34_PHASE2_TONE_OK ||
+		     single_tone_detector_reset(&detector->answer_guard) !=
+			     SINGLE_TONE_OK))
 			return V34_PHASE2_TONE_INVALID_ARGUMENT;
 		*detected = false;
 		return V34_PHASE2_TONE_OK;
 	}
 	if (sample_valid_tone_detector(
-		    &detector->tone, sample, &event) != V34_PHASE2_TONE_OK)
+		    &detector->tone, sample, &event) != V34_PHASE2_TONE_OK ||
+	    (detector->tone.local_role == V34_CALLING_STATION &&
+	     single_tone_detector_sample(
+		     &detector->answer_guard, sample, &guard_event) !=
+		     SINGLE_TONE_OK))
 		return V34_PHASE2_TONE_INVALID_ARGUMENT;
 	measurement = measure_valid_tone_detector(&detector->tone);
 	if (retrain_tone_matches(detector, &measurement)) {

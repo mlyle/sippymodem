@@ -1303,6 +1303,52 @@ static bool check_full_retrain_response(
 	       retrain.detector.silence_samples == 0u;
 }
 
+static bool test_attenuated_retrain_guard(void)
+{
+	static const struct {
+		double guard_gain;
+		unsigned int guard_hz;
+		bool detected;
+	} cases[] = {
+		{ 0.3981071705534972, 1800, true }, /* Eight dB guard loss. */
+		{ 0.1, 1800, false }, /* Effectively bare carrier. */
+		{ 0.3981071705534972, 1300, false }, /* Unrelated energy. */
+	};
+
+	for (enum test_codec codec = TEST_CODEC_LINEAR;
+	     codec <= TEST_CODEC_PCMA; ++codec) {
+		for (size_t test = 0; test < ARRAY_LENGTH(cases); ++test) {
+			struct v34_retrain_detector detector;
+			bool seen = false;
+
+			CHECK(v34_retrain_detector_init(
+				      &detector, V34_CALLING_STATION) ==
+				      V34_PHASE2_TONE_OK &&
+			      arm_retrain_silence(&detector, codec),
+			      "attenuated retrain guard did not initialize");
+			for (size_t index = 0;
+			     index < V34_RETRAIN_TONE_SAMPLES +
+					     V34_RETRAIN_EDGE_SAMPLES && !seen;
+			     ++index) {
+				double phase = 2.0 * TEST_PI * index /
+					V34_PHASE2_SAMPLE_RATE;
+				int16_t sample = (int16_t)lround(TEST_AMPLITUDE *
+					(0.8912509381337456 * sin(2400 * phase) +
+					 cases[test].guard_gain *
+					 sin(cases[test].guard_hz * phase)));
+
+				CHECK(feed_retrain_sample(
+					      &detector, sample, codec, &seen),
+				      "attenuated guard failed at %zu", index);
+			}
+			CHECK(seen == cases[test].detected,
+			      "retrain guard case=%zu codec=%d detected=%d",
+			      test, codec, seen);
+		}
+	}
+	return true;
+}
+
 static bool test_full_retrain_response(void)
 {
 	for (enum test_codec codec = TEST_CODEC_LINEAR;
@@ -1536,6 +1582,7 @@ int main(void)
 		{ "wrong tone rejection", test_wrong_tone_rejection },
 		{ "frequency tolerance", test_frequency_tolerance },
 		{ "full-retrain request", test_full_retrain_request },
+		{ "attenuated retrain guard", test_attenuated_retrain_guard },
 		{ "short retrain quiet guard", test_retrain_quiet_tolerance },
 		{ "trained receiver silence ceiling", test_receiver_silence_ceiling },
 		{ "full-retrain response", test_full_retrain_response },

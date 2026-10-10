@@ -92,11 +92,12 @@ struct v34_phase2_tone_measurement {
 };
 
 /* Qualify the complete silence-to-Tone-A/B full-retrain request.  Tone A
- * additionally needs the answer-guard energy implied by its carrier share.
+ * additionally needs a qualified 1800 Hz answer guard.
  * The detector is instance-owned and reusable by V.34, V.90, and V.92 call
  * controllers, whose full-retrain preamble is the same. */
 struct v34_retrain_detector {
 	struct v34_phase2_tone_detector tone;
+	struct single_tone_detector answer_guard;
 	uint64_t silence_energy;
 	uint32_t silence_history[V34_RETRAIN_SILENCE_WINDOW_SAMPLES];
 	size_t silence_history_index;
