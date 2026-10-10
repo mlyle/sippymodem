@@ -4,14 +4,17 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from concurrent.futures import ThreadPoolExecutor
 import io
 import json
 import os
 from pathlib import Path
 import stat
+import socket
 import sys
 import tempfile
 import textwrap
+import threading
 import time
 import unittest
 from unittest import mock
@@ -56,6 +59,7 @@ FAKE_MODEM = r"""
 import os
 import pty
 import select
+import socket
 import sys
 import time
 import tty
@@ -72,6 +76,16 @@ online = False
 ring_sent = False
 callback_requested = False
 callback_nonce = b"0123456789abcdef0123456789abcdef"
+return_nonce = callback_nonce
+if mode == "callback-wrong-nonce":
+    return_nonce = b"fedcba9876543210fedcba9876543210"
+udp = None
+if mode == "callback-udp":
+    callback_nonce = sys.argv[4].encode("ascii")
+    return_nonce = callback_nonce
+    udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp.bind(("127.0.0.1", int(os.environ.get("SIP_PORT", "0"))))
+    udp.setblocking(False)
 raw_transport = False
 retrained = False
 
@@ -119,8 +133,17 @@ pong = (
     b"1783737600123\r\n"
 )
 while True:
+    if udp is not None and role == "answer" and not ring_sent:
+        try:
+            return_nonce, _ = udp.recvfrom(256)
+        except BlockingIOError:
+            pass
+        else:
+            os.write(master, b"\r\nRING\r\n")
+            ring_sent = True
     if (
         mode.startswith("callback")
+        and udp is None
         and role == "answer"
         and barrier is not None
         and barrier.exists()
@@ -207,7 +230,7 @@ while True:
                 master,
                 connect_response()
                 + b"GETTY:CALLBACK:CONNECT:"
-                + callback_nonce
+                + return_nonce
                 + b":ready\r\n",
             )
             online = True
@@ -223,6 +246,8 @@ while True:
             if callback_requested:
                 assert barrier is not None
                 barrier.touch()
+                if udp is not None:
+                    udp.sendto(callback_nonce, ("127.0.0.1", int(sys.argv[3])))
             os.write(master, b"\r\nOK\r\n")
         else:
             if command == b"ATZ":
@@ -1189,6 +1214,77 @@ class LiveCampaignTests(unittest.TestCase):
             training = stages.index("waiting for callback CONNECT")
             self.assertLess(ring, answering)
             self.assertLess(answering, training)
+
+    def test_two_simultaneous_callbacks_keep_listeners_and_nonces_separate(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = root / "fake.py"
+            script.write_text(textwrap.dedent(FAKE_MODEM), encoding="utf-8")
+            reservations = [socket.socket(socket.AF_INET, socket.SOCK_DGRAM) for _ in range(2)]
+            try:
+                for reservation in reservations:
+                    reservation.bind(("127.0.0.1", 0))
+                ports = [reservation.getsockname()[1] for reservation in reservations]
+            finally:
+                for reservation in reservations:
+                    reservation.close()
+            ready = threading.Barrier(2)
+
+            class CallbackProgress(_AttemptProgress):
+                def set(self, stage: str) -> None:
+                    super().set(stage)
+                    if stage == "waiting for callback RING":
+                        ready.wait(timeout=5)
+
+            frozen = FrozenBinary(root, Path(sys.executable), "a" * 40, "b" * 64, False)
+            scheduled = ScheduledAttempt(CASES_BY_NAME["v21-300-callback"], 1)
+            calls = []
+            for index, port in enumerate(ports, 1):
+                work = root / f"fxs{index}"
+                work.mkdir()
+                nonce = str(index) * 32
+                config = self.config(work, script, "callback-udp", work / "callback-ready")
+                config = replace(
+                    config,
+                    reference_name=f"fxs{index}",
+                    candidate=replace(config.candidate, arguments=config.candidate.arguments + (str(port), nonce)),
+                    callback_answer_environment=(("SIP_PORT", str(port)),),
+                )
+                calls.append((config, self.artifacts(work, scheduled), nonce))
+            with mock.patch("tools.live_terminal.time.sleep"), ThreadPoolExecutor(max_workers=2) as workers:
+                futures = [
+                    workers.submit(run_physical_attempt, config, frozen, scheduled, 1,
+                                   artifacts, True, CallbackProgress(config.reference_name))
+                    for config, artifacts, _ in calls
+                ]
+                results = [future.result(timeout=15) for future in futures]
+            for (config, artifacts, nonce), result in zip(calls, results):
+                self.assertEqual(result.reference_name, config.reference_name)
+                self.assertEqual(result.maturity, MATURITY_FULL, result.detail)
+                self.assertEqual(result.remote_retrain_nonce, nonce)
+                recorded = json.loads((artifacts.directory / "result.json").read_text())
+                self.assertEqual(recorded["result"]["reference_name"], config.reference_name)
+                received = (artifacts.legs["answer"] / "terminal-rx.bin").read_bytes()
+                self.assertIn(b"GETTY:CALLBACK:CONNECT:" + nonce.encode(), received)
+                other = ("2" if nonce[0] == "1" else "1") * 32
+                self.assertNotIn(b"GETTY:CALLBACK:CONNECT:" + other.encode(), received)
+
+    def test_callback_from_another_request_is_not_verified(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = root / "fake.py"
+            script.write_text(textwrap.dedent(FAKE_MODEM), encoding="utf-8")
+            scheduled = ScheduledAttempt(CASES_BY_NAME["v21-300-callback"], 1)
+            artifacts = self.artifacts(root, scheduled)
+            config = self.config(root, script, "callback-wrong-nonce", root / "callback-ready")
+            config = replace(config, online_timeout_seconds=0.15)
+            frozen = FrozenBinary(root, Path(sys.executable), "a" * 40, "b" * 64, False)
+            with mock.patch("tools.live_terminal.time.sleep"):
+                result = run_physical_attempt(config, frozen, scheduled, 1, artifacts, True)
+            self.assertTrue(result.connected)
+            self.assertFalse(result.initial_data)
+            self.assertFalse(result.remote_retrain)
+            self.assertEqual(result.maturity, MATURITY_CONNECT)
 
     def test_callback_request_failure_does_not_score_requested_modulation(
         self,

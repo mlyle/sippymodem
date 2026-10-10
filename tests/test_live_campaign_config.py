@@ -156,15 +156,15 @@ class LiveCampaignConfigTests(unittest.TestCase):
             assert isinstance(request, dict)
             request["SIP_PORT"] = "5060"
             self.write(path, value)
-            with self.assertRaisesRegex(CampaignConfigError, "nonstandard"):
+            with self.assertRaisesRegex(CampaignConfigError, "must differ"):
                 load_campaign_config(path)
 
             value = self.value(root)
             answer = value["callback_answer_environment"]
             assert isinstance(answer, dict)
-            answer["SIP_PORT"] = "5061"
+            answer["SIP_PORT"] = "0"
             self.write(path, value)
-            with self.assertRaisesRegex(CampaignConfigError, "standard port 5060"):
+            with self.assertRaisesRegex(CampaignConfigError, "fixed nonzero"):
                 load_campaign_config(path)
 
             value = self.value(root)
@@ -174,6 +174,26 @@ class LiveCampaignConfigTests(unittest.TestCase):
             self.write(path, value)
             with self.assertRaisesRegex(CampaignConfigError, "decimal port"):
                 load_campaign_config(path)
+
+    def test_second_reference_has_its_own_callback_listener(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "campaign.json"
+            value = self.value(root)
+            value["reference_name"] = "fxs2"
+            value["callback_answer_environment"]["SIP_PORT"] = "5064"
+            value["outbound_environment"]["SIP_TARGET"] = "sip:modem@example.invalid:5062"
+            value["callback_request_environment"]["SIP_TARGET"] = "sip:modem@example.invalid:5062"
+            self.write(path, value)
+            config = load_campaign_config(path)
+            self.assertEqual(config.reference_name, "fxs2")
+            self.assertEqual(config.environment("callback-answer")["SIP_PORT"], "5064")
+            self.assertEqual(config.environment("callback-request")["SIP_PORT"], "0")
+            for invalid in ("../fxs2", "two modems", "", "a" * 33, None):
+                value["reference_name"] = invalid
+                self.write(path, value)
+                with self.assertRaisesRegex(CampaignConfigError, "short identifier"):
+                    load_campaign_config(path)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 {
   "enabled": false,
+  "reference_name": "fxs1",
   "artifact_directory": "live-call-artifacts/campaigns",
   "build_cache": "live-call-artifacts/frozen-builds",
   "candidate": {

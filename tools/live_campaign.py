@@ -336,13 +336,14 @@ class CampaignStore:
         attempts: int,
         failure_extra: int,
         retrain: bool,
+        reference_name: str = "ata",
     ) -> CampaignStore:
         root = root.absolute()
         _private_directory(root)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
         directory = Path(
             tempfile.mkdtemp(
-                prefix=f"{stamp}-{frozen.revision[:12]}-",
+                prefix=f"{stamp}-{frozen.revision[:12]}-{reference_name}-",
                 dir=root,
             )
         )
@@ -357,6 +358,7 @@ class CampaignStore:
             directory / "manifest.json",
             {
                 "schema": 1,
+                "reference_name": reference_name,
                 "started_at": datetime.now(timezone.utc).isoformat(),
                 "revision": frozen.revision,
                 "binary_sha256": frozen.sha256,
@@ -1023,6 +1025,7 @@ def run_physical_attempt(
             state.detail += "modem hangup or cleanup did not complete"
 
     result = AttemptResult(
+        reference_name=config.reference_name,
         case_name=scheduled.case.name,
         family=scheduled.case.family,
         role=scheduled.case.role,
@@ -1262,7 +1265,7 @@ def _run_schedule(
                 else:
                     status = result.maturity or result.outcome
                 print(
-                    f"{scheduled.case.name} attempt={scheduled.ordinal} "
+                    f"{config.reference_name}: {scheduled.case.name} attempt={scheduled.ordinal} "
                     f"physical={physical_try} status={status} "
                     f"duration={result.duration_seconds:.1f}s",
                     flush=True,
@@ -1331,6 +1334,7 @@ def run_campaign(
             attempts,
             failure_extra,
             retrain,
+            reference_name=config.reference_name,
         )
         results: list[AttemptResult] = []
         started = time.monotonic()
@@ -1487,7 +1491,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             arguments.attempts + arguments.failure_extra
         )
         print(
-            f"revision={frozen.revision} binary={frozen.sha256} "
+            f"reference={config.reference_name} revision={frozen.revision} binary={frozen.sha256} "
             f"cases={len(cases)} base={len(cases) * arguments.attempts} "
             f"maximum_logical={maximum} seed={seed}",
             flush=True,

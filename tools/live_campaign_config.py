@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path, PurePosixPath
+import re
 import stat
 from typing import Any, Mapping
 
@@ -63,6 +64,7 @@ PRIVATE_ENVIRONMENT_KEYS = frozenset(
 ROOT_KEYS = frozenset(
     {
         "enabled",
+        "reference_name",
         "artifact_directory",
         "build_cache",
         "candidate",
@@ -127,6 +129,7 @@ class CampaignConfig:
     inter_call_seconds: float
     busy_retry_seconds: float
     busy_retry_limit: int
+    reference_name: str = "ata"
 
     def environment(self, purpose: str) -> dict[str, str]:
         values = {
@@ -322,6 +325,11 @@ def load_campaign_config(path: Path) -> CampaignConfig:
             "enabled campaign configuration must be owner-only"
         )
     base = path.absolute().parent
+    reference_name = value.get("reference_name", "ata")
+    if not isinstance(reference_name, str) or re.fullmatch(
+        r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}", reference_name
+    ) is None:
+        raise CampaignConfigError("reference_name must be a short identifier")
     outbound = _environment(
         value.get("outbound_environment"), "outbound_environment"
     )
@@ -341,14 +349,14 @@ def load_campaign_config(path: Path) -> CampaignConfig:
         "SIP_PORT",
         str(SIP_STANDARD_PORT),
     )
-    if _sip_port(request, "callback_request_environment") == SIP_STANDARD_PORT:
+    request_port = _sip_port(request, "callback_request_environment")
+    answer_port = _sip_port(answer, "callback_answer_environment")
+    if answer_port == 0:
         raise CampaignConfigError(
-            "callback request SIP_PORT must be nonstandard or zero"
+            "callback answer SIP_PORT must be a fixed nonzero port"
         )
-    if _sip_port(answer, "callback_answer_environment") != SIP_STANDARD_PORT:
-        raise CampaignConfigError(
-            "callback answer SIP_PORT must be the standard port 5060"
-        )
+    if request_port == answer_port:
+        raise CampaignConfigError("callback request and answer SIP_PORT must differ")
     if enabled:
         if "SIP_TARGET" not in dict(outbound):
             raise CampaignConfigError("outbound environment requires SIP_TARGET")
@@ -362,6 +370,7 @@ def load_campaign_config(path: Path) -> CampaignConfig:
             )
     return CampaignConfig(
         enabled=enabled,
+        reference_name=reference_name,
         artifact_directory=_path(
             value.get("artifact_directory"), "artifact_directory", base
         ),

@@ -126,6 +126,7 @@ class AttemptResult:
     retrain_upstream_mode: str | None = None
     startup: str | None = None
     retrain_startup: str | None = None
+    reference_name: str = "ata"
 
     @property
     def profile_mismatch(self) -> bool:

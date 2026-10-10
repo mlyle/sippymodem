@@ -95,6 +95,45 @@ are bounded and recorded. The ledger, seed, schedule, result records, logs and
 captures remain in owner-only ignored artifacts. Do not publish those files
 without checking them for site information.
 
+### Two modems on one ATA
+
+Use one owner-only campaign configuration per FXS port, with distinct
+`reference_name` values such as `fxs1` and `fxs2`. Set both `SIP_TARGET` values
+(outbound and callback request) to that FXS port's direct SIP URI. Keep the
+second configuration disabled until its modem and reference getty are ready.
+The foreground terminal also accepts an `ata2` profile; plain `ATDT` calls
+its configured `SIP_TARGET`.
+
+Callbacks need separate **local** listening ports. The ATA's FXS destination
+port and our callback listening port are independent settings:
+
+| Configuration | Direct target example | Local callback `SIP_PORT` |
+| --- | --- | --- |
+| FXS1 | `sip:modem@ata.example.invalid:5060` | `5060` |
+| FXS2 | `sip:modem@ata.example.invalid:5062` | `5064` |
+
+Configure each reference getty's callback number to reach its corresponding
+listener. Grandstream direct-IP dialing encodes the destination port as a final
+`*port`: for example, `*47192*0*2*10*5064` reaches `192.0.2.10:5064`.
+See the [Grandstream direct-IP calling guide](https://documentation.grandstream.com/knowledge-base/ht81x-user-guide/).
+Use ephemeral local SIP/RTP ports (`"0"`) on outbound/request legs and ephemeral
+RTP ports on callback answerers. Both answerers may bind the same local address
+on different SIP ports. Reserve each physical modem for one campaign at a time.
+
+Run the campaigns in separate terminals:
+
+```sh
+python3 tools/live_campaign.py --config .live-campaign-fxs1.json --plain
+python3 tools/live_campaign.py --config .live-campaign-fxs2.json --plain
+```
+
+Each campaign starts and configures its callback listener before dialing the
+request leg. Separate listeners handle simultaneous returns; the returned
+GETTY marker must also match that request's nonce. Results and campaign
+manifests retain `reference_name`, and each run has its own artifact directory.
+An occupied callback port fails setup before the reference is asked to call
+back. Existing single-modem configurations keep the default callback port 5060.
+
 ## Recording replay
 
 Large recordings stay outside Git. Inputs below are 8-kHz signed 16-bit
