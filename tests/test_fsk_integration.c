@@ -137,6 +137,7 @@ struct modem_test_case {
 	unsigned int training_frame_limit;
 	unsigned int answer_tone_prefix_ms;
 	unsigned int caller_delay_frames;
+	unsigned int answerer_s1_gap_samples;
 	unsigned int minimum_caller_rate_signals;
 	unsigned int minimum_caller_rate_signal_sample;
 	bool answer_tone_prefix_modulated;
@@ -2385,6 +2386,7 @@ static bool run_media_call(
 	bool transferred = false;
 	bool answerer_signal_seen = false;
 	bool answerer_carrier_seen = false;
+	bool answerer_s1_gap_injected = false;
 	uint32_t answerer_precarrier_noise = 0x42519554u;
 	unsigned int answerer_silence_frames = 0;
 	unsigned int answerer_silence_max = 0;
@@ -2570,6 +2572,13 @@ static bool run_media_call(
 	      test_case->name);
 
 	for (unsigned int frame = 0; frame < training_frame_limit; ++frame) {
+		if (test_case->answerer_s1_gap_samples != 0 &&
+		    !answerer_s1_gap_injected &&
+		    !strcmp(modem_protocol_step(answerer.modem), "V.22/mark-exchange")) {
+			/* A fixed answerer begins its S1 in the mark-exchange phase. */
+			caller.erased_samples = test_case->answerer_s1_gap_samples;
+			answerer_s1_gap_injected = true;
+		}
 		CHECK(process_test_frame(
 			      &caller, &answerer, codec, &recorder,
 			      &caller_delay,
@@ -2630,6 +2639,8 @@ static bool run_media_call(
 	}
 	if (answerer_silence_frames > answerer_silence_max)
 		answerer_silence_max = answerer_silence_frames;
+	CHECK(test_case->answerer_s1_gap_samples == 0 || answerer_s1_gap_injected,
+	      "%s did not exercise its S1 signal dip", test_case->name);
 	CHECK(online && answerer_used_v8 &&
 		      caller.modem->tx_rate == test_case->caller_tx_rate &&
 		      caller.modem->rx_rate == test_case->caller_rx_rate &&
@@ -4828,15 +4839,30 @@ int main(void)
 		},
 		{
 			.id = DP_V92, .answerer_id = DP_V22BIS,
-			.name = "automatic legacy V.22bis with delayed response",
+			.name = "automatic legacy V.22bis with delayed response and signal dip",
 			.connected_id = DP_V22BIS,
 			.selection_command = "AT\r",
 			.answerer_selection_command = "AT+MS=122,0,2400,2400\r",
 			.caller_tx_rate = 2400, .caller_rx_rate = 2400,
 			.answerer_tx_rate = 2400, .answerer_rx_rate = 2400,
-			/* Include the caller's mark guard and S1 before the delayed
-			 * reply. The old 1.6 s probe expired before reciprocal S1. */
+			/* A single 5 ms dip must not reacquire timing and lose S1. */
 			.caller_delay_frames = 45,
+			.answerer_s1_gap_samples = MODEM_FRAG,
+			.training_frame_limit = 500,
+			.automode = true, .answerer_fixed = true,
+			.raw_transport = true, .factory_transport = true,
+			.automatic_pcm_roles = true,
+		},
+		{
+			.id = DP_V92, .answerer_id = DP_V22BIS,
+			.name = "automatic legacy V.22bis with long delayed response",
+			.connected_id = DP_V22BIS,
+			.selection_command = "AT\r",
+			.answerer_selection_command = "AT+MS=122,0,2400,2400\r",
+			.caller_tx_rate = 2400, .caller_rx_rate = 2400,
+			.answerer_tx_rate = 2400, .answerer_rx_rate = 2400,
+			/* The old two-second probe included the mark guard and our S1. */
+			.caller_delay_frames = 65,
 			.training_frame_limit = 500,
 			.automode = true, .answerer_fixed = true,
 			.raw_transport = true, .factory_transport = true,

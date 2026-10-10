@@ -24,10 +24,6 @@ enum {
 	LEGACY_TONE_COUNT = 5,
 	LEGACY_ANSWER_SAMPLES = 5 * MODEM_RATE,
 	LEGACY_GAP_SAMPLES = MODEM_RATE * 75 / 1000,
-	/* Allow the answer-mark guard, our S1 and a delayed reciprocal S1
-	 * before retrying a fixed 600-bit/s peer. Confirmed training owns
-	 * its remaining deadline. */
-	LEGACY_V22_RETRY_SAMPLES = 2 * MODEM_RATE,
 };
 
 static const struct {
@@ -772,8 +768,7 @@ static int process_legacy(struct v8_datapump *datapump, const int16_t *receive, 
 		    legacy_id(datapump, DP_B103) != 0)
 			return start_legacy(datapump, DP_B103, false) ? DPSTAT_OK : DPSTAT_ERROR;
 		if (result == DPSTAT_OK && datapump->legacy->id == DP_V22BIS &&
-		    datapump->legacy_samples >= LEGACY_V22_RETRY_SAMPLES &&
-		    !v22_datapump_has_peer(datapump->legacy) &&
+		    v22_datapump_can_retry_600(datapump->legacy) &&
 		    datapump->dp.modem->min_rate <= 600 &&
 		    datapump->dp.modem->max_rate >= 600)
 			return start_legacy(datapump, DP_V22, true) ? DPSTAT_OK : DPSTAT_ERROR;

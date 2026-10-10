@@ -18,5 +18,7 @@ enum {
 
 const struct dp_operations *v22_datapump_operations(enum DP_ID id);
 bool v22_datapump_has_peer(struct dp *dp);
+/* The bounded reply wait starts after our S1, excluding the answer-mark guard. */
+bool v22_datapump_can_retry_600(struct dp *dp);
 
 #endif /* V22_DATAPUMP_H */

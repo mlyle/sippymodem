@@ -48,6 +48,9 @@ enum {
 	V22BIS_RETRAIN_CONFIDENCE_Q15 = 0x7eb8,
 	V22BIS_RETRAIN_MIN_REPEATED_PAIRS = 3,
 	V22_RETRAIN_RETRY_SAMPLES = MODEM_RATE * 12 / 10,
+	V22BIS_RATE_REPLY_WAIT_SAMPLES = 2 * MODEM_RATE,
+	/* Preserve acquired timing across short dips at training boundaries. */
+	V22_TRAINING_GAP_SAMPLES = MODEM_RATE / 50,
 };
 
 static const struct qam_channel v22_low_channel = {
@@ -118,6 +121,7 @@ struct v22_datapump {
 	uint32_t v22bis_confirm_bits;
 	uint32_t rate_signal_tx_symbols;
 	uint32_t rate_signal_wait_samples;
+	uint32_t training_gap_samples;
 	uint32_t missing_carrier_samples;
 	uint32_t carrier_return_hold_samples;
 	uint32_t retrain_peer_samples;
@@ -290,7 +294,8 @@ static struct v22_datapump *v22_from_dp(struct dp *dp)
 	    datapump->rate_signal_tx_symbols >
 		    V22BIS_RATE_SIGNAL_SYMBOLS ||
 	    datapump->rate_signal_wait_samples >
-		    V22_RETRAIN_RETRY_SAMPLES ||
+		    V22BIS_RATE_REPLY_WAIT_SAMPLES ||
+	    datapump->training_gap_samples > V22_TRAINING_GAP_SAMPLES ||
 	    datapump->retrain_candidate_bit_count >
 		    sizeof(datapump->retrain_candidate_bits) ||
 	    datapump->retrain_peer_samples > V22_RETRAIN_RETRY_SAMPLES ||
@@ -1692,7 +1697,7 @@ static int advance_training_timer(
 	    datapump->training_state == V22_TRAINING_WAIT_SCRAMBLED_MARK)
 		datapump_add_samples_bounded(
 			&datapump->rate_signal_wait_samples, 1,
-			V22_RETRAIN_RETRY_SAMPLES);
+			V22BIS_RATE_REPLY_WAIT_SAMPLES);
 	if (datapump->training_state == V22_TRAINING_ORIGINATE_SILENCE) {
 		datapump->phase_samples++;
 		if (datapump->phase_samples >= V22_ORIGINATE_SILENCE_SAMPLES) {
@@ -1761,15 +1766,30 @@ static int process_v22(
 	uint32_t carrier_loss_limit;
 	bool discard_receive = false;
 	bool line_power_present;
+	bool retain_training_timing = false;
 	bool linked = false;
 	bool return_hold_was_active;
 
 	if (!datapump_linear_fragment_is_ready(datapump, receive, transmit, count))
 		return DPSTAT_ERROR;
 	line_power_present = datapump_qam_line_power_present(receive, count);
+	if (!datapump_is_retraining(datapump) &&
+	    datapump->training_state != V22_TRAINING_ONLINE) {
+		if (line_power_present)
+			datapump->training_gap_samples = 0;
+		else
+			datapump_add_samples_bounded(
+				&datapump->training_gap_samples, (unsigned)count,
+				V22_TRAINING_GAP_SAMPLES);
+		retain_training_timing = datapump->has_previous_receive_point &&
+			datapump->training_state !=
+				V22_TRAINING_ORIGINATE_WAIT_ANSWER_MARK &&
+			datapump->training_gap_samples < V22_TRAINING_GAP_SAMPLES;
+	}
 	/* The generic QAM floor is deliberately permissive.  Do not let codec
 	 * idle residue establish V.22 timing or protocol lineage before carrier. */
-	if (!line_power_present && !datapump_is_retraining(datapump) &&
+	if (!line_power_present && !retain_training_timing &&
+	    !datapump_is_retraining(datapump) &&
 	    datapump->training_state != V22_TRAINING_ONLINE) {
 		if (reset_v22_receive_path(datapump) != 0) {
 			memset(transmit, 0, (size_t)count * sizeof(*transmit));
@@ -1811,7 +1831,7 @@ static int process_v22(
 	return_hold_was_active =
 		datapump->carrier_return_hold_samples != 0;
 	for (int index = 0; index < count; ++index) {
-		bool receive_active = line_power_present;
+		bool receive_active = line_power_present || retain_training_timing;
 		if (datapump->originator && datapump->training_state ==
 		    V22_TRAINING_ORIGINATE_WAIT_ANSWER_MARK) {
 			struct single_tone_event event;
@@ -1827,7 +1847,8 @@ static int process_v22(
 		}
 		if (generate_sample(datapump, &transmit[index]) != 0 ||
 		    (receive_active && receive_sample(
-			    datapump, receive[index], discard_receive,
+			    datapump, receive[index],
+			    discard_receive || !line_power_present,
 			    &linked) != 0) ||
 		    advance_training_timer(datapump, &linked) != 0) {
 			memset(transmit, 0, (size_t)count * sizeof(*transmit));
@@ -1880,6 +1901,18 @@ bool v22_datapump_has_peer(struct dp *dp)
 		 datapump->training_state == V22_TRAINING_CONNECT_HOLD ||
 		 datapump->training_state == V22_TRAINING_V22BIS_CONFIRM ||
 		 datapump->training_state == V22_TRAINING_ONLINE);
+}
+
+bool v22_datapump_can_retry_600(struct dp *dp)
+{
+	struct v22_datapump *datapump = v22_from_dp(dp);
+
+	return datapump != NULL && datapump->originator &&
+		datapump_uses_v22bis(datapump) &&
+		datapump->training_state == V22_TRAINING_WAIT_SCRAMBLED_MARK &&
+		datapump->rate_signal_wait_samples >=
+			V22BIS_RATE_REPLY_WAIT_SAMPLES &&
+		!v22_datapump_has_peer(dp);
 }
 
 static int tx_tail_samples(const struct dp *dp)
