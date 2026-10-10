@@ -22,9 +22,10 @@ enum {
 	LEGACY_TONE_COUNT = 5,
 	LEGACY_ANSWER_SAMPLES = 5 * MODEM_RATE,
 	LEGACY_GAP_SAMPLES = MODEM_RATE * 75 / 1000,
-	/* Retain confirmed S1/1200 training; otherwise retry before a fixed
-	 * 600-bit/s answerer abandons its initial carrier acquisition. */
-	LEGACY_V22_RETRY_SAMPLES = MODEM_RATE * 16 / 10,
+	/* Allow the answer-mark guard, our S1 and a delayed reciprocal S1
+	 * before retrying a fixed 600-bit/s peer. Confirmed training owns
+	 * its remaining deadline. */
+	LEGACY_V22_RETRY_SAMPLES = 2 * MODEM_RATE,
 };
 
 static const struct {

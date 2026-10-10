@@ -4693,6 +4693,23 @@ int main(void)
 			.impairment = INTEGRATION_IMPAIRMENT_NONE,
 		},
 		{
+			.id = DP_V92, .answerer_id = DP_V22BIS,
+			.name = "automatic legacy V.22bis with delayed response",
+			.connected_id = DP_V22BIS,
+			.selection_command = "AT\r",
+			.answerer_selection_command = "AT+MS=122,0,2400,2400\r",
+			.caller_tx_rate = 2400, .caller_rx_rate = 2400,
+			.answerer_tx_rate = 2400, .answerer_rx_rate = 2400,
+			/* Include the caller's mark guard and S1 before the delayed
+			 * reply. The old 1.6 s probe expired before reciprocal S1. */
+			.caller_delay_frames = 45,
+			.training_frame_limit = 500,
+			.automode = true, .answerer_fixed = true,
+			.raw_transport = true, .factory_transport = true,
+			.automatic_pcm_roles = true,
+		},
+
+		{
 			.id = DP_V22BIS, .answerer_id = DP_V22,
 			.name = "automatic V.22bis caller to legacy V.22",
 			.connected_id = DP_V22,
