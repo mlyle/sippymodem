@@ -532,9 +532,11 @@ static bool run_pair_until_frames(
 		    v34_call_is_online(&answerer->call) &&
 		    caller->mapping_frames_received >= minimum_frames &&
 		    answerer->mapping_frames_received >= minimum_frames) {
-			CHECK(caller->call.phase4_e_remaining_samples == 0u &&
+			CHECK(caller->call.phase4_s_remaining_samples == 0u &&
+			      answerer->call.phase4_s_remaining_samples == 0u &&
+			      caller->call.phase4_e_remaining_samples == 0u &&
 			      answerer->call.phase4_e_remaining_samples == 0u,
-			      "received E retained a startup deadline into online data");
+			      "online data retained a startup deadline");
 			return true;
 		}
 	}
@@ -2077,6 +2079,73 @@ static bool test_final_tone_timeout(void)
 }
 
 
+static bool test_missing_final_s_recovery(void)
+{
+	const size_t delays[] = { LINE_DELAY_SAMPLES, 800u };
+
+	for (unsigned pcma = 0; pcma < 2u; ++pcma) {
+		for (size_t index = 0; index < ARRAY_LENGTH(delays); ++index) {
+			struct endpoint caller = { 0 }, answerer = { 0 };
+			struct channel channel = { .delay_samples = delays[index], .pcma = pcma };
+			bool started = false;
+
+			CHECK(endpoint_init(&caller, V34_CALLING_STATION) &&
+			      endpoint_init(&answerer, V34_ANSWERING_STATION),
+			      "final S deadline endpoints did not initialize");
+			for (size_t sample = 0; sample < SAMPLE_LIMIT; ++sample) {
+				struct v34_call_observation observations[2];
+
+				CHECK(channel_sample_pair(&channel, &caller, &answerer,
+					      &observations[0], &observations[1]),
+				      "final S deadline setup failed at %zu", sample);
+				if (observations[0].processed == V34_CALL_PHASE3 &&
+				    (observations[0].events.phase3 &
+				     V34_PHASE3_EXCHANGE_EVENT_TRANSMIT_J_STARTED) != 0) {
+					started = true;
+					break;
+				}
+			}
+			CHECK(started && caller.call.peer_info0_stored &&
+			      caller.call.round_trip_delay_stored,
+			      "final S deadline missed the caller's first J sample");
+			struct v34_info0 peer = caller.call.peer_info0;
+			uint16_t rtd = caller.call.round_trip_delay_samples;
+			uint32_t deadline = 600u * 8u + rtd;
+			struct v34_call_observation observation;
+			struct v34_received_mapping_frame received;
+			int16_t transmitted;
+
+			/* The caller has sent J, but the peer's final S/S-bar never
+			 * arrives. The later E deadline cannot start in this state. */
+			for (uint32_t elapsed = 1u; elapsed <= deadline; ++elapsed) {
+				CHECK(v34_call_sample(&caller.call, 0, NULL, NULL,
+					      &transmitted, &observation, &received) == V34_CALL_OK,
+				      "law %u delay %zu missing S stopped at %u/%u",
+				      pcma, delays[index], elapsed, deadline);
+				CHECK((caller.call.stage == V34_CALL_RETRAIN_SILENCE) ==
+					      (elapsed == deadline),
+				      "law %u delay %zu missing S recovered at the wrong sample %u/%u",
+				      pcma, delays[index], elapsed, deadline);
+			}
+			CHECK(caller.call.retrain_active && !caller.call.failed &&
+			      caller.call.phase4_s_remaining_samples == 0u &&
+			      caller.call.phase4_e_remaining_samples == 0u &&
+			      caller.call.round_trip_delay_samples == rtd &&
+			      v34_info0_equal(&caller.call.peer_info0, &peer),
+			      "missing S recovery lost the negotiated call agreement");
+			for (unsigned sample = 0; sample < 70u * 8u; ++sample)
+				CHECK(v34_call_sample(&caller.call, 0, NULL, NULL, &transmitted,
+					      &observation, &received) == V34_CALL_OK && transmitted == 0 &&
+				      observation.processed == V34_CALL_RETRAIN_SILENCE,
+				      "missing S recovery did not retain its full silence interval");
+			CHECK(caller.call.stage == V34_CALL_PHASE2 &&
+			      caller.call.retrain_active && !caller.call.failed,
+			      "missing S recovery did not resume Phase 2");
+		}
+	}
+	return true;
+}
+
 static bool test_initial_e_timeout(void)
 {
 	for (unsigned int role = 0; role < 2u; ++role) {
@@ -2208,6 +2277,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "final Tone-A timeout retrain", test_final_tone_timeout },
+		{ "missing final S recovery", test_missing_final_s_recovery },
 		{ "bounded initial E exchange", test_initial_e_timeout },
 		{ "bounded online rate renegotiation", test_rate_renegotiation_timeout },
 		{ "reciprocal zero-rate cleardown", test_cleardown },

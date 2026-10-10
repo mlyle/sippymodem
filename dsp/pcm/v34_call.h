@@ -85,6 +85,7 @@ struct v34_call {
 	struct v34_phase3_exchange_configuration phase3_configuration;
 	struct v34_phase4_exchange_configuration phase4_configuration;
 	struct v34_full_retrain retrain;
+	uint32_t phase4_s_remaining_samples;
 	uint32_t phase4_e_remaining_samples;
 	uint32_t echo_quiet_samples;
 	uint16_t round_trip_delay_samples;
