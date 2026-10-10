@@ -40,8 +40,14 @@ fixed prefill when the next remote-clocked samples are already contiguous.
 ## Receive-driven pacing
 
 Accepted RTP sample time supplies transmit and DSP credit, including lost
-intervals. A seed frame starts media before the first inbound RTP; an already
-received stream supplies its own startup credit.
+intervals. Before the first accepted RTP, the modem sends at the nominal local
+rate. Some symmetric RTP gateways need several sequential packets to learn
+the return address; a single seed packet can leave both ends waiting. Startup
+processes at most one frame per nominal interval, without a catch-up burst.
+The first accepted stream, including a partial frame, switches immediately to
+receive-driven timing. An already received stream supplies its own startup
+credit, and later loss of an established stream does not restart the local
+clock.
 
 The ceiling is exactly four thirds of the configured sample rate. A token
 interval is three quarters of a nominal frame: 20 ms becomes 15 ms; 10 ms
@@ -65,7 +71,9 @@ continued excess input therefore loses packets. A software feedback peer follows
 the rate of our replies, while an independent peer must keep its own clock within
 the sustainable receive rate.
 
-Five seconds without accepted complete RTP clock progress ends the call.
+Five seconds without accepted complete RTP clock progress ends the call,
+including startup. Sending startup packets or receiving malformed packets
+does not extend that deadline.
 
 ## Measured receive delay
 

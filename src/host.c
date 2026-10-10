@@ -19,7 +19,7 @@ struct modem_host {
 	bool audio_suspended;
 	bool shared_signaling;
 	bool remote_clock;
-	bool remote_seed_pending;
+	bool remote_starting;
 	bool remote_clock_started;
 	uint64_t remote_clock_time_ns;
 	size_t remote_frames_pending;
@@ -28,6 +28,7 @@ struct modem_host {
 	struct rtp_playout_status remote_gap_cursor;
 	bool remote_gap_active;
 	struct frame_pacer remote_pacer;
+	struct frame_pacer startup_pacer;
 	uint64_t remote_now_ns;
 	bool remote_time_valid;
 	bool remote_stream_valid;
@@ -55,13 +56,14 @@ static void synchronize_audio(struct modem_host *host)
 		media_configured && !host->audio_suspended);
 	if (host->remote_clock && !was_active &&
 	    audio_scheduler_is_active(&host->audio_scheduler))
-		host->remote_seed_pending = true;
+		host->remote_starting = true;
 	if (!audio_scheduler_is_active(&host->audio_scheduler)) {
-		host->remote_seed_pending = false;
+		host->remote_starting = false;
 		host->remote_clock_started = false;
 		host->remote_frames_pending = 0;
 		host->remote_gap_active = false;
 		frame_pacer_reset(&host->remote_pacer);
+		frame_pacer_reset(&host->startup_pacer);
 		host->remote_time_valid = false;
 		host->remote_stream_valid = false;
 		host->remote_partial_active = false;
@@ -102,7 +104,9 @@ struct modem_host *modem_host_create_shared(
 	 * Integer-millisecond RTP frames have an exactly representable quarter. */
 	if (!frame_pacer_init(&host->remote_pacer,
 		host->audio_scheduler.clock.interval_ns / 4 * 3,
-		MEDIA_MAX_CATCHUP_FRAMES))
+		MEDIA_MAX_CATCHUP_FRAMES) ||
+	    !frame_pacer_init(&host->startup_pacer,
+		host->audio_scheduler.clock.interval_ns, 1))
 		goto fail;
 	host->remote_partial_window_ns = host->remote_gap_window_ns;
 	if (host->remote_partial_window_ns < host->audio_scheduler.clock.interval_ns)
@@ -164,11 +168,12 @@ enum sip_session_result modem_host_close(
 	(void)audio_path_take_levels(host->audio_path);
 	host->media_was_configured = false;
 	host->audio_suspended = false;
-	host->remote_seed_pending = false;
+	host->remote_starting = false;
 	host->remote_clock_started = false;
 	host->remote_frames_pending = 0;
 	host->remote_gap_active = false;
 	frame_pacer_reset(&host->remote_pacer);
+	frame_pacer_reset(&host->startup_pacer);
 	host->remote_time_valid = false;
 	host->remote_stream_valid = false;
 	host->remote_partial_active = false;
@@ -335,12 +340,19 @@ enum modem_host_result modem_host_step(
 					host, MODEM_HOST_MEDIA_TIMEOUT);
 			}
 		}
-		if (host->remote_seed_pending) {
-			/* Incoming media already supplies the startup clock. Seeding
-			 * its receiver again would consume audio without RTP credit. */
-			if (!sip_session_playout_status(host->session).stream_active)
-				host->remote_frames_pending++;
-			host->remote_seed_pending = false;
+		/* A symmetric RTP peer may qualify several sequential packets before
+		 * routing return media. Run at the nominal local rate until its first
+		 * accepted audio, bounded by the unchanged media timeout above. Once
+		 * the stream exists, only its credit may advance the modem. */
+		if (sip_session_playout_status(host->session).stream_active)
+			host->remote_starting = false;
+		if (host->remote_starting) {
+			host->last_audio_scheduler_result = AUDIO_SCHEDULER_IDLE;
+			if (frame_pacer_take(&host->startup_pacer, now_ns) &&
+			    frame_pacer_take(&host->remote_pacer, now_ns))
+				host->last_audio_scheduler_result = audio_scheduler_step_remote(
+					&host->audio_scheduler, 1, &frames);
+			goto audio_processed;
 		}
 		if (audio_scheduler_is_active(&host->audio_scheduler)) {
 			if (remote_frames > SIZE_MAX - host->remote_frames_pending)
@@ -376,6 +388,7 @@ enum modem_host_result modem_host_step(
 		host->last_audio_scheduler_result = audio_scheduler_step(
 			&host->audio_scheduler, now_ns, &frames);
 	}
+audio_processed:
 	if (frames_processed != NULL)
 		*frames_processed = frames;
 	sip_session_trace_media(host->session, now_ns);
@@ -409,8 +422,16 @@ uint64_t modem_host_wait_ns(
 	if (host->remote_clock) {
 		if (host->remote_time_valid && now_ns < host->remote_now_ns)
 			now_ns = host->remote_now_ns;
-		if (host->remote_seed_pending)
-			return 0;
+		if (host->remote_starting) {
+			uint64_t wait = frame_pacer_wait_ns(&host->startup_pacer, now_ns);
+			uint64_t ceiling = frame_pacer_wait_ns(&host->remote_pacer, now_ns);
+
+			if (wait < ceiling)
+				wait = ceiling;
+
+			return wait < MODEM_HOST_SIGNALING_POLL_NS ?
+				wait : MODEM_HOST_SIGNALING_POLL_NS;
+		}
 		if (host->remote_frames_pending != 0 || host->remote_partial_active) {
 			uint64_t wait = host->remote_frames_pending != 0 ?
 				remote_gap_wait_ns(host, now_ns) : remote_partial_wait_ns(host, now_ns);

@@ -739,7 +739,7 @@ static bool test_remote_media_clocks_elapsed_time(void)
 			      MODEM_HOST_OK &&
 		      datagrams == 0 && frames == 1 && core.calls == 1 &&
 		      modem_host_wait_ns(host, 1000000000) ==
-			      MODEM_HOST_SIGNALING_POLL_NS,
+			      1000000,
 	      "remote-clock host did not emit exactly one seed frame");
 	CHECK(strstr(trace, "TX=1 RX=0 accepted=0"),
 	      "trace did not report the seed packet with no inbound media");
@@ -856,8 +856,8 @@ static bool test_remote_media_clocks_elapsed_time(void)
 	      modem_host_step(host, UINT64_MAX - MODEM_HOST_REMOTE_MEDIA_TIMEOUT_NS,
 		      NULL, &frames) == MODEM_HOST_OK && frames == 1 &&
 	      modem_host_audio_is_active(host) &&
-	      modem_host_step(host, UINT64_MAX - 1, NULL, &frames) == MODEM_HOST_IDLE &&
-	      frames == 0 &&
+	      modem_host_step(host, UINT64_MAX - 1, NULL, &frames) == MODEM_HOST_OK &&
+	      frames == 1 &&
 	      modem_host_step(host, UINT64_MAX, NULL, &frames) == MODEM_HOST_MEDIA_TIMEOUT &&
 	      frames == 0 && fake.hangups == 2,
 	      "new media did not reset its bounded, overflow-safe startup deadline");
@@ -891,12 +891,56 @@ static bool test_remote_media_clocks_elapsed_time(void)
 	core.hangup_host = NULL;
 	CHECK(modem_host_dial(host, "sip:peer@127.0.0.1") == SIP_SIGNALING_OK &&
 		modem_host_step(host, UINT64_MAX, NULL, &frames) == MODEM_HOST_OK && frames == 1 &&
-		modem_host_wait_ns(host, UINT64_MAX) == MODEM_HOST_SIGNALING_POLL_NS,
+		modem_host_wait_ns(host, UINT64_MAX) == 1000000,
 		"replacement call inherited retired remote clock credit");
 	CHECK(modem_host_close(host) == SIP_SESSION_OK,
 	      "remote-clock host did not close");
 	modem_host_destroy(host);
 	close(peer_fd);
+	return true;
+}
+
+static bool test_remote_startup_qualifies_a_return_path(void)
+{
+	struct clock_fixture fixture;
+	uint8_t packet[RTP_HEADER_SIZE + CLOCK_FRAME_SAMPLES];
+	struct rtp_header previous = { 0 };
+	size_t frames;
+
+	CHECK(clock_fixture_open(&fixture, 60), "startup fixture failed");
+	/* A symmetric RTP peer may need several sequential packets before it
+	 * knows where to send audio. One seed cannot open that return path. */
+	for (unsigned int index = 0; index < 5; ++index) {
+		const uint64_t now = index * UINT64_C(20000000);
+		struct rtp_packet_view view;
+		ssize_t count;
+
+		CHECK(sendto(fixture.peer, "bad", 3, 0,
+			(struct sockaddr *)&fixture.address, sizeof(fixture.address)) == 3 &&
+		      modem_host_step(fixture.host, now, NULL, &frames) == MODEM_HOST_OK &&
+		      frames == 1, "startup stopped before source qualification at %u", index);
+		count = recv(fixture.peer, packet, sizeof(packet), MSG_DONTWAIT);
+		CHECK(count > 0 && rtp_packet_parse(packet, (size_t)count, &view) == RTP_OK &&
+		      view.payload_size == CLOCK_FRAME_SAMPLES &&
+		      (index == 0 ||
+		       (view.header.sequence == (uint16_t)(previous.sequence + 1u) &&
+			view.header.timestamp == previous.timestamp + CLOCK_FRAME_SAMPLES)),
+		      "startup RTP was not consecutive at %u", index);
+		previous = view.header;
+		CHECK(modem_host_step(fixture.host, now + UINT64_C(19999999),
+			NULL, &frames) == MODEM_HOST_IDLE && frames == 0 &&
+		      modem_host_wait_ns(fixture.host, now + UINT64_C(19999999)) == 1,
+		      "startup advanced before its nominal frame deadline");
+	}
+	CHECK(fixture.capture.generated_count == 5 * CLOCK_FRAME_SAMPLES &&
+	      clock_fixture_send(&fixture, 0) &&
+	      modem_host_step(fixture.host, UINT64_C(100000000), NULL, &frames) == MODEM_HOST_OK &&
+	      frames == 1 && fixture.capture.received_count == CLOCK_FRAME_SAMPLES &&
+	      fixture.capture.generated_count == 5 * CLOCK_FRAME_SAMPLES,
+	      "first peer audio was delayed or also consumed a startup tick");
+	CHECK(modem_host_step(fixture.host, UINT64_C(200000000), NULL, &frames) == MODEM_HOST_IDLE &&
+	      frames == 0, "established remote clock resumed wall-clock transmission");
+	clock_fixture_close(&fixture);
 	return true;
 }
 
@@ -1030,6 +1074,7 @@ int main(void)
 		{ "recorded frame clock",
 		  test_steps_recorded_media_on_the_frame_clock },
 		{ "remote RTP clock", test_remote_media_clocks_elapsed_time },
+		{ "remote startup return path", test_remote_startup_qualifies_a_return_path },
 		{ "remote gap without prefill", test_remote_gap_wait_has_no_fixed_prefill },
 		{ "remote gap timeout", test_remote_gap_timeout_is_once_per_hole },
 		{ "remote partial deadline", test_remote_partial_frame_is_bounded },
