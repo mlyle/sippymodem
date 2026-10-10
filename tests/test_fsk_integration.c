@@ -16,6 +16,7 @@
 #include <v23_datapump.h>
 #include <datapump.h>
 #include <datapump_link.h>
+#include <v8_ansam.h>
 #include <v8_datapump.h>
 #include <v34_datapump.h>
 #include <v34_frame_schedule.h>
@@ -136,6 +137,7 @@ struct modem_test_case {
 	unsigned int caller_delay_frames;
 	unsigned int minimum_caller_rate_signals;
 	unsigned int minimum_caller_rate_signal_sample;
+	bool answer_tone_prefix_modulated;
 	bool automode;
 	bool answerer_automode;
 	bool answerer_fixed;
@@ -2110,17 +2112,22 @@ static bool exercise_cleardown(
 	return true;
 }
 
-/* Some legacy answerers send ANS before their family-specific mark. Keep
- * the fixed datapump unclocked until that preamble has finished. */
+/* A peer can send ANS or unanswered ANSam before its legacy mark. Keep the
+ * fixed datapump unclocked until that preamble has finished. */
 static bool present_legacy_answer_tone(struct integration_endpoint *caller,
-	enum media_codec codec, unsigned int milliseconds)
+	enum media_codec codec, unsigned int milliseconds, bool modulated)
 {
 	struct single_tone_transmitter tone;
+	struct v8_ansam_generator ansam;
 	enum g711_law law;
 	unsigned int samples = milliseconds * (MODEM_RATE / 1000);
 
-	if (!codec_law(codec, &law) ||
-	    single_tone_transmitter_init(&tone, 2100, 12000) != SINGLE_TONE_OK)
+	if (!codec_law(codec, &law))
+		return false;
+	if (modulated) {
+		if (v8_ansam_generator_init(&ansam, 12000, true) != V8_ANSAM_OK)
+			return false;
+	} else if (single_tone_transmitter_init(&tone, 2100, 12000) != SINGLE_TONE_OK)
 		return false;
 	for (unsigned int offset = 0; offset < samples; offset += MODEM_FRAG) {
 		int16_t receive[MODEM_FRAG], transmit[MODEM_FRAG];
@@ -2131,7 +2138,10 @@ static bool present_legacy_answer_tone(struct integration_endpoint *caller,
 		for (unsigned int i = 0; i < count; ++i) {
 			int16_t sample;
 
-			if (single_tone_transmitter_sample(&tone, &sample) != SINGLE_TONE_OK)
+			if (modulated) {
+				if (v8_ansam_generate(&ansam, &sample, 1) != V8_ANSAM_OK)
+					return false;
+			} else if (single_tone_transmitter_sample(&tone, &sample) != SINGLE_TONE_OK)
 				return false;
 			receive[i] = decode_codeword(law, encode_codeword(law, sample));
 		}
@@ -2140,7 +2150,8 @@ static bool present_legacy_answer_tone(struct integration_endpoint *caller,
 		    caller->modem->dp->id != DP_V8)
 			return false;
 	}
-	return true;
+	return !modulated ||
+		strcmp(modem_protocol_step(caller->modem), "V.8/CM-wait-JM") == 0;
 }
 
 static bool exercise_v91_payload(
@@ -2418,8 +2429,10 @@ static bool run_media_call(
 		      answerer.modem->started,
 	      "connected SIP call did not select %s roles", test_case->name);
 	CHECK(test_case->answer_tone_prefix_ms == 0 ||
-	      present_legacy_answer_tone(&caller, codec, test_case->answer_tone_prefix_ms),
-	      "%s did not retain automatic startup through legacy ANS", test_case->name);
+	      present_legacy_answer_tone(&caller, codec,
+		      test_case->answer_tone_prefix_ms,
+		      test_case->answer_tone_prefix_modulated),
+	      "%s did not retain automatic startup through the answer preamble", test_case->name);
 	CHECK(!impair_answerer_precarrier ||
 		      endpoint_replace_precarrier_silence(
 			      &answerer, codec,
@@ -4459,11 +4472,14 @@ static bool run_factory_startup_cases(const char *filter, bool *selected)
 
 			snprintf(fixed, sizeof(fixed), "AT+MS=%u,0,%u,%u\r",
 				peers[peer].code, peers[peer].rate, peers[peer].rate);
-			for (unsigned int prefix = 0; prefix <= (unsigned int)test_prefix; ++prefix) {
+			unsigned int last_prefix = !answering && peers[peer].id == DP_V22BIS ?
+				2 : (unsigned int)test_prefix;
+			for (unsigned int prefix = 0; prefix <= last_prefix; ++prefix) {
 				test.answer_tone_prefix_ms = prefix ? 2600 : 0;
+				test.answer_tone_prefix_modulated = prefix == 2;
 				snprintf(name, sizeof(name), "legacy startup %s %s%s",
 					answering ? "answering" : "calling", peers[peer].name,
-					prefix ? " after ANS" : "");
+					prefix == 2 ? " after ANSam" : prefix ? " after ANS" : "");
 				if (filter != NULL && filter[0] != '\0' && strstr(name, filter) == NULL)
 					continue;
 				*selected = true;

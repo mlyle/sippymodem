@@ -618,16 +618,24 @@ static int next_answer_probe(struct v8_datapump *datapump)
 
 static int observe_legacy_answer(struct v8_datapump *datapump, const int16_t *receive, int count)
 {
+	bool exchanging = datapump->caller &&
+		datapump->handshake.calling.state == V8_CALLING_EXCHANGE_MENUS;
+
 	/* ANS alone can precede another family's answer mark. Once that mark
-	 * selects a family, its datapump owns the changing training waveform. */
+	 * selects a family, its datapump owns the changing training waveform.
+	 * An unanswered CM can also end in a legacy answer mark. During CM,
+	 * admit only the distinct 2225/2250-Hz marks: 2100 Hz remains ANSam,
+	 * and 1650 Hz can be part of the expected V.8 joint menu. */
 	if ((datapump->legacy != NULL &&
 	     (v8_datapump_modulation(datapump->legacy->id) != V8_MODULATION_V32 ||
 	      v32_datapump_has_peer(datapump->legacy))) ||
 	    !datapump->caller || !MODEM_AUTOMODE(datapump->dp.modem) ||
-	    datapump->handshake.calling.state != V8_CALLING_WAIT_ANSWER_SIGNAL)
+	    (datapump->handshake.calling.state != V8_CALLING_WAIT_ANSWER_SIGNAL &&
+	     !exchanging))
 		return DPSTAT_OK;
 	for (int sample = 0; sample < count; ++sample) {
-		for (unsigned tone = 0; tone < LEGACY_TONE_COUNT; ++tone) {
+		for (unsigned tone = exchanging ? 1 : 0;
+		     tone < (exchanging ? 3 : LEGACY_TONE_COUNT); ++tone) {
 			struct single_tone_event event;
 			if (single_tone_detector_sample(&datapump->answer_tones[tone],
 				    receive[sample], &event) != SINGLE_TONE_OK)
@@ -647,18 +655,21 @@ static int observe_legacy_answer(struct v8_datapump *datapump, const int16_t *re
 				datapump->high_tone_crossings++;
 		}
 		datapump->previous_receive = receive[sample];
-		datapump->answer_tone_samples = datapump->answer_tones[0].tone_present ?
-			datapump->answer_tone_samples + 1 : 0;
+		/* ANSam stops updating when CM starts. Its retained detector
+		 * state must not accrue a false legacy V.32 handoff interval. */
+		if (!exchanging)
+			datapump->answer_tone_samples = datapump->answer_tones[0].tone_present ?
+				datapump->answer_tone_samples + 1 : 0;
 	}
 	unsigned tone = LEGACY_TONE_COUNT;
-	if (datapump->answer_tones[3].tone_present)
+	if (!exchanging && datapump->answer_tones[3].tone_present)
 		tone = 3;
-	else if (datapump->answer_tones[4].tone_present)
+	else if (!exchanging && datapump->answer_tones[4].tone_present)
 		tone = 4;
 	else if (datapump->high_tone_samples >= MODEM_RATE * 160 / 1000) {
 		uint64_t cycles = (uint64_t)datapump->high_tone_crossings * MODEM_RATE;
 		tone = cycles < (uint64_t)datapump->high_tone_samples * 2238 ? 2 : 1;
-	} else if (datapump->answer_tone_samples >= 2 * MODEM_RATE)
+	} else if (!exchanging && datapump->answer_tone_samples >= 2 * MODEM_RATE)
 		tone = 0;
 	if (tone != LEGACY_TONE_COUNT) {
 		enum DP_ID id = legacy_id(datapump, legacy_tones[tone].id);
