@@ -1661,35 +1661,44 @@ static bool test_v92_negotiated_lapm_bypasses_detection(void)
 
 static bool test_v42_detection_deadline(void)
 {
-	static const unsigned rates[][2] = {
-		{ 600, 600 }, { 1200, 1200 }, { 9600, 9600 },
-		{ 31200, 28000 }, { 33600, 56000 },
+	static const struct {
+		unsigned transmit_rate, receive_rate, error_control;
+	} profiles[] = {
+		{ 600, 600, 1 }, { 1200, 1200, 1 }, { 9600, 9600, 1 },
+		{ 31200, 28000, 1 }, { 33600, 56000, 1 },
+		{ 1200, 1200, 0 }, { 1200, 1200, 4 },
 	};
 	struct modem_driver driver = {
 		.name = "V.42 detection deadline", .start = unused_start,
 		.stop = unused_stop, .ioctl = unused_control,
 	};
 
-	for (size_t i = 0; i < ARRAY_LENGTH(rates); ++i) {
+	for (size_t i = 0; i < ARRAY_LENGTH(profiles); ++i) {
 		for (unsigned caller = 0; caller <= 1; ++caller) {
+			/* Explicit raw callers skip V.42 detection entirely. */
+			if (caller && !profiles[i].error_control)
+				continue;
 			struct modem *m = create_compat_modem(&driver, "V.42 detection deadline");
 			struct dp dp = { .id = DP_V34, .modem = m };
 			unsigned tx_phase = 0, rx_phase = 0, tick;
-			unsigned deadline = caller ? 1500 : 750;
+			unsigned deadline = caller || profiles[i].error_control ? 1500 : 750;
 			uint32_t transmit_tail = 0;
 
 			CHECK(m != NULL, "detection deadline allocation failed");
 			m->dp = &dp;
 			m->caller = caller;
-			m->tx_rate = rates[i][0];
-			m->rx_rate = rates[i][1];
-			m->cfg.ec = m->cfg.ec_detector = 1;
+			m->tx_rate = profiles[i].transmit_rate;
+			m->rx_rate = profiles[i].receive_rate;
+			m->cfg.ec = profiles[i].error_control != 0;
+			m->cfg.ec_detector = 1;
+			m->sregs[SREG_EC] = profiles[i].error_control;
 			modem_dp_connected(m);
 			m->xmit.buf[0] = 'Z';
 			m->xmit.count = m->xmit.head = 1;
 			CHECK(m->bit_timer == (int)((m->tx_rate + m->rx_rate) * deadline / 1000),
 			      "detection timer did not start at its role deadline for case %zu role %u", i, caller);
-			for (tick = 0; tick < deadline + 100 && m->get_bits == modem_detector_get_bits; ++tick) {
+			for (tick = 0; tick < deadline + 100 &&
+			     m->get_bits == modem_detector_get_bits && m->state == STATE_EC_ESTAB; ++tick) {
 				tx_phase += m->tx_rate;
 				rx_phase += m->rx_rate;
 				while (tx_phase >= 1000 && m->get_bits == modem_detector_get_bits) {
@@ -1707,15 +1716,26 @@ static bool test_v42_detection_deadline(void)
 					CHECK(modem_put_bits(m, 1, &mark, 1) == 1,
 					      "detection receive clock failed");
 				}
-				CHECK(tick >= deadline - 2 || m->get_bits == modem_detector_get_bits,
+				CHECK(tick >= deadline - 2 ||
+				      (m->get_bits == modem_detector_get_bits && m->state == STATE_EC_ESTAB),
 				      "T400 expired early for case %zu role %u", i, caller);
 			}
-			CHECK(tick >= deadline - 1 && tick < deadline + 100 && !m->cfg.ec &&
-			      m->get_bits == modem_async_get_bits &&
-			      m->put_bits == modem_async_put_bits && !m->bit_timer &&
-			      m->xmit.count == 1 && m->pack.bit <= 9,
+			CHECK(tick >= deadline - 1 && tick < deadline + 100 && m->xmit.count == 1,
 			      "missing detection reply stalled or lost queued data: case %zu role %u", i, caller);
-			CHECK(!caller || (transmit_tail & 0x3ffffu) == (0x89u << 9 | 0x1ffu),
+			if (profiles[i].error_control == 4) {
+				CHECK(m->state == STATE_DP_DISC && m->disconnect_reason != NULL &&
+				      strcmp(m->disconnect_reason,
+					      "V.42 not detected while error control is required") == 0,
+				      "required error control did not retain its detection failure");
+			} else {
+				CHECK(!m->cfg.ec &&
+				      m->get_bits == modem_async_get_bits &&
+				      m->put_bits == modem_async_put_bits && !m->bit_timer &&
+				      m->pack.bit <= 9,
+				      "missing detection reply did not select raw fallback: case %zu role %u", i, caller);
+			}
+			CHECK(!caller || profiles[i].error_control == 4 ||
+			      (transmit_tail & 0x3ffffu) == (0x89u << 9 | 0x1ffu),
 			      "raw fallback truncated the final ODP repetition");
 			m->dp = NULL;
 			modem_delete(m);
@@ -9952,6 +9972,52 @@ static bool test_v42_late_answer_detection(void)
 	return true;
 }
 
+static bool test_v42_late_originator_detection(void)
+{
+	struct modem_driver driver = {
+		.name = "late V.42 originator", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	struct modem *m = create_compat_modem(&driver, "late V.42 originator");
+	struct dp dp = { .id = DP_V22, .modem = m };
+	struct modem originator = { .name = "ODP source" };
+	uint8_t bits[73], marks[12];
+
+	CHECK(m != NULL && modem_ec_init(m) == 0, "delayed ODP allocation failed");
+	m->dp = &dp;
+	m->tx_rate = m->rx_rate = 1200;
+	m->cfg.ec = m->cfg.ec_detector = 1;
+	modem_dp_connected(m);
+	m->xmit.buf[0] = 'Z';
+	m->xmit.count = m->xmit.head = 1;
+	memset(marks, 1, sizeof(marks));
+	/* A recorded 1200-bit/s caller starts ODP after the nominal T400.
+	 * Clock both directions for 800 ms before supplying its request. */
+	for (unsigned tick = 0; tick < 80; ++tick) {
+		CHECK(modem_get_bits(m, 1, bits, 12) == 12 &&
+	          modem_put_bits(m, 1, marks, 12) == 12,
+	          "delayed ODP duplex clock failed");
+	}
+	CHECK(m->get_bits == modem_detector_get_bits && m->xmit.count == 1,
+	      "answerer abandoned detection before the delayed ODP");
+	originator.packer.detector.tx_count = 1;
+	originator.packer.detector.tx_pattern[0] = 0x88;
+	originator.packer.detector.tx_pattern[1] = 0x89;
+	CHECK(modem_detector_get_bits(&originator, 1, bits, sizeof(bits)) == sizeof(bits) &&
+	      modem_put_bits(m, 1, bits, sizeof(bits)) == sizeof(bits) &&
+	      m->packer.detector.ec_enable && !m->bit_timer,
+	      "delayed ODP did not start ADP reply");
+	for (unsigned bit = 0; bit < 600 && m->get_bits == modem_detector_get_bits; ++bit)
+		CHECK(modem_get_bits(m, 1, bits, 1) == 1, "ADP reply clock failed");
+	CHECK(m->get_bits == modem_hdlc_get_bits && m->put_bits == modem_hdlc_put_bits &&
+	      m->cfg.ec && m->xmit.count == 1,
+	      "delayed ODP did not reach LAPM with queued data intact");
+	m->dp = NULL;
+	modem_ec_exit(m);
+	modem_delete(m);
+	return true;
+}
+
 static bool test_v42_raw_text_detection(void)
 {
 	static const char *const lines[] = {
@@ -9963,6 +10029,7 @@ static bool test_v42_raw_text_detection(void)
 		.stop = unused_stop, .ioctl = unused_control,
 	};
 
+	for (unsigned caller = 0; caller <= 1; ++caller)
 	for (unsigned width = 1; width <= 8; width *= 2) {
 		for (size_t line = 0; line < ARRAY_LENGTH(lines); ++line) {
 			struct modem *m = create_compat_modem(&driver, "V.42 text reply");
@@ -9979,7 +10046,7 @@ static bool test_v42_raw_text_detection(void)
 			m->pty = result_pipe[1];
 			m->sregs[SREG_QUIET] = 1;
 			m->dp = &dp;
-			m->caller = 1;
+			m->caller = caller;
 			m->tx_rate = m->rx_rate = 2400;
 			m->cfg.ec = m->cfg.ec_detector = 1;
 			modem_dp_connected(m);
@@ -10007,8 +10074,8 @@ static bool test_v42_raw_text_detection(void)
 			CHECK(m->get_bits == modem_async_get_bits && !m->cfg.ec &&
 			      received_length == (ssize_t)strlen(lines[line]) &&
 			      memcmp(received, lines[line], strlen(lines[line])) == 0,
-			      "text reply lost data or waited for timeout: width %u line %zu length %zd",
-			      width, line, received_length);
+			      "text reply lost data or waited for timeout: role %u width %u line %zu length %zd",
+			      caller, width, line, received_length);
 			close(result_pipe[0]);
 			close(result_pipe[1]);
 			m->pty = -1;
@@ -10150,6 +10217,7 @@ int main(void)
 		{ "independent call-progress modems",
 		  test_call_progress_supports_independent_modems },
 		{ "V.42 late answer detection", test_v42_late_answer_detection },
+		{ "V.42 late originator detection", test_v42_late_originator_detection },
 		{ "V.42 early raw text", test_v42_raw_text_detection },
 	};
 	unsigned int failures = 0;

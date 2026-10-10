@@ -291,6 +291,13 @@ detection where the selected modulation supports it. These values do not
 select separate MNP implementations: the implemented error-control protocol
 is V.42 LAPM. Bell 103, V.21, V.23, and Baudot use their raw paths.
 
+When seeking error control, detection allows up to 1.5 seconds for a delayed
+V.42 request or reply over SIP. This is a compatibility extension to the
+standard's 750-ms default. An explicit `\N0` answer retains 750 ms; valid
+negotiation completes early, and missing replies still cause bounded fallback
+or disconnection according to the selected policy. Convincing raw text also
+ends detection early; its bytes and any partial next character are preserved.
+
 The compression type field is a mask: `0` none, `1` V.42bis, `2` V.44,
 `3` both. Omitting it from `+DS` retains the prior mask. Compression requires
 LAPM and peer agreement; offering V.44 does not mean a peer will choose it.

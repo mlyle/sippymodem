@@ -74,7 +74,7 @@ enum {
 	ASYNC_DATA_BITS = 8,
 	ASYNC_FRAME_BITS = 10,
 	V42_T400_MS = 750,
-	V42_ORIGINATOR_DETECTION_MS = 1500,
+	V42_DETECTION_LIMIT_MS = 2 * V42_T400_MS,
 };
 
 enum async_receive_state {
@@ -427,6 +427,8 @@ static void detector_finish(struct modem *m)
 	m->bit_timer = 0;
 	m->bit_timer_func = NULL;
 	if (!m->packer.detector.ec_enable && detector_ec_required(m)) {
+		modem_note_disconnect(m, true,
+			"V.42 not detected while error control is required");
 		modem_update_status(m, STATUS_ERROR);
 		return;
 	}
@@ -518,7 +520,8 @@ static int detector_observe_text(struct modem *m, u8 character)
 	    d->text_length == 32) {
 		d->text_confirmed = true;
 		d->rx_count = 0;
-		detector_timeout(m);
+		if (m->caller)
+			detector_timeout(m);
 	}
 	return 0;
 }
@@ -616,7 +619,8 @@ int modem_detector_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 				continue;
 			}
 			PACK_DBG("rx pattern: 0x%02x.\n",ch);
-			if (m->caller && !d->ec_enable && !finish &&
+			if (!d->ec_enable && !finish &&
+			    (m->caller || d->tx_count == 0) &&
 			    detector_observe_text(m, ch) != 0) {
 				modem_update_status(m, STATUS_ERROR);
 				return ret;
@@ -637,7 +641,9 @@ int modem_detector_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 			}
 		}
 	}
-	if (finish) {
+	/* An answerer's text fallback must wait until this input group is
+	 * consumed before replacing the detector union with async framing. */
+	if (finish || (!m->caller && d->text_confirmed)) {
 		if (m->caller && !d->ec_enable)
 			detector_timeout(m);
 		else
@@ -649,8 +655,8 @@ int modem_detector_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 void modem_detector_start(struct modem *m)
 {
 	struct detect_state *d = &m->packer.detector;
-	unsigned int duration = m->caller ?
-		V42_ORIGINATOR_DETECTION_MS : V42_T400_MS;
+	unsigned int duration = m->caller || m->cfg.ec ?
+		V42_DETECTION_LIMIT_MS : V42_T400_MS;
 	uint64_t timeout = detector_rate(m) * duration / 1000;
 	d->tx_count = 0; /* mute transmitter */
 	d->rx_count = 0;
@@ -669,11 +675,12 @@ void modem_detector_start(struct modem *m)
 			m->cfg.ec ? ADP1_V42 : ADP1_V14);
 		detector_set_pattern(d->rx_pattern, ODP0, ODP1);
 	}
-	/* V.42 7.2.1: start detection immediately. The answerer retains the
-	 * 9.1.1 default of 750 ms. Allow the originator one extra 750 ms for
-	 * legacy peers whose ADP arrives just beyond that deadline over SIP.
-	 * This is an interoperability allowance beyond the standard default;
-	 * incoming data never renews it, and a valid reply completes early. */
+	/* V.42 7.2.1: start detection immediately. When seeking error control,
+	 * allow one extra 750 ms beyond the 9.1.1 default for delayed ODP/ADP
+	 * over SIP. Recorded 1200-bit/s callers begin ODP just after 750 ms.
+	 * Explicit raw answer mode retains the standard default. This bounded
+	 * interoperability allowance never renews on incoming data; a valid
+	 * reply completes early. */
 	m->bit_timer_func = detector_timeout;
 	m->bit_timer = timeout > INT_MAX ? INT_MAX : timeout > 0 ? (int)timeout : 1;
 	m->pack.bit  = m->unpack.bit  = 0;

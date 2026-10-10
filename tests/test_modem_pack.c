@@ -401,7 +401,7 @@ static bool test_v42_starts_detection_immediately(void)
 	      detection_character_matches(bits + 18, 0x89),
 	      "V.42 originator did not start with a complete ODP pair");
 	modem_detector_start(&answerer);
-	CHECK(answerer.bit_timer == 7200,
+	CHECK(answerer.bit_timer == 14400,
 	      "V.42 answerer armed %d initial detection bits",
 	      answerer.bit_timer);
 	for (unsigned int iteration = 0;
@@ -619,10 +619,11 @@ static bool test_v42_text_requires_framing(void)
 		{ { ' ', '\b', 0, ' ', '\b', 0 }, 6, -1 },
 	};
 
+	for (unsigned caller = 0; caller <= 1; ++caller)
 	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
 		for (unsigned width = 1; width <= 8; ++width) {
 			struct modem m = {
-				.caller = 1, .tx_rate = 2400, .rx_rate = 2400,
+				.caller = caller, .tx_rate = 2400, .rx_rate = 2400,
 				.cfg = { .ec = 1, .ec_detector = 1 },
 			};
 			uint8_t bits[128];
@@ -636,7 +637,8 @@ static bool test_v42_text_requires_framing(void)
 			modem_detector_start(&m);
 			CHECK(receive_detection_bits(&m, bits, sizeof(bits), width) &&
 			      !m.packer.detector.text_confirmed &&
-			      m.packer.detector.tx_limit == 0 && m.bit_timer == 7200,
+			      m.packer.detector.tx_count == (caller ? 1 : 0) &&
+			      m.bit_timer == 7200,
 			      "noise ended detection: case %zu width %u", index, width);
 		}
 	}
