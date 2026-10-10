@@ -57,6 +57,7 @@ import os
 import pty
 import select
 import sys
+import time
 import tty
 from pathlib import Path
 
@@ -159,7 +160,13 @@ while True:
                 os.write(master, pong)
         elif b"RETRAIN" in buffer:
             buffer.clear()
-            if mode in ("online-prefix-before-retrain-end", "wrong-profile-no-end"):
+            if mode in ("slow-retrain-start", "slow-retrain-total"):
+                time.sleep(0.25)
+                os.write(master, b"GETTY:RETRAIN:START:" + callback_nonce + b"\r\n")
+                if mode == "slow-retrain-total":
+                    time.sleep(0.45)
+                os.write(master, b"GETTY:RETRAIN:END:" + callback_nonce + b":1834\r\n")
+            elif mode in ("online-prefix-before-retrain-end", "wrong-profile-no-end"):
                 os.write(
                     master,
                     b"GETTY:RETRAIN:START:"
@@ -952,6 +959,34 @@ class LiveCampaignTests(unittest.TestCase):
                     self.assertEqual(saved["retrain_" + name], value)
                 self.assertEqual(tuple(saved[name] for name in fields), initial)
                 self.assertEqual(result.retrain_data, not mode.endswith(("no-data", "failed")))
+
+    def test_remote_retrain_shares_one_deadline_across_both_markers(self) -> None:
+        for mode, complete in (("slow-retrain-start", True),
+                               ("slow-retrain-total", False)):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                script = root / "fake.py"
+                script.write_text(textwrap.dedent(FAKE_MODEM), encoding="utf-8")
+                scheduled = ScheduledAttempt(CASES_BY_NAME["v21-300-originator"], 1)
+                artifacts = self.artifacts(root, scheduled)
+                config = replace(
+                    self.config(root, script, mode),
+                    online_timeout_seconds=0.05,
+                    retrain_timeout_seconds=2 if complete else 0.5,
+                )
+                with mock.patch("tools.live_terminal.time.sleep"):
+                    result = run_physical_attempt(
+                        config,
+                        FrozenBinary(root, Path(sys.executable), "a" * 40, "b" * 64, False),
+                        scheduled, 1, artifacts, True,
+                    )
+                self.assertTrue(result.initial_data)
+                self.assertEqual(result.remote_retrain, complete)
+                self.assertEqual(result.maturity, MATURITY_FULL if complete else MATURITY_DATA)
+                transmitted = (artifacts.legs["modem"] / "terminal-tx.bin").read_bytes()
+                self.assertEqual(b"ATO1" in transmitted, complete)
+                if not complete:
+                    self.assertIn("END marker", result.detail)
 
     def test_online_bytes_before_retrain_end_are_ordinary_payload(
         self,

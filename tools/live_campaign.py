@@ -608,11 +608,11 @@ def _exercise_online(
     remote_deadline = time.monotonic() + config.retrain_timeout_seconds
     progress.set("waiting for remote retrain START")
     try:
+        # Slow reverse channels can still be draining callback text before
+        # START. Both markers share the total retrain budget, including that
+        # queued output; the ordinary data-probe timeout does not bound START.
         nonce, received = terminal.start_remote_retrain(
-            min(
-                config.online_timeout_seconds,
-                max(0.001, remote_deadline - time.monotonic()),
-            )
+            max(0.001, remote_deadline - time.monotonic())
         )
         state.capture(leg, REMOTE_RETRAIN_REQUEST, received)
     except (LiveTerminalError, OSError, TimeoutError):
