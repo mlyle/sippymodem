@@ -331,6 +331,14 @@ v90_phase4_cp_line_rx_pending_parameters(
 	return V90_PHASE4_CP_LINE_RX_OK;
 }
 
+static bool freeze_trained_gain(struct v90_phase4_cp_line_rx *rx)
+{
+	return v34_gain_control_refresh_level(&rx->line.timing.gain) ==
+		       V34_GAIN_CONTROL_OK &&
+	       v34_receive_timing_freeze_gain(&rx->line.timing) ==
+		       V34_RECEIVE_TIMING_OK;
+}
+
 enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_init(
 	struct v90_phase4_cp_line_rx *rx,
 	const struct v90_phase3_return_line_handoff *handoff,
@@ -351,9 +359,9 @@ enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_init(
 	if (v34_receive_timing_set_feedback_held(
 		    &initialized.line.timing, false) != V34_RECEIVE_TIMING_OK)
 		return V90_PHASE4_CP_LINE_RX_NUMERIC_FAILURE;
-	/* Continue conventional-sample level acquisition after Phase 3 training
-	 * and any final-return drain. Freeze the gain only at a
-	 * verified record, so a frontend gain change cannot poison E/B1. */
+	/* Finish level acquisition at the confirmed S/S-bar boundary. Refresh
+	 * an under-level training handoff before freezing, so a short CP dropout
+	 * cannot drive gain acquisition against silence and corrupt repetitions. */
 	if (v34_gain_control_set_mode(
 		    &initialized.line.timing.gain, V34_GAIN_TRACKING) !=
 	    V34_GAIN_CONTROL_OK)
@@ -364,6 +372,8 @@ enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_init(
 		    constellation) != V90_CP_OK)
 		return V90_PHASE4_CP_LINE_RX_INVALID_ARGUMENT;
 	if (!seed_initial_boundary(&initialized, &handoff->upstream))
+		return V90_PHASE4_CP_LINE_RX_NUMERIC_FAILURE;
+	if (initialized.boundary_complete && !freeze_trained_gain(&initialized))
 		return V90_PHASE4_CP_LINE_RX_NUMERIC_FAILURE;
 	if (!v90_phase4_cp_line_rx_is_valid(&initialized))
 		return V90_PHASE4_CP_LINE_RX_INVALID_ARGUMENT;
@@ -541,6 +551,9 @@ enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_sample(
 		    &next.line, &observation, &action,
 		    next.decoder_power_q15) != V34_LINE_RECEIVER_OK)
 		return fail_sample(rx, &next, &observation);
+	if (!boundary_was_complete && next.boundary_complete &&
+	    !freeze_trained_gain(&next))
+		return fail_sample(rx, &next, NULL);
 	if (emitted.type != V90_CP_RECEIVE_NO_EVENT) {
 		next.record_pending = true;
 		next.pending_record_is_valid =
@@ -549,17 +562,6 @@ enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_sample(
 		next.pending_parameters = (struct v90_cp_parameters){ 0 };
 		if (next.pending_record_is_valid)
 			next.pending_parameters = emitted.parameters;
-		/* A valid CP can finish while the AGC is still correcting an
-		 * under-level training handoff. Settle that level from the owned
-		 * signal history once, then preserve it through CP/E/B1. Rejected
-		 * records and already frozen receivers cannot change the gain. */
-		if (next.pending_record_is_valid &&
-		    next.line.timing.gain.mode == V34_GAIN_TRACKING &&
-		    (v34_gain_control_refresh_level(&next.line.timing.gain) !=
-			     V34_GAIN_CONTROL_OK ||
-		     v34_receive_timing_freeze_gain(&next.line.timing) !=
-			     V34_RECEIVE_TIMING_OK))
-			return fail_sample(rx, &next, NULL);
 	}
 	if (!v90_phase4_cp_line_rx_is_valid(&next))
 		return fail_sample(rx, &next, NULL);

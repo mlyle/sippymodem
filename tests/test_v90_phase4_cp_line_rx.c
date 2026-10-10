@@ -80,8 +80,11 @@ static bool verify_line(
 	CHECK(v90_phase4_cp_line_rx_init(
 		      &rx, &handoff, constellation) ==
 		      V90_PHASE4_CP_LINE_RX_OK &&
-	      rx.line.timing.gain.mode == V34_GAIN_TRACKING,
+	      rx.line.timing.gain.mode == (rx.boundary_complete ?
+		      V34_GAIN_FROZEN : V34_GAIN_TRACKING),
 	      "CP line receiver did not accept the delayed handoff");
+	if (rx.boundary_complete)
+		frozen_gain = rx.line.timing.gain.gain;
 	{
 		struct v34_timing_control expected =
 			handoff.upstream.line.timing.timing;
@@ -121,6 +124,8 @@ static bool verify_line(
 		saved_decision = decision;
 		result = v90_phase4_cp_line_rx_sample(
 			&rx, quantize(law, sample), &event, &decision);
+		if (rx.boundary_complete && frozen_gain == 0)
+			frozen_gain = rx.line.timing.gain.gain;
 		if (boundary_was_complete &&
 		    (result == V90_PHASE4_CP_LINE_RX_SYMBOL ||
 		     result == V90_PHASE4_CP_LINE_RX_RECORD_READY)) {
@@ -142,11 +147,11 @@ static bool verify_line(
 			      v90_phase4_cp_line_rx_result_name(result),
 			      sample_index);
 			CHECK(rx.line.timing.gain.mode ==
-				      (received_records == 0 ?
-					       V34_GAIN_TRACKING : V34_GAIN_FROZEN) &&
-			      (received_records == 0 ||
+				      (rx.boundary_complete ?
+					       V34_GAIN_FROZEN : V34_GAIN_TRACKING) &&
+			      (!rx.boundary_complete ||
 			       rx.line.timing.gain.gain == frozen_gain),
-			      "CP gain did not freeze at the first verified record");
+			      "CP gain did not remain frozen after S/S-bar");
 			continue;
 		}
 		CHECK(received_records < ARRAY_LENGTH(expected) &&
@@ -212,6 +217,80 @@ static bool test_continuous_g711_lines(void)
 	return true;
 }
 
+static bool verify_control_dropout(
+	enum g711_law law, enum v34_constellation_size constellation,
+	bool under_level)
+{
+	struct v90_cp_parameters training = parameters(V90_CP_TRAINING, law, 0);
+	struct v90_phase3_return_line_handoff handoff;
+	struct v90_phase4_cp_line_tx tx;
+	struct v90_phase4_cp_line_rx rx;
+	/* At 8 kHz, erase 60 ms before the first CPt can finish. Require a
+	 * correct repeated record within 250 ms after carrier returns. */
+	const unsigned hole_start = 80, hole_end = hole_start + 480;
+
+	CHECK(v90_phase4_line_fixture_init(
+		      law, constellation, &training, &tx, &handoff),
+	      "CP dropout fixture did not reach CPt");
+	if (under_level)
+		handoff.upstream.line.timing.gain.gain /= 4;
+	CHECK(v90_phase4_cp_line_rx_init(&rx, &handoff, constellation) ==
+		      V90_PHASE4_CP_LINE_RX_OK,
+	      "CP dropout receiver did not accept the training handoff");
+	for (unsigned sample_index = 0;
+	     sample_index < hole_end + 2000; ++sample_index) {
+		int16_t sample;
+		struct v90_cp_receive_event event = { 0 };
+		enum v90_phase4_cp_line_rx_result result;
+
+		if (v90_phase4_cp_line_tx_record_is_complete(&tx))
+			CHECK(v90_phase4_cp_line_tx_start_next_record(&tx, &training) ==
+				      V90_PHASE4_CP_LINE_TX_OK,
+			      "CP dropout transmitter could not repeat its record");
+		CHECK(v90_phase4_cp_line_tx_sample(&tx, &sample) ==
+			      V90_PHASE4_CP_LINE_TX_OK,
+		      "CP dropout transmitter stopped");
+		sample = sample_index >= hole_start && sample_index < hole_end ? 0 :
+			quantize(law, sample);
+		result = v90_phase4_cp_line_rx_sample(&rx, sample, &event, NULL);
+		CHECK(result == V90_PHASE4_CP_LINE_RX_OK ||
+		      result == V90_PHASE4_CP_LINE_RX_SYMBOL ||
+		      result == V90_PHASE4_CP_LINE_RX_RECORD_READY,
+		      "CP dropout receive failed at sample %u", sample_index);
+		if (result != V90_PHASE4_CP_LINE_RX_RECORD_READY)
+			continue;
+		if (v90_phase4_cp_line_rx_pending_record_is_valid(&rx)) {
+			CHECK(sample_index > hole_end &&
+			      event.type == V90_CP_RECEIVE_FRAME &&
+			      event.frame_result == V90_CP_OK &&
+			      v90_cp_parameters_are_equal(&event.parameters, &training),
+			      "CP dropout produced an incorrect valid record");
+			return true;
+		}
+		CHECK(v90_phase4_cp_line_rx_continue(&rx) == V90_PHASE4_CP_LINE_RX_OK,
+		      "CP dropout receiver did not resume after rejection");
+	}
+	CHECK(false,
+	      "CP did not recover within 250 ms after a 60 ms gap (%d/%d, weak=%d)",
+	      law, constellation, under_level);
+}
+
+static bool test_control_dropout(void)
+{
+	const enum g711_law laws[] = { G711_LAW_PCMU, G711_LAW_PCMA };
+	const enum v34_constellation_size constellations[] = {
+		V34_CONSTELLATION_4_POINT, V34_CONSTELLATION_16_POINT,
+	};
+
+	for (unsigned law = 0; law < ARRAY_LENGTH(laws); ++law)
+		for (unsigned size = 0; size < ARRAY_LENGTH(constellations); ++size)
+			for (unsigned weak = 0; weak < 2; ++weak)
+				CHECK(verify_control_dropout(laws[law],
+					      constellations[size], weak != 0),
+				      "CP dropout recovery failed");
+	return true;
+}
+
 static bool test_transactional_contracts(void)
 {
 	struct v90_cp_parameters training =
@@ -253,12 +332,18 @@ static bool test_transactional_contracts(void)
 	      (rx.boundary_complete ||
 	       (v34_phase3_s_receiver_is_valid(&rx.boundary) &&
 		!v34_phase3_s_receiver_is_complete(&rx.boundary))) &&
-	      memcmp(&rx.line, &expected_line,
-		     sizeof(rx.line)) == 0 &&
 	      rx.decoder_power_q15 ==
 		      v90_upstream_training_rx_decoder_power(&handoff.upstream) &&
 	      rx.adaptation == V34_ADAPTIVE_EQUALIZER_FULL,
 	      "CP line initialization contract changed");
+	if (rx.boundary_complete)
+		CHECK(v34_gain_control_refresh_level(&expected_line.timing.gain) ==
+			      V34_GAIN_CONTROL_OK &&
+		      v34_receive_timing_freeze_gain(&expected_line.timing) ==
+			      V34_RECEIVE_TIMING_OK,
+		      "CP handoff level could not settle");
+	CHECK(memcmp(&rx.line, &expected_line, sizeof(rx.line)) == 0,
+	      "CP initialization changed trained line history");
 	saved = rx;
 	CHECK(v90_phase4_cp_line_rx_sample(NULL, 0, &event, NULL) ==
 		      V90_PHASE4_CP_LINE_RX_INVALID_ARGUMENT &&
@@ -492,6 +577,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "continuous G.711 lines", test_continuous_g711_lines },
+		{ "CP recovery after a dropout", test_control_dropout },
 		{ "transactional contracts", test_transactional_contracts },
 		{ "fixed handoff contract", test_fixed_handoff_contract },
 		{ "latest history boundary", test_latest_history_boundary },
