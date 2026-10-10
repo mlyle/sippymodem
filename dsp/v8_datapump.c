@@ -12,6 +12,8 @@
 #include "v22_datapump.h"
 #include "v8_answering.h"
 #include "v8_calling.h"
+#include "v34_info0.h"
+#include "v34_phase2_info_audio.h"
 #include "v90_datapump.h"
 
 #include <stdint.h>
@@ -57,6 +59,9 @@ struct v8_datapump {
 		struct v8_answering answering;
 	} handshake;
 	struct v8_pcm_handoff handoff;
+	struct v34_phase2_info_audio_receiver info0_receiver;
+	struct v34_info0 peer_info0;
+	uint8_t info0_repetitions;
 	struct single_tone_detector legacy_carrier;
 	struct single_tone_detector answer_tones[LEGACY_TONE_COUNT];
 	struct dp *legacy;
@@ -258,6 +263,14 @@ static struct dp *create_v8(
 	if (datapump == NULL)
 		return NULL;
 	datapump->caller = caller != 0;
+	if (caller && MODEM_AUTOMODE(modem) &&
+	    modulation == V8_MODULATION_V34_DUPLEX &&
+	    v34_phase2_info_audio_receiver_init(&datapump->info0_receiver,
+		    V34_CALLING_STATION, V34_INFO0_PAYLOAD_BITS) !=
+		    V34_PHASE2_INFO_AUDIO_OK) {
+		free(datapump);
+		return NULL;
+	}
 	if ((datapump->caller &&
 	     v8_calling_init(
 		     &datapump->handshake.calling, &local_menu) !=
@@ -617,6 +630,65 @@ static int next_answer_probe(struct v8_datapump *datapump)
 	return DPSTAT_NOANSWER;
 }
 
+/* A peer may already be in Phase 2 while we are still waiting for ANSam
+ * or JM. Require two matching, CRC-valid INFO0 records before recovering;
+ * never supersede a completed menu or confirmed legacy training. */
+static int observe_v34_info0(
+	struct v8_datapump *datapump, const int16_t *receive, int count)
+{
+	struct modem *modem = datapump->dp.modem;
+
+	if (!datapump->caller || !MODEM_AUTOMODE(modem) ||
+	    v8_datapump_modulation(datapump->requested_datapump) !=
+		    V8_MODULATION_V34_DUPLEX ||
+	    (datapump->handshake.calling.state != V8_CALLING_WAIT_ANSWER_SIGNAL &&
+	     datapump->handshake.calling.state != V8_CALLING_EXCHANGE_MENUS) ||
+	    (datapump->legacy != NULL &&
+	     (v8_datapump_modulation(datapump->legacy->id) != V8_MODULATION_V32 ||
+	      v32_datapump_has_peer(datapump->legacy))))
+		return DPSTAT_OK;
+
+	for (int i = 0; i < count; ++i) {
+		struct v34_phase2_info_event event;
+		struct v34_info0 peer;
+
+		if (v34_phase2_info_audio_receiver_sample(
+			    &datapump->info0_receiver, receive[i], &event) !=
+			    V34_PHASE2_INFO_AUDIO_OK)
+			return DPSTAT_ERROR;
+		if (event.type == V34_PHASE2_INFO_FRAME_REJECTED) {
+			datapump->info0_repetitions = 0;
+			continue;
+		}
+		if (event.type != V34_PHASE2_INFO_FRAME_RECEIVED)
+			continue;
+		if (v34_info0_decode(event.payload, sizeof(event.payload),
+			    event.payload_bit_count, &peer) != V34_INFO0_OK) {
+			datapump->info0_repetitions = 0;
+			continue;
+		}
+		if (datapump->info0_repetitions != 0 &&
+		    v34_info0_equal(&datapump->peer_info0, &peer)) {
+			++datapump->info0_repetitions;
+		} else {
+			datapump->peer_info0 = peer;
+			datapump->info0_repetitions = 1;
+		}
+		if (datapump->info0_repetitions < 2)
+			continue;
+
+		modem->dp_requested = DP_V34;
+		modem->dsp_info.startup = MODEM_STARTUP_UNKNOWN;
+		modem->dsp_info.v8_lapm = false;
+		modem->dsp_info.pcm_role = MODEM_PCM_ROLE_NONE;
+		datapump->v34_fallback = true;
+		datapump->handoff_requested = true;
+		datapump->dp.status = DPSTAT_CHANGEDP;
+		return DPSTAT_CHANGEDP;
+	}
+	return DPSTAT_OK;
+}
+
 static int observe_legacy_answer(struct v8_datapump *datapump, const int16_t *receive, int count)
 {
 	bool exchanging = datapump->caller &&
@@ -759,6 +831,11 @@ static int process_v8(struct dp *dp, void *receive_buffer, void *transmit_buffer
 			return DPSTAT_NOANSWER;
 		}
 		datapump->elapsed_samples += (unsigned)count;
+	}
+	result = observe_v34_info0(datapump, receive, count);
+	if (result != DPSTAT_OK) {
+		memset(transmit_buffer, 0, (size_t)count * sizeof(*receive));
+		return result;
 	}
 	if (observe_legacy_answer(datapump, receive, count) != DPSTAT_OK)
 		return DPSTAT_ERROR;

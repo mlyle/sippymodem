@@ -19,6 +19,8 @@
 #include <v8_ansam.h>
 #include <v8_datapump.h>
 #include <v34_datapump.h>
+#include <v34_profile.h>
+#include <v34_phase2_info_audio.h>
 #include <v34_frame_schedule.h>
 #include <v90_profile.h>
 #include <v90_datapump.h>
@@ -141,6 +143,7 @@ struct modem_test_case {
 	bool automode;
 	bool answerer_automode;
 	bool answerer_fixed;
+	bool v34_info0_peer;
 	bool requires_v8;
 	bool requires_exact_g711;
 	bool test_prelink;
@@ -2240,6 +2243,100 @@ static bool exercise_v91_recovery(
 	return exercise_v91_payload(caller, answerer, codec, recorder);
 }
 
+enum info0_pattern {
+	INFO0_MATCHING,
+	INFO0_BAD_CRC,
+	INFO0_SINGLE_VALID,
+	INFO0_CHANGING_ACK,
+	INFO0_INVALID_CLOCK,
+};
+
+static bool start_info0_frame(
+	struct v34_phase2_info_generator *frame, struct v34_info0 capabilities,
+	enum info0_pattern pattern, unsigned record)
+{
+	uint8_t payload[V34_INFO0_PAYLOAD_BYTES];
+
+	capabilities.acknowledges_peer_info0 =
+		pattern == INFO0_CHANGING_ACK && (record & 1u) != 0;
+	if (v34_info0_encode(&capabilities, payload, sizeof(payload)) != V34_INFO0_OK)
+		return false;
+	/* Clock code 3 is reserved. Recompute the CRC so only field validation
+	 * can reject this otherwise intact record. */
+	if (pattern == INFO0_INVALID_CLOCK)
+		payload[1] |= 3u;
+	return v34_phase2_info_generator_init(frame, payload,
+		       V34_INFO0_PAYLOAD_BITS) == V34_PHASE2_INFO_OK;
+}
+
+static bool present_v34_info0(
+	struct integration_endpoint *caller, enum media_codec codec,
+	enum info0_pattern pattern)
+{
+	struct v34_call_configuration policy;
+	struct v34_phase2_info_generator frame;
+	struct v34_phase2_dpsk_transmitter tx;
+	struct v34_phase2_info_audio_receiver observer;
+	unsigned records = 0, valid_frames = 0;
+	uint16_t rates;
+	enum g711_law law;
+
+	if (!codec_law(codec, &law) ||
+	    v34_profile_init(&policy, &rates, V34_ANSWERING_STATION,
+		    26400, 26400, 0) != V34_PROFILE_OK ||
+	    !start_info0_frame(&frame, policy.local_info0, pattern, records) ||
+	    v34_phase2_dpsk_transmitter_init(&tx, V34_ANSWERING_STATION,
+		    7000) != V34_PHASE2_DPSK_OK ||
+	    v34_phase2_info_audio_receiver_init(&observer, V34_CALLING_STATION,
+		    V34_INFO0_PAYLOAD_BITS) != V34_PHASE2_INFO_AUDIO_OK)
+		return false;
+
+	/* Continuous DPSK, including the gaps between repeated INFO0 records.
+	 * Half a second leaves several records after receive-filter startup. */
+	for (unsigned offset = 0; offset < MODEM_RATE / 2; offset += MODEM_FRAG) {
+		int16_t receive[MODEM_FRAG], transmit[MODEM_FRAG];
+
+		for (unsigned i = 0; i < MODEM_FRAG; ++i) {
+			uint8_t bit = 0;
+			bool last = false, accepted;
+			int16_t sample;
+			struct v34_phase2_info_event event;
+
+			if (v34_phase2_dpsk_transmitter_can_accept_bit(&tx)) {
+				unsigned index = frame.bit_index;
+				if (v34_phase2_info_next_bit(&frame, &bit, &last) !=
+				    V34_PHASE2_INFO_OK)
+					return false;
+				/* Keep one valid record after the receiver has locked. */
+				if ((pattern == INFO0_BAD_CRC ||
+				     (pattern == INFO0_SINGLE_VALID && records != 3)) &&
+				    index == V34_PHASE2_INFO_PREFIX_BITS + V34_INFO0_PAYLOAD_BITS)
+					bit ^= 1u;
+			}
+			if (v34_phase2_dpsk_transmitter_sample(&tx, bit, &sample,
+				    &accepted) != V34_PHASE2_DPSK_OK)
+				return false;
+			if (last && !start_info0_frame(&frame, policy.local_info0,
+				    pattern, ++records))
+				return false;
+			receive[i] = decode_codeword(law, encode_codeword(law, sample));
+			if (v34_phase2_info_audio_receiver_sample(&observer, receive[i],
+				    &event) != V34_PHASE2_INFO_AUDIO_OK)
+				return false;
+			valid_frames += event.type == V34_PHASE2_INFO_FRAME_RECEIVED;
+		}
+		modem_process(caller->modem, receive, transmit, MODEM_FRAG);
+		if (!endpoint_drain(caller) || caller->modem->dp == NULL)
+			return false;
+		if (caller->modem->dp->id == DP_V34)
+			return pattern == INFO0_MATCHING;
+	}
+	/* Verify that rejection controls delivered their intended waveforms. */
+	return pattern != INFO0_MATCHING && caller->modem->dp->id == DP_V8 &&
+	       (pattern == INFO0_BAD_CRC ? valid_frames == 0 :
+		pattern == INFO0_SINGLE_VALID ? valid_frames == 1 : valid_frames >= 2);
+}
+
 static bool run_media_call(
 	const struct modem_test_case *test_case,
 	enum media_codec codec)
@@ -2434,11 +2531,36 @@ static bool run_media_call(
 		      modem_report_incoming_call(answerer.modem) == 0 &&
 		      answerer.modem->started,
 	      "connected SIP call did not select %s roles", test_case->name);
+	if (test_case->v34_info0_peer) {
+		int16_t quiet[SIP_FRAME_SAMPLES] = { 0 };
+		for (unsigned frame = 0; frame < 10 && answerer.modem->dp == NULL; frame++) {
+			modem_process(answerer.modem, quiet, answerer.transmit, SIP_FRAME_SAMPLES);
+			CHECK(endpoint_drain(&answerer), "non-V.8 peer media startup failed");
+		}
+		CHECK(endpoint_drain(&answerer) && answerer.modem->dp != NULL,
+		      "non-V.8 peer did not start its answer datapump");
+		/* A direct Phase 2 peer models a remote that has already left V.8. */
+		const struct dp_operations *ops = modem_dp_get_registered_ops(DP_V34);
+		CHECK(ops != NULL, "non-V.8 peer lacks V.34 operations");
+		struct dp *old = answerer.modem->dp;
+		struct dp *phase2 = ops->create(answerer.modem, DP_V34, 0,
+			MODEM_RATE, MODEM_FRAG, ops);
+		CHECK(phase2 != NULL && old->op->delete(old) == 0,
+		      "non-V.8 peer Phase2 startup failed");
+		answerer.modem->dp = phase2;
+	}
 	CHECK(test_case->answer_tone_prefix_ms == 0 ||
 	      present_legacy_answer_tone(&caller, codec,
 		      test_case->answer_tone_prefix_ms,
 		      test_case->answer_tone_prefix_modulated),
 	      "%s did not retain automatic startup through the answer preamble", test_case->name);
+	if (test_case->v34_info0_peer)
+		for (unsigned pattern = INFO0_BAD_CRC; pattern <= INFO0_INVALID_CLOCK; ++pattern)
+			CHECK(present_v34_info0(&caller, codec, (enum info0_pattern)pattern),
+			      "INFO0 rejection control %u changed the family", pattern);
+	CHECK(!test_case->v34_info0_peer ||
+	      present_v34_info0(&caller, codec, INFO0_MATCHING),
+	      "repeated INFO0 did not select V.34 without a menu");
 	CHECK(!impair_answerer_precarrier ||
 		      endpoint_replace_precarrier_silence(
 			      &answerer, codec,
@@ -4446,15 +4568,19 @@ static bool run_factory_startup_cases(const char *filter, bool *selected)
 		{ DP_V22BIS, "V.22bis", 122, 2400 },
 		{ DP_V32, "V.32", 32, 9600 },
 		{ DP_V32BIS, "V.32bis", 132, 14400 },
+		{ DP_V34, "V.34", 34, 26400 },
 		{ DP_B212, "Bell212", 212, 1200 },
 	};
 	static const enum media_codec codecs[] = { MEDIA_CODEC_PCMU, MEDIA_CODEC_PCMA };
 
 	for (size_t peer = 0; peer < ARRAY_LENGTH(peers); ++peer) {
 		for (unsigned answering = 0; answering < 2; ++answering) {
+			if (answering && peers[peer].id == DP_V34)
+				continue;
 			char name[80], fixed[80];
 			bool test_prefix = !answering && (peers[peer].id == DP_V22 ||
-				peers[peer].id == DP_V22BIS || peers[peer].id == DP_V23);
+				peers[peer].id == DP_V22BIS || peers[peer].id == DP_V23 ||
+				peers[peer].id == DP_V34);
 			enum DP_ID modern_id = peers[peer].id == DP_V32 ? DP_V32BIS :
 				answering && peers[peer].id == DP_B212 ? DP_V22 : peers[peer].id;
 			unsigned caller_rate = peers[peer].id == DP_V23 ? 75 : peers[peer].rate;
@@ -4472,13 +4598,15 @@ static bool run_factory_startup_cases(const char *filter, bool *selected)
 				.carrier_loss_samples = MODEM_RATE * 7 / 10,
 				.training_frame_limit = 2000,
 				.automode = !answering, .answerer_fixed = !answering,
+				.v34_info0_peer = peers[peer].id == DP_V34,
 				.answerer_automode = answering, .raw_transport = true,
 				.automatic_pcm_roles = true, .factory_transport = true,
 			};
 
 			snprintf(fixed, sizeof(fixed), "AT+MS=%u,0,%u,%u\r",
 				peers[peer].code, peers[peer].rate, peers[peer].rate);
-			unsigned int last_prefix = !answering && peers[peer].id == DP_V22BIS ?
+			unsigned int last_prefix = !answering &&
+				(peers[peer].id == DP_V22BIS || peers[peer].id == DP_V34) ?
 				2 : (unsigned int)test_prefix;
 			for (unsigned int prefix = 0; prefix <= last_prefix; ++prefix) {
 				test.answer_tone_prefix_ms = prefix ? 2600 : 0;
