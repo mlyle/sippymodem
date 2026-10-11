@@ -40,12 +40,14 @@ bool v92_upstream_data_rx_is_valid(
 	    receiver->decoder.pending_frames !=
 		    (receiver->line.received_frames < V92_PCM_RX_DELAY_FRAMES ?
 			     receiver->line.received_frames : V92_PCM_RX_DELAY_FRAMES) ||
-	    !v92_upstream_model_is_valid(receiver))
+	    !v92_upstream_model_is_valid(receiver) ||
+	    !v92_residual_is_valid(&receiver->line.residual))
 		return false;
 	if (receiver->line.plan.observation == V92_PCM_FRAME_CONSTELLATION) {
 		const struct v92_upstream_data_line *line = &receiver->line;
 
-		if (line->adaptation != 0.0 ||
+		if ((line->residual.active && line->received_frames < V92_B1U_ACQUISITION_FRAMES) ||
+		    line->adaptation != 0.0 ||
 		    !memory_region_is_zero(&line->equalizer, sizeof(line->equalizer)) ||
 		    !isfinite(line->host.gain) || line->host.gain < 0.0 ||
 		    !isfinite(line->host.lower) || !isfinite(line->host.upper) ||
@@ -75,16 +77,20 @@ bool v92_upstream_data_rx_is_valid(
 			return false;
 		for (size_t i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
 			if (line->raw[i] < -32768 || line->raw[i] > 32768 ||
+			    line->correction[i] < -65536 || line->correction[i] > 65536 ||
+			    (!line->residual.active && line->correction[i] != 0) ||
 			    (line->received[i] && !line->wire_known[i]) ||
 			    (!line->wire_known[i] && line->wire[i] != 0) ||
 			    (!line->wire_known[i] && line->host_samples[i] != 0) ||
-			    (i >= line->symbol_count && (line->raw[i] != 0 || line->samples[i] != 0 ||
+			    (i >= line->symbol_count && (line->raw[i] != 0 || line->samples[i] != 0 || line->correction[i] != 0 ||
 				line->wire[i] != 0 || line->host_samples[i] != 0 ||
 				line->wire_known[i] || line->received[i])))
 				return false;
 		return true;
 	}
-	if (!memory_region_is_zero(&receiver->line.calibration, sizeof(receiver->line.calibration)) ||
+	if (receiver->line.residual.active ||
+	    !memory_region_is_zero(receiver->line.correction, sizeof(receiver->line.correction)) ||
+	    !memory_region_is_zero(&receiver->line.calibration, sizeof(receiver->line.calibration)) ||
 	    !memory_region_is_zero(&receiver->line.host, sizeof(receiver->line.host)) ||
 	    !qam_equalizer_is_handoff_ready(&receiver->line.equalizer) ||
 	    receiver->line.equalizer.tap_count != V92_PCM_PHASE4_TRN2U_LINE_EQUALIZER_TAPS ||
@@ -331,7 +337,7 @@ static enum v92_upstream_data_rx_result receive_frame(
 		return fail(receiver, result == V92_PCM_FRAME_NO_PATH ?
 			V92_UPSTREAM_DATA_RX_NO_PATH :
 			V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE);
-	v92_upstream_model_observe(&model, &decision.frame, line);
+	v92_upstream_model_observe(&model, &decision, line);
 	if (raw && line->received_frames < V92_B1U_ACQUISITION_FRAMES &&
 	    (model.acquiring || line->received_frames >=
 		V92_B1U_ACQUISITION_FRAMES - V92_PCM_RX_DELAY_FRAMES)) {
@@ -373,7 +379,7 @@ static enum v92_upstream_data_rx_result receive_frame(
 			 * units. G.711 conversion preceded any host conditioning: a
 			 * second quantization here would invent different wire cells.
 			 * Retain actual companding noise and unclipped prediction error. */
-			double error = line->raw[symbol] - line->calibration.offset -
+			double error = line->raw[symbol] - line->calibration.offset - line->correction[symbol] -
 				predictions[symbol] / line->calibration.gain;
 
 			generated.squared_error += error * error;
@@ -428,6 +434,7 @@ static enum v92_upstream_data_rx_result receive_frame(
 	line->symbol_count = 0u;
 	memset(line->observations, 0, sizeof(line->observations));
 	memset(line->samples, 0, sizeof(line->samples));
+	memset(line->correction, 0, sizeof(line->correction));
 	memset(line->wire, 0, sizeof(line->wire));
 	memset(line->host_samples, 0, sizeof(line->host_samples));
 	memset(line->wire_known, 0, sizeof(line->wire_known));
@@ -477,14 +484,20 @@ static enum v92_upstream_data_rx_result receive_sample(
 			--line->delay_remaining;
 			return V92_UPSTREAM_DATA_RX_OK;
 		}
-		line->raw[line->symbol_count] = (int32_t)line->polarity * sample;
+		int32_t raw = (int32_t)line->polarity * sample, correction;
+		if (!v92_residual_sample(&line->residual, raw, line->polarity,
+		    wire_known && available, &correction))
+			return fail(receiver, V92_UPSTREAM_DATA_RX_NO_PATH);
+		line->raw[line->symbol_count] = raw;
+		line->correction[line->symbol_count] = correction;
 		line->wire[line->symbol_count] = wire_known ? line->polarity *
 			g711_decode(receiver->decoder.mapping.law, code) : 0;
 		line->wire_known[line->symbol_count] = wire_known;
 		line->host_samples[line->symbol_count] = wire_known ? host_sample : 0;
 		line->received[line->symbol_count] = wire_known && available;
 		line->samples[line->symbol_count] = sample_round_s16(
-			(line->raw[line->symbol_count] - line->calibration.offset) * line->calibration.gain);
+			(line->raw[line->symbol_count] - line->calibration.offset -
+			 line->correction[line->symbol_count]) * line->calibration.gain);
 		if (++line->symbol_count == V92_PCM_MAPPING_FRAME_SYMBOLS)
 			return receive_frame(receiver, line, frame);
 		return V92_UPSTREAM_DATA_RX_OK;

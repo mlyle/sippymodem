@@ -27,7 +27,7 @@ struct v92_upstream_model {
 	double scalar_gain;
 	int16_t coefficient;
 	uint8_t valid, primary;
-	bool acquiring;
+	bool acquiring, residual_acquiring;
 	/* This large receiver is live only while a second hypothesis is active. */
 	struct v92_pcm_frame_rx alternate;
 };
@@ -40,9 +40,9 @@ bool v92_upstream_model_has_alternate(const struct v92_upstream_data_rx *receive
 /* Internal, exclusively owned state. The enclosing frame transaction commits
  * these mutations only after decoding, quality evaluation and fitting succeed. */
 void v92_upstream_model_observe(struct v92_upstream_model *model,
-	const struct v92_pcm_frame *frame, const struct v92_upstream_data_line *line);
+	const struct v92_pcm_frame_decision *decision, const struct v92_upstream_data_line *line);
 void v92_upstream_model_fit(struct v92_upstream_model *model,
-	const struct v92_upstream_data_line *line, const struct v92_pcm_frame_rx *decoder);
+	struct v92_upstream_data_line *line, const struct v92_pcm_frame_rx *decoder);
 enum v92_pcm_frame_result v92_upstream_model_decode(struct v92_upstream_model *model,
 	struct v92_pcm_frame_rx *decoder, const struct v92_upstream_data_line *line,
 	uint8_t *bits, struct v92_pcm_frame_decision *decision,

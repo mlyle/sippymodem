@@ -236,6 +236,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v92_upstream_data_tx.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_upstream_data_rx.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_upstream_model.c \
+	$(DSP_PCM_SOURCE_DIR)/v92_residual.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_data_quality.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_cpd_direct.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_cpd_channel.c \

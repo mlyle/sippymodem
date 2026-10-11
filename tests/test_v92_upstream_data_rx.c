@@ -33,6 +33,9 @@ struct channel {
 	double receive_gain;
 	int16_t offset;
 	int16_t previous;
+	double residual_first, residual_second;
+	int16_t history[6];
+	unsigned cursor;
 	enum g711_law law;
 	int8_t polarity;
 	uint8_t code;
@@ -41,8 +44,12 @@ struct channel {
 static int16_t wire_sample(struct channel *channel, int16_t sample)
 {
 	int16_t mixed = (int16_t)lround(channel->gain * sample +
-		channel->postcursor * channel->previous + channel->offset);
+		channel->postcursor * channel->previous + channel->offset +
+		channel->residual_first * channel->history[(channel->cursor + 2) % 6] +
+		channel->residual_second * channel->history[channel->cursor]);
 
+	channel->history[channel->cursor] = sample;
+	channel->cursor = (channel->cursor + 1) % 6;
 	channel->previous = sample;
 	int16_t decoded = channel->law == G711_LAW_PCMU ?
 		g711_decode_pcmu(g711_encode_pcmu(mixed)) :
@@ -1536,6 +1543,7 @@ enum channel_fault {
 	CHANNEL_WRONG_B1,
 	CHANNEL_LOSS,
 	CHANNEL_EXCESSIVE_OFFSET,
+	CHANNEL_RESIDUAL,
 };
 
 /* E2u recognizes its last control symbol after already consuming ten B1u
@@ -1619,6 +1627,10 @@ static bool test_channel_plan(
 	      receiver.line.delay_remaining == plan.delay - leading, "E2u/data delay lost");
 	CHECK(!wire || !receiver.model.acquiring, "wire fixture entered pure-delay fitter");
 	channel.offset = offset;
+	if (fault == CHANNEL_RESIDUAL) {
+		channel.residual_first = -.027;
+		channel.residual_second = .011;
+	}
 	comparison_rx = receiver;
 	if (biased)
 		comparison_rx.line.calibration.minimum = comparison_rx.line.calibration.maximum = plan.gain;
@@ -1731,6 +1743,9 @@ static bool test_channel_plan(
 			}
 		}
 
+		if (fault == CHANNEL_EXCESSIVE_OFFSET && result == V92_UPSTREAM_DATA_RX_NO_PATH) {
+			return true;
+		}
 		CHECK(result == V92_UPSTREAM_DATA_RX_OK || result == V92_UPSTREAM_DATA_RX_FRAME,
 		      "channel-plan receive failed: %d", result);
 		CHECK(receiver.line.received_frames ==
@@ -1766,7 +1781,7 @@ static bool test_channel_plan(
 			for (unsigned i = 0; i < frame.bit_count; ++i)
 				bad_b1 |= frame.bits[i] != 1u;
 		}
-		if (fault && receiver.line.received_frames == V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
+		if (fault && fault != CHANNEL_RESIDUAL && receiver.line.received_frames == V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
 			double host_gain = conditioned ? .75 : 1.0;
 			if (fault == CHANNEL_NOISE)
 				CHECK(b1_error / (host_gain * host_gain) >
@@ -1774,9 +1789,13 @@ static bool test_channel_plan(
 				      "frozen offset hid held-out noise");
 			if (fault == CHANNEL_WRONG_B1)
 				CHECK(bad_b1, "offset fitting hid a validly coded wrong B1u bit");
-			if (fault == CHANNEL_LOSS || fault == CHANNEL_EXCESSIVE_OFFSET)
-				CHECK(receiver.line.calibration.offset == 0.0,
-				      "missing media or excessive bias supplied an offset fit");
+			if (fault == CHANNEL_LOSS)
+				CHECK(receiver.line.calibration.offset == 0.0 && !receiver.line.residual.active,
+				      "missing acquisition media supplied an offset fit");
+			if (fault == CHANNEL_EXCESSIVE_OFFSET)
+				CHECK(bad_b1 || b1_error / (host_gain * host_gain) >
+				      V92_B1U_VALIDATION_SYMBOLS * V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
+				      "an aliased offset fit hid a damaged B1u");
 			return true;
 		}
 		if (frame.bit_count == 0u || frame.b1u)
@@ -1796,14 +1815,16 @@ static bool test_channel_plan(
 	double quality_gain = wire ? receiver.line.host.gain : 1.0;
 	CHECK(b1_error / (quality_gain * quality_gain) <
 	      V92_B1U_VALIDATION_SYMBOLS * V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
-	      "channel-plan B1u residual too large: %g law=%u polarity=%d conditioned=%u offset=%d fit=%g gain=%g [%g,%g] nominal=%g",
+	      "channel-plan B1u residual too large: %g law=%u polarity=%d conditioned=%u offset=%d fit=%g gain=%g [%g,%g] nominal=%g residual=%g lags=%u,%u beta=%g,%g",
 	      sqrt(b1_error / V92_B1U_VALIDATION_SYMBOLS), law, polarity, conditioned, offset,
 	      receiver.line.calibration.offset, receiver.line.calibration.gain,
-	      receiver.line.calibration.minimum, receiver.line.calibration.maximum, plan.gain);
+	      receiver.line.calibration.minimum, receiver.line.calibration.maximum, plan.gain,
+	      receiver.line.residual.offset, receiver.line.residual.delay[0], receiver.line.residual.delay[1],
+	      receiver.line.residual.coefficient[0], receiver.line.residual.coefficient[1]);
 	CHECK(comparison_payload == DATA_FRAMES, "comparison channel shortened payload");
 	if (offset) {
-		CHECK(fabs(receiver.line.calibration.offset - offset * (conditioned ? .75 : 1.0)) < 16.0,
-		      "offset fit missed the physical bias: %g expected %g", receiver.line.calibration.offset,
+		CHECK(fabs(receiver.line.calibration.offset + receiver.line.residual.offset - offset * (conditioned ? .75 : 1.0)) < 16.0,
+		      "offset fit missed the physical bias: %g expected %g", receiver.line.calibration.offset + receiver.line.residual.offset,
 		      offset * (conditioned ? .75 : 1.0));
 		CHECK(!bad_b1 && b1_error < comparison_error / 2.0,
 		      "offset correction did not improve independently validated B1u");
@@ -1822,6 +1843,17 @@ static bool test_channel_plan(
 		CHECK(comparison_bad_bits == 0u && comparison_error <
 		      V92_B1U_VALIDATION_SYMBOLS * V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
 		      "inverted constellation did not acquire valid B1u");
+	}
+	if (fault == CHANNEL_RESIDUAL) {
+		struct v92_upstream_data_rx lost = receiver;
+		struct v92_upstream_data_frame output, unchanged;
+		memset(&output, 0xa5, sizeof(output)); unchanged = output;
+		CHECK(receiver.line.residual.active &&
+		      v92_upstream_data_rx_octet(&lost, channel.code, 0, false, &output) == V92_UPSTREAM_DATA_RX_NO_PATH &&
+		      lost.failed && v92_upstream_data_rx_is_valid(&lost) &&
+		      !memcmp(&output, &unchanged, sizeof(output)) &&
+		      !memcmp(&lost.line.residual, &receiver.line.residual, sizeof(receiver.line.residual)),
+		      "missing data media advanced residual history or corrupted receiver state");
 	}
 	CHECK(memcmp(&receiver.line.plan, &plan, sizeof(plan)) == 0,
 	      "B1u calibration changed the negotiated receive plan");
@@ -2888,8 +2920,85 @@ static bool test_direct_b1_validation(enum g711_law law, int polarity, bool faul
 	return true;
 }
 
+/* A physical residual channel at unrelated delays must be learned from
+ * acquisition, then decode a different held-out sequence without refitting. */
+static bool test_residual_inverse(void)
+{
+	enum { TRAIN = V92_B1U_ACQUISITION_FRAMES * V92_PCM_MAPPING_FRAME_SYMBOLS,
+	       TOTAL = TRAIN + 240 };
+	int32_t points[TOTAL], raw[TOTAL];
+	const unsigned delays[][2] = { { 0, 0 }, { 4, 0 }, { 3, 9 }, { 1, 12 } };
+	for (unsigned fixture = 0; fixture < ARRAY_LENGTH(delays); fixture++) {
+		uint32_t random = 71371;
+		for (unsigned i = 0; i < TOTAL; i++) {
+			random = random * 1664525u + 1013904223u;
+			points[i] = (int)(random >> 20) - 2048;
+			double value = points[i];
+			if (delays[fixture][0] && i >= delays[fixture][0]) value -= .027 * points[i - delays[fixture][0]];
+			if (delays[fixture][1] && i >= delays[fixture][1]) value += .011 * points[i - delays[fixture][1]];
+			raw[i] = (int32_t)lround(1.2 * value + 128 + ((int)(random & 3u) - 1));
+		}
+		struct v92_residual filter = { 0 }, copy;
+		double gain = 0;
+		CHECK(v92_residual_fit(&filter, points, raw, .8, .9, &gain) &&
+		      v92_residual_is_valid(&filter), "residual fit rejected an identifiable channel");
+		CHECK(filter.delay[0] == delays[fixture][0] && filter.delay[1] == delays[fixture][1],
+		      "residual fit invented or missed delayed channel memory");
+		for (unsigned edge = 0; edge < 2; edge++) {
+			double bound = edge ? .835 : .832, fitted_gain = 0;
+			struct v92_residual bounded = { 0 };
+			CHECK(v92_residual_fit(&bounded, points, raw, bound, bound, &fitted_gain) &&
+			      fitted_gain == bound && bounded.delay[0] == delays[fixture][0] &&
+			      bounded.delay[1] == delays[fixture][1], "gain boundary changed the delay hypothesis");
+		}
+		for (unsigned fault = 0; fault < 6; fault++) {
+			copy = filter;
+			if (fault == 0) copy.cursor = V92_RESIDUAL_LAGS;
+			if (fault == 1) copy.count = 3;
+			if (fault == 2) copy.offset = NAN;
+			if (fault == 3) copy.history[0] = INFINITY;
+			if (fault == 4) copy.coefficient[0] = .11;
+			if (fault == 5) { copy.active = false; copy.offset = 1; }
+			CHECK(!v92_residual_is_valid(&copy), "invalid residual state was accepted");
+		}
+		copy = filter;
+		double energy = 0;
+		for (unsigned i = TRAIN; i < TOTAL; i++) {
+			int32_t correction, other;
+			CHECK(v92_residual_sample(&filter, raw[i], 1, true, &correction) &&
+			      v92_residual_sample(&copy, raw[i], -1, true, &other) && correction == other &&
+			      !memcmp(&filter, &copy, sizeof(filter)), "independent filters or polarity diverged");
+			if (i >= TRAIN + V92_RESIDUAL_LAGS) {
+				double error = (raw[i] - correction) * gain - points[i];
+				energy += error * error;
+			}
+		}
+		CHECK(energy < 16. * (TOTAL - TRAIN - V92_RESIDUAL_LAGS),
+		      "frozen residual inverse missed held-out points");
+		copy = filter;
+		int32_t correction = 123;
+		CHECK(!v92_residual_sample(&filter, 0, 1, false, &correction) && correction == 123 &&
+		      !memcmp(&copy, &filter, sizeof(filter)), "missing media advanced the inverse");
+		copy.offset = -512;
+		struct v92_residual saved = copy;
+		CHECK(!v92_residual_sample(&copy, INT16_MAX, 1, true, &correction) &&
+		      !memcmp(&copy, &saved, sizeof(copy)), "inverse clipped an out-of-range sample");
+		saved = filter;
+		CHECK(!v92_residual_fit(&filter, points, raw, NAN, .9, &gain) &&
+		      !memcmp(&filter, &saved, sizeof(filter)), "invalid bounds changed the inverse");
+		for (unsigned i = 0; i < TRAIN; i++) raw[i] += 2048;
+		CHECK(!v92_residual_fit(&filter, points, raw, .8, .9, &gain) &&
+		      !memcmp(&filter, &saved, sizeof(filter)), "excessive DC bias supplied an inverse");
+		memset(points, 0, sizeof(points));
+		CHECK(!v92_residual_fit(&filter, points, raw, .8, .9, &gain),
+		      "singular acquisition supplied an inverse");
+	}
+	return true;
+}
+
 int main(void)
 {
+	if (!test_residual_inverse()) return 1;
 	if (!test_data_initialization()) return 1;
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)
 		for (int polarity = -1; polarity <= 1; polarity += 2)
@@ -2958,9 +3067,14 @@ int main(void)
 				for (int sign = -1; sign <= 1; sign += 2)
 					for (enum channel_fault fault = CHANNEL_OK; fault <= CHANNEL_EXCESSIVE_OFFSET; ++fault)
 						if (!test_channel_plan(law, polarity, false, true, conditioned,
-						      false, true, sign * (fault == CHANNEL_EXCESSIVE_OFFSET ? 96 : 48), fault))
+						      false, true, sign * (fault == CHANNEL_EXCESSIVE_OFFSET ? 768 : 48), fault))
 							return 1;
 	fprintf(stderr, "[       OK ] bounded PCM upstream offset acquisition\n");
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)
+		for (int polarity = -1; polarity <= 1; polarity += 2)
+			for (unsigned conditioned = 0; conditioned < 2; conditioned++)
+				if (!test_channel_plan(law, polarity, false, false, conditioned,
+				    false, true, 128, CHANNEL_RESIDUAL)) return 1;
 	if (!test_quantized_level_tracking(G711_LAW_PCMU, 19u, false, TEST_LU, false, 0u, 0u) ||
 	    !test_quantized_level_tracking(G711_LAW_PCMA, 19u, false, TEST_LU, false, 0u, 0u) ||
 	    !test_quantized_level_tracking(G711_LAW_PCMU, 13u, false, TEST_LU, false, 0u, 0u) ||

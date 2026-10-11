@@ -16,6 +16,7 @@ _Static_assert(V92_OBSERVATION_TRAINING ==
 static void close_acquisition(struct v92_upstream_model *model)
 {
 	model->acquiring = false;
+	model->residual_acquiring = false;
 	memset(model->x, 0, sizeof(model->x));
 	memset(model->raw, 0, sizeof(model->raw));
 	memset(model->u, 0, sizeof(model->u));
@@ -42,6 +43,13 @@ static bool alternate_is_valid(const struct v92_upstream_data_rx *receiver)
 bool v92_upstream_model_is_valid(const struct v92_upstream_data_rx *receiver)
 {
 	const struct v92_upstream_model *model = &receiver->model;
+
+	if (model->residual_acquiring && (model->acquiring || model->valid || model->scalar_gain ||
+	    receiver->line.plan.observation != V92_PCM_FRAME_CONSTELLATION ||
+	    receiver->line.received_frames >= V92_B1U_ACQUISITION_FRAMES || receiver->line.residual.active))
+		return false;
+	if (receiver->line.residual.active && (model->acquiring || model->valid || model->scalar_gain))
+		return false;
 
 	if (receiver->line.plan.observation == V92_PCM_FRAME_FILTER_OUTPUT) {
 		const struct v92_pcm_level_fit *fit = &model->level;
@@ -94,6 +102,8 @@ void v92_upstream_model_init(struct v92_upstream_data_rx *receiver)
 	unsigned history = cpd->filter[V92_CPD_PRECODER_FEEDBACK].count;
 
 	memset(model, 0, sizeof(*model));
+	memset(&receiver->line.residual, 0, sizeof(receiver->line.residual));
+	model->residual_acquiring = receiver->line.plan.observation == V92_PCM_FRAME_CONSTELLATION;
 	if (receiver->line.plan.observation != V92_PCM_FRAME_CONSTELLATION ||
 	    delay >= filter->count || filter->coefficient[delay] <= 0)
 		return;
@@ -109,11 +119,26 @@ void v92_upstream_model_init(struct v92_upstream_data_rx *receiver)
 		return;
 	model->coefficient = filter->coefficient[delay];
 	model->acquiring = true;
+	model->residual_acquiring = false;
 }
 
 void v92_upstream_model_observe(struct v92_upstream_model *model,
-	const struct v92_pcm_frame *frame, const struct v92_upstream_data_line *line)
+	const struct v92_pcm_frame_decision *decision, const struct v92_upstream_data_line *line)
 {
+	const struct v92_pcm_frame *frame = &decision->frame;
+	if (model->residual_acquiring) {
+		for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; i++)
+			if (!line->wire_known[i] || !line->received[i]) {
+				close_acquisition(model);
+				return;
+			}
+		size_t offset = line->received_frames * V92_PCM_MAPPING_FRAME_SYMBOLS;
+		for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; i++) {
+			model->x[offset + i] = decision->predicted_samples[i];
+			model->raw[offset + i] = line->raw[i];
+		}
+		return;
+	}
 	if (!model->acquiring || line->received_frames >= V92_B1U_ACQUISITION_FRAMES)
 		return;
 	size_t offset = line->received_frames * V92_PCM_MAPPING_FRAME_SYMBOLS;
@@ -155,8 +180,15 @@ static bool observation_offset(const struct v92_upstream_data_line *line,
 }
 
 void v92_upstream_model_fit(struct v92_upstream_model *model,
-	const struct v92_upstream_data_line *line, const struct v92_pcm_frame_rx *decoder)
+	struct v92_upstream_data_line *line, const struct v92_pcm_frame_rx *decoder)
 {
+	if (model->residual_acquiring && line->received_frames + 1u == V92_B1U_ACQUISITION_FRAMES) {
+		if (line->host.gain > 0.0 && v92_residual_fit(&line->residual, model->x, model->raw,
+		    line->calibration.minimum, line->calibration.maximum, &line->calibration.gain))
+			line->calibration.offset = 0.0;
+		close_acquisition(model);
+		return;
+	}
 	int16_t samples[V92_OBSERVATION_TRAINING];
 	double offsets[V92_OBSERVATION_TRAINING];
 
@@ -241,7 +273,8 @@ static bool wire_cells(const struct v92_upstream_data_line *line, enum g711_law 
 		    !pcm_gain_observe(&checked, line->wire[i] * line->polarity, host) ||
 		    !g711_quantization_interval(law, line->wire[i] * line->polarity, &cell))
 			return false;
-		double offset = line->raw[i] - (int32_t)host * line->polarity - line->calibration.offset;
+		double offset = line->raw[i] - (int32_t)host * line->polarity -
+			line->calibration.offset - line->correction[i];
 		double lower = line->polarity > 0 ? cell.lower : -(double)cell.upper;
 		double upper = line->polarity > 0 ? cell.upper : -(double)cell.lower;
 

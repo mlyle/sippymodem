@@ -8,6 +8,7 @@
 #include "v92_upstream_plan.h"
 #include "v92_upstream_model.h"
 #include "pcm_gain.h"
+#include "v92_residual.h"
 
 enum v92_upstream_data_rx_result {
 	V92_UPSTREAM_DATA_RX_OK,
@@ -29,6 +30,9 @@ struct v92_upstream_data_line {
 		int32_t raw[V92_PCM_MAPPING_FRAME_SYMBOLS];
 	};
 	struct v92_upstream_plan plan;
+	struct v92_residual residual;
+	/* Known causal subtraction for each original raw observation. */
+	int32_t correction[V92_PCM_MAPPING_FRAME_SYMBOLS];
 	/* Raw-coordinate calibration from known B1u only. Gain bounds come from
 	 * the training LU cell; offset is in polarity-normalized input units.
 	 * Sums count acquisition decisions only. The nominal plan stays intact. */
@@ -103,6 +107,11 @@ struct v92_upstream_data_frame {
  * decodes raw line samples without another FIR or G.711 quantization. The
  * gain is refined within training LU uncertainty during initial B1u
  * acquisition, then remains fixed through B1u validation and data/control.
+ * A general CPd channel with complete acquisition media can also acquire a
+ * bounded causal residual inverse. It selects up to two small delayed terms
+ * from the last acquisition frames, then freezes before independent B1u.
+ * Original raw samples, wire cells and quality units are retained; missing
+ * media after fitting takes ordinary no-path recovery.
  * A linear channel path with complete wire/host evidence also fits a bounded
  * constant offset at the end of acquisition. Subtract it in decoding, wire
  * cells and residuals; validation and payload never update the fit.
