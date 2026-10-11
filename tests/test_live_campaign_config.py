@@ -189,6 +189,15 @@ class LiveCampaignConfigTests(unittest.TestCase):
             self.assertEqual(config.reference_name, "fxs2")
             self.assertEqual(config.environment("callback-answer")["SIP_PORT"], "5064")
             self.assertEqual(config.environment("callback-request")["SIP_PORT"], "0")
+            value["callback_port"] = 5064
+            self.write(path, value)
+            self.assertEqual(load_campaign_config(path).callback_port, 5064)
+            for invalid_port in (0, 65536, True, "5064", 5060):
+                value["callback_port"] = invalid_port
+                self.write(path, value)
+                with self.assertRaisesRegex(CampaignConfigError, "callback_port"):
+                    load_campaign_config(path)
+            value["callback_port"] = None
             for invalid in ("../fxs2", "two modems", "", "a" * 33, None):
                 value["reference_name"] = invalid
                 self.write(path, value)

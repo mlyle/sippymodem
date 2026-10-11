@@ -112,8 +112,13 @@ port and our callback listening port are independent settings:
 | FXS1 | `sip:modem@ata.example.invalid:5060` | `5060` |
 | FXS2 | `sip:modem@ata.example.invalid:5062` | `5064` |
 
-Configure each reference getty's callback number to reach its corresponding
-listener. Grandstream direct-IP dialing encodes the destination port as a final
+With a reference getty that supports the port argument, set `callback_port`
+to its local callback listener port (for example, `5064`). The request becomes
+`DIAL 5064 V42 V44 PCM`, with the port before the profile's feature flags.
+The configuration rejects a port that differs from the listener. Omit this
+setting for older gettys; their existing portless `DIAL` command is preserved.
+For those gettys, configure the callback number to reach the assigned listener.
+Grandstream direct-IP dialing encodes the destination port as a final
 `*port`: for example, `*47192*0*2*10*5064` reaches `192.0.2.10:5064`.
 See the [Grandstream direct-IP calling guide](https://documentation.grandstream.com/knowledge-base/ht81x-user-guide/).
 Use ephemeral local SIP/RTP ports (`"0"`) on outbound/request legs and ephemeral

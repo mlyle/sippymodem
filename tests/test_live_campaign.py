@@ -1145,6 +1145,11 @@ class LiveCampaignTests(unittest.TestCase):
         self.assertEqual(plain, b"\r\n\r\nDIAL\r\n")
         self.assertEqual(v22bis, b"\r\n\r\nDIAL V42\r\n")
         self.assertEqual(pcm, b"\r\n\r\nDIAL V42 V44 PCM\r\n")
+        for name, features in (("v21-300-callback", b""),
+                               ("v22bis-2400-lapm-callback", b" V42"),
+                               ("v92-pcmup-36000-callback", b" V42 V44 PCM")):
+            self.assertEqual(_callback_command(CASES_BY_NAME[name], 5064),
+                             b"\r\n\r\nDIAL 5064" + features + b"\r\n")
 
     def test_callback_real_ptys_bind_nonce_and_retrain(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1249,6 +1254,7 @@ class LiveCampaignTests(unittest.TestCase):
                     reference_name=f"fxs{index}",
                     candidate=replace(config.candidate, arguments=config.candidate.arguments + (str(port), nonce)),
                     callback_answer_environment=(("SIP_PORT", str(port)),),
+                    callback_port=port,
                 )
                 calls.append((config, self.artifacts(work, scheduled), nonce))
             with mock.patch("tools.live_terminal.time.sleep"), ThreadPoolExecutor(max_workers=2) as workers:
@@ -1264,10 +1270,35 @@ class LiveCampaignTests(unittest.TestCase):
                 self.assertEqual(result.remote_retrain_nonce, nonce)
                 recorded = json.loads((artifacts.directory / "result.json").read_text())
                 self.assertEqual(recorded["result"]["reference_name"], config.reference_name)
+                transmitted = (artifacts.legs["request"] / "terminal-tx.bin").read_bytes()
+                self.assertIn(_callback_command(scheduled.case, config.callback_port), transmitted)
                 received = (artifacts.legs["answer"] / "terminal-rx.bin").read_bytes()
                 self.assertIn(b"GETTY:CALLBACK:CONNECT:" + nonce.encode(), received)
                 other = ("2" if nonce[0] == "1" else "1") * 32
                 self.assertNotIn(b"GETTY:CALLBACK:CONNECT:" + other.encode(), received)
+
+    def test_occupied_callback_listener_does_not_start_request(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as occupied:
+            occupied.bind(("127.0.0.1", 0))
+            port = occupied.getsockname()[1]
+            root = Path(directory)
+            script = root / "fake.py"
+            script.write_text(textwrap.dedent(FAKE_MODEM), encoding="utf-8")
+            scheduled = ScheduledAttempt(CASES_BY_NAME["v21-300-callback"], 1)
+            artifacts = self.artifacts(root, scheduled)
+            config = self.config(root, script, "callback-udp", root / "callback-ready")
+            config = replace(
+                config,
+                callback_port=port,
+                callback_answer_environment=(("SIP_PORT", str(port)),),
+                candidate=replace(config.candidate, arguments=config.candidate.arguments + (str(port), "1" * 32)),
+            )
+            frozen = FrozenBinary(root, Path(sys.executable), "a" * 40, "b" * 64, False)
+            result = run_physical_attempt(config, frozen, scheduled, 1, artifacts, True)
+            self.assertEqual(result.outcome, "infrastructure-error")
+            self.assertFalse(result.line_attempted)
+            self.assertFalse(result.callback_request_attempted)
+            self.assertFalse(artifacts.daemon_log("request").exists())
 
     def test_callback_from_another_request_is_not_verified(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

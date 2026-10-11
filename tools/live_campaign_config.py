@@ -65,6 +65,7 @@ ROOT_KEYS = frozenset(
     {
         "enabled",
         "reference_name",
+        "callback_port",
         "artifact_directory",
         "build_cache",
         "candidate",
@@ -130,6 +131,7 @@ class CampaignConfig:
     busy_retry_seconds: float
     busy_retry_limit: int
     reference_name: str = "ata"
+    callback_port: int | None = None
 
     def environment(self, purpose: str) -> dict[str, str]:
         values = {
@@ -355,6 +357,11 @@ def load_campaign_config(path: Path) -> CampaignConfig:
         raise CampaignConfigError(
             "callback answer SIP_PORT must be a fixed nonzero port"
         )
+    callback_port = value.get("callback_port")
+    if callback_port is not None:
+        callback_port = _integer(callback_port, "callback_port", 1, 65535)
+        if callback_port != answer_port:
+            raise CampaignConfigError("callback_port must match callback answer SIP_PORT")
     if request_port == answer_port:
         raise CampaignConfigError("callback request and answer SIP_PORT must differ")
     if enabled:
@@ -371,6 +378,7 @@ def load_campaign_config(path: Path) -> CampaignConfig:
     return CampaignConfig(
         enabled=enabled,
         reference_name=reference_name,
+        callback_port=callback_port,
         artifact_directory=_path(
             value.get("artifact_directory"), "artifact_directory", base
         ),

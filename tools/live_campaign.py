@@ -756,10 +756,10 @@ def _outbound_body(
     )
 
 
-def _callback_command(case: CampaignCase) -> bytes:
-    suffix = b""
+def _callback_command(case: CampaignCase, port: int | None = None) -> bytes:
+    suffix = b"" if port is None else b" " + str(port).encode("ascii")
     if case.callback_features:
-        suffix = b" " + b" ".join(
+        suffix += b" " + b" ".join(
             feature.encode("ascii") for feature in case.callback_features
         )
     return b"\r\n\r\nDIAL" + suffix + b"\r\n"
@@ -854,7 +854,7 @@ def _callback_body(
     ) or ""
     if not _wake_raw_link(request.terminal, "request", config, state, progress):
         return
-    callback_command = _callback_command(scheduled.case)
+    callback_command = _callback_command(scheduled.case, config.callback_port)
     progress.set("waiting for callback request greeting")
     try:
         greeting_verified, received = request.terminal.probe_initial_data(
