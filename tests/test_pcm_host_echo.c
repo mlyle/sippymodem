@@ -1142,6 +1142,52 @@ static bool test_frozen_delay_tracking(int changed_delay, bool transient)
 	return true;
 }
 
+static bool test_prompt_weak_delay_tracking(unsigned warmup)
+{
+	struct pcm_host_echo echo;
+	CHECK(pcm_host_echo_init(&echo) == PCM_HOST_ECHO_OK,
+	      "weak timing owner did not initialize");
+	for (size_t index = 0; index < TRAIN_SAMPLES; index++) {
+		int16_t cleaned;
+		CHECK(echo_step(&echo, PCM_HOST_ECHO_TRAIN, index,
+			       echo_sample(index) / 8, &cleaned),
+		      "weak timing training failed at %zu", index);
+	}
+	CHECK(pcm_host_echo_is_ready(&echo), "weak timing model not ready");
+	uint32_t original_delay = echo.window_delay_samples;
+	float coefficients[PCM_HOST_ECHO_FILTER_TAPS];
+	memcpy(coefficients, echo.coefficients, sizeof(coefficients));
+	uint64_t residual = 0, source = 0;
+	for (size_t index = TRAIN_SAMPLES; index < TRAIN_SAMPLES + warmup; index++) {
+		int16_t cleaned;
+		CHECK(echo_step(&echo, PCM_HOST_ECHO_FILTER, index,
+			       add_s16(remote_sample(index) * 7 + echo_sample(index) / 8), &cleaned),
+		      "weak timing warmup failed at %zu", index);
+	}
+	size_t start = TRAIN_SAMPLES + warmup;
+	/* An echo near one percent of received power can corrupt dense PCM
+	 * while remaining below the fast monitor's material-return threshold.
+	 * A 13.625 ms path change must recover before a 700 ms data outage. */
+	for (size_t index = start; index < start + 5600; index++) {
+		int16_t remote = remote_sample(index) * 7;
+		int16_t returned = echo_sample(index - 109u) / 8;
+		int16_t cleaned;
+		CHECK(echo_step(&echo, PCM_HOST_ECHO_FILTER, index,
+			       add_s16((int32_t)remote + returned), &cleaned),
+		      "weak timing filtering failed at %zu", index);
+		if (index >= start + 4800) {
+			residual = energy_add(residual, (int32_t)cleaned - remote);
+			source = energy_add(source, returned);
+		}
+	}
+	CHECK(echo.window_delay_samples == original_delay + 109u &&
+	      memcmp(coefficients, echo.coefficients, sizeof(coefficients)) == 0,
+	      "weak return did not retime promptly without refitting: %u -> %u",
+	      original_delay, echo.window_delay_samples);
+	CHECK(residual * 50 < source, "weak return residual remained high");
+	return true;
+}
+
 static bool test_unrelated_input_does_not_retime(uint32_t salt)
 {
 	struct pcm_host_echo echo;
@@ -1208,7 +1254,10 @@ int main(void)
 	for (size_t index = 0; index < sizeof(shifts) / sizeof(shifts[0]); ++index)
 		if (!test_frozen_delay_tracking(shifts[index], false))
 			return 1;
-	if (!test_prompt_frozen_delay_tracking() || !test_frozen_delay_tracking(8, true))
+	if (!test_prompt_frozen_delay_tracking() || !test_prompt_weak_delay_tracking(0) ||
+	    !test_prompt_weak_delay_tracking(PCM_HOST_ECHO_TIMING_BINS - 1 +
+					    PCM_HOST_ECHO_MEDIUM_TIMING_WINDOW) ||
+	    !test_frozen_delay_tracking(8, true))
 		return 1;
 	for (uint32_t salt = 1; salt <= 8; ++salt)
 		if (!test_unrelated_input_does_not_retime(salt * UINT32_C(7919)))

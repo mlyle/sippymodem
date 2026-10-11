@@ -65,8 +65,10 @@ static bool header_is_valid(const struct pcm_host_echo *echo)
 	    echo->timing.write >= PCM_HOST_ECHO_TIMING_BINS ||
 	    echo->timing.fill > PCM_HOST_ECHO_TIMING_BINS ||
 	    echo->timing.slow.count >= PCM_HOST_ECHO_TIMING_WINDOW ||
+	    echo->timing.medium.count >= PCM_HOST_ECHO_MEDIUM_TIMING_WINDOW ||
 	    echo->timing.fast.count >= PCM_HOST_ECHO_FAST_TIMING_WINDOW ||
 	    echo->timing.slow.candidate >= PCM_HOST_ECHO_TIMING_BINS ||
+	    echo->timing.medium.candidate >= PCM_HOST_ECHO_TIMING_BINS ||
 	    echo->timing.fast.candidate >= PCM_HOST_ECHO_TIMING_BINS ||
 	    echo->reference.scan_count == 0 ||
 	    echo->window_delay_samples == 0 ||
@@ -559,7 +561,7 @@ static bool timing_is_qualified(
 {
 	/* Require useful cancellation as well as correlation. Compare against
 	 * the current delay on the same input, including the peer's signal.
-	 * Strength is sample_count * r-squared. Both monitors use 9 in
+	 * Strength is sample_count * r-squared. All monitors use 9 in
 	 * each window and 36 together; short windows require material returns
 	 * too. Agreement and a half-prediction-energy improvement are
 	 * required so unrelated input cannot win just by choosing another bin. */
@@ -624,12 +626,14 @@ static bool finish_timing_window(struct pcm_host_echo *echo,
 				evidence.input + t->first.input,
 				2 * samples, 36);
 	}
-	/* A short window can follow a strong return before a handshake ends.
-	 * Weak returns retain the long monitor's sensitivity; require at least
-	 * 1/32 of received energy in both short-window predictions. */
+	/* Short windows require a material return: 1/32 of received energy
+	 * for fast tracking, 1/128 for intermediate tracking. The long monitor
+	 * keeps its sensitivity to weaker returns. All still require the same
+	 * independent-window agreement and combined confidence above. */
+	unsigned material_scale = samples == PCM_HOST_ECHO_FAST_TIMING_WINDOW ? 32 : 128;
 	bool material_return =
-		scaled_energy_at_least(evidence.energy, 32, evidence.input) &&
-		scaled_energy_at_least(t->first.energy, 32, t->first.input);
+		scaled_energy_at_least(evidence.energy, material_scale, evidence.input) &&
+		scaled_energy_at_least(t->first.energy, material_scale, t->first.input);
 	if ((samples == PCM_HOST_ECHO_TIMING_WINDOW || material_return) &&
 	    t->second && t->first_qualified && qualified && best == t->candidate) {
 		struct pcm_host_echo_timing_evidence combined = {
@@ -662,7 +666,10 @@ static bool finish_timing_window(struct pcm_host_echo *echo,
 			return true;
 		}
 	}
-	t->second = !t->second;
+	/* Each completed window is disjoint from its predecessor. Retain it
+	 * for the next comparison even when it just served as the second one;
+	 * fixed pairs otherwise discard agreement across a pair boundary. */
+	t->second = true;
 	t->first = evidence;
 	t->candidate = best;
 	t->first_qualified = qualified;
@@ -671,6 +678,19 @@ static bool finish_timing_window(struct pcm_host_echo *echo,
 	memset(t->cross, 0, sizeof(t->cross));
 	memset(t->energy, 0, sizeof(t->energy));
 	return false;
+}
+
+static void accumulate_timing_window(struct pcm_host_echo_timing_window *to,
+	const struct pcm_host_echo_timing_window *from)
+{
+	/* Fold completed blocks before clearing them. Each input contributes
+	 * once to every scale without another per-sample correlation scan. */
+	to->input += from->input;
+	to->count += from->count;
+	for (unsigned i = 0; i < PCM_HOST_ECHO_TIMING_BINS; i++) {
+		to->cross[i] += from->cross[i];
+		to->energy[i] += from->energy[i];
+	}
 }
 
 static void track_timing(
@@ -693,24 +713,27 @@ static void track_timing(
 		return;
 	int16_t input = t->received[(index + bins - radius) % bins];
 
-	t->slow.input += square_s16(input);
 	t->fast.input += square_s16(input);
 	for (unsigned candidate = 0; candidate < bins; ++candidate) {
 		int32_t predicted = t->prediction[index];
 		int64_t cross = (int64_t)input * predicted;
 		uint64_t energy = (int64_t)predicted * predicted;
 
-		t->slow.cross[candidate] += cross;
 		t->fast.cross[candidate] += cross;
-		t->slow.energy[candidate] += energy;
 		t->fast.energy[candidate] += energy;
 		index = index == 0 ? bins - 1 : index - 1;
 	}
-	if (++t->fast.count == PCM_HOST_ECHO_FAST_TIMING_WINDOW &&
-	    finish_timing_window(echo, &t->fast,
-				 PCM_HOST_ECHO_FAST_TIMING_WINDOW))
+	if (++t->fast.count != PCM_HOST_ECHO_FAST_TIMING_WINDOW)
 		return;
-	if (++t->slow.count == PCM_HOST_ECHO_TIMING_WINDOW)
+	accumulate_timing_window(&t->medium, &t->fast);
+	if (finish_timing_window(echo, &t->fast, PCM_HOST_ECHO_FAST_TIMING_WINDOW))
+		return;
+	if (t->medium.count != PCM_HOST_ECHO_MEDIUM_TIMING_WINDOW)
+		return;
+	accumulate_timing_window(&t->slow, &t->medium);
+	if (finish_timing_window(echo, &t->medium, PCM_HOST_ECHO_MEDIUM_TIMING_WINDOW))
+		return;
+	if (t->slow.count == PCM_HOST_ECHO_TIMING_WINDOW)
 		finish_timing_window(echo, &t->slow,
 				     PCM_HOST_ECHO_TIMING_WINDOW);
 }

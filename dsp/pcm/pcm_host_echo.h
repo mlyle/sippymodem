@@ -33,12 +33,18 @@ enum {
 	PCM_HOST_ECHO_TIMING_RADIUS = PCM_ECHO_REFERENCE_SAMPLE_RATE / 50,
 	PCM_HOST_ECHO_TIMING_BINS = 2 * PCM_HOST_ECHO_TIMING_RADIUS + 1,
 	PCM_HOST_ECHO_TIMING_WINDOW = 8192,
+	/* Subsecond evidence for roughly one-percent returns; the long window
+	 * still qualifies weaker echoes. */
+	PCM_HOST_ECHO_MEDIUM_TIMING_WINDOW = 2048,
 	PCM_HOST_ECHO_FAST_TIMING_WINDOW = 128,
 };
 
 _Static_assert((unsigned)PCM_HOST_ECHO_FILTER_TAPS ==
 		       (unsigned)PCM_ECHO_REFERENCE_MAX_WINDOW_SAMPLES,
 	       "PCM host echo filter must fill the retained PCM window");
+_Static_assert(PCM_HOST_ECHO_MEDIUM_TIMING_WINDOW % PCM_HOST_ECHO_FAST_TIMING_WINDOW == 0 &&
+	       PCM_HOST_ECHO_TIMING_WINDOW % PCM_HOST_ECHO_MEDIUM_TIMING_WINDOW == 0,
+	       "echo timing windows must contain whole shorter windows");
 
 enum pcm_host_echo_mode {
 	PCM_HOST_ECHO_BYPASS,
@@ -72,7 +78,7 @@ struct pcm_host_echo_timing_window {
 struct pcm_host_echo_timing {
 	int32_t prediction[PCM_HOST_ECHO_TIMING_BINS];
 	int16_t received[PCM_HOST_ECHO_TIMING_BINS];
-	struct pcm_host_echo_timing_window slow, fast;
+	struct pcm_host_echo_timing_window slow, medium, fast;
 	uint16_t write, fill;
 };
 
