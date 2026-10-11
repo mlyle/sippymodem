@@ -2939,15 +2939,15 @@ static bool test_residual_inverse(void)
 			raw[i] = (int32_t)lround(1.2 * value + 128 + ((int)(random & 3u) - 1));
 		}
 		struct v92_residual filter = { 0 }, copy;
-		double gain = 0;
-		CHECK(v92_residual_fit(&filter, points, raw, .8, .9, &gain) &&
+		double gain = 0, score = INFINITY;
+		CHECK(v92_residual_fit(&filter, points, raw, .8, .9, &gain, &score) && isfinite(score) &&
 		      v92_residual_is_valid(&filter), "residual fit rejected an identifiable channel");
 		CHECK(filter.delay[0] == delays[fixture][0] && filter.delay[1] == delays[fixture][1],
 		      "residual fit invented or missed delayed channel memory");
 		for (unsigned edge = 0; edge < 2; edge++) {
 			double bound = edge ? .835 : .832, fitted_gain = 0;
 			struct v92_residual bounded = { 0 };
-			CHECK(v92_residual_fit(&bounded, points, raw, bound, bound, &fitted_gain) &&
+			CHECK(v92_residual_fit(&bounded, points, raw, bound, bound, &fitted_gain, NULL) &&
 			      fitted_gain == bound && bounded.delay[0] == delays[fixture][0] &&
 			      bounded.delay[1] == delays[fixture][1], "gain boundary changed the delay hypothesis");
 		}
@@ -2984,20 +2984,111 @@ static bool test_residual_inverse(void)
 		CHECK(!v92_residual_sample(&copy, INT16_MAX, 1, true, &correction) &&
 		      !memcmp(&copy, &saved, sizeof(copy)), "inverse clipped an out-of-range sample");
 		saved = filter;
-		CHECK(!v92_residual_fit(&filter, points, raw, NAN, .9, &gain) &&
+		double saved_score = score;
+		CHECK(!v92_residual_fit(&filter, points, raw, NAN, .9, &gain, &score) && score == saved_score &&
 		      !memcmp(&filter, &saved, sizeof(filter)), "invalid bounds changed the inverse");
 		for (unsigned i = 0; i < TRAIN; i++) raw[i] += 2048;
-		CHECK(!v92_residual_fit(&filter, points, raw, .8, .9, &gain) &&
+		CHECK(!v92_residual_fit(&filter, points, raw, .8, .9, &gain, NULL) &&
 		      !memcmp(&filter, &saved, sizeof(filter)), "excessive DC bias supplied an inverse");
 		memset(points, 0, sizeof(points));
-		CHECK(!v92_residual_fit(&filter, points, raw, .8, .9, &gain),
+		CHECK(!v92_residual_fit(&filter, points, raw, .8, .9, &gain, NULL),
 		      "singular acquisition supplied an inverse");
 	}
 	return true;
 }
 
+/* Early unconstrained decisions must not teach the residual fitter their
+ * errors. The known-bit candidate ends at acquisition; different later data
+ * and a deliberately wrong held-out B1 bit remain independently decoded. */
+static bool test_residual_acquisition(unsigned prefix, bool damaged)
+{
+	struct v92_cpd_parameters cpd;
+	struct v92_pcm_mapping mapping;
+	struct v92_pcm_frame_tx tx;
+	struct v92_pcm_frame_rx decoder;
+	struct v92_upstream_model model = { .residual_acquiring = true };
+	struct v92_upstream_data_line line = {
+		.plan.observation = V92_PCM_FRAME_CONSTELLATION,
+		.calibration = { .gain = 1.272, .minimum = 1.18, .maximum = 1.30 },
+		.host.gain = 1., .polarity = 1,
+	};
+	CHECK(v92_cpd_direct_init(&cpd, G711_LAW_PCMU, 4, false) == V92_CPD_OK,
+	      "acquisition mapping init failed");
+	cpd.constellation[0].count = 32;
+	for (unsigned i = 0; i < 32; i++) cpd.constellation[0].positive_linear[i] = (int16_t)((2 * i + 1) * 256);
+	CHECK(v92_pcm_mapping_init(&mapping, G711_LAW_PCMU, &cpd) == V92_PCM_MAPPING_OK &&
+	      v92_pcm_frame_tx_init(&tx, &mapping) == V92_PCM_FRAME_OK &&
+	      v92_pcm_frame_rx_init_constellation(&decoder, &mapping) == V92_PCM_FRAME_OK,
+	      "acquisition coding init failed");
+	double history[6] = { 0 }, error = 0.;
+	unsigned cursor = 0, errors = 0, payload_frames = 0;
+	struct v92_residual frozen = { 0 };
+	for (unsigned frame = 0; frame < prefix + 68; frame++) {
+		struct v92_pcm_frame encoded = { 0 };
+		uint8_t bits[V92_PCM_MAPPING_MAX_BITS], decoded[V92_PCM_MAPPING_MAX_BITS];
+		if (frame >= prefix) {
+			if (frame - prefix < V92_B1U_FRAMES) memset(bits, 1, mapping.data_bits_per_frame);
+			else payload(bits, mapping.data_bits_per_frame, frame - prefix - V92_B1U_FRAMES);
+			if (damaged && frame - prefix == 40) bits[7] = 0;
+			CHECK(v92_pcm_frame_encode(&tx, bits, mapping.data_bits_per_frame, &encoded) == V92_PCM_FRAME_OK,
+			      "acquisition source failed");
+		} else {
+			for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; i++) encoded.u[i] = 256;
+		}
+		for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; i++) {
+			double point = encoded.u[i];
+			int16_t raw = (int16_t)lround((point - .027 * history[(cursor + 2) % 6] +
+				.011 * history[cursor]) / 1.237 + 128.);
+			history[cursor] = point; cursor = (cursor + 1) % 6;
+			raw = g711_quantize(G711_LAW_PCMU, raw);
+			int32_t correction;
+			CHECK(v92_residual_sample(&line.residual, raw, 1, true, &correction), "residual sample failed");
+			line.raw[i] = raw; line.received[i] = line.wire_known[i] = true;
+			line.samples[i] = (int16_t)lround((raw - correction) * line.calibration.gain);
+			if (frame >= V92_B1U_ACQUISITION_FRAMES && frame < V92_B1U_FRAMES) {
+				double residual = raw - correction - point / line.calibration.gain;
+				error += residual * residual;
+			}
+		}
+		struct v92_pcm_frame_decision decision;
+		CHECK(v92_pcm_frame_decode(&decoder, line.samples, frame < prefix + V92_B1U_FRAMES,
+		      decoded, mapping.data_bits_per_frame, &decision) == V92_PCM_FRAME_OK, "independent decode failed");
+		v92_upstream_model_observe(&model, &decision, &line);
+		v92_upstream_model_fit(&model, &line, &decoder);
+		if (frame == V92_B1U_ACQUISITION_FRAMES - 1) {
+			frozen = line.residual;
+			CHECK(frozen.active && memory_region_is_zero(&model.alternate, sizeof(model.alternate)),
+			      "acquisition did not release alternate decoder");
+		} else if (frame >= V92_B1U_ACQUISITION_FRAMES) {
+			CHECK(line.residual.offset == frozen.offset && line.residual.count == frozen.count &&
+			      !memcmp(line.residual.coefficient, frozen.coefficient, sizeof(frozen.coefficient)),
+			      "validation or payload retrained the residual model");
+		}
+		if (decision.bits_ready && frame >= prefix + V92_PCM_RX_DELAY_FRAMES + V92_B1U_ACQUISITION_FRAMES) {
+			unsigned source_frame = frame - prefix - V92_PCM_RX_DELAY_FRAMES;
+			if (source_frame < V92_B1U_FRAMES) {
+				for (unsigned i = 0; i < mapping.data_bits_per_frame; i++) errors += decoded[i] != 1;
+			} else {
+				payload(bits, mapping.data_bits_per_frame, source_frame - V92_B1U_FRAMES);
+				CHECK(!decision.ambiguous && !memcmp(decoded, bits, mapping.data_bits_per_frame),
+				      "residual acquisition corrupted later payload");
+				payload_frames++;
+			}
+		}
+		line.received_frames++;
+	}
+	CHECK(errors == (unsigned)damaged && payload_frames == 10 &&
+	      error < V92_B1U_VALIDATION_SYMBOLS * V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
+	      "acquisition missed independent data: prefix=%u damaged=%u errors=%u rms=%g payload=%u",
+	      prefix, damaged, errors, sqrt(error / V92_B1U_VALIDATION_SYMBOLS), payload_frames);
+	return true;
+}
+
 int main(void)
 {
+	for (unsigned prefix = 0; prefix < 2; prefix++)
+		for (unsigned damaged = 0; damaged < 2; damaged++)
+			if (!test_residual_acquisition(prefix, damaged)) return 1;
 	if (!test_residual_inverse()) return 1;
 	if (!test_data_initialization()) return 1;
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)

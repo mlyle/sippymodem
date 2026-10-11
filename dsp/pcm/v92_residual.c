@@ -83,7 +83,7 @@ static void features(const int32_t *points, unsigned n,
 
 bool v92_residual_fit(struct v92_residual *filter,
 	const int32_t *points, const int32_t *raw, double minimum, double maximum,
-	double *gain)
+	double *gain, double *score)
 {
 	if (!filter || !points || !raw || !gain || !isfinite(minimum) ||
 	    !isfinite(maximum) || minimum <= 0. || maximum < minimum) return false;
@@ -143,6 +143,7 @@ bool v92_residual_fit(struct v92_residual *filter,
 		}
 	if (!best.active) return false;
 	*filter = best; *gain = best_gain;
+	if (score) *score = best_score;
 	return true;
 }
 

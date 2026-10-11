@@ -10,7 +10,8 @@
  * coding histories. The data receiver owns the primary decoder; only the
  * alternate lives here. Neither model is copied into traceback paths. Direct
  * calls instead reuse the alternate for independent B1u validation, from the
- * end of acquisition until the final delayed B1u decision. */
+ * end of acquisition until the final delayed B1u decision. Residual acquisition
+ * reuses it for a known-B1 candidate, then discards it before validation. */
 struct v92_upstream_model {
 	struct v92_observation model[2];
 	/* The observation contract owns exactly one training scratch. */

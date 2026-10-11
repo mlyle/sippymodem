@@ -15,6 +15,8 @@ _Static_assert(V92_OBSERVATION_TRAINING ==
 
 static void close_acquisition(struct v92_upstream_model *model)
 {
+	if (model->residual_acquiring)
+		memset(&model->alternate, 0, sizeof(model->alternate));
 	model->acquiring = false;
 	model->residual_acquiring = false;
 	memset(model->x, 0, sizeof(model->x));
@@ -49,6 +51,13 @@ bool v92_upstream_model_is_valid(const struct v92_upstream_data_rx *receiver)
 	    receiver->line.received_frames >= V92_B1U_ACQUISITION_FRAMES || receiver->line.residual.active))
 		return false;
 	if (receiver->line.residual.active && (model->acquiring || model->valid || model->scalar_gain))
+		return false;
+	if (model->residual_acquiring && receiver->line.received_frames >= 4 && model->alternate.path_count &&
+	    (!v92_pcm_frame_rx_is_valid(&model->alternate) ||
+	     !v92_pcm_mapping_equal(&model->alternate.mapping, &receiver->decoder.mapping) ||
+	     model->alternate.observation != V92_PCM_FRAME_CONSTELLATION ||
+	     (model->alternate.noise.frames != receiver->line.received_frames &&
+	      model->alternate.noise.frames + 1u != receiver->line.received_frames)))
 		return false;
 
 	if (receiver->line.plan.observation == V92_PCM_FRAME_FILTER_OUTPUT) {
@@ -179,14 +188,105 @@ static bool observation_offset(const struct v92_upstream_data_line *line,
 	return isfinite(*offset);
 }
 
+/* Compare only ordinary-symbol residue classes: the fourth symbol also
+ * depends on trellis parity. Shared scrambling and mapping identify the
+ * classes without assuming the peer chooses our precoder representatives.
+ * A single leading frame can remain at the control/data transition. This
+ * selects acquisition context only; receive timing and payload stay intact. */
+static double residual_prefix_score(const struct v92_pcm_mapping *mapping,
+	const int32_t *raw, double gain, unsigned prefix)
+{
+	struct v34_scrambler scrambler;
+	uint8_t differential = 0;
+	double score = 0.;
+	if (v34_scrambler_init(&scrambler, V34_POLYNOMIAL_GPA) != V34_FRAMING_OK)
+		return INFINITY;
+	for (unsigned frame = prefix; frame < 4; frame++) {
+		uint8_t bits[V92_PCM_MAPPING_MAX_BITS], digits[V92_PCM_MAPPING_FRAME_SYMBOLS], sign;
+		memset(bits, 1, mapping->data_bits_per_frame);
+		if (v34_scramble_unpacked_bits(&scrambler, bits, mapping->data_bits_per_frame, bits) != V34_FRAMING_OK ||
+		    v92_pcm_mapping_encode_owned(mapping, bits, mapping->data_bits_per_frame,
+			&differential, digits, &sign) != V92_PCM_MAPPING_OK)
+			return INFINITY;
+		if (frame == 0) continue;
+		for (unsigned symbol = 0; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; symbol++) {
+			if (symbol % 4 == 3) continue;
+			const struct v92_cpd_constellation *points = &mapping->cpd.constellation[
+				mapping->cpd.frame_constellation[symbol % V92_PCM_MAPPING_PHASES]];
+			int modulus = mapping->cpd.modulus[symbol];
+			int first = -(int)points->count;
+			first += ((int)digits[symbol] - first) % modulus;
+			double sample = raw[frame * V92_PCM_MAPPING_FRAME_SYMBOLS + symbol] * gain;
+			double distance = INFINITY;
+			for (int eta = first; eta < points->count; eta += modulus) {
+				double point = eta < 0 ? -points->positive_linear[-eta - 1] : points->positive_linear[eta];
+				distance = fmin(distance, (sample - point) * (sample - point));
+			}
+			score += distance;
+		}
+	}
+	return score;
+}
+
+static void acquire_residual_points(struct v92_upstream_model *model,
+	const struct v92_upstream_data_line *line, const struct v92_pcm_frame_rx *decoder)
+{
+	unsigned first = (unsigned)line->received_frames;
+	if (first < 3) return;
+	if (first == 3) {
+		double direct = residual_prefix_score(&decoder->mapping, model->raw, line->calibration.gain, 0);
+		double delayed = residual_prefix_score(&decoder->mapping, model->raw, line->calibration.gain, 1);
+		first = delayed < direct;
+		if (v92_pcm_frame_rx_init_constellation(&model->alternate, &decoder->mapping) != V92_PCM_FRAME_OK)
+			return;
+	}
+	if (!model->alternate.path_count) return;
+	/* Catch up four frames once, then one frame per invocation. Existing
+	 * acquisition scratch and the otherwise idle alternate own this work. */
+	for (unsigned frame = first; frame <= line->received_frames; frame++) {
+		int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
+		uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
+		struct v92_pcm_frame_decision decision;
+		size_t offset = frame * V92_PCM_MAPPING_FRAME_SYMBOLS;
+		for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; i++)
+			samples[i] = sample_round_s16(model->raw[offset + i] * line->calibration.gain);
+		if (v92_pcm_frame_acquire_model(&model->alternate, samples, bits,
+		    decoder->mapping.data_bits_per_frame, &decision) != V92_PCM_FRAME_OK) {
+			memset(&model->alternate, 0, sizeof(model->alternate));
+			return;
+		}
+		memcpy(model->u + offset, decision.predicted_samples, sizeof(decision.predicted_samples));
+	}
+}
+
+static void fit_residual(struct v92_upstream_model *model, struct v92_upstream_data_line *line)
+{
+	double best = INFINITY;
+	(void)v92_residual_fit(&line->residual, model->x, model->raw,
+		line->calibration.minimum, line->calibration.maximum, &line->calibration.gain, &best);
+	if (model->alternate.path_count) {
+		struct v92_residual candidate;
+		int32_t points[V92_OBSERVATION_TRAINING];
+		double gain, score;
+		for (unsigned i = 0; i < V92_OBSERVATION_TRAINING; i++) points[i] = model->u[i];
+		if (v92_residual_fit(&candidate, points, model->raw, line->calibration.minimum,
+		    line->calibration.maximum, &gain, &score) && score < best) {
+			line->residual = candidate;
+			line->calibration.gain = gain;
+		}
+	}
+	if (line->residual.active) line->calibration.offset = 0.;
+}
+
 void v92_upstream_model_fit(struct v92_upstream_model *model,
 	struct v92_upstream_data_line *line, const struct v92_pcm_frame_rx *decoder)
 {
-	if (model->residual_acquiring && line->received_frames + 1u == V92_B1U_ACQUISITION_FRAMES) {
-		if (line->host.gain > 0.0 && v92_residual_fit(&line->residual, model->x, model->raw,
-		    line->calibration.minimum, line->calibration.maximum, &line->calibration.gain))
-			line->calibration.offset = 0.0;
-		close_acquisition(model);
+	if (model->residual_acquiring) {
+		acquire_residual_points(model, line, decoder);
+		if (line->received_frames + 1u == V92_B1U_ACQUISITION_FRAMES) {
+			if (line->host.gain > 0.) fit_residual(model, line);
+			close_acquisition(model);
+		}
 		return;
 	}
 	int16_t samples[V92_OBSERVATION_TRAINING];

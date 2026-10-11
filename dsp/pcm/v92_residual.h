@@ -17,11 +17,12 @@ struct v92_residual {
 bool v92_residual_is_valid(const struct v92_residual *filter);
 /* points/raw contain all acquisition frames. Only the final traceback span
  * is fitted; its preceding predictions provide delayed features. Rejection
- * leaves filter and gain unchanged. Gain is the inverse channel gain and
+ * leaves outputs unchanged. Optional score receives the acquisition model
+ * selection cost; smaller is better. Gain is the inverse channel gain and
  * must remain inside the original training-cell bounds. */
 bool v92_residual_fit(struct v92_residual *filter,
 	const int32_t *points, const int32_t *raw, double minimum, double maximum,
-	double *gain);
+	double *gain, double *score);
 /* Exclusively owned, validated filter. Returns the input-domain correction,
  * preserving the original raw sample for wire evidence and quality scoring.
  * Missing media or an out-of-range inverse fails without advancing history. */
