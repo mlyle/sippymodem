@@ -103,7 +103,7 @@ static bool check_ranging(
 	bool analog_received_info = false;
 	bool digital_received_info = false;
 	size_t analog_tone_handoffs = 0;
-	size_t analog_ack_tone_start = SIZE_MAX;
+	size_t analog_tone_start = SIZE_MAX;
 	size_t analog_first_reversal = SIZE_MAX;
 
 	CHECK(pcm_phase2_ranging_init_analog(
@@ -151,8 +151,8 @@ static bool check_ranging(
 		if (analog_transmit_before == PHASE2_INFO0_CARRIER_TAIL &&
 		    analog_end.info0_exchange.transport.transmit_phase ==
 			    PHASE2_INFO0_TONE &&
-		    ++analog_tone_handoffs == 2u)
-			analog_ack_tone_start = index + 1u;
+		    ++analog_tone_handoffs == 1u)
+			analog_tone_start = index + 1u;
 		if (analog_phase_before == PHASE2_SIGNAL_A_WAIT_INITIAL_TONE &&
 		    analog_end.control.phase == PHASE2_WAIT_FIRST_REMOTE_REVERSAL)
 			analog_first_reversal = index;
@@ -197,12 +197,12 @@ static bool check_ranging(
 		      TEST_EDGE_TOLERANCE_SAMPLES,
 	      "V.90 round-trip estimates changed for codec %d: analog %u digital %u",
 	      codec, analog_delay, digital_delay);
-	CHECK(analog_ack_tone_start != SIZE_MAX &&
+	CHECK(analog_tone_handoffs == 1u && analog_tone_start != SIZE_MAX &&
 	      analog_first_reversal != SIZE_MAX &&
-	      analog_first_reversal - analog_ack_tone_start ==
+	      analog_first_reversal - analog_tone_start ==
 		      PHASE2_RANGING_INITIAL_TONE_SAMPLES,
-	      "repeated INFO0 did not restart the 50 ms Tone A epoch for codec %d: %zu/%zu",
-	      codec, analog_ack_tone_start, analog_first_reversal);
+	      "normal INFO0 did not retain the 50 ms Tone A epoch for codec %d: %zu/%zu",
+	      codec, analog_tone_start, analog_first_reversal);
 	return true;
 }
 
@@ -310,10 +310,11 @@ static bool initialize_interrupted_ranging(
 		V90_DIGITAL_MODEM : V90_ANALOG_MODEM;
 	size_t expected_bits = local_role == V90_ANALOG_MODEM ?
 		V90_INFO0A_PAYLOAD_BITS : V90_INFO0D_PAYLOAD_BITS;
+	bool initialized;
 
 	*peer_payload_bits = peer_role == V90_ANALOG_MODEM ?
 		V90_INFO0A_PAYLOAD_BITS : V90_INFO0D_PAYLOAD_BITS;
-	return initialize_info0_exchange(
+	initialized = initialize_info0_exchange(
 		       &ranging->info0_exchange, local_role, protocol, codec) ==
 		       PCM_PHASE2_INFO0_EXCHANGE_OK &&
 	       encode_peer_info0(
@@ -328,6 +329,10 @@ static bool initialize_interrupted_ranging(
 		       TEST_AMPLITUDE, peer_payload, *peer_payload_bits,
 		       expected_bits) == PHASE2_INFO0_EXCHANGE_OK &&
 	       pcm_phase2_ranging_is_valid(ranging);
+	/* The interruption follows an already acknowledged recovery record. */
+	if (initialized)
+		ranging->info0_exchange.state = PCM_PHASE2_INFO0_REPEAT;
+	return initialized;
 }
 
 static bool check_info_interrupted_reversal(
@@ -658,6 +663,7 @@ static bool check_deferred_first_reversal(
 	      pcm_phase2_ranging_is_valid(&ranging),
 	      "deferred-reversal fixture did not initialize for %d/%d",
 	      codec, protocol);
+	ranging.info0_exchange.state = PCM_PHASE2_INFO0_REPEAT;
 
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
 		struct phase2_info0_exchange_event peer_event;
@@ -1239,6 +1245,8 @@ static bool check_completed_exchange_repeat(
 		      payload, V90_INFO0D_PAYLOAD_BITS,
 		      V90_INFO0A_PAYLOAD_BITS) == PHASE2_INFO0_EXCHANGE_OK,
 	      "completed-repeat ranging fixture did not initialize");
+	/* Exercise a repeat after our recovery ACK has already completed. */
+	ranging.info0_exchange.state = PCM_PHASE2_INFO0_REPEAT;
 
 	for (size_t index = 0; index < 2u * TEST_SAMPLE_LIMIT; ++index) {
 		struct phase2_info0_exchange_event peer_event;

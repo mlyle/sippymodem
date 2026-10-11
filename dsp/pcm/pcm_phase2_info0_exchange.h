@@ -31,6 +31,8 @@ enum pcm_info0_recovery_event {
 
 enum pcm_phase2_info0_exchange_state {
 	PCM_PHASE2_INFO0_INITIAL,
+	/* Peer record accepted without an ACK reply; finish the local record. */
+	PCM_PHASE2_INFO0_ACCEPTED,
 	/* Opposite tone arrived before a valid record; repeat without ACK. */
 	PCM_PHASE2_INFO0_REPEAT,
 	/* Validate another peer record before deciding whether it needs a reply
@@ -68,10 +70,10 @@ struct pcm_phase2_info0_exchange {
 
 /* Initial INFO0 clears its acknowledgment bit. V.90 emits reserved extension
  * bits as zero; V.92 carries its capability and short-Phase-2 request. The
- * protocol tag is immutable for the exchange. A valid peer record is retained
- * while a phase-continuous local repetition acknowledges it. The record is
- * released to ranging only after that repetition finishes and either the peer
- * acknowledgment or its following opposite tone has been received. */
+ * protocol tag is immutable for the exchange. Normal startup retains the peer
+ * record and enters ranging once the original local record finishes. Repetition
+ * and acknowledgment are recovery procedures: after a missed or repeated peer
+ * record, finish the local ACK and wait for the peer ACK or its following tone. */
 enum pcm_phase2_info0_exchange_result
 pcm_phase2_info0_exchange_init_v90_analog(
 	struct pcm_phase2_info0_exchange *exchange,

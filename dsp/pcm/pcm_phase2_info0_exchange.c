@@ -94,7 +94,8 @@ static bool local_info0_acknowledges_peer(
 static bool state_retains_peer_info0(
 	enum pcm_phase2_info0_exchange_state state)
 {
-	return state == PCM_PHASE2_INFO0_VERIFY_REPEAT ||
+	return state == PCM_PHASE2_INFO0_ACCEPTED ||
+	       state == PCM_PHASE2_INFO0_VERIFY_REPEAT ||
 	       state == PCM_PHASE2_INFO0_ACKNOWLEDGING ||
 	       state == PCM_PHASE2_INFO0_ACK_REPEAT ||
 	       state == PCM_PHASE2_INFO0_WAIT_COMPLETION ||
@@ -137,8 +138,11 @@ static bool exchange_state_contract_is_valid(
 	case PCM_PHASE2_INFO0_INITIAL:
 	case PCM_PHASE2_INFO0_REPEAT:
 		return !local_ack && !exchange->fresh_peer_tone_seen;
+	case PCM_PHASE2_INFO0_ACCEPTED:
+		return !local_ack && !exchange->fresh_peer_tone_seen &&
+		       exchange->transport.transmit_phase != PHASE2_INFO0_TONE;
 	case PCM_PHASE2_INFO0_VERIFY_REPEAT:
-		return local_ack && !exchange->fresh_peer_tone_seen &&
+		return !exchange->fresh_peer_tone_seen &&
 		       exchange->transport.info_receiver.frame.stage !=
 			       V34_PHASE2_INFO_SEARCH_SYNC &&
 		       exchange->transport.transmit_phase !=
@@ -156,8 +160,8 @@ static bool exchange_state_contract_is_valid(
 		       exchange->transport.transmit_phase == PHASE2_INFO0_TONE &&
 		       !exchange->transport.tone_detector.carrier.tone_present;
 	case PCM_PHASE2_INFO0_COMPLETE:
-		return local_ack &&
-		       (peer_ack != exchange->fresh_peer_tone_seen) &&
+		return (local_ack ? (peer_ack != exchange->fresh_peer_tone_seen) :
+		       !exchange->fresh_peer_tone_seen) &&
 		       exchange->transport.transmit_phase == PHASE2_INFO0_TONE;
 	case PCM_PHASE2_INFO0_RETRAIN:
 		return !local_ack && !exchange->fresh_peer_tone_seen &&
@@ -342,7 +346,8 @@ static bool reject_peer_info0(
 	if (exchange->state == PCM_PHASE2_INFO0_VERIFY_REPEAT) {
 		event->recovery_event = PCM_INFO0_RECOVERY_REJECTED;
 		exchange->state = PCM_PHASE2_INFO0_COMPLETE;
-		exchange->fresh_peer_tone_seen = !peer_acknowledges_local(exchange);
+		exchange->fresh_peer_tone_seen = local_info0_acknowledges_peer(exchange) &&
+			!peer_acknowledges_local(exchange);
 	}
 	if (exchange->state != PCM_PHASE2_INFO0_COMPLETE &&
 	    !state_is_retrain(exchange->state))
@@ -396,11 +401,10 @@ static bool retain_peer_info0(
 		clear_completion_tone(exchange, event);
 		event->recovery_event = late_ack ? PCM_INFO0_LATE_ACK_RECEIVED :
 			PCM_INFO0_RECOVERY_ACCEPTED;
-		/* Our previous record already acknowledged this peer. A repeat
-		 * can have been sent before that ACK arrived. Let its following
-		 * tone finish the exchange; another record while waiting requests
-		 * a new ACK. Sending one now can cover the peer's first reversal. */
-		exchange->state = PCM_PHASE2_INFO0_ACKNOWLEDGING;
+		/* An ACK after normal startup needs no reply. Otherwise reuse
+		 * an existing ACK, or send the first recovery ACK after this record. */
+		exchange->state = decoded_ack && !local_info0_acknowledges_peer(exchange) ?
+			PCM_PHASE2_INFO0_ACCEPTED : PCM_PHASE2_INFO0_ACKNOWLEDGING;
 		return true;
 	}
 	if (!retained) {
@@ -426,6 +430,9 @@ static bool retain_peer_info0(
 	clear_completion_tone(exchange, event);
 	switch (exchange->state) {
 	case PCM_PHASE2_INFO0_INITIAL:
+		exchange->state = PCM_PHASE2_INFO0_ACCEPTED;
+		break;
+	case PCM_PHASE2_INFO0_ACCEPTED:
 	case PCM_PHASE2_INFO0_REPEAT:
 		exchange->state = PCM_PHASE2_INFO0_ACKNOWLEDGING;
 		break;
@@ -483,11 +490,9 @@ static void begin_repeat_verification(
 	struct pcm_phase2_info0_exchange_event *event)
 {
 	clear_completion_tone(exchange, event);
-	/* The local record already acknowledged this peer. An in-flight peer
-	 * acknowledgment needs no new reply: replying at sync before decoding
-	 * its acknowledgment bit can keep two delayed stations repeating INFO0
-	 * indefinitely. Leave the current transmission unchanged until the
-	 * record has been validated. */
+	/* Validate the record before deciding whether it needs an ACK.
+	 * Replying at sync can keep two delayed stations repeating INFO0
+	 * indefinitely even after both have acknowledged each other. */
 	exchange->state = PCM_PHASE2_INFO0_VERIFY_REPEAT;
 	event->recovery_event = PCM_INFO0_RECOVERY_STARTED;
 }
@@ -520,6 +525,9 @@ static bool advance_recovery(
 
 	switch (exchange->state) {
 	case PCM_PHASE2_INFO0_INITIAL:
+		return true;
+	case PCM_PHASE2_INFO0_ACCEPTED:
+		complete_exchange(exchange, event);
 		return true;
 	case PCM_PHASE2_INFO0_REPEAT:
 		return restart_local_info0(exchange, false);

@@ -295,7 +295,8 @@ static bool check_exchange(
 	      analog_end.state == PCM_PHASE2_INFO0_COMPLETE &&
 	      digital_end.state == PCM_PHASE2_INFO0_COMPLETE,
 	      "unequal INFO0 frame timing or tone handoff changed");
-	CHECK(analog_observation.info_received == 1 &&
+	CHECK(analog_observation.info_received ==
+		      (drop_initial_analog_info0 ? 2u : 1u) &&
 	      analog_observation.info_rejected == 0 &&
 	      digital_observation.info_received == 1 &&
 	      digital_observation.info_rejected == 0,
@@ -307,6 +308,9 @@ static bool check_exchange(
 	      digital_observation.info_rejected,
 	      analog_observation.tone_started,
 	      digital_observation.tone_started);
+	if (!drop_initial_analog_info0)
+		CHECK(analog_ack_repeats == 0 && digital_ack_repeats == 0,
+		      "normal INFO0 inserted recovery acknowledgments");
 	if (drop_initial_analog_info0)
 		CHECK(digital_entered_repeat &&
 		      digital_unacknowledged_repeats >= 1 &&
@@ -380,7 +384,7 @@ enum following_tone_case {
 
 static bool check_following_tone(
 	enum test_codec codec, enum test_info0_mode mode,
-	enum following_tone_case test_case, bool digital_local)
+	enum following_tone_case test_case, bool digital_local, bool recovery)
 {
 	struct v92_info0a analog = {
 		.v90 = analog_capabilities(),
@@ -454,6 +458,9 @@ static bool check_following_tone(
 		      PHASE2_INFO0_EXCHANGE_OK,
 	      "following-tone fixtures did not initialize for %d/%d/%d/%d",
 	      mode, codec, test_case, digital_local);
+	/* These cases exercise a recovery already requested by a peer tone. */
+	if (recovery)
+		exchange.state = PCM_PHASE2_INFO0_REPEAT;
 	memcpy(repeat_payload, payload, sizeof(repeat_payload));
 	if (test_case == TEST_TONE_REJECT_AFTER_COMPLETION) {
 		if (digital_local) {
@@ -551,7 +558,8 @@ static bool check_following_tone(
 		}
 		if (transmit_before != PHASE2_INFO0_SEQUENCE &&
 		    transmit_before != PHASE2_INFO0_POST_V8_SILENCE &&
-		    exchange.transport.transmit_phase == PHASE2_INFO0_SEQUENCE) {
+		    exchange.transport.transmit_phase == PHASE2_INFO0_SEQUENCE &&
+		    exchange.state == PCM_PHASE2_INFO0_ACKNOWLEDGING) {
 			acknowledge_starts++;
 			early_acknowledgment |= repeated &&
 				exchange.transport.info_receiver.frame.stage !=
@@ -711,11 +719,12 @@ static bool check_following_tone(
 	else
 		CHECK(received_records == 1 && completed != SIZE_MAX &&
 		      rejected_after_completion && reopened_after_completion &&
-		      !early_acknowledgment && acknowledge_starts == 1 &&
+		      !early_acknowledgment &&
+		      acknowledge_starts == (recovery ? 1u : 0u) &&
 		      recovery_starts == 1 && recovery_accepts == 0 &&
 		      recovery_rejects == 1 &&
 		      exchange.state == PCM_PHASE2_INFO0_COMPLETE &&
-		      exchange.fresh_peer_tone_seen,
+		      exchange.fresh_peer_tone_seen == recovery,
 		      "rejected completed-state repeat did not recover for %d/%d/%d: records %zu complete %zu rejected %d reopened %d early %d ACK %zu state %d tone %d",
 		      mode, codec, digital_local, received_records, completed,
 		      rejected_after_completion, reopened_after_completion,
@@ -744,10 +753,24 @@ static bool test_info0_following_tone_orderings(void)
 				for (unsigned int role = 0; role < roles; ++role)
 					CHECK(check_following_tone(
 						      codec, mode, test_case,
-						      role != 0),
+						      role != 0, true),
 					      "INFO0 tone ordering failed for %d/%d/%d/%u",
 					      mode, codec, test_case, role);
 			}
+	for (enum test_codec codec = TEST_CODEC_PCMU;
+	     codec <= TEST_CODEC_PCMA; ++codec)
+		for (enum test_info0_mode mode = TEST_INFO0_V90;
+		     mode <= TEST_INFO0_V92_FULL; ++mode)
+			for (unsigned int role = 0; role < 2; ++role)
+				for (enum following_tone_case test_case =
+					     TEST_TONE_REPEAT_AFTER_COMPLETION;
+				     test_case <= TEST_TONE_REJECT_AFTER_COMPLETION;
+				     ++test_case)
+					CHECK(check_following_tone(
+						      codec, mode, test_case,
+						      role != 0, false),
+					      "normal-completion repeat failed for %d/%d/%d/%u",
+					      codec, mode, test_case, role);
 	return true;
 }
 
