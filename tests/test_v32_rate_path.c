@@ -51,6 +51,9 @@ struct generated_source {
 	bool selected_started;
 	bool retrain_started;
 	bool retrain_alternating;
+	bool online_control;
+	uint16_t control_word;
+	unsigned control_symbols;
 };
 
 static const struct v32_rate_offer SELECTED_OFFERS[TEST_SELECTED_MODES] = {
@@ -189,6 +192,26 @@ static bool source_next_selected_point(struct generated_source *source)
 	uint8_t signal;
 	uint8_t retrain_quadrant;
 
+	if (source->online_control) {
+		unsigned n = source->control_symbols++;
+		uint8_t quadrant;
+		if (n < 64) {
+			quadrant = source->rate_encoder.scrambler.transmitter_role ==
+				V32_CALLING_TRANSMITTER ? 0u : (uint8_t)((n & 1u) * 2u);
+			if (n >= 56) quadrant ^= 2u;
+			source->rate_encoder.phase_quadrant = quadrant;
+		} else {
+			uint8_t dibit;
+			if (n == 64)
+				CHECK(v32_scrambler_init(&source->rate_encoder.scrambler,
+					source->rate_encoder.scrambler.transmitter_role) == V32_FRAMING_OK,
+				      "control scrambler reset failed");
+			CHECK(v32_rate_signal_dibit(source->control_word, n % 8, &dibit) == V32_RATE_SIGNAL_OK &&
+			      v32_4800_symbol_encode(&source->rate_encoder, dibit, &quadrant) == V32_FRAMING_OK,
+			      "control symbol encoding failed");
+		}
+		return v32_4800_constellation_point(quadrant, &source->point) == V32_CONSTELLATION_OK;
+	}
 	if (source->retrain_started) {
 		retrain_quadrant = source->retrain_alternating &&
 					   (source->retrain_symbols & 1u) != 0 ?
@@ -372,6 +395,40 @@ static bool detect_remote_retrain(
 	      selected_offer->trellis_at_highest_rate,
 	      source.retrain_symbols,
 	      data.retrain.repeated_pair_observations);
+	return true;
+}
+
+static bool detect_online_cleardown(const struct generated_source *online_source,
+	const struct v32_data_path *online_data)
+{
+	/* An invalid word and a normal rate offer must never become hangup.
+	 * A valid cleardown word alone must not substitute for the preamble. */
+	for (unsigned test = 0; test < 4; ++test) {
+		struct generated_source source = *online_source;
+		struct v32_data_path data = *online_data;
+		bool cleared = false;
+		source.online_control = true;
+		source.control_word = test == 1 ? 0 : test == 2 ? 0x0fb9 : 0x0191;
+		source.control_symbols = test == 3 ? 64 : 0;
+		for (unsigned n = 0; n < 1600 && !cleared; ++n) {
+			struct v32_echo_reference reference;
+			struct v32_data_batch batch;
+			int16_t sample;
+			bool accepted;
+			CHECK(source_sample(&source, &sample, &reference, &accepted) &&
+			      v32_data_path_sample(&data, sample, accepted ? &reference : NULL,
+				&batch) == V32_DATA_PATH_OK, "online control stopped");
+			CHECK(!batch.retrain_requested, "short control preamble requested full retrain");
+			cleared = batch.cleardown_requested;
+			CHECK(!cleared || batch.count == 0, "cleardown exposed payload groups");
+		}
+		CHECK(cleared == (test == 0), "online cleardown case %u, role %d rate %u: detected=%u",
+		      test, source.rate_encoder.scrambler.transmitter_role,
+		      source.selected_offer.rates, cleared);
+		CHECK(!cleared || source.control_symbols <= 64 + V32_DATA_CONTROL_OBSERVATIONS + 64,
+		      "cleardown probe exceeded its bounded interval");
+		CHECK(cleared || data.control_remaining == 0, "control probe did not expire");
+	}
 	return true;
 }
 
@@ -857,6 +914,7 @@ static bool run_role(
 		      "trellis data did not drain B1 for role/mode %d/%u",
 		      role, selected_offer->rates);
 	*data_advanced = data;
+	CHECK(detect_online_cleardown(&source, &data), "online control failed");
 	CHECK(detect_remote_retrain(
 		      &source, &data, role, selected_offer),
 	      "remote retrain detection failed for role/mode %d/%u:%u", role,

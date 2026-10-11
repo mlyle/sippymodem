@@ -12,6 +12,7 @@ enum {
 	/* One line sample can release a complete retained timing block. */
 	V32_DATA_PATH_MAX_GROUPS = V32_RECEIVE_PATH_RECOVERED_CAPACITY,
 	V32_DATA_RETRAIN_OBSERVATIONS = 60,
+	V32_DATA_CONTROL_OBSERVATIONS = 96,
 };
 
 enum v32_data_path_result {
@@ -29,6 +30,8 @@ struct v32_data_batch {
 	struct v32_data_group groups[V32_DATA_PATH_MAX_GROUPS];
 	uint8_t count;
 	bool retrain_requested;
+	/* Qualified peer request; this batch contains no payload groups. */
+	bool cleardown_requested;
 };
 
 /* Online retrain is a repeated-pair decision pattern in the persistent
@@ -49,6 +52,11 @@ struct v32_data_retrain_detector {
 struct v32_data_path {
 	struct v32_b1_path b1;
 	struct v32_data_retrain_detector retrain;
+	/* Short online preamble opens a bounded four-point control probe.
+	 * Payload and its decoder remain unchanged until a valid request. */
+	struct v32_uncoded_receiver control;
+	struct v32_rate_signal_detector control_rate;
+	uint8_t control_remaining;
 };
 
 enum v32_data_path_result v32_data_path_init(

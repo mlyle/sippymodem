@@ -34,6 +34,7 @@
 enum {
 	V32_TRANSMIT_AMPLITUDE = 12000,
 	V32_CARRIER_LOSS_SAMPLES = MODEM_RATE / 5,
+	V32_ONLINE_CLEARDOWN_SYMBOLS = 3 * V32_CLEARDOWN_SYMBOLS,
 };
 
 enum v32_fixed_stage {
@@ -54,6 +55,7 @@ enum v32_fixed_stage {
 	V32_FIXED_ANSWERER_CLEARDOWN,
 	V32_FIXED_B1,
 	V32_FIXED_DATA,
+	V32_FIXED_ONLINE_CLEARDOWN,
 };
 
 /* Keep clocking the physical lane between the completed R1 observation and
@@ -97,7 +99,7 @@ struct v32_datapump {
 	struct training_session training;
 	uint32_t missing_carrier_samples;
 	uint16_t caller_s_extension_symbols;
-	uint8_t cleardown_symbols;
+	uint16_t cleardown_symbols;
 	bool trellis_encoder_initialized;
 	bool answerer_s_detected;
 	bool caller;
@@ -144,7 +146,8 @@ static const char *progress_v32(const struct dp *dp)
 	case V32_FIXED_CALLER_END:
 	case V32_FIXED_ANSWERER_END: return "V.32/E";
 	case V32_FIXED_ANSWERER_CLEARDOWN_CONDITIONING:
-	case V32_FIXED_ANSWERER_CLEARDOWN: return "V.32/cleardown";
+	case V32_FIXED_ANSWERER_CLEARDOWN:
+	case V32_FIXED_ONLINE_CLEARDOWN: return "V.32/cleardown";
 	case V32_FIXED_B1: return "V.32/B1";
 	case V32_FIXED_DATA: return "data/V.32";
 	}
@@ -172,7 +175,8 @@ static bool fixed_path_is_clearing(const struct v32_datapump *datapump)
 {
 	return datapump->fixed_path.stage ==
 		       V32_FIXED_ANSWERER_CLEARDOWN_CONDITIONING ||
-	       datapump->fixed_path.stage == V32_FIXED_ANSWERER_CLEARDOWN;
+	       datapump->fixed_path.stage == V32_FIXED_ANSWERER_CLEARDOWN ||
+	       datapump->fixed_path.stage == V32_FIXED_ONLINE_CLEARDOWN;
 }
 
 static const struct v32_receive_path *fixed_path_receive_const(
@@ -206,6 +210,7 @@ static const struct v32_receive_path *fixed_path_receive_const(
 	case V32_FIXED_OFF:
 	case V32_FIXED_ANSWERER_CLEARDOWN_CONDITIONING:
 	case V32_FIXED_ANSWERER_CLEARDOWN:
+	case V32_FIXED_ONLINE_CLEARDOWN:
 		break;
 	}
 	return NULL;
@@ -229,7 +234,7 @@ static bool fixed_path_is_valid(
 	bool valid;
 
 	if (path->stage <= V32_FIXED_OFF ||
-	    path->stage > V32_FIXED_DATA ||
+	    path->stage > V32_FIXED_ONLINE_CLEARDOWN ||
 	    (!datapump->caller &&
 	     path->stage >= V32_FIXED_CALLER_CONDITIONING &&
 	     path->stage <= V32_FIXED_CALLER_END) ||
@@ -315,6 +320,9 @@ static bool fixed_path_is_valid(
 			       datapump->modulator.channel.pulse_span_symbols + 1u &&
 		       v32_conditioning_transmitter_is_complete(
 			       &path->training.conditioning);
+	case V32_FIXED_ONLINE_CLEARDOWN:
+		return datapump->cleardown_symbols <= V32_ONLINE_CLEARDOWN_SYMBOLS +
+			datapump->modulator.channel.pulse_span_symbols + 1u;
 	case V32_FIXED_OFF:
 		return false;
 	}
@@ -961,6 +969,46 @@ static int next_cleardown_point(struct v32_datapump *datapump)
 	return 0;
 }
 
+/* V.32bis 8: acknowledge online cleardown with the local 56T/8T
+ * preamble, 64T of R5, and at least 64T of E (note 2). Keep the modulator
+ * running through its pulse tail before reporting the remote disconnect. */
+static int next_online_cleardown_point(struct v32_datapump *datapump)
+{
+	unsigned n = datapump->cleardown_symbols;
+	uint8_t quadrant;
+	if (n < V32_CLEARDOWN_SYMBOLS) {
+		quadrant = datapump->caller ? 0u : (uint8_t)((n & 1u) * 2u);
+		if (n >= 56u) quadrant ^= 2u;
+		datapump->encoder.phase_quadrant = quadrant;
+	} else if (n < V32_ONLINE_CLEARDOWN_SYMBOLS) {
+		const struct v32_rate_offer empty = { 0 };
+		uint16_t word;
+		uint8_t dibit;
+		if (n == V32_CLEARDOWN_SYMBOLS &&
+		    v32_scrambler_init(&datapump->encoder.scrambler,
+			local_role(datapump->caller)) != V32_FRAMING_OK)
+			return -1;
+		if (v32_rate_signal_encode(V32_CLEARDOWN_SIGNAL, &empty, &word) !=
+		    V32_RATE_SIGNAL_OK)
+			return -1;
+		/* E changes B0..B3 to ones; its zero-rate payload remains intact. */
+		if (n >= 2u * V32_CLEARDOWN_SYMBOLS) word |= 0xf000u;
+		if (v32_rate_signal_dibit(word, n % V32_RATE_SIGNAL_DIBITS, &dibit) !=
+		    V32_RATE_SIGNAL_OK ||
+		    v32_4800_symbol_encode(&datapump->encoder, dibit, &quadrant) != V32_FRAMING_OK)
+			return -1;
+	} else {
+		datapump->transmit_point = (struct qam_point){ 0 };
+		if (n < V32_ONLINE_CLEARDOWN_SYMBOLS +
+		    datapump->modulator.channel.pulse_span_symbols + 1u)
+			++datapump->cleardown_symbols;
+		return 0;
+	}
+	++datapump->cleardown_symbols;
+	return v32_4800_constellation_point(quadrant, &datapump->transmit_point) ==
+		V32_CONSTELLATION_OK ? 0 : -1;
+}
+
 static int generate_fixed_path_sample(
 	struct v32_datapump *datapump, int16_t *sample,
 	struct v32_echo_reference *reference, bool *reference_ready,
@@ -1081,6 +1129,10 @@ static int generate_fixed_path_sample(
 			break;
 		case V32_FIXED_ANSWERER_RATE:
 			datapump->transmit_point = silence;
+			break;
+		case V32_FIXED_ONLINE_CLEARDOWN:
+			if (next_online_cleardown_point(datapump) != 0)
+				return -1;
 			break;
 		case V32_FIXED_ANSWERER_CLEARDOWN:
 			if (next_cleardown_point(datapump) != 0)
@@ -1516,6 +1568,13 @@ static int receive_fixed_path_sample(
 			    &datapump->fixed_path.owner.data, sample,
 			    reference, &batch) != V32_DATA_PATH_OK)
 			return -1;
+		if (batch.cleardown_requested) {
+			modem_note_disconnect(datapump->dp.modem, false,
+				"remote V.32bis cleardown request");
+			datapump->fixed_path.stage = V32_FIXED_ONLINE_CLEARDOWN;
+			datapump->cleardown_symbols = 0;
+			return 0;
+		}
 		if (deliver_fixed_batch(datapump, &batch) != 0)
 			return -1;
 		if (batch.retrain_requested) {
@@ -1573,6 +1632,7 @@ static int receive_fixed_path_sample(
 	}
 	case V32_FIXED_ANSWERER_CLEARDOWN_CONDITIONING:
 	case V32_FIXED_ANSWERER_CLEARDOWN:
+	case V32_FIXED_ONLINE_CLEARDOWN:
 		return 0;
 	case V32_FIXED_OFF:
 		break;
@@ -1597,6 +1657,12 @@ static int process_v32(
 	}
 	/* The final nonempty fragment must reach the host before reporting the
 	 * disconnect; the ordinary failure path deliberately blanks its output. */
+	if (datapump->fixed_path.stage == V32_FIXED_ONLINE_CLEARDOWN &&
+	    datapump->cleardown_symbols == V32_ONLINE_CLEARDOWN_SYMBOLS +
+		    datapump->modulator.channel.pulse_span_symbols + 1u) {
+		memset(transmit, 0, (size_t)count * sizeof(*transmit));
+		return DPSTAT_DISCONNECT;
+	}
 	if (datapump->fixed_path.stage == V32_FIXED_ANSWERER_CLEARDOWN &&
 	    datapump->cleardown_symbols == V32_CLEARDOWN_SYMBOLS +
 		    datapump->modulator.channel.pulse_span_symbols + 1u)
@@ -1641,7 +1707,8 @@ static int process_v32(
 	}
 	if (linked)
 		return DPSTAT_CONNECT;
-	if (!training_session_is_online(&datapump->training))
+	if (!training_session_is_online(&datapump->training) ||
+	    fixed_path_is_clearing(datapump))
 		return DPSTAT_OK;
 	if (fixed_path_receive_const(
 		    &datapump->fixed_path)->line.timing.signal_detected &&

@@ -23,7 +23,9 @@ static int32_t repeated_pair_energy(
 	return arithmetic_shift_right_u32(energy, 16);
 }
 
-static bool observe_retrain(
+enum online_signal { ONLINE_NONE, ONLINE_RETRAIN, ONLINE_CONTROL };
+
+static enum online_signal observe_online_signal(
 	struct v32_data_retrain_detector *detector,
 	const struct v32_equalizer_observation *observation)
 {
@@ -41,31 +43,72 @@ static bool observe_retrain(
 	detector->q_last = observation->q;
 	detector->average_error = average;
 	if (average <= 0x04ff) {
-		/* A large new two-symbol error during qualification is the separate
-		 * rate-renegotiation pattern.  This path does not yet negotiate a new
-		 * rate, but it must reset rather than falsely request full retrain. */
+		/* The short preamble reverses after 56 symbols (V.32bis 8).
+		 * Distinguish it from the longer full-retrain carrier. */
 		if (average < (int16_t)arithmetic_shift_right_u32(
 				      (uint32_t)energy, 3) &&
 		    count > 0x0014 && count <= 0x003b) {
 			detector->repeated_pair_observations = 0;
-			return false;
+			return ONLINE_CONTROL;
 		}
 		detector->repeated_pair_observations = count;
 		if (count == V32_DATA_RETRAIN_OBSERVATIONS) {
 			detector->repeated_pair_observations = 0;
-			return true;
+			return ONLINE_RETRAIN;
 		}
-		return false;
+		return ONLINE_NONE;
 	}
 	detector->repeated_pair_observations = 0;
-	return false;
+	return ONLINE_NONE;
 }
 
 bool v32_data_path_is_valid(const struct v32_data_path *path)
 {
 	return path != NULL && v32_b1_path_is_complete(&path->b1) &&
 	       path->retrain.repeated_pair_observations <
-		       V32_DATA_RETRAIN_OBSERVATIONS;
+		       V32_DATA_RETRAIN_OBSERVATIONS &&
+	       path->control_remaining <= V32_DATA_CONTROL_OBSERVATIONS &&
+	       (!path->control_remaining ||
+		(v32_uncoded_receiver_is_valid(&path->control) &&
+		 v32_rate_signal_detector_is_valid(&path->control_rate)));
+}
+
+/* The scrambler is self-synchronizing, so the bounded probe also tolerates
+ * a few uncertain observations at the preamble/rate boundary. Only repeated,
+ * valid rate words can turn a preamble candidate into a control request. */
+static bool observe_control(struct v32_data_path *path,
+	enum online_signal signal, const struct v32_equalizer_observation *observation,
+	bool *cleardown)
+{
+	if (signal == ONLINE_CONTROL) {
+		struct v32_symbol_decoder seed;
+		enum v32_transmitter_role role = path->b1.mode == V32_B1_MODE_TRELLIS ?
+			path->b1.receiver.trellis.descrambler.transmitter_role :
+			path->b1.receiver.uncoded.decoder.descrambler.transmitter_role;
+		if (v32_symbol_decoder_init(&seed, role, 0) != V32_FRAMING_OK ||
+		    v32_uncoded_receiver_init(&path->control, &seed) != V32_UNCODED_RECEIVER_OK ||
+		    v32_rate_signal_detector_init(&path->control_rate) != V32_RATE_SIGNAL_OK)
+			return false;
+		path->control_remaining = V32_DATA_CONTROL_OBSERVATIONS;
+	}
+	if (signal == ONLINE_RETRAIN)
+		path->control_remaining = 0;
+	if (path->control_remaining) {
+		struct v32_uncoded_symbol symbol;
+		struct v32_rate_offer offer;
+		enum v32_rate_signal_event event;
+		if (v32_uncoded_receiver_observe(&path->control, 2, observation, false,
+			&symbol) != V32_UNCODED_RECEIVER_OK ||
+		    v32_rate_signal_detector_observe(&path->control_rate, symbol.group,
+			&event, &offer) != V32_RATE_SIGNAL_OK)
+			return false;
+		--path->control_remaining;
+		if (event == V32_CLEARDOWN_SIGNAL_DETECTED) {
+			*cleardown = true;
+			path->control_remaining = 0;
+		}
+	}
+	return true;
 }
 
 static bool append_group(
@@ -138,13 +181,16 @@ static enum v32_data_path_result commit_observations(
 		struct v32_data_retrain_detector next_retrain = path->retrain;
 		struct v32_equalizer_decision decision;
 		bool b1_matches = path->b1.b1_matches;
-		bool retrain_requested = false;
+		enum online_signal signal = ONLINE_NONE;
 
 		if (path->b1.receive.line.gain.signal_present)
-			retrain_requested = observe_retrain(
+			signal = observe_online_signal(
 				&next_retrain, observation);
 		else
 			next_retrain = (struct v32_data_retrain_detector){ 0 };
+
+		if (!observe_control(path, signal, observation, &batch->cleardown_requested))
+			return V32_DATA_PATH_INVALID_STATE;
 
 		if (decide_observation(
 			    path, observation, &next_receiver, &decision, batch,
@@ -160,7 +206,9 @@ static enum v32_data_path_result commit_observations(
 		path->b1.b1_matches = b1_matches;
 		path->retrain = next_retrain;
 		batch->retrain_requested =
-			batch->retrain_requested || retrain_requested;
+			batch->retrain_requested || (signal == ONLINE_RETRAIN);
+		if (batch->cleardown_requested)
+			batch->count = 0;
 	}
 	if (receive_result != V32_RECEIVE_PATH_OK)
 		return receive_result == V32_RECEIVE_PATH_INVALID_ARGUMENT ?
