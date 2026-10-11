@@ -27,6 +27,8 @@ enum {
 		2 * V32_RATE_SIGNAL_DIBITS,
 	/* Only the minimum S age matters to the energy-edge detector. */
 	V32_CONDITIONING_EPOCH_READY_SYMBOLS = 0x97,
+	/* A corroborating phase reversal allows late acquisition of S. */
+	V32_CONDITIONING_REVERSAL_READY_SYMBOLS = 32,
 };
 
 static bool role_is_valid(enum v32_transmitter_role role)
@@ -296,8 +298,17 @@ static bool observe_epoch_energy(
 		detector->average_a, detector->average_b,
 		0, 0, 13);
 	threshold = ((int32_t)average_energy * 4) / 3;
+	/* Gain acquisition may leave much less than 151 symbols of qualified S.
+	 * After 32 symbols, also accept an energy edge with a reversed two-symbol
+	 * vector. A positive gain step cannot satisfy that dot-product check.
+	 * Keep the longer guard for smeared edges without a clear reversal. */
 	detected = history_energy > threshold &&
-		detector->timer == V32_CONDITIONING_EPOCH_READY_SYMBOLS;
+		(detector->timer == V32_CONDITIONING_EPOCH_READY_SYMBOLS ||
+		 (detector->timer >= V32_CONDITIONING_REVERSAL_READY_SYMBOLS &&
+		  ((int64_t)observation->i * detector->i_previous +
+		       (int64_t)observation->q * detector->q_previous < 0 ||
+		   (int64_t)detector->i_last * detector->i_older +
+		       (int64_t)detector->q_last * detector->q_older < 0)));
 	if (detected) {
 		detector->i_older = 0;
 		detector->q_older = 0;

@@ -239,6 +239,48 @@ static bool test_s_bar_epoch_boundary(void)
 	return true;
 }
 
+static bool test_late_s_acquisition(void)
+{
+	for (enum v32_transmitter_role role = V32_CALLING_TRANSMITTER;
+	     role <= V32_ANSWERING_TRANSMITTER; ++role) {
+		struct v32_conditioning_receiver receiver;
+		struct v32_conditioning_transmitter transmitter;
+		bool ready = false;
+
+		CHECK(v32_conditioning_receiver_init(&receiver, role) ==
+			      V32_CONDITIONING_RECEIVER_OK &&
+		      v32_conditioning_transmitter_init(&transmitter, role,
+			      V32_CONDITIONING_TRN_MIN_SYMBOLS) == V32_CONDITIONING_OK,
+		      "V.32 late S fixture did not initialize");
+		for (unsigned symbol = 0; symbol < TEST_SEQUENCE_SYMBOLS; ++symbol) {
+			struct v32_equalizer_observation received;
+			uint8_t quadrant;
+
+			CHECK(v32_conditioning_transmitter_next(&transmitter, &quadrant) ==
+				      V32_CONDITIONING_OK,
+			      "V.32 late S source stopped at %u", symbol);
+			/* Acquisition exposes only the final 56 symbols of S. */
+			if (symbol < 200)
+				continue;
+			CHECK(generated_observation(quadrant, &received),
+			      "V.32 late S observation failed");
+			received.magnitude = 0x3299;
+			CHECK(observe(&receiver, &received, &ready) ==
+				      V32_CONDITIONING_RECEIVER_OK,
+			      "V.32 late S receiver failed at %u", symbol);
+			if (symbol == V32_CONDITIONING_S_SYMBOLS)
+				CHECK(receiver.phase == V32_CONDITIONING_COUNT_S_BAR &&
+				      receiver.s_bar_symbols == 1,
+				      "V.32 late S missed the reversal for role %d", role);
+			CHECK(!ready || symbol == TEST_SEQUENCE_SYMBOLS - 1,
+			      "V.32 late S published readiness early at %u", symbol);
+		}
+		CHECK(ready && receiver.trn_symbols == V32_CONDITIONING_TRN_MIN_SYMBOLS,
+		      "V.32 late S changed TRN handoff for role %d", role);
+	}
+	return true;
+}
+
 static bool test_s_bar_epoch_survives_boundary_smear(void)
 {
 	for (enum v32_transmitter_role role = V32_CALLING_TRANSMITTER;
@@ -366,7 +408,7 @@ static bool test_s_qualification_expires(void)
 	return true;
 }
 
-static bool test_s_acquisition_gain_step(void)
+static bool check_s_acquisition_gain_step(unsigned gain_step)
 {
 	for (enum v32_transmitter_role role = V32_CALLING_TRANSMITTER;
 	     role <= V32_ANSWERING_TRANSMITTER; ++role) {
@@ -399,7 +441,7 @@ static bool test_s_acquisition_gain_step(void)
 			      "V.32 acquisition signal fixture failed");
 			received.magnitude = 0x3299;
 			/* An acquisition gain change is not an S-to-S-bar reversal. */
-			if (symbol < 16) {
+			if (symbol < gain_step) {
 				received.i /= 4;
 				received.q /= 4;
 				received.magnitude /= 4;
@@ -417,6 +459,12 @@ static bool test_s_acquisition_gain_step(void)
 		      "V.32 gain-step training did not complete for role %d", role);
 	}
 	return true;
+}
+
+static bool test_s_acquisition_gain_step(void)
+{
+	return check_s_acquisition_gain_step(16) &&
+	       check_s_acquisition_gain_step(64);
 }
 
 static bool test_epoch_phase_slip_recovery(void)
@@ -1170,6 +1218,7 @@ int main(void)
 		  test_extended_trn_framing_handoff },
 		{ "TRN-prefix acquisition", test_trn_prefix_acquisition },
 		{ "S/S-bar epoch boundary", test_s_bar_epoch_boundary },
+		{ "late S acquisition", test_late_s_acquisition },
 		{ "smeared S/S-bar epoch",
 		  test_s_bar_epoch_survives_boundary_smear },
 		{ "interrupted S qualification", test_s_qualification_expires },
