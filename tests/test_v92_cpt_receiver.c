@@ -359,12 +359,52 @@ static bool test_contracts(void)
 	return true;
 }
 
+static bool test_first_fill_compatibility(void)
+{
+	for (uint8_t count = 1u; count <= V92_CPT_MAX_CONSTELLATIONS; ++count) {
+		for (unsigned codec_copy = 0u; codec_copy < 2u; ++codec_copy) {
+			struct v92_cpt_parameters parameters =
+				parameters_for(count, codec_copy != 0u);
+			struct v92_cpt_receiver receiver;
+			struct v92_cpt_receive_event event;
+			uint8_t valid[V92_CPT_MAX_FRAME_BYTES];
+			uint8_t modified[V92_CPT_MAX_FRAME_BYTES];
+			size_t bits;
+			size_t first_fill = pcm_control_frame_payload_end(
+				count, codec_copy != 0u) + 17u;
+
+			CHECK(encode_frame(&parameters, valid, &bits) &&
+			      v92_cpt_receiver_init(&receiver) == V92_CPT_OK, "fill fixture failed");
+			memcpy(modified, valid, sizeof(modified));
+			replace_bit(modified, first_fill, 1u);
+			CHECK(v92_cpt_decode(modified, sizeof(modified), bits,
+				    &parameters) == V92_CPT_INVALID_FRAME,
+			      "strict CPt codec accepted noncanonical fill");
+			CHECK(feed_frame(&receiver, modified, 0u, bits, &event) &&
+			      event_reencodes_frame(&event, valid, bits), "first fill variant rejected");
+			replace_bit(modified, 80u, packed_bit(modified, 80u) ^ 1u);
+			CHECK(feed_frame(&receiver, modified, 0u, bits, &event) &&
+			      event.type == V92_CPT_RECEIVE_REJECTED &&
+			      event.frame_result == V92_CPT_CRC_MISMATCH,
+			      "fill tolerance accepted bad CRC");
+			replace_bit(modified, 80u, packed_bit(valid, 80u));
+			replace_bit(modified, first_fill + 1u, 1u);
+			CHECK(feed_frame(&receiver, modified, 0u, bits, &event) &&
+			      event.type == V92_CPT_RECEIVE_REJECTED &&
+			      event.frame_result == V92_CPT_INVALID_FRAME,
+			      "fill tolerance accepted extra padding errors");
+		}
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "first fill interoperability", test_first_fill_compatibility },
 		{ "variable frames and handoff",
 		  test_variable_frames_and_handoff },
 		{ "CRC rejection and recovery",

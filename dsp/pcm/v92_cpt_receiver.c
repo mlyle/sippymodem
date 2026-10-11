@@ -52,6 +52,17 @@ enum v92_cpt_result v92_cpt_receiver_receive_bit(
 	if (!v92_cpt_receiver_is_valid(receiver) || bit > 1u || event == NULL)
 		return V92_CPT_INVALID_ARGUMENT;
 	next = *receiver;
+	/* Accept a peer that sets the first post-CRC fill bit in an otherwise
+	 * valid record. Normalize only that non-information bit; the strict
+	 * codec still checks all framing, the full CRC and remaining padding. */
+	if (bit != 0u && next.wire.stage == PCM_CONTROL_READ_FRAME) {
+		size_t payload_end = pcm_control_frame_payload_end(
+			pcm_control_frame_read_map(next.wire.frame, NULL),
+			packed_msb_bit(next.wire.frame, 128u) != 0u);
+
+		if (next.wire.bit_index == payload_end + 17u)
+			bit = 0u;
+	}
 	struct pcm_control_receive_event received =
 		pcm_control_receiver_receive_bit(&next.wire, PCM_CONTROL_CPT, bit);
 
