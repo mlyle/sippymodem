@@ -9397,6 +9397,66 @@ static bool v92_resume_rate_call(struct v92_rate_call *test, struct v92_phase4_r
 	return true;
 }
 
+static bool v92_unusable_cpu_recovery(const struct v92_rate_call *test,
+	const struct v92_phase4_record_tx *boundary, unsigned mapping_bits)
+{
+	struct pcm_call call = test->call;
+	struct fractional_delay delay = test->upstream_delay;
+	struct v92_phase4_record_tx record = *boundary;
+	struct v92_cpu_parameters cpu = test->cpu;
+	struct v90_pcm_mapping mapping;
+	uint8_t frame[V92_CPU_MAX_FRAME_BYTES];
+	size_t bits;
+
+	/* A CRC-valid 36k CPu can still lack enough constellation tuples:
+	 * 12^4 * 13^2 < 2^22. Detect this before acknowledging the selection. */
+	cpu.data_rate_number = 7u;
+	cpu.sign_redundancy = 1u;
+	cpu.acknowledges_cpd = false;
+	cpu.codec_constellations_differ = false;
+	cpu.constellation_count = 2u;
+	memset(cpu.transmit_constellations, 0, sizeof(cpu.transmit_constellations));
+	memset(cpu.codec_constellations, 0, sizeof(cpu.codec_constellations));
+	for (unsigned row = 0; row < 2u; ++row)
+		for (unsigned point = 0; point < 13u - row; ++point)
+			pcm_constellation_add(&cpu.transmit_constellations[row], 40u + point);
+	for (unsigned interval = 0; interval < V92_CPU_FRAME_INTERVALS; ++interval)
+		cpu.frame_constellation[interval] = interval < 4u;
+	CHECK(v92_cpu_encode(&cpu, mapping_bits, frame, sizeof(frame), &bits) == V92_CPU_OK &&
+	      v90_pcm_mapping_init_from_v92_cpu(&mapping, &cpu, call.law) ==
+		V90_PCM_MAPPING_INVALID_PARAMETERS, "unusable CPu fixture did not encode");
+	unsigned limit = 2u * bits / v92_phase4_modulator_bits_per_symbol(record.modulator.constellation);
+	for (unsigned i = 0; i < limit && call.stage == PCM_CALL_PHASE4; ++i) {
+		struct pcm_call_observation observation;
+		int16_t sample;
+		uint8_t generated;
+		if (v92_phase4_record_tx_is_complete(&record))
+			CHECK(v92_phase4_record_tx_start_next(&record, frame, sizeof(frame), bits) ==
+				V92_PHASE4_RECORD_TX_OK, "unusable CPu did not start");
+		CHECK(v92_phase4_record_tx_next(&record, &sample) == V92_PHASE4_RECORD_TX_OK &&
+		      fractional_delay_process(&delay, sample, &sample) == FRACTIONAL_DELAY_OK,
+		      "unusable CPu transmitter failed");
+		uint8_t octet = encode_octet(call.law, sample);
+		CHECK(pcm_call_octet(&call, octet, decode_octet(call.law, octet), &generated,
+			&observation) == PCM_CALL_OK, "unusable CPu aborted the call");
+		CHECK(call.stage != PCM_CALL_PHASE4 ||
+		      (call.state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL &&
+		       !call.state.phase4.v92.owner.digital.control.transmit_acknowledges_cpu),
+		      "unusable CPu was acknowledged");
+	}
+	CHECK(call.stage == PCM_CALL_RETRAIN_SILENCE && call.retrain_active &&
+	      !call.v92_rate_renegotiation_active && !call.rate_renegotiation_deadline_armed &&
+	      !call.failed && pcm_call_is_valid(&call) && call.protocol == PCM_PROTOCOL_V92 &&
+	      !pcm_call_is_online(&call) &&
+	      call.pcm_upstream_quality.automatic_retrains == test->quality_retrains,
+	      "unusable CPu did not preserve the call through full retrain");
+	struct pcm_call_observation observation;
+	uint8_t generated;
+	CHECK(pcm_call_octet(&call, silence_octet(call.law), 0, &generated, &observation) == PCM_CALL_OK &&
+	      generated == silence_octet(call.law), "unusable CPu recovery omitted retrain silence");
+	return true;
+}
+
 static bool run_v92_rate_request(struct pcm_call *online,
 	struct v92_upstream_data_tx *upstream, struct fractional_delay *delay, unsigned epoch, bool local)
 {
@@ -9566,6 +9626,9 @@ static bool run_v92_rate_request(struct pcm_call *online,
 			CHECK(v92_phase4_record_tx_next(&record, &sample) == V92_PHASE4_RECORD_TX_OK &&
 			      v92_rate_call_sample(&test, decode_octet(law, encode_octet(law, sample))), "control record failed");
 		}
+		if (which == 0u)
+			CHECK(v92_unusable_cpu_recovery(&test, &record, mapping_bits),
+			      "unusable rate selection recovery failed");
 		if (which == 2u) {
 			struct v92_cpu_parameters cpu = path->cpu;
 			cpu.data_rate_number--;

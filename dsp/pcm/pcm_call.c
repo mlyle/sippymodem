@@ -3926,6 +3926,7 @@ static enum pcm_call_result sample_v92_phase4(
 		const struct v92_jd *jd = &call->phase3_configuration.v92_digital.jd;
 		struct v92_phase4_digital_station *station = &call->state.phase4.v92.owner.digital;
 		uint16_t measured_symbols = station->receive.channel.symbols;
+		bool cpu_received = station->control.cpu_received;
 		const struct v92_cpu_parameters *cpu = &call->state.phase4.v92.owner.digital.control.cpu;
 		enum v92_phase4_digital_station_result station_result = prefix_sent ?
 			V92_PHASE4_DIGITAL_STATION_OK : v92_phase4_digital_station_transmit(
@@ -3981,10 +3982,18 @@ static enum pcm_call_result sample_v92_phase4(
 			if (result != PCM_CALL_OK)
 				return result;
 		}
-		if (call->state.phase4.v92.owner.digital.control.cpu_received &&
-		    (!downstream_rate_is_enabled(jd->data_rate_capability_mask, cpu->data_rate_number) ||
-		     cpu->spectral_lookahead_frames > jd->maximum_spectral_shaping_lookahead))
-			return PCM_CALL_UNUSABLE_SELECTION;
+		if (!cpu_received && station->control.cpu_received) {
+			struct v90_pcm_mapping mapping;
+
+			/* CRC and field bounds do not prove that the selected
+			 * constellations can carry the requested rate. Validate before
+			 * acknowledging CPu; an unusable peer selection belongs to
+			 * rate-exchange recovery, not an internal E2u handoff failure. */
+			if (!downstream_rate_is_enabled(jd->data_rate_capability_mask, cpu->data_rate_number) ||
+			    cpu->spectral_lookahead_frames > jd->maximum_spectral_shaping_lookahead ||
+			    v90_pcm_mapping_init_from_v92_cpu(&mapping, cpu, call->law) != V90_PCM_MAPPING_OK)
+				return PCM_CALL_UNUSABLE_SELECTION;
+		}
 		if (v92_phase4_control_is_ready(call))
 			return enter_v92_e2u(call);
 		return PCM_CALL_OK;
