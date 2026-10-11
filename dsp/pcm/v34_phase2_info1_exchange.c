@@ -149,8 +149,16 @@ static bool map_common_event(
 		event->kind = V34_PHASE2_INFO1_EVENT_LOCAL_INFO1C_SENT;
 		return true;
 	case PHASE2_INFO1_EVENT_PEER_FRAME_STARTED:
-	case PHASE2_INFO1_EVENT_PEER_INFOMARKS:
 		return true;
+	case PHASE2_INFO1_EVENT_PEER_INFOMARKS:
+		/* V.34 11.2.2.1.6: after the peer deadline, INFOMARKSa
+		 * requests INFO1c again. Reuse the retained record and its
+		 * normal response deadline; the host bounds the whole call. */
+		if (exchange->control.signal_role != PHASE2_SIGNAL_B ||
+		    exchange->control.phase != PHASE2_INFO1_RECOVERING)
+			return true;
+		return phase2_info1_repeat_signal_b(&exchange->control) ==
+		       PHASE2_INFO1_OK;
 	case PHASE2_INFO1_EVENT_PEER_FRAME_PENDING:
 		return resolve_peer_frame(exchange, &common->frame_event, event);
 	case PHASE2_INFO1_EVENT_LOCAL_SECOND_SENT:

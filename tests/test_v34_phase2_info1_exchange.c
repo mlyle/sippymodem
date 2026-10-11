@@ -491,6 +491,114 @@ static bool test_exact_deadlines(void)
 	return true;
 }
 
+static bool check_infomarks_recovery(enum test_codec codec)
+{
+	const struct v34_info1c offered = info1c_fixture();
+	const struct v34_info1a selected = info1a_fixture();
+	const uint16_t delay = 173;
+	struct v34_phase2_info1_exchange caller;
+	struct v34_phase2_info1_exchange_event event;
+	struct v34_phase2_dpsk_transmitter marks;
+	struct v34_phase2_info_audio_transmitter peer;
+	uint8_t payload[V34_INFO1A_PAYLOAD_BYTES];
+	bool received_reply = false;
+
+	CHECK(v34_phase2_info1_exchange_caller_init(
+		      &caller, TEST_AMPLITUDE, delay, &offered) == PHASE2_INFO1_OK &&
+	      v34_phase2_dpsk_transmitter_init(
+		      &marks, V34_ANSWERING_STATION, TEST_AMPLITUDE) ==
+		      V34_PHASE2_DPSK_OK,
+	      "INFOMARKSa recovery fixture failed");
+	/* Continuous marks must not interrupt INFO1c or extend its peer wait.
+	 * After each timeout, the same marks request another complete record. */
+	for (unsigned attempt = 0; attempt < 3; ++attempt) {
+		struct v34_phase2_info_audio_receiver observer;
+		unsigned frames = 0, sent = 0, waited = 0;
+
+		CHECK(v34_phase2_info_audio_receiver_init(
+			      &observer, V34_ANSWERING_STATION,
+			      V34_INFO1C_PAYLOAD_BITS) == V34_PHASE2_INFO_AUDIO_OK,
+		      "INFO1c observer failed");
+		for (unsigned sample = 0; sample < TEST_SAMPLE_LIMIT; ++sample) {
+			struct v34_phase2_info_event observed;
+			const bool waiting = caller.control.phase ==
+				PHASE2_INFO1_WAITING_FOR_PEER;
+			int16_t rx, tx;
+			bool accepted;
+
+			CHECK(v34_phase2_dpsk_transmitter_sample(
+				      &marks, 1, &rx, &accepted) == V34_PHASE2_DPSK_OK &&
+			      v34_phase2_info1_exchange_sample(
+				      &caller, codec_round_trip(rx, codec), &tx,
+				      &event) == PHASE2_INFO1_OK &&
+			      v34_phase2_info_audio_receiver_sample(
+				      &observer, codec_round_trip(tx, codec),
+				      &observed) == V34_PHASE2_INFO_AUDIO_OK,
+			      "INFOMARKSa recovery sample failed");
+			waited += waiting;
+			sent += event.kind == V34_PHASE2_INFO1_EVENT_LOCAL_INFO1C_SENT;
+			if (observed.type == V34_PHASE2_INFO_FRAME_RECEIVED) {
+				struct v34_info1c decoded;
+
+				CHECK(v34_info1c_decode(
+					      observed.payload, sizeof(observed.payload),
+					      observed.payload_bit_count, &decoded) == V34_INFO1_OK &&
+				      info1c_equal(&decoded, &offered),
+				      "repeated INFO1c changed its payload");
+				frames++;
+			}
+			if (caller.control.phase == PHASE2_INFO1_FAILED ||
+			    (attempt == 2 && frames == 1 && sent == 1 &&
+			     caller.control.phase == PHASE2_INFO1_WAITING_FOR_PEER))
+				break;
+		}
+		CHECK(frames == 1 && sent == 1 &&
+		      caller.control.round_trip_delay_samples == delay,
+		      "codec %d attempt %u: expected one INFO1c, got %u/%u",
+		      codec, attempt, frames, sent);
+		if (attempt < 2)
+			CHECK(caller.control.phase == PHASE2_INFO1_FAILED &&
+			      caller.control.failure == PHASE2_INFO1_PEER_TIMEOUT &&
+			      waited == PHASE2_INFO1_SIGNAL_B_WAIT_BASE_SAMPLES + delay &&
+			      phase2_info1_recover(&caller.control) == PHASE2_INFO1_OK,
+			      "marks restarted INFO1c early or extended its deadline");
+	}
+	CHECK(caller.control.phase == PHASE2_INFO1_WAITING_FOR_PEER &&
+	      v34_info1a_encode(&selected, payload, sizeof(payload)) == V34_INFO1_OK &&
+	      v34_phase2_info_audio_transmitter_init(
+		      &peer, V34_ANSWERING_STATION, TEST_AMPLITUDE,
+		      payload, V34_INFO1A_PAYLOAD_BITS) == V34_PHASE2_INFO_AUDIO_OK,
+	      "repeated INFO1c did not restore its peer wait");
+	for (unsigned sample = 0; sample < TEST_SAMPLE_LIMIT && !received_reply;
+	     ++sample) {
+		int16_t rx, tx;
+		bool complete, accepted;
+
+		if (!peer.frame_complete)
+			CHECK(v34_phase2_info_audio_transmitter_sample(
+				      &peer, &rx, &complete) == V34_PHASE2_INFO_AUDIO_OK,
+			      "INFO1a reply failed");
+		else
+			CHECK(v34_phase2_dpsk_transmitter_sample(
+				      &peer.modulation, 0, &rx, &accepted) == V34_PHASE2_DPSK_OK,
+			      "INFO1a tail failed");
+		CHECK(v34_phase2_info1_exchange_sample(
+			      &caller, codec_round_trip(rx, codec), &tx, &event) ==
+			      PHASE2_INFO1_OK,
+		      "INFO1a reception failed after resend");
+		received_reply = event.kind == V34_PHASE2_INFO1_EVENT_PEER_INFO1A_RECEIVED;
+	}
+	CHECK(received_reply && info1a_equal(&event.peer_parameters.info1a, &selected),
+	      "codec %d: retry did not accept the peer's valid INFO1a", codec);
+	return true;
+}
+
+static bool test_infomarks_recovery(void)
+{
+	return check_infomarks_recovery(TEST_CODEC_PCMU) &&
+	       check_infomarks_recovery(TEST_CODEC_PCMA);
+}
+
 static bool test_semantic_frame_rejection(void)
 {
 	struct v34_info1c info1c = info1c_fixture();
@@ -700,6 +808,7 @@ int main(void)
 	} tests[] = {
 		{ "bidirectional exchange", test_bidirectional_exchange },
 		{ "exact peer deadlines", test_exact_deadlines },
+		{ "INFOMARKSa recovery", test_infomarks_recovery },
 		{ "semantic frame rejection", test_semantic_frame_rejection },
 		{ "reject short exchange", test_reject_short_exchange },
 		{ "validation", test_validation },
