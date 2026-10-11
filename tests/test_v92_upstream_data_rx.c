@@ -3000,7 +3000,7 @@ static bool test_residual_inverse(void)
 /* Early unconstrained decisions must not teach the residual fitter their
  * errors. The known-bit candidate ends at acquisition; different later data
  * and a deliberately wrong held-out B1 bit remain independently decoded. */
-static bool test_residual_acquisition(unsigned prefix, bool damaged)
+static bool test_residual_acquisition(unsigned prefix, bool damaged, int transient)
 {
 	struct v92_cpd_parameters cpd;
 	struct v92_pcm_mapping mapping;
@@ -3041,6 +3041,10 @@ static bool test_residual_acquisition(unsigned prefix, bool damaged)
 				.011 * history[cursor]) / 1.237 + 128.);
 			history[cursor] = point; cursor = (cursor + 1) % 6;
 			raw = g711_quantize(G711_LAW_PCMU, raw);
+			/* A final acquisition disturbance must not contaminate the
+			 * descrambler used by the otherwise clean validation half. */
+			if (frame == V92_B1U_ACQUISITION_FRAMES - 1 && i == V92_PCM_MAPPING_FRAME_SYMBOLS - 1)
+				raw += transient;
 			int32_t correction;
 			CHECK(v92_residual_sample(&line.residual, raw, 1, true, &correction), "residual sample failed");
 			line.raw[i] = raw; line.received[i] = line.wire_known[i] = true;
@@ -3088,7 +3092,8 @@ int main(void)
 {
 	for (unsigned prefix = 0; prefix < 2; prefix++)
 		for (unsigned damaged = 0; damaged < 2; damaged++)
-			if (!test_residual_acquisition(prefix, damaged)) return 1;
+			for (int transient = -384; transient <= 384; transient += 384)
+				if (!test_residual_acquisition(prefix, damaged, transient)) return 1;
 	if (!test_residual_inverse()) return 1;
 	if (!test_data_initialization()) return 1;
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)

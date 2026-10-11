@@ -259,8 +259,9 @@ static void acquire_residual_points(struct v92_upstream_model *model,
 	}
 }
 
-static void fit_residual(struct v92_upstream_model *model, struct v92_upstream_data_line *line)
+static bool fit_residual(struct v92_upstream_model *model, struct v92_upstream_data_line *line)
 {
+	bool selected = false;
 	double best = INFINITY;
 	(void)v92_residual_fit(&line->residual, model->x, model->raw,
 		line->calibration.minimum, line->calibration.maximum, &line->calibration.gain, &best);
@@ -273,18 +274,28 @@ static void fit_residual(struct v92_upstream_model *model, struct v92_upstream_d
 		    line->calibration.maximum, &gain, &score) && score < best) {
 			line->residual = candidate;
 			line->calibration.gain = gain;
+			selected = true;
 		}
 	}
 	if (line->residual.active) line->calibration.offset = 0.;
+	return selected;
 }
 
 void v92_upstream_model_fit(struct v92_upstream_model *model,
-	struct v92_upstream_data_line *line, const struct v92_pcm_frame_rx *decoder)
+	struct v92_upstream_data_line *line, struct v92_pcm_frame_rx *decoder)
 {
 	if (model->residual_acquiring) {
 		acquire_residual_points(model, line, decoder);
 		if (line->received_frames + 1u == V92_B1U_ACQUISITION_FRAMES) {
-			if (line->host.gain > 0.) fit_residual(model, line);
+			if (line->host.gain > 0. && fit_residual(model, line)) {
+				/* Carry the selected acquisition's coding history into
+				 * independent decoding. Old erroneous decisions must not
+				 * poison the first validation bits through the descrambler.
+				 * Retain the physical-frame quality clock. */
+				struct v92_pcm_frame_noise noise = decoder->noise;
+				*decoder = model->alternate;
+				decoder->noise = noise;
+			}
 			close_acquisition(model);
 		}
 		return;
