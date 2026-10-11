@@ -10088,6 +10088,108 @@ static bool test_v42_raw_text_detection(void)
 	return true;
 }
 
+enum partial_adp_reply {
+	PARTIAL_ADP_RAW,
+	PARTIAL_ADP_LAPM,
+	PARTIAL_ADP_ABANDONED,
+};
+
+static bool exercise_partial_adp_tail(enum partial_adp_reply reply)
+{
+	struct modem_driver driver = {
+		.name = "partial ADP tail", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	struct modem *m = create_compat_modem(&driver, "partial ADP tail");
+	struct dp dp = { .id = DP_V22BIS, .modem = m };
+	struct modem answerer = { .name = "ADP source" };
+	uint8_t bits[1024], output, mark = 1;
+	unsigned tail = 0;
+
+	CHECK(m != NULL && modem_ec_init(m) == 0, "partial ADP allocation failed");
+	m->dp = &dp;
+	m->caller = 1;
+	m->tx_rate = m->rx_rate = 2400;
+	m->cfg.ec = m->cfg.ec_detector = 1;
+	m->sregs[SREG_QUIET] = 1;
+	modem_dp_connected(m);
+	m->xmit.buf[0] = 'Z';
+	m->xmit.count = m->xmit.head = 1;
+	while (m->bit_timer > 20)
+		CHECK(modem_get_bits(m, 1, &output, 1) == 1 &&
+		      modem_put_bits(m, 1, &mark, 1) == 1,
+		      "initial detection clock failed");
+	/* One ADP character arrives while T400 and the final ODP expire. */
+	answerer.packer.detector.tx_count = 1;
+	answerer.packer.detector.tx_pattern[0] = 0xa2;
+	answerer.packer.detector.tx_pattern[1] = reply == PARTIAL_ADP_LAPM ? 0xc2 : 0;
+	CHECK(modem_detector_get_bits(&answerer, 1, bits, 19) == 19 &&
+	      modem_put_bits(m, 1, bits, 19) == 19 &&
+	      m->packer.detector.rx_count == 1,
+	      "partial ADP did not begin at the detection deadline");
+	CHECK(modem_get_bits(m, 1, &output, 1) == 1 && m->bit_timer == 0,
+	      "final ODP did not begin at the detection deadline");
+	while (m->get_bits == modem_detector_get_bits &&
+	       m->bit_timer == 0 && tail++ < 80)
+		CHECK(modem_get_bits(m, 1, &output, 1) == 1, "final ODP stopped");
+	CHECK(m->get_bits == modem_detector_get_bits && m->bit_timer > 0 &&
+	      m->packer.detector.rx_count == 1 && m->xmit.count == 1,
+	      "raw handoff discarded partial ADP or consumed queued data");
+	if (reply == PARTIAL_ADP_ABANDONED) {
+		unsigned elapsed = 0;
+		int previous = m->bit_timer;
+		unsigned bound = V42_DETECTION_MAX_PATTERN_BITS * V42_ORIGINATOR_MATCH_PATTERNS;
+
+		while (m->get_bits == modem_detector_get_bits && elapsed++ < bound + 16) {
+			CHECK(modem_get_bits(m, 1, &output, 1) == 1 &&
+			      modem_put_bits(m, 1, &mark, 1) == 1,
+			      "abandoned ADP clock failed");
+			CHECK(m->bit_timer <= previous, "partial ADP renewed its deadline");
+			previous = m->bit_timer;
+		}
+		CHECK(m->get_bits == modem_async_get_bits && !m->cfg.ec && elapsed <= bound,
+		      "abandoned ADP did not finish within two pattern intervals");
+	} else {
+		CHECK(modem_detector_get_bits(&answerer, 1, bits, 54) == 54 &&
+		      modem_put_bits(m, 1, bits, 54) == 54, "remaining ADP did not complete");
+		for (unsigned bit = 0; bit < 80 && m->get_bits == modem_detector_get_bits; ++bit)
+			CHECK(modem_get_bits(m, 1, &output, 1) == 1, "final ODP tail failed");
+		CHECK(m->xmit.count == 1 && m->cfg.ec == (reply == PARTIAL_ADP_LAPM),
+		      "late ADP lost queued data or selected the wrong protocol");
+		if (reply == PARTIAL_ADP_LAPM) {
+			CHECK(m->get_bits == modem_hdlc_get_bits && m->put_bits == modem_hdlc_put_bits,
+			      "late ADP-V.42 did not reach LAPM");
+		} else {
+			static const uint8_t message[] = { 'R', 0x45, 0x00, 0xff };
+
+			CHECK(m->get_bits == modem_async_get_bits, "late ADP-V.14 did not reach raw");
+			memset(&lapm_sink, 0, sizeof(lapm_sink));
+			lapm_sink.result = 1;
+			m->put_chars = scripted_lapm_sink;
+			CHECK(modem_detector_get_bits(&answerer, 1, bits, 14 * 36) == 14 * 36 &&
+			      modem_put_bits(m, 1, bits, 14 * 36) == 14 * 36 && lapm_sink.length == 0,
+			      "ADP tail leaked into raw payload");
+			CHECK(feed_async_characters(m, message, sizeof(message)) &&
+			      lapm_sink.length == sizeof(message) &&
+			      memcmp(lapm_sink.data, message, sizeof(message)) == 0,
+			      "raw payload changed after the late ADP tail");
+		}
+	}
+	m->dp = NULL;
+	modem_ec_exit(m);
+	modem_delete(m);
+	memset(&lapm_source, 0, sizeof(lapm_source));
+	memset(&lapm_sink, 0, sizeof(lapm_sink));
+	return true;
+}
+
+static bool test_partial_adp_tail(void)
+{
+	return exercise_partial_adp_tail(PARTIAL_ADP_RAW) &&
+	       exercise_partial_adp_tail(PARTIAL_ADP_LAPM) &&
+	       exercise_partial_adp_tail(PARTIAL_ADP_ABANDONED);
+}
+
 int main(void)
 {
 	static const struct {
@@ -10216,6 +10318,7 @@ int main(void)
 		  test_builtin_datapump_lifecycle },
 		{ "independent call-progress modems",
 		  test_call_progress_supports_independent_modems },
+		{ "V.42 partial reply at raw boundary", test_partial_adp_tail },
 		{ "V.42 late answer detection", test_v42_late_answer_detection },
 		{ "V.42 late originator detection", test_v42_late_originator_detection },
 		{ "V.42 early raw text", test_v42_raw_text_detection },

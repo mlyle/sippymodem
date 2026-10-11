@@ -571,8 +571,26 @@ int modem_detector_get_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 		}
 	}
 	if (d->tx_limit != 0 &&
-	    d->tx_count > d->tx_limit + 1 && s->bit == 0)
-		detector_finish(m);
+	    d->tx_count > d->tx_limit + 1 && s->bit == 0) {
+		if (m->bit_timer_func == detector_finish)
+			return ret;
+		/* A reply that begins while the final ODP drains still belongs
+		 * to detection. Allow at most two received pattern intervals
+		 * to complete it; the timer callback prevents repeated renewal. */
+		if (m->caller && !d->text_confirmed &&
+		    d->rx_count > 0 && d->rx_count < DETECTOR_MATCH_CHARACTERS) {
+			uint64_t receive_rate = m->rx_rate ? m->rx_rate :
+				DETECTOR_FALLBACK_RATE / 2;
+			uint64_t ticks = detector_rate(m) *
+				V42_DETECTION_MAX_PATTERN_BITS *
+				V42_ORIGINATOR_MATCH_PATTERNS;
+			ticks = (ticks + receive_rate - 1) / receive_rate;
+			m->bit_timer = ticks > INT_MAX ? INT_MAX :
+				ticks != 0 ? (int)ticks : 1;
+			m->bit_timer_func = detector_finish;
+		} else
+			detector_finish(m);
+	}
 	return ret;
 }
 
