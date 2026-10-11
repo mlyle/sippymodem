@@ -181,30 +181,56 @@ static bool test_initial_state_and_carrier_profile(void)
 	      "carrier profile changed: %#llx",
 	      (unsigned long long)profile_hash);
 
-	{
-		struct v34_adaptive_equalizer equalizer;
-		struct v34_adaptive_equalizer_observation observation;
-		struct v34_adaptive_equalizer_decision decision;
+	return true;
+}
 
-		CHECK(v34_adaptive_equalizer_init(&equalizer) ==
-			      V34_ADAPTIVE_EQUALIZER_OK,
-		      "signed carrier phase owner did not initialize");
-		equalizer.carrier_phase_fraction = 1;
-		equalizer.carrier_phase_low = UINT16_MAX;
-		CHECK(push_zero_symbol(&equalizer),
-		      "signed carrier phase input failed");
-		CHECK(v34_adaptive_equalizer_observe(
-			      &equalizer, &observation) ==
-			      V34_ADAPTIVE_EQUALIZER_OK,
-		      "signed carrier phase observation failed");
-		decision = zero_decision(&observation);
-		CHECK(v34_adaptive_equalizer_commit(&equalizer, &decision) ==
-			      V34_ADAPTIVE_EQUALIZER_OK &&
-		      equalizer.carrier_phase_fraction == 0 &&
-		      equalizer.carrier_phase_low == UINT16_MAX &&
-		      equalizer.rotate_in_phase == 0x4000 &&
-		      equalizer.rotate_quadrature == 0,
-		      "carrier low word lost its signed lineage");
+static bool test_carrier_phase_accumulation(void)
+{
+	static const uint32_t initial_phases[] = {
+		0, UINT32_C(0x17fff), UINT32_C(0x18000),
+		UINT32_C(0x1ffff), UINT32_C(0x1fffffff),
+	};
+	static const int32_t steps[] = { -65537, -32768, -1, 0, 1, 32768, 65537 };
+	const uint32_t phase_mask = UINT32_C(0x1fffffff);
+
+	for (size_t initial = 0; initial < ARRAY_LENGTH(initial_phases); ++initial) {
+		for (size_t step = 0; step < ARRAY_LENGTH(steps); ++step) {
+			struct v34_adaptive_equalizer equalizer;
+			uint32_t expected = initial_phases[initial];
+
+			CHECK(v34_adaptive_equalizer_init(&equalizer) ==
+				      V34_ADAPTIVE_EQUALIZER_OK,
+			      "carrier accumulation owner did not initialize");
+			equalizer.carrier_phase_fraction = (uint16_t)(expected >> 16);
+			equalizer.carrier_phase_low = (uint16_t)expected;
+			equalizer.phase_accumulator = steps[step] * 32;
+			for (size_t epoch = 0; epoch < 1024; ++epoch) {
+				struct v34_adaptive_equalizer_observation observation;
+				struct v34_adaptive_equalizer_decision decision;
+				uint32_t actual;
+
+				CHECK(push_zero_symbol(&equalizer) &&
+				      v34_adaptive_equalizer_observe(
+					      &equalizer, &observation) ==
+					      V34_ADAPTIVE_EQUALIZER_OK,
+				      "carrier accumulation observation failed");
+				decision = zero_decision(&observation);
+				decision.adaptation = V34_ADAPTIVE_EQUALIZER_CARRIER;
+				CHECK(v34_adaptive_equalizer_commit(
+					      &equalizer, &decision) ==
+					      V34_ADAPTIVE_EQUALIZER_OK,
+				      "carrier accumulation commit failed");
+				expected = (expected + (uint32_t)steps[step]) & phase_mask;
+				actual = ((uint32_t)equalizer.carrier_phase_fraction << 16) |
+					 equalizer.carrier_phase_low;
+				CHECK(actual == expected && equalizer.phase_error == 0 &&
+				      equalizer.phase_accumulator == steps[step] * 32,
+				      "carrier phase drifted: initial=%#x step=%d epoch=%zu "
+				      "expected=%#x actual=%#x",
+				      initial_phases[initial], steps[step], epoch,
+				      expected, actual);
+			}
+		}
 	}
 	return true;
 }
@@ -540,18 +566,18 @@ static bool test_exact_decision_feedback_oracle(void)
 			      V34_ADAPTIVE_EQUALIZER_OK,
 		      "oracle commit failed at symbol %zu", symbol);
 	}
-	CHECK(observation_hash == UINT64_C(0x4b5ed34a8f4b676c),
+	CHECK(observation_hash == UINT64_C(0x64e46e6432bf9a5d),
 	      "observation oracle changed: %#llx",
 	      (unsigned long long)observation_hash);
-	CHECK(state_hash(&equalizer) == UINT64_C(0xa240b84b6ce805f7),
+	CHECK(state_hash(&equalizer) == UINT64_C(0xbdaa3e5601caa320),
 	      "terminal oracle changed: %#llx",
 	      (unsigned long long)state_hash(&equalizer));
-	CHECK(equalizer.phase_accumulator == 1859052 &&
-	      equalizer.phase_error == 330697664 &&
-	      equalizer.rotate_in_phase == 2963 &&
-	      equalizer.rotate_quadrature == 16115 &&
-	      equalizer.carrier_phase_low == 48886 &&
-	      equalizer.carrier_phase_fraction == 1811 &&
+	CHECK(equalizer.phase_accumulator == -1671967 &&
+	      equalizer.phase_error == 154685984 &&
+	      equalizer.rotate_in_phase == 3833 &&
+	      equalizer.rotate_quadrature == -15930 &&
+	      equalizer.carrier_phase_low == 30664 &&
+	      equalizer.carrier_phase_fraction == 6452 &&
 	      equalizer.equalizer.index == 32 && equalizer.epoch == 96 &&
 	      equalizer.lineage == UINT64_C(0xd3e3fb96b7dabaf6) &&
 	      !equalizer.decision_pending &&
@@ -1667,6 +1693,7 @@ int main(void)
 {
 	if (!test_training_decoder_power() ||
 	    !test_initial_state_and_carrier_profile() ||
+	    !test_carrier_phase_accumulation() ||
 	    !test_carrier_only_commit() ||
 	    !test_retained_pair_geometry(V34_EQUALIZER_TAPS, 20u) ||
 	    !test_retained_pair_geometry(V34_EQUALIZER_MAX_TAPS, 16u) ||

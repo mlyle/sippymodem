@@ -27,8 +27,8 @@ enum {
 	V90_PHASE3_RETURN_RX_MIN_IMPLICIT_S_SYMBOLS = 96,
 	/* The second return is specified as 128T of S followed by 16T of S-bar.
 	 * Admit a narrow error/timing margin around that fixed S interval so an
-	 * alternating slice of permitted DIL SCR cannot own the adaptive receiver
-	 * indefinitely. */
+	 * alternating slice of permitted DIL SCR cannot end DIL early. Count a
+	 * continuous run in full, including any overlong first-return tail. */
 	V90_PHASE3_RETURN_RX_MIN_SECOND_S_SYMBOLS = 96,
 	V90_PHASE3_RETURN_RX_MAX_SECOND_S_SYMBOLS = 192,
 	V90_PHASE3_RETURN_RX_EXIT_SYMBOLS = 16,

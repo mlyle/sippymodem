@@ -240,7 +240,7 @@ static bool test_missing_s_bar(void)
 	      "first return restarted before its complete S-bar");
 	CHECK(prepare_second_return(1, &rx) &&
 	      feed_first_return(&rx, 1, false) &&
-	      rx.stage == V90_PHASE3_RETURN_RX_STAGE_S &&
+	      rx.stage == V90_PHASE3_RETURN_RX_STAGE_SEARCH_S &&
 	      !v90_phase3_return_marker_is_complete(&rx),
 	      "second return accepted an arbitrary S ending");
 	return true;
@@ -352,6 +352,10 @@ static bool test_second_return_bounds(void)
 		{ V90_PHASE3_RETURN_RX_MIN_SECOND_S_SYMBOLS, true },
 		{ V90_PHASE3_RETURN_RX_MAX_SECOND_S_SYMBOLS, true },
 		{ V90_PHASE3_RETURN_RX_MAX_SECOND_S_SYMBOLS + 32u, false },
+		/* Restarting after each maximum-length interval used to accept
+		 * these tails of a single continuous, overlong S as a new S. */
+		{ V90_PHASE3_RETURN_RX_MAX_SECOND_S_SYMBOLS + 128u, false },
+		{ 6u * V90_PHASE3_RETURN_RX_MAX_SECOND_S_SYMBOLS + 98u, false },
 	};
 	const unsigned int offset = 3;
 	struct v90_phase3_return_marker rx;
@@ -362,7 +366,7 @@ static bool test_second_return_bounds(void)
 		CHECK(prepare_second_return(offset, &rx) &&
 		      feed_second_marker(&rx, offset, cases[index].s_symbols,
 			      &s_events, &s_bar_events) &&
-		      (index == ARRAY_LENGTH(cases) - 1u || s_events == 1u) &&
+		      s_events == 1u &&
 		      s_bar_events == (cases[index].accepted ? 1u : 0u) &&
 		      v90_phase3_return_marker_is_complete(&rx) == cases[index].accepted,
 		      "second S length %zu returned S=%u Sbar=%u stage=%d",

@@ -285,12 +285,6 @@ static enum v90_phase3_return_rx_result observe_s_exit(
 {
 	bool matches = expected_s_decision(rx, rotation);
 
-	if (rx->second_return && rx->exit_symbols == 0 && matches &&
-	    rx->confirmed_s_symbols >=
-		    V90_PHASE3_RETURN_RX_MAX_SECOND_S_SYMBOLS)
-		return reset_onset_candidate(rx, rotation) ?
-			V90_PHASE3_RETURN_RX_OK :
-			V90_PHASE3_RETURN_RX_NUMERIC_FAILURE;
 	if (rx->exit_symbols == 0 &&
 	    (rx->confirmed_s_symbols <
 		     V90_PHASE3_RETURN_RX_MIN_IMPLICIT_S_SYMBOLS ||
@@ -309,6 +303,13 @@ static enum v90_phase3_return_rx_result observe_s_exit(
 	rx->exit_symbols++;
 	if (rx->exit_symbols < V90_PHASE3_RETURN_RX_EXIT_SYMBOLS)
 		return V90_PHASE3_RETURN_RX_OK;
+	/* Do not rearm within an overlong alternating run: its remaining tail
+	 * can otherwise look like a valid second S. Wait for an actual exit
+	 * from the periodic signal, or reject its complete S-bar below. */
+	if (rx->second_return && s_exit_is_nonperiodic(rx))
+		return reset_onset_candidate(rx, rotation) ?
+			V90_PHASE3_RETURN_RX_OK :
+			V90_PHASE3_RETURN_RX_NUMERIC_FAILURE;
 	if (rx->allow_implicit_s_end && s_exit_is_nonperiodic(rx)) {
 		rx->allow_implicit_s_end = false;
 		rx->stage = V90_PHASE3_RETURN_RX_STAGE_IMPLICIT_END;
@@ -363,8 +364,10 @@ static enum v90_phase3_return_rx_result receive_decision(
 		return observe_s_exit(rx, rotation);
 	case V34_PHASE3_S_RECEIVER_DETECTED:
 		if (rx->second_return &&
-		    rx->confirmed_s_symbols <
-			    V90_PHASE3_RETURN_RX_MIN_SECOND_S_SYMBOLS)
+		    (rx->confirmed_s_symbols <
+			     V90_PHASE3_RETURN_RX_MIN_SECOND_S_SYMBOLS ||
+		     rx->confirmed_s_symbols >
+			     V90_PHASE3_RETURN_RX_MAX_SECOND_S_SYMBOLS))
 			return reset_onset_candidate(rx, rotation) ?
 				V90_PHASE3_RETURN_RX_OK :
 				V90_PHASE3_RETURN_RX_NUMERIC_FAILURE;

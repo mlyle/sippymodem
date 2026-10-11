@@ -574,12 +574,14 @@ static void update_carrier(
 			(uint32_t)error, V34_CARRIER_PHASE_SHIFT_A));
 	}
 	int32_t accumulator = wrap_s32_from_u32(accumulator_word);
+	/* These are the high and low words of one phase, not a signed residue.
+	 * Sign extension would lose a coarse step whenever bit 15 is set. */
 	uint32_t phase_word =
 		(uint32_t)proportional +
 		(uint32_t)arithmetic_shift_right_u32(
 			(uint32_t)accumulator, 5) +
 		((uint32_t)equalizer->carrier_phase_fraction << 16) +
-		(uint32_t)(int32_t)(int16_t)equalizer->carrier_phase_low;
+		(uint32_t)equalizer->carrier_phase_low;
 	int32_t phase = wrap_s32_from_u32(phase_word);
 	uint16_t coarse = (uint16_t)(
 		(uint32_t)arithmetic_shift_right_u32(
