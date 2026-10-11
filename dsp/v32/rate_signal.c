@@ -163,6 +163,12 @@ enum v32_rate_signal_result v32_rate_signal_decode(
 	decoded.trellis_at_highest_rate =
 		decoded_type != V32_CLEARDOWN_SIGNAL &&
 		(word & V32_B8_TRELLIS) != 0;
+	/* V.32bis Tables 5 and 6 retain B4/B8 as identification bits at
+	 * 4800 bit/s, where the data itself is always uncoded (2.3.5).
+	 * Report the coding of the highest advertised rate in the offer. */
+	if (decoded.rates == V32_RATE_CAPABILITY_4800 &&
+	    (word & V32_B4_2400_OR_BIS) != 0)
+		decoded.trellis_at_highest_rate = false;
 	if (!offer_is_valid(&decoded, decoded_type))
 		return V32_RATE_SIGNAL_INVALID_WORD;
 	*type = decoded_type;

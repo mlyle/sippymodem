@@ -303,6 +303,53 @@ static bool test_ignored_receive_extensions(void)
 	return true;
 }
 
+static bool test_bis_4800_offer(void)
+{
+	/* V.32bis Table 5 fixes B4 and B8 at one even when only the
+	 * uncoded 4800 bit/s rate is enabled. Table 6 retains them in E. */
+	const struct v32_rate_offer expected = {
+		.rates = V32_RATE_CAPABILITY_4800,
+	};
+
+	for (unsigned int prefix = 0; prefix < V32_RATE_SIGNAL_DIBITS; ++prefix) {
+		struct v32_rate_signal_detector detector = { 0 };
+		struct v32_rate_offer offer = { 0 };
+		enum v32_rate_signal_event event;
+
+		for (unsigned int index = 0; index < prefix; ++index)
+			CHECK(v32_rate_signal_detector_observe(
+				      &detector, 2, &event, &offer) == V32_RATE_SIGNAL_OK &&
+			      event == V32_RATE_SIGNAL_NO_EVENT,
+			      "prefix falsely selected a rate");
+		CHECK(observe_word(&detector, 0x0d91, &event, &offer) &&
+		      event == V32_RATE_SIGNAL_NO_EVENT &&
+		      observe_word(&detector, 0x0d91, &event, &offer) &&
+		      event == V32_RATE_SIGNAL_DETECTED &&
+		      offers_are_equal(&offer, &expected) &&
+		      v32_rate_signal_detector_is_valid(&detector) &&
+		      v32_rate_signal_detector_offer(&detector, &offer) &&
+		      offers_are_equal(&offer, &expected),
+		      "V.32bis 4800 offer rejected or treated as coded at offset %u",
+		      prefix);
+		CHECK(observe_word(&detector, 0xfd91, &event, &offer) &&
+		      event == V32_END_SIGNAL_DETECTED &&
+		      offers_are_equal(&offer, &expected) &&
+		      !detector.aligned &&
+		      v32_rate_signal_detector_is_valid(&detector),
+		      "V.32bis 4800 E word rejected or treated as coded");
+	}
+	{
+		struct v32_rate_offer offer = expected;
+		enum v32_rate_signal_type type = V32_END_SIGNAL;
+
+		CHECK(v32_rate_signal_decode(0x0591, &type, &offer) ==
+			      V32_RATE_SIGNAL_INVALID_WORD &&
+		      type == V32_END_SIGNAL && offers_are_equal(&offer, &expected),
+		      "base V.32 accepted unsupported coded 4800 without B4");
+	}
+	return true;
+}
+
 static bool test_repeated_rate_detection(void)
 {
 	struct v32_rate_signal_detector detector;
@@ -491,6 +538,7 @@ int main(void)
 		{ "zero-rate cleardown", test_cleardown },
 		{ "ignored receive extensions",
 		  test_ignored_receive_extensions },
+		{ "V.32bis uncoded 4800 offer", test_bis_4800_offer },
 		{ "repeated rate detection", test_repeated_rate_detection },
 		{ "aligned end detection", test_aligned_end_detection },
 		{ "detector reacquisition", test_detector_reacquisition },
