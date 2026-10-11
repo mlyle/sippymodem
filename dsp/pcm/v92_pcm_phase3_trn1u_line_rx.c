@@ -10,7 +10,10 @@
 #include <string.h>
 
 enum {
-	MINIMUM_CORRELATION_SCORE = 40,
+	/* Require squared normalized correlation of at least one half.
+	 * Fractional sampling phase and postcursors spread this prefix across
+	 * neighboring symbols; the following equalizer trains them. */
+	MINIMUM_CORRELATION_SCORE = V92_PCM_PHASE3_TRN1U_LINE_SYNC_SYMBOLS / 2,
 };
 
 _Static_assert((int)V92_PCM_PHASE3_TRN1U_LINE_EQUALIZER_TAPS <=
