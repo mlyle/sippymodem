@@ -2065,8 +2065,8 @@ static bool test_contracts(void)
 	return true;
 }
 
-static bool test_corrupted_cpu_length(enum g711_law law,
-	enum v92_constellation_size constellation, bool extended, bool sparse)
+static bool test_corrupted_cpu_tail(enum g711_law law,
+	enum v92_constellation_size constellation, bool extended, bool sparse, unsigned prefix_bits)
 {
 	struct v92_upstream_control_line_rx line;
 	struct v92_phase4_record_tx wire;
@@ -2081,7 +2081,7 @@ static bool test_corrupted_cpu_length(enum g711_law law,
 	      v92_cpu_encode(&cpu, bits * V92_CPU_SYMBOLS_PER_FRAME,
 		      frame, sizeof(frame), &frame_bits) == V92_CPU_OK &&
 	      v92_e2u_rx_init(&e2u, &line.signal, extended) == V92_E2U_RX_OK,
-	      "corrupted-length fixture failed");
+	      "corrupted-tail fixture failed");
 	if (sparse) {
 		/* Keep both wire rows, but reference only the second. Decoding compacts
 		 * this to one row without changing the transmitted record length. */
@@ -2095,12 +2095,19 @@ static bool test_corrupted_cpu_length(enum g711_law law,
 	for (unsigned record = 0; record < 3; ++record) {
 		if (record == 2) {
 			line.retained_cpu_bits = (uint16_t)frame_bits;
-			/* A received map index claims five rows; the transmitted record still
-			 * has its original length and CRC. No parameters may be accepted. */
-			packed_msb_write_lsb_field(frame, pcm_control_frame_map_bit(0), 4, 4);
+			if (prefix_bits) {
+				/* A late false prefix leaves an incomplete, zero-rate-looking
+				 * header at the established boundary. Its alignment determines
+				 * whether it can plausibly own the following symbols. */
+				for (size_t bit = frame_bits - prefix_bits; bit < frame_bits; ++bit)
+					packed_msb_set_bit(frame, bit, bit < frame_bits - prefix_bits + 17u);
+			} else {
+				/* A map index claims five rows while retaining the original CRC. */
+				packed_msb_write_lsb_field(frame, pcm_control_frame_map_bit(0), 4, 4);
+			}
 		}
 		CHECK(v92_phase4_record_tx_init(&wire, &modulator, frame, sizeof(frame), frame_bits) ==
-		      V92_PHASE4_RECORD_TX_OK, "corrupted-length transmit init failed");
+		      V92_PHASE4_RECORD_TX_OK, "corrupted-tail transmit init failed");
 		unsigned accepted = 0;
 		while (!v92_phase4_record_tx_is_complete(&wire)) {
 			int16_t sample;
@@ -2112,21 +2119,36 @@ static bool test_corrupted_cpu_length(enum g711_law law,
 		}
 		CHECK(accepted == (record < 2) && line.repeat_symbols * bits == frame_bits &&
 		      v92_phase4_record_tx_handoff(&wire, &modulator) == V92_PHASE4_RECORD_TX_OK,
-		      "corrupted-length record changed parameters");
+		      "corrupted-tail record changed parameters");
 	}
 	CHECK(line.repeat_confirmed && !line.repeat_remaining &&
-	      line.control.stage == V92_CONTROL_RX_SEARCH_SYNC &&
+	      line.control.stage == (prefix_bits ? V92_CONTROL_RX_RECEIVE_PARAMETERS : V92_CONTROL_RX_SEARCH_SYNC) &&
+	      line.control.bit_index == prefix_bits &&
 	      v92_phase4_record_tx_init_e2u(&wire, &modulator, extended) == V92_PHASE4_RECORD_TX_OK,
-	      "corrupted-length recovery lost the confirmed boundary");
+	      "corrupted-tail recovery lost the confirmed boundary");
+	struct v92_upstream_control_line_rx unretained = line, unconfirmed = line;
+	struct v92_e2u_rx unretained_e2u = e2u, unconfirmed_e2u = e2u;
+	unretained.retained_cpu_bits = 0;
+	unconfirmed.repeat_confirmed = false;
+	/* 72 bits span whole mapping frames in both constellations; 76 do not. */
+	bool marker_allowed = prefix_bits != 72u;
 	while (!v92_phase4_record_tx_is_complete(&wire)) {
 		int16_t sample;
 		struct v92_control_event event;
 		CHECK(v92_phase4_record_tx_next(&wire, &sample) == V92_PHASE4_RECORD_TX_OK,
 		      "marker transmit failed");
 		enum v92_e2u_rx_result result = v92_e2u_rx_search(&e2u, &line, true, quantize(law, sample), &event);
-		CHECK(result == (v92_phase4_record_tx_is_complete(&wire) ? V92_E2U_RX_COMPLETE : V92_E2U_RX_OK),
-		      "corrupted length hid E2u: law=%u constellation=%u extended=%u result=%u",
-		      law, constellation, extended, result);
+		CHECK(result == (marker_allowed && v92_phase4_record_tx_is_complete(&wire) ?
+		      V92_E2U_RX_COMPLETE : V92_E2U_RX_OK),
+		      "corrupted tail E2u: law=%u constellation=%u extended=%u prefix=%u result=%u",
+		      law, constellation, extended, prefix_bits, result);
+		if (prefix_bits) {
+			CHECK(v92_e2u_rx_search(&unretained_e2u, &unretained, true,
+				      quantize(law, sample), &event) == V92_E2U_RX_OK &&
+			      v92_e2u_rx_search(&unconfirmed_e2u, &unconfirmed, true,
+				      quantize(law, sample), &event) == V92_E2U_RX_OK,
+			      "partial header bypassed CPu selection or repetition confirmation");
+		}
 	}
 	return true;
 }
@@ -2137,9 +2159,11 @@ int main(void)
 		for (unsigned size = 0; size < 2; ++size)
 			for (unsigned extended = 0; extended < 2; ++extended)
 				for (unsigned sparse = 0; sparse < 2; ++sparse)
-					if (!test_corrupted_cpu_length(law, size ? V92_CONSTELLATION_8_POINT :
-						V92_CONSTELLATION_4_POINT, extended, sparse))
-						return 1;
+					for (unsigned tail = 0; tail < 3; ++tail)
+						if (!test_corrupted_cpu_tail(law, size ? V92_CONSTELLATION_8_POINT :
+							V92_CONSTELLATION_4_POINT, extended, sparse,
+							tail == 0 ? 0 : tail == 1 ? 72 : 76))
+							return 1;
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (unsigned size = 0; size < 2; ++size) {
 			enum v92_constellation_size constellation = size ? V92_CONSTELLATION_8_POINT :

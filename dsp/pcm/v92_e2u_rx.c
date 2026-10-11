@@ -183,11 +183,15 @@ enum v92_e2u_rx_result v92_e2u_rx_search(
 	/* V.92 9.6.2.1.4 finishes CPu before E2u; SUVu repeats also
 	 * end on control frame boundaries. Once repetition is confirmed,
 	 * a damaged header must not erase the next boundary.
-	 * A newly parsed record still owns its full length; never search its
-	 * zero-filled interior at the old repetition period. */
+	 * An aligned record still owns its full length; never search its
+	 * zero-filled interior at the old repetition period. After CPu selection,
+	 * a partial record off the twelve-symbol alignment cannot own that
+	 * boundary. Keep parsing it, but allow a competing marker search. */
 	bool boundary = control->control.record_boundary ||
 		(control->repeat_confirmed && !control->repeat_remaining &&
-		 control->control.stage == V92_CONTROL_RX_SEARCH_SYNC);
+		 (control->control.stage == V92_CONTROL_RX_SEARCH_SYNC ||
+		  (control->retained_cpu_bits &&
+		   control->control.bit_index % control->control.alignment_bits != 0u)));
 	if (eligible && boundary &&
 	    v92_e2u_rx_init(&next, &control->signal, extended) != V92_E2U_RX_OK)
 		return fail(receiver);
