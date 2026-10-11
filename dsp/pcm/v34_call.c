@@ -8,9 +8,9 @@
 #include <stddef.h>
 #include <string.h>
 
-/* 11.4.2.1.1 specifies 600 ms plus RTT. Allow 100 ms of receive
+/* 11.3.2.2.1 and 11.4.2.1.1 specify 600 ms plus RTT. Allow 100 ms of receive
  * compatibility grace for a late S/S-bar and its TRN confirmation. */
-static const uint32_t PHASE4_S_WAIT_SAMPLES = (600u + 100u) * 8u;
+static const uint32_t PEER_S_WAIT_SAMPLES = (600u + 100u) * 8u;
 
 static enum v34_call_result phase3_result(
 	enum v34_phase3_exchange_result result);
@@ -232,11 +232,11 @@ bool v34_call_is_valid(const struct v34_call *call)
 		return false;
 	}
 	return child_valid && child_role == call->local_role &&
-	       call->phase4_s_remaining_samples <=
-		       PHASE4_S_WAIT_SAMPLES + call->round_trip_delay_samples &&
-	       (call->phase4_s_remaining_samples == 0u ||
-		(call->local_role == V34_CALLING_STATION &&
-		 (call->stage == V34_CALL_PHASE3 ||
+	       call->peer_s_remaining_samples <=
+		       PEER_S_WAIT_SAMPLES + call->round_trip_delay_samples &&
+	       (call->peer_s_remaining_samples == 0u ||
+		(call->stage == V34_CALL_PHASE3 ||
+		 (call->local_role == V34_CALLING_STATION &&
 		  call->stage == V34_CALL_PHASE4))) &&
 	       call->phase4_e_remaining_samples <= 30u * 8000u &&
 	       (call->phase4_e_remaining_samples == 0u ||
@@ -366,7 +366,7 @@ static enum v34_call_result begin_retrain(
 		return V34_CALL_NUMERIC_FAILURE;
 	next.retrain_active = true;
 	next.echo_quiet_samples = 0;
-	next.phase4_s_remaining_samples = 0u;
+	next.peer_s_remaining_samples = 0u;
 	next.phase4_e_remaining_samples = 0u;
 	next.stage = V34_CALL_RETRAIN_SILENCE;
 	if (!v34_call_is_valid(&next))
@@ -723,26 +723,32 @@ static enum v34_call_result sample_phase4(
 	return phase4_result(result);
 }
 
-/* V.34 11.4.2.1.1 bounds the caller's wait for final S/S-bar from
- * the first transmitted J. Use the full-retrain alternative permitted by
- * 11.3.2.1 and 11.4.2.1, preserving INFO0 and the measured delay. The E
- * deadline starts only after J-prime and cannot cover a missing S marker. */
-static bool phase4_s_has_timed_out(
+/* Bound each station's wait for S/S-bar from its first transmitted J:
+ * Phase 3 for the answerer (11.3.2.2.1), Phase 4 for the caller (11.4.2.1.1).
+ * Use the full-retrain alternative permitted by 11.3.2.2 and 11.4.2.1,
+ * preserving INFO0 and the measured delay. The later E deadline cannot
+ * cover a missing S marker. */
+static bool peer_s_has_timed_out(
 	struct v34_call *call, const struct v34_call_observation *observation)
 {
-	if (call->local_role != V34_CALLING_STATION)
+	if (call->local_role == V34_ANSWERING_STATION &&
+	    observation->processed == V34_CALL_PHASE3 &&
+	    (observation->events.phase3 &
+	     V34_PHASE3_EXCHANGE_EVENT_PEER_S_DETECTED) != 0) {
+		call->peer_s_remaining_samples = 0u;
 		return false;
+	}
 	if (observation->processed == V34_CALL_PHASE3 &&
 	    (observation->events.phase3 &
 	     V34_PHASE3_EXCHANGE_EVENT_TRANSMIT_J_STARTED) != 0) {
-		call->phase4_s_remaining_samples =
-			PHASE4_S_WAIT_SAMPLES + call->round_trip_delay_samples;
+		call->peer_s_remaining_samples =
+			PEER_S_WAIT_SAMPLES + call->round_trip_delay_samples;
 	} else if (observation->processed == V34_CALL_PHASE4 &&
 		   (observation->events.phase4 &
 		    V34_PHASE4_EXCHANGE_EVENT_PEER_S_DETECTED) != 0) {
-		call->phase4_s_remaining_samples = 0u;
-	} else if (call->phase4_s_remaining_samples != 0u &&
-		   --call->phase4_s_remaining_samples == 0u) {
+		call->peer_s_remaining_samples = 0u;
+	} else if (call->peer_s_remaining_samples != 0u &&
+		   --call->peer_s_remaining_samples == 0u) {
 		return true;
 	}
 	return false;
@@ -942,7 +948,7 @@ enum v34_call_result v34_call_sample(
 	default:
 		return V34_CALL_INVALID_STATE;
 	}
-	if (result == V34_CALL_OK && phase4_s_has_timed_out(call, &emitted))
+	if (result == V34_CALL_OK && peer_s_has_timed_out(call, &emitted))
 		retrain_requested = true;
 	echo_advanced = pcm_host_echo_advance_predicted(
 		&call->echo, echo_mode, received_sample, conditioned,

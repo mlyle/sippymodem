@@ -532,8 +532,8 @@ static bool run_pair_until_frames(
 		    v34_call_is_online(&answerer->call) &&
 		    caller->mapping_frames_received >= minimum_frames &&
 		    answerer->mapping_frames_received >= minimum_frames) {
-			CHECK(caller->call.phase4_s_remaining_samples == 0u &&
-			      answerer->call.phase4_s_remaining_samples == 0u &&
+			CHECK(caller->call.peer_s_remaining_samples == 0u &&
+			      answerer->call.peer_s_remaining_samples == 0u &&
 			      caller->call.phase4_e_remaining_samples == 0u &&
 			      answerer->call.phase4_e_remaining_samples == 0u,
 			      "online data retained a startup deadline");
@@ -2079,10 +2079,23 @@ static bool test_final_tone_timeout(void)
 }
 
 
-static bool test_late_final_s(void)
+static bool peer_s_observed(
+	const struct v34_call_observation *observation, enum v34_station_role role)
+{
+	if (role == V34_CALLING_STATION)
+		return observation->processed == V34_CALL_PHASE4 &&
+		       (observation->events.phase4 &
+			V34_PHASE4_EXCHANGE_EVENT_PEER_S_DETECTED) != 0;
+	return observation->processed == V34_CALL_PHASE3 &&
+	       (observation->events.phase3 &
+		V34_PHASE3_EXCHANGE_EVENT_PEER_S_DETECTED) != 0;
+}
+
+static bool check_late_s(enum v34_station_role role)
 {
 	for (unsigned pcma = 0u; pcma < 2u; ++pcma) {
 		struct endpoint caller = { 0 }, answerer = { 0 }, waiting = { 0 };
+		struct endpoint *local = role == V34_CALLING_STATION ? &caller : &answerer;
 		struct channel channel = { .pcma = pcma };
 		int16_t samples[4000];
 		size_t count = 0u;
@@ -2091,14 +2104,15 @@ static bool test_late_final_s(void)
 		CHECK(endpoint_init(&caller, V34_CALLING_STATION) &&
 		      endpoint_init(&answerer, V34_ANSWERING_STATION),
 		      "late S endpoints did not initialize");
-		/* Retain the trained caller at its first J and generate the peer's
+		/* Retain the local station at its first J and generate the peer's
 		 * real S/S-bar/TRN waveform over the ordinary companded channel.
 		 * No prerecorded vector or synthetic slicer decisions are needed. */
 		for (size_t sample = 0u; sample < SAMPLE_LIMIT; ++sample) {
 			struct v34_call_observation observations[2];
-			int16_t incoming, unused;
+			int16_t incoming, call_sample, answer_sample;
 
-			channel_receive(&channel, &incoming, &unused);
+			channel_receive(&channel, &call_sample, &answer_sample);
+			incoming = role == V34_CALLING_STATION ? call_sample : answer_sample;
 			if (started) {
 				CHECK(count < ARRAY_LENGTH(samples), "late S waveform overflow");
 				samples[count++] = incoming;
@@ -2106,15 +2120,13 @@ static bool test_late_final_s(void)
 			CHECK(channel_sample_pair(&channel, &caller, &answerer,
 				      &observations[0], &observations[1]),
 			      "late S waveform generation failed");
-			if (!started && observations[0].processed == V34_CALL_PHASE3 &&
-			    (observations[0].events.phase3 &
+			if (!started && observations[role].processed == V34_CALL_PHASE3 &&
+			    (observations[role].events.phase3 &
 			     V34_PHASE3_EXCHANGE_EVENT_TRANSMIT_J_STARTED) != 0) {
-				waiting = caller;
+				waiting = *local;
 				started = true;
 			}
-			if (started && observations[0].processed == V34_CALL_PHASE4 &&
-			    (observations[0].events.phase4 &
-			     V34_PHASE4_EXCHANGE_EVENT_PEER_S_DETECTED) != 0) {
+			if (started && peer_s_observed(&observations[role], role)) {
 				recorded = true;
 				break;
 			}
@@ -2137,12 +2149,11 @@ static bool test_late_final_s(void)
 			      "late S reception failed for law %u", pcma);
 			CHECK(waiting.call.stage != V34_CALL_RETRAIN_SILENCE,
 			      "late valid S was abandoned for law %u at %zu", pcma, sample);
-			if (observation.processed == V34_CALL_PHASE4 &&
-			    (observation.events.phase4 &
-			     V34_PHASE4_EXCHANGE_EVENT_PEER_S_DETECTED) != 0) {
+			if (peer_s_observed(&observation, role)) {
 				CHECK(sample + 1u > nominal_deadline &&
-				      waiting.call.phase4_s_remaining_samples == 0u &&
-				      !waiting.call.state.phase4.transmit_trn_started,
+				      waiting.call.peer_s_remaining_samples == 0u &&
+				      (role == V34_ANSWERING_STATION ||
+				       !waiting.call.state.phase4.transmit_trn_started),
 				      "late S did not cancel its deadline before local TRN");
 				detected = true;
 			}
@@ -2152,71 +2163,84 @@ static bool test_late_final_s(void)
 	return true;
 }
 
-static bool test_missing_final_s_recovery(void)
+static bool test_late_s(void)
+{
+	return check_late_s(V34_CALLING_STATION) &&
+	       check_late_s(V34_ANSWERING_STATION);
+}
+
+static bool check_missing_s_recovery(enum v34_station_role role)
 {
 	const size_t delays[] = { LINE_DELAY_SAMPLES, 800u };
 
 	for (unsigned pcma = 0; pcma < 2u; ++pcma) {
 		for (size_t index = 0; index < ARRAY_LENGTH(delays); ++index) {
 			struct endpoint caller = { 0 }, answerer = { 0 };
+			struct endpoint *local = role == V34_CALLING_STATION ? &caller : &answerer;
 			struct channel channel = { .delay_samples = delays[index], .pcma = pcma };
 			bool started = false;
 
 			CHECK(endpoint_init(&caller, V34_CALLING_STATION) &&
 			      endpoint_init(&answerer, V34_ANSWERING_STATION),
-			      "final S deadline endpoints did not initialize");
+			      "S deadline endpoints did not initialize");
 			for (size_t sample = 0; sample < SAMPLE_LIMIT; ++sample) {
 				struct v34_call_observation observations[2];
 
 				CHECK(channel_sample_pair(&channel, &caller, &answerer,
 					      &observations[0], &observations[1]),
-				      "final S deadline setup failed at %zu", sample);
-				if (observations[0].processed == V34_CALL_PHASE3 &&
-				    (observations[0].events.phase3 &
+				      "S deadline setup failed at %zu", sample);
+				if (observations[role].processed == V34_CALL_PHASE3 &&
+				    (observations[role].events.phase3 &
 				     V34_PHASE3_EXCHANGE_EVENT_TRANSMIT_J_STARTED) != 0) {
 					started = true;
 					break;
 				}
 			}
-			CHECK(started && caller.call.peer_info0_stored &&
-			      caller.call.round_trip_delay_stored,
-			      "final S deadline missed the caller's first J sample");
-			struct v34_info0 peer = caller.call.peer_info0;
-			uint16_t rtd = caller.call.round_trip_delay_samples;
+			CHECK(started && local->call.peer_info0_stored &&
+			      local->call.round_trip_delay_stored,
+			      "S deadline missed the local station's first J sample");
+			struct v34_info0 peer = local->call.peer_info0;
+			uint16_t rtd = local->call.round_trip_delay_samples;
 			uint32_t deadline = 700u * 8u + rtd;
 			struct v34_call_observation observation;
 			struct v34_received_mapping_frame received;
 			int16_t transmitted;
 
-			/* The caller has sent J, but the peer's final S/S-bar never
+			/* The local station has sent J, but the peer's S/S-bar never
 			 * arrives. The later E deadline cannot start in this state. */
 			for (uint32_t elapsed = 1u; elapsed <= deadline; ++elapsed) {
-				CHECK(v34_call_sample(&caller.call, 0, NULL, NULL,
+				CHECK(v34_call_sample(&local->call, 0, NULL, NULL,
 					      &transmitted, &observation, &received) == V34_CALL_OK,
 				      "law %u delay %zu missing S stopped at %u/%u",
 				      pcma, delays[index], elapsed, deadline);
-				CHECK((caller.call.stage == V34_CALL_RETRAIN_SILENCE) ==
+				CHECK((local->call.stage == V34_CALL_RETRAIN_SILENCE) ==
 					      (elapsed == deadline),
 				      "law %u delay %zu missing S recovered at the wrong sample %u/%u",
 				      pcma, delays[index], elapsed, deadline);
 			}
-			CHECK(caller.call.retrain_active && !caller.call.failed &&
-			      caller.call.phase4_s_remaining_samples == 0u &&
-			      caller.call.phase4_e_remaining_samples == 0u &&
-			      caller.call.round_trip_delay_samples == rtd &&
-			      v34_info0_equal(&caller.call.peer_info0, &peer),
+			CHECK(local->call.retrain_active && !local->call.failed &&
+			      local->call.peer_s_remaining_samples == 0u &&
+			      local->call.phase4_e_remaining_samples == 0u &&
+			      local->call.round_trip_delay_samples == rtd &&
+			      v34_info0_equal(&local->call.peer_info0, &peer),
 			      "missing S recovery lost the negotiated call agreement");
 			for (unsigned sample = 0; sample < 70u * 8u; ++sample)
-				CHECK(v34_call_sample(&caller.call, 0, NULL, NULL, &transmitted,
+				CHECK(v34_call_sample(&local->call, 0, NULL, NULL, &transmitted,
 					      &observation, &received) == V34_CALL_OK && transmitted == 0 &&
 				      observation.processed == V34_CALL_RETRAIN_SILENCE,
 				      "missing S recovery did not retain its full silence interval");
-			CHECK(caller.call.stage == V34_CALL_PHASE2 &&
-			      caller.call.retrain_active && !caller.call.failed,
+			CHECK(local->call.stage == V34_CALL_PHASE2 &&
+			      local->call.retrain_active && !local->call.failed,
 			      "missing S recovery did not resume Phase 2");
 		}
 	}
 	return true;
+}
+
+static bool test_missing_s_recovery(void)
+{
+	return check_missing_s_recovery(V34_CALLING_STATION) &&
+	       check_missing_s_recovery(V34_ANSWERING_STATION);
 }
 
 static bool test_initial_e_timeout(void)
@@ -2350,8 +2374,8 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "final Tone-A timeout retrain", test_final_tone_timeout },
-		{ "late final S qualification", test_late_final_s },
-		{ "missing final S recovery", test_missing_final_s_recovery },
+		{ "late S qualification", test_late_s },
+		{ "missing S recovery", test_missing_s_recovery },
 		{ "bounded initial E exchange", test_initial_e_timeout },
 		{ "bounded online rate renegotiation", test_rate_renegotiation_timeout },
 		{ "reciprocal zero-rate cleardown", test_cleardown },
