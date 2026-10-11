@@ -1311,6 +1311,9 @@ static bool test_attenuated_retrain_guard(void)
 		bool detected;
 	} cases[] = {
 		{ 0.3981071705534972, 1800, true }, /* Eight dB guard loss. */
+		{ 0.251188643150958, 1800, true }, /* Twelve dB guard loss. */
+		{ 0.223872113856834, 1800, true }, /* Thirteen dB guard loss. */
+		{ 0.177827941003892, 1800, false }, /* Below retained guard floor. */
 		{ 0.1, 1800, false }, /* Effectively bare carrier. */
 		{ 0.3981071705534972, 1300, false }, /* Unrelated energy. */
 	};

@@ -16,7 +16,7 @@ static const double V34_PHASE2_TONE_MIN_LINE_POWER = 256.0 * 256.0;
 static const double V34_PHASE2_TONE_MIN_CALLING_CARRIER_SHARE = 0.70;
 static const double V34_PHASE2_TONE_MIN_ANSWERING_CARRIER_SHARE = 0.30;
 static const double V34_PHASE2_TONE_MAX_CARRIER_SHARE = 1.20;
-static const double V34_RETRAIN_MIN_GUARD_SHARE = 0.10;
+static const double V34_RETRAIN_MIN_GUARD_SHARE = 0.05;
 
 _Static_assert(
 	V34_RETRAIN_MIN_SILENCE_SAMPLES == 478 &&
@@ -533,8 +533,9 @@ static bool retrain_tone_matches(
 		return true;
 	/* Line filtering can weaken the 1800 Hz answer guard.
 	 * Require that guard itself, rather than inferring it from energy
-	 * missing from the 2400 Hz carrier. Ten percent tolerates guard loss
-	 * while rejecting a bare carrier mixed with unrelated tones. */
+	 * missing from the 2400 Hz carrier. Five percent tolerates about 13 dB
+	 * of guard attenuation while rejecting a bare carrier or unrelated tones.
+	 * The preceding silence and continuous-tone duration remain required. */
 	guard =
 		single_tone_detector_measure(&detector->answer_guard);
 
