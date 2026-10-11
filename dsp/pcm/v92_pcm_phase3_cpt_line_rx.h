@@ -21,23 +21,34 @@ enum v92_pcm_phase3_cpt_line_rx_result {
 	V92_PCM_PHASE3_CPT_LINE_RX_NUMERIC_FAILURE,
 };
 
+struct v92_cpt_line_candidate {
+	struct binary_equalizer line;
+	struct v92_pcm_phase3_cpt_rx signs;
+};
+
 /* Continue a locked PCM-upstream line from second TRN1u through repeated CPt
  * records and E1u. The inherited equalizer owns its delayed samples, so the
  * first new input produces the first sign not delivered by the handoff. */
 struct v92_pcm_phase3_cpt_line_rx {
 	struct binary_equalizer line;
 	struct v92_pcm_phase3_cpt_rx signs;
+	/* A training-derived DC interpretation competes only until the first
+	 * CRC-valid CPt record. Raw wins ties; the selected state owns E1u. */
+	struct v92_cpt_line_candidate alternate;
 	uint64_t starting_input_samples;
 	uint64_t input_samples;
 	uint64_t processed_samples;
 	uint8_t input_advance_symbols;
+	int16_t dc_offset;
+	bool alternate_active;
 	bool failed;
 };
 
 /* E1u decisions trail the physical line by the equalizer decision delay.
  * Preserve those already-accepted TRN2u symbols with the trained line state.
  * TRN2u starts a fresh GPA scrambler, but its differential sign begins with
- * previous_sign from the final E1u symbol. */
+ * previous_sign from the final E1u symbol. A centered CPt receiver restores
+ * raw input coordinates in the FIR history for known-symbol TRN2u training. */
 struct v92_pcm_phase3_cpt_line_handoff {
 	struct qam_equalizer equalizer;
 	struct v92_cpt_parameters parameters;

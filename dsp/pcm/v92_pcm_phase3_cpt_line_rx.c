@@ -2,14 +2,33 @@
 
 #include "v92_pcm_phase3_cpt_line_rx.h"
 
+#include "memory_region.h"
+
 #include <math.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
+
+static bool alternate_is_valid(const struct v92_pcm_phase3_cpt_line_rx *receiver)
+{
+	if (!receiver->alternate_active)
+		return memory_region_is_zero(&receiver->alternate, sizeof(receiver->alternate)) &&
+		       (!receiver->dc_offset || receiver->signs.matching_records != 0);
+	return receiver->dc_offset != 0 && receiver->signs.matching_records == 0 &&
+	       v92_pcm_phase3_line_geometry_is_valid(&receiver->alternate.line) &&
+	       receiver->alternate.line.polarity == receiver->line.polarity &&
+	       receiver->alternate.line.magnitude == receiver->line.magnitude &&
+	       receiver->alternate.line.adaptation == receiver->line.adaptation &&
+	       v92_pcm_phase3_cpt_rx_is_valid(&receiver->alternate.signs) &&
+	       receiver->alternate.signs.stage != V92_PCM_PHASE3_CPT_RX_TRAINING &&
+	       receiver->alternate.signs.matching_records == 0;
+}
 
 bool v92_pcm_phase3_cpt_line_rx_is_valid(
 	const struct v92_pcm_phase3_cpt_line_rx *receiver)
 {
 	return receiver != NULL &&
+	       alternate_is_valid(receiver) &&
 	       v92_pcm_phase3_line_geometry_is_valid(&receiver->line) &&
 	       v92_pcm_phase3_cpt_rx_is_valid(&receiver->signs) &&
 	       receiver->signs.stage != V92_PCM_PHASE3_CPT_RX_TRAINING &&
@@ -56,8 +75,19 @@ v92_pcm_phase3_cpt_line_rx_init(
 		    handoff->polarity) != BINARY_EQUALIZER_OK ||
 	    v92_pcm_phase3_cpt_rx_init_from_training(
 		    &initialized.signs, &handoff->sync) !=
-		    V92_PCM_PHASE3_CPT_RX_OK ||
-	    !v92_pcm_phase3_cpt_line_rx_is_valid(&initialized))
+		    V92_PCM_PHASE3_CPT_RX_OK)
+		return V92_PCM_PHASE3_CPT_LINE_RX_NUMERIC_FAILURE;
+	if (handoff->dc_offset) {
+		initialized.dc_offset = handoff->dc_offset;
+		initialized.alternate_active = true;
+		initialized.alternate = (struct v92_cpt_line_candidate){
+			.line = initialized.line, .signs = initialized.signs,
+		};
+		for (unsigned i = 0; i < initialized.line.equalizer.tap_count; i++)
+			initialized.alternate.line.equalizer.history[i].in_phase -=
+				initialized.line.polarity * initialized.dc_offset;
+	}
+	if (!v92_pcm_phase3_cpt_line_rx_is_valid(&initialized))
 		return V92_PCM_PHASE3_CPT_LINE_RX_NUMERIC_FAILURE;
 	*receiver = initialized;
 	return V92_PCM_PHASE3_CPT_LINE_RX_OK;
@@ -75,6 +105,21 @@ static enum v92_pcm_phase3_cpt_line_rx_result fail_sample(
 	return V92_PCM_PHASE3_CPT_LINE_RX_NUMERIC_FAILURE;
 }
 
+static bool receive_sign(struct binary_equalizer *line,
+	struct v92_pcm_phase3_cpt_rx *signs, int32_t sample,
+	struct v92_pcm_phase3_cpt_rx_event *event)
+{
+	uint8_t sign;
+	return binary_equalizer_receive(line, sample, &sign) == BINARY_EQUALIZER_OK &&
+	       v92_pcm_phase3_cpt_rx_receive(signs, sign, event) == V92_PCM_PHASE3_CPT_RX_OK;
+}
+
+static void discard_alternate(struct v92_pcm_phase3_cpt_line_rx *receiver)
+{
+	memset(&receiver->alternate, 0, sizeof(receiver->alternate));
+	receiver->alternate_active = false;
+}
+
 enum v92_pcm_phase3_cpt_line_rx_result
 v92_pcm_phase3_cpt_line_rx_sample(
 	struct v92_pcm_phase3_cpt_line_rx *receiver, int16_t sample,
@@ -82,7 +127,6 @@ v92_pcm_phase3_cpt_line_rx_sample(
 {
 	struct v92_pcm_phase3_cpt_line_rx next;
 	struct v92_pcm_phase3_cpt_rx_event emitted = { 0 };
-	uint8_t sign;
 
 	if (!v92_pcm_phase3_cpt_line_rx_is_valid(receiver) || event == NULL)
 		return V92_PCM_PHASE3_CPT_LINE_RX_INVALID_ARGUMENT;
@@ -96,12 +140,28 @@ v92_pcm_phase3_cpt_line_rx_sample(
 	next = *receiver;
 	next.input_samples++;
 	next.processed_samples++;
-	if (binary_equalizer_receive(&next.line, sample, &sign) !=
-	    BINARY_EQUALIZER_OK)
-		return fail_sample(receiver, &next);
-	if (v92_pcm_phase3_cpt_rx_receive(
-		    &next.signs, sign, &emitted) != V92_PCM_PHASE3_CPT_RX_OK ||
-	    !v92_pcm_phase3_cpt_line_rx_is_valid(&next))
+	int32_t centered = (int32_t)sample - next.dc_offset;
+	bool primary_ok = receive_sign(&next.line, &next.signs,
+		next.alternate_active ? sample : centered, &emitted);
+	if (next.alternate_active) {
+		struct v92_pcm_phase3_cpt_rx_event other = { 0 };
+		bool alternate_ok = receive_sign(&next.alternate.line,
+			&next.alternate.signs, centered, &other);
+		if (primary_ok && emitted.type == V92_PCM_PHASE3_CPT_RX_PARAMETERS) {
+			next.dc_offset = 0;
+			discard_alternate(&next);
+		} else if (alternate_ok && other.type == V92_PCM_PHASE3_CPT_RX_PARAMETERS) {
+			next.line = next.alternate.line;
+			next.signs = next.alternate.signs;
+			emitted = other;
+			primary_ok = true;
+			discard_alternate(&next);
+		} else if (!alternate_ok) {
+			next.dc_offset = 0;
+			discard_alternate(&next);
+		}
+	}
+	if (!primary_ok || !v92_pcm_phase3_cpt_line_rx_is_valid(&next))
 		return fail_sample(receiver, &next);
 	*receiver = next;
 	*event = emitted;
@@ -168,6 +228,9 @@ v92_pcm_phase3_cpt_line_rx_handoff(
 		.input_advance_symbols = receiver->input_advance_symbols,
 		.polarity = receiver->line.polarity,
 	};
+	for (unsigned i = 0; i < generated.equalizer.tap_count; i++)
+		generated.equalizer.history[i].in_phase +=
+			generated.polarity * receiver->dc_offset;
 	if (!v92_pcm_phase3_cpt_rx_parameters(
 		    &receiver->signs, &generated.parameters) ||
 	    !v92_pcm_phase3_cpt_rx_previous_sign(

@@ -173,8 +173,8 @@ static bool test_contracts(void)
 static bool check_immediate_adaptation(
 	unsigned tap_count, bool tracking, int8_t polarity, double adaptation)
 {
-	static const int16_t samples[] = {
-		INT16_MIN, -4096, -1, 0, 1, 4096, INT16_MAX,
+	static const int32_t samples[] = {
+		-65535, INT16_MIN, -4096, -1, 0, 1, 4096, INT16_MAX, 65535,
 	};
 	const struct qam_point reference = { .in_phase = TEST_MAGNITUDE };
 	struct qam_equalizer trained;
@@ -201,7 +201,7 @@ static bool check_immediate_adaptation(
 	CHECK(binary_equalizer_init(&receiver, &trained, TEST_MAGNITUDE,
 	      adaptation, polarity) == BINARY_EQUALIZER_OK, "receiver setup failed");
 	for (size_t i = 0; i < 4u * ARRAY_LENGTH(samples); ++i) {
-		int16_t sample = samples[i % ARRAY_LENGTH(samples)];
+		int32_t sample = samples[i % ARRAY_LENGTH(samples)];
 		struct qam_point input = { .in_phase = polarity * (double)sample };
 		struct qam_point target;
 		struct qam_equalizer_observation observation = { 0 };

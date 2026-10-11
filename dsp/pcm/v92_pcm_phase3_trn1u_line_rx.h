@@ -66,6 +66,10 @@ struct v92_pcm_phase3_trn1u_line_rx {
 	uint64_t input_samples;
 	uint32_t output_symbols;
 	uint32_t training_errors;
+	/* Raw mean from known training after prefix acquisition. It supplies
+	 * an optional control-receiver hypothesis, never a PCM level change. */
+	int64_t sample_sum;
+	uint16_t sample_count;
 	double signal_level;
 	double adaptation;
 	enum v92_pcm_phase3_trn1u_line_rx_stage stage;
@@ -84,6 +88,7 @@ struct v92_pcm_phase3_trn1u_line_handoff {
 	uint32_t training_errors;
 	double signal_level;
 	double adaptation;
+	int16_t dc_offset;
 	uint8_t input_advance_symbols;
 	int8_t polarity;
 };

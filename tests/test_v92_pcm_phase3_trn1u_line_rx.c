@@ -35,6 +35,8 @@ static bool check_channel(
 	uint8_t expected_previous_sign = 2u;
 	uint32_t expected_history = 0u;
 	bool trained = false;
+	int64_t sample_sum = 0;
+	unsigned sample_count = 0;
 
 	CHECK(channel_bench_init(&bench, effects, effect_count) ==
 		      CHANNEL_BENCH_OK &&
@@ -60,6 +62,10 @@ static bool check_channel(
 		CHECK(channel_bench_process(&bench, &sample, 1u) ==
 			      CHANNEL_BENCH_OK,
 		      "TRN1u channel failed at %zu", index);
+		if (receiver.stage == V92_PCM_PHASE3_TRN1U_LINE_RX_STAGE_TRAINING) {
+			sample_sum += sample;
+			sample_count++;
+		}
 		result = v92_pcm_phase3_trn1u_line_rx_sample(
 			&receiver, sample);
 		alignment_events +=
@@ -91,6 +97,9 @@ static bool check_channel(
 	      handoff.input_advance_symbols ==
 		      V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY &&
 	      handoff.input_samples == source_symbols &&
+	      sample_count != 0 && receiver.sample_count == sample_count &&
+	      receiver.sample_sum == sample_sum &&
+	      handoff.dc_offset == lround((double)sample_sum / sample_count) &&
 	      handoff.sync.training.previous_sign == expected_previous_sign &&
 	      handoff.sync.training.scrambler.history == expected_history,
 	      "TRN1u line handoff lost coding or equalizer delay");
@@ -323,6 +332,14 @@ static bool test_contracts(void)
 	      v92_pcm_phase3_trn1u_line_rx_is_valid(&receiver) &&
 	      !v92_pcm_phase3_trn1u_line_rx_is_complete(&receiver),
 	      "TRN1u line initialization contracts failed");
+	for (unsigned fault = 0; fault < 3; fault++) {
+		struct v92_pcm_phase3_trn1u_line_rx invalid = receiver;
+		if (fault == 0) invalid.sample_sum = 1;
+		if (fault == 1) invalid.sample_count = 1;
+		if (fault == 2) invalid.sample_count = UINT16_MAX;
+		CHECK(!v92_pcm_phase3_trn1u_line_rx_is_valid(&invalid),
+		      "invalid training mean %u was accepted", fault);
+	}
 	for (unsigned int fault = 0u; fault < 4u; ++fault) {
 		struct v92_pcm_phase3_trn1u_line_rx invalid = receiver;
 		size_t index = fault % 2u == 0u ? 0u :

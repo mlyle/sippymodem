@@ -43,6 +43,9 @@ static bool aligned_state_is_valid(
 {
 	return receiver->window_count ==
 		       V92_PCM_PHASE3_TRN1U_LINE_SYNC_SYMBOLS &&
+	       receiver->output_symbols == (uint32_t)receiver->sample_count +
+		       V92_PCM_PHASE3_TRN1U_LINE_SYNC_SYMBOLS -
+		       V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY &&
 	       (receiver->polarity == -1 || receiver->polarity == 1) &&
 	       isfinite(receiver->signal_level) &&
 		       receiver->signal_level >=
@@ -78,11 +81,15 @@ bool v92_pcm_phase3_trn1u_line_rx_is_valid(
 	    receiver->polarity > 1 ||
 	    receiver->output_symbols != receiver->sync.trained_symbols ||
 	    receiver->training_errors > receiver->output_symbols ||
+	    receiver->sample_count > V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS ||
+	    receiver->sample_sum < (int64_t)receiver->sample_count * INT16_MIN ||
+	    receiver->sample_sum > (int64_t)receiver->sample_count * INT16_MAX ||
 	    receiver->input_samples < receiver->window_count)
 		return false;
 	switch (receiver->stage) {
 	case V92_PCM_PHASE3_TRN1U_LINE_RX_STAGE_HUNTING:
 		return receiver->output_symbols == 0u &&
+		       receiver->sample_count == 0u &&
 		       receiver->training_errors == 0u &&
 		       receiver->signal_level == 0.0 &&
 		       receiver->polarity == 0 &&
@@ -397,8 +404,11 @@ v92_pcm_phase3_trn1u_line_rx_sample(
 	if (next.stage == V92_PCM_PHASE3_TRN1U_LINE_RX_STAGE_HUNTING) {
 		if (!hunt_sample(&next, sample, &aligned))
 			return fail_sample(receiver, &next);
-	} else if (!train_sample(&next, sample)) {
-		return fail_sample(receiver, &next);
+	} else {
+		next.sample_sum += sample;
+		next.sample_count++;
+		if (!train_sample(&next, sample))
+			return fail_sample(receiver, &next);
 	}
 	if (!v92_pcm_phase3_trn1u_line_rx_is_valid(&next))
 		return fail_sample(receiver, &next);
@@ -455,6 +465,8 @@ v92_pcm_phase3_trn1u_line_rx_handoff(
 		.training_errors = receiver->training_errors,
 		.signal_level = receiver->signal_level,
 		.adaptation = receiver->adaptation,
+		.dc_offset = (int16_t)lround(
+			(double)receiver->sample_sum / receiver->sample_count),
 		.input_advance_symbols =
 			V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY,
 		.polarity = receiver->polarity,

@@ -29,6 +29,8 @@ static bool receiver_states_equal(
 	memcpy(&right_snapshot, right, sizeof(right_snapshot));
 	binary_equalizer_snapshot(&left_snapshot.line, &left->line);
 	binary_equalizer_snapshot(&right_snapshot.line, &right->line);
+	binary_equalizer_snapshot(&left_snapshot.alternate.line, &left->alternate.line);
+	binary_equalizer_snapshot(&right_snapshot.alternate.line, &right->alternate.line);
 	return memcmp(&left_snapshot, &right_snapshot, sizeof(left_snapshot)) == 0;
 }
 
@@ -93,18 +95,29 @@ static bool start_tail(
 }
 
 static bool next_tail_symbol(
-	struct pcm_binary_sign *tail, enum g711_law law,
+	struct pcm_binary_sign *tail, enum g711_law law, unsigned ucode,
 	struct v90_pcm_symbol *symbol)
 {
 	uint8_t sign;
 
 	return pcm_binary_sign_encode(tail, 1u, &sign) ==
 		       PCM_BINARY_SIGN_OK &&
-	       v90_pcm_symbol_make(symbol, law, TEST_UCODE, sign == 0u);
+	       v90_pcm_symbol_make(symbol, law, ucode, sign == 0u);
 }
 
-static bool check_line(
-	enum g711_law law, bool impaired, unsigned damaged_descriptors)
+/* A long second TRN1u exposes decision-directed drift before CPt arrives.
+ * The high-pass channel and fractional delay leave residual ISI; a constant
+ * input offset must not pull the binary equalizer onto one sign. */
+struct offset_channel {
+	unsigned ucode;
+	int offset;
+	double fraction;
+	int polarity;
+	bool require_centered;
+};
+
+static bool check_channel(enum g711_law law, bool impaired,
+	unsigned damaged_descriptors, const struct offset_channel *offset)
 {
 	struct channel_bench_effect_spec effects[5] = {
 		{
@@ -148,24 +161,31 @@ static bool check_line(
 	bool repeat_seen = false;
 	bool e1u_seen = false;
 	unsigned rejected_records = 0u;
+	unsigned ucode = offset ? offset->ucode : TEST_UCODE;
+	unsigned extra_training = offset ? 16008u : 0u;
+	int expected_polarity = offset ? offset->polarity : impaired ? -1 : 1;
+	double dc = 0.0, previous = 0.0;
+	int16_t raw_history[V92_PCM_PHASE3_TRN1U_LINE_EQUALIZER_TAPS] = { 0 };
+	if (offset)
+		effects[1].parameters.gain.scale_q15 = offset->polarity * 24576;
 
 	CHECK(channel_bench_init(
 		      &channel, impaired ? effects : &effects[4],
 		      impaired ? ARRAY_LENGTH(effects) : 1u) == CHANNEL_BENCH_OK &&
 	      v92_pcm_phase3_cpt_tx_init(
-		      &transmitter, law, TEST_UCODE, &parameters) ==
+		      &transmitter, law, ucode, &parameters) ==
 		      V92_PCM_PHASE3_CPT_TX_OK &&
 	      v92_pcm_phase3_trn1u_line_rx_init(
 		      &training, impaired ? 0.125 : 0.0) ==
 		      V92_PCM_PHASE3_TRN1U_LINE_RX_OK,
 	      "CPt line fixture did not initialize");
-	for (size_t index = 0; index < SAMPLE_LIMIT && !e1u_seen; ++index) {
+	for (size_t index = 0; index < SAMPLE_LIMIT + extra_training && !e1u_seen; ++index) {
 		struct v90_pcm_symbol symbol;
 		int16_t sample;
 
 		if (transmitter.stage == V92_PCM_PHASE3_CPT_TX_TRN1U &&
 		    transmitter.trn1u.emitted_symbols ==
-			    V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS)
+			    V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS + extra_training)
 			CHECK(v92_pcm_phase3_cpt_tx_start(&transmitter) ==
 				      V92_PCM_PHASE3_CPT_TX_OK,
 			      "CPt line transmitter did not start");
@@ -188,11 +208,18 @@ static bool check_line(
 				      "TRN2u tail did not initialize");
 				tail_started = true;
 			}
-			CHECK(next_tail_symbol(&tail, law, &symbol),
+			CHECK(next_tail_symbol(&tail, law, ucode, &symbol),
 			      "TRN2u tail failed at %zu", index);
 			tail_symbols++;
 		}
 		sample = symbol.sample;
+		if (offset) {
+			dc += 0.16 * (sample - dc);
+			double high = sample - dc;
+			sample = (int16_t)lrint(high * (1.0 - offset->fraction) +
+				previous * offset->fraction);
+			previous = high;
+		}
 		if (damaged_descriptors != 0u &&
 		    index >= V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS &&
 		    index < V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS + V92_PHASE3_MARKER_BITS)
@@ -204,6 +231,11 @@ static bool check_line(
 		CHECK(channel_bench_process(&channel, &sample, 1u) ==
 			      CHANNEL_BENCH_OK,
 		      "CPt line channel failed at %zu", index);
+		if (offset)
+			sample += offset->offset;
+		memmove(raw_history + 1, raw_history,
+			sizeof(raw_history) - sizeof(raw_history[0]));
+		raw_history[0] = sample;
 		if (!receiver_started) {
 			enum v92_pcm_phase3_trn1u_line_rx_result result =
 				v92_pcm_phase3_trn1u_line_rx_sample(
@@ -242,6 +274,12 @@ static bool check_line(
 			if (result == V92_PCM_PHASE3_CPT_LINE_RX_SIGN)
 				continue;
 			if (event.type == V92_PCM_PHASE3_CPT_RX_PARAMETERS) {
+				CHECK(!receiver.alternate_active,
+				      "CPt retained alternate after valid parameters");
+				CHECK(!offset || !offset->require_centered || receiver.dc_offset != 0,
+				      "CPt offset recovery did not select the centered receiver");
+				CHECK(impaired || receiver.dc_offset == 0,
+				      "clean CPt channel did not retain the raw receiver");
 				CHECK(!parameters_seen &&
 				      parameters_match(
 					      &event.parameters, &parameters),
@@ -270,12 +308,12 @@ static bool check_line(
 	      !v92_pcm_phase3_cpt_line_rx_has_failed(&receiver) &&
 	      v92_pcm_phase3_cpt_tx_is_complete(&transmitter) &&
 	      receiver.processed_samples ==
-		      V92_PCM_PHASE3_CPT_PREAMBLE_SYMBOLS +
+		      extra_training + V92_PCM_PHASE3_CPT_PREAMBLE_SYMBOLS +
 		      (2u + damaged_descriptors) * frame_bits +
 			      V92_CPT_SYMBOLS_PER_FRAME &&
 	      receiver.input_advance_symbols ==
 		      V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY &&
-	      receiver.line.polarity == (impaired ? -1 : 1) &&
+	      receiver.line.polarity == expected_polarity &&
 	      tail_symbols ==
 		      V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY +
 			      (impaired ? 7u : 0u),
@@ -287,11 +325,11 @@ static bool check_line(
 	      v92_pcm_phase3_cpt_line_rx_has_failed(&receiver),
 	      v92_pcm_phase3_cpt_tx_is_complete(&transmitter),
 	      (unsigned long long)receiver.processed_samples,
-	      V92_PCM_PHASE3_CPT_PREAMBLE_SYMBOLS +
+	      extra_training + V92_PCM_PHASE3_CPT_PREAMBLE_SYMBOLS +
 		      (2u + damaged_descriptors) * frame_bits +
 		      V92_CPT_SYMBOLS_PER_FRAME,
 	      receiver.input_advance_symbols, receiver.line.polarity,
-	      impaired ? -1 : 1, (unsigned long long)tail_symbols,
+	      expected_polarity, (unsigned long long)tail_symbols,
 	      V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY +
 		      (impaired ? 7u : 0u));
 	{
@@ -302,6 +340,9 @@ static bool check_line(
 		struct v92_pcm_phase3_cpt_line_rx before = receiver;
 		struct v92_pcm_phase3_cpt_rx_event event;
 		struct v92_pcm_phase3_cpt_rx_event before_event;
+		struct qam_equalizer expected = receiver.line.equalizer;
+		for (unsigned i = 0; i < expected.tap_count; i++)
+			expected.history[i].in_phase += receiver.line.polarity * receiver.dc_offset;
 
 		memset(&event, 0xa5, sizeof(event));
 		before_event = event;
@@ -322,7 +363,7 @@ static bool check_line(
 			      V92_PCM_PHASE3_CPT_LINE_RX_OK &&
 		      v92_pcm_phase3_cpt_line_handoff_is_valid(&handoff) &&
 		      memcmp(
-			      &handoff.equalizer, &receiver.line.equalizer,
+			      &handoff.equalizer, &expected,
 			      sizeof(handoff.equalizer)) == 0 &&
 		      parameters_match(&handoff.parameters, &parameters) &&
 		      handoff.input_samples == receiver.input_samples &&
@@ -333,6 +374,11 @@ static bool check_line(
 		      handoff.previous_sign == transmitter.coding.previous_sign &&
 		      handoff.polarity == receiver.line.polarity,
 		      "CPt line handoff did not preserve the E1u boundary");
+		for (unsigned i = 0; i < handoff.equalizer.tap_count; i++)
+			CHECK(handoff.equalizer.history[i].in_phase ==
+			      handoff.polarity * (double)raw_history[i] &&
+			      handoff.equalizer.history[i].quadrature == 0,
+			      "CPt handoff lost raw input at history index %u", i);
 		invalid = handoff;
 		invalid.previous_sign = 2u;
 		CHECK(!v92_pcm_phase3_cpt_line_handoff_is_valid(NULL) &&
@@ -340,6 +386,27 @@ static bool check_line(
 		      "invalid CPt line handoff was accepted");
 	}
 	channel_bench_destroy(&channel);
+	return true;
+}
+
+static bool check_line(enum g711_law law, bool impaired, unsigned damaged)
+{
+	return check_channel(law, impaired, damaged, NULL);
+}
+
+static bool test_offset_channel(void)
+{
+	const struct offset_channel recovery = { 65, 128, 0.5, -1, true };
+	CHECK(check_channel(G711_LAW_PCMA, true, 0, &recovery),
+	      "CPt did not recover the weak offset channel");
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)
+		for (int polarity = -1; polarity <= 1; polarity += 2)
+			for (int dc = -128; dc <= 128; dc += 256) {
+				const struct offset_channel channel = { 91, dc, 0.5, polarity, false };
+				CHECK(check_channel(law, true, 0, &channel),
+				      "CPt offset control failed law=%u polarity=%d offset=%d",
+				      law, polarity, dc);
+			}
 	return true;
 }
 
@@ -459,6 +526,41 @@ static bool test_contracts(void)
 	return true;
 }
 
+static bool test_offset_contracts(void)
+{
+	struct v92_pcm_phase3_trn1u_line_handoff handoff;
+	struct v92_pcm_phase3_cpt_line_rx receiver, before;
+	struct v92_pcm_phase3_cpt_rx_event event;
+	CHECK(make_handoff(&handoff), "offset contract training failed");
+	handoff.dc_offset = 0;
+	CHECK(v92_pcm_phase3_cpt_line_rx_init(&receiver, &handoff) ==
+	      V92_PCM_PHASE3_CPT_LINE_RX_OK && !receiver.alternate_active,
+	      "zero offset created a redundant candidate");
+	for (int polarity = -1; polarity <= 1; polarity += 2) {
+		handoff.polarity = polarity;
+		handoff.dc_offset = INT16_MIN;
+		CHECK(v92_pcm_phase3_cpt_line_rx_init(&receiver, &handoff) ==
+		      V92_PCM_PHASE3_CPT_LINE_RX_OK && receiver.alternate_active &&
+		      v92_pcm_phase3_cpt_line_rx_sample(&receiver, INT16_MAX, &event) ==
+		      V92_PCM_PHASE3_CPT_LINE_RX_SIGN &&
+		      receiver.alternate.line.equalizer.history[0].in_phase == polarity * 65535.0,
+		      "centered input was clipped for polarity %d", polarity);
+	}
+	for (unsigned fault = 0; fault < 3; fault++) {
+		struct v92_pcm_phase3_cpt_line_rx invalid = receiver;
+		if (fault == 0) invalid.dc_offset = 0;
+		if (fault == 1) invalid.alternate_active = false;
+		if (fault == 2) invalid.alternate.line.polarity *= -1;
+		before = invalid;
+		CHECK(!v92_pcm_phase3_cpt_line_rx_is_valid(&invalid) &&
+		      v92_pcm_phase3_cpt_line_rx_sample(&invalid, 0, &event) ==
+		      V92_PCM_PHASE3_CPT_LINE_RX_INVALID_ARGUMENT &&
+		      receiver_states_equal(&invalid, &before),
+		      "invalid offset state %u changed receiver", fault);
+	}
+	return true;
+}
+
 static bool test_exact_pcmu(void)
 {
 	return check_line(G711_LAW_PCMU, false, 0u);
@@ -492,8 +594,10 @@ int main(void)
 		{ "exact PCMU line", test_exact_pcmu },
 		{ "exact PCMA line", test_exact_pcma },
 		{ "impaired PCMA line", test_impaired_pcma },
+		{ "offset channel", test_offset_channel },
 		{ "lost preamble, CRC and E1u", test_lost_preamble },
 		{ "contracts", test_contracts },
+		{ "offset contracts", test_offset_contracts },
 	};
 	unsigned int failures = 0u;
 

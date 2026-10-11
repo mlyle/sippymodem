@@ -39,7 +39,7 @@ enum binary_equalizer_result binary_equalizer_init(
 }
 
 enum binary_equalizer_result binary_equalizer_receive(
-	struct binary_equalizer *receiver, int16_t sample,
+	struct binary_equalizer *receiver, int32_t sample,
 	uint8_t *sign)
 {
 	struct binary_equalizer next;
