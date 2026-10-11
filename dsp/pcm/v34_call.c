@@ -8,9 +8,12 @@
 #include <stddef.h>
 #include <string.h>
 
-/* 11.3.2.2.1 and 11.4.2.1.1 specify 600 ms plus RTT. Allow 100 ms of receive
- * compatibility grace for a late S/S-bar and its TRN confirmation. */
-static const uint32_t PEER_S_WAIT_SAMPLES = (600u + 100u) * 8u;
+/* 11.3.2.2.1 and 11.4.2.1.1 specify 600 ms plus RTT. Allow 100 ms of
+ * compatibility grace for late S/S-bar. The countdown's final 8 ms are
+ * reserved for a marker already complete at that deadline: the caller
+ * needs 16T of peer TRN to reject local echo (6.67 ms at 2400 baud). */
+static const uint32_t PEER_S_CONFIRM_SAMPLES = 8u * 8u;
+static const uint32_t PEER_S_WAIT_SAMPLES = (600u + 100u + 8u) * 8u;
 
 static enum v34_call_result phase3_result(
 	enum v34_phase3_exchange_result result);
@@ -747,9 +750,21 @@ static bool peer_s_has_timed_out(
 		   (observation->events.phase4 &
 		    V34_PHASE4_EXCHANGE_EVENT_PEER_S_DETECTED) != 0) {
 		call->peer_s_remaining_samples = 0u;
-	} else if (call->peer_s_remaining_samples != 0u &&
-		   --call->peer_s_remaining_samples == 0u) {
-		return true;
+	} else if (call->peer_s_remaining_samples != 0u) {
+		--call->peer_s_remaining_samples;
+		if (call->peer_s_remaining_samples == 0u)
+			return true;
+		/* Without a complete marker, recover at the original deadline.
+		 * This tail is consumed once; another candidate cannot renew it. */
+		if (call->peer_s_remaining_samples == PEER_S_CONFIRM_SAMPLES) {
+			const struct v34_phase4_decision_receiver *receiver =
+				&call->state.phase4.receive.semantic.phase4;
+
+			return call->local_role != V34_CALLING_STATION ||
+			       call->stage != V34_CALL_PHASE4 ||
+			       receiver->stage != V34_PHASE4_DECISION_RECEIVER_ANSWER_S ||
+			       !v34_phase3_s_hunt_is_complete(&receiver->answer_s);
+		}
 	}
 	return false;
 }

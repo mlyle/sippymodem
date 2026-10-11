@@ -2091,7 +2091,8 @@ static bool peer_s_observed(
 		V34_PHASE3_EXCHANGE_EVENT_PEER_S_DETECTED) != 0;
 }
 
-static bool check_late_s(enum v34_station_role role)
+static bool check_late_s(
+	enum v34_station_role role, bool at_deadline, bool truncate_trn)
 {
 	for (unsigned pcma = 0u; pcma < 2u; ++pcma) {
 		struct endpoint caller = { 0 }, answerer = { 0 }, waiting = { 0 };
@@ -2100,6 +2101,8 @@ static bool check_late_s(enum v34_station_role role)
 		int16_t samples[4000];
 		size_t count = 0u;
 		bool started = false, recorded = false, detected = false;
+		bool pending_at_deadline = false, recovered = false;
+		size_t qualified_count = 0u, peer_trn_count = 0u;
 
 		CHECK(endpoint_init(&caller, V34_CALLING_STATION) &&
 		      endpoint_init(&answerer, V34_ANSWERING_STATION),
@@ -2120,6 +2123,11 @@ static bool check_late_s(enum v34_station_role role)
 			CHECK(channel_sample_pair(&channel, &caller, &answerer,
 				      &observations[0], &observations[1]),
 			      "late S waveform generation failed");
+			if (started && role == V34_CALLING_STATION &&
+			    observations[V34_ANSWERING_STATION].processed == V34_CALL_PHASE4 &&
+			    (observations[V34_ANSWERING_STATION].events.phase4 &
+			     V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_TRN_STARTED) != 0)
+				peer_trn_count = count;
 			if (!started && observations[role].processed == V34_CALL_PHASE3 &&
 			    (observations[role].events.phase3 &
 			     V34_PHASE3_EXCHANGE_EVENT_TRANSMIT_J_STARTED) != 0) {
@@ -2127,13 +2135,19 @@ static bool check_late_s(enum v34_station_role role)
 				started = true;
 			}
 			if (started && peer_s_observed(&observations[role], role)) {
+				qualified_count = count;
 				recorded = true;
-				break;
 			}
+			/* Retain the waveform beyond qualification: a delayed replay
+			 * can acquire a slightly different sampling phase. */
+			if (recorded && count >= qualified_count + 160u)
+				break;
 		}
 		CHECK(recorded, "late S fixture did not qualify peer S");
 		uint32_t nominal_deadline = 600u * 8u + waiting.call.round_trip_delay_samples;
-		const uint32_t prefix = 600u * 8u;
+		uint32_t deadline = 700u * 8u + waiting.call.round_trip_delay_samples;
+		const uint32_t prefix = at_deadline ?
+			deadline + 24u - qualified_count : 600u * 8u;
 
 		/* Delay the peer waveform into the compatibility grace period.
 		 * Qualification must cancel the timer immediately, before the
@@ -2142,14 +2156,36 @@ static bool check_late_s(enum v34_station_role role)
 			struct v34_call_observation observation;
 			struct v34_received_mapping_frame received;
 			int16_t transmitted;
+			int16_t input = sample < prefix ? 0 : samples[sample - prefix];
 
+			/* Preserve S/S-bar but cut the following training waveform.
+			 * This must enter the allowance and still expire, rather than
+			 * treating the marker alone as qualified peer training. */
+			if (truncate_trn && sample >= prefix + peer_trn_count + 80u)
+				input = 0;
 			CHECK(v34_call_sample(&waiting.call,
-				      sample < prefix ? 0 : samples[sample - prefix],
+				      input,
 				      NULL, NULL, &transmitted, &observation, &received) == V34_CALL_OK,
 			      "late S reception failed for law %u", pcma);
+			if (at_deadline && sample + 1u == deadline) {
+				CHECK(waiting.call.stage == V34_CALL_PHASE4 &&
+				      waiting.call.peer_s_remaining_samples == 64u &&
+				      v34_phase3_s_hunt_is_complete(
+					      &waiting.call.state.phase4.receive.semantic.phase4.answer_s),
+				      "complete S did not retain bounded confirmation for law %u", pcma);
+				pending_at_deadline = true;
+			}
+			if (truncate_trn && waiting.call.stage == V34_CALL_RETRAIN_SILENCE) {
+				CHECK(pending_at_deadline && sample + 1u == deadline + 64u &&
+				      waiting.call.peer_s_remaining_samples == 0u,
+				      "unconfirmed S did not expire at the bounded deadline");
+				recovered = true;
+				break;
+			}
 			CHECK(waiting.call.stage != V34_CALL_RETRAIN_SILENCE,
 			      "late valid S was abandoned for law %u at %zu", pcma, sample);
 			if (peer_s_observed(&observation, role)) {
+				CHECK(!truncate_trn, "truncated TRN falsely qualified peer S");
 				CHECK(sample + 1u > nominal_deadline &&
 				      waiting.call.peer_s_remaining_samples == 0u &&
 				      (role == V34_ANSWERING_STATION ||
@@ -2158,15 +2194,23 @@ static bool check_late_s(enum v34_station_role role)
 				detected = true;
 			}
 		}
-		CHECK(detected, "late valid S was not qualified for law %u", pcma);
+		CHECK(detected == !truncate_trn && recovered == truncate_trn &&
+		      (!at_deadline || pending_at_deadline),
+		      "late S completion/recovery was not verified for law %u", pcma);
 	}
 	return true;
 }
 
 static bool test_late_s(void)
 {
-	return check_late_s(V34_CALLING_STATION) &&
-	       check_late_s(V34_ANSWERING_STATION);
+	return check_late_s(V34_CALLING_STATION, false, false) &&
+	       check_late_s(V34_ANSWERING_STATION, false, false);
+}
+
+static bool test_s_confirmation_deadline(void)
+{
+	return check_late_s(V34_CALLING_STATION, true, false) &&
+	       check_late_s(V34_CALLING_STATION, true, true);
 }
 
 static bool check_missing_s_recovery(enum v34_station_role role)
@@ -2375,6 +2419,7 @@ int main(void)
 	} tests[] = {
 		{ "final Tone-A timeout retrain", test_final_tone_timeout },
 		{ "late S qualification", test_late_s },
+		{ "bounded S confirmation", test_s_confirmation_deadline },
 		{ "missing S recovery", test_missing_s_recovery },
 		{ "bounded initial E exchange", test_initial_e_timeout },
 		{ "bounded online rate renegotiation", test_rate_renegotiation_timeout },
