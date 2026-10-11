@@ -463,7 +463,8 @@ class LiveTerminalTests(unittest.TestCase):
         terminal = ModemTerminal(-1)
         terminal._decoder.feed(b"CONNECT 300\r\n")
         with (
-            mock.patch("tools.live_terminal.time.sleep") as sleep,
+            mock.patch("tools.live_terminal._wait_for_descriptor",
+                       side_effect=TimeoutError) as wait,
             mock.patch.object(terminal, "_write") as write,
             mock.patch.object(
                 terminal, "_read_result", side_effect=("ok", "ok", "connect")
@@ -474,7 +475,7 @@ class LiveTerminalTests(unittest.TestCase):
         self.assertEqual(report.escape_result, "ok")
         self.assertEqual(report.command_result, "ok")
         self.assertEqual(report.retrain_result, "connect")
-        sleep.assert_called_once_with(0.1)
+        wait.assert_called_once()
         self.assertEqual(
             [call.args[0] for call in write.call_args_list],
             [b"+++", b"ATO1\r"],
@@ -483,7 +484,8 @@ class LiveTerminalTests(unittest.TestCase):
         terminal = ModemTerminal(-1)
         terminal._decoder.feed(b"CONNECT 300\r\n")
         with (
-            mock.patch("tools.live_terminal.time.sleep"),
+            mock.patch("tools.live_terminal._wait_for_descriptor",
+                       side_effect=TimeoutError),
             mock.patch.object(terminal, "_write") as write,
             mock.patch.object(
                 terminal, "_read_result", return_value="no-carrier"
@@ -501,6 +503,40 @@ class LiveTerminalTests(unittest.TestCase):
         terminal = ModemTerminal(-1)
         with self.assertRaises(LiveTerminalError):
             terminal.return_online(2.0, 0.1)
+
+    def test_escape_guard_preserves_payload_before_command_mode(self) -> None:
+        terminal = ModemTerminal(-1)
+        terminal._decoder.feed(b"CONNECT 14400\r\ns")
+        with (
+            mock.patch("tools.live_terminal.time.monotonic", return_value=12.0),
+            mock.patch("tools.live_terminal._wait_for_descriptor",
+                       side_effect=[None, TimeoutError]) as wait,
+            mock.patch("tools.live_terminal.os.read", return_value=b"\r\nOK\r\n"),
+            mock.patch.object(terminal, "_write"),
+            mock.patch.object(terminal, "_read_result",
+                              side_effect=("ok", "ok", "connect")),
+        ):
+            report = terminal.return_online(2.0, 0.1)
+        self.assertTrue(report.connected)
+        self.assertEqual(report.received, b"s\r\nOK\r\n")
+        self.assertEqual(terminal._decoder.take_online_data(), b"")
+        self.assertTrue(all(call.args[-1] == 12.1 for call in wait.call_args_list))
+
+    def test_escape_guard_capture_is_bounded_even_if_escape_fails(self) -> None:
+        terminal = ModemTerminal(-1)
+        terminal._decoder.feed(b"CONNECT 14400\r\n")
+        with (
+            mock.patch("tools.live_terminal._wait_for_descriptor",
+                       side_effect=[None] * 20 + [TimeoutError]),
+            mock.patch("tools.live_terminal.os.read",
+                       return_value=b"x" * (ONLINE_CAPTURE_MAX // 2)),
+            mock.patch.object(terminal, "_write"),
+            mock.patch.object(terminal, "_read_result", return_value="no-carrier"),
+        ):
+            report = terminal.return_online(2.0, 0.1)
+        self.assertFalse(report.connected)
+        self.assertTrue(report.received)
+        self.assertLessEqual(len(report.received), ONLINE_CAPTURE_MAX)
 
     def test_response_decoder_handles_fragments_and_bounds(self) -> None:
         decoder = ResponseDecoder()

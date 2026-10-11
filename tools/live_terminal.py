@@ -95,11 +95,12 @@ class ConnectReport:
 
 @dataclass(frozen=True)
 class ReturnOnlineReport:
-    """Results from the escape guard and the following ATO1 command."""
+    """ATO1 results and a bounded payload tail collected during its escape guard."""
 
     escape_result: str
     command_result: str | None = None
     retrain_result: str | None = None
+    received: bytes = b""
 
     @property
     def connected(self) -> bool:
@@ -396,19 +397,26 @@ class ModemTerminal:
         ):
             raise LiveTerminalError("invalid return-online request")
         deadline = time.monotonic() + timeout_seconds
-        time.sleep(guard_seconds)
+        # Keep reading payload during the escape guard. Switching the decoder
+        # to command mode first would discard buffered bytes and mistake an
+        # unread payload tail for result text. Retain a bounded tail, just as
+        # the other online exchanges do.
+        if guard_seconds:
+            _, received = self._exchange_online(b"", None, guard_seconds)
+        else:
+            received = self._decoder.take_online_data()
         self._decoder.begin_command_response()
         self._write(b"+++", deadline)
         escape_result = self._read_result(deadline)
         if escape_result != "ok":
-            return ReturnOnlineReport(escape_result)
+            return ReturnOnlineReport(escape_result, received=received)
         self._write(b"ATO1\r", deadline)
         command_result = self._read_result(deadline)
         retrain_result = (
             self._read_result(deadline) if command_result == "ok" else None
         )
         return ReturnOnlineReport(
-            escape_result, command_result, retrain_result
+            escape_result, command_result, retrain_result, received
         )
 
     def probe_initial_data(self, timeout_seconds: float) -> tuple[bool, bytes]:
@@ -466,13 +474,14 @@ class ModemTerminal:
     def _exchange_online(
         self,
         send: bytes,
-        pattern: re.Pattern[bytes],
+        pattern: re.Pattern[bytes] | None,
         timeout_seconds: float,
         *,
         initial: bytes = b"",
     ) -> tuple[re.Match[bytes] | None, bytes]:
         """Search a rolling window, returning only retained newly read bytes.
 
+        With no pattern, collect until the deadline.
         Raw training transitions can exceed the capture size. Retain half a
         window across reads for split payloads/markers, but never extend the
         deadline. Matches must fit in that overlap; `initial` seeds matching
@@ -498,7 +507,10 @@ class ModemTerminal:
         while True:
             # The first byte after clipping has no predecessor in this
             # window. Do not let ^ mistake it for the stream's real start.
-            match = pattern.search(received, 1 if clipped else 0)
+            match = (
+                pattern.search(received, 1 if clipped else 0)
+                if pattern is not None else None
+            )
             if match is not None:
                 return match, bytes(received[initial_remaining:])
             discard = max(0, len(received) - chunk_size)

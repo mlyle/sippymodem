@@ -202,6 +202,9 @@ while True:
                     b"GETTY:RETRAIN:START:" + callback_nonce + b"\r\n"
                     b"GETTY:RETRAIN:END:" + callback_nonce + b":1834\r\n",
                 )
+                if mode == "retrain-tail":
+                    time.sleep(0.05)
+                    os.write(master, b"tail during escape guard\r\n")
         continue
     while b"\r" in buffer:
         command, _, remainder = buffer.partition(b"\r")
@@ -942,6 +945,23 @@ class LiveCampaignTests(unittest.TestCase):
                     self.assertEqual(result.detail, "")
                     self.assertIn(b"ATO1", tx)
                     self.assertIn(b"PING", tx)
+
+    def test_local_retrain_saves_payload_received_during_escape_guard(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = root / "fake.py"
+            script.write_text(textwrap.dedent(FAKE_MODEM), encoding="utf-8")
+            scheduled = ScheduledAttempt(CASES_BY_NAME["v21-300-originator"], 1)
+            artifacts = self.artifacts(root, scheduled)
+            config = self.config(root, script, "retrain-tail")
+            result = run_physical_attempt(
+                config,
+                FrozenBinary(root, Path(sys.executable), "a" * 40, "b" * 64, False),
+                scheduled, 1, artifacts, True,
+            )
+            self.assertEqual(result.maturity, MATURITY_FULL)
+            received = (artifacts.legs["modem"] / "terminal-rx.bin").read_bytes()
+            self.assertEqual(received.count(b"tail during escape guard\r\n"), 1)
 
     def test_retrain_profile_is_saved_separately_before_the_data_probe(self) -> None:
         for mode in ("pcm-retrain-fallback", "callback-pcm-retrain-fallback",

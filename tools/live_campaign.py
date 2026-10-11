@@ -647,6 +647,7 @@ def _exercise_online(
     try:
         state.capture(leg, b"+++ATO1\r", b"")
         report = terminal.return_online(config.retrain_timeout_seconds)
+        state.capture(leg, b"", report.received)
         state.retrain_connected = report.connected
     except (LiveTerminalError, OSError, TimeoutError):
         state.detail = "retrain did not return online"
