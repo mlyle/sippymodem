@@ -155,6 +155,64 @@ static int16_t window_sample(
 		V92_PCM_PHASE3_TRN1U_LINE_SYNC_SYMBOLS];
 }
 
+/* A short channel can spread the prefix across neighboring samples even
+ * when one scalar correlation is weak. Fit only three causal taps, retain a
+ * dominant current tap to fix alignment/polarity, and require 80% explained
+ * energy. The normal scalar test remains the first choice. No decoded data
+ * participates in this fit, and the following training/CRC checks still run. */
+static bool filtered_prefix_matches(
+	const struct v92_pcm_phase3_trn1u_line_rx *receiver,
+	const int8_t signs[V92_PCM_PHASE3_TRN1U_LINE_SYNC_SYMBOLS],
+	int8_t *polarity)
+{
+	double system[3][4] = { { 0 } };
+	double correlation[3], energy = 0.0;
+
+	/* The first two physical samples may still contain the previous signal.
+	 * Every fitted target below belongs to the known training prefix. */
+	for (size_t index = 2u;
+	     index < V92_PCM_PHASE3_TRN1U_LINE_SYNC_SYMBOLS; ++index) {
+		double sample = window_sample(receiver, index);
+
+		energy += sample * sample;
+		for (unsigned row = 0u; row < 3u; ++row) {
+			system[row][3] += signs[index - row] * sample;
+			for (unsigned column = 0u; column < 3u; ++column)
+				system[row][column] +=
+					signs[index - row] * signs[index - column];
+		}
+	}
+	if (!(energy > 0.0))
+		return false;
+	for (unsigned row = 0u; row < 3u; ++row)
+		correlation[row] = system[row][3];
+	for (unsigned column = 0u; column < 3u; ++column) {
+		double pivot = system[column][column];
+
+		if (!(pivot > 0.0))
+			return false;
+		for (unsigned entry = column; entry < 4u; ++entry)
+			system[column][entry] /= pivot;
+		for (unsigned row = 0u; row < 3u; ++row) {
+			if (row == column)
+				continue;
+			double scale = system[row][column];
+
+			for (unsigned entry = column; entry < 4u; ++entry)
+				system[row][entry] -= scale * system[column][entry];
+		}
+	}
+	double explained = 0.0;
+
+	for (unsigned row = 0u; row < 3u; ++row)
+		explained += system[row][3] * correlation[row];
+	if (explained < 0.8 * energy || fabs(system[0][3]) <
+	    0.8 * fmax(fabs(system[1][3]), fabs(system[2][3])))
+		return false;
+	*polarity = system[0][3] < 0.0 ? -1 : 1;
+	return true;
+}
+
 static bool window_matches(
 	const struct v92_pcm_phase3_trn1u_line_rx *receiver,
 	int8_t *polarity, double *level)
@@ -164,6 +222,7 @@ static bool window_matches(
 	uint64_t energy = 0u;
 	uint64_t magnitude_sum = 0u;
 	uint64_t absolute_correlation;
+	int8_t signs[V92_PCM_PHASE3_TRN1U_LINE_SYNC_SYMBOLS];
 
 	if (polarity == NULL || level == NULL ||
 	    v34_scrambler_init(&reference, V34_POLYNOMIAL_GPA) !=
@@ -179,7 +238,8 @@ static bool window_matches(
 		if (v34_scramble_group(&reference, 1u, 1u, &sign) !=
 		    V34_FRAMING_OK)
 			return false;
-		correlation += sign != 0u ? -sample : sample;
+		signs[index] = sign != 0u ? -1 : 1;
+		correlation += signs[index] * sample;
 		energy += (uint64_t)magnitude * magnitude;
 		magnitude_sum += magnitude;
 	}
@@ -189,10 +249,14 @@ static bool window_matches(
 		    (uint64_t)V92_PCM_PHASE3_TRN1U_LINE_SYNC_SYMBOLS *
 			    V92_PCM_PHASE3_TRN1U_LINE_MIN_SIGNAL_LEVEL *
 			    V92_PCM_PHASE3_TRN1U_LINE_MIN_SIGNAL_LEVEL ||
-	    absolute_correlation * absolute_correlation <
-		    (uint64_t)MINIMUM_CORRELATION_SCORE * energy)
+	    magnitude_sum < (uint64_t)V92_PCM_PHASE3_TRN1U_LINE_SYNC_SYMBOLS *
+		    V92_PCM_PHASE3_TRN1U_LINE_MIN_SIGNAL_LEVEL)
 		return false;
-	*polarity = correlation < 0 ? -1 : 1;
+	if (absolute_correlation * absolute_correlation >=
+	    (uint64_t)MINIMUM_CORRELATION_SCORE * energy)
+		*polarity = correlation < 0 ? -1 : 1;
+	else if (!filtered_prefix_matches(receiver, signs, polarity))
+		return false;
 	*level = (double)magnitude_sum /
 		 V92_PCM_PHASE3_TRN1U_LINE_SYNC_SYMBOLS;
 	return true;

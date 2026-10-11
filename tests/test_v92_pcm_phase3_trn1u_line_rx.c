@@ -176,6 +176,42 @@ static bool test_filtered_prefix(void)
 	return true;
 }
 
+static bool test_bandpass_prefix(void)
+{
+	struct channel_bench_effect_spec effects[] = {
+		{ .kind = CHANNEL_BENCH_FRACTIONAL_DELAY,
+		  .parameters.fractional_delay.phase_q16 = 0 },
+		{ .kind = CHANNEL_BENCH_GAIN, .parameters.gain.scale_q15 = 32768 },
+		{ .kind = CHANNEL_BENCH_ECHO,
+		  .parameters.echo = { .delay_samples = 2u, .gain_q15 = -24576 } },
+		{ .kind = CHANNEL_BENCH_PCMU },
+	};
+
+	/* A strong opposite postcursor at these sampling phases defeats the
+	 * scalar prefix match while the trained FIR recovers the exact stream. */
+	static const int32_t phases[] = { -28672, -24576 };
+
+	for (int polarity = -1; polarity <= 1; polarity += 2) {
+		effects[1].parameters.gain.scale_q15 = polarity * 32768;
+		for (size_t i = 0; i < ARRAY_LENGTH(phases); ++i) {
+			int32_t phase = phases[i];
+
+			effects[0].parameters.fractional_delay.phase_q16 = phase;
+			effects[3].kind = CHANNEL_BENCH_PCMU;
+			CHECK(check_channel(
+				      G711_LAW_PCMU, effects, ARRAY_LENGTH(effects),
+				      0.125, polarity),
+			      "filtered PCMU prefix failed at phase %d", phase);
+			effects[3].kind = CHANNEL_BENCH_PCMA;
+			CHECK(check_channel(
+				      G711_LAW_PCMA, effects, ARRAY_LENGTH(effects),
+				      0.125, polarity),
+			      "filtered PCMA prefix failed at phase %d", phase);
+		}
+	}
+	return true;
+}
+
 static bool test_unrelated_signal_rejection(void)
 {
 	static const unsigned frequencies[] = { 0u, 1100u, 1800u, 2100u, 2400u };
@@ -234,6 +270,32 @@ static bool test_weak_signal_rejection(void)
 	CHECK(receiver.stage == V92_PCM_PHASE3_TRN1U_LINE_RX_STAGE_HUNTING &&
 	      receiver.output_symbols == 0u,
 	      "weak TRN1u falsely acquired");
+	return true;
+}
+
+static bool test_peaked_prefix_rejection(void)
+{
+	struct v92_pcm_phase3_trn1u source;
+	struct v92_pcm_phase3_trn1u_line_rx receiver;
+
+	CHECK(v92_pcm_phase3_trn1u_init(&source, G711_LAW_PCMU, TEST_UCODE) ==
+		V92_PCM_PHASE3_TRN1U_OK &&
+	      v92_pcm_phase3_trn1u_line_rx_init(&receiver, 0.125) ==
+		V92_PCM_PHASE3_TRN1U_LINE_RX_OK, "peaked prefix fixture failed");
+	for (unsigned i = 0; i < V92_PCM_PHASE3_TRN1U_LINE_SYNC_SYMBOLS; ++i) {
+		struct v90_pcm_symbol symbol;
+
+		CHECK(v92_pcm_phase3_trn1u_next(&source, &symbol) ==
+			      V92_PCM_PHASE3_TRN1U_OK,
+		      "peaked prefix source failed");
+		int16_t sample = i < 32 ? (symbol.positive ? 900 : -900) : 0;
+
+		CHECK(v92_pcm_phase3_trn1u_line_rx_sample(&receiver, sample) ==
+			V92_PCM_PHASE3_TRN1U_LINE_RX_OK,
+		      "insufficient mean magnitude acquired or failed training");
+	}
+	CHECK(receiver.stage == V92_PCM_PHASE3_TRN1U_LINE_RX_STAGE_HUNTING,
+	      "peaked prefix acquired below the handoff magnitude floor");
 	return true;
 }
 
@@ -315,7 +377,9 @@ int main(void)
 		{ "exact PCMU and PCMA lines", test_exact_laws },
 		{ "impaired line", test_impaired_channel },
 		{ "weak signal rejection", test_weak_signal_rejection },
+		{ "peaked prefix rejection", test_peaked_prefix_rejection },
 		{ "filtered prefix", test_filtered_prefix },
+		{ "bandpass prefix", test_bandpass_prefix },
 		{ "noise and tone rejection", test_unrelated_signal_rejection },
 		{ "contracts", test_contracts },
 	};
