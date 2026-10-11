@@ -13,10 +13,33 @@ _Static_assert(V92_OBSERVATION_TRAINING ==
 	V92_B1U_ACQUISITION_FRAMES * V92_PCM_MAPPING_FRAME_SYMBOLS,
 	"model acquisition must end before held-out B1u decisions");
 
+bool v92_upstream_seed_is_valid(const struct v92_upstream_seed *seed)
+{
+	return seed && v92_residual_is_valid(&seed->residual) &&
+		(seed->residual.active ? isfinite(seed->gain) && seed->gain >= 1. / 32768. &&
+		 seed->gain <= 32768. : seed->gain == 0.);
+}
+
+bool v92_upstream_model_seed(struct v92_upstream_data_rx *receiver,
+	const struct v92_upstream_seed *seed)
+{
+	if (!v92_upstream_seed_is_valid(seed) || !seed->residual.active ||
+	    !v92_upstream_data_rx_is_valid(receiver) || receiver->failed ||
+	    !receiver->model.residual_acquiring || receiver->line.received_frames ||
+	    receiver->line.symbol_count || seed->gain < receiver->line.calibration.minimum ||
+	    seed->gain > receiver->line.calibration.maximum)
+		return false;
+	receiver->model.seed = *seed;
+	memset(receiver->model.seed.residual.history, 0, sizeof(seed->residual.history));
+	receiver->model.seed.residual.cursor = 0;
+	return true;
+}
+
 static void close_acquisition(struct v92_upstream_model *model)
 {
 	if (model->residual_acquiring)
 		memset(&model->alternate, 0, sizeof(model->alternate));
+	memset(&model->seed, 0, sizeof(model->seed));
 	model->acquiring = false;
 	model->residual_acquiring = false;
 	memset(model->x, 0, sizeof(model->x));
@@ -46,6 +69,11 @@ bool v92_upstream_model_is_valid(const struct v92_upstream_data_rx *receiver)
 {
 	const struct v92_upstream_model *model = &receiver->model;
 
+	if (!v92_upstream_seed_is_valid(&model->seed) ||
+	    (model->seed.residual.active && (!model->residual_acquiring ||
+	     model->seed.gain < receiver->line.calibration.minimum ||
+	     model->seed.gain > receiver->line.calibration.maximum)))
+		return false;
 	if (model->residual_acquiring && (model->acquiring || model->valid || model->scalar_gain ||
 	    receiver->line.plan.observation != V92_PCM_FRAME_CONSTELLATION ||
 	    receiver->line.received_frames >= V92_B1U_ACQUISITION_FRAMES || receiver->line.residual.active))
@@ -234,9 +262,14 @@ static void acquire_residual_points(struct v92_upstream_model *model,
 	unsigned first = (unsigned)line->received_frames;
 	if (first < 3) return;
 	if (first == 3) {
-		double direct = residual_prefix_score(&decoder->mapping, model->raw, line->calibration.gain, 0);
-		double delayed = residual_prefix_score(&decoder->mapping, model->raw, line->calibration.gain, 1);
-		first = delayed < direct;
+		/* A retained physical correction uses unconstrained coding from
+		 * frame zero. Only known-bit acquisition needs prefix selection. */
+		first = 0;
+		if (!model->seed.residual.active) {
+			double direct = residual_prefix_score(&decoder->mapping, model->raw, line->calibration.gain, 0);
+			double delayed = residual_prefix_score(&decoder->mapping, model->raw, line->calibration.gain, 1);
+			first = delayed < direct;
+		}
 		if (v92_pcm_frame_rx_init_constellation(&model->alternate, &decoder->mapping) != V92_PCM_FRAME_OK)
 			return;
 	}
@@ -248,10 +281,22 @@ static void acquire_residual_points(struct v92_upstream_model *model,
 		uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
 		struct v92_pcm_frame_decision decision;
 		size_t offset = frame * V92_PCM_MAPPING_FRAME_SYMBOLS;
-		for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; i++)
-			samples[i] = sample_round_s16(model->raw[offset + i] * line->calibration.gain);
-		if (v92_pcm_frame_acquire_model(&model->alternate, samples, bits,
-		    decoder->mapping.data_bits_per_frame, &decision) != V92_PCM_FRAME_OK) {
+		for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; i++) {
+			int32_t correction = 0;
+			if (!v92_residual_sample(&model->seed.residual, model->raw[offset + i],
+			    1, true, &correction)) {
+				memset(&model->alternate, 0, sizeof(model->alternate));
+				return;
+			}
+			double gain = model->seed.residual.active ? model->seed.gain : line->calibration.gain;
+			samples[i] = sample_round_s16((model->raw[offset + i] - correction) * gain);
+		}
+		enum v92_pcm_frame_result result = model->seed.residual.active ?
+			v92_pcm_frame_decode(&model->alternate, samples, true, bits,
+				decoder->mapping.data_bits_per_frame, &decision) :
+			v92_pcm_frame_acquire_model(&model->alternate, samples, bits,
+				decoder->mapping.data_bits_per_frame, &decision);
+		if (result != V92_PCM_FRAME_OK) {
 			memset(&model->alternate, 0, sizeof(model->alternate));
 			return;
 		}

@@ -316,6 +316,8 @@ struct pcm_call_v92_analog_rate_prefix {
 };
 
 struct pcm_call_v92_phase4_state {
+	/* Physical acquisition hint survives only this Ru/control exchange. */
+	struct v92_upstream_seed upstream_seed;
 	union pcm_call_v92_phase4_owner owner;
 	union {
 		struct v90_downstream_data_stream data;

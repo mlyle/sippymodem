@@ -4,6 +4,16 @@
 
 #include "v92_observation.h"
 #include "v92_pcm_frame.h"
+#include "v92_residual.h"
+
+/* Optional physical correction from the preceding rate epoch. Coding and
+ * filter history are never retained. It seeds an acquisition candidate only;
+ * that candidate must win a fresh fit before independent B1u validation. */
+struct v92_upstream_seed {
+	struct v92_residual residual;
+	double gain;
+};
+bool v92_upstream_seed_is_valid(const struct v92_upstream_seed *seed);
 
 /* One acquisition per mapping epoch, followed by immutable channel fits.
  * Fractional and rounded prefilter hypotheses share the line input, but not
@@ -11,9 +21,11 @@
  * alternate lives here. Neither model is copied into traceback paths. Direct
  * calls instead reuse the alternate for independent B1u validation, from the
  * end of acquisition until the final delayed B1u decision. Residual acquisition
- * reuses it for a known-B1 candidate, then discards it before validation. */
+ * reuses it for a known-B1 or physically seeded candidate, then discards
+ * it before validation. */
 struct v92_upstream_model {
 	struct v92_observation model[2];
+	struct v92_upstream_seed seed;
 	/* The observation contract owns exactly one training scratch. */
 	union {
 		struct {
@@ -35,6 +47,10 @@ struct v92_upstream_model {
 
 struct v92_upstream_data_rx;
 struct v92_upstream_data_line;
+/* Freshly initialized, exclusively owned receiver; incompatible seeds are
+ * declined without mutation. Missing acquisition media still closes fitting. */
+bool v92_upstream_model_seed(struct v92_upstream_data_rx *receiver,
+	const struct v92_upstream_seed *seed);
 void v92_upstream_model_init(struct v92_upstream_data_rx *receiver);
 bool v92_upstream_model_is_valid(const struct v92_upstream_data_rx *receiver);
 bool v92_upstream_model_has_alternate(const struct v92_upstream_data_rx *receiver);

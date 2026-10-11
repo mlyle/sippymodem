@@ -803,6 +803,10 @@ static bool v92_rate_prefix_is_valid(const struct pcm_call *call)
 {
 	const struct pcm_call_v92_phase4_state *state = &call->state.phase4.v92;
 
+	if (!v92_upstream_seed_is_valid(&state->upstream_seed) ||
+	    (state->upstream_seed.residual.active &&
+	     (!call->v92_rate_renegotiation_active || call->local_role != V90_DIGITAL_MODEM)))
+		return false;
 	if (state->prefix_queue_count >= V90_CP_FRAME_INTERVALS ||
 	    (state->prefix_queue_count && (state->prefix_stage != PCM_CALL_V92_PREFIX_RD ||
 		state->prefix.rd.transmitted_symbols)))
@@ -4196,6 +4200,9 @@ static bool start_v92_data_path(struct pcm_call *next, const struct pcm_call *ca
 		if (v92_upstream_data_rx_init(&path->upstream, &from->receive,
 					     &from->mapping, &from->upstream_plan) != V92_UPSTREAM_DATA_RX_OK)
 			return false;
+		/* Decline a stale gain or incompatible observation domain. A seed
+		 * never bypasses fresh fitting or the held-out B1u quality gate. */
+		(void)v92_upstream_model_seed(&path->upstream, &call->state.phase4.v92.upstream_seed);
 		if (!v92_ru_line_rx_init_after_e2u(&path->ru, &from->receive) ||
 		    !v92_data_quality_restart(&next->pcm_upstream_quality))
 			return false;
@@ -4453,6 +4460,12 @@ static enum pcm_call_result begin_v92_rate_request(struct pcm_call *call, bool l
 		.request_silence = call->v92_digital_phase4_configuration.suvd.request_silence,
 	};
 
+	if (path->upstream.line.residual.active) {
+		state.upstream_seed.residual = path->upstream.line.residual;
+		state.upstream_seed.gain = path->upstream.line.calibration.gain;
+		memset(state.upstream_seed.residual.history, 0, sizeof(state.upstream_seed.residual.history));
+		state.upstream_seed.residual.cursor = 0;
+	}
 	if (path->downstream_stage != V92_PHASE4_E2U_DOWNSTREAM_DATA)
 		return PCM_CALL_SEQUENCE_MISMATCH;
 	if (path->fast.stage != PCM_CALL_V92_FAST_IDLE) {

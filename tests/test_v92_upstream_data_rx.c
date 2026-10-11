@@ -1549,9 +1549,9 @@ enum channel_fault {
 /* E2u recognizes its last control symbol after already consuming ten B1u
  * samples. The channel-compensating filter has a different causal delay:
  * receive its remaining prefix exactly once, not as B1u or payload. */
-static bool test_channel_plan(
+static bool run_channel_plan(
 	enum g711_law law, int polarity, bool extended, bool biased, bool conditioned,
-	bool changed_history, bool wire, int offset, enum channel_fault fault)
+	bool changed_history, bool wire, int offset, enum channel_fault fault, const int *seed_offset)
 {
 	/* Match the captured marginal B1u's training amplitude. */
 	int16_t lu = offset ? TEST_LU / 2 : TEST_LU;
@@ -1630,6 +1630,26 @@ static bool test_channel_plan(
 	if (fault == CHANNEL_RESIDUAL) {
 		channel.residual_first = -.027;
 		channel.residual_second = .011;
+	}
+	if (seed_offset) {
+		struct v92_upstream_seed seed = {
+			.residual = { .active = true, .offset = *seed_offset,
+				.history = { 99.0 }, .cursor = 3 },
+			.gain = receiver.line.calibration.gain,
+		};
+		struct v92_upstream_data_rx saved = receiver;
+		CHECK(!v92_upstream_model_seed(NULL, &seed) &&
+		      !v92_upstream_model_seed(&receiver, NULL), "seed accepted a null owner/input");
+		seed.gain = NAN;
+		CHECK(!v92_upstream_model_seed(&receiver, &seed), "seed accepted a nonfinite gain");
+		seed.gain = receiver.line.calibration.maximum * 1.01;
+		CHECK(!v92_upstream_model_seed(&receiver, &seed) &&
+		      !memcmp(&receiver, &saved, sizeof(saved)), "out-of-cell seed changed receiver");
+		seed.gain = receiver.line.calibration.gain;
+		CHECK(v92_upstream_model_seed(&receiver, &seed) && v92_upstream_data_rx_is_valid(&receiver) &&
+		      !memcmp(&receiver.decoder, &saved.decoder, sizeof(saved.decoder)) &&
+		      memory_region_is_zero(receiver.model.seed.residual.history, sizeof(seed.residual.history)) &&
+		      receiver.model.seed.residual.cursor == 0, "seed retained coding or physical history");
 	}
 	comparison_rx = receiver;
 	if (biased)
@@ -1798,6 +1818,9 @@ static bool test_channel_plan(
 				      "an aliased offset fit hid a damaged B1u");
 			return true;
 		}
+		if (receiver.line.received_frames >= V92_B1U_ACQUISITION_FRAMES)
+			CHECK(memory_region_is_zero(&receiver.model.seed, sizeof(receiver.model.seed)),
+			      "acquisition seed survived into held-out B1u");
 		if (frame.bit_count == 0u || frame.b1u)
 			continue;
 		payload(expected, mapping.data_bits_per_frame, delivered);
@@ -1862,6 +1885,14 @@ static bool test_channel_plan(
 	      memcmp(&saved, &receiver.line, sizeof(saved)) == 0,
 	      "control reset changed channel plan or line timing");
 	return true;
+}
+
+static bool test_channel_plan(
+	enum g711_law law, int polarity, bool extended, bool biased, bool conditioned,
+	bool changed_history, bool wire, int offset, enum channel_fault fault)
+{
+	return run_channel_plan(law, polarity, extended, biased, conditioned,
+		changed_history, wire, offset, fault, NULL);
 }
 
 static bool test_rate_request_contracts(const struct v92_upstream_rx *handoff)
@@ -3156,6 +3187,14 @@ int main(void)
 							fixture % 4u == 1u, fixture % 4u == 2u,
 							fixture % 4u == 3u, fixture >= 4u, 0, CHANNEL_OK))
 						return 1;
+	fprintf(stderr, "[ RUN      ] PCM upstream acquisition seeds and changed channels\n");
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)
+		for (int polarity = -1; polarity <= 1; polarity += 2)
+			for (int seed = -384; seed <= 128; seed += 512)
+				for (enum channel_fault fault = CHANNEL_OK; fault <= CHANNEL_LOSS; fault++)
+					if (!run_channel_plan(law, polarity, false, false, false,
+					    false, true, 128, fault, &seed)) return 1;
+	fprintf(stderr, "[       OK ] PCM upstream acquisition seeds and changed channels\n");
 	fprintf(stderr, "[ RUN      ] bounded PCM upstream offset acquisition\n");
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (int polarity = -1; polarity <= 1; polarity += 2)
