@@ -26,6 +26,9 @@ enum v92_upstream_control_line_rx_result {
 struct v92_upstream_control_line_rx {
 	struct v92_upstream_rx signal;
 	struct v92_control_rx control;
+	/* Set by the final-training owner after accepting CPu. Repeats must
+	 * retain its wire length; zero leaves generic record parsing unrestricted. */
+	uint16_t retained_cpu_bits;
 	/* Two CRC-valid control records at the same period confirm repetition.
 	 * Preserve that clock through damaged repeats, never their parameters.
 	 * A valid record with a different length establishes a new period. */

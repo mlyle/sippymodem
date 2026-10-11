@@ -1112,7 +1112,7 @@ static bool test_contracts(void)
 	      memcmp(&receiver, &saved, sizeof(saved)) == 0 &&
 	      memcmp(&event, &event_before, sizeof(event)) == 0,
 	      "control-line null calls changed state");
-	for (unsigned fault = 0; fault < 7; ++fault) {
+	for (unsigned fault = 0; fault < 10; ++fault) {
 		untouched = receiver;
 		untouched.signal.failed = true;
 		switch (fault) {
@@ -1126,6 +1126,9 @@ static bool test_contracts(void)
 			break;
 		case 5: untouched.signal.line.demodulator.lu = 0; break;
 		case 6: untouched.control.alignment_bits = 0u; break;
+		case 7: untouched.retained_cpu_bits = 24u; break;
+		case 8: untouched.retained_cpu_bits = UINT16_MAX; break;
+		case 9: untouched.retained_cpu_bits = V92_CPU_MIN_FRAME_BITS + 1u; break;
 		}
 		saved = untouched;
 		CHECK(!v92_upstream_control_line_rx_is_valid(&untouched) &&

@@ -2,6 +2,8 @@
 
 #include "v92_upstream_control_line_rx.h"
 
+#include "packed_bits.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -18,6 +20,10 @@ static bool line_state_is_valid(
 	       v92_control_rx_is_valid(&receiver->control) &&
 	       receiver->control.direction == V92_CONTROL_UPSTREAM &&
 	       receiver->control.alignment_bits == expected_alignment &&
+	       (!receiver->retained_cpu_bits ||
+		(receiver->retained_cpu_bits >= V92_CPU_MIN_FRAME_BITS &&
+		 receiver->retained_cpu_bits <= V92_CPU_MAX_FRAME_BITS &&
+		 receiver->retained_cpu_bits % expected_alignment == 0u)) &&
 	       receiver->repeat_symbols <= V92_CPU_MAX_FRAME_BITS /
 		       (expected_alignment / V92_CPU_SYMBOLS_PER_FRAME) &&
 	       receiver->repeat_symbols % V92_CPU_SYMBOLS_PER_FRAME == 0u &&
@@ -92,7 +98,7 @@ static bool receive_group(
 }
 
 static void track_repetition(struct v92_upstream_control_line_rx *receiver,
-	const struct v92_control_event *event, unsigned bits_per_symbol)
+	const struct v92_control_event *event, unsigned bits_per_symbol, size_t frame_bits)
 {
 	if (receiver->repeat_symbols) {
 		if (!receiver->repeat_remaining)
@@ -110,12 +116,9 @@ static void track_repetition(struct v92_upstream_control_line_rx *receiver,
 	}
 	if (event->type == V92_CONTROL_EVENT_SUVU ||
 	    event->type == V92_CONTROL_EVENT_CPU || event->type == V92_CONTROL_EVENT_CPUS) {
-		size_t bits = event->type == V92_CONTROL_EVENT_SUVU ?
-			v92_suvu_frame_bits(receiver->control.alignment_bits) :
-			event->type == V92_CONTROL_EVENT_CPU ?
-			v92_cpu_frame_bits(&event->record.cpu.parameters, receiver->control.alignment_bits) :
-			v92_cpus_frame_bits(receiver->control.alignment_bits);
-		uint16_t symbols = (uint16_t)(bits / bits_per_symbol);
+		/* The decoded CPu canonicalizes duplicate/unused constellation rows.
+		 * Only the parsed wire extent is a valid repetition clock. */
+		uint16_t symbols = (uint16_t)(frame_bits / bits_per_symbol);
 		receiver->repeat_confirmed = symbols == receiver->repeat_symbols &&
 			receiver->repeat_remaining == 0u;
 		receiver->repeat_symbols = symbols;
@@ -152,7 +155,26 @@ v92_upstream_control_line_rx_sample(
 	if (bits == 0u || !receive_group(
 				  &next.control, decision.group, bits, &emitted))
 		return fail(receiver);
-	track_repetition(&next, &emitted, bits);
+	/* CPu selection is fixed for this exchange once its owner accepts it.
+	 * A damaged row-count header must not hold the parser past the next
+	 * confirmed repeat boundary and swallow E2u. Discard the bad candidate;
+	 * never substitute its length or accept its unverified parameters. Short
+	 * CPus and SUVu records retain their ordinary framing. */
+	if (next.retained_cpu_bits &&
+	    next.control.stage == V92_CONTROL_RX_RECEIVE_PARAMETERS &&
+	    next.control.frame_bit_count >= V92_CPU_MIN_FRAME_BITS &&
+	    next.control.frame_bit_count != next.retained_cpu_bits &&
+	    /* Table 23 bits 21..25: zero rate starts an independent cleardown. */
+	    packed_msb_read_lsb_field(next.control.frame, 21u, 5u) != 0u) {
+		if (v92_control_rx_init_upstream(&next.control,
+			    receiver->control.alignment_bits) != V92_CONTROL_RX_OK)
+			return fail(receiver);
+		emitted = (struct v92_control_event){
+			.type = V92_CONTROL_EVENT_CPU_REJECTED,
+			.record.cpu.frame_result = V92_CPU_INVALID_FRAME,
+		};
+	}
+	track_repetition(&next, &emitted, bits, receiver->control.frame_bit_count);
 	if (!v92_upstream_control_line_rx_is_valid(&next))
 		return fail(receiver);
 	*receiver = next;

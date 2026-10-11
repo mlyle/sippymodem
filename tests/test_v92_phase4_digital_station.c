@@ -1526,6 +1526,10 @@ static bool run_paired_station_exchange(
 			result == V92_PHASE4_ANALOG_STATION_EVENT;
 	}
 	if (ready && v92_phase4_digital_station_is_ed_ready(&digital)) {
+		CHECK(digital.receive.signal.control.retained_cpu_bits ==
+		      v92_cpu_frame_bits(&digital.control.cpu,
+			      digital.receive.signal.control.control.alignment_bits),
+		      "final-training owner did not retain the accepted CPu length");
 		terminal_analog = analog;
 		terminal_digital = digital;
 		terminal_status_seen = false;

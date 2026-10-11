@@ -212,6 +212,14 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_receive(
 	}
 	if (!v92_downstream_control_receive(&station->control, &event))
 		return fail(station);
+	if (event.type == V92_CONTROL_EVENT_CPU && station->control.cpu_received &&
+	    !station->control.cleardown.active) {
+		struct v92_upstream_control_line_rx *line = &station->receive.signal.control;
+		/* Further CPu transmissions repeat this selected record, with only
+		 * acknowledgement changing (V.92 9.6.2.1.2-4). */
+		line->retained_cpu_bits = line->repeat_symbols *
+			v92_phase4_modulator_bits_per_symbol(line->signal.line.demodulator.constellation);
+	}
 	if (station->control.cleardown.active) {
 		station->searching_e2u = false;
 		return V92_PHASE4_DIGITAL_STATION_OK;
