@@ -3031,8 +3031,9 @@ static bool test_residual_inverse(void)
 /* Early unconstrained decisions must not teach the residual fitter their
  * errors. The known-bit candidate ends at acquisition; different later data
  * and a deliberately wrong held-out B1 bit remain independently decoded. */
-static bool test_residual_acquisition(unsigned prefix, bool damaged, int transient)
+static bool test_residual_acquisition(unsigned prefix, bool damaged, int transient, bool recover)
 {
+	const double scale = recover ? .1 : 1.;
 	struct v92_cpd_parameters cpd;
 	struct v92_pcm_mapping mapping;
 	struct v92_pcm_frame_tx tx;
@@ -3040,13 +3041,21 @@ static bool test_residual_acquisition(unsigned prefix, bool damaged, int transie
 	struct v92_upstream_model model = { .residual_acquiring = true };
 	struct v92_upstream_data_line line = {
 		.plan.observation = V92_PCM_FRAME_CONSTELLATION,
-		.calibration = { .gain = 1.272, .minimum = 1.18, .maximum = 1.30 },
+		.calibration = { .gain = 1.272 * scale, .minimum = 1.18 * scale, .maximum = 1.30 * scale },
 		.host.gain = 1., .polarity = 1,
 	};
-	CHECK(v92_cpd_direct_init(&cpd, G711_LAW_PCMU, 4, false) == V92_CPD_OK,
+	CHECK(v92_cpd_direct_init(&cpd, G711_LAW_PCMU, recover ? 12 : 4, false) == V92_CPD_OK,
 	      "acquisition mapping init failed");
 	cpd.constellation[0].count = 32;
-	for (unsigned i = 0; i < 32; i++) cpd.constellation[0].positive_linear[i] = (int16_t)((2 * i + 1) * 256);
+	for (unsigned i = 0; i < 32; i++) {
+		if (recover)
+			CHECK(g711_ucode_sample(G711_LAW_PCMU, (uint8_t)(2 * i + 1), true,
+			      &cpd.constellation[0].positive_linear[i]), "channel grid failed");
+		else cpd.constellation[0].positive_linear[i] = (int16_t)((2 * i + 1) * 256);
+	}
+	if (recover)
+		for (unsigned i = 0; i < V92_CPD_MODULUS_COUNT; i++)
+			cpd.modulus[i] = i % 4 == 3 ? 17 : 34;
 	CHECK(v92_pcm_mapping_init(&mapping, G711_LAW_PCMU, &cpd) == V92_PCM_MAPPING_OK &&
 	      v92_pcm_frame_tx_init(&tx, &mapping) == V92_PCM_FRAME_OK &&
 	      v92_pcm_frame_rx_init_constellation(&decoder, &mapping) == V92_PCM_FRAME_OK,
@@ -3069,12 +3078,12 @@ static bool test_residual_acquisition(unsigned prefix, bool damaged, int transie
 		for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; i++) {
 			double point = encoded.u[i];
 			int16_t raw = (int16_t)lround((point - .027 * history[(cursor + 2) % 6] +
-				.011 * history[cursor]) / 1.237 + 128.);
+				.011 * history[cursor]) / (1.237 * scale) + 128.);
 			history[cursor] = point; cursor = (cursor + 1) % 6;
 			raw = g711_quantize(G711_LAW_PCMU, raw);
-			/* A final acquisition disturbance must not contaminate the
+			/* An acquisition disturbance must not contaminate the
 			 * descrambler used by the otherwise clean validation half. */
-			if (frame == V92_B1U_ACQUISITION_FRAMES - 1 && i == V92_PCM_MAPPING_FRAME_SYMBOLS - 1)
+			if (frame == (recover ? 7u : V92_B1U_ACQUISITION_FRAMES - 1u) && i == V92_PCM_MAPPING_FRAME_SYMBOLS - 1)
 				raw += transient;
 			int32_t correction;
 			CHECK(v92_residual_sample(&line.residual, raw, 1, true, &correction), "residual sample failed");
@@ -3086,8 +3095,39 @@ static bool test_residual_acquisition(unsigned prefix, bool damaged, int transie
 			}
 		}
 		struct v92_pcm_frame_decision decision;
-		CHECK(v92_pcm_frame_decode(&decoder, line.samples, frame < prefix + V92_B1U_FRAMES,
-		      decoded, mapping.data_bits_per_frame, &decision) == V92_PCM_FRAME_OK, "independent decode failed");
+		if (recover) {
+			double predictions[V92_PCM_MAPPING_FRAME_SYMBOLS];
+
+			if (frame == 7u) {
+				/* The retained candidate cannot excuse missing media or an
+				 * absent coding history. Rejection preserves the decoder. */
+				for (unsigned unavailable = 0; unavailable < 4; unavailable++) {
+					struct v92_upstream_model rejected = model;
+					struct v92_pcm_frame_rx saved = decoder;
+					struct v92_upstream_data_line incomplete = line;
+
+					if (unavailable == 0) incomplete.received[0] = false;
+					else if (unavailable == 1) incomplete.wire_known[0] = false;
+					else if (unavailable == 2) rejected.alternate.path_count = 0;
+					else rejected.seed = (struct v92_upstream_seed){
+						.residual.active = true, .gain = line.calibration.gain,
+					};
+					CHECK(v92_upstream_model_decode(&rejected, &saved, &incomplete,
+					      decoded, &decision, predictions) == V92_PCM_FRAME_NO_PATH &&
+					      !memcmp(&saved, &decoder, sizeof(saved)), "invalid acquisition recovered");
+				}
+			}
+			CHECK(v92_upstream_model_decode(&model, &decoder, &line, decoded,
+			      &decision, predictions) == V92_PCM_FRAME_OK,
+			      "acquisition failed at frame %u", frame);
+			CHECK(decoder.pending_frames == (frame < V92_PCM_RX_DELAY_FRAMES ?
+			      frame + 1u : V92_PCM_RX_DELAY_FRAMES), "prefix lost its traceback slot");
+			if (frame == V92_PCM_RX_DELAY_FRAMES)
+				CHECK(!decision.bits_ready, "control prefix became payload");
+		} else {
+			CHECK(v92_pcm_frame_decode(&decoder, line.samples, frame < prefix + V92_B1U_FRAMES,
+			      decoded, mapping.data_bits_per_frame, &decision) == V92_PCM_FRAME_OK, "independent decode failed");
+		}
 		v92_upstream_model_observe(&model, &decision, &line);
 		v92_upstream_model_fit(&model, &line, &decoder);
 		if (frame == V92_B1U_ACQUISITION_FRAMES - 1) {
@@ -3124,7 +3164,12 @@ int main(void)
 	for (unsigned prefix = 0; prefix < 2; prefix++)
 		for (unsigned damaged = 0; damaged < 2; damaged++)
 			for (int transient = -384; transient <= 384; transient += 384)
-				if (!test_residual_acquisition(prefix, damaged, transient)) return 1;
+				if (!test_residual_acquisition(prefix, damaged, transient, false)) return 1;
+	/* One small acquisition disturbance exhausts the unconstrained 38,667
+	 * mapping at frame seven. The known candidate must preserve later data
+	 * and must still expose a deliberately wrong held-out training bit. */
+	for (unsigned damaged = 0; damaged < 2; damaged++)
+		if (!test_residual_acquisition(1, damaged, 128, true)) return 1;
 	if (!test_residual_inverse()) return 1;
 	if (!test_data_initialization()) return 1;
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)

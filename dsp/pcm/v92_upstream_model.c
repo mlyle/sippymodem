@@ -442,6 +442,47 @@ static bool wire_cells(const struct v92_upstream_data_line *line, enum g711_law 
 	return true;
 }
 
+/* A noisy acquisition word can exhaust the unconstrained decoder before
+ * its channel fit is ready. The retained known-B1 candidate may bridge that
+ * word, but never validation or payload, missing media, or seeded unknown
+ * coding. The independent second half of B1u still owns readiness. */
+static bool recover_acquisition(const struct v92_upstream_model *model,
+	struct v92_pcm_frame_rx *decoder, const struct v92_upstream_data_line *line,
+	uint8_t *bits, struct v92_pcm_frame_decision *decision)
+{
+	if (!model->residual_acquiring || model->seed.residual.active ||
+	    !model->alternate.path_count || line->received_frames < 3u ||
+	    line->received_frames >= V92_B1U_ACQUISITION_FRAMES)
+		return false;
+	for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; i++)
+		if (!line->wire_known[i] || !line->received[i]) return false;
+	struct v92_pcm_frame_rx recovered = model->alternate;
+	unsigned pending = line->received_frames < V92_PCM_RX_DELAY_FRAMES ?
+		(unsigned)line->received_frames : V92_PCM_RX_DELAY_FRAMES;
+
+	if (recovered.pending_frames != pending) {
+		if (recovered.pending_frames + 1u != pending) return false;
+		/* Known acquisition may have skipped one control-prefix frame.
+		 * Preserve its place in traceback as nondata, never invented bits.
+		 * This slot ages out before independent B1u validation begins. */
+		for (unsigned i = 0; i < recovered.path_count; i++) {
+			struct v92_pcm_frame_rx_path *path = &recovered.paths[i];
+
+			memmove(path->pending + 1, path->pending,
+				recovered.pending_frames * sizeof(path->pending[0]));
+			memset(path->pending[0], 0, sizeof(path->pending[0]));
+			path->ambiguous_frames <<= 1;
+			path->nondata_frames = (uint16_t)((path->nondata_frames << 1) | 1u);
+		}
+		recovered.pending_frames++;
+	}
+	if (v92_pcm_frame_acquire_model(&recovered, line->samples, bits,
+	    decoder->mapping.data_bits_per_frame, decision) != V92_PCM_FRAME_OK)
+		return false;
+	*decoder = recovered;
+	return true;
+}
+
 enum v92_pcm_frame_result v92_upstream_model_decode(struct v92_upstream_model *model,
 	struct v92_pcm_frame_rx *decoder, const struct v92_upstream_data_line *line,
 	uint8_t *bits, struct v92_pcm_frame_decision *decision,
@@ -492,6 +533,9 @@ enum v92_pcm_frame_result v92_upstream_model_decode(struct v92_upstream_model *m
 			result = v92_pcm_frame_decode(decoder, line->samples, b1u, bits, count, decision);
 		}
 
+		if (result == V92_PCM_FRAME_NO_PATH &&
+		    recover_acquisition(model, decoder, line, bits, decision))
+			result = V92_PCM_FRAME_OK;
 		if (result != V92_PCM_FRAME_OK)
 			return result;
 		for (unsigned i = 0u; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i) {
