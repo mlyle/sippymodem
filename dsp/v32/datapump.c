@@ -351,11 +351,9 @@ static bool fixed_path_is_valid(
 	if (!v32_conditioning_transmitter_is_valid(
 		    &path->training.conditioning))
 		return false;
-	if (path->stage == V32_FIXED_ANSWERER_SECOND_CONDITIONING)
-		return receive->echo_training &&
-		       !receive->echo.echo.adapting;
-	return v32_conditioning_transmitter_is_complete(
-		       &path->training.conditioning) &&
+	return (path->stage == V32_FIXED_ANSWERER_SECOND_CONDITIONING ||
+		v32_conditioning_transmitter_is_complete(
+			&path->training.conditioning)) &&
 	       !receive->echo_training && !receive->echo.echo.adapting;
 }
 
@@ -922,8 +920,6 @@ static int finish_fixed_answerer_conditioning(
 		    V32_FIXED_ANSWERER_SECOND_CONDITIONING ||
 	    v32_conditioning_transmitter_framing_state(
 		    conditioning, &encoder) != V32_CONDITIONING_OK ||
-	    v32_receive_path_finish_echo_training(&end.receive) !=
-		    V32_RECEIVE_PATH_OK ||
 	    v32_end_path_set_adaptation(
 		    &end, V32_EQUALIZER_ADAPTATION_DISABLED) !=
 		    V32_END_PATH_OK ||
@@ -1352,9 +1348,7 @@ static int finish_fixed_rate(
 		    v32_conditioning_transmitter_init(
 			    &conditioning, V32_ANSWERING_TRANSMITTER,
 			    V32_ANSWERING_SECOND_TRN_SYMBOLS) !=
-			    V32_CONDITIONING_OK ||
-		    v32_receive_path_begin_echo_training(&end.receive) !=
-			    V32_RECEIVE_PATH_OK)
+			    V32_CONDITIONING_OK)
 			return -1;
 		datapump->startup = next_startup;
 		datapump->fixed_path.owner.end = end;
@@ -1536,19 +1530,22 @@ static int receive_fixed_path_sample(
 		}
 		return 0;
 	}
-	case V32_FIXED_ANSWERER_INITIAL_ECHO:
-	case V32_FIXED_ANSWERER_SECOND_CONDITIONING: {
+	case V32_FIXED_ANSWERER_INITIAL_ECHO: {
 		struct v32_equalizer_observation observation;
 		struct v32_receive_path *receive =
-			datapump->fixed_path.stage ==
-				V32_FIXED_ANSWERER_INITIAL_ECHO ?
-				&datapump->fixed_path.owner.receive :
-				&datapump->fixed_path.owner.end.receive;
+			&datapump->fixed_path.owner.receive;
 
 		return v32_receive_path_sample(
 			       receive, sample, reference, &observation) ==
 			       V32_RECEIVE_PATH_OK ? 0 : -1;
 	}
+	case V32_FIXED_ANSWERER_SECOND_CONDITIONING:
+		/* V.32bis 6.1 keeps R2 on the line until R3. Preserve the
+		 * trained timing, carrier and decoder while sending our second
+		 * conditioning sequence; only initial echo training pauses RX. */
+		return v32_end_path_sample(
+			       &datapump->fixed_path.owner.end, sample, reference) ==
+			       V32_END_PATH_OK ? 0 : -1;
 	case V32_FIXED_ANSWERER_CONDITIONING: {
 		enum v32_conditioning_path_result result =
 			v32_conditioning_path_sample(

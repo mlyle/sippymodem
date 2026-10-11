@@ -138,6 +138,7 @@ struct modem_test_case {
 	unsigned int answer_tone_prefix_ms;
 	unsigned int caller_delay_frames;
 	unsigned int answerer_s1_gap_samples;
+	int32_t answerer_conditioning_shift_q16;
 	unsigned int minimum_caller_rate_signals;
 	unsigned int minimum_caller_rate_signal_sample;
 	bool answer_tone_prefix_modulated;
@@ -2571,7 +2572,28 @@ static bool run_media_call(
 	      "%s answerer pre-carrier noise could not be represented",
 	      test_case->name);
 
+	unsigned int answerer_conditioning_frames = 0;
+
 	for (unsigned int frame = 0; frame < training_frame_limit; ++frame) {
+		if (test_case->answerer_conditioning_shift_q16 != 0 &&
+		    !strcmp(modem_protocol_step(answerer.modem),
+			    "V.32/second-S-TRN") &&
+		    ++answerer_conditioning_frames == MODEM_RATE / SIP_FRAME_SAMPLES) {
+			/* Change the incoming phase one second into the answerer's
+			 * second conditioning. R2 continues throughout this interval;
+			 * a paused receiver loses the trained phase before E/B1. */
+			const struct channel_bench_effect_spec shift = {
+				.kind = CHANNEL_BENCH_FRACTIONAL_DELAY,
+				.parameters.fractional_delay.phase_q16 =
+					test_case->answerer_conditioning_shift_q16,
+			};
+
+			CHECK(channel_bench_init(
+				      &answerer.receive_bench, &shift, 1) ==
+				      CHANNEL_BENCH_OK,
+			      "%s conditioning phase change failed", test_case->name);
+		}
+
 		if (test_case->answerer_s1_gap_samples != 0 &&
 		    !answerer_s1_gap_injected &&
 		    !strcmp(modem_protocol_step(answerer.modem), "V.22/mark-exchange")) {
@@ -2637,6 +2659,9 @@ static bool run_media_call(
 			break;
 		}
 	}
+	CHECK(test_case->answerer_conditioning_shift_q16 == 0 ||
+	      answerer_conditioning_frames >= MODEM_RATE / SIP_FRAME_SAMPLES,
+	      "%s did not exercise the conditioning phase change", test_case->name);
 	if (answerer_silence_frames > answerer_silence_max)
 		answerer_silence_max = answerer_silence_frames;
 	CHECK(test_case->answerer_s1_gap_samples == 0 || answerer_s1_gap_injected,
@@ -5208,6 +5233,20 @@ int main(void)
 			.carrier_loss_samples = MODEM_RATE / 5,
 			.automode = true,
 			.test_retrain = true,
+		},
+		{
+			.id = DP_V32BIS,
+			.name = "V.32bis 14400 conditioning phase change",
+			.selection_command = "AT+MS=132,1,14400,14400\r",
+			.caller_tx_rate = V32_14400_BIT_RATE,
+			.caller_rx_rate = V32_14400_BIT_RATE,
+			.answerer_tx_rate = V32_14400_BIT_RATE,
+			.answerer_rx_rate = V32_14400_BIT_RATE,
+			.carrier_loss_samples = MODEM_RATE / 5,
+			.automode = true,
+			.require_lapm = true,
+			.test_retrain = true,
+			.answerer_conditioning_shift_q16 = 16384,
 		},
 		{
 			.id = DP_V32BIS,
