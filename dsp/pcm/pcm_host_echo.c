@@ -579,7 +579,8 @@ static bool finish_timing_window(struct pcm_host_echo *echo,
 		.input = t->input,
 	};
 	bool qualified = timing_is_qualified(&evidence, samples, 9);
-	if (echo->weak_margin && !prediction_is_qualified(evidence.current_cross,
+	if ((echo->weak_margin || echo->retained_delay_samples) &&
+	    !prediction_is_qualified(evidence.current_cross,
 		evidence.current_energy, evidence.input,
 		samples, 9))
 		echo->filter_suspended = true;
@@ -593,7 +594,8 @@ static bool finish_timing_window(struct pcm_host_echo *echo,
 		    evidence.current_energy + t->first.current_energy,
 		    evidence.input + t->first.input, 2 * samples, 36))
 		echo->filter_suspended = true;
-	if ((echo->weak_margin || echo->filter_suspended) && t->second) {
+	if ((echo->weak_margin || echo->retained_delay_samples ||
+	     echo->filter_suspended) && t->second) {
 		/* A marginal or harmful prediction needs fresh support in data.
 		 * Reuse the timing monitor's independent confidence bounds at the
 		 * current delay. One unsupported window suspends subtraction;
@@ -627,16 +629,24 @@ static bool finish_timing_window(struct pcm_host_echo *echo,
 			.current_energy = evidence.current_energy + t->first.current_energy,
 			.input = evidence.input + t->first.input,
 		};
-		int64_t delay = (int64_t)echo->window_delay_samples + best - radius;
+		/* Monitor the frozen model being subtracted. Its replacement's
+		 * acquisition window must keep its independent training state. */
+		uint32_t active_delay = echo->retained_delay_samples ?
+			echo->retained_delay_samples : echo->window_delay_samples;
+		int64_t delay = (int64_t)active_delay + best - radius;
 
 		/* Two disjoint windows must choose the same useful delay, and
 		 * the combined normalized correlation must be stronger still. */
 		if (timing_is_qualified(&combined, 2 * samples, 36) &&
 		    delay > 0 && delay <= PCM_ECHO_REFERENCE_MAX_WINDOW_DELAY_SAMPLES &&
 		    (uint64_t)delay + PCM_HOST_ECHO_FILTER_TAPS - 1 <= echo->reference.fill &&
-		    pcm_echo_reference_start_scan(&echo->reference, (uint32_t)delay,
-					  PCM_HOST_ECHO_FILTER_PRE_SAMPLES) == PCM_ECHO_REFERENCE_OK) {
-			echo->window_delay_samples = (uint32_t)delay;
+		    (echo->retained_delay_samples ||
+		     pcm_echo_reference_start_scan(&echo->reference, (uint32_t)delay,
+					   PCM_HOST_ECHO_FILTER_PRE_SAMPLES) == PCM_ECHO_REFERENCE_OK)) {
+			if (echo->retained_delay_samples)
+				echo->retained_delay_samples = (uint32_t)delay;
+			else
+				echo->window_delay_samples = (uint32_t)delay;
 			echo->filter_suspended = false;
 			memset(&echo->timing, 0, sizeof(echo->timing));
 			return true;
@@ -708,7 +718,8 @@ static enum pcm_host_echo_result advance_predicted(
 
 	if (!mode_is_filtering(mode) && echo->timing.fill != 0)
 		memset(&echo->timing, 0, sizeof(echo->timing));
-	if (mode_is_filtering(mode) && echo->filter_ready) {
+	if (mode_is_filtering(mode) &&
+	    (echo->filter_ready || echo->retained_delay_samples)) {
 		int16_t monitored = cleaned_sample;
 
 		if (mode == PCM_HOST_ECHO_FILTER_DATA && echo->filter_suspended) {

@@ -779,6 +779,83 @@ static bool test_retained_cancellation(size_t training, bool unrelated)
 	return true;
 }
 
+static int16_t retained_timing_echo_sample(size_t index)
+{
+	/* Uneven return delays distinguish a true timing shift from choosing
+	 * a different cluster in the same partial multipath response. */
+	const int16_t gains[] = { -2200, 1200, 900, -1800, 1300, 1000, -1100, 1700 };
+	const unsigned delays[] = { 0, 11, 29, 51, 87, 121, 178, 249 };
+	int32_t returned = 0;
+
+	for (size_t tap = 0; tap < sizeof(gains) / sizeof(gains[0]); ++tap)
+		returned += scale_q15(transmit_sample(index - 2967 - delays[tap]), gains[tap]);
+	return add_s16(returned);
+}
+
+static bool test_retained_delay_tracking(int shift, bool unrelated)
+{
+	struct pcm_host_echo echo;
+	const size_t history = PCM_ECHO_REFERENCE_HISTORY_SAMPLES;
+	const size_t start = history + 4100u;
+	uint64_t source_energy = 0, residual_energy = 0;
+	float retained[PCM_HOST_ECHO_FILTER_TAPS], candidate[PCM_HOST_ECHO_FILTER_TAPS];
+
+	CHECK(pcm_host_echo_init(&echo) == PCM_HOST_ECHO_OK &&
+	      pcm_host_echo_seed_phase2_delay(&echo, 3067) == PCM_HOST_ECHO_OK,
+	      "retained timing owner did not initialize");
+	for (size_t index = 0; index < start; ++index) {
+		int16_t received = index >= history ? retained_timing_echo_sample(index) : 0;
+		int16_t cleaned;
+
+		CHECK(echo_step(&echo, index >= history ? PCM_HOST_ECHO_TRAIN :
+			PCM_HOST_ECHO_BYPASS, index, received, &cleaned),
+		      "retained timing training failed");
+	}
+	CHECK(echo.retained_delay_samples != 0 && !echo.filter_ready,
+	      "timing fixture did not retain its partial model");
+	uint32_t original_delay = echo.retained_delay_samples;
+	uint32_t acquisition_delay = echo.window_delay_samples;
+	uint32_t trained = echo.train_samples;
+
+	memcpy(retained, echo.retained_coefficients, sizeof(retained));
+	memcpy(candidate, echo.coefficients, sizeof(candidate));
+	for (size_t index = start; index < start + 48000u; ++index) {
+		int16_t peer = remote_sample(index) * 7;
+		int16_t returned = unrelated ? 0 : retained_timing_echo_sample(
+			(size_t)((int64_t)index - shift));
+		int16_t received = add_s16((int32_t)peer + returned), cleaned;
+
+		CHECK(echo_step(&echo, unrelated ? PCM_HOST_ECHO_FILTER_DATA :
+			PCM_HOST_ECHO_FILTER, index, received, &cleaned),
+		      "retained timing filtering failed");
+		if (index >= start + 40000u) {
+			source_energy = energy_add(source_energy, returned);
+			residual_energy = energy_add(residual_energy, (int32_t)cleaned - peer);
+		}
+	}
+	CHECK((int64_t)echo.retained_delay_samples ==
+		      (int64_t)original_delay + (unrelated ? 0 : shift),
+	      "retained return did not track: %u -> %u",
+	      original_delay, echo.retained_delay_samples);
+	CHECK(echo.window_delay_samples == acquisition_delay &&
+	      echo.train_samples == trained && !echo.filter_ready &&
+	      memcmp(retained, echo.retained_coefficients, sizeof(retained)) == 0 &&
+	      memcmp(candidate, echo.coefficients, sizeof(candidate)) == 0 &&
+	      pcm_host_echo_is_valid(&echo),
+	      "timing changed acquisition state or either filter response");
+	if (unrelated) {
+		CHECK(echo.filter_suspended && residual_energy == 0,
+		      "unsupported retained model kept subtracting peer data");
+	} else {
+		/* This partial model excludes the first three returns. Require
+		 * useful cancellation while its replacement remains unqualified. */
+		CHECK(residual_energy * 5u < source_energy * 3u,
+		      "retained timing lost cancellation: %" PRIu64 " / %" PRIu64,
+		      residual_energy, source_energy);
+	}
+	return true;
+}
+
 static bool test_training_quiet_boundary(void)
 {
 	for (unsigned scenario = 0; scenario < 3; ++scenario) {
@@ -1080,6 +1157,9 @@ int main(void)
 	    !test_retained_cancellation(4100, false) || !test_retained_cancellation(5000, false) ||
 	    !test_retained_cancellation(6500, false) || !test_retained_cancellation(8000, false) ||
 	    !test_retained_cancellation(12000, true) ||
+	    !test_retained_delay_tracking(80, false) ||
+	    !test_retained_delay_tracking(-80, false) ||
+	    !test_retained_delay_tracking(80, true) ||
 	    !test_acquisition_after_unrelated_prefix())
 		return 1;
 	const int shifts[] = {0, 8, -60, -PCM_HOST_ECHO_TIMING_RADIUS,
