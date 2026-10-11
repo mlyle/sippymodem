@@ -163,8 +163,35 @@ static bool marker_matches(
 	return true;
 }
 
-enum v92_phase3_sync_result v92_phase3_sync_receive(
-	struct v92_phase3_sync *sync, uint8_t sign)
+/* A repeated descriptor has only the 17-one frame sync. Reconstruct its
+ * differential scrambler history from the preceding 24 observed signs, then
+ * require every frame-sync bit and the zero start bit. The descriptor owner
+ * must validate its CRC before accepting any parameters. */
+static bool descriptor_marker_matches(
+	const struct v92_phase3_sync *sync,
+	struct pcm_binary_sign *after)
+{
+	struct pcm_binary_sign candidate = sync->window_start;
+
+	if (sync->marker_count != V92_PHASE3_MARKER_BITS)
+		return false;
+	for (size_t index = 0; index < V92_PHASE3_MARKER_BITS; ++index) {
+		uint8_t observed = sync->marker_signs[
+			(sync->marker_index + index) % V92_PHASE3_MARKER_BITS];
+		uint8_t bit;
+
+		if (pcm_binary_sign_decode(&candidate, observed, &bit) !=
+		    PCM_BINARY_SIGN_OK ||
+		    (index >= V92_PHASE3_PREAMBLE_BITS &&
+		     bit != (index + 1u < V92_PHASE3_MARKER_BITS)))
+			return false;
+	}
+	*after = candidate;
+	return true;
+}
+
+static enum v92_phase3_sync_result receive_sign(
+	struct v92_phase3_sync *sync, uint8_t sign, bool descriptor)
 {
 	struct v92_phase3_sync next;
 	struct pcm_binary_sign after;
@@ -179,7 +206,8 @@ enum v92_phase3_sync_result v92_phase3_sync_receive(
 	next = *sync;
 	if (!push_sign(&next, sign))
 		return V92_PHASE3_SYNC_INVALID_STATE;
-	if (marker_matches(&next, &after)) {
+	if (marker_matches(&next, &after) ||
+	    (descriptor && descriptor_marker_matches(&next, &after))) {
 		next.training = after;
 		next.window_start = after;
 		next.marker_count = 0u;
@@ -192,6 +220,18 @@ enum v92_phase3_sync_result v92_phase3_sync_receive(
 	*sync = next;
 	return next.stage == V92_PHASE3_SYNC_COMPLETE ?
 		       V92_PHASE3_SYNC_SYNCHRONIZED : V92_PHASE3_SYNC_OK;
+}
+
+enum v92_phase3_sync_result v92_phase3_sync_receive(
+	struct v92_phase3_sync *sync, uint8_t sign)
+{
+	return receive_sign(sync, sign, false);
+}
+
+enum v92_phase3_sync_result v92_phase3_sync_receive_descriptor(
+	struct v92_phase3_sync *sync, uint8_t sign)
+{
+	return receive_sign(sync, sign, true);
 }
 
 bool v92_phase3_sync_handoff(

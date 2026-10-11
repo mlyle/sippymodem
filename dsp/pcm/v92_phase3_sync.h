@@ -60,6 +60,13 @@ enum v92_phase3_sync_result v92_phase3_sync_begin(
 enum v92_phase3_sync_result v92_phase3_sync_receive(
 	struct v92_phase3_sync *sync, uint8_t sign);
 
+/* Also acquire a repeated descriptor after its one-time preamble was lost.
+ * Require the 17-one frame sync and zero start bit; the descriptor owner must
+ * validate its CRC before accepting parameters. The strong initial marker
+ * keeps its preamble repair and takes precedence over this recovery path. */
+enum v92_phase3_sync_result v92_phase3_sync_receive_descriptor(
+	struct v92_phase3_sync *sync, uint8_t sign);
+
 /* Copy the corrected coding state at the first unconsumed payload bit.
  * Rejected calls leave the destination unchanged. */
 bool v92_phase3_sync_handoff(

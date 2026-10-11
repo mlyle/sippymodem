@@ -53,7 +53,7 @@ static bool check_line(
 	enum g711_law law, uint32_t rate_mask,
 	const struct channel_bench_effect_spec *effects,
 	size_t effect_count, double adaptation, int expected_polarity,
-	uint32_t channel_delay)
+	uint32_t channel_delay, unsigned damaged_descriptors)
 {
 	struct channel_bench channel = { 0 };
 	struct v92_pcm_phase3_trn1u trn1u;
@@ -83,6 +83,14 @@ static bool check_line(
 		      "Ja line source failed at %zu", index);
 		ja_symbols += ja_started;
 		sample = symbol.sample;
+		/* Lose the one-time preamble and the first descriptor's sync.
+		 * Later descriptors carry only the ordinary frame sync. */
+		if (damaged_descriptors != 0u && ja_started &&
+		    ja_symbols <= V92_PHASE3_MARKER_BITS)
+			sample = 0;
+		if (damaged_descriptors == 2u &&
+		    ja_symbols == V92_PCM_PHASE3_JA_MIN_SYMBOLS + 81u)
+			sample = -sample;
 		CHECK(channel_bench_process(&channel, &sample, 1u) ==
 			      CHANNEL_BENCH_OK,
 		      "Ja line channel failed at %zu", index);
@@ -133,7 +141,8 @@ static bool check_line(
 	      v92_pcm_phase3_ja_line_rx_parameters(&receiver, &decoded) &&
 	      decoded.upstream_rate_mask == rate_mask &&
 	      decoded.downstream.segment_count == 0u &&
-	      receiver.processed_samples == V92_PCM_PHASE3_JA_MIN_SYMBOLS &&
+	      receiver.processed_samples == V92_PCM_PHASE3_JA_MIN_SYMBOLS +
+		      damaged_descriptors * V92_PCM_DIL_ZERO_DESCRIPTOR_BITS &&
 	      receiver.input_advance_symbols ==
 		      V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY &&
 	      receiver.line.polarity == expected_polarity &&
@@ -144,7 +153,9 @@ static bool check_line(
 	      receiver_started, detected, synchronization_events,
 	      (unsigned int)decoded.upstream_rate_mask, (unsigned int)rate_mask,
 	      (unsigned long long)receiver.processed_samples,
-	      V92_PCM_PHASE3_JA_MIN_SYMBOLS, receiver.line.polarity,
+	      V92_PCM_PHASE3_JA_MIN_SYMBOLS +
+		damaged_descriptors * V92_PCM_DIL_ZERO_DESCRIPTOR_BITS,
+	      receiver.line.polarity,
 	      expected_polarity, (unsigned long long)ja_symbols, channel_delay);
 	{
 		struct v92_pcm_phase3_ja_line_rx before = receiver;
@@ -168,12 +179,28 @@ static bool test_exact_laws(void)
 	};
 
 	CHECK(check_line(
-		      G711_LAW_PCMU, 0u, &pcmu, 1u, 0.0, 1, 0u),
+		      G711_LAW_PCMU, 0u, &pcmu, 1u, 0.0, 1, 0u, 0u),
 	      "exact PCMU Ja line failed");
 	CHECK(check_line(
 		      G711_LAW_PCMA, V92_PCM_DIL_RATE_MASK_ALL,
-		      &pcma, 1u, 0.0, 1, 0u),
+		      &pcma, 1u, 0.0, 1, 0u, 0u),
 	      "exact PCMA Ja line failed");
+	return true;
+}
+
+static bool test_lost_preamble(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		struct channel_bench_effect_spec codec = {
+			.kind = law == G711_LAW_PCMU ?
+				CHANNEL_BENCH_PCMU : CHANNEL_BENCH_PCMA,
+		};
+
+		for (unsigned damaged = 1u; damaged <= 2u; ++damaged)
+			CHECK(check_line(law, V92_PCM_DIL_RATE_MASK_ALL,
+				&codec, 1u, 0.0, 1, 0u, damaged),
+			      "lost Ja preamble did not recover after %u descriptors", damaged);
+	}
 	return true;
 }
 
@@ -209,7 +236,7 @@ static bool test_impaired_line(void)
 
 	CHECK(check_line(
 		      G711_LAW_PCMA, UINT32_C(0x52491), effects,
-		      ARRAY_LENGTH(effects), 0.125, -1, 7u),
+		      ARRAY_LENGTH(effects), 0.125, -1, 7u, 0u),
 	      "impaired PCMA Ja line failed");
 	return true;
 }
@@ -331,6 +358,7 @@ int main(void)
 	} tests[] = {
 		{ "exact PCMU and PCMA lines", test_exact_laws },
 		{ "impaired line", test_impaired_line },
+		{ "lost preamble and CRC rejection", test_lost_preamble },
 		{ "contracts", test_contracts },
 	};
 	unsigned int failures = 0u;
