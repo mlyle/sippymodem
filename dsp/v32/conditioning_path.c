@@ -119,6 +119,15 @@ static enum v32_conditioning_path_result commit_observations(
 			&next_conditioning, observation, &decision);
 		if (conditioning_result != V32_CONDITIONING_RECEIVER_OK)
 			return V32_CONDITIONING_PATH_INVALID_STATE;
+		/* Preserve the acquired sampling phase through the two-point S
+		 * signal and its reversal. Resume tracking on TRN or lost S
+		 * qualification, before handing the receiver to the rate path. */
+		if (next_conditioning.phase != path->conditioning.phase &&
+		    v32_symbol_timing_set_tracking(&path->receive.line.timing,
+			    next_conditioning.phase != V32_CONDITIONING_MATCH_TRN &&
+			    next_conditioning.phase != V32_CONDITIONING_COUNT_S_BAR) !=
+			    V32_SYMBOL_TIMING_OK)
+			return V32_CONDITIONING_PATH_INVALID_STATE;
 		if (next_conditioning.phase == V32_CONDITIONING_READY) {
 			receive_result = v32_receive_path_commit_adaptation(
 				&path->receive, &decision.equalizer,

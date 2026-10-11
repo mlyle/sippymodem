@@ -243,7 +243,8 @@ static bool run_generated_role(
 	      (unsigned long long)path.conditioning.observation_epoch,
 	      path.receive.line.timing.signal_detected,
 	      retained_cursor, carrier_octant);
-	CHECK(v32_conditioning_path_is_complete(&path) &&
+	CHECK(path.receive.line.timing.tracking_enabled &&
+	      v32_conditioning_path_is_complete(&path) &&
 	      path.receive.equalizer.adaptation ==
 		      V32_EQUALIZER_ADAPTATION_FINE &&
 	      path.conditioning.trn_symbols >=
@@ -277,6 +278,53 @@ static bool run_generated_role(
 	      "generated conditioning lost its buffered rate observation");
 	*completed = path;
 	return true;
+}
+
+static bool test_s_timing_lifecycle(void)
+{
+	struct generated_source source;
+	struct v32_conditioning_path path;
+	bool qualified = false;
+	unsigned held_samples = 0;
+	int16_t held_phase = 0, held_fraction = 0;
+
+	CHECK(source_init(&source, V32_CALLING_TRANSMITTER) &&
+	      v32_conditioning_path_init(&path, V32_CALLING_TRANSMITTER,
+		      0, V32_ECHO_MIN_ROUND_TRIP_SYMBOLS) == V32_CONDITIONING_PATH_OK,
+	      "S timing fixture did not initialize");
+	for (unsigned index = 0; index < TEST_LINE_SAMPLE_LIMIT; ++index) {
+		struct v32_echo_reference reference;
+		int16_t sample;
+		bool accepted;
+
+		CHECK(source_sample(&source, &sample, &reference, &accepted),
+		      "S timing source stopped");
+		/* Keep S briefly, then interrupt it before a genuine S-bar edge. */
+		if (qualified && held_samples >= 100)
+			sample = 0;
+		CHECK(v32_conditioning_path_sample(&path, sample,
+			      accepted ? &reference : NULL) == V32_CONDITIONING_PATH_OK,
+		      "interrupted S falsely completed conditioning");
+		if (!qualified && path.conditioning.phase == V32_CONDITIONING_MATCH_TRN) {
+			qualified = true;
+			held_phase = path.receive.line.timing.polyphase_index;
+			held_fraction = path.receive.line.timing.fractional_phase_q11;
+		}
+		if (!qualified)
+			continue;
+		if (path.conditioning.phase == V32_CONDITIONING_SEARCH_S_BAR) {
+			CHECK(held_samples >= 100 && path.receive.line.timing.tracking_enabled,
+			      "lost S did not resume timing acquisition");
+			return true;
+		}
+		CHECK(path.conditioning.phase == V32_CONDITIONING_MATCH_TRN &&
+		      !path.receive.line.timing.tracking_enabled &&
+		      path.receive.line.timing.polyphase_index == held_phase &&
+		      path.receive.line.timing.fractional_phase_q11 == held_fraction,
+		      "qualified S timing moved at sample %u", index);
+		held_samples++;
+	}
+	CHECK(false, "interrupted S did not release timing hold");
 }
 
 static bool test_contracts(
@@ -406,7 +454,7 @@ int main(void)
 					    (enum v32_transmitter_role)role,
 					    cursor, octant, &completed))
 					return 1;
-	if (!test_contracts(&completed))
+	if (!test_s_timing_lifecycle() || !test_contracts(&completed))
 		return 1;
 	puts("V.32 conditioning path tests passed");
 	return 0;
