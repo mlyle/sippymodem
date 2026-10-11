@@ -6,6 +6,7 @@
 #include <v90_profile.h>
 #include <v90_pcm_mapping.h>
 #include <v92_pcm_dil.h>
+#include <v92_pcm_phase3_ja.h>
 
 #include "test.h"
 
@@ -335,6 +336,75 @@ static bool test_conventional_policy(void)
 	return true;
 }
 
+static bool test_drifting_upstream_control(void)
+{
+	/* A 31.25 ppm clock difference moves the sampled pulse by about half a
+	 * symbol during a long TRN1u. The receiver must track it closely enough
+	 * to accept the first Ja descriptor, before the peer's reply deadline. */
+	const unsigned training_symbols =
+		V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS + 15996u;
+	const unsigned sample_limit = training_symbols +
+		V92_PCM_PHASE3_JA_MIN_SYMBOLS +
+		V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY;
+
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		struct pcm_call_configuration configuration;
+		struct v92_pcm_phase3_trn1u training;
+		struct v92_pcm_phase3_ja_tx ja;
+		struct v92_pcm_phase3_initial_rx receiver;
+		struct v92_pcm_dil_parameters parameters;
+		int16_t previous = 0;
+		bool detected = false;
+
+		CHECK(v92_profile_init(&configuration, V90_DIGITAL_MODEM,
+			      law, 28000, 56000, 19, NULL) == V92_PROFILE_OK &&
+		      v92_pcm_phase3_trn1u_init(&training, law, 91) ==
+			      V92_PCM_PHASE3_TRN1U_OK &&
+		      v92_pcm_phase3_initial_rx_init(&receiver,
+			      configuration.phase3.v92_digital.equalizer_adaptation) ==
+			      V92_PCM_PHASE3_INITIAL_RX_OK,
+		      "drifting upstream control did not initialize");
+		for (unsigned index = 0; index < sample_limit; ++index) {
+			struct v90_pcm_symbol symbol;
+			enum v92_pcm_phase3_initial_rx_result result;
+			double fraction = (double)index / 32000.0;
+			int16_t sample;
+
+			if (index == training_symbols)
+				CHECK(v92_pcm_phase3_ja_tx_init(&ja, &training,
+					      V92_PCM_DIL_RATE_MASK_ALL) ==
+					      V92_PCM_PHASE3_JA_OK,
+				      "drifting Ja source did not initialize");
+			if (index < training_symbols)
+				CHECK(v92_pcm_phase3_trn1u_next(&training, &symbol) ==
+					      V92_PCM_PHASE3_TRN1U_OK,
+				      "drifting TRN1u source failed");
+			else
+				CHECK(v92_pcm_phase3_ja_tx_next(&ja, &symbol) ==
+					      V92_PCM_PHASE3_JA_OK,
+				      "drifting Ja source failed");
+			sample = (int16_t)((1.0 - fraction) * symbol.sample +
+					   fraction * previous);
+			previous = symbol.sample;
+			result = v92_pcm_phase3_initial_rx_sample(
+				&receiver, g711_quantize(law, sample));
+			CHECK(result <= V92_PCM_PHASE3_INITIAL_RX_SYNCHRONIZED ||
+			      result == V92_PCM_PHASE3_INITIAL_RX_DETECTED,
+			      "law %u rejected drifting control at %u: %s", law, index,
+			      v92_pcm_phase3_initial_rx_result_name(result));
+			if (result == V92_PCM_PHASE3_INITIAL_RX_DETECTED) {
+				detected = true;
+				break;
+			}
+		}
+		CHECK(detected && v92_pcm_phase3_initial_rx_parameters(
+			      &receiver, &parameters) &&
+		      parameters.upstream_rate_mask == V92_PCM_DIL_RATE_MASK_ALL,
+		      "law %u did not decode the first drifting Ja descriptor", law);
+	}
+	return true;
+}
+
 static bool test_transactionality(void)
 {
 	struct pcm_call_configuration configuration;
@@ -376,7 +446,7 @@ static bool test_transactionality(void)
 int main(void)
 {
 	if (!test_upstream_rates() || !test_generated_profiles() || !test_conventional_policy() ||
-	    !test_transactionality())
+	    !test_drifting_upstream_control() || !test_transactionality())
 		return 1;
 	return 0;
 }

@@ -145,7 +145,9 @@ static void configure_digital(
 				.rate_renegotiation_constellation =
 					V92_CONSTELLATION_4_POINT,
 			},
-			.equalizer_adaptation = 0.05,
+			/* Track clock drift through long TRN1u/Ja exchanges before
+			 * the peer times out waiting for our downstream prefix. */
+			.equalizer_adaptation = 0.1,
 			.su_minimum_magnitude = V92_SU_MINIMUM_MAGNITUDE,
 		};
 	selected->v92_digital_phase4.upstream_selection = PCM_CALL_V92_UPSTREAM_DIRECT;
