@@ -73,6 +73,7 @@ static const u8 _ordered[] = {
 enum {
 	ASYNC_DATA_BITS = 8,
 	ASYNC_FRAME_BITS = 10,
+	ASYNC_BREAK_BITS = 2 * ASYNC_FRAME_BITS + 3,
 	V42_T400_MS = 750,
 	V42_DETECTION_LIMIT_MS = 2 * V42_T400_MS,
 };
@@ -218,6 +219,27 @@ int modem_async_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt)
 		for (int index = nbits - 1; index >= 0; --index) {
 			unsigned int bit = (bits >> index) & 1u;
 
+			/* V.14 7.3.2: distinguish deleted stops in NULs from break.
+			 * At most two NULs can be pending before break is known.
+			 * Keep the byte interface's existing break suppression. */
+			if (bit == 0) {
+				if (async->receive_zero_run < ASYNC_BREAK_BITS)
+					async->receive_zero_run++;
+				if (async->receive_zero_run == ASYNC_BREAK_BITS) {
+					async->receive_pending_nuls = 0;
+					async->receive_state = ASYNC_RECEIVE_HUNT_MARK;
+					async->receive_bit_count = 0;
+					async->receive_data = 0;
+					continue;
+				}
+			} else {
+				async->receive_zero_run = 0;
+				while (async->receive_pending_nuls) {
+					async_receive_character(m, 0);
+					async->receive_pending_nuls--;
+				}
+			}
+
 			switch (async->receive_state) {
 			case ASYNC_RECEIVE_HUNT_MARK:
 				if (bit != 0)
@@ -240,18 +262,14 @@ int modem_async_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt)
 					async->receive_state = ASYNC_RECEIVE_STOP;
 				break;
 			case ASYNC_RECEIVE_STOP:
-				if (bit != 0) {
-					async_receive_character(
-						m, async->receive_data);
-					async->receive_state =
-						ASYNC_RECEIVE_HUNT_START;
-				} else {
-					/* Do not reinterpret a bad stop bit as the
-					 * next start bit.  A mark must re-establish
-					 * the asynchronous framing boundary first. */
-					async->receive_state =
-						ASYNC_RECEIVE_HUNT_MARK;
-				}
+				/* V.14 7.1/7.2: a deleted stop is replaced by the
+				 * next character's start, already consumed here. */
+				if (bit || async->receive_data)
+					async_receive_character(m, async->receive_data);
+				else
+					async->receive_pending_nuls++;
+				async->receive_state = bit ? ASYNC_RECEIVE_HUNT_START :
+					ASYNC_RECEIVE_DATA;
 				async->receive_bit_count = 0;
 				async->receive_data = 0;
 				break;
@@ -271,6 +289,8 @@ static void modem_async_reset_receive(struct modem *m)
 	m->packer.async.receive_state = ASYNC_RECEIVE_HUNT_START;
 	m->packer.async.receive_bit_count = 0;
 	m->packer.async.receive_data = 0;
+	m->packer.async.receive_zero_run = 0;
+	m->packer.async.receive_pending_nuls = 0;
 	m->packer.async.detection_residue_state =
 		ASYNC_DETECTION_RESIDUE_OFF;
 }

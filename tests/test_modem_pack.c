@@ -121,39 +121,135 @@ static bool detection_character_matches(
 	return true;
 }
 
-static bool test_async_resynchronizes_after_bad_stop(void)
+static bool receive_async_bits(struct modem *m, const uint8_t *bits,
+			       size_t count, unsigned int width)
 {
-	uint8_t bits[64] = { 0 };
-	uint8_t decoded[3] = { 0 };
-	size_t bit_count = 0;
-	struct byte_stream sink = {
-		.output = decoded,
-		.output_capacity = ARRAY_LENGTH(decoded),
-	};
-	struct modem receiver = {
-		.name = "async-resynchronization-receiver",
-		.dev_data = &sink,
-		.put_chars = write_chars,
-	};
+	for (size_t at = 0; at < count; at += width) {
+		uint8_t group = 0;
+		for (unsigned int bit = 0; bit < width; ++bit)
+			group = (uint8_t)((group << 1) |
+				(at + bit < count ? bits[at + bit] : 1u));
+		CHECK(modem_async_put_bits(m, (int)width, &group, 1) == 1,
+		      "async receiver did not consume a bit group");
+	}
+	return true;
+}
 
-	CHECK(append_async_character(
-		      bits, ARRAY_LENGTH(bits), &bit_count, 'A', true) &&
-		      append_async_character(
-			      bits, ARRAY_LENGTH(bits), &bit_count, 0x55, false) &&
-		      append_async_character(
-			      bits, ARRAY_LENGTH(bits), &bit_count, 0xff, true) &&
-		      append_async_character(
-			      bits, ARRAY_LENGTH(bits), &bit_count, 'B', true),
-	      "async resynchronization fixture overflowed");
+static bool test_async_deleted_stops(void)
+{
+	/* V.14 7.1 permits one deletion per eight characters (basic), or
+	 * four (extended). The physical peer also exercises a nine-byte period.
+	 * Include adjacent NULs and every byte value at every deletion phase. */
+	static const unsigned int periods[] = { 0, 4, 8, 9 };
+	uint8_t input[512] = { 0 };
+	for (size_t i = 256; i < sizeof(input); ++i)
+		input[i] = (uint8_t)i;
+	for (size_t p = 0; p < ARRAY_LENGTH(periods); ++p)
+	for (unsigned int phase = 0; phase < (periods[p] ? periods[p] : 1); ++phase)
+	for (unsigned int width = 1; width <= 8; ++width) {
+		uint8_t bits[sizeof(input) * 14];
+		uint8_t decoded[sizeof(input)] = { 0 };
+		size_t count = 0;
+		struct byte_stream sink = {
+			.output = decoded, .output_capacity = sizeof(decoded),
+		};
+		struct modem receiver = {
+			.name = "async-deleted-stops", .dev_data = &sink,
+			.put_chars = write_chars,
+		};
+		for (size_t i = 0; i < sizeof(input); ++i) {
+			CHECK(append_async_character(bits, sizeof(bits), &count,
+						     input[i], true), "fixture capacity");
+			if (periods[p] && i % periods[p] == phase &&
+			    i + 1 < sizeof(input))
+				--count; /* Remove, rather than corrupt, the stop. */
+			else if (i % 7 == 0)
+				for (unsigned int idle = 0; idle < 3; ++idle)
+					bits[count++] = 1;
+		}
+		modem_async_start(&receiver);
+		CHECK(receive_async_bits(&receiver, bits, count, width), "receive bits");
+		CHECK(!sink.output_overflow && sink.output_length == sizeof(input) &&
+		      memcmp(decoded, input, sizeof(input)) == 0,
+		      "deleted-stop payload period=%u phase=%u width=%u: %zu bytes",
+		      periods[p], phase, width, sink.output_length);
+	}
+	return true;
+}
 
-	modem_async_start(&receiver);
-	CHECK(modem_async_put_bits(
-		      &receiver, 1, bits, (int)bit_count) == (int)bit_count,
-	      "async decoder did not consume the malformed stream");
-	CHECK(!sink.output_overflow,
-	      "async resynchronization overflowed its output");
-	CHECK(sink.output_length == 2 && decoded[0] == 'A' && decoded[1] == 'B',
-	      "async decoder retained malformed framing or missed recovery");
+static bool test_async_resynchronizes_after_break(void)
+{
+	for (unsigned int zeros = 23; zeros <= 160; ++zeros)
+	for (unsigned int width = 1; width <= 8; ++width) {
+		uint8_t bits[192] = { 0 };
+		uint8_t decoded[3] = { 0 };
+		size_t bit_count = 0;
+		struct byte_stream sink = {
+			.output = decoded,
+			.output_capacity = ARRAY_LENGTH(decoded),
+		};
+		struct modem receiver = {
+			.name = "async-resynchronization-receiver",
+			.dev_data = &sink,
+			.put_chars = write_chars,
+		};
+
+		CHECK(append_async_character(
+			      bits, ARRAY_LENGTH(bits), &bit_count, 'A', true),
+		      "async resynchronization fixture overflowed");
+		bit_count += zeros;
+		bits[bit_count++] = 1;
+		CHECK(append_async_character(bits, sizeof(bits), &bit_count, 'B', true),
+		      "async break fixture overflowed");
+
+		modem_async_start(&receiver);
+		CHECK(receive_async_bits(&receiver, bits, bit_count, width), "receive break");
+		CHECK(!sink.output_overflow,
+		      "async resynchronization overflowed its output");
+		CHECK(sink.output_length == 2 && decoded[0] == 'A' && decoded[1] == 'B',
+		      "async decoder fabricated a NUL or missed break recovery");
+	}
+	return true;
+}
+
+static bool test_async_pending_nuls(void)
+{
+	/* NULs with a deleted stop must wait for a mark to rule out break.
+	 * Both receive reset paths must discard this pending state. */
+	for (unsigned int reset = 0; reset < 2; ++reset)
+	for (unsigned int zeros = 10; zeros <= 19; zeros += 9) {
+		uint8_t bits[20] = { 0 }, decoded[4] = { 0 };
+		size_t count = 0;
+		struct byte_stream sink = {
+			.output = decoded, .output_capacity = sizeof(decoded),
+		};
+		struct modem receiver = {
+			.name = "async-pending-nuls", .dev_data = &sink,
+			.put_chars = write_chars,
+		};
+		modem_async_start(&receiver);
+		CHECK(receive_async_bits(&receiver, bits, zeros, 1), "pending NULs");
+		CHECK(sink.output_length == 0, "possible break leaked NULs");
+		if (reset)
+			modem_async_retrain(&receiver);
+		else
+			modem_async_reframe(&receiver);
+		CHECK(append_async_character(bits, sizeof(bits), &count, 'R', true),
+		      "reset fixture capacity");
+		CHECK(receive_async_bits(&receiver, bits, count, 1), "after reset");
+		CHECK(sink.output_length == 1 && decoded[0] == 'R',
+		      "reset retained pending NUL or partial character");
+
+		modem_async_start(&receiver);
+		sink.output_length = 0;
+		sink.output_capacity = 1;
+		memset(bits, 0, sizeof(bits));
+		bits[19] = 1; /* Two NULs with the first stop deleted. */
+		CHECK(receive_async_bits(&receiver, bits, sizeof(bits), 1), "NUL overflow");
+		CHECK(sink.output_length == 1 && decoded[0] == 0 &&
+		      sink.output_overflow && receiver.dte_overflow,
+		      "pending NUL delivery silently discarded output");
+	}
 	return true;
 }
 
@@ -870,8 +966,10 @@ int main(void)
 {
 	static const struct test_case tests[] = {
 		{ "async round trip", test_async_round_trip },
-		{ "async bad-stop resynchronization",
-		  test_async_resynchronizes_after_bad_stop },
+		{ "async deleted stops", test_async_deleted_stops },
+		{ "async break resynchronization",
+		  test_async_resynchronizes_after_break },
+		{ "async pending NULs", test_async_pending_nuls },
 		{ "async reframe",
 		  test_async_reframe_discards_partial_characters },
 		{ "async retrain framing",
