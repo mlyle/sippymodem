@@ -967,7 +967,7 @@ static bool check_retrain_quiet_tolerance(
 		seen = false;
 		/* Seed the sliding window with active signal before quiet begins. */
 		for (size_t index = 0; index < 128; ++index)
-			CHECK(feed_retrain_sample(&detector, 8000, codec, &seen),
+			CHECK(feed_retrain_sample(&detector, (index & 1u) ? 8000 : -8000, codec, &seen),
 			      "active prefix failed");
 		for (size_t index = 0; index < quiet; ++index)
 			CHECK(feed_retrain_sample(&detector, 0, codec, &seen),
@@ -1009,7 +1009,7 @@ static bool check_retrain_quiet_tolerance(
 	}
 	CHECK(!seen, "55 ms tone passed the retained 80 ms guard");
 	for (size_t index = 0; index < V34_PHASE2_SAMPLE_RATE / 50u; ++index)
-		CHECK(feed_retrain_sample(&detector, 8000, codec, &seen),
+		CHECK(feed_retrain_sample(&detector, (index & 1u) ? 8000 : -8000, codec, &seen),
 		      "tone interruption failed");
 	for (size_t index = 0;
 	     index < V34_RETRAIN_TONE_SAMPLES + V34_RETRAIN_EDGE_SAMPLES; ++index) {
@@ -1521,7 +1521,7 @@ static bool test_validation(void)
 		      &retrain, V34_CALLING_STATION) ==
 		      V34_PHASE2_TONE_OK,
 	      "silence-history validation fixture did not initialize");
-	retrain.silence_history[0] = UINT32_MAX;
+	retrain.silence_sum = INT32_MAX;
 	retrain_before = retrain;
 	{
 		bool detected = true;
@@ -1567,12 +1567,55 @@ static bool test_validation(void)
 	return true;
 }
 
+/* Quiet remains quiet with a DC offset; a tone or ordinary signal does not.
+ * Preserve the same silence duration, role-specific tone and answer guard. */
+static bool check_retrain_dc_offset(enum v34_station_role role,
+	enum test_codec codec, int offset, bool quiet)
+{
+	struct v34_retrain_detector detector;
+	struct v34_phase2_tone_transmitter tone;
+	bool seen = false;
+
+	CHECK(v34_retrain_detector_init(&detector, role) == V34_PHASE2_TONE_OK &&
+	      v34_phase2_tone_transmitter_init(&tone, v34_station_peer_role(role),
+		      4000) == V34_PHASE2_TONE_OK, "DC retrain fixture failed");
+	for (size_t i = 0; i < 128; ++i)
+		CHECK(feed_retrain_sample(&detector, (i & 1u) ? 8000 : -8000, codec, &seen),
+		      "DC active prefix failed");
+	if (quiet)
+		for (size_t i = 0; i < 560; ++i)
+			CHECK(feed_retrain_sample(&detector,
+				offset + ((i & 1u) ? 100 : -100), codec, &seen),
+			      "DC quiet preamble failed");
+	for (size_t i = 0; i < 1600; ++i) {
+		int16_t sample;
+		CHECK(v34_phase2_tone_transmitter_sample(&tone, &sample) == V34_PHASE2_TONE_OK &&
+		      feed_retrain_sample(&detector, sample + offset, codec, &seen),
+		      "DC retrain tone failed");
+	}
+	CHECK(seen == quiet, "DC retrain role=%d codec=%d offset=%d quiet=%d detected=%d",
+	      role, codec, offset, quiet, seen);
+	return true;
+}
+
+static bool test_retrain_dc_offset(void)
+{
+	for (enum test_codec codec = TEST_CODEC_LINEAR; codec <= TEST_CODEC_PCMA; ++codec)
+		for (enum v34_station_role role = V34_CALLING_STATION; role <= V34_ANSWERING_STATION; ++role)
+			for (int offset = -600; offset <= 600; offset += 1200)
+				for (unsigned quiet = 0; quiet < 2; ++quiet)
+					CHECK(check_retrain_dc_offset(role, codec, offset, quiet != 0),
+					      "DC quiet qualification failed");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "DC retrain quiet guard", test_retrain_dc_offset },
 		{ "tone levels", test_tone_levels },
 		{ "nominal level handoff", test_nominal_level_handoff },
 		{ "phase reversal", test_phase_reversal },

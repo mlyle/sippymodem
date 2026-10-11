@@ -99,7 +99,9 @@ struct v34_retrain_detector {
 	struct v34_phase2_tone_detector tone;
 	struct single_tone_detector answer_guard;
 	uint64_t silence_energy;
-	uint32_t silence_history[V34_RETRAIN_SILENCE_WINDOW_SAMPLES];
+	/* Raw energy and signed samples retain a DC-independent quiet measure. */
+	int16_t silence_history[V34_RETRAIN_SILENCE_WINDOW_SAMPLES];
+	int32_t silence_sum;
 	size_t silence_history_index;
 	size_t silence_history_count;
 	uint16_t silence_samples;

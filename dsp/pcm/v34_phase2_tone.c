@@ -16,8 +16,6 @@ static const double V34_PHASE2_TONE_MIN_LINE_POWER = 256.0 * 256.0;
 static const double V34_PHASE2_TONE_MIN_CALLING_CARRIER_SHARE = 0.70;
 static const double V34_PHASE2_TONE_MIN_ANSWERING_CARRIER_SHARE = 0.30;
 static const double V34_PHASE2_TONE_MAX_CARRIER_SHARE = 1.20;
-static const uint32_t V34_RETRAIN_MAX_SAMPLE_ENERGY =
-	UINT32_C(1) << 30;
 static const double V34_RETRAIN_MIN_GUARD_SHARE = 0.10;
 
 _Static_assert(
@@ -387,6 +385,7 @@ static bool retrain_silence_state_is_valid(
 	const struct v34_retrain_detector *detector)
 {
 	uint64_t energy = 0;
+	int32_t sum = 0;
 
 	if (detector->silence_history_index >=
 		    V34_RETRAIN_SILENCE_WINDOW_SAMPLES ||
@@ -409,12 +408,11 @@ static bool retrain_silence_state_is_valid(
 		return false;
 	for (size_t index = 0;
 	     index < V34_RETRAIN_SILENCE_WINDOW_SAMPLES; ++index) {
-		if (detector->silence_history[index] >
-		    V34_RETRAIN_MAX_SAMPLE_ENERGY)
-			return false;
-		energy += detector->silence_history[index];
+		int32_t sample = detector->silence_history[index];
+		energy += (uint32_t)(sample * sample);
+		sum += sample;
 	}
-	return energy == detector->silence_energy;
+	return energy == detector->silence_energy && sum == detector->silence_sum;
 }
 
 bool v34_retrain_detector_is_valid(
@@ -442,11 +440,11 @@ static void add_retrain_silence_observation(
 	uint32_t maximum_window_energy)
 {
 	uint32_t sample_energy = (uint32_t)((int32_t)sample * sample);
-	uint32_t old_energy =
-		detector->silence_history[detector->silence_history_index];
+	int32_t old_sample = detector->silence_history[detector->silence_history_index];
+	uint32_t old_energy = (uint32_t)(old_sample * old_sample);
 
-	detector->silence_history[detector->silence_history_index] =
-		sample_energy;
+	detector->silence_history[detector->silence_history_index] = sample;
+	detector->silence_sum += (int32_t)sample - old_sample;
 	detector->silence_history_index =
 		(detector->silence_history_index + 1u) %
 		V34_RETRAIN_SILENCE_WINDOW_SAMPLES;
@@ -460,7 +458,13 @@ static void add_retrain_silence_observation(
 	if (detector->silence_history_count !=
 	    V34_RETRAIN_SILENCE_WINDOW_SAMPLES)
 		return;
-	if (detector->silence_energy <= maximum_window_energy) {
+	/* A DC offset is not a training signal. Remove the window mean only
+	 * from quiet qualification; retain raw samples for tone phase and
+	 * the following Phase 2 handoff. The 64-sample sum is bounded by 2^21. */
+	int64_t sum = detector->silence_sum;
+	uint64_t ac_energy = detector->silence_energy -
+		(uint64_t)(sum * sum) / V34_RETRAIN_SILENCE_WINDOW_SAMPLES;
+	if (ac_energy <= maximum_window_energy) {
 		detector->silence_glitch_samples = 0;
 		if (detector->silence_samples <
 		    V34_RETRAIN_SILENCE_WINDOW_SAMPLES)
