@@ -536,6 +536,45 @@ static bool test_phase2_delay_seed(void)
 	return true;
 }
 
+static bool test_short_acquisition(void)
+{
+	struct pcm_host_echo echo;
+	const size_t history = PCM_ECHO_REFERENCE_HISTORY_SAMPLES;
+	const size_t training = 6000;
+	const size_t delay = PCM_HOST_ECHO_DEFAULT_WINDOW_DELAY_SAMPLES - 25u;
+	uint64_t source_energy = 0, residual_energy = 0;
+	float coefficients[PCM_HOST_ECHO_FILTER_TAPS];
+
+	CHECK(pcm_host_echo_init(&echo) == PCM_HOST_ECHO_OK, "short acquisition init failed");
+	/* A return just before the initial window needs acquisition and the
+	 * full retimed qualification period within 750 ms of quiet training. */
+	for (size_t index = 0; index < history + training; ++index) {
+		bool train = index >= history;
+		int16_t input = train ? scale_q15(transmit_sample(index - delay), -622) : 0;
+		int16_t cleaned;
+		CHECK(echo_step(&echo, train ? PCM_HOST_ECHO_TRAIN : PCM_HOST_ECHO_BYPASS,
+			index, input, &cleaned) && cleaned == input, "short training failed");
+	}
+	CHECK(echo.filter_ready && echo.delay_acquired &&
+	      echo.train_samples >= PCM_HOST_ECHO_RETIMED_TRAIN_MIN_SAMPLES,
+	      "quiet training ended before return qualified: %u samples", echo.train_samples);
+	memcpy(coefficients, echo.coefficients, sizeof(coefficients));
+	for (size_t index = history + training;
+	     index < history + training + VERIFY_SAMPLES; ++index) {
+		int16_t returned = scale_q15(transmit_sample(index - delay), -622);
+		int16_t peer = remote_sample(index) * 7, cleaned;
+		CHECK(echo_step(&echo, PCM_HOST_ECHO_FILTER, index,
+			add_s16((int32_t)returned + peer), &cleaned), "short acquired filtering failed");
+		source_energy = energy_add(source_energy, returned);
+		residual_energy = energy_add(residual_energy, (int32_t)cleaned - peer);
+	}
+	CHECK(residual_energy * 5u < source_energy &&
+	      memcmp(coefficients, echo.coefficients, sizeof(coefficients)) == 0 &&
+	      pcm_host_echo_is_valid(&echo),
+	      "short acquisition lost cancellation or changed frozen response");
+	return true;
+}
+
 static bool test_long_phase2_delay_seed(void)
 {
 	static const struct {
@@ -704,55 +743,82 @@ static bool test_distributed_echo(bool acquire, bool late_peak)
 	return true;
 }
 
+static int16_t retained_echo_sample(size_t index, bool include_early_returns)
+{
+	/* Uneven delays distinguish a timing shift from choosing another
+	 * cluster in the same partial response. */
+	const int16_t gains[] = { -2200, 1200, 900, -1800, 1300, 1000, -1100, 1700 };
+	const unsigned delays[] = { 0, 11, 29, 51, 87, 121, 178, 249 };
+	int32_t returned = 0;
+
+	for (size_t tap = include_early_returns ? 0 : 3; tap < sizeof(gains) / sizeof(gains[0]); ++tap)
+		returned += scale_q15(transmit_sample(index - 2967 - delays[tap]), gains[tap]);
+	return add_s16(returned);
+}
+
+static bool train_retained_echo(struct pcm_host_echo *echo, size_t *next)
+{
+	const size_t history = PCM_ECHO_REFERENCE_HISTORY_SAMPLES;
+	size_t index = 0;
+
+	CHECK(pcm_host_echo_init(echo) == PCM_HOST_ECHO_OK &&
+	      pcm_host_echo_seed_phase2_delay(echo, 3067) == PCM_HOST_ECHO_OK,
+	      "retained echo owner did not initialize");
+	/* First qualify the later returns, then introduce an earlier cluster.
+	 * Stop when acquisition retains the original model. This exercises the
+	 * handoff without tying the fixture to a particular scan cadence. */
+	for (; index < history + 4000u; ++index) {
+		int16_t cleaned;
+		bool train = index >= history;
+		int16_t input = train ? retained_echo_sample(index, false) : 0;
+		CHECK(echo_step(echo, train ? PCM_HOST_ECHO_TRAIN : PCM_HOST_ECHO_BYPASS,
+			index, input, &cleaned) && cleaned == input, "initial retained training failed");
+	}
+	CHECK(echo->filter_ready && !echo->weak_margin, "initial return did not qualify strongly");
+	for (; index < history + 16000u; ++index) {
+		int16_t input = retained_echo_sample(index, true), cleaned;
+		CHECK(echo_step(echo, PCM_HOST_ECHO_TRAIN, index, input, &cleaned) &&
+		      cleaned == input && pcm_host_echo_is_ready(echo),
+		      "earlier return lost qualified cancellation");
+		if (echo->retained_delay_samples) {
+			CHECK(!echo->filter_ready && pcm_host_echo_has_weak_margin(echo),
+			      "replacement did not retain original quality state");
+			*next = index + 1u;
+			return true;
+		}
+	}
+	CHECK(false, "earlier return never acquired a replacement window");
+}
+
 static bool test_retained_cancellation(size_t training, bool unrelated)
 {
 	struct pcm_host_echo echo;
-	const size_t history = PCM_ECHO_REFERENCE_HISTORY_SAMPLES;
+	size_t start;
 	uint64_t source_energy = 0, residual_energy = 0;
-	bool ready = false, retained = false;
 	float saved[PCM_HOST_ECHO_FILTER_TAPS];
 
-	/* The seeded window covers enough later returns to qualify weakly,
-	 * but leaves the first returns outside. A new window needs more time
-	 * to qualify; short training must keep the original cancellation. */
-	CHECK(pcm_host_echo_init(&echo) == PCM_HOST_ECHO_OK &&
-	      pcm_host_echo_seed_phase2_delay(&echo, 3067) == PCM_HOST_ECHO_OK,
-	      "retained echo owner did not initialize");
-	for (size_t i = 0; i < history + training; ++i) {
-		int16_t clean, received = i >= history ? distributed_echo_sample(i, 8, false) : 0;
-
-		if (retained && unrelated)
-			received = generated_sample(i, UINT32_C(0xf4a8b223), 30000);
-		CHECK(echo_step(&echo, i >= history ? PCM_HOST_ECHO_TRAIN : PCM_HOST_ECHO_BYPASS,
-			      i, received, &clean), "retained training failed at %zu", i);
-		CHECK(clean == received && (!ready || pcm_host_echo_is_ready(&echo)),
-		      "training changed input or lost qualified cancellation at %zu", i);
-		ready |= pcm_host_echo_is_ready(&echo);
-		if (echo.retained_delay_samples) {
-			if (!retained)
-				memcpy(saved, echo.retained_coefficients, sizeof(saved));
-			CHECK(!memcmp(saved, echo.retained_coefficients, sizeof(saved)),
-			      "retained coefficients were refitted");
-			CHECK(!echo.filter_ready && pcm_host_echo_has_weak_margin(&echo),
-			      "unqualified replacement lost retained quality");
-			retained = true;
-		}
+	CHECK(train_retained_echo(&echo, &start), "retained setup failed");
+	memcpy(saved, echo.retained_coefficients, sizeof(saved));
+	for (size_t i = start; i < start + training; ++i) {
+		int16_t input = unrelated ? generated_sample(i, UINT32_C(0xf4a8b223), 30000) :
+			retained_echo_sample(i, true), cleaned;
+		CHECK(echo_step(&echo, PCM_HOST_ECHO_TRAIN, i, input, &cleaned) &&
+		      cleaned == input && pcm_host_echo_is_ready(&echo),
+		      "replacement training lost original cancellation");
+		if (echo.retained_delay_samples)
+			CHECK(!memcmp(saved, echo.retained_coefficients, sizeof(saved)) &&
+			      !echo.filter_ready && pcm_host_echo_has_weak_margin(&echo),
+			      "replacement changed retained response or quality state");
 	}
-	CHECK(retained && pcm_host_echo_is_ready(&echo),
-	      "fixture did not retain its partial model");
-	bool replaced = training >= 6500 && !unrelated;
-
+	bool replaced = training >= 2500 && !unrelated;
 	CHECK((echo.retained_delay_samples == 0) == replaced && echo.filter_ready == replaced,
-	      "replacement did not wait for stronger qualification");
-	for (size_t i = history + training; i < history + training + VERIFY_SAMPLES; ++i) {
-		int16_t returned = distributed_echo_sample(i, 8, false);
-		int16_t peer = remote_sample(i), clean;
-
+	      "replacement did not wait for stronger qualification: %zu", training);
+	for (size_t i = start + training; i < start + training + VERIFY_SAMPLES; ++i) {
+		int16_t returned = retained_echo_sample(i, true), peer = remote_sample(i), cleaned;
 		CHECK(echo_step(&echo, PCM_HOST_ECHO_FILTER, i,
-			      add_s16((int32_t)returned + peer), &clean),
-		      "retained filtering failed at %zu", i);
+			add_s16((int32_t)returned + peer), &cleaned), "retained filtering failed");
 		source_energy = energy_add(source_energy, returned);
-		residual_energy = energy_add(residual_energy, (int32_t)clean - peer);
+		residual_energy = energy_add(residual_energy, (int32_t)cleaned - peer);
 	}
 	CHECK(residual_energy * (replaced ? 20u : 2u) < source_energy,
 	      "retained cancellation failed: training=%zu unrelated=%u residual=%" PRIu64
@@ -779,40 +845,14 @@ static bool test_retained_cancellation(size_t training, bool unrelated)
 	return true;
 }
 
-static int16_t retained_timing_echo_sample(size_t index)
-{
-	/* Uneven return delays distinguish a true timing shift from choosing
-	 * a different cluster in the same partial multipath response. */
-	const int16_t gains[] = { -2200, 1200, 900, -1800, 1300, 1000, -1100, 1700 };
-	const unsigned delays[] = { 0, 11, 29, 51, 87, 121, 178, 249 };
-	int32_t returned = 0;
-
-	for (size_t tap = 0; tap < sizeof(gains) / sizeof(gains[0]); ++tap)
-		returned += scale_q15(transmit_sample(index - 2967 - delays[tap]), gains[tap]);
-	return add_s16(returned);
-}
-
 static bool test_retained_delay_tracking(int shift, bool unrelated)
 {
 	struct pcm_host_echo echo;
-	const size_t history = PCM_ECHO_REFERENCE_HISTORY_SAMPLES;
-	const size_t start = history + 4100u;
+	size_t start;
 	uint64_t source_energy = 0, residual_energy = 0;
 	float retained[PCM_HOST_ECHO_FILTER_TAPS], candidate[PCM_HOST_ECHO_FILTER_TAPS];
 
-	CHECK(pcm_host_echo_init(&echo) == PCM_HOST_ECHO_OK &&
-	      pcm_host_echo_seed_phase2_delay(&echo, 3067) == PCM_HOST_ECHO_OK,
-	      "retained timing owner did not initialize");
-	for (size_t index = 0; index < start; ++index) {
-		int16_t received = index >= history ? retained_timing_echo_sample(index) : 0;
-		int16_t cleaned;
-
-		CHECK(echo_step(&echo, index >= history ? PCM_HOST_ECHO_TRAIN :
-			PCM_HOST_ECHO_BYPASS, index, received, &cleaned),
-		      "retained timing training failed");
-	}
-	CHECK(echo.retained_delay_samples != 0 && !echo.filter_ready,
-	      "timing fixture did not retain its partial model");
+	CHECK(train_retained_echo(&echo, &start), "retained timing setup failed");
 	uint32_t original_delay = echo.retained_delay_samples;
 	uint32_t acquisition_delay = echo.window_delay_samples;
 	uint32_t trained = echo.train_samples;
@@ -821,8 +861,8 @@ static bool test_retained_delay_tracking(int shift, bool unrelated)
 	memcpy(candidate, echo.coefficients, sizeof(candidate));
 	for (size_t index = start; index < start + 48000u; ++index) {
 		int16_t peer = remote_sample(index) * 7;
-		int16_t returned = unrelated ? 0 : retained_timing_echo_sample(
-			(size_t)((int64_t)index - shift));
+		int16_t returned = unrelated ? 0 : retained_echo_sample(
+			(size_t)((int64_t)index - shift), true);
 		int16_t received = add_s16((int32_t)peer + returned), cleaned;
 
 		CHECK(echo_step(&echo, unrelated ? PCM_HOST_ECHO_FILTER_DATA :
@@ -1150,12 +1190,13 @@ int main(void)
 	    !test_runtime_model_confidence(false) ||
 	    !test_runtime_model_confidence(true) ||
 	    !test_phase2_delay_seed() ||
+	    !test_short_acquisition() ||
 	    !test_long_phase2_delay_seed() ||
 	    !test_weak_joint_margin() ||
 	    !test_distributed_echo(false, false) || !test_distributed_echo(true, false) ||
 	    !test_distributed_echo(true, true) ||
-	    !test_retained_cancellation(4100, false) || !test_retained_cancellation(5000, false) ||
-	    !test_retained_cancellation(6500, false) || !test_retained_cancellation(8000, false) ||
+	    !test_retained_cancellation(0, false) || !test_retained_cancellation(1000, false) ||
+	    !test_retained_cancellation(2500, false) || !test_retained_cancellation(4000, false) ||
 	    !test_retained_cancellation(12000, true) ||
 	    !test_retained_delay_tracking(80, false) ||
 	    !test_retained_delay_tracking(-80, false) ||

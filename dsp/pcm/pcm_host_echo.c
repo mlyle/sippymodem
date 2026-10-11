@@ -475,6 +475,16 @@ static bool scan_should_retime(
 		scan->best_window_delay_samples + PCM_HOST_ECHO_FILTER_PRE_SAMPLES +
 			echo->reference.scan_step < scan->current_window_delay_samples;
 
+	/* Let a correlated, converging filter complete its initial qualification
+	 * before a faster scan can replace it with an ambiguous return. */
+	if (!echo->filter_ready && !echo->delay_acquired &&
+	    echo->train_samples < PCM_HOST_ECHO_TRAIN_MIN_SAMPLES &&
+	    echo->prediction_cross_energy > 0 &&
+	    echo->error_energy <= echo->input_energy / 2u &&
+	    correlation_at_least(echo->prediction_energy, echo->input_energy,
+				 echo->prediction_cross_energy))
+		return false;
+
 	return (!echo->filter_ready || extend_weak_window) &&
 	       echo->train_peak >= PCM_HOST_ECHO_READY_MIN_PEAK &&
 	       delta > echo->reference.scan_step &&
@@ -739,9 +749,11 @@ static enum pcm_host_echo_result advance_predicted(
 			if (result != PCM_HOST_ECHO_OK)
 				return result;
 			reference_result = PCM_ECHO_REFERENCE_NOT_READY;
+			unsigned scan_interval = echo->filter_ready || echo->delay_acquired ?
+				PCM_HOST_ECHO_SCAN_INTERVAL_SAMPLES :
+				PCM_HOST_ECHO_ACQUIRE_SCAN_INTERVAL_SAMPLES;
 			if (training.available &&
-			    training.train_samples %
-				    PCM_HOST_ECHO_SCAN_INTERVAL_SAMPLES == 0)
+			    training.train_samples % scan_interval == 0)
 				reference_result =
 					pcm_echo_reference_scan_observe(
 						&echo->reference,
