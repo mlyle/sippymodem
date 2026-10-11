@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
+#include <g711.h>
 #include <v34_data_mapping.h>
 #include <v34_data_stream.h>
 #include <v34_mapping_parameters.h>
@@ -10,6 +11,7 @@
 #include "v34_stream_fixture.h"
 #include "v34_phase34_state_fixture.h"
 
+#include <math.h>
 #include <string.h>
 
 enum {
@@ -28,6 +30,9 @@ struct line_source {
 	struct v34_data_direction_parameters parameters;
 	struct v34_mp_parameters initial_mp;
 	struct v34_mp_parameters final_mp;
+	v34_mapping_frame_source payload;
+	void *payload_context;
+	unsigned int extra_training_symbols;
 	unsigned int completed_records;
 	bool data_started;
 };
@@ -169,7 +174,8 @@ static bool prepare_source(struct line_source *source)
 
 	if (training->stage == V34_TRAINING_TRANSMITTER_PHASE3 &&
 	    training->phase3.stage == V34_PHASE3_TRANSMITTER_TRN &&
-	    training->phase3.trn_symbols == PHASE3_TRN_SYMBOLS)
+	    training->phase3.trn_symbols ==
+		    PHASE3_TRN_SYMBOLS + source->extra_training_symbols)
 		return v34_training_transmitter_start_j(training) ==
 		       V34_TRAINING_TRANSMITTER_OK;
 	if (training->stage == V34_TRAINING_TRANSMITTER_PHASE3 &&
@@ -178,7 +184,8 @@ static bool prepare_source(struct line_source *source)
 		return v34_training_transmitter_finish_j(training) ==
 		       V34_TRAINING_TRANSMITTER_OK;
 	if (training->stage == V34_TRAINING_TRANSMITTER_PHASE4_TRN &&
-	    training->phase4_trn_symbols == PHASE4_TRN_SYMBOLS)
+	    training->phase4_trn_symbols ==
+		    PHASE4_TRN_SYMBOLS + source->extra_training_symbols)
 		return v34_training_transmitter_start_mp_type0(
 			       training, &source->initial_mp) ==
 		       V34_TRAINING_TRANSMITTER_OK;
@@ -210,7 +217,8 @@ static bool source_sample(struct line_source *source, int16_t *sample)
 			source->data_started = true;
 		}
 		return v34_data_stream_sample(
-			       &source->data, NULL, NULL, sample, &accepted) ==
+			       &source->data, source->payload, source->payload_context,
+			       sample, &accepted) ==
 		       V34_DATA_STREAM_OK;
 	}
 	return prepare_source(source) &&
@@ -974,6 +982,172 @@ static bool test_late_s_entry(void)
 	return true;
 }
 
+/* Ten seconds of idle, then reproducible varying bits. Indexing each bit
+ * independently lets the receive check detect both corruption and slips. */
+static uint8_t sustained_bit(uint32_t position)
+{
+	uint32_t value;
+
+	if (position < 33600u * 10u)
+		return 1;
+	value = position + UINT32_C(0x9e3779b9);
+	value ^= value >> 16;
+	value *= UINT32_C(0x7feb352d);
+	value ^= value >> 15;
+	value *= UINT32_C(0x846ca68b);
+	value ^= value >> 16;
+	return value & 1u;
+}
+
+static bool sustained_payload(
+	void *context, const struct v34_mapping_frame *frame,
+	uint8_t *bits, uint8_t *auxiliary)
+{
+	uint32_t *position = context;
+
+	for (unsigned bit = 0; bit < frame->primary_bits; ++bit)
+		bits[bit] = sustained_bit((*position)++);
+	if (auxiliary != NULL)
+		*auxiliary = 1;
+	return true;
+}
+
+/* Normalized 64-tap Blackman-windowed sinc. Resample the G.711 waveform
+ * continuously: duplicating/dropping whole samples would instead inject
+ * phase discontinuities unrelated to oscillator drift. */
+static double clock_sample(const int16_t *wave, unsigned count, double position)
+{
+	const double pi = 3.14159265358979323846;
+	int base = (int)floor(position);
+	double fraction = position - base;
+	double sum = 0, weight = 0;
+
+	if (fraction == 0)
+		return base >= 0 && (unsigned)base < count ? wave[base] : 0;
+	for (int tap = -31; tap <= 32; ++tap) {
+		double distance = tap - fraction;
+		double sinc = sin(pi * distance) / (pi * distance);
+		double window = 0.42 + 0.5 * cos(pi * distance / 32) +
+			0.08 * cos(2 * pi * distance / 32);
+		double coefficient = sinc * window;
+		int index = base + tap;
+
+		if (index >= 0 && (unsigned)index < count)
+			sum += coefficient * wave[index];
+		weight += coefficient;
+	}
+	return sum / weight;
+}
+
+static bool test_sustained_clock_case(bool alaw, int ppm, bool ramp)
+{
+	enum { WAVE_SAMPLES = SAMPLE_RATE * 35 };
+	int16_t wave[WAVE_SAMPLES];
+	struct v34_phase3_profile selected;
+	struct line_source source;
+	struct v34_phase34_receiver receiver;
+	uint32_t transmitted = 0, received = 0, errors = 0, b1_bits = 0;
+	bool online = false;
+
+	CHECK(profile(&selected, V34_ANSWERING_STATION,
+		      V34_SYMBOL_RATE_3429, 14, true, 0) &&
+	      source_init(&source, &selected, 14) &&
+	      v34_phase34_receiver_init(&receiver, &selected,
+		      V34_CONSTELLATION_16_POINT, TEST_INITIAL_RECEIVE_GAIN) ==
+		      V34_PHASE34_RECEIVER_OK, "clock fixture failed");
+	/* Give the equalizer time to converge before studying data tracking;
+	 * the existing training cases separately exercise shorter acquisition. */
+	source.extra_training_symbols = 3072;
+	source.payload = sustained_payload;
+	source.payload_context = &transmitted;
+	for (unsigned i = 0; i < WAVE_SAMPLES; ++i) {
+		int16_t sample;
+
+		CHECK(source_sample(&source, &sample), "clock source failed");
+		wave[i] = alaw ? g711_decode_pcma(g711_encode_pcma(sample)) :
+			g711_decode_pcmu(g711_encode_pcmu(sample));
+	}
+	for (unsigned i = 0; i + 64 < WAVE_SAMPLES; ++i) {
+		struct v34_phase34_receive_output output;
+		enum v34_phase34_receiver_result result;
+		double elapsed = (double)i / SAMPLE_RATE;
+		double integrated = elapsed;
+		double value;
+
+		/* V.34 section 5.2 permits +/-100 ppm symbol clocks. Also
+		 * exercise a slow change after acquisition, reaching that
+		 * offset over 20 seconds and then holding it. */
+		if (ramp) {
+			elapsed -= 5;
+			integrated = elapsed <= 0 ? 0 : elapsed < 20 ?
+				elapsed * elapsed / 40 : elapsed - 10;
+		}
+		value = clock_sample(wave, WAVE_SAMPLES,
+			i + integrated * SAMPLE_RATE * ppm / 1000000);
+		CHECK(value >= INT16_MIN && value <= INT16_MAX,
+		      "clock resampling clipped");
+		result = v34_phase34_receiver_sample(
+			&receiver, (int16_t)lrint(value), &output);
+		CHECK(result < V34_PHASE34_RECEIVER_FAILED,
+		      "clock receiver failed at sample %u: %u", i, result);
+		switch (result) {
+		case V34_PHASE34_RECEIVER_J_DETECTED:
+			CHECK(v34_phase34_receiver_rearm_phase4_s(&receiver) ==
+				      V34_PHASE34_RECEIVER_OK, "clock rearm failed");
+			break;
+		case V34_PHASE34_RECEIVER_RECORD_READY:
+			CHECK(v34_phase34_receiver_continue_mp(&receiver) ==
+				      V34_PHASE34_RECEIVER_OK, "clock MP failed");
+			break;
+		case V34_PHASE34_RECEIVER_E_COMPLETE: {
+			struct v34_q14_coefficient taps[V34_PRECODER_TAP_COUNT];
+
+			CHECK(v34_phase34_receiver_finish_feedback_training(
+				      &receiver, false, taps) == V34_PHASE34_RECEIVER_OK &&
+			      v34_phase34_receiver_start_data(&receiver,
+				      &source.preparation.mapping.normalizer,
+				      &source.preparation.mapping.schedule.geometry,
+				      false, taps, source.parameters.trellis_selection) ==
+				      V34_PHASE34_RECEIVER_OK, "clock data start failed");
+			break;
+		}
+		case V34_PHASE34_RECEIVER_B1_COMPLETE:
+			online = true;
+			/* fall through */
+		case V34_PHASE34_RECEIVER_B1_IN_PROGRESS:
+			CHECK(received_all_ones(&output.received), "clock B1 errors");
+			b1_bits += output.received.primary_bit_count;
+			break;
+		case V34_PHASE34_RECEIVER_MAPPING_FRAME_READY:
+			CHECK(online, "clock data preceded B1");
+			for (unsigned bit = 0; bit < output.received.primary_bit_count; ++bit) {
+				uint8_t expected = received < source.data.primary_delay_bits ? 1 :
+					sustained_bit(received - source.data.primary_delay_bits);
+
+				errors += output.received.primary_bits[bit] != expected;
+				received++;
+			}
+			break;
+		default:
+			break;
+		}
+	}
+	CHECK(online && b1_bits > 1000 && received > 1000000 && errors == 0,
+	      "%s %d ppm ramp=%d: online=%d B1=%u data errors=%u/%u",
+	      alaw ? "PCMA" : "PCMU", ppm, ramp, online, b1_bits, errors, received);
+	return true;
+}
+
+static bool test_sustained_clock(void)
+{
+	for (unsigned law = 0; law < 2; ++law)
+		for (int ppm = -100; ppm <= 100; ppm += 200)
+			for (unsigned ramp = 0; ramp < 2; ++ramp)
+				CHECK(test_sustained_clock_case(law != 0, ppm, ramp != 0),
+				      "sustained clock case failed");
+	return true;
+}
+
 static bool test_training(void)
 {
 	static const struct {
@@ -1044,6 +1218,7 @@ int main(void)
 		{ "tone-owned acquisition", test_tone_owned_acquisition },
 		{ "late S entry", test_late_s_entry },
 		{ "continuous Phase 3 through data", test_training },
+		{ "sustained data with clock drift", test_sustained_clock },
 	};
 	unsigned int failures = 0;
 

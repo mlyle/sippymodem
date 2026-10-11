@@ -376,6 +376,74 @@ static bool test_data_freeze(void)
 	return true;
 }
 
+static bool test_data_profile(void)
+{
+	struct v34_timing_control invalid = { 0 };
+	uint32_t random = UINT32_C(0x19253df1);
+
+	CHECK(v34_timing_control_use_data_profile(NULL) ==
+		      V34_TIMING_CONTROL_INVALID_STATE &&
+	      v34_timing_control_use_data_profile(&invalid) ==
+		      V34_TIMING_CONTROL_INVALID_STATE,
+	      "data profile accepted an absent timing owner");
+	for (unsigned variant = 0; variant < 4; ++variant) {
+		struct v34_timing_control control, saved, expected;
+
+		CHECK(v34_timing_control_init(&control, 8000, 24000, 7,
+			      variant < 2 ? V34_CALLING_STATION : V34_ANSWERING_STATION) ==
+			      V34_TIMING_CONTROL_OK &&
+		      v34_timing_control_begin_acquisition(&control, variant % 2 == 0) ==
+			      V34_TIMING_CONTROL_OK,
+		      "data profile fixture did not initialize");
+		for (unsigned step = 0; step < 10000; ++step) {
+			int16_t observations[V34_TIMING_CONTROL_OBSERVATIONS];
+			uint16_t increment;
+
+			generate_observations(&random, step, observations);
+			CHECK(v34_timing_control_process(&control, observations, &increment) ==
+				      V34_TIMING_CONTROL_OK, "acquisition failed");
+			if (control.timeout == -1)
+				break;
+			saved = control;
+			CHECK(v34_timing_control_use_data_profile(&control) ==
+				      V34_TIMING_CONTROL_OK &&
+			      memcmp(&control, &saved, sizeof(control)) == 0,
+			      "data profile interrupted timed acquisition");
+		}
+		CHECK(control.timeout == -1, "timing did not settle");
+		saved = control;
+		CHECK(v34_timing_control_set_data_frozen(&control, true) ==
+			      V34_TIMING_CONTROL_OK, "freeze failed");
+		expected = control;
+		CHECK(v34_timing_control_use_data_profile(&control) == V34_TIMING_CONTROL_OK &&
+		      memcmp(&control, &expected, sizeof(control)) == 0 &&
+		      v34_timing_control_set_data_frozen(&control, false) == V34_TIMING_CONTROL_OK &&
+		      memcmp(&control, &saved, sizeof(control)) == 0,
+		      "profile change resumed a frozen clock");
+		CHECK(v34_timing_control_set_feedback_held(&control, true) == V34_TIMING_CONTROL_OK,
+		      "feedback hold failed");
+		expected = control;
+		CHECK(v34_timing_control_use_data_profile(&control) == V34_TIMING_CONTROL_OK &&
+		      memcmp(&control, &expected, sizeof(control)) == 0 &&
+		      v34_timing_control_set_feedback_held(&control, false) == V34_TIMING_CONTROL_OK,
+		      "profile change disturbed a temporary feedback hold");
+		expected = saved;
+		expected.mode = V34_TIMING_CONTROL_HOLD;
+		expected.proportional_gain = 0x01f4;
+		expected.integral_gain = 0x0001;
+		CHECK(v34_timing_control_use_data_profile(&control) == V34_TIMING_CONTROL_OK &&
+		      memcmp(&control, &expected, sizeof(control)) == 0 &&
+		      v34_timing_control_use_data_profile(&control) == V34_TIMING_CONTROL_OK &&
+		      memcmp(&control, &expected, sizeof(control)) == 0,
+		      "data profile changed learned timing or was not idempotent");
+		CHECK(v34_timing_control_set_data_frozen(&control, true) == V34_TIMING_CONTROL_OK &&
+		      v34_timing_control_set_data_frozen(&control, false) == V34_TIMING_CONTROL_OK &&
+		      memcmp(&control, &expected, sizeof(control)) == 0,
+		      "freeze/resume lost the gentle data profile");
+	}
+	return true;
+}
+
 static bool test_feedback_hold(void)
 {
 	struct v34_timing_control invalid = { 0 };
@@ -508,6 +576,7 @@ int main(void)
 		{ "exact control", test_exact_control },
 		{ "ownership", test_ownership },
 		{ "data freeze", test_data_freeze },
+		{ "data profile", test_data_profile },
 		{ "feedback hold", test_feedback_hold },
 	};
 	unsigned int failures = 0;

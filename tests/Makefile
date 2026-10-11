@@ -1484,6 +1484,7 @@ V34_PHASE4_DECISION_RECEIVER_TEST_OBJECTS := \
 V34_PHASE34_RECEIVER_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_phase34_receiver
 V34_PHASE34_RECEIVER_TEST_OBJECTS := \
+	$(BUILD_DIR)/g711.o \
 	$(BUILD_DIR)/test_v34_phase34_receiver.o \
 	$(BUILD_DIR)/v34_phase34_receiver.o \
 	$(BUILD_DIR)/v34_line_receiver.o \

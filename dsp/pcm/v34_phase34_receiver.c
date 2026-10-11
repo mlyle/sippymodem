@@ -539,6 +539,13 @@ static enum v34_phase34_receiver_result receive_data(
 		    &receiver->line.equalizer, &decision) !=
 	    V34_ADAPTIVE_EQUALIZER_OK)
 		return fail(receiver, V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
+	/* Revisit at mapping boundaries so short B1 cannot interrupt a timed
+	 * acquisition schedule. No separate pending-profile state is needed. */
+	if ((result == V34_DATA_RECEIVE_B1_COMPLETE ||
+	     result == V34_DATA_RECEIVE_MAPPING_FRAME_READY) &&
+	    v34_receive_timing_use_data_profile(&receiver->line.timing) !=
+		    V34_RECEIVE_TIMING_OK)
+		return fail(receiver, V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
 	advance_tracking(receiver);
 	receiver->semantic.data = data;
 	if (result != V34_DATA_RECEIVE_OK) {

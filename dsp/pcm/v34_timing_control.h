@@ -73,6 +73,12 @@ bool v34_timing_control_is_valid(
 enum v34_timing_control_result v34_timing_control_begin_acquisition(
 	struct v34_timing_control *control, bool full_pull_in);
 
+/* After B1, use gentle tracking once acquisition has settled. Repeated calls
+ * leave active acquisition, frozen clocks and temporary feedback holds alone.
+ * Preserve the learned phase, frequency, fractional residue and history. */
+enum v34_timing_control_result v34_timing_control_use_data_profile(
+	struct v34_timing_control *control);
+
 /* Freeze or resume a settled data-mode clock without changing its learned
  * phase, increment, integrator, or tracking profile. Full calling-side
  * acquisition settles in MEDIUM_TRACK; other schedules reach HOLD.

@@ -277,6 +277,22 @@ static void set_mode_parameters(struct v34_timing_control *control)
 	}
 }
 
+enum v34_timing_control_result v34_timing_control_use_data_profile(
+	struct v34_timing_control *control)
+{
+	if (!v34_timing_control_is_valid(control))
+		return V34_TIMING_CONTROL_INVALID_STATE;
+	/* Full caller acquisition ends in MEDIUM_TRACK. Its stronger loop
+	 * can disturb a trained receive eye during sustained data. The other
+	 * acquisition schedules already reach this gentle tracking profile. */
+	if (!control->feedback_held && control->timeout == -1 &&
+	    control->mode == V34_TIMING_CONTROL_MEDIUM_TRACK) {
+		control->mode = V34_TIMING_CONTROL_HOLD;
+		set_mode_parameters(control);
+	}
+	return V34_TIMING_CONTROL_OK;
+}
+
 enum v34_timing_control_result v34_timing_control_set_data_frozen(
 	struct v34_timing_control *control, bool frozen)
 {

@@ -115,6 +115,16 @@ enum v34_receive_timing_result v34_receive_timing_freeze_gain(
 	return V34_RECEIVE_TIMING_OK;
 }
 
+enum v34_receive_timing_result v34_receive_timing_use_data_profile(
+	struct v34_receive_timing *timing)
+{
+	if (!v34_receive_timing_is_acquired(timing) ||
+	    v34_timing_control_use_data_profile(&timing->timing) !=
+		    V34_TIMING_CONTROL_OK)
+		return V34_RECEIVE_TIMING_INVALID_STATE;
+	return V34_RECEIVE_TIMING_OK;
+}
+
 enum v34_receive_timing_result v34_receive_timing_set_data_frozen(
 	struct v34_receive_timing *timing, bool frozen)
 {

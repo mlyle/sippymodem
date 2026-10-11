@@ -80,6 +80,11 @@ bool v34_receive_timing_matches_profile(
 enum v34_receive_timing_result v34_receive_timing_freeze_gain(
 	struct v34_receive_timing *timing);
 
+/* Select gentle data tracking without interrupting acquisition or changing
+ * the trained gain, carrier, or fractional sample clock. */
+enum v34_receive_timing_result v34_receive_timing_use_data_profile(
+	struct v34_receive_timing *timing);
+
 /* Freeze or resume a settled data-mode clock, preserving its tracking profile.
  * A timed acquisition or tracking schedule remains unchanged. */
 enum v34_receive_timing_result v34_receive_timing_set_data_frozen(
