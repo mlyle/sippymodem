@@ -8364,9 +8364,13 @@ static bool capture_v92_duplex_data(
 			if ((expected.trellis == V92_CPD_TRELLIS_32_STATE && expected.constellation[0].count == 32u) ||
 			    (offer->expected == 16u && expected.constellation[0].count == 27u))
 				expected.constellation[0].count = 64u;
-			/* The focused channel test pins the dense spacing. Here verify
+			/* The focused channel test pins constellation spacing. Here verify
 			 * that both peers actually exchanged that complete design. */
-			if (expected.trellis == V92_CPD_TRELLIS_16_STATE && expected.constellation[0].count == 64u)
+			if (expected.constellation[0].count <= 16u) {
+				CHECK(rx->decoder.mapping.cpd.constellation[0].count == 2u * expected.constellation[0].count,
+				      "V.92 channel mapping did not add equivalent precoder points");
+				expected.constellation[0] = rx->decoder.mapping.cpd.constellation[0];
+			} else if (expected.trellis == V92_CPD_TRELLIS_16_STATE && expected.constellation[0].count == 64u)
 				expected.constellation[0] = rx->decoder.mapping.cpd.constellation[0];
 			else if (expected.constellation[0].count == 32u || expected.constellation[0].count == 64u)
 				for (unsigned point = 0; point < expected.constellation[0].count; ++point)

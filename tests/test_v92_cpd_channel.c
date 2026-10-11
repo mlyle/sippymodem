@@ -197,7 +197,28 @@ static bool test_channel_model(enum g711_law law, double main, double post, doub
 	if ((original.trellis == V92_CPD_TRELLIS_32_STATE && original.constellation[0].count == 32u) ||
 	    (rate == 16u && original.constellation[0].count == 27u))
 		original.constellation[0].count = 64u;
-	if (original.trellis == V92_CPD_TRELLIS_16_STATE && original.constellation[0].count == 64u) {
+	if (original.constellation[0].count <= 16u) {
+		const struct v92_cpd_constellation *set = &cpd.constellation[0];
+
+		CHECK(set->count == 2u * original.constellation[0].count &&
+			set->positive_linear[0] == 256 && set->positive_linear[15] == 7936 &&
+			(set->count != 32u || set->positive_linear[31] == 16128),
+			"low-rate channel grid lost its spacing or outer representatives");
+		for (unsigned symbol = 0; symbol < V92_CPD_MODULUS_COUNT; ++symbol) {
+			unsigned step = cpd.modulus[symbol] * (symbol % 4u == 3u ? 2u : 1u);
+
+			/* Check every possible encoded residue, including negative indices. */
+			for (unsigned residue = 0; residue < step; ++residue) {
+				unsigned choices = 0;
+
+				for (int eta = -(int)set->count; eta < set->count; ++eta)
+					choices += (unsigned)((eta % (int)step + (int)step) % (int)step) == residue;
+				CHECK(choices >= 2u, "rate %u interval %u residue %u has no precoder choice",
+					rate, symbol, residue);
+			}
+		}
+		original.constellation[0] = *set;
+	} else if (original.trellis == V92_CPD_TRELLIS_16_STATE && original.constellation[0].count == 64u) {
 		/* Representative values of the generated sinh grid, independently
 		 * pinned without repeating the production formula. */
 		const struct v92_cpd_constellation *set = &cpd.constellation[0];

@@ -462,7 +462,15 @@ bool v92_cpd_channel_design(struct v92_cpd_parameters *parameters,
 	 * choices, not wire limits. Keep the 32-state family's spacing: its
 	 * redundant representatives have different error margins. Normalize the
 	 * actual filtered B1u below. */
-	if (next.trellis == V92_CPD_TRELLIS_16_STATE && next.constellation[0].count == 64u) {
+	if (next.constellation[0].count <= 16u) {
+		/* The compact direct grid leaves some fourth-symbol classes with
+		 * one point. Feedback needs a choice to reduce the precoder output.
+		 * Extend the same linear grid so every class has at least two
+		 * representatives (6.4.2), preserving rate, moduli and trellis. */
+		next.constellation[0].count *= 2u;
+		for (unsigned point = 0; point < next.constellation[0].count; ++point)
+			next.constellation[0].positive_linear[point] = (int16_t)((2u * point + 1u) * 256u);
+	} else if (next.trellis == V92_CPD_TRELLIS_16_STATE && next.constellation[0].count == 64u) {
 		for (unsigned point = 0; point < 64u; ++point)
 			next.constellation[0].positive_linear[point] = (int16_t)lround(
 				30000.0 * sinh(4.0 * (point + 0.5) / 63.5) / sinh(4.0));
