@@ -103,7 +103,8 @@ static bool next_tail_symbol(
 	       v90_pcm_symbol_make(symbol, law, TEST_UCODE, sign == 0u);
 }
 
-static bool check_line(enum g711_law law, bool impaired)
+static bool check_line(
+	enum g711_law law, bool impaired, unsigned damaged_descriptors)
 {
 	struct channel_bench_effect_spec effects[5] = {
 		{
@@ -146,6 +147,7 @@ static bool check_line(enum g711_law law, bool impaired)
 	bool parameters_seen = false;
 	bool repeat_seen = false;
 	bool e1u_seen = false;
+	unsigned rejected_records = 0u;
 
 	CHECK(channel_bench_init(
 		      &channel, impaired ? effects : &effects[4],
@@ -168,7 +170,7 @@ static bool check_line(enum g711_law law, bool impaired)
 				      V92_PCM_PHASE3_CPT_TX_OK,
 			      "CPt line transmitter did not start");
 		if (transmitter.stage == V92_PCM_PHASE3_CPT_TX_RECORD &&
-		    transmitter.completed_records == 1u &&
+		    transmitter.completed_records == 1u + damaged_descriptors &&
 		    transmitter.frame_bit_index == FINISH_BIT &&
 		    !transmitter.finish_requested)
 			CHECK(v92_pcm_phase3_cpt_tx_request_finish(
@@ -191,6 +193,14 @@ static bool check_line(enum g711_law law, bool impaired)
 			tail_symbols++;
 		}
 		sample = symbol.sample;
+		if (damaged_descriptors != 0u &&
+		    index >= V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS &&
+		    index < V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS + V92_PHASE3_MARKER_BITS)
+			sample = 0;
+		if (damaged_descriptors == 2u &&
+		    index == V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS +
+			V92_PCM_PHASE3_CPT_PREAMBLE_SYMBOLS + frame_bits + 80u)
+			sample = -sample;
 		CHECK(channel_bench_process(&channel, &sample, 1u) ==
 			      CHANNEL_BENCH_OK,
 		      "CPt line channel failed at %zu", index);
@@ -244,6 +254,10 @@ static bool check_line(enum g711_law law, bool impaired)
 			} else if (event.type == V92_PCM_PHASE3_CPT_RX_E1U) {
 				CHECK(repeat_seen, "CPt line E1u arrived early");
 				e1u_seen = true;
+			} else if (event.type == V92_PCM_PHASE3_CPT_RX_REJECTED) {
+				CHECK(damaged_descriptors == 2u && !parameters_seen,
+				      "CPt line rejected a valid record");
+				rejected_records++;
 			} else {
 				CHECK(false, "CPt line emitted event %u",
 				      (unsigned int)event.type);
@@ -251,11 +265,13 @@ static bool check_line(enum g711_law law, bool impaired)
 		}
 	}
 	CHECK(receiver_started && parameters_seen && repeat_seen && e1u_seen &&
+	      rejected_records == (damaged_descriptors == 2u) &&
 	      v92_pcm_phase3_cpt_line_rx_is_complete(&receiver) &&
 	      !v92_pcm_phase3_cpt_line_rx_has_failed(&receiver) &&
 	      v92_pcm_phase3_cpt_tx_is_complete(&transmitter) &&
 	      receiver.processed_samples ==
-		      V92_PCM_PHASE3_CPT_PREAMBLE_SYMBOLS + 2u * frame_bits +
+		      V92_PCM_PHASE3_CPT_PREAMBLE_SYMBOLS +
+		      (2u + damaged_descriptors) * frame_bits +
 			      V92_CPT_SYMBOLS_PER_FRAME &&
 	      receiver.input_advance_symbols ==
 		      V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY &&
@@ -271,7 +287,8 @@ static bool check_line(enum g711_law law, bool impaired)
 	      v92_pcm_phase3_cpt_line_rx_has_failed(&receiver),
 	      v92_pcm_phase3_cpt_tx_is_complete(&transmitter),
 	      (unsigned long long)receiver.processed_samples,
-	      V92_PCM_PHASE3_CPT_PREAMBLE_SYMBOLS + 2u * frame_bits +
+	      V92_PCM_PHASE3_CPT_PREAMBLE_SYMBOLS +
+		      (2u + damaged_descriptors) * frame_bits +
 		      V92_CPT_SYMBOLS_PER_FRAME,
 	      receiver.input_advance_symbols, receiver.line.polarity,
 	      impaired ? -1 : 1, (unsigned long long)tail_symbols,
@@ -444,17 +461,26 @@ static bool test_contracts(void)
 
 static bool test_exact_pcmu(void)
 {
-	return check_line(G711_LAW_PCMU, false);
+	return check_line(G711_LAW_PCMU, false, 0u);
 }
 
 static bool test_exact_pcma(void)
 {
-	return check_line(G711_LAW_PCMA, false);
+	return check_line(G711_LAW_PCMA, false, 0u);
 }
 
 static bool test_impaired_pcma(void)
 {
-	return check_line(G711_LAW_PCMA, true);
+	return check_line(G711_LAW_PCMA, true, 0u);
+}
+
+static bool test_lost_preamble(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned damaged = 1u; damaged <= 2u; ++damaged)
+			CHECK(check_line(law, false, damaged),
+			      "CPt did not recover after %u damaged descriptors", damaged);
+	return true;
 }
 
 int main(void)
@@ -466,6 +492,7 @@ int main(void)
 		{ "exact PCMU line", test_exact_pcmu },
 		{ "exact PCMA line", test_exact_pcma },
 		{ "impaired PCMA line", test_impaired_pcma },
+		{ "lost preamble, CRC and E1u", test_lost_preamble },
 		{ "contracts", test_contracts },
 	};
 	unsigned int failures = 0u;

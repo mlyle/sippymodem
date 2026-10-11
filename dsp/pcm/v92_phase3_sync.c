@@ -190,8 +190,8 @@ static bool descriptor_marker_matches(
 	return true;
 }
 
-static enum v92_phase3_sync_result receive_sign(
-	struct v92_phase3_sync *sync, uint8_t sign, bool descriptor)
+enum v92_phase3_sync_result v92_phase3_sync_receive(
+	struct v92_phase3_sync *sync, uint8_t sign)
 {
 	struct v92_phase3_sync next;
 	struct pcm_binary_sign after;
@@ -207,7 +207,7 @@ static enum v92_phase3_sync_result receive_sign(
 	if (!push_sign(&next, sign))
 		return V92_PHASE3_SYNC_INVALID_STATE;
 	if (marker_matches(&next, &after) ||
-	    (descriptor && descriptor_marker_matches(&next, &after))) {
+	    descriptor_marker_matches(&next, &after)) {
 		next.training = after;
 		next.window_start = after;
 		next.marker_count = 0u;
@@ -220,18 +220,6 @@ static enum v92_phase3_sync_result receive_sign(
 	*sync = next;
 	return next.stage == V92_PHASE3_SYNC_COMPLETE ?
 		       V92_PHASE3_SYNC_SYNCHRONIZED : V92_PHASE3_SYNC_OK;
-}
-
-enum v92_phase3_sync_result v92_phase3_sync_receive(
-	struct v92_phase3_sync *sync, uint8_t sign)
-{
-	return receive_sign(sync, sign, false);
-}
-
-enum v92_phase3_sync_result v92_phase3_sync_receive_descriptor(
-	struct v92_phase3_sync *sync, uint8_t sign)
-{
-	return receive_sign(sync, sign, true);
 }
 
 bool v92_phase3_sync_handoff(

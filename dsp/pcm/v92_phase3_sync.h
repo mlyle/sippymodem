@@ -32,9 +32,11 @@ enum v92_phase3_sync_result {
 };
 
 /* Search polarity-normalized hard signs for the 24-one preamble shared by
- * Ja and CPt and the following 17-one frame sync plus zero start bit. Search
+ * Ja and CPt and the following 17-one frame sync plus zero start bit. Also
+ * recover repeated descriptors after the one-time preamble was lost. Search
  * starts while TRN1u is still present. Accepted preamble errors are repaired,
- * so the handoff owns the exact coding state at the first payload bit. */
+ * so the handoff owns the exact coding state at the first payload bit. The
+ * descriptor owner must validate its CRC before accepting any parameters. */
 struct v92_phase3_sync {
 	struct pcm_binary_sign training;
 	struct pcm_binary_sign window_start;
@@ -58,13 +60,6 @@ enum v92_phase3_sync_result v92_phase3_sync_train(
 enum v92_phase3_sync_result v92_phase3_sync_begin(
 	struct v92_phase3_sync *sync);
 enum v92_phase3_sync_result v92_phase3_sync_receive(
-	struct v92_phase3_sync *sync, uint8_t sign);
-
-/* Also acquire a repeated descriptor after its one-time preamble was lost.
- * Require the 17-one frame sync and zero start bit; the descriptor owner must
- * validate its CRC before accepting parameters. The strong initial marker
- * keeps its preamble repair and takes precedence over this recovery path. */
-enum v92_phase3_sync_result v92_phase3_sync_receive_descriptor(
 	struct v92_phase3_sync *sync, uint8_t sign);
 
 /* Copy the corrected coding state at the first unconsumed payload bit.

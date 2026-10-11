@@ -245,10 +245,6 @@ static bool test_contracts(void)
 		      V92_PHASE3_SYNC_INVALID_ARGUMENT &&
 	      v92_phase3_sync_receive(NULL, 0u) ==
 		      V92_PHASE3_SYNC_INVALID_ARGUMENT &&
-	      v92_phase3_sync_receive_descriptor(NULL, 0u) ==
-		      V92_PHASE3_SYNC_INVALID_ARGUMENT &&
-	      v92_phase3_sync_receive_descriptor(&sync, 2u) ==
-		      V92_PHASE3_SYNC_INVALID_ARGUMENT &&
 	      v92_phase3_sync_receive(&sync, 2u) ==
 		      V92_PHASE3_SYNC_INVALID_ARGUMENT &&
 	      sync_states_equal(&sync, &before),
@@ -268,8 +264,6 @@ static bool test_contracts(void)
 	before = sync;
 	CHECK(!v92_phase3_sync_is_valid(&sync) &&
 	      v92_phase3_sync_receive(&sync, 0u) == V92_PHASE3_SYNC_INVALID_STATE &&
-	      v92_phase3_sync_receive_descriptor(&sync, 0u) ==
-		      V92_PHASE3_SYNC_INVALID_STATE &&
 	      sync_states_equal(&sync, &before),
 	      "corrupt Phase 3 synchronization state was not rejected");
 	CHECK(v92_phase3_sync_init(&sync) == V92_PHASE3_SYNC_OK,

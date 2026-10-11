@@ -98,7 +98,7 @@ static enum v92_pcm_phase3_ja_line_rx_result receive_search_sign(
 	struct v92_pcm_phase3_ja_line_rx *receiver, uint8_t sign)
 {
 	struct v92_ja_decoder decoder;
-	enum v92_phase3_sync_result result = v92_phase3_sync_receive_descriptor(
+	enum v92_phase3_sync_result result = v92_phase3_sync_receive(
 		&receiver->sequence.sync, sign);
 
 	if (result == V92_PHASE3_SYNC_OK)
