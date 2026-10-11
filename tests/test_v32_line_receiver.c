@@ -166,6 +166,53 @@ static bool test_sample_rounding(void)
 	return true;
 }
 
+static bool test_quiet_acquisition(void)
+{
+	struct v32_line_receiver receiver;
+	double samples[V32_LINE_RECEIVER_EPOCH_SAMPLES];
+	int16_t recovered[V32_SYMBOL_TIMING_MAX_OUTPUT_SAMPLES];
+	uint32_t random = UINT32_C(0x2468ace1);
+	size_t total = 0;
+
+	CHECK(v32_line_receiver_init(&receiver) == V32_LINE_RECEIVER_OK,
+	      "quiet acquisition fixture did not initialize");
+	/* Background noise before peer S must not train the downstream
+	 * equalizer, even during the first gain-control epoch. */
+	for (unsigned int block = 0; block < 80; ++block) {
+		size_t produced;
+
+		for (size_t index = 0; index < ARRAY_LENGTH(samples); ++index)
+			samples[index] = (int32_t)(fixture_random(&random) % 81u) - 40;
+		CHECK(v32_line_receiver_process(
+			      &receiver, samples, ARRAY_LENGTH(samples), false,
+			      recovered, ARRAY_LENGTH(recovered), &produced) ==
+			      V32_LINE_RECEIVER_OK && produced == 0,
+		      "quiet acquisition published noise in epoch %u", block);
+	}
+	/* A weak real signal must still open the timing lane after the
+	 * quiet interval; use the same 600 Hz signal as the echo-line test. */
+	for (unsigned int block = 0; block < 80; ++block) {
+		size_t produced;
+
+		for (size_t index = 0; index < ARRAY_LENGTH(samples); ++index) {
+			size_t sample = block * ARRAY_LENGTH(samples) + index;
+
+			samples[index] = 300.0 * sin(2.0 * acos(-1.0) * 600.0 *
+				(double)sample / 7200.0);
+		}
+		CHECK(v32_line_receiver_process(
+			      &receiver, samples, ARRAY_LENGTH(samples), false,
+			      recovered, ARRAY_LENGTH(recovered), &produced) ==
+			      V32_LINE_RECEIVER_OK,
+		      "quiet acquisition rejected the following real signal");
+		total += produced;
+	}
+	CHECK(total > 2000 && receiver.gain.signal_present &&
+	      receiver.timing.signal_detected,
+	      "quiet acquisition failed to acquire a weak real signal");
+	return true;
+}
+
 static bool test_adaptation_and_gain_boundaries(void)
 {
 	double samples[V32_LINE_RECEIVER_EPOCH_SAMPLES];
@@ -486,6 +533,7 @@ int main(void)
 {
 	if (!test_epochs_fragmentation_and_reentrancy() ||
 	    !test_sample_rounding() ||
+	    !test_quiet_acquisition() ||
 	    !test_adaptation_and_gain_boundaries() ||
 	    !test_line_contracts() || !test_composed_echo_line_owner())
 		return 1;
