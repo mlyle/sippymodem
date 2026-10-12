@@ -201,6 +201,8 @@ static bool check_cps_requests(enum g711_law law, unsigned int final_case)
 	/* CPs masks are unused; retain active masks only for the invalid-data case. */
 	if (final_case != 2u)
 		memset(cps.transmit_constellations, 0, sizeof(cps.transmit_constellations));
+	/* The invalid-data case advertises its rate so mapping admission, rather
+	 * than the disabled-rate filter, must reject it. */
 	CHECK(v90_cp_parameters_are_valid(&cps) &&
 	      v90_pcm_mapping_init_transmit(&mapping, &cps, law) != V90_PCM_MAPPING_OK &&
 	      line_profile(V34_SYMBOL_RATE_3000, 6u, &profile) &&
@@ -209,7 +211,9 @@ static bool check_cps_requests(enum g711_law law, unsigned int final_case)
 	      v90_phase4_cp_line_rx_init(&cp, &phase3, V34_CONSTELLATION_4_POINT) ==
 		      V90_PHASE4_CP_LINE_RX_OK &&
 	      v90_pcm_mapping_init_transmit(&mapping, &training, law) == V90_PCM_MAPPING_OK &&
-	      v90_upstream_rx_init(&rx, &cp, &mapping, &mp, 1u) == V90_UPSTREAM_RX_OK,
+	      v90_upstream_rx_init(&rx, &cp, &mapping, &mp,
+		      final_case == 2u ? V90_JD_RATE_CAPABILITY_MASK : 1u) ==
+		      V90_UPSTREAM_RX_OK,
 	      "CPs admission fixture failed");
 	if (final_case == 1u)
 		data.selected_rate_index = 0u;
@@ -333,7 +337,8 @@ static bool entry_payload_received(
 static bool run_line(
 	enum g711_law law, enum v34_constellation_size constellation,
 	enum v34_symbol_rate symbol_rate, uint8_t rate_2400_bps_units,
-	bool acknowledged_first, bool different_codec, bool damage_prime)
+	bool acknowledged_first, bool different_codec, bool damage_prime,
+	bool unusable_unadvertised)
 {
 	enum g711_law codec_law = different_codec ?
 		(law == G711_LAW_PCMU ? G711_LAW_PCMA : G711_LAW_PCMU) : law;
@@ -383,7 +388,18 @@ static bool run_line(
 	prime.acknowledges_peer = true;
 	expected_data = data;
 	expected_data.acknowledges_peer = false;
-	unadvertised.selected_rate_index = 2;
+	/* Exercise usable and impossible mappings at a disabled rate. Neither
+	 * CRC-valid record may become a data selection or fail negotiation. */
+	unadvertised.selected_rate_index = unusable_unadvertised ?
+		V90_CP_RATE_INDEX_MAX : 2u;
+	if (unusable_unadvertised) {
+		struct v90_pcm_mapping unusable;
+
+		CHECK(v90_cp_parameters_are_valid(&unadvertised) &&
+		      v90_pcm_mapping_init_transmit(&unusable, &unadvertised, law) ==
+			      V90_PCM_MAPPING_INVALID_PARAMETERS,
+		      "unadvertised CP must have an unusable data mapping");
+	}
 	/* A peer can finish training with a different, still CPt-marked
 	 * constellation before sending its actual data CP. Keep the original
 	 * training map and wait for an explicit data selection. */
@@ -781,20 +797,20 @@ int main(void)
 					    paths[path].law,
 					    paths[path].constellation,
 					    profiles[profile].symbol_rate,
-					    rate, false, false, false))
+					    rate, false, false, false, false))
 					return 1;
 	fprintf(stderr, "[       OK ] generated upstream entry\n");
 	fprintf(stderr, "[ RUN      ] CP-prime-first upstream entry\n");
 	if (!run_line(
 		    G711_LAW_PCMA, V34_CONSTELLATION_16_POINT,
-		    V34_SYMBOL_RATE_3429, 14, true, false, false))
+		    V34_SYMBOL_RATE_3429, 14, true, false, false, false))
 		return 1;
 	fprintf(stderr, "[       OK ] CP-prime-first upstream entry\n");
 	fprintf(stderr, "[ RUN      ] differing peer codec through CP/E/B1\n");
 	if (!run_line(G711_LAW_PCMU, V34_CONSTELLATION_4_POINT,
-		      V34_SYMBOL_RATE_3000, 6, false, true, false) ||
+		      V34_SYMBOL_RATE_3000, 6, false, true, false, false) ||
 	    !run_line(G711_LAW_PCMA, V34_CONSTELLATION_16_POINT,
-		      V34_SYMBOL_RATE_3429, 14, true, true, false))
+		      V34_SYMBOL_RATE_3429, 14, true, true, false, false))
 		return 1;
 	fprintf(stderr, "[       OK ] differing peer codec through CP/E/B1\n");
 	fprintf(stderr, "[ RUN      ] E after damaged CP prime\n");
@@ -802,9 +818,17 @@ int main(void)
 		for (unsigned int mode = 0u; mode < 2u; ++mode)
 			if (!run_line(law, mode == 0u ? V34_CONSTELLATION_4_POINT :
 				      V34_CONSTELLATION_16_POINT,
-				      V34_SYMBOL_RATE_3000, 6, false, false, true))
+				      V34_SYMBOL_RATE_3000, 6, false, false, true, false))
 				return 1;
 	fprintf(stderr, "[       OK ] E after damaged CP prime\n");
+	fprintf(stderr, "[ RUN      ] disabled CP with unusable data mapping\n");
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned int mode = 0u; mode < 2u; ++mode)
+			if (!run_line(law, mode == 0u ? V34_CONSTELLATION_4_POINT :
+				      V34_CONSTELLATION_16_POINT,
+				      V34_SYMBOL_RATE_3000, 6, false, false, false, true))
+				return 1;
+	fprintf(stderr, "[       OK ] disabled CP with unusable data mapping\n");
 	fprintf(stderr, "[ RUN      ] zero-rate CP/CPt cleardown\n");
 	for (size_t path = 0; path < ARRAY_LENGTH(paths); ++path)
 		if (!check_cleardown(paths[path].law, paths[path].constellation, V90_CP_DATA) ||

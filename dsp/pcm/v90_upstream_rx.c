@@ -308,14 +308,15 @@ static enum v90_upstream_rx_result accept_cp_record(
 	}
 	if (receiver->stage == V90_UPSTREAM_RX_STAGE_CPS)
 		return V90_UPSTREAM_RX_SEQUENCE_MISMATCH;
+	/* Jd advertises the digital transmitter's enabled downstream rates.
+	 * Consume an unadvertised CP without acknowledging or retaining it, then
+	 * keep the continuous receiver searching for an admissible repetition.
+	 * Its unused mapping must not fail an otherwise viable negotiation. */
+	if (!downstream_rate_is_enabled(receiver, &parameters))
+		return continue_cp(receiver);
 	result = validate_data_parameters(receiver, &parameters);
 	if (result != V90_UPSTREAM_RX_OK)
 		return result;
-	/* Jd advertises the digital transmitter's enabled downstream rates.
-	 * Consume an unadvertised CP without acknowledging or retaining it, then
-	 * keep the continuous receiver searching for an admissible repetition. */
-	if (!downstream_rate_is_enabled(receiver, &parameters))
-		return continue_cp(receiver);
 	if (!receiver->data_cp_received) {
 		bool reconditioned =
 			receiver->stage == V90_UPSTREAM_RX_STAGE_RECONDITION;
