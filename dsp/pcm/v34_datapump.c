@@ -671,7 +671,8 @@ static int process_v34(
 			datapump, &transmit[index], &observation, &received);
 
 		if (result != V34_CALL_OK) {
-			modem_note_disconnect(dp->modem, true,
+			modem_note_disconnect(dp->modem, result != V34_CALL_PEER_CLEARDOWN,
+				result == V34_CALL_PEER_CLEARDOWN ? "peer requested V.34 cleardown" :
 				result == V34_CALL_NO_COMMON_RATE ? "no common V.34 rate" :
 				result == V34_CALL_SEQUENCE_MISMATCH ? "V.34 sequence mismatch" :
 				result == V34_CALL_NUMERIC_FAILURE ? "V.34 numeric failure" : "V.34 protocol failed");

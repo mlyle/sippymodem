@@ -1250,6 +1250,25 @@ static bool test_mp_acknowledgment_boundaries(void)
 	      snapshot->transmit_mp_started &&
 	      v34_phase4_exchange_needs_data_preparation(snapshot),
 	      "preparation snapshot cannot model an acknowledged first record");
+	for (unsigned int zero_rate = 0u; zero_rate < 2u; ++zero_rate) {
+		struct v34_data_startup_preparation preparation = { 0 };
+		struct v34_data_startup_preparation saved = preparation;
+		struct v34_mp_parameters *peer;
+
+		pending = *snapshot;
+		peer = pending.peer_mp.type == V34_MP_RECORD_TYPE0 ?
+			&pending.peer_mp.parameters.type0 : &pending.peer_mp.parameters.type1.common;
+		peer->maximum_call_to_answer_rate_2400_bps_units = zero_rate ? 0u : 14u;
+		peer->maximum_answer_to_call_rate_2400_bps_units = zero_rate ? 0u : 14u;
+		peer->data_rate_capability_mask = zero_rate ? 0u : 0x2000u;
+		CHECK(v34_phase4_exchange_is_valid(&pending) &&
+		      v34_phase4_exchange_begin_data_preparation(&pending, &preparation) ==
+			(zero_rate ? V34_PHASE4_EXCHANGE_PEER_CLEARDOWN :
+			 V34_PHASE4_EXCHANGE_NO_COMMON_RATE) &&
+		      pending.failed && v34_phase4_exchange_is_valid(&pending) &&
+		      memcmp(&preparation, &saved, sizeof(preparation)) == 0,
+		      "peer cleardown and incompatible rate offers were not distinguished");
+	}
 	pending = *snapshot;
 	pending.peer_mp_prime_received = true;
 	CHECK(v34_phase4_exchange_is_valid(&pending),

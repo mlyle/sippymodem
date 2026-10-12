@@ -702,6 +702,15 @@ static enum v34_phase4_exchange_result latch_failure(
 static enum v34_phase4_exchange_result select_data_mode(
 	const struct v34_phase4_exchange *exchange, struct v34_data_mode *mode)
 {
+	const struct v34_mp_parameters *peer =
+		v34_mp_record_common_parameters(&exchange->peer_mp);
+
+	/* A validated zero-rate MP requests cleardown (V.34 11.7); it is
+	 * distinct from two ordinary offers with no compatible data rate. */
+	if (peer->maximum_call_to_answer_rate_2400_bps_units == 0u &&
+	    peer->maximum_answer_to_call_rate_2400_bps_units == 0u)
+		return V34_PHASE4_EXCHANGE_PEER_CLEARDOWN;
+
 	enum v34_data_mode_result result = exchange->rate_renegotiation ?
 		v34_data_mode_select_update(local_role(exchange), &exchange->transmit_mp,
 			&exchange->peer_mp, &exchange->data_startup.mode, mode) :
@@ -958,6 +967,7 @@ static bool terminal_result(enum v34_phase4_exchange_result result)
 {
 	return result == V34_PHASE4_EXCHANGE_FAILED ||
 	       result == V34_PHASE4_EXCHANGE_NO_COMMON_RATE ||
+	       result == V34_PHASE4_EXCHANGE_PEER_CLEARDOWN ||
 	       result == V34_PHASE4_EXCHANGE_OUT_OF_RANGE ||
 	       result == V34_PHASE4_EXCHANGE_SEQUENCE_MISMATCH ||
 	       result == V34_PHASE4_EXCHANGE_NUMERIC_FAILURE;
