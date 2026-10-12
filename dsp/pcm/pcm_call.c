@@ -2166,8 +2166,17 @@ static enum pcm_call_result advance_phase2(
 		/* Missing L1 after a detected reversal can leave the peers in
 		 * different ranging epochs. Reuse full retrain to synchronize
 		 * them; the datapump's training deadline still bounds recovery. */
-		if (event->failure == PCM_PHASE2_FAILURE_REMOTE_PROBE_NOT_FOUND)
+		if (event->failure == PCM_PHASE2_FAILURE_REMOTE_PROBE_NOT_FOUND) {
+			/* Without the initial L1, the preceding reversal may have
+			 * belonged to INFO0 recovery rather than ranging. Do not let
+			 * that unconfirmed delay override the next full measurement.
+			 * A missing reciprocal probe retains the completed first turn. */
+			if (call->state.phase2.stage == PCM_PHASE2_INITIAL_PROBE) {
+				call->round_trip_delay_samples = 0u;
+				call->round_trip_delay_stored = false;
+			}
 			return begin_retrain(call, false);
+		}
 		/* V.90 9.2.1.2.5 restarts training when final Tone A misses
 		 * the reciprocal-probe deadline. Keep the INFO0/RTD agreement
 		 * and use the shared full-retrain path, not terminal hangup. */

@@ -11751,8 +11751,10 @@ static bool check_missing_probe_boundary(
 			      clock + 1u == missing_probe_limit &&
 			      waiting.stage == PCM_CALL_RETRAIN_SILENCE && waiting.retrain_active &&
 			      waiting.protocol == protocol && waiting.local_role == role &&
-			      waiting.round_trip_delay_stored && waiting.peer_info0_stored &&
-			      waiting.round_trip_delay_samples == receiver->round_trip_delay_samples &&
+			      waiting.peer_info0_stored &&
+			      waiting.round_trip_delay_stored == (role == V90_ANALOG_MODEM) &&
+			      waiting.round_trip_delay_samples == (role == V90_ANALOG_MODEM ?
+				      receiver->round_trip_delay_samples : 0u) &&
 			      memcmp(&waiting.peer_info0, &receiver->peer_info0,
 				     sizeof(waiting.peer_info0)) == 0,
 			      "missing-probe restart lost the call agreement or failure observation");
@@ -11773,6 +11775,9 @@ static bool check_missing_probe_boundary(
 	}
 	CHECK(waiting.stage == PCM_CALL_PHASE2 && waiting.retrain_active &&
 	      !waiting.failed, "missing-probe retrain did not return to Phase 2");
+	CHECK(waiting.state.phase2.state.ranging.control.prior_round_trip_delay_samples ==
+	      (role == V90_ANALOG_MODEM ? receiver->round_trip_delay_samples : 0u),
+	      "missing initial probe pinned an unconfirmed ranging estimate");
 	return true;
 }
 
