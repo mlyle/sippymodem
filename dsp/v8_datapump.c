@@ -688,21 +688,35 @@ static int observe_v34_info0(
 
 static int observe_legacy_answer(struct v8_datapump *datapump, const int16_t *receive, int count)
 {
-	bool exchanging = datapump->caller &&
+	bool exchanging = datapump->legacy == NULL && datapump->caller &&
 		datapump->handshake.calling.state == V8_CALLING_EXCHANGE_MENUS;
+	bool settling = false;
 
-	/* ANS alone can precede another family's answer mark. Once that mark
-	 * selects a family, its datapump owns the changing training waveform.
-	 * An unanswered CM can also end in a legacy answer mark. During CM,
-	 * admit only the distinct 2225/2250-Hz marks: 2100 Hz remains ANSam,
-	 * and 1650 Hz can be part of the expected V.8 joint menu. */
-	if ((datapump->legacy != NULL &&
-	     (v8_datapump_modulation(datapump->legacy->id) != V8_MODULATION_V32 ||
-	      v32_datapump_has_peer(datapump->legacy))) ||
-	    !datapump->caller || !MODEM_AUTOMODE(datapump->dp.modem) ||
-	    (datapump->handshake.calling.state != V8_CALLING_WAIT_ANSWER_SIGNAL &&
-	     !exchanging))
+	if (!datapump->caller || !MODEM_AUTOMODE(datapump->dp.modem))
 		return DPSTAT_OK;
+	if (datapump->legacy != NULL) {
+		enum v8_modulation family = v8_datapump_modulation(datapump->legacy->id);
+
+		/* ANS may precede another family's mark. A V.22 mark also
+		 * need not lead to an exchange: a scanning peer can move on.
+		 * Keep confirmed training, and give V.22 time to obtain S1 or
+		 * scrambled marks before listening for a different family. */
+		if (family == V8_MODULATION_V32) {
+			if (v32_datapump_has_peer(datapump->legacy))
+				return DPSTAT_OK;
+		} else if (family != V8_MODULATION_V22 ||
+			   v22_datapump_has_peer(datapump->legacy)) {
+			return DPSTAT_OK;
+		}
+		settling = family == V8_MODULATION_V22 &&
+			datapump->legacy_samples < 3 * MODEM_RATE;
+	} else if (datapump->handshake.calling.state != V8_CALLING_WAIT_ANSWER_SIGNAL &&
+		   !exchanging) {
+		return DPSTAT_OK;
+	}
+	/* During active CM, admit only distinct 2225/2250-Hz marks:
+	 * 2100 Hz remains ANSam and 1650 Hz can be the V.8 joint menu.
+	 * A legacy child stops CM even though the stored V.8 state remains. */
 	for (int sample = 0; sample < count; ++sample) {
 		for (unsigned tone = exchanging ? 1 : 0;
 		     tone < (exchanging ? 3 : LEGACY_TONE_COUNT); ++tone) {
@@ -731,6 +745,10 @@ static int observe_legacy_answer(struct v8_datapump *datapump, const int16_t *re
 			datapump->answer_tone_samples = datapump->answer_tones[0].tone_present ?
 				datapump->answer_tone_samples + 1 : 0;
 	}
+	/* Clock the detectors during the grace period so a retained mark
+	 * cannot cause a stale family selection when the period ends. */
+	if (settling)
+		return DPSTAT_OK;
 	unsigned tone = LEGACY_TONE_COUNT;
 	if (!exchanging && datapump->answer_tones[3].tone_present)
 		tone = 3;
