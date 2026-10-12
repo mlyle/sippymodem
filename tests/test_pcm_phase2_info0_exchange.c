@@ -376,6 +376,7 @@ static bool test_dropped_initial_info0(void)
 enum following_tone_case {
 	TEST_TONE_DURING_ACK,
 	TEST_TONE_AFTER_ACK,
+	TEST_TONE_EARLY_REPEAT,
 	TEST_TONE_INVALIDATED_BY_REPEAT,
 	TEST_TONE_REPEAT_AFTER_COMPLETION,
 	TEST_TONE_REPEAT_NEEDS_ACK,
@@ -409,6 +410,7 @@ static bool check_following_tone(
 	size_t recovery_accepts = 0;
 	size_t recovery_rejects = 0;
 	bool tone_during_ack = false;
+	bool tone_before_queued_ack = false;
 	bool tone_retained = false;
 	bool tone_invalidated = false;
 	bool fresh_tone_after_repeat = false;
@@ -577,6 +579,9 @@ static bool check_following_tone(
 		}
 		if (!retain_tone_before && exchange.fresh_peer_tone_seen) {
 			tone_retained = true;
+			tone_before_queued_ack |=
+				exchange.state == PCM_PHASE2_INFO0_ACK_REPEAT &&
+				exchange.transport.transmit_phase != PHASE2_INFO0_TONE;
 			tone_during_ack |=
 				exchange.transport.transmit_phase != PHASE2_INFO0_TONE;
 			if (tone_invalidated)
@@ -589,8 +594,12 @@ static bool check_following_tone(
 		if (repeated &&
 		    !pcm_phase2_info0_exchange_complete(&exchange))
 			reopened_after_completion = true;
-		if (test_case == TEST_TONE_INVALIDATED_BY_REPEAT &&
-		    !repeated && exchange.fresh_peer_tone_seen &&
+		/* Start one repeat before or after the first following tone qualifies.
+		 * The shorter INFO0a can finish during our current INFO0d ACK. */
+		if ((test_case == TEST_TONE_INVALIDATED_BY_REPEAT ||
+		     test_case == TEST_TONE_EARLY_REPEAT) &&
+		    !repeated && (exchange.fresh_peer_tone_seen ||
+				  test_case == TEST_TONE_EARLY_REPEAT) &&
 		    acknowledge_starts == 1 &&
 		    peer.transmit_phase == PHASE2_INFO0_TONE) {
 			CHECK(phase2_info0_exchange_restart_info(
@@ -689,11 +698,20 @@ static bool check_following_tone(
 			      V34_PHASE2_TONE_ACQUIRE_SAMPLES - 1u,
 		      "post-ACK tone timing changed for %d/%d: %zu",
 		      mode, codec, completed - final_wait);
+	else if (test_case == TEST_TONE_EARLY_REPEAT)
+		CHECK(received_records == 1 && repeated && tone_during_ack &&
+		      exchange.fresh_peer_tone_seen &&
+		      acknowledge_starts == (digital_local ? 1u : 2u) &&
+		      (!digital_local || tone_before_queued_ack),
+		      "following tone did not cancel queued repeat for %d/%d: ACK %zu tone %d fresh %d",
+		      mode, codec, acknowledge_starts, tone_during_ack,
+		      exchange.fresh_peer_tone_seen);
 	else if (test_case == TEST_TONE_INVALIDATED_BY_REPEAT)
 		CHECK(received_records == 1 && completed != SIZE_MAX &&
 		      exchange.state == PCM_PHASE2_INFO0_COMPLETE &&
 		      exchange.fresh_peer_tone_seen && repeated &&
-		      acknowledge_starts == 2 &&
+		      acknowledge_starts == (digital_local ? 1u : 2u) &&
+		      (!digital_local || tone_before_queued_ack) &&
 		      tone_during_ack && tone_invalidated &&
 		      fresh_tone_after_repeat &&
 		      (digital_local || overlapping_repeat),
@@ -705,7 +723,8 @@ static bool check_following_tone(
 		 test_case == TEST_TONE_REPEAT_NEEDS_ACK)
 		CHECK(received_records == 2 && completed != SIZE_MAX &&
 		      reopened_after_completion && !early_acknowledgment &&
-		      acknowledge_starts == (repeated_without_tone ? 2u : 1u) &&
+		      acknowledge_starts ==
+			      (repeated_without_tone && !tone_before_queued_ack ? 2u : 1u) &&
 		      repeated_without_tone == (test_case == TEST_TONE_REPEAT_NEEDS_ACK) &&
 		      recovery_starts == 1 &&
 		      recovery_accepts == 1 && recovery_rejects == 0 &&
@@ -748,7 +767,7 @@ static bool test_info0_following_tone_orderings(void)
 			     test_case <= TEST_TONE_REJECT_AFTER_COMPLETION;
 			     ++test_case) {
 				unsigned int roles = test_case >=
-					TEST_TONE_INVALIDATED_BY_REPEAT ? 2u : 1u;
+					TEST_TONE_EARLY_REPEAT ? 2u : 1u;
 
 				for (unsigned int role = 0; role < roles; ++role)
 					CHECK(check_following_tone(

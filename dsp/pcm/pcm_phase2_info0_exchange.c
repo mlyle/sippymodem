@@ -549,6 +549,12 @@ static bool advance_recovery(
 		}
 		return true;
 	case PCM_PHASE2_INFO0_ACK_REPEAT:
+		/* The following tone supersedes a repeat queued by an older record.
+		 * Recovery finishes the current INFO0 before entering ranging. */
+		if (exchange->fresh_peer_tone_seen) {
+			complete_exchange(exchange, event);
+			return true;
+		}
 		if (!restart_local_info0(exchange, true))
 			return false;
 		exchange->state = PCM_PHASE2_INFO0_ACKNOWLEDGING;
