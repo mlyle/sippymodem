@@ -39,6 +39,14 @@ struct modem_host {
 	uint64_t remote_partial_window_ns;
 };
 
+static bool use_remote_clock(const struct modem_host *host)
+{
+	/* Early media can suppress ringback silence. Keep call-progress timers and
+	 * the receive cursor on local time until the SIP call is established. */
+	return host->remote_clock &&
+		sip_session_call_state(host->session) == SIP_CALL_CONNECTED;
+}
+
 static void synchronize_audio(struct modem_host *host)
 {
 	bool media_configured = sip_session_is_open(host->session) &&
@@ -320,7 +328,7 @@ enum modem_host_result modem_host_step(
 			sip_session_finish_receive_tail(host->session);
 			synchronize_audio(host);
 		}
-	} else if (host->remote_clock) {
+	} else if (use_remote_clock(host)) {
 		if (audio_scheduler_is_active(&host->audio_scheduler)) {
 			if (host->remote_time_valid && now_ns < host->remote_now_ns)
 				now_ns = host->remote_now_ns;
@@ -419,7 +427,7 @@ uint64_t modem_host_wait_ns(
 	if (sip_session_media_cleanup_pending(host->session) ||
 	    sip_session_receive_draining(host->session))
 		return 0;
-	if (host->remote_clock) {
+	if (use_remote_clock(host)) {
 		if (host->remote_time_valid && now_ns < host->remote_now_ns)
 			now_ns = host->remote_now_ns;
 		if (host->remote_starting) {

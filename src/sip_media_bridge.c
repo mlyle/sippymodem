@@ -50,12 +50,22 @@ DEFINE_FORWARDER(forward_trace, trace,
 		 struct sip_trace_record)
 DEFINE_FORWARDER(forward_registration, registration_changed,
 		 struct sip_registration_event)
-DEFINE_FORWARDER(deliver_call, call_changed,
-		 struct sip_call_event)
 DEFINE_FORWARDER(forward_media_changed, media_changed,
 		 struct sip_media_event)
 
 #undef DEFINE_FORWARDER
+
+static void deliver_call(void *context, const struct sip_call_event *event)
+{
+	struct sip_media_bridge *bridge = context;
+
+	bridge->call_state = event->state;
+	if (bridge->destination.call_changed == NULL)
+		return;
+	bridge->callback_depth++;
+	bridge->destination.call_changed(bridge->destination.context, event);
+	bridge->callback_depth--;
+}
 
 /* The mailbox has no borrowed callback strings and is touched only by the
  * SIP owner. The worker continues using the established binding unchanged. */

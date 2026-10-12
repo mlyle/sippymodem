@@ -74,6 +74,7 @@ bool sip_session_receive_draining(const struct sip_session *session);
 size_t sip_session_receive_tail_frames(const struct sip_session *session);
 void sip_session_finish_receive_tail(struct sip_session *session);
 bool sip_session_is_open(const struct sip_session *session);
+enum sip_call_state sip_session_call_state(const struct sip_session *session);
 bool sip_session_media_is_configured(
 	const struct sip_session *session);
 

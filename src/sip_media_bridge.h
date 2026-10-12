@@ -23,6 +23,8 @@ struct sip_media_bridge {
 	struct sip_signaling_callbacks destination;
 	struct sip_signaling_callbacks source;
 	enum sip_rtp_result last_binding;
+	/* Delivered on the owner, unchanged while a worker owns the media. */
+	enum sip_call_state call_state;
 	uint64_t binding_failures;
 	uint64_t trace_time_ns;
 	struct rtp_endpoint_stats trace_endpoint;

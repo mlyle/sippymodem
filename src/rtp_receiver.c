@@ -333,6 +333,12 @@ bool rtp_receiver_play(
 			receiver->stats.samples_concealed++;
 		}
 	}
+	/* Local playout can cross silence-suppressed early media. Already played
+	 * time must not become fresh remote-clock credit when packets resume. */
+	if (timestamp_is_before(receiver->clock_timestamp, receiver->play_timestamp)) {
+		receiver->clock_timestamp = receiver->play_timestamp;
+		receiver->clock_pending_samples = 0;
+	}
 
 	if (report != NULL)
 		*report = played;

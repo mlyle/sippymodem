@@ -98,6 +98,7 @@ enum sip_session_result sip_session_open(
 	if (session->opened)
 		return SIP_SESSION_ALREADY_OPEN;
 	finish_deferred_signaling(session);
+	session->bridge.call_state = SIP_CALL_IDLE;
 	local.sin_port = htons((uint16_t)session->config.media.rtp_listen_port);
 	session->last_rtp_result =
 		rtp_runtime_open(session->rtp, &local);
@@ -324,6 +325,12 @@ void sip_session_finish_receive_tail(struct sip_session *session)
 	/* Retiring a transport drains its socket; defer that to the owner. */
 	if (sip_session_receive_draining(session) && !session->media_batch)
 		sip_media_bridge_clear_media(&session->bridge);
+}
+
+enum sip_call_state sip_session_call_state(const struct sip_session *session)
+{
+	return session != NULL && session->opened ?
+		session->bridge.call_state : SIP_CALL_IDLE;
 }
 
 bool sip_session_is_open(const struct sip_session *session)

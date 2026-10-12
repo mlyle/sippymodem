@@ -306,6 +306,39 @@ static bool test_remote_clock_tracks_timestamp_extent(void)
 	return true;
 }
 
+static bool test_local_playout_consumes_clock_time(void)
+{
+	const uint32_t starts[] = { 100, UINT32_MAX - 5u };
+	const uint8_t payload[] = { 1, 2, 3, 4 };
+	struct rtp_jitter_slot slots[TEST_SLOT_COUNT];
+	struct rtp_receiver receiver;
+	uint8_t output[sizeof(payload)];
+
+	for (size_t index = 0; index < ARRAY_LENGTH(starts); ++index) {
+		struct rtp_packet_view packet = packet_view(1, 1, starts[index], payload, 2);
+		CHECK(init_receiver(&receiver, slots, 0) &&
+		      rtp_receiver_push(&receiver, &packet) == RTP_RECEIVE_ACCEPTED &&
+		      rtp_receiver_take_clock_frames(&receiver, sizeof(output)) == 0,
+		      "initial partial clock failed");
+		for (unsigned int frame = 0; frame < 4; ++frame)
+			CHECK(rtp_receiver_play(&receiver, output, NULL, sizeof(output), NULL),
+			      "local playout across quiet media failed");
+		CHECK(rtp_receiver_take_clock_frames(&receiver, 1) == 0,
+		      "already-played partial audio retained clock credit");
+		/* Sequence remains consecutive through silence suppression, including
+		 * a timestamp wrap. Only the resumed packet is new clock time. */
+		packet = packet_view(1, 2, starts[index] + 4 * sizeof(output),
+			payload, sizeof(payload));
+		CHECK(rtp_receiver_push(&receiver, &packet) == RTP_RECEIVE_ACCEPTED &&
+		      rtp_receiver_take_clock_frames(&receiver, sizeof(output)) == 1 &&
+		      rtp_receiver_take_clock_frames(&receiver, sizeof(output)) == 0 &&
+		      rtp_receiver_play(&receiver, output, NULL, sizeof(output), NULL) &&
+		      memcmp(output, payload, sizeof(output)) == 0,
+		      "resumed media replayed silence as remote credit or lost its payload");
+	}
+	return true;
+}
+
 static bool test_remote_clock_preserves_time_through_repeated_loss(void)
 {
 	enum { FRAME_SAMPLES = 80, FRAME_COUNT = 240, WINDOW_SAMPLES = 640 };
@@ -454,6 +487,7 @@ int main(void)
 		{ "validation and idle", test_validation_and_idle },
 		{ "remote timestamp clock",
 		  test_remote_clock_tracks_timestamp_extent },
+		{ "local playout clock handoff", test_local_playout_consumes_clock_time },
 		{ "remote clock repeated loss",
 		  test_remote_clock_preserves_time_through_repeated_loss },
 		{ "playout gap cursor", test_playout_gap_cursor },

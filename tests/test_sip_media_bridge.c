@@ -396,6 +396,7 @@ struct pending_capture {
 	uint64_t generation;
 	enum sip_call_state state;
 	bool copied;
+	bool state_current;
 };
 static void pending_call(void *context, const struct sip_call_event *event)
 {
@@ -403,6 +404,7 @@ static void pending_call(void *context, const struct sip_call_event *event)
 	capture->order[capture->count++] = 'C';
 	capture->generation = event->generation;
 	capture->state = event->state;
+	capture->state_current &= capture->bridge->call_state == event->state;
 	if (event->called_number != NULL)
 		capture->copied = strcmp(event->called_number, "123") == 0 &&
 			strcmp(event->caller_number, "456") == 0 &&
@@ -422,11 +424,14 @@ static bool test_worker_owned_media(void)
 	struct bridge_fixture fixture;
 	struct callback_capture unused = { 0 };
 	CHECK(open_fixture(&fixture, &unused), "fixture failed");
-	struct pending_capture capture = { .bridge = &fixture.bridge };
+	struct pending_capture capture = { .bridge = &fixture.bridge, .state_current = true };
 	fixture.bridge.destination = (struct sip_signaling_callbacks){
 		.context = &capture, .call_changed = pending_call, .media_changed = pending_media,
 	};
 	const struct sip_signaling_callbacks *source = sip_media_bridge_callbacks(&fixture.bridge);
+	struct sip_call_event early = { .state = SIP_CALL_EARLY };
+	source->call_changed(source->context, &early);
+	capture.count = 0;
 	char called[] = "123", caller[] = "456", reason[] = "reason", identity[] = "peer";
 	char address[] = "127.0.0.1";
 	struct sip_call_event call = { .generation = 42, .state = SIP_CALL_CONNECTED,
@@ -446,10 +451,12 @@ static bool test_worker_owned_media(void)
 	call.generation = 99;
 	media.remote_port = 1;
 	CHECK(capture.count == 0 && !fixture.endpoint.remote_configured &&
-	      !source->admit(source->context), "worker-owned media was changed or admitted a call");
+	      fixture.bridge.call_state == SIP_CALL_EARLY &&
+	      !source->admit(source->context), "worker-owned media or call state changed or admitted a call");
 	CHECK(sip_media_bridge_finish_deferred(&fixture.bridge) && capture.count == 3 &&
 	      memcmp(capture.order, "CMC", 3) == 0 && capture.copied &&
-	      capture.generation == 42 && capture.state == SIP_CALL_IDLE && remote_is(&fixture, 42000),
+	      capture.generation == 42 && capture.state == SIP_CALL_IDLE && capture.state_current &&
+	      fixture.bridge.call_state == SIP_CALL_IDLE && remote_is(&fixture, 42000),
 	      "deferred events lost order, metadata or borrowed strings");
 	capture.count = 0;
 	call = (struct sip_call_event){ .state = SIP_CALL_IDLE };
@@ -470,6 +477,10 @@ static bool test_worker_owned_media(void)
 	sip_media_bridge_begin_deferred(&fixture.bridge);
 	CHECK(sip_media_bridge_finish_deferred(&fixture.bridge) &&
 	      !sip_media_bridge_finish_deferred(&fixture.bridge), "mailbox did not reset");
+	fixture.bridge.destination.call_changed = NULL;
+	source->call_changed(source->context, &early);
+	CHECK(fixture.bridge.call_state == SIP_CALL_EARLY,
+	      "call state depended on a destination callback");
 	rtp_endpoint_close(&fixture.endpoint);
 	return true;
 }

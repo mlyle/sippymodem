@@ -25,6 +25,8 @@ struct fake_signaling_control {
 	bool emit_invalid_media_on_step;
 	bool emit_inactive_on_step;
 	bool defer_hangup_media;
+	bool early_media;
+	bool connect_on_step;
 	uint16_t remote_port;
 };
 
@@ -90,12 +92,23 @@ static void emit_media(
 	struct sip_signaling *signaling,
 	enum sip_media_state state, bool compatible);
 
+static void emit_call(struct sip_signaling *signaling, enum sip_call_state state)
+{
+	const struct sip_call_event event = { .state = state };
+	if (signaling->callbacks.call_changed != NULL)
+		signaling->callbacks.call_changed(signaling->callbacks.context, &event);
+}
+
 enum sip_signaling_result sip_signaling_step(
 	struct sip_signaling *signaling, unsigned int timeout_ms)
 {
 	(void)timeout_ms;
 	if (signaling == NULL || !signaling->opened)
 		return SIP_SIGNALING_NOT_OPEN;
+	if (fake.connect_on_step) {
+		fake.connect_on_step = false;
+		emit_call(signaling, SIP_CALL_CONNECTED);
+	}
 	if (fake.emit_invalid_media_on_step) {
 		fake.emit_invalid_media_on_step = false;
 		emit_media(signaling, SIP_MEDIA_CONFIGURED, false);
@@ -148,6 +161,7 @@ enum sip_signaling_result sip_signaling_dial(
 	if (!signaling->opened)
 		return SIP_SIGNALING_NOT_OPEN;
 	fake.dials++;
+	emit_call(signaling, fake.early_media ? SIP_CALL_EARLY : SIP_CALL_CONNECTED);
 	emit_media(signaling, SIP_MEDIA_CONFIGURED, true);
 	return SIP_SIGNALING_OK;
 }
@@ -304,7 +318,8 @@ static enum modem_core_result capture_clock_audio(
 	return MODEM_CORE_OK;
 }
 
-static bool clock_fixture_open(struct clock_fixture *fixture, unsigned int jitter_ms)
+static bool clock_fixture_open_call(struct clock_fixture *fixture,
+	unsigned int jitter_ms, bool early_media)
 {
 	struct app_config config;
 	struct sockaddr_in peer = {
@@ -317,6 +332,7 @@ static bool clock_fixture_open(struct clock_fixture *fixture, unsigned int jitte
 	};
 
 	memset(&fake, 0, sizeof(fake));
+	fake.early_media = early_media;
 	memset(fixture, 0, sizeof(*fixture));
 	fixture->peer = socket(AF_INET, SOCK_DGRAM, 0);
 	CHECK(fixture->peer >= 0 && bind(fixture->peer,
@@ -336,6 +352,11 @@ static bool clock_fixture_open(struct clock_fixture *fixture, unsigned int jitte
 	      (struct sockaddr *)&fixture->address, &size) == 0,
 	      "clock fixture host failed");
 	return true;
+}
+
+static bool clock_fixture_open(struct clock_fixture *fixture, unsigned int jitter_ms)
+{
+	return clock_fixture_open_call(fixture, jitter_ms, false);
 }
 
 static bool clock_fixture_send_part(struct clock_fixture *fixture,
@@ -366,6 +387,52 @@ static void clock_fixture_close(struct clock_fixture *fixture)
 {
 	modem_host_destroy(fixture->host);
 	close(fixture->peer);
+}
+
+static bool test_early_media_clock_handoff(void)
+{
+	struct clock_fixture fixture;
+	size_t frames, datagrams;
+	const uint64_t start = UINT64_C(1000000000);
+	const uint64_t interval = UINT64_C(20000000);
+
+	CHECK(clock_fixture_open_call(&fixture, 0, true) &&
+	      clock_fixture_send(&fixture, 0), "early-media fixture failed");
+	CHECK(modem_host_step(fixture.host, start, &datagrams, &frames) == MODEM_HOST_OK &&
+	      datagrams == 1 && frames == 1 &&
+	      fixture.capture.received_count == CLOCK_FRAME_SAMPLES,
+	      "early media did not play its first packet");
+	/* Ringback can suppress RTP through silence. Timers and the receive cursor
+	 * must keep advancing without an established-call watchdog or extra credit. */
+	for (unsigned int frame = 1; frame < 400; ++frame) {
+		uint64_t now = start + frame * interval;
+		CHECK(modem_host_wait_ns(fixture.host, now) == 0 &&
+		      modem_host_step(fixture.host, now, &datagrams, &frames) == MODEM_HOST_OK &&
+		      datagrams == 0 && frames == 1 && fake.hangups == 0,
+		      "quiet early media stopped timers, accumulated work or hung up");
+	}
+	CHECK(clock_fixture_send(&fixture, 400), "resumed early media send failed");
+	CHECK(modem_host_step(fixture.host, start + 400 * interval,
+	      &datagrams, &frames) == MODEM_HOST_OK && datagrams == 1 && frames == 1 &&
+	      fixture.capture.received_count == 2 * CLOCK_FRAME_SAMPLES,
+	      "resumed early media was rejected after the quiet timestamp gap");
+	fake.connect_on_step = true;
+	CHECK(clock_fixture_send(&fixture, 401), "connected media send failed");
+	CHECK(modem_host_step(fixture.host, start + 401 * interval,
+	      &datagrams, &frames) == MODEM_HOST_OK && datagrams == 1 && frames == 1 &&
+	      fixture.capture.calls == 402 &&
+	      fixture.capture.received_count == 3 * CLOCK_FRAME_SAMPLES,
+	      "clock handoff replayed already-consumed silence or lost the answer packet");
+	CHECK(modem_host_step(fixture.host, start + 402 * interval,
+	      &datagrams, &frames) == MODEM_HOST_IDLE && frames == 0 &&
+	      modem_host_wait_ns(fixture.host, start + 402 * interval) > 0,
+	      "established media advanced without remote credit or spun");
+	CHECK(modem_host_step(fixture.host, start + 401 * interval +
+	      MODEM_HOST_REMOTE_MEDIA_TIMEOUT_NS, &datagrams, &frames) ==
+	      MODEM_HOST_MEDIA_TIMEOUT && fake.hangups == 1,
+	      "early-media clocking disabled the established-stream watchdog");
+	clock_fixture_close(&fixture);
+	return true;
 }
 
 static bool test_remote_gap_wait_has_no_fixed_prefill(void)
@@ -1074,6 +1141,7 @@ int main(void)
 		{ "recorded frame clock",
 		  test_steps_recorded_media_on_the_frame_clock },
 		{ "remote RTP clock", test_remote_media_clocks_elapsed_time },
+		{ "early-media clock handoff", test_early_media_clock_handoff },
 		{ "remote startup return path", test_remote_startup_qualifies_a_return_path },
 		{ "remote gap without prefill", test_remote_gap_wait_has_no_fixed_prefill },
 		{ "remote gap timeout", test_remote_gap_timeout_is_once_per_hole },
