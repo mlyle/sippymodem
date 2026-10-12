@@ -88,6 +88,7 @@ if mode == "callback-udp":
     udp.setblocking(False)
 raw_transport = False
 retrained = False
+pings = 0
 
 def connect_response():
     if "pcm-retrain" in mode:
@@ -179,11 +180,17 @@ while True:
             os.write(master, b"\r\nOK\r\n")
         elif b"PING" in buffer:
             buffer.clear()
+            pings += 1
+            if mode == "second-ping-fails" and pings == 2:
+                continue
             if not (retrained and mode == "pcm-retrain-no-data"):
-                if mode.endswith("peer-input-errors"):
+                if mode.endswith("peer-input-errors") and pings == 1:
                     os.write(master, b"\r\nERROR: unknown command; send HELP for a list\r\n"
                              b"ADVISORY: 4 invalid commands since the last accepted commands\r\n")
                 os.write(master, pong)
+                if mode == "paired-ping" and pings == 1:
+                    time.sleep(0.05)
+                    os.write(master, b"tail during raw idle\r\n")
         elif b"RETRAIN" in buffer:
             buffer.clear()
             if mode in ("slow-retrain-start", "slow-retrain-total"):
@@ -267,6 +274,31 @@ while True:
 
 
 class LiveCampaignTests(unittest.TestCase):
+    def test_raw_post_retrain_requires_both_pings_and_retains_idle_payload(self) -> None:
+        for mode, verified in (("paired-ping", True), ("second-ping-fails", False)):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                script = root / "fake.py"
+                script.write_text(textwrap.dedent(FAKE_MODEM), encoding="utf-8")
+                scheduled = ScheduledAttempt(CASES_BY_NAME["v21-300-raw-originator"], 1)
+                artifacts = self.artifacts(root, scheduled)
+                config = replace(self.config(root, script, mode), online_timeout_seconds=0.2)
+                with mock.patch("tools.live_terminal.time.sleep"):
+                    result = run_physical_attempt(
+                        config,
+                        FrozenBinary(root, Path(sys.executable), "a" * 40, "b" * 64, False),
+                        scheduled, 1, artifacts, True,
+                    )
+                self.assertTrue(result.initial_data)
+                self.assertTrue(result.remote_retrain)
+                self.assertTrue(result.retrain_connected)
+                self.assertEqual(result.retrain_data, verified, result.detail)
+                tx = (artifacts.legs["modem"] / "terminal-tx.bin").read_bytes()
+                self.assertEqual(tx.count(b"PING"), 2)
+                if verified:
+                    rx = (artifacts.legs["modem"] / "terminal-rx.bin").read_bytes()
+                    self.assertIn(b"tail during raw idle\r\n", rx)
+
     def test_peer_input_quality_belongs_to_the_primary_call(self) -> None:
         for mode, role, unknown, burst in (
             ("peer-input-errors", "originator", 1, 4),
@@ -694,7 +726,7 @@ class LiveCampaignTests(unittest.TestCase):
             transmitted = (artifacts.legs["modem"] / "terminal-tx.bin").read_bytes()
             self.assertNotIn(b"0123456789", transmitted)
             self.assertEqual(transmitted.count(b"RETRAIN"), 1)
-            self.assertEqual(transmitted.count(b"PING"), 1)
+            self.assertEqual(transmitted.count(b"PING"), 2)
             self.assertIn(b"ATH0\n", artifacts.daemon_log("modem").read_bytes())
             stages = [call.args[0] for call in set_stage.call_args_list]
             self.assertIn("waiting for remote retrain END", stages)

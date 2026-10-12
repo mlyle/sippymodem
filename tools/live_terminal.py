@@ -471,6 +471,10 @@ class ModemTerminal:
             timeout_seconds,
         )
 
+    def receive_online(self, timeout_seconds: float) -> bytes:
+        """Keep collecting bounded payload during an otherwise idle interval."""
+        return self._exchange_online(b"", None, timeout_seconds)[1]
+
     def _exchange_online(
         self,
         send: bytes,
