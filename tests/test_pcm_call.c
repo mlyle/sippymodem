@@ -7045,7 +7045,8 @@ static bool v92_b1_bit_validation(const struct pcm_call *boundary, unsigned faul
 				      (tx.mapping.cpd.data_rate_number == 1u ?
 					(result == PCM_CALL_UNUSABLE_SELECTION && damaged.failed) :
 					(result == PCM_CALL_OK && !damaged.failed && !damaged.b1_deadline_armed &&
-					 damaged.v92_upstream_retry_ceiling == tx.mapping.cpd.data_rate_number - 1u)) &&
+					 damaged.v92_upstream_retry_ceiling >= 1u &&
+					 damaged.v92_upstream_retry_ceiling < tx.mapping.cpd.data_rate_number)) &&
 				      memcmp(&damaged.v92_digital_phase4_configuration,
 					&boundary->v92_digital_phase4_configuration,
 					sizeof(damaged.v92_digital_phase4_configuration)) == 0,
@@ -7488,6 +7489,7 @@ struct v92_upstream_offer {
 	/* Zero keeps the received sample unchanged; scaling follows G.711. */
 	double receive_gain;
 	unsigned expected_retrains;
+	const uint8_t *startup_rates; /* One expected rate per B1 epoch. */
 	/* Noise precedes the final codec; zero frames keeps ordinary coverage. */
 	unsigned noise_peak, payload_frames;
 	/* Zero keeps the fixed downstream fixture; otherwise use native profiles. */
@@ -8189,8 +8191,12 @@ static bool capture_v92_duplex_data(
 					uint8_t rate = call->state.data_path.v92_digital.upstream.decoder.mapping.cpd.data_rate_number;
 
 					CHECK(previous_rate == 0u ? call->v92_upstream_retry_ceiling == 0u :
-						      (rate < previous_rate && call->v92_upstream_retry_ceiling == previous_rate - 1u),
+						      (rate <= call->v92_upstream_retry_ceiling && call->v92_upstream_retry_ceiling < previous_rate),
 					      "B1 recovery repeated or increased the failed upstream rate");
+					if (offer && offer->startup_rates)
+						CHECK(retrains[1] <= offer->expected_retrains &&
+						      rate == offer->startup_rates[retrains[1]],
+						      "unexpected startup rate %u after %u retries", rate, retrains[1]);
 					previous_rate = rate;
 					digital_boundary = clock;
 					const struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
@@ -8261,7 +8267,7 @@ static bool capture_v92_duplex_data(
 				if (offer != NULL && offer->expected == 0u && result == PCM_CALL_UNUSABLE_SELECTION) {
 					CHECK(role == 1u && retrains[0] == offer->expected_retrains &&
 					      retrains[1] == offer->expected_retrains && call->failed &&
-					      call->v92_upstream_retry_ceiling == previous_rate - 1u &&
+					      call->v92_upstream_retry_ceiling < previous_rate &&
 					      call->v92_digital_phase4_configuration.direct_maximum_data_rate_number ==
 						      offer->local_maximum && pcm_call_is_valid(call) && !pcm_call_is_online(call),
 					      "V.92 exhausted peer rates without bounded recovery");
@@ -8305,6 +8311,7 @@ static bool capture_v92_duplex_data(
 	      analog_boundary < digital_boundary && deadline_checked[0] && deadline_checked[1] &&
 	      pcm_call_is_online(&analog) && pcm_call_is_online(&digital) &&
 	      !analog.b1_deadline_armed && !digital.b1_deadline_armed &&
+	      digital.v92_upstream_retry_step == 0u &&
 	      retrain_preserves_protocol(&analog, law) && retrain_preserves_protocol(&digital, law) &&
 	      v92_data_error_contracts(&analog) && v92_data_error_contracts(&digital),
 	      "law %u delay %zu V.92 did not complete ordered duplex data (%u/%u)",
@@ -10874,6 +10881,17 @@ static bool test_v92_b1_rate_recovery(void)
 			CHECK(capture_v92_duplex_data(law, 3u, false, &offer, NULL, retries, NULL),
 			      "V.92 B1 recovery law %u retries %u failed", law, retries);
 		}
+		/* Dense offers must reach useful lower rates in fewer complete
+		 * retrains. Also reach the minimum without wrapping or skipping it. */
+		static const uint8_t rates[] = { 19u, 18u, 16u, 12u, 4u, 1u };
+		unsigned retries = law == G711_LAW_PCMU ? 3u : 5u;
+		const struct v92_upstream_offer dense = {
+			.peer_mask = (UINT32_C(1) << 19u) - 1u,
+			.local_maximum = 19u, .expected = rates[retries],
+			.expected_retrains = retries, .startup_rates = rates,
+		};
+		CHECK(capture_v92_duplex_data(law, 3u, false, &dense, NULL, retries, NULL),
+		      "V.92 consecutive B1 failures did not accelerate bounded recovery");
 		const struct v92_upstream_offer exhausted = {
 			.peer_mask = UINT32_C(1) << 18u, .local_maximum = 19u, .expected = 0u, .postcursor = 0.10, .receive_gain = 0.75, .expected_retrains = 1u,
 		};
@@ -12054,9 +12072,18 @@ static bool test_v92_validation(void)
 		      invalid.v92_upstream_retry_ceiling == 0u, "new call inherited a retry ceiling");
 		invalid.v92_upstream_retry_ceiling = 19u;
 		CHECK(!pcm_call_is_valid(&invalid), "retry ceiling did not lower the configured maximum");
+		invalid.v92_upstream_retry_ceiling = 0u;
+		invalid.v92_upstream_retry_step = 2u;
+		CHECK(!pcm_call_is_valid(&invalid), "startup step lost its rate ceiling");
 		invalid.v92_upstream_retry_ceiling = 18u;
+		invalid.v92_upstream_retry_step = 3u;
+		CHECK(!pcm_call_is_valid(&invalid), "startup step accepted a non-power-of-two");
+		invalid.v92_upstream_retry_step = 32u;
+		CHECK(!pcm_call_is_valid(&invalid), "startup step exceeded its bound");
+		invalid.v92_upstream_retry_step = 16u;
 		CHECK(pcm_call_is_valid(&invalid) && pcm_call_init(&invalid, &direct) == PCM_CALL_OK &&
-		      invalid.v92_upstream_retry_ceiling == 0u, "retry ceiling survived a new call");
+		      invalid.v92_upstream_retry_ceiling == 0u && invalid.v92_upstream_retry_step == 0u,
+		      "retry ceiling or startup step survived a new call");
 	}
 	selected.phase3.digital.jd.data_rate_capability_mask = 0u;
 	CHECK(pcm_call_init(&untouched, &selected) == PCM_CALL_INVALID_ARGUMENT,

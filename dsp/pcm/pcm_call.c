@@ -25,6 +25,7 @@
 
 enum {
 	V90_UPSTREAM_RATE_UNIT = 2400,
+	V92_STARTUP_RETRY_MAX_STEP = 16,
 	PCM_PHASE3_RETURN_BASE_DEADLINE_SAMPLES =
 		V34_PHASE2_SAMPLE_RATE * 51 / 10,
 	PCM_PHASE3_SD_DEADLINE_SAMPLES = V34_PHASE2_SAMPLE_RATE * 3 / 2,
@@ -891,6 +892,10 @@ static bool call_is_valid(
 	      call->v92_digital_phase4_configuration.upstream_selection != PCM_CALL_V92_UPSTREAM_DIRECT ||
 	      call->v92_upstream_retry_ceiling >=
 		      call->v92_digital_phase4_configuration.direct_maximum_data_rate_number)) ||
+	    (call->v92_upstream_retry_step != 0u &&
+	     (!call->v92_upstream_retry_ceiling ||
+	      call->v92_upstream_retry_step > V92_STARTUP_RETRY_MAX_STEP ||
+	      (call->v92_upstream_retry_step & (call->v92_upstream_retry_step - 1u)))) ||
 	    (call->stage == PCM_CALL_CLOSED &&
 	     (call->failed || call->retrain_active || call->b1_deadline_armed ||
 	      call->rate_renegotiation_deadline_armed)) ||
@@ -1488,6 +1493,7 @@ static enum pcm_call_result retry_v92_upstream(struct pcm_call *call, bool backo
 {
 	const struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
 	uint8_t previous = call->v92_upstream_retry_ceiling;
+	uint8_t previous_step = call->v92_upstream_retry_step;
 	uint8_t rate = path->upstream.decoder.mapping.cpd.data_rate_number;
 	enum pcm_call_result result;
 	bool lower = backoff && rate > 1u && (path->fast.stage == PCM_CALL_V92_FAST_IDLE || path->fast.b1_started) &&
@@ -1506,13 +1512,21 @@ static enum pcm_call_result retry_v92_upstream(struct pcm_call *call, bool backo
 	/* Preserve earlier rate ceilings. Fast exchange can lower the rate only
 	 * after its new B1u starts. At the minimum rate, retraining can still
 	 * replace a transiently damaged fit without changing caller policy. */
-	if (lower) {
-		if (previous == 0u || rate <= previous)
-			call->v92_upstream_retry_ceiling = rate - 1u;
+	if (lower && (previous == 0u || rate <= previous)) {
+		unsigned step = call->b1_deadline_armed && previous_step ? previous_step : 1u;
+
+		/* A full retrain can cost many seconds. Keep the first reduction
+		 * small, then skip more unusable startup rates before the peer's
+		 * connect timer expires. Online failures still lower one index. */
+		call->v92_upstream_retry_ceiling = rate > step ? rate - step : 1u;
+		call->v92_upstream_retry_step = call->b1_deadline_armed ?
+			(step < V92_STARTUP_RETRY_MAX_STEP ? step * 2u : step) : 0u;
 	}
 	result = begin_retrain(call, false);
-	if (result != PCM_CALL_OK)
+	if (result != PCM_CALL_OK) {
 		call->v92_upstream_retry_ceiling = previous;
+		call->v92_upstream_retry_step = previous_step;
+	}
 	return result;
 }
 
@@ -1529,6 +1543,7 @@ static enum pcm_call_result advance_b1_deadline(struct pcm_call *call)
 	if (!call->b1_deadline_armed)
 		return PCM_CALL_OK;
 	if (peer_b1_received(call)) {
+		call->v92_upstream_retry_step = 0u;
 		call->b1_deadline_remaining_samples = 0u;
 		call->b1_deadline_armed = false;
 		call->b1_completion_grace = false;
