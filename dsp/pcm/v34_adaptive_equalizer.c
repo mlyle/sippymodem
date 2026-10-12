@@ -911,3 +911,15 @@ enum v34_adaptive_equalizer_result v34_adaptive_equalizer_discard(
 	clear_pending(equalizer);
 	return V34_ADAPTIVE_EQUALIZER_OK;
 }
+
+enum v34_adaptive_equalizer_result v34_adaptive_equalizer_coast(
+	struct v34_adaptive_equalizer *equalizer,
+	const struct v34_adaptive_equalizer_observation *observation)
+{
+	enum v34_adaptive_equalizer_result result =
+		v34_adaptive_equalizer_discard(equalizer, observation);
+
+	if (result == V34_ADAPTIVE_EQUALIZER_OK)
+		update_carrier(equalizer, 0);
+	return result;
+}

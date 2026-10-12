@@ -324,4 +324,11 @@ enum v34_adaptive_equalizer_result v34_adaptive_equalizer_discard(
 	struct v34_adaptive_equalizer *equalizer,
 	const struct v34_adaptive_equalizer_observation *observation);
 
+/* Discard an erased observation and advance carrier phase at the retained
+ * frequency, without learning from its target. Call at the same cadence as
+ * ordinary carrier adaptation; use discard for intervening SKIP symbols. */
+enum v34_adaptive_equalizer_result v34_adaptive_equalizer_coast(
+	struct v34_adaptive_equalizer *equalizer,
+	const struct v34_adaptive_equalizer_observation *observation);
+
 #endif /* V34_ADAPTIVE_EQUALIZER_H */

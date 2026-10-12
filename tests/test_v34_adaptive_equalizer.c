@@ -235,6 +235,68 @@ static bool test_carrier_phase_accumulation(void)
 	return true;
 }
 
+static bool test_carrier_coast(void)
+{
+	const uint32_t phase_mask = UINT32_C(0x1fffffff);
+	static const int32_t steps[] = { -65537, -1, 0, 1, 65537 };
+
+	for (unsigned tracking = 0; tracking < 2; ++tracking) {
+		for (size_t step = 0; step < ARRAY_LENGTH(steps); ++step) {
+			struct v34_adaptive_equalizer equalizer;
+			uint32_t expected = phase_mask;
+
+			CHECK(v34_adaptive_equalizer_init(&equalizer) ==
+				      V34_ADAPTIVE_EQUALIZER_OK &&
+			      v34_adaptive_equalizer_set_data_carrier_tracking(
+				      &equalizer, tracking != 0) ==
+				      V34_ADAPTIVE_EQUALIZER_OK,
+			      "carrier coast initialization failed");
+			equalizer.carrier_phase_fraction = (uint16_t)(expected >> 16);
+			equalizer.carrier_phase_low = (uint16_t)expected;
+			equalizer.phase_accumulator = steps[step] * 32;
+			equalizer.phase_error = 12345;
+			for (unsigned epoch = 0; epoch < 16; ++epoch) {
+				struct v34_adaptive_equalizer_observation observation, changed;
+				struct v34_adaptive_equalizer saved, discarded;
+
+				CHECK(push_zero_symbol(&equalizer) &&
+				      v34_adaptive_equalizer_observe(&equalizer, &observation) ==
+					      V34_ADAPTIVE_EQUALIZER_OK,
+				      "carrier coast observation failed");
+				saved = equalizer;
+				changed = observation;
+				changed.epoch++;
+				CHECK(v34_adaptive_equalizer_coast(&equalizer, &changed) ==
+					      V34_ADAPTIVE_EQUALIZER_INVALID_ARGUMENT &&
+				      v34_adaptive_equalizer_coast(&equalizer, NULL) ==
+					      V34_ADAPTIVE_EQUALIZER_INVALID_ARGUMENT &&
+				      memcmp(&equalizer, &saved, sizeof(equalizer)) == 0,
+				      "rejected carrier coast changed the owner");
+				discarded = equalizer;
+				CHECK(v34_adaptive_equalizer_discard(&discarded, &observation) ==
+					      V34_ADAPTIVE_EQUALIZER_OK &&
+				      v34_adaptive_equalizer_coast(&equalizer, &observation) ==
+					      V34_ADAPTIVE_EQUALIZER_OK,
+				      "carrier coast failed");
+				expected = (expected + (uint32_t)steps[step]) & phase_mask;
+				CHECK((((uint32_t)equalizer.carrier_phase_fraction << 16) |
+				       equalizer.carrier_phase_low) == expected &&
+				      v34_adaptive_equalizer_is_valid(&equalizer),
+				      "carrier coast lost frequency or phase wrap");
+				/* Only carrier phase may differ from a targetless discard:
+				 * frequency, FIR, feedback and quality must not learn. */
+				discarded.carrier_phase_low = equalizer.carrier_phase_low;
+				discarded.carrier_phase_fraction = equalizer.carrier_phase_fraction;
+				discarded.rotate_in_phase = equalizer.rotate_in_phase;
+				discarded.rotate_quadrature = equalizer.rotate_quadrature;
+				CHECK(memcmp(&equalizer, &discarded, sizeof(equalizer)) == 0,
+				      "carrier coast learned from an erased observation");
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_carrier_only_commit(void)
 {
 	const struct v34_analytic_sample input = { 3000, -1000 };
@@ -1704,6 +1766,7 @@ int main(void)
 	if (!test_training_decoder_power() ||
 	    !test_initial_state_and_carrier_profile() ||
 	    !test_carrier_phase_accumulation() ||
+	    !test_carrier_coast() ||
 	    !test_carrier_only_commit() ||
 	    !test_retained_pair_geometry(V34_EQUALIZER_TAPS, 20u) ||
 	    !test_retained_pair_geometry(V34_EQUALIZER_MAX_TAPS, 16u) ||

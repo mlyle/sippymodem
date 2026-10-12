@@ -519,20 +519,24 @@ static enum v34_phase34_receiver_result receive_data(
 
 	if (!semantic_result_consumed(mapped))
 		return discard_and_fail(receiver, observation, mapped);
+	decision = decoded.equalizer[result == V34_DATA_RECEIVE_OK ? 0u : 1u];
 	/* A missing line fragment does not stop the peer's mapping schedule.
 	 * Consume its symbol positions without learning from erased decisions or
-	 * exposing their frames. Otherwise a short gap permanently offsets data. */
+	 * exposing their frames. Coast the learned carrier frequency at the normal
+	 * 4-D cadence so oscillator drift does not become a phase jump on return. */
 	if (receiver->data_erasure) {
-		if (v34_adaptive_equalizer_discard(
-			    &receiver->line.equalizer, observation) !=
-		    V34_ADAPTIVE_EQUALIZER_OK)
+		enum v34_adaptive_equalizer_result erased =
+			decision.adaptation == V34_ADAPTIVE_EQUALIZER_SKIP ?
+			v34_adaptive_equalizer_discard(&receiver->line.equalizer, observation) :
+			v34_adaptive_equalizer_coast(&receiver->line.equalizer, observation);
+
+		if (erased != V34_ADAPTIVE_EQUALIZER_OK)
 			return fail(receiver, V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
 		receiver->semantic.data = data;
 		return V34_PHASE34_RECEIVER_OK;
 	}
 	/* Preserve the established V.34 schedule: advance the first symbol
 	 * without adaptation, then train from the current 4-D decision. */
-	decision = decoded.equalizer[result == V34_DATA_RECEIVE_OK ? 0u : 1u];
 	if (decision.adaptation != V34_ADAPTIVE_EQUALIZER_SKIP)
 		decision.decoder_power_q15 = V34_PHASE34_DATA_DECODER_POWER_Q15;
 	if (v34_adaptive_equalizer_commit(

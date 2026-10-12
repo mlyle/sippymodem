@@ -382,14 +382,6 @@ static bool test_data_erasure(
 	      receiver->line.equalizer.phase_accumulator ==
 		      saved.line.equalizer.phase_accumulator &&
 	      receiver->line.equalizer.phase_error == saved.line.equalizer.phase_error &&
-	      receiver->line.equalizer.rotate_in_phase ==
-		      saved.line.equalizer.rotate_in_phase &&
-	      receiver->line.equalizer.rotate_quadrature ==
-		      saved.line.equalizer.rotate_quadrature &&
-	      receiver->line.equalizer.carrier_phase_low ==
-		      saved.line.equalizer.carrier_phase_low &&
-	      receiver->line.equalizer.carrier_phase_fraction ==
-		      saved.line.equalizer.carrier_phase_fraction &&
 	      receiver->line.equalizer.epoch > saved.line.equalizer.epoch &&
 	      receiver->line.equalizer.lineage != saved.line.equalizer.lineage &&
 	      memcmp(&receiver->line.timing, &saved.line.timing,
@@ -1039,14 +1031,21 @@ static double clock_sample(const int16_t *wave, unsigned count, double position)
 	return sum / weight;
 }
 
-static bool test_sustained_clock_case(bool alaw, int ppm, bool ramp)
+static bool test_sustained_clock_case(bool alaw, int ppm, bool ramp, bool erasure)
 {
-	enum { WAVE_SAMPLES = SAMPLE_RATE * 35 };
+	enum {
+		WAVE_SAMPLES = SAMPLE_RATE * 35,
+		ERASURE_START = SAMPLE_RATE * 20,
+		ERASURE_END = ERASURE_START + 560,
+		ERASURE_GUARD_END = ERASURE_END + 160,
+		RECOVERY_END = SAMPLE_RATE * 21,
+	};
 	int16_t wave[WAVE_SAMPLES];
 	struct v34_phase3_profile selected;
 	struct line_source source;
 	struct v34_phase34_receiver receiver;
 	uint32_t transmitted = 0, received = 0, errors = 0, b1_bits = 0;
+	uint32_t checked = 0, erased_bits = 0;
 	bool online = false;
 
 	CHECK(profile(&selected, V34_ANSWERING_STATION,
@@ -1069,6 +1068,7 @@ static bool test_sustained_clock_case(bool alaw, int ppm, bool ramp)
 	}
 	for (unsigned i = 0; i + 64 < WAVE_SAMPLES; ++i) {
 		struct v34_phase34_receive_output output;
+		struct v34_frame_schedule schedule = { 0 };
 		enum v34_phase34_receiver_result result;
 		double elapsed = (double)i / SAMPLE_RATE;
 		double integrated = elapsed;
@@ -1086,10 +1086,41 @@ static bool test_sustained_clock_case(bool alaw, int ppm, bool ramp)
 			i + integrated * SAMPLE_RATE * ppm / 1000000);
 		CHECK(value >= INT16_MIN && value <= INT16_MAX,
 		      "clock resampling clipped");
+		if (erasure && (i == ERASURE_START || i == ERASURE_GUARD_END)) {
+			CHECK(online && receiver.pending_count == 0 &&
+			      v34_phase34_receiver_set_data_erasure(
+				      &receiver, i == ERASURE_START) ==
+				      V34_PHASE34_RECEIVER_OK, "clock erasure control failed");
+		}
+		if (receiver.data_erasure)
+			schedule = receiver.semantic.data.data_receiver.data_receiver.schedule;
+		if (erasure && i >= ERASURE_START && i < ERASURE_END)
+			value = 0;
 		result = v34_phase34_receiver_sample(
 			&receiver, (int16_t)lrint(value), &output);
 		CHECK(result < V34_PHASE34_RECEIVER_FAILED,
 		      "clock receiver failed at sample %u: %u", i, result);
+		/* Erased frames still consume the peer's bit positions. Keep the
+		 * arbitrary-data oracle aligned even though these frames are hidden. */
+		if (receiver.data_erasure) {
+			const struct v34_frame_schedule *next =
+				&receiver.semantic.data.data_receiver.data_receiver.schedule;
+
+			CHECK(result == V34_PHASE34_RECEIVER_OK,
+			      "clock erasure exposed a frame");
+			if (schedule.next_mapping_frame != next->next_mapping_frame ||
+			    schedule.data_frame_in_superframe != next->data_frame_in_superframe) {
+				struct v34_mapping_frame frame;
+
+				CHECK(v34_frame_schedule_prepare_mapping_frame(&schedule) ==
+					      V34_FRAME_SCHEDULE_OK &&
+				      v34_frame_schedule_next(&schedule, &frame) ==
+					      V34_FRAME_SCHEDULE_OK,
+				      "clock erased frame schedule failed");
+				received += frame.primary_bits;
+				erased_bits += frame.primary_bits;
+			}
+		}
 		switch (result) {
 		case V34_PHASE34_RECEIVER_J_DETECTED:
 			CHECK(v34_phase34_receiver_rearm_phase4_s(&receiver) ==
@@ -1124,7 +1155,12 @@ static bool test_sustained_clock_case(bool alaw, int ppm, bool ramp)
 				uint8_t expected = received < source.data.primary_delay_bits ? 1 :
 					sustained_bit(received - source.data.primary_delay_bits);
 
-				errors += output.received.primary_bits[bit] != expected;
+				/* Allow the dropout's filter/decoder tail to settle, then
+				 * require error-free recovery for the remaining 14 seconds. */
+				if (!erasure || i < ERASURE_START || i >= RECOVERY_END) {
+					errors += output.received.primary_bits[bit] != expected;
+					checked++;
+				}
 				received++;
 			}
 			break;
@@ -1132,9 +1168,11 @@ static bool test_sustained_clock_case(bool alaw, int ppm, bool ramp)
 			break;
 		}
 	}
-	CHECK(online && b1_bits > 1000 && received > 1000000 && errors == 0,
-	      "%s %d ppm ramp=%d: online=%d B1=%u data errors=%u/%u",
-	      alaw ? "PCMA" : "PCMU", ppm, ramp, online, b1_bits, errors, received);
+	CHECK(online && b1_bits > 1000 && checked > 1000000 && errors == 0 &&
+	      (!erasure || erased_bits > 2000),
+	      "%s %d ppm ramp=%d erasure=%d: online=%d B1=%u data errors=%u/%u erased=%u",
+	      alaw ? "PCMA" : "PCMU", ppm, ramp, erasure, online, b1_bits,
+	      errors, checked, erased_bits);
 	return true;
 }
 
@@ -1143,8 +1181,17 @@ static bool test_sustained_clock(void)
 	for (unsigned law = 0; law < 2; ++law)
 		for (int ppm = -100; ppm <= 100; ppm += 200)
 			for (unsigned ramp = 0; ramp < 2; ++ramp)
-				CHECK(test_sustained_clock_case(law != 0, ppm, ramp != 0),
+				CHECK(test_sustained_clock_case(law != 0, ppm, ramp != 0, false),
 				      "sustained clock case failed");
+	return true;
+}
+
+static bool test_clock_erasure(void)
+{
+	for (unsigned law = 0; law < 2; ++law)
+		for (int ppm = -100; ppm <= 100; ppm += 100)
+			CHECK(test_sustained_clock_case(law != 0, ppm, false, true),
+			      "clock erasure case failed");
 	return true;
 }
 
@@ -1219,6 +1266,7 @@ int main(void)
 		{ "late S entry", test_late_s_entry },
 		{ "continuous Phase 3 through data", test_training },
 		{ "sustained data with clock drift", test_sustained_clock },
+		{ "clock drift through data erasure", test_clock_erasure },
 	};
 	unsigned int failures = 0;
 
