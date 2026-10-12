@@ -181,6 +181,8 @@ while True:
         elif b"PING" in buffer:
             buffer.clear()
             pings += 1
+            if mode == "first-ping-fails" and pings == 1:
+                continue
             if mode == "second-ping-fails" and pings == 2:
                 continue
             if not (retrained and mode == "pcm-retrain-no-data"):
@@ -275,7 +277,11 @@ while True:
 
 class LiveCampaignTests(unittest.TestCase):
     def test_raw_post_retrain_requires_both_pings_and_retains_idle_payload(self) -> None:
-        for mode, verified in (("paired-ping", True), ("second-ping-fails", False)):
+        for mode, verified in (
+            ("paired-ping", True),
+            ("first-ping-fails", False),
+            ("second-ping-fails", False),
+        ):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 script = root / "fake.py"
@@ -298,6 +304,9 @@ class LiveCampaignTests(unittest.TestCase):
                 if verified:
                     rx = (artifacts.legs["modem"] / "terminal-rx.bin").read_bytes()
                     self.assertIn(b"tail during raw idle\r\n", rx)
+                elif mode == "first-ping-fails":
+                    rx = (artifacts.legs["modem"] / "terminal-rx.bin").read_bytes()
+                    self.assertIn(b"GETTY:PONG:", rx)
 
     def test_peer_input_quality_belongs_to_the_primary_call(self) -> None:
         for mode, role, unknown, burst in (

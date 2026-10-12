@@ -674,10 +674,12 @@ def _exercise_online(
             config.online_timeout_seconds
         )
         state.capture(leg, ONLINE_PING_REQUEST, received)
-        if verified and state.report.protocol == "none":
+        if state.report.protocol == "none":
             # The first newline can expose input buffered during retraining.
             # A second probe after quiet time distinguishes that tail from
-            # continuing corruption. Keep receiving throughout the gap.
+            # continuing corruption, even if the first probe timed out. Keep
+            # receiving throughout the gap and require both replies to pass.
+            first_verified = verified
             progress.set("checking raw idle after retrain")
             received = terminal.receive_online(3.0)
             state.capture(leg, b"", received)
@@ -685,6 +687,7 @@ def _exercise_online(
                 config.online_timeout_seconds
             )
             state.capture(leg, ONLINE_PING_REQUEST, received)
+            verified = first_verified and verified
         state.retrain_data = verified
         if not verified:
             state.detail = "post-retrain online data was not verified"
