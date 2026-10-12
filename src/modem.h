@@ -304,6 +304,12 @@ struct modem_call_report {
 };
 
 /* modem struct */
+struct raw_text_probe {
+	u8 bytes[128];
+	unsigned int length;
+	bool confirmed;
+};
+
 struct modem {
 	const char *name;
 	int pty; /* pty descriptor */
@@ -424,14 +430,15 @@ struct modem {
 			u8 rx_pattern[2];
 			int ec_enable;
 			/* Hold a short text prefix until raw mode is unambiguous. */
-			u8 text[128];
-			unsigned int text_length;
-			bool text_confirmed;
+			struct raw_text_probe text;
 		} detector;
 		struct hdlc_state {
 			struct hdlc_frame *tx_frame;
 			struct hdlc_frame *rx_frame;
 			struct hdlc_rx rx;
+			struct raw_text_probe raw_text;
+			struct bits_state raw_bits;
+			bool raw_fallback_disabled;
 			int tx_ones;
 			unsigned int tx_preamble_flags;
 			void (*tx_preamble_complete)(struct modem *m);

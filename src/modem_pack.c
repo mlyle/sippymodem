@@ -45,6 +45,7 @@
 #include <stdint.h>
 
 #include <modem.h>
+#include "modem_state.h"
 #include "hdlc_fcs.h"
 #include "hdlc_tx.h"
 #include <modem_debug.h>
@@ -435,12 +436,12 @@ static void detector_finish(struct modem *m)
 	 * It arms the residue filter; four characters still select V.42. */
 	int discard_residue = !m->packer.detector.ec_enable &&
 		m->packer.detector.rx_count >= 2;
-	u8 text[sizeof(m->packer.detector.text)];
-	unsigned int text_length = m->packer.detector.text_confirmed ?
-		m->packer.detector.text_length : 0;
+	u8 text[sizeof(m->packer.detector.text.bytes)];
+	unsigned int text_length = m->packer.detector.text.confirmed ?
+		m->packer.detector.text.length : 0;
 
 	if (text_length != 0)
-		memcpy(text, m->packer.detector.text, text_length);
+		memcpy(text, m->packer.detector.text.bytes, text_length);
 
 	PACK_DBG("detector finished.\n");
 	m->packer.detector.tx_count = 0;
@@ -512,33 +513,39 @@ static int detector_accept_pattern_character(struct modem *m,
 	return 0;
 }
 
+static int raw_text_observe(struct raw_text_probe *text, u8 character)
+{
+	bool newline = character == '\r' || character == '\n';
+
+	if (!text->confirmed && !newline && character != '\t' &&
+	    (character < 0x20 || character > 0x7e)) {
+		text->length = 0;
+		return 0;
+	}
+	if (text->length == sizeof(text->bytes))
+		return -1;
+	text->bytes[text->length++] = character;
+	if (text->confirmed)
+		return 0;
+	/* Require adjacent line endings, a short line, or a printable prompt. */
+	if ((newline && (text->length >= 4 ||
+	     (text->length >= 2 &&
+	      (text->bytes[text->length - 2] == '\r' ||
+	       text->bytes[text->length - 2] == '\n')))) || text->length == 32)
+		text->confirmed = true;
+	return 0;
+}
+
 static int detector_observe_text(struct modem *m, u8 character)
 {
 	struct detect_state *d = &m->packer.detector;
-	bool newline;
+	bool confirmed = d->text.confirmed;
 
 	/* Detection patterns use the opposite bit order to DTE characters. */
 	REVERSE_BITS(character);
-	newline = character == '\r' || character == '\n';
-	if (!d->text_confirmed && !newline && character != '\t' &&
-	    (character < 0x20 || character > 0x7e)) {
-		d->text_length = 0;
-		return 0;
-	}
-	if (d->text_length == sizeof(d->text))
-		return -1; /* Receive ran ahead of the final transmitted ODP. */
-	d->text[d->text_length++] = character;
-	if (d->text_confirmed)
-		return 0;
-	/* A lone CR could be noise. Accept adjacent line endings, a short
-	 * text line, or a full printable prompt. EC/ODP and HDLC detection
-	 * take precedence and cannot accumulate such a text prefix. */
-	if ((newline && (d->text_length >= 4 ||
-	     (d->text_length >= 2 &&
-	      (d->text[d->text_length - 2] == '\r' ||
-	       d->text[d->text_length - 2] == '\n')))) ||
-	    d->text_length == 32) {
-		d->text_confirmed = true;
+	if (raw_text_observe(&d->text, character) != 0)
+		return -1;
+	if (!confirmed && d->text.confirmed) {
 		d->rx_count = 0;
 		if (m->caller)
 			detector_timeout(m);
@@ -597,7 +604,7 @@ int modem_detector_get_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 		/* A reply that begins while the final ODP drains still belongs
 		 * to detection. Allow at most two received pattern intervals
 		 * to complete it; the timer callback prevents repeated renewal. */
-		if (m->caller && !d->text_confirmed &&
+		if (m->caller && !d->text.confirmed &&
 		    d->rx_count > 0 && d->rx_count < DETECTOR_MATCH_CHARACTERS) {
 			uint64_t receive_rate = m->rx_rate ? m->rx_rate :
 				DETECTOR_FALLBACK_RATE / 2;
@@ -632,7 +639,7 @@ int modem_detector_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 		 * Require adjacent flags and inspect every newly received bit end. */
 		for (int bit = nbits - 1; bit >= 0; --bit) {
 			if (((s->data >> bit) & 0xffffu) != 0x7e7eu ||
-			    d->ec_enable || d->text_confirmed ||
+			    d->ec_enable || d->text.confirmed ||
 			    (!m->caller && d->tx_count != 0))
 				continue;
 			if (!m->caller)
@@ -650,8 +657,8 @@ int modem_detector_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 			/* V.42 7.2.1 requires correctly received adjacent pattern
 			 * characters. A bad stop breaks an unfinished match. */
 			if (!(s->data & ((u32)1 << s->bit))) {
-				if (!d->text_confirmed)
-					d->text_length = 0;
+				if (!d->text.confirmed)
+					d->text.length = 0;
 				if (d->rx_count < DETECTOR_MATCH_CHARACTERS)
 					d->rx_count = 0;
 				continue;
@@ -663,7 +670,7 @@ int modem_detector_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 				modem_update_status(m, STATUS_ERROR);
 				return ret;
 			}
-			if (d->text_confirmed)
+			if (d->text.confirmed)
 				continue;
 			if (!detector_accept_pattern_character(m, d, ch))
 				continue;
@@ -681,7 +688,7 @@ int modem_detector_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 	}
 	/* An answerer's text fallback must wait until this input group is
 	 * consumed before replacing the detector union with async framing. */
-	if (finish || (!m->caller && d->text_confirmed)) {
+	if (finish || (!m->caller && d->text.confirmed)) {
 		if (m->caller && !d->ec_enable)
 			detector_timeout(m);
 		else
@@ -700,8 +707,8 @@ void modem_detector_start(struct modem *m)
 	d->rx_count = 0;
 	d->tx_limit = m->caller ? 0 : 2 * V42_ANSWER_REPLY_PATTERNS;
 	d->ec_enable = 0;
-	d->text_length = 0;
-	d->text_confirmed = false;
+	d->text.length = 0;
+	d->text.confirmed = false;
 	if (m->caller) {
 		detector_set_pattern(d->tx_pattern, ODP0, ODP1);
 		detector_set_pattern(d->rx_pattern, ADP0, ADP1_V42);
@@ -731,8 +738,8 @@ void modem_detector_reframe(struct modem *m)
 	/* Retraining interrupts adjacency and physical bit alignment, not the
 	 * selected reply or the suspended detection timer (V.42 7.10/7.11). */
 	m->packer.detector.rx_count = 0;
-	if (!m->packer.detector.text_confirmed)
-		m->packer.detector.text_length = 0;
+	if (!m->packer.detector.text.confirmed)
+		m->packer.detector.text.length = 0;
 	m->pack.bit = m->unpack.bit = 0;
 	m->pack.data = 0;
 	m->unpack.data = 0xffffu; /* No flag history before this carrier epoch. */
@@ -821,6 +828,51 @@ int modem_hdlc_get_bits(struct modem *m, int nbits,
 }
 
 
+/* Only unestablished, optional LAPM can yield to a peer's raw fallback.
+ * A valid HDLC frame permanently ends this probe for the current call. */
+static bool hdlc_can_probe_text(const struct modem *m)
+{
+	return m->state == STATE_EC_ESTAB && !m->call_report.connected &&
+	       m->cfg.ec && m->cfg.ec_detector && !detector_ec_required(m) &&
+	       !m->packer.hdlc.raw_fallback_disabled;
+}
+
+static bool hdlc_observe_raw_text(struct modem *m, unsigned bit)
+{
+	struct hdlc_state *h = &m->packer.hdlc;
+	struct bits_state *bits = &h->raw_bits;
+
+	/* Never interpret a possible HDLC frame as asynchronous characters. */
+	if (h->rx.in_frame) {
+		*bits = (struct bits_state){0};
+		h->raw_text = (struct raw_text_probe){0};
+		return false;
+	}
+	if (bits->bit == 0 && bit)
+		return false;
+	bits->data = (bits->data << 1) | bit;
+	if (++bits->bit != ASYNC_FRAME_BITS)
+		return false;
+	bits->bit = 0;
+	if (!bit) {
+		h->raw_text = (struct raw_text_probe){0};
+		return false;
+	}
+	u8 character = (u8)(bits->data >> 1);
+	REVERSE_BITS(character);
+	if (raw_text_observe(&h->raw_text, character) != 0 ||
+	    !h->raw_text.confirmed)
+		return false;
+	struct raw_text_probe text = h->raw_text;
+
+	m->cfg.ec = 0;
+	m->cfg.comp = 0;
+	modem_update_status(m, STATUS_PACK_LINK);
+	for (unsigned i = 0; i < text.length; ++i)
+		async_deliver_character(m, text.bytes[i]);
+	return true;
+}
+
 int modem_hdlc_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt)
 {
 	if (m == NULL || nbits < 1 || nbits > 8 || bit_cnt < 0 ||
@@ -829,11 +881,26 @@ int modem_hdlc_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt)
 	if (h->rx_frame == NULL || h->rx_frame->buf == NULL || h->rx_frame->size <= 0)
 		return -1;
 	for (int group = 0; group < bit_cnt; ++group) {
-		if (hdlc_rx_bits(&h->rx, bit_buf[group] & ((1u << nbits) - 1u), nbits,
-		    h->rx_frame->buf, h->rx_frame->size)) continue;
+		if (!hdlc_can_probe_text(m) &&
+		    hdlc_rx_bits(&h->rx, bit_buf[group] & ((1u << nbits) - 1u),
+		                 nbits, h->rx_frame->buf, h->rx_frame->size))
+			continue;
 		for (int bit = nbits - 1; bit >= 0; --bit) {
 			unsigned events = hdlc_rx_bit(&h->rx,
 				(bit_buf[group] >> bit) & 1u, h->rx_frame->buf, h->rx_frame->size);
+			if (events & HDLC_RX_FRAME)
+				h->raw_fallback_disabled = true;
+			if (hdlc_can_probe_text(m) && hdlc_observe_raw_text(
+				    m, (bit_buf[group] >> bit) & 1u)) {
+				/* The packer union was replaced. Finish this group in raw
+				 * mode, then hand over every remaining input group. */
+				for (int tail = bit - 1; tail >= 0; --tail) {
+					u8 value = (bit_buf[group] >> tail) & 1u;
+					modem_async_put_bits(m, 1, &value, 1);
+				}
+				return group + 1 + modem_async_put_bits(m, nbits,
+					bit_buf + group + 1, bit_cnt - group - 1);
+			}
 			if (!events) continue;
 			if (events & (HDLC_RX_PARTIAL | HDLC_RX_SHORT | HDLC_RX_BAD_FCS |
 				HDLC_RX_ABORT | HDLC_RX_OVERFLOW)) {
@@ -862,6 +929,8 @@ static void hdlc_reset_physical_framing(
 	h->tx_frame = NULL;
 	h->tx_ones = 0;
 	hdlc_rx_reset(&h->rx);
+	h->raw_text = (struct raw_text_probe){0};
+	h->raw_bits = (struct bits_state){0};
 	h->rx_frame->count = 0;
 	h->rx_frame->fcs = INIT_FCS;
 	m->pack.bit = m->unpack.bit = 0;

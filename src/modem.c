@@ -581,6 +581,8 @@ void modem_update_status(struct modem *m, unsigned status)
 			modem_ec_start(m);
 		}
 		else {
+			if (m->get_bits == modem_hdlc_get_bits)
+				modem_ec_exit(m);
 			/* start async, pass EC connect phase */
 			modem_async_start(m);
 			m->get_bits = modem_async_get_bits;

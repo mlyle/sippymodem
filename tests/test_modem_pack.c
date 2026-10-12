@@ -732,7 +732,7 @@ static bool test_v42_text_requires_framing(void)
 				      "text noise fixture overflow");
 			modem_detector_start(&m);
 			CHECK(receive_detection_bits(&m, bits, sizeof(bits), width) &&
-			      !m.packer.detector.text_confirmed &&
+			      !m.packer.detector.text.confirmed &&
 			      m.packer.detector.tx_count == (caller ? 1 : 0) &&
 			      m.bit_timer == 7200,
 			      "noise ended detection: case %zu width %u", index, width);

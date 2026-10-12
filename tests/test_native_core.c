@@ -10018,6 +10018,133 @@ static bool test_v42_late_originator_detection(void)
 	return true;
 }
 
+static bool test_lapm_raw_text_fallback(void)
+{
+	enum { RAW_TEXT, REQUIRED, ESTABLISHED, VALID_FRAME, REFRAMED, IN_FRAME, BAD_STOP };
+	struct modem_driver driver = {
+		.name = "LAPM raw fallback", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+
+	for (unsigned caller = 0; caller <= 1; ++caller)
+	for (unsigned batch = 0; batch <= 1; ++batch)
+	for (unsigned test = RAW_TEXT; test <= BAD_STOP; ++test)
+	for (unsigned width = 1; width <= 8; ++width) {
+		struct modem *m = create_compat_modem(&driver, "LAPM raw fallback");
+		struct dp dp = { .id = DP_V22BIS, .modem = m };
+		struct modem source = { .get_chars = scripted_lapm_source };
+		const char *text = test == BAD_STOP ? "\r\n" : "\r\nWelcome";
+		uint8_t bits[256], groups[256], received[128], output;
+		int result_pipe[2];
+		size_t count = strlen(text) * 10;
+
+		CHECK(m != NULL && pipe(result_pipe) == 0 &&
+		      fcntl(result_pipe[0], F_SETFL, O_NONBLOCK) == 0,
+		      "raw fallback allocation failed");
+		m->pty = result_pipe[1];
+		m->sregs[SREG_QUIET] = 1;
+		m->sregs[SREG_EC] = test == REQUIRED ? 2 : 3;
+		m->dp = &dp;
+		m->caller = caller;
+		m->tx_rate = m->rx_rate = 2400;
+		m->cfg.ec = m->cfg.ec_detector = 1;
+		CHECK(modem_ec_init(m) == 0, "raw fallback LAPM init failed");
+		modem_dp_connected(m);
+		modem_update_status(m, STATUS_PACK_LINK);
+		m->xmit.buf[0] = 'Z';
+		m->xmit.count = m->xmit.head = 1;
+		/* The caller starts XID and its timer; the answerer waits.
+		 * Queued DTE data must remain untouched in both roles. */
+		for (unsigned i = 0; i < 2000; ++i)
+			CHECK(modem_get_bits(m, 1, &output, 1) == 1,
+			      "raw fallback XID output failed");
+		CHECK((!caller || m->bit_timer > 0) && m->xmit.count == 1,
+		      "raw fallback did not retain pending negotiation and data");
+		if (test == ESTABLISHED)
+			m->call_report.connected = true;
+		if (test == VALID_FRAME || test == REFRAMED) {
+			uint8_t frame[4] = { 0, 0 };
+			uint16_t fcs = hdlc_fcs16_update(hdlc_fcs16_update(
+				HDLC_FCS16_INITIAL, 0), 0) ^ 0xffffu;
+			unsigned ones = 0;
+			uint8_t flag = 0x7e;
+
+			frame[2] = (uint8_t)fcs;
+			frame[3] = (uint8_t)(fcs >> 8);
+			CHECK(modem_put_bits(m, 8, &flag, 1) == 1, "frame flag failed");
+			for (unsigned i = 0; i < sizeof(frame); ++i)
+			for (unsigned bit = 0; bit < 8; ++bit) {
+				uint8_t value = (frame[i] >> bit) & 1u;
+				CHECK(modem_put_bits(m, 1, &value, 1) == 1, "frame bit failed");
+				ones = value ? ones + 1 : 0;
+				if (ones == 5) {
+					value = 0;
+					CHECK(modem_put_bits(m, 1, &value, 1) == 1, "stuff bit failed");
+					ones = 0;
+				}
+			}
+			CHECK(modem_put_bits(m, 8, &flag, 1) == 1, "frame end failed");
+			if (test == REFRAMED)
+				CHECK(modem_ec_resume_after_retrain(m) == 0, "frame resume failed");
+		}
+		/* Leave flag framing before the peer's raw startup text. */
+		memset(bits, 1, 32);
+		CHECK(modem_put_bits(m, 1, bits, 32) == 32, "mark idle failed");
+		if (test == IN_FRAME) {
+			uint8_t flag = 0x7e;
+			CHECK(modem_put_bits(m, 8, &flag, 1) == 1, "candidate frame failed");
+		}
+		lapm_source.data = (const uint8_t *)text;
+		lapm_source.length = strlen(text);
+		lapm_source.offset = 0;
+		modem_async_start(&source);
+		CHECK(modem_async_get_bits(&source, 1, bits, count) == (int)count,
+		      "raw fallback text encoding failed");
+		if (test == BAD_STOP)
+			bits[9] = 0;
+		size_t group_count = 0;
+		for (size_t offset = 0; offset < count;) {
+			unsigned n = count - offset < width ? (unsigned)(count - offset) : width;
+			uint8_t value = 0;
+			for (unsigned i = 0; i < n; ++i)
+				value = (uint8_t)((value << 1) | (bits[offset++] & 1u));
+			if (batch && n == width) {
+				groups[group_count++] = value;
+				continue;
+			}
+			if (group_count) {
+				CHECK(modem_put_bits(m, width, groups, group_count) == (int)group_count,
+				      "raw fallback batch input failed");
+				group_count = 0;
+			}
+			CHECK(modem_put_bits(m, n, &value, 1) == 1, "raw fallback input failed");
+		}
+		if (group_count)
+			CHECK(modem_put_bits(m, width, groups, group_count) == (int)group_count,
+			      "raw fallback final batch failed");
+		ssize_t length = read(result_pipe[0], received, sizeof(received));
+		if (test == RAW_TEXT) {
+			CHECK(m->get_bits == modem_async_get_bits && !m->cfg.ec && !m->cfg.comp &&
+			      length == (ssize_t)strlen(text) && !memcmp(received, text, strlen(text)) &&
+			      m->xmit.count == 1 && m->xmit.buf[m->xmit.tail] == 'Z' &&
+			      m->bit_timer == 0 && m->bit_timer_func == NULL &&
+			      m->ec.lapm.modem == NULL,
+			      "raw fallback lost text, data or cleanup at width %u", width);
+		} else {
+			CHECK(m->get_bits == modem_hdlc_get_bits && m->cfg.ec && length < 0,
+			      "unsafe raw fallback: case %u width %u raw=%d ec=%u length=%zd state=%u",
+			      test, width, m->get_bits == modem_async_get_bits, m->cfg.ec, length, m->state);
+		}
+		close(result_pipe[0]);
+		close(result_pipe[1]);
+		m->pty = -1;
+		m->dp = NULL;
+		modem_delete(m);
+	}
+	memset(&lapm_source, 0, sizeof(lapm_source));
+	return true;
+}
+
 static bool test_v42_raw_text_detection(void)
 {
 	static const char *const lines[] = {
@@ -10322,6 +10449,7 @@ int main(void)
 		{ "V.42 late answer detection", test_v42_late_answer_detection },
 		{ "V.42 late originator detection", test_v42_late_originator_detection },
 		{ "V.42 early raw text", test_v42_raw_text_detection },
+		{ "LAPM peer raw fallback", test_lapm_raw_text_fallback },
 	};
 	unsigned int failures = 0;
 
