@@ -5074,6 +5074,18 @@ int main(void)
 		},
 		{
 			.id = DP_V22BIS,
+			.name = "V.22bis attenuated raw carrier",
+			.selection_command = "AT+MS=122,0,2400,2400\r",
+			.caller_tx_rate = V22BIS_BIT_RATE,
+			.caller_rx_rate = V22BIS_BIT_RATE,
+			.answerer_tx_rate = V22BIS_BIT_RATE,
+			.answerer_rx_rate = V22BIS_BIT_RATE,
+			.carrier_loss_samples = MODEM_RATE * 7 / 10,
+			.raw_transport = true,
+			.impairment = INTEGRATION_IMPAIRMENT_ATTENUATED,
+		},
+		{
+			.id = DP_V22BIS,
 			.name = "V.22bis raw retrain",
 			.selection_command = "AT+MS=122,1,2400,2400\r",
 			.caller_tx_rate = V22BIS_BIT_RATE,

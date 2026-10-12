@@ -1773,6 +1773,15 @@ static int process_v22(
 	if (!datapump_linear_fragment_is_ready(datapump, receive, transmit, count))
 		return DPSTAT_ERROR;
 	line_power_present = datapump_qam_line_power_present(receive, count);
+	measurement = qam_demodulator_measure(&datapump->demodulator);
+	/* A short fragment can contain mostly inner constellation points. Once
+	 * timing is acquired, retain carrier from the receiver's 32 ms power
+	 * estimate, with 6 dB of hysteresis below the acquisition floor. */
+	line_power_present = line_power_present ||
+		(measurement.timing_locked &&
+		 measurement.line_power >= DATAPUMP_MIN_QAM_LINE_POWER / 4.0 &&
+		 datapump_qam_line_power_above(
+			 receive, count, DATAPUMP_MIN_QAM_LINE_POWER / 4));
 	if (!datapump_is_retraining(datapump) &&
 	    datapump->training_state != V22_TRAINING_ONLINE) {
 		if (line_power_present)
@@ -1831,7 +1840,10 @@ static int process_v22(
 	return_hold_was_active =
 		datapump->carrier_return_hold_samples != 0;
 	for (int index = 0; index < count; ++index) {
-		bool receive_active = line_power_present || retain_training_timing;
+		/* Keep the carrier phase, symbol clock and power estimate advancing
+		 * through a dropout even when received bits must be discarded. */
+		bool receive_active = line_power_present || retain_training_timing ||
+			datapump->demodulator.timing_locked;
 		if (datapump->originator && datapump->training_state ==
 		    V22_TRAINING_ORIGINATE_WAIT_ANSWER_MARK) {
 			struct single_tone_event event;
