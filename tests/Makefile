@@ -3759,7 +3759,7 @@ $(HOST_TEST_BINARY): $(HOST_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(RECORDING_FILES_TEST_BINARY): $(RECORDING_FILES_TEST_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^
+	$(CC) $(LDFLAGS) -Wl,--wrap=write -Wl,--wrap=pthread_create -o $@ $^ -pthread
 
 $(SLMODEM_ADAPTER_TEST_BINARY): $(SLMODEM_ADAPTER_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
@@ -6229,7 +6229,7 @@ LIBRARY_INPUTS := $(wildcard ../src/*.c ../src/*.h ../dsp/*.c ../dsp/*.h ../dsp/
 $(BUILD_DIR)/test_library.o: test_library.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(PJSIP_CFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 $(LIBRARY_TEST_BINARY): $(BUILD_DIR)/test_library.o ../src/libsippymodem.a $(PJSIP_DEPENDENCY)
-	$(CC) $(LDFLAGS) -Wl,--wrap=modem_stop_now -Wl,--wrap=pjsua_destroy2 -Wl,--wrap=media_worker_create -Wl,--wrap=modem_process_g711 -Wl,--wrap=sendto -Wl,--wrap=recvmsg -Wl,--wrap=recv -o $@ $(BUILD_DIR)/test_library.o ../src/libsippymodem.a $(PJSIP_LDLIBS) -lm
+	$(CC) $(LDFLAGS) -Wl,--wrap=write -Wl,--wrap=modem_stop_now -Wl,--wrap=pjsua_destroy2 -Wl,--wrap=media_worker_create -Wl,--wrap=modem_process_g711 -Wl,--wrap=sendto -Wl,--wrap=recvmsg -Wl,--wrap=recv -o $@ $(BUILD_DIR)/test_library.o ../src/libsippymodem.a $(PJSIP_LDLIBS) -lm
 
 $(DS0_CODEC_TEST_BINARY): $(BUILD_DIR)/test_ds0_codec.o $(BUILD_DIR)/ds0_codec.o $(BUILD_DIR)/modem_pack.o $(BUILD_DIR)/modem_stubs.o
 	$(CC) $(LDFLAGS) -o $@ $^

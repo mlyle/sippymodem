@@ -42,6 +42,13 @@ four generated RTP packets are outstanding per line. The server collects each
 completion independently and flushes its packets before applying deferred SIP
 updates. A slow line does not delay processing of other lines.
 
+When recording is enabled, the line also owns a file writer thread. Media jobs
+copy evidence into a 256 KiB queue; disk writes run outside the media thread.
+Queue exhaustion or a write error ends the call with a retained local media
+failure and a line log. Line stop drains accepted evidence and reports late
+write errors; stop/destroy can therefore wait for filesystem I/O. This flush
+does not call `fsync()` or promise persistence across power loss.
+
 `process()` submits and collects without waiting for workers or network input.
 Use the [portable wait operation](#portable-terminal-server-loop), or observe
 the borrowed native event hook and respect the returned deadline. Call

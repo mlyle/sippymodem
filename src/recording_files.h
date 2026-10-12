@@ -17,9 +17,11 @@ enum recording_files_result {
 	RECORDING_FILES_OK,
 	RECORDING_FILES_INVALID_BLOCK,
 	RECORDING_FILES_WRITE_ERROR,
+	RECORDING_FILES_QUEUE_FULL,
 };
 
 struct recording_files_stats {
+	/* Completed writes only; flush before reading a complete capture. */
 	uint64_t blocks_written;
 	uint64_t bytes_written;
 };
@@ -33,6 +35,14 @@ struct recording_files *recording_files_create(
 	const char *prefix);
 void recording_files_destroy(
 	struct recording_files *files);
+
+/* One producer owns the callbacks; they copy at most 64 KiB per block into a
+ * 256 KiB queue and never perform file I/O. Overflow latches QUEUE_FULL.
+ * Flush waits for accepted blocks, including an in-flight write. Call only
+ * outside media processing with the producer quiescent. Destroy also drains
+ * and joins the writer; inspect flush's result before destroying evidence. */
+enum recording_files_result recording_files_flush(
+	const struct recording_files *files);
 
 /* Borrowed recorder valid until files is destroyed. */
 const struct media_recorder *recording_files_recorder(

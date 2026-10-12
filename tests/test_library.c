@@ -9,11 +9,14 @@
 
 #include <stdio.h>
 #include <errno.h>
+#include <dirent.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <poll.h>
 #include <semaphore.h>
 #include <time.h>
+#include <stdlib.h>
+#include <sys/stat.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <string.h>
@@ -21,6 +24,17 @@
 
 static pthread_t io_owner;
 static atomic_bool wrong_io_thread;
+static atomic_bool fail_evidence_write;
+ssize_t __real_write(int, const void *, size_t);
+ssize_t __wrap_write(int fd, const void *data, size_t size)
+{
+	struct stat status;
+	if (atomic_load(&fail_evidence_write) && fstat(fd, &status) == 0 && S_ISREG(status.st_mode)) {
+		errno = ENOSPC;
+		return -1;
+	}
+	return __real_write(fd, data, size);
+}
 ssize_t __real_sendto(int, const void *, size_t, int, const struct sockaddr *, socklen_t);
 ssize_t __wrap_sendto(int fd, const void *bytes, size_t count, int flags,
 	const struct sockaddr *address, socklen_t length)
@@ -865,6 +879,67 @@ static bool test_signaling_timeout(void)
 	return true;
 }
 
+static bool test_recording_failure(void)
+{
+	char directory[] = "/tmp/modem-sdk-recording-XXXXXX", prefix[128], target[128];
+	EXPECT(mkdtemp(directory) != NULL);
+	snprintf(prefix, sizeof(prefix), "%s/call", directory);
+	struct sippymodem_server_config sc;
+	sippymodem_server_config_init(&sc);
+	sc.max_lines = 2;
+	sc.public_address = sc.bound_address = "127.0.0.1";
+	struct sippymodem_server *server = sippymodem_server_create(&sc);
+	EXPECT(server != NULL);
+	struct sippymodem_line_config lc;
+	sippymodem_line_config_init(&lc);
+	lc.modulation = 21;
+	lc.automode = false;
+	lc.recording_prefix = prefix;
+	struct sippymodem_line *line = sippymodem_line_create(server, &lc);
+	lc.recording_prefix = NULL;
+	struct sippymodem_line *answerer = sippymodem_line_create(server, &lc);
+	EXPECT(line != NULL && sippymodem_server_start(server) == SIPPYMODEM_OK &&
+	       answerer != NULL && sippymodem_line_start(line) == SIPPYMODEM_OK &&
+	       sippymodem_line_start(answerer) == SIPPYMODEM_OK);
+	snprintf(target, sizeof(target), "sip:100@127.0.0.1:%u", sippymodem_listen_port(server));
+	uint64_t now = 1000000000, next, generation;
+	EXPECT(sippymodem_process(server, now, &next) == SIPPYMODEM_OK);
+	atomic_store(&fail_evidence_write, true);
+	EXPECT(sippymodem_dial(line, target, &generation) == SIPPYMODEM_OK);
+	struct sippymodem_status status = { 0 }, remote = { 0 };
+	bool answered = false;
+	for (unsigned i = 0; i < 2000 && !status.disconnect_sequence; ++i) {
+		EXPECT(step(server, &now));
+		EXPECT(sippymodem_get_status(line, &status) == SIPPYMODEM_OK);
+		EXPECT(sippymodem_get_status(answerer, &remote) == SIPPYMODEM_OK);
+		if (remote.phase == SIPPYMODEM_RINGING && !answered) {
+			EXPECT(sippymodem_answer(answerer, remote.generation) == SIPPYMODEM_OK);
+			answered = true;
+		}
+	}
+	atomic_store(&fail_evidence_write, false);
+	bool correct = status.disconnect_generation == generation && status.disconnect_local &&
+		status.disconnect_cause == SIPPYMODEM_DISCONNECT_MEDIA &&
+		strcmp(status.disconnect_reason, "recording evidence failed") == 0;
+	bool stopped = sippymodem_line_stop(line) == SIPPYMODEM_ERROR;
+	sippymodem_server_destroy(server);
+	DIR *dir = opendir(directory);
+	EXPECT(dir != NULL);
+	struct dirent *entry;
+	while ((entry = readdir(dir)) != NULL) {
+		if (entry->d_name[0] == '.')
+			continue;
+		char path[512];
+		snprintf(path, sizeof(path), "%s/%s", directory, entry->d_name);
+		unlink(path);
+	}
+	closedir(dir);
+	rmdir(directory);
+	CHECK(correct && stopped, "SDK hid recording failure: cause=%u local=%d stop=%d reason=%s",
+	      status.disconnect_cause, status.disconnect_local, stopped, status.disconnect_reason);
+	return true;
+}
+
 static bool test_timeout_and_bounds(void)
 {
 	struct sippymodem_server_config config;
@@ -1527,7 +1602,7 @@ static bool test_transmit_completion(void)
 int main(void)
 {
 	io_owner = pthread_self();
-	bool passed = test_signaling_timeout() && test_startup_transmit_completion() && test_transmit_completion() && test_endpoint_registrations() && test_huntgroups() && test_typed_credentials() && test_typed_accounts() && test_owned_loopback() && test_compressed_command_and_fd_eof() && test_timeout_and_bounds();
+	bool passed = test_recording_failure() && test_signaling_timeout() && test_startup_transmit_completion() && test_transmit_completion() && test_endpoint_registrations() && test_huntgroups() && test_typed_credentials() && test_typed_accounts() && test_owned_loopback() && test_compressed_command_and_fd_eof() && test_timeout_and_bounds();
 	if (atomic_load(&wrong_io_thread))
 		fprintf(stderr, "network I/O escaped the SDK owner thread\n");
 	return passed && !atomic_load(&wrong_io_thread) ? 0 : 1;

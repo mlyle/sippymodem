@@ -7,17 +7,58 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 enum {
 	TEST_STREAM_COUNT = RECORD_RTP_PACKETS + 1,
 };
+
+static pthread_mutex_t write_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t write_ready = PTHREAD_COND_INITIALIZER;
+static bool block_write, entered_write, producer_done, fail_write, fail_thread;
+
+ssize_t __real_write(int descriptor, const void *data, size_t size);
+ssize_t __wrap_write(int descriptor, const void *data, size_t size)
+{
+	pthread_mutex_lock(&write_mutex);
+	entered_write = true;
+	pthread_cond_broadcast(&write_ready);
+	while (block_write)
+		pthread_cond_wait(&write_ready, &write_mutex);
+	bool fail = fail_write;
+	pthread_mutex_unlock(&write_mutex);
+	if (fail) {
+		errno = ENOSPC;
+		return -1;
+	}
+	return __real_write(descriptor, data, size);
+}
+
+int __real_pthread_create(pthread_t *, const pthread_attr_t *, void *(*)(void *), void *);
+int __wrap_pthread_create(pthread_t *thread, const pthread_attr_t *attributes,
+	void *(*run)(void *), void *context)
+{
+	return fail_thread ? EAGAIN : __real_pthread_create(thread, attributes, run, context);
+}
+
+static bool wait_flag(bool *flag)
+{
+	struct timespec deadline;
+	clock_gettime(CLOCK_REALTIME, &deadline);
+	deadline.tv_sec += 3;
+	while (!*flag)
+		if (pthread_cond_timedwait(&write_ready, &write_mutex, &deadline) != 0)
+			return false;
+	return true;
+}
 
 struct recording_fixture {
 	char directory[PATH_MAX];
@@ -210,6 +251,8 @@ static bool test_writes_bounded_canonical_evidence(void)
 			      MEDIA_SAMPLE_RATE, samples,
 			      ARRAY_LENGTH(samples)),
 	      "valid evidence blocks were rejected");
+	CHECK(recording_files_flush(fixture.files) == RECORDING_FILES_OK,
+	      "could not finish canonical evidence");
 	recording_files_get_stats(fixture.files, &stats);
 	passed = recording_files_last_result(fixture.files) ==
 			 RECORDING_FILES_OK &&
@@ -289,6 +332,8 @@ static bool test_packet_journal(void)
 	packet.sequence = 0;
 	packet.timestamp = 0;
 	recorder->packet(recorder->context, &packet);
+	CHECK(recording_files_flush(fixture.files) == RECORDING_FILES_OK,
+	      "could not finish packet journal");
 	recording_files_get_stats(fixture.files, &stats);
 	passed = read_exact_file(fixture.paths[RECORD_RTP_PACKETS], actual, sizeof(actual)) &&
 		memcmp(actual, expected, sizeof(actual)) == 0 &&
@@ -326,6 +371,142 @@ static bool test_packet_journal_collision(void)
 	return true;
 }
 
+struct producer {
+	const struct media_recorder *recorder;
+	uint8_t bytes[8];
+};
+
+static void *produce(void *context)
+{
+	struct producer *producer = context;
+	(void)recording_emit(producer->recorder, RECORD_RX_RTP_PAYLOAD_ARRIVAL,
+		RECORD_OCTETS, MEDIA_SAMPLE_RATE, producer->bytes, sizeof(producer->bytes));
+	pthread_mutex_lock(&write_mutex);
+	producer_done = true;
+	pthread_cond_broadcast(&write_ready);
+	pthread_mutex_unlock(&write_mutex);
+	return NULL;
+}
+
+static bool test_stalled_writer_keeps_producer_bounded(void)
+{
+	struct recording_fixture fixture;
+	struct recording_files_stats stats;
+	uint8_t block[32 * 1024];
+	pthread_t thread;
+	CHECK(fixture_open(&fixture), "could not create stalled writer fixture");
+	struct producer producer = { .recorder = recording_files_recorder(fixture.files),
+		.bytes = { 1, 2, 3, 4, 5, 6, 7, 8 } };
+	pthread_mutex_lock(&write_mutex);
+	block_write = true;
+	entered_write = producer_done = false;
+	pthread_mutex_unlock(&write_mutex);
+	CHECK(pthread_create(&thread, NULL, produce, &producer) == 0,
+	      "could not start recording producer");
+	pthread_mutex_lock(&write_mutex);
+	bool entered = wait_flag(&entered_write);
+	bool returned = entered && wait_flag(&producer_done);
+	pthread_mutex_unlock(&write_mutex);
+	unsigned accepted = 0;
+	memset(block, 0xa5, sizeof(block));
+	if (returned) {
+		memset(producer.bytes, 0, sizeof(producer.bytes));
+		for (unsigned i = 0; i < 20; ++i) {
+			(void)recording_emit(producer.recorder, RECORD_RX_RTP_PAYLOAD_ARRIVAL,
+				RECORD_OCTETS, MEDIA_SAMPLE_RATE, block, sizeof(block));
+			if (recording_files_last_result(fixture.files) != RECORDING_FILES_OK)
+				break;
+			accepted++;
+		}
+	}
+	pthread_mutex_lock(&write_mutex);
+	block_write = false;
+	pthread_cond_broadcast(&write_ready);
+	pthread_mutex_unlock(&write_mutex);
+	pthread_join(thread, NULL);
+	bool overflow = recording_files_flush(fixture.files) == RECORDING_FILES_QUEUE_FULL &&
+		recording_files_system_error(fixture.files) == 0;
+	recording_files_get_stats(fixture.files, &stats);
+	recording_files_destroy(fixture.files);
+	fixture.files = NULL;
+	size_t size = 8 + accepted * sizeof(block);
+	uint8_t *saved = malloc(size);
+	bool exact = saved != NULL && read_exact_file(
+		fixture.paths[RECORD_RX_RTP_PAYLOAD_ARRIVAL], saved, size);
+	for (size_t i = 0; exact && i < size; ++i)
+		exact = saved[i] == (i < 8 ? i + 1 : 0xa5);
+	free(saved);
+	fixture_close(&fixture);
+	CHECK(entered && returned, "media producer waited behind a stalled file write");
+	CHECK(accepted > 0 && accepted < 20 && overflow,
+	      "recording queue failed to report bounded overflow");
+	CHECK(exact && stats.blocks_written == accepted + 1 && stats.bytes_written == size,
+	      "queued evidence retained borrowed memory or lost accepted blocks");
+	return true;
+}
+
+static bool test_writer_failure_and_startup_cleanup(void)
+{
+	struct recording_fixture fixture;
+	CHECK(fixture_open(&fixture), "could not create writer failure fixture");
+	const struct media_recorder *recorder = recording_files_recorder(fixture.files);
+	const uint8_t octet = 1;
+	pthread_mutex_lock(&write_mutex);
+	fail_write = true;
+	pthread_mutex_unlock(&write_mutex);
+	(void)recording_emit(recorder, RECORD_TX_RTP_PAYLOAD_SENT, RECORD_OCTETS,
+		MEDIA_SAMPLE_RATE, &octet, 1);
+	bool failed = recording_files_flush(fixture.files) == RECORDING_FILES_WRITE_ERROR &&
+		recording_files_system_error(fixture.files) == ENOSPC;
+	pthread_mutex_lock(&write_mutex);
+	fail_write = false;
+	pthread_mutex_unlock(&write_mutex);
+	(void)recording_emit(recorder, RECORD_TX_RTP_PAYLOAD_SENT, RECORD_OCTETS,
+		MEDIA_SAMPLE_RATE, &octet, 1);
+	recording_files_destroy(fixture.files);
+	fixture.files = NULL;
+	bool empty = file_is_private_and_empty(fixture.paths[RECORD_TX_RTP_PAYLOAD_SENT]);
+	for (size_t i = 0; i < TEST_STREAM_COUNT; ++i)
+		unlink(fixture.paths[i]);
+	fail_thread = true;
+	errno = 0;
+	fixture.files = recording_files_create(fixture.prefix);
+	bool unwound = fixture.files == NULL && errno == EAGAIN;
+	fail_thread = false;
+	for (size_t i = 0; i < TEST_STREAM_COUNT; ++i)
+		unwound &= access(fixture.paths[i], F_OK) < 0 && errno == ENOENT;
+	fixture_close(&fixture);
+	CHECK(failed && empty, "writer failure was hidden or recording resumed with a hole");
+	CHECK(unwound, "failed writer startup left evidence files behind");
+	return true;
+}
+
+static bool test_queue_wrap_and_destroy_drain(void)
+{
+	struct recording_fixture fixture;
+	uint8_t block[8191], saved[64 * sizeof(block)];
+	CHECK(fixture_open(&fixture), "could not create wrapped queue fixture");
+	const struct media_recorder *recorder = recording_files_recorder(fixture.files);
+	for (unsigned i = 0; i < 64; ++i) {
+		memset(block, i, sizeof(block));
+		(void)recording_emit(recorder, RECORD_TX_RTP_PAYLOAD_SENT,
+			RECORD_OCTETS, MEDIA_SAMPLE_RATE, block, sizeof(block));
+		/* The last block is drained only by destroy. Odd sizes wrap both
+		 * metadata and payload independently across the byte ring. */
+		if (i != 63)
+			CHECK(recording_files_flush(fixture.files) == RECORDING_FILES_OK,
+			      "wrapped queue failed to drain");
+	}
+	recording_files_destroy(fixture.files);
+	fixture.files = NULL;
+	bool exact = read_exact_file(fixture.paths[RECORD_TX_RTP_PAYLOAD_SENT], saved, sizeof(saved));
+	for (size_t i = 0; exact && i < sizeof(saved); ++i)
+		exact = saved[i] == i / sizeof(block);
+	fixture_close(&fixture);
+	CHECK(exact, "wrapped queue or destroy lost/reordered copied evidence");
+	return true;
+}
+
 struct test_case {
 	const char *name;
 	bool (*run)(void);
@@ -341,6 +522,9 @@ int main(void)
 		{ "ambiguous evidence", test_latches_ambiguous_evidence },
 		{ "packet journal", test_packet_journal },
 		{ "packet journal collision", test_packet_journal_collision },
+		{ "stalled writer and queue bounds", test_stalled_writer_keeps_producer_bounded },
+		{ "writer failure and cleanup", test_writer_failure_and_startup_cleanup },
+		{ "queue wrap and destroy drain", test_queue_wrap_and_destroy_drain },
 	};
 	unsigned int failures = 0;
 

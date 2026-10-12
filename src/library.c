@@ -872,12 +872,26 @@ enum sippymodem_result sippymodem_line_start(struct sippymodem_line *line)
 	return SIPPYMODEM_OK;
 }
 
+static bool recording_failed(struct sippymodem_line *line, bool flush)
+{
+	const struct recording_files *files = modem_line_recording(line->core);
+	if (files == NULL)
+		return false;
+	enum recording_files_result result = flush ? recording_files_flush(files) :
+		recording_files_last_result(files);
+	if (result == RECORDING_FILES_OK)
+		return false;
+	log_line(line, SIPPYMODEM_LOG_ERROR, "%s (system error %d)",
+		recording_files_result_name(result), recording_files_system_error(files));
+	return true;
+}
+
 enum sippymodem_result sippymodem_line_stop(struct sippymodem_line *line)
 {
 	if (line == NULL || line->server->processing)
 		return SIPPYMODEM_INVALID;
 	if (!line->started)
-		return SIPPYMODEM_OK;
+		return recording_failed(line, true) ? SIPPYMODEM_ERROR : SIPPYMODEM_OK;
 	(void)collect_media(line, true);
 	media_worker_destroy(line->worker);
 	line->worker = NULL;
@@ -885,6 +899,8 @@ enum sippymodem_result sippymodem_line_stop(struct sippymodem_line *line)
 	enum sippymodem_result result = end_call(line, SIPPYMODEM_DISCONNECT_SHUTDOWN);
 	enum sip_session_result closed = modem_host_close(line_host(line));
 	if (closed != SIP_SESSION_OK && closed != SIP_SESSION_NOT_OPEN)
+		result = SIPPYMODEM_ERROR;
+	if (recording_failed(line, true))
 		result = SIPPYMODEM_ERROR;
 	line->started = false;
 	line->stopping = false;
@@ -1159,7 +1175,10 @@ static bool collect_media(struct sippymodem_line *line, bool wait)
 		end_call(line, SIPPYMODEM_DISCONNECT_MODEM);
 	if (line->active && modem->dte_overflow)
 		end_call(line, SIPPYMODEM_DISCONNECT_RX_OVERFLOW);
-	else if (job.result != MODEM_HOST_OK && job.result != MODEM_HOST_IDLE && line->active)
+	else if (line->active && recording_failed(line, false)) {
+		modem_note_disconnect(modem, true, "recording evidence failed");
+		end_call(line, SIPPYMODEM_DISCONNECT_MEDIA);
+	} else if (job.result != MODEM_HOST_OK && job.result != MODEM_HOST_IDLE && line->active)
 		end_call(line, job.result == MODEM_HOST_MODEM_STOPPED ?
 			SIPPYMODEM_DISCONNECT_MODEM : SIPPYMODEM_DISCONNECT_MEDIA);
 	else if (line->active && line->status.sip_state == SIPPYMODEM_SIP_CONNECTED && !modem->started)

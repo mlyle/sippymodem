@@ -427,6 +427,11 @@ enum recording_files_result recording_files_last_result(
 			       RECORDING_FILES_INVALID_BLOCK;
 }
 
+enum recording_files_result recording_files_flush(const struct recording_files *files)
+{
+	return recording_files_last_result(files);
+}
+
 struct modem_host *modem_host_create(
 	const struct app_config *config,
 	const struct media_recorder *recorder,

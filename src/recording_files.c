@@ -7,6 +7,7 @@
 #include <fcntl.h>
 #include <inttypes.h>
 #include <limits.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -26,6 +27,12 @@ enum {
 	RECORDING_STREAM_COUNT =
 		RECORD_RTP_PACKETS + 1,
 	PCM_CHUNK_SAMPLES = 256,
+	QUEUE_BYTES = 256 * 1024,
+	BLOCK_BYTES = 64 * 1024,
+};
+
+struct queued_block {
+	uint32_t stream, size;
 };
 
 struct recording_files {
@@ -35,6 +42,12 @@ struct recording_files {
 	enum recording_files_result last_result;
 	int system_error;
 	struct recording_files_stats stats;
+	pthread_t writer;
+	pthread_mutex_t mutex;
+	pthread_cond_t ready, drained;
+	bool stopping, writing;
+	size_t head, tail, queued;
+	uint8_t queue[QUEUE_BYTES];
 };
 
 static bool stream_is_valid(enum recording_stream stream)
@@ -119,15 +132,110 @@ static bool write_little_endian_pcm(
 	return true;
 }
 
+/* Queue and status share a short critical section; filesystem calls never
+ * hold it. The producer cannot wait behind a stalled evidence write. */
+static void latch_error(struct recording_files *files,
+	enum recording_files_result result, int error)
+{
+	if (files->last_result == RECORDING_FILES_OK) {
+		files->last_result = result;
+		files->system_error = error;
+	}
+}
+
+static void invalid_block(struct recording_files *files)
+{
+	pthread_mutex_lock(&files->mutex);
+	latch_error(files, RECORDING_FILES_INVALID_BLOCK, 0);
+	pthread_mutex_unlock(&files->mutex);
+}
+
+static void copy_ring(struct recording_files *files, void *data,
+	size_t size, bool store)
+{
+	size_t *position = store ? &files->tail : &files->head;
+	size_t first = QUEUE_BYTES - *position;
+	if (first > size)
+		first = size;
+	if (store) {
+		memcpy(files->queue + *position, data, first);
+		memcpy(files->queue, (uint8_t *)data + first, size - first);
+		files->queued += size;
+	} else {
+		memcpy(data, files->queue + *position, first);
+		memcpy((uint8_t *)data + first, files->queue, size - first);
+		files->queued -= size;
+	}
+	*position = (*position + size) % QUEUE_BYTES;
+}
+
+static void enqueue(struct recording_files *files, enum recording_stream stream,
+	const void *data, size_t size)
+{
+	pthread_mutex_lock(&files->mutex);
+	if (files->last_result == RECORDING_FILES_OK) {
+		if (size > BLOCK_BYTES || sizeof(struct queued_block) + size >
+		    QUEUE_BYTES - files->queued) {
+			latch_error(files, RECORDING_FILES_QUEUE_FULL, 0);
+		} else {
+			struct queued_block block = { (uint32_t)stream, (uint32_t)size };
+			copy_ring(files, &block, sizeof(block), true);
+			copy_ring(files, (void *)data, size, true);
+			pthread_cond_signal(&files->ready);
+		}
+	}
+	pthread_mutex_unlock(&files->mutex);
+}
+
+static void *writer_main(void *context)
+{
+	struct recording_files *files = context;
+	uint8_t data[BLOCK_BYTES];
+	pthread_mutex_lock(&files->mutex);
+	for (;;) {
+		while (files->queued == 0 && !files->stopping)
+			pthread_cond_wait(&files->ready, &files->mutex);
+		if (files->queued == 0)
+			break;
+		struct queued_block block;
+		copy_ring(files, &block, sizeof(block), false);
+		copy_ring(files, data, block.size, false);
+		files->writing = true;
+		pthread_mutex_unlock(&files->mutex);
+		bool written = stream_contains_pcm((enum recording_stream)block.stream) ?
+			write_little_endian_pcm(files->descriptors[block.stream],
+				data, block.size / sizeof(int16_t)) :
+			write_all(files->descriptors[block.stream], data, block.size);
+		int error = written ? 0 : errno;
+		pthread_mutex_lock(&files->mutex);
+		files->writing = false;
+		if (written) {
+			files->stats.blocks_written = add_u64_saturating(
+				files->stats.blocks_written, 1);
+			files->stats.bytes_written = add_u64_saturating(
+				files->stats.bytes_written, block.size);
+		} else {
+			latch_error(files, RECORDING_FILES_WRITE_ERROR, error);
+			/* The capture is incomplete. Reject later blocks rather than
+			 * presenting a stream with an unexplained hole. */
+			files->queued = 0;
+		}
+		pthread_cond_broadcast(&files->drained);
+		if (!written)
+			break;
+	}
+	pthread_mutex_unlock(&files->mutex);
+	return NULL;
+}
+
 static void record_block(
 	void *context, const struct recording_block *block)
 {
 	struct recording_files *files = context;
 	bool pcm;
 	size_t bytes;
-	bool written;
 
-	if (files->last_result != RECORDING_FILES_OK)
+	if (recording_files_last_result(files) != RECORDING_FILES_OK)
 		return;
 	pcm = block != NULL && stream_is_valid(block->stream) &&
 	      stream_contains_pcm(block->stream);
@@ -138,28 +246,14 @@ static void record_block(
 	    block->sample_rate != MEDIA_SAMPLE_RATE ||
 	    (block->data == NULL && block->count != 0) ||
 	    (pcm && block->count > SIZE_MAX / sizeof(int16_t))) {
-		files->last_result = RECORDING_FILES_INVALID_BLOCK;
+		invalid_block(files);
 		return;
 	}
 	if (block->count == 0)
 		return;
 
 	bytes = pcm ? block->count * sizeof(int16_t) : block->count;
-	written = pcm ?
-			  write_little_endian_pcm(
-				  files->descriptors[block->stream], block->data,
-				  block->count) :
-			  write_all(files->descriptors[block->stream],
-				    block->data, block->count);
-	if (!written) {
-		files->last_result = RECORDING_FILES_WRITE_ERROR;
-		files->system_error = errno;
-		return;
-	}
-	files->stats.blocks_written = add_u64_saturating(
-		files->stats.blocks_written, 1);
-	files->stats.bytes_written = add_u64_saturating(
-		files->stats.bytes_written, bytes);
+	enqueue(files, block->stream, block->data, bytes);
 }
 
 static void record_packet(void *context, const struct recording_packet *packet)
@@ -176,11 +270,11 @@ static void record_packet(void *context, const struct recording_packet *packet)
 	char line[192];
 	int length;
 
-	if (files->last_result != RECORDING_FILES_OK)
+	if (recording_files_last_result(files) != RECORDING_FILES_OK)
 		return;
 	if (packet == NULL || packet->event < RECORD_PACKET_SENT ||
 	    packet->event > RECORD_PACKET_REJECTED || packet->payload_type > 127) {
-		files->last_result = RECORDING_FILES_INVALID_BLOCK;
+		invalid_block(files);
 		return;
 	}
 	length = snprintf(line, sizeof(line),
@@ -192,18 +286,10 @@ static void record_packet(void *context, const struct recording_packet *packet)
 		packet->payload_octets, packet->playout_samples,
 		packet->concealed_samples);
 	if (length < 0 || (size_t)length >= sizeof(line)) {
-		files->last_result = RECORDING_FILES_INVALID_BLOCK;
+		invalid_block(files);
 		return;
 	}
-	if (!write_all(files->descriptors[RECORD_RTP_PACKETS], line, (size_t)length)) {
-		files->last_result = RECORDING_FILES_WRITE_ERROR;
-		files->system_error = errno;
-		return;
-	}
-	files->stats.blocks_written = add_u64_saturating(
-		files->stats.blocks_written, 1);
-	files->stats.bytes_written = add_u64_saturating(
-		files->stats.bytes_written, (uint64_t)length);
+	enqueue(files, RECORD_RTP_PACKETS, line, (size_t)length);
 }
 
 static void close_descriptors(struct recording_files *files)
@@ -256,6 +342,15 @@ struct recording_files *recording_files_create(
 	files->recorder.context = files;
 	files->recorder.write = record_block;
 	files->recorder.packet = record_packet;
+	failure = pthread_mutex_init(&files->mutex, NULL);
+	if (failure != 0)
+		goto fail_allocation;
+	failure = pthread_cond_init(&files->ready, NULL);
+	if (failure != 0)
+		goto fail_mutex;
+	failure = pthread_cond_init(&files->drained, NULL);
+	if (failure != 0)
+		goto fail_ready;
 
 	while (created < RECORDING_STREAM_COUNT) {
 		if (!build_path(
@@ -277,12 +372,21 @@ struct recording_files *recording_files_create(
 			goto fail;
 #endif
 	}
-	return files;
+	failure = pthread_create(&files->writer, NULL, writer_main, files);
+	if (failure == 0)
+		return files;
+	errno = failure;
 
 fail:
 	failure = errno;
 	close_descriptors(files);
 	remove_paths(files, created);
+	pthread_cond_destroy(&files->drained);
+fail_ready:
+	pthread_cond_destroy(&files->ready);
+fail_mutex:
+	pthread_mutex_destroy(&files->mutex);
+fail_allocation:
 	free(files);
 	errno = failure;
 	return NULL;
@@ -293,8 +397,29 @@ void recording_files_destroy(
 {
 	if (files == NULL)
 		return;
+	pthread_mutex_lock(&files->mutex);
+	files->stopping = true;
+	pthread_cond_signal(&files->ready);
+	pthread_mutex_unlock(&files->mutex);
+	pthread_join(files->writer, NULL);
 	close_descriptors(files);
+	pthread_cond_destroy(&files->drained);
+	pthread_cond_destroy(&files->ready);
+	pthread_mutex_destroy(&files->mutex);
 	free(files);
+}
+
+enum recording_files_result recording_files_flush(const struct recording_files *files)
+{
+	if (files == NULL)
+		return RECORDING_FILES_INVALID_BLOCK;
+	pthread_mutex_t *mutex = (pthread_mutex_t *)&files->mutex;
+	pthread_mutex_lock(mutex);
+	while (files->queued != 0 || files->writing)
+		pthread_cond_wait((pthread_cond_t *)&files->drained, mutex);
+	enum recording_files_result result = files->last_result;
+	pthread_mutex_unlock(mutex);
+	return result;
 }
 
 const struct media_recorder *recording_files_recorder(
@@ -314,14 +439,25 @@ bool recording_files_path(
 enum recording_files_result recording_files_last_result(
 	const struct recording_files *files)
 {
-	return files != NULL ? files->last_result :
-			       RECORDING_FILES_INVALID_BLOCK;
+	if (files == NULL)
+		return RECORDING_FILES_INVALID_BLOCK;
+	pthread_mutex_t *mutex = (pthread_mutex_t *)&files->mutex;
+	pthread_mutex_lock(mutex);
+	enum recording_files_result result = files->last_result;
+	pthread_mutex_unlock(mutex);
+	return result;
 }
 
 int recording_files_system_error(
 	const struct recording_files *files)
 {
-	return files != NULL ? files->system_error : EINVAL;
+	if (files == NULL)
+		return EINVAL;
+	pthread_mutex_t *mutex = (pthread_mutex_t *)&files->mutex;
+	pthread_mutex_lock(mutex);
+	int error = files->system_error;
+	pthread_mutex_unlock(mutex);
+	return error;
 }
 
 void recording_files_get_stats(
@@ -330,9 +466,12 @@ void recording_files_get_stats(
 {
 	if (stats == NULL)
 		return;
-	if (files != NULL)
+	if (files != NULL) {
+		pthread_mutex_t *mutex = (pthread_mutex_t *)&files->mutex;
+		pthread_mutex_lock(mutex);
 		*stats = files->stats;
-	else
+		pthread_mutex_unlock(mutex);
+	} else
 		memset(stats, 0, sizeof(*stats));
 }
 
@@ -346,6 +485,8 @@ const char *recording_files_result_name(
 		return "recording block does not match its evidence stream";
 	case RECORDING_FILES_WRITE_ERROR:
 		return "recording write failed";
+	case RECORDING_FILES_QUEUE_FULL:
+		return "recording queue exhausted";
 	}
 	return "unknown recording result";
 }

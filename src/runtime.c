@@ -285,6 +285,9 @@ enum modem_runtime_result modem_runtime_close(
 	runtime->terminal_client_connected = false;
 	runtime->last_terminal_result =
 		pty_terminal_close(runtime->terminal);
+	if (runtime->recording_files != NULL &&
+	    recording_files_flush(runtime->recording_files) != RECORDING_FILES_OK)
+		return MODEM_RUNTIME_RECORDING_ERROR;
 	if (stop_result != 0)
 		return MODEM_RUNTIME_MODEM_STOP_ERROR;
 	if (runtime->last_session_result != SIP_SESSION_OK &&
