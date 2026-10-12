@@ -87,6 +87,14 @@ int modem_report_remote_call_end(struct modem *modem)
 	return capture.remote_end_result;
 }
 
+void modem_note_disconnect(struct modem *modem, bool local, const char *reason)
+{
+	if (modem->disconnect_reason == NULL) {
+		modem->disconnect_local = local;
+		modem->disconnect_reason = reason;
+	}
+}
+
 void modem_update_status(struct modem *modem, unsigned int status)
 {
 	(void)modem;
@@ -220,6 +228,33 @@ static bool test_maps_outgoing_busy_responses(void)
 		      capture.status_updates == 2 &&
 		      capture.remote_end_calls == 4,
 	      "a non-busy or incoming response was reported as BUSY");
+	return true;
+}
+
+static bool test_distinguishes_transaction_timeout(void)
+{
+	struct modem modem = { 0 };
+	struct slmodem_calls calls;
+	memset(&capture, 0, sizeof(capture));
+	CHECK(slmodem_calls_init(&calls, &modem), "timeout fixture failed");
+	struct sip_call_event event = { .direction = SIP_CALL_DIRECTION_OUTGOING,
+		.state = SIP_CALL_IDLE, .status_code = 408, .timed_out = true };
+	calls.callbacks.call_changed(&calls, &event);
+	event.timed_out = false;
+	CHECK(modem.disconnect_reason == NULL, "timeout applied inside callback");
+	CHECK(slmodem_calls_drain(&calls) == SLMODEM_CALLS_OK &&
+	      modem.disconnect_local && strcmp(modem.disconnect_reason, "SIP transaction timed out") == 0,
+	      "local transaction timeout was not retained");
+	modem = (struct modem){ 0 };
+	calls.callbacks.call_changed(&calls, &event);
+	CHECK(slmodem_calls_drain(&calls) == SLMODEM_CALLS_OK && modem.disconnect_reason == NULL,
+	      "received SIP408 was mistaken for a local timer");
+	modem_note_disconnect(&modem, true, "original modem failure");
+	event.timed_out = true;
+	calls.callbacks.call_changed(&calls, &event);
+	CHECK(slmodem_calls_drain(&calls) == SLMODEM_CALLS_OK &&
+	      strcmp(modem.disconnect_reason, "original modem failure") == 0,
+	      "later SIP timeout replaced the first cause");
 	return true;
 }
 
@@ -364,6 +399,7 @@ int main(void)
 		{ "event order", test_preserves_event_order },
 		{ "incoming lifecycle", test_maps_incoming_lifecycle },
 		{ "outgoing busy responses", test_maps_outgoing_busy_responses },
+		{ "transaction timeout attribution", test_distinguishes_transaction_timeout },
 		{ "drain event preservation",
 		  test_preserves_events_raised_while_draining },
 		{ "invalid transitions",

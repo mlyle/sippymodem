@@ -1749,7 +1749,7 @@ int modem_report_remote_call_end(struct modem *m)
 	if (!IS_STATE_IDLE(m->state) || m->call_report.active)
 		modem_note_disconnect(m, false, "remote SIP call ended");
 	if (IS_STATE_IDLE(m->state) && m->call_report.active) {
-		modem_finish_call_report(m, false, "remote SIP call ended", RESULT_NOCARRIER);
+		modem_finish_call_report(m, m->disconnect_local, m->disconnect_reason, RESULT_NOCARRIER);
 	}
 	TOTAL_RINGS_COUNT(m) = 0;
 	modem_hup(m, 0);

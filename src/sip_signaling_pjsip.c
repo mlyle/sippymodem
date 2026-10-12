@@ -328,9 +328,9 @@ static void copy_pj_text(char *output, size_t capacity,
 
 static void emit_call_event(struct sip_signaling *signaling,
 			    enum sip_call_state state,
-			    const pjsua_call_info *info)
+			    const pjsua_call_info *info, bool timed_out)
 {
-	struct sip_call_event event;
+	struct sip_call_event event = { .timed_out = timed_out };
 
 	if (signaling == NULL)
 		return;
@@ -419,7 +419,6 @@ static void pjsip_call_changed(pjsua_call_id call_id, pjsip_event *event)
 	struct sip_signaling *signaling = owner_from_call(call_id, false);
 	pjsua_call_info info;
 
-	(void)event;
 	if (signaling == NULL ||
 	    (call_id != signaling->call_id && !signaling->call_starting) ||
 	    pjsua_call_get_info(call_id, &info) != PJ_SUCCESS)
@@ -428,21 +427,26 @@ static void pjsip_call_changed(pjsua_call_id call_id, pjsip_event *event)
 		signaling->call_id = call_id;
 	switch (info.state) {
 	case PJSIP_INV_STATE_CALLING:
-		emit_call_event(signaling, SIP_CALL_DIALING, &info);
+		emit_call_event(signaling, SIP_CALL_DIALING, &info, false);
 		break;
 	case PJSIP_INV_STATE_EARLY:
-		emit_call_event(signaling, SIP_CALL_EARLY, &info);
+		emit_call_event(signaling, SIP_CALL_EARLY, &info, false);
 		break;
 	case PJSIP_INV_STATE_CONFIRMED:
-		emit_call_event(signaling, SIP_CALL_CONNECTED, &info);
+		emit_call_event(signaling, SIP_CALL_CONNECTED, &info, false);
 		break;
-	case PJSIP_INV_STATE_DISCONNECTED:
+	case PJSIP_INV_STATE_DISCONNECTED: {
+		bool timed_out = event != NULL &&
+			(event->type == PJSIP_EVENT_TIMER ||
+			 (event->type == PJSIP_EVENT_TSX_STATE &&
+			  event->body.tsx_state.type == PJSIP_EVENT_TIMER));
 		emit_media_inactive(signaling);
 		signaling->call_id = PJSUA_INVALID_ID;
 		signaling->call_starting = false;
 		signaling->incoming_response_code = 0;
-		emit_call_event(signaling, SIP_CALL_IDLE, &info);
+		emit_call_event(signaling, SIP_CALL_IDLE, &info, timed_out);
 		break;
+	}
 	case PJSIP_INV_STATE_NULL:
 	case PJSIP_INV_STATE_INCOMING:
 	case PJSIP_INV_STATE_CONNECTING:
@@ -607,7 +611,7 @@ static void pjsip_incoming_call(pjsua_acc_id account_id,
 	}
 	signaling->call_direction = SIP_CALL_DIRECTION_INCOMING;
 	signaling->incoming_response_code = 0;
-	emit_call_event(signaling, SIP_CALL_INCOMING_PENDING, &info);
+	emit_call_event(signaling, SIP_CALL_INCOMING_PENDING, &info, false);
 	if (signaling->close_requested || signaling->call_id != call_id ||
 	    signaling->incoming_response_code >= 200)
 		return;
@@ -1387,7 +1391,7 @@ static enum sip_signaling_result close_now(struct sip_signaling *signaling)
 	}
 	emit_media_inactive(signaling);
 	if (signaling->call_state != SIP_CALL_IDLE)
-		emit_call_event(signaling, SIP_CALL_IDLE, NULL);
+		emit_call_event(signaling, SIP_CALL_IDLE, NULL, false);
 	signaling->close_requested = false;
 	signaling->closing = false;
 	if (signaling->owns_server) {
@@ -1741,7 +1745,7 @@ enum sip_signaling_result sip_signaling_dial(
 		signaling->call_id = PJSUA_INVALID_ID;
 		if (signaling->call_state != SIP_CALL_IDLE)
 			emit_call_event(signaling, SIP_CALL_IDLE,
-					NULL);
+					NULL, false);
 		emit_library_error(signaling, "place SIP call", status);
 		if (signaling->close_requested)
 			(void)close_now(signaling);
@@ -1755,11 +1759,11 @@ enum sip_signaling_result sip_signaling_dial(
 			if (pjsua_call_get_info(call_id, &info) == PJ_SUCCESS)
 				emit_call_event(signaling,
 						SIP_CALL_DIALING,
-						&info);
+						&info, false);
 			else
 				emit_call_event(signaling,
 						SIP_CALL_DIALING,
-						NULL);
+						NULL, false);
 		}
 	}
 	if (signaling->close_requested)
@@ -1829,7 +1833,7 @@ enum sip_signaling_result sip_signaling_hangup(
 	status = pjsua_call_hangup(call_id, 0, NULL, NULL);
 	emit_media_inactive(signaling);
 	if (signaling->call_state != SIP_CALL_IDLE)
-		emit_call_event(signaling, SIP_CALL_IDLE, NULL);
+		emit_call_event(signaling, SIP_CALL_IDLE, NULL, false);
 	if (status != PJ_SUCCESS) {
 		emit_library_error(signaling, "hang up SIP call", status);
 		if (signaling->close_requested)

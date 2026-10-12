@@ -75,6 +75,7 @@ struct sip_call_event {
 	enum sip_call_direction direction;
 	enum sip_call_state state;
 	unsigned int status_code;
+	bool timed_out; /* Local transaction timer, not a received SIP 408. */
 	const char *reason;
 	const char *remote_identity;
 };

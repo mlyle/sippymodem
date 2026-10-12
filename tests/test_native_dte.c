@@ -437,6 +437,11 @@ static bool unanswered_call_report(void)
 	EXPECT(modem->call_report.result == RESULT_NOCARRIER && !modem->call_report.disconnect_local);
 	EXPECT(strcmp(modem->call_report.reason, "remote SIP call ended") == 0);
 	EXPECT(modem_report_incoming_call(modem) == 0);
+	modem_note_disconnect(modem, true, "SIP transaction timed out");
+	EXPECT(modem_report_remote_call_end(modem) == 0);
+	EXPECT(!modem->call_report.active && modem->call_report.disconnect_local &&
+	       strcmp(modem->call_report.reason, "SIP transaction timed out") == 0);
+	EXPECT(modem_report_incoming_call(modem) == 0);
 	modem_hangup(modem);
 	EXPECT(!modem->call_report.active && modem->call_report.disconnect_local);
 	EXPECT(strcmp(modem->call_report.reason, "local hangup") == 0);

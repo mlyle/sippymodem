@@ -38,6 +38,7 @@ static void capture_call(
 	calls->pending[tail].direction = event->direction;
 	calls->pending[tail].state = event->state;
 	calls->pending[tail].status_code = event->status_code;
+	calls->pending[tail].timed_out = event->timed_out;
 	calls->pending_count++;
 }
 
@@ -99,6 +100,8 @@ enum slmodem_calls_result slmodem_calls_drain(
 		return SLMODEM_CALLS_INVALID_EVENT;
 	switch (transition.state) {
 	case SIP_CALL_IDLE:
+		if (transition.timed_out)
+			modem_note_disconnect(calls->modem, true, "SIP transaction timed out");
 		if (is_outgoing_busy(&transition))
 			modem_update_status(calls->modem, STATUS_BUSY);
 		result = modem_report_remote_call_end(calls->modem);

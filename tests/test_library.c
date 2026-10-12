@@ -5,6 +5,7 @@
 #include "g711.h"
 #include "test.h"
 #include "sdk_io.h"
+#include <pjsip.h>
 
 #include <stdio.h>
 #include <errno.h>
@@ -815,6 +816,55 @@ static bool test_typed_accounts(void)
 	return true;
 }
 
+static bool test_signaling_timeout(void)
+{
+	struct sippymodem_server_config sc;
+	sippymodem_server_config_init(&sc);
+	sc.max_lines = 1;
+	sc.public_address = sc.bound_address = "127.0.0.1";
+	struct sippymodem_server *server = sippymodem_server_create(&sc);
+	EXPECT(server != NULL);
+	struct sippymodem_line_config lc;
+	sippymodem_line_config_init(&lc);
+	lc.modulation = 21;
+	lc.automode = false;
+	lc.ec_policy = SIPPYMODEM_EC_RAW;
+	lc.compression_types = 0;
+	lc.call_timeout_ms = 5000;
+	struct sippymodem_line *line = sippymodem_line_create(server, &lc);
+	EXPECT(line != NULL && sippymodem_server_start(server) == SIPPYMODEM_OK &&
+	       sippymodem_line_start(line) == SIPPYMODEM_OK);
+	uint64_t now = 1000000000, next, generation;
+	EXPECT(sippymodem_process(server, now, &next) == SIPPYMODEM_OK);
+	int sink = socket(AF_INET, SOCK_DGRAM, 0);
+	struct sockaddr_in bound = { .sin_family = AF_INET, .sin_addr.s_addr = htonl(INADDR_LOOPBACK) };
+	EXPECT(sink >= 0 && bind(sink, (struct sockaddr *)&bound, sizeof(bound)) == 0);
+	socklen_t size = sizeof(bound);
+	EXPECT(getsockname(sink, (struct sockaddr *)&bound, &size) == 0);
+	char target[128];
+	snprintf(target, sizeof(target), "sip:100@127.0.0.1:%u", ntohs(bound.sin_port));
+	/* Exercise the real SIP transaction timer before the SDK's call deadline. */
+	unsigned int old_timeout = pjsip_cfg()->tsx.td;
+	pjsip_tsx_set_timers(0, 0, 0, 100);
+	enum sippymodem_result dialed = sippymodem_dial(line, target, &generation);
+	struct sippymodem_status status = { 0 };
+	bool processed = true;
+	for (unsigned int i = 0; i < 1000 && !status.disconnect_sequence && processed; ++i) {
+		processed = step(server, &now) && sippymodem_get_status(line, &status) == SIPPYMODEM_OK;
+		usleep(1000);
+	}
+	pjsip_tsx_set_timers(0, 0, 0, old_timeout);
+	bool correct = dialed == SIPPYMODEM_OK && processed &&
+		status.disconnect_cause == SIPPYMODEM_DISCONNECT_TIMEOUT && status.disconnect_local &&
+		status.disconnect_generation == generation && status.disconnect_sequence == 1 &&
+		strcmp(status.disconnect_reason, "SIP transaction timed out") == 0;
+	close(sink);
+	sippymodem_server_destroy(server);
+	CHECK(correct, "SIP timer misreported: cause=%u local=%d reason=%s",
+	      status.disconnect_cause, status.disconnect_local, status.disconnect_reason);
+	return true;
+}
+
 static bool test_timeout_and_bounds(void)
 {
 	struct sippymodem_server_config config;
@@ -1477,7 +1527,7 @@ static bool test_transmit_completion(void)
 int main(void)
 {
 	io_owner = pthread_self();
-	bool passed = test_startup_transmit_completion() && test_transmit_completion() && test_endpoint_registrations() && test_huntgroups() && test_typed_credentials() && test_typed_accounts() && test_owned_loopback() && test_compressed_command_and_fd_eof() && test_timeout_and_bounds();
+	bool passed = test_signaling_timeout() && test_startup_transmit_completion() && test_transmit_completion() && test_endpoint_registrations() && test_huntgroups() && test_typed_credentials() && test_typed_accounts() && test_owned_loopback() && test_compressed_command_and_fd_eof() && test_timeout_and_bounds();
 	if (atomic_load(&wrong_io_thread))
 		fprintf(stderr, "network I/O escaped the SDK owner thread\n");
 	return passed && !atomic_load(&wrong_io_thread) ? 0 : 1;

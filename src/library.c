@@ -43,6 +43,7 @@ struct sippymodem_line {
 	uint64_t attempt_deadline;
 	bool active;
 	bool remote_closing;
+	enum sippymodem_disconnect_cause closing_cause;
 	bool terminal_due;
 	bool incoming;
 	bool started;
@@ -368,11 +369,17 @@ static void call_changed(void *context, const struct sip_call_event *event)
 		return;
 	line->status.sip_state = states[event->state];
 	line->status.state_sequence++;
+	if (event->state == SIP_CALL_IDLE && event->timed_out)
+		modem_note_disconnect(line_modem(line), true, "SIP transaction timed out");
+	enum sippymodem_disconnect_cause cause = event->timed_out ? SIPPYMODEM_DISCONNECT_TIMEOUT :
+		line_modem(line)->disconnect_reason != NULL && line_modem(line)->disconnect_local ?
+		SIPPYMODEM_DISCONNECT_MODEM : SIPPYMODEM_DISCONNECT_REMOTE;
 	if (event->state == SIP_CALL_IDLE && line_modem(line)->started &&
 	    (line_modem(line)->state == STATE_MODEM_ONLINE ||
 	     line_modem(line)->state == STATE_COMMAND_ONLINE)) {
 		/* SIP ended; retain carrier/RX until the accepted media tail is played. */
 		line->remote_closing = true;
+		line->closing_cause = cause;
 		return;
 	}
 	struct sip_call_event owned_event = *event;
@@ -384,8 +391,7 @@ static void call_changed(void *context, const struct sip_call_event *event)
 	else if (event->state == SIP_CALL_CONNECTED)
 		emit(line, SIPPYMODEM_EVENT_SIP_ESTABLISHED);
 	else if (event->state == SIP_CALL_IDLE)
-		disconnected(line, line_modem(line)->disconnect_reason != NULL && line_modem(line)->disconnect_local ?
-			SIPPYMODEM_DISCONNECT_MODEM : SIPPYMODEM_DISCONNECT_REMOTE);
+		disconnected(line, cause);
 }
 
 static bool drain_received_media(void *context)
@@ -1144,7 +1150,7 @@ static bool collect_media(struct sippymodem_line *line, bool wait)
 		job.result = MODEM_HOST_SESSION_ERROR;
 	(void)modem_line_flush_signaling(line->core);
 	if (line->remote_closing && !modem_host_media_is_configured(line_host(line)))
-		end_call(line, SIPPYMODEM_DISCONNECT_REMOTE);
+		end_call(line, line->closing_cause);
 	struct modem *modem = line_modem(line);
 	if (line->config.ec_policy == SIPPYMODEM_EC_REQUIRED &&
 	    !(modem->dp != NULL && modem->dp->id == DP_DS0 && !line->config.ds0_lapm) &&
