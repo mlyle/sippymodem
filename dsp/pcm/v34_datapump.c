@@ -455,7 +455,7 @@ static bool enter_link(struct v34_datapump *datapump)
 	if (v34_data_quality_start(
 		    &data_quality, startup.receive.geometry.symbol_rate,
 		    startup.receive.geometry.primary_data_rate_2400_bps_units,
-		    measurement) != V34_DATA_QUALITY_OK)
+		    measurement, 2) != V34_DATA_QUALITY_OK)
 		return false;
 	transmit_rate =
 		(unsigned int)startup.mode.transmit

@@ -573,7 +573,7 @@ static bool observe_upstream_quality(struct v90_datapump *datapump)
 		if (v34_data_quality_start(
 			    &next, receiver->geometry.symbol_rate,
 			    receiver->geometry.primary_data_rate_2400_bps_units,
-			    &receiver->line.equalizer.quality) != V34_DATA_QUALITY_OK)
+			    &receiver->line.equalizer.quality, 1) != V34_DATA_QUALITY_OK)
 			return false;
 		datapump->upstream_quality_ready = true;
 	} else {

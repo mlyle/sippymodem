@@ -106,7 +106,7 @@ bool v34_data_quality_is_valid(const struct v34_data_quality *quality)
 {
 	if (quality == NULL ||
 	    (quality->loss_windows != 0 &&
-	     (quality->loss_windows < 5 || quality->loss_windows > 7)) ||
+	     (quality->loss_windows < 3 || quality->loss_windows > 7)) ||
 	    quality->bad_windows > quality->loss_windows ||
 	    quality->automatic_retrains > V34_DATA_QUALITY_MAX_RETRAINS ||
 	    quality->good_windows >= V34_DATA_QUALITY_REARM_WINDOWS ||
@@ -192,13 +192,15 @@ enum v34_data_quality_result v34_data_quality_start(
 	struct v34_data_quality *quality,
 	enum v34_symbol_rate symbol_rate,
 	uint8_t primary_data_rate_2400_bps_units,
-	const struct v34_adaptive_equalizer_quality *measurement)
+	const struct v34_adaptive_equalizer_quality *measurement,
+	unsigned int symbols_per_decision)
 {
 	struct v34_data_quality next;
 	int16_t threshold;
 	int32_t relaxed_threshold;
 
 	if (quality == NULL || measurement == NULL ||
+	    (symbols_per_decision != 1u && symbols_per_decision != 2u) ||
 	    memory_regions_overlap(
 		quality, sizeof(*quality), measurement, sizeof(*measurement)) ||
 	    !measurement_is_valid(measurement) ||
@@ -216,7 +218,10 @@ enum v34_data_quality_result v34_data_quality_start(
 	relaxed_threshold = ((int32_t)threshold * 105 + 99) / 100;
 	next.threshold = (int16_t)(relaxed_threshold > INT16_MAX ?
 				   INT16_MAX : relaxed_threshold);
-	next.loss_windows = loss_windows(symbol_rate);
+	/* Each window contains 1024 measured decisions. Some receivers adapt
+	 * only on the second symbol of each pair, doubling its duration. */
+	next.loss_windows = (uint8_t)((loss_windows(symbol_rate) +
+		symbols_per_decision - 1u) / symbols_per_decision);
 	next.bad_windows = 0;
 	next.good_windows = 0;
 	next.window_position = measurement->window_position;

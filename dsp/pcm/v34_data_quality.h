@@ -57,12 +57,15 @@ enum v34_data_quality_result v34_data_quality_select_receive_rate(
 	uint8_t *selected_rate_2400_bps_units);
 
 /* Start a new data generation while retaining used automatic-retrain attempts,
- * not healthy credit. Only a subsequently completed window affects policy. */
+ * not healthy credit. Only a subsequently completed window affects policy.
+ * symbols_per_decision is 1 when measuring both symbols of each 4-D pair,
+ * or 2 when measuring only its second symbol, as conventional V.34 does. */
 enum v34_data_quality_result v34_data_quality_start(
 	struct v34_data_quality *quality,
 	enum v34_symbol_rate symbol_rate,
 	uint8_t primary_data_rate_2400_bps_units,
-	const struct v34_adaptive_equalizer_quality *measurement);
+	const struct v34_adaptive_equalizer_quality *measurement,
+	unsigned int symbols_per_decision);
 
 /* Observe after each single or paired decision. A window may finish between
  * the two decisions, so completion is a counter wrap, not an exact zero.

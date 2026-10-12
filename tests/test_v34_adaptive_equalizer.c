@@ -1205,7 +1205,7 @@ static bool test_data_quality_policy(void)
 		CHECK(v34_data_quality_init(&quality) == V34_DATA_QUALITY_OK &&
 		      v34_data_quality_start(
 			      &quality, profiles[index].symbol_rate,
-			      profiles[index].rate_units, &measurement) ==
+			      profiles[index].rate_units, &measurement, 1) ==
 			      V34_DATA_QUALITY_OK &&
 		      quality.threshold == profiles[index].threshold,
 		      "quality threshold changed at profile %zu: %d", index,
@@ -1220,7 +1220,7 @@ static bool test_data_quality_policy(void)
 		     ++rate) {
 			CHECK(v34_data_quality_start(
 				      &quality, (enum v34_symbol_rate)index, rate,
-				      &measurement) == V34_DATA_QUALITY_OK,
+				      &measurement, 1) == V34_DATA_QUALITY_OK,
 			      "quality profile rejected %zu/%u", index, rate);
 			profile_hash = hash_word(
 				profile_hash, (uint16_t)quality.threshold);
@@ -1267,19 +1267,19 @@ static bool test_data_quality_policy(void)
 	measurement.decision_metric = 100;
 	CHECK(v34_data_quality_init(&quality) == V34_DATA_QUALITY_OK &&
 	      v34_data_quality_start(
-		      &quality, V34_SYMBOL_RATE_2400, 1, &measurement) ==
+		      &quality, V34_SYMBOL_RATE_2400, 1, &measurement, 1) ==
 		      V34_DATA_QUALITY_OK &&
 	      quality.threshold == 840,
 	      "minimum-rate training baseline changed: %d", quality.threshold);
 	measurement.decision_metric = INT16_MAX / 8;
 	CHECK(v34_data_quality_start(
-		      &quality, V34_SYMBOL_RATE_2400, 1, &measurement) ==
+		      &quality, V34_SYMBOL_RATE_2400, 1, &measurement, 1) ==
 		      V34_DATA_QUALITY_OK && quality.threshold == INT16_MAX &&
 	      v34_data_quality_is_valid(&quality),
 	      "minimum-rate threshold headroom overflowed");
 	measurement.decision_metric = 5000;
 	CHECK(v34_data_quality_start(
-		      &quality, V34_SYMBOL_RATE_2743, 2, &measurement) ==
+		      &quality, V34_SYMBOL_RATE_2743, 2, &measurement, 1) ==
 		      V34_DATA_QUALITY_OK &&
 	      quality.threshold == 0 && quality.active,
 	      "saturated minimum-rate baseline was not disabled");
@@ -1292,7 +1292,7 @@ static bool test_data_quality_policy(void)
 	measurement.decision_metric = 109;
 	CHECK(v34_data_quality_init(&quality) == V34_DATA_QUALITY_OK &&
 	      v34_data_quality_start(
-		      &quality, V34_SYMBOL_RATE_3429, 12, &measurement) ==
+		      &quality, V34_SYMBOL_RATE_3429, 12, &measurement, 1) ==
 		      V34_DATA_QUALITY_OK &&
 	      quality.baseline == 109 && quality.threshold == 177 &&
 	      !quality.timing_frozen &&
@@ -1314,7 +1314,7 @@ static bool test_data_quality_policy(void)
 
 	CHECK(v34_data_quality_init(&quality) == V34_DATA_QUALITY_OK &&
 	      v34_data_quality_start(
-		      &quality, V34_SYMBOL_RATE_3429, 14, &measurement) ==
+		      &quality, V34_SYMBOL_RATE_3429, 14, &measurement, 1) ==
 		      V34_DATA_QUALITY_OK &&
 	      quality.threshold == 71,
 	      "retained quality profile did not initialize");
@@ -1352,7 +1352,7 @@ static bool test_data_quality_policy(void)
 		measurement.window_position = 0;
 		CHECK(v34_data_quality_start(
 			      &quality, V34_SYMBOL_RATE_3429, 14,
-			      &measurement) == V34_DATA_QUALITY_OK,
+			      &measurement, 1) == V34_DATA_QUALITY_OK,
 		      "quality generation %u did not restart", retry);
 		for (unsigned int window = 0;
 		     window < quality.loss_windows; ++window) {
@@ -1372,7 +1372,7 @@ static bool test_data_quality_policy(void)
 	      "quality retrain budget did not saturate");
 	measurement.window_position = 1;
 	CHECK(v34_data_quality_start(
-		      &quality, V34_SYMBOL_RATE_3200, 11, &measurement) ==
+		      &quality, V34_SYMBOL_RATE_3200, 11, &measurement, 1) ==
 		      V34_DATA_QUALITY_OK &&
 	      quality.threshold == 220,
 	      "26400 quality profile changed");
@@ -1403,42 +1403,45 @@ static bool test_data_quality_duration(void)
 		{ 3000, 1, 6 }, { 3200, 1, 6 }, { 24000, 7, 7 },
 	};
 
-	for (unsigned rate = 0; rate < ARRAY_LENGTH(rates); ++rate) {
-		struct v34_adaptive_equalizer_quality measurement = { 0 };
-		struct v34_data_quality quality = { 0 };
-		unsigned window_time = V34_ADAPTIVE_EQUALIZER_QUALITY_SYMBOLS *
-			1000u * rates[rate].denominator;
-		unsigned minimum_time = 1800u * rates[rate].numerator;
+	for (unsigned stride = 1; stride <= 2; ++stride) {
+		for (unsigned rate = 0; rate < ARRAY_LENGTH(rates); ++rate) {
+			struct v34_adaptive_equalizer_quality measurement = { 0 };
+			struct v34_data_quality quality = { 0 };
+			unsigned window_time = V34_ADAPTIVE_EQUALIZER_QUALITY_SYMBOLS *
+				1000u * rates[rate].denominator * stride;
+			unsigned windows = (rates[rate].windows + stride - 1u) / stride;
+			unsigned minimum_time = 1800u * rates[rate].numerator;
 
-		CHECK(v34_data_quality_start(&quality, (enum v34_symbol_rate)rate,
-			      9, &measurement) == V34_DATA_QUALITY_OK &&
-		      quality.loss_windows == rates[rate].windows &&
-		      quality.loss_windows * window_time >= minimum_time &&
-		      (quality.loss_windows - 1u) * window_time < minimum_time,
-		      "quality delay is not the shortest count covering 1.8 s at rate %u", rate);
-		/* A metric just below the new boundary breaks a nearly complete
-		 * failure streak; a metric exactly at it starts a fresh streak. */
-		for (unsigned pass = 0; pass < 2; ++pass) {
-			for (unsigned window = 1; window <= rates[rate].windows; ++window) {
-				bool recovered = pass == 0 && window == rates[rate].windows;
-				enum v34_data_quality_result result = publish_quality_window(
-					&quality, &measurement,
-					(int16_t)(quality.threshold - (recovered ? 1 : 0)));
+			CHECK(v34_data_quality_start(&quality, (enum v34_symbol_rate)rate,
+				      9, &measurement, stride) == V34_DATA_QUALITY_OK &&
+			      quality.loss_windows == windows &&
+			      quality.loss_windows * window_time >= minimum_time &&
+			      (quality.loss_windows - 1u) * window_time < minimum_time,
+			      "quality delay is not the shortest count covering 1.8 s at rate %u", rate);
+			/* A metric just below the new boundary breaks a nearly complete
+			 * failure streak; a metric exactly at it starts a fresh streak. */
+			for (unsigned pass = 0; pass < 2; ++pass) {
+				for (unsigned window = 1; window <= windows; ++window) {
+					bool recovered = pass == 0 && window == windows;
+					enum v34_data_quality_result result = publish_quality_window(
+						&quality, &measurement,
+						(int16_t)(quality.threshold - (recovered ? 1 : 0)));
 
-				CHECK(result == (pass == 1 && window == rates[rate].windows ?
-					      V34_DATA_QUALITY_RETRAIN :
-					      pass == 0 && window == 1 ?
-					      V34_DATA_QUALITY_FREEZE_TIMING : V34_DATA_QUALITY_OK),
-				      "quality recovery fired at rate %u pass %u window %u",
-				      rate, pass, window);
-				if (recovered)
-					CHECK(quality.bad_windows == 0,
-					      "below-threshold window retained bad credit");
+					CHECK(result == (pass == 1 && window == windows ?
+						      V34_DATA_QUALITY_RETRAIN :
+						      pass == 0 && window == 1 ?
+						      V34_DATA_QUALITY_FREEZE_TIMING : V34_DATA_QUALITY_OK),
+					      "quality recovery fired at rate %u pass %u window %u",
+					      rate, pass, window);
+					if (recovered)
+						CHECK(quality.bad_windows == 0,
+						      "below-threshold window retained bad credit");
+				}
 			}
+			CHECK(!quality.active && quality.automatic_retrains == 1 &&
+			      v34_data_quality_is_valid(&quality),
+			      "duration recovery left invalid state at rate %u", rate);
 		}
-		CHECK(!quality.active && quality.automatic_retrains == 1 &&
-		      v34_data_quality_is_valid(&quality),
-		      "duration recovery left invalid state at rate %u", rate);
 	}
 	return true;
 }
@@ -1483,7 +1486,7 @@ static bool test_recent_rate_measurement(void)
 		CHECK(v34_data_quality_init(&online) == V34_DATA_QUALITY_OK &&
 		      v34_data_quality_start(
 			      &online, V34_SYMBOL_RATE_3429, 14u,
-			      &measurement) == V34_DATA_QUALITY_OK &&
+			      &measurement, 1) == V34_DATA_QUALITY_OK &&
 		      online.baseline == cases[index].published,
 		      "rate selection published a partial online window");
 	}
@@ -1501,7 +1504,7 @@ static bool test_paired_data_quality_windows(void)
 
 		CHECK(v34_data_quality_init(&quality) == V34_DATA_QUALITY_OK &&
 		      v34_data_quality_start(
-			      &quality, V34_SYMBOL_RATE_3200, 11, &measurement) ==
+			      &quality, V34_SYMBOL_RATE_3200, 11, &measurement, 1) ==
 			      V34_DATA_QUALITY_OK,
 		      "paired quality phase %u did not start", phase);
 		for (unsigned int window = 0;
@@ -1538,7 +1541,7 @@ static bool test_data_quality_rearm(void)
 		struct v34_data_quality quality = { .automatic_retrains = budget };
 
 		CHECK(v34_data_quality_start(&quality, V34_SYMBOL_RATE_3429, 12,
-			      &measurement) == V34_DATA_QUALITY_OK,
+			      &measurement, 1) == V34_DATA_QUALITY_OK,
 		      "rearm fixture did not start");
 		for (unsigned window = 1; window <= V34_DATA_QUALITY_REARM_WINDOWS; ++window) {
 			measurement.window_position = 1;
@@ -1555,7 +1558,7 @@ static bool test_data_quality_rearm(void)
 		for (unsigned attempt = 0; attempt <= V34_DATA_QUALITY_MAX_RETRAINS; ++attempt) {
 			measurement.decision_metric = 40;
 			CHECK(v34_data_quality_start(&quality, V34_SYMBOL_RATE_3429, 12,
-				      &measurement) == V34_DATA_QUALITY_OK,
+				      &measurement, 1) == V34_DATA_QUALITY_OK,
 			      "rearmed quality did not restart");
 			for (unsigned window = 0; window < quality.loss_windows; ++window) {
 				enum v34_data_quality_result expected = window == 0 ?
@@ -1574,7 +1577,7 @@ static bool test_data_quality_rearm(void)
 		struct v34_data_quality quality = { .automatic_retrains = 2 };
 
 		CHECK(v34_data_quality_start(&quality, V34_SYMBOL_RATE_3429, 12,
-			      &measurement) == V34_DATA_QUALITY_OK, "interruption fixture did not start");
+			      &measurement, 1) == V34_DATA_QUALITY_OK, "interruption fixture did not start");
 		for (unsigned window = 1; window < V34_DATA_QUALITY_REARM_WINDOWS; ++window)
 			CHECK(publish_quality_window(&quality, &measurement, 40) == V34_DATA_QUALITY_OK,
 			      "clean window failed before interruption");
@@ -1587,7 +1590,7 @@ static bool test_data_quality_rearm(void)
 			measurement.decision_metric = interruption == 3 ? 5000 : 40;
 			CHECK(v34_data_quality_start(&quality,
 				      interruption == 3 ? V34_SYMBOL_RATE_2400 : V34_SYMBOL_RATE_3429,
-				      interruption == 3 ? 1 : 12, &measurement) == V34_DATA_QUALITY_OK,
+				      interruption == 3 ? 1 : 12, &measurement, 1) == V34_DATA_QUALITY_OK,
 			      "quality restart failed");
 		}
 		for (unsigned window = 1; window <= V34_DATA_QUALITY_REARM_WINDOWS; ++window) {
@@ -1617,17 +1620,24 @@ static bool test_data_quality_transactionality(void)
 	      v34_data_quality_is_valid(&quality),
 	      "quality owner did not initialize transactionally");
 	saved = quality;
+	for (unsigned stride = 0; stride <= 3; stride += 3) {
+		CHECK(v34_data_quality_start(
+			      &quality, V34_SYMBOL_RATE_3429, 14,
+			      &measurement, stride) == V34_DATA_QUALITY_INVALID_ARGUMENT &&
+		      memcmp(&quality, &saved, sizeof(quality)) == 0,
+		      "invalid measurement cadence changed the quality owner");
+	}
 	CHECK(v34_data_quality_observe(&quality, &measurement) ==
 		      V34_DATA_QUALITY_INVALID_STATE &&
 	      v34_data_quality_start(
-		      &quality, V34_SYMBOL_RATE_COUNT, 14, &measurement) ==
+		      &quality, V34_SYMBOL_RATE_COUNT, 14, &measurement, 1) ==
 		      V34_DATA_QUALITY_INVALID_ARGUMENT &&
 	      v34_data_quality_start(
-		      &quality, V34_SYMBOL_RATE_2400, 10, &measurement) ==
+		      &quality, V34_SYMBOL_RATE_2400, 10, &measurement, 1) ==
 		      V34_DATA_QUALITY_INVALID_ARGUMENT &&
 	      v34_data_quality_start(
 		      &quality, V34_SYMBOL_RATE_3429, 14,
-		      (const struct v34_adaptive_equalizer_quality *)&quality) ==
+		      (const struct v34_adaptive_equalizer_quality *)&quality, 1) ==
 		      V34_DATA_QUALITY_INVALID_ARGUMENT &&
 	      memcmp(&quality, &saved, sizeof(quality)) == 0,
 	      "quality setup rejection changed the owner");
@@ -1647,13 +1657,13 @@ static bool test_data_quality_transactionality(void)
 	      selected_rate == 7,
 	      "rate-selection rejection changed its output");
 	CHECK(v34_data_quality_start(
-		      &quality, V34_SYMBOL_RATE_3429, 14, &measurement) ==
+		      &quality, V34_SYMBOL_RATE_3429, 14, &measurement, 1) ==
 		      V34_DATA_QUALITY_OK,
 	      "quality transaction fixture did not start");
 	saved = quality;
 	for (unsigned invalid = 0; invalid < 3; ++invalid) {
 		quality = saved;
-		quality.loss_windows = invalid == 0 ? 0 : invalid == 1 ? 4 : 8;
+		quality.loss_windows = invalid == 0 ? 0 : invalid == 1 ? 2 : 8;
 		CHECK(v34_data_quality_observe(&quality, &measurement) ==
 			      V34_DATA_QUALITY_INVALID_STATE,
 		      "invalid recovery duration accepted");
