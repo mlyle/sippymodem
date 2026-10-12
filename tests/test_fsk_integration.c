@@ -2677,7 +2677,7 @@ static bool run_media_call(
 		answerer_silence_max = answerer_silence_frames;
 	CHECK(test_case->answerer_s1_gap_samples == 0 || answerer_s1_gap_injected,
 	      "%s did not exercise its S1 signal dip", test_case->name);
-	CHECK(online && answerer_used_v8 &&
+	CHECK(online && (answerer_used_v8 || test_case->v34_info0_peer) &&
 		      caller.modem->tx_rate == test_case->caller_tx_rate &&
 		      caller.modem->rx_rate == test_case->caller_rx_rate &&
 		      answerer.modem->tx_rate == test_case->answerer_tx_rate &&
@@ -5380,6 +5380,20 @@ int main(void)
 			.training_frame_limit = 1500,
 			.requires_v8 = true,
 			.test_retrain = true,
+		},
+		{
+			.id = DP_V34,
+			.name = "V.34 forced mode with repeated INFO0",
+			.selection_command = "AT+MS=34,0,26400,26400\r",
+			.caller_tx_rate = 26400,
+			.caller_rx_rate = 26400,
+			.answerer_tx_rate = 26400,
+			.answerer_rx_rate = 26400,
+			.carrier_loss_samples = MODEM_RATE / 2,
+			.training_frame_limit = 2000,
+			.requires_v8 = true,
+			.v34_info0_peer = true,
+			.raw_transport = true,
 		},
 		{
 			.id = DP_V34,

@@ -259,7 +259,7 @@ static struct dp *create_v8(
 	if (datapump == NULL)
 		return NULL;
 	datapump->caller = caller != 0;
-	if (caller && MODEM_AUTOMODE(modem) &&
+	if (caller && (MODEM_AUTOMODE(modem) || id == DP_V34) &&
 	    modulation == V8_MODULATION_V34_DUPLEX &&
 	    v34_phase2_info_audio_receiver_init(&datapump->info0_receiver,
 		    V34_CALLING_STATION, V34_INFO0_PAYLOAD_BITS) !=
@@ -634,7 +634,8 @@ static int observe_v34_info0(
 {
 	struct modem *modem = datapump->dp.modem;
 
-	if (!datapump->caller || !MODEM_AUTOMODE(modem) ||
+	if (!datapump->caller ||
+	    (!MODEM_AUTOMODE(modem) && datapump->requested_datapump != DP_V34) ||
 	    v8_datapump_modulation(datapump->requested_datapump) !=
 		    V8_MODULATION_V34_DUPLEX ||
 	    (datapump->handshake.calling.state != V8_CALLING_WAIT_ANSWER_SIGNAL &&
