@@ -180,6 +180,9 @@ while True:
         elif b"PING" in buffer:
             buffer.clear()
             if not (retrained and mode == "pcm-retrain-no-data"):
+                if mode.endswith("peer-input-errors"):
+                    os.write(master, b"\r\nERROR: unknown command; send HELP for a list\r\n"
+                             b"ADVISORY: 4 invalid commands since the last accepted commands\r\n")
                 os.write(master, pong)
         elif b"RETRAIN" in buffer:
             buffer.clear()
@@ -221,6 +224,8 @@ while True:
                 os.write(master, b"\r\nNO CARRIER\r\n")
             elif mode.startswith("callback") and role == "request":
                 os.write(master, request_connect_response() + initial_payload)
+                if mode == "callback-request-errors":
+                    os.write(master, b"\r\nERROR: unknown command; send HELP for a list\r\n")
                 online = True
             elif mode in ("raw-wakeup", "wrong-link"):
                 os.write(master, connect_response())
@@ -262,6 +267,33 @@ while True:
 
 
 class LiveCampaignTests(unittest.TestCase):
+    def test_peer_input_quality_belongs_to_the_primary_call(self) -> None:
+        for mode, role, unknown, burst in (
+            ("peer-input-errors", "originator", 1, 4),
+            ("callback-peer-input-errors", "callback", 1, 4),
+            ("callback-request-errors", "callback", 0, 0),
+        ):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                script = root / "fake.py"
+                script.write_text(textwrap.dedent(FAKE_MODEM), encoding="utf-8")
+                scheduled = ScheduledAttempt(CASES_BY_NAME[f"v21-300-raw-{role}"], 1)
+                artifacts = self.artifacts(root, scheduled)
+                config = self.config(root, script, mode, root / "callback-ready")
+                with mock.patch("tools.live_terminal.time.sleep"):
+                    result = run_physical_attempt(
+                        config,
+                        FrozenBinary(root, Path(sys.executable), "a" * 40, "b" * 64, False),
+                        scheduled, 1, artifacts, True,
+                    )
+                self.assertEqual(result.maturity, MATURITY_FULL, result.detail)
+                self.assertEqual(result.peer_unknown_commands, unknown)
+                self.assertEqual(result.peer_invalid_command_burst, burst)
+                self.assertEqual(result.successful(), not (unknown or burst))
+                saved = json.loads((artifacts.directory / "result.json").read_text())["result"]
+                self.assertEqual(saved["peer_unknown_commands"], unknown)
+                self.assertEqual(saved["peer_invalid_command_burst"], burst)
+
     def test_live_display_clears_the_terminal_before_repainting(self) -> None:
         output = io.StringIO()
         with mock.patch("tools.live_campaign.sys.stdout", output):

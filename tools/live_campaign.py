@@ -54,6 +54,7 @@ if __package__:
         ScheduledAttempt,
         base_schedule,
         extra_schedule,
+        peer_input_errors,
         render_dashboard,
     )
     from .live_terminal import (
@@ -100,6 +101,7 @@ else:
         ScheduledAttempt,
         base_schedule,
         extra_schedule,
+        peer_input_errors,
         render_dashboard,
     )
     from live_terminal import (
@@ -1025,8 +1027,15 @@ def run_physical_attempt(
                 state.detail += "; "
             state.detail += "modem hangup or cleanup did not complete"
 
+    # The callback request is a separate connection and must not contaminate
+    # the returning call's quality evidence.
+    primary_leg = "answer" if scheduled.case.role == "callback" else "modem"
+    _, received = state.captures.get(primary_leg, (bytearray(), bytearray()))
+    unknown_commands, invalid_burst = peer_input_errors(bytes(received))
     result = AttemptResult(
         reference_name=config.reference_name,
+        peer_unknown_commands=unknown_commands,
+        peer_invalid_command_burst=invalid_burst,
         case_name=scheduled.case.name,
         family=scheduled.case.family,
         role=scheduled.case.role,

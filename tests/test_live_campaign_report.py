@@ -28,11 +28,43 @@ from tools.live_campaign_report import (  # noqa: E402
     OUTCOME_SETUP_ERROR,
     base_schedule,
     extra_schedule,
+    peer_input_errors,
     render_dashboard,
 )
 
 
 class LiveCampaignReportTests(unittest.TestCase):
+    def test_peer_input_reports_do_not_double_count_cumulative_advisories(self) -> None:
+        error = b"ERROR: unknown command; send HELP for a list\r\n"
+        advisory = b"ADVISORY: %d invalid commands since the last accepted commands\r\n"
+        payload = b"\r\n" + error * 2 + advisory % 4 + advisory % 4 + advisory % 2
+        self.assertEqual(peer_input_errors(payload), (2, 4))
+        self.assertEqual(peer_input_errors(
+            b"ADVISORY: 1 invalid command since the last accepted command\n"
+        ), (0, 1))
+        self.assertEqual(peer_input_errors(
+            b"HELP: " + error + b"ADVISORY: 99999999999 invalid commands "
+            b"since the last accepted commands\r\nADVISORY: 4 invalid commands"
+        ), (0, 0))
+
+    def test_peer_input_warning_prevents_success_without_erasing_markers(self) -> None:
+        case = cases_for_suite("smoke")[0]
+        for field in ("peer_unknown_commands", "peer_invalid_command_burst"):
+            with self.subTest(field=field):
+                result = self.result(
+                    case_name=case.name, family=case.family, role=case.role,
+                    connected=True, initial_data=True, remote_retrain=True,
+                    retrain_connected=True, retrain_data=True, **{field: 4},
+                )
+                self.assertEqual(result.maturity, MATURITY_FULL)
+                self.assertFalse(result.successful())
+                dashboard = render_dashboard(
+                    (case,), 1, (result,), revision="c" * 40,
+                    campaign_id="test", elapsed_seconds=1, recent_limit=3,
+                )
+                self.assertIn("Peer input warnings: 1 calls", dashboard)
+                self.assertIn("peer-input=", dashboard)
+
     def result(self, **changes: object) -> AttemptResult:
         fields: dict[str, object] = {
             "case_name": "v21-300-originator",

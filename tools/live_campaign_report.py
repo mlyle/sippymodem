@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from fractions import Fraction
 import random
+import re
 from typing import Iterable, Sequence
 
 
@@ -73,6 +74,25 @@ FAMILY_LABELS = {
 }
 
 
+def peer_input_errors(received: bytes) -> tuple[int, int]:
+    """Count reference-getty reports, not inferred bit errors.
+
+    Advisories are cumulative since the last accepted command, so retain the
+    largest reported burst rather than adding overlapping counts or replies.
+    Parse the complete leg capture so split terminal reads count only once.
+    """
+    unknown = len(re.findall(
+        rb"(?:^|[\r\n])ERROR: unknown command; send HELP for a list(?=[\r\n])",
+        received,
+    ))
+    bursts = re.findall(
+        rb"(?:^|[\r\n])ADVISORY: ([0-9]{1,10}) invalid commands? "
+        rb"since the last accepted commands?(?=[\r\n])",
+        received,
+    )
+    return unknown, max((int(count) for count in bursts), default=0)
+
+
 @dataclass(frozen=True)
 class ScheduledAttempt:
     case: CampaignCase
@@ -127,6 +147,8 @@ class AttemptResult:
     startup: str | None = None
     retrain_startup: str | None = None
     reference_name: str = "ata"
+    peer_unknown_commands: int = 0
+    peer_invalid_command_burst: int = 0
 
     @property
     def profile_mismatch(self) -> bool:
@@ -178,7 +200,12 @@ class AttemptResult:
 
     def successful(self) -> bool:
         expected = MATURITY_FULL if self.retrain_requested else MATURITY_DATA
-        return self.maturity == expected and not self.profile_mismatch
+        return (
+            self.maturity == expected
+            and not self.profile_mismatch
+            and not self.peer_unknown_commands
+            and not self.peer_invalid_command_burst
+        )
 
 
 def base_schedule(
@@ -563,6 +590,14 @@ def render_dashboard(
         f"{'TOTAL':<12} {total_fields('originator')} | "
         f"{total_fields('callback')}"
     )
+    warnings = [result for result in results
+                if result.peer_unknown_commands or result.peer_invalid_command_burst]
+    if warnings:
+        rows.append(
+            f"Peer input warnings: {len(warnings)} calls; "
+            f"unknown replies={sum(r.peer_unknown_commands for r in warnings)}; "
+            f"largest invalid burst={max(r.peer_invalid_command_burst for r in warnings)}"
+        )
     if recent_limit > 0 and results:
         rows.extend(
             (
@@ -658,6 +693,8 @@ def render_dashboard(
                 status = f"{request_status if request else status}/mismatch"
             if not request and connected and result.upstream_mode in {"V.34", "PCM"}:
                 status += f" up={result.upstream_mode}"
+            if not request and (result.peer_unknown_commands or result.peer_invalid_command_burst):
+                status += f" peer-input={result.peer_unknown_commands}/{result.peer_invalid_command_burst}"
             sequence = f"{index + 1:03d}{'+' if result.extra else ' '}"
             request_cell = (
                 str(int(result.callback_request_maturity == MATURITY_REQUEST))
