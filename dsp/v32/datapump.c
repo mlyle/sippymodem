@@ -1380,10 +1380,16 @@ static int finish_fixed_rate(
 	     stage != V32_FIXED_ANSWERER_RATE) ||
 	    v32_rate_path_handoff(
 		    &datapump->fixed_path.owner.rate, &handoff) !=
-		    V32_RATE_PATH_OK ||
-	    v32_startup_note_rate_signal(
-		    &next_startup, &handoff.offer) != V32_STARTUP_OK)
+		    V32_RATE_PATH_OK)
 		return -1;
+	enum v32_startup_result startup_result = v32_startup_note_rate_signal(
+		&next_startup, &handoff.offer);
+	if (startup_result != V32_STARTUP_OK) {
+		if (startup_result == V32_STARTUP_NO_COMMON_RATE)
+			modem_note_disconnect(datapump->dp.modem, true,
+				"V.32 peer offer excludes configured rates");
+		return -1;
+	}
 	if (stage == V32_FIXED_ANSWERER_RATE) {
 		struct v32_rate_offer selected_offer;
 		struct v32_conditioning_transmitter conditioning;
