@@ -21,21 +21,30 @@ static inline void datapump_add_samples_bounded(
 		       limit : *value + increment;
 }
 
-/* Mean square of one bounded 8 kHz media fragment. Use the same power floor
- * for V.22, V.32, and V.34; timing and protocol qualification stay local. */
-static inline bool datapump_qam_line_power_present(
-	const int16_t *samples, int count)
+/* Mean square of one bounded 8 kHz media fragment. The receiver owns its
+ * power floor; timing and protocol qualification stay local. */
+static inline bool datapump_qam_line_power_above(
+	const int16_t *samples, int count, uint32_t minimum_power)
 {
 	uint64_t power = 0;
 
-	if (samples == NULL || count <= 0 || count > MODEM_FRAG)
+	if (samples == NULL || count <= 0 || count > MODEM_FRAG ||
+	    minimum_power == 0u)
 		return false;
 	for (int index = 0; index < count; ++index) {
 		int32_t sample = samples[index];
 
 		power += (uint64_t)(sample * sample);
 	}
-	return power / (unsigned int)count >= DATAPUMP_MIN_QAM_LINE_POWER;
+	return power / (unsigned int)count >= minimum_power;
+}
+
+/* Use the default floor before a receiver has calibrated its line gain. */
+static inline bool datapump_qam_line_power_present(
+	const int16_t *samples, int count)
+{
+	return datapump_qam_line_power_above(
+		samples, count, DATAPUMP_MIN_QAM_LINE_POWER);
 }
 
 /* Return the S7 carrier-wait interval in 8 kHz media ticks. */

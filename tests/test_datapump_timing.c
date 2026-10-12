@@ -98,6 +98,14 @@ static bool test_qam_line_power(void)
 	CHECK(datapump_qam_line_power_present(samples, 1) &&
 		      !datapump_qam_line_power_present(samples, 2),
 	      "carrier floor did not use mean-square power");
+	CHECK(!datapump_qam_line_power_above(samples, 1, 0u) &&
+	      !datapump_qam_line_power_above(NULL, 1, 10000u),
+	      "invalid calibrated carrier gate was accepted");
+	samples[0] = 100;
+	CHECK(datapump_qam_line_power_above(samples, 1, 10000u) &&
+	      !datapump_qam_line_power_above(samples, 1, 10001u) &&
+	      !datapump_qam_line_power_above(samples, 2, 10000u),
+	      "calibrated carrier floor did not use mean-square power");
 	samples[0] = INT16_MIN;
 	CHECK(datapump_qam_line_power_present(samples, MODEM_FRAG),
 	      "full-width sample square overflowed");

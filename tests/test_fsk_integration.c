@@ -119,6 +119,7 @@ enum integration_impairment {
 	INTEGRATION_IMPAIRMENT_COMPOSITE,
 	INTEGRATION_IMPAIRMENT_DIGITAL_DELAY,
 	INTEGRATION_IMPAIRMENT_TRAINING_NOISE,
+	INTEGRATION_IMPAIRMENT_ATTENUATED,
 };
 
 struct modem_test_case {
@@ -675,6 +676,16 @@ static bool endpoint_add_impairment(
 	switch (impairment) {
 	case INTEGRATION_IMPAIRMENT_NONE:
 		return true;
+	case INTEGRATION_IMPAIRMENT_ATTENUATED: {
+		const struct channel_bench_effect_spec gain = {
+			.kind = CHANNEL_BENCH_GAIN,
+			/* About 0.30 amplitude: valid QAM below the default gate. */
+			.parameters.gain.scale_q15 = 9830,
+		};
+
+		return channel_bench_init(
+			       &endpoint->receive_bench, &gain, 1) == CHANNEL_BENCH_OK;
+	}
 	case INTEGRATION_IMPAIRMENT_COMPOSITE:
 		return channel_bench_init(
 			       &endpoint->receive_bench, composite,
@@ -5369,6 +5380,21 @@ int main(void)
 			.training_frame_limit = 1500,
 			.requires_v8 = true,
 			.test_retrain = true,
+		},
+		{
+			.id = DP_V34,
+			.name = "V.34 weak carrier through raw retrain",
+			.selection_command = "AT+MS=34,0,9600,9600+V34B=3429\r",
+			.caller_tx_rate = 9600,
+			.caller_rx_rate = 9600,
+			.answerer_tx_rate = 9600,
+			.answerer_rx_rate = 9600,
+			.carrier_loss_samples = MODEM_RATE / 2,
+			.training_frame_limit = 1500,
+			.requires_v8 = true,
+			.test_retrain = true,
+			.raw_transport = true,
+			.impairment = INTEGRATION_IMPAIRMENT_ATTENUATED,
 		},
 		{
 			.id = DP_V34,

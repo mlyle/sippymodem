@@ -40,6 +40,7 @@ struct v34_datapump {
 	struct training_session training;
 	struct pcm_fallback_restart *pcm_restart;
 	uint32_t missing_carrier_samples;
+	uint32_t carrier_power_floor;
 	uint16_t carrier_recovery_samples;
 	uint16_t rate_mask;
 	bool caller;
@@ -234,6 +235,8 @@ static struct v34_datapump *v34_from_dp(struct dp *dp)
 	    !v34_data_quality_is_valid(&datapump->data_quality) ||
 	    !training_session_is_valid(&datapump->training) ||
 	    datapump->missing_carrier_samples > V34_CARRIER_LOSS_SAMPLES ||
+	    datapump->carrier_power_floor == 0u ||
+	    datapump->carrier_power_floor > DATAPUMP_MIN_QAM_LINE_POWER ||
 	    datapump->carrier_recovery_samples >
 		    V34_CARRIER_RECOVERY_SAMPLES ||
 	    !v34_call_is_valid(&datapump->call) ||
@@ -327,6 +330,7 @@ static struct dp *create_v34(
 		free(datapump);
 		return NULL;
 	}
+	datapump->carrier_power_floor = DATAPUMP_MIN_QAM_LINE_POWER;
 	datapump->caller = role == V34_CALLING_STATION;
 	datapump->rate_mask = rate_mask;
 	if (from_pcm)
@@ -466,6 +470,18 @@ static bool enter_link(struct v34_datapump *datapump)
 	if (!datapump_set_link_rates(
 		    &datapump->dp, transmit_rate, receive_rate))
 		return false;
+	/* Apply the trained Q10 gain to the carrier test as well as decoding.
+	 * Retain this floor through retraining, where the new gain is not ready.
+	 * Never raise the existing floor for stronger signals. */
+	uint32_t gain = (uint32_t)
+		datapump->call.state.phase4.receive.line.timing.gain.gain;
+	uint32_t unity = 1u << V34_GAIN_FRACTION_BITS;
+
+	datapump->carrier_power_floor = DATAPUMP_MIN_QAM_LINE_POWER;
+	if (gain > unity)
+		datapump->carrier_power_floor = (uint32_t)(
+			(uint64_t)DATAPUMP_MIN_QAM_LINE_POWER * unity * unity /
+			(gain * gain));
 	datapump->data_quality = data_quality;
 	datapump->missing_carrier_samples = 0;
 	datapump->carrier_recovery_samples = 0;
@@ -530,24 +546,25 @@ static bool data_link_is_online(const struct v34_datapump *datapump)
 	       modem->put_chars != NULL;
 }
 
-static bool fragment_has_carrier(const int16_t *samples, int count)
+static bool fragment_has_carrier(
+	const int16_t *samples, int count, uint32_t power_floor)
 {
 	int offset;
 
 	if (count <= V34_CARRIER_WINDOW_SAMPLES)
-		return datapump_qam_line_power_present(samples, count);
+		return datapump_qam_line_power_above(samples, count, power_floor);
 	for (offset = 0;
 	     offset + V34_CARRIER_WINDOW_SAMPLES <= count;
 	     offset += V34_CARRIER_WINDOW_SAMPLES)
-		if (!datapump_qam_line_power_present(
-			    samples + offset, V34_CARRIER_WINDOW_SAMPLES))
+		if (!datapump_qam_line_power_above(
+			    samples + offset, V34_CARRIER_WINDOW_SAMPLES, power_floor))
 			return false;
 	/* Also cover a short tail without making a sub-window zero crossing its
 	 * own carrier decision. */
 	if (offset != count &&
-	    !datapump_qam_line_power_present(
+	    !datapump_qam_line_power_above(
 		    samples + count - V34_CARRIER_WINDOW_SAMPLES,
-		    V34_CARRIER_WINDOW_SAMPLES))
+		    V34_CARRIER_WINDOW_SAMPLES, power_floor))
 		return false;
 	return true;
 }
@@ -597,7 +614,8 @@ static int process_v34(
 		}
 		return DPSTAT_OK;
 	}
-	carrier_present = fragment_has_carrier(receive, count);
+	carrier_present = fragment_has_carrier(
+		receive, count, datapump->carrier_power_floor);
 	if (training_session_is_online(&datapump->training)) {
 		carrier_erased =
 			datapump->call.state.phase4.receive.data_erasure;
