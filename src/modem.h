@@ -308,6 +308,7 @@ struct raw_text_probe {
 	u8 bytes[128];
 	unsigned int length;
 	bool confirmed;
+	u8 adp_next;
 };
 
 struct modem {

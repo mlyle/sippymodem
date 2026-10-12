@@ -517,6 +517,13 @@ static int raw_text_observe(struct raw_text_probe *text, u8 character)
 {
 	bool newline = character == '\r' || character == '\n';
 
+	if (text->adp_next != 0) {
+		if (character == text->adp_next) {
+			text->adp_next = character == 'E' ? 'C' : 'E';
+			return 0;
+		}
+		text->adp_next = 0;
+	}
 	if (!text->confirmed && !newline && character != '\t' &&
 	    (character < 0x20 || character > 0x7e)) {
 		text->length = 0;
@@ -527,6 +534,17 @@ static int raw_text_observe(struct raw_text_probe *text, u8 character)
 	text->bytes[text->length++] = character;
 	if (text->confirmed)
 		return 0;
+	/* V.42 ADP decodes as printable E/C characters. Repeated answer
+	 * patterns can outlast detection and must not become a raw prompt.
+	 * Either pair alignment is possible when the HDLC probe begins. */
+	if (text->length >= 4) {
+		const u8 *tail = text->bytes + text->length - 4;
+		if (!memcmp(tail, "ECEC", 4) || !memcmp(tail, "CECE", 4)) {
+			text->adp_next = tail[2];
+			text->length = 0;
+			return 0;
+		}
+	}
 	/* Require adjacent line endings, a short line, or a printable prompt. */
 	if ((newline && (text->length >= 4 ||
 	     (text->length >= 2 &&
@@ -658,7 +676,7 @@ int modem_detector_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 			 * characters. A bad stop breaks an unfinished match. */
 			if (!(s->data & ((u32)1 << s->bit))) {
 				if (!d->text.confirmed)
-					d->text.length = 0;
+					d->text = (struct raw_text_probe){0};
 				if (d->rx_count < DETECTOR_MATCH_CHARACTERS)
 					d->rx_count = 0;
 				continue;
@@ -707,8 +725,7 @@ void modem_detector_start(struct modem *m)
 	d->rx_count = 0;
 	d->tx_limit = m->caller ? 0 : 2 * V42_ANSWER_REPLY_PATTERNS;
 	d->ec_enable = 0;
-	d->text.length = 0;
-	d->text.confirmed = false;
+	d->text = (struct raw_text_probe){0};
 	if (m->caller) {
 		detector_set_pattern(d->tx_pattern, ODP0, ODP1);
 		detector_set_pattern(d->rx_pattern, ADP0, ADP1_V42);
@@ -739,7 +756,7 @@ void modem_detector_reframe(struct modem *m)
 	 * selected reply or the suspended detection timer (V.42 7.10/7.11). */
 	m->packer.detector.rx_count = 0;
 	if (!m->packer.detector.text.confirmed)
-		m->packer.detector.text.length = 0;
+		m->packer.detector.text = (struct raw_text_probe){0};
 	m->pack.bit = m->unpack.bit = 0;
 	m->pack.data = 0;
 	m->unpack.data = 0xffffu; /* No flag history before this carrier epoch. */

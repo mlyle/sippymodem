@@ -10020,7 +10020,7 @@ static bool test_v42_late_originator_detection(void)
 
 static bool test_lapm_raw_text_fallback(void)
 {
-	enum { RAW_TEXT, REQUIRED, ESTABLISHED, VALID_FRAME, REFRAMED, IN_FRAME, BAD_STOP };
+	enum { RAW_TEXT, REQUIRED, ESTABLISHED, VALID_FRAME, REFRAMED, IN_FRAME, BAD_STOP, ADP_ONLY, ADP_TEXT };
 	struct modem_driver driver = {
 		.name = "LAPM raw fallback", .start = unused_start,
 		.stop = unused_stop, .ioctl = unused_control,
@@ -10028,13 +10028,14 @@ static bool test_lapm_raw_text_fallback(void)
 
 	for (unsigned caller = 0; caller <= 1; ++caller)
 	for (unsigned batch = 0; batch <= 1; ++batch)
-	for (unsigned test = RAW_TEXT; test <= BAD_STOP; ++test)
+	for (unsigned test = RAW_TEXT; test <= ADP_TEXT; ++test)
 	for (unsigned width = 1; width <= 8; ++width) {
 		struct modem *m = create_compat_modem(&driver, "LAPM raw fallback");
 		struct dp dp = { .id = DP_V22BIS, .modem = m };
 		struct modem source = { .get_chars = scripted_lapm_source };
-		const char *text = test == BAD_STOP ? "\r\n" : "\r\nWelcome";
-		uint8_t bits[256], groups[256], received[128], output;
+		const char *text = test == ADP_ONLY ? "" :
+			test == BAD_STOP ? "\r\n" : "\r\nWelcome";
+		uint8_t bits[1024], groups[1024], received[128], output;
 		int result_pipe[2];
 		size_t count = strlen(text) * 10;
 
@@ -10098,8 +10099,22 @@ static bool test_lapm_raw_text_fallback(void)
 		lapm_source.length = strlen(text);
 		lapm_source.offset = 0;
 		modem_async_start(&source);
-		CHECK(modem_async_get_bits(&source, 1, bits, count) == (int)count,
+		size_t prefix = 0;
+		if (test == ADP_ONLY || test == ADP_TEXT) {
+			/* Twenty V.42 ADP pairs and one trailing character, with eight
+			 * extra mark bits after each. They read as printable EC. */
+			for (unsigned i = 0; i < 41; ++i) {
+				uint8_t character = (i + caller) & 1u ? 'C' : 'E';
+				bits[prefix++] = 0;
+				for (unsigned bit = 0; bit < 8; ++bit)
+					bits[prefix++] = (character >> bit) & 1u;
+				for (unsigned mark = 0; mark < 9; ++mark)
+					bits[prefix++] = 1;
+			}
+		}
+		CHECK(modem_async_get_bits(&source, 1, bits + prefix, count) == (int)count,
 		      "raw fallback text encoding failed");
+		count += prefix;
 		if (test == BAD_STOP)
 			bits[9] = 0;
 		size_t group_count = 0;
@@ -10123,7 +10138,7 @@ static bool test_lapm_raw_text_fallback(void)
 			CHECK(modem_put_bits(m, width, groups, group_count) == (int)group_count,
 			      "raw fallback final batch failed");
 		ssize_t length = read(result_pipe[0], received, sizeof(received));
-		if (test == RAW_TEXT) {
+		if (test == RAW_TEXT || test == ADP_TEXT) {
 			CHECK(m->get_bits == modem_async_get_bits && !m->cfg.ec && !m->cfg.comp &&
 			      length == (ssize_t)strlen(text) && !memcmp(received, text, strlen(text)) &&
 			      m->xmit.count == 1 && m->xmit.buf[m->xmit.tail] == 'Z' &&
