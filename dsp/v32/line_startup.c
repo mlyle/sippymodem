@@ -8,6 +8,17 @@
 
 #include <limits.h>
 
+/* V.32 section 5.4 measures the 64T response at the line terminals. Schedule
+ * the point change ahead of that boundary by the transmit pulse's group
+ * delay; detector events already account for their receive-side delay. */
+enum {
+	V32_CARRIER_GROUP_DELAY_SAMPLES =
+		V32_CARRIER_SAMPLE_RATE * V32_CARRIER_PULSE_SPAN_SYMBOLS /
+		(2 * V32_CARRIER_SYMBOL_RATE),
+	V32_REVERSAL_COMMAND_SAMPLES =
+		V32_REVERSAL_RESPONSE_SAMPLES - V32_CARRIER_GROUP_DELAY_SAMPLES,
+};
+
 /* The alternating answerer states divide their energy between the 600 and
  * 3000 Hz projections. Either projection may carry only half of the line
  * power on a clean channel. */
@@ -209,7 +220,7 @@ bool v32_line_startup_is_valid(
 		     V32_LINE_DELAY_CALLING_CARRIER_REVERSAL &&
 	     (startup->state_samples == 0 ||
 	      startup->state_samples >=
-		      V32_REVERSAL_RESPONSE_SAMPLES)))
+		      V32_REVERSAL_COMMAND_SAMPLES)))
 		return false;
 	turnaround_selected =
 		startup->state ==
@@ -331,7 +342,7 @@ bool v32_answerer_line_startup_is_valid(
 		       !measured && !startup->caller_reversed_early;
 	if (startup->state == V32_ANSWERER_LINE_DELAY_RESPONSE)
 		return startup->state_samples > 0 &&
-		       startup->state_samples < V32_REVERSAL_RESPONSE_SAMPLES &&
+		       startup->state_samples < V32_REVERSAL_COMMAND_SAMPLES &&
 		       (measured || startup->caller_reversed_early);
 	if (startup->state == V32_ANSWERER_LINE_HOLD_RESPONSE)
 		return startup->state_samples <
@@ -530,12 +541,15 @@ enum v32_line_startup_result v32_answerer_line_startup_process(
 		next.state_samples++;
 		if (carrier_event.kind == SINGLE_TONE_PHASE_REVERSED) {
 			uint32_t measured = next.state_samples;
+			/* MT starts at transmitted CA, after the pulse-filter delay. */
+			uint32_t delay = carrier_event.reversal_delay_samples +
+				V32_CARRIER_GROUP_DELAY_SAMPLES;
 
-			if (measured <= carrier_event.reversal_delay_samples)
+			if (measured <= delay)
 				return answerer_fail(
 					&next, startup, transmit_sample, complete);
 			next.round_trip_samples =
-				measured - carrier_event.reversal_delay_samples;
+				measured - delay;
 			next.state_samples = carrier_event.reversal_delay_samples;
 			next.state = V32_ANSWERER_LINE_DELAY_RESPONSE;
 		} else if (carrier_event.kind == SINGLE_TONE_ENDED ||
@@ -550,7 +564,7 @@ enum v32_line_startup_result v32_answerer_line_startup_process(
 			return answerer_fail(
 				&next, startup, transmit_sample, complete);
 		next.state_samples++;
-		if (next.state_samples == V32_REVERSAL_RESPONSE_SAMPLES) {
+		if (next.state_samples == V32_REVERSAL_COMMAND_SAMPLES) {
 			if (!answerer_reverse_turnaround(&next))
 				return V32_LINE_STARTUP_INVALID_ARGUMENT;
 			answerer_enter_state(
@@ -770,7 +784,7 @@ v32_line_startup_process(
 				&next, startup, transmit_sample, complete);
 		advance_state_clock(&next);
 		if (next.state_samples ==
-		    V32_REVERSAL_RESPONSE_SAMPLES) {
+		    V32_REVERSAL_COMMAND_SAMPLES) {
 			if (!line_carrier_reverse(
 				    &next.calling_carrier))
 				return V32_LINE_STARTUP_INVALID_ARGUMENT;
@@ -792,8 +806,10 @@ v32_line_startup_process(
 		advance_state_clock(&next);
 		if (turnaround_event.kind ==
 		    SINGLE_TONE_PHASE_REVERSED) {
+			/* Reconstruct NT from the commanded CC boundary. The filter
+			 * delay is already included in this state's elapsed time. */
 			uint64_t measured =
-				(uint64_t)V32_REVERSAL_RESPONSE_SAMPLES +
+				(uint64_t)V32_REVERSAL_COMMAND_SAMPLES +
 				next.state_samples;
 
 			if (measured <= turnaround_event.reversal_delay_samples)

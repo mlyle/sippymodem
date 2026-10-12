@@ -7,6 +7,7 @@
 #include "channel_bench.h"
 #include "test.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -102,6 +103,157 @@ static bool reverse_turnaround(struct test_turnaround_signal *signal)
 		       SINGLE_TONE_OK &&
 	       single_tone_transmitter_reverse(&signal->secondary) ==
 		       SINGLE_TONE_OK;
+}
+
+/* Locate the physical phase reversal independently of the startup detectors.
+ * Forty samples contain whole cycles of all three turnaround carriers. A
+ * centered coherent projection crosses zero at the reversal, even through
+ * pulse shaping and either G.711 law. */
+static double waveform_reversal(
+	const int16_t *samples, size_t count, unsigned int hz, size_t around)
+{
+	const double step = 2.0 * acos(-1.0) * hz / SINGLE_TONE_SAMPLE_RATE;
+	double reference_i = 0.0, reference_q = 0.0, previous = 0.0;
+
+	if (around < 300 || around + 120 >= count)
+		return -1.0;
+	for (size_t i = around - 300; i < around - 100; ++i) {
+		reference_i += samples[i] * cos(step * i);
+		reference_q += samples[i] * sin(step * i);
+	}
+	for (size_t start = around - 80; start <= around + 80; ++start) {
+		double projected_i = 0.0, projected_q = 0.0, projection;
+
+		for (size_t i = start; i < start + 40; ++i) {
+			projected_i += samples[i] * cos(step * i);
+			projected_q += samples[i] * sin(step * i);
+		}
+		projection = projected_i * reference_i + projected_q * reference_q;
+		if (previous > 0.0 && projection <= 0.0)
+			return start + 18.5 + previous / (previous - projection);
+		previous = projection;
+	}
+	return -1.0;
+}
+
+static bool run_caller_wire_timing(
+	enum test_codec codec, unsigned int hz, size_t offset)
+{
+	struct v32_line_startup caller;
+	struct test_turnaround_signal answerer;
+	int16_t receive[4000] = { 0 }, transmit[4000] = { 0 };
+	const size_t first = 1600 + offset, second = first + 900;
+	bool complete = false;
+	double received, sent, symbols;
+
+	CHECK(v32_line_startup_resume(&caller, TEST_AMPLITUDE) ==
+		      V32_LINE_STARTUP_OK && turnaround_signal_init(&answerer, hz),
+	      "caller wire-timing fixture did not initialize");
+	for (size_t i = 0; i < ARRAY_LENGTH(receive) && !complete; ++i) {
+		int16_t primary, secondary, output;
+
+		if (i == first || i == second)
+			CHECK(reverse_turnaround(&answerer), "answerer did not reverse");
+		CHECK(single_tone_transmitter_sample(&answerer.primary, &primary) ==
+			      SINGLE_TONE_OK &&
+		      single_tone_transmitter_sample(&answerer.secondary, &secondary) ==
+			      SINGLE_TONE_OK, "answerer tone generation failed");
+		receive[i] = codec_round_trip((int16_t)(primary + secondary), codec);
+		CHECK(v32_line_startup_process(&caller, receive[i], &output, &complete) ==
+			      V32_LINE_STARTUP_OK, "caller rejected wire-timing signal");
+		transmit[i] = codec_round_trip(output, codec);
+	}
+	received = waveform_reversal(receive, ARRAY_LENGTH(receive), hz, first);
+	sent = waveform_reversal(transmit, ARRAY_LENGTH(transmit),
+		V32_CALLING_CARRIER_HZ, first + V32_REVERSAL_RESPONSE_SAMPLES);
+	symbols = (sent - received) * V32_STARTUP_SYMBOL_RATE / SINGLE_TONE_SAMPLE_RATE;
+	CHECK(received >= 0.0 && sent >= 0.0 && symbols >= 62.0 && symbols <= 66.0,
+	      "caller wire response %.3f symbols, codec=%d tone=%u offset=%zu",
+	      symbols, codec, hz, offset);
+	CHECK(complete && fabs((double)caller.round_trip_samples - (second - first)) <=
+		      V32_REVERSAL_RESPONSE_TOLERANCE_SAMPLES,
+	      "caller NT=%u did not measure the received reversal interval",
+	      caller.round_trip_samples);
+	return true;
+}
+
+static bool run_answerer_wire_timing(enum test_codec codec, size_t offset)
+{
+	struct v32_answerer_line_startup answerer;
+	struct single_tone_transmitter caller;
+	int16_t receive[3000], transmit[3000];
+	const size_t reversal = 1600 + offset;
+	bool complete = false;
+	double received;
+
+	CHECK(v32_answerer_line_retrain_init(&answerer, TEST_AMPLITUDE) ==
+		      V32_LINE_STARTUP_OK &&
+	      single_tone_transmitter_init(&caller, V32_CALLING_CARRIER_HZ,
+		      TEST_AMPLITUDE) == SINGLE_TONE_OK,
+	      "answerer wire-timing fixture did not initialize");
+	for (size_t i = 0; i < ARRAY_LENGTH(receive); ++i) {
+		int16_t input, output;
+
+		if (i == reversal)
+			CHECK(single_tone_transmitter_reverse(&caller) == SINGLE_TONE_OK,
+			      "caller did not reverse");
+		CHECK(single_tone_transmitter_sample(&caller, &input) == SINGLE_TONE_OK,
+		      "caller tone generation failed");
+		receive[i] = codec_round_trip(input, codec);
+		CHECK(v32_answerer_line_startup_process(
+			      &answerer, receive[i], &output, &complete) ==
+			      V32_LINE_STARTUP_OK && !complete,
+		      "answerer rejected wire-timing signal");
+		transmit[i] = codec_round_trip(output, codec);
+	}
+	received = waveform_reversal(receive, ARRAY_LENGTH(receive),
+		V32_CALLING_CARRIER_HZ, reversal);
+	for (unsigned int hz = V32_LOW_TURNAROUND_TONE_HZ;
+	     hz <= V32_HIGH_TURNAROUND_TONE_HZ;
+	     hz += V32_HIGH_TURNAROUND_TONE_HZ - V32_LOW_TURNAROUND_TONE_HZ) {
+		double first = waveform_reversal(transmit, ARRAY_LENGTH(transmit),
+			hz, V32_ANSWERER_AC_SAMPLES);
+		double sent = waveform_reversal(transmit, ARRAY_LENGTH(transmit),
+			hz, reversal + V32_REVERSAL_RESPONSE_SAMPLES);
+		double symbols = (sent - received) *
+			V32_STARTUP_SYMBOL_RATE / SINGLE_TONE_SAMPLE_RATE;
+
+		CHECK(first >= 0.0 && received >= 0.0 && sent >= 0.0 &&
+			      symbols >= 62.0 && symbols <= 66.0,
+		      "answerer wire response %.3f symbols, codec=%d tone=%u offset=%zu",
+		      symbols, codec, hz, offset);
+		CHECK(fabs(answerer.round_trip_samples - (received - first)) <=
+			      V32_REVERSAL_RESPONSE_TOLERANCE_SAMPLES,
+		      "answerer MT=%u did not measure the transmitted CA boundary (%.3f)",
+		      answerer.round_trip_samples, received - first);
+	}
+	return true;
+}
+
+static bool test_caller_wire_timing(void)
+{
+	static const size_t offsets[] = { 0, 1, 2, 5, 16, 39 };
+
+	for (enum test_codec codec = TEST_CODEC_LINEAR; codec <= TEST_CODEC_PCMA; ++codec)
+		for (size_t i = 0; i < ARRAY_LENGTH(offsets); ++i) {
+			CHECK(run_caller_wire_timing(codec, V32_LOW_TURNAROUND_TONE_HZ,
+				      offsets[i]) &&
+			      run_caller_wire_timing(codec, V32_HIGH_TURNAROUND_TONE_HZ,
+				      offsets[i]),
+			      "V.32 caller wire timing failed");
+		}
+	return true;
+}
+
+static bool test_answerer_wire_timing(void)
+{
+	static const size_t offsets[] = { 0, 1, 2, 5, 16, 39 };
+
+	for (enum test_codec codec = TEST_CODEC_LINEAR; codec <= TEST_CODEC_PCMA; ++codec)
+		for (size_t i = 0; i < ARRAY_LENGTH(offsets); ++i)
+			CHECK(run_answerer_wire_timing(codec, offsets[i]),
+			      "V.32 answerer wire timing failed");
+	return true;
 }
 
 static bool advance_to_state(
@@ -221,15 +373,8 @@ static bool run_exchange(enum test_codec codec, unsigned int turnaround_hz)
 	}
 	CHECK(startup.state ==
 		      V32_LINE_SEND_REVERSED_CALLING_CARRIER &&
-		      startup.selected_turnaround_tone_hz == turnaround_hz &&
-		      marker_samples + reversal_response_samples >=
-			      V32_REVERSAL_RESPONSE_SAMPLES -
-				      V32_REVERSAL_RESPONSE_TOLERANCE_SAMPLES &&
-		      marker_samples + reversal_response_samples <=
-			      V32_REVERSAL_RESPONSE_SAMPLES +
-				      V32_REVERSAL_RESPONSE_TOLERANCE_SAMPLES,
-	      "caller did not answer the turnaround marker after 64 symbols (%zu)",
-	      marker_samples + reversal_response_samples);
+		      startup.selected_turnaround_tone_hz == turnaround_hz,
+	      "caller did not select and answer the turnaround marker");
 	{
 		struct v32_line_startup lost = startup;
 		enum v32_line_startup_result result =
@@ -273,7 +418,7 @@ static bool run_exchange(enum test_codec codec, unsigned int turnaround_hz)
 	}
 	{
 		uint32_t expected =
-			V32_REVERSAL_RESPONSE_SAMPLES + 400;
+			marker_samples + reversal_response_samples + 400;
 		uint32_t measured =
 			v32_line_startup_round_trip_samples(&startup);
 
@@ -447,20 +592,9 @@ static bool run_answerer_standard_exchange(enum test_codec codec)
 		response_samples++;
 	}
 	CHECK(startup.state == V32_ANSWERER_LINE_HOLD_RESPONSE &&
-		      response_samples >=
-			      V32_REVERSAL_RESPONSE_SAMPLES -
-				      V32_REVERSAL_RESPONSE_TOLERANCE_SAMPLES &&
-		      response_samples <=
-			      V32_REVERSAL_RESPONSE_SAMPLES +
-				      V32_REVERSAL_RESPONSE_TOLERANCE_SAMPLES &&
-		      startup.round_trip_samples >=
-			      TEST_ROUND_TRIP_SAMPLES -
-				      V32_REVERSAL_RESPONSE_TOLERANCE_SAMPLES &&
-		      startup.round_trip_samples <=
-			      TEST_ROUND_TRIP_SAMPLES +
-				      V32_REVERSAL_RESPONSE_TOLERANCE_SAMPLES &&
+		      startup.round_trip_samples != 0 &&
 		      !startup.caller_reversed_early,
-	      "answerer response timing changed (%zu samples, MT=%u)",
+	      "answerer did not complete its response (%zu samples, MT=%u)",
 	      response_samples, startup.round_trip_samples);
 	for (size_t count = 0; count < SINGLE_TONE_WINDOW_SAMPLES; ++count) {
 		int16_t transmit;
@@ -771,6 +905,8 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "caller wire reversal timing", test_caller_wire_timing },
+		{ "answerer wire reversal timing", test_answerer_wire_timing },
 		{ "generated exchange", test_generated_exchange },
 		{ "generated answerer exchange", test_generated_answerer_exchange },
 		{ "resume after answer tone", test_resume_after_answer_tone },
