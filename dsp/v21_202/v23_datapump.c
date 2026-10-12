@@ -410,8 +410,12 @@ static int process_v23(struct dp *dp, void *receive_buffer,
 			&datapump->missing_carrier_samples, (uint32_t)count,
 			carrier_loss_limit);
 	}
-	return datapump->missing_carrier_samples >= carrier_loss_limit ?
-		       DPSTAT_ERROR : DPSTAT_OK;
+	if (datapump->missing_carrier_samples >= carrier_loss_limit) {
+		modem_note_disconnect(datapump->dp.modem, true,
+			"V.23 carrier lost");
+		return DPSTAT_ERROR;
+	}
+	return DPSTAT_OK;
 }
 
 const struct dp_operations *v23_datapump_operations(enum DP_ID id)

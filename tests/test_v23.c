@@ -250,6 +250,8 @@ static bool test_training_roles_and_carrier_loss(void)
 	}
 	CHECK(received.bits == 0,
 	      "V.23 delivered bits from a silent receive line");
+	CHECK(pair.originator_modem.disconnect_reason == NULL,
+	      "V.23 reported a disconnect during a short carrier gap");
 	for (unsigned int frame = 0; frame < 4; ++frame)
 		CHECK(process_pair(
 		      &pair, false, &originator_status, &answerer_status),
@@ -264,6 +266,11 @@ static bool test_training_roles_and_carrier_loss(void)
 		      loss_frame < LOSS_FRAME_LIMIT,
 	      "V.23 sustained carrier loss was not debounced: frame %u",
 	      loss_frame);
+	CHECK(pair.originator_modem.disconnect_local &&
+		      pair.originator_modem.disconnect_reason != NULL &&
+		      strcmp(pair.originator_modem.disconnect_reason,
+			     "V.23 carrier lost") == 0,
+	      "V.23 carrier loss did not retain its local disconnect cause");
 	pair_destroy(&pair);
 	return true;
 }
