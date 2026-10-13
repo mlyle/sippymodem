@@ -308,6 +308,7 @@ class AttemptArtifacts:
         scheduled: ScheduledAttempt,
         result: AttemptResult,
         setup_trace: Sequence[Mapping[str, str]],
+        exchanges: Sequence[Mapping[str, object]],
     ) -> None:
         _write_json_once(
             self.directory / "result.json",
@@ -316,6 +317,7 @@ class AttemptArtifacts:
                 "case": asdict(scheduled.case),
                 "result": asdict(result),
                 "setup": list(setup_trace),
+                "exchanges": list(exchanges),
             },
         )
 
@@ -432,9 +434,25 @@ class _AttemptState:
     detail: str = ""
     setup_trace: list[dict[str, str]] = field(default_factory=list)
     captures: dict[str, tuple[bytearray, bytearray]] = field(default_factory=dict)
+    exchanges: list[dict[str, object]] = field(default_factory=list)
+    started: float = field(default_factory=time.monotonic)
 
-    def capture(self, leg: str, transmitted: bytes, received: bytes) -> None:
+    def capture(
+        self, leg: str, transmitted: bytes, received: bytes, *, phase: str
+    ) -> None:
         tx, rx = self.captures.setdefault(leg, (bytearray(), bytearray()))
+        # Collection times identify bounded application exchanges. Buffered
+        # replies can describe earlier errors; these are not wire timestamps.
+        self.exchanges.append({
+            "leg": leg,
+            "phase": phase,
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+            "elapsed_seconds": round(time.monotonic() - self.started, 6),
+            "tx_offset": len(tx),
+            "tx_bytes": len(transmitted),
+            "rx_offset": len(rx),
+            "rx_bytes": len(received),
+        })
         tx.extend(transmitted)
         rx.extend(received)
 
@@ -500,7 +518,7 @@ def _wake_raw_link(
     except (LiveTerminalError, OSError, TimeoutError):
         state.detail = "raw peer wake-up could not be sent"
         return False
-    state.capture(leg, RAW_LINK_WAKE, b"")
+    state.capture(leg, RAW_LINK_WAKE, b"", phase="raw-wakeup")
     return True
 
 
@@ -596,7 +614,7 @@ def _exercise_online(
             verified, received = terminal.probe_initial_data(
                 config.online_timeout_seconds
             )
-            state.capture(leg, b"", received)
+            state.capture(leg, b"", received, phase="initial-data")
         except (LiveTerminalError, OSError, TimeoutError):
             state.detail = "initial online exchange failed"
             return
@@ -618,7 +636,9 @@ def _exercise_online(
         nonce, received = terminal.start_remote_retrain(
             max(0.001, remote_deadline - time.monotonic())
         )
-        state.capture(leg, REMOTE_RETRAIN_REQUEST, received)
+        state.capture(
+            leg, REMOTE_RETRAIN_REQUEST, received, phase="remote-retrain-start"
+        )
     except (LiveTerminalError, OSError, TimeoutError):
         state.detail = "remote retrain START exchange failed"
         return
@@ -638,7 +658,7 @@ def _exercise_online(
             remaining,
         )
         state.remote_retrain = report.complete
-        state.capture(leg, b"", report.continuation)
+        state.capture(leg, b"", report.continuation, phase="remote-retrain-end")
     except (LiveTerminalError, OSError, TimeoutError):
         state.detail = "remote retrain END exchange failed"
         return
@@ -647,9 +667,9 @@ def _exercise_online(
         return
     progress.set("waiting for local retrain")
     try:
-        state.capture(leg, b"+++ATO1\r", b"")
+        state.capture(leg, b"+++ATO1\r", b"", phase="local-retrain-command")
         report = terminal.return_online(config.retrain_timeout_seconds)
-        state.capture(leg, b"", report.received)
+        state.capture(leg, b"", report.received, phase="local-retrain-connect")
         state.retrain_connected = report.connected
     except (LiveTerminalError, OSError, TimeoutError):
         state.detail = "retrain did not return online"
@@ -673,7 +693,7 @@ def _exercise_online(
         verified, received = terminal.probe_online_ping(
             config.online_timeout_seconds
         )
-        state.capture(leg, ONLINE_PING_REQUEST, received)
+        state.capture(leg, ONLINE_PING_REQUEST, received, phase="post-retrain-ping")
         if state.report.protocol == "none":
             # The first newline can expose input buffered during retraining.
             # A second probe after quiet time distinguishes that tail from
@@ -682,11 +702,14 @@ def _exercise_online(
             first_verified = verified
             progress.set("checking raw idle after retrain")
             received = terminal.receive_online(3.0)
-            state.capture(leg, b"", received)
+            state.capture(leg, b"", received, phase="post-retrain-idle")
             verified, received = terminal.probe_online_ping(
                 config.online_timeout_seconds
             )
-            state.capture(leg, ONLINE_PING_REQUEST, received)
+            state.capture(
+                leg, ONLINE_PING_REQUEST, received,
+                phase="post-retrain-confirmation",
+            )
             verified = first_verified and verified
         state.retrain_data = verified
         if not verified:
@@ -880,7 +903,7 @@ def _callback_body(
     except (LiveTerminalError, OSError, TimeoutError):
         state.detail = "callback request greeting was not received"
         return None
-    state.capture("request", b"", received)
+    state.capture("request", b"", received, phase="callback-request-greeting")
     if not greeting_verified:
         state.detail = "callback request greeting was not verified"
         return None
@@ -893,7 +916,7 @@ def _callback_body(
     except (LiveTerminalError, OSError, TimeoutError):
         state.detail = "callback request could not be sent"
         return None
-    state.capture("request", callback_command, b"")
+    state.capture("request", callback_command, b"", phase="callback-request")
     progress.set("waiting for callback START")
     try:
         verified, received = request.terminal.exchange_online_pattern(
@@ -904,7 +927,7 @@ def _callback_body(
     except (LiveTerminalError, OSError, TimeoutError):
         state.detail = "callback START marker was not received"
         return None
-    state.capture("request", b"", received)
+    state.capture("request", b"", received, phase="callback-request-start")
     match = CALLBACK_START_RE.search(received) if verified else None
     if match is None:
         state.detail = "callback START marker was not verified"
@@ -967,7 +990,7 @@ def _callback_body(
         marker_verified, received = answer.terminal.exchange_online_pattern(
             b"", connect_pattern, config.online_timeout_seconds
         )
-        state.capture("answer", b"", received)
+        state.capture("answer", b"", received, phase="callback-return-greeting")
     except (LiveTerminalError, OSError, TimeoutError):
         marker_verified = False
         state.detail = "callback CONNECT marker was not received"
@@ -996,7 +1019,7 @@ def run_physical_attempt(
     state = _AttemptState()
     endpoints: list[EndpointProcess] = []
     stopped: set[int] = set()
-    started = time.monotonic()
+    started = state.started
     try:
         if scheduled.case.role == "originator":
             _outbound_body(
@@ -1096,7 +1119,7 @@ def run_physical_attempt(
     for leg in artifacts.legs:
         tx, rx = state.captures.get(leg, (bytearray(), bytearray()))
         artifacts.write_exchange(leg, bytes(tx), bytes(rx))
-    artifacts.write_detail(scheduled, result, state.setup_trace)
+    artifacts.write_detail(scheduled, result, state.setup_trace, state.exchanges)
     return result
 
 

@@ -89,6 +89,14 @@ but the report attributes it to the negotiated modulation and records the
 requested-profile mismatch. PCM-upstream cases require explicit upstream-mode
 evidence, not only the V.92 name or bitrate.
 
+Each `result.json` indexes the terminal captures in `exchanges`, with the call
+leg, test phase, collection time, and byte offsets into `terminal-tx.bin` and
+`terminal-rx.bin`. Raw calls retain separate exchanges for the first probe
+after retrain, the three-second idle interval, and the second probe. This helps
+distinguish transition tails from continuing corruption. Collection times mark
+when the harness gathers a reply; buffered replies may describe earlier errors.
+Peer invalid-command warnings remain quality flags, not measurements of BER.
+
 Callback cases use a bounded request call and a nonce-matched returned call;
 request legs are reported separately. BUSY retries and inter-call cooldowns
 are bounded and recorded. The ledger, seed, schedule, result records, logs and

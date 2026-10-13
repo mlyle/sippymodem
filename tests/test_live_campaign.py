@@ -304,6 +304,18 @@ class LiveCampaignTests(unittest.TestCase):
                 if verified:
                     rx = (artifacts.legs["modem"] / "terminal-rx.bin").read_bytes()
                     self.assertIn(b"tail during raw idle\r\n", rx)
+                    detail = json.loads((artifacts.directory / "result.json").read_text())
+                    idle = next(e for e in detail["exchanges"]
+                                if e["phase"] == "post-retrain-idle")
+                    self.assertIn(
+                        b"tail during raw idle\r\n",
+                        rx[idle["rx_offset"]:idle["rx_offset"] + idle["rx_bytes"]],
+                    )
+                    phases = [e["phase"] for e in detail["exchanges"]]
+                    self.assertLess(phases.index("post-retrain-ping"),
+                                    phases.index("post-retrain-idle"))
+                    self.assertLess(phases.index("post-retrain-idle"),
+                                    phases.index("post-retrain-confirmation"))
                 elif mode == "first-ping-fails":
                     rx = (artifacts.legs["modem"] / "terminal-rx.bin").read_bytes()
                     self.assertIn(b"GETTY:PONG:", rx)
@@ -331,9 +343,26 @@ class LiveCampaignTests(unittest.TestCase):
                 self.assertEqual(result.peer_unknown_commands, unknown)
                 self.assertEqual(result.peer_invalid_command_burst, burst)
                 self.assertEqual(result.successful(), not (unknown or burst))
-                saved = json.loads((artifacts.directory / "result.json").read_text())["result"]
+                detail = json.loads((artifacts.directory / "result.json").read_text())
+                saved = detail["result"]
                 self.assertEqual(saved["peer_unknown_commands"], unknown)
                 self.assertEqual(saved["peer_invalid_command_burst"], burst)
+                # The phase index must cover each leg exactly, including the
+                # separate callback request and bytes outside verified markers.
+                for leg, directory in artifacts.legs.items():
+                    tx_end = rx_end = 0
+                    elapsed = 0.0
+                    for exchange in detail["exchanges"]:
+                        if exchange["leg"] != leg:
+                            continue
+                        self.assertEqual(exchange["tx_offset"], tx_end)
+                        self.assertEqual(exchange["rx_offset"], rx_end)
+                        self.assertGreaterEqual(exchange["elapsed_seconds"], elapsed)
+                        elapsed = exchange["elapsed_seconds"]
+                        tx_end += exchange["tx_bytes"]
+                        rx_end += exchange["rx_bytes"]
+                    self.assertEqual(tx_end, (directory / "terminal-tx.bin").stat().st_size)
+                    self.assertEqual(rx_end, (directory / "terminal-rx.bin").stat().st_size)
 
     def test_live_display_clears_the_terminal_before_repainting(self) -> None:
         output = io.StringIO()
