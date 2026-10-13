@@ -1851,7 +1851,15 @@ int modem_ec_resume_after_retrain(struct modem *m)
 		modem_detector_reframe(m);
 		return 0;
 	}
-	if (!m->cfg.ec || m->get_bits != modem_hdlc_get_bits ||
+	if (!m->cfg.ec) {
+		/* New idle marks must not complete a pre-retrain receive byte.
+		 * Keep pending transmit framing; only hunt a fresh receive start. */
+		if (m->get_bits == modem_async_get_bits &&
+		    m->put_bits == modem_async_put_bits)
+			modem_async_retrain(m);
+		return 0;
+	}
+	if (m->get_bits != modem_hdlc_get_bits ||
 	    m->put_bits != modem_hdlc_put_bits)
 		return 0;
 	l = &m->ec.lapm;

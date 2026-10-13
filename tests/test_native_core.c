@@ -8796,6 +8796,40 @@ static bool test_lapm_retrain_preserves_link_state(void)
 	return true;
 }
 
+static bool test_raw_retrain_discards_partial_receive(void)
+{
+	static const uint8_t prefix[] = { 0, 1, 0, 1, 0, 0, 0, 1, 0 };
+	static const uint8_t idle[] = { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 };
+	static const uint8_t character[] = { 0, 0, 0, 1, 0, 1, 0, 1, 0, 1 };
+
+	for (size_t count = 1; count <= sizeof(prefix); ++count) {
+		struct modem m = {
+			.get_bits = modem_async_get_bits,
+			.put_bits = modem_async_put_bits,
+			.put_chars = scripted_lapm_sink,
+		};
+
+		memset(&lapm_sink, 0, sizeof(lapm_sink));
+		lapm_sink.result = 1;
+		modem_async_start(&m);
+		CHECK(modem_put_bits(&m, 1, (uint8_t *)prefix, (int)count) == (int)count,
+		      "raw retrain prefix was not consumed");
+		m.pack.bit = 7;
+		m.pack.data = 0x1234;
+		CHECK(modem_ec_resume_after_retrain(&m) == 0 &&
+		      m.pack.bit == 7 && m.pack.data == 0x1234,
+		      "raw retrain discarded pending transmit framing");
+		CHECK(modem_put_bits(&m, 1, (uint8_t *)idle, sizeof(idle)) == sizeof(idle) &&
+		      lapm_sink.length == 0,
+		      "raw retrain turned a %zu-bit receive prefix into a phantom byte", count);
+		CHECK(modem_put_bits(&m, 1, (uint8_t *)character, sizeof(character)) ==
+			      sizeof(character) && lapm_sink.length == 1 && lapm_sink.data[0] == 'T',
+		      "raw retrain damaged the first complete post-retrain character");
+	}
+	memset(&lapm_sink, 0, sizeof(lapm_sink));
+	return true;
+}
+
 static bool test_retrain_preserves_detection(void)
 {
 	enum {
@@ -10445,6 +10479,7 @@ int main(void)
 		{ "LAPM retrain preserves link state",
 		  test_lapm_retrain_preserves_link_state },
 		{ "retrain preserves V.42 detection", test_retrain_preserves_detection },
+		{ "raw retrain receive boundary", test_raw_retrain_discards_partial_receive },
 		{ "retrain preserves LAPM establishment",
 		  test_retrain_preserves_lapm_establishment },
 		{ "LAPM exit retires framing", test_lapm_exit_retires_framing },
