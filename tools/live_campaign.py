@@ -62,6 +62,7 @@ if __package__:
         LiveTerminalError,
         ModemTerminal,
         ONLINE_PING_REQUEST,
+        ONLINE_PONG_RE,
         REMOTE_RETRAIN_REQUEST,
     )
     from .revision_build import (
@@ -109,6 +110,7 @@ else:
         LiveTerminalError,
         ModemTerminal,
         ONLINE_PING_REQUEST,
+        ONLINE_PONG_RE,
         REMOTE_RETRAIN_REQUEST,
     )
     from revision_build import (
@@ -696,18 +698,19 @@ def _exercise_online(
         state.capture(leg, ONLINE_PING_REQUEST, received, phase="post-retrain-ping")
         if state.report.protocol == "none":
             # The first newline can expose input buffered during retraining.
-            # A second probe after quiet time distinguishes that tail from
-            # continuing corruption, even if the first probe timed out. Keep
-            # receiving throughout the gap and require both replies to pass.
+            # After quiet time, send a bare command so leading newlines cannot
+            # hide input accumulated during idle. Keep receiving throughout
+            # the gap and require both replies to pass.
             first_verified = verified
             progress.set("checking raw idle after retrain")
             received = terminal.receive_online(3.0)
             state.capture(leg, b"", received, phase="post-retrain-idle")
-            verified, received = terminal.probe_online_ping(
-                config.online_timeout_seconds
+            request = b"PING\r\n"
+            verified, received = terminal.exchange_online_pattern(
+                request, ONLINE_PONG_RE, config.online_timeout_seconds
             )
             state.capture(
-                leg, ONLINE_PING_REQUEST, received,
+                leg, request, received,
                 phase="post-retrain-confirmation",
             )
             verified = first_verified and verified

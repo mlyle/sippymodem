@@ -179,8 +179,12 @@ while True:
             online = False
             os.write(master, b"\r\nOK\r\n")
         elif b"PING" in buffer:
+            commands = bytes(buffer).replace(b"\r", b"\n").split(b"\n")
             buffer.clear()
             pings += 1
+            if mode == "idle-input-garbage" and b"PING" not in commands:
+                os.write(master, b"\r\nERROR: unknown command; send HELP for a list\r\n")
+                continue
             if mode == "first-ping-fails" and pings == 1:
                 continue
             if mode == "second-ping-fails" and pings == 2:
@@ -190,6 +194,8 @@ while True:
                     os.write(master, b"\r\nERROR: unknown command; send HELP for a list\r\n"
                              b"ADVISORY: 4 invalid commands since the last accepted commands\r\n")
                 os.write(master, pong)
+                if mode == "idle-input-garbage" and pings == 1:
+                    buffer.extend(b"\x00")
                 if mode == "paired-ping" and pings == 1:
                     time.sleep(0.05)
                     os.write(master, b"tail during raw idle\r\n")
@@ -281,6 +287,7 @@ class LiveCampaignTests(unittest.TestCase):
             ("paired-ping", True),
             ("first-ping-fails", False),
             ("second-ping-fails", False),
+            ("idle-input-garbage", False),
         ):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
@@ -301,10 +308,17 @@ class LiveCampaignTests(unittest.TestCase):
                 self.assertEqual(result.retrain_data, verified, result.detail)
                 tx = (artifacts.legs["modem"] / "terminal-tx.bin").read_bytes()
                 self.assertEqual(tx.count(b"PING"), 2)
+                detail = json.loads((artifacts.directory / "result.json").read_text())
+                confirmation = next(e for e in detail["exchanges"]
+                                    if e["phase"] == "post-retrain-confirmation")
+                self.assertEqual(
+                    tx[confirmation["tx_offset"]:
+                       confirmation["tx_offset"] + confirmation["tx_bytes"]],
+                    b"PING\r\n",
+                )
                 if verified:
                     rx = (artifacts.legs["modem"] / "terminal-rx.bin").read_bytes()
                     self.assertIn(b"tail during raw idle\r\n", rx)
-                    detail = json.loads((artifacts.directory / "result.json").read_text())
                     idle = next(e for e in detail["exchanges"]
                                 if e["phase"] == "post-retrain-idle")
                     self.assertIn(
