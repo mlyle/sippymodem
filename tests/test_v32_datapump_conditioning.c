@@ -33,16 +33,14 @@ enum {
 		256,
 	TEST_ANSWERER_OFFER_POWER_SAMPLES = 400,
 	TEST_FRESH_CALLER_SAMPLES = 4000,
-	/* A half-second physical round trip must survive the line handoff. */
-	TEST_LONG_ONE_WAY_DELAY_SAMPLES = MODEM_RATE / 4,
+	TEST_LONG_MAX_ONE_WAY_DELAY_SAMPLES = MODEM_RATE,
 	TEST_LONG_LINE_LIMIT = MODEM_RATE * 12,
-	TEST_LONG_DRAIN_SAMPLES = TEST_LONG_ONE_WAY_DELAY_SAMPLES +
-		V32_ANSWERER_DROP_SILENCE_SAMPLES + 512,
 };
 
 struct test_sample_delay {
-	int16_t samples[TEST_LONG_ONE_WAY_DELAY_SAMPLES];
+	int16_t samples[TEST_LONG_MAX_ONE_WAY_DELAY_SAMPLES];
 	size_t cursor;
+	size_t count;
 };
 
 struct test_conditioning_signal {
@@ -110,25 +108,29 @@ static int16_t delay_sample(
 	int16_t delayed = delay->samples[delay->cursor];
 
 	delay->samples[delay->cursor] = sample;
-	delay->cursor = (delay->cursor + 1u) %
-		TEST_LONG_ONE_WAY_DELAY_SAMPLES;
+	delay->cursor = (delay->cursor + 1u) % delay->count;
 	return delayed;
 }
 
 static bool drive_long_line_startup(
 	const struct dp_operations *operations, struct dp *datapump,
-	bool candidate_is_caller, uint32_t *measured_round_trip,
+	bool candidate_is_caller, size_t one_way_samples,
+	uint32_t *measured_round_trip,
 	uint64_t *post_startup_power)
 {
 	struct v32_line_startup caller = { 0 };
 	struct v32_answerer_line_startup answerer = { 0 };
-	struct test_sample_delay candidate_to_peer = { 0 };
-	struct test_sample_delay peer_to_candidate = { 0 };
+	struct test_sample_delay candidate_to_peer = { .count = one_way_samples };
+	struct test_sample_delay peer_to_candidate = { .count = one_way_samples };
 	int16_t candidate_transmit = 0;
 	int16_t peer_transmit = 0;
 	bool peer_complete = false;
+	size_t drain_samples = one_way_samples +
+		V32_ANSWERER_DROP_SILENCE_SAMPLES + 512u;
 
-	CHECK(measured_round_trip != NULL && post_startup_power != NULL &&
+	CHECK(one_way_samples != 0 &&
+	      one_way_samples <= TEST_LONG_MAX_ONE_WAY_DELAY_SAMPLES &&
+	      measured_round_trip != NULL && post_startup_power != NULL &&
 	      (candidate_is_caller ?
 		       v32_answerer_line_startup_init(
 			       &answerer, TEST_TONE_AMPLITUDE) :
@@ -168,7 +170,7 @@ static bool drive_long_line_startup(
 		v32_line_startup_round_trip_samples(&caller);
 	*post_startup_power = 0;
 	for (unsigned int sample = 0;
-	     sample < TEST_LONG_DRAIN_SAMPLES; ++sample) {
+	     sample < drain_samples; ++sample) {
 		int16_t candidate_receive = delay_sample(
 			&peer_to_candidate, 0);
 		int16_t next_candidate;
@@ -178,14 +180,14 @@ static bool drive_long_line_startup(
 			      &next_candidate),
 		      "V.32 endpoint rejected the long-delay handoff at %u",
 		      sample);
-		if (sample >= TEST_LONG_DRAIN_SAMPLES - 512u)
+		if (sample >= drain_samples - 512u)
 			*post_startup_power += (uint64_t)(
 				(int32_t)next_candidate * next_candidate);
 	}
 	return true;
 }
 
-static bool test_long_round_trip_line_startup(void)
+static bool run_long_round_trip_line_startup(size_t one_way_samples)
 {
 	struct modem_driver driver = {
 		.name = "V.32 long round-trip test",
@@ -195,7 +197,7 @@ static bool test_long_round_trip_line_startup(void)
 	};
 	const struct dp_operations *operations;
 	uint32_t minimum_turnaround_samples =
-		2u * TEST_LONG_ONE_WAY_DELAY_SAMPLES;
+		2u * one_way_samples;
 
 	operations = modem_dp_get_registered_ops(DP_V32);
 	CHECK(operations != NULL,
@@ -218,7 +220,7 @@ static bool test_long_round_trip_line_startup(void)
 			MODEM_RATE, MODEM_FRAG, operations);
 		CHECK(datapump != NULL && drive_long_line_startup(
 			      operations, datapump,
-			      candidate_is_caller != 0,
+			      candidate_is_caller != 0, one_way_samples,
 			      &measured_round_trip, &post_startup_power) &&
 		      measured_round_trip > minimum_turnaround_samples &&
 		      measured_round_trip < minimum_turnaround_samples +
@@ -231,6 +233,19 @@ static bool test_long_round_trip_line_startup(void)
 		      "V.32 long round-trip cleanup failed");
 		modem_delete(modem);
 	}
+	return true;
+}
+
+static bool test_long_round_trip_line_startup(void)
+{
+	/* Preserve the shorter path and exercise both roles beyond one second. */
+	static const size_t one_way_delays[] = {
+		MODEM_RATE / 4, MODEM_RATE * 3 / 5, MODEM_RATE,
+	};
+
+	for (size_t index = 0; index < ARRAY_LENGTH(one_way_delays); ++index)
+		CHECK(run_long_round_trip_line_startup(one_way_delays[index]),
+		      "long line failed with one-way delay %zu", one_way_delays[index]);
 	return true;
 }
 

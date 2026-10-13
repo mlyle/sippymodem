@@ -409,7 +409,9 @@ static bool test_push_rollback(void)
 			      V32_ECHO_OK,
 		      "rollback history setup failed at sample %zu", calls);
 		calls++;
-		CHECK(calls < 10000, "rollback history setup did not converge");
+		/* A reference symbol needs at most four 8 kHz line samples. */
+		CHECK(calls < V32_ECHO_REFERENCE_CAPACITY * 4u,
+		      "rollback history setup did not converge");
 	}
 	frontend.echo.coefficients[0][V32_ECHO_NEAR_WINDOW][0].in_phase =
 		INFINITY;

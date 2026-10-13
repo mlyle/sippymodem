@@ -818,13 +818,17 @@ static bool test_measured_echo_timing(void)
 		{ 4333, false, 1216, 0 },
 		{ 8493, true, 2400, 2548 },
 		{ 8280, false, 2400, 0 },
+		/* A completed long carrier turnaround must reach conditioning. */
+		{ 10207, true, 2916, 3064 },
+		{ 16493, true, 4800, 4948 },
+		{ 16280, false, 4800, 0 },
 	};
 	static const struct {
 		uint32_t samples;
 		bool caller;
 	} rejected[] = {
 		{ 0, true }, { 0, false },
-		{ 8494, true }, { 8281, false },
+		{ 16494, true }, { 16281, false },
 		{ UINT32_MAX, true }, { UINT32_MAX, false },
 	};
 	const struct v32_line_timing saved = {
