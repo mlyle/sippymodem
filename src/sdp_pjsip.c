@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
+#if defined(__APPLE__) && !defined(_DARWIN_C_SOURCE)
+#define _DARWIN_C_SOURCE
+#endif
 
 #include "sdp_pjsip.h"
 

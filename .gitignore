@@ -19,3 +19,6 @@ __pycache__/
 
 /src/libsippymodem.a
 /src/libsippymodem.so
+/src/libsippymodem.dylib
+/src/libsippymodem.dll
+/src/libsippymodem.dll.a

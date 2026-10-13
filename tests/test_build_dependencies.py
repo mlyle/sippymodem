@@ -40,13 +40,18 @@ class DefaultBuildTests(unittest.TestCase):
         self.assertIn("libsippymodem", plan)
         command = ["make", "--no-print-directory", "--dry-run", "--always-make",
                    "PJSIP_AVAILABLE=yes", "PKG_CONFIG=false", "CCACHE=", "libsippymodem"]
-        result = subprocess.run(command, cwd=ROOT / "src", capture_output=True,
-                                text=True, check=True, timeout=10)
-        self.assertIn("library.o", result.stdout)
-        self.assertIn("libsippymodem.so", result.stdout)
-        for frontend in ("main.o", "runtime.o", "terminal.o", "modem_at.o",
-                         "modem_frontend.o", "slmodem_terminal.o", "log_target.o"):
-            self.assertNotIn("-o " + frontend + " ", result.stdout)
+        for system, library in (("Linux", "libsippymodem.so"),
+                                ("Darwin", "libsippymodem.dylib"),
+                                ("Windows", "libsippymodem.dll")):
+            with self.subTest(system=system):
+                result = subprocess.run(command + [f"TARGET_SYSTEM={system}"],
+                                        cwd=ROOT / "src", capture_output=True,
+                                        text=True, check=True, timeout=10)
+                self.assertIn("library.o", result.stdout)
+                self.assertIn(library, result.stdout)
+                for frontend in ("main.o", "runtime.o", "terminal.o", "modem_at.o",
+                                 "modem_frontend.o", "slmodem_terminal.o", "log_target.o"):
+                    self.assertNotIn("-o " + frontend + " ", result.stdout)
 
 
 class HeaderDependencyTests(unittest.TestCase):

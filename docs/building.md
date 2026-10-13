@@ -7,7 +7,7 @@ and DSP processing. GCC and Clang can be selected through `CC`.
 | Host | Products and validation |
 | --- | --- |
 | Linux | PTY/AT executable and library; native regression suite |
-| macOS | POSIX executable and `.dylib` build paths; source reviewed, native execution unverified |
+| macOS | POSIX executable, static library, and `.dylib` built on Apple Silicon; startup, focused checks, and V.21 loopback byte exchange tested |
 | Windows | MinGW-w64 library with winpthreads; DLL and concurrent V.21 calls tested under Wine, native Windows execution unverified |
 
 The terminal-server byte-array API is available on every target. The PTY
@@ -103,13 +103,45 @@ modem compatibility version.
 ## macOS and Windows toolchains
 
 On macOS, use GNU Make and a matching PJSIP SDK or the pinned submodule.
+With Homebrew and the Apple Command Line Tools installed:
+
+```sh
+brew install make pkgconf
+gmake pjproject-init
+gmake -j4
+```
+
+The checks use GNU Make 4 or later. For Python checks that invoke `make`, put
+Homebrew's GNU Make first in `PATH`:
+
+```sh
+export PATH="$(brew --prefix make)/libexec/gnubin:$PATH"
+```
+
+If Apple's C++ compiler cannot find `<atomic>` or `<string>` while building
+PJSIP, but those headers are present in the selected SDK, supply that SDK's
+C++ include directory explicitly:
+
+```sh
+gmake -j4 CXXFLAGS="-isystem $(xcrun --show-sdk-path)/usr/include/c++/v1"
+```
+
 The build selects Mach-O linking, an `@rpath/libsippymodem.dylib` install name,
 and a public-symbol export list. Set the consuming application's rpath to
 its library directory. PTY creation uses `openpty`; native fd pumping uses
 nonblocking socket pairs and kqueue for command-mode half-close detection.
 The frontend uses `poll()` with waits rounded up by less than 1 ms.
 Each DSP worker requests an 8 MiB stack for nested PCM training scratch.
-These Apple-specific paths have not been executed on a Mac.
+The complete native regression suite currently requires Linux: some tests
+use GNU linker's `--wrap`, which Apple's linker does not support. This includes
+the recording-file tests. Build and installation checks and the portable
+library owner-loop test also run on macOS. To run the focused native owner-loop
+check with bundled PJSIP:
+
+```sh
+PKG_CONFIG_PATH="$PWD/.build/pjproject/install/lib/pkgconfig" \
+  gmake -C tests run-test-test_library_wait
+```
 
 For native Windows, use MinGW-w64 with POSIX threading support (winpthreads),
 a Unix build shell, and a PJSIP SDK built for that same target. `make` builds
