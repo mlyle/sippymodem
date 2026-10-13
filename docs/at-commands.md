@@ -171,6 +171,11 @@ Baudot is an explicit selection rather than a default fallback. Use
 `AT+MS=45,0,45,45` for 45.45 baud or `AT+MS=45,0,50,50` for 50 baud;
 its configured integer rate bounds must admit 45 or 50.
 
+V.32 and V.32bis can request a full retrain after 18 consecutive bad receive
+quality windows (1.8 seconds at 2400 baud). The receiver gets one second to
+settle after training. Two automatic attempts are allowed until 30 seconds of
+clean reception rearm recovery; explicit `ATO1` and peer requests remain available.
+
 `AT+V34B=<baud>` selects a V.34 symbol rate. Values are
 `0,2400,2743,2800,3000,3200,3429`; `0` is automatic and is the default.
 The rounded labels 2743 and 3429 stand for the corresponding fractional

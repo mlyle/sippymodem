@@ -142,6 +142,7 @@ V32_SOURCES := \
 	$(DSP_V32_SOURCE_DIR)/conditioning_path.c \
 	$(DSP_V32_SOURCE_DIR)/datapump.c \
 	$(DSP_V32_SOURCE_DIR)/data_path.c \
+	$(DSP_V32_SOURCE_DIR)/data_quality.c \
 	$(DSP_V32_SOURCE_DIR)/echo_canceller.c \
 	$(DSP_V32_SOURCE_DIR)/echo_frontend.c \
 	$(DSP_V32_SOURCE_DIR)/echo_training.c \

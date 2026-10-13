@@ -9,6 +9,7 @@
 #include "datapump_media.h"
 #include "datapump_timing.h"
 #include "data_path.h"
+#include "data_quality.h"
 #include "echo_training.h"
 #include "end_path.h"
 #include "modem.h"
@@ -97,12 +98,14 @@ struct v32_datapump {
 	struct v32_startup startup;
 	struct qam_point transmit_point;
 	struct training_session training;
+	struct v32_data_quality quality;
 	uint32_t missing_carrier_samples;
 	uint16_t caller_s_extension_symbols;
 	uint16_t cleardown_symbols;
 	bool trellis_encoder_initialized;
 	bool answerer_s_detected;
 	bool caller;
+	bool quality_retrain;
 };
 
 static struct dp *create_v32(
@@ -132,7 +135,9 @@ static const char *progress_v32(const struct dp *dp)
 	if (datapump == NULL)
 		return "V.32/initializing";
 	switch (datapump->fixed_path.stage) {
-	case V32_FIXED_OFF: return "V.32/answer-tone-carrier-turnaround";
+	case V32_FIXED_OFF:
+		return datapump->quality_retrain ? "V.32/quality-retrain-carrier-turnaround" :
+			"V.32/answer-tone-carrier-turnaround";
 	case V32_FIXED_CALLER_CONDITIONING:
 	case V32_FIXED_ANSWERER_CONDITIONING: return "V.32/S-TRN";
 	case V32_FIXED_CALLER_RATE_OFFER:
@@ -551,6 +556,7 @@ static int initialize_protocol(
 	datapump->caller_s_extension_symbols = 0;
 	datapump->trellis_encoder_initialized = false;
 	datapump->answerer_s_detected = false;
+	datapump->quality_retrain = false;
 	return 0;
 }
 
@@ -1265,6 +1271,8 @@ static int enter_link(struct v32_datapump *datapump)
 	if (!datapump_set_link_rates(&datapump->dp, bit_rate, bit_rate))
 		return -1;
 	datapump->missing_carrier_samples = 0;
+	if (!v32_data_quality_start(&datapump->quality, bit_rate))
+		return -1;
 	return datapump_complete_training(&datapump->dp, &datapump->training) ? 0 : -1;
 }
 
@@ -1569,6 +1577,9 @@ static int receive_fixed_path_sample(
 	}
 	case V32_FIXED_DATA: {
 		struct v32_data_batch batch;
+		struct v32_equalizer *equalizer =
+			&datapump->fixed_path.owner.data.b1.receive.equalizer;
+		uint64_t previous_epoch = equalizer->epoch;
 
 		if (v32_data_path_sample(
 			    &datapump->fixed_path.owner.data, sample,
@@ -1583,12 +1594,18 @@ static int receive_fixed_path_sample(
 		}
 		if (deliver_fixed_batch(datapump, &batch) != 0)
 			return -1;
-		if (batch.retrain_requested) {
+		bool quality_retrain = !batch.retrain_requested &&
+			v32_data_quality_observe(&datapump->quality,
+				equalizer->decision_error,
+				(unsigned)(equalizer->epoch - previous_epoch));
+		if (batch.retrain_requested || quality_retrain) {
 			struct v32_datapump next = *datapump;
 
 			if (prepare_retrain(
-				    &next, TRAINING_REMOTE_RETRAIN) != 0)
+				    &next, quality_retrain ? TRAINING_LOCAL_RETRAIN :
+					TRAINING_REMOTE_RETRAIN) != 0)
 				return -1;
+			next.quality_retrain = quality_retrain;
 			*datapump = next;
 			if (!datapump->dp.modem->cfg.ec)
 				modem_async_retrain(datapump->dp.modem);

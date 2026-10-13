@@ -152,6 +152,7 @@ struct modem_test_case {
 	bool requires_exact_g711;
 	bool test_prelink;
 	bool test_retrain;
+	bool test_quality_recovery;
 	unsigned int cleardown_initiators;
 	bool raw_transport;
 	bool require_lapm;
@@ -1437,6 +1438,80 @@ static bool contains_pcm_rate_signal(const uint8_t *octets, size_t count, enum g
 			return true;
 	}
 	return false;
+}
+
+static bool exercise_v32_quality_recovery(
+	struct integration_endpoint *caller, struct integration_endpoint *answerer,
+	enum DP_ID id, enum media_codec codec, const struct media_recorder *recorder)
+{
+	struct integration_endpoint *ends[] = { caller, answerer };
+	struct dp *owned[] = { caller->modem->dp, answerer->modem->dp };
+	const struct channel_bench_effect_spec noise = {
+		.kind = CHANNEL_BENCH_NOISE,
+		.parameters.noise = { .peak = 6000, .seed = 0x32a17 },
+	};
+	const char payloads[][16] = { "caller recovered", "answer recovered" };
+
+	for (unsigned side = 0; side < ARRAY_LENGTH(ends); ++side) {
+		bool requested = false, recovered = false;
+		unsigned frame;
+		/* Allow the receiver's initial settling interval to finish. */
+		for (frame = 0; frame < 60; ++frame) {
+			CHECK(process_sip_frame(caller, answerer, codec, recorder) &&
+			      endpoint_drain(caller) && endpoint_drain(answerer) &&
+			      modem_is_online(caller->modem, id) &&
+			      modem_is_online(answerer->modem, id),
+			      "clean V.32 idle requested recovery");
+			caller->output_count = answerer->output_count = 0;
+		}
+		CHECK(ends[side]->receive_bench.effect_count == 0 &&
+		      channel_bench_init(&ends[side]->receive_bench, &noise, 1) ==
+			      CHANNEL_BENCH_OK, "quality impairment did not initialize");
+		for (frame = 0; frame < 200; ++frame) {
+			CHECK(process_sip_frame(caller, answerer, codec, recorder) &&
+			      endpoint_drain(caller) && endpoint_drain(answerer),
+			      "V.32 noise processing failed");
+			caller->output_count = answerer->output_count = 0;
+			if (strstr(modem_protocol_step(ends[side]->modem), "quality-retrain")) {
+				requested = true;
+				break;
+			}
+		}
+		channel_bench_destroy(&ends[side]->receive_bench);
+		CHECK(requested && frame >= 80,
+		      "V.32 side %u failed to request sustained-quality recovery (frame %u)",
+		      side, frame);
+		for (frame = 0; frame < V32_RETRAIN_FRAME_LIMIT; ++frame) {
+			CHECK(process_sip_frame(caller, answerer, codec, recorder) &&
+			      endpoint_drain(caller) && endpoint_drain(answerer) &&
+			      caller->modem->dp == owned[0] && answerer->modem->dp == owned[1] &&
+			      caller->stops == 0 && answerer->stops == 0,
+			      "quality retrain lost the call or replaced its modem");
+			caller->output_count = answerer->output_count = 0;
+			if (modem_is_online(caller->modem, id) &&
+			    modem_is_online(answerer->modem, id)) {
+				recovered = true;
+				break;
+			}
+		}
+		CHECK(recovered, "V.32 side %u did not finish quality retrain", side);
+		for (unsigned end = 0; end < ARRAY_LENGTH(ends); ++end)
+			CHECK(modem_write(ends[end]->modem, payloads[end], sizeof(payloads[end])) ==
+				      sizeof(payloads[end]), "recovered modem rejected payload");
+		for (frame = 0; frame < DATA_FRAME_LIMIT; ++frame) {
+			CHECK(process_sip_frame(caller, answerer, codec, recorder) &&
+			      endpoint_drain(caller) && endpoint_drain(answerer),
+			      "data processing failed after quality retrain");
+			if (caller->output_count >= sizeof(payloads[1]) &&
+			    answerer->output_count >= sizeof(payloads[0]))
+				break;
+		}
+		for (unsigned end = 0; end < ARRAY_LENGTH(ends); ++end)
+			CHECK(ends[end]->output_count == sizeof(payloads[0]) &&
+			      memcmp(ends[end]->output, payloads[1u - end], sizeof(payloads[0])) == 0,
+			      "V.32 side %u lost post-recovery payload at end %u", side, end);
+	}
+	return true;
 }
 
 static bool exercise_v92_rate_exchange(
@@ -2832,6 +2907,9 @@ static bool run_media_call(
 	if (connected_id == DP_V92 && !test_case->raw_transport)
 		CHECK(exercise_v92_rate_exchange(&caller, &answerer, codec, &recorder),
 		      "%s rate exchange did not preserve outstanding LAPM data", test_case->name);
+	if (test_case->test_quality_recovery)
+		CHECK(exercise_v32_quality_recovery(&caller, &answerer, connected_id, codec, &recorder),
+		      "%s sustained-quality recovery failed", test_case->name);
 	if (test_case->test_retrain) {
 		if (connected_id == DP_V34 && test_case->raw_transport)
 			CHECK(exercise_v34_media_gap(&caller, &answerer, codec, &recorder),
@@ -5241,6 +5319,7 @@ int main(void)
 			.carrier_loss_samples = MODEM_RATE / 5,
 			.automode = true,
 			.test_retrain = true,
+			.test_quality_recovery = true,
 			.raw_transport = true,
 		},
 		{
@@ -5266,6 +5345,7 @@ int main(void)
 			.carrier_loss_samples = MODEM_RATE / 5,
 			.automode = true,
 			.test_retrain = true,
+			.test_quality_recovery = true,
 		},
 		{
 			.id = DP_V32BIS,
