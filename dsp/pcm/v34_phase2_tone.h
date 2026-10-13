@@ -211,6 +211,11 @@ bool v34_retrain_detector_is_valid(
 	const struct v34_retrain_detector *detector);
 enum v34_phase2_tone_result v34_retrain_detector_reset(
 	struct v34_retrain_detector *detector);
+/* Retain quiet history while tone recognition is disarmed. Qualification
+ * finishes in sample(), which resets the tone detectors before recognizing
+ * a request. Invalid input leaves the detector unchanged. */
+enum v34_phase2_tone_result v34_retrain_detector_observe_silence(
+	struct v34_retrain_detector *detector, int16_t sample);
 /* detected is true for exactly the sample that completes a request. */
 enum v34_phase2_tone_result v34_retrain_detector_sample(
 	struct v34_retrain_detector *detector, int16_t sample,

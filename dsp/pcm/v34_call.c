@@ -997,6 +997,11 @@ enum v34_call_result v34_call_sample(
 	else if (result == V34_CALL_OK && emitted.processed == call->stage &&
 		 retrain_detection_is_active(call))
 		result = observe_retrain_tone(call, conditioned);
+	else if (result == V34_CALL_OK && call->stage == V34_CALL_PHASE4 &&
+		 call->state.phase4.transmit_b1_complete &&
+		 v34_retrain_detector_observe_silence(&call->retrain.detector,
+			 conditioned) != V34_PHASE2_TONE_OK)
+		result = V34_CALL_NUMERIC_FAILURE;
 	if (result != V34_CALL_OK && result != V34_CALL_CLEARDOWN_COMPLETE)
 		call->failed = true;
 	emitted.next = call->stage;

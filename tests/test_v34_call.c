@@ -922,6 +922,65 @@ static bool exercise_full_retrain(
 		&caller, &answerer, &channel, initiator_role);
 }
 
+static bool test_early_retrain(void)
+{
+	for (unsigned int law = 0; law < 2; ++law) {
+		for (enum v34_station_role role = V34_CALLING_STATION;
+		     role <= V34_ANSWERING_STATION; ++role) {
+			struct endpoint caller, answerer;
+			struct channel channel = { .pcma = law != 0 };
+			struct endpoint *local = role == V34_CALLING_STATION ?
+				&caller : &answerer;
+			bool requested = false;
+			bool caller_retrained = false, answerer_retrained = false;
+			bool verifying = false;
+
+			CHECK(endpoint_init(&caller, V34_CALLING_STATION) &&
+			      endpoint_init(&answerer, V34_ANSWERING_STATION),
+			      "early-retrain pair did not initialize");
+			caller.verify_mapping_frames = answerer.verify_mapping_frames = false;
+			for (size_t sample = 0; sample < 2u * SAMPLE_LIMIT; ++sample) {
+				struct v34_call_observation co, ao;
+
+				CHECK(channel_sample_pair(&channel, &caller, &answerer,
+					      &co, &ao),
+				      "early retrain stopped role=%u law=%u sample=%zu",
+				      role, law, sample);
+				if (!requested && v34_call_is_online(&local->call)) {
+					/* The caller is ready while the answerer still receives
+					 * B1. Do not add a settling interval before retraining. */
+					CHECK(role != V34_CALLING_STATION ||
+					      !v34_call_is_online(&answerer.call),
+					      "early-retrain fixture missed the B1 overlap");
+					CHECK(v34_call_start_retrain(&local->call) == V34_CALL_OK,
+					      "immediate retrain was rejected");
+					requested = true;
+				}
+				if (requested) {
+					caller_retrained |= caller.call.stage == V34_CALL_RETRAIN_SILENCE;
+					answerer_retrained |= answerer.call.stage == V34_CALL_RETRAIN_SILENCE;
+				}
+				if (!verifying && caller_retrained && answerer_retrained &&
+				    v34_call_is_online(&caller.call) &&
+				    v34_call_is_online(&answerer.call)) {
+					caller.mapping_frames_received = answerer.mapping_frames_received = 0;
+					caller.verify_mapping_frames = answerer.verify_mapping_frames = true;
+					verifying = true;
+				}
+				if (verifying && caller.mapping_frames_received >= 4u &&
+				    answerer.mapping_frames_received >= 4u)
+					break;
+			}
+			CHECK(verifying && caller.mapping_frames_received >= 4u &&
+			      answerer.mapping_frames_received >= 4u,
+			      "immediate retrain did not recover role=%u law=%u "
+			      "requested=%u caller=%u answerer=%u",
+			      role, law, requested, caller_retrained, answerer_retrained);
+		}
+	}
+	return true;
+}
+
 static bool test_full_retrain(void)
 {
 	CHECK(exercise_full_retrain(V34_CALLING_STATION, false),
@@ -1462,8 +1521,13 @@ static bool check_retrain_tone_stage_guard(
 		       observation.next == V34_CALL_RETRAIN_SILENCE &&
 			       endpoint->call.retrain_active :
 		       observation.next == target_stage &&
-			       memcmp(&endpoint->call.retrain.detector, &before,
-				      sizeof(before)) == 0),
+			       (target_stage == V34_CALL_PHASE4 && transmit_b1_complete ?
+					memcmp(&endpoint->call.retrain.detector.tone,
+					       &before.tone, sizeof(before.tone)) == 0 &&
+					memcmp(&endpoint->call.retrain.detector.answer_guard,
+					       &before.answer_guard, sizeof(before.answer_guard)) == 0 :
+					memcmp(&endpoint->call.retrain.detector, &before,
+					       sizeof(before)) == 0)),
 	      "retrain stage %d produced the wrong detector transition",
 	      target_stage);
 	if (expect_retrain)
@@ -2451,6 +2515,7 @@ int main(void)
 		{ "quiet training completion", test_quiet_training_completion },
 		{ "symmetric selected-rate calls", test_symmetric_calls },
 		{ "local and remote full retrain", test_full_retrain },
+		{ "retrain at first readiness", test_early_retrain },
 		{ "full retrain through answerer echo", test_echo_retrain },
 		{ "retrain selects new INFO1a rate pair",
 		  test_retrain_selects_new_rate },

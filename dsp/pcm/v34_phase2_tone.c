@@ -487,6 +487,24 @@ static void add_retrain_silence_observation(
 	}
 }
 
+enum v34_phase2_tone_result v34_retrain_detector_observe_silence(
+	struct v34_retrain_detector *detector, int16_t sample)
+{
+	if (!v34_retrain_detector_is_valid(detector))
+		return V34_PHASE2_TONE_INVALID_ARGUMENT;
+	/* Leave the last quiet sample to the armed path, which resets the tone
+	 * detectors before it starts recognizing the following request. */
+	if (detector->silence_samples == V34_RETRAIN_MIN_SILENCE_SAMPLES)
+		detector->silence_samples--;
+	detector->tone_samples = 0;
+	detector->edge_samples = 0;
+	add_retrain_silence_observation(detector, sample,
+		V34_RETRAIN_SILENCE_MAX_WINDOW_ENERGY);
+	if (detector->silence_samples == V34_RETRAIN_MIN_SILENCE_SAMPLES)
+		detector->silence_samples--;
+	return V34_PHASE2_TONE_OK;
+}
+
 enum v34_phase2_tone_result v34_retrain_detector_init(
 	struct v34_retrain_detector *detector,
 	enum v34_station_role local_role)

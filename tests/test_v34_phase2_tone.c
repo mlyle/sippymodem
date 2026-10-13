@@ -1500,6 +1500,8 @@ static bool test_validation(void)
 		CHECK(v34_retrain_detector_sample_with_power_limit(
 			      &retrain, 0, 0u, &detected) ==
 			      V34_PHASE2_TONE_INVALID_ARGUMENT &&
+		      v34_retrain_detector_observe_silence(NULL, 0) ==
+			      V34_PHASE2_TONE_INVALID_ARGUMENT &&
 		      v34_retrain_detector_sample_with_power_limit(
 			      &retrain, 0,
 			      V34_RETRAIN_SILENCE_MAX_WINDOW_ENERGY + 1u,
@@ -1515,6 +1517,8 @@ static bool test_validation(void)
 
 		CHECK(v34_retrain_detector_sample(
 			      &retrain, 0, &detected) ==
+			      V34_PHASE2_TONE_INVALID_ARGUMENT &&
+		      v34_retrain_detector_observe_silence(&retrain, 0) ==
 			      V34_PHASE2_TONE_INVALID_ARGUMENT &&
 		      memcmp(&retrain, &retrain_before, sizeof(retrain)) == 0 &&
 		      detected,
