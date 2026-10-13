@@ -191,9 +191,9 @@ static struct v34_call_configuration configuration(
 }
 
 static struct v34_call_configuration symmetric_configuration(
-	enum v34_station_role role, enum v34_symbol_rate symbol_rate)
+	enum v34_station_role role, enum v34_symbol_rate symbol_rate,
+	uint8_t primary_rate_units)
 {
-	enum { PRIMARY_RATE_UNITS = 10 };
 	struct v34_call_configuration selected = configuration(role);
 	uint8_t preemphasis_filter_index =
 		symbol_rate == V34_SYMBOL_RATE_3000 ? 2u :
@@ -227,7 +227,7 @@ static struct v34_call_configuration symmetric_configuration(
 			.preemphasis_filter_index = preemphasis_filter_index;
 		selected.local_info1.calling.answer_transmit[symbol_rate]
 			.projected_data_rate_2400_bps_units =
-				PRIMARY_RATE_UNITS;
+				primary_rate_units;
 	} else {
 		selected.local_info1.answering.common
 			.frequency_offset_1_50_hz_units =
@@ -238,18 +238,18 @@ static struct v34_call_configuration symmetric_configuration(
 			.preemphasis_filter_index = preemphasis_filter_index;
 		selected.local_info1.answering.call_transmit
 			.projected_data_rate_2400_bps_units =
-				PRIMARY_RATE_UNITS;
+				primary_rate_units;
 		selected.local_info1.answering.answer_to_call_symbol_rate =
 			symbol_rate;
 		selected.local_info1.answering.call_to_answer_symbol_rate =
 			symbol_rate;
 	}
 	selected.phase4.transmit_mp.parameters.type0
-		.maximum_call_to_answer_rate_2400_bps_units = PRIMARY_RATE_UNITS;
+		.maximum_call_to_answer_rate_2400_bps_units = primary_rate_units;
 	selected.phase4.transmit_mp.parameters.type0
-		.maximum_answer_to_call_rate_2400_bps_units = PRIMARY_RATE_UNITS;
+		.maximum_answer_to_call_rate_2400_bps_units = primary_rate_units;
 	selected.phase4.transmit_mp.parameters.type0.data_rate_capability_mask =
-		(uint16_t)((1u << PRIMARY_RATE_UNITS) - 1u);
+		(uint16_t)((1u << primary_rate_units) - 1u);
 	return selected;
 }
 
@@ -344,10 +344,10 @@ static bool endpoint_init(
 
 static bool endpoint_init_symmetric(
 	struct endpoint *endpoint, enum v34_station_role role,
-	enum v34_symbol_rate symbol_rate)
+	enum v34_symbol_rate symbol_rate, uint8_t primary_rate_units)
 {
 	struct v34_call_configuration config =
-		symmetric_configuration(role, symbol_rate);
+		symmetric_configuration(role, symbol_rate, primary_rate_units);
 	struct endpoint initialized = {
 		.mapping_pattern_seed =
 			role == V34_CALLING_STATION ? UINT32_C(0x34c011ab) :
@@ -756,16 +756,16 @@ static bool test_quiet_training_completion(void)
 }
 
 static bool check_symmetric_call(
-	enum v34_symbol_rate symbol_rate, bool pcma)
+	enum v34_symbol_rate symbol_rate, uint8_t primary_rate_units, bool pcma)
 {
 	struct channel channel = { .pcma = pcma };
 	struct endpoint caller;
 	struct endpoint answerer;
 
 	CHECK(endpoint_init_symmetric(
-		      &caller, V34_CALLING_STATION, symbol_rate) &&
+		      &caller, V34_CALLING_STATION, symbol_rate, primary_rate_units) &&
 	      endpoint_init_symmetric(
-		      &answerer, V34_ANSWERING_STATION, symbol_rate),
+		      &answerer, V34_ANSWERING_STATION, symbol_rate, primary_rate_units),
 	      "symmetric rate %u endpoints did not initialize", symbol_rate);
 	CHECK(run_initialized_pair(&caller, &answerer, &channel),
 	      "symmetric rate %u call did not reach mapped data", symbol_rate);
@@ -773,6 +773,10 @@ static bool check_symmetric_call(
 		      V34_PHASE34_RECEIVER_DATA &&
 	      answerer.call.state.phase4.receive.stage ==
 		      V34_PHASE34_RECEIVER_DATA &&
+	      caller.call.state.phase4.data_startup.receive.geometry
+		      .primary_data_rate_2400_bps_units == primary_rate_units &&
+	      answerer.call.state.phase4.data_startup.receive.geometry
+		      .primary_data_rate_2400_bps_units == primary_rate_units &&
 	      caller.call.local_info1.calling.answer_transmit[symbol_rate]
 		      .preemphasis_filter_index == 6 &&
 	      answerer.call.local_info1.answering.call_transmit
@@ -785,26 +789,30 @@ static bool check_symmetric_call(
 
 static bool test_symmetric_calls(void)
 {
-	CHECK(check_symmetric_call(V34_SYMBOL_RATE_2743, false),
+	CHECK(check_symmetric_call(V34_SYMBOL_RATE_2743, 10u, false),
 	      "PCMU symmetric 2743 call failed");
-	CHECK(check_symmetric_call(V34_SYMBOL_RATE_2743, true),
+	CHECK(check_symmetric_call(V34_SYMBOL_RATE_2743, 10u, true),
 	      "PCMA symmetric 2743 call failed");
-	CHECK(check_symmetric_call(V34_SYMBOL_RATE_2800, false),
+	CHECK(check_symmetric_call(V34_SYMBOL_RATE_2800, 10u, false),
 	      "PCMU symmetric 2800 call failed");
-	CHECK(check_symmetric_call(V34_SYMBOL_RATE_2800, true),
+	CHECK(check_symmetric_call(V34_SYMBOL_RATE_2800, 10u, true),
 	      "PCMA symmetric 2800 call failed");
-	CHECK(check_symmetric_call(V34_SYMBOL_RATE_3000, false),
+	CHECK(check_symmetric_call(V34_SYMBOL_RATE_3000, 10u, false),
 	      "PCMU symmetric 3000 call failed");
-	CHECK(check_symmetric_call(V34_SYMBOL_RATE_3000, true),
+	CHECK(check_symmetric_call(V34_SYMBOL_RATE_3000, 10u, true),
 	      "PCMA symmetric 3000 call failed");
-	CHECK(check_symmetric_call(V34_SYMBOL_RATE_3200, false),
+	CHECK(check_symmetric_call(V34_SYMBOL_RATE_3200, 10u, false),
 	      "PCMU symmetric 3200 call failed");
-	CHECK(check_symmetric_call(V34_SYMBOL_RATE_3200, true),
+	CHECK(check_symmetric_call(V34_SYMBOL_RATE_3200, 10u, true),
 	      "PCMA symmetric 3200 call failed");
-	CHECK(check_symmetric_call(V34_SYMBOL_RATE_3429, false),
+	CHECK(check_symmetric_call(V34_SYMBOL_RATE_3429, 10u, false),
 	      "PCMU symmetric 3429 call failed");
-	CHECK(check_symmetric_call(V34_SYMBOL_RATE_3429, true),
+	CHECK(check_symmetric_call(V34_SYMBOL_RATE_3429, 10u, true),
 	      "PCMA symmetric 3429 call failed");
+	for (unsigned int law = 0; law < 2; ++law)
+		for (uint8_t units = 1; units <= 2; ++units)
+			CHECK(check_symmetric_call(V34_SYMBOL_RATE_2400, units, law != 0),
+			      "minimum-rate B1 call failed law=%u units=%u", law, units);
 	return true;
 }
 
@@ -922,62 +930,89 @@ static bool exercise_full_retrain(
 		&caller, &answerer, &channel, initiator_role);
 }
 
-static bool test_early_retrain(void)
+static bool check_startup_retrain(
+	enum v34_station_role role, bool pcma, bool corrupt_b1)
 {
-	for (unsigned int law = 0; law < 2; ++law) {
-		for (enum v34_station_role role = V34_CALLING_STATION;
-		     role <= V34_ANSWERING_STATION; ++role) {
-			struct endpoint caller, answerer;
-			struct channel channel = { .pcma = law != 0 };
-			struct endpoint *local = role == V34_CALLING_STATION ?
-				&caller : &answerer;
-			bool requested = false;
-			bool caller_retrained = false, answerer_retrained = false;
-			bool verifying = false;
+	struct endpoint caller, answerer;
+	struct channel channel = { .pcma = pcma };
+	struct endpoint *local = role == V34_CALLING_STATION ? &caller : &answerer;
+	struct endpoint *peer = role == V34_CALLING_STATION ? &answerer : &caller;
+	bool injected = false, requested = false;
+	bool caller_retrained = false, answerer_retrained = false;
+	bool verifying = false;
 
-			CHECK(endpoint_init(&caller, V34_CALLING_STATION) &&
-			      endpoint_init(&answerer, V34_ANSWERING_STATION),
-			      "early-retrain pair did not initialize");
-			caller.verify_mapping_frames = answerer.verify_mapping_frames = false;
-			for (size_t sample = 0; sample < 2u * SAMPLE_LIMIT; ++sample) {
-				struct v34_call_observation co, ao;
+	CHECK(endpoint_init(&caller, V34_CALLING_STATION) &&
+	      endpoint_init(&answerer, V34_ANSWERING_STATION),
+	      "startup-retrain pair did not initialize");
+	caller.verify_mapping_frames = answerer.verify_mapping_frames = false;
+	for (size_t sample = 0; sample < 2u * SAMPLE_LIMIT; ++sample) {
+		struct v34_call_observation co, ao;
+		const struct v34_call_observation *observation =
+			role == V34_CALLING_STATION ? &co : &ao;
 
-				CHECK(channel_sample_pair(&channel, &caller, &answerer,
-					      &co, &ao),
-				      "early retrain stopped role=%u law=%u sample=%zu",
-				      role, law, sample);
-				if (!requested && v34_call_is_online(&local->call)) {
-					/* The caller is ready while the answerer still receives
-					 * B1. Do not add a settling interval before retraining. */
-					CHECK(role != V34_CALLING_STATION ||
-					      !v34_call_is_online(&answerer.call),
-					      "early-retrain fixture missed the B1 overlap");
-					CHECK(v34_call_start_retrain(&local->call) == V34_CALL_OK,
-					      "immediate retrain was rejected");
-					requested = true;
-				}
-				if (requested) {
-					caller_retrained |= caller.call.stage == V34_CALL_RETRAIN_SILENCE;
-					answerer_retrained |= answerer.call.stage == V34_CALL_RETRAIN_SILENCE;
-				}
-				if (!verifying && caller_retrained && answerer_retrained &&
-				    v34_call_is_online(&caller.call) &&
-				    v34_call_is_online(&answerer.call)) {
-					caller.mapping_frames_received = answerer.mapping_frames_received = 0;
-					caller.verify_mapping_frames = answerer.verify_mapping_frames = true;
-					verifying = true;
-				}
-				if (verifying && caller.mapping_frames_received >= 4u &&
-				    answerer.mapping_frames_received >= 4u)
-					break;
+		if (corrupt_b1 && !requested && peer->call.stage == V34_CALL_PHASE4 &&
+		    peer->call.state.phase4.transmit_data_active) {
+			struct v34_data_stream *stream = &peer->call.state.phase4.transmit.data;
+			struct v34_data_points *points = &stream->points;
+			unsigned frames = points->schedule.geometry.mapping_frames_per_data_frame;
+
+			if (stream->b1_active && v34_data_points_needs_mapping_frame(points) &&
+			    points->schedule.next_mapping_frame >= frames / 2u &&
+			    points->schedule.next_mapping_frame < frames) {
+				struct v34_mapping_frame request;
+				uint8_t primary[V34_MAX_MAPPING_FRAME_BITS] = { 0 };
+				uint8_t auxiliary = 0;
+
+				/* Send valid coded symbols with a known wrong B1 payload. */
+				CHECK(v34_data_points_preview_mapping_frame(points, &request) == V34_DATA_POINTS_OK &&
+				      v34_data_points_queue_mapping_frame(points, primary, request.primary_bits,
+					      request.carries_auxiliary_bit ? &auxiliary : NULL) == V34_DATA_POINTS_OK,
+				      "could not generate a corrupt B1 frame");
+				injected = true;
 			}
-			CHECK(verifying && caller.mapping_frames_received >= 4u &&
-			      answerer.mapping_frames_received >= 4u,
-			      "immediate retrain did not recover role=%u law=%u "
-			      "requested=%u caller=%u answerer=%u",
-			      role, law, requested, caller_retrained, answerer_retrained);
 		}
+		CHECK(channel_sample_pair(&channel, &caller, &answerer, &co, &ao),
+		      "startup retrain stopped role=%u law=%u sample=%zu", role, pcma, sample);
+		if (corrupt_b1 && injected && !requested) {
+			CHECK(!v34_call_is_online(&local->call) &&
+			      (observation->processed != V34_CALL_PHASE4 ||
+			       (observation->events.phase4 & V34_PHASE4_EXCHANGE_EVENT_MAPPING_FRAME_RECEIVED) == 0),
+			      "corrupt B1 published online data role=%u law=%u", role, pcma);
+			requested = local->call.stage == V34_CALL_RETRAIN_SILENCE;
+		} else if (!corrupt_b1 && !requested && v34_call_is_online(&local->call)) {
+			CHECK(role != V34_CALLING_STATION || !v34_call_is_online(&answerer.call),
+			      "early-retrain fixture missed the B1 overlap");
+			CHECK(v34_call_start_retrain(&local->call) == V34_CALL_OK,
+			      "immediate retrain was rejected");
+			requested = true;
+		}
+		if (requested) {
+			caller_retrained |= caller.call.stage == V34_CALL_RETRAIN_SILENCE;
+			answerer_retrained |= answerer.call.stage == V34_CALL_RETRAIN_SILENCE;
+		}
+		if (!verifying && caller_retrained && answerer_retrained &&
+		    v34_call_is_online(&caller.call) && v34_call_is_online(&answerer.call)) {
+			caller.mapping_frames_received = answerer.mapping_frames_received = 0;
+			caller.verify_mapping_frames = answerer.verify_mapping_frames = true;
+			verifying = true;
+		}
+		if (verifying && caller.mapping_frames_received >= 4u && answerer.mapping_frames_received >= 4u)
+			break;
 	}
+	CHECK(verifying && caller.mapping_frames_received >= 4u && answerer.mapping_frames_received >= 4u,
+	      "startup retrain did not recover role=%u law=%u corrupt=%u requested=%u caller=%u answerer=%u",
+	      role, pcma, corrupt_b1, requested, caller_retrained, answerer_retrained);
+	return true;
+}
+
+static bool test_startup_retrain(void)
+{
+	for (unsigned int corrupt = 0; corrupt < 2; ++corrupt)
+		for (unsigned int law = 0; law < 2; ++law)
+			for (enum v34_station_role role = V34_CALLING_STATION;
+			     role <= V34_ANSWERING_STATION; ++role)
+				CHECK(check_startup_retrain(role, law != 0, corrupt != 0),
+				      "startup retrain failed role=%u law=%u corrupt=%u", role, law, corrupt);
 	return true;
 }
 
@@ -1651,7 +1686,7 @@ static struct v34_call_configuration fallback_configuration(
 	enum v34_station_role role)
 {
 	struct v34_call_configuration selected = symmetric_configuration(
-		role, V34_SYMBOL_RATE_3429);
+		role, V34_SYMBOL_RATE_3429, 10u);
 
 	selected.local_info0.low_carrier_3200_supported = true;
 	if (role == V34_CALLING_STATION)
@@ -2515,7 +2550,7 @@ int main(void)
 		{ "quiet training completion", test_quiet_training_completion },
 		{ "symmetric selected-rate calls", test_symmetric_calls },
 		{ "local and remote full retrain", test_full_retrain },
-		{ "retrain at first readiness", test_early_retrain },
+		{ "startup retrain and B1 validation", test_startup_retrain },
 		{ "full retrain through answerer echo", test_echo_retrain },
 		{ "retrain selects new INFO1a rate pair",
 		  test_retrain_selects_new_rate },

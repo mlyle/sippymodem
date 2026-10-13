@@ -949,6 +949,17 @@ enum v34_call_result v34_call_sample(
 		if (result != V34_CALL_OK &&
 		    phase4_receive_has_failed(&call->state.phase4))
 			retrain_requested = true;
+		/* Finish both B1 directions before recovery so the peer can observe
+		 * the complete retrain silence. Gross errors in this known all-one
+		 * frame must not become an online data connection. */
+		if (result == V34_CALL_OK &&
+		    (emitted.events.phase4 & V34_PHASE4_EXCHANGE_EVENT_ONLINE) != 0) {
+			const struct v34_data_receiver *b1 = &call->state.phase4.receive
+				.semantic.data.data_receiver.data_receiver;
+
+			if (4u * b1->b1_error_bits > b1->b1_received_bits)
+				retrain_requested = true;
+		}
 		if (result == V34_CALL_OK &&
 		    phase4_e_has_timed_out(call, emitted.events.phase4))
 			retrain_requested = true;
