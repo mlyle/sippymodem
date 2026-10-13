@@ -538,14 +538,6 @@ static bool observe_online_quality(struct v34_datapump *datapump)
 	return true;
 }
 
-static bool data_link_is_online(const struct v34_datapump *datapump)
-{
-	const struct modem *modem = datapump->dp.modem;
-
-	return modem != NULL && modem->get_chars != NULL &&
-	       modem->put_chars != NULL;
-}
-
 static bool fragment_has_carrier(
 	const int16_t *samples, int count, uint32_t power_floor)
 {
@@ -725,8 +717,9 @@ static int process_v34(
 			memset(transmit, 0, (size_t)count * sizeof(*transmit));
 			return DPSTAT_ERROR;
 		}
+		/* V.42 establishment also needs a usable physical data receiver.
+		 * Its DTE callbacks are installed only after LAPM is ready. */
 		if (training_session_is_online(&datapump->training) &&
-		    data_link_is_online(datapump) &&
 		    !carrier_erased &&
 		    !observe_online_quality(datapump)) {
 			fail_training(datapump);

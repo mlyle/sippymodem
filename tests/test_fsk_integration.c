@@ -153,6 +153,8 @@ struct modem_test_case {
 	bool test_prelink;
 	bool test_retrain;
 	bool test_quality_recovery;
+	/* Zero disables the fault; 1 targets the caller and 2 the answerer. */
+	unsigned int establishment_quality_side;
 	unsigned int cleardown_initiators;
 	bool raw_transport;
 	bool require_lapm;
@@ -1440,6 +1442,56 @@ static bool contains_pcm_rate_signal(const uint8_t *octets, size_t count, enum g
 	return false;
 }
 
+static bool exercise_v34_establishment_quality(
+	struct integration_endpoint *caller, struct integration_endpoint *answerer,
+	unsigned int side, enum media_codec codec, const struct media_recorder *recorder)
+{
+	struct integration_endpoint *ends[] = { caller, answerer };
+	struct dp *owned[] = { caller->modem->dp, answerer->modem->dp };
+	const struct channel_bench_effect_spec noise = {
+		.kind = CHANNEL_BENCH_NOISE,
+		.parameters.noise = { .peak = 6000, .seed = 0x3442 },
+	};
+	bool requested = false;
+	unsigned int frame;
+
+	CHECK(side < ARRAY_LENGTH(ends) &&
+	      (ends[side]->modem->get_chars == NULL || ends[side]->modem->put_chars == NULL) &&
+	      ends[side]->modem->get_bits == modem_hdlc_get_bits &&
+	      ends[side]->modem->put_bits == modem_hdlc_put_bits &&
+	      !strcmp(modem_call_phase(ends[side]->modem), "error-control-negotiation") &&
+	      ends[side]->receive_bench.effect_count == 0 &&
+	      channel_bench_init(&ends[side]->receive_bench, &noise, 1) == CHANNEL_BENCH_OK,
+	      "V.34 establishment fault missed the pre-CONNECT boundary");
+	for (frame = 0; frame < 200; ++frame) {
+		CHECK(process_sip_frame(caller, answerer, codec, recorder) &&
+		      endpoint_drain(caller) && endpoint_drain(answerer) &&
+		      caller->modem->dp == owned[0] && answerer->modem->dp == owned[1] &&
+		      caller->stops == 0 && answerer->stops == 0,
+		      "V.34 establishment fault lost the call at frame %u "
+		      "(caller=%s/%s, answerer=%s/%s)", frame,
+		      modem_protocol_step(caller->modem),
+		      caller->modem->disconnect_reason ? caller->modem->disconnect_reason : "no disconnect",
+		      modem_protocol_step(answerer->modem),
+		      answerer->modem->disconnect_reason ? answerer->modem->disconnect_reason : "no disconnect");
+		CHECK((ends[side]->modem->get_chars == NULL ||
+		       ends[side]->modem->put_chars == NULL) &&
+		      !output_contains(ends[side], "CONNECT"),
+		      "V.34 exposed CONNECT before impaired LAPM establishment");
+		if (!strcmp(modem_protocol_step(ends[side]->modem), "retrain/silence-tone")) {
+			requested = true;
+			break;
+		}
+	}
+	channel_bench_destroy(&ends[side]->receive_bench);
+	CHECK(requested && frame >= 80,
+	      "V.34 side %u did not recover sustained quality loss before CONNECT (frame %u)",
+	      side, frame);
+	/* The ordinary call loop must now establish LAPM and exchange exact
+	 * bilateral payloads over the retained call after the fault is removed. */
+	return true;
+}
+
 static bool exercise_v32_quality_recovery(
 	struct integration_endpoint *caller, struct integration_endpoint *answerer,
 	enum DP_ID id, enum media_codec codec, const struct media_recorder *recorder)
@@ -2475,6 +2527,7 @@ static bool run_media_call(
 	bool answerer_signal_seen = false;
 	bool answerer_carrier_seen = false;
 	bool answerer_s1_gap_injected = false;
+	bool establishment_quality_exercised = false;
 	uint32_t answerer_precarrier_noise = 0x42519554u;
 	unsigned int answerer_silence_frames = 0;
 	unsigned int answerer_silence_max = 0;
@@ -2732,6 +2785,20 @@ static bool run_media_call(
 		if (answerer.modem->dp != NULL &&
 		    answerer.modem->dp->id == DP_V8)
 			answerer_used_v8 = true;
+		if (test_case->establishment_quality_side != 0 &&
+		    !establishment_quality_exercised) {
+			struct integration_endpoint *target =
+				test_case->establishment_quality_side == 1 ? &caller : &answerer;
+			if (target->modem->dp != NULL && target->modem->dp->status == DPSTAT_CONNECT &&
+			    target->modem->get_bits == modem_hdlc_get_bits &&
+			    target->modem->put_bits == modem_hdlc_put_bits &&
+			    !strcmp(modem_call_phase(target->modem), "error-control-negotiation")) {
+				CHECK(exercise_v34_establishment_quality(&caller, &answerer,
+					      test_case->establishment_quality_side - 1, codec, &recorder),
+				      "%s did not recover during LAPM setup", test_case->name);
+				establishment_quality_exercised = true;
+			}
+		}
 		if (test_case->test_prelink && !prelink_queued &&
 		    modem_is_online(answerer.modem, test_case->id) &&
 		    !modem_is_online(caller.modem, test_case->id)) {
@@ -2743,7 +2810,8 @@ static bool run_media_call(
 			      test_case->name);
 			prelink_queued = true;
 		}
-		if (modem_is_online(caller.modem, connected_id) &&
+		if ((test_case->establishment_quality_side == 0 || establishment_quality_exercised) &&
+		    modem_is_online(caller.modem, connected_id) &&
 		    modem_is_online(answerer.modem, answerer_connected_id)) {
 			online = true;
 			break;
@@ -2756,6 +2824,8 @@ static bool run_media_call(
 		answerer_silence_max = answerer_silence_frames;
 	CHECK(test_case->answerer_s1_gap_samples == 0 || answerer_s1_gap_injected,
 	      "%s did not exercise its S1 signal dip", test_case->name);
+	CHECK(test_case->establishment_quality_side == 0 || establishment_quality_exercised,
+	      "%s did not exercise pre-CONNECT quality recovery", test_case->name);
 	CHECK(online && (answerer_used_v8 || test_case->v34_info0_peer) &&
 		      caller.modem->tx_rate == test_case->caller_tx_rate &&
 		      caller.modem->rx_rate == test_case->caller_rx_rate &&
@@ -5482,6 +5552,28 @@ int main(void)
 			.training_frame_limit = 1500,
 			.requires_v8 = true,
 			.test_retrain = true,
+		},
+		{
+			.id = DP_V34,
+			.name = "V.34 caller quality recovery during LAPM setup",
+			.selection_command = "AT+MS=34,0,33600,33600+V34B=3429\r",
+			.caller_tx_rate = 33600, .caller_rx_rate = 33600,
+			.answerer_tx_rate = 33600, .answerer_rx_rate = 33600,
+			.carrier_loss_samples = MODEM_RATE / 2,
+			.training_frame_limit = 1500,
+			.requires_v8 = true, .require_lapm = true,
+			.establishment_quality_side = 1,
+		},
+		{
+			.id = DP_V34,
+			.name = "V.34 answerer quality recovery during LAPM setup",
+			.selection_command = "AT+MS=34,0,33600,33600+V34B=3429\r",
+			.caller_tx_rate = 33600, .caller_rx_rate = 33600,
+			.answerer_tx_rate = 33600, .answerer_rx_rate = 33600,
+			.carrier_loss_samples = MODEM_RATE / 2,
+			.training_frame_limit = 1500,
+			.requires_v8 = true, .require_lapm = true,
+			.establishment_quality_side = 2,
 		},
 		{
 			.id = DP_V34,

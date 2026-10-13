@@ -171,6 +171,10 @@ Baudot is an explicit selection rather than a default fallback. Use
 `AT+MS=45,0,45,45` for 45.45 baud or `AT+MS=45,0,50,50` for 50 baud;
 its configured integer rate bounds must admit 45 or 50.
 
+V.34 receive-quality recovery remains active while V.42 detection and LAPM
+establishment are in progress, before `CONNECT`. Retraining preserves the
+pending error-control negotiation and its retry budget.
+
 V.32 and V.32bis can request a full retrain after 18 consecutive bad receive
 quality windows (1.8 seconds at 2400 baud). The receiver gets one second to
 settle after training. Two automatic attempts are allowed until 30 seconds of
