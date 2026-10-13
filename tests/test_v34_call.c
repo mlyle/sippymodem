@@ -1993,13 +1993,31 @@ static bool test_missing_probe_recovery(void)
 				    observed[role].events.phase2.kind == V34_PHASE2_EVENT_FAILED) {
 					CHECK(erased && observed[role].events.phase2.failure == V34_PHASE2_FAILURE_REMOTE_PROBE_NOT_FOUND &&
 					      waiting->call.stage == V34_CALL_RETRAIN_SILENCE && waiting->call.retrain_active &&
-					      waiting->call.peer_info0_stored && waiting->call.round_trip_delay_samples == rtd &&
+					      waiting->call.peer_info0_stored &&
+					      waiting->call.round_trip_delay_stored == (role == V34_ANSWERING_STATION) &&
+					      waiting->call.round_trip_delay_samples == (role == V34_ANSWERING_STATION ? rtd : 0u) &&
 					      v34_info0_equal(&waiting->call.peer_info0, &peer),
-					      "missing-probe recovery lost the failure or completed call agreement");
+					      "missing-probe recovery retained the wrong delay or lost call agreement");
 					restarted = true;
 				}
 			}
-			CHECK(restarted && run_initialized_pair(&caller, &answerer, &channel) &&
+			CHECK(restarted, "missing probe did not start recovery");
+			for (unsigned silence = 0;
+			     silence < V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES &&
+				     waiting->call.stage == V34_CALL_RETRAIN_SILENCE;
+			     ++silence) {
+				struct v34_call_observation caller_observed, answerer_observed;
+
+				CHECK(channel_sample_pair(&channel, &caller, &answerer,
+					      &caller_observed, &answerer_observed),
+				      "missing-probe silence did not advance");
+			}
+			CHECK(waiting->call.stage == V34_CALL_PHASE2 &&
+			      waiting->call.state.phase2.stage == V34_PHASE2_RANGING &&
+			      waiting->call.state.phase2.prior_round_trip_delay_samples ==
+				      (role == V34_ANSWERING_STATION ? rtd : 0u),
+			      "missing-probe recovery passed the wrong prior delay");
+			CHECK(run_initialized_pair(&caller, &answerer, &channel) &&
 			      caller.mapping_frames_received >= 4u && answerer.mapping_frames_received >= 4u,
 			      "law %u role %u missing probe did not recover verified data", pcma, (unsigned)role);
 		}

@@ -248,6 +248,7 @@ bool v34_call_is_valid(const struct v34_call *call)
 	       (call->retrain.response_silence_samples_remaining != 0u) ==
 		       (call->stage == V34_CALL_RETRAIN_SILENCE) &&
 	       (call->round_trip_delay_stored ||
+		call->stage == V34_CALL_RETRAIN_SILENCE ||
 		(call->stage == V34_CALL_PHASE2 &&
 		 call->state.phase2.stage == V34_PHASE2_RANGING)) &&
 	       (call->failed || !child_failed);
@@ -355,8 +356,6 @@ static enum v34_call_result begin_retrain(
 			return V34_CALL_INVALID_STATE;
 		next.peer_info0_stored = true;
 	}
-	if (!next.round_trip_delay_stored)
-		return V34_CALL_INVALID_STATE;
 	/* A forced initial cadence remains exact. On full retrain, let the peer
 	 * select a compatible slower probe result instead of
 	 * rejecting an otherwise valid INFO1a fallback. */
@@ -602,8 +601,15 @@ static enum v34_call_result advance_phase2(
 		/* A missing L1 can leave the stations in different ranging epochs.
 		 * Reuse the PCM call's full-retrain recovery; retain the acquisition
 		 * failure and let the host's whole-call deadline bound retries. */
-		if (event->failure == V34_PHASE2_FAILURE_REMOTE_PROBE_NOT_FOUND)
+		if (event->failure == V34_PHASE2_FAILURE_REMOTE_PROBE_NOT_FOUND) {
+			/* A missing initial L1 leaves the first ranging estimate
+			 * unconfirmed, just as it does in the PCM call owner. */
+			if (call->state.phase2.stage == V34_PHASE2_INITIAL_PROBE) {
+				call->round_trip_delay_samples = 0u;
+				call->round_trip_delay_stored = false;
+			}
 			return begin_retrain(call, false);
+		}
 		/* V.34 11.2.2.1.5: missing final Tone A requires full retrain.
 		 * Keep the completed INFO0/ranging agreement and common recovery path. */
 		if (call->local_role == V34_CALLING_STATION &&
