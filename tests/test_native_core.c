@@ -1244,6 +1244,7 @@ static struct {
 	unsigned int linear_calls;
 	unsigned int g711_calls;
 	bool first_fragment_only;
+	bool last_fragment_only;
 } g711_dp;
 
 static struct dp *create_g711_dp(
@@ -1301,8 +1302,44 @@ static int process_g711_codewords(
 	for (int index = 0; index < count; ++index)
 		transmit_codewords[index] = (uint8_t)~receive_codewords[index];
 	memset(transmit, 0, (size_t)count * sizeof(int16_t));
-	*exact_output = !g711_dp.first_fragment_only || g711_dp.g711_calls == 1;
+	*exact_output = g711_dp.last_fragment_only ? g711_dp.g711_calls == 2 :
+		!g711_dp.first_fragment_only || g711_dp.g711_calls == 1;
 	return DPSTAT_OK;
+}
+
+static bool test_v8_tones_allow_transmit_gain(void)
+{
+	struct modem_driver driver = {
+		.name = "V.8 linear output test",
+		.start = unused_start,
+		.stop = unused_stop,
+		.ioctl = unused_control,
+	};
+	const struct dp_operations *operations = v8_datapump_operations(DP_V8);
+	uint8_t input[MODEM_FRAG], output[MODEM_FRAG];
+	int16_t receive[MODEM_FRAG] = { 0 }, transmit[MODEM_FRAG];
+
+	for (unsigned automatic = 0; automatic < 2; ++automatic)
+		for (int caller = 0; caller < 2; ++caller)
+			for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+				struct modem *modem = modem_create(&driver, "V.8 linear output test");
+				CHECK(modem != NULL && operations != NULL, "V.8 fixture failed");
+				modem->sregs[SREG_AUTOMODE] = automatic;
+				modem->min_rate = MODEM_MIN_RATE;
+				modem->max_rate = MODEM_MAX_RATE;
+				struct dp *dp = operations->create(modem, DP_V34, caller,
+					MODEM_RATE, MODEM_FRAG, operations);
+				CHECK(dp != NULL, "V.8 owner creation failed");
+				memset(input, g711_encode(law, 0), sizeof(input));
+				bool exact = true;
+				CHECK(operations->process_g711(dp, law, input, receive, NULL,
+					output, transmit, MODEM_FRAG, &exact) == DPSTAT_OK && !exact,
+				      "V.8 tones unnecessarily require exact output: auto=%u caller=%d law=%d",
+				      automatic, caller, law);
+				operations->delete(dp);
+				modem_delete(modem);
+			}
+	return true;
 }
 
 static bool test_g711_datapump_input(void)
@@ -1329,7 +1366,7 @@ static bool test_g711_datapump_input(void)
 	bool exact_output = false;
 
 	memset(&g711_dp, 0, sizeof(g711_dp));
-	memset(codewords, 0x7f, sizeof(codewords));
+	memset(codewords, 0x80, sizeof(codewords));
 	for (size_t index = 0; index < ARRAY_LENGTH(received_mask); ++index)
 		received_mask[index] = index != 0 && index != MODEM_FRAG;
 	call_progress_override = &operations;
@@ -1348,16 +1385,27 @@ static bool test_g711_datapump_input(void)
 		CHECK(transmit_codewords[index] == (uint8_t)~codewords[index],
 		      "exact transmit codeword changed at sample %zu", index);
 	}
-	g711_dp.g711_calls = 0;
-	g711_dp.first_fragment_only = true;
-	exact_output = true;
-	modem_process_g711(
-		modem, G711_LAW_PCMA, codewords, receive, received_mask,
-		transmit_codewords, transmit, ARRAY_LENGTH(codewords),
-		&exact_output);
-	CHECK(g711_dp.g711_calls == 2 && !exact_output &&
-	      g711_dp.received_mask == received_mask + MODEM_FRAG && g711_dp.missing_samples == 3,
-	      "one exact fragment incorrectly made the whole frame exact");
+	for (unsigned int exact_first = 0; exact_first < 2; ++exact_first)
+		for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+			unsigned int missing_before = g711_dp.missing_samples;
+			g711_dp.g711_calls = 0;
+			g711_dp.first_fragment_only = exact_first;
+			g711_dp.last_fragment_only = !exact_first;
+			modem_process_g711(modem, law, codewords, receive, received_mask,
+				transmit_codewords, transmit, ARRAY_LENGTH(codewords), &exact_output);
+			CHECK(g711_dp.g711_calls == 2 && exact_output &&
+			      g711_dp.received_mask == received_mask + MODEM_FRAG &&
+			      g711_dp.missing_samples == missing_before + 2,
+			      "mixed exact/linear frame lost its codeword output");
+			for (size_t i = 0; i < ARRAY_LENGTH(codewords); ++i) {
+				bool fragment_exact = (i < MODEM_FRAG) == (exact_first != 0);
+				CHECK(transmit_codewords[i] == (fragment_exact ? 0x7f : g711_encode(law, 0)),
+				      "mixed frame changed sample %zu: law=%d exact-first=%u", i, law, exact_first);
+				if (!fragment_exact)
+					CHECK(transmit[i] == g711_decode(law, transmit_codewords[i]),
+					      "mixed frame retained a noncanonical linear sample %zu", i);
+			}
+		}
 	modem_process(modem, receive, transmit, MODEM_FRAG);
 	CHECK(g711_dp.g711_calls == 2 && g711_dp.linear_calls == 1,
 	      "linear processing did not retain its legacy path");
@@ -10406,6 +10454,7 @@ int main(void)
 		{ "source-built core lifecycle",
 		  test_core_has_no_external_dsp_owner },
 		{ "G.711 data-pump input", test_g711_datapump_input },
+		{ "V.8 linear output", test_v8_tones_allow_transmit_gain },
 		{ "receive DC front end", test_receive_dc_frontend },
 		{ "truthful ATO1 lifecycle",
 		  test_ato1_waits_for_datapump_retrain },

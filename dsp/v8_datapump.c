@@ -985,14 +985,5 @@ static int process_v8_g711(struct dp *dp, enum g711_law law, const uint8_t *code
 			result = DPSTAT_CHANGEDP;
 		} else result = process_v8(dp, receive, transmit, count);
 	} else result = process_v8(dp, receive, transmit, count);
-	/* A packet can cross from V.8 into DS0 between DSP fragments. Keep
-	 * every codeword exact so re-encoding the whole packet cannot alter
-	 * a subsequent raw DS0 fragment (notably the PCMU negative zero). */
-	int16_t *samples = transmit;
-	for (int i = 0; i < count; ++i) {
-		output[i] = g711_encode(law, samples[i]);
-		samples[i] = g711_decode(law, output[i]);
-	}
-	*exact = true;
 	return result;
 }

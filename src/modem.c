@@ -818,8 +818,9 @@ static void modem_dp_process_frame(struct modem *m, enum g711_law law,
 	int ret;
 	unsigned cnt;
 	unsigned int frame_samples = count;
-	bool all_exact = receive_codewords != NULL &&
-		transmit_codewords != NULL && exact_output != NULL;
+	int16_t *frame_output = out;
+	u8 *frame_codewords = transmit_codewords;
+	bool any_exact = false;
 
 	if (exact_output != NULL)
 		*exact_output = false;
@@ -841,8 +842,21 @@ static void modem_dp_process_frame(struct modem *m, enum g711_law law,
 			ret = m->dp->op->process(m->dp,in,out,cnt);
 			fragment_exact = false;
 		}
-		if (!fragment_exact)
-			all_exact = false;
+		/* A packet may cross between linear tones and exact PCM/DS0.
+		 * Encode linear fragments only when an exact fragment makes the
+		 * codeword buffer authoritative for the whole packet. */
+		if (fragment_exact && !any_exact) {
+			for (unsigned int i = 0; i < frame_samples - count; ++i) {
+				frame_codewords[i] = g711_encode(law, frame_output[i]);
+				frame_output[i] = g711_decode(law, frame_codewords[i]);
+			}
+			any_exact = true;
+		} else if (!fragment_exact && any_exact) {
+			for (unsigned int i = 0; i < cnt; ++i) {
+				transmit_codewords[i] = g711_encode(law, ((int16_t *)out)[i]);
+				((int16_t *)out)[i] = g711_decode(law, transmit_codewords[i]);
+			}
+		}
 		switch(ret) {
 		case DPSTAT_OK:
 			break;
@@ -866,7 +880,7 @@ static void modem_dp_process_frame(struct modem *m, enum g711_law law,
 			}
 			break;
 		default: /* errors */
-			all_exact = false;
+			any_exact = false;
 			if (m->state == STATE_DP_DISC)
 				schedule_modem_stop(m);
 			else
@@ -899,7 +913,7 @@ static void modem_dp_process_frame(struct modem *m, enum g711_law law,
 			break;
 	}
 	if(count) {
-		if (all_exact) {
+		if (any_exact) {
 			uint8_t silence = law == G711_LAW_PCMA ? 0xd5 : 0xff;
 			/* G.711's smallest positive A-law level is 8, not zero. */
 			int16_t linear = law == G711_LAW_PCMA ? 8 : 0;
@@ -911,7 +925,7 @@ static void modem_dp_process_frame(struct modem *m, enum g711_law law,
 		}
 	}
 	if (exact_output != NULL)
-		*exact_output = all_exact;
+		*exact_output = any_exact;
 }
 
 static void modem_dp_process(struct modem *m,void *in,void *out,int count)
