@@ -140,6 +140,41 @@ static bool echo_training_can_finish(const struct v34_call *call)
 	       transmit->line.generated_samples >= return_guard + minimum_samples;
 }
 
+static bool constrain_caller_info1(struct v34_call *call)
+{
+	struct v34_info0 peer;
+	struct v34_info1c selected = {
+		.common = call->local_info1.calling.common,
+	};
+
+	if (v34_phase2_peer_info0(&call->state.phase2, &peer) != V34_PHASE2_OK)
+		return false;
+	if (!peer.transmit_power_reduction_supported) {
+		selected.common.minimum_peer_power_reduction_db = 0;
+		selected.common.additional_peer_power_reduction_db = 0;
+	}
+	for (unsigned int index = 0; index < V34_SYMBOL_RATE_COUNT; ++index) {
+		struct v34_info1_probe_result *probe =
+			&selected.answer_transmit[index];
+
+		*probe = call->local_info1.calling.answer_transmit[index];
+		if (!peer.constellation_1664_supported &&
+		    probe->projected_data_rate_2400_bps_units > 12)
+			probe->projected_data_rate_2400_bps_units = 12;
+		/* Retain the configured carrier where possible, then try the
+		 * alternate. Unsupported baud rates remain withdrawn from INFO1c. */
+		if (!v34_phase2_info1c_is_consistent(
+			    &call->local_info0, &peer, &selected)) {
+			probe->high_carrier = !probe->high_carrier;
+			if (!v34_phase2_info1c_is_consistent(
+				    &call->local_info0, &peer, &selected))
+				*probe = (struct v34_info1_probe_result){ 0 };
+		}
+	}
+	call->local_info1.calling = selected;
+	return true;
+}
+
 static bool add_caller_retrain_fallbacks(struct v34_call *call)
 {
 	struct v34_info1c selected = call->local_info1.calling;
@@ -660,6 +695,11 @@ static enum v34_call_result sample_phase2(
 		call->round_trip_delay_samples =
 			observation->events.phase2.round_trip_delay_samples;
 		call->round_trip_delay_stored = true;
+		/* The configured caller INFO1 template precedes peer capability
+		 * discovery. Bound it before INFO1 or a missing-probe retrain. */
+		if (call->local_role == V34_CALLING_STATION &&
+		    !constrain_caller_info1(call))
+			return V34_CALL_NUMERIC_FAILURE;
 	}
 	return advance_phase2(call, &observation->events.phase2);
 }

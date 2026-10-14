@@ -2163,16 +2163,45 @@ static bool test_missing_probe_recovery(void)
 	for (unsigned int pcma = 0; pcma < 2u; ++pcma) {
 		for (enum v34_station_role role = V34_CALLING_STATION;
 		     role <= V34_ANSWERING_STATION; ++role) {
-			struct endpoint caller, answerer;
+			struct endpoint caller = { .verify_mapping_frames = true };
+			struct endpoint answerer = {
+				.transmit_bit = 1, .verify_mapping_frames = true,
+			};
 			struct endpoint *waiting = role == V34_CALLING_STATION ? &caller : &answerer;
 			struct channel channel = { .pcma = pcma != 0u };
 			bool erased = false, restarted = false;
 			struct v34_info0 peer = { 0 };
 			uint16_t rtd = 0;
+			struct v34_call_configuration caller_config =
+				configuration(V34_CALLING_STATION);
+			struct v34_call_configuration answerer_config =
+				configuration(V34_ANSWERING_STATION);
+			const struct v34_info1c *bounded = &caller.call.local_info1.calling;
 
-			CHECK(endpoint_init(&caller, V34_CALLING_STATION) &&
-			      endpoint_init(&answerer, V34_ANSWERING_STATION),
-			      "missing-probe endpoints did not initialize");
+			/* Caller proposals precede peer INFO0. Include excluded baud
+			 * rates, a carrier requiring correction, and unsupported power
+			 * and constellation requests; missing L1 must still retrain. */
+			caller_config.local_info0.symbol_rate_2743_supported = true;
+			caller_config.local_info0.symbol_rate_3429_supported = true;
+			caller_config.local_info1.calling.common
+				.minimum_peer_power_reduction_db = 1;
+			caller_config.local_info1.calling.answer_transmit[V34_SYMBOL_RATE_2743] =
+				(struct v34_info1_probe_result){
+					.high_carrier = true,
+					.projected_data_rate_2400_bps_units = 4,
+				};
+			caller_config.local_info1.calling.answer_transmit[V34_SYMBOL_RATE_3429] =
+				(struct v34_info1_probe_result){
+					.projected_data_rate_2400_bps_units = 4,
+				};
+			caller_config.local_info1.calling.answer_transmit[V34_SYMBOL_RATE_3200] =
+				(struct v34_info1_probe_result){
+					.projected_data_rate_2400_bps_units = 13,
+				};
+			answerer_config.local_info0.constellation_1664_supported = false;
+			CHECK(v34_call_init(&caller.call, &caller_config) == V34_CALL_OK &&
+			      v34_call_init(&answerer.call, &answerer_config) == V34_CALL_OK,
+			      "provisional caller INFO1 fixture did not initialize");
 			caller.generated_mapping_frames = answerer.generated_mapping_frames = true;
 			caller.mapping_pattern_seed = answerer.peer_mapping_pattern_seed = UINT32_C(0x34c011ab);
 			answerer.mapping_pattern_seed = caller.peer_mapping_pattern_seed = UINT32_C(0x34a05e17);
@@ -2207,6 +2236,15 @@ static bool test_missing_probe_recovery(void)
 					      waiting->call.round_trip_delay_samples == (role == V34_ANSWERING_STATION ? rtd : 0u) &&
 					      v34_info0_equal(&waiting->call.peer_info0, &peer),
 					      "missing-probe recovery retained the wrong delay or lost call agreement");
+					CHECK(bounded->answer_transmit[V34_SYMBOL_RATE_2743]
+						      .projected_data_rate_2400_bps_units == 0 &&
+					      bounded->answer_transmit[V34_SYMBOL_RATE_3429]
+						      .projected_data_rate_2400_bps_units == 0 &&
+					      bounded->answer_transmit[V34_SYMBOL_RATE_3200].high_carrier &&
+					      bounded->answer_transmit[V34_SYMBOL_RATE_3200]
+						      .projected_data_rate_2400_bps_units == 12 &&
+					      bounded->common.minimum_peer_power_reduction_db == 0,
+					      "caller INFO1 exceeded peer capabilities");
 					restarted = true;
 				}
 			}
