@@ -317,12 +317,6 @@ class ModemTerminal:
         """Attempt a bounded local hangup before the owner stops the process."""
         try:
             if self._decoder.online:
-                # Ask the peer to release its line without waiting for a reply.
-                # Failure must not prevent the local escape and hangup attempt.
-                try:
-                    self._write(b"BYE\n", time.monotonic() + 1.0)
-                except (LiveTerminalError, OSError, TimeoutError):
-                    pass
                 time.sleep(1.1)
                 deadline = time.monotonic() + 3.0
                 self._decoder.begin_command_response()
