@@ -619,9 +619,13 @@ static enum v34_call_result advance_phase2(
 	}
 	/* V.34 11.2.2.2.4: an answerer missing INFO1c must initiate
 	 * full retrain or send INFOMARKSa, not retain Tone A indefinitely. */
-	if (event->kind == V34_PHASE2_EVENT_INFO1_RECOVERY_STARTED &&
-	    call->local_role == V34_ANSWERING_STATION)
-		return begin_retrain(call, false);
+	if (event->kind == V34_PHASE2_EVENT_INFO1_RECOVERY_STARTED) {
+		if (call->local_role == V34_ANSWERING_STATION)
+			return begin_retrain(call, false);
+		if (v34_retrain_detector_reset(&call->retrain.detector) !=
+		    V34_PHASE2_TONE_OK)
+			return V34_CALL_NUMERIC_FAILURE;
+	}
 	if (v34_phase2_is_ready_for_info1(&call->state.phase2)) {
 		if (call->local_role == V34_CALLING_STATION &&
 		    !select_local_preemphasis(call, &call->local_info1))
@@ -875,7 +879,26 @@ static enum v34_call_result observe_retrain_tone(
 {
 	bool detected;
 
-	if (v34_retrain_detector_sample(
+	if (call->stage == V34_CALL_PHASE2 &&
+	    call->local_role == V34_CALLING_STATION &&
+	    call->state.phase2.stage == V34_PHASE2_INFO1 &&
+	    call->state.phase2.state.info1.control.phase ==
+		    PHASE2_INFO1_RECOVERING) {
+		/* A synchronized INFO frame owns its carrier, including zero-bit
+		 * runs that resemble Tone A. Qualify tone only outside that frame. */
+		if (call->state.phase2.state.info1.control.receiver.frame.stage !=
+		    V34_PHASE2_INFO_SEARCH_SYNC)
+			return v34_retrain_detector_reset(&call->retrain.detector) ==
+				       V34_PHASE2_TONE_OK ?
+				       V34_CALL_OK : V34_CALL_NUMERIC_FAILURE;
+		/* V.34 11.2.2.1.6 conditions Tone A reception after the INFO1
+		 * deadline, including a peer still holding its earlier Tone A.
+		 * Ordinary online retrains retain their silence preamble. */
+		if (v34_retrain_detector_sample_tone(
+			    &call->retrain.detector, received_sample, &detected) !=
+		    V34_PHASE2_TONE_OK)
+			return V34_CALL_NUMERIC_FAILURE;
+	} else if (v34_retrain_detector_sample(
 		    &call->retrain.detector, received_sample,
 		    &detected) != V34_PHASE2_TONE_OK)
 		return V34_CALL_NUMERIC_FAILURE;

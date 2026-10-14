@@ -211,6 +211,11 @@ bool v34_retrain_detector_is_valid(
 	const struct v34_retrain_detector *detector);
 enum v34_phase2_tone_result v34_retrain_detector_reset(
 	struct v34_retrain_detector *detector);
+/* INFO1 timeout recovery can encounter an already held peer tone. Keep the
+ * ordinary guarded-tone duration and retained phase, without a new silence
+ * preamble. The owner excludes synchronized INFO frame samples. */
+enum v34_phase2_tone_result v34_retrain_detector_sample_tone(
+	struct v34_retrain_detector *detector, int16_t sample, bool *detected);
 /* Retain quiet history while tone recognition is disarmed. Qualification
  * finishes in sample(), which resets the tone detectors before recognizing
  * a request. Invalid input leaves the detector unchanged. */

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <v34_call.h>
+#include <v34_phase2_selection.h>
 
 #include <g711.h>
 
@@ -1406,6 +1407,111 @@ static bool info1_retrain_before_deadline(
 	return complete_remote_retrain_silence(&endpoint, &remote_tone, pcma);
 }
 
+static bool info1_continuous_tone_after_deadline(
+	const struct endpoint *initial, bool pcma)
+{
+	struct endpoint endpoint = *initial;
+	const struct phase2_info1_exchange *exchange =
+		&initial->call.state.phase2.state.info1.control;
+	struct v34_phase2_tone_transmitter remote_tone;
+	uint32_t remaining = PHASE2_INFO1_SIGNAL_B_WAIT_BASE_SAMPLES +
+		exchange->round_trip_delay_samples -
+		exchange->peer_deadline_elapsed_samples;
+	bool recovered = false;
+
+	CHECK(initial->call.local_role == V34_CALLING_STATION &&
+	      exchange->phase == PHASE2_INFO1_WAITING_FOR_PEER &&
+	      v34_phase2_tone_transmitter_init(
+		      &remote_tone, V34_ANSWERING_STATION,
+		      NOMINAL_AMPLITUDE) == V34_PHASE2_TONE_OK,
+	      "continuous INFO1 Tone A fixture did not initialize");
+	/* Keep Tone A present from the INFO1 wait through its real deadline.
+	 * V.34 11.2.2.1.6 then conditions reception for Tone A; it does not
+	 * require a new full-retrain silence preamble before recognizing it. */
+	for (uint32_t sample = 0;
+	     sample < remaining + V34_RETRAIN_TONE_SAMPLES +
+			      2u * V34_PHASE2_TONE_WINDOW_SAMPLES;
+	     ++sample) {
+		struct v34_call_observation observation;
+		int16_t remote_sample;
+		int16_t transmitted;
+
+		CHECK(v34_phase2_tone_transmitter_sample(
+			      &remote_tone, &remote_sample) == V34_PHASE2_TONE_OK &&
+		      endpoint_sample(
+			      &endpoint, codec_round_trip(remote_sample, pcma),
+			      supply_mapping_frame, &transmitted, &observation),
+		      "continuous INFO1 Tone A failed at sample %u", sample);
+		recovered |= observation.events.phase2.kind ==
+			     V34_PHASE2_EVENT_INFO1_RECOVERY_STARTED;
+		if (endpoint.call.stage == V34_CALL_RETRAIN_SILENCE) {
+			CHECK(recovered && sample + 1u >
+				      remaining + V34_PHASE2_SAMPLE_RATE / 20u &&
+			      endpoint.call.retrain.peer_tone_retained,
+			      "continuous Tone A retrain missed its INFO1 deadline");
+			return complete_remote_retrain_silence(
+				&endpoint, &remote_tone, pcma);
+		}
+	}
+	CHECK(false, "continuous Tone A left caller waiting after INFO1 deadline");
+}
+
+static bool info1_late_reply(
+	const struct endpoint *initial, const struct endpoint *answerer, bool pcma)
+{
+	struct endpoint endpoint = *initial;
+	const struct phase2_info1_exchange *exchange =
+		&initial->call.state.phase2.state.info1.control;
+	struct v34_phase2_info_audio_transmitter reply;
+	struct v34_info1a selection;
+	uint8_t payload[V34_INFO1A_PAYLOAD_BYTES];
+	uint32_t remaining = PHASE2_INFO1_SIGNAL_B_WAIT_BASE_SAMPLES +
+		exchange->round_trip_delay_samples -
+		exchange->peer_deadline_elapsed_samples;
+	bool complete = false;
+
+	CHECK(v34_phase2_select_answerer_info1a(
+		      &initial->call.local_info0, &answerer->call.local_info0,
+		      &initial->call.local_info1.calling,
+		      &answerer->call.local_info1.answering, &selection) ==
+		      V34_PHASE2_SELECTION_OK &&
+	      v34_info1a_encode(&selection, payload, sizeof(payload)) ==
+		      V34_INFO1_OK &&
+	      v34_phase2_info_audio_transmitter_init(
+		      &reply, V34_ANSWERING_STATION, NOMINAL_AMPLITUDE,
+		      payload, V34_INFO1A_PAYLOAD_BITS) == V34_PHASE2_INFO_AUDIO_OK,
+	      "late INFO1a fixture did not initialize");
+	for (uint32_t sample = 0; sample < remaining + 80u; ++sample) {
+		struct v34_call_observation observation;
+		int16_t transmitted;
+
+		CHECK(endpoint_sample(&endpoint, codec_round_trip(0, pcma),
+			      supply_mapping_frame, &transmitted, &observation) &&
+		      endpoint.call.stage == V34_CALL_PHASE2,
+		      "late INFO1a wait failed at sample %u", sample);
+	}
+	CHECK(endpoint.call.state.phase2.state.info1.control.phase ==
+		      PHASE2_INFO1_RECOVERING,
+	      "late INFO1a did not cross the real deadline");
+	for (uint32_t sample = 0; sample < 4000u; ++sample) {
+		struct v34_call_observation observation;
+		int16_t received = 0;
+		int16_t transmitted;
+
+		CHECK((complete || v34_phase2_info_audio_transmitter_sample(
+			       &reply, &received, &complete) ==
+			       V34_PHASE2_INFO_AUDIO_OK) &&
+		      endpoint_sample(&endpoint, codec_round_trip(received, pcma),
+			      supply_mapping_frame, &transmitted, &observation),
+		      "late INFO1a failed at sample %u", sample);
+		if (endpoint.call.stage == V34_CALL_PHASE3)
+			return true;
+		CHECK(endpoint.call.stage == V34_CALL_PHASE2,
+		      "late valid INFO1a triggered retrain at sample %u", sample);
+	}
+	CHECK(false, "late valid INFO1a did not reach Phase3");
+}
+
 static bool test_info1_retrain_preamble(void)
 {
 	for (unsigned int law = 0; law < 2; ++law) {
@@ -1443,6 +1549,10 @@ static bool test_info1_retrain_preamble(void)
 		CHECK(stored[0] && stored[1], "INFO1 calls were not retained");
 		CHECK(info1_timeout_restarts_answerer(&retained[1], law != 0),
 		      "INFO1 answerer timeout failed law=%u", law);
+		CHECK(info1_continuous_tone_after_deadline(&retained[0], law != 0),
+		      "continuous INFO1 Tone A recovery failed law=%u", law);
+		CHECK(info1_late_reply(&retained[0], &retained[1], law != 0),
+		      "late INFO1a recovery failed law=%u", law);
 		for (size_t role = 0; role < ARRAY_LENGTH(retained); ++role)
 			CHECK(info1_retrain_before_deadline(
 				      &retained[role], law != 0,

@@ -427,10 +427,6 @@ bool v34_retrain_detector_is_valid(
 	    detector->tone_samples > V34_RETRAIN_TONE_SAMPLES ||
 	    detector->edge_samples > V34_RETRAIN_EDGE_SAMPLES)
 		return false;
-	if (detector->silence_samples <
-	    V34_RETRAIN_MIN_SILENCE_SAMPLES)
-		return detector->tone_samples == 0 &&
-		       detector->edge_samples == 0;
 	return detector->tone_samples == 0 ||
 	       detector->edge_samples == 0;
 }
@@ -553,7 +549,7 @@ static bool retrain_tone_matches(
 	 * Require that guard itself, rather than inferring it from energy
 	 * missing from the 2400 Hz carrier. Five percent tolerates about 13 dB
 	 * of guard attenuation while rejecting a bare carrier or unrelated tones.
-	 * The preceding silence and continuous-tone duration remain required. */
+	 * The request owner qualifies silence and continuous-tone duration. */
 	guard =
 		single_tone_detector_measure(&detector->answer_guard);
 
@@ -570,9 +566,9 @@ enum v34_phase2_tone_result v34_retrain_detector_sample(
 		detected);
 }
 
-enum v34_phase2_tone_result v34_retrain_detector_sample_with_power_limit(
+static enum v34_phase2_tone_result sample_retrain_detector(
 	struct v34_retrain_detector *detector, int16_t sample,
-	uint32_t maximum_window_energy, bool *detected)
+	uint32_t maximum_window_energy, bool require_silence, bool *detected)
 {
 	struct v34_phase2_tone_measurement measurement;
 	struct v34_phase2_tone_event event;
@@ -591,7 +587,8 @@ enum v34_phase2_tone_result v34_retrain_detector_sample_with_power_limit(
 		V34_RETRAIN_SILENCE_MAX_WINDOW_ENERGY;
 	detector->answer_guard.profile.minimum_line_power =
 		detector->tone.carrier.profile.minimum_line_power;
-	if (detector->silence_samples < V34_RETRAIN_MIN_SILENCE_SAMPLES) {
+	if (require_silence &&
+	    detector->silence_samples < V34_RETRAIN_MIN_SILENCE_SAMPLES) {
 		add_retrain_silence_observation(
 			detector, sample, maximum_window_energy);
 		if (detector->silence_samples ==
@@ -647,6 +644,22 @@ enum v34_phase2_tone_result v34_retrain_detector_sample_with_power_limit(
 	}
 	*detected = emitted;
 	return V34_PHASE2_TONE_OK;
+}
+
+enum v34_phase2_tone_result v34_retrain_detector_sample_with_power_limit(
+	struct v34_retrain_detector *detector, int16_t sample,
+	uint32_t maximum_window_energy, bool *detected)
+{
+	return sample_retrain_detector(
+		detector, sample, maximum_window_energy, true, detected);
+}
+
+enum v34_phase2_tone_result v34_retrain_detector_sample_tone(
+	struct v34_retrain_detector *detector, int16_t sample, bool *detected)
+{
+	return sample_retrain_detector(
+		detector, sample, V34_RETRAIN_SILENCE_MAX_WINDOW_ENERGY,
+		false, detected);
 }
 
 static bool retrain_request_state_is_clear(
