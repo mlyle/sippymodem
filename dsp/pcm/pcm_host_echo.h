@@ -29,8 +29,8 @@ enum {
 	PCM_HOST_ECHO_SCAN_INTERVAL_SAMPLES = 4,
 	PCM_HOST_ECHO_READY_MIN_PEAK = 64,
 	PCM_HOST_ECHO_READY_MIN_RMS = 32,
-	/* Requalify small host timing changes without adapting to peer data. */
-	PCM_HOST_ECHO_TIMING_RADIUS = PCM_ECHO_REFERENCE_SAMPLE_RATE / 50,
+	/* Track delay steps up to 40 ms without adapting to the peer's signal. */
+	PCM_HOST_ECHO_TIMING_RADIUS = PCM_ECHO_REFERENCE_SAMPLE_RATE / 25,
 	PCM_HOST_ECHO_TIMING_BINS = 2 * PCM_HOST_ECHO_TIMING_RADIUS + 1,
 	PCM_HOST_ECHO_TIMING_WINDOW = 8192,
 	/* Subsecond evidence for roughly one-percent returns; the long window

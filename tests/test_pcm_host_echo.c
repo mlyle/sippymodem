@@ -1098,8 +1098,10 @@ static bool test_frozen_delay_tracking(int changed_delay, bool transient)
 
 	memcpy(coefficients, echo.coefficients, sizeof(coefficients));
 	/* A weak echo changes delay after training while the remote remains
-	 * much louder. Only timing may change; never fit the remote as echo. */
-	for (size_t index = TRAIN_SAMPLES; index < TRAIN_SAMPLES + 48000; ++index) {
+	 * much louder. Allow six seconds for independent timing evidence, then
+	 * measure one second of settled cancellation. Short-window tests below
+	 * separately bound recovery for material returns. */
+	for (size_t index = TRAIN_SAMPLES; index < TRAIN_SAMPLES + 56000; ++index) {
 		int16_t remote = remote_sample(index) * 7;
 		int shift = transient && index >= TRAIN_SAMPLES + PCM_HOST_ECHO_TIMING_WINDOW ?
 			0 : changed_delay;
@@ -1109,7 +1111,11 @@ static bool test_frozen_delay_tracking(int changed_delay, bool transient)
 		CHECK(echo_step(&echo, PCM_HOST_ECHO_FILTER, index,
 			       add_s16((int32_t)remote + returned), &cleaned),
 		      "changed-return filtering failed at %zu", index);
-		if (index >= TRAIN_SAMPLES + 40000) {
+		if (index == TRAIN_SAMPLES + 48000 - 1)
+			CHECK((int64_t)echo.window_delay_samples ==
+				(int64_t)original_delay + (transient ? 0 : changed_delay),
+			      "weak return did not retime within six seconds");
+		if (index >= TRAIN_SAMPLES + 48000) {
 			source_energy = energy_add(source_energy, returned);
 			residual_energy = energy_add(residual_energy,
 						    (int32_t)cleaned - remote);
@@ -1122,8 +1128,8 @@ static bool test_frozen_delay_tracking(int changed_delay, bool transient)
 	CHECK(memcmp(coefficients, echo.coefficients, sizeof(coefficients)) == 0,
 	      "timing correction changed filter coefficients");
 	CHECK(residual_energy * 50 < source_energy,
-	      "retimed residual too large: %" PRIu64 " / %" PRIu64,
-	      residual_energy, source_energy);
+	      "retimed residual too large at shift %d: %" PRIu64 " / %" PRIu64,
+	      changed_delay, residual_energy, source_energy);
 	{
 		struct pcm_host_echo saved = echo;
 		int16_t cleaned;
@@ -1249,7 +1255,8 @@ int main(void)
 	    !test_retained_delay_tracking(80, true) ||
 	    !test_acquisition_after_unrelated_prefix())
 		return 1;
-	const int shifts[] = {0, 8, -60, -PCM_HOST_ECHO_TIMING_RADIUS,
+	/* A 33 ms step must work independently of the configured radius. */
+	const int shifts[] = {0, 8, -60, 264, -264, -PCM_HOST_ECHO_TIMING_RADIUS,
 		PCM_HOST_ECHO_TIMING_RADIUS};
 	for (size_t index = 0; index < sizeof(shifts) / sizeof(shifts[0]); ++index)
 		if (!test_frozen_delay_tracking(shifts[index], false))
