@@ -49,7 +49,6 @@ struct generated_source {
 	uint32_t b1_history;
 	bool rate_started;
 	bool selected_started;
-	bool selected_gain_step;
 	bool retrain_started;
 	bool retrain_alternating;
 	bool online_control;
@@ -328,13 +327,10 @@ static bool source_sample(
 		     reference, &source->point,
 		     source->modulator.carrier_phase) != V32_ECHO_OK))
 		return false;
-	if (qam_modulator_sample(&source->modulator, &source->point,
-				 sample, accepted) != QAM_OK ||
-	    *accepted != can_accept)
-		return false;
-	if (source->selected_started && source->selected_gain_step)
-		*sample = (int16_t)((int32_t)*sample * 3 / 4);
-	return true;
+	return qam_modulator_sample(
+		       &source->modulator, &source->point,
+		       sample, accepted) == QAM_OK &&
+	       *accepted == can_accept;
 }
 
 static bool consume_data_batch(
@@ -603,7 +599,6 @@ static bool reject_wrong_end(
 static bool run_role(
 	enum v32_transmitter_role role,
 	const struct v32_rate_offer *selected_offer,
-	bool selected_gain_step,
 	struct v32_conditioning_path_handoff *conditioning_handoff,
 	struct v32_rate_path *started,
 	struct v32_rate_path *completed,
@@ -637,9 +632,6 @@ static bool run_role(
 	CHECK(complete_conditioning(
 		      &source, role, selected_offer, false, &conditioning, &handoff),
 	      "rate-path conditioning failed for role %d", role);
-	/* A peer's selected-rate signal can have a different level from TRN.
-	 * Require exact payload despite a 25% drop at the start of B1. */
-	source.selected_gain_step = selected_gain_step;
 	CHECK(v32_rate_path_init(&path, &handoff) == V32_RATE_PATH_OK &&
 	      v32_rate_path_is_valid(&path) &&
 	      !v32_rate_path_is_complete(&path),
@@ -793,7 +785,7 @@ static bool run_role(
 	      "B1 path initialized invalid for role/mode %d/%u:%u", role,
 	      selected_offer->rates,
 	      selected_offer->trellis_at_highest_rate);
-	CHECK(agc_is_valid(&b1.receive.line.gain) &&
+	CHECK(b1.receive.line.gain.gain_mode == AGC_GAIN_FROZEN &&
 	      b1.receive.line.gain.gain_mantissa_q15 ==
 		      end_handoff.receive.line.gain.gain_mantissa_q15 &&
 	      b1.receive.line.gain.gain_shift ==
@@ -827,7 +819,11 @@ static bool run_role(
 		complete = result == V32_B1_PATH_COMPLETE;
 	}
 	CHECK(complete && v32_b1_path_is_complete(&b1) &&
-	      agc_is_valid(&b1.receive.line.gain) &&
+	      b1.receive.line.gain.gain_mode == AGC_GAIN_FROZEN &&
+	      b1.receive.line.gain.gain_mantissa_q15 ==
+		      b1_started->receive.line.gain.gain_mantissa_q15 &&
+	      b1.receive.line.gain.gain_shift ==
+		      b1_started->receive.line.gain.gain_shift &&
 	      b1.observations == V32_B1_PATH_SYMBOLS &&
 	      b1.observation_epoch ==
 		      end_handoff.observation_epoch + V32_B1_PATH_SYMBOLS &&
@@ -1338,10 +1334,7 @@ int main(void)
 	struct v32_data_path data_started;
 	struct v32_data_path data_advanced;
 
-	for (size_t mode = 0; mode <= TEST_SELECTED_MODES; ++mode) {
-		bool gain_step = mode == TEST_SELECTED_MODES;
-		const struct v32_rate_offer *offer = &SELECTED_OFFERS[
-			gain_step ? TEST_SELECTED_MODES - 1 : mode];
+	for (size_t mode = 0; mode < TEST_SELECTED_MODES; ++mode) {
 		for (unsigned int role = 0; role < 2; ++role) {
 			struct v32_conditioning_path_handoff next_conditioning;
 			struct v32_rate_path next_started;
@@ -1356,7 +1349,7 @@ int main(void)
 
 			if (!run_role(
 				    (enum v32_transmitter_role)role,
-				    offer, gain_step, &next_conditioning,
+				    &SELECTED_OFFERS[mode], &next_conditioning,
 				    &next_started, &next_completed,
 				    &next_end_started, &next_end_completed,
 				    &next_end_handoff, &next_b1_started,
