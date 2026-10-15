@@ -343,6 +343,8 @@ static struct dp *create_v34(
 		return NULL;
 	}
 	if (from_pcm) {
+		/* A repeated peer request still belongs to the retained retrain. */
+		datapump->call.retrain_active = fallback.retrain_active;
 		datapump->pcm_restart = malloc(sizeof(*datapump->pcm_restart));
 		if (datapump->pcm_restart == NULL) {
 			free(datapump);

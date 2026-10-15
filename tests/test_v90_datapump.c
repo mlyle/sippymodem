@@ -15,6 +15,7 @@
 #include "test.h"
 
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 enum {
@@ -1631,6 +1632,59 @@ static bool fallback_pcm_source(void *context, uint8_t *bits, size_t bit_count)
 	return source_bits(context, 1, bits, (int)bit_count) >= 0;
 }
 
+static bool check_fallback_phase3_retrain(
+	struct modem *modem, enum g711_law law, bool retraining)
+{
+	const struct dp_operations *operations = v34_datapump_operations(DP_V34);
+	struct dp *dp = operations->create(
+		modem, DP_V34, 0, MODEM_RATE, MODEM_FRAG, operations);
+	struct v34_phase2_tone_transmitter tone;
+	int16_t input[MODEM_FRAG];
+	int16_t output[MODEM_FRAG];
+	int status = DPSTAT_OK;
+
+	CHECK(dp != NULL &&
+	      v34_phase2_tone_transmitter_init(
+		      &tone, V34_ANSWERING_STATION, 6000) == V34_PHASE2_TONE_OK,
+	      "fallback retrain probe did not initialize");
+	/* Repeat the shared request before either direction reaches data: 70 ms
+	 * quiet followed by guarded Tone A. Initial Phase 3 must stay unarmed. */
+	for (unsigned int clock = 0; clock < 2400u; clock += MODEM_FRAG) {
+		for (unsigned int i = 0; i < MODEM_FRAG; ++i) {
+			int16_t sample = 0;
+
+			if (clock + i >= V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES)
+				CHECK(v34_phase2_tone_transmitter_sample(&tone, &sample) ==
+				      V34_PHASE2_TONE_OK, "fallback peer tone failed");
+			input[i] = decode(law, encode(law, sample));
+		}
+		status = dp->op->process(dp, input, output, MODEM_FRAG);
+		if (status == DPSTAT_CHANGEDP)
+			break;
+		CHECK(status == DPSTAT_OK, "fallback Phase 3 probe failed");
+	}
+	CHECK((status == DPSTAT_CHANGEDP) == retraining,
+	      "fallback Phase 3 lost its retrain context (active=%d status=%d)",
+	      retraining, status);
+	if (retraining) {
+		struct pcm_call *call = malloc(sizeof(*call));
+		struct training_session training;
+
+		CHECK(call != NULL &&
+		      v34_datapump_pcm_retrain_handoff(dp, call, &training) &&
+		      call->retrain_active && call->stage == PCM_CALL_RETRAIN_SILENCE &&
+		      call->retrain.peer_tone_retained &&
+		      call->retrain.response_silence_samples_remaining > 0 &&
+		      call->retrain.response_silence_samples_remaining <=
+			      V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES,
+		      "fallback repeated request lost its PCM response epoch");
+		free(call);
+	}
+	CHECK(dp->op->delete(dp) == 0, "fallback probe owner was not released");
+	modem->dp_requested = DP_V34;
+	return true;
+}
+
 static bool run_fallback_restart(
 	enum g711_law law, bool remote, enum DP_ID protocol, uint8_t pcm_up_max_drn,
 	bool after_online)
@@ -1730,6 +1784,8 @@ static bool run_fallback_restart(
 				       handoff.restart.local_info1.v92_digital.pcm_upstream_supported ==
 					       (pcm_up_max_drn != 0)),
 				      "PCM did not export its fallback agreement");
+				CHECK(check_fallback_phase3_retrain(&digital, law, after_online),
+				      "fallback Phase 3 repeated request failed");
 				/* The peer uses the same INFO0 capabilities retained in
 				 * the digital handoff, with the station roles reversed. */
 				digital_info0 = handoff.phase2.local_info0;

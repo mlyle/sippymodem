@@ -18,6 +18,7 @@ struct pcm_v34_fallback_handoff {
 	struct v34_phase2_handoff phase2;
 	struct pcm_fallback_restart restart;
 	struct training_session training;
+	bool retrain_active;
 };
 
 const struct dp_operations *v90_datapump_operations(enum DP_ID id);

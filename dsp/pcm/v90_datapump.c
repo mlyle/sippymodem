@@ -853,6 +853,7 @@ static bool process_octet(
 			    &datapump->fallback.restart) != PCM_CALL_OK)
 			return false;
 		datapump->fallback.training = datapump->training;
+		datapump->fallback.retrain_active = datapump->call.retrain_active;
 		datapump->fallback_ready = true;
 		*fallback = true;
 		return true;
