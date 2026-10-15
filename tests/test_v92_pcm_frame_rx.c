@@ -1199,6 +1199,9 @@ static bool test_rejection_and_training_evidence(void)
 	receiver.maximum_level = 1;
 	CHECK(!v92_pcm_frame_rx_is_valid(&receiver), "constellation receiver accepted maximum LU");
 	receiver = saved;
+	receiver.post_b1_frames = 1u;
+	CHECK(!v92_pcm_frame_rx_is_valid(&receiver), "post-B1u counter exceeded traceback history");
+	receiver = saved;
 	receiver.noise.frames = V92_B1U_FRAMES + 1u;
 	CHECK(!v92_pcm_frame_rx_is_valid(&receiver), "noise accepted excess training");
 	receiver = saved;
@@ -1616,8 +1619,69 @@ static bool test_inactive_filter_history(void)
 	return true;
 }
 
+static bool test_spare_word_beam(unsigned damaged_frame, unsigned differential)
+{
+	struct v92_cpd_parameters cpd;
+	struct v92_pcm_mapping mapping;
+	struct v92_pcm_frame_tx tx;
+	struct v92_pcm_frame_rx rx;
+
+	CHECK(v92_cpd_direct_init(&cpd, G711_LAW_PCMU, 10u, false) == V92_CPD_OK,
+	      "spare-word CPd initialization failed");
+	/* 28^9 * 14^3 exceeds the 54-bit payload space. Nearby spare words
+	 * must not consume every entry in the bounded symbol-path search. */
+	for (unsigned i = 0u; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
+		cpd.modulus[i] = i % 4u == 3u ? 14u : 28u;
+	memset(cpd.constellation, 0, sizeof(cpd.constellation));
+	cpd.constellation[0].count = 14u;
+	for (unsigned i = 0u; i < 14u; ++i)
+		cpd.constellation[0].positive_linear[i] = (int16_t)((2u * i + 1u) * 32u);
+	CHECK(v92_pcm_mapping_init(&mapping, G711_LAW_PCMU, &cpd) == V92_PCM_MAPPING_OK &&
+	      v92_pcm_frame_tx_init(&tx, &mapping) == V92_PCM_FRAME_OK &&
+	      v92_pcm_frame_rx_init_constellation(&rx, &mapping) == V92_PCM_FRAME_OK,
+	      "spare-word stream initialization failed");
+	for (unsigned f = 0u; f < damaged_frame + 26u; ++f) {
+		struct v92_pcm_frame frame;
+		struct v92_pcm_frame_decision decision;
+		uint8_t bits[V92_PCM_MAPPING_MAX_BITS], decoded[V92_PCM_MAPPING_MAX_BITS];
+		int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
+		unsigned prior = tx.state.differential;
+
+		source_bits(bits, mapping.data_bits_per_frame, f);
+		CHECK(v92_pcm_frame_encode(&tx, bits, mapping.data_bits_per_frame, &frame) ==
+		      V92_PCM_FRAME_OK, "spare-word waveform failed");
+		memcpy(samples, frame.u, sizeof(samples));
+		if (f == damaged_frame) {
+			CHECK(prior == differential, "fixture missed differential state %u", differential);
+			/* Move only the final sample toward an unused modulus word,
+			 * retaining the fourth symbol's required parity. */
+			int target = prior ? 0 : 13;
+			int eta = frame.signed_index[11] + 2 * (target - frame.digit[11]);
+
+			while (eta < -14) eta += 28;
+			while (eta >= 14) eta -= 28;
+			samples[11] = eta < 0 ? -cpd.constellation[0].positive_linear[-eta - 1] :
+				cpd.constellation[0].positive_linear[eta];
+		}
+		CHECK(v92_pcm_frame_decode(&rx, samples, f < V92_B1U_FRAMES, decoded,
+			mapping.data_bits_per_frame, &decision) == V92_PCM_FRAME_OK,
+		      "spare words exhausted the beam at frame %u", f);
+		/* The damaged frame may contain errors. Require independent known
+		 * payload after traceback and descrambler recovery have elapsed. */
+		if (f >= damaged_frame + 16u) {
+			source_bits(bits, mapping.data_bits_per_frame, f - V92_PCM_RX_DELAY_FRAMES);
+			CHECK(decision.bits_ready && !decision.ambiguous &&
+			      !memcmp(bits, decoded, mapping.data_bits_per_frame),
+			      "spare-word recovery corrupted frame %u", f);
+		}
+	}
+	return true;
+}
+
 int main(void)
 {
+	if (!test_spare_word_beam(64u, 1u) || !test_spare_word_beam(69u, 0u))
+		return 1;
 	if (!test_direct_confidence() || !test_inactive_filter_history()) return 1;
 	if (!test_trellis_polarity()) return 1;
 	if (!test_polarity_acquisition_boundary()) return 1;

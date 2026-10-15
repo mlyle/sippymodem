@@ -8789,6 +8789,7 @@ static bool run_v92_no_path_recovery(enum g711_law law)
 	const struct v92_upstream_offer offer = {
 		.peer_mask = (UINT32_C(1) << 19u) - 1u,
 		.local_maximum = 19u, .expected = 19u,
+		.postcursor = .10, .receive_gain = .75,
 	};
 	struct v92_online_pair pair;
 	uint32_t noise = UINT32_C(0x81374aef);
@@ -8796,9 +8797,13 @@ static bool run_v92_no_path_recovery(enum g711_law law)
 	CHECK(capture_v92_duplex_data(law, 3u, false, &offer, NULL, 0u, &pair),
 	      "no-path recovery initial call failed");
 	struct pcm_call call = pair.digital;
+	const struct v92_upstream_data_rx *upstream = &call.state.data_path.v92_digital.upstream;
+	CHECK(upstream->model.valid && upstream->line.host.lower <= .75 &&
+	      upstream->line.host.upper >= .75, "no-path fixture did not fit its codec and host gain");
 
-	/* Damage real media without an erasure notification. Probe an owned
-	 * receiver copy to identify the exact sample that eliminates all paths,
+	/* Damage real media and remove the trained host gain without an erasure
+	 * notification. The frozen codec model must reject the changed input.
+	 * Probe an owned receiver copy to identify that exact sample,
 	 * then feed that same sample through the complete call at each budget.
 	 * This distinguishes decoder failure from a later quality-window alarm. */
 	for (unsigned sample = 0; sample < 64u; ++sample) {

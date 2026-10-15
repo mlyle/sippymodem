@@ -116,6 +116,8 @@ struct v92_pcm_frame_rx {
 	int16_t maximum_level;
 	uint8_t path_count;
 	uint8_t pending_frames;
+	/* Saturates at traceback depth, after pending B1u decisions drain. */
+	uint8_t post_b1_frames;
 };
 
 struct v92_pcm_frame_decision {

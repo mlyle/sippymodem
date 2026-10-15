@@ -623,6 +623,7 @@ bool v92_pcm_frame_rx_is_valid(const struct v92_pcm_frame_rx *receiver)
 	    receiver->path_count == 0u ||
 	    receiver->path_count > V92_PCM_RX_PATHS ||
 	    receiver->pending_frames > V92_PCM_RX_DELAY_FRAMES ||
+	    receiver->post_b1_frames > receiver->pending_frames ||
 	    !trellis_selection(receiver->mapping.cpd.trellis, &selected))
 		return false;
 	switch (receiver->observation) {
@@ -772,16 +773,26 @@ static enum v92_pcm_frame_rm rm_state(const struct v92_pcm_frame_rx_path *path)
 		path->rm_prime_frames == 1u ? V92_PCM_FRAME_RM_PRIME : V92_PCM_FRAME_RM_COMPLETE;
 }
 
+/* Bit 0 matches RM; bit 1 matches RM-prime. A prefix may match either. */
+static unsigned rm_prefix(const struct v92_pcm_mapping *mapping,
+	const uint8_t *digits, size_t symbols)
+{
+	unsigned words = 3u;
+
+	for (size_t i = 0u; i < symbols && words; ++i) {
+		uint8_t high = (uint8_t)(mapping->cpd.modulus[i] - 1u);
+		if (digits[i] != (i % 4u < 2u ? high : 0u)) words &= ~1u;
+		if (digits[i] != (i % 4u < 2u ? 0u : high)) words &= ~2u;
+	}
+	return words;
+}
+
 static bool observe_rm(const struct v92_pcm_mapping *mapping, const uint8_t *digits,
 	bool b1u, struct v92_pcm_frame_rx_path *path)
 {
-	bool rm = !b1u, prime = !b1u;
+	unsigned words = b1u ? 0u : rm_prefix(mapping, digits, V92_PCM_MAPPING_FRAME_SYMBOLS);
+	bool rm = (words & 1u) != 0u, prime = (words & 2u) != 0u;
 
-	for (unsigned i = 0u; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i) {
-		uint8_t high = (uint8_t)(mapping->cpd.modulus[i] - 1u);
-		rm &= digits[i] == (i % 4u < 2u ? high : 0u);
-		prime &= digits[i] == (i % 4u < 2u ? 0u : high);
-	}
 	if (rm) {
 		if (path->rm_prime_frames) path->rm_frames = 0u;
 		if (path->rm_frames < V92_PCM_RM_QUALIFY_FRAMES) ++path->rm_frames;
@@ -1183,6 +1194,20 @@ static enum v92_pcm_frame_result decode_frame(
 				      paths[index].known_digits))
 			return V92_PCM_FRAME_INVALID_PARAMETERS;
 	}
+	uint8_t maximum_digits[V92_PCM_MAPPING_FRAME_SYMBOLS];
+	/* Apply payload bounds after delayed B1u validation has drained. */
+	bool constrain_words = !b1u && receiver->post_b1_frames == V92_PCM_RX_DELAY_FRAMES;
+	if (constrain_words) {
+		uint8_t maximum_bits[V92_PCM_MAPPING_MAX_BITS], differential = 0u, sign;
+
+		memset(maximum_bits, 1, bit_count);
+		if (v92_pcm_mapping_encode_owned(&receiver->mapping, maximum_bits, bit_count,
+			&differential, maximum_digits, &sign) != V92_PCM_MAPPING_OK)
+			return V92_PCM_FRAME_INVALID_PARAMETERS;
+		constrain_words = false;
+		for (size_t i = 0u; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
+			constrain_words |= maximum_digits[i] != receiver->mapping.cpd.modulus[i] - 1u;
+	}
 	bool initial = !known && b1u && receiver->noise.frames == 0u &&
 		receiver->pending_frames == 0u;
 	/* Inverting the four coordinates complements only convolutional input
@@ -1267,6 +1292,28 @@ static enum v92_pcm_frame_result decode_frame(
 				for (size_t previous = symbol - symbol % V92_PCM_TRELLIS_INTERVAL_SYMBOLS;
 				     previous < symbol; ++previous)
 					parity ^= (unsigned)paths[path].frame.signed_index[previous] & 1u;
+			int data_limit = (int)modulus - 1;
+			unsigned requests = 0u;
+			if (constrain_words && symbol + 1u == V92_PCM_MAPPING_FRAME_SYMBOLS) {
+				/* Restrict the completed word before the heap fills with
+				 * unused codes. Compare its lower digits with 2^K-1 once
+				 * per path; the final digit then needs only an integer bound.
+				 * Differential reflection applies to every modulus digit. */
+				data_limit = maximum_digits[symbol];
+				for (size_t i = symbol; i-- > 0u;) {
+					unsigned ordinary = paths[path].state.differential ?
+						receiver->mapping.cpd.modulus[i] - 1u - paths[path].frame.digit[i] :
+						paths[path].frame.digit[i];
+
+					if (ordinary != maximum_digits[i]) {
+						data_limit -= ordinary > maximum_digits[i];
+						break;
+					}
+				}
+				requests = rm_prefix(&receiver->mapping, paths[path].frame.digit, symbol);
+				if (paths[path].state.rm_frames != V92_PCM_RM_QUALIFY_FRAMES)
+					requests &= ~2u;
+			}
 			int first_eta = -(int)constellation->count, end_eta = constellation->count;
 			/* A full heap supplies a budget which can only decrease as this
 			 * path is visited. Trim only tails whose enlarged observation
@@ -1319,6 +1366,13 @@ static enum v92_pcm_frame_result decode_frame(
 				next_digit += !known;
 				if (next_digit == modulus)
 					next_digit = 0u;
+				if (constrain_words && symbol + 1u == V92_PCM_MAPPING_FRAME_SYMBOLS) {
+					int ordinary = paths[path].state.differential ? (int)modulus - 1 - digit : digit;
+
+					if (ordinary > data_limit && !((requests & 1u) && digit == 0u) &&
+					    !((requests & 2u) && digit == modulus - 1u))
+						continue;
+				}
 				int16_t u = signed_point(constellation, eta);
 				if (cache_points) {
 					cost = point_cost[symbol][eta + constellation->count];
@@ -1600,6 +1654,10 @@ static enum v92_pcm_frame_result decode_frame(
 		memcpy(bits, decoded, bit_count);
 	if (receiver->pending_frames < V92_PCM_RX_DELAY_FRAMES)
 		receiver->pending_frames++;
+	if (b1u)
+		receiver->post_b1_frames = 0u;
+	else if (receiver->post_b1_frames < V92_PCM_RX_DELAY_FRAMES)
+		receiver->post_b1_frames++;
 	uint64_t minimum_metric = paths[best].state.metric;
 
 	for (size_t index = 0u; index < valid; ++index) {
