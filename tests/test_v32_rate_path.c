@@ -29,6 +29,7 @@ enum {
 	TEST_SELECTED_MODES = 6,
 	/* Exercise adaptation well beyond its first few dozen decisions. */
 	TEST_DATA_GROUPS = 1024,
+	TEST_LEVEL_STEP_SYMBOLS = 32,
 };
 
 struct generated_source {
@@ -49,6 +50,7 @@ struct generated_source {
 	uint32_t b1_history;
 	bool rate_started;
 	bool selected_started;
+	bool b1_level_step;
 	bool retrain_started;
 	bool retrain_alternating;
 	bool online_control;
@@ -327,10 +329,14 @@ static bool source_sample(
 		     reference, &source->point,
 		     source->modulator.carrier_phase) != V32_ECHO_OK))
 		return false;
-	return qam_modulator_sample(
-		       &source->modulator, &source->point,
-		       sample, accepted) == QAM_OK &&
-	       *accepted == can_accept;
+	if (qam_modulator_sample(&source->modulator, &source->point,
+				 sample, accepted) != QAM_OK ||
+	    *accepted != can_accept)
+		return false;
+	if (source->b1_level_step && source->selected_started &&
+	    source->selected_symbols <= TEST_LEVEL_STEP_SYMBOLS)
+		*sample = (int16_t)((int32_t)*sample * 5 / 4);
+	return true;
 }
 
 static bool consume_data_batch(
@@ -599,6 +605,7 @@ static bool reject_wrong_end(
 static bool run_role(
 	enum v32_transmitter_role role,
 	const struct v32_rate_offer *selected_offer,
+	bool b1_level_step,
 	struct v32_conditioning_path_handoff *conditioning_handoff,
 	struct v32_rate_path *started,
 	struct v32_rate_path *completed,
@@ -704,6 +711,9 @@ static bool run_role(
 			      V32_EQUALIZER_ADAPTATION_DISABLED,
 		      "answering endpoint did not disable at R3");
 	*end_started = end;
+	/* Raise only the B1 prefix by 25%, then restore nominal level well
+	 * before payload. Its energy must not replace the trained scale. */
+	source.b1_level_step = b1_level_step;
 	end_source_limit = 0;
 	complete = false;
 	for (unsigned int index = 0;
@@ -1334,7 +1344,10 @@ int main(void)
 	struct v32_data_path data_started;
 	struct v32_data_path data_advanced;
 
-	for (size_t mode = 0; mode < TEST_SELECTED_MODES; ++mode) {
+	for (size_t mode = 0; mode <= TEST_SELECTED_MODES; ++mode) {
+		bool level_step = mode == TEST_SELECTED_MODES;
+		const struct v32_rate_offer *offer = &SELECTED_OFFERS[
+			level_step ? TEST_SELECTED_MODES - 1 : mode];
 		for (unsigned int role = 0; role < 2; ++role) {
 			struct v32_conditioning_path_handoff next_conditioning;
 			struct v32_rate_path next_started;
@@ -1349,7 +1362,7 @@ int main(void)
 
 			if (!run_role(
 				    (enum v32_transmitter_role)role,
-				    &SELECTED_OFFERS[mode], &next_conditioning,
+				    offer, level_step, &next_conditioning,
 				    &next_started, &next_completed,
 				    &next_end_started, &next_end_completed,
 				    &next_end_handoff, &next_b1_started,

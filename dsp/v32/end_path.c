@@ -174,6 +174,10 @@ enum v32_end_path_result v32_end_path_init(
 		return V32_END_PATH_INVALID_ARGUMENT;
 	memset(&initialized, 0, sizeof(initialized));
 	initialized.receive = rate->receive;
+	/* B1 samples can reach the gain estimator before E is decoded.
+	 * Preserve the trained scale across the rate/E transition. */
+	if (agc_freeze(&initialized.receive.line.gain) != AGC_OK)
+		return V32_END_PATH_INVALID_STATE;
 	initialized.four_point = rate->four_point;
 	initialized.detector = rate->detector;
 	initialized.initial_offer = rate->offer;
