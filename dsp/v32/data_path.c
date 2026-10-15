@@ -237,6 +237,10 @@ enum v32_data_path_result v32_data_path_init(
 	    !v32_b1_path_is_complete(b1))
 		return V32_DATA_PATH_INVALID_ARGUMENT;
 	initialized.b1 = *b1;
+	/* B1 completes gain acquisition at the selected rate. Payload energy
+	 * must not move that scale, including a retained first observation. */
+	if (agc_freeze(&initialized.b1.receive.line.gain) != AGC_OK)
+		return V32_DATA_PATH_INVALID_STATE;
 	if (initialized.b1.receive.equalizer.decision_pending) {
 		struct v32_equalizer_observation observation =
 			initialized.b1.receive.equalizer.pending_observation;

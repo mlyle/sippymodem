@@ -223,10 +223,8 @@ enum v32_b1_path_result v32_b1_path_init(
 		return V32_B1_PATH_INVALID_ARGUMENT;
 	memset(&initialized, 0, sizeof(initialized));
 	initialized.receive = end->receive;
-	/* Retain trained gain as B1 changes to the selected constellation;
-	 * neither B1 nor payload energy should move its receive scale. */
-	if (agc_freeze(&initialized.receive.line.gain) != AGC_OK)
-		return V32_B1_PATH_INVALID_STATE;
+	/* Finish gain tracking through the selected-rate B1 constellation.
+	 * The data owner freezes it before consuming payload. */
 	initialized.selected_offer = end->selected_offer;
 	initialized.b1_matches = true;
 	if (!selected_mode(
