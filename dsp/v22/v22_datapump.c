@@ -1274,7 +1274,7 @@ static int start_retrain_signal(struct v22_datapump *datapump)
 	return 0;
 }
 
-static int reset_v22_receive_path(struct v22_datapump *datapump)
+static int reset_v22_receive_path(struct v22_datapump *datapump, bool retain_signal)
 {
 	struct qam_demodulator demodulator;
 	struct v22_symbol_decoder decoder;
@@ -1282,7 +1282,9 @@ static int reset_v22_receive_path(struct v22_datapump *datapump)
 	if (datapump == NULL || !id_uses_v22_carrier(datapump->dp.id))
 		return -1;
 	demodulator = datapump->demodulator;
-	if (qam_demodulator_reset(&demodulator) != QAM_OK ||
+	if ((retain_signal ? qam_demodulator_reacquire(
+		    &demodulator, QAM_MIN_TIMING_WINDOW_SYMBOLS) :
+		    qam_demodulator_reset(&demodulator)) != QAM_OK ||
 	    v22_symbol_decoder_init(&decoder, 0) != V22_FRAMING_OK)
 		return -1;
 	datapump->demodulator = demodulator;
@@ -1315,7 +1317,7 @@ static int begin_retrain(
 	    receive_quadrant >= QPSK_QUADRANT_COUNT)
 		return -1;
 	if (peer_signal_received) {
-		if (reset_v22_receive_path(datapump) != 0)
+		if (reset_v22_receive_path(datapump, false) != 0)
 			return -1;
 	} else if (v22_symbol_decoder_init(
 			   &datapump->decoder, receive_quadrant) !=
@@ -1363,7 +1365,7 @@ static int note_peer_retrain_signal(
 	    (datapump->training_state != V22_TRAINING_RETRAIN_WAIT_PEER &&
 	     datapump->training_state != V22_TRAINING_RETRAIN_SIGNAL))
 		return -1;
-	if (reset_v22_receive_path(datapump) != 0)
+	if (reset_v22_receive_path(datapump, false) != 0)
 		return -1;
 	datapump->retrain_peer_signal_received = true;
 	datapump->retrain_retry_samples = 0;
@@ -1380,7 +1382,7 @@ static int repeat_peer_retrain_signal(
 	    !datapump_uses_v22bis(datapump) ||
 	    !datapump->retrain_peer_signal_received)
 		return -1;
-	if (reset_v22_receive_path(datapump) != 0)
+	if (reset_v22_receive_path(datapump, false) != 0)
 		return -1;
 	datapump->phase_samples = 0;
 	reset_retrain_receive_progress(datapump);
@@ -1613,6 +1615,10 @@ static int enter_link(struct v22_datapump *datapump)
 	if (!datapump_set_link_rates(
 		    &datapump->dp, datapump->bit_rate, datapump->bit_rate))
 		return -1;
+	/* The short mark-transition window must not change later retrains. */
+	if (qam_demodulator_has_timing_lock(&datapump->demodulator))
+		datapump->demodulator.acquisition_window_symbols = datapump->originator ?
+			V22_ORIGINATE_ACQUISITION_SYMBOLS : V22_ANSWER_ACQUISITION_SYMBOLS;
 	datapump->training_state = V22_TRAINING_ONLINE;
 	datapump->transmit_mode = V22_TRANSMIT_DATA;
 	datapump->training_samples = 0;
@@ -1800,7 +1806,7 @@ static int process_v22(
 	if (!line_power_present && !retain_training_timing &&
 	    !datapump_is_retraining(datapump) &&
 	    datapump->training_state != V22_TRAINING_ONLINE) {
-		if (reset_v22_receive_path(datapump) != 0) {
+		if (reset_v22_receive_path(datapump, false) != 0) {
 			memset(transmit, 0, (size_t)count * sizeof(*transmit));
 			return DPSTAT_ERROR;
 		}
@@ -1844,16 +1850,26 @@ static int process_v22(
 		 * through a dropout even when received bits must be discarded. */
 		bool receive_active = line_power_present || retain_training_timing ||
 			datapump->demodulator.timing_locked;
-		if (datapump->originator && datapump->training_state ==
-		    V22_TRAINING_ORIGINATE_WAIT_ANSWER_MARK) {
+		if (datapump->originator && datapump->training_state <=
+		    V22_TRAINING_WAIT_SCRAMBLED_MARK) {
 			struct single_tone_event event;
 			if (single_tone_detector_sample(&datapump->answer_mark,
 				    receive[index], &event) != SINGLE_TONE_OK)
 				return DPSTAT_ERROR;
-			receive_active = receive_active && datapump->answer_mark.tone_present;
-			if (event.kind == SINGLE_TONE_ENDED) {
+			bool acquiring_mark = datapump->training_state ==
+				V22_TRAINING_ORIGINATE_WAIT_ANSWER_MARK;
+			if (acquiring_mark)
+				receive_active = receive_active && datapump->answer_mark.tone_present;
+			if (event.kind == SINGLE_TONE_ENDED &&
+			    !datapump->rate_signal_detector.present &&
+			    (!datapump_uses_v22bis(datapump) ||
+			     datapump->rate_signal_wait_samples < V22_RETRAIN_RETRY_SAMPLES)) {
 				datapump->answer_mark_symbols = 0;
-				if (reset_v22_receive_path(datapump) != 0)
+				/* A steady mark has no reliable symbol-clock phase. Keep
+				 * the filter history so the short S1 suffix can acquire
+				 * timing before its scrambled-mark transition. A late
+				 * reciprocal S1 must retain its complete prefix. */
+				if (reset_v22_receive_path(datapump, !acquiring_mark) != 0)
 					return DPSTAT_ERROR;
 			}
 		}

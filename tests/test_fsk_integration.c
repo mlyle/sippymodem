@@ -13,6 +13,7 @@
 #include <v21.h>
 #include <v22_datapump.h>
 #include <v22_framing.h>
+#include <v22bis_symbols.h>
 #include <v23_datapump.h>
 #include <datapump.h>
 #include <datapump_link.h>
@@ -3621,6 +3622,155 @@ static bool run_v22_mark_qualification(void)
 	return true;
 }
 
+/* A steady answer mark does not reveal the symbol clock. Remove the image
+ * components of the generated mark, keeping its fitted fundamental continuous
+ * with the following S1. Starting the RRC filter with the receiver would give
+ * timing acquisition an onset that is absent on an already ringing line. */
+static bool run_v22bis_mark_transition(unsigned phase, enum g711_law law)
+{
+	static const char *const commands[] = {
+		"ATZ\r", "ATE0\r", "ATX3\r", "AT\\N0\r", "AT+DS=0,0\r",
+		"AT+MS=122,0,2400,2400\r",
+	};
+	static const uint8_t expected[] = { 'n', 0, 255 };
+	const struct qam_channel channel = {
+		.sample_rate = MODEM_RATE,
+		.symbol_rate_numerator = 600, .symbol_rate_denominator = 1,
+		.carrier_frequency_numerator = 24001,
+		.carrier_frequency_denominator = 10,
+		.rolloff = 0.75, .pulse_span_symbols = 6,
+	};
+	struct integration_endpoint endpoint;
+	struct qam_modulator modulator;
+	struct v22_symbol_encoder encoder;
+	struct qam_point point;
+	unsigned quadrant = 0, rate_symbols = 0;
+	size_t transition = SIZE_MAX, data_at = SIZE_MAX, data_bit = 0;
+	bool started_2400 = false, connected = false, payload = false;
+	double cc = 0, ss = 0, cs = 0, yc = 0, ys = 0;
+	double omega = 2 * acos(-1.0) * 2250.1 / MODEM_RATE;
+	const size_t warm_samples = MODEM_RATE + phase;
+	const size_t mark_samples = MODEM_RATE * 8u / 5u;
+
+	CHECK(endpoint_init(&endpoint, "V.22bis steady answer mark") &&
+	      configure_recording_replay(&endpoint, commands, ARRAY_LENGTH(commands)) &&
+	      qam_modulator_init(&modulator, &channel, 12000) == QAM_OK &&
+	      v22_symbol_encoder_init(&encoder, 0) == V22_FRAMING_OK,
+	      "V.22bis steady-mark fixture setup failed");
+	CHECK(modem_write(endpoint.modem, "ATDrecording\r", 13) == 13 &&
+	      modem_report_outgoing_call_connected(endpoint.modem) == 0,
+	      "V.22bis steady-mark fixture did not originate");
+	for (size_t sample = 0; sample < warm_samples; ++sample) {
+		bool ready = qam_modulator_can_accept_symbol(&modulator), accepted;
+		int16_t generated;
+
+		if (ready) {
+			quadrant = (quadrant + 3u) & 3u;
+			CHECK(v22bis_1200_constellation_point(quadrant, &point) == V22_FRAMING_OK,
+			      "V.22bis warm mark point failed");
+		}
+		CHECK(qam_modulator_sample(&modulator, &point, &generated, &accepted) ==
+		      QAM_OK && accepted == ready, "V.22bis warm mark failed");
+		if (sample >= MODEM_RATE / 2u) {
+			double c = cos(omega * sample), s = sin(omega * sample);
+
+			cc += c * c; ss += s * s; cs += c * s;
+			yc += generated * c; ys += generated * s;
+		}
+	}
+	double in_phase = (yc * ss - ys * cs) / (cc * ss - cs * cs);
+	double quadrature = (ys * cc - yc * cs) / (cc * ss - cs * cs);
+
+	endpoint.output_count = 0;
+	for (size_t sample = 0; sample < 4u * MODEM_RATE; ++sample) {
+		bool ready = qam_modulator_can_accept_symbol(&modulator), accepted;
+		int16_t generated;
+
+		if (ready) {
+			if (sample < mark_samples) {
+				quadrant = (quadrant + 3u) & 3u;
+				CHECK(v22bis_1200_constellation_point(quadrant, &point) ==
+				      V22_FRAMING_OK, "V.22bis mark point failed");
+			} else if (rate_symbols < V22BIS_RATE_SIGNAL_SYMBOLS) {
+				uint8_t turn;
+
+				CHECK(v22bis_rate_signal_turn(rate_symbols++, &turn) ==
+				      V22_FRAMING_OK, "V.22bis S1 generation failed");
+				quadrant = (quadrant + turn) & 3u;
+				CHECK(v22bis_1200_constellation_point(quadrant, &point) ==
+				      V22_FRAMING_OK, "V.22bis S1 point failed");
+			} else {
+				if (transition == SIZE_MAX) {
+					transition = sample;
+					CHECK(v22_symbol_encoder_init(&encoder, quadrant) ==
+					      V22_FRAMING_OK, "V.22bis mark encoder failed");
+				}
+				/* The answerer switches 600 ms after beginning its S1. */
+				if (sample - transition < MODEM_RATE / 2u) {
+					uint8_t next;
+
+					CHECK(v22_symbol_encode(&encoder, 1, 1, &next, true) ==
+					      V22_FRAMING_OK, "V.22bis scrambled mark failed");
+					quadrant = next;
+					CHECK(v22bis_1200_constellation_point(quadrant, &point) ==
+					      V22_FRAMING_OK, "V.22bis scrambled point failed");
+				} else {
+					uint8_t bits[4] = { 1, 1, 1, 1 }, symbol;
+
+					if (!started_2400) {
+						CHECK(v22_symbol_encoder_init(&encoder, quadrant) ==
+						      V22_FRAMING_OK, "V.22bis data encoder failed");
+						started_2400 = true;
+						data_at = sample + MODEM_RATE / 2u;
+					}
+					if (sample >= data_at)
+						for (unsigned bit = 0; bit < 4; ++bit, ++data_bit)
+							if (data_bit < sizeof(expected) * 10u) {
+								unsigned position = data_bit % 10u;
+
+								bits[bit] = position == 0 ? 0 : position == 9 ? 1 :
+									(expected[data_bit / 10u] >> (position - 1u)) & 1u;
+							}
+					CHECK(v22bis_symbol_encode(&encoder, bits, &symbol) ==
+					      V22_FRAMING_OK && v22bis_constellation_point(symbol, &point) ==
+					      V22_FRAMING_OK, "V.22bis data point failed");
+				}
+			}
+		}
+		CHECK(qam_modulator_sample(&modulator, &point, &generated, &accepted) ==
+		      QAM_OK && accepted == ready, "V.22bis waveform generation failed");
+		if (sample < mark_samples) {
+			double angle = omega * (sample + warm_samples);
+
+			generated = (int16_t)lround(in_phase * cos(angle) + quadrature * sin(angle));
+		}
+		endpoint.receive[sample % 80u] = g711_quantize(law, generated);
+		if (sample % 80u == 79u) {
+			modem_process(endpoint.modem, endpoint.receive, endpoint.transmit, 80);
+			CHECK(endpoint_drain(&endpoint), "V.22bis steady-mark output overflowed");
+			connected |= modem_is_online(endpoint.modem, DP_V22BIS);
+		}
+	}
+	for (size_t offset = 0; offset + sizeof(expected) <= endpoint.output_count; ++offset)
+		payload |= memcmp(endpoint.output + offset, expected, sizeof(expected)) == 0;
+	CHECK(connected && payload,
+	      "V.22bis lost steady-mark transition (phase=%u law=%u connected=%u data=%u)",
+	      phase, law, connected, payload);
+	endpoint_destroy(&endpoint);
+	return true;
+}
+
+static bool test_v22bis_mark_transition(void)
+{
+	static const enum g711_law laws[] = { G711_LAW_PCMU, G711_LAW_PCMA };
+
+	for (size_t law = 0; law < ARRAY_LENGTH(laws); ++law)
+		for (unsigned phase = 0; phase < 14; ++phase)
+			CHECK(run_v22bis_mark_transition(phase, laws[law]),
+			      "V.22bis steady-mark phase sweep failed");
+	return true;
+}
+
 static bool run_v32_recording_replay(const char *path, const char *expected_text)
 {
 	static const char dial_command[] = "ATDrecording\r";
@@ -5994,6 +6144,10 @@ int main(void)
 	if (!run_v22_mark_qualification())
 		return 1;
 	fprintf(stderr, "[       OK ] V.22 scrambled mark qualification\n");
+	fprintf(stderr, "[ RUN      ] V.22bis steady-mark timing reacquisition\n");
+	if (!test_v22bis_mark_transition())
+		return 1;
+	fprintf(stderr, "[       OK ] V.22bis steady-mark timing reacquisition\n");
 	fprintf(stderr, "[ RUN      ] abandoned V.22 calling probe\n");
 	if (!run_v22_abandoned_probe()) {
 		fprintf(stderr, "[  FAILED  ] abandoned V.22 calling probe\n");

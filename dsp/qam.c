@@ -1083,6 +1083,34 @@ static void select_timing_candidate(
 	demodulator->timing_sample_target = next_sample_target;
 }
 
+enum qam_result qam_demodulator_reacquire(
+	struct qam_demodulator *demodulator, uint32_t acquisition_symbols)
+{
+	struct qam_demodulator next;
+	uint32_t target;
+
+	if (!qam_demodulator_is_valid(demodulator) ||
+	    !timing_sample_target(&demodulator->channel,
+		    demodulator->symbol_period_units,
+		    demodulator->timing_candidate_count, acquisition_symbols, &target))
+		return QAM_INVALID_ARGUMENT;
+	next = *demodulator;
+	next.acquisition_window_symbols = acquisition_symbols;
+	next.timing_sample_target = target;
+	next.timing_locked = false;
+	next.acquisition_started = false;
+	next.recovery_pending = false;
+	reset_timing_scores(&next);
+	reset_clock_tracking_filter(&next);
+	reset_timing_reference_filter(&next);
+	reset_recovery_phase(&next);
+	initialize_timing_candidates(&next);
+	if (!qam_demodulator_is_valid(&next))
+		return QAM_INVALID_ARGUMENT;
+	*demodulator = next;
+	return QAM_OK;
+}
+
 static void acquire_symbol_timing(
 	struct qam_demodulator *demodulator,
 	double in_phase, double quadrature)

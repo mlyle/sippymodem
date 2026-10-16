@@ -1091,6 +1091,28 @@ static bool test_timing_windows(void)
 	      demodulator.acquisition_window_symbols == 64 &&
 	      demodulator.tracking_window_symbols == 384,
 	      "QAM did not measure a carrier-relative acquisition window");
+	saved = demodulator;
+	CHECK(qam_demodulator_reacquire(&demodulator, 32) == QAM_OK &&
+	      !demodulator.timing_locked && !demodulator.acquisition_started &&
+	      demodulator.acquisition_window_symbols == 32 &&
+	      demodulator.tracking_window_symbols == 384 &&
+	      demodulator.carrier_phase == saved.carrier_phase &&
+	      demodulator.history_count == saved.history_count &&
+	      demodulator.history_index == saved.history_index &&
+	      memcmp(demodulator.in_phase_history, saved.in_phase_history,
+		     sizeof(saved.in_phase_history)) == 0 &&
+	      memcmp(demodulator.quadrature_history, saved.quadrature_history,
+		     sizeof(saved.quadrature_history)) == 0,
+	      "QAM timing reacquisition discarded carrier or matched-filter history");
+	saved = demodulator;
+	CHECK(qam_demodulator_reacquire(NULL, 32) == QAM_INVALID_ARGUMENT &&
+	      qam_demodulator_reacquire(&demodulator, 31) == QAM_INVALID_ARGUMENT &&
+	      qam_demodulator_reacquire(&demodulator,
+		      QAM_MAX_TIMING_WINDOW_SYMBOLS + 1u) == QAM_INVALID_ARGUMENT &&
+	      qam_demodulators_equal(&demodulator, &saved),
+	      "invalid QAM timing reacquisition changed state");
+	CHECK(qam_demodulator_reacquire(&demodulator, 64) == QAM_OK,
+	      "QAM could not restore its acquisition window");
 	CHECK(qam_demodulator_set_timing_power_hysteresis(
 		      &demodulator, 1.01) == QAM_OK &&
 	      demodulator.timing_power_hysteresis == (double)1.01 &&

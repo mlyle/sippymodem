@@ -293,6 +293,10 @@ bool qam_demodulator_has_timing_lock(
 	const struct qam_demodulator *demodulator);
 enum qam_result qam_demodulator_reset(
 	struct qam_demodulator *demodulator);
+/* Reacquire symbol timing after a training-signal transition, retaining the
+ * matched-filter input and carrier clock. Rejected calls preserve state. */
+enum qam_result qam_demodulator_reacquire(
+	struct qam_demodulator *demodulator, uint32_t acquisition_symbols);
 /* Ready points are unnormalized matched-filter coordinates interpolated at
  * the exact rational symbol-clock crossing. */
 enum qam_result qam_demodulator_sample(
