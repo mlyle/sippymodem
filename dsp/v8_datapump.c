@@ -24,6 +24,9 @@ enum {
 	LEGACY_TONE_COUNT = 5,
 	LEGACY_ANSWER_SAMPLES = 5 * MODEM_RATE,
 	LEGACY_GAP_SAMPLES = MODEM_RATE * 75 / 1000,
+	/* V.32 5.4.1 requires at least one second of ANS. Leave ANSam's
+	 * one-second Te detector time to finish before selecting legacy V.32. */
+	LEGACY_ANS_SAMPLES = MODEM_RATE * 3 / 2,
 };
 
 static const struct {
@@ -757,7 +760,7 @@ static int observe_legacy_answer(struct v8_datapump *datapump, const int16_t *re
 	else if (datapump->high_tone_samples >= MODEM_RATE * 160 / 1000) {
 		uint64_t cycles = (uint64_t)datapump->high_tone_crossings * MODEM_RATE;
 		tone = cycles < (uint64_t)datapump->high_tone_samples * 2238 ? 2 : 1;
-	} else if (!exchanging && datapump->answer_tone_samples >= 2 * MODEM_RATE)
+	} else if (!exchanging && datapump->answer_tone_samples >= LEGACY_ANS_SAMPLES)
 		tone = 0;
 	if (tone != LEGACY_TONE_COUNT) {
 		enum DP_ID id = legacy_id(datapump, legacy_tones[tone].id);
@@ -917,7 +920,7 @@ bool v8_datapump_v32_handoff(const struct dp *dp, struct single_tone_detector *c
 	const struct v8_datapump *datapump = v8_from_dp_const(dp);
 
 	if (datapump == NULL || carrier == NULL || (!datapump->legacy_v32 &&
-	     !(datapump->caller && datapump->answer_tone_samples >= 2 * MODEM_RATE)) ||
+	     !(datapump->caller && datapump->answer_tone_samples >= LEGACY_ANS_SAMPLES)) ||
 	    (!datapump->handoff_requested && !datapump->caller) ||
 	    memory_regions_overlap(datapump, sizeof(*datapump), carrier, sizeof(*carrier)))
 		return false;

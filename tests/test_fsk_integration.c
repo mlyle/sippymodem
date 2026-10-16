@@ -4750,6 +4750,56 @@ static bool test_fsk300_mark_qualification(void)
 	return valid;
 }
 
+static bool run_legacy_answer_guard(enum media_codec codec, unsigned fixture)
+{
+	struct integration_endpoint caller;
+	struct single_tone_transmitter tone;
+	struct v8_ansam_generator ansam;
+	const char setup[] = "AT&FE0\r";
+	const char dial[] = "ATD\r";
+	enum g711_law law;
+	bool interrupted = fixture == 1;
+	bool modulated = fixture == 2;
+	unsigned duration = MODEM_RATE * (interrupted ? 27 : 17) / 10;
+	unsigned guard_at = MODEM_RATE * (interrupted ? 24 : 14) / 10;
+	bool carrier_sent = false;
+
+	CHECK(endpoint_init(&caller, "answer-guard") && codec_law(codec, &law) &&
+	      single_tone_transmitter_init(&tone, 2100, 4600) == SINGLE_TONE_OK &&
+	      v8_ansam_generator_init(&ansam, 4600, true) == V8_ANSAM_OK &&
+	      modem_write(caller.modem, setup, sizeof(setup) - 1) == sizeof(setup) - 1 &&
+	      modem_write(caller.modem, dial, sizeof(dial) - 1) == sizeof(dial) - 1 &&
+	      modem_report_outgoing_call_connected(caller.modem) == 0,
+	      "short answer fixture did not initialize");
+	for (unsigned at = 0; at < duration; ++at) {
+		int16_t receive, transmit;
+
+		CHECK((modulated ? v8_ansam_generate(&ansam, &receive, 1) == V8_ANSAM_OK :
+		      single_tone_transmitter_sample(&tone, &receive) == SINGLE_TONE_OK),
+		      "short answer generation failed");
+		/* Two short tones must not be accumulated into one qualification. */
+		if (interrupted && at >= MODEM_RATE * 9 / 10 && at < MODEM_RATE)
+			receive = 0;
+		receive = decode_codeword(law, encode_codeword(law, receive));
+		modem_process(caller.modem, &receive, &transmit, 1);
+		CHECK(caller.modem->dp != NULL && caller.modem->dp->id == DP_V8,
+		      "answer guard unexpectedly completed training");
+		if (at == guard_at && !modulated)
+			CHECK(strcmp(modem_protocol_step(caller.modem), "V.8/wait-ANSam") == 0,
+			      "short or interrupted answer committed legacy training early");
+		if (at > guard_at && transmit != 0)
+			carrier_sent = true;
+	}
+	CHECK(endpoint_drain(&caller) && !output_contains(&caller, "CONNECT") &&
+	      strcmp(modem_protocol_step(caller.modem), modulated ?
+		      "V.8/CM-wait-JM" : "V.32/answer-tone-carrier-turnaround") == 0 &&
+	      carrier_sent,
+	      "short answer did not select %s: %s", modulated ? "V.8" : "V.32",
+	      modem_protocol_step(caller.modem));
+	endpoint_destroy(&caller);
+	return true;
+}
+
 /* Exercise actual factory settings against fixed, non-V.8 peers. Each
  * case must negotiate and carry exact binary bytes in both directions. */
 static bool run_factory_startup_cases(const char *filter, bool *selected)
@@ -4771,6 +4821,20 @@ static bool run_factory_startup_cases(const char *filter, bool *selected)
 		{ DP_B212, "Bell212", 212, 1200 },
 	};
 	static const enum media_codec codecs[] = { MEDIA_CODEC_PCMU, MEDIA_CODEC_PCMA };
+
+	const char *guard_name = "legacy startup short answer qualification";
+	if (filter == NULL || filter[0] == '\0' || strstr(guard_name, filter) != NULL) {
+		*selected = true;
+		for (size_t codec = 0; codec < ARRAY_LENGTH(codecs); ++codec) {
+			fprintf(stderr, "[ RUN      ] %s over %s SIP media\n",
+				guard_name, codec_name(codecs[codec]));
+			for (unsigned fixture = 0; fixture < 3; ++fixture)
+				if (!run_legacy_answer_guard(codecs[codec], fixture))
+					return false;
+			fprintf(stderr, "[       OK ] %s over %s SIP media\n",
+				guard_name, codec_name(codecs[codec]));
+		}
+	}
 
 	for (size_t peer = 0; peer < ARRAY_LENGTH(peers); ++peer) {
 		for (unsigned answering = 0; answering < 2; ++answering) {
