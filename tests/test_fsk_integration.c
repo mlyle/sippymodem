@@ -4661,6 +4661,98 @@ static int capture_fsk_startup(struct modem *modem, const char *input, int count
 	return count;
 }
 
+static bool run_bell103_probe_response(unsigned fragment, unsigned reply_delay_ms)
+{
+	const uint8_t payload[] = { 'n', 0, 255 };
+	struct modem modem = { 0 };
+	struct fsk_startup_output output = { 0 };
+	const struct dp_operations *ops = modem_dp_get_registered_ops(DP_B103);
+	struct single_tone_transmitter probe;
+	struct single_tone_detector calling;
+	struct fsk_channel channel = v21_channel_2;
+	struct fsk_tone_generator answer;
+	int16_t receive[MODEM_FRAG], transmit[MODEM_FRAG];
+	unsigned reply_at = 0;
+	bool connected = false;
+
+	channel.mark_frequency_hz = 2225;
+	channel.space_frequency_hz = 2025;
+	modem.dev_data = &output;
+	modem.sregs[SREG_WAIT_CARRIER_AFTER_DIAL] = 3;
+	CHECK(ops != NULL &&
+	      single_tone_transmitter_init(&probe, 2250, 8192) == SINGLE_TONE_OK &&
+	      single_tone_detector_init(&calling, 1270) == SINGLE_TONE_OK &&
+	      fsk_tone_generator_init(&answer, &channel, 8192) == FSK_OK,
+	      "Bell probe fixture failed");
+	modem.dp = ops->create(&modem, DP_B103, 1, MODEM_RATE, MODEM_FRAG, ops);
+	CHECK(modem.dp != NULL, "Bell probe caller did not initialize");
+	for (unsigned at = 0; at < 3u * MODEM_RATE; at += fragment) {
+		unsigned count = fragment;
+		if (count > 3u * MODEM_RATE - at)
+			count = 3u * MODEM_RATE - at;
+		for (unsigned i = 0; i < count; ++i) {
+			unsigned sample = at + i;
+			if (reply_at != 0 && sample >= reply_at) {
+				/* An automode answerer selects Bell only after receiving
+				 * our calling mark. It sends raw bytes before we CONNECT. */
+				unsigned start = reply_at + MODEM_RATE * 300u / 1000u;
+				unsigned bit_index = sample >= start ?
+					(sample - start) * 300u / MODEM_RATE : UINT_MAX;
+				uint8_t bit = 1;
+				if (bit_index < sizeof(payload) * 10u) {
+					unsigned cell = bit_index % 10u;
+					bit = cell == 0 ? 0 : cell == 9 ? 1 :
+						(payload[bit_index / 10u] >> (cell - 1u)) & 1u;
+				}
+				CHECK(fsk_tone_generator_sample(&answer, bit, &receive[i]) == FSK_OK,
+				      "Bell answer generation failed");
+			} else {
+				CHECK(single_tone_transmitter_sample(&probe, &receive[i]) == SINGLE_TONE_OK,
+				      "Bell probe generation failed");
+			}
+			if (fragment == 1)
+				receive[i] = g711_decode_pcmu(g711_encode_pcmu(receive[i]));
+			if (fragment == 7)
+				receive[i] = g711_decode_pcma(g711_encode_pcma(receive[i]));
+		}
+		int status = ops->process(modem.dp, receive, transmit, (int)count);
+		CHECK(status == DPSTAT_OK || status == DPSTAT_CONNECT,
+		      "Bell probe failed at %u", at);
+		for (unsigned i = 0; i < count; ++i) {
+			struct single_tone_event event;
+			CHECK(single_tone_detector_sample(&calling, transmit[i], &event) == SINGLE_TONE_OK,
+			      "Bell calling detector failed");
+			if (reply_at == 0 && event.kind == SINGLE_TONE_STARTED)
+				reply_at = at + i + MODEM_RATE * reply_delay_ms / 1000u;
+		}
+		if (status == DPSTAT_CONNECT) {
+			CHECK(!connected && reply_at != 0 && at > reply_at,
+			      "Bell probe connected before a real answer");
+			connected = true;
+			modem_async_start(&modem);
+			modem.put_bits = modem_async_put_bits;
+			modem.put_chars = capture_fsk_startup;
+		}
+	}
+	CHECK(connected && output.count == sizeof(payload) &&
+	      memcmp(output.bytes, payload, sizeof(payload)) == 0,
+	      "Bell probe lost early data: fragment=%u delay=%u bytes=%zu",
+	      fragment, reply_delay_ms, output.count);
+	CHECK(ops->delete(modem.dp) == 0, "Bell probe cleanup failed");
+	return true;
+}
+
+static bool test_bell103_probe_response(void)
+{
+	const unsigned fragments[] = { 1, 7, MODEM_FRAG };
+	const unsigned delays_ms[] = { 40, 120, 170, 240 };
+	for (unsigned f = 0; f < ARRAY_LENGTH(fragments); ++f)
+		for (unsigned d = 0; d < ARRAY_LENGTH(delays_ms); ++d)
+			CHECK(run_bell103_probe_response(fragments[f], delays_ms[d]),
+			      "Bell probe response failed");
+	return true;
+}
+
 static bool test_fsk_startup_carrier_withdrawal(void)
 {
 	const unsigned int fragments[] = { 1, 7, MODEM_FRAG };
@@ -5878,6 +5970,10 @@ int main(void)
 	if (!test_fsk300_mark_qualification())
 		return 1;
 	fprintf(stderr, "[       OK ] continuous 300-bit/s FSK mark qualification\n");
+	fprintf(stderr, "[ RUN      ] Bell 103 automode probe response\n");
+	if (!test_bell103_probe_response())
+		return 1;
+	fprintf(stderr, "[       OK ] Bell 103 automode probe response\n");
 	fprintf(stderr, "[ RUN      ] raw FSK startup carrier withdrawal\n");
 	if (!test_fsk_startup_carrier_withdrawal())
 		return 1;

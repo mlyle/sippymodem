@@ -95,6 +95,7 @@ _Static_assert((int)FSK300_BIT_RATE ==
 enum fsk300_training_state {
 	FSK300_TRAINING_WAIT_MARK,
 	FSK300_TRAINING_GUARD,
+	FSK300_TRAINING_PROBE_MARK,
 	FSK300_TRAINING_SEND_MARK,
 	FSK300_TRAINING_ONLINE,
 };
@@ -154,6 +155,8 @@ static struct fsk300_datapump *fsk300_from_dp(struct dp *dp)
 	datapump = dp->dp_data;
 	if (&datapump->dp != dp || datapump->profile == NULL ||
 	    datapump->profile->id != dp->id ||
+	    (datapump->training_state == FSK300_TRAINING_PROBE_MARK &&
+	     (dp->id != DP_B103 || !datapump->originator)) ||
 	    datapump->startup_count > sizeof(datapump->startup_bits) ||
 	    datapump->carrier_return_samples >
 		    FSK300_CARRIER_RETURN_SAMPLES ||
@@ -295,7 +298,8 @@ static int receive_samples(
 				&measurement, FSK300_MIN_LINE_POWER,
 				FSK300_MIN_DOMINANCE_Q8) ?
 				datapump->remote_mark_samples + 1u : 0;
-		} else if (datapump->training_state == FSK300_TRAINING_SEND_MARK) {
+		} else if (datapump->training_state == FSK300_TRAINING_SEND_MARK ||
+			   datapump->training_state == FSK300_TRAINING_PROBE_MARK) {
 			struct fsk_measurement measurement =
 				fsk_receiver_measure(&datapump->receiver);
 			uint64_t strongest = measurement.mark_power > measurement.space_power ?
@@ -317,6 +321,7 @@ static int receive_samples(
 			}
 		}
 		if ((datapump->training_state == FSK300_TRAINING_GUARD ||
+		     datapump->training_state == FSK300_TRAINING_PROBE_MARK ||
 		     (datapump->profile->id == DP_B103 && !datapump->originator &&
 		      datapump->training_state == FSK300_TRAINING_SEND_MARK)) &&
 		    datapump->previous_sample <= 0 && receive[index] > 0)
@@ -362,18 +367,19 @@ static int advance_training(
 			       TRAINING_SESSION_OK ?
 			       DPSTAT_OK : DPSTAT_ERROR;
 	}
-	if (datapump->training_state == FSK300_TRAINING_GUARD) {
+	if (datapump->training_state == FSK300_TRAINING_GUARD ||
+	    datapump->training_state == FSK300_TRAINING_PROBE_MARK) {
 		datapump->training_state_samples += count;
 		if (datapump->training_state_samples < FSK300_GUARD_SAMPLES)
 			return DPSTAT_OK;
 		if (datapump->profile->id == DP_B103) {
-			/* The one-symbol FSK detector also accepts the nearby
-			 * 2250 Hz answer probe. Use the existing silent guard to
-			 * check mark frequency, allowing one crossing of phase
-			 * uncertainty as well as the frequency tolerance. */
+			/* A genuine Bell mark can proceed directly. Some automode
+			 * peers instead send 2250 Hz until we request Bell with
+			 * our calling mark; confirm their answer before connecting. */
 			if (!bell_mark_matches(datapump, BELL103_ANSWERER_MARK_HZ)) {
-				datapump->training_state = FSK300_TRAINING_WAIT_MARK;
-				datapump->remote_mark_samples = 0;
+				datapump->training_state = FSK300_TRAINING_PROBE_MARK;
+				datapump->training_state_samples = 0;
+				datapump->guard_crossings = 0;
 				return DPSTAT_OK;
 			}
 		}
