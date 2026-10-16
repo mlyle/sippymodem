@@ -28,9 +28,9 @@ enum {
 	 * retrain-silence ceiling. */
 	WEAK_UPSTREAM_GAIN_Q15 = 2400,
 	RETURNED_ECHO_DELAY = 5600,
-	RETURNED_ECHO_TAP_1 = RETURNED_ECHO_DELAY + 7,
 	RETURNED_ECHO_TAP_2 = RETURNED_ECHO_DELAY + 23,
-	RETURNED_ECHO_HISTORY = RETURNED_ECHO_TAP_2 + 1,
+	RETURNED_ECHO_HISTORY = RETURNED_ECHO_TAP_2 + 115,
+	SHIFTED_ECHO_DELAY = 1290,
 	SPREAD_ECHO_DELAY = 2967,
 	SPREAD_LINK_DELAY = 2136,
 	/* At 3429 symbols/s, 49 samples contain exactly 21 symbols. With the
@@ -53,6 +53,8 @@ enum returned_echo_mode {
 	RETURNED_ECHO_DC_BIASED_G711,
 	RETURNED_ECHO_WEAK_G711,
 	RETURNED_ECHO_SPREAD_G711,
+	RETURNED_ECHO_SHIFT_80_G711,
+	RETURNED_ECHO_SHIFT_114_G711,
 };
 
 enum upstream_channel_mode {
@@ -411,8 +413,12 @@ static int16_t history_sample(
 
 static int16_t returned_echo(
 	const int16_t history[RETURNED_ECHO_HISTORY], size_t write,
-	size_t fill, enum returned_echo_mode mode)
+	size_t fill, enum returned_echo_mode mode, unsigned int delay_shift)
 {
+	bool shifted = mode == RETURNED_ECHO_SHIFT_80_G711 ||
+		mode == RETURNED_ECHO_SHIFT_114_G711;
+	unsigned int delay = shifted ? SHIFTED_ECHO_DELAY : RETURNED_ECHO_DELAY;
+
 	if (mode == RETURNED_ECHO_SPREAD_G711) {
 		int32_t sample = 0;
 		for (unsigned int tap = 0; tap < 8u; ++tap)
@@ -424,24 +430,26 @@ static int16_t returned_echo(
 	int32_t sample = scale_q15(
 		history_sample(
 			history, RETURNED_ECHO_HISTORY, write, fill,
-			RETURNED_ECHO_DELAY),
+			delay + delay_shift),
 		11000);
 
 	sample += scale_q15(
 		history_sample(
 			history, RETURNED_ECHO_HISTORY, write, fill,
-			RETURNED_ECHO_TAP_1),
+			delay + 7u + delay_shift),
 		4500);
 	sample -= scale_q15(
 		history_sample(
 			history, RETURNED_ECHO_HISTORY, write, fill,
-			RETURNED_ECHO_TAP_2),
+			delay + 23u + delay_shift),
 		2200);
 	if (mode == RETURNED_ECHO_DC_BIASED ||
 	    mode == RETURNED_ECHO_DC_BIASED_G711)
 		sample += 1400;
 	if (mode == RETURNED_ECHO_WEAK_G711)
 		sample /= 8;
+	if (shifted)
+		sample /= 16;
 	return add_s16(sample);
 }
 
@@ -652,9 +660,12 @@ static bool run_pcm_pair(
 	bool analog_reconnected = false;
 	bool digital_reconnected = false;
 	bool post_retrain_data_enabled = false;
-	bool automatic_retrain = upstream_channel == UPSTREAM_CHANNEL_NOISE_BURST;
+	unsigned int echo_shift = echo_mode == RETURNED_ECHO_SHIFT_80_G711 ? 80u :
+		echo_mode == RETURNED_ECHO_SHIFT_114_G711 ? 114u : 0u;
+	bool automatic_retrain = upstream_channel == UPSTREAM_CHANNEL_NOISE_BURST ||
+		echo_shift != 0u;
 	bool automatic_downshift = automatic_retrain && pcm_upstream_max_drn == 0 &&
-		upstream_min_rate < upstream_max_rate;
+		upstream_min_rate < upstream_max_rate && echo_shift == 0u;
 	bool exercise_retrain = retrain_role != MODEM_PCM_ROLE_NONE || automatic_retrain;
 	/* Reserve payload time at the slowest supported upstream rate separately
 	 * from each training budget, which now includes nonzero DIL. */
@@ -759,7 +770,7 @@ static bool run_pcm_pair(
 			digital_receive = decode(law, digital_received_octet);
 			dropout_samples++;
 		}
-		if (automatic_retrain && retrain_requested &&
+		if (upstream_channel == UPSTREAM_CHANNEL_NOISE_BURST && retrain_requested &&
 		    noise_samples < noise_limit) {
 			/* A bounded physical disturbance after verified initial data.
 			 * Preserve network sample time and require automatic recovery;
@@ -778,10 +789,11 @@ static bool run_pcm_pair(
 				(int32_t)digital_receive +
 				returned_echo(
 					echo_history, echo_history_write,
-					echo_history_fill, echo_mode));
+					echo_history_fill, echo_mode,
+					retrain_requested ? echo_shift : 0u));
 		if (echo_mode == RETURNED_ECHO_DC_BIASED_G711 ||
 		    echo_mode == RETURNED_ECHO_WEAK_G711 ||
-		    echo_mode == RETURNED_ECHO_SPREAD_G711) {
+		    echo_mode == RETURNED_ECHO_SPREAD_G711 || echo_shift != 0u) {
 			/* The analogue return, echo and bias share one codec input. */
 			digital_received_octet = encode(law, digital_receive);
 			digital_receive = decode(law, digital_received_octet);
@@ -839,6 +851,12 @@ static bool run_pcm_pair(
 				rates.receive_baud > 0 && rates.transmit_bps == 0 && rates.receive_bps == 0;
 		}
 		if (retrain_requested) {
+			if (echo_shift != 0u) {
+				/* Observe a short exchange too, so falsely reporting its
+				 * corrupt receiver as recovered fails the exact-bit check. */
+				analog_reconnected |= analog.tx_rate < upstream_max_rate;
+				digital_reconnected |= digital.rx_rate < upstream_max_rate;
+			}
 			if (automatic_downshift) {
 				CHECK(analog_dp->status == DPSTAT_CONNECT &&
 				      digital_dp->status == DPSTAT_CONNECT,
@@ -966,7 +984,7 @@ static bool run_pcm_pair(
 	       digital_bits.received_bits >= minimum_received_bits),
 	      "V.90 role %u did not complete local and remote retrain",
 	      (unsigned int)retrain_role);
-	CHECK(!automatic_retrain || noise_samples == noise_limit,
+	CHECK(upstream_channel != UPSTREAM_CHANNEL_NOISE_BURST || noise_samples == noise_limit,
 	      "quality recovery did not consume the complete noise burst");
 	CHECK(upstream_channel != UPSTREAM_CHANNEL_RETRAIN_DROPOUT ||
 	      dropout_samples == RETRAIN_DROPOUT_SAMPLES,
@@ -1055,6 +1073,32 @@ static bool test_upstream_quality_downshift(void)
 				true, MODEM_PCM_ROLE_NONE, false, UNITY_GAIN_Q15,
 				RETURNED_ECHO_NONE, UPSTREAM_CHANNEL_NOISE_BURST),
 			      "law %u protocol %u did not downshift after noise", law, protocols[index]);
+	return true;
+}
+
+static bool test_corrupted_upstream_b1_recovery(void)
+{
+	const enum DP_ID protocols[] = { DP_V90, DP_V92 };
+	const struct {
+		enum g711_law law;
+		enum returned_echo_mode echo;
+	} channels[] = {
+		{ G711_LAW_PCMU, RETURNED_ECHO_SHIFT_80_G711 },
+		{ G711_LAW_PCMU, RETURNED_ECHO_SHIFT_114_G711 },
+		{ G711_LAW_PCMA, RETURNED_ECHO_SHIFT_114_G711 },
+	};
+
+	/* A weak return can move after clean initial data. The short downshift
+	 * then completes with a corrupted B1. It must recover through full
+	 * training before exposing a new host-data epoch. */
+	for (size_t protocol = 0; protocol < ARRAY_LENGTH(protocols); ++protocol)
+		for (size_t channel = 0; channel < ARRAY_LENGTH(channels); ++channel)
+			CHECK(run_pcm_pair(protocols[protocol], 0, channels[channel].law,
+				      49333, 26400, 28800, 26400, 3200,
+				      MAXIMUM_RATE_RECEIVED_BITS, true, MODEM_PCM_ROLE_NONE,
+				      false, 16384, channels[channel].echo, UPSTREAM_CHANNEL_CLEAN),
+			      "protocol %u law %u did not recover a corrupted B1",
+			      protocols[protocol], channels[channel].law);
 	return true;
 }
 
@@ -1994,6 +2038,7 @@ int main(void)
 		{ "cleardown before CONNECT", test_training_cleardown },
 		{ "automatic upstream quality recovery", test_upstream_quality_recovery },
 		{ "automatic upstream quality downshift", test_upstream_quality_downshift },
+		{ "corrupted upstream B1 recovery", test_corrupted_upstream_b1_recovery },
 		{ "long-delay upstream channel",
 		  test_delayed_upstream_channel },
 		{ "attenuated maximum-rate upstream",

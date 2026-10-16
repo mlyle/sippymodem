@@ -1020,7 +1020,7 @@ enum v34_call_result v34_call_sample(
 			const struct v34_data_receiver *b1 = &call->state.phase4.receive
 				.semantic.data.data_receiver.data_receiver;
 
-			if (4u * b1->b1_error_bits > b1->b1_received_bits)
+			if (!v34_data_receiver_b1_is_qualified(b1))
 				retrain_requested = true;
 		}
 		if (result == V34_CALL_OK &&

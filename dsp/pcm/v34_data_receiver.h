@@ -32,6 +32,10 @@ bool v34_data_receiver_is_valid(
 	const struct v34_data_receiver *receiver);
 bool v34_data_receiver_is_receiving_b1(
 	const struct v34_data_receiver *receiver);
+/* Inspect completed B1 counters of a validated receiver, allowing a bounded
+ * acquisition tail without walking its decoder graph again. */
+bool v34_data_receiver_b1_is_qualified(
+	const struct v34_data_receiver *receiver);
 
 /* Receive one exact decided mapping frame. B1 results expose the known all-one
  * payload while counting non-one decisions without changing the physical

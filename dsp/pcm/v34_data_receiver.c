@@ -90,6 +90,16 @@ bool v34_data_receiver_is_receiving_b1(
 	       receiver->b1_active;
 }
 
+bool v34_data_receiver_b1_is_qualified(
+	const struct v34_data_receiver *receiver)
+{
+	/* B1 can include the acquisition boundary. More than one eighth of
+	 * its known bits being wrong cannot qualify an online data receiver. */
+	return receiver != NULL && !receiver->b1_active &&
+	       receiver->b1_received_bits != 0u &&
+	       8u * receiver->b1_error_bits <= receiver->b1_received_bits;
+}
+
 static uint16_t b1_error_count(
 	const struct v34_received_mapping_frame *received)
 {

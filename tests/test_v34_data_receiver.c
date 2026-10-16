@@ -550,6 +550,44 @@ static bool test_validation(void)
 	return true;
 }
 
+static bool test_b1_qualification(void)
+{
+	CHECK(!v34_data_receiver_b1_is_qualified(NULL),
+	      "absent B1 receiver qualified");
+	for (size_t index = 0; index < ARRAY_LENGTH(CONFIGURATIONS); ++index) {
+		struct fixture fixture;
+		struct packet packet;
+		struct v34_received_mapping_frame received;
+
+		CHECK(initialize_fixture(&fixture, &CONFIGURATIONS[index]),
+		      "qualification fixture did not initialize");
+		CHECK(!v34_data_receiver_b1_is_qualified(&fixture.receiver),
+		      "unfinished B1 qualified");
+		while (fixture.receiver.b1_active) {
+			CHECK(transmit_uniform(&fixture, 1, &packet),
+			      "qualification B1 did not transmit");
+			enum v34_data_receive_result result =
+				v34_data_receiver_receive_mapping_frame(
+					&fixture.receiver, packet.decided, &received);
+			CHECK(result == V34_DATA_RECEIVE_B1_IN_PROGRESS ||
+			      result == V34_DATA_RECEIVE_B1_COMPLETE,
+			      "qualification B1 did not decode");
+		}
+		CHECK(v34_data_receiver_b1_is_qualified(&fixture.receiver),
+		      "clean completed B1 rejected");
+		fixture.receiver.b1_error_bits = fixture.receiver.b1_received_bits / 8u;
+		CHECK(v34_data_receiver_b1_is_qualified(&fixture.receiver),
+		      "bounded B1 acquisition errors rejected");
+		fixture.receiver.b1_error_bits++;
+		CHECK(!v34_data_receiver_b1_is_qualified(&fixture.receiver),
+		      "corrupted B1 qualified");
+		fixture.receiver.b1_received_bits = 0u;
+		CHECK(!v34_data_receiver_b1_is_qualified(&fixture.receiver),
+		      "empty B1 qualified");
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -558,6 +596,7 @@ int main(void)
 	} tests[] = {
 		{ "B1 and superframe handoff", test_b1_and_superframe_handoff },
 		{ "B1 errors and rejection", test_b1_errors_and_rejection },
+		{ "completed B1 qualification", test_b1_qualification },
 		{ "B1 schedule continuity", test_b1_schedule_continuity },
 		{ "disjoint receive regions", test_disjoint_receive_regions },
 		{ "validation", test_validation },

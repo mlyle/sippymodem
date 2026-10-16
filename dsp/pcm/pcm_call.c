@@ -5306,6 +5306,21 @@ static enum pcm_call_result data_octet_owned(
 	}
 	if (result == PCM_CALL_SOURCE_FAILURE)
 		return result;
+	/* Carrier remains asserted during a short rate exchange. Inspect B1
+	 * only after that exchange and both physical directions finish; before
+	 * then the upstream union can still own its startup receiver. A peer
+	 * retrain candidate owns its guard first. Recheck B1 if it goes away. */
+	if (result == PCM_CALL_OK && !retrain_candidate &&
+	    pcm_call_uses_conventional_upstream(call) &&
+	    call->local_role == V90_DIGITAL_MODEM &&
+	    call->stage == PCM_CALL_DATA_PATH &&
+	    !call->state.data_path.digital.rate_renegotiation_active &&
+	    data_path_is_online_owned(call) &&
+	    !v34_data_receiver_b1_is_qualified(&call->state.data_path.digital
+		    .upstream.data.decisions.data_receiver.data_receiver)) {
+		emitted = (struct pcm_call_data_event){ 0 };
+		result = begin_retrain(call, false);
+	}
 	result = recover_rate_renegotiation_failure(call, result);
 	if (result == PCM_CALL_OK && pcm_call_uses_conventional_upstream(call) &&
 	    call->stage == PCM_CALL_DATA_PATH &&
