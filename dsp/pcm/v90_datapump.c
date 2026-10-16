@@ -15,6 +15,7 @@
 #include "v34_data_quality.h"
 #include "v34_datapump.h"
 #include "pcm_host_echo.h"
+#include "v34_echo_timing.h"
 #include "v90_info1.h"
 #include "v90_mp.h"
 #include "v90_profile.h"
@@ -48,6 +49,7 @@ struct v90_datapump {
 	bool host_echo_margin_evaluated;
 	bool host_echo_delay_seeded;
 	bool upstream_quality_ready;
+	struct v34_echo_timing echo_timing;
 };
 
 static struct dp *create_v90(
@@ -548,12 +550,10 @@ bool v90_datapump_start_fast_exchange(struct dp *dp)
 	return start_parameter_exchange(dp, true, false);
 }
 
-static bool observe_upstream_quality(struct v90_datapump *datapump)
+static struct v34_data_line_receiver *upstream_data_receiver(
+	struct v90_datapump *datapump)
 {
 	struct v90_digital_path *path = &datapump->call.state.data_path.digital;
-	struct v34_data_quality next = datapump->upstream_quality;
-	struct v34_data_line_receiver *receiver;
-	enum v34_data_quality_result result;
 
 	/* Both sessions share the conventional V.34 upstream receiver. Do not
 	 * carry a quality baseline across CP/E/B1, rate renegotiation or full
@@ -564,11 +564,21 @@ static bool observe_upstream_quality(struct v90_datapump *datapump)
 	    !training_session_is_online(&datapump->training) ||
 	    path->rate_renegotiation_active || path->cleardown_requested ||
 	    path->upstream_stage != V90_DIGITAL_PATH_UPSTREAM_DATA ||
-	    path->downstream_stage != V90_DIGITAL_PATH_DOWNSTREAM_DATA) {
+	    path->downstream_stage != V90_DIGITAL_PATH_DOWNSTREAM_DATA)
+		return NULL;
+	return &path->upstream.data;
+}
+
+static bool observe_upstream_quality(struct v90_datapump *datapump)
+{
+	struct v34_data_quality next = datapump->upstream_quality;
+	struct v34_data_line_receiver *receiver = upstream_data_receiver(datapump);
+	enum v34_data_quality_result result;
+
+	if (receiver == NULL) {
 		datapump->upstream_quality_ready = false;
 		return true;
 	}
-	receiver = &path->upstream.data;
 	if (!datapump->upstream_quality_ready) {
 		if (v34_data_quality_start(
 			    &next, receiver->geometry.symbol_rate,
@@ -1028,6 +1038,12 @@ static int process_v90_g711(
 		enum pcm_host_echo_mode echo_mode = host_echo_mode(datapump);
 		int16_t cleaned_sample = receive_samples[index];
 		uint8_t pcm_transmit;
+		struct v34_line_receiver before;
+		struct v34_data_line_receiver *data = upstream_data_receiver(datapump);
+		bool observe_echo = data != NULL &&
+			(received_mask == NULL || received_mask[index]);
+		if (observe_echo)
+			before = data->line;
 
 		/* An accepted hangup owns the line until its bounded protocol
 		 * tail drains, even if the original CONNECT deadline expires. */
@@ -1058,6 +1074,16 @@ static int process_v90_g711(
 			return DPSTAT_DISCONNECT;
 		}
 		if (datapump->host_echo != NULL) {
+			data = upstream_data_receiver(datapump);
+			if (observe_echo && data != NULL) {
+				v34_echo_timing_prepare(&datapump->echo_timing,
+					datapump->host_echo, echo_mode, &before, &data->decisions,
+					receive_samples[index], cleaned_sample);
+				v34_echo_timing_observe(&datapump->echo_timing,
+					datapump->host_echo, &data->line);
+			} else {
+				v34_echo_timing_reset(&datapump->echo_timing);
+			}
 			if (pcm_host_echo_advance_predicted(
 				    datapump->host_echo, echo_mode,
 				    receive_samples[index], cleaned_sample,

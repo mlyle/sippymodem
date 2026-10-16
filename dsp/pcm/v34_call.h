@@ -7,6 +7,7 @@
 #include "v34_phase3_exchange.h"
 #include "v34_phase4_exchange.h"
 #include "pcm_host_echo.h"
+#include "v34_echo_timing.h"
 #include "v34_cleardown.h"
 
 #include <stdbool.h>
@@ -79,6 +80,7 @@ struct v34_call_observation {
 struct v34_call {
 	union v34_call_state state;
 	struct pcm_host_echo echo;
+	struct v34_echo_timing echo_timing;
 	struct v34_data_startup_preparation data_preparation;
 	union v34_local_info1 local_info1;
 	struct v34_info0 local_info0;

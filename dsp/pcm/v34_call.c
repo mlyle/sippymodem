@@ -953,6 +953,15 @@ static enum v34_call_result reset_retrain_detector(struct v34_call *call)
 	return V34_CALL_OK;
 }
 
+static const struct v34_phase34_receiver *data_receiver(const struct v34_call *call)
+{
+	if (call->stage != V34_CALL_PHASE4 ||
+	    call->state.phase4.receive.stage != V34_PHASE34_RECEIVER_DATA ||
+	    call->state.phase4.receive.data_erasure)
+		return NULL;
+	return &call->state.phase4.receive;
+}
+
 enum v34_call_result v34_call_sample(
 	struct v34_call *call, int16_t received_sample,
 	v34_mapping_frame_source source, void *source_context,
@@ -967,6 +976,8 @@ enum v34_call_result v34_call_sample(
 	enum pcm_host_echo_mode echo_mode;
 	bool echo_advanced;
 	bool retrain_requested = false;
+	struct v34_line_receiver before;
+	bool observe_echo;
 
 	if (!v34_call_is_valid(call) || transmit_sample == NULL ||
 	    observation == NULL || received == NULL ||
@@ -994,6 +1005,10 @@ enum v34_call_result v34_call_sample(
 		call->failed = true;
 		return V34_CALL_NUMERIC_FAILURE;
 	}
+	const struct v34_phase34_receiver *data = data_receiver(call);
+	observe_echo = data != NULL;
+	if (observe_echo)
+		before = data->line;
 	switch (call->stage) {
 	case V34_CALL_PHASE2:
 		result = sample_phase2(
@@ -1047,6 +1062,14 @@ enum v34_call_result v34_call_sample(
 	}
 	if (result == V34_CALL_OK && peer_s_has_timed_out(call, &emitted))
 		retrain_requested = true;
+	data = data_receiver(call);
+	if (result == V34_CALL_OK && observe_echo && data != NULL) {
+		v34_echo_timing_prepare(&call->echo_timing, &call->echo, echo_mode,
+			&before, &data->semantic.data, received_sample, conditioned);
+		v34_echo_timing_observe(&call->echo_timing, &call->echo, &data->line);
+	} else {
+		v34_echo_timing_reset(&call->echo_timing);
+	}
 	echo_advanced = pcm_host_echo_advance_predicted(
 		&call->echo, echo_mode, received_sample, conditioned,
 		generated) == PCM_HOST_ECHO_OK;

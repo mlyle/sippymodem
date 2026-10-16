@@ -896,6 +896,41 @@ static bool test_retained_delay_tracking(int shift, bool unrelated)
 	return true;
 }
 
+static bool test_explicit_retime(void)
+{
+	struct pcm_host_echo echo, saved;
+	size_t start;
+
+	CHECK(pcm_host_echo_retime(NULL, 80) == PCM_HOST_ECHO_INVALID_ARGUMENT &&
+	      pcm_host_echo_init(&echo) == PCM_HOST_ECHO_OK,
+	      "explicit timing contract setup failed");
+	saved = echo;
+	CHECK(pcm_host_echo_retime(&echo, 80) == PCM_HOST_ECHO_INVALID_STATE &&
+	      memcmp(&echo, &saved, sizeof(echo)) == 0,
+	      "unqualified timing request changed the owner");
+	CHECK(train_retained_echo(&echo, &start), "explicit timing training failed");
+	saved = echo;
+	const int invalid[] = { 0, INT_MIN, INT_MAX,
+		-PCM_HOST_ECHO_TIMING_RADIUS - 1, PCM_HOST_ECHO_TIMING_RADIUS + 1 };
+	for (unsigned i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i)
+		CHECK(pcm_host_echo_retime(&echo, invalid[i]) == PCM_HOST_ECHO_INVALID_ARGUMENT &&
+		      memcmp(&echo, &saved, sizeof(echo)) == 0,
+		      "invalid timing request changed retained evidence");
+	CHECK(pcm_host_echo_retime(&echo, 80) == PCM_HOST_ECHO_OK &&
+	      echo.retained_delay_samples == saved.retained_delay_samples + 80 &&
+	      echo.window_delay_samples == saved.window_delay_samples &&
+	      echo.train_samples == saved.train_samples &&
+	      memcmp(&echo.reference, &saved.reference, sizeof(echo.reference)) == 0 &&
+	      memcmp(echo.coefficients, saved.coefficients, sizeof(echo.coefficients)) == 0 &&
+	      memcmp(echo.retained_coefficients, saved.retained_coefficients,
+		     sizeof(echo.retained_coefficients)) == 0 && pcm_host_echo_is_valid(&echo),
+	      "explicit timing discarded transmit history or changed either response");
+	CHECK(pcm_host_echo_retime(&echo, -80) == PCM_HOST_ECHO_OK &&
+	      echo.retained_delay_samples == saved.retained_delay_samples,
+	      "explicit timing could not restore its original delay");
+	return true;
+}
+
 static bool test_training_quiet_boundary(void)
 {
 	for (unsigned scenario = 0; scenario < 3; ++scenario) {
@@ -1234,7 +1269,7 @@ int main(void)
 		if (!test_unrelated_input_does_not_train(
 			UINT32_C(0x31415927) + trial * 7919u, trial % 2 ? 30000 : 1000))
 			return 1;
-	if (!test_contracts() || !test_training_quiet_boundary() ||
+	if (!test_contracts() || !test_explicit_retime() || !test_training_quiet_boundary() ||
 	    !test_half_sample_prediction() ||
 	    !test_prediction_energy_saturation() ||
 	    !test_long_delay_cancellation() ||

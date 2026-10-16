@@ -3065,6 +3065,7 @@ V34_PHASE2_TEST_OBJECTS := \
 V34_CALL_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v34_call.o \
 	$(BUILD_DIR)/v34_call.o \
+	$(BUILD_DIR)/v34_echo_timing.o \
 	$(BUILD_DIR)/v34_cleardown.o \
 	$(BUILD_DIR)/pcm_host_echo.o \
 	$(BUILD_DIR)/pcm_echo_reference.o \
@@ -4640,7 +4641,7 @@ $(V92_PROFILE_TEST_BINARY): $(V92_PROFILE_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V90_DATAPUMP_TEST_BINARY): $(V90_DATAPUMP_TEST_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^ -lm
+	$(CC) $(LDFLAGS) -Wl,--wrap=v34_echo_timing_prepare -o $@ $^ -lm
 
 $(V34_PHASE2_DPSK_TEST_BINARY): $(V34_PHASE2_DPSK_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
@@ -5198,6 +5199,10 @@ $(BUILD_DIR)/v34_precoder_trainer.o: \
 
 $(BUILD_DIR)/v34_data_quality.o: \
 	$(DSP_PCM_SOURCE_DIR)/v34_data_quality.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v34_echo_timing.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_echo_timing.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v34_rate_profile.o: \

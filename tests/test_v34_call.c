@@ -41,6 +41,7 @@ struct endpoint {
 	unsigned int mapping_frames_received;
 	uint32_t transmit_primary_bits;
 	uint32_t receive_primary_bits;
+	uint32_t receive_errors;
 	uint32_t phase3_trn_symbols;
 	uint32_t phase3_transmit_samples;
 	uint32_t mapping_pattern_seed;
@@ -50,6 +51,7 @@ struct endpoint {
 	uint8_t transmit_bit;
 	bool generated_mapping_frames;
 	bool verify_mapping_frames;
+	bool allow_receive_errors;
 	bool entered_phase3;
 	bool entered_phase4;
 	bool suppress_failure_diagnostic;
@@ -312,8 +314,11 @@ static bool accept_mapping_frame(
 			      (uint8_t)(mixed >> 31) :
 			      (uint8_t)(endpoint->transmit_bit ^ 1u);
 
-		if (received->primary_bits[index] != bit)
-			return false;
+		if (received->primary_bits[index] != bit) {
+			if (!endpoint->allow_receive_errors)
+				return false;
+			endpoint->receive_errors++;
+		}
 		if (endpoint->primary_idle_bits_remaining != 0) {
 			endpoint->primary_idle_bits_remaining--;
 		} else {
@@ -451,15 +456,17 @@ static int16_t mix_echo(int16_t remote, int16_t local, int16_t gain_q15)
 static int16_t self_echo_receive(
 	const struct self_echo *echo, int16_t remote)
 {
-	return mix_echo(remote, echo->samples[echo->cursor], echo->gain_q15);
+	if (echo->delay_samples == 0)
+		return remote;
+	size_t index = (echo->cursor + ECHO_DELAY_CAPACITY -
+		echo->delay_samples) % ECHO_DELAY_CAPACITY;
+	return mix_echo(remote, echo->samples[index], echo->gain_q15);
 }
 
 static void self_echo_transmit(struct self_echo *echo, int16_t local)
 {
-	if (echo->delay_samples == 0)
-		return;
 	echo->samples[echo->cursor] = local;
-	echo->cursor = (echo->cursor + 1u) % echo->delay_samples;
+	echo->cursor = (echo->cursor + 1u) % ECHO_DELAY_CAPACITY;
 }
 
 static void channel_receive(
@@ -732,6 +739,54 @@ static bool test_delayed_echo_calls(void)
 		CHECK(check_echo_call(V34_CALLING_STATION, law != 0, 3333, 1666) &&
 		      check_echo_call(V34_ANSWERING_STATION, law != 0, 3333, 1666),
 		      "law %u delayed return did not verify mapped data", law);
+	return true;
+}
+
+static bool test_weak_echo_delay_step(void)
+{
+	for (unsigned law = 0; law < 2; ++law) {
+		struct endpoint caller, answerer;
+		struct channel channel = { .pcma = law != 0 };
+		struct self_echo *echo = &channel.echo[V34_CALLING_STATION];
+
+		*echo = (struct self_echo){ .delay_samples = 256, .gain_q15 = 700 };
+		CHECK(endpoint_init_symmetric(&caller, V34_CALLING_STATION,
+			V34_SYMBOL_RATE_3200, 12) &&
+		      endpoint_init_symmetric(&answerer, V34_ANSWERING_STATION,
+			V34_SYMBOL_RATE_3200, 12) &&
+		      run_pair_until_frames(&caller, &answerer, &channel, 256),
+		      "weak echo setup failed for codec %u", law);
+		CHECK(pcm_host_echo_is_ready(&caller.call.echo),
+		      "weak echo did not qualify during training");
+		uint32_t delay = caller.call.echo.window_delay_samples;
+		for (unsigned i = 0; i < 8000; ++i) {
+			struct v34_call_observation c, a;
+			CHECK(channel_sample_pair(&channel, &caller, &answerer, &c, &a) &&
+			      caller.call.echo.window_delay_samples == delay,
+			      "stationary weak echo retimed or corrupted mapped data");
+		}
+		/* Keep the reference history intact: only the physical return's
+		 * delay changes. Continue checking the random stream's position
+		 * while allowing errors during the recovery interval. */
+		echo->delay_samples += 80;
+		caller.allow_receive_errors = true;
+		for (unsigned i = 0; i < 10000; ++i) {
+			struct v34_call_observation c, a;
+			CHECK(channel_sample_pair(&channel, &caller, &answerer, &c, &a),
+			      "delay step lost the data path for codec %u", law);
+		}
+		CHECK(caller.call.echo.window_delay_samples == delay + 80,
+		      "weak return did not follow delay step: codec %u, %u -> %u",
+		      law, delay, caller.call.echo.window_delay_samples);
+		caller.allow_receive_errors = false;
+		for (unsigned i = 0; i < 4000; ++i) {
+			struct v34_call_observation c, a;
+			CHECK(channel_sample_pair(&channel, &caller, &answerer, &c, &a),
+			      "recovered return corrupted mapped data for codec %u", law);
+		}
+		CHECK(v34_call_is_online(&caller.call) && v34_call_is_online(&answerer.call),
+		      "delay recovery required a retrain");
+	}
 	return true;
 }
 
@@ -2695,6 +2750,7 @@ int main(void)
 		{ "delayed PCMU and PCMA calls", test_delayed_calls },
 		{ "generated station echo", test_echo_calls },
 		{ "delayed station echo", test_delayed_echo_calls },
+		{ "weak echo delay step", test_weak_echo_delay_step },
 		{ "quiet training completion", test_quiet_training_completion },
 		{ "symmetric selected-rate calls", test_symmetric_calls },
 		{ "local and remote full retrain", test_full_retrain },

@@ -5,6 +5,7 @@
 #include <v92_profile.h>
 #include <v34_datapump.h>
 #include <v34_call.h>
+#include <v34_echo_timing.h>
 #include <datapump_link.h>
 
 #include <dc_remover.h>
@@ -75,6 +76,28 @@ struct bit_endpoint {
 	uint64_t mismatched_bits;
 	uint64_t first_mismatch_bit_plus_one;
 };
+
+/* Keep the corrupt-B1 guard regression's physical stimulus: the optional
+ * delay witness must not rescue it before the B1 check is exercised. */
+static bool echo_timing_enabled = true;
+
+extern bool __real_v34_echo_timing_prepare(struct v34_echo_timing *,
+	const struct pcm_host_echo *, enum pcm_host_echo_mode,
+	const struct v34_line_receiver *, const struct v34_data_decision_receiver *,
+	int16_t, int16_t);
+
+bool __wrap_v34_echo_timing_prepare(struct v34_echo_timing *timing,
+	const struct pcm_host_echo *echo, enum pcm_host_echo_mode mode,
+	const struct v34_line_receiver *receiver,
+	const struct v34_data_decision_receiver *data, int16_t received, int16_t cleaned)
+{
+	if (!echo_timing_enabled) {
+		v34_echo_timing_reset(timing);
+		return false;
+	}
+	return __real_v34_echo_timing_prepare(timing, echo, mode, receiver,
+		data, received, cleaned);
+}
 
 int modem_get_sreg(struct modem *modem, unsigned int number)
 {
@@ -662,6 +685,7 @@ static bool run_pcm_pair(
 	bool post_retrain_data_enabled = false;
 	unsigned int echo_shift = echo_mode == RETURNED_ECHO_SHIFT_80_G711 ? 80u :
 		echo_mode == RETURNED_ECHO_SHIFT_114_G711 ? 114u : 0u;
+	bool echo_retime_expected = echo_shift != 0u && echo_timing_enabled;
 	bool automatic_retrain = upstream_channel == UPSTREAM_CHANNEL_NOISE_BURST ||
 		echo_shift != 0u;
 	bool automatic_downshift = automatic_retrain && pcm_upstream_max_drn == 0 &&
@@ -851,7 +875,18 @@ static bool run_pcm_pair(
 				rates.receive_baud > 0 && rates.transmit_bps == 0 && rates.receive_bps == 0;
 		}
 		if (retrain_requested) {
-			if (echo_shift != 0u) {
+			if (echo_retime_expected) {
+				CHECK(analog_dp->status == DPSTAT_CONNECT &&
+				      digital_dp->status == DPSTAT_CONNECT &&
+				      analog.tx_rate == upstream_max_rate &&
+				      digital.rx_rate == upstream_max_rate,
+				      "weak echo correction entered retrain or reduced the rate");
+				/* The physical step is followed by a bounded idle interval.
+				 * Resume a new exact-bit pattern without asking either peer
+				 * to retrain or resetting its coding state. */
+				if (octet - retrain_start >= MODEM_RATE * 5u / 4u)
+					analog_reconnected = digital_reconnected = true;
+			} else if (echo_shift != 0u) {
 				/* Observe a short exchange too, so falsely reporting its
 				 * corrupt receiver as recovered fails the exact-bit check. */
 				analog_reconnected |= analog.tx_rate < upstream_max_rate;
@@ -982,7 +1017,7 @@ static bool run_pcm_pair(
 	      (retrain_requested && post_retrain_data_enabled &&
 	       analog_bits.received_bits >= minimum_received_bits &&
 	       digital_bits.received_bits >= minimum_received_bits),
-	      "V.90 role %u did not complete local and remote retrain",
+	      "V.90 role %u did not complete recovery",
 	      (unsigned int)retrain_role);
 	CHECK(upstream_channel != UPSTREAM_CHANNEL_NOISE_BURST || noise_samples == noise_limit,
 	      "quality recovery did not consume the complete noise burst");
@@ -1076,7 +1111,7 @@ static bool test_upstream_quality_downshift(void)
 	return true;
 }
 
-static bool test_corrupted_upstream_b1_recovery(void)
+static bool check_weak_echo_delay_recovery(bool correction)
 {
 	const enum DP_ID protocols[] = { DP_V90, DP_V92 };
 	const struct {
@@ -1088,18 +1123,31 @@ static bool test_corrupted_upstream_b1_recovery(void)
 		{ G711_LAW_PCMA, RETURNED_ECHO_SHIFT_114_G711 },
 	};
 
-	/* A weak return can move after clean initial data. The short downshift
-	 * then completes with a corrupted B1. It must recover through full
-	 * training before exposing a new host-data epoch. */
 	for (size_t protocol = 0; protocol < ARRAY_LENGTH(protocols); ++protocol)
-		for (size_t channel = 0; channel < ARRAY_LENGTH(channels); ++channel)
-			CHECK(run_pcm_pair(protocols[protocol], 0, channels[channel].law,
-				      49333, 26400, 28800, 26400, 3200,
+		for (size_t channel = 0; channel < ARRAY_LENGTH(channels); ++channel) {
+			echo_timing_enabled = correction;
+			bool passed = run_pcm_pair(protocols[protocol], 0, channels[channel].law,
+				      49333, 26400, 28800, correction ? 28800 : 26400, 3200,
 				      MAXIMUM_RATE_RECEIVED_BITS, true, MODEM_PCM_ROLE_NONE,
-				      false, 16384, channels[channel].echo, UPSTREAM_CHANNEL_CLEAN),
-			      "protocol %u law %u did not recover a corrupted B1",
+				      false, 16384, channels[channel].echo, UPSTREAM_CHANNEL_CLEAN);
+			echo_timing_enabled = true;
+			CHECK(passed, "protocol %u law %u did not recover from a weak echo step",
 			      protocols[protocol], channels[channel].law);
+		}
 	return true;
+}
+
+static bool test_weak_echo_delay_recovery(void)
+{
+	/* Retain the rate and coding state, then verify a new payload epoch. */
+	return check_weak_echo_delay_recovery(true);
+}
+
+static bool test_corrupted_upstream_b1_recovery(void)
+{
+	/* The short downshift's corrupted B1 requires full training before a
+	 * new host-data epoch. Keep the ordinary timing monitor enabled. */
+	return check_weak_echo_delay_recovery(false);
 }
 
 static bool run_pair_with_input_contract(
@@ -2039,6 +2087,7 @@ int main(void)
 		{ "automatic upstream quality recovery", test_upstream_quality_recovery },
 		{ "automatic upstream quality downshift", test_upstream_quality_downshift },
 		{ "corrupted upstream B1 recovery", test_corrupted_upstream_b1_recovery },
+		{ "weak echo delay recovery", test_weak_echo_delay_recovery },
 		{ "long-delay upstream channel",
 		  test_delayed_upstream_channel },
 		{ "attenuated maximum-rate upstream",

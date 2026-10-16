@@ -26,6 +26,9 @@ enum v34_line_receiver_result {
 struct v34_line_receiver {
 	struct v34_receive_timing timing;
 	struct v34_adaptive_equalizer equalizer;
+	/* Retain the last published signal observation across semantic resolve.
+	 * Its lineage identifies the observed state, not a reset generation. */
+	struct v34_adaptive_equalizer_observation latest_observation;
 	bool initialized;
 };
 

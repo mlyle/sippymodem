@@ -123,6 +123,12 @@ bool pcm_host_echo_has_weak_margin(const struct pcm_host_echo *echo);
 uint32_t pcm_host_echo_window_delay_samples(
 	const struct pcm_host_echo *echo);
 
+/* Reposition a qualified frozen model after independently confirmed timing
+ * evidence. Preserve its coefficients and TX history; reject an unavailable
+ * reference window without mutation. */
+enum pcm_host_echo_result pcm_host_echo_retime(
+	struct pcm_host_echo *echo, int delay_change_samples);
+
 /* Prediction is pure. TRAIN retains raw input while learning. FILTER keeps
  * coefficients frozen; independently qualified timing changes may reposition
  * the active model, including a retained model whose replacement is still

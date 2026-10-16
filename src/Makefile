@@ -181,6 +181,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v34_profile.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_rate_profile.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_data_quality.c \
+	$(DSP_PCM_SOURCE_DIR)/v34_echo_timing.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_4d_decoder.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_4d_encoder.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_data_receiver.c \

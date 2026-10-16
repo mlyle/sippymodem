@@ -575,6 +575,44 @@ static bool timing_is_qualified(
 	       wide_compare(wide_shift_left(improvement, 1), wide_from_u64(e->energy)) >= 0;
 }
 
+static enum pcm_host_echo_result retime_active_model(
+	struct pcm_host_echo *echo, int delay_change_samples)
+{
+	if (!echo->filter_ready && !echo->retained_delay_samples)
+		return PCM_HOST_ECHO_INVALID_STATE;
+	uint32_t active = echo->retained_delay_samples ?
+		echo->retained_delay_samples : echo->window_delay_samples;
+	int64_t delay = (int64_t)active + delay_change_samples;
+	if (delay_change_samples == 0 ||
+	    delay_change_samples < -PCM_HOST_ECHO_TIMING_RADIUS ||
+	    delay_change_samples > PCM_HOST_ECHO_TIMING_RADIUS ||
+	    delay <= 0 || delay > PCM_ECHO_REFERENCE_MAX_WINDOW_DELAY_SAMPLES)
+		return PCM_HOST_ECHO_INVALID_ARGUMENT;
+	if ((uint64_t)delay + PCM_HOST_ECHO_FILTER_TAPS - 1u > echo->reference.fill)
+		return PCM_HOST_ECHO_INVALID_STATE;
+	if (echo->retained_delay_samples)
+		echo->retained_delay_samples = (uint32_t)delay;
+	else {
+		if (pcm_echo_reference_start_scan(&echo->reference, (uint32_t)delay,
+				PCM_HOST_ECHO_FILTER_PRE_SAMPLES) != PCM_ECHO_REFERENCE_OK)
+			return PCM_HOST_ECHO_INVALID_STATE;
+		echo->window_delay_samples = (uint32_t)delay;
+	}
+	echo->filter_suspended = false;
+	memset(&echo->timing, 0, sizeof(echo->timing));
+	return PCM_HOST_ECHO_OK;
+}
+
+enum pcm_host_echo_result pcm_host_echo_retime(
+	struct pcm_host_echo *echo, int delay_change_samples)
+{
+	if (echo == NULL)
+		return PCM_HOST_ECHO_INVALID_ARGUMENT;
+	if (!header_is_valid(echo))
+		return PCM_HOST_ECHO_INVALID_STATE;
+	return retime_active_model(echo, delay_change_samples);
+}
+
 static bool finish_timing_window(struct pcm_host_echo *echo,
 	struct pcm_host_echo_timing_window *t, unsigned samples)
 {
@@ -645,24 +683,10 @@ static bool finish_timing_window(struct pcm_host_echo *echo,
 		};
 		/* Monitor the frozen model being subtracted. Its replacement's
 		 * acquisition window must keep its independent training state. */
-		uint32_t active_delay = echo->retained_delay_samples ?
-			echo->retained_delay_samples : echo->window_delay_samples;
-		int64_t delay = (int64_t)active_delay + best - radius;
-
 		/* Two disjoint windows must choose the same useful delay, and
 		 * the combined normalized correlation must be stronger still. */
 		if (timing_is_qualified(&combined, 2 * samples, 36) &&
-		    delay > 0 && delay <= PCM_ECHO_REFERENCE_MAX_WINDOW_DELAY_SAMPLES &&
-		    (uint64_t)delay + PCM_HOST_ECHO_FILTER_TAPS - 1 <= echo->reference.fill &&
-		    (echo->retained_delay_samples ||
-		     pcm_echo_reference_start_scan(&echo->reference, (uint32_t)delay,
-					   PCM_HOST_ECHO_FILTER_PRE_SAMPLES) == PCM_ECHO_REFERENCE_OK)) {
-			if (echo->retained_delay_samples)
-				echo->retained_delay_samples = (uint32_t)delay;
-			else
-				echo->window_delay_samples = (uint32_t)delay;
-			echo->filter_suspended = false;
-			memset(&echo->timing, 0, sizeof(echo->timing));
+		    retime_active_model(echo, (int)best - (int)radius) == PCM_HOST_ECHO_OK) {
 			return true;
 		}
 	}

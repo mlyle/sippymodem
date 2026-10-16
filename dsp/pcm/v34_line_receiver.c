@@ -117,6 +117,7 @@ enum v34_line_receiver_result v34_line_receiver_sample(
 	}
 	if (!v34_line_receiver_is_valid(receiver))
 		return V34_LINE_RECEIVER_NUMERIC_FAILURE;
+	receiver->latest_observation = generated;
 	*observation = generated;
 	return V34_LINE_RECEIVER_OBSERVATION_READY;
 }
