@@ -1736,7 +1736,7 @@ static bool test_v42_detection_deadline(void)
 			struct modem *m = create_compat_modem(&driver, "V.42 detection deadline");
 			struct dp dp = { .id = DP_V34, .modem = m };
 			unsigned tx_phase = 0, rx_phase = 0, tick;
-			unsigned deadline = caller || profiles[i].error_control ? 1500 : 750;
+			unsigned deadline = caller || profiles[i].error_control ? 3000 : 750;
 			uint32_t transmit_tail = 0;
 
 			CHECK(m != NULL, "detection deadline allocation failed");
@@ -9064,9 +9064,9 @@ static bool test_lapm_timer_follows_rate_changes(void)
 	modem_detector_start(m);
 	m->get_bits = modem_detector_get_bits;
 	timeout = m->bit_timer_func;
-	CHECK(m->bit_timer == 7200 &&
+	CHECK(m->bit_timer == 14400 &&
 	      modem_set_link_rates(m, 24000, m->rx_rate) == 0 &&
-	      m->bit_timer == 43200 && m->bit_timer_func == timeout,
+	      m->bit_timer == 86400 && m->bit_timer_func == timeout,
 	      "rate update altered the detector's remaining T400 interval");
 	modem_delete(m);
 	return true;
@@ -10063,6 +10063,54 @@ static bool test_v42_late_answer_detection(void)
 	return true;
 }
 
+static bool test_v42_late_protocol_after_retrain(void)
+{
+	struct modem_driver driver = {
+		.name = "late V.42 protocol", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	struct modem *m = create_compat_modem(&driver, "late V.42 protocol");
+	struct dp dp = { .id = DP_V22BIS, .modem = m };
+	uint8_t bits[12], marks[12], flags = 0x7e;
+
+	CHECK(m != NULL && modem_ec_init(m) == 0, "late protocol allocation failed");
+	m->dp = &dp;
+	m->caller = 1;
+	m->tx_rate = m->rx_rate = 2400;
+	m->cfg.ec = m->cfg.ec_detector = 1;
+	m->sregs[SREG_QUIET] = 1;
+	modem_dp_connected(m);
+	m->xmit.buf[0] = 'Z';
+	m->xmit.count = m->xmit.head = 1;
+	memset(marks, 1, sizeof(marks));
+	/* Recorded legacy peers start protocol flags after about 2.6 seconds
+	 * of active detection, with physical retraining between those spans. */
+	for (unsigned tick = 0; tick < 520; ++tick) {
+		/* Twelve bits per direction advance this 2400-bit/s link by 5 ms. */
+		CHECK(modem_get_bits(m, 1, bits, sizeof(bits)) == sizeof(bits) &&
+		      modem_put_bits(m, 1, marks, sizeof(marks)) == sizeof(marks),
+		      "late protocol duplex clock failed");
+		CHECK(m->get_bits == modem_detector_get_bits && m->xmit.count == 1,
+		      "detection abandoned the late peer at %u ms", tick * 5);
+		if (tick == 260) {
+			int remaining = m->bit_timer;
+
+			modem_dp_reconnected(m);
+			CHECK(m->bit_timer == remaining && m->get_bits == modem_detector_get_bits,
+			      "physical retraining renewed or abandoned detection");
+		}
+	}
+	CHECK(modem_put_bits(m, 8, &flags, 1) == 1 &&
+	      modem_put_bits(m, 8, &flags, 1) == 1 &&
+	      m->get_bits == modem_hdlc_get_bits && m->put_bits == modem_hdlc_put_bits &&
+	      m->cfg.ec && m->xmit.count == 1 && m->state == STATE_EC_ESTAB,
+	      "late protocol flags leaked into raw data or lost queued output");
+	m->dp = NULL;
+	modem_ec_exit(m);
+	modem_delete(m);
+	return true;
+}
+
 static bool test_v42_late_originator_detection(void)
 {
 	struct modem_driver driver = {
@@ -10555,6 +10603,7 @@ int main(void)
 		  test_call_progress_supports_independent_modems },
 		{ "V.42 partial reply at raw boundary", test_partial_adp_tail },
 		{ "V.42 late answer detection", test_v42_late_answer_detection },
+		{ "V.42 late protocol after retrain", test_v42_late_protocol_after_retrain },
 		{ "V.42 late originator detection", test_v42_late_originator_detection },
 		{ "V.42 early raw text", test_v42_raw_text_detection },
 		{ "LAPM peer raw fallback", test_lapm_raw_text_fallback },

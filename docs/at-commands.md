@@ -304,8 +304,9 @@ detection where the selected modulation supports it. These values do not
 select separate MNP implementations: the implemented error-control protocol
 is V.42 LAPM. Bell 103, V.21, V.23, and Baudot use their raw paths.
 
-When seeking error control, detection allows up to 1.5 seconds for a delayed
-V.42 request or reply over SIP. This is a compatibility extension to the
+When seeking error control, detection allows up to three seconds of active
+media for a delayed V.42 request, reply, or protocol flags over SIP. Physical
+retraining pauses this budget. This is a compatibility extension to the
 standard's 750-ms default. An explicit `\N0` answer retains 750 ms; valid
 negotiation completes early, and missing replies still cause bounded fallback
 or disconnection according to the selected policy. Convincing raw text also
