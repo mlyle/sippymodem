@@ -1499,7 +1499,8 @@ static bool test_constellation_cells(enum g711_law law, double gain)
 			int64_t error = samples[i] - encoded.u[i];
 			double distance = fmax(cells[i].lower - encoded.u[i],
 				fmax(encoded.u[i] - cells[i].upper, 0.0));
-			uint64_t weight = (uint64_t)(65536.0 /
+			uint64_t weight = rx.post_b1_frames == V92_PCM_RX_DELAY_FRAMES ?
+				UINT64_C(65536) : (uint64_t)(65536.0 /
 				(1.0 + rx.noise.relative_variance * samples[i] * samples[i]));
 
 			expected_error += (uint64_t)(error * error);

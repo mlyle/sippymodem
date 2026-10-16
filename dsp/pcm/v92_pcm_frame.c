@@ -1164,7 +1164,10 @@ static enum v92_pcm_frame_result decode_frame(
 			unsigned set = receiver->mapping.cpd.frame_constellation[symbol % V92_PCM_MAPPING_PHASES];
 			const struct v92_cpd_constellation *constellation = &receiver->mapping.cpd.constellation[set];
 			uint64_t minimum[2] = { UINT64_MAX, UINT64_MAX };
-			uint64_t weight = constellation_weight(receiver, samples[symbol]);
+			/* Cells already describe companding uncertainty. After the B1u
+			 * tail drains, score the remaining input distance uniformly. */
+			uint64_t weight = receiver->post_b1_frames == V92_PCM_RX_DELAY_FRAMES ?
+				UINT64_C(65536) : constellation_weight(receiver, samples[symbol]);
 
 			for (int eta = -(int)constellation->count; eta < constellation->count; ++eta) {
 				uint64_t cost = cell_metric(cells + symbol, signed_point(constellation, eta),
