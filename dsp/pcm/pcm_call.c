@@ -1495,6 +1495,7 @@ static enum pcm_call_result retry_v92_upstream(struct pcm_call *call, bool backo
 	uint8_t previous = call->v92_upstream_retry_ceiling;
 	uint8_t previous_step = call->v92_upstream_retry_step;
 	uint8_t rate = path->upstream.decoder.mapping.cpd.data_rate_number;
+	bool conventional = false;
 	enum pcm_call_result result;
 	bool lower = backoff && rate > 1u && (path->fast.stage == PCM_CALL_V92_FAST_IDLE || path->fast.b1_started) &&
 		call->v92_digital_phase4_configuration.upstream_selection == PCM_CALL_V92_UPSTREAM_DIRECT;
@@ -1507,11 +1508,23 @@ static enum pcm_call_result retry_v92_upstream(struct pcm_call *call, bool backo
 			&call->pcm_upstream_quality);
 		if (quality != V92_DATA_QUALITY_RETRAIN)
 			return quality == V92_DATA_QUALITY_EXHAUSTED ? PCM_CALL_FAILED : PCM_CALL_NUMERIC_FAILURE;
+		conventional = backoff && rate == 1u && call->b1_deadline_armed &&
+			call->v92_digital_phase4_configuration.upstream_selection == PCM_CALL_V92_UPSTREAM_DIRECT &&
+			call->pcm_upstream_quality.automatic_retrains == V92_DATA_QUALITY_MAX_RETRAINS;
+		/* Spend the last minimum-rate B1 recovery on V.34 upstream.
+		 * Full retrain sends fresh INFO1d without PCM permission, so the
+		 * peer can retain PCM downstream and send conventional INFO1a.
+		 * Fixed mappings and missing media do not select this fallback. */
+		if (conventional) {
+			call->local_info1.v92_digital.pcm_upstream_supported = false;
+			call->v92_upstream_retry_ceiling = 0u;
+			call->v92_upstream_retry_step = 0u;
+		}
 	}
 
 	/* Preserve earlier rate ceilings. Fast exchange can lower the rate only
-	 * after its new B1u starts. At the minimum rate, retraining can still
-	 * replace a transiently damaged fit without changing caller policy. */
+	 * after its new B1u starts. One minimum-rate retry can replace a
+	 * transiently damaged fit before trying conventional upstream. */
 	if (lower && (previous == 0u || rate <= previous)) {
 		unsigned step = call->b1_deadline_armed && previous_step ? previous_step : 1u;
 
@@ -1526,6 +1539,8 @@ static enum pcm_call_result retry_v92_upstream(struct pcm_call *call, bool backo
 	if (result != PCM_CALL_OK) {
 		call->v92_upstream_retry_ceiling = previous;
 		call->v92_upstream_retry_step = previous_step;
+		if (conventional)
+			call->local_info1.v92_digital.pcm_upstream_supported = true;
 	}
 	return result;
 }

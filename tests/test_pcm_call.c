@@ -8834,6 +8834,95 @@ static bool test_v92_no_path_recovery(void)
 	return run_v92_no_path_recovery(G711_LAW_PCMU) && run_v92_no_path_recovery(G711_LAW_PCMA);
 }
 
+
+static bool v92_minimum_policy_contracts(const struct pcm_call *boundary)
+{
+	CHECK(boundary->b1_deadline_armed &&
+	      boundary->state.data_path.v92_digital.upstream.decoder.mapping.cpd.data_rate_number == 1u,
+	      "minimum-rate policy requires an unfinished B1u");
+	for (unsigned fixed = 0u; fixed < 2u; ++fixed)
+		for (unsigned missing = 0u; missing < 2u; ++missing)
+			for (unsigned budget = 0u; budget <= V92_DATA_QUALITY_MAX_RETRAINS; ++budget) {
+				struct pcm_call call = *boundary;
+				struct pcm_call_data_event event;
+				uint8_t transmitted;
+
+				if (fixed) {
+					struct v92_cpd_parameters cpd = call.state.data_path.v92_digital
+						.upstream.decoder.mapping.cpd;
+
+					call.v92_digital_phase4_configuration.upstream_selection =
+						PCM_CALL_V92_UPSTREAM_CONFIGURED;
+					call.v92_digital_phase4_configuration.cpd = cpd;
+				}
+				call.pcm_upstream_quality.automatic_retrains = budget;
+				CHECK(arm_v92_quality_failure(&call, missing ? 3u : 0u) &&
+				      pcm_call_is_valid(&call), "minimum-rate policy fixture is invalid");
+				enum pcm_call_result result = pcm_call_data_octet(&call,
+					silence_octet(call.law), 0, true, NULL, &transmitted, &event);
+				bool available = budget < V92_DATA_QUALITY_MAX_RETRAINS;
+				bool fallback = available && !fixed && !missing &&
+					budget + 1u >= V92_DATA_QUALITY_MAX_RETRAINS;
+				bool recover = available || fallback;
+
+				CHECK(result == (recover ? PCM_CALL_OK : PCM_CALL_FAILED) &&
+				      pcm_call_is_valid(&call) && event.kind == PCM_CALL_DATA_NONE &&
+				      call.local_info1.v92_digital.pcm_upstream_supported == !fallback &&
+				      call.pcm_upstream_quality.automatic_retrains == budget + available &&
+				      call.protocol == PCM_PROTOCOL_V92 &&
+				      call.enabled_downstream_rate_mask == boundary->enabled_downstream_rate_mask &&
+				      (recover ? call.stage == PCM_CALL_RETRAIN_SILENCE : call.failed),
+				      "minimum-rate recovery changed fixed mapping, media-loss handling, "
+				      "budget or mode: fixed=%u missing=%u budget=%u result=%s",
+				      fixed, missing, budget, pcm_call_result_name(result));
+			}
+	return true;
+}
+
+static bool v92_conventional_recovery_data(
+	struct pcm_call calls[2], struct channel *wire, enum g711_law law)
+{
+	struct endpoint analog = { .call = calls[0], .upstream_received_delay = UINT16_MAX };
+	struct endpoint digital = { .call = calls[1], .upstream_received_delay = UINT16_MAX };
+
+	for (unsigned clock = 0u; clock < 25u * V34_PHASE2_SAMPLE_RATE; ++clock) {
+		/* The peer can still send its old PCM stream while our retrain
+		 * tone is in flight. Start the conventional payload checker only
+		 * after that peer has also entered retrain. */
+		if (analog.call.stage == PCM_CALL_DATA_PATH &&
+		    !pcm_call_uses_conventional_upstream(&analog.call)) {
+			uint8_t received[2], transmitted[2];
+			struct pcm_call_data_event event;
+			struct pcm_call_observation observation;
+
+			channel_receive(wire, &received[0], &received[1]);
+			CHECK(pcm_call_data_octet(&analog.call, received[0],
+				decode_octet(law, received[0]), true, NULL, &transmitted[0], &event) ==
+				PCM_CALL_OK &&
+			      pcm_call_octet(&digital.call, received[1], decode_octet(law, received[1]),
+				&transmitted[1], &observation) == PCM_CALL_OK,
+			      "old PCM stream did not yield to retrain");
+			channel_transmit(wire, transmitted[0], transmitted[1]);
+			continue;
+		}
+		if (analog.call.stage == PCM_CALL_DATA_PATH &&
+		    analog.call.state.data_path.analog.upstream_stage == V90_ANALOG_PATH_UPSTREAM_DATA)
+			digital.upstream_delay_bits = analog.call.state.data_path.analog.upstream
+				.data.primary_delay_bits;
+		CHECK(step_endpoints(wire, &analog, &digital, law), "conventional recovery failed");
+		if (analog.downstream_frames < 64u || digital.upstream_frames < 64u)
+			continue;
+		CHECK(pcm_call_is_online(&analog.call) && pcm_call_is_online(&digital.call) &&
+		      pcm_call_uses_conventional_upstream(&analog.call) &&
+		      pcm_call_uses_conventional_upstream(&digital.call) &&
+		      analog.call.protocol == PCM_PROTOCOL_V92 && digital.call.protocol == PCM_PROTOCOL_V92 &&
+		      !digital.call.local_info1.v92_digital.pcm_upstream_supported,
+		      "fallback lost its negotiated modulation or readiness");
+		return true;
+	}
+	CHECK(false, "conventional fallback did not deliver duplex payload");
+}
+
 static bool run_v92_b1_recovery(enum g711_law law, uint8_t rate,
 	unsigned damaged_epochs, bool acquisition, bool concealed)
 {
@@ -8846,7 +8935,7 @@ static bool run_v92_b1_recovery(enum g711_law law, uint8_t rate,
 	uint64_t idle[2] = { 0u, 0u };
 	uint32_t noise = UINT32_C(0x81374aef);
 	unsigned injected = 0u, retrains = 0u;
-	bool recovered = false, payload = false;
+	bool recovered = false, payload = false, policy_checked = false;
 
 	ac.phase3.v92_analog.upstream_rate_mask = damaged_epochs ?
 		UINT32_C(1) << (rate - 1u) : (UINT32_C(1) << 19u) - 1u;
@@ -8876,6 +8965,11 @@ static bool run_v92_b1_recovery(enum g711_law law, uint8_t rate,
 				continue;
 			}
 			struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
+			if (side == 1u && rate == 1u && !policy_checked &&
+			    path->upstream.line.received_frames >= V92_B1U_ACQUISITION_FRAMES) {
+				CHECK(v92_minimum_policy_contracts(call), "minimum-rate policy contracts failed");
+				policy_checked = true;
+			}
 			bool damage = side == 1u &&
 				(damaged_epochs ? retrains < damaged_epochs && injected < 80u : !recovered) &&
 				path->upstream.line.received_frames >=
@@ -8916,6 +9010,13 @@ static bool run_v92_b1_recovery(enum g711_law law, uint8_t rate,
 				++retrains;
 		}
 		channel_transmit(&wire, transmitted[0], transmitted[1]);
+		if (!calls[1].local_info1.v92_digital.pcm_upstream_supported) {
+			CHECK(!concealed && rate == 1u &&
+			      damaged_epochs >= V92_DATA_QUALITY_MAX_RETRAINS &&
+			      retrains == V92_DATA_QUALITY_MAX_RETRAINS,
+			      "unexpected conventional fallback");
+			return v92_conventional_recovery_data(calls, &wire, law);
+		}
 		if (!payload && pcm_call_is_online(&calls[0]) && pcm_call_is_online(&calls[1])) {
 			unsigned expected_retrains = damaged_epochs ? damaged_epochs : 1u;
 			uint8_t expected_rate = damaged_epochs ? rate : rate - 1u;
@@ -8962,7 +9063,7 @@ static bool test_v92_b1_minimum_rate_recovery(void)
 	/* Received silence in held-out B1u is a bad waveform, not missing RTP.
 	 * At the minimum automatic rate, it shares the fixed-map retry budget.
 	 * Transient damage must re-enter training and verify duplex payload;
-	 * the third incident must stop without unclamping failed training. */
+	 * repeated waveform damage must use the final recovery for V.34 upstream. */
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (unsigned epochs = 1u; epochs <= V92_DATA_QUALITY_MAX_RETRAINS + 1u; ++epochs)
 			CHECK(run_v92_b1_recovery(law, 1u, epochs, false, false),
