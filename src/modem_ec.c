@@ -644,6 +644,8 @@ static void build_xid_fields(
 	u8 private_parameters[XID_PRIVATE_LENGTH],
 	struct v42_xid_fields *fields)
 {
+	const unsigned int compression =
+		(config->modem.comp_types & MODEM_COMP_TYPE_V42BIS) ? config->modem.comp : 0;
 	const unsigned int tx_bits = config->tx_info_size * 8U;
 	const unsigned int rx_bits = config->rx_info_size * 8U;
 	const u8 parameter_values[XID_PARAMETER_LENGTH] = {
@@ -658,7 +660,7 @@ static void build_xid_fields(
 	const u8 private_values[XID_PRIVATE_LENGTH] = {
 		PI_PARAMETER_SET_ID, 3, 0x56, 0x34, 0x32,
 		PI_V42BIS_REQUEST, 1, initiator ?
-			modem_comp_reverse_directions(config->modem.comp) : config->modem.comp,
+			modem_comp_reverse_directions(compression) : compression,
 		PI_V42BIS_CW_NUMBER, 2,
 		(u8)(config->modem.comp_dict_size >> 8),
 		(u8)config->modem.comp_dict_size,
@@ -671,11 +673,10 @@ static void build_xid_fields(
 		.parameter_negotiation = parameters,
 		.parameter_negotiation_length = XID_PARAMETER_LENGTH,
 	};
-	if (config->modem.comp &&
-	    (config->modem.comp_types & MODEM_COMP_TYPE_V42BIS) != 0) {
-		fields->private_negotiation = private_parameters;
-		fields->private_negotiation_length = XID_PRIVATE_LENGTH;
-	}
+	/* State P0=0 explicitly when V.42bis is disabled. Older peers can
+	 * interpret an omitted private group as permission to compress. */
+	fields->private_negotiation = private_parameters;
+	fields->private_negotiation_length = XID_PRIVATE_LENGTH;
 }
 
 static int queue_xid(

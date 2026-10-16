@@ -1135,8 +1135,15 @@ static bool test_hangup_uses_active_framing(void)
 				      active->count == active_count &&
 				      memcmp(active->buf, retained, (size_t)active_size) == 0,
 				      "cancelling negotiation overwrote its borrowed XID frame");
-			CHECK(modem_get_bits(m, 8, bits, sizeof(bits)) == sizeof(bits) &&
-			      m->ec.lapm.tx_ctrl == m->ec.lapm.ctrl_list,
+			/* A borrowed XID and a crossed response can precede DISC.
+			 * Drain bounded chunks rather than assuming all fit in 32 bytes. */
+			for (unsigned octets = 0; octets < 4 * sizeof(retained); octets += sizeof(bits)) {
+				CHECK(modem_get_bits(m, 8, bits, sizeof(bits)) == sizeof(bits),
+				      "LAPM release could not serialize its pending controls");
+				if (m->ec.lapm.tx_ctrl == m->ec.lapm.ctrl_list)
+					break;
+			}
+			CHECK(m->ec.lapm.tx_ctrl == m->ec.lapm.ctrl_list,
 			      "LAPM release could not serialize DISC: caller %u", caller);
 		} else {
 			unsigned long delay = local && !failure ? MODEM_RATE * 3 : 48;
@@ -3847,9 +3854,9 @@ static bool test_lapm_xid_parameters(void)
 		.ioctl = unused_control,
 	};
 
-	for (size_t scenario = 0; scenario < 3 * ARRAY_LENGTH(compression_types); ++scenario) {
-		size_t index = scenario / 3;
-		unsigned int directions = scenario % 3 + 1;
+	for (size_t scenario = 0; scenario < 4 * ARRAY_LENGTH(compression_types); ++scenario) {
+		size_t index = scenario / 4;
+		unsigned int directions = scenario % 4;
 		struct modem *modem = create_compat_modem(&driver, "LAPM XID parameters");
 		struct v42_xid_fields fields;
 		uint8_t preamble[109];
@@ -3888,7 +3895,8 @@ static bool test_lapm_xid_parameters(void)
 					      sizeof(expected_private)) == 0,
 			      "XID did not encode the V.42bis parameters");
 		} else {
-			CHECK(fields.private_negotiation == NULL,
+			CHECK(fields.private_negotiation_length == sizeof(expected_private) &&
+			      fields.private_negotiation[7] == 0,
 			      "XID offered V.42bis without the configured capability");
 		}
 		modem_delete(modem);
@@ -4136,7 +4144,8 @@ static bool test_lapm_v42bis_negotiation(void)
 						      fields.private_negotiation[14] == m->cfg.comp_max_string,
 					      "compression reply advertised different directions or limits from its codec");
 				} else {
-					CHECK(fields.private_negotiation == NULL,
+					CHECK(fields.private_negotiation_length == sizeof(parameters) &&
+					      fields.private_negotiation[7] == 0,
 					      "compression reply offered a disabled capability");
 				}
 			}
