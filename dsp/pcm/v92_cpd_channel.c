@@ -6,6 +6,8 @@
 
 #include "memory_region.h"
 #include "v92_cpd_gain.h"
+#include "v92_cpd_direct.h"
+#include "v92_pcm_dil.h"
 
 #include <math.h>
 #include <string.h>
@@ -329,12 +331,14 @@ static bool select_inverse(const struct v92_upstream_channel *channel, double co
 	return true;
 }
 
-static bool normalize_gain(struct v92_cpd_parameters *cpd, enum g711_law law)
+static bool normalize_gain(struct v92_cpd_parameters *cpd, enum g711_law law, uint64_t *point_energy)
 {
 	struct v92_pcm_mapping mapping;
 	struct v92_pcm_frame_tx transmitter;
 	uint8_t ones[V92_PCM_MAPPING_MAX_BITS];
 	uint64_t energy = 0u;
+
+	*point_energy = 0u;
 
 	if (v92_pcm_mapping_init(&mapping, law, cpd) != V92_PCM_MAPPING_OK ||
 	    v92_pcm_frame_tx_init(&transmitter, &mapping) != V92_PCM_FRAME_OK)
@@ -347,6 +351,8 @@ static bool normalize_gain(struct v92_cpd_parameters *cpd, enum g711_law law)
 			return false;
 		for (size_t n = 0; n < V92_PCM_MAPPING_FRAME_SYMBOLS; ++n) {
 			uint64_t square = (uint64_t)((int64_t)frame.v[n] * frame.v[n]);
+
+			*point_energy += (uint64_t)((int64_t)frame.u[n] * frame.u[n]);
 
 			if (square > UINT64_MAX - energy)
 				return false;
@@ -388,9 +394,9 @@ static bool balanced_moduli(uint8_t moduli[V92_CPD_MODULUS_COUNT], unsigned int 
 	return false;
 }
 
-bool v92_cpd_channel_design(struct v92_cpd_parameters *parameters,
+static bool design(struct v92_cpd_parameters *parameters,
 	const struct v92_upstream_channel *channel, enum g711_law law,
-	int16_t upstream_level, struct v92_upstream_plan *plan)
+	int16_t upstream_level, struct v92_upstream_plan *plan, uint32_t rate_mask)
 {
 	double coefficients[TAPS], largest = 0.0;
 	struct v92_cpd_parameters next;
@@ -439,53 +445,120 @@ bool v92_cpd_channel_design(struct v92_cpd_parameters *parameters,
 		while (filter->count && filter->coefficient[filter->count - 1u] == 0)
 			--filter->count;
 	}
-	/* Balance 16-state channel mappings from 34.667k upward. Concentrating
-	 * large points in some trellis intervals can clip after B1u normalization
-	 * or erase payload distinctions during companding. Keep the low-rate
-	 * and level-selected direct mappings separate. */
-	if (next.data_rate_number >= 9u && next.trellis == V92_CPD_TRELLIS_16_STATE) {
-		if (!balanced_moduli(next.modulus, pcm_upstream_frame_bits(next.data_rate_number)))
+	/* A single feed-forward tap lets the receiver model companding itself.
+	 * Its observed quantization residual need not force a lower rate. The
+	 * general inverse uses linear residual correction instead, so choose
+	 * its rate with an explicit spacing margin before sending CPd. */
+	bool codec_model = next.filter[V92_CPD_PREFILTER_FEED_FORWARD].count > DELAY &&
+		next.filter[V92_CPD_PREFILTER_FEED_FORWARD].coefficient[DELAY] > 0;
+	for (unsigned tap = 0; tap < next.filter[V92_CPD_PREFILTER_FEED_FORWARD].count; ++tap)
+		if (tap != DELAY && next.filter[V92_CPD_PREFILTER_FEED_FORWARD].coefficient[tap])
+			codec_model = false;
+	double relative_error = 0.0;
+
+	if (rate_mask && !codec_model) {
+		double scale = fmax(channel->observed_autocorrelation[0], channel->expected_autocorrelation[0]);
+		double rhs[TAPS];
+
+		inverse_rhs(channel, scale, rhs);
+		relative_error = fmax(0.0, inverse_error(channel, coefficients, scale, rhs)) /
+			((double)moment(channel, false, DELAY, false, DELAY) / scale);
+		if (!isfinite(relative_error))
 			return false;
 	}
-	/* The direct 40k/44k selections omit outer representatives that an
-	 * identity precoder cannot reach. Restore them for precoder feedback. */
-	if ((next.trellis == V92_CPD_TRELLIS_32_STATE && next.constellation[0].count == 32u) ||
-	    (next.data_rate_number == 16u && next.trellis == V92_CPD_TRELLIS_16_STATE &&
-	     next.constellation[0].count == 27u))
-		next.constellation[0].count = 64u;
-	/* CPd carries linear points, not codec indices. A sinh grid has a
-	 * finite spacing floor near zero and progressively wider outer gaps.
-	 * For the dense 16-state family, this protects small symbols from residual ISI
-	 * instead of compressing odd codec levels into adjoining wire cells
-	 * after power normalization. Shape 4 balances that floor and companding
-	 * noise; peak 30000 leaves signed-observation headroom. These are design
-	 * choices, not wire limits. Keep the 32-state family's spacing: its
-	 * redundant representatives have different error margins. Normalize the
-	 * actual filtered B1u below. */
-	if (next.constellation[0].count <= 16u) {
-		/* The compact direct grid leaves some fourth-symbol classes with
-		 * one point. Feedback needs a choice to reduce the precoder output.
-		 * Extend the same linear grid so every class has at least two
-		 * representatives (6.4.2), preserving rate, moduli and trellis. */
-		next.constellation[0].count *= 2u;
-		for (unsigned point = 0; point < next.constellation[0].count; ++point)
-			next.constellation[0].positive_linear[point] = (int16_t)((2u * point + 1u) * 256u);
-	} else if (next.trellis == V92_CPD_TRELLIS_16_STATE && next.constellation[0].count == 64u) {
-		for (unsigned point = 0; point < 64u; ++point)
-			next.constellation[0].positive_linear[point] = (int16_t)lround(
-				30000.0 * sinh(4.0 * (point + 0.5) / 63.5) / sinh(4.0));
-	} else if (next.constellation[0].count == 32u || next.constellation[0].count == 64u) {
-		for (unsigned point = 0; point < next.constellation[0].count; ++point)
-			if (!g711_ucode_sample(law, (uint8_t)(2u * point + 1u), true,
-				    &next.constellation[0].positive_linear[point]))
+	const struct v92_cpd_parameters filtered = next;
+
+	for (unsigned rate = parameters->data_rate_number; rate; rate--) {
+		if (rate_mask) {
+			if (!(rate_mask & (UINT32_C(1) << (rate - 1))))
+				continue;
+			if (rate == parameters->data_rate_number)
+				next = filtered;
+			else if (v92_cpd_direct_init(&next, law, rate, parameters->extend_e2u) != V92_CPD_OK)
+				continue;
+			memcpy(next.filter, filtered.filter, sizeof(next.filter));
+			next.acknowledges_cpu = parameters->acknowledges_cpu;
+		}
+		/* Balance 16-state channel mappings from 34.667k upward. Concentrating
+		 * large points in some trellis intervals can clip after B1u normalization
+		 * or erase payload distinctions during companding. Keep the low-rate
+		 * and level-selected direct mappings separate. */
+		if (next.data_rate_number >= 9u && next.trellis == V92_CPD_TRELLIS_16_STATE) {
+			if (!balanced_moduli(next.modulus, pcm_upstream_frame_bits(next.data_rate_number)))
 				return false;
+		}
+		/* The direct 40k/44k selections omit outer representatives that an
+		 * identity precoder cannot reach. Restore them for precoder feedback. */
+		if ((next.trellis == V92_CPD_TRELLIS_32_STATE && next.constellation[0].count == 32u) ||
+		    (next.data_rate_number == 16u && next.trellis == V92_CPD_TRELLIS_16_STATE &&
+		     next.constellation[0].count == 27u))
+			next.constellation[0].count = 64u;
+		/* CPd carries linear points, not codec indices. A sinh grid has a
+		 * finite spacing floor near zero and progressively wider outer gaps.
+		 * For the dense 16-state family, this protects small symbols from residual ISI
+		 * instead of compressing odd codec levels into adjoining wire cells
+		 * after power normalization. Shape 4 balances that floor and companding
+		 * noise; peak 30000 leaves signed-observation headroom. These are design
+		 * choices, not wire limits. Keep the 32-state family's spacing: its
+		 * redundant representatives have different error margins. Normalize the
+		 * actual filtered B1u below. */
+		if (next.constellation[0].count <= 16u || next.constellation[0].count == 32u) {
+			/* Small direct alphabets need outer feedback representatives.
+			 * Keep their linear spacing through the 32-positive-point family:
+			 * codec-shaped points sacrifice the minimum linear spacing that
+			 * protects this filtered channel from residual ISI. */
+			if (next.constellation[0].count <= 16u)
+				next.constellation[0].count *= 2u;
+			for (unsigned point = 0; point < next.constellation[0].count; ++point)
+				next.constellation[0].positive_linear[point] = (int16_t)((2u * point + 1u) * 256u);
+		} else if (next.trellis == V92_CPD_TRELLIS_16_STATE && next.constellation[0].count == 64u) {
+			for (unsigned point = 0; point < 64u; ++point)
+				next.constellation[0].positive_linear[point] = (int16_t)lround(
+					30000.0 * sinh(4.0 * (point + 0.5) / 63.5) / sinh(4.0));
+		} else if (next.constellation[0].count == 64u) {
+			for (unsigned point = 0; point < next.constellation[0].count; ++point)
+				if (!g711_ucode_sample(law, (uint8_t)(2u * point + 1u), true,
+					    &next.constellation[0].positive_linear[point]))
+					return false;
+		}
+		uint64_t point_energy;
+		if (!normalize_gain(&next, law, &point_energy))
+			return false;
+		aligned.gain = 32768.0 * 262144.0 / (z2_scale * next.four_times_gain_q0_16 * upstream_level);
+		if (rate_mask && !codec_model) {
+			const struct v92_cpd_constellation *points = &next.constellation[0];
+			int gap = 2 * points->positive_linear[0];
+
+			for (unsigned i = 1; i < points->count; i++)
+				if (points->positive_linear[i] - points->positive_linear[i - 1] < gap)
+					gap = points->positive_linear[i] - points->positive_linear[i - 1];
+			/* Estimate noise in constellation coordinates from the same
+			 * channel inverse and actual B1u energy. Require three estimated
+			 * standard deviations to either nearest decision boundary. This
+			 * is rate-selection policy; independent B1u still decides readiness. */
+			if ((double)gap * gap < 36.0 * relative_error * point_energy / V92_B1U_SYMBOLS)
+				continue;
+		}
+		if (!v92_upstream_plan_is_valid(&aligned) || !v92_cpd_parameters_are_valid(&next))
+			return false;
+		*parameters = next;
+		*plan = aligned;
+		return true;
 	}
-	if (!normalize_gain(&next, law))
-		return false;
-	aligned.gain = 32768.0 * 262144.0 / (z2_scale * next.four_times_gain_q0_16 * upstream_level);
-	if (!v92_upstream_plan_is_valid(&aligned) || !v92_cpd_parameters_are_valid(&next))
-		return false;
-	*parameters = next;
-	*plan = aligned;
-	return true;
+	return false;
+}
+
+bool v92_cpd_channel_design(struct v92_cpd_parameters *parameters,
+	const struct v92_upstream_channel *channel, enum g711_law law,
+	int16_t upstream_level, struct v92_upstream_plan *plan)
+{
+	return design(parameters, channel, law, upstream_level, plan, 0);
+}
+
+bool v92_cpd_channel_select(struct v92_cpd_parameters *parameters,
+	const struct v92_upstream_channel *channel, enum g711_law law,
+	int16_t upstream_level, struct v92_upstream_plan *plan, uint32_t rate_mask)
+{
+	return rate_mask && !(rate_mask & ~V92_PCM_DIL_RATE_MASK_ALL) &&
+		design(parameters, channel, law, upstream_level, plan, rate_mask);
 }

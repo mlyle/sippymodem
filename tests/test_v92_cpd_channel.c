@@ -4,6 +4,7 @@
 
 #include <v92_cpd_channel.h>
 #include <v92_cpd_direct.h>
+#include <v92_pcm_dil.h>
 #include <fractional_delay.h>
 
 #include "test.h"
@@ -228,7 +229,10 @@ static bool test_channel_model(enum g711_law law, double main, double post, doub
 			set->positive_linear[31] == 3922 && set->positive_linear[47] == 10926 &&
 			set->positive_linear[63] == 30000, "dense channel spacing changed");
 		original.constellation[0] = *set;
-	} else if (original.constellation[0].count == 32u || original.constellation[0].count == 64u) {
+	} else if (original.constellation[0].count == 32u) {
+		for (unsigned point = 0; point < 32u; ++point)
+			original.constellation[0].positive_linear[point] = (int16_t)((2u * point + 1u) * 256u);
+	} else if (original.constellation[0].count == 64u) {
 		for (unsigned point = 0; point < original.constellation[0].count; ++point)
 			CHECK(g711_ucode_sample(law, (uint8_t)(2u * point + 1u), true,
 				&original.constellation[0].positive_linear[point]), "expected spacing failed");
@@ -675,9 +679,76 @@ static bool test_training_changes(void)
 	return true;
 }
 
+static bool test_rate_selection(void)
+{
+	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		for (unsigned noisy = 0; noisy < 2; ++noisy) {
+			struct v92_upstream_channel channel = { 0 };
+			uint32_t random = 0x12345678u, noise_random = 0x87654321u;
+			int16_t history[32] = { 0 };
+
+			for (unsigned n = 0; n < V92_UPSTREAM_CHANNEL_SYMBOLS; ++n) {
+				int16_t sample = (int16_t)((int)(random_word(&random) % 8192u) - 4096);
+				int noise = noisy ? (int)(random_word(&noise_random) % 129u) - 64 : 0;
+
+				/* A distant echo needs the general inverse; a short codec-modelled
+				 * channel retains the existing dense-rate acquisition policy. */
+				int echo = noisy ? history[n % ARRAY_LENGTH(history)] / 20 : 0;
+				history[n % ARRAY_LENGTH(history)] = sample;
+				CHECK(v92_upstream_channel_sample(&channel, sample, sample + echo + noise),
+				      "rate-selection measurement failed");
+			}
+			struct v92_upstream_channel saved_channel = channel;
+			struct v92_cpd_parameters maximum;
+			struct v92_upstream_plan plan = { 0 };
+
+			CHECK(v92_cpd_direct_init(&maximum, law, 19, false) == V92_CPD_OK,
+			      "rate-selection template failed");
+			struct v92_cpd_parameters selected = maximum;
+
+			CHECK(v92_cpd_channel_select(&selected, &channel, law, LEVEL, &plan,
+			      V92_PCM_DIL_RATE_MASK_ALL), "rate selection failed");
+			CHECK(noisy ? selected.data_rate_number < 19 : selected.data_rate_number == 19,
+			      "training did not control the selected rate: law %u noise %u rate %u",
+			      law, noisy, selected.data_rate_number);
+			unsigned rate = selected.data_rate_number;
+
+			selected = maximum;
+			CHECK(v92_cpd_channel_select(&selected, &channel, law, LEVEL, &plan,
+			      (UINT32_C(1) << (rate - 1)) | 1u) && selected.data_rate_number == rate,
+			      "selection missed the highest usable peer rate");
+			selected = maximum;
+			CHECK(v92_cpd_channel_select(&selected, &channel, law, LEVEL, &plan, 1u) &&
+			      selected.data_rate_number == 1, "selection ignored the peer rate mask");
+			CHECK(v92_cpd_channel_select(&selected, &channel, law, LEVEL, &plan,
+			      V92_PCM_DIL_RATE_MASK_ALL) && selected.data_rate_number == 1,
+			      "selection exceeded the configured ceiling");
+
+			const uint32_t rejected[] = { 0, UINT32_C(1) << 31, UINT32_C(1) << 18 };
+			for (unsigned i = 0; i < ARRAY_LENGTH(rejected); ++i) {
+				if (i == 2 && !noisy)
+					continue;
+				selected = maximum;
+				struct v92_cpd_parameters saved = selected;
+				struct v92_upstream_plan saved_plan = plan;
+
+				CHECK(!v92_cpd_channel_select(&selected, &channel, law, LEVEL, &plan, rejected[i]),
+				      "selection accepted an empty, invalid or unusable rate mask");
+				CHECK(memcmp(&saved, &selected, sizeof(saved)) == 0 &&
+				      memcmp(&saved_plan, &plan, sizeof(plan)) == 0,
+				      "rejected selection changed its outputs");
+			}
+			CHECK(memcmp(&channel, &saved_channel, sizeof(channel)) == 0,
+			      "rate selection changed the training evidence");
+		}
+	}
+	return true;
+}
+
 int main(void)
 {
-	if (!test_filter_padding() || !test_training_changes() || !test_rejections() || !test_receive_plan() ||
+	if (!test_rate_selection() || !test_filter_padding() || !test_training_changes() ||
+	    !test_rejections() || !test_receive_plan() ||
 	    !test_short_channel_selection(false) || !test_short_channel_selection(true) ||
 	    !test_quantized_stability() || !test_finite_window_inverse(false) ||
 	    !test_finite_window_inverse(true))

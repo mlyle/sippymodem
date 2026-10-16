@@ -316,6 +316,8 @@ struct pcm_call_v92_analog_rate_prefix {
 };
 
 struct pcm_call_v92_phase4_state {
+	/* Initial digital Phase 4 retains the peer DIL rates for channel selection. */
+	uint32_t upstream_rate_mask;
 	/* Physical acquisition hint survives only this Ru/control exchange. */
 	struct v92_upstream_seed upstream_seed;
 	union pcm_call_v92_phase4_owner owner;

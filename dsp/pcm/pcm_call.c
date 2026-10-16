@@ -3016,6 +3016,7 @@ static enum pcm_call_result enter_v92_phase4(struct pcm_call *call)
 			    V92_PHASE4_DIGITAL_STATION_OK)
 				return PCM_CALL_NUMERIC_FAILURE;
 		next.state.phase4.v92 = (struct pcm_call_v92_phase4_state){
+			.upstream_rate_mask = upstream_rate_mask,
 			.owner.digital = station,
 			.child = PCM_CALL_V92_PHASE4_CONTROL,
 		};
@@ -3987,7 +3988,8 @@ static enum pcm_call_result sample_v92_phase4(
 			if (v92_cpd_decode(wire->sequence, sizeof(wire->sequence),
 				    wire->sequence_bits, wire->frame_bits, &cpd) != V92_CPD_OK)
 				return PCM_CALL_UNUSABLE_SELECTION;
-			if (!v92_cpd_channel_design(&cpd, &station->receive.channel, call->law, level, &plan)) {
+			if (!v92_cpd_channel_select(&cpd, &station->receive.channel, call->law, level, &plan,
+			    call->state.phase4.v92.upstream_rate_mask)) {
 				/* A truncated or corrupted TRN2u cannot identify a usable
 				 * channel. V.92 9.6.1.2 permits full retrain during Phase 4;
 				 * do not accept the bad fit or renegotiate a data rate before

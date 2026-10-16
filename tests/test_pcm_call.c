@@ -8377,9 +8377,10 @@ static bool capture_v92_duplex_data(
 				CHECK(rx->decoder.mapping.cpd.constellation[0].count == 2u * expected.constellation[0].count,
 				      "V.92 channel mapping did not add equivalent precoder points");
 				expected.constellation[0] = rx->decoder.mapping.cpd.constellation[0];
-			} else if (expected.trellis == V92_CPD_TRELLIS_16_STATE && expected.constellation[0].count == 64u)
+			} else if (expected.constellation[0].count == 32u ||
+			           (expected.trellis == V92_CPD_TRELLIS_16_STATE && expected.constellation[0].count == 64u))
 				expected.constellation[0] = rx->decoder.mapping.cpd.constellation[0];
-			else if (expected.constellation[0].count == 32u || expected.constellation[0].count == 64u)
+			else if (expected.constellation[0].count == 64u)
 				for (unsigned point = 0; point < expected.constellation[0].count; ++point)
 					CHECK(g711_ucode_sample(law, (uint8_t)(2u * point + 1u), true,
 						&expected.constellation[0].positive_linear[point]), "expected spacing failed");

@@ -18,4 +18,14 @@ bool v92_cpd_channel_design(struct v92_cpd_parameters *parameters,
 	const struct v92_upstream_channel *channel, enum g711_law law,
 	int16_t upstream_level, struct v92_upstream_plan *plan);
 
+/* Choose the highest enabled rate at or below parameters->data_rate_number.
+ * For a general inverse, use its residual and actual B1u point energy
+ * to estimate a three-sigma margin to each nearest decision boundary.
+ * Retain the highest rate when explicit codec modelling is available.
+ * This local policy does not replace independent B1u validation. Reuse
+ * one channel solve across all candidates. Rejection changes no outputs. */
+bool v92_cpd_channel_select(struct v92_cpd_parameters *parameters,
+	const struct v92_upstream_channel *channel, enum g711_law law,
+	int16_t upstream_level, struct v92_upstream_plan *plan, uint32_t rate_mask);
+
 #endif /* V92_CPD_CHANNEL_H */
