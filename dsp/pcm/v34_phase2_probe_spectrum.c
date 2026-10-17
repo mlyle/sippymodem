@@ -49,11 +49,8 @@ v34_phase2_probe_spectrum_init(
 
 static void accumulate_sample(
 	struct v34_phase2_probe_spectrum *spectrum,
-	int16_t sample)
+	int32_t sample, uint32_t period_index)
 {
-	uint32_t period_index =
-		spectrum->samples_observed %
-		V34_PHASE2_PROBE_PERIOD_SAMPLES;
 	double angle = V34_PHASE2_PROBE_SPECTRUM_TWO_PI * 3.0 *
 		       (double)period_index /
 		       (double)V34_PHASE2_PROBE_PERIOD_SAMPLES;
@@ -94,8 +91,27 @@ v34_phase2_probe_spectrum_sample(
 	    spectrum->samples_observed == UINT32_MAX)
 		return V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT;
 	next = *spectrum;
-	accumulate_sample(&next, sample);
+	accumulate_sample(&next, sample,
+		next.samples_observed % V34_PHASE2_PROBE_PERIOD_SAMPLES);
 	next.samples_observed++;
+	if (!v34_phase2_probe_spectrum_is_valid(&next))
+		return V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT;
+	*spectrum = next;
+	return V34_PHASE2_PROBE_SPECTRUM_OK;
+}
+
+enum v34_phase2_probe_spectrum_result
+v34_phase2_probe_spectrum_replace(
+	struct v34_phase2_probe_spectrum *spectrum, uint16_t period_index,
+	int16_t outgoing, int16_t incoming)
+{
+	if (!v34_phase2_probe_spectrum_is_valid(spectrum) ||
+	    spectrum->samples_observed != V34_PHASE2_PROBE_PERIOD_SAMPLES ||
+	    period_index >= V34_PHASE2_PROBE_PERIOD_SAMPLES)
+		return V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT;
+	struct v34_phase2_probe_spectrum next = *spectrum;
+
+	accumulate_sample(&next, (int32_t)incoming - outgoing, period_index);
 	if (!v34_phase2_probe_spectrum_is_valid(&next))
 		return V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT;
 	*spectrum = next;

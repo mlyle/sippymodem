@@ -139,6 +139,62 @@ static bool test_phase_measurement(void)
 	return true;
 }
 
+static bool test_rolling_period(void)
+{
+	enum { PERIOD = V34_PHASE2_PROBE_PERIOD_SAMPLES, SAMPLES = 4 * PERIOD };
+	int16_t samples[SAMPLES];
+	uint32_t random = UINT32_C(0x12345678);
+	struct v34_phase2_probe_spectrum rolling, before;
+	CHECK(v34_phase2_probe_spectrum_init(&rolling) == V34_PHASE2_PROBE_SPECTRUM_OK,
+	      "rolling spectrum did not initialize");
+	before = rolling;
+	CHECK(v34_phase2_probe_spectrum_replace(&rolling, 0, 0, 1) ==
+		      V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT &&
+	      memcmp(&rolling, &before, sizeof(before)) == 0,
+	      "empty spectrum accepted replacement");
+	for (unsigned i = 0; i < SAMPLES; ++i) {
+		random = random * UINT32_C(1664525) + UINT32_C(1013904223);
+		samples[i] = i < 2 * PERIOD ? (int32_t)(random >> 16) - 32768 : 0;
+	}
+	samples[0] = INT16_MIN;
+	samples[PERIOD] = INT16_MAX; /* The replacement delta needs 17 bits. */
+	for (unsigned i = 0; i < PERIOD; ++i)
+		CHECK(v34_phase2_probe_spectrum_sample(&rolling, samples[i]) ==
+			      V34_PHASE2_PROBE_SPECTRUM_OK, "first period failed");
+	for (unsigned start = 0; start <= SAMPLES - PERIOD; ++start) {
+		struct v34_phase2_probe_spectrum fresh;
+		struct v34_phase2_probe_spectrum_measurement expected, actual;
+		CHECK(v34_phase2_probe_spectrum_init(&fresh) == V34_PHASE2_PROBE_SPECTRUM_OK,
+		      "reference period did not initialize");
+		for (unsigned i = 0; i < PERIOD; ++i)
+			CHECK(v34_phase2_probe_spectrum_sample(&fresh, samples[start + i]) ==
+				      V34_PHASE2_PROBE_SPECTRUM_OK, "reference period failed");
+		CHECK(v34_phase2_probe_spectrum_measure(&fresh, &expected) ==
+			      V34_PHASE2_PROBE_SPECTRUM_OK &&
+		      v34_phase2_probe_spectrum_measure(&rolling, &actual) ==
+			      V34_PHASE2_PROBE_SPECTRUM_OK && actual.sample_count == PERIOD,
+		      "rolling period changed its observation length");
+		for (unsigned h = 0; h < V34_PHASE2_PROBE_HIGHEST_HARMONIC; ++h) {
+			double power = expected.harmonics[h].mean_square;
+			CHECK(fabs(actual.harmonics[h].mean_square - power) <=
+				      1e-6 + 1e-9 * power,
+			      "rolling bin %u differs at offset %u", h, start);
+		}
+		if (start < SAMPLES - PERIOD)
+			CHECK(v34_phase2_probe_spectrum_replace(&rolling, start % PERIOD,
+				      samples[start], samples[start + PERIOD]) ==
+				      V34_PHASE2_PROBE_SPECTRUM_OK, "rolling replacement failed");
+	}
+	before = rolling;
+	CHECK(v34_phase2_probe_spectrum_replace(&rolling, PERIOD, 0, 1) ==
+		      V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT &&
+	      memcmp(&rolling, &before, sizeof(before)) == 0 &&
+	      v34_phase2_probe_spectrum_replace(NULL, 0, 0, 1) ==
+		      V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT,
+	      "invalid replacement mutated spectrum");
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v34_phase2_probe_spectrum spectrum;
@@ -198,6 +254,7 @@ int main(void)
 	} tests[] = {
 		{ "generated probe spectrum", test_generated_probe_spectrum },
 		{ "phase measurement", test_phase_measurement },
+		{ "rolling period", test_rolling_period },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

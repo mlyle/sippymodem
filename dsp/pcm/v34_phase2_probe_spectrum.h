@@ -41,6 +41,16 @@ struct v34_phase2_probe_spectrum_measurement {
 enum v34_phase2_probe_spectrum_result
 v34_phase2_probe_spectrum_init(
 	struct v34_phase2_probe_spectrum *spectrum);
+
+/* Replace a sample at its absolute phase in a one-period observation without
+ * changing its length. Sliding windows remove and add samples one period
+ * apart at the same phase. Bin powers are invariant under the resulting
+ * rotation relative to the window's new start. */
+enum v34_phase2_probe_spectrum_result
+v34_phase2_probe_spectrum_replace(
+	struct v34_phase2_probe_spectrum *spectrum, uint16_t period_index,
+	int16_t outgoing, int16_t incoming);
+
 bool v34_phase2_probe_spectrum_is_valid(
 	const struct v34_phase2_probe_spectrum *spectrum);
 

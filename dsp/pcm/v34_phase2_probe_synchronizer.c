@@ -72,32 +72,18 @@ v34_phase2_probe_synchronizer_init(
 }
 
 static bool measure_probe_energy_fraction(
-	const int16_t *received, double *fraction)
+	const struct v34_phase2_probe_spectrum *spectrum,
+	double sample_energy, double *fraction)
 {
-	struct v34_phase2_probe_spectrum spectrum;
 	struct v34_phase2_probe_spectrum_measurement measurement;
 	double probe_mean_square = 0.0;
-	double sample_mean_square = 0.0;
 
-	if (v34_phase2_probe_spectrum_init(&spectrum) !=
-	    V34_PHASE2_PROBE_SPECTRUM_OK)
-		return false;
-	for (size_t index = 0;
-	     index < V34_PHASE2_PROBE_PERIOD_SAMPLES; ++index) {
-		double sample = received[index];
-
-		if (v34_phase2_probe_spectrum_sample(
-			    &spectrum, received[index]) !=
-		    V34_PHASE2_PROBE_SPECTRUM_OK)
-			return false;
-		sample_mean_square += sample * sample;
-	}
-	if (sample_mean_square == 0.0) {
+	if (sample_energy == 0.0) {
 		*fraction = 0.0;
 		return true;
 	}
 	if (v34_phase2_probe_spectrum_measure(
-		    &spectrum, &measurement) !=
+		    spectrum, &measurement) !=
 	    V34_PHASE2_PROBE_SPECTRUM_OK)
 		return false;
 	for (unsigned int harmonic = 1;
@@ -107,7 +93,7 @@ static bool measure_probe_energy_fraction(
 			probe_mean_square +=
 				measurement.harmonics[harmonic - 1u]
 					.mean_square;
-	sample_mean_square /= V34_PHASE2_PROBE_PERIOD_SAMPLES;
+	double sample_mean_square = sample_energy / V34_PHASE2_PROBE_PERIOD_SAMPLES;
 	*fraction = probe_mean_square / sample_mean_square;
 	/* Roundoff may exceed the mathematical upper bound by a few ulps. */
 	if (*fraction > 1.0)
@@ -122,15 +108,39 @@ static bool find_onset(
 	double fractions[V34_PHASE2_PROBE_SYNCHRONIZER_SEARCH_SAMPLES + 1u];
 	double best_fraction = 0.0;
 	uint16_t best_candidate = 0;
+	struct v34_phase2_probe_spectrum spectrum;
+	double energy = 0.0;
 
+	if (v34_phase2_probe_spectrum_init(&spectrum) != V34_PHASE2_PROBE_SPECTRUM_OK)
+		return false;
+	for (unsigned i = 0; i < V34_PHASE2_PROBE_PERIOD_SAMPLES; ++i) {
+		int16_t sample = synchronizer->capture[i];
+		energy += (double)sample * sample;
+		if (v34_phase2_probe_spectrum_sample(&spectrum, sample) !=
+		    V34_PHASE2_PROBE_SPECTRUM_OK)
+			return false;
+	}
 	for (uint16_t candidate = 0;
 	     candidate <=
 	     V34_PHASE2_PROBE_SYNCHRONIZER_SEARCH_SAMPLES;
 	     ++candidate) {
 		double fraction;
 
-		if (!measure_probe_energy_fraction(
-			    &synchronizer->capture[candidate], &fraction))
+		/* Adjacent windows replace samples one exact probe period apart.
+		 * Retain absolute phase; onset selection consumes bin powers only. */
+		if (candidate) {
+			unsigned leaving = candidate - 1u;
+			int16_t outgoing = synchronizer->capture[leaving];
+			int16_t incoming = synchronizer->capture[
+				leaving + V34_PHASE2_PROBE_PERIOD_SAMPLES];
+
+			if (v34_phase2_probe_spectrum_replace(&spectrum,
+				    leaving % V34_PHASE2_PROBE_PERIOD_SAMPLES,
+				    outgoing, incoming) != V34_PHASE2_PROBE_SPECTRUM_OK)
+				return false;
+			energy += (double)incoming * incoming - (double)outgoing * outgoing;
+		}
+		if (!measure_probe_energy_fraction(&spectrum, energy, &fraction))
 			return false;
 		fractions[candidate] = fraction;
 		if (fraction > best_fraction) {
