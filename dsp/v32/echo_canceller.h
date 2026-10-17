@@ -4,6 +4,7 @@
 #define V32_ECHO_CANCELLER_H
 
 #include "qam.h"
+#include "echo_timing.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -55,6 +56,10 @@ struct v32_echo_canceller {
 	size_t reference_fill;
 	uint16_t near_delay_symbols;
 	uint16_t round_trip_symbols;
+	/* Frozen far-return evidence; accepted changes wait for a symbol boundary. */
+	struct echo_timing far_timing;
+	uint16_t pending_far_delay_symbols;
+	bool far_suspended;
 	double adaptation;
 	uint8_t phase;
 	bool reference_pending;

@@ -4,6 +4,7 @@
 
 #include "memory_region.h"
 #include "ring_history.h"
+#include "sample_math.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -35,6 +36,11 @@ bool v32_echo_canceller_header_is_valid(
 	       ring_history_state_is_valid(
 		canceller->reference_write, canceller->reference_fill,
 		V32_ECHO_REFERENCE_CAPACITY) &&
+	       echo_timing_is_valid(&canceller->far_timing) &&
+	       (!canceller->pending_far_delay_symbols ||
+		(!canceller->adapting && geometry_is_valid(
+			canceller->near_delay_symbols,
+			canceller->pending_far_delay_symbols))) &&
 	       canceller->phase < V32_ECHO_PHASE_COUNT &&
 	       (canceller->phase == 0 || canceller->reference_pending) &&
 	       qam_adaptation_is_valid(canceller->adaptation) &&
@@ -92,6 +98,9 @@ enum v32_echo_result v32_echo_canceller_start_adaptation(
 		return V32_ECHO_INVALID_ARGUMENT;
 	if (canceller->reference_pending)
 		return V32_ECHO_INVALID_STATE;
+	memset(&canceller->far_timing, 0, sizeof(canceller->far_timing));
+	canceller->pending_far_delay_symbols = 0;
+	canceller->far_suspended = false;
 	canceller->adaptation = adaptation;
 	canceller->adapting = true;
 	return V32_ECHO_OK;
@@ -156,9 +165,10 @@ static struct qam_point tap_reference(
 
 static bool prediction_and_energy(
 	const struct v32_echo_canceller *canceller, size_t phase,
-	double *prediction, double *energy)
+	double *prediction, double *energy, double *far_prediction)
 {
 	double predicted = 0.0;
+	double far = 0.0;
 	double reference_energy = 0.0;
 
 	for (size_t window = 0; window < V32_ECHO_WINDOW_COUNT; ++window) {
@@ -172,14 +182,18 @@ static bool prediction_and_energy(
 			if (!point_is_finite(&point) ||
 			    !point_is_finite(coefficient))
 				return false;
-			predicted += coefficient->in_phase * point.in_phase +
-				     coefficient->quadrature * point.quadrature;
+			double value = coefficient->in_phase * point.in_phase +
+				       coefficient->quadrature * point.quadrature;
+			predicted += value;
+			if (window == V32_ECHO_DELAYED_WINDOW)
+				far += value;
 			reference_energy += qam_point_power(&point);
 		}
 	}
+	*far_prediction = far;
 	*prediction = predicted;
 	*energy = reference_energy;
-	return isfinite(predicted) && isfinite(reference_energy);
+	return isfinite(predicted) && isfinite(reference_energy) && isfinite(far);
 }
 
 static bool update_is_finite(
@@ -222,11 +236,30 @@ static void apply_update(
 	}
 }
 
+/* The shared monitor measures 7.2 kHz samples. Preserve all three phase
+ * filters by accepting integral 2.4 kHz symbol changes, and apply the accepted
+ * delay at the next symbol boundary without resetting TX history. */
+static bool retime_far(void *owner, int change_samples)
+{
+	struct v32_echo_canceller *canceller = owner;
+	int64_t delay = (int64_t)canceller->round_trip_symbols +
+		change_samples / V32_ECHO_PHASE_COUNT;
+	if (change_samples % V32_ECHO_PHASE_COUNT != 0 ||
+	    delay < V32_ECHO_MIN_ROUND_TRIP_SYMBOLS ||
+	    delay > V32_ECHO_MAX_ROUND_TRIP_SYMBOLS ||
+	    (uint64_t)delay + canceller->near_delay_symbols +
+		V32_ECHO_WINDOW_SYMBOLS > canceller->reference_fill)
+		return false;
+	canceller->pending_far_delay_symbols = (uint16_t)delay;
+	return true;
+}
+
 enum v32_echo_result v32_echo_canceller_process(
 	struct v32_echo_canceller *canceller,
 	const double *received, double *cleaned, size_t count)
 {
 	double error[V32_ECHO_PHASE_COUNT];
+	double far[V32_ECHO_PHASE_COUNT];
 	double scale[V32_ECHO_PHASE_COUNT] = { 0 };
 	size_t bytes;
 
@@ -255,10 +288,10 @@ enum v32_echo_result v32_echo_canceller_process(
 		if (!isfinite(received[index]))
 			return V32_ECHO_INVALID_ARGUMENT;
 		if (!prediction_and_energy(
-			    canceller, phase, &prediction, &energy))
+			    canceller, phase, &prediction, &energy, &far[index]))
 			return V32_ECHO_INVALID_STATE;
 		error[index] = received[index] - prediction;
-		if (!isfinite(error[index]))
+		if (!isfinite(error[index]) || !isfinite(error[index] + far[index]))
 			return V32_ECHO_INVALID_STATE;
 		if (!canceller->adapting)
 			continue;
@@ -269,16 +302,32 @@ enum v32_echo_result v32_echo_canceller_process(
 			return V32_ECHO_INVALID_STATE;
 	}
 	for (size_t index = 0; index < count; ++index) {
-		size_t phase = canceller->phase + index;
-
 		if (canceller->adapting)
-			apply_update(canceller, phase, scale[index]);
+			apply_update(canceller, canceller->phase, scale[index]);
 		cleaned[index] = error[index];
-	}
-	canceller->phase = (uint8_t)(canceller->phase + count);
-	if (canceller->phase == V32_ECHO_PHASE_COUNT) {
-		canceller->phase = 0;
-		canceller->reference_pending = false;
+		if (!canceller->adapting && canceller->adaptation > 0.0) {
+			struct echo_timing_model model = {
+				.suspended = canceller->far_suspended,
+				.retime = retime_far,
+				.owner = canceller,
+			};
+			if (canceller->far_suspended)
+				cleaned[index] += far[index];
+			/* Exclude the near prediction from far-delay evidence. */
+			echo_timing_observe(&canceller->far_timing, &model,
+				sample_round_s16(error[index] + far[index]),
+				sample_round_s16(error[index]));
+			canceller->far_suspended = model.suspended;
+		}
+		if (++canceller->phase == V32_ECHO_PHASE_COUNT) {
+			canceller->phase = 0;
+			canceller->reference_pending = false;
+			if (canceller->pending_far_delay_symbols) {
+				canceller->round_trip_symbols =
+					canceller->pending_far_delay_symbols;
+				canceller->pending_far_delay_symbols = 0;
+			}
+		}
 	}
 	return V32_ECHO_OK;
 }

@@ -113,7 +113,10 @@ static bool drive_symbol(
 	for (size_t phase = 0; phase < V32_ECHO_PHASE_COUNT; ++phase)
 		received[phase] = source_echo(source, phase) +
 				  (far_signal == NULL ? 0.0 : far_signal[phase]);
-	if (fragmentation == 0) {
+	if (fragmentation == UINT32_MAX) {
+		CHECK(v32_echo_canceller_process(canceller, received, cleaned, 3) ==
+		      V32_ECHO_OK, "whole-symbol cancellation failed");
+	} else if (fragmentation == 0) {
 		for (size_t phase = 0; phase < V32_ECHO_PHASE_COUNT; ++phase) {
 			CHECK(v32_echo_canceller_process(
 				      canceller, &received[phase], &cleaned[phase], 1) ==
@@ -465,6 +468,54 @@ static bool run_convergence_freeze_and_resume(uint16_t round_trip)
 	      frozen_error_power < frozen_echo_power * 1e-5,
 	      "frozen coefficients changed or stopped cancelling: %.9g/%.9g",
 	      frozen_error_power, frozen_echo_power);
+
+	/* Move only the far return by one 10 ms host packet and then back.
+	 * The independent peer signal and learned near path must survive. */
+	for (unsigned leg = 0; leg < 2; ++leg) {
+		int shift = round_trip == V32_ECHO_MAX_ROUND_TRIP_SYMBOLS ?
+			-24 : 24;
+		double residual = 0.0, echo_power = 0.0;
+
+		source.round_trip_symbols =
+			(uint16_t)(round_trip + (leg ? 0 : shift));
+		for (unsigned symbol = 0; symbol < 2048;
+		     ++symbol, ++total_symbols) {
+			struct qam_point reference;
+			double far[V32_ECHO_PHASE_COUNT];
+			double cleaned[V32_ECHO_PHASE_COUNT];
+
+			for (unsigned phase = 0; phase < V32_ECHO_PHASE_COUNT;
+			     ++phase) {
+				int32_t centered =
+					(int32_t)(fixture_random(&far_random) >> 16) -
+					32768;
+				far[phase] = (double)centered / 32.0;
+			}
+			CHECK(generated_reference(&reference_random, &reference) &&
+			      drive_symbol(&canceller, &source, &reference,
+					   far, cleaned, symbol),
+			      "shifted frozen model stopped");
+			if (symbol < 1792)
+				continue;
+			for (unsigned phase = 0; phase < V32_ECHO_PHASE_COUNT;
+			     ++phase) {
+				double error = cleaned[phase] - far[phase];
+				double echo = source_echo(&source, phase);
+				residual += error * error;
+				echo_power += echo * echo;
+			}
+		}
+		CHECK(canceller.round_trip_symbols == source.round_trip_symbols &&
+		      !canceller.far_suspended &&
+		      !canceller.pending_far_delay_symbols &&
+		      memcmp(frozen_coefficients, canceller.coefficients,
+			     sizeof(frozen_coefficients)) == 0 &&
+		      residual < echo_power * 1e-5,
+		      "far step did not recover: delay=%u expected=%u "
+		      "residual=%.9g/%.9g suspended=%d",
+		      canceller.round_trip_symbols, source.round_trip_symbols,
+		      residual, echo_power, canceller.far_suspended);
+	}
 	source.extra_echo = 700.0;
 	CHECK(v32_echo_canceller_start_adaptation(&canceller, 0.08) ==
 		      V32_ECHO_OK &&
@@ -666,12 +717,97 @@ static bool test_complete_finite_state_validation(void)
 	return true;
 }
 
+static bool run_frozen_delay_chunks(
+	unsigned fragmentation, uint64_t *hash, bool near_only)
+{
+	struct generated_run run = {
+		.source = { .near_delay_symbols = 4, .round_trip_symbols = 80 },
+		.random = UINT32_C(0x894123),
+	};
+	uint32_t peer_random = UINT32_C(0xdeadbeef);
+	CHECK(v32_echo_canceller_init(&run.canceller, 4, 80) == V32_ECHO_OK,
+		"delay chunk fixture did not initialize");
+	/* Exact independent path, with stronger near echo than far echo. */
+	run.canceller.coefficients[0][0][3].in_phase = 2200;
+	run.canceller.coefficients[0][0][17].quadrature = -1300;
+	run.canceller.coefficients[0][1][5].in_phase = 900;
+	run.canceller.coefficients[0][1][23].quadrature = 500;
+	run.canceller.coefficients[1][0][3].quadrature = -1700;
+	run.canceller.coefficients[1][0][17].in_phase = 750;
+	run.canceller.coefficients[1][1][5].quadrature = 1400;
+	run.canceller.coefficients[1][1][23].in_phase = -350;
+	run.canceller.coefficients[2][0][3].in_phase = 1050;
+	run.canceller.coefficients[2][0][17].quadrature = 1250;
+	run.canceller.coefficients[2][1][5].in_phase = -800;
+	run.canceller.coefficients[2][1][23].quadrature = 1100;
+	run.canceller.adaptation = 0.1; /* A frozen, trained model. */
+	*hash = UINT64_C(1469598103934665603);
+	for (unsigned symbol = 0; symbol < 6144; ++symbol) {
+		struct qam_point reference;
+		double peer[V32_ECHO_PHASE_COUNT], cleaned[V32_ECHO_PHASE_COUNT];
+		if (symbol == 2048 || symbol == 4096) {
+			int change = symbol == 2048 ? 24 : -24;
+
+			/* The far source delay includes the near delay. */
+			if (near_only) {
+				run.source.near_delay_symbols += change;
+				run.source.round_trip_symbols -= change;
+			} else {
+				run.source.round_trip_symbols += change;
+			}
+		}
+		for (unsigned phase = 0; phase < V32_ECHO_PHASE_COUNT; ++phase) {
+			int32_t centered =
+				(int32_t)(fixture_random(&peer_random) >> 16) - 32768;
+			peer[phase] = (double)centered / 32.0;
+		}
+		CHECK(generated_reference(&run.random, &reference) &&
+		      drive_symbol(&run.canceller, &run.source, &reference,
+				   peer, cleaned, fragmentation),
+		      "frozen chunk fixture failed");
+		CHECK(!near_only || run.canceller.round_trip_symbols == 80,
+			"near-only step moved far delay to %u at symbol %u",
+			run.canceller.round_trip_symbols, symbol);
+		*hash = hash_samples(*hash, cleaned);
+	}
+	CHECK(run.canceller.round_trip_symbols == 80 &&
+		!run.canceller.pending_far_delay_symbols && !run.canceller.far_suspended,
+		"frozen chunk fixture did not return to its original delay");
+	return true;
+}
+
+static bool test_frozen_delay_chunk_equivalence(void)
+{
+	const unsigned fragments[] = { 0, 1, 2, UINT32_MAX };
+	uint64_t expected = 0;
+	for (unsigned i = 0; i < ARRAY_LENGTH(fragments); ++i) {
+		uint64_t hash;
+		CHECK(run_frozen_delay_chunks(fragments[i], &hash, false),
+			"frozen delay fragmentation failed");
+		CHECK(i == 0 || hash == expected,
+			"frozen delay output depends on chunking: %llu versus %llu",
+			(unsigned long long)hash, (unsigned long long)expected);
+		expected = hash;
+	}
+	return true;
+}
+
+static bool test_near_only_step(void)
+{
+	uint64_t hash;
+
+	return run_frozen_delay_chunks(0, &hash, true);
+}
+
 int main(void)
 {
 	static const struct {
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "near-only delay step", test_near_only_step },
+		{ "frozen delay chunk equivalence",
+		  test_frozen_delay_chunk_equivalence },
 		{ "initialization and reset", test_initialization_and_reset },
 		{ "validation and aliases", test_validation_and_aliases },
 		{ "complete finite-state validation",

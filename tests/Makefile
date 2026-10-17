@@ -464,6 +464,7 @@ V32_FIXED_RECEIVE_OBJECTS := \
 	$(BUILD_DIR)/agc.o \
 	$(BUILD_DIR)/fixed_phase.o \
 	$(BUILD_DIR)/echo_canceller.o \
+	$(BUILD_DIR)/echo_timing.o \
 	$(BUILD_DIR)/echo_frontend.o \
 	$(BUILD_DIR)/v32_symbol_timing.o \
 	$(BUILD_DIR)/v32_equalizer.o \
@@ -650,6 +651,7 @@ V32_ECHO_CANCELLER_TEST_BINARY := \
 V32_ECHO_CANCELLER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v32_echo_canceller.o \
 	$(BUILD_DIR)/echo_canceller.o \
+	$(BUILD_DIR)/echo_timing.o \
 	$(BUILD_DIR)/constellation.o
 V32_ECHO_FRONTEND_TEST_BINARY := \
 	$(BUILD_DIR)/test_v32_echo_frontend
@@ -657,6 +659,7 @@ V32_ECHO_FRONTEND_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v32_echo_frontend.o \
 	$(BUILD_DIR)/echo_frontend.o \
 	$(BUILD_DIR)/echo_canceller.o \
+	$(BUILD_DIR)/echo_timing.o \
 	$(BUILD_DIR)/qam.o
 V32_SYMBOL_TIMING_TEST_BINARY := \
 	$(BUILD_DIR)/test_v32_symbol_timing
@@ -675,6 +678,7 @@ V32_LINE_RECEIVER_TEST_OBJECTS := \
 	$(BUILD_DIR)/agc.o \
 	$(BUILD_DIR)/echo_frontend.o \
 	$(BUILD_DIR)/echo_canceller.o \
+	$(BUILD_DIR)/echo_timing.o \
 	$(BUILD_DIR)/qam.o
 V32_EQUALIZER_TEST_BINARY := \
 	$(BUILD_DIR)/test_v32_equalizer
@@ -694,6 +698,7 @@ V32_RECEIVE_PATH_TEST_OBJECTS := \
 	$(BUILD_DIR)/agc.o \
 	$(BUILD_DIR)/echo_frontend.o \
 	$(BUILD_DIR)/echo_canceller.o \
+	$(BUILD_DIR)/echo_timing.o \
 	$(BUILD_DIR)/qam.o
 V32_ECHO_TRAINING_TEST_BINARY := \
 	$(BUILD_DIR)/test_v32_echo_training
@@ -719,6 +724,7 @@ V32_CONDITIONING_PATH_TEST_OBJECTS := \
 	$(BUILD_DIR)/agc.o \
 	$(BUILD_DIR)/echo_frontend.o \
 	$(BUILD_DIR)/echo_canceller.o \
+	$(BUILD_DIR)/echo_timing.o \
 	$(BUILD_DIR)/conditioning_receiver.o \
 	$(BUILD_DIR)/conditioning.o \
 	$(BUILD_DIR)/uncoded_receiver.o \
@@ -747,6 +753,7 @@ V32_RATE_PATH_TEST_OBJECTS := \
 	$(BUILD_DIR)/agc.o \
 	$(BUILD_DIR)/echo_frontend.o \
 	$(BUILD_DIR)/echo_canceller.o \
+	$(BUILD_DIR)/echo_timing.o \
 	$(BUILD_DIR)/conditioning_receiver.o \
 	$(BUILD_DIR)/conditioning.o \
 	$(BUILD_DIR)/uncoded_receiver.o \
