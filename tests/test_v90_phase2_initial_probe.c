@@ -806,6 +806,60 @@ static bool endpoint_sample(
 	return true;
 }
 
+static bool check_probe_recovery_gate(
+	const struct v90_phase2_initial_probe *completed, enum test_codec codec)
+{
+	for (unsigned retraining = 0; retraining <= 1; ++retraining) {
+		struct pcm_phase2_ranging ranging = completed->ranging;
+		struct v90_phase2_initial_probe probe;
+		struct v34_phase2_tone_transmitter tone;
+		struct phase2_initial_probe_event event;
+		if (retraining) {
+			struct pcm_phase2 restarted;
+			struct v90_info0d local = digital_capabilities(codec);
+			struct v34_info0 peer = analog_capabilities();
+			CHECK(pcm_phase2_init_retrain_v90_digital(&restarted, TEST_AMPLITUDE,
+				      &local, &peer, ranging.control.round_trip_delay_samples) ==
+				      PCM_PHASE2_OK, "PCM retrain fixture did not initialize");
+			ranging.info0_exchange = restarted.state.ranging.info0_exchange;
+			ranging.control.prior_round_trip_delay_samples =
+				restarted.state.ranging.control.prior_round_trip_delay_samples;
+		}
+		CHECK(v90_phase2_initial_probe_init(&probe, &ranging) == PHASE2_INITIAL_PROBE_OK &&
+		      v34_phase2_tone_transmitter_init(&tone, V34_ANSWERING_STATION,
+			      TEST_AMPLITUDE) == V34_PHASE2_TONE_OK,
+		      "PCM recovery fixture did not initialize");
+		for (unsigned n = 0; n < V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES; ++n) {
+			int16_t received, transmit = 1234;
+			CHECK(v34_phase2_tone_transmitter_sample(&tone, &received) == V34_PHASE2_TONE_OK &&
+			      v90_phase2_initial_probe_sample(&probe, codec_round_trip(received, codec),
+				      &transmit, &event) == PHASE2_INITIAL_PROBE_OK && transmit == 0,
+			      "PCM continued Tone A failed");
+		}
+		CHECK(probe.control.path.receive.synchronizer.extended == !retraining &&
+		      probe.control.phase == (retraining ? PHASE2_INITIAL_PROBE_FAILED :
+			      PHASE2_INITIAL_PROBE_SIGNAL_B_RECEIVING),
+		      "PCM retrain did not preserve the nominal acquisition bound");
+		if (retraining) {
+			struct v90_phase2_initial_probe before = probe;
+			struct v34_phase2_probe_transmitter echo;
+			CHECK(v34_phase2_probe_transmitter_init(&echo, TEST_AMPLITUDE) == V34_PHASE2_PROBE_OK,
+			      "old-probe echo did not initialize");
+			for (unsigned n = 0; n < V34_PHASE2_PROBE_L1_SAMPLES; ++n) {
+				int16_t received, transmit = 1234;
+				CHECK(v34_phase2_probe_transmitter_sample(&echo, V34_PHASE2_PROBE_L1,
+					      &received) == V34_PHASE2_PROBE_OK &&
+				      v90_phase2_initial_probe_sample(&probe, codec_round_trip(received, codec),
+					      &transmit, &event) == PHASE2_INITIAL_PROBE_OK && transmit == 0 &&
+				      event.kind == PHASE2_INITIAL_PROBE_EVENT_NONE,
+				      "late old-probe echo reopened failed acquisition");
+			}
+			CHECK(v90_initial_probes_equal(&probe, &before), "old echo changed rejected PCM state");
+		}
+	}
+	return true;
+}
+
 static bool check_initial_probe(enum test_codec codec)
 {
 	struct v34_info0 analog_info = analog_capabilities();
@@ -1110,6 +1164,7 @@ static bool check_initial_probe(enum test_codec codec)
 		      event.kind == PHASE2_RECIPROCAL_PROBE_EVENT_FAILED,
 		      "invalid V.90 reciprocal probe mutated state or outputs");
 	}
+	CHECK(check_probe_recovery_gate(&digital.probe, codec), "PCM initial/retrain recovery gate failed");
 	return true;
 }
 

@@ -925,6 +925,79 @@ static bool test_answerer_reversal_recovery(void)
 	return true;
 }
 
+static bool test_late_caller_probe(void)
+{
+	struct v34_phase2_ranging caller_ranging, answerer_ranging;
+	CHECK(completed_ranging_pair(&caller_ranging, &answerer_ranging),
+	      "late-probe fixtures did not complete ranging");
+	for (enum test_codec codec = TEST_CODEC_LINEAR; codec <= TEST_CODEC_PCMA; ++codec)
+		for (unsigned scenario = 0; scenario < 4; ++scenario) {
+			bool missing = scenario & 1u;
+			bool retraining = scenario & 2u;
+			struct v34_phase2_ranging ranging = caller_ranging;
+			ranging.retraining = retraining;
+			struct v34_phase2_initial_probe caller;
+			struct v34_phase2_tone_transmitter tone;
+			struct v34_phase2_probe_transmitter probe;
+			struct phase2_initial_probe_event event;
+			int16_t prefix[V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES];
+			const unsigned leading =
+				V34_PHASE2_PROBE_SYNCHRONIZER_EXTENDED_SEARCH_SAMPLES - 8;
+			bool complete = false;
+			unsigned samples = 0;
+			CHECK(v34_phase2_initial_probe_init(&caller, &ranging, false) ==
+				      PHASE2_INITIAL_PROBE_OK &&
+			      v34_phase2_tone_transmitter_init(&tone, V34_ANSWERING_STATION,
+				      TEST_AMPLITUDE) == V34_PHASE2_TONE_OK &&
+			      v34_phase2_probe_transmitter_init(&probe, TEST_AMPLITUDE) ==
+				      V34_PHASE2_PROBE_OK, "late caller did not initialize");
+			for (; samples < leading + 2 * V34_PHASE2_PROBE_L1_SAMPLES + 8; ++samples) {
+				int16_t received, transmit = 1234;
+				if (missing || samples < leading)
+					CHECK(v34_phase2_tone_transmitter_sample(&tone, &received) ==
+						      V34_PHASE2_TONE_OK, "late Tone A failed");
+				else
+					CHECK(v34_phase2_probe_transmitter_sample(&probe,
+						      samples - leading < V34_PHASE2_PROBE_L1_SAMPLES ?
+							      V34_PHASE2_PROBE_L1 : V34_PHASE2_PROBE_L2,
+						      &received) == V34_PHASE2_PROBE_OK,
+					      "late L1/L2 generation failed");
+				if (codec == TEST_CODEC_PCMU)
+					received = g711_decode_pcmu(g711_encode_pcmu(received));
+				else if (codec == TEST_CODEC_PCMA)
+					received = g711_decode_pcma(g711_encode_pcma(received));
+				if (samples < ARRAY_LENGTH(prefix)) prefix[samples] = received;
+				CHECK(v34_phase2_initial_probe_sample(&caller, received, &transmit,
+					      &event) == PHASE2_INITIAL_PROBE_OK,
+				      "late caller failed at %u", samples);
+				if (event.kind == PHASE2_INITIAL_PROBE_EVENT_REMOTE_PROBE_COMPLETE) {
+					complete = true;
+					break;
+				}
+				CHECK(transmit == 0, "caller transmitted before measuring the probe");
+				if (event.kind == PHASE2_INITIAL_PROBE_EVENT_FAILED) break;
+			}
+			const struct v34_phase2_probe_acquisition *receive = &caller.control.path.receive;
+			CHECK(receive->synchronizer.extended == !retraining &&
+			      memcmp(prefix, receive->synchronizer.capture, sizeof(prefix)) == 0,
+			      "caller did not retain its original Tone A prefix");
+			if (missing || retraining) {
+				unsigned bound = retraining ? V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES :
+					V34_PHASE2_PROBE_SYNCHRONIZER_MAX_CAPTURE_SAMPLES;
+				CHECK(!complete && samples + 1u == bound &&
+				      caller.control.failure == PHASE2_PROBE_REMOTE_NOT_FOUND,
+				      "continued Tone A exceeded the single recovery bound");
+			} else {
+				CHECK(complete && receive->gain_samples == V34_PHASE2_PROBE_L1_SAMPLES &&
+				      receive->receiver.phase == V34_PHASE2_PROBE_RECEIVER_COMPLETE &&
+				      receive->synchronizer.leading_samples + 1u >= leading &&
+				      receive->synchronizer.leading_samples <= leading + 1u,
+				      "late probe lost its synchronized L1/L2 windows");
+			}
+		}
+	return true;
+}
+
 static bool test_bounded_failures(void)
 {
 	struct v34_phase2_ranging caller_ranging;
@@ -952,6 +1025,8 @@ static bool test_bounded_failures(void)
 			      PHASE2_INITIAL_PROBE_OK,
 		      "missing-probe wait failed at sample %zu", samples);
 	CHECK(caller.control.phase == PHASE2_INITIAL_PROBE_FAILED &&
+	      samples == V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES &&
+	      !caller.control.path.receive.synchronizer.extended &&
 	      caller.control.failure ==
 		      PHASE2_PROBE_REMOTE_NOT_FOUND &&
 	      event.kind == PHASE2_INITIAL_PROBE_EVENT_FAILED,
@@ -1289,6 +1364,7 @@ int main(void)
 			{ "bidirectional probe turnaround", test_probe_turnaround },
 			{ "answerer reversal recovery",
 			  test_answerer_reversal_recovery },
+			{ "late caller probe", test_late_caller_probe },
 			{ "bounded failures", test_bounded_failures },
 			{ "validation", test_validation },
 			{ "turnaround failures and validation",

@@ -11,7 +11,7 @@ enum {
 };
 
 _Static_assert(
-	(int)V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES <
+	(int)V34_PHASE2_PROBE_SYNCHRONIZER_MAX_CAPTURE_SAMPLES <
 		(int)V34_PHASE2_PROBE_L1_SAMPLES,
 	"Probe synchronization replay must end within the L1 window");
 
@@ -115,6 +115,27 @@ v34_phase2_probe_acquisition_init(
 	    !v34_phase2_probe_acquisition_is_valid(&initialized))
 		return V34_PHASE2_PROBE_ACQUISITION_INVALID_ARGUMENT;
 	*acquisition = initialized;
+	return V34_PHASE2_PROBE_ACQUISITION_OK;
+}
+
+enum v34_phase2_probe_acquisition_result
+v34_phase2_probe_acquisition_extend(
+	struct v34_phase2_probe_acquisition *acquisition)
+{
+	if (!v34_phase2_probe_acquisition_is_valid(acquisition) ||
+	    acquisition->phase != V34_PHASE2_PROBE_ACQUISITION_NOT_FOUND ||
+	    acquisition->synchronizer.extended)
+		return V34_PHASE2_PROBE_ACQUISITION_INVALID_ARGUMENT;
+	struct v34_phase2_probe_acquisition next = *acquisition;
+
+	next.synchronizer.extended = true;
+	next.synchronizer.phase = V34_PHASE2_PROBE_SYNCHRONIZER_COLLECTING;
+	next.synchronizer.leading_samples = 0;
+	next.synchronizer.probe_energy_fraction = 0.0;
+	next.phase = V34_PHASE2_PROBE_ACQUISITION_SEARCHING;
+	if (!v34_phase2_probe_acquisition_is_valid(&next))
+		return V34_PHASE2_PROBE_ACQUISITION_INVALID_ARGUMENT;
+	*acquisition = next;
 	return V34_PHASE2_PROBE_ACQUISITION_OK;
 }
 

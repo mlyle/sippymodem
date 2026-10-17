@@ -385,6 +385,22 @@ static bool test_not_found(void)
 		      V34_PHASE2_PROBE_ACQUISITION_EVENT_NONE &&
 	      memcmp(&acquisition, &before, sizeof(before)) == 0,
 	      "rejected acquisition changed terminal state");
+	CHECK(v34_phase2_probe_acquisition_extend(&acquisition) ==
+		      V34_PHASE2_PROBE_ACQUISITION_OK && acquisition.synchronizer.extended &&
+	      acquisition.synchronizer.samples_observed ==
+		      V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES,
+	      "nominal rejection did not extend once");
+	for (unsigned index = V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES;
+	     index < V34_PHASE2_PROBE_SYNCHRONIZER_MAX_CAPTURE_SAMPLES; ++index)
+		CHECK(v34_phase2_probe_acquisition_sample(&acquisition, 0, false, &event) ==
+			      V34_PHASE2_PROBE_ACQUISITION_OK, "extended silence failed");
+	CHECK(acquisition.phase == V34_PHASE2_PROBE_ACQUISITION_NOT_FOUND,
+	      "extended silence acquired as a probe");
+	before = acquisition;
+	CHECK(v34_phase2_probe_acquisition_extend(&acquisition) ==
+		      V34_PHASE2_PROBE_ACQUISITION_INVALID_ARGUMENT &&
+	      memcmp(&acquisition, &before, sizeof(before)) == 0,
+	      "repeated extension changed terminal state");
 	return true;
 }
 

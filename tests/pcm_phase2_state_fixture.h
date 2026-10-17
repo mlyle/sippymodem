@@ -172,6 +172,8 @@ static inline bool name(const struct type *left, const struct type *right) \
 STATE_EQUAL(pcm_phase2_owners_equal, pcm_phase2, pcm_snapshot_phase2(copy))
 STATE_EQUAL(pcm_info1_exchanges_equal, pcm_phase2_info1_exchange,
 	pcm_snapshot_info1_exchange(copy))
+STATE_EQUAL(v90_initial_probes_equal, v90_phase2_initial_probe,
+	pcm_snapshot_info0_exchange(&copy->ranging.info0_exchange))
 STATE_EQUAL(v90_probe_turnarounds_equal, v90_phase2_probe_turnaround,
 	pcm_snapshot_info0_exchange(&copy->initial_probe.ranging.info0_exchange))
 STATE_EQUAL(v90_reciprocal_probes_equal, v90_phase2_reciprocal_probe,

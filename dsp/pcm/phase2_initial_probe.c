@@ -175,7 +175,7 @@ static void fail_probe(
 static bool receive_remote_probe(
 	struct phase2_initial_probe *probe,
 	struct phase2_info0_exchange *exchange,
-	int16_t received_sample, int16_t *transmit_sample,
+	bool initial_call, int16_t received_sample, int16_t *transmit_sample,
 	struct phase2_initial_probe_event *event)
 {
 	struct v34_phase2_probe_acquisition *receive =
@@ -200,12 +200,28 @@ static bool receive_remote_probe(
 			PHASE2_INITIAL_PROBE_EVENT_REMOTE_PROBE_COMPLETE;
 		return true;
 	}
+	/* The estimated probe edge can precede the end of peer Tone A.
+	 * Track that tone during the nominal search
+	 * before deciding whether its failed capture may be extended once. */
+	if (initial_call && receive->phase == V34_PHASE2_PROBE_ACQUISITION_SEARCHING &&
+	    !phase2_info0_exchange_observe_tone(
+		    exchange, received_sample, &event->tone_event))
+		return false;
 	if (v34_phase2_probe_acquisition_sample(
 		    receive, received_sample, false, &event->receive_event) !=
 	    V34_PHASE2_PROBE_ACQUISITION_OK)
 		return false;
 	switch (event->receive_event.kind) {
 	case V34_PHASE2_PROBE_ACQUISITION_EVENT_NOT_FOUND:
+		if (initial_call && !receive->synchronizer.extended &&
+		    exchange->tone_detector.carrier.tone_present) {
+			if (v34_phase2_probe_acquisition_extend(receive) !=
+			    V34_PHASE2_PROBE_ACQUISITION_OK)
+				return false;
+			event->receive_event =
+				(struct v34_phase2_probe_acquisition_event){ 0 };
+			break;
+		}
 		fail_probe(
 			probe,
 			PHASE2_PROBE_REMOTE_NOT_FOUND,
@@ -291,7 +307,7 @@ enum phase2_initial_probe_result
 phase2_initial_probe_sample(
 	struct phase2_initial_probe *probe,
 	struct phase2_info0_exchange *exchange,
-	int16_t received_sample, int16_t *transmit_sample,
+	bool initial_call, int16_t received_sample, int16_t *transmit_sample,
 	struct phase2_initial_probe_event *event)
 {
 	struct phase2_initial_probe next;
@@ -311,7 +327,7 @@ phase2_initial_probe_sample(
 	switch (next.phase) {
 	case PHASE2_INITIAL_PROBE_SIGNAL_B_RECEIVING:
 		accepted = receive_remote_probe(
-			&next, &next_exchange, received_sample,
+			&next, &next_exchange, initial_call, received_sample,
 			&generated, &emitted);
 		break;
 	case PHASE2_INITIAL_PROBE_SIGNAL_A_TRANSMITTING:

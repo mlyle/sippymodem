@@ -60,6 +60,13 @@ v34_phase2_probe_acquisition_init(
 bool v34_phase2_probe_acquisition_is_valid(
 	const struct v34_phase2_probe_acquisition *acquisition);
 
+/* After the nominal search fails, retain its samples for one bounded longer
+ * prefix. Only initial Signal-B reception still observing peer Tone A before
+ * its own probe may use this; Signal-A echo trials keep the nominal window. */
+enum v34_phase2_probe_acquisition_result
+v34_phase2_probe_acquisition_extend(
+	struct v34_phase2_probe_acquisition *acquisition);
+
 /* finish_l2 follows the probe receiver's complete-period boundary while L2
  * is measured, or is accepted at any sample after MEASUREMENT_READY. The
  * completion call does not consume received_sample, allowing the next owner

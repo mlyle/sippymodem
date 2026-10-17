@@ -188,7 +188,7 @@ enum phase2_initial_probe_result v34_phase2_initial_probe_sample(
 	    phase2_initial_probe_sample(
 		    &next.control,
 		    &next.ranging.info0_exchange.transport,
-		    received_sample, &generated, &emitted) !=
+		    !next.ranging.retraining, received_sample, &generated, &emitted) !=
 		    PHASE2_INITIAL_PROBE_OK ||
 	    !v34_phase2_initial_probe_is_valid(&next))
 		return PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;

@@ -53,6 +53,7 @@ enum phase2_initial_probe_result v90_phase2_initial_probe_sample(
 	if (phase2_initial_probe_sample(
 		    &next.control,
 		    &next.ranging.info0_exchange.transport,
+		    next.ranging.info0_exchange.state != PCM_PHASE2_INFO0_RETRAIN,
 		    received_sample, &generated, &emitted) !=
 		    PHASE2_INITIAL_PROBE_OK ||
 	    !v90_phase2_initial_probe_is_valid(&next))

@@ -19,6 +19,13 @@ enum {
 	V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES =
 		V34_PHASE2_PROBE_SYNCHRONIZER_SEARCH_SAMPLES +
 		V34_PHASE2_PROBE_PERIOD_SAMPLES,
+	/* One initial Signal-B recovery may retain a longer Tone A prefix. Finish
+	 * synchronization with a complete probe period still left in L1. */
+	V34_PHASE2_PROBE_SYNCHRONIZER_EXTENDED_SEARCH_SAMPLES =
+		V34_PHASE2_PROBE_L1_SAMPLES - 2 * V34_PHASE2_PROBE_PERIOD_SAMPLES,
+	V34_PHASE2_PROBE_SYNCHRONIZER_MAX_CAPTURE_SAMPLES =
+		V34_PHASE2_PROBE_SYNCHRONIZER_EXTENDED_SEARCH_SAMPLES +
+		V34_PHASE2_PROBE_PERIOD_SAMPLES,
 };
 
 enum v34_phase2_probe_synchronizer_phase {
@@ -46,11 +53,12 @@ enum v34_phase2_probe_synchronizer_result {
 };
 
 struct v34_phase2_probe_synchronizer {
-	int16_t capture[V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES];
+	int16_t capture[V34_PHASE2_PROBE_SYNCHRONIZER_MAX_CAPTURE_SAMPLES];
 	enum v34_phase2_probe_synchronizer_phase phase;
 	uint16_t samples_observed;
 	uint16_t leading_samples;
 	double probe_energy_fraction;
+	bool extended;
 };
 
 /* Collect a bounded interval beginning near the expected L1 edge. Acquisition

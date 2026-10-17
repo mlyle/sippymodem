@@ -16,12 +16,23 @@ _Static_assert(
 	V34_PHASE2_PROBE_SYNCHRONIZER_SEARCH_SAMPLES > 0,
 	"V.34 probe synchronization needs a non-empty search prefix");
 _Static_assert(
-	V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES <= UINT16_MAX,
+	V34_PHASE2_PROBE_SYNCHRONIZER_MAX_CAPTURE_SAMPLES <= UINT16_MAX,
 	"V.34 probe synchronization counters must contain the capture");
 _Static_assert(
 	V34_PHASE2_PROBE_HIGHEST_HARMONIC -
 		V34_PHASE2_PROBE_TONE_COUNT == 4,
 	"V.34 probe energy selection must contain every transmitted tone");
+
+static unsigned search_samples(const struct v34_phase2_probe_synchronizer *s)
+{
+	return s->extended ? V34_PHASE2_PROBE_SYNCHRONIZER_EXTENDED_SEARCH_SAMPLES :
+		V34_PHASE2_PROBE_SYNCHRONIZER_SEARCH_SAMPLES;
+}
+
+static unsigned capture_samples(const struct v34_phase2_probe_synchronizer *s)
+{
+	return search_samples(s) + V34_PHASE2_PROBE_PERIOD_SAMPLES;
+}
 
 bool v34_phase2_probe_synchronizer_is_valid(
 	const struct v34_phase2_probe_synchronizer *synchronizer)
@@ -30,9 +41,11 @@ bool v34_phase2_probe_synchronizer_is_valid(
 	    (unsigned int)synchronizer->phase >
 		    V34_PHASE2_PROBE_SYNCHRONIZER_NOT_FOUND ||
 	    synchronizer->samples_observed >
-		    V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES ||
+		    capture_samples(synchronizer) ||
+	    (synchronizer->extended && synchronizer->samples_observed <
+		    V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES) ||
 	    synchronizer->leading_samples >
-		    V34_PHASE2_PROBE_SYNCHRONIZER_SEARCH_SAMPLES ||
+		    search_samples(synchronizer) ||
 	    !isfinite(synchronizer->probe_energy_fraction) ||
 	    synchronizer->probe_energy_fraction < 0.0 ||
 	    synchronizer->probe_energy_fraction > 1.0)
@@ -41,17 +54,17 @@ bool v34_phase2_probe_synchronizer_is_valid(
 	switch (synchronizer->phase) {
 	case V34_PHASE2_PROBE_SYNCHRONIZER_COLLECTING:
 		return synchronizer->samples_observed <
-			       V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES &&
+			       capture_samples(synchronizer) &&
 		       synchronizer->leading_samples == 0 &&
 		       synchronizer->probe_energy_fraction == 0.0;
 	case V34_PHASE2_PROBE_SYNCHRONIZER_ACQUIRED:
 		return synchronizer->samples_observed ==
-			       V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES &&
+			       capture_samples(synchronizer) &&
 		       synchronizer->probe_energy_fraction >=
 			       V34_PHASE2_PROBE_SYNCHRONIZER_MINIMUM_ENERGY_FRACTION;
 	case V34_PHASE2_PROBE_SYNCHRONIZER_NOT_FOUND:
 		return synchronizer->samples_observed ==
-			       V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES &&
+			       capture_samples(synchronizer) &&
 		       synchronizer->probe_energy_fraction <
 			       V34_PHASE2_PROBE_SYNCHRONIZER_MINIMUM_ENERGY_FRACTION;
 	}
@@ -105,7 +118,7 @@ static bool find_onset(
 	struct v34_phase2_probe_synchronizer *synchronizer,
 	struct v34_phase2_probe_synchronizer_event *event)
 {
-	double fractions[V34_PHASE2_PROBE_SYNCHRONIZER_SEARCH_SAMPLES + 1u];
+	double fractions[V34_PHASE2_PROBE_SYNCHRONIZER_EXTENDED_SEARCH_SAMPLES + 1u];
 	double best_fraction = 0.0;
 	uint16_t best_candidate = 0;
 	struct v34_phase2_probe_spectrum spectrum;
@@ -122,7 +135,7 @@ static bool find_onset(
 	}
 	for (uint16_t candidate = 0;
 	     candidate <=
-	     V34_PHASE2_PROBE_SYNCHRONIZER_SEARCH_SAMPLES;
+	     search_samples(synchronizer);
 	     ++candidate) {
 		double fraction;
 
@@ -197,7 +210,7 @@ v34_phase2_probe_synchronizer_sample(
 	    V34_PHASE2_PROBE_SYNCHRONIZER_COLLECTING) {
 		next.capture[next.samples_observed++] = received_sample;
 		if (next.samples_observed ==
-			    V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES &&
+			    capture_samples(&next) &&
 		    !find_onset(&next, &emitted))
 			return V34_PHASE2_PROBE_SYNCHRONIZER_INVALID_ARGUMENT;
 	}

@@ -71,10 +71,12 @@ bool phase2_initial_probe_is_valid(
 	const struct phase2_initial_probe *probe,
 	const struct phase2_info0_exchange *exchange);
 
+/* Initial Signal-B reception may tolerate one longer Tone A prefix. During
+ * retraining an old local probe can still return, so keep the nominal search. */
 enum phase2_initial_probe_result phase2_initial_probe_sample(
 	struct phase2_initial_probe *probe,
 	struct phase2_info0_exchange *exchange,
-	int16_t received_sample, int16_t *transmit_sample,
+	bool initial_call, int16_t received_sample, int16_t *transmit_sample,
 	struct phase2_initial_probe_event *event);
 
 enum phase2_initial_probe_result phase2_initial_probe_measure(
