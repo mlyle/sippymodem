@@ -140,6 +140,8 @@ FILE_MODE = 0o600
 DIRECTORY_MODE = 0o700
 DASHBOARD_REFRESH_SECONDS = 2.0
 RAW_LINK_WAKE = b"\r\r"
+CALLBACK_LINE_MAX = 512
+CALLBACK_SERIALIZATION_MAX_SECONDS = 120.0
 ANALOGUE_FALLBACK_MODULATIONS = ("V.34", "V.90", "V.92")
 
 
@@ -799,6 +801,15 @@ def _outbound_body(
     )
 
 
+def _callback_marker_timeout(seconds: float, report: ConnectReport) -> float:
+    # The modem's CONNECT precedes a potentially long reference status line.
+    # Budget its 8N1 serialization separately from remote processing time.
+    rate = report.receive_bit_rate
+    if rate is None or rate <= 0:
+        return seconds
+    return seconds + min(CALLBACK_SERIALIZATION_MAX_SECONDS, 10.0 * CALLBACK_LINE_MAX / rate)
+
+
 def _callback_command(case: CampaignCase, port: int | None = None) -> bytes:
     suffix = b"" if port is None else b" " + str(port).encode("ascii")
     if case.callback_features:
@@ -983,15 +994,17 @@ def _callback_body(
         progress,
     ):
         return
+    prefix = b"GETTY:CALLBACK:CONNECT:" + nonce + b":"
     connect_pattern = re.compile(
-        rb"GETTY:CALLBACK:CONNECT:"
-        + re.escape(nonce)
-        + rb":[^\r\n]*(?:\r\n|\r|\n)"
+        re.escape(prefix)
+        + rb"[^\r\n]{0," + str(CALLBACK_LINE_MAX - len(prefix) - 2).encode("ascii")
+        + rb"}(?:\r\n|\r|\n)"
     )
     progress.set("verifying callback nonce")
     try:
         marker_verified, received = answer.terminal.exchange_online_pattern(
-            b"", connect_pattern, config.online_timeout_seconds
+            b"", connect_pattern,
+            _callback_marker_timeout(config.online_timeout_seconds, state.report),
         )
         state.capture("answer", b"", received, phase="callback-return-greeting")
     except (LiveTerminalError, OSError, TimeoutError):

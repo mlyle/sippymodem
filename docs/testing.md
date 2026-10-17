@@ -98,10 +98,17 @@ when the harness gathers a reply; buffered replies may describe earlier errors.
 Peer invalid-command warnings remain quality flags, not measurements of BER.
 
 Callback cases use a bounded request call and a nonce-matched returned call;
-request legs are reported separately. BUSY retries and inter-call cooldowns
-are bounded and recorded. The ledger, seed, schedule, result records, logs and
-captures remain in owner-only ignored artifacts. Do not publish those files
-without checking them for site information.
+request legs are reported separately. After callback CONNECT, verification adds
+the time to serialize a 512-byte status line at the negotiated receive bitrate
+(10 bits per byte) to `online_timeout_seconds`. This allowance is capped at
+120 seconds; an unknown receive rate keeps the configured timeout. Verification
+still requires the expected nonce and a complete line ending, and rejects status
+lines beyond that bound. This matters for the 75-bit/s direction of V.23, where
+a normal callback status line can take nearly 14 seconds on the wire.
+
+BUSY retries and inter-call cooldowns are bounded and recorded. The ledger,
+seed, schedule, result records, logs and captures remain in owner-only ignored
+artifacts. Do not publish those files without checking them for site information.
 
 ### Two modems on one ATA
 

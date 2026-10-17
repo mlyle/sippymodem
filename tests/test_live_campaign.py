@@ -28,6 +28,7 @@ from tools.live_campaign import (  # noqa: E402
     _AttemptProgress,
     _LiveTicker,
     _callback_command,
+    _callback_marker_timeout,
     _case_connect_error,
     _display,
     _freeze_with_status,
@@ -91,6 +92,9 @@ retrained = False
 pings = 0
 
 def connect_response():
+    if mode == "callback-slow-line":
+        return (b"\r\nModulation: V23\r\nProtocol: NONE\r\nCompression: NONE"
+                b"\r\nTxRate: 1200\r\nCONNECT 75\r\n")
     if "pcm-retrain" in mode:
         if retrained and mode == "pcm-retrain-unknown":
             return b"\r\nCONNECT 24000\r\n"
@@ -249,13 +253,12 @@ while True:
                 os.write(master, connect_response() + initial_payload)
                 online = True
         elif command == b"ATA" and mode.startswith("callback") and role == "answer":
-            os.write(
-                master,
-                connect_response()
-                + b"GETTY:CALLBACK:CONNECT:"
-                + return_nonce
-                + b":ready\r\n",
-            )
+            prefix = b"GETTY:CALLBACK:CONNECT:" + return_nonce + b":"
+            os.write(master, connect_response() + prefix)
+            if mode == "callback-slow-line":
+                time.sleep(0.25)
+            tail = b"x" * 512 if mode == "callback-long-line" else b"ready"
+            os.write(master, tail + b"\r\n")
             online = True
         elif command == b"ATO1":
             retrained = True
@@ -1435,6 +1438,35 @@ class LiveCampaignTests(unittest.TestCase):
             self.assertFalse(result.line_attempted)
             self.assertFalse(result.callback_request_attempted)
             self.assertFalse(artifacts.daemon_log("request").exists())
+
+    def test_callback_marker_timeout_accounts_for_receive_direction(self) -> None:
+        self.assertGreater(_callback_marker_timeout(15, ConnectReport(receive_bit_rate=75)), 80)
+        self.assertLess(_callback_marker_timeout(15, ConnectReport(receive_bit_rate=64000)), 15.1)
+        self.assertEqual(_callback_marker_timeout(15, ConnectReport()), 15)
+        self.assertLessEqual(_callback_marker_timeout(15, ConnectReport(receive_bit_rate=1)), 135)
+
+    def test_callback_status_line_deadline_and_bound(self) -> None:
+        for mode, case_name, verified in (
+            ("callback-slow-line", "v23-1200-75-raw-callback", True),
+            ("callback-long-line", "v21-300-callback", False),
+        ):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                script = root / "fake.py"
+                script.write_text(textwrap.dedent(FAKE_MODEM), encoding="utf-8")
+                scheduled = ScheduledAttempt(CASES_BY_NAME[case_name], 1)
+                artifacts = self.artifacts(root, scheduled)
+                config = replace(self.config(root, script, mode, root / "callback-ready"),
+                                 online_timeout_seconds=0.15)
+                frozen = FrozenBinary(root, Path(sys.executable), "a" * 40, "b" * 64, False)
+                with mock.patch("tools.live_terminal.time.sleep"):
+                    result = run_physical_attempt(config, frozen, scheduled, 1, artifacts, False)
+                self.assertTrue(result.connected)
+                self.assertEqual(result.initial_data, verified, result.detail)
+                self.assertEqual(result.maturity, MATURITY_DATA if verified else MATURITY_CONNECT)
+                if verified:
+                    received = (artifacts.legs["answer"] / "terminal-rx.bin").read_bytes()
+                    self.assertIn(b":ready\r", received)
 
     def test_callback_from_another_request_is_not_verified(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
