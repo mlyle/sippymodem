@@ -4,6 +4,7 @@
 #define V32_STARTUP_H
 
 #include "rate_signal.h"
+#include "framing.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -11,7 +12,7 @@
 enum {
 	/* One dibit is carried per 2400-baud training symbol. */
 	V32_STARTUP_TRAINING_DIBITS = 1280,
-	V32_STARTUP_CONFIRMATION_DIBITS = 128,
+	V32_STARTUP_CONFIRMATION_DIBITS = V32_STARTUP_CONFIRMATION_SYMBOLS,
 };
 
 enum v32_endpoint_role {

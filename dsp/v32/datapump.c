@@ -1373,7 +1373,8 @@ static int finish_fixed_end(
 		    V32_STARTUP_OK ||
 	    !next_startup.end_received)
 		return -1;
-	result = v32_b1_path_init(&b1, &handoff);
+	result = v32_b1_path_init(
+		&b1, &handoff, V32_STARTUP_CONFIRMATION_SYMBOLS);
 	if (result != V32_B1_PATH_OK &&
 	    result != V32_B1_PATH_COMPLETE)
 		return -1;

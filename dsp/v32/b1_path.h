@@ -10,10 +10,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-enum {
-	V32_B1_PATH_SYMBOLS = 128,
-};
-
 enum v32_b1_path_result {
 	V32_B1_PATH_OK,
 	V32_B1_PATH_COMPLETE,
@@ -31,8 +27,8 @@ union v32_b1_receiver {
 	struct v32_trellis_receiver trellis;
 };
 
-/* Own the selected-rate receive lane through exactly 128 physical B1
- * symbols.  A complete owner retains the semantic receiver and any already
+/* Own the selected-rate receive lane through 128 startup or 24 rate-change
+ * B1 symbols.  A complete owner retains the semantic receiver and any already
  * recovered first payload observation for the following data path. */
 struct v32_b1_path {
 	struct v32_receive_path receive;
@@ -40,16 +36,17 @@ struct v32_b1_path {
 	struct v32_rate_offer selected_offer;
 	uint64_t observation_epoch;
 	uint8_t observations;
+	uint8_t symbols;
 	uint8_t data_bits_per_symbol;
 	enum v32_b1_mode mode;
-	/* Evidence does not gate the 128-symbol transition.  Trellis evidence
+	/* Evidence does not gate the configured B1 transition.  Trellis evidence
 	 * excludes the final delayed traceback symbols. */
 	bool b1_matches;
 };
 
 enum v32_b1_path_result v32_b1_path_init(
 	struct v32_b1_path *path,
-	const struct v32_end_path_handoff *end);
+	const struct v32_end_path_handoff *end, uint8_t symbols);
 bool v32_b1_path_is_valid(
 	const struct v32_b1_path *path);
 bool v32_b1_path_is_complete(

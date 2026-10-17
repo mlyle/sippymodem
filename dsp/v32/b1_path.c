@@ -57,6 +57,7 @@ static bool active_receiver_is_valid(const struct v32_b1_path *path)
 		       v32_trellis_receiver_is_valid(&path->receiver.trellis) &&
 		       path->receiver.trellis.decoder.data_bits_per_symbol ==
 			       path->data_bits_per_symbol &&
+		       path->receiver.trellis.b1_symbols == path->symbols &&
 		       path->receiver.trellis.b1_observations ==
 			       path->observations &&
 		       path->receiver.trellis.b1_matches == path->b1_matches;
@@ -70,7 +71,10 @@ static bool path_header_is_valid(const struct v32_b1_path *path)
 	uint8_t data_bits;
 	enum v32_equalizer_adaptation adaptation;
 
-	if (path == NULL || path->observations > V32_B1_PATH_SYMBOLS ||
+	if (path == NULL ||
+	    (path->symbols != V32_STARTUP_CONFIRMATION_SYMBOLS &&
+	     path->symbols != V32_RATE_CONFIRMATION_SYMBOLS) ||
+	    path->observations > path->symbols ||
 	    !selected_mode(&path->selected_offer, &selected, &data_bits) ||
 	    selected != path->mode || data_bits != path->data_bits_per_symbol ||
 	    !active_receiver_is_valid(path) ||
@@ -81,7 +85,7 @@ static bool path_header_is_valid(const struct v32_b1_path *path)
 	if (adaptation != V32_EQUALIZER_ADAPTATION_DISABLED &&
 	    adaptation != V32_EQUALIZER_ADAPTATION_FINE)
 		return false;
-	return path->observations != V32_B1_PATH_SYMBOLS ||
+	return path->observations != path->symbols ||
 	       adaptation == V32_EQUALIZER_ADAPTATION_FINE;
 }
 
@@ -94,7 +98,7 @@ bool v32_b1_path_is_valid(const struct v32_b1_path *path)
 bool v32_b1_path_is_complete(const struct v32_b1_path *path)
 {
 	return v32_b1_path_is_valid(path) &&
-	       path->observations == V32_B1_PATH_SYMBOLS;
+	       path->observations == path->symbols;
 }
 
 static bool initialize_receiver(
@@ -113,7 +117,7 @@ static bool initialize_receiver(
 		return v32_trellis_receiver_init(
 			       &path->receiver.trellis,
 			       &four_point->decoder.descrambler,
-			       path->data_bits_per_symbol) ==
+			       path->data_bits_per_symbol, path->symbols) ==
 		       V32_TRELLIS_RECEIVER_OK;
 	}
 	return false;
@@ -172,7 +176,7 @@ static enum v32_b1_path_result commit_observations(
 		uint8_t next_observations;
 		bool b1_matches = path->b1_matches;
 
-		if (path->observations == V32_B1_PATH_SYMBOLS)
+		if (path->observations == path->symbols)
 			return V32_B1_PATH_COMPLETE;
 		result = decide_observation(
 			path, observation, &next_receiver, &decision,
@@ -180,7 +184,7 @@ static enum v32_b1_path_result commit_observations(
 		if (result != V32_B1_PATH_OK)
 			return result;
 		next_observations = (uint8_t)(path->observations + 1u);
-		if (next_observations == V32_B1_PATH_SYMBOLS &&
+		if (next_observations == path->symbols &&
 		    path->receive.equalizer.adaptation !=
 			    V32_EQUALIZER_ADAPTATION_FINE) {
 			receive_result = v32_receive_path_commit_adaptation(
@@ -197,7 +201,7 @@ static enum v32_b1_path_result commit_observations(
 		path->observations = next_observations;
 		path->observation_epoch = decision.observation.epoch;
 		path->b1_matches = b1_matches;
-		if (path->observations == V32_B1_PATH_SYMBOLS)
+		if (path->observations == path->symbols)
 			return path_header_is_valid(path) ?
 				       V32_B1_PATH_COMPLETE :
 				       V32_B1_PATH_INVALID_STATE;
@@ -212,12 +216,14 @@ static enum v32_b1_path_result commit_observations(
 
 enum v32_b1_path_result v32_b1_path_init(
 	struct v32_b1_path *path,
-	const struct v32_end_path_handoff *end)
+	const struct v32_end_path_handoff *end, uint8_t symbols)
 {
 	struct v32_b1_path initialized;
 	enum v32_b1_path_result result = V32_B1_PATH_OK;
 
 	if (path == NULL || end == NULL ||
+	    (symbols != V32_STARTUP_CONFIRMATION_SYMBOLS &&
+	     symbols != V32_RATE_CONFIRMATION_SYMBOLS) ||
 	    memory_regions_overlap(path, sizeof(*path), end, sizeof(*end)) ||
 	    !v32_end_path_handoff_is_valid(end))
 		return V32_B1_PATH_INVALID_ARGUMENT;
@@ -225,6 +231,7 @@ enum v32_b1_path_result v32_b1_path_init(
 	initialized.receive = end->receive;
 	initialized.selected_offer = end->selected_offer;
 	initialized.b1_matches = true;
+	initialized.symbols = symbols;
 	if (!selected_mode(
 		    &initialized.selected_offer, &initialized.mode,
 		    &initialized.data_bits_per_symbol) ||
@@ -259,7 +266,7 @@ enum v32_b1_path_result v32_b1_path_sample(
 
 	if (!path_header_is_valid(path))
 		return V32_B1_PATH_INVALID_STATE;
-	if (path->observations == V32_B1_PATH_SYMBOLS)
+	if (path->observations == path->symbols)
 		return v32_receive_path_is_valid(&path->receive) ?
 			       V32_B1_PATH_COMPLETE : V32_B1_PATH_INVALID_STATE;
 	if (accepted_reference != NULL &&

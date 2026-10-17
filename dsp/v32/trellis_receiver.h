@@ -9,10 +9,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-enum {
-	V32_TRELLIS_RECEIVER_B1_SYMBOLS = 128,
-};
-
 enum v32_trellis_receiver_result {
 	V32_TRELLIS_RECEIVER_OK,
 	V32_TRELLIS_RECEIVER_INVALID_ARGUMENT,
@@ -25,6 +21,7 @@ struct v32_trellis_receiver {
 	struct v32_trellis_decoder decoder;
 	struct v32_scrambler descrambler;
 	uint8_t b1_observations;
+	uint8_t b1_symbols;
 	uint8_t b1_flush_symbols;
 	bool b1_matches;
 };
@@ -39,17 +36,17 @@ struct v32_trellis_receiver_symbol {
 enum v32_trellis_receiver_result v32_trellis_receiver_init(
 	struct v32_trellis_receiver *receiver,
 	const struct v32_scrambler *continuous_descrambler,
-	uint8_t data_bits_per_symbol);
+	uint8_t data_bits_per_symbol, uint8_t b1_symbols);
 bool v32_trellis_receiver_is_valid(
 	const struct v32_trellis_receiver *receiver);
 
-/* Consume exactly 128 physical B1 observations.  Traceback output is
- * descrambled and compared with the all-one B1 group as it becomes ready. */
+/* Consume 128 startup or 24 rate-change B1 observations. Traceback output
+ * is descrambled and compared with the all-one B1 group as it becomes ready. */
 enum v32_trellis_receiver_result v32_trellis_receiver_track_b1(
 	struct v32_trellis_receiver *receiver,
 	const struct v32_equalizer_observation *observation);
 
-/* Consume payload observations after all 128 B1 observations.  The first
+/* Consume payload observations after the configured B1 interval. The first
  * 16 calls drain delayed B1 groups; call 17 returns the first payload group. */
 enum v32_trellis_receiver_result v32_trellis_receiver_decode(
 	struct v32_trellis_receiver *receiver,

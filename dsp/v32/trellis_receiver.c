@@ -12,8 +12,10 @@ static bool receiver_metadata_is_valid(
 	uint8_t expected_history;
 
 	if (receiver == NULL ||
+	    (receiver->b1_symbols != V32_STARTUP_CONFIRMATION_SYMBOLS &&
+	     receiver->b1_symbols != V32_RATE_CONFIRMATION_SYMBOLS) ||
 	    !v32_scrambler_is_valid(&receiver->descrambler) ||
-	    receiver->b1_observations > V32_TRELLIS_RECEIVER_B1_SYMBOLS ||
+	    receiver->b1_observations > receiver->b1_symbols ||
 	    receiver->b1_flush_symbols >
 		    V32_TRELLIS_DECODER_TRACEBACK_SYMBOLS)
 		return false;
@@ -23,8 +25,7 @@ static bool receiver_metadata_is_valid(
 			   V32_TRELLIS_DECODER_TRACEBACK_SYMBOLS;
 	if (receiver->b1_flush_symbols == 0)
 		return receiver->decoder.history_fill == expected_history;
-	return receiver->b1_observations ==
-		       V32_TRELLIS_RECEIVER_B1_SYMBOLS &&
+	return receiver->b1_observations == receiver->b1_symbols &&
 	       receiver->decoder.history_fill ==
 		       V32_TRELLIS_DECODER_TRACEBACK_SYMBOLS;
 }
@@ -39,13 +40,16 @@ bool v32_trellis_receiver_is_valid(
 enum v32_trellis_receiver_result v32_trellis_receiver_init(
 	struct v32_trellis_receiver *receiver,
 	const struct v32_scrambler *continuous_descrambler,
-	uint8_t data_bits_per_symbol)
+	uint8_t data_bits_per_symbol, uint8_t b1_symbols)
 {
 	struct v32_trellis_receiver initialized = {
 		.b1_matches = true,
+		.b1_symbols = b1_symbols,
 	};
 
 	if (receiver == NULL ||
+	    (b1_symbols != V32_STARTUP_CONFIRMATION_SYMBOLS &&
+	     b1_symbols != V32_RATE_CONFIRMATION_SYMBOLS) ||
 	    !v32_scrambler_is_valid(continuous_descrambler) ||
 	    memory_regions_overlap(
 		    receiver, sizeof(*receiver), continuous_descrambler,
@@ -129,8 +133,7 @@ enum v32_trellis_receiver_result v32_trellis_receiver_track_b1(
 	if (!observation_is_separate(receiver, observation))
 		return V32_TRELLIS_RECEIVER_INVALID_ARGUMENT;
 	if (!receiver_metadata_is_valid(receiver) ||
-	    receiver->b1_observations ==
-		    V32_TRELLIS_RECEIVER_B1_SYMBOLS)
+	    receiver->b1_observations == receiver->b1_symbols)
 		return V32_TRELLIS_RECEIVER_INVALID_STATE;
 	next = *receiver;
 	result = decode_observation(&next, observation, &decoded);
@@ -182,8 +185,7 @@ enum v32_trellis_receiver_result v32_trellis_receiver_decode(
 	if (!decode_arguments_are_separate(receiver, observation, symbol))
 		return V32_TRELLIS_RECEIVER_INVALID_ARGUMENT;
 	if (!receiver_metadata_is_valid(receiver) ||
-	    receiver->b1_observations !=
-		    V32_TRELLIS_RECEIVER_B1_SYMBOLS)
+	    receiver->b1_observations != receiver->b1_symbols)
 		return V32_TRELLIS_RECEIVER_INVALID_STATE;
 	next = *receiver;
 	result = decode_observation(&next, observation, &decoded);

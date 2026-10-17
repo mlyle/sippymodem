@@ -46,6 +46,7 @@ struct generated_source {
 	unsigned int rate_dibit;
 	unsigned int rate_symbols;
 	unsigned int selected_symbols;
+	uint8_t confirmation_symbols;
 	unsigned int retrain_symbols;
 	uint32_t b1_history;
 	bool rate_started;
@@ -130,6 +131,7 @@ static bool source_init(
 	struct qam_channel channel;
 
 	memset(source, 0, sizeof(*source));
+	source->confirmation_symbols = V32_STARTUP_CONFIRMATION_SYMBOLS;
 	source->offer = role_offer(role);
 	source->selected_offer = *selected_offer;
 	source->offer.rates |= selected_offer->rates;
@@ -187,9 +189,9 @@ static bool source_next_selected_point(struct generated_source *source)
 {
 	uint8_t data_bits = selected_trellis_data_bits(
 		&source->selected_offer);
-	bool b1 = source->selected_symbols < V32_B1_PATH_SYMBOLS;
+	bool b1 = source->selected_symbols < source->confirmation_symbols;
 	unsigned int payload = b1 ? 0 :
-		source->selected_symbols - V32_B1_PATH_SYMBOLS;
+		source->selected_symbols - source->confirmation_symbols;
 	uint8_t input;
 	uint8_t signal;
 	uint8_t retrain_quadrant;
@@ -272,7 +274,7 @@ static bool source_next_selected_point(struct generated_source *source)
 			return false;
 	}
 	source->selected_symbols++;
-	if (source->selected_symbols == V32_B1_PATH_SYMBOLS)
+	if (source->selected_symbols == source->confirmation_symbols)
 		source->b1_history = source->rate_encoder.scrambler.history;
 	return true;
 }
@@ -334,7 +336,9 @@ static bool source_sample(
 	    *accepted != can_accept)
 		return false;
 	if (source->b1_level_step && source->selected_started &&
-	    source->selected_symbols <= TEST_LEVEL_STEP_SYMBOLS)
+	    source->selected_symbols <= (source->confirmation_symbols <
+		2 * TEST_LEVEL_STEP_SYMBOLS ? source->confirmation_symbols / 2 :
+		TEST_LEVEL_STEP_SYMBOLS))
 		*sample = (int16_t)((int32_t)*sample * 5 / 4);
 	return true;
 }
@@ -619,7 +623,7 @@ static bool reject_wrong_end(
 static bool run_role(
 	enum v32_transmitter_role role,
 	const struct v32_rate_offer *selected_offer,
-	bool b1_level_step,
+	bool b1_level_step, uint8_t confirmation_symbols,
 	struct v32_conditioning_path_handoff *conditioning_handoff,
 	struct v32_rate_path *started,
 	struct v32_rate_path *completed,
@@ -653,6 +657,7 @@ static bool run_role(
 	CHECK(complete_conditioning(
 		      &source, role, selected_offer, false, &conditioning, &handoff),
 	      "rate-path conditioning failed for role %d", role);
+	source.confirmation_symbols = confirmation_symbols;
 	CHECK(v32_rate_path_init(&path, &handoff) == V32_RATE_PATH_OK &&
 	      v32_rate_path_is_valid(&path) &&
 	      !v32_rate_path_is_complete(&path),
@@ -796,7 +801,7 @@ static bool run_role(
 	*completed_end_handoff = end_handoff;
 	{
 		enum v32_b1_path_result result = v32_b1_path_init(
-			&b1, &end_handoff);
+			&b1, &end_handoff, confirmation_symbols);
 
 		CHECK(result == V32_B1_PATH_OK ||
 		      result == V32_B1_PATH_COMPLETE,
@@ -848,15 +853,15 @@ static bool run_role(
 		      b1_started->receive.line.gain.gain_mantissa_q15 &&
 	      b1.receive.line.gain.gain_shift ==
 		      b1_started->receive.line.gain.gain_shift &&
-	      b1.observations == V32_B1_PATH_SYMBOLS &&
+	      b1.observations == confirmation_symbols &&
 	      b1.observation_epoch ==
-		      end_handoff.observation_epoch + V32_B1_PATH_SYMBOLS &&
+		      end_handoff.observation_epoch + confirmation_symbols &&
 	      b1.receive.equalizer.adaptation ==
 		      V32_EQUALIZER_ADAPTATION_FINE &&
 	      (!b1.receive.equalizer.decision_pending ||
 	       b1.receive.equalizer.pending_observation.epoch ==
 		       b1.observation_epoch + 1u) &&
-	      source.selected_symbols > V32_B1_PATH_SYMBOLS &&
+	      source.selected_symbols > confirmation_symbols &&
 	      source.b1_history != 0,
 	      "B1 boundary changed for role/mode %d/%u:%u", role,
 	      selected_offer->rates,
@@ -867,7 +872,7 @@ static bool run_role(
 		      "uncoded B1 descrambler changed for role %d", role);
 	if (b1.mode == V32_B1_MODE_TRELLIS)
 		CHECK(b1.receiver.trellis.b1_observations ==
-			      V32_B1_PATH_SYMBOLS &&
+			      confirmation_symbols &&
 		      b1.receiver.trellis.b1_flush_symbols == 0 &&
 		      b1.receiver.trellis.b1_matches == b1.b1_matches,
 		      "trellis B1 state changed for role/mode %d/%u", role,
@@ -919,7 +924,7 @@ static bool run_role(
 		      data_started->b1.receive.line.gain.gain_mantissa_q15 &&
 	      data.b1.receive.line.gain.gain_shift ==
 		      data_started->b1.receive.line.gain.gain_shift &&
-	      data.b1.observations == V32_B1_PATH_SYMBOLS &&
+	      data.b1.observations == confirmation_symbols &&
 	      data.b1.receive.equalizer.adaptation ==
 		      V32_EQUALIZER_ADAPTATION_FINE &&
 	      data.b1.observation_epoch - data_start_epoch ==
@@ -1183,19 +1188,28 @@ static bool test_contracts(
 
 	memset(&b1, 0x5a, sizeof(b1));
 	saved_b1 = b1;
+	const uint8_t invalid_lengths[] = { 0, 16, 23, 25, 127, 129, 255 };
+	for (size_t i = 0; i < ARRAY_LENGTH(invalid_lengths); ++i)
+		CHECK(v32_b1_path_init(&b1, completed_end_handoff,
+			invalid_lengths[i]) == V32_B1_PATH_INVALID_ARGUMENT &&
+		      memcmp(&b1, &saved_b1, sizeof(b1)) == 0,
+		      "invalid B1 length changed its owner");
 	bad_end_handoff = *completed_end_handoff;
 	bad_end_handoff.observation_ready =
 		!bad_end_handoff.observation_ready;
 	overlapping_b1.end = *completed_end_handoff;
 	saved_overlapping_b1 = overlapping_b1;
-	CHECK(v32_b1_path_init(NULL, completed_end_handoff) ==
+	CHECK(v32_b1_path_init(NULL, completed_end_handoff,
+		      V32_STARTUP_CONFIRMATION_SYMBOLS) ==
 		      V32_B1_PATH_INVALID_ARGUMENT &&
-	      v32_b1_path_init(&b1, NULL) ==
+	      v32_b1_path_init(&b1, NULL, V32_STARTUP_CONFIRMATION_SYMBOLS) ==
 		      V32_B1_PATH_INVALID_ARGUMENT &&
 	      v32_b1_path_init(
-		      &overlapping_b1.b1, &overlapping_b1.end) ==
+		      &overlapping_b1.b1, &overlapping_b1.end,
+		      V32_STARTUP_CONFIRMATION_SYMBOLS) ==
 		      V32_B1_PATH_INVALID_ARGUMENT &&
-	      v32_b1_path_init(&b1, &bad_end_handoff) ==
+	      v32_b1_path_init(&b1, &bad_end_handoff,
+		      V32_STARTUP_CONFIRMATION_SYMBOLS) ==
 		      V32_B1_PATH_INVALID_ARGUMENT &&
 	      memcmp(&b1, &saved_b1, sizeof(b1)) == 0 &&
 	      memcmp(
@@ -1326,7 +1340,8 @@ static bool test_uncoded_phase_handoff(void)
 					V32_RATE_CAPABILITY_4800 :
 					V32_RATE_CAPABILITY_9600;
 				CHECK(v32_end_path_handoff_is_valid(&end) &&
-				      v32_b1_path_init(&b1, &end) == V32_B1_PATH_OK &&
+				      v32_b1_path_init(&b1, &end,
+					      V32_STARTUP_CONFIRMATION_SYMBOLS) == V32_B1_PATH_OK &&
 				      end.four_point.decoder.phase_quadrant == phase &&
 				      b1.observations == 0 &&
 				      b1.data_bits_per_symbol == bits &&
@@ -1358,43 +1373,50 @@ int main(void)
 	struct v32_data_path data_started;
 	struct v32_data_path data_advanced;
 
-	for (size_t mode = 0; mode <= TEST_SELECTED_MODES; ++mode) {
-		bool level_step = mode == TEST_SELECTED_MODES;
-		const struct v32_rate_offer *offer = &SELECTED_OFFERS[
-			level_step ? TEST_SELECTED_MODES - 1 : mode];
-		for (unsigned int role = 0; role < 2; ++role) {
-			struct v32_conditioning_path_handoff next_conditioning;
-			struct v32_rate_path next_started;
-			struct v32_rate_path next_completed;
-			struct v32_end_path next_end_started;
-			struct v32_end_path next_end_completed;
-			struct v32_end_path_handoff next_end_handoff;
-			struct v32_b1_path next_b1_started;
-			struct v32_b1_path next_b1_completed;
-			struct v32_data_path next_data_started;
-			struct v32_data_path next_data_advanced;
+	const uint8_t lengths[] = { V32_STARTUP_CONFIRMATION_SYMBOLS,
+		V32_RATE_CONFIRMATION_SYMBOLS };
+	for (size_t length = 0; length < ARRAY_LENGTH(lengths); ++length) {
+		uint8_t confirmation_symbols = lengths[length];
+		for (size_t mode = 0; mode <= TEST_SELECTED_MODES; ++mode) {
+			bool level_step = mode == TEST_SELECTED_MODES;
+			const struct v32_rate_offer *offer = &SELECTED_OFFERS[
+				level_step ? TEST_SELECTED_MODES - 1 : mode];
+			for (unsigned int role = 0; role < 2; ++role) {
+				struct v32_conditioning_path_handoff next_conditioning;
+				struct v32_rate_path next_started;
+				struct v32_rate_path next_completed;
+				struct v32_end_path next_end_started;
+				struct v32_end_path next_end_completed;
+				struct v32_end_path_handoff next_end_handoff;
+				struct v32_b1_path next_b1_started;
+				struct v32_b1_path next_b1_completed;
+				struct v32_data_path next_data_started;
+				struct v32_data_path next_data_advanced;
 
-			if (!run_role(
-				    (enum v32_transmitter_role)role,
-				    offer, level_step, &next_conditioning,
-				    &next_started, &next_completed,
-				    &next_end_started, &next_end_completed,
-				    &next_end_handoff, &next_b1_started,
-				    &next_b1_completed, &next_data_started,
-				    &next_data_advanced))
-				return 1;
-			if (mode == 0 &&
-			    role == V32_ANSWERING_TRANSMITTER) {
-				conditioning = next_conditioning;
-				started = next_started;
-				completed = next_completed;
-				end_started = next_end_started;
-				end_completed = next_end_completed;
-				completed_end_handoff = next_end_handoff;
-				b1_started = next_b1_started;
-				b1_completed = next_b1_completed;
-				data_started = next_data_started;
-				data_advanced = next_data_advanced;
+				if (!run_role(
+					    (enum v32_transmitter_role)role,
+					    offer, level_step, confirmation_symbols,
+					    &next_conditioning,
+					    &next_started, &next_completed,
+					    &next_end_started, &next_end_completed,
+					    &next_end_handoff, &next_b1_started,
+					    &next_b1_completed, &next_data_started,
+					    &next_data_advanced))
+					return 1;
+				if (mode == 0 &&
+				    confirmation_symbols == V32_STARTUP_CONFIRMATION_SYMBOLS &&
+				    role == V32_ANSWERING_TRANSMITTER) {
+					conditioning = next_conditioning;
+					started = next_started;
+					completed = next_completed;
+					end_started = next_end_started;
+					end_completed = next_end_completed;
+					completed_end_handoff = next_end_handoff;
+					b1_started = next_b1_started;
+					b1_completed = next_b1_completed;
+					data_started = next_data_started;
+					data_advanced = next_data_advanced;
+				}
 			}
 		}
 	}
