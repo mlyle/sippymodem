@@ -27,6 +27,13 @@ struct v34_echo_timing_point {
 	bool received;
 };
 
+struct v34_echo_timing_window {
+	double score[2][V34_ECHO_TIMING_BINS];
+	unsigned points, position;
+	int previous_bin;
+	bool previous_qualified;
+};
+
 /* Owned beside the echo model, outside transactionally copied receive paths.
  * All input pointers are borrowed only for the duration of a call. */
 struct v34_echo_timing {
@@ -34,13 +41,12 @@ struct v34_echo_timing {
 	struct v34_equalizer reference_equalizer;
 	struct v34_echo_timing_point history[V34_ECHO_TIMING_HISTORY];
 	struct v34_echo_timing_bin bins[V34_ECHO_TIMING_BINS];
-	double score[2][V34_ECHO_TIMING_BINS];
+	struct v34_echo_timing_window normal, fast;
 	double scale, symbol_rate, carrier_frequency;
 	uint64_t first_half, latest_half, drain_half, receiver_epoch;
-	unsigned window_points, position, lookahead;
+	unsigned lookahead;
 	uint32_t model_delay;
-	int previous_bin;
-	bool previous_qualified, initialized, prepared;
+	bool initialized, prepared;
 };
 
 /* Logical reset invalidates retained evidence without clearing the large

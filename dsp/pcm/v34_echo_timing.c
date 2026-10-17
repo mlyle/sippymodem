@@ -12,8 +12,10 @@
  * test. Project the frozen echo prediction through the real receiver's linear
  * filters and test whether shifting it restores the negotiated odd lattice.
  * This never fits an echo response to peer data. A candidate must improve both
- * halves of a window, then win again in the next disjoint window. Unsupported
- * constellations retain the ordinary echo monitor and retrain behavior. */
+ * halves of a window, then win again in the next disjoint window. Strong
+ * improvements can qualify sooner; small improvements retain longer windows.
+ * Unsupported constellations retain the ordinary echo monitor and retrain
+ * behavior. */
 
 void v34_echo_timing_reset(struct v34_echo_timing *timing)
 {
@@ -32,9 +34,11 @@ static bool configure(struct v34_echo_timing *timing,
 	timing->symbol_rate = rate;
 	timing->carrier_frequency = carrier;
 	timing->model_delay = model_delay;
-	/* Each observation spans two symbols: 200 ms, split into independent
-	 * 100 ms selection and validation intervals. */
-	timing->window_points = (unsigned)ceil(rate / 10.0);
+	/* Each observation spans two symbols. Keep the 200 ms window for small
+	 * improvements and also test 100 ms windows with a stronger margin.
+	 * Each path needs four disjoint selection/validation intervals. */
+	timing->normal.points = (unsigned)ceil(rate / 10.0);
+	timing->fast.points = (unsigned)ceil(rate / 20.0);
 	timing->lookahead = (unsigned)ceil(
 		V34_ECHO_TIMING_RADIUS * 2.0 * rate / 8000.0) + 4u;
 	timing->reference_timing = receiver->timing;
@@ -179,29 +183,30 @@ static double distance(double value)
 	return difference * difference;
 }
 
-static int finish_window(struct v34_echo_timing *timing)
+static int finish_window(struct v34_echo_timing_window *window, double ratio)
 {
 	unsigned best = V34_ECHO_TIMING_RADIUS;
 	for (unsigned i = 0; i < V34_ECHO_TIMING_BINS; ++i)
-		if (timing->score[0][i] < timing->score[0][best])
+		if (window->score[0][i] < window->score[0][best])
 			best = i;
 	bool qualified = best != V34_ECHO_TIMING_RADIUS &&
-		timing->score[0][best] <= 0.95 * timing->score[0][V34_ECHO_TIMING_RADIUS] &&
-		timing->score[1][best] <= 0.95 * timing->score[1][V34_ECHO_TIMING_RADIUS];
-	int delta = qualified && timing->previous_qualified &&
-		(int)best == timing->previous_bin ? (int)best - V34_ECHO_TIMING_RADIUS : 0;
+		window->score[0][best] <= ratio * window->score[0][V34_ECHO_TIMING_RADIUS] &&
+		window->score[1][best] <= ratio * window->score[1][V34_ECHO_TIMING_RADIUS];
+	int delta = qualified && window->previous_qualified &&
+		(int)best == window->previous_bin ? (int)best - V34_ECHO_TIMING_RADIUS : 0;
 
-	timing->previous_qualified = qualified;
-	timing->previous_bin = (int)best;
-	timing->position = 0;
-	memset(timing->score, 0, sizeof(timing->score));
+	window->previous_qualified = qualified;
+	window->previous_bin = (int)best;
+	window->position = 0;
+	memset(window->score, 0, sizeof(window->score));
 	return delta;
 }
 
 static int observe_point(struct v34_echo_timing *timing,
 	const struct v34_echo_timing_point *point)
 {
-	unsigned part = timing->position >= timing->window_points / 2u;
+	unsigned part = timing->normal.position >= timing->normal.points / 2u;
+	unsigned fast_part = timing->fast.position >= timing->fast.points / 2u;
 	double x = point->received_real + point->real * point->cosine -
 		point->imaginary * point->sine;
 	double y = point->received_imaginary + point->real * point->sine +
@@ -225,10 +230,17 @@ static int observe_point(struct v34_echo_timing *timing,
 		}
 		double cosine = point->cosine * bin->cosine - point->sine * bin->sine;
 		double sine = point->sine * bin->cosine + point->cosine * bin->sine;
-		timing->score[part][i] += distance(x - real * cosine + imaginary * sine) +
+		double cost = distance(x - real * cosine + imaginary * sine) +
 			distance(y - real * sine - imaginary * cosine);
+		timing->normal.score[part][i] += cost;
+		timing->fast.score[fast_part][i] += cost;
 	}
-	return ++timing->position == timing->window_points ? finish_window(timing) : 0;
+	int normal = ++timing->normal.position == timing->normal.points ?
+		finish_window(&timing->normal, 0.95) : 0;
+	int fast = ++timing->fast.position == timing->fast.points ?
+		finish_window(&timing->fast, 0.75) : 0;
+	/* Prefer the longer evidence if both paths qualify on this sample. */
+	return normal != 0 ? normal : fast;
 }
 
 int v34_echo_timing_observe(struct v34_echo_timing *timing,

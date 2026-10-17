@@ -790,6 +790,68 @@ static bool test_weak_echo_delay_step(void)
 	return true;
 }
 
+static bool test_fast_echo_delay_step(void)
+{
+	const enum v34_symbol_rate rates[] = { V34_SYMBOL_RATE_3200, V34_SYMBOL_RATE_3429 };
+	const unsigned units[] = { 12, 14 };
+	for (unsigned law = 0; law < 2; ++law) {
+		for (unsigned rate = 0; rate < ARRAY_LENGTH(rates); ++rate) {
+			struct endpoint caller, answerer;
+			struct channel channel = { .pcma = law != 0 };
+			struct self_echo *echo = &channel.echo[V34_CALLING_STATION];
+
+			*echo = (struct self_echo){ .delay_samples = 256, .gain_q15 = 700 };
+			CHECK(endpoint_init_symmetric(&caller, V34_CALLING_STATION,
+				rates[rate], units[rate]) &&
+			      endpoint_init_symmetric(&answerer, V34_ANSWERING_STATION,
+				rates[rate], units[rate]), "fast echo setup failed");
+			caller.mapping_pattern_seed ^= 17;
+			answerer.peer_mapping_pattern_seed ^= 17;
+			answerer.mapping_pattern_seed ^= 51;
+			caller.peer_mapping_pattern_seed ^= 51;
+			CHECK(run_pair_until_frames(&caller, &answerer, &channel, 256),
+			      "fast echo training failed: law %u, rate %u", law, rate);
+			uint32_t delay = caller.call.echo.window_delay_samples;
+			for (unsigned i = 0; i < 8000; ++i) {
+				struct v34_call_observation c, a;
+				CHECK(channel_sample_pair(&channel, &caller, &answerer, &c, &a) &&
+				      caller.call.echo.window_delay_samples == delay,
+				      "stationary return retimed or corrupted data");
+			}
+			echo->delay_samples += 80;
+			caller.allow_receive_errors = true;
+			unsigned recovered = 0;
+			for (unsigned i = 0; i < 8000; ++i) {
+				struct v34_call_observation c, a;
+				CHECK(channel_sample_pair(&channel, &caller, &answerer, &c, &a),
+				      "fast echo recovery lost the data path");
+				uint32_t current = caller.call.echo.window_delay_samples;
+				CHECK(current == delay || current == delay + 80,
+				      "echo tracker selected an unrelated delay");
+				if (current == delay + 80 && recovered == 0)
+					recovered = i + 1;
+			}
+			CHECK(recovered != 0 && recovered <= 3200,
+			      "strong echo improvement took %u samples: law %u, rate %u",
+			      recovered, law, rate);
+			/* The longer tracker takes over 4500 samples on these streams.
+			 * Quicker correction avoids all errors in the mu-law 28.8k case. */
+			CHECK(law != 0 || rate != 0 || caller.receive_errors == 0,
+			      "fast recovery did not preserve the known 28.8k bit stream");
+			caller.allow_receive_errors = false;
+			for (unsigned i = 0; i < 4000; ++i) {
+				struct v34_call_observation c, a;
+				CHECK(channel_sample_pair(&channel, &caller, &answerer, &c, &a) &&
+				      caller.call.echo.window_delay_samples == delay + 80,
+				      "recovered return corrupted data or moved again");
+			}
+			CHECK(v34_call_is_online(&caller.call) && v34_call_is_online(&answerer.call),
+			      "fast delay recovery required a retrain");
+		}
+	}
+	return true;
+}
+
 static bool test_quiet_training_completion(void)
 {
 	struct endpoint caller;
@@ -2751,6 +2813,7 @@ int main(void)
 		{ "generated station echo", test_echo_calls },
 		{ "delayed station echo", test_delayed_echo_calls },
 		{ "weak echo delay step", test_weak_echo_delay_step },
+		{ "fast echo delay step", test_fast_echo_delay_step },
 		{ "quiet training completion", test_quiet_training_completion },
 		{ "symmetric selected-rate calls", test_symmetric_calls },
 		{ "local and remote full retrain", test_full_retrain },
