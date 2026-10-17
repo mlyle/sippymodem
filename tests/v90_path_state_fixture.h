@@ -57,10 +57,10 @@ static inline bool v90_snapshot_analog_path(struct v90_analog_path *path)
 		qam_snapshot_channel(&job->calibration.line.carrier.channel);
 	} else {
 		v34_snapshot_geometry(
-			&job->calibration.mapping.initial_schedule.geometry);
+			&job->calibration.mapping.geometry);
 		v34_snapshot_geometry(&job->calibration.mapping.schedule.geometry);
 		v34_snapshot_parameters(
-			&job->calibration.mapping.initial_encoder.parameters);
+			&job->calibration.mapping.parameters);
 		v34_snapshot_parameters(
 			&job->calibration.mapping.encoder.parameters);
 	}
@@ -95,10 +95,10 @@ static inline bool v90_digital_path_states_equal(
 			v34_snapshot_parameters(&rx->data_mapping.encoder.parameters);
 			v34_snapshot_parameters(&rx->data_mapping.normalizer.parameters);
 			v34_snapshot_geometry(
-				&rx->calibration.initial_schedule.geometry);
+				&rx->calibration.geometry);
 			v34_snapshot_geometry(&rx->calibration.schedule.geometry);
 			v34_snapshot_parameters(
-				&rx->calibration.initial_encoder.parameters);
+				&rx->calibration.parameters);
 			v34_snapshot_parameters(&rx->calibration.encoder.parameters);
 			if (rx->stage == V90_UPSTREAM_RX_STAGE_B1 ||
 			    rx->stage == V90_UPSTREAM_RX_STAGE_COMPLETE)

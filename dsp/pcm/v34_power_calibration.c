@@ -63,9 +63,8 @@ static enum v34_power_calibration_result generate_mapping_frame(
 	struct v34_frame_schedule *schedule,
 	struct v34_scrambler *scrambler,
 	struct v34_4d_encoder *encoder,
-	enum v34_nonlinear_parameter nonlinear_parameter,
-	double mean_squared_magnitude, uint32_t *random_state,
-	struct v34_transmitted_mapping_frame *transmitted, bool project)
+	uint32_t *random_state,
+	struct v34_transmitted_mapping_frame *transmitted)
 {
 	struct v34_frame_schedule preview;
 	struct v34_mapping_frame mapping_frame;
@@ -87,12 +86,8 @@ static enum v34_power_calibration_result generate_mapping_frame(
 		auxiliary_bit = next_generated_bit(random_state);
 		auxiliary_pointer = &auxiliary_bit;
 	}
-	result = project ? v34_transmit_mapping_frame(
-		schedule, scrambler, encoder, primary_bits,
-		mapping_frame.primary_bits, auxiliary_pointer,
-		nonlinear_parameter, mean_squared_magnitude, transmitted) :
-		v34_transmit_mapping_frame_q7(schedule, scrambler, encoder, primary_bits,
-			mapping_frame.primary_bits, auxiliary_pointer, transmitted);
+	result = v34_transmit_mapping_frame_q7(schedule, scrambler, encoder,
+		primary_bits, mapping_frame.primary_bits, auxiliary_pointer, transmitted);
 	return mapping_transmitter_result(result);
 }
 
@@ -143,10 +138,20 @@ enum v34_power_calibration_result v34_mapping_power_calibration_begin(
 		    initial_encoder->parameters.mapping_frame_bits ||
 	    !v34_nonlinear_parameter_is_valid(nonlinear_parameter))
 		return V34_POWER_CALIBRATION_INVALID_ARGUMENT;
+	double moment_scale = 0.0;
+	if (nonlinear_parameter != V34_NONLINEAR_THETA_ZERO) {
+		struct v34_power_normalizer bounds;
+		enum v34_symbol_power_result result = v34_power_normalizer_init_linear(
+			&bounds, &initial_encoder->parameters, 1.0);
+		if (result != V34_SYMBOL_POWER_OK)
+			return symbol_power_result(result);
+		moment_scale = bounds.maximum_precoded_point_power;
+	}
 	*calibration = (struct v34_mapping_power_calibration){
-		.initial_schedule = *initial_schedule, .schedule = *initial_schedule,
-		.initial_scrambler = *initial_scrambler, .scrambler = *initial_scrambler,
-		.initial_encoder = *initial_encoder, .encoder = *initial_encoder,
+		.geometry = initial_schedule->geometry,
+		.parameters = initial_encoder->parameters,
+		.schedule = *initial_schedule, .scrambler = *initial_scrambler,
+		.encoder = *initial_encoder, .moment_scale = moment_scale,
 		.random_state = V34_POWER_CALIBRATION_SEED,
 		.frame_count = (uint32_t)V34_POWER_CALIBRATION_SUPERFRAMES *
 			initial_schedule->geometry.data_frames_per_superframe *
@@ -162,34 +167,66 @@ static enum v34_power_calibration_result observe_mapping_frame(
 	struct v34_mapping_power_calibration *calibration)
 {
 	struct v34_transmitted_mapping_frame transmitted;
-	struct v34_symbol_power_measurement *measured =
-		calibration->measuring_projected ? &calibration->projected :
-			&calibration->precoded;
 	enum v34_power_calibration_result result = generate_mapping_frame(
 		&calibration->schedule, &calibration->scrambler, &calibration->encoder,
-		calibration->measuring_projected ? calibration->nonlinear_parameter :
-			V34_NONLINEAR_THETA_ZERO,
-		calibration->measuring_projected ?
-			calibration->precoded.mean_squared_magnitude : 1.0,
-		&calibration->random_state, &transmitted, calibration->measuring_projected);
-
+		&calibration->random_state, &transmitted);
 	if (result != V34_POWER_CALIBRATION_OK)
 		return result;
 	for (size_t interval = 0; interval < V34_4D_INTERVALS_PER_MAPPING_FRAME;
 	     ++interval) {
 		for (size_t symbol = 0; symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL;
 		     ++symbol) {
-			size_t index = interval * V34_2D_SYMBOLS_PER_4D_INTERVAL + symbol;
-			result = symbol_power_result(calibration->measuring_projected ?
-				v34_symbol_power_observe_point(measured,
-					&transmitted.projected_symbol[index]) :
-				v34_symbol_power_observe_q7(measured,
-					&transmitted.encoded.interval[interval]
-						.precoded[symbol].precoded_symbol));
+			const struct v34_q7_point *point =
+				&transmitted.encoded.interval[interval]
+					.precoded[symbol].precoded_symbol;
+			result = symbol_power_result(v34_symbol_power_observe_q7(
+				&calibration->precoded, point));
 			if (result != V34_POWER_CALIBRATION_OK)
 				return result;
+			if (calibration->nonlinear_parameter != V34_NONLINEAR_THETA_ZERO) {
+				/* Scale power by its hard geometric bound so all
+				 * accumulated per-symbol moments stay at most one. */
+				double re = (double)point->in_phase / V34_Q7_SCALE;
+				double im = (double)point->quadrature / V34_Q7_SCALE;
+				double q = (re * re + im * im) / calibration->moment_scale;
+				if (!isfinite(q) || q < 0.0 || q > 1.0 + 1e-12)
+					return V34_POWER_CALIBRATION_NUMERIC_FAILURE;
+				double power = q * q;
+				for (unsigned i = 0; i < 4; ++i) {
+					calibration->power_moments[i] += power;
+					power *= q;
+				}
+			}
 		}
 	}
+	return V34_POWER_CALIBRATION_OK;
+}
+
+/* Clause 9.7 gives P' = P(1 + theta*P/(6*mu) + theta^2*P^2/(120*mu^2))^2.
+ * Its mean uses E[P^2] through E[P^5], with coefficients theta/(3*mu),
+ * 2*theta^2/(45*mu^2), theta^3/(360*mu^3), theta^4/(14400*mu^4).
+ * Evaluate scaled moments from the same finite sample; k = theta*bound/mu.
+ * This avoids regenerating that sample after its raw mean becomes known. */
+static enum v34_power_calibration_result finish_projected_power(
+	struct v34_mapping_power_calibration *calibration)
+{
+	double mu = calibration->precoded.mean_squared_magnitude;
+	if (!v34_symbol_power_measurement_is_valid(&calibration->precoded) ||
+	    calibration->precoded.symbol_count == 0 || mu <= 0.0)
+		return V34_POWER_CALIBRATION_INVALID_ARGUMENT;
+	double k = (5.0 / 16.0) * calibration->moment_scale / mu;
+	const double *sum = calibration->power_moments;
+	double extra = k / 3.0 * sum[0] + (2.0 * k * k / 45.0) * sum[1] +
+		(k * k * k / 360.0) * sum[2] +
+		(k * k * k * k / 14400.0) * sum[3];
+	double projected = mu + calibration->moment_scale * extra /
+		calibration->precoded.symbol_count;
+	if (!isfinite(projected) || projected <= 0.0)
+		return V34_POWER_CALIBRATION_NUMERIC_FAILURE;
+	calibration->projected = (struct v34_symbol_power_measurement){
+		.mean_squared_magnitude = projected,
+		.symbol_count = calibration->precoded.symbol_count,
+	};
 	return V34_POWER_CALIBRATION_OK;
 }
 
@@ -199,9 +236,9 @@ static enum v34_power_calibration_result profile_gain(
 	uint16_t rate_level;
 
 	if (v34_rate_profile_level(
-		    calibration->initial_schedule.geometry.symbol_rate,
-		    calibration->initial_schedule.geometry.primary_data_rate_2400_bps_units,
-		    calibration->initial_encoder.parameters.expanded_shaping, &rate_level) !=
+		    calibration->geometry.symbol_rate,
+		    calibration->geometry.primary_data_rate_2400_bps_units,
+		    calibration->parameters.expanded_shaping, &rate_level) !=
 	    V34_RATE_PROFILE_OK)
 		return V34_POWER_CALIBRATION_OUT_OF_RANGE;
 	*gain = (double)rate_level * V34_TRAINING_PULSE_POINT_ZERO_Q12 /
@@ -222,7 +259,7 @@ static enum v34_power_calibration_result finish_mapping_power(
 	enum v34_power_calibration_result result;
 
 	result = symbol_power_result(v34_power_normalizer_init(
-		&generated, &calibration->initial_encoder.parameters, nonlinear_parameter,
+		&generated, &calibration->parameters, nonlinear_parameter,
 		&precoded, &projected));
 	if (result != V34_POWER_CALIBRATION_OK)
 		return result;
@@ -241,23 +278,31 @@ static enum v34_power_calibration_result finish_mapping_power(
 		*normalizer = generated;
 	return result;
 }
+
 enum v34_power_calibration_result v34_mapping_power_calibration_step(
 	struct v34_mapping_power_calibration *calibration,
 	uint32_t frame_budget, struct v34_power_normalizer *normalizer)
 {
 	if (calibration == NULL || normalizer == NULL || frame_budget == 0 ||
-	    calibration->frame_count == 0 || calibration->frame > calibration->frame_count)
+	    calibration->frame_count == 0 ||
+	    calibration->frame > calibration->frame_count ||
+	    !v34_nonlinear_parameter_is_valid(calibration->nonlinear_parameter) ||
+	    (calibration->nonlinear_parameter != V34_NONLINEAR_THETA_ZERO &&
+	     (!isfinite(calibration->moment_scale) ||
+	      calibration->moment_scale <= 0.0)) ||
+	    !v34_frame_schedule_is_valid(&calibration->schedule) ||
+	    !v34_scrambler_is_valid(&calibration->scrambler) ||
+	    !v34_4d_encoder_is_valid(&calibration->encoder) ||
+	    !v34_frame_geometry_is_equal(&calibration->geometry,
+		&calibration->schedule.geometry) ||
+	    calibration->geometry.high_mapping_frame_bits !=
+		calibration->parameters.mapping_frame_bits ||
+	    !v34_mapping_parameters_are_equal(&calibration->encoder.parameters,
+		&calibration->parameters))
 		return V34_POWER_CALIBRATION_INVALID_ARGUMENT;
 	if (calibration->linear_bounded) {
 		if (calibration->nonlinear_parameter != V34_NONLINEAR_THETA_ZERO ||
-		    calibration->measuring_projected ||
-		    !v34_frame_schedule_is_valid(&calibration->schedule) ||
-		    !v34_scrambler_is_valid(&calibration->scrambler) ||
-		    !v34_4d_encoder_is_valid(&calibration->encoder) ||
-		    calibration->schedule.geometry.high_mapping_frame_bits !=
-			calibration->encoder.parameters.mapping_frame_bits ||
-		    !v34_mapping_parameters_are_equal(&calibration->encoder.parameters,
-			&calibration->initial_encoder.parameters))
+		    calibration->measuring_projected)
 			return V34_POWER_CALIBRATION_INVALID_ARGUMENT;
 		uint32_t remaining = calibration->frame_count - calibration->frame;
 		calibration->frame += frame_budget < remaining ? frame_budget : remaining;
@@ -267,23 +312,27 @@ enum v34_power_calibration_result v34_mapping_power_calibration_step(
 		enum v34_power_calibration_result result = profile_gain(calibration, &gain);
 		return result == V34_POWER_CALIBRATION_OK ?
 			symbol_power_result(v34_power_normalizer_init_linear(normalizer,
-				&calibration->initial_encoder.parameters, gain)) : result;
+				&calibration->parameters, gain)) : result;
 	}
 	while (frame_budget != 0) {
 		if (calibration->frame == calibration->frame_count) {
 			if (calibration->measuring_projected ||
 			    calibration->nonlinear_parameter == V34_NONLINEAR_THETA_ZERO)
 				return finish_mapping_power(calibration, normalizer);
-			calibration->schedule = calibration->initial_schedule;
-			calibration->scrambler = calibration->initial_scrambler;
-			calibration->encoder = calibration->initial_encoder;
-			calibration->random_state = V34_POWER_CALIBRATION_SEED;
+			enum v34_power_calibration_result result =
+				finish_projected_power(calibration);
+			if (result != V34_POWER_CALIBRATION_OK)
+				return result;
 			calibration->frame = 0;
 			calibration->measuring_projected = true;
 		}
-		enum v34_power_calibration_result result = observe_mapping_frame(calibration);
-		if (result != V34_POWER_CALIBRATION_OK)
-			return result;
+		/* Preserve the former projection pass's frame charges so startup
+		 * completion timing stays independent of calibration CPU cost. */
+		if (!calibration->measuring_projected) {
+			enum v34_power_calibration_result result = observe_mapping_frame(calibration);
+			if (result != V34_POWER_CALIBRATION_OK)
+				return result;
+		}
 		calibration->frame++;
 		frame_budget--;
 	}

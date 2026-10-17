@@ -264,6 +264,87 @@ static bool test_generated_calibration(void)
 	return true;
 }
 
+static uint8_t next_calibration_bit(uint32_t *state)
+{
+	*state = *state * UINT32_C(1664525) + UINT32_C(1013904223);
+	return (uint8_t)(*state >> 31);
+}
+
+/* Compare the statistical derivation with actual complex-point projection,
+ * using the same deterministic sample and its measured raw mean. */
+static bool test_direct_projection(void)
+{
+	const enum v34_trellis_selection trellises[] = {
+		V34_TRELLIS_16_STATE, V34_TRELLIS_32_STATE, V34_TRELLIS_64_STATE,
+	};
+
+	for (unsigned role = 0; role < 2; ++role) {
+		for (unsigned t = 0; t < ARRAY_LENGTH(trellises); ++t) {
+			struct calibration_fixture fixture;
+			struct v34_mapping_power_calibration job;
+			struct v34_power_normalizer normalizer;
+			struct v34_symbol_power_measurement raw = { 0 }, projected = { 0 };
+
+			CHECK(initialize_fixture(&fixture, role ? V34_ANSWERING_STATION :
+				V34_CALLING_STATION, trellises[t], role + t, 3 * t) &&
+			      v34_mapping_power_calibration_begin(&job, &fixture.schedule,
+				&fixture.scrambler, &fixture.encoder,
+				V34_NONLINEAR_THETA_5_OVER_16) == V34_POWER_CALIBRATION_OK,
+			      "direct projection fixture failed");
+			uint32_t random_state = job.random_state, frames = job.frame_count;
+			CHECK(v34_mapping_power_calibration_step(&job, UINT32_MAX,
+				&normalizer) == V34_POWER_CALIBRATION_OK,
+			      "moment calibration failed");
+			for (uint32_t frame = 0; frame < frames; ++frame) {
+				struct v34_frame_schedule preview;
+				struct v34_mapping_frame request;
+				struct v34_transmitted_mapping_frame transmitted;
+				uint8_t bits[V34_MAX_MAPPING_FRAME_BITS], auxiliary = 0;
+
+				CHECK(v34_frame_schedule_prepare_mapping_frame(&fixture.schedule) ==
+					V34_FRAME_SCHEDULE_OK, "could not prepare reference frame");
+				preview = fixture.schedule;
+				CHECK(v34_frame_schedule_next(&preview, &request) ==
+					V34_FRAME_SCHEDULE_OK, "could not preview reference frame");
+				for (unsigned bit = 0; bit < request.primary_bits; ++bit)
+					bits[bit] = next_calibration_bit(&random_state);
+				if (request.carries_auxiliary_bit)
+					auxiliary = next_calibration_bit(&random_state);
+				CHECK(v34_transmit_mapping_frame_q7(&fixture.schedule,
+					&fixture.scrambler, &fixture.encoder, bits,
+					request.primary_bits, request.carries_auxiliary_bit ?
+					&auxiliary : NULL, &transmitted) ==
+					V34_MAPPING_FRAME_TRANSMITTER_OK,
+				      "reference mapping frame failed");
+				for (unsigned interval = 0;
+				     interval < V34_4D_INTERVALS_PER_MAPPING_FRAME; ++interval) {
+					for (unsigned symbol = 0;
+					     symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
+						const struct v34_q7_point *point =
+							&transmitted.encoded.interval[interval]
+								.precoded[symbol].precoded_symbol;
+						struct qam_point encoded;
+
+						CHECK(v34_symbol_power_observe_q7(&raw, point) ==
+							V34_SYMBOL_POWER_OK &&
+						      v34_nonlinear_encode(V34_NONLINEAR_THETA_5_OVER_16,
+							normalizer.precoded_mean_squared_magnitude,
+							point, &encoded) == V34_NONLINEAR_OK &&
+						      v34_symbol_power_observe_point(&projected, &encoded) ==
+							V34_SYMBOL_POWER_OK, "direct projection failed");
+					}
+				}
+			}
+			CHECK(raw.symbol_count == normalizer.calibration_symbol_count &&
+			      raw.mean_squared_magnitude == normalizer.precoded_mean_squared_magnitude &&
+			      mean_powers_are_equal(projected.mean_squared_magnitude,
+				normalizer.projected_mean_squared_magnitude),
+			      "moment calibration differs from direct point projection");
+		}
+	}
+	return true;
+}
+
 static bool test_generated_line_power(void)
 {
 	struct calibration_fixture fixture;
@@ -533,7 +614,7 @@ static bool test_resumable_calibration(void)
 			struct v34_power_normalizer actual;
 			struct v34_line_power_measurement actual_line;
 			enum v34_power_calibration_result result;
-			uint32_t previous = 0, steps = 0;
+			uint32_t previous = 0, previous_frames = 0, steps = 0;
 
 			CHECK(v34_mapping_power_calibration_begin(&mapping, &fixture.schedule,
 				&fixture.scrambler, &fixture.encoder, parameter) ==
@@ -564,7 +645,12 @@ static bool test_resumable_calibration(void)
 			}
 			do {
 				result = v34_mapping_power_calibration_step(&mapping, BUDGETS[i], &actual);
-				uint32_t symbols = mapping.precoded.symbol_count + mapping.projected.symbol_count;
+				uint32_t symbols = mapping.precoded.symbol_count;
+				uint32_t charged_frames = mapping.frame +
+					(mapping.measuring_projected ? mapping.frame_count : 0);
+				CHECK(charged_frames - previous_frames <= BUDGETS[i],
+				      "mapping cadence exceeded budget");
+				previous_frames = charged_frames;
 				CHECK(symbols - previous <= (uint64_t)BUDGETS[i] *
 					V34_SYMBOLS_PER_MAPPING_FRAME && ++steps <= 1000,
 					"mapping step exceeded budget or failed to progress");
@@ -754,6 +840,7 @@ int main(void)
 	} tests[] = {
 		{ "rate profile", test_rate_profile },
 		{ "generated calibration", test_generated_calibration },
+		{ "direct point projection", test_direct_projection },
 		{ "generated line power", test_generated_line_power },
 		{ "line validation", test_line_validation },
 		{ "configuration sweep", test_configuration_sweep },

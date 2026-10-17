@@ -29,12 +29,16 @@ enum v34_power_calibration_result {
 
 /* Resumable, instance-owned calibration. Begin copies its inputs; thereafter
  * only step may mutate the job. Each step charges at most frame_budget frames,
- * preserving completion cadence even when linear power need not be measured.
+ * preserving completion cadence when measured work can be skipped.
  * Outputs change only on completion; discard the job after a terminal failure. */
 struct v34_mapping_power_calibration {
-	struct v34_frame_schedule initial_schedule, schedule;
-	struct v34_scrambler initial_scrambler, scrambler;
-	struct v34_4d_encoder initial_encoder, encoder;
+	struct v34_frame_geometry geometry;
+	struct v34_mapping_parameters parameters;
+	struct v34_frame_schedule schedule;
+	struct v34_scrambler scrambler;
+	struct v34_4d_encoder encoder;
+	/* Sums of (power / moment_scale) raised to powers two through five. */
+	double moment_scale, power_moments[4];
 	struct v34_symbol_power_measurement precoded, projected;
 	uint32_t random_state, frame, frame_count;
 	enum v34_nonlinear_parameter nonlinear_parameter;
@@ -42,9 +46,10 @@ struct v34_mapping_power_calibration {
 	bool linear_bounded;
 };
 
-/* Measure a generated data stream at the exact Q7 precoder boundary, then
- * after nonlinear projection using that raw mean. A linear job with a proven
- * precoder range skips generation and reports unmeasured power; other jobs
+/* Measure Q7 precoder power and bounded moments in one generated pass. Derive
+ * nonlinear projection power from those moments after the raw mean is known.
+ * A linear job with a proven precoder range skips generation and reports
+ * unmeasured power; other jobs
  * retain generated-stream range validation. The selected rate profile supplies
  * the gain, corrected so nonlinear projection preserves the same mean power.
  * Generated jobs visit four complete schedule periods from the starting position.

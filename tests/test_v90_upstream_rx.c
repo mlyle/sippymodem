@@ -20,11 +20,11 @@ static void receiver_snapshot(struct v90_upstream_rx *copy,
 {
 	memcpy(copy, receiver, sizeof(*copy));
 	v34_snapshot_geometry(&copy->data_mapping.schedule.geometry);
-	v34_snapshot_geometry(&copy->calibration.initial_schedule.geometry);
+	v34_snapshot_geometry(&copy->calibration.geometry);
 	v34_snapshot_geometry(&copy->calibration.schedule.geometry);
 	v34_snapshot_parameters(&copy->data_mapping.encoder.parameters);
 	v34_snapshot_parameters(&copy->data_mapping.normalizer.parameters);
-	v34_snapshot_parameters(&copy->calibration.initial_encoder.parameters);
+	v34_snapshot_parameters(&copy->calibration.parameters);
 	v34_snapshot_parameters(&copy->calibration.encoder.parameters);
 	if (copy->stage == V90_UPSTREAM_RX_STAGE_B1 ||
 	    copy->stage == V90_UPSTREAM_RX_STAGE_COMPLETE) {
