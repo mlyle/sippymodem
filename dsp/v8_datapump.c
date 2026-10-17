@@ -730,13 +730,19 @@ static int observe_legacy_answer(struct v8_datapump *datapump, const int16_t *re
 		}
 		/* Bell 103's 2225-Hz answer and the V.22 2250-Hz mark fit
 		 * the same short tone window. Count cycles over 160 ms before
-		 * choosing, as the fixed Bell caller does in its silent guard. */
+		 * choosing, as the fixed Bell caller does in its silent guard.
+		 * Pause counting during loss hangover so a new lower carrier
+		 * cannot change the old estimate; retain evidence across gaps. */
 		bool high = datapump->answer_tones[1].tone_present ||
 			datapump->answer_tones[2].tone_present;
+		bool current_high = (datapump->answer_tones[1].tone_present &&
+			!datapump->answer_tones[1].missing_samples) ||
+			(datapump->answer_tones[2].tone_present &&
+			 !datapump->answer_tones[2].missing_samples);
 		if (!high) {
 			datapump->high_tone_samples = 0;
 			datapump->high_tone_crossings = 0;
-		} else {
+		} else if (current_high) {
 			datapump->high_tone_samples++;
 			if (datapump->previous_receive <= 0 && receive[sample] > 0)
 				datapump->high_tone_crossings++;

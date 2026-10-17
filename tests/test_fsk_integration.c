@@ -57,7 +57,8 @@ enum {
 	/* Nonzero V.92 DIL adds about four seconds to full retraining. */
 	V92_RETRAIN_FRAME_LIMIT = 750,
 	RETRAIN_RESPONSE_LOSS_FRAMES = 70,
-	MAX_CALLER_DELAY_FRAMES = 70,
+	V22_RATE_REPLY_DELAY_FRAMES = 70,
+	MAX_CALLER_DELAY_FRAMES = 100,
 	/* 2,400 line samples are 720 V.32 symbols. */
 	V32_LONG_DELAY_FRAMES = 15,
 	V32_LONG_TRAINING_FRAME_LIMIT = 1000,
@@ -5002,12 +5003,15 @@ static bool run_legacy_answer_guard(enum media_codec codec, unsigned fixture)
 	enum g711_law law;
 	bool interrupted = fixture == 1;
 	bool modulated = fixture == 2;
-	unsigned duration = MODEM_RATE * (interrupted ? 27 : 17) / 10;
+	bool gapped_mark = fixture == 3;
+	unsigned duration = gapped_mark ? MODEM_RATE / 2 :
+		MODEM_RATE * (interrupted ? 27 : 17) / 10;
 	unsigned guard_at = MODEM_RATE * (interrupted ? 24 : 14) / 10;
 	bool carrier_sent = false;
 
 	CHECK(endpoint_init(&caller, "answer-guard") && codec_law(codec, &law) &&
-	      single_tone_transmitter_init(&tone, 2100, 4600) == SINGLE_TONE_OK &&
+	      single_tone_transmitter_init(
+		      &tone, gapped_mark ? 2225 : 2100, 4600) == SINGLE_TONE_OK &&
 	      v8_ansam_generator_init(&ansam, 4600, true) == V8_ANSAM_OK &&
 	      modem_write(caller.modem, setup, sizeof(setup) - 1) == sizeof(setup) - 1 &&
 	      modem_write(caller.modem, dial, sizeof(dial) - 1) == sizeof(dial) - 1 &&
@@ -5022,21 +5026,26 @@ static bool run_legacy_answer_guard(enum media_codec codec, unsigned fixture)
 		/* Two short tones must not be accumulated into one qualification. */
 		if (interrupted && at >= MODEM_RATE * 9 / 10 && at < MODEM_RATE)
 			receive = 0;
+		/* Four-ms gaps must not erase the whole 160-ms frequency history. */
+		if (gapped_mark && at % (MODEM_RATE * 80 / 1000) < MODEM_RATE * 4 / 1000)
+			receive = 0;
 		receive = decode_codeword(law, encode_codeword(law, receive));
 		modem_process(caller.modem, &receive, &transmit, 1);
 		CHECK(caller.modem->dp != NULL && caller.modem->dp->id == DP_V8,
 		      "answer guard unexpectedly completed training");
-		if (at == guard_at && !modulated)
+		if (at == guard_at && !modulated && !gapped_mark)
 			CHECK(strcmp(modem_protocol_step(caller.modem), "V.8/wait-ANSam") == 0,
 			      "short or interrupted answer committed legacy training early");
 		if (at > guard_at && transmit != 0)
 			carrier_sent = true;
 	}
 	CHECK(endpoint_drain(&caller) && !output_contains(&caller, "CONNECT") &&
-	      strcmp(modem_protocol_step(caller.modem), modulated ?
-		      "V.8/CM-wait-JM" : "V.32/answer-tone-carrier-turnaround") == 0 &&
-	      carrier_sent,
-	      "short answer did not select %s: %s", modulated ? "V.8" : "V.32",
+	      (gapped_mark ? strncmp(modem_protocol_step(caller.modem), "V.22/", 5) == 0 :
+	       strcmp(modem_protocol_step(caller.modem), modulated ?
+		      "V.8/CM-wait-JM" : "V.32/answer-tone-carrier-turnaround") == 0) &&
+	      /* A gapped sinusoid checks selection, without peer QAM startup. */
+	      (gapped_mark || carrier_sent),
+	      "short answer did not select %s: %s", gapped_mark ? "Bell 212" : modulated ? "V.8" : "V.32",
 	      modem_protocol_step(caller.modem));
 	endpoint_destroy(&caller);
 	return true;
@@ -5070,7 +5079,7 @@ static bool run_factory_startup_cases(const char *filter, bool *selected)
 		for (size_t codec = 0; codec < ARRAY_LENGTH(codecs); ++codec) {
 			fprintf(stderr, "[ RUN      ] %s over %s SIP media\n",
 				guard_name, codec_name(codecs[codec]));
-			for (unsigned fixture = 0; fixture < 3; ++fixture)
+			for (unsigned fixture = 0; fixture < 4; ++fixture)
 				if (!run_legacy_answer_guard(codecs[codec], fixture))
 					return false;
 			fprintf(stderr, "[       OK ] %s over %s SIP media\n",
@@ -5562,6 +5571,25 @@ int main(void)
 			.raw_transport = true,
 		},
 		{
+			.id = DP_V92, .answerer_id = DP_V22BIS,
+			.connected_id = DP_V22BIS,
+			.answerer_connected_id = DP_V22BIS,
+			.name = "legacy V.22bis delayed peer reply",
+			.selection_command = "AT\r",
+			.answerer_selection_command = "AT+MS=122,0,2400,2400\r",
+			.caller_tx_rate = V22BIS_BIT_RATE,
+			.caller_rx_rate = V22BIS_BIT_RATE,
+			.answerer_tx_rate = V22BIS_BIT_RATE,
+			.answerer_rx_rate = V22BIS_BIT_RATE,
+			.carrier_loss_samples = MODEM_RATE * 7 / 10,
+			.training_frame_limit = NEGOTIATED_TRAINING_FRAME_LIMIT,
+			/* A late S1 still belongs to the acquired V.22bis call. */
+			.caller_delay_frames = MAX_CALLER_DELAY_FRAMES,
+			.automode = true, .answerer_fixed = true,
+			.automatic_pcm_roles = true, .factory_transport = true,
+			.raw_transport = true,
+		},
+		{
 			.id = DP_V22BIS,
 			.name = "V.22bis delayed rate response",
 			.selection_command = "AT+MS=122,0,2400,2400\r",
@@ -5572,10 +5600,10 @@ int main(void)
 			.carrier_loss_samples = MODEM_RATE * 7 / 10,
 			.training_frame_limit = 400,
 			/* Force the answer S1 beyond the 1.2 s retry boundary. */
-			.caller_delay_frames = MAX_CALLER_DELAY_FRAMES,
+			.caller_delay_frames = V22_RATE_REPLY_DELAY_FRAMES,
 			.minimum_caller_rate_signals = 1,
 			.minimum_caller_rate_signal_sample =
-				MAX_CALLER_DELAY_FRAMES * SIP_FRAME_SAMPLES,
+				V22_RATE_REPLY_DELAY_FRAMES * SIP_FRAME_SAMPLES,
 			.raw_transport = true,
 		},
 		{

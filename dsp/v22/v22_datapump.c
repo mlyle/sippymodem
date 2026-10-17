@@ -48,7 +48,9 @@ enum {
 	V22BIS_RETRAIN_CONFIDENCE_Q15 = 0x7eb8,
 	V22BIS_RETRAIN_MIN_REPEATED_PAIRS = 3,
 	V22_RETRAIN_RETRY_SAMPLES = MODEM_RATE * 12 / 10,
-	V22BIS_RATE_REPLY_WAIT_SAMPLES = 2 * MODEM_RATE,
+	/* Local interoperability allowance before probing a 600-bit/s peer.
+	 * Slow reciprocal S1 must not restart an acquired 1200/2400 path. */
+	V22BIS_RATE_REPLY_WAIT_SAMPLES = 4 * MODEM_RATE,
 	/* Preserve acquired timing across short dips at training boundaries. */
 	V22_TRAINING_GAP_SAMPLES = MODEM_RATE / 50,
 };
