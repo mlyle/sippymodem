@@ -3,6 +3,7 @@
 #include "v34_phase3_s_receiver.h"
 
 #include "memory_region.h"
+#include "sample_math.h"
 #include "v34_constellation.h"
 
 #include <limits.h>
@@ -456,14 +457,13 @@ static uint64_t metric(
 	struct v34_analytic_sample observation,
 	struct v34_analytic_sample reference)
 {
-	int32_t in_phase = (int16_t)(
+	int16_t in_phase = (int16_t)(
 		(uint16_t)observation.in_phase - (uint16_t)reference.in_phase);
-	int32_t quadrature = (int16_t)(
+	int16_t quadrature = (int16_t)(
 		(uint16_t)observation.quadrature -
 		(uint16_t)reference.quadrature);
 
-	return ((uint64_t)((int64_t)in_phase * in_phase) +
-		(uint64_t)((int64_t)quadrature * quadrature)) >>
+	return sample_pair_power_s16(in_phase, quadrature) >>
 	       V34_PHASE3_S_METRIC_SHIFT;
 }
 

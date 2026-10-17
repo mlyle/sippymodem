@@ -5,6 +5,7 @@
 #include "fixed_phase.h"
 #include "integer_math.h"
 #include "memory_region.h"
+#include "sample_math.h"
 
 #include <limits.h>
 #include <stddef.h>
@@ -470,13 +471,12 @@ static uint32_t distance_squared(
 	struct v34_analytic_sample sample,
 	struct v34_analytic_sample reference)
 {
-	int32_t in_phase = wrap_s16_from_s32(
+	int16_t in_phase = wrap_s16_from_s32(
 		(int32_t)sample.in_phase - reference.in_phase);
-	int32_t quadrature = wrap_s16_from_s32(
+	int16_t quadrature = wrap_s16_from_s32(
 		(int32_t)sample.quadrature - reference.quadrature);
 
-	return (uint32_t)(in_phase * in_phase) +
-	       (uint32_t)(quadrature * quadrature);
+	return sample_pair_power_s16(in_phase, quadrature);
 }
 
 static int16_t published_metric(uint32_t accumulator)

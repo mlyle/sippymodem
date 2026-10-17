@@ -3,6 +3,7 @@
 #include "v34_phase4_decision_receiver.h"
 
 #include "memory_region.h"
+#include "sample_math.h"
 #include "v34_constellation.h"
 #include "v34_phase4_e_sequence.h"
 
@@ -57,8 +58,7 @@ static bool training_decision_is_qualified(
 		(uint64_t)((int64_t)in_phase_error * in_phase_error) +
 		(uint64_t)((int64_t)quadrature_error * quadrature_error);
 	uint64_t target_energy =
-		(uint64_t)((int64_t)target.in_phase * target.in_phase) +
-		(uint64_t)((int64_t)target.quadrature * target.quadrature);
+		sample_pair_power_s16(target.in_phase, target.quadrature);
 
 	/* A one-shot boundary needs physical training evidence as well as the
 	 * decoded bit pattern.  Permit one poor symbol, matching the one-dibit
@@ -337,11 +337,9 @@ static bool confirm_answer_trn(
 		(int64_t)observed.quadrature * target.in_phase -
 		(int64_t)observed.in_phase * target.quadrature;
 	receiver->trn_observed_energy +=
-		(uint64_t)((int64_t)observed.in_phase * observed.in_phase) +
-		(uint64_t)((int64_t)observed.quadrature * observed.quadrature);
+		sample_pair_power_s16(observed.in_phase, observed.quadrature);
 	receiver->trn_target_energy +=
-		(uint64_t)((int64_t)target.in_phase * target.in_phase) +
-		(uint64_t)((int64_t)target.quadrature * target.quadrature);
+		sample_pair_power_s16(target.in_phase, target.quadrature);
 	return true;
 }
 
