@@ -66,10 +66,48 @@ static void test_rejection(void)
 	assert(!gram_fit(gram, rhs, 5, fitted));
 }
 
+static void test_elimination(void)
+{
+	double matrix[4][5] = {
+		{ 4., 2., 0., 8., 99. },
+		{ 2., 5., 1., 13., 99. },
+		{ 0., 1., 3., 5., 99. },
+		{ 99., 99., 99., 99., 99. },
+	};
+	double determinant = 99.;
+
+	assert(gram_eliminate(matrix, 3, 0., &determinant));
+	assert(determinant == 44.);
+	assert(matrix[0][3] == 1. && matrix[1][3] == 2. && matrix[2][3] == 1.);
+	for (unsigned i = 0; i < 4; i++) assert(matrix[i][4] == 99.);
+	for (unsigned i = 0; i < 5; i++) assert(matrix[3][i] == 99.);
+
+	/* The channel designer's absolute pivot floor is intentionally different
+	 * from the normalized fit's determinant limit and prefix fit's zero floor. */
+	matrix[0][0] = 1e-8;
+	matrix[0][1] = 2e-8;
+	determinant = 99.;
+	assert(!gram_eliminate(matrix, 1, 1e-8, &determinant));
+	assert(determinant == 99.);
+	assert(gram_eliminate(matrix, 1, 0., NULL) && matrix[0][1] == 2.);
+	matrix[0][0] = nextafter(1e-8, INFINITY);
+	matrix[0][1] = matrix[0][0] * 2.;
+	assert(gram_eliminate(matrix, 1, 1e-8, NULL) && matrix[0][1] == 2.);
+	matrix[0][0] = 0.;
+	assert(!gram_eliminate(matrix, 1, 0., &determinant) && determinant == 99.);
+	matrix[0][0] = NAN;
+	assert(!gram_eliminate(matrix, 1, 0., NULL));
+	assert(!gram_eliminate(matrix, 0, 0., NULL));
+	assert(!gram_eliminate(matrix, 5, 0., NULL));
+	assert(!gram_eliminate(matrix, 1, -1., NULL));
+	assert(!gram_eliminate(matrix, 1, NAN, NULL));
+}
+
 int main(void)
 {
 	for (unsigned count = 1; count <= 4; count++) test_polynomial(count);
 	test_rejection();
+	test_elimination();
 	puts("Gram fitting tests passed");
 	return 0;
 }

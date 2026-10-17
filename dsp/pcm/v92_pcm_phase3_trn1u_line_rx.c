@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "v92_pcm_phase3_trn1u_line_rx.h"
+#include "gram_fit.h"
 
 #include "packed_bits.h"
 
@@ -172,7 +173,7 @@ static bool filtered_prefix_matches(
 	const int8_t signs[V92_PCM_PHASE3_TRN1U_LINE_SYNC_SYMBOLS],
 	int8_t *polarity)
 {
-	double system[3][4] = { { 0 } };
+	double system[GRAM_FIT_COLUMNS][GRAM_FIT_COLUMNS + 1] = { { 0 } };
 	double correlation[3], energy = 0.0;
 
 	/* The first two physical samples may still contain the previous signal.
@@ -193,22 +194,8 @@ static bool filtered_prefix_matches(
 		return false;
 	for (unsigned row = 0u; row < 3u; ++row)
 		correlation[row] = system[row][3];
-	for (unsigned column = 0u; column < 3u; ++column) {
-		double pivot = system[column][column];
-
-		if (!(pivot > 0.0))
-			return false;
-		for (unsigned entry = column; entry < 4u; ++entry)
-			system[column][entry] /= pivot;
-		for (unsigned row = 0u; row < 3u; ++row) {
-			if (row == column)
-				continue;
-			double scale = system[row][column];
-
-			for (unsigned entry = column; entry < 4u; ++entry)
-				system[row][entry] -= scale * system[column][entry];
-		}
-	}
+	if (!gram_eliminate(system, 3, 0., NULL))
+		return false;
 	double explained = 0.0;
 
 	for (unsigned row = 0u; row < 3u; ++row)

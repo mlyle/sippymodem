@@ -9,6 +9,32 @@
 
 enum { GRAM_FIT_COLUMNS = 4 };
 
+/* Reduce an owned augmented Gram matrix in place. Keep the owner's pivot
+ * floor and arithmetic order; normalization and fit admission stay outside.
+ * The right-hand side is column count. Failure leaves partially reduced
+ * scratch, but does not write the optional determinant. */
+static inline bool gram_eliminate(
+	double matrix[GRAM_FIT_COLUMNS][GRAM_FIT_COLUMNS + 1],
+	unsigned count, double minimum_pivot, double *determinant)
+{
+	double product = 1.;
+
+	if (!count || count > GRAM_FIT_COLUMNS ||
+	    !isfinite(minimum_pivot) || minimum_pivot < 0.) return false;
+	for (unsigned i = 0; i < count; i++) {
+		double pivot = matrix[i][i];
+		if (!(pivot > minimum_pivot)) return false;
+		if (determinant) product *= pivot;
+		for (unsigned k = i; k <= count; k++) matrix[i][k] /= pivot;
+		for (unsigned j = 0; j < count; j++) if (j != i) {
+			double factor = matrix[j][i];
+			for (unsigned k = i; k <= count; k++) matrix[j][k] -= factor * matrix[i][k];
+		}
+	}
+	if (determinant) *determinant = product;
+	return true;
+}
+
 /* Solve a small Gram system without changing its moments. Normalize columns
  * before elimination and reject unidentifiable fits using the relative
  * determinant. The caller owns any coefficient bounds or model selection.
@@ -31,16 +57,7 @@ static inline bool gram_fit(
 			matrix[i][j] = gram[i][j] / (scale[i] * scale[j]);
 		matrix[i][count] = rhs[i] / scale[i];
 	}
-	for (unsigned i = 0; i < count; i++) {
-		double pivot = matrix[i][i];
-		if (!(pivot > 0.)) return false;
-		determinant *= pivot;
-		for (unsigned k = i; k <= count; k++) matrix[i][k] /= pivot;
-		for (unsigned j = 0; j < count; j++) if (j != i) {
-			double factor = matrix[j][i];
-			for (unsigned k = i; k <= count; k++) matrix[j][k] -= factor * matrix[i][k];
-		}
-	}
+	if (!gram_eliminate(matrix, count, 0., &determinant)) return false;
 	if (!(determinant > 64. * DBL_EPSILON)) return false;
 	for (unsigned i = 0; i < count; i++) {
 		fitted[i] = matrix[i][count] / scale[i];

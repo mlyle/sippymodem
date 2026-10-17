@@ -3,6 +3,7 @@
 #include "v92_cpd_channel.h"
 
 #include "wide_uint.h"
+#include "gram_fit.h"
 
 #include "memory_region.h"
 #include "v92_cpd_gain.h"
@@ -149,7 +150,8 @@ static int64_t moment(const struct v92_upstream_channel *channel,
 static bool solve_four_tap_channel(const struct v92_upstream_channel *channel,
 	double coefficients[TAPS])
 {
-	double system[4][5], fit[4], observed = channel->observed_autocorrelation[0];
+	double system[GRAM_FIT_COLUMNS][GRAM_FIT_COLUMNS + 1], fit[4];
+	double observed = channel->observed_autocorrelation[0];
 
 	if (!(observed > 0.)) return false;
 	for (unsigned i = 0; i < 4; i++) {
@@ -157,15 +159,7 @@ static bool solve_four_tap_channel(const struct v92_upstream_channel *channel,
 			system[i][j] = moment(channel, false, i, false, j) / observed;
 		system[i][4] = cross(channel, i, observed);
 	}
-	for (unsigned i = 0; i < 4; i++) {
-		double pivot = system[i][i];
-		if (!(pivot > 1e-8)) return false;
-		for (unsigned k = i; k < 5; k++) system[i][k] /= pivot;
-		for (unsigned j = 0; j < 4; j++) if (i != j) {
-			double factor = system[j][i];
-			for (unsigned k = i; k < 5; k++) system[j][k] -= factor * system[i][k];
-		}
-	}
+	if (!gram_eliminate(system, 4, 1e-8, NULL)) return false;
 	double error = 1., feedback = 0.;
 	for (unsigned i = 0; i < 4; i++) {
 		fit[i] = system[i][4];
