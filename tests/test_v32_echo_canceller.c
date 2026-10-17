@@ -365,6 +365,42 @@ static bool test_validation_and_aliases(void)
 	return true;
 }
 
+static bool test_late_update_overflow(void)
+{
+	for (unsigned in_place = 0; in_place < 2; ++in_place) {
+		struct v32_echo_canceller canceller;
+		struct qam_point reference = { .in_phase = 0.5 };
+		double received[] = { 100.0, 200.0, 0.9 * DBL_MAX };
+		double output[] = { -1.0, -2.0, -3.0 };
+
+		CHECK(v32_echo_canceller_init(&canceller, 0,
+			      V32_ECHO_MIN_ROUND_TRIP_SYMBOLS) == V32_ECHO_OK &&
+		      v32_echo_canceller_start_adaptation(&canceller, 0.5) == V32_ECHO_OK &&
+		      v32_echo_canceller_push_reference(&canceller, &reference) == V32_ECHO_OK,
+		      "late overflow fixture did not initialize");
+		/* Prediction, error, and normalized step remain finite. Only the
+		 * final phase's updated coefficient overflows. */
+		canceller.coefficients[2][0][0].in_phase = 0.95 * DBL_MAX;
+		CHECK(v32_echo_canceller_is_valid(&canceller), "invalid finite fixture");
+		struct v32_echo_canceller saved = canceller;
+		struct v32_echo_canceller prefix = canceller;
+		double prefix_output[2];
+		CHECK(v32_echo_canceller_process(&prefix, received, prefix_output, 2) ==
+			      V32_ECHO_OK && prefix.coefficients[0][0][0].in_phase > 0.0 &&
+		      prefix.coefficients[1][0][0].in_phase > 0.0,
+		      "earlier phases did not have valid coefficient updates");
+		double *destination = in_place ? received : output;
+		double saved_output[3];
+		memcpy(saved_output, destination, sizeof(saved_output));
+		CHECK(v32_echo_canceller_process(&canceller, received, destination, 3) ==
+			      V32_ECHO_INVALID_STATE &&
+		      memcmp(&canceller, &saved, sizeof(saved)) == 0 &&
+		      memcmp(destination, saved_output, sizeof(saved_output)) == 0,
+		      "late update overflow committed earlier phases, in-place=%u", in_place);
+	}
+	return true;
+}
+
 static bool run_convergence_freeze_and_resume(uint16_t round_trip)
 {
 	struct v32_echo_canceller canceller;
@@ -810,6 +846,7 @@ int main(void)
 		  test_frozen_delay_chunk_equivalence },
 		{ "initialization and reset", test_initialization_and_reset },
 		{ "validation and aliases", test_validation_and_aliases },
+		{ "late coefficient-update overflow", test_late_update_overflow },
 		{ "complete finite-state validation",
 		  test_complete_finite_state_validation },
 		{ "convergence, freeze, and resume",

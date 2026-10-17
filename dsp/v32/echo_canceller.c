@@ -196,9 +196,10 @@ static bool prediction_and_energy(
 	return isfinite(predicted) && isfinite(reference_energy) && isfinite(far);
 }
 
-static bool update_is_finite(
+static bool prepare_update(
 	const struct v32_echo_canceller *canceller, size_t phase,
-	double scale)
+	double scale, struct qam_point updated[V32_ECHO_WINDOW_COUNT]
+					      [V32_ECHO_WINDOW_SYMBOLS])
 {
 	for (size_t window = 0; window < V32_ECHO_WINDOW_COUNT; ++window) {
 		for (size_t tap = 0;
@@ -208,32 +209,15 @@ static bool update_is_finite(
 			const struct qam_point *coefficient =
 				&canceller->coefficients[phase][window][tap];
 
-			if (!isfinite(
-				    coefficient->in_phase + scale * point.in_phase) ||
-			    !isfinite(
-				    coefficient->quadrature +
-					    scale * point.quadrature))
+			updated[window][tap] = (struct qam_point){
+				.in_phase = coefficient->in_phase + scale * point.in_phase,
+				.quadrature = coefficient->quadrature + scale * point.quadrature,
+			};
+			if (!point_is_finite(&updated[window][tap]))
 				return false;
 		}
 	}
 	return true;
-}
-
-static void apply_update(
-	struct v32_echo_canceller *canceller, size_t phase, double scale)
-{
-	for (size_t window = 0; window < V32_ECHO_WINDOW_COUNT; ++window) {
-		for (size_t tap = 0;
-		     tap < V32_ECHO_WINDOW_SYMBOLS; ++tap) {
-			struct qam_point point =
-				tap_reference(canceller, window, tap);
-			struct qam_point *coefficient =
-				&canceller->coefficients[phase][window][tap];
-
-			coefficient->in_phase += scale * point.in_phase;
-			coefficient->quadrature += scale * point.quadrature;
-		}
-	}
 }
 
 /* The shared monitor measures 7.2 kHz samples. Preserve all three phase
@@ -260,7 +244,8 @@ enum v32_echo_result v32_echo_canceller_process(
 {
 	double error[V32_ECHO_PHASE_COUNT];
 	double far[V32_ECHO_PHASE_COUNT];
-	double scale[V32_ECHO_PHASE_COUNT] = { 0 };
+	struct qam_point updated[V32_ECHO_PHASE_COUNT]
+				[V32_ECHO_WINDOW_COUNT][V32_ECHO_WINDOW_SYMBOLS];
 	size_t bytes;
 
 	if (!v32_echo_canceller_header_is_valid(canceller))
@@ -295,15 +280,18 @@ enum v32_echo_result v32_echo_canceller_process(
 			return V32_ECHO_INVALID_STATE;
 		if (!canceller->adapting)
 			continue;
-		scale[index] = canceller->adaptation * error[index] /
+		double scale = canceller->adaptation * error[index] /
 			       (energy + V32_ECHO_ENERGY_FLOOR);
-		if (!isfinite(scale[index]) ||
-		    !update_is_finite(canceller, phase, scale[index]))
+		if (!isfinite(scale) ||
+		    !prepare_update(canceller, phase, scale, updated[index]))
 			return V32_ECHO_INVALID_STATE;
 	}
+	/* Commit only after every requested phase passes preflight. Retain the
+	 * checked values rather than walking the reference and computing twice. */
 	for (size_t index = 0; index < count; ++index) {
 		if (canceller->adapting)
-			apply_update(canceller, canceller->phase, scale[index]);
+			memcpy(canceller->coefficients[canceller->phase], updated[index],
+			       sizeof(updated[index]));
 		cleaned[index] = error[index];
 		if (!canceller->adapting && canceller->adaptation > 0.0) {
 			struct echo_timing_model model = {
