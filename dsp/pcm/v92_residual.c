@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #include "v92_residual.h"
 #include "memory_region.h"
+#include "gram_fit.h"
 
-#include <float.h>
 #include <math.h>
 #include <string.h>
 
@@ -39,38 +39,6 @@ bool v92_residual_is_valid(const struct v92_residual *filter)
 	return norm <= .10;
 }
 
-/* Normalize the small Gram system before elimination. A relative determinant
- * rejects unidentifiable columns rather than fitting a nearly singular input. */
-static bool solve(double gram[4][4], double rhs[4], unsigned count, double fitted[4])
-{
-	double matrix[4][5] = { { 0 } }, scale[4], determinant = 1.;
-	for (unsigned i = 0; i < count; i++) {
-		if (!(gram[i][i] > 0.)) return false;
-		scale[i] = sqrt(gram[i][i]);
-	}
-	for (unsigned i = 0; i < count; i++) {
-		for (unsigned j = 0; j < count; j++)
-			matrix[i][j] = gram[i][j] / (scale[i] * scale[j]);
-		matrix[i][count] = rhs[i] / scale[i];
-	}
-	for (unsigned i = 0; i < count; i++) {
-		double pivot = matrix[i][i];
-		if (!(pivot > 0.)) return false;
-		determinant *= pivot;
-		for (unsigned k = i; k <= count; k++) matrix[i][k] /= pivot;
-		for (unsigned j = 0; j < count; j++) if (j != i) {
-			double factor = matrix[j][i];
-			for (unsigned k = i; k <= count; k++) matrix[j][k] -= factor * matrix[i][k];
-		}
-	}
-	if (!(determinant > 64. * DBL_EPSILON)) return false;
-	for (unsigned i = 0; i < count; i++) {
-		fitted[i] = matrix[i][count] / scale[i];
-		if (!isfinite(fitted[i])) return false;
-	}
-	return true;
-}
-
 static void features(const int32_t *points, unsigned n,
 	unsigned first, unsigned second, double x[4])
 {
@@ -105,7 +73,7 @@ bool v92_residual_fit(struct v92_residual *filter,
 					rhs[j] += x[j] * raw[n];
 				}
 			}
-			if (!solve(gram, rhs, count, fitted)) continue;
+			if (!gram_fit(gram, rhs, count, fitted)) continue;
 			/* Constrain the main gain, then refit the other coefficients at
 			 * that boundary. Discarding the entire model here could select a
 			 * wrong delay merely because its unconstrained gain was in range. */
@@ -116,7 +84,7 @@ bool v92_residual_fit(struct v92_residual *filter,
 					target[i - 1] = rhs[i] - gram[i][0] * fixed;
 					for (unsigned j = 1; j < count; j++) reduced[i - 1][j - 1] = gram[i][j];
 				}
-				if (!solve(reduced, target, count - 1, other)) continue;
+				if (!gram_fit(reduced, target, count - 1, other)) continue;
 				fitted[0] = fixed;
 				for (unsigned i = 1; i < count; i++) fitted[i] = other[i - 1];
 			}

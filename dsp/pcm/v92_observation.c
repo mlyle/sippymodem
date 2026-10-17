@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #include "v92_observation.h"
 #include "memory_region.h"
+#include "gram_fit.h"
 #include "integer_math.h"
 #include "sample_math.h"
 
@@ -13,6 +14,7 @@
 #define V92_SCORE_SCALE 1e6
 
 enum { INTERVALS = V92_OBSERVATION_INTERVALS, TAPS = V92_OBSERVATION_TAPS };
+_Static_assert((int)TAPS == (int)GRAM_FIT_COLUMNS, "Gram moment stride must match");
 _Static_assert(V92_OBSERVATION_STEPS < UINT16_MAX, "geometry tags must fit");
 _Static_assert((V92_OBSERVATION_CACHE & (V92_OBSERVATION_CACHE - 1)) == 0 &&
 	(V92_OBSERVATION_POINTS & (V92_OBSERVATION_POINTS - 1)) == 0,
@@ -24,36 +26,9 @@ struct boundary { double at; unsigned next; };
 static bool codec_bounds(enum g711_law law, double gain, int16_t observed,
 	const int16_t *level, double offset, double *lower, double *upper);
 
-/* Normalize columns before eliminating the small positive-definite system.
- * Reject unidentifiable fits using its normalized determinant. */
 static bool solve_channel(const struct moments *moments, unsigned taps, double fitted[TAPS])
 {
-	double system[TAPS][TAPS + 1] = { { 0 } }, scale[TAPS], determinant = 1.;
-	for (unsigned i = 0; i < taps; i++) {
-		if (!(moments->gram[i][i] > 0.)) return false;
-		scale[i] = sqrt(moments->gram[i][i]);
-	}
-	for (unsigned i = 0; i < taps; i++) {
-		for (unsigned j = 0; j < taps; j++)
-			system[i][j] = moments->gram[i][j] / (scale[i] * scale[j]);
-		system[i][taps] = moments->rhs[i] / scale[i];
-	}
-	for (unsigned i = 0; i < taps; i++) {
-		double pivot = system[i][i];
-		if (!(pivot > 0.)) return false;
-		determinant *= pivot;
-		for (unsigned k = i; k <= taps; k++) system[i][k] /= pivot;
-		for (unsigned j = 0; j < taps; j++) if (j != i) {
-			double factor = system[j][i];
-			for (unsigned k = i; k <= taps; k++) system[j][k] -= factor * system[i][k];
-		}
-	}
-	if (!(determinant > 64. * DBL_EPSILON)) return false;
-	for (unsigned i = 0; i < taps; i++) {
-		fitted[i] = system[i][taps] / scale[i];
-		if (!isfinite(fitted[i])) return false;
-	}
-	return fitted[0] > 0.;
+	return gram_fit(moments->gram, moments->rhs, taps, fitted) && fitted[0] > 0.;
 }
 
 /* Gaussian interval probability with arguments scaled by sqrt(2)*sigma.
