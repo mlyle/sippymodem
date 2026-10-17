@@ -35,7 +35,7 @@ static uint64_t convolution_at(
 	return total;
 }
 
-static bool generate_coefficients(
+static void generate_coefficients(
 	uint8_t ring_count, struct shell_coefficients *coefficients)
 {
 	coefficients->g2_count = (uint8_t)(2u * ring_count - 1u);
@@ -46,15 +46,23 @@ static bool generate_coefficients(
 			(uint32_t)sum + 1u :
 			(uint32_t)(2u * ring_count - 1u - sum);
 	}
+	/* Reflect four bounded ring indices to t <= 2M-2. Their count is
+	 * C(t+3,3) - 4*C(t-M+3,3): at most one index can exceed M-1 on
+	 * this half. The second term is zero for t < M. Validated M <= 18
+	 * bounds the largest cubic product at 37*36*35 = 46620. */
+	uint32_t maximum_sum = coefficients->g4_count - 1u;
 	for (uint8_t sum = 0; sum < coefficients->g4_count; ++sum) {
-		uint64_t count = convolution_at(
-			coefficients->g2, coefficients->g2_count, sum);
-
-		if (count > UINT32_MAX)
-			return false;
-		coefficients->g4[sum] = (uint32_t)count;
+		uint32_t reflected = sum <= maximum_sum / 2u ?
+			sum : maximum_sum - sum;
+		uint32_t ways = (reflected + 1u) * (reflected + 2u) *
+			(reflected + 3u);
+		if (reflected >= ring_count) {
+			uint32_t excess = reflected - ring_count;
+			ways -= 4u * (excess + 1u) * (excess + 2u) *
+				(excess + 3u);
+		}
+		coefficients->g4[sum] = ways / 6u;
 	}
-	return true;
 }
 
 static bool select_partition(
@@ -326,9 +334,10 @@ enum v34_shell_mapper_result v34_shell_map(
 	    indices == NULL)
 		return V34_SHELL_MAPPER_INVALID_ARGUMENT;
 	label_limit = shell_label_limit(parameters);
-	if (shell_label >= label_limit ||
-	    !generate_coefficients(parameters->ring_count, &coefficients) ||
-	    !map_shell_label(
+	if (shell_label >= label_limit)
+		return V34_SHELL_MAPPER_INVALID_ARGUMENT;
+	generate_coefficients(parameters->ring_count, &coefficients);
+	if (!map_shell_label(
 		    &coefficients, parameters->ring_count, shell_label,
 		    &generated) ||
 	    !v34_ring_indices_are_valid(&generated, parameters))
@@ -347,9 +356,9 @@ enum v34_shell_mapper_result v34_shell_unmap_decision(
 	uint32_t label_limit;
 
 	if (!v34_mapping_parameters_is_valid(parameters) || prefixes == NULL ||
-	    shell_bits > parameters->shell_mapper_bits || shell_label == NULL ||
-	    !generate_coefficients(parameters->ring_count, &coefficients))
+	    shell_bits > parameters->shell_mapper_bits || shell_label == NULL)
 		return V34_SHELL_MAPPER_INVALID_ARGUMENT;
+	generate_coefficients(parameters->ring_count, &coefficients);
 	/* A corrupted survivor can exceed the bounded receive work tables.  The
 	 * receive mapping represents that span with an all-one shell word and
 	 * continues decoding rather than turning channel errors into state
