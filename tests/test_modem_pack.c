@@ -489,7 +489,7 @@ static bool test_v42_starts_detection_immediately(void)
 	};
 
 	modem_detector_start(&originator);
-	CHECK(originator.bit_timer == 28800 &&
+	CHECK(originator.bit_timer == 36000 &&
 		      originator.packer.detector.tx_count == 1,
 	      "V.42 originator did not arm T400 and begin ODP immediately");
 	CHECK(modem_detector_get_bits(&originator, 1, bits, 37) == 37 &&
@@ -497,7 +497,7 @@ static bool test_v42_starts_detection_immediately(void)
 	      detection_character_matches(bits + 18, 0x89),
 	      "V.42 originator did not start with a complete ODP pair");
 	modem_detector_start(&answerer);
-	CHECK(answerer.bit_timer == 28800,
+	CHECK(answerer.bit_timer == 36000,
 	      "V.42 answerer armed %d initial detection bits",
 	      answerer.bit_timer);
 	for (unsigned int iteration = 0;
@@ -734,7 +734,7 @@ static bool test_v42_text_requires_framing(void)
 			CHECK(receive_detection_bits(&m, bits, sizeof(bits), width) &&
 			      !m.packer.detector.text.confirmed &&
 			      m.packer.detector.tx_count == (caller ? 1 : 0) &&
-			      m.bit_timer == 14400,
+			      m.bit_timer == 18000,
 			      "noise ended detection: case %zu width %u", index, width);
 		}
 	}

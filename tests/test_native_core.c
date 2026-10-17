@@ -1736,7 +1736,7 @@ static bool test_v42_detection_deadline(void)
 			struct modem *m = create_compat_modem(&driver, "V.42 detection deadline");
 			struct dp dp = { .id = DP_V34, .modem = m };
 			unsigned tx_phase = 0, rx_phase = 0, tick;
-			unsigned deadline = caller || profiles[i].error_control ? 3000 : 750;
+			unsigned deadline = caller || profiles[i].error_control ? 3750 : 750;
 			uint32_t transmit_tail = 0;
 
 			CHECK(m != NULL, "detection deadline allocation failed");
@@ -9064,9 +9064,9 @@ static bool test_lapm_timer_follows_rate_changes(void)
 	modem_detector_start(m);
 	m->get_bits = modem_detector_get_bits;
 	timeout = m->bit_timer_func;
-	CHECK(m->bit_timer == 14400 &&
+	CHECK(m->bit_timer == 18000 &&
 	      modem_set_link_rates(m, 24000, m->rx_rate) == 0 &&
-	      m->bit_timer == 86400 && m->bit_timer_func == timeout,
+	      m->bit_timer == 108000 && m->bit_timer_func == timeout,
 	      "rate update altered the detector's remaining T400 interval");
 	modem_delete(m);
 	return true;

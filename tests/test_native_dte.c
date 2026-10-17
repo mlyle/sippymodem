@@ -330,6 +330,62 @@ static bool connection_report_layout(void)
 	return true;
 }
 
+static bool late_v42_answer_after_retrain(void)
+{
+	for (unsigned reply = 0; reply < 2; ++reply) {
+		struct capture data = { .limit = 4096 }, commands = { .limit = 4096 };
+		struct modem *modem = create(&data, &commands);
+		EXPECT(modem != NULL);
+		struct dp datapump = { .id = DP_V22BIS, .status = DPSTAT_CONNECT, .modem = modem };
+		modem->dp = &datapump;
+		modem->caller = 1;
+		modem->tx_rate = modem->rx_rate = 2400;
+		modem->cfg.ec = modem->cfg.ec_detector = 1;
+		modem->cfg.comp = 0;
+		EXPECT(modem_ec_init(modem) == 0);
+		modem_update_status(modem, STATUS_DP_LINK);
+		uint8_t transmitted[12], marks[12];
+		memset(marks, 1, sizeof(marks));
+		/* Each duplex exchange advances five milliseconds of active detection.
+		 * A physical retrain preserves the remaining timer and drops framing. */
+		for (unsigned frame = 0; frame < 650; ++frame) {
+			if (frame == 520) {
+				int remaining = modem->bit_timer;
+				EXPECT(modem_ec_resume_after_retrain(modem) == 0);
+				EXPECT(modem->bit_timer == remaining);
+			}
+			EXPECT(modem_get_bits(modem, 1, transmitted, 12) == 12);
+			EXPECT(modem_put_bits(modem, 1, marks, 12) == 12);
+		}
+		EXPECT(modem->get_bits == modem_detector_get_bits && modem->cfg.ec);
+		if (reply) {
+			/* Two complete ADPs arrive after 3.25 active seconds. */
+			for (unsigned character = 0; character < 4; ++character) {
+				uint8_t bits[18];
+				uint8_t value = character & 1u ? 'C' : 'E';
+				memset(bits, 1, sizeof(bits));
+				bits[0] = 0;
+				for (unsigned bit = 0; bit < 8; ++bit)
+					bits[bit + 1] = (value >> bit) & 1u;
+				EXPECT(modem_put_bits(modem, 1, bits, sizeof(bits)) == sizeof(bits));
+			}
+			EXPECT(modem->cfg.ec && modem->get_bits == modem_hdlc_get_bits);
+			EXPECT(modem->put_bits == modem_hdlc_put_bits);
+			EXPECT(data.count == 0 && commands.count == 0);
+		} else {
+			for (unsigned frame = 650; frame < 800; ++frame) {
+				EXPECT(modem_get_bits(modem, 1, transmitted, 12) == 12);
+				EXPECT(modem_put_bits(modem, 1, marks, 12) == 12);
+			}
+			EXPECT(!modem->cfg.ec && modem->get_bits == modem_async_get_bits);
+			EXPECT(modem->bit_timer == 0 && modem->bit_timer_func == NULL);
+		}
+		modem->dp = NULL;
+		modem_delete(modem);
+	}
+	return true;
+}
+
 static bool local_lapm_retry_cause(void)
 {
 	struct capture data = { .limit = 4096 }, commands = { .limit = 4096 };
@@ -532,6 +588,6 @@ static bool caller_identity_results(void)
 int main(void)
 {
 	return literal_and_partial() && command_preserves_receive() &&
-		raw_overflow_is_reported() && at_replies_are_separate() && at_response_formats() && connection_report_layout() && local_lapm_retry_cause() &&
+		raw_overflow_is_reported() && at_replies_are_separate() && at_response_formats() && connection_report_layout() && late_v42_answer_after_retrain() && local_lapm_retry_cause() &&
 		retained_call_report() && unanswered_call_report() && caller_identity_results() ? 0 : 1;
 }
