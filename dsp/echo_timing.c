@@ -2,16 +2,11 @@
 
 #include "echo_timing.h"
 
+#include "integer_math.h"
 #include "wide_uint.h"
 
 #include <limits.h>
 #include <string.h>
-
-/* Compare value * scale >= bound without overflowing the energy sum. */
-static bool scaled_energy_at_least(uint64_t value, unsigned scale, uint64_t bound)
-{
-	return value >= bound / scale + (bound % scale != 0);
-}
 
 static bool prediction_is_qualified(
 	int64_t cross, uint64_t energy, uint64_t input,
@@ -132,8 +127,8 @@ static bool finish_timing_window(struct echo_timing *timing,
 	 * independent-window agreement and combined confidence above. */
 	unsigned material_scale = samples == ECHO_TIMING_FAST_WINDOW ? 32 : 128;
 	bool material_return =
-		scaled_energy_at_least(evidence.energy, material_scale, evidence.input) &&
-		scaled_energy_at_least(t->first.energy, material_scale, t->first.input);
+		scaled_u64_at_least(evidence.energy, material_scale, evidence.input) &&
+		scaled_u64_at_least(t->first.energy, material_scale, t->first.input);
 	if ((samples == ECHO_TIMING_WINDOW || material_return) &&
 	    t->second && t->first_qualified && qualified && best == t->candidate) {
 		/* Monitor the frozen model being subtracted. Its replacement's

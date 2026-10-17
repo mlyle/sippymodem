@@ -182,6 +182,14 @@ static inline uint16_t normalized_reciprocal_q15(
 	return (uint16_t)((UINT32_C(1) << 22) / high);
 }
 
+/* Compare value * scale >= bound without overflowing the product.
+ * scale must be positive; even the rounded-up quotient fits uint64_t. */
+static inline bool scaled_u64_at_least(
+	uint64_t value, unsigned scale, uint64_t bound)
+{
+	return value >= bound / scale + (bound % scale != 0);
+}
+
 /* Euclid's algorithm, with gcd(0, 0) defined as zero. */
 static inline uint64_t gcd_u64(uint64_t left, uint64_t right)
 {

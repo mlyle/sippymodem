@@ -18,17 +18,6 @@ static int32_t divide_s32(uint32_t dividend, int32_t divisor)
 				 divisor);
 }
 
-static uint32_t gcd_u32(uint32_t left, uint32_t right)
-{
-	while (right != 0) {
-		uint32_t remainder = left % right;
-
-		left = right;
-		right = remainder;
-	}
-	return left;
-}
-
 static bool mode_is_valid(enum v34_timing_control_mode mode)
 {
 	return mode >= V34_TIMING_CONTROL_LOCKED &&
@@ -96,7 +85,7 @@ enum v34_timing_control_result v34_timing_control_init(
 		return V34_TIMING_CONTROL_INVALID_ARGUMENT;
 	timing_numerator = (uint32_t)wide_numerator;
 	timing_denominator = (uint32_t)wide_denominator;
-	divisor = gcd_u32(timing_numerator, timing_denominator);
+	divisor = (uint32_t)gcd_u64(timing_numerator, timing_denominator);
 	if (divisor == 0)
 		return V34_TIMING_CONTROL_INVALID_ARGUMENT;
 	timing_numerator /= divisor;

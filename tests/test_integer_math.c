@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <integer_math.h>
+#include <wide_uint.h>
 
 #include "test.h"
 
@@ -60,6 +61,30 @@ static bool test_full_width_values(void)
 	      gcd_u64(UINT64_C(1) << 63, UINT64_C(1) << 32) ==
 		      (UINT64_C(1) << 32),
 	      "GCD truncated or mishandled full-width values");
+	return true;
+}
+
+static bool test_scaled_comparison(void)
+{
+	const uint64_t values[] = {
+		0, 1, 2, UINT16_MAX, UINT32_MAX, UINT64_C(1) << 63,
+		UINT64_MAX / 6, UINT64_MAX / 6 + 1, UINT64_MAX - 1, UINT64_MAX,
+	};
+	const unsigned scales[] = { 1, 2, 3, 6, 32, 128, UINT_MAX };
+	for (size_t i = 0; i < ARRAY_LENGTH(values); ++i) {
+		for (size_t j = 0; j < ARRAY_LENGTH(scales); ++j) {
+			for (size_t k = 0; k < ARRAY_LENGTH(values); ++k) {
+				/* Independent multiplication in 128 bits includes products
+				 * that overflow 64 bits and thresholds at UINT64_MAX. */
+				bool expected = wide_compare(
+					wide_product_u64(values[i], scales[j]),
+					wide_from_u64(values[k])) >= 0;
+
+				CHECK(scaled_u64_at_least(values[i], scales[j], values[k]) == expected,
+				      "scaled comparison changed at %zu/%zu/%zu", i, j, k);
+			}
+		}
+	}
 	return true;
 }
 
@@ -268,6 +293,7 @@ int main(void)
 		{ "bit width", test_bit_width },
 		{ "zero and symmetry", test_zero_and_symmetry },
 		{ "full-width values", test_full_width_values },
+		{ "scaled comparison", test_scaled_comparison },
 		{ "signed rounding", test_signed_rounding },
 		{ "fixed-width words", test_fixed_width_words },
 		{ "wide energy arithmetic", test_wide_energy_arithmetic },

@@ -406,12 +406,6 @@ static double coefficient_sum(const struct pcm_host_echo *echo)
 	return sum;
 }
 
-/* Compare value * scale >= bound without overflowing the energy sum. */
-static bool scaled_energy_at_least(uint64_t value, unsigned scale, uint64_t bound)
-{
-	return value >= bound / scale + (bound % scale != 0);
-}
-
 static void maybe_mark_ready(struct pcm_host_echo *echo)
 {
 	uint32_t train_min = echo->delay_acquired ?
@@ -421,7 +415,7 @@ static void maybe_mark_ready(struct pcm_host_echo *echo)
 	/* TRAIN may keep improving a qualified model. Its fitting margin must
 	 * describe the current retained coefficients rather than the first fit. */
 	if (echo->filter_ready) {
-		echo->weak_margin = scaled_energy_at_least(echo->error_energy, 6, echo->input_energy);
+		echo->weak_margin = scaled_u64_at_least(echo->error_energy, 6, echo->input_energy);
 		return;
 	}
 	/* A transient peak in otherwise quiet input cannot qualify a useful
@@ -436,7 +430,7 @@ static void maybe_mark_ready(struct pcm_host_echo *echo)
 				  echo->prediction_cross_energy) ||
 	    echo->error_energy > echo->input_energy / 2u)
 		return;
-	bool weak = scaled_energy_at_least(echo->error_energy, 6, echo->input_energy);
+	bool weak = scaled_u64_at_least(echo->error_energy, 6, echo->input_energy);
 
 	/* A newly acquired partial model is not an improvement over the
 	 * qualified one retained for short training. Require stronger margin. */
