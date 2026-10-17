@@ -24,6 +24,9 @@ static inline bool v34_nonlinear_parameter_is_valid(
 	return parameter == V34_NONLINEAR_THETA_ZERO ||
 	       parameter == V34_NONLINEAR_THETA_5_OVER_16;
 }
+/* Identity projection permits zero for an unmeasured mean. Active nonlinear
+ * projection requires a finite positive mean; negative/nonfinite means are
+ * invalid in either mode. */
 bool v34_nonlinear_configuration_is_valid(
 	enum v34_nonlinear_parameter parameter,
 	double mean_squared_magnitude);

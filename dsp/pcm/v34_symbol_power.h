@@ -24,6 +24,8 @@ struct v34_symbol_power_measurement {
 
 struct v34_power_normalizer {
 	struct v34_mapping_parameters parameters;
+	/* Both means and the count are zero for unmeasured linear power.
+	 * Measured models retain positive means and a nonzero count. */
 	double precoded_mean_squared_magnitude;
 	double projected_mean_squared_magnitude;
 	double normalization_gain;
@@ -62,8 +64,15 @@ v34_power_normalizer_init(
 	const struct v34_symbol_power_measurement
 		*projected_measurement);
 
+/* Scale the identity projection by a finite positive gain. Derive the same
+ * hard bounds without generating symbols or inventing a measured mean.
+ * Inputs may belong to normalizer; rejection leaves it unchanged. */
+enum v34_symbol_power_result v34_power_normalizer_init_linear(
+	struct v34_power_normalizer *normalizer,
+	const struct v34_mapping_parameters *parameters, double normalization_gain);
+
 /* Replace the initial unit-power gain with a negotiated line-profile gain.
- * Generated means and hard bounds remain owned by the same calibration. */
+ * Preserve measured or unmeasured power metadata and the same hard bounds. */
 enum v34_symbol_power_result v34_power_normalizer_set_gain(
 	struct v34_power_normalizer *normalizer, double normalization_gain);
 

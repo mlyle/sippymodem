@@ -103,33 +103,35 @@ static bool test_disabled_projection(void)
 		{ INT32_MAX, INT32_MIN },
 	};
 
-	for (size_t index = 0; index < ARRAY_LENGTH(inputs); ++index) {
+	for (size_t index = 0; index < 2u * ARRAY_LENGTH(inputs); ++index) {
+		const struct v34_q7_point *input = &inputs[index / 2u];
+		double mean = index % 2u ? 1.0 : 0.0;
 		struct qam_point output;
 		struct qam_point unprojected;
-		double in_phase = (double)inputs[index].in_phase /
+		double in_phase = (double)input->in_phase /
 			V34_Q7_SCALE;
-		double quadrature = (double)inputs[index].quadrature /
+		double quadrature = (double)input->quadrature /
 			V34_Q7_SCALE;
 		double power = in_phase * in_phase + quadrature * quadrature;
 		double projected_power = -1.0;
 
 		CHECK(v34_nonlinear_encode(
-			      V34_NONLINEAR_THETA_ZERO, 1.0,
-			      &inputs[index], &output) ==
+			      V34_NONLINEAR_THETA_ZERO, mean,
+			      input, &output) ==
 			      V34_NONLINEAR_OK &&
 		      output.in_phase ==
-			      (double)inputs[index].in_phase /
+			      (double)input->in_phase /
 				      V34_Q7_SCALE &&
 		      output.quadrature ==
-			      (double)inputs[index].quadrature /
+			      (double)input->quadrature /
 				      V34_Q7_SCALE &&
 		      v34_nonlinear_project_power(
-			      V34_NONLINEAR_THETA_ZERO, 1.0,
+			      V34_NONLINEAR_THETA_ZERO, mean,
 			      power, &projected_power) ==
 			      V34_NONLINEAR_OK &&
 		      projected_power == power &&
 		      v34_nonlinear_unproject(
-			      V34_NONLINEAR_THETA_ZERO, 1.0,
+			      V34_NONLINEAR_THETA_ZERO, mean,
 			      &output, &unprojected) ==
 			      V34_NONLINEAR_OK &&
 		      unprojected.in_phase == output.in_phase &&

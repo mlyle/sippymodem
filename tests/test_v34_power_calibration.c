@@ -240,10 +240,9 @@ static bool test_generated_calibration(void)
 	      v34_power_normalizer_is_valid(&normalizer) &&
 	      v34_normalizers_equal(&normalizer, &repeated) &&
 	      normalizer.calibration_symbol_count == expected_symbols &&
-	      normalizer.precoded_mean_squared_magnitude ==
-		      linear.precoded_mean_squared_magnitude &&
-	      linear.precoded_mean_squared_magnitude ==
-		      linear.projected_mean_squared_magnitude &&
+	      linear.calibration_symbol_count == 0 &&
+	      linear.precoded_mean_squared_magnitude == 0.0 &&
+	      linear.projected_mean_squared_magnitude == 0.0 &&
 	      normalizer.projected_mean_squared_magnitude >
 		      normalizer.precoded_mean_squared_magnitude &&
 	      normalizer.normalization_gain < linear.normalization_gain &&
@@ -251,7 +250,7 @@ static bool test_generated_calibration(void)
 		      normalizer.projected_mean_squared_magnitude *
 			      normalizer.normalization_gain *
 			      normalizer.normalization_gain,
-		      linear.projected_mean_squared_magnitude *
+		      normalizer.precoded_mean_squared_magnitude *
 			      linear.normalization_gain *
 			      linear.normalization_gain) &&
 	      normalizer.precoded_mean_squared_magnitude <=
@@ -476,19 +475,16 @@ static bool test_configuration_sweep(void)
 				      "calibration configuration %zu/%zu/%u failed",
 				      role_index, trellis_index, nonlinear);
 				if (nonlinear == 0) {
-					raw_mean[role_index][trellis_index] =
-						normalizer
-							.precoded_mean_squared_magnitude;
-					CHECK(normalizer
-						      .projected_mean_squared_magnitude ==
-						      normalizer
-							      .precoded_mean_squared_magnitude,
+					CHECK(normalizer.calibration_symbol_count == 0 &&
+					      normalizer.precoded_mean_squared_magnitude == 0.0 &&
+					      normalizer.projected_mean_squared_magnitude == 0.0,
 					      "linear calibration %zu/%zu changed",
 					      role_index, trellis_index);
 				} else {
-					CHECK(normalizer
-						      .precoded_mean_squared_magnitude ==
-						      raw_mean[role_index][trellis_index] &&
+					raw_mean[role_index][trellis_index] =
+						normalizer.precoded_mean_squared_magnitude;
+					CHECK(normalizer.calibration_symbol_count != 0 &&
+					      raw_mean[role_index][trellis_index] > 0.0 &&
 					      normalizer
 						      .projected_mean_squared_magnitude >
 						      normalizer
@@ -551,6 +547,21 @@ static bool test_resumable_calibration(void)
 				      V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
 			      bytes_are_filled(&actual, sizeof(actual), 0xa5),
 			      "rejected mapping step exposed output");
+			if (!nonlinear) {
+				for (unsigned corrupt = 0; corrupt < 3; ++corrupt) {
+					struct v34_mapping_power_calibration invalid = mapping;
+					if (corrupt == 0)
+						invalid.schedule.next_mapping_frame = UINT8_MAX;
+					if (corrupt == 1)
+						invalid.scrambler.polynomial = (enum v34_scrambler_polynomial)2;
+					if (corrupt == 2)
+						invalid.encoder.precoder.grid_step = 0;
+					CHECK(v34_mapping_power_calibration_step(&invalid, 1, &actual) ==
+						V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
+					      bytes_are_filled(&actual, sizeof(actual), 0xa5),
+					      "linear shortcut bypassed working-state validation %u", corrupt);
+				}
+			}
 			do {
 				result = v34_mapping_power_calibration_step(&mapping, BUDGETS[i], &actual);
 				uint32_t symbols = mapping.precoded.symbol_count + mapping.projected.symbol_count;
@@ -563,6 +574,8 @@ static bool test_resumable_calibration(void)
 						"pending mapping exposed partial output");
 			} while (result == V34_POWER_CALIBRATION_IN_PROGRESS);
 			CHECK(result == V34_POWER_CALIBRATION_OK &&
+			      steps == ((uint64_t)mapping.frame_count * (nonlinear ? 2u : 1u) +
+				BUDGETS[i] - 1u) / BUDGETS[i] &&
 			      v34_normalizers_equal(&actual, &expected),
 			      "resuming changed mapping calibration");
 			CHECK(v34_line_power_calibration_begin(&line, &fixture.schedule,
@@ -594,6 +607,35 @@ static bool test_resumable_calibration(void)
 			      "resuming changed line calibration");
 		}
 	}
+	return true;
+}
+
+static bool test_linear_range_fallback(void)
+{
+	struct calibration_fixture fixture;
+	struct v34_mapping_power_calibration calibration;
+	struct v34_power_normalizer normalizer;
+
+	CHECK(initialize_fixture(&fixture, V34_CALLING_STATION,
+		V34_TRELLIS_16_STATE, 0, 0), "linear fallback fixture failed");
+	memset(fixture.encoder.precoder.coefficients, 0,
+		sizeof(fixture.encoder.precoder.coefficients));
+	/* A large initial history prevents the proof, but zero coefficients make
+	 * the generated stream safe. Keep accepting it through measured fallback. */
+	for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap)
+		fixture.encoder.precoder.previous_symbols[tap] =
+			(struct v34_q7_point){ 254 * V34_Q7_SCALE, 254 * V34_Q7_SCALE };
+	CHECK(v34_mapping_power_calibration_begin(&calibration, &fixture.schedule,
+		&fixture.scrambler, &fixture.encoder, V34_NONLINEAR_THETA_ZERO) ==
+		V34_POWER_CALIBRATION_OK && !calibration.linear_bounded &&
+	      v34_mapping_power_calibration_step(&calibration, UINT32_MAX, &normalizer) ==
+		V34_POWER_CALIBRATION_OK && v34_power_normalizer_is_valid(&normalizer) &&
+	      normalizer.calibration_symbol_count ==
+		calibration.frame_count * V34_SYMBOLS_PER_MAPPING_FRAME &&
+	      normalizer.precoded_mean_squared_magnitude > 0.0 &&
+	      normalizer.precoded_mean_squared_magnitude ==
+		normalizer.projected_mean_squared_magnitude,
+	      "unproven linear range bypassed generated validation");
 	return true;
 }
 
@@ -716,6 +758,7 @@ int main(void)
 		{ "line validation", test_line_validation },
 		{ "configuration sweep", test_configuration_sweep },
 		{ "resumable calibration", test_resumable_calibration },
+		{ "linear range fallback", test_linear_range_fallback },
 		{ "transactional validation", test_transactional_validation },
 	};
 	unsigned int failures = 0;

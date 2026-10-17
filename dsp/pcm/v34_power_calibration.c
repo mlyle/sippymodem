@@ -2,6 +2,7 @@
 
 #include "v34_power_calibration.h"
 
+#include "integer_math.h"
 #include "v34_data_points.h"
 #include "v34_pulse_modulator.h"
 #include "v34_rate_profile.h"
@@ -95,6 +96,38 @@ static enum v34_power_calibration_result generate_mapping_frame(
 	return mapping_transmitter_result(result);
 }
 
+/* x = u + c - p, with |c - p| <= grid/2 on each axis. If all histories
+ * stay in that envelope, the coefficient L1 norm bounds p. Integer ceilings
+ * cover both roundings conservatively. Require |u + c| <= 255 for every
+ * future mapper symbol; unresolved cases retain generated-stream validation. */
+static bool linear_precoder_is_bounded(const struct v34_4d_encoder *encoder)
+{
+	uint64_t maximum = 0, norm = 0;
+	uint64_t grid = encoder->precoder.grid_step;
+
+	for (size_t label = 0; label < encoder->parameters.constellation_points / 4u; ++label) {
+		struct v34_grid_point point;
+		if (v34_quarter_superconstellation_point(label, &point) != V34_CONSTELLATION_OK)
+			return false;
+		uint64_t in_phase = magnitude_s16(point.in_phase);
+		uint64_t quadrature = magnitude_s16(point.quadrature);
+		if (in_phase > maximum) maximum = in_phase;
+		if (quadrature > maximum) maximum = quadrature;
+	}
+	uint64_t history_bound = (maximum + grid / 2u) * V34_Q7_SCALE;
+	for (unsigned tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap) {
+		if (magnitude_s64(encoder->precoder.previous_symbols[tap].in_phase) > history_bound ||
+		    magnitude_s64(encoder->precoder.previous_symbols[tap].quadrature) > history_bound)
+			return false;
+		norm += (uint64_t)magnitude_s16(encoder->precoder.coefficients[tap].real) +
+			magnitude_s16(encoder->precoder.coefficients[tap].imaginary);
+	}
+	uint64_t predicted = (history_bound * norm + V34_Q14_SCALE - 1u) / V34_Q14_SCALE;
+	uint64_t quantum = grid * V34_Q7_SCALE;
+	uint64_t lattice = ((predicted + quantum - 1u) / quantum) * grid;
+	return maximum + lattice <= V34_CHANNEL_COORDINATE_LIMIT;
+}
+
 enum v34_power_calibration_result v34_mapping_power_calibration_begin(
 	struct v34_mapping_power_calibration *calibration,
 	const struct v34_frame_schedule *initial_schedule,
@@ -119,6 +152,8 @@ enum v34_power_calibration_result v34_mapping_power_calibration_begin(
 			initial_schedule->geometry.data_frames_per_superframe *
 			initial_schedule->geometry.mapping_frames_per_data_frame,
 		.nonlinear_parameter = nonlinear_parameter,
+		.linear_bounded = nonlinear_parameter == V34_NONLINEAR_THETA_ZERO &&
+			linear_precoder_is_bounded(initial_encoder),
 	};
 	return V34_POWER_CALIBRATION_OK;
 }
@@ -158,6 +193,22 @@ static enum v34_power_calibration_result observe_mapping_frame(
 	return V34_POWER_CALIBRATION_OK;
 }
 
+static enum v34_power_calibration_result profile_gain(
+	const struct v34_mapping_power_calibration *calibration, double *gain)
+{
+	uint16_t rate_level;
+
+	if (v34_rate_profile_level(
+		    calibration->initial_schedule.geometry.symbol_rate,
+		    calibration->initial_schedule.geometry.primary_data_rate_2400_bps_units,
+		    calibration->initial_encoder.parameters.expanded_shaping, &rate_level) !=
+	    V34_RATE_PROFILE_OK)
+		return V34_POWER_CALIBRATION_OUT_OF_RANGE;
+	*gain = (double)rate_level * V34_TRAINING_PULSE_POINT_ZERO_Q12 /
+		((double)V34_PULSE_POINT_SCALE * V34_TRAINING_FIXED_POINT_ZERO);
+	return V34_POWER_CALIBRATION_OK;
+}
+
 static enum v34_power_calibration_result finish_mapping_power(
 	const struct v34_mapping_power_calibration *calibration,
 	struct v34_power_normalizer *normalizer)
@@ -167,7 +218,6 @@ static enum v34_power_calibration_result finish_mapping_power(
 		calibration->projected : precoded;
 	struct v34_power_normalizer generated;
 	enum v34_nonlinear_parameter nonlinear_parameter = calibration->nonlinear_parameter;
-	uint16_t rate_level;
 	double normalization_gain;
 	enum v34_power_calibration_result result;
 
@@ -176,16 +226,9 @@ static enum v34_power_calibration_result finish_mapping_power(
 		&precoded, &projected));
 	if (result != V34_POWER_CALIBRATION_OK)
 		return result;
-	if (v34_rate_profile_level(
-		    calibration->initial_schedule.geometry.symbol_rate,
-		    calibration->initial_schedule.geometry.primary_data_rate_2400_bps_units,
-		    calibration->initial_encoder.parameters.expanded_shaping, &rate_level) !=
-	    V34_RATE_PROFILE_OK)
-		return V34_POWER_CALIBRATION_OUT_OF_RANGE;
-	normalization_gain = (double)rate_level *
-		V34_TRAINING_PULSE_POINT_ZERO_Q12 /
-		((double)V34_PULSE_POINT_SCALE *
-		 V34_TRAINING_FIXED_POINT_ZERO);
+	result = profile_gain(calibration, &normalization_gain);
+	if (result != V34_POWER_CALIBRATION_OK)
+		return result;
 	/* The rate profile sets the linear mean-power scale.  Preserve that
 	 * mean after the radial nonlinear projection instead of transmitting
 	 * the projection's additional power. */
@@ -205,6 +248,27 @@ enum v34_power_calibration_result v34_mapping_power_calibration_step(
 	if (calibration == NULL || normalizer == NULL || frame_budget == 0 ||
 	    calibration->frame_count == 0 || calibration->frame > calibration->frame_count)
 		return V34_POWER_CALIBRATION_INVALID_ARGUMENT;
+	if (calibration->linear_bounded) {
+		if (calibration->nonlinear_parameter != V34_NONLINEAR_THETA_ZERO ||
+		    calibration->measuring_projected ||
+		    !v34_frame_schedule_is_valid(&calibration->schedule) ||
+		    !v34_scrambler_is_valid(&calibration->scrambler) ||
+		    !v34_4d_encoder_is_valid(&calibration->encoder) ||
+		    calibration->schedule.geometry.high_mapping_frame_bits !=
+			calibration->encoder.parameters.mapping_frame_bits ||
+		    !v34_mapping_parameters_are_equal(&calibration->encoder.parameters,
+			&calibration->initial_encoder.parameters))
+			return V34_POWER_CALIBRATION_INVALID_ARGUMENT;
+		uint32_t remaining = calibration->frame_count - calibration->frame;
+		calibration->frame += frame_budget < remaining ? frame_budget : remaining;
+		if (calibration->frame != calibration->frame_count)
+			return V34_POWER_CALIBRATION_IN_PROGRESS;
+		double gain;
+		enum v34_power_calibration_result result = profile_gain(calibration, &gain);
+		return result == V34_POWER_CALIBRATION_OK ?
+			symbol_power_result(v34_power_normalizer_init_linear(normalizer,
+				&calibration->initial_encoder.parameters, gain)) : result;
+	}
 	while (frame_budget != 0) {
 		if (calibration->frame == calibration->frame_count) {
 			if (calibration->measuring_projected ||

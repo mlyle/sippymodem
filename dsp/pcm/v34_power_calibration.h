@@ -27,8 +27,9 @@ enum v34_power_calibration_result {
 	V34_POWER_CALIBRATION_IN_PROGRESS,
 };
 
-/* Resumable, instance-owned calibration. A step visits at most frame_budget
- * mapping frames. Generation and accumulation order stay deterministic.
+/* Resumable, instance-owned calibration. Begin copies its inputs; thereafter
+ * only step may mutate the job. Each step charges at most frame_budget frames,
+ * preserving completion cadence even when linear power need not be measured.
  * Outputs change only on completion; discard the job after a terminal failure. */
 struct v34_mapping_power_calibration {
 	struct v34_frame_schedule initial_schedule, schedule;
@@ -38,14 +39,15 @@ struct v34_mapping_power_calibration {
 	uint32_t random_state, frame, frame_count;
 	enum v34_nonlinear_parameter nonlinear_parameter;
 	bool measuring_projected;
+	bool linear_bounded;
 };
 
 /* Measure a generated data stream at the exact Q7 precoder boundary, then
- * after nonlinear projection using that raw mean. Linear encoding reuses
- * the first measurement because projection is the identity. The selected
- * rate-profile level supplies the line-profile gain, corrected so nonlinear
- * projection preserves the same mean power. One complete schedule period is
- * visited four times from the supplied starting position.
+ * after nonlinear projection using that raw mean. A linear job with a proven
+ * precoder range skips generation and reports unmeasured power; other jobs
+ * retain generated-stream range validation. The selected rate profile supplies
+ * the gain, corrected so nonlinear projection preserves the same mean power.
+ * Generated jobs visit four complete schedule periods from the starting position.
  * The input schedule, scrambler, and encoder are copied and remain unchanged;
  * the normalizer changes only on successful completion. */
 enum v34_power_calibration_result v34_mapping_power_calibration_begin(

@@ -511,6 +511,70 @@ static bool test_normalizer_validation(void)
 	return true;
 }
 
+static bool test_linear_normalizer(void)
+{
+	static const double INVALID_GAINS[] = { 0.0, -1.0, NAN, INFINITY, -INFINITY,
+		DBL_MIN, DBL_MAX };
+	struct v34_frame_geometry geometry;
+	struct v34_mapping_parameters parameters, invalid = { 0 };
+	struct v34_symbol_power_measurement measured = {
+		.mean_squared_magnitude = 1.0, .symbol_count = 1,
+	};
+	struct v34_power_normalizer linear, reference, saved;
+	const struct qam_point point = { 1.0, -3.0 };
+	struct qam_point actual, expected;
+
+	CHECK(v34_frame_geometry_init(&geometry, V34_SYMBOL_RATE_3000, 8, false) ==
+		V34_FRAME_SCHEDULE_OK &&
+	      v34_mapping_parameters_init(&parameters, &geometry, false) ==
+		V34_MAPPING_PARAMETERS_OK &&
+	      v34_power_normalizer_init(&reference, &parameters, V34_NONLINEAR_THETA_ZERO,
+		&measured, &measured) == V34_SYMBOL_POWER_OK &&
+	      v34_power_normalizer_set_gain(&reference, 0.25) == V34_SYMBOL_POWER_OK &&
+	      v34_power_normalizer_init_linear(&linear, &parameters, 0.25) ==
+		V34_SYMBOL_POWER_OK && v34_power_normalizer_is_valid(&linear) &&
+	      linear.calibration_symbol_count == 0 &&
+	      linear.precoded_mean_squared_magnitude == 0.0 &&
+	      linear.projected_mean_squared_magnitude == 0.0 &&
+	      linear.maximum_precoded_point_power == reference.maximum_precoded_point_power &&
+	      linear.maximum_projected_point_power == reference.maximum_projected_point_power &&
+	      linear.maximum_normalized_point_power == reference.maximum_normalized_point_power &&
+	      v34_normalize_power(&linear, &point, &actual) == V34_SYMBOL_POWER_OK &&
+	      v34_normalize_power(&reference, &point, &expected) == V34_SYMBOL_POWER_OK &&
+	      actual.in_phase == expected.in_phase && actual.quadrature == expected.quadrature,
+	      "unmeasured linear power changed the waveform or bounds");
+	saved = linear;
+	CHECK(v34_power_normalizer_init_linear(NULL, &parameters, 0.25) ==
+		V34_SYMBOL_POWER_INVALID_ARGUMENT &&
+	      v34_power_normalizer_init_linear(&linear, NULL, 0.25) ==
+		V34_SYMBOL_POWER_INVALID_ARGUMENT &&
+	      v34_power_normalizer_init_linear(&linear, &invalid, 0.25) ==
+		V34_SYMBOL_POWER_INVALID_ARGUMENT && v34_normalizers_equal(&linear, &saved),
+	      "invalid linear initialization changed output");
+	for (size_t i = 0; i < ARRAY_LENGTH(INVALID_GAINS); ++i) {
+		enum v34_symbol_power_result result = i < 5 ?
+			V34_SYMBOL_POWER_INVALID_ARGUMENT : V34_SYMBOL_POWER_NUMERIC_FAILURE;
+		CHECK(v34_power_normalizer_init_linear(&linear, &parameters, INVALID_GAINS[i]) ==
+			result && v34_normalizers_equal(&linear, &saved),
+		      "invalid linear gain %zu changed output", i);
+	}
+	CHECK(v34_power_normalizer_init_linear(&linear, &linear.parameters, 0.5) ==
+		V34_SYMBOL_POWER_OK &&
+	      v34_power_normalizer_set_gain(&linear, 0.25) == V34_SYMBOL_POWER_OK &&
+	      v34_normalizers_equal(&linear, &saved),
+	      "linear gain update lost unmeasured metadata or aliased parameters");
+	for (unsigned i = 0; i < 4; ++i) {
+		linear = saved;
+		if (i == 0) linear.calibration_symbol_count = 1;
+		if (i == 1) linear.precoded_mean_squared_magnitude = 1.0;
+		if (i == 2) linear.projected_mean_squared_magnitude = 1.0;
+		if (i == 3) linear.nonlinear_parameter = V34_NONLINEAR_THETA_5_OVER_16;
+		CHECK(!v34_power_normalizer_is_valid(&linear),
+		      "inconsistent unmeasured power metadata %u accepted", i);
+	}
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v34_symbol_power_measurement measurement = {
@@ -576,6 +640,7 @@ int main(void)
 		{ "normalized mean", test_normalized_mean },
 		{ "all power envelopes", test_all_power_envelopes },
 		{ "normalizer validation", test_normalizer_validation },
+		{ "linear normalizer", test_linear_normalizer },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

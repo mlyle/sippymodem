@@ -16,7 +16,8 @@ bool v34_nonlinear_configuration_is_valid(
 	double mean_squared_magnitude)
 {
 	return v34_nonlinear_parameter_is_valid(parameter) &&
-	       isfinite(mean_squared_magnitude) && mean_squared_magnitude > 0.0;
+	       isfinite(mean_squared_magnitude) && mean_squared_magnitude >= 0.0 &&
+	       (parameter == V34_NONLINEAR_THETA_ZERO || mean_squared_magnitude > 0.0);
 }
 
 static enum v34_nonlinear_result projection_factor(

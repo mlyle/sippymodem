@@ -668,7 +668,12 @@ static bool test_transactional_validation(void)
 	      rejected_transmission_is_transactional(
 		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,
 		      fixture.primary_bits, fixture.mapping_frame.primary_bits,
-		      NULL, V34_NONLINEAR_THETA_ZERO, 0.0,
+		      NULL, V34_NONLINEAR_THETA_ZERO, -1.0,
+		      V34_MAPPING_FRAME_TRANSMITTER_INVALID_ARGUMENT) &&
+	      rejected_transmission_is_transactional(
+		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,
+		      fixture.primary_bits, fixture.mapping_frame.primary_bits,
+		      NULL, V34_NONLINEAR_THETA_5_OVER_16, 0.0,
 		      V34_MAPPING_FRAME_TRANSMITTER_INVALID_ARGUMENT) &&
 	      rejected_transmission_is_transactional(
 		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,

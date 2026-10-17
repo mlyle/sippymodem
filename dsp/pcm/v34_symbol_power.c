@@ -140,6 +140,29 @@ static bool maximum_precoded_point_power(
 	return isfinite(*maximum) && *maximum > 0.0;
 }
 
+enum v34_symbol_power_result v34_power_normalizer_init_linear(
+	struct v34_power_normalizer *normalizer,
+	const struct v34_mapping_parameters *parameters, double normalization_gain)
+{
+	struct v34_power_normalizer generated = { 0 };
+
+	if (normalizer == NULL || !v34_mapping_parameters_is_valid(parameters) ||
+	    !isfinite(normalization_gain) || normalization_gain <= 0.0 ||
+	    !maximum_precoded_point_power(parameters, &generated.maximum_precoded_point_power))
+		return V34_SYMBOL_POWER_INVALID_ARGUMENT;
+	generated.parameters = *parameters;
+	generated.normalization_gain = normalization_gain;
+	generated.nonlinear_parameter = V34_NONLINEAR_THETA_ZERO;
+	generated.maximum_projected_point_power = generated.maximum_precoded_point_power;
+	generated.maximum_normalized_point_power = generated.maximum_projected_point_power *
+		normalization_gain * normalization_gain;
+	if (!isfinite(generated.maximum_normalized_point_power) ||
+	    generated.maximum_normalized_point_power <= 0.0)
+		return V34_SYMBOL_POWER_NUMERIC_FAILURE;
+	*normalizer = generated;
+	return V34_SYMBOL_POWER_OK;
+}
+
 enum v34_symbol_power_result v34_power_normalizer_init(
 	struct v34_power_normalizer *normalizer,
 	const struct v34_mapping_parameters *parameters,
@@ -240,12 +263,17 @@ bool v34_power_normalizer_is_valid(
 	if (normalizer == NULL ||
 	    !v34_mapping_parameters_is_valid(
 		    &normalizer->parameters) ||
-	    normalizer->calibration_symbol_count == 0 ||
+	    (normalizer->calibration_symbol_count == 0 ?
+		(normalizer->nonlinear_parameter != V34_NONLINEAR_THETA_ZERO ||
+		 normalizer->precoded_mean_squared_magnitude != 0.0 ||
+		 normalizer->projected_mean_squared_magnitude != 0.0) :
+		(normalizer->precoded_mean_squared_magnitude <= 0.0 ||
+		 normalizer->projected_mean_squared_magnitude <= 0.0)) ||
 	    !v34_nonlinear_configuration_is_valid(
 		    normalizer->nonlinear_parameter,
 		    normalizer->precoded_mean_squared_magnitude) ||
 	    !isfinite(normalizer->projected_mean_squared_magnitude) ||
-	    normalizer->projected_mean_squared_magnitude <= 0.0 ||
+	    normalizer->projected_mean_squared_magnitude < 0.0 ||
 	    !isfinite(normalizer->maximum_precoded_point_power) ||
 	    normalizer->maximum_precoded_point_power <= 0.0 ||
 	    !power_does_not_exceed(
