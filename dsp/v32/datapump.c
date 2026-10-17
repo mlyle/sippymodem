@@ -987,14 +987,22 @@ static int next_online_cleardown_point(struct v32_datapump *datapump)
 		if (n >= 56u) quadrant ^= 2u;
 		datapump->encoder.phase_quadrant = quadrant;
 	} else if (n < V32_ONLINE_CLEARDOWN_SYMBOLS) {
-		const struct v32_rate_offer empty = { 0 };
+		struct v32_rate_offer offer = { 0 };
 		uint16_t word;
 		uint8_t dibit;
 		if (n == V32_CLEARDOWN_SYMBOLS &&
 		    v32_scrambler_init(&datapump->encoder.scrambler,
 			local_role(datapump->caller)) != V32_FRAMING_OK)
 			return -1;
-		if (v32_rate_signal_encode(V32_CLEARDOWN_SIGNAL, &empty, &word) !=
+		/* R5 describes our enabled rates independently of R4 (8.2).
+		 * E has no common rate, whether R4 was empty or incompatible. */
+		if (n < 2u * V32_CLEARDOWN_SYMBOLS) {
+			offer.rates = datapump->startup.supported_rates;
+			offer.trellis_at_highest_rate =
+				v32_rate_highest(offer.rates) > V32_RATE_CAPABILITY_4800;
+		}
+		if (v32_rate_signal_encode(offer.rates ? V32_RATE_SIGNAL :
+			V32_CLEARDOWN_SIGNAL, &offer, &word) !=
 		    V32_RATE_SIGNAL_OK)
 			return -1;
 		/* E changes B0..B3 to ones; its zero-rate payload remains intact. */
@@ -1585,8 +1593,16 @@ static int receive_fixed_path_sample(
 			    &datapump->fixed_path.owner.data, sample,
 			    reference, &batch) != V32_DATA_PATH_OK)
 			return -1;
-		if (batch.cleardown_requested) {
-			modem_note_disconnect(datapump->dp.modem, false,
+		/* V.32bis 8, note 2: an R4 with no enabled common rate must
+		 * finish the exchange with at least 64T of E before clearing.
+		 * Keep the configured minimum; do not decode control as payload. */
+		bool incompatible_rate = batch.rate_request.rates != 0 &&
+			!(batch.rate_request.rates & rate_capabilities(
+				datapump->dp.modem, datapump->dp.id));
+		if (batch.cleardown_requested || incompatible_rate) {
+			modem_note_disconnect(datapump->dp.modem, incompatible_rate,
+				incompatible_rate ?
+				"V.32bis rate request has no configured common rate" :
 				"remote V.32bis cleardown request");
 			datapump->fixed_path.stage = V32_FIXED_ONLINE_CLEARDOWN;
 			datapump->cleardown_symbols = 0;

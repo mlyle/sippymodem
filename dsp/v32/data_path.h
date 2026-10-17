@@ -32,6 +32,9 @@ struct v32_data_batch {
 	bool retrain_requested;
 	/* Qualified peer request; this batch contains no payload groups. */
 	bool cleardown_requested;
+	/* Nonzero rates identify one qualified online R4 proposal. The call
+	 * owner decides whether the configured rates permit it. */
+	struct v32_rate_offer rate_request;
 };
 
 /* Online retrain is a repeated-pair decision pattern in the persistent

@@ -78,7 +78,7 @@ bool v32_data_path_is_valid(const struct v32_data_path *path)
  * valid rate words can turn a preamble candidate into a control request. */
 static bool observe_control(struct v32_data_path *path,
 	enum online_signal signal, const struct v32_equalizer_observation *observation,
-	bool *cleardown)
+	struct v32_data_batch *batch)
 {
 	if (signal == ONLINE_CONTROL) {
 		struct v32_symbol_decoder seed;
@@ -104,7 +104,10 @@ static bool observe_control(struct v32_data_path *path,
 			return false;
 		--path->control_remaining;
 		if (event == V32_CLEARDOWN_SIGNAL_DETECTED) {
-			*cleardown = true;
+			batch->cleardown_requested = true;
+			path->control_remaining = 0;
+		} else if (event == V32_RATE_SIGNAL_DETECTED) {
+			batch->rate_request = offer;
 			path->control_remaining = 0;
 		}
 	}
@@ -189,7 +192,7 @@ static enum v32_data_path_result commit_observations(
 		else
 			next_retrain = (struct v32_data_retrain_detector){ 0 };
 
-		if (!observe_control(path, signal, observation, &batch->cleardown_requested))
+		if (!observe_control(path, signal, observation, batch))
 			return V32_DATA_PATH_INVALID_STATE;
 
 		if (decide_observation(

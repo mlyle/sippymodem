@@ -346,8 +346,9 @@ static bool consume_data_batch(
 	uint8_t mask = (uint8_t)((UINT8_C(1) << bit_count) - 1u);
 
 	CHECK(batch->count <= V32_DATA_PATH_MAX_GROUPS &&
-	      !batch->retrain_requested,
-	      "ordinary data requested retrain or exceeded its batch bound");
+	      !batch->retrain_requested && !batch->cleardown_requested &&
+	      !batch->rate_request.rates,
+	      "ordinary data requested control or exceeded its batch bound");
 	*multiple = *multiple || batch->count > 1;
 	for (uint8_t index = 0; index < batch->count; ++index) {
 		const struct v32_data_group *group = &batch->groups[index];
@@ -407,15 +408,17 @@ static bool detect_remote_retrain(
 static bool detect_online_cleardown(const struct generated_source *online_source,
 	const struct v32_data_path *online_data)
 {
-	/* An invalid word and a normal rate offer must never become hangup.
-	 * A valid cleardown word alone must not substitute for the preamble. */
-	for (unsigned test = 0; test < 4; ++test) {
+	/* Invalid words and nonzero rate offers cannot become hangup. Neither
+	 * a cleardown nor an R4 proposal is qualified without its preamble. */
+	const uint16_t words[] = { 0x0191, 0, 0x0fb9, 0x0191, 0x0fd1, 0x0fd1 };
+	for (unsigned test = 0; test < ARRAY_LENGTH(words); ++test) {
 		struct generated_source source = *online_source;
 		struct v32_data_path data = *online_data;
 		bool cleared = false;
+		unsigned requests = 0;
 		source.online_control = true;
-		source.control_word = test == 1 ? 0 : test == 2 ? 0x0fb9 : 0x0191;
-		source.control_symbols = test == 3 ? 64 : 0;
+		source.control_word = words[test];
+		source.control_symbols = test == 3 || test == 5 ? 64 : 0;
 		for (unsigned n = 0; n < 1600 && !cleared; ++n) {
 			struct v32_echo_reference reference;
 			struct v32_data_batch batch;
@@ -427,6 +430,15 @@ static bool detect_online_cleardown(const struct generated_source *online_source
 			CHECK(!batch.retrain_requested, "short control preamble requested full retrain");
 			cleared = batch.cleardown_requested;
 			CHECK(!cleared || batch.count == 0, "cleardown exposed payload groups");
+			if (batch.rate_request.rates) {
+				enum v32_rate_signal_type type;
+				struct v32_rate_offer expected;
+				CHECK(v32_rate_signal_decode(words[test], &type, &expected) ==
+					V32_RATE_SIGNAL_OK && type == V32_RATE_SIGNAL &&
+					v32_rate_offers_match(&batch.rate_request, &expected),
+					"online R4 proposal differs from the transmitted word");
+				++requests;
+			}
 		}
 		CHECK(cleared == (test == 0), "online cleardown case %u, role %d rate %u: detected=%u",
 		      test, source.rate_encoder.scrambler.transmitter_role,
@@ -434,6 +446,8 @@ static bool detect_online_cleardown(const struct generated_source *online_source
 		CHECK(!cleared || source.control_symbols <= 64 + V32_DATA_CONTROL_OBSERVATIONS + 64,
 		      "cleardown probe exceeded its bounded interval");
 		CHECK(cleared || data.control_remaining == 0, "control probe did not expire");
+		CHECK(requests == (test == 2 || test == 4 ? 1u : 0u),
+		      "online R4 case %u produced %u requests", test, requests);
 	}
 	return true;
 }
