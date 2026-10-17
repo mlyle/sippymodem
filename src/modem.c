@@ -289,6 +289,13 @@ const char *modem_call_phase(const struct modem *m)
 
 const char *modem_protocol_step(const struct modem *m)
 {
+	/* A physical retrain interrupts establishment and keeps its DSP step. */
+	if (m != NULL && m->dp != NULL && m->dp->status == DPSTAT_CONNECT &&
+	    (m->state == STATE_EC_ESTAB || m->state == STATE_EC_DISC)) {
+		const char *step = modem_ec_protocol_step(m);
+		if (step != NULL)
+			return step;
+	}
 	if (m != NULL && m->dp != NULL && m->dp->op != NULL &&
 	    m->dp->op->progress != NULL) {
 		const char *step = m->dp->op->progress(m->dp);

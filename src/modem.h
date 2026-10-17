@@ -569,6 +569,8 @@ extern int  modem_ec_init(struct modem *m);
 extern void modem_ec_exit(struct modem *m);
 extern void modem_ec_start(struct modem *m);
 extern void modem_ec_stop(struct modem *m);
+/* Borrow the current detection/LAPM exchange label, or NULL outside control. */
+extern const char *modem_ec_protocol_step(const struct modem *m);
 /* Whether the host still accepts LAPM establishment for this call. */
 extern bool modem_ec_can_establish(const struct modem *m);
 /* Consume a bounded request; the host invokes retrain outside DSP callbacks. */

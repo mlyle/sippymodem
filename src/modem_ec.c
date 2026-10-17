@@ -215,6 +215,26 @@ static bool xid_pending(const struct lapm_state *l)
 	return l->v44_session.phase == LAPM_V44_COMMAND_PENDING;
 }
 
+const char *modem_ec_protocol_step(const struct modem *m)
+{
+	if (m == NULL)
+		return NULL;
+	if (m->get_bits == modem_detector_get_bits &&
+	    m->put_bits == modem_detector_put_bits)
+		return "V.42/ODP-ADP";
+	if (m->get_bits != modem_hdlc_get_bits ||
+	    m->put_bits != modem_hdlc_put_bits)
+		return NULL;
+	if (xid_pending(&m->ec.lapm))
+		return "LAPM/XID";
+	switch (m->ec.lapm.state) {
+	case LAPM_IDLE: return "LAPM/wait-XID-SABME";
+	case LAPM_ESTAB: return "LAPM/SABME-UA";
+	case LAPM_DISC: return "LAPM/DISC-UA";
+	default: return NULL;
+	}
+}
+
 static int read_host_characters(
 	void *context, uint8_t *output, size_t output_capacity)
 {
