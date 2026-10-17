@@ -13,6 +13,7 @@ enum {
 	/* Small physical DC biases can exceed the data error ceiling. This is
 	 * a fit bound, not an increase to the held-out residual/bit limits. */
 	MAX_OFFSET = 512,
+	MOMENT_COLUMNS = V92_RESIDUAL_LAGS + 2,
 };
 _Static_assert((unsigned)START >= (unsigned)V92_RESIDUAL_LAGS, "acquisition must include delayed predictors");
 
@@ -58,6 +59,22 @@ bool v92_residual_fit(struct v92_residual *filter,
 	for (unsigned i = 0; i < SAMPLES; i++)
 		if (points[i] < -32768 || points[i] > 32768 || raw[i] < -32768 || raw[i] > 32768)
 			return false;
+	/* Every candidate uses columns from the same acquisition window. These
+	 * integer products and 120-sample sums are exact in binary64, so sharing
+	 * them preserves each candidate's original normal equations. */
+	double moments[MOMENT_COLUMNS][MOMENT_COLUMNS] = { { 0 } };
+	double cross[MOMENT_COLUMNS] = { 0 };
+	for (unsigned n = START; n < SAMPLES; n++) {
+		double row[MOMENT_COLUMNS];
+		for (unsigned lag = 0; lag <= V92_RESIDUAL_LAGS; lag++)
+			row[lag] = points[n - lag];
+		row[MOMENT_COLUMNS - 1] = 1.;
+		for (unsigned j = 0; j < MOMENT_COLUMNS; j++) {
+			cross[j] += row[j] * raw[n];
+			for (unsigned k = 0; k < MOMENT_COLUMNS; k++)
+				moments[j][k] += row[j] * row[k];
+		}
+	}
 	struct v92_residual best = { 0 };
 	double best_gain = 0., best_score = INFINITY;
 	const unsigned samples = SAMPLES - START;
@@ -65,13 +82,15 @@ bool v92_residual_fit(struct v92_residual *filter,
 		for (unsigned second = 0; second <= V92_RESIDUAL_LAGS; second++) {
 			if (second && (!first || second <= first)) continue;
 			unsigned taps = (first != 0) + (second != 0), count = taps + 2;
+			unsigned columns[4] = { 0 }, used = 1;
+			if (first) columns[used++] = first;
+			if (second) columns[used++] = second;
+			columns[used] = MOMENT_COLUMNS - 1;
 			double gram[4][4] = { { 0 } }, rhs[4] = { 0 }, fitted[4];
-			for (unsigned n = START; n < SAMPLES; n++) {
-				double x[4]; features(points, n, first, second, x);
-				for (unsigned j = 0; j < count; j++) {
-					for (unsigned k = 0; k < count; k++) gram[j][k] += x[j] * x[k];
-					rhs[j] += x[j] * raw[n];
-				}
+			for (unsigned j = 0; j < count; j++) {
+				rhs[j] = cross[columns[j]];
+				for (unsigned k = 0; k < count; k++)
+					gram[j][k] = moments[columns[j]][columns[k]];
 			}
 			if (!gram_fit(gram, rhs, count, fitted)) continue;
 			/* Constrain the main gain, then refit the other coefficients at

@@ -2959,28 +2959,34 @@ static bool test_residual_inverse(void)
 	       TOTAL = TRAIN + 240 };
 	int32_t points[TOTAL], raw[TOTAL];
 	const unsigned delays[][2] = { { 0, 0 }, { 4, 0 }, { 3, 9 }, { 1, 12 } };
-	for (unsigned fixture = 0; fixture < ARRAY_LENGTH(delays); fixture++) {
+	for (unsigned fixture = 0; fixture < 2u * ARRAY_LENGTH(delays); fixture++) {
+		const unsigned *delay = delays[fixture % ARRAY_LENGTH(delays)];
+		bool wide = fixture >= ARRAY_LENGTH(delays);
+		double minimum = wide ? 1.9 : .8, maximum = wide ? 2.1 : .9;
 		uint32_t random = 71371;
 		for (unsigned i = 0; i < TOTAL; i++) {
 			random = random * 1664525u + 1013904223u;
-			points[i] = (int)(random >> 20) - 2048;
+			points[i] = wide ? (int)(random >> 16) - 32768 : (int)(random >> 20) - 2048;
+			if (wide && i % 17u == 0u) points[i] = 32768;
+			if (wide && i % 19u == 0u) points[i] = -32768;
 			double value = points[i];
-			if (delays[fixture][0] && i >= delays[fixture][0]) value -= .027 * points[i - delays[fixture][0]];
-			if (delays[fixture][1] && i >= delays[fixture][1]) value += .011 * points[i - delays[fixture][1]];
-			raw[i] = (int32_t)lround(1.2 * value + 128 + ((int)(random & 3u) - 1));
+			if (delay[0] && i >= delay[0]) value -= .027 * points[i - delay[0]];
+			if (delay[1] && i >= delay[1]) value += .011 * points[i - delay[1]];
+			raw[i] = (int32_t)lround((wide ? .5 : 1.2) * value + 128 + ((int)(random & 3u) - 1));
 		}
 		struct v92_residual filter = { 0 }, copy;
 		double gain = 0, score = INFINITY;
-		CHECK(v92_residual_fit(&filter, points, raw, .8, .9, &gain, &score) && isfinite(score) &&
+		CHECK(v92_residual_fit(&filter, points, raw, minimum, maximum, &gain, &score) && isfinite(score) &&
 		      v92_residual_is_valid(&filter), "residual fit rejected an identifiable channel");
-		CHECK(filter.delay[0] == delays[fixture][0] && filter.delay[1] == delays[fixture][1],
+		CHECK(filter.delay[0] == delay[0] && filter.delay[1] == delay[1],
 		      "residual fit invented or missed delayed channel memory");
 		for (unsigned edge = 0; edge < 2; edge++) {
-			double bound = edge ? .835 : .832, fitted_gain = 0;
+			const double bounds[2][2] = { { .832, .835 }, { 1.995, 2.005 } };
+			double bound = bounds[wide][edge], fitted_gain = 0;
 			struct v92_residual bounded = { 0 };
 			CHECK(v92_residual_fit(&bounded, points, raw, bound, bound, &fitted_gain, NULL) &&
-			      fitted_gain == bound && bounded.delay[0] == delays[fixture][0] &&
-			      bounded.delay[1] == delays[fixture][1], "gain boundary changed the delay hypothesis");
+			      fitted_gain == bound && bounded.delay[0] == delay[0] &&
+			      bounded.delay[1] == delay[1], "gain boundary changed the delay hypothesis");
 		}
 		for (unsigned fault = 0; fault < 6; fault++) {
 			copy = filter;
@@ -3019,10 +3025,10 @@ static bool test_residual_inverse(void)
 		CHECK(!v92_residual_fit(&filter, points, raw, NAN, .9, &gain, &score) && score == saved_score &&
 		      !memcmp(&filter, &saved, sizeof(filter)), "invalid bounds changed the inverse");
 		for (unsigned i = 0; i < TRAIN; i++) raw[i] += 2048;
-		CHECK(!v92_residual_fit(&filter, points, raw, .8, .9, &gain, NULL) &&
+		CHECK(!v92_residual_fit(&filter, points, raw, minimum, maximum, &gain, NULL) &&
 		      !memcmp(&filter, &saved, sizeof(filter)), "excessive DC bias supplied an inverse");
 		memset(points, 0, sizeof(points));
-		CHECK(!v92_residual_fit(&filter, points, raw, .8, .9, &gain, NULL),
+		CHECK(!v92_residual_fit(&filter, points, raw, minimum, maximum, &gain, NULL),
 		      "singular acquisition supplied an inverse");
 	}
 	return true;
