@@ -93,40 +93,38 @@ static bool finish_timing_window(struct echo_timing *timing,
 		.energy = t->energy[best], .current_energy = t->energy[radius],
 		.input = t->input,
 	};
+	struct echo_timing_evidence combined = {
+		.cross = evidence.cross + t->first.cross,
+		.current_cross = evidence.current_cross + t->first.current_cross,
+		.energy = evidence.energy + t->first.energy,
+		.current_energy = evidence.current_energy + t->first.current_energy,
+		.input = evidence.input + t->first.input,
+	};
 	bool qualified = timing_is_qualified(&evidence, samples, 9);
-	if (model->require_support &&
-	    !prediction_is_qualified(evidence.current_cross,
-		evidence.current_energy, evidence.input,
-		samples, 9))
+	if (t->second) {
+		/* Weak or suspended models need two fresh supported windows to
+		 * restore subtraction. A strong model enters the same policy only
+		 * after both windows and their sum show harmful cancellation. */
+		if (model->require_support || model->suspended ||
+		    (prediction_is_harmful(t->first.current_cross,
+			    t->first.current_energy, t->first.input, samples, 9) &&
+		     prediction_is_harmful(evidence.current_cross,
+			    evidence.current_energy, evidence.input, samples, 9) &&
+		     prediction_is_harmful(combined.current_cross,
+			    combined.current_energy, combined.input, 2 * samples, 36)))
+			model->suspended =
+				!prediction_is_qualified(t->first.current_cross,
+					t->first.current_energy, t->first.input, samples, 9) ||
+				!prediction_is_qualified(evidence.current_cross,
+					evidence.current_energy, evidence.input, samples, 9) ||
+				!prediction_is_qualified(combined.current_cross,
+					combined.current_energy, combined.input, 2 * samples, 36);
+	} else if (model->require_support &&
+		   !prediction_is_qualified(evidence.current_cross,
+			   evidence.current_energy, evidence.input, samples, 9)) {
+		/* The first unsupported window suspends a marginal model; one
+		 * supported window cannot restore an already suspended model. */
 		model->suspended = true;
-	if (t->second &&
-	    prediction_is_harmful(t->first.current_cross,
-		    t->first.current_energy, t->first.input, samples, 9) &&
-	    prediction_is_harmful(evidence.current_cross,
-		    evidence.current_energy, evidence.input, samples, 9) &&
-	    prediction_is_harmful(
-		    evidence.current_cross + t->first.current_cross,
-		    evidence.current_energy + t->first.current_energy,
-		    evidence.input + t->first.input, 2 * samples, 36))
-		model->suspended = true;
-	if ((model->require_support || model->suspended) && t->second) {
-		/* A marginal or harmful prediction needs fresh support in data.
-		 * Reuse the timing monitor's independent confidence bounds at the
-		 * current delay. One unsupported window suspends subtraction;
-		 * two fresh windows are required to restore it. Keep testing the
-		 * frozen prediction while bypassed. */
-		model->suspended =
-			!prediction_is_qualified(t->first.current_cross,
-				t->first.current_energy, t->first.input,
-				samples, 9) ||
-			!prediction_is_qualified(evidence.current_cross,
-				evidence.current_energy, evidence.input,
-				samples, 9) ||
-			!prediction_is_qualified(
-				evidence.current_cross + t->first.current_cross,
-				evidence.current_energy + t->first.current_energy,
-				evidence.input + t->first.input,
-				2 * samples, 36);
 	}
 	/* Short windows require a material return: 1/32 of received energy
 	 * for fast tracking, 1/128 for intermediate tracking. The long monitor
@@ -138,13 +136,6 @@ static bool finish_timing_window(struct echo_timing *timing,
 		scaled_energy_at_least(t->first.energy, material_scale, t->first.input);
 	if ((samples == ECHO_TIMING_WINDOW || material_return) &&
 	    t->second && t->first_qualified && qualified && best == t->candidate) {
-		struct echo_timing_evidence combined = {
-			.cross = evidence.cross + t->first.cross,
-			.current_cross = evidence.current_cross + t->first.current_cross,
-			.energy = evidence.energy + t->first.energy,
-			.current_energy = evidence.current_energy + t->first.current_energy,
-			.input = evidence.input + t->first.input,
-		};
 		/* Monitor the frozen model being subtracted. Its replacement's
 		 * acquisition window must keep its independent training state. */
 		/* Two disjoint windows must choose the same useful delay, and
