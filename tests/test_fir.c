@@ -70,6 +70,48 @@ static bool test_impulse_order(void)
 	return true;
 }
 
+static bool test_read_ring(void)
+{
+	uint32_t random = UINT32_C(0x1be506ad);
+	int16_t history[128], coefficients[128 * 10];
+	int16_t saved_history[128], saved_coefficients[128 * 10];
+
+	CHECK(fir_read_ring_s16(NULL, NULL, 0, 0, 1) == 0,
+	      "empty ring FIR accessed storage");
+	for (size_t count = 1; count <= ARRAY_LENGTH(history); ++count) {
+		for (size_t stride = 1; stride <= 10; ++stride) {
+			for (size_t trial = 0; trial < 3; ++trial) {
+				for (size_t i = 0; i < ARRAY_LENGTH(history); ++i)
+					history[i] = trial == 0 ? INT16_MIN :
+						trial == 1 ? INT16_MAX : next_sample(&random);
+				for (size_t i = 0; i < ARRAY_LENGTH(coefficients); ++i)
+					coefficients[i] = trial == 0 ? INT16_MIN :
+						trial == 1 ? INT16_MAX : next_sample(&random);
+				memcpy(saved_history, history, sizeof(history));
+				memcpy(saved_coefficients, coefficients, sizeof(coefficients));
+				for (size_t start = 0; start < count; ++start) {
+					int64_t expected = 0;
+					size_t phase = start % stride;
+
+					/* Independent modular indexing and a widened sum. Only
+					 * the final result wraps, including full-scale products. */
+					for (size_t tap = 0; tap < count; ++tap)
+						expected += (int64_t)history[(start + count - tap) % count] *
+							coefficients[phase + tap * stride];
+					CHECK(fir_read_ring_s16(history, coefficients + phase, count,
+								start, stride) == (uint32_t)expected,
+					      "ring FIR changed count=%zu start=%zu stride=%zu trial=%zu",
+					      count, start, stride, trial);
+				}
+				CHECK(memcmp(history, saved_history, sizeof(history)) == 0 &&
+				      memcmp(coefficients, saved_coefficients, sizeof(coefficients)) == 0,
+				      "read-only ring FIR changed storage");
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_symmetric_ring(void)
 {
 	uint32_t random = UINT32_C(0x80cd176a);
@@ -124,5 +166,5 @@ static bool test_symmetric_ring(void)
 int main(void)
 {
 	return test_full_width_convolution() && test_impulse_order() &&
-	       test_symmetric_ring() ? 0 : 1;
+	       test_read_ring() && test_symmetric_ring() ? 0 : 1;
 }

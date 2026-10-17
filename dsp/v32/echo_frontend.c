@@ -2,6 +2,7 @@
 
 #include "echo_frontend.h"
 
+#include "fir.h"
 #include "integer_math.h"
 #include "memory_region.h"
 #include "phase.h"
@@ -155,28 +156,6 @@ enum v32_echo_result v32_echo_frontend_freeze(
 	return v32_echo_canceller_freeze(&frontend->echo);
 }
 
-static int16_t filter_output(
-	const struct v32_echo_frontend_filter *filter)
-{
-	uint32_t accumulator = 0;
-	size_t history = filter->history_write;
-
-	for (size_t tap = 0; tap < V32_ECHO_FRONTEND_FILTER_TAPS; ++tap) {
-		int32_t product =
-			(int32_t)filter->history[history] *
-			(int32_t)line_filter_coefficients[
-				filter->phase +
-				tap * V32_ECHO_FRONTEND_FILTER_PHASES];
-
-		accumulator += (uint32_t)product;
-		history = history == 0 ?
-				  V32_ECHO_FRONTEND_FILTER_TAPS - 1u :
-				  history - 1u;
-	}
-	return wrap_s16_from_s32(
-		arithmetic_shift_right_u32(accumulator, 15u));
-}
-
 static bool filter_sample(
 	struct v32_echo_frontend_filter *filter, int16_t received,
 	int16_t *filtered)
@@ -190,7 +169,11 @@ static bool filter_sample(
 	filter->inputs_needed--;
 	if (filter->inputs_needed != 0)
 		return false;
-	*filtered = filter_output(filter);
+	*filtered = wrap_s16_from_s32(arithmetic_shift_right_u32(
+		fir_read_ring_s16(filter->history,
+			line_filter_coefficients + filter->phase,
+			V32_ECHO_FRONTEND_FILTER_TAPS, filter->history_write,
+			V32_ECHO_FRONTEND_FILTER_PHASES), 15u));
 	next_phase = filter->phase + V32_ECHO_FRONTEND_FILTER_STEP;
 	filter->inputs_needed =
 		(uint8_t)(next_phase / V32_ECHO_FRONTEND_FILTER_PHASES);

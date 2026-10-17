@@ -3,6 +3,7 @@
 #include "symbol_timing.h"
 #include "agc.h"
 #include "fixed_phase.h"
+#include "fir.h"
 #include "integer_math.h"
 #include "memory_region.h"
 
@@ -63,18 +64,10 @@ static const int16_t INTEGRAL_GAIN[3] = { 0, 17, 8 };
 
 static int16_t filter_symbol(const struct v32_symbol_timing *timing)
 {
-	uint32_t accumulator = 0;
-	size_t history = timing->history_index;
+	uint32_t accumulator = fir_read_ring_s16(timing->sample_history,
+		timing->interpolator + timing->polyphase_index,
+		V32_SYMBOL_TIMING_HISTORY, timing->history_index, TIMING_PHASES);
 
-	for (size_t tap = 0; tap < V32_SYMBOL_TIMING_HISTORY; ++tap) {
-		int32_t product = (int32_t)timing->sample_history[history] *
-			timing->interpolator[timing->polyphase_index +
-					     tap * TIMING_PHASES];
-
-		accumulator += (uint32_t)product;
-		history = history == 0 ? V32_SYMBOL_TIMING_HISTORY - 1u :
-					 history - 1u;
-	}
 	return wrap_s16_from_s32(
 		wrap_s16_from_s32(
 			arithmetic_shift_right_u32(accumulator, 15)) * 2);

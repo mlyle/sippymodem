@@ -2,6 +2,7 @@
 
 #include "equalizer.h"
 #include "fixed_phase.h"
+#include "fir.h"
 #include "integer_math.h"
 #include "memory_region.h"
 
@@ -195,14 +196,9 @@ enum v32_equalizer_result v32_equalizer_restart_carrier_acquisition(
 static int16_t filter_sample(
 	const struct v32_equalizer *equalizer, const int16_t *coefficients)
 {
-	uint32_t accumulator = 0;
-	size_t history = equalizer->history_index;
+	uint32_t accumulator = fir_read_ring_s16(equalizer->sample_history,
+		coefficients, V32_EQUALIZER_TAPS, equalizer->history_index, 1);
 
-	for (size_t tap = 0; tap < V32_EQUALIZER_TAPS; ++tap) {
-		accumulator += (uint32_t)((int32_t)coefficients[tap] *
-			equalizer->sample_history[history]);
-		history = history == 0 ? V32_EQUALIZER_TAPS - 1u : history - 1u;
-	}
 	return wrap_s16_from_s32(
 		wrap_s16_from_s32(
 			arithmetic_shift_right_u32(accumulator, 15)) * 2);
