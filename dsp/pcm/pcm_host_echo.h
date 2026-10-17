@@ -4,6 +4,7 @@
 #define PCM_HOST_ECHO_H
 
 #include "pcm_echo_reference.h"
+#include "echo_timing.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -29,22 +30,12 @@ enum {
 	PCM_HOST_ECHO_SCAN_INTERVAL_SAMPLES = 4,
 	PCM_HOST_ECHO_READY_MIN_PEAK = 64,
 	PCM_HOST_ECHO_READY_MIN_RMS = 32,
-	/* Track delay steps up to 40 ms without adapting to the peer's signal. */
-	PCM_HOST_ECHO_TIMING_RADIUS = PCM_ECHO_REFERENCE_SAMPLE_RATE / 25,
-	PCM_HOST_ECHO_TIMING_BINS = 2 * PCM_HOST_ECHO_TIMING_RADIUS + 1,
-	PCM_HOST_ECHO_TIMING_WINDOW = 8192,
-	/* Subsecond evidence for roughly one-percent returns; the long window
-	 * still qualifies weaker echoes. */
-	PCM_HOST_ECHO_MEDIUM_TIMING_WINDOW = 2048,
-	PCM_HOST_ECHO_FAST_TIMING_WINDOW = 128,
+
 };
 
 _Static_assert((unsigned)PCM_HOST_ECHO_FILTER_TAPS ==
 		       (unsigned)PCM_ECHO_REFERENCE_MAX_WINDOW_SAMPLES,
 	       "PCM host echo filter must fill the retained PCM window");
-_Static_assert(PCM_HOST_ECHO_MEDIUM_TIMING_WINDOW % PCM_HOST_ECHO_FAST_TIMING_WINDOW == 0 &&
-	       PCM_HOST_ECHO_TIMING_WINDOW % PCM_HOST_ECHO_MEDIUM_TIMING_WINDOW == 0,
-	       "echo timing windows must contain whole shorter windows");
 
 enum pcm_host_echo_mode {
 	PCM_HOST_ECHO_BYPASS,
@@ -59,27 +50,6 @@ enum pcm_host_echo_result {
 	PCM_HOST_ECHO_INVALID_STATE,
 	PCM_HOST_ECHO_SEQUENCE_MISMATCH,
 	PCM_HOST_ECHO_NUMERIC_FAILURE,
-};
-
-struct pcm_host_echo_timing_evidence {
-	int64_t cross, current_cross;
-	uint64_t energy, current_energy, input;
-};
-
-struct pcm_host_echo_timing_window {
-	int64_t cross[PCM_HOST_ECHO_TIMING_BINS];
-	uint64_t energy[PCM_HOST_ECHO_TIMING_BINS];
-	struct pcm_host_echo_timing_evidence first;
-	uint64_t input;
-	uint16_t count, candidate;
-	bool second, first_qualified;
-};
-
-struct pcm_host_echo_timing {
-	int32_t prediction[PCM_HOST_ECHO_TIMING_BINS];
-	int16_t received[PCM_HOST_ECHO_TIMING_BINS];
-	struct pcm_host_echo_timing_window slow, medium, fast;
-	uint16_t write, fill;
 };
 
 struct pcm_host_echo {
@@ -101,7 +71,7 @@ struct pcm_host_echo {
 	bool filter_ready;
 	bool weak_margin;
 	bool filter_suspended;
-	struct pcm_host_echo_timing timing;
+	struct echo_timing timing;
 };
 
 enum pcm_host_echo_result pcm_host_echo_init(

@@ -101,6 +101,7 @@ APP_SOURCES := \
 SHARED_DSP_SOURCES := \
 	$(DSP_SOURCE_DIR)/agc.c \
 	$(DSP_SOURCE_DIR)/dc_remover.c \
+	$(DSP_SOURCE_DIR)/echo_timing.c \
 	$(DSP_SOURCE_DIR)/binary_equalizer.c \
 	$(DSP_SOURCE_DIR)/crc16_ccitt_false.c \
 	$(DSP_SOURCE_DIR)/datapumps.c \

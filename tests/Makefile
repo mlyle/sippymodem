@@ -43,7 +43,7 @@ PCM_RUNTIME_SOURCE_NAMES := \
 	pcm_gain.c \
 	pcm_octet_probe.c v91_profile.c v91_control.c v91_call.c v91_datapump.c \
 	pcm_dil_descriptor.c pcm_downstream_rx.c pcm_downstream_tx.c pcm_downstream_equalizer.c \
-	pcm_echo_reference.c pcm_host_echo.c \
+	pcm_echo_reference.c pcm_host_echo.c echo_timing.c \
 	pcm_info1.c pcm_j_frame.c pcm_r.c \
 	pcm_binary_sign.c \
 	pcm_phase2_info0_exchange.c pcm_phase2_info1_exchange.c \
@@ -1531,6 +1531,7 @@ PCM_HOST_ECHO_TEST_BINARY := $(BUILD_DIR)/test_pcm_host_echo
 PCM_HOST_ECHO_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_pcm_host_echo.o \
 	$(BUILD_DIR)/pcm_host_echo.o \
+	$(BUILD_DIR)/echo_timing.o \
 	$(BUILD_DIR)/pcm_echo_reference.o
 V34_CALL_TEST_BINARY := $(BUILD_DIR)/test_v34_call
 V34_PHASE4_E_SEQUENCE_TEST_BINARY := \
@@ -3068,6 +3069,7 @@ V34_CALL_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_echo_timing.o \
 	$(BUILD_DIR)/v34_cleardown.o \
 	$(BUILD_DIR)/pcm_host_echo.o \
+	$(BUILD_DIR)/echo_timing.o \
 	$(BUILD_DIR)/pcm_echo_reference.o \
 	$(sort $(filter-out \
 		$(BUILD_DIR)/test_v34_phase2.o \
@@ -6305,3 +6307,7 @@ $(BUILD_DIR)/test_library_wait: $(BUILD_DIR)/test_library_wait.o ../src/libsippy
 
 $(BUILD_DIR)/test_rtp_read_event: $(BUILD_DIR)/test_rtp_read_event.o $(filter-out $(BUILD_DIR)/test_rtp_endpoint.o,$(ENDPOINT_TEST_OBJECTS))
 	$(CC) $(LDFLAGS) -o $@ $^
+
+$(BUILD_DIR)/echo_timing.o: \
+	$(DSP_SOURCE_DIR)/echo_timing.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<

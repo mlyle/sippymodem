@@ -911,7 +911,7 @@ static bool test_explicit_retime(void)
 	CHECK(train_retained_echo(&echo, &start), "explicit timing training failed");
 	saved = echo;
 	const int invalid[] = { 0, INT_MIN, INT_MAX,
-		-PCM_HOST_ECHO_TIMING_RADIUS - 1, PCM_HOST_ECHO_TIMING_RADIUS + 1 };
+		-ECHO_TIMING_RADIUS - 1, ECHO_TIMING_RADIUS + 1 };
 	for (unsigned i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i)
 		CHECK(pcm_host_echo_retime(&echo, invalid[i]) == PCM_HOST_ECHO_INVALID_ARGUMENT &&
 		      memcmp(&echo, &saved, sizeof(echo)) == 0,
@@ -1138,7 +1138,7 @@ static bool test_frozen_delay_tracking(int changed_delay, bool transient)
 	 * separately bound recovery for material returns. */
 	for (size_t index = TRAIN_SAMPLES; index < TRAIN_SAMPLES + 56000; ++index) {
 		int16_t remote = remote_sample(index) * 7;
-		int shift = transient && index >= TRAIN_SAMPLES + PCM_HOST_ECHO_TIMING_WINDOW ?
+		int shift = transient && index >= TRAIN_SAMPLES + ECHO_TIMING_WINDOW ?
 			0 : changed_delay;
 		int16_t returned = echo_sample((size_t)((int64_t)index - shift)) / 16;
 		int16_t cleaned;
@@ -1291,14 +1291,14 @@ int main(void)
 	    !test_acquisition_after_unrelated_prefix())
 		return 1;
 	/* A 33 ms step must work independently of the configured radius. */
-	const int shifts[] = {0, 8, -60, 264, -264, -PCM_HOST_ECHO_TIMING_RADIUS,
-		PCM_HOST_ECHO_TIMING_RADIUS};
+	const int shifts[] = {0, 8, -60, 264, -264, -ECHO_TIMING_RADIUS,
+		ECHO_TIMING_RADIUS};
 	for (size_t index = 0; index < sizeof(shifts) / sizeof(shifts[0]); ++index)
 		if (!test_frozen_delay_tracking(shifts[index], false))
 			return 1;
 	if (!test_prompt_frozen_delay_tracking() || !test_prompt_weak_delay_tracking(0) ||
-	    !test_prompt_weak_delay_tracking(PCM_HOST_ECHO_TIMING_BINS - 1 +
-					    PCM_HOST_ECHO_MEDIUM_TIMING_WINDOW) ||
+	    !test_prompt_weak_delay_tracking(ECHO_TIMING_BINS - 1 +
+					    ECHO_TIMING_MEDIUM_WINDOW) ||
 	    !test_frozen_delay_tracking(8, true))
 		return 1;
 	for (uint32_t salt = 1; salt <= 8; ++salt)
