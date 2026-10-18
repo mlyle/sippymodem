@@ -437,6 +437,54 @@ static bool test_validation_is_transactional(void)
 	return true;
 }
 
+static bool test_history_and_numeric_rejection(void)
+{
+	struct single_tone_detector detector;
+	struct single_tone_detector before;
+	struct single_tone_detector_profile profile;
+	struct single_tone_event event = {
+		.kind = SINGLE_TONE_ENDED,
+		.reversal_delay_samples = 17,
+	};
+
+	CHECK(single_tone_detector_init(&detector, TEST_CARRIER_HZ) ==
+		      SINGLE_TONE_OK,
+	      "history rejection fixture failed");
+	profile = detector.profile;
+	profile.window_samples /= 2u;
+	CHECK(single_tone_detector_init_profile(&detector, &profile) ==
+		      SINGLE_TONE_OK,
+	      "short history fixture failed");
+	detector.history[SINGLE_TONE_MAX_WINDOW_SAMPLES - 1u].energy = NAN;
+	before = detector;
+	CHECK(single_tone_detector_sample(&detector, 0, &event) ==
+		      SINGLE_TONE_INVALID_ARGUMENT &&
+	      single_tone_detector_suppress_sample(&detector) ==
+		      SINGLE_TONE_INVALID_ARGUMENT &&
+	      memcmp(&detector, &before, sizeof(detector)) == 0 &&
+	      event.kind == SINGLE_TONE_ENDED &&
+	      event.reversal_delay_samples == 17,
+	      "invalid inactive history was accepted or changed");
+
+	CHECK(single_tone_detector_init(&detector, TEST_CARRIER_HZ) ==
+		      SINGLE_TONE_OK,
+	      "numeric rejection fixture failed");
+	/* Individually bounded fields can still produce a negative energy
+	 * when the next update removes an inconsistent retained observation. */
+	detector.history_count = detector.profile.window_samples;
+	detector.history[0].energy = 1.0;
+	CHECK(single_tone_detector_is_valid(&detector),
+	      "numeric rejection fixture is not range-valid");
+	before = detector;
+	CHECK(single_tone_detector_sample(&detector, 0, &event) ==
+		      SINGLE_TONE_INVALID_ARGUMENT &&
+	      memcmp(&detector, &before, sizeof(detector)) == 0 &&
+	      event.kind == SINGLE_TONE_ENDED &&
+	      event.reversal_delay_samples == 17,
+	      "rejected numeric update changed state or emitted an event");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -447,6 +495,7 @@ int main(void)
 		{ "detection and rejection", test_detection_and_rejection },
 		{ "configurable carrier share", test_configurable_carrier_share },
 		{ "transactional validation", test_validation_is_transactional },
+		{ "history and numeric rejection", test_history_and_numeric_rejection },
 	};
 	unsigned int failures = 0;
 

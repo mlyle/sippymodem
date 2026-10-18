@@ -131,7 +131,7 @@ static double retained_power(
 	       detector->reference_quadrature * detector->reference_quadrature;
 }
 
-bool single_tone_detector_is_valid(
+static bool detector_header_is_valid(
 	const struct single_tone_detector *detector)
 {
 	double maximum_projection;
@@ -146,7 +146,6 @@ bool single_tone_detector_is_valid(
 	if (detector->phase_step != phase_step_u32(
 		    detector->profile.sample_rate_hz,
 		    detector->profile.frequency_hz, 1) ||
-	    !history_is_valid(detector) ||
 	    detector->history_index >= window_samples ||
 	    detector->history_count > window_samples ||
 	    (detector->history_count < window_samples &&
@@ -198,6 +197,14 @@ bool single_tone_detector_is_valid(
 	return false;
 }
 
+/* The complete state check owns the history scan. After validating input,
+ * mutators recheck metadata and any observations they actually replace. */
+bool single_tone_detector_is_valid(
+	const struct single_tone_detector *detector)
+{
+	return detector_header_is_valid(detector) && history_is_valid(detector);
+}
+
 enum single_tone_result single_tone_detector_init(
 	struct single_tone_detector *detector,
 	unsigned int frequency_hz)
@@ -239,7 +246,7 @@ enum single_tone_result single_tone_detector_init_profile(
 	initialized.profile = *profile;
 	initialized.phase_step = phase_step_u32(
 		profile->sample_rate_hz, profile->frequency_hz, 1);
-	if (!single_tone_detector_is_valid(&initialized))
+	if (!detector_header_is_valid(&initialized))
 		return SINGLE_TONE_INVALID_ARGUMENT;
 	*detector = initialized;
 	return SINGLE_TONE_OK;
@@ -477,7 +484,8 @@ enum single_tone_result single_tone_detector_sample(
 	    observe_reversal(
 		    &next, qualifies, &emitted.reversal_delay_samples))
 		emitted.kind = SINGLE_TONE_PHASE_REVERSED;
-	if (!single_tone_detector_is_valid(&next))
+	if (!detector_header_is_valid(&next) ||
+	    !observation_is_valid(&next.history[detector->history_index]))
 		return SINGLE_TONE_INVALID_ARGUMENT;
 	*detector = next;
 	*event = emitted;
@@ -509,7 +517,7 @@ enum single_tone_result single_tone_detector_suppress_sample(
 		next.interruption = SINGLE_TONE_SUPPRESSING;
 	}
 	next.phase += next.phase_step;
-	if (!single_tone_detector_is_valid(&next))
+	if (!detector_header_is_valid(&next))
 		return SINGLE_TONE_INVALID_ARGUMENT;
 	*detector = next;
 	return SINGLE_TONE_OK;
@@ -538,7 +546,7 @@ enum single_tone_result single_tone_detector_resume(
 	} else {
 		next.interruption = SINGLE_TONE_UNINTERRUPTED;
 	}
-	if (!single_tone_detector_is_valid(&next))
+	if (!detector_header_is_valid(&next))
 		return SINGLE_TONE_INVALID_ARGUMENT;
 	*detector = next;
 	return SINGLE_TONE_OK;
@@ -559,7 +567,7 @@ enum single_tone_result single_tone_detector_reject_reversal(
 	next.reference_in_phase = -next.reference_in_phase;
 	next.reference_quadrature = -next.reference_quadrature;
 	next.rejected_reversal_active = true;
-	if (!single_tone_detector_is_valid(&next))
+	if (!detector_header_is_valid(&next))
 		return SINGLE_TONE_INVALID_ARGUMENT;
 	*detector = next;
 	return SINGLE_TONE_OK;
