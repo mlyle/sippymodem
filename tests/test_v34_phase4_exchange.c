@@ -15,6 +15,8 @@ enum {
 };
 
 struct endpoint {
+	/* Borrowed only while the paired sample loop is running. */
+	const struct v34_data_stream *remote_data;
 	struct v34_phase3_exchange phase3;
 	struct v34_phase4_exchange phase4;
 	struct v34_phase3_exchange_handoff handoff;
@@ -181,7 +183,7 @@ phase4_configuration(enum v34_station_role role)
 static bool endpoint_init_with_rates(
 	struct endpoint *endpoint, enum v34_station_role role,
 	uint8_t local_projected_rate, uint8_t peer_projected_rate,
-	uint8_t mp_rate_limit)
+	uint8_t mp_rate_limit, enum v34_symbol_rate symbol_rate)
 {
 	struct v34_phase3_profile local = profile(role);
 	struct v34_phase3_profile peer = profile(v34_station_peer_role(role));
@@ -197,6 +199,22 @@ static bool endpoint_init_with_rates(
 	struct v34_mp_parameters *parameters =
 		v34_mp_record_common_parameters_mutable(
 			&initialized.phase4_configuration.transmit_mp);
+
+	if (symbol_rate == V34_SYMBOL_RATE_3429) {
+		struct v34_phase3_profile *profiles[] = { &local, &peer };
+
+		for (size_t index = 0; index < ARRAY_LENGTH(profiles); ++index) {
+			profiles[index]->symbol_rate = symbol_rate;
+			profiles[index]->symbol_rate_numerator = 24000;
+			profiles[index]->symbol_rate_denominator = 7;
+			profiles[index]->carrier_frequency_numerator = 96000;
+			profiles[index]->carrier_frequency_denominator = 49;
+		}
+	} else if (symbol_rate != V34_SYMBOL_RATE_3000) {
+		return false;
+	}
+	if (mp_rate_limit > 8u)
+		parameters->data_rate_capability_mask = V34_MP_RATE_CAPABILITY_MASK;
 
 	local.projected_data_rate_2400_bps_units = local_projected_rate;
 	peer.projected_data_rate_2400_bps_units = peer_projected_rate;
@@ -218,7 +236,8 @@ static bool endpoint_init_with_rates(
 static bool endpoint_init(
 	struct endpoint *endpoint, enum v34_station_role role)
 {
-	return endpoint_init_with_rates(endpoint, role, 8, 8, 4);
+	return endpoint_init_with_rates(
+		endpoint, role, 8, 8, 4, V34_SYMBOL_RATE_3000);
 }
 
 static bool endpoint_sample(
@@ -250,9 +269,15 @@ static bool endpoint_sample(
 			endpoint->trn_symbols_at_mp =
 				endpoint->phase4.transmit.training
 					.phase4_trn_symbols;
+		if ((*phase4_events & V34_PHASE4_EXCHANGE_EVENT_RATE_RENEGOTIATION) != 0)
+			endpoint->mapping_frames_received = 0;
 		if ((*phase4_events &
-		     V34_PHASE4_EXCHANGE_EVENT_PEER_B1_RECEIVED) != 0)
-			endpoint->primary_idle_bits_remaining = 16;
+		     V34_PHASE4_EXCHANGE_EVENT_PEER_B1_RECEIVED) != 0) {
+			CHECK(endpoint->remote_data != NULL, "missing peer data stream");
+			/* B1 can leave a partial 16-bit source word. */
+			endpoint->primary_idle_bits_remaining =
+				endpoint->remote_data->primary_delay_bits;
+		}
 		if ((*phase4_events &
 		     V34_PHASE4_EXCHANGE_EVENT_MAPPING_FRAME_RECEIVED) != 0 &&
 		    !accept_mapping_frame(endpoint, &received_frame)) {
@@ -359,6 +384,8 @@ static bool run_initialized_pair(
 	uint32_t caller_events_seen = 0;
 	uint32_t answerer_events_seen = 0;
 
+	calling->remote_data = &answering->phase4.transmit.data;
+	answering->remote_data = &calling->phase4.transmit.data;
 	for (size_t index = 0; index < SAMPLE_LIMIT; ++index) {
 		int16_t caller_transmit;
 		int16_t answerer_transmit;
@@ -477,8 +504,12 @@ static bool renegotiating_peer_sample(
 			      configuration->precoder_coefficients,
 			      configuration->trellis_selection) == V34_PHASE34_RECEIVER_OK,
 		      "rate renegotiation peer could not start B1");
+	} else if (result == V34_PHASE34_RECEIVER_RATE_RENEGOTIATION) {
+		endpoint->mapping_frames_received = 0;
 	} else if (result == V34_PHASE34_RECEIVER_B1_COMPLETE) {
-		endpoint->primary_idle_bits_remaining = 16;
+		CHECK(endpoint->remote_data != NULL, "missing peer data stream");
+		endpoint->primary_idle_bits_remaining =
+			endpoint->remote_data->primary_delay_bits;
 	} else if (result == V34_PHASE34_RECEIVER_MAPPING_FRAME_READY) {
 		CHECK(accept_mapping_frame(endpoint, &received.received),
 		      "rate renegotiation peer received bad data");
@@ -551,7 +582,28 @@ transmit:
 		V34_TRAINING_TRANSMITTER_OK;
 }
 
-static bool test_online_rate_renegotiation(void)
+/* Directional rates are in units of 2400 bit/s. */
+struct rate_change_case {
+	enum v34_symbol_rate symbol_rate;
+	uint8_t call_rate;
+	uint8_t answer_rate;
+	uint8_t updated_call_rate;
+	uint8_t updated_answer_rate;
+};
+
+static bool check_b1(const struct v34_phase34_receiver *receiver)
+{
+	const struct v34_data_receiver *data =
+		&receiver->semantic.data.data_receiver.data_receiver;
+
+	CHECK(receiver->stage == V34_PHASE34_RECEIVER_DATA &&
+	      !data->b1_active && data->b1_received_bits != 0u &&
+	      data->b1_error_bits == 0u,
+	      "clean channel B1 errors=%u/%u", data->b1_error_bits, data->b1_received_bits);
+	return true;
+}
+
+static bool run_rate_renegotiation(const struct rate_change_case *rates)
 {
 	for (unsigned int variant = 0; variant < 6u; ++variant) {
 		unsigned int calling_peer = variant & 1u;
@@ -562,20 +614,42 @@ static bool test_online_rate_renegotiation(void)
 		uint32_t caller_events, answerer_events;
 		uint32_t events_seen = 0;
 		bool waited_for_acknowledgment = false;
+		uint8_t maximum = rates->call_rate > rates->answer_rate ?
+			rates->call_rate : rates->answer_rate;
 
-		CHECK(run_pair(&caller, &answerer, &caller_events, &answerer_events),
+		CHECK(endpoint_init_with_rates(&caller, V34_CALLING_STATION,
+			      rates->call_rate, rates->answer_rate, maximum, rates->symbol_rate) &&
+		      endpoint_init_with_rates(&answerer, V34_ANSWERING_STATION,
+			      rates->answer_rate, rates->call_rate, maximum, rates->symbol_rate),
+		      "rate renegotiation endpoints did not initialize");
+		struct endpoint *ends[] = { &caller, &answerer };
+
+		for (size_t index = 0; index < ARRAY_LENGTH(ends); ++index) {
+			struct v34_mp_parameters *parameters = v34_mp_record_common_parameters_mutable(
+				&ends[index]->phase4_configuration.transmit_mp);
+			parameters->maximum_call_to_answer_rate_2400_bps_units = rates->call_rate;
+			parameters->maximum_answer_to_call_rate_2400_bps_units = rates->answer_rate;
+		}
+		CHECK(run_initialized_pair(&caller, &answerer, &caller_events, &answerer_events),
 		      "rate renegotiation initial call failed");
+		CHECK(caller.phase4.data_startup.mode.transmit.primary_data_rate_2400_bps_units ==
+			      rates->call_rate &&
+		      caller.phase4.data_startup.mode.receive.primary_data_rate_2400_bps_units ==
+			      rates->answer_rate && check_b1(&caller.phase4.receive) &&
+		      check_b1(&answerer.phase4.receive),
+		      "initial call did not validate the requested rates");
 		CHECK(v34_training_transmitter_resume_online(&peer.training,
 			      &initiator->phase4.transmit.data.line) == V34_TRAINING_TRANSMITTER_OK,
 		      "rate renegotiation peer could not retain transmit line");
+		responder->remote_data = &peer.data;
 		peer.receive = initiator->phase4.receive;
 		peer.local_mp = initiator->phase4.transmit_mp;
 		peer.acknowledgment_delay_records = variant >= 2u && variant < 4u ? 6u : 0u;
 		peer.damage_acknowledgment = variant >= 4u;
 		v34_mp_record_common_parameters_mutable(&peer.local_mp)
-			->maximum_call_to_answer_rate_2400_bps_units = 3;
+			->maximum_call_to_answer_rate_2400_bps_units = rates->updated_call_rate;
 		v34_mp_record_common_parameters_mutable(&peer.local_mp)
-			->maximum_answer_to_call_rate_2400_bps_units = 3;
+			->maximum_answer_to_call_rate_2400_bps_units = rates->updated_answer_rate;
 		initiator->mapping_frames_received = 0;
 		responder->mapping_frames_received = 0;
 		for (size_t sample = 0; sample < 16000u; ++sample) {
@@ -612,18 +686,41 @@ static bool test_online_rate_renegotiation(void)
 		      peer.transmitting_data && initiator->mapping_frames_received >= 4u &&
 		      responder->mapping_frames_received >= 4u &&
 		      responder->phase4.data_startup.mode.transmit
-			      .primary_data_rate_2400_bps_units == 3u &&
+			      .primary_data_rate_2400_bps_units ==
+			      (calling_peer ? rates->updated_answer_rate : rates->updated_call_rate) &&
 		      responder->phase4.data_startup.mode.receive
-			      .primary_data_rate_2400_bps_units == 3u,
+			      .primary_data_rate_2400_bps_units ==
+			      (calling_peer ? rates->updated_call_rate : rates->updated_answer_rate),
 		      "rate renegotiation did not restore reduced-rate data: variant=%u events=0x%x frames=%u/%u",
 		      variant, events_seen, initiator->mapping_frames_received,
 		      responder->mapping_frames_received);
+		CHECK(check_b1(&peer.receive) && check_b1(&responder->phase4.receive),
+		      "rate renegotiation did not validate clean B1 in both directions");
 		CHECK(!peer.damage_acknowledgment ||
 		      (peer.acknowledgment_damaged &&
 		       !responder->phase4.peer_mp_prime_received &&
 		       (events_seen & V34_PHASE4_EXCHANGE_EVENT_PEER_E_RECEIVED) != 0),
 		      "missed MP-prime did not recover through E: variant=%u", variant);
 	}
+	return true;
+}
+
+static bool test_online_rate_renegotiation(void)
+{
+	static const struct rate_change_case cases[] = {
+		{ V34_SYMBOL_RATE_3000, 4, 4, 3, 3 },
+		{ V34_SYMBOL_RATE_3000, 12, 12, 11, 11 },
+		{ V34_SYMBOL_RATE_3429, 13, 13, 12, 12 },
+		{ V34_SYMBOL_RATE_3429, 14, 14, 13, 13 },
+		{ V34_SYMBOL_RATE_3429, 14, 12, 13, 12 },
+	};
+
+	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index)
+		CHECK(run_rate_renegotiation(&cases[index]),
+		      "rate change failed: cadence=%u rates=%u/%u -> %u/%u",
+		      cases[index].symbol_rate, 2400u * cases[index].call_rate,
+		      2400u * cases[index].answer_rate, 2400u * cases[index].updated_call_rate,
+		      2400u * cases[index].updated_answer_rate);
 	return true;
 }
 
@@ -1102,9 +1199,9 @@ static bool test_phase4_owns_selected_rates(void)
 	uint32_t answerer_seen;
 
 	CHECK(endpoint_init_with_rates(
-		      &caller, V34_CALLING_STATION, 4, 6, 8) &&
+		      &caller, V34_CALLING_STATION, 4, 6, 8, V34_SYMBOL_RATE_3000) &&
 	      endpoint_init_with_rates(
-		      &answerer, V34_ANSWERING_STATION, 6, 4, 8),
+		      &answerer, V34_ANSWERING_STATION, 6, 4, 8, V34_SYMBOL_RATE_3000),
 	      "asymmetric projected-rate endpoints did not initialize");
 	caller_configuration = v34_mp_record_common_parameters(
 		&caller.phase4_configuration.transmit_mp);
