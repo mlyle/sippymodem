@@ -107,6 +107,8 @@ enum v34_phase2_result v34_phase2_init_retrain(
 bool v34_phase2_is_valid(const struct v34_phase2 *phase2);
 bool v34_phase2_has_failed(const struct v34_phase2 *phase2);
 bool v34_phase2_is_ready_for_info1(const struct v34_phase2 *phase2);
+/* The caller can listen for S as soon as INFO1a is valid. The answerer must
+ * complete its post-INFO1a transmit silence before starting Phase 3. */
 bool v34_phase2_is_ready_for_phase3(const struct v34_phase2 *phase2);
 
 /* Copy the peer capability record after the initial INFO0 exchange. */

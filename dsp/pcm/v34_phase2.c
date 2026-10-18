@@ -253,9 +253,14 @@ bool v34_phase2_is_ready_for_info1(const struct v34_phase2 *phase2)
 
 static bool ready_for_phase3(const struct v34_phase2 *phase2)
 {
+	/* The caller listens for S after validating INFO1a (11.2.1.1.8).
+	 * The answerer owns the following 70 ms transmit silence (11.3.1.2.1).
+	 * Waiting through it at the caller can lose S to receive-filter delay. */
 	return phase2->failure == V34_PHASE2_FAILURE_NONE &&
 	       phase2->stage == V34_PHASE2_INFO1 &&
-	       phase2->state.info1.control.phase == PHASE2_INFO1_COMPLETE &&
+	       (phase2->state.info1.control.phase == PHASE2_INFO1_COMPLETE ||
+		(phase2->local_role == V34_CALLING_STATION &&
+		 phase2->state.info1.control.phase == PHASE2_INFO1_SILENCE)) &&
 	       phase2->local_info1_stored &&
 	       info1_records_are_consistent(phase2);
 }

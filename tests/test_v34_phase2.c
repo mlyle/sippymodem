@@ -381,6 +381,19 @@ static bool check_timeline(
 			      "answerer did not accept and answer INFO1c");
 			answerer_replied = true;
 		}
+		if (caller_event.kind == V34_PHASE2_EVENT_PEER_INFO1A_RECEIVED) {
+			struct v34_phase3_profile local, peer;
+
+			CHECK(caller_transmit == 0 &&
+			      pair.caller.state.info1.control.phase == PHASE2_INFO1_SILENCE &&
+			      v34_phase2_is_ready_for_phase3(&pair.caller) &&
+			      v34_phase2_profiles(&pair.caller, &local, &peer) == V34_PHASE2_OK,
+			      "caller delayed Phase 3 reception after validated INFO1a");
+		}
+		if (pair.answerer.stage == V34_PHASE2_INFO1 &&
+		    pair.answerer.state.info1.control.phase == PHASE2_INFO1_SILENCE)
+			CHECK(!v34_phase2_is_ready_for_phase3(&pair.answerer),
+			      "answerer shortened the required post-INFO1a silence");
 		if (v34_phase2_is_ready_for_phase3(&pair.caller) &&
 		    v34_phase2_is_ready_for_phase3(&pair.answerer))
 			break;

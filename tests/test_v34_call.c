@@ -16,6 +16,8 @@ enum {
 	ECHO_DELAY_CAPACITY = 3333,
 	TEST_ECHO_DELAY_SAMPLES = 32,
 	NOMINAL_AMPLITUDE = 7000,
+	S_CONFIRMATION_SAMPLES = 8u * 8u,
+	SHORT_TRN_SAMPLES = 5u * 8u,
 };
 
 struct self_echo {
@@ -2510,6 +2512,55 @@ static bool peer_s_observed(
 		V34_PHASE3_EXCHANGE_EVENT_PEER_S_DETECTED) != 0;
 }
 
+/* Inserting silence changes the receiver's fractional sampling phase. Find a
+ * shared waveform position where S/S-bar is complete at the deadline but TRN
+ * remains unconfirmed, both with and without the following training. This
+ * constructs the boundary being tested instead of assuming the undelayed
+ * qualification time survives the inserted silence. */
+static bool confirmation_prefix(
+	const struct endpoint *waiting, const int16_t *samples, size_t count,
+	uint32_t deadline, size_t qualified_count, size_t peer_trn_count,
+	uint32_t *prefix)
+{
+	CHECK(qualified_count < count && qualified_count <= deadline &&
+	      peer_trn_count < count,
+	      "invalid confirmation waveform bounds");
+	for (unsigned offset = 0; offset < S_CONFIRMATION_SAMPLES; ++offset) {
+		uint32_t candidate_prefix = deadline - (uint32_t)qualified_count + offset;
+		bool supported = true;
+
+		for (unsigned truncate = 0; truncate < 2u && supported; ++truncate) {
+			struct endpoint candidate = *waiting;
+
+			for (uint32_t sample = 0; sample < deadline; ++sample) {
+				struct v34_call_observation observation;
+				struct v34_received_mapping_frame received;
+				int16_t transmitted;
+				int16_t input = sample < candidate_prefix ? 0 :
+					samples[sample - candidate_prefix];
+
+				if (truncate && sample >= candidate_prefix + peer_trn_count +
+				    SHORT_TRN_SAMPLES)
+					input = 0;
+				CHECK(v34_call_sample(&candidate.call, input, NULL, NULL,
+					      &transmitted, &observation, &received) == V34_CALL_OK,
+				      "confirmation boundary search failed");
+				if (candidate.call.stage == V34_CALL_RETRAIN_SILENCE)
+					break;
+			}
+			supported = candidate.call.stage == V34_CALL_PHASE4 &&
+				candidate.call.peer_s_remaining_samples == S_CONFIRMATION_SAMPLES &&
+				v34_phase3_s_hunt_is_complete(
+					&candidate.call.state.phase4.receive.semantic.phase4.answer_s);
+		}
+		if (supported) {
+			*prefix = candidate_prefix;
+			return true;
+		}
+	}
+	CHECK(false, "no complete S marker awaiting bounded TRN confirmation");
+}
+
 static bool check_late_s(
 	enum v34_station_role role, bool at_deadline, bool truncate_trn)
 {
@@ -2565,8 +2616,12 @@ static bool check_late_s(
 		CHECK(recorded, "late S fixture did not qualify peer S");
 		uint32_t nominal_deadline = 600u * 8u + waiting.call.round_trip_delay_samples;
 		uint32_t deadline = 700u * 8u + waiting.call.round_trip_delay_samples;
-		const uint32_t prefix = at_deadline ?
-			deadline + 24u - qualified_count : 600u * 8u;
+		uint32_t prefix = 600u * 8u;
+
+		if (at_deadline)
+			CHECK(confirmation_prefix(&waiting, samples, count, deadline,
+				      qualified_count, peer_trn_count, &prefix),
+			      "could not construct the confirmation boundary for law %u", pcma);
 
 		/* Delay the peer waveform into the compatibility grace period.
 		 * Qualification must cancel the timer immediately, before the
@@ -2577,10 +2632,11 @@ static bool check_late_s(
 			int16_t transmitted;
 			int16_t input = sample < prefix ? 0 : samples[sample - prefix];
 
-			/* Preserve S/S-bar but cut the following training waveform.
-			 * This must enter the allowance and still expire, rather than
-			 * treating the marker alone as qualified peer training. */
-			if (truncate_trn && sample >= prefix + peer_trn_count + 80u)
+			/* Cut input 5 ms after the peer starts TRN, before the
+			 * sixteen-symbol confirmation can fill at 2400 baud.
+			 * The boundary search verifies that the erasure retains S.
+			 * Complete training must qualify; unsupported training must expire. */
+			if (truncate_trn && sample >= prefix + peer_trn_count + SHORT_TRN_SAMPLES)
 				input = 0;
 			CHECK(v34_call_sample(&waiting.call,
 				      input,
