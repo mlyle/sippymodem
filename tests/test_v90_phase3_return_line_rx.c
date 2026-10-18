@@ -618,6 +618,110 @@ static bool run_fixed_returns(enum g711_law law, unsigned int silence_symbols)
 	return true;
 }
 
+static bool check_weak_decision(
+	const struct v90_phase3_return_line_rx *prepared, unsigned phase,
+	unsigned length)
+{
+	struct v90_phase3_return_line_rx rx = *prepared;
+	bool published = length == V90_PHASE3_RETURN_RX_TRACKED_ONSET_SYMBOLS;
+
+	for (unsigned symbol = 0; symbol < length; ++symbol)
+		CHECK(v90_phase3_return_marker_observe(
+			      &rx.marker,
+			      (uint8_t)((phase + 4u - (symbol & 1u)) & 3u)) ==
+			      (symbol + 1u == V90_PHASE3_RETURN_RX_TRACKED_ONSET_SYMBOLS ?
+			       V90_PHASE3_RETURN_RX_S_DETECTED : V90_PHASE3_RETURN_RX_OK),
+		      "could not seed %u S decisions", length);
+	for (unsigned sample = 0; sample < 16; ++sample) {
+		struct v90_upstream_training_rx expected = rx.upstream;
+		struct v34_analytic_sample decision;
+		enum v90_upstream_training_rx_result result =
+			v90_upstream_training_rx_sample(&expected, 0, &decision);
+
+		CHECK(v90_phase3_return_line_rx_sample(&rx, 0) ==
+			      V90_PHASE3_RETURN_LINE_RX_OK &&
+		      memcmp(&rx.upstream, &expected, sizeof(expected)) == 0 &&
+		      memcmp(&rx.precoder, &prepared->precoder, sizeof(rx.precoder)) == 0,
+		      "weak onset reset its physical owner");
+		if (result != V90_UPSTREAM_TRAINING_RX_DECISION_READY)
+			continue;
+		CHECK(!v34_training_constellation_has_signal(
+			      V34_CONSTELLATION_4_POINT, decision) &&
+		      rx.marker.confirm_onset == prepared->marker.confirm_onset &&
+		      rx.marker.second_return == prepared->marker.second_return &&
+		      rx.marker.allow_implicit_s_end == prepared->marker.allow_implicit_s_end,
+		      "weak decision changed return permissions");
+		CHECK(published ? rx.marker.stage == V90_PHASE3_RETURN_RX_STAGE_S :
+		      (rx.marker.stage == V90_PHASE3_RETURN_RX_STAGE_SEARCH_S &&
+		       rx.marker.buffered_onset_decisions == 0 &&
+		       rx.marker.confirmed_s_symbols == 0),
+		      "phase %u length %u retained weak onset or revoked published S",
+		      phase, length);
+		return true;
+	}
+	CHECK(false, "physical line did not produce a weak decision");
+}
+
+static bool test_weak_onset(void)
+{
+	unsigned cases = 0;
+
+	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		struct v90_phase3_analog_line_tx tx;
+		struct v90_phase3_analog_line_handoff source;
+		struct v90_phase3_return_line_rx quiet;
+
+		CHECK(establish_ja(law, &tx, &source) &&
+		      v90_phase3_return_line_rx_init(&quiet, &source) ==
+			      V90_PHASE3_RETURN_LINE_RX_OK,
+		      "law %u weak-onset line did not initialize", law);
+		/* Drain Ja before seeding the semantic onset. A weak decision must
+		 * break consecutive evidence without resetting the trained line. */
+		quiet.upstream.tracking_constellation = V34_CONSTELLATION_16_POINT;
+		for (unsigned sample = 0; sample < 2048; ++sample) {
+			struct v34_analytic_sample decision;
+			enum v90_upstream_training_rx_result result =
+				v90_upstream_training_rx_sample(&quiet.upstream, 0, &decision);
+
+			CHECK(result == V90_UPSTREAM_TRAINING_RX_OK ||
+			      result == V90_UPSTREAM_TRAINING_RX_DECISION_READY,
+			      "law %u could not drain Ja", law);
+		}
+		for (unsigned mode = 0; mode < 3; ++mode) {
+			struct v90_phase3_return_line_rx prepared = quiet;
+
+			if (mode == 1)
+				CHECK(v90_phase3_return_marker_allow_implicit_s_end(
+					      &prepared.marker) == V90_PHASE3_RETURN_RX_OK,
+				      "could not enable legacy first return");
+			if (mode == 2) {
+				for (unsigned symbol = 0; symbol <
+				     V34_PHASE3_S_SYMBOLS + V34_PHASE3_S_BAR_SYMBOLS; ++symbol) {
+					uint8_t rotation = (uint8_t)((4u - (symbol & 1u) +
+						(symbol >= V34_PHASE3_S_SYMBOLS ? 2u : 0u)) & 3u);
+
+					CHECK(v90_phase3_return_marker_observe(
+						      &prepared.marker, rotation) <=
+						      V90_PHASE3_RETURN_RX_S_BAR_DETECTED,
+					      "could not prepare completed first return");
+				}
+				CHECK(v90_phase3_return_line_rx_restart(&prepared) ==
+					      V90_PHASE3_RETURN_LINE_RX_OK,
+				      "could not prepare second return");
+			}
+			for (unsigned phase = 0; phase < 4; ++phase)
+				for (unsigned length = 0; length <=
+				     V90_PHASE3_RETURN_RX_TRACKED_ONSET_SYMBOLS; ++length) {
+					CHECK(check_weak_decision(&prepared, phase, length),
+					      "law %u mode %u weak onset failed", law, mode);
+					cases++;
+				}
+		}
+	}
+	CHECK(cases == 264, "weak-onset coverage changed to %u cases", cases);
+	return true;
+}
+
 static bool test_fixed_returns(void)
 {
 	CHECK(run_fixed_returns(G711_LAW_PCMU, RETURN_SILENCE_SYMBOLS) &&
@@ -699,6 +803,7 @@ int main(void)
 	} tests[] = {
 		{ "G.711 lines", test_g711_lines },
 		{ "negotiated SCR", test_negotiated_scr },
+		{ "weak onset and published return", test_weak_onset },
 		{ "fixed return decisions", test_fixed_returns },
 		{ "validation", test_validation },
 	};

@@ -94,12 +94,44 @@ static enum v90_phase3_return_line_rx_result marker_result(
 	return V90_PHASE3_RETURN_LINE_RX_NUMERIC_FAILURE;
 }
 
+static enum v90_phase3_return_line_rx_result observe_return(
+	struct v90_phase3_return_marker *marker,
+	struct v34_analytic_sample decision)
+{
+	struct v34_fixed_training_decision hard;
+
+	/* Slicing near-silence can produce an alternating rotation alias. Break
+	 * its unpublished onset history before S can end Jd. Once S is announced,
+	 * preserve the irreversible transmit handoff and ordinary S-bar rules. */
+	if (marker->stage == V90_PHASE3_RETURN_RX_STAGE_SEARCH_S &&
+	    !v34_training_constellation_has_signal(
+		    V34_CONSTELLATION_4_POINT, decision)) {
+		if (marker->buffered_onset_decisions != 0) {
+			struct v90_phase3_return_marker cleared;
+
+			if (v90_phase3_return_marker_init(
+				    &cleared, marker->confirm_onset) !=
+			    V90_PHASE3_RETURN_RX_OK)
+				return V90_PHASE3_RETURN_LINE_RX_NUMERIC_FAILURE;
+			cleared.allow_implicit_s_end = marker->allow_implicit_s_end;
+			cleared.second_return = marker->second_return;
+			*marker = cleared;
+		}
+		return V90_PHASE3_RETURN_LINE_RX_OK;
+	}
+	if (v34_training_constellation_fixed_slice(
+		    V34_CONSTELLATION_4_POINT, decision, &hard) !=
+	    V34_CONSTELLATION_OK)
+		return V90_PHASE3_RETURN_LINE_RX_NUMERIC_FAILURE;
+	return marker_result(v90_phase3_return_marker_observe(
+		marker, hard.clockwise_quarter_turns));
+}
+
 enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_sample(
 	struct v90_phase3_return_line_rx *rx, int16_t sample)
 {
 	struct v90_phase3_return_line_rx next;
 	struct v34_analytic_sample decision;
-	struct v34_fixed_training_decision hard;
 	enum v90_upstream_training_rx_result upstream_result;
 	enum v90_phase3_return_line_rx_result result =
 		V90_PHASE3_RETURN_LINE_RX_OK;
@@ -115,17 +147,9 @@ enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_sample(
 	next = *rx;
 	upstream_result = v90_upstream_training_rx_sample(
 		&next.upstream, sample, &decision);
-	if (upstream_result == V90_UPSTREAM_TRAINING_RX_DECISION_READY) {
-		if (v34_training_constellation_fixed_slice(
-			    V34_CONSTELLATION_4_POINT, decision, &hard) !=
-			    V34_CONSTELLATION_OK)
-			result = V90_PHASE3_RETURN_LINE_RX_NUMERIC_FAILURE;
-		else
-			/* Physical adaptation is already complete. The marker owns
-			 * only the first/second return semantic boundary. */
-			result = marker_result(v90_phase3_return_marker_observe(
-				&next.marker, hard.clockwise_quarter_turns));
-	} else if (upstream_result != V90_UPSTREAM_TRAINING_RX_OK) {
+	if (upstream_result == V90_UPSTREAM_TRAINING_RX_DECISION_READY)
+		result = observe_return(&next.marker, decision);
+	else if (upstream_result != V90_UPSTREAM_TRAINING_RX_OK) {
 		result = V90_PHASE3_RETURN_LINE_RX_NUMERIC_FAILURE;
 	}
 	/* SCR can use Jd's sixteen-point constellation; S/S-bar always use
