@@ -1447,13 +1447,13 @@ static enum v92_pcm_frame_result decode_frame(
 		next = swap;
 		path_count = count;
 	}
-	/* Direct input-cell distance is not a likelihood. Use the best symbol
+	/* Input-cell distance is not a likelihood. Use the best symbol
 	 * path's CURRENT-frame cost as an optimistic residual scale, excluding
 	 * its inherited path penalty. Gaps within three mean symbol energies
 	 * are weak evidence, not exact ambiguity or permission to discard bits.
 	 * The call owner can qualify repeated uncertainty over time. */
-	bool measure_confidence = !b1u &&
-		receiver->observation == V92_PCM_FRAME_FILTER_OUTPUT;
+	bool measure_confidence = !b1u && !model &&
+		(cells || receiver->observation == V92_PCM_FRAME_FILTER_OUTPUT);
 	uint64_t resolution = 0u;
 	if (measure_confidence) {
 		size_t closest = 0u;

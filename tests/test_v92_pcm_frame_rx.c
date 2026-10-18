@@ -1009,13 +1009,28 @@ static bool test_rm_receive(enum g711_law law, uint8_t rate,
 	return true;
 }
 
-static bool test_direct_confidence(void)
+static enum v92_pcm_frame_result decode_confidence(
+	struct v92_pcm_frame_rx *receiver, const int16_t samples[12],
+	const struct v92_pcm_frame_cell *cells, uint8_t *bits,
+	struct v92_pcm_frame_decision *decision)
+{
+	if (!cells)
+		return v92_pcm_frame_decode(receiver, samples, false, bits,
+			receiver->mapping.data_bits_per_frame, decision);
+	struct v92_pcm_frame_channel channel = { .cells = cells };
+	struct v92_pcm_frame_likelihood likelihood;
+	return v92_pcm_frame_decode_observed(receiver, samples, false, bits,
+		receiver->mapping.data_bits_per_frame, decision, &channel, &likelihood);
+}
+
+static bool test_input_confidence(bool conditioned)
 {
 	struct v92_pcm_mapping mapping;
 	struct v92_pcm_frame_tx transmitter;
 	struct v92_pcm_frame frame;
 	uint8_t ones[V92_PCM_MAPPING_MAX_BITS];
 	int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
+	struct v92_pcm_frame_cell cells[V92_PCM_MAPPING_FRAME_SYMBOLS];
 	uint64_t cost = 0;
 
 	CHECK(mapping_init(&mapping, G711_LAW_PCMU, 1u, false) &&
@@ -1025,16 +1040,18 @@ static bool test_direct_confidence(void)
 	CHECK(v92_pcm_frame_encode(&transmitter, ones, mapping.data_bits_per_frame, &frame) ==
 		V92_PCM_FRAME_OK, "confidence fixture encoding failed");
 	for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i) {
-		int16_t source;
+		int16_t source = frame.u[i];
 		struct g711_interval cell;
 
-		CHECK(v92_pcm_frame_scale(mapping.cpd.four_times_gain_q0_16, UPSTREAM_LEVEL, frame.v[i], &source) ==
-			V92_PCM_FRAME_OK, "confidence sample failed");
+		if (!conditioned)
+			CHECK(v92_pcm_frame_scale(mapping.cpd.four_times_gain_q0_16, UPSTREAM_LEVEL, frame.v[i], &source) ==
+				V92_PCM_FRAME_OK, "confidence sample failed");
 		samples[i] = quantize(mapping.law, (int16_t)(source + 128));
 		CHECK(g711_quantization_interval(mapping.law, samples[i], &cell), "invalid cell");
 		int64_t error = source < cell.lower ? cell.lower - source :
 			source > cell.upper ? source - cell.upper : 0;
-		cost += (uint64_t)(error * error);
+		cells[i] = (struct v92_pcm_frame_cell){ cell.lower, cell.upper };
+		cost += (uint64_t)(error * error) * (conditioned ? UINT64_C(65536) : 1u);
 	}
 	uint64_t resolution = cost / (V92_PCM_MAPPING_FRAME_SYMBOLS / 3u);
 	const uint64_t gaps[] = { 1u, 0u, resolution, resolution + 1u };
@@ -1047,16 +1064,19 @@ static bool test_direct_confidence(void)
 			struct v92_pcm_frame_decision decision;
 			uint8_t decoded[V92_PCM_MAPPING_MAX_BITS];
 
-			CHECK(v92_pcm_frame_rx_init(&receiver, &mapping, UPSTREAM_LEVEL) ==
-				V92_PCM_FRAME_OK, "confidence receiver failed");
-			receiver.minimum_level = receiver.maximum_level = UPSTREAM_LEVEL;
+			enum v92_pcm_frame_result initialized = conditioned ?
+				v92_pcm_frame_rx_init_constellation(&receiver, &mapping) :
+				v92_pcm_frame_rx_init(&receiver, &mapping, UPSTREAM_LEVEL);
+			CHECK(initialized == V92_PCM_FRAME_OK, "confidence receiver failed");
+			if (!conditioned)
+				receiver.minimum_level = receiver.maximum_level = UPSTREAM_LEVEL;
 			receiver.pending_frames = V92_PCM_RX_DELAY_FRAMES;
 			receiver.path_count = 2u;
 			receiver.paths[1] = receiver.paths[0];
 			receiver.paths[1].metric = gaps[g];
 			receiver.paths[1].pending[pending][0] = 1u;
-			CHECK(v92_pcm_frame_decode(&receiver, samples, false, decoded,
-				mapping.data_bits_per_frame, &decision) == V92_PCM_FRAME_OK &&
+			CHECK(decode_confidence(&receiver, samples, conditioned ? cells : NULL, decoded,
+				&decision) == V92_PCM_FRAME_OK &&
 				v92_pcm_frame_rx_is_valid(&receiver) && decision.bits_ready &&
 				memcmp(decision.frame.digit, frame.digit, sizeof(frame.digit)) == 0,
 				"confidence changed symbol decisions");
@@ -1064,15 +1084,29 @@ static bool test_direct_confidence(void)
 				decision.ambiguous == (gaps[g] == 0u && pending == 0u),
 				"gap %llu at pending %u conflated confidence and ambiguity",
 				(unsigned long long)gaps[g], pending);
+			/* Exact ties may select either disputed bit; every undisputed bit stays intact. */
 			for (unsigned bit = 0; bit < mapping.data_bits_per_frame; ++bit)
-				CHECK(decoded[bit] == 0, "confidence overwrote the winning payload");
+				CHECK(decoded[bit] == 0 || (gaps[g] == 0u && pending == 0u && bit == 0u),
+					"confidence changed payload: cell %u gap %llu pending %u bit %u",
+					conditioned, (unsigned long long)gaps[g], pending, bit);
 			if (gaps[g]) {
 				struct v92_pcm_frame_tx next = transmitter;
 				int16_t clean[V92_PCM_MAPPING_FRAME_SYMBOLS];
+				struct v92_pcm_frame_cell clean_cells[V92_PCM_MAPPING_FRAME_SYMBOLS];
 
-				CHECK(waveform(&next, ones, clean, UPSTREAM_LEVEL) &&
-					v92_pcm_frame_decode(&receiver, clean, false, decoded,
-						mapping.data_bits_per_frame, &decision) == V92_PCM_FRAME_OK &&
+				if (conditioned) {
+					struct v92_pcm_frame encoded;
+					CHECK(v92_pcm_frame_encode(&next, ones, mapping.data_bits_per_frame,
+						&encoded) == V92_PCM_FRAME_OK, "clean cell frame failed");
+					for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i) {
+						clean[i] = encoded.u[i];
+						clean_cells[i] = (struct v92_pcm_frame_cell){ clean[i], clean[i] };
+					}
+				} else {
+					CHECK(waveform(&next, ones, clean, UPSTREAM_LEVEL), "clean waveform failed");
+				}
+				CHECK(decode_confidence(&receiver, clean, conditioned ? clean_cells : NULL, decoded,
+					&decision) == V92_PCM_FRAME_OK &&
 					!decision.uncertain && !decision.ambiguous,
 					"weak evidence persisted as an erasure on a later clean frame");
 			}
@@ -1683,7 +1717,8 @@ int main(void)
 {
 	if (!test_spare_word_beam(64u, 1u) || !test_spare_word_beam(69u, 0u))
 		return 1;
-	if (!test_direct_confidence() || !test_inactive_filter_history()) return 1;
+	if (!test_input_confidence(false) || !test_input_confidence(true) ||
+	    !test_inactive_filter_history()) return 1;
 	if (!test_trellis_polarity()) return 1;
 	if (!test_polarity_acquisition_boundary()) return 1;
 	static const int16_t levels[] = { 4096, 4104, 4224, 4351 };
