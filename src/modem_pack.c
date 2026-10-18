@@ -76,7 +76,7 @@ enum {
 	ASYNC_FRAME_BITS = 10,
 	ASYNC_BREAK_BITS = 2 * ASYNC_FRAME_BITS + 3,
 	V42_T400_MS = 750,
-	V42_DETECTION_LIMIT_MS = 5 * V42_T400_MS,
+	V42_DETECTION_LIMIT_MS = 10 * V42_T400_MS,
 };
 
 enum async_receive_state {
@@ -738,7 +738,7 @@ void modem_detector_start(struct modem *m)
 		detector_set_pattern(d->rx_pattern, ODP0, ODP1);
 	}
 	/* V.42 7.2.1: start detection immediately. When seeking error control,
-	 * allow 3.75 seconds of active detection for delayed ODP/ADP or
+	 * allow 7.5 seconds of active detection for delayed ODP/ADP or
 	 * protocol flags. A peer can finish training after our carrier is ready,
 	 * including after a retrain has consumed most of the initial allowance.
 	 * Explicit raw answer mode retains the standard default. This bounded

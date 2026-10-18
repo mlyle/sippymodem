@@ -332,7 +332,8 @@ static bool connection_report_layout(void)
 
 static bool late_v42_answer_after_retrain(void)
 {
-	for (unsigned reply = 0; reply < 2; ++reply) {
+	enum { NO_REPLY, V42_REPLY, V14_REPLY, LATE_TEXT, EARLY_TEXT };
+	for (unsigned reply = NO_REPLY; reply <= EARLY_TEXT; ++reply) {
 		struct capture data = { .limit = 4096 }, commands = { .limit = 4096 };
 		struct modem *modem = create(&data, &commands);
 		EXPECT(modem != NULL);
@@ -348,7 +349,8 @@ static bool late_v42_answer_after_retrain(void)
 		memset(marks, 1, sizeof(marks));
 		/* Each duplex exchange advances five milliseconds of active detection.
 		 * A physical retrain preserves the remaining timer and drops framing. */
-		for (unsigned frame = 0; frame < 650; ++frame) {
+		unsigned delay_frames = reply == EARLY_TEXT ? 10 : 1250;
+		for (unsigned frame = 0; frame < delay_frames; ++frame) {
 			if (frame == 520) {
 				int remaining = modem->bit_timer;
 				EXPECT(modem_ec_resume_after_retrain(modem) == 0);
@@ -358,8 +360,8 @@ static bool late_v42_answer_after_retrain(void)
 			EXPECT(modem_put_bits(modem, 1, marks, 12) == 12);
 		}
 		EXPECT(modem->get_bits == modem_detector_get_bits && modem->cfg.ec);
-		if (reply) {
-			/* Two complete ADPs arrive after 3.25 active seconds. */
+		if (reply == V42_REPLY) {
+			/* Two complete ADPs arrive after 6.25 active seconds. */
 			for (unsigned character = 0; character < 4; ++character) {
 				uint8_t bits[18];
 				uint8_t value = character & 1u ? 'C' : 'E';
@@ -372,8 +374,49 @@ static bool late_v42_answer_after_retrain(void)
 			EXPECT(modem->cfg.ec && modem->get_bits == modem_hdlc_get_bits);
 			EXPECT(modem->put_bits == modem_hdlc_put_bits);
 			EXPECT(data.count == 0 && commands.count == 0);
+		} else if (reply >= V14_REPLY) {
+			/* A late negative reply must select raw framing without leaking
+			 * its remaining E/NUL pairs. Clear text must also finish early,
+			 * retaining the prompt and queued DTE byte across the handoff. */
+			modem->xmit.buf[0] = 'Z';
+			modem->xmit.count = modem->xmit.head = 1;
+			if (reply == V14_REPLY) {
+				for (unsigned character = 0; character < 40; ++character) {
+					uint8_t bits[19];
+					uint8_t value = character & 1u ? 0 : 'E';
+					memset(bits, 1, sizeof(bits));
+					bits[0] = 0;
+					for (unsigned bit = 0; bit < 8; ++bit)
+						bits[bit + 1] = (value >> bit) & 1u;
+					EXPECT(modem_put_bits(modem, 1, bits, sizeof(bits)) == sizeof(bits));
+					for (unsigned bit = 0; bit < sizeof(bits) &&
+					     modem->get_bits == modem_detector_get_bits; ++bit) {
+						uint8_t output;
+						EXPECT(modem_get_bits(modem, 1, &output, 1) == 1);
+					}
+				}
+				EXPECT(data.count == 0);
+			}
+			static const char prompt[] = "\r\nWelcome";
+			for (unsigned character = 0; character < sizeof(prompt) - 1; ++character) {
+				uint8_t bits[10];
+				bits[0] = 0;
+				for (unsigned bit = 0; bit < 8; ++bit)
+					bits[bit + 1] = (prompt[character] >> bit) & 1u;
+				bits[9] = 1;
+				EXPECT(modem_put_bits(modem, 1, bits, sizeof(bits)) == sizeof(bits));
+			}
+			for (unsigned bit = 0; bit < 64 &&
+			     modem->get_bits == modem_detector_get_bits; ++bit) {
+				uint8_t output;
+				EXPECT(modem_get_bits(modem, 1, &output, 1) == 1);
+			}
+			EXPECT(!modem->cfg.ec && modem->get_bits == modem_async_get_bits);
+			EXPECT(modem->put_bits == modem_async_put_bits && modem->bit_timer == 0);
+			EXPECT(modem->xmit.count == 1 && data.count == sizeof(prompt) - 1);
+			EXPECT(memcmp(data.bytes, prompt, data.count) == 0 && commands.count == 0);
 		} else {
-			for (unsigned frame = 650; frame < 800; ++frame) {
+			for (unsigned frame = 1250; frame < 1600; ++frame) {
 				EXPECT(modem_get_bits(modem, 1, transmitted, 12) == 12);
 				EXPECT(modem_put_bits(modem, 1, marks, 12) == 12);
 			}
