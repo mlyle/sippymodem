@@ -232,15 +232,6 @@ static int reset_search(
 	return 0;
 }
 
-static int16_t smooth_magnitude(int16_t average, int16_t magnitude)
-{
-	return wrap_s16_from_s32(
-		arithmetic_shift_right_u32(
-			(uint32_t)((int32_t)average * 0x7c00), 15) +
-		arithmetic_shift_right_u32(
-			(uint32_t)((int32_t)magnitude * 0x0400), 15));
-}
-
 static int16_t shifted_distance(
 	int16_t first_i, int16_t first_q,
 	int16_t second_i, int16_t second_q, unsigned shift)
@@ -277,13 +268,13 @@ static bool observe_epoch_energy(
 		phase_delta = wrap_s16_from_s32(
 			(uint16_t)phase_delta - 0x8000u);
 	if (phase_delta > 0x4000)
-		detector->average_a = smooth_magnitude(
+		detector->average_a = wrap_s16_from_s32(smooth_q15_s16(
 			detector->average_a,
-			(int16_t)observation->magnitude);
+			(int16_t)observation->magnitude, 0x7c00));
 	else
-		detector->average_b = smooth_magnitude(
+		detector->average_b = wrap_s16_from_s32(smooth_q15_s16(
 			detector->average_b,
-			(int16_t)observation->magnitude);
+			(int16_t)observation->magnitude, 0x7c00));
 	history_energy = wrap_s16_from_s32(
 		shifted_distance(
 			detector->i_previous,

@@ -31,10 +31,9 @@ static enum online_signal observe_online_signal(
 {
 	int32_t energy = repeated_pair_energy(
 		detector->i_previous, detector->q_previous, observation);
-	int16_t average = wrap_s16_from_s32(
-		arithmetic_shift_right_u32(
-			(uint32_t)((int32_t)detector->average_error * 15), 4) +
-		arithmetic_shift_right_u32((uint32_t)energy, 4));
+	/* A signed high word of pair energy fits the helper's sample input. */
+	int16_t average = wrap_s16_from_s32(smooth_q15_s16(
+		detector->average_error, (int16_t)energy, 0x7800));
 	uint16_t count = detector->repeated_pair_observations + 1u;
 
 	detector->i_previous = detector->i_last;

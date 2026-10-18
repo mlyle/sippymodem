@@ -127,14 +127,9 @@ enum agc_result agc_process(
 		   (block_gain != 0 &&
 		    level < next.config.tracking_threshold));
 	if (active) {
-		int32_t history = arithmetic_shift_right_u32(
-			(uint32_t)((int32_t)next.config.history_weight_q15 *
-				   next.smoothed_level), 15u);
-		int32_t observed = arithmetic_shift_right_u32(
-			(uint32_t)((int32_t)level *
-				   next.config.input_weight_q15), 15u);
-
-		block_gain = wrap_s16_from_s32(history + observed);
+		block_gain = wrap_s16_from_s32(smooth_q15_s16(
+			next.smoothed_level, level,
+			(uint16_t)next.config.history_weight_q15));
 		next.smoothed_level = block_gain;
 		if (next.gain_mode == AGC_GAIN_TRACKING && block_gain != 0) {
 			uint16_t exponent;

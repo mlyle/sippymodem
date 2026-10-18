@@ -20,7 +20,6 @@ enum {
 	CARRIER_HIGH_ERROR = 0x1988,
 	CARRIER_LOW_ERROR = 0x0666,
 	ERROR_SMOOTH_PRIOR_Q15 = 0x799a,
-	ERROR_SMOOTH_SAMPLE_Q15 = 0x0666,
 };
 
 enum carrier_gain_mode {
@@ -58,16 +57,6 @@ static const int16_t CARRIER_PROPORTIONAL_GAIN[] = {
 static const int16_t CARRIER_INTEGRAL_GAIN[] = {
 	0, 18, 1,
 };
-
-static int16_t smooth_q15(
-	int16_t prior, int16_t sample)
-{
-	return wrap_s16_from_s32(
-		arithmetic_shift_right_u32(
-			(uint32_t)((int32_t)prior * ERROR_SMOOTH_PRIOR_Q15), 15) +
-		arithmetic_shift_right_u32(
-			(uint32_t)((int32_t)sample * ERROR_SMOOTH_SAMPLE_Q15), 15));
-}
 
 static uint64_t lineage_word(uint64_t lineage, uint16_t word)
 {
@@ -357,8 +346,9 @@ enum v32_equalizer_result v32_equalizer_process(
 static void update_carrier_loop(
 	struct v32_equalizer *equalizer, int16_t phase_error)
 {
-	int16_t average = smooth_q15(
-		equalizer->smoothed_carrier_error, phase_error);
+	int16_t average = wrap_s16_from_s32(smooth_q15_s16(
+		equalizer->smoothed_carrier_error, phase_error,
+		ERROR_SMOOTH_PRIOR_Q15));
 
 	equalizer->smoothed_carrier_error = average;
 	if (!equalizer->carrier_tracking)
@@ -495,13 +485,8 @@ enum v32_equalizer_result v32_equalizer_commit(
 		(uint32_t)((int32_t)error_q * error_q));
 	scaled_error = wrap_s16_from_s32(
 		arithmetic_shift_right_u32((uint32_t)error_energy, 11));
-	next_error =
-		arithmetic_shift_right_u32(
-			(uint32_t)((int32_t)next.decision_error *
-				   ERROR_SMOOTH_PRIOR_Q15), 15) +
-		arithmetic_shift_right_u32(
-			(uint32_t)((int32_t)scaled_error *
-				   ERROR_SMOOTH_SAMPLE_Q15), 15);
+	next_error = smooth_q15_s16(next.decision_error, scaled_error,
+		ERROR_SMOOTH_PRIOR_Q15);
 	next.decision_error = (uint32_t)next_error < CARRIER_DECISION_PERIOD ?
 		wrap_s16_from_s32(next_error) : INT16_MAX;
 	adapt = next.adaptation != V32_EQUALIZER_ADAPTATION_DISABLED &&

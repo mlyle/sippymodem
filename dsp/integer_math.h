@@ -127,6 +127,21 @@ static inline int32_t arithmetic_shift_right_u32(
 	return wrap_s32_from_u32(shifted);
 }
 
+/* One-pole signed smoothing with a Q15 prior weight in [0, 32768].
+ * Round each product down separately; combining products before shifting
+ * changes the established feedback by a low bit. The caller owns state and
+ * any final narrowing or saturation. */
+static inline int32_t smooth_q15_s16(
+	int16_t prior, int16_t sample, uint16_t prior_weight)
+{
+	int32_t sample_weight = 0x8000 - (int32_t)prior_weight;
+
+	return arithmetic_shift_right_u32(
+		(uint32_t)((int32_t)prior * prior_weight), 15) +
+	       arithmetic_shift_right_u32(
+		(uint32_t)((int32_t)sample * sample_weight), 15);
+}
+
 static inline int64_t arithmetic_shift_right_u64(
 	uint64_t value, unsigned int shift)
 {

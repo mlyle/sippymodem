@@ -283,6 +283,39 @@ static bool test_normalized_reciprocal(void)
 	return true;
 }
 
+/* Use signed division in wider arithmetic as the independent floor oracle. */
+static int32_t floor_q15(int64_t product)
+{
+	return product >= 0 ? (int32_t)(product / 32768) :
+		-(int32_t)((-product + 32767) / 32768);
+}
+
+static bool test_smoothing(void)
+{
+	static const int16_t priors[] = {
+		INT16_MIN, INT16_MIN + 1, -327, -1, 0, 1, 327,
+		INT16_MAX - 1, INT16_MAX,
+	};
+	static const uint16_t weights[] = {
+		0, 1, 0x0400, 0x0666, 0x0800, 0x4000,
+		0x7800, 0x799a, 0x7c00, 0x7fff, 0x8000,
+	};
+
+	for (size_t p = 0; p < ARRAY_LENGTH(priors); ++p)
+		for (size_t w = 0; w < ARRAY_LENGTH(weights); ++w)
+			for (int32_t sample = INT16_MIN; sample <= INT16_MAX; ++sample) {
+				int32_t expected = floor_q15((int64_t)priors[p] * weights[w]) +
+					floor_q15((int64_t)sample * (32768 - weights[w]));
+
+				CHECK(smooth_q15_s16(priors[p], (int16_t)sample, weights[w]) == expected,
+				      "smoothing changed for %d/%d/%u", priors[p], sample, weights[w]);
+			}
+	CHECK(smooth_q15_s16(-1, -1, 0x4000) == -2 &&
+	      smooth_q15_s16(1, 1, 0x4000) == 0,
+	      "smoothing combined products before rounding");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -299,6 +332,7 @@ int main(void)
 		{ "wide energy arithmetic", test_wide_energy_arithmetic },
 		{ "arithmetic shift", test_arithmetic_shift },
 		{ "normalized reciprocal", test_normalized_reciprocal },
+		{ "fixed smoothing", test_smoothing },
 	};
 	unsigned int failures = 0;
 

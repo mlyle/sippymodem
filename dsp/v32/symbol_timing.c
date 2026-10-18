@@ -206,11 +206,8 @@ static void update_loop(
 		angle = (uint16_t)(angle - 0x8000);
 	angle_error = wrap_s16_from_s32(arithmetic_shift_right_u32(
 		(uint32_t)(SAMPLES_PER_SYMBOL * wrap_s16_from_s32(angle)), 3));
-	timing->smoothed_error = wrap_s16_from_s32(
-		arithmetic_shift_right_u32(
-			(uint32_t)((int32_t)timing->smoothed_error * 15), 4) +
-		arithmetic_shift_right_u32(
-			(uint32_t)(int32_t)angle_error, 4));
+	timing->smoothed_error = wrap_s16_from_s32(smooth_q15_s16(
+		timing->smoothed_error, angle_error, 0x7800));
 	if (!timing->tracking_enabled)
 		return;
 	if (timing->acquisition_groups > ACQUISITION_DELAY_GROUPS) {
