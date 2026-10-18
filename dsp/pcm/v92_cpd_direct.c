@@ -202,20 +202,30 @@ static int input_margin(enum g711_law law, int lower, int upper)
 	return margin < crossing ? margin : crossing;
 }
 
-/* Identity prefilter followed by the analogue LU/G scale. Keep the same
- * two rounding steps as the transmitter. */
-static int scaled_point(const struct v92_cpd_parameters *cpd, int eta, int lu)
+/* Preserve the transmitter's identity-prefilter rounding before applying
+ * F and LU. All three factors give a product below 2^46, retained in
+ * int64_t until its final rounding. */
+static int64_t point_gain(const struct v92_cpd_parameters *cpd, int eta)
 {
 	const struct v92_cpd_constellation *points = &cpd->constellation[0];
 	int u = eta < 0 ? -points->positive_linear[-eta - 1] :
 		points->positive_linear[eta];
 	int32_t v = round_shift_s64_to_s32_saturating((int64_t)u * INT16_MAX, 15u);
 
-	return round_shift_s64_to_s32_saturating(
-		(int64_t)v * cpd->four_times_gain_q0_16 * lu, 18u);
+	return (int64_t)v * cpd->four_times_gain_q0_16;
 }
 
-/* Both signs matter: the transmitter's integer rounding is not symmetric.
+static int scale_at_level(int64_t point, int lu)
+{
+	return round_shift_s64_to_s32_saturating(point * lu, 18u);
+}
+
+static int scaled_point(const struct v92_cpd_parameters *cpd, int eta, int lu)
+{
+	return scale_at_level(point_gain(cpd, eta), lu);
+}
+
+/* Both signs matter: G.711's signed input cells are not symmetric.
  * For an LU interval, monotonicity bounds each symbol by its endpoints.
  * Reject a candidate as soon as it cannot beat the retained margin. */
 static int level_separation(
@@ -247,6 +257,160 @@ static int level_separation(
 	return minimum;
 }
 
+/* Minimum peak input noise needed for both points to enter one codec bin. */
+static int bin_margin(
+	int64_t left, int64_t right, int lu, const struct g711_interval *bin)
+{
+	int distance = bin->lower - scale_at_level(left, lu);
+	int other = scale_at_level(right, lu) - bin->upper;
+
+	if (other > distance)
+		distance = other;
+	return distance < 0 ? 0 : distance;
+}
+
+static int pair_input_margin(
+	enum g711_law law, int64_t left, int64_t right, int lower_lu, int upper_lu)
+{
+	int a = scale_at_level(left, lower_lu);
+	int b = scale_at_level(right, lower_lu);
+
+	/* Across zero both distances to any fixed bin grow with LU. */
+	if (left <= 0 && right >= 0)
+		return input_margin(law, a, b);
+	int first = a + (b - a) / 2;
+
+	a = scale_at_level(left, upper_lu);
+	b = scale_at_level(right, upper_lu);
+	int last = a + (b - a) / 2;
+
+	if (first > last) {
+		int swap = first;
+
+		first = last;
+		last = swap;
+	}
+	int minimum = INT16_MAX;
+
+	/* An optimal shared bin contains the integer midpoint. Its range is
+	 * monotone for same-sign points, so only these bins need inspection. */
+	for (int midpoint = first; midpoint <= last;) {
+		struct g711_interval bin;
+
+		(void)g711_quantization_interval(law, (int16_t)midpoint, &bin);
+		int low = lower_lu, high = upper_lu + 1;
+		int center = bin.lower + bin.upper;
+
+		/* One bin-entry distance decreases while the other grows. Their
+		 * maximum is minimized at their crossing or its predecessor. */
+		while (low < high) {
+			int lu = low + (high - low) / 2;
+			int sum = scale_at_level(left, lu) + scale_at_level(right, lu);
+
+			if (left >= 0 ? sum >= center : sum <= center)
+				high = lu;
+			else
+				low = lu + 1;
+		}
+		int candidate = low > upper_lu ? upper_lu : low;
+		int margin = bin_margin(left, right, candidate, &bin);
+
+		if (margin < minimum)
+			minimum = margin;
+		if (low > lower_lu) {
+			margin = bin_margin(left, right, low - 1, &bin);
+			if (margin < minimum)
+				minimum = margin;
+		}
+		if (bin.upper >= last)
+			break;
+		midpoint = bin.upper + 1;
+	}
+	return minimum;
+}
+
+/* Find the first LU outside the current codec bin. The endpoint proves
+ * whether a transition remains; native signed rounding owns all ties. */
+static int next_codec_change(
+	int64_t point, int lu, int end, const struct g711_interval *bin)
+{
+	int last = scale_at_level(point, end);
+
+	if (last >= bin->lower && last <= bin->upper)
+		return end + 1;
+	int low = lu + 1, high = end;
+
+	while (low < high) {
+		int middle = low + (high - low) / 2;
+		int sample = scale_at_level(point, middle);
+
+		if (point >= 0 ? sample > bin->upper : sample < bin->lower)
+			high = middle;
+		else
+			low = middle + 1;
+	}
+	return low;
+}
+
+static int pair_decoded_gap(
+	enum g711_law law, int64_t left, int64_t right,
+	int lower_lu, int upper_lu, int required_margin)
+{
+	int minimum = INT_MAX;
+
+	/* Reconstructed separation is constant until either input changes bin.
+	 * Visit every such transition instead of every integer LU value. */
+	for (int lu = lower_lu; lu <= upper_lu;) {
+		int16_t a = (int16_t)scale_at_level(left, lu);
+		int16_t b = (int16_t)scale_at_level(right, lu);
+		int gap = g711_quantize(law, b) - g711_quantize(law, a);
+		struct g711_interval left_bin, right_bin;
+
+		if (gap <= required_margin)
+			return 0;
+		if (gap < minimum)
+			minimum = gap;
+		(void)g711_quantization_interval(law, a, &left_bin);
+		(void)g711_quantization_interval(law, b, &right_bin);
+		int next_left = next_codec_change(left, lu, upper_lu, &left_bin);
+		int next_right = next_codec_change(right, lu, upper_lu, &right_bin);
+
+		lu = next_left < next_right ? next_left : next_right;
+	}
+	return minimum;
+}
+
+static int cell_separation(
+	const struct v92_cpd_parameters *cpd, enum g711_law law,
+	const struct g711_interval *levels, int required_margin)
+{
+	int count = cpd->constellation[0].count;
+	int64_t previous = point_gain(cpd, -count);
+
+	/* Monotonicity bounds every source point by the outer endpoints. Keep
+	 * the same strict clipping limits as the per-level scorer. Together with
+	 * the already validated law, this makes every following codec-bin query
+	 * valid without another per-pair validation layer. */
+	if (scale_at_level(previous, levels->upper) <= INT16_MIN ||
+	    scale_at_level(point_gain(cpd, count - 1), levels->upper) >= INT16_MAX)
+		return 0;
+	int minimum = INT16_MAX;
+
+	for (int eta = -count + 1; eta < count; ++eta) {
+		int64_t next = point_gain(cpd, eta);
+		int separation = cpd->data_rate_number >= 18u ?
+			pair_input_margin(law, previous, next, levels->lower, levels->upper) :
+			pair_decoded_gap(law, previous, next, levels->lower, levels->upper, required_margin);
+
+		if (separation <= required_margin)
+			return 0;
+		if (separation < minimum)
+			minimum = separation;
+		previous = next;
+	}
+	return minimum;
+}
+
 static int direct_separation(
 	const struct v92_cpd_parameters *cpd, enum g711_law law, int16_t lu,
 	bool disjoint_ranges, int required_margin)
@@ -259,22 +423,13 @@ static int direct_separation(
 	 * At 48k, maximize per-level noise margin instead: B1u refines LU,
 	 * while separating entire cells can sacrifice most of that margin. */
 	struct g711_interval interval;
-	int minimum = INT16_MAX;
 
 	if (!g711_quantization_interval(law, lu, &interval) || interval.lower <= 0)
 		return 0;
 	if (disjoint_ranges)
 		return level_separation(
 			cpd, law, interval.lower, interval.upper, required_margin);
-	for (int level = interval.lower; level <= interval.upper; ++level) {
-		int separation = level_separation(cpd, law, level, level, required_margin);
-
-		if (separation == 0)
-			return 0;
-		if (separation < minimum)
-			minimum = separation;
-	}
-	return minimum;
+	return cell_separation(cpd, law, &interval, required_margin);
 }
 
 static enum v92_cpd_result select_mapping(

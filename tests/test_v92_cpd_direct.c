@@ -391,6 +391,74 @@ static bool test_level_selection(void)
 	return true;
 }
 
+static bool test_full_cell_selection(void)
+{
+	/* Inspect actual native transmitter samples at every LU in each codec
+	 * cell. A fast score must never skip a zero-margin transition or accept
+	 * a clipping alphabet. Rejection is allowed; valid improved maps remain
+	 * usable without pinning the selector to one historical constellation. */
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		for (uint8_t rate = 15u; rate <= 19u; ++rate) {
+			unsigned accepted = 0u;
+
+			for (unsigned code = 0u; code < 128u; ++code) {
+				struct v92_cpd_parameters selected, before;
+				struct g711_interval levels;
+				int16_t nominal;
+
+				CHECK(g711_ucode_sample(law, (uint8_t)code, true, &nominal) &&
+				      g711_quantization_interval(law, nominal, &levels),
+				      "training-cell fixture failed");
+				memset(&selected, 0xa5, sizeof(selected));
+				before = selected;
+				enum v92_cpd_result result = v92_cpd_direct_select(
+					&selected, law, rate, nominal, (code & 1u) != 0u);
+
+				if (result == V92_CPD_INVALID_PARAMETERS) {
+					CHECK(memcmp(&selected, &before, sizeof(selected)) == 0,
+					      "rejected training cell changed output");
+					continue;
+				}
+				CHECK(result == V92_CPD_OK && levels.lower > 0 &&
+				      v92_cpd_parameters_are_valid(&selected),
+				      "invalid training cell was selected");
+				const struct v92_cpd_constellation *points = &selected.constellation[0];
+				int32_t filtered[2u * V92_CPD_DIRECT_MAX_POINTS];
+				int count = points->count;
+
+				for (int eta = -count; eta < count; ++eta) {
+					int u = eta < 0 ? -points->positive_linear[-eta - 1] :
+						points->positive_linear[eta];
+
+					filtered[eta + count] = round_shift_s64_to_s32_saturating(
+						(int64_t)u * INT16_MAX, 15u);
+				}
+				for (int lu = levels.lower; lu <= levels.upper; ++lu) {
+					int previous = INT16_MIN;
+
+					for (int index = 0; index < 2 * count; ++index) {
+						int16_t linear;
+
+						CHECK(v92_pcm_frame_scale(selected.four_times_gain_q0_16,
+							      (int16_t)lu, filtered[index], &linear) == V92_PCM_FRAME_OK &&
+						      linear > INT16_MIN && linear < INT16_MAX,
+						      "law %u rate %u code %u LU %d clipped", law, rate, code, lu);
+						int reconstructed = g711_quantize(law, linear);
+
+						CHECK(reconstructed > previous,
+						      "law %u rate %u code %u LU %d point %d collapsed",
+						      law, rate, code, lu, index);
+						previous = reconstructed;
+					}
+				}
+				accepted++;
+			}
+			CHECK(accepted != 0u, "law %u rate %u rejected every training cell", law, rate);
+		}
+	}
+	return true;
+}
+
 static bool test_uncertain_symbol_ranges(void)
 {
 	/* At ordinary direct levels a 46 2/3k alphabet can keep neighboring
@@ -486,7 +554,8 @@ int main(void)
 {
 	if (!test_rate_and_law_matrix() || !test_known_boundaries() ||
 	    !test_transactionality() || !test_level_selection() ||
-	    !test_uncertain_symbol_ranges() || !test_48k_input_noise_margin())
+	    !test_full_cell_selection() || !test_uncertain_symbol_ranges() ||
+	    !test_48k_input_noise_margin())
 		return 1;
 	return 0;
 }
