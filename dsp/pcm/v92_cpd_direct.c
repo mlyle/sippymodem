@@ -14,6 +14,13 @@ enum {
 	V92_CPD_DIRECT_LINEAR_STEP = 256,
 };
 
+enum separation_rule {
+	SEPARATION_NOMINAL,
+	SEPARATION_CELL_GAP,
+	SEPARATION_CELL_MARGIN,
+	SEPARATION_DISJOINT_MARGIN,
+};
+
 static bool direct_constellation(
 	struct v92_cpd_constellation *constellation,
 	enum g711_law law, uint8_t point_count)
@@ -244,7 +251,7 @@ static int scaled_point(const struct v92_cpd_parameters *cpd, int eta, int lu)
  * Reject a candidate as soon as it cannot beat the retained margin. */
 static int level_separation(
 	const struct v92_cpd_parameters *cpd, enum g711_law law,
-	int lower_lu, int upper_lu, int required_margin)
+	int lower_lu, int upper_lu, bool input_noise, int required_margin)
 {
 	int count = cpd->constellation[0].count;
 	int previous = 0, minimum = INT16_MAX;
@@ -256,7 +263,7 @@ static int level_separation(
 		if (lower <= INT16_MIN || upper >= INT16_MAX)
 			return 0;
 		if (eta != -count) {
-			int gap = cpd->data_rate_number >= 18u ?
+			int gap = input_noise ?
 				input_margin(law, previous, lower) :
 				g711_quantize(law, (int16_t)lower) -
 					g711_quantize(law, (int16_t)previous);
@@ -396,7 +403,7 @@ static int pair_decoded_gap(
 
 static int cell_separation(
 	const struct v92_cpd_parameters *cpd, enum g711_law law,
-	const struct g711_interval *levels, int required_margin)
+	const struct g711_interval *levels, bool input_noise, int required_margin)
 {
 	int count = cpd->constellation[0].count;
 	int64_t previous = point_gain(cpd, -count);
@@ -412,7 +419,7 @@ static int cell_separation(
 
 	for (int eta = -count + 1; eta < count; ++eta) {
 		int64_t next = point_gain(cpd, eta);
-		int separation = cpd->data_rate_number >= 18u ?
+		int separation = input_noise ?
 			pair_input_margin(law, previous, next, levels->lower, levels->upper) :
 			pair_decoded_gap(law, previous, next, levels->lower, levels->upper, required_margin);
 
@@ -427,10 +434,10 @@ static int cell_separation(
 
 static int direct_separation(
 	const struct v92_cpd_parameters *cpd, enum g711_law law, int16_t lu,
-	bool disjoint_ranges, int required_margin)
+	enum separation_rule rule, int required_margin)
 {
-	if (cpd->data_rate_number < 15u || cpd->data_rate_number > 19u)
-		return level_separation(cpd, law, lu, lu, required_margin);
+	if (rule == SEPARATION_NOMINAL)
+		return level_separation(cpd, law, lu, lu, false, required_margin);
 	/* TRN1u supplies a quantized LU. Every balanced alphabet must stay
 	 * injective at each level in that cell. Prefer disjoint symbol ranges
 	 * at 46.7k so the receiver need not resolve LU to distinguish them.
@@ -440,29 +447,39 @@ static int direct_separation(
 
 	if (!g711_quantization_interval(law, lu, &interval) || interval.lower <= 0)
 		return 0;
-	if (disjoint_ranges)
+	if (rule == SEPARATION_DISJOINT_MARGIN)
 		return level_separation(
-			cpd, law, interval.lower, interval.upper, required_margin);
-	return cell_separation(cpd, law, &interval, required_margin);
+			cpd, law, interval.lower, interval.upper, true, required_margin);
+	return cell_separation(cpd, law, &interval,
+		rule == SEPARATION_CELL_MARGIN, required_margin);
 }
 
 static enum v92_cpd_result select_mapping(
 	struct v92_cpd_parameters *parameters, enum g711_law law,
 	int16_t upstream_level, const struct v92_cpd_parameters *initial,
 	const uint16_t frequencies[2 * V92_CPD_DIRECT_MAX_POINTS],
-	bool disjoint_ranges)
+	enum separation_rule rule)
 {
 	struct v92_cpd_parameters candidate = *initial, best;
 	uint8_t data_rate_number = initial->data_rate_number;
 	unsigned int count;
 	int best_separation = 0;
+	bool refine_low_rate = rule == SEPARATION_CELL_MARGIN &&
+		(data_rate_number == 13u || data_rate_number == 14u);
 
-	/* At 48k a merely distinct template can have almost no input margin.
-	 * Rank all candidates rather than returning the first usable one. */
-	if (data_rate_number != 19u &&
-	    direct_separation(&candidate, law, upstream_level, disjoint_ranges, 0) > 0) {
-		*parameters = candidate;
-		return V92_CPD_OK;
+	/* Refined low rates and 48k need the best available input margin,
+	 * rather than the first template with distinct nominal points. */
+	if (data_rate_number != 19u) {
+		int separation = direct_separation(&candidate, law, upstream_level, rule, 0);
+
+		if (separation > 0) {
+			if (!refine_low_rate) {
+				*parameters = candidate;
+				return V92_CPD_OK;
+			}
+			best = candidate;
+			best_separation = separation;
+		}
 	}
 	/* V.92 Table 30 permits arbitrary positive linear points. Search a
 	 * bounded set of contiguous G.711 windows, including quarter-code
@@ -492,25 +509,26 @@ static enum v92_cpd_result select_mapping(
 		if (!normalize_gain(&candidate, frequencies))
 			return V92_CPD_INVALID_PARAMETERS;
 		separation = direct_separation(
-			&candidate, law, upstream_level, disjoint_ranges, best_separation);
+			&candidate, law, upstream_level, rule, best_separation);
 		if (separation > best_separation) {
 			best_separation = separation;
 			best = candidate;
 		}
 	}
-	if ((best_separation == 0 || data_rate_number == 19u) &&
-	    data_rate_number >= 15u && data_rate_number <= 19u) {
+	if (refine_low_rate || ((best_separation == 0 || data_rate_number == 19u) &&
+	    data_rate_number >= 15u && data_rate_number <= 19u)) {
 		/* Contiguous codec windows can have no placement that survives the
 		 * whole LU cell. Try a bounded family of linear/cubic grids:
 		 * a(x) = 30000 * (x + s*x^3)/(1+s), x=(2i+1)/(2N-1), s=0..16.
 		 * The linear term keeps spacing near zero; curvature increases the
-		 * outer gaps. At 48k, use quarter steps and compare against the codec
+		 * outer gaps. At 40k and 48k, use quarter steps and compare against codec
 		 * windows too: integer shapes can miss useful source separation.
 		 * Integer rounding makes generation deterministic; all intermediates
 		 * fit uint64_t for N<=64. Reuse B1u frequencies
 		 * because monotone spacing does not change inner representatives. */
 		uint64_t width = 2u * count - 1u;
-		unsigned resolution = data_rate_number == 19u ? 4u : 1u;
+		unsigned resolution = (refine_low_rate && data_rate_number == 13u) ||
+			data_rate_number == 19u ? 4u : 1u;
 
 		for (unsigned shape = 0u; shape <= 16u * resolution; ++shape) {
 			uint64_t denominator = (shape + resolution) * width * width * width;
@@ -526,7 +544,7 @@ static enum v92_cpd_result select_mapping(
 			if (!normalize_gain(&candidate, frequencies))
 				return V92_CPD_INVALID_PARAMETERS;
 			int separation = direct_separation(
-				&candidate, law, upstream_level, disjoint_ranges, best_separation);
+				&candidate, law, upstream_level, rule, best_separation);
 
 			if (separation > best_separation) {
 				best_separation = separation;
@@ -553,17 +571,30 @@ enum v92_cpd_result v92_cpd_direct_select(
 	    !initialize_direct(&initial, frequencies, law,
 		    data_rate_number, extend_e2u, true))
 		return V92_CPD_INVALID_PARAMETERS;
-	/* Both spacing policies reuse this call's alphabet and exact B1u
-	 * frequencies. Each search mutates its own candidate copy. */
-	if (data_rate_number == 18u) {
+	/* Prefer a full-cell noise margin where the bounded family can provide
+	 * one. A missing scalar bound does not prove the coded channel unusable;
+	 * retain the existing nominal selector as the fallback. Both searches
+	 * reuse this call's exact B1u frequencies and independent candidates. */
+	if (data_rate_number == 13u || data_rate_number == 14u) {
 		enum v92_cpd_result result = select_mapping(
-			parameters, law, upstream_level, &initial, frequencies, true);
+			parameters, law, upstream_level, &initial, frequencies,
+			SEPARATION_CELL_MARGIN);
 
 		if (result != V92_CPD_INVALID_PARAMETERS)
 			return result;
 	}
-	/* Disjoint ranges may be unavailable even with a useful injective
-	 * alphabet. In that case retain the ordinary B1u-refined LU path. */
+	if (data_rate_number == 18u) {
+		enum v92_cpd_result result = select_mapping(
+			parameters, law, upstream_level, &initial, frequencies,
+			SEPARATION_DISJOINT_MARGIN);
+
+		if (result != V92_CPD_INVALID_PARAMETERS)
+			return result;
+	}
+	enum separation_rule rule = data_rate_number >= 18u ?
+		SEPARATION_CELL_MARGIN : data_rate_number >= 15u ?
+		SEPARATION_CELL_GAP : SEPARATION_NOMINAL;
+
 	return select_mapping(
-		parameters, law, upstream_level, &initial, frequencies, false);
+		parameters, law, upstream_level, &initial, frequencies, rule);
 }

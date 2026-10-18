@@ -391,6 +391,53 @@ static bool test_level_selection(void)
 	return true;
 }
 
+static bool test_low_rate_cell_selection(void)
+{
+	static const struct {
+		enum g711_law law;
+		uint8_t rate, ucode;
+	} cells[] = {
+		{ G711_LAW_PCMU, 13u, 80u },
+		{ G711_LAW_PCMA, 13u, 37u },
+		{ G711_LAW_PCMA, 13u, 80u },
+		{ G711_LAW_PCMA, 13u, 96u },
+		{ G711_LAW_PCMU, 14u, 26u },
+		{ G711_LAW_PCMA, 14u, 36u },
+	};
+
+	/* Nominally distinct maps can alias elsewhere in the reported cell.
+	 * Check native scaling and the actual codec throughout each witness;
+	 * any improved constellation with these properties is acceptable. */
+	for (size_t i = 0u; i < ARRAY_LENGTH(cells); ++i) {
+		struct v92_cpd_parameters selected;
+		struct g711_interval levels;
+		int16_t nominal;
+
+		CHECK(g711_ucode_sample(cells[i].law, cells[i].ucode, true, &nominal) &&
+		      g711_quantization_interval(cells[i].law, nominal, &levels) &&
+		      v92_cpd_direct_select(&selected, cells[i].law, cells[i].rate,
+			      nominal, false) == V92_CPD_OK &&
+		      v92_cpd_parameters_are_valid(&selected) &&
+		      gain_is_nearest(&selected, cells[i].law),
+		      "low-rate training-cell selection failed");
+		for (int level = levels.lower; level <= levels.upper; ++level)
+			CHECK(quantized_points_are_distinct(&selected, cells[i].law,
+				      (int16_t)level),
+			      "low-rate alphabet aliases within its reported cell");
+	}
+	/* Failure to find a scalar full-cell margin must retain an existing
+	 * nominally usable coded profile, whose B1u still checks reception. */
+	struct v92_cpd_parameters fallback;
+	int16_t nominal;
+
+	CHECK(g711_ucode_sample(G711_LAW_PCMU, 16u, true, &nominal) &&
+	      v92_cpd_direct_select(&fallback, G711_LAW_PCMU, 13u, nominal, false) == V92_CPD_OK &&
+	      v92_cpd_parameters_are_valid(&fallback) &&
+	      quantized_points_are_distinct(&fallback, G711_LAW_PCMU, nominal),
+	      "nominal low-rate fallback was lost");
+	return true;
+}
+
 static bool test_full_cell_selection(void)
 {
 	/* Inspect actual native transmitter samples at every LU in each codec
@@ -554,7 +601,8 @@ int main(void)
 {
 	if (!test_rate_and_law_matrix() || !test_known_boundaries() ||
 	    !test_transactionality() || !test_level_selection() ||
-	    !test_full_cell_selection() || !test_uncertain_symbol_ranges() ||
+	    !test_low_rate_cell_selection() || !test_full_cell_selection() ||
+	    !test_uncertain_symbol_ranges() ||
 	    !test_48k_input_noise_margin())
 		return 1;
 	return 0;
