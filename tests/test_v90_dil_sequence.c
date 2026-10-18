@@ -166,6 +166,46 @@ static bool test_maximum_segment(void)
 	return true;
 }
 
+static bool test_rejected_segment_transition(void)
+{
+	for (unsigned damage = 0; damage < 3u; ++damage) {
+		struct v90_dil_parameters dil = parameters();
+		struct v90_dil_sequence sequence;
+		struct v90_dil_sequence saved;
+		struct v90_pcm_symbol symbol = { 0 };
+		struct v90_pcm_symbol saved_symbol;
+
+		CHECK(v90_dil_sequence_init(&sequence, &dil, G711_LAW_PCMU) ==
+			      V90_DIL_SEQUENCE_OK,
+		      "segment transition fixture did not initialize");
+		for (unsigned index = 0; index < 5u; ++index)
+			CHECK(v90_dil_sequence_next(&sequence, &symbol) ==
+				      V90_DIL_SEQUENCE_OK,
+			      "segment transition fixture stopped early");
+		if (damage == 0u)
+			sequence.parameters.training_ucodes[1] = 128u;
+		else if (damage == 1u)
+			sequence.parameters.reference_ucodes[7] = 128u;
+		else
+			sequence.parameters.segment_length_codes[7] = 128u;
+		saved = sequence;
+		saved_symbol = symbol;
+		CHECK(v90_dil_sequence_next(&sequence, &symbol) ==
+			      V90_DIL_SEQUENCE_INVALID_STATE &&
+		      memcmp(&sequence, &saved, sizeof(sequence)) == 0 &&
+		      memcmp(&symbol, &saved_symbol, sizeof(symbol)) == 0,
+		      "invalid next segment changed the cursor or emitted a symbol");
+		CHECK(v90_dil_sequence_request_finish(&sequence) ==
+			      V90_DIL_SEQUENCE_OK &&
+		      v90_dil_sequence_next(&sequence, &symbol) ==
+			      V90_DIL_SEQUENCE_OK &&
+		      v90_dil_sequence_is_complete(&sequence) &&
+		      sequence.segment == 0u && sequence.segment_symbol == 6u,
+		      "finishing the current segment inspected an unused segment");
+	}
+	return true;
+}
+
 static bool test_contracts(void)
 {
 	struct v90_dil_parameters dil = parameters();
@@ -396,6 +436,7 @@ int main(void)
 		{ "exact repeated cycles", test_exact_cycles },
 		{ "bounded segment finish", test_bounded_finish },
 		{ "maximum segment", test_maximum_segment },
+		{ "rejected segment transition", test_rejected_segment_transition },
 		{ "contracts", test_contracts },
 	};
 	unsigned int failures = 0;

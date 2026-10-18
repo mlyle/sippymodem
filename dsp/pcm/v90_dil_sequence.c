@@ -22,32 +22,40 @@ static uint16_t segment_symbols(
 	       V90_DIL_SEGMENT_INTERVALS;
 }
 
-static bool state_is_usable(const struct v90_dil_sequence *sequence)
+static bool position_is_usable(
+	const struct v90_dil_sequence *sequence,
+	uint8_t segment, uint16_t segment_symbol, bool complete)
 {
 	uint8_t ucode;
 	uint8_t chord;
 	uint16_t symbols;
 
-	if (sequence == NULL || !g711_law_is_valid(sequence->law) ||
-	    sequence->parameters.segment_count == 0u ||
-	    sequence->parameters.sign_pattern_bits == 0u ||
-	    sequence->parameters.sign_pattern_bits > V90_DIL_MAX_PATTERN_BITS ||
-	    sequence->parameters.training_pattern_bits == 0u ||
-	    sequence->parameters.training_pattern_bits > V90_DIL_MAX_PATTERN_BITS ||
-	    sequence->segment >= sequence->parameters.segment_count)
+	if (segment >= sequence->parameters.segment_count)
 		return false;
-	ucode = sequence->parameters.training_ucodes[sequence->segment];
+	ucode = sequence->parameters.training_ucodes[segment];
 	chord = ucode >> 4;
 	if (ucode > 127u || chord >= V90_DIL_CHORDS ||
 	    sequence->parameters.segment_length_codes[chord] > 127u ||
 	    sequence->parameters.reference_ucodes[chord] > 127u)
 		return false;
-	symbols = segment_symbols(sequence, sequence->segment);
-	if (sequence->complete)
+
+	symbols = segment_symbols(sequence, segment);
+	if (complete)
 		return sequence->finish_requested &&
-		       (sequence->segment_symbol == 0u ||
-			sequence->segment_symbol == symbols);
-	return sequence->segment_symbol < symbols;
+		       (segment_symbol == 0u || segment_symbol == symbols);
+	return segment_symbol < symbols;
+}
+
+static bool state_is_usable(const struct v90_dil_sequence *sequence)
+{
+	return sequence != NULL && g711_law_is_valid(sequence->law) &&
+	       sequence->parameters.segment_count != 0u &&
+	       sequence->parameters.sign_pattern_bits != 0u &&
+	       sequence->parameters.sign_pattern_bits <= V90_DIL_MAX_PATTERN_BITS &&
+	       sequence->parameters.training_pattern_bits != 0u &&
+	       sequence->parameters.training_pattern_bits <= V90_DIL_MAX_PATTERN_BITS &&
+	       position_is_usable(sequence, sequence->segment,
+				  sequence->segment_symbol, sequence->complete);
 }
 
 bool v90_dil_sequence_is_valid(
@@ -82,12 +90,14 @@ enum v90_dil_sequence_result v90_dil_sequence_next(
 	struct v90_dil_sequence *sequence,
 	struct v90_pcm_symbol *symbol)
 {
-	struct v90_dil_sequence next;
 	struct v90_pcm_symbol generated;
+	uint16_t next_symbol;
+	uint8_t next_segment;
 	uint8_t training_ucode;
 	uint8_t chord;
 	uint8_t ucode;
 	bool positive;
+	bool complete = false;
 
 	if (sequence == NULL || symbol == NULL)
 		return V90_DIL_SEQUENCE_INVALID_ARGUMENT;
@@ -95,32 +105,38 @@ enum v90_dil_sequence_result v90_dil_sequence_next(
 		return V90_DIL_SEQUENCE_INVALID_STATE;
 	if (sequence->complete)
 		return V90_DIL_SEQUENCE_COMPLETE;
-	next = *sequence;
-	training_ucode = next.parameters.training_ucodes[next.segment];
+
+	training_ucode = sequence->parameters.training_ucodes[sequence->segment];
 	chord = training_ucode >> 4;
 	ucode = pattern_bit(
-			next.parameters.training_pattern,
-			next.parameters.training_pattern_bits,
-			next.segment_symbol) ?
-		training_ucode : next.parameters.reference_ucodes[chord];
+			sequence->parameters.training_pattern,
+			sequence->parameters.training_pattern_bits,
+			sequence->segment_symbol) ?
+		training_ucode : sequence->parameters.reference_ucodes[chord];
 	positive = pattern_bit(
-		next.parameters.sign_pattern,
-		next.parameters.sign_pattern_bits, next.segment_symbol);
-	if (!v90_pcm_symbol_make(&generated, next.law, ucode, positive))
+		sequence->parameters.sign_pattern,
+		sequence->parameters.sign_pattern_bits, sequence->segment_symbol);
+	if (!v90_pcm_symbol_make(&generated, sequence->law, ucode, positive))
 		return V90_DIL_SEQUENCE_INVALID_STATE;
-	next.segment_symbol++;
-	if (next.segment_symbol == segment_symbols(&next, next.segment)) {
-		if (next.finish_requested)
-			next.complete = true;
+
+	/* Only the cursor changes. Check the next position before committing
+	 * either state or output, including a segment reached by this symbol. */
+	next_symbol = sequence->segment_symbol + 1u;
+	next_segment = sequence->segment;
+	if (next_symbol == segment_symbols(sequence, next_segment)) {
+		if (sequence->finish_requested)
+			complete = true;
 		else {
-			next.segment_symbol = 0u;
-			next.segment = (uint8_t)(
-				(next.segment + 1u) % next.parameters.segment_count);
+			next_symbol = 0u;
+			next_segment = (uint8_t)(
+				(next_segment + 1u) % sequence->parameters.segment_count);
 		}
 	}
-	if (!state_is_usable(&next))
+	if (!position_is_usable(sequence, next_segment, next_symbol, complete))
 		return V90_DIL_SEQUENCE_INVALID_STATE;
-	*sequence = next;
+	sequence->segment_symbol = next_symbol;
+	sequence->segment = next_segment;
+	sequence->complete = complete;
 	*symbol = generated;
 	return V90_DIL_SEQUENCE_OK;
 }
