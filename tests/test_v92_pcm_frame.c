@@ -17,6 +17,8 @@
 enum {
 	B1U_TEST_LEVEL = 4096,
 	B1U_ORACLE_FRAMES = 8,
+	FILTER_HISTORY_TAPS = 32,
+	FILTER_HISTORY_ACTIVE_TAP = 15,
 };
 
 static struct v92_cpd_parameters parameters(uint8_t rate)
@@ -609,6 +611,127 @@ static bool test_filter_history(int32_t prior_u, int32_t prior_x, int32_t prior_
 	return true;
 }
 
+static struct v92_cpd_parameters history_parameters(unsigned active)
+{
+	struct v92_cpd_parameters cpd = parameters(9);
+
+	memset(cpd.filter, 0, sizeof(cpd.filter));
+	for (unsigned section = 0; section < V92_CPD_FILTER_SECTION_COUNT; ++section)
+		cpd.filter[section].count = FILTER_HISTORY_TAPS;
+	cpd.filter[V92_CPD_PREFILTER_FEED_FORWARD].coefficient[0] = INT16_MAX;
+	if (active)
+		cpd.filter[active - 1u].coefficient[FILTER_HISTORY_ACTIVE_TAP] = 512;
+	return cpd;
+}
+
+static bool test_causal_filter_history(void)
+{
+	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned model = 0; model < 2; ++model)
+			for (unsigned active = 0; active <= V92_CPD_FILTER_SECTION_COUNT; ++active) {
+				struct v92_cpd_parameters cpd = history_parameters(active);
+				struct v92_pcm_mapping mapping;
+				struct v92_pcm_frame_tx tx;
+				struct v92_pcm_frame_rx rx;
+				struct v92_pcm_frame frame;
+				struct v92_pcm_frame_decision decision;
+				uint8_t bits[V92_PCM_MAPPING_MAX_BITS], decoded[V92_PCM_MAPPING_MAX_BITS];
+				int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
+
+				CHECK(v92_pcm_mapping_init(&mapping, (enum g711_law)law, &cpd) == V92_PCM_MAPPING_OK &&
+				      v92_pcm_frame_tx_init(&tx, &mapping) == V92_PCM_FRAME_OK &&
+				      (model ? v92_pcm_frame_rx_init_constellation(&rx, &mapping) :
+					       v92_pcm_frame_rx_init(&rx, &mapping, B1U_TEST_LEVEL)) == V92_PCM_FRAME_OK,
+				      "causal history initialization");
+				memset(bits, 1, mapping.data_bits_per_frame);
+				CHECK(v92_pcm_frame_encode(&tx, bits, mapping.data_bits_per_frame, &frame) ==
+				      V92_PCM_FRAME_OK, "causal history encoding");
+				for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i) {
+					if (model)
+						samples[i] = frame.u[i];
+					else {
+						CHECK(v92_pcm_frame_scale(cpd.four_times_gain_q0_16, B1U_TEST_LEVEL,
+							frame.v[i], &samples[i]) == V92_PCM_FRAME_OK,
+						      "causal history scaling");
+						samples[i] = g711_quantize((enum g711_law)law, samples[i]);
+					}
+				}
+				CHECK((model ? v92_pcm_frame_acquire_model(&rx, samples, decoded,
+					mapping.data_bits_per_frame, &decision) :
+					v92_pcm_frame_decode(&rx, samples, true, decoded,
+					mapping.data_bits_per_frame, &decision)) == V92_PCM_FRAME_OK &&
+				      v92_pcm_frame_rx_is_valid(&rx), "causal history decoding");
+				CHECK((active || model) ? rx.path_count > 1u : rx.path_count == 1u,
+				      "law %u model %u active %u retained %u histories",
+				      law, model, active, rx.path_count);
+				if (model && !active) {
+					bool different = false;
+
+					for (unsigned path = 1; path < rx.path_count; ++path)
+						different |= memcmp(rx.paths[0].filter.history + FILTER_HISTORY_TAPS,
+							rx.paths[path].filter.history + FILTER_HISTORY_TAPS,
+							3u * sizeof(int32_t)) != 0;
+					CHECK(different, "future channel-model x history was merged");
+				}
+			}
+	return true;
+}
+
+static bool test_delayed_filter_stream(void)
+{
+	enum { FRAMES = 72 };
+
+	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned active = 1; active <= V92_CPD_FILTER_SECTION_COUNT; ++active) {
+			struct v92_cpd_parameters cpd = history_parameters(active);
+			struct v92_pcm_mapping mapping;
+			struct v92_pcm_frame_tx tx;
+			struct v92_pcm_frame_rx rx;
+			uint8_t bits[FRAMES][V92_PCM_MAPPING_MAX_BITS], decoded[V92_PCM_MAPPING_MAX_BITS];
+			uint32_t random = 123;
+			unsigned payload_bits = 0;
+
+			CHECK(v92_pcm_mapping_init(&mapping, (enum g711_law)law, &cpd) == V92_PCM_MAPPING_OK &&
+			      v92_pcm_frame_tx_init(&tx, &mapping) == V92_PCM_FRAME_OK &&
+			      v92_pcm_frame_rx_init(&rx, &mapping, B1U_TEST_LEVEL) == V92_PCM_FRAME_OK,
+			      "delayed stream initialization");
+			for (unsigned f = 0; f < FRAMES; ++f) {
+				struct v92_pcm_frame frame;
+				struct v92_pcm_frame_decision decision;
+				int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
+
+				for (unsigned i = 0; i < mapping.data_bits_per_frame; ++i) {
+					random ^= random << 13u;
+					random ^= random >> 17u;
+					random ^= random << 5u;
+					bits[f][i] = f < V92_B1U_FRAMES ? 1u : random & 1u;
+				}
+				CHECK(v92_pcm_frame_encode(&tx, bits[f], mapping.data_bits_per_frame, &frame) ==
+				      V92_PCM_FRAME_OK, "delayed stream encoding");
+				for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i) {
+					CHECK(v92_pcm_frame_scale(cpd.four_times_gain_q0_16, B1U_TEST_LEVEL,
+						frame.v[i], &samples[i]) == V92_PCM_FRAME_OK, "delayed stream scaling");
+					samples[i] = g711_quantize((enum g711_law)law, samples[i]);
+				}
+				CHECK(v92_pcm_frame_decode(&rx, samples, f < V92_B1U_FRAMES,
+					decoded, mapping.data_bits_per_frame, &decision) == V92_PCM_FRAME_OK,
+				      "delayed stream decoding");
+				if (decision.bits_ready) {
+					CHECK(f >= V92_PCM_RX_DELAY_FRAMES,
+					      "delayed stream published bits before lookahead");
+					unsigned source = f - V92_PCM_RX_DELAY_FRAMES;
+
+					CHECK(memcmp(decoded, bits[source], mapping.data_bits_per_frame) == 0,
+					      "law %u filter %u frame %u changed decoded bits", law, active, f);
+					if (source >= V92_B1U_FRAMES)
+						payload_bits += mapping.data_bits_per_frame;
+				}
+			}
+			CHECK(payload_bits != 0, "delayed stream never verified payload");
+		}
+	return true;
+}
+
 static bool test_filters(void)
 {
 	/* The history contribution must not be rounded or saturated before
@@ -1042,7 +1165,8 @@ int main(void)
 	if (!test_b1u_output_range() || !test_b1u_oracle() || !test_b1u_coding_acquisition() ||
 	    !test_model_acquisition_boundary() || !test_rate_matrix_and_reset() ||
 	    !test_transmitter_equation_matrix() ||
-	    !test_filters() || !test_level_refinement() ||
+	    !test_filters() || !test_causal_filter_history() ||
+	    !test_delayed_filter_stream() || !test_level_refinement() ||
 	    !test_pending_bit_validation() || !test_receiver_initialization() ||
 	    !test_rejection_and_names())
 		return 1;

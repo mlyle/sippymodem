@@ -501,8 +501,7 @@ static bool design(struct v92_cpd_parameters *parameters,
 	for (size_t section = 0; section < V92_CPD_FILTER_SECTION_COUNT; ++section) {
 		struct v92_cpd_filter *filter = &next.filter[section];
 
-		while (filter->count && filter->coefficient[filter->count - 1u] == 0)
-			--filter->count;
+		filter->count = (uint16_t)v92_cpd_filter_response_length(filter);
 	}
 	/* A single feed-forward tap lets the receiver model companding itself.
 	 * Its observed quantization residual need not force a lower rate. The

@@ -48,6 +48,27 @@ static struct v92_cpd_parameters cleardown(void)
 	};
 }
 
+static bool test_filter_response_length(void)
+{
+	struct v92_cpd_filter filter = { 0 };
+
+	for (uint16_t count = 0; count <= V92_CPD_MAX_SECTION_COEFFICIENTS; ++count) {
+		filter.count = count;
+		CHECK(v92_cpd_filter_response_length(&filter) == 0,
+		      "zero filter retained response at count %u", count);
+		for (uint16_t last = 0; last < count; ++last) {
+			filter.coefficient[last] = last & 1u ? INT16_MIN : INT16_MAX;
+			CHECK(v92_cpd_filter_response_length(&filter) == (size_t)last + 1u &&
+			      filter.count == count &&
+			      filter.coefficient[last] == (last & 1u ? INT16_MIN : INT16_MAX),
+			      "response length lost delay or changed filter: count %u last %u",
+			      count, last);
+			filter.coefficient[last] = 0;
+		}
+	}
+	return true;
+}
+
 static struct v92_cpd_parameters selection(unsigned int sections)
 {
 	struct v92_cpd_parameters parameters = {
@@ -746,6 +767,7 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "filter response length", test_filter_response_length },
 		{ "cleardown wire image", test_cleardown_wire_image },
 		{ "base encoding", test_base_encoding },
 		{ "optional section matrix", test_optional_section_matrix },

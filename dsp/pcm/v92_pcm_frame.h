@@ -106,6 +106,9 @@ struct v92_pcm_frame_noise {
 };
 
 struct v92_pcm_frame_rx {
+	/* Fixed until reinitialization: history storage uses the declared filter
+	 * lengths. Path equivalence may ignore zero response tails, but retains
+	 * x history for any supported channel model selected on a later frame. */
 	struct v92_pcm_mapping mapping;
 	struct v92_pcm_frame_rx_path paths[V92_PCM_RX_PATHS];
 	struct v92_pcm_frame_noise noise;

@@ -129,16 +129,18 @@ static int positive_modulo(int value, unsigned int modulus)
 	return reduced < 0 ? reduced + (int)modulus : reduced;
 }
 
+static size_t x_history_length(size_t feedback, size_t feed_forward)
+{
+	if (feed_forward)
+		--feed_forward;
+	return feedback > feed_forward ? feedback : feed_forward;
+}
+
 static size_t x_history_count(const struct v92_pcm_mapping *mapping)
 {
-	size_t count =
-		mapping->cpd.filter[V92_CPD_PRECODER_FEEDBACK].count;
-	size_t feed_forward =
-		mapping->cpd.filter[V92_CPD_PREFILTER_FEED_FORWARD].count;
-
-	if (feed_forward > 1u && count < feed_forward - 1u)
-		count = feed_forward - 1u;
-	return count;
+	return x_history_length(
+		mapping->cpd.filter[V92_CPD_PRECODER_FEEDBACK].count,
+		mapping->cpd.filter[V92_CPD_PREFILTER_FEED_FORWARD].count);
 }
 
 static const int32_t *u_history(
@@ -160,6 +162,51 @@ static const int32_t *v_history(
 	const struct v92_pcm_frame_filter_state *filter)
 {
 	return x_history(mapping, filter) + x_history_count(mapping);
+}
+
+struct filter_history_span {
+	size_t u, x, v;
+};
+
+static struct filter_history_span causal_history(
+	const struct v92_pcm_frame_rx *receiver)
+{
+	const struct v92_cpd_filter *filter = receiver->mapping.cpd.filter;
+	struct filter_history_span span = {
+		.u = v92_cpd_filter_response_length(filter + V92_CPD_PRECODER_FEED_FORWARD),
+		.x = x_history_length(
+			v92_cpd_filter_response_length(filter + V92_CPD_PRECODER_FEEDBACK),
+			v92_cpd_filter_response_length(filter + V92_CPD_PREFILTER_FEED_FORWARD)),
+		.v = v92_cpd_filter_response_length(filter + V92_CPD_PREFILTER_FEEDBACK),
+	};
+
+	if (receiver->observation == V92_PCM_FRAME_CONSTELLATION) {
+		/* A later frame may select any supported channel model. Preserve
+		 * its x history even when the wire filter has zero tail taps. */
+		size_t reserved = x_history_count(&receiver->mapping);
+
+		if (reserved > V92_OBSERVATION_TAPS - 1u)
+			reserved = V92_OBSERVATION_TAPS - 1u;
+		if (span.x < reserved)
+			span.x = reserved;
+	}
+	return span;
+}
+
+static bool same_filter_history(
+	const struct v92_pcm_mapping *mapping,
+	const struct filter_history_span *span,
+	const struct v92_pcm_frame_filter_state *left,
+	const struct v92_pcm_frame_filter_state *right)
+{
+	/* Storage offsets follow declared lengths, including their zero tails.
+	 * Only the causal prefixes determine future filter/model predictions. */
+	return (!span->u || memcmp(u_history(left), u_history(right),
+			span->u * sizeof(int32_t)) == 0) &&
+	       (!span->x || memcmp(x_history(mapping, left), x_history(mapping, right),
+			span->x * sizeof(int32_t)) == 0) &&
+	       (!span->v || memcmp(v_history(mapping, left), v_history(mapping, right),
+			span->v * sizeof(int32_t)) == 0);
 }
 
 /* A validated path fixes the fourth-symbol coset before point enumeration.
@@ -1120,12 +1167,7 @@ static enum v92_pcm_frame_result decode_frame(
 		receiver->minimum_level;
 	int32_t maximum_gain = (int32_t)receiver->mapping.cpd.four_times_gain_q0_16 *
 		receiver->maximum_level;
-	/* Only the active prefix can affect later symbols. */
-	size_t history_bytes =
-		(receiver->mapping.cpd.filter[V92_CPD_PRECODER_FEED_FORWARD].count +
-		 x_history_count(&receiver->mapping) +
-		 receiver->mapping.cpd.filter[V92_CPD_PREFILTER_FEEDBACK].count) *
-		sizeof(receiver->paths[0].filter.history[0]);
+	const struct filter_history_span history_span = causal_history(receiver);
 	path_count = receiver->path_count;
 	struct v92_observation_cache cache;
 	if (model)
@@ -1553,8 +1595,8 @@ static enum v92_pcm_frame_result decode_frame(
 			    state->rm_prime_frames == prior->rm_prime_frames &&
 			    state->descrambler.history == prior->descrambler.history &&
 			    state->trellis.state == prior->trellis.state &&
-			    memcmp(state->filter.history, prior->filter.history,
-			           history_bytes) == 0)
+			    same_filter_history(&receiver->mapping, &history_span,
+				&state->filter, &prior->filter))
 				break;
 		}
 		uint64_t gap = survivor == valid ? UINT64_MAX :

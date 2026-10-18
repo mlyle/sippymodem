@@ -97,6 +97,18 @@ struct v92_cpd_filter {
 	uint16_t count;
 };
 
+/* Response length through the last nonzero tap of a validated filter.
+ * Leading zeros retain their delay. The declared wire count is unchanged. */
+static inline size_t v92_cpd_filter_response_length(
+	const struct v92_cpd_filter *filter)
+{
+	size_t count = filter->count;
+
+	while (count && filter->coefficient[count - 1u] == 0)
+		--count;
+	return count;
+}
+
 struct v92_cpd_constellation {
 	int16_t positive_linear[V92_CPD_MAX_CONSTELLATION_POINTS];
 	uint8_t count;
