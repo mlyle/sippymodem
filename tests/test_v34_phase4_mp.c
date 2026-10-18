@@ -557,6 +557,8 @@ static bool verify_encoded_record(
 		      transmitter->scrambler.history == reference->history &&
 		      transmitter->previous_clockwise_quarter_turns ==
 			      reference->previous_clockwise_quarter_turns &&
+		      memcmp(transmitter->frame, expected_frame,
+			     V34_MP_TYPE1_FRAME_BYTES) == 0 &&
 		      v34_phase4_mp_is_valid(transmitter),
 		      "MP record symbol %zu/%zu changed", symbol,
 		      symbol_count);

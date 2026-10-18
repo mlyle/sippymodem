@@ -186,7 +186,8 @@ enum v90_phase4_cp_tx_result v90_phase4_cp_tx_next_owned(
 	struct qam_point *point, uint8_t *quarter_point,
 	uint8_t *clockwise_quarter_turns, bool *record_complete)
 {
-	struct v90_phase4_cp_tx next;
+	struct v34_scrambler scrambler;
+	uint8_t rotation;
 	struct qam_point next_point;
 	uint8_t next_quarter_point;
 	bool complete;
@@ -205,25 +206,20 @@ enum v90_phase4_cp_tx_result v90_phase4_cp_tx_next_owned(
 		return V90_PHASE4_CP_TX_INVALID_ARGUMENT;
 	if (tx->bit_index == tx->frame_bit_count)
 		return V90_PHASE4_CP_TX_RECORD_COMPLETE;
-	next = *tx;
-	if (!v34_training_encode_symbol(
-		    &next.scrambler, next.constellation,
-		    (uint8_t)packed_msb_read_msb_field(
-			    next.frame, next.bit_index, 2u),
-		    next.constellation == V34_CONSTELLATION_16_POINT ?
-			    (uint8_t)packed_msb_read_msb_field(
-				    next.frame, next.bit_index + 2u, 2u) :
-			    0u,
-		    &next.previous_clockwise_quarter_turns,
-		    &next_point, &next_quarter_point))
+	scrambler = tx->scrambler;
+	rotation = tx->previous_clockwise_quarter_turns;
+	if (!v34_training_encode_packed_symbol(
+		    &scrambler, tx->constellation, tx->frame, tx->bit_index,
+		    &rotation, &next_point, &next_quarter_point))
 		return V90_PHASE4_CP_TX_INVALID_ARGUMENT;
 	/* The validated record and cursor contain whole symbols. */
-	next.bit_index += v34_constellation_bits_per_symbol(next.constellation);
-	complete = next.bit_index == next.frame_bit_count;
-	*tx = next;
+	tx->scrambler = scrambler;
+	tx->previous_clockwise_quarter_turns = rotation;
+	tx->bit_index += v34_constellation_bits_per_symbol(tx->constellation);
+	complete = tx->bit_index == tx->frame_bit_count;
 	*point = next_point;
 	*quarter_point = next_quarter_point;
-	*clockwise_quarter_turns = next.previous_clockwise_quarter_turns;
+	*clockwise_quarter_turns = rotation;
 	*record_complete = complete;
 	return V90_PHASE4_CP_TX_OK;
 }
@@ -243,7 +239,8 @@ enum v90_phase4_cp_tx_result v90_phase4_cp_tx_scr_next_owned(
 	struct qam_point *point, uint8_t *quarter_point,
 	uint8_t *clockwise_quarter_turns)
 {
-	struct v90_phase4_cp_tx next;
+	struct v34_scrambler scrambler;
+	uint8_t rotation;
 	struct qam_point next_point;
 	uint8_t next_quarter_point;
 
@@ -259,16 +256,18 @@ enum v90_phase4_cp_tx_result v90_phase4_cp_tx_scr_next_owned(
 		return V90_PHASE4_CP_TX_INVALID_ARGUMENT;
 	if (tx->bit_index != tx->frame_bit_count)
 		return V90_PHASE4_CP_TX_RECORD_IN_PROGRESS;
-	next = *tx;
+	scrambler = tx->scrambler;
+	rotation = tx->previous_clockwise_quarter_turns;
 	if (!v34_training_encode_symbol(
-		    &next.scrambler, next.constellation, 3u, 3u,
-		    &next.previous_clockwise_quarter_turns,
+		    &scrambler, tx->constellation, 3u, 3u,
+		    &rotation,
 		    &next_point, &next_quarter_point))
 		return V90_PHASE4_CP_TX_INVALID_ARGUMENT;
-	*tx = next;
+	tx->scrambler = scrambler;
+	tx->previous_clockwise_quarter_turns = rotation;
 	*point = next_point;
 	*quarter_point = next_quarter_point;
-	*clockwise_quarter_turns = next.previous_clockwise_quarter_turns;
+	*clockwise_quarter_turns = rotation;
 	return V90_PHASE4_CP_TX_OK;
 }
 

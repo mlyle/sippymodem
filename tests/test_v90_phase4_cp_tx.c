@@ -195,6 +195,7 @@ static bool verify_record(
 		      tx->previous_clockwise_quarter_turns == rotation &&
 		      tx->bit_index == first_bit + symbol_bits &&
 		      complete == (first_bit + symbol_bits == frame_bits) &&
+		      memcmp(tx->frame, frame, (frame_bits + 7u) / 8u) == 0 &&
 		      v90_phase4_cp_tx_is_valid(tx),
 		      "CP symbol changed at bit %zu/%zu", first_bit,
 		      frame_bits);
@@ -225,7 +226,9 @@ static bool verify_scr(
 	struct reference_mapper *reference, size_t symbol_count)
 {
 	size_t saved_bit_index = tx->bit_index;
+	uint8_t saved_frame[sizeof(tx->frame)];
 
+	memcpy(saved_frame, tx->frame, sizeof(saved_frame));
 	CHECK(v90_phase4_cp_tx_record_is_complete(tx),
 	      "SCR fixture did not start after CPt");
 	for (size_t index = 0; index < symbol_count; ++index) {
@@ -252,6 +255,7 @@ static bool verify_scr(
 		      tx->scrambler.history == reference->history &&
 		      tx->previous_clockwise_quarter_turns == rotation &&
 		      tx->bit_index == saved_bit_index &&
+		      memcmp(tx->frame, saved_frame, sizeof(saved_frame)) == 0 &&
 		      v90_phase4_cp_tx_record_is_complete(tx),
 		      "SCR symbol changed at index %zu", index);
 	}

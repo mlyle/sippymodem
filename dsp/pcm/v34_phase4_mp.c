@@ -246,7 +246,8 @@ enum v34_phase4_mp_result v34_phase4_mp_next(
 	struct qam_point *point, uint8_t *quarter_point,
 	uint8_t *clockwise_quarter_turns, bool *record_complete)
 {
-	struct v34_phase4_mp next;
+	struct v34_scrambler scrambler;
+	uint8_t rotation;
 	struct qam_point next_point;
 	uint8_t next_quarter_point;
 	bool complete;
@@ -265,25 +266,22 @@ enum v34_phase4_mp_result v34_phase4_mp_next(
 		return V34_PHASE4_MP_INVALID_ARGUMENT;
 	if (transmitter->bit_index == transmitter->frame_bit_count)
 		return V34_PHASE4_MP_RECORD_COMPLETE;
-	next = *transmitter;
-	if (!v34_training_encode_symbol(
-		    &next.scrambler, next.constellation,
-		    (uint8_t)packed_msb_read_msb_field(
-			    next.frame, next.bit_index, 2u),
-		    next.constellation == V34_CONSTELLATION_16_POINT ?
-			    (uint8_t)packed_msb_read_msb_field(
-				    next.frame, next.bit_index + 2u, 2u) :
-			    0u,
-		    &next.previous_clockwise_quarter_turns,
-		    &next_point, &next_quarter_point))
+	scrambler = transmitter->scrambler;
+	rotation = transmitter->previous_clockwise_quarter_turns;
+	if (!v34_training_encode_packed_symbol(
+		    &scrambler, transmitter->constellation,
+		    transmitter->frame, transmitter->bit_index,
+		    &rotation, &next_point, &next_quarter_point))
 		return V34_PHASE4_MP_INVALID_ARGUMENT;
 	/* The record is unchanged; one aligned symbol preserves valid bounds. */
-	next.bit_index += v34_constellation_bits_per_symbol(next.constellation);
-	complete = next.bit_index == next.frame_bit_count;
-	*transmitter = next;
+	transmitter->scrambler = scrambler;
+	transmitter->previous_clockwise_quarter_turns = rotation;
+	transmitter->bit_index +=
+		v34_constellation_bits_per_symbol(transmitter->constellation);
+	complete = transmitter->bit_index == transmitter->frame_bit_count;
 	*point = next_point;
 	*quarter_point = next_quarter_point;
-	*clockwise_quarter_turns = next.previous_clockwise_quarter_turns;
+	*clockwise_quarter_turns = rotation;
 	*record_complete = complete;
 	return V34_PHASE4_MP_OK;
 }
