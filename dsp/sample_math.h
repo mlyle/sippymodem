@@ -3,7 +3,28 @@
 #ifndef SAMPLE_MATH_H
 #define SAMPLE_MATH_H
 
+#include "integer_math.h"
+
+#include <stddef.h>
 #include <stdint.h>
+
+/* Fixed-point level used by gain and carrier gates. Floor each weighted
+ * sample before multiplying by the original sample, sum modulo 2^32, then
+ * apply the legacy square root. The caller supplies count readable samples
+ * and the Q15 weight; count zero accesses no samples and returns zero. */
+static inline uint16_t sample_level_s16(
+	const int16_t *samples, size_t count, uint16_t weight_q15)
+{
+	uint32_t energy = 0;
+
+	for (size_t index = 0; index < count; ++index) {
+		int32_t scaled = arithmetic_shift_right_u32(
+			(uint32_t)((int32_t)samples[index] * weight_q15), 15);
+
+		energy += (uint32_t)(scaled * samples[index]);
+	}
+	return fixed_square_root_u32(energy);
+}
 
 /* Exact squared magnitude of two signed samples, in their original units.
  * Each square fits int32_t, but their sum can reach 2^31. Add unsigned

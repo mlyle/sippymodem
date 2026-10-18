@@ -6,6 +6,7 @@
 #include "fir.h"
 #include "integer_math.h"
 #include "memory_region.h"
+#include "sample_math.h"
 
 #include <string.h>
 
@@ -147,7 +148,6 @@ static void condition_block(
 {
 	const int16_t *coefficients = conditioner->role == V8_CALLING_STATION ?
 		V8_CALLER_ENTRANCE_FILTER : V8_ANSWERER_ENTRANCE_FILTER;
-	uint32_t history_energy = 0;
 	uint16_t energy_level;
 
 	block->gain_reset = false;
@@ -158,20 +158,13 @@ static void condition_block(
 				V8_LINE_ENTRANCE_FILTER_TAPS, block->samples[index]), 14));
 	for (size_t index = 0; index < V8_LINE_BLOCK_SAMPLES; ++index) {
 		conditioner->power_history[conditioner->power_index] =
-			(uint16_t)block->samples[index];
+			block->samples[index];
 		conditioner->power_index++;
 		if (conditioner->power_index == V8_LINE_POWER_HISTORY_SAMPLES)
 			conditioner->power_index = 0;
 	}
-	for (size_t index = 0;
-	     index < V8_LINE_POWER_HISTORY_SAMPLES; ++index) {
-		int16_t sample = (int16_t)conditioner->power_history[index];
-		int32_t weighted = arithmetic_shift_right_u32(
-			(uint32_t)((int32_t)sample * V8_LINE_POWER_WEIGHT_Q15), 15);
-
-		history_energy += (uint32_t)(weighted * sample);
-	}
-	energy_level = fixed_square_root_u32(history_energy);
+	energy_level = sample_level_s16(conditioner->power_history,
+		V8_LINE_POWER_HISTORY_SAMPLES, V8_LINE_POWER_WEIGHT_Q15);
 
 	for (size_t index = 0; index < V8_LINE_BLOCK_SAMPLES; ++index) {
 		bool overflow;

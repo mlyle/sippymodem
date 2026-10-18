@@ -3,6 +3,7 @@
 #include "agc.h"
 #include "integer_math.h"
 #include "memory_region.h"
+#include "sample_math.h"
 
 #include <stdint.h>
 
@@ -14,7 +15,6 @@ enum {
 enum agc_result agc_measure_level_s16(
 	const int16_t *samples, size_t count, int16_t *level)
 {
-	uint32_t energy = 0;
 	int16_t measured;
 
 	if (samples == NULL || count == 0 || count > UINT16_MAX ||
@@ -23,16 +23,8 @@ enum agc_result agc_measure_level_s16(
 		    samples, count * sizeof(*samples), level, sizeof(*level)))
 		return AGC_INVALID_ARGUMENT;
 
-	for (size_t index = 0; index < count; ++index) {
-		int32_t product =
-			(int32_t)samples[index] * AGC_ENERGY_SCALE_Q15;
-		int32_t scaled = arithmetic_shift_right_u32(
-			(uint32_t)product, 15u);
-
-		energy += (uint32_t)(scaled * (int32_t)samples[index]);
-	}
 	measured = wrap_s16_from_s32(
-		(int32_t)fixed_square_root_u32(energy));
+		(int32_t)sample_level_s16(samples, count, AGC_ENERGY_SCALE_Q15));
 	*level = measured;
 	return AGC_OK;
 }

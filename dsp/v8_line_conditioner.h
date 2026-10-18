@@ -37,7 +37,7 @@ struct v8_line_conditioned_block {
 struct v8_line_conditioner {
 	int16_t entrance_history[V8_LINE_ENTRANCE_FILTER_TAPS];
 	int16_t input_queue[V8_LINE_INPUT_QUEUE_SAMPLES];
-	uint16_t power_history[V8_LINE_POWER_HISTORY_SAMPLES];
+	int16_t power_history[V8_LINE_POWER_HISTORY_SAMPLES];
 	uint16_t filtered_energy;
 	uint16_t gain;
 	uint16_t gain_delta;
