@@ -3,6 +3,7 @@
 #include "v92_ru_line_rx.h"
 
 #include <stddef.h>
+#include <math.h>
 
 bool v92_ru_line_rx_is_valid(const struct v92_ru_line_rx *receiver)
 {
@@ -13,6 +14,7 @@ bool v92_ru_line_rx_is_valid(const struct v92_ru_line_rx *receiver)
 	       v92_ru_rx_is_valid(&receiver->signal) &&
 	       receiver->input_samples >= receiver->equalizer.decision_delay &&
 	       qam_adaptation_is_valid(receiver->adaptation) &&
+	       isfinite(receiver->output_bias) &&
 	       v92_phase4_modulator_bits_per_symbol(receiver->constellation) != 0 &&
 	       g711_law_is_valid(receiver->law) &&
 	       (receiver->polarity == -1 || receiver->polarity == 1);
@@ -29,6 +31,7 @@ bool v92_ru_line_rx_init_after_e2u(struct v92_ru_line_rx *receiver,
 		.equalizer = handoff->line.equalizer,
 		.input_samples = handoff->line.input_samples,
 		.adaptation = handoff->line.adaptation,
+		.output_bias = handoff->line.output_bias,
 		.constellation = handoff->line.demodulator.constellation,
 		.law = handoff->line.law,
 		.polarity = handoff->line.polarity,
@@ -63,7 +66,7 @@ enum v92_ru_rx_result v92_ru_line_rx_sample(struct v92_ru_line_rx *receiver,
 	/* Ru uses the retained FIR without adapting it. Discard this output's
 	 * adaptation opportunity without constructing a gradient snapshot. */
 	next.equalizer.can_adapt = false;
-	result = v92_ru_rx_sample(&next.signal, output.in_phase);
+	result = v92_ru_rx_sample(&next.signal, output.in_phase + next.output_bias);
 	if (result == V92_RU_RX_INVALID_ARGUMENT || result == V92_RU_RX_INVALID_STATE)
 		return result;
 	next.input_samples++;

@@ -31,6 +31,7 @@ struct channel {
 	double postcursor;
 	/* Zero keeps the original codec output; nonzero scales after G.711. */
 	double receive_gain;
+	int16_t receive_offset;
 	int16_t offset;
 	int16_t previous;
 	double residual_first, residual_second;
@@ -58,7 +59,8 @@ static int16_t wire_sample(struct channel *channel, int16_t sample)
 		g711_encode_pcmu(channel->polarity * decoded) :
 		g711_encode_pcma(channel->polarity * decoded);
 	return channel->polarity * (channel->receive_gain != 0.0 ?
-		(int16_t)lround(decoded * channel->receive_gain) : decoded);
+		(int16_t)lround(decoded * channel->receive_gain) : decoded) +
+		channel->polarity * channel->receive_offset;
 }
 
 static void payload(uint8_t *bits, size_t count, unsigned int frame)
@@ -171,6 +173,7 @@ static bool prepare_e2u_at_level(
 		.input_samples = V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS,
 		.training_symbols = V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS,
 		.adaptation = adaptation,
+		.output_bias = -channel->receive_offset,
 		.law = channel->law,
 		.polarity = channel->polarity,
 	};
@@ -334,13 +337,14 @@ static bool after_idle(void *context, uint8_t *bits, size_t count)
 	return true;
 }
 
-static bool test_quantized_level_tracking(
+static bool check_quantized_level_tracking(
 	enum g711_law law, uint8_t rate, bool drift, int16_t lu, bool select,
-	unsigned burst_symbols, unsigned noise_peak)
+	unsigned burst_symbols, unsigned noise_peak, int16_t receive_offset)
 {
 	unsigned idle_frames = noise_peak ? 32u : burst_symbols ? 64u : 2000u;
 	unsigned payload_frames = burst_symbols ? 128u : 400u;
-	struct channel channel = { .gain = 1.0, .law = law, .polarity = 1 };
+	struct channel channel = { .gain = 1.0, .law = law, .polarity = 1,
+		.receive_offset = receive_offset };
 	struct v92_cpd_parameters cpd;
 	struct v92_pcm_mapping mapping;
 	struct v92_phase4_record_tx e2u_tx;
@@ -390,6 +394,7 @@ static bool test_quantized_level_tracking(
 		      V92_UPSTREAM_DATA_RX_OK &&
 	      receiver.line.adaptation > 0.0 &&
 	      receiver.line.adaptation < handoff.line.adaptation &&
+	      receiver.line.output_bias == -receive_offset &&
 	      memcmp(&receiver.line.equalizer, &handoff.line.equalizer,
 		      sizeof(handoff.line.equalizer)) == 0,
 	      "tracking handoff changed learned coefficients or pending inputs");
@@ -471,7 +476,8 @@ static bool test_quantized_level_tracking(
 		      frame.ambiguous, frame.squared_error);
 		delivered++;
 	}
-	CHECK(delivered == V92_B1U_FRAMES + idle_frames + payload_frames && damaged == burst_symbols,
+	CHECK(receiver.line.output_bias == -receive_offset &&
+	      delivered == V92_B1U_FRAMES + idle_frames + payload_frames && damaged == burst_symbols,
 	      "tracking lost payload frames");
 	CHECK(!burst_symbols || burst_error > (double)burst_symbols *
 	      V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
@@ -482,6 +488,23 @@ static bool test_quantized_level_tracking(
 		      V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
 	      "law %u rate %u rejected clean quantized B1u: RMS %.2f",
 	      (unsigned int)law, rate, sqrt(b1u_error / V92_B1U_SYMBOLS));
+	return true;
+}
+
+static bool test_quantized_level_tracking(
+	enum g711_law law, uint8_t rate, bool drift, int16_t lu, bool select,
+	unsigned burst_symbols, unsigned noise_peak)
+{
+	return check_quantized_level_tracking(law, rate, drift, lu, select,
+		burst_symbols, noise_peak, 0);
+}
+
+static bool test_affine_data(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (int offset = -768; offset <= 768; offset += 1536)
+			CHECK(check_quantized_level_tracking(law, 19u, false, TEST_LU,
+				false, 0, 0, offset), "retained correction lost idle/payload data");
 	return true;
 }
 
@@ -3167,6 +3190,7 @@ static bool test_residual_acquisition(unsigned prefix, bool damaged, int transie
 
 int main(void)
 {
+	if (!test_affine_data()) return 1;
 	for (unsigned prefix = 0; prefix < 2; prefix++)
 		for (unsigned damaged = 0; damaged < 2; damaged++)
 			for (int transient = -384; transient <= 384; transient += 384)

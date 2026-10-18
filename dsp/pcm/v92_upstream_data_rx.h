@@ -60,6 +60,8 @@ struct v92_upstream_data_line {
 	uint64_t input_samples;
 	uint64_t received_frames;
 	double adaptation;
+	/* Frozen correction in equalized units; raw-coordinate plans use zero. */
+	double output_bias;
 	uint16_t delay_remaining;
 	uint8_t symbol_count;
 	int8_t polarity;
@@ -93,7 +95,7 @@ struct v92_upstream_data_frame {
 };
 
 /* Start at the first B1u decision after E2u, preserving the trained equalizer,
- * its pending physical inputs, polarity, and LU. Reset only data coding.
+ * its pending physical inputs, output correction, polarity, and LU. Reset only data coding.
  * Bound the inherited adaptation step for decision-directed data tracking;
  * a smaller step, including disabled adaptation, remains unchanged. Unknown
  * decisions exceeding the receive error ceiling or farther from the

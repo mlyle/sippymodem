@@ -32,6 +32,7 @@ bool v92_upstream_data_rx_is_valid(
 {
 	if (receiver == NULL || !v92_pcm_frame_rx_is_valid(&receiver->decoder) ||
 	    !v92_upstream_plan_is_valid(&receiver->line.plan) ||
+	    !isfinite(receiver->line.output_bias) ||
 	    receiver->decoder.observation != receiver->line.plan.observation ||
 	    (receiver->line.polarity != -1 && receiver->line.polarity != 1) ||
 	    receiver->line.symbol_count >= V92_PCM_MAPPING_FRAME_SYMBOLS ||
@@ -47,7 +48,7 @@ bool v92_upstream_data_rx_is_valid(
 		const struct v92_upstream_data_line *line = &receiver->line;
 
 		if ((line->residual.active && line->received_frames < V92_B1U_ACQUISITION_FRAMES) ||
-		    line->adaptation != 0.0 ||
+		    line->adaptation != 0.0 || line->output_bias != 0.0 ||
 		    !memory_region_is_zero(&line->equalizer, sizeof(line->equalizer)) ||
 		    !isfinite(line->host.gain) || line->host.gain < 0.0 ||
 		    !isfinite(line->host.lower) || !isfinite(line->host.upper) ||
@@ -169,6 +170,7 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_init(
 		 * chase the wrong point. Retain the trained FIR and any slower
 		 * caller-selected step, but bound decision-directed tracking. */
 		line.equalizer = handoff->line.equalizer;
+		line.output_bias = handoff->line.output_bias;
 		line.adaptation = fmin(handoff->line.adaptation, 0.002);
 	}
 	/* The decoder validates the mapping and commits only on success. Preflight
@@ -398,7 +400,8 @@ static enum v92_upstream_data_rx_result receive_frame(
 		}
 		/* Preserve the original equalizer residual, including excursions
 		 * clipped only for the frame decoder's fixed-point input. */
-		double error = line->observations[symbol].output.in_phase - target.in_phase;
+		double observed = line->observations[symbol].output.in_phase + line->output_bias;
+		double error = observed - target.in_phase;
 
 		generated.squared_error += error * error;
 		if (!isfinite(generated.squared_error))
@@ -411,8 +414,9 @@ static enum v92_upstream_data_rx_result receive_frame(
 		 * decisions keep their tracking step. */
 		double adaptation = line->adaptation;
 		if (!b1u && (fabs(error) > V92_DATA_MAX_RMS_ERROR ||
-		    fabs(error) > fabs(line->observations[symbol].output.in_phase)))
+		    fabs(error) > fabs(observed)))
 			adaptation = 0.0;
+		target.in_phase -= line->output_bias;
 		if (qam_equalizer_adapt_observation(&line->equalizer,
 				&line->observations[symbol], &target, adaptation) !=
 		    QAM_EQUALIZER_OK)
@@ -508,7 +512,7 @@ static enum v92_upstream_data_rx_result receive_sample(
 		    QAM_EQUALIZER_OK || !ready)
 		return fail(receiver, V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE);
 	line->samples[line->symbol_count] = sample_round_s16(
-		line->observations[line->symbol_count].output.in_phase);
+		line->observations[line->symbol_count].output.in_phase + line->output_bias);
 	line->symbol_count++;
 	line->input_samples++;
 	if (final_sample)

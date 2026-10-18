@@ -169,6 +169,7 @@ enum v92_e2u_rx_result v92_e2u_rx_search(
 	    !v92_upstream_control_line_rx_is_valid(control) ||
 	    receiver->signal.line.law != control->signal.line.law ||
 	    receiver->signal.line.renegotiation != control->signal.line.renegotiation ||
+	    receiver->signal.line.output_bias != control->signal.line.output_bias ||
 	    receiver->signal.line.demodulator.constellation != control->signal.line.demodulator.constellation ||
 	    control->signal.training_tail_remaining != 0u)
 		return V92_E2U_RX_INVALID_STATE;

@@ -1869,6 +1869,14 @@ static bool pause_confirmation_contracts(const struct v92_phase4_digital_station
 	CHECK(v92_e2u_rx_search(&candidate, &control, true, 0, &event) == V92_E2U_RX_INVALID_STATE &&
 	      memcmp(&candidate, &saved, sizeof(saved)) == 0 && memcmp(&event, &saved_event, sizeof(event)) == 0,
 	      "E2u search accepted a different line law");
+	control = saved_control;
+	control.signal.line.output_bias += 1.0;
+	struct v92_upstream_control_line_rx mismatched = control;
+	CHECK(v92_e2u_rx_search(&candidate, &control, true, 0, &event) == V92_E2U_RX_INVALID_STATE &&
+	      memcmp(&candidate, &saved, sizeof(saved)) == 0 &&
+	      memcmp(&control, &mismatched, sizeof(control)) == 0 &&
+	      memcmp(&event, &saved_event, sizeof(event)) == 0,
+	      "E2u search accepted a different retained correction");
 	return true;
 }
 

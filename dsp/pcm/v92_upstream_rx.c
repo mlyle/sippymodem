@@ -86,9 +86,8 @@ static enum v92_upstream_rx_result sample(
 	struct v92_upstream_decision generated;
 	struct qam_point output;
 	struct qam_point input;
-	struct qam_point target;
 	int16_t expected_level = 0;
-	int16_t nominal_level, gradient_target;
+	int16_t nominal_level;
 	unsigned int bits;
 	bool ready;
 	bool adapt = true;
@@ -119,8 +118,10 @@ static enum v92_upstream_rx_result sample(
 	if (qam_equalizer_push(
 		    &next.line.equalizer, &input, &output, &ready) !=
 		    QAM_EQUALIZER_OK ||
-	    !ready ||
-	    v92_phase4_demodulator_next(
+	    !ready)
+		return fail(receiver);
+	output.in_phase += next.line.output_bias;
+	if (v92_phase4_demodulator_next(
 		    &next.line.demodulator, output.in_phase,
 		    &generated.group, &generated.nearest_level) !=
 		    V92_PHASE4_MODULATOR_OK)
@@ -138,15 +139,9 @@ static enum v92_upstream_rx_result sample(
 		next.training_tail_remaining--;
 	}
 	if (adapt) {
-		if (!v92_control_target(next.line.law, &next.line.demodulator,
-				nominal_level, output.in_phase, &gradient_target))
-			return fail(receiver);
-		target = (struct qam_point){
-			.in_phase = gradient_target,
-		};
-		if (qam_equalizer_adapt(
-			    &next.line.equalizer, &target,
-			    next.line.adaptation) != QAM_EQUALIZER_OK)
+		if (!v92_control_adapt(&next.line.equalizer, next.line.law,
+				&next.line.demodulator, nominal_level, next.line.adaptation,
+				&next.line.output_bias, false))
 			return fail(receiver);
 	}
 	next.line.equalizer.can_adapt = false;

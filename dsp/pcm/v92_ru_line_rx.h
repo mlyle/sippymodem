@@ -6,7 +6,8 @@
 #include "v92_ru_rx.h"
 #include "v92_upstream_rx.h"
 
-/* Keep the trained control-channel FIR running alongside PCM data reception.
+/* Keep the trained control-channel FIR and its output correction running
+ * alongside PCM data reception.
  * Data's precoder/prefilter compensation and decision-directed adaptation do
  * not describe the raw Ru waveform. Do not adapt this retained FIR to data.
  * Its own decision delay, polarity and frame phase remain authoritative. */
@@ -15,6 +16,7 @@ struct v92_ru_line_rx {
 	struct v92_ru_rx signal;
 	uint64_t input_samples;
 	double adaptation;
+	double output_bias;
 	enum v92_constellation_size constellation;
 	enum g711_law law;
 	int8_t polarity;

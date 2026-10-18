@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "v92_control_target.h"
+#include "memory_region.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -77,5 +78,47 @@ bool v92_control_target(
 			upper = lu - 1;
 	}
 	*target = best;
+	return true;
+}
+
+bool v92_control_adapt(struct qam_equalizer *equalizer,
+	enum g711_law law, const struct v92_phase4_demodulator *demodulator,
+	int16_t nominal, double adaptation, double *output_bias, bool learn_bias)
+{
+	int16_t gradient;
+	double bias, observed, step = adaptation;
+	struct qam_point target;
+
+	if (!qam_equalizer_is_valid(equalizer) || demodulator == NULL ||
+	    output_bias == NULL ||
+	    !qam_adaptation_is_valid(adaptation) ||
+	    memory_regions_overlap(equalizer, sizeof(*equalizer),
+		    demodulator, sizeof(*demodulator)) ||
+	    memory_regions_overlap(equalizer, sizeof(*equalizer),
+		    output_bias, sizeof(*output_bias)) ||
+	    memory_regions_overlap(demodulator, sizeof(*demodulator),
+		    output_bias, sizeof(*output_bias)) || !isfinite(*output_bias))
+		return false;
+	bias = *output_bias;
+	observed = equalizer->last_output.in_phase + bias;
+	if (!v92_control_target(law, demodulator, nominal, observed, &gradient))
+		return false;
+	if (learn_bias) {
+		double power = 1e-12;
+		double basis = (double)demodulator->lu * demodulator->lu;
+
+		for (unsigned i = 0; i < equalizer->tap_count; ++i)
+			power += qam_point_power(&equalizer->history[i]);
+		/* Scale the constant coordinate by LU so its learning time is
+		 * comparable to a signal tap, rather than one PCM unit. */
+		bias += adaptation * basis / (power + basis) * (gradient - observed);
+		step *= power / (power + basis);
+		if (!isfinite(bias))
+			return false;
+	}
+	target = (struct qam_point){ .in_phase = gradient - *output_bias };
+	if (qam_equalizer_adapt(equalizer, &target, step) != QAM_EQUALIZER_OK)
+		return false;
+	*output_bias = bias;
 	return true;
 }

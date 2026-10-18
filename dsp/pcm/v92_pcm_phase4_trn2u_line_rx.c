@@ -87,6 +87,7 @@ bool v92_pcm_phase4_trn2u_line_rx_is_valid(
 	       isfinite(receiver->squared_error_sum) &&
 	       receiver->squared_error_sum >= 0.0 &&
 	       qam_adaptation_is_valid(receiver->adaptation) &&
+	       isfinite(receiver->output_bias) &&
 	       g711_law_is_valid(receiver->law) &&
 	       receiver->expected_index <
 		       V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY &&
@@ -130,6 +131,7 @@ bool v92_pcm_phase4_trn2u_line_handoff_is_valid(
 		       V92_PCM_PHASE4_TRN2U_ALIGNMENT == 0u &&
 	       handoff->input_samples >= handoff->training_symbols &&
 	       qam_adaptation_is_valid(handoff->adaptation) &&
+	       isfinite(handoff->output_bias) &&
 	       g711_law_is_valid(handoff->law) &&
 	       (handoff->polarity == -1 || handoff->polarity == 1) &&
 	       targets_are_valid(
@@ -157,6 +159,7 @@ v92_pcm_phase4_trn2u_line_rx_handoff(
 		.input_samples = receiver->input_samples,
 		.training_symbols = receiver->reference.emitted_symbols,
 		.adaptation = receiver->adaptation,
+		.output_bias = receiver->output_bias,
 		.law = receiver->law,
 		.polarity = receiver->polarity,
 		.renegotiation = receiver->renegotiation,
@@ -254,6 +257,7 @@ v92_pcm_phase4_trn2u_line_rx_init_after_ru(
 		.input_samples = handoff->input_samples,
 		.adaptation = handoff->adaptation,
 		.law = handoff->law,
+		.output_bias = handoff->output_bias,
 		.polarity = handoff->polarity,
 		.renegotiation = true,
 	};
@@ -282,7 +286,6 @@ v92_pcm_phase4_trn2u_line_rx_sample(
 	struct v92_pcm_phase4_trn2u_line_rx next;
 	struct qam_point output;
 	struct qam_point input;
-	struct qam_point target;
 	double error;
 	unsigned int bits;
 	uint8_t decoded_group;
@@ -317,7 +320,10 @@ v92_pcm_phase4_trn2u_line_rx_sample(
 	if (qam_equalizer_push(
 		    &next.equalizer, &input, &output, &ready) !=
 		    QAM_EQUALIZER_OK ||
-	    !ready || v92_phase4_demodulator_next(
+	    !ready)
+		return fail(receiver);
+	output.in_phase += next.output_bias;
+	if (v92_phase4_demodulator_next(
 			      &next.demodulator, output.in_phase,
 			      &decoded_group, &selected_level) !=
 			      V92_PHASE4_MODULATOR_OK)
@@ -328,23 +334,15 @@ v92_pcm_phase4_trn2u_line_rx_sample(
 	if (bits == 0u)
 		return fail(receiver);
 	training_group = (uint8_t)((1u << bits) - 1u);
-	target = (struct qam_point){ .in_phase = next_expected };
-	error = output.in_phase - target.in_phase;
+	error = output.in_phase - next_expected;
 	if (!isfinite(error) ||
 	    !isfinite(next.squared_error_sum + error * error))
 		return fail(receiver);
 	if (selected == next_expected) {
-		int16_t gradient_target;
-
 		/* Retain nominal residual evidence above; only the training
 		 * gradient allows the uncertainty inherited from TRN1u's LU. */
-		if (!v92_control_target(next.law, &next.demodulator, selected_level,
-				output.in_phase, &gradient_target))
-			return fail(receiver);
-		target.in_phase = gradient_target;
-		if (qam_equalizer_adapt(
-			    &next.equalizer, &target,
-			    next.adaptation) != QAM_EQUALIZER_OK)
+		if (!v92_control_adapt(&next.equalizer, next.law, &next.demodulator,
+				selected_level, next.adaptation, &next.output_bias, true))
 			return fail(receiver);
 	} else {
 		next.equalizer.can_adapt = false;

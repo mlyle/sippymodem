@@ -43,6 +43,8 @@ struct v92_pcm_phase4_trn2u_line_rx {
 	uint32_t coding_errors;
 	double squared_error_sum;
 	double adaptation;
+	/* Add after filtering; retained FIR history stays in physical units. */
+	double output_bias;
 	enum g711_law law;
 	uint8_t expected_index;
 	int8_t polarity;
@@ -62,6 +64,7 @@ struct v92_pcm_phase4_trn2u_line_handoff {
 	uint64_t input_samples;
 	uint32_t training_symbols;
 	double adaptation;
+	double output_bias;
 	enum g711_law law;
 	int8_t polarity;
 	bool renegotiation;
