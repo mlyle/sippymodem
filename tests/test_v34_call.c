@@ -1744,6 +1744,43 @@ static bool check_retrain_tone_stage_guard(
 		      &remote_tone, remote_role, NOMINAL_AMPLITUDE) ==
 			      V34_PHASE2_TONE_OK,
 	      "retrain stage guard did not reach stage %d", target_stage);
+	if (target_stage == V34_CALL_PHASE4 &&
+	    !endpoint->call.state.phase4.transmit_data_active &&
+	    !endpoint->call.state.phase4.receive_data_active) {
+		bool responded = false;
+
+		/* Exercise the real initial receive path, including its S/TRN/MP
+		 * owner, rather than installing an already qualified detector.
+		 * Both initial training and a restarted exchange must respond. */
+		for (unsigned sample = 0; sample < 70u * 8u; ++sample)
+			CHECK(endpoint_sample(endpoint, 0, supply_mapping_frame,
+				      &transmitted, &observation) &&
+			      observation.next == V34_CALL_PHASE4,
+			      "startup retrain consumed quiet as a request");
+		for (unsigned sample = 0; sample < 120u * 8u; ++sample) {
+			int16_t remote_sample;
+
+			CHECK(v34_phase2_tone_transmitter_sample(&remote_tone,
+				      &remote_sample) == V34_PHASE2_TONE_OK &&
+			      endpoint_sample(endpoint,
+				      codec_round_trip(remote_sample, pcma),
+				      supply_mapping_frame, &transmitted, &observation),
+			      "startup retrain tone reception failed");
+			if (observation.next == V34_CALL_RETRAIN_SILENCE) {
+				CHECK(sample + 1u >= V34_RETRAIN_TONE_SAMPLES &&
+				      endpoint->call.retrain_active,
+				      "startup retrain bypassed the continuous tone guard");
+				responded = true;
+				break;
+			}
+			CHECK(observation.next == V34_CALL_PHASE4,
+			      "startup tone left Phase 4 without a retrain response");
+		}
+		CHECK(responded && complete_remote_retrain_silence(
+			      endpoint, &remote_tone, pcma),
+		      "startup retrain request was ignored or lost its peer tone");
+		return true;
+	}
 	for (size_t index = 0; index < V34_RETRAIN_MIN_SILENCE_SAMPLES;
 	     ++index)
 		CHECK(v34_retrain_detector_sample(
@@ -1817,7 +1854,7 @@ static bool test_retrain_tone_stage_guard(void)
 			CHECK(check_retrain_tone_stage_guard(
 				      role, law != 0, V34_CALL_PHASE4,
 				      false, false, false),
-			      "pre-B1 Phase 4 retrain guard failed role=%d law=%u",
+			      "initial Phase 4 retrain response failed role=%d law=%u",
 			      role, law);
 			/* This generated role exposes the valid interval after local B1
 			 * transmission but before the receive direction reaches B1. */
@@ -1837,7 +1874,7 @@ static bool test_retrain_tone_stage_guard(void)
 			CHECK(check_retrain_tone_stage_guard(
 				      role, law != 0, V34_CALL_PHASE4,
 				      true, false, false),
-			      "active retrain guard failed role=%d law=%u",
+			      "restarted Phase 4 retrain response failed role=%d law=%u",
 			      role, law);
 		}
 	return true;

@@ -900,14 +900,16 @@ static bool retrain_detection_is_active(const struct v34_call *call)
 	 * full-retrain transaction; ordinary initial Phase 3 remains unarmed. */
 	if (call->stage == V34_CALL_PHASE3)
 		return call->retrain_active;
-	/* A peer cannot request an online retrain while it is still sending its
-	 * Phase 4 E or B1.  Arm only after both local directions are online;
-	 * earlier Phase 4 waveforms can otherwise qualify as a retrain tone.
-	 * An online rate renegotiation retains the full-retrain recovery path. */
+	/* V.34 11.4.2 permits peer retrain during initial S/TRN/MP. Keep the
+	 * guarded silence-and-tone detector armed until either direction starts
+	 * B1. E/B1 overlap can resemble a request: retain the online guard there.
+	 * An online rate renegotiation retains its full-retrain recovery path. */
 	if (call->stage == V34_CALL_PHASE4)
-		return !call->retrain_active &&
-		       (call->state.phase4.online_announced ||
-			call->state.phase4.rate_renegotiation);
+		return (!call->state.phase4.transmit_data_active &&
+		        !call->state.phase4.receive_data_active) ||
+		       (!call->retrain_active &&
+		        (call->state.phase4.online_announced ||
+			 call->state.phase4.rate_renegotiation));
 	return call->stage == V34_CALL_PHASE2 &&
 	       call->state.phase2.stage == V34_PHASE2_INFO1 &&
 	       phase2_info1_is_waiting_for_peer(
