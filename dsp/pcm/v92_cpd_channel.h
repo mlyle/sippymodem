@@ -7,7 +7,8 @@
 #include "v92_upstream_plan.h"
 
 /* Refine a complete initial direct CPd for the measured channel. Solve the
- * regularized joint p1/z2 channel inverse, quantize it to the wire formats,
+ * regularized joint p1/z2 channel inverse with a separate constant offset,
+ * quantize the linear filters to the wire formats,
  * spread dense constellation points, balance higher-rate moduli across trellis
  * groups, and normalize actual filtered B1u power. Rate and trellis remain
  * fixed. The matching LOCAL receive

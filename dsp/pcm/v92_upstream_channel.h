@@ -56,6 +56,8 @@ struct v92_upstream_channel {
 	int32_t observed_boundary[V92_UPSTREAM_CHANNEL_MAX_LAG];
 	int16_t expected_boundary[V92_UPSTREAM_CHANNEL_MAX_LAG];
 	uint16_t symbols;
+	/* First moments over the same settled window as the correlations. */
+	int64_t observed_sum, expected_sum;
 };
 
 bool v92_upstream_channel_is_valid(const struct v92_upstream_channel *channel);

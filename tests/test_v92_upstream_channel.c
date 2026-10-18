@@ -28,12 +28,19 @@ static int32_t observed(int index, bool full_scale)
 static bool test_correlations(bool full_scale)
 {
 	struct v92_upstream_channel channel = { 0 };
+	int64_t expected_sum = 0, observed_sum = 0;
 
 	CHECK(v92_upstream_channel_is_valid(&channel), "zero channel did not initialize");
 	for (int index = 0; index < V92_UPSTREAM_CHANNEL_SYMBOLS; ++index) {
 		CHECK(v92_upstream_channel_sample(&channel, expected(index, full_scale),
 			      observed(index, full_scale)) && channel.symbols == index + 1 &&
 		      v92_upstream_channel_is_valid(&channel), "channel accumulation failed");
+		if (index >= V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS) {
+			expected_sum += expected(index, full_scale);
+			observed_sum += observed(index, full_scale);
+		}
+		CHECK(channel.expected_sum == expected_sum && channel.observed_sum == observed_sum,
+		      "first moments changed at symbol %d", index);
 		if (index < V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS)
 			CHECK(channel.observed_autocorrelation[0] == 0, "channel included settling symbols");
 		for (int lag = 0; lag < V92_UPSTREAM_CHANNEL_MAX_LAG; ++lag) {
@@ -103,6 +110,13 @@ static bool test_rejection(void)
 	      !v92_upstream_channel_sample(&channel, 0, -32769) &&
 	      !v92_upstream_channel_sample(&channel, 0, 32769) &&
 	      memcmp(&channel, &saved, sizeof(channel)) == 0, "invalid input changed channel");
+	channel.observed_sum = 1;
+	CHECK(!v92_upstream_channel_is_valid(&channel), "unowned first moment accepted");
+	channel = saved;
+	channel.symbols = V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS + 1;
+	channel.expected_sum = -32769;
+	CHECK(!v92_upstream_channel_is_valid(&channel), "first-moment sample bound ignored");
+	channel = saved;
 	channel.window[0].expected_energy = 1;
 	CHECK(!v92_upstream_channel_is_valid(&channel), "unowned window energy accepted");
 	channel = saved;

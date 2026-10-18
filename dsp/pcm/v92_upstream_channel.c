@@ -34,6 +34,11 @@ bool v92_upstream_channel_is_valid(const struct v92_upstream_channel *channel)
 	unsigned int used = channel->symbols > V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS ?
 		(unsigned int)channel->symbols - V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS : 0u;
 	int64_t bound = (int64_t)used * INT64_C(32768) * INT64_C(32768);
+	int64_t sum_bound = (int64_t)used * 32768;
+
+	if (channel->observed_sum < -sum_bound || channel->observed_sum > sum_bound ||
+	    channel->expected_sum < -sum_bound || channel->expected_sum > sum_bound)
+		return false;
 
 	if (channel->observed_autocorrelation[0] < 0 || channel->expected_autocorrelation[0] < 0 ||
 	    !correlations_are_bounded(channel->observed_autocorrelation,
@@ -102,6 +107,8 @@ bool v92_upstream_channel_sample_owned(
 	struct v92_upstream_channel_window *window =
 		&channel->window[(used - 1u) / V92_UPSTREAM_CHANNEL_WINDOW_SYMBOLS];
 
+	channel->observed_sum += observed;
+	channel->expected_sum += expected;
 	window->expected_energy += (int64_t)expected * expected;
 	window->observed_energy += (int64_t)observed * observed;
 	window->cross += (int64_t)expected * observed;

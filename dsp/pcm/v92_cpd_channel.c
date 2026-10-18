@@ -20,6 +20,33 @@ enum {
 	DELAY = V92_UPSTREAM_CHANNEL_DECISION_DELAY,
 };
 
+/* Eliminate an unpenalized constant offset before fitting the linear
+ * filters. Keep one normalized Gram matrix in local scratch: its entries
+ * are reused by every CG iteration and by the final residual comparison. */
+struct inverse_system {
+	double normal[TAPS][TAPS], rhs[TAPS];
+	double observed, expected, target;
+};
+
+/* The fixed training span, sample bounds and finite-window corrections
+ * keep both products and their difference within int64_t. Multiplying by
+ * the sample count first preserves exact centering even near full scale. */
+static int64_t centered_product(
+	int64_t product, int64_t left, int64_t right, int64_t samples)
+{
+	return samples * product - left * right;
+}
+
+static int64_t shifted_sum(const struct v92_upstream_channel *channel,
+	bool observed, unsigned lag, int64_t sum)
+{
+	for (unsigned i = 0; i < lag; ++i)
+		sum += observed ?
+			(int64_t)channel->observed_boundary[i] - channel->observed_history[i] :
+			(int64_t)channel->expected_boundary[i] - channel->expected_history[i];
+	return sum;
+}
+
 static double dot(const double *left, const double *right)
 {
 	double result = 0.0;
@@ -184,15 +211,35 @@ static bool solve_four_tap_channel(const struct v92_upstream_channel *channel,
 	return true;
 }
 
-/* Apply the symmetric normal matrix without allocating a dense matrix.
- * H(z)Z2(z) = z^-DELAY (1-P1(z)); unknowns are z2 then p1. Walking each
- * diagonal updates its exact covariance with just two boundary products,
- * retaining quadratic work/storage-linear workspace per CG iteration. */
-static void apply_normal(const struct v92_upstream_channel *channel,
-	const double input[TAPS], double regularization, double scale, double output[TAPS])
+/* Build the exact finite-window covariances once. The symmetric entries
+ * share one rounded value; diagonal walks retain the boundary corrections
+ * without repeatedly shifting both signals across the measurement window. */
+static bool inverse_system_init(struct inverse_system *system,
+	const struct v92_upstream_channel *channel)
 {
-	for (unsigned i = 0; i < TAPS; ++i)
-		output[i] = regularization * input[i];
+	int64_t samples = channel->symbols - V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS;
+	int64_t sums[TAPS];
+
+	for (unsigned i = 0; i < Z2_TAPS; ++i)
+		sums[i] = shifted_sum(channel, true, i, channel->observed_sum);
+	for (unsigned i = 0; i < P1_TAPS; ++i)
+		sums[Z2_TAPS + i] = shifted_sum(channel, false, DELAY + 1u + i, channel->expected_sum);
+	int64_t target_sum = shifted_sum(channel, false, DELAY, channel->expected_sum);
+	double observed_energy = centered_product(channel->observed_autocorrelation[0],
+		channel->observed_sum, channel->observed_sum, samples);
+	double expected_energy = centered_product(channel->expected_autocorrelation[0],
+		channel->expected_sum, channel->expected_sum, samples);
+	double target_energy = centered_product(moment(channel, false, DELAY, false, DELAY),
+		target_sum, target_sum, samples);
+
+	if (observed_energy <= 0.0 || expected_energy <= 0.0 || target_energy <= 0.0)
+		return false;
+	double scale = fmax(observed_energy, expected_energy);
+
+	system->observed = observed_energy / scale;
+	system->expected = expected_energy / scale;
+	system->target = target_energy / scale;
+
 	for (unsigned block = 0; block < 2u; ++block) {
 		bool observed = block == 0;
 		unsigned count = observed ? Z2_TAPS : P1_TAPS;
@@ -203,11 +250,12 @@ static void apply_normal(const struct v92_upstream_channel *channel,
 			int64_t value = moment(channel, observed, delay + lag, observed, delay);
 
 			for (unsigned col = 0, row = lag; row < count; ++col, ++row) {
-				double covariance = (double)value / scale;
+				double covariance = (double)centered_product(value,
+					sums[offset + row], sums[offset + col], samples) / scale;
 
-				output[offset + row] += covariance * input[offset + col];
+				system->normal[offset + row][offset + col] = covariance;
 				if (row != col)
-					output[offset + col] += covariance * input[offset + row];
+					system->normal[offset + col][offset + row] = covariance;
 				if (row + 1u < count)
 					value += boundary_product(channel, observed, delay + row, observed, delay + col);
 			}
@@ -220,47 +268,59 @@ static void apply_normal(const struct v92_upstream_channel *channel,
 
 		for (; y < Z2_TAPS && x <= DELAY + P1_TAPS; ++y, ++x) {
 			unsigned col = Z2_TAPS + x - DELAY - 1u;
-			double covariance = (double)value / scale;
+			double covariance = (double)centered_product(value,
+				sums[y], sums[col], samples) / scale;
 
-			output[y] += covariance * input[col];
-			output[col] += covariance * input[y];
+			system->normal[y][col] = covariance;
+			system->normal[col][y] = covariance;
 			if (y + 1u < Z2_TAPS && x < DELAY + P1_TAPS)
 				value += boundary_product(channel, true, y, false, x);
 		}
 	}
+
+	for (unsigned i = 0; i < Z2_TAPS; ++i)
+		system->rhs[i] = (double)centered_product(moment(channel, true, i, false, DELAY),
+			sums[i], target_sum, samples) / scale;
+	for (unsigned i = 0; i < P1_TAPS; ++i)
+		system->rhs[Z2_TAPS + i] = (double)centered_product(
+			moment(channel, false, DELAY + 1u + i, false, DELAY),
+			sums[Z2_TAPS + i], target_sum, samples) / scale;
+	return true;
 }
 
-static void inverse_rhs(const struct v92_upstream_channel *channel, double scale, double rhs[TAPS])
+static void apply_normal(const struct inverse_system *system,
+	const double input[TAPS], double regularization, double output[TAPS])
 {
-	for (size_t tap = 0; tap < Z2_TAPS; ++tap)
-		rhs[tap] = (double)moment(channel, true, tap, false, DELAY) / scale;
-	for (size_t tap = 0; tap < P1_TAPS; ++tap)
-		rhs[Z2_TAPS + tap] = (double)moment(channel, false, DELAY + tap + 1u, false, DELAY) / scale;
+	for (unsigned i = 0; i < TAPS; ++i) {
+		double sum = regularization * input[i];
+
+		for (unsigned j = 0; j < TAPS; ++j)
+			sum += system->normal[i][j] * input[j];
+		output[i] = sum;
+	}
 }
 
-static double inverse_error(const struct v92_upstream_channel *channel,
-	const double coefficients[TAPS], double scale, const double rhs[TAPS])
+static double inverse_error(const struct inverse_system *system,
+	const double coefficients[TAPS])
 {
 	double normal[TAPS];
 
-	apply_normal(channel, coefficients, 0.0, scale, normal);
-	return (double)moment(channel, false, DELAY, false, DELAY) / scale -
-		2.0 * dot(coefficients, rhs) + dot(coefficients, normal);
+	apply_normal(system, coefficients, 0.0, normal);
+	return system->target - 2.0 * dot(coefficients, system->rhs) + dot(coefficients, normal);
 }
 
-static bool solve(const struct v92_upstream_channel *channel, double coefficients[TAPS])
+static bool solve(const struct inverse_system *system, double coefficients[TAPS])
 {
-	double residual[TAPS], direction[TAPS], normal[TAPS], rhs[TAPS];
-	double observed = (double)channel->observed_autocorrelation[0];
-	double expected = (double)channel->expected_autocorrelation[0];
-	double target = (double)moment(channel, false, DELAY, false, DELAY);
-	double scale = fmax(observed, expected);
+	double residual[TAPS], direction[TAPS], normal[TAPS];
+	const double *rhs = system->rhs;
+	double observed = system->observed;
+	double expected = system->expected;
+	double target = system->target;
 
 	if (observed <= 0.0 || expected <= 0.0 || target <= 0.0)
 		return false;
-	double regularization = 1.0e-3 * (Z2_TAPS * observed + P1_TAPS * expected) / (TAPS * scale);
+	double regularization = 1.0e-3 * (Z2_TAPS * observed + P1_TAPS * expected) / TAPS;
 
-	inverse_rhs(channel, scale, rhs);
 	memcpy(residual, rhs, sizeof(residual));
 	memcpy(direction, rhs, sizeof(direction));
 	memset(coefficients, 0, TAPS * sizeof(*coefficients));
@@ -269,7 +329,7 @@ static bool solve(const struct v92_upstream_channel *channel, double coefficient
 	if (!(norm > 1.0e-24) || !isfinite(norm))
 		return false;
 	for (unsigned iteration = 0; iteration < 4u * TAPS; ++iteration) {
-		apply_normal(channel, direction, regularization, scale, normal);
+		apply_normal(system, direction, regularization, normal);
 		double denominator = dot(direction, normal);
 
 		if (!(denominator > 0.0) || !isfinite(denominator))
@@ -287,10 +347,10 @@ static bool solve(const struct v92_upstream_channel *channel, double coefficient
 		if (next_norm <= initial_norm * 1.0e-14) {
 			/* Reject a solved but uninformative/noisy inverse. This is an
 			 * implementation quality bound, not a negotiated wire limit. */
-			double error = inverse_error(channel, coefficients, scale, rhs);
+			double error = inverse_error(system, coefficients);
 
-			return isfinite(error) && error >= -1.0e-10 * target / scale &&
-				error <= 0.05 * target / scale;
+			return isfinite(error) && error >= -1.0e-10 * target &&
+				error <= 0.05 * target;
 		}
 		for (size_t tap = 0; tap < TAPS; ++tap)
 			direction[tap] = residual[tap] + next_norm / norm * direction[tap];
@@ -299,30 +359,35 @@ static bool solve(const struct v92_upstream_channel *channel, double coefficient
 	return false;
 }
 
-static bool select_inverse(const struct v92_upstream_channel *channel, double coefficients[TAPS])
+static bool select_inverse(const struct v92_upstream_channel *channel,
+	double coefficients[TAPS], double *relative_error)
 {
-	if (!solve_short_channel(channel, coefficients) && !solve_four_tap_channel(channel, coefficients))
-		return solve(channel, coefficients);
-	double general[TAPS], rhs[TAPS];
+	struct inverse_system system;
 
-	if (!solve(channel, general))
-		return true;
-	double scale = fmax(channel->observed_autocorrelation[0], channel->expected_autocorrelation[0]);
+	if (!inverse_system_init(&system, channel))
+		return false;
+	if (!solve_short_channel(channel, coefficients) && !solve_four_tap_channel(channel, coefficients)) {
+		if (!solve(&system, coefficients))
+			return false;
+	} else {
+		double general[TAPS];
 
-	inverse_rhs(channel, scale, rhs);
-	double short_error = inverse_error(channel, coefficients, scale, rhs);
-	double general_error = inverse_error(channel, general, scale, rhs);
+		if (solve(&system, general)) {
+			double short_error = inverse_error(&system, coefficients);
+			double general_error = inverse_error(&system, general);
 
-	/* Small timing offsets can leave weak distant taps that pass the 2%
-	 * short-fit limit yet destroy high-rate B1u. Compare both candidates
-	 * in the same delayed-target plane, using the exact finite window.
-	 * Require 10% less residual energy before adding a long filter; small
-	 * reductions from fitting quantization noise should retain the simpler
-	 * inverse. This selection margin is local policy, not a V.92 limit. */
-	if (isfinite(general_error) && (!isfinite(short_error) ||
-	    fmax(0.0, general_error) < 0.9 * fmax(0.0, short_error)))
-		memcpy(coefficients, general, sizeof(general));
-	return true;
+			/* Keep the simpler inverse unless the general fit reduces
+			 * residual energy by at least 10%. Both include an independent
+			 * constant term, never a constant in the CPd wire filters. */
+			if (isfinite(general_error) && (!isfinite(short_error) ||
+			    fmax(0.0, general_error) < 0.9 * fmax(0.0, short_error)))
+				memcpy(coefficients, general, sizeof(general));
+		}
+	}
+	double error = inverse_error(&system, coefficients);
+
+	*relative_error = fmax(0.0, error) / system.target;
+	return isfinite(error) && isfinite(*relative_error);
 }
 
 static bool normalize_gain(struct v92_cpd_parameters *cpd, enum g711_law law, uint64_t *point_energy)
@@ -392,7 +457,7 @@ static bool design(struct v92_cpd_parameters *parameters,
 	const struct v92_upstream_channel *channel, enum g711_law law,
 	int16_t upstream_level, struct v92_upstream_plan *plan, uint32_t rate_mask)
 {
-	double coefficients[TAPS], largest = 0.0;
+	double coefficients[TAPS], largest = 0.0, relative_error = 0.0;
 	struct v92_cpd_parameters next;
 	struct v92_upstream_plan aligned = { .observation = V92_PCM_FRAME_CONSTELLATION, .delay = DELAY };
 
@@ -404,7 +469,7 @@ static bool design(struct v92_cpd_parameters *parameters,
 	    memory_regions_overlap(parameters, sizeof(*parameters), plan, sizeof(*plan)) ||
 	    memory_regions_overlap(plan, sizeof(*plan), channel, sizeof(*channel)) ||
 	    !v92_upstream_channel_has_stable_gain(channel) ||
-	    !select_inverse(channel, coefficients))
+	    !select_inverse(channel, coefficients, &relative_error))
 		return false;
 	for (size_t tap = 0; tap < TAPS; ++tap) {
 		if (!isfinite(coefficients[tap]) ||
@@ -448,18 +513,6 @@ static bool design(struct v92_cpd_parameters *parameters,
 	for (unsigned tap = 0; tap < next.filter[V92_CPD_PREFILTER_FEED_FORWARD].count; ++tap)
 		if (tap != DELAY && next.filter[V92_CPD_PREFILTER_FEED_FORWARD].coefficient[tap])
 			codec_model = false;
-	double relative_error = 0.0;
-
-	if (rate_mask && !codec_model) {
-		double scale = fmax(channel->observed_autocorrelation[0], channel->expected_autocorrelation[0]);
-		double rhs[TAPS];
-
-		inverse_rhs(channel, scale, rhs);
-		relative_error = fmax(0.0, inverse_error(channel, coefficients, scale, rhs)) /
-			((double)moment(channel, false, DELAY, false, DELAY) / scale);
-		if (!isfinite(relative_error))
-			return false;
-	}
 	const struct v92_cpd_parameters filtered = next;
 
 	for (unsigned rate = parameters->data_rate_number; rate; rate--) {

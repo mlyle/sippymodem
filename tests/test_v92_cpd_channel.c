@@ -481,15 +481,15 @@ static bool test_quantized_stability(void)
 	return true;
 }
 
-static bool test_finite_window_inverse(bool strong_boundaries)
+static bool test_finite_window_inverse(bool strong_boundaries, int offset)
 {
 	enum { Z = V92_UPSTREAM_CHANNEL_Z2_TAPS, P = V92_UPSTREAM_CHANNEL_P1_TAPS, N = Z + P };
 	struct v92_upstream_channel channel = { 0 };
 	struct v92_cpd_parameters cpd;
 	struct v92_upstream_plan plan;
 	int16_t x[V92_UPSTREAM_CHANNEL_SYMBOLS], y[V92_UPSTREAM_CHANNEL_SYMBOLS];
-	double gram[N][N] = { { 0 } }, rhs[N] = { 0 }, row[N], solution[N];
-	double xx = 0.0, yy = 0.0;
+	double gram[N][N] = { { 0 } }, rhs[N] = { 0 }, row[N], solution[N], sums[N] = { 0 };
+	double xx = 0.0, yy = 0.0, x_sum = 0.0, y_sum = 0.0, target_sum = 0.0;
 	uint32_t random = 0x62735198u;
 
 	for (unsigned n = 0; n < V92_UPSTREAM_CHANNEL_SYMBOLS; ++n) {
@@ -501,7 +501,7 @@ static bool test_finite_window_inverse(bool strong_boundaries)
 		/* A fourth postcursor keeps this on the general designer; the
 		 * short inverse now covers the three-postcursor case separately. */
 		y[n] = quantize(G711_LAW_PCMU, 0.7 * x[n] -
-			(n ? 0.2 * x[n - 1u] : 0.0) + (n >= 4u ? 0.1 * x[n - 4u] : 0.0));
+			(n ? 0.2 * x[n - 1u] : 0.0) + (n >= 4u ? 0.1 * x[n - 4u] : 0.0)) + offset;
 		CHECK(v92_upstream_channel_sample(&channel, x[n], y[n]), "finite-window measurement failed");
 	}
 	/* Independent dense least squares uses the actual shifted columns over
@@ -516,15 +516,28 @@ static bool test_finite_window_inverse(bool strong_boundaries)
 
 		for (unsigned i = 0; i < N; ++i) {
 			rhs[i] += row[i] * target;
+			sums[i] += row[i];
 			for (unsigned j = 0; j <= i; ++j)
 				gram[i][j] += row[i] * row[j];
 		}
 		xx += (double)x[n] * x[n];
 		yy += (double)y[n] * y[n];
+		x_sum += x[n];
+		y_sum += y[n];
+		target_sum += target;
 	}
+	double samples = V92_UPSTREAM_CHANNEL_SYMBOLS - V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS;
+
+	for (unsigned i = 0; i < N; ++i) {
+		rhs[i] -= sums[i] * target_sum / samples;
+		for (unsigned j = 0; j <= i; ++j)
+			gram[i][j] -= sums[i] * sums[j] / samples;
+	}
+	xx -= x_sum * x_sum / samples;
+	yy -= y_sum * y_sum / samples;
 	double ridge = 1.0e-3 * (Z * yy + P * xx) / N;
 
-	/* Cholesky is intentionally different from the matrix-free CG solver. */
+	/* Cholesky is intentionally different from the native CG iteration. */
 	for (unsigned i = 0; i < N; ++i) {
 		gram[i][i] += ridge;
 		for (unsigned j = 0; j <= i; ++j) {
@@ -561,6 +574,49 @@ static bool test_finite_window_inverse(bool strong_boundaries)
 		CHECK(labs(actual - wanted) <= 1,
 			"finite-window tap %u: got %d expected %ld (strong boundaries=%d)",
 			i, actual, wanted, strong_boundaries);
+	}
+	return true;
+}
+
+/* A constant added after the codec must not alter the learned linear
+ * channel or its rate margin. Use a distant postcursor so every case takes
+ * the general inverse rather than a special short-channel design. */
+static bool test_offset_invariance(void)
+{
+	const int offset[] = { 0, 257, -509 };
+	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		struct v92_upstream_channel channel[3] = { 0 };
+		struct v92_cpd_parameters reference;
+		struct v92_upstream_plan reference_plan;
+		int16_t history[10] = { 0 };
+		uint32_t random = 0x3a856719u;
+
+		for (unsigned n = 0; n < V92_UPSTREAM_CHANNEL_SYMBOLS; ++n) {
+			memmove(history + 1, history, 9u * sizeof(history[0]));
+			history[0] = (int16_t)((int)(random_word(&random) % 4096u) - 2048);
+			int16_t sample = quantize(law, 0.7 * history[0] + 0.2 * history[4] - 0.1 * history[9]);
+
+			for (unsigned i = 0; i < ARRAY_LENGTH(offset); ++i)
+				CHECK(v92_upstream_channel_sample(&channel[i], history[0], sample + offset[i]),
+				      "offset measurement failed");
+		}
+		for (unsigned i = 0; i < ARRAY_LENGTH(offset); ++i) {
+			struct v92_cpd_parameters cpd;
+			struct v92_upstream_plan plan;
+
+			CHECK(v92_cpd_direct_init(&cpd, law, 19u, false) == V92_CPD_OK &&
+			      v92_cpd_channel_select(&cpd, &channel[i], law, LEVEL, &plan,
+				      V92_PCM_DIL_RATE_MASK_ALL), "offset channel design failed");
+			if (i == 0) {
+				reference = cpd;
+				reference_plan = plan;
+			} else {
+				CHECK(memcmp(&reference, &cpd, sizeof(cpd)) == 0 &&
+				      plan.gain == reference_plan.gain && plan.delay == reference_plan.delay &&
+				      plan.observation == reference_plan.observation,
+				      "constant offset changed linear filters or rate selection");
+			}
+		}
 	}
 	return true;
 }
@@ -750,8 +806,9 @@ int main(void)
 	if (!test_rate_selection() || !test_filter_padding() || !test_training_changes() ||
 	    !test_rejections() || !test_receive_plan() ||
 	    !test_short_channel_selection(false) || !test_short_channel_selection(true) ||
-	    !test_quantized_stability() || !test_finite_window_inverse(false) ||
-	    !test_finite_window_inverse(true))
+	    !test_quantized_stability() || !test_finite_window_inverse(false, 0) ||
+	    !test_finite_window_inverse(true, 0) || !test_finite_window_inverse(false, 257) ||
+	    !test_finite_window_inverse(true, -509) || !test_offset_invariance())
 		return 1;
 	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
 		/* +/- 0.011 sample timing has a small training residual but needs
