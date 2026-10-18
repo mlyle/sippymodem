@@ -403,11 +403,7 @@ static enum qam_equalizer_result adapt_decision(
 	if (!isfinite(power))
 		return QAM_EQUALIZER_INVALID_ARGUMENT;
 	for (size_t index = 0; index < equalizer->tap_count; ++index) {
-		struct qam_point conjugate = {
-			.in_phase = history[index].in_phase,
-			.quadrature = -history[index].quadrature,
-		};
-		struct qam_point update = qam_point_multiply(&error, &conjugate);
+		struct qam_point update = qam_point_correlation(&history[index], &error);
 
 		coefficients[index] = equalizer->coefficients[index];
 		coefficients[index].in_phase += adaptation * update.in_phase / power;
