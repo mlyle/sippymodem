@@ -239,10 +239,22 @@ bool v34_phase3_s_detection_is_valid(
 		       V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS;
 }
 
-static bool s_suffix_is_valid(uint8_t symbols)
+static bool s_suffix_is_valid(uint8_t symbols, bool fixed)
 {
-	return symbols >= V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS &&
+	return symbols >= (fixed ?
+		       V34_PHASE3_S_RECEIVER_MIN_FIXED_SUFFIX_SYMBOLS :
+		       V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS) &&
 	       symbols <= V34_PHASE3_S_SYMBOLS;
+}
+
+static bool detection_is_qualified(
+	const struct v34_phase3_s_receiver *receiver,
+	const struct v34_phase3_s_detection *detection)
+{
+	return v34_phase3_s_detection_is_valid(detection) &&
+	       (receiver->s_symbols >=
+			V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS ||
+		detection->s_errors <= receiver->s_symbols / 4u);
 }
 
 static size_t receive_window(
@@ -256,7 +268,8 @@ bool v34_phase3_s_receiver_is_valid(
 {
 	size_t window;
 
-	if (receiver == NULL || !s_suffix_is_valid(receiver->s_symbols))
+	if (receiver == NULL || !s_suffix_is_valid(
+		    receiver->s_symbols, receiver->metric_enabled))
 		return false;
 	window = receive_window(receiver);
 	if (receiver->next_decision >= window ||
@@ -293,7 +306,7 @@ bool v34_phase3_s_receiver_is_valid(
 	    (!receiver->complete && receiver->post_marker_symbols != 0) ||
 	    (receiver->complete &&
 	     (receiver->buffered_decisions != window ||
-	      !v34_phase3_s_detection_is_valid(&receiver->detection))) ||
+	      !detection_is_qualified(receiver, &receiver->detection))) ||
 	    (!receiver->complete &&
 	     (receiver->detection.clockwise_quarter_turn_offset != 0 ||
 	      receiver->detection.s_errors != 0 ||
@@ -322,7 +335,7 @@ enum v34_phase3_s_receiver_result v34_phase3_s_receiver_init_suffix(
 		.s_symbols = s_symbols,
 	};
 
-	if (receiver == NULL || !s_suffix_is_valid(s_symbols))
+	if (receiver == NULL || !s_suffix_is_valid(s_symbols, false))
 		return V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT;
 	*receiver = initialized;
 	return V34_PHASE3_S_RECEIVER_OK;
@@ -337,7 +350,7 @@ v34_phase3_s_receiver_init_fixed_suffix(
 		.metric_enabled = true,
 	};
 
-	if (receiver == NULL || !s_suffix_is_valid(s_symbols))
+	if (receiver == NULL || !s_suffix_is_valid(s_symbols, true))
 		return V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT;
 	*receiver = initialized;
 	return V34_PHASE3_S_RECEIVER_OK;
@@ -517,20 +530,32 @@ static bool observation_evidence(
 	return true;
 }
 
-static void complete_detection(
+static void clear_pending_detection(struct v34_phase3_s_receiver *receiver)
+{
+	receiver->pending_detection =
+		(struct v34_phase3_s_detection){ 0 };
+	receiver->pending_symbols = 0;
+	receiver->detection_pending = false;
+	receiver->pending_metric = false;
+}
+
+static void qualify_detection(
 	struct v34_phase3_s_receiver *receiver,
 	const struct v34_phase3_s_detection *detection,
 	uint8_t post_marker_symbols)
 {
+	/* Provisional correlation also gates adaptive feedback. Keep that gate
+	 * independent of final acceptance so S-bar does not train the equalizer
+	 * while a short suffix is still resolving its phase. */
+	if (!detection_is_qualified(receiver, detection)) {
+		clear_pending_detection(receiver);
+		return;
+	}
 	receiver->detection = *detection;
-	receiver->pending_detection =
-		(struct v34_phase3_s_detection){ 0 };
-	receiver->pending_symbols = 0;
+	clear_pending_detection(receiver);
 	receiver->post_marker_symbols = post_marker_symbols;
 	receiver->target_rotation[0] = 0u;
 	receiver->target_rotation[1] = 0u;
-	receiver->detection_pending = false;
-	receiver->pending_metric = false;
 	receiver->complete = true;
 }
 
@@ -571,7 +596,7 @@ static enum v34_phase3_s_receiver_result receive_decision(
 		    (metric_found &&
 		     metric_confirms_complete_s_bar(
 			     &hard_detection, &metric_detection))) {
-			complete_detection(&next, &hard_detection, 0);
+			qualify_detection(&next, &hard_detection, 0);
 		} else if (!next.detection_pending || next.pending_metric) {
 			next.pending_detection = hard_detection;
 			next.pending_symbols = 0;
@@ -584,7 +609,7 @@ static enum v34_phase3_s_receiver_result receive_decision(
 		}
 	} else if (metric_found && !next.complete) {
 		if (metric_detection.s_bar_errors == 0u) {
-			complete_detection(&next, &metric_detection, 0);
+			qualify_detection(&next, &metric_detection, 0);
 		} else if (!next.detection_pending) {
 			next.pending_detection = metric_detection;
 			next.pending_symbols = 0;
@@ -600,7 +625,7 @@ static enum v34_phase3_s_receiver_result receive_decision(
 	if (next.detection_pending &&
 	    next.pending_symbols >=
 		    V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS)
-		complete_detection(
+		qualify_detection(
 			&next, &next.pending_detection, next.pending_symbols);
 	if (!v34_phase3_s_receiver_is_valid(&next))
 		return V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT;

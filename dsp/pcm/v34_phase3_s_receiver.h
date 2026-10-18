@@ -24,6 +24,10 @@ enum {
 	/* A sample-domain receiver may lock after S begins. Retaining at least
 	 * 32T before the 16T S-bar still gives a bounded correlation. */
 	V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS = 32,
+	/* Fresh timing/equalizer acquisition can consume most of S. The fixed
+	 * receiver may retain 16T, with a proportionally smaller acceptance
+	 * budget. Online hard-decision hunts still retain at least 32T. */
+	V34_PHASE3_S_RECEIVER_MIN_FIXED_SUFFIX_SYMBOLS = 16,
 	/* Four lag-two recurrence hits plus the retained points qualify an
 	 * online S candidate without assuming absolute carrier phase. */
 	V34_PHASE3_S_HUNT_CANDIDATE_RECURRENCE_HITS = 4,
@@ -125,11 +129,13 @@ bool v34_phase3_s_detection_is_valid(
 	const struct v34_phase3_s_detection *detection);
 
 /* Bounded hard-decision history for locating S followed by the complete 16T
- * S-bar marker at an arbitrary input boundary. The ordinary initializer
- * requires all 128T of S; a suffix initializer supports a receiver that locks
- * during S. The complete retained S suffix supplies the phase anchor and keeps
- * the full bounded S error budget; S and S-bar remain separate so a smeared
- * transition cannot veto an otherwise qualified marker. Fixed-distance
+ * S-bar marker at an arbitrary input boundary. A suffix initializer supports
+ * a receiver that locks during S. The retained S suffix supplies the phase
+ * anchor; fixed
+ * suffixes below 32T accept at most one-quarter S errors. Provisional evidence
+ * retains the full error budget to hold feedback across S-bar. S and S-bar
+ * remain separate so a smeared transition cannot veto an otherwise qualified
+ * marker. Fixed-distance
  * evidence for a complete S-bar can publish the same hard alignment
  * immediately; an otherwise non-exact four-symbol boundary is confirmed by
  * later decisions. Expected rotations are generated during correlation. */
@@ -211,7 +217,9 @@ bool v34_phase3_s_hunt_get_post_marker_observation(
 enum v34_phase3_s_receiver_result v34_phase3_s_receiver_init_suffix(
 	struct v34_phase3_s_receiver *receiver, uint8_t s_symbols);
 /* Use hard decisions first, with the fixed-domain relative metric as a
- * bounded fallback when companding collapses the decision quadrants. */
+ * bounded fallback when companding collapses the decision quadrants. Accepts
+ * at least MIN_FIXED_SUFFIX_SYMBOLS; the hard-only initializer requires
+ * MIN_S_SUFFIX_SYMBOLS. */
 enum v34_phase3_s_receiver_result
 v34_phase3_s_receiver_init_fixed_suffix(
 	struct v34_phase3_s_receiver *receiver, uint8_t s_symbols);

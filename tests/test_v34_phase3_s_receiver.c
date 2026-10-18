@@ -592,6 +592,127 @@ static bool receive_suffix(
 	return true;
 }
 
+static bool test_short_fixed_suffix(void)
+{
+	const uint8_t suffix = V34_PHASE3_S_RECEIVER_MIN_FIXED_SUFFIX_SYMBOLS;
+	uint8_t rotations[V34_PHASE3_S_SEQUENCE_SYMBOLS];
+	struct v34_phase3_s_receiver receiver;
+	struct v34_phase3_s_receiver saved;
+
+	CHECK(generate_marker(rotations), "short marker did not generate");
+	for (uint8_t length = suffix; length <= suffix + 1u; ++length)
+		for (uint8_t offset = 0; offset < 4u; ++offset)
+			for (unsigned int errors = 0; errors <= length / 4u + 1u; ++errors) {
+				struct v34_phase3_s_detection detection;
+				size_t count = length + V34_PHASE3_S_BAR_SYMBOLS;
+				bool accepted = errors <= length / 4u;
+
+				CHECK(v34_phase3_s_receiver_init_fixed_suffix(
+					      &receiver, length) == V34_PHASE3_S_RECEIVER_OK,
+				      "short receiver did not initialize");
+				for (size_t local = 0; local < count; ++local) {
+					uint8_t rotation = (uint8_t)((offset + rotations[
+						V34_PHASE3_S_SYMBOLS - length + local]) & 3u);
+					struct v34_analytic_sample point;
+					struct v34_phase3_s_adaptation adaptation;
+					enum v34_phase3_s_receiver_result result;
+
+					if (local < errors)
+						rotation = (uint8_t)((rotation + 2u) & 3u);
+					CHECK(v34_training_constellation_fixed_point(
+						      V34_CONSTELLATION_4_POINT, 0, rotation,
+						      &point) == V34_CONSTELLATION_OK,
+					      "short marker point did not generate");
+					result = v34_phase3_s_receiver_receive_adaptive(
+						&receiver, 0, rotation, point, &adaptation);
+					CHECK(result == (accepted &&
+						      local + 1u == count ?
+						      V34_PHASE3_S_RECEIVER_DETECTED :
+						      V34_PHASE3_S_RECEIVER_OK),
+					      "short suffix length=%u rotation=%u errors=%u symbol=%zu",
+					      length, offset, errors, local);
+				}
+				CHECK(v34_phase3_s_receiver_is_valid(&receiver) &&
+				      v34_phase3_s_receiver_get_detection(&receiver, &detection) == accepted,
+				      "short receiver lost validity or acceptance bound");
+				if (accepted) {
+					CHECK(detection.s_errors == errors &&
+					      detection.s_bar_errors == 0 &&
+					      detection.clockwise_quarter_turn_offset == offset,
+					      "short suffix lost errors or absolute phase");
+					receiver.detection.s_errors = (uint8_t)(length / 4u + 1u);
+					CHECK(!v34_phase3_s_receiver_is_valid(&receiver),
+					      "short completion accepted an excessive error count");
+				}
+			}
+	CHECK(v34_phase3_s_receiver_init_fixed_suffix(&receiver, suffix) ==
+		      V34_PHASE3_S_RECEIVER_OK, "provisional receiver did not initialize");
+	receiver.buffered_decisions = suffix + V34_PHASE3_S_BAR_SYMBOLS;
+	receiver.target_rotation[1] = 3;
+	receiver.detection_pending = true;
+	receiver.pending_metric = true;
+	receiver.pending_symbols = V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS - 1u;
+	receiver.pending_detection.s_errors = V34_PHASE3_S_RECEIVER_MAX_S_ERRORS;
+	CHECK(v34_phase3_s_receiver_is_valid(&receiver),
+	      "provisional short suffix was rejected before confirmation");
+	struct v34_phase3_s_adaptation adaptation;
+	CHECK(v34_phase3_s_receiver_receive_adaptive(
+		      &receiver, 3, 0, (struct v34_analytic_sample){ 0 }, &adaptation) ==
+		      V34_PHASE3_S_RECEIVER_OK &&
+	      !receiver.detection_pending && !receiver.complete &&
+	      v34_phase3_s_receiver_is_valid(&receiver),
+	      "unqualified confirmation did not clear its bounded pending state");
+	memset(&receiver, 0xa5, sizeof(receiver));
+	saved = receiver;
+	CHECK(v34_phase3_s_receiver_init_fixed_suffix(&receiver, suffix - 1u) ==
+		      V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT &&
+	      v34_phase3_s_receiver_init_suffix(&receiver, suffix) ==
+		      V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT &&
+	      memcmp(&receiver, &saved, sizeof(saved)) == 0,
+	      "short suffix escaped its fixed-receiver boundary");
+	return true;
+}
+
+static bool test_short_fixed_nonmarkers(void)
+{
+	uint8_t rotations[V34_PHASE3_S_SEQUENCE_SYMBOLS];
+	uint32_t random = UINT32_C(0x31415926);
+
+	CHECK(generate_marker(rotations), "non-marker S did not generate");
+	/* Constant tones, unbroken S, and independently varying 16-point data
+	 * must not supply the S-to-S-bar boundary, even after the window fills. */
+	for (unsigned int kind = 0; kind < 6u; ++kind) {
+		struct v34_phase3_s_receiver receiver;
+
+		CHECK(v34_phase3_s_receiver_init_fixed_suffix(
+			      &receiver, V34_PHASE3_S_RECEIVER_MIN_FIXED_SUFFIX_SYMBOLS) ==
+			      V34_PHASE3_S_RECEIVER_OK, "non-marker receiver did not initialize");
+		for (unsigned int symbol = 0; symbol < 32768u; ++symbol) {
+			struct v34_analytic_sample point;
+			struct v34_phase3_s_adaptation adaptation;
+			uint8_t rotation = kind < 4u ? kind : rotations[symbol & 1u];
+			uint8_t quarter = 0;
+
+			if (kind == 5u) {
+				random ^= random << 13u;
+				random ^= random >> 17u;
+				random ^= random << 5u;
+				rotation = random & 3u;
+				quarter = (random >> 2u) & 3u;
+			}
+			CHECK(v34_training_constellation_fixed_point(
+				      V34_CONSTELLATION_16_POINT, quarter, rotation,
+				      &point) == V34_CONSTELLATION_OK,
+			      "non-marker point did not generate");
+			CHECK(v34_phase3_s_receiver_receive_adaptive(
+				      &receiver, quarter, rotation, point, &adaptation) ==
+				      V34_PHASE3_S_RECEIVER_OK,
+			      "non-marker kind=%u symbol=%u completed S", kind, symbol);
+		}
+	}
+	return true;
+}
+
 static bool test_suffix_acquisition(void)
 {
 	uint8_t rotations[V34_PHASE3_S_SEQUENCE_SYMBOLS];
@@ -1540,6 +1661,8 @@ int main(void)
 		{ "transition error confirmation",
 		  test_transition_error_confirmation },
 		{ "suffix acquisition", test_suffix_acquisition },
+		{ "short fixed suffix", test_short_fixed_suffix },
+		{ "short fixed non-markers", test_short_fixed_nonmarkers },
 		{ "fixed metric fallback", test_fixed_metric_fallback },
 		{ "fixed metric exact marker",
 		  test_fixed_metric_exact_marker },

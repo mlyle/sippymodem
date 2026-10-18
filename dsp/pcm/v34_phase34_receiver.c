@@ -228,7 +228,7 @@ enum v34_phase34_receiver_result v34_phase34_receiver_init(
 		    &initialized.semantic.phase3,
 		    transmitting_profile->local_role,
 		    transmitting_profile->md_symbol_count,
-		    V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS) !=
+		    V34_PHASE3_S_RECEIVER_MIN_FIXED_SUFFIX_SYMBOLS) !=
 		    V34_PHASE3_DECISION_RECEIVER_OK)
 		return V34_PHASE34_RECEIVER_INVALID_ARGUMENT;
 	initialized.initialized = true;

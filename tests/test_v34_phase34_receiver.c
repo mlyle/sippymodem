@@ -930,15 +930,25 @@ static bool test_training_case(
 static bool test_late_s_entry(void)
 {
 	const int16_t offsets[] = { -30, 50 };
+	const struct {
+		enum v34_symbol_rate rate;
+		unsigned int entry;
+	} cases[] = {
+		{ V34_SYMBOL_RATE_3200, 94 },
+		{ V34_SYMBOL_RATE_3429, 240 },
+	};
 	struct v34_phase3_profile selected;
 
-	CHECK(profile(&selected, V34_ANSWERING_STATION, V34_SYMBOL_RATE_3200,
-		      12, true, 6), "late S profile did not initialize");
-	for (size_t n = 0; n < ARRAY_LENGTH(offsets); ++n) {
+	for (size_t n = 0; n < ARRAY_LENGTH(offsets) * ARRAY_LENGTH(cases); ++n) {
 		struct v34_phase34_receiver receiver;
 		struct v34_training_transmitter transmitter;
+		int16_t offset = offsets[n % ARRAY_LENGTH(offsets)];
+		unsigned int entry = cases[n / ARRAY_LENGTH(offsets)].entry;
 		bool detected = false;
 
+		CHECK(profile(&selected, V34_ANSWERING_STATION,
+			      cases[n / ARRAY_LENGTH(offsets)].rate, 12, true, 6),
+		      "late S profile did not initialize");
 		CHECK(v34_training_transmitter_init(&transmitter, &selected,
 			      V34_CONSTELLATION_4_POINT, SAMPLE_RATE, 5000) ==
 			      V34_TRAINING_TRANSMITTER_OK &&
@@ -961,15 +971,16 @@ static bool test_late_s_entry(void)
 			      "late S transmitter stopped");
 			/* Enter partway through S with a small constant DC bias. A
 			 * timing restart at the later qualified edge loses this suffix. */
-			if (i < 94u)
+			if (i < entry)
 				continue;
 			result = v34_phase34_receiver_sample(
-				&receiver, (int16_t)(sample + offsets[n]), &output);
+				&receiver, (int16_t)(sample + offset), &output);
 			CHECK(result < V34_PHASE34_RECEIVER_FAILED,
 			      "late S receiver failed at sample %u", i);
 			detected = result == V34_PHASE34_RECEIVER_J_DETECTED;
 		}
-		CHECK(detected, "DC offset %d prevented late S/J acquisition", offsets[n]);
+		CHECK(detected, "DC offset %d entry %u prevented S/J acquisition",
+		      offset, entry);
 	}
 	return true;
 }
