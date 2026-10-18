@@ -18,6 +18,7 @@ PJSIP_LDLIBS := $(shell \
 PHASE_PROFILE_HEADER := ../.build/generated/phase_profile.h
 PREEMPHASIS_PROFILE_HEADER := ../.build/generated/v34_preemphasis_profiles.h
 CONSTELLATION_HEADER := ../.build/generated/v34_constellation_points.h
+SHELL_COUNTS_HEADER := ../.build/generated/v34_shell_counts.h
 CPPFLAGS += -D_POSIX_C_SOURCE=200809L -I../src -I../dsp \
 	-I$(dir $(PHASE_PROFILE_HEADER)) \
 	-I../dsp/v21_202 -I../dsp/v22 -I../dsp/v32 -I../dsp/pcm
@@ -4925,7 +4926,12 @@ $(PREEMPHASIS_PROFILE_HEADER): $(DSP_PCM_SOURCE_DIR)/generate_preemphasis_profil
 
 $(BUILD_DIR)/v34_constellation.o: $(CONSTELLATION_HEADER)
 
+$(BUILD_DIR)/test_v34_shell_mapper.o: $(SHELL_COUNTS_HEADER)
+
 $(CONSTELLATION_HEADER): $(DSP_PCM_SOURCE_DIR)/generate_constellation.py
+	$(PYTHON) $< $@
+
+$(SHELL_COUNTS_HEADER): $(DSP_PCM_SOURCE_DIR)/generate_shell_counts.py
 	$(PYTHON) $< $@
 
 $(BUILD_DIR)/fractional_delay.o: \
@@ -5126,7 +5132,7 @@ $(BUILD_DIR)/v34_parser.o: \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v34_shell_mapper.o: \
-	$(DSP_PCM_SOURCE_DIR)/v34_shell_mapper.c | $(BUILD_DIR)
+	$(DSP_PCM_SOURCE_DIR)/v34_shell_mapper.c $(SHELL_COUNTS_HEADER) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v34_mapper.o: \

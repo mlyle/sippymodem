@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "v34_shell_mapper.h"
+#include "v34_shell_counts.h"
 
 #include <limits.h>
 #include <stddef.h>
+
+_Static_assert((int)V34_MAX_RING_COUNT == (int)V34_SHELL_COUNT_MAX_RINGS,
+	       "Regenerate shell counts when the ring limit changes");
 
 enum {
 	V34_MAX_2_RING_SUM = 2 * (V34_MAX_RING_COUNT - 1),
@@ -21,18 +25,16 @@ struct shell_coefficients {
 	uint8_t g4_count;
 };
 
-static uint64_t convolution_at(
-	const uint32_t *weights, uint8_t count, uint8_t sum)
+/* Each M-ring row contains prefixes 0 through 8*(M-1)+1. */
+static uint64_t eight_ring_prefix(uint8_t rings, uint16_t limit)
 {
-	uint64_t total = 0;
+	uint32_t previous = rings - 1u;
+	uint32_t offset = 4u * previous * previous - 2u * previous;
+	uint16_t end = (uint16_t)(8u * previous + 1u);
 
-	for (uint8_t left = 0; left < count && left <= sum; ++left) {
-		uint8_t right = (uint8_t)(sum - left);
-
-		if (right < count)
-			total += (uint64_t)weights[left] * weights[right];
-	}
-	return total;
+	if (limit > end)
+		limit = end;
+	return V34_EIGHT_RING_PREFIXES[offset + limit];
 }
 
 static void generate_coefficients(
@@ -90,21 +92,23 @@ static bool select_eight_ring_sum(
 	const struct shell_coefficients *coefficients, uint32_t shell_label,
 	uint8_t *sum, uint64_t *residual)
 {
-	uint64_t cumulative = 0;
-	uint8_t sum_count = (uint8_t)(2u * coefficients->g4_count - 1u);
+	uint8_t rings = (uint8_t)((coefficients->g2_count + 1u) / 2u);
+	uint8_t low = 0;
+	uint8_t high = (uint8_t)(2u * coefficients->g4_count - 1u);
 
-	for (uint8_t candidate = 0; candidate < sum_count; ++candidate) {
-		uint64_t count = convolution_at(
-			coefficients->g4, coefficients->g4_count, candidate);
+	if ((uint64_t)shell_label >= eight_ring_prefix(rings, high))
+		return false;
+	while (low + 1u < high) {
+		uint8_t middle = (uint8_t)(low + (high - low) / 2u);
 
-		if ((uint64_t)shell_label < cumulative + count) {
-			*sum = candidate;
-			*residual = (uint64_t)shell_label - cumulative;
-			return true;
-		}
-		cumulative += count;
+		if (eight_ring_prefix(rings, middle) <= shell_label)
+			low = middle;
+		else
+			high = middle;
 	}
-	return false;
+	*sum = low;
+	*residual = (uint64_t)shell_label - eight_ring_prefix(rings, low);
+	return true;
 }
 
 static void split_ring_pair(
@@ -151,20 +155,14 @@ static int32_t receive_start_weight(
 static uint32_t receive_shell_metric(
 	const struct shell_coefficients *coefficients, uint16_t sum)
 {
-	uint64_t cumulative = 0;
-	uint16_t candidate = 0;
-	uint16_t sum_count = (uint16_t)(2u * coefficients->g4_count - 1u);
+	uint8_t rings = (uint8_t)((coefficients->g2_count + 1u) / 2u);
+	uint64_t cumulative;
 
-	while (candidate < sum_count &&
-	       candidate < V34_RECEIVE_SHELL_WORD_COUNT &&
-	       cumulative <= INT32_MAX) {
-		if (candidate == sum)
-			return (uint32_t)cumulative;
-		cumulative += convolution_at(
-			coefficients->g4, coefficients->g4_count, candidate);
-		candidate++;
-	}
-	return UINT32_MAX;
+	if (sum >= (uint16_t)(2u * coefficients->g4_count - 1u) ||
+	    sum >= V34_RECEIVE_SHELL_WORD_COUNT)
+		return UINT32_MAX;
+	cumulative = eight_ring_prefix(rings, sum);
+	return cumulative <= INT32_MAX ? (uint32_t)cumulative : UINT32_MAX;
 }
 
 static bool recover_received_shell_word(
@@ -336,6 +334,11 @@ enum v34_shell_mapper_result v34_shell_map(
 	label_limit = shell_label_limit(parameters);
 	if (shell_label >= label_limit)
 		return V34_SHELL_MAPPER_INVALID_ARGUMENT;
+	/* The innermost shell contains just the all-zero tuple. */
+	if (shell_label == 0) {
+		*indices = (struct v34_ring_indices){ 0 };
+		return V34_SHELL_MAPPER_OK;
+	}
 	generate_coefficients(parameters->ring_count, &coefficients);
 	if (!map_shell_label(
 		    &coefficients, parameters->ring_count, shell_label,
@@ -358,6 +361,11 @@ enum v34_shell_mapper_result v34_shell_unmap_decision(
 	if (!v34_mapping_parameters_is_valid(parameters) || prefixes == NULL ||
 	    shell_bits > parameters->shell_mapper_bits || shell_label == NULL)
 		return V34_SHELL_MAPPER_INVALID_ARGUMENT;
+	/* Every recovered word is zero modulo the empty bit field. */
+	if (shell_bits == 0) {
+		*shell_label = 0;
+		return V34_SHELL_MAPPER_OK;
+	}
 	generate_coefficients(parameters->ring_count, &coefficients);
 	/* A corrupted survivor can exceed the bounded receive work tables.  The
 	 * receive mapping represents that span with an all-one shell word and
@@ -366,7 +374,7 @@ enum v34_shell_mapper_result v34_shell_unmap_decision(
 	if (!recover_received_shell_word(
 		    &coefficients, parameters->ring_count, prefixes, &recovered))
 		recovered = UINT32_MAX;
-	label_limit = shell_bits == 0 ? 1u : UINT32_C(1) << shell_bits;
+	label_limit = UINT32_C(1) << shell_bits;
 	*shell_label = recovered % label_limit;
 	return V34_SHELL_MAPPER_OK;
 }

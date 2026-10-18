@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <v34_shell_mapper.h>
+#include <v34_shell_counts.h>
 
 #include "test.h"
 
@@ -232,6 +233,10 @@ static bool test_received_prefix_extension(void)
 		      V34_SHELL_MAPPER_OK &&
 	      shell_label == (UINT32_C(1) << 29) - 1u,
 	      "out-of-span received prefix did not recover the error word");
+	CHECK(v34_shell_unmap_decision(
+		      &parameters, &invalid, 0, &shell_label) ==
+		      V34_SHELL_MAPPER_OK && shell_label == 0,
+	      "empty shell bits retained a corrupted receive word");
 	return true;
 }
 
@@ -307,6 +312,61 @@ static bool test_small_shell_order(void)
 	return true;
 }
 
+static bool verify_energy_boundaries(
+	const struct v34_mapping_parameters *parameters,
+	const struct inverse_counts *counts, uint64_t *checked)
+{
+	uint64_t prefix = 0;
+	uint64_t limit = parameters->shell_mapper_bits ?
+		UINT64_C(1) << parameters->shell_mapper_bits : 1;
+	unsigned sums = 2u * counts->quartet_count - 1u;
+	for (unsigned sum = 0; sum < sums && prefix < limit; ++sum) {
+		CHECK(verify_label(parameters, counts, (uint32_t)prefix),
+		      "first label in energy shell %u changed", sum);
+		++*checked;
+		if (prefix) {
+			CHECK(verify_label(parameters, counts, (uint32_t)(prefix - 1u)),
+			      "last label before energy shell %u changed", sum);
+			++*checked;
+		}
+		prefix += convolution_count(counts->quartet, counts->quartet_count,
+			(uint8_t)sum);
+	}
+	return true;
+}
+
+static bool test_cumulative_counts(void)
+{
+	unsigned offset = 0;
+
+	for (unsigned rings = 1; rings <= V34_MAX_RING_COUNT; ++rings) {
+		uint64_t ways[8 * (V34_MAX_RING_COUNT - 1) + 2] = { 1 };
+		uint64_t prefix = 0;
+		unsigned end = 8 * (rings - 1) + 1;
+
+		/* Independent polynomial multiplication, without binomials. */
+		for (unsigned dimension = 0; dimension < 8; ++dimension) {
+			uint64_t next[ARRAY_LENGTH(ways)] = { 0 };
+
+			for (unsigned sum = 0; sum <= dimension * (rings - 1); ++sum)
+				for (unsigned ring = 0; ring < rings; ++ring)
+					next[sum + ring] += ways[sum];
+			memcpy(ways, next, sizeof(ways));
+		}
+		CHECK(offset == 4 * (rings - 1) * (rings - 1) - 2 * (rings - 1),
+		      "cumulative row offset changed for %u rings", rings);
+		for (unsigned sum = 0; sum <= end; ++sum) {
+			CHECK(offset < ARRAY_LENGTH(V34_EIGHT_RING_PREFIXES) &&
+			      V34_EIGHT_RING_PREFIXES[offset++] == prefix,
+			      "cumulative count changed for %u rings, sum %u", rings, sum);
+			prefix += ways[sum];
+		}
+	}
+	CHECK(offset == ARRAY_LENGTH(V34_EIGHT_RING_PREFIXES),
+	      "unused cumulative shell counts");
+	return true;
+}
+
 static bool test_all_supported_parameters(void)
 {
 	struct inverse_counts counts[V34_MAX_RING_COUNT + 1];
@@ -316,6 +376,7 @@ static bool test_all_supported_parameters(void)
 	unsigned int geometry_variants = 0;
 	unsigned int unique_combinations = 0;
 	uint64_t labels_checked = 0;
+	uint64_t boundaries_checked = 0;
 
 	for (size_t symbol_index = 0;
 	     symbol_index < ARRAY_LENGTH(SYMBOL_RATES); ++symbol_index) {
@@ -375,6 +436,10 @@ static bool test_all_supported_parameters(void)
 					combination_seen[parameters.shell_mapper_bits]
 							[parameters.ring_count] = true;
 					unique_combinations++;
+					CHECK(verify_energy_boundaries(&parameters,
+						&counts[parameters.ring_count],
+						&boundaries_checked),
+					      "energy-shell boundary mapping failed");
 					if (parameters.shell_mapper_bits <= 12u) {
 						for (uint32_t label = 0;
 						     label < label_limit; ++label) {
@@ -413,10 +478,12 @@ static bool test_all_supported_parameters(void)
 		}
 	}
 	CHECK(geometry_variants >= 250u && unique_combinations >= 30u &&
-	      labels_checked >= 10000u,
-	      "shell coverage shrank to %u geometries, %u combinations, %llu labels",
+	      labels_checked >= 10000u && boundaries_checked >= 1000u,
+	      "shell coverage shrank to %u geometries, %u combinations, "
+	      "%llu labels, %llu boundaries",
 	      geometry_variants, unique_combinations,
-	      (unsigned long long)labels_checked);
+	      (unsigned long long)labels_checked,
+	      (unsigned long long)boundaries_checked);
 	return true;
 }
 
@@ -508,6 +575,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "small shell order", test_small_shell_order },
+		{ "cumulative counts", test_cumulative_counts },
 		{ "all supported parameters", test_all_supported_parameters },
 		{ "received prefix extension", test_received_prefix_extension },
 		{ "validation", test_validation },
