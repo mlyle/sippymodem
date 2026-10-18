@@ -3,6 +3,8 @@
 #ifndef V32_DATA_QUALITY_H
 #define V32_DATA_QUALITY_H
 
+#include "recovery.h"
+
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -16,13 +18,11 @@ enum {
 
 /* The call owns the recovery budget across receiver restarts. */
 struct v32_data_quality {
+	struct recovery recovery;
 	uint32_t error_sum;
 	uint16_t threshold;
 	uint16_t window_symbols;
-	uint16_t good_windows;
 	uint8_t warmup_windows;
-	uint8_t bad_windows;
-	uint8_t automatic_retrains;
 };
 
 /* A zero-initialized owner starts a new call. Starting after B1 preserves

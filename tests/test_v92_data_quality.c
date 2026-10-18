@@ -30,11 +30,11 @@ static bool test_windows(void)
 	/* At the B1 ceiling is acceptable, not a loss window. */
 	for (unsigned int n = 0; n < 4; ++n)
 		CHECK(window(&quality, V92_DATA_MAX_RMS_ERROR, V92_DATA_QUALITY_OK) &&
-		      quality.bad_windows == 0, "ceiling requested recovery");
+		      quality.recovery.bad_windows == 0, "ceiling requested recovery");
 	for (unsigned int n = 0; n < V92_DATA_QUALITY_BAD_WINDOWS - 1u; ++n)
 		CHECK(window(&quality, 2 * V92_DATA_MAX_RMS_ERROR, V92_DATA_QUALITY_OK),
 		      "short disturbance triggered recovery");
-	CHECK(window(&quality, 0, V92_DATA_QUALITY_OK) && quality.bad_windows == 0,
+	CHECK(window(&quality, 0, V92_DATA_QUALITY_OK) && quality.recovery.bad_windows == 0,
 	      "clean window did not break consecutive loss");
 	for (unsigned int attempt = 0; attempt <= V92_DATA_QUALITY_MAX_RETRAINS; ++attempt) {
 		for (unsigned int n = 0; n < V92_DATA_QUALITY_BAD_WINDOWS; ++n)
@@ -44,10 +44,10 @@ static bool test_windows(void)
 				V92_DATA_QUALITY_RETRAIN), "attempt %u failed", attempt);
 		if (attempt == V92_DATA_QUALITY_MAX_RETRAINS)
 			break;
-		CHECK(quality.automatic_retrains == attempt + 1u &&
+		CHECK(quality.recovery.attempts == attempt + 1u &&
 		      quality.frames == 0 && quality.squared_error == 0 &&
-		      quality.bad_windows == 0 && v92_data_quality_restart(&quality) &&
-		      quality.automatic_retrains == attempt + 1u,
+		      quality.recovery.bad_windows == 0 && v92_data_quality_restart(&quality) &&
+		      quality.recovery.attempts == attempt + 1u,
 		      "reconnect lost attempt budget");
 	}
 	return true;
@@ -60,7 +60,7 @@ static bool test_ambiguity(void)
 	for (unsigned int attempt = 0; attempt < V92_DATA_QUALITY_MAX_RETRAINS; ++attempt) {
 		CHECK(v92_data_quality_observe(&quality, 0, false, false) == V92_DATA_QUALITY_OK &&
 		      v92_data_quality_observe(&quality, 0, true, false) == V92_DATA_QUALITY_RETRAIN &&
-		      quality.automatic_retrains == attempt + 1u &&
+		      quality.recovery.attempts == attempt + 1u &&
 		      quality.frames == 0 && v92_data_quality_restart(&quality),
 		      "ambiguity did not request immediate bounded recovery");
 	}
@@ -70,7 +70,7 @@ static bool test_ambiguity(void)
 	      "exhausted ambiguity replenished budget");
 	CHECK(v92_data_quality_observe(&quality, 100, false, false) == V92_DATA_QUALITY_OK &&
 	      v92_data_quality_restart(&quality) && quality.frames == 0 &&
-	      quality.squared_error == 0 && quality.automatic_retrains == 2,
+	      quality.squared_error == 0 && quality.recovery.attempts == 2,
 	      "restart retained measurement or replenished budget");
 	return true;
 }
@@ -103,21 +103,21 @@ static bool test_invalid(void)
 	      v92_data_quality_retrain(&quality) == V92_DATA_QUALITY_INVALID_ARGUMENT &&
 	      v92_data_quality_observe(&quality, 0, false, false) == V92_DATA_QUALITY_INVALID_ARGUMENT &&
 	      memcmp(&before, &quality, sizeof(quality)) == 0, "invalid window accepted");
-	quality = (struct v92_data_quality){ .automatic_retrains = 3 };
+	quality = (struct v92_data_quality){ .recovery.attempts = 3 };
 	CHECK(!v92_data_quality_is_valid(&quality), "invalid budget accepted");
-	quality = (struct v92_data_quality){ .bad_windows = 3 };
+	quality = (struct v92_data_quality){ .recovery.bad_windows = 3 };
 	CHECK(!v92_data_quality_is_valid(&quality), "invalid loss count accepted");
 	quality = (struct v92_data_quality){ .squared_error = 1 };
 	CHECK(!v92_data_quality_is_valid(&quality), "unowned measurement accepted");
 	quality = (struct v92_data_quality){ .uncertain_window = true };
 	CHECK(!v92_data_quality_is_valid(&quality), "unowned confidence accepted");
 	quality = (struct v92_data_quality){
-		.automatic_retrains = 1, .good_windows = V92_DATA_QUALITY_REARM_WINDOWS,
+		.recovery.attempts = 1, .recovery.good_windows = V92_DATA_QUALITY_REARM_WINDOWS,
 	};
 	CHECK(!v92_data_quality_is_valid(&quality), "unbounded healthy credit accepted");
-	quality = (struct v92_data_quality){ .good_windows = 1 };
+	quality = (struct v92_data_quality){ .recovery.good_windows = 1 };
 	CHECK(!v92_data_quality_is_valid(&quality), "healthy credit without used attempts accepted");
-	quality = (struct v92_data_quality){ .automatic_retrains = 1, .good_windows = 1, .bad_windows = 1 };
+	quality = (struct v92_data_quality){ .recovery.attempts = 1, .recovery.good_windows = 1, .recovery.bad_windows = 1 };
 	CHECK(!v92_data_quality_is_valid(&quality), "concurrent good and bad windows accepted");
 	return true;
 }
@@ -127,10 +127,10 @@ static bool test_training_recovery(void)
 	struct v92_data_quality quality = { .frames = 1, .squared_error = 100.0 };
 
 	CHECK(v92_data_quality_retrain(&quality) == V92_DATA_QUALITY_RETRAIN &&
-	      quality.automatic_retrains == 1u && quality.frames == 0u && quality.squared_error == 0.0 &&
+	      quality.recovery.attempts == 1u && quality.frames == 0u && quality.squared_error == 0.0 &&
 	      v92_data_quality_restart(&quality) &&
 	      v92_data_quality_observe(&quality, 0, true, false) == V92_DATA_QUALITY_RETRAIN &&
-	      quality.automatic_retrains == V92_DATA_QUALITY_MAX_RETRAINS,
+	      quality.recovery.attempts == V92_DATA_QUALITY_MAX_RETRAINS,
 	      "training and data failures did not share their recovery budget");
 	struct v92_data_quality before = quality;
 	CHECK(v92_data_quality_retrain(&quality) == V92_DATA_QUALITY_EXHAUSTED &&
@@ -159,33 +159,33 @@ static bool test_uncertainty(void)
 		}
 		bad = uncertain[n] ? bad + 1u : 0u;
 		if (bad == V92_DATA_QUALITY_BAD_WINDOWS) bad = 0;
-		CHECK(quality.bad_windows == bad && !quality.uncertain_window &&
+		CHECK(quality.recovery.bad_windows == bad && !quality.uncertain_window &&
 			v92_data_quality_is_valid(&quality), "uncertainty window did not clear");
 	}
-	CHECK(quality.automatic_retrains == 1u &&
+	CHECK(quality.recovery.attempts == 1u &&
 		v92_data_quality_observe(&quality, 0, false, true) == V92_DATA_QUALITY_OK &&
 		v92_data_quality_restart(&quality) && !quality.uncertain_window &&
-		quality.automatic_retrains == 1u, "restart lost confidence ownership or retry budget");
+		quality.recovery.attempts == 1u, "restart lost confidence ownership or retry budget");
 	return true;
 }
 
 static bool test_healthy_rearm(void)
 {
 	for (unsigned budget = 1; budget <= V92_DATA_QUALITY_MAX_RETRAINS; ++budget) {
-		struct v92_data_quality quality = { .automatic_retrains = budget };
+		struct v92_data_quality quality = { .recovery.attempts = budget };
 
 		for (unsigned n = 0; n < V92_DATA_QUALITY_REARM_WINDOWS; ++n) {
 			CHECK(window(&quality, V92_DATA_MAX_RMS_ERROR, V92_DATA_QUALITY_OK),
 			      "clean reception failed");
-			CHECK(quality.automatic_retrains ==
+			CHECK(quality.recovery.attempts ==
 			      (n + 1u == V92_DATA_QUALITY_REARM_WINDOWS ? 0u : budget),
 			      "healthy reception rearmed at wrong window %u", n);
 		}
-		CHECK(quality.good_windows == 0 && v92_data_quality_is_valid(&quality),
+		CHECK(quality.recovery.good_windows == 0 && v92_data_quality_is_valid(&quality),
 		      "rearmed state retained healthy credit");
 		for (unsigned n = 0; n < V92_DATA_QUALITY_MAX_RETRAINS; ++n)
 			CHECK(v92_data_quality_observe(&quality, 0, true, false) == V92_DATA_QUALITY_RETRAIN &&
-			      quality.automatic_retrains == n + 1u && v92_data_quality_restart(&quality),
+			      quality.recovery.attempts == n + 1u && v92_data_quality_restart(&quality),
 			      "rearmed recovery did not retain its bound");
 		CHECK(v92_data_quality_observe(&quality, 0, true, false) == V92_DATA_QUALITY_EXHAUSTED,
 		      "continuous failure escaped rearmed limit");
@@ -196,11 +196,11 @@ static bool test_healthy_rearm(void)
 static bool test_interrupted_healthy_credit(void)
 {
 	for (unsigned interruption = 0; interruption < 3; ++interruption) {
-		struct v92_data_quality quality = { .automatic_retrains = V92_DATA_QUALITY_MAX_RETRAINS };
+		struct v92_data_quality quality = { .recovery.attempts = V92_DATA_QUALITY_MAX_RETRAINS };
 
 		for (unsigned n = 1; n < V92_DATA_QUALITY_REARM_WINDOWS; ++n)
 			CHECK(window(&quality, 0, V92_DATA_QUALITY_OK), "healthy setup failed");
-		CHECK(quality.good_windows == V92_DATA_QUALITY_REARM_WINDOWS - 1u,
+		CHECK(quality.recovery.good_windows == V92_DATA_QUALITY_REARM_WINDOWS - 1u,
 		      "healthy credit was not retained");
 		if (interruption == 0) {
 			CHECK(window(&quality, 2 * V92_DATA_MAX_RMS_ERROR, V92_DATA_QUALITY_OK),
@@ -212,9 +212,9 @@ static bool test_interrupted_healthy_credit(void)
 		} else {
 			CHECK(v92_data_quality_restart(&quality), "restart failed");
 		}
-		CHECK(quality.good_windows == 0 &&
-		      quality.automatic_retrains == V92_DATA_QUALITY_MAX_RETRAINS &&
-		      window(&quality, 0, V92_DATA_QUALITY_OK) && quality.good_windows == 1,
+		CHECK(quality.recovery.good_windows == 0 &&
+		      quality.recovery.attempts == V92_DATA_QUALITY_MAX_RETRAINS &&
+		      window(&quality, 0, V92_DATA_QUALITY_OK) && quality.recovery.good_windows == 1,
 		      "interruption retained healthy credit or replenished attempts");
 	}
 	return true;
@@ -222,20 +222,20 @@ static bool test_interrupted_healthy_credit(void)
 
 static bool test_ambiguous_rearm_boundary(void)
 {
-	struct v92_data_quality quality = { .automatic_retrains = V92_DATA_QUALITY_MAX_RETRAINS };
+	struct v92_data_quality quality = { .recovery.attempts = V92_DATA_QUALITY_MAX_RETRAINS };
 
 	for (unsigned n = 1; n < V92_DATA_QUALITY_REARM_WINDOWS; ++n)
 		CHECK(window(&quality, 0, V92_DATA_QUALITY_OK), "healthy setup failed");
 	for (unsigned f = 1; f < V92_DATA_QUALITY_WINDOW_FRAMES; ++f)
 		CHECK(v92_data_quality_observe(&quality, 0, false, false) == V92_DATA_QUALITY_OK &&
-		      quality.automatic_retrains == V92_DATA_QUALITY_MAX_RETRAINS,
+		      quality.recovery.attempts == V92_DATA_QUALITY_MAX_RETRAINS,
 		      "partial clean window replenished attempts");
 	struct v92_data_quality before = quality;
 	CHECK(v92_data_quality_observe(&quality, 0, true, false) == V92_DATA_QUALITY_EXHAUSTED &&
 	      memcmp(&quality, &before, sizeof(quality)) == 0,
 	      "ambiguous final frame rearmed recovery or changed exhausted state");
 	CHECK(v92_data_quality_observe(&quality, 0, false, false) == V92_DATA_QUALITY_OK &&
-	      quality.automatic_retrains == 0 && quality.good_windows == 0,
+	      quality.recovery.attempts == 0 && quality.recovery.good_windows == 0,
 	      "complete clean window did not rearm recovery");
 	return true;
 }

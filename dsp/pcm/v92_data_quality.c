@@ -14,11 +14,11 @@ bool v92_data_quality_is_valid(const struct v92_data_quality *quality)
 	       quality->frames < V92_DATA_QUALITY_WINDOW_FRAMES &&
 	       (quality->frames != 0u ||
 		(quality->squared_error == 0.0 && !quality->uncertain_window)) &&
-	       quality->bad_windows < V92_DATA_QUALITY_BAD_WINDOWS &&
-	       quality->good_windows < V92_DATA_QUALITY_REARM_WINDOWS &&
-	       (quality->good_windows == 0u ||
-		(quality->automatic_retrains != 0u && quality->bad_windows == 0u)) &&
-	       quality->automatic_retrains <= V92_DATA_QUALITY_MAX_RETRAINS;
+	       quality->recovery.bad_windows < V92_DATA_QUALITY_BAD_WINDOWS &&
+	       quality->recovery.good_windows < V92_DATA_QUALITY_REARM_WINDOWS &&
+	       (quality->recovery.good_windows == 0u ||
+		(quality->recovery.attempts != 0u && quality->recovery.bad_windows == 0u)) &&
+	       quality->recovery.attempts <= V92_DATA_QUALITY_MAX_RETRAINS;
 }
 
 bool v92_data_quality_restart(struct v92_data_quality *quality)
@@ -26,7 +26,7 @@ bool v92_data_quality_restart(struct v92_data_quality *quality)
 	if (!v92_data_quality_is_valid(quality))
 		return false;
 	*quality = (struct v92_data_quality){
-		.automatic_retrains = quality->automatic_retrains,
+		.recovery.attempts = quality->recovery.attempts,
 	};
 	return true;
 }
@@ -35,11 +35,11 @@ enum v92_data_quality_result v92_data_quality_retrain(struct v92_data_quality *q
 {
 	if (!v92_data_quality_is_valid(quality))
 		return V92_DATA_QUALITY_INVALID_ARGUMENT;
-	if (quality->automatic_retrains == V92_DATA_QUALITY_MAX_RETRAINS)
+	struct v92_data_quality next = { .recovery = quality->recovery };
+
+	if (!recovery_take(&next.recovery, V92_DATA_QUALITY_MAX_RETRAINS))
 		return V92_DATA_QUALITY_EXHAUSTED;
-	*quality = (struct v92_data_quality){
-		.automatic_retrains = quality->automatic_retrains + 1u,
-	};
+	*quality = next;
 	return V92_DATA_QUALITY_RETRAIN;
 }
 
@@ -62,16 +62,11 @@ enum v92_data_quality_result v92_data_quality_observe(
 		return V92_DATA_QUALITY_INVALID_ARGUMENT;
 	next.uncertain_window |= uncertain;
 	if (++next.frames == V92_DATA_QUALITY_WINDOW_FRAMES) {
-		next.bad_windows = next.squared_error > limit || next.uncertain_window ?
-			next.bad_windows + 1u : 0u;
-		recover |= next.bad_windows == V92_DATA_QUALITY_BAD_WINDOWS;
-		if (next.bad_windows || ambiguous) {
-			next.good_windows = 0u;
-		} else if (next.automatic_retrains &&
-			   ++next.good_windows == V92_DATA_QUALITY_REARM_WINDOWS) {
-			next.automatic_retrains = 0u;
-			next.good_windows = 0u;
-		}
+		bool bad = next.squared_error > limit || next.uncertain_window;
+
+		recovery_window(&next.recovery, bad, !bad && !ambiguous,
+			V92_DATA_QUALITY_BAD_WINDOWS, V92_DATA_QUALITY_REARM_WINDOWS);
+		recover |= next.recovery.bad_windows == V92_DATA_QUALITY_BAD_WINDOWS;
 		next.frames = 0u;
 		next.squared_error = 0.0;
 		next.uncertain_window = false;

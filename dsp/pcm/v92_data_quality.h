@@ -3,6 +3,8 @@
 #ifndef V92_DATA_QUALITY_H
 #define V92_DATA_QUALITY_H
 
+#include "recovery.h"
+
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -41,11 +43,9 @@ enum v92_data_quality_result {
  * None of these conditions licenses delivering ambiguous bits to the host. */
 struct v92_data_quality {
 	double squared_error;
+	struct recovery recovery;
 	uint16_t frames;
-	uint8_t bad_windows;
-	uint8_t automatic_retrains;
 	bool uncertain_window;
-	uint8_t good_windows;
 };
 
 bool v92_data_quality_is_valid(const struct v92_data_quality *quality);

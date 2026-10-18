@@ -8257,7 +8257,7 @@ static bool capture_v92_duplex_data(
 				if (damaged_training && result == PCM_CALL_UNUSABLE_SELECTION && offer->expected == 0u) {
 					CHECK(retrains[0] == V92_DATA_QUALITY_MAX_RETRAINS &&
 					      retrains[1] == V92_DATA_QUALITY_MAX_RETRAINS &&
-					      call->pcm_upstream_quality.automatic_retrains == V92_DATA_QUALITY_MAX_RETRAINS &&
+					      call->pcm_upstream_quality.recovery.attempts == V92_DATA_QUALITY_MAX_RETRAINS &&
 					      call->failed && pcm_call_is_valid(call) && !pcm_call_is_online(call) &&
 					      call->v92_upstream_retry_ceiling == 0u &&
 					      analog_boundary == SIZE_MAX && digital_boundary == SIZE_MAX,
@@ -8491,7 +8491,7 @@ static bool test_v92_trn2u_recovery(void)
 			CHECK(capture_v92_duplex_data(law, 3u, false, &offer, NULL, 0u, &pair),
 			      "law %u damaged TRN2u epochs %u failed recovery", law, epochs);
 			if (!exhausted)
-				CHECK(pair.digital.pcm_upstream_quality.automatic_retrains == epochs &&
+				CHECK(pair.digital.pcm_upstream_quality.recovery.attempts == epochs &&
 				      pair.digital.v92_upstream_retry_ceiling == 0u,
 				      "successful training reset its budget or downshifted an unmeasured rate");
 		}
@@ -8581,7 +8581,7 @@ static bool test_v92_codec_noise_recovery(void)
 			/* The fixture counts both peers' actual retrains. After this
 			 * longer clean run at the recovered rate, the incident budget
 			 * must have rearmed rather than retaining a lifetime count. */
-			CHECK(pair.digital.pcm_upstream_quality.automatic_retrains == 0u,
+			CHECK(pair.digital.pcm_upstream_quality.recovery.attempts == 0u,
 			      "sustained clean PCM data did not rearm the recovery budget");
 			if (recovery) {
 				if (law == G711_LAW_PCMU) {
@@ -8647,17 +8647,17 @@ static bool arm_v92_quality_failure(struct pcm_call *call, unsigned reason)
 	 * owned quality state must not consume the retry during qualification. */
 	bool ambiguous = reason == 1u || reason == 3u;
 	double error = 0.0;
-	call->pcm_upstream_quality.good_windows = 0u;
+	call->pcm_upstream_quality.recovery.good_windows = 0u;
 	if (!ambiguous) {
 		call->pcm_upstream_quality.frames = V92_DATA_QUALITY_WINDOW_FRAMES - 1u;
-		call->pcm_upstream_quality.bad_windows = V92_DATA_QUALITY_BAD_WINDOWS - 1u;
+		call->pcm_upstream_quality.recovery.bad_windows = V92_DATA_QUALITY_BAD_WINDOWS - 1u;
 		if (reason == 0u)
 			error = 2.0 * V92_DATA_QUALITY_WINDOW_FRAMES * V92_PCM_MAPPING_FRAME_SYMBOLS *
 				V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR;
 	}
 	struct v92_data_quality probe = call->pcm_upstream_quality;
 	enum v92_data_quality_result result = v92_data_quality_observe(&probe, error, ambiguous, reason == 2u);
-	CHECK(result == (call->pcm_upstream_quality.automatic_retrains < V92_DATA_QUALITY_MAX_RETRAINS ?
+	CHECK(result == (call->pcm_upstream_quality.recovery.attempts < V92_DATA_QUALITY_MAX_RETRAINS ?
 		V92_DATA_QUALITY_RETRAIN : V92_DATA_QUALITY_EXHAUSTED), "guard fixture did not qualify its failure");
 	call->state.data_path.v92_digital.quality_guard_samples = 1u;
 	call->state.data_path.v92_digital.pending_media_loss = reason == 3u;
@@ -8681,7 +8681,7 @@ static bool v92_quality_backoff_contracts(const struct pcm_call *online)
 			struct pcm_call_data_event event;
 			uint8_t octet;
 
-			call.pcm_upstream_quality.automatic_retrains = budget;
+			call.pcm_upstream_quality.recovery.attempts = budget;
 			CHECK(arm_v92_quality_failure(&call, reason), "quality failure did not qualify");
 			/* Changing host gain during the guard must not requalify a
 			 * failure or forgive its already-established recovery. */
@@ -8698,7 +8698,7 @@ static bool v92_quality_backoff_contracts(const struct pcm_call *online)
 			CHECK(result == (available ? PCM_CALL_OK : PCM_CALL_FAILED) &&
 			      pcm_call_is_valid(&call) && event.kind == PCM_CALL_DATA_NONE &&
 			      call.v92_upstream_retry_ceiling == (available && reason != 3u ? ceiling : online->v92_upstream_retry_ceiling) &&
-			      call.pcm_upstream_quality.automatic_retrains == budget + (available ? 1u : 0u) &&
+			      call.pcm_upstream_quality.recovery.attempts == budget + (available ? 1u : 0u) &&
 			      (available ? call.stage == PCM_CALL_RETRAIN_SILENCE : call.failed) &&
 			      memcmp(&call.v92_digital_phase4_configuration, configuration, sizeof(*configuration)) == 0,
 			      "quality recovery lost its rate ceiling, fixed mapping, or retry budget");
@@ -8728,7 +8728,7 @@ static bool v92_no_path_recovery_contracts(const struct pcm_call *before, uint8_
 						before->state.data_path.v92_digital.upstream.decoder.mapping.cpd;
 					checked.v92_digital_phase4_configuration.cpd.acknowledges_cpu = false;
 				}
-				checked.pcm_upstream_quality.automatic_retrains = budget;
+				checked.pcm_upstream_quality.recovery.attempts = budget;
 				CHECK(pcm_call_is_valid(&checked) && (!fast || pcm_call_start_fast_exchange(&checked) == PCM_CALL_OK) &&
 				      (!closing || pcm_call_start_cleardown(&checked) == PCM_CALL_OK),
 				      "no-path policy setup failed");
@@ -8743,7 +8743,7 @@ static bool v92_no_path_recovery_contracts(const struct pcm_call *before, uint8_
 					CHECK(result == PCM_CALL_OK && owned_result == result &&
 					      pcm_call_is_valid(&checked) && checked.state.data_path.v92_digital.upstream.failed &&
 					      checked.state.data_path.v92_digital.quality_guard_samples &&
-					      checked.pcm_upstream_quality.automatic_retrains == budget &&
+					      checked.pcm_upstream_quality.recovery.attempts == budget &&
 					      checked.v92_upstream_retry_ceiling == before->v92_upstream_retry_ceiling,
 					      "lost paths bypassed the control guard");
 					struct v92_upstream_data_rx stopped = checked.state.data_path.v92_digital.upstream;
@@ -8770,7 +8770,7 @@ static bool v92_no_path_recovery_contracts(const struct pcm_call *before, uint8_
 				      memcmp(&event, &owned_event, sizeof(event)) == 0 &&
 				      pcm_call_is_valid(&checked) && event.kind == PCM_CALL_DATA_NONE &&
 				      checked.protocol == PCM_PROTOCOL_V92 &&
-				      checked.pcm_upstream_quality.automatic_retrains == budget + (available && (fixed || !training)) &&
+				      checked.pcm_upstream_quality.recovery.attempts == budget + (available && (fixed || !training)) &&
 				      checked.v92_upstream_retry_ceiling == (available && !fixed && !fast ? rate - 1u : 0u) &&
 				      (closing ? checked.stage == PCM_CALL_CLOSED && !checked.failed :
 				       available ? checked.stage == PCM_CALL_RETRAIN_SILENCE && !checked.failed : checked.failed) &&
@@ -8778,7 +8778,7 @@ static bool v92_no_path_recovery_contracts(const struct pcm_call *before, uint8_
 				      "no-path recovery lost budget, selection, or payload clamp: law=%u training=%u fixed=%u fast=%u budget=%u result=%s stage=%u valid=%u ceiling=%u retrains=%u compare=%d/%d event=%u failed=%u frames=%zu",
 				      before->law, training, fixed, fast, budget, pcm_call_result_name(result), checked.stage,
 				      pcm_call_is_valid(&checked), checked.v92_upstream_retry_ceiling,
-				      checked.pcm_upstream_quality.automatic_retrains, memcmp(&checked, &owned, sizeof(checked)),
+				      checked.pcm_upstream_quality.recovery.attempts, memcmp(&checked, &owned, sizeof(checked)),
 				      memcmp(&event, &owned_event, sizeof(event)), event.kind, checked.failed,
 				      (size_t)before->state.data_path.v92_digital.upstream.line.received_frames);
 			}
@@ -8855,7 +8855,7 @@ static bool v92_minimum_policy_contracts(const struct pcm_call *boundary)
 						PCM_CALL_V92_UPSTREAM_CONFIGURED;
 					call.v92_digital_phase4_configuration.cpd = cpd;
 				}
-				call.pcm_upstream_quality.automatic_retrains = budget;
+				call.pcm_upstream_quality.recovery.attempts = budget;
 				CHECK(arm_v92_quality_failure(&call, missing ? 3u : 0u) &&
 				      pcm_call_is_valid(&call), "minimum-rate policy fixture is invalid");
 				enum pcm_call_result result = pcm_call_data_octet(&call,
@@ -8868,7 +8868,7 @@ static bool v92_minimum_policy_contracts(const struct pcm_call *boundary)
 				CHECK(result == (recover ? PCM_CALL_OK : PCM_CALL_FAILED) &&
 				      pcm_call_is_valid(&call) && event.kind == PCM_CALL_DATA_NONE &&
 				      call.local_info1.v92_digital.pcm_upstream_supported == !fallback &&
-				      call.pcm_upstream_quality.automatic_retrains == budget + available &&
+				      call.pcm_upstream_quality.recovery.attempts == budget + available &&
 				      call.protocol == PCM_PROTOCOL_V92 &&
 				      call.enabled_downstream_rate_mask == boundary->enabled_downstream_rate_mask &&
 				      (recover ? call.stage == PCM_CALL_RETRAIN_SILENCE : call.failed),
@@ -8999,7 +8999,7 @@ static bool run_v92_b1_recovery(enum g711_law law, uint8_t rate,
 			      "B1 recovery released unqualified upstream payload");
 			if (result == PCM_CALL_FAILED && damaged_epochs > V92_DATA_QUALITY_MAX_RETRAINS) {
 				CHECK(side == 1u && retrains == V92_DATA_QUALITY_MAX_RETRAINS && call->failed &&
-				      call->pcm_upstream_quality.automatic_retrains == retrains &&
+				      call->pcm_upstream_quality.recovery.attempts == retrains &&
 				      call->v92_upstream_retry_ceiling == 0u && !pcm_call_is_online(call),
 				      "persistent B1 damage escaped its budget or changed rate");
 				return true;
@@ -9022,7 +9022,7 @@ static bool run_v92_b1_recovery(enum g711_law law, uint8_t rate,
 			uint8_t expected_rate = damaged_epochs ? rate : rate - 1u;
 			CHECK(retrains == expected_retrains &&
 			      calls[1].v92_upstream_retry_ceiling == (damaged_epochs ? 0u : expected_rate) &&
-			      calls[1].pcm_upstream_quality.automatic_retrains == (damaged_epochs ? retrains : 0u) &&
+			      calls[1].pcm_upstream_quality.recovery.attempts == (damaged_epochs ? retrains : 0u) &&
 			      calls[1].state.data_path.v92_digital.upstream.decoder.mapping.cpd.data_rate_number == expected_rate &&
 			      calls[0].state.data_path.v92_analog.upstream.encoder.mapping.cpd.data_rate_number == expected_rate,
 			      "B1 recovery changed its rate policy or budget: law=%u rate=%u epochs=%u retrains=%u",
@@ -9088,8 +9088,8 @@ static bool v92_peer_retrain_quality_guard(const struct pcm_call *boundary, int1
 			 * retrain beginning at the worst quality boundary can qualify. */
 			call.pcm_upstream_quality = (struct v92_data_quality){
 				.frames = V92_DATA_QUALITY_WINDOW_FRAMES - 1u,
-				.bad_windows = V92_DATA_QUALITY_BAD_WINDOWS - 1u,
-				.automatic_retrains = budget,
+				.recovery.bad_windows = V92_DATA_QUALITY_BAD_WINDOWS - 1u,
+				.recovery.attempts = budget,
 				.squared_error = 2.0 * V92_DATA_QUALITY_WINDOW_FRAMES *
 					V92_PCM_MAPPING_FRAME_SYMBOLS * V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
 			};
@@ -9106,7 +9106,7 @@ static bool v92_peer_retrain_quality_guard(const struct pcm_call *boundary, int1
 				uint8_t input = encode_octet(call.law, sample);
 				CHECK(pcm_call_data_octet(&call, input, decode_octet(call.law, input), true, NULL,
 					&octet, &event) == PCM_CALL_OK && pcm_call_is_valid(&call) &&
-				      call.pcm_upstream_quality.automatic_retrains == budget &&
+				      call.pcm_upstream_quality.recovery.attempts == budget &&
 				      call.v92_upstream_retry_ceiling == boundary->v92_upstream_retry_ceiling,
 				      "peer full retrain consumed quality recovery at sample %u", clock);
 				if (call.stage == PCM_CALL_DATA_PATH)
@@ -9209,7 +9209,7 @@ static bool test_v92_quality_rate_recovery(void)
 				uint8_t expected = fixed ? fixed_rate : rates[epoch + 1u];
 				CHECK(frames[0] >= 200u && frames[1] >= 200u &&
 				      pcm_call_is_online(&pair.analog) && pcm_call_is_online(&pair.digital) &&
-				      pair.digital.pcm_upstream_quality.automatic_retrains == epoch + 1u &&
+				      pair.digital.pcm_upstream_quality.recovery.attempts == epoch + 1u &&
 				      pair.digital.state.data_path.v92_digital.upstream.decoder.mapping.cpd.data_rate_number == expected &&
 				      pair.analog.state.data_path.v92_analog.upstream.encoder.mapping.cpd.data_rate_number == expected &&
 				      pair.digital.v92_upstream_retry_ceiling == (fixed || epoch == 0u ? 0u : rates[epoch] - 1u),
@@ -9286,7 +9286,7 @@ static bool v92_rate_call_sample(struct v92_rate_call *test, int16_t sample)
 	if (test->data_started && data.kind == PCM_CALL_PCM_UPSTREAM_FRAME)
 		CHECK(v92_rate_payload(data.frame.pcm_upstream.bits, data.frame.pcm_upstream.bit_count,
 			&test->upstream_frames), "upstream payload did not resume");
-	CHECK(call->pcm_upstream_quality.automatic_retrains == test->quality_retrains,
+	CHECK(call->pcm_upstream_quality.recovery.attempts == test->quality_retrains,
 	      "legitimate Ru consumed quality recovery budget");
 	uint64_t transmitted = test->transmitted++;
 	if (result == PCM_CALL_CLEARDOWN_COMPLETE) {
@@ -9366,7 +9366,7 @@ static bool v92_rejected_control_recovery(const struct pcm_call *online, int16_t
 		struct pcm_call call = *online;
 		unsigned guard_started = 0;
 		bool recovered = false;
-		call.pcm_upstream_quality.automatic_retrains = budget;
+		call.pcm_upstream_quality.recovery.attempts = budget;
 		for (unsigned clock = 0; clock < 8000u; ++clock) {
 			struct pcm_call_data_event event;
 			uint8_t octet;
@@ -9388,7 +9388,7 @@ static bool v92_rejected_control_recovery(const struct pcm_call *online, int16_t
 				      pcm_call_is_valid(&call) &&
 				      (budget < V92_DATA_QUALITY_MAX_RETRAINS ?
 					(result == PCM_CALL_OK && call.stage == PCM_CALL_RETRAIN_SILENCE &&
-					 call.pcm_upstream_quality.automatic_retrains == budget + 1u) :
+					 call.pcm_upstream_quality.recovery.attempts == budget + 1u) :
 					(result == PCM_CALL_FAILED && call.failed)),
 				      "false Ru lost its bounded quality recovery/budget");
 				recovered = true;
@@ -9439,7 +9439,7 @@ static bool v92_interrupted_rate_recovery(const struct v92_rate_call *test,
 		      !call.v92_rate_renegotiation_active && !call.rate_renegotiation_deadline_armed &&
 		      !call.b1_deadline_armed && !call.failed && pcm_call_is_valid(&call) &&
 		      call.protocol == PCM_PROTOCOL_V92 && !pcm_call_is_online(&call) &&
-		      call.pcm_upstream_quality.automatic_retrains == test->quality_retrains &&
+		      call.pcm_upstream_quality.recovery.attempts == test->quality_retrains &&
 		      memcmp(&call.local_info0, &test->call.local_info0, sizeof(call.local_info0)) == 0 &&
 		      memcmp(&call.peer_info0, &test->call.peer_info0, sizeof(call.peer_info0)) == 0,
 		      "failed rate exchange did not preserve the call through full retrain");
@@ -9562,7 +9562,7 @@ static bool v92_unusable_cpu_recovery(const struct v92_rate_call *test,
 	      !call.v92_rate_renegotiation_active && !call.rate_renegotiation_deadline_armed &&
 	      !call.failed && pcm_call_is_valid(&call) && call.protocol == PCM_PROTOCOL_V92 &&
 	      !pcm_call_is_online(&call) &&
-	      call.pcm_upstream_quality.automatic_retrains == test->quality_retrains,
+	      call.pcm_upstream_quality.recovery.attempts == test->quality_retrains,
 	      "unusable CPu did not preserve the call through full retrain");
 	struct pcm_call_observation observation;
 	uint8_t generated;
@@ -9576,7 +9576,7 @@ static bool run_v92_rate_request(struct pcm_call *online,
 {
 	const enum g711_law law = online->law;
 	struct v92_rate_call test = {
-		.call = *online, .quality_retrains = online->pcm_upstream_quality.automatic_retrains,
+		.call = *online, .quality_retrains = online->pcm_upstream_quality.recovery.attempts,
 		.upstream_delay = *delay,
 	};
 	const struct pcm_call_v92_digital_data *path = &online->state.data_path.v92_digital;
@@ -9861,7 +9861,7 @@ static bool test_v92_remote_rate_request(void)
 				/* A legitimate exchange must work even after automatic
 				 * recovery attempts have been exhausted, without resetting them. */
 				if (epoch == 1u)
-					pair.digital.pcm_upstream_quality.automatic_retrains = V92_DATA_QUALITY_MAX_RETRAINS;
+					pair.digital.pcm_upstream_quality.recovery.attempts = V92_DATA_QUALITY_MAX_RETRAINS;
 				CHECK(run_v92_rate_request(&pair.digital, upstream, &pair.analog.upstream_transmit_delay, epoch, false),
 				      "law %u rate %u Ru epoch %u failed", law, rates[i], epoch);
 			}
@@ -9910,7 +9910,7 @@ static bool v92_fast_boundary_checks(const struct pcm_call *snapshot, uint8_t re
 	CHECK(pcm_call_is_valid(&call) && pcm_call_data_octet(&call, received, decode_octet(call.law, received),
 		true, NULL, &generated, &event) == PCM_CALL_OK && call.stage == PCM_CALL_RETRAIN_SILENCE &&
 	      call.retrain_active && !call.failed && pcm_call_is_valid(&call) && event.kind == PCM_CALL_DATA_NONE &&
-	      call.pcm_upstream_quality.automatic_retrains == snapshot->pcm_upstream_quality.automatic_retrains &&
+	      call.pcm_upstream_quality.recovery.attempts == snapshot->pcm_upstream_quality.recovery.attempts &&
 	      memcmp(&call.local_info0, &snapshot->local_info0, sizeof(call.local_info0)) == 0 &&
 	      memcmp(&call.peer_info0, &snapshot->peer_info0, sizeof(call.peer_info0)) == 0,
 	      "fast timeout lost its bounded full-retrain recovery");
@@ -9957,7 +9957,7 @@ static bool run_v92_fast_response(struct v92_online_pair *pair, unsigned hangup)
 	      pcm_downstream_rx_init(&control, PCM_PROTOCOL_V92, &downstream_mapping, V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK &&
 	      v92_upstream_data_tx_start_rm(upstream) == V92_UPSTREAM_DATA_TX_OK,
 	      "fast response fixture did not initialize");
-	unsigned old_budget = call->pcm_upstream_quality.automatic_retrains;
+	unsigned old_budget = call->pcm_upstream_quality.recovery.attempts;
 	for (unsigned clock = 0; clock < 16000u; ++clock) {
 		uint8_t ar, dr, transmitted;
 		int16_t sample;
@@ -9993,7 +9993,7 @@ static bool run_v92_fast_response(struct v92_online_pair *pair, unsigned hangup)
 			return true;
 		}
 		CHECK(result == PCM_CALL_OK && pcm_call_is_valid(call) && call->stage == PCM_CALL_DATA_PATH &&
-		      call->pcm_upstream_quality.automatic_retrains == old_budget,
+		      call->pcm_upstream_quality.recovery.attempts == old_budget,
 		      "fast response failed at %u: %s stage=%u fast=%u", clock, pcm_call_result_name(result),
 		      call->stage, call->state.data_path.v92_digital.fast.stage);
 		struct pcm_call_v92_fast_exchange *fast = &call->state.data_path.v92_digital.fast;
@@ -10115,7 +10115,7 @@ static bool v92_fast_analog_contracts(const struct pcm_call *snapshot, uint8_t r
 	call.state.data_path.v92_analog.fast.deadline_remaining = 1u;
 	CHECK(pcm_call_data_octet(&call, received, decode_octet(call.law, received), true, NULL, &generated, &event) == PCM_CALL_OK &&
 	      call.stage == PCM_CALL_RETRAIN_SILENCE && pcm_call_is_valid(&call) && event.kind == PCM_CALL_DATA_NONE &&
-	      call.pcm_upstream_quality.automatic_retrains == snapshot->pcm_upstream_quality.automatic_retrains,
+	      call.pcm_upstream_quality.recovery.attempts == snapshot->pcm_upstream_quality.recovery.attempts,
 	      "analogue fast timeout did not retain bounded recovery");
 	call = *snapshot;
 	call.state.data_path.v92_analog.fast.record_index = sizeof(call.state.data_path.v92_analog.fast.record) * 8u + 1u;
@@ -10636,7 +10636,7 @@ static bool test_v92_rate_request(void)
 				bool e2u_confirmed = false;
 				pair.analog.v92_analog_phase4_configuration.suvu.request_silence = (requests & 1u) != 0u;
 				pair.digital.v92_digital_phase4_configuration.suvd.request_silence = (requests & 2u) != 0u;
-				pair.digital.pcm_upstream_quality.automatic_retrains = V92_DATA_QUALITY_MAX_RETRAINS;
+				pair.digital.pcm_upstream_quality.recovery.attempts = V92_DATA_QUALITY_MAX_RETRAINS;
 				unsigned initiator = epoch % 3u == 1u ? 1u : 0u;
 				CHECK(pcm_call_start_rate_renegotiation(calls[initiator]) == PCM_CALL_OK &&
 				      (epoch % 3u != 2u || pcm_call_start_rate_renegotiation(&pair.digital) == PCM_CALL_OK),
@@ -10758,7 +10758,7 @@ static bool test_v92_rate_request(void)
 				      pcm_call_is_online(&pair.analog) && pcm_call_is_online(&pair.digital) &&
 				      !pair.analog.v92_rate_renegotiation_active && !pair.digital.v92_rate_renegotiation_active &&
 				      !pair.analog.rate_renegotiation_deadline_armed && !pair.digital.rate_renegotiation_deadline_armed &&
-				      pair.digital.pcm_upstream_quality.automatic_retrains == V92_DATA_QUALITY_MAX_RETRAINS,
+				      pair.digital.pcm_upstream_quality.recovery.attempts == V92_DATA_QUALITY_MAX_RETRAINS,
 				      "rate exchange did not return to ordered duplex data: law %u rate %u epoch %u "
 				      "frames %u/%u pause %u/%u resume %u/%u damaged %u E2u-confirmed %u checks %u/%u",
 				      law, rates[i], epoch, frames[0], frames[1], paused[0], paused[1], resumed[0], resumed[1],
@@ -10812,7 +10812,7 @@ static bool run_v92_fast_rate_pair(struct v92_online_pair *pair, unsigned fast_r
 	bool entered[2] = { false, false }, rate_seen[2] = { false, false };
 	uint8_t expected[V90_CP_FRAME_INTERVALS + PCM_R_SEQUENCE_SYMBOLS];
 	unsigned expected_count = 0, checked = 0;
-	pair->digital.pcm_upstream_quality.automatic_retrains = V92_DATA_QUALITY_MAX_RETRAINS;
+	pair->digital.pcm_upstream_quality.recovery.attempts = V92_DATA_QUALITY_MAX_RETRAINS;
 	unsigned fast_start = offset < 0 ? (unsigned)-offset : 0u;
 	unsigned rate_start = offset > 0 ? (unsigned)offset : 0u;
 	for (unsigned clock = 0; clock < 40000u; ++clock) {
@@ -10879,7 +10879,7 @@ static bool run_v92_fast_rate_pair(struct v92_online_pair *pair, unsigned fast_r
 			      rate_seen[0] && rate_seen[1] && pcm_call_is_online(calls[0]) && pcm_call_is_online(calls[1]) &&
 			      !calls[0]->retrain_active && !calls[1]->retrain_active &&
 			      !calls[0]->rate_renegotiation_deadline_armed && !calls[1]->rate_renegotiation_deadline_armed &&
-			      pair->digital.pcm_upstream_quality.automatic_retrains == V92_DATA_QUALITY_MAX_RETRAINS,
+			      pair->digital.pcm_upstream_quality.recovery.attempts == V92_DATA_QUALITY_MAX_RETRAINS,
 			      "collision did not complete rate exchange");
 			return true;
 		}
@@ -11563,7 +11563,7 @@ static bool run_v92_clipping_recovery(bool persistent)
 				if (result != PCM_CALL_OK) {
 					CHECK(persistent && side == 0 && result == PCM_CALL_FAILED &&
 					      injected == V92_DATA_QUALITY_MAX_RETRAINS + 1u &&
-					      analog.pcm_upstream_quality.automatic_retrains == V92_DATA_QUALITY_MAX_RETRAINS &&
+					      analog.pcm_upstream_quality.recovery.attempts == V92_DATA_QUALITY_MAX_RETRAINS &&
 					      pcm_call_is_valid(&analog) && pcm_call_has_failed(&analog),
 					      "clipping recovery failed unexpectedly: side %u injection %u result %s", side, injected,
 					      pcm_call_result_name(result));
@@ -11584,7 +11584,7 @@ static bool run_v92_clipping_recovery(bool persistent)
 		}
 		channel_transmit(&wire, tx[0], tx[1]);
 		if (frames[0] >= 20u && frames[1] >= 20u) {
-			CHECK(!persistent && injected == 1 && analog.pcm_upstream_quality.automatic_retrains == 1 &&
+			CHECK(!persistent && injected == 1 && analog.pcm_upstream_quality.recovery.attempts == 1 &&
 			      pcm_call_is_online(&analog) && pcm_call_is_online(&digital), "recovery lost its retry budget");
 			return true;
 		}

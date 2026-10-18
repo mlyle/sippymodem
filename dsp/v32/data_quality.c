@@ -30,7 +30,7 @@ bool v32_data_quality_start(struct v32_data_quality *quality, unsigned bit_rate)
 	*quality = (struct v32_data_quality){
 		.threshold = threshold,
 		.warmup_windows = V32_QUALITY_WARMUP_WINDOWS,
-		.automatic_retrains = quality->automatic_retrains,
+		.recovery.attempts = quality->recovery.attempts,
 	};
 	return true;
 }
@@ -57,24 +57,11 @@ bool v32_data_quality_observe(struct v32_data_quality *quality,
 			--quality->warmup_windows;
 			continue;
 		}
-		if (bad) {
-			quality->good_windows = 0;
-			if (quality->bad_windows < V32_QUALITY_BAD_WINDOWS)
-				++quality->bad_windows;
-		} else {
-			quality->bad_windows = 0;
-			if (quality->automatic_retrains != 0 &&
-			    ++quality->good_windows == V32_QUALITY_REARM_WINDOWS) {
-				quality->good_windows = 0;
-				quality->automatic_retrains = 0;
-			}
-		}
-		if (quality->bad_windows == V32_QUALITY_BAD_WINDOWS &&
-		    quality->automatic_retrains < V32_QUALITY_MAX_RETRAINS) {
-			++quality->automatic_retrains;
-			quality->bad_windows = 0;
+		recovery_window(&quality->recovery, bad, !bad,
+			V32_QUALITY_BAD_WINDOWS, V32_QUALITY_REARM_WINDOWS);
+		if (quality->recovery.bad_windows == V32_QUALITY_BAD_WINDOWS &&
+		    recovery_take(&quality->recovery, V32_QUALITY_MAX_RETRAINS))
 			return true;
-		}
 	}
 	return false;
 }

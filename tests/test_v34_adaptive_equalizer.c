@@ -1347,7 +1347,7 @@ static bool test_data_quality_policy(void)
 	      "saturated minimum-rate baseline was not disabled");
 	CHECK(publish_quality_window(&quality, &measurement, INT16_MAX) ==
 		      V34_DATA_QUALITY_OK &&
-	      quality.bad_windows == 0,
+	      quality.recovery.bad_windows == 0,
 	      "disabled minimum-rate quality requested recovery");
 	measurement.decision_metric = 0;
 	measurement.window_position = 1;
@@ -1384,15 +1384,15 @@ static bool test_data_quality_policy(void)
 	measurement.window_position = 0;
 	CHECK(v34_data_quality_observe(&quality, &measurement) ==
 		      V34_DATA_QUALITY_FREEZE_TIMING &&
-	      quality.bad_windows == 1 && quality.window_position == 0 &&
+	      quality.recovery.bad_windows == 1 && quality.window_position == 0 &&
 	      quality.timing_frozen &&
 	      v34_data_quality_observe(&quality, &measurement) ==
 		      V34_DATA_QUALITY_OK &&
-	      quality.bad_windows == 1,
+	      quality.recovery.bad_windows == 1,
 	      "one bad window was not consumed exactly once");
 	CHECK(publish_quality_window(&quality, &measurement, 66) ==
 		      V34_DATA_QUALITY_OK &&
-	      quality.bad_windows == 0,
+	      quality.recovery.bad_windows == 0,
 	      "a recovered window did not clear quality loss");
 	for (unsigned int window = 0;
 	     window < quality.loss_windows; ++window) {
@@ -1405,7 +1405,7 @@ static bool test_data_quality_policy(void)
 			      expected,
 		      "quality loss result changed at window %u", window);
 	}
-	CHECK(!quality.active && quality.automatic_retrains == 1 &&
+	CHECK(!quality.active && quality.recovery.attempts == 1 &&
 	      v34_data_quality_is_valid(&quality),
 	      "first quality retrain did not preserve a valid budget");
 
@@ -1429,7 +1429,7 @@ static bool test_data_quality_policy(void)
 			      window);
 		}
 	}
-	CHECK(quality.automatic_retrains == V34_DATA_QUALITY_MAX_RETRAINS &&
+	CHECK(quality.recovery.attempts == V34_DATA_QUALITY_MAX_RETRAINS &&
 	      !quality.active,
 	      "quality retrain budget did not saturate");
 	measurement.window_position = 1;
@@ -1446,10 +1446,10 @@ static bool test_data_quality_policy(void)
 				       V34_DATA_QUALITY_OK),
 		      "exhausted quality budget retriggered at %u", window);
 	CHECK(quality.active &&
-	      quality.bad_windows == quality.loss_windows &&
+	      quality.recovery.bad_windows == quality.loss_windows &&
 	      publish_quality_window(&quality, &measurement, 166) ==
 		      V34_DATA_QUALITY_RESUME_TIMING &&
-	      quality.bad_windows == 0 && !quality.timing_frozen,
+	      quality.recovery.bad_windows == 0 && !quality.timing_frozen,
 	      "exhausted quality monitor did not retain recovery evidence");
 	return true;
 }
@@ -1496,11 +1496,11 @@ static bool test_data_quality_duration(void)
 					      "quality recovery fired at rate %u pass %u window %u",
 					      rate, pass, window);
 					if (recovered)
-						CHECK(quality.bad_windows == 0,
+						CHECK(quality.recovery.bad_windows == 0,
 						      "below-threshold window retained bad credit");
 				}
 			}
-			CHECK(!quality.active && quality.automatic_retrains == 1 &&
+			CHECK(!quality.active && quality.recovery.attempts == 1 &&
 			      v34_data_quality_is_valid(&quality),
 			      "duration recovery left invalid state at rate %u", rate);
 		}
@@ -1578,7 +1578,7 @@ static bool test_paired_data_quality_windows(void)
 
 			measurement.window_position = (uint16_t)(1022u + phase);
 			CHECK(v34_data_quality_observe(&quality, &measurement) ==
-				      V34_DATA_QUALITY_OK && quality.bad_windows == window,
+				      V34_DATA_QUALITY_OK && quality.recovery.bad_windows == window,
 			      "an incomplete paired window changed quality");
 			measurement.window_position = phase;
 			measurement.decision_metric = 480;
@@ -1586,10 +1586,10 @@ static bool test_paired_data_quality_windows(void)
 			      "paired quality phase %u lost completed window %u", phase, window);
 			if (expected != V34_DATA_QUALITY_RETRAIN)
 				CHECK(v34_data_quality_observe(&quality, &measurement) ==
-					      V34_DATA_QUALITY_OK && quality.bad_windows == window + 1,
+					      V34_DATA_QUALITY_OK && quality.recovery.bad_windows == window + 1,
 				      "paired quality counted a window twice");
 		}
-		CHECK(!quality.active && quality.automatic_retrains == 1 &&
+		CHECK(!quality.active && quality.recovery.attempts == 1 &&
 		      v34_data_quality_is_valid(&quality),
 		      "paired quality did not retain its recovery budget");
 	}
@@ -1600,7 +1600,7 @@ static bool test_data_quality_rearm(void)
 {
 	for (unsigned budget = 1; budget <= V34_DATA_QUALITY_MAX_RETRAINS; ++budget) {
 		struct v34_adaptive_equalizer_quality measurement = { .decision_metric = 40 };
-		struct v34_data_quality quality = { .automatic_retrains = budget };
+		struct v34_data_quality quality = { .recovery.attempts = budget };
 
 		CHECK(v34_data_quality_start(&quality, V34_SYMBOL_RATE_3429, 12,
 			      &measurement, 1) == V34_DATA_QUALITY_OK,
@@ -1609,10 +1609,10 @@ static bool test_data_quality_rearm(void)
 			measurement.window_position = 1;
 			for (unsigned repeat = 0; repeat < 4; ++repeat)
 				CHECK(v34_data_quality_observe(&quality, &measurement) ==
-					      V34_DATA_QUALITY_OK && quality.automatic_retrains == budget,
+					      V34_DATA_QUALITY_OK && quality.recovery.attempts == budget,
 				      "partial or unchanged measurement rearmed recovery");
 			CHECK(publish_quality_window(&quality, &measurement, 40) ==
-				      V34_DATA_QUALITY_OK && quality.automatic_retrains ==
+				      V34_DATA_QUALITY_OK && quality.recovery.attempts ==
 				      (window == V34_DATA_QUALITY_REARM_WINDOWS ? 0 : budget) &&
 				      v34_data_quality_is_valid(&quality),
 			      "recovery budget did not rearm at the clean-window boundary: %u", window);
@@ -1636,7 +1636,7 @@ static bool test_data_quality_rearm(void)
 	}
 	for (unsigned interruption = 0; interruption < 4; ++interruption) {
 		struct v34_adaptive_equalizer_quality measurement = { .decision_metric = 40 };
-		struct v34_data_quality quality = { .automatic_retrains = 2 };
+		struct v34_data_quality quality = { .recovery.attempts = 2 };
 
 		CHECK(v34_data_quality_start(&quality, V34_SYMBOL_RATE_3429, 12,
 			      &measurement, 1) == V34_DATA_QUALITY_OK, "interruption fixture did not start");
@@ -1646,7 +1646,7 @@ static bool test_data_quality_rearm(void)
 		if (interruption < 2) {
 			/* Frozen timing below the retrain threshold is not healthy evidence. */
 			CHECK(publish_quality_window(&quality, &measurement, interruption ? 200 : 91) ==
-				      V34_DATA_QUALITY_FREEZE_TIMING && quality.automatic_retrains == 2,
+				      V34_DATA_QUALITY_FREEZE_TIMING && quality.recovery.attempts == 2,
 			      "uncertain or bad quality rearmed recovery");
 		} else {
 			measurement.decision_metric = interruption == 3 ? 5000 : 40;
@@ -1659,7 +1659,7 @@ static bool test_data_quality_rearm(void)
 			CHECK(publish_quality_window(&quality, &measurement, 40) ==
 				      (window == 1 && interruption < 2 ?
 				       V34_DATA_QUALITY_RESUME_TIMING : V34_DATA_QUALITY_OK) &&
-				      quality.automatic_retrains ==
+				      quality.recovery.attempts ==
 				      (window == V34_DATA_QUALITY_REARM_WINDOWS && interruption != 3 ? 0 : 2),
 			      "interruption %u did not clear clean credit at window %u", interruption, window);
 		}
@@ -1736,7 +1736,7 @@ static bool test_data_quality_transactionality(void)
 		      V34_DATA_QUALITY_INVALID_ARGUMENT &&
 	      memcmp(&quality, &saved, sizeof(quality)) == 0,
 	      "invalid measurement changed the quality owner");
-	quality.automatic_retrains = V34_DATA_QUALITY_MAX_RETRAINS + 1u;
+	quality.recovery.attempts = V34_DATA_QUALITY_MAX_RETRAINS + 1u;
 	CHECK(!v34_data_quality_is_valid(&quality),
 	      "invalid quality retrain count was accepted");
 	quality = saved;
@@ -1745,12 +1745,12 @@ static bool test_data_quality_transactionality(void)
 	      "invalid completed-window position was accepted");
 	for (unsigned invalid = 0; invalid < 6; ++invalid) {
 		quality = saved;
-		quality.automatic_retrains = 1;
-		quality.good_windows = 1;
+		quality.recovery.attempts = 1;
+		quality.recovery.good_windows = 1;
 		switch (invalid) {
-		case 0: quality.good_windows = V34_DATA_QUALITY_REARM_WINDOWS; break;
-		case 1: quality.automatic_retrains = 0; break;
-		case 2: quality.bad_windows = 1; break;
+		case 0: quality.recovery.good_windows = V34_DATA_QUALITY_REARM_WINDOWS; break;
+		case 1: quality.recovery.attempts = 0; break;
+		case 2: quality.recovery.bad_windows = 1; break;
 		case 3: quality.threshold = 0; break;
 		case 4: quality.timing_frozen = true; break;
 		case 5: quality.active = false; break;

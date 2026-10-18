@@ -107,12 +107,12 @@ bool v34_data_quality_is_valid(const struct v34_data_quality *quality)
 	if (quality == NULL ||
 	    (quality->loss_windows != 0 &&
 	     (quality->loss_windows < 3 || quality->loss_windows > 7)) ||
-	    quality->bad_windows > quality->loss_windows ||
-	    quality->automatic_retrains > V34_DATA_QUALITY_MAX_RETRAINS ||
-	    quality->good_windows >= V34_DATA_QUALITY_REARM_WINDOWS ||
-	    (quality->good_windows != 0 &&
-	     (!quality->active || quality->automatic_retrains == 0 ||
-	      quality->bad_windows != 0 || quality->threshold == 0 ||
+	    quality->recovery.bad_windows > quality->loss_windows ||
+	    quality->recovery.attempts > V34_DATA_QUALITY_MAX_RETRAINS ||
+	    quality->recovery.good_windows >= V34_DATA_QUALITY_REARM_WINDOWS ||
+	    (quality->recovery.good_windows != 0 &&
+	     (!quality->active || quality->recovery.attempts == 0 ||
+	      quality->recovery.bad_windows != 0 || quality->threshold == 0 ||
 	      quality->timing_frozen)) ||
 	    quality->window_position >= V34_ADAPTIVE_EQUALIZER_QUALITY_SYMBOLS ||
 	    quality->baseline < 0 || quality->threshold < 0 ||
@@ -123,7 +123,7 @@ bool v34_data_quality_is_valid(const struct v34_data_quality *quality)
 	if (quality->active)
 		return quality->loss_windows != 0;
 	return quality->baseline == 0 && quality->threshold == 0 &&
-	       quality->bad_windows == 0 && quality->window_position == 0 &&
+	       quality->recovery.bad_windows == 0 && quality->window_position == 0 &&
 	       !quality->timing_frozen;
 }
 
@@ -222,8 +222,8 @@ enum v34_data_quality_result v34_data_quality_start(
 	 * only on the second symbol of each pair, doubling its duration. */
 	next.loss_windows = (uint8_t)((loss_windows(symbol_rate) +
 		symbols_per_decision - 1u) / symbols_per_decision);
-	next.bad_windows = 0;
-	next.good_windows = 0;
+	next.recovery.bad_windows = 0;
+	next.recovery.good_windows = 0;
 	next.window_position = measurement->window_position;
 	next.timing_frozen = false;
 	next.active = true;
@@ -274,27 +274,18 @@ enum v34_data_quality_result v34_data_quality_observe(
 	if (measurement->window_position < next.window_position) {
 		timing_result = update_timing_gate(
 			&next, measurement->decision_metric);
-		if (next.threshold == 0 ||
-		    measurement->decision_metric < next.threshold) {
-			next.bad_windows = 0;
-		} else if (next.bad_windows < next.loss_windows) {
-			next.bad_windows++;
-		}
-		if (next.threshold == 0 || next.bad_windows != 0 || next.timing_frozen) {
-			next.good_windows = 0;
-		} else if (next.automatic_retrains != 0 &&
-			   ++next.good_windows == V34_DATA_QUALITY_REARM_WINDOWS) {
-			next.automatic_retrains = 0;
-			next.good_windows = 0;
-		}
+		bool bad = next.threshold != 0 &&
+			measurement->decision_metric >= next.threshold;
+
+		recovery_window(&next.recovery, bad,
+			next.threshold != 0 && !bad && !next.timing_frozen,
+			next.loss_windows, V34_DATA_QUALITY_REARM_WINDOWS);
 	}
 	next.window_position = measurement->window_position;
-	if (next.bad_windows == next.loss_windows &&
-	    next.automatic_retrains < V34_DATA_QUALITY_MAX_RETRAINS) {
-		next.automatic_retrains++;
+	if (next.recovery.bad_windows == next.loss_windows &&
+	    recovery_take(&next.recovery, V34_DATA_QUALITY_MAX_RETRAINS)) {
 		next.baseline = 0;
 		next.threshold = 0;
-		next.bad_windows = 0;
 		next.window_position = 0;
 		next.timing_frozen = false;
 		next.active = false;

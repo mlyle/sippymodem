@@ -6,6 +6,8 @@
 #include "v34_adaptive_equalizer.h"
 #include "v34_info1.h"
 
+#include "recovery.h"
+
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -30,13 +32,11 @@ enum v34_data_quality_result {
  * the measurements themselves; this compact owner consumes each completed
  * 1024-decision window exactly once and bounds automatic full retraining. */
 struct v34_data_quality {
+	struct recovery recovery;
 	int16_t baseline;
 	int16_t threshold;
 	uint16_t window_position;
 	uint8_t loss_windows;
-	uint8_t bad_windows;
-	uint8_t automatic_retrains;
-	uint8_t good_windows;
 	bool timing_frozen;
 	bool active;
 };

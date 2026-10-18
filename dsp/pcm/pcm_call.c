@@ -1510,7 +1510,7 @@ static enum pcm_call_result retry_v92_upstream(struct pcm_call *call, bool backo
 			return quality == V92_DATA_QUALITY_EXHAUSTED ? PCM_CALL_FAILED : PCM_CALL_NUMERIC_FAILURE;
 		conventional = backoff && rate == 1u && call->b1_deadline_armed &&
 			call->v92_digital_phase4_configuration.upstream_selection == PCM_CALL_V92_UPSTREAM_DIRECT &&
-			call->pcm_upstream_quality.automatic_retrains == V92_DATA_QUALITY_MAX_RETRAINS;
+			call->pcm_upstream_quality.recovery.attempts == V92_DATA_QUALITY_MAX_RETRAINS;
 		/* Spend the last minimum-rate B1 recovery on V.34 upstream.
 		 * Full retrain sends fresh INFO1d without PCM permission, so the
 		 * peer can retain PCM downstream and send conventional INFO1a.
