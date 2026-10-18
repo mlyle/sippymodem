@@ -79,24 +79,6 @@ bool qam_equalizer_observation_is_pending(
 	return true;
 }
 
-static bool inverse_channel(
-	const struct qam_point *received,
-	const struct qam_point *transmitted,
-	struct qam_point *inverse)
-{
-	double power;
-
-	if (!point_is_finite(received) || !point_is_finite(transmitted) ||
-	    inverse == NULL)
-		return false;
-	power = qam_point_power(received);
-	if (!isfinite(power) || power <= QAM_EQUALIZER_MINIMUM_POWER)
-		return false;
-	*inverse = qam_point_quotient(transmitted, received, power);
-	return point_is_finite(inverse) &&
-	       qam_point_power(transmitted) > QAM_EQUALIZER_MINIMUM_POWER;
-}
-
 bool qam_equalizer_is_valid(
 	const struct qam_equalizer *equalizer)
 {
@@ -165,9 +147,9 @@ enum qam_equalizer_result qam_equalizer_init_geometry(
 
 	if (equalizer == NULL ||
 	    !geometry_is_valid(tap_count, decision_delay) ||
-	    !inverse_channel(received_reference, transmitted_reference,
-			     &initialized.coefficients[
-				     decision_delay]) ||
+	    !qam_point_divide(transmitted_reference, received_reference,
+			      &initialized.coefficients[decision_delay]) ||
+	    !(qam_point_power(transmitted_reference) > QAM_EQUALIZER_MINIMUM_POWER) ||
 	    !qam_equalizer_is_valid(&initialized))
 		return QAM_EQUALIZER_INVALID_ARGUMENT;
 	*equalizer = initialized;

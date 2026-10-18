@@ -150,6 +150,26 @@ static inline bool qam_point_nonzero_power(
 	return true;
 }
 
+/* Checked complex division. A zero numerator is allowed; the denominator
+ * needs finite power above 1e-12. Both inputs may alias the output.
+ * Rejection leaves the output unchanged. */
+static inline bool qam_point_divide(
+	const struct qam_point *numerator,
+	const struct qam_point *denominator, struct qam_point *quotient)
+{
+	struct qam_point next;
+	double power;
+
+	if (!point_is_finite(numerator) || quotient == NULL ||
+	    !qam_point_nonzero_power(denominator, &power))
+		return false;
+	next = qam_point_quotient(numerator, denominator, power);
+	if (!point_is_finite(&next))
+		return false;
+	*quotient = next;
+	return true;
+}
+
 /* Accept a finite point whose squared magnitude fits a finite positive limit.
  * A small relative tolerance covers floating-point roundoff at the boundary. */
 static inline bool qam_point_fits_power(

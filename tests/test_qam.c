@@ -221,6 +221,8 @@ static bool test_point_quotient(void)
 		{ { 2, 4 }, { 1, 1 }, { 3, 1 } },
 		{ { 2, 4 }, { -1, 1 }, { 1, -3 } },
 		{ { 0x1p480, 0 }, { 0x1p240, 0 }, { 0x1p240, 0 } },
+		{ { 0x1p520, 0 }, { 0x1p480, 0 }, { 0x1p40, 0 } },
+		{ { 0, 0 }, { 1, -1 }, { 0, 0 } },
 	};
 
 	for (size_t i = 0; i < ARRAY_LENGTH(cases); ++i) {
@@ -231,7 +233,50 @@ static bool test_point_quotient(void)
 		CHECK(result.in_phase == cases[i].expected.in_phase &&
 		      result.quadrature == cases[i].expected.quadrature,
 		      "raw quotient case %zu changed the complex division", i);
+		CHECK(qam_point_divide(&cases[i].numerator, &cases[i].denominator, &result) &&
+		      result.in_phase == cases[i].expected.in_phase &&
+		      result.quadrature == cases[i].expected.quadrature,
+		      "checked quotient case %zu changed the complex division", i);
 	}
+	return true;
+}
+
+static bool test_checked_quotient(void)
+{
+	const struct qam_point numerator = { 2, 4 }, denominator = { 1, 1 };
+	const struct qam_point bad[] = {
+		{ 0, 0 }, { 1e-6, 0 }, { 0x1p512, 0 }, { NAN, 0 }, { 1, INFINITY },
+	};
+	struct qam_point output = { 7, -9 }, saved = output;
+	struct qam_point alias = numerator;
+
+	CHECK(qam_point_divide(&alias, &denominator, &alias) &&
+	      alias.in_phase == 3 && alias.quadrature == 1,
+	      "quotient output cannot alias the numerator");
+	alias = denominator;
+	CHECK(qam_point_divide(&numerator, &alias, &alias) &&
+	      alias.in_phase == 3 && alias.quadrature == 1,
+	      "quotient output cannot alias the denominator");
+	CHECK(!qam_point_divide(NULL, &denominator, &output) &&
+	      !qam_point_divide(&numerator, NULL, &output) &&
+	      !qam_point_divide(&numerator, &denominator, NULL) &&
+	      memcmp(&output, &saved, sizeof(output)) == 0,
+	      "null quotient arguments changed output");
+	for (size_t i = 0; i < ARRAY_LENGTH(bad); ++i)
+		CHECK(!qam_point_divide(&numerator, &bad[i], &output) &&
+		      memcmp(&output, &saved, sizeof(output)) == 0,
+		      "invalid denominator %zu changed output", i);
+	const struct qam_point nonfinite = { NAN, 0 }, overflow = { 0x1p1023, 0 },
+		half = { 0.5, 0 };
+	CHECK(!qam_point_divide(&nonfinite, &denominator, &output) &&
+	      !qam_point_divide(&overflow, &half, &output) &&
+	      memcmp(&output, &saved, sizeof(output)) == 0,
+	      "invalid numerator or quotient changed output");
+	alias = bad[1];
+	saved = alias;
+	CHECK(!qam_point_divide(&numerator, &alias, &alias) &&
+	      memcmp(&alias, &saved, sizeof(alias)) == 0,
+	      "rejected quotient changed its aliased input");
 	return true;
 }
 
@@ -1523,6 +1568,7 @@ int main(void)
 		{ "point correlation", test_point_correlation },
 		{ "carrier rotation", test_carrier_rotation },
 		{ "point quotient", test_point_quotient },
+		{ "checked quotient", test_checked_quotient },
 		{ "flat gain prediction", test_flat_gain_prediction },
 		{ "flat gain product boundaries", test_flat_gain_product_boundaries },
 		{ "flat gain adaptation", test_flat_gain_adaptation },

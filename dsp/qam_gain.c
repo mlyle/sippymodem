@@ -4,24 +4,6 @@
 
 #include <stddef.h>
 
-static bool divide_points(
-	const struct qam_point *numerator,
-	const struct qam_point *denominator,
-	struct qam_point *quotient)
-{
-	struct qam_point next;
-	double power;
-
-	if (!point_is_finite(numerator) || quotient == NULL ||
-	    !qam_point_nonzero_power(denominator, &power))
-		return false;
-	next = qam_point_quotient(numerator, denominator, power);
-	if (!point_is_finite(&next))
-		return false;
-	*quotient = next;
-	return true;
-}
-
 bool qam_gain_is_valid(
 	const struct qam_gain *tracker)
 {
@@ -56,7 +38,7 @@ enum qam_gain_result qam_gain_init_from_reference(
 	struct qam_point observed_gain;
 
 	if (tracker == NULL ||
-	    !divide_points(received, transmitted, &observed_gain))
+	    !qam_point_divide(received, transmitted, &observed_gain))
 		return QAM_GAIN_INVALID_ARGUMENT;
 	return qam_gain_init(tracker, &observed_gain, adaptation);
 }
@@ -88,7 +70,7 @@ enum qam_gain_result qam_gain_track(
 
 	if (!qam_gain_is_valid(tracker) ||
 	    !qam_point_nonzero_power(received, NULL) ||
-	    !divide_points(received, transmitted, &observed_gain))
+	    !qam_point_divide(received, transmitted, &observed_gain))
 		return QAM_GAIN_INVALID_ARGUMENT;
 	next = *tracker;
 	next.channel_gain.in_phase +=
