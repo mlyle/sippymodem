@@ -13,6 +13,57 @@ static int16_t next_sample(uint32_t *state)
 	return (int16_t)((int32_t)(*state >> 16) - 32768);
 }
 
+static bool check_complex_product(
+	int16_t real, int16_t imag, int16_t coefficient_real,
+	int16_t coefficient_imag, uint32_t initial)
+{
+	const int32_t matrix[2][2] = {
+		{ coefficient_real, -(int32_t)coefficient_imag },
+		{ coefficient_imag, coefficient_real },
+	};
+	const int16_t input[] = { real, imag };
+	uint32_t guarded[] = { 0x12345678u, initial, ~initial, 0x87654321u };
+	int64_t expected[] = { initial, ~initial };
+
+	/* Independent widened matrix product; wrap only after the complete sum. */
+	for (size_t row = 0; row < 2; ++row)
+		for (size_t column = 0; column < 2; ++column)
+			expected[row] += (int64_t)input[column] * matrix[row][column];
+	fir_accumulate_complex_s16(real, imag, coefficient_real, coefficient_imag,
+		&guarded[1], &guarded[2]);
+	CHECK(guarded[1] == (uint32_t)expected[0] &&
+	      guarded[2] == (uint32_t)expected[1],
+	      "complex product changed for (%d,%d)*(%d,%d), initial=%u",
+	      real, imag, coefficient_real, coefficient_imag, initial);
+	CHECK(guarded[0] == 0x12345678u && guarded[3] == 0x87654321u,
+	      "complex accumulation changed an adjacent word");
+	return true;
+}
+
+static bool test_complex_accumulation(void)
+{
+	const int16_t edges[] = { INT16_MIN, -16384, -1, 0, 1, 16384, INT16_MAX };
+	const uint32_t initial[] = { 0, 0x7fffffffu, 0x80000000u, UINT32_MAX };
+	uint32_t random = UINT32_C(0x5812fe90);
+
+	for (size_t a = 0; a < ARRAY_LENGTH(edges); ++a)
+		for (size_t b = 0; b < ARRAY_LENGTH(edges); ++b)
+			for (size_t c = 0; c < ARRAY_LENGTH(edges); ++c)
+				for (size_t d = 0; d < ARRAY_LENGTH(edges); ++d)
+					for (size_t i = 0; i < ARRAY_LENGTH(initial); ++i)
+						CHECK(check_complex_product(edges[a], edges[b], edges[c],
+							      edges[d], initial[i]), "complex edge failed");
+	for (size_t trial = 0; trial < 32768; ++trial) {
+		int16_t real = next_sample(&random), imag = next_sample(&random);
+		int16_t coefficient_real = next_sample(&random);
+		int16_t coefficient_imag = next_sample(&random);
+
+		CHECK(check_complex_product(real, imag, coefficient_real,
+			      coefficient_imag, random), "complex random trial=%zu", trial);
+	}
+	return true;
+}
+
 static bool test_full_width_convolution(void)
 {
 	uint32_t random = UINT32_C(0x6352fd7a);
@@ -165,6 +216,7 @@ static bool test_symmetric_ring(void)
 
 int main(void)
 {
-	return test_full_width_convolution() && test_impulse_order() &&
-	       test_read_ring() && test_symmetric_ring() ? 0 : 1;
+	return test_complex_accumulation() && test_full_width_convolution() &&
+	       test_impulse_order() && test_read_ring() &&
+	       test_symmetric_ring() ? 0 : 1;
 }

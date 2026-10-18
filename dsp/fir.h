@@ -6,6 +6,22 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* Add one signed complex sample/coefficient product to separate 32-bit
+ * accumulator words. Each multiplication is exact; sums wrap modulo 2^32,
+ * including the full-scale imaginary product 2^31. The caller owns scaling,
+ * rounding, and tap/history order. Both accumulator pointers must be valid
+ * and distinct. */
+static inline void fir_accumulate_complex_s16(
+	int16_t input_real, int16_t input_imag,
+	int16_t coefficient_real, int16_t coefficient_imag,
+	uint32_t *real, uint32_t *imag)
+{
+	*real += (uint32_t)((int32_t)input_real * coefficient_real) -
+		 (uint32_t)((int32_t)input_imag * coefficient_imag);
+	*imag += (uint32_t)((int32_t)input_real * coefficient_imag) +
+		 (uint32_t)((int32_t)input_imag * coefficient_real);
+}
+
 /* Shift a newest-first history and return the low 32 bits of its signed
  * convolution. The two count-element arrays must be separate; count zero
  * leaves history untouched and returns zero. Scaling/rounding belong to the

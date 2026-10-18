@@ -2,6 +2,7 @@
 
 #include "v34_equalizer.h"
 
+#include "fir.h"
 #include "integer_math.h"
 #include "memory_region.h"
 
@@ -83,17 +84,12 @@ static void accumulate_tap(
 	size_t sample_index, size_t coefficient_index,
 	uint32_t *in_phase, uint32_t *quadrature)
 {
-	int16_t sample_in_phase = equalizer->in_phase_delay[sample_index];
-	int16_t sample_quadrature = equalizer->quadrature_delay[sample_index];
-	int16_t coefficient_in_phase =
-		equalizer->in_phase_coefficient[coefficient_index];
-	int16_t coefficient_quadrature =
-		equalizer->quadrature_coefficient[coefficient_index];
-
-	*in_phase += multiply_low_s32(sample_in_phase, coefficient_in_phase);
-	*in_phase -= multiply_low_s32(sample_quadrature, coefficient_quadrature);
-	*quadrature += multiply_low_s32(sample_quadrature, coefficient_in_phase);
-	*quadrature += multiply_low_s32(sample_in_phase, coefficient_quadrature);
+	fir_accumulate_complex_s16(
+		equalizer->in_phase_delay[sample_index],
+		equalizer->quadrature_delay[sample_index],
+		equalizer->in_phase_coefficient[coefficient_index],
+		equalizer->quadrature_coefficient[coefficient_index],
+		in_phase, quadrature);
 }
 
 enum v34_equalizer_result v34_equalizer_filter(

@@ -52,17 +52,6 @@ static int16_t scale_input(int16_t input)
 		multiply_low_s32(input, 0x599a), UINT32_C(0x8000), 15));
 }
 
-static void accumulate_complex(
-	int16_t input_real, int16_t input_imag,
-	int16_t coefficient_real, int16_t coefficient_imag,
-	uint32_t *real, uint32_t *imag)
-{
-	*real += multiply_low_s32(input_real, coefficient_real) -
-		 multiply_low_s32(input_imag, coefficient_imag);
-	*imag += multiply_low_s32(input_real, coefficient_imag) +
-		 multiply_low_s32(input_imag, coefficient_real);
-}
-
 static void shift_recursive_filter(
 	int16_t *real_history, int16_t *imag_history,
 	const int16_t *real_coefficients,
@@ -78,7 +67,7 @@ static void shift_recursive_filter(
 
 		real_history[tap] = input_real;
 		imag_history[tap] = input_imag;
-		accumulate_complex(
+		fir_accumulate_complex_s16(
 			input_real, input_imag, real_coefficients[tap],
 			imag_coefficients[tap], real, imag);
 		input_real = old_real;
@@ -149,7 +138,7 @@ enum v34_timing_filter_result v34_timing_filter_observe(
 
 		filter->positive_b_real[tap] = input_real;
 		filter->positive_b_imag[tap] = input_imag;
-		accumulate_complex(
+		fir_accumulate_complex_s16(
 			input_real, input_imag, B_REAL[tap], 0,
 			&b_real, &b_imag);
 		input_real = old_real;
