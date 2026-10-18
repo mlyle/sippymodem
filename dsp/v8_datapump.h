@@ -30,7 +30,7 @@ bool v8_datapump_pcm_handoff(const struct dp *dp, struct v8_pcm_handoff *handoff
 struct dp *v8_datapump_take_legacy(struct dp *dp);
 bool v8_datapump_answer_tone_complete(const struct dp *dp);
 
-/* Transfer the qualified 2100-Hz answer to a caller, or the 1800-Hz
+/* Transfer a qualified answer or AC turnaround tone to a caller, or the 1800-Hz
  * calling carrier to an answerer, before deleting the negotiation owner. */
 bool v8_datapump_v32_handoff(const struct dp *dp, struct single_tone_detector *carrier);
 

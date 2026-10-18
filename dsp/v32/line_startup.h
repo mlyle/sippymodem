@@ -15,6 +15,8 @@ enum {
 	V32_LOW_TURNAROUND_TONE_HZ = 600,
 	V32_HIGH_TURNAROUND_TONE_HZ = 3000,
 	V32_STARTUP_SYMBOL_RATE = 2400,
+	/* AC divides its energy between 600-Hz and 3000-Hz components. */
+	V32_TURNAROUND_MINIMUM_CARRIER_PERCENT = 40,
 	V32_ANSWER_GUARD_SAMPLES =
 		SINGLE_TONE_SAMPLE_RATE,
 	/* Either station changes carrier state at the line terminals 64 +/- 2
@@ -129,7 +131,7 @@ enum v32_line_startup_result v32_line_startup_init(
 enum v32_line_startup_result v32_line_retrain_init(
 	struct v32_line_startup *startup,
 	int16_t transmit_amplitude);
-/* Continue after an already qualified unmodulated answer tone. */
+/* Continue after an already qualified answer or turnaround carrier. */
 enum v32_line_startup_result v32_line_startup_resume(
 	struct v32_line_startup *startup, int16_t transmit_amplitude);
 enum v32_line_startup_result v32_answerer_line_after_answer_init(

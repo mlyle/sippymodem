@@ -145,6 +145,7 @@ struct modem_test_case {
 	unsigned int minimum_caller_rate_signals;
 	unsigned int minimum_caller_rate_signal_sample;
 	bool answer_tone_prefix_modulated;
+	bool omit_answer_tone;
 	bool unanswered_v22_prefix;
 	bool automode;
 	bool answerer_automode;
@@ -2746,6 +2747,10 @@ static bool run_media_call(
 			caller.erased_samples = test_case->answerer_s1_gap_samples;
 			answerer_s1_gap_injected = true;
 		}
+		/* Lose ANS and the start of AC; the peer still waits for AA. */
+		if (test_case->omit_answer_tone &&
+		    frame * SIP_FRAME_SAMPLES < MODEM_RATE * 7 / 2)
+			caller.erased_samples = SIP_FRAME_SAMPLES;
 		CHECK(process_test_frame(
 			      &caller, &answerer, codec, &recorder,
 			      &caller_delay,
@@ -4993,6 +4998,73 @@ static bool test_fsk300_mark_qualification(void)
 	return valid;
 }
 
+enum turnaround_fixture {
+	TURNAROUND_SHORT,
+	TURNAROUND_INTERRUPTED,
+	TURNAROUND_WRONG_FREQUENCY,
+	TURNAROUND_LOW_ONLY,
+	TURNAROUND_HIGH_ONLY,
+	TURNAROUND_RATE_LIMITED,
+};
+
+static bool run_legacy_turnaround_guard(
+	enum media_codec codec, enum turnaround_fixture fixture)
+{
+	struct integration_endpoint caller;
+	struct single_tone_transmitter low, high;
+	const char setup[] = "AT&FE0\r";
+	const char limited[] = "AT+MS=122,1,300,2400\r";
+	const char dial[] = "ATD\r";
+	enum g711_law law;
+	bool expect_carrier = fixture == TURNAROUND_LOW_ONLY ||
+		fixture == TURNAROUND_HIGH_ONLY;
+	bool wrong_frequency = fixture == TURNAROUND_WRONG_FREQUENCY;
+
+	CHECK(endpoint_init(&caller, "turnaround-guard") && codec_law(codec, &law) &&
+	      single_tone_transmitter_init(&low, wrong_frequency ? 700 : 600,
+		      2800) == SINGLE_TONE_OK &&
+	      single_tone_transmitter_init(&high, wrong_frequency ? 2900 : 3000,
+		      2800) == SINGLE_TONE_OK &&
+	      modem_write(caller.modem, setup, sizeof(setup) - 1) == sizeof(setup) - 1 &&
+	      (fixture != TURNAROUND_RATE_LIMITED ||
+	       modem_write(caller.modem, limited, sizeof(limited) - 1) == sizeof(limited) - 1) &&
+	      modem_write(caller.modem, dial, sizeof(dial) - 1) == sizeof(dial) - 1 &&
+	      modem_report_outgoing_call_connected(caller.modem) == 0,
+	      "turnaround guard fixture %u did not initialize", fixture);
+	for (unsigned at = 0; at < MODEM_RATE / 2; ++at) {
+		int16_t lo, hi, transmit, receive = 0;
+		bool active = at < MODEM_RATE / 5;
+
+		if (fixture == TURNAROUND_SHORT)
+			active = at < MODEM_RATE / 20;
+		else if (fixture == TURNAROUND_INTERRUPTED)
+			active = at % (MODEM_RATE / 10) < MODEM_RATE * 6 / 100;
+		else if (wrong_frequency)
+			active = true;
+
+		CHECK(single_tone_transmitter_sample(&low, &lo) == SINGLE_TONE_OK &&
+		      single_tone_transmitter_sample(&high, &hi) == SINGLE_TONE_OK,
+		      "turnaround guard generation failed");
+		if (active) {
+			receive = (int16_t)(lo + hi);
+			if (fixture == TURNAROUND_LOW_ONLY)
+				receive = lo;
+			else if (fixture == TURNAROUND_HIGH_ONLY)
+				receive = hi;
+		}
+		receive = decode_codeword(law, encode_codeword(law, receive));
+		modem_process(caller.modem, &receive, &transmit, 1);
+	}
+	CHECK(endpoint_drain(&caller) && !output_contains(&caller, "CONNECT") &&
+	      (expect_carrier ?
+	       strcmp(modem_protocol_step(caller.modem), "V.32/answer-tone-carrier-turnaround") == 0 :
+	       strcmp(modem_protocol_step(caller.modem), "V.8/wait-ANSam") == 0),
+	      "turnaround guard fixture %u selected the wrong startup: %s",
+	      fixture, modem_protocol_step(caller.modem));
+	endpoint_destroy(&caller);
+	return true;
+}
+
 static bool run_legacy_answer_guard(enum media_codec codec, unsigned fixture)
 {
 	struct integration_endpoint caller;
@@ -5081,6 +5153,10 @@ static bool run_factory_startup_cases(const char *filter, bool *selected)
 				guard_name, codec_name(codecs[codec]));
 			for (unsigned fixture = 0; fixture < 4; ++fixture)
 				if (!run_legacy_answer_guard(codecs[codec], fixture))
+					return false;
+			for (enum turnaround_fixture fixture = TURNAROUND_SHORT;
+			     fixture <= TURNAROUND_RATE_LIMITED; ++fixture)
+				if (!run_legacy_turnaround_guard(codecs[codec], fixture))
 					return false;
 			fprintf(stderr, "[       OK ] %s over %s SIP media\n",
 				guard_name, codec_name(codecs[codec]));
@@ -5403,6 +5479,21 @@ int main(void)
 			.training_frame_limit = 2000,
 		},
 
+		{
+			.id = DP_V92, .answerer_id = DP_V32BIS,
+			.connected_id = DP_V32BIS,
+			.name = "automatic V.32bis without initial answer tone",
+			.selection_command = "AT\r",
+			.answerer_selection_command = "AT+MS=132,0,14400,14400\r",
+			.caller_tx_rate = 14400, .caller_rx_rate = 14400,
+			.answerer_tx_rate = 14400, .answerer_rx_rate = 14400,
+			.training_frame_limit = V32_TRAINING_FRAME_LIMIT,
+			.carrier_loss_samples = MODEM_RATE / 5,
+			.omit_answer_tone = true,
+			.automode = true, .answerer_fixed = true,
+			.require_lapm = true, .factory_transport = true,
+			.automatic_pcm_roles = true,
+		},
 		{
 			.id = DP_V32, .answerer_id = DP_V92,
 			.name = "legacy auto-answer V.32 raw",

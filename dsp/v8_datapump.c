@@ -10,6 +10,7 @@
 #include "modem.h"
 #include "single_tone.h"
 #include "v22_datapump.h"
+#include "v32/line_startup.h"
 #include "v8_answering.h"
 #include "v8_calling.h"
 #include "v34_info0.h"
@@ -21,7 +22,13 @@
 #include <string.h>
 
 enum {
-	LEGACY_TONE_COUNT = 5,
+	LEGACY_LOW_TURNAROUND = 5,
+	LEGACY_HIGH_TURNAROUND,
+	LEGACY_TONE_COUNT,
+	/* Qualify more than 128 V.32 symbol intervals after tone acquisition. */
+	LEGACY_TURNAROUND_SAMPLES =
+		(MODEM_RATE * 128 + V32_STARTUP_SYMBOL_RATE - 1) /
+		V32_STARTUP_SYMBOL_RATE,
 	LEGACY_ANSWER_SAMPLES = 5 * MODEM_RATE,
 	LEGACY_GAP_SAMPLES = MODEM_RATE * 75 / 1000,
 	/* V.32 5.4.1 requires at least one second of ANS. Leave ANSam's
@@ -35,6 +42,8 @@ static const struct {
 } legacy_tones[LEGACY_TONE_COUNT] = {
 	{ 2100, DP_V32BIS }, { 2250, DP_V22BIS }, { 2225, DP_B103 },
 	{ 1650, DP_V21 }, { 1300, DP_V23 },
+	[LEGACY_LOW_TURNAROUND] = { V32_LOW_TURNAROUND_TONE_HZ, DP_V32BIS },
+	[LEGACY_HIGH_TURNAROUND] = { V32_HIGH_TURNAROUND_TONE_HZ, DP_V32BIS },
 };
 
 static const struct {
@@ -68,6 +77,7 @@ struct v8_datapump {
 	uint32_t elapsed_samples;
 	uint32_t legacy_samples;
 	uint32_t answer_tone_samples;
+	uint32_t turnaround_tone_samples;
 	uint32_t high_tone_samples;
 	uint32_t high_tone_crossings;
 	int16_t previous_receive;
@@ -285,8 +295,16 @@ static struct dp *create_v8(
 	datapump->offered_modulations = offered;
 	if (caller && MODEM_AUTOMODE(modem)) {
 		for (unsigned i = 0; i < LEGACY_TONE_COUNT; ++i) {
-			if (single_tone_detector_init(&datapump->answer_tones[i],
-				    legacy_tones[i].frequency) != SINGLE_TONE_OK) {
+			enum single_tone_result result;
+
+			if (i >= LEGACY_LOW_TURNAROUND)
+				result = single_tone_detector_init_with_minimum_carrier_share(
+					&datapump->answer_tones[i], legacy_tones[i].frequency,
+					V32_TURNAROUND_MINIMUM_CARRIER_PERCENT / 100.0);
+			else
+				result = single_tone_detector_init(&datapump->answer_tones[i],
+					legacy_tones[i].frequency);
+			if (result != SINGLE_TONE_OK) {
 				free(datapump);
 				return NULL;
 			}
@@ -689,6 +707,16 @@ static int observe_v34_info0(
 	return DPSTAT_OK;
 }
 
+static unsigned current_turnaround_tone(const struct v8_datapump *datapump)
+{
+	for (unsigned tone = LEGACY_LOW_TURNAROUND;
+	     tone < LEGACY_TONE_COUNT; ++tone)
+		if (datapump->answer_tones[tone].tone_present &&
+		    !datapump->answer_tones[tone].missing_samples)
+			return tone;
+	return LEGACY_TONE_COUNT;
+}
+
 static int observe_legacy_answer(struct v8_datapump *datapump, const int16_t *receive, int count)
 {
 	bool exchanging = datapump->legacy == NULL && datapump->caller &&
@@ -748,6 +776,13 @@ static int observe_legacy_answer(struct v8_datapump *datapump, const int16_t *re
 				datapump->high_tone_crossings++;
 		}
 		datapump->previous_receive = receive[sample];
+		/* V.32bis section 6 note 1 permits AC without a preceding ANS. */
+		if (!exchanging) {
+			if (current_turnaround_tone(datapump) == LEGACY_TONE_COUNT)
+				datapump->turnaround_tone_samples = 0;
+			else if (datapump->turnaround_tone_samples < LEGACY_TURNAROUND_SAMPLES)
+				datapump->turnaround_tone_samples++;
+		}
 		/* ANSam stops updating when CM starts. Its retained detector
 		 * state must not accrue a false legacy V.32 handoff interval. */
 		if (!exchanging)
@@ -759,7 +794,9 @@ static int observe_legacy_answer(struct v8_datapump *datapump, const int16_t *re
 	if (settling)
 		return DPSTAT_OK;
 	unsigned tone = LEGACY_TONE_COUNT;
-	if (!exchanging && datapump->answer_tones[3].tone_present)
+	if (!exchanging && datapump->turnaround_tone_samples >= LEGACY_TURNAROUND_SAMPLES)
+		tone = current_turnaround_tone(datapump);
+	else if (!exchanging && datapump->answer_tones[3].tone_present)
 		tone = 3;
 	else if (!exchanging && datapump->answer_tones[4].tone_present)
 		tone = 4;
@@ -925,12 +962,24 @@ bool v8_datapump_v32_handoff(const struct dp *dp, struct single_tone_detector *c
 {
 	const struct v8_datapump *datapump = v8_from_dp_const(dp);
 
-	if (datapump == NULL || carrier == NULL || (!datapump->legacy_v32 &&
-	     !(datapump->caller && datapump->answer_tone_samples >= LEGACY_ANS_SAMPLES)) ||
-	    (!datapump->handoff_requested && !datapump->caller) ||
+	if (datapump == NULL || carrier == NULL ||
 	    memory_regions_overlap(datapump, sizeof(*datapump), carrier, sizeof(*carrier)))
 		return false;
-	*carrier = datapump->caller ? datapump->answer_tones[0] : datapump->legacy_carrier;
+	if (datapump->caller) {
+		unsigned tone = 0;
+
+		if (datapump->turnaround_tone_samples >= LEGACY_TURNAROUND_SAMPLES)
+			tone = current_turnaround_tone(datapump);
+		else if (datapump->answer_tone_samples < LEGACY_ANS_SAMPLES)
+			return false;
+		if (tone == LEGACY_TONE_COUNT)
+			return false;
+		*carrier = datapump->answer_tones[tone];
+	} else {
+		if (!datapump->legacy_v32 || !datapump->handoff_requested)
+			return false;
+		*carrier = datapump->legacy_carrier;
+	}
 	return true;
 }
 

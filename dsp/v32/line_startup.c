@@ -22,7 +22,8 @@ enum {
 /* The alternating answerer states divide their energy between the 600 and
  * 3000 Hz projections. Either projection may carry only half of the line
  * power on a clean channel. */
-static const double V32_TURNAROUND_MINIMUM_CARRIER_SHARE = 0.40;
+static const double V32_TURNAROUND_MINIMUM_CARRIER_SHARE =
+	V32_TURNAROUND_MINIMUM_CARRIER_PERCENT / 100.0;
 
 static bool line_carrier_point_matches(
 	const struct v32_line_carrier *carrier)
