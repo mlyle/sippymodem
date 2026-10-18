@@ -3,6 +3,7 @@
 #ifndef DSP_PHASE_H
 #define DSP_PHASE_H
 
+#include <math.h>
 #include <stdint.h>
 
 /* A full turn spans every value of an unsigned 32-bit accumulator. */
@@ -31,6 +32,14 @@ static inline double phase_radians_u32(uint32_t phase)
 {
 	return (double)phase *
 	       (6.283185307179586476925286766559 / 4294967296.0);
+}
+
+/* Sample a sine with a nonnegative signed-16 peak amplitude. Round halfway
+ * away from zero; the bounded amplitude needs no clipping. The owner advances
+ * phase and rounds each component before mixing multiple tones. */
+static inline int16_t phase_sine_s16(uint32_t phase, int16_t amplitude)
+{
+	return (int16_t)lround((double)amplitude * sin(phase_radians_u32(phase)));
 }
 
 #endif

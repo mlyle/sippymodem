@@ -70,9 +70,7 @@ single_tone_transmitter_sample(
 	if (!single_tone_transmitter_is_valid(transmitter) ||
 	    sample == NULL)
 		return SINGLE_TONE_INVALID_ARGUMENT;
-	*sample = (int16_t)lround(
-		(double)transmitter->amplitude *
-		sin(phase_radians_u32(transmitter->phase)));
+	*sample = phase_sine_s16(transmitter->phase, transmitter->amplitude);
 	transmitter->phase += transmitter->phase_step;
 	return SINGLE_TONE_OK;
 }

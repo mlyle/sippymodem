@@ -235,9 +235,8 @@ v34_phase2_dpsk_transmitter_sample(
 	}
 	mixed = carrier_sample;
 	if (transmitter->guard_amplitude != 0) {
-		mixed += lround(
-			(double)transmitter->guard_amplitude *
-			sin(phase_radians_u32(transmitter->guard_phase)));
+		mixed += phase_sine_s16(transmitter->guard_phase,
+			transmitter->guard_amplitude);
 		transmitter->guard_phase += transmitter->guard_phase_step;
 	}
 	*sample = (int16_t)mixed;

@@ -115,14 +115,12 @@ v34_phase2_tone_transmitter_sample(
 	if (!v34_phase2_tone_transmitter_is_valid(transmitter) ||
 	    sample == NULL)
 		return V34_PHASE2_TONE_INVALID_ARGUMENT;
-	mixed = lround(
-		(double)transmitter->carrier_amplitude *
-		sin(phase_radians_u32(transmitter->carrier_phase)));
+	mixed = phase_sine_s16(transmitter->carrier_phase,
+		transmitter->carrier_amplitude);
 	transmitter->carrier_phase += transmitter->carrier_phase_step;
 	if (transmitter->guard_amplitude != 0) {
-		mixed += lround(
-			(double)transmitter->guard_amplitude *
-			sin(phase_radians_u32(transmitter->guard_phase)));
+		mixed += phase_sine_s16(transmitter->guard_phase,
+			transmitter->guard_amplitude);
 		transmitter->guard_phase += transmitter->guard_phase_step;
 	}
 	*sample = (int16_t)mixed;

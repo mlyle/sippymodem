@@ -93,15 +93,12 @@ enum fsk_result fsk_tone_generator_sample(
 	int16_t *sample)
 {
 	uint32_t step;
-	double radians;
 
 	if (!tone_generator_is_valid(generator) || sample == NULL)
 		return FSK_INVALID_ARGUMENT;
 	step = (bit & 1u) ? generator->mark_phase_step :
 			    generator->space_phase_step;
-	radians = phase_radians_u32(generator->carrier_phase);
-	*sample = (int16_t)lround(
-		sin(radians) * (double)generator->amplitude);
+	*sample = phase_sine_s16(generator->carrier_phase, generator->amplitude);
 	generator->carrier_phase += step;
 	return FSK_OK;
 }

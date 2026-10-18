@@ -48,6 +48,40 @@ static bool test_radian_conversion(void)
 	return true;
 }
 
+static bool test_sine_samples(void)
+{
+	const int16_t amplitudes[] = { 0, 1, 3, 127, 8192, INT16_MAX };
+	const uint32_t phases[] = {
+		0, UINT32_C(0x40000000), UINT32_C(0x80000000),
+		UINT32_C(0xc0000000), UINT32_MAX,
+	};
+	const int signs[] = { 0, 1, 0, -1, 0 };
+	const long double turn = 2.0L * acosl(-1.0L);
+
+	for (size_t a = 0; a < ARRAY_LENGTH(amplitudes); ++a) {
+		int16_t amplitude = amplitudes[a];
+
+		for (size_t p = 0; p < ARRAY_LENGTH(phases); ++p)
+			CHECK(phase_sine_s16(phases[p], amplitude) == signs[p] * amplitude,
+			      "sine endpoint changed at phase=%u amplitude=%d", phases[p], amplitude);
+		/* Independent extended-precision oracle across a complete turn,
+		 * including values immediately on either side of a half sample. */
+		for (uint32_t p = 0; p < 65536; ++p) {
+			uint32_t phase = p * UINT32_C(65537);
+			long expected = lroundl(amplitude * sinl(turn * phase / 4294967296.0L));
+
+			CHECK(phase_sine_s16(phase, amplitude) == expected,
+			      "sine sample changed at phase=%u amplitude=%d", phase, amplitude);
+		}
+	}
+	CHECK(phase_sine_s16(UINT32_C(0x15555555), 1) == 0 &&
+	      phase_sine_s16(UINT32_C(0x15555556), 1) == 1 &&
+	      phase_sine_s16(UINT32_C(0x95555555), 1) == 0 &&
+	      phase_sine_s16(UINT32_C(0x95555556), 1) == -1,
+	      "sine rounding changed beside positive or negative half samples");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -58,6 +92,7 @@ int main(void)
 		{ "rational frequency steps", test_rational_frequency_steps },
 		{ "invalid and wrapping steps", test_invalid_and_wrapping_steps },
 		{ "radian conversion", test_radian_conversion },
+		{ "sine samples", test_sine_samples },
 	};
 	unsigned int failures = 0;
 
