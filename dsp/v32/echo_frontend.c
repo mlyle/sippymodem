@@ -96,20 +96,11 @@ enum v32_echo_result v32_echo_reference_init(
 	const struct qam_point *mapped, uint32_t carrier_phase)
 {
 	struct v32_echo_reference initialized;
-	double radians;
-	double cosine;
 	double power;
-	double sine;
 
 	if (reference == NULL || !point_is_finite(mapped))
 		return V32_ECHO_INVALID_ARGUMENT;
-	radians = phase_radians_u32(carrier_phase);
-	cosine = cos(radians);
-	sine = sin(radians);
-	initialized.point.in_phase =
-		mapped->in_phase * cosine - mapped->quadrature * sine;
-	initialized.point.quadrature =
-		mapped->in_phase * sine + mapped->quadrature * cosine;
+	initialized.point = qam_point_rotate(mapped, phase_radians_u32(carrier_phase));
 	power = qam_point_power(&initialized.point);
 	if (!point_is_finite(&initialized.point) || !isfinite(power))
 		return V32_ECHO_INVALID_ARGUMENT;

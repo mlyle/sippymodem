@@ -74,6 +74,34 @@ static bool points_are_close(
 	       fabs(left->quadrature - right->quadrature) < 1e-12;
 }
 
+static bool test_carrier_rotation(void)
+{
+	const struct qam_point point = { 3.0, -4.0 };
+	const struct qam_point expected[] = {
+		{ 3.0, -4.0 }, { 4.0, 3.0 }, { -3.0, 4.0 }, { -4.0, -3.0 },
+	};
+	struct qam_point saved = point;
+
+	for (int quarter = -8; quarter <= 8; ++quarter) {
+		struct qam_point rotated = qam_point_rotate(&point, quarter * TEST_PI / 2.0);
+
+		CHECK(points_are_close(&rotated, &expected[(quarter + 8) % 4]),
+		      "carrier rotation changed quadrant at %d", quarter);
+	}
+	for (unsigned step = 0; step < 127; ++step) {
+		double phase = step * TEST_PI / 63.0;
+		struct qam_point rotated = qam_point_rotate(&point, phase);
+		struct qam_point recovered = qam_point_rotate(&rotated, -phase);
+
+		CHECK(points_are_close(&point, &recovered) &&
+		      fabs(qam_point_power(&rotated) - 25.0) < 1e-12,
+		      "carrier rotation changed power or inverse at %u", step);
+	}
+	CHECK(memcmp(&point, &saved, sizeof(point)) == 0,
+	      "carrier rotation changed its input");
+	return true;
+}
+
 static bool test_coordinate_quantization(void)
 {
 	const double invalid[] = {
@@ -1493,6 +1521,7 @@ int main(void)
 		{ "coordinate quantization", test_coordinate_quantization },
 		{ "point validation", test_point_validation },
 		{ "point correlation", test_point_correlation },
+		{ "carrier rotation", test_carrier_rotation },
 		{ "point quotient", test_point_quotient },
 		{ "flat gain prediction", test_flat_gain_prediction },
 		{ "flat gain product boundaries", test_flat_gain_product_boundaries },

@@ -50,20 +50,6 @@ static double wrap_carrier_phase(double phase)
 	return phase == -0.0 ? 0.0 : phase;
 }
 
-static struct qam_point rotate_point(
-	const struct qam_point *point, double phase)
-{
-	double cosine = cos(phase);
-	double sine = sin(phase);
-
-	return (struct qam_point){
-		.in_phase = point->in_phase * cosine -
-			    point->quadrature * sine,
-		.quadrature = point->in_phase * sine +
-			      point->quadrature * cosine,
-	};
-}
-
 static bool geometry_is_valid(
 	unsigned int tap_count, unsigned int decision_delay)
 {
@@ -297,7 +283,7 @@ enum qam_equalizer_result qam_equalizer_push(
 		return QAM_EQUALIZER_INVALID_ARGUMENT;
 	correction_phase = equalizer->carrier_phase;
 	corrected = equalizer->carrier_tracking ?
-		    rotate_point(&filtered, correction_phase) : filtered;
+		    qam_point_rotate(&filtered, correction_phase) : filtered;
 	if (!point_is_finite(&corrected))
 		return QAM_EQUALIZER_INVALID_ARGUMENT;
 	memmove(equalizer->history + 1, equalizer->history,
@@ -398,7 +384,7 @@ static enum qam_equalizer_result adapt_decision(
 	frequency = equalizer->carrier_frequency;
 	unrotated_target = *target;
 	if (equalizer->carrier_tracking) {
-		unrotated_target = rotate_point(target, -correction_phase);
+		unrotated_target = qam_point_rotate(target, -correction_phase);
 		if (!point_is_finite(&unrotated_target))
 			return QAM_EQUALIZER_INVALID_ARGUMENT;
 		if (qam_point_power(output) > QAM_EQUALIZER_MINIMUM_POWER &&

@@ -82,6 +82,16 @@ static inline struct qam_point qam_point_multiply(
 	};
 }
 
+/* Counterclockwise carrier rotation in radians. Numeric validation and phase
+ * wrapping belong to the caller, just as for the raw complex product. */
+static inline struct qam_point qam_point_rotate(
+	const struct qam_point *point, double phase)
+{
+	const struct qam_point rotation = { cos(phase), sin(phase) };
+
+	return qam_point_multiply(point, &rotation);
+}
+
 /* Raw complex quotient using the denominator power already measured by the
  * caller. As with multiplication, numeric validation belongs to the owner. */
 static inline struct qam_point qam_point_quotient(
