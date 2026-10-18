@@ -60,6 +60,45 @@ static bool weighted_level_boundaries(void)
 	return true;
 }
 
+static uint16_t energy_oracle(uint16_t previous, uint32_t energy, uint16_t pole)
+{
+	int64_t signed_previous = previous <= INT16_MAX ? previous :
+		(int64_t)previous - 65536;
+	int64_t product = signed_previous * pole;
+	int64_t history = product >= 0 ? product / 32768 :
+		-((-product + 32767) / 32768);
+	int64_t combined = history + energy / 65536;
+
+	return combined < INT16_MIN || combined > INT16_MAX ?
+		UINT16_C(0x7f00) : (uint16_t)combined;
+}
+
+static bool energy_smoothing_boundaries(void)
+{
+	const uint16_t poles[] = { 0, 1, 0x6952, 0x6ccd, 32768, UINT16_MAX };
+	const uint32_t energies[] = {
+		0, 65535, 65536, UINT32_C(0x7fff0000),
+		UINT32_C(0x80000000), UINT32_MAX,
+	};
+
+	/* Sweep every retained signed word at both real poles, including
+	 * negative histories, ignored low energy bits and overflow boundaries.
+	 * The widened oracle uses division and a range check, not bit tests. */
+	for (uint32_t word = 0; word <= UINT16_MAX; ++word)
+		for (size_t i = 0; i < ARRAY_LENGTH(poles); ++i)
+			for (size_t j = 0; j < ARRAY_LENGTH(energies); ++j)
+				CHECK(sample_smooth_energy_q15((uint16_t)word,
+					      energies[j], poles[i]) ==
+				      energy_oracle((uint16_t)word, energies[j], poles[i]),
+				      "energy recurrence changed at %u/%u/%u",
+				      (unsigned)word, (unsigned)poles[i], (unsigned)energies[j]);
+	CHECK(sample_smooth_energy_q15(0x8000, 0, 32768) == 0x8000 &&
+	      sample_smooth_energy_q15(0x7fff, 65536, 32768) == 0x7f00 &&
+	      sample_smooth_energy_q15(0x8000, 0, UINT16_MAX) == 0x7f00,
+	      "signed energy limits or legacy overflow result changed");
+	return true;
+}
+
 static bool pair_power_boundaries(void)
 {
 	const int16_t edges[] = { INT16_MIN, -32767, -1, 0, 1, 32766, INT16_MAX };
@@ -113,7 +152,8 @@ int main(void)
 {
 	const int modes[] = { FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO };
 	int saved = fegetround();
-	bool passed = saved != -1 && pair_power_boundaries() && weighted_level_boundaries();
+	bool passed = saved != -1 && pair_power_boundaries() &&
+		weighted_level_boundaries() && energy_smoothing_boundaries();
 	for (size_t i = 0; passed && i < ARRAY_LENGTH(modes); ++i)
 		passed = fesetround(modes[i]) == 0 && rounding_boundaries();
 	if (saved != -1 && fesetround(saved) != 0)

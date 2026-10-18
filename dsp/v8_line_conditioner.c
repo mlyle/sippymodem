@@ -11,6 +11,7 @@
 #include <string.h>
 
 enum {
+	V8_LINE_ENERGY_HISTORY_Q15 = 0x6952,
 	V8_LINE_POWER_WEIGHT_Q15 =
 		(0x8000 + V8_LINE_POWER_HISTORY_SAMPLES / 2) /
 		V8_LINE_POWER_HISTORY_SAMPLES,
@@ -105,19 +106,11 @@ static int16_t gain_step(enum v8_line_gain_mode mode)
 static void adapt_gain(
 	struct v8_line_conditioner *conditioner, uint32_t block_energy)
 {
-	int32_t filtered = (int16_t)conditioner->filtered_energy;
-	int32_t block_high = (uint16_t)(block_energy >> 16);
-	int32_t next_filtered =
-		arithmetic_shift_right_u32(
-			(uint32_t)(filtered * 0x6952), 15) + block_high;
 	int32_t deviation;
 	int32_t delta;
 
-	if (((uint32_t)next_filtered >> 15) == 0u ||
-	    ((uint32_t)next_filtered >> 15) == 0x1ffffu)
-		conditioner->filtered_energy = (uint16_t)next_filtered;
-	else
-		conditioner->filtered_energy = 0x7f00;
+	conditioner->filtered_energy = sample_smooth_energy_q15(
+		conditioner->filtered_energy, block_energy, V8_LINE_ENERGY_HISTORY_Q15);
 	if (conditioner->gain_mode == V8_LINE_GAIN_FROZEN)
 		return;
 

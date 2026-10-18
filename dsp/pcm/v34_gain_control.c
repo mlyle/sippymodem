@@ -5,6 +5,7 @@
 #include "agc.h"
 #include "integer_math.h"
 #include "memory_region.h"
+#include "sample_math.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -22,19 +23,6 @@ enum {
 	V34_GAIN_MINIMUM_LEVEL = 0x001f,
 	V34_GAIN_ENERGY_HISTORY_Q15 = 0x6ccd,
 };
-
-static uint16_t smooth_energy(uint16_t average, uint32_t energy)
-{
-	int32_t history = arithmetic_shift_right_u32(
-		(uint32_t)((int32_t)(int16_t)average *
-			   V34_GAIN_ENERGY_HISTORY_Q15),
-		15);
-	uint32_t combined = (uint32_t)history + (energy >> 16);
-	uint32_t top = combined >> 15;
-
-	return top == 0 || top == 0x1ffff ?
-		       (uint16_t)combined : UINT16_C(0x7f00);
-}
 
 static void correct_gain(
 	struct v34_gain_control *control, int16_t correction_gain)
@@ -193,8 +181,9 @@ static enum v34_gain_control_result process(
 			(void)agc_measure_level_s16(control->history,
 				V34_GAIN_HISTORY_SAMPLES, &level);
 			if (level > V34_GAIN_MINIMUM_LEVEL) {
-				control->average_energy = smooth_energy(
-					control->average_energy, next_energy);
+				control->average_energy = sample_smooth_energy_q15(
+					control->average_energy, next_energy,
+					V34_GAIN_ENERGY_HISTORY_Q15);
 				correct_gain(control, correction_gain);
 			}
 		}

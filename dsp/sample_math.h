@@ -26,6 +26,22 @@ static inline uint16_t sample_level_s16(
 	return fixed_square_root_u32(energy);
 }
 
+/* Smooth a signed energy word with a Q15 history pole, adding the high
+ * word of the block's modulo-2^32 energy. Floor the history product and
+ * retain any signed 16-bit result; overflow in either direction uses the
+ * legacy positive limit 0x7f00 rather than ordinary signed saturation. */
+static inline uint16_t sample_smooth_energy_q15(
+	uint16_t previous, uint32_t block_energy, uint16_t history_q15)
+{
+	int32_t history = arithmetic_shift_right_u32(
+		(uint32_t)((int32_t)wrap_s16_from_s32(previous) * history_q15), 15);
+	uint32_t combined = (uint32_t)history + (block_energy >> 16);
+	uint32_t top = combined >> 15;
+
+	return top == 0 || top == 0x1ffffu ?
+		(uint16_t)combined : UINT16_C(0x7f00);
+}
+
 /* Exact squared magnitude of two signed samples, in their original units.
  * Each square fits int32_t, but their sum can reach 2^31. Add unsigned
  * squares so the full-scale negative pair stays representable. */
