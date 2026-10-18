@@ -67,6 +67,10 @@ struct phase2_info1_exchange {
 	struct v34_phase2_info_audio_receiver receiver;
 	struct v34_phase2_tone_transmitter signal_a_tone;
 	uint32_t peer_deadline_elapsed_samples;
+	/* Samples after LOCAL_FIRST_SENT, including recovery and accepted-frame
+	 * handoff. Unlike the response deadline this clock does not stop at a
+	 * timeout. Saturates at UINT32_MAX; zero before the first record ends. */
+	uint32_t first_record_elapsed_samples;
 	/* short_exchange selects a remaining budget instead of full-startup RTD. */
 	union {
 		uint16_t round_trip_delay_samples;

@@ -172,6 +172,12 @@ bool phase2_info1_is_valid(const struct phase2_info1_exchange *exchange)
 		     peer_payload_bits(exchange)))
 		return false;
 	deadline = peer_deadline_samples(exchange);
+	if ((exchange->short_exchange ||
+	     exchange->signal_role == PHASE2_SIGNAL_A ||
+	     exchange->phase == PHASE2_INFO1_TRANSMITTING ||
+	     exchange->phase == PHASE2_INFO1_CARRIER_TAIL) &&
+	    exchange->first_record_elapsed_samples != 0u)
+		return false;
 	if (exchange->peer_deadline_elapsed_samples > deadline)
 		return false;
 	failed = exchange->phase == PHASE2_INFO1_FAILED;
@@ -353,6 +359,7 @@ enum phase2_info1_result phase2_info1_repeat_signal_b(
 		    next.second_payload_bit_count) != V34_PHASE2_INFO_AUDIO_OK)
 		return PHASE2_INFO1_INVALID_ARGUMENT;
 	next.peer_deadline_elapsed_samples = 0;
+	next.first_record_elapsed_samples = 0;
 	next.carrier_tail_symbols = 0;
 	next.phase = PHASE2_INFO1_TRANSMITTING;
 	if (!phase2_info1_is_valid(&next))
@@ -568,6 +575,13 @@ enum phase2_info1_result phase2_info1_sample(
 	    event == NULL || exchange->phase == PHASE2_INFO1_PEER_FRAME_PENDING)
 		return PHASE2_INFO1_INVALID_ARGUMENT;
 	next = *exchange;
+	if (!next.short_exchange && next.signal_role == PHASE2_SIGNAL_B &&
+	    next.phase != PHASE2_INFO1_TRANSMITTING &&
+	    next.phase != PHASE2_INFO1_CARRIER_TAIL &&
+	    next.phase != PHASE2_INFO1_COMPLETE &&
+	    next.phase != PHASE2_INFO1_FAILED &&
+	    next.first_record_elapsed_samples != UINT32_MAX)
+		++next.first_record_elapsed_samples;
 	waited_for_peer = phase2_info1_is_waiting_for_peer(&next);
 	if ((waited_for_peer &&
 	     !receive_peer_frame(&next, received_sample, &emitted)) ||

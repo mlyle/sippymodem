@@ -25,6 +25,8 @@ struct v34_phase2_handoff {
 	struct v34_info0 peer_info0;
 	struct v34_info1c caller_info1c;
 	struct v34_info1a answerer_info1a;
+	/* Age of the caller's completed INFO1c/d at this sample boundary. */
+	uint32_t first_record_elapsed_samples;
 	uint16_t round_trip_delay_samples;
 	int16_t receive_gain;
 	enum v34_station_role local_role;

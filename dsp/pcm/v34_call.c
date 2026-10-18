@@ -26,6 +26,17 @@ static bool initialize_echo(struct pcm_host_echo *echo)
 	       pcm_host_echo_seed_window_delay(echo, 1u) == PCM_HOST_ECHO_OK;
 }
 
+/* V.34 11.3.2.1.1 anchors missing initial J to the end of INFO1c,
+ * not to Phase 3 entry. Retain that epoch even after late INFO1a recovery
+ * or a PCM fallback. An already expired handoff recovers on its first sample. */
+static uint32_t peer_j_wait_samples(const struct v34_call *call, uint32_t elapsed)
+{
+	uint32_t budget = 2800u * 8u + 2u * call->round_trip_delay_samples;
+
+	return call->local_role != V34_CALLING_STATION ? 0u :
+		elapsed < budget ? budget - elapsed : 1u;
+}
+
 static enum v34_phase3_exchange_result initialize_phase3(
 	struct v34_call *call, const struct v34_phase3_profile *local,
 	const struct v34_phase3_profile *peer, int16_t gain)
@@ -270,6 +281,11 @@ bool v34_call_is_valid(const struct v34_call *call)
 		return false;
 	}
 	return child_valid && child_role == call->local_role &&
+	       call->peer_j_remaining_samples <=
+		       2800u * 8u + 2u * call->round_trip_delay_samples &&
+	       (call->peer_j_remaining_samples == 0u ||
+		(call->local_role == V34_CALLING_STATION &&
+		 call->stage == V34_CALL_PHASE3)) &&
 	       call->peer_s_remaining_samples <=
 		       PEER_S_WAIT_SAMPLES + call->round_trip_delay_samples &&
 	       (call->peer_s_remaining_samples == 0u ||
@@ -361,6 +377,8 @@ enum v34_call_result v34_call_init_from_phase2(
 		configuration->phase2_nominal_amplitude;
 	initialized.local_role = handoff->local_role;
 	initialized.stage = V34_CALL_PHASE3;
+	initialized.peer_j_remaining_samples = peer_j_wait_samples(
+		&initialized, handoff->first_record_elapsed_samples);
 	initialized.peer_info0_stored = true;
 	initialized.round_trip_delay_stored = true;
 	result = initialize_phase3(
@@ -403,6 +421,7 @@ static enum v34_call_result begin_retrain(
 		return V34_CALL_NUMERIC_FAILURE;
 	next.retrain_active = true;
 	next.echo_quiet_samples = 0;
+	next.peer_j_remaining_samples = 0u;
 	next.peer_s_remaining_samples = 0u;
 	next.phase4_e_remaining_samples = 0u;
 	next.stage = V34_CALL_RETRAIN_SILENCE;
@@ -549,6 +568,8 @@ static enum v34_call_result enter_phase3(struct v34_call *call)
 		    &call->state.phase2, &receive_gain) != V34_PHASE2_OK)
 		return V34_CALL_NUMERIC_FAILURE;
 	call->peer_info0_stored = true;
+	call->peer_j_remaining_samples = peer_j_wait_samples(call,
+		call->state.phase2.state.info1.control.first_record_elapsed_samples);
 	result = initialize_phase3(call, &local, &peer, receive_gain);
 	if (result != V34_PHASE3_EXCHANGE_OK)
 		return phase3_result(result);
@@ -776,6 +797,21 @@ static enum v34_call_result sample_phase4(
 			V34_CALL_NUMERIC_FAILURE;
 	result = v34_phase4_exchange_complete_data_preparation(&call->state.phase4, &startup);
 	return phase4_result(result);
+}
+
+/* A caller may initiate full retrain during Phase 3 (11.3.2.1). Use
+ * that alternative at the missing-J recovery horizon, sharing the normal
+ * silence, Tone B and retained INFO0 path rather than waiting indefinitely. */
+static bool peer_j_has_timed_out(
+	struct v34_call *call, const struct v34_call_observation *observation)
+{
+	if (observation->processed != V34_CALL_PHASE3)
+		return false;
+	if ((observation->events.phase3 &
+	     V34_PHASE3_EXCHANGE_EVENT_PEER_J_DETECTED) != 0)
+		call->peer_j_remaining_samples = 0u;
+	return call->peer_j_remaining_samples != 0u &&
+	       --call->peer_j_remaining_samples == 0u;
 }
 
 /* Bound each station's wait for S/S-bar from its first transmitted J:
@@ -1062,6 +1098,8 @@ enum v34_call_result v34_call_sample(
 	default:
 		return V34_CALL_INVALID_STATE;
 	}
+	if (result == V34_CALL_OK && peer_j_has_timed_out(call, &emitted))
+		retrain_requested = true;
 	if (result == V34_CALL_OK && peer_s_has_timed_out(call, &emitted))
 		retrain_requested = true;
 	data = data_receiver(call);

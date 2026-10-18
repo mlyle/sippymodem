@@ -542,7 +542,9 @@ static bool run_pair_until_frames(
 		    v34_call_is_online(&answerer->call) &&
 		    caller->mapping_frames_received >= minimum_frames &&
 		    answerer->mapping_frames_received >= minimum_frames) {
-			CHECK(caller->call.peer_s_remaining_samples == 0u &&
+			CHECK(caller->call.peer_j_remaining_samples == 0u &&
+			      answerer->call.peer_j_remaining_samples == 0u &&
+			      caller->call.peer_s_remaining_samples == 0u &&
 			      answerer->call.peer_s_remaining_samples == 0u &&
 			      caller->call.phase4_e_remaining_samples == 0u &&
 			      answerer->call.phase4_e_remaining_samples == 0u,
@@ -2283,6 +2285,7 @@ static bool test_phase2_handoff(void)
 		.peer_info0 = answerer.local_info0,
 		.caller_info1c = caller.local_info1.calling,
 		.answerer_info1a = answerer.local_info1.answering,
+		.first_record_elapsed_samples = 1234,
 		.round_trip_delay_samples = LINE_DELAY_SAMPLES * 2u,
 		.receive_gain = INT16_MAX,
 		.local_role = V34_CALLING_STATION,
@@ -2296,6 +2299,7 @@ static bool test_phase2_handoff(void)
 		      V34_CALL_OK &&
 	      v34_call_is_valid(&call) && call.stage == V34_CALL_PHASE3 &&
 	      call.local_role == V34_CALLING_STATION &&
+	      call.peer_j_remaining_samples == 2800u * 8u + 2u * handoff.round_trip_delay_samples - 1234u &&
 	      call.round_trip_delay_samples ==
 		      handoff.round_trip_delay_samples &&
 	      memcmp(&call.local_info0, &handoff.local_info0,
@@ -2303,6 +2307,23 @@ static bool test_phase2_handoff(void)
 	      memcmp(&call.peer_info0, &handoff.peer_info0,
 		     sizeof(call.peer_info0)) == 0,
 	      "completed Phase 2 did not initialize the V.34 Phase 3 owner");
+	/* Foreign Phase 2 owners may hand over an almost or already expired
+	 * epoch. Neither path may grant another whole Phase 3 wait. */
+	const uint32_t budget = 2800u * 8u + 2u * handoff.round_trip_delay_samples;
+	const uint32_t ages[] = { budget - 1u, budget, UINT32_MAX };
+	for (size_t i = 0; i < ARRAY_LENGTH(ages); ++i) {
+		struct v34_call_observation observed;
+		struct v34_received_mapping_frame received;
+		int16_t transmitted;
+
+		handoff.first_record_elapsed_samples = ages[i];
+		CHECK(v34_call_init_from_phase2(&call, &caller, &handoff) == V34_CALL_OK &&
+		      call.peer_j_remaining_samples == 1u &&
+		      v34_call_sample(&call, 0, NULL, NULL, &transmitted, &observed, &received) == V34_CALL_OK &&
+		      call.stage == V34_CALL_RETRAIN_SILENCE && call.retrain_active && !call.failed,
+		      "expired Phase 2 epoch renewed the initial J deadline");
+	}
+
 	handoff.receive_gain = 0;
 	memset(&call, 0xa5, sizeof(call));
 	saved = call;
@@ -2688,6 +2709,91 @@ static bool test_s_confirmation_deadline(void)
 	       check_late_s(V34_CALLING_STATION, true, true);
 }
 
+static bool test_initial_j_recovery(void)
+{
+	const size_t delays[] = { LINE_DELAY_SAMPLES, 800u };
+
+	for (unsigned pcma = 0; pcma < 2; ++pcma) {
+		for (size_t d = 0; d < ARRAY_LENGTH(delays); ++d) {
+			for (unsigned erase = 0; erase < 2; ++erase) {
+				struct endpoint caller = { 0 }, answerer = { 0 };
+				struct channel channel = { .pcma = pcma, .delay_samples = delays[d] };
+				size_t info1c_end = 0, peer_j = 0, received_j = 0, recovered = 0;
+				size_t horizon = 0;
+				struct v34_call before_j;
+
+				CHECK(endpoint_init(&caller, V34_CALLING_STATION) &&
+				      endpoint_init(&answerer, V34_ANSWERING_STATION),
+				      "initial J endpoints did not initialize");
+				for (size_t sample = 1; sample < SAMPLE_LIMIT; ++sample) {
+					struct v34_call_observation observed[2];
+					int16_t input[2], output[2];
+
+					channel_receive(&channel, &input[0], &input[1]);
+					/* Start erasing only after healthy S/PP/TRN have reached
+					 * the caller. Keep J and all following input absent until
+					 * recovery, including the answerer's later retrain tone. */
+					if (erase && peer_j) input[0] = 0;
+					if (!erase && peer_j) before_j = caller.call;
+					note_peer_primary_delays(&caller, &answerer);
+					CHECK(endpoint_sample(&caller, input[0], supply_mapping_frame,
+						      &output[0], &observed[0]) &&
+					      endpoint_sample(&answerer, input[1], supply_mapping_frame,
+						      &output[1], &observed[1]),
+					      "initial J sample failed at %zu law %u delay %zu", sample, pcma, delays[d]);
+					channel_transmit(&channel, output[0], output[1]);
+					if (observed[0].processed == V34_CALL_PHASE2 &&
+					    observed[0].events.phase2.kind == V34_PHASE2_EVENT_LOCAL_INFO1C_SENT) {
+						info1c_end = sample;
+						horizon = sample + 2800u * 8u + 2u * caller.call.round_trip_delay_samples;
+					}
+					if (observed[0].processed == V34_CALL_PHASE2 &&
+					    observed[0].next == V34_CALL_PHASE3)
+						CHECK(info1c_end && caller.call.peer_j_remaining_samples == horizon - sample,
+						      "J recovery started a fresh Phase 3 deadline");
+					if (observed[1].processed == V34_CALL_PHASE3 &&
+					    (observed[1].events.phase3 & V34_PHASE3_EXCHANGE_EVENT_TRANSMIT_J_STARTED))
+						peer_j = sample;
+					if (observed[0].processed == V34_CALL_PHASE3 &&
+					    (observed[0].events.phase3 & V34_PHASE3_EXCHANGE_EVENT_PEER_J_DETECTED)) {
+						received_j = sample;
+						/* A valid J on the final allowed sample wins over
+						 * recovery. Replay exactly that qualifying input. */
+						struct v34_call_observation last;
+						struct v34_received_mapping_frame received;
+						int16_t transmitted;
+
+						CHECK(peer_j && !erase, "J erasure unexpectedly qualified");
+						before_j.peer_j_remaining_samples = 1u;
+						CHECK(v34_call_sample(&before_j, input[0], NULL, NULL,
+							      &transmitted, &last, &received) == V34_CALL_OK &&
+						      (last.events.phase3 & V34_PHASE3_EXCHANGE_EVENT_PEER_J_DETECTED) &&
+						      before_j.stage != V34_CALL_RETRAIN_SILENCE &&
+						      before_j.peer_j_remaining_samples == 0u,
+						      "valid final-sample J lost to its recovery deadline");
+						CHECK(caller.call.peer_j_remaining_samples == 0u,
+						      "received J did not cancel its recovery deadline");
+					}
+					if (caller.call.stage == V34_CALL_RETRAIN_SILENCE) recovered = sample;
+					if (recovered || (!erase && received_j) || (horizon && sample > horizon)) break;
+				}
+				CHECK(info1c_end && peer_j && horizon &&
+				      (erase ? recovered == horizon && !received_j : received_j && received_j < horizon && !recovered),
+				      "initial J recovery timing failed law %u delay %zu erased %u", pcma, delays[d], erase);
+				if (erase) {
+					CHECK(caller.call.retrain_active && !caller.call.failed &&
+					      caller.call.peer_j_remaining_samples == 0u && caller.call.peer_info0_stored &&
+					      caller.call.round_trip_delay_stored,
+					      "initial J recovery lost the call agreement");
+				}
+				CHECK(run_initialized_pair(&caller, &answerer, &channel),
+				      "initial J control/recovery did not reach verified duplex data");
+			}
+		}
+	}
+	return true;
+}
+
 static bool check_missing_s_recovery(enum v34_station_role role)
 {
 	const size_t delays[] = { LINE_DELAY_SAMPLES, 800u };
@@ -2895,6 +3001,7 @@ int main(void)
 		{ "final Tone-A timeout retrain", test_final_tone_timeout },
 		{ "late S qualification", test_late_s },
 		{ "bounded S confirmation", test_s_confirmation_deadline },
+		{ "initial J recovery", test_initial_j_recovery },
 		{ "missing S recovery", test_missing_s_recovery },
 		{ "bounded initial E exchange", test_initial_e_timeout },
 		{ "bounded online rate renegotiation", test_rate_renegotiation_timeout },

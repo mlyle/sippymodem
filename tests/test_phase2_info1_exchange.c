@@ -227,6 +227,47 @@ static bool test_corrupt_frame_budget(void)
 	return true;
 }
 
+static bool test_first_record_clock(void)
+{
+	const uint8_t payload[] = { 0x02, 0x83, 0x94, 0xb0, 0x04 };
+	struct phase2_info1_exchange exchange;
+	struct phase2_info1_event event;
+	int16_t output;
+
+	CHECK(phase2_info1_init_signal_b(&exchange, 7000, 317,
+		      payload, 40, 40) == PHASE2_INFO1_OK,
+	      "record-clock initialization failed");
+	for (unsigned sample = 0; sample < 10000; ++sample) {
+		CHECK(phase2_info1_sample(&exchange, 0, &output, &event) == PHASE2_INFO1_OK &&
+		      exchange.first_record_elapsed_samples == 0u,
+		      "record clock began before the transmit filter tail ended");
+		if (event.kind == PHASE2_INFO1_EVENT_LOCAL_FIRST_SENT)
+			break;
+	}
+	CHECK(event.kind == PHASE2_INFO1_EVENT_LOCAL_FIRST_SENT,
+	      "record clock fixture did not finish its first record");
+	for (unsigned age = 1; age <= 10000; ++age) {
+		CHECK(phase2_info1_sample(&exchange, 0, &output, &event) == PHASE2_INFO1_OK &&
+		      exchange.first_record_elapsed_samples == age,
+		      "record clock stopped or skipped a sample at age %u", age);
+		if (exchange.phase == PHASE2_INFO1_FAILED)
+			CHECK(phase2_info1_recover(&exchange) == PHASE2_INFO1_OK,
+			      "record-clock recovery failed");
+	}
+	CHECK(exchange.phase == PHASE2_INFO1_RECOVERING &&
+	      exchange.peer_deadline_elapsed_samples < exchange.first_record_elapsed_samples,
+	      "record clock reused the saturated response deadline");
+	exchange.first_record_elapsed_samples = UINT32_MAX - 1u;
+	for (unsigned i = 0; i < 2; ++i)
+		CHECK(phase2_info1_sample(&exchange, 0, &output, &event) == PHASE2_INFO1_OK &&
+		      exchange.first_record_elapsed_samples == UINT32_MAX,
+		      "record age wrapped instead of saturating");
+	CHECK(phase2_info1_repeat_signal_b(&exchange) == PHASE2_INFO1_OK &&
+	      exchange.first_record_elapsed_samples == 0u,
+	      "repeated first record retained the old epoch");
+	return true;
+}
+
 static bool test_record_ownership(void)
 {
 	static const struct {
@@ -324,6 +365,7 @@ int main(void)
 		{ "one-way short INFO1a", test_one_way_exchange },
 		{ "short receive budget", test_receive_budget },
 		{ "corrupt INFO1a receive budget", test_corrupt_frame_budget },
+		{ "first record clock", test_first_record_clock },
 		{ "record ownership", test_record_ownership },
 		{ "short exchange validation", test_validation },
 	};

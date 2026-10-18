@@ -1783,6 +1783,8 @@ enum pcm_call_result pcm_call_v34_fallback_handoff(
 			call->state.phase2.state.info1.digital.record.v90,
 		.answerer_info1a =
 			call->state.phase2.state.info1.analog.record.v34_fallback,
+		.first_record_elapsed_samples =
+			call->state.phase2.state.info1.control.first_record_elapsed_samples,
 		.round_trip_delay_samples = call->round_trip_delay_samples,
 		.receive_gain = receive_gain,
 		.local_role = V34_CALLING_STATION,
