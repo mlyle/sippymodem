@@ -45,11 +45,15 @@ static bool direct_constellation(
 
 static bool direct_tables(
 	struct v92_cpd_parameters *parameters, enum g711_law law,
-	uint8_t data_rate_number, bool extend_e2u)
+	uint8_t data_rate_number, bool extend_e2u, bool direct_channel)
 {
 	unsigned int data_bits =
 		pcm_upstream_frame_bits(data_rate_number);
 	uint8_t point_count = 0u;
+	uint8_t balanced_points = data_rate_number == 16u ? 27u :
+		!direct_channel ? 0u : data_rate_number == 15u ? 24u :
+		data_rate_number == 17u ? 31u : data_rate_number == 18u ? 34u :
+		data_rate_number == 19u ? 39u : 0u;
 
 	if (parameters == NULL || !g711_law_is_valid(law) ||
 	    data_bits == 0u)
@@ -69,12 +73,12 @@ static bool direct_tables(
 		V92_CPD_DIRECT_FILTER_TAPS;
 	parameters->filter[V92_CPD_PREFILTER_FEED_FORWARD]
 		.coefficient[0] = INT16_MAX;
-	/* Spread the 44k frame's 66 data bits evenly across the intervals.
-	 * Nine modulus-54 and three modulus-27 trellis intervals have product
-	 * 54^9 * 27^3 >= 2^66 (V.92 6.4.1); 52/26 would be too small. Each
-	 * interval needs only 54 signed points, rather than concentrating 128
-	 * in one interval. This improves quantizer separation for direct calls
-	 * and leaves equivalent representatives for channel precoder feedback. */
+	/* The 44k template already needs 54/27 moduli. Direct-channel
+	 * selection also uses 48/24, 62/31, 68/34 and 78/39 for the
+	 * 64-, 68-, 70- and 72-bit frames: the smallest uniform alphabets
+	 * satisfying (2N)^9 * N^3 >= 2^K (V.92 6.4.1-6.4.2).
+	 * Allocate them before measuring B1u; keep the channel designer's
+	 * level-neutral template unchanged. */
 	for (size_t symbol = 0u;
 	     symbol < V92_CPD_MODULUS_COUNT; ++symbol) {
 		unsigned int exponent = data_bits / V92_CPD_MODULUS_COUNT;
@@ -83,17 +87,19 @@ static bool direct_tables(
 		if (symbol < data_bits % V92_CPD_MODULUS_COUNT)
 			exponent++;
 		parameters->modulus[symbol] = (uint8_t)(1u << exponent);
-		if (data_rate_number == 16u)
-			parameters->modulus[symbol] = symbol % 4u == 3u ? 27u : 54u;
+		if (balanced_points != 0u)
+			parameters->modulus[symbol] = symbol % 4u == 3u ?
+				balanced_points : 2u * balanced_points;
 		required = symbol % 4u == 3u ?
 			parameters->modulus[symbol] :
 			(uint8_t)((parameters->modulus[symbol] + 1u) / 2u);
 		if (point_count < required)
 			point_count = required;
 	}
-	/* The 40 kbit/s selection uses the 32-state trellis. A 64-point
-	 * positive half gives each modulus-32 value four representatives. */
-	if (data_rate_number == V92_CPD_DIRECT_40K_RATE_NUMBER)
+	/* The 40k template has four representatives per modulus-32 value.
+	 * The identity precoder uses only the inner half; direct selection
+	 * omits the unreachable outer points before measuring B1u. */
+	if (!direct_channel && data_rate_number == V92_CPD_DIRECT_40K_RATE_NUMBER)
 		point_count = V92_CPD_DIRECT_MAX_POINTS;
 	return direct_constellation(
 		&parameters->constellation[0], law, point_count);
@@ -158,6 +164,17 @@ static bool normalize_gain(
 	return parameters->four_times_gain_q0_16 != 0u;
 }
 
+static bool initialize_direct(
+	struct v92_cpd_parameters *parameters,
+	uint16_t frequencies[2 * V92_CPD_DIRECT_MAX_POINTS],
+	enum g711_law law, uint8_t rate, bool extend_e2u, bool direct_channel)
+{
+	return direct_tables(parameters, law, rate, extend_e2u, direct_channel) &&
+	       b1u_frequencies(parameters, law, frequencies) &&
+	       normalize_gain(parameters, frequencies) &&
+	       v92_cpd_parameters_are_valid(parameters);
+}
+
 enum v92_cpd_result v92_cpd_direct_init(
 	struct v92_cpd_parameters *parameters, enum g711_law law,
 	uint8_t data_rate_number, bool extend_e2u)
@@ -167,11 +184,8 @@ enum v92_cpd_result v92_cpd_direct_init(
 
 	if (parameters == NULL)
 		return V92_CPD_INVALID_ARGUMENT;
-	if (!direct_tables(
-		    &generated, law, data_rate_number, extend_e2u) ||
-	    !b1u_frequencies(&generated, law, frequencies) ||
-	    !normalize_gain(&generated, frequencies) ||
-	    !v92_cpd_parameters_are_valid(&generated))
+	if (!initialize_direct(&generated, frequencies, law,
+		    data_rate_number, extend_e2u, false))
 		return V92_CPD_INVALID_PARAMETERS;
 	*parameters = generated;
 	return V92_CPD_OK;
@@ -434,44 +448,15 @@ static int direct_separation(
 
 static enum v92_cpd_result select_mapping(
 	struct v92_cpd_parameters *parameters, enum g711_law law,
-	uint8_t data_rate_number, int16_t upstream_level, bool extend_e2u,
+	int16_t upstream_level, const struct v92_cpd_parameters *initial,
+	const uint16_t frequencies[2 * V92_CPD_DIRECT_MAX_POINTS],
 	bool disjoint_ranges)
 {
-	struct v92_cpd_parameters candidate, best;
-	uint16_t frequencies[2 * V92_CPD_DIRECT_MAX_POINTS];
+	struct v92_cpd_parameters candidate = *initial, best;
+	uint8_t data_rate_number = initial->data_rate_number;
 	unsigned int count;
 	int best_separation = 0;
 
-	if (parameters == NULL)
-		return V92_CPD_INVALID_ARGUMENT;
-	if (upstream_level <= 0 ||
-	    v92_cpd_direct_init(&candidate, law, data_rate_number, extend_e2u) != V92_CPD_OK)
-		return V92_CPD_INVALID_PARAMETERS;
-	/* Use 48/24, 62/31, 68/34 and 78/39 moduli for 64-, 68-, 70- and
-	 * 72-bit frames. These are the smallest uniform signed alphabets satisfying
-	 * (2N)^9 * N^3 >= 2^K (V.92 6.4.1-6.4.2). Keep this direct
-	 * allocation out of the channel designer's level-neutral template. */
-	if (data_rate_number == 15u || data_rate_number == 17u ||
-	    data_rate_number == 18u || data_rate_number == 19u) {
-		uint8_t points = data_rate_number == 15u ? 24u :
-			data_rate_number == 17u ? 31u : data_rate_number == 18u ? 34u : 39u;
-
-		for (size_t symbol = 0u; symbol < V92_CPD_MODULUS_COUNT; ++symbol)
-			candidate.modulus[symbol] = symbol % 4u == 3u ? points : 2u * points;
-		memset(&candidate.constellation[0], 0, sizeof(candidate.constellation[0]));
-		if (!direct_constellation(&candidate.constellation[0], law, points) ||
-		    !b1u_frequencies(&candidate, law, frequencies) ||
-		    !normalize_gain(&candidate, frequencies))
-			return V92_CPD_INVALID_PARAMETERS;
-	}
-	/* The identity precoder always selects the inner representatives. At
-	 * 40k its outer 32 positive points are unreachable; do not let unused
-	 * points constrain placement or add competing receive branches. */
-	if (data_rate_number == V92_CPD_DIRECT_40K_RATE_NUMBER) {
-		candidate.constellation[0].count = 32u;
-		memset(candidate.constellation[0].positive_linear + 32u, 0,
-			(V92_CPD_MAX_CONSTELLATION_POINTS - 32u) * sizeof(int16_t));
-	}
 	/* At 48k a merely distinct template can have almost no input margin.
 	 * Rank all candidates rather than returning the first usable one. */
 	if (data_rate_number != 19u &&
@@ -479,8 +464,6 @@ static enum v92_cpd_result select_mapping(
 		*parameters = candidate;
 		return V92_CPD_OK;
 	}
-	if (!b1u_frequencies(&candidate, law, frequencies))
-		return V92_CPD_INVALID_PARAMETERS;
 	/* V.92 Table 30 permits arbitrary positive linear points. Search a
 	 * bounded set of contiguous G.711 windows, including quarter-code
 	 * offsets; renormalize the actual B1u waveform for each candidate.
@@ -561,9 +544,20 @@ enum v92_cpd_result v92_cpd_direct_select(
 	struct v92_cpd_parameters *parameters, enum g711_law law,
 	uint8_t data_rate_number, int16_t upstream_level, bool extend_e2u)
 {
+	struct v92_cpd_parameters initial;
+	uint16_t frequencies[2 * V92_CPD_DIRECT_MAX_POINTS];
+
+	if (parameters == NULL)
+		return V92_CPD_INVALID_ARGUMENT;
+	if (upstream_level <= 0 ||
+	    !initialize_direct(&initial, frequencies, law,
+		    data_rate_number, extend_e2u, true))
+		return V92_CPD_INVALID_PARAMETERS;
+	/* Both spacing policies reuse this call's alphabet and exact B1u
+	 * frequencies. Each search mutates its own candidate copy. */
 	if (data_rate_number == 18u) {
 		enum v92_cpd_result result = select_mapping(
-			parameters, law, data_rate_number, upstream_level, extend_e2u, true);
+			parameters, law, upstream_level, &initial, frequencies, true);
 
 		if (result != V92_CPD_INVALID_PARAMETERS)
 			return result;
@@ -571,5 +565,5 @@ enum v92_cpd_result v92_cpd_direct_select(
 	/* Disjoint ranges may be unavailable even with a useful injective
 	 * alphabet. In that case retain the ordinary B1u-refined LU path. */
 	return select_mapping(
-		parameters, law, data_rate_number, upstream_level, extend_e2u, false);
+		parameters, law, upstream_level, &initial, frequencies, false);
 }
