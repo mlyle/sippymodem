@@ -2161,8 +2161,52 @@ static bool test_corrupted_cpu_tail(enum g711_law law,
 	return true;
 }
 
+static bool test_weak_marker_bits(enum g711_law law, int polarity)
+{
+	for (unsigned impulse = 0; impulse < 2; ++impulse) {
+		struct v92_phase4_record_tx wire;
+		struct v92_upstream_control_line_rx line;
+		struct v92_e2u_rx candidate;
+		bool injected = false;
+		/* This nonzero word has a weak positive waveform match. The
+		 * true zero marker instead gets one large outer-point impulse
+		 * that preserves its decoded bits. Both follow a complete SUVu. */
+		uint32_t word = impulse ? 0u : UINT32_C(0xa);
+
+		CHECK(upstream_line(law, V92_CONSTELLATION_4_POINT, &wire, &line),
+		      "weak marker fixture failed");
+		line.signal.line.polarity = polarity;
+		CHECK(v92_e2u_rx_init(&candidate, &line.signal, false) == V92_E2U_RX_OK,
+		      "weak marker receiver failed");
+		for (unsigned symbol = 0; symbol < V92_PHASE4_E2U_SYMBOLS; ++symbol) {
+			int16_t sample;
+			CHECK(v92_phase4_modulator_next(&wire.modulator,
+				      (word >> (2u * symbol)) & 3u, &sample) == V92_PHASE4_MODULATOR_OK,
+			      "weak marker modulation failed");
+			if (impulse && !injected && (sample > TEST_LU || sample < -TEST_LU)) {
+				sample = sample < 0 ? -32000 : 32000;
+				injected = true;
+			}
+			enum v92_e2u_rx_result expected = symbol + 1u < V92_PHASE4_E2U_SYMBOLS ?
+				V92_E2U_RX_OK : impulse ? V92_E2U_RX_COMPLETE : V92_E2U_RX_NO_MATCH;
+			CHECK(v92_e2u_rx_sample(&candidate, polarity * quantize(law, sample)) == expected,
+			      "weak marker: law=%u polarity=%d impulse=%u symbol=%u",
+			      law, polarity, impulse, symbol);
+		}
+		CHECK(candidate.bit_errors == (impulse ? 0u : 2u) && injected == (bool)impulse &&
+		      candidate.correlation > 0.0 &&
+		      candidate.correlation * candidate.correlation * 4.0 <
+			      candidate.observed_energy * candidate.expected_energy * 3.0,
+		      "weak marker fixture did not exercise the coded-bit decision");
+	}
+	return true;
+}
+
 int main(void)
 {
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (int polarity = -1; polarity <= 1; polarity += 2)
+			if (!test_weak_marker_bits(law, polarity)) return 1;
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (unsigned size = 0; size < 2; ++size)
 			for (unsigned extended = 0; extended < 2; ++extended)

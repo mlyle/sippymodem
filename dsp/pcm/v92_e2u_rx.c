@@ -85,18 +85,19 @@ static bool sequence_matches(const struct v92_e2u_rx *receiver)
 	if (input_energy * 64.0 < equalizer->tap_count * lu * lu)
 		return false;
 
-	unsigned int bits = v92_phase4_modulator_bits_per_symbol(
-		receiver->signal.line.demodulator.constellation);
 	double correlation_squared =
 		receiver->correlation * receiver->correlation;
 	double total_energy =
 		receiver->observed_energy * receiver->expected_energy;
-	unsigned int bit_count = receiver->expected_symbols * bits;
 	bool positive = receiver->correlation > 0.0 && total_energy > 0.0;
 	bool strong = positive && correlation_squared * 4.0 >=
 		total_energy * 3.0;
+	/* Repeated control boundaries test many short E2u candidates. A few
+	 * decoded errors plus weak correlation also fit ordinary control bits.
+	 * Require exact decoded zeros when the waveform alone is insufficient;
+	 * an impulse that preserves the coded decisions remains acceptable. */
 	bool weak = positive && correlation_squared * 5.0 >= total_energy &&
-		receiver->bit_errors <= bit_count / 6u;
+		receiver->bit_errors == 0u;
 
 	return strong || weak;
 }
