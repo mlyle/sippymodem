@@ -55,25 +55,16 @@ enum phase2_reciprocal_probe_result v90_phase2_reciprocal_probe_sample(
 	int16_t received_sample, int16_t *transmit_sample,
 	struct phase2_reciprocal_probe_event *event)
 {
-	struct v90_phase2_reciprocal_probe next;
-	struct phase2_reciprocal_probe_event emitted;
-	int16_t generated;
-
 	if (!v90_phase2_reciprocal_probe_is_valid(probe) ||
 	    transmit_sample == NULL || event == NULL)
 		return PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT;
-	next = *probe;
-	if (phase2_reciprocal_probe_sample(
-		    &next.control, &next.turnaround.control,
-		    &next.turnaround.initial_probe.control,
-		    transport(&next), received_sample, &generated, &emitted) !=
-		    PHASE2_RECIPROCAL_PROBE_OK ||
-	    !v90_phase2_reciprocal_probe_is_valid(&next))
-		return PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT;
-	*probe = next;
-	*transmit_sample = generated;
-	*event = emitted;
-	return PHASE2_RECIPROCAL_PROBE_OK;
+
+	/* The shared transaction preserves both completed probe controls and
+	 * stages the reciprocal control and transport before publishing output. */
+	return phase2_reciprocal_probe_sample(
+		&probe->control, &probe->turnaround.control,
+		&probe->turnaround.initial_probe.control,
+		transport(probe), received_sample, transmit_sample, event);
 }
 
 enum phase2_reciprocal_probe_result v90_phase2_reciprocal_probe_measure(

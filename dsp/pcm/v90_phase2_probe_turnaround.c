@@ -42,23 +42,14 @@ enum phase2_probe_turnaround_result v90_phase2_probe_turnaround_sample(
 	int16_t received_sample, int16_t *transmit_sample,
 	struct phase2_probe_turnaround_event *event)
 {
-	struct v90_phase2_probe_turnaround next;
-	struct phase2_probe_turnaround_event emitted;
-	int16_t generated;
-
 	if (!v90_phase2_probe_turnaround_is_valid(turnaround) ||
 	    transmit_sample == NULL || event == NULL)
 		return PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT;
-	next = *turnaround;
-	if (phase2_probe_turnaround_sample(
-		    &next.control, &next.initial_probe.control,
-		    &next.initial_probe.ranging.info0_exchange.transport,
-		    received_sample, &generated, &emitted) !=
-		    PHASE2_PROBE_TURNAROUND_OK ||
-	    !v90_phase2_probe_turnaround_is_valid(&next))
-		return PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT;
-	*turnaround = next;
-	*transmit_sample = generated;
-	*event = emitted;
-	return PHASE2_PROBE_TURNAROUND_OK;
+
+	/* The completed probe is read-only; the shared controller commits
+	 * only the turnaround control, transport and outputs on success. */
+	return phase2_probe_turnaround_sample(
+		&turnaround->control, &turnaround->initial_probe.control,
+		&turnaround->initial_probe.ranging.info0_exchange.transport,
+		received_sample, transmit_sample, event);
 }

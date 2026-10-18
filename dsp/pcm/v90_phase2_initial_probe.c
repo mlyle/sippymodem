@@ -42,26 +42,16 @@ enum phase2_initial_probe_result v90_phase2_initial_probe_sample(
 	int16_t received_sample, int16_t *transmit_sample,
 	struct phase2_initial_probe_event *event)
 {
-	struct v90_phase2_initial_probe next;
-	struct phase2_initial_probe_event emitted;
-	int16_t generated;
-
 	if (!v90_phase2_initial_probe_is_valid(probe) ||
 	    transmit_sample == NULL || event == NULL)
 		return PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
-	next = *probe;
-	if (phase2_initial_probe_sample(
-		    &next.control,
-		    &next.ranging.info0_exchange.transport,
-		    next.ranging.info0_exchange.state != PCM_PHASE2_INFO0_RETRAIN,
-		    received_sample, &generated, &emitted) !=
-		    PHASE2_INITIAL_PROBE_OK ||
-	    !v90_phase2_initial_probe_is_valid(&next))
-		return PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
-	*probe = next;
-	*transmit_sample = generated;
-	*event = emitted;
-	return PHASE2_INITIAL_PROBE_OK;
+
+	/* The shared controller stages its control and transport together.
+	 * Protocol records and completed ranging remain unchanged. */
+	return phase2_initial_probe_sample(
+		&probe->control, &probe->ranging.info0_exchange.transport,
+		probe->ranging.info0_exchange.state != PCM_PHASE2_INFO0_RETRAIN,
+		received_sample, transmit_sample, event);
 }
 
 enum phase2_initial_probe_result v90_phase2_initial_probe_measure(
