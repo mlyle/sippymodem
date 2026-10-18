@@ -1403,6 +1403,8 @@ static void complete_link_release(struct lapm_state *l)
 {
 	modem_note_disconnect(l->modem, true, "LAPM processing or recovery failed");
 	l->state = LAPM_IDLE;
+	/* Retire queued replies; HDLC still owns any frame already in flight. */
+	l->ctrl_list = l->tx_ctrl;
 	reset_lapm_link(l);
 	T401_STOP(l);
 	modem_update_status(l->modem, STATUS_EC_RELEASE);

@@ -6032,7 +6032,7 @@ static bool test_lapm_connected_sabme(void)
 {
 	enum { INITIAL, SHORT_FRAME, WRONG_ADDRESS, INFORMATION, RR_COMMAND,
 	       RNR_COMMAND, REJ_COMMAND, RR_RESPONSE, RNR_RESPONSE, REJ_RESPONSE,
-	       SEQUENCE_WRAP, RETRAIN };
+	       SEQUENCE_WRAP, QUEUED_STATUS, RETRAIN };
 	struct modem_driver driver = {
 		.name = "LAPM connected SABME", .start = unused_start,
 		.stop = unused_stop, .ioctl = unused_control,
@@ -6081,8 +6081,10 @@ static bool test_lapm_connected_sabme(void)
 			wire[1] = 1 + 4 * ((scenario - RR_COMMAND) % 3);
 			wire[0] = scenario <= REJ_COMMAND ? l->rsp_addr : l->cmd_addr;
 		}
-		if (scenario == RETRAIN)
+		if (scenario == RETRAIN || scenario == QUEUED_STATUS)
 			wire[1] = 1;
+		if (scenario == QUEUED_STATUS)
+			wire[2] = 1; /* Retain the reply to this peer poll. */
 		if (scenario != INITIAL) {
 			unsigned frames = scenario == SEQUENCE_WRAP ? 128 : 1;
 			for (unsigned n = 0; n < frames; ++n) {
@@ -6090,10 +6092,14 @@ static bool test_lapm_connected_sabme(void)
 					wire[1] = n << 1;
 				m->packer.hdlc.rx_complete(l, &incoming);
 				CHECK(l->state == 2, "SABME fixture rejected valid peer traffic");
-				while ((outgoing = m->packer.hdlc.get_tx_frame(l)) != NULL)
+				while (scenario != QUEUED_STATUS &&
+				       (outgoing = m->packer.hdlc.get_tx_frame(l)) != NULL)
 					m->packer.hdlc.tx_complete(l, outgoing);
 			}
 		}
+		if (scenario == QUEUED_STATUS)
+			CHECK(l->ctrl_list != l->tx_ctrl,
+			      "SABME fixture did not retain its supervisory reply");
 		if (scenario == SEQUENCE_WRAP)
 			CHECK(!l->vr && !l->vs && !l->va, "SABME fixture did not wrap its sequence");
 		if (scenario == RETRAIN) {
@@ -6112,7 +6118,7 @@ static bool test_lapm_connected_sabme(void)
 				CHECK(l->state == 0 && !m->bit_timer &&
 				      strcmp(modem_call_phase(m), "cleardown") == 0 &&
 				      l->ctrl_list == l->tx_ctrl,
-				      "connected SABME restarted instead of releasing: role=%u P=%u scenario=%u",
+				      "connected SABME retained link state or queued replies: role=%u P=%u scenario=%u",
 				      caller, poll, scenario);
 				break;
 			}
