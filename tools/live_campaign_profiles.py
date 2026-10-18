@@ -334,7 +334,8 @@ def _fallback(
     specific = []
     if datapump == 92:
         specific.extend(("AT+DSC=3", "AT+V92Q=0", "AT+V92U=0"))
-    specific.extend(("AT+V90D=0", f"AT+MS={datapump},0,25000,56000"))
+    # Conventional fallback must also admit the lower V.34 rates.
+    specific.extend(("AT+V90D=0", f"AT+MS={datapump},0,2400,56000"))
     return _case(
         f"{family}-analogue-fallback",
         family,
