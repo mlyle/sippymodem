@@ -121,13 +121,14 @@ enum v34_equalizer_result v34_equalizer_filter(
 	return V34_EQUALIZER_OK;
 }
 
-static void adapt_tap(
+static inline void adapt_tap(
 	struct v34_equalizer *equalizer,
+	const int16_t *restrict in_phase_delay, const int16_t *restrict quadrature_delay,
 	size_t sample_index, size_t coefficient_index,
 	struct v34_analytic_sample error, bool preserve_residue)
 {
-	int16_t sample_in_phase = equalizer->in_phase_delay[sample_index];
-	int16_t sample_quadrature = equalizer->quadrature_delay[sample_index];
+	int16_t sample_in_phase = in_phase_delay[sample_index];
+	int16_t sample_quadrature = quadrature_delay[sample_index];
 	uint32_t in_phase = pack_s16_u16_words(
 		equalizer->in_phase_coefficient[coefficient_index],
 		preserve_residue ?
@@ -155,20 +156,63 @@ static void adapt_tap(
 	}
 }
 
+static inline void adapt_history(
+	struct v34_equalizer *equalizer,
+	const int16_t *restrict in_phase_delay, const int16_t *restrict quadrature_delay,
+	uint32_t index, struct v34_analytic_sample error, bool center_only)
+{
+	size_t coefficient = 0;
+
+	if (center_only) {
+		for (size_t offset = 0; offset < V34_EQUALIZER_CENTER_TAPS; ++offset) {
+			coefficient = equalizer->identity_tap -
+				V34_EQUALIZER_CENTER_TAPS / 2u + offset;
+			size_t sample = index + coefficient;
+
+			if (sample >= equalizer->tap_count)
+				sample -= equalizer->tap_count;
+			adapt_tap(equalizer, in_phase_delay, quadrature_delay,
+				sample, coefficient, error, false);
+		}
+		return;
+	}
+	for (size_t sample = index;
+	     sample < equalizer->tap_count; ++sample, ++coefficient)
+		adapt_tap(equalizer, in_phase_delay, quadrature_delay,
+			sample, coefficient, error, true);
+	for (size_t sample = 0; sample < index;
+	     ++sample, ++coefficient)
+		adapt_tap(equalizer, in_phase_delay, quadrature_delay,
+			sample, coefficient, error, true);
+}
+
+enum v34_equalizer_result v34_equalizer_adapt_history(
+	struct v34_equalizer *equalizer,
+	const int16_t *in_phase_delay, const int16_t *quadrature_delay,
+	uint32_t index, struct v34_analytic_sample error, bool center_only)
+{
+	if (!v34_equalizer_is_valid(equalizer))
+		return V34_EQUALIZER_INVALID_STATE;
+	size_t bytes = equalizer->tap_count * sizeof(*in_phase_delay);
+
+	if (in_phase_delay == NULL || quadrature_delay == NULL ||
+	    index >= equalizer->tap_count ||
+	    memory_regions_overlap(equalizer, sizeof(*equalizer), in_phase_delay, bytes) ||
+	    memory_regions_overlap(equalizer, sizeof(*equalizer), quadrature_delay, bytes))
+		return V34_EQUALIZER_INVALID_ARGUMENT;
+	adapt_history(equalizer, in_phase_delay, quadrature_delay,
+		index, error, center_only);
+	return V34_EQUALIZER_OK;
+}
+
 enum v34_equalizer_result v34_equalizer_adapt(
 	struct v34_equalizer *equalizer,
 	struct v34_analytic_sample error)
 {
-	size_t coefficient = 0;
-
 	if (!v34_equalizer_is_valid(equalizer))
 		return V34_EQUALIZER_INVALID_STATE;
-	for (size_t sample = equalizer->index;
-	     sample < equalizer->tap_count; ++sample, ++coefficient)
-		adapt_tap(equalizer, sample, coefficient, error, true);
-	for (size_t sample = 0; sample < equalizer->index;
-	     ++sample, ++coefficient)
-		adapt_tap(equalizer, sample, coefficient, error, true);
+	adapt_history(equalizer, equalizer->in_phase_delay, equalizer->quadrature_delay,
+		equalizer->index, error, false);
 	return V34_EQUALIZER_OK;
 }
 
@@ -178,14 +222,7 @@ enum v34_equalizer_result v34_equalizer_adapt_center(
 {
 	if (!v34_equalizer_is_valid(equalizer))
 		return V34_EQUALIZER_INVALID_STATE;
-	for (size_t offset = 0; offset < V34_EQUALIZER_CENTER_TAPS; ++offset) {
-		size_t coefficient = equalizer->identity_tap -
-			V34_EQUALIZER_CENTER_TAPS / 2u + offset;
-		size_t sample = equalizer->index + coefficient;
-
-		if (sample >= equalizer->tap_count)
-			sample -= equalizer->tap_count;
-		adapt_tap(equalizer, sample, coefficient, error, false);
-	}
+	adapt_history(equalizer, equalizer->in_phase_delay, equalizer->quadrature_delay,
+		equalizer->index, error, true);
 	return V34_EQUALIZER_OK;
 }

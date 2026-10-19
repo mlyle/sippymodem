@@ -327,6 +327,56 @@ static bool test_bounded_geometry(void)
 	return true;
 }
 
+static bool test_retained_history(void)
+{
+	static const uint16_t spans[] = { 8, 12, 80, 128 };
+	static const struct v34_analytic_sample errors[] = {
+		{ INT16_MIN, INT16_MIN }, { INT16_MAX, INT16_MIN },
+		{ 0, -1 }, { 1234, -5678 },
+	};
+
+	for (size_t span = 0; span < ARRAY_LENGTH(spans); ++span) {
+		uint16_t taps = spans[span];
+
+		for (uint32_t index = 0; index < taps; ++index) {
+			struct v34_equalizer live, retained, saved;
+			struct v34_analytic_sample error = errors[index % ARRAY_LENGTH(errors)];
+
+			seed_equalizer(&live, index + 1u, (index + 13u) % taps);
+			live.tap_count = taps;
+			live.identity_tap = taps - (taps > 32u ? 32u : 4u);
+			retained = live;
+			retained.index = index;
+			for (size_t tap = 0; tap < V34_EQUALIZER_MAX_TAPS; ++tap) {
+				retained.in_phase_delay[tap] = patterned_word(tap, index + 7u);
+				retained.quadrature_delay[tap] = patterned_word(tap, index + 11u);
+			}
+			saved = retained;
+			for (unsigned center = 0; center < 2; ++center) {
+				struct v34_equalizer actual = live;
+				struct v34_equalizer expected = retained;
+
+				reference_adapt(&expected, error, center != 0);
+				/* The reference computes against an old window; restore
+				 * the live window before comparing the complete owner. */
+				memcpy(expected.in_phase_delay, live.in_phase_delay,
+				       sizeof(expected.in_phase_delay));
+				memcpy(expected.quadrature_delay, live.quadrature_delay,
+				       sizeof(expected.quadrature_delay));
+				expected.index = live.index;
+				CHECK(v34_equalizer_adapt_history(&actual,
+					      retained.in_phase_delay, retained.quadrature_delay,
+					      index, error, center != 0) == V34_EQUALIZER_OK &&
+				      memcmp(&actual, &expected, sizeof(actual)) == 0 &&
+				      memcmp(&retained, &saved, sizeof(retained)) == 0,
+				      "retained history changed at span %u index %u center %u",
+				      taps, index, center);
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_transactionality(void)
 {
 	struct v34_equalizer equalizer;
@@ -334,6 +384,7 @@ static bool test_transactionality(void)
 	struct v34_equalizer_accumulator output = { 17, -23 };
 	struct v34_equalizer_accumulator saved_output = output;
 	struct v34_analytic_sample sample = { 1, 2 };
+	int16_t history[V34_EQUALIZER_MAX_TAPS] = { 0 };
 
 	seed_equalizer(&equalizer, 0x6b, 5);
 	saved = equalizer;
@@ -347,6 +398,20 @@ static bool test_transactionality(void)
 	      memcmp(&equalizer, &saved, sizeof(equalizer)) == 0 &&
 	      memcmp(&output, &saved_output, sizeof(output)) == 0,
 	      "equalizer alias rejection was not transactional");
+	CHECK(v34_equalizer_adapt_history(&equalizer, NULL, history, 0, sample, false) ==
+		      V34_EQUALIZER_INVALID_ARGUMENT &&
+	      v34_equalizer_adapt_history(&equalizer, history, NULL, 0, sample, true) ==
+		      V34_EQUALIZER_INVALID_ARGUMENT &&
+	      v34_equalizer_adapt_history(&equalizer, history, history,
+		      equalizer.tap_count, sample, false) == V34_EQUALIZER_INVALID_ARGUMENT &&
+	      v34_equalizer_adapt_history(&equalizer, equalizer.in_phase_coefficient,
+		      history, 0, sample, false) == V34_EQUALIZER_INVALID_ARGUMENT &&
+	      v34_equalizer_adapt_history(&equalizer, history,
+		      equalizer.quadrature_coefficient + 1, 0, sample, true) ==
+		      V34_EQUALIZER_INVALID_ARGUMENT &&
+	      memcmp(&equalizer, &saved, sizeof(equalizer)) == 0 &&
+	      memcmp(history, (const int16_t[V34_EQUALIZER_MAX_TAPS]){ 0 }, sizeof(history)) == 0,
+	      "invalid retained history changed the owner or inputs");
 
 	equalizer.index = V34_EQUALIZER_TAPS;
 	saved = equalizer;
@@ -360,6 +425,8 @@ static bool test_transactionality(void)
 	      v34_equalizer_adapt(&equalizer, sample) ==
 		      V34_EQUALIZER_INVALID_STATE &&
 	      v34_equalizer_adapt_center(&equalizer, sample) ==
+		      V34_EQUALIZER_INVALID_STATE &&
+	      v34_equalizer_adapt_history(&equalizer, history, history, 0, sample, false) ==
 		      V34_EQUALIZER_INVALID_STATE &&
 	      memcmp(&equalizer, &saved, sizeof(equalizer)) == 0 &&
 	      memcmp(&output, &saved_output, sizeof(output)) == 0,
@@ -376,6 +443,7 @@ int main(void)
 		{ "lifecycle", test_lifecycle },
 		{ "filter and adaptation", test_filter_and_adaptation },
 		{ "bounded geometry", test_bounded_geometry },
+		{ "retained history", test_retained_history },
 		{ "transactionality", test_transactionality },
 	};
 	unsigned int failures = 0;

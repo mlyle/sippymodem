@@ -677,31 +677,10 @@ static enum v34_adaptive_equalizer_result adapt_retained(
 	const struct v34_adaptive_equalizer_retained *retained,
 	struct v34_analytic_sample error, bool center_only)
 {
-	struct v34_equalizer historical = *equalizer;
-	enum v34_equalizer_result result;
-
-	memcpy(historical.in_phase_delay, retained->in_phase_delay,
-	       sizeof(historical.in_phase_delay));
-	memcpy(historical.quadrature_delay, retained->quadrature_delay,
-	       sizeof(historical.quadrature_delay));
-	historical.index = retained->equalizer_index;
-	result = center_only ?
-		v34_equalizer_adapt_center(&historical, error) :
-		v34_equalizer_adapt(&historical, error);
-	if (result != V34_EQUALIZER_OK)
-		return V34_ADAPTIVE_EQUALIZER_INVALID_STATE;
-	memcpy(equalizer->in_phase_coefficient,
-	       historical.in_phase_coefficient,
-	       sizeof(equalizer->in_phase_coefficient));
-	memcpy(equalizer->quadrature_coefficient,
-	       historical.quadrature_coefficient,
-	       sizeof(equalizer->quadrature_coefficient));
-	memcpy(equalizer->in_phase_residue, historical.in_phase_residue,
-	       sizeof(equalizer->in_phase_residue));
-	memcpy(equalizer->quadrature_residue,
-	       historical.quadrature_residue,
-	       sizeof(equalizer->quadrature_residue));
-	return V34_ADAPTIVE_EQUALIZER_OK;
+	return v34_equalizer_adapt_history(equalizer,
+		retained->in_phase_delay, retained->quadrature_delay,
+		retained->equalizer_index, error, center_only) == V34_EQUALIZER_OK ?
+		V34_ADAPTIVE_EQUALIZER_OK : V34_ADAPTIVE_EQUALIZER_INVALID_STATE;
 }
 
 static enum v34_adaptive_equalizer_result apply_decision(

@@ -74,4 +74,15 @@ enum v34_equalizer_result v34_equalizer_adapt_center(
 	struct v34_equalizer *equalizer,
 	struct v34_analytic_sample error);
 
+/* Apply a delayed decision to its original circular input window. Each
+ * read-only history covers tap_count samples and must be separate from the
+ * equalizer. index has the same meaning as the live delay-line index. Only
+ * coefficients (and, for a full update, residues) change; histories and the
+ * live index stay intact. No pointers are retained. center_only selects the
+ * same eight rounded updates as adapt_center; otherwise retain Q16 residues. */
+enum v34_equalizer_result v34_equalizer_adapt_history(
+	struct v34_equalizer *equalizer,
+	const int16_t *in_phase_delay, const int16_t *quadrature_delay,
+	uint32_t index, struct v34_analytic_sample error, bool center_only);
+
 #endif /* V34_EQUALIZER_H */
