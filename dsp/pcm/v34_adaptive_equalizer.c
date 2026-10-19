@@ -4,6 +4,7 @@
 
 #include "fixed_phase.h"
 #include "integer_math.h"
+#include "lineage.h"
 #include "memory_region.h"
 #include "sample_math.h"
 
@@ -41,16 +42,6 @@ _Static_assert(
 static int16_t shifted_s16(uint32_t value, unsigned int shift)
 {
 	return wrap_s16_from_s32(arithmetic_shift_right_u32(value, shift));
-}
-
-static uint64_t lineage_word(uint64_t lineage, uint16_t word)
-{
-	return (lineage ^ word) * UINT64_C(1099511628211);
-}
-
-static uint64_t lineage_tag(uint64_t lineage, uint16_t tag)
-{
-	return lineage_word(lineage_word(lineage, UINT16_C(0xa55a)), tag);
 }
 
 static bool feedback_mode_is_valid(unsigned int mode)
@@ -155,7 +146,7 @@ enum v34_adaptive_equalizer_result v34_adaptive_equalizer_init(
 	if (v34_equalizer_init(&initialized.equalizer) != V34_EQUALIZER_OK)
 		return V34_ADAPTIVE_EQUALIZER_INVALID_STATE;
 	initialized.rotate_in_phase = 0x4000;
-	initialized.lineage = UINT64_C(14695981039346656037);
+	initialized.lineage = LINEAGE_INITIAL;
 	initialized.initialized = true;
 	if (!v34_adaptive_equalizer_is_valid(&initialized))
 		return V34_ADAPTIVE_EQUALIZER_INVALID_STATE;

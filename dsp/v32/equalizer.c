@@ -4,6 +4,7 @@
 #include "fixed_phase.h"
 #include "fir.h"
 #include "integer_math.h"
+#include "lineage.h"
 #include "memory_region.h"
 
 #include <limits.h>
@@ -57,16 +58,6 @@ static const int16_t CARRIER_PROPORTIONAL_GAIN[] = {
 static const int16_t CARRIER_INTEGRAL_GAIN[] = {
 	0, 18, 1,
 };
-
-static uint64_t lineage_word(uint64_t lineage, uint16_t word)
-{
-	return (lineage ^ word) * UINT64_C(1099511628211);
-}
-
-static uint64_t lineage_tag(uint64_t lineage, uint16_t tag)
-{
-	return lineage_word(lineage_word(lineage, UINT16_C(0xa55a)), tag);
-}
 
 bool v32_equalizer_is_valid(
 	const struct v32_equalizer *equalizer)
@@ -124,7 +115,7 @@ enum v32_equalizer_result v32_equalizer_init(
 		return V32_EQUALIZER_INVALID_ARGUMENT;
 	memset(&initialized, 0, sizeof(initialized));
 	reconstruct_initial_coefficients(&initialized);
-	initialized.lineage = UINT64_C(14695981039346656037);
+	initialized.lineage = LINEAGE_INITIAL;
 	initialized.samples_until_observation = 1;
 	initialized.adaptation = V32_EQUALIZER_ADAPTATION_COARSE;
 	initialized.carrier_tracking = true;
