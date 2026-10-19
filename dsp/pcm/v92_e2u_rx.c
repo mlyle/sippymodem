@@ -18,7 +18,16 @@ static bool metrics_are_valid(const struct v92_e2u_rx *receiver)
 	       isfinite(receiver->observed_energy) &&
 	       isfinite(receiver->expected_energy) &&
 	       receiver->observed_energy >= 0.0 &&
-	       receiver->expected_energy >= 0.0 && bits != 0u &&
+	       receiver->expected_energy >= 0.0 &&
+	       isfinite(receiver->outlier.squared_error) &&
+	       isfinite(receiver->outlier.correlation) &&
+	       isfinite(receiver->outlier.observed_energy) &&
+	       isfinite(receiver->outlier.expected_energy) &&
+	       receiver->outlier.squared_error >= 0.0 &&
+	       receiver->outlier.observed_energy >= 0.0 &&
+	       receiver->outlier.expected_energy >= 0.0 &&
+	       receiver->outlier.observed_energy <= receiver->observed_energy &&
+	       receiver->outlier.expected_energy <= receiver->expected_energy && bits != 0u &&
 	       receiver->bit_errors <= receiver->received_symbols * bits;
 }
 
@@ -70,19 +79,23 @@ static bool sequence_matches(const struct v92_e2u_rx *receiver)
 {
 	const struct qam_equalizer *equalizer = &receiver->signal.line.equalizer;
 	double lu = receiver->signal.line.demodulator.lu;
-	double input_energy = 0.0;
+	double input_energy = 0.0, peak_energy = 0.0;
+	unsigned count = receiver->received_symbols;
+	unsigned begin = equalizer->decision_delay;
 
-	/* LU is the acquired receive level. Decision-directed adaptation can
-	 * lift quiet biased input to an inner point, which then correlates with
-	 * scrambled zeros. Require carrier in the existing FIR window before
-	 * trusting that normalized match. This receiver-policy floor is 18 dB
-	 * below acquisition, below even the weakest eight-point symbol; using
-	 * the full window includes the control tail without new power state. */
-	for (unsigned int tap = 0u; tap < equalizer->tap_count; ++tap) {
+	/* Measure only the raw samples corresponding to this marker. FIR
+	 * padding and following B1u do not supply evidence about E2u carrier.
+	 * Keep the acquired-LU floor 18 dB below training, excluding the
+	 * largest sample so one impulse cannot make quiet input a carrier. */
+	if (count < 2u || begin > equalizer->tap_count ||
+	    count > equalizer->tap_count - begin)
+		return false;
+	for (unsigned tap = begin; tap < begin + count; ++tap) {
 		double input = equalizer->history[tap].in_phase;
 		input_energy += input * input;
+		peak_energy = fmax(peak_energy, input * input);
 	}
-	if (input_energy * 64.0 < equalizer->tap_count * lu * lu)
+	if ((input_energy - peak_energy) * 64.0 < (count - 1u) * lu * lu)
 		return false;
 
 	double correlation_squared =
@@ -99,7 +112,25 @@ static bool sequence_matches(const struct v92_e2u_rx *receiver)
 	bool weak = positive && correlation_squared * 5.0 >= total_energy &&
 		receiver->bit_errors == 0u;
 
-	return strong || weak;
+	if (strong || weak)
+		return true;
+	/* One dominant impulse can reverse an outer point while the rest of
+	 * E2u remains a strong known-sequence match. Restrict this additional
+	 * qualification to one decoded error and one residual carrying over
+	 * four times the remaining error energy. Keep the ordinary strong
+	 * correlation requirement on every retained sample. */
+	if (receiver->bit_errors != 1u)
+		return false;
+	double remaining_error = fmax(0.0, receiver->observed_energy +
+		receiver->expected_energy - 2.0 * receiver->correlation -
+		receiver->outlier.squared_error);
+	if (receiver->outlier.squared_error <= 4.0 * remaining_error)
+		return false;
+	double correlation = receiver->correlation - receiver->outlier.correlation;
+	double observed = receiver->observed_energy - receiver->outlier.observed_energy;
+	double expected = receiver->expected_energy - receiver->outlier.expected_energy;
+	return correlation > 0.0 && observed > 0.0 && expected > 0.0 &&
+		correlation * correlation * 4.0 >= observed * expected * 3.0;
 }
 
 static enum v92_e2u_rx_result fail(struct v92_e2u_rx *receiver)
@@ -143,6 +174,13 @@ enum v92_e2u_rx_result v92_e2u_rx_sample(
 	next.observed_energy +=
 		decision.equalized_level * decision.equalized_level;
 	next.expected_energy += (double)expected * expected;
+	double residual = decision.equalized_level - expected;
+	if (residual * residual > next.outlier.squared_error) {
+		next.outlier.squared_error = residual * residual;
+		next.outlier.correlation = decision.equalized_level * expected;
+		next.outlier.observed_energy = decision.equalized_level * decision.equalized_level;
+		next.outlier.expected_energy = (double)expected * expected;
+	}
 	next.bit_errors += bit_count_u8(
 		(uint8_t)(decision.group & ((1u << bits) - 1u)));
 	next.received_symbols++;

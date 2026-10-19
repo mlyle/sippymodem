@@ -666,7 +666,7 @@ static bool test_e2u(void)
 }
 
 static bool run_e2u_carrier(enum g711_law law,
-	enum v92_constellation_size points, int16_t lu, bool quiet)
+	enum v92_constellation_size points, int16_t lu, bool quiet, int16_t pulse, unsigned pulse_index)
 {
 	struct v92_pcm_phase4_trn2u transmitter;
 	struct v92_pcm_phase4_trn2u_line_handoff boundary;
@@ -699,10 +699,11 @@ static bool run_e2u_carrier(enum g711_law law,
 	CHECK(v92_e2u_rx_init(&receiver, &signal, false) == V92_E2U_RX_OK,
 	      "carrier trial did not initialize");
 	for (unsigned int sample = 0u; sample < V92_PHASE4_E2U_SYMBOLS; ++sample)
-		result = v92_e2u_rx_sample(&receiver, level);
+		result = v92_e2u_rx_sample(&receiver,
+			pulse != 0 && sample == pulse_index ? line_sample(law, 1, pulse) : level);
 	CHECK(result == (quiet ? V92_E2U_RX_NO_MATCH : V92_E2U_RX_COMPLETE),
-	      "carrier qualification differed law=%u points=%u lu=%d quiet=%u result=%s",
-	      law, points, lu, quiet, v92_e2u_rx_result_name(result));
+	      "carrier qualification differed law=%u points=%u lu=%d quiet=%u pulse=%d position=%u result=%s",
+	      law, points, lu, quiet, pulse, pulse_index, v92_e2u_rx_result_name(result));
 	return true;
 }
 
@@ -710,10 +711,17 @@ static bool test_e2u_carrier(void)
 {
 	for (unsigned int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (unsigned int points = 4u; points <= 8u; points += 4u)
-			for (unsigned int scale = 1u; scale <= 8u; scale *= 8u)
-				CHECK(run_e2u_carrier(law, points, TEST_LU / scale, false) &&
-				      run_e2u_carrier(law, points, TEST_LU / scale, true),
+			for (unsigned int scale = 1u; scale <= 8u; scale *= 8u) {
+				CHECK(run_e2u_carrier(law, points, TEST_LU / scale, false, 0, 0u) &&
+				      run_e2u_carrier(law, points, TEST_LU / scale, true, 0, 0u),
 				      "carrier qualification matrix stopped");
+				/* One spike must not make quiet biased input a carrier,
+				 * even when adaptation lifts it onto a legal inner point. */
+				for (unsigned impulse = 0u; impulse < V92_PHASE4_E2U_SYMBOLS; ++impulse)
+					CHECK(run_e2u_carrier(law, points, TEST_LU / scale, true, -30000, impulse) &&
+					      run_e2u_carrier(law, points, TEST_LU / scale, true, 30000, impulse),
+					      "quiet impulse qualified as a carrier");
+			}
 	return true;
 }
 

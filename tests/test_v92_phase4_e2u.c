@@ -2202,6 +2202,54 @@ static bool test_weak_marker_bits(enum g711_law law, int polarity)
 	return true;
 }
 
+static bool run_marker_impulses(enum g711_law law,
+	enum v92_constellation_size points, int polarity, bool extended,
+	unsigned *single_error)
+{
+	unsigned symbols = extended ? V92_PHASE4_E2U_EXTENDED_SYMBOLS : V92_PHASE4_E2U_SYMBOLS;
+	for (unsigned impulse = 0u; impulse < symbols; ++impulse) {
+		struct v92_phase4_record_tx wire;
+		struct v92_upstream_control_line_rx line;
+		struct v92_e2u_rx candidate;
+		CHECK(upstream_line(law, points, &wire, &line), "impulse line failed");
+		line.signal.line.polarity = polarity;
+		CHECK(v92_e2u_rx_init(&candidate, &line.signal, extended != 0u) == V92_E2U_RX_OK,
+		      "impulse receiver failed");
+		enum v92_e2u_rx_result result = V92_E2U_RX_OK;
+		for (unsigned symbol = 0u; symbol < symbols; ++symbol) {
+			int16_t sample;
+			CHECK(v92_phase4_modulator_next(&wire.modulator, 0u, &sample) == V92_PHASE4_MODULATOR_OK,
+			      "impulse marker generation failed");
+			if (symbol == impulse)
+				sample = (int16_t)-sample;
+			result = v92_e2u_rx_sample(&candidate, polarity * quantize(law, sample));
+			if (symbol + 1u < symbols)
+				CHECK(result == V92_E2U_RX_OK,
+				      "impulse receiver finished before the marker boundary");
+		}
+		if (candidate.bit_errors == 1u) {
+			++*single_error;
+			CHECK(result == V92_E2U_RX_COMPLETE,
+			      "isolated impulse lost marker law=%u points=%u polarity=%d extended=%u position=%u errors=%u",
+			      law, points, polarity, extended, impulse, candidate.bit_errors);
+		}
+	}
+	return true;
+}
+
+static bool test_isolated_marker_impulses(void)
+{
+	unsigned single_error = 0u;
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned points = 4u; points <= 8u; points += 4u)
+			for (int polarity = -1; polarity <= 1; polarity += 2)
+				for (unsigned extended = 0u; extended < 2u; ++extended)
+					CHECK(run_marker_impulses(law, points, polarity, extended != 0u, &single_error),
+					      "marker impulse matrix stopped");
+	CHECK(single_error != 0u, "impulse matrix did not exercise a one-error marker");
+	return true;
+}
+
 int main(void)
 {
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
@@ -2284,5 +2332,5 @@ int main(void)
 			if (!run_control_rejection((enum g711_law)law, kind))
 				return 1;
 	}
-	return test_contracts() ? 0 : 1;
+	return test_contracts() && test_isolated_marker_impulses() ? 0 : 1;
 }

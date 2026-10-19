@@ -28,6 +28,11 @@ struct v92_e2u_rx {
 	double correlation;
 	double observed_energy;
 	double expected_energy;
+	/* Largest nominal-level residual and its contribution to the three
+	 * correlation sums. This bounded evidence belongs to one marker trial. */
+	struct {
+		double squared_error, correlation, observed_energy, expected_energy;
+	} outlier;
 	uint16_t bit_errors;
 	uint8_t expected_symbols;
 	uint8_t received_symbols;
