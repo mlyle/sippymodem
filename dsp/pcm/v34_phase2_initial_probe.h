@@ -51,6 +51,15 @@ v34_phase2_initial_probe_sample_concurrent(
 	int16_t received_sample,
 	struct v34_phase2_probe_acquisition_event *event);
 
+/* Internal step shared by initial probing and turnaround. Supply a validated
+ * private owner copy and a distinct event. Validate and commit the complete
+ * owner only after every child succeeds; discard staged state on rejection. */
+enum phase2_initial_probe_result
+v34_phase2_initial_probe_sample_concurrent_owned(
+	struct v34_phase2_initial_probe *probe,
+	int16_t received_sample,
+	struct v34_phase2_probe_acquisition_event *event);
+
 enum phase2_initial_probe_result
 v34_phase2_initial_probe_measure(
 	const struct v34_phase2_initial_probe *probe,

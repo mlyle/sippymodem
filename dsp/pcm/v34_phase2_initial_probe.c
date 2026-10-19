@@ -121,19 +121,15 @@ enum phase2_initial_probe_result v34_phase2_initial_probe_init(
 }
 
 enum phase2_initial_probe_result
-v34_phase2_initial_probe_sample_concurrent(
+v34_phase2_initial_probe_sample_concurrent_owned(
 	struct v34_phase2_initial_probe *probe, int16_t received_sample,
 	struct v34_phase2_probe_acquisition_event *event)
 {
-	struct v34_phase2_initial_probe next;
 	struct v34_phase2_probe_acquisition_event emitted = { 0 };
 	struct v34_phase2_probe_acquisition *receive =
-		&next.concurrent_receive;
+		&probe->concurrent_receive;
 	bool finish_l2;
 
-	if (!v34_phase2_initial_probe_is_valid(probe) || event == NULL)
-		return PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
-	next = *probe;
 	if (!probe->concurrent_receive_enabled ||
 	    probe->concurrent_receive.phase ==
 		    V34_PHASE2_PROBE_ACQUISITION_COMPLETE) {
@@ -147,12 +143,12 @@ v34_phase2_initial_probe_sample_concurrent(
 	if (v34_phase2_probe_acquisition_sample(
 		    receive, received_sample, finish_l2, &emitted) !=
 		    V34_PHASE2_PROBE_ACQUISITION_OK ||
-	    !resolve_early_prefix(&next, &emitted))
+	    !resolve_early_prefix(probe, &emitted))
 		return PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
 	if (emitted.kind == V34_PHASE2_PROBE_ACQUISITION_EVENT_NOT_FOUND ||
 	    emitted.kind == V34_PHASE2_PROBE_ACQUISITION_EVENT_LIMIT_REACHED) {
-		if (!next.ranging.retraining) {
-			next.concurrent_receive_enabled = false;
+		if (!probe->ranging.retraining) {
+			probe->concurrent_receive_enabled = false;
 		} else {
 			if (v34_phase2_probe_acquisition_init(receive) !=
 			    V34_PHASE2_PROBE_ACQUISITION_OK)
@@ -161,7 +157,24 @@ v34_phase2_initial_probe_sample_concurrent(
 				(struct v34_phase2_probe_acquisition_event){ 0 };
 		}
 	}
-	if (!v34_phase2_initial_probe_is_valid(&next))
+	*event = emitted;
+	return PHASE2_INITIAL_PROBE_OK;
+}
+
+enum phase2_initial_probe_result
+v34_phase2_initial_probe_sample_concurrent(
+	struct v34_phase2_initial_probe *probe, int16_t received_sample,
+	struct v34_phase2_probe_acquisition_event *event)
+{
+	struct v34_phase2_initial_probe next;
+	struct v34_phase2_probe_acquisition_event emitted;
+
+	if (!v34_phase2_initial_probe_is_valid(probe) || event == NULL)
+		return PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
+	next = *probe;
+	if (v34_phase2_initial_probe_sample_concurrent_owned(
+		    &next, received_sample, &emitted) != PHASE2_INITIAL_PROBE_OK ||
+	    !v34_phase2_initial_probe_is_valid(&next))
 		return PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
 	*probe = next;
 	*event = emitted;
@@ -182,7 +195,7 @@ enum phase2_initial_probe_result v34_phase2_initial_probe_sample(
 	    transmit_sample == NULL || event == NULL)
 		return PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
 	next = *probe;
-	if (v34_phase2_initial_probe_sample_concurrent(
+	if (v34_phase2_initial_probe_sample_concurrent_owned(
 		    &next, received_sample, &concurrent) !=
 		    PHASE2_INITIAL_PROBE_OK ||
 	    phase2_initial_probe_sample(

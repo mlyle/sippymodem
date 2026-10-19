@@ -784,6 +784,8 @@ static bool test_concurrent_probe_crosses_turnaround(void)
 	      "turnaround-crossing probe owners were invalid");
 	for (size_t sample = 0; sample < TEST_SAMPLE_LIMIT; ++sample) {
 		struct v34_phase2_probe_sequence_event peer_event;
+		struct v34_phase2_probe_acquisition_event owned_event;
+		struct v34_phase2_initial_probe owned = answerer_probe;
 		int16_t peer_transmit;
 
 		CHECK(v34_phase2_probe_sequence_sample(
@@ -794,6 +796,17 @@ static bool test_concurrent_probe_crosses_turnaround(void)
 			      &concurrent_event) ==
 			      PHASE2_INITIAL_PROBE_OK,
 		      "concurrent probe prefix stopped at sample %zu", sample);
+		CHECK(v34_phase2_initial_probe_sample_concurrent_owned(
+			      &owned, peer_transmit, &owned_event) ==
+			      PHASE2_INITIAL_PROBE_OK &&
+		      v34_phase2_initial_probe_is_valid(&owned) &&
+		      v34_initial_probes_equal(&owned, &answerer_probe) &&
+		      owned_event.kind == concurrent_event.kind &&
+		      owned_event.leading_samples == concurrent_event.leading_samples &&
+		      owned_event.replay_samples == concurrent_event.replay_samples &&
+		      owned_event.probe_energy_fraction == concurrent_event.probe_energy_fraction &&
+		      owned_event.l2_samples == concurrent_event.l2_samples,
+		      "staged concurrent probe changed state or evidence at sample %zu", sample);
 		if (answerer_probe.concurrent_receive.phase ==
 			    V34_PHASE2_PROBE_ACQUISITION_RECEIVING &&
 		    answerer_probe.concurrent_receive.receiver.l2_spectrum
@@ -1190,6 +1203,10 @@ static bool test_validation(void)
 	      memcmp(&event, &event_before, sizeof(event)) == 0 &&
 	      transmit == 1234,
 	      "invalid sample output was not transactional");
+	CHECK(v34_phase2_initial_probe_sample_concurrent(&probe, 0, NULL) ==
+		      PHASE2_INITIAL_PROBE_INVALID_ARGUMENT &&
+	      v34_initial_probes_equal(&probe, &before),
+	      "standalone concurrent receiver changed state on a rejected output");
 	CHECK(v34_phase2_initial_probe_init(
 		      &invalid, &caller_ranging, true) ==
 		      PHASE2_INITIAL_PROBE_INVALID_ARGUMENT,

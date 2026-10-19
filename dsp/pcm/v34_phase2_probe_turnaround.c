@@ -54,7 +54,7 @@ v34_phase2_probe_turnaround_sample(
 	    transmit_sample == NULL || event == NULL)
 		return PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT;
 	next = *turnaround;
-	if (v34_phase2_initial_probe_sample_concurrent(
+	if (v34_phase2_initial_probe_sample_concurrent_owned(
 		    &next.initial_probe, received_sample, &concurrent) !=
 		    PHASE2_INITIAL_PROBE_OK ||
 	    phase2_probe_turnaround_sample(
