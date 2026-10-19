@@ -68,25 +68,16 @@ v34_phase2_reciprocal_probe_sample(
 	int16_t received_sample, int16_t *transmit_sample,
 	struct phase2_reciprocal_probe_event *event)
 {
-	struct v34_phase2_reciprocal_probe next;
-	struct phase2_reciprocal_probe_event common;
-	int16_t generated;
-
 	if (!v34_phase2_reciprocal_probe_is_valid(probe) ||
 	    transmit_sample == NULL || event == NULL)
 		return PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT;
-	next = *probe;
-	if (phase2_reciprocal_probe_sample(
-		    &next.control, &next.turnaround.control,
-		    &next.turnaround.initial_probe.control,
-		    transport(&next), received_sample, &generated, &common) !=
-		    PHASE2_RECIPROCAL_PROBE_OK ||
-	    !v34_phase2_reciprocal_probe_is_valid(&next))
-		return PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT;
-	*probe = next;
-	*transmit_sample = generated;
-	*event = common;
-	return PHASE2_RECIPROCAL_PROBE_OK;
+
+	/* The shared transaction preserves the completed probe and turnaround,
+	 * staging only the active reciprocal controller and transport. */
+	return phase2_reciprocal_probe_sample(
+		&probe->control, &probe->turnaround.control,
+		&probe->turnaround.initial_probe.control,
+		transport(probe), received_sample, transmit_sample, event);
 }
 
 enum phase2_reciprocal_probe_result
