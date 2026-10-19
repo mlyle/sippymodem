@@ -467,23 +467,107 @@ enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_continue(
 }
 
 static enum v90_phase4_cp_line_rx_result fail_sample(
+	const struct v90_phase4_cp_line_rx *previous,
 	struct v90_phase4_cp_line_rx *rx,
-	struct v90_phase4_cp_line_rx *next,
 	const struct v34_adaptive_equalizer_observation *observation)
 {
-	if (next->line.equalizer.decision_pending && observation != NULL &&
+	if (rx->line.equalizer.decision_pending && observation != NULL &&
 	    v34_adaptive_equalizer_discard(
-		    &next->line.equalizer, observation) !=
+		    &rx->line.equalizer, observation) !=
 		    V34_ADAPTIVE_EQUALIZER_OK) {
+		*rx = *previous;
 		rx->failed = true;
 		return V90_PHASE4_CP_LINE_RX_NUMERIC_FAILURE;
 	}
-	next->failed = true;
-	if (v90_phase4_cp_line_rx_is_valid(next))
-		*rx = *next;
-	else
+	rx->failed = true;
+	if (!v90_phase4_cp_line_rx_is_valid(rx)) {
+		*rx = *previous;
 		rx->failed = true;
+	}
 	return V90_PHASE4_CP_LINE_RX_NUMERIC_FAILURE;
+}
+
+enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_sample_owned(
+	struct v90_phase4_cp_line_rx *rx,
+	const struct v90_phase4_cp_line_rx *previous, int16_t sample,
+	struct v90_cp_receive_event *event,
+	struct v34_fixed_training_decision *decision)
+{
+	struct v34_adaptive_equalizer_observation observation;
+	struct v34_fixed_training_decision hard;
+	struct v34_phase3_s_adaptation boundary_adaptation;
+	struct v34_receive_action action;
+	struct v90_cp_receive_event emitted = { 0 };
+	enum v34_line_receiver_result line_result;
+	bool boundary_was_complete;
+
+	if (rx == NULL || previous == NULL || event == NULL)
+		return V90_PHASE4_CP_LINE_RX_INVALID_ARGUMENT;
+	if (rx->failed)
+		return V90_PHASE4_CP_LINE_RX_FAILED;
+	if (rx->record_pending)
+		return V90_PHASE4_CP_LINE_RX_INVALID_STATE;
+
+	line_result = v34_line_receiver_sample(
+		&rx->line, sample, &observation);
+	if (line_result == V34_LINE_RECEIVER_OK) {
+		if (!v90_phase4_cp_line_rx_is_valid(rx))
+			return fail_sample(previous, rx, NULL);
+		return V90_PHASE4_CP_LINE_RX_OK;
+	}
+	if (line_result != V34_LINE_RECEIVER_OBSERVATION_READY)
+		return fail_sample(previous, rx, NULL);
+	boundary_was_complete = rx->boundary_complete;
+	if (!receive_fixed_decision(
+		    rx, observation.decision, &hard,
+		    &boundary_adaptation, &emitted))
+		return fail_sample(previous, rx, &observation);
+	if (!boundary_was_complete) {
+		if (boundary_adaptation.adapt)
+			action = v34_receive_action_commit(
+				&observation, boundary_adaptation.target,
+				rx->decoder_power_q15,
+				V34_ADAPTIVE_EQUALIZER_CENTER);
+		else
+			action =
+				v34_receive_action_only(V34_RECEIVE_DISCARD);
+	} else {
+		/* A CP dropout must not teach the FIR an arbitrary hard decision.
+		 * Keep the carrier and symbol history moving so a later CP or E can
+		 * recover, and resume ordinary adaptation as soon as signal returns. */
+		action = v34_receive_action_commit(
+			&observation, hard.target,
+			rx->decoder_power_q15,
+			rx->adaptation == V34_ADAPTIVE_EQUALIZER_FULL &&
+			!v34_training_constellation_has_signal(
+				rx->symbols.constellation, observation.decision) ?
+				V34_ADAPTIVE_EQUALIZER_CARRIER : rx->adaptation);
+	}
+	if (v34_line_receiver_resolve(
+		    &rx->line, &observation, &action,
+		    rx->decoder_power_q15) != V34_LINE_RECEIVER_OK)
+		return fail_sample(previous, rx, &observation);
+	if (!boundary_was_complete && rx->boundary_complete &&
+	    !freeze_trained_gain(rx))
+		return fail_sample(previous, rx, NULL);
+	if (emitted.type != V90_CP_RECEIVE_NO_EVENT) {
+		rx->record_pending = true;
+		rx->pending_record_is_valid =
+			emitted.type == V90_CP_RECEIVE_FRAME &&
+			emitted.frame_result == V90_CP_OK;
+		rx->pending_parameters = (struct v90_cp_parameters){ 0 };
+		if (rx->pending_record_is_valid)
+			rx->pending_parameters = emitted.parameters;
+	}
+	if (!v90_phase4_cp_line_rx_is_valid(rx))
+		return fail_sample(previous, rx, NULL);
+	if (decision != NULL && boundary_was_complete)
+		*decision = hard;
+	if (emitted.type != V90_CP_RECEIVE_NO_EVENT) {
+		*event = emitted;
+		return V90_PHASE4_CP_LINE_RX_RECORD_READY;
+	}
+	return V90_PHASE4_CP_LINE_RX_SYMBOL;
 }
 
 enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_sample(
@@ -492,13 +576,7 @@ enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_sample(
 	struct v34_fixed_training_decision *decision)
 {
 	struct v90_phase4_cp_line_rx next;
-	struct v34_adaptive_equalizer_observation observation;
-	struct v34_fixed_training_decision hard;
-	struct v34_phase3_s_adaptation boundary_adaptation;
-	struct v34_receive_action action;
-	struct v90_cp_receive_event emitted = { 0 };
-	enum v34_line_receiver_result line_result;
-	bool boundary_was_complete;
+	enum v90_phase4_cp_line_rx_result result;
 
 	if (!v90_phase4_cp_line_rx_is_valid(rx) || event == NULL ||
 	    memory_regions_overlap(rx, sizeof(*rx), event, sizeof(*event)) ||
@@ -511,68 +589,10 @@ enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_sample(
 	if (rx->record_pending)
 		return V90_PHASE4_CP_LINE_RX_INVALID_STATE;
 	next = *rx;
-	line_result = v34_line_receiver_sample(
-		&next.line, sample, &observation);
-	if (line_result == V34_LINE_RECEIVER_OK) {
-		if (!v90_phase4_cp_line_rx_is_valid(&next))
-			return fail_sample(rx, &next, NULL);
-		*rx = next;
-		return V90_PHASE4_CP_LINE_RX_OK;
-	}
-	if (line_result != V34_LINE_RECEIVER_OBSERVATION_READY)
-		return fail_sample(rx, &next, NULL);
-	boundary_was_complete = next.boundary_complete;
-	if (!receive_fixed_decision(
-		    &next, observation.decision, &hard,
-		    &boundary_adaptation, &emitted))
-		return fail_sample(rx, &next, &observation);
-	if (!boundary_was_complete) {
-		if (boundary_adaptation.adapt)
-			action = v34_receive_action_commit(
-				&observation, boundary_adaptation.target,
-				next.decoder_power_q15,
-				V34_ADAPTIVE_EQUALIZER_CENTER);
-		else
-			action =
-				v34_receive_action_only(V34_RECEIVE_DISCARD);
-	} else {
-		/* A CP dropout must not teach the FIR an arbitrary hard decision.
-		 * Keep the carrier and symbol history moving so a later CP or E can
-		 * recover, and resume ordinary adaptation as soon as signal returns. */
-		action = v34_receive_action_commit(
-			&observation, hard.target,
-			next.decoder_power_q15,
-			next.adaptation == V34_ADAPTIVE_EQUALIZER_FULL &&
-			!v34_training_constellation_has_signal(
-				next.symbols.constellation, observation.decision) ?
-				V34_ADAPTIVE_EQUALIZER_CARRIER : next.adaptation);
-	}
-	if (v34_line_receiver_resolve(
-		    &next.line, &observation, &action,
-		    next.decoder_power_q15) != V34_LINE_RECEIVER_OK)
-		return fail_sample(rx, &next, &observation);
-	if (!boundary_was_complete && next.boundary_complete &&
-	    !freeze_trained_gain(&next))
-		return fail_sample(rx, &next, NULL);
-	if (emitted.type != V90_CP_RECEIVE_NO_EVENT) {
-		next.record_pending = true;
-		next.pending_record_is_valid =
-			emitted.type == V90_CP_RECEIVE_FRAME &&
-			emitted.frame_result == V90_CP_OK;
-		next.pending_parameters = (struct v90_cp_parameters){ 0 };
-		if (next.pending_record_is_valid)
-			next.pending_parameters = emitted.parameters;
-	}
-	if (!v90_phase4_cp_line_rx_is_valid(&next))
-		return fail_sample(rx, &next, NULL);
+	result = v90_phase4_cp_line_rx_sample_owned(
+		&next, rx, sample, event, decision);
 	*rx = next;
-	if (decision != NULL && boundary_was_complete)
-		*decision = hard;
-	if (emitted.type != V90_CP_RECEIVE_NO_EVENT) {
-		*event = emitted;
-		return V90_PHASE4_CP_LINE_RX_RECORD_READY;
-	}
-	return V90_PHASE4_CP_LINE_RX_SYMBOL;
+	return result;
 }
 
 const char *v90_phase4_cp_line_rx_result_name(

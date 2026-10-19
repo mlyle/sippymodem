@@ -90,6 +90,17 @@ enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_sample(
 	struct v90_cp_receive_event *event,
 	struct v34_fixed_training_decision *decision);
 
+/* Internal step for a validated private owner copy. previous is its disjoint,
+ * immutable receiver before this sample; it supplies the existing fallback
+ * when a consumed DSP failure cannot retain valid history. Outputs are
+ * disjoint from both states and each other. The owner must validate and commit
+ * its whole result, including the latched receive failure. */
+enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_sample_owned(
+	struct v90_phase4_cp_line_rx *rx,
+	const struct v90_phase4_cp_line_rx *previous, int16_t sample,
+	struct v90_cp_receive_event *event,
+	struct v34_fixed_training_decision *decision);
+
 const char *v90_phase4_cp_line_rx_result_name(
 	enum v90_phase4_cp_line_rx_result result);
 

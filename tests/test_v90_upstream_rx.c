@@ -759,7 +759,50 @@ static bool test_contracts(void)
 		     (enum v90_upstream_rx_result)99),
 		     "unknown") == 0,
 	      "owner contracts or result names changed");
-	return true;
+	/* Exhausting the equalizer epoch fails after timing and input history
+	 * have advanced. Keep that consumed state and both failure latches;
+	 * an owner rollback must not silently make the CP child usable again. */
+	receiver.state.cp.line.equalizer.epoch = UINT64_MAX;
+	CHECK(v90_upstream_rx_is_valid(&receiver),
+	      "exhausted-epoch fixture is invalid");
+	for (unsigned int index = 0; index < 16; ++index) {
+		struct v90_cp_parameters event;
+		struct v90_cp_parameters saved_event;
+		enum v90_upstream_rx_result result;
+		int16_t sample;
+
+		memset(&event, 0xa5, sizeof(event));
+		saved_event = event;
+		saved = receiver;
+		CHECK(v90_phase4_cp_line_tx_sample(&cp_tx, &sample) ==
+			      V90_PHASE4_CP_LINE_TX_OK,
+		      "failure fixture lost its CP input");
+		result = v90_upstream_rx_sample(
+			&receiver, quantize(G711_LAW_PCMU, sample), &event);
+		CHECK(memcmp(&event, &saved_event, sizeof(event)) == 0,
+		      "numeric receive failure published a control event");
+		if (result == V90_UPSTREAM_RX_NUMERIC_FAILURE) {
+			CHECK(v90_upstream_rx_has_failed(&receiver) &&
+			      receiver.state.cp.failed &&
+			      !receiver.state.cp.line.equalizer.decision_pending &&
+			      receiver.state.cp.line.equalizer.epoch == UINT64_MAX &&
+			      memcmp(&receiver.state.cp.line.timing,
+				     &saved.state.cp.line.timing,
+				     sizeof(receiver.state.cp.line.timing)) != 0,
+			      "CP failure lost consumed history or its failure latch");
+			saved = receiver;
+			CHECK(v90_upstream_rx_sample(&receiver, sample, &event) ==
+				      V90_UPSTREAM_RX_FAILED &&
+			      receiver_states_equal(&receiver, &saved) &&
+			      memcmp(&event, &saved_event, sizeof(event)) == 0,
+			      "failed CP owner consumed another sample");
+			return true;
+		}
+		CHECK(result == V90_UPSTREAM_RX_OK,
+		      "exhausted CP epoch produced an unexpected result");
+	}
+	CHECK(false, "CP receiver did not reach its exhausted epoch");
+	return false;
 }
 
 int main(void)

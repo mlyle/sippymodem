@@ -176,11 +176,13 @@ static enum v90_phase4_startup_result transmit_character(
 }
 
 static enum v90_phase4_startup_result receive_continued(
-	struct v90_phase4_digital_continuation *state, int16_t sample)
+	struct v90_phase4_digital_continuation *state,
+	const struct v90_phase4_cp_line_rx *previous, int16_t sample)
 {
 	struct v90_cp_receive_event event = { 0 };
 	enum v90_phase4_cp_line_rx_result result =
-		v90_phase4_cp_line_rx_sample(&state->receive, sample, &event, NULL);
+		v90_phase4_cp_line_rx_sample_owned(
+			&state->receive, previous, sample, &event, NULL);
 
 	switch (result) {
 	case V90_PHASE4_CP_LINE_RX_OK:
@@ -214,12 +216,15 @@ static enum v90_phase4_startup_result receive_continued(
 }
 
 static enum v90_phase4_startup_result receive_sample(
-	struct v90_phase4_digital_startup *startup, int16_t sample)
+	struct v90_phase4_digital_startup *startup,
+	const struct v90_phase4_digital_startup *previous, int16_t sample)
 {
 	if (startup->stage == V90_PHASE4_STARTUP_INITIAL)
 		return station_result(v90_phase4_digital_station_receive(
 			&startup->state.initial, sample));
-	return receive_continued(&startup->state.continuing, sample);
+	return receive_continued(
+		&startup->state.continuing,
+		&previous->state.continuing.receive, sample);
 }
 
 static enum v90_phase4_startup_result advance_startup(
@@ -313,7 +318,7 @@ enum v90_phase4_startup_result v90_phase4_digital_startup_sample(
 		return fail_startup(
 			startup, &next, result, false, generated,
 			transmit_octet);
-	result = receive_sample(&next, received_sample);
+	result = receive_sample(&next, startup, received_sample);
 	if (result != V90_PHASE4_STARTUP_OK)
 		return fail_startup(
 			startup, &next, result, true, generated,

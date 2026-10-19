@@ -389,13 +389,14 @@ static enum v90_upstream_rx_result start_b1(
 }
 
 static enum v90_upstream_rx_result receive_cp_sample(
-	struct v90_upstream_rx *receiver, int16_t sample,
+	struct v90_upstream_rx *receiver,
+	const struct v90_phase4_cp_line_rx *previous, int16_t sample,
 	struct v90_cp_parameters *emitted, bool *event_ready)
 {
 	struct v90_cp_receive_event event = { 0 };
 	enum v90_phase4_cp_line_rx_result result =
-		v90_phase4_cp_line_rx_sample(
-			&receiver->state.cp, sample, &event, NULL);
+		v90_phase4_cp_line_rx_sample_owned(
+			&receiver->state.cp, previous, sample, &event, NULL);
 
 	/* CPt and echo-reconditioning SCR are not E. Only a normal data CP
 	 * authorizes the 20-one marker in the continuous CP decoder. */
@@ -533,7 +534,7 @@ enum v90_upstream_rx_result v90_upstream_rx_sample(
 	case V90_UPSTREAM_RX_STAGE_CPS:
 	case V90_UPSTREAM_RX_STAGE_RECONDITION:
 		result = receive_cp_sample(
-			&next, sample, &emitted, &event_ready);
+			&next, &receiver->state.cp, sample, &emitted, &event_ready);
 		break;
 	case V90_UPSTREAM_RX_STAGE_E:
 		result = receive_e_sample(&next, sample);
