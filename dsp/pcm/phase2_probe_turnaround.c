@@ -376,6 +376,52 @@ static void advance_reversal_wait(
 }
 
 enum phase2_probe_turnaround_result
+phase2_probe_turnaround_sample_owned(
+	struct phase2_probe_turnaround *turnaround,
+	struct phase2_info0_exchange *exchange,
+	int16_t received_sample, int16_t *transmit_sample,
+	struct phase2_probe_turnaround_event *event)
+{
+	struct phase2_probe_turnaround_event emitted = { 0 };
+	int16_t generated = 0;
+	bool advance_signal_a_epoch;
+
+	advance_signal_a_epoch =
+		turnaround->signal_a_reversal_elapsed_samples != 0 &&
+		turnaround->phase !=
+			PHASE2_PROBE_TURNAROUND_SIGNAL_A_PROBE_READY;
+	if (!prepare_signal_b_response(turnaround, exchange))
+		return PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT;
+	if (turnaround->phase !=
+		    PHASE2_PROBE_TURNAROUND_SIGNAL_B_PROBE_READY &&
+	    turnaround->phase !=
+		    PHASE2_PROBE_TURNAROUND_SIGNAL_A_PROBE_READY &&
+	    turnaround->phase != PHASE2_PROBE_TURNAROUND_TIMED_OUT &&
+	    !phase2_info0_exchange_observe_tone(
+		    exchange, received_sample, &emitted.tone_event))
+		return PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT;
+	if (phase_transmits_tone(turnaround->phase) &&
+	    !phase2_info0_exchange_generate_tone(exchange, &generated))
+		return PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT;
+	if (emitted.tone_event.kind ==
+	    V34_PHASE2_TONE_PHASE_REVERSED)
+		handle_remote_reversal(
+			turnaround, exchange,
+			emitted.tone_event.reversal_delay_samples, &emitted);
+	advance_reversal_wait(turnaround, exchange, &emitted);
+	if (emitted.kind !=
+		    PHASE2_PROBE_TURNAROUND_EVENT_RECOVERY_STARTED &&
+	    !finish_fixed_interval(turnaround, exchange, &emitted))
+		return PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT;
+	advance_signal_a_probe_start(turnaround, exchange, &emitted);
+	if (advance_signal_a_epoch)
+		turnaround->signal_a_reversal_elapsed_samples++;
+	*transmit_sample = generated;
+	*event = emitted;
+	return PHASE2_PROBE_TURNAROUND_OK;
+}
+
+enum phase2_probe_turnaround_result
 phase2_probe_turnaround_sample(
 	struct phase2_probe_turnaround *turnaround,
 	const struct phase2_initial_probe *completed_probe,
@@ -385,9 +431,8 @@ phase2_probe_turnaround_sample(
 {
 	struct phase2_probe_turnaround next;
 	struct phase2_info0_exchange next_exchange;
-	struct phase2_probe_turnaround_event emitted = { 0 };
-	int16_t generated = 0;
-	bool advance_signal_a_epoch;
+	struct phase2_probe_turnaround_event emitted;
+	int16_t generated;
 
 	if (!phase2_probe_turnaround_is_valid(
 		    turnaround, completed_probe, exchange) ||
@@ -395,37 +440,10 @@ phase2_probe_turnaround_sample(
 		return PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT;
 	next = *turnaround;
 	next_exchange = *exchange;
-	advance_signal_a_epoch =
-		next.signal_a_reversal_elapsed_samples != 0 &&
-		next.phase !=
-			PHASE2_PROBE_TURNAROUND_SIGNAL_A_PROBE_READY;
-	if (!prepare_signal_b_response(&next, &next_exchange))
-		return PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT;
-	if (next.phase !=
-		    PHASE2_PROBE_TURNAROUND_SIGNAL_B_PROBE_READY &&
-	    next.phase !=
-		    PHASE2_PROBE_TURNAROUND_SIGNAL_A_PROBE_READY &&
-	    next.phase != PHASE2_PROBE_TURNAROUND_TIMED_OUT &&
-	    !phase2_info0_exchange_observe_tone(
-		    &next_exchange, received_sample, &emitted.tone_event))
-		return PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT;
-	if (phase_transmits_tone(next.phase) &&
-	    !phase2_info0_exchange_generate_tone(&next_exchange, &generated))
-		return PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT;
-	if (emitted.tone_event.kind ==
-	    V34_PHASE2_TONE_PHASE_REVERSED)
-		handle_remote_reversal(
-			&next, &next_exchange,
-			emitted.tone_event.reversal_delay_samples, &emitted);
-	advance_reversal_wait(&next, &next_exchange, &emitted);
-	if (emitted.kind !=
-		    PHASE2_PROBE_TURNAROUND_EVENT_RECOVERY_STARTED &&
-	    !finish_fixed_interval(&next, &next_exchange, &emitted))
-		return PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT;
-	advance_signal_a_probe_start(&next, &next_exchange, &emitted);
-	if (advance_signal_a_epoch)
-		next.signal_a_reversal_elapsed_samples++;
-	if (!phase2_probe_turnaround_is_valid(
+	if (phase2_probe_turnaround_sample_owned(
+		    &next, &next_exchange, received_sample, &generated,
+		    &emitted) != PHASE2_PROBE_TURNAROUND_OK ||
+	    !phase2_probe_turnaround_is_valid(
 		    &next, completed_probe, &next_exchange))
 		return PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT;
 	*turnaround = next;

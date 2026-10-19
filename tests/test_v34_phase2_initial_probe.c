@@ -1235,6 +1235,51 @@ static bool test_validation(void)
 	return true;
 }
 
+static bool test_shared_turnaround_owned_step(void)
+{
+	struct v34_phase2_initial_probe caller_probe, answerer_probe;
+
+	CHECK(completed_initial_probe_states(&caller_probe, &answerer_probe),
+	      "owned turnaround fixtures did not complete probing");
+	for (unsigned int role = 0; role < 2; ++role) {
+		struct v34_phase2_probe_turnaround checked, owned;
+		const struct v34_phase2_initial_probe *initial =
+			role == 0 ? &caller_probe : &answerer_probe;
+
+		CHECK(v34_phase2_probe_turnaround_init(&checked, initial) ==
+			      PHASE2_PROBE_TURNAROUND_OK,
+		      "owned turnaround fixture did not initialize");
+		owned = checked;
+		for (unsigned int sample = 0; sample <
+		     PHASE2_PROBE_TURNAROUND_INITIAL_TONE_SAMPLES +
+		     PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES +
+		     PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES + 8u; ++sample) {
+			struct phase2_probe_turnaround_event expected, actual;
+			int16_t expected_tx, actual_tx;
+
+			CHECK(phase2_probe_turnaround_sample(
+				      &checked.control, &checked.initial_probe.control,
+				      &checked.initial_probe.ranging.info0_exchange.transport,
+				      0, &expected_tx, &expected) ==
+				      PHASE2_PROBE_TURNAROUND_OK &&
+			      phase2_probe_turnaround_sample_owned(
+				      &owned.control,
+				      &owned.initial_probe.ranging.info0_exchange.transport,
+				      0, &actual_tx, &actual) ==
+				      PHASE2_PROBE_TURNAROUND_OK &&
+			      v34_phase2_probe_turnaround_is_valid(&owned) &&
+			      v34_probe_turnarounds_equal(&checked, &owned) &&
+			      expected_tx == actual_tx && expected.kind == actual.kind &&
+			      expected.failure == actual.failure &&
+			      expected.tone_event.kind == actual.tone_event.kind &&
+			      expected.tone_event.reversal_delay_samples ==
+				      actual.tone_event.reversal_delay_samples,
+			      "owned turnaround differs role=%u sample=%u", role, sample);
+		}
+	}
+	return true;
+}
+
 static bool test_turnaround_failures_and_validation(void)
 {
 	struct v34_phase2_initial_probe caller_probe;
@@ -1384,6 +1429,7 @@ int main(void)
 			{ "late caller probe", test_late_caller_probe },
 			{ "bounded failures", test_bounded_failures },
 			{ "validation", test_validation },
+			{ "shared owned turnaround step", test_shared_turnaround_owned_step },
 			{ "turnaround failures and validation",
 			  test_turnaround_failures_and_validation },
 		};

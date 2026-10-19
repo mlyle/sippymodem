@@ -91,4 +91,15 @@ enum phase2_probe_turnaround_result phase2_probe_turnaround_sample(
 	int16_t received_sample, int16_t *transmit_sample,
 	struct phase2_probe_turnaround_event *event);
 
+/* Internal step for an already validated private owner copy. Its controller
+ * and transport must be distinct, and outputs must not overlap owned state or
+ * one another. It may mutate the copy before returning an error; the owner
+ * must discard that copy on failure, validate the whole result, and commit it
+ * only on success. The checked entry point above retains its atomic contract. */
+enum phase2_probe_turnaround_result phase2_probe_turnaround_sample_owned(
+	struct phase2_probe_turnaround *turnaround,
+	struct phase2_info0_exchange *exchange,
+	int16_t received_sample, int16_t *transmit_sample,
+	struct phase2_probe_turnaround_event *event);
+
 #endif

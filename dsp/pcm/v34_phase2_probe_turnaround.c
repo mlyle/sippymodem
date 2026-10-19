@@ -57,8 +57,8 @@ v34_phase2_probe_turnaround_sample(
 	if (v34_phase2_initial_probe_sample_concurrent_owned(
 		    &next.initial_probe, received_sample, &concurrent) !=
 		    PHASE2_INITIAL_PROBE_OK ||
-	    phase2_probe_turnaround_sample(
-		    &next.control, &next.initial_probe.control,
+	    phase2_probe_turnaround_sample_owned(
+		    &next.control,
 		    &next.initial_probe.ranging.info0_exchange.transport,
 		    received_sample, &generated, &emitted) !=
 		    PHASE2_PROBE_TURNAROUND_OK ||
