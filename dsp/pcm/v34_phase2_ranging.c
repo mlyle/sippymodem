@@ -410,9 +410,8 @@ v34_phase2_ranging_sample(
 	    transmit_sample == NULL || event == NULL)
 		return V34_PHASE2_RANGING_INVALID_ARGUMENT;
 	next = *ranging;
-	if (phase2_ranging_prepare_sample(
-		    &next.control, &next.info0_exchange.transport,
-		    next.info0_exchange.peer_info0_received) !=
+	if (phase2_ranging_prepare_sample_owned(
+		    &next.control, &next.info0_exchange.transport) !=
 	    PHASE2_RANGING_OK)
 		return V34_PHASE2_RANGING_INVALID_ARGUMENT;
 	ranging_phase_before = next.control.phase;
@@ -430,7 +429,7 @@ v34_phase2_ranging_sample(
 	     !reset_retrain_probe(
 		     &next,
 		     V34_PHASE2_RETRAIN_PROBE_WAIT_REVERSAL)) ||
-	    phase2_ranging_finish_sample(
+	    phase2_ranging_finish_sample_owned(
 		    &next.control, &next.info0_exchange.transport,
 		    next.info0_exchange.peer_info0_received,
 		    transmit_phase_before, &exchange_event.tone_event,

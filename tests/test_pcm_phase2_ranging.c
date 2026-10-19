@@ -1367,6 +1367,34 @@ static bool test_completed_exchange_repeat(void)
 	return true;
 }
 
+static bool test_late_failure_rollback(void)
+{
+	struct v34_info0 analog = analog_capabilities();
+	struct pcm_phase2_ranging ranging, before;
+	struct pcm_phase2_ranging_event event = {
+		.kind = PHASE2_ROUND_TRIP_DELAY_MEASURED,
+		.round_trip_delay_samples = 123,
+	};
+	int16_t sample = 1234;
+
+	CHECK(pcm_phase2_ranging_init_analog(
+		      &ranging, TEST_AMPLITUDE, &analog) == PCM_PHASE2_RANGING_OK,
+	      "late-failure fixture did not initialize");
+	ranging.info0_exchange.transport.info_receiver.frame.stage =
+		V34_PHASE2_INFO_RECEIVE_PAYLOAD;
+	ranging.info0_exchange.transport.info_receiver.samples_since_sync = UINT16_MAX;
+	CHECK(pcm_phase2_ranging_is_valid(&ranging),
+	      "late-failure fixture is invalid");
+	before = ranging;
+	CHECK(pcm_phase2_ranging_sample(&ranging, 0, &sample, &event) ==
+		      PCM_PHASE2_RANGING_INVALID_ARGUMENT &&
+	      memcmp(&ranging, &before, sizeof(ranging)) == 0 &&
+	      sample == 1234 && event.kind == PHASE2_ROUND_TRIP_DELAY_MEASURED &&
+	      event.round_trip_delay_samples == 123,
+	      "INFO0 failure committed partial PCM ranging state");
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v34_info0 analog = analog_capabilities();
@@ -1424,6 +1452,7 @@ int main(void)
 		{ "rejected edge before INFO", test_rejected_edge_before_info },
 		{ "completed INFO0 repeat ordering",
 		  test_completed_exchange_repeat },
+		{ "late failure rollback", test_late_failure_rollback },
 		{ "validation", test_validation },
 		{ "response after late first ACK", test_response_after_late_first_ack },
 	};

@@ -280,9 +280,8 @@ enum pcm_phase2_ranging_result pcm_phase2_ranging_sample(
 	    transmit_sample == NULL || event == NULL)
 		return PCM_PHASE2_RANGING_INVALID_ARGUMENT;
 	next = *ranging;
-	if (!uses_short_control(&next) && phase2_ranging_prepare_sample(
-		    &next.control, &next.info0_exchange.transport,
-		    ranging_context_is_retained(&next)) !=
+	if (!uses_short_control(&next) && phase2_ranging_prepare_sample_owned(
+		    &next.control, &next.info0_exchange.transport) !=
 	    PHASE2_RANGING_OK)
 		return PCM_PHASE2_RANGING_INVALID_ARGUMENT;
 	transmit_phase_before = next.info0_exchange.transport.transmit_phase;
@@ -313,7 +312,7 @@ enum pcm_phase2_ranging_result pcm_phase2_ranging_sample(
 		      next.control.phase == PHASE2_SIGNAL_B_WAIT_SECOND_REMOTE_REVERSAL)) &&
 		    !restart_after_repeated_info0(&next))
 			return PCM_PHASE2_RANGING_INVALID_ARGUMENT;
-		if (phase2_ranging_finish_sample(
+		if (phase2_ranging_finish_sample_owned(
 			    &next.control, &next.info0_exchange.transport,
 			    ranging_context_is_retained(&next),
 			    transmit_phase_before, &exchange_event.tone_event,

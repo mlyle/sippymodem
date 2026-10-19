@@ -90,15 +90,16 @@ bool phase2_ranging_control_is_valid(
 	const struct phase2_info0_exchange *exchange,
 	bool peer_info0_received);
 
-/* The owning typed exchange applies these two operations to a candidate copy
- * around exactly one INFO0 exchange sample. `transmit_phase_before` is sampled
- * after prepare and before that exchange sample. This keeps record decoding in
- * the mode while sharing exact tone-reversal and ranging deadlines. */
-enum phase2_ranging_result phase2_ranging_prepare_sample(
+/* Internal steps for validated, distinct state in a private owner copy, with
+ * disjoint outputs. Prepare enters the intermediate ranging state; the owner
+ * records transmit_phase_before and consumes exactly one typed INFO0 sample
+ * before finish. These operations may mutate private state on failure. The
+ * owner must discard it on any error, validate the whole result, and commit
+ * state and outputs only on success. */
+enum phase2_ranging_result phase2_ranging_prepare_sample_owned(
 	struct phase2_ranging_control *control,
-	struct phase2_info0_exchange *exchange,
-	bool peer_info0_received);
-enum phase2_ranging_result phase2_ranging_finish_sample(
+	struct phase2_info0_exchange *exchange);
+enum phase2_ranging_result phase2_ranging_finish_sample_owned(
 	struct phase2_ranging_control *control,
 	struct phase2_info0_exchange *exchange,
 	bool peer_info0_received,

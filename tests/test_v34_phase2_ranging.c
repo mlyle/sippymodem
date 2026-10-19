@@ -360,7 +360,7 @@ static bool test_early_turnaround_tolerance(void)
 		tone_event.reversal_delay_samples -
 		PHASE2_RANGING_TURNAROUND_TOLERANCE_SAMPLES;
 	CHECK(v34_phase2_ranging_is_valid(&ranging) &&
-	      phase2_ranging_finish_sample(
+	      phase2_ranging_finish_sample_owned(
 		      &ranging.control,
 		      &ranging.info0_exchange.transport, true,
 		      PHASE2_INFO0_TONE, &tone_event, &sample, &event) ==
@@ -416,7 +416,7 @@ static bool test_probe_recovery_delay(void)
 		ranging.control.measurement_elapsed_samples =
 			3152 + PHASE2_RANGING_TURNAROUND_SAMPLES +
 			reversal.reversal_delay_samples;
-		CHECK(phase2_ranging_finish_sample(
+		CHECK(phase2_ranging_finish_sample_owned(
 			      &ranging.control, &ranging.info0_exchange.transport,
 			      true, PHASE2_INFO0_TONE, &reversal, &transmit, &event) ==
 			      PHASE2_RANGING_OK &&
@@ -1132,6 +1132,45 @@ static bool test_info0_tone_completion(void)
 	return true;
 }
 
+static bool test_late_failure_rollback(void)
+{
+	struct v34_info0 local = calling_capabilities();
+	struct v34_info0 peer = answering_capabilities();
+	struct v34_phase2_ranging ranging, before, scratch;
+	struct v34_phase2_ranging_event event = {
+		.kind = PHASE2_ROUND_TRIP_DELAY_MEASURED,
+		.round_trip_delay_samples = 123,
+	};
+	int16_t sample = 1234;
+
+	peer.acknowledges_peer_info0 = true;
+	CHECK(v34_phase2_ranging_init_retrain(
+		      &ranging, V34_CALLING_STATION, TEST_AMPLITUDE, &local, &peer) ==
+		      V34_PHASE2_RANGING_OK,
+	      "late-failure fixture did not initialize");
+	ranging.control = (struct phase2_ranging_control){
+		.phase = PHASE2_RANGING_INFO0_EXCHANGE,
+		.deferred_reversal_samples = 1,
+	};
+	ranging.info0_exchange.transport.info_receiver.frame.stage =
+		V34_PHASE2_INFO_RECEIVE_PAYLOAD;
+	ranging.info0_exchange.transport.info_receiver.samples_since_sync = UINT16_MAX;
+	CHECK(v34_phase2_ranging_is_valid(&ranging),
+	      "late-failure fixture is invalid");
+	before = scratch = ranging;
+	CHECK(phase2_ranging_prepare_sample_owned(
+		      &scratch.control, &scratch.info0_exchange.transport) ==
+		      PHASE2_RANGING_OK &&
+	      scratch.control.deferred_reversal_samples == 2 &&
+	      v34_phase2_ranging_sample(&ranging, 0, &sample, &event) ==
+		      V34_PHASE2_RANGING_INVALID_ARGUMENT &&
+	      memcmp(&ranging, &before, sizeof(ranging)) == 0 &&
+	      sample == 1234 && event.kind == PHASE2_ROUND_TRIP_DELAY_MEASURED &&
+	      event.round_trip_delay_samples == 123,
+	      "INFO0 failure committed an already advanced ranging controller");
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v34_info0 capabilities = calling_capabilities();
@@ -1179,6 +1218,7 @@ int main(void)
 		{ "INFO0 recovery by tone", test_info0_tone_completion },
 		{ "missing second reversal recovery",
 		  test_missing_second_reversal_recovers },
+		{ "late failure rollback", test_late_failure_rollback },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;
