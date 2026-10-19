@@ -70,6 +70,19 @@ enum v90_phase3_return_line_rx_result
 v90_phase3_return_line_rx_advance_complete(
 	struct v90_phase3_return_line_rx *rx, int16_t sample);
 
+/* Internal steps for a validated private owner copy. previous is its
+ * disjoint, immutable receiver before this sample, used to preserve the
+ * existing failure rollback. The owner validates and commits its whole
+ * result, including failure. The completed-marker step freezes the marker
+ * while advancing the physical line, as the checked entry point does. */
+enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_sample_owned(
+	struct v90_phase3_return_line_rx *rx,
+	const struct v90_phase3_return_line_rx *previous, int16_t sample);
+enum v90_phase3_return_line_rx_result
+v90_phase3_return_line_rx_advance_complete_owned(
+	struct v90_phase3_return_line_rx *rx,
+	const struct v90_phase3_return_line_rx *previous, int16_t sample);
+
 bool v90_phase3_return_line_handoff_is_valid(
 	const struct v90_phase3_return_line_handoff *handoff);
 /* The output must be disjoint from the receiver. Rejected handoffs leave both

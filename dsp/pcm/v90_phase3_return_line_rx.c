@@ -127,82 +127,103 @@ static enum v90_phase3_return_line_rx_result observe_return(
 		marker, hard.clockwise_quarter_turns));
 }
 
-enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_sample(
-	struct v90_phase3_return_line_rx *rx, int16_t sample)
+static enum v90_phase3_return_line_rx_result fail_sample(
+	struct v90_phase3_return_line_rx *rx,
+	const struct v90_phase3_return_line_rx *previous)
 {
-	struct v90_phase3_return_line_rx next;
+	rx->failed = true;
+	if (!v90_phase3_return_line_rx_is_valid(rx)) {
+		*rx = *previous;
+		rx->failed = true;
+	}
+	return V90_PHASE3_RETURN_LINE_RX_NUMERIC_FAILURE;
+}
+
+static enum v90_phase3_return_line_rx_result receive_sample(
+	struct v90_phase3_return_line_rx *rx,
+	const struct v90_phase3_return_line_rx *previous,
+	int16_t sample, bool draining)
+{
 	struct v34_analytic_sample decision;
 	enum v90_upstream_training_rx_result upstream_result;
 	enum v90_phase3_return_line_rx_result result =
 		V90_PHASE3_RETURN_LINE_RX_OK;
 
-	if (!v90_phase3_return_line_rx_is_valid(rx))
+	if (rx == NULL || previous == NULL)
 		return V90_PHASE3_RETURN_LINE_RX_INVALID_ARGUMENT;
 	if (rx->failed)
 		return V90_PHASE3_RETURN_LINE_RX_FAILED;
-	if (v90_phase3_return_marker_is_complete(&rx->marker))
-		return V90_PHASE3_RETURN_LINE_RX_COMPLETE;
-	if (rx->marker.stage == V90_PHASE3_RETURN_RX_STAGE_IMPLICIT_END)
-		return V90_PHASE3_RETURN_LINE_RX_INVALID_STATE;
+	if (draining) {
+		if (!v90_phase3_return_marker_is_complete(&rx->marker))
+			return V90_PHASE3_RETURN_LINE_RX_INVALID_STATE;
+		rx->handoff_draining = true;
+		upstream_result = v90_upstream_training_rx_advance(
+			&rx->upstream, sample);
+		if (upstream_result != V90_UPSTREAM_TRAINING_RX_OK)
+			return fail_sample(rx, previous);
+	} else {
+		if (v90_phase3_return_marker_is_complete(&rx->marker))
+			return V90_PHASE3_RETURN_LINE_RX_COMPLETE;
+		if (rx->marker.stage == V90_PHASE3_RETURN_RX_STAGE_IMPLICIT_END)
+			return V90_PHASE3_RETURN_LINE_RX_INVALID_STATE;
+		upstream_result = v90_upstream_training_rx_sample(
+			&rx->upstream, sample, &decision);
+		if (upstream_result == V90_UPSTREAM_TRAINING_RX_DECISION_READY)
+			result = observe_return(&rx->marker, decision);
+		else if (upstream_result != V90_UPSTREAM_TRAINING_RX_OK)
+			return fail_sample(rx, previous);
+		/* SCR can use Jd's sixteen-point constellation; S/S-bar always
+		 * use four points. Resume adaptation after the qualified onset. */
+		if (result == V90_PHASE3_RETURN_LINE_RX_S_DETECTED)
+			rx->upstream.tracking_constellation = V34_CONSTELLATION_4_POINT;
+		if (result == V90_PHASE3_RETURN_LINE_RX_NUMERIC_FAILURE)
+			return fail_sample(rx, previous);
+	}
+	if (!v90_phase3_return_line_rx_is_valid(rx))
+		return fail_sample(rx, previous);
+	return result;
+}
+
+enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_sample_owned(
+	struct v90_phase3_return_line_rx *rx,
+	const struct v90_phase3_return_line_rx *previous, int16_t sample)
+{
+	return receive_sample(rx, previous, sample, false);
+}
+
+enum v90_phase3_return_line_rx_result
+v90_phase3_return_line_rx_advance_complete_owned(
+	struct v90_phase3_return_line_rx *rx,
+	const struct v90_phase3_return_line_rx *previous, int16_t sample)
+{
+	return receive_sample(rx, previous, sample, true);
+}
+
+static enum v90_phase3_return_line_rx_result checked_sample(
+	struct v90_phase3_return_line_rx *rx, int16_t sample, bool draining)
+{
+	struct v90_phase3_return_line_rx next;
+	enum v90_phase3_return_line_rx_result result;
+
+	if (!v90_phase3_return_line_rx_is_valid(rx))
+		return V90_PHASE3_RETURN_LINE_RX_INVALID_ARGUMENT;
 	next = *rx;
-	upstream_result = v90_upstream_training_rx_sample(
-		&next.upstream, sample, &decision);
-	if (upstream_result == V90_UPSTREAM_TRAINING_RX_DECISION_READY)
-		result = observe_return(&next.marker, decision);
-	else if (upstream_result != V90_UPSTREAM_TRAINING_RX_OK) {
-		result = V90_PHASE3_RETURN_LINE_RX_NUMERIC_FAILURE;
-	}
-	/* SCR can use Jd's sixteen-point constellation; S/S-bar always use
-	 * four points. Resume their adaptation after the qualified S onset. */
-	if (result == V90_PHASE3_RETURN_LINE_RX_S_DETECTED)
-		next.upstream.tracking_constellation = V34_CONSTELLATION_4_POINT;
-	if (result == V90_PHASE3_RETURN_LINE_RX_NUMERIC_FAILURE) {
-		next.failed = true;
-		if (v90_phase3_return_line_rx_is_valid(&next))
-			*rx = next;
-		else
-			rx->failed = true;
-		return result;
-	}
-	if (!v90_phase3_return_line_rx_is_valid(&next)) {
-		rx->failed = true;
-		return V90_PHASE3_RETURN_LINE_RX_NUMERIC_FAILURE;
-	}
+	result = receive_sample(&next, rx, sample, draining);
 	*rx = next;
 	return result;
+}
+
+enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_sample(
+	struct v90_phase3_return_line_rx *rx, int16_t sample)
+{
+	return checked_sample(rx, sample, false);
 }
 
 enum v90_phase3_return_line_rx_result
 v90_phase3_return_line_rx_advance_complete(
 	struct v90_phase3_return_line_rx *rx, int16_t sample)
 {
-	struct v90_phase3_return_line_rx next;
-	enum v90_upstream_training_rx_result upstream_result;
-
-	if (!v90_phase3_return_line_rx_is_valid(rx))
-		return V90_PHASE3_RETURN_LINE_RX_INVALID_ARGUMENT;
-	if (rx->failed)
-		return V90_PHASE3_RETURN_LINE_RX_FAILED;
-	if (!v90_phase3_return_marker_is_complete(&rx->marker))
-		return V90_PHASE3_RETURN_LINE_RX_INVALID_STATE;
-	next = *rx;
-	next.handoff_draining = true;
-	upstream_result = v90_upstream_training_rx_advance(
-		&next.upstream, sample);
-	if (upstream_result != V90_UPSTREAM_TRAINING_RX_OK) {
-		next.failed = true;
-		if (v90_phase3_return_line_rx_is_valid(&next))
-			*rx = next;
-		else
-			rx->failed = true;
-		return V90_PHASE3_RETURN_LINE_RX_NUMERIC_FAILURE;
-	}
-	if (!v90_phase3_return_line_rx_is_valid(&next)) {
-		rx->failed = true;
-		return V90_PHASE3_RETURN_LINE_RX_NUMERIC_FAILURE;
-	}
-	*rx = next;
-	return V90_PHASE3_RETURN_LINE_RX_OK;
+	return checked_sample(rx, sample, true);
 }
 
 bool v90_phase3_return_line_handoff_is_valid(

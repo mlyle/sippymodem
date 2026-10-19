@@ -107,6 +107,59 @@ static bool establish_ja(
 	return false;
 }
 
+static bool check_exhausted_epoch(
+	const struct v90_phase3_return_line_rx *source, bool draining)
+{
+	struct v90_phase3_return_line_rx checked = *source;
+	struct v90_phase3_return_line_rx owned;
+
+	checked.upstream.line.equalizer.epoch = UINT64_MAX;
+	owned = checked;
+	CHECK(v90_phase3_return_line_rx_is_valid(&checked),
+	      "exhausted return epoch is invalid");
+	for (unsigned sample = 0; sample < 16; ++sample) {
+		struct v90_phase3_return_line_rx saved = checked;
+		enum v90_phase3_return_line_rx_result result = draining ?
+			v90_phase3_return_line_rx_advance_complete(&checked, 0) :
+			v90_phase3_return_line_rx_sample(&checked, 0);
+		enum v90_phase3_return_line_rx_result owner_result = draining ?
+			v90_phase3_return_line_rx_advance_complete_owned(&owned, &saved, 0) :
+			v90_phase3_return_line_rx_sample_owned(&owned, &saved, 0);
+
+		CHECK(result == owner_result &&
+		      memcmp(&checked, &owned, sizeof(checked)) == 0,
+		      "return owner changed exhausted-epoch behavior");
+		if (result == V90_PHASE3_RETURN_LINE_RX_NUMERIC_FAILURE) {
+			/* A failed upstream cannot remain a tracking receiver. Retain
+			 * the last valid child and latch the enclosing failure, including
+			 * rolling back the first handoff-draining flag when necessary. */
+			struct v90_phase3_return_line_rx expected = saved;
+
+			expected.failed = true;
+			CHECK(v90_phase3_return_line_rx_has_failed(&checked) &&
+			      memcmp(&checked, &expected, sizeof(checked)) == 0,
+			      "return failure changed its existing rollback");
+			saved = checked;
+			CHECK((draining ?
+			       v90_phase3_return_line_rx_advance_complete(&checked, 0) :
+			       v90_phase3_return_line_rx_sample(&checked, 0)) ==
+				      V90_PHASE3_RETURN_LINE_RX_FAILED &&
+			      (draining ?
+			       v90_phase3_return_line_rx_advance_complete_owned(&owned, &saved, 0) :
+			       v90_phase3_return_line_rx_sample_owned(&owned, &saved, 0)) ==
+				      V90_PHASE3_RETURN_LINE_RX_FAILED &&
+			      memcmp(&checked, &saved, sizeof(checked)) == 0 &&
+			      memcmp(&owned, &saved, sizeof(owned)) == 0,
+			      "failed return receiver consumed another sample");
+			return true;
+		}
+		CHECK(result == V90_PHASE3_RETURN_LINE_RX_OK,
+		      "return receiver did not reach its exhausted epoch");
+	}
+	CHECK(false, "return receiver did not exhaust its epoch");
+	return false;
+}
+
 static bool receive_return(
 	enum g711_law law, struct v90_phase3_return_line_tx *tx,
 	struct v90_phase3_return_line_rx *rx, struct v34_training_line *line,
@@ -357,6 +410,8 @@ static bool run_line(enum g711_law law, bool scr)
 		struct v90_phase3_return_line_rx saved = return_rx;
 		struct v90_upstream_training_rx expected = return_rx.upstream;
 
+		CHECK(check_exhausted_epoch(&return_rx, true),
+		      "law %d completed-return failure changed", law);
 		for (unsigned int index = 0; index < 32; ++index) {
 			struct qam_point point = v34_rotated_point_zero(
 				(int)((index * 3u) & 3u));
@@ -757,6 +812,8 @@ static bool test_validation(void)
 	CHECK(v90_phase3_return_line_rx_init(&rx, &source) ==
 		      V90_PHASE3_RETURN_LINE_RX_OK,
 	      "valid return line receiver did not initialize");
+	CHECK(check_exhausted_epoch(&rx, false),
+	      "return receive failure changed");
 	saved = rx;
 	CHECK(v90_phase3_return_line_rx_restart(NULL) ==
 		      V90_PHASE3_RETURN_LINE_RX_INVALID_ARGUMENT &&

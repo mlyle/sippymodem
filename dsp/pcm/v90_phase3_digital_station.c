@@ -257,7 +257,8 @@ static enum v90_phase3_digital_station_result receive_initial(
 }
 
 static enum v90_phase3_digital_station_result receive_return(
-	struct v90_phase3_digital_station *station, int16_t sample)
+	struct v90_phase3_digital_station *station,
+	const struct v90_phase3_return_line_rx *previous, int16_t sample)
 {
 	/* V.90 9.3.1.4 arms the return S detector when Jd starts. The peer
 	 * cannot acknowledge Jd during Sd/TRN1d. Keep the physical receiver
@@ -274,8 +275,8 @@ static enum v90_phase3_digital_station_result receive_return(
 			V90_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE;
 	}
 	enum v90_phase3_return_line_rx_result result =
-		v90_phase3_return_line_rx_sample(
-			&station->receive.returning, sample);
+		v90_phase3_return_line_rx_sample_owned(
+			&station->receive.returning, previous, sample);
 
 	switch (result) {
 	case V90_PHASE3_RETURN_LINE_RX_OK:
@@ -380,7 +381,7 @@ enum v90_phase3_digital_station_result v90_phase3_digital_station_receive_owned(
 	next = *station;
 	result = next.receive_stage == V90_PHASE3_DIGITAL_RECEIVE_INITIAL ?
 			 receive_initial(&next, sample) :
-			 receive_return(&next, sample);
+			 receive_return(&next, &station->receive.returning, sample);
 	if (result_is_terminal(result)) {
 		next.failed = true;
 		if (v90_phase3_digital_station_owned_state_is_valid(&next))
@@ -423,8 +424,8 @@ v90_phase3_digital_station_advance_completed_receive_owned(
 	    v90_phase3_digital_station_transmit_complete_owned(station))
 		return V90_PHASE3_DIGITAL_STATION_INVALID_STATE;
 	next = *station;
-	result = v90_phase3_return_line_rx_advance_complete(
-		&next.receive.returning, sample);
+	result = v90_phase3_return_line_rx_advance_complete_owned(
+		&next.receive.returning, &station->receive.returning, sample);
 	if (result != V90_PHASE3_RETURN_LINE_RX_OK) {
 		if (result == V90_PHASE3_RETURN_LINE_RX_INVALID_STATE)
 			return V90_PHASE3_DIGITAL_STATION_INVALID_STATE;
