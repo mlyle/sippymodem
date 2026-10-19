@@ -15,6 +15,12 @@ enum v92_downstream_control_stage {
 	V92_DOWNSTREAM_CONTROL_SILENCE_SUVD,
 };
 
+enum v92_downstream_control_result {
+	V92_DOWNSTREAM_CONTROL_OK,
+	V92_DOWNSTREAM_CONTROL_REJECTED,
+	V92_DOWNSTREAM_CONTROL_ERROR,
+};
+
 /* Digital-side 9.6.1 control exchange, shared by training, renegotiation and
  * fast parameter exchange. The caller supplies decoded upstream records;
  * this owner retains the downstream coder and the entire pending CPd tail.
@@ -58,9 +64,12 @@ bool v92_downstream_control_select(struct v92_downstream_control *control,
 	const struct v92_cpd_parameters *cpd);
 /* Training may defer SUVd until its channel measurement is complete. */
 bool v92_downstream_control_ready(struct v92_downstream_control *control);
-/* Damaged wire records are ignored, but incompatible selections fail the
- * exchange. Retry expiry waits through a whole valid peer record. */
-bool v92_downstream_control_receive(struct v92_downstream_control *control,
+/* Damaged wire records are ignored. REJECTED latches failure on an incompatible
+ * peer selection without replacing retained parameters; the call may retrain.
+ * ERROR denotes invalid input/owner state or an internal invariant failure.
+ * Retry expiry waits through a whole valid peer record. */
+enum v92_downstream_control_result v92_downstream_control_receive(
+	struct v92_downstream_control *control,
 	const struct v92_control_event *event);
 /* A successful call produces one network octet, unless cleardown has just
  * completed (transmit.complete). Failures leave the output untouched. */

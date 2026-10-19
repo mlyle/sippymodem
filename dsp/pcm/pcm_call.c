@@ -3487,6 +3487,17 @@ static enum pcm_call_result phase4_startup_result(
 	return PCM_CALL_NUMERIC_FAILURE;
 }
 
+static enum pcm_call_result recover_v92_training(struct pcm_call *call)
+{
+	/* Control rejection and unusable training share the decoder's bounded
+	 * recovery budget. A new exchange must not replenish it. */
+	enum v92_data_quality_result result =
+		v92_data_quality_retrain(&call->pcm_upstream_quality);
+
+	return result == V92_DATA_QUALITY_RETRAIN ? begin_retrain(call, false) :
+		result == V92_DATA_QUALITY_EXHAUSTED ? PCM_CALL_FAILED : PCM_CALL_NUMERIC_FAILURE;
+}
+
 static enum pcm_call_result v92_analog_phase4_result(
 	struct pcm_call *call, enum v92_phase4_analog_station_result result)
 {
@@ -3496,17 +3507,9 @@ static enum pcm_call_result v92_analog_phase4_result(
 		return PCM_CALL_OK;
 	case V92_PHASE4_ANALOG_STATION_CLEARDOWN_COMPLETE:
 		return PCM_CALL_CLEARDOWN_COMPLETE;
-	case V92_PHASE4_ANALOG_STATION_UNUSABLE_WAVEFORM: {
-		/* V.92 9.6.2.2 permits full retrain during Phase 4. Share the
-		 * bounded training/decoder recovery budget; a new exchange does
-		 * not replenish attempts. Exhaustion must not enter the separate
-		 * rate-renegotiation recovery path and restart forever. */
-		enum v92_data_quality_result quality =
-			v92_data_quality_retrain(&call->pcm_upstream_quality);
-
-		return quality == V92_DATA_QUALITY_RETRAIN ? begin_retrain(call, false) :
-			quality == V92_DATA_QUALITY_EXHAUSTED ? PCM_CALL_FAILED : PCM_CALL_NUMERIC_FAILURE;
-	}
+	case V92_PHASE4_ANALOG_STATION_UNUSABLE_WAVEFORM:
+		/* V.92 9.6.2.2 permits full retrain during Phase 4. */
+		return recover_v92_training(call);
 	case V92_PHASE4_ANALOG_STATION_FAILED:
 		return PCM_CALL_FAILED;
 	case V92_PHASE4_ANALOG_STATION_INVALID_PARAMETERS:
@@ -3522,7 +3525,7 @@ static enum pcm_call_result v92_analog_phase4_result(
 }
 
 static enum pcm_call_result v92_digital_phase4_result(
-	enum v92_phase4_digital_station_result result)
+	struct pcm_call *call, enum v92_phase4_digital_station_result result)
 {
 	switch (result) {
 	case V92_PHASE4_DIGITAL_STATION_OK:
@@ -3530,6 +3533,11 @@ static enum pcm_call_result v92_digital_phase4_result(
 		return PCM_CALL_OK;
 	case V92_PHASE4_DIGITAL_STATION_CLEARDOWN_COMPLETE:
 		return PCM_CALL_CLEARDOWN_COMPLETE;
+	case V92_PHASE4_DIGITAL_STATION_REJECTED_CONTROL:
+		/* A CRC-valid but conflicting record is a wire failure, not a
+		 * numeric fault or permission to change the accepted mapping.
+		 * V.92 9.6.1.2 permits a full retrain during this exchange. */
+		return recover_v92_training(call);
 	case V92_PHASE4_DIGITAL_STATION_FAILED:
 		return PCM_CALL_FAILED;
 	case V92_PHASE4_DIGITAL_STATION_INVALID_PARAMETERS:
@@ -3975,14 +3983,15 @@ static enum pcm_call_result sample_v92_phase4(
 				&call->state.phase4.v92.owner.digital,
 				transmit_octet);
 		enum pcm_call_result result =
-			v92_digital_phase4_result(station_result);
+			v92_digital_phase4_result(call, station_result);
 
 		if (result != PCM_CALL_OK)
 			return result;
 		station_result = v92_phase4_digital_station_receive(
 			&call->state.phase4.v92.owner.digital, received_sample);
-		result = v92_digital_phase4_result(station_result);
-		if (result != PCM_CALL_OK)
+		result = v92_digital_phase4_result(call, station_result);
+		/* Recovery replaced the phase union; station/cpu no longer own it. */
+		if (result != PCM_CALL_OK || call->stage == PCM_CALL_RETRAIN_SILENCE)
 			return result;
 		if (station->control.cleardown.active)
 			return PCM_CALL_OK;
@@ -4020,7 +4029,7 @@ static enum pcm_call_result sample_v92_phase4(
 			}
 			if (!v92_filters_fit_capabilities(&cpd, &call->phase3_entry.selection.analog.pcm))
 				return PCM_CALL_UNUSABLE_SELECTION;
-			result = v92_digital_phase4_result(
+			result = v92_digital_phase4_result(call,
 				v92_phase4_digital_station_select_upstream(station, &cpd, &plan));
 			if (result != PCM_CALL_OK)
 				return result;
@@ -4931,7 +4940,7 @@ static bool v92_fast_receive(struct pcm_call *call, const struct v92_upstream_da
 		struct v92_control_event acknowledged = { .type = V92_CONTROL_EVENT_SUVU };
 		acknowledged.record.suvu.parameters = fast->control.suvu;
 		acknowledged.record.suvu.parameters.acknowledges_cpd = true;
-		if (!v92_downstream_control_receive(&fast->control, &acknowledged))
+		if (v92_downstream_control_receive(&fast->control, &acknowledged) != V92_DOWNSTREAM_CONTROL_OK)
 			return false;
 		if (path->upstream.line.received_frames > UINT64_MAX - (V92_B1U_FRAMES - V92_PCM_RX_DELAY_FRAMES))
 			return false;
@@ -4943,7 +4952,7 @@ static bool v92_fast_receive(struct pcm_call *call, const struct v92_upstream_da
 	for (size_t bit = 0; bit < frame->bit_count; ++bit) {
 		struct v92_control_event event;
 		if (v92_control_rx_receive_bit(&fast->receive, frame->bits[bit], &event) != V92_CONTROL_RX_OK ||
-		    !v92_downstream_control_receive(&fast->control, &event))
+		    v92_downstream_control_receive(&fast->control, &event) != V92_DOWNSTREAM_CONTROL_OK)
 			return false;
 		if (fast->control.cpu_received &&
 		    (!downstream_rate_is_enabled(call->enabled_downstream_rate_mask, fast->control.cpu.data_rate_number) ||

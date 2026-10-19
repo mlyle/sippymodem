@@ -318,11 +318,8 @@ static bool accept_event(
 	case V92_CONTROL_EVENT_NONE:
 		return true;
 	case V92_CONTROL_EVENT_SUVU:
-		if (event->record.suvu.frame_result != V92_SUVU_OK ||
-		    (control->transmit.encoder.mapping.kind == V90_CP_DATA &&
-		     event->record.suvu.parameters.request_silence) ||
-		    !v92_suvu_parameters_are_valid(
-			    &event->record.suvu.parameters))
+		if (control->transmit.encoder.mapping.kind == V90_CP_DATA &&
+		    event->record.suvu.parameters.request_silence)
 			return false;
 		if (!control->suvu_received) {
 			control->suvu = event->record.suvu.parameters;
@@ -343,13 +340,11 @@ static bool accept_event(
 			 control->cpu.acknowledges_cpd);
 		return true;
 	case V92_CONTROL_EVENT_CPU:
-		return event->record.cpu.frame_result == V92_CPU_OK &&
-			accept_cpu(control, &event->record.cpu.parameters);
+		return accept_cpu(control, &event->record.cpu.parameters);
 	case V92_CONTROL_EVENT_CPUS: {
 		/* Table 24 changes only the rate and acknowledgement. Initial
 		 * training has no preceding mapping, so still requires long CPu. */
-		if (!control->previous_cpu ||
-		    event->record.cpus.frame_result != V92_CPU_OK)
+		if (!control->previous_cpu)
 			return false;
 		struct v92_cpu_parameters cpu = control->cpu;
 		cpu.data_rate_number = event->record.cpus.parameters.data_rate_number;
@@ -369,23 +364,42 @@ static bool accept_event(
 	return false;
 }
 
-bool v92_downstream_control_receive(struct v92_downstream_control *control,
+static bool received_event_is_valid(const struct v92_control_event *event)
+{
+	switch (event->type) {
+	case V92_CONTROL_EVENT_SUVU:
+		return event->record.suvu.frame_result == V92_SUVU_OK &&
+			v92_suvu_parameters_are_valid(&event->record.suvu.parameters);
+	case V92_CONTROL_EVENT_CPU:
+		return event->record.cpu.frame_result == V92_CPU_OK &&
+			v92_cpu_parameters_are_valid(&event->record.cpu.parameters);
+	case V92_CONTROL_EVENT_CPUS:
+		return event->record.cpus.frame_result == V92_CPU_OK &&
+			event->record.cpus.parameters.data_rate_number <= V92_CPU_MAX_DATA_RATE_NUMBER;
+	case V92_CONTROL_EVENT_NONE:
+	case V92_CONTROL_EVENT_SUVU_REJECTED:
+	case V92_CONTROL_EVENT_CPU_REJECTED:
+	case V92_CONTROL_EVENT_CPUS_REJECTED:
+		return true;
+	default:
+		return false;
+	}
+}
+
+enum v92_downstream_control_result v92_downstream_control_receive(
+	struct v92_downstream_control *control,
 	const struct v92_control_event *received)
 {
 	if (!v92_downstream_control_is_valid(control) || control->failed || received == NULL)
-		return false;
+		return V92_DOWNSTREAM_CONTROL_ERROR;
 	struct v92_control_event event = *received;
 	/* Decoded events are a public boundary: a malformed zero-rate record
 	 * must not bypass selection validation and trigger cleardown. */
-	if ((event.type == V92_CONTROL_EVENT_CPU &&
-	     (event.record.cpu.frame_result != V92_CPU_OK ||
-	      !v92_cpu_parameters_are_valid(&event.record.cpu.parameters))) ||
-	    (event.type == V92_CONTROL_EVENT_CPUS &&
-	     (event.record.cpus.frame_result != V92_CPU_OK ||
-	      event.record.cpus.parameters.data_rate_number > V92_CPU_MAX_DATA_RATE_NUMBER)))
-		return fail(control);
-	if ((event.type == V92_CONTROL_EVENT_CPU && event.record.cpu.frame_result == V92_CPU_OK) ||
-	    (event.type == V92_CONTROL_EVENT_CPUS && event.record.cpus.frame_result == V92_CPU_OK)) {
+	if (!received_event_is_valid(&event)) {
+		fail(control);
+		return V92_DOWNSTREAM_CONTROL_ERROR;
+	}
+	if (event.type == V92_CONTROL_EVENT_CPU || event.type == V92_CONTROL_EVENT_CPUS) {
 		bool zero = event.type == V92_CONTROL_EVENT_CPU ?
 			event.record.cpu.parameters.data_rate_number == 0u :
 			event.record.cpus.parameters.data_rate_number == 0u;
@@ -400,9 +414,11 @@ bool v92_downstream_control_receive(struct v92_downstream_control *control,
 				control->transmit.transmitted_symbols);
 	}
 	if (control->cleardown.active)
-		return true;
-	if (!accept_event(control, &event))
-		return fail(control);
+		return V92_DOWNSTREAM_CONTROL_OK;
+	if (!accept_event(control, &event)) {
+		fail(control);
+		return V92_DOWNSTREAM_CONTROL_REJECTED;
+	}
 	/* V.92 9.6.1.1.3: expiry alone is insufficient. Wait through a whole
 	 * valid CPu/SUVu at or after the deadline; damaged records do not count.
 	 * The output clock includes queued coder frames, so use the CPd's wire
@@ -418,9 +434,11 @@ bool v92_downstream_control_receive(struct v92_downstream_control *control,
 		    control->status_start_frame * V90_CP_FRAME_INTERVALS >=
 			    (unsigned int)CPD_REPEAT_BASE_SAMPLES + control->round_trip_delay_samples)
 		control->repeat_cpd = true;
-	if (!owned_state_is_valid(control))
-		return fail(control);
-	return true;
+	if (!owned_state_is_valid(control)) {
+		fail(control);
+		return V92_DOWNSTREAM_CONTROL_ERROR;
+	}
+	return V92_DOWNSTREAM_CONTROL_OK;
 }
 
 static bool apply_pending_downstream(

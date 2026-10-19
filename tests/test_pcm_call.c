@@ -11594,6 +11594,111 @@ static bool run_v92_clipping_recovery(bool persistent)
 	return false;
 }
 
+/* The recorded status has a valid CRC, including its ignored reserved bits.
+ * Deliver it through the peer's continuous modulator, after a prior status has
+ * selected different fields. Recovery must reject it without changing modes. */
+static bool run_v92_conflicting_status_recovery(
+	enum g711_law law, bool persistent, bool after_online)
+{
+	static const uint8_t conflict[] = { 0xff, 0xff, 0xbf, 0xff, 0xc0, 0, 0, 0, 0 };
+	struct v92_suvu_parameters decoded;
+	struct pcm_call_configuration ac = v92_configuration(V90_ANALOG_MODEM, law);
+	struct pcm_call_configuration dc = v92_configuration(V90_DIGITAL_MODEM, law);
+	struct pcm_call analog, digital;
+	struct channel wire;
+	struct pcm_payload_source sources[2] = { { .reject = true }, { .reject = true } };
+	uint32_t frames[2] = { 0, 0 };
+	unsigned injected = 0;
+	bool in_epoch = false, requested = !after_online, payload_reset = !after_online;
+
+	CHECK(v92_suvu_decode(conflict, sizeof(conflict), 72u, 24u, &decoded) == V92_SUVU_OK &&
+	      decoded.prefilter_level_db_q2_2 == -1 && decoded.wait_for_cpu &&
+	      decoded.request_silence && decoded.acknowledges_cpd &&
+	      channel_init(&wire, law, 3u) && pcm_call_init(&analog, &ac) == PCM_CALL_OK &&
+	      pcm_call_init(&digital, &dc) == PCM_CALL_OK, "conflicting status fixture failed");
+	for (unsigned clock = 0; clock < 4u * CALL_SAMPLE_LIMIT; ++clock) {
+		uint8_t rx[2], tx[2];
+		struct pcm_call *calls[] = { &analog, &digital };
+		channel_receive(&wire, &rx[0], &rx[1]);
+		for (unsigned side = 0; side < 2; ++side) {
+			struct pcm_call *call = calls[side];
+			if (pcm_call_phase4_is_ready(call))
+				CHECK(pcm_call_start_data_path(call) == PCM_CALL_OK, "conflict recovery handoff failed");
+			if (call->stage == PCM_CALL_DATA_PATH) {
+				CHECK(v92_payload_sample(call, rx[side], decode_octet(law, rx[side]),
+					&sources[side], &frames[side], &tx[side]), "conflict recovery changed data");
+			} else {
+				struct pcm_call_observation event;
+				enum pcm_call_result result = pcm_call_octet(call, rx[side], decode_octet(law, rx[side]),
+					&tx[side], &event);
+				if (result != PCM_CALL_OK) {
+					CHECK(persistent && side == 1u && result == PCM_CALL_FAILED &&
+					      injected == V92_DATA_QUALITY_MAX_RETRAINS + 1u &&
+					      digital.pcm_upstream_quality.recovery.attempts == V92_DATA_QUALITY_MAX_RETRAINS &&
+					      pcm_call_is_valid(&digital) && pcm_call_has_failed(&digital) &&
+					      !pcm_call_is_online(&digital),
+					      "conflict recovery failed: law=%u online=%u side=%u injections=%u result=%s",
+					      law, after_online, side, injected, pcm_call_result_name(result));
+					return true;
+				}
+			}
+		}
+		if (digital.stage != PCM_CALL_PHASE4)
+			in_epoch = false;
+		if (requested && !in_epoch && (persistent || !injected) &&
+		    analog.stage == PCM_CALL_PHASE4 && digital.stage == PCM_CALL_PHASE4 &&
+		    analog.state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL &&
+		    digital.state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL) {
+			struct v92_phase4_analog_tx *source = &analog.state.phase4.v92.owner.analog.station.transmit;
+			const struct v92_downstream_control *control = &digital.state.phase4.v92.owner.digital.control;
+			if (control->suvu_received && source->stage == V92_PHASE4_ANALOG_TX_SUVU &&
+			    source->signal.record.bit_index <= 18u) {
+				/* The emitted prefix is identical. Only untransmitted bits
+				 * change; the scrambler and differential history stay live. */
+				CHECK(source->signal.record.frame_bit_count == 72u &&
+				      control->suvu.prefilter_level_db_q2_2 != decoded.prefilter_level_db_q2_2,
+				      "conflicting status did not change an accepted selection");
+				memcpy(source->signal.record.frame, conflict, sizeof(conflict));
+				in_epoch = true;
+				injected++;
+			}
+		}
+		channel_transmit(&wire, tx[0], tx[1]);
+		if (requested && !payload_reset && analog.stage != PCM_CALL_DATA_PATH &&
+		    digital.stage != PCM_CALL_DATA_PATH) {
+			/* Old payload can still arrive while the peer detects the
+			 * retrain. Begin a fresh test pattern after both leave data. */
+			frames[0] = frames[1] = 0u;
+			sources[0] = sources[1] = (struct pcm_payload_source){ .reject = true };
+			payload_reset = true;
+		}
+		if (frames[0] >= 20u && frames[1] >= 20u &&
+		    pcm_call_is_online(&analog) && pcm_call_is_online(&digital)) {
+			if (!requested) {
+				CHECK(pcm_call_start_retrain(&analog) == PCM_CALL_OK, "peer retrain did not start");
+				requested = true;
+			} else {
+				CHECK(!persistent && injected == 1u &&
+				      digital.pcm_upstream_quality.recovery.attempts == 1u,
+				      "conflict recovery did not retain its budget");
+				return true;
+			}
+		}
+	}
+	CHECK(false, "conflict recovery did not finish: law=%u persistent=%u online=%u injected=%u stages=%u/%u",
+	      law, persistent, after_online, injected, analog.stage, digital.stage);
+	return false;
+}
+
+static bool test_v92_conflicting_status_recovery(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned variant = 0; variant < 4u; ++variant)
+			CHECK(run_v92_conflicting_status_recovery(law, variant & 1u, variant & 2u),
+			      "conflicting status recovery law=%u variant=%u", law, variant);
+	return true;
+}
+
 static bool test_v92_clipping_recovery(void)
 {
 	return run_v92_clipping_recovery(false) && run_v92_clipping_recovery(true);
@@ -12842,6 +12947,7 @@ int main(int argc, char **argv)
 		{ "retained INFO0 codec law", test_local_offer_law },
 		{ "result names", test_result_names },
 		{ "automatic conventional upstream and peer-limited fallback", test_automatic_upstream },
+		{ "V.92 conflicting status bounded recovery", test_v92_conflicting_status_recovery },
 	};
 	unsigned int failures = 0;
 	size_t first = 0, stride = 1;

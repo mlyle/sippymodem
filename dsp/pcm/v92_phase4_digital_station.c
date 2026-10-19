@@ -210,7 +210,11 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_receive(
 	} else {
 		result = v92_phase4_digital_rx_sample(&station->receive, sample, &event);
 	}
-	if (!v92_downstream_control_receive(&station->control, &event))
+	enum v92_downstream_control_result control_result =
+		v92_downstream_control_receive(&station->control, &event);
+	if (control_result == V92_DOWNSTREAM_CONTROL_REJECTED)
+		return V92_PHASE4_DIGITAL_STATION_REJECTED_CONTROL;
+	if (control_result != V92_DOWNSTREAM_CONTROL_OK)
 		return fail(station);
 	if (event.type == V92_CONTROL_EVENT_CPU && station->control.cpu_received &&
 	    !station->control.cleardown.active) {
@@ -394,6 +398,8 @@ const char *v92_phase4_digital_station_result_name(
 		return "invalid parameters";
 	case V92_PHASE4_DIGITAL_STATION_INTERNAL_ERROR:
 		return "internal error";
+	case V92_PHASE4_DIGITAL_STATION_REJECTED_CONTROL:
+		return "rejected control record";
 	}
 	return "unknown";
 }

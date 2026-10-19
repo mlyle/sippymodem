@@ -764,7 +764,7 @@ static bool downstream_control_contracts(const struct v92_downstream_control *in
 	CHECK(pcm_downstream_rx_init(&peer, PCM_PROTOCOL_V92, &initial->transmit.encoder.mapping,
 		      V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK, "early SUVu peer failed");
 	struct v92_control_event early = { .type = V92_CONTROL_EVENT_SUVU };
-	CHECK(v92_downstream_control_receive(&selected, &early), "early SUVu rejected");
+	CHECK(v92_downstream_control_receive(&selected, &early) == V92_DOWNSTREAM_CONTROL_OK, "early SUVu rejected");
 	unsigned statuses = 0, selections = 0;
 	for (unsigned clock = 0; clock < 4000 && !selections; ++clock) {
 		uint8_t octet;
@@ -782,21 +782,21 @@ static bool downstream_control_contracts(const struct v92_downstream_control *in
 	selected = *initial;
 	struct v92_control_event event = { .type = V92_CONTROL_EVENT_CPUS };
 	event.record.cpus.parameters.data_rate_number = previous->data_rate_number - 1;
-	CHECK(v92_downstream_control_receive(&selected, &event) && !selected.cpu_received,
+	CHECK(v92_downstream_control_receive(&selected, &event) == V92_DOWNSTREAM_CONTROL_OK && !selected.cpu_received,
 	      "CPus before SUVu changed selection");
 	event = (struct v92_control_event){ .type = V92_CONTROL_EVENT_SUVU };
-	CHECK(v92_downstream_control_receive(&selected, &event), "SUVu did not open selection");
+	CHECK(v92_downstream_control_receive(&selected, &event) == V92_DOWNSTREAM_CONTROL_OK, "SUVu did not open selection");
 	event = (struct v92_control_event){ .type = V92_CONTROL_EVENT_CPUS };
 	event.record.cpus.parameters.data_rate_number = previous->data_rate_number - 1;
-	CHECK(v92_downstream_control_receive(&selected, &event) && selected.cpu_received &&
+	CHECK(v92_downstream_control_receive(&selected, &event) == V92_DOWNSTREAM_CONTROL_OK && selected.cpu_received &&
 	      !selected.peer_confirmation_received && selected.cpu.data_rate_number == previous->data_rate_number - 1 &&
 	      v90_pcm_mapping_equal(&selected.transmit.encoder.mapping, &initial->transmit.encoder.mapping),
 	      "short CPu lost previous parameters or replaced the active data mapping");
 	event.record.cpus.parameters.acknowledges_cpd = true;
-	CHECK(v92_downstream_control_receive(&selected, &event) && selected.peer_confirmation_received &&
+	CHECK(v92_downstream_control_receive(&selected, &event) == V92_DOWNSTREAM_CONTROL_OK && selected.peer_confirmation_received &&
 	      !v92_downstream_control_is_ed_ready(&selected), "received acknowledgment counted as transmitted");
 	event.record.cpus.parameters.acknowledges_cpd = false;
-	CHECK(!v92_downstream_control_receive(&selected, &event) && selected.failed,
+	CHECK(v92_downstream_control_receive(&selected, &event) == V92_DOWNSTREAM_CONTROL_REJECTED && selected.failed,
 	      "conflicting repeated CPus was accepted");
 	for (unsigned invalid = 0; invalid < 4; ++invalid) {
 		selected = *initial;
@@ -813,7 +813,7 @@ static bool downstream_control_contracts(const struct v92_downstream_control *in
 			event.record.cpus.parameters.data_rate_number = 0;
 			break;
 		}
-		CHECK(!v92_downstream_control_receive(&selected, &event) && !selected.cleardown.active,
+		CHECK(v92_downstream_control_receive(&selected, &event) == V92_DOWNSTREAM_CONTROL_ERROR && !selected.cleardown.active,
 		      "invalid zero-rate record %u caused cleardown", invalid);
 	}
 	/* The peer codec is not the local network law, including in a valid
@@ -824,17 +824,17 @@ static bool downstream_control_contracts(const struct v92_downstream_control *in
 	event.record.cpu.parameters.data_rate_number = 0;
 	event.record.cpu.parameters.law = previous->law == G711_LAW_PCMU ?
 		G711_LAW_PCMA : G711_LAW_PCMU;
-	CHECK(v92_downstream_control_receive(&selected, &event) && selected.cleardown.active &&
+	CHECK(v92_downstream_control_receive(&selected, &event) == V92_DOWNSTREAM_CONTROL_OK && selected.cleardown.active &&
 	      selected.cleardown.peer_requested && !selected.failed &&
 	      v90_pcm_mapping_equal(&selected.transmit.encoder.mapping, &initial->transmit.encoder.mapping),
 	      "peer codec blocked cleardown or changed the network mapping");
 	selected = *initial;
 	event = (struct v92_control_event){ .type = V92_CONTROL_EVENT_CPUS_REJECTED };
-	CHECK(v92_downstream_control_receive(&selected, &event) && memcmp(&selected, initial, sizeof(selected)) == 0,
+	CHECK(v92_downstream_control_receive(&selected, &event) == V92_DOWNSTREAM_CONTROL_OK && memcmp(&selected, initial, sizeof(selected)) == 0,
 	      "damaged control record changed exchange state");
 	event = (struct v92_control_event){ .type = V92_CONTROL_EVENT_SUVU };
 	event.record.suvu.parameters.request_silence = true;
-	CHECK(!v92_downstream_control_receive(&selected, &event) && selected.failed,
+	CHECK(v92_downstream_control_receive(&selected, &event) == V92_DOWNSTREAM_CONTROL_REJECTED && selected.failed,
 	      "FPE accepted an SUVu silence request");
 	uint8_t octet = 123;
 	CHECK(!v92_downstream_control_transmit(&selected, &octet) && octet == 123,
@@ -968,7 +968,7 @@ static bool test_fast_control(enum g711_law law, uint8_t rate)
 			} else {
 				CHECK(event.type == V92_CONTROL_EVENT_NONE, "control wire record rejected: %u", event.type);
 			}
-			CHECK(v92_downstream_control_receive(&digital, &event), "digital rejected upstream record %u", event.type);
+			CHECK(v92_downstream_control_receive(&digital, &event) == V92_DOWNSTREAM_CONTROL_OK, "digital rejected upstream record %u", event.type);
 		}
 		if (ack_count && input.control.record_complete && v92_upstream_control_can_finish(&input.control) &&
 		    v92_downstream_control_is_ed_ready(&digital) && peer.ed_requested) {

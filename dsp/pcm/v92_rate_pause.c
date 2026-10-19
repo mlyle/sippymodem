@@ -276,7 +276,7 @@ bool v92_rate_pause_digital_resume(struct v92_phase4_digital_station *station,
 	    v92_phase4_digital_rx_resume(&next.receive, &pause->upstream) != V92_PHASE4_DIGITAL_RX_OK ||
 	    !v92_downstream_control_init(&next.control, &pause->downstream, &suvd, &selected, cpu,
 		    round_trip_delay_samples) ||
-	    !v92_downstream_control_receive(&next.control, &event) ||
+	    v92_downstream_control_receive(&next.control, &event) != V92_DOWNSTREAM_CONTROL_OK ||
 	    !v92_phase4_digital_station_is_valid(&next))
 		return false;
 	*station = next;

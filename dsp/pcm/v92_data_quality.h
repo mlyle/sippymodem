@@ -39,7 +39,8 @@ enum v92_data_quality_result {
  * during B1u; automatic mapping failures lower the rate ceiling until the
  * minimum rate, where they use this same bounded budget.
  * Unusable TRN2u measurements and unrepresentable peer B1u selections
- * share the same retry budget.
+	 * and incompatible CRC-valid upstream control records share the same
+	 * retry budget.
  * None of these conditions licenses delivering ambiguous bits to the host. */
 struct v92_data_quality {
 	double squared_error;

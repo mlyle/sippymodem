@@ -730,7 +730,7 @@ static bool run_exchange(
 			.type = V92_CONTROL_EVENT_CPU,
 			.record.cpu = { .frame_result = V92_CPU_OK, .parameters = cpu },
 		};
-		CHECK(v92_downstream_control_receive(&station.control, &repeat) &&
+		CHECK(v92_downstream_control_receive(&station.control, &repeat) == V92_DOWNSTREAM_CONTROL_OK &&
 		      v92_phase4_digital_station_is_ed_ready(&station),
 		      "an in-flight CPu erased E2u confirmation");
 		struct v92_phase4_digital_station saved = station;
@@ -784,6 +784,26 @@ static bool run_exchange(
 		CHECK(!v92_phase4_digital_handoff_is_valid(&selected),
 		      "invalid receive plan crossed station handoff");
 	}
+	{
+		/* This CRC-valid status was decoded on a physical retrain. Its
+		 * reserved bits must remain ignored, but its conflicting fields
+		 * must not replace the selected status or acknowledge parameters. */
+		static const uint8_t frame[] = { 0xff, 0xff, 0xbf, 0xff, 0xc0, 0, 0, 0, 0 };
+		struct v92_downstream_control rejected = station.control;
+		struct v92_downstream_control before = rejected;
+		struct v92_control_event event = { .type = V92_CONTROL_EVENT_SUVU };
+
+		CHECK(v92_suvu_decode(frame, sizeof(frame), 72u, 24u,
+			&event.record.suvu.parameters) == V92_SUVU_OK &&
+		      v92_downstream_control_receive(&rejected, &event) == V92_DOWNSTREAM_CONTROL_REJECTED &&
+		      rejected.failed, "conflicting wire status was accepted or misclassified");
+		rejected.failed = false;
+		CHECK(memcmp(&rejected, &before, sizeof(before)) == 0,
+		      "conflicting wire status changed retained parameters or coding state");
+		event.record.suvu.frame_result = V92_SUVU_CRC_MISMATCH;
+		CHECK(v92_downstream_control_receive(&rejected, &event) == V92_DOWNSTREAM_CONTROL_ERROR,
+		      "malformed decoded event was classified as a peer selection");
+	}
 	if (law == G711_LAW_PCMU &&
 	    constellation == V92_CONSTELLATION_4_POINT) {
 		struct v92_cpu_parameters changed = cpu;
@@ -806,7 +826,7 @@ static bool run_exchange(
 					&station,
 					line_sample(law, polarity, raw));
 				if (result ==
-				    V92_PHASE4_DIGITAL_STATION_INTERNAL_ERROR) {
+				    V92_PHASE4_DIGITAL_STATION_REJECTED_CONTROL) {
 					rejected = true;
 					break;
 				}
@@ -2241,7 +2261,7 @@ static bool run_short_cpu(bool zero_rate)
 					CHECK(false, "early zero-rate CPus response did not finish");
 					return true;
 				}
-				CHECK(result == V92_PHASE4_DIGITAL_STATION_INTERNAL_ERROR &&
+				CHECK(result == V92_PHASE4_DIGITAL_STATION_REJECTED_CONTROL &&
 				      station.control.failed && !station.control.cpu_received &&
 				      !station.control.peer_confirmation_received,
 				      "initial training accepted a CPus in place of a full mapping");
@@ -2340,7 +2360,7 @@ static bool run_silence_status(enum g711_law law, unsigned redundancy,
 	for (unsigned clock = 0u; clock < 5000u; ++clock) {
 		if (clock == arrival) {
 			struct pcm_downstream_tx before = control.transmit;
-			CHECK(v92_downstream_control_receive(&control, &upstream) &&
+			CHECK(v92_downstream_control_receive(&control, &upstream) == V92_DOWNSTREAM_CONTROL_OK &&
 			      memcmp(&before, &control.transmit, sizeof(before)) == 0,
 			      "silence request rewrote the pending downstream record");
 		}
@@ -2386,12 +2406,12 @@ static bool run_silence_status(enum g711_law law, unsigned redundancy,
 		struct v92_downstream_control rejected = control;
 		struct v92_control_event event = upstream;
 		event.type = V92_CONTROL_EVENT_SUVU_REJECTED;
-		CHECK(v92_downstream_control_receive(&rejected, &event) &&
+		CHECK(v92_downstream_control_receive(&rejected, &event) == V92_DOWNSTREAM_CONTROL_OK &&
 		      memcmp(&rejected, &control, sizeof(control)) == 0,
 		      "damaged SUVu acknowledged silence or changed its state");
 		event = upstream;
 		event.record.suvu.parameters.request_silence = !event.record.suvu.parameters.request_silence;
-		CHECK(!v92_downstream_control_receive(&rejected, &event) && rejected.failed,
+		CHECK(v92_downstream_control_receive(&rejected, &event) == V92_DOWNSTREAM_CONTROL_REJECTED && rejected.failed,
 		      "late silence change was accepted");
 		rejected.failed = false;
 		CHECK(memcmp(&rejected, &control, sizeof(control)) == 0,
@@ -2400,13 +2420,13 @@ static bool run_silence_status(enum g711_law law, unsigned redundancy,
 			.type = V92_CONTROL_EVENT_CPU,
 			.record.cpu = { .frame_result = V92_CPU_OK, .parameters = cpu },
 		};
-		CHECK(!v92_downstream_control_receive(&rejected, &event) && rejected.failed,
+		CHECK(v92_downstream_control_receive(&rejected, &event) == V92_DOWNSTREAM_CONTROL_REJECTED && rejected.failed,
 		      "silence accepted an ordinary CPu");
 		rejected.failed = false;
 		CHECK(memcmp(&rejected, &control, sizeof(control)) == 0,
 		      "rejected CPu replaced the retained parameters");
 		event.record.cpu.parameters.data_rate_number = 0u;
-		CHECK(v92_downstream_control_receive(&rejected, &event) && rejected.cleardown.active &&
+		CHECK(v92_downstream_control_receive(&rejected, &event) == V92_DOWNSTREAM_CONTROL_OK && rejected.cleardown.active &&
 		      !v92_downstream_control_is_silence_ready(&rejected) &&
 		      !v92_downstream_control_note_e2u(&rejected),
 		      "silence hid a zero-rate cleardown request");
@@ -2433,14 +2453,14 @@ static bool run_silence_status(enum g711_law law, unsigned redundancy,
 	before = control;
 	upstream.record.suvu.parameters.acknowledges_cpd = true;
 	CHECK((confirmation == 2u ? v92_downstream_control_note_e2u(&control) :
-		v92_downstream_control_receive(&control, &upstream)) &&
+		v92_downstream_control_receive(&control, &upstream) == V92_DOWNSTREAM_CONTROL_OK) &&
 	      v92_downstream_control_is_silence_ready(&control) && !v92_downstream_control_is_ed_ready(&control) &&
 	      memcmp(&before.transmit, &control.transmit, sizeof(control.transmit)) == 0 &&
 	      memcmp(&before.initial_cpd, &control.initial_cpd, sizeof(control.initial_cpd)) == 0,
 	      "silence confirmation lost the record tail or authorized data");
 	if (confirmation == 2u) {
 		upstream.record.suvu.parameters.acknowledges_cpd = false;
-		CHECK(v92_downstream_control_receive(&control, &upstream) &&
+		CHECK(v92_downstream_control_receive(&control, &upstream) == V92_DOWNSTREAM_CONTROL_OK &&
 		      v92_downstream_control_is_silence_ready(&control),
 		      "an in-flight non-ACK SUVu erased E2u confirmation");
 	}
