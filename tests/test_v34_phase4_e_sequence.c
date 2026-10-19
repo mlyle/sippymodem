@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <v34_phase4_e_sequence.h>
+#include <v34_training_symbol.h>
 
 #include "test.h"
 
@@ -425,12 +426,41 @@ static bool test_validation(void)
 	return true;
 }
 
+static bool test_training_symbol_rejection(void)
+{
+	struct v34_scrambler scrambler;
+	const struct qam_point sentinel = { 17.0, -29.0 };
+	struct qam_point point = sentinel;
+	uint8_t rotation = 2, quarter = 7;
+
+	CHECK(v34_transmit_scrambler_init(&scrambler, V34_CALLING_STATION) ==
+	      V34_FRAMING_OK, "training symbol setup failed");
+	scrambler.history = 0x654321;
+	struct v34_scrambler saved = scrambler;
+	/* Both errors occur after the differential dibit could advance history:
+	 * the second dibit is invalid, or constellation mapping rejects the size. */
+	CHECK(!v34_training_encode_symbol(&scrambler,
+		      V34_CONSTELLATION_16_POINT, 3u, 4u,
+		      &rotation, &point, &quarter) &&
+	      !v34_training_encode_symbol(&scrambler,
+		      (enum v34_constellation_size)8, 3u, 3u,
+		      &rotation, &point, &quarter) &&
+	      scrambler.history == saved.history &&
+	      scrambler.polynomial == saved.polynomial &&
+	      rotation == 2 && quarter == 7 &&
+	      point.in_phase == sentinel.in_phase &&
+	      point.quadrature == sentinel.quadrature,
+	      "rejected training symbol changed history or outputs");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "training symbol rejection", test_training_symbol_rejection },
 		{ "roles, constellations, and records",
 		  test_roles_constellations_and_records },
 		{ "copy behavior", test_copy_behavior },

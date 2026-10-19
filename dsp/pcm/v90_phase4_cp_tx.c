@@ -186,12 +186,6 @@ enum v90_phase4_cp_tx_result v90_phase4_cp_tx_next_owned(
 	struct qam_point *point, uint8_t *quarter_point,
 	uint8_t *clockwise_quarter_turns, bool *record_complete)
 {
-	struct v34_scrambler scrambler;
-	uint8_t rotation;
-	struct qam_point next_point;
-	uint8_t next_quarter_point;
-	bool complete;
-
 	const struct memory_region regions[] = {
 		{ tx, sizeof(*tx) }, { point, sizeof(*point) },
 		{ quarter_point, sizeof(*quarter_point) },
@@ -206,21 +200,14 @@ enum v90_phase4_cp_tx_result v90_phase4_cp_tx_next_owned(
 		return V90_PHASE4_CP_TX_INVALID_ARGUMENT;
 	if (tx->bit_index == tx->frame_bit_count)
 		return V90_PHASE4_CP_TX_RECORD_COMPLETE;
-	scrambler = tx->scrambler;
-	rotation = tx->previous_clockwise_quarter_turns;
 	if (!v34_training_encode_packed_symbol(
-		    &scrambler, tx->constellation, tx->frame, tx->bit_index,
-		    &rotation, &next_point, &next_quarter_point))
+		    &tx->scrambler, tx->constellation, tx->frame, tx->bit_index,
+		    &tx->previous_clockwise_quarter_turns, point, quarter_point))
 		return V90_PHASE4_CP_TX_INVALID_ARGUMENT;
 	/* The validated record and cursor contain whole symbols. */
-	tx->scrambler = scrambler;
-	tx->previous_clockwise_quarter_turns = rotation;
 	tx->bit_index += v34_constellation_bits_per_symbol(tx->constellation);
-	complete = tx->bit_index == tx->frame_bit_count;
-	*point = next_point;
-	*quarter_point = next_quarter_point;
-	*clockwise_quarter_turns = rotation;
-	*record_complete = complete;
+	*clockwise_quarter_turns = tx->previous_clockwise_quarter_turns;
+	*record_complete = tx->bit_index == tx->frame_bit_count;
 	return V90_PHASE4_CP_TX_OK;
 }
 
@@ -239,11 +226,6 @@ enum v90_phase4_cp_tx_result v90_phase4_cp_tx_scr_next_owned(
 	struct qam_point *point, uint8_t *quarter_point,
 	uint8_t *clockwise_quarter_turns)
 {
-	struct v34_scrambler scrambler;
-	uint8_t rotation;
-	struct qam_point next_point;
-	uint8_t next_quarter_point;
-
 	const struct memory_region regions[] = {
 		{ tx, sizeof(*tx) }, { point, sizeof(*point) },
 		{ quarter_point, sizeof(*quarter_point) },
@@ -256,18 +238,11 @@ enum v90_phase4_cp_tx_result v90_phase4_cp_tx_scr_next_owned(
 		return V90_PHASE4_CP_TX_INVALID_ARGUMENT;
 	if (tx->bit_index != tx->frame_bit_count)
 		return V90_PHASE4_CP_TX_RECORD_IN_PROGRESS;
-	scrambler = tx->scrambler;
-	rotation = tx->previous_clockwise_quarter_turns;
 	if (!v34_training_encode_symbol(
-		    &scrambler, tx->constellation, 3u, 3u,
-		    &rotation,
-		    &next_point, &next_quarter_point))
+		    &tx->scrambler, tx->constellation, 3u, 3u,
+		    &tx->previous_clockwise_quarter_turns, point, quarter_point))
 		return V90_PHASE4_CP_TX_INVALID_ARGUMENT;
-	tx->scrambler = scrambler;
-	tx->previous_clockwise_quarter_turns = rotation;
-	*point = next_point;
-	*quarter_point = next_quarter_point;
-	*clockwise_quarter_turns = rotation;
+	*clockwise_quarter_turns = tx->previous_clockwise_quarter_turns;
 	return V90_PHASE4_CP_TX_OK;
 }
 

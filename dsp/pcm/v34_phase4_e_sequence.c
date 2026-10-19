@@ -86,10 +86,6 @@ v34_phase4_e_sequence_next(
 	struct qam_point *point, uint8_t *quarter_point,
 	uint8_t *clockwise_quarter_turns)
 {
-	struct v34_phase4_e_sequence next;
-	struct qam_point next_point;
-	uint8_t next_quarter_point;
-
 	const struct memory_region regions[] = {
 		{ sequence, sizeof(*sequence) }, { point, sizeof(*point) },
 		{ quarter_point, sizeof(*quarter_point) },
@@ -103,20 +99,14 @@ v34_phase4_e_sequence_next(
 		return V34_PHASE4_E_SEQUENCE_INVALID_ARGUMENT;
 	if (sequence->emitted_bits == V34_PHASE4_E_BITS)
 		return V34_PHASE4_E_SEQUENCE_COMPLETE;
-	next = *sequence;
 	if (!v34_training_encode_symbol(
-		    &next.scrambler, next.constellation, 3u, 3u,
-		    &next.previous_clockwise_quarter_turns,
-		    &next_point, &next_quarter_point))
+		    &sequence->scrambler, sequence->constellation, 3u, 3u,
+		    &sequence->previous_clockwise_quarter_turns,
+		    point, quarter_point))
 		return V34_PHASE4_E_SEQUENCE_INVALID_ARGUMENT;
-	next.emitted_bits = (uint8_t)(
-		next.emitted_bits +
-		v34_constellation_bits_per_symbol(next.constellation));
-	if (!v34_phase4_e_sequence_is_valid(&next))
-		return V34_PHASE4_E_SEQUENCE_INVALID_ARGUMENT;
-	*sequence = next;
-	*point = next_point;
-	*quarter_point = next_quarter_point;
-	*clockwise_quarter_turns = next.previous_clockwise_quarter_turns;
+	/* One whole symbol cannot exceed the aligned E boundary above. */
+	sequence->emitted_bits = (uint8_t)(sequence->emitted_bits +
+		v34_constellation_bits_per_symbol(sequence->constellation));
+	*clockwise_quarter_turns = sequence->previous_clockwise_quarter_turns;
 	return V34_PHASE4_E_SEQUENCE_OK;
 }
