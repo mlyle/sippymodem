@@ -430,6 +430,7 @@ class _AttemptState:
     callback_return_attempted: bool = False
     remote_retrain_nonce: str | None = None
     remote_retrain: bool = False
+    remote_retrain_data: bool | None = None
     retrain_connected: bool = False
     retrain_data: bool = False
     report: ConnectReport = field(default_factory=ConnectReport)
@@ -669,6 +670,26 @@ def _exercise_online(
     if not state.remote_retrain:
         state.detail = "remote retrain END marker was not verified"
         return
+    if state.report.protocol == "LAPM":
+        # END proves reception after the peer retrain. Verify transmission
+        # too, before another retrain can obscure which exchange failed.
+        progress.set("checking data after remote retrain")
+        try:
+            time.sleep(config.online_settle_seconds)
+            verified, received = terminal.probe_online_ping(
+                config.online_timeout_seconds
+            )
+            state.capture(
+                leg, ONLINE_PING_REQUEST, received, phase="remote-retrain-ping"
+            )
+            state.remote_retrain_data = verified
+        except (LiveTerminalError, OSError, TimeoutError):
+            state.remote_retrain_data = False
+            state.detail = "post-peer-retrain online exchange failed"
+            return
+        if not verified:
+            state.detail = "post-peer-retrain online data was not verified"
+            return
     progress.set("waiting for local retrain")
     try:
         state.capture(leg, b"+++ATO1\r", b"", phase="local-retrain-command")
@@ -1110,6 +1131,7 @@ def run_physical_attempt(
         callback_return_attempted=state.callback_return_attempted,
         remote_retrain_nonce=state.remote_retrain_nonce,
         remote_retrain=state.remote_retrain,
+        remote_retrain_data=state.remote_retrain_data,
         retrain_connected=state.retrain_connected,
         retrain_data=state.retrain_data,
         retrain_requested=retrain,

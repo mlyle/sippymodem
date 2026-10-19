@@ -110,6 +110,20 @@ class LiveCampaignReportTests(unittest.TestCase):
         self.assertEqual(self.result().maturity, MATURITY_NO_CONNECT)
         self.assertIsNone(self.result(outcome=OUTCOME_BUSY).maturity)
 
+    def test_failed_remote_data_probe_cannot_report_full_success(self) -> None:
+        for verified, expected in (
+            (None, MATURITY_FULL),  # Older recordings did not run this probe.
+            (True, MATURITY_FULL),
+            (False, MATURITY_RETRAIN),
+        ):
+            with self.subTest(verified=verified):
+                result = self.result(
+                    connected=True, initial_data=True, remote_retrain=True,
+                    remote_retrain_data=verified, retrain_connected=True,
+                    retrain_data=True,
+                )
+                self.assertEqual(result.maturity, expected)
+
     def test_schedule_is_seeded_and_breadth_first(self) -> None:
         cases = cases_for_suite("smoke")
         first = base_schedule(cases, 3, 1234)

@@ -149,6 +149,8 @@ class AttemptResult:
     reference_name: str = "ata"
     peer_unknown_commands: int = 0
     peer_invalid_command_burst: int = 0
+    # None distinguishes older results and raw calls without this probe.
+    remote_retrain_data: bool | None = None
 
     @property
     def profile_mismatch(self) -> bool:
@@ -169,6 +171,7 @@ class AttemptResult:
             self.initial_data
             and self.retrain_requested
             and self.remote_retrain
+            and self.remote_retrain_data is not False
             and self.retrain_connected
             and self.retrain_data
         ):

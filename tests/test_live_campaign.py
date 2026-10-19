@@ -186,6 +186,8 @@ while True:
             commands = bytes(buffer).replace(b"\r", b"\n").split(b"\n")
             buffer.clear()
             pings += 1
+            if mode.endswith("peer-no-data") and not retrained:
+                continue
             if mode == "idle-input-garbage" and b"PING" not in commands:
                 os.write(master, b"\r\nERROR: unknown command; send HELP for a list\r\n")
                 continue
@@ -285,6 +287,63 @@ while True:
 
 
 class LiveCampaignTests(unittest.TestCase):
+    def test_lapm_checks_peer_retrain_data_before_local_retrain(self) -> None:
+        for role in ("originator", "callback"):
+            for responds in (True, False):
+                with self.subTest(role=role, responds=responds), \
+                        tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    script = root / "fake.py"
+                    script.write_text(textwrap.dedent(FAKE_MODEM), encoding="utf-8")
+                    mode = (
+                        "pcm-retrain-fallback" if responds
+                        else "pcm-retrain-peer-no-data"
+                    )
+                    if role == "callback":
+                        mode = "callback-" + mode
+                    scheduled = ScheduledAttempt(
+                        CASES_BY_NAME[f"v92-pcmup-24000-lapm-{role}"], 1
+                    )
+                    artifacts = self.artifacts(root, scheduled)
+                    config = replace(
+                        self.config(root, script, mode, root / "callback-ready"),
+                        online_timeout_seconds=0.2,
+                    )
+                    with mock.patch("tools.live_terminal.time.sleep"):
+                        result = run_physical_attempt(
+                            config,
+                            FrozenBinary(
+                                root, Path(sys.executable), "a" * 40, "b" * 64, False
+                            ),
+                            scheduled, 1, artifacts, True,
+                        )
+                    self.assertTrue(result.initial_data)
+                    self.assertTrue(result.remote_retrain)
+                    self.assertEqual(result.remote_retrain_data, responds)
+                    leg = "answer" if role == "callback" else "modem"
+                    tx = (artifacts.legs[leg] / "terminal-tx.bin").read_bytes()
+                    saved = json.loads((artifacts.directory / "result.json").read_text())
+                    self.assertEqual(saved["result"]["remote_retrain_data"], responds)
+                    exchanges = saved["exchanges"]
+                    phases = [e["phase"] for e in exchanges]
+                    probe = next(e for e in exchanges if e["phase"] == "remote-retrain-ping")
+                    self.assertEqual(
+                        tx[probe["tx_offset"]:probe["tx_offset"] + probe["tx_bytes"]],
+                        b"\r\n\r\nPING\r\n",
+                    )
+                    self.assertLess(phases.index("remote-retrain-end"),
+                                    phases.index("remote-retrain-ping"))
+                    if responds:
+                        self.assertEqual(result.maturity, MATURITY_FULL)
+                        self.assertLess(phases.index("remote-retrain-ping"),
+                                        phases.index("local-retrain-command"))
+                        self.assertEqual(tx.count(b"PING"), 2)
+                    else:
+                        self.assertEqual(result.maturity, MATURITY_DATA)
+                        self.assertIn("post-peer-retrain", result.detail)
+                        self.assertNotIn(b"ATO1", tx)
+                        self.assertNotIn("local-retrain-command", phases)
+
     def test_raw_post_retrain_requires_both_pings_and_retains_idle_payload(self) -> None:
         for mode, verified in (
             ("paired-ping", True),
@@ -307,6 +366,7 @@ class LiveCampaignTests(unittest.TestCase):
                     )
                 self.assertTrue(result.initial_data)
                 self.assertTrue(result.remote_retrain)
+                self.assertIsNone(result.remote_retrain_data)
                 self.assertTrue(result.retrain_connected)
                 self.assertEqual(result.retrain_data, verified, result.detail)
                 tx = (artifacts.legs["modem"] / "terminal-tx.bin").read_bytes()
