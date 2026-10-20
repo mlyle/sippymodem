@@ -2,6 +2,7 @@
 
 #include <pcm_host_echo.h>
 
+#include <float.h>
 #include <inttypes.h>
 #include <limits.h>
 #include <math.h>
@@ -215,6 +216,55 @@ static bool test_half_sample_prediction(void)
 		CHECK(pcm_host_echo_predict(&echo, PCM_HOST_ECHO_FILTER, 0, &cleaned) ==
 		      PCM_HOST_ECHO_OK && cleaned == -sign,
 		      "half echo did not round away from zero for sign %d", sign);
+	}
+	return true;
+}
+
+static bool test_prediction_numeric_bounds(void)
+{
+	struct pcm_host_echo echo;
+	const float nonfinite[] = { NAN, INFINITY, -INFINITY };
+	const int16_t references[] = { 0, INT16_MIN, INT16_MAX };
+
+	for (unsigned retained = 0; retained < 2; ++retained) {
+		CHECK(pcm_host_echo_init(&echo) == PCM_HOST_ECHO_OK,
+		      "numeric owner did not initialize");
+		for (unsigned i = 0; i < echo.window_delay_samples + PCM_HOST_ECHO_FILTER_TAPS; ++i)
+			CHECK(pcm_echo_reference_push(&echo.reference, 0) == PCM_ECHO_REFERENCE_OK,
+			      "numeric reference did not fill");
+		echo.filter_ready = !retained;
+		echo.train_samples = PCM_HOST_ECHO_TRAIN_MIN_SAMPLES;
+		echo.train_peak = PCM_HOST_ECHO_READY_MIN_PEAK;
+		echo.delay_acquired = retained;
+		echo.retained_delay_samples = retained ? echo.window_delay_samples : 0;
+		float *coefficients = retained ? echo.retained_coefficients : echo.coefficients;
+
+		for (unsigned r = 0; r < sizeof(references) / sizeof(references[0]); ++r) {
+			for (unsigned i = 0; i < echo.reference.fill; ++i)
+				echo.reference.samples[i] = references[r];
+			/* Even the largest finite model remains a finite double sum. */
+			for (unsigned i = 0; i < PCM_HOST_ECHO_FILTER_TAPS; ++i)
+				coefficients[i] = FLT_MAX;
+			int16_t cleaned = 321;
+			CHECK(pcm_host_echo_is_valid(&echo) &&
+			      pcm_host_echo_predict(&echo, PCM_HOST_ECHO_FILTER, 321, &cleaned) ==
+				      PCM_HOST_ECHO_OK &&
+			      cleaned == (references[r] < 0 ? INT16_MAX :
+				      references[r] > 0 ? INT16_MIN : 321),
+			      "finite model failed: retained=%u reference=%d", retained, references[r]);
+			memset(coefficients, 0, sizeof(echo.coefficients));
+			for (unsigned tap = 0; tap < PCM_HOST_ECHO_FILTER_TAPS; ++tap) {
+				for (unsigned n = 0; n < sizeof(nonfinite) / sizeof(nonfinite[0]); ++n) {
+					coefficients[tap] = nonfinite[n];
+					cleaned = 321;
+					CHECK(pcm_host_echo_predict(&echo, PCM_HOST_ECHO_FILTER, 0, &cleaned) ==
+					      PCM_HOST_ECHO_NUMERIC_FAILURE && cleaned == 321,
+					      "nonfinite model accepted: retained=%u reference=%d tap=%u kind=%u",
+					      retained, references[r], tap, n);
+				}
+				coefficients[tap] = 0;
+			}
+		}
 	}
 	return true;
 }
@@ -1271,6 +1321,7 @@ int main(void)
 			return 1;
 	if (!test_contracts() || !test_explicit_retime() || !test_training_quiet_boundary() ||
 	    !test_half_sample_prediction() ||
+	    !test_prediction_numeric_bounds() ||
 	    !test_prediction_energy_saturation() ||
 	    !test_long_delay_cancellation() ||
 	    !test_near_window_seed() || !test_negligible_return_does_not_qualify() ||

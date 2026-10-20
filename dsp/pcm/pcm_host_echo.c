@@ -25,6 +25,10 @@
 #define PCM_HOST_ECHO_PHASE2_DELAY_MARGIN_SAMPLES \
 	(PCM_ECHO_REFERENCE_SAMPLE_RATE / 20)
 
+_Static_assert(FLT_RADIX == 2 && PCM_HOST_ECHO_FILTER_TAPS <= 512 &&
+	       FLT_MAX_EXP + 15 + 9 < DBL_MAX_EXP,
+	       "finite echo products and their sum must fit double");
+
 struct training_step {
 	float coefficients[PCM_HOST_ECHO_FILTER_TAPS];
 	uint64_t prediction_energy;
@@ -246,15 +250,18 @@ static bool estimate_echo(
 		double coefficient = coefficients[tap];
 		double reference = references[tap];
 
-		if (!isfinite(coefficient))
-			return false;
 		predicted += coefficient * reference;
-		accumulated_energy += reference * reference;
+		if (energy != NULL)
+			accumulated_energy += reference * reference;
 	}
-	if (!isfinite(predicted) || !isfinite(accumulated_energy))
+	/* Finite float coefficients times int16 references cannot overflow double
+	 * in 384 taps. Any nonfinite coefficient propagates to the final sum,
+	 * including infinity times zero. Reference energy is bounded by 384*2^30. */
+	if (!isfinite(predicted))
 		return false;
 	*estimate = predicted;
-	*energy = accumulated_energy;
+	if (energy != NULL)
+		*energy = accumulated_energy;
 	return true;
 }
 
@@ -265,12 +272,12 @@ static enum pcm_host_echo_result predict_frozen_model(
 	int16_t references[PCM_HOST_ECHO_FILTER_TAPS];
 	const float *coefficients = echo->retained_delay_samples ?
 		echo->retained_coefficients : echo->coefficients;
-	double estimate, energy;
+	double estimate;
 	enum pcm_host_echo_result result = read_filter_window(echo, references);
 
 	if (result != PCM_HOST_ECHO_OK)
 		return result;
-	if (!estimate_echo(coefficients, references, &estimate, &energy))
+	if (!estimate_echo(coefficients, references, &estimate, NULL))
 		return PCM_HOST_ECHO_NUMERIC_FAILURE;
 	*cleaned_sample = sample_round_s16((double)received_sample - estimate);
 	return PCM_HOST_ECHO_OK;
