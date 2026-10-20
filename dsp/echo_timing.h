@@ -37,9 +37,11 @@ struct echo_timing_window {
 
 struct echo_timing {
 	int32_t prediction[ECHO_TIMING_BINS];
-	int16_t received[ECHO_TIMING_BINS];
+	/* Predictions span both sides of the delayed input. Retain only the
+	 * input delay itself, reading its oldest sample before overwriting it. */
+	int16_t received[ECHO_TIMING_RADIUS];
 	struct echo_timing_window slow, medium, fast;
-	uint16_t write, fill;
+	uint16_t write, received_write, fill;
 };
 
 /* Borrowed for this observe call only. retime is synchronous and returns
@@ -55,7 +57,8 @@ struct echo_timing_model {
 
 static inline bool echo_timing_is_valid(const struct echo_timing *t)
 {
-	return t != 0 && t->write < ECHO_TIMING_BINS && t->fill <= ECHO_TIMING_BINS &&
+	return t != 0 && t->write < ECHO_TIMING_BINS &&
+	       t->received_write < ECHO_TIMING_RADIUS && t->fill <= ECHO_TIMING_BINS &&
 	       t->slow.count < ECHO_TIMING_WINDOW &&
 	       t->medium.count < ECHO_TIMING_MEDIUM_WINDOW &&
 	       t->fast.count < ECHO_TIMING_FAST_WINDOW &&

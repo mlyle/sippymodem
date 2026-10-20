@@ -173,7 +173,6 @@ void echo_timing_observe(struct echo_timing *t,
 	struct echo_timing_model *model, int16_t received, int16_t cleaned)
 {
 	const unsigned bins = ECHO_TIMING_BINS;
-	const unsigned radius = ECHO_TIMING_RADIUS;
 	unsigned index = t->write;
 
 	if (cleaned == INT16_MIN || cleaned == INT16_MAX ||
@@ -182,11 +181,13 @@ void echo_timing_observe(struct echo_timing *t,
 		return;
 	}
 	t->prediction[index] = (int32_t)received - cleaned;
-	t->received[index] = received;
+	int16_t input = t->received[t->received_write];
+	t->received[t->received_write] = received;
+	if (++t->received_write == ECHO_TIMING_RADIUS)
+		t->received_write = 0;
 	t->write = (index + 1) % bins;
 	if (t->fill < bins && ++t->fill < bins)
 		return;
-	int16_t input = t->received[(index + bins - radius) % bins];
 
 	t->fast.input += (int32_t)input * input;
 	for (unsigned candidate = 0; candidate < bins; ++candidate) {
