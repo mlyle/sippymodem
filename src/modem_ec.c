@@ -884,9 +884,11 @@ static void t401_timeout(struct modem *m)
 	}
 	/* A final RR can complete every enquiry while acknowledging no data.
 	 * Keep a separate local progress budget across those recovery episodes;
-	 * the ordinary N400 counter still governs unanswered polls. */
+	 * the ordinary N400 counter still governs unanswered polls. Resynchronizing
+	 * after a retrain holds information transmission, so its status retries
+	 * must not consume the separate information-progress budget. */
 	if (l->state == LAPM_DATA && !xid_pending(l)) {
-		if (l->busy || l->peer_busy)
+		if (l->busy || l->peer_busy || l->retrain_poll)
 			l->stalled_polls = 0;
 		else if (l->sent_info != l->info_list &&
 			 ++l->stalled_polls > LAPM_MAX_RTX) {
@@ -1904,15 +1906,14 @@ int modem_ec_resume_after_retrain(struct modem *m)
 	/* Probe every established link after the physical interruption, including
 	 * an empty retained window. Incoming commands can refresh T403 without
 	 * confirming the outgoing direction; retain ordinary T401/N400 recovery. */
-	/* Continue an outstanding enquiry under its retained T401/N400. */
+	/* The enquiry's rtx_count already gates information. Preserve the peer's
+	 * actual RNR state and continue under retained T401/N400. */
 	if (l->retrain_poll || l->rtx_count) {
-		l->peer_busy = 1;
 		l->retrain_poll = 1;
 		return 0;
 	}
 	if (tx_status(l, l->cmd_addr, 1) != 0)
 		return -1;
-	l->peer_busy = 1;
 	/* V.42 7.10.2/7.11: resume an existing T401 without renewing it. */
 	if (m->bit_timer <= 0 || m->bit_timer_func != t401_timeout)
 		T401_START(l);

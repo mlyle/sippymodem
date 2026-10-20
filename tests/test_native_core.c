@@ -7909,7 +7909,7 @@ static bool test_lapm_idle_supervision(void)
 		      modem_ec_take_retrain_request(m) && !modem_ec_take_retrain_request(m),
 		      "unanswered idle polls did not request one physical recovery");
 		CHECK(modem_ec_resume_after_retrain(m) == 0 && l->retrain_poll &&
-		      l->peer_busy && l->rtx_count == 2 && l->stalled_retrain,
+		      !l->peer_busy && l->rtx_count == 2 && l->stalled_retrain,
 		      "idle retrain did not resynchronize its outstanding enquiry");
 		wire[0] = l->cmd_addr;
 		wire[2] = 1; /* RR response F=1 */
@@ -8107,7 +8107,7 @@ static bool test_lapm_post_retrain_enquiry(void)
 		l->stalled_retrain = recovered;
 		void (*idle_timeout)(struct modem *) = m->bit_timer_func;
 		CHECK(modem_ec_resume_after_retrain(m) == 0 && l->retrain_poll &&
-		      l->rtx_count == 1 && l->peer_busy && l->va == l->vs &&
+		      l->rtx_count == 1 && !l->peer_busy && l->va == l->vs &&
 		      m->bit_timer_func != idle_timeout,
 		      "clean post-retrain link did not verify outgoing reception");
 		outgoing = m->packer.hdlc.get_tx_frame(l);
@@ -8233,6 +8233,9 @@ static bool test_lapm_retrain_recovery_budget(void)
 		}
 		if (full)
 			CHECK(fill_lapm_control_queue(m), "retrain budget control queue did not fill");
+		/* Retain earlier data-stall evidence until the enquiry is serviced.
+		 * Its held interval must not count as another failed data attempt. */
+		l->stalled_polls = information ? 2 : 0;
 		frame_t *queued = l->ctrl_list, *next = l->tx_ctrl, *retained = l->sent_info;
 		void (*timeout)(struct modem *) = m->bit_timer_func;
 		m->bit_timer = 1;
@@ -8240,7 +8243,7 @@ static bool test_lapm_retrain_recovery_budget(void)
 			CHECK(modem_ec_resume_after_retrain(m) == 0 &&
 			      m->bit_timer == 1 && m->bit_timer_func == timeout &&
 			      l->rtx_count == (int)(first_retry ? first_retry : 1) &&
-			      l->retrain_poll && l->peer_busy && l->state == 2 && m->state == 5 &&
+			      l->retrain_poll && l->peer_busy == (int)full && l->state == 2 && m->state == 5 &&
 			      l->sent_info == retained && l->va == 0 && l->vs == information &&
 			      source.calls == information && m->packer.hdlc.tx_frame == NULL &&
 			      (!first_retry || (l->ctrl_list == queued && l->tx_ctrl == next)),
@@ -8275,6 +8278,8 @@ static bool test_lapm_retrain_recovery_budget(void)
 				m->packer.hdlc.tx_complete(l, outgoing);
 			}
 			m->bit_timer_func(m);
+			CHECK(l->state != 2 || l->stalled_polls == 0,
+			      "held post-retrain enquiry consumed the information-progress budget");
 		}
 		CHECK(enquiries == 5 && l->state == 0 && !m->bit_timer &&
 		      m->packer_process == NULL && source.calls == information &&
@@ -8782,7 +8787,7 @@ static bool test_lapm_retrain_preserves_link_state(void)
 			modem_dp_reconnected(modem);
 			CHECK(modem->retrain_pending == 0 &&
 				      lapm->state == LAPM_DATA_STATE &&
-				      lapm->peer_busy == 1 && lapm->vs == 5 &&
+				      lapm->peer_busy == 0 && lapm->vs == 5 &&
 				      lapm->va == 5 && lapm->vr == 6 &&
 				      lapm->v44_path == v44_path &&
 				      lapm->retrain_poll == 1 &&
@@ -8849,7 +8854,7 @@ static bool test_lapm_retrain_preserves_link_state(void)
 	modem->unpack.bit = 5;
 	modem->retrain_pending = 1;
 	modem_dp_reconnected(modem);
-	CHECK(modem->retrain_pending == 0 && lapm->peer_busy &&
+	CHECK(modem->retrain_pending == 0 && !lapm->peer_busy &&
 		      lapm->retrain_poll && lapm->rtx_count == 1 &&
 		      modem->bit_timer > 0 && lapm->vs == 5 && lapm->va == 5 &&
 		      lapm->vr == 6 && modem->pack.bit == 0 &&
@@ -8902,7 +8907,7 @@ static bool test_lapm_retrain_preserves_link_state(void)
 	modem->bit_timer = 0;
 	modem_dp_reconnected(modem);
 	CHECK(lapm->state == LAPM_DATA_STATE && lapm->vs == 6 &&
-		      lapm->va == 5 && lapm->vr == 6 && lapm->peer_busy == 1 &&
+		      lapm->va == 5 && lapm->vr == 6 && lapm->peer_busy == 0 &&
 		      lapm->retrain_poll == 1 &&
 		      lapm->sent_info == retained_frame &&
 		      modem->packer.hdlc.tx_frame == NULL &&
