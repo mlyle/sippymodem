@@ -42,6 +42,24 @@ static inline void gram_accumulate(
 	}
 }
 
+/* Gather an ordered subset of columns and its RHS from a packed system.
+ * Source arrays must cover every selected column; destination arrays cover
+ * count RHS entries and count * (count + 1) / 2 moments. Columns may repeat
+ * or be reordered. All arrays must be separate; count zero accesses none.
+ * Values are copied without arithmetic or a solver-specific column limit. */
+static inline void gram_select(
+	const double *restrict moments, const double *restrict rhs,
+	const unsigned *restrict columns, unsigned count,
+	double *restrict selected, double *restrict target)
+{
+	for (unsigned i = 0; i < count; ++i) {
+		target[i] = rhs[columns[i]];
+		for (unsigned j = 0; j <= i; ++j)
+			selected[gram_moment_index(i, j)] =
+				moments[gram_moment_index(columns[i], columns[j])];
+	}
+}
+
 /* Reduce an owned augmented Gram matrix in place. Keep the owner's pivot
  * floor and arithmetic order; normalization and fit admission stay outside.
  * The right-hand side is column count. Failure leaves partially reduced

@@ -3,6 +3,7 @@
 #include "gram_fit.h"
 
 #include <assert.h>
+#include <limits.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -62,6 +63,51 @@ static void test_accumulation_bounds(void)
 		for (unsigned i = count * (count + 1) / 2; i < 106; ++i)
 			assert(moments[i] == -99.);
 	}
+}
+
+static void test_column_selection(void)
+{
+	enum { COLUMNS = 14, MOMENTS = COLUMNS * (COLUMNS + 1) / 2 };
+	double packed[MOMENTS], dense[COLUMNS][COLUMNS], rhs[COLUMNS];
+	for (unsigned i = 0; i < COLUMNS; ++i) {
+		rhs[i] = i ? -(double)i : -0.;
+		for (unsigned j = 0; j <= i; ++j) {
+			double value = i == 13 && j == 7 ? NAN : (i + 1.) * 256. + j;
+			dense[i][j] = dense[j][i] = value;
+			packed[gram_moment_index(i, j)] = value;
+		}
+	}
+	double saved[MOMENTS], saved_rhs[COLUMNS];
+	memcpy(saved, packed, sizeof(saved));
+	memcpy(saved_rhs, rhs, sizeof(saved_rhs));
+	gram_select(NULL, NULL, NULL, 0, NULL, NULL);
+	/* Nonmonotonic, reversed and repeated columns must retain the requested
+	 * order. Include larger systems than the four-column solver accepts. */
+	for (unsigned count = 1; count <= COLUMNS; ++count) {
+		for (unsigned variation = 0; variation < 29; ++variation) {
+			unsigned columns[COLUMNS + 1];
+			double selected[MOMENTS + 2], target[COLUMNS + 2];
+			for (unsigned i = 0; i <= COLUMNS; ++i) columns[i] = UINT_MAX;
+			for (unsigned i = 0; i < count; ++i)
+				columns[i] = variation == 28 ? 7 : variation < 14 ?
+					(variation + 3 * i) % COLUMNS : (variation + 13 * i) % COLUMNS;
+			for (unsigned i = 0; i < MOMENTS + 2; ++i) selected[i] = 99.;
+			for (unsigned i = 0; i < COLUMNS + 2; ++i) target[i] = -99.;
+			gram_select(packed, rhs, columns, count, selected + 1, target + 1);
+			for (unsigned i = 0; i < count; ++i) {
+				assert(memcmp(target + i + 1, rhs + columns[i], sizeof(double)) == 0);
+				for (unsigned j = 0; j <= i; ++j)
+					assert(memcmp(selected + 1 + i * (i + 1) / 2 + j,
+						&dense[columns[i]][columns[j]], sizeof(double)) == 0);
+			}
+			assert(selected[0] == 99. && target[0] == -99.);
+			for (unsigned i = count * (count + 1) / 2 + 1; i < MOMENTS + 2; ++i)
+				assert(selected[i] == 99.);
+			for (unsigned i = count + 1; i < COLUMNS + 2; ++i) assert(target[i] == -99.);
+		}
+	}
+	assert(memcmp(saved, packed, sizeof(saved)) == 0);
+	assert(memcmp(saved_rhs, rhs, sizeof(saved_rhs)) == 0);
 }
 
 /* Fit a polynomial from independent samples, with widely different column
@@ -168,6 +214,7 @@ int main(void)
 {
 	test_symmetric_moments();
 	test_accumulation_bounds();
+	test_column_selection();
 	for (unsigned count = 1; count <= 4; count++) test_polynomial(count);
 	test_rejection();
 	test_elimination();

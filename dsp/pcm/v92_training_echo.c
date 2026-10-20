@@ -43,14 +43,10 @@ static bool fit(const struct v92_training_echo *timing, const unsigned *lags,
 	unsigned count, double *coefficient, double *error)
 {
 	double normal[GRAM_FIT_MOMENTS] = { 0 }, cross[4] = { 0 };
-	for (unsigned i = 0; i <= count; ++i) {
-		unsigned a = i == count ? V92_TRAINING_ECHO_LAGS : lags[i];
-		cross[i] = timing->cross[a];
-		for (unsigned j = 0; j <= i; ++j) {
-			unsigned b = j == count ? V92_TRAINING_ECHO_LAGS : lags[j];
-			normal[gram_moment_index(i, j)] = timing->normal[gram_moment_index(a, b)];
-		}
-	}
+	unsigned columns[4];
+	for (unsigned i = 0; i < count; ++i) columns[i] = lags[i];
+	columns[count] = V92_TRAINING_ECHO_LAGS;
+	gram_select(timing->normal, timing->cross, columns, count + 1u, normal, cross);
 	if (!gram_fit(normal, cross, count + 1u, coefficient))
 		return false;
 	*error = timing->energy;
