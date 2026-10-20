@@ -10,36 +10,20 @@
 
 static bool scan_state_is_valid(const struct pcm_echo_reference *reference)
 {
-	uint64_t last;
-	uint64_t required_fill;
-
 	if (reference->scan_count == 0)
-		return reference->scan_start == 0 && reference->scan_step == 0 &&
-		       reference->scan_current_index == 0 &&
+		return reference->scan_current_index == 0 &&
 		       reference->scan_pre_samples == 0 &&
-		       reference->scan_required_fill == 0 &&
 		       reference->scan_samples == 0 &&
 		       reference->scan_epoch == 0 &&
 		       reference->scan_input_energy == 0;
 	if (reference->scan_count >
 		    PCM_ECHO_REFERENCE_SCAN_MAX_CANDIDATES ||
-	    reference->scan_start == 0 ||
-	    reference->scan_step != PCM_ECHO_REFERENCE_SCAN_STEP ||
 	    reference->scan_current_index >= reference->scan_count ||
 	    reference->scan_pre_samples >=
 		    PCM_ECHO_REFERENCE_MAX_WINDOW_SAMPLES ||
-	    reference->scan_required_fill >
-		    PCM_ECHO_REFERENCE_HISTORY_SAMPLES ||
 	    reference->scan_epoch > reference->scan_samples)
 		return false;
-	last = (uint64_t)reference->scan_start +
-	       (uint64_t)(reference->scan_count - 1u) * reference->scan_step;
-	required_fill = last + reference->scan_pre_samples +
-		reference->scan_step - 1u;
-	if (required_fill > PCM_ECHO_REFERENCE_HISTORY_SAMPLES)
-		required_fill = PCM_ECHO_REFERENCE_HISTORY_SAMPLES;
-	return last <= PCM_ECHO_REFERENCE_MAX_WINDOW_DELAY_SAMPLES &&
-	       required_fill == reference->scan_required_fill;
+	return true;
 }
 
 bool pcm_echo_reference_is_valid(
@@ -120,12 +104,9 @@ static void clear_scan(struct pcm_echo_reference *reference)
 	memset(reference->scan_cross_energy, 0,
 	       sizeof(reference->scan_cross_energy));
 	reference->scan_input_energy = 0;
-	reference->scan_start = 0;
-	reference->scan_step = 0;
 	reference->scan_count = 0;
 	reference->scan_current_index = 0;
 	reference->scan_pre_samples = 0;
-	reference->scan_required_fill = 0;
 	reference->scan_samples = 0;
 	reference->scan_epoch = 0;
 }
@@ -135,11 +116,8 @@ enum pcm_echo_reference_result pcm_echo_reference_start_scan(
 	uint32_t current_window_delay_samples,
 	uint32_t pre_samples)
 {
-	uint32_t start;
 	uint32_t stop;
 	uint32_t required_stop;
-	uint32_t step = PCM_ECHO_REFERENCE_SCAN_STEP;
-	uint32_t count;
 
 	if (!pcm_echo_reference_is_valid(reference))
 		return PCM_ECHO_REFERENCE_INVALID_STATE;
@@ -148,8 +126,8 @@ enum pcm_echo_reference_result pcm_echo_reference_start_scan(
 		    PCM_ECHO_REFERENCE_MAX_WINDOW_DELAY_SAMPLES ||
 	    pre_samples >= PCM_ECHO_REFERENCE_MAX_WINDOW_SAMPLES)
 		return PCM_ECHO_REFERENCE_INVALID_ARGUMENT;
-	/* Always include the front of the ring on the first acquisition pass. */
-	start = 1u;
+	/* Scan every sample delay from the front of the ring. Adjacent-delay
+	 * averaging can cancel a QAM echo's correlation. */
 	stop = current_window_delay_samples + PCM_ECHO_REFERENCE_SCAN_SPAN;
 	if (stop > PCM_ECHO_REFERENCE_MAX_WINDOW_DELAY_SAMPLES)
 		stop = PCM_ECHO_REFERENCE_MAX_WINDOW_DELAY_SAMPLES;
@@ -160,26 +138,10 @@ enum pcm_echo_reference_result pcm_echo_reference_start_scan(
 		PCM_ECHO_REFERENCE_REQUIRED_DELAY_SAMPLES - pre_samples : 1u;
 	if (stop < required_stop)
 		stop = required_stop;
-	count = (stop - start) / step + 1u;
-	if (count == 0 || count > PCM_ECHO_REFERENCE_SCAN_MAX_CANDIDATES)
-		return PCM_ECHO_REFERENCE_INVALID_STATE;
-
 	clear_scan(reference);
-	reference->scan_start = start;
-	reference->scan_step = step;
-	reference->scan_count = count;
-	reference->scan_current_index =
-		(current_window_delay_samples - start) / step;
+	reference->scan_count = stop;
+	reference->scan_current_index = current_window_delay_samples - 1u;
 	reference->scan_pre_samples = pre_samples;
-	{
-		uint64_t required_fill = (uint64_t)start +
-			(uint64_t)(count - 1u) * step + pre_samples + step - 1u;
-
-		reference->scan_required_fill = required_fill >
-				PCM_ECHO_REFERENCE_HISTORY_SAMPLES ?
-			PCM_ECHO_REFERENCE_HISTORY_SAMPLES :
-			(uint32_t)required_fill;
-	}
 	return PCM_ECHO_REFERENCE_OK;
 }
 
@@ -247,11 +209,9 @@ static bool find_best_scan(
 		 * Ignore bins below one quarter of the peak's squared correlation
 		 * to keep weak scan-noise bins from dominating the placement.
 		 * This is acquisition evidence only, not cancellation readiness. */
-		uint32_t bins = (PCM_ECHO_REFERENCE_MAX_WINDOW_SAMPLES -
-			reference->scan_pre_samples) / reference->scan_step;
+		uint32_t bins = PCM_ECHO_REFERENCE_MAX_WINDOW_SAMPLES -
+			reference->scan_pre_samples;
 		uint32_t peak = *best_index;
-		if (bins == 0u)
-			bins = 1u;
 		uint32_t first = peak >= bins ? peak - bins + 1u : 0u;
 		long double mass = 0.0L, best_mass = -1.0L;
 		for (uint32_t index = first; index < peak + bins; ++index) {
@@ -299,16 +259,14 @@ enum pcm_echo_reference_result pcm_echo_reference_scan_observe(
 	    memory_regions_overlap(
 		    reference, sizeof(*reference), result, sizeof(*result)))
 		return PCM_ECHO_REFERENCE_INVALID_ARGUMENT;
-	if (reference->fill < reference->scan_required_fill)
+	if (reference->fill < reference->scan_count + reference->scan_pre_samples)
 		return PCM_ECHO_REFERENCE_NOT_READY;
 
 	input_energy = square_s16(received_sample);
 	reference->scan_input_energy = add_u64_saturating(
 		reference->scan_input_energy, input_energy);
 	for (uint32_t index = 0; index < reference->scan_count; ++index) {
-		uint32_t age = reference->scan_start +
-			index * reference->scan_step +
-			reference->scan_pre_samples;
+		uint32_t age = index + 1u + reference->scan_pre_samples;
 		int16_t sample = sample_at_age(reference, age);
 		int64_t cross;
 		cross = (int64_t)sample * received_sample;
@@ -326,10 +284,8 @@ enum pcm_echo_reference_result pcm_echo_reference_scan_observe(
 			    &current_score))
 		return PCM_ECHO_REFERENCE_OK;
 
-	generated.best_window_delay_samples = reference->scan_start +
-		best_index * reference->scan_step;
-	generated.current_window_delay_samples = reference->scan_start +
-		reference->scan_current_index * reference->scan_step;
+	generated.best_window_delay_samples = best_index + 1u;
+	generated.current_window_delay_samples = reference->scan_current_index + 1u;
 	generated.sample_count = reference->scan_samples;
 	generated.best_correlation_ppm = correlation_ppm(best_score);
 	generated.current_correlation_ppm =

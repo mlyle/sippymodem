@@ -56,8 +56,7 @@ static bool mode_is_filtering(enum pcm_host_echo_mode mode)
 static uint32_t scan_current_delay(
 	const struct pcm_echo_reference *reference)
 {
-	return reference->scan_start +
-	       reference->scan_current_index * reference->scan_step;
+	return reference->scan_current_index + 1u;
 }
 
 static bool header_is_valid(const struct pcm_host_echo *echo)
@@ -469,7 +468,7 @@ static bool scan_should_retime(
 	 * outside its window to widen coverage without discarding that model. */
 	bool extend_weak_window = echo->filter_ready && echo->weak_margin &&
 		scan->best_window_delay_samples + PCM_HOST_ECHO_FILTER_PRE_SAMPLES +
-			echo->reference.scan_step < scan->current_window_delay_samples;
+			1u < scan->current_window_delay_samples;
 
 	/* Let a correlated, converging filter complete its initial qualification
 	 * before a faster scan can replace it with an ambiguous return. */
@@ -483,7 +482,7 @@ static bool scan_should_retime(
 
 	return (!echo->filter_ready || extend_weak_window) &&
 	       echo->train_peak >= PCM_HOST_ECHO_READY_MIN_PEAK &&
-	       delta > echo->reference.scan_step &&
+	       delta > 1u &&
 	       scan->best_window_delay_samples != 0 &&
 	       scan->best_window_delay_samples !=
 		       scan->current_window_delay_samples &&

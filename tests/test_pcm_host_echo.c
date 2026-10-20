@@ -539,10 +539,10 @@ static bool test_phase2_delay_seed(void)
 		      SHORT_FILTER_DELAY,
 	      "Phase-2 delay did not seed host echo: %u",
 	      pcm_host_echo_window_delay_samples(&seeded));
-	CHECK(seeded.reference.scan_required_fill >=
+	CHECK(seeded.reference.scan_count + seeded.reference.scan_pre_samples >=
 		      PCM_ECHO_REFERENCE_REQUIRED_DELAY_SAMPLES,
 	      "short seed narrowed long-delay coverage: %u",
-	      seeded.reference.scan_required_fill);
+	      seeded.reference.scan_count + seeded.reference.scan_pre_samples);
 
 	for (size_t index = 0; index < SHORT_TRAIN_SAMPLES; ++index) {
 		int16_t received = short_echo_sample(index);

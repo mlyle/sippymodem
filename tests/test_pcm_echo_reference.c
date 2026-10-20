@@ -193,11 +193,11 @@ static bool test_long_delay_scan(void)
 		      &reference, SHORT_FILTER_DELAY,
 		      FILTER_PRE_SAMPLES) == PCM_ECHO_REFERENCE_OK,
 	      "long-delay scan did not initialize");
-	CHECK(reference.scan_required_fill >= LONG_RETURN_DELAY &&
-	      reference.scan_required_fill <=
+	CHECK(reference.scan_count + reference.scan_pre_samples >= LONG_RETURN_DELAY &&
+	      reference.scan_count + reference.scan_pre_samples <=
 		      PCM_ECHO_REFERENCE_HISTORY_SAMPLES,
 	      "scan fill boundary does not cover long return: %u",
-	      reference.scan_required_fill);
+	      reference.scan_count + reference.scan_pre_samples);
 
 	while (!acquired &&
 	       index < PCM_ECHO_REFERENCE_HISTORY_SAMPLES) {
@@ -206,7 +206,7 @@ static bool test_long_delay_scan(void)
 
 		scan_result = pcm_echo_reference_scan_observe(
 			&reference, returned_sample(index), &report);
-		if (reference.fill < reference.scan_required_fill)
+		if (reference.fill < reference.scan_count + reference.scan_pre_samples)
 			CHECK(scan_result == PCM_ECHO_REFERENCE_NOT_READY &&
 			      memcmp(&report, &unchanged, sizeof(report)) == 0,
 			      "prefill scan changed output at %zu", index);
@@ -343,6 +343,44 @@ static bool test_opposite_adjacent_returns(void)
 	return true;
 }
 
+static bool test_full_history_scan_boundary(void)
+{
+	struct pcm_echo_reference reference = { 0 }, saved;
+	struct pcm_echo_reference_scan_result report = { .sample_count = 123 };
+	const struct pcm_echo_reference_scan_result unchanged = report;
+	const unsigned maximum = PCM_ECHO_REFERENCE_MAX_WINDOW_DELAY_SAMPLES;
+	const unsigned pre = PCM_ECHO_REFERENCE_MAX_WINDOW_SAMPLES - 1u;
+	const unsigned history = PCM_ECHO_REFERENCE_HISTORY_SAMPLES;
+	const int16_t received = -901;
+
+	CHECK(pcm_echo_reference_start_scan(&reference, maximum, pre) ==
+		      PCM_ECHO_REFERENCE_OK,
+	      "maximum scan did not initialize");
+	for (unsigned i = 0; i + 1u < history; ++i)
+		CHECK(pcm_echo_reference_push(&reference, reference_sample(i)) ==
+			      PCM_ECHO_REFERENCE_OK, "history stopped at %u", i);
+	saved = reference;
+	CHECK(pcm_echo_reference_scan_observe(&reference, received, &report) ==
+		      PCM_ECHO_REFERENCE_NOT_READY &&
+	      memcmp(&reference, &saved, sizeof(reference)) == 0 &&
+	      memcmp(&report, &unchanged, sizeof(report)) == 0,
+	      "maximum scan consumed an unavailable oldest sample");
+	CHECK(pcm_echo_reference_push(&reference, reference_sample(history - 1u)) ==
+		      PCM_ECHO_REFERENCE_OK &&
+	      pcm_echo_reference_scan_observe(&reference, received, &report) ==
+		      PCM_ECHO_REFERENCE_OK && reference.scan_samples == 1u &&
+	      reference.scan_reference_energy[maximum - 1u] ==
+		      (uint64_t)((int64_t)reference_sample(0) * reference_sample(0)) &&
+	      reference.scan_cross_energy[maximum - 1u] ==
+		      (int64_t)reference_sample(0) * received &&
+	      memcmp(&report, &unchanged, sizeof(report)) == 0,
+	      "maximum scan did not use the oldest retained sample exactly");
+	reference.scan_current_index = maximum;
+	CHECK(!pcm_echo_reference_is_valid(&reference),
+	      "out-of-range current candidate was accepted");
+	return true;
+}
+
 int main(void)
 {
 	if (!test_ring_and_contracts() || !test_long_delay_scan() ||
@@ -351,7 +389,7 @@ int main(void)
 	    !test_cluster_scan(11424u, FILTER_PRE_SAMPLES) ||
 	    !test_cluster_scan(2u, 0u) ||
 	    !test_cluster_scan(2967u, PCM_ECHO_REFERENCE_MAX_WINDOW_SAMPLES - 1u) ||
-	    !test_opposite_adjacent_returns())
+	    !test_opposite_adjacent_returns() || !test_full_history_scan_boundary())
 		return 1;
 	puts("PCM echo reference tests passed");
 	return 0;

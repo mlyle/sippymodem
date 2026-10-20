@@ -20,9 +20,6 @@ enum {
 		PCM_ECHO_REFERENCE_HISTORY_SAMPLES -
 		PCM_ECHO_REFERENCE_MAX_WINDOW_SAMPLES + 1,
 	PCM_ECHO_REFERENCE_SCAN_SPAN = 4096,
-	/* Adjacent-delay averaging can cancel a QAM echo's correlation.
-	 * Preserve every sample phase throughout the bounded search. */
-	PCM_ECHO_REFERENCE_SCAN_STEP = 1,
 	PCM_ECHO_REFERENCE_SCAN_MIN_SAMPLES =
 		PCM_ECHO_REFERENCE_SAMPLE_RATE / 8,
 	PCM_ECHO_REFERENCE_SCAN_CADENCE = 512,
@@ -67,12 +64,12 @@ struct pcm_echo_reference {
 	size_t write;
 	size_t fill;
 	uint64_t scan_input_energy;
-	uint32_t scan_start;
-	uint32_t scan_step;
+	/* One candidate per delay, from 1 through scan_count. Readiness needs
+	 * scan_count + scan_pre_samples retained samples. These fixed facts
+	 * are derived rather than stored as independently mutable geometry. */
 	uint32_t scan_count;
 	uint32_t scan_current_index;
 	uint32_t scan_pre_samples;
-	uint32_t scan_required_fill;
 	uint32_t scan_samples;
 	uint32_t scan_epoch;
 };
