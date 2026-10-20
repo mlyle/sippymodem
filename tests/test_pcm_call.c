@@ -12878,7 +12878,6 @@ static bool run_conditioning_recovery(enum g711_law law, uint32_t trigger, bool 
 	struct pcm_payload_source source[2] = { { .reject = true }, { .reject = true } };
 	uint32_t frames[2] = { 0, 0 };
 	unsigned injections = 0;
-	bool in_epoch = false;
 	bool control_checked = false;
 
 	CHECK(channel_init(&wire, law, 3u) && pcm_call_init(&analog, &ac) == PCM_CALL_OK &&
@@ -12904,11 +12903,12 @@ static bool run_conditioning_recovery(enum g711_law law, uint32_t trigger, bool 
 					&tx[side], &event) == PCM_CALL_OK, "conditioning call stopped at %u", clock);
 			}
 		}
-		if (digital.stage != PCM_CALL_PHASE4) in_epoch = false;
-		if (!in_epoch && (persistent || !injections) && digital.stage == PCM_CALL_PHASE4 &&
+		CHECK(persistent || !injections || !pcm_call_is_full_retraining(&digital),
+		      "measurement-only recovery restarted full training at %u", clock);
+		if ((persistent || !injections) && digital.stage == PCM_CALL_PHASE4 &&
 		    digital.state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL &&
 		    digital.state.phase4.v92.owner.digital.receive.stage == V92_PHASE4_DIGITAL_RX_TRN2U &&
-		    digital.state.phase4.v92.owner.digital.receive.signal.trn2u.reference.emitted_symbols >= trigger) {
+		    digital.state.phase4.v92.owner.digital.receive.channel.symbols >= trigger) {
 			struct pcm_call before = digital, expected = digital;
 			struct pcm_call rejected = digital;
 			rejected.failed = true;
@@ -12925,9 +12925,18 @@ static bool run_conditioning_recovery(enum g711_law law, uint32_t trigger, bool 
 			saved = analog;
 			CHECK(pcm_call_recover_upstream_training(&wrong_role) == PCM_CALL_INVALID_STATE &&
 			      memcmp(&wrong_role, &saved, sizeof(saved)) == 0, "analogue call changed");
+			if (before.pcm_upstream_quality.recovery.attempts < V92_DATA_QUALITY_MAX_RETRAINS) {
+				struct pcm_call released = digital;
+				CHECK(v92_downstream_control_ready(&released.state.phase4.v92.owner.digital.control),
+				      "could not release peer training");
+				CHECK(pcm_call_recover_upstream_training(&released) == PCM_CALL_OK &&
+				      pcm_call_is_full_retraining(&released) &&
+				      released.pcm_upstream_quality.recovery.attempts ==
+					before.pcm_upstream_quality.recovery.attempts + 1u,
+				      "released peer training accepted measurement-only recovery");
+			}
 			enum pcm_call_result result = pcm_call_recover_upstream_training(&digital);
 			++injections;
-			in_epoch = true;
 			if (injections > V92_DATA_QUALITY_MAX_RETRAINS) {
 				CHECK(persistent && result == PCM_CALL_FAILED &&
 				      memcmp(&digital, &before, sizeof(before)) == 0 &&
@@ -12935,13 +12944,20 @@ static bool run_conditioning_recovery(enum g711_law law, uint32_t trigger, bool 
 				      "conditioning exhaustion changed state or replenished budget");
 				return true;
 			}
+			/* The physical stream and both coding directions are untouched.
+			 * Only the contaminated evidence and recovery allowance change. */
+			struct v92_phase4_digital_rx *measurement =
+				&expected.state.phase4.v92.owner.digital.receive;
+			measurement->measurement_start_symbol = measurement->signal.trn2u.trained_symbols;
+			measurement->channel = (struct v92_upstream_channel){ 0 };
+			measurement->channel_distorted = false;
 			CHECK(v92_data_quality_retrain(&expected.pcm_upstream_quality) == V92_DATA_QUALITY_RETRAIN &&
-			      pcm_call_start_retrain(&expected) == PCM_CALL_OK && result == PCM_CALL_OK &&
+			      result == PCM_CALL_OK &&
 			      memcmp(&digital, &expected, sizeof(digital)) == 0 &&
-			      pcm_call_is_full_retraining(&digital) &&
+			      !pcm_call_is_full_retraining(&digital) &&
 			      digital.v92_upstream_retry_ceiling == before.v92_upstream_retry_ceiling,
 			      "conditioning recovery changed waveform policy or rate ceiling");
-			/* A repeated request is not another incident and must not restart silence. */
+			/* A repeated request has no new measurement to invalidate. */
 			saved = digital;
 			CHECK(pcm_call_recover_upstream_training(&digital) == PCM_CALL_INVALID_STATE &&
 			      memcmp(&digital, &saved, sizeof(saved)) == 0, "repeated request restarted recovery");

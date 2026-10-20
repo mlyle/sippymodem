@@ -568,8 +568,11 @@ enum pcm_call_result pcm_call_init_qc(
  * records. The following line character begins the 70 ms silence interval. */
 enum pcm_call_result pcm_call_start_retrain(struct pcm_call *call);
 
-/* A confirmed conditioning change invalidated initial PCM-upstream training.
- * Start a genuine full retrain using the shared automatic recovery budget.
+/* A confirmed conditioning change invalidated the partial channel measurement.
+ * Before SUVd, collect fresh training without restarting either coding
+ * direction. Once SUVd is enabled, use a full retrain because the peer may
+ * have already ended its known training.
+ * Consume the shared automatic recovery budget; never replenish it here.
  * Only digital V.92 TRN2u accepts this request; short rate exchanges do not.
  * Exhaustion returns FAILED. Every non-OK result leaves the owner unchanged.
  * The host must retain its overall training deadline across this recovery. */

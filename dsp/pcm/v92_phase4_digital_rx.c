@@ -21,7 +21,8 @@ bool v92_phase4_digital_rx_is_valid(
 	    !v92_upstream_channel_is_valid(&receiver->channel))
 		return false;
 	if (receiver->stage == V92_PHASE4_DIGITAL_RX_RESUMED_CONTROL)
-		return receiver->channel.symbols == 0u && !receiver->channel_distorted &&
+		return receiver->channel.symbols == 0u && !receiver->measurement_start_symbol &&
+			!receiver->channel_distorted &&
 			v92_upstream_control_line_rx_is_valid(&receiver->signal.control) &&
 			receiver->signal.control.signal.line.renegotiation &&
 			receiver->signal.control.signal.training_tail_remaining == 0u;
@@ -30,6 +31,11 @@ bool v92_phase4_digital_rx_is_valid(
 		receiver->signal.control.signal.line.training_symbols -
 			receiver->signal.control.signal.training_tail_remaining;
 
+	if (receiver->measurement_start_symbol > symbols)
+		return false;
+	symbols -= receiver->measurement_start_symbol;
+	if (symbols > V92_UPSTREAM_CHANNEL_SYMBOLS)
+		symbols = V92_UPSTREAM_CHANNEL_SYMBOLS;
 	if (receiver->channel.symbols != symbols ||
 	    (receiver->channel_distorted && symbols <= V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS))
 		return false;
@@ -65,6 +71,23 @@ bool v92_phase4_digital_rx_is_receiving_control(
 	    receiver->stage == V92_PHASE4_DIGITAL_RX_TRN2U)
 		return false;
 	return !state_has_failed(receiver);
+}
+
+enum v92_phase4_digital_rx_result v92_phase4_digital_rx_restart_measurement(
+	struct v92_phase4_digital_rx *receiver)
+{
+	if (!v92_phase4_digital_rx_is_valid(receiver))
+		return V92_PHASE4_DIGITAL_RX_INVALID_ARGUMENT;
+	if (receiver->stage != V92_PHASE4_DIGITAL_RX_TRN2U ||
+	    state_has_failed(receiver) || receiver->signal.trn2u.renegotiation ||
+	    receiver->channel.symbols == 0u ||
+	    receiver->signal.trn2u.trained_symbols >
+		UINT32_MAX - V92_UPSTREAM_CHANNEL_SYMBOLS - V92_PCM_PHASE4_TRN2U_ALIGNMENT)
+		return V92_PHASE4_DIGITAL_RX_INVALID_STATE;
+	receiver->channel = (struct v92_upstream_channel){ 0 };
+	receiver->channel_distorted = false;
+	receiver->measurement_start_symbol = receiver->signal.trn2u.trained_symbols;
+	return V92_PHASE4_DIGITAL_RX_OK;
 }
 
 enum v92_phase4_digital_rx_result v92_phase4_digital_rx_resume(
@@ -189,6 +212,12 @@ static enum v92_phase4_digital_rx_result receive_training(
 	if (result == V92_PCM_PHASE4_TRN2U_LINE_RX_OK)
 		return V92_PHASE4_DIGITAL_RX_OK;
 	if (result == V92_PCM_PHASE4_TRN2U_LINE_RX_ALIGNED) {
+		/* The FIR still owes its delayed targets. Its control successor
+		 * completes those samples before the channel can be selected. */
+		if (next->measurement_start_symbol &&
+		    next->channel.symbols + V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY <
+		    V92_UPSTREAM_CHANNEL_SYMBOLS)
+			return V92_PHASE4_DIGITAL_RX_OK;
 		struct v92_pcm_phase4_trn2u_line_handoff handoff;
 		struct v92_upstream_control_line_rx control;
 

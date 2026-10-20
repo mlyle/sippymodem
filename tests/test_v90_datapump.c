@@ -86,8 +86,8 @@ static bool echo_timing_enabled = true;
  * itself has separate physical shift controls; this fixture checks that the
  * adapter recovers before admitting that sample and advances TX exactly once. */
 static struct {
-	bool enabled, injected, recovered, advanced, mismatch;
-	uint32_t symbol, sample, injected_sample, advances;
+	bool enabled, injected, recovered, refreshed, advanced, mismatch;
+	uint32_t symbol, sample, injected_sample, advances, predictions;
 	struct pcm_host_echo *echo;
 } training_recovery;
 
@@ -133,10 +133,28 @@ enum pcm_call_result __wrap_pcm_call_recover_upstream_training(struct pcm_call *
 	if (training_recovery.enabled) {
 		training_recovery.recovered = result == PCM_CALL_OK;
 		training_recovery.mismatch |= result != PCM_CALL_OK ||
-			call->stage != PCM_CALL_RETRAIN_SILENCE ||
+			call->stage != PCM_CALL_PHASE4 ||
+			call->state.phase4.v92.owner.digital.receive.channel.symbols != 0 ||
 			call->pcm_upstream_quality.recovery.attempts != attempts + 1u;
 	}
 	return result;
+}
+
+extern enum pcm_host_echo_result __real_pcm_host_echo_predict(
+	const struct pcm_host_echo *, enum pcm_host_echo_mode, int16_t, int16_t *);
+
+enum pcm_host_echo_result __wrap_pcm_host_echo_predict(
+	const struct pcm_host_echo *echo, enum pcm_host_echo_mode mode,
+	int16_t raw, int16_t *cleaned)
+{
+	if (training_recovery.enabled && training_recovery.injected &&
+	    training_recovery.sample == training_recovery.injected_sample &&
+	    !training_recovery.advanced && echo == training_recovery.echo) {
+		training_recovery.mismatch |= !training_recovery.recovered;
+		training_recovery.refreshed = true;
+		++training_recovery.predictions;
+	}
+	return __real_pcm_host_echo_predict(echo, mode, raw, cleaned);
 }
 
 extern enum pcm_host_echo_result __real_pcm_host_echo_advance_reference(
@@ -147,7 +165,8 @@ enum pcm_host_echo_result __wrap_pcm_host_echo_advance_reference(
 {
 	if (training_recovery.enabled && training_recovery.injected &&
 	    training_recovery.sample == training_recovery.injected_sample && echo == training_recovery.echo) {
-		training_recovery.mismatch |= !training_recovery.recovered;
+		training_recovery.mismatch |= !training_recovery.recovered ||
+			!training_recovery.refreshed || training_recovery.predictions != 1;
 		training_recovery.advanced = true;
 		++training_recovery.advances;
 	}
@@ -1670,6 +1689,7 @@ static bool test_training_echo_recovery(void)
 			RETURNED_ECHO_STABLE, UPSTREAM_CHANNEL_CLEAN);
 		training_recovery.enabled = false;
 		CHECK(passed && training_recovery.injected && training_recovery.recovered &&
+			training_recovery.refreshed && training_recovery.predictions == 1 &&
 			training_recovery.advanced && training_recovery.advances == 1 && !training_recovery.mismatch,
 			"law %u training recovery did not preserve the adapter boundary", law);
 	}

@@ -3511,10 +3511,24 @@ enum pcm_call_result pcm_call_recover_upstream_training(struct pcm_call *call)
 	    call->state.phase4.v92.owner.digital.receive.signal.trn2u.renegotiation)
 		return PCM_CALL_INVALID_STATE;
 	struct pcm_call next = *call;
-	enum pcm_call_result result = recover_v92_training(&next);
-	if (result == PCM_CALL_OK)
-		*call = next;
-	return result;
+	/* Once SUVd is enabled, the peer may already be ending TRN2u. It
+	 * cannot supply another full measurement without a fresh exchange. */
+	if (next.state.phase4.v92.owner.digital.control.transmit.control_configured) {
+		enum pcm_call_result result = recover_v92_training(&next);
+		if (result == PCM_CALL_OK)
+			*call = next;
+		return result;
+	}
+	if (v92_phase4_digital_rx_restart_measurement(
+		    &next.state.phase4.v92.owner.digital.receive) != V92_PHASE4_DIGITAL_RX_OK)
+		return PCM_CALL_INVALID_STATE;
+	enum v92_data_quality_result quality =
+		v92_data_quality_retrain(&next.pcm_upstream_quality);
+	if (quality != V92_DATA_QUALITY_RETRAIN)
+		return quality == V92_DATA_QUALITY_EXHAUSTED ?
+			PCM_CALL_FAILED : PCM_CALL_NUMERIC_FAILURE;
+	*call = next;
+	return PCM_CALL_OK;
 }
 
 static enum pcm_call_result v92_analog_phase4_result(
@@ -3994,7 +4008,8 @@ static enum pcm_call_result sample_v92_phase4(
 	{
 		const struct v92_jd *jd = &call->phase3_configuration.v92_digital.jd;
 		struct v92_phase4_digital_station *station = &call->state.phase4.v92.owner.digital;
-		uint16_t measured_symbols = station->receive.channel.symbols;
+		bool measured = station->receive.stage != V92_PHASE4_DIGITAL_RX_TRN2U &&
+			station->receive.channel.symbols == V92_UPSTREAM_CHANNEL_SYMBOLS;
 		bool cpu_received = station->control.cpu_received;
 		const struct v92_cpu_parameters *cpu = &call->state.phase4.v92.owner.digital.control.cpu;
 		enum v92_phase4_digital_station_result station_result = prefix_sent ?
@@ -4020,7 +4035,7 @@ static enum pcm_call_result sample_v92_phase4(
 		 * A scalar gain change already belongs to the trained receive FIR.
 		 * Redesigning CPd for it can destroy the direct constellation's
 		 * quantizer spacing without providing useful channel compensation. */
-		if (measured_symbols < V92_UPSTREAM_CHANNEL_SYMBOLS &&
+		if (!measured && station->receive.stage != V92_PHASE4_DIGITAL_RX_TRN2U &&
 		    station->receive.channel.symbols == V92_UPSTREAM_CHANNEL_SYMBOLS &&
 		    station->receive.channel_distorted &&
 		    !v92_upstream_channel_fits_gain(&station->receive.channel) &&

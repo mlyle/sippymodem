@@ -1091,9 +1091,9 @@ static int process_v90_g711(
 				goto failure;
 			}
 			if (training_echo == V92_TRAINING_ECHO_RETIMED) {
-				/* A confirmed shift invalidates the channel's earlier samples.
-				 * Restart before this sample can admit the mixed fit. Keep the
-				 * host's absolute training deadline and the call's retry budget. */
+				/* Discard the old measurement while the known training and
+				 * coding continue. Predict this unconsumed sample again at
+				 * the corrected delay; timing was already observed once. */
 				enum pcm_call_result result = pcm_call_recover_upstream_training(&datapump->call);
 				if (result != PCM_CALL_OK) {
 					modem_note_disconnect(dp->modem, true, result == PCM_CALL_FAILED ?
@@ -1101,6 +1101,9 @@ static int process_v90_g711(
 						"PCM upstream training recovery rejected");
 					goto failure;
 				}
+				if (pcm_host_echo_predict(datapump->host_echo, echo_mode,
+					    receive_samples[index], &cleaned_sample) != PCM_HOST_ECHO_OK)
+					goto failure;
 			}
 		}
 		if (!process_octet(

@@ -39,6 +39,9 @@ union v92_phase4_digital_receive {
 struct v92_phase4_digital_rx {
 	union v92_phase4_digital_receive signal;
 	struct v92_upstream_channel channel;
+	/* Delay-corrected training can discard a partial channel measurement
+	 * while the physical TRN2u coding and equalizer continue unchanged. */
+	uint32_t measurement_start_symbol;
 	enum v92_phase4_digital_rx_stage stage;
 	/* Compare raw-input cells with quantized targets separately from the linear
 	 * training reference used to design the channel inverse. */
@@ -70,6 +73,13 @@ bool v92_phase4_digital_rx_has_failed(
 	const struct v92_phase4_digital_rx *receiver);
 bool v92_phase4_digital_rx_is_receiving_control(
 	const struct v92_phase4_digital_rx *receiver);
+
+/* Discard only a nonempty initial TRN2u channel measurement after a known
+ * conditioning change. Preserve the line, reference and delayed decisions;
+ * control stays deferred until a fresh complete measurement is available.
+ * Invalid or repeated requests leave the receiver unchanged. */
+enum v92_phase4_digital_rx_result v92_phase4_digital_rx_restart_measurement(
+	struct v92_phase4_digital_rx *receiver);
 
 /* Consume one signed 8 kHz line sample. ALIGNED identifies the exact physical
  * TRN2u boundary and EVENT carries one complete or rejected control record.

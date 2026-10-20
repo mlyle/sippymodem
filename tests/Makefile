@@ -4670,7 +4670,7 @@ $(V92_PROFILE_TEST_BINARY): $(V92_PROFILE_TEST_OBJECTS)
 $(V90_DATAPUMP_TEST_BINARY): $(V90_DATAPUMP_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -Wl,--wrap=v34_echo_timing_prepare \
 		-Wl,--wrap=v92_training_echo_observe -Wl,--wrap=pcm_call_recover_upstream_training \
-		-Wl,--wrap=pcm_host_echo_advance_reference -o $@ $^ -lm
+		-Wl,--wrap=pcm_host_echo_predict -Wl,--wrap=pcm_host_echo_advance_reference -o $@ $^ -lm
 
 $(V34_PHASE2_DPSK_TEST_BINARY): $(V34_PHASE2_DPSK_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
