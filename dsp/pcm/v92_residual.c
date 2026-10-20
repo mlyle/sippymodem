@@ -70,12 +70,7 @@ bool v92_residual_fit(struct v92_residual *filter,
 		for (unsigned lag = 0; lag <= V92_RESIDUAL_LAGS; lag++)
 			row[lag] = points[n - lag];
 		row[MOMENT_COLUMNS - 1] = 1.;
-		for (unsigned j = 0; j < MOMENT_COLUMNS; j++) {
-			cross[j] += row[j] * raw[n];
-			unsigned first = gram_moment_index(j, 0);
-			for (unsigned k = 0; k <= j; k++)
-				moments[first + k] += row[j] * row[k];
-		}
+		gram_accumulate(moments, cross, row, MOMENT_COLUMNS, raw[n]);
 	}
 	struct v92_residual best = { 0 };
 	double best_gain = 0., best_score = INFINITY;

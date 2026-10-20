@@ -25,6 +25,23 @@ static inline unsigned gram_moment_index(unsigned a, unsigned b)
 	return a * (a + 1u) / 2u + b;
 }
 
+/* Add one feature row and target to an owned least-squares system, retaining
+ * sample order in every sum. Arrays must be separate and cover count
+ * features/RHS entries and count * (count + 1) / 2 packed moments. Count
+ * zero accesses no arrays. Feature construction, energy and fit admission
+ * remain with the owner; this does not impose the solver's column limit. */
+static inline void gram_accumulate(
+	double *moments, double *rhs,
+	const double *row, unsigned count, double target)
+{
+	for (unsigned i = 0; i < count; ++i) {
+		rhs[i] += row[i] * target;
+		unsigned first = gram_moment_index(i, 0);
+		for (unsigned j = 0; j <= i; ++j)
+			moments[first + j] += row[i] * row[j];
+	}
+}
+
 /* Reduce an owned augmented Gram matrix in place. Keep the owner's pivot
  * floor and arithmetic order; normalization and fit admission stay outside.
  * The right-hand side is column count. Failure leaves partially reduced

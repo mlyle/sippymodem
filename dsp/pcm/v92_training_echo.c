@@ -102,12 +102,8 @@ static void collect(struct v92_training_echo *timing, int16_t received)
 	feature[V92_TRAINING_ECHO_LAGS] = 1;
 	/* At most 1024 integer products, each at most 2^30: all sums are
 	 * exact in binary64. Symmetry therefore loses neither bits nor order. */
-	for (unsigned i = 0; i < V92_TRAINING_ECHO_COLUMNS; ++i) {
-		timing->cross[i] += feature[i] * received;
-		unsigned row = gram_moment_index(i, 0);
-		for (unsigned j = 0; j <= i; ++j)
-			timing->normal[row + j] += feature[i] * feature[j];
-	}
+	gram_accumulate(timing->normal, timing->cross, feature,
+		V92_TRAINING_ECHO_COLUMNS, received);
 	timing->energy += (double)received * received;
 	if (++timing->count == FIT_SAMPLES)
 		timing->ready = choose(timing);

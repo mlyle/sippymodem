@@ -10,6 +10,7 @@ static void test_symmetric_moments(void)
 {
 	enum { COLUMNS = 14, MOMENTS = COLUMNS * (COLUMNS + 1) / 2 };
 	double packed[MOMENTS] = { 0 }, dense[COLUMNS][COLUMNS] = { { 0 } };
+	double rhs[COLUMNS] = { 0 }, expected_rhs[COLUMNS] = { 0 };
 	bool used[MOMENTS] = { false };
 
 	for (unsigned i = 0; i < COLUMNS; i++)
@@ -27,14 +28,40 @@ static void test_symmetric_moments(void)
 		for (unsigned i = 0; i + 1 < COLUMNS; i++)
 			row[i] = (int)((n * 12347u + i * 31337u) & 65535u) - 32768;
 		row[COLUMNS - 1] = 1.;
+		double target = (int)((n * 271u) & 65535u) - 32768;
+		gram_accumulate(packed, rhs, row, COLUMNS, target);
 		for (unsigned i = 0; i < COLUMNS; i++) {
+			expected_rhs[i] += row[i] * target;
 			for (unsigned j = 0; j < COLUMNS; j++) dense[i][j] += row[i] * row[j];
-			for (unsigned j = 0; j <= i; j++) packed[gram_moment_index(i, j)] += row[i] * row[j];
 		}
 	}
+	assert(memcmp(rhs, expected_rhs, sizeof(rhs)) == 0);
 	for (unsigned i = 0; i < COLUMNS; i++)
 		for (unsigned j = 0; j < COLUMNS; j++)
 			assert(packed[gram_moment_index(i, j)] == dense[i][j]);
+}
+
+static void test_accumulation_bounds(void)
+{
+	gram_accumulate(NULL, NULL, NULL, 0, NAN);
+	for (unsigned count = 1; count <= 14; ++count) {
+		double moments[106], rhs[15], row[15];
+		for (unsigned i = 0; i < 106; ++i) moments[i] = -99.;
+		for (unsigned i = 0; i < 15; ++i) rhs[i] = row[i] = NAN;
+		for (unsigned i = 0; i < count; ++i) {
+			rhs[i] = 7.;
+			row[i] = i & 1u ? -0.25 : 0.5;
+		}
+		gram_accumulate(moments, rhs, row, count, -0.5);
+		for (unsigned i = 0; i < count; ++i) {
+			assert(rhs[i] == 7. - row[i] * 0.5);
+			for (unsigned j = 0; j <= i; ++j)
+				assert(moments[gram_moment_index(i, j)] == -99. + row[i] * row[j]);
+		}
+		for (unsigned i = count; i < 15; ++i) assert(isnan(rhs[i]));
+		for (unsigned i = count * (count + 1) / 2; i < 106; ++i)
+			assert(moments[i] == -99.);
+	}
 }
 
 /* Fit a polynomial from independent samples, with widely different column
@@ -140,6 +167,7 @@ static void test_elimination(void)
 int main(void)
 {
 	test_symmetric_moments();
+	test_accumulation_bounds();
 	for (unsigned count = 1; count <= 4; count++) test_polynomial(count);
 	test_rejection();
 	test_elimination();
