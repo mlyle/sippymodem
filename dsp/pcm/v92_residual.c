@@ -88,11 +88,11 @@ bool v92_residual_fit(struct v92_residual *filter,
 			if (first) columns[used++] = first;
 			if (second) columns[used++] = second;
 			columns[used] = MOMENT_COLUMNS - 1;
-			double gram[4][4] = { { 0 } }, rhs[4] = { 0 }, fitted[4];
+			double gram[GRAM_FIT_MOMENTS] = { 0 }, rhs[4] = { 0 }, fitted[4];
 			for (unsigned j = 0; j < count; j++) {
 				rhs[j] = cross[columns[j]];
-				for (unsigned k = 0; k < count; k++)
-					gram[j][k] = moments[gram_moment_index(columns[j], columns[k])];
+				for (unsigned k = 0; k <= j; k++)
+					gram[gram_moment_index(j, k)] = moments[gram_moment_index(columns[j], columns[k])];
 			}
 			if (!gram_fit(gram, rhs, count, fitted)) continue;
 			/* Constrain the main gain, then refit the other coefficients at
@@ -100,10 +100,11 @@ bool v92_residual_fit(struct v92_residual *filter,
 			 * wrong delay merely because its unconstrained gain was in range. */
 			if (fitted[0] < 1. / maximum || fitted[0] > 1. / minimum) {
 				double fixed = fmax(1. / maximum, fmin(1. / minimum, fitted[0]));
-				double reduced[4][4] = { { 0 } }, target[4], other[4];
+				double reduced[GRAM_FIT_MOMENTS] = { 0 }, target[4], other[4];
 				for (unsigned i = 1; i < count; i++) {
-					target[i - 1] = rhs[i] - gram[i][0] * fixed;
-					for (unsigned j = 1; j < count; j++) reduced[i - 1][j - 1] = gram[i][j];
+					target[i - 1] = rhs[i] - gram[gram_moment_index(i, 0)] * fixed;
+					for (unsigned j = 1; j <= i; j++)
+						reduced[gram_moment_index(i - 1, j - 1)] = gram[gram_moment_index(i, j)];
 				}
 				if (!gram_fit(reduced, target, count - 1, other)) continue;
 				fitted[0] = fixed;

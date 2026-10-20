@@ -20,7 +20,7 @@ _Static_assert((V92_OBSERVATION_CACHE & (V92_OBSERVATION_CACHE - 1)) == 0 &&
 	(V92_OBSERVATION_POINTS & (V92_OBSERVATION_POINTS - 1)) == 0,
 	"cache sizes must be powers of two");
 struct interval { double low, high, coefficient[TAPS], error, weight; };
-struct moments { double gram[TAPS][TAPS], rhs[TAPS], energy; };
+struct moments { double gram[GRAM_FIT_MOMENTS], rhs[TAPS], energy; };
 struct boundary { double at; unsigned next; };
 
 static bool codec_bounds(enum g711_law law, double gain, int16_t observed,
@@ -133,8 +133,8 @@ static bool fit_bin_channel(struct v92_observation_interval *fit, const int16_t 
 		double residual = y[j];
 		for (unsigned a = 0; a < taps; a++) {
 			residual -= fit->coefficient[a] * q[j - a];
-			for (unsigned b = 0; b < taps; b++)
-				m.gram[a][b] += (double)q[j - a] * q[j - b];
+			for (unsigned b = 0; b <= a; b++)
+				m.gram[gram_moment_index(a, b)] += (double)q[j - a] * q[j - b];
 		}
 		noise += residual * residual;
 	}
@@ -309,8 +309,8 @@ static bool fit_intervals(struct interval fits[INTERVALS], enum g711_law law,
 	for (size_t j = taps; j < count; j++) {
 		for (unsigned a = 0; a < taps; a++) {
 			m.rhs[a] += (double)q[j - a] * y[j];
-			for (unsigned b = 0; b < taps; b++)
-				m.gram[a][b] += (double)q[j - a] * q[j - b];
+			for (unsigned b = 0; b <= a; b++)
+				m.gram[gram_moment_index(a, b)] += (double)q[j - a] * q[j - b];
 		}
 		m.energy += (double)y[j] * y[j];
 	}
@@ -344,10 +344,12 @@ static bool fit_intervals(struct interval fits[INTERVALS], enum g711_law law,
 				size_t row = j + a;
 				if (row < taps || row >= count) continue;
 				m.rhs[a] += change * y[row];
-				m.gram[a][a] += square;
+				m.gram[gram_moment_index(a, a)] += square;
+				/* Each affected row contributes once to its shared moment;
+				 * both index orders still matter as q[j] moves. */
 				for (unsigned b = 0; b < taps; b++) if (b != a) {
 					double delta = change * q[row - b];
-					m.gram[a][b] += delta; m.gram[b][a] += delta;
+					m.gram[gram_moment_index(a, b)] += delta;
 				}
 			}
 			q[j] = value;

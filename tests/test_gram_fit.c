@@ -43,9 +43,12 @@ static void test_polynomial(unsigned count)
 {
 	const double expected[4] = { -.5, 2., -.25, 3. };
 	const double units[4] = { .001, 1000., .1, 10. };
-	double gram[4][4] = { { 0 } }, rhs[4] = { 0 };
+	double gram[GRAM_FIT_MOMENTS], rhs[4] = { 0 };
 	double fitted[4] = { 99., 99., 99., 99. };
 
+	/* Inactive packed entries are not part of the selected system. */
+	for (unsigned i = 0; i < GRAM_FIT_MOMENTS; i++)
+		gram[i] = i < count * (count + 1) / 2 ? 0. : NAN;
 	for (int n = -8; n <= 8; n++) {
 		double x[4], power = 1., y = 0.;
 		for (unsigned i = 0; i < count; i++) {
@@ -55,10 +58,10 @@ static void test_polynomial(unsigned count)
 		}
 		for (unsigned i = 0; i < count; i++) {
 			rhs[i] += x[i] * y;
-			for (unsigned j = 0; j < count; j++) gram[i][j] += x[i] * x[j];
+			for (unsigned j = 0; j <= i; j++) gram[gram_moment_index(i, j)] += x[i] * x[j];
 		}
 	}
-	double saved_gram[4][4], saved_rhs[4];
+	double saved_gram[GRAM_FIT_MOMENTS], saved_rhs[4];
 	memcpy(saved_gram, gram, sizeof(gram));
 	memcpy(saved_rhs, rhs, sizeof(rhs));
 	assert(gram_fit(gram, rhs, count, fitted));
@@ -70,7 +73,7 @@ static void test_polynomial(unsigned count)
 
 static void test_rejection(void)
 {
-	double gram[4][4] = { { 1., 1. }, { 1., 1. } };
+	double gram[GRAM_FIT_MOMENTS] = { 1., 1., 1. };
 	double rhs[4] = { 1., 1. }, fitted[4];
 
 	/* Duplicate columns, then nearly dependent columns on either side of
@@ -78,19 +81,19 @@ static void test_rejection(void)
 	assert(!gram_fit(gram, rhs, 2, fitted));
 	for (unsigned scale = 0; scale < 2; scale++) {
 		double amplitude = scale ? 1e12 : 1e-12;
-		gram[0][0] = gram[1][1] = amplitude;
-		gram[0][1] = gram[1][0] = amplitude * (1. - 4. * DBL_EPSILON);
+		gram[0] = gram[2] = amplitude;
+		gram[1] = amplitude * (1. - 4. * DBL_EPSILON);
 		assert(!gram_fit(gram, rhs, 2, fitted));
-		gram[0][1] = gram[1][0] = amplitude * (1. - 256. * DBL_EPSILON);
+		gram[1] = amplitude * (1. - 256. * DBL_EPSILON);
 		assert(gram_fit(gram, rhs, 2, fitted));
 	}
-	gram[0][0] = 0.;
+	gram[0] = 0.;
 	assert(!gram_fit(gram, rhs, 1, fitted));
-	gram[0][0] = -1.;
+	gram[0] = -1.;
 	assert(!gram_fit(gram, rhs, 1, fitted));
-	gram[0][0] = NAN;
+	gram[0] = NAN;
 	assert(!gram_fit(gram, rhs, 1, fitted));
-	gram[0][0] = 1.;
+	gram[0] = 1.;
 	rhs[0] = INFINITY;
 	assert(!gram_fit(gram, rhs, 1, fitted));
 	assert(!gram_fit(gram, rhs, 0, fitted));

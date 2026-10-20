@@ -42,13 +42,13 @@ static bool target(const struct v92_pcm_phase4_trn2u_line_rx *receiver,
 static bool fit(const struct v92_training_echo *timing, const unsigned *lags,
 	unsigned count, double *coefficient, double *error)
 {
-	double normal[4][4] = { { 0 } }, cross[4] = { 0 };
+	double normal[GRAM_FIT_MOMENTS] = { 0 }, cross[4] = { 0 };
 	for (unsigned i = 0; i <= count; ++i) {
 		unsigned a = i == count ? V92_TRAINING_ECHO_LAGS : lags[i];
 		cross[i] = timing->cross[a];
-		for (unsigned j = 0; j <= count; ++j) {
+		for (unsigned j = 0; j <= i; ++j) {
 			unsigned b = j == count ? V92_TRAINING_ECHO_LAGS : lags[j];
-			normal[i][j] = timing->normal[gram_moment_index(a, b)];
+			normal[gram_moment_index(i, j)] = timing->normal[gram_moment_index(a, b)];
 		}
 	}
 	if (!gram_fit(normal, cross, count + 1u, coefficient))
