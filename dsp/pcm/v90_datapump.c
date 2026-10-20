@@ -20,6 +20,7 @@
 #include "v90_mp.h"
 #include "v90_profile.h"
 #include "v92_profile.h"
+#include "v92_training_echo.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -50,6 +51,7 @@ struct v90_datapump {
 	bool host_echo_delay_seeded;
 	bool upstream_quality_ready;
 	struct v34_echo_timing echo_timing;
+	struct v92_training_echo training_echo;
 };
 
 static struct dp *create_v90(
@@ -955,6 +957,23 @@ static enum pcm_host_echo_mode host_echo_mode(
 	return PCM_HOST_ECHO_BYPASS;
 }
 
+static const struct v92_pcm_phase4_trn2u_line_rx *upstream_training_receiver(
+	const struct v90_datapump *datapump)
+{
+	const struct pcm_call *call = &datapump->call;
+
+	if (call->failed || call->protocol != PCM_PROTOCOL_V92 ||
+	    call->local_role != V90_DIGITAL_MODEM ||
+	    pcm_call_uses_conventional_upstream(call) || call->stage != PCM_CALL_PHASE4 ||
+	    call->state.phase4.v92.child != PCM_CALL_V92_PHASE4_CONTROL)
+		return NULL;
+	const struct v92_phase4_digital_station *station = &call->state.phase4.v92.owner.digital;
+	if (station->control.cleardown.active ||
+	    station->receive.stage != V92_PHASE4_DIGITAL_RX_TRN2U)
+		return NULL;
+	return &station->receive.signal.trn2u;
+}
+
 static bool seed_host_echo_delay(struct v90_datapump *datapump)
 {
 	/* The seed belongs to this echo model. Retrain can replace the call's
@@ -1036,6 +1055,7 @@ static int process_v90_g711(
 	for (int index = 0; index < count; ++index) {
 		enum pcm_call_stage stage_before = datapump->call.stage;
 		enum pcm_host_echo_mode echo_mode = host_echo_mode(datapump);
+		enum v92_training_echo_result training_echo = V92_TRAINING_ECHO_UNOBSERVED;
 		int16_t cleaned_sample = receive_samples[index];
 		uint8_t pcm_transmit;
 		struct v34_line_receiver before;
@@ -1060,6 +1080,29 @@ static int process_v90_g711(
 			    receive_samples[index], &cleaned_sample) !=
 			    PCM_HOST_ECHO_OK)
 			goto failure;
+		if (datapump->host_echo != NULL) {
+			int delay_change;
+			training_echo = v92_training_echo_observe(&datapump->training_echo,
+				datapump->host_echo, upstream_training_receiver(datapump), echo_mode,
+				receive_samples[index], cleaned_sample,
+				received_mask == NULL || received_mask[index], &delay_change);
+			if (training_echo == V92_TRAINING_ECHO_ERROR) {
+				modem_note_disconnect(dp->modem, true, "PCM upstream echo timing failed");
+				goto failure;
+			}
+			if (training_echo == V92_TRAINING_ECHO_RETIMED) {
+				/* A confirmed shift invalidates the channel's earlier samples.
+				 * Restart before this sample can admit the mixed fit. Keep the
+				 * host's absolute training deadline and the call's retry budget. */
+				enum pcm_call_result result = pcm_call_recover_upstream_training(&datapump->call);
+				if (result != PCM_CALL_OK) {
+					modem_note_disconnect(dp->modem, true, result == PCM_CALL_FAILED ?
+						"PCM upstream training recovery exhausted" :
+						"PCM upstream training recovery rejected");
+					goto failure;
+				}
+			}
+		}
 		if (!process_octet(
 			    datapump, receive_codewords[index],
 			    cleaned_sample, receive_samples[index], received_mask == NULL || received_mask[index],
@@ -1084,10 +1127,15 @@ static int process_v90_g711(
 			} else {
 				v34_echo_timing_reset(&datapump->echo_timing);
 			}
-			if (pcm_host_echo_advance_predicted(
-				    datapump->host_echo, echo_mode,
-				    receive_samples[index], cleaned_sample,
-				    transmit_samples[index]) != PCM_HOST_ECHO_OK)
+			/* Projected timing was observed before the receiver. Record the
+			 * actual TX once, without observing that sample a second time. */
+			enum pcm_host_echo_result echo_result =
+				training_echo == V92_TRAINING_ECHO_UNOBSERVED ?
+				pcm_host_echo_advance_predicted(datapump->host_echo, echo_mode,
+					receive_samples[index], cleaned_sample, transmit_samples[index]) :
+				pcm_host_echo_advance_reference(datapump->host_echo, echo_mode,
+					receive_samples[index], transmit_samples[index]);
+			if (echo_result != PCM_HOST_ECHO_OK)
 				goto failure;
 			/* Retain qualified cancellation through retrain ranging, but
 			 * reacquire it for the new Phase 3/TRN1d epoch. Old margin and

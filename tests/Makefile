@@ -1541,6 +1541,13 @@ PCM_HOST_ECHO_TEST_OBJECTS := \
 	$(BUILD_DIR)/pcm_host_echo.o \
 	$(BUILD_DIR)/echo_timing.o \
 	$(BUILD_DIR)/pcm_echo_reference.o
+V92_TRAINING_ECHO_TEST_BINARY := $(BUILD_DIR)/test_v92_training_echo
+V92_TRAINING_ECHO_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_v92_training_echo.o $(BUILD_DIR)/v92_training_echo.o \
+	$(BUILD_DIR)/pcm_host_echo.o $(BUILD_DIR)/echo_timing.o \
+	$(BUILD_DIR)/pcm_echo_reference.o $(BUILD_DIR)/v92_pcm_phase4_trn2u.o \
+	$(BUILD_DIR)/v92_phase4_modulator.o $(BUILD_DIR)/v34_framing.o \
+	$(SELF_SYNC_SCRAMBLER_OBJECT)
 V34_CALL_TEST_BINARY := $(BUILD_DIR)/test_v34_call
 V34_PHASE4_E_SEQUENCE_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_phase4_e_sequence
@@ -3411,6 +3418,7 @@ TEST_BINARIES := $(BUILD_DIR)/test_rtp_read_event $(NET_SOCKET_TEST_BINARY) $(RT
 	$(V34_PHASE4_EXCHANGE_TEST_BINARY) \
 	$(PCM_ECHO_REFERENCE_TEST_BINARY) \
 	$(PCM_HOST_ECHO_TEST_BINARY) \
+	$(V92_TRAINING_ECHO_TEST_BINARY) \
 	$(V34_CALL_TEST_BINARY) \
 	$(V34_PHASE4_E_SEQUENCE_TEST_BINARY) \
 	$(V34_PHASE4_E_RECEIVER_TEST_BINARY) \
@@ -4210,6 +4218,9 @@ $(PCM_ECHO_REFERENCE_TEST_BINARY): $(PCM_ECHO_REFERENCE_TEST_OBJECTS)
 $(PCM_HOST_ECHO_TEST_BINARY): $(PCM_HOST_ECHO_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
+$(V92_TRAINING_ECHO_TEST_BINARY): $(V92_TRAINING_ECHO_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^ -lm
+
 $(V34_CALL_TEST_BINARY): $(V34_CALL_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
@@ -4654,7 +4665,9 @@ $(V92_PROFILE_TEST_BINARY): $(V92_PROFILE_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V90_DATAPUMP_TEST_BINARY): $(V90_DATAPUMP_TEST_OBJECTS)
-	$(CC) $(LDFLAGS) -Wl,--wrap=v34_echo_timing_prepare -o $@ $^ -lm
+	$(CC) $(LDFLAGS) -Wl,--wrap=v34_echo_timing_prepare \
+		-Wl,--wrap=v92_training_echo_observe -Wl,--wrap=pcm_call_recover_upstream_training \
+		-Wl,--wrap=pcm_host_echo_advance_reference -o $@ $^ -lm
 
 $(V34_PHASE2_DPSK_TEST_BINARY): $(V34_PHASE2_DPSK_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
@@ -6154,6 +6167,10 @@ $(BUILD_DIR)/pcm_echo_reference.o: \
 
 $(BUILD_DIR)/pcm_host_echo.o: \
 	$(DSP_PCM_SOURCE_DIR)/pcm_host_echo.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v92_training_echo.o: \
+	$(DSP_PCM_SOURCE_DIR)/v92_training_echo.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v22_datapump.o: \

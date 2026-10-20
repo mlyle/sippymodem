@@ -6,6 +6,7 @@
 #include <v34_datapump.h>
 #include <v34_call.h>
 #include <v34_echo_timing.h>
+#include <v92_training_echo.h>
 #include <datapump_link.h>
 
 #include <dc_remover.h>
@@ -80,6 +81,78 @@ struct bit_endpoint {
 /* Keep the corrupt-B1 guard regression's physical stimulus: the optional
  * delay witness must not rescue it before the B1 check is exercised. */
 static bool echo_timing_enabled = true;
+
+/* Inject a timing notification at a real late TRN2u boundary. The detector
+ * itself has separate physical shift controls; this fixture checks that the
+ * adapter recovers before admitting that sample and advances TX exactly once. */
+static struct {
+	bool enabled, injected, recovered, advanced, mismatch;
+	uint32_t symbol, sample, injected_sample, advances;
+	struct pcm_host_echo *echo;
+} training_recovery;
+
+extern enum v92_training_echo_result __real_v92_training_echo_observe(
+	struct v92_training_echo *, struct pcm_host_echo *,
+	const struct v92_pcm_phase4_trn2u_line_rx *, enum pcm_host_echo_mode,
+	int16_t, int16_t, bool, int *);
+
+enum v92_training_echo_result __wrap_v92_training_echo_observe(
+	struct v92_training_echo *timing, struct pcm_host_echo *echo,
+	const struct v92_pcm_phase4_trn2u_line_rx *line, enum pcm_host_echo_mode mode,
+	int16_t raw, int16_t cleaned, bool available, int *change)
+{
+	if (training_recovery.enabled) {
+		training_recovery.mismatch |= training_recovery.injected && !training_recovery.advanced;
+		++training_recovery.sample;
+	}
+	enum v92_training_echo_result result = __real_v92_training_echo_observe(
+		timing, echo, line, mode, raw, cleaned, available, change);
+	if (training_recovery.enabled && !training_recovery.injected && line != NULL &&
+	    line->reference.emitted_symbols >= 9000 && result == V92_TRAINING_ECHO_OBSERVED) {
+		training_recovery.injected = true;
+		training_recovery.symbol = line->reference.emitted_symbols;
+		training_recovery.injected_sample = training_recovery.sample;
+		training_recovery.echo = echo;
+		*change = 98;
+		return V92_TRAINING_ECHO_RETIMED;
+	}
+	return result;
+}
+
+extern enum pcm_call_result __real_pcm_call_recover_upstream_training(struct pcm_call *);
+
+enum pcm_call_result __wrap_pcm_call_recover_upstream_training(struct pcm_call *call)
+{
+	unsigned attempts = call->pcm_upstream_quality.recovery.attempts;
+	if (training_recovery.enabled)
+		training_recovery.mismatch |= !training_recovery.injected ||
+			call->stage != PCM_CALL_PHASE4 ||
+			call->state.phase4.v92.owner.digital.receive.signal.trn2u.reference.emitted_symbols !=
+				training_recovery.symbol;
+	enum pcm_call_result result = __real_pcm_call_recover_upstream_training(call);
+	if (training_recovery.enabled) {
+		training_recovery.recovered = result == PCM_CALL_OK;
+		training_recovery.mismatch |= result != PCM_CALL_OK ||
+			call->stage != PCM_CALL_RETRAIN_SILENCE ||
+			call->pcm_upstream_quality.recovery.attempts != attempts + 1u;
+	}
+	return result;
+}
+
+extern enum pcm_host_echo_result __real_pcm_host_echo_advance_reference(
+	struct pcm_host_echo *, enum pcm_host_echo_mode, int16_t, int16_t);
+
+enum pcm_host_echo_result __wrap_pcm_host_echo_advance_reference(
+	struct pcm_host_echo *echo, enum pcm_host_echo_mode mode, int16_t raw, int16_t tx)
+{
+	if (training_recovery.enabled && training_recovery.injected &&
+	    training_recovery.sample == training_recovery.injected_sample && echo == training_recovery.echo) {
+		training_recovery.mismatch |= !training_recovery.recovered;
+		training_recovery.advanced = true;
+		++training_recovery.advances;
+	}
+	return __real_pcm_host_echo_advance_reference(echo, mode, raw, tx);
+}
 
 extern bool __real_v34_echo_timing_prepare(struct v34_echo_timing *,
 	const struct pcm_host_echo *, enum pcm_host_echo_mode,
@@ -696,6 +769,8 @@ static bool run_pcm_pair(
 	size_t sample_limit = (CALL_OCTET_LIMIT +
 		(minimum_received_bits * MODEM_RATE + 4799u) / 4800u) *
 		(exercise_retrain ? 2u : 1u);
+	if (training_recovery.enabled)
+		sample_limit += CALL_OCTET_LIMIT;
 	uint32_t noise_state = UINT32_C(0x197bc485);
 	/* V.34 recovery now needs at least 1.8 s of complete bad windows. */
 	const unsigned int noise_limit = pcm_upstream_max_drn == 0 ?
@@ -1585,6 +1660,22 @@ static bool test_v92_pcm_host_echo(void)
 	return true;
 }
 
+static bool test_training_echo_recovery(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		memset(&training_recovery, 0, sizeof(training_recovery));
+		training_recovery.enabled = true;
+		bool passed = run_pcm_pair(DP_V92, 4, law, 41333, 0, 0, 28000, 0,
+			MAXIMUM_RATE_RECEIVED_BITS, true, MODEM_PCM_ROLE_NONE, false, UNITY_GAIN_Q15,
+			RETURNED_ECHO_STABLE, UPSTREAM_CHANNEL_CLEAN);
+		training_recovery.enabled = false;
+		CHECK(passed && training_recovery.injected && training_recovery.recovered &&
+			training_recovery.advanced && training_recovery.advances == 1 && !training_recovery.mismatch,
+			"law %u training recovery did not preserve the adapter boundary", law);
+	}
+	return true;
+}
+
 static bool test_v92_quantized_host_echo(void)
 {
 	/* Quantize the combined upstream and independent returned echo, then
@@ -2081,6 +2172,7 @@ int main(void)
 	} tests[] = {
 		{ "V.92 Quick Connect adapter data", test_qc_adapter },
 		{ "V.92 Quick Connect fallback deadline", test_qc_adapter_timeout },
+		{ "V.92 training echo recovery", test_training_echo_recovery },
 		{ "PCM retrain after V.34 fallback", test_fallback_restart },
 		{ "online PCM retrain through V.34 fallback", test_online_fallback_restart },
 		{ "cleardown before CONNECT", test_training_cleardown },
