@@ -546,6 +546,8 @@ struct pcm_call {
 	bool v92_rate_renegotiation_active;
 	bool retrain_active;
 	bool failed;
+	/* Consecutive peer rejections before PCM Phase 4 reaches data. */
+	uint8_t v92_training_rejections;
 };
 
 enum pcm_call_result pcm_call_init(

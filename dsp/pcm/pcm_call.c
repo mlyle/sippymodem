@@ -869,7 +869,8 @@ static bool call_is_valid(
 	bool child_valid;
 	bool child_failed;
 
-	if (call == NULL || !stored_configuration_is_valid(call) ||
+	if (call == NULL || call->v92_training_rejections > 2u ||
+	    !stored_configuration_is_valid(call) ||
 	    call->qc_frame_interval >= V90_CP_FRAME_INTERVALS ||
 	    (call->qc_frame_pending ?
 		(call->protocol != PCM_PROTOCOL_V92 || call->local_role != V90_DIGITAL_MODEM) :
@@ -1321,6 +1322,22 @@ static enum pcm_call_result begin_retrain(
 		    &next.retrain, retain_peer_tone) !=
 	    V34_PHASE2_TONE_OK)
 		return PCM_CALL_NUMERIC_FAILURE;
+	if (retain_peer_tone &&
+	    (next.stage == PCM_CALL_PHASE3 || next.stage == PCM_CALL_PHASE4) &&
+	    next.protocol == PCM_PROTOCOL_V92 && next.local_role == V90_DIGITAL_MODEM &&
+	    uses_pcm_upstream(&next) &&
+	    next.v92_digital_phase4_configuration.upstream_selection == PCM_CALL_V92_UPSTREAM_DIRECT) {
+		if (next.v92_training_rejections < 2u)
+			++next.v92_training_rejections;
+		if (next.v92_training_rejections == 2u) {
+			/* A repeated rejection of PCM training needs a different
+			 * upstream procedure. The next INFO1d negotiates V.34 upstream;
+			 * keep PCM downstream, fixed mappings, and the host deadline. */
+			next.local_info1.v92_digital.pcm_upstream_supported = false;
+			next.v92_upstream_retry_ceiling = 0u;
+			next.v92_upstream_retry_step = 0u;
+		}
+	}
 	next.state = (union pcm_call_state){ 0 };
 	next.downstream_equalizer = (struct pcm_downstream_equalizer){ 0 };
 	next.downstream_dil = (struct pcm_dil_result){ 0 };
@@ -4361,6 +4378,7 @@ enum pcm_call_result pcm_call_start_data_path(struct pcm_call *call)
 		next.state.data_path.digital = path;
 	}
 	next.stage = PCM_CALL_DATA_PATH;
+	next.v92_training_rejections = 0u;
 	/* E/B1 is a continuous receive boundary. A peer's Phase 4 retrain
 	 * request can straddle it; retain the already observed silence/tone. */
 	if (!pcm_call_is_valid(&next))
