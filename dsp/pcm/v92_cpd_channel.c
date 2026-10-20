@@ -21,10 +21,10 @@ enum {
 };
 
 /* Eliminate an unpenalized constant offset before fitting the linear
- * filters. Keep one normalized Gram matrix in local scratch: its entries
+ * filters. Keep one packed Gram matrix in local scratch: its entries
  * are reused by every CG iteration and by the final residual comparison. */
 struct inverse_system {
-	double normal[TAPS][TAPS], rhs[TAPS];
+	double normal[TAPS * (TAPS + 1u) / 2u], rhs[TAPS];
 	double observed, expected, target;
 };
 
@@ -253,9 +253,7 @@ static bool inverse_system_init(struct inverse_system *system,
 				double covariance = (double)centered_product(value,
 					sums[offset + row], sums[offset + col], samples) / scale;
 
-				system->normal[offset + row][offset + col] = covariance;
-				if (row != col)
-					system->normal[offset + col][offset + row] = covariance;
+				system->normal[gram_moment_index(offset + row, offset + col)] = covariance;
 				if (row + 1u < count)
 					value += boundary_product(channel, observed, delay + row, observed, delay + col);
 			}
@@ -271,8 +269,7 @@ static bool inverse_system_init(struct inverse_system *system,
 			double covariance = (double)centered_product(value,
 				sums[y], sums[col], samples) / scale;
 
-			system->normal[y][col] = covariance;
-			system->normal[col][y] = covariance;
+			system->normal[gram_moment_index(col, y)] = covariance;
 			if (y + 1u < Z2_TAPS && x < DELAY + P1_TAPS)
 				value += boundary_product(channel, true, y, false, x);
 		}
@@ -288,15 +285,24 @@ static bool inverse_system_init(struct inverse_system *system,
 	return true;
 }
 
+/* The solver supplies distinct input and output scratch. Visit each packed
+ * entry once, completing earlier outputs as later rows arrive. Each output
+ * still accumulates its columns in ascending order, including the diagonal. */
 static void apply_normal(const struct inverse_system *system,
-	const double input[TAPS], double regularization, double output[TAPS])
+	const double input[restrict TAPS], double regularization, double output[restrict TAPS])
 {
 	for (unsigned i = 0; i < TAPS; ++i) {
 		double sum = regularization * input[i];
 
-		for (unsigned j = 0; j < TAPS; ++j)
-			sum += system->normal[i][j] * input[j];
-		output[i] = sum;
+		const double *row = system->normal + gram_moment_index(i, 0u);
+
+		for (unsigned j = 0; j < i; ++j) {
+			double value = row[j];
+
+			sum += value * input[j];
+			output[j] += value * input[i];
+		}
+		output[i] = sum + row[i] * input[i];
 	}
 }
 
