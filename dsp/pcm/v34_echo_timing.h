@@ -11,6 +11,8 @@ enum {
 	V34_ECHO_TIMING_RADIUS = ECHO_TIMING_RADIUS,
 	V34_ECHO_TIMING_BINS = 2 * V34_ECHO_TIMING_RADIUS + 1,
 	V34_ECHO_TIMING_HISTORY = 1024,
+	V34_ECHO_TIMING_OBSERVATION_STRIDE = 4,
+	V34_ECHO_TIMING_OBSERVATIONS = V34_ECHO_TIMING_HISTORY / V34_ECHO_TIMING_OBSERVATION_STRIDE,
 };
 
 struct v34_echo_timing_bin {
@@ -23,8 +25,12 @@ struct v34_echo_timing_point {
 	uint64_t epoch;
 	float real, imaginary;
 	float cosine, sine;
-	float received_real, received_imaginary;
-	bool received;
+};
+
+/* Equalizer observations occur at one out of four half-symbol epochs. */
+struct v34_echo_timing_observation {
+	uint64_t epoch;
+	float real, imaginary;
 };
 
 struct v34_echo_timing_window {
@@ -40,6 +46,7 @@ struct v34_echo_timing {
 	struct v34_receive_timing reference_timing;
 	struct v34_equalizer reference_equalizer;
 	struct v34_echo_timing_point history[V34_ECHO_TIMING_HISTORY];
+	struct v34_echo_timing_observation observations[V34_ECHO_TIMING_OBSERVATIONS];
 	struct v34_echo_timing_bin bins[V34_ECHO_TIMING_BINS];
 	struct v34_echo_timing_window normal, fast;
 	double scale, symbol_rate, carrier_frequency;

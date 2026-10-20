@@ -166,6 +166,10 @@ bool v34_echo_timing_prepare(struct v34_echo_timing *timing,
 			.cosine = receiver->equalizer.rotate_in_phase / 16384.0,
 			.sine = -receiver->equalizer.rotate_quadrature / 16384.0,
 		};
+		/* A replacement reference awaits its own received observation. */
+		if (half % V34_ECHO_TIMING_OBSERVATION_STRIDE == 0)
+			timing->observations[(half / V34_ECHO_TIMING_OBSERVATION_STRIDE) %
+				V34_ECHO_TIMING_OBSERVATIONS].epoch = 0;
 		if (timing->first_half == 0)
 			timing->drain_half = timing->first_half = half;
 		timing->latest_half = half;
@@ -203,13 +207,14 @@ static int finish_window(struct v34_echo_timing_window *window, double ratio)
 }
 
 static int observe_point(struct v34_echo_timing *timing,
-	const struct v34_echo_timing_point *point)
+	const struct v34_echo_timing_point *point,
+	const struct v34_echo_timing_observation *observation)
 {
 	unsigned part = timing->normal.position >= timing->normal.points / 2u;
 	unsigned fast_part = timing->fast.position >= timing->fast.points / 2u;
-	double x = point->received_real + point->real * point->cosine -
+	double x = observation->real + point->real * point->cosine -
 		point->imaginary * point->sine;
-	double y = point->received_imaginary + point->real * point->sine +
+	double y = observation->imaginary + point->real * point->sine +
 		point->imaginary * point->cosine;
 
 	for (unsigned i = 0; i < V34_ECHO_TIMING_BINS; ++i) {
@@ -264,9 +269,14 @@ int v34_echo_timing_observe(struct v34_echo_timing *timing,
 		struct v34_echo_timing_point *point =
 			&timing->history[half % V34_ECHO_TIMING_HISTORY];
 		if (point->epoch == half) {
-			point->received_real = observation->decision.in_phase / timing->scale;
-			point->received_imaginary = observation->decision.quadrature / timing->scale;
-			point->received = true;
+			struct v34_echo_timing_observation *received = &timing->observations[
+				(half / V34_ECHO_TIMING_OBSERVATION_STRIDE) % V34_ECHO_TIMING_OBSERVATIONS];
+
+			*received = (struct v34_echo_timing_observation){
+				.epoch = half,
+				.real = observation->decision.in_phase / timing->scale,
+				.imaginary = observation->decision.quadrature / timing->scale,
+			};
 		}
 	}
 	/* At most two new half-symbols are available per host sample. Leave the
@@ -275,10 +285,13 @@ int v34_echo_timing_observe(struct v34_echo_timing *timing,
 		uint64_t half = timing->drain_half++;
 		const struct v34_echo_timing_point *point =
 			&timing->history[half % V34_ECHO_TIMING_HISTORY];
+		const struct v34_echo_timing_observation *received = &timing->observations[
+			(half / V34_ECHO_TIMING_OBSERVATION_STRIDE) % V34_ECHO_TIMING_OBSERVATIONS];
 		if (half < timing->first_half + 2u * timing->lookahead ||
-		    point->epoch != half || !point->received)
+		    point->epoch != half || half == 0 ||
+		    half % V34_ECHO_TIMING_OBSERVATION_STRIDE != 0 || received->epoch != half)
 			continue;
-		int delta = observe_point(timing, point);
+		int delta = observe_point(timing, point, received);
 		if (delta != 0) {
 			bool applied = pcm_host_echo_retime(echo, delta) == PCM_HOST_ECHO_OK;
 			v34_echo_timing_reset(timing);

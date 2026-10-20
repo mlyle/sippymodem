@@ -746,6 +746,41 @@ static bool test_delayed_echo_calls(void)
 	return true;
 }
 
+static bool check_echo_observation_replacement(struct endpoint *caller,
+	struct endpoint *answerer, struct channel *channel)
+{
+	for (unsigned sample = 0; sample < 64; ++sample) {
+		struct v34_call_observation c, a;
+		CHECK(channel_sample_pair(channel, caller, answerer, &c, &a),
+		      "observation replacement lost mapped data");
+		struct v34_echo_timing timing = caller->call.echo_timing;
+		const struct v34_phase34_receiver *data = &caller->call.state.phase4.receive;
+		uint64_t previous = timing.latest_half;
+
+		CHECK(v34_echo_timing_prepare(&timing, &caller->call.echo,
+			PCM_HOST_ECHO_FILTER, &data->line, &data->semantic.data, 0, 0),
+		      "observation replacement reference was not prepared");
+		uint64_t half = timing.latest_half;
+		if (half <= previous || half % V34_ECHO_TIMING_OBSERVATION_STRIDE != 0)
+			continue;
+		struct v34_echo_timing_observation *received = &timing.observations[
+			(half / V34_ECHO_TIMING_OBSERVATION_STRIDE) % V34_ECHO_TIMING_OBSERVATIONS];
+		*received = (struct v34_echo_timing_observation){
+			.epoch = half, .real = 1., .imaginary = -1.,
+		};
+		/* Replay the pre-sample cursor. Replacing that reference must retire
+		 * its old observation even when the epoch itself has not changed. */
+		timing.reference_equalizer.index = data->line.equalizer.equalizer.index;
+		timing.receiver_epoch = data->line.equalizer.epoch;
+		CHECK(v34_echo_timing_prepare(&timing, &caller->call.echo,
+			PCM_HOST_ECHO_FILTER, &data->line, &data->semantic.data, 0, 0) &&
+		      timing.latest_half == half && received->epoch == 0,
+		      "replaced reference retained a stale observation");
+		return true;
+	}
+	CHECK(false, "no aligned echo observation was available");
+}
+
 static bool test_weak_echo_delay_step(void)
 {
 	for (unsigned law = 0; law < 2; ++law) {
@@ -769,6 +804,8 @@ static bool test_weak_echo_delay_step(void)
 			      caller.call.echo.window_delay_samples == delay,
 			      "stationary weak echo retimed or corrupted mapped data");
 		}
+		CHECK(check_echo_observation_replacement(&caller, &answerer, &channel),
+		      "observation replacement failed for codec %u", law);
 		/* Keep the reference history intact: only the physical return's
 		 * delay changes. Continue checking the random stream's position
 		 * while allowing errors during the recovery interval. */
