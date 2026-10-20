@@ -70,6 +70,21 @@ static inline bool pcm_control_frame_starts_are_zero(
 	return true;
 }
 
+/* Complete CP/CPt framing: prefix, word starts, zero fill after the CRC,
+ * and unused storage bits. The caller validates storage and the exact wire
+ * length first; payload_end is the CRC word's zero start bit and at least
+ * its 16 information bits must follow. Protocol fields stay with the codec. */
+static inline bool pcm_control_frame_framing_is_valid(
+	const uint8_t *frame, size_t payload_end, size_t frame_bits)
+{
+	return pcm_control_frame_prefix_is_valid(frame) &&
+	       pcm_control_frame_starts_are_zero(frame, 34u, payload_end + 1u) &&
+	       packed_msb_bits_are_zero(frame, payload_end + 17u,
+		       frame_bits - payload_end - 17u) &&
+	       packed_msb_bits_are_zero(frame, frame_bits,
+		       (8u - frame_bits % 8u) % 8u);
+}
+
 /* J, MP, CP and DIL records carry 16 information bits after each zero start
  * bit and use the V.34 10.1.2.3.2 CRC generator. Exclude frame sync, start
  * and fill bits. The unreflected numeric representation holds the first CRC

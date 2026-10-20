@@ -12,7 +12,6 @@ enum {
 	CPT_RATE_FIRST_BIT = 21,
 	CPT_RATE_BITS = 5,
 	CPT_CODEC_DIFFERENCE_BIT = 128,
-	CPT_CRC_BITS = 16,
 };
 
 bool v92_cpt_parameters_are_valid(
@@ -92,21 +91,6 @@ enum v92_cpt_result v92_cpt_encode(
 	return V92_CPT_OK;
 }
 
-static bool framing_is_valid(
-	const uint8_t *frame, size_t payload_end,
-	size_t frame_bit_count)
-{
-	return pcm_control_frame_prefix_is_valid(frame) &&
-	       pcm_control_frame_starts_are_zero(frame, 34u, payload_end + 1u) &&
-	       packed_msb_bits_are_zero(frame, 18u, 3u) &&
-	       packed_msb_bits_are_zero(
-		       frame, payload_end + 1u + CPT_CRC_BITS,
-		       frame_bit_count - payload_end - 1u - CPT_CRC_BITS) &&
-	       packed_msb_bits_are_zero(
-		       frame, frame_bit_count,
-		       (8u - frame_bit_count % 8u) % 8u);
-}
-
 static void decode_header(
 	const uint8_t *frame, struct v92_cpt_parameters *parameters)
 {
@@ -151,7 +135,8 @@ enum v92_cpt_result v92_cpt_decode(
 	expected_bits = pcm_control_frame_align_bits(
 		payload_end + V92_CPT_MIN_TRAILER_BITS, V92_CPT_SYMBOLS_PER_FRAME);
 	if (frame_bit_count != expected_bits ||
-	    !framing_is_valid(frame, payload_end, frame_bit_count))
+	    !pcm_control_frame_framing_is_valid(frame, payload_end, frame_bit_count) ||
+	    !packed_msb_bits_are_zero(frame, 18u, 3u))
 		return V92_CPT_INVALID_FRAME;
 	if (!pcm_control_frame_read_constellation_payload(
 		    frame, decoded.transmit_constellations,

@@ -163,20 +163,6 @@ enum v90_cp_result v90_cp_encode(
 	return V90_CP_OK;
 }
 
-static bool framing_is_valid(
-	const uint8_t *frame, size_t payload_end,
-	size_t frame_bit_count)
-{
-	/* Table 14's reserved information bits are not interpreted by the
-	 * receiver. Keep them in the CRC, but only validate wire framing here. */
-	return pcm_control_frame_prefix_is_valid(frame) &&
-	       pcm_control_frame_starts_are_zero(frame, 34u, payload_end + 1u) &&
-	       packed_msb_bits_are_zero(frame, payload_end + 17u, 3) &&
-	       packed_msb_bits_are_zero(
-		       frame, frame_bit_count,
-		       (8u - frame_bit_count % 8u) % 8u);
-}
-
 static void decode_header(
 	const uint8_t *frame, struct v90_cp_parameters *parameters)
 {
@@ -227,7 +213,8 @@ enum v90_cp_result v90_cp_decode(
 	expected_bits = payload_end + V90_CP_TRAILER_BITS;
 	if (frame_bit_count != expected_bits)
 		return V90_CP_INVALID_FRAME;
-	if (!framing_is_valid(frame, payload_end, frame_bit_count))
+	/* Reserved information bits remain CRC-only; validate framing here. */
+	if (!pcm_control_frame_framing_is_valid(frame, payload_end, frame_bit_count))
 		return V90_CP_INVALID_FRAME;
 	if (!pcm_control_frame_read_constellation_payload(
 		    frame, decoded.transmit_constellations,
