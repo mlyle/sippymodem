@@ -22,6 +22,21 @@ static inline void fir_accumulate_complex_s16(
 		 (uint32_t)((int32_t)input_imag * coefficient_real);
 }
 
+/* Subtract conjugate(reference) * error from two coefficient accumulator
+ * words. Products are exact; sums wrap modulo 2^32 even for full-scale
+ * negative inputs. The caller owns scaling, rounding and retained residue.
+ * Both accumulator pointers must be valid and distinct. */
+static inline void fir_subtract_correlation_s16(
+	int16_t reference_real, int16_t reference_imag,
+	int16_t error_real, int16_t error_imag,
+	uint32_t *real, uint32_t *imag)
+{
+	*real -= (uint32_t)((int32_t)reference_real * error_real);
+	*real -= (uint32_t)((int32_t)reference_imag * error_imag);
+	*imag -= (uint32_t)((int32_t)reference_real * error_imag);
+	*imag += (uint32_t)((int32_t)reference_imag * error_real);
+}
+
 /* Shift a newest-first history and return the low 32 bits of its signed
  * convolution. The two count-element arrays must be separate; count zero
  * leaves history untouched and returns zero. Scaling/rounding belong to the

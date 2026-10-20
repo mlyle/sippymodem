@@ -138,10 +138,8 @@ static inline void adapt_tap(
 		preserve_residue ?
 			equalizer->quadrature_residue[coefficient_index] : 0);
 
-	in_phase -= multiply_low_s32(sample_in_phase, error.in_phase);
-	in_phase -= multiply_low_s32(sample_quadrature, error.quadrature);
-	quadrature -= multiply_low_s32(sample_in_phase, error.quadrature);
-	quadrature += multiply_low_s32(sample_quadrature, error.in_phase);
+	fir_subtract_correlation_s16(sample_in_phase, sample_quadrature,
+		error.in_phase, error.quadrature, &in_phase, &quadrature);
 	if (!preserve_residue) {
 		in_phase += UINT32_C(0x8000);
 		quadrature += UINT32_C(0x8000);

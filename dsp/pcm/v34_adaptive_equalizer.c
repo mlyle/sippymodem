@@ -3,6 +3,7 @@
 #include "v34_adaptive_equalizer.h"
 
 #include "fixed_phase.h"
+#include "fir.h"
 #include "integer_math.h"
 #include "lineage.h"
 #include "memory_region.h"
@@ -438,14 +439,11 @@ static struct v34_analytic_sample update_feedback_filter(
 		int16_t b = feedback->coefficient_b[index];
 		int16_t d = feedback->in_phase_history[3u - index];
 		int16_t f = feedback->quadrature_history[3u - index];
-		uint32_t next_a =
-			((uint32_t)(uint16_t)a << 16) -
-			multiply_low_s32(d, error_in_phase) -
-			multiply_low_s32(f, error_quadrature);
-		uint32_t next_b =
-			((uint32_t)(uint16_t)b << 16) -
-			multiply_low_s32(d, error_quadrature) +
-			multiply_low_s32(f, error_in_phase);
+		uint32_t next_a = (uint32_t)(uint16_t)a << 16;
+		uint32_t next_b = (uint32_t)(uint16_t)b << 16;
+
+		fir_subtract_correlation_s16(d, f, error_in_phase,
+			error_quadrature, &next_a, &next_b);
 
 		feedback->coefficient_a[index] =
 			round_shift_s32_word_to_s16(next_a, 16);

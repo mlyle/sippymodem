@@ -37,6 +37,26 @@ static bool check_complex_product(
 	      real, imag, coefficient_real, coefficient_imag, initial);
 	CHECK(guarded[0] == 0x12345678u && guarded[3] == 0x87654321u,
 	      "complex accumulation changed an adjacent word");
+	const int32_t correlation[2][2] = {
+		{ coefficient_real, coefficient_imag },
+		{ coefficient_imag, -(int32_t)coefficient_real },
+	};
+
+	guarded[1] = initial;
+	guarded[2] = ~initial;
+	expected[0] = initial;
+	expected[1] = ~initial;
+	for (size_t row = 0; row < 2; ++row)
+		for (size_t column = 0; column < 2; ++column)
+			expected[row] -= (int64_t)input[column] * correlation[row][column];
+	fir_subtract_correlation_s16(real, imag, coefficient_real,
+		coefficient_imag, &guarded[1], &guarded[2]);
+	CHECK(guarded[1] == (uint32_t)expected[0] &&
+	      guarded[2] == (uint32_t)expected[1],
+	      "correlation update changed for (%d,%d), error=(%d,%d), initial=%u",
+	      real, imag, coefficient_real, coefficient_imag, initial);
+	CHECK(guarded[0] == 0x12345678u && guarded[3] == 0x87654321u,
+	      "correlation update changed an adjacent word");
 	return true;
 }
 
