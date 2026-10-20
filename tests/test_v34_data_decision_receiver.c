@@ -40,6 +40,9 @@ static const struct configuration CONFIGURATIONS[] = {
 	{ V34_SYMBOL_RATE_3000, 8, true, false,
 	  V34_CALLING_STATION, V34_TRELLIS_16_STATE,
 	  V34_NONLINEAR_THETA_ZERO },
+	{ V34_SYMBOL_RATE_3000, 8, true, false,
+	  V34_ANSWERING_STATION, V34_TRELLIS_32_STATE,
+	  V34_NONLINEAR_THETA_ZERO },
 	{ V34_SYMBOL_RATE_3429, 14, false, true,
 	  V34_ANSWERING_STATION, V34_TRELLIS_64_STATE,
 	  V34_NONLINEAR_THETA_5_OVER_16 },
@@ -438,6 +441,90 @@ static bool rejected_call_preserves_outputs(
 	       memcmp(output, &saved_output, sizeof(*output)) == 0;
 }
 
+static bool test_retained_path_validation(void)
+{
+	for (size_t mode = 0; mode < ARRAY_LENGTH(CONFIGURATIONS); ++mode) {
+		struct fixture fixture;
+		struct v34_adaptive_equalizer_observation input = {
+			.decision = { 3238, -3238 }, .epoch = 1u, .lineage = 1u,
+		};
+		struct v34_data_decision_output output;
+
+		CHECK(initialize_fixture(&fixture, &CONFIGURATIONS[mode]) &&
+		      v34_data_decision_receiver_observe(
+			      &fixture.receiver, &input, &output) == V34_DATA_RECEIVE_OK,
+		      "retained-path fixture failed");
+		input.epoch++;
+		input.lineage++;
+		CHECK(v34_data_decision_receiver_observe(
+			      &fixture.receiver, &input, &output) ==
+			      V34_DATA_RECEIVE_INTERVAL_READY &&
+		      v34_data_decision_receiver_is_valid(&fixture.receiver),
+		      "first path interval failed");
+		input.epoch++;
+		input.lineage++;
+		for (unsigned int fault = 0; fault < 5; ++fault) {
+			struct v34_data_decision_receiver corrupt = fixture.receiver;
+			struct v34_channel_frame_receiver *channel =
+				&corrupt.data_receiver.channel_receiver;
+			struct v34_survivor *path = &channel->frame_decoder
+				.channel_decoder.survivor;
+			struct v34_channel_frame_receiver saved;
+			const struct qam_point normalized[2] = { { .5, -.5 }, { -.5, .5 } };
+			struct v34_survivor_decision current, saved_current;
+			struct qam_point targets[2], saved_targets[2];
+			struct v34_decided_4d_interval
+				frame[V34_4D_INTERVALS_PER_MAPPING_FRAME],
+				saved_frame[V34_4D_INTERVALS_PER_MAPPING_FRAME];
+			bool ready = true;
+
+			CHECK(path->path_intervals == 1, "fixture lacks retained history");
+			switch (fault) {
+			case 0:
+				path->path[0].predecessor[0] =
+					v34_trellis_state_count(path->selection);
+				break;
+			case 1:
+				path->path[0].branch_index[0] =
+					v34_trellis_branch_count(path->selection);
+				break;
+			case 2:
+				path->path[0].branch[0].channel_output[0].in_phase ^= 1;
+				break;
+			case 3:
+				path->path_metric[0] = NAN;
+				break;
+			default:
+				/* Individually valid precoders must still agree. */
+				channel->receive_precoder.coefficients[0].real++;
+				break;
+			}
+			memset(&output, 0x5a, sizeof(output));
+			CHECK(rejected_call_preserves_outputs(
+				      &corrupt, &input, &output, V34_DATA_RECEIVE_INVALID_STATE),
+			      "mode %zu fault %u: invalid state changed the owner or output",
+			      mode, fault);
+			memcpy(&saved, channel, sizeof(saved));
+			memset(&current, 0x5a, sizeof(current));
+			memcpy(&saved_current, &current, sizeof(current));
+			memset(targets, 0x5a, sizeof(targets));
+			memcpy(saved_targets, targets, sizeof(targets));
+			memset(frame, 0x5a, sizeof(frame));
+			memcpy(saved_frame, frame, sizeof(frame));
+			CHECK(v34_channel_frame_receiver_advance(
+				      channel, normalized, &current, targets, frame, &ready) ==
+				      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
+			      memcmp(channel, &saved, sizeof(saved)) == 0 &&
+			      memcmp(&current, &saved_current, sizeof(current)) == 0 &&
+			      memcmp(targets, saved_targets, sizeof(targets)) == 0 &&
+			      memcmp(frame, saved_frame, sizeof(frame)) == 0 && ready,
+			      "mode %zu fault %u: channel entry lost invalid-state rejection",
+			      mode, fault);
+		}
+	}
+	return true;
+}
+
 static bool test_unrepresentable_feedback(void)
 {
 	struct v34_frame_geometry geometry;
@@ -621,6 +708,7 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "retained path validation", test_retained_path_validation },
 		{ "generated pair path", test_generated_pair_path },
 		{ "unrepresentable feedback", test_unrepresentable_feedback },
 		{ "cancel partial interval", test_cancel_interval },

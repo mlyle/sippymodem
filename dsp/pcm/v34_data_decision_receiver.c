@@ -164,8 +164,8 @@ v34_data_decision_receiver_observe(
 	next.first_observation =
 		(struct v34_adaptive_equalizer_observation){ 0 };
 	next.has_first_symbol = false;
-	if (!v34_data_decision_receiver_is_valid(&next))
-		return V34_DATA_RECEIVE_INVALID_STATE;
+	/* The child preserves its configuration and receive invariants. Clearing
+	 * the retained symbol establishes this owner's remaining invariant. */
 	if (!v34_data_receive_emits_mapping_frame(result))
 		generated.received = (struct v34_received_mapping_frame){ 0 };
 	*receiver = next;

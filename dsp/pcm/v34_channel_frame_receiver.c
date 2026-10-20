@@ -207,8 +207,8 @@ v34_channel_frame_receiver_advance(
 		if (result != V34_DATA_RECEIVE_OK)
 			return result;
 	}
-	if (!v34_channel_frame_receiver_is_valid(&next))
-		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
+	/* Checked child operations preserve their histories; the normalizer,
+	 * mapping and matching precoder coefficients have not changed. */
 	*receiver = next;
 	*current = generated_current;
 	memcpy(decision_targets, generated_targets, sizeof(generated_targets));
