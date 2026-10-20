@@ -545,35 +545,39 @@ enum pcm_host_echo_result pcm_host_echo_retime(
 	return result;
 }
 
+struct timing_owner {
+	struct pcm_host_echo *echo;
+	int *delay_change;
+};
+
 static bool retime_frozen_model(void *owner, int delay_change_samples)
 {
-	return retime_active_model(owner, delay_change_samples) == PCM_HOST_ECHO_OK;
+	struct timing_owner *timing = owner;
+	if (retime_active_model(timing->echo, delay_change_samples) != PCM_HOST_ECHO_OK)
+		return false;
+	if (timing->delay_change != NULL)
+		*timing->delay_change = delay_change_samples;
+	return true;
 }
 
 static void track_timing(struct pcm_host_echo *echo,
-	int16_t received, int16_t cleaned)
+	int16_t received, int16_t cleaned, int *delay_change)
 {
+	struct timing_owner owner = { echo, delay_change };
 	struct echo_timing_model model = {
 		.require_support = echo->weak_margin || echo->retained_delay_samples,
 		.suspended = echo->filter_suspended,
 		.retime = retime_frozen_model,
-		.owner = echo,
+		.owner = &owner,
 	};
 	echo_timing_observe(&echo->timing, &model, received, cleaned);
 	echo->filter_suspended = model.suspended;
 }
 
-static enum pcm_host_echo_result advance_predicted(
+static enum pcm_host_echo_result observe_timing(
 	struct pcm_host_echo *echo, enum pcm_host_echo_mode mode,
-	int16_t received_sample, int16_t cleaned_sample,
-	int16_t transmitted_sample)
+	int16_t received_sample, int16_t cleaned_sample, int *delay_change)
 {
-	struct pcm_echo_reference_scan_result scan;
-	struct training_step training;
-	uint32_t next_quiet;
-	enum pcm_host_echo_result result;
-	enum pcm_echo_reference_result reference_result;
-
 	if (!mode_is_filtering(mode) && echo->timing.fill != 0)
 		memset(&echo->timing, 0, sizeof(echo->timing));
 	if (mode_is_filtering(mode) &&
@@ -581,12 +585,51 @@ static enum pcm_host_echo_result advance_predicted(
 		int16_t monitored = cleaned_sample;
 
 		if (mode == PCM_HOST_ECHO_FILTER_DATA && echo->filter_suspended) {
-			result = predict_frozen_model(echo, received_sample, &monitored);
+			enum pcm_host_echo_result result =
+				predict_frozen_model(echo, received_sample, &monitored);
 			if (result != PCM_HOST_ECHO_OK)
 				return result;
 		}
-		track_timing(echo, received_sample, monitored);
+		track_timing(echo, received_sample, monitored, delay_change);
 	}
+
+	return PCM_HOST_ECHO_OK;
+}
+
+enum pcm_host_echo_result pcm_host_echo_observe_timing(
+	struct pcm_host_echo *echo, enum pcm_host_echo_mode mode,
+	int16_t received_sample, int16_t cleaned_sample, int *delay_change)
+{
+	if (!header_is_valid(echo))
+		return PCM_HOST_ECHO_INVALID_STATE;
+	if (!mode_is_valid(mode) || (delay_change != NULL && memory_regions_overlap(
+		    echo, sizeof(*echo), delay_change, sizeof(*delay_change))))
+		return PCM_HOST_ECHO_INVALID_ARGUMENT;
+	int changed = 0;
+	enum pcm_host_echo_result result =
+		observe_timing(echo, mode, received_sample, cleaned_sample, &changed);
+	if (result == PCM_HOST_ECHO_OK && delay_change != NULL)
+		*delay_change = changed;
+	return result;
+}
+
+enum pcm_host_echo_result pcm_host_echo_reset_timing(struct pcm_host_echo *echo)
+{
+	if (!header_is_valid(echo))
+		return PCM_HOST_ECHO_INVALID_STATE;
+	memset(&echo->timing, 0, sizeof(echo->timing));
+	return PCM_HOST_ECHO_OK;
+}
+
+static enum pcm_host_echo_result advance_reference(
+	struct pcm_host_echo *echo, enum pcm_host_echo_mode mode,
+	int16_t received_sample, int16_t transmitted_sample)
+{
+	struct pcm_echo_reference_scan_result scan;
+	struct training_step training;
+	uint32_t next_quiet;
+	enum pcm_host_echo_result result;
+	enum pcm_echo_reference_result reference_result;
 
 	if (mode == PCM_HOST_ECHO_TRAIN) {
 		next_quiet = echo->quiet_samples == UINT32_MAX ? UINT32_MAX :
@@ -645,6 +688,28 @@ push_reference:
 		    PCM_ECHO_REFERENCE_OK)
 		return PCM_HOST_ECHO_INVALID_STATE;
 	return PCM_HOST_ECHO_OK;
+}
+
+enum pcm_host_echo_result pcm_host_echo_advance_reference(
+	struct pcm_host_echo *echo, enum pcm_host_echo_mode mode,
+	int16_t received_sample, int16_t transmitted_sample)
+{
+	if (!header_is_valid(echo))
+		return PCM_HOST_ECHO_INVALID_STATE;
+	if (!mode_is_valid(mode))
+		return PCM_HOST_ECHO_INVALID_ARGUMENT;
+	return advance_reference(echo, mode, received_sample, transmitted_sample);
+}
+
+static enum pcm_host_echo_result advance_predicted(
+	struct pcm_host_echo *echo, enum pcm_host_echo_mode mode,
+	int16_t received_sample, int16_t cleaned_sample,
+	int16_t transmitted_sample)
+{
+	enum pcm_host_echo_result result =
+		observe_timing(echo, mode, received_sample, cleaned_sample, NULL);
+	return result == PCM_HOST_ECHO_OK ?
+		advance_reference(echo, mode, received_sample, transmitted_sample) : result;
 }
 
 enum pcm_host_echo_result pcm_host_echo_advance_predicted(

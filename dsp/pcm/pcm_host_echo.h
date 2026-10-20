@@ -110,6 +110,29 @@ enum pcm_host_echo_result pcm_host_echo_predict(
 	const struct pcm_host_echo *echo, enum pcm_host_echo_mode mode,
 	int16_t received_sample, int16_t *cleaned_sample);
 
+/* Observe timing once for a successful prediction, before the receiver commits
+ * evidence for this sample. No coefficients may change after prediction.
+ * A known peer component may be removed from both samples, preserving the
+ * frozen echo prediction as received-cleaned. No TX history or coefficients
+ * advance. Optional delay_change reports the accepted shift, or zero; invalid
+ * calls preserve it. Reset timing when changing the observation's input view.
+ * Follow a successful observation with advance_reference, not another observe
+ * or advance_predicted. All calls on the owner remain serialized. */
+enum pcm_host_echo_result pcm_host_echo_observe_timing(
+	struct pcm_host_echo *echo, enum pcm_host_echo_mode mode,
+	int16_t received_sample, int16_t cleaned_sample, int *delay_change);
+
+/* Discard timing evidence without changing either filter, its confidence,
+ * or TX history. Use at a change of observation coordinates or epoch. */
+enum pcm_host_echo_result pcm_host_echo_reset_timing(struct pcm_host_echo *echo);
+
+/* Complete an explicitly observed sample: train on the actual physical input
+ * in TRAIN mode, then clock the actual TX sample into reference history.
+ * Timing was already observed; this operation does not observe it again. */
+enum pcm_host_echo_result pcm_host_echo_advance_reference(
+	struct pcm_host_echo *echo, enum pcm_host_echo_mode mode,
+	int16_t received_sample, int16_t transmitted_sample);
+
 /* Verify and advance exactly one prediction, then clock the actual host-rate
  * transmit sample into the delayed reference history. */
 enum pcm_host_echo_result pcm_host_echo_advance(

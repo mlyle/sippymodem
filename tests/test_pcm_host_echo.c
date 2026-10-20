@@ -1313,13 +1313,141 @@ static bool test_unrelated_input_does_not_retime(uint32_t salt)
 	return true;
 }
 
+static bool test_observation_contracts(void)
+{
+	struct pcm_host_echo echo, saved;
+	int changed = 123;
+	CHECK(pcm_host_echo_init(&echo) == PCM_HOST_ECHO_OK,
+	      "observation owner did not initialize");
+	saved = echo;
+	CHECK(pcm_host_echo_observe_timing(NULL, PCM_HOST_ECHO_FILTER, 0, 0, &changed) ==
+		      PCM_HOST_ECHO_INVALID_STATE && changed == 123 &&
+	      pcm_host_echo_reset_timing(NULL) == PCM_HOST_ECHO_INVALID_STATE &&
+	      pcm_host_echo_advance_reference(NULL, PCM_HOST_ECHO_FILTER, 0, 0) ==
+		      PCM_HOST_ECHO_INVALID_STATE,
+	      "null observation/reference owner accepted");
+	CHECK(pcm_host_echo_observe_timing(&echo, 99, 0, 0, &changed) ==
+		      PCM_HOST_ECHO_INVALID_ARGUMENT && changed == 123 &&
+	      pcm_host_echo_advance_reference(&echo, 99, 0, 0) ==
+		      PCM_HOST_ECHO_INVALID_ARGUMENT &&
+	      pcm_host_echo_observe_timing(&echo, PCM_HOST_ECHO_FILTER, 0, 0,
+		      (int *)&echo.window_delay_samples) == PCM_HOST_ECHO_INVALID_ARGUMENT &&
+	      memcmp(&echo, &saved, sizeof(echo)) == 0,
+	      "rejected observation changed owner/output");
+	CHECK(pcm_host_echo_observe_timing(&echo, PCM_HOST_ECHO_FILTER, 17, 17, &changed) ==
+		      PCM_HOST_ECHO_OK && changed == 0 &&
+	      pcm_host_echo_observe_timing(&echo, PCM_HOST_ECHO_FILTER, 17, 17, NULL) ==
+		      PCM_HOST_ECHO_OK && memcmp(&echo, &saved, sizeof(echo)) == 0,
+	      "unqualified observation clocked the TX reference");
+	echo.window_delay_samples = 0;
+	saved = echo;
+	changed = 456;
+	CHECK(pcm_host_echo_observe_timing(&echo, PCM_HOST_ECHO_FILTER, 0, 0, &changed) ==
+		      PCM_HOST_ECHO_INVALID_STATE && changed == 456 &&
+	      pcm_host_echo_advance_reference(&echo, PCM_HOST_ECHO_FILTER, 0, 0) ==
+		      PCM_HOST_ECHO_INVALID_STATE &&
+	      pcm_host_echo_reset_timing(&echo) == PCM_HOST_ECHO_INVALID_STATE &&
+	      memcmp(&echo, &saved, sizeof(echo)) == 0,
+	      "corrupt observation owner changed");
+	CHECK(pcm_host_echo_init(&echo) == PCM_HOST_ECHO_OK,
+	      "numeric observation fixture did not initialize");
+	for (unsigned i = 0; i < echo.window_delay_samples + PCM_HOST_ECHO_FILTER_TAPS; ++i)
+		CHECK(pcm_echo_reference_push(&echo.reference, 0) == PCM_ECHO_REFERENCE_OK,
+		      "numeric observation reference did not fill");
+	echo.filter_ready = echo.filter_suspended = true;
+	echo.train_samples = PCM_HOST_ECHO_TRAIN_MIN_SAMPLES;
+	echo.train_peak = PCM_HOST_ECHO_READY_MIN_PEAK;
+	echo.coefficients[0] = NAN;
+	memcpy(&saved, &echo, sizeof(echo));
+	CHECK(pcm_host_echo_observe_timing(&echo, PCM_HOST_ECHO_FILTER_DATA, 0, 0, &changed) ==
+		      PCM_HOST_ECHO_NUMERIC_FAILURE && changed == 456 &&
+	      memcmp(&echo, &saved, sizeof(echo)) == 0,
+	      "failed suspended-model prediction changed timing or output");
+	return true;
+}
+
+static bool test_explicit_observation(enum pcm_host_echo_mode mode, bool retained, int shift)
+{
+	struct pcm_host_echo echo, legacy;
+	const size_t start = 4096;
+	CHECK(pcm_host_echo_init(&echo) == PCM_HOST_ECHO_OK,
+	      "explicit observation fixture did not initialize");
+	for (size_t i = 0; i < start; ++i)
+		CHECK(pcm_echo_reference_push(&echo.reference, transmit_sample(i)) == PCM_ECHO_REFERENCE_OK,
+		      "explicit observation history did not fill");
+	echo.train_samples = PCM_HOST_ECHO_TRAIN_MIN_SAMPLES;
+	echo.train_peak = PCM_HOST_ECHO_READY_MIN_PEAK;
+	echo.filter_ready = !retained;
+	echo.delay_acquired = retained;
+	echo.retained_delay_samples = retained ? echo.window_delay_samples : 0;
+	echo.filter_suspended = mode == PCM_HOST_ECHO_FILTER_DATA;
+	float *coefficients = retained ? echo.retained_coefficients : echo.coefficients;
+	coefficients[PCM_HOST_ECHO_FILTER_PRE_SAMPLES] = 0.25f;
+	CHECK(pcm_host_echo_is_valid(&echo), "explicit observation fixture is invalid");
+	memcpy(&legacy, &echo, sizeof(echo));
+	uint32_t original = retained ? echo.retained_delay_samples : echo.window_delay_samples;
+	unsigned events = 0;
+	for (size_t i = start; i < start + 3600u; ++i) {
+		int offset = i >= start + 1024 ? shift : 0;
+		int16_t returned = transmit_sample((size_t)((int64_t)i - original -
+			PCM_HOST_ECHO_FILTER_PRE_SAMPLES - offset)) / 4;
+		int16_t received = add_s16((int32_t)returned + remote_sample(i));
+		int16_t cleaned, old_cleaned;
+		int changed = 789;
+		CHECK(pcm_host_echo_predict(&echo, mode, received, &cleaned) == PCM_HOST_ECHO_OK &&
+		      pcm_host_echo_predict(&legacy, mode, received, &old_cleaned) == PCM_HOST_ECHO_OK &&
+		      cleaned == old_cleaned,
+		      "explicit prediction diverged at %zu", i);
+		uint32_t before = retained ? echo.retained_delay_samples : echo.window_delay_samples;
+		CHECK(pcm_host_echo_observe_timing(&echo, mode, received, cleaned, &changed) == PCM_HOST_ECHO_OK &&
+		      echo.reference.write == legacy.reference.write &&
+		      echo.reference.fill == legacy.reference.fill &&
+		      memcmp(echo.reference.samples, legacy.reference.samples,
+			     sizeof(echo.reference.samples)) == 0 &&
+		      memcmp(echo.coefficients, legacy.coefficients, sizeof(echo.coefficients)) == 0 &&
+		      memcmp(echo.retained_coefficients, legacy.retained_coefficients,
+			     sizeof(echo.retained_coefficients)) == 0,
+		      "timing observation clocked TX or changed coefficients at %zu", i);
+		uint32_t after = retained ? echo.retained_delay_samples : echo.window_delay_samples;
+		CHECK((int64_t)after - before == changed,
+		      "accepted delay change was not reported at %zu", i);
+		if (changed) {
+			CHECK(changed == shift, "unexpected delay change %d", changed);
+			events++;
+		}
+		CHECK(pcm_host_echo_advance_reference(&echo, mode, received, transmit_sample(i)) == PCM_HOST_ECHO_OK &&
+		      pcm_host_echo_advance_predicted(&legacy, mode, received, old_cleaned,
+			      transmit_sample(i)) == PCM_HOST_ECHO_OK &&
+		      memcmp(&echo, &legacy, sizeof(echo)) == 0,
+		      "explicit observation/reference sequence diverged at %zu (mode %u)", i, mode);
+	}
+	CHECK(events == ((mode == PCM_HOST_ECHO_FILTER || mode == PCM_HOST_ECHO_FILTER_DATA) && shift ? 1u : 0u),
+	      "timing event missing or repeated: mode %u events %u", mode, events);
+	/* A new observation view must not retain the preceding view's evidence. */
+	echo.filter_suspended = true;
+	memcpy(&legacy, &echo, sizeof(echo));
+	memset(&legacy.timing, 0, sizeof(legacy.timing));
+	CHECK(pcm_host_echo_reset_timing(&echo) == PCM_HOST_ECHO_OK &&
+	      pcm_host_echo_reset_timing(&echo) == PCM_HOST_ECHO_OK &&
+	      memcmp(&echo, &legacy, sizeof(echo)) == 0,
+	      "timing reset changed filters, confidence or reference history");
+	return true;
+}
+
 int main(void)
 {
 	for (uint32_t trial = 0; trial < 4; ++trial)
 		if (!test_unrelated_input_does_not_train(
 			UINT32_C(0x31415927) + trial * 7919u, trial % 2 ? 30000 : 1000))
 			return 1;
-	if (!test_contracts() || !test_explicit_retime() || !test_training_quiet_boundary() ||
+	if (!test_observation_contracts() ||
+	    !test_explicit_observation(PCM_HOST_ECHO_BYPASS, false, 0) ||
+	    !test_explicit_observation(PCM_HOST_ECHO_TRAIN, false, 0) ||
+	    !test_explicit_observation(PCM_HOST_ECHO_FILTER, false, 98) ||
+	    !test_explicit_observation(PCM_HOST_ECHO_FILTER_DATA, false, -98) ||
+	    !test_explicit_observation(PCM_HOST_ECHO_FILTER, true, 98) ||
+	    !test_explicit_observation(PCM_HOST_ECHO_FILTER_DATA, true, -98) ||
+	    !test_contracts() || !test_explicit_retime() || !test_training_quiet_boundary() ||
 	    !test_half_sample_prediction() ||
 	    !test_prediction_numeric_bounds() ||
 	    !test_prediction_energy_saturation() ||
