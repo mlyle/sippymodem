@@ -6,6 +6,37 @@
 #include <stdio.h>
 #include <string.h>
 
+static void test_symmetric_moments(void)
+{
+	enum { COLUMNS = 14, MOMENTS = COLUMNS * (COLUMNS + 1) / 2 };
+	double packed[MOMENTS] = { 0 }, dense[COLUMNS][COLUMNS] = { { 0 } };
+	bool used[MOMENTS] = { false };
+
+	for (unsigned i = 0; i < COLUMNS; i++)
+		for (unsigned j = 0; j <= i; j++) {
+			unsigned index = gram_moment_index(i, j);
+			assert(index < MOMENTS && !used[index]);
+			used[index] = true;
+			assert(gram_moment_index(j, i) == index);
+		}
+	for (unsigned i = 0; i < MOMENTS; i++) assert(used[i]);
+	/* Include DC, correlated delayed features, both signs and full-scale
+	 * products. Reconstruction must preserve every dense normal equation. */
+	for (unsigned n = 0; n < 1024; n++) {
+		double row[COLUMNS];
+		for (unsigned i = 0; i + 1 < COLUMNS; i++)
+			row[i] = (int)((n * 12347u + i * 31337u) & 65535u) - 32768;
+		row[COLUMNS - 1] = 1.;
+		for (unsigned i = 0; i < COLUMNS; i++) {
+			for (unsigned j = 0; j < COLUMNS; j++) dense[i][j] += row[i] * row[j];
+			for (unsigned j = 0; j <= i; j++) packed[gram_moment_index(i, j)] += row[i] * row[j];
+		}
+	}
+	for (unsigned i = 0; i < COLUMNS; i++)
+		for (unsigned j = 0; j < COLUMNS; j++)
+			assert(packed[gram_moment_index(i, j)] == dense[i][j]);
+}
+
 /* Fit a polynomial from independent samples, with widely different column
  * units. Truncating the degree exercises every supported system size. */
 static void test_polynomial(unsigned count)
@@ -105,6 +136,7 @@ static void test_elimination(void)
 
 int main(void)
 {
+	test_symmetric_moments();
 	for (unsigned count = 1; count <= 4; count++) test_polynomial(count);
 	test_rejection();
 	test_elimination();

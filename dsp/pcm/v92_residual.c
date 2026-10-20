@@ -14,6 +14,7 @@ enum {
 	 * a fit bound, not an increase to the held-out residual/bit limits. */
 	MAX_OFFSET = 512,
 	MOMENT_COLUMNS = V92_RESIDUAL_LAGS + 2,
+	MOMENTS = MOMENT_COLUMNS * (MOMENT_COLUMNS + 1) / 2,
 };
 _Static_assert((unsigned)START >= (unsigned)V92_RESIDUAL_LAGS, "acquisition must include delayed predictors");
 
@@ -61,8 +62,8 @@ bool v92_residual_fit(struct v92_residual *filter,
 			return false;
 	/* Every candidate uses columns from the same acquisition window. These
 	 * integer products and 120-sample sums are exact in binary64, so sharing
-	 * them preserves each candidate's original normal equations. */
-	double moments[MOMENT_COLUMNS][MOMENT_COLUMNS] = { { 0 } };
+	 * the lower triangle preserves each candidate's normal equations. */
+	double moments[MOMENTS] = { 0 };
 	double cross[MOMENT_COLUMNS] = { 0 };
 	for (unsigned n = START; n < SAMPLES; n++) {
 		double row[MOMENT_COLUMNS];
@@ -71,8 +72,9 @@ bool v92_residual_fit(struct v92_residual *filter,
 		row[MOMENT_COLUMNS - 1] = 1.;
 		for (unsigned j = 0; j < MOMENT_COLUMNS; j++) {
 			cross[j] += row[j] * raw[n];
-			for (unsigned k = 0; k < MOMENT_COLUMNS; k++)
-				moments[j][k] += row[j] * row[k];
+			unsigned first = gram_moment_index(j, 0);
+			for (unsigned k = 0; k <= j; k++)
+				moments[first + k] += row[j] * row[k];
 		}
 	}
 	struct v92_residual best = { 0 };
@@ -90,7 +92,7 @@ bool v92_residual_fit(struct v92_residual *filter,
 			for (unsigned j = 0; j < count; j++) {
 				rhs[j] = cross[columns[j]];
 				for (unsigned k = 0; k < count; k++)
-					gram[j][k] = moments[columns[j]][columns[k]];
+					gram[j][k] = moments[gram_moment_index(columns[j], columns[k])];
 			}
 			if (!gram_fit(gram, rhs, count, fitted)) continue;
 			/* Constrain the main gain, then refit the other coefficients at

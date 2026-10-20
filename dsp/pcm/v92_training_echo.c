@@ -16,16 +16,6 @@ enum {
 	FIT_END = FIT_START + FIT_SAMPLES,
 };
 
-static unsigned moment_index(unsigned a, unsigned b)
-{
-	if (a < b) {
-		unsigned swap = a;
-		a = b;
-		b = swap;
-	}
-	return a * (a + 1u) / 2u + b;
-}
-
 static bool clear(struct v92_training_echo *timing, struct pcm_host_echo *echo)
 {
 	if (timing->view && pcm_host_echo_reset_timing(echo) != PCM_HOST_ECHO_OK)
@@ -58,7 +48,7 @@ static bool fit(const struct v92_training_echo *timing, const unsigned *lags,
 		cross[i] = timing->cross[a];
 		for (unsigned j = 0; j <= count; ++j) {
 			unsigned b = j == count ? V92_TRAINING_ECHO_LAGS : lags[j];
-			normal[i][j] = timing->normal[moment_index(a, b)];
+			normal[i][j] = timing->normal[gram_moment_index(a, b)];
 		}
 	}
 	if (!gram_fit(normal, cross, count + 1u, coefficient))
@@ -114,7 +104,7 @@ static void collect(struct v92_training_echo *timing, int16_t received)
 	 * exact in binary64. Symmetry therefore loses neither bits nor order. */
 	for (unsigned i = 0; i < V92_TRAINING_ECHO_COLUMNS; ++i) {
 		timing->cross[i] += feature[i] * received;
-		unsigned row = i * (i + 1u) / 2u;
+		unsigned row = gram_moment_index(i, 0);
 		for (unsigned j = 0; j <= i; ++j)
 			timing->normal[row + j] += feature[i] * feature[j];
 	}

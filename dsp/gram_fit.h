@@ -9,6 +9,19 @@
 
 enum { GRAM_FIT_COLUMNS = 4 };
 
+/* Row-packed lower triangle of a symmetric Gram matrix. Owners bound their
+ * feature count and allocate columns * (columns + 1) / 2 moments. Keep each
+ * product sum in sample order, then use either index order when fitting. */
+static inline unsigned gram_moment_index(unsigned a, unsigned b)
+{
+	if (a < b) {
+		unsigned swap = a;
+		a = b;
+		b = swap;
+	}
+	return a * (a + 1u) / 2u + b;
+}
+
 /* Reduce an owned augmented Gram matrix in place. Keep the owner's pivot
  * floor and arithmetic order; normalization and fit admission stay outside.
  * The right-hand side is column count. Failure leaves partially reduced
