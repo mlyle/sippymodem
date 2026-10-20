@@ -1901,18 +1901,15 @@ int modem_ec_resume_after_retrain(struct modem *m)
 				lapm_originator_preamble_flags(m);
 		return 0;
 	}
-	/* A physical interruption loses HDLC framing and leaves the peer's
-	 * receive sequence uncertain only while flow control or unacknowledged
-	 * information or a status enquiry remains. A clean retained window can
-	 * continue directly. */
+	/* Probe every established link after the physical interruption, including
+	 * an empty retained window. Incoming commands can refresh T403 without
+	 * confirming the outgoing direction; retain ordinary T401/N400 recovery. */
 	/* Continue an outstanding enquiry under its retained T401/N400. */
 	if (l->retrain_poll || l->rtx_count) {
 		l->peer_busy = 1;
 		l->retrain_poll = 1;
 		return 0;
 	}
-	if (!l->busy && !l->peer_busy && l->va == l->vs && !l->rtx_count)
-		return 0;
 	if (tx_status(l, l->cmd_addr, 1) != 0)
 		return -1;
 	l->peer_busy = 1;

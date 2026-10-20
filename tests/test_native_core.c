@@ -8072,6 +8072,104 @@ static bool test_lapm_acknowledgement_progress(void)
 	return true;
 }
 
+static bool test_lapm_post_retrain_enquiry(void)
+{
+	struct modem_driver driver = {
+		.name = "Post-retrain enquiry", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	for (unsigned caller = 0; caller < 2; ++caller)
+	for (unsigned heal = 0; heal < 2; ++heal)
+	for (unsigned recovered = 0; recovered < 2; ++recovered) {
+		struct modem *m = create_compat_modem(&driver, driver.name);
+		uint8_t wire[] = { 0, 0x0f, 0 };
+		frame_t incoming = { .buf = wire, .count = 2 };
+		frame_t *outgoing;
+		CHECK(m != NULL, "enquiry allocation failed");
+		m->caller = caller;
+		m->cfg.ec = 1;
+		m->cfg.comp = 0;
+		m->rx_rate = m->tx_rate = 4800;
+		m->state = 4;
+		CHECK(modem_ec_init(m) == 0, "enquiry initialization failed");
+		m->caller = 0;
+		modem_update_status(m, STATUS_PACK_LINK);
+		m->caller = caller;
+		struct lapm_state *l = &m->ec.lapm;
+		wire[0] = l->cmd_addr;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		outgoing = m->packer.hdlc.get_tx_frame(l);
+		CHECK(outgoing != NULL && outgoing->buf[1] == 0x7f, "fixture lacks SABME");
+		m->packer.hdlc.tx_complete(l, outgoing);
+		wire[1] = 0x73;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(l->state == 2 && m->state == 5, "fixture did not connect");
+		l->stalled_retrain = recovered;
+		void (*idle_timeout)(struct modem *) = m->bit_timer_func;
+		CHECK(modem_ec_resume_after_retrain(m) == 0 && l->retrain_poll &&
+		      l->rtx_count == 1 && l->peer_busy && l->va == l->vs &&
+		      m->bit_timer_func != idle_timeout,
+		      "clean post-retrain link did not verify outgoing reception");
+		outgoing = m->packer.hdlc.get_tx_frame(l);
+		CHECK(outgoing != NULL && outgoing->buf[0] == l->cmd_addr &&
+		      outgoing->buf[1] == 1 && outgoing->buf[2] == 1, "enquiry lacks RR P=1");
+		m->packer.hdlc.tx_complete(l, outgoing);
+		struct lapm_host_read source = { .count = 1 };
+		m->dev_data = &source;
+		m->get_chars = counted_lapm_source;
+		CHECK(m->packer.hdlc.get_tx_frame(l) == NULL && source.calls == 0,
+		      "post-retrain enquiry dequeued new payload");
+		wire[0] = l->rsp_addr;
+		wire[1] = 1;
+		wire[2] = 1;
+		incoming.count = 3;
+		m->bit_timer /= 2;
+		int remaining = m->bit_timer;
+		for (unsigned repeat = 0; repeat < 4; ++repeat) {
+			m->packer.hdlc.rx_complete(l, &incoming);
+			CHECK(m->bit_timer == remaining && l->rtx_count == 1 &&
+			      !l->peer_busy && !modem_ec_take_retrain_request(m),
+			      "peer poll postponed our unanswered enquiry");
+			outgoing = m->packer.hdlc.get_tx_frame(l);
+			CHECK(outgoing != NULL && outgoing->buf[0] == l->rsp_addr &&
+			      outgoing->buf[1] == 1 && outgoing->buf[2] == 1,
+			      "peer poll lost its final response");
+			m->packer.hdlc.tx_complete(l, outgoing);
+		}
+		m->bit_timer_func(m);
+		CHECK(l->rtx_count == 2 && !modem_ec_take_retrain_request(m),
+		      "post-retrain enquiry requested another physical recovery");
+		remaining = m->bit_timer;
+		CHECK(modem_ec_resume_after_retrain(m) == 0 && l->rtx_count == 2 &&
+		      m->bit_timer == remaining && l->stalled_retrain == (bool)recovered &&
+		      !modem_ec_take_retrain_request(m), "resumption renewed the recovery budget");
+		if (heal) {
+			wire[0] = l->cmd_addr;
+			m->packer.hdlc.rx_complete(l, &incoming);
+			CHECK(!l->rtx_count && !l->retrain_poll && !l->stalled_retrain &&
+			      m->bit_timer_func == idle_timeout, "final response did not restore supervision");
+			while ((outgoing = m->packer.hdlc.get_tx_frame(l)) != NULL) {
+				m->packer.hdlc.tx_complete(l, outgoing);
+				if (source.calls) break;
+			}
+			CHECK(source.calls == 1 && l->vs == 1, "healed link did not resume payload");
+		} else {
+			m->get_chars = NULL;
+			for (unsigned retry = 0; retry < 6 && l->state == 2; ++retry) {
+				while ((outgoing = m->packer.hdlc.get_tx_frame(l)) != NULL)
+					m->packer.hdlc.tx_complete(l, outgoing);
+				m->bit_timer_func(m);
+				CHECK(!modem_ec_take_retrain_request(m), "persistent failure requested physical recovery");
+			}
+			CHECK(l->state == 0 && !m->bit_timer && source.calls == 0,
+			      "unanswered enquiry exceeded ordinary N400");
+		}
+		CHECK(modem_stop_now(m) == 0, "enquiry cleanup failed");
+		modem_delete(m);
+	}
+	return true;
+}
+
 static bool test_lapm_retrain_recovery_budget(void)
 {
 	struct modem_driver driver = {
@@ -8751,12 +8849,23 @@ static bool test_lapm_retrain_preserves_link_state(void)
 	modem->unpack.bit = 5;
 	modem->retrain_pending = 1;
 	modem_dp_reconnected(modem);
-	CHECK(modem->retrain_pending == 0 && !lapm->peer_busy &&
-		      !lapm->retrain_poll && lapm->rtx_count == 0 &&
+	CHECK(modem->retrain_pending == 0 && lapm->peer_busy &&
+		      lapm->retrain_poll && lapm->rtx_count == 1 &&
 		      modem->bit_timer > 0 && lapm->vs == 5 && lapm->va == 5 &&
 		      lapm->vr == 6 && modem->pack.bit == 0 &&
 		      modem->unpack.bit == 0,
-	      "clean LAPM retrain invented a recovery poll");
+	      "clean LAPM retrain did not verify outgoing reception");
+	outgoing = modem->packer.hdlc.get_tx_frame(lapm);
+	CHECK(outgoing != NULL && outgoing->buf[0] == lapm->cmd_addr &&
+	      outgoing->buf[1] == FRAME_S_RR && outgoing->buf[2] == 13,
+	      "clean LAPM retrain did not emit its status enquiry");
+	modem->packer.hdlc.tx_complete(lapm, outgoing);
+	response[0] = lapm->cmd_addr;
+	response[1] = FRAME_S_RR;
+	response[2] = (uint8_t)((lapm->va << 1) | 1);
+	modem->packer.hdlc.rx_complete(lapm, &incoming);
+	CHECK(!lapm->retrain_poll && !lapm->rtx_count && !lapm->peer_busy,
+	      "clean LAPM retrain did not accept its final ready response");
 
 	memset(&lapm_source, 0, sizeof(lapm_source));
 	lapm_source.data = retained_payload;
@@ -10585,6 +10694,7 @@ int main(void)
 		{ "LAPM supervisory command polls", test_lapm_supervisory_polls },
 		{ "LAPM peer-busy timer", test_lapm_peer_busy_timer },
 		{ "LAPM idle supervision", test_lapm_idle_supervision },
+		{ "LAPM post-retrain enquiry", test_lapm_post_retrain_enquiry },
 		{ "LAPM retrain recovery budget", test_lapm_retrain_recovery_budget },
 		{ "LAPM acknowledgement progress", test_lapm_acknowledgement_progress },
 		{ "bounded LAPM stalled retrain", test_lapm_stalled_retrain },
