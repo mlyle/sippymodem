@@ -45,8 +45,9 @@ struct agc_config {
 	int16_t acquisition_threshold;
 	int16_t tracking_threshold;
 	uint16_t block_samples;
+	/* 1..32767; the input weight is the Q15 complement (32768 - history).
+	 * Keep only the independent parameter used by smooth_q15_s16. */
 	int16_t history_weight_q15;
-	int16_t input_weight_q15;
 };
 
 /*

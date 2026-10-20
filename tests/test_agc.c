@@ -19,7 +19,6 @@ static const struct agc_config TEST_CONFIG = {
 	.tracking_threshold = 0x0050,
 	.block_samples = AGC_TEST_SAMPLES,
 	.history_weight_q15 = 0x4000,
-	.input_weight_q15 = 0x4000,
 };
 
 static uint64_t hash_i16(const int16_t *samples, size_t count)
@@ -179,6 +178,36 @@ static bool test_exact_arithmetic(void)
 	return true;
 }
 
+static bool test_smoothing_weight_contract(void)
+{
+	static const struct {
+		int16_t history_weight;
+		int16_t expected_level;
+	} cases[] = { { 1, 4251 }, { 16384, 4095 }, { 32767, 3938 } };
+	int16_t input[AGC_TEST_SAMPLES], output[AGC_TEST_SAMPLES];
+	struct agc_config config = TEST_CONFIG;
+	struct agc control, saved;
+
+	for (size_t i = 0; i < ARRAY_LENGTH(input); ++i)
+		input[i] = 4252;
+	for (size_t i = 0; i < ARRAY_LENGTH(cases); ++i) {
+		config.history_weight_q15 = cases[i].history_weight;
+		CHECK(agc_init(&control, &config) == AGC_OK, "smoothing endpoint rejected");
+		control.smoothed_level = 3939;
+		CHECK(agc_process(&control, input, ARRAY_LENGTH(input), output) == AGC_OK &&
+			control.smoothed_level == cases[i].expected_level,
+			"smoothing weight %d changed separate-product rounding", cases[i].history_weight);
+	}
+	saved = control;
+	for (int weight = -1; weight <= 0; ++weight) {
+		config.history_weight_q15 = (int16_t)weight;
+		CHECK(agc_init(&control, &config) == AGC_INVALID_ARGUMENT &&
+			memcmp(&control, &saved, sizeof(control)) == 0,
+			"invalid smoothing weight changed the owner");
+	}
+	return true;
+}
+
 static bool test_lifecycle_and_contracts(void)
 {
 	struct agc control;
@@ -196,7 +225,7 @@ static bool test_lifecycle_and_contracts(void)
 		input[index] = 4252;
 	memset(&control, 0x5a, sizeof(control));
 	saved = control;
-	invalid.input_weight_q15--;
+	invalid.history_weight_q15 = 0;
 	CHECK(agc_init(&control, &invalid) == AGC_INVALID_ARGUMENT &&
 	      memcmp(&control, &saved, sizeof(control)) == 0 &&
 	      agc_init(NULL, &TEST_CONFIG) == AGC_INVALID_ARGUMENT,
@@ -328,6 +357,7 @@ int main(void)
 {
 	if (!test_q10_sample_scaling() ||
 	    !test_fixed_square_root_profile() || !test_exact_arithmetic() ||
+	    !test_smoothing_weight_contract() ||
 	    !test_lifecycle_and_contracts() ||
 	    !test_level_measurement_contract())
 		return 1;

@@ -16,7 +16,6 @@ static const struct agc_config V32_RECEIVE_GAIN = {
 	.tracking_threshold = 0x0050,
 	.block_samples = V32_LINE_RECEIVER_EPOCH_SAMPLES,
 	.history_weight_q15 = 0x4000,
-	.input_weight_q15 = 0x4000,
 };
 
 bool v32_line_receiver_is_valid(

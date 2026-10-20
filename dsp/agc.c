@@ -9,7 +9,6 @@
 
 enum {
 	AGC_ENERGY_SCALE_Q15 = 0x038e,
-	AGC_WEIGHT_TOTAL_Q15 = 0x8000,
 };
 
 enum agc_result agc_measure_level_s16(
@@ -36,11 +35,7 @@ static bool config_is_valid(const struct agc_config *config)
 	       config->tracking_threshold >=
 		       config->acquisition_threshold &&
 	       config->block_samples != 0 &&
-	       config->history_weight_q15 >= 0 &&
-	       config->input_weight_q15 >= 0 &&
-	       (uint32_t)config->history_weight_q15 +
-		       (uint32_t)config->input_weight_q15 ==
-		       AGC_WEIGHT_TOTAL_Q15;
+	       config->history_weight_q15 > 0;
 }
 
 bool agc_is_valid(const struct agc *control)
