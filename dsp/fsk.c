@@ -138,7 +138,6 @@ enum fsk_result fsk_transmitter_sample(
 	int16_t *sample, bool *bit_consumed)
 {
 	uint64_t period_units;
-	uint64_t units_remaining;
 
 	if (transmitter == NULL || sample == NULL || bit_consumed == NULL ||
 	    !symbol_rate_is_valid(&transmitter->channel) ||
@@ -157,17 +156,11 @@ enum fsk_result fsk_transmitter_sample(
 	    FSK_OK)
 		return FSK_INVALID_ARGUMENT;
 
-	units_remaining = period_units - transmitter->symbol_accumulator;
 	*bit_consumed = false;
-	if (transmitter->channel.symbol_rate_numerator >= units_remaining) {
-		transmitter->symbol_accumulator =
-			transmitter->channel.symbol_rate_numerator -
-			units_remaining;
+	if (phase_advance_u64(&transmitter->symbol_accumulator, period_units,
+		transmitter->channel.symbol_rate_numerator, NULL)) {
 		transmitter->holding_bit = false;
 		*bit_consumed = true;
-	} else {
-		transmitter->symbol_accumulator +=
-			transmitter->channel.symbol_rate_numerator;
 	}
 	return FSK_OK;
 }

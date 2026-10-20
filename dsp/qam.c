@@ -280,15 +280,9 @@ static void advance_time(struct qam_modulator *modulator)
 		}
 	}
 	modulator->active_count = retained;
-	if (step >= modulator->symbol_period_units -
-			    modulator->symbol_phase_units) {
-		modulator->symbol_phase_units =
-			step - (modulator->symbol_period_units -
-				modulator->symbol_phase_units);
+	if (phase_advance_u64(&modulator->symbol_phase_units,
+		modulator->symbol_period_units, step, NULL))
 		modulator->needs_symbol = true;
-	} else {
-		modulator->symbol_phase_units += step;
-	}
 	modulator->carrier_phase += modulator->carrier_phase_step;
 }
 
@@ -753,22 +747,6 @@ static void matched_filter_sample(
 	}
 }
 
-static bool advance_symbol_phase(
-	uint64_t *phase, uint64_t period, uint64_t step,
-	double *crossing_fraction)
-{
-	uint64_t remaining = period - *phase;
-
-	if (step < remaining) {
-		*phase += step;
-		return false;
-	}
-	*phase = step - remaining;
-	if (crossing_fraction != NULL)
-		*crossing_fraction = (double)remaining / (double)step;
-	return true;
-}
-
 static double interpolate(
 	double previous, double current, double fraction)
 {
@@ -1133,7 +1111,7 @@ static void acquire_symbol_timing(
 			&demodulator->timing[index];
 		double fraction = 0.0;
 
-		if (advance_symbol_phase(
+		if (phase_advance_u64(
 			    &candidate->phase_units,
 			    demodulator->symbol_period_units,
 			    demodulator->channel.symbol_rate_numerator,
@@ -1223,7 +1201,7 @@ static enum qam_result recover_symbol(
 		if (demodulator->recovery_phase_units == 0u)
 			reset_recovery_phase(demodulator);
 	}
-	if (advance_symbol_phase(
+	if (phase_advance_u64(
 		    &demodulator->locked_phase_units,
 		    demodulator->symbol_period_units,
 		    recovery_step, &fraction)) {

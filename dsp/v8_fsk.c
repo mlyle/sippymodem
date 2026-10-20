@@ -6,6 +6,7 @@
 #include "fir.h"
 #include "integer_math.h"
 #include "memory_region.h"
+#include "phase.h"
 #include "v21.h"
 
 enum {
@@ -175,7 +176,7 @@ enum v8_fsk_result v8_fsk_transmit_sample(
 {
 	struct v8_fsk_transmitter *transmitter;
 	uint16_t step;
-	uint32_t bit_progress;
+	uint64_t bit_progress;
 	int16_t generated;
 	bool consumed = false;
 
@@ -204,12 +205,11 @@ enum v8_fsk_result v8_fsk_transmit_sample(
 		transmitter->gain, 14);
 	generated = filter_sample(
 		transmitter, transmit_filter(fsk->role), generated);
-	bit_progress = (uint32_t)transmitter->bit_progress + V8_FSK_BIT_RATE;
-	if (bit_progress >= V8_FSK_SAMPLE_RATE) {
-		bit_progress -= V8_FSK_SAMPLE_RATE;
+	bit_progress = transmitter->bit_progress;
+	consumed = phase_advance_u64(
+		&bit_progress, V8_FSK_SAMPLE_RATE, V8_FSK_BIT_RATE, NULL);
+	if (consumed)
 		transmitter->holding_bit = false;
-		consumed = true;
-	}
 	transmitter->bit_progress = (uint16_t)bit_progress;
 	*sample = generated;
 	*bit_consumed = consumed;

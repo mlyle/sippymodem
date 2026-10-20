@@ -4,7 +4,30 @@
 #define DSP_PHASE_H
 
 #include <math.h>
+#include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
+
+/* Advance a rational sample/symbol phase by at most one period. The owner
+ * supplies period > 0, *phase < period and step <= period (zero is allowed).
+ * Subtract before adding so even full-width periods cannot overflow. On a
+ * crossing, optionally report its fraction of this step; otherwise leave
+ * that output unchanged. State and optional output must be separate. */
+static inline bool phase_advance_u64(
+	uint64_t *phase, uint64_t period, uint64_t step,
+	double *crossing_fraction)
+{
+	uint64_t remaining = period - *phase;
+
+	if (step < remaining) {
+		*phase += step;
+		return false;
+	}
+	*phase = step - remaining;
+	if (crossing_fraction != NULL)
+		*crossing_fraction = (double)remaining / (double)step;
+	return true;
+}
 
 /* A full turn spans every value of an unsigned 32-bit accumulator. */
 static inline uint32_t phase_step_u32(
