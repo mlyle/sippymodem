@@ -315,7 +315,15 @@ static bool fit_residual(struct v92_upstream_model *model, struct v92_upstream_d
 		int32_t points[V92_OBSERVATION_TRAINING];
 		double gain, score;
 		for (unsigned i = 0; i < V92_OBSERVATION_TRAINING; i++) points[i] = model->u[i];
-		if (v92_residual_fit(&candidate, points, model->raw, line->calibration.minimum,
+		/* A constant point translation has the same physical fit after a
+		 * DC shift. Use the known B1 coding history to resolve that exact
+		 * ambiguity, rather than roundoff between equivalent fit scores.
+		 * Independent later B1 decisions still qualify the selected fit. */
+		if (!model->seed.residual.active && isfinite(best) &&
+		    v92_residual_translate(&line->residual, model->x, points,
+			model->raw, line->calibration.gain)) {
+			selected = true;
+		} else if (v92_residual_fit(&candidate, points, model->raw, line->calibration.minimum,
 		    line->calibration.maximum, &gain, &score) && score < best) {
 			line->residual = candidate;
 			line->calibration.gain = gain;

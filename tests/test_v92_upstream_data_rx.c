@@ -3188,8 +3188,133 @@ static bool test_residual_acquisition(unsigned prefix, bool damaged, int transie
 	return true;
 }
 
+static bool test_residual_translation(void)
+{
+	enum { COUNT = V92_B1U_ACQUISITION_FRAMES * V92_PCM_MAPPING_FRAME_SYMBOLS };
+	int32_t points[COUNT], shifted[COUNT], raw[COUNT];
+	struct v92_residual fitted;
+	double gain, score;
+	for (unsigned i = 0; i < COUNT; ++i) {
+		points[i] = (int32_t)((i * 7919u) % 401u) * 4 - 800;
+		raw[i] = points[i] / 4 + 128;
+	}
+	CHECK(v92_residual_fit(&fitted, points, raw, 4., 4., &gain, &score),
+	      "translation source fit failed");
+	for (int shift = -512; shift <= 512; shift += 512) {
+		struct v92_residual translated = fitted;
+		for (unsigned i = 0; i < COUNT; ++i) shifted[i] = points[i] + shift;
+		CHECK(v92_residual_translate(&translated, points, shifted, raw, gain),
+		      "exact translated fit rejected");
+		double response = 1.;
+		for (unsigned i = 0; i < fitted.count; ++i) response += fitted.coefficient[i];
+		CHECK(translated.count == fitted.count &&
+		      !memcmp(translated.delay, fitted.delay, sizeof(fitted.delay)) &&
+		      !memcmp(translated.coefficient, fitted.coefficient, sizeof(fitted.coefficient)) &&
+		      fabs(translated.offset - (fitted.offset - shift * response / gain)) < 1e-12,
+		      "translation changed the response or failed to absorb the DC shift");
+		for (unsigned i = 0; i < V92_RESIDUAL_LAGS; ++i)
+			CHECK(translated.history[i] == raw[COUNT - V92_RESIDUAL_LAGS + i] - translated.offset,
+			      "translation retained the wrong raw history");
+	}
+	for (unsigned fault = 0; fault < 5; ++fault) {
+		struct v92_residual next = fitted, saved;
+		for (unsigned i = 0; i < COUNT; ++i) shifted[i] = points[i] + 512;
+		double trial_gain = gain;
+		if (fault == 0) shifted[COUNT - 1]++;
+		else if (fault == 1)
+			shifted[COUNT - (V92_PCM_RX_DELAY_FRAMES + 1) *
+				V92_PCM_MAPPING_FRAME_SYMBOLS]++;
+		else if (fault == 2) trial_gain = NAN;
+		else if (fault == 3) next.cursor = 1;
+		else for (unsigned i = 0; i < COUNT; ++i) shifted[i] = points[i] + 8192;
+		saved = next;
+		CHECK(!v92_residual_translate(&next, points, shifted, raw, trial_gain) &&
+		      !memcmp(&next, &saved, sizeof(next)),
+		      "invalid translation changed the fit: fault %u", fault);
+	}
+	CHECK(!v92_residual_translate(NULL, points, shifted, raw, gain) &&
+	      !v92_residual_translate(&fitted, NULL, shifted, raw, gain) &&
+	      !v92_residual_translate(&fitted, points, NULL, raw, gain) &&
+	      !v92_residual_translate(&fitted, points, shifted, NULL, gain),
+	      "translation accepted missing inputs");
+	return true;
+}
+
+/* Gain four and DC 128 shift each observation by one 512-unit point step.
+ * Equivalent physical fits must not retain the wrong coding history.
+ * The later half still decodes independently, including a deliberately
+ * wrong source bit and the payload following B1u. */
+static bool test_translated_acquisition(bool damaged)
+{
+	struct v92_cpd_parameters cpd;
+	struct v92_pcm_mapping mapping;
+	struct v92_pcm_frame_tx tx;
+	struct v92_pcm_frame_rx decoder;
+	struct v92_upstream_model model = { .residual_acquiring = true };
+	struct v92_upstream_data_line line = {
+		.plan.observation = V92_PCM_FRAME_CONSTELLATION,
+		.calibration = { .gain = 4., .minimum = 4., .maximum = 4. },
+		.host.gain = 1., .polarity = 1,
+	};
+	CHECK(v92_cpd_direct_init(&cpd, G711_LAW_PCMU, 9, false) == V92_CPD_OK,
+	      "translated acquisition mapping failed");
+	cpd.constellation[0].count = 32;
+	for (unsigned i = 0; i < 32; ++i)
+		cpd.constellation[0].positive_linear[i] = (int16_t)((2 * i + 1) * 256);
+	for (unsigned i = 0; i < V92_CPD_MODULUS_COUNT; ++i)
+		cpd.modulus[i] = i % 4 == 3 ? 12 : 24;
+	CHECK(v92_pcm_mapping_init(&mapping, G711_LAW_PCMU, &cpd) == V92_PCM_MAPPING_OK &&
+	      v92_pcm_frame_tx_init(&tx, &mapping) == V92_PCM_FRAME_OK &&
+	      v92_pcm_frame_rx_init_constellation(&decoder, &mapping) == V92_PCM_FRAME_OK,
+	      "translated acquisition initialization failed");
+	unsigned errors = 0, payload_frames = 0;
+	for (unsigned frame = 0; frame < V92_B1U_FRAMES + 20; ++frame) {
+		uint8_t bits[V92_PCM_MAPPING_MAX_BITS], decoded[V92_PCM_MAPPING_MAX_BITS];
+		struct v92_pcm_frame encoded;
+		struct v92_pcm_frame_decision decision;
+		if (frame < V92_B1U_FRAMES) memset(bits, 1, mapping.data_bits_per_frame);
+		else payload(bits, mapping.data_bits_per_frame, frame - V92_B1U_FRAMES);
+		if (damaged && frame == 40) bits[7] = 0;
+		CHECK(v92_pcm_frame_encode(&tx, bits, mapping.data_bits_per_frame, &encoded) == V92_PCM_FRAME_OK,
+		      "translated acquisition source failed");
+		for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i) {
+			int32_t raw = encoded.u[i] / 4 + 128, correction;
+			CHECK(v92_residual_sample(&line.residual, raw, 1, true, &correction),
+			      "translated residual sample failed");
+			line.raw[i] = raw;
+			line.received[i] = line.wire_known[i] = true;
+			line.samples[i] = (int16_t)((raw - correction) * line.calibration.gain);
+		}
+		CHECK(v92_pcm_frame_decode(&decoder, line.samples, frame < V92_B1U_FRAMES,
+		      decoded, mapping.data_bits_per_frame, &decision) == V92_PCM_FRAME_OK,
+		      "translated acquisition decode failed at %u", frame);
+		v92_upstream_model_observe(&model, &decision, &line);
+		v92_upstream_model_fit(&model, &line, &decoder);
+		if (frame == V92_B1U_ACQUISITION_FRAMES - 1)
+			CHECK(line.residual.active, "translated acquisition did not fit the channel");
+		if (decision.bits_ready && frame >= V92_PCM_RX_DELAY_FRAMES + V92_B1U_ACQUISITION_FRAMES) {
+			unsigned source = frame - V92_PCM_RX_DELAY_FRAMES;
+			if (source < V92_B1U_FRAMES) {
+				for (unsigned i = 0; i < mapping.data_bits_per_frame; ++i)
+					errors += decoded[i] != 1;
+			} else {
+				payload(bits, mapping.data_bits_per_frame, source - V92_B1U_FRAMES);
+				CHECK(!decision.ambiguous && !memcmp(decoded, bits, mapping.data_bits_per_frame),
+				      "translated fit corrupted payload");
+				payload_frames++;
+			}
+		}
+		line.received_frames++;
+	}
+	CHECK(errors == (unsigned)damaged && payload_frames == 10,
+	      "translated fit missed independent B1 or payload: %u/%u", errors, payload_frames);
+	return true;
+}
+
 int main(void)
 {
+	if (!test_residual_translation() || !test_translated_acquisition(false) ||
+	    !test_translated_acquisition(true)) return 1;
 	if (!test_affine_data()) return 1;
 	for (unsigned prefix = 0; prefix < 2; prefix++)
 		for (unsigned damaged = 0; damaged < 2; damaged++)

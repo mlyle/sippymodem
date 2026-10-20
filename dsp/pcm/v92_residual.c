@@ -134,6 +134,28 @@ bool v92_residual_fit(struct v92_residual *filter,
 	return true;
 }
 
+bool v92_residual_translate(struct v92_residual *filter,
+	const int32_t *original, const int32_t *translated, const int32_t *raw,
+	double gain)
+{
+	if (!filter || !original || !translated || !raw ||
+	    !v92_residual_is_valid(filter) || !filter->active || filter->cursor ||
+	    !isfinite(gain) || gain <= 0.) return false;
+	const unsigned start = START - V92_RESIDUAL_LAGS;
+	int64_t shift = (int64_t)translated[start] - original[start];
+	for (unsigned i = start + 1u; i < SAMPLES; ++i)
+		if ((int64_t)translated[i] - original[i] != shift) return false;
+	struct v92_residual next = *filter;
+	double response = 1.;
+	for (unsigned i = 0; i < next.count; ++i) response += next.coefficient[i];
+	next.offset -= shift * response / gain;
+	for (unsigned i = 0; i < V92_RESIDUAL_LAGS; ++i)
+		next.history[i] = raw[SAMPLES - V92_RESIDUAL_LAGS + i] - next.offset;
+	if (!v92_residual_is_valid(&next)) return false;
+	*filter = next;
+	return true;
+}
+
 bool v92_residual_sample(struct v92_residual *filter,
 	int32_t raw, int polarity, bool available, int32_t *correction)
 {

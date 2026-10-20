@@ -23,6 +23,16 @@ bool v92_residual_is_valid(const struct v92_residual *filter);
 bool v92_residual_fit(struct v92_residual *filter,
 	const int32_t *points, const int32_t *raw, double minimum, double maximum,
 	double *gain, double *score);
+
+/* Re-express a fresh fit for points translated by one exact integer offset
+ * across all current/delayed fitting inputs. The DC term absorbs the shift;
+ * coefficients and gain remain unchanged. Rebuild its initial raw history.
+ * This does not equate coding histories or constrain held-out decisions.
+ * Invalid, nontranslated or out-of-bound calls leave the fit unchanged. */
+bool v92_residual_translate(struct v92_residual *filter,
+	const int32_t *original, const int32_t *translated, const int32_t *raw,
+	double gain);
+
 /* Exclusively owned, validated filter. Returns the input-domain correction,
  * preserving the original raw sample for wire evidence and quality scoring.
  * Missing media or an out-of-range inverse fails without advancing history. */
