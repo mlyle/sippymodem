@@ -191,8 +191,7 @@ static bool refit_bins(struct v92_observation *model,
 		struct v92_observation_interval *fit = &model->intervals[i];
 		double gain = sqrt(fit->low * fit->high);
 		for (size_t j = 0; j < count; j++) {
-			double value = fmax(INT16_MIN, fmin(INT16_MAX, round(gain * x[j])));
-			q[i][j] = g711_quantize(model->law, (int16_t)value);
+			q[i][j] = g711_quantize(model->law, sample_round_s16(gain * x[j]));
 		}
 		costs[i] = fit_bin_channel(fit, q[i], y, low, high, count, model->taps, variances + i) ?
 			bin_cost(q[i], low, high, count, model->taps, fit, variances[i]) : HUGE_VAL;
@@ -570,7 +569,7 @@ double v92_observation_predict_scalar(enum g711_law law, double gain,
 	    !isfinite(offset)) return NAN;
 	double physical = (gain * linear - offset) / host_gain;
 	if (!isfinite(physical)) return NAN;
-	int16_t sample = (int16_t)fmax(INT16_MIN, fmin(INT16_MAX, round(physical)));
+	int16_t sample = sample_round_s16(physical);
 	double prediction = host_gain * g711_quantize(law, sample) + offset;
 	return isfinite(prediction) ? prediction : NAN;
 }
@@ -911,8 +910,7 @@ static double codec_mean(enum g711_law law, double mean, double variance, double
 	if (!isfinite(mean) || !isfinite(variance) || variance <= 0. ||
 	    !isfinite(gain) || gain <= 0.) return NAN;
 	double divisor = sqrt(variance) * sqrt(2.);
-	int16_t center = g711_quantize(law, (int16_t)fmax(INT16_MIN,
-		fmin(INT16_MAX, round(mean / gain))));
+	int16_t center = g711_quantize(law, sample_round_s16(mean / gain));
 	double prediction = center;
 	for (int direction = -1; direction <= 1; direction += 2) {
 		int16_t level = center;

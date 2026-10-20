@@ -3,6 +3,7 @@
 #include "integer_math.h"
 
 #include <assert.h>
+#include <fenv.h>
 #include <float.h>
 #include <limits.h>
 #include <math.h>
@@ -634,8 +635,34 @@ static void check_scalar(enum g711_law law, double host_gain)
 		sqrt(linear_error / (SAMPLES - TRAINING)));
 }
 
+/* Exercise the public predictor across every integer and half-sample codec
+ * boundary. Keep the independent round-and-clip oracle above: the model's
+ * sample conversion must not depend on the host's floating rounding mode. */
+static void check_scalar_rounding(void)
+{
+	const int modes[] = { FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO };
+	int saved = fegetround();
+	assert(saved != -1);
+	for (unsigned mode = 0; mode < sizeof(modes) / sizeof(modes[0]); ++mode) {
+		assert(fesetround(modes[mode]) == 0);
+		for (int value = INT16_MIN; value <= INT16_MAX; ++value) {
+			double half = value + .5;
+			const double physical[] = { value, half,
+				nextafter(half, -INFINITY), nextafter(half, INFINITY) };
+			for (unsigned i = 0; i < sizeof(physical) / sizeof(physical[0]); ++i)
+				for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+					double offset = -physical[i];
+					double expected = quantize(law, physical[i]) + offset;
+					assert(v92_observation_predict_scalar(law, 1., 1., 0, offset) == expected);
+				}
+		}
+	}
+	assert(fesetround(saved) == 0);
+}
+
 int main(void)
 {
+	check_scalar_rounding();
 	const double gains[] = { .00002, .02, .125, 4., 16.39453125, 21.859375, 512. };
 	struct v92_observation previous = { 0 };
 	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)
