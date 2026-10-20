@@ -158,6 +158,12 @@ enum v34_line_receiver_result v34_line_receiver_resolve(
 		    V34_ADAPTIVE_EQUALIZER_OK)
 			return V34_LINE_RECEIVER_NUMERIC_FAILURE;
 		break;
+	case V34_RECEIVE_COAST:
+		if (v34_adaptive_equalizer_coast(
+			    &next.equalizer, observation) !=
+		    V34_ADAPTIVE_EQUALIZER_OK)
+			return V34_LINE_RECEIVER_NUMERIC_FAILURE;
+		break;
 	case V34_RECEIVE_BEGIN_TRACKING:
 		if (v34_adaptive_equalizer_discard(
 			    &next.equalizer, observation) !=

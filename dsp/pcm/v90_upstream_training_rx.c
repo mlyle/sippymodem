@@ -216,13 +216,14 @@ static enum v90_upstream_training_rx_result receive_tracking(
 			return V90_UPSTREAM_TRAINING_RX_NUMERIC_FAILURE;
 		return resolve_action(receiver, observation, &action);
 	}
-	/* Silence between return intervals cannot train a constellation point. */
+	/* Silence cannot train a constellation point, but the learned carrier
+	 * frequency must keep advancing through the gap before the next S. */
 	if (!v34_training_constellation_has_signal(
 		    receiver->tracking_constellation, observation->decision)) {
 		if (v34_receive_timing_set_feedback_held(
 			    &receiver->line.timing, true) != V34_RECEIVE_TIMING_OK)
 			return V90_UPSTREAM_TRAINING_RX_NUMERIC_FAILURE;
-		action = v34_receive_action_only(V34_RECEIVE_DISCARD);
+		action = v34_receive_action_only(V34_RECEIVE_COAST);
 		return resolve_action(receiver, observation, &action);
 	}
 	if (v34_receive_timing_set_feedback_held(

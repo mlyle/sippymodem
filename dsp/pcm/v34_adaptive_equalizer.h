@@ -76,6 +76,8 @@ enum v34_receive_action_kind {
 	V34_RECEIVE_BEGIN_TRACKING,
 	/* Discard the boundary decision, then restart timing and equalization. */
 	V34_RECEIVE_RESTART_PATH,
+	/* Advance the learned carrier frequency without training on a target. */
+	V34_RECEIVE_COAST,
 };
 
 struct v34_receive_action {
@@ -164,6 +166,7 @@ static inline bool v34_receive_action_is_valid(
 			action->equalizer.adaptation ==
 				V34_ADAPTIVE_EQUALIZER_FULL);
 	return (action->action == V34_RECEIVE_DISCARD ||
+		action->action == V34_RECEIVE_COAST ||
 		action->action == V34_RECEIVE_BEGIN_TRACKING ||
 		action->action == V34_RECEIVE_RESTART_PATH) &&
 	       v34_adaptive_equalizer_observation_is_zero(

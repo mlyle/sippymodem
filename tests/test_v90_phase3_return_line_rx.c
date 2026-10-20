@@ -107,6 +107,73 @@ static bool establish_ja(
 	return false;
 }
 
+static bool test_quiet_carrier(void)
+{
+	static const int32_t steps[] = { -12000, 0, 12000 };
+	const uint32_t phase_mask = UINT32_C(0x1fffffff);
+
+	for (unsigned int law = 0; law < 2; ++law) {
+		struct v90_phase3_analog_line_tx tx;
+		struct v90_phase3_analog_line_handoff handoff;
+		struct v90_upstream_training_rx quiet;
+		struct v34_analytic_sample decision;
+
+		CHECK(establish_ja(law ? G711_LAW_PCMA : G711_LAW_PCMU,
+				   &tx, &handoff),
+		      "quiet carrier training failed");
+		quiet = handoff.upstream;
+		/* Flush the known waveform and every physical receive delay. */
+		for (unsigned int sample = 0; sample < 1000; ++sample)
+			CHECK(v90_upstream_training_rx_sample(&quiet, 0, &decision) <=
+				      V90_UPSTREAM_TRAINING_RX_DECISION_READY,
+			      "quiet carrier flush failed");
+		for (size_t index = 0; index < ARRAY_LENGTH(steps); ++index) {
+			struct v90_upstream_training_rx rx = quiet;
+			struct v34_adaptive_equalizer *eq = &rx.line.equalizer;
+			uint32_t expected = phase_mask;
+			unsigned int decisions = 0;
+
+			/* A small retained offset accumulates about 48 degrees in
+			 * two seconds. Test both signs and the phase wrap boundary. */
+			eq->phase_accumulator = steps[index] * 32;
+			eq->carrier_phase_fraction = (uint16_t)(expected >> 16);
+			eq->carrier_phase_low = (uint16_t)expected;
+			for (unsigned int sample = 0; sample < 16000; ++sample) {
+				enum v90_upstream_training_rx_result result =
+					v90_upstream_training_rx_sample(&rx, 0, &decision);
+
+				CHECK(result == V90_UPSTREAM_TRAINING_RX_OK ||
+				      result == V90_UPSTREAM_TRAINING_RX_DECISION_READY,
+				      "quiet receiver failed");
+				if (result == V90_UPSTREAM_TRAINING_RX_DECISION_READY) {
+					CHECK(!v34_training_constellation_has_signal(
+						      rx.tracking_constellation, decision),
+					      "quiet receiver invented signal");
+					expected = (expected + (uint32_t)steps[index]) & phase_mask;
+					decisions++;
+				}
+				CHECK((((uint32_t)eq->carrier_phase_fraction << 16) |
+				       eq->carrier_phase_low) == expected,
+				      "quiet interval stopped the learned carrier clock");
+			}
+			CHECK(decisions > 5900 && decisions < 6100 &&
+			      eq->phase_accumulator == steps[index] * 32 &&
+			      memcmp(eq->equalizer.in_phase_coefficient,
+				     quiet.line.equalizer.equalizer.in_phase_coefficient,
+				     sizeof(eq->equalizer.in_phase_coefficient)) == 0 &&
+			      memcmp(eq->equalizer.quadrature_coefficient,
+				     quiet.line.equalizer.equalizer.quadrature_coefficient,
+				     sizeof(eq->equalizer.quadrature_coefficient)) == 0 &&
+			      memcmp(&eq->quality, &quiet.line.equalizer.quality,
+				     sizeof(eq->quality)) == 0 &&
+			      memcmp(&eq->feedback, &quiet.line.equalizer.feedback,
+				     sizeof(eq->feedback)) == 0,
+			      "quiet receiver learned from silence or lost its clock");
+		}
+	}
+	return true;
+}
+
 static bool check_exhausted_epoch(
 	const struct v90_phase3_return_line_rx *source, bool draining)
 {
@@ -858,6 +925,7 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "quiet carrier continuity", test_quiet_carrier },
 		{ "G.711 lines", test_g711_lines },
 		{ "negotiated SCR", test_negotiated_scr },
 		{ "weak onset and published return", test_weak_onset },
