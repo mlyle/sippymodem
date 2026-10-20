@@ -9232,6 +9232,7 @@ struct v92_rate_call {
 	unsigned rd_symbols, zero_acks, quality_retrains;
 	uint64_t transmitted;
 	bool control_started, complete, data_started, peer_data_started, peer_acknowledged;
+	bool training_recovery_rejected;
 };
 
 static bool v92_rate_payload(const uint8_t *bits, size_t count, uint32_t *frames)
@@ -9257,6 +9258,15 @@ static bool v92_rate_call_sample(struct v92_rate_call *test, int16_t sample)
 	};
 	CHECK(fractional_delay_process(&test->upstream_delay, sample, &sample) == FRACTIONAL_DELAY_OK,
 	      "synthetic rate peer lost its transmit history");
+	if (!test->training_recovery_rejected && call->stage == PCM_CALL_PHASE4 &&
+	    call->state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL &&
+	    call->state.phase4.v92.owner.digital.receive.stage == V92_PHASE4_DIGITAL_RX_TRN2U) {
+		struct pcm_call saved = *call;
+		CHECK(call->state.phase4.v92.owner.digital.receive.signal.trn2u.renegotiation &&
+		      pcm_call_recover_upstream_training(call) == PCM_CALL_INVALID_STATE &&
+		      memcmp(call, &saved, sizeof(saved)) == 0, "short training accepted recovery");
+		test->training_recovery_rejected = true;
+	}
 
 	if (pcm_call_phase4_is_ready(call)) {
 		CHECK(pcm_call_start_data_path(call) == PCM_CALL_OK, "post-Ru data entry failed");
@@ -9684,6 +9694,7 @@ static bool run_v92_rate_request(struct pcm_call *online,
 		}
 		CHECK(v92_resume_rate_call(&test, &handoff.transmit, &handoff.mapping,
 			upstream->upstream_level, mapping_bits, upstream), "analogue rate exchange did not resume");
+		CHECK(test.training_recovery_rejected, "short training rejection was not exercised");
 		*online = test.call;
 		*delay = test.upstream_delay;
 		return true;
@@ -9723,6 +9734,7 @@ static bool run_v92_rate_request(struct pcm_call *online,
 		if (which == 3u && epoch == 1u) {
 			CHECK(v92_resume_rate_call(&test, &record, &upstream->encoder.mapping,
 				upstream->upstream_level, mapping_bits, upstream), "rate exchange did not resume");
+			CHECK(test.training_recovery_rejected, "short training rejection was not exercised");
 			*online = test.call;
 			*delay = test.upstream_delay;
 			return true;
@@ -9755,6 +9767,7 @@ static bool run_v92_rate_request(struct pcm_call *online,
 	for (unsigned i = 0; i < 4000u && !test.complete; ++i)
 		CHECK(v92_rate_call_sample(&test, upstream->upstream_level), "cleardown failed");
 	CHECK(test.complete, "rate exchange did not complete bounded cleardown");
+	CHECK(test.training_recovery_rejected, "short training rejection was not exercised");
 	*online = test.call;
 	*delay = test.upstream_delay;
 	return true;
@@ -12856,6 +12869,116 @@ static bool test_v92_owned_phase_octets(void)
 	return true;
 }
 
+static bool run_conditioning_recovery(enum g711_law law, uint32_t trigger, bool persistent)
+{
+	struct pcm_call_configuration ac = v92_configuration(V90_ANALOG_MODEM, law);
+	struct pcm_call_configuration dc = v92_configuration(V90_DIGITAL_MODEM, law);
+	struct pcm_call analog, digital;
+	struct channel wire;
+	struct pcm_payload_source source[2] = { { .reject = true }, { .reject = true } };
+	uint32_t frames[2] = { 0, 0 };
+	unsigned injections = 0;
+	bool in_epoch = false;
+	bool control_checked = false;
+
+	CHECK(channel_init(&wire, law, 3u) && pcm_call_init(&analog, &ac) == PCM_CALL_OK &&
+	      pcm_call_init(&digital, &dc) == PCM_CALL_OK, "conditioning fixture failed");
+	struct pcm_call initial = digital;
+	CHECK(pcm_call_recover_upstream_training(NULL) == PCM_CALL_INVALID_ARGUMENT &&
+	      pcm_call_recover_upstream_training(&digital) == PCM_CALL_INVALID_STATE &&
+	      memcmp(&digital, &initial, sizeof(digital)) == 0, "initial call accepted recovery");
+	for (unsigned clock = 0; clock < 4u * CALL_SAMPLE_LIMIT; ++clock) {
+		uint8_t rx[2], tx[2];
+		struct pcm_call *calls[] = { &analog, &digital };
+		channel_receive(&wire, &rx[0], &rx[1]);
+		for (unsigned side = 0; side < 2; ++side) {
+			struct pcm_call *call = calls[side];
+			if (pcm_call_phase4_is_ready(call))
+				CHECK(pcm_call_start_data_path(call) == PCM_CALL_OK, "recovered data handoff failed");
+			if (call->stage == PCM_CALL_DATA_PATH) {
+				CHECK(!persistent && v92_payload_sample(call, rx[side], decode_octet(law, rx[side]),
+					&source[side], &frames[side], &tx[side]), "persistent damage reached data");
+			} else {
+				struct pcm_call_observation event;
+				CHECK(pcm_call_octet(call, rx[side], decode_octet(law, rx[side]),
+					&tx[side], &event) == PCM_CALL_OK, "conditioning call stopped at %u", clock);
+			}
+		}
+		if (digital.stage != PCM_CALL_PHASE4) in_epoch = false;
+		if (!in_epoch && (persistent || !injections) && digital.stage == PCM_CALL_PHASE4 &&
+		    digital.state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL &&
+		    digital.state.phase4.v92.owner.digital.receive.stage == V92_PHASE4_DIGITAL_RX_TRN2U &&
+		    digital.state.phase4.v92.owner.digital.receive.signal.trn2u.reference.emitted_symbols >= trigger) {
+			struct pcm_call before = digital, expected = digital;
+			struct pcm_call rejected = digital;
+			rejected.failed = true;
+			struct pcm_call saved = rejected;
+			CHECK(pcm_call_recover_upstream_training(&rejected) == PCM_CALL_INVALID_STATE &&
+			      memcmp(&rejected, &saved, sizeof(saved)) == 0, "failed call changed");
+			rejected = digital;
+			rejected.state.phase4.v92.owner.digital.receive.signal.trn2u.renegotiation = true;
+			saved = rejected;
+			CHECK(!pcm_call_is_valid(&rejected) &&
+			      pcm_call_recover_upstream_training(&rejected) == PCM_CALL_INVALID_ARGUMENT &&
+			      memcmp(&rejected, &saved, sizeof(saved)) == 0, "inconsistent rate state accepted recovery");
+			struct pcm_call wrong_role = analog;
+			saved = analog;
+			CHECK(pcm_call_recover_upstream_training(&wrong_role) == PCM_CALL_INVALID_STATE &&
+			      memcmp(&wrong_role, &saved, sizeof(saved)) == 0, "analogue call changed");
+			enum pcm_call_result result = pcm_call_recover_upstream_training(&digital);
+			++injections;
+			in_epoch = true;
+			if (injections > V92_DATA_QUALITY_MAX_RETRAINS) {
+				CHECK(persistent && result == PCM_CALL_FAILED &&
+				      memcmp(&digital, &before, sizeof(before)) == 0 &&
+				      digital.pcm_upstream_quality.recovery.attempts == V92_DATA_QUALITY_MAX_RETRAINS,
+				      "conditioning exhaustion changed state or replenished budget");
+				return true;
+			}
+			CHECK(v92_data_quality_retrain(&expected.pcm_upstream_quality) == V92_DATA_QUALITY_RETRAIN &&
+			      pcm_call_start_retrain(&expected) == PCM_CALL_OK && result == PCM_CALL_OK &&
+			      memcmp(&digital, &expected, sizeof(digital)) == 0 &&
+			      pcm_call_is_full_retraining(&digital) &&
+			      digital.v92_upstream_retry_ceiling == before.v92_upstream_retry_ceiling,
+			      "conditioning recovery changed waveform policy or rate ceiling");
+			/* A repeated request is not another incident and must not restart silence. */
+			saved = digital;
+			CHECK(pcm_call_recover_upstream_training(&digital) == PCM_CALL_INVALID_STATE &&
+			      memcmp(&digital, &saved, sizeof(saved)) == 0, "repeated request restarted recovery");
+		}
+		if (!control_checked && digital.stage == PCM_CALL_PHASE4 &&
+		    digital.state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL &&
+		    digital.state.phase4.v92.owner.digital.receive.stage == V92_PHASE4_DIGITAL_RX_CONTROL) {
+			struct pcm_call saved = digital;
+			CHECK(pcm_call_recover_upstream_training(&digital) == PCM_CALL_INVALID_STATE &&
+			      memcmp(&digital, &saved, sizeof(saved)) == 0, "control tail accepted recovery");
+			control_checked = true;
+		}
+		channel_transmit(&wire, tx[0], tx[1]);
+		if (frames[0] >= 20u && frames[1] >= 20u) {
+			CHECK(!persistent && control_checked && injections == 1 && digital.pcm_upstream_quality.recovery.attempts == 1 &&
+			      pcm_call_is_online(&analog) && pcm_call_is_online(&digital), "conditioning recovery lost data");
+			struct pcm_call saved = digital;
+			CHECK(pcm_call_recover_upstream_training(&digital) == PCM_CALL_INVALID_STATE &&
+			      memcmp(&digital, &saved, sizeof(saved)) == 0, "online call accepted training recovery");
+			return true;
+		}
+	}
+	CHECK(false, "conditioning recovery did not finish: law %u trigger %u persistent %u injections %u stages %u/%u",
+		law, trigger, persistent, injections, analog.stage, digital.stage);
+	return false;
+}
+
+static bool test_conditioning_recovery(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned late = 0; late < 2; ++late)
+			for (unsigned persistent = 0; persistent < 2; ++persistent)
+				CHECK(run_conditioning_recovery(law, late ? 11900u : 512u, persistent != 0),
+				      "conditioning recovery failed");
+	return true;
+}
+
 int main(int argc, char **argv)
 {
 	static const struct {
@@ -12948,6 +13071,7 @@ int main(int argc, char **argv)
 		{ "result names", test_result_names },
 		{ "automatic conventional upstream and peer-limited fallback", test_automatic_upstream },
 		{ "V.92 conflicting status bounded recovery", test_v92_conflicting_status_recovery },
+		{ "V.92 conditioned training bounded recovery", test_conditioning_recovery },
 	};
 	unsigned int failures = 0;
 	size_t first = 0, stride = 1;

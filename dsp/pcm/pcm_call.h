@@ -568,6 +568,13 @@ enum pcm_call_result pcm_call_init_qc(
  * records. The following line character begins the 70 ms silence interval. */
 enum pcm_call_result pcm_call_start_retrain(struct pcm_call *call);
 
+/* A confirmed conditioning change invalidated initial PCM-upstream training.
+ * Start a genuine full retrain using the shared automatic recovery budget.
+ * Only digital V.92 TRN2u accepts this request; short rate exchanges do not.
+ * Exhaustion returns FAILED. Every non-OK result leaves the owner unchanged.
+ * The host must retain its overall training deadline across this recovery. */
+enum pcm_call_result pcm_call_recover_upstream_training(struct pcm_call *call);
+
 /* Excludes rate renegotiation and fast parameter exchange, which a local
  * full-retrain request may replace. */
 bool pcm_call_is_full_retraining(const struct pcm_call *call);

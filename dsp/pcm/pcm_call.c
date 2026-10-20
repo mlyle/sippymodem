@@ -3498,6 +3498,25 @@ static enum pcm_call_result recover_v92_training(struct pcm_call *call)
 		result == V92_DATA_QUALITY_EXHAUSTED ? PCM_CALL_FAILED : PCM_CALL_NUMERIC_FAILURE;
 }
 
+enum pcm_call_result pcm_call_recover_upstream_training(struct pcm_call *call)
+{
+	if (!pcm_call_is_valid(call))
+		return PCM_CALL_INVALID_ARGUMENT;
+	if (call->failed || call->protocol != PCM_PROTOCOL_V92 ||
+	    call->local_role != V90_DIGITAL_MODEM || !uses_pcm_upstream(call) ||
+	    call->stage != PCM_CALL_PHASE4 ||
+	    call->state.phase4.v92.child != PCM_CALL_V92_PHASE4_CONTROL ||
+	    call->state.phase4.v92.owner.digital.control.cleardown.active ||
+	    call->state.phase4.v92.owner.digital.receive.stage != V92_PHASE4_DIGITAL_RX_TRN2U ||
+	    call->state.phase4.v92.owner.digital.receive.signal.trn2u.renegotiation)
+		return PCM_CALL_INVALID_STATE;
+	struct pcm_call next = *call;
+	enum pcm_call_result result = recover_v92_training(&next);
+	if (result == PCM_CALL_OK)
+		*call = next;
+	return result;
+}
+
 static enum pcm_call_result v92_analog_phase4_result(
 	struct pcm_call *call, enum v92_phase4_analog_station_result result)
 {
