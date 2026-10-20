@@ -42,6 +42,7 @@
  */
 
 #include <modem.h>
+#include <modem_state.h>
 #include <modem_debug.h>
 #include <v42_xid.h>
 #include <v44_character_path.h>
@@ -64,7 +65,7 @@ enum {
 	LAPM_TIMER_FRAME_OVERHEAD_OCTETS = 7,
 	LAPM_TIMER_STUFFED_BITS_PER_OCTET = 10,
 	LAPM_TIMER_FALLBACK_BIT_RATE = 57600,
-	/* Allow two unanswered status enquiries before physical recovery. */
+	/* Allow two unanswered control retries before physical recovery. */
 	LAPM_RETRAIN_POLLS = 2,
 };
 
@@ -1842,21 +1843,26 @@ void modem_ec_stop(struct modem *m)
 bool modem_ec_take_retrain_request(struct modem *m)
 {
 	struct lapm_state *l;
+	bool establishing;
 
 	if (m == NULL || !m->cfg.ec || m->get_bits != modem_hdlc_get_bits ||
 	    m->put_bits != modem_hdlc_put_bits)
 		return false;
 	l = &m->ec.lapm;
-	if (l->state != LAPM_DATA || xid_pending(l) || l->busy || l->peer_busy ||
-	    l->retrain_poll ||
+	establishing = m->state == STATE_EC_ESTAB &&
+		((l->state == LAPM_IDLE && xid_pending(l)) ||
+		 l->state == LAPM_ESTAB);
+	if ((!establishing &&
+	     (l->state != LAPM_DATA || xid_pending(l) || l->retrain_poll)) ||
+	    l->busy || l->peer_busy ||
 	    m->bit_timer <= 0 || m->bit_timer_func != t401_timeout ||
 	    (l->rtx_count < LAPM_RETRAIN_POLLS &&
 	     l->stalled_polls < LAPM_RETRAIN_POLLS) ||
 	    l->stalled_retrain)
 		return false;
-	/* A PCM frame-phase slip can produce legal symbols but no usable HDLC
-	 * frames, even with no local information outstanding. Try physical
-	 * recovery once before LAPM exhausts N400. Keep
+	/* A usable receive direction need not imply a usable transmit direction.
+	 * This also applies to unanswered XID/SABME during establishment. Try
+	 * physical recovery once before the current transaction exhausts N400. Keep
 	 * the queues and T401 progress, even if the datapump rejects the request.
 	 * Acknowledgement progress or a recovered idle link rearms the allowance;
 	 * starting or resuming retraining does not. Peer flow control is not a

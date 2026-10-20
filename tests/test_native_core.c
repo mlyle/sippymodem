@@ -8291,6 +8291,118 @@ static bool test_lapm_retrain_recovery_budget(void)
 	return true;
 }
 
+static bool test_lapm_establishment_recovery(void)
+{
+	struct modem_driver driver = {
+		.name = "LAPM establishment recovery", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	int16_t receive[MODEM_FRAG] = { 0 }, transmit[MODEM_FRAG];
+
+	for (unsigned xid = 0; xid < 2; ++xid)
+	for (int result = -1; result <= 0; ++result)
+	for (unsigned heal = 0; heal < 2; ++heal) {
+		struct dp_operations operations = {
+			.name = "LAPM establishment recovery", .create = create_retrain_dp,
+			.delete = delete_retrain_dp, .process = process_retrain_dp,
+			.retrain = request_retrain_dp,
+		};
+		memset(&retrain_dp, 0, sizeof(retrain_dp));
+		retrain_dp.retrain_result = result;
+		call_progress_override = &operations;
+		struct modem *m = create_compat_modem(&driver, driver.name);
+		CHECK(m != NULL && modem_dial(m) == 0, "establishment fixture did not start");
+		m->state = 4;
+		m->caller = xid;
+		m->cfg.ec = 1;
+		m->cfg.comp = 0;
+		m->rx_rate = m->tx_rate = 4800;
+		CHECK(modem_ec_init(m) == 0, "establishment LAPM initialization failed");
+		modem_hdlc_start(m);
+		modem_ec_start(m);
+		m->get_bits = modem_hdlc_get_bits;
+		m->put_bits = modem_hdlc_put_bits;
+		struct lapm_state *l = &m->ec.lapm;
+		uint8_t response[LAPM_V44_MAX_XID_SIZE + 2], bit;
+		frame_t incoming = { .buf = response, .count = 2 };
+		CHECK(!modem_ec_take_retrain_request(m), "preamble/passive wait requested recovery");
+		if (xid) {
+			while (m->packer.hdlc.tx_preamble_complete != NULL)
+				CHECK(modem_get_bits(m, 1, &bit, 1) == 1, "preamble did not advance");
+		} else {
+			response[0] = l->cmd_addr;
+			response[1] = 0x0f; /* DM F=0 asks us to establish. */
+			m->packer.hdlc.rx_complete(l, &incoming);
+		}
+		frame_t *outgoing = m->packer.hdlc.tx_frame;
+		if (outgoing == NULL)
+			outgoing = m->packer.hdlc.get_tx_frame(l);
+		CHECK(outgoing != NULL && outgoing->buf[1] == (xid ? 0xaf : 0x7f),
+		      "fixture did not send XID/SABME");
+		incoming.count = outgoing->size;
+		memcpy(response, outgoing->buf, (size_t)outgoing->size);
+		if (m->packer.hdlc.tx_frame != outgoing)
+			m->packer.hdlc.tx_complete(l, outgoing);
+		CHECK(modem_hdlc_reframe(m) == 0, "fixture could not finish its first control frame");
+		struct lapm_v44_session session = l->v44_session;
+		operations.process = process_stalled_lapm_dp;
+		for (unsigned expiry = 1; expiry <= 2; ++expiry) {
+			modem_process(m, receive, transmit, MODEM_FRAG);
+			/* Preparing an XID retry advances its serialization revision;
+			 * the proposal and negotiated state must remain frozen. */
+			session.revision = l->v44_session.revision;
+			CHECK(l->rtx_count == (int)expiry &&
+			      retrain_dp.retrain_calls == (expiry == 2) && m->state == 4 &&
+			      lapm_v44_sessions_equal(&l->v44_session, &session),
+			      "establishment recovery changed negotiation: xid %u expiry %u retries %d calls %u state %u session %u",
+			      xid, expiry, l->rtx_count, retrain_dp.retrain_calls, m->state,
+			      lapm_v44_sessions_equal(&l->v44_session, &session));
+			while ((outgoing = m->packer.hdlc.get_tx_frame(l)) != NULL)
+				m->packer.hdlc.tx_complete(l, outgoing);
+		}
+		operations.process = process_retrain_dp;
+		int remaining = m->bit_timer;
+		modem_dp_reconnected(m);
+		CHECK(m->state == 4 && l->rtx_count == 2 && l->stalled_retrain &&
+		      m->bit_timer == remaining &&
+		      lapm_v44_sessions_equal(&l->v44_session, &session),
+		      "physical readiness reset establishment or reported CONNECT");
+		for (unsigned repeat = 0; repeat < 10; ++repeat)
+			modem_process(m, receive, transmit, MODEM_FRAG);
+		CHECK(retrain_dp.retrain_calls == 1, "establishment recovery repeated without progress");
+		if (heal) {
+			response[0] = l->cmd_addr;
+			if (!xid) response[1] = 0x73; /* UA F=1 */
+			m->packer.hdlc.rx_complete(l, &incoming);
+			if (xid) {
+				outgoing = m->packer.hdlc.get_tx_frame(l);
+				CHECK(outgoing != NULL && outgoing->buf[1] == 0x7f,
+				      "recovered XID did not advance to SABME");
+				m->packer.hdlc.tx_complete(l, outgoing);
+				response[1] = 0x73;
+				incoming.count = 2;
+				m->packer.hdlc.rx_complete(l, &incoming);
+			}
+			CHECK(l->state == 2 && m->state == 5 && !l->stalled_retrain,
+			      "valid recovered response did not complete establishment");
+		} else {
+			operations.process = process_stalled_lapm_dp;
+			for (unsigned expiry = 0; expiry < 4 && m->state == 4; ++expiry) {
+				modem_process(m, receive, transmit, MODEM_FRAG);
+				while ((outgoing = m->packer.hdlc.get_tx_frame(l)) != NULL)
+					m->packer.hdlc.tx_complete(l, outgoing);
+			}
+			CHECK(l->state == 0 && m->state != 4 && !m->bit_timer &&
+			      retrain_dp.retrain_calls == 1,
+			      "establishment recovery renewed the exhausted retry budget");
+		}
+		CHECK(modem_stop_now(m) == 0, "establishment recovery cleanup failed");
+		modem_delete(m);
+		call_progress_override = NULL;
+	}
+	return true;
+}
+
 static bool test_lapm_stalled_retrain(void)
 {
 	enum { ONLINE = 5, LAPM_DATA_STATE = 2, LAPM_IDLE_STATE = 0 };
@@ -10702,6 +10814,7 @@ int main(void)
 		{ "LAPM post-retrain enquiry", test_lapm_post_retrain_enquiry },
 		{ "LAPM retrain recovery budget", test_lapm_retrain_recovery_budget },
 		{ "LAPM acknowledgement progress", test_lapm_acknowledgement_progress },
+		{ "LAPM establishment recovery", test_lapm_establishment_recovery },
 		{ "bounded LAPM stalled retrain", test_lapm_stalled_retrain },
 		{ "LAPM retrain preserves link state",
 		  test_lapm_retrain_preserves_link_state },
