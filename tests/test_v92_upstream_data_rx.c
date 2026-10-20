@@ -3188,6 +3188,116 @@ static bool test_residual_acquisition(unsigned prefix, bool damaged, int transie
 	return true;
 }
 
+/* A cold primary can follow the wrong coding history through a control
+ * prefix. The physical seed describes the channel, not that history. Search
+ * B1u independently, then decode its held-out half and different payload
+ * without imposing their bits. A coded wrong B1u bit must remain visible. */
+static bool test_acquisition_history(enum v92_cpd_trellis trellis,
+	unsigned state, unsigned prefix, bool damaged)
+{
+	struct v92_cpd_parameters cpd;
+	struct v92_pcm_mapping mapping;
+	struct v92_pcm_frame_tx tx;
+	struct v92_pcm_frame_rx decoder;
+	struct v92_upstream_model model = {
+		.residual_acquiring = true,
+		.seed = { .gain = 1.370,
+			.residual = { .active = true, .offset = 128., .count = 2,
+				.delay = { 4, 6 }, .coefficient = { -.027, .011 } } },
+	};
+	struct v92_upstream_data_line line = {
+		.plan.observation = V92_PCM_FRAME_CONSTELLATION,
+		.calibration = { .gain = 1.367, .minimum = 1.313, .maximum = 1.390 },
+		.host.gain = 1., .polarity = 1,
+	};
+	CHECK(v92_cpd_direct_init(&cpd, G711_LAW_PCMU, 1, false) == V92_CPD_OK,
+	      "history acquisition mapping failed");
+	cpd.trellis = trellis;
+	cpd.constellation[0].count = 16;
+	for (unsigned i = 0; i < 16; i++)
+		cpd.constellation[0].positive_linear[i] = (int16_t)((2 * i + 1) * 256);
+	CHECK(v92_pcm_mapping_init(&mapping, G711_LAW_PCMU, &cpd) == V92_PCM_MAPPING_OK &&
+	      v92_pcm_frame_tx_init(&tx, &mapping) == V92_PCM_FRAME_OK &&
+	      v92_pcm_frame_rx_init_constellation(&decoder, &mapping) == V92_PCM_FRAME_OK,
+	      "history acquisition initialization failed");
+	tx.state.trellis.state = (uint8_t)state;
+	double history[6] = { 0 }, error = 0.;
+	unsigned cursor = 0, errors = 0, payload_frames = 0;
+	struct v92_residual frozen = { 0 };
+	for (unsigned frame = 0; frame < prefix + V92_B1U_FRAMES + 20; frame++) {
+		struct v92_pcm_frame encoded = { 0 };
+		uint8_t bits[V92_PCM_MAPPING_MAX_BITS], decoded[V92_PCM_MAPPING_MAX_BITS];
+		if (frame >= prefix) {
+			unsigned source = frame - prefix;
+			if (source < V92_B1U_FRAMES) memset(bits, 1, mapping.data_bits_per_frame);
+			else payload(bits, mapping.data_bits_per_frame, source - V92_B1U_FRAMES);
+			if (damaged && source == 40) bits[7] = 0;
+			CHECK(v92_pcm_frame_encode(&tx, bits, mapping.data_bits_per_frame, &encoded) ==
+			      V92_PCM_FRAME_OK, "history acquisition source failed");
+		} else {
+			for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; i++) encoded.u[i] = 256;
+		}
+		for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; i++) {
+			double point = encoded.u[i];
+			int16_t raw = (int16_t)lround((point - .027 * history[(cursor + 2) % 6] +
+				.011 * history[cursor]) / 1.370 + 128.);
+			history[cursor] = point;
+			cursor = (cursor + 1) % 6;
+			raw = g711_quantize(G711_LAW_PCMU, raw);
+			int32_t correction;
+			CHECK(v92_residual_sample(&line.residual, raw, 1, true, &correction),
+			      "history acquisition correction failed");
+			line.raw[i] = raw;
+			line.received[i] = line.wire_known[i] = true;
+			line.samples[i] = (int16_t)lround((raw - correction) * line.calibration.gain);
+			if (frame >= V92_B1U_ACQUISITION_FRAMES && frame < V92_B1U_FRAMES) {
+				double residual = raw - correction - point / line.calibration.gain;
+				error += residual * residual;
+			}
+		}
+		struct v92_pcm_frame_decision decision;
+		/* Fault injection: keep the primary's cold zero history throughout
+		 * acquisition. The independent candidate must supply the fresh fit. */
+		enum v92_pcm_frame_result result = frame < V92_B1U_ACQUISITION_FRAMES ?
+			v92_pcm_frame_acquire_model(&decoder, line.samples, decoded,
+				mapping.data_bits_per_frame, &decision) :
+			v92_pcm_frame_decode(&decoder, line.samples, frame < prefix + V92_B1U_FRAMES,
+				decoded, mapping.data_bits_per_frame, &decision);
+		CHECK(result == V92_PCM_FRAME_OK, "history acquisition decode failed");
+		v92_upstream_model_observe(&model, &decision, &line);
+		v92_upstream_model_fit(&model, &line, &decoder);
+		if (frame + 1 == V92_B1U_ACQUISITION_FRAMES) {
+			frozen = line.residual;
+			CHECK(frozen.active && memory_region_is_zero(&model.alternate, sizeof(model.alternate)) &&
+			      memory_region_is_zero(&model.seed, sizeof(model.seed)),
+			      "history acquisition retained its candidate or missed the fit");
+		} else if (frame >= V92_B1U_ACQUISITION_FRAMES) {
+			CHECK(line.residual.offset == frozen.offset && line.residual.count == frozen.count &&
+			      !memcmp(line.residual.delay, frozen.delay, sizeof(frozen.delay)) &&
+			      !memcmp(line.residual.coefficient, frozen.coefficient, sizeof(frozen.coefficient)),
+			      "held-out B1u or payload changed the history acquisition fit");
+		}
+		if (decision.bits_ready && frame >= prefix + V92_PCM_RX_DELAY_FRAMES +
+		    V92_B1U_ACQUISITION_FRAMES) {
+			unsigned source = frame - prefix - V92_PCM_RX_DELAY_FRAMES;
+			if (source < V92_B1U_FRAMES) {
+				for (unsigned i = 0; i < mapping.data_bits_per_frame; i++) errors += decoded[i] != 1;
+			} else {
+				payload(bits, mapping.data_bits_per_frame, source - V92_B1U_FRAMES);
+				CHECK(!decision.ambiguous && !memcmp(decoded, bits, mapping.data_bits_per_frame),
+				      "history acquisition corrupted payload");
+				payload_frames++;
+			}
+		}
+		line.received_frames++;
+	}
+	CHECK(errors == (unsigned)damaged && payload_frames == 10 &&
+	      error < V92_B1U_VALIDATION_SYMBOLS * V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
+	      "history acquisition failed: code=%u state=%u prefix=%u errors=%u rms=%g payload=%u",
+	      trellis, state, prefix, errors, sqrt(error / V92_B1U_VALIDATION_SYMBOLS), payload_frames);
+	return true;
+}
+
 static bool test_residual_translation(void)
 {
 	enum { COUNT = V92_B1U_ACQUISITION_FRAMES * V92_PCM_MAPPING_FRAME_SYMBOLS };
@@ -3325,6 +3435,11 @@ int main(void)
 	 * and must still expose a deliberately wrong held-out training bit. */
 	for (unsigned damaged = 0; damaged < 2; damaged++)
 		if (!test_residual_acquisition(1, damaged, 128, true)) return 1;
+	for (enum v92_cpd_trellis code = V92_CPD_TRELLIS_16_STATE; code <= V92_CPD_TRELLIS_32_STATE; code++)
+		for (unsigned state = 0; state < (16u << code); state++)
+			for (unsigned prefix = 0; prefix < 2; prefix++)
+				for (unsigned damaged = 0; damaged < 2; damaged++)
+					if (!test_acquisition_history(code, state, prefix, damaged)) return 1;
 	if (!test_residual_inverse()) return 1;
 	if (!test_data_initialization()) return 1;
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)

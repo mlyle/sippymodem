@@ -260,18 +260,32 @@ static void acquire_residual_points(struct v92_upstream_model *model,
 	const struct v92_upstream_data_line *line, const struct v92_pcm_frame_rx *decoder)
 {
 	unsigned first = (unsigned)line->received_frames;
+	unsigned states = v34_trellis_state_count(decoder->paths[0].trellis.selection);
+	bool known = !model->seed.residual.active || states <= V92_PCM_RX_PATHS;
+
 	if (first < 3) return;
 	if (first == 3) {
-		/* A retained physical correction uses unconstrained coding from
-		 * frame zero. Only known-bit acquisition needs prefix selection. */
+		/* A physical correction does not fix the coding epoch. Small
+		 * trellises can acquire known B1u across all initial histories;
+		 * retain control-prefix selection for that candidate too. */
 		first = 0;
-		if (!model->seed.residual.active) {
+		if (known) {
 			double direct = residual_prefix_score(&decoder->mapping, model->raw, line->calibration.gain, 0);
 			double delayed = residual_prefix_score(&decoder->mapping, model->raw, line->calibration.gain, 1);
 			first = delayed < direct;
 		}
 		if (v92_pcm_frame_rx_init_constellation(&model->alternate, &decoder->mapping) != V92_PCM_FRAME_OK)
 			return;
+		/* Keep every 16/32-state hypothesis in the existing beam. A wrong
+		 * history must not become a physical channel fit. The 64-state
+		 * case keeps its preceding acquisition behavior. */
+		if (states <= V92_PCM_RX_PATHS) {
+			for (unsigned i = 1; i < states; i++) {
+				model->alternate.paths[i] = model->alternate.paths[0];
+				model->alternate.paths[i].trellis.state = i;
+			}
+			model->alternate.path_count = (uint8_t)states;
+		}
 	}
 	if (!model->alternate.path_count) return;
 	/* Catch up four frames once, then one frame per invocation. Existing
@@ -291,10 +305,10 @@ static void acquire_residual_points(struct v92_upstream_model *model,
 			double gain = model->seed.residual.active ? model->seed.gain : line->calibration.gain;
 			samples[i] = sample_round_s16((model->raw[offset + i] - correction) * gain);
 		}
-		enum v92_pcm_frame_result result = model->seed.residual.active ?
-			v92_pcm_frame_decode(&model->alternate, samples, true, bits,
-				decoder->mapping.data_bits_per_frame, &decision) :
+		enum v92_pcm_frame_result result = known ?
 			v92_pcm_frame_acquire_model(&model->alternate, samples, bits,
+				decoder->mapping.data_bits_per_frame, &decision) :
+			v92_pcm_frame_decode(&model->alternate, samples, true, bits,
 				decoder->mapping.data_bits_per_frame, &decision);
 		if (result != V92_PCM_FRAME_OK) {
 			memset(&model->alternate, 0, sizeof(model->alternate));
