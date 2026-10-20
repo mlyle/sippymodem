@@ -1111,6 +1111,66 @@ static bool test_rejection_and_names(void)
 	return true;
 }
 
+static bool test_b1u_parity_completion(void)
+{
+	struct v92_cpd_parameters cpd = parameters(10u);
+	const uint8_t moduli[] = { 28, 28, 28, 14, 28, 26, 26, 14, 26, 26, 26, 13 };
+	struct v92_pcm_mapping mapping;
+	struct v92_pcm_frame_tx tx;
+	struct v92_pcm_frame_rx rx;
+	uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
+	uint32_t random = 11;
+	unsigned verified = 0;
+
+	cpd.four_times_gain_q0_16 = 128;
+	memcpy(cpd.modulus, moduli, sizeof(moduli));
+	for (unsigned i = 0; i < cpd.constellation[0].count; ++i)
+		cpd.constellation[0].positive_linear[i] = (int16_t)((2 * i + 1) * 256);
+	CHECK(v92_pcm_mapping_init(&mapping, G711_LAW_PCMU, &cpd) == V92_PCM_MAPPING_OK &&
+	      v92_pcm_frame_tx_init(&tx, &mapping) == V92_PCM_FRAME_OK &&
+	      v92_pcm_frame_rx_init_constellation(&rx, &mapping) == V92_PCM_FRAME_OK,
+	      "parity-completion mapping did not initialize");
+	memset(bits, 1, mapping.data_bits_per_frame);
+	for (unsigned n = 0; n < V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES; ++n) {
+		struct v92_pcm_frame frame;
+		struct v92_pcm_frame_decision decision;
+		uint8_t decoded[V92_PCM_MAPPING_MAX_BITS];
+		int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
+
+		CHECK(v92_pcm_frame_encode(&tx, bits, mapping.data_bits_per_frame, &frame) ==
+		      V92_PCM_FRAME_OK, "parity-completion source did not encode");
+		for (unsigned symbol = 0; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
+			/* Twelve uniform bytes give centred integer noise of about
+			 * 128 RMS against a 512-unit grid. This seed exposes cheap
+			 * prefixes pruning the true path before their expensive
+			 * parity symbol arrives. */
+			int noise = -1530;
+
+			for (unsigned i = 0; i < 12; ++i) {
+				random = random * UINT32_C(1664525) + UINT32_C(1013904223);
+				noise += (int)(random >> 24);
+			}
+			int sample = frame.u[symbol] + noise / 2;
+
+			CHECK(sample > INT16_MIN && sample < INT16_MAX,
+			      "parity-completion input clipped");
+			samples[symbol] = (int16_t)sample;
+		}
+		CHECK(v92_pcm_frame_decode(&rx, samples, n < V92_B1U_FRAMES,
+			decoded, mapping.data_bits_per_frame, &decision) == V92_PCM_FRAME_OK,
+		      "parity-completion receive failed at %u", n);
+		if (n < V92_B1U_ACQUISITION_FRAMES + V92_PCM_RX_DELAY_FRAMES)
+			continue;
+		CHECK(decision.bits_ready && !decision.ambiguous &&
+		      memcmp(decoded, bits, mapping.data_bits_per_frame) == 0,
+		      "parity completion lost validation B1u at %u", n);
+		++verified;
+	}
+	CHECK(verified == V92_B1U_FRAMES - V92_B1U_ACQUISITION_FRAMES,
+	      "parity-completion validation extent changed");
+	return true;
+}
+
 static bool test_b1u_output_range(void)
 {
 	struct v92_cpd_parameters cpd;
@@ -1163,6 +1223,7 @@ static bool test_b1u_output_range(void)
 int main(void)
 {
 	if (!test_b1u_output_range() || !test_b1u_oracle() || !test_b1u_coding_acquisition() ||
+	    !test_b1u_parity_completion() ||
 	    !test_model_acquisition_boundary() || !test_rate_matrix_and_reset() ||
 	    !test_transmitter_equation_matrix() ||
 	    !test_filters() || !test_causal_filter_history() ||

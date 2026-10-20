@@ -1180,15 +1180,18 @@ static enum v92_pcm_frame_result decode_frame(
 		receiver->observation != V92_PCM_FRAME_CONSTELLATION);
 	/* The fourth symbol must satisfy the group's parity. Ranking partial
 	 * groups without its cost can fill the beam with cheap prefixes whose
-	 * legal completion is expensive. The independent cell scores permit an
+	 * legal completion is expensive. Independent symbol scores permit an
 	 * exact minimum remaining cost for each parity, computed backwards.
-	 * This orders the existing beam; it never adds future costs to history
-	 * or changes B1u, filter-dependent scoring, or the delivered residual. */
-	bool lookahead = cells && !b1u;
-	/* Share history-independent scores, even when CPd explicitly carries
-	 * zero history coefficients. Precoding is then x=u; the prefilter's
-	 * current-input coefficient still scales it. Keep score and eta order. */
-	bool cache_points = !b1u && !model;
+	 * Apply this to unconstrained constellation B1u too: acquisition cannot
+	 * recover a pruned path by looking farther ahead. The bound orders the
+	 * existing beam without adding future costs to history or changing
+	 * filter-dependent scoring, known-bit constraints or residual units. */
+	bool lookahead = !known && !model &&
+		(cells || receiver->observation == V92_PCM_FRAME_CONSTELLATION);
+	/* Constellation scores are independent of filter history, including B1u.
+	 * Filter-output scores can share work when CPd has zero history taps:
+	 * precoding is then x=u, with the prefilter's current-input scaling. */
+	bool cache_points = lookahead || (!b1u && !model);
 	if (cache_points && receiver->observation == V92_PCM_FRAME_FILTER_OUTPUT)
 		for (unsigned kind = 0; kind < V92_CPD_FILTER_SECTION_COUNT; ++kind) {
 			const struct v92_cpd_filter *filter = &receiver->mapping.cpd.filter[kind];
@@ -1208,12 +1211,15 @@ static enum v92_pcm_frame_result decode_frame(
 			uint64_t minimum[2] = { UINT64_MAX, UINT64_MAX };
 			/* Cells already describe companding uncertainty. After the B1u
 			 * tail drains, score the remaining input distance uniformly. */
-			uint64_t weight = receiver->post_b1_frames == V92_PCM_RX_DELAY_FRAMES ?
+			uint64_t weight = cells && receiver->post_b1_frames == V92_PCM_RX_DELAY_FRAMES ?
 				UINT64_C(65536) : constellation_weight(receiver, samples[symbol]);
 
 			for (int eta = -(int)constellation->count; eta < constellation->count; ++eta) {
-				uint64_t cost = cell_metric(cells + symbol, signed_point(constellation, eta),
-					weight, !received || received[symbol]);
+				int16_t u = signed_point(constellation, eta);
+				uint64_t cost = cells ? cell_metric(cells + symbol, u,
+					weight, !received || received[symbol]) :
+					sample_metric(receiver, u, 0, samples[symbol], b1u,
+						NULL, minimum_gain, maximum_gain, weight);
 				point_cost[symbol][eta + constellation->count] = cost;
 				unsigned parity = (unsigned)eta & 1u;
 
