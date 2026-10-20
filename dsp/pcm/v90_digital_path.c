@@ -886,13 +886,6 @@ static enum v90_digital_path_result receive_upstream(
 	}
 }
 
-static bool output_overlaps_path(
-	const struct v90_digital_path *path, const void *output,
-	size_t output_size)
-{
-	return memory_regions_overlap(path, sizeof(*path), output, output_size);
-}
-
 enum v90_digital_path_result v90_digital_path_transmit(
 	struct v90_digital_path *path,
 	pcm_frame_source source, void *source_context,
@@ -902,7 +895,7 @@ enum v90_digital_path_result v90_digital_path_transmit(
 	enum v90_digital_path_result result;
 
 	if (!v90_digital_path_is_valid(path) || transmit_octet == NULL ||
-	    output_overlaps_path(path, transmit_octet, sizeof(*transmit_octet)))
+	    memory_regions_overlap(path, sizeof(*path), transmit_octet, sizeof(*transmit_octet)))
 		return V90_DIGITAL_PATH_INVALID_ARGUMENT;
 	if (path->failed)
 		return V90_DIGITAL_PATH_FAILED;
@@ -931,7 +924,7 @@ enum v90_digital_path_result v90_digital_path_receive_sample(
 	enum v90_digital_path_result result;
 
 	if (!v90_digital_path_is_valid(path) || received == NULL ||
-	    output_overlaps_path(path, received, sizeof(*received)))
+	    memory_regions_overlap(path, sizeof(*path), received, sizeof(*received)))
 		return V90_DIGITAL_PATH_INVALID_ARGUMENT;
 	if (path->failed)
 		return V90_DIGITAL_PATH_FAILED;
@@ -995,13 +988,15 @@ enum v90_digital_path_result v90_digital_path_sample(
 	uint8_t generated;
 	enum v90_digital_path_result result;
 
+	const struct memory_region regions[] = {
+		{ path, sizeof(*path) },
+		{ transmit_octet, sizeof(*transmit_octet) },
+		{ received, sizeof(*received) },
+	};
+
 	if (!v90_digital_path_is_valid(path) || transmit_octet == NULL ||
 	    received == NULL ||
-	    output_overlaps_path(path, transmit_octet, sizeof(*transmit_octet)) ||
-	    output_overlaps_path(path, received, sizeof(*received)) ||
-	    memory_regions_overlap(
-		transmit_octet, sizeof(*transmit_octet),
-		received, sizeof(*received)))
+	    memory_region_set_overlaps(regions, sizeof regions / sizeof *regions))
 		return V90_DIGITAL_PATH_INVALID_ARGUMENT;
 	if (path->failed)
 		return V90_DIGITAL_PATH_FAILED;

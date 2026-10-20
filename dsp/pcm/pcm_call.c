@@ -4358,12 +4358,13 @@ static inline bool outputs_overlap(
 	const struct pcm_call *call, const uint8_t *transmit_octet,
 	const void *event, size_t event_size)
 {
-	return memory_regions_overlap(
-		       call, sizeof(*call),
-		       transmit_octet, sizeof(*transmit_octet)) ||
-	       memory_regions_overlap(call, sizeof(*call), event, event_size) ||
-	       memory_regions_overlap(
-		       transmit_octet, sizeof(*transmit_octet), event, event_size);
+	const struct memory_region regions[] = {
+		{ call, sizeof(*call) },
+		{ transmit_octet, sizeof(*transmit_octet) },
+		{ event, event_size },
+	};
+
+	return memory_region_set_overlaps(regions, sizeof regions / sizeof *regions);
 }
 
 static const struct v90_pcm_mapping *online_downstream_mapping(

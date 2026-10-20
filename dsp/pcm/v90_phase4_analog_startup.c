@@ -388,14 +388,6 @@ static enum v90_phase4_startup_result advance_startup(
 	return V90_PHASE4_STARTUP_OK;
 }
 
-static bool output_overlaps_startup(
-	const struct v90_phase4_analog_startup *startup,
-	const uint8_t *output)
-{
-	return memory_regions_overlap(
-		startup, sizeof(*startup), output, sizeof(*output));
-}
-
 static enum v90_phase4_startup_result fail_startup(
 	struct v90_phase4_analog_startup *startup,
 	struct v90_phase4_analog_startup *next,
@@ -432,7 +424,7 @@ enum v90_phase4_startup_result v90_phase4_analog_startup_octet_owned(
 
 	if (!v90_phase4_analog_startup_owned_state_is_valid(startup) ||
 	    transmit_octet == NULL ||
-	    output_overlaps_startup(startup, transmit_octet))
+	    memory_regions_overlap(startup, sizeof(*startup), transmit_octet, sizeof(*transmit_octet)))
 		return V90_PHASE4_STARTUP_INVALID_ARGUMENT;
 	if (startup->failed)
 		return V90_PHASE4_STARTUP_FAILED;

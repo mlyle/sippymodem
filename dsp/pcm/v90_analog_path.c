@@ -500,14 +500,6 @@ static enum v90_analog_path_result emit_upstream(
 	}
 }
 
-static bool output_overlaps_path(
-	const struct v90_analog_path *path,
-	const void *output, size_t output_size)
-{
-	return memory_regions_overlap(
-		path, sizeof(*path), output, output_size);
-}
-
 static enum v90_analog_path_result fail_path(
 	struct v90_analog_path *path,
 	enum v90_analog_path_result result)
@@ -527,7 +519,7 @@ static enum v90_analog_path_result transmit_clock(
 
 	if (path == NULL || transmit_octet == NULL ||
 	    (!owned && !v90_analog_path_is_valid(path)) ||
-	    output_overlaps_path(path, transmit_octet, sizeof(*transmit_octet)))
+	    memory_regions_overlap(path, sizeof(*path), transmit_octet, sizeof(*transmit_octet)))
 		return V90_ANALOG_PATH_INVALID_ARGUMENT;
 	if (path->failed)
 		return V90_ANALOG_PATH_FAILED;
@@ -889,7 +881,7 @@ static enum v90_analog_path_result receive_clock(
 
 	if (path == NULL || received == NULL ||
 	    (!owned && !v90_analog_path_is_valid(path)) ||
-	    output_overlaps_path(path, received, sizeof(*received)))
+	    memory_regions_overlap(path, sizeof(*path), received, sizeof(*received)))
 		return V90_ANALOG_PATH_INVALID_ARGUMENT;
 	if (path->failed)
 		return V90_ANALOG_PATH_FAILED;
