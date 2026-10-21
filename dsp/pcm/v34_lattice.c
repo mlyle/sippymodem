@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "v34_lattice.h"
+#include "sample_math.h"
 
 #include <math.h>
 #include <stdbool.h>
@@ -100,13 +101,6 @@ static bool candidate_error_projected(
 	return true;
 }
 
-static int32_t point_magnitude_squared(
-	const struct v34_grid_point *point)
-{
-	return (int32_t)point->in_phase * point->in_phase +
-	       (int32_t)point->quadrature * point->quadrature;
-}
-
 static bool candidate_precedes(
 	const struct v34_lattice_candidate *candidate,
 	const struct v34_lattice_candidate *current)
@@ -116,8 +110,10 @@ static bool candidate_precedes(
 
 	if (candidate->squared_error != current->squared_error)
 		return candidate->squared_error < current->squared_error;
-	candidate_magnitude = point_magnitude_squared(&candidate->channel_output);
-	current_magnitude = point_magnitude_squared(&current->channel_output);
+	candidate_magnitude = (int32_t)sample_pair_power_s16(candidate->channel_output.in_phase,
+		candidate->channel_output.quadrature);
+	current_magnitude = (int32_t)sample_pair_power_s16(current->channel_output.in_phase,
+		current->channel_output.quadrature);
 	if (candidate_magnitude != current_magnitude)
 		return candidate_magnitude < current_magnitude;
 	if (candidate->channel_output.in_phase !=

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "v34_branches.h"
+#include "sample_math.h"
 
 #include <math.h>
 #include <stdbool.h>
@@ -56,8 +57,7 @@ static int32_t branch_magnitude_squared(
 		const struct v34_grid_point *point =
 			&branch->symbol[symbol].channel_output;
 
-		magnitude += (int32_t)point->in_phase * point->in_phase +
-			     (int32_t)point->quadrature * point->quadrature;
+		magnitude += (int32_t)sample_pair_power_s16(point->in_phase, point->quadrature);
 	}
 	return magnitude;
 }
