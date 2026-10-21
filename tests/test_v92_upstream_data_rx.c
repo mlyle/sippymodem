@@ -238,11 +238,45 @@ static bool prepare_e2u(
 		TEST_LU, (int16_t)lround(TEST_LU * channel->gain), 0.002, V92_CONSTELLATION_4_POINT);
 }
 
+static bool check_calibration_interval(
+	const struct v92_upstream_data_rx *receiver, int16_t lu)
+{
+	const struct v92_upstream_data_line *line = &receiver->line;
+	struct g711_interval cell;
+	double gain = line->plan.gain;
+	double minimum = line->calibration.minimum;
+	double maximum = line->calibration.maximum;
+
+	CHECK(g711_quantization_interval(receiver->decoder.mapping.law, lu, &cell),
+	      "calibration LU has no codec cell");
+	CHECK(minimum >= 1.0 / 32768.0 && minimum <= gain &&
+	      maximum >= gain && maximum <= 32768.0,
+	      "calibration excludes nominal gain: LU %d gain %a bounds %a/%a",
+	      lu, gain, minimum, maximum);
+	/* Evaluate the rational bounds in wider precision. Check their values
+	 * independently of the constructor's ordering of double operations. */
+	long double lower = fmaxl(1.0L / 32768.0L,
+		(long double)gain * lu / cell.upper);
+	long double upper = fminl(32768.0L,
+		(long double)gain * lu / fmaxl(1.0L, cell.lower));
+
+	CHECK(fabsl(minimum - lower) <= 2 * DBL_EPSILON * lower &&
+	      fabsl(maximum - upper) <= 2 * DBL_EPSILON * upper,
+	      "calibration changed the codec-cell interval");
+	CHECK((lu != cell.upper || minimum == gain) &&
+	      (lu != fmax(1.0, cell.lower) || maximum == gain),
+	      "calibration rounded away an exact nominal cell edge");
+	return true;
+}
+
 static bool test_data_initialization(void)
 {
-	const int16_t levels[] = { 2, 3, TEST_LU, 16000 };
-	const double gains[] = { 1.0 / 32768.0, nextafter(1.0 / 32768.0, 1.0),
-		1.0, 4096.0, nextafter(32768.0, 1.0), 32768.0 };
+	/* Include lower/upper codec-cell edges and the measured gain that
+	 * exposed a one-ULP nominal-gain exclusion during an actual retrain. */
+	const int16_t levels[] = { 2043, 2, 3, 1916, 2047, 2048, 4095, TEST_LU, 16000 };
+	const double gains[] = { 0x1.872c17a5244p-1, 1.0 / 32768.0,
+		nextafter(1.0 / 32768.0, 1.0), 1.0 / 3.0, 0.7, 1.0, 4096.0,
+		nextafter(32768.0, 1.0), 32768.0 };
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (int polarity = -1; polarity <= 1; polarity += 2)
 			for (size_t level = 0; level < ARRAY_LENGTH(levels); ++level) {
@@ -279,15 +313,9 @@ static bool test_data_initialization(void)
 							expected.line.input_samples = e2u_rx.signal.line.input_samples;
 							expected.line.polarity = polarity;
 							if (domain) {
-								struct g711_interval cell;
-								CHECK(g711_quantization_interval(law, levels[level], &cell) &&
-								      v92_pcm_frame_rx_init_constellation(&expected.decoder, &mapping) ==
+								CHECK(v92_pcm_frame_rx_init_constellation(&expected.decoder, &mapping) ==
 									V92_PCM_FRAME_OK, "constellation initialization fixture failed");
 								expected.line.calibration.gain = plan.gain;
-								expected.line.calibration.minimum = fmax(1.0 / 32768.0,
-									plan.gain * levels[level] / cell.upper);
-								expected.line.calibration.maximum = fmin(32768.0,
-									plan.gain * levels[level] / fmax(1.0, cell.lower));
 								pcm_gain_init(&expected.line.host.fit);
 								expected.line.delay_remaining = plan.delay -
 									V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY;
@@ -300,8 +328,18 @@ static bool test_data_initialization(void)
 							v92_upstream_model_init(&expected);
 							memset(&receiver, 0xa5, sizeof(receiver));
 							CHECK(v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping, &plan) ==
-							      V92_UPSTREAM_DATA_RX_OK && v92_upstream_data_rx_is_valid(&receiver) &&
-							      !memcmp(&receiver, &expected, sizeof(receiver)),
+							      V92_UPSTREAM_DATA_RX_OK && v92_upstream_data_rx_is_valid(&receiver),
+							      "fresh handoff rejected: law %u rate %u domain %u level %d gain %a",
+							      law, rate, domain, levels[level], gains[gain]);
+							if (domain) {
+								CHECK(check_calibration_interval(&receiver, levels[level]),
+								      "calibration interval contract failed");
+								/* These two values have their numerical checks above;
+								 * retain exact checks for all other initialized state. */
+								expected.line.calibration.minimum = receiver.line.calibration.minimum;
+								expected.line.calibration.maximum = receiver.line.calibration.maximum;
+							}
+							CHECK(!memcmp(&receiver, &expected, sizeof(receiver)),
 							      "fresh handoff changed state: law %u rate %u domain %u level %d gain %g",
 							      law, rate, domain, levels[level], gains[gain]);
 							CHECK(v92_upstream_data_rx_init(&receiver, (const void *)&receiver.model,

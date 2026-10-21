@@ -155,11 +155,13 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_init(
 
 		line.calibration.gain = plan->gain;
 		pcm_gain_init(&line.host.fit);
+		/* Divide LU by each cell edge first. At an edge the ratio is exactly
+		 * one; rounding gain * LU first can otherwise exclude nominal gain. */
 		line.calibration.minimum = fmax(1.0 / 32768.0,
-			plan->gain * lu / levels.upper);
+			plan->gain * ((double)lu / levels.upper));
 		/* LU is positive even when its PCMU cell also contains zero. */
 		line.calibration.maximum = fmin(32768.0,
-			plan->gain * lu / fmax(1.0, levels.lower));
+			plan->gain * ((double)lu / fmax(1.0, levels.lower)));
 		line.delay_remaining = plan->delay - V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY;
 		if (!calibrated_gain_is_valid(&line))
 			return V92_UPSTREAM_DATA_RX_INVALID_PARAMETERS;
