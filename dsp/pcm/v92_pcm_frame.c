@@ -671,6 +671,9 @@ bool v92_pcm_frame_rx_is_valid(const struct v92_pcm_frame_rx *receiver)
 	    receiver->path_count > V92_PCM_RX_PATHS ||
 	    receiver->pending_frames > V92_PCM_RX_DELAY_FRAMES ||
 	    receiver->post_b1_frames > receiver->pending_frames ||
+	    receiver->b1u_frames > V92_B1U_FRAMES ||
+	    !v34_scrambler_is_valid(&receiver->b1u_scrambler) ||
+	    receiver->b1u_scrambler.polynomial != V34_POLYNOMIAL_GPA ||
 	    !trellis_selection(receiver->mapping.cpd.trellis, &selected))
 		return false;
 	switch (receiver->observation) {
@@ -700,7 +703,7 @@ bool v92_pcm_frame_rx_is_valid(const struct v92_pcm_frame_rx *receiver)
 		    !v34_convolutional_encoder_is_valid(&path->trellis) ||
 		    path->trellis.selection != selected)
 			return false;
-		if ((path->ambiguous_frames | path->nondata_frames) >> receiver->pending_frames ||
+		if ((path->ambiguous_frames | path->nondata_frames | path->b1u_code_mismatches) >> receiver->pending_frames ||
 		    path->rm_frames > V92_PCM_RM_QUALIFY_FRAMES || path->rm_prime_frames > 2u ||
 		    (path->rm_prime_frames && path->rm_frames != V92_PCM_RM_QUALIFY_FRAMES))
 			return false;
@@ -750,6 +753,7 @@ static enum v92_pcm_frame_result initialize_receiver(
 	receiver->maximum_level = upstream_level;
 	receiver->path_count = 1u;
 	receiver->paths[0].descrambler = descrambler;
+	receiver->b1u_scrambler = descrambler;
 	receiver->paths[0].trellis = trellis;
 	return V92_PCM_FRAME_OK;
 }
@@ -774,6 +778,8 @@ enum v92_pcm_frame_result v92_pcm_frame_rx_reset_control(
 		return V92_PCM_FRAME_INVALID_ARGUMENT;
 	if (!v92_pcm_frame_rx_is_valid(receiver))
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
+	/* Pending words retain their evidence; new control is not B1u. */
+	receiver->b1u_frames = V92_B1U_FRAMES;
 	for (size_t index = 0u; index < receiver->path_count; ++index) {
 		receiver->paths[index].descrambler.history = 0u;
 		receiver->paths[index].differential = 0u;
@@ -792,6 +798,7 @@ struct frame_path {
 	uint8_t known_digits[V92_PCM_MAPPING_FRAME_SYMBOLS];
 	bool output_ambiguous;
 	bool output_nondata;
+	bool output_b1u_code_mismatch;
 	bool uncertain;
 };
 
@@ -1161,6 +1168,14 @@ static enum v92_pcm_frame_result decode_frame(
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
 	if (bit_count != receiver->mapping.data_bits_per_frame)
 		return V92_PCM_FRAME_OUT_OF_RANGE;
+	struct v34_scrambler b1u_scrambler = receiver->b1u_scrambler;
+	uint8_t expected[V92_PCM_MAPPING_MAX_BITS];
+	bool expect_b1u = receiver->b1u_frames < V92_B1U_FRAMES;
+	if (expect_b1u) {
+		memset(expected, 1, bit_count);
+		if (v34_scramble_unpacked_bits(&b1u_scrambler, expected, bit_count, expected) != V34_FRAMING_OK)
+			return V92_PCM_FRAME_INVALID_PARAMETERS;
+	}
 	/* LU bounds are fixed for this frame. Factor them out of the per-point
 	 * cell score while retaining the exact fixed-point rounding. */
 	int32_t minimum_gain = (int32_t)receiver->mapping.cpd.four_times_gain_q0_16 *
@@ -1545,9 +1560,15 @@ static enum v92_pcm_frame_result decode_frame(
 			if (!request_word) continue;
 			memset(candidate_bits, 0, bit_count);
 			nondata = true;
-		} else {
+		}
+		/* Observe the modulus word before GPA history can carry an
+		 * acquisition error into later source bits. Forced acquisition
+		 * cannot independently certify its own choices. */
+		bool code_mismatch = !expect_b1u || known || mapped != V92_PCM_MAPPING_OK ||
+			memcmp(candidate_bits, expected, bit_count) != 0;
+		if (mapped == V92_PCM_MAPPING_OK) {
 			/* An isolated in-range RM-like word can be genuine payload.
-			 * Preserve its coding until the repeated request qualifies. */
+			 * Preserve coding until the repeated request qualifies. */
 			for (size_t bit = 0u; bit < bit_count;) {
 				unsigned count = bit_count - bit > 8u ? 8u : (unsigned)(bit_count - bit);
 				uint8_t group = 0u;
@@ -1575,10 +1596,12 @@ static enum v92_pcm_frame_result decode_frame(
 		memcpy(paths[index].output_bits, state->pending[0], bit_count);
 		paths[index].output_ambiguous = (state->ambiguous_frames & 1u) != 0u;
 		paths[index].output_nondata = (state->nondata_frames & 1u) != 0u;
+		paths[index].output_b1u_code_mismatch = (state->b1u_code_mismatches & 1u) != 0u;
 		unsigned pending_index = receiver->pending_frames;
 		if (receiver->pending_frames == V92_PCM_RX_DELAY_FRAMES) {
 			state->ambiguous_frames >>= 1u;
 			state->nondata_frames >>= 1u;
+			state->b1u_code_mismatches >>= 1u;
 			pending_index--;
 			memmove(state->pending, state->pending + 1,
 				(V92_PCM_RX_DELAY_FRAMES - 1u) * sizeof(state->pending[0]));
@@ -1589,6 +1612,7 @@ static enum v92_pcm_frame_result decode_frame(
 				candidate_bits, bit_count);
 		}
 		if (nondata) state->nondata_frames |= (uint16_t)(1u << pending_index);
+		if (code_mismatch) state->b1u_code_mismatches |= (uint16_t)(1u << pending_index);
 		/* Merge histories with identical future behavior. Different old
 		 * payload decisions are resolved by their accumulated metric. */
 		size_t survivor;
@@ -1641,6 +1665,8 @@ static enum v92_pcm_frame_result decode_frame(
 				memcmp(prior->output_bits, paths[index].output_bits, bit_count) != 0;
 			prior->state.ambiguous_frames |= state->ambiguous_frames |
 				(prior->state.nondata_frames ^ state->nondata_frames);
+			prior->output_b1u_code_mismatch |= paths[index].output_b1u_code_mismatch;
+			prior->state.b1u_code_mismatches |= state->b1u_code_mismatches;
 			for (size_t frame = 0u; frame < V92_PCM_RX_DELAY_FRAMES; ++frame) {
 				if (memcmp(prior->state.pending[frame], state->pending[frame],
 					   bit_count) != 0)
@@ -1659,6 +1685,7 @@ static enum v92_pcm_frame_result decode_frame(
 	bool ambiguous = paths[best].output_ambiguous;
 	bool nondata = paths[best].output_nondata;
 	bool uncertain = paths[best].uncertain;
+	bool code_mismatch = paths[best].output_b1u_code_mismatch;
 	enum v92_pcm_frame_rm rm = rm_state(&paths[best].state);
 
 	for (size_t index = 0u; index < valid; ++index) {
@@ -1667,6 +1694,7 @@ static enum v92_pcm_frame_result decode_frame(
 		    memcmp(decoded, paths[index].output_bits, bit_count) != 0)
 			uncertain = true;
 		if (paths[index].state.metric == paths[best].state.metric) {
+			code_mismatch |= paths[index].output_b1u_code_mismatch;
 			ambiguous |= paths[index].output_ambiguous ||
 				nondata != paths[index].output_nondata ||
 				memcmp(decoded, paths[index].output_bits, bit_count) != 0;
@@ -1680,7 +1708,14 @@ static enum v92_pcm_frame_result decode_frame(
 		.bits_ready = receiver->pending_frames == V92_PCM_RX_DELAY_FRAMES && !nondata,
 		.ambiguous = receiver->pending_frames == V92_PCM_RX_DELAY_FRAMES && ambiguous,
 		.rm = rm,
+		.b1u_mismatches = code_mismatch ? V92_B1U_CODE_MISMATCH : 0u,
 	};
+	if (result.bits_ready)
+		for (size_t bit = 0; bit < bit_count; bit++)
+			if (decoded[bit] != 1u) {
+				result.b1u_mismatches |= V92_B1U_SOURCE_MISMATCH;
+				break;
+			}
 	for (size_t symbol = 0u; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol)
 		result.predicted_samples[symbol] = predicted_observation(receiver,
 			result.frame.u[symbol], result.frame.v[symbol], samples[symbol], b1u);
@@ -1705,6 +1740,10 @@ static enum v92_pcm_frame_result decode_frame(
 		memcpy(bits, decoded, bit_count);
 	if (receiver->pending_frames < V92_PCM_RX_DELAY_FRAMES)
 		receiver->pending_frames++;
+	if (expect_b1u) {
+		receiver->b1u_scrambler = b1u_scrambler;
+		receiver->b1u_frames++;
+	}
 	if (b1u)
 		receiver->post_b1_frames = 0u;
 	else if (receiver->post_b1_frames < V92_PCM_RX_DELAY_FRAMES)

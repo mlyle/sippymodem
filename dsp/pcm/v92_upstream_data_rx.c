@@ -429,6 +429,7 @@ static enum v92_upstream_data_rx_result receive_frame(
 		generated.b1u = line->received_frames - V92_PCM_RX_DELAY_FRAMES <
 			V92_B1U_FRAMES;
 		generated.ambiguous = decision.ambiguous;
+		generated.b1u_mismatches = decision.b1u_mismatches;
 	}
 	observe_host_gain(line);
 	if (raw && !model.acquiring)

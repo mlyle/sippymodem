@@ -495,6 +495,7 @@ static bool recover_acquisition(const struct v92_upstream_model *model,
 			memset(path->pending[0], 0, sizeof(path->pending[0]));
 			path->ambiguous_frames <<= 1;
 			path->nondata_frames = (uint16_t)((path->nondata_frames << 1) | 1u);
+			path->b1u_code_mismatches = (uint16_t)((path->b1u_code_mismatches << 1) | 1u);
 		}
 		recovered.pending_frames++;
 	}
@@ -574,9 +575,10 @@ enum v92_pcm_frame_result v92_upstream_model_decode(struct v92_upstream_model *m
 
 			if (!failed) {
 				failed = !validation.bits_ready || validation.ambiguous;
-				if (validation.bits_ready)
-					for (size_t i = 0u; i < count; ++i)
-						failed |= checked[i] != 1u;
+				/* The known primary cannot certify B1u. Keep the
+				 * independent decoder's two complete-window explanations. */
+				decision->b1u_mismatches = validation.b1u_mismatches;
+				failed |= validation.b1u_mismatches == V92_B1U_BOTH_MISMATCH;
 			}
 			if (decision->bits_ready)
 				decision->ambiguous |= failed;
@@ -628,6 +630,8 @@ enum v92_pcm_frame_result v92_upstream_model_decode(struct v92_upstream_model *m
 		    (!decisions[other].bits_ready || decisions[other].ambiguous ||
 		     memcmp(output[chosen], output[other], count)))
 			decision->ambiguous = true;
+		if ((model->valid & (1u << other)) && gap <= V92_PCM_RX_AMBIGUITY_COST)
+			decision->b1u_mismatches |= decisions[other].b1u_mismatches;
 	}
 	if (chosen != primary) {
 		unsigned char *current = (unsigned char *)decoder;

@@ -781,6 +781,8 @@ static bool v92_data_path_is_valid(const struct pcm_call *call)
 		     (!path->quality_guard_samples || path->fast.stage != PCM_CALL_V92_FAST_IDLE)) ||
 		    !isfinite(path->b1u_squared_error) ||
 		    path->b1u_squared_error < 0.0 ||
+		    path->b1u_mismatches > V92_B1U_BOTH_MISMATCH ||
+		    (path->b1u_mismatches == V92_B1U_BOTH_MISMATCH && !path->b1u_decode_failed) ||
 		    (path->upstream.line.received_frames <= V92_B1U_ACQUISITION_FRAMES &&
 		     path->b1u_squared_error != 0.0) ||
 		    v90_pcm_mapping_init_from_v92_cpu(&expected, cpu, call->law) !=
@@ -5165,6 +5167,7 @@ static enum pcm_call_result v92_data_octet_owned(
 					return PCM_CALL_NUMERIC_FAILURE;
 				path->b1u_squared_error = 0.0;
 				path->b1u_decode_failed = false;
+				path->b1u_mismatches = 0u;
 				path->fast.b1_started = true;
 			}
 		} else {
@@ -5265,14 +5268,17 @@ static enum pcm_call_result v92_data_octet_owned(
 					return PCM_CALL_NUMERIC_FAILURE;
 				path->b1u_squared_error = error;
 			}
-			/* Bits arrive after traceback. Apply the same acquisition split
-			 * as the residual, in decoded-frame rather than input time. */
+			/* Apply the acquisition split after traceback too. A correct
+			 * scrambled word can retain bad acquisition GPA history in its
+			 * source bits; conversely a peer may resume source ones from an
+			 * uncertain history. Require one independent explanation across
+			 * the whole interval, without excusing ambiguity or missing media. */
 			if (frame.b1u && frame.bit_count != 0u &&
 			    path->upstream.line.received_frames >
 				    V92_B1U_ACQUISITION_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
 				path->b1u_decode_failed |= frame.ambiguous;
-				for (size_t bit = 0u; bit < frame.bit_count; ++bit)
-					path->b1u_decode_failed |= frame.bits[bit] != 1u;
+				path->b1u_mismatches |= frame.b1u_mismatches;
+				path->b1u_decode_failed |= path->b1u_mismatches == V92_B1U_BOTH_MISMATCH;
 			}
 			/* The decoder's lookahead can still deliver B1u bits after
 			 * the physical B1 boundary. Never expose them as host data. */

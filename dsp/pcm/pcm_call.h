@@ -416,6 +416,9 @@ struct pcm_call_v92_digital_data {
 	bool pending_media_loss;
 	/* Missing media can reject B1u before the first delayed decision. */
 	bool b1u_decode_failed;
+	/* Each bit rejects one independent explanation over the WHOLE held-out
+	 * interval. Never choose a different explanation for each frame. */
+	uint8_t b1u_mismatches;
 };
 
 union pcm_call_data_path_state {

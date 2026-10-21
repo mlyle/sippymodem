@@ -92,6 +92,7 @@ struct v92_upstream_data_frame {
 	uint8_t bit_count;
 	bool b1u;
 	bool ambiguous;
+	uint8_t b1u_mismatches;
 };
 
 /* Start at the first B1u decision after E2u, preserving the trained equalizer,

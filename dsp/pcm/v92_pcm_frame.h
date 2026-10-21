@@ -69,6 +69,15 @@ struct v92_pcm_frame {
 	uint8_t frame_sign;
 };
 
+/* Independent whole-window B1u explanations: source ones after acquisition,
+ * or the zero-initialized scrambled-one stream. Expected bits never rank a
+ * path. A forced/unknown coded word cannot establish the second explanation. */
+enum v92_b1u_mismatch {
+	V92_B1U_SOURCE_MISMATCH = 1,
+	V92_B1U_CODE_MISMATCH = 2,
+	V92_B1U_BOTH_MISMATCH = 3,
+};
+
 struct v92_pcm_frame_rx_path {
 	struct v34_scrambler descrambler;
 	struct v34_convolutional_encoder trellis;
@@ -77,6 +86,7 @@ struct v92_pcm_frame_rx_path {
 	uint8_t pending[V92_PCM_RX_DELAY_FRAMES][V92_PCM_MAPPING_MAX_BITS];
 	uint16_t ambiguous_frames;
 	uint16_t nondata_frames;
+	uint16_t b1u_code_mismatches;
 	uint8_t differential;
 	uint8_t rm_frames;
 	uint8_t rm_prime_frames;
@@ -112,6 +122,11 @@ struct v92_pcm_frame_rx {
 	struct v92_pcm_mapping mapping;
 	struct v92_pcm_frame_rx_path paths[V92_PCM_RX_PATHS];
 	struct v92_pcm_frame_noise noise;
+	/* Counts actual decoded words, independently of the quality-fit clock.
+	 * An acquisition candidate that skips a control prefix starts its own
+	 * B1u epoch here; inserted nondata slots do not advance this sequence. */
+	struct v34_scrambler b1u_scrambler;
+	uint8_t b1u_frames;
 	enum v92_pcm_frame_observation observation;
 	/* Zero in constellation coordinates; the caller has removed the gain. */
 	int16_t upstream_level;
@@ -135,6 +150,9 @@ struct v92_pcm_frame_decision {
 	bool bits_ready;
 	/* Unresolved histories disagree about the delivered payload. */
 	bool ambiguous;
+	/* Delayed-word evidence. OR over the complete validation interval;
+	 * both explanations failing rejects B1u. Ambiguity remains independent. */
+	uint8_t b1u_mismatches;
 	/* Current-frame request evidence, independent of delayed bits. A single
 	 * in-range RM-like word remains payload. Qualified RM and its two prime
 	 * frames are signaling; the caller owns the response/control transition. */

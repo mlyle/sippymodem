@@ -960,6 +960,7 @@ static bool test_receiver_initialization(void)
 					      v34_convolutional_encoder_init(&expected.paths[0].trellis,
 						      (enum v34_trellis_selection)selection) == V34_TRELLIS_OK,
 					      "receiver initialization coding seeds");
+					expected.b1u_scrambler = expected.paths[0].descrambler;
 					for (unsigned alias = 0u; alias < 2u; ++alias) {
 						memset(&rx, 0xa5, sizeof(rx));
 						rx.mapping = mapping;
@@ -1171,6 +1172,66 @@ static bool test_b1u_parity_completion(void)
 	return true;
 }
 
+static bool test_b1u_validation_history(void)
+{
+	/* Both complete-window explanations have useful, distinct cases. */
+	const uint8_t expected[] = { 0, V92_B1U_SOURCE_MISMATCH,
+		V92_B1U_BOTH_MISMATCH, V92_B1U_CODE_MISMATCH, 0, 0 };
+	for (unsigned mode = 0; mode < ARRAY_LENGTH(expected); mode++) {
+		struct v92_cpd_parameters cpd = parameters(10);
+		for (unsigned i = 0; i < cpd.constellation[0].count; i++)
+			cpd.constellation[0].positive_linear[i] = (int16_t)((2 * i + 1) * 256);
+		struct v92_pcm_mapping mapping;
+		struct v92_pcm_frame_tx tx;
+		struct v92_pcm_frame_rx rx;
+		CHECK(v92_pcm_mapping_init(&mapping, G711_LAW_PCMU, &cpd) == V92_PCM_MAPPING_OK &&
+		      v92_pcm_frame_tx_init(&tx, &mapping) == V92_PCM_FRAME_OK &&
+		      v92_pcm_frame_rx_init_constellation(&rx, &mapping) == V92_PCM_FRAME_OK,
+		      "B1 validation histories did not initialize");
+		uint8_t mismatches = 0;
+		for (unsigned n = 0; n < V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES; n++) {
+			uint8_t bits[V92_PCM_MAPPING_MAX_BITS], decoded[V92_PCM_MAPPING_MAX_BITS];
+			memset(bits, 1, mapping.data_bits_per_frame);
+			if ((mode == 2 && n == 40) || (mode == 3 && n == 22)) bits[0] = 0;
+			if ((mode == 1 || mode == 2) && n == V92_B1U_ACQUISITION_FRAMES)
+				for (unsigned i = 0; i < rx.path_count; i++) rx.paths[i].descrambler.history ^= 1;
+			struct v92_pcm_frame frame;
+			struct v92_pcm_frame_decision decision;
+			CHECK(v92_pcm_frame_encode(&tx, bits, mapping.data_bits_per_frame, &frame) == V92_PCM_FRAME_OK,
+			      "B1 validation source failed");
+			if (mode == 4) {
+				/* Another allowed representative with identical trellis labels.
+				 * Identity filters leave later points independent of this choice. */
+				int eta = frame.signed_index[0];
+				eta += eta < 0 ? cpd.modulus[0] : -(int)cpd.modulus[0];
+				frame.u[0] = eta < 0 ? (int16_t)-cpd.constellation[0].positive_linear[-eta - 1] :
+					cpd.constellation[0].positive_linear[eta];
+			}
+			enum v92_pcm_frame_result result = mode == 5 && n < V92_B1U_ACQUISITION_FRAMES ?
+				v92_pcm_frame_acquire_model(&rx, frame.u, decoded, mapping.data_bits_per_frame, &decision) :
+				v92_pcm_frame_decode(&rx, frame.u, n < V92_B1U_FRAMES, decoded,
+					mapping.data_bits_per_frame, &decision);
+			CHECK(result == V92_PCM_FRAME_OK,
+			      "B1 validation receive failed");
+			if (mode == 5 && decision.bits_ready &&
+			    n < V92_B1U_ACQUISITION_FRAMES + V92_PCM_RX_DELAY_FRAMES)
+				CHECK(decision.b1u_mismatches & V92_B1U_CODE_MISMATCH,
+				      "forced acquisition certified its own coded word");
+			if (n < V92_B1U_ACQUISITION_FRAMES + V92_PCM_RX_DELAY_FRAMES) continue;
+			CHECK(decision.bits_ready && !decision.ambiguous,
+			      "B1 validation lost a delayed word");
+			mismatches |= decision.b1u_mismatches;
+		}
+		CHECK(mismatches == expected[mode], "B1 explanation changed: mode=%u got=%u expected=%u",
+		      mode, mismatches, expected[mode]);
+		uint16_t pending = rx.paths[0].b1u_code_mismatches;
+		CHECK(v92_pcm_frame_rx_reset_control(&rx) == V92_PCM_FRAME_OK &&
+		      rx.b1u_frames == V92_B1U_FRAMES && rx.paths[0].b1u_code_mismatches == pending,
+		      "control reset lost delayed validation evidence");
+	}
+	return true;
+}
+
 static bool test_b1u_output_range(void)
 {
 	struct v92_cpd_parameters cpd;
@@ -1223,7 +1284,7 @@ static bool test_b1u_output_range(void)
 int main(void)
 {
 	if (!test_b1u_output_range() || !test_b1u_oracle() || !test_b1u_coding_acquisition() ||
-	    !test_b1u_parity_completion() ||
+	    !test_b1u_parity_completion() || !test_b1u_validation_history() ||
 	    !test_model_acquisition_boundary() || !test_rate_matrix_and_reset() ||
 	    !test_transmitter_equation_matrix() ||
 	    !test_filters() || !test_causal_filter_history() ||

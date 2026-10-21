@@ -6983,7 +6983,11 @@ static bool v92_bad_b1_stays_clamped(const struct pcm_call *boundary)
 	return true;
 }
 
-static bool v92_b1_bit_validation(const struct pcm_call *boundary, unsigned fault_frame)
+enum b1_bit_fault { B1_SOURCE_FAULT, B1_HISTORY_FAULT, B1_HISTORY_LATE_FAULT,
+	B1_HISTORY_AMBIGUOUS, B1_MIXED_EXPLANATIONS };
+
+static bool v92_b1_bit_validation(const struct pcm_call *boundary, unsigned fault_frame,
+	enum b1_bit_fault fault)
 {
 	struct pcm_call damaged = *boundary;
 	struct pcm_call_v92_digital_data *path = &damaged.state.data_path.v92_digital;
@@ -6991,7 +6995,8 @@ static bool v92_b1_bit_validation(const struct pcm_call *boundary, unsigned faul
 	struct pcm_call_data_event event;
 	uint8_t transmitted;
 	uint8_t silence = silence_octet(boundary->law);
-	bool acquisition = fault_frame < V92_B1U_ACQUISITION_FRAMES;
+	bool acquisition = fault == B1_HISTORY_FAULT ||
+		(fault == B1_SOURCE_FAULT && fault_frame < V92_B1U_ACQUISITION_FRAMES);
 
 	if (path->upstream.line.plan.observation != V92_PCM_FRAME_CONSTELLATION)
 		return true;
@@ -7009,8 +7014,25 @@ static bool v92_b1_bit_validation(const struct pcm_call *boundary, unsigned faul
 		uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
 
 		memset(bits, 1, tx.mapping.data_bits_per_frame);
-		if (frame == fault_frame)
+		if ((fault == B1_SOURCE_FAULT && frame == fault_frame) ||
+		    (fault == B1_HISTORY_LATE_FAULT && frame == V92_B1U_FRAMES - 1u))
 			bits[0] = 0u;
+		if (fault != B1_SOURCE_FAULT && frame == V92_B1U_ACQUISITION_FRAMES)
+			for (unsigned i = 0; i < path->upstream.decoder.path_count; i++)
+				path->upstream.decoder.paths[i].descrambler.history ^= 1;
+		if (fault == B1_HISTORY_AMBIGUOUS &&
+		    frame == V92_B1U_ACQUISITION_FRAMES + V92_PCM_RX_DELAY_FRAMES)
+			for (unsigned i = 0; i < path->upstream.decoder.path_count; i++)
+				path->upstream.decoder.paths[i].ambiguous_frames |= 1;
+		if (fault == B1_MIXED_EXPLANATIONS && frame == V92_B1U_ACQUISITION_FRAMES + 1u) {
+			/* The first word has only a source mismatch. Change both ends'
+			 * GPA histories so later source words are ones but no longer
+			 * match the zero-initialized code stream. Neither explanation
+			 * covers this complete interval, despite per-word alternatives. */
+			tx.state.scrambler.history ^= 1;
+			for (unsigned i = 0; i < path->upstream.decoder.path_count; i++)
+				path->upstream.decoder.paths[i].descrambler.history ^= 1;
+		}
 		CHECK(v92_pcm_frame_encode(&tx, bits, tx.mapping.data_bits_per_frame, &encoded) == V92_PCM_FRAME_OK,
 		      "wrong-B1u encoding failed");
 		for (size_t symbol = 0u; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
@@ -7033,6 +7055,8 @@ static bool v92_b1_bit_validation(const struct pcm_call *boundary, unsigned faul
 				      "corrected acquisition bit rejected the held-out B1u: result=%s bits=%u armed=%u error=%g",
 				      pcm_call_result_name(result), path->b1u_decode_failed, damaged.b1_deadline_armed,
 				      path->b1u_squared_error);
+				CHECK(fault != B1_HISTORY_FAULT || pcm_call_is_online(&damaged),
+				      "clean independent code words did not establish readiness");
 				return true;
 			}
 			CHECK(event.kind == PCM_CALL_DATA_NONE && !pcm_call_is_online(&damaged),
@@ -8205,9 +8229,13 @@ static bool capture_v92_duplex_data(
 					expected_downstream_idle = accepted > V90_PHASE4_B1D_FRAMES ?
 						accepted - V90_PHASE4_B1D_FRAMES : 0u;
 					CHECK(v92_bad_b1_stays_clamped(call) &&
-					      v92_b1_bit_validation(call, V92_B1U_ACQUISITION_FRAMES - 2u) &&
-					      v92_b1_bit_validation(call, V92_B1U_ACQUISITION_FRAMES) &&
-					      v92_b1_bit_validation(call, V92_B1U_FRAMES - 1u),
+					      v92_b1_bit_validation(call, V92_B1U_ACQUISITION_FRAMES - 2u, B1_SOURCE_FAULT) &&
+					      v92_b1_bit_validation(call, V92_B1U_ACQUISITION_FRAMES, B1_SOURCE_FAULT) &&
+					      v92_b1_bit_validation(call, V92_B1U_FRAMES - 1u, B1_SOURCE_FAULT) &&
+					      v92_b1_bit_validation(call, 0, B1_HISTORY_FAULT) &&
+					      v92_b1_bit_validation(call, 0, B1_HISTORY_LATE_FAULT) &&
+					      v92_b1_bit_validation(call, 0, B1_HISTORY_AMBIGUOUS) &&
+					      v92_b1_bit_validation(call, 0, B1_MIXED_EXPLANATIONS),
 					      "V.92 B1 quality gate failed");
 				}
 			}
