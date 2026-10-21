@@ -122,6 +122,61 @@ static bool pair_power_boundaries(void)
 	return true;
 }
 
+static bool checked_rounding_boundaries(void)
+{
+	const double invalid[] = {
+		NAN, INFINITY, -INFINITY, DBL_MAX, -DBL_MAX,
+		INT16_MIN - 0.5, INT16_MAX + 0.5,
+	};
+	const double zero[] = { 0.0, -0.0, DBL_MIN, -DBL_MIN };
+
+	CHECK(!sample_round_checked_s16(0.0, NULL),
+	      "coordinate quantizer accepted a null output");
+	for (size_t index = 0; index < ARRAY_LENGTH(invalid); ++index) {
+		int16_t fixed = 12345;
+
+		CHECK(!sample_round_checked_s16(invalid[index], &fixed) &&
+		      fixed == 12345,
+		      "invalid coordinate %zu changed the output", index);
+	}
+	for (size_t index = 0; index < ARRAY_LENGTH(zero); ++index) {
+		int16_t fixed = 12345;
+
+		CHECK(sample_round_checked_s16(zero[index], &fixed) && fixed == 0,
+		      "near-zero coordinate %zu did not round to zero", index);
+	}
+	/* Check every half-integer boundary and its immediate neighbors.
+	 * Integer expectations are independent of the quantizer. */
+	for (int32_t lower = INT16_MIN - 1; lower <= INT16_MAX; ++lower) {
+		double half = lower + 0.5;
+		const double coordinates[] = {
+			nextafter(half, -INFINITY), half, nextafter(half, INFINITY),
+		};
+		const int32_t expected[] = {
+			lower, lower < 0 ? lower : lower + 1, lower + 1,
+		};
+
+		for (size_t index = 0; index < ARRAY_LENGTH(coordinates); ++index) {
+			bool fits = expected[index] >= INT16_MIN &&
+				    expected[index] <= INT16_MAX;
+			int16_t fixed = 12345;
+
+			CHECK(sample_round_checked_s16(coordinates[index], &fixed) ==
+				      fits &&
+			      fixed == (fits ? expected[index] : 12345),
+			      "half-integer boundary %d/%zu quantized incorrectly",
+			      lower, index);
+		}
+	}
+	for (int32_t word = INT16_MIN; word <= INT16_MAX; ++word) {
+		int16_t fixed = 12345;
+
+		CHECK(sample_round_checked_s16(word, &fixed) && fixed == word,
+		      "integer coordinate %d changed", word);
+	}
+	return true;
+}
+
 static bool rounding_boundaries(void)
 {
 	for (int32_t integer = INT16_MIN; integer <= INT16_MAX; ++integer) {
@@ -155,10 +210,11 @@ int main(void)
 	bool passed = saved != -1 && pair_power_boundaries() &&
 		weighted_level_boundaries() && energy_smoothing_boundaries();
 	for (size_t i = 0; passed && i < ARRAY_LENGTH(modes); ++i)
-		passed = fesetround(modes[i]) == 0 && rounding_boundaries();
+		passed = fesetround(modes[i]) == 0 && rounding_boundaries() &&
+			checked_rounding_boundaries();
 	if (saved != -1 && fesetround(saved) != 0)
 		passed = false;
-	printf("[ %s ] sample pair power and saturated rounding in all rounding modes\n",
+	printf("[ %s ] sample power, checked and saturated rounding in all rounding modes\n",
 	       passed ? "OK" : "FAILED");
 	return passed ? 0 : 1;
 }

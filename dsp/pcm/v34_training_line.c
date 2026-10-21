@@ -4,6 +4,7 @@
 
 #include "v34_phase3_s_sequence.h"
 #include "memory_region.h"
+#include "sample_math.h"
 
 #include <limits.h>
 #include <math.h>
@@ -259,7 +260,7 @@ enum v34_training_line_result v34_training_line_sample(
 	 * stays fixed, and the headroom check makes rounding representable. */
 	line->carrier = next;
 	line->generated_samples = next.generated_samples;
-	*sample = (int16_t)lround(scaled_sample);
+	*sample = sample_round_s16(scaled_sample);
 	*point_accepted = accepted;
 	return V34_TRAINING_LINE_OK;
 }

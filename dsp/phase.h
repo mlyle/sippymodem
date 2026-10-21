@@ -3,6 +3,8 @@
 #ifndef DSP_PHASE_H
 #define DSP_PHASE_H
 
+#include "sample_math.h"
+
 #include <math.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -62,7 +64,8 @@ static inline double phase_radians_u32(uint32_t phase)
  * phase and rounds each component before mixing multiple tones. */
 static inline int16_t phase_sine_s16(uint32_t phase, int16_t amplitude)
 {
-	return (int16_t)lround((double)amplitude * sin(phase_radians_u32(phase)));
+	return sample_round_s16(
+		(double)amplitude * sin(phase_radians_u32(phase)));
 }
 
 #endif

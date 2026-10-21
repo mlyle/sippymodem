@@ -3,6 +3,7 @@
 #include "v34_data_decision_receiver.h"
 
 #include "memory_region.h"
+#include "sample_math.h"
 
 #include <stddef.h>
 
@@ -66,10 +67,10 @@ static bool fixed_target(
 	const struct qam_point *normalized, struct v34_analytic_sample *fixed)
 {
 	return point_is_finite(normalized) &&
-	       qam_coordinate_to_s16(
+	       sample_round_checked_s16(
 		       normalized->in_phase * V34_TRAINING_FIXED_AMPLITUDE,
 		       &fixed->in_phase) &&
-	       qam_coordinate_to_s16(
+	       sample_round_checked_s16(
 		       normalized->quadrature * V34_TRAINING_FIXED_AMPLITUDE,
 		       &fixed->quadrature);
 }

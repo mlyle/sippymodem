@@ -6,6 +6,7 @@
 #include "fir.h"
 #include "integer_math.h"
 #include "memory_region.h"
+#include "sample_math.h"
 #include "phase.h"
 
 #include <limits.h>
@@ -366,9 +367,9 @@ static enum v34_pulse_modulator_result pulse_sample(
 	if ((point != NULL) != accepting ||
 	    (point != NULL &&
 	     (!qam_point_fits_power(point, modulator->maximum_point_power) ||
-	      !qam_coordinate_to_s16(point->in_phase * V34_PULSE_POINT_SCALE,
+	      !sample_round_checked_s16(point->in_phase * V34_PULSE_POINT_SCALE,
 				     &fixed_in_phase) ||
-	      !qam_coordinate_to_s16(point->quadrature * V34_PULSE_POINT_SCALE,
+	      !sample_round_checked_s16(point->quadrature * V34_PULSE_POINT_SCALE,
 				     &fixed_quadrature))))
 		return V34_PULSE_MODULATOR_INVALID_ARGUMENT;
 	if (modulator->generated_samples == UINT64_MAX ||

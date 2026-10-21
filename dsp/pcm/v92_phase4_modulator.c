@@ -3,6 +3,7 @@
 #include "v92_phase4_modulator.h"
 
 #include "memory_region.h"
+#include "sample_math.h"
 
 #include <limits.h>
 #include <math.h>
@@ -30,13 +31,13 @@ static unsigned int magnitude_count(
 	return bits == 0 ? 0 : 1u << (bits - 1u);
 }
 
-static bool raw_level(
+static inline bool raw_level(
 	enum v92_constellation_size constellation, int16_t lu,
 	uint8_t magnitude_index, uint8_t encoded_sign, int16_t *sample)
 {
 	double mean_square;
 	double scaled;
-	long rounded;
+	int16_t rounded;
 
 	if (sample == NULL || lu <= 0 || encoded_sign > 1u ||
 	    magnitude_index >= magnitude_count(constellation))
@@ -45,8 +46,7 @@ static bool raw_level(
 		3.0;
 	scaled = (double)(2u * magnitude_index + 1u) * (double)lu /
 		sqrt(mean_square);
-	rounded = lround(scaled);
-	if (rounded <= 0 || rounded > INT16_MAX)
+	if (!sample_round_checked_s16(scaled, &rounded) || rounded <= 0)
 		return false;
 	*sample = encoded_sign != 0u ?
 		(int16_t)-rounded : (int16_t)rounded;
