@@ -8154,6 +8154,17 @@ static bool test_lapm_post_retrain_enquiry(void)
 			}
 			CHECK(source.calls == 1 && l->vs == 1, "healed link did not resume payload");
 		} else {
+			/* A lost first enquiry gets its ordinary retry before any
+			 * new physical recovery. Only the second expiry can use it. */
+			while ((outgoing = m->packer.hdlc.get_tx_frame(l)) != NULL)
+				m->packer.hdlc.tx_complete(l, outgoing);
+			m->bit_timer_func(m);
+			CHECK(l->rtx_count == 3 && modem_ec_take_retrain_request(m) == !recovered &&
+			      !modem_ec_take_retrain_request(m), "post-retrain enquiry lost its remaining recovery");
+			remaining = m->bit_timer;
+			CHECK(modem_ec_resume_after_retrain(m) == 0 && l->rtx_count == 3 &&
+			      m->bit_timer == remaining && l->stalled_retrain &&
+			      !modem_ec_take_retrain_request(m), "second resumption renewed recovery");
 			m->get_chars = NULL;
 			for (unsigned retry = 0; retry < 6 && l->state == 2; ++retry) {
 				while ((outgoing = m->packer.hdlc.get_tx_frame(l)) != NULL)
@@ -8243,7 +8254,7 @@ static bool test_lapm_retrain_recovery_budget(void)
 			CHECK(modem_ec_resume_after_retrain(m) == 0 &&
 			      m->bit_timer == 1 && m->bit_timer_func == timeout &&
 			      l->rtx_count == (int)(first_retry ? first_retry : 1) &&
-			      l->retrain_poll && l->peer_busy == (int)full && l->state == 2 && m->state == 5 &&
+			      l->retrain_poll == (int)(first_retry ? first_retry : 1) && l->peer_busy == (int)full && l->state == 2 && m->state == 5 &&
 			      l->sent_info == retained && l->va == 0 && l->vs == information &&
 			      source.calls == information && m->packer.hdlc.tx_frame == NULL &&
 			      (!first_retry || (l->ctrl_list == queued && l->tx_ctrl == next)),
@@ -8278,6 +8289,9 @@ static bool test_lapm_retrain_recovery_budget(void)
 				m->packer.hdlc.tx_complete(l, outgoing);
 			}
 			m->bit_timer_func(m);
+			CHECK(modem_ec_take_retrain_request(m) == (l->state == 2 && expiry == 1u) &&
+			      !modem_ec_take_retrain_request(m),
+			      "post-retrain enquiry reused earlier retry history or renewed recovery");
 			CHECK(l->state != 2 || l->stalled_polls == 0,
 			      "held post-retrain enquiry consumed the information-progress budget");
 		}

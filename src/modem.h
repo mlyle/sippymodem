@@ -260,6 +260,7 @@ struct lapm_state {
         enum lapm_reject_state reject;
         int busy;
         int peer_busy;
+        /* Initial retry count of the post-retrain enquiry; zero when absent. */
         int retrain_poll;
         bool accept_sabme_retry; /* answering DCE, before peer I/S traffic */
         bool stalled_retrain;

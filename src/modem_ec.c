@@ -1852,12 +1852,14 @@ bool modem_ec_take_retrain_request(struct modem *m)
 	establishing = m->state == STATE_EC_ESTAB &&
 		((l->state == LAPM_IDLE && xid_pending(l)) ||
 		 l->state == LAPM_ESTAB);
+	/* Anchor retries to resumption; older poll counts and information
+	 * stalls cannot shortcut the two new enquiry timeout intervals. */
 	if ((!establishing &&
-	     (l->state != LAPM_DATA || xid_pending(l) || l->retrain_poll)) ||
+	     (l->state != LAPM_DATA || xid_pending(l))) ||
 	    l->busy || l->peer_busy ||
 	    m->bit_timer <= 0 || m->bit_timer_func != t401_timeout ||
-	    (l->rtx_count < LAPM_RETRAIN_POLLS &&
-	     l->stalled_polls < LAPM_RETRAIN_POLLS) ||
+	    (l->retrain_poll ? l->rtx_count - l->retrain_poll < LAPM_RETRAIN_POLLS :
+	     (l->rtx_count < LAPM_RETRAIN_POLLS && l->stalled_polls < LAPM_RETRAIN_POLLS)) ||
 	    l->stalled_retrain)
 		return false;
 	/* A usable receive direction need not imply a usable transmit direction.
@@ -1914,8 +1916,10 @@ int modem_ec_resume_after_retrain(struct modem *m)
 	 * confirming the outgoing direction; retain ordinary T401/N400 recovery. */
 	/* The enquiry's rtx_count already gates information. Preserve the peer's
 	 * actual RNR state and continue under retained T401/N400. */
-	if (l->retrain_poll || l->rtx_count) {
-		l->retrain_poll = 1;
+	if (l->retrain_poll)
+		return 0;
+	if (l->rtx_count) {
+		l->retrain_poll = l->rtx_count;
 		return 0;
 	}
 	if (tx_status(l, l->cmd_addr, 1) != 0)
