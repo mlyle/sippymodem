@@ -16,7 +16,6 @@ enum {
 
 enum separation_rule {
 	SEPARATION_NOMINAL,
-	SEPARATION_CELL_GAP,
 	SEPARATION_CELL_MARGIN,
 	SEPARATION_DISJOINT_MARGIN,
 };
@@ -350,60 +349,9 @@ static int pair_input_margin(
 	return minimum;
 }
 
-/* Find the first LU outside the current codec bin. The endpoint proves
- * whether a transition remains; native signed rounding owns all ties. */
-static int next_codec_change(
-	int64_t point, int lu, int end, const struct g711_interval *bin)
-{
-	int last = scale_at_level(point, end);
-
-	if (last >= bin->lower && last <= bin->upper)
-		return end + 1;
-	int low = lu + 1, high = end;
-
-	while (low < high) {
-		int middle = low + (high - low) / 2;
-		int sample = scale_at_level(point, middle);
-
-		if (point >= 0 ? sample > bin->upper : sample < bin->lower)
-			high = middle;
-		else
-			low = middle + 1;
-	}
-	return low;
-}
-
-static int pair_decoded_gap(
-	enum g711_law law, int64_t left, int64_t right,
-	int lower_lu, int upper_lu, int required_margin)
-{
-	int minimum = INT_MAX;
-
-	/* Reconstructed separation is constant until either input changes bin.
-	 * Visit every such transition instead of every integer LU value. */
-	for (int lu = lower_lu; lu <= upper_lu;) {
-		int16_t a = (int16_t)scale_at_level(left, lu);
-		int16_t b = (int16_t)scale_at_level(right, lu);
-		int gap = g711_quantize(law, b) - g711_quantize(law, a);
-		struct g711_interval left_bin, right_bin;
-
-		if (gap <= required_margin)
-			return 0;
-		if (gap < minimum)
-			minimum = gap;
-		(void)g711_quantization_interval(law, a, &left_bin);
-		(void)g711_quantization_interval(law, b, &right_bin);
-		int next_left = next_codec_change(left, lu, upper_lu, &left_bin);
-		int next_right = next_codec_change(right, lu, upper_lu, &right_bin);
-
-		lu = next_left < next_right ? next_left : next_right;
-	}
-	return minimum;
-}
-
 static int cell_separation(
 	const struct v92_cpd_parameters *cpd, enum g711_law law,
-	const struct g711_interval *levels, bool input_noise, int required_margin)
+	const struct g711_interval *levels, int required_margin)
 {
 	int count = cpd->constellation[0].count;
 	int64_t previous = point_gain(cpd, -count);
@@ -419,9 +367,8 @@ static int cell_separation(
 
 	for (int eta = -count + 1; eta < count; ++eta) {
 		int64_t next = point_gain(cpd, eta);
-		int separation = input_noise ?
-			pair_input_margin(law, previous, next, levels->lower, levels->upper) :
-			pair_decoded_gap(law, previous, next, levels->lower, levels->upper, required_margin);
+		int separation = pair_input_margin(
+			law, previous, next, levels->lower, levels->upper);
 
 		if (separation <= required_margin)
 			return 0;
@@ -450,8 +397,12 @@ static int direct_separation(
 	if (rule == SEPARATION_DISJOINT_MARGIN)
 		return level_separation(
 			cpd, law, interval.lower, interval.upper, true, required_margin);
-	return cell_separation(cpd, law, &interval,
-		rule == SEPARATION_CELL_MARGIN, required_margin);
+	/* A minimum over the LU cell cannot exceed its value at the
+	 * reported level. Reject candidates that cannot improve the retained
+	 * margin before enumerating the exact codec-bin crossings. */
+	if (!level_separation(cpd, law, lu, lu, true, required_margin))
+		return 0;
+	return cell_separation(cpd, law, &interval, required_margin);
 }
 
 static enum v92_cpd_result select_mapping(
@@ -464,16 +415,16 @@ static enum v92_cpd_result select_mapping(
 	uint8_t data_rate_number = initial->data_rate_number;
 	unsigned int count;
 	int best_separation = 0;
-	bool refine_low_rate = rule == SEPARATION_CELL_MARGIN &&
-		(data_rate_number == 13u || data_rate_number == 14u);
+	bool optimize_margin = rule == SEPARATION_CELL_MARGIN;
 
-	/* Refined low rates and 48k need the best available input margin,
-	 * rather than the first template with distinct nominal points. */
+	/* Full-cell selection maximizes pre-codec noise margin within the
+	 * bounded family. Nominal and disjoint selection retain their first
+	 * usable template. Decoded-code spacing alone cannot bound input noise. */
 	if (data_rate_number != 19u) {
 		int separation = direct_separation(&candidate, law, upstream_level, rule, 0);
 
 		if (separation > 0) {
-			if (!refine_low_rate) {
+			if (!optimize_margin) {
 				*parameters = candidate;
 				return V92_CPD_OK;
 			}
@@ -515,7 +466,7 @@ static enum v92_cpd_result select_mapping(
 			best = candidate;
 		}
 	}
-	if (refine_low_rate || ((best_separation == 0 || data_rate_number == 19u) &&
+	if (optimize_margin || (best_separation == 0 &&
 	    data_rate_number >= 15u && data_rate_number <= 19u)) {
 		/* Contiguous codec windows can have no placement that survives the
 		 * whole LU cell. Try a bounded family of linear/cubic grids:
@@ -527,7 +478,7 @@ static enum v92_cpd_result select_mapping(
 		 * fit uint64_t for N<=64. Reuse B1u frequencies
 		 * because monotone spacing does not change inner representatives. */
 		uint64_t width = 2u * count - 1u;
-		unsigned resolution = (refine_low_rate && data_rate_number == 13u) ||
+		unsigned resolution = (optimize_margin && data_rate_number == 13u) ||
 			data_rate_number == 19u ? 4u : 1u;
 
 		for (unsigned shape = 0u; shape <= 16u * resolution; ++shape) {
@@ -591,9 +542,8 @@ enum v92_cpd_result v92_cpd_direct_select(
 		if (result != V92_CPD_INVALID_PARAMETERS)
 			return result;
 	}
-	enum separation_rule rule = data_rate_number >= 18u ?
-		SEPARATION_CELL_MARGIN : data_rate_number >= 15u ?
-		SEPARATION_CELL_GAP : SEPARATION_NOMINAL;
+	enum separation_rule rule = data_rate_number >= 15u ?
+		SEPARATION_CELL_MARGIN : SEPARATION_NOMINAL;
 
 	return select_mapping(
 		parameters, law, upstream_level, &initial, frequencies, rule);

@@ -549,51 +549,79 @@ static bool test_uncertain_symbol_ranges(void)
 	return true;
 }
 
-static bool test_48k_input_noise_margin(void)
+static bool check_input_noise_margin(
+	enum g711_law law, uint8_t rate, int16_t nominal, int noise)
 {
-	const struct { int16_t lu; int noise; } cases[] = {
-		{ 4091, 16 }, { 5471, 32 }, { 7040, 32 }, { 7777, 32 },
-	};
 	/* Check the wire cells independently of the selector's score. At each
 	 * possible training level, even opposite peak perturbations must leave
 	 * adjacent symbols distinct. Do not require different LU hypotheses
 	 * to separate: known B1u resolves that uncertainty before payload. */
-	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
-		for (size_t index = 0u; index < ARRAY_LENGTH(cases); ++index) {
-			struct g711_interval interval;
-			struct v92_cpd_parameters cpd;
-			struct v92_pcm_mapping mapping;
 
-			CHECK(g711_quantization_interval(law, cases[index].lu, &interval) &&
-			      v92_cpd_direct_select(&cpd, law, 19u, cases[index].lu, false) == V92_CPD_OK &&
-			      v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK,
-			      "48k noise-margin mapping failed");
-			const struct v92_cpd_constellation *points = &cpd.constellation[0];
-			for (int lu = interval.lower; lu <= interval.upper; ++lu) {
-				int previous_maximum = INT16_MIN;
+	struct g711_interval interval;
+	struct v92_cpd_parameters cpd;
+	struct v92_pcm_mapping mapping;
 
-				for (int eta = -(int)points->count; eta < points->count; ++eta) {
-					int u = eta < 0 ? -points->positive_linear[-eta - 1] :
-						points->positive_linear[eta];
-					int32_t v = round_shift_s64_to_s32_saturating((int64_t)u * INT16_MAX, 15u);
-					int16_t linear;
+	CHECK(g711_quantization_interval(law, nominal, &interval) &&
+	      v92_cpd_direct_select(&cpd, law, rate, nominal, false) == V92_CPD_OK &&
+	      v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK &&
+	      gain_is_nearest(&cpd, law),
+	      "rate %u law %u noise-margin mapping failed", rate, law);
+	const struct v92_cpd_constellation *points = &cpd.constellation[0];
+	for (int lu = interval.lower; lu <= interval.upper; ++lu) {
+		int previous_maximum = INT16_MIN;
 
-					CHECK(v92_pcm_frame_scale(mapping.cpd.four_times_gain_q0_16, (int16_t)lu, v, &linear) == V92_PCM_FRAME_OK &&
-					      linear - cases[index].noise >= INT16_MIN &&
-					      linear + cases[index].noise <= INT16_MAX, "48k symbol clipped");
-					int minimum = law == G711_LAW_PCMU ?
-						g711_decode_pcmu(g711_encode_pcmu(linear - cases[index].noise)) :
-						g711_decode_pcma(g711_encode_pcma(linear - cases[index].noise));
-					int maximum = law == G711_LAW_PCMU ?
-						g711_decode_pcmu(g711_encode_pcmu(linear + cases[index].noise)) :
-						g711_decode_pcma(g711_encode_pcma(linear + cases[index].noise));
+		for (int eta = -(int)points->count; eta < points->count; ++eta) {
+			int u = eta < 0 ? -points->positive_linear[-eta - 1] :
+				points->positive_linear[eta];
+			int32_t v = round_shift_s64_to_s32_saturating((int64_t)u * INT16_MAX, 15u);
+			int16_t linear;
 
-					CHECK(minimum > previous_maximum,
-					      "48k law %u LU %d eta %d lost input-noise margin", law, lu, eta);
-					previous_maximum = maximum;
-				}
-			}
+			CHECK(v92_pcm_frame_scale(mapping.cpd.four_times_gain_q0_16, (int16_t)lu, v, &linear) == V92_PCM_FRAME_OK &&
+			      linear - noise >= INT16_MIN &&
+			      linear + noise <= INT16_MAX, "rate %u law %u symbol clipped", rate, law);
+			int minimum = law == G711_LAW_PCMU ?
+				g711_decode_pcmu(g711_encode_pcmu(linear - noise)) :
+				g711_decode_pcma(g711_encode_pcma(linear - noise));
+			int maximum = law == G711_LAW_PCMU ?
+				g711_decode_pcmu(g711_encode_pcmu(linear + noise)) :
+				g711_decode_pcma(g711_encode_pcma(linear + noise));
+
+			CHECK(minimum > previous_maximum,
+			      "rate %u law %u LU %d eta %d lost input-noise margin", rate, law, lu, eta);
+			previous_maximum = maximum;
 		}
+	}
+	return true;
+}
+
+static bool test_input_noise_margin(void)
+{
+	const struct { int16_t lu; int noise; } high_rate[] = {
+		{ 4091, 16 }, { 5471, 32 }, { 7040, 32 }, { 7777, 32 },
+	};
+	const struct { enum g711_law law; uint8_t rate, code; int noise; } balanced[] = {
+		{ G711_LAW_PCMU, 15, 56, 16 },
+		{ G711_LAW_PCMU, 16, 56, 12 },
+		{ G711_LAW_PCMU, 17, 56, 8 },
+		{ G711_LAW_PCMA, 15, 48, 12 },
+		{ G711_LAW_PCMA, 16, 48, 8 },
+		{ G711_LAW_PCMA, 17, 50, 4 },
+	};
+
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (size_t i = 0; i < ARRAY_LENGTH(high_rate); ++i)
+			CHECK(check_input_noise_margin(law, 19u, high_rate[i].lu, high_rate[i].noise),
+			      "48k noise witness failed");
+	/* These balanced mappings used to have distinct decoded levels but
+	 * little pre-codec noise headroom. Exercise both signs, all levels in
+	 * the reported LU cell, and the actual transmitter's fixed scaling. */
+	for (size_t i = 0; i < ARRAY_LENGTH(balanced); ++i) {
+		int16_t nominal;
+
+		CHECK(g711_ucode_sample(balanced[i].law, balanced[i].code, true, &nominal) &&
+		      check_input_noise_margin(balanced[i].law, balanced[i].rate,
+			      nominal, balanced[i].noise), "balanced noise witness %zu failed", i);
+	}
 	return true;
 }
 
@@ -603,7 +631,7 @@ int main(void)
 	    !test_transactionality() || !test_level_selection() ||
 	    !test_low_rate_cell_selection() || !test_full_cell_selection() ||
 	    !test_uncertain_symbol_ranges() ||
-	    !test_48k_input_noise_margin())
+	    !test_input_noise_margin())
 		return 1;
 	return 0;
 }
