@@ -8969,10 +8969,10 @@ static bool run_v92_training_rejections(enum g711_law law, unsigned target, bool
 	}
 	CHECK(channel_init(&wire, law, 3u) && pcm_call_init(&calls[0], &ac) == PCM_CALL_OK &&
 	      pcm_call_init(&calls[1], &dc) == PCM_CALL_OK, "training-rejection calls failed");
-	CHECK(!calls[1].v92_training_rejections, "new call inherited training rejections");
-	calls[1].v92_training_rejections = 3u;
+	CHECK(!calls[1].v92_training_failures, "new call inherited training rejections");
+	calls[1].v92_training_failures = 3u;
 	CHECK(!pcm_call_is_valid(&calls[1]), "unbounded training rejection count was accepted");
-	calls[1].v92_training_rejections = 0u;
+	calls[1].v92_training_failures = 0u;
 	for (unsigned clock = 0; clock < 4u * CALL_SAMPLE_LIMIT; ++clock) {
 		uint8_t rx[2], tx[2];
 		channel_receive(&wire, &rx[0], &rx[1]);
@@ -8998,7 +8998,7 @@ static bool run_v92_training_rejections(enum g711_law law, unsigned target, bool
 			++injected;
 		}
 		if (!calls[1].local_info1.v92_digital.pcm_upstream_supported) {
-			CHECK(!fixed && injected == 2u && calls[1].v92_training_rejections == 2u &&
+			CHECK(!fixed && injected == 2u && calls[1].v92_training_failures == 2u &&
 			      calls[1].protocol == PCM_PROTOCOL_V92 &&
 			      calls[1].pcm_upstream_quality.recovery.attempts == 0u,
 			      "rejection fallback changed policy or quality budget");
@@ -9006,7 +9006,7 @@ static bool run_v92_training_rejections(enum g711_law law, unsigned target, bool
 		}
 		if (pcm_call_is_online(&calls[0]) && pcm_call_is_online(&calls[1])) {
 			CHECK(injected == target && (target == 1u || fixed) &&
-			      !calls[1].v92_training_rejections &&
+			      !calls[1].v92_training_failures &&
 			      !pcm_call_uses_conventional_upstream(&calls[1]),
 			      "single rejection/fixed mapping lost PCM or retained its rejection count");
 			return true;
@@ -9024,6 +9024,87 @@ static bool test_v92_training_rejections(void)
 				CHECK(run_v92_training_rejections(law, target, phase4, false), "training rejection recovery failed");
 		CHECK(run_v92_training_rejections(law, 2u, false, true), "fixed mapping policy changed");
 	}
+	return true;
+}
+
+/* Erase the upstream response until the digital station's own deadline.
+ * The analogue peer keeps running, including its independent recovery. */
+static bool run_v92_missing_training(enum g711_law law, unsigned target, bool su, bool fixed)
+{
+	struct pcm_call_configuration ac = v92_configuration(V90_ANALOG_MODEM, law);
+	struct pcm_call_configuration dc = v92_configuration(V90_DIGITAL_MODEM, law);
+	struct v92_cpd_parameters fixed_cpd = dc.v92_digital_phase4.cpd;
+	struct pcm_call calls[2];
+	struct channel wire;
+	struct pcm_payload_source sources[2] = { { .reject = true }, { .reject = true } };
+	uint32_t frames[2] = { 0u, 0u };
+	unsigned timeouts = 0u;
+	bool erasing = false;
+
+	CHECK(codec_v92_profile_init(&dc, V90_DIGITAL_MODEM, law, 28000u, 56000u, 1u, NULL) == V92_PROFILE_OK,
+	      "missing-training profile failed");
+	if (fixed) {
+		dc.v92_digital_phase4.upstream_selection = PCM_CALL_V92_UPSTREAM_CONFIGURED;
+		dc.v92_digital_phase4.cpd = fixed_cpd;
+	}
+	CHECK(channel_init(&wire, law, 3u) && pcm_call_init(&calls[0], &ac) == PCM_CALL_OK &&
+	      pcm_call_init(&calls[1], &dc) == PCM_CALL_OK, "missing-training calls failed");
+	for (unsigned clock = 0u; clock < 4u * CALL_SAMPLE_LIMIT; ++clock) {
+		uint8_t rx[2], tx[2];
+		bool phase3 = calls[1].stage == PCM_CALL_PHASE3;
+
+		if (phase3 && timeouts < target &&
+		    calls[1].state.phase3.v92_digital.receive_stage == (su ?
+			V92_PHASE3_DIGITAL_RECEIVE_SU_PHASE : V92_PHASE3_DIGITAL_RECEIVE_INITIAL))
+			erasing = true;
+		channel_receive(&wire, &rx[0], &rx[1]);
+		if (erasing)
+			rx[1] = silence_octet(law);
+		for (unsigned side = 0u; side < 2u; ++side) {
+			struct pcm_call *call = &calls[side];
+			struct pcm_call_observation observation;
+
+			if (pcm_call_phase4_is_ready(call))
+				CHECK(pcm_call_start_data_path(call) == PCM_CALL_OK, "missing-training data handoff failed");
+			if (call->stage == PCM_CALL_DATA_PATH) {
+				CHECK(v92_payload_sample(call, rx[side], decode_octet(law, rx[side]),
+					&sources[side], &frames[side], &tx[side]), "missing-training payload failed");
+			} else {
+				CHECK(pcm_call_octet(call, rx[side], decode_octet(law, rx[side]),
+					&tx[side], &observation) == PCM_CALL_OK, "missing-training recovery failed at %u side %u", clock, side);
+			}
+		}
+		channel_transmit(&wire, tx[0], tx[1]);
+		if (erasing && phase3 && calls[1].stage == PCM_CALL_RETRAIN_SILENCE) {
+			erasing = false;
+			++timeouts;
+			CHECK(!calls[1].retrain.peer_tone_retained &&
+			      calls[1].local_info1.v92_digital.pcm_upstream_supported == (fixed || timeouts < 2u),
+			      "local timeout did not select bounded upstream recovery: law %u Su %u fixed %u count %u", law, su, fixed, timeouts);
+		}
+		if (!calls[1].local_info1.v92_digital.pcm_upstream_supported) {
+			CHECK(timeouts == 2u && !fixed && calls[1].pcm_upstream_quality.recovery.attempts == 0u,
+			      "missing-training fallback spent a data-quality recovery");
+			return v92_conventional_recovery_data(calls, &wire, law);
+		}
+		if (pcm_call_is_online(&calls[0]) && pcm_call_is_online(&calls[1])) {
+			CHECK(timeouts == target && (target == 1u || fixed) &&
+			      !pcm_call_uses_conventional_upstream(&calls[1]), "transient loss or fixed mapping lost PCM");
+			return true;
+		}
+	}
+	CHECK(false, "missing training did not recover: law %u Su %u fixed %u count %u stages %u/%u",
+	      law, su, fixed, timeouts, calls[0].stage, calls[1].stage);
+}
+
+static bool test_v92_missing_training(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned su = 0u; su < 2u; ++su) {
+			for (unsigned target = 1u; target <= 2u; ++target)
+				CHECK(run_v92_missing_training(law, target, su, false), "missing-training recovery failed");
+			CHECK(run_v92_missing_training(law, 2u, su, true), "fixed training policy changed");
+		}
 	return true;
 }
 
@@ -13106,6 +13187,7 @@ int main(int argc, char **argv)
 		bool (*run)(void);
 	} tests[] = {
 		{ "V.92 repeated training rejection fallback", test_v92_training_rejections },
+		{ "V.92 missing training response fallback", test_v92_missing_training },
 		{ "V.92 clipping selection retrain", test_v92_clipping_recovery },
 		{ "V.92 cleaned input through Phase 3", test_v92_phase3_cleaned_input },
 		{ "V.92 learns robbed bits in each frame interval", test_v92_dil_data },

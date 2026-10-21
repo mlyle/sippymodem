@@ -871,7 +871,7 @@ static bool call_is_valid(
 	bool child_valid;
 	bool child_failed;
 
-	if (call == NULL || call->v92_training_rejections > 2u ||
+	if (call == NULL || call->v92_training_failures > 2u ||
 	    !stored_configuration_is_valid(call) ||
 	    call->qc_frame_interval >= V90_CP_FRAME_INTERVALS ||
 	    (call->qc_frame_pending ?
@@ -1313,26 +1313,32 @@ static enum pcm_phase2_result initialize_retrain_phase2(
 	return result;
 }
 
+enum retrain_reason {
+	RETRAIN_LOCAL,
+	RETRAIN_PEER,
+	RETRAIN_RESPONSE_TIMEOUT,
+};
+
 static enum pcm_call_result begin_retrain(
-	struct pcm_call *call, bool retain_peer_tone)
+	struct pcm_call *call, enum retrain_reason reason)
 {
 	struct pcm_call next = *call;
 
 	if (!next.peer_info0_stored)
 		return PCM_CALL_INVALID_STATE;
 	if (v34_full_retrain_begin_response(
-		    &next.retrain, retain_peer_tone) !=
+		    &next.retrain, reason == RETRAIN_PEER) !=
 	    V34_PHASE2_TONE_OK)
 		return PCM_CALL_NUMERIC_FAILURE;
-	if (retain_peer_tone &&
+	if (reason != RETRAIN_LOCAL &&
 	    (next.stage == PCM_CALL_PHASE3 || next.stage == PCM_CALL_PHASE4) &&
 	    next.protocol == PCM_PROTOCOL_V92 && next.local_role == V90_DIGITAL_MODEM &&
 	    uses_pcm_upstream(&next) &&
 	    next.v92_digital_phase4_configuration.upstream_selection == PCM_CALL_V92_UPSTREAM_DIRECT) {
-		if (next.v92_training_rejections < 2u)
-			++next.v92_training_rejections;
-		if (next.v92_training_rejections == 2u) {
-			/* A repeated rejection of PCM training needs a different
+		if (next.v92_training_failures < 2u)
+			++next.v92_training_failures;
+		if (next.v92_training_failures == 2u) {
+			/* Rejected or unanswered PCM training needs a different
 			 * upstream procedure. The next INFO1d negotiates V.34 upstream;
 			 * keep PCM downstream, fixed mappings, and the host deadline. */
 			next.local_info1.v92_digital.pcm_upstream_supported = false;
@@ -1375,7 +1381,7 @@ static enum pcm_call_result recover_unusable_phase2_selection(
 	 * V.90's full Phase 2 recovery procedures without dropping V.92.
 	 * A short-startup profile that no longer matches the peer also needs
 	 * full training. Recover after the old INFO1 event, without arming B1. */
-	return begin_retrain(call, false);
+	return begin_retrain(call, RETRAIN_LOCAL);
 }
 
 static bool is_info1a_boundary(
@@ -1554,7 +1560,7 @@ static enum pcm_call_result retry_v92_upstream(struct pcm_call *call, bool backo
 		call->v92_upstream_retry_step = call->b1_deadline_armed ?
 			(step < V92_STARTUP_RETRY_MAX_STEP ? step * 2u : step) : 0u;
 	}
-	result = begin_retrain(call, false);
+	result = begin_retrain(call, RETRAIN_LOCAL);
 	if (result != PCM_CALL_OK) {
 		call->v92_upstream_retry_ceiling = previous;
 		call->v92_upstream_retry_step = previous_step;
@@ -1603,7 +1609,7 @@ static enum pcm_call_result advance_b1_deadline(struct pcm_call *call)
 			uint8_t previous = call->downstream_retry_ceiling;
 			if (previous == 0u || rate <= previous)
 				call->downstream_retry_ceiling = rate - 1u;
-			enum pcm_call_result result = begin_retrain(call, false);
+			enum pcm_call_result result = begin_retrain(call, RETRAIN_LOCAL);
 			if (result != PCM_CALL_OK)
 				call->downstream_retry_ceiling = previous;
 			return result;
@@ -1642,7 +1648,7 @@ static enum pcm_call_result advance_b1_deadline(struct pcm_call *call)
 		call->b1_deadline_remaining_samples = V90_B1_COMPLETION_GRACE_SAMPLES;
 		return PCM_CALL_OK;
 	}
-	return begin_retrain(call, false);
+	return begin_retrain(call, RETRAIN_RESPONSE_TIMEOUT);
 }
 
 enum pcm_call_result pcm_call_start_retrain(struct pcm_call *call)
@@ -1654,7 +1660,7 @@ enum pcm_call_result pcm_call_start_retrain(struct pcm_call *call)
 	    call->stage == PCM_CALL_PHASE2 ||
 	    call->stage == PCM_CALL_RETRAIN_SILENCE)
 		return PCM_CALL_INVALID_STATE;
-	return begin_retrain(call, false);
+	return begin_retrain(call, RETRAIN_LOCAL);
 }
 
 bool pcm_call_is_full_retraining(const struct pcm_call *call)
@@ -2211,23 +2217,23 @@ static enum pcm_call_result advance_phase2(
 				call->round_trip_delay_samples = 0u;
 				call->round_trip_delay_stored = false;
 			}
-			return begin_retrain(call, false);
+			return begin_retrain(call, RETRAIN_LOCAL);
 		}
 		/* V.90 9.2.1.2.5 restarts training when final Tone A misses
 		 * the reciprocal-probe deadline. Keep the INFO0/RTD agreement
 		 * and use the shared full-retrain path, not terminal hangup. */
 		if (call->local_role == V90_DIGITAL_MODEM &&
 		    event->failure == PCM_PHASE2_FAILURE_LOCAL_PROBE_LIMIT)
-			return begin_retrain(call, false);
+			return begin_retrain(call, RETRAIN_LOCAL);
 		return PCM_CALL_FAILED;
 	}
 	if (event->kind == PCM_PHASE2_EVENT_RETRAIN_REQUESTED)
-		return begin_retrain(call, false);
+		return begin_retrain(call, RETRAIN_LOCAL);
 	/* V.90 9.2.2.2.4, also used by V.92 full Phase 2: choose the
 	 * full-retrain recovery branch when the analogue modem misses INFO1d. */
 	if (event->kind == PCM_PHASE2_EVENT_INFO1_RECOVERY_STARTED &&
 	    call->local_role == V90_ANALOG_MODEM)
-		return begin_retrain(call, false);
+		return begin_retrain(call, RETRAIN_LOCAL);
 	if (pcm_phase2_is_ready_for_info1(&call->state.phase2)) {
 		struct pcm_startup_selection startup;
 
@@ -2498,7 +2504,7 @@ static enum pcm_call_result observe_retrain_tone(
 	    PCM_CALL_OK)
 		return PCM_CALL_NUMERIC_FAILURE;
 	call->retrain = observed;
-	return detected ? begin_retrain(call, true) : PCM_CALL_OK;
+	return detected ? begin_retrain(call, RETRAIN_PEER) : PCM_CALL_OK;
 }
 
 static enum pcm_call_result reset_retrain_detector(struct pcm_call *call)
@@ -2837,7 +2843,7 @@ static enum pcm_call_result enter_phase4(struct pcm_call *call)
 			 * inventing unmeasured levels or relaxing the rate policy. */
 			if (!next.downstream_dil.measured || call->downstream_dil_retried)
 				return PCM_CALL_UNUSABLE_SELECTION;
-			result = begin_retrain(call, false);
+			result = begin_retrain(call, RETRAIN_LOCAL);
 			if (result == PCM_CALL_OK)
 				call->downstream_dil_retried = true;
 			return result;
@@ -3322,7 +3328,7 @@ static enum pcm_call_result sample_phase3(
 					received_sample));
 	}
 	if (result == PCM_CALL_OK && phase3_response_timed_out(call))
-		return begin_retrain(call, false);
+		return begin_retrain(call, RETRAIN_RESPONSE_TIMEOUT);
 	return result == PCM_CALL_OK ? advance_phase3(call) : result;
 }
 
@@ -3513,7 +3519,7 @@ static enum pcm_call_result recover_v92_training(struct pcm_call *call)
 	enum v92_data_quality_result result =
 		v92_data_quality_retrain(&call->pcm_upstream_quality);
 
-	return result == V92_DATA_QUALITY_RETRAIN ? begin_retrain(call, false) :
+	return result == V92_DATA_QUALITY_RETRAIN ? begin_retrain(call, RETRAIN_LOCAL) :
 		result == V92_DATA_QUALITY_EXHAUSTED ? PCM_CALL_FAILED : PCM_CALL_NUMERIC_FAILURE;
 }
 
@@ -4076,7 +4082,7 @@ static enum pcm_call_result sample_v92_phase4(
 				enum v92_data_quality_result quality =
 					v92_data_quality_retrain(&call->pcm_upstream_quality);
 
-				return quality == V92_DATA_QUALITY_RETRAIN ? begin_retrain(call, false) :
+				return quality == V92_DATA_QUALITY_RETRAIN ? begin_retrain(call, RETRAIN_LOCAL) :
 					quality == V92_DATA_QUALITY_EXHAUSTED ? PCM_CALL_UNUSABLE_SELECTION :
 					PCM_CALL_NUMERIC_FAILURE;
 			}
@@ -4380,7 +4386,7 @@ enum pcm_call_result pcm_call_start_data_path(struct pcm_call *call)
 		next.state.data_path.digital = path;
 	}
 	next.stage = PCM_CALL_DATA_PATH;
-	next.v92_training_rejections = 0u;
+	next.v92_training_failures = 0u;
 	/* E/B1 is a continuous receive boundary. A peer's Phase 4 retrain
 	 * request can straddle it; retain the already observed silence/tone. */
 	if (!pcm_call_is_valid(&next))
@@ -4523,7 +4529,7 @@ static enum pcm_call_result update_rate_renegotiation_deadline(
 	/* V.90 9.6 bounds the response to 5000 ms plus two round-trip delays.
 	 * Use the same bounded recovery policy for PCM Ru/control/B1, not as
 	 * a purported V.92 normative timer. */
-	return begin_retrain(call, false);
+	return begin_retrain(call, RETRAIN_LOCAL);
 }
 
 static enum pcm_call_result recover_rate_renegotiation_failure(
@@ -4537,7 +4543,7 @@ static enum pcm_call_result recover_rate_renegotiation_failure(
 		return PCM_CALL_CLEARDOWN_COMPLETE;
 	/* Leave a broken committed rate exchange through the standards-defined
 	 * full-retrain path. */
-	return begin_retrain(call, false);
+	return begin_retrain(call, RETRAIN_LOCAL);
 }
 
 static void complete_cleardown(struct pcm_call *call)
@@ -5073,7 +5079,7 @@ static enum pcm_call_result v92_data_octet_owned(
 			if (path->fast.deadline_remaining == 1u)
 				return path->fast.cleardown.active ?
 					filter_v92_upstream(call, PCM_CALL_CLEARDOWN_COMPLETE, 0, generated) :
-					begin_retrain(call, false);
+					begin_retrain(call, RETRAIN_LOCAL);
 			--path->fast.deadline_remaining;
 		} else {
 			transmitted = v92_upstream_data_tx_next_owned(&path->upstream,
@@ -5120,7 +5126,7 @@ static enum pcm_call_result v92_data_octet_owned(
 				return PCM_CALL_OK;
 			if (path->downstream_stage == V92_PHASE4_E2U_DOWNSTREAM_TRAINING &&
 			    !pcm_downstream_rx_is_complete(&path->downstream.training))
-				return v92_fast_analog_receive(call, received_octet) ? PCM_CALL_OK : begin_retrain(call, false);
+				return v92_fast_analog_receive(call, received_octet) ? PCM_CALL_OK : begin_retrain(call, RETRAIN_LOCAL);
 		}
 		received = v92_downstream_receive_owned(&path->downstream,
 			&path->downstream_stage, &path->cpu, &path->upstream.encoder.mapping,
@@ -5155,7 +5161,7 @@ static enum pcm_call_result v92_data_octet_owned(
 				*generated = g711_encode(call->law, 0);
 				if (path->fast.control.cleardown.active)
 					return PCM_CALL_CLEARDOWN_COMPLETE;
-				return begin_retrain(call, false);
+				return begin_retrain(call, RETRAIN_LOCAL);
 			}
 			if (path->fast.b1_frame && !path->fast.b1_started &&
 			    path->upstream.line.received_frames == path->fast.b1_frame && !path->upstream.line.symbol_count) {
@@ -5234,7 +5240,7 @@ static enum pcm_call_result v92_data_octet_owned(
 			if ((received == V92_UPSTREAM_DATA_RX_FRAME && !v92_fast_receive(call, &frame)) ||
 			    ru == V92_RU_RX_DETECTED) {
 				*generated = g711_encode(call->law, 0);
-				return begin_retrain(call, false);
+				return begin_retrain(call, RETRAIN_LOCAL);
 			}
 			if (path->fast.stage == PCM_CALL_V92_FAST_CONTROL &&
 			    v92_downstream_control_is_ed_ready(&path->fast.control)) {
@@ -5389,7 +5395,7 @@ static enum pcm_call_result data_octet_owned(
 	    !v34_data_receiver_b1_is_qualified(&call->state.data_path.digital
 		    .upstream.data.decisions.data_receiver.data_receiver)) {
 		emitted = (struct pcm_call_data_event){ 0 };
-		result = begin_retrain(call, false);
+		result = begin_retrain(call, RETRAIN_LOCAL);
 	}
 	result = recover_rate_renegotiation_failure(call, result);
 	if (result == PCM_CALL_OK && pcm_call_uses_conventional_upstream(call) &&
@@ -5428,7 +5434,7 @@ static enum pcm_call_result data_octet_owned(
 		if (rate_renegotiation_is_active_owned(call)) {
 			result = begin_rate_renegotiation_control(call);
 		} else {
-			result = begin_retrain(call, false);
+			result = begin_retrain(call, RETRAIN_LOCAL);
 		}
 	} else if (result == PCM_CALL_OK &&
 		   call->stage == PCM_CALL_DATA_PATH &&
@@ -5439,7 +5445,7 @@ static enum pcm_call_result data_octet_owned(
 			result = PCM_CALL_NUMERIC_FAILURE;
 	}
 	if (result == PCM_CALL_OK && retrain_detected)
-		result = begin_retrain(call, true);
+		result = begin_retrain(call, RETRAIN_PEER);
 	else if (result == PCM_CALL_OK && call->retrain_active &&
 		 data_path_is_online_owned(call)) {
 		call->retrain_active = false;
