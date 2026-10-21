@@ -17,9 +17,6 @@ enum {
 	V34_GAIN_TARGET_ENERGY = 0x0fa0,
 	V34_GAIN_ENERGY_DEADBAND = 0x04b0,
 	V34_GAIN_CORRECTION_LIMIT = 0x01f4,
-	V34_GAIN_DECREASE_Q14 = 0x390a,
-	V34_GAIN_INCREASE_Q14 = 0x47cf,
-	V34_GAIN_INCREASE_CEILING = 0x6a00,
 	V34_GAIN_MINIMUM_LEVEL = 0x001f,
 	V34_GAIN_ENERGY_HISTORY_Q15 = 0x6ccd,
 };
@@ -33,7 +30,6 @@ static void correct_gain(
 	int32_t correction_step;
 	int16_t next_correction;
 	int16_t correction_magnitude;
-	int16_t scale;
 
 	if (wrap_s16_from_s32((int32_t)delta_magnitude -
 		     V34_GAIN_ENERGY_DEADBAND) <= 0)
@@ -48,16 +44,7 @@ static void correct_gain(
 		     V34_GAIN_CORRECTION_LIMIT) <= 0)
 		return;
 	control->correction = 0;
-	if (next_correction > 0) {
-		scale = V34_GAIN_DECREASE_Q14;
-	} else {
-		if (control->gain > V34_GAIN_INCREASE_CEILING)
-			return;
-		scale = V34_GAIN_INCREASE_Q14;
-	}
-	/* Decrease shrinks any valid gain; the increase ceiling bounds its
-	 * scaled result below INT16_MAX. Neither update can make gain invalid. */
-	control->gain = multiply_shift_s16(control->gain, scale, 14);
+	control->gain = agc_step_gain_q10(control->gain, next_correction > 0);
 }
 
 bool v34_gain_control_is_valid(const struct v34_gain_control *control)
@@ -120,16 +107,16 @@ enum v34_gain_control_result v34_gain_control_refresh_level(
 				  V34_GAIN_HISTORY_SAMPLES, &level) != AGC_OK)
 		return V34_GAIN_CONTROL_INVALID_STATE;
 	if (level <= V34_GAIN_MINIMUM_LEVEL ||
-	    control->gain >= V34_GAIN_INCREASE_CEILING)
+	    control->gain >= AGC_Q10_INCREASE_CEILING)
 		return V34_GAIN_CONTROL_OK;
 	denominator = (uint64_t)level * level * V34_GAIN_UPDATE_SAMPLES;
 	if ((uint64_t)control->gain * control->gain * denominator >=
 	    (V34_GAIN_TARGET_ENERGY - V34_GAIN_ENERGY_DEADBAND) * energy_scale)
 		return V34_GAIN_CONTROL_OK;
 	target = V34_GAIN_TARGET_ENERGY * energy_scale;
-	if (target >= denominator * V34_GAIN_INCREASE_CEILING *
-			      V34_GAIN_INCREASE_CEILING) {
-		gain = V34_GAIN_INCREASE_CEILING;
+	if (target >= denominator * AGC_Q10_INCREASE_CEILING *
+			      AGC_Q10_INCREASE_CEILING) {
+		gain = AGC_Q10_INCREASE_CEILING;
 	} else {
 		/* The ceiling bounds this quotient to a 32-bit square. */
 		gain = integer_square_root_u32((uint32_t)(target / denominator));

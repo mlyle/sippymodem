@@ -126,13 +126,8 @@ static void adapt_gain(
 	}
 
 	conditioner->gain_delta = 0;
-	if (delta > 0) {
-		conditioner->gain = (uint16_t)arithmetic_shift_right_u32(
-			(uint32_t)((int16_t)conditioner->gain * 0x390a), 14);
-	} else if ((int16_t)conditioner->gain <= 0x6a00) {
-		conditioner->gain = (uint16_t)arithmetic_shift_right_u32(
-			(uint32_t)((int16_t)conditioner->gain * 0x47cf), 14);
-	}
+	conditioner->gain = (uint16_t)agc_step_gain_q10(
+		(int16_t)conditioner->gain, delta > 0);
 }
 
 static void condition_block(

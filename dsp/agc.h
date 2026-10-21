@@ -9,6 +9,19 @@
 #include <stddef.h>
 #include <stdint.h>
 
+enum { AGC_Q10_INCREASE_CEILING = 0x6a00 };
+
+/* Step a nonnegative Q10 gain by the shared receive-control Q14 factors.
+ * Decrease always applies; increase holds gains above the existing ceiling.
+ * Products fit int32_t and both results remain nonnegative signed 16-bit
+ * values. Owners choose the direction, update clock, and correction gates. */
+static inline int16_t agc_step_gain_q10(int16_t gain, bool decrease)
+{
+	if (!decrease && gain > AGC_Q10_INCREASE_CEILING)
+		return gain;
+	return multiply_shift_s16(gain, decrease ? 0x390a : 0x47cf, 14);
+}
+
 /* Q10 sample gain with pre-rounding clipping to +/-32512 outside the signed
  * 26-bit product range. Inside that range, add rounding (0 or 512), shift,
  * and retain the low 16 bits. If supplied, clipped is set on every call. */
