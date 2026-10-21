@@ -3,6 +3,7 @@
 #include "v34_carrier_demodulator.h"
 
 #include "fixed_phase.h"
+#include "fir.h"
 #include "integer_math.h"
 #include "memory_region.h"
 #include "phase.h"
@@ -50,8 +51,7 @@ enum v34_carrier_demodulator_result v34_carrier_demodulator_process(
 	struct v34_carrier_demodulator next;
 	struct fixed_phase_q14 carrier;
 	struct v34_analytic_sample generated;
-	uint32_t real;
-	uint32_t quadrature;
+	uint32_t real = 0, quadrature = 0;
 
 	if (!v34_carrier_demodulator_is_valid(demodulator))
 		return V34_CARRIER_DEMODULATOR_INVALID_STATE;
@@ -63,11 +63,11 @@ enum v34_carrier_demodulator_result v34_carrier_demodulator_process(
 	carrier = fixed_phase_sin_cos_u16_q14(
 		(uint16_t)(next.phase >> 16));
 	next.phase += next.phase_step;
-	real = (uint32_t)((int32_t)input.in_phase * carrier.cosine) +
-	       (uint32_t)((int32_t)input.quadrature * carrier.sine);
-	quadrature =
-		(uint32_t)((int32_t)carrier.cosine * input.quadrature) -
-		(uint32_t)((int32_t)carrier.sine * input.in_phase);
+	/* Subtract conj(input) * carrier, then restore the real sign to obtain
+	 * input * conj(carrier). Keep negation in the unsigned accumulator. */
+	fir_subtract_correlation_s16(input.in_phase, input.quadrature,
+		carrier.cosine, carrier.sine, &real, &quadrature);
+	real = 0u - real;
 	generated = (struct v34_analytic_sample){
 		.in_phase = round_shift_s32_word_to_s16(real, 14),
 		.quadrature = round_shift_s32_word_to_s16(quadrature, 14),

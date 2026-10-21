@@ -360,10 +360,10 @@ static struct v34_analytic_sample apply_feedback(
 static struct v34_analytic_sample rotate_q14(
 	struct v34_analytic_sample input, int16_t cosine, int16_t sine)
 {
-	uint32_t in_phase = multiply_low_s32(cosine, input.in_phase) -
-		multiply_low_s32(sine, input.quadrature);
-	uint32_t quadrature = multiply_low_s32(sine, input.in_phase) +
-		multiply_low_s32(cosine, input.quadrature);
+	uint32_t in_phase = 0, quadrature = 0;
+
+	fir_accumulate_complex_s16(input.in_phase, input.quadrature,
+		cosine, sine, &in_phase, &quadrature);
 
 	return (struct v34_analytic_sample){
 		.in_phase = round_shift_s32_word_to_s16(in_phase, 14),
