@@ -127,6 +127,64 @@ static bool test_precoder_training(void)
 	return true;
 }
 
+static bool test_precoder_quantization(void)
+{
+	struct v34_precoder_trainer trainer;
+	struct v34_precoder_recommendation recommendation;
+
+	CHECK(v34_precoder_trainer_init(&trainer) == V34_PRECODER_TRAINER_OK,
+	      "quantization trainer did not initialize");
+	trainer.measured_symbols = V34_PRECODER_TRAINER_MINIMUM_MEASURED_SYMBOLS;
+	trainer.observed_symbols = trainer.measured_symbols +
+		V34_PRECODER_TRAINER_SETTLING_SYMBOLS - 1u;
+	trainer.decision_error_power = 0.1 * trainer.measured_symbols;
+	trainer.feedback_error_power = 0.05 * trainer.measured_symbols;
+	for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap) {
+		for (unsigned axis = 0; axis < 2; ++axis) {
+			for (int lower = -INT16_MAX; lower < INT16_MAX; ++lower) {
+				double half = (lower + 0.5) / V34_Q14_SCALE;
+				const double values[] = {
+					nextafter(half, -INFINITY), half, nextafter(half, INFINITY),
+				};
+				for (size_t side = 0; side < ARRAY_LENGTH(values); ++side) {
+					/* An orthogonal 1/4 coefficient keeps a zero rounded
+					 * test coordinate from disabling the recommendation. */
+					memset(trainer.coefficients, 0, sizeof(trainer.coefficients));
+					trainer.coefficients[tap] = axis == 0 ?
+						(struct qam_point){ values[side], 0.25 } :
+						(struct qam_point){ 0.25, values[side] };
+					int expected = lower +
+						(side == 2 || (side == 1 && lower >= 0));
+
+					CHECK(v34_precoder_trainer_finish(&trainer, &recommendation) ==
+						      V34_PRECODER_TRAINER_OK && recommendation.enabled,
+					      "quantization rejected tap=%zu axis=%u lower=%d side=%zu",
+					      tap, axis, lower, side);
+					for (size_t i = 0; i < V34_PRECODER_TAP_COUNT; ++i) {
+						CHECK(recommendation.coefficients[i].real ==
+							      (i != tap ? 0 : axis == 0 ? expected : 4096) &&
+						      recommendation.coefficients[i].imaginary ==
+							      (i != tap ? 0 : axis == 1 ? expected : 4096),
+						      "quantization changed tap=%zu axis=%u lower=%d side=%zu",
+						      tap, axis, lower, side);
+					}
+				}
+			}
+		}
+	}
+	/* The protocol's symmetric coefficient limit still disables precoding
+	 * at either endpoint, regardless of the converter's asymmetric range. */
+	for (int sign = -1; sign <= 1; sign += 2) {
+		memset(trainer.coefficients, 0, sizeof(trainer.coefficients));
+		trainer.coefficients[0].in_phase = (double)sign * INT16_MAX / V34_Q14_SCALE;
+		CHECK(v34_precoder_trainer_finish(&trainer, &recommendation) ==
+			      V34_PRECODER_TRAINER_OK && !recommendation.enabled &&
+		      v34_precoder_coefficients_are_zero(recommendation.coefficients),
+		      "symmetric coefficient limit changed for sign=%d", sign);
+	}
+	return true;
+}
+
 static bool run_timeline(
 	uint32_t trn_symbols, unsigned int quarter_turns)
 {
@@ -283,6 +341,7 @@ int main(void)
 	} tests[] = {
 		{ "generated Ja timelines", test_generated_timelines },
 		{ "precoder training", test_precoder_training },
+		{ "precoder quantization", test_precoder_quantization },
 		{ "TRN guard and transactionality", test_guard_and_transactionality },
 	};
 	unsigned int failures = 0;

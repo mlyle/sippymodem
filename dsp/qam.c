@@ -6,6 +6,7 @@
 
 #include "integer_math.h"
 #include "phase.h"
+#include "sample_math.h"
 
 #include <limits.h>
 #include <math.h>
@@ -322,7 +323,7 @@ enum qam_result qam_modulator_sample(
 {
 	double waveform;
 	bool accepted;
-	long rounded;
+	int16_t rounded;
 	enum qam_result result;
 
 	if (sample == NULL || symbol_accepted == NULL)
@@ -331,12 +332,12 @@ enum qam_result qam_modulator_sample(
 		modulator, point, &waveform, &accepted);
 	if (result != QAM_OK)
 		return result;
-	rounded = lround(waveform * modulator->amplitude);
+	rounded = sample_round_s16(waveform * modulator->amplitude);
 	if (rounded > modulator->amplitude)
 		rounded = modulator->amplitude;
 	if (rounded < -modulator->amplitude)
 		rounded = -modulator->amplitude;
-	*sample = (int16_t)rounded;
+	*sample = rounded;
 	*symbol_accepted = accepted;
 	return QAM_OK;
 }

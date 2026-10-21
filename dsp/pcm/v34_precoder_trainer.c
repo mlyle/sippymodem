@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "v34_precoder_trainer.h"
+#include "sample_math.h"
 
 #include <limits.h>
 #include <math.h>
@@ -142,17 +143,6 @@ enum v34_precoder_trainer_result v34_precoder_trainer_observe(
 	return V34_PRECODER_TRAINER_OK;
 }
 
-static int16_t q14_component(double component)
-{
-	long quantized = lround(component * V34_Q14_SCALE);
-
-	if (quantized > INT16_MAX)
-		quantized = INT16_MAX;
-	if (quantized < -INT16_MAX)
-		quantized = -INT16_MAX;
-	return (int16_t)quantized;
-}
-
 enum v34_precoder_trainer_result v34_precoder_trainer_finish(
 	const struct v34_precoder_trainer *trainer,
 	struct v34_precoder_recommendation *recommendation)
@@ -183,12 +173,13 @@ enum v34_precoder_trainer_result v34_precoder_trainer_finish(
 			coefficients_unclipped = false;
 		magnitude_sum += fabs(trainer->coefficients[tap].in_phase) +
 			fabs(trainer->coefficients[tap].quadrature);
+		/* Validation bounds both Q14 coordinates to +/-INT16_MAX. */
 		generated.coefficients[tap] =
 			(struct v34_q14_coefficient){
-				.real = q14_component(
-					trainer->coefficients[tap].in_phase),
-				.imaginary = q14_component(
-					trainer->coefficients[tap].quadrature),
+				.real = sample_round_s16(
+					trainer->coefficients[tap].in_phase * V34_Q14_SCALE),
+				.imaginary = sample_round_s16(
+					trainer->coefficients[tap].quadrature * V34_Q14_SCALE),
 			};
 	}
 	generated.enabled = decision_power >=

@@ -6,6 +6,7 @@
 #include "test.h"
 #include "qam_state_fixture.h"
 
+#include <fenv.h>
 #include <float.h>
 #include <math.h>
 #include <stdlib.h>
@@ -680,24 +681,24 @@ static bool test_channel_carriers(void)
 	return check_carrier(1200, 2400) && check_carrier(2400, 1200);
 }
 
-static bool test_floating_transmit_path(void)
+static bool check_floating_transmit_path(int16_t amplitude, double scale)
 {
 	struct qam_channel channel = v22_channel(1200);
 	struct qam_modulator floating;
 	struct qam_modulator integer;
 	unsigned int accepted_count = 0;
 
-	CHECK(qam_modulator_init(
-		      &floating, &channel, TEST_AMPLITUDE) ==
+	CHECK(qam_modulator_init_with_point_power_limit(
+		      &floating, &channel, amplitude, scale * scale * 1.8) ==
 		      QAM_OK &&
-	      qam_modulator_init(
-		      &integer, &channel, TEST_AMPLITUDE) ==
+	      qam_modulator_init_with_point_power_limit(
+		      &integer, &channel, amplitude, scale * scale * 1.8) ==
 		      QAM_OK,
 	      "QAM floating transmit fixtures did not initialize");
 	for (unsigned int index = 0; index < 1000; ++index) {
 		struct qam_point point = quadrant_point(
 			(uint8_t)(accepted_count & 3u),
-			(double)(accepted_count % 4u + 1u) / 4.0);
+			(double)(accepted_count % 4u + 1u) / 4.0 * scale);
 		double floating_sample;
 		int16_t integer_sample;
 		long expected;
@@ -714,11 +715,11 @@ static bool test_floating_transmit_path(void)
 		      floating_accepted == integer_accepted &&
 		      qam_modulators_equal(&floating, &integer),
 		      "QAM floating transmit path diverged at sample %u", index);
-		expected = lround(floating_sample * TEST_AMPLITUDE);
-		if (expected > TEST_AMPLITUDE)
-			expected = TEST_AMPLITUDE;
-		if (expected < -TEST_AMPLITUDE)
-			expected = -TEST_AMPLITUDE;
+		/* Clip the floating oracle before conversion: configurable point
+		 * power can produce finite samples far beyond LONG_MAX. */
+		double scaled = floating_sample * amplitude;
+		expected = scaled >= amplitude ? amplitude :
+			scaled <= -amplitude ? -amplitude : lround(scaled);
 		CHECK(integer_sample == expected,
 		      "QAM integer scaling changed at sample %u", index);
 		if (floating_accepted)
@@ -727,6 +728,22 @@ static bool test_floating_transmit_path(void)
 	CHECK(accepted_count == 75,
 	      "QAM floating path accepted %u symbols instead of 75",
 	      accepted_count);
+	return true;
+}
+
+static bool test_floating_transmit_path(void)
+{
+	const int16_t amplitudes[] = { 1, TEST_AMPLITUDE, INT16_MAX };
+	const double scales[] = { 0.001, 1.0, 10.0, 1e20, 1e100 };
+
+	feclearexcept(FE_INVALID);
+	for (size_t i = 0; i < ARRAY_LENGTH(amplitudes); ++i)
+		for (size_t j = 0; j < ARRAY_LENGTH(scales); ++j)
+			CHECK(check_floating_transmit_path(amplitudes[i], scales[j]),
+			      "QAM conversion changed at amplitude=%d scale=%g",
+			      amplitudes[i], scales[j]);
+	CHECK(!fetestexcept(FE_INVALID),
+	      "QAM sample conversion raised an invalid floating operation");
 	return true;
 }
 
