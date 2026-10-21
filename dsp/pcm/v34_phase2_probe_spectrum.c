@@ -2,6 +2,8 @@
 
 #include "v34_phase2_probe_spectrum.h"
 
+#include "qam.h"
+
 #include <math.h>
 #include <stddef.h>
 
@@ -54,29 +56,19 @@ static void accumulate_sample(
 	double angle = V34_PHASE2_PROBE_SPECTRUM_TWO_PI * 3.0 *
 		       (double)period_index /
 		       (double)V34_PHASE2_PROBE_PERIOD_SAMPLES;
-	double fundamental_in_phase = cos(angle);
-	double fundamental_quadrature = sin(angle);
-	double harmonic_in_phase = 1.0;
-	double harmonic_quadrature = 0.0;
+	const struct qam_point fundamental = { cos(angle), sin(angle) };
+	struct qam_point power = { 1.0, 0.0 };
 
 	/* Generate z through z^25 from one fundamental basis. Re-deriving z at
 	 * every sample prevents oscillator drift without a coefficient table. */
 	for (size_t harmonic = 0;
 	     harmonic < V34_PHASE2_PROBE_HIGHEST_HARMONIC;
 	     ++harmonic) {
-		double next_in_phase =
-			harmonic_in_phase * fundamental_in_phase -
-			harmonic_quadrature * fundamental_quadrature;
-		double next_quadrature =
-			harmonic_quadrature * fundamental_in_phase +
-			harmonic_in_phase * fundamental_quadrature;
-
-		harmonic_in_phase = next_in_phase;
-		harmonic_quadrature = next_quadrature;
+		power = qam_point_multiply(&fundamental, &power);
 		spectrum->harmonics[harmonic].in_phase_sum +=
-			(double)sample * harmonic_in_phase;
+			(double)sample * power.in_phase;
 		spectrum->harmonics[harmonic].quadrature_sum -=
-			(double)sample * harmonic_quadrature;
+			(double)sample * power.quadrature;
 	}
 }
 

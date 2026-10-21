@@ -182,8 +182,7 @@ static bool prediction_and_energy(
 			if (!point_is_finite(&point) ||
 			    !point_is_finite(coefficient))
 				return false;
-			double value = coefficient->in_phase * point.in_phase +
-				       coefficient->quadrature * point.quadrature;
+			double value = qam_point_correlation(coefficient, &point).in_phase;
 			predicted += value;
 			if (window == V32_ECHO_DELAYED_WINDOW)
 				far += value;

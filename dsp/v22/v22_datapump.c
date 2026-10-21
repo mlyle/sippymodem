@@ -630,8 +630,7 @@ static int decode_600_phase_change(
 	if (!point_is_finite(previous) || !point_is_finite(current) ||
 	    decoder == NULL || bit == NULL || quarter_turns == NULL)
 		return -1;
-	cross = previous->in_phase * current->quadrature -
-		previous->quadrature * current->in_phase;
+	cross = qam_point_correlation(previous, current).quadrature;
 	if (!isfinite(cross))
 		return -1;
 	/* Choose between the two Table 1 rotations before quarter-turn

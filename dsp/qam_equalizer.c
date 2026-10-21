@@ -373,8 +373,7 @@ static enum qam_equalizer_result adapt_decision(
 		    qam_point_power(target) > QAM_EQUALIZER_MINIMUM_POWER) {
 			/* The V.34 cross-product detector naturally gives weak
 			 * decisions less authority than a unit-angle error. */
-			double error = target->quadrature * output->in_phase -
-				target->in_phase * output->quadrature;
+			double error = qam_point_correlation(output, target).quadrature;
 			if (equalizer->carrier_error_limit > 0.0) {
 				if (error > equalizer->carrier_error_limit)
 					error = equalizer->carrier_error_limit;
