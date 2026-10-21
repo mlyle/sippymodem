@@ -4,6 +4,7 @@
 
 #include "v92_observation.h"
 
+#include "fir.h"
 #include "integer_math.h"
 #include "memory_region.h"
 #include "packed_bits.h"
@@ -222,6 +223,9 @@ static int equivalence_offset(size_t symbol,
 		selected[base + 2u] + y0, 2u);
 }
 
+/* CPd permits at most 384 coefficients in total. Even full-width samples
+ * and doubled Q14 products have absolute sum <= 384 * 2^47 < 2^56, so
+ * regrouping each section before the feedback doubling remains exact. */
 static int64_t precoder_history(
 	const struct v92_pcm_mapping *mapping,
 	const struct v92_pcm_frame_filter_state *filter)
@@ -232,15 +236,11 @@ static int64_t precoder_history(
 		&mapping->cpd.filter[V92_CPD_PRECODER_FEEDBACK];
 	const int32_t *u_values = u_history(filter);
 	const int32_t *x_values = x_history(mapping, filter);
-	int64_t accumulator = 0;
 
-	for (size_t tap = 0u; tap < feed_forward->count; ++tap)
-		accumulator += (int64_t)u_values[tap] *
-			       feed_forward->coefficient[tap];
-	for (size_t tap = 0u; tap < feedback->count; ++tap)
-		accumulator += (int64_t)x_values[tap] *
-			       feedback->coefficient[tap] * 2;
-	return accumulator;
+	return fir_read_s32_s16(u_values, feed_forward->coefficient,
+				feed_forward->count) +
+	       2 * fir_read_s32_s16(x_values, feedback->coefficient,
+				    feedback->count);
 }
 
 static int64_t prefilter_history(
@@ -253,15 +253,11 @@ static int64_t prefilter_history(
 		&mapping->cpd.filter[V92_CPD_PREFILTER_FEEDBACK];
 	const int32_t *x_values = x_history(mapping, filter);
 	const int32_t *v_values = v_history(mapping, filter);
-	int64_t accumulator = 0;
 
-	for (size_t tap = 1u; tap < feed_forward->count; ++tap)
-		accumulator += (int64_t)x_values[tap - 1u] *
-			       feed_forward->coefficient[tap];
-	for (size_t tap = 0u; tap < feedback->count; ++tap)
-		accumulator += (int64_t)v_values[tap] *
-			       feedback->coefficient[tap] * 2;
-	return accumulator;
+	return fir_read_s32_s16(x_values, feed_forward->coefficient + 1,
+				feed_forward->count ? feed_forward->count - 1u : 0u) +
+	       2 * fir_read_s32_s16(v_values, feedback->coefficient,
+				    feedback->count);
 }
 
 /* A path's past inputs are fixed across candidate points. Retain the full

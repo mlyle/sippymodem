@@ -6,6 +6,20 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* Read a signed 32-bit history and 16-bit coefficient convolution without
+ * scaling, rounding or changing either array. Each product is exact; the
+ * caller must bound count and values so every partial sum fits int64_t. Count zero
+ * accesses neither array and returns zero. */
+static inline int64_t fir_read_s32_s16(
+	const int32_t *history, const int16_t *coefficients, size_t count)
+{
+	int64_t sum = 0;
+
+	for (size_t tap = 0; tap < count; ++tap)
+		sum += (int64_t)history[tap] * coefficients[tap];
+	return sum;
+}
+
 /* Add one signed complex sample/coefficient product to separate 32-bit
  * accumulator words. Each multiplication is exact; sums wrap modulo 2^32,
  * including the full-scale imaginary product 2^31. The caller owns scaling,

@@ -13,6 +13,53 @@ static int16_t next_sample(uint32_t *state)
 	return (int16_t)((int32_t)(*state >> 16) - 32768);
 }
 
+static bool test_mixed_width_convolution(void)
+{
+	int32_t history[386], saved[386];
+	int16_t coefficients[384], saved_coefficients[384];
+	uint32_t random = UINT32_C(0x384f17a9);
+
+	CHECK(fir_read_s32_s16(NULL, NULL, 0) == 0,
+	      "empty mixed-width FIR accessed storage");
+	for (size_t count = 0; count <= ARRAY_LENGTH(coefficients); ++count) {
+		for (unsigned trial = 0; trial < 8; ++trial) {
+			int64_t high_sum = 0, low_sum = 0;
+
+			for (size_t i = 0; i < ARRAY_LENGTH(history); ++i) {
+				random = random * UINT32_C(1664525) + UINT32_C(1013904223);
+				history[i] = trial == 0 ? INT32_MIN : trial == 1 ? INT32_MAX :
+					(int32_t)((int64_t)random - INT64_C(2147483648));
+			}
+			for (size_t i = 0; i < ARRAY_LENGTH(coefficients); ++i)
+				coefficients[i] = trial == 0 ? INT16_MIN : trial == 1 ? INT16_MAX :
+					trial == 2 ? (i % 2 ? INT16_MIN : INT16_MAX) : next_sample(&random);
+			memcpy(saved, history, sizeof(saved));
+			memcpy(saved_coefficients, coefficients, sizeof(coefficients));
+			/* Independently split each 32-bit input into signed high and
+			 * unsigned low halves. Recombine only after both convolutions. */
+			for (size_t i = 0; i < count; ++i) {
+				int64_t low = (uint16_t)(uint32_t)history[i + 1];
+				int64_t high = ((int64_t)history[i + 1] - low) / 65536;
+
+				low_sum += low * coefficients[i];
+				high_sum += high * coefficients[i];
+			}
+			CHECK(fir_read_s32_s16(history + 1, coefficients, count) ==
+				      high_sum * 65536 + low_sum,
+			      "mixed-width FIR changed at count=%zu trial=%u", count, trial);
+			CHECK(memcmp(saved, history, sizeof(saved)) == 0 &&
+			      memcmp(saved_coefficients, coefficients, sizeof(coefficients)) == 0,
+			      "mixed-width FIR changed input storage or guards");
+		}
+	}
+	const int32_t cancellation[] = { INT32_MIN, INT32_MIN, 1 };
+	const int16_t signs[] = { INT16_MIN, INT16_MAX, 1 };
+
+	CHECK(fir_read_s32_s16(cancellation, signs, 3) == INT64_C(2147483649),
+	      "mixed-width FIR lost full-scale cancellation");
+	return true;
+}
+
 static bool check_complex_product(
 	int16_t real, int16_t imag, int16_t coefficient_real,
 	int16_t coefficient_imag, uint32_t initial)
@@ -236,7 +283,8 @@ static bool test_symmetric_ring(void)
 
 int main(void)
 {
-	return test_complex_accumulation() && test_full_width_convolution() &&
+	return test_mixed_width_convolution() && test_complex_accumulation() &&
+	       test_full_width_convolution() &&
 	       test_impulse_order() && test_read_ring() &&
 	       test_symmetric_ring() ? 0 : 1;
 }
