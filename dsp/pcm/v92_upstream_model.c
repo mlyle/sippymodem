@@ -467,12 +467,15 @@ static bool wire_cells(const struct v92_upstream_data_line *line, enum g711_law 
 /* A noisy acquisition word can exhaust the unconstrained decoder before
  * its channel fit is ready. The retained known-B1 candidate may bridge that
  * word, but never validation or payload, missing media, or seeded unknown
- * coding. The independent second half of B1u still owns readiness. */
+ * coding. A seeded 16/32-state candidate also searches known B1u across all
+ * initial histories. The independent second half still owns readiness. */
 static bool recover_acquisition(const struct v92_upstream_model *model,
 	struct v92_pcm_frame_rx *decoder, const struct v92_upstream_data_line *line,
 	uint8_t *bits, struct v92_pcm_frame_decision *decision)
 {
-	if (!model->residual_acquiring || model->seed.residual.active ||
+	if (!model->residual_acquiring ||
+	    (model->seed.residual.active &&
+	     v34_trellis_state_count(decoder->paths[0].trellis.selection) > V92_PCM_RX_PATHS) ||
 	    !model->alternate.path_count || line->received_frames < 3u ||
 	    line->received_frames >= V92_B1U_ACQUISITION_FRAMES)
 		return false;

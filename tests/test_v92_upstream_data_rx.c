@@ -3098,7 +3098,8 @@ static bool test_residual_inverse(void)
 /* Early unconstrained decisions must not teach the residual fitter their
  * errors. The known-bit candidate ends at acquisition; different later data
  * and a deliberately wrong held-out B1 bit remain independently decoded. */
-static bool test_residual_acquisition(unsigned prefix, bool damaged, int transient, bool recover)
+static bool test_residual_acquisition(unsigned prefix, bool damaged, int transient, bool recover,
+	bool seeded, enum v92_cpd_trellis trellis)
 {
 	const double scale = recover ? .1 : 1.;
 	struct v92_cpd_parameters cpd;
@@ -3113,6 +3114,12 @@ static bool test_residual_acquisition(unsigned prefix, bool damaged, int transie
 	};
 	CHECK(v92_cpd_direct_init(&cpd, G711_LAW_PCMU, recover ? 12 : 4, false) == V92_CPD_OK,
 	      "acquisition mapping init failed");
+	cpd.trellis = trellis;
+	if (seeded)
+		model.seed = (struct v92_upstream_seed){
+			.residual = { .active = true, .offset = 128. },
+			.gain = 1.237 * scale,
+		};
 	cpd.constellation[0].count = 32;
 	for (unsigned i = 0; i < 32; i++) {
 		if (recover)
@@ -3168,17 +3175,14 @@ static bool test_residual_acquisition(unsigned prefix, bool damaged, int transie
 			if (frame == 7u) {
 				/* The retained candidate cannot excuse missing media or an
 				 * absent coding history. Rejection preserves the decoder. */
-				for (unsigned unavailable = 0; unavailable < 4; unavailable++) {
+				for (unsigned unavailable = 0; unavailable < 3; unavailable++) {
 					struct v92_upstream_model rejected = model;
 					struct v92_pcm_frame_rx saved = decoder;
 					struct v92_upstream_data_line incomplete = line;
 
 					if (unavailable == 0) incomplete.received[0] = false;
 					else if (unavailable == 1) incomplete.wire_known[0] = false;
-					else if (unavailable == 2) rejected.alternate.path_count = 0;
-					else rejected.seed = (struct v92_upstream_seed){
-						.residual.active = true, .gain = line.calibration.gain,
-					};
+					else rejected.alternate.path_count = 0;
 					CHECK(v92_upstream_model_decode(&rejected, &saved, &incomplete,
 					      decoded, &decision, predictions) == V92_PCM_FRAME_NO_PATH &&
 					      !memcmp(&saved, &decoder, sizeof(saved)), "invalid acquisition recovered");
@@ -3467,12 +3471,20 @@ int main(void)
 	for (unsigned prefix = 0; prefix < 2; prefix++)
 		for (unsigned damaged = 0; damaged < 2; damaged++)
 			for (int transient = -384; transient <= 384; transient += 384)
-				if (!test_residual_acquisition(prefix, damaged, transient, false)) return 1;
+				if (!test_residual_acquisition(prefix, damaged, transient, false,
+				    false, V92_CPD_TRELLIS_16_STATE)) return 1;
 	/* One small acquisition disturbance exhausts the unconstrained 38,667
 	 * mapping at frame seven. The known candidate must preserve later data
 	 * and must still expose a deliberately wrong held-out training bit. */
 	for (unsigned damaged = 0; damaged < 2; damaged++)
-		if (!test_residual_acquisition(1, damaged, 128, true)) return 1;
+		if (!test_residual_acquisition(1, damaged, 128, true,
+		    false, V92_CPD_TRELLIS_16_STATE)) return 1;
+	/* A rate change can retain a physical seed while a short disturbance
+	 * exhausts the primary decoder. Known B1u acquisition remains eligible
+	 * with a complete 16/32-state search; the wrong held-out bit stays visible. */
+	for (enum v92_cpd_trellis code = V92_CPD_TRELLIS_16_STATE; code <= V92_CPD_TRELLIS_32_STATE; code++)
+		for (unsigned damaged = 0; damaged < 2; damaged++)
+			if (!test_residual_acquisition(1, damaged, 128, true, true, code)) return 1;
 	for (enum v92_cpd_trellis code = V92_CPD_TRELLIS_16_STATE; code <= V92_CPD_TRELLIS_32_STATE; code++)
 		for (unsigned state = 0; state < (16u << code); state++)
 			for (unsigned prefix = 0; prefix < 2; prefix++)
