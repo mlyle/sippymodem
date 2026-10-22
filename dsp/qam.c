@@ -731,19 +731,18 @@ static void mix_sample(
 
 static void matched_filter_sample(
 	const struct qam_demodulator *demodulator,
-	double *in_phase, double *quadrature)
+	struct qam_point *matched)
 {
 	size_t index = demodulator->history_index;
 
-	*in_phase = 0.0;
-	*quadrature = 0.0;
+	*matched = (struct qam_point){ 0 };
 	for (size_t tap = 0; tap < demodulator->matched_filter_count; ++tap) {
 		double coefficient = demodulator->matched_coefficients[tap];
 
 		index = index != 0 ? index - 1 :
 			demodulator->matched_filter_count - 1;
-		*in_phase += demodulator->in_phase_history[index] * coefficient;
-		*quadrature +=
+		matched->in_phase += demodulator->in_phase_history[index] * coefficient;
+		matched->quadrature +=
 			demodulator->quadrature_history[index] * coefficient;
 	}
 }
@@ -752,15 +751,6 @@ static double interpolate(
 	double previous, double current, double fraction)
 {
 	return previous + (current - previous) * fraction;
-}
-
-static void observe_timing_candidate(
-	struct qam_timing_candidate *candidate,
-	double in_phase, double quadrature)
-{
-	candidate->symbol_power_sum +=
-		in_phase * in_phase + quadrature * quadrature;
-	candidate->symbol_count++;
 }
 
 static void reset_timing_scores(
@@ -1092,7 +1082,7 @@ enum qam_result qam_demodulator_reacquire(
 
 static void acquire_symbol_timing(
 	struct qam_demodulator *demodulator,
-	double in_phase, double quadrature)
+	const struct qam_point *matched)
 {
 	bool observe = demodulator->timing_locked ||
 		       demodulator->acquisition_started;
@@ -1101,7 +1091,7 @@ static void acquire_symbol_timing(
 		&demodulator->matched_history[
 			demodulator->matched_history_count - 1u];
 
-	if (!observe && in_phase * in_phase + quadrature * quadrature >
+	if (!observe && qam_point_power(matched) >
 			QAM_MIN_ACQUISITION_POWER) {
 		demodulator->acquisition_started = true;
 		observe = true;
@@ -1117,15 +1107,16 @@ static void acquire_symbol_timing(
 			    demodulator->symbol_period_units,
 			    demodulator->channel.symbol_rate_numerator,
 			    &fraction) &&
-		    previous != NULL && observe)
-			observe_timing_candidate(
-				candidate,
-				interpolate(
-					previous->in_phase, in_phase,
-					fraction),
-				interpolate(
-					previous->quadrature,
-					quadrature, fraction));
+		    previous != NULL && observe) {
+			struct qam_point interpolated = {
+				.in_phase = interpolate(previous->in_phase,
+					matched->in_phase, fraction),
+				.quadrature = interpolate(previous->quadrature,
+					matched->quadrature, fraction),
+			};
+			candidate->symbol_power_sum += qam_point_power(&interpolated);
+			candidate->symbol_count++;
+		}
 	}
 	if (!observe)
 		return;
@@ -1134,12 +1125,12 @@ static void acquire_symbol_timing(
 	    demodulator->timing_sample_target)
 		select_timing_candidate(
 			demodulator,
-			in_phase * in_phase + quadrature * quadrature);
+			qam_point_power(matched));
 }
 
 static enum qam_result recover_symbol(
 	struct qam_demodulator *demodulator,
-	double in_phase, double quadrature, struct qam_point *point,
+	const struct qam_point *matched, struct qam_point *point,
 	bool *symbol_ready)
 {
 	double fraction = 0.0;
@@ -1151,13 +1142,13 @@ static enum qam_result recover_symbol(
 			demodulator->matched_history[0].in_phase,
 			demodulator->matched_history[1].in_phase,
 			demodulator->matched_history[2].in_phase,
-			in_phase,
+			matched->in_phase,
 		};
 		double quadrature_samples[4] = {
 			demodulator->matched_history[0].quadrature,
 			demodulator->matched_history[1].quadrature,
 			demodulator->matched_history[2].quadrature,
-			quadrature,
+			matched->quadrature,
 		};
 		struct qam_point recovered;
 
@@ -1170,8 +1161,7 @@ static enum qam_result recover_symbol(
 			return QAM_INVALID_ARGUMENT;
 		*point = recovered;
 		demodulator->symbol_power +=
-			(point->in_phase * point->in_phase +
-			 point->quadrature * point->quadrature -
+			(qam_point_power(point) -
 			 demodulator->symbol_power) /
 			64.0;
 		demodulator->recovery_pending = false;
@@ -1215,31 +1205,25 @@ static enum qam_result recover_symbol(
 
 static void remember_matched_sample(
 	struct qam_demodulator *demodulator,
-	double in_phase, double quadrature)
+	const struct qam_point *matched)
 {
-	struct qam_point matched = {
-		.in_phase = in_phase,
-		.quadrature = quadrature,
-	};
-
 	if (demodulator->matched_history_count < QAM_INTERPOLATION_HISTORY) {
 		demodulator->matched_history[
-			demodulator->matched_history_count++] = matched;
+			demodulator->matched_history_count++] = *matched;
 		return;
 	}
 	for (size_t index = 1; index < QAM_INTERPOLATION_HISTORY; ++index)
 		demodulator->matched_history[index - 1u] =
 			demodulator->matched_history[index];
 	demodulator->matched_history[
-		QAM_INTERPOLATION_HISTORY - 1u] = matched;
+		QAM_INTERPOLATION_HISTORY - 1u] = *matched;
 }
 
 enum qam_result qam_demodulator_sample(
 	struct qam_demodulator *demodulator, int16_t sample,
 	struct qam_point *point, bool *symbol_ready)
 {
-	double in_phase;
-	double quadrature;
+	struct qam_point matched;
 
 	if (!qam_demodulator_is_valid(demodulator) || point == NULL ||
 	    symbol_ready == NULL)
@@ -1249,18 +1233,18 @@ enum qam_result qam_demodulator_sample(
 	mix_sample(demodulator, sample);
 	if (demodulator->history_count < demodulator->matched_filter_count)
 		return QAM_OK;
-	matched_filter_sample(demodulator, &in_phase, &quadrature);
+	matched_filter_sample(demodulator, &matched);
 	if (!demodulator->timing_locked) {
-		acquire_symbol_timing(demodulator, in_phase, quadrature);
-		remember_matched_sample(demodulator, in_phase, quadrature);
+		acquire_symbol_timing(demodulator, &matched);
+		remember_matched_sample(demodulator, &matched);
 		return QAM_OK;
 	}
 	if (recover_symbol(
-		    demodulator, in_phase, quadrature, point,
+		    demodulator, &matched, point,
 		    symbol_ready) != QAM_OK)
 		return QAM_INVALID_ARGUMENT;
-	acquire_symbol_timing(demodulator, in_phase, quadrature);
-	remember_matched_sample(demodulator, in_phase, quadrature);
+	acquire_symbol_timing(demodulator, &matched);
+	remember_matched_sample(demodulator, &matched);
 	return QAM_OK;
 }
 
