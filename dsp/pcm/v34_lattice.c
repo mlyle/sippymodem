@@ -56,45 +56,35 @@ static int16_t nearest_residue_coordinate(
 	return (int16_t)lower;
 }
 
-static bool candidate_error_linear(
-	const struct qam_point *estimate,
-	const struct v34_grid_point *candidate, double *squared_error)
-{
-	double in_phase = estimate->in_phase - candidate->in_phase;
-	double quadrature = estimate->quadrature - candidate->quadrature;
-	double generated = in_phase * in_phase + quadrature * quadrature;
-
-	if (!isfinite(generated))
-		return false;
-	*squared_error = generated;
-	return true;
-}
-
-static bool candidate_error_projected(
+static bool candidate_error(
 	const struct qam_point *observation,
 	const struct v34_grid_point *candidate,
 	const struct v34_power_normalizer *normalizer,
 	double *squared_error)
 {
-	struct v34_q7_point precoded = {
-		.in_phase = (int32_t)candidate->in_phase * V34_Q7_SCALE,
-		.quadrature = (int32_t)candidate->quadrature * V34_Q7_SCALE,
-	};
-	struct qam_point projected;
-	double in_phase;
-	double quadrature;
-	double generated;
+	struct qam_point point;
 
-	if (v34_nonlinear_encode(
-		    normalizer->nonlinear_parameter,
-		    normalizer->precoded_mean_squared_magnitude,
-		    &precoded, &projected) != V34_NONLINEAR_OK)
-		return false;
-	in_phase = observation->in_phase -
-		projected.in_phase * normalizer->normalization_gain;
-	quadrature = observation->quadrature -
-		projected.quadrature * normalizer->normalization_gain;
-	generated = in_phase * in_phase + quadrature * quadrature;
+	if (normalizer != NULL) {
+		struct v34_q7_point precoded = {
+			.in_phase = (int32_t)candidate->in_phase * V34_Q7_SCALE,
+			.quadrature = (int32_t)candidate->quadrature * V34_Q7_SCALE,
+		};
+
+		if (v34_nonlinear_encode(
+			    normalizer->nonlinear_parameter,
+			    normalizer->precoded_mean_squared_magnitude,
+			    &precoded, &point) != V34_NONLINEAR_OK)
+			return false;
+		point.in_phase *= normalizer->normalization_gain;
+		point.quadrature *= normalizer->normalization_gain;
+	} else {
+		point = (struct qam_point){
+			.in_phase = candidate->in_phase,
+			.quadrature = candidate->quadrature,
+		};
+	}
+	double generated = qam_point_distance_squared(observation, &point);
+
 	if (!isfinite(generated))
 		return false;
 	*squared_error = generated;
@@ -132,6 +122,8 @@ static enum v34_lattice_result slice_grid_subsets(
 {
 	struct v34_subset_slice generated = { 0 };
 	bool found[V34_SUBSET_LABEL_COUNT] = { false };
+	const struct qam_point *observation = normalized_observation == NULL ?
+		channel_estimate : normalized_observation;
 
 	if (!point_is_finite(channel_estimate) || slice == NULL ||
 	    ((normalized_observation == NULL) != (normalizer == NULL)) ||
@@ -163,15 +155,10 @@ static enum v34_lattice_result slice_grid_subsets(
 				    V34_TRELLIS_OK)
 				return V34_LATTICE_INVALID_ARGUMENT;
 			candidate.subset_label = label;
-			if (!(normalized_observation == NULL ?
-			      candidate_error_linear(
-				      channel_estimate,
-				      &candidate.channel_output,
-				      &candidate.squared_error) :
-			      candidate_error_projected(
-				      normalized_observation,
-				      &candidate.channel_output, normalizer,
-				      &candidate.squared_error)))
+			if (!candidate_error(
+				    observation,
+				    &candidate.channel_output, normalizer,
+				    &candidate.squared_error))
 				return V34_LATTICE_NUMERIC_FAILURE;
 			if (!found[label] || candidate_precedes(
 						     &candidate,

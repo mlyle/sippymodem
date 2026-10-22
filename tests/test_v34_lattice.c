@@ -242,6 +242,52 @@ static bool test_nonlinear_signal_plane_metric(void)
 	return true;
 }
 
+static bool test_linear_projection_scaling(void)
+{
+	const struct qam_point estimates[] = {
+		{ 0.0, 0.0 }, { 3.0, 3.0 }, { -1.0, -1.0 },
+		{ -3.5, 6.25 }, { 255.25, -255.25 }, { 512.0, -512.0 },
+	};
+	const double gains[] = { 0.25, 1.0, 4.0 };
+	struct v34_power_normalizer normalizer;
+
+	CHECK(initialize_nonlinear_normalizer(&normalizer),
+	      "linear projection fixture did not initialize");
+	for (size_t gain = 0; gain < ARRAY_LENGTH(gains); ++gain) {
+		CHECK(v34_power_normalizer_init_linear(&normalizer,
+			      &normalizer.parameters, gains[gain]) == V34_SYMBOL_POWER_OK,
+		      "linear projection gain did not initialize");
+		for (size_t index = 0; index < ARRAY_LENGTH(estimates); ++index) {
+			struct qam_point observation = {
+				.in_phase = estimates[index].in_phase * gains[gain],
+				.quadrature = estimates[index].quadrature * gains[gain],
+			};
+			struct v34_subset_slice linear, projected;
+
+			CHECK(v34_slice_grid_subsets(&estimates[index], &linear) ==
+				      V34_LATTICE_OK &&
+			      v34_slice_grid_subsets_projected(&estimates[index],
+				      &observation, &normalizer, &projected) == V34_LATTICE_OK,
+			      "linear projection failed at gain %zu estimate %zu", gain, index);
+			for (uint8_t label = 0; label < V34_SUBSET_LABEL_COUNT; ++label) {
+				const struct v34_lattice_candidate *a = &linear.subset[label];
+				const struct v34_lattice_candidate *b = &projected.subset[label];
+
+				/* Binary gains and quarter-grid observations keep this
+				 * identity exact, including ties and clipped grid edges. */
+				CHECK(a->channel_output.in_phase == b->channel_output.in_phase &&
+				      a->channel_output.quadrature == b->channel_output.quadrature &&
+				      a->subset_label == b->subset_label &&
+				      a->squared_error * gains[gain] * gains[gain] ==
+					      b->squared_error,
+				      "linear projection changed subset %u at gain %zu estimate %zu",
+				      label, gain, index);
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_transactional_validation(void)
 {
 	const struct qam_point valid = { 1.0, 1.0 };
@@ -295,6 +341,7 @@ int main(void)
 		{ "all grid subsets", test_all_grid_subsets },
 		{ "nonlinear signal-plane metric",
 		  test_nonlinear_signal_plane_metric },
+		{ "linear projection scaling", test_linear_projection_scaling },
 		{ "transactional validation", test_transactional_validation },
 	};
 	unsigned int failures = 0;
