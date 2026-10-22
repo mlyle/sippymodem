@@ -398,33 +398,13 @@ static bool select_inverse(const struct v92_upstream_channel *channel,
 
 static bool normalize_gain(struct v92_cpd_parameters *cpd, enum g711_law law, uint64_t *point_energy)
 {
-	struct v92_pcm_mapping mapping;
-	struct v92_pcm_frame_tx transmitter;
-	uint8_t ones[V92_PCM_MAPPING_MAX_BITS];
-	uint64_t energy = 0u;
+	struct v92_b1u_measurement measurement;
 
-	*point_energy = 0u;
-
-	if (v92_pcm_mapping_init(&mapping, law, cpd) != V92_PCM_MAPPING_OK ||
-	    v92_pcm_frame_tx_init(&transmitter, &mapping) != V92_PCM_FRAME_OK)
+	if (v92_pcm_frame_measure_b1u(cpd, law, &measurement) != V92_PCM_FRAME_OK)
 		return false;
-	memset(ones, 1, mapping.data_bits_per_frame);
-	for (unsigned i = 0; i < V92_B1U_FRAMES; ++i) {
-		struct v92_pcm_frame frame;
-
-		if (v92_pcm_frame_encode(&transmitter, ones, mapping.data_bits_per_frame, &frame) != V92_PCM_FRAME_OK)
-			return false;
-		for (size_t n = 0; n < V92_PCM_MAPPING_FRAME_SYMBOLS; ++n) {
-			uint64_t square = (uint64_t)((int64_t)frame.v[n] * frame.v[n]);
-
-			*point_energy += (uint64_t)((int64_t)frame.u[n] * frame.u[n]);
-
-			if (square > UINT64_MAX - energy)
-				return false;
-			energy += square;
-		}
-	}
-	cpd->four_times_gain_q0_16 = v92_cpd_gain_for_energy(energy, V92_B1U_SYMBOLS);
+	*point_energy = measurement.point_energy;
+	cpd->four_times_gain_q0_16 =
+		v92_cpd_gain_for_energy(measurement.prefilter_energy, V92_B1U_SYMBOLS);
 	return cpd->four_times_gain_q0_16 != 0u;
 }
 

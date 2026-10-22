@@ -111,44 +111,9 @@ static bool direct_tables(
 		&parameters->constellation[0], law, point_count);
 }
 
-static bool b1u_frequencies(
-	const struct v92_cpd_parameters *parameters, enum g711_law law,
-	uint16_t frequencies[2 * V92_CPD_DIRECT_MAX_POINTS])
-{
-	struct v92_pcm_mapping mapping;
-	struct v92_pcm_frame_tx transmitter;
-	uint8_t ones[V92_PCM_MAPPING_MAX_BITS];
-
-	if (v92_pcm_mapping_init(&mapping, law, parameters) !=
-			V92_PCM_MAPPING_OK ||
-	    v92_pcm_frame_tx_init(&transmitter, &mapping) !=
-			V92_PCM_FRAME_OK)
-		return false;
-	memset(frequencies, 0, 2u * V92_CPD_DIRECT_MAX_POINTS * sizeof(*frequencies));
-	memset(ones, 1, mapping.data_bits_per_frame);
-	for (unsigned int index = 0u;
-	     index < V92_B1U_FRAMES; ++index) {
-		struct v92_pcm_frame frame;
-
-		if (v92_pcm_frame_encode(
-			    &transmitter, ones, mapping.data_bits_per_frame,
-			    &frame) != V92_PCM_FRAME_OK)
-			return false;
-		for (size_t symbol = 0u;
-		     symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
-			int index = frame.signed_index[symbol] + V92_CPD_DIRECT_MAX_POINTS;
-
-			if (index < 0 || index >= 2 * V92_CPD_DIRECT_MAX_POINTS)
-				return false;
-			frequencies[index]++;
-		}
-	}
-	return true;
-}
-
 static bool normalize_gain(
 	struct v92_cpd_parameters *parameters,
-	const uint16_t frequencies[2 * V92_CPD_DIRECT_MAX_POINTS])
+	const uint16_t frequencies[2 * V92_CPD_MAX_CONSTELLATION_POINTS])
 {
 	const struct v92_cpd_constellation *points = &parameters->constellation[0];
 	uint64_t energy = 0u;
@@ -163,7 +128,7 @@ static bool normalize_gain(
 			points->positive_linear[eta];
 		int64_t v = round_shift_s64_to_s32_saturating((int64_t)u * INT16_MAX, 15u);
 
-		energy += (uint64_t)(v * v) * frequencies[eta + V92_CPD_DIRECT_MAX_POINTS];
+		energy += (uint64_t)(v * v) * frequencies[eta + V92_CPD_MAX_CONSTELLATION_POINTS];
 	}
 	parameters->four_times_gain_q0_16 =
 		v92_cpd_gain_for_energy(energy, V92_B1U_FRAMES * V92_PCM_MAPPING_FRAME_SYMBOLS);
@@ -172,12 +137,19 @@ static bool normalize_gain(
 
 static bool initialize_direct(
 	struct v92_cpd_parameters *parameters,
-	uint16_t frequencies[2 * V92_CPD_DIRECT_MAX_POINTS],
+	uint16_t frequencies[2 * V92_CPD_MAX_CONSTELLATION_POINTS],
 	enum g711_law law, uint8_t rate, bool extend_e2u, bool direct_channel)
 {
-	return direct_tables(parameters, law, rate, extend_e2u, direct_channel) &&
-	       b1u_frequencies(parameters, law, frequencies) &&
-	       normalize_gain(parameters, frequencies) &&
+	struct v92_b1u_measurement measurement;
+
+	if (!direct_tables(parameters, law, rate, extend_e2u, direct_channel) ||
+	    v92_pcm_frame_measure_b1u(parameters, law, &measurement) != V92_PCM_FRAME_OK)
+		return false;
+	memcpy(frequencies, measurement.signed_frequencies,
+		sizeof(measurement.signed_frequencies));
+	parameters->four_times_gain_q0_16 =
+		v92_cpd_gain_for_energy(measurement.prefilter_energy, V92_B1U_SYMBOLS);
+	return parameters->four_times_gain_q0_16 != 0u &&
 	       v92_cpd_parameters_are_valid(parameters);
 }
 
@@ -186,7 +158,7 @@ enum v92_cpd_result v92_cpd_direct_init(
 	uint8_t data_rate_number, bool extend_e2u)
 {
 	struct v92_cpd_parameters generated;
-	uint16_t frequencies[2 * V92_CPD_DIRECT_MAX_POINTS];
+	uint16_t frequencies[2 * V92_CPD_MAX_CONSTELLATION_POINTS];
 
 	if (parameters == NULL)
 		return V92_CPD_INVALID_ARGUMENT;
@@ -408,7 +380,7 @@ static int direct_separation(
 static enum v92_cpd_result select_mapping(
 	struct v92_cpd_parameters *parameters, enum g711_law law,
 	int16_t upstream_level, const struct v92_cpd_parameters *initial,
-	const uint16_t frequencies[2 * V92_CPD_DIRECT_MAX_POINTS],
+	const uint16_t frequencies[2 * V92_CPD_MAX_CONSTELLATION_POINTS],
 	enum separation_rule rule)
 {
 	struct v92_cpd_parameters candidate = *initial, best;
@@ -514,7 +486,7 @@ enum v92_cpd_result v92_cpd_direct_select(
 	uint8_t data_rate_number, int16_t upstream_level, bool extend_e2u)
 {
 	struct v92_cpd_parameters initial;
-	uint16_t frequencies[2 * V92_CPD_DIRECT_MAX_POINTS];
+	uint16_t frequencies[2 * V92_CPD_MAX_CONSTELLATION_POINTS];
 
 	if (parameters == NULL)
 		return V92_CPD_INVALID_ARGUMENT;

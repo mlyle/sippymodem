@@ -595,6 +595,49 @@ enum v92_pcm_frame_result v92_pcm_frame_encode_owned(
 	return V92_PCM_FRAME_OK;
 }
 
+enum v92_pcm_frame_result v92_pcm_frame_measure_b1u(
+	const struct v92_cpd_parameters *parameters, enum g711_law law,
+	struct v92_b1u_measurement *measurement)
+{
+	struct v92_pcm_mapping mapping;
+	struct v92_pcm_frame_tx_state state;
+	struct v92_b1u_measurement next = { 0 };
+	uint8_t ones[V92_PCM_MAPPING_MAX_BITS];
+
+	if (parameters == NULL || measurement == NULL ||
+	    memory_regions_overlap(parameters, sizeof(*parameters),
+		measurement, sizeof(*measurement)))
+		return V92_PCM_FRAME_INVALID_ARGUMENT;
+	if (v92_pcm_mapping_init(&mapping, law, parameters) != V92_PCM_MAPPING_OK ||
+	    !state_init(&state, parameters->trellis))
+		return V92_PCM_FRAME_INVALID_PARAMETERS;
+	memset(ones, 1, mapping.data_bits_per_frame);
+	for (unsigned index = 0; index < V92_B1U_FRAMES; ++index) {
+		struct v92_pcm_frame frame;
+		enum v92_pcm_frame_result result = v92_pcm_frame_encode_owned(
+			&mapping, &state, ones,
+			mapping.data_bits_per_frame, &frame);
+
+		if (result != V92_PCM_FRAME_OK)
+			return result;
+		for (size_t symbol = 0; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
+			uint64_t square = (uint64_t)((int64_t)frame.v[symbol] * frame.v[symbol]);
+			int point = frame.signed_index[symbol] + V92_CPD_MAX_CONSTELLATION_POINTS;
+
+			if (point < 0 || point >= 2 * V92_CPD_MAX_CONSTELLATION_POINTS ||
+			    square > UINT64_MAX - next.prefilter_energy)
+				return V92_PCM_FRAME_OUT_OF_RANGE;
+			/* 576 signed 16-bit points keep this sum below 2^40. */
+			next.point_energy +=
+				(uint64_t)((int64_t)frame.u[symbol] * frame.u[symbol]);
+			next.prefilter_energy += square;
+			next.signed_frequencies[point]++;
+		}
+	}
+	*measurement = next;
+	return V92_PCM_FRAME_OK;
+}
+
 enum v92_pcm_frame_result v92_pcm_frame_scale(
 	uint16_t four_times_gain_q0_16, int16_t upstream_level,
 	int32_t prefilter_output, int16_t *sample)

@@ -159,6 +159,22 @@ struct v92_pcm_frame_decision {
 	enum v92_pcm_frame_rm rm;
 };
 
+/* Exact statistics of the locally encoded, zero-state 48-frame B1u.
+ * Energies precede F/LU scaling and use this encoder's representative
+ * selection. Frequencies use signed_index + V92_CPD_MAX_CONSTELLATION_POINTS. */
+struct v92_b1u_measurement {
+	uint64_t point_energy;
+	uint64_t prefilter_energy;
+	uint16_t signed_frequencies[2 * V92_CPD_MAX_CONSTELLATION_POINTS];
+};
+
+/* Own a validated mapping and coder for this bounded measurement. No samples
+ * or pointers are retained. Rejection preserves measurement; its storage must
+ * not overlap parameters. Unrepresentable energy returns OUT_OF_RANGE. */
+enum v92_pcm_frame_result v92_pcm_frame_measure_b1u(
+	const struct v92_cpd_parameters *parameters, enum g711_law law,
+	struct v92_b1u_measurement *measurement);
+
 enum v92_pcm_frame_result v92_pcm_frame_tx_init(
 	struct v92_pcm_frame_tx *transmitter,
 	const struct v92_pcm_mapping *mapping);

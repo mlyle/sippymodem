@@ -1281,9 +1281,115 @@ static bool test_b1u_output_range(void)
 	return true;
 }
 
+static bool check_b1u_measurement(
+	const struct v92_cpd_parameters *cpd, enum g711_law law)
+{
+	struct v92_pcm_mapping mapping;
+	struct v92_pcm_frame_tx tx;
+	struct v92_b1u_measurement actual, expected = { 0 };
+	struct v92_cpd_parameters saved = *cpd;
+	uint8_t ones[V92_PCM_MAPPING_MAX_BITS];
+
+	CHECK(v92_pcm_mapping_init(&mapping, law, cpd) == V92_PCM_MAPPING_OK &&
+	      v92_pcm_frame_tx_init(&tx, &mapping) == V92_PCM_FRAME_OK &&
+	      v92_pcm_frame_measure_b1u(cpd, law, &actual) == V92_PCM_FRAME_OK,
+	      "B1u measurement did not initialize");
+	memset(ones, 1, mapping.data_bits_per_frame);
+	/* Compare the owned measurement with the public checked encoder, using
+	 * its independent state and all 48 frames, including filter history. */
+	for (unsigned index = 0; index < V92_B1U_FRAMES; ++index) {
+		struct v92_pcm_frame frame;
+
+		CHECK(v92_pcm_frame_encode(&tx, ones, mapping.data_bits_per_frame, &frame) ==
+		      V92_PCM_FRAME_OK, "checked B1u encoding failed");
+		for (unsigned symbol = 0; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
+			int slot = frame.signed_index[symbol] + V92_CPD_MAX_CONSTELLATION_POINTS;
+
+			CHECK(slot >= 0 && slot < (int)ARRAY_LENGTH(expected.signed_frequencies),
+			      "checked B1u index escaped its constellation");
+			expected.point_energy += (uint64_t)((int64_t)frame.u[symbol] * frame.u[symbol]);
+			expected.prefilter_energy += (uint64_t)((int64_t)frame.v[symbol] * frame.v[symbol]);
+			expected.signed_frequencies[slot]++;
+		}
+	}
+	CHECK(actual.point_energy == expected.point_energy &&
+	      actual.prefilter_energy == expected.prefilter_energy &&
+	      memcmp(actual.signed_frequencies, expected.signed_frequencies,
+		     sizeof(actual.signed_frequencies)) == 0 &&
+	      memcmp(cpd, &saved, sizeof(saved)) == 0,
+	      "owned B1u measurement differs from checked encoding or changes CPd");
+	return true;
+}
+
+static bool test_b1u_measurement(void)
+{
+	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (uint8_t rate = 1; rate <= V92_CPD_MAX_DATA_RATE_NUMBER; ++rate)
+			for (unsigned code = V92_CPD_TRELLIS_16_STATE;
+			     code <= V92_CPD_TRELLIS_64_STATE; ++code)
+				for (unsigned filtered = 0; filtered < 2; ++filtered) {
+					struct v92_cpd_parameters cpd = parameters(rate);
+
+					cpd.trellis = (enum v92_cpd_trellis)code;
+					if (filtered) {
+						cpd.filter[V92_CPD_PREFILTER_FEED_FORWARD] =
+							(struct v92_cpd_filter){ .count = 3,
+								.coefficient = { 24576, -8192, 4096 } };
+						cpd.filter[V92_CPD_PRECODER_FEEDBACK] =
+							(struct v92_cpd_filter){ .count = 2,
+								.coefficient = { 8192, -4096 } };
+					}
+					CHECK(check_b1u_measurement(&cpd, (enum g711_law)law),
+					      "B1u measurement rate %u law %u code %u filter %u failed",
+					      rate, law, code, filtered);
+				}
+	return true;
+}
+
+static bool test_b1u_measurement_contracts(void)
+{
+	struct v92_cpd_parameters cpd = parameters(1u);
+	struct v92_b1u_measurement actual, saved;
+
+	/* Zero prefilter energy is representable; gain selection owns its use. */
+	cpd.filter[V92_CPD_PREFILTER_FEED_FORWARD] = (struct v92_cpd_filter){ .count = 1 };
+	CHECK(v92_pcm_frame_measure_b1u(&cpd, G711_LAW_PCMU, &actual) == V92_PCM_FRAME_OK &&
+	      actual.point_energy > 0 && actual.prefilter_energy == 0,
+	      "zero-energy B1u measurement changed");
+	memset(&actual, 0x5a, sizeof(actual));
+	memcpy(&saved, &actual, sizeof(saved));
+	cpd = parameters(1u);
+	CHECK(v92_pcm_frame_measure_b1u(NULL, G711_LAW_PCMU, &actual) == V92_PCM_FRAME_INVALID_ARGUMENT &&
+	      memcmp(&actual, &saved, sizeof(actual)) == 0 &&
+	      v92_pcm_frame_measure_b1u(&cpd, G711_LAW_PCMU, NULL) == V92_PCM_FRAME_INVALID_ARGUMENT &&
+	      v92_pcm_frame_measure_b1u(&cpd, (enum g711_law)99, &actual) == V92_PCM_FRAME_INVALID_PARAMETERS &&
+	      memcmp(&actual, &saved, sizeof(actual)) == 0,
+	      "invalid B1u measurement changed output");
+	cpd.data_rate_number = 0;
+	CHECK(v92_pcm_frame_measure_b1u(&cpd, G711_LAW_PCMU, &actual) == V92_PCM_FRAME_INVALID_PARAMETERS &&
+	      memcmp(&actual, &saved, sizeof(actual)) == 0, "invalid CPd changed measurement");
+	cpd = parameters(1u);
+	cpd.filter[V92_CPD_PREFILTER_FEEDBACK] = (struct v92_cpd_filter){
+		.count = 2, .coefficient = { INT16_MIN, INT16_MIN } };
+	CHECK(v92_pcm_frame_measure_b1u(&cpd, G711_LAW_PCMU, &actual) == V92_PCM_FRAME_OUT_OF_RANGE &&
+	      memcmp(&actual, &saved, sizeof(actual)) == 0, "unrepresentable energy changed output");
+	union {
+		struct v92_cpd_parameters parameters;
+		struct v92_b1u_measurement measurement;
+	} aliased, original;
+	memset(&aliased, 0x5a, sizeof(aliased));
+	aliased.parameters = parameters(1u);
+	memcpy(&original, &aliased, sizeof(original));
+	CHECK(v92_pcm_frame_measure_b1u(&aliased.parameters, G711_LAW_PCMU, &aliased.measurement) ==
+		      V92_PCM_FRAME_INVALID_ARGUMENT && memcmp(&aliased, &original, sizeof(aliased)) == 0,
+	      "overlapping B1u measurement changed CPd");
+	return true;
+}
+
 int main(void)
 {
-	if (!test_b1u_output_range() || !test_b1u_oracle() || !test_b1u_coding_acquisition() ||
+	if (!test_b1u_measurement() || !test_b1u_measurement_contracts() ||
+	    !test_b1u_output_range() || !test_b1u_oracle() || !test_b1u_coding_acquisition() ||
 	    !test_b1u_parity_completion() || !test_b1u_validation_history() ||
 	    !test_model_acquisition_boundary() || !test_rate_matrix_and_reset() ||
 	    !test_transmitter_equation_matrix() ||
