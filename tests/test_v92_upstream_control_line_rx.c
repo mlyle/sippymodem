@@ -725,6 +725,71 @@ static bool test_e2u_carrier(void)
 	return true;
 }
 
+static bool run_shifted_e2u_carrier(enum g711_law law,
+	enum v92_constellation_size points, bool extended, unsigned tap,
+	unsigned variant)
+{
+	struct v92_pcm_phase4_trn2u transmitter;
+	struct v92_pcm_phase4_trn2u_line_handoff boundary;
+	struct v92_upstream_rx signal;
+	struct v92_upstream_decision decision;
+	struct v92_e2u_rx receiver;
+	int16_t level;
+	bool quiet = variant != 0u;
+	unsigned count = extended ? V92_PHASE4_E2U_EXTENDED_SYMBOLS :
+		V92_PHASE4_E2U_SYMBOLS;
+
+	CHECK(build_boundary(law, points, 0u, 1, &transmitter, &boundary) &&
+	      v92_phase4_modulator_level(points, TEST_LU, 0u, 0u, &level) ==
+		      V92_PHASE4_MODULATOR_OK,
+	      "shifted marker predecessor failed");
+	for (size_t i = 0; i < ARRAY_LENGTH(boundary.pending_training_targets); ++i)
+		boundary.pending_training_targets[i] = line_sample(law, 1, level);
+	CHECK(v92_upstream_rx_init(&signal, &boundary) == V92_UPSTREAM_RX_OK,
+	      "shifted marker signal failed");
+	level = line_sample(law, 1, level);
+	for (unsigned i = 0; i < 1000u; ++i)
+		CHECK(v92_upstream_rx_sample(&signal, level, &decision) == V92_UPSTREAM_RX_OK,
+		      "shifted marker settling failed");
+	struct qam_equalizer *equalizer = &signal.line.equalizer;
+	CHECK(tap >= count && tap < equalizer->tap_count,
+	      "shifted marker tap unavailable");
+	memset(equalizer->coefficients, 0, sizeof(equalizer->coefficients));
+	memset(equalizer->history, 0, sizeof(equalizer->history));
+	equalizer->coefficients[tap].in_phase = quiet ? 32.0 : 1.0;
+	signal.line.adaptation = 0.0;
+	signal.line.output_bias = 0.0;
+	/* The complete marker is still inside the learned FIR delay; newer
+	 * physical input is already silent. Keep the declared delay unchanged. */
+	for (unsigned i = 0; i < count; ++i)
+		equalizer->history[tap - 1u - i].in_phase = quiet ? level / 32 : level;
+	if (variant >= 2u)
+		equalizer->history[tap - 1u - (variant == 2u ? 0u : count - 1u)].in_phase =
+			variant == 2u ? 30000 : -30000;
+	CHECK(v92_e2u_rx_init(&receiver, &signal, extended) == V92_E2U_RX_OK,
+	      "shifted marker trial failed");
+	enum v92_e2u_rx_result result = V92_E2U_RX_OK;
+	for (unsigned i = 0; i < count; ++i)
+		result = v92_e2u_rx_sample(&receiver, 0);
+	CHECK(result == (quiet ? V92_E2U_RX_NO_MATCH : V92_E2U_RX_COMPLETE),
+	      "shifted marker law=%u points=%u extend=%u tap=%u variant=%u result=%s",
+	      law, points, extended, tap, variant, v92_e2u_rx_result_name(result));
+	return true;
+}
+
+static bool test_shifted_e2u_carrier(void)
+{
+	static const unsigned taps[] = { 28u, 49u, 60u };
+	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned points = 4u; points <= 8u; points += 4u)
+			for (unsigned extended = 0u; extended < 2u; ++extended)
+				for (size_t tap = 0; tap < ARRAY_LENGTH(taps); ++tap)
+					for (unsigned variant = 0u; variant < 4u; ++variant)
+						CHECK(run_shifted_e2u_carrier(law, points, extended != 0u,
+							      taps[tap], variant), "shifted marker matrix stopped");
+	return true;
+}
+
 static bool run_prediction_contracts(
 	enum g711_law law, enum v92_constellation_size points,
 	uint8_t previous_sign, int8_t polarity)
@@ -1314,6 +1379,7 @@ int main(void)
 		{ "generated digital Phase 4 lines", test_generated_lines },
 		{ "generated E2u boundaries", test_e2u },
 		{ "E2u carrier qualification", test_e2u_carrier },
+		{ "E2u learned input delay", test_shifted_e2u_carrier },
 		{ "read-only upstream predictions", test_prediction_contracts },
 		{ "fresh and aliased control initialization", test_control_initialization },
 		{ "E2u contracts", test_e2u_contracts },

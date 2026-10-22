@@ -28,6 +28,9 @@ struct v92_e2u_rx {
 	double correlation;
 	double observed_energy;
 	double expected_energy;
+	/* Raw carrier evidence follows the learned FIR input tap throughout
+	 * this marker, including taps whose oldest samples leave its history. */
+	double carrier_energy, carrier_peak;
 	/* Largest nominal-level residual and its contribution to the three
 	 * correlation sums. This bounded evidence belongs to one marker trial. */
 	struct {
@@ -36,6 +39,7 @@ struct v92_e2u_rx {
 	uint16_t bit_errors;
 	uint8_t expected_symbols;
 	uint8_t received_symbols;
+	uint8_t carrier_tap;
 	bool matched;
 	bool failed;
 };

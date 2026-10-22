@@ -14,7 +14,13 @@ static bool metrics_are_valid(const struct v92_e2u_rx *receiver)
 	unsigned int bits = v92_phase4_modulator_bits_per_symbol(
 		receiver->signal.line.demodulator.constellation);
 
-	return isfinite(receiver->correlation) &&
+	return isfinite(receiver->carrier_energy) &&
+	       isfinite(receiver->carrier_peak) &&
+	       receiver->carrier_energy >= 0.0 &&
+	       receiver->carrier_peak >= 0.0 &&
+	       receiver->carrier_peak <= receiver->carrier_energy &&
+	       receiver->carrier_tap < receiver->signal.line.equalizer.tap_count &&
+	       isfinite(receiver->correlation) &&
 	       isfinite(receiver->observed_energy) &&
 	       isfinite(receiver->expected_energy) &&
 	       receiver->observed_energy >= 0.0 &&
@@ -77,25 +83,15 @@ enum v92_e2u_rx_result v92_e2u_rx_init(
 
 static bool sequence_matches(const struct v92_e2u_rx *receiver)
 {
-	const struct qam_equalizer *equalizer = &receiver->signal.line.equalizer;
 	double lu = receiver->signal.line.demodulator.lu;
-	double input_energy = 0.0, peak_energy = 0.0;
 	unsigned count = receiver->received_symbols;
-	unsigned begin = equalizer->decision_delay;
 
-	/* Measure only the raw samples corresponding to this marker. FIR
-	 * padding and following B1u do not supply evidence about E2u carrier.
-	 * Keep the acquired-LU floor 18 dB below training, excluding the
-	 * largest sample so one impulse cannot make quiet input a carrier. */
-	if (count < 2u || begin > equalizer->tap_count ||
-	    count > equalizer->tap_count - begin)
-		return false;
-	for (unsigned tap = begin; tap < begin + count; ++tap) {
-		double input = equalizer->history[tap].in_phase;
-		input_energy += input * input;
-		peak_energy = fmax(peak_energy, input * input);
-	}
-	if ((input_energy - peak_energy) * 64.0 < (count - 1u) * lu * lu)
+	/* Exclude one impulse from raw carrier evidence. The learned FIR may
+	 * move its strongest input away from its initial decision delay;
+	 * following samples and padding cannot supply marker evidence. Keep the
+	 * acquired-LU floor 18 dB below training. */
+	if (count < 2u || (receiver->carrier_energy - receiver->carrier_peak) * 64.0 <
+	    (count - 1u) * lu * lu)
 		return false;
 
 	double correlation_squared =
@@ -158,6 +154,23 @@ enum v92_e2u_rx_result v92_e2u_rx_sample(
 		return receiver->matched ? V92_E2U_RX_COMPLETE :
 			V92_E2U_RX_NO_MATCH;
 	next = *receiver;
+	/* Freeze one input delay for the whole marker, retaining the nominal
+	 * delay when equal taps provide no reason to move it. */
+	if (next.received_symbols == 0u) {
+		const struct qam_equalizer *equalizer = &next.signal.line.equalizer;
+		next.carrier_tap = (uint8_t)equalizer->decision_delay;
+		double largest = hypot(equalizer->coefficients[next.carrier_tap].in_phase,
+				       equalizer->coefficients[next.carrier_tap].quadrature);
+
+		for (unsigned tap = 0u; tap < equalizer->tap_count; ++tap) {
+			double magnitude = hypot(equalizer->coefficients[tap].in_phase,
+					 equalizer->coefficients[tap].quadrature);
+			if (magnitude > largest) {
+				largest = magnitude;
+				next.carrier_tap = (uint8_t)tap;
+			}
+		}
+	}
 	if (!v92_upstream_rx_expected_level(&next.signal, 0u, &expected))
 		return fail(receiver);
 	result = v92_upstream_rx_sample_known(
@@ -168,6 +181,9 @@ enum v92_e2u_rx_result v92_e2u_rx_sample(
 		return V92_E2U_RX_INVALID_STATE;
 	if (result != V92_UPSTREAM_RX_OK)
 		return fail(receiver);
+	double input = next.signal.line.equalizer.history[next.carrier_tap].in_phase;
+	next.carrier_energy += input * input;
+	next.carrier_peak = fmax(next.carrier_peak, input * input);
 	bits = v92_phase4_modulator_bits_per_symbol(
 		next.signal.line.demodulator.constellation);
 	next.correlation += decision.equalized_level * expected;
