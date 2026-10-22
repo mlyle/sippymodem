@@ -505,6 +505,46 @@ class LiveTerminalTests(unittest.TestCase):
         self.assertEqual(terminal._decoder.take_online_data(), b"")
         self.assertTrue(all(call.args[-1] == 12.1 for call in wait.call_args_list))
 
+    def test_hangup_escapes_after_ato1_response_timeout(self) -> None:
+        for acknowledged in (False, True):
+            with self.subTest(acknowledged=acknowledged):
+                terminal = ModemTerminal(-1)
+                terminal._decoder.feed(b"CONNECT 300\r\n")
+                initial_replies = 2 if acknowledged else 1
+                with (
+                    mock.patch("tools.live_terminal.time.sleep"),
+                    mock.patch.object(terminal, "_write") as write,
+                    mock.patch("tools.live_terminal._wait_for_descriptor",
+                               side_effect=[None] * initial_replies
+                               + [TimeoutError, None, None]),
+                    mock.patch("tools.live_terminal.os.read",
+                               return_value=b"\r\nOK\r\n"),
+                ):
+                    with self.assertRaises(TimeoutError):
+                        terminal.return_online(2.0, 0.0)
+                    self.assertFalse(terminal._decoder.online)
+                    self.assertTrue(terminal.escape_and_hang_up())
+                self.assertEqual(
+                    [call.args[0] for call in write.call_args_list],
+                    [b"+++", b"ATO1\r", b"+++", b"ATH0\r"],
+                )
+
+    def test_rejected_ato1_keeps_command_mode_for_hangup(self) -> None:
+        terminal = ModemTerminal(-1)
+        terminal._decoder.feed(b"CONNECT 300\r\n")
+        with (
+            mock.patch.object(terminal, "_write") as write,
+            mock.patch("tools.live_terminal._wait_for_descriptor"),
+            mock.patch("tools.live_terminal.os.read",
+                       side_effect=[b"OK\r\n", b"ERROR\r\n", b"OK\r\n"]),
+        ):
+            self.assertFalse(terminal.return_online(2.0, 0.0).connected)
+            self.assertTrue(terminal.escape_and_hang_up())
+        self.assertEqual(
+            [call.args[0] for call in write.call_args_list],
+            [b"+++", b"ATO1\r", b"ATH0\r"],
+        )
+
     def test_escape_guard_capture_is_bounded_even_if_escape_fails(self) -> None:
         terminal = ModemTerminal(-1)
         terminal._decoder.feed(b"CONNECT 14400\r\n")

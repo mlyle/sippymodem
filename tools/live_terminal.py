@@ -275,6 +275,7 @@ class ModemTerminal:
     def __init__(self, descriptor: int) -> None:
         self._descriptor = descriptor
         self._decoder = ResponseDecoder()
+        self._awaiting_reconnect = False
 
     @classmethod
     def open(cls, device_path: str) -> ModemTerminal:
@@ -316,12 +317,14 @@ class ModemTerminal:
     def escape_and_hang_up(self) -> bool:
         """Attempt a bounded local hangup before the owner stops the process."""
         try:
-            if self._decoder.online:
+            if self._decoder.online or self._awaiting_reconnect:
                 time.sleep(1.1)
                 deadline = time.monotonic() + 3.0
                 self._decoder.begin_command_response()
                 self._write(b"+++", deadline)
                 response = self._read_result(deadline)
+                if response in {"ok", "no-carrier"}:
+                    self._awaiting_reconnect = False
                 if response == "no-carrier":
                     return True
                 if response != "ok":
@@ -405,10 +408,15 @@ class ModemTerminal:
         if escape_result != "ok":
             return ReturnOnlineReport(escape_result, received=received)
         self._write(b"ATO1\r", deadline)
+        # ATO returns the modem to data mode before retraining completes.
+        # A missing acknowledgement or CONNECT must not make cleanup send
+        # ATH as payload merely because the decoder still expects results.
+        self._awaiting_reconnect = True
         command_result = self._read_result(deadline)
         retrain_result = (
             self._read_result(deadline) if command_result == "ok" else None
         )
+        self._awaiting_reconnect = False
         return ReturnOnlineReport(
             escape_result, command_result, retrain_result, received
         )
