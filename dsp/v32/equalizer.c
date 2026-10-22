@@ -6,6 +6,7 @@
 #include "integer_math.h"
 #include "lineage.h"
 #include "memory_region.h"
+#include "sample_math.h"
 
 #include <limits.h>
 #include <stdint.h>
@@ -471,9 +472,7 @@ enum v32_equalizer_result v32_equalizer_commit(
 			(uint32_t)((int32_t)(int16_t)decision->ideal_magnitude *
 				 phasor.sine), 14) -
 		next.pending_filtered_q);
-	error_energy = wrap_s32_from_u32(
-		(uint32_t)((int32_t)error_i * error_i) +
-		(uint32_t)((int32_t)error_q * error_q));
+	error_energy = wrap_s32_from_u32(sample_pair_power_s16(error_i, error_q));
 	scaled_error = wrap_s16_from_s32(
 		arithmetic_shift_right_u32((uint32_t)error_energy, 11));
 	next_error = smooth_q15_s16(next.decision_error, scaled_error,

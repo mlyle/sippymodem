@@ -5,6 +5,7 @@
 #include "decision.h"
 #include "integer_math.h"
 #include "memory_region.h"
+#include "sample_math.h"
 
 #include <stddef.h>
 
@@ -16,9 +17,7 @@ static int32_t repeated_pair_energy(
 		(uint16_t)previous_i - (uint16_t)observation->i);
 	int16_t difference_q = (int16_t)(
 		(uint16_t)previous_q - (uint16_t)observation->q);
-	uint32_t energy =
-		(uint32_t)((int32_t)difference_i * difference_i) +
-		(uint32_t)((int32_t)difference_q * difference_q);
+	uint32_t energy = sample_pair_power_s16(difference_i, difference_q);
 
 	return arithmetic_shift_right_u32(energy, 16);
 }

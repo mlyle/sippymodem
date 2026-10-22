@@ -7,6 +7,7 @@
 #include "integer_math.h"
 #include "memory_region.h"
 #include "rate_signal.h"
+#include "sample_math.h"
 
 #include <limits.h>
 #include <stddef.h>
@@ -240,9 +241,7 @@ static int16_t shifted_distance(
 		(uint16_t)first_i - (uint16_t)second_i);
 	int16_t difference_q = (int16_t)(
 		(uint16_t)first_q - (uint16_t)second_q);
-	uint32_t energy =
-		(uint32_t)((int32_t)difference_i * difference_i) +
-		(uint32_t)((int32_t)difference_q * difference_q);
+	uint32_t energy = sample_pair_power_s16(difference_i, difference_q);
 
 	return wrap_s16_from_s32(
 		arithmetic_shift_right_u32(energy, shift));
