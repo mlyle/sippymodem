@@ -237,11 +237,8 @@ static int16_t shifted_distance(
 	int16_t first_i, int16_t first_q,
 	int16_t second_i, int16_t second_q, unsigned shift)
 {
-	int16_t difference_i = (int16_t)(
-		(uint16_t)first_i - (uint16_t)second_i);
-	int16_t difference_q = (int16_t)(
-		(uint16_t)first_q - (uint16_t)second_q);
-	uint32_t energy = sample_pair_power_s16(difference_i, difference_q);
+	uint32_t energy = sample_pair_wrapped_distance_s16(
+		first_i, first_q, second_i, second_q);
 
 	return wrap_s16_from_s32(
 		arithmetic_shift_right_u32(energy, shift));

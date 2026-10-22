@@ -456,18 +456,6 @@ static struct v34_analytic_sample update_feedback_filter(
 	};
 }
 
-static uint32_t distance_squared(
-	struct v34_analytic_sample sample,
-	struct v34_analytic_sample reference)
-{
-	int16_t in_phase = wrap_s16_from_s32(
-		(int32_t)sample.in_phase - reference.in_phase);
-	int16_t quadrature = wrap_s16_from_s32(
-		(int32_t)sample.quadrature - reference.quadrature);
-
-	return sample_pair_power_s16(in_phase, quadrature);
-}
-
 static int16_t published_metric(uint32_t accumulator)
 {
 	return (accumulator & UINT32_C(0x80000000)) != 0 ?
@@ -509,10 +497,12 @@ static void update_quality(
 	struct v34_analytic_sample demodulated,
 	struct v34_analytic_sample rotated_target)
 {
-	uint32_t error = distance_squared(demodulated, rotated_target);
+	uint32_t error = sample_pair_wrapped_distance_s16(
+		demodulated.in_phase, demodulated.quadrature,
+		rotated_target.in_phase, rotated_target.quadrature);
 	uint32_t metric = quality->decision_accumulator + error;
-	uint32_t reference = distance_squared(
-		rotated_target, (struct v34_analytic_sample){ 0 });
+	uint32_t reference = sample_pair_power_s16(
+		rotated_target.in_phase, rotated_target.quadrature);
 	uint16_t position = (uint16_t)(
 		(quality->window_position + 1u) &
 		(V34_ADAPTIVE_EQUALIZER_QUALITY_SYMBOLS - 1u));
@@ -707,8 +697,8 @@ static enum v34_adaptive_equalizer_result apply_decision(
 
 		decision_error = update_feedback_filter(
 			&equalizer->feedback, decision_error);
-		equalizer->quality.feedback_accumulator += distance_squared(
-			decision_error, (struct v34_analytic_sample){ 0 });
+		equalizer->quality.feedback_accumulator += sample_pair_power_s16(
+			decision_error.in_phase, decision_error.quadrature);
 	}
 	rotated_target = rotate_q14(
 		decision->target, rotate_in_phase, rotate_quadrature);

@@ -9,27 +9,16 @@
 
 #include <stddef.h>
 
-static int32_t repeated_pair_energy(
-	int16_t previous_i, int16_t previous_q,
-	const struct v32_equalizer_observation *observation)
-{
-	int16_t difference_i = (int16_t)(
-		(uint16_t)previous_i - (uint16_t)observation->i);
-	int16_t difference_q = (int16_t)(
-		(uint16_t)previous_q - (uint16_t)observation->q);
-	uint32_t energy = sample_pair_power_s16(difference_i, difference_q);
-
-	return arithmetic_shift_right_u32(energy, 16);
-}
-
 enum online_signal { ONLINE_NONE, ONLINE_RETRAIN, ONLINE_CONTROL };
 
 static enum online_signal observe_online_signal(
 	struct v32_data_retrain_detector *detector,
 	const struct v32_equalizer_observation *observation)
 {
-	int32_t energy = repeated_pair_energy(
-		detector->i_previous, detector->q_previous, observation);
+	uint32_t pair_energy = sample_pair_wrapped_distance_s16(
+		detector->i_previous, detector->q_previous,
+		observation->i, observation->q);
+	int32_t energy = arithmetic_shift_right_u32(pair_energy, 16);
 	/* A signed high word of pair energy fits the helper's sample input. */
 	int16_t average = wrap_s16_from_s32(smooth_q15_s16(
 		detector->average_error, (int16_t)energy, 0x7800));

@@ -470,14 +470,9 @@ static uint64_t metric(
 	struct v34_analytic_sample observation,
 	struct v34_analytic_sample reference)
 {
-	int16_t in_phase = (int16_t)(
-		(uint16_t)observation.in_phase - (uint16_t)reference.in_phase);
-	int16_t quadrature = (int16_t)(
-		(uint16_t)observation.quadrature -
-		(uint16_t)reference.quadrature);
-
-	return sample_pair_power_s16(in_phase, quadrature) >>
-	       V34_PHASE3_S_METRIC_SHIFT;
+	return sample_pair_wrapped_distance_s16(
+		observation.in_phase, observation.quadrature,
+		reference.in_phase, reference.quadrature) >> V34_PHASE3_S_METRIC_SHIFT;
 }
 
 static bool s_bar_target_is_qualified(

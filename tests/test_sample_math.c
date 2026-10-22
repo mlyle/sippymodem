@@ -122,6 +122,45 @@ static bool pair_power_boundaries(void)
 	return true;
 }
 
+static int32_t wrapped_difference_oracle(int16_t first, int16_t second)
+{
+	int32_t difference = (int32_t)first - second;
+
+	if (difference < INT16_MIN)
+		difference += 65536;
+	if (difference > INT16_MAX)
+		difference -= 65536;
+	return difference;
+}
+
+static bool wrapped_pair_distance_boundaries(void)
+{
+	const int16_t edges[] = { INT16_MIN, -32767, -1, 0, 1, 32766, INT16_MAX };
+
+	CHECK(sample_pair_wrapped_distance_s16(INT16_MIN, INT16_MIN, 0, 0) ==
+		      UINT32_C(2147483648) &&
+	      sample_pair_wrapped_distance_s16(INT16_MAX, INT16_MAX,
+		      INT16_MIN, INT16_MIN) == 2,
+	      "pair distance lost full-scale energy or widened wrapped subtraction");
+	for (int32_t value = INT16_MIN; value <= INT16_MAX; ++value) {
+		CHECK(sample_pair_wrapped_distance_s16(value, value, value, value) == 0,
+		      "equal sample pairs have nonzero distance");
+		for (size_t i = 0; i < ARRAY_LENGTH(edges); ++i) {
+			int16_t first_q = edges[(i + 2u) % ARRAY_LENGTH(edges)];
+			int32_t di = wrapped_difference_oracle(value, edges[i]);
+			int32_t dq = wrapped_difference_oracle(first_q, value);
+			uint32_t expected = (uint32_t)((int64_t)di * di + (int64_t)dq * dq);
+
+			CHECK(sample_pair_wrapped_distance_s16(value, first_q,
+				      edges[i], value) == expected &&
+			      sample_pair_wrapped_distance_s16(edges[i], value,
+				      value, first_q) == expected,
+			      "wrapped pair distance changed at %d/%zu", (int)value, i);
+		}
+	}
+	return true;
+}
+
 static bool checked_rounding_boundaries(void)
 {
 	const double invalid[] = {
@@ -208,6 +247,7 @@ int main(void)
 	const int modes[] = { FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO };
 	int saved = fegetround();
 	bool passed = saved != -1 && pair_power_boundaries() &&
+		wrapped_pair_distance_boundaries() &&
 		weighted_level_boundaries() && energy_smoothing_boundaries();
 	for (size_t i = 0; passed && i < ARRAY_LENGTH(modes); ++i)
 		passed = fesetround(modes[i]) == 0 && rounding_boundaries() &&

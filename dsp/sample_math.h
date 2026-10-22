@@ -53,6 +53,18 @@ static inline uint32_t sample_pair_power_s16(int16_t first, int16_t second)
 	       (uint32_t)((int32_t)second * second);
 }
 
+/* Wrap each coordinate difference to a signed sample before measuring power.
+ * Training and recovery metrics retain this modulo-16-bit geometry; their
+ * owners choose the signed or unsigned scaling of the resulting 0..2^31 sum. */
+static inline uint32_t sample_pair_wrapped_distance_s16(
+	int16_t first_i, int16_t first_q, int16_t second_i, int16_t second_q)
+{
+	int16_t difference_i = wrap_s16_from_s32((int32_t)first_i - second_i);
+	int16_t difference_q = wrap_s16_from_s32((int32_t)first_q - second_q);
+
+	return sample_pair_power_s16(difference_i, difference_q);
+}
+
 /* Round an already-scaled sample, rejecting nonfinite or clipping inputs.
  * Check before lround so conversion is defined even with a 32-bit long.
  * Ties go away from zero, independently of the active rounding mode.
