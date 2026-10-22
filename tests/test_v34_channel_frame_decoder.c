@@ -649,6 +649,61 @@ static bool test_disjoint_regions(void)
 	return true;
 }
 
+static bool test_projected_failures(void)
+{
+	static const struct {
+		double estimate;
+		double observation;
+		bool invalid_normalizer;
+		enum v34_channel_frame_decoder_result result;
+	} cases[] = {
+		{ NAN, 1.0, false, V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT },
+		{ 1.0, NAN, false, V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT },
+		{ 1.0, DBL_MAX, false, V34_CHANNEL_FRAME_DECODER_NUMERIC_FAILURE },
+		{ 1.0, 1.0, true, V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT },
+	};
+	struct fixture fixture;
+	struct v34_power_normalizer normalizer;
+	const struct v34_symbol_power_measurement power = { 25.0, 256 };
+
+	CHECK(initialize_fixture(
+		      &fixture, &CONFIGURATIONS[0], V34_TRELLIS_16_STATE) &&
+	      v34_power_normalizer_init(
+		      &normalizer, &fixture.channel_decoder.channel_decoder.parameters,
+		      V34_NONLINEAR_THETA_ZERO, &power, &power) == V34_SYMBOL_POWER_OK,
+	      "projected failure fixture did not initialize");
+	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
+		struct v34_channel_frame_decoder saved = fixture.channel_decoder;
+		struct v34_power_normalizer model = normalizer;
+		struct qam_point estimates[2] = {
+			{ cases[index].estimate, 1.0 }, { 1.0, 1.0 },
+		};
+		struct qam_point observations[2] = {
+			{ cases[index].observation, 1.0 }, { 1.0, 1.0 },
+		};
+		struct v34_survivor_decision current;
+		struct v34_survivor_decision saved_current;
+		struct v34_decided_4d_interval decided[4];
+		struct v34_decided_4d_interval saved_decided[4];
+		bool ready = true;
+
+		if (cases[index].invalid_normalizer)
+			model.normalization_gain = 0.0;
+		memset(&current, 0x5a, sizeof(current));
+		memset(decided, 0xa5, sizeof(decided));
+		saved_current = current;
+		memcpy(saved_decided, decided, sizeof(decided));
+		CHECK(v34_channel_frame_decoder_advance_projected(
+			      &fixture.channel_decoder, estimates, observations, &model,
+			      &current, decided, &ready) == cases[index].result &&
+		      v34_channel_frame_decoders_equal(&fixture.channel_decoder, &saved) &&
+		      memcmp(&current, &saved_current, sizeof(current)) == 0 &&
+		      memcmp(decided, saved_decided, sizeof(decided)) == 0 && ready,
+		      "projected failure %zu changed state or output", index);
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -660,6 +715,7 @@ int main(void)
 		{ "transactional boundaries", test_transactional_boundaries },
 		{ "frame boundary rejection", test_frame_boundary_rejection },
 		{ "disjoint regions", test_disjoint_regions },
+		{ "projected failures", test_projected_failures },
 	};
 	unsigned int failures = 0;
 

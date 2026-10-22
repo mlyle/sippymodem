@@ -163,7 +163,7 @@ static bool advance_regions_overlap(
 	return memory_region_set_overlaps(regions, sizeof regions / sizeof *regions);
 }
 
-static enum v34_channel_decoder_result advance(
+enum v34_channel_decoder_result v34_channel_decoder_advance_owned(
 	struct v34_channel_decoder *decoder,
 	const struct qam_point estimates[V34_2D_SYMBOLS_PER_4D_INTERVAL],
 	const struct qam_point normalized[V34_2D_SYMBOLS_PER_4D_INTERVAL],
@@ -180,15 +180,6 @@ static enum v34_channel_decoder_result advance(
 	struct v34_decided_4d_interval generated_decided;
 	bool generated_ready;
 
-	if (decoder == NULL || estimates == NULL || current == NULL ||
-	    decided == NULL || decided_ready == NULL || inversion_bit > 1u ||
-	    ((normalized == NULL) != (normalizer == NULL)) ||
-	    (normalizer != NULL && !v34_power_normalizer_is_valid(normalizer)) ||
-	    advance_regions_overlap(
-		    decoder, estimates, normalized, normalizer, current, decided,
-		    decided_ready) ||
-	    !v34_channel_decoder_is_valid(decoder))
-		return V34_CHANNEL_DECODER_INVALID_ARGUMENT;
 	/* A survivor update changes only its metrics, cursors, and one ring slot.
 	 * Keep that bounded undo record until the transactional inverse precoder
 	 * succeeds; the other traceback slots and configuration never change. */
@@ -226,6 +217,28 @@ static enum v34_channel_decoder_result advance(
 	if (generated_ready)
 		*decided = generated_decided;
 	return V34_CHANNEL_DECODER_OK;
+}
+
+static enum v34_channel_decoder_result advance(
+	struct v34_channel_decoder *decoder,
+	const struct qam_point estimates[V34_2D_SYMBOLS_PER_4D_INTERVAL],
+	const struct qam_point normalized[V34_2D_SYMBOLS_PER_4D_INTERVAL],
+	const struct v34_power_normalizer *normalizer,
+	uint8_t inversion_bit, struct v34_survivor_decision *current,
+	struct v34_decided_4d_interval *decided, bool *decided_ready)
+{
+	if (decoder == NULL || estimates == NULL || current == NULL ||
+	    decided == NULL || decided_ready == NULL || inversion_bit > 1u ||
+	    ((normalized == NULL) != (normalizer == NULL)) ||
+	    (normalizer != NULL && !v34_power_normalizer_is_valid(normalizer)) ||
+	    advance_regions_overlap(
+		    decoder, estimates, normalized, normalizer, current, decided,
+		    decided_ready) ||
+	    !v34_channel_decoder_is_valid(decoder))
+		return V34_CHANNEL_DECODER_INVALID_ARGUMENT;
+	return v34_channel_decoder_advance_owned(
+		decoder, estimates, normalized, normalizer, inversion_bit, current,
+		decided, decided_ready);
 }
 
 enum v34_channel_decoder_result

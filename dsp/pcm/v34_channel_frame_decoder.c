@@ -206,14 +206,10 @@ static enum v34_channel_frame_decoder_result advance(
 	if (next_interval == 0u &&
 	    !load_next_channel_frame(&next_schedule, &next_frame))
 		return V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT;
-	result = normalized == NULL ?
-		v34_channel_decoder_advance(
-			&decoder->channel_decoder, estimates, inversion_bit,
-			&generated_current, &generated_decided, &decided_ready) :
-		v34_channel_decoder_advance_projected(
-			&decoder->channel_decoder, estimates, normalized, normalizer,
-			inversion_bit, &generated_current, &generated_decided,
-			&decided_ready);
+	result = v34_channel_decoder_advance_owned(
+		&decoder->channel_decoder, estimates, normalized, normalizer,
+		inversion_bit, &generated_current, &generated_decided,
+		&decided_ready);
 	if (result != V34_CHANNEL_DECODER_OK)
 		return channel_result(result);
 	decoder->channel_schedule = next_schedule;
