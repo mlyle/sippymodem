@@ -554,6 +554,24 @@ static bool prefer_linear(const struct v92_observation *model,
 	return false;
 }
 
+/* If the unchanged linear predictor lies strictly inside every actual codec
+ * cell, its zero-noise likelihood is already maximal. Do not let the numeric
+ * variance floor reward unnecessary structure that moves within those cells.
+ * This is model admission, not a noise estimate for the remaining channels. */
+static bool linear_explains_cells(const struct v92_observation_training *training)
+{
+	if (!training->levels) return false;
+	for (size_t i = training->taps; i < training->count; i++) {
+		double lower, upper;
+		if (!codec_bounds(training->law, training->host_gain, training->sample[i],
+			training->levels + i, training->offsets ? training->offsets[i] : 0.,
+			&lower, &upper)) return false;
+		double error = (double)training->sample[i] - training->linear[i];
+		if (!(error + lower < 0. && error + upper > 0.)) return false;
+	}
+	return true;
+}
+
 bool v92_observation_fit(struct v92_observation *model,
 	const struct v92_observation_training *training)
 {
@@ -570,7 +588,7 @@ bool v92_observation_fit(struct v92_observation *model,
 		double error = (double)y[i] - u[i];
 		energy += (double)y[i] * y[i]; linear_error += error * error;
 	}
-	if (energy == 0. || linear_error == 0.) return false;
+	if (energy == 0. || linear_error == 0. || linear_explains_cells(training)) return false;
 	struct interval fits[INTERVALS];
 	if (!fit_intervals(fits, law, x, y, count, taps)) return false;
 	struct v92_observation initialized = { .law = law, .taps = taps, .energy = energy / (count - taps),

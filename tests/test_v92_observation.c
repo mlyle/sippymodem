@@ -365,6 +365,38 @@ static void check_scores(const struct v92_observation *model,
 	assert(v92_observation_symbol(&cache, 0));
 }
 
+/* A noiseless final codec can move sample centres away from the correct
+ * linear prediction. That alone does not justify another codec stage. */
+static void check_single_codec_cells(enum g711_law law, double host_gain, bool translated)
+{
+	int32_t x[TRAINING];
+	int16_t u[TRAINING], y[TRAINING], levels[TRAINING];
+	double offsets[TRAINING];
+	uint32_t state = 1;
+	for (unsigned i = 0; i < TRAINING; i++) {
+		int magnitude = (int)(2 * ((random_value(&state) >> 16) % 16) + 1) * 256;
+		x[i] = random_value(&state) >> 31 ? -magnitude : magnitude;
+		u[i] = (int16_t)x[i];
+		double echo = translated ? (int)(random_value(&state) % 201) - 100 : 0.;
+		levels[i] = quantize(law, x[i] / host_gain + echo);
+		offsets[i] = -host_gain * echo;
+		y[i] = (int16_t)round(host_gain * levels[i] + offsets[i]);
+		struct g711_interval cell;
+		assert(g711_quantization_interval(law, levels[i], &cell));
+		assert(u[i] > (cell.lower - .5) * host_gain + offsets[i] &&
+		       u[i] < (cell.upper + .5) * host_gain + offsets[i]);
+	}
+	struct v92_observation model, before;
+	memset(&model, 0x5a, sizeof(model));
+	before = model;
+	const struct v92_observation_training training = {
+		.input = x, .linear = u, .sample = y, .levels = levels, .offsets = offsets,
+		.count = TRAINING, .taps = 3, .host_gain = host_gain, .law = law,
+	};
+	assert(!v92_observation_fit(&model, &training));
+	assert(memcmp(&model, &before, sizeof(model)) == 0);
+}
+
 static void check_rebinding(const struct v92_observation *a, const struct v92_observation *b)
 {
 	struct v92_observation_cache cache;
@@ -698,6 +730,11 @@ int main(void)
 	};
 	assert(!v92_observation_fit(&model, &training));
 	assert(memcmp(&model, &before, sizeof(model)) == 0);
+	for (unsigned law = 0; law < 2; law++)
+		for (unsigned translated = 0; translated < 2; translated++) {
+			check_single_codec_cells(law, 1.25, translated);
+			check_single_codec_cells(law, 1.9586004197173543, translated);
+		}
 	puts("V.92 observation checks passed");
 	return 0;
 }
