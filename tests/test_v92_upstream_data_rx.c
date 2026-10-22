@@ -3463,6 +3463,125 @@ static bool test_translated_acquisition(bool damaged)
 	return true;
 }
 
+/* A single final codec after a known linear channel must not acquire an
+ * unnecessary first-codec model during B1u. Exercise channel selection and
+ * the E2u-to-B1u handoff before checking independent payload bits. */
+static bool test_single_codec(enum g711_law law)
+{
+	enum { BITS = 54, PAYLOAD = 128,
+		FRAMES = V92_B1U_FRAMES + PAYLOAD + V92_PCM_RX_DELAY_FRAMES, EXTRA = 6 };
+	const int16_t lu = 1898;
+	struct channel measured_line = { .gain = 1., .postcursor = .25, .law = law, .polarity = 1 };
+	struct v92_upstream_channel measured = { 0 };
+	uint32_t random = UINT32_C(0x2468ace);
+	for (unsigned i = 0; i < V92_UPSTREAM_CHANNEL_SYMBOLS; i++) {
+		random ^= random << 13; random ^= random >> 17; random ^= random << 5;
+		int16_t input = (int16_t)(8 * ((int)(random % 2048) - 1024));
+		CHECK(v92_upstream_channel_sample(&measured, input, wire_sample(&measured_line, input)),
+			"single-codec channel measurement failed");
+	}
+	struct v92_cpd_parameters cpd;
+	struct v92_upstream_plan plan;
+	struct v92_pcm_mapping mapping;
+	CHECK(v92_cpd_direct_select(&cpd, law, 10, lu, false) == V92_CPD_OK &&
+		v92_cpd_channel_design(&cpd, &measured, law, lu, &plan) &&
+		v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK,
+		"single-codec channel design failed");
+	CHECK(mapping.data_bits_per_frame == BITS, "single-codec rate changed");
+	struct v92_pcm_frame_tx encoder;
+	CHECK(v92_pcm_frame_tx_init(&encoder, &mapping) == V92_PCM_FRAME_OK,
+		"single-codec encoder failed");
+	struct channel data_line = { .gain = 1., .postcursor = .25, .law = law, .polarity = 1 };
+	uint8_t octets[(FRAMES + EXTRA) * V92_PCM_MAPPING_FRAME_SYMBOLS];
+	int16_t samples[(FRAMES + EXTRA) * V92_PCM_MAPPING_FRAME_SYMBOLS];
+	uint8_t expected[PAYLOAD][BITS];
+	random = UINT32_C(0x10203041) ^ UINT32_C(0xa17c001);
+	for (unsigned f = 0; f < FRAMES + EXTRA; f++) {
+		uint8_t bits[BITS];
+		for (unsigned b = 0; b < BITS; b++) {
+			if (f < V92_B1U_FRAMES) bits[b] = 1;
+			else {
+				random = random * UINT32_C(1664525) + UINT32_C(1013904223);
+				bits[b] = (uint8_t)(random >> 31);
+			}
+		}
+		if (f >= V92_B1U_FRAMES && f < V92_B1U_FRAMES + PAYLOAD)
+			memcpy(expected[f - V92_B1U_FRAMES], bits, BITS);
+		struct v92_pcm_frame frame;
+		CHECK(v92_pcm_frame_encode(&encoder, bits, BITS, &frame) == V92_PCM_FRAME_OK,
+			"single-codec encode failed");
+		for (unsigned n = 0; n < V92_PCM_MAPPING_FRAME_SYMBOLS; n++) {
+			int16_t sample;
+			CHECK(v92_pcm_frame_scale(cpd.four_times_gain_q0_16, lu, frame.v[n], &sample) ==
+				V92_PCM_FRAME_OK, "single-codec scale failed");
+			unsigned i = f * V92_PCM_MAPPING_FRAME_SYMBOLS + n;
+			samples[i] = wire_sample(&data_line, sample);
+			octets[i] = data_line.code;
+		}
+	}
+	struct channel control_line = { .gain = 1., .postcursor = .25, .law = law, .polarity = 1 };
+	struct v92_phase4_record_tx control_tx;
+	struct v92_e2u_rx control_rx;
+	CHECK(prepare_e2u_at_level(&control_line, false, &control_tx, &control_rx,
+		lu, lu, 0., V92_CONSTELLATION_4_POINT), "single-codec E2u preparation failed");
+	unsigned input = 0;
+	while (!v92_e2u_rx_is_complete(&control_rx)) {
+		int16_t sample;
+		if (!v92_phase4_record_tx_is_complete(&control_tx)) {
+			CHECK(v92_phase4_record_tx_next(&control_tx, &sample) == V92_PHASE4_RECORD_TX_OK,
+				"single-codec E2u TX failed");
+			sample = wire_sample(&control_line, sample);
+		} else {
+			CHECK(input < V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY,
+				"single-codec E2u exceeded prefix");
+			sample = samples[input++];
+		}
+		enum v92_e2u_rx_result result = v92_e2u_rx_sample(&control_rx, sample);
+		CHECK(result == V92_E2U_RX_OK || result == V92_E2U_RX_COMPLETE,
+			"single-codec E2u RX failed");
+	}
+	CHECK(input == V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY, "single-codec E2u delay changed");
+	struct v92_upstream_data_rx receiver;
+	CHECK(v92_upstream_data_rx_init(&receiver, &control_rx.signal, &mapping, &plan) ==
+		V92_UPSTREAM_DATA_RX_OK, "single-codec handoff failed");
+	unsigned frames = 0, checked = 0, errors = 0, mismatch = 0, ambiguity = 0;
+	double error = 0.;
+	while (frames < FRAMES) {
+		CHECK(input < ARRAY_LENGTH(samples), "single-codec receiver exceeded source");
+		struct v92_upstream_data_frame frame;
+		enum v92_upstream_data_rx_result result = v92_upstream_data_rx_octet(&receiver,
+			octets[input], samples[input], true, &frame);
+		input++;
+		CHECK(result == V92_UPSTREAM_DATA_RX_OK || result == V92_UPSTREAM_DATA_RX_FRAME,
+			"single-codec data receive failed");
+		if (result != V92_UPSTREAM_DATA_RX_FRAME) continue;
+		unsigned f = frames++;
+		if (f >= V92_B1U_ACQUISITION_FRAMES && f < V92_B1U_FRAMES) {
+			double gain = receiver.line.host.gain;
+			error += gain > 0. ? frame.squared_error / gain / gain : frame.squared_error;
+		}
+		if (f >= V92_B1U_ACQUISITION_FRAMES + V92_PCM_RX_DELAY_FRAMES &&
+			f < V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
+			mismatch |= frame.b1u_mismatches;
+			ambiguity += frame.ambiguous;
+			CHECK(frame.bit_count == BITS, "single-codec B1u missing");
+		}
+		if (f >= V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
+			CHECK(frame.bit_count == BITS && !frame.b1u && !frame.ambiguous,
+				"single-codec payload missing or ambiguous");
+			for (unsigned b = 0; b < BITS; b++)
+				errors += frame.bits[b] != expected[f - V92_B1U_FRAMES - V92_PCM_RX_DELAY_FRAMES][b];
+			checked += BITS;
+		}
+	}
+	CHECK(mismatch != V92_B1U_BOTH_MISMATCH && !ambiguity &&
+		error <= V92_B1U_VALIDATION_SYMBOLS * (double)V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
+		"single-codec B1u rejected");
+	CHECK(checked == PAYLOAD * BITS && errors == 0,
+		"single-codec law %u has %u payload errors / %u", law, errors, checked);
+	return true;
+}
+
 int main(void)
 {
 	if (!test_residual_translation() || !test_translated_acquisition(false) ||
@@ -3636,5 +3755,6 @@ int main(void)
 		for (int polarity = -1; polarity <= 1; polarity += 2)
 			for (unsigned i = 0u; i < ARRAY_LENGTH(rm_rates); ++i)
 				if (!run_stream(law, polarity, false, rm_rates[i], 1.0, 0.0, STREAM_RM)) return 1;
-	return test_owned_boundaries() && test_rejection_and_failure() ? 0 : 1;
+	return test_single_codec(G711_LAW_PCMU) && test_single_codec(G711_LAW_PCMA) &&
+		test_owned_boundaries() && test_rejection_and_failure() ? 0 : 1;
 }

@@ -422,6 +422,9 @@ static void check_channel(enum g711_law law, double gain, unsigned taps, struct 
 		double sample = .63 * q[i] + (i ? .07 * q[i - 1] : 0.) - (i > 1 ? .02 * q[i - 2] : 0.);
 		if (taps == 4 && i > 2) sample += .03 * q[i - 3];
 		y[i] = quantize(law, sample);
+		if (i < TRAINING)
+			u[i] = (int16_t)lround(gain * (.63 * x[i] + (i ? .07 * x[i - 1] : 0.) -
+				(i > 1 ? .02 * x[i - 2] : 0.) + (taps == 4 && i > 2 ? .03 * x[i - 3] : 0.)));
 	}
 	struct v92_observation model;
 	const struct v92_observation_training training = {
@@ -470,6 +473,9 @@ static void check_conditioned_channel(enum g711_law law, double host_gain)
 		wire[i] = quantize(law, signal + echo);
 		offsets[i] = -host_gain * echo;
 		y[i] = (int16_t)round(host_gain * wire[i] + offsets[i]);
+		if (i < TRAINING)
+			u[i] = (int16_t)lround(host_gain * .125 * (.63 * x[i] +
+				(i ? .07 * x[i - 1] : 0.) - (i > 1 ? .02 * x[i - 2] : 0.)));
 	}
 	struct v92_observation model;
 	const struct v92_observation_training training = {
@@ -538,6 +544,8 @@ static void check_noise_fit(enum g711_law law, unsigned sigma)
 		double noise = sigma * sqrt(-2. * log(a)) * cos(2. * acos(-1.) * b);
 		y[j] = quantize(law, .63 * q[j] + (j ? .07 * q[j - 1] : 0.) -
 			(j > 1 ? .02 * q[j - 2] : 0.) + noise);
+		u[j] = (int16_t)lround(.125 * (.63 * x[j] + (j ? .07 * x[j - 1] : 0.) -
+			(j > 1 ? .02 * x[j - 2] : 0.)));
 		if (j >= 3) noise_energy += noise * noise;
 	}
 	struct v92_observation model;

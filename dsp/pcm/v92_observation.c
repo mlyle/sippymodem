@@ -511,6 +511,49 @@ static bool training_is_valid(const void *output, size_t size,
 	return true;
 }
 
+/* Compare both hypotheses against the actual final-codec cells using the
+ * same noise variance. Extra codec structure must improve on the existing
+ * linear prediction, not just move closer to quantized sample centres. */
+static bool prefer_linear(const struct v92_observation *model,
+	const struct v92_observation_training *training)
+{
+	if (!training->levels) return false;
+	uint64_t linear = 0;
+	double divisor = sqrt(2. * model->variance);
+	for (size_t i = model->taps; i < training->count; ++i) {
+		double lower, upper;
+		if (!codec_bounds(training->law, training->host_gain, training->sample[i],
+			training->levels + i, training->offsets ? training->offsets[i] : 0.,
+			&lower, &upper)) return false;
+		double error = (double)training->sample[i] - training->linear[i];
+		double probability = gaussian_log_probability((error + lower) / divisor,
+			(error + upper) / divisor);
+		if (!isfinite(probability)) return false;
+		uint64_t cost = score_value(-2. * V92_SCORE_SCALE * probability);
+		if (cost == UINT64_MAX || cost > UINT64_MAX - linear) return false;
+		linear += cost;
+	}
+	if (!linear) return true;
+	struct v92_observation_cache cache;
+	v92_observation_begin(&cache, model, 0.);
+	uint64_t fitted = 0;
+	for (size_t i = model->taps; i < training->count; ++i) {
+		if (!v92_observation_symbol_level(&cache, training->sample[i],
+			training->levels + i, training->offsets ? training->offsets[i] : 0.))
+			return false;
+		struct v92_observation_point previous[V92_OBSERVATION_TAPS - 1];
+		for (unsigned tap = 1; tap < model->taps; ++tap)
+			previous[tap - 1] = v92_observation_point(&cache, training->input[i - tap]);
+		uint64_t cost = v92_observation_score(&cache, training->input[i], previous,
+			linear - fitted);
+		/* The scorer may return a lower bound once this budget is reached.
+		 * Nonnegative later costs cannot restore a win. */
+		if (cost >= linear - fitted) return true;
+		fitted += cost;
+	}
+	return false;
+}
+
 bool v92_observation_fit(struct v92_observation *model,
 	const struct v92_observation_training *training)
 {
@@ -557,6 +600,7 @@ bool v92_observation_fit(struct v92_observation *model,
 	}
 	if (!refit_bins(&initialized, x, y, levels, offsets, count) || !compile_geometry(&initialized) ||
 		!v92_observation_is_valid(&initialized)) return false;
+	if (prefer_linear(&initialized, training)) return false;
 	*model = initialized;
 	return true;
 }

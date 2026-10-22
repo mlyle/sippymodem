@@ -72,8 +72,10 @@ struct v92_observation_training {
 };
 
 /* Fit Q(g*input), the selected channel taps and noise, then a final codec.
- * The center fit must improve on linear before codec-bin refinement. Compile
- * only the final model: no partially fitted model is exposed to the caller.
+ * The center fit must improve on linear before codec-bin refinement. With
+ * actual wire levels, the final model must also improve observed-codec
+ * likelihood over linear under the same fitted noise variance. Compile only
+ * the final model: no partially fitted model is exposed to the caller.
  *
  * Output may not overlap training or any of its arrays. Rejection leaves it
  * unchanged. Set input_coefficient only after fitting already-rounded inputs.
