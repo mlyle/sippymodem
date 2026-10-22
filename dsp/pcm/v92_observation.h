@@ -74,8 +74,10 @@ struct v92_observation_training {
 /* Fit Q(g*input), the selected channel taps and noise, then a final codec.
  * The center fit must improve on linear before codec-bin refinement. With
  * actual wire levels, decline fitting if the unchanged linear prediction
- * already lies strictly inside every observed cell. Otherwise the final
- * model must also improve observed-codec likelihood over linear under the
+ * already lies strictly inside every observed cell, or the existing scalar
+ * fitter returns a gain strictly inside their common intersection and
+ * reconstructs every scored wire level. Otherwise the final model must
+ * also improve observed-codec likelihood over linear under the
  * same fitted noise variance. Compile only the final model: no partially
  * fitted model is exposed to the caller.
  *

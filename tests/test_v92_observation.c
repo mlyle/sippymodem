@@ -397,6 +397,37 @@ static void check_single_codec_cells(enum g711_law law, double host_gain, bool t
 	assert(memcmp(&model, &before, sizeof(model)) == 0);
 }
 
+/* A small calibration bias can cross codec cells on a bipolar grid.
+ * Rounded precoder inputs differ slightly from the linear prediction. The
+ * actual wire observations still have a simple scalar explanation. */
+static void check_scalar_codec_cells(enum g711_law law, bool translated)
+{
+	for (uint32_t seed = 1; seed <= 8; seed++) {
+		int32_t x[TRAINING];
+		int16_t u[TRAINING], y[TRAINING], levels[TRAINING];
+		double offsets[TRAINING];
+		uint32_t state = seed;
+		const double host_gain = 1.3913323887692399;
+		for (unsigned i = 0; i < TRAINING; i++) {
+			int magnitude = (int)(2 * ((random_value(&state) >> 16) % 16) + 1) * 246 + 1;
+			u[i] = random_value(&state) >> 31 ? magnitude : -magnitude;
+			x[i] = u[i] + (int)(random_value(&state) % 3) - 1;
+			offsets[i] = translated ? ((int)(random_value(&state) % 201) - 100) * .25 : 0.;
+			levels[i] = quantize(law, (1.0015 * u[i] - offsets[i]) / host_gain);
+			y[i] = (int16_t)lround(host_gain * levels[i] + offsets[i]);
+		}
+		struct v92_observation model, before;
+		memset(&model, 0x5a, sizeof(model));
+		memcpy(&before, &model, sizeof(before));
+		const struct v92_observation_training training = {
+			.input = x, .linear = u, .sample = y, .levels = levels, .offsets = offsets,
+			.count = TRAINING, .taps = 3, .host_gain = host_gain, .law = law,
+		};
+		assert(!v92_observation_fit(&model, &training));
+		assert(memcmp(&model, &before, sizeof(model)) == 0);
+	}
+}
+
 static void check_rebinding(const struct v92_observation *a, const struct v92_observation *b)
 {
 	struct v92_observation_cache cache;
@@ -732,6 +763,7 @@ int main(void)
 	assert(memcmp(&model, &before, sizeof(model)) == 0);
 	for (unsigned law = 0; law < 2; law++)
 		for (unsigned translated = 0; translated < 2; translated++) {
+			check_scalar_codec_cells(law, translated);
 			check_single_codec_cells(law, 1.25, translated);
 			check_single_codec_cells(law, 1.9586004197173543, translated);
 		}

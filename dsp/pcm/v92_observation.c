@@ -572,6 +572,45 @@ static bool linear_explains_cells(const struct v92_observation_training *trainin
 	return true;
 }
 
+/* A positive scalar may explain all wire cells even when gain one does
+ * not. Intersect their open gain constraints, then check the actual integer
+ * codec: a rounded half-boundary is not proof of a noiseless explanation. */
+static bool scalar_explains_cells(const struct v92_observation_training *training)
+{
+	if (!training->levels) return false;
+	double low = 0., high = HUGE_VAL;
+	for (size_t i = training->taps; i < training->count; ++i) {
+		double lower, upper, x = training->linear[i];
+		if (!codec_bounds(training->law, training->host_gain, training->sample[i],
+			training->levels + i, training->offsets ? training->offsets[i] : 0.,
+			&lower, &upper)) return false;
+		lower += training->sample[i]; upper += training->sample[i];
+		if (x == 0.) {
+			if (!(lower < 0. && upper > 0.)) return false;
+			continue;
+		}
+		double a = lower / x, b = upper / x;
+		low = fmax(low, x > 0. ? a : b);
+		high = fmin(high, x > 0. ? b : a);
+		if (!(low < high)) return false;
+	}
+	if (!isfinite(low) || !isfinite(high)) return false;
+	/* Admission must agree with the scalar fallback actually used by the
+	 * receiver, not just a different feasible gain. Keep that fitter and
+	 * validate its reconstruction before declining a tandem hypothesis. */
+	double gain;
+	if (!v92_observation_fit_scalar(&gain, training) ||
+	    !(gain > low && gain < high)) return false;
+	for (size_t i = training->taps; i < training->count; ++i) {
+		double offset = training->offsets ? training->offsets[i] : 0.;
+		double physical = (gain * training->linear[i] - offset) / training->host_gain;
+		if (!isfinite(physical) ||
+		    g711_quantize(training->law, sample_round_s16(physical)) != training->levels[i])
+			return false;
+	}
+	return true;
+}
+
 bool v92_observation_fit(struct v92_observation *model,
 	const struct v92_observation_training *training)
 {
@@ -588,7 +627,8 @@ bool v92_observation_fit(struct v92_observation *model,
 		double error = (double)y[i] - u[i];
 		energy += (double)y[i] * y[i]; linear_error += error * error;
 	}
-	if (energy == 0. || linear_error == 0. || linear_explains_cells(training)) return false;
+	if (energy == 0. || linear_error == 0. || linear_explains_cells(training) ||
+	    scalar_explains_cells(training)) return false;
 	struct interval fits[INTERVALS];
 	if (!fit_intervals(fits, law, x, y, count, taps)) return false;
 	struct v92_observation initialized = { .law = law, .taps = taps, .energy = energy / (count - taps),
