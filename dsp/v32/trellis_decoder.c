@@ -5,6 +5,7 @@
 #include "constellation.h"
 #include "integer_math.h"
 #include "memory_region.h"
+#include "sample_math.h"
 #include "trellis_profile.h"
 
 #include <limits.h>
@@ -98,10 +99,8 @@ static int16_t branch_metric(
 	const struct v32_equalizer_observation *observation,
 	struct v32_fixed_point point)
 {
-	int64_t difference_i = (int32_t)observation->i - point.i;
-	int64_t difference_q = (int32_t)observation->q - point.q;
-	uint64_t energy = (uint64_t)(difference_i * difference_i +
-				     difference_q * difference_q);
+	uint64_t energy = sample_pair_distance_s16(
+		observation->i, observation->q, point.i, point.q);
 	uint64_t scaled = ((energy >> 16) * BRANCH_SCALE) >> 12;
 
 	return wrap_s16_from_s32((int32_t)scaled);

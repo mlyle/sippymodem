@@ -280,22 +280,14 @@ v34_training_constellation_fixed_slice(
 	for (uint8_t rotation = 0; rotation < 4u; ++rotation) {
 		for (uint8_t quarter = 0; quarter < quarter_count; ++quarter) {
 			struct v34_analytic_sample target;
-			int32_t in_phase_error;
-			int32_t quadrature_error;
 			uint64_t distance;
 
 			if (v34_training_constellation_fixed_point(
 				    constellation, quarter, rotation, &target) !=
 			    V34_CONSTELLATION_OK)
 				return V34_CONSTELLATION_INVALID_ARGUMENT;
-			in_phase_error =
-				(int32_t)point.in_phase - target.in_phase;
-			quadrature_error =
-				(int32_t)point.quadrature - target.quadrature;
-			distance = (uint64_t)(
-				(int64_t)in_phase_error * in_phase_error) +
-				(uint64_t)(
-					(int64_t)quadrature_error * quadrature_error);
+			distance = sample_pair_distance_s16(point.in_phase, point.quadrature,
+				target.in_phase, target.quadrature);
 			if (distance >= best_distance)
 				continue;
 			best_distance = distance;

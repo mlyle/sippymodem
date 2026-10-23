@@ -50,13 +50,9 @@ static bool training_decision_is_qualified(
 	const struct v34_adaptive_equalizer_observation *observation,
 	struct v34_analytic_sample target)
 {
-	int32_t in_phase_error =
-		(int32_t)observation->decision.in_phase - target.in_phase;
-	int32_t quadrature_error =
-		(int32_t)observation->decision.quadrature - target.quadrature;
-	uint64_t error_energy =
-		(uint64_t)((int64_t)in_phase_error * in_phase_error) +
-		(uint64_t)((int64_t)quadrature_error * quadrature_error);
+	uint64_t error_energy = sample_pair_distance_s16(
+		observation->decision.in_phase, observation->decision.quadrature,
+		target.in_phase, target.quadrature);
 	uint64_t target_energy =
 		sample_pair_power_s16(target.in_phase, target.quadrature);
 

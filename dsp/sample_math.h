@@ -53,6 +53,18 @@ static inline uint32_t sample_pair_power_s16(int16_t first, int16_t second)
 	       (uint32_t)((int32_t)second * second);
 }
 
+/* Preserve each coordinate difference in -65535..65535 before squaring.
+ * The sum can reach 2 * 65535^2 and needs 33 unsigned bits. */
+static inline uint64_t sample_pair_distance_s16(
+	int16_t first_i, int16_t first_q, int16_t second_i, int16_t second_q)
+{
+	int32_t difference_i = (int32_t)first_i - second_i;
+	int32_t difference_q = (int32_t)first_q - second_q;
+
+	return (uint64_t)((int64_t)difference_i * difference_i) +
+	       (uint64_t)((int64_t)difference_q * difference_q);
+}
+
 /* Wrap each coordinate difference to a signed sample before measuring power.
  * Training and recovery metrics retain this modulo-16-bit geometry; their
  * owners choose the signed or unsigned scaling of the resulting 0..2^31 sum. */

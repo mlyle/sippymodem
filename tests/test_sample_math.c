@@ -122,6 +122,38 @@ static bool pair_power_boundaries(void)
 	return true;
 }
 
+static bool pair_distance_boundaries(void)
+{
+	const int32_t edges[] = {
+		-65535, -65534, -32768, -1, 0, 1, 32768, 65534, 65535,
+	};
+
+	_Static_assert(DBL_MANT_DIG >= 33, "distance oracle needs exact 33-bit integers");
+	CHECK(sample_pair_distance_s16(INT16_MIN, INT16_MIN, INT16_MAX, INT16_MAX) ==
+		      UINT64_C(8589672450),
+	      "opposite full-scale pairs lost distance bits");
+	/* Cover every representable difference. Binary64 squares and their sum
+	 * are exact here, so the oracle does not reuse integer widening/casts. */
+	for (int32_t di = -65535; di <= 65535; ++di) {
+		int16_t first_i = di < 0 ? INT16_MIN : INT16_MAX;
+		int16_t second_i = (int16_t)((int32_t)first_i - di);
+
+		for (size_t i = 0; i < ARRAY_LENGTH(edges); ++i) {
+			int32_t dq = edges[i];
+			int16_t first_q = dq < 0 ? INT16_MIN : INT16_MAX;
+			int16_t second_q = (int16_t)((int32_t)first_q - dq);
+			uint64_t expected = (uint64_t)((double)di * di + (double)dq * dq);
+
+			CHECK(sample_pair_distance_s16(first_i, first_q, second_i, second_q) ==
+				      expected &&
+			      sample_pair_distance_s16(second_i, second_q, first_i, first_q) ==
+				      expected,
+			      "pair distance changed at %d/%d", (int)di, (int)dq);
+		}
+	}
+	return true;
+}
+
 static int32_t wrapped_difference_oracle(int16_t first, int16_t second)
 {
 	int32_t difference = (int32_t)first - second;
@@ -247,7 +279,7 @@ int main(void)
 	const int modes[] = { FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO };
 	int saved = fegetround();
 	bool passed = saved != -1 && pair_power_boundaries() &&
-		wrapped_pair_distance_boundaries() &&
+		pair_distance_boundaries() && wrapped_pair_distance_boundaries() &&
 		weighted_level_boundaries() && energy_smoothing_boundaries();
 	for (size_t i = 0; passed && i < ARRAY_LENGTH(modes); ++i)
 		passed = fesetround(modes[i]) == 0 && rounding_boundaries() &&

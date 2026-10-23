@@ -5,6 +5,7 @@
 #include "constellation.h"
 #include "integer_math.h"
 #include "memory_region.h"
+#include "sample_math.h"
 
 #include <limits.h>
 #include <stddef.h>
@@ -41,11 +42,8 @@ static uint64_t distance_squared(
 	const struct v32_equalizer_observation *observation,
 	struct v32_fixed_point point)
 {
-	int32_t difference_i = (int32_t)observation->i - point.i;
-	int32_t difference_q = (int32_t)observation->q - point.q;
-
-	return (uint64_t)((int64_t)difference_i * difference_i) +
-	       (uint64_t)((int64_t)difference_q * difference_q);
+	return sample_pair_distance_s16(
+		observation->i, observation->q, point.i, point.q);
 }
 
 static uint8_t nearest_generated(
