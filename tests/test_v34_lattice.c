@@ -175,6 +175,30 @@ static bool test_all_grid_subsets(void)
 	return true;
 }
 
+static bool test_axis_boundary_grid(void)
+{
+	const double axis[] = {
+		-1024.0, -256.0, -255.5, -255.0, -253.0, -249.0,
+		-9.0, -7.0, -5.0, -3.0, -1.0, 0.0,
+		1.0, 3.0, 5.0, 7.0, 9.0,
+		249.0, 253.0, 255.0, 255.5, 256.0, 1024.0,
+	};
+
+	for (size_t real = 0; real < ARRAY_LENGTH(axis); ++real) {
+		for (size_t imag = 0; imag < ARRAY_LENGTH(axis); ++imag) {
+			const struct qam_point estimate = { axis[real], axis[imag] };
+			struct v34_subset_slice actual, expected;
+			size_t index = real * ARRAY_LENGTH(axis) + imag;
+
+			exhaustive_subset_oracle(&estimate, &expected);
+			CHECK(v34_slice_grid_subsets(&estimate, &actual) == V34_LATTICE_OK &&
+			      subset_slices_match(&actual, &expected, index),
+			      "boundary grid slice %zu failed", index);
+		}
+	}
+	return true;
+}
+
 static bool initialize_nonlinear_normalizer(
 	struct v34_power_normalizer *normalizer)
 {
@@ -339,6 +363,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "all grid subsets", test_all_grid_subsets },
+		{ "axis boundaries and ties", test_axis_boundary_grid },
 		{ "nonlinear signal-plane metric",
 		  test_nonlinear_signal_plane_metric },
 		{ "linear projection scaling", test_linear_projection_scaling },

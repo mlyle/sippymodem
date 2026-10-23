@@ -12,23 +12,18 @@ enum {
 	V34_LATTICE_SUBSET_PERIOD = 8,
 };
 
-static int class_coordinate(int class_index, int residue, int period)
-{
-	return residue + period * class_index;
-}
-
-static int coordinate_residue(int coordinate, int period)
-{
-	int residue = coordinate % period;
-
-	return residue < 0 ? residue + period : residue;
-}
+_Static_assert((V34_CHANNEL_COORDINATE_LIMIT + 1) %
+	       V34_LATTICE_SUBSET_PERIOD == 0,
+	       "lattice endpoints must bound complete residue periods");
 
 static int16_t nearest_residue_coordinate(
-	double estimate, int residue, int period)
+	double estimate, int residue)
 {
-	int minimum = -V34_CHANNEL_COORDINATE_LIMIT;
-	int maximum = V34_CHANNEL_COORDINATE_LIMIT;
+	/* For residues 1, 3, 5, 7, complete periods put the endpoints at
+	 * residue - (limit + 1) and residue + (limit + 1) - period. */
+	int minimum = residue - (V34_CHANNEL_COORDINATE_LIMIT + 1);
+	int maximum = residue + V34_CHANNEL_COORDINATE_LIMIT + 1 -
+		V34_LATTICE_SUBSET_PERIOD;
 	double position;
 	int lower_index;
 	int lower;
@@ -36,18 +31,14 @@ static int16_t nearest_residue_coordinate(
 	double lower_error;
 	double upper_error;
 
-	while (coordinate_residue(minimum, period) != residue)
-		minimum++;
-	while (coordinate_residue(maximum, period) != residue)
-		maximum--;
 	if (estimate <= minimum)
 		return (int16_t)minimum;
 	if (estimate >= maximum)
 		return (int16_t)maximum;
-	position = (estimate - residue) / period;
+	position = (estimate - residue) / V34_LATTICE_SUBSET_PERIOD;
 	lower_index = (int)floor(position);
-	lower = class_coordinate(lower_index, residue, period);
-	upper = class_coordinate(lower_index + 1, residue, period);
+	lower = residue + V34_LATTICE_SUBSET_PERIOD * lower_index;
+	upper = lower + V34_LATTICE_SUBSET_PERIOD;
 	lower_error = fabs(estimate - lower);
 	upper_error = fabs(estimate - upper);
 	if (upper_error < lower_error ||
@@ -134,8 +125,7 @@ static enum v34_lattice_result slice_grid_subsets(
 	for (int in_phase_residue = 1; in_phase_residue < 8;
 	     in_phase_residue += 2) {
 		int16_t in_phase = nearest_residue_coordinate(
-			channel_estimate->in_phase, in_phase_residue,
-			V34_LATTICE_SUBSET_PERIOD);
+			channel_estimate->in_phase, in_phase_residue);
 
 		for (int quadrature_residue = 1; quadrature_residue < 8;
 		     quadrature_residue += 2) {
@@ -143,9 +133,7 @@ static enum v34_lattice_result slice_grid_subsets(
 				.channel_output = {
 					.in_phase = in_phase,
 					.quadrature = nearest_residue_coordinate(
-						channel_estimate->quadrature,
-						quadrature_residue,
-						V34_LATTICE_SUBSET_PERIOD),
+						channel_estimate->quadrature, quadrature_residue),
 				},
 			};
 			uint8_t label;
