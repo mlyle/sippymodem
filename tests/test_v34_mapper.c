@@ -4,6 +4,7 @@
 
 #include "test.h"
 
+#include <math.h>
 #include <string.h>
 
 struct symbol_rate_fixture {
@@ -159,6 +160,78 @@ static bool test_all_supported_mappings(void)
 	return true;
 }
 
+static bool test_bounded_hard_decisions(void)
+{
+	struct v34_grid_point quarter[V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT];
+	struct v34_mapping_parameters parameters[2];
+	size_t ties = 0, decisions = 0;
+
+	CHECK(v34_quarter_superconstellation_generate(quarter, ARRAY_LENGTH(quarter)) ==
+		      V34_CONSTELLATION_OK,
+	      "hard-decision oracle generation failed");
+	for (size_t i = 0; i < ARRAY_LENGTH(parameters); ++i) {
+		struct v34_frame_geometry geometry;
+
+		CHECK(v34_frame_geometry_init(&geometry,
+			      i ? V34_SYMBOL_RATE_3429 : V34_SYMBOL_RATE_2400,
+			      i ? 14 : 1, false) == V34_FRAME_SCHEDULE_OK &&
+		      v34_mapping_parameters_init(&parameters[i], &geometry, i != 0) ==
+			      V34_MAPPING_PARAMETERS_OK,
+		      "hard-decision geometry %zu failed", i);
+	}
+	for (int in_phase = -255; in_phase <= 255; in_phase += 2) {
+		for (int quadrature = -255; quadrature <= 255; quadrature += 2) {
+			struct v34_grid_point input = { in_phase, quadrature }, canonical;
+			uint8_t rotation;
+
+			/* Recover the quarter by rotation rather than the production
+			 * residue-to-rotation decision tree. */
+			for (rotation = 0; rotation < 4; ++rotation) {
+				canonical = rotate_clockwise(input, (4u - rotation) & 3u);
+				if ((canonical.in_phase - 1) % 4 == 0 &&
+				    (canonical.quadrature - 1) % 4 == 0)
+					break;
+			}
+			CHECK(rotation < 4, "hard-decision quarter was not found");
+			double best = HUGE_VAL;
+			size_t label = 0, equal = 0;
+
+			/* These integer squares/sums are exact in binary64; do not
+			 * reuse the fixed-point distance helper being checked. */
+			for (size_t i = 0; i < ARRAY_LENGTH(quarter); ++i) {
+				double di = (double)canonical.in_phase - quarter[i].in_phase;
+				double dq = (double)canonical.quadrature - quarter[i].quadrature;
+				double distance = di * di + dq * dq;
+
+				if (distance < best) {
+					best = distance;
+					label = i;
+					equal = 1;
+				} else if (distance == best) {
+					equal++;
+				}
+			}
+			ties += equal > 1;
+			for (size_t i = 0; i < ARRAY_LENGTH(parameters); ++i) {
+				struct v34_2d_mapping_decision recovered;
+				unsigned width = parameters[i].point_index_bits_per_2d_symbol;
+
+				CHECK(v34_unmap_2d_decision(&parameters[i], &input, &recovered) ==
+					      V34_MAPPER_OK &&
+				      recovered.ring_prefix == (label >> width) &&
+				      recovered.point_index == (label & ((1u << width) - 1u)) &&
+				      recovered.clockwise_quarter_turns == rotation,
+				      "hard decision %d/%d/%zu lost label or tie order",
+				      in_phase, quadrature, i);
+				decisions++;
+			}
+		}
+	}
+	CHECK(decisions == 131072 && ties != 0,
+	      "hard-decision coverage changed: %zu decisions, %zu ties", decisions, ties);
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v34_frame_geometry geometry;
@@ -291,6 +364,7 @@ int main(void)
 	} tests[] = {
 		{ "all supported mappings", test_all_supported_mappings },
 		{ "hard decision folding", test_hard_decision_folding },
+		{ "bounded hard decisions", test_bounded_hard_decisions },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;
