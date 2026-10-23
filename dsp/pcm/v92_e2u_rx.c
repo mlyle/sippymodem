@@ -243,7 +243,17 @@ enum v92_e2u_rx_result v92_e2u_rx_search(
 	 * zero-filled interior at the old repetition period. After CPu selection,
 	 * a partial record off the twelve-symbol alignment cannot own that
 	 * boundary. Keep parsing it, but allow a competing marker search. */
-	bool boundary = control->control.record_boundary ||
+	/* An accepted CPu fixes its wire extent before a second intact repeat
+	 * confirms the clock. At that retained period an idle parser cannot
+	 * erase E2u just because the preceding repeat lost its sync/header.
+	 * Partial headers still require the confirmed-clock rule below. */
+	unsigned bits = v92_phase4_modulator_bits_per_symbol(
+		control->signal.line.demodulator.constellation);
+	bool selected_cpu_boundary = control->retained_cpu_bits &&
+		control->repeat_symbols * bits == control->retained_cpu_bits &&
+		!control->repeat_remaining &&
+		control->control.stage == V92_CONTROL_RX_SEARCH_SYNC;
+	bool boundary = selected_cpu_boundary || control->control.record_boundary ||
 		(control->repeat_confirmed && !control->repeat_remaining &&
 		 (control->control.stage == V92_CONTROL_RX_SEARCH_SYNC ||
 		  (control->retained_cpu_bits &&

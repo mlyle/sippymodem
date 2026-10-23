@@ -602,7 +602,7 @@ static bool test_guarded_handoff(enum g711_law law, bool extended, unsigned pref
 
 static bool test_damaged_record_repetition(enum g711_law law,
 	enum v92_constellation_size constellation, bool extended, unsigned intact,
-	enum upstream_tail kind, unsigned status_tail_symbols)
+	enum upstream_tail kind, unsigned status_tail_symbols, bool selected_cpu)
 {
 	struct v92_upstream_control_line_rx line;
 	struct v92_phase4_record_tx wire;
@@ -670,6 +670,10 @@ static bool test_damaged_record_repetition(enum g711_law law,
 			      v92_e2u_rx_search(&e2u, &line, true, quantize(law, sample), &event) == V92_E2U_RX_OK,
 			      "control interior falsely ended E2u search, repeat %u", repeat);
 			accepted += event.type == (kind == SUVU_TAIL ? V92_CONTROL_EVENT_SUVU : V92_CONTROL_EVENT_CPU);
+			/* Match the station owner: only an accepted full CPu retains
+			 * the negotiated wire extent. Damaged repeats retain no fields. */
+			if (selected_cpu && event.type == V92_CONTROL_EVENT_CPU)
+				line.retained_cpu_bits = (uint16_t)frame_bits;
 			rejected += event.type == V92_CONTROL_EVENT_SUVU_REJECTED;
 		}
 		CHECK(accepted == (repeat < intact ? 1u : 0u) &&
@@ -689,7 +693,7 @@ static bool test_damaged_record_repetition(enum g711_law law,
 		      "E2u generation failed");
 		enum v92_e2u_rx_result result = v92_e2u_rx_search(
 			&e2u, &line, true, quantize(law, sample), &event);
-		CHECK(result == (intact == 2 && v92_phase4_record_tx_is_complete(&wire) ?
+		CHECK(result == ((intact == 2 || selected_cpu) && v92_phase4_record_tx_is_complete(&wire) ?
 		      V92_E2U_RX_COMPLETE : V92_E2U_RX_OK),
 		      "E2u repetition guard failed: law=%u size=%u extended=%u intact=%u kind=%u result=%u",
 		      law, constellation, extended, intact, kind, result);
@@ -2272,11 +2276,12 @@ int main(void)
 				return 1;
 			for (unsigned extended = 0; extended < 2; ++extended)
 				for (unsigned intact = 1; intact <= 2; ++intact)
-					if (!test_damaged_record_repetition(law, constellation, extended, intact, CPU_TAIL, 0u) ||
-					    !test_damaged_record_repetition(law, constellation, extended, intact, SUVU_TAIL, 0u) ||
+					if (!test_damaged_record_repetition(law, constellation, extended, intact, CPU_TAIL, 0u, false) ||
+					    !test_damaged_record_repetition(law, constellation, extended, intact, SUVU_TAIL, 0u, false) ||
+					    !test_damaged_record_repetition(law, constellation, extended, intact, CPU_TAIL, 0u, true) ||
 					    (intact == 2 &&
-					     (!test_damaged_record_repetition(law, constellation, extended, intact, CPU_TAIL, 12u) ||
-					      !test_damaged_record_repetition(law, constellation, extended, intact, CPU_TAIL, 15u))))
+					     (!test_damaged_record_repetition(law, constellation, extended, intact, CPU_TAIL, 12u, false) ||
+					      !test_damaged_record_repetition(law, constellation, extended, intact, CPU_TAIL, 15u, false))))
 						return 1;
 		}
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
