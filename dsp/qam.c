@@ -6,6 +6,7 @@
 
 #include "integer_math.h"
 #include "phase.h"
+#include "ring_history.h"
 #include "sample_math.h"
 
 #include <limits.h>
@@ -719,11 +720,8 @@ static void mix_sample(
 	demodulator->in_phase_history[demodulator->history_index] = in_phase;
 	demodulator->quadrature_history[demodulator->history_index] =
 		quadrature;
-	demodulator->history_index =
-		(demodulator->history_index + 1) %
-		demodulator->matched_filter_count;
-	if (demodulator->history_count < demodulator->matched_filter_count)
-		demodulator->history_count++;
+	ring_history_advance(&demodulator->history_index,
+		&demodulator->history_count, demodulator->matched_filter_count);
 	demodulator->carrier_phase += demodulator->carrier_phase_step;
 	demodulator->line_power +=
 		((double)sample * sample - demodulator->line_power) / 256.0;
