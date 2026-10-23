@@ -77,7 +77,7 @@ static bool downstream_state_matches(
 	case V92_DOWNSTREAM_CONTROL_READY_FOR_CPD:
 		return tx->v92_control_kind ==
 			       PCM_DOWNSTREAM_V92_CONTROL_SUVD &&
-		       !tx->control.suvd.acknowledges_cpu &&
+		       tx->control.suvd.acknowledges_cpu == control->transmit_acknowledges_cpu &&
 		       tx->control.suvd.request_silence ==
 			       control->request_silence;
 	case V92_DOWNSTREAM_CONTROL_CPD: {
@@ -154,15 +154,12 @@ static bool owned_state_is_valid(
 			control->status_start_frame <=
 				control->transmit.accepted_frames :
 		control->status_start_frame == 0u) &&
-	       (!control->cpu_received || control->suvu_received) &&
 	       (!control->repeat_cpd || control->cpd_start_frame != 0u) &&
 	       (!control->acknowledgement_end_frame || control->cpu_received) &&
-	       (!control->peer_confirmation_received || control->suvu_received) &&
 	       (!control->transmit_acknowledges_cpu ||
-		((control->transmit_stage ==
-			 V92_DOWNSTREAM_CONTROL_CPD ||
-		 control->transmit_stage ==
-			 V92_DOWNSTREAM_CONTROL_STATUS_SUVD) &&
+		((control->transmit_stage == V92_DOWNSTREAM_CONTROL_READY_FOR_CPD ||
+		  control->transmit_stage == V92_DOWNSTREAM_CONTROL_CPD ||
+		  control->transmit_stage == V92_DOWNSTREAM_CONTROL_STATUS_SUVD) &&
 		 control->cpu_received)) &&
 	       (control->suvu_received ?
 		v92_suvu_parameters_are_valid(&control->suvu) :
@@ -295,8 +292,6 @@ static bool accept_cpu(struct v92_downstream_control *control,
 {
 	if (silence_requested(control) || !v92_cpu_parameters_are_valid(cpu))
 		return false;
-	if (!control->suvu_received)
-		return true;
 	if (!control->cpu_received) {
 		control->cpu = *cpu;
 		control->cpu_received = true;
@@ -466,6 +461,21 @@ static bool apply_pending_downstream(
 		control->transmit_stage = V92_DOWNSTREAM_CONTROL_SILENCE_SUVD;
 		return true;
 	}
+	/* A valid CPu may outlive all initially transmitted SUVu records.
+	 * Acknowledge its selection so the peer resumes SUVu, but retain the
+	 * requirement to receive that actual status before starting CPd. */
+	if (control->transmit_stage == V92_DOWNSTREAM_CONTROL_READY_FOR_CPD &&
+	    !control->suvu_received && control->cpu_received &&
+	    !control->transmit_acknowledges_cpu) {
+		const struct v92_suvd_parameters suvd = {
+			.request_silence = control->request_silence,
+			.acknowledges_cpu = true,
+		};
+		if (pcm_downstream_tx_start_suvd(&control->transmit, &suvd) != PCM_DOWNSTREAM_TX_OK)
+			return false;
+		control->transmit_acknowledges_cpu = true;
+		return true;
+	}
 	if (control->suvu_received &&
 	    (control->transmit_stage == V92_DOWNSTREAM_CONTROL_READY_FOR_CPD ||
 	     (control->transmit_stage == V92_DOWNSTREAM_CONTROL_STATUS_SUVD &&
@@ -628,9 +638,11 @@ bool v92_downstream_control_transmit(
 
 		if (pcm_downstream_tx_next(&control->transmit, &symbol) != PCM_DOWNSTREAM_TX_OK)
 			return fail(control);
-		/* Merely updating the stored SUVd while CPd is in flight does not
-		 * send an acknowledgement. Count the record only once sourced. */
-		if ((control->transmit_acknowledges_cpu ||
+		/* Count a sourced acknowledgement only after CPd. An earlier
+		 * SUVd ACK stops CPu retries, but cannot authorize Ed before the
+		 * missing SUVu has arrived and our parameters have left the wire. */
+		if (((control->transmit_stage == V92_DOWNSTREAM_CONTROL_STATUS_SUVD &&
+		      control->transmit_acknowledges_cpu) ||
 		     control->transmit_stage == V92_DOWNSTREAM_CONTROL_SILENCE_SUVD) &&
 		    !control->acknowledgement_end_frame &&
 		    control->transmit.accepted_frames > before)
@@ -650,6 +662,7 @@ bool v92_downstream_control_is_ed_ready(
 	 * the leading E2u symbols while the independent transmitter drains. */
 	return v92_downstream_control_is_valid(control) &&
 	       !control->failed && !control->cleardown.active && control->cpu_received &&
+	       control->cpd_start_frame != 0u &&
 	       control->peer_confirmation_received &&
 	       control->transmit_acknowledges_cpu &&
 	       control->acknowledgement_end_frame != 0u &&
@@ -693,7 +706,8 @@ bool v92_downstream_control_note_e2u(struct v92_downstream_control *control)
 	if (!v92_downstream_control_is_valid(control) || control->failed || control->cleardown.active ||
 	    !control->acknowledgement_end_frame || control->transmit.transmitted_symbols /
 		V90_CP_FRAME_INTERVALS < control->acknowledgement_end_frame ||
-	    !(silence_requested(control) || (control->cpu_received && control->transmit_acknowledges_cpu)))
+	    !(silence_requested(control) || (control->cpd_start_frame != 0u &&
+	     control->cpu_received && control->transmit_acknowledges_cpu)))
 		return false;
 	control->e2u_received = true;
 	control->peer_confirmation_received = true;

@@ -64,7 +64,9 @@ bool v92_downstream_control_select(struct v92_downstream_control *control,
 	const struct v92_cpd_parameters *cpd);
 /* Training may defer SUVd until its channel measurement is complete. */
 bool v92_downstream_control_ready(struct v92_downstream_control *control);
-/* Damaged wire records are ignored. REJECTED latches failure on an incompatible
+/* A valid CPu is retained and acknowledged even if initial SUVu was lost;
+ * CPd still waits for actual SUVu, and Ed waits for the acknowledging CPd tail.
+ * Damaged wire records are ignored. REJECTED latches failure on an incompatible
  * peer selection without replacing retained parameters; the call may retrain.
  * ERROR denotes invalid input/owner state or an internal invariant failure.
  * Retry expiry waits through a whole valid peer record. */

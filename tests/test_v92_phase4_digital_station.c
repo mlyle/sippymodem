@@ -2083,6 +2083,107 @@ static bool test_cpd_transmitter_boundaries(void)
 	return true;
 }
 
+static bool test_lost_initial_suvu(void)
+{
+	for (unsigned law = 0; law < 2u; ++law) {
+		for (unsigned early_ack = 0; early_ack < 2u; ++early_ack) {
+			const struct v92_cpt_parameters cpt = cpt_parameters(law);
+			const struct v92_suvd_parameters suvd = { 0 };
+			struct v92_cpd_parameters cpd = cpd_parameters(law);
+			struct v90_pcm_mapping mapping;
+			struct pcm_downstream_tx transmit;
+			struct pcm_downstream_rx receive;
+			struct v92_downstream_control control;
+			struct v92_control_event cpu = {
+				.type = V92_CONTROL_EVENT_CPU,
+				.record.cpu = { .frame_result = V92_CPU_OK,
+					.parameters = cpu_parameters(law) },
+			};
+			unsigned initial_status = 0, acknowledged_status = 0;
+			cpu.record.cpu.parameters.acknowledges_cpd = early_ack != 0u;
+			CHECK(v90_pcm_mapping_init_from_v92_cpt(&mapping, &cpt, law) == V90_PCM_MAPPING_OK &&
+			      pcm_downstream_tx_init(&transmit, PCM_PROTOCOL_V92, &mapping) == PCM_DOWNSTREAM_TX_OK &&
+			      pcm_downstream_rx_init(&receive, PCM_PROTOCOL_V92, &mapping,
+				      V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK &&
+			      v92_downstream_control_init(&control, &transmit, &suvd, &cpd, NULL, 0u) &&
+			      v92_downstream_control_ready(&control), "lost-SUVu initialization failed");
+			/* The initial status and CPu can both be lost. A conforming peer
+			 * then repeats CPu alone. Rejected records cannot restore readiness. */
+			const struct v92_control_event rejected = { .type = V92_CONTROL_EVENT_CPU_REJECTED };
+			CHECK(v92_downstream_control_receive(&control, &rejected) == V92_DOWNSTREAM_CONTROL_OK &&
+			      !control.cpu_received && !control.transmit_acknowledges_cpu &&
+			      v92_downstream_control_receive(&control, &cpu) == V92_DOWNSTREAM_CONTROL_OK &&
+			      control.cpu_received && !control.suvu_received,
+			      "valid CPu was discarded with the lost initial SUVu");
+			struct v92_downstream_control incompatible = control;
+			struct v92_control_event changed = cpu;
+			changed.record.cpu.parameters.shaping_a1_q1_6++;
+			CHECK(v92_downstream_control_receive(&incompatible, &changed) == V92_DOWNSTREAM_CONTROL_REJECTED &&
+			      cpu_equal(&incompatible.cpu, &cpu.record.cpu.parameters),
+			      "missing SUVu allowed a changed CPu selection");
+			for (unsigned sample = 0; sample < 16000u && !acknowledged_status; ++sample) {
+				struct pcm_downstream_event event;
+				uint8_t octet;
+				CHECK(v92_downstream_control_transmit(&control, &octet), "lost-SUVu output stopped");
+				enum pcm_downstream_rx_result result = pcm_downstream_rx_receive(&receive, octet, &event);
+				CHECK(result == PCM_DOWNSTREAM_RX_BUFFERING || result == PCM_DOWNSTREAM_RX_TRN2D_FRAME ||
+				      result == PCM_DOWNSTREAM_RX_SUVD, "CPd preceded the missing SUVu");
+				if (result == PCM_DOWNSTREAM_RX_SUVD) {
+					CHECK(event.control.record.suvd.frame_result == V92_SUVD_OK,
+					      "lost-SUVu recovery emitted invalid status");
+					if (event.control.record.suvd.parameters.acknowledges_cpu)
+						acknowledged_status++;
+					else
+						initial_status++;
+				}
+				CHECK(!control.suvu_received && control.cpd_start_frame == 0u &&
+				      !control.acknowledgement_end_frame &&
+				      !v92_downstream_control_is_ed_ready(&control) &&
+				      v92_downstream_control_e2u_delay(&control) == UINT64_MAX &&
+				      !v92_downstream_control_note_e2u(&control),
+				      "CPu recovery bypassed the missing status or CPd wire tail");
+			}
+			CHECK(initial_status && acknowledged_status, "CPu did not restore an acknowledged SUVd");
+			/* The ACK stops the peer's CPu retries so its real status returns.
+			 * Keep its measured level and wait flag rather than inventing them. */
+			const struct v92_control_event status = {
+				.type = V92_CONTROL_EVENT_SUVU,
+				.record.suvu = { .frame_result = V92_SUVU_OK,
+					.parameters = { .prefilter_level_db_q2_2 = -7, .wait_for_cpu = true } },
+			};
+			CHECK(v92_downstream_control_receive(&control, &status) == V92_DOWNSTREAM_CONTROL_OK &&
+			      control.suvu_received && control.suvu.prefilter_level_db_q2_2 == -7 &&
+			      control.suvu.wait_for_cpu, "late SUVu was not retained");
+			cpd.acknowledges_cpu = true;
+			bool cpd_seen = false;
+			for (unsigned sample = 0; sample < 4000u && !cpd_seen; ++sample) {
+				struct pcm_downstream_event event;
+				uint8_t octet;
+				CHECK(v92_downstream_control_transmit(&control, &octet), "recovered CPd output stopped");
+				enum pcm_downstream_rx_result result = pcm_downstream_rx_receive(&receive, octet, &event);
+				CHECK(result == PCM_DOWNSTREAM_RX_BUFFERING || result == PCM_DOWNSTREAM_RX_SUVD ||
+				      result == PCM_DOWNSTREAM_RX_CPD, "recovered CPd decode failed");
+				if (result == PCM_DOWNSTREAM_RX_CPD) {
+					cpd_seen = true;
+					CHECK(event.control.record.cpd.frame_result == V92_CPD_OK &&
+					      event.control.record.cpd.parameters.acknowledges_cpu &&
+					      cpd_selection_equal(&event.control.record.cpd.parameters, &cpd, law),
+					      "recovered CPd changed the selected mapping or lost its ACK");
+				}
+			}
+			CHECK(cpd_seen && control.acknowledgement_end_frame &&
+			      v92_downstream_control_e2u_delay(&control) == 0u,
+			      "recovered CPd did not finish its physical tail");
+			struct v92_control_event confirmation = status;
+			confirmation.record.suvu.parameters.acknowledges_cpd = true;
+			CHECK(v92_downstream_control_receive(&control, &confirmation) == V92_DOWNSTREAM_CONTROL_OK &&
+			      v92_downstream_control_is_ed_ready(&control) &&
+			      v92_downstream_control_note_e2u(&control), "recovered exchange did not finish");
+		}
+	}
+	return true;
+}
+
 static bool test_early_cpu_acknowledgement(void)
 {
 	const struct v92_suvd_parameters suvd = {
@@ -2665,6 +2766,7 @@ int main(void)
 		{ "compact station boundary", test_compact_boundary },
 		{ "CPd transmitter boundaries", test_cpd_transmitter_boundaries },
 		{ "early CPu acknowledgement", test_early_cpu_acknowledgement },
+		{ "lost initial SUVu recovery", test_lost_initial_suvu },
 		{ "short CPu phase guard", test_short_cpu_requires_renegotiation },
 		{ "cleardown physical CP deadlines", test_cleardown_timing },
 		{ "digital silence status agreement", test_silence_status },

@@ -820,8 +820,41 @@ static bool downstream_control_contracts(const struct v92_downstream_control *in
 	selected = *initial;
 	struct v92_control_event event = { .type = V92_CONTROL_EVENT_CPUS };
 	event.record.cpus.parameters.data_rate_number = previous->data_rate_number - 1;
-	CHECK(v92_downstream_control_receive(&selected, &event) == V92_DOWNSTREAM_CONTROL_OK && !selected.cpu_received,
-	      "CPus before SUVu changed selection");
+	/* A lost initial SUVu must not make repeated, valid CPus invisible.
+	 * The previous parameters identify the short selection, but the actual
+	 * status must still arrive before CPd or completion is authorized. */
+	CHECK(v92_downstream_control_receive(&selected, &event) == V92_DOWNSTREAM_CONTROL_OK &&
+	      selected.cpu_received && !selected.suvu_received && !selected.peer_confirmation_received &&
+	      selected.cpu.data_rate_number == previous->data_rate_number - 1 &&
+	      selected.cpu.law == previous->law && selected.cpu.sign_redundancy == previous->sign_redundancy &&
+	      selected.cpu.constellation_count == previous->constellation_count &&
+	      memcmp(selected.cpu.transmit_constellations, previous->transmit_constellations,
+		      sizeof(selected.cpu.transmit_constellations)) == 0 &&
+	      v90_pcm_mapping_equal(&selected.transmit.encoder.mapping, &initial->transmit.encoder.mapping),
+	      "CPus lost its previous parameters or replaced the active wire mapping");
+	CHECK(pcm_downstream_rx_init(&peer, PCM_PROTOCOL_V92, &initial->transmit.encoder.mapping,
+		      V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK, "CPus recovery peer failed");
+	unsigned unacknowledged = 0, acknowledged = 0;
+	for (unsigned clock = 0; clock < 4000 && !acknowledged; ++clock) {
+		uint8_t octet;
+		struct pcm_downstream_event record;
+		CHECK(v92_downstream_control_transmit(&selected, &octet), "CPus recovery output failed");
+		enum pcm_downstream_rx_result result = pcm_downstream_rx_receive(&peer, octet, &record);
+		CHECK(result == PCM_DOWNSTREAM_RX_BUFFERING || result == PCM_DOWNSTREAM_RX_SUVD,
+		      "CPus bypassed the missing SUVu");
+		if (result == PCM_DOWNSTREAM_RX_SUVD) {
+			CHECK(record.control.record.suvd.frame_result == V92_SUVD_OK, "CPus recovery status was damaged");
+			if (record.control.record.suvd.parameters.acknowledges_cpu)
+				acknowledged++;
+			else
+				unacknowledged++;
+		}
+		CHECK(!selected.suvu_received && !selected.cpd_start_frame &&
+		      !selected.acknowledgement_end_frame && !v92_downstream_control_is_ed_ready(&selected) &&
+		      v92_downstream_control_e2u_delay(&selected) == UINT64_MAX &&
+		      !v92_downstream_control_note_e2u(&selected), "CPus recovery completed before SUVu/CPd");
+	}
+	CHECK(unacknowledged && acknowledged, "CPus recovery lost initial status or did not acknowledge");
 	event = (struct v92_control_event){ .type = V92_CONTROL_EVENT_SUVU };
 	CHECK(v92_downstream_control_receive(&selected, &event) == V92_DOWNSTREAM_CONTROL_OK, "SUVu did not open selection");
 	event = (struct v92_control_event){ .type = V92_CONTROL_EVENT_CPUS };
