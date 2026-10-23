@@ -3758,7 +3758,7 @@ static bool exercise_lapm_dual_compression_retry(bool counteroffer)
 		      fields.parameter_negotiation[18] == 12 &&
 		      fields.private_negotiation != NULL && fields.user_data != NULL &&
 		      caller->ec.lapm.tx_win_size == 15 && caller->ec.lapm.rx_win_size == 15 &&
-		      caller->bit_timer == 14400,
+		      caller->bit_timer == 6605,
 		      "smaller response windows were applied instead of counterproposed");
 		caller->packer.hdlc.tx_complete(caller->packer.hdlc.framer, outgoing);
 		before = caller->ec.lapm.v44_session;
@@ -3777,7 +3777,7 @@ static bool exercise_lapm_dual_compression_retry(bool counteroffer)
 	caller->packer.hdlc.rx_complete(caller->packer.hdlc.framer, &incoming);
 	CHECK(caller->ec.lapm.v44_path == NULL &&
 	      caller->ec.lapm.v44_session.phase == LAPM_V44_COMMAND_PENDING &&
-	      caller->bit_timer == 14400 && caller->ec.lapm.rtx_count == 0 &&
+	      caller->bit_timer == 6605 && caller->ec.lapm.rtx_count == 0 &&
 	      caller->ec.lapm.tx_info_size == 128,
 	      "dual selection applied settings or failed to start the new XID deadline");
 	outgoing = caller->packer.hdlc.get_tx_frame(caller->packer.hdlc.framer);
@@ -5183,9 +5183,8 @@ static bool test_lapm_xid_envelopes(void)
 		      caller->ec.lapm.v44_session.phase ==
 			      LAPM_V44_COMMAND_PENDING,
 	      "LAPM caller did not emit a bounded V.44 XID offer");
-	CHECK(caller->bit_timer ==
-		      (int)(3u * (caller->rx_rate + caller->tx_rate)),
-	      "LAPM response timer did not provide three elapsed seconds");
+	CHECK(caller->bit_timer == 6605,
+	      "LAPM response timer did not cover the 2400-bit/s XID exchange");
 	command_size = outgoing->size;
 	memcpy(command, outgoing->buf, (size_t)command_size);
 	caller->packer.hdlc.tx_complete(
@@ -5204,9 +5203,9 @@ static bool test_lapm_xid_envelopes(void)
 		CHECK(caller->ec.lapm.v44_session.phase == LAPM_V44_COMMAND_PENDING,
 		      "malformed XID response completed LAPM negotiation");
 	}
-	caller->rx_rate = caller->tx_rate = 300;
+	caller->rx_rate = caller->tx_rate = 1200;
 	caller->bit_timer_func(caller);
-	CHECK(caller->bit_timer == 3300,
+	CHECK(caller->bit_timer == 6000,
 	      "LAPM response timer did not allow slow-frame serialization");
 	caller->rx_rate = caller->tx_rate = 2400;
 	outgoing = caller->packer.hdlc.get_tx_frame(
@@ -6459,7 +6458,7 @@ static bool test_lapm_disconnected_disc(void)
 static bool test_lapm_recovery_boundaries(void)
 {
 	enum { XID, SABME, DISC, INFORMATION, IDLE, PEER_BUSY, OWN_BUSY };
-	enum { EXHAUSTION, QUEUE_FAILURE, FINAL_RESPONSE, N400 = 5 };
+	enum { EXHAUSTION, QUEUE_FAILURE, FINAL_RESPONSE };
 	struct modem_driver driver = {
 		.name = "LAPM recovery boundary", .start = unused_start,
 		.stop = unused_stop, .ioctl = unused_control,
@@ -6562,7 +6561,7 @@ static bool test_lapm_recovery_boundaries(void)
 			      "recovery boundary did not fill the control queue");
 			m->bit_timer_func(m);
 		} else {
-			for (unsigned expiry = 1; expiry <= N400; ++expiry) {
+			for (unsigned expiry = 1; expiry <= (mode == XID ? 16u : 5u); ++expiry) {
 				m->bit_timer_func(m);
 				outgoing = m->packer.hdlc.get_tx_frame(l);
 				CHECK(outgoing != NULL && outgoing->size == expected_size &&
@@ -8315,7 +8314,10 @@ static bool test_lapm_establishment_recovery(void)
 
 	for (unsigned xid = 0; xid < 2; ++xid)
 	for (int result = -1; result <= 0; ++result)
-	for (unsigned heal = 0; heal < 2; ++heal) {
+	for (unsigned heal = 0; heal < 2; ++heal)
+	for (unsigned late_reply = 0; late_reply < 2; ++late_reply) {
+		if (late_reply && (!heal || result != 0))
+			continue;
 		struct dp_operations operations = {
 			.name = "LAPM establishment recovery", .create = create_retrain_dp,
 			.delete = delete_retrain_dp, .process = process_retrain_dp,
@@ -8360,13 +8362,15 @@ static bool test_lapm_establishment_recovery(void)
 		CHECK(modem_hdlc_reframe(m) == 0, "fixture could not finish its first control frame");
 		struct lapm_v44_session session = l->v44_session;
 		operations.process = process_stalled_lapm_dp;
-		for (unsigned expiry = 1; expiry <= 2; ++expiry) {
+		unsigned recovery_expiry = xid ? 9u : 3u;
+		unsigned expiries = late_reply ? recovery_expiry - 1 : recovery_expiry;
+		for (unsigned expiry = 1; expiry <= expiries; ++expiry) {
 			modem_process(m, receive, transmit, MODEM_FRAG);
 			/* Preparing an XID retry advances its serialization revision;
 			 * the proposal and negotiated state must remain frozen. */
 			session.revision = l->v44_session.revision;
 			CHECK(l->rtx_count == (int)expiry &&
-			      retrain_dp.retrain_calls == (expiry == 2) && m->state == 4 &&
+			      retrain_dp.retrain_calls == (expiry == recovery_expiry) && m->state == 4 &&
 			      lapm_v44_sessions_equal(&l->v44_session, &session),
 			      "establishment recovery changed negotiation: xid %u expiry %u retries %d calls %u state %u session %u",
 			      xid, expiry, l->rtx_count, retrain_dp.retrain_calls, m->state,
@@ -8376,14 +8380,16 @@ static bool test_lapm_establishment_recovery(void)
 		}
 		operations.process = process_retrain_dp;
 		int remaining = m->bit_timer;
-		modem_dp_reconnected(m);
-		CHECK(m->state == 4 && l->rtx_count == 2 && l->stalled_retrain &&
+		if (!late_reply)
+			modem_dp_reconnected(m);
+		CHECK(m->state == 4 && l->rtx_count == (int)expiries &&
+		      l->stalled_retrain == !late_reply &&
 		      m->bit_timer == remaining &&
 		      lapm_v44_sessions_equal(&l->v44_session, &session),
 		      "physical readiness reset establishment or reported CONNECT");
 		for (unsigned repeat = 0; repeat < 10; ++repeat)
 			modem_process(m, receive, transmit, MODEM_FRAG);
-		CHECK(retrain_dp.retrain_calls == 1, "establishment recovery repeated without progress");
+		CHECK(retrain_dp.retrain_calls == !late_reply, "establishment recovery repeated or preempted a late reply");
 		if (heal) {
 			response[0] = l->cmd_addr;
 			if (!xid) response[1] = 0x73; /* UA F=1 */
@@ -8401,7 +8407,7 @@ static bool test_lapm_establishment_recovery(void)
 			      "valid recovered response did not complete establishment");
 		} else {
 			operations.process = process_stalled_lapm_dp;
-			for (unsigned expiry = 0; expiry < 4 && m->state == 4; ++expiry) {
+			for (unsigned expiry = 0; expiry < 17 && m->state == 4; ++expiry) {
 				modem_process(m, receive, transmit, MODEM_FRAG);
 				while ((outgoing = m->packer.hdlc.get_tx_frame(l)) != NULL)
 					m->packer.hdlc.tx_complete(l, outgoing);
@@ -9212,6 +9218,61 @@ static bool test_retrain_preserves_detection(void)
 	return true;
 }
 
+static bool test_lapm_xid_timer_wire_budget(void)
+{
+	struct modem_driver driver = {
+		.name = "LAPM XID wire budget", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	static const struct {
+		unsigned tx, rx, timeout_ms;
+	} cases[] = {
+		{ 1200, 1200, 2500 }, { 2400, 2400, 1376 },
+		{ 4800, 4800, 1000 }, { 33600, 56000, 1000 },
+		{ 1200, 56000, 1400 }, { 56000, 1200, 1400 },
+	};
+
+	for (size_t i = 0; i < ARRAY_LENGTH(cases); ++i) {
+		struct modem *m = create_compat_modem(&driver, driver.name);
+		uint8_t bit;
+		CHECK(m != NULL, "wire-budget fixture allocation failed");
+		m->caller = 1;
+		m->cfg.ec = 1;
+		m->tx_rate = cases[i].tx;
+		m->rx_rate = cases[i].rx;
+		CHECK(modem_ec_init(m) == 0, "wire-budget LAPM initialization failed");
+		modem_hdlc_start(m);
+		m->get_bits = modem_hdlc_get_bits;
+		m->put_bits = modem_hdlc_put_bits;
+		modem_ec_start(m);
+		for (unsigned n = 0; !m->bit_timer && n < 1000000; ++n)
+			CHECK(modem_get_bits(m, 1, &bit, 1) == 1, "wire-budget preamble stalled");
+		int expected = (int)(((uint64_t)(cases[i].tx + cases[i].rx) *
+			cases[i].timeout_ms + 999) / 1000);
+		CHECK(m->bit_timer == expected && !m->ec.lapm.rtx_count,
+		      "XID wire budget incorrect for TX %u RX %u: %d expected %d",
+		      cases[i].tx, cases[i].rx, m->bit_timer, expected);
+		/* The original command must finish on the wire before any retry.
+		 * Keep both bit clocks advancing, including asymmetric links. */
+		unsigned elapsed_ms = 0;
+		while (m->packer.hdlc.tx_frame != NULL && elapsed_ms++ < cases[i].timeout_ms) {
+			for (unsigned n = (elapsed_ms - 1) * cases[i].tx / 1000;
+			     n < elapsed_ms * cases[i].tx / 1000; ++n)
+				CHECK(modem_get_bits(m, 1, &bit, 1) == 1, "XID transmit clock stalled");
+			bit = 1;
+			for (unsigned n = (elapsed_ms - 1) * cases[i].rx / 1000;
+			     n < elapsed_ms * cases[i].rx / 1000; ++n)
+				CHECK(modem_put_bits(m, 1, &bit, 1) == 1, "XID receive clock stalled");
+		}
+		CHECK(m->packer.hdlc.tx_frame == NULL && !m->ec.lapm.rtx_count,
+		      "XID retry overtook its original command at TX %u RX %u",
+		      cases[i].tx, cases[i].rx);
+		modem_ec_exit(m);
+		modem_delete(m);
+	}
+	return true;
+}
+
 static bool test_lapm_timer_follows_rate_changes(void)
 {
 	struct modem_driver driver = {
@@ -9225,10 +9286,10 @@ static bool test_lapm_timer_follows_rate_changes(void)
 		uint32_t transmit_rate, receive_rate;
 		int remaining;
 	} changes[] = {
-		{ 24000, 4800, 86400 },
-		{ 24000, 24000, 144000 },
-		{ 4800, 24000, 86400 },
-		{ 4800, 4800, 28800 },
+		{ 24000, 4800, 28800 },
+		{ 24000, 24000, 48000 },
+		{ 4800, 24000, 28800 },
+		{ 4800, 4800, 9600 },
 	};
 
 	CHECK(m != NULL, "LAPM timer modem allocation failed");
@@ -9244,7 +9305,7 @@ static bool test_lapm_timer_follows_rate_changes(void)
 	modem_ec_start(m);
 	for (unsigned i = 0; m->bit_timer == 0 && i < 10000; ++i)
 		modem_get_bits(m, 1, bits, 1);
-	CHECK(m->bit_timer == 28800 && m->ec.lapm.v44_session.phase == LAPM_V44_COMMAND_PENDING &&
+	CHECK(m->bit_timer == 9600 && m->ec.lapm.v44_session.phase == LAPM_V44_COMMAND_PENDING &&
 	      m->ec.lapm.rtx_count == 0, "XID did not start its response timer");
 	timeout = m->bit_timer_func;
 	for (size_t i = 0; i < sizeof(changes) / sizeof(changes[0]); ++i) {
@@ -9254,7 +9315,7 @@ static bool test_lapm_timer_follows_rate_changes(void)
 		      "rate change %zu altered the remaining LAPM timeout", i);
 	}
 
-	/* Only half a second remains. Preserve that, not a fresh three seconds,
+	/* Only half a second remains. Preserve that, not a fresh second,
 	 * when both directions change to an asymmetric PCM link. */
 	m->bit_timer = 4800;
 	CHECK(modem_set_link_rates(m, 14400, 48000) == 0 &&
@@ -9274,7 +9335,7 @@ static bool test_lapm_timer_follows_rate_changes(void)
 	memset(bits, 1, sizeof(bits));
 	CHECK(modem_put_bits(m, 1, bits, 479) == 479 && m->bit_timer == 1 &&
 	      m->ec.lapm.rtx_count == 0 && modem_put_bits(m, 1, bits, 1) == 1 &&
-	      m->ec.lapm.rtx_count == 1 && m->bit_timer == 187200,
+	      m->ec.lapm.rtx_count == 1 && m->bit_timer == 62400,
 	      "LAPM retry did not occur at the preserved half-second boundary");
 
 	m->tx_rate = m->rx_rate = 4800;
@@ -10837,6 +10898,7 @@ int main(void)
 		{ "retrain preserves LAPM establishment",
 		  test_retrain_preserves_lapm_establishment },
 		{ "LAPM exit retires framing", test_lapm_exit_retires_framing },
+		{ "LAPM XID timer wire budget", test_lapm_xid_timer_wire_budget },
 		{ "LAPM timer follows rate changes", test_lapm_timer_follows_rate_changes },
 		{ "V.21 brief answer mark",
 		  test_v21_originator_answers_brief_mark },

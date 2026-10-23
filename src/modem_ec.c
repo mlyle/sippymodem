@@ -60,6 +60,10 @@
 
 enum {
 	LAPM_TIMER_MIN_MS = 3000,
+	LAPM_XID_TIMER_MIN_MS = 1000,
+	LAPM_XID_RESPONSE_MARGIN_MS = 250,
+	/* V.42 Appendix III.2 recommends a large establishment retry budget. */
+	LAPM_XID_MAX_RTX = 16,
 	LAPM_IDLE_TIMER_SECONDS = 10,
 	LAPM_TIMER_RESPONSE_MARGIN_MS = 1000,
 	LAPM_TIMER_FRAME_OVERHEAD_OCTETS = 7,
@@ -67,7 +71,13 @@ enum {
 	LAPM_TIMER_FALLBACK_BIT_RATE = 57600,
 	/* Allow two unanswered control retries before physical recovery. */
 	LAPM_RETRAIN_POLLS = 2,
+	/* Let a slow peer answer the third SABME before physical recovery. */
+	LAPM_ESTABLISHMENT_RETRAIN_POLLS = 3,
+	/* Faster XIDs must not shorten the initial physical-recovery allowance. */
+	LAPM_XID_RETRAIN_POLLS = 9,
 };
+
+static bool xid_pending(const struct lapm_state *l);
 
 /* The shared bit timer advances with both line directions. Express T401 in
  * elapsed time, and at slow rates leave room for a maximally stuffed frame
@@ -75,7 +85,7 @@ enum {
 static int lapm_timer_timeout(const struct lapm_state *l)
 {
 	uint64_t bits_per_second;
-	uint64_t tx_rate;
+	uint64_t tx_rate, rx_rate;
 	uint64_t info_octets;
 	uint64_t frame_bits;
 	uint64_t timeout_ms;
@@ -85,6 +95,7 @@ static int lapm_timer_timeout(const struct lapm_state *l)
 		return LAPM_TIMER_FALLBACK_BIT_RATE * LAPM_TIMER_MIN_MS / 1000;
 	bits_per_second = (uint64_t)l->modem->rx_rate + l->modem->tx_rate;
 	tx_rate = l->modem->tx_rate;
+	rx_rate = l->modem->rx_rate;
 	info_octets = l->tx_info_size != 0 ? l->tx_info_size :
 		LAPM_DFLT_INFO_SIZE;
 	frame_bits = (info_octets + LAPM_TIMER_FRAME_OVERHEAD_OCTETS) *
@@ -95,10 +106,26 @@ static int lapm_timer_timeout(const struct lapm_state *l)
 	} else if (tx_rate == 0) {
 		tx_rate = bits_per_second;
 	}
-	timeout_ms = (frame_bits * 1000 + tx_rate - 1) / tx_rate +
-		LAPM_TIMER_RESPONSE_MARGIN_MS;
-	if (timeout_ms < LAPM_TIMER_MIN_MS)
-		timeout_ms = LAPM_TIMER_MIN_MS;
+	if (rx_rate == 0)
+		rx_rate = tx_rate;
+	if (xid_pending(l)) {
+		/* T401 starts at queueing, before local serialization. Budget a
+		 * full legal XID in both directions, worst-case HDLC stuffing,
+		 * and processing/propagation. At 1200 bit/s this exceeds 1 s.
+		 * V.42 9.2.1/Appendix IV leave the timer value to the DCE. */
+		frame_bits = (LAPM_V44_MAX_XID_SIZE + LAPM_TIMER_FRAME_OVERHEAD_OCTETS) *
+			LAPM_TIMER_STUFFED_BITS_PER_OCTET;
+		timeout_ms = (frame_bits * 1000 + tx_rate - 1) / tx_rate +
+			(frame_bits * 1000 + rx_rate - 1) / rx_rate +
+			LAPM_XID_RESPONSE_MARGIN_MS;
+		if (timeout_ms < LAPM_XID_TIMER_MIN_MS)
+			timeout_ms = LAPM_XID_TIMER_MIN_MS;
+	} else {
+		timeout_ms = (frame_bits * 1000 + tx_rate - 1) / tx_rate +
+			LAPM_TIMER_RESPONSE_MARGIN_MS;
+		if (timeout_ms < LAPM_TIMER_MIN_MS)
+			timeout_ms = LAPM_TIMER_MIN_MS;
+	}
 	timeout = (bits_per_second * timeout_ms + 999) / 1000;
 	return timeout > INT_MAX ? INT_MAX : (int)timeout;
 }
@@ -877,7 +904,7 @@ static void t401_timeout(struct modem *m)
 	/* V.42 8.3.2.2/8.4.8/8.7.3/8.10.3: exhaust N400 before
 	 * another request. Data recovery terminates the physical connection
 	 * immediately (8.4.9.2), without starting a new DISC transaction. */
-	if (l->rtx_count >= LAPM_MAX_RTX) {
+	if (l->rtx_count >= (xid_pending(l) ? LAPM_XID_MAX_RTX : LAPM_MAX_RTX)) {
 		modem_note_disconnect(m, true, xid_pending(l) ?
 			"LAPM XID retry budget exhausted" : "LAPM T401 retry budget exhausted");
 		complete_link_release(l);
@@ -1844,6 +1871,7 @@ bool modem_ec_take_retrain_request(struct modem *m)
 {
 	struct lapm_state *l;
 	bool establishing;
+	int polls;
 
 	if (m == NULL || !m->cfg.ec || m->get_bits != modem_hdlc_get_bits ||
 	    m->put_bits != modem_hdlc_put_bits)
@@ -1852,14 +1880,18 @@ bool modem_ec_take_retrain_request(struct modem *m)
 	establishing = m->state == STATE_EC_ESTAB &&
 		((l->state == LAPM_IDLE && xid_pending(l)) ||
 		 l->state == LAPM_ESTAB);
-	/* Anchor retries to resumption; older poll counts and information
-	 * stalls cannot shortcut the two new enquiry timeout intervals. */
+	polls = establishing ? (xid_pending(l) ? LAPM_XID_RETRAIN_POLLS :
+		LAPM_ESTABLISHMENT_RETRAIN_POLLS) : LAPM_RETRAIN_POLLS;
+	/* T401 queues the next command before this recovery check. Preserve at
+	 * least nine seconds for initial replies, including a slow peer that
+	 * answers after several XIDs. Anchor connected recovery to resumption
+	 * so older polls cannot shortcut its budget. */
 	if ((!establishing &&
 	     (l->state != LAPM_DATA || xid_pending(l))) ||
 	    l->busy || l->peer_busy ||
 	    m->bit_timer <= 0 || m->bit_timer_func != t401_timeout ||
-	    (l->retrain_poll ? l->rtx_count - l->retrain_poll < LAPM_RETRAIN_POLLS :
-	     (l->rtx_count < LAPM_RETRAIN_POLLS && l->stalled_polls < LAPM_RETRAIN_POLLS)) ||
+	    (l->retrain_poll ? l->rtx_count - l->retrain_poll < polls :
+	     (l->rtx_count < polls && l->stalled_polls < polls)) ||
 	    l->stalled_retrain)
 		return false;
 	/* A usable receive direction need not imply a usable transmit direction.
