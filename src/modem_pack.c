@@ -364,7 +364,10 @@ _Static_assert(V42_ANSWER_REPLY_PATTERNS >=
 
 int modem_link_supports_v42(const struct modem *m)
 {
-	if (m == NULL || m->dp == NULL)
+	/* Require at least 1200 bit/s in each direction before offering V.42.
+	 * The family alone is insufficient: V.22 can also run at 600. */
+	if (m == NULL || m->dp == NULL ||
+	    m->tx_rate < 1200 || m->rx_rate < 1200)
 		return 0;
 
 	switch (m->dp->id) {

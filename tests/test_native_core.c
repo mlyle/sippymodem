@@ -1718,10 +1718,14 @@ static bool test_v42_detection_deadline(void)
 {
 	static const struct {
 		unsigned transmit_rate, receive_rate, error_control;
+		bool supports_v42;
 	} profiles[] = {
-		{ 600, 600, 1 }, { 1200, 1200, 1 }, { 9600, 9600, 1 },
-		{ 31200, 28000, 1 }, { 33600, 56000, 1 },
-		{ 1200, 1200, 0 }, { 1200, 1200, 4 },
+		{ 600, 600, 1, false }, { 600, 1200, 1, false }, { 1200, 600, 1, false },
+		{ 1199, 1200, 1, false }, { 1200, 1199, 1, false },
+		{ 1200, 1200, 1, true }, { 9600, 9600, 1, true },
+		{ 1200, 56000, 1, true }, { 56000, 1200, 1, true },
+		{ 31200, 28000, 1, true }, { 33600, 56000, 1, true },
+		{ 1200, 1200, 0, true }, { 1200, 1200, 4, true },
 	};
 	struct modem_driver driver = {
 		.name = "V.42 detection deadline", .start = unused_start,
@@ -1734,7 +1738,9 @@ static bool test_v42_detection_deadline(void)
 			if (caller && !profiles[i].error_control)
 				continue;
 			struct modem *m = create_compat_modem(&driver, "V.42 detection deadline");
-			struct dp dp = { .id = DP_V34, .modem = m };
+			struct dp dp = {
+				.id = profiles[i].supports_v42 ? DP_V34 : DP_V22, .modem = m,
+			};
 			unsigned tx_phase = 0, rx_phase = 0, tick;
 			unsigned deadline = caller || profiles[i].error_control ? 7500 : 750;
 			uint32_t transmit_tail = 0;
@@ -1750,6 +1756,16 @@ static bool test_v42_detection_deadline(void)
 			modem_dp_connected(m);
 			m->xmit.buf[0] = 'Z';
 			m->xmit.count = m->xmit.head = 1;
+			if (!profiles[i].supports_v42) {
+				CHECK(!m->cfg.ec && !m->bit_timer &&
+				      m->state == STATE_MODEM_ONLINE && m->xmit.count == 1 &&
+				      m->get_bits == modem_async_get_bits &&
+				      m->put_bits == modem_async_put_bits,
+				      "sub-1200 link entered V.42 detection: case %zu role %u", i, caller);
+				m->dp = NULL;
+				modem_delete(m);
+				continue;
+			}
 			CHECK(m->bit_timer == (int)((m->tx_rate + m->rx_rate) * deadline / 1000),
 			      "detection timer did not start at its role deadline for case %zu role %u", i, caller);
 			for (tick = 0; tick < deadline + 100 &&

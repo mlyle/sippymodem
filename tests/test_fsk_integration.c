@@ -160,6 +160,7 @@ struct modem_test_case {
 	unsigned int establishment_quality_side;
 	unsigned int cleardown_initiators;
 	bool raw_transport;
+	bool request_lapm;
 	bool require_lapm;
 	bool require_v44;
 	bool digital_caller;
@@ -2591,7 +2592,7 @@ static bool run_media_call(
 		      MODEM_AUTOMODE(caller.modem) == 1 &&
 		      MODEM_AUTOMODE(answerer.modem) == 1,
 	      "source-built modem did not default to its available capability");
-	if (test_case->raw_transport) {
+	if (test_case->raw_transport && !test_case->request_lapm) {
 		const char *caller_command = test_case->factory_transport && test_case->automode ?
 			"AT\r" : raw_command;
 		const char *answerer_command = test_case->factory_transport && test_case->answerer_automode ?
@@ -2607,7 +2608,7 @@ static bool run_media_call(
 		caller.output_count = 0;
 		answerer.output_count = 0;
 	}
-	if (require_lapm) {
+	if (require_lapm || test_case->request_lapm) {
 		CHECK(modem_write(
 			      caller.modem, lapm_command,
 			      (int)(sizeof(lapm_command) - 1u)) ==
@@ -5699,7 +5700,7 @@ int main(void)
 		},
 		{
 			.id = DP_V22,
-			.name = "V.22 600 LAPM ATO1 resume",
+			.name = "V.22 600 configured LAPM uses raw ATO1 resume",
 			.selection_command = "AT+MS=22,0,600,600\r",
 			.caller_tx_rate = V22_600_BIT_RATE,
 			.caller_rx_rate = V22_600_BIT_RATE,
@@ -5707,6 +5708,8 @@ int main(void)
 			.answerer_rx_rate = V22_600_BIT_RATE,
 			.carrier_loss_samples = MODEM_RATE * 7 / 10,
 			.test_retrain = true,
+			.raw_transport = true,
+			.request_lapm = true,
 		},
 		{
 			.id = DP_V22,

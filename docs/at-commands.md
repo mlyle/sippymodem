@@ -302,7 +302,8 @@ See [raw digital calls](ds0.md) for framing limits and throughput measurements.
 allow raw fallback. `\N2`, `\N4`, and `\N5` require successful error-control
 detection where the selected modulation supports it. These values do not
 select separate MNP implementations: the implemented error-control protocol
-is V.42 LAPM. Bell 103, V.21, V.23, and Baudot use their raw paths.
+is V.42 LAPM. Both negotiated directions must run at least 1200 bit/s.
+Bell 103, V.21, V.23, Baudot, and V.22 at 600 bit/s use their raw paths.
 
 When seeking error control, detection allows up to 7.5 seconds of active
 media for a delayed V.42 request, reply, or protocol flags over SIP. Physical
