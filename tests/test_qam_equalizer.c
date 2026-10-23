@@ -1136,6 +1136,37 @@ static bool test_reference_division_boundaries(void)
 	return true;
 }
 
+static bool test_validation_span(void)
+{
+	const struct qam_point reference = { 1.0, 0.0 };
+	const unsigned spans[] = { 1, 7, QAM_EQUALIZER_MAX_TAP_COUNT };
+	const double poison[] = { NAN, INFINITY, DBL_MAX };
+
+	for (size_t span = 0; span < ARRAY_LENGTH(spans); ++span) {
+		struct qam_equalizer initial;
+		CHECK(qam_equalizer_init_geometry(&initial, &reference, &reference,
+			spans[span], spans[span] / 2) == QAM_EQUALIZER_OK,
+		      "validation span fixture failed");
+		for (size_t tap = 0; tap < QAM_EQUALIZER_MAX_TAP_COUNT; ++tap)
+			for (unsigned axis = 0; axis < 2; ++axis)
+				for (size_t value = 0; value < ARRAY_LENGTH(poison); ++value) {
+					struct qam_equalizer coefficients = initial, history = initial;
+					if (axis) {
+						coefficients.coefficients[tap].quadrature = poison[value];
+						history.history[tap].quadrature = poison[value];
+					} else {
+						coefficients.coefficients[tap].in_phase = poison[value];
+						history.history[tap].in_phase = poison[value];
+					}
+					CHECK(qam_equalizer_is_valid(&coefficients) == (tap >= spans[span]) &&
+					      qam_equalizer_is_valid(&history) ==
+						      (tap >= spans[span] || isfinite(poison[value])),
+					      "coefficient power/history finiteness escaped active span");
+				}
+	}
+	return true;
+}
+
 static bool test_validation(void)
 {
 	const struct qam_point reference = { 1.0, -1.0 };
@@ -1291,6 +1322,7 @@ int main(void)
 		{ "output ownership", test_output_ownership },
 		{ "adaptation power boundaries", test_adaptation_power_boundaries },
 		{ "reference division boundaries", test_reference_division_boundaries },
+		{ "validation spans", test_validation_span },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

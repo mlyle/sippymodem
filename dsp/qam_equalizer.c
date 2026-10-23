@@ -93,10 +93,11 @@ bool qam_equalizer_is_valid(
 	    !point_is_finite(&equalizer->last_output) ||
 	    !carrier_state_is_valid(equalizer))
 		return false;
+	/* The final finite-power gate also rejects nonfinite coefficients.
+	 * History has no power bound and still needs its coordinate checks. */
 	for (size_t index = 0; index < equalizer->tap_count;
 	     ++index) {
-		if (!point_is_finite(&equalizer->coefficients[index]) ||
-		    !point_is_finite(&equalizer->history[index]))
+		if (!point_is_finite(&equalizer->history[index]))
 			return false;
 		coefficient_power +=
 			qam_point_power(&equalizer->coefficients[index]);

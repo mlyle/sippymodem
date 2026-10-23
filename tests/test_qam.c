@@ -111,6 +111,8 @@ static bool test_point_validation(void)
 	const struct qam_point invalid_power[] = {
 		{ 0.0, -0.0 }, bad_in_phase, bad_quadrature, { DBL_MAX, 0.0 },
 		{ nextafter(1e-6, 0.0), 0.0 }, { 1e-6, 0.0 },
+		{ INFINITY, -INFINITY }, { NAN, NAN }, { 0.0, -INFINITY },
+		{ DBL_MAX, -DBL_MAX },
 	};
 	const struct qam_point above = { nextafter(1e-6, INFINITY), 0.0 };
 	struct qam_point alias_i = finite, alias_q = finite;
@@ -154,6 +156,13 @@ static bool test_point_validation(void)
 	CHECK(!qam_point_nonzero_power(&rejected_alias, &rejected_alias.in_phase) &&
 	      rejected_alias.in_phase == (double)1e-6 && rejected_alias.quadrature == 0.0,
 	      "rejected aliased power changed the input point");
+	const struct qam_point large = { 0x1p511, -0x1p511 };
+	const struct qam_point overflow = { 0x1p512, 0.0 };
+	CHECK(qam_point_nonzero_power(&large, &power) && power == 0x1p1023 &&
+	      qam_point_fits_power(&large, DBL_MAX) &&
+	      !qam_point_fits_power(&overflow, DBL_MAX) &&
+	      !qam_point_fits_power(&bad_quadrature, DBL_MAX),
+	      "coordinate finiteness was confused with finite power");
 	return true;
 }
 

@@ -121,14 +121,15 @@ static inline bool point_is_finite(const struct qam_point *point)
 	       isfinite(point->quadrature);
 }
 
-/* Require finite coordinates and finite power strictly above 1e-12.
+/* Finite squared magnitude also proves both coordinates finite: squares
+ * cannot cancel infinity or NaN. Require power strictly above 1e-12.
  * Optional power may alias a coordinate; rejection leaves it unchanged. */
 static inline bool qam_point_nonzero_power(
 	const struct qam_point *point, double *power)
 {
 	double value;
 
-	if (!point_is_finite(point))
+	if (point == NULL)
 		return false;
 	value = qam_point_power(point);
 	if (!isfinite(value) || value <= 1e-12)
@@ -165,7 +166,7 @@ static inline bool qam_point_fits_power(
 {
 	double power;
 
-	if (!point_is_finite(point) || !isfinite(maximum_point_power) ||
+	if (point == NULL || !isfinite(maximum_point_power) ||
 	    maximum_point_power <= 0.0)
 		return false;
 	power = qam_point_power(point);
