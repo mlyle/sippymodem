@@ -19,14 +19,15 @@ bool v92_residual_is_valid(const struct v92_residual *filter);
  * is fitted; its preceding predictions provide delayed features. Rejection
  * leaves outputs unchanged. Optional score receives the acquisition model
  * selection cost; smaller is better. Gain is the inverse channel gain and
- * must remain inside the original training-cell bounds. */
+ * must remain inside the original training-cell bounds. Initial inverse history
+ * is primed from the same acquisition observations, without held-out input. */
 bool v92_residual_fit(struct v92_residual *filter,
 	const int32_t *points, const int32_t *raw, double minimum, double maximum,
 	double *gain, double *score);
 
 /* Re-express a fresh fit for points translated by one exact integer offset
  * across all current/delayed fitting inputs. The DC term absorbs the shift;
- * coefficients and gain remain unchanged. Rebuild its initial raw history.
+ * coefficients and gain remain unchanged. Reprime its inverse history.
  * This does not equate coding histories or constrain held-out decisions.
  * Invalid, nontranslated or out-of-bound calls leave the fit unchanged. */
 bool v92_residual_translate(struct v92_residual *filter,

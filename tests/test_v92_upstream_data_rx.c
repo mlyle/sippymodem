@@ -3099,12 +3099,10 @@ static bool test_residual_inverse(void)
 			CHECK(v92_residual_sample(&filter, raw[i], 1, true, &correction) &&
 			      v92_residual_sample(&copy, raw[i], -1, true, &other) && correction == other &&
 			      !memcmp(&filter, &copy, sizeof(filter)), "independent filters or polarity diverged");
-			if (i >= TRAIN + V92_RESIDUAL_LAGS) {
-				double error = (raw[i] - correction) * gain - points[i];
-				energy += error * error;
-			}
+			double error = (raw[i] - correction) * gain - points[i];
+			energy += error * error;
 		}
-		CHECK(energy < 16. * (TOTAL - TRAIN - V92_RESIDUAL_LAGS),
+		CHECK(energy < 16. * (TOTAL - TRAIN),
 		      "frozen residual inverse missed held-out points");
 		copy = filter;
 		int32_t correction = 123;
@@ -3125,6 +3123,52 @@ static bool test_residual_inverse(void)
 		CHECK(!v92_residual_fit(&filter, points, raw, minimum, maximum, &gain, NULL),
 		      "singular acquisition supplied an inverse");
 	}
+	return true;
+}
+
+/* Exact delayed channels expose a raw-history handoff transient even when
+ * later samples are clean. Check every sample immediately after fitting or
+ * translating, without granting the inverse another settling interval. */
+static bool test_residual_transition(void)
+{
+	enum { TRAIN = V92_B1U_ACQUISITION_FRAMES * V92_PCM_MAPPING_FRAME_SYMBOLS,
+	       TOTAL = TRAIN + 240 };
+	const unsigned delays[][2] = { { 3, 11 }, { 1, 12 } };
+	const double gains[] = { .5, 1., 2. };
+	int32_t points[TOTAL], raw[TOTAL], shifted[TRAIN];
+	for (unsigned d = 0; d < ARRAY_LENGTH(delays); d++)
+		for (unsigned g = 0; g < ARRAY_LENGTH(gains); g++) {
+			uint32_t random = 0x197241;
+			for (unsigned i = 0; i < TOTAL; i++) {
+				random ^= random << 13; random ^= random >> 17; random ^= random << 5;
+				points[i] = ((int)(random % 4) * 2 - 3) * 4000;
+				double value = points[i];
+				if (i >= delays[d][0]) value += .06 * points[i - delays[d][0]];
+				if (i >= delays[d][1]) value -= .03 * points[i - delays[d][1]];
+				raw[i] = (int32_t)lround(value / gains[g] + 41.);
+			}
+			for (int shift = -128; shift <= 128; shift += 128) {
+				struct v92_residual filter = { 0 };
+				double gain;
+				CHECK(v92_residual_fit(&filter, points, raw, gains[g], gains[g], &gain, NULL) &&
+				      filter.count == 2 && filter.delay[0] == delays[d][0] &&
+				      filter.delay[1] == delays[d][1], "transition channel fit failed");
+				if (shift) {
+					for (unsigned i = 0; i < TRAIN; i++) shifted[i] = points[i] + shift;
+					CHECK(v92_residual_translate(&filter, points, shifted, raw, gain),
+					      "transition channel translation failed");
+				}
+				for (unsigned i = TRAIN; i < TOTAL; i++) {
+					int32_t correction;
+					CHECK(v92_residual_sample(&filter, raw[i], 1, true, &correction),
+					      "transition inverse rejected a physical sample");
+					double error = (raw[i] - correction) * gain - (points[i] + shift);
+					CHECK(fabs(error) <= gain / 2. + 1e-8,
+					      "inverse handoff transient: delays=%u/%u gain=%g shift=%d sample=%u error=%g",
+					      delays[d][0], delays[d][1], gain, shift, i - TRAIN, error);
+				}
+			}
+		}
 	return true;
 }
 
@@ -3642,7 +3686,7 @@ int main(void)
 			for (unsigned prefix = 0; prefix < 2; prefix++)
 				for (unsigned damaged = 0; damaged < 2; damaged++)
 					if (!test_acquisition_history(code, state, prefix, damaged)) return 1;
-	if (!test_residual_inverse()) return 1;
+	if (!test_residual_transition() || !test_residual_inverse()) return 1;
 	if (!test_data_initialization()) return 1;
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)
 		for (int polarity = -1; polarity <= 1; polarity += 2)
