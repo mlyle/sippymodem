@@ -1232,6 +1232,102 @@ static bool test_b1u_validation_history(void)
 	return true;
 }
 
+/* Point observations and zero-width cells rank identically after clean
+ * training. Erasures and covering cells both contribute zero; cells far
+ * beyond either sample limit both saturate. Preserve delayed bits, chosen
+ * representatives, residuals and exact ties across these metric boundaries. */
+static bool metric_equivalence_case(uint8_t rate, enum v92_cpd_trellis code,
+	enum g711_law law, unsigned kind)
+{
+	struct v92_cpd_parameters cpd = parameters(rate);
+	struct v92_pcm_mapping mapping;
+	struct v92_pcm_frame_tx tx;
+	struct v92_pcm_frame_rx rx[2];
+	cpd.trellis = code;
+	CHECK(v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK &&
+	      v92_pcm_frame_tx_init(&tx, &mapping) == V92_PCM_FRAME_OK &&
+	      v92_pcm_frame_rx_init_constellation(&rx[0], &mapping) == V92_PCM_FRAME_OK,
+	      "metric equivalence initialization failed");
+	rx[1] = rx[0];
+	unsigned verified = 0;
+	for (unsigned n = 0; n < V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES + 24u; n++) {
+		uint8_t bits[V92_PCM_MAPPING_MAX_BITS], decoded[2][V92_PCM_MAPPING_MAX_BITS];
+		struct v92_pcm_frame encoded;
+		struct v92_pcm_frame_decision decision[2];
+		struct v92_pcm_frame_cell cells[2][V92_PCM_MAPPING_FRAME_SYMBOLS];
+		bool received[V92_PCM_MAPPING_FRAME_SYMBOLS];
+		int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
+		if (n < V92_B1U_FRAMES) memset(bits, 1, mapping.data_bits_per_frame);
+		else generated_bits(bits, mapping.data_bits_per_frame, n);
+		CHECK(v92_pcm_frame_encode(&tx, bits, mapping.data_bits_per_frame, &encoded) ==
+		      V92_PCM_FRAME_OK, "metric equivalence source failed");
+		for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; i++) {
+			int noise = n < V92_B1U_FRAMES ? 0 :
+				((int)((n + i) % 3u) - 1) * cpd.constellation[0].positive_linear[0] / 2;
+			samples[i] = (int16_t)(encoded.u[i] + noise);
+			cells[0][i] = cells[1][i] =
+				(struct v92_pcm_frame_cell){ samples[i], samples[i] };
+			received[i] = true;
+			if (n < V92_B1U_FRAMES) continue;
+			if (kind == 1u) {
+				received[i] = false;
+				cells[1][i] = (struct v92_pcm_frame_cell){ -32768., 32767. };
+			} else if (kind == 2u) {
+				cells[0][i] = (struct v92_pcm_frame_cell){ -1e300, -1e300 };
+				cells[1][i] = (struct v92_pcm_frame_cell){ 1e300, 1e300 };
+			}
+		}
+		for (unsigned side = 0; side < 2; side++) {
+			struct v92_pcm_frame_channel channel = {
+				.cells = cells[side], .received = side == 0 ? received : NULL,
+			};
+			struct v92_pcm_frame_likelihood likelihood;
+			memset(decoded[side], 0x5a, sizeof(decoded[side]));
+			enum v92_pcm_frame_result result = kind == 0 && side == 0 ?
+				v92_pcm_frame_decode(&rx[side], samples, n < V92_B1U_FRAMES,
+					decoded[side], mapping.data_bits_per_frame, &decision[side]) :
+				v92_pcm_frame_decode_observed(&rx[side], samples, n < V92_B1U_FRAMES,
+					decoded[side], mapping.data_bits_per_frame, &decision[side], &channel, &likelihood);
+			CHECK(result == V92_PCM_FRAME_OK, "metric receive failed: rate=%u code=%u kind=%u n=%u",
+			      rate, code, kind, n);
+		}
+		CHECK(!memcmp(decoded[0], decoded[1], sizeof(decoded[0])) &&
+		      decision[0].bits_ready == decision[1].bits_ready &&
+		      decision[0].ambiguous == decision[1].ambiguous &&
+		      decision[0].b1u_mismatches == decision[1].b1u_mismatches &&
+		      decision[0].rm == decision[1].rm &&
+		      decision[0].squared_error == decision[1].squared_error &&
+		      !memcmp(decision[0].frame.u, decision[1].frame.u, sizeof(decision[0].frame.u)) &&
+		      !memcmp(decision[0].frame.digit, decision[1].frame.digit, sizeof(decision[0].frame.digit)) &&
+		      !memcmp(decision[0].predicted_samples, decision[1].predicted_samples,
+			      sizeof(decision[0].predicted_samples)),
+		      "equivalent metrics diverged: rate=%u code=%u kind=%u n=%u", rate, code, kind, n);
+		/* The interval API additionally reports soft cell-distance confidence. */
+		if (kind != 0u) CHECK(decision[0].uncertain == decision[1].uncertain,
+		      "equivalent interval confidence diverged");
+		if (kind == 0u && n >= V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
+			generated_bits(bits, mapping.data_bits_per_frame, n - V92_PCM_RX_DELAY_FRAMES);
+			CHECK(decision[0].bits_ready && !decision[0].ambiguous &&
+			      !memcmp(decoded[0], bits, mapping.data_bits_per_frame),
+			      "point/cell equivalence lost payload");
+			verified++;
+		}
+	}
+	CHECK(kind != 0u || verified == 24u, "metric payload extent changed");
+	return true;
+}
+
+static bool test_metric_equivalence(void)
+{
+	const uint8_t rates[] = { 1, 10, 13, 19 };
+	for (unsigned r = 0; r < ARRAY_LENGTH(rates); r++)
+		for (unsigned code = V92_CPD_TRELLIS_16_STATE; code <= V92_CPD_TRELLIS_64_STATE; code++)
+			for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)
+				for (unsigned kind = 0; kind < 3; kind++)
+					if (!metric_equivalence_case(rates[r], code, law, kind)) return false;
+	return true;
+}
+
 static bool test_b1u_output_range(void)
 {
 	struct v92_cpd_parameters cpd;
@@ -1391,7 +1487,8 @@ int main(void)
 	if (!test_b1u_measurement() || !test_b1u_measurement_contracts() ||
 	    !test_b1u_output_range() || !test_b1u_oracle() || !test_b1u_coding_acquisition() ||
 	    !test_b1u_parity_completion() || !test_b1u_validation_history() ||
-	    !test_model_acquisition_boundary() || !test_rate_matrix_and_reset() ||
+	    !test_model_acquisition_boundary() || !test_metric_equivalence() ||
+	    !test_rate_matrix_and_reset() ||
 	    !test_transmitter_equation_matrix() ||
 	    !test_filters() || !test_causal_filter_history() ||
 	    !test_delayed_filter_stream() || !test_level_refinement() ||

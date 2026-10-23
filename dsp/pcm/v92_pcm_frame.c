@@ -1254,6 +1254,7 @@ static enum v92_pcm_frame_result decode_frame(
 			     tap < filter->count; ++tap)
 				if (filter->coefficient[tap]) cache_points = false;
 		}
+	unsigned minimum_point[V92_PCM_MAPPING_FRAME_SYMBOLS] = { 0 };
 	uint64_t tail[V92_PCM_MAPPING_FRAME_SYMBOLS][2] = { { 0 } };
 	uint64_t point_cost[V92_PCM_MAPPING_FRAME_SYMBOLS]
 		[2 * V92_CPD_MAX_CONSTELLATION_POINTS];
@@ -1274,7 +1275,10 @@ static enum v92_pcm_frame_result decode_frame(
 					weight, !received || received[symbol]) :
 					sample_metric(receiver, u, 0, samples[symbol], b1u,
 						NULL, minimum_gain, maximum_gain, weight);
-				point_cost[symbol][eta + constellation->count] = cost;
+				unsigned index = eta + constellation->count;
+				point_cost[symbol][index] = cost;
+				if (cost < point_cost[symbol][minimum_point[symbol]])
+					minimum_point[symbol] = index;
 				unsigned parity = (unsigned)eta & 1u;
 
 				if (cost < minimum[parity]) minimum[parity] = cost;
@@ -1420,6 +1424,30 @@ static enum v92_pcm_frame_result decode_frame(
 					requests &= ~2u;
 			}
 			int first_eta = -(int)constellation->count, end_eta = constellation->count;
+			/* Independent squared point/cell distances are unimodal on
+			 * the monotone signed constellation. Exclude only points whose
+			 * observation cost already exhausts the full heap's budget.
+			 * Keep original eta order and strict tie retention. */
+			if (lookahead && count == V92_PCM_RX_PATHS) {
+				const uint64_t *costs = point_cost[symbol];
+				uint64_t budget = candidates[0].metric - paths[path].state.metric;
+				unsigned middle = minimum_point[symbol];
+				if (costs[middle] >= budget) continue;
+				unsigned low = 0, high = middle;
+				while (low < high) {
+					unsigned mid = low + (high - low) / 2;
+					if (costs[mid] >= budget) low = mid + 1;
+					else high = mid;
+				}
+				first_eta = (int)low - constellation->count;
+				low = middle + 1; high = 2u * constellation->count;
+				while (low < high) {
+					unsigned mid = low + (high - low) / 2;
+					if (costs[mid] < budget) low = mid + 1;
+					else high = mid;
+				}
+				end_eta = (int)low - constellation->count;
+			}
 			/* A full heap supplies a budget which can only decrease as this
 			 * path is visited. Trim only tails whose enlarged observation
 			 * envelope cannot reach that budget; preserve eta/tie ordering. */
