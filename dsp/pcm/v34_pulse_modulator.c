@@ -122,17 +122,7 @@ bool v34_line_channel_matches(
 	       v34_line_channel_init(
 		       profile, channel->sample_rate, &expected) ==
 		       V34_LINE_CHANNEL_OK &&
-	       channel->sample_rate == expected.sample_rate &&
-	       channel->symbol_rate_numerator ==
-		       expected.symbol_rate_numerator &&
-	       channel->symbol_rate_denominator ==
-		       expected.symbol_rate_denominator &&
-	       channel->carrier_frequency_numerator ==
-		       expected.carrier_frequency_numerator &&
-	       channel->carrier_frequency_denominator ==
-		       expected.carrier_frequency_denominator &&
-	       channel->rolloff == expected.rolloff &&
-	       channel->pulse_span_symbols == expected.pulse_span_symbols;
+	       qam_channels_match(channel, &expected);
 }
 
 static bool channel_matches_profile(

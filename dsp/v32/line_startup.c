@@ -42,7 +42,7 @@ static bool line_carrier_point_matches(
 static bool line_carrier_is_valid(
 	const struct v32_line_carrier *carrier)
 {
-	const struct qam_channel *channel;
+	struct qam_channel expected;
 
 	if (carrier == NULL ||
 	    !qam_modulator_is_valid(&carrier->modulator) ||
@@ -53,16 +53,8 @@ static bool line_carrier_is_valid(
 	    (!carrier->alternating && carrier->next_quadrant != 0) ||
 	    !line_carrier_point_matches(carrier))
 		return false;
-	channel = &carrier->modulator.channel;
-	return channel->sample_rate == V32_CARRIER_SAMPLE_RATE &&
-	       channel->symbol_rate_numerator == V32_CARRIER_SYMBOL_RATE &&
-	       channel->symbol_rate_denominator == 1 &&
-	       channel->carrier_frequency_numerator ==
-		       V32_CARRIER_FREQUENCY_HZ &&
-	       channel->carrier_frequency_denominator == 1 &&
-	       channel->rolloff == 0.25 &&
-	       channel->pulse_span_symbols ==
-		       V32_CARRIER_PULSE_SPAN_SYMBOLS;
+	return v32_carrier_channel(&expected) == V32_CARRIER_OK &&
+	       qam_channels_match(&carrier->modulator.channel, &expected);
 }
 
 static bool line_carrier_init(

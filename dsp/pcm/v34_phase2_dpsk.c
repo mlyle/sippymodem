@@ -78,16 +78,9 @@ static struct qam_channel phase2_channel(uint32_t carrier_hz)
 static bool channel_matches(
 	const struct qam_channel *channel, uint32_t carrier_hz)
 {
-	return channel != NULL &&
-	       channel->sample_rate == V34_PHASE2_SAMPLE_RATE &&
-	       channel->symbol_rate_numerator ==
-		       V34_PHASE2_DPSK_BIT_RATE &&
-	       channel->symbol_rate_denominator == 1 &&
-	       channel->carrier_frequency_numerator == carrier_hz &&
-	       channel->carrier_frequency_denominator == 1 &&
-	       channel->rolloff == V34_PHASE2_DPSK_ROLLOFF &&
-	       channel->pulse_span_symbols ==
-		       V34_PHASE2_DPSK_PULSE_SPAN_SYMBOLS;
+	const struct qam_channel expected = phase2_channel(carrier_hz);
+
+	return qam_channels_match(channel, &expected);
 }
 
 static bool transmitter_metadata_is_valid(

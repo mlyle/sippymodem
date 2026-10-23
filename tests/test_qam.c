@@ -40,6 +40,55 @@ static struct qam_channel v22_channel(uint32_t carrier_hz)
 	};
 }
 
+static bool test_channel_matching(void)
+{
+	const struct qam_channel expected = v22_channel(1200);
+	struct qam_channel other = expected;
+	struct qam_channel saved = expected;
+
+	CHECK(qam_channels_match(&expected, &other) &&
+	      qam_channels_match(&expected, &expected) &&
+	      !qam_channels_match(NULL, &expected) &&
+	      !qam_channels_match(&expected, NULL),
+	      "channel matching lost copy, identity or null behavior");
+	/* A different carrier is not the same lane. Equivalent rational rates
+	 * also retain their configured representation at a handoff. */
+	other = v22_channel(2400);
+	CHECK(!qam_channels_match(&expected, &other), "opposite V.22 carriers matched");
+	other = expected;
+	other.symbol_rate_numerator *= 2;
+	other.symbol_rate_denominator *= 2;
+	CHECK(!qam_channels_match(&expected, &other), "symbol rate was implicitly normalized");
+	other = expected;
+	other.carrier_frequency_numerator *= 2;
+	other.carrier_frequency_denominator *= 2;
+	CHECK(!qam_channels_match(&expected, &other), "carrier rate was implicitly normalized");
+	/* Object padding is not part of the configured channel. */
+	other = expected;
+	struct qam_channel padded = expected;
+	unsigned char *bytes = (unsigned char *)&other;
+	unsigned char *padded_bytes = (unsigned char *)&padded;
+	for (size_t i = offsetof(struct qam_channel, carrier_frequency_denominator) +
+	     sizeof(other.carrier_frequency_denominator); i < offsetof(struct qam_channel, rolloff); ++i) {
+		bytes[i] = 0x5a;
+		padded_bytes[i] = 0xa5;
+	}
+	for (size_t i = offsetof(struct qam_channel, pulse_span_symbols) +
+	     sizeof(other.pulse_span_symbols); i < sizeof(other); ++i) {
+		bytes[i] = 0x5a;
+		padded_bytes[i] = 0xa5;
+	}
+	CHECK(qam_channels_match(&padded, &other), "channel matching compared padding");
+	/* Matching does not replace an owner's geometry validation. */
+	saved.rolloff = 0.0;
+	other = saved;
+	other.rolloff = -0.0;
+	CHECK(qam_channels_match(&saved, &other), "signed zero changed field equality");
+	other.rolloff = NAN;
+	CHECK(!qam_channels_match(&other, &other), "NaN channel matched itself");
+	return true;
+}
+
 static struct qam_point quadrant_point(
 	uint8_t quadrant, double magnitude)
 {
@@ -1536,6 +1585,7 @@ int main(void)
 	} tests[] = {
 		{ "point validation", test_point_validation },
 		{ "point correlation", test_point_correlation },
+		{ "channel matching", test_channel_matching },
 		{ "carrier rotation", test_carrier_rotation },
 		{ "point quotient", test_point_quotient },
 		{ "checked quotient", test_checked_quotient },

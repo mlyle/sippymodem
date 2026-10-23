@@ -32,6 +32,22 @@ struct qam_channel {
 	unsigned int pulse_span_symbols;
 };
 
+/* Compare the configured fields, not normalized ratios or object bytes.
+ * Owners validate their profiles separately; this does not establish valid
+ * geometry. Numeric equality treats signed zero alike and rejects NaN. */
+static inline bool qam_channels_match(
+	const struct qam_channel *left, const struct qam_channel *right)
+{
+	return left != NULL && right != NULL &&
+	       left->sample_rate == right->sample_rate &&
+	       left->symbol_rate_numerator == right->symbol_rate_numerator &&
+	       left->symbol_rate_denominator == right->symbol_rate_denominator &&
+	       left->carrier_frequency_numerator == right->carrier_frequency_numerator &&
+	       left->carrier_frequency_denominator == right->carrier_frequency_denominator &&
+	       left->rolloff == right->rolloff &&
+	       left->pulse_span_symbols == right->pulse_span_symbols;
+}
+
 enum qam_result {
 	QAM_OK,
 	QAM_INVALID_ARGUMENT,
