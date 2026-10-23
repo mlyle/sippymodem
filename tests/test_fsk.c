@@ -549,6 +549,57 @@ static bool test_measurement_qualification(void)
 	return true;
 }
 
+static bool test_channel_matching(void)
+{
+	const struct fsk_channel original = channel_500_over_11_baud;
+	struct fsk_channel changed[7];
+	struct fsk_channel padded[2];
+	struct fsk_channel saved;
+	const struct fsk_channel zero = { 0 };
+
+	CHECK(!fsk_channels_match(NULL, NULL) &&
+	      !fsk_channels_match(&original, NULL) &&
+	      !fsk_channels_match(NULL, &original), "missing FSK channel matched");
+	CHECK(fsk_channels_match(&original, &original) &&
+	      fsk_channels_match(&zero, &zero),
+	      "FSK matching imposed a geometry validation policy");
+	for (size_t i = 0; i < ARRAY_LENGTH(changed); ++i)
+		changed[i] = original;
+	changed[0].sample_rate++;
+	changed[1].symbol_rate_numerator++;
+	changed[2].symbol_rate_denominator++;
+	changed[3].mark_frequency_hz++;
+	changed[4].space_frequency_hz++;
+	changed[5].detector_window++;
+	changed[6].metric_smoothing_shift++;
+	for (size_t i = 0; i < ARRAY_LENGTH(changed); ++i) {
+		memcpy(&saved, &changed[i], sizeof(saved));
+		CHECK(!fsk_channels_match(&original, &changed[i]) &&
+		      !fsk_channels_match(&changed[i], &original),
+		      "FSK field %zu was ignored", i);
+		CHECK(memcmp(&saved, &changed[i], sizeof(saved)) == 0,
+		      "FSK matching changed its input");
+	}
+	changed[0] = original;
+	changed[0].symbol_rate_numerator *= 2;
+	changed[0].symbol_rate_denominator *= 2;
+	CHECK(!fsk_channels_match(&original, &changed[0]),
+	      "FSK matching normalized configured symbol-rate units");
+	for (size_t i = 0; i < ARRAY_LENGTH(padded); ++i) {
+		memset(&padded[i], i ? 0xa5 : 0x5a, sizeof(padded[i]));
+		padded[i].sample_rate = original.sample_rate;
+		padded[i].symbol_rate_numerator = original.symbol_rate_numerator;
+		padded[i].symbol_rate_denominator = original.symbol_rate_denominator;
+		padded[i].mark_frequency_hz = original.mark_frequency_hz;
+		padded[i].space_frequency_hz = original.space_frequency_hz;
+		padded[i].detector_window = original.detector_window;
+		padded[i].metric_smoothing_shift = original.metric_smoothing_shift;
+	}
+	CHECK(fsk_channels_match(&padded[0], &padded[1]),
+	      "FSK matching compared struct padding");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -561,6 +612,7 @@ int main(void)
 		{ "continuous tone detection", test_continuous_tone_detection },
 		{ "V.21 profiles", test_v21_profiles },
 		{ "measurement qualification", test_measurement_qualification },
+		{ "configured channel matching", test_channel_matching },
 		{ "fixed detector arithmetic", test_fixed_detector_arithmetic },
 		{ "detector ring wrap", test_detector_ring_wrap },
 		{ "V.21 channel pairs", test_v21_channel_pairs },

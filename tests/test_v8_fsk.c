@@ -74,6 +74,28 @@ static bool test_station_channels(void)
 	return true;
 }
 
+static bool test_configured_receiver_channel(void)
+{
+	for (enum v8_station_role role = V8_CALLING_STATION;
+	     role <= V8_ANSWERING_STATION; ++role) {
+		struct v8_fsk fsk, saved;
+		uint8_t bit = 99;
+		bool ready = true;
+
+		CHECK(v8_fsk_init(&fsk, role) == V8_FSK_OK,
+		      "V.8 channel contract fixture did not initialize");
+		/* The generic detector accepts this smoothing value, but it is
+		 * not the detector configured for this station's V.21 channel. */
+		fsk.receiver.channel.metric_smoothing_shift ^= 1u;
+		memcpy(&saved, &fsk, sizeof(saved));
+		CHECK(v8_fsk_receive_sample(&fsk, 0, &bit, &ready) ==
+			      V8_FSK_INVALID_ARGUMENT && bit == 99 && ready &&
+		      memcmp(&saved, &fsk, sizeof(saved)) == 0,
+		      "V.8 accepted or mutated a mismatched receiver channel");
+	}
+	return true;
+}
+
 static bool test_transmit_oracle(void)
 {
 	static const uint64_t expected_hash[] = {
@@ -486,6 +508,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "station channels", test_station_channels },
+		{ "configured receiver channel", test_configured_receiver_channel },
 		{ "transmit oracle", test_transmit_oracle },
 		{ "menu audio round trip", test_menu_audio_round_trip },
 		{ "transmit ownership", test_transmit_ownership },

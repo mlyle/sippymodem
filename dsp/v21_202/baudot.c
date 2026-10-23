@@ -392,19 +392,7 @@ static bool receiver_is_valid(
 		       BAUDOT_RX_CHARACTER_CAPACITY &&
 	       receiver->detector_bit <= 1 && receiver->stable_bit <= 1 &&
 	       receiver->data_index <= 5 && receiver->code < 32 &&
-	       receiver->detector.channel.sample_rate == expected->sample_rate &&
-	       receiver->detector.channel.symbol_rate_numerator ==
-		       expected->symbol_rate_numerator &&
-	       receiver->detector.channel.symbol_rate_denominator ==
-		       expected->symbol_rate_denominator &&
-	       receiver->detector.channel.mark_frequency_hz ==
-		       expected->mark_frequency_hz &&
-	       receiver->detector.channel.space_frequency_hz ==
-		       expected->space_frequency_hz &&
-	       receiver->detector.channel.detector_window ==
-		       expected->detector_window &&
-	       receiver->detector.channel.metric_smoothing_shift ==
-		       expected->metric_smoothing_shift;
+	       fsk_channels_match(&receiver->detector.channel, expected);
 }
 
 static void reset_receive_signal(

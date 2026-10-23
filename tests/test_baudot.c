@@ -417,6 +417,23 @@ static bool test_validation(void)
 	return true;
 }
 
+static bool test_configured_receiver_channel(void)
+{
+	const enum baudot_rate rates[] = { BAUDOT_RATE_45, BAUDOT_RATE_50 };
+	for (size_t i = 0; i < ARRAY_LENGTH(rates); ++i) {
+		struct baudot_receiver receiver, saved;
+		const int16_t sample = 0;
+		CHECK(baudot_receiver_init(&receiver, rates[i]) == BAUDOT_OK,
+		      "Baudot channel contract fixture did not initialize");
+		receiver.detector.channel.metric_smoothing_shift ^= 1u;
+		memcpy(&saved, &receiver, sizeof(saved));
+		CHECK(baudot_receive(&receiver, &sample, 1) == BAUDOT_INVALID_ARGUMENT &&
+		      memcmp(&saved, &receiver, sizeof(saved)) == 0,
+		      "Baudot accepted or mutated a mismatched detector channel");
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -431,6 +448,7 @@ int main(void)
 		{ "receive tolerance", test_receive_tolerance },
 		{ "receive queue bound", test_receive_queue_bound },
 		{ "validation", test_validation },
+		{ "configured receiver channel", test_configured_receiver_channel },
 	};
 	unsigned int failures = 0;
 

@@ -67,19 +67,6 @@ static bool role_channels(
 	return false;
 }
 
-static bool channels_equal(
-	const struct fsk_channel *left,
-	const struct fsk_channel *right)
-{
-	return left->sample_rate == right->sample_rate &&
-	       left->symbol_rate_numerator == right->symbol_rate_numerator &&
-	       left->symbol_rate_denominator == right->symbol_rate_denominator &&
-	       left->mark_frequency_hz == right->mark_frequency_hz &&
-	       left->space_frequency_hz == right->space_frequency_hz &&
-	       left->detector_window == right->detector_window &&
-	       left->metric_smoothing_shift == right->metric_smoothing_shift;
-}
-
 static const int16_t *transmit_filter(enum v8_station_role role)
 {
 	if (role == V8_CALLING_STATION)
@@ -113,7 +100,7 @@ static bool fsk_is_configured(const struct v8_fsk *fsk)
 	       transmitter_is_valid(&fsk->transmitter, transmit) &&
 	       v8_line_conditioner_is_valid(&fsk->line) &&
 	       fsk->line.role == fsk->role &&
-	       channels_equal(&fsk->receiver.channel, receive);
+	       fsk_channels_match(&fsk->receiver.channel, receive);
 }
 
 enum v8_fsk_result v8_fsk_init(

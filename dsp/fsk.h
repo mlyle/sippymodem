@@ -22,6 +22,22 @@ struct fsk_channel {
 	unsigned int metric_smoothing_shift;
 };
 
+/* Compare configured channels exactly, including detector geometry. This
+ * does not validate a channel or normalize equivalent symbol-rate ratios.
+ * Padding is ignored; missing channels never match. */
+static inline bool fsk_channels_match(
+	const struct fsk_channel *left, const struct fsk_channel *right)
+{
+	return left != NULL && right != NULL &&
+	       left->sample_rate == right->sample_rate &&
+	       left->symbol_rate_numerator == right->symbol_rate_numerator &&
+	       left->symbol_rate_denominator == right->symbol_rate_denominator &&
+	       left->mark_frequency_hz == right->mark_frequency_hz &&
+	       left->space_frequency_hz == right->space_frequency_hz &&
+	       left->detector_window == right->detector_window &&
+	       left->metric_smoothing_shift == right->metric_smoothing_shift;
+}
+
 enum fsk_result {
 	FSK_OK,
 	FSK_INVALID_ARGUMENT,
