@@ -44,6 +44,28 @@ struct v92_e2u_rx {
 	bool failed;
 };
 
+/* Optional repeat evidence has one owner per Phase 4 exchange. A validated
+ * acknowledging CPu supplies the exact wire bits and an independent coder.
+ * The second marker trial never replaces the ordinary receive-history trial. */
+struct v92_e2u_search {
+	struct v92_e2u_rx repeated;
+	struct v92_phase4_modulator coder;
+	uint8_t frame[V92_CPU_MAX_FRAME_BYTES];
+	uint16_t frame_bits;
+	uint16_t bit_index;
+	bool candidate_active;
+};
+
+/* Zero initialization starts an exchange; copy this state at a live handoff.
+ * Discard it on retrain/reentry. No pointers or process state are retained.
+ * All four arguments are distinct owned objects; the native search contract
+ * below applies, including eligibility and no mutation on rejected calls. */
+bool v92_e2u_search_is_valid(const struct v92_e2u_search *search);
+enum v92_e2u_rx_result v92_e2u_search_sample(
+	struct v92_e2u_search *search, struct v92_e2u_rx *receiver,
+	struct v92_upstream_control_line_rx *control, bool eligible, int16_t sample,
+	struct v92_control_event *event);
+
 enum v92_e2u_rx_result v92_e2u_rx_init(
 	struct v92_e2u_rx *receiver,
 	const struct v92_upstream_rx *signal, bool extend_one_symbol);

@@ -41,6 +41,7 @@ struct v92_phase4_digital_station {
 	/* E2u can replace a lost acknowledging CPu/SUVu, including during pause.
 	 * Keep its candidate beside, not in place of, the control parser. */
 	struct v92_e2u_rx e2u;
+	struct v92_e2u_search e2u_search;
 	bool searching_e2u;
 };
 
@@ -61,6 +62,7 @@ struct v92_phase4_digital_handoff {
 	/* Control may already have consumed part or all of E2u before Ed is
 	 * authorized. Transfer that candidate instead of restarting it. */
 	struct v92_e2u_rx e2u;
+	struct v92_e2u_search e2u_search;
 	bool searching_e2u;
 };
 

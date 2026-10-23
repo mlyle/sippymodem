@@ -31,7 +31,8 @@ bool v92_phase4_digital_station_is_valid(const struct v92_phase4_digital_station
 	const struct v92_phase4_digital_rx *receive;
 	bool training, receive_failed, renegotiating;
 
-	if (station == NULL || !v92_phase4_digital_rx_is_valid(&station->receive) ||
+	if (station == NULL || !v92_e2u_search_is_valid(&station->e2u_search) ||
+	    !v92_phase4_digital_rx_is_valid(&station->receive) ||
 	    !v92_downstream_control_is_valid(&station->control))
 		return false;
 	receive = &station->receive;
@@ -67,6 +68,7 @@ bool v92_phase4_digital_station_start_cleardown(struct v92_phase4_digital_statio
 	    !v92_downstream_control_start_cleardown(&station->control))
 		return false;
 	station->searching_e2u = false;
+	station->e2u_search = (struct v92_e2u_search){ 0 };
 	return true;
 }
 
@@ -197,8 +199,8 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_receive(
 		return V92_PHASE4_DIGITAL_STATION_INVALID_STATE;
 	enum v92_phase4_digital_rx_result result;
 	if (station->searching_e2u) {
-		enum v92_e2u_rx_result received = v92_e2u_rx_search(
-			&station->e2u, &station->receive.signal.control,
+		enum v92_e2u_rx_result received = v92_e2u_search_sample(
+			&station->e2u_search, &station->e2u, &station->receive.signal.control,
 			v92_downstream_control_e2u_delay(&station->control) == 0u, sample, &event);
 		if (received == V92_E2U_RX_COMPLETE)
 			return v92_downstream_control_note_e2u(&station->control) ?
@@ -226,6 +228,7 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_receive(
 	}
 	if (station->control.cleardown.active) {
 		station->searching_e2u = false;
+		station->e2u_search = (struct v92_e2u_search){ 0 };
 		return V92_PHASE4_DIGITAL_STATION_OK;
 	}
 	/* A complete record (including a CRC-rejected repeat) marks an exact E2u
@@ -311,6 +314,7 @@ bool v92_phase4_digital_handoff_is_valid(
 	const struct v92_phase4_digital_handoff *handoff)
 {
 	return handoff != NULL &&
+	       v92_e2u_search_is_valid(&handoff->e2u_search) &&
 	       v92_upstream_control_line_rx_is_valid(&handoff->receive) &&
 	       handoff->e2u_delay_samples != UINT64_MAX &&
 	       (!handoff->searching_e2u || !handoff->e2u.received_symbols || !handoff->e2u_delay_samples) &&
@@ -349,6 +353,7 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_handoff(
 		return V92_PHASE4_DIGITAL_STATION_INVALID_STATE;
 	generated = (struct v92_phase4_digital_handoff){
 		.receive = station->receive.signal.control,
+		.e2u_search = station->e2u_search,
 		.cpu = station->control.cpu,
 		.upstream_plan = station->upstream_plan,
 		.e2u_delay_samples = v92_downstream_control_e2u_delay(&station->control),
