@@ -1131,6 +1131,44 @@ static bool test_acquisition_after_unrelated_prefix(void)
 	return true;
 }
 
+static bool test_acquisition_after_codec_silence(void)
+{
+	struct pcm_host_echo echo;
+	const size_t history = PCM_ECHO_REFERENCE_HISTORY_SAMPLES;
+	const unsigned delay = 2405;
+	const unsigned window = delay - PCM_HOST_ECHO_FILTER_PRE_SAMPLES;
+
+	CHECK(pcm_host_echo_init(&echo) == PCM_HOST_ECHO_OK,
+	      "codec-silence owner did not initialize");
+	for (size_t index = 0; index < history + 6000u; ++index) {
+		int16_t transmitted = index < 9000u ? 8 : transmit_sample(index);
+		int16_t received = index >= delay ? transmit_sample(index - delay) / 4 : 0;
+		int16_t cleaned;
+		enum pcm_host_echo_mode mode = index < history ?
+			PCM_HOST_ECHO_BYPASS : PCM_HOST_ECHO_TRAIN;
+
+		/* DC during initial acquisition makes old nonzero silence look
+		 * stronger than the real return in an uncentered scan. It must not
+		 * consume the remaining training time with a false delay. */
+		if (index < history + 2100u)
+			received += 3000;
+		CHECK(pcm_host_echo_predict(&echo, mode, received, &cleaned) ==
+			      PCM_HOST_ECHO_OK &&
+		      pcm_host_echo_advance_predicted(&echo, mode, received, cleaned,
+			      transmitted) == PCM_HOST_ECHO_OK,
+		      "codec-silence training failed at %zu", index);
+		CHECK(echo.window_delay_samples == PCM_HOST_ECHO_DEFAULT_WINDOW_DELAY_SAMPLES ||
+		      echo.window_delay_samples == window,
+		      "codec silence acquired false delay %u at %zu",
+		      echo.window_delay_samples, index);
+	}
+	CHECK(pcm_host_echo_is_ready(&echo) && echo.delay_acquired &&
+	      echo.window_delay_samples == window,
+	      "earlier return did not qualify: ready=%d delay=%u samples=%u",
+	      pcm_host_echo_is_ready(&echo), echo.window_delay_samples, echo.train_samples);
+	return true;
+}
+
 static bool test_prompt_frozen_delay_tracking(void)
 {
 	struct pcm_host_echo echo;
@@ -1467,7 +1505,8 @@ int main(void)
 	    !test_retained_delay_tracking(80, false) ||
 	    !test_retained_delay_tracking(-80, false) ||
 	    !test_retained_delay_tracking(80, true) ||
-	    !test_acquisition_after_unrelated_prefix())
+	    !test_acquisition_after_unrelated_prefix() ||
+	    !test_acquisition_after_codec_silence())
 		return 1;
 	/* A 33 ms step must work independently of the configured radius. */
 	const int shifts[] = {0, 8, -60, 264, -264, -ECHO_TIMING_RADIUS,

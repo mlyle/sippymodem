@@ -61,6 +61,10 @@ struct pcm_echo_reference {
 	uint64_t scan_reference_energy
 		[PCM_ECHO_REFERENCE_SCAN_MAX_CANDIDATES];
 	int64_t scan_cross_energy[PCM_ECHO_REFERENCE_SCAN_MAX_CANDIDATES];
+	/* First moments exclude DC (including nonzero codec silence) from
+	 * delay evidence. Every bin observes the same scan input window. */
+	int64_t scan_reference_sum[PCM_ECHO_REFERENCE_SCAN_MAX_CANDIDATES];
+	int64_t scan_input_sum;
 	size_t write;
 	size_t fill;
 	uint64_t scan_input_energy;

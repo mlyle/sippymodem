@@ -5,6 +5,7 @@
 #include "integer_math.h"
 #include "memory_region.h"
 #include "ring_history.h"
+#include "wide_uint.h"
 
 #include <string.h>
 
@@ -15,7 +16,8 @@ static bool scan_state_is_valid(const struct pcm_echo_reference *reference)
 		       reference->scan_pre_samples == 0 &&
 		       reference->scan_samples == 0 &&
 		       reference->scan_epoch == 0 &&
-		       reference->scan_input_energy == 0;
+		       reference->scan_input_energy == 0 &&
+		       reference->scan_input_sum == 0;
 	if (reference->scan_count >
 		    PCM_ECHO_REFERENCE_SCAN_MAX_CANDIDATES ||
 	    reference->scan_current_index >= reference->scan_count ||
@@ -103,6 +105,9 @@ static void clear_scan(struct pcm_echo_reference *reference)
 	       sizeof(reference->scan_reference_energy));
 	memset(reference->scan_cross_energy, 0,
 	       sizeof(reference->scan_cross_energy));
+	memset(reference->scan_reference_sum, 0,
+	       sizeof(reference->scan_reference_sum));
+	reference->scan_input_sum = 0;
 	reference->scan_input_energy = 0;
 	reference->scan_count = 0;
 	reference->scan_current_index = 0;
@@ -145,16 +150,48 @@ enum pcm_echo_reference_result pcm_echo_reference_start_scan(
 	return PCM_ECHO_REFERENCE_OK;
 }
 
-static long double correlation_score(
-	uint64_t reference_energy, uint64_t input_energy,
-	int64_t cross_energy)
+/* Signed moments use two's-complement wide arithmetic. With at most
+ * UINT32_MAX signed-sample observations, each centered moment fits 96 bits.
+ * Keep centering exact before conversion: on targets with a binary64 long
+ * double, subtracting rounded large energies can invent variance in silence. */
+static struct wide_uint signed_moment(int64_t value)
 {
-	long double cross = (long double)magnitude_s64(cross_energy);
+	return (struct wide_uint){ value < 0 ? UINT64_MAX : 0, (uint64_t)value };
+}
 
-	if (reference_energy == 0 || input_energy == 0)
+static long double moment_value(struct wide_uint value)
+{
+	return (long double)value.high * 18446744073709551616.0L + value.low;
+}
+
+static long double correlation_score(
+	uint64_t reference_energy, uint64_t input_energy, int64_t cross_energy,
+	int64_t reference_sum, int64_t input_sum, uint32_t samples)
+{
+	struct wide_uint count = wide_from_u64(samples);
+	struct wide_uint reference = wide_multiply(wide_from_u64(reference_energy), count);
+	struct wide_uint input = wide_multiply(wide_from_u64(input_energy), count);
+	struct wide_uint reference_mean = wide_product_u64(
+		magnitude_s64(reference_sum), magnitude_s64(reference_sum));
+	struct wide_uint input_mean = wide_product_u64(
+		magnitude_s64(input_sum), magnitude_s64(input_sum));
+	uint64_t sum_bound = (uint64_t)samples * 32768u;
+
+	if (!samples || magnitude_s64(reference_sum) > sum_bound ||
+	    magnitude_s64(input_sum) > sum_bound ||
+	    wide_compare(reference, reference_mean) <= 0 ||
+	    wide_compare(input, input_mean) <= 0)
 		return -1.0L;
-	return cross * cross /
-	       ((long double)reference_energy * input_energy);
+	reference = wide_subtract(reference, reference_mean);
+	input = wide_subtract(input, input_mean);
+	struct wide_uint cross = wide_subtract(
+		wide_multiply(signed_moment(cross_energy), count),
+		wide_multiply(signed_moment(reference_sum), signed_moment(input_sum)));
+	if (cross.high >> 63)
+		cross = wide_subtract(wide_from_u64(0), cross);
+	long double value = moment_value(cross);
+
+	return value * value / (moment_value(reference) * moment_value(input));
 }
 
 static uint32_t correlation_ppm(long double score)
@@ -191,7 +228,9 @@ static bool find_best_scan(
 		long double score = correlation_score(
 			reference->scan_reference_energy[index],
 			reference->scan_input_energy,
-			reference->scan_cross_energy[index]);
+			reference->scan_cross_energy[index],
+			reference->scan_reference_sum[index],
+			reference->scan_input_sum, reference->scan_samples);
 
 		if (index == reference->scan_current_index)
 			*current_score = score;
@@ -218,7 +257,9 @@ static bool find_best_scan(
 			long double score = index < reference->scan_count ? correlation_score(
 				reference->scan_reference_energy[index],
 				reference->scan_input_energy,
-				reference->scan_cross_energy[index]) : -1.0L;
+				reference->scan_cross_energy[index],
+				reference->scan_reference_sum[index],
+				reference->scan_input_sum, reference->scan_samples) : -1.0L;
 			if (score >= *best_score / 4.0L)
 				mass += score;
 			if (index >= first + bins) {
@@ -226,7 +267,9 @@ static bool find_best_scan(
 				long double removed = correlation_score(
 					reference->scan_reference_energy[expired],
 					reference->scan_input_energy,
-					reference->scan_cross_energy[expired]);
+					reference->scan_cross_energy[expired],
+					reference->scan_reference_sum[expired],
+					reference->scan_input_sum, reference->scan_samples);
 				if (removed >= *best_score / 4.0L)
 					mass -= removed;
 			}
@@ -262,6 +305,12 @@ enum pcm_echo_reference_result pcm_echo_reference_scan_observe(
 	if (reference->fill < reference->scan_count + reference->scan_pre_samples)
 		return PCM_ECHO_REFERENCE_NOT_READY;
 
+	/* The bounded observation count also bounds first moments to 47 bits.
+	 * A saturated scan cannot report another window; retain its evidence. */
+	if (reference->scan_samples == UINT32_MAX)
+		return PCM_ECHO_REFERENCE_OK;
+	reference->scan_input_sum = wrap_s64_from_u64(
+		(uint64_t)reference->scan_input_sum + (uint64_t)(int64_t)received_sample);
 	input_energy = square_s16(received_sample);
 	reference->scan_input_energy = add_u64_saturating(
 		reference->scan_input_energy, input_energy);
@@ -270,6 +319,10 @@ enum pcm_echo_reference_result pcm_echo_reference_scan_observe(
 		int16_t sample = sample_at_age(reference, age);
 		int64_t cross;
 		cross = (int64_t)sample * received_sample;
+		/* Valid first moments cannot overflow their 47-bit bound. Keep
+		 * corrupt state defined too; scoring rejects out-of-bound sums. */
+		reference->scan_reference_sum[index] = wrap_s64_from_u64(
+			(uint64_t)reference->scan_reference_sum[index] + (uint64_t)(int64_t)sample);
 
 		reference->scan_reference_energy[index] = add_u64_saturating(
 			reference->scan_reference_energy[index],
@@ -277,8 +330,7 @@ enum pcm_echo_reference_result pcm_echo_reference_scan_observe(
 		reference->scan_cross_energy[index] = add_s64_saturating(
 			reference->scan_cross_energy[index], cross);
 	}
-	if (reference->scan_samples < UINT32_MAX)
-		reference->scan_samples++;
+	reference->scan_samples++;
 	if (!scan_report_is_due(reference) ||
 	    !find_best_scan(reference, &best_index, &best_score,
 			    &current_score))

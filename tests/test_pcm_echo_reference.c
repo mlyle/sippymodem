@@ -381,6 +381,134 @@ static bool test_full_history_scan_boundary(void)
 	return true;
 }
 
+static bool test_dc_only_scan(bool constant_reference, int16_t constant)
+{
+	struct pcm_echo_reference reference = { 0 };
+	const struct pcm_echo_reference_scan_result unchanged = { .sample_count = 123 };
+	const size_t history = PCM_ECHO_REFERENCE_HISTORY_SAMPLES;
+
+	CHECK(pcm_echo_reference_start_scan(&reference, DEFAULT_RETURN_DELAY,
+		      FILTER_PRE_SAMPLES) == PCM_ECHO_REFERENCE_OK,
+	      "DC scan did not initialize");
+	for (size_t index = 0; index < history; ++index)
+		CHECK(pcm_echo_reference_push(&reference,
+			      constant_reference ? constant : reference_sample(index)) ==
+			      PCM_ECHO_REFERENCE_OK, "DC history did not fill");
+	for (size_t index = history; index < history + 2048u; ++index) {
+		struct pcm_echo_reference_scan_result report = unchanged;
+		int16_t received = constant_reference ?
+			(int16_t)(1200 + reference_sample(index) / 8) : constant;
+
+		CHECK(pcm_echo_reference_scan_observe(&reference, received, &report) ==
+			      PCM_ECHO_REFERENCE_OK &&
+		      memcmp(&report, &unchanged, sizeof(report)) == 0,
+		      "constant %s %d invented delay evidence at %zu",
+		      constant_reference ? "reference" : "input", constant, index);
+		CHECK(pcm_echo_reference_push(&reference,
+			      constant_reference ? constant : reference_sample(index)) ==
+			      PCM_ECHO_REFERENCE_OK, "DC history stopped");
+	}
+	return true;
+}
+
+static bool test_biased_return_scan(int sign)
+{
+	struct pcm_echo_reference reference = { 0 };
+	struct pcm_echo_reference_scan_result scan;
+	const size_t history = PCM_ECHO_REFERENCE_HISTORY_SAMPLES;
+	const unsigned delay = 2405;
+
+	CHECK(pcm_echo_reference_start_scan(&reference, DEFAULT_RETURN_DELAY,
+		      FILTER_PRE_SAMPLES) == PCM_ECHO_REFERENCE_OK,
+	      "biased scan did not initialize");
+	for (size_t index = 0; index < history; ++index)
+		CHECK(pcm_echo_reference_push(&reference, index < 6000u ? 8 :
+			      (int16_t)(3000 + reference_sample(index))) == PCM_ECHO_REFERENCE_OK,
+		      "biased history did not fill");
+	for (size_t index = history;
+	     index < history + PCM_ECHO_REFERENCE_SCAN_MIN_SAMPLES; ++index) {
+		/* A weak return lies just before the current filter window. Old
+		 * A-law silence (+8) has a stronger uncentered score because the
+		 * received signal also has DC; it supplies no delay evidence. */
+		int16_t received = (int16_t)(sign * 1200 +
+			reference_sample(index - delay) / 16 +
+			reference_sample(index + 17011u) / 8);
+		enum pcm_echo_reference_result result =
+			pcm_echo_reference_scan_observe(&reference, received, &scan);
+
+		CHECK(result == (index + 1u == history + PCM_ECHO_REFERENCE_SCAN_MIN_SAMPLES ?
+			      PCM_ECHO_REFERENCE_SCAN_READY : PCM_ECHO_REFERENCE_OK) &&
+		      pcm_echo_reference_push(&reference,
+			      (int16_t)(3000 + reference_sample(index))) == PCM_ECHO_REFERENCE_OK,
+		      "biased scan failed at %zu", index);
+	}
+	CHECK(scan.best_window_delay_samples == delay - FILTER_PRE_SAMPLES &&
+	      scan.best_correlation_ppm > 100000u,
+	      "DC hid the earlier return: sign=%d delay=%u strength=%u", sign,
+	      scan.best_window_delay_samples, scan.best_correlation_ppm);
+	CHECK(pcm_echo_reference_start_scan(&reference, DEFAULT_RETURN_DELAY,
+		      FILTER_PRE_SAMPLES) == PCM_ECHO_REFERENCE_OK &&
+	      reference.scan_input_sum == 0 && reference.scan_samples == 0,
+	      "new scan retained input first moments");
+	for (unsigned index = 0; index < reference.scan_count; ++index)
+		CHECK(reference.scan_reference_sum[index] == 0,
+		      "new scan retained reference first moments at %u", index);
+	return true;
+}
+
+static bool test_large_centered_moments(bool varying_reference)
+{
+	struct pcm_echo_reference reference = { 0 }, saved;
+	struct pcm_echo_reference_scan_result scan = { .sample_count = 123 };
+	const struct pcm_echo_reference_scan_result unchanged = scan;
+	/* Reach a reporting boundary with legitimate moments for a long run
+	 * of full-scale DC. One changed sample has tiny positive variance;
+	 * constant reference bins must retain exactly zero variance even when
+	 * long double has only binary64 precision. */
+	const uint32_t count = UINT32_MAX - 512u;
+	const int64_t sample = INT16_MAX;
+
+	CHECK(pcm_echo_reference_start_scan(&reference, 1u, 0u) == PCM_ECHO_REFERENCE_OK,
+	      "large-moment scan did not initialize");
+	for (unsigned index = 0; index < PCM_ECHO_REFERENCE_HISTORY_SAMPLES; ++index)
+		CHECK(pcm_echo_reference_push(&reference, (int16_t)sample) == PCM_ECHO_REFERENCE_OK,
+		      "large-moment history did not fill");
+	if (varying_reference)
+		reference.samples[(reference.write + PCM_ECHO_REFERENCE_HISTORY_SAMPLES - 1u) %
+			PCM_ECHO_REFERENCE_HISTORY_SAMPLES]--;
+	reference.scan_samples = count;
+	reference.scan_input_energy = count * (uint64_t)(sample * sample);
+	reference.scan_input_sum = -(int64_t)count * sample;
+	for (unsigned index = 0; index < reference.scan_count; ++index) {
+		reference.scan_reference_energy[index] = reference.scan_input_energy;
+		reference.scan_cross_energy[index] = -(int64_t)reference.scan_input_energy;
+		reference.scan_reference_sum[index] = (int64_t)count * sample;
+	}
+	enum pcm_echo_reference_result result =
+		pcm_echo_reference_scan_observe(&reference, (int16_t)(1 - sample), &scan);
+	if (varying_reference)
+		CHECK(result == PCM_ECHO_REFERENCE_SCAN_READY &&
+		      scan.best_window_delay_samples == 1u &&
+		      scan.best_correlation_ppm == 1000000u,
+		      "wide centering lost a genuine return: result=%d delay=%u strength=%u",
+		      result, scan.best_window_delay_samples, scan.best_correlation_ppm);
+	else
+		CHECK(result == PCM_ECHO_REFERENCE_OK &&
+		      memcmp(&scan, &unchanged, sizeof(scan)) == 0,
+		      "large constant reference invented variance");
+	/* Once the bounded observation count is exhausted, preserve all
+	 * accumulated evidence rather than overflowing first moments. */
+	reference.scan_samples = UINT32_MAX;
+	saved = reference;
+	scan = unchanged;
+	CHECK(pcm_echo_reference_scan_observe(&reference, INT16_MIN, &scan) ==
+		      PCM_ECHO_REFERENCE_OK &&
+	      memcmp(&reference, &saved, sizeof(reference)) == 0 &&
+	      memcmp(&scan, &unchanged, sizeof(scan)) == 0,
+	      "exhausted scan changed evidence or output");
+	return true;
+}
+
 int main(void)
 {
 	if (!test_ring_and_contracts() || !test_long_delay_scan() ||
@@ -389,7 +517,12 @@ int main(void)
 	    !test_cluster_scan(11424u, FILTER_PRE_SAMPLES) ||
 	    !test_cluster_scan(2u, 0u) ||
 	    !test_cluster_scan(2967u, PCM_ECHO_REFERENCE_MAX_WINDOW_SAMPLES - 1u) ||
-	    !test_opposite_adjacent_returns() || !test_full_history_scan_boundary())
+	    !test_opposite_adjacent_returns() || !test_full_history_scan_boundary() ||
+	    !test_dc_only_scan(true, 8) || !test_dc_only_scan(true, -8) ||
+	    !test_dc_only_scan(true, INT16_MIN) || !test_dc_only_scan(false, 8) ||
+	    !test_dc_only_scan(false, INT16_MAX) ||
+	    !test_biased_return_scan(1) || !test_biased_return_scan(-1) ||
+	    !test_large_centered_moments(false) || !test_large_centered_moments(true))
 		return 1;
 	puts("PCM echo reference tests passed");
 	return 0;
