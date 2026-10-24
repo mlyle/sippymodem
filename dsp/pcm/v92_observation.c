@@ -120,10 +120,51 @@ static bool bin_moments(double low, double high, double mean, double variance,
 	return isfinite(*expected) && isfinite(*deviation);
 }
 
-/* Bounded expectation/maximization, starting with the center fit. The E
- * step conditions latent samples on their codec bins; the M step fits the
- * channel taps and noise together. A one-sample variance floor bounds numeric
- * precision, not channel quality. Payload never updates these parameters. */
+/* Shared conditional-bin E/M updates. Owners supply their fixed Gram system,
+ * observation range and initial noise. Scalar gain retains all 96 updates;
+ * the channel owner may stop at its existing convergence boundary. */
+static bool refine_bin_fit(double coefficient[TAPS], const int16_t *q,
+	const double *low, const double *high, size_t count, size_t first,
+	unsigned taps, struct moments *m, double noise, bool converge, double *variance)
+{
+	for (unsigned iteration = 0; iteration < 96; iteration++) {
+		double targets[V92_OBSERVATION_TRAINING], deviations[V92_OBSERVATION_TRAINING];
+		double next[TAPS] = { 0 }, next_noise = 0.;
+		memset(m->rhs, 0, sizeof(m->rhs));
+		for (size_t j = first; j < count; j++) {
+			double mean = 0.;
+			for (unsigned i = 0; i < taps; i++) mean += coefficient[i] * q[j - i];
+			if (!bin_moments(low[j], high[j], mean, noise, targets + j, deviations + j)) return false;
+			for (unsigned i = 0; i < taps; i++) m->rhs[i] += q[j - i] * targets[j];
+		}
+		if (taps == 1u) {
+			next[0] = m->rhs[0] / m->gram[0];
+			if (!isfinite(next[0]) || next[0] <= 0.) return false;
+		} else if (!solve_channel(m, taps, next)) return false;
+		for (size_t j = first; j < count; j++) {
+			double residual = targets[j];
+			for (unsigned i = 0; i < taps; i++) residual -= next[i] * q[j - i];
+			next_noise += deviations[j] + residual * residual;
+		}
+		next_noise = fmax(1., next_noise / (count - first));
+		if (!isfinite(next_noise)) return false;
+		bool settled = false;
+		if (converge) {
+			double change = 0.;
+			for (unsigned i = 0; i < taps; i++) change += fabs(next[i] - coefficient[i]);
+			settled = fabs(next_noise - noise) < 1e-8 * (1. + noise) &&
+				change < 1e-10 * (1. + next[0]);
+		}
+		memcpy(coefficient, next, sizeof(next)); noise = next_noise;
+		if (settled) break;
+	}
+	*variance = noise;
+	return true;
+}
+
+/* Start the channel fit with its center residuals. The one-sample variance
+ * floor bounds numeric precision, not channel quality. Payload never updates
+ * these parameters. */
 static bool fit_bin_channel(struct v92_observation_interval *fit, const int16_t *q,
 	const int16_t *y, const double *low, const double *high, size_t count, unsigned taps, double *variance)
 {
@@ -138,34 +179,8 @@ static bool fit_bin_channel(struct v92_observation_interval *fit, const int16_t 
 		}
 		noise += residual * residual;
 	}
-	noise = fmax(1., noise / (count - taps));
-	for (unsigned iteration = 0; iteration < 96; iteration++) {
-		double targets[V92_OBSERVATION_TRAINING], deviations[V92_OBSERVATION_TRAINING];
-		double next[TAPS] = { 0 }, next_noise = 0.;
-		memset(m.rhs, 0, sizeof(m.rhs));
-		for (size_t j = taps; j < count; j++) {
-			double mean = 0.;
-			for (unsigned i = 0; i < taps; i++) mean += fit->coefficient[i] * q[j - i];
-			if (!bin_moments(low[j], high[j], mean, noise, targets + j, deviations + j)) return false;
-			for (unsigned i = 0; i < taps; i++) m.rhs[i] += q[j - i] * targets[j];
-		}
-		if (!solve_channel(&m, taps, next)) return false;
-		for (size_t j = taps; j < count; j++) {
-			double residual = targets[j];
-			for (unsigned i = 0; i < taps; i++) residual -= next[i] * q[j - i];
-			next_noise += deviations[j] + residual * residual;
-		}
-		next_noise = fmax(1., next_noise / (count - taps));
-		if (!isfinite(next_noise)) return false;
-		double change = 0.;
-		for (unsigned i = 0; i < taps; i++) change += fabs(next[i] - fit->coefficient[i]);
-		bool settled = fabs(next_noise - noise) < 1e-8 * (1. + noise) &&
-			change < 1e-10 * (1. + next[0]);
-		memcpy(fit->coefficient, next, sizeof(next)); noise = next_noise;
-		if (settled) break;
-	}
-	*variance = noise;
-	return true;
+	return refine_bin_fit(fit->coefficient, q, low, high, count, taps, taps,
+		&m, fmax(1., noise / (count - taps)), true, variance);
 }
 
 /* The first-codec gain intervals come from the initial center fit. Select
@@ -692,27 +707,12 @@ bool v92_observation_fit_scalar(double *gain,
 		xx += x * x; xy += x * y; linear_error += (x - y) * (x - y);
 	}
 	if (!(xx > 0. && xy > 0. && linear_error > 0.)) return false;
-	double fitted = xy / xx, variance = fmax(1., linear_error / count);
-	/* The same bounded conditional-bin fit as the tandem channel, with
- * one gain instead of a channel kernel. Fitting distance only outside bins
-	 * would mistake quantization uncertainty for noise-free observations. */
-	for (unsigned iteration = 0; iteration < 96; iteration++) {
-		double targets[V92_OBSERVATION_TRAINING], deviations[V92_OBSERVATION_TRAINING];
-		double next_xy = 0., next_variance = 0.;
-		for (size_t i = 0; i < count; i++) {
-			if (!bin_moments(low[i], high[i], fitted * training->linear[i], variance,
-				targets + i, deviations + i)) return false;
-			next_xy += training->linear[i] * targets[i];
-		}
-		fitted = next_xy / xx;
-		if (!isfinite(fitted) || fitted <= 0.) return false;
-		for (size_t i = 0; i < count; i++) {
-			double error = targets[i] - fitted * training->linear[i];
-			next_variance += deviations[i] + error * error;
-		}
-		variance = fmax(1., next_variance / count);
-		if (!isfinite(variance)) return false;
-	}
+	double coefficient[TAPS] = { xy / xx }, variance;
+	struct moments m = { .gram = { xx } };
+	if (!refine_bin_fit(coefficient, training->linear, low, high, count, 0, 1,
+		&m, fmax(1., linear_error / count), false, &variance)) return false;
+	double fitted = coefficient[0];
+
 	double error_energy = 0.;
 	for (size_t i = 0; i < count; i++) {
 		double predicted = v92_observation_predict_scalar(training->law, fitted,
