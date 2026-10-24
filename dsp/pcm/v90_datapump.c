@@ -21,6 +21,7 @@
 #include "v90_profile.h"
 #include "v92_profile.h"
 #include "v92_training_echo.h"
+#include "v92_echo_timing.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -52,6 +53,7 @@ struct v90_datapump {
 	bool upstream_quality_ready;
 	struct v34_echo_timing echo_timing;
 	struct v92_training_echo training_echo;
+	struct v92_echo_timing pcm_echo_timing;
 };
 
 static struct dp *create_v90(
@@ -957,6 +959,20 @@ static enum pcm_host_echo_mode host_echo_mode(
 	return PCM_HOST_ECHO_BYPASS;
 }
 
+static const struct v92_upstream_data_rx *pcm_upstream_receiver(
+	const struct v90_datapump *datapump)
+{
+	const struct pcm_call *call = &datapump->call;
+	if (call->failed || call->protocol != PCM_PROTOCOL_V92 ||
+	    call->local_role != V90_DIGITAL_MODEM || call->stage != PCM_CALL_DATA_PATH ||
+	    !call->phase3_entry_stored || call->b1_deadline_armed ||
+	    call->phase3_entry.selection.upstream != PCM_UPSTREAM_PCM)
+		return NULL;
+	const struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
+	return path->fast.stage == PCM_CALL_V92_FAST_IDLE && !path->quality_guard_samples ?
+		&path->upstream : NULL;
+}
+
 static const struct v92_pcm_phase4_trn2u_line_rx *upstream_training_receiver(
 	const struct v90_datapump *datapump)
 {
@@ -1081,6 +1097,13 @@ static int process_v90_g711(
 			    PCM_HOST_ECHO_OK)
 			goto failure;
 		if (datapump->host_echo != NULL) {
+			if (v92_echo_timing_observe(&datapump->pcm_echo_timing, datapump->host_echo,
+				    pcm_upstream_receiver(datapump), echo_mode, receive_codewords[index],
+				    receive_samples[index], cleaned_sample,
+				    received_mask == NULL || received_mask[index]) != 0 &&
+			    pcm_host_echo_predict(datapump->host_echo, echo_mode,
+				    receive_samples[index], &cleaned_sample) != PCM_HOST_ECHO_OK)
+				goto failure;
 			int delay_change;
 			training_echo = v92_training_echo_observe(&datapump->training_echo,
 				datapump->host_echo, upstream_training_receiver(datapump), echo_mode,

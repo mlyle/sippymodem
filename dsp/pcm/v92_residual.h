@@ -14,6 +14,26 @@ struct v92_residual {
 	bool active;
 };
 
+/* Owned linear projection before physical rounding or clipping. Geometry and
+ * coefficients are validated at the boundary; inputs and retained outputs
+ * must be finite. A frozen echo prediction uses the same arithmetic with its
+ * own history, which need not fit the physical signed-16 sample bounds.
+ * v92_residual_sample() separately enforces those bounds for receive state. */
+static inline double v92_residual_output(const struct v92_residual *filter, double raw)
+{
+	double corrected = raw - filter->offset;
+	for (unsigned j = 0; j < filter->count; j++)
+		corrected -= filter->coefficient[j] * filter->history[
+			(filter->cursor + V92_RESIDUAL_LAGS - filter->delay[j]) % V92_RESIDUAL_LAGS];
+	return corrected;
+}
+
+static inline void v92_residual_retain(struct v92_residual *filter, double corrected)
+{
+	filter->history[filter->cursor] = corrected;
+	filter->cursor = (filter->cursor + 1) % V92_RESIDUAL_LAGS;
+}
+
 bool v92_residual_is_valid(const struct v92_residual *filter);
 /* points/raw contain all acquisition frames. Only the final traceback span
  * is fitted; its preceding predictions provide delayed features. Rejection

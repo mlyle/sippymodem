@@ -51,21 +51,6 @@ static void features(const int32_t *points, unsigned n,
 	x[k] = 1.;
 }
 
-static double residual_output(const struct v92_residual *filter, int32_t raw)
-{
-	double corrected = raw - filter->offset;
-	for (unsigned j = 0; j < filter->count; j++)
-		corrected -= filter->coefficient[j] * filter->history[
-			(filter->cursor + V92_RESIDUAL_LAGS - filter->delay[j]) % V92_RESIDUAL_LAGS];
-	return corrected;
-}
-
-static void retain_output(struct v92_residual *filter, double corrected)
-{
-	filter->history[filter->cursor] = corrected;
-	filter->cursor = (filter->cursor + 1) % V92_RESIDUAL_LAGS;
-}
-
 static bool prime_history(struct v92_residual *filter, const int32_t *raw)
 {
 	/* History holds inverse outputs, not raw observations. Run the same
@@ -76,9 +61,9 @@ static bool prime_history(struct v92_residual *filter, const int32_t *raw)
 		filter->history[i] = raw[START - V92_RESIDUAL_LAGS + i] - filter->offset;
 	filter->cursor = 0;
 	for (unsigned n = START; n < SAMPLES; n++) {
-		double corrected = residual_output(filter, raw[n]);
+		double corrected = v92_residual_output(filter, raw[n]);
 		if (!isfinite(corrected)) return false;
-		retain_output(filter, corrected);
+		v92_residual_retain(filter, corrected);
 	}
 	return v92_residual_is_valid(filter);
 }
@@ -183,11 +168,11 @@ bool v92_residual_sample(struct v92_residual *filter,
 	int32_t raw, int polarity, bool available, int32_t *correction)
 {
 	if (!filter->active) { *correction = 0; return true; }
-	double corrected = residual_output(filter, raw);
+	double corrected = v92_residual_output(filter, raw);
 	double physical = corrected * polarity;
 	if (!available || !isfinite(physical) || physical < INT16_MIN || physical > INT16_MAX)
 		return false;
-	retain_output(filter, corrected);
+	v92_residual_retain(filter, corrected);
 	*correction = raw - (int32_t)lrint(physical) * polarity;
 	return true;
 }
