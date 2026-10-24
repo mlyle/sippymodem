@@ -240,8 +240,17 @@ static bool test_long_delay_scan(void)
 	      result.best_correlation_ppm,
 	      result.current_correlation_ppm);
 
-	while (reference.scan_samples < PCM_ECHO_REFERENCE_SCAN_CADENCE * 2u) {
+	while (reference.scan_samples < PCM_ECHO_REFERENCE_SCAN_CADENCE * 4u) {
 		struct pcm_echo_reference_scan_result report = unchanged;
+		struct pcm_echo_reference saved = reference;
+
+		/* A rejected observation cannot consume the next report boundary.
+		 * Retry it immediately with valid output on the same physical input. */
+		CHECK(pcm_echo_reference_scan_observe(
+			      &reference, returned_sample(index), NULL) ==
+			      PCM_ECHO_REFERENCE_INVALID_ARGUMENT &&
+		      memcmp(&reference, &saved, sizeof(reference)) == 0,
+		      "rejected scan observation changed its clock or evidence");
 		enum pcm_echo_reference_result scan_result =
 			pcm_echo_reference_scan_observe(
 				&reference, returned_sample(index), &report);
@@ -251,11 +260,10 @@ static bool test_long_delay_scan(void)
 			      PCM_ECHO_REFERENCE_OK,
 		      "continued scan push failed at %zu", index);
 		index++;
-		if (reference.scan_samples ==
-		    PCM_ECHO_REFERENCE_SCAN_CADENCE * 2u) {
+		if (reference.scan_samples % PCM_ECHO_REFERENCE_SCAN_CADENCE == 0) {
 			CHECK(scan_result == PCM_ECHO_REFERENCE_SCAN_READY &&
 			      report.sample_count ==
-				      PCM_ECHO_REFERENCE_SCAN_CADENCE * 2u &&
+				      reference.scan_samples &&
 			      report.best_window_delay_samples ==
 				      LONG_FILTER_DELAY,
 			      "cadenced scan report changed: result=%d samples=%u "

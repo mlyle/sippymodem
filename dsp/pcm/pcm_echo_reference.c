@@ -15,15 +15,13 @@ static bool scan_state_is_valid(const struct pcm_echo_reference *reference)
 		return reference->scan_current_index == 0 &&
 		       reference->scan_pre_samples == 0 &&
 		       reference->scan_samples == 0 &&
-		       reference->scan_epoch == 0 &&
 		       reference->scan_input_energy == 0 &&
 		       reference->scan_input_sum == 0;
 	if (reference->scan_count >
 		    PCM_ECHO_REFERENCE_SCAN_MAX_CANDIDATES ||
 	    reference->scan_current_index >= reference->scan_count ||
 	    reference->scan_pre_samples >=
-		    PCM_ECHO_REFERENCE_MAX_WINDOW_SAMPLES ||
-	    reference->scan_epoch > reference->scan_samples)
+		    PCM_ECHO_REFERENCE_MAX_WINDOW_SAMPLES)
 		return false;
 	return true;
 }
@@ -113,7 +111,6 @@ static void clear_scan(struct pcm_echo_reference *reference)
 	reference->scan_current_index = 0;
 	reference->scan_pre_samples = 0;
 	reference->scan_samples = 0;
-	reference->scan_epoch = 0;
 }
 
 enum pcm_echo_reference_result pcm_echo_reference_start_scan(
@@ -203,8 +200,7 @@ static bool scan_report_is_due(const struct pcm_echo_reference *reference)
 {
 	uint32_t count = reference->scan_samples;
 
-	if (count < PCM_ECHO_REFERENCE_SCAN_MIN_SAMPLES ||
-	    reference->scan_epoch == count)
+	if (count < PCM_ECHO_REFERENCE_SCAN_MIN_SAMPLES)
 		return false;
 	return count == PCM_ECHO_REFERENCE_SCAN_MIN_SAMPLES ||
 	       count % PCM_ECHO_REFERENCE_SCAN_CADENCE == 0;
@@ -337,7 +333,6 @@ enum pcm_echo_reference_result pcm_echo_reference_scan_observe(
 	generated.best_correlation_ppm = correlation_ppm(best_score);
 	generated.current_correlation_ppm =
 		correlation_ppm(current_score);
-	reference->scan_epoch = reference->scan_samples;
 	*result = generated;
 	return PCM_ECHO_REFERENCE_SCAN_READY;
 }
