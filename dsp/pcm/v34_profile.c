@@ -95,24 +95,6 @@ static uint16_t enabled_rates(
 	return enabled;
 }
 
-static struct v34_info0 local_info0(void)
-{
-	return (struct v34_info0){
-		.symbol_rate_2743_supported = true,
-		.symbol_rate_2800_supported = true,
-		.symbol_rate_3429_supported = true,
-		.low_carrier_3000_supported = true,
-		.high_carrier_3000_supported = true,
-		.low_carrier_3200_supported = true,
-		.high_carrier_3200_supported = true,
-		.symbol_rate_3429_transmit_permitted = true,
-		.transmit_power_reduction_supported = true,
-		.constellation_1664_supported = true,
-		.maximum_symbol_rate_difference_steps = 0,
-		.transmit_clock_source = V34_INFO0_CLOCK_INTERNAL,
-	};
-}
-
 static union v34_local_info1 local_info1(
 	enum v34_station_role role, enum v34_symbol_rate symbol_rate,
 	uint8_t projected_rate_units, bool fixed_symbol_rate)
@@ -199,7 +181,7 @@ enum v34_profile_result v34_profile_init(
 	selected = (struct v34_call_configuration){
 		.local_role = role,
 		.phase2_nominal_amplitude = V34_PHASE2_L2_AMPLITUDE,
-		.local_info0 = local_info0(),
+		.local_info0 = v34_profile_info0(),
 		.local_info1 = local_info1(
 			role, selected_symbol_rate, highest_rate_units,
 			symbol_rate != 0),

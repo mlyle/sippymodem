@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "v90_profile.h"
+#include "v34_profile.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -36,35 +37,17 @@ struct v90_upstream_selection {
 
 static struct v34_info0 analog_info0(void)
 {
-	return (struct v34_info0){
-		.symbol_rate_2743_supported = true,
-		.symbol_rate_3429_supported = true,
-		.low_carrier_3000_supported = true,
-		.high_carrier_3000_supported = true,
-		.low_carrier_3200_supported = true,
-		.high_carrier_3200_supported = true,
-		.symbol_rate_3429_transmit_permitted = true,
-		.transmit_power_reduction_supported = true,
-		.maximum_symbol_rate_difference_steps = 2,
-		.constellation_1664_supported = true,
-	};
+	struct v34_info0 info0 = v34_profile_info0();
+
+	info0.symbol_rate_2800_supported = false;
+	info0.maximum_symbol_rate_difference_steps = 2;
+	return info0;
 }
 
 static struct v90_info0d digital_info0(enum g711_law law)
 {
 	return (struct v90_info0d){
-		.common = {
-			.symbol_rate_2743_supported = true,
-			.symbol_rate_2800_supported = true,
-			.symbol_rate_3429_supported = true,
-			.low_carrier_3000_supported = true,
-			.high_carrier_3000_supported = true,
-			.low_carrier_3200_supported = true,
-			.high_carrier_3200_supported = true,
-			.symbol_rate_3429_transmit_permitted = true,
-			.transmit_power_reduction_supported = true,
-			.constellation_1664_supported = true,
-		},
+		.common = v34_profile_info0(),
 		.nominal_transmit_power =
 			V90_PHASE2_DIGITAL_NOMINAL_POWER_CODE,
 		.maximum_transmit_power =

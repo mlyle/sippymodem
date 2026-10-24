@@ -92,6 +92,24 @@ static bool test_digital_info0_profile(void)
 	return true;
 }
 
+static bool test_analog_info0_profile(void)
+{
+	static const uint8_t expected[V90_INFO0A_PAYLOAD_BYTES] = { 0xbf, 0xa4, 0x00 };
+
+	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		struct pcm_call_configuration configuration;
+		uint8_t payload[V90_INFO0A_PAYLOAD_BYTES];
+
+		CHECK(v90_profile_init(&configuration, V90_ANALOG_MODEM, law,
+				      28000, 56000, NULL) == V90_PROFILE_OK &&
+		      v90_info0a_encode(&configuration.local_info0.analog,
+				       payload, sizeof(payload)) == V90_INFO0_OK &&
+		      memcmp(payload, expected, sizeof(payload)) == 0,
+		      "analog PCM law %u changed its V.34 capability subset", law);
+	}
+	return true;
+}
+
 static bool test_advertised_phase2_power(void)
 {
 	static const char *const names[] = { "B", "INFO", "L2", "L1" };
@@ -859,6 +877,7 @@ int main(void)
 	} tests[] = {
 		{ "downstream rate selection", test_downstream_rate_selection },
 		{ "digital INFO0 profile", test_digital_info0_profile },
+		{ "analog INFO0 profile", test_analog_info0_profile },
 		{ "advertised Phase 2 power", test_advertised_phase2_power },
 		{ "generated role and media profiles", test_generated_profiles },
 		{ "generated constellation power selection", test_constellation_power_selection },

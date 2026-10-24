@@ -32,6 +32,8 @@ static bool profile_common_is_expected(
 	const struct v34_mp_parameters *mp =
 		v34_mp_record_common_parameters(record);
 	bool zero_precoder = record->type == V34_MP_RECORD_TYPE1;
+	static const uint8_t expected_info0[V34_INFO0_PAYLOAD_BYTES] = { 0xff, 0x84, 0x00 };
+	uint8_t payload[V34_INFO0_PAYLOAD_BYTES];
 
 	for (size_t tap = 0; zero_precoder && tap < V34_PRECODER_TAP_COUNT;
 	     ++tap)
@@ -40,7 +42,10 @@ static bool profile_common_is_expected(
 			record->parameters.type1.precoder_coefficients[tap]
 				.imaginary == 0;
 
-	return configuration->local_role == role &&
+	return v34_info0_encode(&configuration->local_info0, payload, sizeof(payload)) ==
+		       V34_INFO0_OK &&
+	       memcmp(payload, expected_info0, sizeof(payload)) == 0 &&
+	       configuration->local_role == role &&
 	       configuration->phase2_nominal_amplitude == 4096 &&
 	       configuration->local_info0.symbol_rate_2743_supported &&
 	       configuration->local_info0.symbol_rate_2800_supported &&
