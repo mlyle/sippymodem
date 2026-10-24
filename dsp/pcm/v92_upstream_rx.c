@@ -20,11 +20,21 @@ bool v92_upstream_rx_has_failed(const struct v92_upstream_rx *receiver)
 	return v92_upstream_rx_is_valid(receiver) && receiver->failed;
 }
 
+static struct v92_phase4_modulator reference_from(
+	const struct v92_phase4_demodulator *demodulator)
+{
+	return (struct v92_phase4_modulator){
+		.scrambler = demodulator->descrambler,
+		.constellation = demodulator->constellation,
+		.lu = demodulator->lu,
+		.previous_encoded_sign = demodulator->previous_encoded_sign,
+	};
+}
+
 bool v92_upstream_rx_expected_level(
 	const struct v92_upstream_rx *receiver, uint8_t input_group,
 	int16_t *level)
 {
-	const struct v92_phase4_demodulator *demodulator;
 	struct v92_phase4_modulator reference;
 	unsigned int bits;
 	int16_t generated;
@@ -34,17 +44,11 @@ bool v92_upstream_rx_expected_level(
 	    memory_regions_overlap(
 		    receiver, sizeof(*receiver), level, sizeof(*level)))
 		return false;
-	demodulator = &receiver->line.demodulator;
 	bits = v92_phase4_modulator_bits_per_symbol(
-		demodulator->constellation);
+		receiver->line.demodulator.constellation);
 	if (bits == 0u || input_group >= (1u << bits))
 		return false;
-	reference = (struct v92_phase4_modulator){
-		.scrambler = demodulator->descrambler,
-		.constellation = demodulator->constellation,
-		.lu = demodulator->lu,
-		.previous_encoded_sign = demodulator->previous_encoded_sign,
-	};
+	reference = reference_from(&receiver->line.demodulator);
 	if (v92_phase4_modulator_next(
 		    &reference, input_group, &generated) !=
 	    V92_PHASE4_MODULATOR_OK)
@@ -87,6 +91,7 @@ static enum v92_upstream_rx_result sample(
 	struct qam_point output;
 	struct qam_point input;
 	int16_t expected_level = 0;
+	struct v92_phase4_modulator reference = { 0 };
 	int16_t nominal_level;
 	unsigned int bits;
 	bool ready;
@@ -106,10 +111,12 @@ static enum v92_upstream_rx_result sample(
 		receiver->line.demodulator.constellation);
 	if (known && (bits == 0u || expected_group >= (1u << bits)))
 		return V92_UPSTREAM_RX_INVALID_ARGUMENT;
-	if (known && receiver->training_tail_remaining == 0u &&
-	    !v92_upstream_rx_expected_level(
-		    receiver, expected_group, &expected_level))
-		return V92_UPSTREAM_RX_INVALID_STATE;
+	if (known && receiver->training_tail_remaining == 0u) {
+		reference = reference_from(&receiver->line.demodulator);
+		if (v92_phase4_modulator_next(&reference, expected_group, &expected_level) !=
+		    V92_PHASE4_MODULATOR_OK)
+			return V92_UPSTREAM_RX_INVALID_STATE;
+	}
 	next = *receiver;
 	input = (struct qam_point){
 		.in_phase = next.line.polarity > 0 ?
@@ -143,6 +150,14 @@ static enum v92_upstream_rx_result sample(
 				&next.line.demodulator, nominal_level, next.line.adaptation,
 				&next.line.output_bias, false))
 			return fail(receiver);
+	}
+	/* A known sequence owns its coding history. Preserve the observed decision
+	 * for error measurements, but keep an impulse from changing later targets
+	 * or the handoff into unknown data. The delayed training tail still owns
+	 * its distinct targets until all of those decisions have been consumed. */
+	if (known && receiver->training_tail_remaining == 0u) {
+		next.line.demodulator.descrambler = reference.scrambler;
+		next.line.demodulator.previous_encoded_sign = reference.previous_encoded_sign;
 	}
 	next.line.equalizer.can_adapt = false;
 	generated.equalized_level = output.in_phase;

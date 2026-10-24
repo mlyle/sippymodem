@@ -637,6 +637,73 @@ static bool run_e2u(
 	return true;
 }
 
+static bool run_known_symbol_error(enum g711_law law,
+	enum v92_constellation_size points, int8_t polarity,
+	uint8_t group, unsigned error_symbol)
+{
+	struct v92_pcm_phase4_trn2u training;
+	struct v92_pcm_phase4_trn2u_line_handoff boundary;
+	struct v92_upstream_rx signal;
+	struct v92_upstream_decision decision;
+	CHECK(build_boundary(law, points, 0u, polarity, &training, &boundary) &&
+	      v92_upstream_rx_init(&signal, &boundary) == V92_UPSTREAM_RX_OK,
+	      "known-symbol predecessor failed");
+	for (unsigned i = 0; i < V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY; ++i) {
+		int16_t raw;
+		CHECK(v92_pcm_phase4_trn2u_next(&training, &raw) == V92_PCM_PHASE4_TRN2U_OK &&
+		      v92_upstream_rx_sample(&signal, line_sample(law, polarity, raw), &decision) ==
+			V92_UPSTREAM_RX_OK, "known-symbol training tail failed");
+	}
+	/* Use a flat, already acquired line with its strongest tap at the newest
+	 * input. The transmitter's history is independent of every sliced decision. */
+	memset(signal.line.equalizer.coefficients, 0, sizeof(signal.line.equalizer.coefficients));
+	signal.line.equalizer.coefficients[0].in_phase = 1.0;
+	signal.line.adaptation = 0.0;
+	signal.line.output_bias = 0.0;
+	struct v92_phase4_modulator transmitter = {
+		.scrambler = signal.line.demodulator.descrambler,
+		.constellation = points, .lu = signal.line.demodulator.lu,
+		.previous_encoded_sign = signal.line.demodulator.previous_encoded_sign,
+	};
+	for (unsigned i = 0; i < 32u; ++i) {
+		int16_t raw, expected;
+		CHECK(v92_phase4_modulator_next(&transmitter, group, &raw) ==
+			V92_PHASE4_MODULATOR_OK &&
+		      v92_upstream_rx_expected_level(&signal, group, &expected) && expected == raw,
+		      "known reference followed an erroneous decision at %u", i);
+		int16_t received = i == error_symbol ? (int16_t)-raw : raw;
+		CHECK(v92_upstream_rx_sample_known(&signal,
+			line_sample(law, polarity, received), group, &decision) == V92_UPSTREAM_RX_OK &&
+		      (decision.group != group) == (i == error_symbol),
+		      "one physical error changed later known decisions at %u", i);
+	}
+	/* An immediately following unknown stream must inherit the actual known
+	 * sequence, rather than a history contaminated by the earlier impulse. */
+	for (unsigned i = 0; i < 128u; ++i) {
+		uint8_t data = (uint8_t)((i * 13u + i / 7u) & (points - 1u));
+		int16_t raw;
+		CHECK(v92_phase4_modulator_next(&transmitter, data, &raw) ==
+			V92_PHASE4_MODULATOR_OK &&
+		      v92_upstream_rx_sample(&signal, line_sample(law, polarity, raw), &decision) ==
+			V92_UPSTREAM_RX_OK && decision.group == data,
+		      "known-symbol handoff damaged data at %u", i);
+	}
+	return true;
+}
+
+static bool test_known_symbol_error(void)
+{
+	static const unsigned errors[] = { 0u, 6u, 12u, 31u };
+	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned points = 4u; points <= 8u; points *= 2u)
+			for (int polarity = -1; polarity <= 1; polarity += 2)
+				for (unsigned group = 0u; group < points; group += points - 1u)
+					for (size_t error = 0u; error < ARRAY_LENGTH(errors); ++error)
+						CHECK(run_known_symbol_error(law, points, polarity, group, errors[error]),
+						      "known-symbol error matrix stopped");
+	return true;
+}
+
 static bool test_e2u(void)
 {
 	static const enum v92_constellation_size constellations[] = {
@@ -1378,6 +1445,7 @@ int main(void)
 	} tests[] = {
 		{ "generated digital Phase 4 lines", test_generated_lines },
 		{ "generated E2u boundaries", test_e2u },
+		{ "known-symbol error isolation", test_known_symbol_error },
 		{ "E2u carrier qualification", test_e2u_carrier },
 		{ "E2u learned input delay", test_shifted_e2u_carrier },
 		{ "read-only upstream predictions", test_prediction_contracts },

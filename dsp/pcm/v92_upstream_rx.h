@@ -55,7 +55,9 @@ enum v92_upstream_rx_result v92_upstream_rx_sample(
 	struct v92_upstream_decision *decision);
 
 /* Consume one sample while adapting a post-training decision against a known
- * input group rather than a possibly damaged nearest decision. */
+ * input group rather than a possibly damaged nearest decision. After the
+ * pending training tail, advance coding history from that known group while
+ * returning the observed group for error measurement. */
 enum v92_upstream_rx_result v92_upstream_rx_sample_known(
 	struct v92_upstream_rx *receiver, int16_t sample,
 	uint8_t expected_group, struct v92_upstream_decision *decision);

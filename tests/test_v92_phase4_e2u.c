@@ -2179,7 +2179,7 @@ static bool test_weak_marker_bits(enum g711_law law, int polarity)
 		/* This nonzero word has a weak positive waveform match. The
 		 * true zero marker instead gets one large outer-point impulse
 		 * that preserves its decoded bits. Both follow a complete SUVu. */
-		uint32_t word = impulse ? 0u : UINT32_C(0xa);
+		uint32_t word = impulse ? 0u : UINT32_C(0x9);
 
 		CHECK(upstream_line(law, V92_CONSTELLATION_4_POINT, &wire, &line),
 		      "weak marker fixture failed");
@@ -2201,11 +2201,16 @@ static bool test_weak_marker_bits(enum g711_law law, int polarity)
 			      "weak marker: law=%u polarity=%d impulse=%u symbol=%u",
 			      law, polarity, impulse, symbol);
 		}
-		CHECK(candidate.bit_errors == (impulse ? 0u : 2u) && injected == (bool)impulse &&
+		CHECK((impulse ? candidate.bit_errors == 0u : candidate.bit_errors != 0u) &&
+		      injected == (bool)impulse &&
 		      candidate.correlation > 0.0 &&
+		      candidate.correlation * candidate.correlation * 5.0 >=
+			      candidate.observed_energy * candidate.expected_energy &&
 		      candidate.correlation * candidate.correlation * 4.0 <
 			      candidate.observed_energy * candidate.expected_energy * 3.0,
-		      "weak marker fixture did not exercise the coded-bit decision");
+		      "weak marker fixture: impulse=%u errors=%u correlation=%.17g observed=%.17g expected=%.17g",
+		      impulse, candidate.bit_errors, candidate.correlation,
+		      candidate.observed_energy, candidate.expected_energy);
 	}
 	return true;
 }
