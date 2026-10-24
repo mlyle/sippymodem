@@ -12,6 +12,18 @@ static bool test_boundaries(void)
 	struct wide_uint maximum = { UINT64_MAX, UINT64_MAX }, value, quotient;
 	struct wide_uint one = wide_from_u64(1);
 
+	CHECK(equal(wide_from_s64(0), 0, 0) &&
+	      equal(wide_from_s64(1), 0, 1) &&
+	      equal(wide_from_s64(-1), UINT64_MAX, UINT64_MAX) &&
+	      equal(wide_from_s64(INT64_MIN), UINT64_MAX, UINT64_C(1) << 63) &&
+	      equal(wide_from_s64(INT64_MAX), 0, INT64_MAX),
+	      "signed conversion lost its extension or low word");
+	value = wide_subtract(
+		wide_multiply(wide_from_s64(-17), wide_from_u64(31)),
+		wide_multiply(wide_from_s64(-3), wide_from_s64(5)));
+	CHECK(equal(value, UINT64_MAX, UINT64_C(0xfffffffffffffe00)),
+	      "centering signed moments lost the negative residue");
+
 	CHECK(!wide_add(maximum, one, &value) && equal(value, 0, 0),
 	      "addition overflow differs");
 	value = (struct wide_uint){ 7, UINT64_MAX };
@@ -80,6 +92,11 @@ static bool test_native_oracle(void)
 		uint32_t factor = (uint32_t)random_word(&seed);
 		uint32_t divisor = (uint32_t)random_word(&seed) | 1u;
 		unsigned shift = index % 130;
+		int64_t magnitude = (int64_t)(a.low >> 1);
+		int64_t moment = a.low & 1u ? -magnitude - 1 : magnitude;
+		__uint128_t signed_value = (__uint128_t)(__int128_t)moment;
+		CHECK(equal(wide_from_s64(moment), signed_value >> 64, signed_value),
+		      "signed conversion oracle differs at %u", index);
 		__uint128_t expected = x + y;
 		CHECK(wide_add(a, b, &value) == (expected >= x) &&
 		      equal(value, expected >> 64, expected), "sum oracle differs at %u", index);

@@ -154,11 +154,6 @@ enum pcm_echo_reference_result pcm_echo_reference_start_scan(
  * UINT32_MAX signed-sample observations, each centered moment fits 96 bits.
  * Keep centering exact before conversion: on targets with a binary64 long
  * double, subtracting rounded large energies can invent variance in silence. */
-static struct wide_uint signed_moment(int64_t value)
-{
-	return (struct wide_uint){ value < 0 ? UINT64_MAX : 0, (uint64_t)value };
-}
-
 static long double moment_value(struct wide_uint value)
 {
 	return (long double)value.high * 18446744073709551616.0L + value.low;
@@ -185,8 +180,8 @@ static long double correlation_score(
 	reference = wide_subtract(reference, reference_mean);
 	input = wide_subtract(input, input_mean);
 	struct wide_uint cross = wide_subtract(
-		wide_multiply(signed_moment(cross_energy), count),
-		wide_multiply(signed_moment(reference_sum), signed_moment(input_sum)));
+		wide_multiply(wide_from_s64(cross_energy), count),
+		wide_multiply(wide_from_s64(reference_sum), wide_from_s64(input_sum)));
 	if (cross.high >> 63)
 		cross = wide_subtract(wide_from_u64(0), cross);
 	long double value = moment_value(cross);

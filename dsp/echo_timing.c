@@ -21,13 +21,7 @@ static bool prediction_is_qualified(
 	return wide_compare(explained, required) >= 0;
 }
 
-/* Sign-extend signed evidence into a two's-complement wide value. The
- * differences below fit in signed 128 bits even at the 64-bit boundaries. */
-static struct wide_uint signed_evidence(int64_t value)
-{
-	return (struct wide_uint){ value < 0 ? UINT64_MAX : 0, (uint64_t)value };
-}
-
+/* The evidence differences fit signed 128 bits even at 64-bit boundaries. */
 static bool evidence_is_positive(struct wide_uint value)
 {
 	return (value.high >> 63) == 0 && (value.high != 0 || value.low != 0);
@@ -41,7 +35,7 @@ static bool prediction_is_harmful(
 	 * Require that increase to exceed the uncertainty of the cross term;
 	 * its factor of two contributes four to the variance bound. */
 	struct wide_uint excess = wide_subtract(wide_from_u64(energy),
-		wide_shift_left(signed_evidence(cross), 1));
+		wide_shift_left(wide_from_s64(cross), 1));
 	struct wide_uint increase, required;
 
 	if (energy == 0 || !evidence_is_positive(excess))
@@ -63,7 +57,7 @@ static bool timing_is_qualified(
 	 * too. Agreement and a half-prediction-energy improvement are
 	 * required so unrelated input cannot win just by choosing another bin. */
 	struct wide_uint improvement = wide_subtract(wide_shift_left(
-		wide_subtract(signed_evidence(e->cross), signed_evidence(e->current_cross)), 1),
+		wide_subtract(wide_from_s64(e->cross), wide_from_s64(e->current_cross)), 1),
 		wide_subtract(wide_from_u64(e->energy), wide_from_u64(e->current_energy)));
 
 	return prediction_is_qualified(e->cross, e->energy, e->input,

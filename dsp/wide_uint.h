@@ -18,6 +18,13 @@ static inline struct wide_uint wide_from_u64(uint64_t value)
 	return (struct wide_uint){ .low = value };
 }
 
+/* Sign-extend a signed moment into its two's-complement residue modulo
+ * 2^128. Subsequent wide operations retain their unsigned wrap semantics. */
+static inline struct wide_uint wide_from_s64(int64_t value)
+{
+	return (struct wide_uint){ value < 0 ? UINT64_MAX : 0, (uint64_t)value };
+}
+
 static inline int wide_compare(struct wide_uint left, struct wide_uint right)
 {
 	if (left.high != right.high)
