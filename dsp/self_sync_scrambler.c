@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "self_sync_scrambler.h"
+#include "packed_bits.h"
 
 #include <stddef.h>
 
@@ -52,6 +53,16 @@ self_sync_scrambler_init(
 	return SELF_SYNC_SCRAMBLER_OK;
 }
 
+static uint8_t transform_bit(uint32_t *history, uint32_t mask,
+	unsigned int tap_a, unsigned int tap_b, uint8_t input, bool descramble)
+{
+	uint8_t output = input ^ (uint8_t)(
+		((*history >> tap_a) ^ (*history >> tap_b)) & 1u);
+
+	*history = ((*history << 1) | (descramble ? input : output)) & mask;
+	return output;
+}
+
 static enum self_sync_scrambler_result transform_group(
 	struct self_sync_scrambler *state,
 	const struct self_sync_scrambler_config *config,
@@ -71,14 +82,9 @@ static enum self_sync_scrambler_result transform_group(
 	mask = history_mask(config);
 	for (unsigned int bit = bit_count; bit > 0; --bit) {
 		uint8_t input_bit = (uint8_t)((input >> (bit - 1u)) & 1u);
-		uint8_t feedback = (uint8_t)(
-			((next.history >> (config->tap_a_delay - 1u)) ^
-			 (next.history >> (config->tap_b_delay - 1u))) &
-			1u);
-		uint8_t output_bit = input_bit ^ feedback;
-		uint8_t remembered_bit = descramble ? input_bit : output_bit;
-
-		next.history = ((next.history << 1) | remembered_bit) & mask;
+		uint8_t output_bit = transform_bit(&next.history, mask,
+			config->tap_a_delay - 1u, config->tap_b_delay - 1u,
+			input_bit, descramble);
 		transformed = (uint8_t)((transformed << 1) | output_bit);
 	}
 	*state = next;
@@ -104,4 +110,52 @@ self_sync_descramble_group(
 {
 	return transform_group(
 		descrambler, config, input, bit_count, output, true);
+}
+
+static enum self_sync_scrambler_result transform_unpacked_bits(
+	struct self_sync_scrambler *state,
+	const struct self_sync_scrambler_config *config,
+	const uint8_t *input, size_t bit_count, uint8_t *output, bool descramble)
+{
+	if (input == NULL || output == NULL || bit_count == 0 ||
+	    !self_sync_scrambler_is_valid(state, config) ||
+	    memory_regions_overlap(state, sizeof(*state), input, bit_count) ||
+	    memory_regions_overlap(state, sizeof(*state), output, bit_count) ||
+	    memory_regions_overlap(state, sizeof(*state), config, sizeof(*config)) ||
+	    memory_regions_overlap(config, sizeof(*config), output, bit_count) ||
+	    (input != output &&
+	     memory_regions_overlap(input, bit_count, output, bit_count)) ||
+	    !unpacked_bits_are_binary(input, bit_count))
+		return SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT;
+
+	uint32_t history = state->history;
+	uint32_t mask = history_mask(config);
+	unsigned int tap_a = config->tap_a_delay - 1u;
+	unsigned int tap_b = config->tap_b_delay - 1u;
+
+	for (size_t bit = 0; bit < bit_count; ++bit)
+		output[bit] = transform_bit(&history, mask,
+			tap_a, tap_b, input[bit], descramble);
+	state->history = history;
+	return SELF_SYNC_SCRAMBLER_OK;
+}
+
+enum self_sync_scrambler_result
+self_sync_scramble_unpacked_bits(
+	struct self_sync_scrambler *state,
+	const struct self_sync_scrambler_config *config,
+	const uint8_t *input, size_t bit_count, uint8_t *output)
+{
+	return transform_unpacked_bits(state, config,
+		input, bit_count, output, false);
+}
+
+enum self_sync_scrambler_result
+self_sync_descramble_unpacked_bits(
+	struct self_sync_scrambler *state,
+	const struct self_sync_scrambler_config *config,
+	const uint8_t *input, size_t bit_count, uint8_t *output)
+{
+	return transform_unpacked_bits(state, config,
+		input, bit_count, output, true);
 }

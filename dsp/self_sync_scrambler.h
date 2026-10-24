@@ -4,6 +4,7 @@
 #define SELF_SYNC_SCRAMBLER_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 enum {
@@ -58,5 +59,20 @@ self_sync_descramble_group(
 	const struct self_sync_scrambler_config *config,
 	uint8_t input, unsigned int bit_count, uint8_t *output);
 
+/* Process a nonempty array of binary bytes in transmission order. Exact
+ * in-place operation is allowed; other input/output overlap and overlap with
+ * mutable state are rejected. State and config must be disjoint; output must
+ * not overlap config. Rejection leaves state and output untouched, including
+ * a nonbinary final input byte. */
+enum self_sync_scrambler_result
+self_sync_scramble_unpacked_bits(
+	struct self_sync_scrambler *scrambler,
+	const struct self_sync_scrambler_config *config,
+	const uint8_t *input, size_t bit_count, uint8_t *output);
+enum self_sync_scrambler_result
+self_sync_descramble_unpacked_bits(
+	struct self_sync_scrambler *descrambler,
+	const struct self_sync_scrambler_config *config,
+	const uint8_t *input, size_t bit_count, uint8_t *output);
 
 #endif

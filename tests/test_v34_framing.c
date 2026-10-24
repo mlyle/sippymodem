@@ -202,6 +202,14 @@ static bool test_unpacked_bit_batches(void)
 			      V34_FRAMING_INVALID_ARGUMENT &&
 		      scrambler.history == before && input[1] == 0u,
 		      "V.34 batch accepted empty or overlapping input");
+		struct v34_scrambler saved = scrambler;
+		for (size_t byte = 0; byte < sizeof(scrambler); ++byte) {
+			CHECK(v34_scramble_unpacked_bits(&scrambler, input, 1,
+				      (uint8_t *)&scrambler + byte) ==
+			      V34_FRAMING_INVALID_ARGUMENT &&
+			      memcmp(&scrambler, &saved, sizeof(saved)) == 0,
+			      "V.34 batch overwrote owner byte %zu", byte);
+		}
 	}
 	return true;
 }

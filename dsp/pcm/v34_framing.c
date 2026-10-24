@@ -131,34 +131,23 @@ static enum v34_framing_result transform_unpacked_bits(
 	struct v34_scrambler *state, const uint8_t *input,
 	size_t bit_count, uint8_t *output, bool descramble)
 {
-	struct v34_scrambler next;
+	struct self_sync_scrambler shared;
+	const struct self_sync_scrambler_config *config;
+	enum self_sync_scrambler_result result;
 
-	if (state == NULL || input == NULL || output == NULL || bit_count == 0u ||
-	    !v34_scrambler_is_valid(state) ||
-	    !unpacked_bits_are_binary(input, bit_count) ||
+	if (state == NULL ||
 	    memory_regions_overlap(state, sizeof(*state), input, bit_count) ||
-	    memory_regions_overlap(state, sizeof(*state), output, bit_count) ||
-	    (input != output &&
-	     memory_regions_overlap(input, bit_count, output, bit_count)))
+	    memory_regions_overlap(state, sizeof(*state), output, bit_count))
 		return V34_FRAMING_INVALID_ARGUMENT;
-	next = *state;
-	for (size_t offset = 0; offset < bit_count;) {
-		unsigned int count = (unsigned int)(
-			bit_count - offset < SELF_SYNC_MAX_GROUP_BITS ?
-				bit_count - offset : SELF_SYNC_MAX_GROUP_BITS);
-		uint8_t group = 0;
-
-		for (unsigned int bit = 0; bit < count; ++bit)
-			group = (uint8_t)((group << 1) | input[offset + bit]);
-		if (transform_group(&next, group, count, &group, descramble) !=
-		    V34_FRAMING_OK)
-			return V34_FRAMING_INVALID_ARGUMENT;
-		for (unsigned int bit = 0; bit < count; ++bit)
-			output[offset + bit] = (uint8_t)(
-				(group >> (count - bit - 1u)) & 1u);
-		offset += count;
-	}
-	*state = next;
+	shared.history = state->history;
+	config = scrambler_config(state->polynomial);
+	result = descramble ? self_sync_descramble_unpacked_bits(
+		&shared, config, input, bit_count, output) :
+		self_sync_scramble_unpacked_bits(
+			&shared, config, input, bit_count, output);
+	if (result != SELF_SYNC_SCRAMBLER_OK)
+		return V34_FRAMING_INVALID_ARGUMENT;
+	state->history = shared.history;
 	return V34_FRAMING_OK;
 }
 

@@ -10,6 +10,7 @@ static const struct self_sync_scrambler_config test_configs[] = {
 	{ .history_bits = 23, .tap_a_delay = 18, .tap_b_delay = 23 },
 	{ .history_bits = 23, .tap_a_delay = 5, .tap_b_delay = 23 },
 	{ .history_bits = 32, .tap_a_delay = 17, .tap_b_delay = 32 },
+	{ .history_bits = 2, .tap_a_delay = 1, .tap_b_delay = 2 },
 };
 
 static uint32_t fixture_random(uint32_t *state)
@@ -157,6 +158,132 @@ static bool test_descrambler_resynchronization(void)
 	return true;
 }
 
+static bool test_unpacked_streams(void)
+{
+	uint32_t random = UINT32_C(0x294f813b);
+
+	for (size_t fixture = 0; fixture < ARRAY_LENGTH(test_configs); ++fixture)
+	for (unsigned int direction = 0; direction < 2; ++direction)
+	for (unsigned int inplace = 0; inplace < 2; ++inplace) {
+		const struct self_sync_scrambler_config *config = &test_configs[fixture];
+		uint8_t input[257], expected[257], output[257], past[32];
+		struct self_sync_scrambler state = { 0 };
+		uint32_t expected_history = 0;
+
+		for (unsigned int bit = 0; bit < config->history_bits; ++bit) {
+			past[bit] = fixture_random(&random) >> 31;
+			state.history |= (uint32_t)past[bit] << bit;
+		}
+		/* An explicit delay line is independent of the packed recurrence. */
+		for (size_t bit = 0; bit < sizeof(input); ++bit) {
+			input[bit] = fixture_random(&random) >> 31;
+			expected[bit] = input[bit] ^ past[config->tap_a_delay - 1] ^
+				past[config->tap_b_delay - 1];
+			memmove(past + 1, past, config->history_bits - 1);
+			past[0] = direction ? input[bit] : expected[bit];
+		}
+		for (unsigned int bit = 0; bit < config->history_bits; ++bit)
+			expected_history |= (uint32_t)past[bit] << bit;
+		memcpy(output, input, sizeof(input));
+		for (size_t offset = 0; offset < sizeof(input);) {
+			size_t count = offset % 17 + 1;
+			if (count > sizeof(input) - offset)
+				count = sizeof(input) - offset;
+			if (count <= 8 && (offset & 1u)) {
+				uint8_t group = 0;
+				for (size_t bit = 0; bit < count; ++bit)
+					group = (uint8_t)((group << 1) | input[offset + bit]);
+				CHECK((direction ? self_sync_descramble_group :
+					self_sync_scramble_group)(&state, config, group,
+					count, &group) == SELF_SYNC_SCRAMBLER_OK,
+				      "mixed group rejected at %zu", offset);
+				for (size_t bit = 0; bit < count; ++bit)
+					output[offset + bit] = (group >> (count - bit - 1)) & 1u;
+			} else {
+				CHECK((direction ? self_sync_descramble_unpacked_bits :
+					self_sync_scramble_unpacked_bits)(&state, config,
+					inplace ? output + offset : input + offset,
+					count, output + offset) == SELF_SYNC_SCRAMBLER_OK,
+				      "unpacked chunk rejected at %zu", offset);
+			}
+			offset += count;
+		}
+		CHECK(memcmp(output, expected, sizeof(output)) == 0 &&
+		      state.history == expected_history,
+		      "unpacked delay-line result changed at %zu/%u/%u",
+		      fixture, direction, inplace);
+	}
+	return true;
+}
+
+static bool test_unpacked_rejection(void)
+{
+	for (unsigned int direction = 0; direction < 2; ++direction) {
+		struct self_sync_scrambler_config config = { 8, 3, 8 };
+		struct self_sync_scrambler state = { .history = 0x5a };
+		uint8_t input[17] = { 0 }, output[17], saved[17];
+		enum self_sync_scrambler_result (*transform)(
+			struct self_sync_scrambler *,
+			const struct self_sync_scrambler_config *,
+			const uint8_t *, size_t, uint8_t *) = direction ?
+			self_sync_descramble_unpacked_bits : self_sync_scramble_unpacked_bits;
+
+		memset(output, 0xa5, sizeof(output));
+		memcpy(saved, output, sizeof(saved));
+		input[16] = 2;
+		CHECK(transform(&state, &config, input, sizeof(input), output) ==
+		      SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT && state.history == 0x5a &&
+		      memcmp(output, saved, sizeof(output)) == 0,
+		      "late nonbinary bit partially committed");
+		uint8_t invalid[sizeof(input)];
+		memcpy(invalid, input, sizeof(input));
+		CHECK(transform(&state, &config, input, sizeof(input), input) ==
+		      SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT && state.history == 0x5a &&
+		      memcmp(input, invalid, sizeof(input)) == 0,
+		      "late nonbinary bit partially committed in place");
+		input[16] = 0;
+		CHECK(transform(&state, &config, input, 0, output) ==
+		      SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT &&
+		      transform(NULL, &config, input, 1, output) ==
+		      SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT &&
+		      transform(&state, NULL, input, 1, output) ==
+		      SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT &&
+		      transform(&state, &config, NULL, 1, output) ==
+		      SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT &&
+		      transform(&state, &config, input, 1, NULL) ==
+		      SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT && state.history == 0x5a &&
+		      memcmp(output, saved, sizeof(output)) == 0,
+		      "invalid unpacked arguments partially committed");
+		CHECK(transform(&state, &config, output, 8, output + 1) ==
+		      SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT &&
+		      transform(&state, &config, input, 1, (uint8_t *)&state) ==
+		      SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT &&
+		      transform(&state, &config, (uint8_t *)&state, 1, output) ==
+		      SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT &&
+		      transform(&state, &config, input, 1, (uint8_t *)&config) ==
+		      SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT && state.history == 0x5a &&
+		      config.history_bits == 8 && memcmp(output, saved, sizeof(output)) == 0,
+		      "overlapping unpacked regions partially committed");
+		union {
+			struct self_sync_scrambler state;
+			struct self_sync_scrambler_config config;
+		} overlapping;
+		memset(&overlapping, 0, sizeof(overlapping));
+		overlapping.config = test_configs[2];
+		struct self_sync_scrambler_config before = overlapping.config;
+		CHECK(transform(&overlapping.state, &overlapping.config, input, 1, output) ==
+		      SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT &&
+		      memcmp(&overlapping.config, &before, sizeof(before)) == 0,
+		      "unpacked operation overwrote overlapping state/config");
+		state.history = 0x100;
+		CHECK(transform(&state, &config, input, 1, output) ==
+		      SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT && state.history == 0x100 &&
+		      memcmp(output, saved, sizeof(output)) == 0,
+		      "unpacked input accepted an invalid history");
+	}
+	return true;
+}
+
 static bool test_validation(void)
 {
 	static const struct self_sync_scrambler_config invalid[] = {
@@ -237,6 +364,8 @@ int main(void)
 		{ "descrambler resynchronization",
 		  test_descrambler_resynchronization },
 		{ "validation", test_validation },
+		{ "unpacked streams", test_unpacked_streams },
+		{ "unpacked rejection", test_unpacked_rejection },
 	};
 	unsigned int failures = 0;
 
