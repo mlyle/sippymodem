@@ -23,7 +23,7 @@ static uint64_t hash_state(const struct v34_gain_control *control)
 {
 	uint64_t hash = UINT64_C(1469598103934665603);
 
-	hash = hash_word(hash, control->energy_count);
+	hash = hash_word(hash, control->history_index % V34_GAIN_UPDATE_SAMPLES);
 	hash = hash_word(
 		hash, (uint16_t)(control->energy_accumulator & 0xffffu));
 	hash = hash_word(
@@ -73,7 +73,7 @@ static bool test_exact_profile(void)
 			CHECK(frozen_average == UINT16_C(0x0d77) &&
 				      frozen_gain == 1205 &&
 				      frozen_correction == 0 &&
-				      control.energy_count == 1 &&
+				      (control.history_index % V34_GAIN_UPDATE_SAMPLES) == 1 &&
 				      control.energy_accumulator ==
 					      UINT32_C(0x009c0e04) &&
 				      control.history_index == 33 &&
@@ -85,7 +85,7 @@ static bool test_exact_profile(void)
 			CHECK(control.average_energy == frozen_average &&
 				      control.gain == frozen_gain &&
 				      control.correction == frozen_correction &&
-				      control.energy_count == 3 &&
+				      (control.history_index % V34_GAIN_UPDATE_SAMPLES) == 3 &&
 				      control.energy_accumulator ==
 					      UINT32_C(0x8258f050) &&
 				      control.history_index == 15 &&
@@ -104,7 +104,7 @@ static bool test_exact_profile(void)
 	CHECK(random == UINT32_C(0xf0cde793) &&
 		      output_hash == UINT64_C(0x86f1b50893004f3a) &&
 		      hash_state(&control) == UINT64_C(0x730681e710c816ab) &&
-		      control.energy_count == 0 &&
+		      (control.history_index % V34_GAIN_UPDATE_SAMPLES) == 0 &&
 		      control.energy_accumulator == 0 &&
 		      control.average_energy == UINT16_C(0x12fe) &&
 		      control.gain == 743 && control.correction == -254 &&
@@ -156,14 +156,12 @@ static bool test_gain_bounds(void)
 			for (size_t index = 0; index < V34_GAIN_HISTORY_SAMPLES; ++index)
 				control.history[index] = 1000;
 			control.history_index = V34_GAIN_HISTORY_SAMPLES - 1u;
-			control.energy_count = V34_GAIN_UPDATE_SAMPLES - 1u;
 			control.gain = (int16_t)gain;
 			control.correction = decrease ? 2000 : -2000;
 			control.mode = frozen ? V34_GAIN_FROZEN : V34_GAIN_TRACKING;
 			expected = control;
 			expected.history[V34_GAIN_HISTORY_SAMPLES - 1u] = 0;
 			expected.history_index = 0;
-			expected.energy_count = 0;
 			if (!frozen) {
 				expected.correction = 0;
 				if (decrease || gain <= 0x6a00)
@@ -232,7 +230,7 @@ static bool test_ownership(void)
 		      memcmp(&output, &saved_output, sizeof(output)) == 0,
 	      "V.34 gain rejection was not transactional");
 
-	for (unsigned int field = 0; field < 5u; ++field) {
+	for (unsigned int field = 0; field < 4u; ++field) {
 		struct v34_gain_control invalid = saved;
 		struct v34_gain_control snapshot;
 		int16_t scalar = 137;
@@ -240,9 +238,8 @@ static bool test_ownership(void)
 		switch (field) {
 		case 0: invalid.initialized = false; break;
 		case 1: invalid.history_index = V34_GAIN_HISTORY_SAMPLES; break;
-		case 2: invalid.energy_count = V34_GAIN_UPDATE_SAMPLES; break;
-		case 3: invalid.gain = -1; break;
-		case 4: invalid.mode = (enum v34_gain_mode)2; break;
+		case 2: invalid.gain = -1; break;
+		case 3: invalid.mode = (enum v34_gain_mode)2; break;
 		}
 		snapshot = invalid;
 		CHECK(v34_gain_control_process(&invalid,
@@ -348,7 +345,7 @@ static bool test_measured_refresh(void)
 		      index, level, cases[index].level);
 		/* Refresh only the gain, including while a correction is partly
 		 * accumulated. The running correction owner keeps its lineage. */
-		control.energy_count = 2;
+		control.history_index = 2;
 		control.energy_accumulator = 329981;
 		control.average_energy = 1200;
 		control.correction = -173;
@@ -405,7 +402,7 @@ static bool test_refresh_continuation(void)
 			      v34_gain_control_set_mode(&control, V34_GAIN_FROZEN) ==
 				      V34_GAIN_CONTROL_OK,
 			      "continuation owner did not initialize");
-			for (unsigned int count = 0; count < V34_GAIN_HISTORY_SAMPLES;
+			for (unsigned int count = 0; count < (unsigned)V34_GAIN_HISTORY_SAMPLES + consumed;
 			     ++count)
 				CHECK(v34_gain_control_process(&control, input, &output) ==
 					      V34_GAIN_CONTROL_OK,
@@ -413,7 +410,6 @@ static bool test_refresh_continuation(void)
 			control.mode = mode == 0u ? V34_GAIN_FROZEN : V34_GAIN_TRACKING;
 			control.average_energy = 1200;
 			control.correction = -173;
-			control.energy_count = consumed;
 			/* The first samples were actually emitted with the old gain;
 			 * preserve their 159^2 energy, not a rescaled fiction. */
 			control.energy_accumulator = consumed * UINT32_C(159) * 159u;
@@ -427,7 +423,7 @@ static bool test_refresh_continuation(void)
 				      "continuation output changed before correction");
 				if (count + 1u < remaining)
 					CHECK(control.gain == 9584 &&
-					      control.energy_count == consumed + count + 1u &&
+					      (control.history_index % V34_GAIN_UPDATE_SAMPLES) == consumed + count + 1u &&
 					      control.energy_accumulator ==
 						consumed * UINT32_C(159) * 159u +
 						(count + 1u) * UINT32_C(3248) * 3248u &&
@@ -435,9 +431,9 @@ static bool test_refresh_continuation(void)
 					      control.correction == -173,
 					      "partial mixed-gain energy was reset or rescaled");
 			}
-			CHECK(control.energy_count == 0u &&
+			CHECK((control.history_index % V34_GAIN_UPDATE_SAMPLES) == 0u &&
 			      control.energy_accumulator == 0u &&
-			      control.history_index == remaining &&
+			      control.history_index == V34_GAIN_UPDATE_SAMPLES &&
 			      control.average_energy == (mode == 0u ?
 				      1200 : expected_energy[consumed - 1u]) &&
 			      control.gain == (mode == 0u ? 9584 : 10753) &&
@@ -459,7 +455,7 @@ static bool test_info_profile(void)
 		CHECK(v34_gain_control_process_info(&control, 4096, &output) ==
 			      V34_GAIN_CONTROL_OK && output == 4096 &&
 			      control.history_index == index + 1u &&
-			      control.energy_count == (index + 1u) % 4u,
+			      (control.history_index % V34_GAIN_UPDATE_SAMPLES) == (index + 1u) % 4u,
 		      "INFO gain changed the four-sample correction boundary");
 		if (index == 3)
 			CHECK(control.average_energy == 1024 &&
@@ -478,7 +474,7 @@ static bool test_info_profile(void)
 			      control.gain == 1148 && control.average_energy == 1894 &&
 			      control.correction == 0 &&
 			      control.history_index == index + 9u &&
-			      control.energy_count == (index + 1u) % 4u,
+			      (control.history_index % V34_GAIN_UPDATE_SAMPLES) == (index + 1u) % 4u,
 		      "frozen INFO gain changed learned state or stopped history");
 	CHECK(v34_gain_control_init(&control, 0x0600) ==
 		      V34_GAIN_CONTROL_OK &&
@@ -529,12 +525,62 @@ static bool test_info_ownership(void)
 			      &control.history[35]) == V34_GAIN_CONTROL_INVALID_ARGUMENT &&
 		      memcmp(&control, &snapshot, sizeof(control)) == 0,
 	      "INFO gain accepted an absent or aliased output");
-	control.energy_count = V34_GAIN_UPDATE_SAMPLES;
+	control.history_index = V34_GAIN_HISTORY_SAMPLES;
 	snapshot = control;
 	CHECK(v34_gain_control_process_info(&control, 2048, &output) ==
 		      V34_GAIN_CONTROL_INVALID_STATE &&
 		      memcmp(&control, &snapshot, sizeof(control)) == 0 && output == 137,
 	      "invalid INFO gain mutated state or output");
+	return true;
+}
+
+static bool test_mixed_cadence(void)
+{
+	struct v34_gain_control control;
+	uint32_t random = UINT32_C(0x673e912b);
+	uint64_t outputs = UINT64_C(1469598103934665603);
+	uint64_t states = outputs;
+
+	CHECK(v34_gain_control_init(&control, 1024) == V34_GAIN_CONTROL_OK,
+	      "mixed gain owner did not initialize");
+	/* Switch scalar/analytic processing inside correction windows and freeze
+	 * or refresh at different phases. Cross every history wrap repeatedly. */
+	for (unsigned i = 0; i < 12960; ++i) {
+		struct v34_analytic_sample input, output = { 0 };
+
+		random = random * UINT32_C(1664525) + UINT32_C(1013904223);
+		input.in_phase = (int16_t)(random >> 16);
+		random = random * UINT32_C(1664525) + UINT32_C(1013904223);
+		input.quadrature = (int16_t)(random >> 16);
+		if ((i / 100u) % 3u == 0) {
+			input.in_phase /= 64;
+			input.quadrature /= 64;
+		}
+		if (i % 101u == 3u || i % 101u == 37u)
+			CHECK(v34_gain_control_set_mode(&control,
+				      i % 101u == 3u ? V34_GAIN_FROZEN : V34_GAIN_TRACKING) ==
+				      V34_GAIN_CONTROL_OK, "mixed gain mode change failed");
+		if (i % 127u == 35u)
+			CHECK(v34_gain_control_refresh_level(&control) == V34_GAIN_CONTROL_OK,
+			      "mixed gain refresh failed");
+		if ((i / 5u) % 2u)
+			CHECK(v34_gain_control_process_info(&control, input.in_phase,
+				      &output.in_phase) == V34_GAIN_CONTROL_OK,
+			      "mixed scalar sample failed");
+		else
+			CHECK(v34_gain_control_process(&control, input, &output) ==
+				      V34_GAIN_CONTROL_OK, "mixed analytic sample failed");
+		CHECK(control.history_index == (i + 1u) % V34_GAIN_HISTORY_SAMPLES,
+		      "mixed gain history clock diverged at %u", i);
+		outputs = hash_word(outputs, (uint16_t)output.in_phase);
+		outputs = hash_word(outputs, (uint16_t)output.quadrature);
+		uint64_t state = hash_state(&control);
+		for (unsigned part = 0; part < 4; ++part)
+			states = hash_word(states, (uint16_t)(state >> (part * 16u)));
+	}
+	CHECK(outputs == UINT64_C(0xee66316062e735e9) &&
+	      states == UINT64_C(0x2b8b0a7b97f8f1ed),
+	      "mixed gain outputs or canonical state changed");
 	return true;
 }
 
@@ -552,6 +598,7 @@ int main(void)
 		{ "ownership", test_ownership },
 		{ "measured acquisition refresh", test_measured_refresh },
 		{ "refresh correction continuation", test_refresh_continuation },
+		{ "mixed sample cadence", test_mixed_cadence },
 	};
 	unsigned int failures = 0;
 

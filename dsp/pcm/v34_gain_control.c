@@ -51,7 +51,6 @@ bool v34_gain_control_is_valid(const struct v34_gain_control *control)
 {
 	return control != NULL && control->initialized &&
 	       control->history_index < V34_GAIN_HISTORY_SAMPLES &&
-	       control->energy_count < V34_GAIN_UPDATE_SAMPLES &&
 	       control->gain >= 0 &&
 	       (control->mode == V34_GAIN_TRACKING ||
 		control->mode == V34_GAIN_FROZEN);
@@ -136,7 +135,6 @@ static enum v34_gain_control_result process(
 	uint32_t rounding, int16_t correction_gain)
 {
 	struct v34_analytic_sample generated;
-	uint16_t next_count;
 	uint32_t next_energy;
 
 	if (!v34_gain_control_is_valid(control))
@@ -152,12 +150,10 @@ static enum v34_gain_control_result process(
 		.in_phase = agc_scale_q10(control->gain, input.in_phase, rounding, NULL),
 		.quadrature = agc_scale_q10(control->gain, input.quadrature, rounding, NULL),
 	};
-	next_count = (uint16_t)(control->energy_count + 1u);
 	next_energy = (uint32_t)((int32_t)generated.in_phase *
 				 (int32_t)generated.in_phase) +
 		      control->energy_accumulator;
-	if (next_count < V34_GAIN_UPDATE_SAMPLES) {
-		control->energy_count = next_count;
+	if (control->history_index % V34_GAIN_UPDATE_SAMPLES != 0) {
 		control->energy_accumulator = next_energy;
 	} else {
 		if (control->mode == V34_GAIN_TRACKING) {
@@ -174,7 +170,6 @@ static enum v34_gain_control_result process(
 				correct_gain(control, correction_gain);
 			}
 		}
-		control->energy_count = 0;
 		control->energy_accumulator = 0;
 	}
 	*output = generated;

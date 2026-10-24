@@ -14,6 +14,9 @@ enum {
 	V34_GAIN_FRACTION_BITS = 10,
 };
 
+_Static_assert(V34_GAIN_HISTORY_SAMPLES % V34_GAIN_UPDATE_SAMPLES == 0,
+	       "gain history must contain whole correction windows");
+
 enum v34_gain_control_result {
 	V34_GAIN_CONTROL_OK,
 	V34_GAIN_CONTROL_INVALID_ARGUMENT,
@@ -29,8 +32,8 @@ enum v34_gain_mode {
 struct v34_gain_control {
 	int16_t history[V34_GAIN_HISTORY_SAMPLES];
 	uint32_t energy_accumulator;
+	/* One sample clock owns history insertion and correction cadence. */
 	uint16_t history_index;
-	uint16_t energy_count;
 	uint16_t average_energy;
 	int16_t gain; /* Nonnegative Q5.10 sample multiplier. */
 	int16_t correction;
