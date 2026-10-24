@@ -39,9 +39,9 @@ union v92_pcm_phase3_ja_line_rx_sequence {
 struct v92_pcm_phase3_ja_line_rx {
 	struct binary_equalizer line;
 	union v92_pcm_phase3_ja_line_rx_sequence sequence;
+	/* Fixed handoff origin; elapsed input is input_samples minus this. */
 	uint64_t starting_input_samples;
 	uint64_t input_samples;
-	uint64_t processed_samples;
 	enum v92_pcm_phase3_ja_line_rx_stage stage;
 	uint8_t input_advance_symbols;
 	bool failed;

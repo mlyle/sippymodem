@@ -54,6 +54,7 @@ static bool check_line(
 	struct v92_pcm_phase3_initial_rx receiver;
 	struct v90_pcm_symbol md_symbol;
 	struct v92_pcm_dil_parameters decoded = { 0 };
+	uint64_t ja_samples = 0u;
 	unsigned int alignment_events = 0u;
 	unsigned int training_events = 0u;
 	unsigned int synchronization_events = 0u;
@@ -80,7 +81,14 @@ static bool check_line(
 		CHECK(channel_bench_process(&channel, &sample, 1u) ==
 			      CHANNEL_BENCH_OK,
 		      "initial receive channel failed at %zu", index);
+		bool ja_input = receiver.stage == V92_PCM_PHASE3_INITIAL_RX_JA;
 		result = v92_pcm_phase3_initial_rx_sample(&receiver, sample);
+		if (ja_input) {
+			++ja_samples;
+			CHECK(receiver.sequence.ja.input_samples -
+				      receiver.sequence.ja.starting_input_samples == ja_samples,
+			      "initial receiver Ja input clock did not advance once");
+		}
 		CHECK(result == V92_PCM_PHASE3_INITIAL_RX_OK ||
 		      result == V92_PCM_PHASE3_INITIAL_RX_ALIGNED ||
 		      result == V92_PCM_PHASE3_INITIAL_RX_TRAINED ||
@@ -103,11 +111,11 @@ static bool check_line(
 	      decoded.upstream_rate_mask == rate_mask &&
 	      decoded.downstream.segment_count == 0u &&
 	      transmitter.stage == V92_PCM_PHASE3_INITIAL_TX_JA &&
-	      receiver.sequence.ja.processed_samples ==
+	      ja_samples ==
 		      V92_PCM_PHASE3_JA_MIN_SYMBOLS &&
 	      receiver.sequence.ja.line.polarity == expected_polarity &&
 	      transmitter.sequence.ja.emitted_symbols ==
-		      receiver.sequence.ja.processed_samples +
+		      ja_samples +
 			      receiver.sequence.ja.input_advance_symbols +
 			      channel_delay,
 	      "initial receive differed: detected=%u events=%u/%u/%u "
@@ -116,7 +124,7 @@ static bool check_line(
 	      detected, alignment_events, training_events,
 	      synchronization_events, (unsigned int)decoded.upstream_rate_mask,
 	      (unsigned int)rate_mask,
-	      (unsigned long long)receiver.sequence.ja.processed_samples,
+	      (unsigned long long)ja_samples,
 	      V92_PCM_PHASE3_JA_MIN_SYMBOLS,
 	      receiver.sequence.ja.line.polarity, expected_polarity,
 	      (unsigned long long)transmitter.sequence.ja.emitted_symbols,

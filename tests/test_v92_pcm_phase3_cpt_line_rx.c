@@ -154,7 +154,7 @@ static bool check_channel(enum g711_law law, bool impaired,
 	struct v92_pcm_phase3_cpt_line_rx receiver;
 	struct pcm_binary_sign tail;
 	size_t frame_bits = v92_cpt_frame_bits(&parameters);
-	uint64_t tail_symbols = 0u;
+	uint64_t tail_symbols = 0u, processed_samples = 0u;
 	bool receiver_started = false;
 	bool tail_started = false;
 	bool parameters_seen = false;
@@ -271,6 +271,10 @@ static bool check_channel(enum g711_law law, bool impaired,
 			      result == V92_PCM_PHASE3_CPT_LINE_RX_EVENT,
 			      "CPt line receiver returned %s at %zu",
 			      v92_pcm_phase3_cpt_line_rx_result_name(result), index);
+			++processed_samples;
+			CHECK(receiver.input_samples == receiver.starting_input_samples +
+				      processed_samples,
+			      "CPt line input clock did not advance once");
 			if (result == V92_PCM_PHASE3_CPT_LINE_RX_SIGN)
 				continue;
 			if (event.type == V92_PCM_PHASE3_CPT_RX_PARAMETERS) {
@@ -307,7 +311,7 @@ static bool check_channel(enum g711_law law, bool impaired,
 	      v92_pcm_phase3_cpt_line_rx_is_complete(&receiver) &&
 	      !v92_pcm_phase3_cpt_line_rx_has_failed(&receiver) &&
 	      v92_pcm_phase3_cpt_tx_is_complete(&transmitter) &&
-	      receiver.processed_samples ==
+	      processed_samples ==
 		      extra_training + V92_PCM_PHASE3_CPT_PREAMBLE_SYMBOLS +
 		      (2u + damaged_descriptors) * frame_bits +
 			      V92_CPT_SYMBOLS_PER_FRAME &&
@@ -324,7 +328,7 @@ static bool check_channel(enum g711_law law, bool impaired,
 	      v92_pcm_phase3_cpt_line_rx_is_complete(&receiver),
 	      v92_pcm_phase3_cpt_line_rx_has_failed(&receiver),
 	      v92_pcm_phase3_cpt_tx_is_complete(&transmitter),
-	      (unsigned long long)receiver.processed_samples,
+	      (unsigned long long)processed_samples,
 	      extra_training + V92_PCM_PHASE3_CPT_PREAMBLE_SYMBOLS +
 		      (2u + damaged_descriptors) * frame_bits +
 		      V92_CPT_SYMBOLS_PER_FRAME,
@@ -502,9 +506,24 @@ static bool test_contracts(void)
 	      receiver_states_equal(&receiver, &before) &&
 	      memcmp(&event, &before_event, sizeof(event)) == 0,
 	      "rejected CPt line sample changed state");
-	receiver.input_samples = UINT64_MAX;
-	receiver.processed_samples =
-		UINT64_MAX - receiver.starting_input_samples;
+	CHECK(receiver.starting_input_samples != 0u,
+	      "CPT line fixture needs a nonzero handoff clock");
+	uint64_t origin = receiver.starting_input_samples;
+	receiver.starting_input_samples = receiver.input_samples + 1u;
+	before = receiver;
+	CHECK(!v92_pcm_phase3_cpt_line_rx_is_valid(&receiver) &&
+	      v92_pcm_phase3_cpt_line_rx_sample(&receiver, 0, &event) ==
+		      V92_PCM_PHASE3_CPT_LINE_RX_INVALID_ARGUMENT &&
+	      receiver_states_equal(&receiver, &before),
+	      "CPT line accepted an input clock before its handoff");
+	receiver.starting_input_samples = origin;
+	receiver.input_samples = UINT64_MAX - 1u;
+	CHECK(v92_pcm_phase3_cpt_line_rx_sample(&receiver, 0, &event) ==
+		      V92_PCM_PHASE3_CPT_LINE_RX_SIGN &&
+	      receiver.input_samples == UINT64_MAX &&
+	      receiver.starting_input_samples == origin,
+	      "CPT line rejected the last representable input sample");
+
 	before = receiver;
 	CHECK(v92_pcm_phase3_cpt_line_rx_is_valid(&receiver) &&
 	      v92_pcm_phase3_cpt_line_rx_sample(&receiver, 0, &event) ==

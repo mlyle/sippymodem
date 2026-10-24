@@ -60,7 +60,7 @@ static bool check_line(
 	struct v92_pcm_phase3_ja_tx ja;
 	struct v92_pcm_phase3_trn1u_line_rx training;
 	struct v92_pcm_phase3_ja_line_rx receiver;
-	uint64_t ja_symbols = 0u;
+	uint64_t ja_symbols = 0u, processed_samples = 0u;
 	struct v92_pcm_dil_parameters decoded = { 0 };
 	unsigned int synchronization_events = 0u;
 	bool ja_started = false;
@@ -130,6 +130,10 @@ static bool check_line(
 			      result == V92_PCM_PHASE3_JA_LINE_RX_DETECTED,
 			      "Ja line receiver returned %s at %zu",
 			      v92_pcm_phase3_ja_line_rx_result_name(result), index);
+			++processed_samples;
+			CHECK(receiver.input_samples == receiver.starting_input_samples +
+				      processed_samples,
+			      "Ja line input clock did not advance once");
 			synchronization_events +=
 				result == V92_PCM_PHASE3_JA_LINE_RX_SYNCHRONIZED;
 			detected = result == V92_PCM_PHASE3_JA_LINE_RX_DETECTED;
@@ -141,18 +145,18 @@ static bool check_line(
 	      v92_pcm_phase3_ja_line_rx_parameters(&receiver, &decoded) &&
 	      decoded.upstream_rate_mask == rate_mask &&
 	      decoded.downstream.segment_count == 0u &&
-	      receiver.processed_samples == V92_PCM_PHASE3_JA_MIN_SYMBOLS +
+	      processed_samples == V92_PCM_PHASE3_JA_MIN_SYMBOLS +
 		      damaged_descriptors * V92_PCM_DIL_ZERO_DESCRIPTOR_BITS &&
 	      receiver.input_advance_symbols ==
 		      V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY &&
 	      receiver.line.polarity == expected_polarity &&
-	      ja_symbols == receiver.processed_samples +
+	      ja_symbols == processed_samples +
 			    receiver.input_advance_symbols + channel_delay,
 	      "Ja line differed: started=%u detected=%u sync=%u mask=%05x/%05x "
 	      "processed=%llu/%u polarity=%d/%d source=%llu delay=%u",
 	      receiver_started, detected, synchronization_events,
 	      (unsigned int)decoded.upstream_rate_mask, (unsigned int)rate_mask,
-	      (unsigned long long)receiver.processed_samples,
+	      (unsigned long long)processed_samples,
 	      V92_PCM_PHASE3_JA_MIN_SYMBOLS +
 		damaged_descriptors * V92_PCM_DIL_ZERO_DESCRIPTOR_BITS,
 	      receiver.line.polarity,
@@ -317,9 +321,24 @@ static bool test_contracts(void)
 		      V92_PCM_PHASE3_JA_LINE_RX_INVALID_ARGUMENT &&
 	      receiver_states_equal(&receiver, &before),
 	      "invalid Ja line call changed state");
-	receiver.starting_input_samples = 0u;
-	receiver.input_samples = UINT64_MAX;
-	receiver.processed_samples = UINT64_MAX;
+	CHECK(receiver.starting_input_samples != 0u,
+	      "JA line fixture needs a nonzero handoff clock");
+	uint64_t origin = receiver.starting_input_samples;
+	receiver.starting_input_samples = receiver.input_samples + 1u;
+	before = receiver;
+	CHECK(!v92_pcm_phase3_ja_line_rx_is_valid(&receiver) &&
+	      v92_pcm_phase3_ja_line_rx_sample(&receiver, 0) ==
+		      V92_PCM_PHASE3_JA_LINE_RX_INVALID_ARGUMENT &&
+	      receiver_states_equal(&receiver, &before),
+	      "JA line accepted an input clock before its handoff");
+	receiver.starting_input_samples = origin;
+	receiver.input_samples = UINT64_MAX - 1u;
+	CHECK(v92_pcm_phase3_ja_line_rx_sample(&receiver, 0) ==
+		      V92_PCM_PHASE3_JA_LINE_RX_OK &&
+	      receiver.input_samples == UINT64_MAX &&
+	      receiver.starting_input_samples == origin,
+	      "JA line rejected the last representable input sample");
+
 	before = receiver;
 	CHECK(v92_pcm_phase3_ja_line_rx_is_valid(&receiver) &&
 	      v92_pcm_phase3_ja_line_rx_sample(&receiver, 0) ==

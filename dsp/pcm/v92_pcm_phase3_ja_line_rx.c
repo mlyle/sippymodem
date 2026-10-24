@@ -17,8 +17,6 @@ bool v92_pcm_phase3_ja_line_rx_is_valid(
 	if (receiver == NULL || !stage_is_valid(receiver->stage) ||
 	    !v92_pcm_phase3_line_geometry_is_valid(&receiver->line) ||
 	    receiver->starting_input_samples > receiver->input_samples ||
-	    receiver->input_samples - receiver->starting_input_samples !=
-		    receiver->processed_samples ||
 	    receiver->input_advance_symbols !=
 		    receiver->line.equalizer.decision_delay ||
 	    receiver->input_advance_symbols !=
@@ -143,12 +141,10 @@ enum v92_pcm_phase3_ja_line_rx_result v92_pcm_phase3_ja_line_rx_sample(
 		return V92_PCM_PHASE3_JA_LINE_RX_FAILED;
 	if (receiver->stage == V92_PCM_PHASE3_JA_LINE_RX_COMPLETE)
 		return V92_PCM_PHASE3_JA_LINE_RX_DONE;
-	if (receiver->input_samples == UINT64_MAX ||
-	    receiver->processed_samples == UINT64_MAX)
+	if (receiver->input_samples == UINT64_MAX)
 		return V92_PCM_PHASE3_JA_LINE_RX_INVALID_STATE;
 	next = *receiver;
 	next.input_samples++;
-	next.processed_samples++;
 	if (binary_equalizer_receive(&next.line, sample, &sign) !=
 	    BINARY_EQUALIZER_OK)
 		return fail_sample(receiver, &next);

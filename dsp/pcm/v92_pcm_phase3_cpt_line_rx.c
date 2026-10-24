@@ -33,8 +33,6 @@ bool v92_pcm_phase3_cpt_line_rx_is_valid(
 	       v92_pcm_phase3_cpt_rx_is_valid(&receiver->signs) &&
 	       receiver->signs.stage != V92_PCM_PHASE3_CPT_RX_TRAINING &&
 	       receiver->starting_input_samples <= receiver->input_samples &&
-	       receiver->input_samples - receiver->starting_input_samples ==
-		       receiver->processed_samples &&
 	       receiver->input_advance_symbols ==
 		       receiver->line.equalizer.decision_delay;
 }
@@ -134,12 +132,10 @@ v92_pcm_phase3_cpt_line_rx_sample(
 		return V92_PCM_PHASE3_CPT_LINE_RX_FAILED;
 	if (v92_pcm_phase3_cpt_rx_is_complete(&receiver->signs))
 		return V92_PCM_PHASE3_CPT_LINE_RX_DONE;
-	if (receiver->input_samples == UINT64_MAX ||
-	    receiver->processed_samples == UINT64_MAX)
+	if (receiver->input_samples == UINT64_MAX)
 		return V92_PCM_PHASE3_CPT_LINE_RX_INVALID_STATE;
 	next = *receiver;
 	next.input_samples++;
-	next.processed_samples++;
 	int32_t centered = (int32_t)sample - next.dc_offset;
 	bool primary_ok = receive_sign(&next.line, &next.signs,
 		next.alternate_active ? sample : centered, &emitted);

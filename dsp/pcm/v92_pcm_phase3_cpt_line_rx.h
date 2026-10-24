@@ -35,9 +35,9 @@ struct v92_pcm_phase3_cpt_line_rx {
 	/* A training-derived DC interpretation competes only until the first
 	 * CRC-valid CPt record. Raw wins ties; the selected state owns E1u. */
 	struct v92_cpt_line_candidate alternate;
+	/* Fixed handoff origin; elapsed input is input_samples minus this. */
 	uint64_t starting_input_samples;
 	uint64_t input_samples;
-	uint64_t processed_samples;
 	uint8_t input_advance_symbols;
 	int16_t dc_offset;
 	bool alternate_active;
