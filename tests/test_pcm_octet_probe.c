@@ -29,8 +29,46 @@ static uint8_t impairment(unsigned kind, enum g711_law law, unsigned interval,
 		(octet & ~1u) | (epoch & 1u) : octet;
 	case 8: return (g711_encode(law, g711_decode(law, octet) / 2) & ~1u) |
 		(epoch & 1u);
+	case 9:
+	case 10:
+		if (interval == 3) {
+			/* Four stationary signaling positions, with a pad between
+			 * the input and output robbed-bit operations. */
+			if (epoch % 4 != 0)
+				octet = (octet & ~1u) | (epoch % 4 == 2);
+			octet = g711_encode(law, g711_decode(law, octet) / 2);
+			if (kind == 10 && epoch % 4 != 2)
+				octet = (octet & ~1u) | (epoch % 4 != 1);
+			return octet;
+		}
+		return g711_encode(law, g711_decode(law, octet) / 2);
 	default: return octet;
 	}
+}
+
+static bool test_training_coverage(enum g711_law law)
+{
+	struct v90_dil_parameters dil;
+	struct v90_dil_sequence sequence;
+	uint8_t occurrences[24][256] = { 0 };
+	uint32_t length;
+
+	CHECK(v91_profile_dil(&dil) &&
+	      v90_dil_training_symbol_count(&dil, &length) && length == 6144 &&
+	      v90_dil_sequence_init(&sequence, &dil, law) == V90_DIL_SEQUENCE_OK,
+	      "coverage DIL initialization failed");
+	for (unsigned n = 0; n < length; ++n) {
+		struct v90_pcm_symbol symbol;
+		CHECK(v90_dil_sequence_next(&sequence, &symbol) == V90_DIL_SEQUENCE_OK,
+		      "coverage DIL generation failed");
+		CHECK(occurrences[n % 24][symbol.octet]++ == 0,
+		      "DIL repeats an octet before covering the 24-position cycle");
+	}
+	for (unsigned position = 0; position < 24; ++position)
+		for (unsigned octet = 0; octet < 256; ++octet)
+			CHECK(occurrences[position][octet] == 1,
+			      "DIL misses law=%u position=%u octet=%u", law, position, octet);
+	return true;
 }
 
 static bool test_channel(unsigned kind, enum g711_law law)
@@ -70,6 +108,24 @@ static bool test_channel(unsigned kind, enum g711_law law)
 	if (kind == 0 || kind == 5) CHECK(bits == 48, "clear channel lost capacity");
 	if (kind == 1) CHECK(bits == 42, "robbed-bit channel did not yield 56k");
 	if (kind == 2) CHECK(bits == 47, "periodic robbed bits did not yield 62.667k");
+	/* Check every retained code, both signs, at every signaling position.
+	 * Random payloads alone need not exercise the rare output of a pad
+	 * combined with input and output robbed bits. */
+	for (unsigned interval = 0; interval < 6; ++interval)
+		for (unsigned code = 0; code < 128; ++code) {
+			if (!pcm_constellation_contains(&mapping.transmit[interval], code))
+				continue;
+			for (unsigned sign = 0; sign < 2; ++sign)
+				for (unsigned epoch = 0; epoch < 4; ++epoch) {
+					uint8_t sent, normalized;
+					CHECK(g711_ucode_octet(law, code, sign != 0, &sent) &&
+					      pcm_octet_channel_normalize(&channel, interval,
+						impairment(kind, law, interval, epoch, sent), &normalized) &&
+					      normalized == sent,
+					      "uncovered output kind=%u law=%u interval=%u code=%u sign=%u epoch=%u",
+					      kind, law, interval, code, sign, epoch);
+				}
+		}
 	CHECK(v90_pcm_frame_encoder_init(&tx, &mapping) == V90_PCM_FRAME_ENCODER_OK &&
 	      v90_pcm_frame_decoder_init(&rx, &mapping, V90_PCM_MAPPING_TRANSMIT) ==
 	      V90_PCM_FRAME_DECODER_OK, "coder initialization failed");
@@ -177,9 +233,12 @@ int main(void)
 {
 	if (!test_contracts())
 		return 1;
-	for (unsigned law = 0; law < 2; ++law)
-		for (unsigned kind = 0; kind <= 8; ++kind)
+	for (unsigned law = 0; law < 2; ++law) {
+		if (!test_training_coverage(law))
+			return 1;
+		for (unsigned kind = 0; kind <= 10; ++kind)
 			if (!test_channel(kind, law))
 				return 1;
+	}
 	return 0;
 }
