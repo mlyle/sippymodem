@@ -462,7 +462,7 @@ static bool test_answerer_requires_fresh_conditioning(void)
 			const struct v32_echo_frontend *echo = rate_started ?
 				&rate.receive.echo : &reply.receive.echo;
 			const struct v32_echo_reference *reference =
-				echo->filter.inputs_needed == 1 && echo->echo.phase == 0 ?
+				echo->filter.inputs_needed == 1 && echo->echo.pending_samples == 0 ?
 				&silence : NULL;
 			int status;
 

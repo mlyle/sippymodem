@@ -80,8 +80,9 @@ static bool frontend_header_is_valid(
 	       filter->phase < V32_ECHO_FRONTEND_FILTER_PHASES &&
 	       filter->inputs_needed >= 1 && filter->inputs_needed <= 2 &&
 	       (filter->phase == 0 || filter->inputs_needed == 1) &&
-	       echo->phase == filter->phase % V32_ECHO_PHASE_COUNT &&
-	       echo->reference_pending == (echo->phase != 0);
+	       echo->pending_samples ==
+		       (V32_ECHO_PHASE_COUNT - filter->phase % V32_ECHO_PHASE_COUNT) %
+			       V32_ECHO_PHASE_COUNT;
 }
 
 bool v32_echo_frontend_is_valid(
@@ -180,7 +181,7 @@ static void restore_reference_push(
 	echo->reference[write] = *overwritten;
 	echo->reference_write = write;
 	echo->reference_fill = fill;
-	echo->reference_pending = false;
+	echo->pending_samples = 0;
 }
 
 enum v32_echo_result v32_echo_frontend_sample(
@@ -220,7 +221,7 @@ enum v32_echo_result v32_echo_frontend_sample(
 			     cleaned_ready, sizeof(*cleaned_ready)))))
 		return V32_ECHO_INVALID_ARGUMENT;
 	produces = frontend->filter.inputs_needed == 1;
-	expects_reference = produces && frontend->echo.phase == 0;
+	expects_reference = produces && frontend->echo.pending_samples == 0;
 	if ((accepted_reference != NULL) != expects_reference)
 		return V32_ECHO_INVALID_STATE;
 	if (accepted_reference != NULL &&

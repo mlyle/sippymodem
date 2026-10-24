@@ -438,7 +438,7 @@ static bool test_echo_adaptation_lifecycle(void)
 	      "receive path did not start its echo prefill");
 
 	while (path.echo.echo.reference_fill < 64u ||
-	       path.echo.echo.reference_pending) {
+	       path.echo.echo.pending_samples) {
 		enum v32_receive_path_result result =
 			V32_RECEIVE_PATH_INVALID_STATE;
 
@@ -477,7 +477,7 @@ static bool test_echo_adaptation_lifecycle(void)
 	      "receive path did not start echo adaptation after prefill");
 
 	while (path.echo.echo.reference_fill < 192u ||
-	       path.echo.echo.reference_pending) {
+	       path.echo.echo.pending_samples) {
 		enum v32_receive_path_result result =
 			V32_RECEIVE_PATH_INVALID_STATE;
 
@@ -546,7 +546,7 @@ static bool test_echo_adaptation_lifecycle(void)
 	      memcmp(&path.equalizer, &initial_equalizer,
 		     sizeof(path.equalizer)) == 0,
 	      "post-echo receive evidence did not resume from its boundary");
-	while (path.echo.echo.reference_pending) {
+	while (path.echo.echo.pending_samples) {
 		enum v32_receive_path_result result =
 			V32_RECEIVE_PATH_INVALID_STATE;
 

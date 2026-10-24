@@ -61,8 +61,8 @@ struct v32_echo_canceller {
 	uint16_t pending_far_delay_symbols;
 	bool far_suspended;
 	double adaptation;
-	uint8_t phase;
-	bool reference_pending;
+	/* Zero awaits a reference; a push grants three matched samples. */
+	uint8_t pending_samples;
 	bool adapting;
 };
 

@@ -70,7 +70,7 @@ enum v32_receive_path_result v32_receive_path_begin_echo_training(
 		return V32_RECEIVE_PATH_DECISION_PENDING;
 	if (path->echo_training || path->echo.echo.adapting)
 		return V32_RECEIVE_PATH_INVALID_STATE;
-	if (path->echo.echo.reference_pending)
+	if (path->echo.echo.pending_samples)
 		return V32_RECEIVE_PATH_INVALID_STATE;
 	path->echo_training = true;
 	return V32_RECEIVE_PATH_OK;

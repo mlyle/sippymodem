@@ -41,8 +41,7 @@ bool v32_echo_canceller_header_is_valid(
 		(!canceller->adapting && geometry_is_valid(
 			canceller->near_delay_symbols,
 			canceller->pending_far_delay_symbols))) &&
-	       canceller->phase < V32_ECHO_PHASE_COUNT &&
-	       (canceller->phase == 0 || canceller->reference_pending) &&
+	       canceller->pending_samples <= V32_ECHO_PHASE_COUNT &&
 	       qam_adaptation_is_valid(canceller->adaptation) &&
 	       (!canceller->adapting || canceller->adaptation > 0.0);
 }
@@ -96,7 +95,7 @@ enum v32_echo_result v32_echo_canceller_start_adaptation(
 		return V32_ECHO_INVALID_STATE;
 	if (!qam_adaptation_is_valid(adaptation) || adaptation == 0.0)
 		return V32_ECHO_INVALID_ARGUMENT;
-	if (canceller->reference_pending)
+	if (canceller->pending_samples)
 		return V32_ECHO_INVALID_STATE;
 	memset(&canceller->far_timing, 0, sizeof(canceller->far_timing));
 	canceller->pending_far_delay_symbols = 0;
@@ -111,7 +110,7 @@ enum v32_echo_result v32_echo_canceller_freeze(
 {
 	if (!v32_echo_canceller_is_valid(canceller))
 		return V32_ECHO_INVALID_STATE;
-	if (canceller->reference_pending)
+	if (canceller->pending_samples)
 		return V32_ECHO_INVALID_STATE;
 	canceller->adapting = false;
 	return V32_ECHO_OK;
@@ -130,7 +129,7 @@ enum v32_echo_result v32_echo_canceller_push_reference(
 		    reference, sizeof(*reference),
 		    canceller, sizeof(*canceller)))
 		return V32_ECHO_INVALID_ARGUMENT;
-	if (canceller->phase != 0 || canceller->reference_pending)
+	if (canceller->pending_samples)
 		return V32_ECHO_INVALID_STATE;
 	power = qam_point_power(reference);
 	if (!isfinite(power))
@@ -138,7 +137,7 @@ enum v32_echo_result v32_echo_canceller_push_reference(
 	canceller->reference[canceller->reference_write] = *reference;
 	ring_history_advance(&canceller->reference_write,
 		&canceller->reference_fill, V32_ECHO_REFERENCE_CAPACITY);
-	canceller->reference_pending = true;
+	canceller->pending_samples = V32_ECHO_PHASE_COUNT;
 	return V32_ECHO_OK;
 }
 
@@ -252,7 +251,8 @@ enum v32_echo_result v32_echo_canceller_process(
 	if (count == 0)
 		return V32_ECHO_OK;
 	if (received == NULL || cleaned == NULL ||
-	    count > (size_t)(V32_ECHO_PHASE_COUNT - canceller->phase))
+	    count > (size_t)(canceller->pending_samples ?
+			    canceller->pending_samples : V32_ECHO_PHASE_COUNT))
 		return V32_ECHO_INVALID_ARGUMENT;
 	bytes = count * sizeof(*received);
 	if (memory_regions_overlap(
@@ -262,12 +262,12 @@ enum v32_echo_result v32_echo_canceller_process(
 	    (received != cleaned &&
 	     memory_regions_overlap(received, bytes, cleaned, bytes)))
 		return V32_ECHO_INVALID_ARGUMENT;
-	if (!canceller->reference_pending)
+	if (!canceller->pending_samples)
 		return V32_ECHO_INVALID_STATE;
 	for (size_t index = 0; index < count; ++index) {
 		double energy;
 		double prediction;
-		size_t phase = canceller->phase + index;
+		size_t phase = V32_ECHO_PHASE_COUNT - canceller->pending_samples + index;
 
 		if (!isfinite(received[index]))
 			return V32_ECHO_INVALID_ARGUMENT;
@@ -288,8 +288,10 @@ enum v32_echo_result v32_echo_canceller_process(
 	/* Commit only after every requested phase passes preflight. Retain the
 	 * checked values rather than walking the reference and computing twice. */
 	for (size_t index = 0; index < count; ++index) {
+		size_t phase = V32_ECHO_PHASE_COUNT - canceller->pending_samples;
+
 		if (canceller->adapting)
-			memcpy(canceller->coefficients[canceller->phase], updated[index],
+			memcpy(canceller->coefficients[phase], updated[index],
 			       sizeof(updated[index]));
 		cleaned[index] = error[index];
 		if (!canceller->adapting && canceller->adaptation > 0.0) {
@@ -306,9 +308,7 @@ enum v32_echo_result v32_echo_canceller_process(
 				sample_round_s16(error[index]));
 			canceller->far_suspended = model.suspended;
 		}
-		if (++canceller->phase == V32_ECHO_PHASE_COUNT) {
-			canceller->phase = 0;
-			canceller->reference_pending = false;
+		if (--canceller->pending_samples == 0) {
 			if (canceller->pending_far_delay_symbols) {
 				canceller->round_trip_symbols =
 					canceller->pending_far_delay_symbols;

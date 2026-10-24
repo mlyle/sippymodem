@@ -343,7 +343,7 @@ static bool test_echo_header_rejection(void)
 			invalid.echo.reference_write = 1;
 			break;
 		case 6:
-			invalid.echo.phase = V32_ECHO_PHASE_COUNT;
+			invalid.echo.pending_samples = V32_ECHO_PHASE_COUNT + 1;
 			break;
 		case 7:
 			invalid.echo.adaptation = -0.1;
@@ -358,11 +358,11 @@ static bool test_echo_header_rejection(void)
 			invalid.echo.adapting = true;
 			break;
 		case 11:
-			invalid.echo.phase = 1;
+			invalid.echo.pending_samples = 0;
 			invalid.filter.phase = 7;
 			break;
 		case 12:
-			invalid.echo.reference_pending = true;
+			invalid.echo.pending_samples = V32_ECHO_PHASE_COUNT;
 			break;
 		}
 		saved = invalid;
@@ -393,9 +393,9 @@ static bool test_push_rollback(void)
 		      V32_ECHO_OK,
 	      "rollback fixture did not initialize");
 	while (frontend.echo.reference_fill < V32_ECHO_REFERENCE_CAPACITY ||
-	       frontend.filter.inputs_needed != 1 || frontend.echo.phase != 0) {
+	       frontend.filter.inputs_needed != 1 || frontend.echo.pending_samples != 0) {
 		bool expects = frontend.filter.inputs_needed == 1 &&
-			       frontend.echo.phase == 0;
+			       frontend.echo.pending_samples == 0;
 
 		point = fixture_point(frontend.echo.reference_fill + calls);
 		if (expects) {
