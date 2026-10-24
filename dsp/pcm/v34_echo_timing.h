@@ -6,6 +6,7 @@
 #include "v34_data_decision_receiver.h"
 #include "v34_line_receiver.h"
 #include "pcm_host_echo.h"
+#include "echo_shift.h"
 
 enum {
 	V34_ECHO_TIMING_RADIUS = ECHO_TIMING_RADIUS,
@@ -33,13 +34,6 @@ struct v34_echo_timing_observation {
 	float real, imaginary;
 };
 
-struct v34_echo_timing_window {
-	double score[2][V34_ECHO_TIMING_BINS];
-	unsigned points, position;
-	int previous_bin;
-	bool previous_qualified;
-};
-
 /* Owned beside the echo model, outside transactionally copied receive paths.
  * All input pointers are borrowed only for the duration of a call. */
 struct v34_echo_timing {
@@ -48,7 +42,7 @@ struct v34_echo_timing {
 	struct v34_echo_timing_point history[V34_ECHO_TIMING_HISTORY];
 	struct v34_echo_timing_observation observations[V34_ECHO_TIMING_OBSERVATIONS];
 	struct v34_echo_timing_bin bins[V34_ECHO_TIMING_BINS];
-	struct v34_echo_timing_window normal, fast;
+	struct echo_shift_window normal, fast;
 	double scale, symbol_rate, carrier_frequency;
 	uint64_t first_half, latest_half, drain_half, receiver_epoch;
 	unsigned lookahead;

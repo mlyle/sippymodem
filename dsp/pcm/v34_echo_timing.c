@@ -187,31 +187,12 @@ static double distance(double value)
 	return difference * difference;
 }
 
-static int finish_window(struct v34_echo_timing_window *window, double ratio)
-{
-	unsigned best = V34_ECHO_TIMING_RADIUS;
-	for (unsigned i = 0; i < V34_ECHO_TIMING_BINS; ++i)
-		if (window->score[0][i] < window->score[0][best])
-			best = i;
-	bool qualified = best != V34_ECHO_TIMING_RADIUS &&
-		window->score[0][best] <= ratio * window->score[0][V34_ECHO_TIMING_RADIUS] &&
-		window->score[1][best] <= ratio * window->score[1][V34_ECHO_TIMING_RADIUS];
-	int delta = qualified && window->previous_qualified &&
-		(int)best == window->previous_bin ? (int)best - V34_ECHO_TIMING_RADIUS : 0;
-
-	window->previous_qualified = qualified;
-	window->previous_bin = (int)best;
-	window->position = 0;
-	memset(window->score, 0, sizeof(window->score));
-	return delta;
-}
-
 static int observe_point(struct v34_echo_timing *timing,
 	const struct v34_echo_timing_point *point,
 	const struct v34_echo_timing_observation *observation)
 {
-	unsigned part = timing->normal.position >= timing->normal.points / 2u;
-	unsigned fast_part = timing->fast.position >= timing->fast.points / 2u;
+	unsigned part = echo_shift_part(&timing->normal);
+	unsigned fast_part = echo_shift_part(&timing->fast);
 	double x = observation->real + point->real * point->cosine -
 		point->imaginary * point->sine;
 	double y = observation->imaginary + point->real * point->sine +
@@ -240,10 +221,8 @@ static int observe_point(struct v34_echo_timing *timing,
 		timing->normal.score[part][i] += cost;
 		timing->fast.score[fast_part][i] += cost;
 	}
-	int normal = ++timing->normal.position == timing->normal.points ?
-		finish_window(&timing->normal, 0.95) : 0;
-	int fast = ++timing->fast.position == timing->fast.points ?
-		finish_window(&timing->fast, 0.75) : 0;
+	int normal = echo_shift_advance(&timing->normal, 0.95);
+	int fast = echo_shift_advance(&timing->fast, 0.75);
 	/* Prefer the longer evidence if both paths qualify on this sample. */
 	return normal != 0 ? normal : fast;
 }
