@@ -66,6 +66,10 @@ enum v32_data_path_result v32_data_path_init(
 	struct v32_data_path *path,
 	const struct v32_b1_path *b1,
 	struct v32_data_batch *batch);
+/* Bounds/control checks for an admitted streaming owner. The full
+ * is_valid predicate also audits stored echo samples and coefficients. */
+bool v32_data_path_header_is_valid(
+	const struct v32_data_path *path);
 bool v32_data_path_is_valid(
 	const struct v32_data_path *path);
 

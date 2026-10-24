@@ -45,6 +45,10 @@ struct v32_echo_frontend {
 enum v32_echo_result v32_echo_frontend_init(
 	struct v32_echo_frontend *frontend,
 	uint16_t near_delay_symbols, uint16_t round_trip_symbols);
+/* Bounds/control checks for an admitted streaming owner. The full
+ * is_valid predicate also audits stored echo samples and coefficients. */
+bool v32_echo_frontend_header_is_valid(
+	const struct v32_echo_frontend *frontend);
 bool v32_echo_frontend_is_valid(
 	const struct v32_echo_frontend *frontend);
 

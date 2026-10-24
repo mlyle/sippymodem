@@ -45,6 +45,10 @@ enum v32_conditioning_path_result v32_conditioning_path_init_from_receive(
 	struct v32_conditioning_path *path,
 	enum v32_transmitter_role source_role,
 	const struct v32_receive_path *receive);
+/* Bounds/control checks for an admitted streaming owner. The full
+ * is_valid predicate also audits stored echo samples and coefficients. */
+bool v32_conditioning_path_header_is_valid(
+	const struct v32_conditioning_path *path);
 bool v32_conditioning_path_is_valid(
 	const struct v32_conditioning_path *path);
 bool v32_conditioning_path_is_complete(

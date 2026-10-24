@@ -54,6 +54,10 @@ bool v32_echo_training_is_valid(
 	const struct v32_echo_training *training);
 bool v32_echo_training_is_complete(
 	const struct v32_echo_training *training);
+/* Bounded training/receive control checks; full audit remains separate. */
+bool v32_echo_training_path_header_is_valid(
+	const struct v32_echo_training *training,
+	const struct v32_receive_path *path);
 bool v32_echo_training_path_is_valid(
 	const struct v32_echo_training *training,
 	const struct v32_receive_path *path);

@@ -59,9 +59,10 @@ static bool adaptation_state_is_valid(const struct v32_end_path *path)
 	       path->receive.equalizer.decision_pending;
 }
 
-static bool path_header_is_valid(const struct v32_end_path *path)
+bool v32_end_path_header_is_valid(const struct v32_end_path *path)
 {
 	return path != NULL &&
+	       v32_receive_path_header_is_valid(&path->receive) &&
 	       v32_uncoded_receiver_is_valid(&path->four_point) &&
 	       v32_rate_signal_detector_is_valid(&path->detector) &&
 	       offer_is_valid(&path->initial_offer, V32_RATE_SIGNAL) &&
@@ -76,7 +77,7 @@ static bool path_header_is_valid(const struct v32_end_path *path)
 
 bool v32_end_path_is_valid(const struct v32_end_path *path)
 {
-	return path_header_is_valid(path) &&
+	return v32_end_path_header_is_valid(path) &&
 	       v32_receive_path_is_valid(&path->receive);
 }
 
@@ -139,7 +140,7 @@ static enum v32_end_path_result commit_observations(
 		path->observation_epoch = symbol.equalizer.observation.epoch;
 		if (event == V32_END_SIGNAL_DETECTED) {
 			path->end_received = true;
-			return path_header_is_valid(path) ?
+			return v32_end_path_header_is_valid(path) ?
 				       V32_END_PATH_COMPLETE :
 				       V32_END_PATH_INVALID_STATE;
 		}
@@ -148,7 +149,7 @@ static enum v32_end_path_result commit_observations(
 		return receive_result == V32_RECEIVE_PATH_INVALID_ARGUMENT ?
 			       V32_END_PATH_INVALID_ARGUMENT :
 			       V32_END_PATH_INVALID_STATE;
-	return path_header_is_valid(path) ? V32_END_PATH_OK :
+	return v32_end_path_header_is_valid(path) ? V32_END_PATH_OK :
 					 V32_END_PATH_INVALID_STATE;
 }
 
@@ -192,7 +193,7 @@ enum v32_end_path_result v32_end_path_init(
 		    &initialized.receive, adaptation) !=
 		    V32_RECEIVE_PATH_OK)
 		return V32_END_PATH_INVALID_STATE;
-	if (!path_header_is_valid(&initialized))
+	if (!v32_end_path_header_is_valid(&initialized))
 		return V32_END_PATH_INVALID_ARGUMENT;
 	if (rate->observation_ready) {
 		struct v32_equalizer_observation observation =
@@ -236,7 +237,7 @@ enum v32_end_path_result v32_end_path_set_adaptation(
 	if (result != V32_RECEIVE_PATH_OK)
 		return V32_END_PATH_INVALID_STATE;
 	path->target_adaptation = adaptation;
-	return path_header_is_valid(path) ? V32_END_PATH_OK :
+	return v32_end_path_header_is_valid(path) ? V32_END_PATH_OK :
 					 V32_END_PATH_INVALID_STATE;
 }
 
@@ -247,7 +248,7 @@ enum v32_end_path_result v32_end_path_sample(
 	struct v32_equalizer_observation observation;
 	enum v32_receive_path_result receive_result;
 
-	if (!path_header_is_valid(path))
+	if (!v32_end_path_header_is_valid(path))
 		return V32_END_PATH_INVALID_STATE;
 	if (path->end_received)
 		return v32_receive_path_is_valid(&path->receive) ?

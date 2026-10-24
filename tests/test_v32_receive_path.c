@@ -905,6 +905,61 @@ static bool test_contracts(void)
 	return true;
 }
 
+static bool test_model_audit_boundary(void)
+{
+	struct v32_receive_path path, saved;
+	struct v32_equalizer_observation output, saved_output;
+	struct qam_point point = { 1.0, 0.0 };
+	struct v32_echo_reference reference;
+
+	CHECK(v32_receive_path_init(
+		      &path, 0, V32_ECHO_MIN_ROUND_TRIP_SYMBOLS) ==
+		      V32_RECEIVE_PATH_OK &&
+	      v32_receive_path_header_is_valid(&path) &&
+	      v32_receive_path_is_valid(&path),
+	      "audit owner did not initialize");
+	/* Borrowed models must pass a full audit before lifecycle admission. */
+	path.echo.echo.reference[V32_ECHO_REFERENCE_CAPACITY - 1].in_phase = NAN;
+	saved = path;
+	CHECK(v32_receive_path_header_is_valid(&path) &&
+	      !v32_receive_path_is_valid(&path) &&
+	      v32_receive_path_begin_echo_training(&path) ==
+		      V32_RECEIVE_PATH_INVALID_STATE &&
+	      memcmp(&path, &saved, sizeof(path)) == 0,
+	      "full audit admitted a nonfinite stored reference");
+
+	CHECK(v32_receive_path_init(
+		      &path, 0, V32_ECHO_MIN_ROUND_TRIP_SYMBOLS) ==
+		      V32_RECEIVE_PATH_OK &&
+	      v32_echo_reference_init(&reference, &point, 0) == V32_ECHO_OK,
+	      "active-value fixture did not initialize");
+	path.echo.echo.coefficients[0][V32_ECHO_NEAR_WINDOW][0].in_phase = NAN;
+	saved = path;
+	memset(&output, 0x5a, sizeof(output));
+	saved_output = output;
+	CHECK(v32_receive_path_header_is_valid(&path) &&
+	      !v32_receive_path_is_valid(&path) &&
+	      v32_receive_path_sample(&path, 100, &reference, &output) ==
+		      V32_RECEIVE_PATH_INVALID_STATE &&
+	      memcmp(&path, &saved, sizeof(path)) == 0 &&
+	      memcmp(&output, &saved_output, sizeof(output)) == 0,
+	      "streaming consumed a nonfinite coefficient or mutated on rejection");
+
+	CHECK(v32_receive_path_init(
+		      &path, 0, V32_ECHO_MIN_ROUND_TRIP_SYMBOLS) ==
+		      V32_RECEIVE_PATH_OK,
+	      "header fixture did not initialize");
+	path.echo.filter.phase = V32_ECHO_FRONTEND_FILTER_PHASES;
+	saved = path;
+	CHECK(!v32_receive_path_header_is_valid(&path) &&
+	      v32_receive_path_sample(&path, 100, &reference, &output) ==
+		      V32_RECEIVE_PATH_INVALID_STATE &&
+	      memcmp(&path, &saved, sizeof(path)) == 0 &&
+	      memcmp(&output, &saved_output, sizeof(output)) == 0,
+	      "invalid frontend cursor bypassed receive preflight");
+	return true;
+}
+
 static bool test_observation_epoch(void)
 {
 	static const uint64_t epochs[] = { 0, 1, 2, UINT64_MAX - 1u, UINT64_MAX };
@@ -941,7 +996,7 @@ static bool test_observation_epoch(void)
 
 int main(void)
 {
-	if (!test_observation_epoch() ||
+	if (!test_model_audit_boundary() || !test_observation_epoch() ||
 	    !test_composed_path() || !test_buffered_commits() ||
 	    !test_boundary_adaptation() ||
 	    !test_echo_adaptation_lifecycle() || !test_gain_lifecycle() ||

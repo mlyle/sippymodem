@@ -45,6 +45,10 @@ enum v32_end_path_result v32_end_path_init(
 	const struct v32_rate_path_handoff *rate,
 	const struct v32_rate_offer *selected_offer,
 	enum v32_equalizer_adaptation adaptation);
+/* Bounds/control checks for an admitted streaming owner. The full
+ * is_valid predicate also audits stored echo samples and coefficients. */
+bool v32_end_path_header_is_valid(
+	const struct v32_end_path *path);
 bool v32_end_path_is_valid(
 	const struct v32_end_path *path);
 bool v32_end_path_is_complete(

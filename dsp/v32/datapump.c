@@ -221,17 +221,19 @@ static const struct v32_receive_path *fixed_path_receive_const(
 	return NULL;
 }
 
-static bool fixed_rate_drain_is_valid(
+static bool fixed_rate_drain_header_is_valid(
 	const struct v32_fixed_rate_drain *drain)
 {
 	return drain != NULL &&
-	       v32_receive_path_is_valid(&drain->receive) &&
+	       v32_receive_path_header_is_valid(&drain->receive) &&
 	       v32_uncoded_receiver_is_valid(&drain->four_point) &&
 	       !drain->receive.equalizer.decision_pending &&
 	       drain->observation_epoch == drain->receive.equalizer.epoch;
 }
 
-static bool fixed_path_is_valid(
+/* Phase transfers admit fully audited owners. The serialized stream then
+ * checks bounded controls here and finite reference/tap values when used. */
+static bool fixed_path_header_is_valid(
 	const struct v32_datapump *datapump)
 {
 	const struct v32_fixed_path *path = &datapump->fixed_path;
@@ -250,36 +252,36 @@ static bool fixed_path_is_valid(
 	switch (path->stage) {
 	case V32_FIXED_CALLER_CONDITIONING:
 	case V32_FIXED_CALLER_SECOND_CONDITIONING:
-		valid = v32_conditioning_path_is_valid(
+		valid = v32_conditioning_path_header_is_valid(
 				&path->owner.conditioning) &&
-			!v32_conditioning_path_is_complete(
-				&path->owner.conditioning);
+			path->owner.conditioning.conditioning.phase !=
+				V32_CONDITIONING_READY;
 		break;
 	case V32_FIXED_CALLER_RATE_OFFER:
 	case V32_FIXED_CALLER_SELECTION:
-		valid = v32_rate_path_is_valid(&path->owner.rate) &&
-			!v32_rate_path_is_complete(&path->owner.rate);
+		valid = v32_rate_path_header_is_valid(&path->owner.rate) &&
+			!path->owner.rate.detector.aligned;
 		break;
 	case V32_FIXED_CALLER_RATE_DRAIN:
 	case V32_FIXED_CALLER_ECHO:
-		valid = fixed_rate_drain_is_valid(&path->owner.drain);
+		valid = fixed_rate_drain_header_is_valid(&path->owner.drain);
 		break;
 	case V32_FIXED_CALLER_END:
-		valid = v32_end_path_is_valid(&path->owner.end) &&
-			!v32_end_path_is_complete(&path->owner.end);
+		valid = v32_end_path_header_is_valid(&path->owner.end) &&
+			!path->owner.end.end_received;
 		break;
 	case V32_FIXED_B1:
-		valid = v32_b1_path_is_valid(&path->owner.b1) &&
-			!v32_b1_path_is_complete(&path->owner.b1);
+		valid = v32_b1_path_header_is_valid(&path->owner.b1) &&
+			path->owner.b1.observations != path->owner.b1.symbols;
 		break;
 	case V32_FIXED_DATA:
-		valid = v32_data_path_is_valid(&path->owner.data);
+		valid = v32_data_path_header_is_valid(&path->owner.data);
 		break;
 	case V32_FIXED_ANSWERER_INITIAL_ECHO:
 		valid = !datapump->caller &&
 			datapump->startup.phase == V32_ANSWERER_TRAIN &&
-			v32_receive_path_is_valid(&path->owner.receive) &&
-			v32_echo_training_path_is_valid(
+			v32_receive_path_header_is_valid(&path->owner.receive) &&
+			v32_echo_training_path_header_is_valid(
 				&path->training.echo,
 				&path->owner.receive) &&
 			!v32_echo_training_is_complete(
@@ -288,22 +290,22 @@ static bool fixed_path_is_valid(
 	case V32_FIXED_ANSWERER_CONDITIONING:
 		valid = !datapump->caller &&
 			datapump->startup.phase == V32_ANSWERER_SEND_OFFER &&
-			v32_conditioning_path_is_valid(
+			v32_conditioning_path_header_is_valid(
 				&path->owner.conditioning) &&
-			!v32_conditioning_path_is_complete(
-				&path->owner.conditioning);
+			path->owner.conditioning.conditioning.phase !=
+				V32_CONDITIONING_READY;
 		break;
 	case V32_FIXED_ANSWERER_RATE:
 		valid = !datapump->caller &&
 			datapump->startup.phase == V32_ANSWERER_SEND_OFFER &&
-			v32_rate_path_is_valid(&path->owner.rate) &&
-			!v32_rate_path_is_complete(&path->owner.rate);
+			v32_rate_path_header_is_valid(&path->owner.rate) &&
+			!path->owner.rate.detector.aligned;
 		break;
 	case V32_FIXED_ANSWERER_SECOND_CONDITIONING:
 		valid = !datapump->caller &&
 			datapump->startup.phase == V32_ANSWERER_RETRAIN &&
-			v32_end_path_is_valid(&path->owner.end) &&
-			!v32_end_path_is_complete(&path->owner.end) &&
+			v32_end_path_header_is_valid(&path->owner.end) &&
+			!path->owner.end.end_received &&
 			v32_conditioning_transmitter_is_valid(
 				&path->training.conditioning);
 		break;
@@ -313,8 +315,8 @@ static bool fixed_path_is_valid(
 				 V32_ANSWERER_SEND_SELECTION ||
 			 datapump->startup.phase == V32_ANSWERER_SEND_END ||
 			 datapump->startup.phase == V32_CONFIRM) &&
-			v32_end_path_is_valid(&path->owner.end) &&
-			!v32_end_path_is_complete(&path->owner.end);
+			v32_end_path_header_is_valid(&path->owner.end) &&
+			!path->owner.end.end_received;
 		break;
 	case V32_FIXED_ANSWERER_CLEARDOWN_CONDITIONING:
 		return datapump->cleardown_symbols == 0 &&
@@ -342,24 +344,24 @@ static bool fixed_path_is_valid(
 	if (datapump->caller &&
 	    (path->stage == V32_FIXED_CALLER_RATE_DRAIN ||
 	     path->stage == V32_FIXED_CALLER_ECHO))
-		return v32_echo_training_path_is_valid(
+		return v32_echo_training_path_header_is_valid(
 			&path->training.echo, receive) &&
 			(path->stage == V32_FIXED_CALLER_ECHO) ==
 				receive->echo_training;
 	if (!datapump->caller &&
 	    path->stage == V32_FIXED_ANSWERER_INITIAL_ECHO)
-		return v32_echo_training_path_is_valid(
+		return v32_echo_training_path_header_is_valid(
 			&path->training.echo, receive);
 	if (datapump->caller)
 		return v32_echo_training_is_complete(
 			       &path->training.echo) &&
-		       v32_echo_training_path_is_valid(
+		       v32_echo_training_path_header_is_valid(
 			       &path->training.echo, receive);
 	if (path->stage == V32_FIXED_ANSWERER_CONDITIONING ||
 	    path->stage == V32_FIXED_ANSWERER_RATE)
 		return v32_echo_training_is_complete(
 			       &path->training.echo) &&
-		       v32_echo_training_path_is_valid(
+		       v32_echo_training_path_header_is_valid(
 			       &path->training.echo, receive);
 	if (!v32_conditioning_transmitter_is_valid(
 		    &path->training.conditioning))
@@ -387,10 +389,10 @@ static bool line_state_is_valid(
 			       datapump->line_startup.state ==
 				       V32_LINE_WAIT_ANSWER_TONE &&
 			       datapump->caller_s_extension_symbols == 0 &&
-			       fixed_path_is_valid(datapump);
+			       fixed_path_header_is_valid(datapump);
 		return v32_line_startup_is_complete(
 			       &datapump->line_startup) &&
-		       fixed_path_is_valid(datapump);
+		       fixed_path_header_is_valid(datapump);
 	}
 	if (datapump->caller_s_extension_symbols != 0 ||
 	    datapump->answerer_s_detected)
@@ -821,7 +823,7 @@ static int commit_fixed_rate_drain(
 			symbol.equalizer.observation.epoch;
 	}
 	return receive_result == V32_RECEIVE_PATH_OK &&
-	       fixed_rate_drain_is_valid(drain) ? 0 : -1;
+	       fixed_rate_drain_header_is_valid(drain) ? 0 : -1;
 }
 
 static int initialize_fixed_rate_drain(
@@ -847,10 +849,10 @@ static int initialize_fixed_rate_drain(
 			    &observation) != 0)
 			return -1;
 	}
-	if (!fixed_rate_drain_is_valid(&initialized) ||
+	if (!fixed_rate_drain_header_is_valid(&initialized) ||
 	    v32_receive_path_freeze_gain(&initialized.receive) !=
 		    V32_RECEIVE_PATH_OK ||
-	    !fixed_rate_drain_is_valid(&initialized))
+	    !fixed_rate_drain_header_is_valid(&initialized))
 		return -1;
 	*drain = initialized;
 	return 0;
@@ -863,7 +865,7 @@ static int sample_fixed_rate_drain(
 	struct v32_equalizer_observation observation;
 	enum v32_receive_path_result result;
 
-	if (!fixed_rate_drain_is_valid(drain))
+	if (!fixed_rate_drain_header_is_valid(drain))
 		return -1;
 	result = v32_receive_path_sample(
 		&drain->receive, received, reference, &observation);
@@ -1041,7 +1043,7 @@ static int generate_fixed_path_sample(
 			V32_FIXED_CALLER_RATE_DRAIN;
 	uint32_t carrier_phase = datapump->modulator.carrier_phase;
 
-	if (!fixed_path_is_valid(datapump) || sample == NULL ||
+	if (!fixed_path_header_is_valid(datapump) || sample == NULL ||
 	    reference == NULL || reference_ready == NULL || linked == NULL)
 		return -1;
 	*reference_ready = false;

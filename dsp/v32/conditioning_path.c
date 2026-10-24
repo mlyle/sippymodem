@@ -14,13 +14,14 @@ static bool decoder_is_valid(const struct v32_symbol_decoder *decoder)
 	       decoder->phase_quadrant < 4;
 }
 
-static bool path_header_is_valid(
+bool v32_conditioning_path_header_is_valid(
 	const struct v32_conditioning_path *path)
 {
 	const struct v32_equalizer *equalizer;
 	bool complete;
 
 	if (path == NULL ||
+	    !v32_receive_path_header_is_valid(&path->receive) ||
 	    !v32_conditioning_receiver_is_valid(&path->conditioning))
 		return false;
 	equalizer = &path->receive.equalizer;
@@ -43,7 +44,7 @@ static bool path_header_is_valid(
 bool v32_conditioning_path_is_valid(
 	const struct v32_conditioning_path *path)
 {
-	return path_header_is_valid(path) &&
+	return v32_conditioning_path_header_is_valid(path) &&
 	       v32_receive_path_is_valid(&path->receive);
 }
 
@@ -143,7 +144,7 @@ static enum v32_conditioning_path_result commit_observations(
 		path->observation_epoch =
 			decision.equalizer.observation.epoch;
 		if (path->conditioning.phase == V32_CONDITIONING_READY)
-			return path_header_is_valid(path) ?
+			return v32_conditioning_path_header_is_valid(path) ?
 				       V32_CONDITIONING_PATH_COMPLETE :
 				       V32_CONDITIONING_PATH_INVALID_STATE;
 	}
@@ -151,7 +152,7 @@ static enum v32_conditioning_path_result commit_observations(
 		return receive_result == V32_RECEIVE_PATH_INVALID_ARGUMENT ?
 			       V32_CONDITIONING_PATH_INVALID_ARGUMENT :
 			       V32_CONDITIONING_PATH_INVALID_STATE;
-	return path_header_is_valid(path) ?
+	return v32_conditioning_path_header_is_valid(path) ?
 		       V32_CONDITIONING_PATH_OK :
 		       V32_CONDITIONING_PATH_INVALID_STATE;
 }
@@ -163,7 +164,7 @@ enum v32_conditioning_path_result v32_conditioning_path_sample(
 	struct v32_equalizer_observation observation;
 	enum v32_receive_path_result receive_result;
 
-	if (!path_header_is_valid(path))
+	if (!v32_conditioning_path_header_is_valid(path))
 		return V32_CONDITIONING_PATH_INVALID_STATE;
 	if (path->conditioning.phase == V32_CONDITIONING_READY)
 		return v32_receive_path_is_valid(&path->receive) ?

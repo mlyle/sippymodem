@@ -47,6 +47,10 @@ struct v32_b1_path {
 enum v32_b1_path_result v32_b1_path_init(
 	struct v32_b1_path *path,
 	const struct v32_end_path_handoff *end, uint8_t symbols);
+/* Bounds/control checks for an admitted streaming owner. The full
+ * is_valid predicate also audits stored echo samples and coefficients. */
+bool v32_b1_path_header_is_valid(
+	const struct v32_b1_path *path);
 bool v32_b1_path_is_valid(
 	const struct v32_b1_path *path);
 bool v32_b1_path_is_complete(

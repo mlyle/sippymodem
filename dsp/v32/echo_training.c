@@ -139,7 +139,7 @@ static bool gain_lifecycle_matches(
 	       path->line.gain.gain_mantissa_q15 != 0;
 }
 
-bool v32_echo_training_path_is_valid(
+bool v32_echo_training_path_header_is_valid(
 	const struct v32_echo_training *training,
 	const struct v32_receive_path *path)
 {
@@ -148,7 +148,7 @@ bool v32_echo_training_path_is_valid(
 	uint16_t symbols;
 
 	if (!v32_echo_training_is_valid(training) ||
-	    !v32_receive_path_is_valid(path))
+	    !v32_receive_path_header_is_valid(path))
 		return false;
 	/* Later receive phases own gain once echo training has released it. */
 	if (training->complete)
@@ -170,6 +170,14 @@ bool v32_echo_training_path_is_valid(
 		symbols <= coarse_end ?
 			V32_ECHO_COARSE_ADAPTATION :
 			V32_ECHO_FINE_ADAPTATION);
+}
+
+bool v32_echo_training_path_is_valid(
+	const struct v32_echo_training *training,
+	const struct v32_receive_path *path)
+{
+	return v32_echo_training_path_header_is_valid(training, path) &&
+	       v32_receive_path_is_valid(path);
 }
 
 static enum v32_echo_training_result transition_path(
@@ -209,7 +217,7 @@ static enum v32_echo_training_result finish_training(
 		    V32_RECEIVE_PATH_OK)
 		return V32_ECHO_TRAINING_INVALID_STATE;
 	next_training.complete = true;
-	if (!v32_echo_training_path_is_valid(&next_training, &next_path))
+	if (!v32_echo_training_path_header_is_valid(&next_training, &next_path))
 		return V32_ECHO_TRAINING_INVALID_STATE;
 	*training = next_training;
 	*path = next_path;
@@ -234,7 +242,7 @@ enum v32_echo_training_result v32_echo_training_next(
 	if (training == NULL || path == NULL || quadrant == NULL ||
 	    memory_region_set_overlaps(regions, 3))
 		return V32_ECHO_TRAINING_INVALID_ARGUMENT;
-	if (!v32_echo_training_path_is_valid(training, path))
+	if (!v32_echo_training_path_header_is_valid(training, path))
 		return V32_ECHO_TRAINING_INVALID_STATE;
 	if (training->complete)
 		return V32_ECHO_TRAINING_COMPLETE;
@@ -252,7 +260,7 @@ enum v32_echo_training_result v32_echo_training_next(
 			(next_training.s_extension_emitted & 1u) != 0 ?
 				V32_SIGNAL_B : V32_SIGNAL_A;
 		next_training.s_extension_emitted++;
-		if (!v32_echo_training_path_is_valid(
+		if (!v32_echo_training_path_header_is_valid(
 			    &next_training,
 			    path_changes ? &next_path : path))
 			return V32_ECHO_TRAINING_INVALID_STATE;
@@ -292,7 +300,7 @@ enum v32_echo_training_result v32_echo_training_next(
 	if (v32_conditioning_transmitter_next(
 		    &next_training.conditioning, &next_quadrant) !=
 	    V32_CONDITIONING_OK ||
-	    !v32_echo_training_path_is_valid(
+	    !v32_echo_training_path_header_is_valid(
 		    &next_training, path_changes ? &next_path : path))
 		return V32_ECHO_TRAINING_INVALID_STATE;
 	*training = next_training;

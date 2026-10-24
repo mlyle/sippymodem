@@ -42,6 +42,10 @@ struct v32_rate_path_handoff {
 enum v32_rate_path_result v32_rate_path_init(
 	struct v32_rate_path *path,
 	const struct v32_conditioning_path_handoff *conditioning);
+/* Bounds/control checks for an admitted streaming owner. The full
+ * is_valid predicate also audits stored echo samples and coefficients. */
+bool v32_rate_path_header_is_valid(
+	const struct v32_rate_path *path);
 bool v32_rate_path_is_valid(
 	const struct v32_rate_path *path);
 bool v32_rate_path_is_complete(

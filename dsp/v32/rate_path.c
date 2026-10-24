@@ -7,9 +7,10 @@
 #include <stddef.h>
 #include <string.h>
 
-static bool path_header_is_valid(const struct v32_rate_path *path)
+bool v32_rate_path_header_is_valid(const struct v32_rate_path *path)
 {
 	return path != NULL &&
+	       v32_receive_path_header_is_valid(&path->receive) &&
 	       v32_uncoded_receiver_is_valid(&path->four_point) &&
 	       v32_rate_signal_detector_is_valid(&path->detector) &&
 	       path->receive.equalizer.adaptation ==
@@ -20,7 +21,7 @@ static bool path_header_is_valid(const struct v32_rate_path *path)
 
 bool v32_rate_path_is_valid(const struct v32_rate_path *path)
 {
-	return path_header_is_valid(path) &&
+	return v32_rate_path_header_is_valid(path) &&
 	       v32_receive_path_is_valid(&path->receive);
 }
 
@@ -64,7 +65,7 @@ static enum v32_rate_path_result commit_observations(
 		if (event == V32_CLEARDOWN_SIGNAL_DETECTED)
 			return V32_RATE_PATH_CLEARDOWN;
 		if (event == V32_RATE_SIGNAL_DETECTED)
-			return path_header_is_valid(path) ?
+			return v32_rate_path_header_is_valid(path) ?
 				       V32_RATE_PATH_COMPLETE :
 				       V32_RATE_PATH_INVALID_STATE;
 	}
@@ -72,7 +73,7 @@ static enum v32_rate_path_result commit_observations(
 		return receive_result == V32_RECEIVE_PATH_INVALID_ARGUMENT ?
 			       V32_RATE_PATH_INVALID_ARGUMENT :
 			       V32_RATE_PATH_INVALID_STATE;
-	return path_header_is_valid(path) ? V32_RATE_PATH_OK :
+	return v32_rate_path_header_is_valid(path) ? V32_RATE_PATH_OK :
 					  V32_RATE_PATH_INVALID_STATE;
 }
 
@@ -100,7 +101,7 @@ enum v32_rate_path_result v32_rate_path_init(
 	initialized.observation_epoch = conditioning->observation_ready ?
 		conditioning->observation.epoch - 1u :
 		conditioning->receive.equalizer.epoch;
-	if (!path_header_is_valid(&initialized))
+	if (!v32_rate_path_header_is_valid(&initialized))
 		return V32_RATE_PATH_INVALID_ARGUMENT;
 	if (conditioning->observation_ready) {
 		struct v32_equalizer_observation observation =
@@ -126,7 +127,7 @@ enum v32_rate_path_result v32_rate_path_sample(
 	struct v32_equalizer_observation observation;
 	enum v32_receive_path_result receive_result;
 
-	if (!path_header_is_valid(path))
+	if (!v32_rate_path_header_is_valid(path))
 		return V32_RATE_PATH_INVALID_STATE;
 	if (path->detector.aligned)
 		return v32_receive_path_is_valid(&path->receive) ?

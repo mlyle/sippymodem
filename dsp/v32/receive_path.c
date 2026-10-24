@@ -20,9 +20,10 @@ static bool buffer_state_is_valid(const struct v32_receive_path *path)
 	return true;
 }
 
-static bool path_header_is_valid(const struct v32_receive_path *path)
+bool v32_receive_path_header_is_valid(const struct v32_receive_path *path)
 {
-	return path != NULL && v32_line_receiver_is_valid(&path->line) &&
+	return path != NULL && v32_echo_frontend_header_is_valid(&path->echo) &&
+	       v32_line_receiver_is_valid(&path->line) &&
 	       v32_equalizer_is_valid(&path->equalizer) &&
 	       (!path->echo.echo.adapting || path->echo_training) &&
 	       buffer_state_is_valid(path);
@@ -30,7 +31,7 @@ static bool path_header_is_valid(const struct v32_receive_path *path)
 
 bool v32_receive_path_is_valid(const struct v32_receive_path *path)
 {
-	return path_header_is_valid(path) &&
+	return v32_receive_path_header_is_valid(path) &&
 	       v32_echo_frontend_is_valid(&path->echo);
 }
 
@@ -224,7 +225,7 @@ enum v32_receive_path_result v32_receive_path_sample(
 	enum v32_echo_result echo_result;
 	enum v32_receive_path_result result;
 
-	if (!path_header_is_valid(path))
+	if (!v32_receive_path_header_is_valid(path))
 		return V32_RECEIVE_PATH_INVALID_STATE;
 	if (path->equalizer.decision_pending)
 		return V32_RECEIVE_PATH_DECISION_PENDING;
@@ -268,7 +269,7 @@ enum v32_receive_path_result v32_receive_path_sample(
 		path->recovered_index = 0;
 		path->recovered_count = 0;
 	}
-	if (!path_header_is_valid(path))
+	if (!v32_receive_path_header_is_valid(path))
 		return V32_RECEIVE_PATH_INVALID_STATE;
 	if (result == V32_RECEIVE_PATH_OBSERVATION_READY)
 		*observation = next_observation;
@@ -285,7 +286,8 @@ enum v32_receive_path_result v32_receive_path_sample_paused(
 	bool next_ready;
 	enum v32_echo_result result;
 
-	if (!path_header_is_valid(path) || !receive_boundary_is_open(path) ||
+	if (!v32_receive_path_header_is_valid(path) ||
+	    !receive_boundary_is_open(path) ||
 	    !path->line.input_paused || path->echo_training ||
 	    path->echo.echo.adapting)
 		return V32_RECEIVE_PATH_INVALID_STATE;
@@ -342,7 +344,7 @@ static enum v32_receive_path_result commit_decision(
 	size_t next_index;
 	enum v32_receive_path_result result;
 
-	if (!path_header_is_valid(path))
+	if (!v32_receive_path_header_is_valid(path))
 		return V32_RECEIVE_PATH_INVALID_STATE;
 	if (!path->equalizer.decision_pending)
 		return V32_RECEIVE_PATH_INVALID_STATE;
@@ -373,7 +375,7 @@ static enum v32_receive_path_result commit_decision(
 	} else {
 		path->recovered_index = next_index;
 	}
-	if (!path_header_is_valid(path))
+	if (!v32_receive_path_header_is_valid(path))
 		return V32_RECEIVE_PATH_INVALID_STATE;
 	if (result == V32_RECEIVE_PATH_OBSERVATION_READY)
 		*observation = next_observation;

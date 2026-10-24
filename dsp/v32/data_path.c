@@ -49,15 +49,22 @@ static enum online_signal observe_online_signal(
 	return ONLINE_NONE;
 }
 
-bool v32_data_path_is_valid(const struct v32_data_path *path)
+bool v32_data_path_header_is_valid(const struct v32_data_path *path)
 {
-	return path != NULL && v32_b1_path_is_complete(&path->b1) &&
+	return path != NULL && v32_b1_path_header_is_valid(&path->b1) &&
+	       path->b1.observations == path->b1.symbols &&
 	       path->retrain.repeated_pair_observations <
 		       V32_DATA_RETRAIN_OBSERVATIONS &&
 	       path->control_remaining <= V32_DATA_CONTROL_OBSERVATIONS &&
 	       (!path->control_remaining ||
 		(v32_uncoded_receiver_is_valid(&path->control) &&
 		 v32_rate_signal_detector_is_valid(&path->control_rate)));
+}
+
+bool v32_data_path_is_valid(const struct v32_data_path *path)
+{
+	return v32_data_path_header_is_valid(path) &&
+	       v32_receive_path_is_valid(&path->b1.receive);
 }
 
 /* The scrambler is self-synchronizing, so the bounded probe also tolerates
@@ -204,7 +211,7 @@ static enum v32_data_path_result commit_observations(
 		return receive_result == V32_RECEIVE_PATH_INVALID_ARGUMENT ?
 			       V32_DATA_PATH_INVALID_ARGUMENT :
 			       V32_DATA_PATH_INVALID_STATE;
-	return v32_data_path_is_valid(path) ? V32_DATA_PATH_OK :
+	return v32_data_path_header_is_valid(path) ? V32_DATA_PATH_OK :
 					      V32_DATA_PATH_INVALID_STATE;
 }
 
@@ -260,7 +267,7 @@ enum v32_data_path_result v32_data_path_sample(
 	enum v32_receive_path_result receive_result;
 	enum v32_data_path_result result;
 
-	if (!v32_data_path_is_valid(path))
+	if (!v32_data_path_header_is_valid(path))
 		return V32_DATA_PATH_INVALID_STATE;
 	if (batch == NULL ||
 	    memory_region_set_overlaps(regions, 3))

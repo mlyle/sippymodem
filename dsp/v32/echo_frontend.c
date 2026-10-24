@@ -65,7 +65,7 @@ _Static_assert(
 		V32_ECHO_FRONTEND_FILTER_TAPS,
 	"V.32 line filter has the wrong shape");
 
-static bool frontend_header_is_valid(
+bool v32_echo_frontend_header_is_valid(
 	const struct v32_echo_frontend *frontend)
 {
 	const struct v32_echo_frontend_filter *filter;
@@ -88,7 +88,7 @@ static bool frontend_header_is_valid(
 bool v32_echo_frontend_is_valid(
 	const struct v32_echo_frontend *frontend)
 {
-	return frontend_header_is_valid(frontend) &&
+	return v32_echo_frontend_header_is_valid(frontend) &&
 	       v32_echo_canceller_is_valid(&frontend->echo);
 }
 
@@ -200,7 +200,7 @@ enum v32_echo_result v32_echo_frontend_sample(
 	bool pushed = false;
 	enum v32_echo_result result;
 
-	if (!frontend_header_is_valid(frontend))
+	if (!v32_echo_frontend_header_is_valid(frontend))
 		return V32_ECHO_INVALID_STATE;
 	if (cleaned == NULL || cleaned_ready == NULL ||
 	    memory_regions_overlap(cleaned, sizeof(*cleaned),

@@ -67,8 +67,16 @@ static inline bool v32_receive_path_handoff_observation_matches(
 enum v32_receive_path_result v32_receive_path_init(
 	struct v32_receive_path *path,
 	uint16_t near_delay_symbols, uint16_t round_trip_symbols);
+/* Bounds/control checks for an admitted streaming owner. The full
+ * is_valid predicate also audits stored echo samples and coefficients. */
+bool v32_receive_path_header_is_valid(
+	const struct v32_receive_path *path);
 bool v32_receive_path_is_valid(
 	const struct v32_receive_path *path);
+
+/* Streaming methods validate controls and each numeric value they consume.
+ * Full stored-model validation remains explicit and is required when
+ * admitting an externally supplied owner at a lifecycle/handoff boundary. */
 
 /* Pause the post-echo lane before the local transmitter's reference prefill.
  * Adaptation may then start and change gain without clearing learned state.
