@@ -72,32 +72,19 @@ static bool downstream_state_matches(
 	if (!tx->control_configured)
 		return control->transmit_stage == V92_DOWNSTREAM_CONTROL_INITIAL_SUVD &&
 			tx->stage == PCM_DOWNSTREAM_TX_TRN2D;
+	if (tx->v92_control_kind != PCM_DOWNSTREAM_V92_CONTROL_SUVD ||
+	    tx->control.suvd.request_silence != control->request_silence)
+		return false;
 	switch (control->transmit_stage) {
 	case V92_DOWNSTREAM_CONTROL_INITIAL_SUVD:
 	case V92_DOWNSTREAM_CONTROL_READY_FOR_CPD:
-		return tx->v92_control_kind ==
-			       PCM_DOWNSTREAM_V92_CONTROL_SUVD &&
-		       tx->control.suvd.acknowledges_cpu == control->transmit_acknowledges_cpu &&
-		       tx->control.suvd.request_silence ==
-			       control->request_silence;
-	case V92_DOWNSTREAM_CONTROL_CPD: {
-		return tx->v92_control_kind == PCM_DOWNSTREAM_V92_CONTROL_SUVD &&
-		       (!tx->control.suvd.acknowledges_cpu ||
-			control->cpu_received) &&
-		       tx->control.suvd.request_silence ==
-			       control->request_silence;
-	}
 	case V92_DOWNSTREAM_CONTROL_STATUS_SUVD:
-		return tx->v92_control_kind ==
-			       PCM_DOWNSTREAM_V92_CONTROL_SUVD &&
-		       tx->control.suvd.acknowledges_cpu ==
-			       control->transmit_acknowledges_cpu &&
-		       tx->control.suvd.request_silence ==
-			       control->request_silence;
+		return tx->control.suvd.acknowledges_cpu ==
+		       control->transmit_acknowledges_cpu;
+	case V92_DOWNSTREAM_CONTROL_CPD:
+		return !tx->control.suvd.acknowledges_cpu || control->cpu_received;
 	case V92_DOWNSTREAM_CONTROL_SILENCE_SUVD:
-		return tx->v92_control_kind == PCM_DOWNSTREAM_V92_CONTROL_SUVD &&
-			tx->control.suvd.acknowledges_cpu &&
-			tx->control.suvd.request_silence == control->request_silence;
+		return tx->control.suvd.acknowledges_cpu;
 	}
 	return false;
 }
@@ -141,10 +128,6 @@ static bool owned_state_is_valid(
 	       ((control->transmit_stage ==
 			 V92_DOWNSTREAM_CONTROL_STATUS_SUVD) ==
 		control->initial_cpd.complete) &&
-	       (control->transmit_stage ==
-			V92_DOWNSTREAM_CONTROL_CPD ?
-		!control->initial_cpd.complete :
-		true) &&
 	       (control->transmit_stage ==
 			V92_DOWNSTREAM_CONTROL_STATUS_SUVD ?
 		control->status_start_frame ==
