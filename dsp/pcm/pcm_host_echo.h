@@ -63,7 +63,6 @@ struct pcm_host_echo {
 	uint64_t input_energy;
 	uint64_t error_energy;
 	int64_t prediction_cross_energy;
-	uint32_t window_delay_samples;
 	uint32_t quiet_samples;
 	uint32_t train_samples;
 	uint16_t train_peak;

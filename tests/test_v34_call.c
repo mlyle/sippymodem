@@ -712,8 +712,8 @@ static bool check_echo_call(
 	CHECK(run_echo_call(role, pcma, echo_delay, line_delay, &filtered),
 	      "cancelled %s-station echo did not reach mapped data", station);
 	CHECK(pcm_host_echo_is_ready(&filtered.call.echo) &&
-	      filtered.call.echo.window_delay_samples <= echo_delay &&
-	      filtered.call.echo.window_delay_samples +
+	      pcm_host_echo_window_delay_samples(&filtered.call.echo) <= echo_delay &&
+	      pcm_host_echo_window_delay_samples(&filtered.call.echo) +
 		      PCM_HOST_ECHO_FILTER_TAPS > echo_delay,
 	      "%s-station echo model was not retained", station);
 	return true;
@@ -797,11 +797,11 @@ static bool test_weak_echo_delay_step(void)
 		      "weak echo setup failed for codec %u", law);
 		CHECK(pcm_host_echo_is_ready(&caller.call.echo),
 		      "weak echo did not qualify during training");
-		uint32_t delay = caller.call.echo.window_delay_samples;
+		uint32_t delay = pcm_host_echo_window_delay_samples(&caller.call.echo);
 		for (unsigned i = 0; i < 8000; ++i) {
 			struct v34_call_observation c, a;
 			CHECK(channel_sample_pair(&channel, &caller, &answerer, &c, &a) &&
-			      caller.call.echo.window_delay_samples == delay,
+			      pcm_host_echo_window_delay_samples(&caller.call.echo) == delay,
 			      "stationary weak echo retimed or corrupted mapped data");
 		}
 		CHECK(check_echo_observation_replacement(&caller, &answerer, &channel),
@@ -816,9 +816,9 @@ static bool test_weak_echo_delay_step(void)
 			CHECK(channel_sample_pair(&channel, &caller, &answerer, &c, &a),
 			      "delay step lost the data path for codec %u", law);
 		}
-		CHECK(caller.call.echo.window_delay_samples == delay + 80,
+		CHECK(pcm_host_echo_window_delay_samples(&caller.call.echo) == delay + 80,
 		      "weak return did not follow delay step: codec %u, %u -> %u",
-		      law, delay, caller.call.echo.window_delay_samples);
+		      law, delay, pcm_host_echo_window_delay_samples(&caller.call.echo));
 		caller.allow_receive_errors = false;
 		for (unsigned i = 0; i < 4000; ++i) {
 			struct v34_call_observation c, a;
@@ -852,11 +852,11 @@ static bool test_fast_echo_delay_step(void)
 			caller.peer_mapping_pattern_seed ^= 51;
 			CHECK(run_pair_until_frames(&caller, &answerer, &channel, 256),
 			      "fast echo training failed: law %u, rate %u", law, rate);
-			uint32_t delay = caller.call.echo.window_delay_samples;
+			uint32_t delay = pcm_host_echo_window_delay_samples(&caller.call.echo);
 			for (unsigned i = 0; i < 8000; ++i) {
 				struct v34_call_observation c, a;
 				CHECK(channel_sample_pair(&channel, &caller, &answerer, &c, &a) &&
-				      caller.call.echo.window_delay_samples == delay,
+				      pcm_host_echo_window_delay_samples(&caller.call.echo) == delay,
 				      "stationary return retimed or corrupted data");
 			}
 			echo->delay_samples += 80;
@@ -866,7 +866,7 @@ static bool test_fast_echo_delay_step(void)
 				struct v34_call_observation c, a;
 				CHECK(channel_sample_pair(&channel, &caller, &answerer, &c, &a),
 				      "fast echo recovery lost the data path");
-				uint32_t current = caller.call.echo.window_delay_samples;
+				uint32_t current = pcm_host_echo_window_delay_samples(&caller.call.echo);
 				CHECK(current == delay || current == delay + 80,
 				      "echo tracker selected an unrelated delay");
 				if (current == delay + 80 && recovered == 0)
@@ -883,7 +883,7 @@ static bool test_fast_echo_delay_step(void)
 			for (unsigned i = 0; i < 4000; ++i) {
 				struct v34_call_observation c, a;
 				CHECK(channel_sample_pair(&channel, &caller, &answerer, &c, &a) &&
-				      caller.call.echo.window_delay_samples == delay + 80,
+				      pcm_host_echo_window_delay_samples(&caller.call.echo) == delay + 80,
 				      "recovered return corrupted data or moved again");
 			}
 			CHECK(v34_call_is_online(&caller.call) && v34_call_is_online(&answerer.call),

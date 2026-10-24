@@ -78,6 +78,14 @@ struct pcm_echo_reference {
 	uint32_t scan_epoch;
 };
 
+/* Current window of a validated active scan. Keep it derived from the scan
+ * index rather than another independently mutable delay. */
+static inline uint32_t pcm_echo_reference_current_delay(
+	const struct pcm_echo_reference *reference)
+{
+	return reference->scan_current_index + 1u;
+}
+
 bool pcm_echo_reference_is_valid(
 	const struct pcm_echo_reference *reference);
 

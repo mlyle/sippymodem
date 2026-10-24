@@ -332,7 +332,7 @@ enum pcm_echo_reference_result pcm_echo_reference_scan_observe(
 		return PCM_ECHO_REFERENCE_OK;
 
 	generated.best_window_delay_samples = best_index + 1u;
-	generated.current_window_delay_samples = reference->scan_current_index + 1u;
+	generated.current_window_delay_samples = pcm_echo_reference_current_delay(reference);
 	generated.sample_count = reference->scan_samples;
 	generated.best_correlation_ppm = correlation_ppm(best_score);
 	generated.current_correlation_ppm =

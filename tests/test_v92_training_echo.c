@@ -56,7 +56,7 @@ static bool run(enum stimulus stimulus, int shift, unsigned configuration)
 			CHECK(v92_pcm_phase4_trn2u_next(&source, &ignored) == V92_PCM_PHASE4_TRN2U_OK,
 			      "source displacement");
 		}
-	unsigned original_delay = echo->window_delay_samples, events = 0, observed = 0;
+	unsigned original_delay = pcm_host_echo_window_delay_samples(echo), events = 0, observed = 0;
 	int16_t history[5] = { 0 };
 	for (unsigned n = 0; n < 12000; ++n) {
 		int16_t generated, cleaned, ignored;
@@ -110,9 +110,9 @@ static bool run(enum stimulus stimulus, int shift, unsigned configuration)
 	}
 	unsigned expected = stimulus == SHIFT && shift != 0;
 	CHECK(observed > 1000 && events == expected &&
-		(int)echo->window_delay_samples - (int)original_delay == (expected ? shift : 0),
+		(int)pcm_host_echo_window_delay_samples(echo) - (int)original_delay == (expected ? shift : 0),
 		"stimulus %d configuration %u: events=%u expected=%u delay=%d", stimulus,
-		configuration, events, expected, (int)echo->window_delay_samples - (int)original_delay);
+		configuration, events, expected, (int)pcm_host_echo_window_delay_samples(echo) - (int)original_delay);
 	free(line);
 	free(echo);
 	return true;

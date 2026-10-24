@@ -53,12 +53,6 @@ static bool mode_is_filtering(enum pcm_host_echo_mode mode)
 	return mode == PCM_HOST_ECHO_FILTER || mode == PCM_HOST_ECHO_FILTER_DATA;
 }
 
-static uint32_t scan_current_delay(
-	const struct pcm_echo_reference *reference)
-{
-	return reference->scan_current_index + 1u;
-}
-
 static bool header_is_valid(const struct pcm_host_echo *echo)
 {
 	uint64_t last_age;
@@ -66,13 +60,9 @@ static bool header_is_valid(const struct pcm_host_echo *echo)
 
 	if (echo == NULL || !pcm_echo_reference_is_valid(&echo->reference) ||
 	    !echo_timing_is_valid(&echo->timing) ||
-	    echo->reference.scan_count == 0 ||
-	    echo->window_delay_samples == 0 ||
-	    echo->window_delay_samples >
-		    PCM_ECHO_REFERENCE_MAX_WINDOW_DELAY_SAMPLES ||
-	    scan_current_delay(&echo->reference) != echo->window_delay_samples)
+	    echo->reference.scan_count == 0)
 		return false;
-	last_age = (uint64_t)echo->window_delay_samples +
+	last_age = (uint64_t)pcm_echo_reference_current_delay(&echo->reference) +
 		   PCM_HOST_ECHO_FILTER_TAPS - 1u;
 	if (last_age > PCM_ECHO_REFERENCE_HISTORY_SAMPLES)
 		return false;
@@ -106,7 +96,8 @@ bool pcm_host_echo_is_valid(const struct pcm_host_echo *echo)
 	return true;
 }
 
-static enum pcm_host_echo_result restart_training(struct pcm_host_echo *echo)
+static enum pcm_host_echo_result restart_training(
+	struct pcm_host_echo *echo, uint32_t delay)
 {
 	memset(&echo->timing, 0, sizeof(echo->timing));
 	memset(echo->coefficients, 0, sizeof(echo->coefficients));
@@ -124,7 +115,7 @@ static enum pcm_host_echo_result restart_training(struct pcm_host_echo *echo)
 	 * Retain TX history and the delay hypothesis, but restart both sets of
 	 * evidence together, whether retrying this delay or acquiring a new one. */
 	return pcm_echo_reference_start_scan(
-		       &echo->reference, echo->window_delay_samples,
+		       &echo->reference, delay,
 		       PCM_HOST_ECHO_FILTER_PRE_SAMPLES) == PCM_ECHO_REFERENCE_OK ?
 		PCM_HOST_ECHO_OK : PCM_HOST_ECHO_INVALID_STATE;
 }
@@ -135,10 +126,8 @@ enum pcm_host_echo_result pcm_host_echo_init(
 	if (echo == NULL)
 		return PCM_HOST_ECHO_INVALID_ARGUMENT;
 	memset(echo, 0, sizeof(*echo));
-	echo->window_delay_samples =
-		PCM_HOST_ECHO_DEFAULT_WINDOW_DELAY_SAMPLES;
 	if (pcm_echo_reference_start_scan(
-		    &echo->reference, echo->window_delay_samples,
+		    &echo->reference, PCM_HOST_ECHO_DEFAULT_WINDOW_DELAY_SAMPLES,
 		    PCM_HOST_ECHO_FILTER_PRE_SAMPLES) !=
 		    PCM_ECHO_REFERENCE_OK ||
 	    !pcm_host_echo_is_valid(echo))
@@ -174,7 +163,6 @@ enum pcm_host_echo_result pcm_host_echo_seed_window_delay(
 		window_delay_samples, PCM_HOST_ECHO_FILTER_PRE_SAMPLES) !=
 	    PCM_ECHO_REFERENCE_OK)
 		return PCM_HOST_ECHO_INVALID_STATE;
-	echo->window_delay_samples = window_delay_samples;
 	return PCM_HOST_ECHO_OK;
 }
 
@@ -219,7 +207,7 @@ bool pcm_host_echo_has_weak_margin(const struct pcm_host_echo *echo)
 uint32_t pcm_host_echo_window_delay_samples(
 	const struct pcm_host_echo *echo)
 {
-	return header_is_valid(echo) ? echo->window_delay_samples : 0;
+	return header_is_valid(echo) ? pcm_echo_reference_current_delay(&echo->reference) : 0;
 }
 
 static enum pcm_host_echo_result read_filter_window(
@@ -227,7 +215,7 @@ static enum pcm_host_echo_result read_filter_window(
 	int16_t references[PCM_HOST_ECHO_FILTER_TAPS])
 {
 	uint32_t delay = echo->retained_delay_samples ?
-		echo->retained_delay_samples : echo->window_delay_samples;
+		echo->retained_delay_samples : pcm_echo_reference_current_delay(&echo->reference);
 	enum pcm_echo_reference_result result =
 		pcm_echo_reference_read_window(
 			&echo->reference, delay,
@@ -336,7 +324,7 @@ static enum pcm_host_echo_result prepare_training_step(
 
 	memset(step, 0, sizeof(*step));
 	window_result = pcm_echo_reference_read_window(
-		&echo->reference, echo->window_delay_samples, references,
+		&echo->reference, pcm_echo_reference_current_delay(&echo->reference), references,
 		PCM_HOST_ECHO_FILTER_TAPS);
 	if (window_result == PCM_ECHO_REFERENCE_NOT_READY)
 		return PCM_HOST_ECHO_OK;
@@ -510,7 +498,7 @@ static enum pcm_host_echo_result retime_active_model(
 	if (!echo->filter_ready && !echo->retained_delay_samples)
 		return PCM_HOST_ECHO_INVALID_STATE;
 	uint32_t active = echo->retained_delay_samples ?
-		echo->retained_delay_samples : echo->window_delay_samples;
+		echo->retained_delay_samples : pcm_echo_reference_current_delay(&echo->reference);
 	int64_t delay = (int64_t)active + delay_change_samples;
 	if (delay_change_samples == 0 ||
 	    delay_change_samples < -ECHO_TIMING_RADIUS ||
@@ -525,7 +513,6 @@ static enum pcm_host_echo_result retime_active_model(
 		if (pcm_echo_reference_start_scan(&echo->reference, (uint32_t)delay,
 				PCM_HOST_ECHO_FILTER_PRE_SAMPLES) != PCM_ECHO_REFERENCE_OK)
 			return PCM_HOST_ECHO_INVALID_STATE;
-		echo->window_delay_samples = (uint32_t)delay;
 	}
 	echo->filter_suspended = false;
 	return PCM_HOST_ECHO_OK;
@@ -665,12 +652,11 @@ static enum pcm_host_echo_result advance_reference(
 				if (echo->filter_ready) {
 					memcpy(echo->retained_coefficients, echo->coefficients,
 					       sizeof(echo->coefficients));
-					echo->retained_delay_samples = echo->window_delay_samples;
+					echo->retained_delay_samples =
+						pcm_echo_reference_current_delay(&echo->reference);
 				}
-				echo->window_delay_samples =
-					scan.best_window_delay_samples;
 				echo->delay_acquired = true;
-				if (restart_training(echo) != PCM_HOST_ECHO_OK)
+				if (restart_training(echo, scan.best_window_delay_samples) != PCM_HOST_ECHO_OK)
 					return PCM_HOST_ECHO_INVALID_STATE;
 				goto push_reference;
 			}
@@ -678,7 +664,8 @@ static enum pcm_host_echo_result advance_reference(
 		echo->quiet_samples = next_quiet;
 		if (!echo->filter_ready &&
 		    echo->train_samples >= PCM_HOST_ECHO_TRAIN_WINDOW_SAMPLES &&
-		    restart_training(echo) != PCM_HOST_ECHO_OK)
+		    restart_training(echo, pcm_echo_reference_current_delay(&echo->reference)) !=
+			    PCM_HOST_ECHO_OK)
 			return PCM_HOST_ECHO_INVALID_STATE;
 	}
 

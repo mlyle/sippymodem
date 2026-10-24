@@ -128,7 +128,6 @@ static bool test_contracts(void)
 		      PCM_HOST_ECHO_DEFAULT_WINDOW_DELAY_SAMPLES,
 	      "ordinary owner did not initialize");
 	memset(&saved, 0, sizeof(saved));
-	saved.window_delay_samples = PCM_HOST_ECHO_DEFAULT_WINDOW_DELAY_SAMPLES;
 	CHECK(pcm_echo_reference_start_scan(&saved.reference,
 		      PCM_HOST_ECHO_DEFAULT_WINDOW_DELAY_SAMPLES,
 		      PCM_HOST_ECHO_FILTER_PRE_SAMPLES) == PCM_ECHO_REFERENCE_OK &&
@@ -178,8 +177,9 @@ static bool test_contracts(void)
 		      &predicted, PCM_HOST_ECHO_FILTER, 17, 17, 91) ==
 	      PCM_HOST_ECHO_OK && memcmp(&echo, &predicted, sizeof(echo)) == 0,
 	      "predicted advance diverged from checked advance");
-	echo.window_delay_samples = 0;
+	echo.reference.scan_current_index = echo.reference.scan_count;
 	CHECK(!pcm_host_echo_is_valid(&echo) &&
+	      pcm_host_echo_window_delay_samples(&echo) == 0 &&
 	      pcm_host_echo_predict(
 		      &echo, PCM_HOST_ECHO_BYPASS, 0, &cleaned) ==
 		      PCM_HOST_ECHO_INVALID_STATE,
@@ -196,7 +196,7 @@ static bool test_half_sample_prediction(void)
 	struct pcm_host_echo echo;
 	CHECK(pcm_host_echo_init(&echo) == PCM_HOST_ECHO_OK,
 	      "rounding owner did not initialize");
-	for (unsigned i = 0; i < echo.window_delay_samples + PCM_HOST_ECHO_FILTER_TAPS; ++i)
+	for (unsigned i = 0; i < pcm_host_echo_window_delay_samples(&echo) + PCM_HOST_ECHO_FILTER_TAPS; ++i)
 		CHECK(pcm_echo_reference_push(&echo.reference, 1) == PCM_ECHO_REFERENCE_OK,
 		      "rounding reference did not fill");
 	echo.filter_ready = true;
@@ -229,14 +229,14 @@ static bool test_prediction_numeric_bounds(void)
 	for (unsigned retained = 0; retained < 2; ++retained) {
 		CHECK(pcm_host_echo_init(&echo) == PCM_HOST_ECHO_OK,
 		      "numeric owner did not initialize");
-		for (unsigned i = 0; i < echo.window_delay_samples + PCM_HOST_ECHO_FILTER_TAPS; ++i)
+		for (unsigned i = 0; i < pcm_host_echo_window_delay_samples(&echo) + PCM_HOST_ECHO_FILTER_TAPS; ++i)
 			CHECK(pcm_echo_reference_push(&echo.reference, 0) == PCM_ECHO_REFERENCE_OK,
 			      "numeric reference did not fill");
 		echo.filter_ready = !retained;
 		echo.train_samples = PCM_HOST_ECHO_TRAIN_MIN_SAMPLES;
 		echo.train_peak = PCM_HOST_ECHO_READY_MIN_PEAK;
 		echo.delay_acquired = retained;
-		echo.retained_delay_samples = retained ? echo.window_delay_samples : 0;
+		echo.retained_delay_samples = retained ? pcm_host_echo_window_delay_samples(&echo) : 0;
 		float *coefficients = retained ? echo.retained_coefficients : echo.coefficients;
 
 		for (unsigned r = 0; r < sizeof(references) / sizeof(references[0]); ++r) {
@@ -397,7 +397,7 @@ static bool test_near_window_seed(void)
 			      "window selection reset an active learner");
 		}
 	}
-	CHECK(pcm_host_echo_is_ready(&echo) && echo.window_delay_samples == 1,
+	CHECK(pcm_host_echo_is_ready(&echo) && pcm_host_echo_window_delay_samples(&echo) == 1,
 	      "near return was not independently qualified");
 	for (size_t index = 6000; index < 10000; ++index) {
 		int16_t returned = scale_q15(transmit_sample(index - 32u), 11000);
@@ -487,7 +487,7 @@ static bool test_runtime_model_confidence(bool strong_fit)
 			      "unsupported runtime prediction altered the peer at %zu", index);
 	}
 	CHECK(echo.filter_suspended && pcm_host_echo_is_ready(&echo) &&
-	      echo.window_delay_samples == 1 &&
+	      pcm_host_echo_window_delay_samples(&echo) == 1 &&
 	      memcmp(coefficients, echo.coefficients, sizeof(coefficients)) == 0,
 	      "runtime monitoring discarded or adapted the trained model");
 	{
@@ -574,13 +574,13 @@ static bool test_phase2_delay_seed(void)
 		      &seeded, PCM_ECHO_REFERENCE_MAX_WINDOW_DELAY_SAMPLES +
 			       PCM_HOST_ECHO_FILTER_PRE_SAMPLES) ==
 		      PCM_HOST_ECHO_OK && pcm_host_echo_is_valid(&seeded) &&
-	      seeded.window_delay_samples ==
+	      pcm_host_echo_window_delay_samples(&seeded) ==
 		      PCM_ECHO_REFERENCE_MAX_WINDOW_DELAY_SAMPLES,
 	      "last representable measured delay was not retained");
 	CHECK(pcm_host_echo_init(&seeded) == PCM_HOST_ECHO_OK &&
 	      pcm_host_echo_seed_phase2_delay(&seeded, UINT32_MAX) ==
 		      PCM_HOST_ECHO_OK && pcm_host_echo_is_valid(&seeded) &&
-	      seeded.window_delay_samples ==
+	      pcm_host_echo_window_delay_samples(&seeded) ==
 		      PCM_HOST_ECHO_DEFAULT_WINDOW_DELAY_SAMPLES,
 	      "out-of-history ranging broke the default search");
 	return true;
@@ -670,10 +670,10 @@ static bool test_long_phase2_delay_seed(void)
 			      "ranging alone qualified an echo filter: %u", delay);
 		}
 		CHECK(pcm_host_echo_is_ready(&echo) && !echo.delay_acquired &&
-		      echo.window_delay_samples ==
+		      pcm_host_echo_window_delay_samples(&echo) ==
 			      seed - PCM_HOST_ECHO_FILTER_PRE_SAMPLES,
 		      "long measured delay needed a fresh search: %u ready=%d window=%u",
-		      delay, pcm_host_echo_is_ready(&echo), echo.window_delay_samples);
+		      delay, pcm_host_echo_is_ready(&echo), pcm_host_echo_window_delay_samples(&echo));
 		for (size_t index = history + training;
 		     index < history + training + VERIFY_SAMPLES; ++index) {
 			int16_t remote = remote_sample(index);
@@ -771,11 +771,11 @@ static bool test_distributed_echo(bool acquire, bool late_peak)
 			      "delay acquisition alone qualified a filter");
 	}
 	CHECK(pcm_host_echo_is_ready(&echo) && echo.delay_acquired == acquire &&
-	      (acquire || echo.window_delay_samples == 2967 - PCM_HOST_ECHO_FILTER_PRE_SAMPLES) &&
-	      echo.window_delay_samples <= 2967 &&
-	      echo.window_delay_samples + PCM_HOST_ECHO_FILTER_TAPS > 2967 + 17 * (returns - 1),
+	      (acquire || pcm_host_echo_window_delay_samples(&echo) == 2967 - PCM_HOST_ECHO_FILTER_PRE_SAMPLES) &&
+	      pcm_host_echo_window_delay_samples(&echo) <= 2967 &&
+	      pcm_host_echo_window_delay_samples(&echo) + PCM_HOST_ECHO_FILTER_TAPS > 2967 + 17 * (returns - 1),
 	      "distributed model did not qualify: ready=%d delay=%u",
-	      echo.filter_ready, echo.window_delay_samples);
+	      echo.filter_ready, pcm_host_echo_window_delay_samples(&echo));
 	for (size_t index = history + training;
 	     index < history + training + VERIFY_SAMPLES; ++index) {
 		int16_t remote = remote_sample(index);
@@ -904,7 +904,7 @@ static bool test_retained_delay_tracking(int shift, bool unrelated)
 
 	CHECK(train_retained_echo(&echo, &start), "retained timing setup failed");
 	uint32_t original_delay = echo.retained_delay_samples;
-	uint32_t acquisition_delay = echo.window_delay_samples;
+	uint32_t acquisition_delay = pcm_host_echo_window_delay_samples(&echo);
 	uint32_t trained = echo.train_samples;
 
 	memcpy(retained, echo.retained_coefficients, sizeof(retained));
@@ -927,7 +927,7 @@ static bool test_retained_delay_tracking(int shift, bool unrelated)
 		      (int64_t)original_delay + (unrelated ? 0 : shift),
 	      "retained return did not track: %u -> %u",
 	      original_delay, echo.retained_delay_samples);
-	CHECK(echo.window_delay_samples == acquisition_delay &&
+	CHECK(pcm_host_echo_window_delay_samples(&echo) == acquisition_delay &&
 	      echo.train_samples == trained && !echo.filter_ready &&
 	      memcmp(retained, echo.retained_coefficients, sizeof(retained)) == 0 &&
 	      memcmp(candidate, echo.coefficients, sizeof(candidate)) == 0 &&
@@ -968,7 +968,7 @@ static bool test_explicit_retime(void)
 		      "invalid timing request changed retained evidence");
 	CHECK(pcm_host_echo_retime(&echo, 80) == PCM_HOST_ECHO_OK &&
 	      echo.retained_delay_samples == saved.retained_delay_samples + 80 &&
-	      echo.window_delay_samples == saved.window_delay_samples &&
+	      pcm_host_echo_window_delay_samples(&echo) == pcm_host_echo_window_delay_samples(&saved) &&
 	      echo.train_samples == saved.train_samples &&
 	      memcmp(&echo.reference, &saved.reference, sizeof(echo.reference)) == 0 &&
 	      memcmp(echo.coefficients, saved.coefficients, sizeof(echo.coefficients)) == 0 &&
@@ -990,7 +990,7 @@ static bool test_training_quiet_boundary(void)
 		      "quiet-boundary owner did not initialize");
 		if (scenario != 0) {
 			for (unsigned index = 0;
-			     index < echo.window_delay_samples +
+			     index < pcm_host_echo_window_delay_samples(&echo) +
 				     PCM_HOST_ECHO_FILTER_TAPS - 1u; ++index)
 				CHECK(pcm_echo_reference_push(
 					      &echo.reference, scenario == 2 ? 100 : 0) ==
@@ -1065,7 +1065,7 @@ static bool test_unrelated_input_does_not_train(uint32_t salt, int16_t span)
 	}
 	CHECK(!pcm_host_echo_is_ready(&echo) && !echo.delay_acquired,
 	      "uncorrelated input produced a ready model: delay=%u corr=%" PRIi64,
-	      echo.window_delay_samples, echo.prediction_cross_energy);
+	      pcm_host_echo_window_delay_samples(&echo), echo.prediction_cross_energy);
 	CHECK(echo.reference.scan_samples != 0 &&
 	      echo.reference.scan_samples <=
 		      FALSE_TRAIN_SAMPLES /
@@ -1109,9 +1109,9 @@ static bool test_acquisition_after_unrelated_prefix(void)
 			      "unrelated prefix qualified a model at %zu", index);
 	}
 	CHECK(pcm_host_echo_is_ready(&echo) && echo.delay_acquired &&
-	      echo.window_delay_samples == FILTER_DELAY,
+	      pcm_host_echo_window_delay_samples(&echo) == FILTER_DELAY,
 	      "clean training retained rejected correlation: ready=%d delay=%u",
-	      pcm_host_echo_is_ready(&echo), echo.window_delay_samples);
+	      pcm_host_echo_is_ready(&echo), pcm_host_echo_window_delay_samples(&echo));
 	for (size_t index = history + training;
 	     index < history + training + VERIFY_SAMPLES; ++index) {
 		int16_t remote = remote_sample(index);
@@ -1157,15 +1157,15 @@ static bool test_acquisition_after_codec_silence(void)
 		      pcm_host_echo_advance_predicted(&echo, mode, received, cleaned,
 			      transmitted) == PCM_HOST_ECHO_OK,
 		      "codec-silence training failed at %zu", index);
-		CHECK(echo.window_delay_samples == PCM_HOST_ECHO_DEFAULT_WINDOW_DELAY_SAMPLES ||
-		      echo.window_delay_samples == window,
+		CHECK(pcm_host_echo_window_delay_samples(&echo) == PCM_HOST_ECHO_DEFAULT_WINDOW_DELAY_SAMPLES ||
+		      pcm_host_echo_window_delay_samples(&echo) == window,
 		      "codec silence acquired false delay %u at %zu",
-		      echo.window_delay_samples, index);
+		      pcm_host_echo_window_delay_samples(&echo), index);
 	}
 	CHECK(pcm_host_echo_is_ready(&echo) && echo.delay_acquired &&
-	      echo.window_delay_samples == window,
+	      pcm_host_echo_window_delay_samples(&echo) == window,
 	      "earlier return did not qualify: ready=%d delay=%u samples=%u",
-	      pcm_host_echo_is_ready(&echo), echo.window_delay_samples, echo.train_samples);
+	      pcm_host_echo_is_ready(&echo), pcm_host_echo_window_delay_samples(&echo), echo.train_samples);
 	return true;
 }
 
@@ -1184,7 +1184,7 @@ static bool test_prompt_frozen_delay_tracking(void)
 		      "prompt timing training failed at %zu", index);
 	}
 	CHECK(pcm_host_echo_is_ready(&echo), "prompt timing model not ready");
-	original_delay = echo.window_delay_samples;
+	original_delay = pcm_host_echo_window_delay_samples(&echo);
 	memcpy(coefficients, echo.coefficients, sizeof(coefficients));
 	/* A material return moves by 10 ms immediately before a finite control
 	 * signal. Recover within 125 ms while the peer remains independent. */
@@ -1195,7 +1195,7 @@ static bool test_prompt_frozen_delay_tracking(void)
 		CHECK(echo_step(&echo, PCM_HOST_ECHO_FILTER, index, received, &cleaned),
 		      "prompt frozen filtering failed at %zu", index);
 	}
-	CHECK(echo.window_delay_samples == original_delay + 80u &&
+	CHECK(pcm_host_echo_window_delay_samples(&echo) == original_delay + 80u &&
 	      memcmp(coefficients, echo.coefficients, sizeof(coefficients)) == 0,
 	      "material return did not retime promptly without refitting");
 	return true;
@@ -1217,7 +1217,7 @@ static bool test_frozen_delay_tracking(int changed_delay, bool transient)
 	}
 	CHECK(pcm_host_echo_is_ready(&echo), "weak return was not qualified");
 	float coefficients[PCM_HOST_ECHO_FILTER_TAPS];
-	uint32_t original_delay = echo.window_delay_samples;
+	uint32_t original_delay = pcm_host_echo_window_delay_samples(&echo);
 
 	memcpy(coefficients, echo.coefficients, sizeof(coefficients));
 	/* A weak echo changes delay after training while the remote remains
@@ -1235,7 +1235,7 @@ static bool test_frozen_delay_tracking(int changed_delay, bool transient)
 			       add_s16((int32_t)remote + returned), &cleaned),
 		      "changed-return filtering failed at %zu", index);
 		if (index == TRAIN_SAMPLES + 48000 - 1)
-			CHECK((int64_t)echo.window_delay_samples ==
+			CHECK((int64_t)pcm_host_echo_window_delay_samples(&echo) ==
 				(int64_t)original_delay + (transient ? 0 : changed_delay),
 			      "weak return did not retime within six seconds");
 		if (index >= TRAIN_SAMPLES + 48000) {
@@ -1244,10 +1244,10 @@ static bool test_frozen_delay_tracking(int changed_delay, bool transient)
 						    (int32_t)cleaned - remote);
 		}
 	}
-	CHECK((int64_t)echo.window_delay_samples ==
+	CHECK((int64_t)pcm_host_echo_window_delay_samples(&echo) ==
 		      (int64_t)original_delay + (transient ? 0 : changed_delay),
 	      "frozen return did not retime: %u -> %u", original_delay,
-	      echo.window_delay_samples);
+	      pcm_host_echo_window_delay_samples(&echo));
 	CHECK(memcmp(coefficients, echo.coefficients, sizeof(coefficients)) == 0,
 	      "timing correction changed filter coefficients");
 	CHECK(residual_energy * 50 < source_energy,
@@ -1283,7 +1283,7 @@ static bool test_prompt_weak_delay_tracking(unsigned warmup)
 		      "weak timing training failed at %zu", index);
 	}
 	CHECK(pcm_host_echo_is_ready(&echo), "weak timing model not ready");
-	uint32_t original_delay = echo.window_delay_samples;
+	uint32_t original_delay = pcm_host_echo_window_delay_samples(&echo);
 	float coefficients[PCM_HOST_ECHO_FILTER_TAPS];
 	memcpy(coefficients, echo.coefficients, sizeof(coefficients));
 	uint64_t residual = 0, source = 0;
@@ -1309,10 +1309,10 @@ static bool test_prompt_weak_delay_tracking(unsigned warmup)
 			source = energy_add(source, returned);
 		}
 	}
-	CHECK(echo.window_delay_samples == original_delay + 109u &&
+	CHECK(pcm_host_echo_window_delay_samples(&echo) == original_delay + 109u &&
 	      memcmp(coefficients, echo.coefficients, sizeof(coefficients)) == 0,
 	      "weak return did not retime promptly without refitting: %u -> %u",
-	      original_delay, echo.window_delay_samples);
+	      original_delay, pcm_host_echo_window_delay_samples(&echo));
 	CHECK(residual * 50 < source, "weak return residual remained high");
 	return true;
 }
@@ -1331,7 +1331,7 @@ static bool test_unrelated_input_does_not_retime(uint32_t salt)
 		      "false-timing training failed at %zu", index);
 	}
 	CHECK(pcm_host_echo_is_ready(&echo), "false-timing model not qualified");
-	uint32_t original_delay = echo.window_delay_samples;
+	uint32_t original_delay = pcm_host_echo_window_delay_samples(&echo);
 
 	/* Remove the echo entirely. Coloured remote noise plus a tone must not
 	 * authorize moving a previously qualified filter onto unrelated data. */
@@ -1344,9 +1344,9 @@ static bool test_unrelated_input_does_not_retime(uint32_t salt)
 		CHECK(echo_step(&echo, PCM_HOST_ECHO_FILTER, index,
 			       (int16_t)remote, &cleaned),
 		      "unrelated input failed at %zu", index);
-		CHECK(echo.window_delay_samples == original_delay,
+		CHECK(pcm_host_echo_window_delay_samples(&echo) == original_delay,
 		      "unrelated data moved echo at %zu: %u -> %u", index,
-		      original_delay, echo.window_delay_samples);
+		      original_delay, pcm_host_echo_window_delay_samples(&echo));
 	}
 	return true;
 }
@@ -1369,7 +1369,7 @@ static bool test_observation_contracts(void)
 	      pcm_host_echo_advance_reference(&echo, 99, 0, 0) ==
 		      PCM_HOST_ECHO_INVALID_ARGUMENT &&
 	      pcm_host_echo_observe_timing(&echo, PCM_HOST_ECHO_FILTER, 0, 0,
-		      (int *)&echo.window_delay_samples) == PCM_HOST_ECHO_INVALID_ARGUMENT &&
+		      (int *)&echo.train_samples) == PCM_HOST_ECHO_INVALID_ARGUMENT &&
 	      memcmp(&echo, &saved, sizeof(echo)) == 0,
 	      "rejected observation changed owner/output");
 	CHECK(pcm_host_echo_observe_timing(&echo, PCM_HOST_ECHO_FILTER, 17, 17, &changed) ==
@@ -1377,7 +1377,7 @@ static bool test_observation_contracts(void)
 	      pcm_host_echo_observe_timing(&echo, PCM_HOST_ECHO_FILTER, 17, 17, NULL) ==
 		      PCM_HOST_ECHO_OK && memcmp(&echo, &saved, sizeof(echo)) == 0,
 	      "unqualified observation clocked the TX reference");
-	echo.window_delay_samples = 0;
+	echo.reference.scan_current_index = echo.reference.scan_count;
 	saved = echo;
 	changed = 456;
 	CHECK(pcm_host_echo_observe_timing(&echo, PCM_HOST_ECHO_FILTER, 0, 0, &changed) ==
@@ -1389,7 +1389,7 @@ static bool test_observation_contracts(void)
 	      "corrupt observation owner changed");
 	CHECK(pcm_host_echo_init(&echo) == PCM_HOST_ECHO_OK,
 	      "numeric observation fixture did not initialize");
-	for (unsigned i = 0; i < echo.window_delay_samples + PCM_HOST_ECHO_FILTER_TAPS; ++i)
+	for (unsigned i = 0; i < pcm_host_echo_window_delay_samples(&echo) + PCM_HOST_ECHO_FILTER_TAPS; ++i)
 		CHECK(pcm_echo_reference_push(&echo.reference, 0) == PCM_ECHO_REFERENCE_OK,
 		      "numeric observation reference did not fill");
 	echo.filter_ready = echo.filter_suspended = true;
@@ -1417,13 +1417,13 @@ static bool test_explicit_observation(enum pcm_host_echo_mode mode, bool retaine
 	echo.train_peak = PCM_HOST_ECHO_READY_MIN_PEAK;
 	echo.filter_ready = !retained;
 	echo.delay_acquired = retained;
-	echo.retained_delay_samples = retained ? echo.window_delay_samples : 0;
+	echo.retained_delay_samples = retained ? pcm_host_echo_window_delay_samples(&echo) : 0;
 	echo.filter_suspended = mode == PCM_HOST_ECHO_FILTER_DATA;
 	float *coefficients = retained ? echo.retained_coefficients : echo.coefficients;
 	coefficients[PCM_HOST_ECHO_FILTER_PRE_SAMPLES] = 0.25f;
 	CHECK(pcm_host_echo_is_valid(&echo), "explicit observation fixture is invalid");
 	memcpy(&legacy, &echo, sizeof(echo));
-	uint32_t original = retained ? echo.retained_delay_samples : echo.window_delay_samples;
+	uint32_t original = retained ? echo.retained_delay_samples : pcm_host_echo_window_delay_samples(&echo);
 	unsigned events = 0;
 	for (size_t i = start; i < start + 3600u; ++i) {
 		int offset = i >= start + 1024 ? shift : 0;
@@ -1436,7 +1436,7 @@ static bool test_explicit_observation(enum pcm_host_echo_mode mode, bool retaine
 		      pcm_host_echo_predict(&legacy, mode, received, &old_cleaned) == PCM_HOST_ECHO_OK &&
 		      cleaned == old_cleaned,
 		      "explicit prediction diverged at %zu", i);
-		uint32_t before = retained ? echo.retained_delay_samples : echo.window_delay_samples;
+		uint32_t before = retained ? echo.retained_delay_samples : pcm_host_echo_window_delay_samples(&echo);
 		CHECK(pcm_host_echo_observe_timing(&echo, mode, received, cleaned, &changed) == PCM_HOST_ECHO_OK &&
 		      echo.reference.write == legacy.reference.write &&
 		      echo.reference.fill == legacy.reference.fill &&
@@ -1446,7 +1446,7 @@ static bool test_explicit_observation(enum pcm_host_echo_mode mode, bool retaine
 		      memcmp(echo.retained_coefficients, legacy.retained_coefficients,
 			     sizeof(echo.retained_coefficients)) == 0,
 		      "timing observation clocked TX or changed coefficients at %zu", i);
-		uint32_t after = retained ? echo.retained_delay_samples : echo.window_delay_samples;
+		uint32_t after = retained ? echo.retained_delay_samples : pcm_host_echo_window_delay_samples(&echo);
 		CHECK((int64_t)after - before == changed,
 		      "accepted delay change was not reported at %zu", i);
 		if (changed) {

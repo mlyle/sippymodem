@@ -106,7 +106,7 @@ bool v34_echo_timing_prepare(struct v34_echo_timing *timing,
 	    receiver->equalizer.epoch > INT64_MAX / 2u - V34_ECHO_TIMING_HISTORY)
 		goto unsupported;
 	model_delay = echo->retained_delay_samples ? echo->retained_delay_samples :
-		echo->window_delay_samples;
+		pcm_echo_reference_current_delay(&echo->reference);
 	channel = &data->data_receiver.channel_receiver;
 	profile = &receiver->timing.transmitting_profile;
 	if (channel->conditioner.normalizer.nonlinear_parameter != 0 ||

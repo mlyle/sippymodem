@@ -354,7 +354,8 @@ static bool test_full_history_scan_boundary(void)
 	const int16_t received = -901;
 
 	CHECK(pcm_echo_reference_start_scan(&reference, maximum, pre) ==
-		      PCM_ECHO_REFERENCE_OK,
+		      PCM_ECHO_REFERENCE_OK &&
+	      pcm_echo_reference_current_delay(&reference) == maximum,
 	      "maximum scan did not initialize");
 	for (unsigned i = 0; i + 1u < history; ++i)
 		CHECK(pcm_echo_reference_push(&reference, reference_sample(i)) ==
