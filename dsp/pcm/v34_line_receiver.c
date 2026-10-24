@@ -10,11 +10,16 @@
 bool v34_line_receiver_is_valid(
 	const struct v34_line_receiver *receiver)
 {
-	if (receiver == NULL || !receiver->initialized ||
-	    !v34_receive_timing_is_valid(&receiver->timing) ||
+	bool acquired;
+
+	if (receiver == NULL || !receiver->initialized)
+		return false;
+	/* The acquisition predicate validates the complete timing owner. */
+	acquired = v34_receive_timing_is_acquired(&receiver->timing);
+	if ((!acquired && !v34_receive_timing_is_valid(&receiver->timing)) ||
 	    !v34_adaptive_equalizer_is_valid(&receiver->equalizer))
 		return false;
-	if (!v34_receive_timing_is_acquired(&receiver->timing))
+	if (!acquired)
 		return receiver->equalizer.epoch == 0u &&
 		       receiver->equalizer.inputs_since_observation == 0u &&
 		       !receiver->equalizer.decision_pending;
@@ -25,9 +30,11 @@ bool v34_line_receiver_matches_profile(
 	const struct v34_line_receiver *receiver,
 	const struct v34_phase3_profile *transmitting_profile)
 {
+	/* Full-field equality with the validated owned profile also validates
+	 * the requested profile, including when it aliases the owned copy. */
 	return v34_line_receiver_is_valid(receiver) &&
-	       v34_receive_timing_matches_profile(
-		       &receiver->timing, transmitting_profile);
+	       v34_phase3_profile_is_equal(
+		       &receiver->timing.transmitting_profile, transmitting_profile);
 }
 
 enum v34_line_receiver_result v34_line_receiver_init(

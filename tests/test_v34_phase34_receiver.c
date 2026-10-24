@@ -106,11 +106,74 @@ static bool sample_preserves_state(
 	return true;
 }
 
+static bool test_line_validation(const struct v34_line_receiver *receiver)
+{
+	const struct v34_phase3_profile *owned =
+		&receiver->timing.transmitting_profile;
+	struct v34_phase3_profile requested = *owned;
+	struct v34_line_receiver invalid;
+	struct v34_line_receiver saved = *receiver;
+
+	CHECK(v34_line_receiver_is_valid(receiver) &&
+	      v34_line_receiver_matches_profile(receiver, &requested) &&
+	      v34_line_receiver_matches_profile(receiver, owned) &&
+	      !v34_line_receiver_is_valid(NULL) &&
+	      !v34_line_receiver_matches_profile(NULL, owned) &&
+	      !v34_line_receiver_matches_profile(receiver, NULL),
+	      "line/profile validation rejected a valid owner or accepted null");
+	/* Each field participates even when changing it leaves a valid profile.
+	 * Do not replace profile matching with just a negotiated-rate check. */
+#define CHECK_PROFILE_FIELD(field) do { \
+	requested = *owned; \
+	requested.field ^= 1u; \
+	CHECK(!v34_line_receiver_matches_profile(receiver, &requested), \
+	      "line/profile matching ignored " #field); \
+} while (0)
+	CHECK_PROFILE_FIELD(symbol_rate_numerator);
+	CHECK_PROFILE_FIELD(symbol_rate_denominator);
+	CHECK_PROFILE_FIELD(carrier_frequency_numerator);
+	CHECK_PROFILE_FIELD(carrier_frequency_denominator);
+	CHECK_PROFILE_FIELD(md_symbol_count);
+	CHECK_PROFILE_FIELD(symbol_rate);
+	CHECK_PROFILE_FIELD(local_role);
+	CHECK_PROFILE_FIELD(transmit_power_reduction_db);
+	CHECK_PROFILE_FIELD(preemphasis_filter_index);
+	CHECK_PROFILE_FIELD(projected_data_rate_2400_bps_units);
+	CHECK_PROFILE_FIELD(md_length_35_ms_units);
+	CHECK_PROFILE_FIELD(high_carrier);
+#undef CHECK_PROFILE_FIELD
+
+#define CHECK_INVALID_LINE(field, value) do { \
+	invalid = *receiver; \
+	invalid.field = (value); \
+	CHECK(!v34_line_receiver_is_valid(&invalid) && \
+	      !v34_line_receiver_matches_profile(&invalid, owned) && \
+	      !v34_line_receiver_matches_profile( \
+		      &invalid, &invalid.timing.transmitting_profile), \
+	      "line/profile validation accepted invalid " #field); \
+} while (0)
+	CHECK_INVALID_LINE(initialized, false);
+	CHECK_INVALID_LINE(timing.initialized, false);
+	CHECK_INVALID_LINE(timing.transmitting_profile.symbol_rate_denominator, 0);
+	CHECK_INVALID_LINE(timing.input_count, V34_RECEIVE_TIMING_INPUT_CAPACITY + 1);
+	CHECK_INVALID_LINE(equalizer.initialized, false);
+	if (!v34_receive_timing_is_acquired(&receiver->timing)) {
+		CHECK_INVALID_LINE(equalizer.epoch, 1);
+		CHECK_INVALID_LINE(equalizer.inputs_since_observation, 1);
+		CHECK_INVALID_LINE(equalizer.decision_pending, true);
+	}
+#undef CHECK_INVALID_LINE
+	CHECK(memcmp(receiver, &saved, sizeof(saved)) == 0,
+	      "line/profile validation changed its owner");
+	return true;
+}
+
 static bool test_terminal_samples(const struct v34_phase34_receiver *receiver)
 {
 	struct v34_phase34_receiver next = *receiver;
 
-	CHECK(v34_phase34_receiver_is_valid(&next),
+	CHECK(v34_phase34_receiver_is_valid(&next) &&
+	      test_line_validation(&next.line),
 	      "terminal fixture was not valid");
 	if (next.stage == V34_PHASE34_RECEIVER_PHASE4) {
 		CHECK(v34_phase34_receiver_is_complete(&next) &&
@@ -274,6 +337,7 @@ static bool test_validation(void)
 		      TEST_INITIAL_RECEIVE_GAIN) ==
 		      V34_PHASE34_RECEIVER_OK &&
 	      v34_phase34_receiver_is_valid(&receiver) &&
+	      test_line_validation(&receiver.line) &&
 	      receiver.line.timing.gain.gain == TEST_INITIAL_RECEIVE_GAIN &&
 	      receiver.line.timing.gain.mode == V34_GAIN_FROZEN,
 	      "valid receiver did not initialize");

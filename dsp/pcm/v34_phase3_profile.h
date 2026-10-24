@@ -40,6 +40,8 @@ bool v34_symbol_rate_matches(
 bool v34_phase3_profile_is_valid(
 	const struct v34_phase3_profile *profile);
 
+/* Compare every profile field, without validating either operand. Equality
+ * with a valid profile therefore implies that the other profile is valid. */
 bool v34_phase3_profile_is_equal(
 	const struct v34_phase3_profile *left,
 	const struct v34_phase3_profile *right);
