@@ -24,11 +24,40 @@ static inline bool packed_msb_bits_are_zero(
 {
 	if (bytes == NULL)
 		return false;
-	for (size_t bit = 0; bit < bit_count; ++bit) {
-		if (packed_msb_bit(bytes, first_bit + bit) != 0u)
+	if (bit_count == 0)
+		return true;
+	bytes += first_bit / 8u;
+	unsigned offset = (unsigned)(first_bit % 8u);
+	if (offset) {
+		size_t used = bit_count < 8u - offset ? bit_count : 8u - offset;
+		uint8_t mask = (uint8_t)((UINT8_MAX >> offset) &
+			(UINT8_MAX << (8u - offset - used)));
+
+		if (*bytes & mask)
 			return false;
+		bit_count -= used;
+		++bytes;
 	}
-	return true;
+	if (!memory_region_is_zero(bytes, bit_count / 8u))
+		return false;
+	bytes += bit_count / 8u;
+	unsigned tail = (unsigned)(bit_count % 8u);
+	return tail == 0 || !(*bytes & (uint8_t)(UINT8_MAX << (8u - tail)));
+}
+
+/* Drop the oldest width bits and append value at the low end of a packed
+ * byte history. For nonzero count, storage covers count bytes, width is
+ * 1..8 and value fits width bits. Count zero accesses no storage. Protocol
+ * owners retain their bit counts, padding rules and input validation. */
+static inline void packed_msb_push(
+	uint8_t *bytes, size_t count, unsigned width, uint8_t value)
+{
+	if (count == 0)
+		return;
+	for (size_t index = 0; index + 1u < count; ++index)
+		bytes[index] = (uint8_t)((bytes[index] << width) |
+			(bytes[index + 1u] >> (8u - width)));
+	bytes[count - 1u] = (uint8_t)((bytes[count - 1u] << width) | value);
 }
 
 /* Assign one bit using the same most-significant-bit-first numbering. */

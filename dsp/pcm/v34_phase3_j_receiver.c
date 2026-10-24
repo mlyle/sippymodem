@@ -2,6 +2,8 @@
 
 #include "v34_phase3_j_receiver.h"
 
+#include "packed_bits.h"
+
 #include <limits.h>
 #include <stddef.h>
 
@@ -60,14 +62,7 @@ static bool rotation_history_is_valid(
 				V34_PHASE3_J_ROTATION_CAPACITY;
 	uint32_t unused = V34_PHASE3_J_ROTATION_CAPACITY - retained;
 
-	for (uint32_t index = 0; index < unused; ++index) {
-		unsigned int shift = 2u * (3u - index % 4u);
-
-		if (((receiver->rotation_history[index / 4u] >> shift) & 3u) !=
-		    0u)
-			return false;
-	}
-	return true;
+	return packed_msb_bits_are_zero(receiver->rotation_history, 0, 2u * unused);
 }
 
 bool v34_phase3_j_receiver_is_valid(
@@ -130,17 +125,8 @@ static uint8_t retained_rotation(
 static void retain_rotation(
 	struct v34_phase3_j_receiver *receiver, uint8_t rotation)
 {
-	for (size_t index = 0;
-	     index + 1u < V34_PHASE3_J_RECEIVER_ROTATION_BYTES; ++index)
-		receiver->rotation_history[index] = (uint8_t)(
-			(receiver->rotation_history[index] << 2u) |
-			(receiver->rotation_history[index + 1u] >> 6u));
-	receiver->rotation_history[
-		V34_PHASE3_J_RECEIVER_ROTATION_BYTES - 1u] = (uint8_t)(
-		(receiver->rotation_history[
-			 V34_PHASE3_J_RECEIVER_ROTATION_BYTES - 1u]
-		 << 2u) |
-		rotation);
+	packed_msb_push(receiver->rotation_history,
+		sizeof(receiver->rotation_history), 2, rotation);
 }
 
 static bool decision_is_qualified(

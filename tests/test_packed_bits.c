@@ -178,6 +178,62 @@ static bool test_zero_range(void)
 	      !packed_msb_bits_are_zero(packed, 8, 13) &&
 	      !packed_msb_bits_are_zero(NULL, 0, 0),
 	      "packed zero-range validation changed");
+	for (size_t first = 0; first < 32; ++first)
+		for (size_t count = 0; count <= 128; ++count) {
+			uint8_t storage[20];
+			memset(storage, 0xff, sizeof(storage));
+			for (size_t bit = first; bit < first + count; ++bit)
+				storage[bit / 8] &= (uint8_t)~(0x80u >> (bit % 8));
+			CHECK(packed_msb_bits_are_zero(storage, first, count),
+			      "outside bits changed zero range %zu/%zu", first, count);
+			for (size_t bit = first; bit < first + count; ++bit) {
+				uint8_t mask = (uint8_t)(0x80u >> (bit % 8));
+				storage[bit / 8] |= mask;
+				CHECK(!packed_msb_bits_are_zero(storage, first, count),
+				      "missed nonzero bit %zu in range %zu/%zu", bit, first, count);
+				storage[bit / 8] &= (uint8_t)~mask;
+			}
+		}
+	CHECK(packed_msb_bits_are_zero(packed, SIZE_MAX, 0),
+	      "empty range inspected its start offset");
+	return true;
+}
+
+static bool check_push(size_t count, unsigned width, uint8_t value, uint32_t pattern)
+{
+	uint8_t storage[20], expected[20];
+	uint8_t *history = storage + 1;
+	memset(storage, 0xa5, sizeof(storage));
+	for (size_t byte = 0; byte < count; ++byte) {
+		pattern = pattern * UINT32_C(1664525) + UINT32_C(1013904223);
+		history[byte] = (uint8_t)(pattern >> 24);
+	}
+	memcpy(expected, storage, sizeof(storage));
+	for (size_t bit = 0; bit < count * 8; ++bit) {
+		size_t source = bit + width;
+		bool set = source < count * 8 ?
+			((history[source / 8] >> (7 - source % 8)) & 1u) != 0 :
+			((value >> (count * 8 - 1 - bit)) & 1u) != 0;
+		uint8_t mask = (uint8_t)(0x80u >> (bit % 8));
+		if (set) expected[1 + bit / 8] |= mask;
+		else expected[1 + bit / 8] &= (uint8_t)~mask;
+	}
+	packed_msb_push(history, count, width, value);
+	CHECK(memcmp(storage, expected, sizeof(storage)) == 0,
+	      "packed push changed wire order or bounds count=%zu width=%u value=%u",
+	      count, width, value);
+	return true;
+}
+
+static bool test_push(void)
+{
+	packed_msb_push(NULL, 0, 1, 0);
+	for (unsigned width = 1; width <= 8; ++width)
+		for (unsigned value = 0; value < (1u << width); ++value)
+			for (size_t count = 0; count <= 18; ++count)
+				CHECK(check_push(count, width, (uint8_t)value,
+					UINT32_C(0xa38fe5c7) + value * 257u),
+				      "packed push fixture failed");
 	return true;
 }
 
@@ -194,6 +250,7 @@ int main(void)
 		{ "unpacked validation", test_unpacked_validation },
 		{ "zero tail", test_zero_tail },
 		{ "zero range", test_zero_range },
+		{ "packed history", test_push },
 	};
 	unsigned int failures = 0;
 

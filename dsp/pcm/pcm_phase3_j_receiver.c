@@ -2,6 +2,7 @@
 
 #include "pcm_phase3_j_receiver.h"
 
+#include "packed_bits.h"
 #include "v90_info1.h"
 #include "v90_phase3_signs.h"
 
@@ -147,12 +148,7 @@ static enum pcm_phase3_j_receiver_result receive_trn1d(
 
 static void push_bit(struct pcm_phase3_j_receiver *receiver, uint8_t bit)
 {
-	for (size_t index = 0; index + 1u < PCM_J_FRAME_BYTES; ++index)
-		receiver->frame[index] = (uint8_t)(
-			(receiver->frame[index] << 1) |
-			(receiver->frame[index + 1u] >> 7));
-	receiver->frame[PCM_J_FRAME_BYTES - 1u] = (uint8_t)(
-		(receiver->frame[PCM_J_FRAME_BYTES - 1u] << 1) | bit);
+	packed_msb_push(receiver->frame, sizeof(receiver->frame), 1, bit);
 	if (receiver->frame_bits < PCM_J_FRAME_BITS)
 		receiver->frame_bits++;
 }
