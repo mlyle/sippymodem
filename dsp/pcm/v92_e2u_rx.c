@@ -259,8 +259,10 @@ static bool retain_repeat(struct v92_e2u_search *search,
 	search->bit_index = 0;
 	search->candidate_active = false;
 	const struct v92_control_rx *record = &before->control;
-	if (!event->record.cpu.parameters.acknowledges_cpd ||
-	    !event->record.cpu.parameters.data_rate_number ||
+	/* A valid CPu fixes the repeat's coding clock without confirming CPd.
+	 * The downstream owner still guards E2u against our acknowledgement;
+	 * E2u itself can confirm the exchange if the last CPu was damaged. */
+	if (!event->record.cpu.parameters.data_rate_number ||
 	    record->stage != V92_CONTROL_RX_RECEIVE_PARAMETERS ||
 	    record->frame_bit_count > V92_CPU_MAX_FRAME_BITS ||
 	    record->bit_index + bits != record->frame_bit_count ||

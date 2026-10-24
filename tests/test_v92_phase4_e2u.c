@@ -2259,7 +2259,7 @@ static bool test_repeat_search_contracts(void)
 	return true;
 }
 
-static bool test_repeat_history_recovery(void)
+static bool test_repeat_history_recovery(bool acknowledged)
 {
 	unsigned recovered = 0;
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
@@ -2277,7 +2277,7 @@ static bool test_repeat_history_recovery(void)
 		native_line = line;
 		native = receiver;
 		for (unsigned repeat = 0; repeat < 3; ++repeat) {
-			cpu.acknowledges_cpd = repeat != 0;
+			cpu.acknowledges_cpd = acknowledged && repeat != 0;
 			CHECK(v92_phase4_record_tx_handoff(&wire, &modulator) == V92_PHASE4_RECORD_TX_OK &&
 			      start_cpu_record(&wire, &modulator, &cpu, true), "repeat did not start");
 			unsigned accepted = 0;
@@ -2301,12 +2301,15 @@ static bool test_repeat_history_recovery(void)
 						(uint16_t)wire.frame_bit_count;
 			}
 			CHECK(accepted == (repeat < 2), "damaged repeat was admitted");
-			CHECK(repeat != 0 || !search.frame_bits, "unacknowledged CPu seeded a marker reference");
 		}
-		CHECK(search.frame_bits && !search.bit_index && line.repeat_confirmed &&
+		CHECK(line.repeat_confirmed &&
 		      v92_phase4_record_tx_handoff(&wire, &modulator) == V92_PHASE4_RECORD_TX_OK &&
 		      v92_phase4_record_tx_init_e2u(&wire, &modulator, extended) == V92_PHASE4_RECORD_TX_OK,
 		      "repeat reference lost its coding clock");
+		/* A retained repeat is coding evidence, never acknowledgement authority. */
+		struct v92_e2u_rx guarded_receiver = receiver;
+		struct v92_upstream_control_line_rx guarded_line = line;
+		struct v92_e2u_search guarded_search = search;
 		enum v92_e2u_rx_result ordinary = V92_E2U_RX_OK;
 		struct v92_e2u_rx copied_receiver;
 		struct v92_upstream_control_line_rx copied_line;
@@ -2318,13 +2321,17 @@ static bool test_repeat_history_recovery(void)
 			CHECK(v92_phase4_record_tx_next(&wire, &sample) == V92_PHASE4_RECORD_TX_OK,
 			      "history marker generation failed");
 			sample = quantize(law, sample);
+			CHECK(v92_e2u_search_sample(&guarded_search, &guarded_receiver,
+				      &guarded_line, false, sample, &event) == V92_E2U_RX_OK &&
+			      !v92_e2u_rx_is_complete(&guarded_receiver),
+			      "repeat reference bypassed response eligibility");
 			ordinary = v92_e2u_rx_search(&native, &native_line, true, sample, &event);
 			enum v92_e2u_rx_result result = v92_e2u_search_sample(
 				&search, &receiver, &line, true, sample, &event);
 			CHECK(result == (v92_phase4_record_tx_is_complete(&wire) ?
 			      V92_E2U_RX_COMPLETE : V92_E2U_RX_OK),
-			      "history marker failed law=%u points=%u extended=%u result=%u",
-			      law, points, extended, result);
+			      "history marker failed law=%u points=%u extended=%u ack=%u result=%u",
+			      law, points, extended, acknowledged, result);
 			if (symbol > 4)
 				CHECK(v92_e2u_search_sample(&copied_search, &copied_receiver,
 				      &copied_line, true, sample, &event) == result &&
@@ -2401,7 +2408,8 @@ static bool test_isolated_marker_impulses(void)
 
 int main(void)
 {
-	if (!test_repeat_search_contracts() || !test_repeat_history_recovery())
+	if (!test_repeat_search_contracts() ||
+	    !test_repeat_history_recovery(false) || !test_repeat_history_recovery(true))
 		return 1;
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (int polarity = -1; polarity <= 1; polarity += 2)

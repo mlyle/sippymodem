@@ -45,7 +45,7 @@ struct v92_e2u_rx {
 };
 
 /* Optional repeat evidence has one owner per Phase 4 exchange. A validated
- * acknowledging CPu supplies the exact wire bits and an independent coder.
+ * nonzero CPu supplies the exact wire bits and an independent coder.
  * The second marker trial never replaces the ordinary receive-history trial. */
 struct v92_e2u_search {
 	struct v92_e2u_rx repeated;
