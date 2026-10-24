@@ -143,7 +143,6 @@ static bool finish_timing_window(struct echo_timing *timing,
 	t->first = evidence;
 	t->candidate = best;
 	t->first_qualified = qualified;
-	t->count = 0;
 	t->input = 0;
 	memset(t->cross, 0, sizeof(t->cross));
 	memset(t->energy, 0, sizeof(t->energy));
@@ -156,7 +155,6 @@ static void accumulate_timing_window(struct echo_timing_window *to,
 	/* Fold completed blocks before clearing them. Each input contributes
 	 * once to every scale without another per-sample correlation scan. */
 	to->input += from->input;
-	to->count += from->count;
 	for (unsigned i = 0; i < ECHO_TIMING_BINS; i++) {
 		to->cross[i] += from->cross[i];
 		to->energy[i] += from->energy[i];
@@ -193,17 +191,19 @@ void echo_timing_observe(struct echo_timing *t,
 		t->fast.energy[candidate] += energy;
 		index = index == 0 ? bins - 1 : index - 1;
 	}
-	if (++t->fast.count != ECHO_TIMING_FAST_WINDOW)
+	if (++t->count % ECHO_TIMING_FAST_WINDOW != 0)
 		return;
 	accumulate_timing_window(&t->medium, &t->fast);
 	if (finish_timing_window(t, model, &t->fast, ECHO_TIMING_FAST_WINDOW))
 		return;
-	if (t->medium.count != ECHO_TIMING_MEDIUM_WINDOW)
+	if (t->count % ECHO_TIMING_MEDIUM_WINDOW != 0)
 		return;
 	accumulate_timing_window(&t->slow, &t->medium);
 	if (finish_timing_window(t, model, &t->medium, ECHO_TIMING_MEDIUM_WINDOW))
 		return;
-	if (t->slow.count == ECHO_TIMING_WINDOW)
+	if (t->count == ECHO_TIMING_WINDOW) {
+		t->count = 0;
 		finish_timing_window(t, model, &t->slow,
 				     ECHO_TIMING_WINDOW);
+	}
 }

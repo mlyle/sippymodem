@@ -31,7 +31,7 @@ struct echo_timing_window {
 	uint64_t energy[ECHO_TIMING_BINS];
 	struct echo_timing_evidence first;
 	uint64_t input;
-	uint16_t count, candidate;
+	uint16_t candidate;
 	bool second, first_qualified;
 };
 
@@ -41,7 +41,8 @@ struct echo_timing {
 	 * input delay itself, reading its oldest sample before overwriting it. */
 	int16_t received[ECHO_TIMING_RADIUS];
 	struct echo_timing_window slow, medium, fast;
-	uint16_t write, received_write, fill;
+	/* One cadence for all nested evidence windows, modulo the longest. */
+	uint16_t write, received_write, fill, count;
 };
 
 /* Borrowed for this observe call only. retime is synchronous and returns
@@ -59,9 +60,7 @@ static inline bool echo_timing_is_valid(const struct echo_timing *t)
 {
 	return t != 0 && t->write < ECHO_TIMING_BINS &&
 	       t->received_write < ECHO_TIMING_RADIUS && t->fill <= ECHO_TIMING_BINS &&
-	       t->slow.count < ECHO_TIMING_WINDOW &&
-	       t->medium.count < ECHO_TIMING_MEDIUM_WINDOW &&
-	       t->fast.count < ECHO_TIMING_FAST_WINDOW &&
+	       t->count < ECHO_TIMING_WINDOW &&
 	       t->slow.candidate < ECHO_TIMING_BINS &&
 	       t->medium.candidate < ECHO_TIMING_BINS &&
 	       t->fast.candidate < ECHO_TIMING_BINS;

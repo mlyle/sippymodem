@@ -1263,7 +1263,7 @@ static bool test_frozen_delay_tracking(int changed_delay, bool transient)
 		      "bad prediction advanced timing evidence");
 		CHECK(echo_step(&echo, PCM_HOST_ECHO_FILTER,
 			       TRAIN_SAMPLES + 48000, INT16_MAX, &cleaned) &&
-		      echo.timing.fill == 0 && echo.timing.slow.count == 0,
+		      echo.timing.fill == 0 && echo.timing.count == 0,
 		      "clipped input retained timing evidence");
 		CHECK(memcmp(coefficients, echo.coefficients, sizeof(coefficients)) == 0,
 		      "clipped input changed the frozen response");
