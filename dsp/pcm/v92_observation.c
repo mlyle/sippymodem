@@ -116,9 +116,9 @@ static double bin_cost(const int16_t *q, const double *low, const double *high,
  * Measuring only distance OUTSIDE the interval underestimates noise: a
  * prediction inside the bin is not evidence that no noise was present. */
 static bool bin_moments(double low, double high, double mean, double variance,
-	double *expected, double *deviation)
+	double sigma, double *expected, double *deviation)
 {
-	double sigma = sqrt(variance), a = (low - mean) / sigma, b = (high - mean) / sigma;
+	double a = (low - mean) / sigma, b = (high - mean) / sigma;
 	double probability = gaussian_probability(a / sqrt(2.), b / sqrt(2.));
 	if (!(probability > 0.)) return false;
 	double pa = exp(-.5 * a * a) / sqrt(2. * acos(-1.));
@@ -140,11 +140,13 @@ static bool refine_bin_fit(double coefficient[TAPS], const int16_t *q,
 	for (unsigned iteration = 0; iteration < 96; iteration++) {
 		double targets[V92_OBSERVATION_TRAINING], deviations[V92_OBSERVATION_TRAINING];
 		double next[TAPS] = { 0 }, next_noise = 0.;
+		/* Every bin in this update uses the same noise distribution. */
+		double sigma = sqrt(noise);
 		memset(m->rhs, 0, sizeof(m->rhs));
 		for (size_t j = first; j < count; j++) {
 			double mean = 0.;
 			for (unsigned i = 0; i < taps; i++) mean += coefficient[i] * q[j - i];
-			if (!bin_moments(low[j], high[j], mean, noise, targets + j, deviations + j)) return false;
+			if (!bin_moments(low[j], high[j], mean, noise, sigma, targets + j, deviations + j)) return false;
 			for (unsigned i = 0; i < taps; i++) m->rhs[i] += q[j - i] * targets[j];
 		}
 		if (taps == 1u) {
