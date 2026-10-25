@@ -8383,7 +8383,7 @@ static bool capture_v92_duplex_data(
 			}
 			memcpy(expected.filter, rx->decoder.mapping.cpd.filter, sizeof(expected.filter));
 			expected.four_times_gain_q0_16 = rx->decoder.mapping.cpd.four_times_gain_q0_16;
-			if (offer->expected >= 9u && expected.trellis == V92_CPD_TRELLIS_16_STATE) {
+			if (offer->expected >= 9u) {
 				struct wide_uint capacity = wide_from_u64(1);
 				struct wide_uint required = wide_shift_left(wide_from_u64(1), pcm_upstream_frame_bits(offer->expected));
 

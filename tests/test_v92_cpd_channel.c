@@ -175,7 +175,7 @@ static bool test_channel_model(enum g711_law law, double main, double post, doub
 		v92_upstream_plan_is_valid(&plan), "invalid receive plan");
 	original.four_times_gain_q0_16 = cpd.four_times_gain_q0_16;
 	memcpy(original.filter, cpd.filter, sizeof(cpd.filter));
-	if (rate >= 9u && cpd.trellis == V92_CPD_TRELLIS_16_STATE) {
+	if (rate >= 9u) {
 		unsigned int modulus = cpd.modulus[3];
 		struct wide_uint capacity = wide_from_u64(1), smaller = wide_from_u64(1);
 		struct wide_uint required = wide_shift_left(wide_from_u64(1), pcm_upstream_frame_bits(rate));

@@ -511,11 +511,13 @@ static bool design(struct v92_cpd_parameters *parameters,
 			memcpy(next.filter, filtered.filter, sizeof(next.filter));
 			next.acknowledges_cpu = parameters->acknowledges_cpu;
 		}
-		/* Balance 16-state channel mappings from 34.667k upward. Concentrating
+		/* Balance channel mappings from 34.667k upward. Concentrating
 		 * large points in some trellis intervals can clip after B1u normalization
-		 * or erase payload distinctions during companding. Keep the low-rate
-		 * and level-selected direct mappings separate. */
-		if (next.data_rate_number >= 9u && next.trellis == V92_CPD_TRELLIS_16_STATE) {
+		 * or erase payload distinctions during companding. All trellis encoders
+		 * add the same fourth-symbol coset bit: the 32-state 40k mapping also
+		 * needs balanced moduli. Keep the low-rate and level-selected direct
+		 * mappings separate. */
+		if (next.data_rate_number >= 9u) {
 			if (!balanced_moduli(next.modulus, pcm_upstream_frame_bits(next.data_rate_number)))
 				return false;
 		}
