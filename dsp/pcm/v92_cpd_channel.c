@@ -7,6 +7,7 @@
 
 #include "memory_region.h"
 #include "v92_cpd_gain.h"
+#include "v92_cpd_moduli.h"
 #include "v92_cpd_direct.h"
 #include "v92_pcm_dil.h"
 
@@ -408,37 +409,6 @@ static bool normalize_gain(struct v92_cpd_parameters *cpd, enum g711_law law, ui
 	return cpd->four_times_gain_q0_16 != 0u;
 }
 
-static bool balanced_moduli(uint8_t moduli[V92_CPD_MODULUS_COUNT], unsigned int data_bits)
-{
-	/* V.92 6.4.1-6.4.2: an ordinary interval needs M signed points,
-	 * each fourth (trellis) interval needs 2M. Choose the smallest N
-	 * with (2N)^9 * N^3 >= 2^K. Products fit in 128 bits for N<=64. */
-	struct wide_uint required = wide_shift_left(wide_from_u64(1), data_bits);
-	struct wide_uint upper = wide_shift_left(required, 1);
-
-	for (unsigned int points = 1u; points <= 64u; ++points) {
-		struct wide_uint capacity = wide_from_u64(1);
-
-		for (size_t symbol = 0u; symbol < V92_CPD_MODULUS_COUNT; ++symbol)
-			wide_multiply_u32(capacity, symbol % 4u == 3u ? points : 2u * points, &capacity);
-		if (wide_compare(capacity, required) < 0)
-			continue;
-		for (size_t symbol = 0u; symbol < V92_CPD_MODULUS_COUNT; ++symbol)
-			moduli[symbol] = symbol % 4u == 3u ? points : 2u * points;
-		/* Some analogue modems infer K from floor(log2(product(M))).
-		 * Keep that width equal to the selected rate. At 37.333k the
-		 * balanced product is exactly 2^(K+1); removing one ordinary
-		 * representative avoids an unadvertised extra bit per frame. */
-		while (wide_compare(capacity, upper) >= 0 && moduli[0] > 1u) {
-			wide_divide_u32(capacity, moduli[0], &capacity);
-			wide_multiply_u32(capacity, moduli[0] - 1u, &capacity);
-			--moduli[0];
-		}
-		return wide_compare(capacity, required) >= 0 && wide_compare(capacity, upper) < 0;
-	}
-	return false;
-}
-
 static bool design(struct v92_cpd_parameters *parameters,
 	const struct v92_upstream_channel *channel, enum g711_law law,
 	int16_t upstream_level, struct v92_upstream_plan *plan, uint32_t rate_mask)
@@ -518,7 +488,7 @@ static bool design(struct v92_cpd_parameters *parameters,
 		 * needs balanced moduli. Keep the low-rate and level-selected direct
 		 * mappings separate. */
 		if (next.data_rate_number >= 9u) {
-			if (!balanced_moduli(next.modulus, pcm_upstream_frame_bits(next.data_rate_number)))
+			if (!v92_cpd_balanced_moduli(next.modulus, next.data_rate_number))
 				return false;
 		}
 		/* The direct 40k/44k selections omit outer representatives that an

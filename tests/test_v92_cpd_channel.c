@@ -4,6 +4,7 @@
 
 #include <v92_cpd_channel.h>
 #include <v92_cpd_direct.h>
+#include <v92_cpd_moduli.h>
 #include <v92_pcm_dil.h>
 #include <fractional_delay.h>
 
@@ -19,6 +20,54 @@ enum {
 	FRAMES = V92_B1U_FRAMES + PAYLOAD_FRAMES + V92_PCM_RX_DELAY_FRAMES,
 	SYMBOLS = (FRAMES + 8) * V92_PCM_MAPPING_FRAME_SYMBOLS,
 };
+
+/* Capacity, minimal alphabet and inferred frame width are independent of
+ * the search used to choose the moduli. Cover the complete wire-rate byte. */
+static bool test_balanced_moduli(void)
+{
+	for (unsigned rate = 0; rate <= UINT8_MAX; ++rate) {
+		uint8_t moduli[V92_CPD_MODULUS_COUNT], before[sizeof(moduli)];
+		memset(moduli, 0xa5, sizeof(moduli));
+		memcpy(before, moduli, sizeof(before));
+		bool selected = v92_cpd_balanced_moduli(moduli, (uint8_t)rate);
+
+		if (rate == 0 || rate > V92_CPD_MAX_DATA_RATE_NUMBER) {
+			CHECK(!selected && memcmp(moduli, before, sizeof(before)) == 0,
+				"invalid rate %u changed moduli", rate);
+			continue;
+		}
+		CHECK(selected, "balanced selection failed at rate %u", rate);
+		unsigned points = moduli[3];
+		struct wide_uint capacity = wide_from_u64(1), smaller = wide_from_u64(1);
+		struct wide_uint required = wide_shift_left(wide_from_u64(1),
+			pcm_upstream_frame_bits((uint8_t)rate));
+		struct wide_uint upper = wide_shift_left(required, 1);
+
+		CHECK(points > 1 && moduli[0] > 0 && moduli[0] <= 2 * points,
+			"invalid balanced alphabet at rate %u", rate);
+		for (unsigned symbol = 0; symbol < V92_CPD_MODULUS_COUNT; ++symbol) {
+			unsigned factor = symbol % 4 == 3 ? 1 : 2;
+			CHECK(symbol == 0 || moduli[symbol] == factor * points,
+				"rate %u changed balanced interval %u", rate, symbol);
+			wide_multiply_u32(capacity, moduli[symbol], &capacity);
+			wide_multiply_u32(smaller, factor * (points - 1), &smaller);
+		}
+		CHECK(wide_compare(capacity, required) >= 0 && wide_compare(capacity, upper) < 0 &&
+			wide_compare(smaller, required) < 0,
+			"rate %u lost capacity, inferred width or minimal alphabet", rate);
+		if (moduli[0] < 2 * points) {
+			wide_divide_u32(capacity, moduli[0], &capacity);
+			wide_multiply_u32(capacity, moduli[0] + 1, &capacity);
+			CHECK(wide_compare(capacity, upper) >= 0,
+				"rate %u reduced its first modulus unnecessarily", rate);
+		}
+		if (rate == 11)
+			CHECK(moduli[0] == 31 && moduli[1] == 32 && moduli[3] == 16,
+				"37.333k lost its inferred-width compatibility adjustment");
+	}
+	CHECK(!v92_cpd_balanced_moduli(NULL, 1), "null moduli accepted");
+	return true;
+}
 
 static uint32_t random_word(uint32_t *state)
 {
@@ -803,7 +852,8 @@ static bool test_rate_selection(void)
 
 int main(void)
 {
-	if (!test_rate_selection() || !test_filter_padding() || !test_training_changes() ||
+	if (!test_balanced_moduli() || !test_rate_selection() || !test_filter_padding() ||
+	    !test_training_changes() ||
 	    !test_rejections() || !test_receive_plan() ||
 	    !test_short_channel_selection(false) || !test_short_channel_selection(true) ||
 	    !test_quantized_stability() || !test_finite_window_inverse(false, 0) ||

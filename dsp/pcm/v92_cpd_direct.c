@@ -4,6 +4,7 @@
 
 #include "integer_math.h"
 #include "v92_cpd_gain.h"
+#include "v92_cpd_moduli.h"
 #include "v92_pcm_frame.h"
 
 #include <limits.h>
@@ -56,10 +57,8 @@ static bool direct_tables(
 	unsigned int data_bits =
 		pcm_upstream_frame_bits(data_rate_number);
 	uint8_t point_count = 0u;
-	uint8_t balanced_points = data_rate_number == 16u ? 27u :
-		!direct_channel ? 0u : data_rate_number == 15u ? 24u :
-		data_rate_number == 17u ? 31u : data_rate_number == 18u ? 34u :
-		data_rate_number == 19u ? 39u : 0u;
+	bool balanced = data_rate_number == 16u ||
+		(direct_channel && data_rate_number >= 15u);
 
 	if (parameters == NULL || !g711_law_is_valid(law) ||
 	    data_bits == 0u)
@@ -79,12 +78,11 @@ static bool direct_tables(
 		V92_CPD_DIRECT_FILTER_TAPS;
 	parameters->filter[V92_CPD_PREFILTER_FEED_FORWARD]
 		.coefficient[0] = INT16_MAX;
-	/* The 44k template already needs 54/27 moduli. Direct-channel
-	 * selection also uses 48/24, 62/31, 68/34 and 78/39 for the
-	 * 64-, 68-, 70- and 72-bit frames: the smallest uniform alphabets
-	 * satisfying (2N)^9 * N^3 >= 2^K (V.92 6.4.1-6.4.2).
-	 * Allocate them before measuring B1u; keep the channel designer's
-	 * level-neutral template unchanged. */
+	/* Retain the level-neutral template and its 44k exception. Direct
+	 * high-rate selection uses the same minimum balanced capacity as the
+	 * channel designer, before measuring B1u. */
+	if (balanced && !v92_cpd_balanced_moduli(parameters->modulus, data_rate_number))
+		return false;
 	for (size_t symbol = 0u;
 	     symbol < V92_CPD_MODULUS_COUNT; ++symbol) {
 		unsigned int exponent = data_bits / V92_CPD_MODULUS_COUNT;
@@ -92,10 +90,8 @@ static bool direct_tables(
 
 		if (symbol < data_bits % V92_CPD_MODULUS_COUNT)
 			exponent++;
-		parameters->modulus[symbol] = (uint8_t)(1u << exponent);
-		if (balanced_points != 0u)
-			parameters->modulus[symbol] = symbol % 4u == 3u ?
-				balanced_points : 2u * balanced_points;
+		if (!balanced)
+			parameters->modulus[symbol] = (uint8_t)(1u << exponent);
 		required = symbol % 4u == 3u ?
 			parameters->modulus[symbol] :
 			(uint8_t)((parameters->modulus[symbol] + 1u) / 2u);
