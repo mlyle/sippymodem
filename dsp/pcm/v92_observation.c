@@ -285,6 +285,70 @@ static struct boundary next_boundary(enum g711_law law, int32_t x, unsigned magn
 	return boundary;
 }
 
+/* One log-uniform gain applies to every tap. Retain each coordinate's next
+ * codec transition, then advance all coincident boundaries together. Cached
+ * cells may replace a complete codec walk with zero or one transition. No
+ * borrowed model, input or cell pointers survive initialization. */
+struct gain_sweep {
+	struct boundary boundary[TAPS];
+	int16_t value[TAPS], last[TAPS];
+	bool general[TAPS];
+	double begin, end, high;
+	unsigned taps, steps;
+	bool failed;
+};
+
+static inline struct gain_sweep gain_sweep_begin(enum g711_law law,
+	const int32_t *input, unsigned taps, double low, double high,
+	const struct v92_observation_cell *const *cells)
+{
+	struct gain_sweep sweep = { .begin = low, .high = high, .taps = taps };
+	for (unsigned i = 0; i < taps; i++) {
+		const struct v92_observation_cell *cell = cells ? cells[i] : NULL;
+		sweep.general[i] = !cell || (cell->low != cell->high && !cell->crossing);
+		if (sweep.general[i]) {
+			unsigned limit = input[i] < 0 ? 32768u : 32767u;
+			double sample = low * fabs((double)input[i]);
+			unsigned magnitude = sample >= limit ? limit : (unsigned)round(sample);
+			sweep.value[i] = cell ? cell->low : magnitude_code(law, input[i], magnitude);
+			sweep.boundary[i] = next_boundary(law, input[i], magnitude);
+		} else {
+			sweep.value[i] = cell->low;
+			sweep.last[i] = cell->high;
+			sweep.boundary[i].at = cell->low == cell->high ?
+				HUGE_VAL : (cell->crossing - .5) / fabs((double)input[i]);
+		}
+	}
+	return sweep;
+}
+
+static inline bool gain_sweep_next(struct gain_sweep *sweep,
+	enum g711_law law, const int32_t *input)
+{
+	if (sweep->steps) {
+		if (sweep->end == sweep->high) return false;
+		for (unsigned i = 0; i < sweep->taps; i++) {
+			if (sweep->boundary[i].at != sweep->end) continue;
+			if (sweep->general[i]) {
+				unsigned magnitude = sweep->boundary[i].next;
+				sweep->value[i] = magnitude_code(law, input[i], magnitude);
+				sweep->boundary[i] = next_boundary(law, input[i], magnitude);
+			} else {
+				sweep->value[i] = sweep->last[i];
+				sweep->boundary[i].at = HUGE_VAL;
+			}
+		}
+		sweep->begin = sweep->end;
+	}
+	sweep->end = sweep->high;
+	for (unsigned i = 0; i < sweep->taps; i++)
+		sweep->end = fmin(sweep->end, sweep->boundary[i].at);
+	/* Negative A-law also visits +8 at rounded zero: at most 128
+	 * transitions per coordinate, plus the final constant segment. */
+	sweep->failed = sweep->end < sweep->begin || sweep->steps++ > sweep->taps * 128u;
+	return !sweep->failed;
+}
+
 static void heap_down(size_t *heap, size_t count, const struct boundary *events)
 {
 	size_t parent = 0;
@@ -381,20 +445,12 @@ static double interval_mean(enum g711_law law, const struct interval *fit, int32
 {
 	int16_t first = scaled(law, fit->low, x), last = scaled(law, fit->high, x);
 	if (first == last) return first;
-	double begin = fit->low, integral = 0;
+	double integral = 0;
 	double width = log1p((fit->high - fit->low) / fit->low);
-	unsigned limit = x < 0 ? 32768u : 32767u;
-	unsigned magnitude = (unsigned)fmin(limit, round(begin * fabs((double)x)));
-	for (;;) {
-		struct boundary boundary = next_boundary(law, x, magnitude);
-		double end = fmin(fit->high, boundary.at);
-		if (end < begin) return NAN;
-		integral += magnitude_code(law, x, magnitude) * log1p((end - begin) / begin);
-		if (end == fit->high) break;
-		magnitude = boundary.next;
-		begin = end;
-	}
-	return integral / width;
+	struct gain_sweep sweep = gain_sweep_begin(law, &x, 1u, fit->low, fit->high, NULL);
+	while (gain_sweep_next(&sweep, law, &x))
+		integral += sweep.value[0] * log1p((sweep.end - sweep.begin) / sweep.begin);
+	return sweep.failed ? NAN : integral / width;
 }
 
 static int compare_steps(const void *left, const void *right)
@@ -757,7 +813,7 @@ static double compiled_log_likelihood(enum g711_law law, const struct v92_observ
 	const struct v92_observation_cell *const *cells, const int32_t *x, unsigned taps,
 	int16_t observed, double variance, double divisor, double width, double lower, double upper)
 {
-	double begin = fit->low, likelihood = -HUGE_VAL;
+	double likelihood = -HUGE_VAL;
 	bool stable = true;
 	for (unsigned i = 0; i < taps; i++) stable &= cells[i]->low == cells[i]->high;
 	if (stable) {
@@ -765,48 +821,15 @@ static double compiled_log_likelihood(enum g711_law law, const struct v92_observ
 		for (unsigned i = 0; i < taps; i++) error -= fit->coefficient[i] * cells[i]->low;
 		return bin_log_probability(error, variance, divisor, lower, upper);
 	}
-	struct boundary boundary[TAPS];
-	unsigned magnitude[TAPS];
-	bool general[TAPS];
-	int16_t value[TAPS];
-	for (unsigned i = 0; i < taps; i++) {
-		const struct v92_observation_cell *cell = cells[i];
-		general[i] = cell->low != cell->high && !cell->crossing;
-		value[i] = cell->low;
-		if (general[i]) {
-			unsigned limit = x[i] < 0 ? 32768u : 32767u;
-			double sample = begin * fabs((double)x[i]);
-			magnitude[i] = sample >= limit ? limit : (unsigned)round(sample);
-			boundary[i] = next_boundary(law, x[i], magnitude[i]);
-		} else {
-			boundary[i] = (struct boundary){ .at = cell->low == cell->high ?
-				HUGE_VAL : (cell->crossing - .5) / fabs((double)x[i]) };
-		}
-	}
-	for (;;) {
-		double end = fit->high, error = observed;
-		for (unsigned i = 0; i < taps; i++) {
-			end = fmin(end, boundary[i].at);
-			error -= fit->coefficient[i] * value[i];
-		}
-		if (end < begin) return NAN;
-		if (end > begin)
+	struct gain_sweep sweep = gain_sweep_begin(law, x, taps, fit->low, fit->high, cells);
+	while (gain_sweep_next(&sweep, law, x)) {
+		double error = observed;
+		for (unsigned i = 0; i < taps; i++) error -= fit->coefficient[i] * sweep.value[i];
+		if (sweep.end > sweep.begin)
 			likelihood = log_add(likelihood, bin_log_probability(error, variance, divisor, lower, upper) +
-				log(log1p((end - begin) / begin) / width));
-		if (end == fit->high) return likelihood;
-		for (unsigned i = 0; i < taps; i++) {
-			if (boundary[i].at != end) continue;
-			if (general[i]) {
-				magnitude[i] = boundary[i].next;
-				value[i] = magnitude_code(law, x[i], magnitude[i]);
-				boundary[i] = next_boundary(law, x[i], magnitude[i]);
-			} else {
-				value[i] = cells[i]->high;
-				boundary[i].at = HUGE_VAL;
-			}
-		}
-		begin = end;
+				log(log1p((sweep.end - sweep.begin) / sweep.begin) / width));
 	}
+	return sweep.failed ? NAN : likelihood;
 }
 
 void v92_observation_begin(struct v92_observation_cache *cache,
@@ -1044,33 +1067,16 @@ double v92_observation_predict(const struct v92_observation *model,
 	for (unsigned i = 0; i < V92_OBSERVATION_INTERVALS; i++) {
 		const struct v92_observation_interval *p = model->intervals + i;
 		if (p->weight == 0) continue;
-		double begin = p->low, width = log1p((p->high - p->low) / p->low);
-		struct boundary bound[TAPS];
-		int16_t q[TAPS];
-		for (unsigned j = 0; j < model->taps; j++) {
-			unsigned limit = x[j] < 0 ? 32768u : 32767u;
-			double sample = begin * fabs((double)x[j]);
-			unsigned magnitude = sample >= limit ? limit : (unsigned)round(sample);
-			q[j] = magnitude_code(model->law, x[j], magnitude);
-			bound[j] = next_boundary(model->law, x[j], magnitude);
-		}
-		for (unsigned steps = 0;; steps++) {
-			double end = p->high;
-			for (unsigned j = 0; j < model->taps; j++) end = fmin(end, bound[j].at);
-			if (end < begin || steps > model->taps * 128u) return NAN;
-			double weight = p->weight * log1p((end - begin) / begin) / width;
+		double width = log1p((p->high - p->low) / p->low);
+		struct gain_sweep sweep = gain_sweep_begin(model->law, x, model->taps, p->low, p->high, NULL);
+		while (gain_sweep_next(&sweep, model->law, x)) {
+			double weight = p->weight * log1p((sweep.end - sweep.begin) / sweep.begin) / width;
 			double linear = 0.;
-			for (unsigned j = 0; j < model->taps; j++) linear += p->coefficient[j] * q[j];
+			for (unsigned j = 0; j < model->taps; j++) linear += p->coefficient[j] * sweep.value[j];
 			prediction += weight * codec_mean(model->law, linear - offset,
 				model->variance, model->quantizer_gain);
-			if (end == p->high) break;
-			for (unsigned j = 0; j < model->taps; j++) {
-				if (bound[j].at != end) continue;
-				q[j] = magnitude_code(model->law, x[j], bound[j].next);
-				bound[j] = next_boundary(model->law, x[j], bound[j].next);
-			}
-			begin = end;
 		}
+		if (sweep.failed) return NAN;
 	}
 	return prediction + offset;
 }

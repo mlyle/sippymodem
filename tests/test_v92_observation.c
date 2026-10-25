@@ -731,6 +731,41 @@ static void check_scalar_rounding(void)
 	assert(fesetround(saved) == 0);
 }
 
+/* Repeated and opposite coordinates make several codec transitions coincide.
+ * Compare their JOINT gain integral with the independent encoder enumeration,
+ * including A-law's zero/sign boundary and saturated int32 input coordinates.
+ * A separate cache per tuple prevents a preceding score from standing in for
+ * this observation. */
+static void check_joint_transitions(const struct v92_observation *model)
+{
+	const int32_t values[] = { INT32_MIN, -65536, -32768, -4096, -128, -1,
+		0, 1, 128, 4096, 32767, 65536, INT32_MAX };
+	for (unsigned i = 0; i < sizeof(values) / sizeof(*values); i++)
+		for (unsigned mixed = 0; mixed < 2; mixed++) {
+			int32_t input[V92_OBSERVATION_TAPS];
+			for (unsigned j = 0; j < model->taps; j++)
+				input[j] = mixed && j % 2 ?
+					(int32_t)fmax(INT32_MIN, fmin(INT32_MAX, -(double)values[i])) : values[i];
+			double actual = v92_observation_predict(model, input, 0.);
+			assert(isfinite(actual));
+			int16_t observed = quantize(model->law, actual);
+			struct v92_observation_cache cache;
+			struct v92_observation_point history[V92_OBSERVATION_TAPS - 1];
+			v92_observation_begin(&cache, model, 0.);
+			assert(v92_observation_symbol_level(&cache, observed, &observed, 0.));
+			for (unsigned j = 1; j < model->taps; j++)
+				history[j - 1] = v92_observation_point(&cache, input[j]);
+			uint64_t score = v92_observation_score(&cache, input[0], history, UINT64_MAX);
+			double expected;
+			uint64_t reference = independent_score(model, input, observed, observed, 0., &expected);
+			assert(fabs(actual - expected) < 1e-7);
+			/* The independent oracle floors probabilities at 1e-300;
+			 * deep Gaussian tails are covered separately in check_tail_scores. */
+			if (reference < (uint64_t)(-2e6 * log(1e-300)))
+				assert(score <= reference + 1 && reference <= score + 1);
+		}
+}
+
 int main(void)
 {
 	check_scalar_rounding();
@@ -745,8 +780,10 @@ int main(void)
 	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)
 		for (unsigned i = 0; i < sizeof(gains) / sizeof(gains[0]); i++)
 			check_channel(law, gains[i], 3, &previous);
-	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)
+	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++) {
 		check_channel(law, 4., 4, &previous);
+		check_joint_transitions(&previous);
+	}
 	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)
 		for (unsigned sigma = 16; sigma <= 64; sigma *= 2)
 			check_noise_fit(law, sigma);
