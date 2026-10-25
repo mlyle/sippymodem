@@ -286,6 +286,50 @@ static void check_tail_scores(const struct v92_observation *fitted)
 	}
 }
 
+/* Move a real codec cell into a Gaussian tail and vary its width across the
+ * representable upper-tail correction. The quadrature oracle integrates the
+ * probability directly, including where erfc itself underflows. */
+static void check_tail_cells(const struct v92_observation *fitted)
+{
+	const int modes[] = { FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO };
+	const double starts[] = { 28., 64., 10000. };
+	const double gaps[] = { 39.5, 40., 40.5, 80. };
+	int saved = fegetround();
+	assert(saved != -1);
+	struct v92_observation model = *fitted;
+	model.quantizer_gain = 1.;
+	for (unsigned i = 0; i < V92_OBSERVATION_INTERVALS; i++) {
+		model.intervals[i].coefficient[0] = 1.;
+		model.intervals[i].coefficient[1] = model.intervals[i].coefficient[2] = 0.;
+		model.intervals[i].weight = i == 0 ? 1. : 0.;
+	}
+	int16_t level = quantize(model.law, 0);
+	struct g711_interval bin;
+	assert(g711_quantization_interval(model.law, level, &bin));
+	for (unsigned mode = 0; mode < sizeof(modes) / sizeof(modes[0]); mode++) {
+		assert(fesetround(modes[mode]) == 0);
+		for (unsigned i = 0; i < sizeof(starts) / sizeof(starts[0]); i++)
+			for (unsigned j = 0; j < sizeof(gaps) / sizeof(gaps[0]); j++) {
+				double a = starts[i], b = sqrt(a * a + gaps[j]);
+				double divisor = (bin.upper + 1. - bin.lower) / (b - a);
+				model.variance = .5 * divisor * divisor;
+				assert(v92_observation_is_valid(&model));
+				struct v92_observation_cache cache;
+				v92_observation_begin(&cache, &model, 0.);
+				struct v92_observation_point zero = v92_observation_point(&cache, 0);
+				double offset = level + a * divisor - (bin.lower - .5);
+				assert(v92_observation_symbol_level(&cache, 0, &level, offset));
+				a = (cache.lower - level) / sqrt(model.variance);
+				b = (cache.upper - level) / sqrt(model.variance);
+				double expected = tail_score(a, b);
+				uint64_t actual = v92_observation_score(&cache, 0,
+					(struct v92_observation_point[]){ zero, zero }, UINT64_MAX);
+				assert(fabs((double)actual - expected) <= 2.);
+			}
+	}
+	assert(fesetround(saved) == 0);
+}
+
 static void check_scores(const struct v92_observation *model,
 	const int32_t *x, const int16_t *y)
 {
@@ -514,6 +558,7 @@ static void check_channel(enum g711_law law, double gain, unsigned taps, struct 
 	if (gain == .125 && taps == 3) {
 		check_predictive_noise(&model);
 		check_tail_scores(&model);
+		check_tail_cells(&model);
 	}
 	assert(memcmp(&model, &before, sizeof(model)) == 0);
 	check_failures(&model, x, u, y);

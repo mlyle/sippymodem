@@ -5,6 +5,7 @@
 #include "integer_math.h"
 #include "sample_math.h"
 
+#include <fenv.h>
 #include <float.h>
 #include <limits.h>
 #include <math.h>
@@ -70,7 +71,16 @@ static double gaussian_log_probability(double a, double b)
 	if (b < 0.) { double swap = a; a = -b; b = -swap; }
 	if (a == HUGE_VAL) return -HUGE_VAL;
 	/* Arguments above are scaled by sqrt(2)*sigma, unlike log_tail. */
-	double low = gaussian_log_tail(a * sqrt(2.)), high = gaussian_log_tail(b * sqrt(2.));
+	double low = gaussian_log_tail(a * sqrt(2.));
+	/* Q(sqrt(2)*b)/Q(sqrt(2)*a) <= exp(a*a-b*b) for a >= 0.
+	 * Below exp(-40), expm1 rounds to -1 and its log correction is zero.
+	 * Bound the argument so exponent rounding stays well below the gap
+	 * margin; huge adjacent arguments can otherwise collapse to one tail.
+	 * Directed rounding and nonfinite tails retain the original expression. */
+	if (isfinite(low) && a >= 0. && a < 0x1p24 &&
+		(b - a) * (b + a) >= 40. && fegetround() == FE_TONEAREST)
+		return low;
+	double high = gaussian_log_tail(b * sqrt(2.));
 	return low + log(-expm1(high - low));
 }
 
