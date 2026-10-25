@@ -826,8 +826,8 @@ static void check_scalar_rounding(void)
  * this observation. */
 static void check_joint_transitions(const struct v92_observation *model)
 {
-	const int32_t values[] = { INT32_MIN, -65536, -32768, -4096, -128, -1,
-		0, 1, 128, 4096, 32767, 65536, INT32_MAX };
+	const int32_t values[] = { INT32_MIN, -65536, -32768, -4096, -128, -16, -4, -1,
+		0, 1, 4, 16, 128, 4096, 32767, 65536, INT32_MAX };
 	for (unsigned i = 0; i < sizeof(values) / sizeof(*values); i++)
 		for (unsigned mixed = 0; mixed < 2; mixed++) {
 			int32_t input[V92_OBSERVATION_TAPS];

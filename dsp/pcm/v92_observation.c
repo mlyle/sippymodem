@@ -277,19 +277,13 @@ static struct boundary next_boundary(enum g711_law law, int32_t x, unsigned magn
 	struct boundary boundary = { .at = HUGE_VAL, .next = limit };
 	if (x == 0) return boundary;
 	int16_t sample = (int16_t)(x < 0 ? -(int32_t)magnitude : (int32_t)magnitude);
-	unsigned code = law == G711_LAW_PCMU ? (unsigned)(uint8_t)~g711_encode_pcmu(sample) & 127u :
-		(unsigned)(g711_encode_pcma(sample) ^ 0x55u) & 127u;
-	/* The largest segment also includes the encoder's clipped tail. */
-	if (code == 127u) return boundary;
-	unsigned segment = code >> 4, quantum = code & 15u, next;
-	if (law == G711_LAW_PCMU)
-		next = ((17u + quantum) << (segment + 3u)) - 132u;
-	else if (x < 0 && magnitude == 0u)
-		next = 1u; /* A-law changes from +8 at zero to -8 at -1. */
-	else {
-		next = segment == 0u ? (quantum + 1u) << 4u : (17u + quantum) << (segment + 3u);
-		if (x < 0) next++; /* Complement the negative magnitude before scaling. */
-	}
+	struct g711_interval bin;
+	if (!g711_quantization_interval(law, sample, &bin)) return boundary;
+	int edge = x < 0 ? bin.lower : bin.upper;
+	if (edge == (x < 0 ? INT16_MIN : INT16_MAX)) return boundary;
+	/* The shared encoder interval includes clipping and the asymmetric
+	 * negative A-law boundary, including the change from zero to -1. */
+	unsigned next = x < 0 ? (unsigned)(1 - edge) : (unsigned)(edge + 1);
 	boundary.next = next;
 	boundary.at = (next - .5) / fabs((double)x);
 	return boundary;
