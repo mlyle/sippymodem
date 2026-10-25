@@ -259,6 +259,15 @@ const char *modem_ec_protocol_step(const struct modem *m)
 	case LAPM_IDLE: return "LAPM/wait-XID-SABME";
 	case LAPM_ESTAB: return "LAPM/SABME-UA";
 	case LAPM_DISC: return "LAPM/DISC-UA";
+	case LAPM_DATA:
+		/* These conditions hold information in lapm_get_tx_frame even
+		 * while the physical carrier and receive direction are healthy. */
+		if (m->ec.lapm.peer_busy)
+			return "LAPM/peer-busy";
+		if (m->ec.lapm.rtx_count)
+			return m->ec.lapm.retrain_poll ?
+				"LAPM/retrain-enquiry" : "LAPM/status-enquiry";
+		return NULL;
 	default: return NULL;
 	}
 }

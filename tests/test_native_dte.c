@@ -467,6 +467,51 @@ static char report_progress[96];
 static const char *report_dp_progress(const struct dp *dp)
 { (void)dp; return report_progress; }
 
+static bool online_lapm_progress(void)
+{
+	enum { LAPM_DATA_STATE = 2 };
+	struct capture data = { .limit = 4096 }, commands = { .limit = 4096 };
+	struct modem *modem = create(&data, &commands);
+	const struct dp_operations operations = { .progress = report_dp_progress };
+	struct dp datapump = { .status = DPSTAT_CONNECT, .op = &operations };
+
+	EXPECT(modem != NULL);
+	modem->cfg.ec = 1;
+	EXPECT(modem_ec_init(modem) == 0);
+	modem->get_bits = modem_hdlc_get_bits;
+	modem->put_bits = modem_hdlc_put_bits;
+	modem->ec.lapm.state = LAPM_DATA_STATE;
+	modem->dp = &datapump;
+	snprintf(report_progress, sizeof(report_progress), "data/PCM-both-directions");
+	const unsigned states[] = { STATE_MODEM_ONLINE, STATE_COMMAND_ONLINE };
+
+	for (size_t i = 0; i < sizeof(states) / sizeof(states[0]); ++i) {
+		modem->state = states[i];
+		EXPECT(modem_ec_protocol_step(modem) == NULL);
+		EXPECT(strcmp(modem_protocol_step(modem), report_progress) == 0);
+		modem->ec.lapm.rtx_count = 1;
+		EXPECT(strcmp(modem_protocol_step(modem), "LAPM/status-enquiry") == 0);
+		modem->ec.lapm.retrain_poll = 1;
+		EXPECT(strcmp(modem_protocol_step(modem), "LAPM/retrain-enquiry") == 0);
+		modem->ec.lapm.peer_busy = 1;
+		EXPECT(strcmp(modem_protocol_step(modem), "LAPM/peer-busy") == 0);
+		/* A physical recovery must still expose its DSP progress, even
+		 * though the retained LAPM enquiry remains outstanding. */
+		datapump.status = DPSTAT_OK;
+		snprintf(report_progress, sizeof(report_progress), "phase2/ranging");
+		EXPECT(strcmp(modem_protocol_step(modem), report_progress) == 0);
+		EXPECT(modem->ec.lapm.rtx_count == 1 && modem->ec.lapm.retrain_poll == 1 &&
+		       modem->ec.lapm.peer_busy == 1);
+		datapump.status = DPSTAT_CONNECT;
+		snprintf(report_progress, sizeof(report_progress), "data/PCM-both-directions");
+		modem->ec.lapm.peer_busy = modem->ec.lapm.rtx_count = modem->ec.lapm.retrain_poll = 0;
+		EXPECT(strcmp(modem_protocol_step(modem), report_progress) == 0);
+	}
+	modem->dp = NULL;
+	modem_delete(modem);
+	return true;
+}
+
 static bool retained_call_report(void)
 {
 	struct capture data = { .limit = 1 }, commands = { .limit = 4096 };
@@ -632,5 +677,5 @@ int main(void)
 {
 	return literal_and_partial() && command_preserves_receive() &&
 		raw_overflow_is_reported() && at_replies_are_separate() && at_response_formats() && connection_report_layout() && late_v42_answer_after_retrain() && local_lapm_retry_cause() &&
-		retained_call_report() && unanswered_call_report() && caller_identity_results() ? 0 : 1;
+		online_lapm_progress() && retained_call_report() && unanswered_call_report() && caller_identity_results() ? 0 : 1;
 }

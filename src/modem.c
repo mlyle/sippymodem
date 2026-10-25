@@ -289,9 +289,11 @@ const char *modem_call_phase(const struct modem *m)
 
 const char *modem_protocol_step(const struct modem *m)
 {
-	/* A physical retrain interrupts establishment and keeps its DSP step. */
+	/* A ready carrier can still have a blocked data link. Physical recovery
+	 * keeps its DSP step instead of reporting the retained LAPM state. */
 	if (m != NULL && m->dp != NULL && m->dp->status == DPSTAT_CONNECT &&
-	    (m->state == STATE_EC_ESTAB || m->state == STATE_EC_DISC)) {
+	    (m->state == STATE_EC_ESTAB || m->state == STATE_EC_DISC ||
+	     IS_STATE_ONLINE(m->state))) {
 		const char *step = modem_ec_protocol_step(m);
 		if (step != NULL)
 			return step;
