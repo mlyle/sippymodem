@@ -10,7 +10,6 @@
 #include <string.h>
 
 enum {
-	V90_MP_START0_BIT = 17,
 	V90_MP_TYPE_BIT = 18,
 	V90_MP_RATE_FIRST_BIT = 24,
 	V90_MP_RATE_BITS = 4,
@@ -258,20 +257,6 @@ enum v90_mp_result v90_mp_encode(
 	return V90_MP_OK;
 }
 
-static bool framing_bits_are_valid(
-	const uint8_t *sequence, size_t sequence_bit_count,
-	size_t crc_start_bit)
-{
-	if (packed_msb_read_msb_field(
-		    sequence, 0u, V90_MP_FRAME_SYNC_BITS) != UINT32_C(0x1ffff))
-		return false;
-	return pcm_control_frame_starts_are_zero(
-		       sequence, V90_MP_START0_BIT, crc_start_bit + 1u) &&
-	       packed_msb_bits_are_zero(
-		       sequence, crc_start_bit + 1u + V90_MP_CRC_BITS,
-		       sequence_bit_count - crc_start_bit - 1u - V90_MP_CRC_BITS);
-}
-
 static void decode_common(
 	const uint8_t *sequence, struct v90_mp_parameters *parameters)
 {
@@ -320,8 +305,8 @@ enum v90_mp_result v90_mp_decode(
 	crc_start_bit = decoded.type == V90_MP_RECORD_TYPE1 ?
 				V90_MP_TYPE1_CRC_START_BIT :
 				V90_MP_TYPE0_CRC_START_BIT;
-	if (!framing_bits_are_valid(
-		    sequence, sequence_bit_count, crc_start_bit))
+	if (!pcm_control_frame_wire_is_valid(
+		    sequence, crc_start_bit, sequence_bit_count))
 		return V90_MP_INVALID_FRAME;
 	received_crc = (uint16_t)packed_msb_read_msb_field(
 		sequence, crc_start_bit + 1u, V90_MP_CRC_BITS);

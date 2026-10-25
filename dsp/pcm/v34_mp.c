@@ -9,8 +9,6 @@
 #include <string.h>
 
 enum {
-	V34_MP_FRAME_SYNC_FIRST_BIT = 0,
-	V34_MP_START0_BIT = 17,
 	V34_MP_TYPE_BIT = 18,
 	V34_MP_MAXIMUM_CALL_TO_ANSWER_RATE_FIRST_BIT = 20,
 	V34_MP_MAXIMUM_ANSWER_TO_CALL_RATE_FIRST_BIT = 24,
@@ -24,11 +22,7 @@ enum {
 	V34_MP_RATE_CAPABILITY_FIRST_BIT = 35,
 	V34_MP_ASYMMETRIC_RATES_BIT = 50,
 	V34_MP_TYPE0_CRC_FIRST_BIT = 69,
-	V34_MP_TYPE0_FILL_FIRST_BIT = 85,
-	V34_MP_TYPE0_FILL_BITS = 3,
 	V34_MP_TYPE1_CRC_FIRST_BIT = 171,
-	V34_MP_TYPE1_FILL_FIRST_BIT = 187,
-	V34_MP_TYPE1_FILL_BITS = 1,
 };
 
 static bool rate_is_valid(uint8_t rate_2400_bps_units)
@@ -275,23 +269,12 @@ enum v34_mp_result v34_mp_type0_encode(
 	return V34_MP_OK;
 }
 
-static bool frame_sync_is_valid(const uint8_t *frame)
-{
-	return packed_msb_read_msb_field(
-		       frame, V34_MP_FRAME_SYNC_FIRST_BIT,
-		       V34_MP_TYPE0_FRAME_SYNC_BITS) == UINT32_C(0x1ffff);
-}
-
 static bool framing_bits_are_valid(
 	const uint8_t *frame, bool type1, size_t crc_first_bit,
-	size_t fill_first_bit, size_t fill_bit_count)
+	size_t frame_bits)
 {
-	if (!frame_sync_is_valid(frame) ||
-	    packed_msb_bit(frame, V34_MP_TYPE_BIT) != (uint8_t)type1)
-		return false;
-	return pcm_control_frame_starts_are_zero(
-		       frame, V34_MP_START0_BIT, crc_first_bit) &&
-	       packed_msb_bits_are_zero(frame, fill_first_bit, fill_bit_count);
+	return pcm_control_frame_wire_is_valid(frame, crc_first_bit - 1u, frame_bits) &&
+	       packed_msb_bit(frame, V34_MP_TYPE_BIT) == (uint8_t)type1;
 }
 
 enum v34_mp_result v34_mp_type0_decode(
@@ -306,7 +289,7 @@ enum v34_mp_result v34_mp_type0_decode(
 		return V34_MP_INVALID_ARGUMENT;
 	if (!framing_bits_are_valid(
 		    frame, false, V34_MP_TYPE0_CRC_FIRST_BIT,
-		    V34_MP_TYPE0_FILL_FIRST_BIT, V34_MP_TYPE0_FILL_BITS))
+		    V34_MP_TYPE0_FRAME_BITS))
 		return V34_MP_INVALID_FRAME;
 	received_crc = (uint16_t)packed_msb_read_msb_field(
 		frame, V34_MP_TYPE0_CRC_FIRST_BIT,
@@ -357,7 +340,7 @@ enum v34_mp_result v34_mp_type1_decode(
 		return V34_MP_INVALID_ARGUMENT;
 	if (!framing_bits_are_valid(
 		    frame, true, V34_MP_TYPE1_CRC_FIRST_BIT,
-		    V34_MP_TYPE1_FILL_FIRST_BIT, V34_MP_TYPE1_FILL_BITS))
+		    V34_MP_TYPE1_FRAME_BITS))
 		return V34_MP_INVALID_FRAME;
 	received_crc = (uint16_t)packed_msb_read_msb_field(
 		frame, V34_MP_TYPE1_CRC_FIRST_BIT,

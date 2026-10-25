@@ -70,17 +70,25 @@ static inline bool pcm_control_frame_starts_are_zero(
 	return true;
 }
 
-/* Complete CP/CPt framing: prefix, word starts, zero fill after the CRC,
- * and unused storage bits. The caller validates storage and the exact wire
- * length first; payload_end is the CRC word's zero start bit and at least
- * its 16 information bits must follow. Protocol fields stay with the codec. */
-static inline bool pcm_control_frame_framing_is_valid(
+/* MP, CP and CPt share prefix, word starts and zero fill after the CRC.
+ * The caller validates storage and exact wire length; payload_end is the
+ * CRC word's zero start bit and its 16 information bits must follow.
+ * Bits outside frame_bits and protocol fields stay with the codec. */
+static inline bool pcm_control_frame_wire_is_valid(
 	const uint8_t *frame, size_t payload_end, size_t frame_bits)
 {
 	return pcm_control_frame_prefix_is_valid(frame) &&
 	       pcm_control_frame_starts_are_zero(frame, 34u, payload_end + 1u) &&
 	       packed_msb_bits_are_zero(frame, payload_end + 17u,
-		       frame_bits - payload_end - 17u) &&
+		       frame_bits - payload_end - 17u);
+}
+
+/* CP/CPt additionally require zero unused bits in their final storage byte.
+ * MP ignores those bits; do not extend its wire length to the byte boundary. */
+static inline bool pcm_control_frame_framing_is_valid(
+	const uint8_t *frame, size_t payload_end, size_t frame_bits)
+{
+	return pcm_control_frame_wire_is_valid(frame, payload_end, frame_bits) &&
 	       packed_msb_bits_are_zero(frame, frame_bits,
 		       (8u - frame_bits % 8u) % 8u);
 }

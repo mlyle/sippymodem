@@ -199,6 +199,50 @@ static bool test_known_check(void)
 	return true;
 }
 
+static bool test_wire_framing(void)
+{
+	static const size_t ends[] = { 68u, 170u, 272u, 1768u };
+	uint8_t frame[256], changed[sizeof(frame)];
+
+	/* Two MP types and longer CP/CPt records, with every byte alignment.
+	 * Wire bits after the CRC are fill; final-byte storage is a separate
+	 * codec policy. Flip every bit, including ignored CRC and guard bits. */
+	for (size_t record = 0; record < ARRAY_LENGTH(ends); ++record)
+	for (size_t fill = 0; fill <= 30u; ++fill) {
+		size_t payload_end = ends[record];
+		size_t wire_end = payload_end + 17u + fill;
+		size_t storage_end = (wire_end + 7u) / 8u * 8u;
+
+		memset(frame, 0xa5, sizeof(frame));
+		for (size_t bit = 0; bit < storage_end; ++bit) {
+			if (bit < 17u)
+				packed_msb_set_bit(frame, bit, true);
+			else if ((bit <= payload_end && bit % 17u == 0u) ||
+				 bit >= payload_end + 17u)
+				packed_msb_set_bit(frame, bit, false);
+		}
+		CHECK(pcm_control_frame_wire_is_valid(frame, payload_end, wire_end) &&
+		      pcm_control_frame_framing_is_valid(frame, payload_end, wire_end),
+		      "valid framing rejected at %zu/%zu", payload_end, fill);
+		for (size_t bit = 0; bit < sizeof(frame) * 8u; ++bit) {
+			bool wire_bit = bit < 18u ||
+				(bit <= payload_end && bit % 17u == 0u) ||
+				(bit >= payload_end + 17u && bit < wire_end);
+			bool storage_bit = bit >= wire_end && bit < storage_end;
+
+			memcpy(changed, frame, sizeof(changed));
+			packed_msb_set_bit(changed, bit, !packed_msb_bit(changed, bit));
+			CHECK(pcm_control_frame_wire_is_valid(changed, payload_end, wire_end) ==
+				      !wire_bit &&
+			      pcm_control_frame_framing_is_valid(changed, payload_end, wire_end) ==
+				      !(wire_bit || storage_bit),
+			      "wire/storage framing changed at %zu/%zu bit %zu",
+			      payload_end, fill, bit);
+		}
+	}
+	return true;
+}
+
 static bool test_constellation_rows(void)
 {
 	struct pcm_constellation rows[6], decoded[7], expected_rows[7];
@@ -372,7 +416,7 @@ int main(void)
 {
 	return test_sync_prefix() && test_write_prefix() && test_streaming_sync() &&
 	       test_sync_suffix() && test_start_ranges() &&
-	       test_known_check() && test_payload_bounds() &&
+	       test_known_check() && test_wire_framing() && test_payload_bounds() &&
 	       test_constellation_rows() && test_constellation_map() &&
 	       test_constellation_payload() ? 0 : 1;
 }
