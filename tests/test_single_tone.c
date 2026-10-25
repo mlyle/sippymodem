@@ -485,6 +485,98 @@ static bool test_history_and_numeric_rejection(void)
 	return true;
 }
 
+static bool test_owned_observation(void)
+{
+	for (unsigned window = 40; window <= 80; window += 40) {
+		struct single_tone_detector reference, owned;
+		struct single_tone_transmitter transmitter;
+		unsigned started = 0, ended = 0, reversed = 0;
+
+		CHECK(single_tone_detector_init(&reference, 1800) == SINGLE_TONE_OK &&
+		      single_tone_transmitter_init(&transmitter, 1800, 7000) == SINGLE_TONE_OK,
+		      "owned observation fixture failed");
+		reference.profile.window_samples = (uint16_t)window;
+		owned = reference;
+		for (unsigned n = 0; n < 10000; ++n) {
+			int16_t sample;
+			struct single_tone_event a, b;
+			struct single_tone_measurement expected, observed;
+
+			if (n == 5000 || n == 6000)
+				CHECK(single_tone_transmitter_reverse(&transmitter) == SINGLE_TONE_OK,
+				      "owned reversal failed");
+			CHECK(single_tone_transmitter_sample(&transmitter, &sample) == SINGLE_TONE_OK,
+			      "owned sample generation failed");
+			if (n % 8000 < 400 || n % 8000 >= 6800) sample = 0;
+			if (n >= 5300 && n < 5400) {
+				CHECK(single_tone_detector_suppress_sample(&reference) == SINGLE_TONE_OK &&
+				      single_tone_detector_suppress_sample(&owned) == SINGLE_TONE_OK,
+				      "owned suppression failed");
+				continue;
+			}
+			if (n == 5400)
+				CHECK(single_tone_detector_resume(&reference, 17) == SINGLE_TONE_OK &&
+				      single_tone_detector_resume(&owned, 17) == SINGLE_TONE_OK,
+				      "owned resumption failed");
+			CHECK(single_tone_detector_is_valid(&owned) &&
+			      single_tone_detector_sample(&reference, sample, &a) == SINGLE_TONE_OK &&
+			      single_tone_detector_observe_owned(&owned, sample, &b, &observed) == SINGLE_TONE_OK,
+			      "owned observation rejected sample %u", n);
+			expected = single_tone_detector_measure(&reference);
+			CHECK(memcmp(&reference, &owned, sizeof(owned)) == 0 &&
+			      a.kind == b.kind && a.reversal_delay_samples == b.reversal_delay_samples &&
+			      expected.line_power == observed.line_power &&
+			      expected.carrier_power == observed.carrier_power &&
+			      expected.carrier_share == observed.carrier_share &&
+			      expected.ready == observed.ready && expected.tone_present == observed.tone_present,
+			      "owned observation changed state, event, or measurement at %u", n);
+			started += a.kind == SINGLE_TONE_STARTED;
+			ended += a.kind == SINGLE_TONE_ENDED;
+			reversed += a.kind == SINGLE_TONE_PHASE_REVERSED;
+		}
+		CHECK(started >= 2 && ended >= 1 && reversed >= 1,
+		      "owned observation did not exercise acquisition, loss, and reversal");
+	}
+	return true;
+}
+
+static bool test_observation_output_contracts(void)
+{
+	struct single_tone_detector detector, before;
+	struct single_tone_event event = { .kind = SINGLE_TONE_ENDED };
+	struct single_tone_measurement measurement = { .line_power = 123 };
+	union {
+		struct single_tone_event event;
+		struct single_tone_measurement measurement;
+	} overlap;
+
+	CHECK(single_tone_detector_init(&detector, 1800) == SINGLE_TONE_OK,
+	      "observation contract fixture failed");
+	before = detector;
+	CHECK(single_tone_detector_sample(&detector, 0,
+		      (struct single_tone_event *)&detector.phase) == SINGLE_TONE_INVALID_ARGUMENT &&
+	      single_tone_detector_observe_owned(&detector, 0, NULL, &measurement) == SINGLE_TONE_INVALID_ARGUMENT &&
+	      single_tone_detector_observe_owned(&detector, 0, &event, NULL) == SINGLE_TONE_INVALID_ARGUMENT &&
+	      single_tone_detector_observe_owned(&detector, 0, &event,
+		      (struct single_tone_measurement *)&detector.history[0]) == SINGLE_TONE_INVALID_ARGUMENT &&
+	      single_tone_detector_observe_owned(&detector, 0, &overlap.event,
+		      &overlap.measurement) == SINGLE_TONE_INVALID_ARGUMENT &&
+	      memcmp(&detector, &before, sizeof(before)) == 0 &&
+	      event.kind == SINGLE_TONE_ENDED && measurement.line_power == 123,
+	      "overlapping observation outputs were not rejected transactionally");
+	/* Range-valid cached totals can still fail when removing an old sample.
+	 * The owner entry point must retain that post-update numeric check. */
+	detector.history_count = detector.profile.window_samples;
+	detector.history[0].energy = 1;
+	before = detector;
+	CHECK(single_tone_detector_is_valid(&detector) &&
+	      single_tone_detector_observe_owned(&detector, 0, &event, &measurement) == SINGLE_TONE_INVALID_ARGUMENT &&
+	      memcmp(&detector, &before, sizeof(before)) == 0 &&
+	      event.kind == SINGLE_TONE_ENDED && measurement.line_power == 123,
+	      "owned numeric rejection changed state or outputs");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -496,6 +588,8 @@ int main(void)
 		{ "configurable carrier share", test_configurable_carrier_share },
 		{ "transactional validation", test_validation_is_transactional },
 		{ "history and numeric rejection", test_history_and_numeric_rejection },
+		{ "owned observation equivalence", test_owned_observation },
+		{ "observation output contracts", test_observation_output_contracts },
 	};
 	unsigned int failures = 0;
 

@@ -129,9 +129,19 @@ bool single_tone_detector_is_valid(
 	const struct single_tone_detector *detector);
 enum single_tone_result single_tone_detector_reset(
 	struct single_tone_detector *detector);
+/* event must be separate from detector; rejection changes neither. */
 enum single_tone_result single_tone_detector_sample(
 	struct single_tone_detector *detector, int16_t sample,
 	struct single_tone_event *event);
+/* For an owner which has validated the complete detector at this sample
+ * boundary. Recheck metadata and the replaced observation, preserving all
+ * numeric rejection, but do not rescan unchanged history. Return the event
+ * and post-update measurement together. Outputs must be separate from each
+ * other and the detector; rejection changes neither state nor outputs. */
+enum single_tone_result single_tone_detector_observe_owned(
+	struct single_tone_detector *detector, int16_t sample,
+	struct single_tone_event *event,
+	struct single_tone_measurement *measurement);
 enum single_tone_result single_tone_detector_reject_reversal(
 	struct single_tone_detector *detector,
 	const struct single_tone_event *event);

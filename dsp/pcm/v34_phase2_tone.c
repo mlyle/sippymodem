@@ -535,10 +535,9 @@ enum v34_phase2_tone_result v34_retrain_detector_reset(
 
 static bool retrain_tone_matches(
 	const struct v34_retrain_detector *detector,
-	const struct v34_phase2_tone_measurement *measurement)
+	const struct single_tone_measurement *measurement,
+	const struct single_tone_measurement *guard)
 {
-	struct single_tone_measurement guard;
-
 	if (!measurement->tone_present)
 		return false;
 	if (detector->tone.local_role != V34_CALLING_STATION)
@@ -548,11 +547,8 @@ static bool retrain_tone_matches(
 	 * missing from the 2400 Hz carrier. Five percent tolerates about 13 dB
 	 * of guard attenuation while rejecting a bare carrier or unrelated tones.
 	 * The request owner qualifies silence and continuous-tone duration. */
-	guard =
-		single_tone_detector_measure(&detector->answer_guard);
-
-	return guard.tone_present &&
-	       guard.carrier_share >= V34_RETRAIN_MIN_GUARD_SHARE;
+	return guard->tone_present &&
+	       guard->carrier_share >= V34_RETRAIN_MIN_GUARD_SHARE;
 }
 
 enum v34_phase2_tone_result v34_retrain_detector_sample(
@@ -568,9 +564,8 @@ static enum v34_phase2_tone_result sample_retrain_detector(
 	struct v34_retrain_detector *detector, int16_t sample,
 	uint32_t maximum_window_energy, bool require_silence, bool *detected)
 {
-	struct v34_phase2_tone_measurement measurement;
-	struct v34_phase2_tone_event event;
-	struct single_tone_event guard_event;
+	struct single_tone_measurement measurement, guard = { 0 };
+	struct single_tone_event event, guard_event;
 	bool emitted = false;
 
 	if (!v34_retrain_detector_is_valid(detector) || detected == NULL ||
@@ -599,17 +594,19 @@ static enum v34_phase2_tone_result sample_retrain_detector(
 		*detected = false;
 		return V34_PHASE2_TONE_OK;
 	}
-	if (sample_valid_tone_detector(
-		    &detector->tone, sample, &event) != V34_PHASE2_TONE_OK ||
+	/* The complete owner check above covers both histories. Each shared
+	 * observation validates its update and returns the same measurement
+	 * used for acquisition, avoiding another validation/measurement pass. */
+	if (single_tone_detector_observe_owned(
+		    &detector->tone.carrier, sample, &event, &measurement) != SINGLE_TONE_OK ||
 	    (detector->tone.local_role == V34_CALLING_STATION &&
-	     single_tone_detector_sample(
-		     &detector->answer_guard, sample, &guard_event) !=
+	     single_tone_detector_observe_owned(
+		     &detector->answer_guard, sample, &guard_event, &guard) !=
 		     SINGLE_TONE_OK))
 		return V34_PHASE2_TONE_INVALID_ARGUMENT;
-	measurement = measure_valid_tone_detector(&detector->tone);
-	if (retrain_tone_matches(detector, &measurement)) {
+	if (retrain_tone_matches(detector, &measurement, &guard)) {
 		detector->edge_samples = 0;
-		if (event.kind == V34_PHASE2_TONE_STARTED)
+		if (event.kind == SINGLE_TONE_STARTED)
 			detector->tone_samples =
 				V34_PHASE2_TONE_ACQUIRE_SAMPLES;
 		else if (detector->tone_samples < V34_RETRAIN_TONE_SAMPLES)

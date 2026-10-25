@@ -2,6 +2,7 @@
 
 #include "single_tone.h"
 
+#include "memory_region.h"
 #include "phase.h"
 
 #include <limits.h>
@@ -458,9 +459,10 @@ static bool observe_reversal(
 	return false;
 }
 
-enum single_tone_result single_tone_detector_sample(
+static enum single_tone_result observe(
 	struct single_tone_detector *detector, int16_t sample,
-	struct single_tone_event *event)
+	struct single_tone_event *event,
+	struct single_tone_measurement *observed, bool owned)
 {
 	struct single_tone_detector next;
 	struct single_tone_event emitted = { 0 };
@@ -468,7 +470,15 @@ enum single_tone_result single_tone_detector_sample(
 	bool was_present;
 	bool qualifies;
 
-	if (!single_tone_detector_is_valid(detector) || event == NULL ||
+	const struct memory_region outputs[] = {
+		{ detector, sizeof(*detector) },
+		{ event, sizeof(*event) },
+		{ observed, observed ? sizeof(*observed) : 0 },
+	};
+
+	if (!(owned ? detector_header_is_valid(detector) :
+		      single_tone_detector_is_valid(detector)) ||
+	    event == NULL || memory_region_set_overlaps(outputs, 3) ||
 	    detector->interruption == SINGLE_TONE_SUPPRESSING)
 		return SINGLE_TONE_INVALID_ARGUMENT;
 	next = *detector;
@@ -487,7 +497,28 @@ enum single_tone_result single_tone_detector_sample(
 		return SINGLE_TONE_INVALID_ARGUMENT;
 	*detector = next;
 	*event = emitted;
+	if (observed != NULL) {
+		measurement.tone_present = next.tone_present;
+		*observed = measurement;
+	}
 	return SINGLE_TONE_OK;
+}
+
+enum single_tone_result single_tone_detector_sample(
+	struct single_tone_detector *detector, int16_t sample,
+	struct single_tone_event *event)
+{
+	return observe(detector, sample, event, NULL, false);
+}
+
+enum single_tone_result single_tone_detector_observe_owned(
+	struct single_tone_detector *detector, int16_t sample,
+	struct single_tone_event *event,
+	struct single_tone_measurement *measurement)
+{
+	if (measurement == NULL)
+		return SINGLE_TONE_INVALID_ARGUMENT;
+	return observe(detector, sample, event, measurement, true);
 }
 
 static void clear_observations(struct single_tone_detector *detector)
