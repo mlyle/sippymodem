@@ -132,7 +132,7 @@ static bool bin_moments(double low, double high, double mean, double variance,
 
 /* Shared conditional-bin E/M updates. Owners supply their fixed Gram system,
  * observation range and initial noise. Scalar gain retains all 96 updates;
- * the channel owner may stop at its existing convergence boundary. */
+ * the channel fallback may stop at its existing convergence boundary. */
 static bool refine_bin_fit(double coefficient[TAPS], const int16_t *q,
 	const double *low, const double *high, size_t count, size_t first,
 	unsigned taps, struct moments *m, double noise, bool converge, double *variance)
@@ -174,6 +174,206 @@ static bool refine_bin_fit(double coefficient[TAPS], const int16_t *q,
 	return true;
 }
 
+enum { BIN_FIT_COLUMNS = TAPS + 1, BIN_FIT_EVALUATIONS = 24 };
+
+struct bin_fit_data {
+	double q[V92_OBSERVATION_TRAINING][TAPS];
+	double low[V92_OBSERVATION_TRAINING], high[V92_OBSERVATION_TRAINING];
+	double scale[TAPS], extent;
+	size_t count;
+	unsigned taps, evaluations;
+};
+
+/* With beta = coefficient/sigma and precision = 1/sigma, both Gaussian
+ * interval endpoints are affine. Their negative log probability is convex.
+ * For endpoint derivatives va and vb, its gradient is ra*va - rb*vb and
+ * Hessian is gg' - a*ra*va*va' + b*rb*vb*vb', where ra = phi(a)/P.
+ * Normalized columns keep the channel/noise system well scaled. */
+static bool bin_fit_evaluate(struct bin_fit_data *data, const double *x,
+	double *loss, double *gradient, double hessian[BIN_FIT_COLUMNS][BIN_FIT_COLUMNS])
+{
+	if (data->evaluations == BIN_FIT_EVALUATIONS) return false;
+	data->evaluations++;
+	*loss = 0.;
+	memset(gradient, 0, BIN_FIT_COLUMNS * sizeof(*gradient));
+	memset(hessian, 0, BIN_FIT_COLUMNS * BIN_FIT_COLUMNS * sizeof(double));
+	for (size_t j = 0; j < data->count; j++) {
+		double mean = 0.;
+		for (unsigned i = 0; i < data->taps; i++) mean += x[i] * data->q[j][i];
+		double a = x[data->taps] * data->low[j] - mean;
+		double b = x[data->taps] * data->high[j] - mean;
+		double probability = gaussian_probability(a / sqrt(2.), b / sqrt(2.));
+		/* Subnormal ratios retain the conditional-moment fallback. */
+		if (!(probability >= DBL_MIN && probability <= 1.)) return false;
+		*loss -= log(probability);
+		double ra = exp(-.5 * a * a) / sqrt(2. * acos(-1.)) / probability;
+		double rb = exp(-.5 * b * b) / sqrt(2. * acos(-1.)) / probability;
+		double ar = isfinite(a) ? a * ra : 0., br = isfinite(b) ? b * rb : 0.;
+		double va[BIN_FIT_COLUMNS] = { 0 }, vb[BIN_FIT_COLUMNS] = { 0 };
+		double g[BIN_FIT_COLUMNS] = { 0 };
+		for (unsigned i = 0; i < data->taps; i++) va[i] = vb[i] = -data->q[j][i];
+		va[data->taps] = isfinite(data->low[j]) ? data->low[j] : 0.;
+		vb[data->taps] = isfinite(data->high[j]) ? data->high[j] : 0.;
+		for (unsigned i = 0; i <= data->taps; i++) {
+			g[i] = ra * va[i] - rb * vb[i];
+			gradient[i] += g[i];
+		}
+		for (unsigned i = 0; i <= data->taps; i++)
+			for (unsigned k = 0; k <= i; k++)
+				hessian[i][k] += g[i] * g[k] - ar * va[i] * va[k] + br * vb[i] * vb[k];
+	}
+	for (unsigned i = 0; i <= data->taps; i++) {
+		if (!isfinite(gradient[i])) return false;
+		for (unsigned k = 0; k <= i; k++) {
+			if (!isfinite(hessian[i][k])) return false;
+			hessian[k][i] = hessian[i][k];
+		}
+	}
+	return isfinite(*loss);
+}
+
+/* Eliminate the precision coordinate with a Schur complement, retaining
+ * the shared four-column Gram solver for channel taps. At the noise floor
+ * solve the active face instead. Roundoff may require a diagonal shift. */
+static bool bin_fit_direction(unsigned taps, const double *gradient,
+	const double hessian[BIN_FIT_COLUMNS][BIN_FIT_COLUMNS], bool fixed,
+	double *step, double *regularization)
+{
+	double diagonal = 1., shift = 0.;
+	for (unsigned i = 0; i <= taps; i++) diagonal = fmax(diagonal, fabs(hessian[i][i]));
+	for (unsigned attempt = 0; attempt < 8; attempt++) {
+		if (attempt == 1) shift = diagonal * 1e-12;
+		else if (attempt > 1) shift *= 100.;
+		double gram[GRAM_FIT_MOMENTS] = { 0 }, rhs[TAPS] = { 0 };
+		double precision = hessian[taps][taps] + shift;
+		if (!fixed && !(precision > 0.)) continue;
+		for (unsigned i = 0; i < taps; i++) {
+			rhs[i] = -gradient[i] + (fixed ? 0. : hessian[i][taps] * gradient[taps] / precision);
+			for (unsigned k = 0; k <= i; k++)
+				gram[gram_moment_index(i, k)] = hessian[i][k] + (i == k ? shift : 0.) -
+					(fixed ? 0. : hessian[i][taps] * hessian[k][taps] / precision);
+		}
+		memset(step, 0, BIN_FIT_COLUMNS * sizeof(*step));
+		if (!gram_fit(gram, rhs, taps, step)) continue;
+		if (!fixed) {
+			double sum = gradient[taps];
+			for (unsigned i = 0; i < taps; i++) sum += hessian[taps][i] * step[i];
+			step[taps] = -sum / precision;
+		}
+		double product = 0.;
+		bool finite = true;
+		for (unsigned i = 0; i <= taps; i++) {
+			product += gradient[i] * step[i];
+			finite = finite && isfinite(step[i]);
+		}
+		if (finite && product < 0.) {
+			*regularization = shift;
+			return true;
+		}
+	}
+	return false;
+}
+
+static bool bin_fit_commit(const struct bin_fit_data *data, const double *x,
+	double coefficient[TAPS], double *variance)
+{
+	double sigma = data->extent / x[data->taps], fitted[TAPS] = { 0 };
+	double noise = sigma * sigma;
+	if (!isfinite(noise) || noise < 1. - 1e-12) return false;
+	for (unsigned i = 0; i < data->taps; i++) {
+		fitted[i] = x[i] * sigma / data->scale[i];
+		if (!isfinite(fitted[i])) return false;
+	}
+	if (!(fitted[0] > 0.)) return false;
+	memcpy(coefficient, fitted, sizeof(fitted));
+	*variance = fmax(1., noise);
+	return true;
+}
+
+/* Fit the channel and its noise together. Reuse derivatives of accepted
+ * line-search points; every evaluation, including rejected trials, consumes
+ * the fixed budget. Declining leaves the original conditional-moment seed
+ * intact. Directed rounding keeps that original path as well. */
+static bool fit_bin_channel_newton(double coefficient[TAPS], const int16_t *q,
+	const double *low, const double *high, size_t count, unsigned taps,
+	double noise, double *variance)
+{
+	if (fegetround() != FE_TONEAREST || !taps || taps > TAPS || count <= taps ||
+	    count > V92_OBSERVATION_TRAINING || !isfinite(noise) || noise < 1.) return false;
+	struct bin_fit_data data = { .count = count - taps, .taps = taps };
+	double x[BIN_FIT_COLUMNS] = { 0 }, sigma = sqrt(noise);
+	for (unsigned i = 0; i < taps; i++) {
+		double sum = 0.;
+		for (size_t j = taps; j < count; j++) sum += (double)q[j - i] * q[j - i];
+		data.scale[i] = sqrt(sum / data.count);
+		if (!(data.scale[i] > 0.)) return false;
+		x[i] = coefficient[i] * data.scale[i] / sigma;
+	}
+	for (size_t j = taps; j < count; j++) {
+		for (unsigned i = 0; i < taps; i++) data.q[j - taps][i] = q[j - i] / data.scale[i];
+		if (isfinite(low[j])) data.extent = fmax(data.extent, fabs(low[j]));
+		if (isfinite(high[j])) data.extent = fmax(data.extent, fabs(high[j]));
+	}
+	if (!(data.extent > 0.) || !isfinite(data.extent)) return false;
+	x[taps] = data.extent / sigma;
+	if (!(x[0] > 0.) || !(x[taps] > 0.)) return false;
+	for (size_t j = taps; j < count; j++) {
+		data.low[j - taps] = low[j] / data.extent;
+		data.high[j - taps] = high[j] / data.extent;
+	}
+	double loss, gradient[BIN_FIT_COLUMNS], hessian[BIN_FIT_COLUMNS][BIN_FIT_COLUMNS];
+	if (!bin_fit_evaluate(&data, x, &loss, gradient, hessian)) return false;
+	for (unsigned iteration = 0; iteration < BIN_FIT_EVALUATIONS; iteration++) {
+		/* Variance >= 1 bounds normalized precision above by extent. */
+		bool upper = x[taps] >= data.extent * (1. - 1e-12), fixed = false;
+		double norm = 0.;
+		for (unsigned i = 0; i <= taps; i++)
+			if (i < taps || !upper || gradient[taps] > 0.) norm = fmax(norm, fabs(gradient[i]));
+		if (norm < 1e-10) return bin_fit_commit(&data, x, coefficient, variance);
+		double step[BIN_FIT_COLUMNS], regularization;
+		bool direction = bin_fit_direction(taps, gradient, hessian, false, step, &regularization);
+		/* Coupling can drive the step outward even when the partial
+		 * precision gradient points inward. Re-solve the active face. */
+		if (upper && (!direction || step[taps] > 0.)) {
+			fixed = true;
+			direction = bin_fit_direction(taps, gradient, hessian, true, step, &regularization);
+		}
+		if (!direction) return false;
+		double product = 0.;
+		for (unsigned i = 0; i <= taps; i++) product += gradient[i] * step[i];
+		if (-product * .5 < 1e-12 * (1. + fabs(loss)) && (!regularization || norm < 1e-8) &&
+		    (!fixed || gradient[taps] <= 0.))
+			return bin_fit_commit(&data, x, coefficient, variance);
+		double length = 1.;
+		if (step[taps] > 0.) length = fmin(length, (data.extent - x[taps]) / step[taps]);
+		else if (step[taps] < 0.) length = fmin(length, -.99 * x[taps] / step[taps]);
+		if (step[0] < 0.) length = fmin(length, -.99 * x[0] / step[0]);
+		if (!(length > 0.)) return false;
+		bool accepted = false;
+		for (unsigned backtrack = 0; backtrack < BIN_FIT_EVALUATIONS; backtrack++) {
+			if (data.evaluations == BIN_FIT_EVALUATIONS) return false;
+			double proposal[BIN_FIT_COLUMNS] = { 0 };
+			for (unsigned i = 0; i <= taps; i++) proposal[i] = x[i] + length * step[i];
+			proposal[taps] = fmin(data.extent, proposal[taps]);
+			if (!memcmp(proposal, x, sizeof(x))) return false;
+			double next_loss, next_gradient[BIN_FIT_COLUMNS];
+			double next_hessian[BIN_FIT_COLUMNS][BIN_FIT_COLUMNS];
+			if (bin_fit_evaluate(&data, proposal, &next_loss, next_gradient, next_hessian) &&
+			    next_loss <= loss + 1e-4 * length * product) {
+				memcpy(x, proposal, sizeof(x));
+				loss = next_loss;
+				memcpy(gradient, next_gradient, sizeof(gradient));
+				memcpy(hessian, next_hessian, sizeof(hessian));
+				accepted = true;
+				break;
+			}
+			length *= .5;
+		}
+		if (!accepted) return false;
+	}
+	return false;
+}
+
 /* Start the channel fit with its center residuals. The one-sample variance
  * floor bounds numeric precision, not channel quality. Payload never updates
  * these parameters. */
@@ -191,8 +391,11 @@ static bool fit_bin_channel(struct v92_observation_interval *fit, const int16_t 
 		}
 		noise += residual * residual;
 	}
+	double initial_noise = fmax(1., noise / (count - taps));
+	if (fit_bin_channel_newton(fit->coefficient, q, low, high, count, taps, initial_noise, variance))
+		return true;
 	return refine_bin_fit(fit->coefficient, q, low, high, count, taps, taps,
-		&m, fmax(1., noise / (count - taps)), true, variance);
+		&m, initial_noise, true, variance);
 }
 
 /* The first-codec gain intervals come from the initial center fit. Select

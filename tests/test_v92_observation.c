@@ -610,6 +610,48 @@ static void check_channel(enum g711_law law, double gain, unsigned taps, struct 
 	printf("V.92 observation law=%u taps=%u gain=%.9g heldout_rms=%.6f\n", law, taps, gain, rms);
 }
 
+/* Independently integrate the actual final-codec cells. A retained fitted
+ * channel must beat a feasible channel with unit noise, including when the
+ * optimum lies on that noise floor. No optimizer or cached score is used. */
+static double physical_cell_loss(enum g711_law law, double mean, double sigma,
+	int16_t level, double gain, double offset)
+{
+	struct g711_interval cell;
+	assert(g711_quantization_interval(law, level, &cell));
+	double a = cell.lower == INT16_MIN ? -HUGE_VAL :
+		((cell.lower - .5) * gain + offset - mean) / (sqrt(2.) * sigma);
+	double b = cell.upper == INT16_MAX ? HUGE_VAL :
+		((cell.upper + .5) * gain + offset - mean) / (sqrt(2.) * sigma);
+	double probability = a > 0. ? .5 * (erfc(a) - erfc(b)) :
+		b < 0. ? .5 * (erfc(-b) - erfc(-a)) : .5 * (erf(b) - erf(a));
+	return probability > 0. ? -log(probability) : HUGE_VAL;
+}
+
+static void check_fit_witness(const struct v92_observation *model, const int32_t *x,
+	const int16_t *wire, const double *offsets, double host_gain)
+{
+	double best = HUGE_VAL, witness = HUGE_VAL;
+	const double coefficient[V92_OBSERVATION_TAPS] = { .63, .07, -.02 };
+	for (unsigned i = 0; i < V92_OBSERVATION_INTERVALS; i++) {
+		const struct v92_observation_interval *fit = &model->intervals[i];
+		double gain = sqrt(fit->low * fit->high), loss = 0., reference = 0.;
+		for (unsigned j = model->taps; j < TRAINING; j++) {
+			double mean = 0., known = 0.;
+			for (unsigned k = 0; k < model->taps; k++) {
+				int16_t point = quantize(model->law, gain * x[j - k]);
+				mean += fit->coefficient[k] * point;
+				known += host_gain * coefficient[k] * .125 / gain * point;
+			}
+			loss += physical_cell_loss(model->law, mean, sqrt(model->variance),
+				wire[j], host_gain, offsets[j]);
+			reference += physical_cell_loss(model->law, known, 1., wire[j], host_gain, offsets[j]);
+		}
+		best = fmin(best, loss);
+		witness = fmin(witness, reference);
+	}
+	assert(isfinite(best) && isfinite(witness) && best <= witness + 1e-6 * (1. + witness));
+}
+
 static void check_conditioned_channel(enum g711_law law, double host_gain)
 {
 	int32_t x[SAMPLES];
@@ -634,6 +676,7 @@ static void check_conditioned_channel(enum g711_law law, double host_gain)
 		.count = TRAINING, .taps = 3, .host_gain = host_gain, .law = law,
 	};
 	assert(v92_observation_fit(&model, &training));
+	check_fit_witness(&model, x, wire, offsets, host_gain);
 	struct v92_observation_cache cache;
 	/* Transaction checks compare unused scratch slots too. */
 	memset(&cache, 0xa5, sizeof(cache));
