@@ -168,7 +168,7 @@ static const struct v8_datapump *v8_from_dp_const(const struct dp *dp)
 	    modulation == V8_MODULATION_NONE ||
 	    (modulation & datapump->offered_modulations) == 0 ||
 	    datapump->handoff.tail_count >= MODEM_FRAG ||
-	    (!datapump->handoff.quick_connect && datapump->handoff.tail_count != 0) ||
+	    (!datapump->handoff_requested && datapump->handoff.tail_count != 0) ||
 	    ((datapump->requested_datapump == DP_V92 || datapump->requested_datapump == DP_V91) &&
 	     !training_session_is_valid(&datapump->handoff.training)))
 		return NULL;
@@ -510,6 +510,21 @@ static int process_v8_samples(
 		return DPSTAT_CHANGEDP;
 	}
 	if (datapump->caller) {
+		struct v8_calling *calling = &datapump->handshake.calling;
+		if (v8_datapump_modulation(datapump->requested_datapump) == V8_MODULATION_V34_DUPLEX &&
+		    calling->state == V8_CALLING_SEND_CJ && !calling->phase2_silence &&
+		    calling->selected_modulation == V8_MODULATION_V34_DUPLEX) {
+			enum modem_pcm_role role;
+			bool duplex = false;
+
+			/* V.91 has its own digital startup. V.34/PCM phase 2 already
+			 * owns the quiet interval, including a conventional fallback. */
+			if ((!v8_datapump_uses_pcm(datapump->requested_datapump) ||
+			     (selected_pcm_role(datapump, &calling->negotiated_menu,
+				     &role, &duplex) && !duplex)) &&
+			    v8_calling_delegate_phase2_silence(calling) != V8_CALLING_OK)
+				return DPSTAT_ERROR;
+		}
 		enum v8_calling_result result =
 			v8_calling_process(
 				&datapump->handshake.calling, receive, transmit,
@@ -547,11 +562,13 @@ static int process_handshake(struct dp *dp, void *receive_buffer, void *transmit
 	const int16_t *receive = receive_buffer;
 	int16_t *transmit = transmit_buffer;
 
-	if (datapump == NULL || (datapump->requested_datapump != DP_V92 && datapump->requested_datapump != DP_V91) ||
+	if (datapump == NULL ||
+	    v8_datapump_modulation(datapump->requested_datapump) != V8_MODULATION_V34_DUPLEX ||
 	    receive == NULL || transmit == NULL || count <= 0 || count > MODEM_FRAG ||
 	    datapump->handoff_requested)
 		return process_v8_samples(dp, receive_buffer, transmit_buffer, count);
-	if (training_session_advance(&datapump->handoff.training, (unsigned)count) != TRAINING_SESSION_OK) {
+	if ((datapump->requested_datapump == DP_V92 || datapump->requested_datapump == DP_V91) &&
+	    training_session_advance(&datapump->handoff.training, (unsigned)count) != TRAINING_SESSION_OK) {
 		memset(transmit, 0, (size_t)count * sizeof(*transmit));
 		return DPSTAT_ERROR;
 	}
@@ -560,7 +577,9 @@ static int process_handshake(struct dp *dp, void *receive_buffer, void *transmit
 
 		if (result == DPSTAT_OK)
 			continue;
-		if (result == DPSTAT_CHANGEDP && datapump->handoff.quick_connect) {
+		if (result == DPSTAT_CHANGEDP && (datapump->handoff.quick_connect ||
+		    dp->modem->dp_requested == DP_V34 || dp->modem->dp_requested == DP_V90 ||
+		    dp->modem->dp_requested == DP_V92)) {
 			datapump->handoff.tail_count = (unsigned)(count - index - 1);
 			memcpy(datapump->handoff.receive_tail, receive + index + 1,
 			       datapump->handoff.tail_count * sizeof(*receive));
@@ -988,7 +1007,8 @@ bool v8_datapump_pcm_handoff(const struct dp *dp, struct v8_pcm_handoff *handoff
 	const struct v8_datapump *datapump = v8_from_dp_const(dp);
 
 	if (datapump == NULL || handoff == NULL || !datapump->handoff_requested ||
-	    (datapump->requested_datapump != DP_V92 && datapump->requested_datapump != DP_V91) || datapump->v34_fallback || datapump->legacy_v32 || datapump->legacy_selected ||
+	    v8_datapump_modulation(datapump->requested_datapump) != V8_MODULATION_V34_DUPLEX ||
+	    datapump->legacy_v32 || datapump->legacy_selected ||
 	    training_session_has_failed(&datapump->handoff.training) ||
 	    memory_regions_overlap(datapump, sizeof(*datapump), handoff, sizeof(*handoff)))
 		return false;

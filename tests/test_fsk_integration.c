@@ -5228,6 +5228,83 @@ static bool run_factory_startup_cases(const char *filter, bool *selected)
 	return true;
 }
 
+/* Observe both complete modem paths: two individually correct silence owners
+ * can still accidentally add their intervals at the V.8/family boundary. */
+static bool run_phase2_quiet_case(enum media_codec codec, unsigned protocol,
+	bool digital_caller, bool fallback)
+{
+	struct integration_endpoint ends[2];
+	char command[80];
+	unsigned last_active[2] = { 0 }, first_active[2] = { 0 };
+	bool handed[2] = { false }, saw_v8[2] = { false };
+	CHECK(endpoint_init(&ends[0], "quiet caller") && endpoint_init(&ends[1], "quiet answerer") &&
+		  endpoint_prepare_media(&ends[0], codec) && endpoint_prepare_media(&ends[1], codec),
+		  "quiet endpoints failed");
+	for (unsigned side = 0; side < 2; ++side) {
+		unsigned selection = fallback && side ? 34 : protocol;
+		int n = snprintf(command, sizeof(command), "AT\\N0+MS=%u,0,2400,%u\r",
+			selection, selection == 34 ? 33600 : 56000);
+		CHECK(n > 0 && (size_t)n < sizeof(command) &&
+			  modem_set_sreg(ends[side].modem, SREG_V90_DIGITAL_INDICATION,
+				  side ? !digital_caller : digital_caller) == 0 &&
+			  modem_write(ends[side].modem, command, n) == n &&
+			  endpoint_drain(&ends[side]) && !output_contains(&ends[side], "ERROR"),
+			  "quiet profile failed");
+	}
+	CHECK(modem_set_sreg(ends[1].modem, SREG_ANS_DELAY, 0) == 0 &&
+		  modem_write(ends[0].modem, "ATDpeer\r", 8) == 8 &&
+		  modem_report_outgoing_call_connected(ends[0].modem) == 0 &&
+		  modem_answer(ends[1].modem) == 0, "quiet call start failed");
+	for (unsigned frame = 0; frame < 600 && (!first_active[0] || !first_active[1]); ++frame) {
+		bool was_v8[2];
+		for (unsigned side = 0; side < 2; ++side) {
+			was_v8[side] = ends[side].modem->dp != NULL && ends[side].modem->dp->id == DP_V8;
+			saw_v8[side] |= was_v8[side];
+		}
+		CHECK(process_sip_frame(&ends[0], &ends[1], codec, NULL) &&
+			  endpoint_drain(&ends[0]) && endpoint_drain(&ends[1]), "quiet media failed");
+		for (unsigned side = 0; side < 2; ++side) {
+			bool family = ends[side].modem->dp != NULL &&
+				(ends[side].modem->dp->id == DP_V34 || ends[side].modem->dp->id == DP_V90 ||
+				 ends[side].modem->dp->id == DP_V92);
+			for (unsigned i = 0; i < SIP_FRAME_SAMPLES && !first_active[side]; ++i) {
+				int sample = ends[side].transmit[i];
+				if (sample >= -32 && sample <= 32) continue;
+				unsigned at = frame * SIP_FRAME_SAMPLES + i;
+				if (!handed[side]) last_active[side] = at;
+				else first_active[side] = at;
+			}
+			if (saw_v8[side] && family) handed[side] = true;
+		}
+	}
+	for (unsigned side = 0; side < 2; ++side) {
+		CHECK(saw_v8[side] && handed[side] && last_active[side] && first_active[side],
+			  "quiet handoff missing side=%u protocol=%u", side, protocol);
+		unsigned gap = first_active[side] - last_active[side] - 1u;
+		/* Account for the old filter tail and new pulse's gradual onset.
+		 * Nominal line silence is 78 ms; a second 75-ms owner cannot fit. */
+		CHECK(gap >= MODEM_RATE * 70u / 1000u && gap <= MODEM_RATE * 80u / 1000u,
+			  "V8/phase2 quiet side=%u protocol=%u digital=%u fallback=%u codec=%u: %u samples",
+			  side, protocol, digital_caller, fallback, codec, gap);
+	}
+	endpoint_destroy(&ends[1]); endpoint_destroy(&ends[0]);
+	return true;
+}
+
+static bool run_phase2_quiet_cases(const char *filter, bool *selected)
+{
+	const char *name = "V8 phase2 quiet ownership";
+	if (filter != NULL && filter[0] && strstr(name, filter) == NULL) return true;
+	*selected = true;
+	for (enum media_codec codec = MEDIA_CODEC_PCMU; codec <= MEDIA_CODEC_PCMA; ++codec) {
+		for (unsigned protocol = 34; protocol <= 92; protocol = protocol == 34 ? 90 : protocol + 2)
+			for (unsigned digital = 0; digital < (protocol == 34 ? 1u : 2u); ++digital)
+				CHECK(run_phase2_quiet_case(codec, protocol, digital, false), "quiet interval case failed");
+		CHECK(run_phase2_quiet_case(codec, 92, true, true), "quiet fallback case failed");
+	}
+	return true;
+}
+
 static bool run_factory_pcm_cases(const char *filter, bool *selected)
 {
 	static const enum media_codec codecs[] = { MEDIA_CODEC_PCMU, MEDIA_CODEC_PCMA };
@@ -6355,6 +6432,8 @@ int main(void)
 			   v90_recording_expected_text)) {
 		return 1;
 	}
+	if (!run_phase2_quiet_cases(integration_filter, &integration_case_selected))
+		return 1;
 	if (!run_factory_pcm_cases(integration_filter, &integration_case_selected))
 		return 1;
 	if (!run_factory_startup_cases(integration_filter, &integration_case_selected))

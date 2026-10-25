@@ -137,7 +137,7 @@ static bool remote_answerer_receive(
 	return true;
 }
 
-static bool call_negotiation(size_t jm_delay)
+static bool call_negotiation(size_t jm_delay, bool delegate)
 {
 	struct v8_calling calling;
 	size_t quiet_samples = 0;
@@ -147,21 +147,35 @@ static bool call_negotiation(size_t jm_delay)
 	enum v8_modulation modulation;
 	size_t exchange_started = 0;
 	size_t completed = 0;
+	enum v8_modulation wanted = delegate ? V8_MODULATION_V34_DUPLEX : V8_MODULATION_V21;
 
 	CHECK(v8_call_menu_init(
-		      &local_menu, V8_MODULATION_V21, true) ==
+		      &local_menu, wanted, true) ==
 		      V8_MENU_OK &&
 	      v8_calling_init(&calling, &local_menu) ==
 		      V8_CALLING_OK &&
 	      remote_answerer_init(
-		      &answerer, V8_MODULATION_V21),
+		      &answerer, wanted),
 	      "V.8 negotiation endpoints did not initialize");
+	struct v8_calling saved = calling;
+	CHECK(v8_calling_delegate_phase2_silence(&calling) == V8_CALLING_INVALID_ARGUMENT &&
+	      !memcmp(&calling, &saved, sizeof(saved)), "unnegotiated quiet delegation changed state");
 	for (size_t sample_index = 0;
 	     sample_index < 6u * V8_ANSAM_SAMPLE_RATE;
 	     ++sample_index) {
 		int16_t receive;
 		int16_t transmit;
 		enum v8_calling_state before = calling.state;
+		if (calling.state == V8_CALLING_SEND_CJ && !calling.phase2_silence) {
+			if (delegate)
+				CHECK(v8_calling_delegate_phase2_silence(&calling) == V8_CALLING_OK,
+				      "phase2 quiet delegation failed");
+			else {
+				saved = calling;
+				CHECK(v8_calling_delegate_phase2_silence(&calling) == V8_CALLING_INVALID_ARGUMENT &&
+				      !memcmp(&calling, &saved, sizeof(saved)), "legacy mode delegated its quiet interval");
+			}
+		}
 
 		if (answerer.state == REMOTE_JOINT_MENU && jm_delay != 0) {
 			--jm_delay;
@@ -180,8 +194,9 @@ static bool call_negotiation(size_t jm_delay)
 		      "CJ interrupted a CM octet at bit %zu",
 		      calling.call_menu_bits.bit_index);
 		if (v8_calling_is_complete(&calling))
-			CHECK(quiet_samples >= V8_CALLING_POST_CJ_SILENCE_SAMPLES &&
-			      quiet_samples <= V8_ANSAM_SAMPLE_RATE * 80u / 1000u,
+			CHECK(delegate ? quiet_samples < V8_FSK_TRANSMIT_FILTER_TAPS :
+			      (quiet_samples >= V8_CALLING_POST_CJ_SILENCE_SAMPLES &&
+			       quiet_samples <= V8_ANSAM_SAMPLE_RATE * 80u / 1000u),
 			      "V.8 handoff violated the post-CJ quiet interval (%zu samples)", quiet_samples);
 		CHECK(remote_answerer_receive(&answerer, transmit),
 		      "V.8 answering station failed at sample %zu", sample_index);
@@ -212,10 +227,9 @@ static bool call_negotiation(size_t jm_delay)
 	CHECK(v8_calling_selection(
 		      &calling, &negotiated_menu, &modulation) ==
 		      V8_CALLING_OK &&
-	      modulation == V8_MODULATION_V21 &&
-	      negotiated_menu.modulations == V8_MODULATION_V21 &&
+	      modulation == wanted && negotiated_menu.modulations == wanted &&
 	      negotiated_menu.lapm,
-	      "V.8 calling station did not expose the selected V.21 menu");
+	      "V.8 calling station did not expose the selected menu");
 	return true;
 }
 
@@ -223,7 +237,8 @@ static bool test_call_negotiation(void)
 {
 	/* Confirm JM at every position within the outgoing CM octet. */
 	for (size_t bit = 0; bit < V8_FRAMED_OCTET_BITS; ++bit)
-		if (!call_negotiation(bit * V8_ANSAM_SAMPLE_RATE / 300u))
+		if (!call_negotiation(bit * V8_ANSAM_SAMPLE_RATE / 300u, false) ||
+		    !call_negotiation(bit * V8_ANSAM_SAMPLE_RATE / 300u, true))
 			return false;
 	return true;
 }

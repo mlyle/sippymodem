@@ -405,7 +405,7 @@ static struct dp *create_v90(
 	datapump = calloc(1, sizeof(*datapump));
 	if (datapump == NULL)
 		return NULL;
-	from_v8 = protocol == PCM_PROTOCOL_V92 && modem->dp != NULL &&
+	from_v8 = modem->dp != NULL &&
 		modem->dp->id == DP_V8;
 	from_v34 = modem->dp != NULL && modem->dp->id == DP_V34;
 	if ((from_v8 && !v8_datapump_pcm_handoff(modem->dp, &datapump->startup)) ||
@@ -438,7 +438,7 @@ static struct dp *create_v90(
 		free(datapump);
 		return NULL;
 	}
-	if (from_v8)
+	if (from_v8 && protocol == PCM_PROTOCOL_V92)
 		datapump->training = datapump->startup.training;
 	if (from_v34) {
 		if (role != V90_DIGITAL_MODEM ||

@@ -287,6 +287,7 @@ static struct dp *create_v34(
 	struct v34_call_configuration configuration;
 	struct v34_datapump *datapump;
 	struct pcm_v34_fallback_handoff fallback;
+	struct v8_pcm_handoff startup = { 0 };
 	enum v34_profile_result profile_result;
 	enum v34_station_role role;
 	bool from_pcm;
@@ -329,6 +330,20 @@ static struct dp *create_v34(
 	    V34_DATA_QUALITY_OK) {
 		free(datapump);
 		return NULL;
+	}
+	if (modem->dp != NULL && v8_datapump_pcm_handoff(modem->dp, &startup)) {
+		for (unsigned i = 0; i < startup.tail_count; ++i) {
+			struct v34_call_observation observation;
+			struct v34_received_mapping_frame received;
+			int16_t sample;
+
+			if (v34_call_sample(&datapump->call, startup.receive_tail[i],
+				    NULL, NULL, &sample, &observation, &received) != V34_CALL_OK ||
+			    sample != 0) {
+				free(datapump);
+				return NULL;
+			}
+		}
 	}
 	datapump->carrier_power_floor = DATAPUMP_MIN_QAM_LINE_POWER;
 	datapump->caller = role == V34_CALLING_STATION;

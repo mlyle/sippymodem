@@ -63,6 +63,7 @@ struct v8_calling {
 	uint8_t transmit_bit;
 	bool negotiated;
 	bool qc_enabled;
+	bool phase2_silence;
 };
 
 enum v8_calling_result v8_calling_init(
@@ -74,8 +75,13 @@ enum v8_calling_result v8_calling_init(
  * Use single-sample processing for an exact QC handoff. */
 enum v8_calling_result v8_calling_enable_quick_connect(
 	struct v8_calling *calling, const struct v92_qc1_message *request);
+/* After selecting V.34 duplex, its family may own the post-CJ interval.
+ * Call before draining CJ's transmit filter. COMPLETE then transfers the
+ * following sample after that filter tail, without adding another silence. */
+enum v8_calling_result v8_calling_delegate_phase2_silence(
+	struct v8_calling *calling);
 /* COMPLETE transfers the next sample to the selected datapump after the CJ
- * tail and following 75-ms quiet interval have completed. */
+ * tail and following 75-ms quiet interval, unless explicitly delegated. */
 enum v8_calling_result v8_calling_process(
 	struct v8_calling *calling, const int16_t *receive,
 	int16_t *transmit, size_t count);

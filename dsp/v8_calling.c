@@ -34,6 +34,9 @@ static bool calling_is_valid(const struct v8_calling *calling)
 	    calling->transmit_bit > 1 ||
 	    calling->cj_bit_index > V8_CJ_BITS)
 		return false;
+	if (calling->phase2_silence && (!calling->negotiated ||
+	    calling->selected_modulation != V8_MODULATION_V34_DUPLEX))
+		return false;
 	if ((calling->state == V8_CALLING_FAILED) !=
 	    (calling->terminal_result != V8_CALLING_OK))
 		return false;
@@ -75,7 +78,8 @@ static bool calling_is_valid(const struct v8_calling *calling)
 			       calling->state_samples < V8_FSK_TRANSMIT_FILTER_TAPS);
 	case V8_CALLING_SEND_CJ:
 		return calling->negotiated && calling->state_samples <
-		       V8_CALLING_CJ_TAIL_SAMPLES;
+		       (calling->phase2_silence ? V8_FSK_TRANSMIT_FILTER_TAPS :
+			V8_CALLING_CJ_TAIL_SAMPLES);
 	case V8_CALLING_COMPLETE:
 		return calling->negotiated &&
 		       calling->cj_bit_index == V8_CJ_BITS &&
@@ -305,7 +309,8 @@ static enum v8_calling_result send_cj_sample(
 			return V8_CALLING_INVALID_ARGUMENT;
 		calling->state_samples++;
 		if (calling->state_samples ==
-		    V8_CALLING_CJ_TAIL_SAMPLES)
+		    (calling->phase2_silence ? V8_FSK_TRANSMIT_FILTER_TAPS :
+			V8_CALLING_CJ_TAIL_SAMPLES))
 			enter_state(calling, V8_CALLING_COMPLETE);
 		return V8_CALLING_OK;
 	}
@@ -333,6 +338,17 @@ static enum v8_calling_result send_cj_sample(
 		    &calling->fsk, calling->transmit_bit, transmit,
 		    &bit_consumed) != V8_FSK_OK)
 		return V8_CALLING_INVALID_ARGUMENT;
+	return V8_CALLING_OK;
+}
+
+enum v8_calling_result v8_calling_delegate_phase2_silence(
+	struct v8_calling *calling)
+{
+	if (!calling_is_valid(calling) || calling->state != V8_CALLING_SEND_CJ ||
+	    calling->state_samples != 0 ||
+	    calling->selected_modulation != V8_MODULATION_V34_DUPLEX)
+		return V8_CALLING_INVALID_ARGUMENT;
+	calling->phase2_silence = true;
 	return V8_CALLING_OK;
 }
 

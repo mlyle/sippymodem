@@ -13,8 +13,10 @@
 struct dp;
 struct single_tone_detector;
 
-/* Copied before the V.8 owner is deleted. QC transfers after the final
- * QC1/QCA1 sample; the fragment tail was already emitted as silence. */
+/* Copied before the V.8 owner is deleted. The remaining fragment was already
+ * emitted as silence; its RX samples advance the next owner's quiet interval.
+ * Training history is supplied for V.92/V.91. Conventional V.34/V.90 retain
+ * their own training clocks. QC transfers after the final QC1/QCA1 sample. */
 struct v8_pcm_handoff {
 	struct training_session training;
 	struct v92_qc1_message local;
