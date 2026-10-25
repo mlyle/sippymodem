@@ -688,6 +688,82 @@ static bool test_feedback_history_lineage(void)
 	return true;
 }
 
+static int16_t feedback_oracle_sample(int64_t sum)
+{
+	uint32_t word = (uint32_t)sum;
+	int64_t signed_word = word <= INT32_MAX ? word :
+		(int64_t)word - INT64_C(4294967296);
+	int64_t shifted = signed_word >= 0 ? signed_word / 16384 :
+		-((-signed_word + 16383) / 16384);
+	uint16_t sample = (uint16_t)shifted;
+
+	return sample <= INT16_MAX ? (int16_t)sample :
+		(int16_t)((int32_t)sample - 65536);
+}
+
+static bool test_feedback_full_scale_projection(void)
+{
+	const int16_t edges[] = { INT16_MIN, INT16_MAX, -1, 0, 1 };
+	uint32_t random = UINT32_C(0x671a9c31);
+
+	for (unsigned trial = 0; trial < 4096; ++trial) {
+		struct v34_adaptive_equalizer equalizer;
+		struct v34_adaptive_equalizer_observation observation;
+		struct v34_adaptive_equalizer_feedback saved;
+		int64_t real = -8192, imaginary = 8192;
+
+		CHECK(v34_adaptive_equalizer_init(&equalizer) ==
+			      V34_ADAPTIVE_EQUALIZER_OK &&
+		      v34_adaptive_equalizer_set_feedback_mode(&equalizer,
+			      V34_ADAPTIVE_EQUALIZER_FEEDBACK_APPLY) ==
+			      V34_ADAPTIVE_EQUALIZER_OK,
+		      "full-scale feedback owner did not initialize");
+		for (unsigned i = 0; i < 3; ++i) {
+			equalizer.feedback.coefficient_a[i] = trial < 25 ?
+				edges[trial % 5] : next_sample(&random);
+			equalizer.feedback.coefficient_b[i] = trial < 25 ?
+				edges[trial / 5] : next_sample(&random);
+		}
+		for (unsigned i = 0; i < 4; ++i) {
+			equalizer.feedback.in_phase_history[i] = trial < 25 ?
+				edges[(trial + i) % 5] : next_sample(&random);
+			equalizer.feedback.quadrature_history[i] = trial < 25 ?
+				edges[(trial / 5 + i) % 5] : next_sample(&random);
+		}
+		saved = equalizer.feedback;
+		/* Widen the complete complex convolution, then wrap once. Read
+		 * history in age order, independently of the filter's tap walk. */
+		for (unsigned age = 0; age < 3; ++age) {
+			int64_t a = saved.coefficient_a[2 - age];
+			int64_t b = saved.coefficient_b[2 - age];
+			int64_t x = saved.in_phase_history[age];
+			int64_t y = saved.quadrature_history[age];
+
+			real += a * x - b * y;
+			imaginary += b * x + a * y;
+		}
+		CHECK(push_zero_symbol(&equalizer) &&
+		      v34_adaptive_equalizer_observe(&equalizer, &observation) ==
+			      V34_ADAPTIVE_EQUALIZER_OK &&
+		      observation.decision.in_phase == feedback_oracle_sample(real) &&
+		      observation.decision.quadrature == feedback_oracle_sample(imaginary),
+		      "full-scale feedback projection changed at trial %u", trial);
+		for (unsigned i = 0; i < 4; ++i) {
+			CHECK(equalizer.feedback.in_phase_history[i] ==
+				      (i ? saved.in_phase_history[i - 1] : 0) &&
+			      equalizer.feedback.quadrature_history[i] ==
+				      (i ? saved.quadrature_history[i - 1] : 0),
+			      "feedback history advanced incorrectly at trial %u", trial);
+		}
+		CHECK(memcmp(equalizer.feedback.coefficient_a, saved.coefficient_a,
+			     sizeof(saved.coefficient_a)) == 0 &&
+		      memcmp(equalizer.feedback.coefficient_b, saved.coefficient_b,
+			     sizeof(saved.coefficient_b)) == 0,
+		      "frozen feedback coefficients changed");
+	}
+	return true;
+}
+
 static bool test_feedback_and_discard_lifecycle(void)
 {
 	struct v34_adaptive_equalizer equalizer;
@@ -1773,6 +1849,7 @@ int main(void)
 	    !test_data_carrier_tracking() ||
 	    !test_exact_decision_feedback_oracle() ||
 	    !test_feedback_history_lineage() ||
+	    !test_feedback_full_scale_projection() ||
 	    !test_feedback_and_discard_lifecycle() ||
 	    !test_discard_lineage_zero() ||
 	    !test_feedback_training_boundary() ||

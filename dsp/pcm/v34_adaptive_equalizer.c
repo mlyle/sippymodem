@@ -300,41 +300,31 @@ enum v34_adaptive_equalizer_result v34_adaptive_equalizer_push(
 static int16_t feedback_in_phase(
 	const struct v34_adaptive_equalizer_feedback *feedback)
 {
-	uint32_t accumulator = UINT32_C(0x2000);
+	/* Feedback coefficients walk the three retained inputs oldest first.
+	 * Keep the legacy negative rounding bias in the real projection. */
+	uint32_t accumulator = fir_read_ring_s16(feedback->in_phase_history,
+		feedback->coefficient_a, 3, 2, 1) - UINT32_C(0x2000) -
+		fir_read_ring_s16(feedback->quadrature_history,
+			feedback->coefficient_b, 3, 2, 1);
 
-	for (size_t index = 0; index < 3; ++index)
-		accumulator += multiply_low_s32(
-			feedback->coefficient_b[index],
-			feedback->quadrature_history[2u - index]);
-	accumulator = 0u - accumulator;
-	for (size_t index = 0; index < 3; ++index)
-		accumulator += multiply_low_s32(
-			feedback->in_phase_history[2u - index],
-			feedback->coefficient_a[index]);
 	return shifted_s16(accumulator, 14);
 }
 
 static int16_t feedback_shift_and_quadrature(
 	struct v34_adaptive_equalizer_feedback *feedback)
 {
-	uint32_t accumulator = UINT32_C(0x2000);
+	uint32_t accumulator = UINT32_C(0x2000) +
+		fir_read_ring_s16(feedback->in_phase_history,
+			feedback->coefficient_b, 3, 2, 1) +
+		fir_read_ring_s16(feedback->quadrature_history,
+			feedback->coefficient_a, 3, 2, 1);
 
 	/* Each filter evaluation advances the four-word history: once for the
 	 * received decision and once again when the resulting error is learned. */
-	for (size_t index = 0; index < 3; ++index) {
-		int16_t value = feedback->in_phase_history[2u - index];
-
-		feedback->in_phase_history[3u - index] = value;
-		accumulator += multiply_low_s32(
-			value, feedback->coefficient_b[index]);
-	}
-	for (size_t index = 0; index < 3; ++index) {
-		int16_t value = feedback->quadrature_history[2u - index];
-
-		feedback->quadrature_history[3u - index] = value;
-		accumulator += multiply_low_s32(
-			value, feedback->coefficient_a[index]);
-	}
+	memmove(feedback->in_phase_history + 1, feedback->in_phase_history,
+		3 * sizeof(feedback->in_phase_history[0]));
+	memmove(feedback->quadrature_history + 1, feedback->quadrature_history,
+		3 * sizeof(feedback->quadrature_history[0]));
 	return shifted_s16(accumulator, 14);
 }
 
