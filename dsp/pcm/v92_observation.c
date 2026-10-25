@@ -1047,6 +1047,7 @@ static double codec_mean(enum g711_law law, double mean, double variance, double
 	double divisor = sqrt(variance) * sqrt(2.);
 	int16_t center = g711_quantize(law, sample_round_s16(mean / gain));
 	double prediction = center;
+	bool nearest = fegetround() == FE_TONEAREST;
 	for (int direction = -1; direction <= 1; direction += 2) {
 		int16_t level = center;
 		for (unsigned step = 0; step < 256; step++) {
@@ -1058,7 +1059,14 @@ static double codec_mean(enum g711_law law, double mean, double variance, double
 			double distance = direction * (boundary - mean) / divisor;
 			if (distance >= 28.) break;
 			int16_t next = g711_quantize(law, (int16_t)(edge + direction));
-			prediction += (next - level) * .5 * erfc(distance);
+			double tail = erfc(distance);
+			prediction += (next - level) * .5 * tail;
+			/* Later tails decrease and have this same sign. Any int16
+			 * level jump has half-magnitude below 32768. If even that
+			 * bound rounds away, every remaining addition would too.
+			 * Directed rounding retains the complete walk. */
+			if (nearest && prediction + direction * 32768. * tail == prediction)
+				break;
 			level = next;
 		}
 	}

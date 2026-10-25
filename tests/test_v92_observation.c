@@ -518,6 +518,48 @@ static void check_predictive_noise(const struct v92_observation *trained)
 	printf("V.92 predictive noise law=%u checks passed\n", model.law);
 }
 
+/* Compare the tail-sum predictor with a complete, independently enumerated
+ * sum of codec-cell probabilities at every reconstructed level and boundary.
+ * Include directed rounding, where small signed additions need not vanish. */
+static void check_predictive_boundaries(const struct v92_observation *trained)
+{
+	const int modes[] = { FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO };
+	const double sigmas[] = { 1., 32., 512. };
+	const int32_t input[V92_OBSERVATION_TAPS] = { 0 };
+	struct v92_observation model = *trained;
+	int saved = fegetround();
+	assert(saved != -1);
+	model.quantizer_gain = 1.;
+	for (unsigned i = 0; i < V92_OBSERVATION_INTERVALS; i++) {
+		memset(model.intervals[i].coefficient, 0, sizeof(model.intervals[i].coefficient));
+		model.intervals[i].coefficient[0] = 1.;
+		model.intervals[i].weight = i == 0 ? 1. : 0.;
+	}
+	for (unsigned mode = 0; mode < sizeof(modes) / sizeof(modes[0]); mode++) {
+		assert(fesetround(modes[mode]) == 0);
+		for (unsigned s = 0; s < sizeof(sigmas) / sizeof(sigmas[0]); s++) {
+			model.variance = sigmas[s] * sigmas[s];
+			assert(v92_observation_is_valid(&model));
+			for (unsigned code = 0; code < 256; code++) {
+				int16_t level = g711_decode(model.law, (uint8_t)code);
+				struct g711_interval bin;
+				assert(g711_quantization_interval(model.law, level, &bin));
+				double edge = bin.lower - .5;
+				const double means[] = { level, edge, nextafter(edge, -INFINITY),
+					nextafter(edge, INFINITY), bin.upper + .5 };
+				for (unsigned j = 0; j < sizeof(means) / sizeof(means[0]); j++) {
+					double zero = quantize(model.law, 0.);
+					double offset = zero - means[j];
+					double expected = independent_mean(model.law, zero - offset, sigmas[s]) + offset;
+					double actual = v92_observation_predict(&model, input, offset);
+					assert(isfinite(actual) && fabs(actual - expected) < 1e-7);
+				}
+			}
+		}
+	}
+	assert(fesetround(saved) == 0);
+}
+
 static void check_channel(enum g711_law law, double gain, unsigned taps, struct v92_observation *previous)
 {
 	int32_t x[SAMPLES];
@@ -557,6 +599,7 @@ static void check_channel(enum g711_law law, double gain, unsigned taps, struct 
 	check_scores(&model, x, y);
 	if (gain == .125 && taps == 3) {
 		check_predictive_noise(&model);
+		check_predictive_boundaries(&model);
 		check_tail_scores(&model);
 		check_tail_cells(&model);
 	}
