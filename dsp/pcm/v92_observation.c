@@ -901,7 +901,7 @@ static void extend_envelope(double *low, double *high, double tap, int16_t first
 	if (b > *high) *high = b;
 }
 
-static const struct v92_observation_values *point_values(struct v92_observation_cache *cache, size_t span)
+static const struct v92_observation_values *load_point_values(struct v92_observation_cache *cache, size_t span)
 {
 	size_t slot = span & (V92_OBSERVATION_POINTS - 1), chosen = slot;
 	for (size_t probe = 0; probe < 4; probe++) {
@@ -943,6 +943,18 @@ static const struct v92_observation_values *point_values(struct v92_observation_
 	}
 	cache->point_tag[chosen] = (uint16_t)(span + 1);
 	return values;
+}
+
+/* Most geometry requests repeat an already visited span. Keep its direct
+ * hit outside the codec-cell construction path. The bounded probe on a
+ * miss retains the same replacement policy and owns all mutations. */
+static inline const struct v92_observation_values *point_values(
+	struct v92_observation_cache *cache, size_t span)
+{
+	size_t slot = span & (V92_OBSERVATION_POINTS - 1);
+
+	return cache->point_tag[slot] == span + 1 ? cache->points + slot :
+		load_point_values(cache, span);
 }
 
 struct v92_observation_point v92_observation_point(struct v92_observation_cache *cache, int32_t x)

@@ -635,6 +635,8 @@ static void check_conditioned_channel(enum g711_law law, double host_gain)
 	};
 	assert(v92_observation_fit(&model, &training));
 	struct v92_observation_cache cache;
+	/* Transaction checks compare unused scratch slots too. */
+	memset(&cache, 0xa5, sizeof(cache));
 	v92_observation_begin(&cache, &model, 0.);
 	double error = 0., unconditioned = 0.;
 	for (unsigned i = TRAINING; i < SAMPLES; i++) {
