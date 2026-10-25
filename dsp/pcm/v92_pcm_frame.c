@@ -841,18 +841,26 @@ struct frame_path {
 	bool uncertain;
 };
 
-/* Pending payload is unchanged while extending the twelve symbols of a
- * frame. Keep its source path by origin and copy it only after the beam has
- * settled, instead of copying ten delayed frames at every symbol. */
-static void copy_frame_path_without_pending(
-	struct frame_path *destination, const struct frame_path *source)
+/* Pending payload and unused filter capacity do not change while extending
+ * a frame. Keep their source path by origin and restore them once the beam
+ * settles, instead of copying them at every symbol. */
+static void copy_frame_path(struct frame_path *destination,
+	const struct frame_path *source, size_t history_bytes)
 {
+	const size_t history_offset = offsetof(struct frame_path, state) +
+		offsetof(struct v92_pcm_frame_rx_path, filter) +
+		offsetof(struct v92_pcm_frame_filter_state, history);
+	const size_t after_history = history_offset +
+		sizeof(destination->state.filter.history);
 	const size_t pending_offset = offsetof(struct frame_path, state) +
 		offsetof(struct v92_pcm_frame_rx_path, pending);
 	const size_t after_pending = pending_offset +
 		sizeof(destination->state.pending);
 
-	memcpy(destination, source, pending_offset);
+	memcpy(destination, source, history_offset + history_bytes);
+	memcpy((char *)destination + after_history,
+	       (const char *)source + after_history,
+	       pending_offset - after_history);
 	memcpy((char *)destination + after_pending,
 	       (const char *)source + after_pending,
 	       sizeof(*destination) - after_pending);
@@ -1248,6 +1256,12 @@ static enum v92_pcm_frame_result decode_frame(
 	int32_t maximum_gain = (int32_t)receiver->mapping.cpd.four_times_gain_q0_16 *
 		receiver->maximum_level;
 	const struct filter_history_span history_span = causal_history(receiver);
+	/* Keep declared zero tails too: filter updates still shift those slots. */
+	const size_t history_bytes =
+		(receiver->mapping.cpd.filter[V92_CPD_PRECODER_FEED_FORWARD].count +
+		 x_history_count(&receiver->mapping) +
+		 receiver->mapping.cpd.filter[V92_CPD_PREFILTER_FEEDBACK].count) * sizeof(int32_t);
+
 	path_count = receiver->path_count;
 	struct v92_observation_cache cache;
 	if (model)
@@ -1626,8 +1640,8 @@ static enum v92_pcm_frame_result decode_frame(
 			struct v92_pcm_frame *frame = &next[index].frame;
 			int64_t error;
 
-			copy_frame_path_without_pending(
-				&next[index], &paths[candidate->path]);
+			copy_frame_path(
+				&next[index], &paths[candidate->path], history_bytes);
 			next[index].state.metric = candidate->path_metric;
 			frame->signed_index[symbol] = candidate->eta;
 			frame->digit[symbol] = candidate->digit;
@@ -1675,6 +1689,12 @@ static enum v92_pcm_frame_result decode_frame(
 	size_t valid = 0u;
 
 	for (size_t index = 0u; index < path_count; ++index) {
+		const struct v92_pcm_frame_filter_state *original_filter =
+			&receiver->paths[paths[index].origin].filter;
+
+		memcpy((char *)paths[index].state.filter.history + history_bytes,
+		       (const char *)original_filter->history + history_bytes,
+		       sizeof(original_filter->history) - history_bytes);
 		memcpy(paths[index].state.pending,
 		       receiver->paths[paths[index].origin].pending,
 		       sizeof(paths[index].state.pending));

@@ -1664,6 +1664,71 @@ static bool test_inactive_filter_history(void)
 	return true;
 }
 
+/* Unused capacity belongs to the surviving parent even though it cannot
+ * affect today's predictions. Exercise empty, split and full history stores;
+ * declared zero coefficients still own their shifted history slots. */
+static bool test_filter_history_capacity(void)
+{
+	static const unsigned extents[] = { 0u, 3u, 383u, 384u };
+	static const uint8_t rates[] = { 1u, 13u };
+
+	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+	for (unsigned rate = 0; rate < ARRAY_LENGTH(rates); ++rate)
+	for (unsigned extent = 0; extent < ARRAY_LENGTH(extents); ++extent) {
+		struct v92_cpd_parameters cpd;
+		struct v92_pcm_mapping mapping;
+		struct v92_pcm_frame_tx tx;
+		struct v92_pcm_frame_rx rx;
+		unsigned used = extents[extent];
+
+		CHECK(v92_cpd_direct_init(&cpd, (enum g711_law)law, rates[rate], false) == V92_CPD_OK,
+		      "history-capacity CPd failed");
+		memset(cpd.filter, 0, sizeof(cpd.filter));
+		if (used == 3u) {
+			cpd.filter[0].count = cpd.filter[1].count = cpd.filter[3].count = 1u;
+			cpd.filter[2].count = 2u;
+			cpd.filter[2].coefficient[0] = INT16_MAX;
+		} else if (used != 0u) {
+			cpd.filter[0].count = V92_CPD_MAX_SECTION_COEFFICIENTS;
+			cpd.filter[1].count = (uint16_t)(used - V92_CPD_MAX_SECTION_COEFFICIENTS);
+		}
+		CHECK(v92_pcm_mapping_init(&mapping, (enum g711_law)law, &cpd) == V92_PCM_MAPPING_OK &&
+		      v92_pcm_frame_tx_init(&tx, &mapping) == V92_PCM_FRAME_OK &&
+		      v92_pcm_frame_rx_init(&rx, &mapping, UPSTREAM_LEVEL) == V92_PCM_FRAME_OK,
+		      "history-capacity initialization failed");
+		for (unsigned i = 0; i < V92_CPD_MAX_TOTAL_COEFFICIENTS; ++i)
+			rx.paths[0].filter.history[i] = (int32_t)(0x12340000u + i);
+		for (unsigned f = 0; f < 8u; ++f) {
+			uint8_t input[V92_PCM_MAPPING_MAX_BITS], bits[V92_PCM_MAPPING_MAX_BITS];
+			int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
+			struct v92_pcm_frame_decision decision;
+
+			memset(input, 1, mapping.data_bits_per_frame);
+			CHECK(waveform(&tx, input, samples, UPSTREAM_LEVEL) &&
+			      v92_pcm_frame_decode(&rx, samples, true, bits,
+				mapping.data_bits_per_frame, &decision) == V92_PCM_FRAME_OK,
+			      "history-capacity decode failed at extent %u", used);
+			for (unsigned path = 0; path < rx.path_count; ++path) {
+				for (unsigned i = used; i < V92_CPD_MAX_TOTAL_COEFFICIENTS; ++i)
+					CHECK(rx.paths[path].filter.history[i] == (int32_t)(0x12340000u + i),
+					      "unused history changed at extent %u slot %u", used, i);
+				/* Zero response tails still shift the old declared history. */
+				unsigned offset = 0;
+				for (unsigned section = 0; section < 2u; ++section) {
+					unsigned count = cpd.filter[section].count;
+					for (unsigned i = (f + 1u) * V92_PCM_MAPPING_FRAME_SYMBOLS; i < count; ++i)
+						CHECK(rx.paths[path].filter.history[offset + i] ==
+						      (int32_t)(0x12340000u + offset + i -
+							(f + 1u) * V92_PCM_MAPPING_FRAME_SYMBOLS),
+						      "declared history stopped shifting at extent %u slot %u", used, i);
+					offset += count;
+				}
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_spare_word_beam(unsigned damaged_frame, unsigned differential)
 {
 	struct v92_cpd_parameters cpd;
@@ -1728,7 +1793,7 @@ int main(void)
 	if (!test_spare_word_beam(64u, 1u) || !test_spare_word_beam(69u, 0u))
 		return 1;
 	if (!test_input_confidence(false) || !test_input_confidence(true) ||
-	    !test_inactive_filter_history()) return 1;
+	    !test_inactive_filter_history() || !test_filter_history_capacity()) return 1;
 	if (!test_trellis_polarity()) return 1;
 	if (!test_polarity_acquisition_boundary()) return 1;
 	static const int16_t levels[] = { 4096, 4104, 4224, 4351 };
