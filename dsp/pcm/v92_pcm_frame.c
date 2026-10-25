@@ -960,6 +960,32 @@ static int16_t signed_point(
 		(int16_t)-constellation->positive_linear[-eta - 1];
 }
 
+/* Pick one legal point near the observation, accounting for this path's
+ * channel history. This only orders visits: the envelope midpoint is not
+ * a likelihood and must never exclude a point or admit a decoded word. */
+static int model_seed(struct v92_observation_cache *cache,
+	const struct v92_cpd_constellation *constellation, int64_t precoder,
+	const struct v92_observation_point *history, int first, unsigned step)
+{
+	if (first >= constellation->count)
+		return first;
+	unsigned points = (unsigned)(constellation->count - first - 1) / step + 1u;
+	double target = cache->observed + .5 * (cache->lower + cache->upper);
+	for (unsigned i = 1; i < cache->model->taps; ++i)
+		target -= .5 * (history[i - 1].values.low[i] + history[i - 1].values.high[i]);
+	unsigned low = 0, high = points;
+	while (low < high) {
+		unsigned mid = low + (high - low) / 2;
+		int eta = first + (int)(mid * step);
+		struct v92_observation_range range = v92_observation_range(cache,
+			precoder_output(precoder, signed_point(constellation, eta)));
+
+		if (.5 * (range.low + range.high) < target) low = mid + 1;
+		else high = mid;
+	}
+	return first + (int)((low < points ? low : points - 1u) * step);
+}
+
 static uint64_t constellation_weight(const struct v92_pcm_frame_rx *receiver, int16_t sample)
 {
 	double variance = 1.0 + receiver->noise.relative_variance * (double)sample * sample;
@@ -1371,7 +1397,16 @@ static enum v92_pcm_frame_result decode_frame(
 					minimum_gain, maximum_gain, weight);
 			}
 
-		for (size_t path = 0u; path < path_count; ++path) {
+		/* First give every history one likely candidate. Otherwise the
+		 * first history fills the beam with distant points, leaving a loose
+		 * scoring budget until later histories are reached. The second pass
+		 * visits the remaining points with the unchanged exact scores and
+		 * conservative bounds. Equal scores retain this deterministic order.
+		 * Erasures and receivers without a model keep their original order. */
+		bool seed_paths = model && present;
+		for (size_t visit = 0; visit < path_count * (seed_paths ? 2u : 1u); ++visit) {
+			size_t path = visit % path_count;
+			bool seeding = seed_paths && visit < path_count;
 			uint8_t y0;
 			int64_t precoder = 0, prefilter = 0;
 			struct v92_observation_point history[V92_OBSERVATION_TAPS - 1];
@@ -1489,6 +1524,20 @@ static enum v92_pcm_frame_result decode_frame(
 
 			first_eta += positive_modulo(residue - first_eta, step);
 			unsigned next_digit = (unsigned)positive_modulo((first_eta - offset) / (int)stride, modulus);
+			int seed_eta = end_eta;
+			if (seed_paths) {
+				/* Use the full legal class in both passes: heap trimming may
+				 * tighten between visits and must not move the seed. */
+				int first = -(int)constellation->count;
+				first += positive_modulo(residue - first, step);
+				seed_eta = model_seed(&cache, constellation, precoder, history, first, step);
+				if (seeding) {
+					if (seed_eta < first_eta || seed_eta >= end_eta) continue;
+					first_eta = seed_eta;
+					end_eta = seed_eta + (int)step;
+					next_digit = positive_modulo((first_eta - offset) / (int)stride, modulus);
+				}
+			}
 
 			/* Known B1u visits one residue class; data cycles all digits. */
 			for (int eta = first_eta; eta < end_eta; eta += (int)step) {
@@ -1499,6 +1548,8 @@ static enum v92_pcm_frame_result decode_frame(
 				next_digit += !known;
 				if (next_digit == modulus)
 					next_digit = 0u;
+				if (seed_paths && !seeding && eta == seed_eta)
+					continue;
 				if (constrain_words && symbol + 1u == V92_PCM_MAPPING_FRAME_SYMBOLS) {
 					int ordinary = paths[path].state.differential ? (int)modulus - 1 - digit : digit;
 

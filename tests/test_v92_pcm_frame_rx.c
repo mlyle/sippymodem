@@ -1399,7 +1399,7 @@ static bool observed_merged_payload(const struct v92_pcm_frame_rx *before,
 	return true;
 }
 
-static bool test_observed_channel(enum g711_law law, unsigned taps)
+static bool test_observed_channel(enum g711_law law, unsigned taps, bool reorder)
 {
 	struct v92_cpd_parameters cpd;
 	struct v92_pcm_mapping mapping;
@@ -1446,6 +1446,16 @@ static bool test_observed_channel(enum g711_law law, unsigned taps)
 			!observed_merged_payload(&rx, &model, samples, levels))) return false;
 		struct v92_pcm_frame_channel channel = { .model = &model, .levels = levels, .received = received };
 		if (f == 50) { channel.levels = NULL; channel.received = NULL; }
+		/* Histories are not sorted by likelihood. Rotate their storage at
+		 * every frame boundary so a visit-order optimization cannot
+		 * depend on the first parent's identity to retain the correct word.
+		 * This also covers known B1u, the erased symbol and delayed payload. */
+		if (reorder && rx.path_count > 1u) {
+			struct v92_pcm_frame_rx_path first = rx.paths[0];
+
+			memmove(rx.paths, rx.paths + 1, (rx.path_count - 1u) * sizeof(first));
+			rx.paths[rx.path_count - 1u] = first;
+		}
 		struct v92_pcm_frame_rx erased_rx = rx;
 		if (f == 72) { received[5] = false; levels[5] = 1; samples[5] = INT16_MAX; }
 		memset(decoded, 0xa5, sizeof(decoded));
@@ -1746,7 +1756,8 @@ int main(void)
 		}
 
 		for (unsigned taps = 3; taps <= 4; taps++)
-			if (!test_observed_channel((enum g711_law)law, taps)) return 1;
+			if (!test_observed_channel((enum g711_law)law, taps, false) ||
+			    !test_observed_channel((enum g711_law)law, taps, true)) return 1;
 
 		for (size_t level = 0u; level < ARRAY_LENGTH(direct_44k_levels); ++level)
 			if (!test_direct_44k_level((enum g711_law)law, direct_44k_levels[level]))
