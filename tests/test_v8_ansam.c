@@ -495,6 +495,120 @@ static bool test_block_validation(void)
 	return true;
 }
 
+/* Independent widened model of the original direct-form recurrences.
+ * Division floors each product before its signed-word wrap. Keep the zero
+ * feed-forward terms and old history layout here to check their removal. */
+struct tone_model {
+	int16_t input[3], output[3], section_input[4], section_output[4];
+	int16_t energy;
+};
+
+static int32_t model_floor(int64_t value, unsigned shift)
+{
+	int64_t divisor = INT64_C(1) << shift;
+
+	return (int32_t)(value >= 0 ? value / divisor :
+		-((-value + divisor - 1) / divisor));
+}
+
+static int16_t model_word(int64_t value)
+{
+	uint16_t word = (uint16_t)value;
+
+	return word <= INT16_MAX ? (int16_t)word :
+		(int16_t)((int32_t)word - 65536);
+}
+
+static int16_t model_product(int16_t left, int16_t right)
+{
+	return model_word(model_floor((int64_t)left * right, 14));
+}
+
+static void model_tone_sample(struct tone_model *model, int16_t sample)
+{
+	const int16_t feed[] = { 15408, 0, 15408 }, feedback[] = { 0, 14487 };
+	const int16_t section_feed[] = { 0, 0, 0, 0 };
+	const int16_t section_feedback[] = { 1984, 15229, 2974, 15229 };
+	int32_t output = 0;
+
+	model->input[0] = sample;
+	for (unsigned i = 0; i < 3; ++i)
+		output += model_product(model->input[i], feed[i]);
+	for (unsigned i = 0; i < 2; ++i)
+		output -= model_product(model->output[i], feedback[i]);
+	for (unsigned i = 2; i != 0; --i) {
+		model->input[i] = model->input[i - 1];
+		model->output[i] = model->output[i - 1];
+	}
+	model->output[0] = model_word(output);
+	for (unsigned section = 0; section < 4; section += 2) {
+		int32_t input = model_floor(output, 4);
+
+		output = input;
+		for (unsigned i = 0; i < 2; ++i) {
+			output += model_product(model->section_input[section + i],
+				section_feed[section + i]);
+			output -= model_product(model->section_output[section + i],
+				section_feedback[section + i]);
+		}
+		model->section_input[section + 1] = model->section_input[section];
+		model->section_input[section] = model_word(input);
+		model->section_output[section + 1] = model->section_output[section];
+		model->section_output[section] = model_word(output);
+	}
+	int16_t measured = model_word(model_floor(output, 4));
+	int16_t magnitude = model_word(measured < 0 ? -(int32_t)measured : measured);
+	model->energy = model_word(model_product(magnitude, 0x706d) +
+		model_product(model->energy, 0x3c2e));
+}
+
+static bool test_filter_recurrence(void)
+{
+	struct v8_ansam_detector detector;
+	struct v8_line_conditioner line;
+	struct v8_line_conditioned_block block = { 0 };
+	struct tone_model model;
+	uint32_t random = 0x1794ad03;
+	bool detected;
+
+	CHECK(v8_ansam_detector_init(&detector) == V8_ANSAM_OK &&
+	      v8_line_conditioner_init(&line, V8_CALLING_STATION) == V8_LINE_CONDITIONER_OK,
+	      "filter recurrence fixture failed");
+	/* Nonzero histories also exercise zero-weight inputs in the old layout. */
+	memset(&detector.tone, 0xa5, sizeof(detector.tone));
+	memset(&model, 0xa5, sizeof(model));
+	detector.tone.counter = 0;
+	detector.tone.warmup_count = 0;
+	detector.tone.locked = false;
+	for (unsigned n = 0; n < 4096; ++n) {
+		for (unsigned i = 0; i < ARRAY_LENGTH(block.samples); ++i) {
+			random = random * UINT32_C(1664525) + UINT32_C(1013904223);
+			block.samples[i] = n < 32 ? (i & 1 ? INT16_MIN : INT16_MAX) :
+				model_word(random >> 16);
+			model_tone_sample(&model, block.samples[i]);
+		}
+		/* Keep observing the carrier filter after acquisition rather than
+		 * letting later modulation/loss policy reset its accumulated state. */
+		detector.stage = V8_ANSAM_WAIT_CARRIER;
+		detector.modulation_energy = 0;
+		CHECK(v8_ansam_observe_block(&detector, &line, &block, &detected) == V8_ANSAM_OK,
+		      "full-scale filter block %u failed", n);
+		for (unsigned i = 0; i < 2; ++i) {
+			unsigned input_index = ARRAY_LENGTH(detector.tone.tone_input) - 2 + i;
+
+			CHECK((int16_t)detector.tone.tone_input[input_index] == model.input[i + 1] &&
+			      (int16_t)detector.tone.tone_output[i] == model.output[i],
+			      "rejection history differs in block %u", n);
+		}
+		for (unsigned i = 0; i < 4; ++i)
+			CHECK((int16_t)detector.tone.iir_output[i] == model.section_output[i],
+			      "recursive history differs in block %u", n);
+		CHECK((int16_t)detector.tone.filtered_energy == model.energy,
+		      "filter energy differs in block %u", n);
+	}
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v8_ansam_generator generator;
@@ -598,6 +712,7 @@ int main(void)
 		{ "gain stability", test_gain_stability },
 		{ "interrupted carrier", test_interrupted_carrier },
 		{ "block validation", test_block_validation },
+		{ "filter recurrence", test_filter_recurrence },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

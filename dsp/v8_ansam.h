@@ -45,10 +45,11 @@ enum v8_ansam_detector_stage {
 struct v8_ansam_tone_detector {
 	uint16_t counter;
 	uint16_t filtered_energy;
-	uint16_t iir_input[4];
 	uint16_t iir_output[4];
-	uint16_t tone_input[3];
-	uint16_t tone_output[3];
+	/* Most recent and next-oldest rejection inputs/outputs. The following
+	 * all-pole sections retain only their two outputs each. */
+	uint16_t tone_input[2];
+	uint16_t tone_output[2];
 	uint16_t warmup_count;
 	bool locked;
 };

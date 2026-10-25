@@ -6,6 +6,7 @@
 #include "integer_math.h"
 #include "memory_region.h"
 #include "phase.h"
+#include "sample_math.h"
 
 #include <limits.h>
 
@@ -120,23 +121,14 @@ enum {
 		V8_ANSAM_SAMPLE_RATE,
 };
 
-static const int16_t V8_ANSAM_TONE_COEFFICIENTS[] = {
-	0, 0, 0, 0, 1984, 15229, 2974, 15229,
+static const int16_t V8_ANSAM_TONE_POLES[2][2] = {
+	{ 1984, 15229 }, { 2974, 15229 },
 };
 
-static const int16_t V8_ANSAM_REJECTION_A[] = { 0, 14487 };
-static const int16_t V8_ANSAM_REJECTION_B[] = { 15408, 0, 15408 };
-
-_Static_assert(
-	sizeof(V8_ANSAM_TONE_COEFFICIENTS) /
-			sizeof(V8_ANSAM_TONE_COEFFICIENTS[0]) == 8,
-	"ANSam tone filter profile changed");
-_Static_assert(
-	sizeof(V8_ANSAM_REJECTION_A) /
-			sizeof(V8_ANSAM_REJECTION_A[0]) == 2 &&
-		sizeof(V8_ANSAM_REJECTION_B) /
-			sizeof(V8_ANSAM_REJECTION_B[0]) == 3,
-	"ANSam rejection filter profile changed");
+enum {
+	V8_ANSAM_REJECTION_INPUT_Q14 = 15408,
+	V8_ANSAM_REJECTION_OUTPUT_Q14 = 14487,
+};
 
 bool v8_ansam_detector_is_valid(
 	const struct v8_ansam_detector *detector)
@@ -173,66 +165,44 @@ enum v8_ansam_result v8_ansam_detector_init(
 	return V8_ANSAM_OK;
 }
 
+/* Each product is floored and wrapped separately before subtraction. Keep
+ * the wide section output until the next section scales it; only history
+ * storage wraps to 16 bits. Neither section uses delayed inputs. */
+static int32_t filter_tone_section(
+	uint16_t history[2], const int16_t poles[2], int32_t sample)
+{
+	int32_t output = arithmetic_shift_right_u32((uint32_t)sample, 4);
+
+	for (size_t index = 0; index < 2; ++index)
+		output -= multiply_shift_s16((int16_t)history[index], poles[index], 14);
+	history[1] = history[0];
+	history[0] = (uint16_t)output;
+	return output;
+}
+
 static bool detect_carrier(
 	struct v8_ansam_tone_detector *tone,
 	const int16_t samples[V8_ANSAM_BLOCK_SAMPLES])
 {
 	for (size_t sample_index = 0;
 	     sample_index < V8_ANSAM_BLOCK_SAMPLES; ++sample_index) {
-		int32_t output = 0;
+		int32_t output = multiply_shift_s16(samples[sample_index],
+			V8_ANSAM_REJECTION_INPUT_Q14, 14) +
+			multiply_shift_s16((int16_t)tone->tone_input[1],
+				V8_ANSAM_REJECTION_INPUT_Q14, 14) -
+			multiply_shift_s16((int16_t)tone->tone_output[1],
+				V8_ANSAM_REJECTION_OUTPUT_Q14, 14);
 
+		tone->tone_input[1] = tone->tone_input[0];
 		tone->tone_input[0] = (uint16_t)samples[sample_index];
-		for (size_t index = 0; index < 3; ++index)
-			output += multiply_shift_s16(
-				(int16_t)tone->tone_input[index],
-				V8_ANSAM_REJECTION_B[index], 14);
-		for (size_t index = 0; index < 2; ++index)
-			output -= multiply_shift_s16(
-				(int16_t)tone->tone_output[index],
-				V8_ANSAM_REJECTION_A[index], 14);
-		for (size_t index = 0; index < 2; ++index) {
-			tone->tone_input[2 - index] =
-				tone->tone_input[1 - index];
-			tone->tone_output[2 - index] =
-				tone->tone_output[1 - index];
-		}
+		tone->tone_output[1] = tone->tone_output[0];
 		tone->tone_output[0] = (uint16_t)output;
 
 		{
-			int32_t stage = arithmetic_shift_right_u32(
-				(uint32_t)output, 4);
-
-			for (size_t index = 0; index < 2; ++index) {
-				stage += multiply_shift_s16(
-					(int16_t)tone->iir_input[index],
-					V8_ANSAM_TONE_COEFFICIENTS[index], 14);
-				stage -= multiply_shift_s16(
-					(int16_t)tone->iir_output[index],
-					V8_ANSAM_TONE_COEFFICIENTS[4 + index],
-					14);
-			}
-			tone->iir_output[1] = tone->iir_output[0];
-			tone->iir_input[1] = tone->iir_input[0];
-			tone->iir_output[0] = (uint16_t)stage;
-			tone->iir_input[0] = (uint16_t)arithmetic_shift_right_u32(
-				(uint32_t)output, 4);
-
-			output = arithmetic_shift_right_u32((uint32_t)stage, 4);
-			for (size_t index = 0; index < 2; ++index) {
-				output += multiply_shift_s16(
-					(int16_t)tone->iir_input[2 + index],
-					V8_ANSAM_TONE_COEFFICIENTS[2 + index],
-					14);
-				output -= multiply_shift_s16(
-					(int16_t)tone->iir_output[2 + index],
-					V8_ANSAM_TONE_COEFFICIENTS[6 + index],
-					14);
-			}
-			tone->iir_output[3] = tone->iir_output[2];
-			tone->iir_input[3] = tone->iir_input[2];
-			tone->iir_output[2] = (uint16_t)output;
-			tone->iir_input[2] = (uint16_t)arithmetic_shift_right_u32(
-				(uint32_t)stage, 4);
+			output = filter_tone_section(tone->iir_output,
+				V8_ANSAM_TONE_POLES[0], output);
+			output = filter_tone_section(tone->iir_output + 2,
+				V8_ANSAM_TONE_POLES[1], output);
 
 			output = multiply_shift_s16(
 				wrap_s16_from_s32(magnitude_s16(
@@ -339,9 +309,8 @@ static uint16_t modulation_energy(const struct v8_ansam_dft *dft)
 		dft->real_accumulator << 1, 16);
 	int32_t imaginary = arithmetic_shift_right_u32(
 		dft->imaginary_accumulator << 1, 16);
-	uint32_t energy = (uint32_t)real * (uint32_t)real;
-
-	energy += (uint32_t)imaginary * (uint32_t)imaginary;
+	/* These shifted words fit signed 16 bits; their combined power can be 2^31. */
+	uint32_t energy = sample_pair_power_s16((int16_t)real, (int16_t)imaginary);
 	return (uint16_t)arithmetic_shift_right_u32(energy, 16);
 }
 
