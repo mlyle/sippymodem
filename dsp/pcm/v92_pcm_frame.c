@@ -1404,33 +1404,54 @@ static enum v92_pcm_frame_result decode_frame(
 		 * conservative bounds. Equal scores retain this deterministic order.
 		 * Erasures and receivers without a model keep their original order. */
 		bool seed_paths = model && present;
+		/* Parent state and channel geometry do not change between visits.
+		 * Keep their derived context only for this symbol and model. */
+		struct {
+			int64_t precoder;
+			struct v92_observation_point history[V92_OBSERVATION_TAPS - 1];
+			uint8_t y0;
+			int seed;
+		} model_paths[V92_PCM_RX_PATHS];
 		for (size_t visit = 0; visit < path_count * (seed_paths ? 2u : 1u); ++visit) {
 			size_t path = visit % path_count;
 			bool seeding = seed_paths && visit < path_count;
 			uint8_t y0;
 			int64_t precoder = 0, prefilter = 0;
-			struct v92_observation_point history[V92_OBSERVATION_TAPS - 1];
+			struct v92_observation_point local_history[V92_OBSERVATION_TAPS - 1];
+			struct v92_observation_point *history = seed_paths ?
+				model_paths[path].history : local_history;
 
 			bool filter_metric = !cache_points && !model && !cells &&
 				receiver->observation == V92_PCM_FRAME_FILTER_OUTPUT;
-			/* Candidate and lookahead costs are nonnegative; ties cannot replace. */
+			/* Candidate and lookahead costs are nonnegative; ties cannot replace.
+			 * A path skipped here on its first visit cannot revive as the heap
+			 * budget decreases, so its retained context is never read. */
 			if (count == V92_PCM_RX_PATHS &&
 			    paths[path].state.metric >= candidates[0].metric)
 				continue;
-			if (model || filter_metric)
-				precoder = precoder_history(&receiver->mapping, &paths[path].state.filter);
-			if (filter_metric)
-				prefilter = prefilter_history(&receiver->mapping, &paths[path].state.filter);
-			if (model) {
-				const int32_t *previous = x_history(&receiver->mapping, &paths[path].state.filter);
-				for (unsigned i = 1; i < model->taps; i++)
-					history[i - 1] = v92_observation_point(&cache, previous[i - 1]);
-			}
+			if (seed_paths && !seeding) {
+				precoder = model_paths[path].precoder;
+				y0 = model_paths[path].y0;
+			} else {
+				if (model || filter_metric)
+					precoder = precoder_history(&receiver->mapping, &paths[path].state.filter);
+				if (filter_metric)
+					prefilter = prefilter_history(&receiver->mapping, &paths[path].state.filter);
+				if (model) {
+					const int32_t *previous = x_history(&receiver->mapping, &paths[path].state.filter);
+					for (unsigned i = 1; i < model->taps; i++)
+						history[i - 1] = v92_observation_point(&cache, previous[i - 1]);
+				}
 
-			if (v34_convolutional_encoder_output(
-					&paths[path].state.trellis, &y0) !=
-			    V34_TRELLIS_OK)
-				return V92_PCM_FRAME_INVALID_PARAMETERS;
+				if (v34_convolutional_encoder_output(
+						&paths[path].state.trellis, &y0) !=
+				    V34_TRELLIS_OK)
+					return V92_PCM_FRAME_INVALID_PARAMETERS;
+				if (seed_paths) {
+					model_paths[path].precoder = precoder;
+					model_paths[path].y0 = y0;
+				}
+			}
 			unsigned parity = y0;
 			if (lookahead)
 				for (size_t previous = symbol - symbol % V92_PCM_TRELLIS_INTERVAL_SYMBOLS;
@@ -1526,11 +1547,13 @@ static enum v92_pcm_frame_result decode_frame(
 			unsigned next_digit = (unsigned)positive_modulo((first_eta - offset) / (int)stride, modulus);
 			int seed_eta = end_eta;
 			if (seed_paths) {
-				/* Use the full legal class in both passes: heap trimming may
-				 * tighten between visits and must not move the seed. */
+				/* Retain the full legal class's seed: heap trimming may
+				 * tighten between visits and must not move it. */
 				int first = -(int)constellation->count;
 				first += positive_modulo(residue - first, step);
-				seed_eta = model_seed(&cache, constellation, precoder, history, first, step);
+				if (seeding)
+					model_paths[path].seed = model_seed(&cache, constellation, precoder, history, first, step);
+				seed_eta = model_paths[path].seed;
 				if (seeding) {
 					if (seed_eta < first_eta || seed_eta >= end_eta) continue;
 					first_eta = seed_eta;
