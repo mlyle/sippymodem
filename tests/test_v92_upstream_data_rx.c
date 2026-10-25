@@ -3659,8 +3659,79 @@ static bool test_single_codec(enum g711_law law)
 	return true;
 }
 
+/* A DC translation leaves the physical acquisition fit unchanged. Its
+ * roundoff must not displace an independently known B1 coding history,
+ * including when an earlier physical correction supplied the candidate. */
+static bool test_translated_acquisition_seed(enum g711_law law,
+	enum v92_cpd_trellis trellis, bool seeded)
+{
+	struct v92_cpd_parameters cpd;
+	struct v92_pcm_mapping mapping;
+	struct v92_pcm_frame_tx tx;
+	struct v92_upstream_data_rx rx = { 0 };
+	int16_t points[V92_OBSERVATION_TRAINING];
+	uint8_t bits[V92_PCM_MAPPING_MAX_BITS], decoded[V92_PCM_MAPPING_MAX_BITS];
+
+	CHECK(v92_cpd_direct_init(&cpd, law, 1u, false) == V92_CPD_OK, "translation CPd failed");
+	cpd.trellis = trellis;
+	CHECK(v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK &&
+		  v92_pcm_frame_tx_init(&tx, &mapping) == V92_PCM_FRAME_OK &&
+		  v92_pcm_frame_rx_init_constellation(&rx.decoder, &mapping) == V92_PCM_FRAME_OK,
+		  "translation coding failed");
+	memset(bits, 1, mapping.data_bits_per_frame);
+	for (unsigned f = 0; f < V92_B1U_ACQUISITION_FRAMES; ++f) {
+		struct v92_pcm_frame frame;
+		struct v92_pcm_frame_decision decision;
+		CHECK(v92_pcm_frame_encode(&tx, bits, mapping.data_bits_per_frame, &frame) ==
+			  V92_PCM_FRAME_OK, "translation B1 encode failed");
+		memcpy(points + V92_PCM_MAPPING_FRAME_SYMBOLS * f, frame.u, sizeof(frame.u));
+		if (f + 1u < V92_B1U_ACQUISITION_FRAMES)
+			CHECK(v92_pcm_frame_acquire_model(&rx.decoder, frame.u, decoded,
+				  mapping.data_bits_per_frame, &decision) == V92_PCM_FRAME_OK,
+				  "translation B1 acquire failed");
+	}
+	/* Stage the final acquisition transaction. The ordinary candidate's
+	 * coordinates have a 512-unit DC alias and a disputed old payload bit.
+	 * The known candidate has consumed the same first 23 complete frames. */
+	rx.model.alternate = rx.decoder;
+	for (unsigned i = 0; i < rx.decoder.path_count; ++i)
+		rx.decoder.paths[i].pending[0][0] = 0;
+	for (unsigned i = 0; i < V92_OBSERVATION_TRAINING; ++i) {
+		rx.model.x[i] = points[i] + 512;
+		rx.model.u[i] = points[i];
+		rx.model.raw[i] = points[i] + 128;
+	}
+	/* Zero residual makes both scalar fits hit the same score floor. */
+	rx.model.residual_acquiring = true;
+	rx.line.received_frames = V92_B1U_ACQUISITION_FRAMES - 1u;
+	rx.line.calibration.gain = 1.;
+	rx.line.calibration.minimum = .9;
+	rx.line.calibration.maximum = 1.1;
+	rx.line.host.gain = 1.;
+	if (seeded) {
+		rx.model.seed.residual = (struct v92_residual){ .active = true, .offset = 128. };
+		rx.model.seed.gain = 1.;
+	}
+	v92_upstream_model_fit(&rx.model, &rx.line, &rx.decoder);
+	bool known = !seeded || v34_trellis_state_count(tx.state.trellis.selection) <= V92_PCM_RX_PATHS;
+	CHECK(rx.line.residual.active && fabs(rx.line.calibration.gain - 1.) < 1e-10 &&
+		  fabs(rx.line.residual.offset - (known ? 128. : -384.)) < 1e-8 &&
+		  rx.decoder.paths[0].pending[0][0] == known &&
+		  !rx.model.residual_acquiring && !rx.model.seed.residual.active,
+		  "translated fit lost known coding: law=%u trellis=%u seeded=%u offset=%g bit=%u",
+		  law, trellis, seeded, rx.line.residual.offset, rx.decoder.paths[0].pending[0][0]);
+	return true;
+}
+
 int main(void)
 {
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (enum v92_cpd_trellis trellis = V92_CPD_TRELLIS_16_STATE;
+			 trellis <= V92_CPD_TRELLIS_64_STATE; ++trellis)
+			for (unsigned seeded = 0; seeded < 2; ++seeded)
+				if (!test_translated_acquisition_seed(law, trellis, seeded))
+					return 1;
+
 	if (!test_residual_translation() || !test_translated_acquisition(false) ||
 	    !test_translated_acquisition(true)) return 1;
 	if (!test_affine_data()) return 1;

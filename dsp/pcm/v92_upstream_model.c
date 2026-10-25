@@ -256,12 +256,17 @@ static double residual_prefix_score(const struct v92_pcm_mapping *mapping,
 	return score;
 }
 
+static bool residual_coding_is_known(const struct v92_upstream_model *model, unsigned states)
+{
+	return !model->seed.residual.active || states <= V92_PCM_RX_PATHS;
+}
+
 static void acquire_residual_points(struct v92_upstream_model *model,
 	const struct v92_upstream_data_line *line, const struct v92_pcm_frame_rx *decoder)
 {
 	unsigned first = (unsigned)line->received_frames;
 	unsigned states = v34_trellis_state_count(decoder->paths[0].trellis.selection);
-	bool known = !model->seed.residual.active || states <= V92_PCM_RX_PATHS;
+	bool known = residual_coding_is_known(model, states);
 
 	if (first < 3) return;
 	if (first == 3) {
@@ -332,8 +337,11 @@ static bool fit_residual(struct v92_upstream_model *model, struct v92_upstream_d
 		/* A constant point translation has the same physical fit after a
 		 * DC shift. Use the known B1 coding history to resolve that exact
 		 * ambiguity, rather than roundoff between equivalent fit scores.
-		 * Independent later B1 decisions still qualify the selected fit. */
-		if (!model->seed.residual.active && isfinite(best) &&
+		 * A retained physical seed also has known coding for the 16/32-state
+		 * acquisitions above. Independent later B1 decisions still qualify
+		 * the selected fit. */
+		if (residual_coding_is_known(model, v34_trellis_state_count(
+			    model->alternate.paths[0].trellis.selection)) && isfinite(best) &&
 		    v92_residual_translate(&line->residual, model->x, points,
 			model->raw, line->calibration.gain)) {
 			selected = true;
