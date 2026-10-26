@@ -165,3 +165,32 @@ fractional scoring credit across every block size. Paired B1 scoring charges
 including native block boundaries. After validation, one retained sample
 may catch up per four new inputs, limiting decoder acceleration to 25%.
 These changes preserve the fitted models, B1 checks and recovery thresholds.
+
+The final schedule (`46965cb2`) was measured again with the same packet size,
+build options, affinity and cooling rules. Each row below contains two calls
+with 500 data packets each; paired cases ran in reverse order on the second
+pass. Values are thread CPU milliseconds, with maxima taken across both calls.
+
+| Receive case | Training worst packet | Training worst three | Data average | Data worst packet |
+| --- | ---: | ---: | ---: | ---: |
+| Mu-law, 0.125 postcursor, three taps | 13.16 | 36.77 | 9.47 | 10.38 |
+| A-law, 0.125 postcursor, three taps | 13.19 | 39.16 | 9.70 | 10.72 |
+| Mu-law, 0.125 postcursor, four taps | 13.41 | 39.83 | 10.97 | 12.12 |
+| A-law, 0.125 postcursor, four taps | 15.58 | 42.80 | 11.46 | 12.93 |
+| A-law, 0.375 postcursor, three taps | 18.62 | 51.93 | — | — |
+| A-law, 0.375 postcursor, four taps | 17.26 | 48.87 | 13.58 | 17.19 |
+
+Every final measured training maximum, including elapsed-timer measurements,
+fit the 20-ms packet and 60-ms three-packet budgets. The stronger four-tap
+case also shows why moving work needs a data-phase check: catch-up increases
+its data peak even as training bursts shrink. Normal-channel startup takes
+roughly 100–140 ms more media time; steady-state input has no added prefill.
+These sampled results do not guarantee deadlines on every channel or under
+concurrent host load.
+
+A separate rebuild of the final source checked 4,911,480 decoded payload bits
+against recorded transmitter words, with zero errors or ambiguous frames.
+Targeted whole-core AddressSanitizer/UndefinedBehaviorSanitizer receiver and
+retired-media checks passed. Receiver Memcheck was clean; broader full-call
+Memcheck still reports an existing INFO1 structure-padding comparison issue,
+which also reproduces before the scheduling changes.
