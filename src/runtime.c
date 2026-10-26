@@ -306,6 +306,8 @@ enum modem_runtime_result modem_runtime_close(
 static enum modem_runtime_result drain_call_transitions(
 	struct modem_runtime *runtime)
 {
+	if (runtime->calls->receive_draining && !modem_host_media_is_configured(runtime->host))
+		runtime->calls->receive_draining = false;
 	for (unsigned int count = 0;
 	     count < MODEM_RUNTIME_MAX_CALL_TRANSITIONS; ++count) {
 		runtime->last_calls_result =

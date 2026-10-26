@@ -10,10 +10,18 @@
 #include <stddef.h>
 #include <string.h>
 
-_Static_assert(offsetof(struct v92_upstream_model, alternate) +
-	sizeof(((struct v92_upstream_model *)0)->alternate) ==
-	sizeof(struct v92_upstream_model),
-	"alternate receiver must end the model transaction");
+/* Each input crosses at most 128 codec boundaries. A sweep counts both
+ * cell solves and transitions; include its terminal check, begin/final
+ * stages, and all eight slower refinements for both input hypotheses. */
+enum {
+	FIT_SWEEP_STEPS = (2 * (V92_OBSERVATION_TRAINING - 1) * 128 + 1023) / 1024 + 1,
+	FIT_HOLD_SAMPLES = 2 * ((FIT_SWEEP_STEPS + 6) * V92_MODEL_SWEEP_SAMPLES +
+		V92_OBSERVATION_INTERVALS * V92_MODEL_REFINE_SAMPLES),
+};
+_Static_assert((int)V92_UPSTREAM_INPUT_QUEUE >= (int)FIT_HOLD_SAMPLES,
+	"initial acquisition must fit before retained input can overflow");
+_Static_assert(sizeof(((struct v92_upstream_model *)0)->fit) <=
+	sizeof(((struct v92_upstream_model *)0)->alternate), "fit must reuse the inactive decoder");
 
 static bool calibrated_gain_is_valid(const struct v92_upstream_data_line *line)
 {
@@ -30,7 +38,11 @@ static bool calibrated_gain_is_valid(const struct v92_upstream_data_line *line)
 bool v92_upstream_data_rx_is_valid(
 	const struct v92_upstream_data_rx *receiver)
 {
-	if (receiver == NULL || !v92_pcm_frame_rx_is_valid(&receiver->decoder) ||
+	if (receiver == NULL || receiver->input.head >= V92_UPSTREAM_INPUT_QUEUE ||
+		receiver->input.count > V92_UPSTREAM_INPUT_QUEUE || receiver->input.catchup > 80 ||
+		receiver->input.frame_credit >= V92_PCM_MAPPING_FRAME_SYMBOLS * V92_OBSERVATION_TAPS / 3 ||
+		receiver->input.count > UINT64_MAX - receiver->line.input_samples ||
+		!v92_pcm_frame_rx_is_valid(&receiver->decoder) ||
 	    !v92_upstream_plan_is_valid(&receiver->line.plan) ||
 	    !isfinite(receiver->line.output_bias) ||
 	    receiver->decoder.observation != receiver->line.plan.observation ||
@@ -314,10 +326,18 @@ static void fit_offset(struct v92_upstream_data_line *line)
 	}
 }
 
+static bool paired_b1(const struct v92_upstream_data_rx *receiver)
+{
+	return receiver->model.valid == 3 &&
+		receiver->line.received_frames < V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES;
+}
+
 static enum v92_upstream_data_rx_result receive_frame(
 	struct v92_upstream_data_rx *receiver, struct v92_upstream_data_line *line,
 	struct v92_upstream_data_frame *frame)
 {
+	bool budgeted = receiver->input.frame_limited && paired_b1(receiver);
+	if (budgeted && !receiver->input.frame_budget) return V92_UPSTREAM_DATA_RX_INVALID_STATE;
 	struct v92_pcm_frame_rx decoder = receiver->decoder;
 	struct v92_upstream_model model;
 	const size_t model_core = offsetof(struct v92_upstream_model, alternate);
@@ -395,8 +415,8 @@ static enum v92_upstream_data_rx_result receive_frame(
 			int16_t sample;
 
 			if (v92_pcm_frame_scale(decoder.mapping.cpd.four_times_gain_q0_16,
-					decoder.upstream_level,
-					decision.frame.v[symbol], &sample) != V92_PCM_FRAME_OK)
+		decoder.upstream_level,
+		decision.frame.v[symbol], &sample) != V92_PCM_FRAME_OK)
 				return fail(receiver, V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE);
 			target.in_phase = g711_quantize(decoder.mapping.law, sample);
 		}
@@ -449,13 +469,15 @@ static enum v92_upstream_data_rx_result receive_frame(
 	receiver->decoder = decoder;
 	memcpy(&receiver->model, &model, model_core);
 	if (alternate_active)
-		receiver->model.alternate = model.alternate;
+		memcpy(&receiver->model.alternate, &model.alternate,
+			sizeof(model) - model_core);
 	receiver->line = *line;
+	if (budgeted) receiver->input.frame_budget--;
 	*frame = generated;
 	return V92_UPSTREAM_DATA_RX_FRAME;
 }
 
-static enum v92_upstream_data_rx_result receive_sample(
+static enum v92_upstream_data_rx_result decode_sample(
 	struct v92_upstream_data_rx *receiver, int16_t sample,
 	struct v92_upstream_data_frame *frame, uint8_t code, bool wire_known,
 	int16_t host_sample, bool available, bool owned)
@@ -523,6 +545,112 @@ static enum v92_upstream_data_rx_result receive_sample(
 	if (!direct)
 		receiver->line = next;
 	return V92_UPSTREAM_DATA_RX_OK;
+}
+
+void v92_upstream_data_rx_begin_block_owned(struct v92_upstream_data_rx *receiver,
+	unsigned samples)
+{
+	/* Four-tap scoring receives proportionally more native work credit. */
+	unsigned frame_work = V92_PCM_MAPPING_FRAME_SYMBOLS *
+		v92_upstream_model_taps(&receiver->decoder.mapping) / 3;
+	receiver->input.frame_limited = true;
+	if (samples < frame_work) {
+		receiver->input.frame_credit += samples;
+		receiver->input.frame_budget = receiver->input.frame_credit / frame_work;
+		receiver->input.frame_credit %= frame_work;
+	} else {
+		receiver->input.frame_budget = samples / frame_work;
+		receiver->input.frame_credit = 0;
+		/* Leave room for a fitting stage that may complete inside this block. */
+		if (receiver->model.fitting && receiver->input.frame_budget > 1)
+			receiver->input.frame_budget--;
+	}
+}
+
+static bool frame_blocked(const struct v92_upstream_data_rx *receiver)
+{
+	return receiver->input.frame_limited && !receiver->input.frame_budget &&
+		receiver->line.symbol_count + 1 == V92_PCM_MAPPING_FRAME_SYMBOLS && paired_b1(receiver);
+}
+
+/* Consume only a previously accepted physical input. Failure preserves the
+ * queued input and the frame transaction; ordinary recovery owns disposal. */
+static enum v92_upstream_data_rx_result decode_pending(
+	struct v92_upstream_data_rx *receiver, struct v92_upstream_data_frame *frame)
+{
+	if (frame_blocked(receiver)) return V92_UPSTREAM_DATA_RX_OK;
+	struct v92_upstream_input *input = &receiver->input.samples[receiver->input.head];
+	if (!(input->flags & 1) && (receiver->model.valid || receiver->model.scalar_gain))
+		return fail(receiver, V92_UPSTREAM_DATA_RX_NO_PATH);
+	enum v92_upstream_data_rx_result result = decode_sample(receiver, input->sample, frame,
+		input->code, input->flags & 1, input->host, input->flags & 2, true);
+	if (result != V92_UPSTREAM_DATA_RX_OK && result != V92_UPSTREAM_DATA_RX_FRAME) return result;
+	memset(input, 0, sizeof(*input));
+	receiver->input.head = (receiver->input.head + 1) % V92_UPSTREAM_INPUT_QUEUE;
+	receiver->input.count--;
+	if (!receiver->input.count) receiver->input.head = receiver->input.catchup = 0;
+	return result;
+}
+
+enum v92_upstream_data_rx_result v92_upstream_data_rx_drain_owned(
+	struct v92_upstream_data_rx *receiver, struct v92_upstream_data_frame *frame)
+{
+	if (!receiver || !frame || memory_regions_overlap(receiver, sizeof(*receiver), frame, sizeof(*frame)))
+		return V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT;
+	if (receiver->failed) return V92_UPSTREAM_DATA_RX_FAILED;
+	if (!receiver->input.count) return V92_UPSTREAM_DATA_RX_OK;
+	if (receiver->model.fitting) {
+		v92_upstream_model_progress(receiver);
+		if (receiver->model.fitting) return V92_UPSTREAM_DATA_RX_OK;
+	}
+	return decode_pending(receiver, frame);
+}
+
+static enum v92_upstream_data_rx_result receive_sample(
+	struct v92_upstream_data_rx *receiver, int16_t sample,
+	struct v92_upstream_data_frame *frame, uint8_t code, bool wire_known,
+	int16_t host_sample, bool available, bool owned)
+{
+	if (!receiver || !frame || memory_regions_overlap(receiver, sizeof(*receiver), frame, sizeof(*frame)))
+		return V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT;
+	if ((!owned && !v92_upstream_data_rx_is_valid(receiver)) ||
+		receiver->line.input_samples == UINT64_MAX ||
+		receiver->input.count >= UINT64_MAX - receiver->line.input_samples)
+		return V92_UPSTREAM_DATA_RX_INVALID_STATE;
+	if (receiver->failed) return V92_UPSTREAM_DATA_RX_FAILED;
+	if ((receiver->model.valid || receiver->model.scalar_gain) && !wire_known)
+		return V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT;
+	if (!receiver->model.fitting && !receiver->input.count && !frame_blocked(receiver))
+		return decode_sample(receiver, sample, frame, code, wire_known, host_sample, available, true);
+	if (receiver->input.count == V92_UPSTREAM_INPUT_QUEUE)
+		return fail(receiver, V92_UPSTREAM_DATA_RX_NO_PATH);
+	unsigned tail = (receiver->input.head + receiver->input.count) % V92_UPSTREAM_INPUT_QUEUE;
+	receiver->input.samples[tail] = (struct v92_upstream_input){sample, host_sample, code,
+		(wire_known ? 1 : 0) | (available ? 2 : 0)};
+	receiver->input.count++;
+	if (receiver->model.fitting) {
+		v92_upstream_model_progress(receiver);
+		if (receiver->model.fitting) return V92_UPSTREAM_DATA_RX_OK;
+	}
+	enum v92_upstream_data_rx_result result = V92_UPSTREAM_DATA_RX_OK;
+	/* Repay latency after B1u validation. A single fitted channel can catch up
+	 * faster; paired decoders retain a slower cadence. No call emits two frames. */
+	unsigned catchup = receiver->line.received_frames < V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES ?
+		0 : receiver->model.valid != 3 ? 2 : 80;
+	if (receiver->input.catchup < catchup) receiver->input.catchup++;
+	for (unsigned i = 0; i < 2; i++) {
+		result = decode_pending(receiver, frame);
+		if (result != V92_UPSTREAM_DATA_RX_OK && result != V92_UPSTREAM_DATA_RX_FRAME) return result;
+		if (!receiver->input.count) break;
+		if (result == V92_UPSTREAM_DATA_RX_FRAME || receiver->model.fitting ||
+			!catchup || receiver->input.catchup < catchup ||
+			receiver->line.symbol_count + 1 == V92_PCM_MAPPING_FRAME_SYMBOLS || i) break;
+		const struct v92_upstream_input *next = &receiver->input.samples[receiver->input.head];
+		if ((!(next->flags & 1) && (receiver->model.valid || receiver->model.scalar_gain)) ||
+			(receiver->line.residual.active && (next->flags & 3) != 3)) break;
+		receiver->input.catchup = 0;
+	}
+	return result;
 }
 
 enum v92_upstream_data_rx_result v92_upstream_data_rx_sample(

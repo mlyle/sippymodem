@@ -752,4 +752,12 @@ enum pcm_call_result pcm_call_data_octet_owned(
 
 const char *pcm_call_result_name(enum pcm_call_result result);
 
+/* Already validated call, exclusive native owner. Begin each media block
+ * before processing its samples. Retired input can then drain without
+ * advancing TX or physical call clocks. */
+bool pcm_call_begin_receive_block_owned(struct pcm_call *call, unsigned samples);
+size_t pcm_call_receive_pending_owned(const struct pcm_call *call);
+enum pcm_call_result pcm_call_drain_receive_owned(struct pcm_call *call,
+	struct pcm_call_data_event *emitted);
+
 #endif /* PCM_CALL_H */

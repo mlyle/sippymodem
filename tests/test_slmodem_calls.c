@@ -387,6 +387,34 @@ static bool test_stale_generation_is_ignored(void)
 	return true;
 }
 
+static bool test_retains_remote_end_until_media_drains(void)
+{
+	struct modem modem = { .started = 1 };
+	struct slmodem_calls calls;
+	memset(&capture, 0, sizeof(capture));
+	CHECK(slmodem_calls_init(&calls, &modem), "tail call setup failed");
+	const struct sip_signaling_callbacks *cb = slmodem_calls_callbacks(&calls);
+	emit_call(&calls, SIP_CALL_DIRECTION_OUTGOING, SIP_CALL_CONNECTED);
+	CHECK(!cb->drain_received_media(cb->context) && !calls.receive_draining,
+		"connected media suspension was treated as remote hangup");
+	CHECK(slmodem_calls_drain(&calls) == SLMODEM_CALLS_OK,
+		"connected transition was not delivered");
+	emit_call(&calls, SIP_CALL_DIRECTION_OUTGOING, SIP_CALL_IDLE);
+	CHECK(cb->drain_received_media(cb->context) && calls.receive_draining &&
+		slmodem_calls_drain(&calls) == SLMODEM_CALLS_IDLE && calls.pending_count == 1 &&
+		!capture.remote_end_calls, "remote end discarded retained input");
+	calls.receive_draining = false;
+	CHECK(slmodem_calls_drain(&calls) == SLMODEM_CALLS_OK && !calls.pending_count &&
+		capture.remote_end_calls == 1, "retired remote end did not finish exactly once");
+	emit_call(&calls, SIP_CALL_DIRECTION_OUTGOING, SIP_CALL_IDLE);
+	CHECK(cb->drain_received_media(cb->context), "second tail was not retained");
+	modem.started = 0;
+	CHECK(slmodem_calls_drain(&calls) == SLMODEM_CALLS_OK && !calls.receive_draining &&
+		capture.remote_end_calls == 2, "local cancellation waited for retired media");
+	CHECK(!cb->drain_received_media(cb->context), "inactive modem retained remote media");
+	return true;
+}
+
 struct test_case {
 	const char *name;
 	bool (*run)(void);
@@ -395,6 +423,7 @@ struct test_case {
 int main(void)
 {
 	static const struct test_case tests[] = {
+		{ "retained remote media", test_retains_remote_end_until_media_drains },
 		{ "stale generation", test_stale_generation_is_ignored },
 		{ "event order", test_preserves_event_order },
 		{ "incoming lifecycle", test_maps_incoming_lifecycle },

@@ -5057,6 +5057,42 @@ static enum pcm_call_result observe_v92_data_quality(
 	return PCM_CALL_OK;
 }
 
+static enum pcm_call_result receive_v92_frame(struct pcm_call *call,
+	const struct v92_upstream_data_frame *frame, struct pcm_call_data_event *emitted)
+{
+	struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
+	/* The first half fits the receive model. Score only the
+	 * following validation frames: a corrected acquisition error
+	 * must not force another retrain on a now-usable channel. */
+	if (path->upstream.line.received_frames > V92_B1U_ACQUISITION_FRAMES &&
+	    path->upstream.line.received_frames <= V92_B1U_FRAMES) {
+		double error = path->b1u_squared_error + v92_quality_error(path, frame->squared_error);
+
+		if (!isfinite(error))
+			return PCM_CALL_NUMERIC_FAILURE;
+		path->b1u_squared_error = error;
+	}
+	/* Apply the acquisition split after traceback too. A correct
+	 * scrambled word can retain bad acquisition GPA history in its
+	 * source bits; conversely a peer may resume source ones from an
+	 * uncertain history. Require one independent explanation across
+	 * the whole interval, without excusing ambiguity or missing media. */
+	if (frame->b1u && frame->bit_count != 0u &&
+	    path->upstream.line.received_frames >
+		    V92_B1U_ACQUISITION_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
+		path->b1u_decode_failed |= frame->ambiguous;
+		path->b1u_mismatches |= frame->b1u_mismatches;
+		path->b1u_decode_failed |= path->b1u_mismatches == V92_B1U_BOTH_MISMATCH;
+	}
+	/* The decoder's lookahead can still deliver B1u bits after
+	 * the physical B1 boundary. Never expose them as host data. */
+	if (v92_peer_b1_received_owned(call) &&
+	    frame->bit_count != 0u && !frame->b1u) {
+		return observe_v92_data_quality(call, frame, emitted);
+	}
+	return PCM_CALL_OK;
+}
+
 static enum pcm_call_result v92_data_octet_owned(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
 	int16_t host_sample, bool received_available,
@@ -5262,38 +5298,53 @@ static enum pcm_call_result v92_data_octet_owned(
 			path->pending_media_loss = false;
 			return retry_v92_upstream(call, backoff);
 		}
-		if (received == V92_UPSTREAM_DATA_RX_FRAME) {
-			/* The first half fits the receive model. Score only the
-			 * following validation frames: a corrected acquisition error
-			 * must not force another retrain on a now-usable channel. */
-			if (path->upstream.line.received_frames > V92_B1U_ACQUISITION_FRAMES &&
-			    path->upstream.line.received_frames <= V92_B1U_FRAMES) {
-				double error = path->b1u_squared_error + v92_quality_error(path, frame.squared_error);
-
-				if (!isfinite(error))
-					return PCM_CALL_NUMERIC_FAILURE;
-				path->b1u_squared_error = error;
-			}
-			/* Apply the acquisition split after traceback too. A correct
-			 * scrambled word can retain bad acquisition GPA history in its
-			 * source bits; conversely a peer may resume source ones from an
-			 * uncertain history. Require one independent explanation across
-			 * the whole interval, without excusing ambiguity or missing media. */
-			if (frame.b1u && frame.bit_count != 0u &&
-			    path->upstream.line.received_frames >
-				    V92_B1U_ACQUISITION_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
-				path->b1u_decode_failed |= frame.ambiguous;
-				path->b1u_mismatches |= frame.b1u_mismatches;
-				path->b1u_decode_failed |= path->b1u_mismatches == V92_B1U_BOTH_MISMATCH;
-			}
-			/* The decoder's lookahead can still deliver B1u bits after
-			 * the physical B1 boundary. Never expose them as host data. */
-			if (v92_peer_b1_received_owned(call) &&
-			    frame.bit_count != 0u && !frame.b1u) {
-				return observe_v92_data_quality(call, &frame, emitted);
-			}
-		}
+		if (received == V92_UPSTREAM_DATA_RX_FRAME)
+			return receive_v92_frame(call, &frame, emitted);
 	}
+	return PCM_CALL_OK;
+}
+
+bool pcm_call_begin_receive_block_owned(struct pcm_call *call, unsigned samples)
+{
+	if (call->failed || call->stage != PCM_CALL_DATA_PATH || call->local_role != V90_DIGITAL_MODEM ||
+		!uses_pcm_upstream(call)) return false;
+	if (!call->state.data_path.v92_digital.upstream.failed)
+		v92_upstream_data_rx_begin_block_owned(&call->state.data_path.v92_digital.upstream, samples);
+	return true;
+}
+
+size_t pcm_call_receive_pending_owned(const struct pcm_call *call)
+{
+	if (!call || call->failed || call->stage != PCM_CALL_DATA_PATH ||
+		call->local_role != V90_DIGITAL_MODEM || !uses_pcm_upstream(call)) return 0;
+	const struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
+	if (call->retrain_active || path->quality_guard_samples || path->upstream.failed ||
+		path->fast.stage != PCM_CALL_V92_FAST_IDLE) return 0;
+	return path->upstream.input.count;
+}
+
+enum pcm_call_result pcm_call_drain_receive_owned(struct pcm_call *call,
+	struct pcm_call_data_event *emitted)
+{
+	struct pcm_call_data_event event = { 0 };
+	if (!pcm_call_receive_pending_owned(call)) { *emitted = event; return PCM_CALL_OK; }
+	struct v92_upstream_data_frame frame;
+	enum v92_upstream_data_rx_result result = v92_upstream_data_rx_drain_owned(
+		&call->state.data_path.v92_digital.upstream, &frame);
+	if (result == V92_UPSTREAM_DATA_RX_NO_PATH) {
+		struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
+		if (call->b1_deadline_armed) path->b1u_decode_failed = true;
+		guard_v92_upstream_failure(path);
+		*emitted = event;
+		return PCM_CALL_OK;
+	}
+	if (result != V92_UPSTREAM_DATA_RX_OK && result != V92_UPSTREAM_DATA_RX_FRAME)
+		return PCM_CALL_NUMERIC_FAILURE;
+	if (result == V92_UPSTREAM_DATA_RX_FRAME) {
+		enum pcm_call_result received = receive_v92_frame(call, &frame, &event);
+		if (received != PCM_CALL_OK) return received;
+	}
+	*emitted = event;
 	return PCM_CALL_OK;
 }
 

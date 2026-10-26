@@ -18,9 +18,56 @@
 #include "integer_math.h"
 #include "packed_bits.h"
 
+#include <assert.h>
 #include <float.h>
 #include <math.h>
 #include <string.h>
+
+/* Keep numerical waveform and rejection oracles independent of the media
+ * scheduler. They supply no next physical sample until the current fit ends.
+ * Deferred-acquisition cases below call the actual streaming entry points. */
+static void fixture_complete_fit(struct v92_upstream_data_rx *receiver,
+	enum v92_upstream_data_rx_result result)
+{
+	if (result != V92_UPSTREAM_DATA_RX_FRAME) return;
+	unsigned steps = 0;
+	while (receiver->model.fitting) {
+		assert(++steps < 2048);
+		v92_upstream_model_progress(receiver);
+	}
+}
+
+static enum v92_upstream_data_rx_result fixture_sample_owned(
+	struct v92_upstream_data_rx *receiver, int16_t sample, struct v92_upstream_data_frame *frame)
+{
+	enum v92_upstream_data_rx_result result = v92_upstream_data_rx_sample_owned(receiver, sample, frame);
+	fixture_complete_fit(receiver, result);
+	return result;
+}
+
+static enum v92_upstream_data_rx_result fixture_octet_owned(
+	struct v92_upstream_data_rx *receiver, uint8_t code, int16_t sample, int16_t host, bool available, struct v92_upstream_data_frame *frame)
+{
+	enum v92_upstream_data_rx_result result = v92_upstream_data_rx_octet_owned(receiver, code, sample, host, available, frame);
+	fixture_complete_fit(receiver, result);
+	return result;
+}
+
+static enum v92_upstream_data_rx_result fixture_sample(
+	struct v92_upstream_data_rx *receiver, int16_t sample, struct v92_upstream_data_frame *frame)
+{
+	enum v92_upstream_data_rx_result result = v92_upstream_data_rx_sample(receiver, sample, frame);
+	fixture_complete_fit(receiver, result);
+	return result;
+}
+
+static enum v92_upstream_data_rx_result fixture_octet(
+	struct v92_upstream_data_rx *receiver, uint8_t code, int16_t sample, bool available, struct v92_upstream_data_frame *frame)
+{
+	enum v92_upstream_data_rx_result result = v92_upstream_data_rx_octet(receiver, code, sample, available, frame);
+	fixture_complete_fit(receiver, result);
+	return result;
+}
 
 enum { TEST_LU = 4096, DATA_FRAMES = 80 };
 
@@ -91,8 +138,8 @@ static bool receive_compared(
 
 	memcpy(&output, frame, sizeof(output));
 	CHECK(v92_upstream_data_rx_is_valid(receiver), "owned fixture is not validated");
-	*result = v92_upstream_data_rx_sample(receiver, sample, frame);
-	CHECK(v92_upstream_data_rx_sample_owned(&owned, sample, &output) == *result &&
+	*result = fixture_sample(receiver, sample, frame);
+	CHECK(fixture_sample_owned(&owned, sample, &output) == *result &&
 	      memcmp(receiver, &owned, sizeof(owned)) == 0 &&
 	      memcmp(frame, &output, sizeof(output)) == 0 &&
 	      v92_upstream_data_rx_is_valid(&owned),
@@ -476,7 +523,7 @@ static bool check_quantized_level_tracking(
 				g711_decode_pcma(g711_encode_pcma(0));
 			++damaged;
 		}
-		result = v92_upstream_data_rx_sample(&receiver, received, &frame);
+		result = fixture_sample(&receiver, received, &frame);
 		CHECK(result == V92_UPSTREAM_DATA_RX_OK || result == V92_UPSTREAM_DATA_RX_FRAME,
 		      "tracking receiver stopped");
 		if (result == V92_UPSTREAM_DATA_RX_FRAME &&
@@ -986,7 +1033,7 @@ static bool test_fast_control(enum g711_law law, uint8_t rate)
 		    input.index == input.bits && !tx.queue_count)
 			CHECK(v92_upstream_control_complete(&input.control), "control wire completion failed");
 		struct v92_upstream_data_frame frame;
-		enum v92_upstream_data_rx_result received = v92_upstream_data_rx_sample(
+		enum v92_upstream_data_rx_result received = fixture_sample(
 			&rx, wire_sample(&channel, sample), &frame);
 		CHECK(received == V92_UPSTREAM_DATA_RX_OK || received == V92_UPSTREAM_DATA_RX_FRAME,
 		      "fast control receiver stopped");
@@ -1288,9 +1335,9 @@ static bool test_fast_finish(enum g711_law law, uint8_t old_rate, uint8_t new_ra
 		struct v92_upstream_data_frame frame;
 		uint8_t code = (uint8_t)wire[cursor];
 		int16_t decoded = law == G711_LAW_PCMU ? g711_decode_pcmu(code) : g711_decode_pcma(code);
-		enum v92_upstream_data_rx_result r = codec ? v92_upstream_data_rx_octet(&rx, code,
+		enum v92_upstream_data_rx_result r = codec ? fixture_octet(&rx, code,
 			(int16_t)lround(.75 * decoded), true, &frame) :
-			v92_upstream_data_rx_sample(&rx, wire_sample(&channel, wire[cursor]), &frame);
+			fixture_sample(&rx, wire_sample(&channel, wire[cursor]), &frame);
 		CHECK(r == V92_UPSTREAM_DATA_RX_OK || r == V92_UPSTREAM_DATA_RX_FRAME, "finish RX failed: %u", r);
 		if (rx.line.symbol_count) {
 			struct v92_upstream_data_rx saved = rx;
@@ -1355,7 +1402,7 @@ static bool test_owned_boundaries(void)
 				receiver.line.equalizer.coefficients[1].in_phase = 2.0;
 			} else {
 				for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS - 1; ++i)
-					CHECK(v92_upstream_data_rx_sample(&receiver, 0, &frame) ==
+					CHECK(fixture_sample(&receiver, 0, &frame) ==
 						      V92_UPSTREAM_DATA_RX_OK, "owned late-failure buffering failed");
 				receiver.line.observations[0].history[0].in_phase = DBL_MAX;
 			}
@@ -1369,11 +1416,11 @@ static bool test_owned_boundaries(void)
 		      "owned failure consumed input or wrote output: %u", fault);
 	}
 	receiver = initial;
-	CHECK(v92_upstream_data_rx_sample_owned(NULL, 0, &frame) ==
+	CHECK(fixture_sample_owned(NULL, 0, &frame) ==
 		      V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT &&
-	      v92_upstream_data_rx_sample_owned(&receiver, 0, NULL) ==
+	      fixture_sample_owned(&receiver, 0, NULL) ==
 		      V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT &&
-	      v92_upstream_data_rx_sample_owned(&receiver, 0, (void *)&receiver) ==
+	      fixture_sample_owned(&receiver, 0, (void *)&receiver) ==
 		      V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT &&
 	      memcmp(&receiver, &initial, sizeof(receiver)) == 0 &&
 	      memcmp(&frame, &sentinel, sizeof(frame)) == 0,
@@ -1431,11 +1478,11 @@ static bool test_rejection_and_failure(void)
 		      V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT &&
 	      v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &receiver.decoder.mapping, &direct_plan) ==
 		      V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT &&
-	      v92_upstream_data_rx_sample(NULL, 0, &frame) ==
+	      fixture_sample(NULL, 0, &frame) ==
 		      V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT &&
-	      v92_upstream_data_rx_sample(&receiver, 0, NULL) ==
+	      fixture_sample(&receiver, 0, NULL) ==
 		      V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT &&
-	      v92_upstream_data_rx_sample(&receiver, 0, (void *)&receiver) ==
+	      fixture_sample(&receiver, 0, (void *)&receiver) ==
 		      V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT &&
 	      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
 	      memcmp(&frame, &saved_frame, sizeof(frame)) == 0,
@@ -1451,7 +1498,7 @@ static bool test_rejection_and_failure(void)
 		      V92_UPSTREAM_DATA_RX_INVALID_PARAMETERS,
 	      "conflicting PCM law accepted");
 	receiver.line.input_samples = UINT64_MAX;
-	CHECK(v92_upstream_data_rx_sample(&receiver, 0, &frame) ==
+	CHECK(fixture_sample(&receiver, 0, &frame) ==
 		      V92_UPSTREAM_DATA_RX_INVALID_STATE &&
 	      memcmp(&frame, &saved_frame, sizeof(frame)) == 0,
 	      "input clock overflow accepted");
@@ -1473,10 +1520,10 @@ static bool test_rejection_and_failure(void)
 	saved = receiver;
 	saved.failed = true;
 	CHECK(v92_upstream_data_rx_is_valid(&receiver) &&
-	      v92_upstream_data_rx_sample(&receiver, INT16_MAX, &frame) ==
+	      fixture_sample(&receiver, INT16_MAX, &frame) ==
 		      V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE &&
 	      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
-	      v92_upstream_data_rx_sample(&receiver, 0, &frame) ==
+	      fixture_sample(&receiver, 0, &frame) ==
 		      V92_UPSTREAM_DATA_RX_FAILED &&
 	      memcmp(&frame, &saved_frame, sizeof(frame)) == 0,
 	      "DSP failure advanced state, changed output, or did not latch");
@@ -1484,13 +1531,13 @@ static bool test_rejection_and_failure(void)
 	CHECK(v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping, &direct_plan) ==
 		      V92_UPSTREAM_DATA_RX_OK, "late-failure initialization failed");
 	for (size_t sample = 0u; sample < V92_PCM_MAPPING_FRAME_SYMBOLS - 1u; ++sample)
-		CHECK(v92_upstream_data_rx_sample(&receiver, 0, &frame) ==
+		CHECK(fixture_sample(&receiver, 0, &frame) ==
 			      V92_UPSTREAM_DATA_RX_OK, "frame buffering failed");
 	receiver.line.observations[0].history[0].in_phase = DBL_MAX;
 	saved = receiver;
 	saved.failed = true;
 	CHECK(v92_upstream_data_rx_is_valid(&receiver) &&
-	      v92_upstream_data_rx_sample(&receiver, 0, &frame) ==
+	      fixture_sample(&receiver, 0, &frame) ==
 		      V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE &&
 	      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
 	      memcmp(&frame, &saved_frame, sizeof(frame)) == 0,
@@ -1501,7 +1548,7 @@ static bool test_rejection_and_failure(void)
 
 	for (size_t sample = 0u; sample < V92_B1U_SYMBOLS; ++sample) {
 		enum v92_upstream_data_rx_result result =
-			v92_upstream_data_rx_sample(&receiver, 0, &frame);
+			fixture_sample(&receiver, 0, &frame);
 
 		CHECK(result == V92_UPSTREAM_DATA_RX_OK || result == V92_UPSTREAM_DATA_RX_FRAME,
 		      "damaged training failed to report evidence");
@@ -1521,7 +1568,7 @@ static bool test_rejection_and_failure(void)
 
 	memcpy(coefficients, receiver.line.equalizer.coefficients, sizeof(coefficients));
 	for (size_t sample = 0u; sample < V92_PCM_MAPPING_FRAME_SYMBOLS; ++sample)
-		CHECK(v92_upstream_data_rx_sample(&receiver, INT16_MAX, &frame) ==
+		CHECK(fixture_sample(&receiver, INT16_MAX, &frame) ==
 			      (sample + 1u == V92_PCM_MAPPING_FRAME_SYMBOLS ?
 				       V92_UPSTREAM_DATA_RX_FRAME : V92_UPSTREAM_DATA_RX_OK),
 		      "unusable data stopped reporting evidence");
@@ -1534,7 +1581,7 @@ static bool test_rejection_and_failure(void)
 	       sizeof(receiver.line.equalizer.coefficients));
 	receiver.line.equalizer.coefficients[0].in_phase = 4.0;
 	for (size_t sample = 0u; sample < V92_PCM_MAPPING_FRAME_SYMBOLS; ++sample)
-		CHECK(v92_upstream_data_rx_sample(&receiver, INT16_MAX, &frame) ==
+		CHECK(fixture_sample(&receiver, INT16_MAX, &frame) ==
 			      (sample + 1u == V92_PCM_MAPPING_FRAME_SYMBOLS ?
 				       V92_UPSTREAM_DATA_RX_FRAME : V92_UPSTREAM_DATA_RX_OK),
 		      "finite equalizer excursion stopped reception");
@@ -1586,7 +1633,7 @@ static bool test_rejection_and_failure(void)
 		struct v92_upstream_data_rx invalid = receiver;
 
 		CHECK(!v92_upstream_data_rx_is_valid(&receiver) &&
-		      v92_upstream_data_rx_sample(&receiver, 0, &frame) == V92_UPSTREAM_DATA_RX_INVALID_STATE &&
+		      fixture_sample(&receiver, 0, &frame) == V92_UPSTREAM_DATA_RX_INVALID_STATE &&
 		      memcmp(&receiver, &invalid, sizeof(invalid)) == 0 &&
 		      memcmp(&frame, &saved_frame, sizeof(frame)) == 0,
 		      "invalid gain calibration consumed a sample or changed output");
@@ -1600,7 +1647,7 @@ static bool test_rejection_and_failure(void)
 			random = random * UINT32_C(1664525) + UINT32_C(1013904223);
 			int16_t sample = damage == 0u ? 0 : damage == 1u ? 12000 :
 				damage == 2u ? (int16_t)((int)(random >> 16) - 32768) : INT16_MAX;
-			enum v92_upstream_data_rx_result result = v92_upstream_data_rx_sample(&receiver, sample, &frame);
+			enum v92_upstream_data_rx_result result = fixture_sample(&receiver, sample, &frame);
 
 			CHECK(result == V92_UPSTREAM_DATA_RX_OK || result == V92_UPSTREAM_DATA_RX_FRAME,
 			      "damaged raw training stopped evidence collection");
@@ -1619,11 +1666,11 @@ static bool test_rejection_and_failure(void)
 	receiver = saved;
 	receiver.line.polarity = -1;
 	receiver.line.delay_remaining = 0u;
-	CHECK(v92_upstream_data_rx_sample(&receiver, INT16_MIN, &frame) == V92_UPSTREAM_DATA_RX_OK &&
+	CHECK(fixture_sample(&receiver, INT16_MIN, &frame) == V92_UPSTREAM_DATA_RX_OK &&
 	      receiver.line.raw[0] == 32768 && receiver.line.samples[0] == INT16_MAX,
 	      "polarity reversal overflowed or lost original raw excursion");
 	for (unsigned int i = 1u; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
-		CHECK(v92_upstream_data_rx_sample(&receiver, INT16_MIN, &frame) ==
+		CHECK(fixture_sample(&receiver, INT16_MIN, &frame) ==
 			      (i + 1u == V92_PCM_MAPPING_FRAME_SYMBOLS ? V92_UPSTREAM_DATA_RX_FRAME : V92_UPSTREAM_DATA_RX_OK),
 		      "raw excursion stopped receiving");
 	CHECK(frame.squared_error > 12.0 * 20000.0 * 20000.0,
@@ -1808,8 +1855,8 @@ static bool run_channel_plan(
 
 			memset(&frame, 0xa5, sizeof(frame)); output = frame;
 			bool available = fault != CHANNEL_LOSS || receiver.line.received_frames != 20u;
-			result = v92_upstream_data_rx_octet(&receiver, channel.code, input, available, &frame);
-			CHECK(v92_upstream_data_rx_octet_owned(&owned, channel.code, input, input,
+			result = fixture_octet(&receiver, channel.code, input, available, &frame);
+			CHECK(fixture_octet_owned(&owned, channel.code, input, input,
 			      available, &output) == result && !memcmp(&owned, &receiver, sizeof(owned)) &&
 			      !memcmp(&output, &frame, sizeof(output)) && v92_upstream_data_rx_is_valid(&receiver),
 			      "owned wire-cell stream diverged");
@@ -1834,7 +1881,7 @@ static bool run_channel_plan(
 		{
 			struct v92_upstream_data_frame comparison;
 			enum v92_upstream_data_rx_result comparison_result =
-				v92_upstream_data_rx_sample(&comparison_rx, input, &comparison);
+				fixture_sample(&comparison_rx, input, &comparison);
 
 			CHECK(comparison_result == result, "B1u comparison lost frame timing");
 			if (comparison_result == V92_UPSTREAM_DATA_RX_FRAME) {
@@ -1966,7 +2013,7 @@ static bool run_channel_plan(
 		struct v92_upstream_data_frame output, unchanged;
 		memset(&output, 0xa5, sizeof(output)); unchanged = output;
 		CHECK(receiver.line.residual.active &&
-		      v92_upstream_data_rx_octet(&lost, channel.code, 0, false, &output) == V92_UPSTREAM_DATA_RX_NO_PATH &&
+		      fixture_octet(&lost, channel.code, 0, false, &output) == V92_UPSTREAM_DATA_RX_NO_PATH &&
 		      lost.failed && v92_upstream_data_rx_is_valid(&lost) &&
 		      !memcmp(&output, &unchanged, sizeof(output)) &&
 		      !memcmp(&lost.line.residual, &receiver.line.residual, sizeof(receiver.line.residual)),
@@ -2219,7 +2266,7 @@ static bool test_rate_request_line(enum g711_law law, int polarity,
 		sample = wire_sample(&channel, sample);
 		CHECK(v92_ru_line_rx_sample(&ru, sample) == V92_RU_RX_BUFFERING,
 		      "data caused a false rate request");
-		enum v92_upstream_data_rx_result r = v92_upstream_data_rx_sample(&data_rx, sample, &frame);
+		enum v92_upstream_data_rx_result r = fixture_sample(&data_rx, sample, &frame);
 		CHECK(r == V92_UPSTREAM_DATA_RX_OK || r == V92_UPSTREAM_DATA_RX_FRAME,
 		      "data receive failed before rate request");
 		if (r == V92_UPSTREAM_DATA_RX_FRAME && frame.bit_count && !frame.b1u) {
@@ -2476,11 +2523,11 @@ static bool test_scalar_model(enum g711_law law, int polarity, bool wrong_bit)
 		linear.model.scalar_gain = 0.;
 		int16_t host = law == G711_LAW_PCMU ? g711_decode_pcmu(codes[i]) : g711_decode_pcma(codes[i]);
 		int16_t sample = host - polarity * codec_echo(i);
-		enum v92_upstream_data_rx_result result = v92_upstream_data_rx_octet_owned(
+		enum v92_upstream_data_rx_result result = fixture_octet_owned(
 			&receiver, codes[i], sample, host, true, &frame);
 		CHECK(result == V92_UPSTREAM_DATA_RX_OK || result == V92_UPSTREAM_DATA_RX_FRAME,
 			"scalar receiver stopped: %u at %u", result, i);
-		CHECK(v92_upstream_data_rx_octet_owned(&independent, codes[i], sample, host, true, &compared) == result &&
+		CHECK(fixture_octet_owned(&independent, codes[i], sample, host, true, &compared) == result &&
 		      !memcmp(&receiver, &independent, sizeof(receiver)) && !memcmp(&frame, &compared, sizeof(frame)) &&
 		      v92_upstream_data_rx_is_valid(&receiver), "scalar receivers shared mutable state");
 		if (result != V92_UPSTREAM_DATA_RX_FRAME) continue;
@@ -2488,7 +2535,7 @@ static bool test_scalar_model(enum g711_law law, int polarity, bool wrong_bit)
 		 * decision intact. Its original residual remains an independent
 		 * comparison, not a fitting target during held-out B1u. */
 		if (frozen) {
-			CHECK(v92_upstream_data_rx_octet_owned(&linear, codes[i], sample, host, true, &compared) == result &&
+			CHECK(fixture_octet_owned(&linear, codes[i], sample, host, true, &compared) == result &&
 			      !memcmp(&linear.decoder, &receiver.decoder, sizeof(linear.decoder)) &&
 			      compared.bit_count == frame.bit_count && compared.ambiguous == frame.ambiguous &&
 			      !memcmp(compared.bits, frame.bits, frame.bit_count), "scalar predictor changed decoded bits");
@@ -2521,7 +2568,7 @@ static bool test_scalar_model(enum g711_law law, int polarity, bool wrong_bit)
 	struct v92_upstream_data_rx saved = receiver;
 	struct v92_upstream_data_frame output, before;
 	memset(&output, 0xa5, sizeof(output)); before = output;
-	CHECK(v92_upstream_data_rx_sample(&receiver, 0, &output) == V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT &&
+	CHECK(fixture_sample(&receiver, 0, &output) == V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT &&
 	      !memcmp(&receiver, &saved, sizeof(saved)) && !memcmp(&output, &before, sizeof(output)),
 	      "scalar prediction invented missing wire evidence");
 	for (unsigned fault = 0; fault < 3; fault++) {
@@ -2532,16 +2579,16 @@ static bool test_scalar_model(enum g711_law law, int polarity, bool wrong_bit)
 		if (fault == 1) host = INT16_MAX;
 		if (fault == 2) host += 8;
 		for (unsigned s = 0; s < V92_PCM_MAPPING_FRAME_SYMBOLS - 1u; s++)
-			CHECK(v92_upstream_data_rx_octet_owned(&clipped, code, sample, host, true, &output) ==
+			CHECK(fixture_octet_owned(&clipped, code, sample, host, true, &output) ==
 				V92_UPSTREAM_DATA_RX_OK, "scalar clipping prefix failed");
 		struct v92_upstream_data_rx retained = clipped;
 		retained.failed = true;
-		CHECK(v92_upstream_data_rx_octet_owned(&clipped, code, sample, host, true, &output) ==
+		CHECK(fixture_octet_owned(&clipped, code, sample, host, true, &output) ==
 			V92_UPSTREAM_DATA_RX_NO_PATH && !memcmp(&clipped, &retained, sizeof(retained)) &&
 			!memcmp(&output, &before, sizeof(output)), "scalar clipping advanced state or released payload");
 	}
 	for (unsigned s = 0; s < V92_PCM_MAPPING_FRAME_SYMBOLS; s++)
-		CHECK(v92_upstream_data_rx_octet(&receiver, 0u, INT16_MAX, false, &output) ==
+		CHECK(fixture_octet(&receiver, 0u, INT16_MAX, false, &output) ==
 			(s == V92_PCM_MAPPING_FRAME_SYMBOLS - 1u ? V92_UPSTREAM_DATA_RX_FRAME :
 			 V92_UPSTREAM_DATA_RX_OK), "scalar erasure stopped receiver");
 	CHECK(output.squared_error > 1e9 && receiver.model.scalar_gain == frozen &&
@@ -2566,9 +2613,11 @@ static bool test_scalar_model(enum g711_law law, int polarity, bool wrong_bit)
 	return true;
 }
 
-static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer, bool echo)
+static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer, bool echo, unsigned deferred_block)
 {
-	enum { FRAMES = V92_B1U_FRAMES + 36 + V92_PCM_RX_DELAY_FRAMES, PREFIX = 6 };
+	bool deferred = deferred_block != 0;
+	unsigned block_decodes = 0;
+	enum { FRAMES = V92_B1U_FRAMES + 36 + V92_PCM_RX_DELAY_FRAMES, PREFIX = 6 + (V92_UPSTREAM_INPUT_QUEUE + 11) / 12 };
 	enum { RM_START = V92_B1U_FRAMES + 16, RM_PRIME = RM_START + 32, RM_END = RM_PRIME + 2 };
 	unsigned frames = FRAMES + (rm ? 34u : 0u);
 	struct channel training = { .gain = 1.0, .law = G711_LAW_PCMU, .polarity = polarity };
@@ -2585,7 +2634,8 @@ static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer, boo
 	uint32_t random = 0x35791bdu;
 	int16_t previous = 0, second = 0;
 	unsigned delivered = 0u;
-	unsigned changed = 0u;
+	unsigned changed = 0u, queued_peak = 0;
+	bool fitting_seen = false;
 	double b1_error = 0.0;
 
 	for (unsigned i = 0u; i < V92_UPSTREAM_CHANNEL_SYMBOLS; ++i) {
@@ -2601,8 +2651,14 @@ static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer, boo
 		previous = q;
 	}
 	CHECK(v92_cpd_direct_select(&cpd, G711_LAW_PCMU, rate, TEST_LU, false) == V92_CPD_OK &&
-	      v92_cpd_channel_design(&cpd, &measured, G711_LAW_PCMU, TEST_LU, &plan) &&
-	      v92_pcm_mapping_init(&mapping, G711_LAW_PCMU, &cpd) == V92_PCM_MAPPING_OK &&
+	      v92_cpd_channel_design(&cpd, &measured, G711_LAW_PCMU, TEST_LU, &plan),
+							"codec channel design failed");
+	if (deferred_block == 40) {
+		struct v92_cpd_filter *feedback = &cpd.filter[V92_CPD_PRECODER_FEEDBACK];
+		feedback->count = 3;
+		feedback->coefficient[2] = 1;
+	}
+	CHECK(v92_pcm_mapping_init(&mapping, G711_LAW_PCMU, &cpd) == V92_PCM_MAPPING_OK &&
 	      v92_pcm_frame_tx_init(&transmitter, &mapping) == V92_PCM_FRAME_OK &&
 	      prepare_e2u(&training, false, &e2u_tx, &e2u_rx) &&
 	      v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping, &plan) ==
@@ -2661,8 +2717,15 @@ static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer, boo
 	for (unsigned i = V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY;
 	     receiver.line.received_frames < frames; ++i) {
 		struct v92_upstream_data_frame frame = { 0 }, compared = { 0 };
+		if (deferred && (i - V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY) % deferred_block == 0) {
+			v92_upstream_data_rx_begin_block_owned(&receiver, deferred_block);
+			block_decodes = 0;
+		}
 		struct v92_upstream_data_rx owned = receiver;
-		uint8_t code = codes[i];
+		bool eof = deferred && i >= plan.delay + frames * V92_PCM_MAPPING_FRAME_SYMBOLS;
+		CHECK(i < plan.delay + frames * V92_PCM_MAPPING_FRAME_SYMBOLS + 4 * V92_UPSTREAM_INPUT_QUEUE,
+			"retired media drain did not finish");
+		uint8_t code = eof ? 0 : codes[i];
 		int16_t host = (int16_t)lround(.75 * g711_decode_pcmu(code));
 		int16_t sample = host - (echo ? polarity * 3 * (codec_echo(i) / 4) : 0);
 
@@ -2678,29 +2741,53 @@ static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer, boo
 			      "paired codec control reset failed");
 			owned = receiver;
 		}
-		enum v92_upstream_data_rx_result result = echo ? v92_upstream_data_rx_octet_owned(
-			&receiver, code, sample, host, true, &frame) : v92_upstream_data_rx_octet(
+		enum v92_upstream_data_rx_result result = eof ?
+			v92_upstream_data_rx_drain_owned(&receiver, &frame) : echo ? (deferred ? v92_upstream_data_rx_octet_owned : fixture_octet_owned)(
+			&receiver, code, sample, host, true, &frame) : (deferred ? v92_upstream_data_rx_octet : fixture_octet)(
 			&receiver, code, sample, true, &frame);
 
 		CHECK(result == V92_UPSTREAM_DATA_RX_OK || result == V92_UPSTREAM_DATA_RX_FRAME,
 		      "codec receiver stopped: %u at sample %u", result, i);
-		CHECK(v92_upstream_data_rx_octet_owned(&owned, code, sample, host, true, &compared) == result &&
+		CHECK((eof ? v92_upstream_data_rx_drain_owned(&owned, &compared) :
+			(deferred ? v92_upstream_data_rx_octet_owned : fixture_octet_owned)(&owned, code, sample, host, true, &compared)) == result &&
 		      memcmp(&receiver, &owned, sizeof(owned)) == 0 &&
 		      memcmp(&frame, &compared, sizeof(frame)) == 0 &&
 		      v92_upstream_data_rx_is_valid(&receiver), "codec owned/checked disagreement");
+
+		CHECK(receiver.line.input_samples + receiver.input.count == initial.line.input_samples +
+			(eof ? plan.delay + frames * V92_PCM_MAPPING_FRAME_SYMBOLS : i + 1) -
+			V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY, "queued input accounting changed");
+		if (receiver.input.count > queued_peak) queued_peak = receiver.input.count;
+		if (receiver.model.fitting && !fitting_seen) {
+			fitting_seen = true;
+			struct v92_upstream_data_rx restarted = receiver;
+			CHECK(v92_upstream_data_rx_init(&restarted, &e2u_rx.signal, &mapping, &plan) ==
+				V92_UPSTREAM_DATA_RX_OK && !memcmp(&restarted, &initial, sizeof(initial)),
+				"restart retained a suspended fit or queued media");
+		}
 		if (result != V92_UPSTREAM_DATA_RX_FRAME)
 			continue;
+		if (deferred && receiver.line.received_frames > V92_B1U_ACQUISITION_FRAMES &&
+			receiver.line.received_frames <= V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES)
+			CHECK(++block_decodes <= (deferred_block < (deferred_block == 40 ? 16 : 12) ? 1 :
+					deferred_block / (deferred_block == 40 ? 16 : 12)),
+				"paired B1 decode exceeded its native block budget");
 		if (receiver.line.received_frames > V92_B1U_ACQUISITION_FRAMES &&
 		    receiver.line.received_frames <= V92_B1U_FRAMES)
 			b1_error += frame.squared_error;
 		if (receiver.line.received_frames == V92_B1U_ACQUISITION_FRAMES) {
-			CHECK(receiver.model.valid == 3u && !receiver.model.acquiring,
-			      "codec B1u did not fit both hypotheses");
+			CHECK(deferred ? receiver.model.fitting && !receiver.model.valid :
+				receiver.model.valid == 3u && !receiver.model.acquiring,
+				"codec B1u acquisition boundary changed");
 			CHECK(fabs(receiver.line.host.gain - .75) < 1e-12 &&
 			      memory_region_is_zero(&receiver.line.host.fit, sizeof(receiver.line.host.fit)),
 			      "host gain did not freeze at the acquisition boundary");
-			memcpy(frozen, receiver.model.model, sizeof(frozen));
+			if (!deferred) memcpy(frozen, receiver.model.model, sizeof(frozen));
 		} else if (receiver.line.received_frames > V92_B1U_ACQUISITION_FRAMES) {
+			if (deferred && receiver.line.received_frames == V92_B1U_ACQUISITION_FRAMES + 1) {
+				CHECK(!receiver.model.fitting && receiver.model.valid == 3, "deferred model not complete before validation");
+				memcpy(frozen, receiver.model.model, sizeof(frozen));
+			}
 			CHECK(memcmp(frozen, receiver.model.model, sizeof(frozen)) == 0 &&
 			      fabs(receiver.line.host.gain - .75) < 1e-12 &&
 			      memory_region_is_zero(&receiver.line.host.fit, sizeof(receiver.line.host.fit)),
@@ -2736,6 +2823,19 @@ static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer, boo
 	CHECK(!peer || changed > V92_B1U_SYMBOLS / 4u, "peer fixture kept canonical points");
 	CHECK(b1_error / (.75 * .75 * V92_B1U_VALIDATION_SYMBOLS) <=
 	      V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR, "codec B1u failed quality");
+	if (deferred) {
+		CHECK(fitting_seen && queued_peak > 0 && queued_peak < V92_UPSTREAM_INPUT_QUEUE &&
+			!receiver.input.count,
+			"deferred fit did not retain bounded input");
+		struct v92_upstream_data_rx full = receiver;
+		full.input.count = V92_UPSTREAM_INPUT_QUEUE;
+		struct v92_upstream_data_frame out = {0}, before = out;
+		CHECK(v92_upstream_data_rx_octet_owned(&full, 0xff, 0, 0, true, &out) ==
+			V92_UPSTREAM_DATA_RX_NO_PATH && full.failed && !memcmp(&out, &before, sizeof(out)),
+			"full input queue silently dropped media");
+		printf("Deferred codec peak retained samples=%u\n", queued_peak);
+		return true;
+	}
 	struct v92_upstream_data_rx saved = receiver;
 	/* Gain changes and clipping must not be interpreted as independently
 	 * known echo. The failed frame retains both coding paths and outputs. */
@@ -2750,11 +2850,11 @@ static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer, boo
 		if (fault == 1) host = INT16_MAX;
 		if (fault == 2) host += 8;
 		for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS - 1; i++)
-			CHECK(v92_upstream_data_rx_octet_owned(&conditioned, code, sample, host, true, &out) ==
+			CHECK(fixture_octet_owned(&conditioned, code, sample, host, true, &out) ==
 				V92_UPSTREAM_DATA_RX_OK, "conditioning fault prefix stopped");
 		struct v92_upstream_data_rx retained = conditioned;
 		retained.failed = true;
-		CHECK(v92_upstream_data_rx_octet_owned(&conditioned, code, sample, host, true, &out) ==
+		CHECK(fixture_octet_owned(&conditioned, code, sample, host, true, &out) ==
 			V92_UPSTREAM_DATA_RX_NO_PATH && !memcmp(&conditioned, &retained, sizeof(retained)) &&
 			!memcmp(&out, &before, sizeof(out)), "conditioning fault changed coding state or payload");
 	}
@@ -2814,7 +2914,7 @@ static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer, boo
 				"erased codec path changed its normalized metric");
 		}
 		for (unsigned i = 0u; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
-			CHECK(v92_upstream_data_rx_octet(&paired, 0u, 0, false, &frame) ==
+			CHECK(fixture_octet(&paired, 0u, 0, false, &frame) ==
 				(i == V92_PCM_MAPPING_FRAME_SYMBOLS - 1u ? V92_UPSTREAM_DATA_RX_FRAME :
 				 V92_UPSTREAM_DATA_RX_OK), "paired non-payload decoding failed");
 		CHECK(paired.model.valid == 3u && paired.model.primary == 0u &&
@@ -2829,14 +2929,14 @@ static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer, boo
 	struct v92_upstream_data_frame output, unchanged;
 	memset(&output, 0xa5, sizeof(output));
 	unchanged = output;
-	CHECK(v92_upstream_data_rx_sample(&receiver, 0, &output) == V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT &&
+	CHECK(fixture_sample(&receiver, 0, &output) == V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT &&
 	      memcmp(&saved, &receiver, sizeof(saved)) == 0 &&
 	      memcmp(&unchanged, &output, sizeof(output)) == 0,
 	      "active codec model invented a wire code");
 	/* Erasures have no likelihood evidence, but must still report raw
 	 * residual. They cannot silently disappear from the quality guard. */
 	for (unsigned i = 0u; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
-		CHECK(v92_upstream_data_rx_octet(&receiver, 0u, INT16_MAX, false, &output) ==
+		CHECK(fixture_octet(&receiver, 0u, INT16_MAX, false, &output) ==
 		      (i == V92_PCM_MAPPING_FRAME_SYMBOLS - 1u ? V92_UPSTREAM_DATA_RX_FRAME :
 			V92_UPSTREAM_DATA_RX_OK), "erased codec frame stopped");
 	CHECK(output.squared_error > 1e9 &&
@@ -2854,17 +2954,17 @@ static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer, boo
 	struct v92_upstream_data_rx owned = receiver;
 	struct v92_upstream_data_frame owned_output = output;
 	for (unsigned i = 0u; i < V92_PCM_MAPPING_FRAME_SYMBOLS - 1u; ++i)
-		CHECK(v92_upstream_data_rx_octet(&receiver, 0u, 100, true, &output) ==
+		CHECK(fixture_octet(&receiver, 0u, 100, true, &output) ==
 		      V92_UPSTREAM_DATA_RX_OK &&
-		      v92_upstream_data_rx_octet_owned(&owned, 0u, 100, 100, true, &owned_output) ==
+		      fixture_octet_owned(&owned, 0u, 100, 100, true, &owned_output) ==
 		      V92_UPSTREAM_DATA_RX_OK && memcmp(&receiver, &owned, sizeof(owned)) == 0 &&
 		      memcmp(&output, &owned_output, sizeof(output)) == 0,
 		      "checked/owned numeric-failure buffering differs");
 	saved = receiver;
 	unchanged = output;
-	CHECK(v92_upstream_data_rx_octet(&receiver, 0u, 100, true, &output) ==
+	CHECK(fixture_octet(&receiver, 0u, 100, true, &output) ==
 	      V92_UPSTREAM_DATA_RX_NO_PATH &&
-	      v92_upstream_data_rx_octet_owned(&owned, 0u, 100, 100, true, &owned_output) ==
+	      fixture_octet_owned(&owned, 0u, 100, 100, true, &owned_output) ==
 	      V92_UPSTREAM_DATA_RX_NO_PATH, "unrepresentable codec frame did not fail");
 	saved.failed = true;
 	CHECK(memcmp(&saved, &receiver, sizeof(saved)) == 0 &&
@@ -2886,8 +2986,8 @@ static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer, boo
 			int16_t sample = (int16_t)lround(.75 * g711_decode_pcmu(code));
 			bool first = receiver.line.received_frames == 0u;
 			enum v92_upstream_data_rx_result result = first && missing == 0u ?
-				v92_upstream_data_rx_sample(&receiver, sample, &output) :
-				v92_upstream_data_rx_octet(&receiver, first && missing == 2u ? 0xffu : code,
+				fixture_sample(&receiver, sample, &output) :
+				fixture_octet(&receiver, first && missing == 2u ? 0xffu : code,
 					sample, !(first && missing == 1u), &output);
 			CHECK(result == V92_UPSTREAM_DATA_RX_OK || result == V92_UPSTREAM_DATA_RX_FRAME,
 			      "closed acquisition stopped linear fallback");
@@ -2907,7 +3007,7 @@ static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer, boo
 	for (unsigned i = V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY;
 	     receiver.line.received_frames < V92_B1U_ACQUISITION_FRAMES; ++i) {
 		uint8_t code = codes[i];
-		enum v92_upstream_data_rx_result result = v92_upstream_data_rx_octet(&receiver, code,
+		enum v92_upstream_data_rx_result result = fixture_octet(&receiver, code,
 			(int16_t)lround(.75 * g711_decode_pcmu(code)), true, &output);
 		CHECK(result == V92_UPSTREAM_DATA_RX_OK || result == V92_UPSTREAM_DATA_RX_FRAME,
 		      "general prefilter host acquisition stopped");
@@ -3626,7 +3726,7 @@ static bool test_single_codec(enum g711_law law)
 	while (frames < FRAMES) {
 		CHECK(input < ARRAY_LENGTH(samples), "single-codec receiver exceeded source");
 		struct v92_upstream_data_frame frame;
-		enum v92_upstream_data_rx_result result = v92_upstream_data_rx_octet(&receiver,
+		enum v92_upstream_data_rx_result result = fixture_octet(&receiver,
 			octets[input], samples[input], true, &frame);
 		input++;
 		CHECK(result == V92_UPSTREAM_DATA_RX_OK || result == V92_UPSTREAM_DATA_RX_FRAME,
@@ -3725,6 +3825,8 @@ static bool test_translated_acquisition_seed(enum g711_law law,
 
 int main(void)
 {
+	for (int polarity = -1; polarity <= 1; polarity += 2)
+		if (!test_codec_model(polarity, false, 19, false, true, polarity < 0 ? 1 : 40)) return 1;
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (enum v92_cpd_trellis trellis = V92_CPD_TRELLIS_16_STATE;
 			 trellis <= V92_CPD_TRELLIS_64_STATE; ++trellis)
@@ -3793,13 +3895,13 @@ int main(void)
 				for (unsigned control = 0u; control < 2u; ++control)
 					if (!test_direct_b1_validation(law, polarity, fault, control))
 						return 1;
-	if (!test_codec_model(1, false, 19u, false, false) || !test_codec_model(-1, false, 19u, false, false) ||
-	    !test_codec_model(1, true, 19u, false, false) || !test_codec_model(-1, true, 19u, false, false))
+	if (!test_codec_model(1, false, 19u, false, false, false) || !test_codec_model(-1, false, 19u, false, false, false) ||
+	    !test_codec_model(1, true, 19u, false, false, false) || !test_codec_model(-1, true, 19u, false, false, false))
 		return 1;
 	for (int polarity = -1; polarity <= 1; polarity += 2)
-		if (!test_codec_model(polarity, false, 1u, true, false) ||
-		    !test_codec_model(polarity, false, 4u, true, false) ||
-		    !test_codec_model(polarity, false, 1u, true, true))
+		if (!test_codec_model(polarity, false, 1u, true, false, false) ||
+		    !test_codec_model(polarity, false, 4u, true, false, false) ||
+		    !test_codec_model(polarity, false, 1u, true, true, false))
 			return 1;
 	fprintf(stderr, "[ RUN      ] retained PCM data-to-Ru control channel\n");
 	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)

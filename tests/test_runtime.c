@@ -481,6 +481,12 @@ enum sip_session_result modem_host_close(
 	return capture.host_close_result;
 }
 
+bool modem_host_media_is_configured(const struct modem_host *host)
+{
+	(void)host;
+	return false;
+}
+
 bool modem_host_is_open(const struct modem_host *host)
 {
 	return host != NULL && host->opened;

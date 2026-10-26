@@ -3,6 +3,7 @@
 #define V92_UPSTREAM_MODEL_H
 
 #include "v92_observation.h"
+#include "v92_observation_fit.h"
 #include "v92_pcm_frame.h"
 #include "v92_residual.h"
 
@@ -14,6 +15,17 @@ struct v92_upstream_seed {
 	double gain;
 };
 bool v92_upstream_seed_is_valid(const struct v92_upstream_seed *seed);
+
+/* The selected CPd fixes the causal observation order for the whole epoch. */
+static inline unsigned v92_upstream_model_taps(const struct v92_pcm_mapping *mapping)
+{
+	const struct v92_cpd_filter *feedback = &mapping->cpd.filter[V92_CPD_PRECODER_FEEDBACK];
+	return feedback->count >= 3 && feedback->coefficient[2] ? 4 : 3;
+}
+
+/* Native fitting cadence, in accepted 8 kHz inputs. More expensive retained
+ * channel refinements get a longer interval than one gain-sweep slice. */
+enum { V92_MODEL_SWEEP_SAMPLES = 3, V92_MODEL_REFINE_SAMPLES = 12 };
 
 /* One acquisition per mapping epoch, followed by immutable channel fits.
  * Fractional and rounded prefilter hypotheses share the line input, but not
@@ -40,9 +52,19 @@ struct v92_upstream_model {
 	double scalar_gain;
 	int16_t coefficient;
 	uint8_t valid, primary;
-	bool acquiring, residual_acquiring;
-	/* This large receiver is live only while a second hypothesis is active. */
-	struct v92_pcm_frame_rx alternate;
+	bool acquiring, residual_acquiring, fitting;
+	/* Acquisition reuses the inactive competing decoder for pointer-free fit
+	 * scratch. All fitted hypotheses finish before independent B1u decoding. */
+	union {
+		struct v92_pcm_frame_rx alternate;
+		struct {
+			struct v92_observation_fit_work work;
+			int32_t input[V92_OBSERVATION_TRAINING];
+			int16_t samples[V92_OBSERVATION_TRAINING];
+			double offsets[V92_OBSERVATION_TRAINING];
+			unsigned candidate, clock;
+		} fit;
+	};
 };
 
 struct v92_upstream_data_rx;
@@ -51,6 +73,7 @@ struct v92_upstream_data_line;
  * declined without mutation. Missing acquisition media still closes fitting. */
 bool v92_upstream_model_seed(struct v92_upstream_data_rx *receiver,
 	const struct v92_upstream_seed *seed);
+void v92_upstream_model_progress(struct v92_upstream_data_rx *receiver);
 void v92_upstream_model_init(struct v92_upstream_data_rx *receiver);
 bool v92_upstream_model_is_valid(const struct v92_upstream_data_rx *receiver);
 bool v92_upstream_model_has_alternate(const struct v92_upstream_data_rx *receiver);

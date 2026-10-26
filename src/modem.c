@@ -754,6 +754,7 @@ int modem_drain_receive(struct modem *m, unsigned budget)
 	if (!m || !m->started || !budget || !m->dp || !m->dp->op ||
 	    !m->dp->op->rx_pending || !m->dp->op->drain_receive)
 		return -1;
+	if (budget > MODEM_FRAG) budget = MODEM_FRAG;
 	return m->dp->op->drain_receive(m->dp, budget);
 }
 

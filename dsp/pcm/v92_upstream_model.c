@@ -41,6 +41,7 @@ static void close_acquisition(struct v92_upstream_model *model)
 		memset(&model->alternate, 0, sizeof(model->alternate));
 	memset(&model->seed, 0, sizeof(model->seed));
 	model->acquiring = false;
+	model->fitting = false;
 	model->residual_acquiring = false;
 	memset(model->x, 0, sizeof(model->x));
 	memset(model->raw, 0, sizeof(model->raw));
@@ -110,6 +111,10 @@ bool v92_upstream_model_is_valid(const struct v92_upstream_data_rx *receiver)
 	if (receiver->line.plan.observation != V92_PCM_FRAME_CONSTELLATION ||
 	    model->coefficient == 0)
 		return false;
+	if (model->fitting)
+		return model->acquiring && !model->residual_acquiring && (model->valid == 0 || model->valid == 1) &&
+			model->fit.candidate < 2 && model->fit.clock < V92_MODEL_REFINE_SAMPLES &&
+			model->fit.work.stage <= V92_FIT_VALIDATE && receiver->line.received_frames == V92_B1U_ACQUISITION_FRAMES;
 	if (model->acquiring)
 		return model->valid == 0u && model->primary == 0u &&
 		       model->cost[0] == 0u && model->cost[1] == 0u &&
@@ -375,55 +380,58 @@ void v92_upstream_model_fit(struct v92_upstream_model *model,
 		}
 		return;
 	}
-	int16_t samples[V92_OBSERVATION_TRAINING];
-	double offsets[V92_OBSERVATION_TRAINING];
 
 	if (!model->acquiring || line->received_frames + 1u != V92_B1U_ACQUISITION_FRAMES)
 		return;
-	if (line->host.gain <= 0.0) {
-		close_acquisition(model);
-		return;
+	if (line->host.gain <= 0.) { close_acquisition(model); return; }
+	memset(&model->alternate, 0, sizeof(model->alternate));
+	for (size_t i = 0; i < V92_OBSERVATION_TRAINING; i++) {
+		if (!observation_offset(line, model->raw[i], model->wire[i], model->host[i], model->fit.offsets + i)) {
+			close_acquisition(model); return;
+		}
+		model->fit.samples[i] = sample_round_s16((model->raw[i] - line->calibration.offset) * line->calibration.gain);
 	}
-	for (size_t i = 0u; i < V92_OBSERVATION_TRAINING; ++i) {
-		if (!observation_offset(line, model->raw[i], model->wire[i], model->host[i], offsets + i)) {
+	model->fitting = true;
+}
+
+void v92_upstream_model_progress(struct v92_upstream_data_rx *receiver)
+{
+	struct v92_upstream_model *model = &receiver->model;
+	if (!model->fitting) return;
+	if (model->fit.clock) { model->fit.clock--; return; }
+	unsigned candidate = model->fit.candidate;
+	struct v92_observation_training training = {
+		.input = model->fit.input, .linear = model->u, .sample = model->fit.samples, .levels = model->wire,
+		.offsets = model->fit.offsets, .count = V92_OBSERVATION_TRAINING,
+		.taps = v92_upstream_model_taps(&receiver->decoder.mapping),
+		.host_gain = receiver->line.host.gain * receiver->line.calibration.gain,
+		.law = receiver->decoder.mapping.law,
+	};
+	enum v92_observation_fit_result result = V92_OBSERVATION_FIT_MORE;
+	unsigned stage = model->fit.work.stage;
+	if (!stage) {
+		for (size_t i = 0; i < V92_OBSERVATION_TRAINING; i++)
+			model->fit.input[i] = candidate ? round_shift_s64_to_s32_saturating(
+				(int64_t)model->x[i] * model->coefficient, 15u) : model->x[i];
+		if (!v92_observation_fit_begin(&model->fit.work, &training)) result = V92_OBSERVATION_FIT_DECLINED;
+	} else result = v92_observation_fit_step(&model->fit.work, &training, &model->model[candidate]);
+	if (result == V92_OBSERVATION_FIT_READY) {
+		model->model[candidate].input_coefficient = candidate ? model->coefficient : 0;
+		model->valid |= (uint8_t)(1u << candidate);
+	} else if (result == V92_OBSERVATION_FIT_DECLINED)
+		memset(&model->model[candidate], 0, sizeof(model->model[candidate]));
+	if (result != V92_OBSERVATION_FIT_MORE) {
+		model->fit.candidate++;
+		if (model->fit.candidate == 2) {
+			if (model->valid) model->primary = (model->valid & 1u) ? 0 : 1;
+			else v92_observation_fit_scalar(&model->scalar_gain, &training);
+			memset(&model->alternate, 0, sizeof(model->alternate));
+			if (model->valid == 3) model->alternate = receiver->decoder;
 			close_acquisition(model);
 			return;
 		}
-		samples[i] = sample_round_s16((model->raw[i] - line->calibration.offset) * line->calibration.gain);
 	}
-	const struct v92_cpd_filter *feedback = &decoder->mapping.cpd.filter[V92_CPD_PRECODER_FEEDBACK];
-	const struct v92_observation_training training = {
-		.input = model->x, .linear = model->u, .sample = samples, .levels = model->wire,
-		.offsets = offsets, .count = V92_OBSERVATION_TRAINING,
-		.taps = feedback->count >= 3 && feedback->coefficient[2] ? 4 : 3,
-		.host_gain = line->host.gain * line->calibration.gain, .law = decoder->mapping.law,
-	};
-	for (unsigned candidate = 0u; candidate < 2u; ++candidate) {
-		struct v92_observation *fit = &model->model[candidate];
-		int32_t x[V92_OBSERVATION_TRAINING];
-
-		memcpy(x, model->x, sizeof(x));
-		if (candidate)
-			for (size_t i = 0u; i < V92_OBSERVATION_TRAINING; ++i)
-				x[i] = round_shift_s64_to_s32_saturating(
-					(int64_t)x[i] * model->coefficient, 15u);
-		struct v92_observation_training candidate_training = training;
-		candidate_training.input = x;
-		if (v92_observation_fit(fit, &candidate_training)) {
-			fit->input_coefficient = candidate ? model->coefficient : 0;
-			model->valid |= (uint8_t)(1u << candidate);
-		} else {
-			memset(fit, 0, sizeof(*fit));
-		}
-	}
-	if (model->valid) {
-		model->primary = (model->valid & 1u) ? 0u : 1u;
-		if (model->valid == 3u)
-			model->alternate = *decoder;
-	} else
-		v92_observation_fit_scalar(&model->scalar_gain, &training);
-	/* Later B1u decisions and payload validate, but never train, these fits. */
-	close_acquisition(model);
+	model->fit.clock = stage == V92_FIT_REFINE ? V92_MODEL_REFINE_SAMPLES - 1 : V92_MODEL_SWEEP_SAMPLES - 1;
 }
 
 static bool wire_cells(const struct v92_upstream_data_line *line, enum g711_law law,

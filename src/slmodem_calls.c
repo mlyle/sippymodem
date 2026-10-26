@@ -42,6 +42,14 @@ static void capture_call(
 	calls->pending_count++;
 }
 
+static bool drain_received_media(void *context)
+{
+	struct slmodem_calls *calls = context;
+	calls->receive_draining = calls->modem->started != 0 &&
+		calls->state == SIP_CALL_IDLE;
+	return calls->receive_draining;
+}
+
 static bool is_outgoing_busy(const struct slmodem_call_transition *transition)
 {
 	return transition->direction == SIP_CALL_DIRECTION_OUTGOING &&
@@ -61,6 +69,7 @@ bool slmodem_calls_init(
 	initialized.modem = modem;
 	initialized.callbacks.context = calls;
 	initialized.callbacks.call_changed = capture_call;
+	initialized.callbacks.drain_received_media = drain_received_media;
 	*calls = initialized;
 	return true;
 }
@@ -87,6 +96,11 @@ enum slmodem_calls_result slmodem_calls_drain(
 		return SLMODEM_CALLS_EVENT_OVERFLOW;
 	}
 	if (calls->pending_count == 0)
+		return SLMODEM_CALLS_IDLE;
+	if (calls->receive_draining && !calls->modem->started) calls->receive_draining = false;
+	const struct slmodem_call_transition *head = &calls->pending[calls->pending_head];
+	if (calls->receive_draining && head->state == SIP_CALL_IDLE &&
+		(!head->generation || head->generation == calls->generation))
 		return SLMODEM_CALLS_IDLE;
 	transition = calls->pending[calls->pending_head];
 	calls->pending_head = (calls->pending_head + 1) %

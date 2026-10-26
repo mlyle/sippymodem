@@ -375,8 +375,7 @@ static void call_changed(void *context, const struct sip_call_event *event)
 		line_modem(line)->disconnect_reason != NULL && line_modem(line)->disconnect_local ?
 		SIPPYMODEM_DISCONNECT_MODEM : SIPPYMODEM_DISCONNECT_REMOTE;
 	if (event->state == SIP_CALL_IDLE && line_modem(line)->started &&
-	    (line_modem(line)->state == STATE_MODEM_ONLINE ||
-	     line_modem(line)->state == STATE_COMMAND_ONLINE)) {
+	    modem_host_media_is_configured(line_host(line))) {
 		/* SIP ended; retain carrier/RX until the accepted media tail is played. */
 		line->remote_closing = true;
 		line->closing_cause = cause;

@@ -73,6 +73,8 @@ static int hangup_v90(struct dp *dp);
 static const char *progress_v90(const struct dp *dp);
 static struct dp_link_rates link_rates_v90(const struct dp *dp);
 
+static size_t receive_pending(const struct dp *dp);
+static int drain_receive(struct dp *dp, unsigned budget);
 static int tx_tail_samples(const struct dp *dp);
 static const struct dp_operations v90_operations = {
 	.name = "PCM V.90/V.92",
@@ -85,6 +87,8 @@ static const struct dp_operations v90_operations = {
 	.progress = progress_v90,
 	.link_rates = link_rates_v90,
 	.tx_tail_samples = tx_tail_samples,
+	.rx_pending = receive_pending,
+	.drain_receive = drain_receive,
 };
 
 static struct dp_link_rates link_rates_v90(const struct dp *dp)
@@ -1068,7 +1072,11 @@ static int process_v90_g711(
 		*exact_output = true;
 		return DPSTAT_DISCONNECT;
 	}
+	bool receive_block_started = false;
 	for (int index = 0; index < count; ++index) {
+		if (!receive_block_started)
+			receive_block_started = pcm_call_begin_receive_block_owned(&datapump->call, (unsigned)(count - index));
+
 		enum pcm_call_stage stage_before = datapump->call.stage;
 		enum pcm_host_echo_mode echo_mode = host_echo_mode(datapump);
 		enum v92_training_echo_result training_echo = V92_TRAINING_ECHO_UNOBSERVED;
@@ -1226,6 +1234,27 @@ failure:
 const struct dp_operations *v90_datapump_operations(enum DP_ID id)
 {
 	return id == DP_V90 || id == DP_V92 ? &v90_operations : NULL;
+}
+
+static size_t receive_pending(const struct dp *dp)
+{
+	const struct v90_datapump *p = v90_from_dp((struct dp *)dp);
+	return p && p->call_started ? pcm_call_receive_pending_owned(&p->call) : 0;
+}
+
+static int drain_receive(struct dp *dp, unsigned budget)
+{
+	struct v90_datapump *p = v90_from_dp(dp);
+	if (!p || !p->call_started || !pcm_call_is_valid(&p->call)) return -1;
+	(void)pcm_call_begin_receive_block_owned(&p->call, budget);
+	for (unsigned i = 0; i < budget && receive_pending(dp); i++) {
+		struct pcm_call_data_event event;
+		if (pcm_call_drain_receive_owned(&p->call, &event) != PCM_CALL_OK) return -1;
+		if (!training_session_is_online(&p->training) && pcm_call_is_online_owned(&p->call) &&
+			!enter_link(p)) return -1;
+		if (!deliver_event(p, &event)) return -1;
+	}
+	return pcm_call_is_valid(&p->call) ? 0 : -1;
 }
 
 static int tx_tail_samples(const struct dp *dp)

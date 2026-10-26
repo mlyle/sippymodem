@@ -67,10 +67,21 @@ struct v92_upstream_data_line {
 	int8_t polarity;
 };
 
+enum { V92_UPSTREAM_INPUT_QUEUE = 1024 };
+struct v92_upstream_input {
+	int16_t sample, host;
+	uint8_t code, flags;
+};
 struct v92_upstream_data_rx {
 	struct v92_pcm_frame_rx decoder;
 	struct v92_upstream_data_line line;
 	struct v92_upstream_model model;
+	struct {
+		struct v92_upstream_input samples[V92_UPSTREAM_INPUT_QUEUE];
+		unsigned head, count, catchup;
+		unsigned frame_budget, frame_credit;
+		bool frame_limited;
+	} input;
 	bool failed;
 };
 
@@ -165,7 +176,11 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_start_b1u(
 	const struct v92_pcm_mapping *mapping,
 	const struct v92_upstream_plan *plan);
 
-/* Consume one signed 8 kHz sample. FRAME reports each twelve-symbol decision;
+/* Acquisition may retain accepted physical inputs while fitting progresses.
+ * line.input_samples counts consumed input and input.count the retained tail.
+ * No input is discarded or replaced by fabricated codec observations.
+ *
+ * Consume one signed 8 kHz sample. FRAME reports each twelve-symbol decision;
  * OK buffers a sample and leaves frame unchanged. Quality is reported even
  * for damaged B1u; known bits do not imply a usable line. Rejected calls
  * consume nothing and leave outputs unchanged. A new DSP failure latches
@@ -199,6 +214,19 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_sample_owned(
 enum v92_upstream_data_rx_result v92_upstream_data_rx_octet_owned(
 	struct v92_upstream_data_rx *receiver, uint8_t code, int16_t sample,
 	int16_t host_sample, bool available, struct v92_upstream_data_frame *frame);
+
+/* Bound paired-hypothesis B1 frame decodes per native media block, with
+ * proportionally more work credit required for four-tap scoring. Keep
+ * fractional credit for sub-frame blocks; larger blocks carry any excess
+ * training input into the next block. No observations or checks are removed.
+ * A new block also renews the budget for retired-input drain work. */
+void v92_upstream_data_rx_begin_block_owned(struct v92_upstream_data_rx *receiver,
+	unsigned samples);
+/* Exclusive-owner retired-media path. Advance one bounded fitting tick or
+ * consume one retained input, without adding samples or fabricating wire
+ * evidence. Empty input returns OK and leaves frame unchanged. */
+enum v92_upstream_data_rx_result v92_upstream_data_rx_drain_owned(
+	struct v92_upstream_data_rx *receiver, struct v92_upstream_data_frame *frame);
 
 const char *v92_upstream_data_rx_result_name(
 	enum v92_upstream_data_rx_result result);

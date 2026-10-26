@@ -8813,6 +8813,57 @@ static bool v92_no_path_recovery_contracts(const struct pcm_call *before, uint8_
 	return true;
 }
 
+static bool test_v92_retained_receive_tail(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++) {
+		const struct v92_upstream_offer offer = {
+			.peer_mask = (UINT32_C(1) << 19u) - 1u, .local_maximum = 19u, .expected = 19u,
+			.postcursor = .10, .receive_gain = .75, .payload_frames = 1,
+		};
+		struct v92_online_pair pair;
+		CHECK(capture_v92_duplex_data(law, 3, false, &offer, NULL, 0, &pair), "tail initial call failed");
+		struct pcm_call call = pair.digital;
+		struct pcm_call_v92_digital_data before = call.state.data_path.v92_digital;
+		struct v92_upstream_data_rx expected = before.upstream;
+		size_t pending = pcm_call_receive_pending_owned(&call);
+		uint64_t physical = expected.line.input_samples + expected.input.count;
+		unsigned steps = 0, delivered = 0;
+		CHECK(pending > 0 && pending <= V92_UPSTREAM_INPUT_QUEUE, "tail fixture has no retained input");
+		while (pcm_call_receive_pending_owned(&call)) {
+			if (steps % 40 == 0) {
+				(void)pcm_call_begin_receive_block_owned(&call, 40);
+				v92_upstream_data_rx_begin_block_owned(&expected, 40);
+			}
+			struct v92_upstream_data_frame frame;
+			struct pcm_call_data_event event;
+			enum v92_upstream_data_rx_result rx = v92_upstream_data_rx_drain_owned(&expected, &frame);
+			CHECK(++steps <= V92_UPSTREAM_INPUT_QUEUE + 2048 &&
+				(rx == V92_UPSTREAM_DATA_RX_OK || rx == V92_UPSTREAM_DATA_RX_FRAME) &&
+				pcm_call_drain_receive_owned(&call, &event) == PCM_CALL_OK && pcm_call_is_valid(&call),
+				"retained call input did not drain within its bound");
+			const struct v92_upstream_data_rx *actual = &call.state.data_path.v92_digital.upstream;
+			CHECK(actual->line.input_samples + actual->input.count == physical &&
+				actual->input.count == expected.input.count &&
+				!memcmp(&actual->decoder, &expected.decoder, sizeof(expected.decoder)),
+				"retired drain invented input or changed decoder state");
+			if (rx == V92_UPSTREAM_DATA_RX_FRAME && frame.bit_count && !frame.b1u) {
+				CHECK(event.kind == PCM_CALL_PCM_UPSTREAM_FRAME && !frame.ambiguous &&
+					event.frame.pcm_upstream.bit_count == frame.bit_count &&
+					!memcmp(event.frame.pcm_upstream.bits, frame.bits, frame.bit_count),
+					"retired call dropped or changed accepted payload");
+				delivered++;
+			} else CHECK(event.kind == PCM_CALL_DATA_NONE, "retired call fabricated payload");
+		}
+		CHECK(delivered && !memcmp(&before.downstream, &call.state.data_path.v92_digital.downstream,
+				sizeof(before.downstream)) && !memcmp(&before.ru, &call.state.data_path.v92_digital.ru, sizeof(before.ru)),
+			"retired drain advanced TX or physical control clocks");
+		struct pcm_call_data_event empty;
+		CHECK(pcm_call_drain_receive_owned(&call, &empty) == PCM_CALL_OK && empty.kind == PCM_CALL_DATA_NONE,
+			"empty receive tail produced data");
+	}
+	return true;
+}
+
 static bool run_v92_no_path_recovery(enum g711_law law)
 {
 	const struct v92_upstream_offer offer = {
@@ -8835,7 +8886,8 @@ static bool run_v92_no_path_recovery(enum g711_law law)
 	 * Probe an owned receiver copy to identify that exact sample,
 	 * then feed that same sample through the complete call at each budget.
 	 * This distinguishes decoder failure from a later quality-window alarm. */
-	for (unsigned sample = 0; sample < 64u; ++sample) {
+	unsigned limit = upstream->input.count + 64u;
+	for (unsigned sample = 0; sample < limit; ++sample) {
 		noise = noise * UINT32_C(1664525) + UINT32_C(1013904223);
 		int32_t signed_noise = (int32_t)(noise >> 16);
 		int16_t linear = (int16_t)(signed_noise > INT16_MAX ? signed_noise - 65536 : signed_noise);
@@ -13253,6 +13305,7 @@ int main(int argc, char **argv)
 		{ "V.92 post-acquisition B1 quality", test_v92_b1_quality_window },
 		{ "V.92 delayed duplex PCM data", test_v92_delayed_duplex_data },
 		{ "V.92 online quality rate recovery", test_v92_quality_rate_recovery },
+		{ "V.92 retained receive input", test_v92_retained_receive_tail },
 		{ "V.92 lost decoder paths recover within budget", test_v92_no_path_recovery },
 		{ "V.92 peer retrain outranks lost PCM paths", test_v92_peer_retrain_lost_paths },
 		{ "V.92 lost B1 decoder paths retrain", test_v92_b1_no_path_recovery },

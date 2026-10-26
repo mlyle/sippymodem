@@ -106,7 +106,7 @@ int v92_echo_timing_observe(
 	if (echo == NULL || receiver == NULL || !available || receiver->failed ||
 	    receiver->line.plan.observation != V92_PCM_FRAME_CONSTELLATION ||
 	    receiver->line.received_frames < V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES ||
-	    receiver->line.delay_remaining || receiver->model.valid || receiver->model.scalar_gain ||
+	    receiver->line.delay_remaining || receiver->input.count || receiver->model.valid || receiver->model.scalar_gain ||
 	    (!echo->filter_ready && !echo->retained_delay_samples) ||
 	    (mode != PCM_HOST_ECHO_FILTER && mode != PCM_HOST_ECHO_FILTER_DATA) ||
 	    (mode == PCM_HOST_ECHO_FILTER_DATA && echo->filter_suspended) ||

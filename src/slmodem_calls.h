@@ -41,6 +41,8 @@ struct slmodem_calls {
 	enum sip_call_state state;
 	uint64_t generation;
 	bool overflowed;
+	/* Owner clears this after the retired host media has drained. */
+	bool receive_draining;
 };
 
 /* modem is borrowed and must outlive calls and its callbacks. */
