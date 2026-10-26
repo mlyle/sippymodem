@@ -73,6 +73,10 @@ struct v92_upstream_data_line;
  * declined without mutation. Missing acquisition media still closes fitting. */
 bool v92_upstream_model_seed(struct v92_upstream_data_rx *receiver,
 	const struct v92_upstream_seed *seed);
+/* Exclusively owned receiver. Call only after the complete independent B1u
+ * bit/quality checks pass. A strongly separated model can then release the
+ * competing decoder; uncertain models remain paired. Fits stay immutable. */
+bool v92_upstream_model_finish_b1u(struct v92_upstream_data_rx *receiver);
 void v92_upstream_model_progress(struct v92_upstream_data_rx *receiver);
 void v92_upstream_model_init(struct v92_upstream_data_rx *receiver);
 bool v92_upstream_model_is_valid(const struct v92_upstream_data_rx *receiver);

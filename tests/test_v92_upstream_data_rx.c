@@ -2796,6 +2796,28 @@ static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer, boo
 			CHECK(receiver.line.host.gain == 0.0 && pcm_gain_is_valid(&receiver.line.host.fit),
 			      "host gain froze before the acquisition boundary");
 		}
+		if (deferred && receiver.line.received_frames == V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
+			struct v92_upstream_data_rx selected = receiver, before;
+			unsigned other = selected.model.primary ^ 1u;
+			selected.line.received_frames--;
+			before = selected;
+			CHECK(!v92_upstream_model_finish_b1u(&selected) && !memcmp(&selected, &before, sizeof(before)),
+				"channel selection ran before the final independent B1u bit");
+			selected = receiver;
+			selected.model.cost[other] = UINT64_C(16) * V92_PCM_RX_AMBIGUITY_COST - 1;
+			before = selected;
+			CHECK(!v92_upstream_model_finish_b1u(&selected) && !memcmp(&selected, &before, sizeof(before)),
+				"channel selection discarded an uncertain model");
+			selected.model.cost[other]++;
+			before = selected;
+			CHECK(v92_upstream_model_finish_b1u(&selected) &&
+				selected.model.valid == (1u << selected.model.primary) &&
+				!memcmp(&selected.decoder, &before.decoder, sizeof(selected.decoder)) &&
+				!memcmp(selected.model.model, before.model.model, sizeof(selected.model.model)) &&
+				!memcmp(&selected.line, &before.line, sizeof(selected.line)) &&
+				memory_region_is_zero(&selected.model.alternate, sizeof(selected.model.alternate)) &&
+				v92_upstream_data_rx_is_valid(&selected), "selected channel changed coding, fits, or physical state");
+		}
 		unsigned f = (unsigned)receiver.line.received_frames - 1u;
 		enum v92_pcm_frame_rm expected_rm = !rm || f < RM_START +
 			V92_PCM_RM_QUALIFY_FRAMES - 1u || f >= RM_END ? V92_PCM_FRAME_RM_NONE :

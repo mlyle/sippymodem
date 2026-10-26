@@ -5084,6 +5084,8 @@ static enum pcm_call_result receive_v92_frame(struct pcm_call *call,
 		path->b1u_mismatches |= frame->b1u_mismatches;
 		path->b1u_decode_failed |= path->b1u_mismatches == V92_B1U_BOTH_MISMATCH;
 	}
+	if (v92_peer_b1_received_owned(call))
+		(void)v92_upstream_model_finish_b1u(&path->upstream);
 	/* The decoder's lookahead can still deliver B1u bits after
 	 * the physical B1 boundary. Never expose them as host data. */
 	if (v92_peer_b1_received_owned(call) &&

@@ -434,6 +434,23 @@ void v92_upstream_model_progress(struct v92_upstream_data_rx *receiver)
 	model->fit.clock = stage == V92_FIT_REFINE ? V92_MODEL_REFINE_SAMPLES - 1 : V92_MODEL_SWEEP_SAMPLES - 1;
 }
 
+/* Once every held-out B1u bit and its physical quality have qualified, a
+ * decisively separated frozen channel need not retain a competing decoder.
+ * Keep uncertain channels paired. This margin is sixteen times the decoder's
+ * ambiguity boundary; it is model-selection evidence, not a measured BER. */
+bool v92_upstream_model_finish_b1u(struct v92_upstream_data_rx *receiver)
+{
+	if (!receiver || receiver->line.received_frames != V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES ||
+		receiver->model.fitting || receiver->model.valid != 3) return false;
+	struct v92_upstream_model *model = &receiver->model;
+	unsigned other = model->primary ^ 1u;
+	if (model->cost[other] < UINT64_C(16) * V92_PCM_RX_AMBIGUITY_COST) return false;
+	model->valid = (uint8_t)(1u << model->primary);
+	model->cost[other] = 0;
+	memset(&model->alternate, 0, sizeof(model->alternate));
+	return true;
+}
+
 static bool wire_cells(const struct v92_upstream_data_line *line, enum g711_law law,
 	struct v92_pcm_frame_cell cells[V92_PCM_MAPPING_FRAME_SYMBOLS])
 {

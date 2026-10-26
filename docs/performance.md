@@ -109,3 +109,48 @@ current shared-server library nor a complete BBS. Five heavy calls passed
 these workloads; this is a planning result with those limits, rather than a
 measured maximum capacity. Private calibration and wave records retain the
 exact source/build hashes, counters, and failure logs.
+
+## PCM receive training on Pi 5: 2026-10-26
+
+Nonlinear channel fitting and paired B1 decoding previously exceeded the
+20-ms packet budget on a channel with return echo and a 0.125 postcursor.
+Receive acquisition now retains physical observations while fitting advances
+across native media blocks. Both channel hypotheses and all independent B1
+checks remain. After successful B1 validation, a sufficiently separated
+channel releases the competing decoder; uncertain channels keep both.
+The temporary observation queue is bounded to 1,024 samples and drains
+accepted input after remote media retirement. It adds no steady-state prefill.
+
+The following measurements use normal `-O2` builds, one Pi core pinned for
+DSP, LAPM, 52,000 bit/s transmit and 40,000 bit/s receive, and 20-ms packets.
+There were two 500-data-packet calls per row, with run order reversed between
+repeats. Runs started at or below 65 degrees C; telemetry showed no active
+throttling. Four-tap rows force a tiny valid third CPd feedback coefficient
+to exercise the more expensive scoring path; they are synthetic cost cases,
+not evidence from another physical line.
+
+All figures are milliseconds of thread CPU time. Three-packet windows exclude
+idle gaps and never cross phases or calls.
+
+| Receive case | Training worst packet | Training worst three | Data average | Data worst packet |
+| --- | ---: | ---: | ---: | ---: |
+| Mu-law, three taps | 16.87 | 48.18 | 9.48 | 10.39 |
+| A-law, three taps | 17.37 | 50.75 | 9.69 | 10.68 |
+| Mu-law, four taps | 17.34 | 49.61 | 10.96 | 12.16 |
+| A-law, four taps | 17.67 | 51.49 | 11.46 | 13.48 |
+
+Elapsed-timer maxima across these runs were 17.68 ms per training packet
+and 51.52 ms per three packets, within the respective 20/60-ms budgets.
+A separate reversed-order comparison against `ca7fc44d` measured three-tap
+training maxima of 36.63/39.83 ms for mu-law/A-law before these changes, and
+steady-data averages of 18.28/18.67 ms.
+
+A fresh build of all 356 native core modules also compared 4,902,720 decoded
+payload bits against independently recorded transmitter output, with zero
+bit errors or ambiguous frames. That check used a 0.375 postcursor for
+mu-law and 0.125 for A-law, with return echo. Receiver tests cover bounded
+input, sub-frame scheduling, restart, four-tap fitting and retained-media
+drain. These measurements establish headroom for the tested core paths;
+they exclude SIP/RTP, BBS load and concurrent-call scheduling. The source,
+build procedure, logs and thermal telemetry remain in the private evidence
+corpus.
