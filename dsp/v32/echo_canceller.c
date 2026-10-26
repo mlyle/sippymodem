@@ -141,25 +141,17 @@ enum v32_echo_result v32_echo_canceller_push_reference(
 	return V32_ECHO_OK;
 }
 
-static struct qam_point reference_at_age(
-	const struct v32_echo_canceller *canceller, size_t age)
-{
-	if (age >= canceller->reference_fill)
-		return (struct qam_point){ 0 };
-	return canceller->reference[ring_index_at_age(
-		canceller->reference_write, V32_ECHO_REFERENCE_CAPACITY,
-		age + 1u)];
-}
-
 static struct qam_point tap_reference(
-	const struct v32_echo_canceller *canceller,
-	size_t window, size_t tap)
+	const struct v32_echo_canceller *canceller, size_t window, size_t tap)
 {
 	size_t age = canceller->near_delay_symbols + tap;
 
 	if (window == V32_ECHO_DELAYED_WINDOW)
 		age += canceller->round_trip_symbols;
-	return reference_at_age(canceller, age);
+	if (age >= canceller->reference_fill)
+		return (struct qam_point){ 0 };
+	return canceller->reference[ring_index_at_age(
+		canceller->reference_write, V32_ECHO_REFERENCE_CAPACITY, age + 1u)];
 }
 
 static bool prediction_and_energy(
@@ -178,9 +170,6 @@ static bool prediction_and_energy(
 			const struct qam_point *coefficient =
 				&canceller->coefficients[phase][window][tap];
 
-			if (!point_is_finite(&point) ||
-			    !point_is_finite(coefficient))
-				return false;
 			double value = qam_point_correlation(coefficient, &point).in_phase;
 			predicted += value;
 			if (window == V32_ECHO_DELAYED_WINDOW)
@@ -191,6 +180,10 @@ static bool prediction_and_energy(
 	*far_prediction = far;
 	*prediction = predicted;
 	*energy = reference_energy;
+	/* Finite energy proves all active reference coordinates finite. Any
+	 * nonfinite coefficient also makes the real correlation nonfinite,
+	 * including infinity times zero; later additions cannot repair it.
+	 * Keep the full-state scan in is_valid, outside this per-sample path. */
 	return isfinite(predicted) && isfinite(reference_energy) && isfinite(far);
 }
 

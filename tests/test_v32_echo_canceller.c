@@ -142,7 +142,8 @@ static bool drive_symbol(
 }
 
 static bool active_corruption_is_transactional(
-	bool adapting, bool corrupt_reference)
+	bool adapting, bool corrupt_reference, bool quadrature,
+	bool silent, double corrupted)
 {
 	struct v32_echo_canceller canceller;
 	struct v32_echo_canceller saved;
@@ -151,6 +152,8 @@ static bool active_corruption_is_transactional(
 	double cleaned = -456.0;
 	double saved_cleaned = cleaned;
 	size_t latest;
+	if (silent)
+		reference = (struct qam_point){ 0 };
 
 	CHECK(v32_echo_canceller_init(
 		      &canceller, 0, V32_ECHO_MIN_ROUND_TRIP_SYMBOLS) ==
@@ -171,10 +174,17 @@ static bool active_corruption_is_transactional(
 		latest = canceller.reference_write == 0 ?
 			 V32_ECHO_REFERENCE_CAPACITY - 1u :
 			 canceller.reference_write - 1u;
-		canceller.reference[latest].in_phase = INFINITY;
+		if (quadrature)
+			canceller.reference[latest].quadrature = corrupted;
+		else
+			canceller.reference[latest].in_phase = corrupted;
 	} else {
-		canceller.coefficients[0][V32_ECHO_NEAR_WINDOW][0]
-			.in_phase = INFINITY;
+		struct qam_point *coefficient =
+			&canceller.coefficients[0][V32_ECHO_NEAR_WINDOW][0];
+		if (quadrature)
+			coefficient->quadrature = corrupted;
+		else
+			coefficient->in_phase = corrupted;
 	}
 	saved = canceller;
 	CHECK(v32_echo_canceller_process(
@@ -185,6 +195,18 @@ static bool active_corruption_is_transactional(
 	      "%s active %s corruption was not transactional",
 	      adapting ? "adaptive" : "frozen",
 	      corrupt_reference ? "reference" : "coefficient");
+	/* Numeric preflight preserves first-error order, including when a later
+	 * receive phase is invalid. Neither failure may commit taps. */
+	double input[] = { NAN, NAN }, output[] = { -1, -2 };
+	CHECK(v32_echo_canceller_process(&canceller, input, output, 2) ==
+		V32_ECHO_INVALID_ARGUMENT && output[0] == -1 && output[1] == -2 &&
+		memcmp(&canceller, &saved, sizeof(canceller)) == 0,
+		"first invalid input was hidden by corrupt echo state");
+	input[0] = received;
+	CHECK(v32_echo_canceller_process(&canceller, input, output, 2) ==
+		V32_ECHO_INVALID_STATE && output[0] == -1 && output[1] == -2 &&
+		memcmp(&canceller, &saved, sizeof(canceller)) == 0,
+		"later invalid input hid corrupt first-phase echo state");
 	return true;
 }
 
@@ -357,11 +379,12 @@ static bool test_validation_and_aliases(void)
 	CHECK(!v32_echo_canceller_is_valid(&canceller) &&
 	      !v32_echo_canceller_is_valid(NULL),
 	      "echo validation changed");
-	CHECK(active_corruption_is_transactional(false, true) &&
-	      active_corruption_is_transactional(false, false) &&
-	      active_corruption_is_transactional(true, true) &&
-	      active_corruption_is_transactional(true, false),
-	      "active corruption contract failed");
+	const double corruptions[] = { INFINITY, -INFINITY, NAN };
+	for (unsigned mode = 0; mode < 16; ++mode)
+		for (size_t i = 0; i < ARRAY_LENGTH(corruptions); ++i)
+			CHECK(active_corruption_is_transactional(
+				mode & 1u, mode & 2u, mode & 4u, mode & 8u, corruptions[i]),
+				"active corruption contract failed in mode %u", mode);
 	return true;
 }
 
