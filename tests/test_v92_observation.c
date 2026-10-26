@@ -560,7 +560,8 @@ static void check_predictive_boundaries(const struct v92_observation *trained)
 	assert(fesetround(saved) == 0);
 }
 
-static void check_channel(enum g711_law law, double gain, unsigned taps, struct v92_observation *previous)
+static void check_channel(enum g711_law law, double gain, unsigned taps,
+	size_t count, struct v92_observation *previous)
 {
 	int32_t x[SAMPLES];
 	int16_t q[SAMPLES], y[SAMPLES], u[TRAINING] = { 0 };
@@ -578,7 +579,7 @@ static void check_channel(enum g711_law law, double gain, unsigned taps, struct 
 	struct v92_observation model;
 	const struct v92_observation_training training = {
 		.input = x, .linear = u, .sample = y, .levels = y,
-		.count = TRAINING, .taps = taps, .host_gain = 1., .law = law,
+		.count = count, .taps = taps, .host_gain = 1., .law = law,
 	};
 	assert(v92_observation_fit(&model, &training));
 	assert(v92_observation_is_valid(&model));
@@ -607,7 +608,7 @@ static void check_channel(enum g711_law law, double gain, unsigned taps, struct 
 	check_failures(&model, x, u, y);
 	if (previous->count) check_rebinding(previous, &model);
 	*previous = model;
-	printf("V.92 observation law=%u taps=%u gain=%.9g heldout_rms=%.6f\n", law, taps, gain, rms);
+	printf("V.92 observation law=%u taps=%u gain=%.9g count=%zu heldout_rms=%.6f\n", law, taps, gain, count, rms);
 }
 
 /* Independently integrate the actual final-codec cells. A retained fitted
@@ -912,11 +913,17 @@ int main(void)
 			check_conditioned_channel(law, quarter / 4.);
 	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)
 		for (unsigned i = 0; i < sizeof(gains) / sizeof(gains[0]); i++)
-			check_channel(law, gains[i], 3, &previous);
+			check_channel(law, gains[i], 3, TRAINING, &previous);
 	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++) {
-		check_channel(law, 4., 4, &previous);
+		check_channel(law, 4., 4, TRAINING, &previous);
 		check_joint_transitions(&previous);
 	}
+	/* Short and odd acquisition spans exercise both finite-window edges. */
+	const size_t counts[] = { TRAINING / 2, TRAINING - 3, TRAINING - 1 };
+	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)
+		for (unsigned taps = 3; taps <= 4; taps++)
+			for (unsigned i = 0; i < sizeof(counts) / sizeof(*counts); i++)
+				check_channel(law, 4., taps, counts[i], &previous);
 	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)
 		for (unsigned sigma = 16; sigma <= 64; sigma *= 2)
 			check_noise_fit(law, sigma);

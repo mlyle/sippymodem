@@ -570,6 +570,25 @@ static void heap_down(size_t *heap, size_t count, const struct boundary *events)
 	}
 }
 
+/* For an interior q[j] change, every Gram entry at lag d gains the same
+ * change * (q[j-d] + q[j+d]); diagonal entries share the square difference.
+ * Integer samples and at most 288 rows keep all products and intermediate
+ * sums exact in binary64, so grouping these terms preserves the fit. */
+static inline void update_interior_moments(struct moments *m,
+	const int16_t *q, const int16_t *y, unsigned taps,
+	size_t j, double change, double square)
+{
+	for (unsigned a = 0; a < taps; a++) {
+		m->rhs[a] += change * y[j + a];
+		m->gram[gram_moment_index(a, a)] += square;
+	}
+	for (unsigned lag = 1; lag < taps; lag++) {
+		double delta = change * ((double)q[j - lag] + q[j + lag]);
+		for (unsigned col = 0; col + lag < taps; col++)
+			m->gram[gram_moment_index(col + lag, col)] += delta;
+	}
+}
+
 static bool fit_intervals(struct interval fits[INTERVALS], enum g711_law law,
 	const int32_t *x, const int16_t *y, size_t count, unsigned taps)
 {
@@ -627,16 +646,24 @@ static bool fit_intervals(struct interval fits[INTERVALS], enum g711_law law,
 			size_t j = heap[0];
 			int16_t value = magnitude_code(law, x[j], events[j].next);
 			double change = value - q[j], square = (double)value * value - (double)q[j] * q[j];
-			for (unsigned a = 0; a < taps; a++) {
-				size_t row = j + a;
-				if (row < taps || row >= count) continue;
-				m.rhs[a] += change * y[row];
-				m.gram[gram_moment_index(a, a)] += square;
-				/* Each affected row contributes once to its shared moment;
-				 * both index orders still matter as q[j] moves. */
-				for (unsigned b = 0; b < taps; b++) if (b != a) {
-					double delta = change * q[row - b];
-					m.gram[gram_moment_index(a, b)] += delta;
+			/* Window edges omit different rows and retain their individual updates. */
+			if (j >= taps && j + taps <= count) {
+				if (taps == 3)
+					update_interior_moments(&m, q, y, 3, j, change, square);
+				else
+					update_interior_moments(&m, q, y, 4, j, change, square);
+			} else {
+				for (unsigned a = 0; a < taps; a++) {
+					size_t row = j + a;
+					if (row < taps || row >= count) continue;
+					m.rhs[a] += change * y[row];
+					m.gram[gram_moment_index(a, a)] += square;
+					/* Each affected row contributes once to its shared moment;
+					 * both index orders still matter as q[j] moves. */
+					for (unsigned b = 0; b < taps; b++) if (b != a) {
+						double delta = change * q[row - b];
+						m.gram[gram_moment_index(a, b)] += delta;
+					}
 				}
 			}
 			q[j] = value;
