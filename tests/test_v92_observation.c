@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #include "v92_observation.h"
+#include "v92_observation_fit.h"
 #include "integer_math.h"
 
 #include <assert.h>
@@ -560,6 +561,66 @@ static void check_predictive_boundaries(const struct v92_observation *trained)
 	assert(fesetround(saved) == 0);
 }
 
+/* Interleave different acquisition spans, suspend and restart one owner,
+ * and ensure an incomplete job never publishes a decoder model. */
+static void check_resumable(const struct v92_observation_training *training,
+	const struct v92_observation *expected)
+{
+	struct v92_observation_training shorter = *training;
+	shorter.count--;
+	struct v92_observation other, output[2], before[2];
+	struct v92_observation_fit_work work[2];
+	assert(v92_observation_fit(&other, &shorter));
+	memset(output, 0x5a, sizeof(output));
+	memcpy(before, output, sizeof(before));
+	assert(v92_observation_fit_begin(work, training));
+	assert(v92_observation_fit_begin(work + 1, &shorter));
+	bool done[2] = { false, false };
+	unsigned steps[2] = { 0, 0 };
+	for (unsigned turn = 0; !done[0] || !done[1]; turn++) {
+		unsigned i = turn % 3 == 0 ? 1 : 0;
+		if (done[i]) continue;
+		const struct v92_observation_training *t = i ? &shorter : training;
+		enum v92_observation_fit_result result = v92_observation_fit_step(work + i, t, output + i);
+		assert(++steps[i] < 128);
+		assert(result != V92_OBSERVATION_FIT_DECLINED);
+		if (result == V92_OBSERVATION_FIT_MORE) {
+			assert(!memcmp(output + i, before + i, sizeof(*output)));
+			if (i == 1 && steps[i] == 3)
+				assert(v92_observation_fit_begin(work + i, t));
+		} else {
+			done[i] = true;
+			assert(steps[i] > 3 && v92_observation_is_valid(output + i));
+			assert(!memcmp(output + i, i ? &other : expected, sizeof(*output)));
+		}
+	}
+}
+
+/* Identical input magnitudes put every codec transition at the same gain.
+ * Even a singular channel must yield between transition batches, without
+ * exposing a partial model or depending only on distinct-cell count. */
+static void check_coincident_fit(enum g711_law law)
+{
+	int32_t x[TRAINING];
+	int16_t y[TRAINING], u[TRAINING] = { 0 };
+	for (unsigned i = 0; i < TRAINING; i++) { x[i] = 4096; y[i] = (int16_t)(i * 8); }
+	struct v92_observation_training training = {
+		.input = x, .sample = y, .linear = u, .count = TRAINING,
+		.taps = 3, .host_gain = 1., .law = law,
+	};
+	struct v92_observation_fit_work work;
+	struct v92_observation output, before;
+	memset(&output, 0x5a, sizeof(output)); before = output;
+	assert(v92_observation_fit_begin(&work, &training));
+	unsigned steps = 0;
+	enum v92_observation_fit_result result;
+	do {
+		result = v92_observation_fit_step(&work, &training, &output);
+		assert(++steps < 128 && !memcmp(&output, &before, sizeof(output)));
+	} while (result == V92_OBSERVATION_FIT_MORE);
+	assert(result == V92_OBSERVATION_FIT_DECLINED && steps > 2);
+}
+
 static void check_channel(enum g711_law law, double gain, unsigned taps,
 	size_t count, struct v92_observation *previous)
 {
@@ -583,6 +644,7 @@ static void check_channel(enum g711_law law, double gain, unsigned taps,
 	};
 	assert(v92_observation_fit(&model, &training));
 	assert(v92_observation_is_valid(&model));
+	if (gain == 4. && count == TRAINING) check_resumable(&training, &model);
 	struct v92_observation before = model;
 	struct v92_observation inferred;
 	struct v92_observation_training without_levels = training;
@@ -903,6 +965,8 @@ static void check_joint_transitions(const struct v92_observation *model)
 int main(void)
 {
 	check_scalar_rounding();
+	check_coincident_fit(G711_LAW_PCMU);
+	check_coincident_fit(G711_LAW_PCMA);
 	const double gains[] = { .00002, .02, .125, 4., 16.39453125, 21.859375, 512. };
 	struct v92_observation previous = { 0 };
 	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #include "v92_observation.h"
+#include "v92_observation_fit.h"
 #include "memory_region.h"
 #include "gram_fit.h"
 #include "integer_math.h"
@@ -20,14 +21,11 @@ _Static_assert(V92_OBSERVATION_STEPS < UINT16_MAX, "geometry tags must fit");
 _Static_assert((V92_OBSERVATION_CACHE & (V92_OBSERVATION_CACHE - 1)) == 0 &&
 	(V92_OBSERVATION_POINTS & (V92_OBSERVATION_POINTS - 1)) == 0,
 	"cache sizes must be powers of two");
-struct interval { double low, high, coefficient[TAPS], error, weight; };
-struct moments { double gram[GRAM_FIT_MOMENTS], rhs[TAPS], energy; };
-struct boundary { double at; unsigned next; };
 
 static bool codec_bounds(enum g711_law law, double gain, int16_t observed,
 	const int16_t *level, double offset, double *lower, double *upper);
 
-static bool solve_channel(const struct moments *moments, unsigned taps, double fitted[TAPS])
+static bool solve_channel(const struct v92_observation_fit_moments *moments, unsigned taps, double fitted[TAPS])
 {
 	return gram_fit(moments->gram, moments->rhs, taps, fitted) && fitted[0] > 0.;
 }
@@ -135,7 +133,7 @@ static bool bin_moments(double low, double high, double mean, double variance,
  * the channel fallback may stop at its existing convergence boundary. */
 static bool refine_bin_fit(double coefficient[TAPS], const int16_t *q,
 	const double *low, const double *high, size_t count, size_t first,
-	unsigned taps, struct moments *m, double noise, bool converge, double *variance)
+	unsigned taps, struct v92_observation_fit_moments *m, double noise, bool converge, double *variance)
 {
 	for (unsigned iteration = 0; iteration < 96; iteration++) {
 		double targets[V92_OBSERVATION_TRAINING], deviations[V92_OBSERVATION_TRAINING];
@@ -380,7 +378,7 @@ static bool fit_bin_channel_newton(double coefficient[TAPS], const int16_t *q,
 static bool fit_bin_channel(struct v92_observation_interval *fit, const int16_t *q,
 	const int16_t *y, const double *low, const double *high, size_t count, unsigned taps, double *variance)
 {
-	struct moments m = { 0 };
+	struct v92_observation_fit_moments m = { 0 };
 	double noise = 0.;
 	for (size_t j = taps; j < count; j++) {
 		double residual = y[j];
@@ -401,43 +399,52 @@ static bool fit_bin_channel(struct v92_observation_interval *fit, const int16_t 
 /* The first-codec gain intervals come from the initial center fit. Select
  * noise from the best likelihood fit, then compare all retained hypotheses
  * under that common variance and their log-uniform gain prior. */
-static bool refit_bins(struct v92_observation *model,
-	const int32_t *x, const int16_t *y, const int16_t *levels,
-	const double *offsets, size_t count)
+static bool refit_bins_begin(struct v92_observation_fit_work *w,
+	const int16_t *y, const int16_t *levels, const double *offsets, size_t count)
 {
-	double low[V92_OBSERVATION_TRAINING], high[V92_OBSERVATION_TRAINING];
-	double costs[INTERVALS], variances[INTERVALS], best = HUGE_VAL, total = 0.;
-	int16_t q[INTERVALS][V92_OBSERVATION_TRAINING];
-	unsigned chosen = 0;
+	struct v92_observation *model = &w->model;
 	for (size_t j = 0; j < count; j++) {
 		double lower, upper;
 		if (!codec_bounds(model->law, model->quantizer_gain, y[j],
 			levels ? levels + j : NULL, offsets ? offsets[j] : 0., &lower, &upper))
 			return false;
-		low[j] = y[j] + lower;
-		high[j] = y[j] + upper;
+		w->lower[j] = y[j] + lower;
+		w->upper[j] = y[j] + upper;
 	}
-	for (unsigned i = 0; i < INTERVALS; i++) {
-		struct v92_observation_interval *fit = &model->intervals[i];
-		double gain = sqrt(fit->low * fit->high);
-		for (size_t j = 0; j < count; j++) {
-			q[i][j] = g711_quantize(model->law, sample_round_s16(gain * x[j]));
-		}
-		costs[i] = fit_bin_channel(fit, q[i], y, low, high, count, model->taps, variances + i) ?
-			bin_cost(q[i], low, high, count, model->taps, fit, variances[i]) : HUGE_VAL;
-		if (costs[i] < best) { best = costs[i]; chosen = i; }
+	return true;
+}
+
+static void refit_bins_step(struct v92_observation_fit_work *w,
+	const int32_t *x, const int16_t *y, size_t count, unsigned i)
+{
+	struct v92_observation *model = &w->model;
+	struct v92_observation_interval *fit = &model->intervals[i];
+	double gain = sqrt(fit->low * fit->high);
+	for (size_t j = 0; j < count; j++) {
+		w->bins[i][j] = g711_quantize(model->law, sample_round_s16(gain * x[j]));
 	}
+	w->costs[i] = fit_bin_channel(fit, w->bins[i], y, w->lower, w->upper, count, model->taps, w->variances + i) ?
+		bin_cost(w->bins[i], w->lower, w->upper, count, model->taps, fit, w->variances[i]) : HUGE_VAL;
+}
+
+static bool refit_bins_finish(struct v92_observation_fit_work *w, size_t count)
+{
+	struct v92_observation *model = &w->model;
+	double best = HUGE_VAL, total = 0.;
+	unsigned chosen = 0;
+	for (unsigned i = 0; i < INTERVALS; i++)
+		if (w->costs[i] < best) { best = w->costs[i]; chosen = i; }
 	if (!isfinite(best)) return false;
-	model->variance = variances[chosen];
+	model->variance = w->variances[chosen];
 	best = HUGE_VAL;
 	for (unsigned i = 0; i < INTERVALS; i++) {
-		if (isfinite(costs[i]))
-			costs[i] = bin_cost(q[i], low, high, count, model->taps, model->intervals + i, model->variance);
-		best = fmin(best, costs[i]);
+		if (isfinite(w->costs[i]))
+			w->costs[i] = bin_cost(w->bins[i], w->lower, w->upper, count, model->taps, model->intervals + i, model->variance);
+		best = fmin(best, w->costs[i]);
 	}
 	for (unsigned i = 0; i < INTERVALS; i++) {
 		struct v92_observation_interval *fit = &model->intervals[i];
-		fit->weight = exp(-.5 * (costs[i] - best)) *
+		fit->weight = exp(-.5 * (w->costs[i] - best)) *
 			log(fit->high / fit->low);
 		total += fit->weight;
 	}
@@ -476,10 +483,10 @@ static int16_t magnitude_code(enum g711_law law, int32_t x, unsigned magnitude)
 	return g711_quantize(law, (int16_t)(x < 0 ? -(int32_t)magnitude : (int32_t)magnitude));
 }
 
-static struct boundary next_boundary(enum g711_law law, int32_t x, unsigned magnitude)
+static struct v92_observation_fit_boundary next_boundary(enum g711_law law, int32_t x, unsigned magnitude)
 {
 	unsigned limit = x < 0 ? 32768u : 32767u;
-	struct boundary boundary = { .at = HUGE_VAL, .next = limit };
+	struct v92_observation_fit_boundary boundary = { .at = HUGE_VAL, .next = limit };
 	if (x == 0) return boundary;
 	int16_t sample = (int16_t)(x < 0 ? -(int32_t)magnitude : (int32_t)magnitude);
 	struct g711_interval bin;
@@ -499,7 +506,7 @@ static struct boundary next_boundary(enum g711_law law, int32_t x, unsigned magn
  * cells may replace a complete codec walk with zero or one transition. No
  * borrowed model, input or cell pointers survive initialization. */
 struct gain_sweep {
-	struct boundary boundary[TAPS];
+	struct v92_observation_fit_boundary boundary[TAPS];
 	int16_t value[TAPS], last[TAPS];
 	bool general[TAPS];
 	double begin, end, high;
@@ -558,7 +565,7 @@ static inline bool gain_sweep_next(struct gain_sweep *sweep,
 	return !sweep->failed;
 }
 
-static void heap_down(size_t *heap, size_t count, const struct boundary *events)
+static void heap_down(size_t *heap, size_t count, const struct v92_observation_fit_boundary *events)
 {
 	size_t parent = 0;
 	while (2 * parent + 1 < count) {
@@ -574,7 +581,7 @@ static void heap_down(size_t *heap, size_t count, const struct boundary *events)
  * change * (q[j-d] + q[j+d]); diagonal entries share the square difference.
  * Integer samples and at most 288 rows keep all products and intermediate
  * sums exact in binary64, so grouping these terms preserves the fit. */
-static inline void update_interior_moments(struct moments *m,
+static inline void update_interior_moments(struct v92_observation_fit_moments *m,
 	const int16_t *q, const int16_t *y, unsigned taps,
 	size_t j, double change, double square)
 {
@@ -589,95 +596,104 @@ static inline void update_interior_moments(struct moments *m,
 	}
 }
 
-static bool fit_intervals(struct interval fits[INTERVALS], enum g711_law law,
-	const int32_t *x, const int16_t *y, size_t count, unsigned taps)
+static void fit_intervals_begin(struct v92_observation_fit_work *w,
+	enum g711_law law, const int32_t *x, const int16_t *y, size_t count, unsigned taps)
 {
-	struct boundary events[V92_OBSERVATION_TRAINING];
-	size_t heap[V92_OBSERVATION_TRAINING], used = 0;
-	int16_t q[V92_OBSERVATION_TRAINING] = { 0 };
-	struct moments m = { 0 };
-	double low = 0.;
-	for (size_t i = 0; i < INTERVALS; i++) fits[i] = (struct interval){ .error = HUGE_VAL };
+	for (size_t i = 0; i < INTERVALS; i++) w->fits[i] = (struct v92_observation_fit_interval){ .error = HUGE_VAL };
 	for (size_t j = 1; j < count; j++) {
 		unsigned limit = x[j] < 0 ? 32768u : 32767u;
-		unsigned magnitude = (unsigned)fmin(limit, round(low * fabs((double)x[j])));
-		q[j] = magnitude_code(law, x[j], magnitude);
-		events[j] = next_boundary(law, x[j], magnitude);
-		size_t child = used++;
-		heap[child] = j;
+		unsigned magnitude = (unsigned)fmin(limit, round(w->low * fabs((double)x[j])));
+		w->q[j] = magnitude_code(law, x[j], magnitude);
+		w->events[j] = next_boundary(law, x[j], magnitude);
+		size_t child = w->used++;
+		w->heap[child] = j;
 		while (child) {
 			size_t parent = (child - 1) / 2;
-			if (events[heap[parent]].at <= events[heap[child]].at) break;
-			size_t swap = heap[parent]; heap[parent] = heap[child]; heap[child] = swap;
+			if (w->events[w->heap[parent]].at <= w->events[w->heap[child]].at) break;
+			size_t swap = w->heap[parent]; w->heap[parent] = w->heap[child]; w->heap[child] = swap;
 			child = parent;
 		}
 	}
 	for (size_t j = taps; j < count; j++) {
 		for (unsigned a = 0; a < taps; a++) {
-			m.rhs[a] += (double)q[j - a] * y[j];
+			w->moments.rhs[a] += (double)w->q[j - a] * y[j];
 			for (unsigned b = 0; b <= a; b++)
-				m.gram[gram_moment_index(a, b)] += (double)q[j - a] * q[j - b];
+				w->moments.gram[gram_moment_index(a, b)] += (double)w->q[j - a] * w->q[j - b];
 		}
-		m.energy += (double)y[j] * y[j];
+		w->moments.energy += (double)y[j] * y[j];
 	}
+}
+
+static int fit_intervals_step(struct v92_observation_fit_work *w,
+	enum g711_law law, const int32_t *x, const int16_t *y, size_t count, unsigned taps)
+{
 	/* Every known input crosses finitely many codec boundaries. Search all
 	 * bounded cells; the all-saturated tail has no identifiable gain and
 	 * cannot carry a proper log-uniform prior. */
-	for (;;) {
-		double high = events[heap[0]].at;
-		if (!isfinite(high)) break;
+	unsigned budget = 1024;
+	while (budget) {
+		double high = w->pending ? w->end : w->events[w->heap[0]].at;
+		if (!isfinite(high)) return isfinite(w->fits[INTERVALS - 1].error) ? 1 : -1;
 
-		if (!(high > low)) return false;
-		struct interval fit = { .low = low, .high = high };
-		if (low > 0. && solve_channel(&m, taps, fit.coefficient)) {
-			double error = m.energy;
-			for (unsigned i = 0; i < taps; i++) error -= fit.coefficient[i] * m.rhs[i];
-			fit.error = fmax(0., error / (count - taps));
-			if (isfinite(fit.error)) {
-				for (size_t i = 0; i < INTERVALS; i++) {
-					if (fit.error >= fits[i].error) continue;
-					memmove(fits + i + 1, fits + i, (INTERVALS - i - 1) * sizeof(*fits));
-					fits[i] = fit;
-					break;
+		if (!w->pending) {
+			if (!(high > w->low)) return -1;
+			struct v92_observation_fit_interval fit = { .low = w->low, .high = high };
+			if (w->low > 0. && solve_channel(&w->moments, taps, fit.coefficient)) {
+				double error = w->moments.energy;
+				for (unsigned i = 0; i < taps; i++) error -= fit.coefficient[i] * w->moments.rhs[i];
+				fit.error = fmax(0., error / (count - taps));
+				if (isfinite(fit.error)) {
+					for (size_t i = 0; i < INTERVALS; i++) {
+						if (fit.error >= w->fits[i].error) continue;
+						memmove(w->fits + i + 1, w->fits + i, (INTERVALS - i - 1) * sizeof(*w->fits));
+						w->fits[i] = fit;
+						break;
+					}
 				}
 			}
+			w->pending = true;
+			w->end = high;
+			budget--;
 		}
-		while (events[heap[0]].at == high) {
-			size_t j = heap[0];
-			int16_t value = magnitude_code(law, x[j], events[j].next);
-			double change = value - q[j], square = (double)value * value - (double)q[j] * q[j];
+		while (w->events[w->heap[0]].at == high) {
+			if (!budget) return 0;
+			budget--;
+			size_t j = w->heap[0];
+			int16_t value = magnitude_code(law, x[j], w->events[j].next);
+			double change = value - w->q[j], square = (double)value * value - (double)w->q[j] * w->q[j];
 			/* Window edges omit different rows and retain their individual updates. */
 			if (j >= taps && j + taps <= count) {
 				if (taps == 3)
-					update_interior_moments(&m, q, y, 3, j, change, square);
+					update_interior_moments(&w->moments, w->q, y, 3, j, change, square);
 				else
-					update_interior_moments(&m, q, y, 4, j, change, square);
+					update_interior_moments(&w->moments, w->q, y, 4, j, change, square);
 			} else {
 				for (unsigned a = 0; a < taps; a++) {
 					size_t row = j + a;
 					if (row < taps || row >= count) continue;
-					m.rhs[a] += change * y[row];
-					m.gram[gram_moment_index(a, a)] += square;
+					w->moments.rhs[a] += change * y[row];
+					w->moments.gram[gram_moment_index(a, a)] += square;
 					/* Each affected row contributes once to its shared moment;
-					 * both index orders still matter as q[j] moves. */
+					 * both index orders still matter as w->q[j] moves. */
 					for (unsigned b = 0; b < taps; b++) if (b != a) {
-						double delta = change * q[row - b];
-						m.gram[gram_moment_index(a, b)] += delta;
+						double delta = change * w->q[row - b];
+						w->moments.gram[gram_moment_index(a, b)] += delta;
 					}
 				}
 			}
-			q[j] = value;
-			events[j] = next_boundary(law, x[j], events[j].next);
-			heap_down(heap, used, events);
+			w->q[j] = value;
+			w->events[j] = next_boundary(law, x[j], w->events[j].next);
+			heap_down(w->heap, w->used, w->events);
 		}
-		low = high;
+		w->low = high;
+		w->pending = false;
 	}
-	return isfinite(fits[INTERVALS - 1].error);
+	return 0;
 }
 
 /* Integral of Q(k*x) for log-uniform k. Every segment is an exact codec cell;
  * endpoint ties have zero measure. No sampled gain grid or quadrature count. */
-static double interval_mean(enum g711_law law, const struct interval *fit, int32_t x)
+static double interval_mean(enum g711_law law, const struct v92_observation_fit_interval *fit, int32_t x)
 {
 	int16_t first = scaled(law, fit->low, x), last = scaled(law, fit->high, x);
 	if (first == last) return first;
@@ -918,56 +934,112 @@ static bool scalar_explains_cells(const struct v92_observation_training *trainin
 	return true;
 }
 
-bool v92_observation_fit(struct v92_observation *model,
+static bool initialize_fit(struct v92_observation_fit_work *w,
 	const struct v92_observation_training *training)
 {
-	if (!training_is_valid(model, sizeof(*model), training) ||
-		(training->taps != 3 && training->taps != 4) || training->count <= training->taps) return false;
 	const int32_t *x = training->input;
-	const int16_t *u = training->linear, *y = training->sample, *levels = training->levels;
-	const double *offsets = training->offsets;
+	const int16_t *y = training->sample;
 	size_t count = training->count;
 	unsigned taps = training->taps;
 	enum g711_law law = training->law;
-	double energy = 0, linear_error = 0;
-	for (size_t i = taps; i < count; i++) {
-		double error = (double)y[i] - u[i];
-		energy += (double)y[i] * y[i]; linear_error += error * error;
-	}
-	if (energy == 0. || linear_error == 0. || linear_explains_cells(training) ||
-	    scalar_explains_cells(training)) return false;
-	struct interval fits[INTERVALS];
-	if (!fit_intervals(fits, law, x, y, count, taps)) return false;
-	struct v92_observation initialized = { .law = law, .taps = taps, .energy = energy / (count - taps),
-		.variance = fmax(1., fits[0].error), .quantizer_gain = training->host_gain };
+	double energy = w->model.energy, linear_error = w->linear_error;
+	w->model = (struct v92_observation){ .law = law, .taps = taps, .energy = energy / (count - taps),
+		.variance = fmax(1., w->fits[0].error), .quantizer_gain = training->host_gain };
 	double total = 0;
 	for (size_t i = 0; i < INTERVALS; i++) {
-		fits[i].weight = exp(-.5 * (count - taps) * (fits[i].error - fits[0].error) / initialized.variance) *
-			log(fits[i].high / fits[i].low);
-		total += fits[i].weight;
+		w->fits[i].weight = exp(-.5 * (count - taps) * (w->fits[i].error - w->fits[0].error) / w->model.variance) *
+			log(w->fits[i].high / w->fits[i].low);
+		total += w->fits[i].weight;
 	}
 	if (!(total > 0.) || !isfinite(total)) return false;
-	for (size_t i = 0; i < INTERVALS; i++) fits[i].weight /= total;
+	for (size_t i = 0; i < INTERVALS; i++) w->fits[i].weight /= total;
 	double error_energy = 0;
 	for (size_t j = taps; j < count; j++) {
 		double predicted = 0;
 		for (size_t i = 0; i < INTERVALS; i++)
 			for (unsigned k = 0; k < taps; k++)
-				predicted += fits[i].weight * fits[i].coefficient[k] * interval_mean(law, fits + i, x[j - k]);
+				predicted += w->fits[i].weight * w->fits[i].coefficient[k] * interval_mean(law, w->fits + i, x[j - k]);
 		double error = y[j] - predicted;
 		error_energy += error * error;
 	}
 	if (!isfinite(error_energy) || error_energy >= linear_error) return false;
 	for (size_t i = 0; i < INTERVALS; i++) {
-		initialized.intervals[i] = (struct v92_observation_interval){
-			.low = fits[i].low, .high = fits[i].high, .weight = fits[i].weight };
-		memcpy(initialized.intervals[i].coefficient, fits[i].coefficient, sizeof(fits[i].coefficient));
+		w->model.intervals[i] = (struct v92_observation_interval){
+			.low = w->fits[i].low, .high = w->fits[i].high, .weight = w->fits[i].weight };
+		memcpy(w->model.intervals[i].coefficient, w->fits[i].coefficient, sizeof(w->fits[i].coefficient));
 	}
-	if (!refit_bins(&initialized, x, y, levels, offsets, count) || !compile_geometry(&initialized) ||
-		!v92_observation_is_valid(&initialized)) return false;
-	if (prefer_linear(&initialized, training)) return false;
-	*model = initialized;
 	return true;
+}
+
+bool v92_observation_fit_begin(struct v92_observation_fit_work *w,
+	const struct v92_observation_training *training)
+{
+	if (!training_is_valid(w, sizeof(*w), training) ||
+		(training->taps != 3 && training->taps != 4) || training->count <= training->taps) return false;
+	double energy = 0., linear_error = 0.;
+	for (size_t i = training->taps; i < training->count; i++) {
+		double error = (double)training->sample[i] - training->linear[i];
+		energy += (double)training->sample[i] * training->sample[i]; linear_error += error * error;
+	}
+	memset(w, 0, sizeof(*w));
+	if (energy == 0. || linear_error == 0. || linear_explains_cells(training) ||
+		scalar_explains_cells(training)) return false;
+	w->linear_error = linear_error;
+	w->model.energy = energy;
+	fit_intervals_begin(w, training->law, training->input, training->sample, training->count, training->taps);
+	w->stage = V92_FIT_SWEEP;
+	return true;
+}
+
+enum v92_observation_fit_result v92_observation_fit_step(struct v92_observation_fit_work *w,
+	const struct v92_observation_training *training, struct v92_observation *output)
+{
+	const int32_t *x = training->input;
+	const int16_t *y = training->sample;
+	size_t count = training->count;
+	enum g711_law law = training->law;
+	if (w->stage == V92_FIT_SWEEP) {
+		int result = fit_intervals_step(w, law, x, y, count, training->taps);
+		if (result < 0) goto decline;
+		if (result) w->stage = V92_FIT_CENTER;
+	} else if (w->stage == V92_FIT_CENTER) {
+		if (!initialize_fit(w, training)) goto decline;
+		w->stage = V92_FIT_BOUNDS;
+	} else if (w->stage == V92_FIT_BOUNDS) {
+		if (!refit_bins_begin(w, y, training->levels, training->offsets, count)) goto decline;
+		w->stage = V92_FIT_REFINE;
+	} else if (w->stage == V92_FIT_REFINE) {
+		refit_bins_step(w, x, y, count, w->cursor++);
+		if (w->cursor == INTERVALS) w->stage = V92_FIT_WEIGHTS;
+	} else if (w->stage == V92_FIT_WEIGHTS) {
+		if (!refit_bins_finish(w, count)) goto decline;
+		w->stage = V92_FIT_GEOMETRY;
+	} else if (w->stage == V92_FIT_GEOMETRY) {
+		if (!compile_geometry(&w->model) || !v92_observation_is_valid(&w->model)) goto decline;
+		w->stage = V92_FIT_VALIDATE;
+	} else if (w->stage == V92_FIT_VALIDATE) {
+		if (prefer_linear(&w->model, training)) goto decline;
+		*output = w->model;
+		w->stage = V92_FIT_IDLE;
+		return V92_OBSERVATION_FIT_READY;
+	} else goto decline;
+	return V92_OBSERVATION_FIT_MORE;
+decline:
+	w->stage = V92_FIT_IDLE;
+	return V92_OBSERVATION_FIT_DECLINED;
+}
+
+bool v92_observation_fit(struct v92_observation *model,
+	const struct v92_observation_training *training)
+{
+	if (!training_is_valid(model, sizeof(*model), training)) return false;
+	struct v92_observation_fit_work work;
+	if (!v92_observation_fit_begin(&work, training)) return false;
+	enum v92_observation_fit_result result;
+	do {
+		result = v92_observation_fit_step(&work, training, model);
+	} while (result == V92_OBSERVATION_FIT_MORE);
+	return result == V92_OBSERVATION_FIT_READY;
 }
 
 double v92_observation_predict_scalar(enum g711_law law, double gain,
@@ -1000,7 +1072,7 @@ bool v92_observation_fit_scalar(double *gain,
 	}
 	if (!(xx > 0. && xy > 0. && linear_error > 0.)) return false;
 	double coefficient[TAPS] = { xy / xx }, variance;
-	struct moments m = { .gram = { xx } };
+	struct v92_observation_fit_moments m = { .gram = { xx } };
 	if (!refine_bin_fit(coefficient, training->linear, low, high, count, 0, 1,
 		&m, fmax(1., linear_error / count), false, &variance)) return false;
 	double fitted = coefficient[0];
@@ -1161,7 +1233,7 @@ static const struct v92_observation_values *load_point_values(struct v92_observa
 			values->stable = false;
 			unsigned limit = x < 0 ? 32768u : 32767u;
 			unsigned magnitude = (unsigned)fmin(limit, round(fit->low * fabs((double)x)));
-			struct boundary boundary = next_boundary(model->law, x, magnitude);
+			struct v92_observation_fit_boundary boundary = next_boundary(model->law, x, magnitude);
 			if (magnitude_code(model->law, x, boundary.next) == cell->high) cell->crossing = (uint16_t)boundary.next;
 		}
 	}
