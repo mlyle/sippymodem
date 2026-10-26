@@ -103,6 +103,10 @@ enum rtp_endpoint_result sip_session_last_rtp_result(
 
 /* Owner-side socket drain/flush around an exclusive worker media job. */
 enum sip_session_result sip_session_begin_media_batch(struct sip_session *session);
-enum sip_session_result sip_session_finish_media_batch(struct sip_session *session);
+/* Keep a retired transport configured while the modem retains accepted input.
+ * No further socket reads extend that tail; false permits final cleanup once
+ * the original RTP storage has also drained. Query the modem after collection. */
+enum sip_session_result sip_session_finish_media_batch(struct sip_session *session,
+	bool receive_retained);
 
 #endif

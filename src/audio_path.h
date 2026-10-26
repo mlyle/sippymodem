@@ -43,6 +43,12 @@ struct modem_core {
 		int16_t *transmit_samples,
 		size_t count,
 		bool *exact_output);
+	/* Optional paired hooks for accepted input retained by the modem. A
+	 * retired SIP call drains this work with the normal frame budget. No new
+	 * RX samples, TX signal, or transport output may be generated. Exclusive
+	 * modem ownership applies to queries as well as drain calls. */
+	size_t (*receive_pending)(void *context);
+	enum modem_core_result (*drain_receive)(void *context, size_t budget);
 };
 
 enum audio_path_result {
@@ -77,6 +83,7 @@ void audio_path_destroy(struct audio_path *path);
 
 size_t audio_path_frame_samples(
 	const struct audio_path *path);
+size_t audio_path_receive_pending(const struct audio_path *path);
 enum audio_path_result audio_path_process_frame(
 	struct audio_path *path);
 

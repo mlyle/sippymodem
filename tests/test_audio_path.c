@@ -25,7 +25,19 @@ struct sip_session {
 	unsigned int play_calls;
 	unsigned int send_calls;
 	unsigned int send_g711_calls;
+	bool draining;
+	size_t tail_frames;
 };
+
+bool sip_session_receive_draining(const struct sip_session *session)
+{
+	return session->draining;
+}
+
+size_t sip_session_receive_tail_frames(const struct sip_session *session)
+{
+	return session->tail_frames;
+}
 
 size_t sip_session_frame_samples(
 	const struct sip_session *session)
@@ -94,7 +106,24 @@ struct core_capture {
 	bool mask_matched;
 	bool exact_output;
 	enum g711_law law;
+	size_t pending, drain_calls;
 };
+
+static size_t receive_pending(void *context)
+{
+	return ((struct core_capture *)context)->pending;
+}
+
+static enum modem_core_result drain_core(void *context, size_t budget)
+{
+	struct core_capture *capture = context;
+	capture->drain_calls++;
+	if (budget != TEST_FRAME_SAMPLES)
+		return MODEM_CORE_ERROR;
+	if (capture->result == MODEM_CORE_OK)
+		capture->pending -= capture->pending < budget ? capture->pending : budget;
+	return capture->result;
+}
 
 static enum modem_core_result process_core(
 	void *context, int16_t *receive_samples,
@@ -448,6 +477,34 @@ static bool test_rejects_invalid_ownership_and_gain(void)
 	return true;
 }
 
+static bool test_retained_receive_tail(void)
+{
+	struct sip_session session = { .frame_samples = TEST_FRAME_SAMPLES, .draining = true };
+	struct core_capture capture = { .pending = 7, .result = MODEM_CORE_OK };
+	struct modem_core core = { .context = &capture, .process = process_core,
+		.receive_pending = receive_pending, .drain_receive = drain_core };
+	const struct media_config config = { .receive_gain = 1., .transmit_gain = 1. };
+	struct audio_path *path = audio_path_create(&session, &config, NULL, &core);
+	CHECK(path && audio_path_receive_pending(path) == 7, "retained input not visible");
+	CHECK(audio_path_process_frame(path) == AUDIO_PATH_OK && capture.pending == 3 &&
+	      audio_path_process_frame(path) == AUDIO_PATH_OK && capture.pending == 0 &&
+	      capture.drain_calls == 2, "receive tail exceeded its per-frame budget");
+	CHECK(audio_path_process_frame(path) == AUDIO_PATH_OK && capture.drain_calls == 2 &&
+	      !capture.calls && !session.play_calls && !session.send_calls && !session.send_g711_calls,
+	      "DSP tail generated input or transport output");
+	capture.pending = 1;
+	capture.result = MODEM_CORE_ERROR;
+	CHECK(audio_path_process_frame(path) == AUDIO_PATH_MODEM_ERROR && capture.pending == 1,
+	      "receive-tail failure was ignored");
+	capture.result = MODEM_CORE_STOPPED;
+	CHECK(audio_path_process_frame(path) == AUDIO_PATH_MODEM_STOPPED,
+	      "receive-tail stop was ignored");
+	audio_path_destroy(path);
+	core.drain_receive = NULL;
+	CHECK(!audio_path_create(&session, &config, NULL, &core), "unpaired tail hooks accepted");
+	return true;
+}
+
 struct test_case {
 	const char *name;
 	bool (*run)(void);
@@ -456,6 +513,7 @@ struct test_case {
 int main(void)
 {
 	static const struct test_case tests[] = {
+		{ "retained receive tail", test_retained_receive_tail },
 		{ "gained recorded frame", test_processes_gained_recorded_frame },
 		{ "failed boundaries", test_stops_at_each_failed_boundary },
 		{ "interval audio levels", test_interval_audio_levels },

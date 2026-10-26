@@ -423,7 +423,8 @@ enum sip_session_result sip_session_begin_media_batch(struct sip_session *sessio
 	return session->batch_result;
 }
 
-enum sip_session_result sip_session_finish_media_batch(struct sip_session *session)
+enum sip_session_result sip_session_finish_media_batch(struct sip_session *session,
+	bool receive_retained)
 {
 	if (session == NULL)
 		return SIP_SESSION_INVALID_ARGUMENT;
@@ -431,7 +432,7 @@ enum sip_session_result sip_session_finish_media_batch(struct sip_session *sessi
 		return SIP_SESSION_NOT_OPEN;
 	session->media_batch = false;
 	session->last_rtp_result = rtp_runtime_finish_transmit_batch(session->rtp);
-	if (sip_session_receive_draining(session) &&
+	if (!receive_retained && sip_session_receive_draining(session) &&
 	    sip_session_receive_tail_frames(session) == 0)
 		sip_session_finish_receive_tail(session);
 	if (!sip_media_bridge_finish_deferred(&session->bridge))

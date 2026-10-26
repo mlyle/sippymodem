@@ -56,6 +56,24 @@ static enum modem_core_result process_modem_g711(
 	return modem->started ? MODEM_CORE_OK : MODEM_CORE_STOPPED;
 }
 
+static size_t receive_pending(void *context)
+{
+	const struct slmodem_adapter *adapter = context;
+	return adapter ? modem_receive_pending(adapter->modem) : 0;
+}
+
+static enum modem_core_result drain_receive(void *context, size_t budget)
+{
+	struct slmodem_adapter *adapter = context;
+	if (!adapter || !adapter->modem || !budget || budget > UINT_MAX)
+		return MODEM_CORE_ERROR;
+	if (!adapter->modem->started)
+		return MODEM_CORE_STOPPED;
+	if (modem_drain_receive(adapter->modem, (unsigned)budget) != 0)
+		return MODEM_CORE_ERROR;
+	return adapter->modem->started ? MODEM_CORE_OK : MODEM_CORE_STOPPED;
+}
+
 bool slmodem_adapter_init(
 	struct slmodem_adapter *adapter, struct modem *modem)
 {
@@ -65,6 +83,8 @@ bool slmodem_adapter_init(
 			.context = adapter,
 			.process = process_modem,
 			.process_g711 = process_modem_g711,
+			.receive_pending = receive_pending,
+			.drain_receive = drain_receive,
 		},
 	};
 

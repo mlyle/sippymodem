@@ -25,6 +25,16 @@ struct modem_process_capture {
 
 static struct modem_process_capture capture;
 
+size_t modem_receive_pending(const struct modem *modem)
+{
+	return modem && modem->started ? 7 : 0;
+}
+
+int modem_drain_receive(struct modem *modem, unsigned budget)
+{
+	return modem && modem->started && budget == 4 ? 0 : -1;
+}
+
 void modem_process(struct modem *modem, void *receive, void *transmit,
 		   int count)
 {
@@ -93,6 +103,11 @@ static bool test_forwards_exact_host_frames(void)
 		      capture.calls == 0,
 	      "inactive modem reached legacy sample processing");
 	modem.started = 1;
+	CHECK(core->receive_pending(core->context) == 7 &&
+	      core->drain_receive(core->context, 4) == MODEM_CORE_OK &&
+	      core->drain_receive(core->context, 0) == MODEM_CORE_ERROR &&
+	      core->drain_receive(core->context, 5) == MODEM_CORE_ERROR,
+	      "adapter lost receive-tail bounds or errors");
 	CHECK(core->process(core->context, receive, transmit,
 			    ARRAY_LENGTH(receive)) ==
 		      MODEM_CORE_OK &&

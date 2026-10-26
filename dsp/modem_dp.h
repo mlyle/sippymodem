@@ -99,6 +99,12 @@ struct dp_operations {
 	 * Return -1 during training or while private input remains unconsumed.
 	 * Used only after a sealed raw DTE queue and its packer are empty. */
 	int (*tx_tail_samples)(const struct dp *);
+	/* Already accepted receive samples retained inside the datapump. After
+	 * media ends, drain at most budget native work units without inventing
+	 * input, advancing TX, or using another thread. Optional paired hooks;
+	 * drain_receive returns zero on success and negative on failure. */
+	size_t (*rx_pending)(const struct dp *);
+	int (*drain_receive)(struct dp *, unsigned budget);
 };
 
 /* data pump structure */

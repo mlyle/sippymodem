@@ -742,6 +742,21 @@ static unsigned dpstat2status(unsigned dpstat)
 	}
 }
 
+size_t modem_receive_pending(const struct modem *m)
+{
+	return m && m->started && m->dp && m->dp->op &&
+		m->dp->op->rx_pending && m->dp->op->drain_receive ?
+		m->dp->op->rx_pending(m->dp) : 0;
+}
+
+int modem_drain_receive(struct modem *m, unsigned budget)
+{
+	if (!m || !m->started || !budget || !m->dp || !m->dp->op ||
+	    !m->dp->op->rx_pending || !m->dp->op->drain_receive)
+		return -1;
+	return m->dp->op->drain_receive(m->dp, budget);
+}
+
 int modem_finish_transmit(struct modem *m)
 {
 	if (m == NULL || m->dp == NULL || m->dp->op == NULL || !m->started)

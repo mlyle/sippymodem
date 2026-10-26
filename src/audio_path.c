@@ -109,6 +109,7 @@ struct audio_path *audio_path_create(
 
 	if (session == NULL || config == NULL || modem_core == NULL ||
 	    modem_core->process == NULL ||
+	    ((modem_core->receive_pending == NULL) != (modem_core->drain_receive == NULL)) ||
 	    !codec_law(config->codec, &law) ||
 	    !gain_is_valid(config->receive_gain) ||
 	    !gain_is_valid(config->transmit_gain))
@@ -148,6 +149,12 @@ size_t audio_path_frame_samples(
 	return path != NULL ? path->frame_samples : 0;
 }
 
+size_t audio_path_receive_pending(const struct audio_path *path)
+{
+	return path && path->modem_core.receive_pending ?
+		path->modem_core.receive_pending(path->modem_core.context) : 0;
+}
+
 enum audio_path_result audio_path_process_frame(
 	struct audio_path *path)
 {
@@ -161,6 +168,16 @@ enum audio_path_result audio_path_process_frame(
 
 	if (path == NULL)
 		return AUDIO_PATH_INVALID_ARGUMENT;
+	if (sip_session_receive_draining(path->session) &&
+	    sip_session_receive_tail_frames(path->session) == 0) {
+		if (!audio_path_receive_pending(path))
+			return AUDIO_PATH_OK;
+		core_result = path->modem_core.drain_receive(
+			path->modem_core.context, path->frame_samples);
+		return core_result == MODEM_CORE_OK ? AUDIO_PATH_OK :
+			core_result == MODEM_CORE_STOPPED ? AUDIO_PATH_MODEM_STOPPED :
+			AUDIO_PATH_MODEM_ERROR;
+	}
 	receive_samples = path->samples;
 	transmit_samples = path->samples + path->frame_samples;
 	receive_codewords = (uint8_t *)(transmit_samples + path->frame_samples);

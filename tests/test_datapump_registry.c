@@ -23,6 +23,8 @@ static bool test_selectable_modulations(void)
 		      op->name != NULL && op->create != NULL &&
 		      op->delete != NULL && op->process != NULL,
 		      "modulation %u has incomplete built-in operations", id);
+		CHECK((op->rx_pending == NULL) == (op->drain_receive == NULL),
+		      "modulation %u has unpaired receive-tail operations", id);
 	}
 	CHECK(modem_dp_selectable_id(ARRAY_LENGTH(expected)) == 0 &&
 	      modem_dp_selectable_id(SIZE_MAX) == 0,

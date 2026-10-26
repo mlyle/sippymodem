@@ -506,6 +506,8 @@ extern int modem_write(struct modem *m, const char *buf, int n);
 extern int modem_data_write(struct modem *m, const void *bytes, size_t length);
 /* Seal literal input. 0 complete, 1 pending, -1 unavailable/invalid. */
 extern int modem_finish_transmit(struct modem *m);
+extern size_t modem_receive_pending(const struct modem *m);
+extern int modem_drain_receive(struct modem *m, unsigned budget);
 extern int modem_set_dte_command(struct modem *m, bool command);
 /* Restore the profile while preserving carrier, buffers and country. */
 extern int modem_factory_defaults(struct modem *m);

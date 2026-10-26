@@ -11,6 +11,7 @@
 #include <string.h>
 
 struct fake_signaling_control {
+	struct sip_signaling *active;
 	unsigned int advertised_rtp_port;
 	unsigned int creates;
 	unsigned int destroys;
@@ -45,6 +46,7 @@ struct sip_signaling *sip_signaling_create(
 	signaling->callbacks = *callbacks;
 	fake.advertised_rtp_port = config->media.rtp_listen_port;
 	fake.creates++;
+	fake.active = signaling;
 	return signaling;
 }
 
@@ -54,6 +56,7 @@ void sip_signaling_destroy(
 	if (signaling == NULL)
 		return;
 	fake.destroys++;
+	if (fake.active == signaling) fake.active = NULL;
 	free(signaling);
 }
 
@@ -146,12 +149,19 @@ enum sip_signaling_result sip_signaling_hangup(
 
 struct callback_capture {
 	struct sip_session *session;
+	struct sip_server *server;
 	enum sip_session_result close_result;
 	enum sip_rtp_result binding;
 	unsigned int ready_calls;
 	unsigned int media_calls;
 	bool close_on_media;
+	bool keep_tail;
 };
+
+static bool drain_received(void *context)
+{
+	return ((struct callback_capture *)context)->keep_tail;
+}
 
 static void on_ready(void *context)
 {
@@ -183,12 +193,13 @@ static struct sip_session *create_session(
 		.context = capture,
 		.ready = on_ready,
 		.media_changed = on_media,
+		.drain_received_media = capture->keep_tail ? drain_received : NULL,
 	};
 
 	config_init(&config);
 	config.media.frame_duration_ms = 1;
 	config.media.jitter_buffer_ms = 0;
-	return sip_session_create(&config, NULL, &callbacks);
+	return sip_session_create_shared(capture->server, &config, NULL, &callbacks);
 }
 
 static bool test_owns_transport_lifetimes(void)
@@ -338,6 +349,37 @@ static bool test_close_clears_media_without_inactive_event(void)
 	return true;
 }
 
+static bool test_batch_retains_modem_receive_tail(void)
+{
+	struct callback_capture capture = { .keep_tail = true };
+	memset(&fake, 0, sizeof(fake));
+	/* Shared signaling is an identity only in this fixture; explicit owner
+	 * steps below deliver its callbacks before session media batches. */
+	capture.server = (struct sip_server *)&fake;
+	struct sip_session *session = create_session(&capture);
+	capture.session = session;
+	CHECK(session && sip_session_open(session) == SIP_SESSION_OK, "tail session did not open");
+	fake.emit_media = true;
+	CHECK(sip_signaling_step(fake.active, 0) == SIP_SIGNALING_OK &&
+	      sip_session_step(session, 0, NULL) == SIP_SESSION_OK &&
+	      sip_session_media_is_configured(session), "tail session did not configure");
+	fake.emit_media = fake.emit_inactive = true;
+	CHECK(sip_signaling_step(fake.active, 0) == SIP_SIGNALING_OK &&
+	      sip_session_step(session, 0, NULL) == SIP_SESSION_OK &&
+	      sip_session_receive_draining(session) && !sip_session_receive_tail_frames(session),
+	      "retired session did not expose an empty transport tail");
+	CHECK(sip_session_begin_media_batch(session) == SIP_SESSION_OK &&
+	      sip_session_finish_media_batch(session, true) == SIP_SESSION_OK &&
+	      sip_session_receive_draining(session) && sip_session_media_is_configured(session),
+	      "transport cleanup discarded retained modem input");
+	CHECK(sip_session_begin_media_batch(session) == SIP_SESSION_OK &&
+	      sip_session_finish_media_batch(session, false) == SIP_SESSION_OK &&
+	      !sip_session_receive_draining(session) && !sip_session_media_is_configured(session),
+	      "completed modem tail retained the retired transport");
+	sip_session_destroy(session);
+	return true;
+}
+
 struct test_case {
 	const char *name;
 	bool (*run)(void);
@@ -346,6 +388,7 @@ struct test_case {
 int main(void)
 {
 	static const struct test_case tests[] = {
+		{ "retained modem receive tail", test_batch_retains_modem_receive_tail },
 		{ "transport lifetimes", test_owns_transport_lifetimes },
 		{ "transactional open failure", test_open_failure_is_transactional },
 		{ "close clears media", test_close_clears_media_without_inactive_event },

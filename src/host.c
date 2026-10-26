@@ -320,11 +320,17 @@ enum modem_host_result modem_host_step(
 		/* Retired media needs no wall-clock/gap hold. Keep the usual per-step
 		 * DSP budget, and never generate transport output during this drain. */
 		size_t tail = sip_session_receive_tail_frames(host->session);
+		if (tail == 0) {
+			size_t pending = audio_path_receive_pending(host->audio_path);
+			size_t samples = audio_path_frame_samples(host->audio_path);
+			tail = pending / samples + (pending % samples != 0);
+		}
 		if (tail > MEDIA_MAX_CATCHUP_FRAMES)
 			tail = MEDIA_MAX_CATCHUP_FRAMES;
 		host->last_audio_scheduler_result = audio_scheduler_step_remote(
 			&host->audio_scheduler, tail, &frames);
-		if (sip_session_receive_tail_frames(host->session) == 0) {
+		if (sip_session_receive_tail_frames(host->session) == 0 &&
+		    audio_path_receive_pending(host->audio_path) == 0) {
 			sip_session_finish_receive_tail(host->session);
 			synchronize_audio(host);
 		}
@@ -583,6 +589,7 @@ enum sip_session_result modem_host_prepare_media(struct modem_host *host)
 
 enum sip_session_result modem_host_finish_media(struct modem_host *host)
 {
-	return host != NULL ? sip_session_finish_media_batch(host->session) :
+	return host != NULL ? sip_session_finish_media_batch(host->session,
+		audio_path_receive_pending(host->audio_path) != 0) :
 		SIP_SESSION_INVALID_ARGUMENT;
 }
