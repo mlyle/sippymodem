@@ -267,6 +267,42 @@ static bool test_receive_tolerance(void)
 		       V34_ANSWERING_STATION, 11, 350);
 }
 
+static bool test_guard_boundaries(void)
+{
+	static const struct {
+		enum v34_station_role role;
+		int16_t carrier, guard;
+		int step_change;
+		bool valid;
+	} cases[] = {
+		{ V34_CALLING_STATION, 1, 0, 0, true },
+		{ V34_CALLING_STATION, 12000, 1, 0, false },
+		{ V34_CALLING_STATION, 12000, 0, 1, false },
+		{ V34_ANSWERING_STATION, 12000, 20767, 0, true },
+		{ V34_ANSWERING_STATION, 12000, 20768, 0, false },
+		{ V34_ANSWERING_STATION, 12000, 0, 0, false },
+		{ V34_ANSWERING_STATION, 12000, -1, 0, false },
+		{ V34_ANSWERING_STATION, 12000, 1, -1, false },
+		{ V34_ANSWERING_STATION, 12000, 1, 1, false },
+		{ V34_ANSWERING_STATION, 0, 1, 0, false },
+	};
+
+	for (size_t i = 0; i < ARRAY_LENGTH(cases); ++i) {
+		struct v34_phase2_dpsk_transmitter transmitter;
+		CHECK(v34_phase2_dpsk_transmitter_init(&transmitter,
+			cases[i].role, TEST_AMPLITUDE) == V34_PHASE2_DPSK_OK,
+		      "guard fixture did not initialize");
+		transmitter.carrier.amplitude = cases[i].carrier;
+		transmitter.guard_amplitude = cases[i].guard;
+		transmitter.guard_phase_step += cases[i].step_change;
+		/* Guard phase is retained across INFO/tone changes, including wrap. */
+		transmitter.guard_phase = UINT32_MAX;
+		CHECK(v34_phase2_dpsk_transmitter_is_valid(&transmitter) == cases[i].valid,
+		      "guard boundary changed for case %zu", i);
+	}
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v34_phase2_dpsk_transmitter transmitter;
@@ -340,6 +376,7 @@ int main(void)
 		{ "carriers and cadence", test_carriers_and_cadence },
 		{ "bidirectional loopback", test_bidirectional_loopback },
 		{ "receive tolerance", test_receive_tolerance },
+		{ "guard boundaries", test_guard_boundaries },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

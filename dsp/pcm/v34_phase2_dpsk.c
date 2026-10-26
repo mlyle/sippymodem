@@ -13,8 +13,6 @@
 
 static const double V34_PHASE2_DPSK_ROLLOFF = 0.75;
 enum { V34_PHASE2_DPSK_INITIAL_GAIN = 0x0600 };
-static const double V34_PHASE2_ANSWERING_CARRIER_GAIN =
-	0.8912509381337456; /* -1 dB. */
 static const double V34_PHASE2_ANSWERING_GUARD_GAIN =
 	0.44668359215096315; /* -7 dB. */
 
@@ -86,23 +84,12 @@ static bool channel_matches(
 static bool transmitter_metadata_is_valid(
 	const struct v34_phase2_dpsk_transmitter *transmitter)
 {
-	if (transmitter == NULL ||
-	    !v34_station_role_is_valid(transmitter->local_role) ||
-	    !channel_matches(
-		    &transmitter->carrier.channel,
-		    v34_phase2_carrier_hz(transmitter->local_role)))
-		return false;
-	if (transmitter->local_role ==
-	    V34_CALLING_STATION)
-		return transmitter->guard_amplitude == 0 &&
-		       transmitter->guard_phase_step == 0;
-	return transmitter->guard_amplitude > 0 &&
-	       transmitter->guard_phase_step ==
-		       phase_step_u32(
-			       V34_PHASE2_SAMPLE_RATE,
-			       V34_PHASE2_ANSWERING_GUARD_HZ, 1) &&
-	       transmitter->carrier.amplitude <=
-		       INT16_MAX - transmitter->guard_amplitude;
+	return transmitter != NULL &&
+	       v34_phase2_guard_is_valid(transmitter->local_role,
+		       transmitter->carrier.amplitude, transmitter->guard_amplitude,
+		       transmitter->guard_phase_step) &&
+	       channel_matches(&transmitter->carrier.channel,
+		       v34_phase2_carrier_hz(transmitter->local_role));
 }
 
 static bool normalize_info_carrier_power(
@@ -160,11 +147,8 @@ v34_phase2_dpsk_transmitter_init(
 	if (transmitter == NULL || !v34_station_role_is_valid(local_role) ||
 	    nominal_amplitude <= 0)
 		return V34_PHASE2_DPSK_INVALID_ARGUMENT;
-	carrier_amplitude = nominal_amplitude;
+	carrier_amplitude = v34_phase2_carrier_level(local_role, nominal_amplitude);
 	if (local_role == V34_ANSWERING_STATION) {
-		carrier_amplitude = lround(
-			(double)nominal_amplitude *
-			V34_PHASE2_ANSWERING_CARRIER_GAIN);
 		guard_amplitude = lround(
 			(double)nominal_amplitude *
 			V34_PHASE2_ANSWERING_GUARD_GAIN);
