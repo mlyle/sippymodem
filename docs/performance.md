@@ -118,10 +118,11 @@ Receive acquisition now retains physical observations while fitting advances
 across native media blocks. Both channel hypotheses and all independent B1
 checks remain. After successful B1 validation, a sufficiently separated
 channel releases the competing decoder; uncertain channels keep both.
-The temporary observation queue is bounded to 1,024 samples and drains
+The temporary observation queue is bounded to 1,280 samples and drains
 accepted input after remote media retirement. It adds no steady-state prefill.
 
-The following measurements use normal `-O2` builds, one Pi core pinned for
+The following measurements capture the initial scheduling change with
+normal `-O2` builds, one Pi core pinned for
 DSP, LAPM, 52,000 bit/s transmit and 40,000 bit/s receive, and 20-ms packets.
 There were two 500-data-packet calls per row, with run order reversed between
 repeats. Runs started at or below 65 degrees C; telemetry showed no active
@@ -154,3 +155,13 @@ drain. These measurements establish headroom for the tested core paths;
 they exclude SIP/RTP, BBS load and concurrent-call scheduling. The source,
 build procedure, logs and thermal telemetry remain in the private evidence
 corpus.
+
+The stronger 0.375-postcursor A-law case exposed a remaining burst in that
+initial schedule: 22.29 ms for one training packet and 65.81 ms for three.
+The receive budget now also accounts for dense codec cells and carries
+fractional scoring credit across every block size. Paired B1 scoring charges
+18 work samples per three-tap frame or 24 per four-tap frame. A bounded
+1,280-sample queue covers the fitting and independent-validation debt,
+including native block boundaries. After validation, one retained sample
+may catch up per four new inputs, limiting decoder acceleration to 25%.
+These changes preserve the fitted models, B1 checks and recovery thresholds.

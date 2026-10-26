@@ -2769,8 +2769,7 @@ static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer, boo
 			continue;
 		if (deferred && receiver.line.received_frames > V92_B1U_ACQUISITION_FRAMES &&
 			receiver.line.received_frames <= V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES)
-			CHECK(++block_decodes <= (deferred_block < (deferred_block == 40 ? 16 : 12) ? 1 :
-					deferred_block / (deferred_block == 40 ? 16 : 12)),
+			CHECK(++block_decodes <= (deferred_block == 40 ? 2u : 1u),
 				"paired B1 decode exceeded its native block budget");
 		if (receiver.line.received_frames > V92_B1U_ACQUISITION_FRAMES &&
 		    receiver.line.received_frames <= V92_B1U_FRAMES)

@@ -14,12 +14,20 @@
  * cell solves and transitions; include its terminal check, begin/final
  * stages, and all eight slower refinements for both input hypotheses. */
 enum {
+	B1_WORK_SAMPLES_PER_TAP = 6,
 	FIT_SWEEP_STEPS = (2 * (V92_OBSERVATION_TRAINING - 1) * 128 + 1023) / 1024 + 1,
 	FIT_HOLD_SAMPLES = 2 * ((FIT_SWEEP_STEPS + 6) * V92_MODEL_SWEEP_SAMPLES +
 		V92_OBSERVATION_INTERVALS * V92_MODEL_REFINE_SAMPLES),
+	/* Retained validation adds the difference between scoring credit and
+	 * decoded symbols. Three work quanta cover the native 40-sample block
+	 * boundary and the fitting stage's reserved credit. */
+	B1_WORK_SAMPLES = B1_WORK_SAMPLES_PER_TAP * V92_OBSERVATION_TAPS,
+	FIT_QUEUE_SAMPLES = FIT_HOLD_SAMPLES +
+		(V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES - V92_B1U_ACQUISITION_FRAMES) *
+		(B1_WORK_SAMPLES - V92_PCM_MAPPING_FRAME_SYMBOLS) + 3 * B1_WORK_SAMPLES,
 };
-_Static_assert((int)V92_UPSTREAM_INPUT_QUEUE >= (int)FIT_HOLD_SAMPLES,
-	"initial acquisition must fit before retained input can overflow");
+_Static_assert((int)V92_UPSTREAM_INPUT_QUEUE >= (int)FIT_QUEUE_SAMPLES,
+	"fitting and independent B1 validation must fit in retained input");
 _Static_assert(sizeof(((struct v92_upstream_model *)0)->fit) <=
 	sizeof(((struct v92_upstream_model *)0)->alternate), "fit must reuse the inactive decoder");
 
@@ -40,7 +48,7 @@ bool v92_upstream_data_rx_is_valid(
 {
 	if (receiver == NULL || receiver->input.head >= V92_UPSTREAM_INPUT_QUEUE ||
 		receiver->input.count > V92_UPSTREAM_INPUT_QUEUE || receiver->input.catchup > 80 ||
-		receiver->input.frame_credit >= V92_PCM_MAPPING_FRAME_SYMBOLS * V92_OBSERVATION_TAPS / 3 ||
+		receiver->input.frame_credit >= B1_WORK_SAMPLES ||
 		receiver->input.count > UINT64_MAX - receiver->line.input_samples ||
 		!v92_pcm_frame_rx_is_valid(&receiver->decoder) ||
 	    !v92_upstream_plan_is_valid(&receiver->line.plan) ||
@@ -550,21 +558,17 @@ static enum v92_upstream_data_rx_result decode_sample(
 void v92_upstream_data_rx_begin_block_owned(struct v92_upstream_data_rx *receiver,
 	unsigned samples)
 {
-	/* Four-tap scoring receives proportionally more native work credit. */
-	unsigned frame_work = V92_PCM_MAPPING_FRAME_SYMBOLS *
-		v92_upstream_model_taps(&receiver->decoder.mapping) / 3;
+	/* Dense codec cells add work beyond the fitted tap count. Carry credit
+	 * across all native block sizes, including 40-sample fragments. */
+	unsigned frame_work = B1_WORK_SAMPLES_PER_TAP *
+		v92_upstream_model_taps(&receiver->decoder.mapping);
+	uint64_t credit = (uint64_t)receiver->input.frame_credit + samples;
 	receiver->input.frame_limited = true;
-	if (samples < frame_work) {
-		receiver->input.frame_credit += samples;
-		receiver->input.frame_budget = receiver->input.frame_credit / frame_work;
-		receiver->input.frame_credit %= frame_work;
-	} else {
-		receiver->input.frame_budget = samples / frame_work;
-		receiver->input.frame_credit = 0;
-		/* Leave room for a fitting stage that may complete inside this block. */
-		if (receiver->model.fitting && receiver->input.frame_budget > 1)
-			receiver->input.frame_budget--;
-	}
+	receiver->input.frame_budget = (unsigned)(credit / frame_work);
+	receiver->input.frame_credit = (unsigned)(credit % frame_work);
+	/* Leave room for a fitting stage that may complete inside this block. */
+	if (receiver->model.fitting && receiver->input.frame_budget > 1)
+		receiver->input.frame_budget--;
 }
 
 static bool frame_blocked(const struct v92_upstream_data_rx *receiver)
@@ -633,10 +637,12 @@ static enum v92_upstream_data_rx_result receive_sample(
 		if (receiver->model.fitting) return V92_UPSTREAM_DATA_RX_OK;
 	}
 	enum v92_upstream_data_rx_result result = V92_UPSTREAM_DATA_RX_OK;
-	/* Repay latency after B1u validation. A single fitted channel can catch up
-	 * faster; paired decoders retain a slower cadence. No call emits two frames. */
+	/* Repay latency after B1u validation, accepting at most one extra decode
+	 * per four physical inputs on a selected channel. This limits catch-up
+	 * acceleration to 25%; paired decoders retain their slower cadence.
+	 * No call emits two frames. */
 	unsigned catchup = receiver->line.received_frames < V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES ?
-		0 : receiver->model.valid != 3 ? 2 : 80;
+		0 : receiver->model.valid != 3 ? 4 : 80;
 	if (receiver->input.catchup < catchup) receiver->input.catchup++;
 	for (unsigned i = 0; i < 2; i++) {
 		result = decode_pending(receiver, frame);

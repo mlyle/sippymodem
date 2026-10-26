@@ -67,7 +67,7 @@ struct v92_upstream_data_line {
 	int8_t polarity;
 };
 
-enum { V92_UPSTREAM_INPUT_QUEUE = 1024 };
+enum { V92_UPSTREAM_INPUT_QUEUE = 1280 };
 struct v92_upstream_input {
 	int16_t sample, host;
 	uint8_t code, flags;
@@ -216,9 +216,9 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_octet_owned(
 	int16_t host_sample, bool available, struct v92_upstream_data_frame *frame);
 
 /* Bound paired-hypothesis B1 frame decodes per native media block, with
- * proportionally more work credit required for four-tap scoring. Keep
- * fractional credit for sub-frame blocks; larger blocks carry any excess
- * training input into the next block. No observations or checks are removed.
+ * proportionally more work credit required for four-tap scoring. Carry
+ * fractional credit across all block sizes; excess training input remains
+ * owned until the next block. No observations or checks are removed.
  * A new block also renews the budget for retired-input drain work. */
 void v92_upstream_data_rx_begin_block_owned(struct v92_upstream_data_rx *receiver,
 	unsigned samples);
