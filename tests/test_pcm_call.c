@@ -20,12 +20,14 @@
 #include "test.h"
 #include "v92_clipping_fixture.h"
 #include "pcm_phase2_state_fixture.h"
+#include "pcm_sign_state_fixture.h"
 #include "v34_state_fixture.h"
 #include "v90_path_state_fixture.h"
 
 #include <float.h>
 #include <limits.h>
 #include <math.h>
+#include <stddef.h>
 #include <string.h>
 
 enum {
@@ -1004,7 +1006,7 @@ static bool endpoint_init_conventional_v92(
 	return true;
 }
 
-static bool conventional_call_states_equal(
+static bool call_states_equal(
 	const struct pcm_call *left, const struct pcm_call *right);
 
 static bool phase4_boundary_is_transactional(
@@ -1067,7 +1069,7 @@ static bool endpoint_data_octet(
 	if (result == PCM_CALL_SOURCE_FAILURE) {
 		if (!expecting_source_failure || generated != 0xa5 ||
 		    memcmp(&event, &event_before, sizeof(event)) != 0 ||
-		    !conventional_call_states_equal(&endpoint->call, &call_before))
+		    !call_states_equal(&endpoint->call, &call_before))
 			return false;
 		set_source_rejection(endpoint, false);
 		endpoint->source_failure_checked = true;
@@ -1225,9 +1227,9 @@ static bool ri_progress_is_consistent(const struct endpoint *endpoint)
 	return endpoint->phase4_entry_ri_symbols == expected;
 }
 
-/* Rollback checks at conventional Phase 4, data and closed boundaries.
- * Compare the selected owners and preserve all surrounding call fields. */
-static bool conventional_call_states_equal(
+/* Compare shared retained records by their owned fields before checking the
+ * selected path and every remaining state byte. C padding is not modem state. */
+static bool call_states_equal(
 	const struct pcm_call *left, const struct pcm_call *right)
 {
 	struct pcm_call copies[2];
@@ -1236,15 +1238,23 @@ static bool conventional_call_states_equal(
 	if (left->stage != right->stage || left->local_role != right->local_role ||
 	    left->protocol != right->protocol)
 		return false;
+	if (!pcm_phase3_entries_equal(&left->phase3_entry, &right->phase3_entry) ||
+	    !v92_jd_parameters_equal(&left->v92_peer_jd, &right->v92_peer_jd))
+		return false;
+	memcpy(&copies[0], left, sizeof(*left));
+	memcpy(&copies[1], right, sizeof(*right));
+	for (size_t i = 0; i < 2; ++i) {
+		pcm_snapshot_info0(&copies[i].local_info0, copies[i].protocol, copies[i].local_role);
+		pcm_snapshot_info0(&copies[i].peer_info0, copies[i].protocol,
+			copies[i].local_role == V90_ANALOG_MODEM ? V90_DIGITAL_MODEM : V90_ANALOG_MODEM);
+		memset(&copies[i].phase3_entry, 0, sizeof(copies[i].phase3_entry));
+		memset(&copies[i].v92_peer_jd, 0, sizeof(copies[i].v92_peer_jd));
+	}
 	if ((left->stage != PCM_CALL_PHASE4 && left->stage != PCM_CALL_DATA_PATH &&
 	     left->stage != PCM_CALL_CLOSED) ||
 	    !pcm_call_uses_conventional_upstream(left) ||
 	    !pcm_call_uses_conventional_upstream(right))
-		return memcmp(left, right, sizeof(*left)) == 0;
-	if (!pcm_phase3_entries_equal(&left->phase3_entry, &right->phase3_entry))
-		return false;
-	memcpy(&copies[0], left, sizeof(*left));
-	memcpy(&copies[1], right, sizeof(*right));
+		return memcmp(&copies[0], &copies[1], sizeof(copies[0])) == 0;
 	if (left->stage != PCM_CALL_PHASE4) {
 		if (left->local_role == V90_ANALOG_MODEM) {
 			struct v90_analog_path *paths[2] = {
@@ -1267,7 +1277,7 @@ static bool conventional_call_states_equal(
 					lines[i] = &paths[i]->upstream.data.line;
 					break;
 				default:
-					return memcmp(left, right, sizeof(*left)) == 0;
+					return memcmp(&copies[0], &copies[1], sizeof(copies[0])) == 0;
 				}
 			}
 			if (!v34_training_lines_equal(lines[0], lines[1]))
@@ -1312,17 +1322,83 @@ static bool conventional_call_states_equal(
 		return false;
 	}
 	for (size_t i = 0; i < 2; ++i) {
-		pcm_snapshot_info0(&copies[i].local_info0,
-			copies[i].protocol, copies[i].local_role);
-		pcm_snapshot_info0(&copies[i].peer_info0, copies[i].protocol,
-			copies[i].local_role == V90_ANALOG_MODEM ?
-				V90_DIGITAL_MODEM : V90_ANALOG_MODEM);
-		memset(&copies[i].phase3_entry, 0, sizeof(copies[i].phase3_entry));
 		memset((unsigned char *)&copies[i].state + active, 0,
 			sizeof(copies[i].state) - active);
 	}
 	return memcmp(&copies[0], &copies[1], sizeof(*left)) == 0;
 }
+
+/* Mark actual field representations so this works with the target ABI's padding. */
+#define MARK_FIELD(mask, type, field) \
+	memset((mask) + offsetof(type, field), 1, sizeof(((type *)0)->field))
+
+static bool test_call_state_comparison(void)
+{
+	unsigned char common_mask[sizeof(struct v34_info1_common)] = { 0 };
+	unsigned char analog_mask[sizeof(struct v92_pcm_info1a)] = { 0 };
+	unsigned char jd_mask[sizeof(struct v92_jd)] = { 0 };
+	struct pcm_call before = { 0 }, after;
+
+	MARK_FIELD(common_mask, struct v34_info1_common, minimum_peer_power_reduction_db);
+	MARK_FIELD(common_mask, struct v34_info1_common, additional_peer_power_reduction_db);
+	MARK_FIELD(common_mask, struct v34_info1_common, local_md_length_35_ms_units);
+	MARK_FIELD(common_mask, struct v34_info1_common, frequency_offset_1_50_hz_units);
+	MARK_FIELD(analog_mask, struct v92_pcm_info1a, filter_sections);
+	MARK_FIELD(analog_mask, struct v92_pcm_info1a, maximum_total_coefficients);
+	MARK_FIELD(analog_mask, struct v92_pcm_info1a, maximum_section_coefficients);
+	MARK_FIELD(analog_mask, struct v92_pcm_info1a, local_md_length_276_symbol_units);
+	MARK_FIELD(analog_mask, struct v92_pcm_info1a, training_ucode);
+	MARK_FIELD(jd_mask, struct v92_jd, data_rate_capability_mask);
+	MARK_FIELD(jd_mask, struct v92_jd, maximum_spectral_shaping_lookahead);
+	before.protocol = PCM_PROTOCOL_V92;
+	before.stage = PCM_CALL_DATA_PATH;
+	before.phase3_entry_stored = before.v92_peer_jd_stored = true;
+	before.phase3_entry.selection.startup.phase2 = PCM_PHASE2_FULL;
+	before.phase3_entry.selection.digital.protocol = PCM_PROTOCOL_V92;
+	before.phase3_entry.selection.upstream = PCM_UPSTREAM_PCM;
+	for (unsigned role = V90_ANALOG_MODEM; role <= V90_DIGITAL_MODEM; ++role) {
+		before.local_role = (enum v90_modem_role)role;
+		memcpy(&after, &before, sizeof(after));
+		struct {
+			unsigned char *bytes;
+			const unsigned char *fields;
+			size_t size;
+		} records[] = {
+			{ (unsigned char *)&after.phase3_entry.selection.digital.record.v92.v34.common,
+			  common_mask, sizeof(common_mask) },
+			{ (unsigned char *)&after.phase3_entry.selection.analog.pcm,
+			  analog_mask, sizeof(analog_mask) },
+			{ (unsigned char *)&after.v92_peer_jd, jd_mask, sizeof(jd_mask) },
+		};
+		for (size_t i = 0; i < ARRAY_LENGTH(records); ++i)
+			for (size_t byte = 0; byte < records[i].size; ++byte)
+				if (!records[i].fields[byte]) records[i].bytes[byte] ^= 0xffu;
+		CHECK(call_states_equal(&before, &after), "call comparison read record padding");
+		/* Invalid/reserved values must also differ, without re-encoding or
+		 * validating them away. Every named field byte remains significant. */
+		for (size_t i = 0; i < ARRAY_LENGTH(records); ++i) {
+			for (size_t byte = 0; byte < records[i].size; ++byte) {
+				if (!records[i].fields[byte]) continue;
+				records[i].bytes[byte] ^= 1u;
+				CHECK(!call_states_equal(&before, &after),
+				      "call comparison lost role %u record %zu byte %zu", role, i, byte);
+				records[i].bytes[byte] ^= 1u;
+			}
+		}
+		after.b1_deadline_remaining_samples++;
+		CHECK(!call_states_equal(&before, &after), "call comparison lost a retained deadline");
+		after.b1_deadline_remaining_samples--;
+		if (role == V90_DIGITAL_MODEM) {
+			after.state.data_path.v92_digital.upstream.input.samples[0].sample = 1;
+			CHECK(!call_states_equal(&before, &after), "call comparison lost queued media");
+			after.state.data_path.v92_digital.upstream.input.samples[0].sample = 0;
+			after.state.data_path.v92_digital.b1u_squared_error = -0.0;
+			CHECK(!call_states_equal(&before, &after), "call comparison lost exact floating-point bits");
+		}
+	}
+	return true;
+}
+#undef MARK_FIELD
 
 static bool phase4_boundary_is_transactional(
 	struct pcm_call *call, enum g711_law law)
@@ -1344,7 +1420,7 @@ static bool phase4_boundary_is_transactional(
 		saved = invalid;
 		CHECK(!pcm_call_phase4_is_ready(&invalid) &&
 		      pcm_call_start_data_path(&invalid) == PCM_CALL_INVALID_ARGUMENT &&
-		      conventional_call_states_equal(&invalid, &saved),
+		      call_states_equal(&invalid, &saved),
 		      "public Phase 4 boundary accepted a corrupt CP record");
 	}
 	memset(&observation, 0x5a, sizeof(observation));
@@ -1355,7 +1431,7 @@ static bool phase4_boundary_is_transactional(
 	       output == 0xa5 &&
 	       memcmp(&observation, &observation_before,
 		      sizeof(observation)) == 0 &&
-	       conventional_call_states_equal(call, &before);
+	       call_states_equal(call, &before);
 }
 
 enum call_goal {
@@ -1469,7 +1545,7 @@ static bool check_peer_cleardown(
 		      sample_event.next == PCM_CALL_CLOSED &&
 		      pcm_call_start_retrain(&calls[side]) == PCM_CALL_INVALID_STATE &&
 		      pcm_call_start_cleardown(&calls[side]) == PCM_CALL_OK &&
-		      conventional_call_states_equal(&before, &calls[side]),
+		      call_states_equal(&before, &calls[side]),
 		      "closed call consumed input, advanced state, or restarted");
 	}
 	return true;
@@ -6857,7 +6933,7 @@ static bool v92_data_boundary(struct pcm_call *call)
 	snapshot = *call;
 	CHECK(pcm_call_start_data_path(call) == PCM_CALL_INVALID_STATE &&
 	      pcm_call_start_cleardown(call) == PCM_CALL_INVALID_STATE &&
-	      memcmp(call, &snapshot, sizeof(snapshot)) == 0,
+	      call_states_equal(call, &snapshot),
 	      "V.92 duplicate data entry or unsupported cleardown changed the call");
 	return true;
 }
@@ -6883,13 +6959,13 @@ static bool v92_payload_sample_with_idle(
 	if (result == PCM_CALL_SOURCE_FAILURE) {
 		CHECK(!source->rejection_checked && !source->reject &&
 		      generated == 0xa5u && memcmp(&event, &sentinel, sizeof(event)) == 0 &&
-		      memcmp(call, &snapshot, sizeof(snapshot)) == 0,
+		      call_states_equal(call, &snapshot),
 		      "V.92 source rejection consumed media or changed output");
 		source->reject = true;
 		CHECK(pcm_call_data_octet(call, received, sample, false, &sources,
 			&generated, &event) == PCM_CALL_SOURCE_FAILURE && !source->reject &&
 		      generated == 0xa5u && memcmp(&event, &sentinel, sizeof(event)) == 0 &&
-		      memcmp(call, &snapshot, sizeof(snapshot)) == 0,
+		      call_states_equal(call, &snapshot),
 		      "V.92 source rejection consumed a media loss notification");
 		source->rejection_checked = true;
 		result = pcm_call_data_octet(call, received, sample, true,
@@ -7442,7 +7518,7 @@ static bool v92_data_error_contracts(const struct pcm_call *online)
 	      pcm_call_data_octet_owned(&checked, silence, 0, 0, true, NULL,
 				       &checked_octet, (struct pcm_call_data_event *)&checked) ==
 		      PCM_CALL_INVALID_ARGUMENT &&
-	      memcmp(&checked, online, sizeof(checked)) == 0,
+	      call_states_equal(&checked, online),
 	      "V.92 accepted aliased media outputs");
 	CHECK(pcm_call_data_octet(&checked, silence, 0, true, NULL, &checked_octet, &checked_event) ==
 		      PCM_CALL_OK &&
@@ -7450,7 +7526,7 @@ static bool v92_data_error_contracts(const struct pcm_call *online)
 		      PCM_CALL_OK &&
 	      pcm_call_is_valid(&owned) && checked_octet == owned_octet &&
 	      memcmp(&checked_event, &owned_event, sizeof(checked_event)) == 0 &&
-	      memcmp(&checked, &owned, sizeof(checked)) == 0,
+	      call_states_equal(&checked, &owned),
 	      "validated-block and checked V.92 clocks diverged");
 	if (online->local_role == V90_DIGITAL_MODEM) {
 		CHECK(checked.state.data_path.v92_digital.quality_guard_samples == 0,
@@ -7461,7 +7537,7 @@ static bool v92_data_error_contracts(const struct pcm_call *online)
 			      PCM_CALL_OK &&
 		      pcm_call_data_octet_owned(&owned, silence, 0, 0, false, NULL, &owned_octet, &owned_event) ==
 			      PCM_CALL_OK &&
-		      memcmp(&checked, &owned, sizeof(checked)) == 0 &&
+		      call_states_equal(&checked, &owned) &&
 		      checked_event.kind == PCM_CALL_DATA_NONE && owned_event.kind == PCM_CALL_DATA_NONE &&
 		      checked.state.data_path.v92_digital.pending_media_loss &&
 		      checked.state.data_path.v92_digital.quality_guard_samples != 0 &&
@@ -7498,7 +7574,7 @@ static bool v92_data_error_contracts(const struct pcm_call *online)
 					 &checked_octet, &checked_event) == PCM_CALL_NUMERIC_FAILURE &&
 		      pcm_call_has_failed(&checked) && checked_octet == owned_octet &&
 		      checked_event.kind == PCM_CALL_DATA_NONE &&
-		      memcmp(&checked, &owned, sizeof(checked)) == 0,
+		      call_states_equal(&checked, &owned),
 		      "late V.92 receive failure hid output or advanced receive state");
 	}
 	return true;
@@ -8779,7 +8855,7 @@ static bool v92_no_path_recovery_contracts(const struct pcm_call *before, uint8_
 					while (result == PCM_CALL_OK && checked.stage == PCM_CALL_DATA_PATH && samples++ < 1600u) {
 						CHECK(transmitted == owned_transmitted && event.kind == PCM_CALL_DATA_NONE &&
 						      memcmp(&event, &owned_event, sizeof(event)) == 0 &&
-						      memcmp(&checked, &owned, sizeof(checked)) == 0 && pcm_call_is_valid(&checked) &&
+						      call_states_equal(&checked, &owned) && pcm_call_is_valid(&checked) &&
 						      (!training || !pcm_call_is_online(&checked)) &&
 						      memcmp(&checked.state.data_path.v92_digital.upstream, &stopped, sizeof(stopped)) == 0,
 						      "lost decoder advanced or emitted data during its guard");
@@ -8794,7 +8870,7 @@ static bool v92_no_path_recovery_contracts(const struct pcm_call *before, uint8_
 				 * the previously usable data rate or forgive its retry cost. */
 				CHECK(result == (closing ? PCM_CALL_CLEARDOWN_COMPLETE : available ? PCM_CALL_OK : PCM_CALL_FAILED) &&
 				      result == owned_result && transmitted == owned_transmitted &&
-				      memcmp(&checked, &owned, sizeof(checked)) == 0 &&
+				      call_states_equal(&checked, &owned) &&
 				      memcmp(&event, &owned_event, sizeof(event)) == 0 &&
 				      pcm_call_is_valid(&checked) && event.kind == PCM_CALL_DATA_NONE &&
 				      checked.protocol == PCM_PROTOCOL_V92 &&
@@ -13090,7 +13166,7 @@ static bool test_v92_owned_phase_octets(void)
 				CHECK(checked_result == PCM_CALL_OK && owned_result == checked_result &&
 				      checked_octet == owned_octet &&
 				      memcmp(&checked_event, &owned_event, sizeof(checked_event)) == 0 &&
-				      memcmp(&checked, &owned, sizeof(checked)) == 0 &&
+				      call_states_equal(&checked, &owned) &&
 				      pcm_call_is_valid(&owned),
 				      "V.92 checked/owned phase diverged: law=%u role=%u clock=%u",
 				      law, role, clock);
@@ -13328,6 +13404,7 @@ int main(int argc, char **argv)
 		{ "automatic conventional upstream and peer-limited fallback", test_automatic_upstream },
 		{ "V.92 conflicting status bounded recovery", test_v92_conflicting_status_recovery },
 		{ "V.92 conditioned training bounded recovery", test_conditioning_recovery },
+		{ "shared call state comparison", test_call_state_comparison },
 	};
 	unsigned int failures = 0;
 	size_t first = 0, stride = 1;
