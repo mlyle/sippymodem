@@ -1109,16 +1109,22 @@ static size_t find_span(const struct v92_observation_cache *cache, int32_t x)
 	return low;
 }
 
+static inline struct v92_observation_geometry *point_geometry(struct v92_observation_cache *cache)
+{
+	return cache->geometry ? cache->geometry : &cache->local_geometry;
+}
+
 /* Candidate envelopes repeatedly visit the same transformed coordinates.
  * Retain only exact integer lookups, never an observation-dependent score. */
 static inline size_t point_span(struct v92_observation_cache *cache, int32_t x)
 {
+	struct v92_observation_geometry *geometry = point_geometry(cache);
 	unsigned slot = ((uint32_t)x * UINT32_C(2654435761)) >> 22;
-	if (cache->spans[slot].tag && cache->spans[slot].key == x)
-		return cache->spans[slot].tag - 1u;
+	if (geometry->spans[slot].tag && geometry->spans[slot].key == x)
+		return geometry->spans[slot].tag - 1u;
 	size_t span = find_span(cache, x);
-	cache->spans[slot].key = x;
-	cache->spans[slot].tag = (uint16_t)(span + 1u);
+	geometry->spans[slot].key = x;
+	geometry->spans[slot].tag = (uint16_t)(span + 1u);
 	return span;
 }
 
@@ -1154,12 +1160,28 @@ static double compiled_log_likelihood(enum g711_law law, const struct v92_observ
 	return sweep.failed ? NAN : likelihood;
 }
 
+void v92_observation_geometry_reset(struct v92_observation_geometry *geometry)
+{
+	memset(geometry->point_tag, 0, sizeof(geometry->point_tag));
+	memset(geometry->spans, 0, sizeof(geometry->spans));
+	geometry->rounding = fegetround();
+}
+
 void v92_observation_begin(struct v92_observation_cache *cache,
 	const struct v92_observation *model, double relative_noise)
 {
+	v92_observation_begin_cached(cache, model, relative_noise, NULL);
+}
+
+void v92_observation_begin_cached(struct v92_observation_cache *cache,
+	const struct v92_observation *model, double relative_noise,
+	struct v92_observation_geometry *geometry)
+{
+	cache->geometry = geometry;
+	int rounding = fegetround();
+	if (!geometry || rounding < 0 || geometry->rounding != rounding)
+		v92_observation_geometry_reset(point_geometry(cache));
 	memset(cache->stamp, 0, sizeof(cache->stamp));
-	memset(cache->point_tag, 0, sizeof(cache->point_tag));
-	memset(cache->spans, 0, sizeof(cache->spans));
 	cache->generation = 0;
 	cache->model = model;
 	cache->bucket_shift = bucket_shift(model);
@@ -1222,15 +1244,16 @@ static void extend_envelope(double *low, double *high, double tap, int16_t first
 
 static const struct v92_observation_values *load_point_values(struct v92_observation_cache *cache, size_t span)
 {
+	struct v92_observation_geometry *geometry = point_geometry(cache);
 	size_t slot = span & (V92_OBSERVATION_POINTS - 1), chosen = slot;
 	for (size_t probe = 0; probe < 4; probe++) {
 		size_t index = (slot + probe) & (V92_OBSERVATION_POINTS - 1);
-		if (cache->point_tag[index] == span + 1) return cache->points + index;
-		if (!cache->point_tag[index]) { chosen = index; break; }
+		if (geometry->point_tag[index] == span + 1) return geometry->points + index;
+		if (!geometry->point_tag[index]) { chosen = index; break; }
 	}
 	const struct v92_observation *model = cache->model;
 	int32_t x = model->first[span];
-	struct v92_observation_values *values = cache->points + chosen;
+	struct v92_observation_values *values = geometry->points + chosen;
 	*values = (struct v92_observation_values){ .stable = true };
 	for (unsigned j = 0; j < model->taps; j++) {
 		values->low[j] = HUGE_VAL;
@@ -1260,7 +1283,7 @@ static const struct v92_observation_values *load_point_values(struct v92_observa
 		values->low[j] -= cache->margin[j];
 		values->high[j] += cache->margin[j];
 	}
-	cache->point_tag[chosen] = (uint16_t)(span + 1);
+	geometry->point_tag[chosen] = (uint16_t)(span + 1);
 	return values;
 }
 
@@ -1270,9 +1293,10 @@ static const struct v92_observation_values *load_point_values(struct v92_observa
 static inline const struct v92_observation_values *point_values(
 	struct v92_observation_cache *cache, size_t span)
 {
+	struct v92_observation_geometry *geometry = point_geometry(cache);
 	size_t slot = span & (V92_OBSERVATION_POINTS - 1);
 
-	return cache->point_tag[slot] == span + 1 ? cache->points + slot :
+	return geometry->point_tag[slot] == span + 1 ? geometry->points + slot :
 		load_point_values(cache, span);
 }
 

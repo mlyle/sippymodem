@@ -1286,6 +1286,9 @@ static bool observed_rejection(struct v92_pcm_frame_rx *rx,
 	memset(&likelihood, 0xa5, sizeof(likelihood)); saved_likelihood = likelihood;
 	memset(bits, 0xa5, sizeof(bits)); memcpy(saved_bits, bits, sizeof(bits));
 	struct v92_pcm_frame_channel channel = { .model = model, .levels = levels };
+	struct v92_observation_geometry geometry;
+	memset(&geometry, 0xa5, sizeof(geometry));
+	v92_observation_geometry_reset(&geometry);
 	const unsigned failures[] = { 1, 6, 12, 0 };
 	for (unsigned i = 0; i < ARRAY_LENGTH(failures); i++) {
 		double gain = model->quantizer_gain;
@@ -1304,6 +1307,7 @@ static bool observed_rejection(struct v92_pcm_frame_rx *rx,
 			"prediction failure %u changed output or receiver (result %d)", failures[i], rc);
 		if (i < 3) {
 			failed_prediction = failures[i]; prediction_count = 0;
+			channel.geometry = &geometry;
 			CHECK(v92_pcm_frame_decode_observed_owned(rx, samples, false,
 				bits, rx->mapping.data_bits_per_frame, &decision, &channel, &likelihood) ==
 				V92_PCM_FRAME_NO_PATH && !memcmp(rx, &initial, sizeof(initial)) &&
@@ -1312,6 +1316,7 @@ static bool observed_rejection(struct v92_pcm_frame_rx *rx,
 				!memcmp(&likelihood, &saved_likelihood, sizeof(likelihood)),
 				"owned prediction failure %u changed state or output", failures[i]);
 			failed_prediction = 0;
+			channel.geometry = NULL;
 		}
 	}
 	int16_t invalid_levels[12]; memcpy(invalid_levels, levels, sizeof(invalid_levels));
@@ -1441,6 +1446,9 @@ static bool test_observed_channel(enum g711_law law, unsigned taps, bool reorder
 	};
 	CHECK(v92_observation_fit(&model, &training), "fit failed");
 	struct v92_observation frozen = model;
+	struct v92_observation_geometry geometry;
+	memset(&geometry, 0xa5, sizeof(geometry));
+	v92_observation_geometry_reset(&geometry);
 	CHECK(v92_pcm_frame_tx_reset_b1u(&tx) == V92_PCM_FRAME_OK, "reset failed");
 	memset(memory, 0, sizeof(memory));
 	for (unsigned f = 0; f < V92_B1U_FRAMES + 100 + V92_PCM_RX_DELAY_FRAMES; f++) {
@@ -1478,8 +1486,10 @@ static bool test_observed_channel(enum g711_law law, unsigned taps, bool reorder
 		CHECK(v92_pcm_frame_decode_observed(&rx, samples, f < V92_B1U_FRAMES, decoded,
 			mapping.data_bits_per_frame, &decision, &channel, &likelihood) == V92_PCM_FRAME_OK,
 			"observed law %u frame %u failed", law, f);
+		struct v92_pcm_frame_channel owned_channel = channel;
+		owned_channel.geometry = &geometry;
 		CHECK(v92_pcm_frame_decode_observed_owned(&owned, samples, f < V92_B1U_FRAMES,
-			owned_bits, mapping.data_bits_per_frame, &owned_decision, &channel,
+			owned_bits, mapping.data_bits_per_frame, &owned_decision, &owned_channel,
 			&owned_likelihood) == V92_PCM_FRAME_OK && !memcmp(&owned, &rx, sizeof(rx)) &&
 			!memcmp(owned_bits, decoded, sizeof(decoded)) &&
 			!memcmp(&owned_likelihood, &likelihood, sizeof(likelihood)) &&

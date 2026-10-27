@@ -496,6 +496,52 @@ static void check_rebinding(const struct v92_observation *a, const struct v92_ob
 	}
 }
 
+static void check_retained_geometry(const struct v92_observation *a, const struct v92_observation *b)
+{
+	struct v92_observation_geometry geometry;
+	struct v92_observation_cache retained[2], fresh;
+	struct v92_observation rebound;
+	const int modes[] = { FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO };
+	int saved = fegetround();
+	memset(&geometry, 0xa5, sizeof(geometry));
+	for (unsigned epoch = 0; epoch < 3; epoch++) {
+		rebound = epoch == 1 ? *b : *a;
+		if (epoch == 1) rebound.input_coefficient = 24576;
+		v92_observation_geometry_reset(&geometry);
+		for (unsigned mode = 0; mode < sizeof(modes) / sizeof(*modes); mode++) {
+			assert(fesetround(modes[mode]) == 0);
+			for (unsigned frame = 0; frame < 2; frame++) {
+				/* A different frame scratch address shares only model geometry.
+				 * Its scores and symbol generation start afresh. */
+				struct v92_observation_cache *cache = retained + frame;
+				v92_observation_begin_cached(cache, &rebound, frame * .001, &geometry);
+				v92_observation_begin(&fresh, &rebound, frame * .001);
+				for (size_t i = 0; i < rebound.count; i++) {
+					int32_t x = rebound.first[frame ? rebound.count - i - 1 : i];
+					struct v92_observation_point p = v92_observation_point(cache, x);
+					struct v92_observation_point q = v92_observation_point(&fresh, x);
+					assert(p.x == q.x && p.key == q.key && p.span == q.span && p.values.stable == q.values.stable);
+					assert(!memcmp(p.values.low, q.values.low, sizeof(p.values.low)) &&
+						!memcmp(p.values.high, q.values.high, sizeof(p.values.high)));
+					for (unsigned j = 0; j < V92_OBSERVATION_INTERVALS; j++)
+						assert(p.values.cell[j].low == q.values.cell[j].low &&
+							p.values.cell[j].high == q.values.cell[j].high &&
+							p.values.cell[j].crossing == q.values.cell[j].crossing);
+				}
+			}
+		}
+	}
+	assert(fesetround(saved) == 0);
+	/* Ordinary local scratch remains movable: populating a copy must not
+	 * mutate its source through a pointer into the original object. */
+	memset(&fresh, 0xa5, sizeof(fresh));
+	v92_observation_begin(&fresh, a, 0.);
+	unsigned char before[sizeof(fresh)]; memcpy(before, &fresh, sizeof(fresh));
+	memcpy(retained, &fresh, sizeof(fresh));
+	(void)v92_observation_point(retained, INT32_MAX);
+	assert(!memcmp(before, &fresh, sizeof(fresh)));
+}
+
 static void check_predictive_noise(const struct v92_observation *trained)
 {
 	const double gains[] = { .03125, 1., 2. };
@@ -677,7 +723,10 @@ static void check_channel(enum g711_law law, double gain, unsigned taps,
 	}
 	assert(memcmp(&model, &before, sizeof(model)) == 0);
 	check_failures(&model, x, u, y);
-	if (previous->count) check_rebinding(previous, &model);
+	if (previous->count) {
+		check_rebinding(previous, &model);
+		check_retained_geometry(previous, &model);
+	}
 	*previous = model;
 	printf("V.92 observation law=%u taps=%u gain=%.9g count=%zu heldout_rms=%.6f\n", law, taps, gain, count, rms);
 }

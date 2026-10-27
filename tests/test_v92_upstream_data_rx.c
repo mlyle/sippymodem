@@ -21,6 +21,7 @@
 #include <assert.h>
 #include <float.h>
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* Keep numerical waveform and rejection oracles independent of the media
@@ -1690,7 +1691,16 @@ enum channel_fault {
 /* E2u recognizes its last control symbol after already consuming ten B1u
  * samples. The channel-compensating filter has a different causal delay:
  * receive its remaining prefix exactly once, not as B1u or payload. */
-static bool run_channel_plan(
+struct channel_plan_workspace {
+	struct v92_upstream_data_rx receiver;
+	struct v92_upstream_data_rx comparison_rx;
+	struct v92_upstream_data_rx owned;
+	struct v92_upstream_data_rx lost;
+	struct v92_upstream_data_rx seed_saved;
+};
+
+static bool check_channel_plan(
+	struct channel_plan_workspace *work,
 	enum g711_law law, int polarity, bool extended, bool biased, bool conditioned,
 	bool changed_history, bool wire, int offset, enum channel_fault fault, const int *seed_offset)
 {
@@ -1707,8 +1717,6 @@ static bool run_channel_plan(
 	struct v92_phase4_record_tx e2u_tx;
 	struct v92_e2u_rx e2u_rx;
 	struct v92_upstream_data_tx transmitter;
-	struct v92_upstream_data_rx receiver;
-	struct v92_upstream_data_rx comparison_rx;
 	struct v92_upstream_data_line trained;
 	uint8_t expected[V92_PCM_MAPPING_MAX_BITS];
 	unsigned int source_frames = 0u, leading = 0u, delivered = 0u;
@@ -1764,9 +1772,9 @@ static bool run_channel_plan(
 		CHECK(result == V92_E2U_RX_OK || result == V92_E2U_RX_COMPLETE, "E2u receive failed");
 	}
 	CHECK(leading == V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY &&
-	      v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping, &plan) == V92_UPSTREAM_DATA_RX_OK &&
-	      receiver.line.delay_remaining == plan.delay - leading, "E2u/data delay lost");
-	CHECK(!wire || !receiver.model.acquiring, "wire fixture entered pure-delay fitter");
+	      v92_upstream_data_rx_init(&work->receiver, &e2u_rx.signal, &mapping, &plan) == V92_UPSTREAM_DATA_RX_OK &&
+	      work->receiver.line.delay_remaining == plan.delay - leading, "E2u/data delay lost");
+	CHECK(!wire || !work->receiver.model.acquiring, "wire fixture entered pure-delay fitter");
 	channel.offset = offset;
 	if (fault == CHANNEL_RESIDUAL) {
 		channel.residual_first = -.027;
@@ -1776,27 +1784,27 @@ static bool run_channel_plan(
 		struct v92_upstream_seed seed = {
 			.residual = { .active = true, .offset = *seed_offset,
 				.history = { 99.0 }, .cursor = 3 },
-			.gain = receiver.line.calibration.gain,
+			.gain = work->receiver.line.calibration.gain,
 		};
-		struct v92_upstream_data_rx saved = receiver;
+		work->seed_saved = work->receiver;
 		CHECK(!v92_upstream_model_seed(NULL, &seed) &&
-		      !v92_upstream_model_seed(&receiver, NULL), "seed accepted a null owner/input");
+		      !v92_upstream_model_seed(&work->receiver, NULL), "seed accepted a null owner/input");
 		seed.gain = NAN;
-		CHECK(!v92_upstream_model_seed(&receiver, &seed), "seed accepted a nonfinite gain");
-		seed.gain = receiver.line.calibration.maximum * 1.01;
-		CHECK(!v92_upstream_model_seed(&receiver, &seed) &&
-		      !memcmp(&receiver, &saved, sizeof(saved)), "out-of-cell seed changed receiver");
-		seed.gain = receiver.line.calibration.gain;
-		CHECK(v92_upstream_model_seed(&receiver, &seed) && v92_upstream_data_rx_is_valid(&receiver) &&
-		      !memcmp(&receiver.decoder, &saved.decoder, sizeof(saved.decoder)) &&
-		      memory_region_is_zero(receiver.model.seed.residual.history, sizeof(seed.residual.history)) &&
-		      receiver.model.seed.residual.cursor == 0, "seed retained coding or physical history");
+		CHECK(!v92_upstream_model_seed(&work->receiver, &seed), "seed accepted a nonfinite gain");
+		seed.gain = work->receiver.line.calibration.maximum * 1.01;
+		CHECK(!v92_upstream_model_seed(&work->receiver, &seed) &&
+		      !memcmp(&work->receiver, &work->seed_saved, sizeof(work->seed_saved)), "out-of-cell seed changed receiver");
+		seed.gain = work->receiver.line.calibration.gain;
+		CHECK(v92_upstream_model_seed(&work->receiver, &seed) && v92_upstream_data_rx_is_valid(&work->receiver) &&
+		      !memcmp(&work->receiver.decoder, &work->seed_saved.decoder, sizeof(work->seed_saved.decoder)) &&
+		      memory_region_is_zero(work->receiver.model.seed.residual.history, sizeof(seed.residual.history)) &&
+		      work->receiver.model.seed.residual.cursor == 0, "seed retained coding or physical history");
 	}
-	comparison_rx = receiver;
+	work->comparison_rx = work->receiver;
 	if (biased)
-		comparison_rx.line.calibration.minimum = comparison_rx.line.calibration.maximum = plan.gain;
+		work->comparison_rx.line.calibration.minimum = work->comparison_rx.line.calibration.maximum = plan.gain;
 	else
-		comparison_rx.line.polarity = -polarity;
+		work->comparison_rx.line.polarity = -polarity;
 	for (unsigned int symbol = 0u; delivered < DATA_FRAMES &&
 	     symbol < (V92_B1U_FRAMES + DATA_FRAMES + V92_PCM_RX_DELAY_FRAMES + 6u) *
 		     V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
@@ -1823,45 +1831,45 @@ static bool run_channel_plan(
 		}
 		CHECK(injected || v92_upstream_data_tx_next(&transmitter, source, &source_frames, &sample) ==
 			      V92_UPSTREAM_DATA_TX_OK, "channel-plan data transmit failed");
-		if (fault == CHANNEL_NOISE && receiver.line.received_frames >= V92_B1U_ACQUISITION_FRAMES &&
-		    receiver.line.received_frames < V92_B1U_FRAMES) {
+		if (fault == CHANNEL_NOISE && work->receiver.line.received_frames >= V92_B1U_ACQUISITION_FRAMES &&
+		    work->receiver.line.received_frames < V92_B1U_FRAMES) {
 			random = random * UINT32_C(1664525) + UINT32_C(1013904223);
 			sample += (int)(random >> 24) - 128;
 		}
 		int16_t input = wire_sample(&channel, sample);
-		bool first_frame = receiver.line.received_frames == 0u &&
-			receiver.line.symbol_count == V92_PCM_MAPPING_FRAME_SYMBOLS - 1u;
+		bool first_frame = work->receiver.line.received_frames == 0u &&
+			work->receiver.line.symbol_count == V92_PCM_MAPPING_FRAME_SYMBOLS - 1u;
 		struct v92_pcm_frame_decision predicted;
 		int32_t raw[V92_PCM_MAPPING_FRAME_SYMBOLS];
 
 		if (first_frame) {
-			struct v92_pcm_frame_rx decoder = receiver.decoder;
+			struct v92_pcm_frame_rx decoder = work->receiver.decoder;
 			int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
 			uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
 
-			memcpy(samples, receiver.line.samples, sizeof(samples));
-			memcpy(raw, receiver.line.raw, sizeof(raw));
+			memcpy(samples, work->receiver.line.samples, sizeof(samples));
+			memcpy(raw, work->receiver.line.raw, sizeof(raw));
 			raw[V92_PCM_MAPPING_FRAME_SYMBOLS - 1u] = polarity * (int32_t)input;
 			samples[V92_PCM_MAPPING_FRAME_SYMBOLS - 1u] = (int16_t)lround(
-				polarity * input * receiver.line.calibration.gain);
+				polarity * input * work->receiver.line.calibration.gain);
 			CHECK(v92_pcm_frame_decode(&decoder, samples, true, bits,
 					mapping.data_bits_per_frame, &predicted) ==
 				      V92_PCM_FRAME_OK, "linear quality prediction failed");
 		}
 		enum v92_upstream_data_rx_result result;
 		if (wire) {
-			struct v92_upstream_data_rx owned = receiver;
+			work->owned = work->receiver;
 			struct v92_upstream_data_frame output;
 
 			memset(&frame, 0xa5, sizeof(frame)); output = frame;
-			bool available = fault != CHANNEL_LOSS || receiver.line.received_frames != 20u;
-			result = fixture_octet(&receiver, channel.code, input, available, &frame);
-			CHECK(fixture_octet_owned(&owned, channel.code, input, input,
-			      available, &output) == result && !memcmp(&owned, &receiver, sizeof(owned)) &&
-			      !memcmp(&output, &frame, sizeof(output)) && v92_upstream_data_rx_is_valid(&receiver),
+			bool available = fault != CHANNEL_LOSS || work->receiver.line.received_frames != 20u;
+			result = fixture_octet(&work->receiver, channel.code, input, available, &frame);
+			CHECK(fixture_octet_owned(&work->owned, channel.code, input, input,
+			      available, &output) == result && !memcmp(&work->owned, &work->receiver, sizeof(work->owned)) &&
+			      !memcmp(&output, &frame, sizeof(output)) && v92_upstream_data_rx_is_valid(&work->receiver),
 			      "owned wire-cell stream diverged");
 		} else {
-			CHECK(receive_compared(&receiver, input, &frame, &result),
+			CHECK(receive_compared(&work->receiver, input, &frame, &result),
 			      "owned raw-coordinate stream diverged");
 		}
 
@@ -1870,7 +1878,7 @@ static bool run_channel_plan(
 
 			for (size_t i = 0u; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i) {
 				double residual = raw[i] -
-					predicted.predicted_samples[i] / receiver.line.calibration.gain;
+					predicted.predicted_samples[i] / work->receiver.line.calibration.gain;
 
 				error += residual * residual;
 			}
@@ -1881,11 +1889,11 @@ static bool run_channel_plan(
 		{
 			struct v92_upstream_data_frame comparison;
 			enum v92_upstream_data_rx_result comparison_result =
-				fixture_sample(&comparison_rx, input, &comparison);
+				fixture_sample(&work->comparison_rx, input, &comparison);
 
 			CHECK(comparison_result == result, "B1u comparison lost frame timing");
 			if (comparison_result == V92_UPSTREAM_DATA_RX_FRAME) {
-				unsigned frames = comparison_rx.line.received_frames;
+				unsigned frames = work->comparison_rx.line.received_frames;
 				if (frames > V92_B1U_ACQUISITION_FRAMES && frames <= V92_B1U_FRAMES)
 					comparison_error += comparison.squared_error;
 				if (comparison.b1u && frames > V92_B1U_ACQUISITION_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
@@ -1909,40 +1917,40 @@ static bool run_channel_plan(
 		}
 		CHECK(result == V92_UPSTREAM_DATA_RX_OK || result == V92_UPSTREAM_DATA_RX_FRAME,
 		      "channel-plan receive failed: %d", result);
-		CHECK(receiver.line.received_frames ==
+		CHECK(work->receiver.line.received_frames ==
 			(symbol + 1u < plan.delay - leading ? 0u :
 			 (symbol + 1u - (plan.delay - leading)) / V92_PCM_MAPPING_FRAME_SYMBOLS),
 		      "channel-plan frame boundary moved");
 		if (result != V92_UPSTREAM_DATA_RX_FRAME)
 			continue;
 		if (!wire)
-			CHECK(memory_region_is_zero(&receiver.line.host, sizeof(receiver.line.host)),
+			CHECK(memory_region_is_zero(&work->receiver.line.host, sizeof(work->receiver.line.host)),
 			      "sample-only input invented host gain");
-		else if (receiver.line.received_frames >= V92_B1U_ACQUISITION_FRAMES && fault != CHANNEL_LOSS)
-			CHECK(fabs(receiver.line.host.gain - (conditioned ? .75 : 1.0)) < 0.001,
+		else if (work->receiver.line.received_frames >= V92_B1U_ACQUISITION_FRAMES && fault != CHANNEL_LOSS)
+			CHECK(fabs(work->receiver.line.host.gain - (conditioned ? .75 : 1.0)) < 0.001,
 			      "wire cells confused host gain with analogue calibration");
-		if (receiver.line.received_frames > V92_B1U_ACQUISITION_FRAMES &&
-		    receiver.line.received_frames <= V92_B1U_FRAMES)
+		if (work->receiver.line.received_frames > V92_B1U_ACQUISITION_FRAMES &&
+		    work->receiver.line.received_frames <= V92_B1U_FRAMES)
 			b1_error += frame.squared_error;
-		if (!receiver.model.acquiring && !receiver.model.valid &&
-		    receiver.line.received_frames + V92_PCM_RX_DELAY_FRAMES <= V92_B1U_ACQUISITION_FRAMES)
-			CHECK(receiver.line.calibration.gain == plan.gain &&
-			      receiver.line.calibration.correlation == 0.0 && receiver.line.calibration.energy == 0.0,
+		if (!work->receiver.model.acquiring && !work->receiver.model.valid &&
+		    work->receiver.line.received_frames + V92_PCM_RX_DELAY_FRAMES <= V92_B1U_ACQUISITION_FRAMES)
+			CHECK(work->receiver.line.calibration.gain == plan.gain &&
+			      work->receiver.line.calibration.correlation == 0.0 && work->receiver.line.calibration.energy == 0.0,
 			      "unsettled coding predictions changed the acquisition gain at frame %llu",
-			      (unsigned long long)receiver.line.received_frames);
-		if (receiver.line.received_frames == V92_B1U_ACQUISITION_FRAMES)
-			trained = receiver.line;
-		else if (receiver.line.received_frames > V92_B1U_ACQUISITION_FRAMES)
-			CHECK(memcmp(&receiver.line.calibration, &trained.calibration, sizeof(trained.calibration)) == 0 &&
-			      memcmp(&receiver.line.host, &trained.host, sizeof(trained.host)) == 0,
+			      (unsigned long long)work->receiver.line.received_frames);
+		if (work->receiver.line.received_frames == V92_B1U_ACQUISITION_FRAMES)
+			trained = work->receiver.line;
+		else if (work->receiver.line.received_frames > V92_B1U_ACQUISITION_FRAMES)
+			CHECK(memcmp(&work->receiver.line.calibration, &trained.calibration, sizeof(trained.calibration)) == 0 &&
+			      memcmp(&work->receiver.line.host, &trained.host, sizeof(trained.host)) == 0,
 			      "B1u validation or payload continued analogue/host gain calibration");
 		if (frame.bit_count && frame.b1u &&
-		    receiver.line.received_frames > V92_B1U_ACQUISITION_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
+		    work->receiver.line.received_frames > V92_B1U_ACQUISITION_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
 			bad_b1 |= frame.ambiguous;
 			for (unsigned i = 0; i < frame.bit_count; ++i)
 				bad_b1 |= frame.bits[i] != 1u;
 		}
-		if (fault && fault != CHANNEL_RESIDUAL && receiver.line.received_frames == V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
+		if (fault && fault != CHANNEL_RESIDUAL && work->receiver.line.received_frames == V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
 			double host_gain = conditioned ? .75 : 1.0;
 			if (fault == CHANNEL_NOISE)
 				CHECK(b1_error / (host_gain * host_gain) >
@@ -1951,7 +1959,7 @@ static bool run_channel_plan(
 			if (fault == CHANNEL_WRONG_B1)
 				CHECK(bad_b1, "offset fitting hid a validly coded wrong B1u bit");
 			if (fault == CHANNEL_LOSS)
-				CHECK(receiver.line.calibration.offset == 0.0 && !receiver.line.residual.active,
+				CHECK(work->receiver.line.calibration.offset == 0.0 && !work->receiver.line.residual.active,
 				      "missing acquisition media supplied an offset fit");
 			if (fault == CHANNEL_EXCESSIVE_OFFSET)
 				CHECK(bad_b1 || b1_error / (host_gain * host_gain) >
@@ -1959,8 +1967,8 @@ static bool run_channel_plan(
 				      "an aliased offset fit hid a damaged B1u");
 			return true;
 		}
-		if (receiver.line.received_frames >= V92_B1U_ACQUISITION_FRAMES)
-			CHECK(memory_region_is_zero(&receiver.model.seed, sizeof(receiver.model.seed)),
+		if (work->receiver.line.received_frames >= V92_B1U_ACQUISITION_FRAMES)
+			CHECK(memory_region_is_zero(&work->receiver.model.seed, sizeof(work->receiver.model.seed)),
 			      "acquisition seed survived into held-out B1u");
 		if (frame.bit_count == 0u || frame.b1u)
 			continue;
@@ -1971,24 +1979,24 @@ static bool run_channel_plan(
 		      law, polarity, wire, delivered);
 		++delivered;
 	}
-	struct v92_upstream_data_line saved = receiver.line;
+	struct v92_upstream_data_line saved = work->receiver.line;
 
 	CHECK(delivered == DATA_FRAMES, "channel-plan data did not arrive");
 	/* Qualify the same held-out window as the call owner. Acquisition
 	 * residual is still reported and independently checked above. */
-	double quality_gain = wire ? receiver.line.host.gain : 1.0;
+	double quality_gain = wire ? work->receiver.line.host.gain : 1.0;
 	CHECK(b1_error / (quality_gain * quality_gain) <
 	      V92_B1U_VALIDATION_SYMBOLS * V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
 	      "channel-plan B1u residual too large: %g law=%u polarity=%d conditioned=%u offset=%d fit=%g gain=%g [%g,%g] nominal=%g residual=%g lags=%u,%u beta=%g,%g",
 	      sqrt(b1_error / V92_B1U_VALIDATION_SYMBOLS), law, polarity, conditioned, offset,
-	      receiver.line.calibration.offset, receiver.line.calibration.gain,
-	      receiver.line.calibration.minimum, receiver.line.calibration.maximum, plan.gain,
-	      receiver.line.residual.offset, receiver.line.residual.delay[0], receiver.line.residual.delay[1],
-	      receiver.line.residual.coefficient[0], receiver.line.residual.coefficient[1]);
+	      work->receiver.line.calibration.offset, work->receiver.line.calibration.gain,
+	      work->receiver.line.calibration.minimum, work->receiver.line.calibration.maximum, plan.gain,
+	      work->receiver.line.residual.offset, work->receiver.line.residual.delay[0], work->receiver.line.residual.delay[1],
+	      work->receiver.line.residual.coefficient[0], work->receiver.line.residual.coefficient[1]);
 	CHECK(comparison_payload == DATA_FRAMES, "comparison channel shortened payload");
 	if (offset) {
-		CHECK(fabs(receiver.line.calibration.offset + receiver.line.residual.offset - offset * (conditioned ? .75 : 1.0)) < 16.0,
-		      "offset fit missed the physical bias: %g expected %g", receiver.line.calibration.offset + receiver.line.residual.offset,
+		CHECK(fabs(work->receiver.line.calibration.offset + work->receiver.line.residual.offset - offset * (conditioned ? .75 : 1.0)) < 16.0,
+		      "offset fit missed the physical bias: %g expected %g", work->receiver.line.calibration.offset + work->receiver.line.residual.offset,
 		      offset * (conditioned ? .75 : 1.0));
 		CHECK(!bad_b1 && b1_error < comparison_error / 2.0,
 		      "offset correction did not improve independently validated B1u");
@@ -1997,8 +2005,8 @@ static bool run_channel_plan(
 		CHECK(comparison_error / (quality_gain * quality_gain) >
 		      V92_B1U_VALIDATION_SYMBOLS * V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
 		      "fixed gain hid bad training: %g", sqrt(comparison_error / V92_B1U_VALIDATION_SYMBOLS));
-		CHECK(receiver.line.calibration.gain < plan.gain &&
-		      receiver.line.calibration.gain >= receiver.line.calibration.minimum,
+		CHECK(work->receiver.line.calibration.gain < plan.gain &&
+		      work->receiver.line.calibration.gain >= work->receiver.line.calibration.minimum,
 		      "gain fixture did not recover rejected B1u within training bounds");
 	} else if (!offset) {
 		/* Unconstrained coding can acquire the inverted constellation too:
@@ -2009,23 +2017,35 @@ static bool run_channel_plan(
 		      "inverted constellation did not acquire valid B1u");
 	}
 	if (fault == CHANNEL_RESIDUAL) {
-		struct v92_upstream_data_rx lost = receiver;
+		work->lost = work->receiver;
 		struct v92_upstream_data_frame output, unchanged;
 		memset(&output, 0xa5, sizeof(output)); unchanged = output;
-		CHECK(receiver.line.residual.active &&
-		      fixture_octet(&lost, channel.code, 0, false, &output) == V92_UPSTREAM_DATA_RX_NO_PATH &&
-		      lost.failed && v92_upstream_data_rx_is_valid(&lost) &&
+		CHECK(work->receiver.line.residual.active &&
+		      fixture_octet(&work->lost, channel.code, 0, false, &output) == V92_UPSTREAM_DATA_RX_NO_PATH &&
+		      work->lost.failed && v92_upstream_data_rx_is_valid(&work->lost) &&
 		      !memcmp(&output, &unchanged, sizeof(output)) &&
-		      !memcmp(&lost.line.residual, &receiver.line.residual, sizeof(receiver.line.residual)),
+		      !memcmp(&work->lost.line.residual, &work->receiver.line.residual, sizeof(work->receiver.line.residual)),
 		      "missing data media advanced residual history or corrupted receiver state");
 	}
-	CHECK(memcmp(&receiver.line.plan, &plan, sizeof(plan)) == 0,
+	CHECK(memcmp(&work->receiver.line.plan, &plan, sizeof(plan)) == 0,
 	      "B1u calibration changed the negotiated receive plan");
-	CHECK(check_control_reset(&receiver) &&
-	      v92_upstream_data_rx_reset_control(&receiver) == V92_UPSTREAM_DATA_RX_OK &&
-	      memcmp(&saved, &receiver.line, sizeof(saved)) == 0,
+	CHECK(check_control_reset(&work->receiver) &&
+	      v92_upstream_data_rx_reset_control(&work->receiver) == V92_UPSTREAM_DATA_RX_OK &&
+	      memcmp(&saved, &work->receiver.line, sizeof(saved)) == 0,
 	      "control reset changed channel plan or line timing");
 	return true;
+}
+
+static bool run_channel_plan(
+	enum g711_law law, int polarity, bool extended, bool biased, bool conditioned,
+	bool changed_history, bool wire, int offset, enum channel_fault fault, const int *seed_offset)
+{
+	struct channel_plan_workspace *work = malloc(sizeof(*work));
+	CHECK(work, "channel plan workspace allocation failed");
+	bool result = check_channel_plan(work, law, polarity, extended, biased, conditioned,
+		changed_history, wire, offset, fault, seed_offset);
+	free(work);
+	return result;
 }
 
 static bool test_channel_plan(
@@ -2467,7 +2487,18 @@ static int codec_echo(unsigned index)
 /* The single final codec quantizes both signal and echo, which is then
  * independently removed at the host. Keep real wire octets and both host
  * sample versions; fitted predictions must not replace bit validation. */
-static bool test_scalar_model(enum g711_law law, int polarity, bool wrong_bit)
+struct scalar_model_workspace {
+	struct v92_upstream_data_rx receiver;
+	struct v92_upstream_data_rx initial;
+	struct v92_upstream_data_rx independent;
+	struct v92_upstream_data_rx linear;
+	struct v92_upstream_data_rx saved;
+	struct v92_upstream_data_rx clipped;
+	struct v92_upstream_data_rx retained;
+	struct v92_upstream_data_rx invalid;
+};
+
+static bool check_scalar_model(struct scalar_model_workspace *work, enum g711_law law, int polarity, bool wrong_bit)
 {
 	enum { FRAMES = V92_B1U_FRAMES + 24 + V92_PCM_RX_DELAY_FRAMES, PREFIX = 6 };
 	struct channel channel = { .gain = .9, .law = law, .polarity = polarity };
@@ -2478,7 +2509,6 @@ static bool test_scalar_model(enum g711_law law, int polarity, bool wrong_bit)
 	struct v92_pcm_frame_tx transmitter;
 	struct v92_phase4_record_tx e2u_tx;
 	struct v92_e2u_rx e2u_rx;
-	struct v92_upstream_data_rx receiver, initial;
 	uint8_t codes[(FRAMES + PREFIX) * V92_PCM_MAPPING_FRAME_SYMBOLS];
 	uint32_t random = UINT32_C(0x35791bd);
 	unsigned delivered = 0, bad = 0;
@@ -2494,9 +2524,9 @@ static bool test_scalar_model(enum g711_law law, int polarity, bool wrong_bit)
 	      v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK &&
 	      v92_pcm_frame_tx_init(&transmitter, &mapping) == V92_PCM_FRAME_OK &&
 	      prepare_e2u(&channel, false, &e2u_tx, &e2u_rx) &&
-	      v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping, &plan) == V92_UPSTREAM_DATA_RX_OK &&
-	      receiver.model.acquiring, "scalar initialization failed");
-	initial = receiver;
+	      v92_upstream_data_rx_init(&work->receiver, &e2u_rx.signal, &mapping, &plan) == V92_UPSTREAM_DATA_RX_OK &&
+	      work->receiver.model.acquiring, "scalar initialization failed");
+	work->initial = work->receiver;
 	for (unsigned f = 0; f < FRAMES + PREFIX; f++) {
 		uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
 		struct v92_pcm_frame frame;
@@ -2516,38 +2546,38 @@ static bool test_scalar_model(enum g711_law law, int polarity, bool wrong_bit)
 				g711_encode_pcma((int16_t)lround(mixed));
 		}
 	}
-	for (unsigned i = V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY; receiver.line.received_frames < FRAMES; i++) {
+	for (unsigned i = V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY; work->receiver.line.received_frames < FRAMES; i++) {
 		struct v92_upstream_data_frame frame = { 0 }, compared = { 0 };
-		struct v92_upstream_data_rx independent = receiver;
-		struct v92_upstream_data_rx linear = receiver;
-		linear.model.scalar_gain = 0.;
+		work->independent = work->receiver;
+		work->linear = work->receiver;
+		work->linear.model.scalar_gain = 0.;
 		int16_t host = law == G711_LAW_PCMU ? g711_decode_pcmu(codes[i]) : g711_decode_pcma(codes[i]);
 		int16_t sample = host - polarity * codec_echo(i);
 		enum v92_upstream_data_rx_result result = fixture_octet_owned(
-			&receiver, codes[i], sample, host, true, &frame);
+			&work->receiver, codes[i], sample, host, true, &frame);
 		CHECK(result == V92_UPSTREAM_DATA_RX_OK || result == V92_UPSTREAM_DATA_RX_FRAME,
 			"scalar receiver stopped: %u at %u", result, i);
-		CHECK(fixture_octet_owned(&independent, codes[i], sample, host, true, &compared) == result &&
-		      !memcmp(&receiver, &independent, sizeof(receiver)) && !memcmp(&frame, &compared, sizeof(frame)) &&
-		      v92_upstream_data_rx_is_valid(&receiver), "scalar receivers shared mutable state");
+		CHECK(fixture_octet_owned(&work->independent, codes[i], sample, host, true, &compared) == result &&
+		      !memcmp(&work->receiver, &work->independent, sizeof(work->receiver)) && !memcmp(&frame, &compared, sizeof(frame)) &&
+		      v92_upstream_data_rx_is_valid(&work->receiver), "scalar receivers shared mutable state");
 		if (result != V92_UPSTREAM_DATA_RX_FRAME) continue;
 		/* Removing only the quality predictor must leave every coding
 		 * decision intact. Its original residual remains an independent
 		 * comparison, not a fitting target during held-out B1u. */
 		if (frozen) {
-			CHECK(fixture_octet_owned(&linear, codes[i], sample, host, true, &compared) == result &&
-			      !memcmp(&linear.decoder, &receiver.decoder, sizeof(linear.decoder)) &&
+			CHECK(fixture_octet_owned(&work->linear, codes[i], sample, host, true, &compared) == result &&
+			      !memcmp(&work->linear.decoder, &work->receiver.decoder, sizeof(work->linear.decoder)) &&
 			      compared.bit_count == frame.bit_count && compared.ambiguous == frame.ambiguous &&
 			      !memcmp(compared.bits, frame.bits, frame.bit_count), "scalar predictor changed decoded bits");
-			if (receiver.line.received_frames <= V92_B1U_FRAMES) linear_error += compared.squared_error;
+			if (work->receiver.line.received_frames <= V92_B1U_FRAMES) linear_error += compared.squared_error;
 		}
-		if (receiver.line.received_frames == V92_B1U_ACQUISITION_FRAMES) {
-			CHECK(!receiver.model.acquiring && !receiver.model.valid && receiver.model.scalar_gain > 0.,
-				"single codec fit missing: tandem=%u scalar=%g", receiver.model.valid, receiver.model.scalar_gain);
-			frozen = receiver.model.scalar_gain;
-		} else if (receiver.line.received_frames > V92_B1U_ACQUISITION_FRAMES) {
-			CHECK(receiver.model.scalar_gain == frozen, "held-out data changed scalar fit");
-			if (receiver.line.received_frames <= V92_B1U_FRAMES) error += frame.squared_error;
+		if (work->receiver.line.received_frames == V92_B1U_ACQUISITION_FRAMES) {
+			CHECK(!work->receiver.model.acquiring && !work->receiver.model.valid && work->receiver.model.scalar_gain > 0.,
+				"single codec fit missing: tandem=%u scalar=%g", work->receiver.model.valid, work->receiver.model.scalar_gain);
+			frozen = work->receiver.model.scalar_gain;
+		} else if (work->receiver.line.received_frames > V92_B1U_ACQUISITION_FRAMES) {
+			CHECK(work->receiver.model.scalar_gain == frozen, "held-out data changed scalar fit");
+			if (work->receiver.line.received_frames <= V92_B1U_FRAMES) error += frame.squared_error;
 		}
 		if (!frame.bit_count) continue;
 		uint8_t expected[V92_PCM_MAPPING_MAX_BITS];
@@ -2565,55 +2595,81 @@ static bool test_scalar_model(enum g711_law law, int polarity, bool wrong_bit)
 	CHECK(error / V92_B1U_VALIDATION_SYMBOLS < V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
 		"scalar B1u RMS failed: %g", sqrt(error / V92_B1U_VALIDATION_SYMBOLS));
 	CHECK(error < linear_error, "single-codec prediction did not improve held-out quality");
-	struct v92_upstream_data_rx saved = receiver;
+	work->saved = work->receiver;
 	struct v92_upstream_data_frame output, before;
 	memset(&output, 0xa5, sizeof(output)); before = output;
-	CHECK(fixture_sample(&receiver, 0, &output) == V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT &&
-	      !memcmp(&receiver, &saved, sizeof(saved)) && !memcmp(&output, &before, sizeof(output)),
+	CHECK(fixture_sample(&work->receiver, 0, &output) == V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT &&
+	      !memcmp(&work->receiver, &work->saved, sizeof(work->saved)) && !memcmp(&output, &before, sizeof(output)),
 	      "scalar prediction invented missing wire evidence");
 	for (unsigned fault = 0; fault < 3; fault++) {
-		struct v92_upstream_data_rx clipped = saved;
+		work->clipped = work->saved;
 		uint8_t code = law == G711_LAW_PCMU ? g711_encode_pcmu(4096) : g711_encode_pcma(4096);
 		int16_t host = law == G711_LAW_PCMU ? g711_decode_pcmu(code) : g711_decode_pcma(code);
 		int16_t sample = fault == 0 ? INT16_MAX : host;
 		if (fault == 1) host = INT16_MAX;
 		if (fault == 2) host += 8;
 		for (unsigned s = 0; s < V92_PCM_MAPPING_FRAME_SYMBOLS - 1u; s++)
-			CHECK(fixture_octet_owned(&clipped, code, sample, host, true, &output) ==
+			CHECK(fixture_octet_owned(&work->clipped, code, sample, host, true, &output) ==
 				V92_UPSTREAM_DATA_RX_OK, "scalar clipping prefix failed");
-		struct v92_upstream_data_rx retained = clipped;
-		retained.failed = true;
-		CHECK(fixture_octet_owned(&clipped, code, sample, host, true, &output) ==
-			V92_UPSTREAM_DATA_RX_NO_PATH && !memcmp(&clipped, &retained, sizeof(retained)) &&
+		work->retained = work->clipped;
+		work->retained.failed = true;
+		CHECK(fixture_octet_owned(&work->clipped, code, sample, host, true, &output) ==
+			V92_UPSTREAM_DATA_RX_NO_PATH && !memcmp(&work->clipped, &work->retained, sizeof(work->retained)) &&
 			!memcmp(&output, &before, sizeof(output)), "scalar clipping advanced state or released payload");
 	}
 	for (unsigned s = 0; s < V92_PCM_MAPPING_FRAME_SYMBOLS; s++)
-		CHECK(fixture_octet(&receiver, 0u, INT16_MAX, false, &output) ==
+		CHECK(fixture_octet(&work->receiver, 0u, INT16_MAX, false, &output) ==
 			(s == V92_PCM_MAPPING_FRAME_SYMBOLS - 1u ? V92_UPSTREAM_DATA_RX_FRAME :
 			 V92_UPSTREAM_DATA_RX_OK), "scalar erasure stopped receiver");
-	CHECK(output.squared_error > 1e9 && receiver.model.scalar_gain == frozen &&
-	      !memcmp(&receiver.line.host, &saved.line.host, sizeof(saved.line.host)),
+	CHECK(output.squared_error > 1e9 && work->receiver.model.scalar_gain == frozen &&
+	      !memcmp(&work->receiver.line.host, &work->saved.line.host, sizeof(work->saved.line.host)),
 	      "scalar erasure hid its residual or changed the fit");
-	receiver = saved;
-	CHECK(check_control_reset(&receiver) &&
-	      v92_upstream_data_rx_reset_control(&receiver) == V92_UPSTREAM_DATA_RX_OK &&
-	      receiver.model.scalar_gain == frozen && !memcmp(&receiver.line, &saved.line, sizeof(saved.line)),
+	work->receiver = work->saved;
+	CHECK(check_control_reset(&work->receiver) &&
+	      v92_upstream_data_rx_reset_control(&work->receiver) == V92_UPSTREAM_DATA_RX_OK &&
+	      work->receiver.model.scalar_gain == frozen && !memcmp(&work->receiver.line, &work->saved.line, sizeof(work->saved.line)),
 	      "control reset discarded the established scalar channel");
 	for (unsigned fault = 0; fault < 5; fault++) {
-		struct v92_upstream_data_rx invalid = saved;
-		if (fault == 0) invalid.model.scalar_gain = NAN;
-		if (fault == 1) invalid.model.scalar_gain = -1.;
-		if (fault == 2) invalid.model.acquiring = true;
-		if (fault == 3) invalid.model.coefficient = 0;
-		if (fault == 4) invalid.line.host.gain = 0.;
-		CHECK(!v92_upstream_data_rx_is_valid(&invalid), "invalid scalar state accepted");
+		work->invalid = work->saved;
+		if (fault == 0) work->invalid.model.scalar_gain = NAN;
+		if (fault == 1) work->invalid.model.scalar_gain = -1.;
+		if (fault == 2) work->invalid.model.acquiring = true;
+		if (fault == 3) work->invalid.model.coefficient = 0;
+		if (fault == 4) work->invalid.line.host.gain = 0.;
+		CHECK(!v92_upstream_data_rx_is_valid(&work->invalid), "invalid scalar state accepted");
 	}
-	CHECK(v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping, &plan) == V92_UPSTREAM_DATA_RX_OK &&
-	      !memcmp(&receiver, &initial, sizeof(initial)), "scalar fit survived a new training epoch");
+	CHECK(v92_upstream_data_rx_init(&work->receiver, &e2u_rx.signal, &mapping, &plan) == V92_UPSTREAM_DATA_RX_OK &&
+	      !memcmp(&work->receiver, &work->initial, sizeof(work->initial)), "scalar fit survived a new training epoch");
 	return true;
 }
 
-static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer, bool echo, unsigned deferred_block)
+static bool test_scalar_model(enum g711_law law, int polarity, bool wrong_bit)
+{
+	struct scalar_model_workspace *work = malloc(sizeof(*work));
+	CHECK(work, "scalar model workspace allocation failed");
+	bool result = check_scalar_model(work, law, polarity, wrong_bit);
+	free(work);
+	return result;
+}
+
+/* Keep independent receiver snapshots off the thread stack, including under
+ * sanitizers. The wrapper frees the workspace after any failed CHECK. */
+struct codec_model_workspace {
+	struct v92_upstream_data_rx receiver;
+	struct v92_upstream_data_rx initial;
+	struct v92_upstream_data_rx invalid;
+	struct v92_upstream_data_rx owned;
+	struct v92_upstream_data_rx restarted;
+	struct v92_upstream_data_rx selected;
+	struct v92_upstream_data_rx selected_before;
+	struct v92_upstream_data_rx full;
+	struct v92_upstream_data_rx saved;
+	struct v92_upstream_data_rx conditioned;
+	struct v92_upstream_data_rx retained;
+	struct v92_upstream_data_rx paired;
+};
+
+static bool check_codec_model(struct codec_model_workspace *work, int polarity, bool rm, uint8_t rate, bool peer, bool echo, unsigned deferred_block)
 {
 	bool deferred = deferred_block != 0;
 	unsigned block_decodes = 0;
@@ -2628,7 +2684,6 @@ static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer, boo
 	struct v92_pcm_frame_tx transmitter;
 	struct v92_phase4_record_tx e2u_tx;
 	struct v92_e2u_rx e2u_rx;
-	struct v92_upstream_data_rx receiver, initial;
 	struct v92_observation frozen[2];
 	uint8_t codes[(FRAMES + 34 + PREFIX) * V92_PCM_MAPPING_FRAME_SYMBOLS];
 	uint32_t random = 0x35791bdu;
@@ -2661,21 +2716,21 @@ static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer, boo
 	CHECK(v92_pcm_mapping_init(&mapping, G711_LAW_PCMU, &cpd) == V92_PCM_MAPPING_OK &&
 	      v92_pcm_frame_tx_init(&transmitter, &mapping) == V92_PCM_FRAME_OK &&
 	      prepare_e2u(&training, false, &e2u_tx, &e2u_rx) &&
-	      v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping, &plan) ==
-		V92_UPSTREAM_DATA_RX_OK && receiver.model.acquiring,
+	      v92_upstream_data_rx_init(&work->receiver, &e2u_rx.signal, &mapping, &plan) ==
+		V92_UPSTREAM_DATA_RX_OK && work->receiver.model.acquiring,
 	      "codec model initialization failed");
-	initial = receiver;
+	work->initial = work->receiver;
 	for (unsigned fault = 0; fault < 4; ++fault) {
-		struct v92_upstream_data_rx invalid = initial;
+		work->invalid = work->initial;
 		if (fault == 0)
-			invalid.line.host.gain = .75;
+			work->invalid.line.host.gain = .75;
 		else if (fault == 1)
-			invalid.line.host.fit.lower = NAN;
+			work->invalid.line.host.fit.lower = NAN;
 		else if (fault == 2)
-			invalid.line.host.fit.energy = -1;
+			work->invalid.line.host.fit.energy = -1;
 		else
-			invalid.line.host.fit.upper = -1;
-		CHECK(!v92_upstream_data_rx_is_valid(&invalid), "invalid host acquisition accepted");
+			work->invalid.line.host.fit.upper = -1;
+		CHECK(!v92_upstream_data_rx_is_valid(&work->invalid), "invalid host acquisition accepted");
 	}
 	previous = second = 0;
 	for (unsigned f = 0u; f < frames + PREFIX; ++f) {
@@ -2715,13 +2770,13 @@ static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer, boo
 		}
 	}
 	for (unsigned i = V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY;
-	     receiver.line.received_frames < frames; ++i) {
+	     work->receiver.line.received_frames < frames; ++i) {
 		struct v92_upstream_data_frame frame = { 0 }, compared = { 0 };
 		if (deferred && (i - V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY) % deferred_block == 0) {
-			v92_upstream_data_rx_begin_block_owned(&receiver, deferred_block);
+			v92_upstream_data_rx_begin_block_owned(&work->receiver, deferred_block);
 			block_decodes = 0;
 		}
-		struct v92_upstream_data_rx owned = receiver;
+		work->owned = work->receiver;
 		bool eof = deferred && i >= plan.delay + frames * V92_PCM_MAPPING_FRAME_SYMBOLS;
 		CHECK(i < plan.delay + frames * V92_PCM_MAPPING_FRAME_SYMBOLS + 4 * V92_UPSTREAM_INPUT_QUEUE,
 			"retired media drain did not finish");
@@ -2729,95 +2784,95 @@ static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer, boo
 		int16_t host = (int16_t)lround(.75 * g711_decode_pcmu(code));
 		int16_t sample = host - (echo ? polarity * 3 * (codec_echo(i) / 4) : 0);
 
-		if (receiver.line.symbol_count == 0u &&
-		    (rm ? receiver.line.received_frames == RM_END :
-		     receiver.line.received_frames == V92_B1U_FRAMES + 16u ||
-		     receiver.line.received_frames == V92_B1U_FRAMES + 18u)) {
-			struct v92_upstream_data_line saved_line = receiver.line;
-			CHECK(receiver.model.valid == 3u &&
-			      check_control_reset(&receiver) &&
-			      v92_upstream_data_rx_reset_control(&receiver) == V92_UPSTREAM_DATA_RX_OK &&
-			      memcmp(&saved_line, &receiver.line, sizeof(saved_line)) == 0,
+		if (work->receiver.line.symbol_count == 0u &&
+		    (rm ? work->receiver.line.received_frames == RM_END :
+		     work->receiver.line.received_frames == V92_B1U_FRAMES + 16u ||
+		     work->receiver.line.received_frames == V92_B1U_FRAMES + 18u)) {
+			struct v92_upstream_data_line saved_line = work->receiver.line;
+			CHECK(work->receiver.model.valid == 3u &&
+			      check_control_reset(&work->receiver) &&
+			      v92_upstream_data_rx_reset_control(&work->receiver) == V92_UPSTREAM_DATA_RX_OK &&
+			      memcmp(&saved_line, &work->receiver.line, sizeof(saved_line)) == 0,
 			      "paired codec control reset failed");
-			owned = receiver;
+			work->owned = work->receiver;
 		}
 		enum v92_upstream_data_rx_result result = eof ?
-			v92_upstream_data_rx_drain_owned(&receiver, &frame) : echo ? (deferred ? v92_upstream_data_rx_octet_owned : fixture_octet_owned)(
-			&receiver, code, sample, host, true, &frame) : (deferred ? v92_upstream_data_rx_octet : fixture_octet)(
-			&receiver, code, sample, true, &frame);
+			v92_upstream_data_rx_drain_owned(&work->receiver, &frame) : echo ? (deferred ? v92_upstream_data_rx_octet_owned : fixture_octet_owned)(
+			&work->receiver, code, sample, host, true, &frame) : (deferred ? v92_upstream_data_rx_octet : fixture_octet)(
+			&work->receiver, code, sample, true, &frame);
 
 		CHECK(result == V92_UPSTREAM_DATA_RX_OK || result == V92_UPSTREAM_DATA_RX_FRAME,
 		      "codec receiver stopped: %u at sample %u", result, i);
-		CHECK((eof ? v92_upstream_data_rx_drain_owned(&owned, &compared) :
-			(deferred ? v92_upstream_data_rx_octet_owned : fixture_octet_owned)(&owned, code, sample, host, true, &compared)) == result &&
-		      memcmp(&receiver, &owned, sizeof(owned)) == 0 &&
+		CHECK((eof ? v92_upstream_data_rx_drain_owned(&work->owned, &compared) :
+			(deferred ? v92_upstream_data_rx_octet_owned : fixture_octet_owned)(&work->owned, code, sample, host, true, &compared)) == result &&
+		      memcmp(&work->receiver, &work->owned, sizeof(work->owned)) == 0 &&
 		      memcmp(&frame, &compared, sizeof(frame)) == 0 &&
-		      v92_upstream_data_rx_is_valid(&receiver), "codec owned/checked disagreement");
+		      v92_upstream_data_rx_is_valid(&work->receiver), "codec owned/checked disagreement");
 
-		CHECK(receiver.line.input_samples + receiver.input.count == initial.line.input_samples +
+		CHECK(work->receiver.line.input_samples + work->receiver.input.count == work->initial.line.input_samples +
 			(eof ? plan.delay + frames * V92_PCM_MAPPING_FRAME_SYMBOLS : i + 1) -
 			V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY, "queued input accounting changed");
-		if (receiver.input.count > queued_peak) queued_peak = receiver.input.count;
-		if (receiver.model.fitting && !fitting_seen) {
+		if (work->receiver.input.count > queued_peak) queued_peak = work->receiver.input.count;
+		if (work->receiver.model.fitting && !fitting_seen) {
 			fitting_seen = true;
-			struct v92_upstream_data_rx restarted = receiver;
-			CHECK(v92_upstream_data_rx_init(&restarted, &e2u_rx.signal, &mapping, &plan) ==
-				V92_UPSTREAM_DATA_RX_OK && !memcmp(&restarted, &initial, sizeof(initial)),
+			work->restarted = work->receiver;
+			CHECK(v92_upstream_data_rx_init(&work->restarted, &e2u_rx.signal, &mapping, &plan) ==
+				V92_UPSTREAM_DATA_RX_OK && !memcmp(&work->restarted, &work->initial, sizeof(work->initial)),
 				"restart retained a suspended fit or queued media");
 		}
 		if (result != V92_UPSTREAM_DATA_RX_FRAME)
 			continue;
-		if (deferred && receiver.line.received_frames > V92_B1U_ACQUISITION_FRAMES &&
-			receiver.line.received_frames <= V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES)
+		if (deferred && work->receiver.line.received_frames > V92_B1U_ACQUISITION_FRAMES &&
+			work->receiver.line.received_frames <= V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES)
 			CHECK(++block_decodes <= (deferred_block == 40 ? 2u : 1u),
 				"paired B1 decode exceeded its native block budget");
-		if (receiver.line.received_frames > V92_B1U_ACQUISITION_FRAMES &&
-		    receiver.line.received_frames <= V92_B1U_FRAMES)
+		if (work->receiver.line.received_frames > V92_B1U_ACQUISITION_FRAMES &&
+		    work->receiver.line.received_frames <= V92_B1U_FRAMES)
 			b1_error += frame.squared_error;
-		if (receiver.line.received_frames == V92_B1U_ACQUISITION_FRAMES) {
-			CHECK(deferred ? receiver.model.fitting && !receiver.model.valid :
-				receiver.model.valid == 3u && !receiver.model.acquiring,
+		if (work->receiver.line.received_frames == V92_B1U_ACQUISITION_FRAMES) {
+			CHECK(deferred ? work->receiver.model.fitting && !work->receiver.model.valid :
+				work->receiver.model.valid == 3u && !work->receiver.model.acquiring,
 				"codec B1u acquisition boundary changed");
-			CHECK(fabs(receiver.line.host.gain - .75) < 1e-12 &&
-			      memory_region_is_zero(&receiver.line.host.fit, sizeof(receiver.line.host.fit)),
+			CHECK(fabs(work->receiver.line.host.gain - .75) < 1e-12 &&
+			      memory_region_is_zero(&work->receiver.line.host.fit, sizeof(work->receiver.line.host.fit)),
 			      "host gain did not freeze at the acquisition boundary");
-			if (!deferred) memcpy(frozen, receiver.model.model, sizeof(frozen));
-		} else if (receiver.line.received_frames > V92_B1U_ACQUISITION_FRAMES) {
-			if (deferred && receiver.line.received_frames == V92_B1U_ACQUISITION_FRAMES + 1) {
-				CHECK(!receiver.model.fitting && receiver.model.valid == 3, "deferred model not complete before validation");
-				memcpy(frozen, receiver.model.model, sizeof(frozen));
+			if (!deferred) memcpy(frozen, work->receiver.model.model, sizeof(frozen));
+		} else if (work->receiver.line.received_frames > V92_B1U_ACQUISITION_FRAMES) {
+			if (deferred && work->receiver.line.received_frames == V92_B1U_ACQUISITION_FRAMES + 1) {
+				CHECK(!work->receiver.model.fitting && work->receiver.model.valid == 3, "deferred model not complete before validation");
+				memcpy(frozen, work->receiver.model.model, sizeof(frozen));
 			}
-			CHECK(memcmp(frozen, receiver.model.model, sizeof(frozen)) == 0 &&
-			      fabs(receiver.line.host.gain - .75) < 1e-12 &&
-			      memory_region_is_zero(&receiver.line.host.fit, sizeof(receiver.line.host.fit)),
+			CHECK(memcmp(frozen, work->receiver.model.model, sizeof(frozen)) == 0 &&
+			      fabs(work->receiver.line.host.gain - .75) < 1e-12 &&
+			      memory_region_is_zero(&work->receiver.line.host.fit, sizeof(work->receiver.line.host.fit)),
 			      "held-out B1u or payload retrained the codec models");
 		} else {
-			CHECK(receiver.line.host.gain == 0.0 && pcm_gain_is_valid(&receiver.line.host.fit),
+			CHECK(work->receiver.line.host.gain == 0.0 && pcm_gain_is_valid(&work->receiver.line.host.fit),
 			      "host gain froze before the acquisition boundary");
 		}
-		if (deferred && receiver.line.received_frames == V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
-			struct v92_upstream_data_rx selected = receiver, before;
-			unsigned other = selected.model.primary ^ 1u;
-			selected.line.received_frames--;
-			before = selected;
-			CHECK(!v92_upstream_model_finish_b1u(&selected) && !memcmp(&selected, &before, sizeof(before)),
-				"channel selection ran before the final independent B1u bit");
-			selected = receiver;
-			selected.model.cost[other] = UINT64_C(16) * V92_PCM_RX_AMBIGUITY_COST - 1;
-			before = selected;
-			CHECK(!v92_upstream_model_finish_b1u(&selected) && !memcmp(&selected, &before, sizeof(before)),
+		if (deferred && work->receiver.line.received_frames == V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
+			work->selected = work->receiver;
+			unsigned other = work->selected.model.primary ^ 1u;
+			work->selected.line.received_frames--;
+			work->selected_before = work->selected;
+			CHECK(!v92_upstream_model_finish_b1u(&work->selected) && !memcmp(&work->selected, &work->selected_before, sizeof(work->selected_before)),
+				"channel selection ran selected_before the final independent B1u bit");
+			work->selected = work->receiver;
+			work->selected.model.cost[other] = UINT64_C(16) * V92_PCM_RX_AMBIGUITY_COST - 1;
+			work->selected_before = work->selected;
+			CHECK(!v92_upstream_model_finish_b1u(&work->selected) && !memcmp(&work->selected, &work->selected_before, sizeof(work->selected_before)),
 				"channel selection discarded an uncertain model");
-			selected.model.cost[other]++;
-			before = selected;
-			CHECK(v92_upstream_model_finish_b1u(&selected) &&
-				selected.model.valid == (1u << selected.model.primary) &&
-				!memcmp(&selected.decoder, &before.decoder, sizeof(selected.decoder)) &&
-				!memcmp(selected.model.model, before.model.model, sizeof(selected.model.model)) &&
-				!memcmp(&selected.line, &before.line, sizeof(selected.line)) &&
-				memory_region_is_zero(&selected.model.alternate, sizeof(selected.model.alternate)) &&
-				v92_upstream_data_rx_is_valid(&selected), "selected channel changed coding, fits, or physical state");
+			work->selected.model.cost[other]++;
+			work->selected_before = work->selected;
+			CHECK(v92_upstream_model_finish_b1u(&work->selected) &&
+				work->selected.model.valid == (1u << work->selected.model.primary) &&
+				!memcmp(&work->selected.decoder, &work->selected_before.decoder, sizeof(work->selected.decoder)) &&
+				!memcmp(work->selected.model.model, work->selected_before.model.model, sizeof(work->selected.model.model)) &&
+				!memcmp(&work->selected.line, &work->selected_before.line, sizeof(work->selected.line)) &&
+				memory_region_is_zero(&work->selected.model.alternate, sizeof(work->selected.model.alternate)) &&
+				v92_upstream_data_rx_is_valid(&work->selected), "selected channel changed coding, fits, or physical state");
 		}
-		unsigned f = (unsigned)receiver.line.received_frames - 1u;
+		unsigned f = (unsigned)work->receiver.line.received_frames - 1u;
 		enum v92_pcm_frame_rm expected_rm = !rm || f < RM_START +
 			V92_PCM_RM_QUALIFY_FRAMES - 1u || f >= RM_END ? V92_PCM_FRAME_RM_NONE :
 			f < RM_PRIME ? V92_PCM_FRAME_RM_SIGNAL :
@@ -2846,22 +2901,22 @@ static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer, boo
 	      V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR, "codec B1u failed quality");
 	if (deferred) {
 		CHECK(fitting_seen && queued_peak > 0 && queued_peak < V92_UPSTREAM_INPUT_QUEUE &&
-			!receiver.input.count,
+			!work->receiver.input.count,
 			"deferred fit did not retain bounded input");
-		struct v92_upstream_data_rx full = receiver;
-		full.input.count = V92_UPSTREAM_INPUT_QUEUE;
+		work->full = work->receiver;
+		work->full.input.count = V92_UPSTREAM_INPUT_QUEUE;
 		struct v92_upstream_data_frame out = {0}, before = out;
-		CHECK(v92_upstream_data_rx_octet_owned(&full, 0xff, 0, 0, true, &out) ==
-			V92_UPSTREAM_DATA_RX_NO_PATH && full.failed && !memcmp(&out, &before, sizeof(out)),
+		CHECK(v92_upstream_data_rx_octet_owned(&work->full, 0xff, 0, 0, true, &out) ==
+			V92_UPSTREAM_DATA_RX_NO_PATH && work->full.failed && !memcmp(&out, &before, sizeof(out)),
 			"full input queue silently dropped media");
 		printf("Deferred codec peak retained samples=%u\n", queued_peak);
 		return true;
 	}
-	struct v92_upstream_data_rx saved = receiver;
+	work->saved = work->receiver;
 	/* Gain changes and clipping must not be interpreted as independently
 	 * known echo. The failed frame retains both coding paths and outputs. */
 	for (unsigned fault = 0; fault < 3; fault++) {
-		struct v92_upstream_data_rx conditioned = saved;
+		work->conditioned = work->saved;
 		struct v92_upstream_data_frame out, before;
 		memset(&out, 0xa5, sizeof(out)); before = out;
 		uint8_t code = g711_encode_pcmu(4096);
@@ -2871,59 +2926,59 @@ static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer, boo
 		if (fault == 1) host = INT16_MAX;
 		if (fault == 2) host += 8;
 		for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS - 1; i++)
-			CHECK(fixture_octet_owned(&conditioned, code, sample, host, true, &out) ==
+			CHECK(fixture_octet_owned(&work->conditioned, code, sample, host, true, &out) ==
 				V92_UPSTREAM_DATA_RX_OK, "conditioning fault prefix stopped");
-		struct v92_upstream_data_rx retained = conditioned;
-		retained.failed = true;
-		CHECK(fixture_octet_owned(&conditioned, code, sample, host, true, &out) ==
-			V92_UPSTREAM_DATA_RX_NO_PATH && !memcmp(&conditioned, &retained, sizeof(retained)) &&
+		work->retained = work->conditioned;
+		work->retained.failed = true;
+		CHECK(fixture_octet_owned(&work->conditioned, code, sample, host, true, &out) ==
+			V92_UPSTREAM_DATA_RX_NO_PATH && !memcmp(&work->conditioned, &work->retained, sizeof(work->retained)) &&
 			!memcmp(&out, &before, sizeof(out)), "conditioning fault changed coding state or payload");
 	}
 	for (unsigned fault = 0; fault < 7; ++fault) {
-		struct v92_upstream_data_rx invalid = saved;
+		work->invalid = work->saved;
 		if (fault == 0)
-			invalid.line.host.gain = NAN;
+			work->invalid.line.host.gain = NAN;
 		else if (fault == 1)
-			invalid.line.host.gain = -1;
+			work->invalid.line.host.gain = -1;
 		else if (fault == 2)
-			invalid.line.host.lower = NAN;
+			work->invalid.line.host.lower = NAN;
 		else if (fault == 3)
-			invalid.line.host.upper = INFINITY;
+			work->invalid.line.host.upper = INFINITY;
 		else if (fault == 4)
-			invalid.line.host.lower = invalid.line.host.gain + .1;
+			work->invalid.line.host.lower = work->invalid.line.host.gain + .1;
 		else if (fault == 5)
-			invalid.line.host.upper = invalid.line.host.gain - .1;
+			work->invalid.line.host.upper = work->invalid.line.host.gain - .1;
 		else
-			pcm_gain_init(&invalid.line.host.fit);
-		CHECK(!v92_upstream_data_rx_is_valid(&invalid), "invalid frozen host gain accepted");
+			pcm_gain_init(&work->invalid.line.host.fit);
+		CHECK(!v92_upstream_data_rx_is_valid(&work->invalid), "invalid frozen host gain accepted");
 	}
 	/* With no new likelihood evidence, equally ranked codec hypotheses can
 	 * disagree about an old non-payload slot. Never compare unwritten bits
 	 * from the suppressed branch or release a placeholder from the winner. */
 	for (unsigned primary = 0u; primary < 2u; ++primary)
 	for (unsigned suppressed = 0u; suppressed < 2u; ++suppressed) {
-		struct v92_upstream_data_rx paired = saved;
+		work->paired = work->saved;
 		struct v92_upstream_data_frame frame = { 0 };
 
-		paired.model.primary = (uint8_t)primary;
-		paired.model.cost[0] = paired.model.cost[1] = 0u;
-		paired.model.alternate = paired.decoder;
+		work->paired.model.primary = (uint8_t)primary;
+		work->paired.model.cost[0] = work->paired.model.cost[1] = 0u;
+		work->paired.model.alternate = work->paired.decoder;
 		struct v92_pcm_frame_rx *branch = suppressed == primary ?
-			&paired.decoder : &paired.model.alternate;
+			&work->paired.decoder : &work->paired.model.alternate;
 		for (unsigned i = 0u; i < branch->path_count; ++i)
 			branch->paths[i].nondata_frames = 1u;
-		CHECK(v92_upstream_data_rx_is_valid(&paired), "paired non-payload fixture invalid");
+		CHECK(v92_upstream_data_rx_is_valid(&work->paired), "paired non-payload fixture invalid");
 		/* Advance both model-indexed paths independently. A normalized
 		 * primary-1 tie must transfer model 0 into the primary owner. */
 		struct v92_pcm_frame_rx expected[2];
 		const int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS] = { 0 };
 		const bool received[V92_PCM_MAPPING_FRAME_SYMBOLS] = { false };
 
-		expected[primary] = paired.decoder;
-		expected[primary ^ 1u] = paired.model.alternate;
+		expected[primary] = work->paired.decoder;
+		expected[primary ^ 1u] = work->paired.model.alternate;
 		for (unsigned model = 0u; model < 2u; ++model) {
 			struct v92_pcm_frame_channel channel = {
-				.model = &paired.model.model[model], .received = received,
+				.model = &work->paired.model.model[model], .received = received,
 			};
 			struct v92_pcm_frame_decision decision;
 			struct v92_pcm_frame_likelihood likelihood;
@@ -2935,107 +2990,116 @@ static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer, boo
 				"erased codec path changed its normalized metric");
 		}
 		for (unsigned i = 0u; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
-			CHECK(fixture_octet(&paired, 0u, 0, false, &frame) ==
+			CHECK(fixture_octet(&work->paired, 0u, 0, false, &frame) ==
 				(i == V92_PCM_MAPPING_FRAME_SYMBOLS - 1u ? V92_UPSTREAM_DATA_RX_FRAME :
 				 V92_UPSTREAM_DATA_RX_OK), "paired non-payload decoding failed");
-		CHECK(paired.model.valid == 3u && paired.model.primary == 0u &&
-			paired.model.cost[0] == 0u && paired.model.cost[1] == 0u &&
+		CHECK(work->paired.model.valid == 3u && work->paired.model.primary == 0u &&
+			work->paired.model.cost[0] == 0u && work->paired.model.cost[1] == 0u &&
 			(suppressed ? frame.bit_count == mapping.data_bits_per_frame && frame.ambiguous :
-			 frame.bit_count == 0u) && v92_upstream_data_rx_is_valid(&paired),
+			 frame.bit_count == 0u) && v92_upstream_data_rx_is_valid(&work->paired),
 			"tied codec models mishandled branch %u's non-payload slot", suppressed);
-		CHECK(memcmp(&paired.decoder, &expected[0], sizeof(expected[0])) == 0 &&
-			memcmp(&paired.model.alternate, &expected[1], sizeof(expected[1])) == 0,
+		CHECK(memcmp(&work->paired.decoder, &expected[0], sizeof(expected[0])) == 0 &&
+			memcmp(&work->paired.model.alternate, &expected[1], sizeof(expected[1])) == 0,
 			"tied codec models changed primary/alternate decoder ownership");
 	}
 	struct v92_upstream_data_frame output, unchanged;
 	memset(&output, 0xa5, sizeof(output));
 	unchanged = output;
-	CHECK(fixture_sample(&receiver, 0, &output) == V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT &&
-	      memcmp(&saved, &receiver, sizeof(saved)) == 0 &&
+	CHECK(fixture_sample(&work->receiver, 0, &output) == V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT &&
+	      memcmp(&work->saved, &work->receiver, sizeof(work->saved)) == 0 &&
 	      memcmp(&unchanged, &output, sizeof(output)) == 0,
 	      "active codec model invented a wire code");
 	/* Erasures have no likelihood evidence, but must still report raw
 	 * residual. They cannot silently disappear from the quality guard. */
 	for (unsigned i = 0u; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
-		CHECK(fixture_octet(&receiver, 0u, INT16_MAX, false, &output) ==
+		CHECK(fixture_octet(&work->receiver, 0u, INT16_MAX, false, &output) ==
 		      (i == V92_PCM_MAPPING_FRAME_SYMBOLS - 1u ? V92_UPSTREAM_DATA_RX_FRAME :
 			V92_UPSTREAM_DATA_RX_OK), "erased codec frame stopped");
 	CHECK(output.squared_error > 1e9 &&
-	      memcmp(&receiver.line.host, &saved.line.host, sizeof(saved.line.host)) == 0,
+	      memcmp(&work->receiver.line.host, &work->saved.line.host, sizeof(work->saved.line.host)) == 0,
 	      "erased media hid its raw residual or retrained host gain");
 	/* Finite model parameters can still overflow at a codec boundary. A
 	 * failed frame must not partly advance either coding hypothesis. */
-	receiver = saved;
+	work->receiver = work->saved;
 	for (unsigned i = 0u; i < 2u; ++i) {
-		receiver.model.model[i].quantizer_gain = DBL_MAX;
+		work->receiver.model.model[i].quantizer_gain = DBL_MAX;
 		for (unsigned j = 0u; j < V92_OBSERVATION_INTERVALS; ++j)
-			receiver.model.model[i].intervals[j].coefficient[0] = DBL_MAX;
+			work->receiver.model.model[i].intervals[j].coefficient[0] = DBL_MAX;
 	}
-	CHECK(v92_upstream_data_rx_is_valid(&receiver), "numeric-failure fixture is invalid");
-	struct v92_upstream_data_rx owned = receiver;
+	CHECK(v92_upstream_data_rx_is_valid(&work->receiver), "numeric-failure fixture is invalid");
+	work->owned = work->receiver;
 	struct v92_upstream_data_frame owned_output = output;
 	for (unsigned i = 0u; i < V92_PCM_MAPPING_FRAME_SYMBOLS - 1u; ++i)
-		CHECK(fixture_octet(&receiver, 0u, 100, true, &output) ==
+		CHECK(fixture_octet(&work->receiver, 0u, 100, true, &output) ==
 		      V92_UPSTREAM_DATA_RX_OK &&
-		      fixture_octet_owned(&owned, 0u, 100, 100, true, &owned_output) ==
-		      V92_UPSTREAM_DATA_RX_OK && memcmp(&receiver, &owned, sizeof(owned)) == 0 &&
+		      fixture_octet_owned(&work->owned, 0u, 100, 100, true, &owned_output) ==
+		      V92_UPSTREAM_DATA_RX_OK && memcmp(&work->receiver, &work->owned, sizeof(work->owned)) == 0 &&
 		      memcmp(&output, &owned_output, sizeof(output)) == 0,
 		      "checked/owned numeric-failure buffering differs");
-	saved = receiver;
+	work->saved = work->receiver;
 	unchanged = output;
-	CHECK(fixture_octet(&receiver, 0u, 100, true, &output) ==
+	CHECK(fixture_octet(&work->receiver, 0u, 100, true, &output) ==
 	      V92_UPSTREAM_DATA_RX_NO_PATH &&
-	      fixture_octet_owned(&owned, 0u, 100, 100, true, &owned_output) ==
+	      fixture_octet_owned(&work->owned, 0u, 100, 100, true, &owned_output) ==
 	      V92_UPSTREAM_DATA_RX_NO_PATH, "unrepresentable codec frame did not fail");
-	saved.failed = true;
-	CHECK(memcmp(&saved, &receiver, sizeof(saved)) == 0 &&
-	      memcmp(&saved, &owned, sizeof(saved)) == 0 &&
+	work->saved.failed = true;
+	CHECK(memcmp(&work->saved, &work->receiver, sizeof(work->saved)) == 0 &&
+	      memcmp(&work->saved, &work->owned, sizeof(work->saved)) == 0 &&
 	      memcmp(&unchanged, &owned_output, sizeof(output)) == 0 &&
 	      memcmp(&unchanged, &output, sizeof(output)) == 0,
 	      "failed codec frame advanced state or wrote payload");
 	/* No retained fit may cross a mapping/retrain epoch. */
-	CHECK(v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping, &plan) ==
-	      V92_UPSTREAM_DATA_RX_OK && memcmp(&initial, &receiver, sizeof(initial)) == 0,
+	CHECK(v92_upstream_data_rx_init(&work->receiver, &e2u_rx.signal, &mapping, &plan) ==
+	      V92_UPSTREAM_DATA_RX_OK && memcmp(&work->initial, &work->receiver, sizeof(work->initial)) == 0,
 	      "new training epoch retained codec state");
 	for (unsigned missing = 0u; missing < 3u; ++missing) {
-		receiver = initial;
+		work->receiver = work->initial;
 		/* Keep the coded sample stream aligned. Only the first frame lacks
 		 * matching wire evidence; later pairs must not reopen acquisition. */
 		for (unsigned i = V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY;
-		     receiver.line.received_frames <= V92_B1U_ACQUISITION_FRAMES; ++i) {
+		     work->receiver.line.received_frames <= V92_B1U_ACQUISITION_FRAMES; ++i) {
 			uint8_t code = codes[i];
 			int16_t sample = (int16_t)lround(.75 * g711_decode_pcmu(code));
-			bool first = receiver.line.received_frames == 0u;
+			bool first = work->receiver.line.received_frames == 0u;
 			enum v92_upstream_data_rx_result result = first && missing == 0u ?
-				fixture_sample(&receiver, sample, &output) :
-				fixture_octet(&receiver, first && missing == 2u ? 0xffu : code,
+				fixture_sample(&work->receiver, sample, &output) :
+				fixture_octet(&work->receiver, first && missing == 2u ? 0xffu : code,
 					sample, !(first && missing == 1u), &output);
 			CHECK(result == V92_UPSTREAM_DATA_RX_OK || result == V92_UPSTREAM_DATA_RX_FRAME,
 			      "closed acquisition stopped linear fallback");
 		}
-		CHECK(!receiver.model.acquiring && !receiver.model.valid && !receiver.model.scalar_gain &&
-		      memory_region_is_zero(&receiver.line.host, sizeof(receiver.line.host)) &&
-		      v92_upstream_data_rx_is_valid(&receiver), "missing or inconsistent media trained a model");
+		CHECK(!work->receiver.model.acquiring && !work->receiver.model.valid && !work->receiver.model.scalar_gain &&
+		      memory_region_is_zero(&work->receiver.line.host, sizeof(work->receiver.line.host)) &&
+		      v92_upstream_data_rx_is_valid(&work->receiver), "missing or inconsistent media trained a model");
 	}
 	/* A multi-tap prefilter is outside this model, not a one-tap fit with
 	 * silently ignored coefficients. Keep the existing linear receiver. */
 	cpd.filter[V92_CPD_PREFILTER_FEED_FORWARD].count = plan.delay + 2u;
 	cpd.filter[V92_CPD_PREFILTER_FEED_FORWARD].coefficient[plan.delay + 1u] = 1;
 	CHECK(v92_pcm_mapping_init(&mapping, G711_LAW_PCMU, &cpd) == V92_PCM_MAPPING_OK &&
-	      v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping, &plan) ==
-	      V92_UPSTREAM_DATA_RX_OK && !receiver.model.acquiring && !receiver.model.valid && !receiver.model.scalar_gain,
+	      v92_upstream_data_rx_init(&work->receiver, &e2u_rx.signal, &mapping, &plan) ==
+	      V92_UPSTREAM_DATA_RX_OK && !work->receiver.model.acquiring && !work->receiver.model.valid && !work->receiver.model.scalar_gain,
 	      "unsupported prefilter enabled the codec model");
 	for (unsigned i = V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY;
-	     receiver.line.received_frames < V92_B1U_ACQUISITION_FRAMES; ++i) {
+	     work->receiver.line.received_frames < V92_B1U_ACQUISITION_FRAMES; ++i) {
 		uint8_t code = codes[i];
-		enum v92_upstream_data_rx_result result = fixture_octet(&receiver, code,
+		enum v92_upstream_data_rx_result result = fixture_octet(&work->receiver, code,
 			(int16_t)lround(.75 * g711_decode_pcmu(code)), true, &output);
 		CHECK(result == V92_UPSTREAM_DATA_RX_OK || result == V92_UPSTREAM_DATA_RX_FRAME,
 		      "general prefilter host acquisition stopped");
 	}
-	CHECK(fabs(receiver.line.host.gain - .75) < 1e-12 && !receiver.model.valid,
+	CHECK(fabs(work->receiver.line.host.gain - .75) < 1e-12 && !work->receiver.model.valid,
 	      "host gain depended on the mapping's codec-model support");
 	return true;
+}
+
+static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer, bool echo, unsigned deferred_block)
+{
+	struct codec_model_workspace *work = malloc(sizeof(*work));
+	CHECK(work, "codec model workspace allocation failed");
+	bool result = check_codec_model(work, polarity, rm, rate, peer, echo, deferred_block);
+	free(work);
+	return result;
 }
 
 /* A validly coded wrong bit in the final 40k B1u frame has RMS error below
@@ -3382,12 +3446,12 @@ static bool test_residual_acquisition(unsigned prefix, bool damaged, int transie
 					else if (unavailable == 1) incomplete.wire_known[0] = false;
 					else rejected.alternate.path_count = 0;
 					CHECK(v92_upstream_model_decode(&rejected, &saved, &incomplete,
-					      decoded, &decision, predictions) == V92_PCM_FRAME_NO_PATH &&
+					      decoded, &decision, predictions, NULL) == V92_PCM_FRAME_NO_PATH &&
 					      !memcmp(&saved, &decoder, sizeof(saved)), "invalid acquisition recovered");
 				}
 			}
 			CHECK(v92_upstream_model_decode(&model, &decoder, &line, decoded,
-			      &decision, predictions) == V92_PCM_FRAME_OK,
+			      &decision, predictions, NULL) == V92_PCM_FRAME_OK,
 			      "acquisition failed at frame %u", frame);
 			CHECK(decoder.pending_frames == (frame < V92_PCM_RX_DELAY_FRAMES ?
 			      frame + 1u : V92_PCM_RX_DELAY_FRAMES), "prefix lost its traceback slot");

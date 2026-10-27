@@ -83,6 +83,9 @@ struct v92_upstream_data_rx {
 		bool frame_limited;
 	} input;
 	bool failed;
+	/* Epoch-owned scratch, outside the decoded-frame transaction. Neither
+	 * geometry keeps pointers to a receiver or to a model's old address. */
+	struct v92_observation_geometry geometry[2];
 };
 
 struct v92_upstream_data_frame {

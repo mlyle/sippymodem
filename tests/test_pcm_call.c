@@ -28,6 +28,7 @@
 #include <limits.h>
 #include <math.h>
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 
 enum {
@@ -1229,10 +1230,9 @@ static bool ri_progress_is_consistent(const struct endpoint *endpoint)
 
 /* Compare shared retained records by their owned fields before checking the
  * selected path and every remaining state byte. C padding is not modem state. */
-static bool call_states_equal(
+static bool compare_call_snapshots(struct pcm_call copies[2],
 	const struct pcm_call *left, const struct pcm_call *right)
 {
-	struct pcm_call copies[2];
 	size_t active;
 
 	if (left->stage != right->stage || left->local_role != right->local_role ||
@@ -1326,6 +1326,18 @@ static bool call_states_equal(
 			sizeof(copies[i].state) - active);
 	}
 	return memcmp(&copies[0], &copies[1], sizeof(*left)) == 0;
+}
+
+/* Transaction checks may already retain several complete duplex calls.
+ * Keep canonical copies off that nested test stack and free on every exit. */
+static bool call_states_equal(
+	const struct pcm_call *left, const struct pcm_call *right)
+{
+	struct pcm_call *copies = malloc(2 * sizeof(*copies));
+	CHECK(copies, "call snapshot allocation failed");
+	bool equal = compare_call_snapshots(copies, left, right);
+	free(copies);
+	return equal;
 }
 
 /* Mark actual field representations so this works with the target ABI's padding. */

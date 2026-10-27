@@ -1264,8 +1264,11 @@ static enum v92_pcm_frame_result decode_frame(
 
 	path_count = receiver->path_count;
 	struct v92_observation_cache cache;
-	if (model)
-		v92_observation_begin(&cache, model, receiver->noise.relative_variance);
+	if (model) {
+		if (owned && channel->geometry)
+			v92_observation_begin_cached(&cache, model, receiver->noise.relative_variance, channel->geometry);
+		else v92_observation_begin(&cache, model, receiver->noise.relative_variance);
+	}
 	/* Linear constellation samples can acquire coding without forcing the
 	 * initial B1u history. A wrong early constraint can otherwise outlive
 	 * acquisition and bias the gain used by held-out training and payload.

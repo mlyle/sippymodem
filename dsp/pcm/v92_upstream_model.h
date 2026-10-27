@@ -82,7 +82,8 @@ void v92_upstream_model_init(struct v92_upstream_data_rx *receiver);
 bool v92_upstream_model_is_valid(const struct v92_upstream_data_rx *receiver);
 bool v92_upstream_model_has_alternate(const struct v92_upstream_data_rx *receiver);
 /* Internal, exclusively owned state. The enclosing frame transaction commits
- * these mutations only after decoding, quality evaluation and fitting succeed. */
+ * these mutations only after decoding, quality evaluation and fitting succeed.
+ * Optional geometry is epoch-owned scratch; reset on new fit publication. */
 void v92_upstream_model_observe(struct v92_upstream_model *model,
 	const struct v92_pcm_frame_decision *decision, const struct v92_upstream_data_line *line);
 void v92_upstream_model_fit(struct v92_upstream_model *model,
@@ -90,6 +91,7 @@ void v92_upstream_model_fit(struct v92_upstream_model *model,
 enum v92_pcm_frame_result v92_upstream_model_decode(struct v92_upstream_model *model,
 	struct v92_pcm_frame_rx *decoder, const struct v92_upstream_data_line *line,
 	uint8_t *bits, struct v92_pcm_frame_decision *decision,
-	double predictions[V92_PCM_MAPPING_FRAME_SYMBOLS]);
+	double predictions[V92_PCM_MAPPING_FRAME_SYMBOLS],
+	struct v92_observation_geometry geometry[2]);
 
 #endif /* V92_UPSTREAM_MODEL_H */

@@ -318,6 +318,7 @@ struct v92_observation;
 struct v92_pcm_frame_cell {
 	double lower, upper;
 };
+struct v92_observation_geometry;
 struct v92_pcm_frame_channel {
 	/* Borrowed, frozen for this coding epoch. Acquisition is caller-owned. */
 	const struct v92_observation *model;
@@ -337,6 +338,11 @@ struct v92_pcm_frame_channel {
 	/* NULL means all received; false ignores the corresponding sample and
 	 * level in likelihood scoring. Erasures still advance coding history. */
 	const bool *received;
+	/* Optional disjoint, exclusive model geometry for the owned entry point.
+	 * Reset on model replacement. Scratch may change on a declined frame;
+	 * decoder, output and likelihood remain transactional. The checked entry
+	 * point uses its own frame-local geometry. */
+	struct v92_observation_geometry *geometry;
 };
 
 struct v92_pcm_frame_likelihood {

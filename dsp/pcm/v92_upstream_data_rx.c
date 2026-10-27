@@ -363,7 +363,7 @@ static enum v92_upstream_data_rx_result receive_frame(
 	if (alternate_active)
 		model.alternate = receiver->model.alternate;
 	result = v92_upstream_model_decode(
-		&model, &decoder, line, generated.bits, &decision, predictions);
+		&model, &decoder, line, generated.bits, &decision, predictions, receiver->geometry);
 
 	if (result != V92_PCM_FRAME_OK)
 		return fail(receiver, result == V92_PCM_FRAME_NO_PATH ?

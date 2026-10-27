@@ -110,8 +110,22 @@ struct v92_observation_point {
 	int32_t x, key;
 	size_t span;
 };
+/* Owned by the channel-model owner; reset when that model is replaced.
+ * Only exact model geometry is retained, never observation scores. */
+struct v92_observation_geometry {
+	struct v92_observation_values points[V92_OBSERVATION_POINTS];
+	uint16_t point_tag[V92_OBSERVATION_POINTS];
+	/* Coordinate-to-span memoization is model-only, shared across symbols.
+	 * Zero tags are empty; reset() invalidates every entry. */
+	struct { int32_t key; uint16_t tag; } spans[V92_OBSERVATION_SPANS];
+	/* Retained floating envelopes belong to one rounding mode. */
+	int rounding;
+};
+void v92_observation_geometry_reset(struct v92_observation_geometry *geometry);
+
 /* Frame-local scratch, borrowing the validated immutable model. Its symbols
- * may have different observed samples and noise; scores cannot cross symbols. */
+ * may have different observed samples and noise; scores cannot cross symbols.
+ * Model geometry can instead be borrowed from the epoch owner. */
 struct v92_observation_cache {
 	/* Derived once at begin(), like the other immutable per-fit constants. */
 	unsigned bucket_shift;
@@ -119,11 +133,9 @@ struct v92_observation_cache {
 	uint64_t value[V92_OBSERVATION_CACHE];
 	int32_t key[V92_OBSERVATION_CACHE][V92_OBSERVATION_TAPS];
 	uint8_t stamp[V92_OBSERVATION_CACHE], generation;
-	struct v92_observation_values points[V92_OBSERVATION_POINTS];
-	uint16_t point_tag[V92_OBSERVATION_POINTS];
-	/* Coordinate-to-span memoization is model-only, shared across symbols.
-	 * Zero tags are empty; begin() invalidates every entry. */
-	struct { int32_t key; uint16_t tag; } spans[V92_OBSERVATION_SPANS];
+	struct v92_observation_geometry local_geometry;
+	/* NULL selects movable, frame-local storage; no self-pointer is retained. */
+	struct v92_observation_geometry *geometry;
 	const struct v92_observation *model;
 	double relative_noise, variance, bound_scale, lower, upper;
 	/* Immutable per-fit constants and the current symbol's Gaussian scale. */
@@ -139,6 +151,15 @@ struct v92_observation_cache {
  * model, but not across model changes. */
 void v92_observation_begin(struct v92_observation_cache *cache,
 	const struct v92_observation *model, double relative_noise);
+/* Optional, disjoint geometry owned exclusively by this model's epoch owner.
+ * Reset before first use and whenever the model changes, even at the same
+ * address. Rounding-mode changes also invalidate its retained entries.
+ * Geometry mutations are scratch, not part of a decoded-frame transaction.
+ * NULL retains begin()'s frame-local behavior. No pointer to local scratch
+ * survives the frame; copying ordinary scratch does not retain a self-pointer. */
+void v92_observation_begin_cached(struct v92_observation_cache *cache,
+	const struct v92_observation *model, double relative_noise,
+	struct v92_observation_geometry *geometry);
 bool v92_observation_symbol(struct v92_observation_cache *cache, int16_t observed);
 /* A nonzero offset requires the actual wire level; no requantization of
  * the conditioned sample may stand in for missing wire evidence. */

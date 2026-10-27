@@ -417,6 +417,7 @@ void v92_upstream_model_progress(struct v92_upstream_data_rx *receiver)
 	} else result = v92_observation_fit_step(&model->fit.work, &training, &model->model[candidate]);
 	if (result == V92_OBSERVATION_FIT_READY) {
 		model->model[candidate].input_coefficient = candidate ? model->coefficient : 0;
+		v92_observation_geometry_reset(&receiver->geometry[candidate]);
 		model->valid |= (uint8_t)(1u << candidate);
 	} else if (result == V92_OBSERVATION_FIT_DECLINED)
 		memset(&model->model[candidate], 0, sizeof(model->model[candidate]));
@@ -545,7 +546,8 @@ static bool recover_acquisition(const struct v92_upstream_model *model,
 enum v92_pcm_frame_result v92_upstream_model_decode(struct v92_upstream_model *model,
 	struct v92_pcm_frame_rx *decoder, const struct v92_upstream_data_line *line,
 	uint8_t *bits, struct v92_pcm_frame_decision *decision,
-	double predictions[V92_PCM_MAPPING_FRAME_SYMBOLS])
+	double predictions[V92_PCM_MAPPING_FRAME_SYMBOLS],
+	struct v92_observation_geometry geometry[2])
 {
 	bool b1u = line->received_frames < V92_B1U_FRAMES;
 	size_t count = decoder->mapping.data_bits_per_frame;
@@ -635,7 +637,8 @@ enum v92_pcm_frame_result v92_upstream_model_decode(struct v92_upstream_model *m
 		if (!(model->valid & (1u << i)))
 			continue;
 		struct v92_pcm_frame_channel channel = {
-			.model = &model->model[i], .levels = line->wire, .received = line->received,
+			.model = &model->model[i], .geometry = geometry ? &geometry[i] : NULL,
+			.levels = line->wire, .received = line->received,
 			.offsets = offsets,
 		};
 		enum v92_pcm_frame_result result = v92_pcm_frame_decode_observed_owned(branch[i],
