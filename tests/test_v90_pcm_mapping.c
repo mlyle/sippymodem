@@ -3,6 +3,7 @@
 #include <v90_pcm_mapping.h>
 #include <v92_cpt.h>
 #include <v92_cpu.h>
+#include <pcm_power.h>
 
 #include "test.h"
 
@@ -12,6 +13,27 @@
 enum {
 	MAX_MODULUS_BITS = 39,
 };
+
+static bool test_power_accumulation(void)
+{
+	const unsigned bits[] = { 16, 24, 39, 42 };
+	const uint64_t squares = (UINT64_C(1) << 37) - 1;
+	for (unsigned i = 0; i < ARRAY_LENGTH(bits); i++) {
+		uint64_t words = UINT64_C(1) << bits[i];
+		struct pcm_power_sum sum = { 0 };
+		pcm_power_accumulate(&sum, bits[i], words - 1, squares);
+		/* (W-1)*S/W = S-ceil(S/W), remainder W-(S mod W).
+		 * The 39/42-bit products cannot be formed in uint64_t. */
+		CHECK(sum.whole == squares - (squares >> bits[i]) - 1 &&
+		      sum.fraction == words - (squares & (words - 1)),
+		      "prefix power multiplication lost low bits at K=%u", bits[i]);
+		sum = (struct pcm_power_sum){ 0 };
+		pcm_power_accumulate(&sum, bits[i], words, squares);
+		CHECK(sum.whole == squares && sum.fraction == 0,
+		      "integral prefix power changed at K=%u", bits[i]);
+	}
+	return true;
+}
 
 static void add_ucode(
 	struct pcm_constellation *constellation, uint8_t ucode)
@@ -1085,6 +1107,7 @@ int main(void)
 {
 	static const struct test_case tests[] = {
 		{ "packed constellation rank", test_packed_constellation_rank },
+		{ "prefix power accumulator", test_power_accumulation },
 		{ "exhaustive constellation power", test_mapping_power_exhaustive },
 		{ "exact constellation power bounds", test_mapping_power_bounds },
 		{ "training mapping", test_training_mapping },

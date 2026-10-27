@@ -1,54 +1,73 @@
-# PCM upstream constellation selection
+# Generated PCM downstream constellations
 
-The direct V.92 selector chooses amplitudes for a scalar G.711 channel. It
-keeps the requested rate, modulus schedule, trellis and identity filter, then
-searches a bounded family of point sets. The filtered-channel designer has a
-separate model and selection path.
+When the analogue role owns generated downstream parameters, it chooses the
+highest enabled rate whose qualified levels and power budget permit a map.
+For that rate it maximizes the smallest signed linear-level distance across
+all six phases. Explicit caller-owned maps and maps received by the digital
+role retain their negotiated levels, cardinalities and labels.
 
-## Measure noise before the codec
+V.90 gives each phase its own cardinality, Mi. The six-radix product must
+cover all 2^K modulus words; the mapper labels each set in descending Ucode
+order. V.92 uses this downstream mapping through CPu. See
+[ITU-T V.90, clauses 5.4 and 8.5.2](https://www.itu.int/rec/dologin_pub.asp?id=T-REC-V.90-199809-I!!PDF-E&lang=e&type=items).
 
-Distance between reconstructed G.711 levels is an incomplete measure of
-robustness. Two well-separated reconstruction values can have source samples
-close to a shared quantizer boundary. Small analogue noise can then make their
-received codes identical.
+The generator searches the existing common-cardinality design plus the
+floor/ceiling sixth-root family, retaining the existing minimum of eight
+levels. There are at most 64 assignments of the two cardinalities across six
+phases. For example, five 57-level sets and one 58-level set carry K=35 where
+an equal 58-level requirement cannot use masks containing only 57 levels in
+some phases. With five sign bits this carries 53,333 bit/s.
 
-For adjacent source samples `a < b`, define `d(a,b)` as the smallest integer
-noise peak for which their quantized output ranges overlap. Equivalently, it
-is the first `e >= 0` for which `Q(a + e) >= Q(b - e)`. A peak smaller than
-`d` preserves their distinction. Both signs need checking because G.711 input
-intervals have signed rounding asymmetry.
+For a proposed distance, greedily taking the lowest available positive level
+at each step minimizes every ordered magnitude. The first magnitude must be
+at least half the distance, so its negative counterpart also satisfies the
+spacing requirement. Since all word-occurrence weights are nonnegative,
+this gives the minimum power for that fixed cardinality and distance.
+Feasibility is monotone, permitting integer bisection across the family.
+Equal distance retains the common-cardinality baseline. Otherwise ties use
+the lower exact power ceiling, then a stable phase-pattern order. This is
+optimal within the stated family, not over arbitrary six-cardinality maps.
 
-TRN1u reports a quantized transmit level, LU. Until training refines it, the
-actual level can lie anywhere in that codec interval. Score a constellation
-by the minimum `d` over every adjacent pair and every integer LU in that
-interval. This measures a bounded pre-codec noise budget, rather than a
-reconstructed-code gap at one assumed level.
+## Exact power without enumerating words
 
-## Preserve power and uncertainty constraints
+Unequal radices do not visit every label equally. For W=2^K words and stride
+A (the product of earlier radices), let R=floor((W-1)/A), q=floor(R/M), and
+b=R mod M. Every label occurs A*q times; labels below b occur A additional
+times, and label b occurs W-A*R additional times. Thus one phase's exact
+weighted sum of squared magnitudes is:
 
-Every candidate is normalized using the actual signed B1u symbol frequencies
-and the transmitter's fixed-point filter rounding. The representable gain is
-chosen to make the scaled mean-square prefilter output nearest unity. This
-follows the power convention in [V.92, clause 8.8.3 and Table 30](https://www.itu.int/rec/dologin_pub.asp?id=T-REC-V.92-200011-I!!PDF-E&lang=e&type=items).
-Full-cell candidates that clip or alias within the LU interval are rejected.
+```
+A*q * sum(all squared levels)
+  + A * sum(squared levels with descending labels below b)
+  + (W-A*R) * square(level with descending label b)
+```
 
-At 40–45.333 kbit/s and 48 kbit/s, full-cell selection maximizes this noise
-budget within the existing codec-window and linear/cubic families. At
-46.667 kbit/s, the selector first tries the existing policy of separating
-entire symbol ranges across LU uncertainty. If that fails, it uses the
-full-cell noise objective. Below 40 kbit/s, nominal selection is retained.
-The existing nominal fallback at 40 and 41.333 kbit/s is also retained.
+Ascending cumulative sums of squared levels evaluate these three terms in
+constant work per phase. The generator prepares each phase/cardinality pair
+once per distance and reuses it across the 64 assignments. A shared 16-bit
+limb accumulator preserves the complete numerator even when a direct
+64-bit product would overflow. Admission uses the exact ceiling of total
+power divided by 6*W, against the existing integer power limit.
 
-The search need not score every candidate expensively. Its minimum over the
-LU interval cannot exceed its score at the reported LU. If that cheap upper
-bound cannot beat the retained candidate, exact interval scoring can be
-skipped. This pruning preserves the optimum within the searched family.
+The search has no heap allocation or retained cache. Its temporary cumulative
+sums are local to one design call. Training retains fixed cardinalities, the
+common-row convenience API retains its original contract, and new data
+selections regenerate capacity from their current K. Generated configurations
+accept mixed data rows while still validating capacity and canonical framing.
+DIL qualification, its common-mask fallback, rate policy and B1 admission are
+unchanged.
 
-## What this establishes
+## Verification boundaries
 
-Tests perturb adjacent symbols in opposite directions, through both codecs,
-at every LU in each witness interval. They also check B1u power normalization.
-This establishes scalar separation under the tested bounded noise. It does
-not establish a bit error rate, account for every channel impairment, or prove
-global optimality over all representable constellations. Native call tests and
-physical modem calls remain necessary to assess training and payload behavior.
+Focused tests exercise mixed 57/58 capacity, exact power boundaries and failed
+selection without partial output. CP and CPu round trips and configuration
+checks cover both codecs. An independent small-K oracle enumerates subsets of
+qualified levels, using full radix-cycle occurrence counts to reject any
+better spacing within the family. Separate integer identities cover wide
+prefix products through K=42; existing exhaustive mapping tests also remain.
+
+Design-call timing and full-call timing are different measurements. The
+former includes complete rate sweeps to bound selection work; the latter
+must also cover the DSP, framing, compression and training transitions.
+Neither synthetic self-calls nor exact replay of a received recording proves
+interoperability with every physical digital peer.

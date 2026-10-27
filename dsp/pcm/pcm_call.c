@@ -151,13 +151,15 @@ static bool stored_peer_info0_is_valid(const struct pcm_call *call)
 			call->peer_info0.v92_analog.v92_capable));
 }
 
-/* Generated maps use equal capacity in every interval. Their selected levels
- * may differ after DIL; a retrain regenerates levels from that capacity. */
+/* Generated data maps may balance capacity across intervals. Training keeps
+ * equal cardinalities; a new selection regenerates data capacity from K. */
 static bool generated_cp_is_valid(const struct v90_cp_parameters *parameters)
 {
 	if (parameters->codec_constellations_differ || parameters->constellation_count == 0 ||
 	    parameters->constellation_count > V90_CP_MAX_CONSTELLATIONS)
 		return false;
+	if (parameters->kind == V90_CP_DATA)
+		return true; /* cp_supports_rate_mask validates the current capacity. */
 	unsigned size = pcm_constellation_count(&parameters->transmit_constellations[0]);
 	for (unsigned row = 1; row < parameters->constellation_count; ++row)
 		if (pcm_constellation_count(&parameters->transmit_constellations[row]) != size)
@@ -212,11 +214,14 @@ static bool v92_analog_phase4_configuration_is_valid(
 	const struct pcm_call_v92_analog_phase4_configuration *configuration,
 	uint32_t enabled_downstream_rate_mask, enum g711_law law, bool generated)
 {
+	struct v90_pcm_mapping mapping;
+
 	return v92_suvu_parameters_are_valid(&configuration->suvu) &&
-	       (!generated || (configuration->cpu.constellation_count == 1u &&
-			       !configuration->cpu.codec_constellations_differ)) &&
+	       (!generated || !configuration->cpu.codec_constellations_differ) &&
 	       !configuration->suvu.acknowledges_cpd &&
 	       v92_cpu_parameters_are_valid(&configuration->cpu) &&
+	       (!generated || v90_pcm_mapping_init_from_v92_cpu(&mapping,
+		       &configuration->cpu, law) == V90_PCM_MAPPING_OK) &&
 	       configuration->cpu.law == law &&
 	       !configuration->cpu.acknowledges_cpd &&
 	       downstream_rate_is_enabled(

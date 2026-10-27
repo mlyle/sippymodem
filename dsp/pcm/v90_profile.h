@@ -66,7 +66,7 @@ bool v90_profile_generate_data_constellation(enum g711_law law,
 	uint8_t rate_index, uint8_t sign_redundancy, uint32_t maximum_power,
 	struct pcm_constellation *constellation);
 
-/* Preserve the mapping's equal interval cardinalities, using qualified levels
+/* Preserve each interval's cardinality, using qualified levels
  * and the exact whole-frame power bound. Output is unchanged on failure. */
 bool v90_profile_select_measured_constellations(
 	const struct v90_pcm_mapping *mapping, uint32_t maximum_power,
@@ -74,8 +74,13 @@ bool v90_profile_select_measured_constellations(
 	struct pcm_constellation rows[V90_CP_MAX_CONSTELLATIONS],
 	uint8_t map[V90_CP_FRAME_INTERVALS], uint8_t *count);
 
-/* Same exact power/distance design over six DIL-qualified interval sets. NULL retains
- * the direct-codec level set. Empty or insufficient sets fail transactionally. */
+/* Maximize signed distance over the common-row baseline and at most 64
+ * floor/ceiling sixth-root cardinality assignments (minimum eight levels).
+ * Equal distance retains the baseline; otherwise ties prefer the lower exact
+ * power ceiling, then pattern order. Each phase retains its DIL-qualified
+ * mask; NULL permits the direct-codec level set. Capacity and power are exact
+ * over all 2^K words. Regenerate at every rate; explicit peer maps stay owned
+ * by their caller. Rejected calls leave rows, map and count unchanged. */
 bool v90_profile_generate_measured_constellations(enum g711_law law,
 	uint8_t rate_index, uint8_t sign_redundancy, uint32_t maximum_power,
 	const struct pcm_constellation available[V90_CP_FRAME_INTERVALS],

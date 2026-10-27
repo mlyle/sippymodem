@@ -3,11 +3,13 @@
 #include <v90_profile.h>
 #include <v90_info0.h>
 #include <v90_jd.h>
+#include <v92_profile.h>
 
 #include "test.h"
 
 #include <math.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 enum {
@@ -836,6 +838,175 @@ static bool test_measured_data_capacity(void)
 	return true;
 }
 
+/* Independent small-K oracle: enumerate every subset of twelve qualified
+ * levels, using complete radix-cycle label counts rather than prefix sums
+ * or the production greedy/bisection algorithm. These K=20 numerators fit
+ * uint64_t. Minimize each phase independently for a fixed radix pattern. */
+static uint64_t subset_power(enum g711_law law, unsigned phase, unsigned size,
+	uint64_t stride, unsigned distance)
+{
+	const uint64_t words = UINT64_C(1) << 20;
+	uint64_t best = UINT64_MAX, cycle = stride * size;
+	for (unsigned subset = 0; subset < 4096; subset++) {
+		if (bit_count_u8((uint8_t)subset) + bit_count_u8((uint8_t)(subset >> 8)) != size) continue;
+		int16_t levels[12], previous = 0;
+		unsigned count = 0;
+		bool fits = true;
+		for (unsigned point = 0; point < 12; point++) if (subset & (1u << point)) {
+			int16_t value;
+			if (!g711_ucode_sample(law, (uint8_t)(8 + 8 * point + phase % 2), true, &value)) return UINT64_MAX;
+			fits &= (previous ? (unsigned)(value - previous) : 2u * value) >= distance;
+			levels[count++] = value; previous = value;
+		}
+		if (!fits) continue;
+		uint64_t power = 0;
+		for (unsigned label = 0; label < size; label++) {
+			uint64_t residual = words % cycle;
+			uint64_t extra = residual > label * stride ? residual - label * stride : 0;
+			if (extra > stride) extra = stride;
+			uint64_t occurrences = (words / cycle) * stride + extra;
+			power += occurrences * (uint32_t)((int32_t)levels[size - 1 - label] * levels[size - 1 - label]);
+		}
+		if (power < best) best = power;
+	}
+	return best;
+}
+
+static bool exhaustive_family_fits(enum g711_law law, unsigned distance, uint32_t limit)
+{
+	const uint64_t words = UINT64_C(1) << 20;
+	for (unsigned pattern = 0; pattern < 64; pattern++) {
+		uint64_t capacity = 1;
+		for (unsigned slot = 0; slot < 6; slot++) capacity *= 10u + ((pattern >> slot) & 1u);
+		if (capacity < words) continue;
+		uint64_t sum = 0, stride = 1;
+		bool fits = true;
+		for (unsigned slot = 0; slot < 6; slot++) {
+			unsigned size = 10u + ((pattern >> slot) & 1u);
+			uint64_t power = subset_power(law, slot, size, stride, distance);
+			if (power == UINT64_MAX) { fits = false; break; }
+			sum += power; stride *= size;
+		}
+		if (fits && sum <= (uint64_t)limit * words * 6u) return true;
+	}
+	return false;
+}
+
+static bool test_balanced_optimality(void)
+{
+	const uint32_t limits[] = { 4000000, 16000000 };
+	struct pcm_constellation available[6] = { 0 };
+	for (unsigned slot = 0; slot < 6; slot++)
+		for (unsigned point = 0; point < 12; point++)
+			pcm_constellation_add(available + slot, (uint8_t)(8 + 8 * point + slot % 2));
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)
+		for (unsigned test = 0; test < ARRAY_LENGTH(limits); test++) {
+			struct v90_cp_parameters cp = { .kind = V90_CP_DATA, .law = law, .selected_rate_index = 6 };
+			bool found = v90_profile_generate_measured_constellations(law, 6, 0, limits[test], available,
+				cp.transmit_constellations, cp.frame_constellation, &cp.constellation_count);
+			if (!found) {
+				CHECK(!exhaustive_family_fits(law, 1, limits[test]), "balanced search missed a feasible family");
+				continue;
+			}
+			struct v90_pcm_mapping mapping;
+			uint32_t floor, ceiling, distance = UINT32_MAX;
+			CHECK(v90_pcm_mapping_init(&mapping, &cp) == V90_PCM_MAPPING_OK && mapping.modulus_bits == 20 &&
+			      v90_pcm_mapping_power(&mapping, V90_PCM_MAPPING_CODEC, law, &floor, &ceiling) == V90_PCM_MAPPING_OK &&
+			      ceiling <= limits[test], "balanced prefix power disagrees with mapping power");
+			for (unsigned slot = 0; slot < 6; slot++) {
+				int16_t previous = 0, value;
+				for (unsigned code = 0; code < 128; code++) if (pcm_constellation_contains(mapping.transmit + slot, code)) {
+					CHECK(pcm_constellation_contains(available + slot, code) &&
+					      g711_ucode_sample(law, code, true, &value), "balanced design left phase mask");
+					uint32_t gap = previous ? (uint32_t)(value - previous) : 2u * value;
+					if (gap < distance) distance = gap;
+					previous = value;
+				}
+			}
+			CHECK(!exhaustive_family_fits(law, distance + 1, limits[test]),
+			      "balanced distance %u is suboptimal at power %u", distance, limits[test]);
+		}
+	return true;
+}
+
+/* One phase can carry 58 levels, the others only 57. Their product
+ * supports K=35; requiring 58 in every phase needlessly loses the rate. */
+static bool test_balanced_measured_capacity(void)
+{
+	struct pcm_constellation available[6] = { 0 };
+	for (unsigned slot = 0; slot < 6; slot++)
+		for (unsigned code = 8; code < 65u + (slot == 5); code++)
+			pcm_constellation_add(available + slot, (uint8_t)code);
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++) {
+		struct v90_cp_parameters cp = {
+			.kind = V90_CP_DATA, .law = law, .selected_rate_index = 20,
+			.sign_redundancy = 1,
+		};
+		struct v90_pcm_mapping mapping;
+		uint32_t floor, ceiling;
+		CHECK(v90_profile_generate_measured_constellations(law, 20, 1, 16000000,
+			available, cp.transmit_constellations, cp.frame_constellation, &cp.constellation_count) &&
+		      cp.constellation_count == 2 &&
+		      v90_pcm_mapping_init(&mapping, &cp) == V90_PCM_MAPPING_OK &&
+		      mapping.modulus_bits == 35 &&
+		      v90_pcm_mapping_power(&mapping, V90_PCM_MAPPING_CODEC, law, &floor, &ceiling) == V90_PCM_MAPPING_OK,
+		      "balanced masks lost the 53.333k rate");
+		for (unsigned slot = 0; slot < 6; slot++)
+			CHECK(mapping.modulus[slot] == 57u + (slot == 5) &&
+			      !memcmp(mapping.transmit + slot, available + slot, sizeof(available[0])),
+			      "balanced generator ignored qualified phase %u", slot);
+		struct v90_cp_parameters before = cp;
+		CHECK(!v90_profile_generate_measured_constellations(law, 20, 1, ceiling - 1,
+			available, cp.transmit_constellations, cp.frame_constellation, &cp.constellation_count) &&
+		      !memcmp(&cp, &before, sizeof(cp)), "mixed power rejection changed output");
+		CHECK(v90_profile_generate_measured_constellations(law, 20, 1, ceiling,
+			available, cp.transmit_constellations, cp.frame_constellation, &cp.constellation_count) &&
+		      !memcmp(&cp, &before, sizeof(cp)), "exact mixed power boundary rejected");
+		CHECK(v90_profile_select_measured_constellations(&mapping, ceiling, available,
+			cp.transmit_constellations, cp.frame_constellation, &cp.constellation_count) &&
+		      !memcmp(&cp, &before, sizeof(cp)), "fixed mixed cardinalities changed");
+
+		uint8_t frame[V90_CP_MAX_FRAME_BYTES]; size_t bits;
+		struct v90_cp_parameters received;
+		CHECK(v90_cp_encode(&cp, frame, sizeof(frame), &bits) == V90_CP_OK &&
+		      v90_cp_decode(frame, sizeof(frame), bits, &received) == V90_CP_OK &&
+		      v90_pcm_mapping_init(&mapping, &received) == V90_PCM_MAPPING_OK,
+		      "mixed data CP did not round trip");
+		struct pcm_call_configuration config;
+		struct pcm_call *call = malloc(sizeof(*call));
+		CHECK(call && v90_profile_init(&config, V90_ANALOG_MODEM, law, 28000, 56000, NULL) == V90_PROFILE_OK,
+		      "balanced configuration setup failed");
+		config.analog_phase4.data_parameters = cp;
+		CHECK(pcm_call_init(call, &config) == PCM_CALL_OK && pcm_call_is_valid(call),
+		      "generated V90 configuration rejected mixed data capacity");
+		CHECK(v92_profile_init(&config, V90_ANALOG_MODEM, law, 28000, 56000, 14, NULL) == V92_PROFILE_OK,
+		      "balanced V92 configuration setup failed");
+		struct v92_cpu_parameters *cpu = &config.v92_analog_phase4.cpu;
+		cpu->data_rate_number = cp.selected_rate_index;
+		cpu->sign_redundancy = cp.sign_redundancy;
+		memcpy(cpu->transmit_constellations, cp.transmit_constellations, sizeof(cp.transmit_constellations));
+		memcpy(cpu->frame_constellation, cp.frame_constellation, sizeof(cp.frame_constellation));
+		cpu->constellation_count = cp.constellation_count;
+		CHECK(pcm_call_init(call, &config) == PCM_CALL_OK && pcm_call_is_valid(call),
+		      "generated V92 configuration rejected mixed data capacity");
+		uint8_t cpu_frame[V92_CPU_MAX_FRAME_BYTES];
+		struct v92_cpu_parameters decoded;
+		CHECK(v92_cpu_encode(cpu, 36, cpu_frame, sizeof(cpu_frame), &bits) == V92_CPU_OK &&
+		      v92_cpu_decode(cpu_frame, sizeof(cpu_frame), bits, 36, &decoded) == V92_CPU_OK &&
+		      !memcmp(decoded.transmit_constellations, cpu->transmit_constellations,
+			      sizeof(cpu->transmit_constellations)) &&
+		      !memcmp(decoded.frame_constellation, cpu->frame_constellation, sizeof(cpu->frame_constellation)),
+		      "mixed data CPu did not round trip");
+		cpu->transmit_constellations[0] = cpu->transmit_constellations[1] = (struct pcm_constellation){ 0 };
+		pcm_constellation_add(cpu->transmit_constellations, 8);
+		pcm_constellation_add(cpu->transmit_constellations + 1, 9);
+		CHECK(v92_cpu_parameters_are_valid(cpu) && pcm_call_init(call, &config) == PCM_CALL_INVALID_ARGUMENT &&
+		      pcm_call_is_valid(call), "undersized generated CPu replaced a valid call");
+		free(call);
+	}
+	return true;
+}
+
 static bool test_data_template_capacity(void)
 {
 	struct pcm_constellation template = { 0 };
@@ -884,6 +1055,8 @@ int main(void)
 		{ "generated data capacity", test_generated_data_capacity },
 		{ "initial data template capacity", test_data_template_capacity },
 		{ "measured data capacity", test_measured_data_capacity },
+		{ "balanced measured capacity", test_balanced_measured_capacity },
+		{ "balanced exhaustive optimality", test_balanced_optimality },
 		{ "upstream policy", test_upstream_policy },
 		{ "rate bounds and transactionality", test_transactionality },
 	};

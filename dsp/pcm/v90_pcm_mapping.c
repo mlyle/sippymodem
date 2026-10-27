@@ -3,6 +3,7 @@
 #include "v90_pcm_mapping.h"
 
 #include "mixed_radix.h"
+#include "pcm_power.h"
 #include "v92_cpt.h"
 #include "v92_cpu.h"
 
@@ -139,8 +140,7 @@ enum v90_pcm_mapping_result v90_pcm_mapping_power(
 	uint32_t *floor_power, uint32_t *ceiling_power)
 {
 	uint64_t words, remainder, stride = 1;
-	uint64_t whole = 0, fraction = 0;
-	uint32_t floor;
+	struct pcm_power_sum sum = { 0 };
 
 	if (mapping == NULL || floor_power == NULL || ceiling_power == NULL ||
 	    floor_power == ceiling_power || !g711_law_is_valid(law) ||
@@ -161,7 +161,7 @@ enum v90_pcm_mapping_result v90_pcm_mapping_power(
 		/* Clause 5.4.4 labels descend in Ucode. The occurrence formula in
 		 * 8.5.2 accounts for unused tuples above the 2^K input range. */
 		for (int ucode = PCM_CONSTELLATION_UCODES - 1; ucode >= 0; --ucode) {
-			uint64_t occurrences, upper, lower;
+			uint64_t occurrences;
 			uint32_t square;
 			int16_t level;
 
@@ -177,26 +177,12 @@ enum v90_pcm_mapping_result v90_pcm_mapping_power(
 				occurrences = stride * next;
 			label++;
 			square = (uint32_t)((int32_t)level * level);
-			/* K <= 42, square < 2^30: their product may exceed 64
-			 * bits. Split square into 16-bit limbs and divide by 2^K
-			 * before accumulating. Upper < 2^56, lower < 2^59,
-			 * total fraction < 6*128*2^42; no precision is lost. */
-			upper = occurrences * (square >> 16);
-			lower = occurrences * (square & UINT16_MAX) +
-				((upper & (words - 1u)) << 16);
-			whole += ((upper >> mapping->modulus_bits) << 16) +
-				 (lower >> mapping->modulus_bits);
-			fraction += lower & (words - 1u);
+			pcm_power_accumulate(&sum, mapping->modulus_bits, occurrences, square);
 		}
 		stride *= mapping->modulus[interval];
 		remainder = next;
 	}
-	whole += fraction >> mapping->modulus_bits;
-	fraction &= words - 1u;
-	floor = (uint32_t)(whole / V90_CP_FRAME_INTERVALS);
-	*floor_power = floor;
-	*ceiling_power = floor +
-		(whole % V90_CP_FRAME_INTERVALS != 0u || fraction != 0u);
+	pcm_power_bounds(&sum, mapping->modulus_bits, floor_power, ceiling_power);
 	return V90_PCM_MAPPING_OK;
 }
 
