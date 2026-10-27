@@ -31,19 +31,25 @@ static bool solve_channel(const struct v92_observation_fit_moments *moments, uns
 	return gram_fit(moments->gram, moments->rhs, taps, fitted) && fitted[0] > 0.;
 }
 
+/* On one side of zero, erfc(b)/erfc(a) <= exp(a*a-b*b).
+ * A gap of 40 puts the subtracted tail below half an ulp of erfc(a),
+ * including subnormal results. Directed rounding keeps the subtraction. */
+static double positive_gaussian_probability(double a, double b)
+{
+	if (a >= 28.) return 0.;
+	double tail = erfc(a);
+	if (b >= 28. || ((b - a) * (b + a) >= 40. && fegetround() == FE_TONEAREST))
+		return .5 * tail;
+	return .5 * (tail - erfc(b));
+}
+
 /* Gaussian interval probability with arguments scaled by sqrt(2)*sigma.
  * erfc(28) is below half the smallest binary64 subnormal; erf(6) rounds
  * to one. These are representable-value tails, not probability cutoffs. */
 static double gaussian_probability(double a, double b)
 {
-	if (a > 0.) {
-		if (a >= 28.) return 0.;
-		return .5 * (erfc(a) - (b >= 28. ? 0. : erfc(b)));
-	}
-	if (b < 0.) {
-		if (b <= -28.) return 0.;
-		return .5 * (erfc(-b) - (a <= -28. ? 0. : erfc(-a)));
-	}
+	if (a > 0.) return positive_gaussian_probability(a, b);
+	if (b < 0.) return positive_gaussian_probability(-b, -a);
 	return .5 * ((b >= 6. ? 1. : erf(b)) - (a <= -6. ? -1. : erf(a)));
 }
 
@@ -1135,27 +1141,41 @@ static double bin_log_probability(double error, double variance, double divisor,
 	return gaussian_log_probability((error + lower) / divisor, (error + upper) / divisor);
 }
 
+/* The ordinary-probability and log-domain paths integrate exactly the same
+ * shared gain partition. Logs retain ordering in unrepresentable tails. */
+static double bin_likelihood(double error, double variance, double divisor,
+	double lower, double upper, bool logarithmic)
+{
+	if (logarithmic) return bin_log_probability(error, variance, divisor, lower, upper);
+	return lower == upper ? exp(-.5 * error * error / variance) :
+		gaussian_probability((error + lower) / divisor, (error + upper) / divisor);
+}
+
 /* General per-observation integral: all symbols share the same log-uniform
  * codec scale. Merge their exact quantizer boundaries, not independent means. */
-static double compiled_log_likelihood(enum g711_law law, const struct v92_observation_interval *fit,
+static double compiled_likelihood(enum g711_law law, const struct v92_observation_interval *fit,
 	const struct v92_observation_cell *const *cells, const int32_t *x, unsigned taps,
-	int16_t observed, double variance, double divisor, double width, double lower, double upper)
+	int16_t observed, double variance, double divisor, double width, double lower, double upper,
+	bool logarithmic)
 {
-	double likelihood = -HUGE_VAL;
+	double likelihood = logarithmic ? -HUGE_VAL : 0.;
 	bool stable = true;
 	for (unsigned i = 0; i < taps; i++) stable &= cells[i]->low == cells[i]->high;
 	if (stable) {
 		double error = observed;
 		for (unsigned i = 0; i < taps; i++) error -= fit->coefficient[i] * cells[i]->low;
-		return bin_log_probability(error, variance, divisor, lower, upper);
+		return bin_likelihood(error, variance, divisor, lower, upper, logarithmic);
 	}
 	struct gain_sweep sweep = gain_sweep_begin(law, x, taps, fit->low, fit->high, cells);
 	while (gain_sweep_next(&sweep, law, x)) {
 		double error = observed;
 		for (unsigned i = 0; i < taps; i++) error -= fit->coefficient[i] * sweep.value[i];
-		if (sweep.end > sweep.begin)
-			likelihood = log_add(likelihood, bin_log_probability(error, variance, divisor, lower, upper) +
-				log(log1p((sweep.end - sweep.begin) / sweep.begin) / width));
+		if (sweep.end > sweep.begin) {
+			double probability = bin_likelihood(error, variance, divisor, lower, upper, logarithmic);
+			double weight = log1p((sweep.end - sweep.begin) / sweep.begin) / width;
+			likelihood = logarithmic ? log_add(likelihood, probability + log(weight)) :
+				likelihood + probability * weight;
+		}
 	}
 	return sweep.failed ? NAN : likelihood;
 }
@@ -1309,6 +1329,29 @@ struct v92_observation_point v92_observation_point(struct v92_observation_cache 
 	return (struct v92_observation_point){ values, x, values.stable ? cache->model->first[span] : x, span };
 }
 
+/* Build the same joint input for either numeric representation. */
+static double observation_likelihood(const struct v92_observation_cache *cache,
+	const struct v92_observation_values *a, const struct v92_observation_point *previous,
+	int32_t x, bool logarithmic)
+{
+	const struct v92_observation *model = cache->model;
+	double likelihood = logarithmic ? -HUGE_VAL : 0.;
+	for (size_t i = 0; i < INTERVALS; i++) if (model->intervals[i].weight > 0.) {
+		const struct v92_observation_cell *cells[TAPS] = { a->cell + i };
+		int32_t input[TAPS] = { x };
+		for (unsigned j = 1; j < model->taps; j++) {
+			cells[j] = previous[j - 1].values.cell + i;
+			input[j] = previous[j - 1].x;
+		}
+		double value = compiled_likelihood(model->law, model->intervals + i, cells, input, model->taps,
+			cache->observed, cache->variance, cache->divisor, cache->width[i], cache->lower, cache->upper,
+			logarithmic);
+		likelihood = logarithmic ? log_add(likelihood, cache->log_weight[i] + value) :
+			likelihood + model->intervals[i].weight * value;
+	}
+	return likelihood;
+}
+
 uint64_t v92_observation_score(struct v92_observation_cache *cache, int32_t x,
 	const struct v92_observation_point *previous, uint64_t budget)
 {
@@ -1353,19 +1396,26 @@ uint64_t v92_observation_score(struct v92_observation_cache *cache, int32_t x,
 		if (cache->stamp[index] != cache->generation) { vacant = index; break; }
 		if (!memcmp(cache->key[index], key, sizeof(key))) return cache->value[index];
 	}
-	double likelihood = -HUGE_VAL;
-	for (size_t i = 0; i < INTERVALS; i++) if (model->intervals[i].weight > 0.) {
-		const struct v92_observation_cell *cells[TAPS] = { a->cell + i };
-		int32_t input[TAPS] = { x };
-		for (unsigned j = 1; j < model->taps; j++) {
-			cells[j] = previous[j - 1].values.cell + i;
-			input[j] = previous[j - 1].x;
-		}
-		likelihood = log_add(likelihood, cache->log_weight[i] +
-			compiled_log_likelihood(model->law, model->intervals + i, cells, input, model->taps,
-			cache->observed, cache->variance, cache->divisor, cache->width[i], cache->lower, cache->upper));
+	/* Normal masses need only one logarithm, rather than a log/exp pair
+	 * per gain cell and another per mixture component. Retain the original
+	 * evaluation for directed rounding, deep tails and integer boundaries.
+	 * The 0.01 score-unit guard is deliberately much wider than binary64
+	 * summation error over the bounded eight four-tap codec partitions.
+	 * The mass floor limits log magnitudes and makes underflowed terms
+	 * negligible; it selects an evaluation method, never caps a score. */
+	double score = NAN;
+	if (fegetround() == FE_TONEAREST) {
+		double probability = observation_likelihood(cache, a, previous, x, false);
+		if (probability >= 1e-200 && probability <= 1.)
+			score = -2. * V92_SCORE_SCALE * log(probability);
 	}
-	uint64_t value = score_value(-2. * V92_SCORE_SCALE * likelihood);
+	uint64_t value;
+	if (isfinite(score) && (score < .01 || fabs(score - nearbyint(score)) > .01)) {
+		value = score_value(score);
+	} else {
+		double likelihood = observation_likelihood(cache, a, previous, x, true);
+		value = score_value(-2. * V92_SCORE_SCALE * likelihood);
+	}
 	if (vacant != V92_OBSERVATION_CACHE) {
 		memcpy(cache->key[vacant], key, sizeof(key));
 		cache->value[vacant] = value;

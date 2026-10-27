@@ -296,18 +296,18 @@ static void check_tail_scores(const struct v92_observation *fitted)
 	}
 }
 
-/* Move a real codec cell into a Gaussian tail and vary its width across the
- * representable upper-tail correction. The quadrature oracle integrates the
- * probability directly, including where erfc itself underflows. */
+/* Move a real codec cell across normal and unrepresentable Gaussian tails.
+ * Cover both signs and widths on either side of the negligible-tail bound;
+ * directed rounding must still account for the subtracted tail. */
 static void check_tail_cells(const struct v92_observation *fitted)
 {
 	const int modes[] = { FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO };
-	const double starts[] = { 28., 64., 10000. };
+	const double starts[] = { .125, 1., 4., 12., 15., 26., 28., 64., 10000. };
 	const double gaps[] = { 39.5, 40., 40.5, 80. };
 	int saved = fegetround();
 	assert(saved != -1);
 	struct v92_observation model = *fitted;
-	model.quantizer_gain = 1.;
+	model.quantizer_gain = 4.;
 	for (unsigned i = 0; i < V92_OBSERVATION_INTERVALS; i++) {
 		model.intervals[i].coefficient[0] = 1.;
 		model.intervals[i].coefficient[1] = model.intervals[i].coefficient[2] = 0.;
@@ -319,23 +319,103 @@ static void check_tail_cells(const struct v92_observation *fitted)
 	for (unsigned mode = 0; mode < sizeof(modes) / sizeof(modes[0]); mode++) {
 		assert(fesetround(modes[mode]) == 0);
 		for (unsigned i = 0; i < sizeof(starts) / sizeof(starts[0]); i++)
-			for (unsigned j = 0; j < sizeof(gaps) / sizeof(gaps[0]); j++) {
-				double a = starts[i], b = sqrt(a * a + gaps[j]);
-				double divisor = (bin.upper + 1. - bin.lower) / (b - a);
-				model.variance = .5 * divisor * divisor;
-				assert(v92_observation_is_valid(&model));
-				struct v92_observation_cache cache;
+			for (unsigned j = 0; j < sizeof(gaps) / sizeof(gaps[0]); j++)
+				for (unsigned reflected = 0; reflected < 2; reflected++) {
+					double a = starts[i], b = sqrt(a * a + gaps[j]);
+					double divisor = (bin.upper + 1. - bin.lower) * model.quantizer_gain / (b - a);
+					model.variance = .5 * divisor * divisor;
+					assert(v92_observation_is_valid(&model));
+					struct v92_observation_cache cache;
+					v92_observation_begin(&cache, &model, 0.);
+					struct v92_observation_point zero = v92_observation_point(&cache, 0);
+					double offset = level + (reflected ? -b : a) * divisor - (bin.lower - .5) * model.quantizer_gain;
+					assert(v92_observation_symbol_level(&cache, 0, &level, offset));
+					a = (cache.lower - level) / sqrt(model.variance);
+					b = (cache.upper - level) / sqrt(model.variance);
+					if (reflected) { double swap = a; a = -b; b = -swap; }
+					/* Independently integrate deep tails; normal masses use the complete
+					 * erfc subtraction, including the term the optimized scorer may omit. */
+					double expected = a > 20. ? tail_score(a, b) :
+						-2e6 * log(.5 * (erfc(a / sqrt(2.)) - erfc(b / sqrt(2.))));
+					uint64_t actual = v92_observation_score(&cache, 0,
+						(struct v92_observation_point[]){ zero, zero }, UINT64_MAX);
+					assert(fabs((double)actual - expected) <= 2.);
+				}
+	}
+	assert(fesetround(saved) == 0);
+}
+
+/* Constant inputs remove the gain integral: every fitted interval has the
+ * same Gaussian mass. Independently retain the old log-domain mixture at
+ * integer-score boundaries, where different summation orders can round to
+ * opposite sides of a truncation. Do not floor the reference probability. */
+static bool constant_input_score(const struct v92_observation_cache *cache,
+	int16_t mean, uint64_t *score)
+{
+	double a = (cache->lower - mean) / cache->divisor;
+	double b = (cache->upper - mean) / cache->divisor;
+	double probability = a > 0. ? .5 * (erfc(a) - erfc(b)) :
+		b < 0. ? .5 * (erfc(-b) - erfc(-a)) :
+		.5 * ((b >= 6. ? 1. : erf(b)) - (a <= -6. ? -1. : erf(a)));
+	if (probability < DBL_MIN) return false;
+	double likelihood = -HUGE_VAL;
+	for (unsigned i = 0; i < V92_OBSERVATION_INTERVALS; i++) {
+		double term = log(cache->model->intervals[i].weight) + log(probability);
+		likelihood = i == 0 ? term : fmax(likelihood, term) +
+			log1p(exp(fmin(likelihood, term) - fmax(likelihood, term)));
+	}
+	double value = -2e6 * likelihood;
+	*score = value <= 0. ? 0 : (uint64_t)value;
+	return true;
+}
+
+static void check_integer_scores(const struct v92_observation *fitted)
+{
+	const int modes[] = { FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO };
+	const uint64_t targets[] = { 1, 2, 7, 31, 1024, 1000000, 100000000, 900000000 };
+	int saved = fegetround();
+	assert(saved != -1 && fesetround(FE_TONEAREST) == 0);
+	struct v92_observation model = *fitted;
+	model.quantizer_gain = 4.;
+	model.variance = 1.;
+	for (unsigned i = 0; i < V92_OBSERVATION_INTERVALS; i++) {
+		memset(model.intervals[i].coefficient, 0, sizeof(model.intervals[i].coefficient));
+		model.intervals[i].coefficient[0] = 1.;
+		model.intervals[i].weight = (i + 1.) / 36.;
+	}
+	assert(v92_observation_is_valid(&model));
+	int16_t level = quantize(model.law, 0);
+	struct g711_interval bin;
+	assert(g711_quantization_interval(model.law, level, &bin));
+	double center = level - .5 * (bin.lower + bin.upper) * model.quantizer_gain;
+	struct v92_observation_cache cache;
+	for (unsigned mode = 0; mode < sizeof(modes) / sizeof(*modes); mode++) {
+		assert(fesetround(modes[mode]) == 0);
+		for (unsigned t = 0; t < sizeof(targets) / sizeof(*targets); t++) {
+			double low = 0., high = 100000.;
+			/* Locate a score transition, then test adjacent representable offsets. */
+			for (unsigned i = 0; i < 60; i++) {
+				double mid = low + .5 * (high - low);
 				v92_observation_begin(&cache, &model, 0.);
+				assert(v92_observation_symbol_level(&cache, 0, &level, center + mid));
+				uint64_t score;
+				if (!constant_input_score(&cache, level, &score) || score >= targets[t]) high = mid;
+				else low = mid;
+			}
+			for (int neighbor = -4; neighbor <= 4; neighbor++) {
+				double offset = high;
+				for (int i = 0; i < abs(neighbor); i++)
+					offset = nextafter(offset, neighbor < 0 ? -INFINITY : INFINITY);
+				v92_observation_begin(&cache, &model, 0.);
+				assert(v92_observation_symbol_level(&cache, 0, &level, center + offset));
 				struct v92_observation_point zero = v92_observation_point(&cache, 0);
-				double offset = level + a * divisor - (bin.lower - .5);
-				assert(v92_observation_symbol_level(&cache, 0, &level, offset));
-				a = (cache.lower - level) / sqrt(model.variance);
-				b = (cache.upper - level) / sqrt(model.variance);
-				double expected = tail_score(a, b);
+				uint64_t expected;
+				assert(constant_input_score(&cache, level, &expected));
 				uint64_t actual = v92_observation_score(&cache, 0,
 					(struct v92_observation_point[]){ zero, zero }, UINT64_MAX);
-				assert(fabs((double)actual - expected) <= 2.);
+				assert(actual == expected);
 			}
+		}
 	}
 	assert(fesetround(saved) == 0);
 }
@@ -720,6 +800,7 @@ static void check_channel(enum g711_law law, double gain, unsigned taps,
 		check_predictive_boundaries(&model);
 		check_tail_scores(&model);
 		check_tail_cells(&model);
+		check_integer_scores(&model);
 	}
 	assert(memcmp(&model, &before, sizeof(model)) == 0);
 	check_failures(&model, x, u, y);

@@ -230,3 +230,32 @@ fell from 20.46 to 19.58 ms, and worst three from 59.82 to 56.00 ms. The receive
 quality failure therefore remains separate from the measured CPU overrun.
 The resulting 0.42-ms sampled margin is small and does not establish a
 deadline or concurrency guarantee.
+
+## PCM likelihood scoring on Pi 5: 2026-10-27
+
+The receive decoder now sums ordinary Gaussian masses before taking a
+logarithm, using the same joint codec-gain partition as the log-domain path.
+Deep tails, directed rounding and scores near integer truncation boundaries
+retain log-domain evaluation. A separate Gaussian-tail bound omits only a
+subtraction too small to change its binary64 result under nearest rounding.
+Neither change removes channel hypotheses or changes B1, CRC, rate-admission
+or recovery thresholds. Channel fitting and payload decisions share the
+same Gaussian primitive.
+
+Paired measurements against `646b92d7` used all 356 native core modules,
+GCC 14.2 with normal `-O2`, 160 samples per callback, DSP pinned to Pi core 2,
+LAPM and V.44. Each design ran twice in forward/reverse order. Runs started
+at or below 70 degrees C; active throttling was absent. These are thread CPU
+maxima over the whole call, including settling and phase transitions.
+Three-callback sums omit idle gaps. Rates are digital transmit/receive.
+
+| Receive case | Previous worst packet / three | New worst packet / three | Outcome |
+| --- | ---: | ---: | --- |
+| Mu-law, 0.375 postcursor, noise sigma 32, three taps | 22.57 / 63.22 ms | 18.75 / 53.24 ms | Verified data at 56k/44k |
+| A-law, 0.7 postcursor, three taps | 23.98 / 67.77 ms | 23.16 / 65.01 ms | Training still fails quality checks |
+
+The noisy mu-law case now fits the sampled 20/60-ms budgets. The stronger
+A-law case remains both a quality failure and a deadline overrun; it is
+included rather than excluded from the cost comparison. These synthetic
+impairment results exclude SIP/RTP, BBS work and concurrent host scheduling,
+and do not establish a worst-case deadline or a call-capacity guarantee.
