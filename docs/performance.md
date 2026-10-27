@@ -311,3 +311,25 @@ single-callback margin in the A-law stress case is small. This comparison
 excludes SIP/RTP, BBS work and concurrent host scheduling; it does not
 establish a deadline or call-capacity guarantee. Directed-rounding and
 original-score comparisons passed on both native and Pi builds.
+
+### Coupled gain bounds before tail integration
+
+The PCM decoder now keeps each gain interval coupled across the current and
+past symbols when bounding a candidate's predicted mean. Combining independent
+tap extremes can admit a mean that no component of the fitted mixture can
+produce, forcing unnecessary Gaussian tail integration.
+
+The existing cheap envelope and exact score cache run first. Before a
+log-domain fallback, the decoder tries the tighter interval envelope and
+rejects only a candidate whose conservative score already exhausts the search
+budget. A reachable component ends the extra bound work immediately. The
+bound includes outward arithmetic margins and the model's permitted weight
+normalization tolerance. Retained candidates use the original likelihoods.
+
+Bounds belong to one frame-local candidate history and contain no observed
+sample, likelihood or borrowed pointer. They reset with the history, model or
+rounding mode. The input queue, catch-up cadence, channel hypotheses, held-out
+B1 checks and recovery thresholds are unchanged. Focused checks exercise both
+codecs, three and four taps, all four rounding modes and a coupled-history
+regression that fails without the tighter bound. These checks do not establish
+host scheduling or concurrent-call headroom.

@@ -1383,6 +1383,64 @@ static double observation_likelihood(const struct v92_observation_cache *cache,
 	return likelihood;
 }
 
+/* Each mixture uses one gain interval for every delayed input. Keep that
+ * interval coupled while bounding its mean; the outer envelope may still
+ * admit impossible combinations of first-codec gains. All outward margins
+ * and the score-bound guard remain, including under directed rounding. */
+static bool interval_envelope(const struct v92_observation_cache *cache,
+	const struct v92_observation_values *current,
+	const struct v92_observation_point *previous,
+	struct v92_observation_history *history, double minimum, double maximum,
+	double *low, double *high)
+{
+	const struct v92_observation *model = cache->model;
+	*low = HUGE_VAL; *high = -HUGE_VAL;
+	for (size_t i = 0; i < INTERVALS; i++) if (model->intervals[i].weight > 0.) {
+		const struct v92_observation_interval *fit = model->intervals + i;
+		unsigned bit = 1u << i;
+		if (!(history->bounded & bit)) {
+			double a = 0., b = 0.;
+			bool stable = true;
+			for (unsigned j = 1; j < model->taps; j++) {
+				const struct v92_observation_cell *cell = previous[j - 1].values.cell + i;
+				double u = fit->coefficient[j] * cell->low, v = fit->coefficient[j] * cell->high;
+				if (u > v) { double swap = u; u = v; v = swap; }
+				a += u - cache->margin[j]; b += v + cache->margin[j];
+				history->level[i][j - 1] = cell->low;
+				stable &= cell->low == cell->high;
+			}
+			if (stable) history->stable |= bit;
+			history->prepared |= bit;
+			history->low[i] = a; history->high[i] = b;
+			history->bounded |= bit;
+		}
+		const struct v92_observation_cell *cell = current->cell + i;
+		double u = fit->coefficient[0] * cell->low, v = fit->coefficient[0] * cell->high;
+		if (u > v) { double swap = u; u = v; v = swap; }
+		u = u - cache->margin[0] + history->low[i];
+		v = v + cache->margin[0] + history->high[i];
+		if (!isfinite(u) || !isfinite(v)) return false;
+		if (u < *low) *low = u;
+		if (v > *high) *high = v;
+		/* One reachable component makes this envelope unable to reject.
+		 * Remaining components can only enlarge the union. */
+		if (*low <= maximum && *high >= minimum) return false;
+	}
+	return true;
+}
+
+static uint64_t envelope_score(const struct v92_observation_cache *cache, double low, double high)
+{
+	double distance = low - (cache->observed + cache->upper);
+	double opposite = cache->observed + cache->lower - high;
+	if (opposite > distance) distance = opposite;
+	if (distance < 0.) distance = 0.;
+	double bound = cache->bound_scale * distance * distance;
+	/* Cover the admitted 32-epsilon weight normalization tolerance too. */
+	if (isfinite(bound)) bound -= 64. * DBL_EPSILON * (V92_SCORE_SCALE + 1. + bound);
+	return isnan(bound) ? 0 : score_value(bound);
+}
+
 uint64_t v92_observation_score_history(struct v92_observation_cache *cache, int32_t x,
 	const struct v92_observation_point *previous, uint64_t budget,
 	struct v92_observation_history *history)
@@ -1403,16 +1461,9 @@ uint64_t v92_observation_score_history(struct v92_observation_cache *cache, int3
 			low += previous[j - 1].values.low[j];
 			high += previous[j - 1].values.high[j];
 		}
-		double distance = low - (cache->observed + cache->upper);
-		double opposite = cache->observed + cache->lower - high;
-		if (opposite > distance) distance = opposite;
-		if (distance < 0.) distance = 0.;
-		double bound = cache->bound_scale * distance * distance;
-		if (isfinite(bound)) bound -= 64. * DBL_EPSILON * (1. + bound);
-		uint64_t minimum = isnan(bound) ? 0 : score_value(bound);
+		uint64_t minimum = envelope_score(cache, low, high);
+		if (minimum >= budget) return minimum;
 
-		if (minimum >= budget)
-			return minimum;
 	}
 
 	int32_t key[TAPS] = { a->stable ? model->first[span] : x };
@@ -1445,6 +1496,21 @@ uint64_t v92_observation_score_history(struct v92_observation_cache *cache, int3
 	if (isfinite(score) && (score < .01 || fabs(score - nearbyint(score)) > .01)) {
 		value = score_value(score);
 	} else {
+		/* Try the tighter coupled envelope only before a costly log-tail
+		 * evaluation. Ordinary masses and exact cache hits need no extra
+		 * bound work; a retained candidate still uses its original score. */
+		if (budget != UINT64_MAX) {
+			struct v92_observation_history local;
+			if (!history) v92_observation_history_reset(&local);
+			double low, high;
+			double radius = sqrt((budget + 1. + 1e-9 * budget) / cache->bound_scale);
+			if (interval_envelope(cache, a, previous, history ? history : &local,
+				cache->observed + cache->lower - radius, cache->observed + cache->upper + radius,
+				&low, &high)) {
+				uint64_t minimum = envelope_score(cache, low, high);
+				if (minimum >= budget) return minimum;
+			}
+		}
 		double likelihood = observation_likelihood(cache, a, previous, x, true, NULL);
 		value = score_value(-2. * V92_SCORE_SCALE * likelihood);
 	}

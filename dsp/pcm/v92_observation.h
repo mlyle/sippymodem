@@ -168,16 +168,19 @@ bool v92_observation_symbol_level(struct v92_observation_cache *cache,
 struct v92_observation_point v92_observation_point(
 	struct v92_observation_cache *cache, int32_t x);
 /* Frame-local scratch for one fixed candidate-path history. Reset when the
- * previous points, model or rounding mode change. Levels are exact conversions,
- * never pre-multiplied coefficients or observation-dependent likelihoods. */
+ * previous points, model or rounding mode change. Levels are exact conversions;
+ * low/high retain outward mean bounds for each shared gain interval. Neither
+ * depends on the current observation or stores a likelihood. */
 struct v92_observation_history {
 	double level[V92_OBSERVATION_INTERVALS][V92_OBSERVATION_TAPS - 1];
-	unsigned prepared, stable;
+	double low[V92_OBSERVATION_INTERVALS], high[V92_OBSERVATION_INTERVALS];
+	unsigned prepared, stable, bounded;
 };
 
 static inline void v92_observation_history_reset(struct v92_observation_history *history)
 {
 	history->prepared = history->stable = 0;
+	history->bounded = 0;
 }
 
 /* Same budget contract as score(). Exclusively owned history must not

@@ -462,6 +462,57 @@ static void check_history_scores(const struct v92_observation *model,
 	free(work);
 }
 
+/* Mixture taps must share their gain interval. Opposing delayed taps
+ * cancel within each component; combining their independent extremes would
+ * admit unrelated gains and force an unnecessary full likelihood. */
+static void check_coupled_bounds(const struct v92_observation *trained)
+{
+	struct v92_observation model = *trained;
+	for (unsigned i = 0; i < V92_OBSERVATION_INTERVALS; i++) {
+		/* Valid models admit a small excess in the sum of weights. */
+		model.intervals[i].weight = 1. / V92_OBSERVATION_INTERVALS + DBL_EPSILON;
+		model.intervals[i].coefficient[0] = 1.;
+		model.intervals[i].coefficient[1] = i & 1 ? .8 : -.8;
+		model.intervals[i].coefficient[2] = -model.intervals[i].coefficient[1];
+		model.intervals[i].coefficient[3] = 0.;
+	}
+	assert(v92_observation_is_valid(&model));
+	struct v92_observation_cache *cache = malloc(2 * sizeof(*cache));
+	assert(cache);
+	const int modes[] = { FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO };
+	const int32_t points[] = { 1, 33, 4096, -4096, INT32_MIN, INT32_MAX };
+	int saved = fegetround(); unsigned pruned = 0;
+	for (unsigned mode = 0; mode < sizeof(modes) / sizeof(*modes); mode++) {
+		assert(fesetround(modes[mode]) == 0);
+		v92_observation_begin(cache, &model, .00001);
+		v92_observation_begin(cache + 1, &model, .00001);
+		for (unsigned p = 0; p < sizeof(points) / sizeof(*points); p++) {
+			struct v92_observation_point history[V92_OBSERVATION_TAPS - 1];
+			for (unsigned j = 1; j < model.taps; j++) history[j - 1] = v92_observation_point(cache, points[p]);
+			struct v92_observation_history fixed;
+			memset(&fixed, 0xa5, sizeof(fixed)); v92_observation_history_reset(&fixed);
+			for (unsigned cell = 0; cell < 3; cell++) {
+				int16_t observed = cell == 0 ? 0 : cell == 1 ? 3000 : -3000;
+				assert(v92_observation_symbol(cache, observed));
+				assert(v92_observation_symbol(cache + 1, observed));
+				uint64_t exact = v92_observation_score(cache + 1, points[p], history, UINT64_MAX);
+				const uint64_t budgets[] = { 0, 1, exact / 2, exact, exact == UINT64_MAX ? exact : exact + 1, UINT64_MAX };
+				for (unsigned b = 0; b < sizeof(budgets) / sizeof(*budgets); b++) {
+					uint64_t actual = v92_observation_score_history(cache, points[p], history, budgets[b], &fixed);
+					assert(actual <= exact);
+					assert(actual == exact || actual >= budgets[b]);
+					assert(actual == v92_observation_score(cache, points[p], history, budgets[b]));
+					pruned += budgets[b] == 1 && cell == 0 &&
+						(points[p] == 4096 || points[p] == -4096) && actual != exact;
+				}
+			}
+		}
+	}
+	assert(pruned > 0);
+	assert(fesetround(saved) == 0);
+	free(cache);
+}
+
 static void check_scores(const struct v92_observation *model,
 	const int32_t *x, const int16_t *y)
 {
@@ -838,6 +889,7 @@ static void check_channel(enum g711_law law, double gain, unsigned taps,
 	assert(isfinite(rms) && rms < 100.);
 	check_scores(&model, x, y);
 	check_history_scores(&model, x, y);
+	if (gain == 4. && count == TRAINING) check_coupled_bounds(&model);
 	if (gain == .125 && taps == 3) {
 		check_predictive_noise(&model);
 		check_predictive_boundaries(&model);
