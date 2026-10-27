@@ -40,8 +40,9 @@ static bool test_input_space(void)
 		struct pcm_gain gain;
 		pcm_gain_init(&gain);
 		for (int32_t wire = INT16_MIN; wire <= INT16_MAX; wire++) {
-			CHECK(pcm_gain_observe(&gain, (int16_t)wire,
-				      host_sample((int16_t)wire, scales[i])),
+			int16_t sample = host_sample((int16_t)wire, scales[i]);
+			CHECK(pcm_gain_contains(&gain, (int16_t)wire, sample) &&
+			      pcm_gain_observe(&gain, (int16_t)wire, sample),
 			      "gain %.17g rejected linear sample %d", scales[i], (int)wire);
 		}
 		CHECK(check_estimate(&gain, scales[i]), "linear gain %zu", i);
@@ -97,6 +98,30 @@ static bool test_clipping_and_ties(void)
 	return true;
 }
 
+static bool test_frozen_bounds(void)
+{
+	const struct pcm_gain gain = {
+		.lower = .5, .upper = 1.5, .correlation = 7500., .energy = 10000.,
+	};
+	struct pcm_gain saved = gain;
+	static const struct { int16_t wire, sample; bool compatible; } pairs[] = {
+		{ 2, 1, true }, { 2, 3, true }, { 2, 0, false }, { 2, 4, false },
+		{ -2, -1, true }, { -2, -3, true }, { -2, 0, false }, { -2, -4, false },
+		{ 0, 0, true }, { 0, 1, false }, { 0, -1, false },
+		{ INT16_MAX, INT16_MAX, true }, { INT16_MIN, INT16_MIN, true },
+		{ INT16_MAX, INT16_MIN, false }, { INT16_MIN, INT16_MAX, false },
+	};
+	for (size_t i = 0; i < ARRAY_LENGTH(pairs); ++i) {
+		CHECK(pcm_gain_contains(&gain, pairs[i].wire, pairs[i].sample) ==
+		      pairs[i].compatible && memcmp(&gain, &saved, sizeof(gain)) == 0,
+		      "held-out pair %zu refitted or escaped the frozen bounds", i);
+	}
+	const struct pcm_gain tie = { .lower = .75, .upper = .75 };
+	CHECK(pcm_gain_contains(&tie, 2, 1) && pcm_gain_contains(&tie, 2, 2) &&
+	      !pcm_gain_contains(&tie, 2, 0), "frozen half-way ties changed");
+	return true;
+}
+
 static bool test_rejections(void)
 {
 	struct pcm_gain gain;
@@ -118,6 +143,7 @@ static bool test_rejections(void)
 		      "rejected pair %zu changed state", i);
 	}
 	CHECK(!pcm_gain_is_valid(NULL) && !pcm_gain_observe(NULL, 0, 0) &&
+	      !pcm_gain_contains(NULL, 0, 0) &&
 	      !pcm_gain_estimate(NULL, &estimate) && estimate == -1. &&
 	      !pcm_gain_estimate(&gain, NULL), "NULL arguments");
 	CHECK(!pcm_gain_estimate(&gain, &gain.lower) &&
@@ -135,6 +161,7 @@ static bool test_rejections(void)
 		gain = invalid[i];
 		saved = gain;
 		CHECK(!pcm_gain_is_valid(&gain) && !pcm_gain_observe(&gain, 1, 1) &&
+		      !pcm_gain_contains(&gain, 1, 1) &&
 		      !pcm_gain_estimate(&gain, &estimate) && estimate == -1. &&
 		      memcmp(&gain, &saved, sizeof(gain)) == 0,
 		      "invalid state %zu was accepted or changed", i);
@@ -170,5 +197,5 @@ static bool test_estimate_clamping(void)
 int main(void)
 {
 	return test_input_space() && test_clipping_and_ties() &&
-		test_estimate_clamping() && test_rejections() ? 0 : 1;
+		test_frozen_bounds() && test_estimate_clamping() && test_rejections() ? 0 : 1;
 }

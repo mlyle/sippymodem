@@ -25,6 +25,12 @@ bool pcm_gain_is_valid(const struct pcm_gain *gain);
  * Rejected input leaves the accumulated state unchanged. */
 bool pcm_gain_observe(struct pcm_gain *gain, int16_t wire, int16_t sample);
 
+/* Check one aligned pair against the same rounding/clipping bounds without
+ * narrowing them or accumulating fit statistics. Held-out data must verify
+ * the frozen interval, never update it. This checks interval compatibility,
+ * not reconstruction by the point estimate or model/line quality. */
+bool pcm_gain_contains(const struct pcm_gain *gain, int16_t wire, int16_t sample);
+
 /* Clamp the uncensored least-squares estimate to the surviving interval.
  * No finite upper bound or no nonzero correlation leaves output unchanged.
  * The result is a point in the interval, not proof of an identified gain.

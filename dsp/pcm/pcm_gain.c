@@ -20,25 +20,45 @@ void pcm_gain_init(struct pcm_gain *gain)
 		*gain = (struct pcm_gain){ .upper = INFINITY };
 }
 
-bool pcm_gain_observe(struct pcm_gain *gain, int16_t wire, int16_t sample)
+static bool intersect_sample(const struct pcm_gain *gain,
+	int16_t wire, int16_t sample, double *lower, double *upper)
 {
 	if (!pcm_gain_is_valid(gain))
 		return false;
+	*lower = gain->lower;
+	*upper = gain->upper;
 	if (wire == 0)
 		return sample == 0;
 
-	double lower = sample == INT16_MIN ? -INFINITY : sample - .5;
-	double upper = sample == INT16_MAX ? INFINITY : sample + .5;
-	double a = lower / wire, b = upper / wire;
-	struct pcm_gain next = *gain;
+	double a = (sample == INT16_MIN ? -INFINITY : sample - .5) / wire;
+	double b = (sample == INT16_MAX ? INFINITY : sample + .5) / wire;
 
 	if (wire < 0) {
 		double swap = a;
 		a = b;
 		b = swap;
 	}
-	next.lower = fmax(next.lower, a);
-	next.upper = fmin(next.upper, b);
+	*lower = fmax(*lower, a);
+	*upper = fmin(*upper, b);
+	return isfinite(*lower) && *upper > 0. && *upper >= *lower;
+}
+
+bool pcm_gain_contains(const struct pcm_gain *gain, int16_t wire, int16_t sample)
+{
+	double lower, upper;
+	return intersect_sample(gain, wire, sample, &lower, &upper);
+}
+
+bool pcm_gain_observe(struct pcm_gain *gain, int16_t wire, int16_t sample)
+{
+	double lower, upper;
+	if (!intersect_sample(gain, wire, sample, &lower, &upper))
+		return false;
+	if (wire == 0)
+		return true;
+	struct pcm_gain next = *gain;
+	next.lower = lower;
+	next.upper = upper;
 	/* Clipped samples constrain the interval one-sidedly but must not bias
 	 * a point estimate as though they were uncensored measurements. */
 	if (sample != INT16_MIN && sample != INT16_MAX) {

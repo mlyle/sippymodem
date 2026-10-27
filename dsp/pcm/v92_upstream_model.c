@@ -215,7 +215,7 @@ static bool observation_offset(const struct v92_upstream_data_line *line,
 	if (host == INT16_MIN || host == INT16_MAX ||
 	    physical <= INT16_MIN || physical >= INT16_MAX ||
 	    sample <= INT16_MIN || sample >= INT16_MAX ||
-	    !pcm_gain_observe(&gain, wire * line->polarity, host))
+	    !pcm_gain_contains(&gain, wire * line->polarity, host))
 		return false;
 	/* Rounding the calibrated sample does not shift the codec interval. */
 	*offset = (raw - (int32_t)host * line->polarity - line->calibration.offset) * line->calibration.gain;
@@ -485,12 +485,10 @@ static bool wire_cells(const struct v92_upstream_data_line *line, enum g711_law 
 		struct g711_interval cell;
 		int32_t raw = line->raw[i] * line->polarity;
 		int16_t host = line->host_samples[i];
-		struct pcm_gain checked = bounds;
-
 		if (!line->wire_known[i] || !line->received[i] ||
 		    raw <= INT16_MIN || raw >= INT16_MAX ||
 		    host == INT16_MIN || host == INT16_MAX ||
-		    !pcm_gain_observe(&checked, line->wire[i] * line->polarity, host) ||
+		    !pcm_gain_contains(&bounds, line->wire[i] * line->polarity, host) ||
 		    !g711_quantization_interval(law, line->wire[i] * line->polarity, &cell))
 			return false;
 		double offset = line->raw[i] - (int32_t)host * line->polarity -
