@@ -1173,6 +1173,18 @@ int main(void)
 	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)
 		for (unsigned sigma = 16; sigma <= 64; sigma *= 2)
 			check_noise_fit(law, sigma);
+	/* Directed rounding uses the conditional-moment fallback. Exercise its
+	 * delayed Gram rows, resumable ownership and held-out predictions too. */
+	const int fit_modes[] = { FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO };
+	int saved_rounding = fegetround();
+	assert(saved_rounding != -1);
+	for (unsigned mode = 0; mode < sizeof(fit_modes) / sizeof(*fit_modes); mode++) {
+		assert(fesetround(fit_modes[mode]) == 0);
+		for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)
+			for (unsigned taps = 3; taps <= 4; taps++)
+				check_channel(law, 4., taps, TRAINING, &previous);
+	}
+	assert(fesetround(saved_rounding) == 0);
 	struct v92_observation model, before;
 	memset(&model, 0x5a, sizeof(model));
 	before = model;

@@ -32,6 +32,21 @@ static bool solve_channel(const struct v92_observation_fit_moments *moments, uns
 	return gram_fit(moments->gram, moments->rhs, taps, fitted) && fitted[0] > 0.;
 }
 
+/* Both gain-cell selection and the conditional-bin fallback use these
+ * delayed integer features. Preserve each moment's sample order through
+ * the shared packed accumulator; fit admission stays with the caller. */
+static void collect_moments(struct v92_observation_fit_moments *moments,
+	const int16_t *q, const int16_t *y, size_t count, unsigned taps)
+{
+	*moments = (struct v92_observation_fit_moments){ 0 };
+	for (size_t j = taps; j < count; j++) {
+		double row[TAPS];
+		for (unsigned i = 0; i < taps; i++) row[i] = q[j - i];
+		gram_accumulate(moments->gram, moments->rhs, row, taps, y[j]);
+		moments->energy += (double)y[j] * y[j];
+	}
+}
+
 /* On one side of zero, erfc(b)/erfc(a) <= exp(a*a-b*b).
  * A gap of 40 puts the subtracted tail below half an ulp of erfc(a),
  * including subnormal results. Directed rounding keeps the subtraction. */
@@ -386,20 +401,18 @@ static bool fit_bin_channel_newton(double coefficient[TAPS], const int16_t *q,
 static bool fit_bin_channel(struct v92_observation_interval *fit, const int16_t *q,
 	const int16_t *y, const double *low, const double *high, size_t count, unsigned taps, double *variance)
 {
-	struct v92_observation_fit_moments m = { 0 };
 	double noise = 0.;
 	for (size_t j = taps; j < count; j++) {
 		double residual = y[j];
-		for (unsigned a = 0; a < taps; a++) {
+		for (unsigned a = 0; a < taps; a++)
 			residual -= fit->coefficient[a] * q[j - a];
-			for (unsigned b = 0; b <= a; b++)
-				m.gram[gram_moment_index(a, b)] += (double)q[j - a] * q[j - b];
-		}
 		noise += residual * residual;
 	}
 	double initial_noise = fmax(1., noise / (count - taps));
 	if (fit_bin_channel_newton(fit->coefficient, q, low, high, count, taps, initial_noise, variance))
 		return true;
+	struct v92_observation_fit_moments m;
+	collect_moments(&m, q, y, count, taps);
 	return refine_bin_fit(fit->coefficient, q, low, high, count, taps, taps,
 		&m, initial_noise, true, variance);
 }
@@ -622,14 +635,7 @@ static void fit_intervals_begin(struct v92_observation_fit_work *w,
 			child = parent;
 		}
 	}
-	for (size_t j = taps; j < count; j++) {
-		for (unsigned a = 0; a < taps; a++) {
-			w->moments.rhs[a] += (double)w->q[j - a] * y[j];
-			for (unsigned b = 0; b <= a; b++)
-				w->moments.gram[gram_moment_index(a, b)] += (double)w->q[j - a] * w->q[j - b];
-		}
-		w->moments.energy += (double)y[j] * y[j];
-	}
+	collect_moments(&w->moments, w->q, y, count, taps);
 }
 
 static int fit_intervals_step(struct v92_observation_fit_work *w,
