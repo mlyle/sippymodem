@@ -89,6 +89,13 @@ but the report attributes it to the negotiated modulation and records the
 requested-profile mismatch. PCM-upstream cases require explicit upstream-mode
 evidence, not only the V.92 name or bitrate.
 
+New LAPM attempts verify a PING/PONG exchange before requesting any retrain.
+Results retain separate `initial_receive_data` and `initial_transmit_data`
+checks; `initial_data` requires both. A received banner with no PONG stays at
+the CONNECT stage, with an initial-transmit failure reason. Raw calls retain
+their initial receive check. Historical results leave the direction checks
+unknown and keep their original grades.
+
 Each `result.json` indexes the terminal captures in `exchanges`, with the call
 leg, test phase, collection time, and byte offsets into `terminal-tx.bin` and
 `terminal-rx.bin`. Raw calls retain separate exchanges for the first probe

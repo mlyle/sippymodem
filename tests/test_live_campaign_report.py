@@ -34,6 +34,28 @@ from tools.live_campaign_report import (  # noqa: E402
 
 
 class LiveCampaignReportTests(unittest.TestCase):
+    def test_initial_direction_checks_distinguish_legacy_raw_and_failed_tx(self) -> None:
+        case = cases_for_suite("smoke")[0]
+        common = dict(case_name=case.name, family=case.family, role=case.role,
+                      connected=True, retrain_requested=False)
+        legacy = self.result(**common, initial_data=True)
+        failed = self.result(**common, protocol="LAPM", initial_data=False,
+                             initial_receive_data=True, initial_transmit_data=False)
+        raw = self.result(**common, protocol="none", initial_data=True,
+                          initial_receive_data=True)
+        self.assertIsNone(legacy.initial_receive_data)
+        self.assertIsNone(legacy.initial_transmit_data)
+        self.assertEqual(legacy.maturity, MATURITY_DATA)
+        self.assertEqual(failed.maturity, MATURITY_CONNECT)
+        self.assertEqual(raw.maturity, MATURITY_DATA)
+        dashboard = render_dashboard(
+            (case,), 3, (legacy, failed, raw), revision="c" * 40,
+            campaign_id="test", elapsed_seconds=1, recent_limit=10,
+        )
+        self.assertIn("Initial checks: RX=2/2 TX=0/1; legacy connected=1", dashboard)
+        self.assertIn("initial-rx=1/tx=0", dashboard)
+        self.assertIn("initial-rx=1/tx=-", dashboard)
+
     def test_peer_input_reports_do_not_double_count_cumulative_advisories(self) -> None:
         error = b"ERROR: unknown command; send HELP for a list\r\n"
         advisory = b"ADVISORY: %d invalid commands since the last accepted commands\r\n"

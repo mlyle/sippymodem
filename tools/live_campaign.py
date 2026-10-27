@@ -423,6 +423,8 @@ class _AttemptState:
     line_attempted: bool = False
     connected: bool = False
     initial_data: bool = False
+    initial_receive_data: bool | None = None
+    initial_transmit_data: bool | None = None
     callback_request_attempted: bool = False
     callback_request_maturity: str | None = None
     callback_request_report: ConnectReport = field(default_factory=ConnectReport)
@@ -621,15 +623,36 @@ def _exercise_online(
             )
             state.capture(leg, b"", received, phase="initial-data")
         except (LiveTerminalError, OSError, TimeoutError):
+            state.initial_receive_data = False
             state.detail = "initial online exchange failed"
             return
         state.initial_data = verified
     else:
         state.initial_data = initial_verified
+    state.initial_receive_data = state.initial_data
     if not state.initial_data:
         if not state.detail:
             state.detail = "initial online data was not verified"
         return
+    if state.report.protocol == "LAPM":
+        # A banner proves only reception. Exercise the first outbound bytes
+        # before a requested retrain can repair or obscure a startup stall.
+        progress.set("checking initial transmit data")
+        state.initial_transmit_data = False
+        state.initial_data = False
+        try:
+            verified, received = terminal.probe_online_ping(
+                config.online_timeout_seconds
+            )
+            state.capture(leg, ONLINE_PING_REQUEST, received, phase="initial-ping")
+        except (LiveTerminalError, OSError, TimeoutError):
+            state.detail = "initial transmit exchange failed"
+            return
+        state.initial_transmit_data = verified
+        state.initial_data = verified
+        if not verified:
+            state.detail = "initial transmit data was not verified"
+            return
     if not retrain:
         return
     remote_deadline = time.monotonic() + config.retrain_timeout_seconds
@@ -1121,6 +1144,8 @@ def run_physical_attempt(
         line_attempted=state.line_attempted,
         connected=state.connected,
         initial_data=state.initial_data,
+        initial_receive_data=state.initial_receive_data,
+        initial_transmit_data=state.initial_transmit_data,
         callback_request_attempted=state.callback_request_attempted,
         callback_request_maturity=state.callback_request_maturity,
         callback_request_modulation=state.callback_request_report.modulation,

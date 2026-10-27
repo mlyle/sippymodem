@@ -151,6 +151,11 @@ class AttemptResult:
     peer_invalid_command_burst: int = 0
     # None distinguishes older results and raw calls without this probe.
     remote_retrain_data: bool | None = None
+    # New LAPM attempts require banner reception and an initial PING/PONG.
+    # None preserves the unknown direction checks of historical results;
+    # raw calls continue to verify initial reception only.
+    initial_receive_data: bool | None = None
+    initial_transmit_data: bool | None = None
 
     @property
     def profile_mismatch(self) -> bool:
@@ -593,6 +598,19 @@ def render_dashboard(
         f"{'TOTAL':<12} {total_fields('originator')} | "
         f"{total_fields('callback')}"
     )
+    checked = [result for result in results
+               if result.initial_receive_data is not None]
+    if checked:
+        transmitted = [result for result in checked
+                       if result.initial_transmit_data is not None]
+        legacy = sum(result.connected and result.initial_receive_data is None
+                     for result in results)
+        rows.append(
+            f"Initial checks: RX={sum(r.initial_receive_data is True for r in checked)}"
+            f"/{len(checked)} TX={sum(r.initial_transmit_data is True for r in transmitted)}"
+            f"/{len(transmitted)}; legacy connected={legacy} (direction checks unknown)"
+        )
+        rows.append("New LAPM D requires initial RX and TX; raw D verifies RX only")
     warnings = [result for result in results
                 if result.peer_unknown_commands or result.peer_invalid_command_burst]
     if warnings:
@@ -696,6 +714,12 @@ def render_dashboard(
                 status = f"{request_status if request else status}/mismatch"
             if not request and connected and result.upstream_mode in {"V.34", "PCM"}:
                 status += f" up={result.upstream_mode}"
+            if not request and result.initial_receive_data is not None:
+                transmitted = (
+                    "-" if result.initial_transmit_data is None
+                    else str(int(result.initial_transmit_data))
+                )
+                status += f" initial-rx={int(result.initial_receive_data)}/tx={transmitted}"
             if not request and (result.peer_unknown_commands or result.peer_invalid_command_burst):
                 status += f" peer-input={result.peer_unknown_commands}/{result.peer_invalid_command_burst}"
             sequence = f"{index + 1:03d}{'+' if result.extra else ' '}"
