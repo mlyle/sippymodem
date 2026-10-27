@@ -2,6 +2,7 @@
 
 #include "v92_upstream_model.h"
 #include "v92_upstream_data_rx.h"
+#include "v92_data_quality.h"
 #include "integer_math.h"
 #include "sample_math.h"
 
@@ -333,11 +334,12 @@ static bool fit_residual(struct v92_upstream_model *model, struct v92_upstream_d
 	bool selected = false;
 	double best = INFINITY;
 	(void)v92_residual_fit(&line->residual, model->x, model->raw,
-		line->calibration.minimum, line->calibration.maximum, &line->calibration.gain, &best);
+		line->calibration.minimum, line->calibration.maximum, &line->calibration.gain, &best, NULL);
 	if (model->alternate.path_count) {
 		struct v92_residual candidate;
 		int32_t points[V92_OBSERVATION_TRAINING];
-		double gain, score;
+		double gain, score, error;
+		double limit = line->host.gain * V92_DATA_MAX_RMS_ERROR;
 		for (unsigned i = 0; i < V92_OBSERVATION_TRAINING; i++) points[i] = model->u[i];
 		/* A constant point translation has the same physical fit after a
 		 * DC shift. Use the known B1 coding history to resolve that exact
@@ -345,13 +347,19 @@ static bool fit_residual(struct v92_upstream_model *model, struct v92_upstream_d
 		 * A retained physical seed also has known coding for the 16/32-state
 		 * acquisitions above. Independent later B1 decisions still qualify
 		 * the selected fit. */
-		if (residual_coding_is_known(model, v34_trellis_state_count(
-			    model->alternate.paths[0].trellis.selection)) && isfinite(best) &&
+		bool known = residual_coding_is_known(model, v34_trellis_state_count(
+			model->alternate.paths[0].trellis.selection));
+		if (known && isfinite(best) &&
 		    v92_residual_translate(&line->residual, model->x, points,
 			model->raw, line->calibration.gain)) {
 			selected = true;
 		} else if (v92_residual_fit(&candidate, points, model->raw, line->calibration.minimum,
-		    line->calibration.maximum, &gain, &score) && score < best) {
+		    line->calibration.maximum, &gain, &score, &error) &&
+		    (score < best || (known && error <= limit * limit))) {
+			/* Free acquisition decisions can fit a wrong coding history
+			 * slightly better. Prefer known B1 only inside the existing
+			 * raw-input quality limit. Held-out decoding still qualifies it;
+			 * unknown or poor fits retain physical-score selection. */
 			line->residual = candidate;
 			line->calibration.gain = gain;
 			selected = true;

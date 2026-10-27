@@ -3254,16 +3254,28 @@ static bool test_residual_inverse(void)
 			raw[i] = (int32_t)lround((wide ? .5 : 1.2) * value + 128 + ((int)(random & 3u) - 1));
 		}
 		struct v92_residual filter = { 0 }, copy;
-		double gain = 0, score = INFINITY;
-		CHECK(v92_residual_fit(&filter, points, raw, minimum, maximum, &gain, &score) && isfinite(score) &&
+		double gain = 0, score = INFINITY, power = -1.;
+		CHECK(v92_residual_fit(&filter, points, raw, minimum, maximum, &gain, &score, &power) && isfinite(score) &&
 		      v92_residual_is_valid(&filter), "residual fit rejected an identifiable channel");
+		double measured = 0.;
+		unsigned start = TRAIN - V92_PCM_RX_DELAY_FRAMES * V92_PCM_MAPPING_FRAME_SYMBOLS;
+		for (unsigned i = start; i < TRAIN; ++i) {
+			double expected = points[i] / gain + filter.offset;
+			for (unsigned tap = 0; tap < filter.count; ++tap)
+				expected += filter.coefficient[tap] * points[i - filter.delay[tap]] / gain;
+			double error = raw[i] - expected;
+			measured += error * error;
+		}
+		measured /= TRAIN - start;
+		CHECK(isfinite(power) && power >= 0. && fabs(power - measured) < 1e-8,
+		      "fit residual power differs from direct reconstruction");
 		CHECK(filter.delay[0] == delay[0] && filter.delay[1] == delay[1],
 		      "residual fit invented or missed delayed channel memory");
 		for (unsigned edge = 0; edge < 2; edge++) {
 			const double bounds[2][2] = { { .832, .835 }, { 1.995, 2.005 } };
 			double bound = bounds[wide][edge], fitted_gain = 0;
 			struct v92_residual bounded = { 0 };
-			CHECK(v92_residual_fit(&bounded, points, raw, bound, bound, &fitted_gain, NULL) &&
+			CHECK(v92_residual_fit(&bounded, points, raw, bound, bound, &fitted_gain, NULL, NULL) &&
 			      fitted_gain == bound && bounded.delay[0] == delay[0] &&
 			      bounded.delay[1] == delay[1], "gain boundary changed the delay hypothesis");
 		}
@@ -3298,15 +3310,16 @@ static bool test_residual_inverse(void)
 		CHECK(!v92_residual_sample(&copy, INT16_MAX, 1, true, &correction) &&
 		      !memcmp(&copy, &saved, sizeof(copy)), "inverse clipped an out-of-range sample");
 		saved = filter;
-		double saved_score = score;
-		CHECK(!v92_residual_fit(&filter, points, raw, NAN, .9, &gain, &score) && score == saved_score &&
+		double saved_score = score, saved_power = power;
+		CHECK(!v92_residual_fit(&filter, points, raw, NAN, .9, &gain, &score, &power) &&
+		      score == saved_score && power == saved_power &&
 		      !memcmp(&filter, &saved, sizeof(filter)), "invalid bounds changed the inverse");
 		for (unsigned i = 0; i < TRAIN; i++) raw[i] += 2048;
-		CHECK(!v92_residual_fit(&filter, points, raw, minimum, maximum, &gain, NULL) &&
+		CHECK(!v92_residual_fit(&filter, points, raw, minimum, maximum, &gain, NULL, NULL) &&
 		      !memcmp(&filter, &saved, sizeof(filter)), "excessive DC bias supplied an inverse");
 		memset(points, 0, sizeof(points));
-		CHECK(!v92_residual_fit(&filter, points, raw, minimum, maximum, &gain, NULL),
-		      "singular acquisition supplied an inverse");
+		CHECK(!v92_residual_fit(&filter, points, raw, minimum, maximum, &gain, NULL, &power) &&
+		      power == saved_power, "singular acquisition supplied an inverse or residual power");
 	}
 	return true;
 }
@@ -3335,7 +3348,7 @@ static bool test_residual_transition(void)
 			for (int shift = -128; shift <= 128; shift += 128) {
 				struct v92_residual filter = { 0 };
 				double gain;
-				CHECK(v92_residual_fit(&filter, points, raw, gains[g], gains[g], &gain, NULL) &&
+				CHECK(v92_residual_fit(&filter, points, raw, gains[g], gains[g], &gain, NULL, NULL) &&
 				      filter.count == 2 && filter.delay[0] == delays[d][0] &&
 				      filter.delay[1] == delays[d][1], "transition channel fit failed");
 				if (shift) {
@@ -3612,7 +3625,7 @@ static bool test_residual_translation(void)
 		points[i] = (int32_t)((i * 7919u) % 401u) * 4 - 800;
 		raw[i] = points[i] / 4 + 128;
 	}
-	CHECK(v92_residual_fit(&fitted, points, raw, 4., 4., &gain, &score),
+	CHECK(v92_residual_fit(&fitted, points, raw, 4., 4., &gain, &score, NULL),
 	      "translation source fit failed");
 	for (int shift = -512; shift <= 512; shift += 512) {
 		struct v92_residual translated = fitted;
@@ -3844,11 +3857,12 @@ static bool test_single_codec(enum g711_law law)
 	return true;
 }
 
-/* A DC translation leaves the physical acquisition fit unchanged. Its
- * roundoff must not displace an independently known B1 coding history,
- * including when an earlier physical correction supplied the candidate. */
+/* A DC alias can give free acquisition decisions a perfect physical fit.
+ * With noise it even beats the known-B1 fit, but cannot replace its coding
+ * history. A physically poor known fit must retain score-based selection.
+ * Include an earlier physical seed and the unknown 64-state case. */
 static bool test_translated_acquisition_seed(enum g711_law law,
-	enum v92_cpd_trellis trellis, bool seeded)
+	enum v92_cpd_trellis trellis, bool seeded, unsigned noise_peak)
 {
 	struct v92_cpd_parameters cpd;
 	struct v92_pcm_mapping mapping;
@@ -3882,11 +3896,27 @@ static bool test_translated_acquisition_seed(enum g711_law law,
 	for (unsigned i = 0; i < rx.decoder.path_count; ++i)
 		rx.decoder.paths[i].pending[0][0] = 0;
 	for (unsigned i = 0; i < V92_OBSERVATION_TRAINING; ++i) {
-		rx.model.x[i] = points[i] + 512;
+		int noise = ((int)(i % 3) - 1) * (int)noise_peak;
+		rx.model.x[i] = points[i] + 512 + noise;
 		rx.model.u[i] = points[i];
-		rx.model.raw[i] = points[i] + 128;
+		rx.model.raw[i] = points[i] + 128 + noise;
 	}
-	/* Zero residual makes both scalar fits hit the same score floor. */
+	/* Without noise both fits hit the same score floor. With noise, the
+	 * wrong free coordinates explain it exactly, while known points retain
+	 * a residual. A low-error known fit wins; excessive noise retains the
+	 * physical-score fallback. */
+	if (noise_peak) {
+		struct v92_residual free_fit, known_fit;
+		double gain, free_score, known_score;
+		int32_t known_points[V92_OBSERVATION_TRAINING];
+		for (unsigned i = 0; i < V92_OBSERVATION_TRAINING; ++i) known_points[i] = rx.model.u[i];
+
+		CHECK(v92_residual_fit(&free_fit, rx.model.x, rx.model.raw,
+			.9, 1.1, &gain, &free_score, NULL) &&
+			v92_residual_fit(&known_fit, known_points, rx.model.raw,
+			.9, 1.1, &gain, &known_score, NULL) && free_score < known_score,
+			"free acquisition fit must win the physical score");
+	}
 	rx.model.residual_acquiring = true;
 	rx.line.received_frames = V92_B1U_ACQUISITION_FRAMES - 1u;
 	rx.line.calibration.gain = 1.;
@@ -3898,13 +3928,13 @@ static bool test_translated_acquisition_seed(enum g711_law law,
 		rx.model.seed.gain = 1.;
 	}
 	v92_upstream_model_fit(&rx.model, &rx.line, &rx.decoder);
-	bool known = !seeded || v34_trellis_state_count(tx.state.trellis.selection) <= V92_PCM_RX_PATHS;
-	CHECK(rx.line.residual.active && fabs(rx.line.calibration.gain - 1.) < 1e-10 &&
-		  fabs(rx.line.residual.offset - (known ? 128. : -384.)) < 1e-8 &&
+	bool known = (!seeded || v34_trellis_state_count(tx.state.trellis.selection) <= V92_PCM_RX_PATHS) && noise_peak <= 1;
+	CHECK(rx.line.residual.active && fabs(rx.line.calibration.gain - 1.) < (noise_peak ? .001 : 1e-10) &&
+		  fabs(rx.line.residual.offset - (known ? 128. : -384.)) < (noise_peak ? 2. : 1e-8) &&
 		  rx.decoder.paths[0].pending[0][0] == known &&
 		  !rx.model.residual_acquiring && !rx.model.seed.residual.active,
-		  "translated fit lost known coding: law=%u trellis=%u seeded=%u offset=%g bit=%u",
-		  law, trellis, seeded, rx.line.residual.offset, rx.decoder.paths[0].pending[0][0]);
+		  "translated fit lost known coding: law=%u trellis=%u seeded=%u noise=%u offset=%g bit=%u",
+		  law, trellis, seeded, noise_peak, rx.line.residual.offset, rx.decoder.paths[0].pending[0][0]);
 	return true;
 }
 
@@ -3912,12 +3942,14 @@ int main(void)
 {
 	for (int polarity = -1; polarity <= 1; polarity += 2)
 		if (!test_codec_model(polarity, false, 19, false, true, polarity < 0 ? 1 : 40)) return 1;
+	const unsigned noise_peaks[] = { 0, 1, 512 };
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (enum v92_cpd_trellis trellis = V92_CPD_TRELLIS_16_STATE;
 			 trellis <= V92_CPD_TRELLIS_64_STATE; ++trellis)
 			for (unsigned seeded = 0; seeded < 2; ++seeded)
-				if (!test_translated_acquisition_seed(law, trellis, seeded))
-					return 1;
+				for (unsigned n = 0; n < ARRAY_LENGTH(noise_peaks); ++n)
+					if (!test_translated_acquisition_seed(law, trellis, seeded, noise_peaks[n]))
+						return 1;
 
 	if (!test_residual_translation() || !test_translated_acquisition(false) ||
 	    !test_translated_acquisition(true)) return 1;

@@ -70,7 +70,7 @@ static bool prime_history(struct v92_residual *filter, const int32_t *raw)
 
 bool v92_residual_fit(struct v92_residual *filter,
 	const int32_t *points, const int32_t *raw, double minimum, double maximum,
-	double *gain, double *score)
+	double *gain, double *score, double *mean_square_error)
 {
 	if (!filter || !points || !raw || !gain || !isfinite(minimum) ||
 	    !isfinite(maximum) || minimum <= 0. || maximum < minimum) return false;
@@ -90,7 +90,7 @@ bool v92_residual_fit(struct v92_residual *filter,
 		gram_accumulate(moments, cross, row, MOMENT_COLUMNS, raw[n]);
 	}
 	struct v92_residual best = { 0 };
-	double best_gain = 0., best_score = INFINITY;
+	double best_gain = 0., best_score = INFINITY, best_error = 0.;
 	const unsigned samples = SAMPLES - START;
 	for (unsigned first = 0; first <= V92_RESIDUAL_LAGS; first++)
 		for (unsigned second = 0; second <= V92_RESIDUAL_LAGS; second++) {
@@ -136,11 +136,13 @@ bool v92_residual_fit(struct v92_residual *filter,
 				count * log(samples) + 2 * taps * log(V92_RESIDUAL_LAGS);
 			if (isfinite(score) && score < best_score) {
 				best = candidate; best_gain = fmax(minimum, fmin(maximum, 1. / fitted[0])); best_score = score;
+				best_error = error / samples;
 			}
 		}
 	if (!best.active || !prime_history(&best, raw)) return false;
 	*filter = best; *gain = best_gain;
 	if (score) *score = best_score;
+	if (mean_square_error) *mean_square_error = best_error;
 	return true;
 }
 

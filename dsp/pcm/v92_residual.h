@@ -38,12 +38,14 @@ bool v92_residual_is_valid(const struct v92_residual *filter);
 /* points/raw contain all acquisition frames. Only the final traceback span
  * is fitted; its preceding predictions provide delayed features. Rejection
  * leaves outputs unchanged. Optional score receives the acquisition model
- * selection cost; smaller is better. Gain is the inverse channel gain and
- * must remain inside the original training-cell bounds. Initial inverse history
+ * selection cost; smaller is better. Optional mean_square_error receives
+ * forward residual power in raw sample units, before causal inversion.
+ * Gain is the inverse channel gain, inside the original training-cell bounds.
+ * Initial inverse history
  * is primed from the same acquisition observations, without held-out input. */
 bool v92_residual_fit(struct v92_residual *filter,
 	const int32_t *points, const int32_t *raw, double minimum, double maximum,
-	double *gain, double *score);
+	double *gain, double *score, double *mean_square_error);
 
 /* Re-express a fresh fit for points translated by one exact integer offset
  * across all current/delayed fitting inputs. The DC term absorbs the shift;

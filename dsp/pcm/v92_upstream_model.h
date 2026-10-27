@@ -9,7 +9,9 @@
 
 /* Optional physical correction from the preceding rate epoch. Coding and
  * filter history are never retained. It seeds an acquisition candidate only;
- * that candidate must win a fresh fit before independent B1u validation. */
+ * that candidate needs an admissible fresh fit before independent B1u
+ * validation. A low-error known-B1 fit takes priority over free decisions;
+ * unknown coding retains physical fit-score selection. */
 struct v92_upstream_seed {
 	struct v92_residual residual;
 	double gain;
