@@ -68,35 +68,6 @@ v34_quarter_superconstellation_label(
 	return V34_CONSTELLATION_OK;
 }
 
-static struct qam_point rotate_point(
-	struct qam_point point, int counterclockwise_quarter_turns)
-{
-	int turns = counterclockwise_quarter_turns % 4;
-
-	if (turns < 0)
-		turns += 4;
-	switch (turns) {
-	case 0:
-		return point;
-	case 1:
-		return (struct qam_point){
-			-point.quadrature,
-			point.in_phase,
-		};
-	case 2:
-		return (struct qam_point){
-			-point.in_phase,
-			-point.quadrature,
-		};
-	case 3:
-		return (struct qam_point){
-			point.quadrature,
-			-point.in_phase,
-		};
-	}
-	return (struct qam_point){ 0 };
-}
-
 struct qam_point v34_rotated_point_zero(
 	int counterclockwise_quarter_turns)
 {
@@ -105,7 +76,7 @@ struct qam_point v34_rotated_point_zero(
 		V34_POINT_ZERO_COORDINATE,
 	};
 
-	return rotate_point(point, counterclockwise_quarter_turns);
+	return qam_point_rotate_quarters(point, counterclockwise_quarter_turns);
 }
 
 static void rotate_clockwise_grid(

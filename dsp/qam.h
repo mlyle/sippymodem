@@ -96,6 +96,20 @@ static inline struct qam_point qam_point_rotate(
 	return qam_point_multiply(point, &rotation);
 }
 
+/* Exact counterclockwise quarter turns, including negative and wrapped counts.
+ * Swap coordinates and signs without trigonometry, scaling or rounding.
+ * As with the raw product, numeric validation stays with the owner. */
+static inline struct qam_point qam_point_rotate_quarters(
+	struct qam_point point, int quarter_turns)
+{
+	switch ((unsigned)quarter_turns & 3u) {
+	case 1: return (struct qam_point){ -point.quadrature, point.in_phase };
+	case 2: return (struct qam_point){ -point.in_phase, -point.quadrature };
+	case 3: return (struct qam_point){ point.quadrature, -point.in_phase };
+	default: return point;
+	}
+}
+
 /* Raw complex quotient using the denominator power already measured by the
  * caller. As with multiplication, numeric validation belongs to the owner. */
 static inline struct qam_point qam_point_quotient(

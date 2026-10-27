@@ -75,36 +75,17 @@ enum v22_framing_result v22bis_symbol_decode(
 enum v22_framing_result v22bis_constellation_point(
 	uint8_t symbol, struct qam_point *point)
 {
-	double in_phase;
-	double quadrature;
-	double base_in_phase;
-	double base_quadrature;
-
 	if (symbol >= V22BIS_SYMBOL_COUNT || point == NULL)
 		return V22_FRAMING_INVALID_ARGUMENT;
-	base_in_phase = (symbol & 1u) != 0 ? 3.0 : 1.0;
-	base_quadrature = (symbol & 2u) != 0 ? 3.0 : 1.0;
-	switch (symbol >> 2) {
-	case 0:
-		in_phase = base_in_phase;
-		quadrature = base_quadrature;
-		break;
-	case 1:
-		in_phase = -base_quadrature;
-		quadrature = base_in_phase;
-		break;
-	case 2:
-		in_phase = -base_in_phase;
-		quadrature = -base_quadrature;
-		break;
-	default:
-		in_phase = base_quadrature;
-		quadrature = -base_in_phase;
-		break;
-	}
+	struct qam_point base = {
+		(symbol & 1u) != 0 ? 3.0 : 1.0,
+		(symbol & 2u) != 0 ? 3.0 : 1.0,
+	};
+	struct qam_point rotated = qam_point_rotate_quarters(base, symbol >> 2);
+
 	*point = (struct qam_point){
-		.in_phase = in_phase * V22BIS_COORDINATE_SCALE,
-		.quadrature = quadrature * V22BIS_COORDINATE_SCALE,
+		.in_phase = rotated.in_phase * V22BIS_COORDINATE_SCALE,
+		.quadrature = rotated.quadrature * V22BIS_COORDINATE_SCALE,
 	};
 	return V22_FRAMING_OK;
 }

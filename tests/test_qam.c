@@ -8,6 +8,7 @@
 
 #include <fenv.h>
 #include <float.h>
+#include <limits.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -149,6 +150,39 @@ static bool test_carrier_rotation(void)
 	}
 	CHECK(memcmp(&point, &saved, sizeof(point)) == 0,
 	      "carrier rotation changed its input");
+	return true;
+}
+
+static bool test_quarter_rotation(void)
+{
+	const struct qam_point point = { DBL_MAX, -DBL_MIN };
+	const struct qam_point expected[] = {
+		{ DBL_MAX, -DBL_MIN }, { DBL_MIN, DBL_MAX },
+		{ -DBL_MAX, DBL_MIN }, { -DBL_MIN, -DBL_MAX },
+	};
+	const int turns[] = {
+		INT_MIN, INT_MIN + 1, -9, -4, -3, -2, -1,
+		0, 1, 2, 3, 4, 9, INT_MAX - 1, INT_MAX,
+	};
+	for (size_t i = 0; i < sizeof turns / sizeof *turns; ++i) {
+		struct qam_point rotated = qam_point_rotate_quarters(point, turns[i]);
+		int quadrant = turns[i] % 4;
+		if (quadrant < 0) quadrant += 4;
+		CHECK(rotated.in_phase == expected[quadrant].in_phase &&
+		      rotated.quadrature == expected[quadrant].quadrature,
+		      "exact rotation scaled, overflowed or chose the wrong turn at %d", turns[i]);
+	}
+	const struct qam_point zero = { 0.0, -0.0 };
+	const struct qam_point zero_expected[] = {
+		{ 0.0, -0.0 }, { 0.0, 0.0 }, { -0.0, 0.0 }, { -0.0, -0.0 },
+	};
+	for (int turn = 0; turn < 4; ++turn) {
+		struct qam_point rotated = qam_point_rotate_quarters(zero, turn);
+		CHECK(rotated.in_phase == 0.0 && rotated.quadrature == 0.0 &&
+		      !!signbit(rotated.in_phase) == !!signbit(zero_expected[turn].in_phase) &&
+		      !!signbit(rotated.quadrature) == !!signbit(zero_expected[turn].quadrature),
+		      "exact rotation changed signed zero at turn %d", turn);
+	}
 	return true;
 }
 
@@ -1585,6 +1619,7 @@ int main(void)
 	} tests[] = {
 		{ "point validation", test_point_validation },
 		{ "point correlation", test_point_correlation },
+		{ "exact quarter rotation", test_quarter_rotation },
 		{ "channel matching", test_channel_matching },
 		{ "carrier rotation", test_carrier_rotation },
 		{ "point quotient", test_point_quotient },
