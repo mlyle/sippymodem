@@ -5238,10 +5238,15 @@ static enum pcm_call_result v92_data_octet_owned(
 				guard_v92_upstream_failure(path);
 			}
 		}
-		/* A lost decoder cannot resume on its old coding history. Keep
-		 * transmitting and clocking the independent control detectors while
-		 * the bounded guard owns that failure; never emit its data. */
-		received = path->upstream.failed ? V92_UPSTREAM_DATA_RX_OK :
+		/* A lost decoder cannot resume its history; a completed B1 rejection
+		 * cannot become ready in this coding epoch either. Keep TX and the
+		 * independent control detectors running during the bounded guard.
+		 * Online and fast-exchange guards still need decoding for in-band RM. */
+		bool startup_rejected = call->b1_deadline_armed && path->quality_guard_samples &&
+			path->fast.stage == PCM_CALL_V92_FAST_IDLE &&
+			path->upstream.line.received_frames >= V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES &&
+			!v92_peer_b1_received_owned(call);
+		received = path->upstream.failed || startup_rejected ? V92_UPSTREAM_DATA_RX_OK :
 			v92_upstream_data_rx_octet_owned(&path->upstream,
 				received_octet, received_sample, host_sample, received_available, &frame);
 		if (received == V92_UPSTREAM_DATA_RX_NO_PATH) {

@@ -7190,6 +7190,7 @@ static bool run_wrong_direct_b1(enum g711_law law, bool fault)
 	double b1_error = 0.0;
 	unsigned received_frames = 0u;
 	unsigned recovery_clock = 0u;
+	uint64_t rejected_inputs = 0;
 
 	/* Keep the validly coded wrong bit below the validation-only residual
 	 * ceiling, so this test requires bit validation rather than a power alarm. */
@@ -7264,7 +7265,12 @@ static bool run_wrong_direct_b1(enum g711_law law, bool fault)
 						      received_frames == V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES - 1u,
 						      "bad B1 guard did not start at the final decision");
 						recovery_clock = clock + guard;
+						rejected_inputs = call->state.data_path.v92_digital.upstream.line.input_samples;
 					}
+					CHECK(call->state.data_path.v92_digital.upstream.line.received_frames ==
+					      V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES &&
+					      call->state.data_path.v92_digital.upstream.line.input_samples == rejected_inputs,
+					      "rejected B1 decoder consumed guarded media");
 					CHECK(clock < recovery_clock && guard == recovery_clock - clock &&
 					      !pcm_call_is_online(call), "bad B1 extended its control guard");
 				}

@@ -259,3 +259,29 @@ A-law case remains both a quality failure and a deadline overrun; it is
 included rather than excluded from the cost comparison. These synthetic
 impairment results exclude SIP/RTP, BBS work and concurrent host scheduling,
 and do not establish a worst-case deadline or a call-capacity guarantee.
+
+### Rejected-startup decoding
+
+After a complete failed B1u validation, the modem keeps transmitting and
+checking independent control signals during its existing recovery guard.
+It now stops decoding payload that cannot make that startup epoch ready.
+Online and fast-exchange guards keep their decoder for in-band RM control.
+The recovery clock, validation cadence and receiver buffer bound are retained.
+
+Further Pi measurements use the same compiler, affinity and 160-sample
+callback setup. Reported runs had zero active firmware throttle bits; a
+soft-temperature-capped A-law baseline is excluded. The A-law row has one
+valid baseline and two new runs; the robbed-bit row has two of each.
+These are whole-call thread CPU maxima in failed-startup stress tests.
+
+| Receive case | Previous worst packet / three | New worst packet / three |
+| --- | ---: | ---: |
+| A-law, 0.7 postcursor, three taps | 23.10 / 64.67 ms | 20.19 / 52.73 ms |
+| Mu-law, 0.375 postcursor, noise sigma 8, partial robbed-bit signaling | 20.32 / 57.01 ms | 15.50 / 42.88 ms |
+
+Both cases retain their failed connection outcomes. The strongest A-law
+single packet still exceeds 20 ms slightly, while its three-packet window
+fits 60 ms. Healthy 48k mu-law calls passed repeated 500-packet holds with
+exact delivered bytes; the recorded Conexant calls also retain exact sent
+PCM and G.711 bytes. These observations establish the tested boundary,
+not a guarantee under concurrent load.
