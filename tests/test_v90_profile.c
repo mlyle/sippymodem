@@ -631,7 +631,7 @@ static bool check_training_constellation(struct v90_cp_parameters cp,
 	bool found = false;
 
 	CHECK(v90_pcm_mapping_init(&mapping, &cp) == V90_PCM_MAPPING_OK &&
-	      v90_profile_select_constellation(&mapping, limit, &selected),
+	      v90_profile_select_training_constellation(&mapping, limit, &selected),
 	      "training constellation selection failed");
 	/* Independently enumerate the previous eight-point CPt family: evenly
 	 * spaced companded codes, with the highest feasible upper rail. Data
@@ -657,6 +657,19 @@ static bool check_training_constellation(struct v90_cp_parameters cp,
 	}
 	CHECK(found && memcmp(&selected, &expected, sizeof(selected)) == 0,
 	      "data spacing changed training law %u power %u", cp.law, limit);
+	struct pcm_constellation saved = selected;
+	CHECK(!v90_profile_select_training_constellation(NULL, limit, &selected) &&
+	      !v90_profile_select_training_constellation(&mapping, limit, NULL) &&
+	      !v90_profile_select_training_constellation(&mapping, 0, &selected) &&
+	      !v90_profile_select_training_constellation(&mapping, 1, &selected) &&
+	      memcmp(&selected, &saved, sizeof(saved)) == 0,
+	      "rejected training selection changed output");
+	cp.kind = V90_CP_DATA;
+	cp.selected_rate_index = 1;
+	CHECK(v90_pcm_mapping_init(&mapping, &cp) == V90_PCM_MAPPING_OK &&
+	      !v90_profile_select_training_constellation(&mapping, limit, &selected) &&
+	      memcmp(&selected, &saved, sizeof(saved)) == 0,
+	      "training selector accepted a data mapping");
 	return true;
 }
 
@@ -687,17 +700,16 @@ static bool test_constellation_power_selection(void)
 			for (uint8_t rate = 1; rate <= V90_CP_RATE_INDEX_MAX; ++rate) {
 				struct v90_cp_parameters cp = profile.analog_phase4.data_parameters;
 				struct v90_pcm_mapping mapping, before;
-				struct pcm_constellation selected = { 0 }, saved = selected;
 				uint32_t lower, upper, limit = rms[code] * rms[code];
 
 				cp.selected_rate_index = rate;
 				CHECK(v90_pcm_mapping_init(&mapping, &cp) == V90_PCM_MAPPING_OK,
 				      "rate %u mapping failed", rate);
 				before = mapping;
-				CHECK(v90_profile_select_constellation(&mapping, limit, &selected) &&
+				CHECK(v90_profile_select_measured_constellations(&mapping, limit, NULL,
+					      cp.transmit_constellations, cp.frame_constellation, &cp.constellation_count) &&
 				      memcmp(&mapping, &before, sizeof(mapping)) == 0,
 				      "law %u power %zu rate %u selection changed input", law, code, rate);
-				cp.transmit_constellations[0] = selected;
 				CHECK(v90_pcm_mapping_init(&mapping, &cp) == V90_PCM_MAPPING_OK &&
 				      mapping.modulus[0] == before.modulus[0] &&
 				      v90_pcm_mapping_power(&mapping, V90_PCM_MAPPING_CODEC, law,
@@ -708,12 +720,20 @@ static bool test_constellation_power_selection(void)
 				      distance <= last_distance[rate],
 				      "law %u power %zu rate %u spacing is not maximal/monotone", law, code, rate);
 				last_distance[rate] = distance;
-				selected = saved;
-				CHECK(!v90_profile_select_constellation(NULL, limit, &selected) &&
-				      !v90_profile_select_constellation(&mapping, limit, NULL) &&
-				      !v90_profile_select_constellation(&mapping, 0, &selected) &&
-				      !v90_profile_select_constellation(&mapping, 1, &selected) &&
-				      memcmp(&selected, &saved, sizeof(selected)) == 0,
+				struct v90_cp_parameters saved = cp;
+				CHECK(!v90_profile_select_measured_constellations(NULL, limit, NULL,
+					      cp.transmit_constellations, cp.frame_constellation, &cp.constellation_count) &&
+				      !v90_profile_select_measured_constellations(&mapping, limit, NULL,
+					      NULL, cp.frame_constellation, &cp.constellation_count) &&
+				      !v90_profile_select_measured_constellations(&mapping, limit, NULL,
+					      cp.transmit_constellations, NULL, &cp.constellation_count) &&
+				      !v90_profile_select_measured_constellations(&mapping, limit, NULL,
+					      cp.transmit_constellations, cp.frame_constellation, NULL) &&
+				      !v90_profile_select_measured_constellations(&mapping, 0, NULL,
+					      cp.transmit_constellations, cp.frame_constellation, &cp.constellation_count) &&
+				      !v90_profile_select_measured_constellations(&mapping, 1, NULL,
+					      cp.transmit_constellations, cp.frame_constellation, &cp.constellation_count) &&
+				      memcmp(&cp, &saved, sizeof(cp)) == 0,
 				      "rejected or impossible selection changed output");
 				/* A valid different codec plane is not a direct-law profile. */
 				unsigned int first = 0;
@@ -723,15 +743,17 @@ static bool test_constellation_power_selection(void)
 				mapping.codec[0].ucode_mask[15] |= 0x80u;
 				mapping.codec_plane_differs = true;
 				CHECK(v90_pcm_mapping_is_valid(&mapping) &&
-				      !v90_profile_select_constellation(&mapping, limit, &selected) &&
-				      memcmp(&selected, &saved, sizeof(selected)) == 0,
+				      !v90_profile_select_measured_constellations(&mapping, limit, NULL,
+					      cp.transmit_constellations, cp.frame_constellation, &cp.constellation_count) &&
+				      memcmp(&cp, &saved, sizeof(cp)) == 0,
 				      "selection accepted a non-direct mapping");
 				mapping.transmit[0] = mapping.codec[0];
 				mapping.codec_plane_differs = false;
 				CHECK(v90_pcm_mapping_is_valid(&mapping) &&
-				      !v90_profile_select_constellation(&mapping, limit, &selected) &&
-				      memcmp(&selected, &saved, sizeof(selected)) == 0,
-				      "selection accepted unequal interval constellations");
+				      v90_profile_select_measured_constellations(&mapping, limit, NULL,
+					      cp.transmit_constellations, cp.frame_constellation, &cp.constellation_count) &&
+				      cp.constellation_count == 1,
+				      "fixed data selection rejected distinct input rows");
 			}
 		}
 	}
@@ -745,27 +767,41 @@ static bool test_generated_data_capacity(void)
 			for (uint8_t rate = 1u; rate <= V90_CP_RATE_INDEX_MAX; ++rate) {
 				struct v90_cp_parameters cp = {
 					.kind = V90_CP_DATA, .law = law, .selected_rate_index = rate,
-					.sign_redundancy = redundancy, .constellation_count = 1u,
+					.sign_redundancy = redundancy,
 				};
 				struct v90_pcm_mapping mapping;
 				uint32_t floor, ceiling;
-				CHECK(v90_profile_generate_data_constellation(law, rate, redundancy, 4024u * 4024u,
-					&cp.transmit_constellations[0]) && v90_pcm_mapping_init(&mapping, &cp) == V90_PCM_MAPPING_OK &&
+				CHECK(v90_profile_generate_measured_constellations(law, rate, redundancy,
+					      4024u * 4024u, NULL, cp.transmit_constellations,
+					      cp.frame_constellation, &cp.constellation_count) &&
+				      v90_pcm_mapping_init(&mapping, &cp) == V90_PCM_MAPPING_OK &&
 				      v90_pcm_mapping_power(&mapping, V90_PCM_MAPPING_CODEC, law, &floor, &ceiling) == V90_PCM_MAPPING_OK &&
 				      ceiling <= 4024u * 4024u, "generated data capacity/power failed");
+				unsigned largest = 0;
+				for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; ++slot)
+					if (mapping.modulus[slot] > largest) largest = mapping.modulus[slot];
 				uint64_t smaller_capacity = 1u;
-				for (unsigned slot = 0u; slot < V90_CP_FRAME_INTERVALS; ++slot)
-					smaller_capacity *= mapping.modulus[0] - 1u;
-				CHECK(mapping.modulus[0] == 8u || smaller_capacity < (UINT64_C(1) << mapping.modulus_bits),
+				for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; ++slot) {
+					CHECK(mapping.modulus[slot] == largest || mapping.modulus[slot] + 1u == largest,
+					      "generated map left the balanced/common family");
+					smaller_capacity *= largest - 1u;
+				}
+				CHECK(largest == 8u || smaller_capacity < (UINT64_C(1) << mapping.modulus_bits),
 				      "generated map retained unnecessary capacity");
-				struct pcm_constellation saved = cp.transmit_constellations[0];
-				CHECK(!v90_profile_generate_data_constellation(law, 0u, redundancy, 100u, &cp.transmit_constellations[0]) &&
-				      !v90_profile_generate_data_constellation(law, 23u, redundancy, 100u, &cp.transmit_constellations[0]) &&
-				      !v90_profile_generate_data_constellation(law, rate, 4u, 100u, &cp.transmit_constellations[0]) &&
-				      !v90_profile_generate_data_constellation(law, rate, redundancy, 0u, &cp.transmit_constellations[0]) &&
-				      !v90_profile_generate_data_constellation((enum g711_law)99, rate, redundancy, 100u, &cp.transmit_constellations[0]) &&
-				      !v90_profile_generate_data_constellation(law, rate, redundancy, 100u, NULL) &&
-				      memcmp(&saved, &cp.transmit_constellations[0], sizeof(saved)) == 0,
+				struct v90_cp_parameters saved = cp;
+				CHECK(!v90_profile_generate_measured_constellations(law, 0u, redundancy, 100u, NULL,
+					      cp.transmit_constellations, cp.frame_constellation, &cp.constellation_count) &&
+				      !v90_profile_generate_measured_constellations(law, 23u, redundancy, 100u, NULL,
+					      cp.transmit_constellations, cp.frame_constellation, &cp.constellation_count) &&
+				      !v90_profile_generate_measured_constellations(law, rate, 4u, 100u, NULL,
+					      cp.transmit_constellations, cp.frame_constellation, &cp.constellation_count) &&
+				      !v90_profile_generate_measured_constellations(law, rate, redundancy, 0u, NULL,
+					      cp.transmit_constellations, cp.frame_constellation, &cp.constellation_count) &&
+				      !v90_profile_generate_measured_constellations((enum g711_law)99, rate, redundancy, 100u, NULL,
+					      cp.transmit_constellations, cp.frame_constellation, &cp.constellation_count) &&
+				      !v90_profile_generate_measured_constellations(law, rate, redundancy, 100u, NULL,
+					      NULL, cp.frame_constellation, &cp.constellation_count) &&
+				      memcmp(&saved, &cp, sizeof(saved)) == 0,
 				      "rejected data generation changed output");
 			}
 	return true;

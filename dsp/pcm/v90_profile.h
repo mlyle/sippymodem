@@ -40,14 +40,12 @@ enum v90_profile_result v90_profile_init(
 	unsigned int minimum_rate, unsigned int maximum_rate,
 	const struct v90_upstream_policy *upstream);
 
-/* Select a common-row direct G.711 constellation at the mapping's current
- * K, retaining its cardinality so later retrains can raise the rate again.
- * Data mappings maximize minimum signed linear-level distance within the
- * generated upper rail and exact power budget. Training keeps its existing
- * companded-code spacing. This does not estimate channel noise or change K.
- * Transmit and codec planes must be identical, with one shared row. Power
- * is mean square in 16-bit linear units. Failure leaves the output alone. */
-bool v90_profile_select_constellation(
+/* Select a common-row direct G.711 training constellation at the mapping's
+ * current K and cardinality. Preserve companded-code spacing and reduce the
+ * upper rail until exact mean-square power fits. Data uses the six-phase
+ * selectors below. Transmit/codec planes must be identical and all intervals
+ * share one row. Failure leaves the output unchanged. */
+bool v90_profile_select_training_constellation(
 	const struct v90_pcm_mapping *mapping, uint32_t maximum_power,
 	struct pcm_constellation *constellation);
 
@@ -56,15 +54,6 @@ bool v90_profile_select_constellation(
  * Failure leaves the output unchanged. */
 bool v90_profile_generate_data_template(uint8_t rate_index,
 	uint8_t sign_redundancy, struct pcm_constellation *constellation);
-
-/* Generated CP/CPu data maps use the smallest common row of at least eight
- * levels supporting the selected rate and sign redundancy, then maximize signed
- * distance under the exact power budget above. Regenerate on every rate
- * selection; explicit caller-owned mappings must not use this policy.
- * Failure leaves the output unchanged. */
-bool v90_profile_generate_data_constellation(enum g711_law law,
-	uint8_t rate_index, uint8_t sign_redundancy, uint32_t maximum_power,
-	struct pcm_constellation *constellation);
 
 /* Preserve each interval's cardinality, using qualified levels
  * and the exact whole-frame power bound. Output is unchanged on failure. */

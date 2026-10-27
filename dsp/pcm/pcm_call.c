@@ -2047,7 +2047,7 @@ static enum pcm_call_result enter_phase3(struct pcm_call *call)
 			if (v90_pcm_mapping_init_from_v92_cpt(&mapping, &config.cpt, call->law) != V90_PCM_MAPPING_OK ||
 			    v90_pcm_mapping_power(&mapping, V90_PCM_MAPPING_CODEC, call->law,
 						  &lower, &upper) != V90_PCM_MAPPING_OK ||
-			    (upper > limit && !v90_profile_select_constellation(&mapping, limit,
+			    (upper > limit && !v90_profile_select_training_constellation(&mapping, limit,
 						&config.cpt.transmit_constellations[0])))
 				return PCM_CALL_UNUSABLE_SELECTION;
 		}
@@ -2790,7 +2790,7 @@ static bool select_analog_constellations(struct pcm_call *call, uint32_t enabled
 				call->downstream_dil.usable, training_parameters->transmit_constellations,
 				training_parameters->frame_constellation, &training_parameters->constellation_count))
 			return false;
-	} else if (!v90_profile_select_constellation(&training, limit,
+	} else if (!v90_profile_select_training_constellation(&training, limit,
 			&training_parameters->transmit_constellations[0]))
 		return false;
 	return v90_pcm_mapping_init(&training, training_parameters) == V90_PCM_MAPPING_OK &&

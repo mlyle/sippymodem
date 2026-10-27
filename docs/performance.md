@@ -339,6 +339,6 @@ host scheduling or concurrent-call headroom.
 Generated analogue-side data maps now compare the common-cardinality baseline
 with a bounded family of phase-specific cardinalities. Cumulative squared-level
 sums keep exact mixed-radix power admission cheap enough for native call
-processing. The common-row API, fixed training cardinalities and peer-owned
-maps retain their contracts. The [constellation design notes](pcm-constellations.md)
+processing. Fixed training cardinalities and peer-owned maps retain their contracts;
+data selection uses the shared six-phase interface. The [constellation design notes](pcm-constellations.md)
 explain the search family, exact power arithmetic and verification boundaries.

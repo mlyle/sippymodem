@@ -51,8 +51,9 @@ power divided by 6*W, against the existing integer power limit.
 
 The search has no heap allocation or retained cache. Its temporary cumulative
 sums are local to one design call. Training retains fixed cardinalities, the
-common-row convenience API retains its original contract, and new data
-selections regenerate capacity from their current K. Generated configurations
+common-row training selector keeps its original levels, and all generated
+data selections use the same six-phase entry point and regenerate capacity
+from their current K. Generated configurations
 accept mixed data rows while still validating capacity and canonical framing.
 DIL qualification, its common-mask fallback, rate policy and B1 admission are
 unchanged.
