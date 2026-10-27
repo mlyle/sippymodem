@@ -388,27 +388,31 @@ bool v90_profile_select_training_constellation(
  * At a fixed distance these are the componentwise lowest legal levels,
  * minimizing every nonnegative word-occurrence power weight. */
 struct spaced_levels {
-	struct pcm_constellation set;
 	uint64_t square[PCM_CONSTELLATION_UCODES + 1];
+	uint8_t code[PCM_CONSTELLATION_UCODES];
 	unsigned size;
 };
 
 static void prepare_levels(struct spaced_levels *levels, enum g711_law law,
-	unsigned size, uint32_t distance, const struct pcm_constellation *available)
+	uint32_t distance, const struct pcm_constellation *available)
 {
+	uint32_t threshold = (distance + 1u) / 2u;
 	levels->size = 0;
-	if (!spaced_constellation(&levels->set, law, (uint8_t)size, distance, available)) return;
 	levels->square[0] = 0;
 	for (unsigned code = 0; code <= V90_CONSTELLATION_LAST_UCODE; code++) {
 		int16_t value;
-		if (!pcm_constellation_contains(&levels->set, (uint8_t)code)) continue;
 		if (!g711_ucode_sample(law, (uint8_t)code, true, &value)) {
 			levels->size = 0;
 			return;
 		}
+		if ((available && !pcm_constellation_contains(available, (uint8_t)code)) ||
+		    (uint32_t)value < threshold)
+			continue;
+		levels->code[levels->size] = (uint8_t)code;
 		levels->square[levels->size + 1] = levels->square[levels->size] +
 			(uint32_t)((int32_t)value * value);
 		levels->size++;
+		threshold = (uint32_t)value + distance;
 	}
 }
 
@@ -416,22 +420,23 @@ static void prepare_levels(struct spaced_levels *levels, enum g711_law law,
  * A*floor(R/M), plus A below R%M and 2^K-A*R at the boundary.
  * Summing the three prefix terms is exactly V.90 8.5.2, including
  * unused tuples. The shared limb accumulator preserves every low bit. */
-static uint32_t balanced_power(const struct spaced_levels levels[6][2],
-	unsigned pattern, unsigned bits)
+static uint32_t balanced_power(const struct spaced_levels levels[6],
+	const uint8_t sizes[6], unsigned bits)
 {
 	uint64_t words = UINT64_C(1) << bits, remaining = words - 1, stride = 1;
 	struct pcm_power_sum sum = { 0 };
 	uint32_t floor, ceiling;
 	for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++) {
-		const struct spaced_levels *row = &levels[slot][(pattern >> slot) & 1u];
-		unsigned boundary = (unsigned)(remaining % row->size);
-		uint64_t next = remaining / row->size;
-		uint64_t total = row->square[row->size];
+		const struct spaced_levels *row = &levels[slot];
+		unsigned size = sizes[slot];
+		unsigned boundary = (unsigned)(remaining % size);
+		uint64_t next = remaining / size;
+		uint64_t total = row->square[size];
 		pcm_power_accumulate(&sum, bits, stride * next, total);
-		pcm_power_accumulate(&sum, bits, stride, total - row->square[row->size - boundary]);
+		pcm_power_accumulate(&sum, bits, stride, total - row->square[size - boundary]);
 		pcm_power_accumulate(&sum, bits, words - stride * remaining,
-			row->square[row->size - boundary] - row->square[row->size - boundary - 1]);
-		stride *= row->size;
+			row->square[size - boundary] - row->square[size - boundary - 1]);
+		stride *= size;
 		remaining = next;
 	}
 	pcm_power_bounds(&sum, bits, &floor, &ceiling);
@@ -440,7 +445,7 @@ static uint32_t balanced_power(const struct spaced_levels levels[6][2],
 
 /* Search the equal-row baseline plus floor/ceiling sixth-root cardinalities.
  * Every family's feasibility is monotone in distance. Enumerate at most 64
- * phase assignments, preparing each phase/size only once at each distance.
+ * phase assignments, reusing one ordered level prefix per phase and distance.
  * Prefer the existing baseline at equal distance; otherwise use the smallest
  * exact power ceiling, then the first pattern. This is a bounded family,
  * not a claim of global optimality over all six independent cardinalities. */
@@ -460,24 +465,32 @@ static bool select_balanced_constellations(const struct v90_pcm_mapping *mapping
 	while (low <= high) {
 		uint32_t spacing = low + (high - low) / 2, best_power = UINT32_MAX;
 		unsigned best = 64;
-		struct spaced_levels levels[V90_CP_FRAME_INTERVALS][2];
+		struct spaced_levels levels[V90_CP_FRAME_INTERVALS];
 		for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++)
-			for (unsigned choice = 0; choice < 2; choice++)
-				prepare_levels(&levels[slot][choice], mapping->law, size - 1 + choice,
-					spacing, available ? available + slot : NULL);
+			prepare_levels(&levels[slot], mapping->law, spacing,
+				available ? available + slot : NULL);
 		for (unsigned pattern = 0; pattern < 64; pattern++) {
+			uint8_t sizes[V90_CP_FRAME_INTERVALS];
+			bool fits = true;
 			capacity = 1;
-			for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++)
-				capacity *= levels[slot][(pattern >> slot) & 1u].size;
-			if (capacity < words) continue;
-			uint32_t power = balanced_power(levels, pattern, mapping->modulus_bits);
+			for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++) {
+				sizes[slot] = (uint8_t)(size - 1u + ((pattern >> slot) & 1u));
+				capacity *= sizes[slot];
+				fits &= sizes[slot] <= levels[slot].size;
+			}
+			if (!fits || capacity < words) continue;
+			uint32_t power = balanced_power(levels, sizes, mapping->modulus_bits);
 			if (power <= maximum_power && power < best_power) {
 				best = pattern; best_power = power;
 			}
 		}
 		if (best < 64) {
-			for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++)
-				selected[slot] = levels[slot][(best >> slot) & 1u].set;
+			for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++) {
+				selected[slot] = (struct pcm_constellation){ 0 };
+				unsigned count = size - 1u + ((best >> slot) & 1u);
+				for (unsigned point = 0; point < count; point++)
+					pcm_constellation_add(&selected[slot], levels[slot].code[point]);
+			}
 			found = true;
 			low = spacing + 1;
 		} else high = spacing - 1;

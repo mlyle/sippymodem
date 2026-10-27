@@ -43,8 +43,8 @@ A*q * sum(all squared levels)
 ```
 
 Ascending cumulative sums of squared levels evaluate these three terms in
-constant work per phase. The generator prepares each phase/cardinality pair
-once per distance and reuses it across the 64 assignments. A shared 16-bit
+constant work per phase. The generator prepares one ordered level prefix
+per phase and distance, then reuses it across the 64 assignments. A shared 16-bit
 limb accumulator preserves the complete numerator even when a direct
 64-bit product would overflow. Admission uses the exact ceiling of total
 power divided by 6*W, against the existing integer power limit.
