@@ -638,7 +638,7 @@ enum v92_pcm_frame_result v92_upstream_model_decode(struct v92_upstream_model *m
 			.model = &model->model[i], .levels = line->wire, .received = line->received,
 			.offsets = offsets,
 		};
-		enum v92_pcm_frame_result result = v92_pcm_frame_decode_observed(branch[i],
+		enum v92_pcm_frame_result result = v92_pcm_frame_decode_observed_owned(branch[i],
 			line->samples, b1u, output[i], count, &decisions[i], &channel, &likelihood[i]);
 
 		if (result != V92_PCM_FRAME_OK || likelihood[i].cost > UINT64_MAX - model->cost[i])

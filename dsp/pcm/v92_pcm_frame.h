@@ -365,6 +365,19 @@ enum v92_pcm_frame_result v92_pcm_frame_decode_observed(
 	const struct v92_pcm_frame_channel *channel,
 	struct v92_pcm_frame_likelihood *likelihood);
 
+/* Same transaction and per-frame input checks, with an exclusively owned,
+ * valid initialized decoder and a validated model frozen for this coding
+ * epoch. The owner preserves decoder invariants and invalidates the model
+ * on retraining; full state/model scans are not repeated here. Requires
+ * channel->model. Use the checked entry point for untrusted state. */
+enum v92_pcm_frame_result v92_pcm_frame_decode_observed_owned(
+	struct v92_pcm_frame_rx *receiver,
+	const int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS], bool b1u,
+	uint8_t *bits, size_t bit_count,
+	struct v92_pcm_frame_decision *decision,
+	const struct v92_pcm_frame_channel *channel,
+	struct v92_pcm_frame_likelihood *likelihood);
+
 const char *v92_pcm_frame_result_name(
 	enum v92_pcm_frame_result result);
 

@@ -194,3 +194,13 @@ Targeted whole-core AddressSanitizer/UndefinedBehaviorSanitizer receiver and
 retired-media checks passed. Receiver Memcheck was clean; broader full-call
 Memcheck still reports an existing INFO1 structure-padding comparison issue,
 which also reproduces before the scheduling changes.
+
+A later 56k/48k A-law four-tap probe retained both channel hypotheses into
+payload and exposed a 20.43-ms callback. The observed-frame hot path now
+accepts exclusively owned, valid decoder state and a validated model frozen
+for the coding epoch, avoiding repeated full metadata scans every 12 symbols.
+The checked entry point retains those scans. A 2-KiB frame-local cache also
+reuses exact coordinate-to-geometry lookups across symbols; it stores no
+observation-dependent scores and resets when the model is rebound. These
+changes retain both hypotheses, independent B1u validation, per-frame input
+checks, transactional prediction failures and all recovery thresholds.

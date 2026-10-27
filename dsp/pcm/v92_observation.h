@@ -14,6 +14,7 @@ enum {
 	V92_OBSERVATION_BUCKETS = 4096,
 	V92_OBSERVATION_CACHE = 2048,
 	V92_OBSERVATION_POINTS = 1024,
+	V92_OBSERVATION_SPANS = 256,
 	V92_OBSERVATION_TAPS = 4,
 };
 
@@ -120,6 +121,9 @@ struct v92_observation_cache {
 	uint8_t stamp[V92_OBSERVATION_CACHE], generation;
 	struct v92_observation_values points[V92_OBSERVATION_POINTS];
 	uint16_t point_tag[V92_OBSERVATION_POINTS];
+	/* Coordinate-to-span memoization is model-only, shared across symbols.
+	 * Zero tags are empty; begin() invalidates every entry. */
+	struct { int32_t key; uint16_t tag; } spans[V92_OBSERVATION_SPANS];
 	const struct v92_observation *model;
 	double relative_noise, variance, bound_scale, lower, upper;
 	/* Immutable per-fit constants and the current symbol's Gaussian scale. */

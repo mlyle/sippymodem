@@ -1183,7 +1183,7 @@ static enum v92_pcm_frame_result decode_frame(
 	uint8_t *bits, size_t bit_count,
 	struct v92_pcm_frame_decision *decision,
 	const struct v92_pcm_frame_channel *channel,
-	struct v92_pcm_frame_likelihood *likelihood, bool acquire_model)
+	struct v92_pcm_frame_likelihood *likelihood, bool acquire_model, bool owned)
 {
 	const struct v92_observation *model = channel ? channel->model : NULL;
 	const struct v92_pcm_frame_cell *cells = channel ? channel->cells : NULL;
@@ -1214,7 +1214,7 @@ static enum v92_pcm_frame_result decode_frame(
 	    decision == NULL ||
 	    memory_region_set_overlaps(regions, sizeof(regions) / sizeof(regions[0])))
 		return V92_PCM_FRAME_INVALID_ARGUMENT;
-	if (!v92_pcm_frame_rx_is_valid(receiver))
+	if (!owned && !v92_pcm_frame_rx_is_valid(receiver))
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
 	if (cells) {
 		if (model || levels || offsets || receiver->observation != V92_PCM_FRAME_CONSTELLATION)
@@ -1234,7 +1234,7 @@ static enum v92_pcm_frame_result decode_frame(
 			if (!isfinite(offsets[i]))
 				return V92_PCM_FRAME_INVALID_PARAMETERS;
 	}
-	if (model && (!v92_observation_is_valid(model) ||
+	if (model && ((!owned && !v92_observation_is_valid(model)) ||
 		model->law != receiver->mapping.law ||
 		receiver->observation != V92_PCM_FRAME_CONSTELLATION ||
 		x_history_count(&receiver->mapping) < model->taps - 1u))
@@ -1934,7 +1934,7 @@ enum v92_pcm_frame_result v92_pcm_frame_decode(
 	uint8_t *bits, size_t bit_count, struct v92_pcm_frame_decision *decision)
 {
 	return decode_frame(receiver, samples, b1u, bits, bit_count, decision,
-		NULL, NULL, false);
+		NULL, NULL, false, false);
 }
 
 enum v92_pcm_frame_result v92_pcm_frame_acquire_model(
@@ -1943,7 +1943,7 @@ enum v92_pcm_frame_result v92_pcm_frame_acquire_model(
 	uint8_t *bits, size_t bit_count, struct v92_pcm_frame_decision *decision)
 {
 	return decode_frame(receiver, samples, true, bits, bit_count, decision,
-		NULL, NULL, true);
+		NULL, NULL, true, false);
 }
 
 const char *v92_pcm_frame_result_name(
@@ -1975,5 +1975,19 @@ enum v92_pcm_frame_result v92_pcm_frame_decode_observed(
 	if (!channel || (!channel->model && !channel->cells) || !likelihood)
 		return V92_PCM_FRAME_INVALID_ARGUMENT;
 	return decode_frame(receiver, samples, b1u, bits, bit_count, decision,
-		channel, likelihood, false);
+		channel, likelihood, false, false);
+}
+
+enum v92_pcm_frame_result v92_pcm_frame_decode_observed_owned(
+	struct v92_pcm_frame_rx *receiver,
+	const int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS], bool b1u,
+	uint8_t *bits, size_t bit_count,
+	struct v92_pcm_frame_decision *decision,
+	const struct v92_pcm_frame_channel *channel,
+	struct v92_pcm_frame_likelihood *likelihood)
+{
+	if (!channel || !channel->model || !likelihood)
+		return V92_PCM_FRAME_INVALID_ARGUMENT;
+	return decode_frame(receiver, samples, b1u, bits, bit_count, decision,
+		channel, likelihood, false, true);
 }

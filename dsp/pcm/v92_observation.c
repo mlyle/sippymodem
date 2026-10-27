@@ -21,6 +21,7 @@ _Static_assert(V92_OBSERVATION_STEPS < UINT16_MAX, "geometry tags must fit");
 _Static_assert((V92_OBSERVATION_CACHE & (V92_OBSERVATION_CACHE - 1)) == 0 &&
 	(V92_OBSERVATION_POINTS & (V92_OBSERVATION_POINTS - 1)) == 0,
 	"cache sizes must be powers of two");
+_Static_assert(V92_OBSERVATION_SPANS == 256, "coordinate hash uses its upper byte");
 
 static bool codec_bounds(enum g711_law law, double gain, int16_t observed,
 	const int16_t *level, double offset, double *lower, double *upper);
@@ -1089,7 +1090,7 @@ bool v92_observation_fit_scalar(double *gain,
 	return true;
 }
 
-static size_t point_span(const struct v92_observation_cache *cache, int32_t x)
+static size_t find_span(const struct v92_observation_cache *cache, int32_t x)
 {
 	const struct v92_observation *model = cache->model;
 	unsigned shift = cache->bucket_shift;
@@ -1106,6 +1107,19 @@ static size_t point_span(const struct v92_observation_cache *cache, int32_t x)
 		else high = middle;
 	}
 	return low;
+}
+
+/* Candidate envelopes repeatedly visit the same transformed coordinates.
+ * Retain only exact integer lookups, never an observation-dependent score. */
+static size_t point_span(struct v92_observation_cache *cache, int32_t x)
+{
+	unsigned slot = ((uint32_t)x * UINT32_C(2654435761)) >> 24;
+	if (cache->spans[slot].tag && cache->spans[slot].key == x)
+		return cache->spans[slot].tag - 1u;
+	size_t span = find_span(cache, x);
+	cache->spans[slot].key = x;
+	cache->spans[slot].tag = (uint16_t)(span + 1u);
+	return span;
 }
 
 /* Log probability of the observed final-codec bin under one Gaussian mean. */
@@ -1145,6 +1159,7 @@ void v92_observation_begin(struct v92_observation_cache *cache,
 {
 	memset(cache->stamp, 0, sizeof(cache->stamp));
 	memset(cache->point_tag, 0, sizeof(cache->point_tag));
+	memset(cache->spans, 0, sizeof(cache->spans));
 	cache->generation = 0;
 	cache->model = model;
 	cache->bucket_shift = bucket_shift(model);

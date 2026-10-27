@@ -134,6 +134,15 @@ static void check_geometry(struct v92_observation_cache *cache)
 			assert(range.high == point.values.high[0]);
 		}
 	}
+	/* Revisit coordinates after more distinct lookups than the bounded
+	 * memo can hold. Replacements must preserve exact geometry. */
+	for (size_t i = model->count; i-- > 0;) {
+		int32_t x = model->first[i];
+		struct v92_observation_range range = v92_observation_range(cache, x);
+		struct v92_observation_point point = v92_observation_point(cache, x);
+		assert(point.span == i && range.low == point.values.low[0] &&
+			range.high == point.values.high[0]);
+	}
 	assert(v92_observation_point(cache, INT32_MAX).span == model->count - 1);
 }
 

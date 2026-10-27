@@ -1302,6 +1302,17 @@ static bool observed_rejection(struct v92_pcm_frame_rx *rx,
 			!memcmp(&decision, &saved_decision, sizeof(decision)) &&
 			!memcmp(&likelihood, &saved_likelihood, sizeof(likelihood)),
 			"prediction failure %u changed output or receiver (result %d)", failures[i], rc);
+		if (i < 3) {
+			failed_prediction = failures[i]; prediction_count = 0;
+			CHECK(v92_pcm_frame_decode_observed_owned(rx, samples, false,
+				bits, rx->mapping.data_bits_per_frame, &decision, &channel, &likelihood) ==
+				V92_PCM_FRAME_NO_PATH && !memcmp(rx, &initial, sizeof(initial)) &&
+				!memcmp(bits, saved_bits, sizeof(bits)) &&
+				!memcmp(&decision, &saved_decision, sizeof(decision)) &&
+				!memcmp(&likelihood, &saved_likelihood, sizeof(likelihood)),
+				"owned prediction failure %u changed state or output", failures[i]);
+			failed_prediction = 0;
+		}
 	}
 	int16_t invalid_levels[12]; memcpy(invalid_levels, levels, sizeof(invalid_levels));
 	invalid_levels[11] = 1;
@@ -1458,10 +1469,35 @@ static bool test_observed_channel(enum g711_law law, unsigned taps, bool reorder
 		}
 		struct v92_pcm_frame_rx erased_rx = rx;
 		if (f == 72) { received[5] = false; levels[5] = 1; samples[5] = INT16_MAX; }
+		struct v92_pcm_frame_rx owned = rx;
+		struct v92_pcm_frame_decision owned_decision;
+		struct v92_pcm_frame_likelihood owned_likelihood;
+		uint8_t owned_bits[sizeof(decoded)];
+		memset(owned_bits, 0xa5, sizeof(owned_bits));
 		memset(decoded, 0xa5, sizeof(decoded));
 		CHECK(v92_pcm_frame_decode_observed(&rx, samples, f < V92_B1U_FRAMES, decoded,
 			mapping.data_bits_per_frame, &decision, &channel, &likelihood) == V92_PCM_FRAME_OK,
 			"observed law %u frame %u failed", law, f);
+		CHECK(v92_pcm_frame_decode_observed_owned(&owned, samples, f < V92_B1U_FRAMES,
+			owned_bits, mapping.data_bits_per_frame, &owned_decision, &channel,
+			&owned_likelihood) == V92_PCM_FRAME_OK && !memcmp(&owned, &rx, sizeof(rx)) &&
+			!memcmp(owned_bits, decoded, sizeof(decoded)) &&
+			!memcmp(&owned_likelihood, &likelihood, sizeof(likelihood)) &&
+			owned_decision.squared_error == decision.squared_error &&
+			owned_decision.uncertain == decision.uncertain &&
+			owned_decision.bits_ready == decision.bits_ready &&
+			owned_decision.ambiguous == decision.ambiguous &&
+			owned_decision.b1u_mismatches == decision.b1u_mismatches &&
+			owned_decision.rm == decision.rm &&
+			owned_decision.frame.frame_sign == decision.frame.frame_sign &&
+			!memcmp(owned_decision.frame.digit, decision.frame.digit, sizeof(decision.frame.digit)) &&
+			!memcmp(owned_decision.frame.y0, decision.frame.y0, sizeof(decision.frame.y0)) &&
+			!memcmp(owned_decision.frame.signed_index, decision.frame.signed_index, sizeof(decision.frame.signed_index)) &&
+			!memcmp(owned_decision.frame.u, decision.frame.u, sizeof(decision.frame.u)) &&
+			!memcmp(owned_decision.frame.x, decision.frame.x, sizeof(decision.frame.x)) &&
+			!memcmp(owned_decision.frame.v, decision.frame.v, sizeof(decision.frame.v)) &&
+			!memcmp(owned_decision.predicted_samples, decision.predicted_samples, sizeof(decision.predicted_samples)),
+			"owned model decoding diverged: law %u taps %u frame %u", law, taps, f);
 		if (f == 72) {
 			struct v92_pcm_frame_decision other;
 			struct v92_pcm_frame_likelihood other_likelihood;
