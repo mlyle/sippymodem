@@ -292,6 +292,23 @@ static bool test_measured_levels(void)
 		CHECK(pcm_dil_receiver_finish(&receiver, &result) && result.measured &&
 		      result.interval_model && result.symbols == length && result.polarity_inverted == (inverted != 0u),
 		      "DIL did not qualify the interval model and line polarity");
+		struct pcm_dil_result raw_result = { .symbols = UINT32_MAX };
+		struct pcm_dil_result untouched_raw = raw_result;
+		struct pcm_dil_receiver frozen = receiver;
+		bool raw_ok = pcm_dil_receiver_finish_unconditioned(&receiver, &raw_result);
+		CHECK(raw_ok == (raw_inverted == inverted) &&
+		      memcmp(&receiver, &frozen, sizeof(receiver)) == 0,
+		      "raw model ignored polarity or changed its evidence");
+		if (raw_ok) {
+			CHECK(raw_result.use_unconditioned && raw_result.interval_model &&
+			      raw_result.polarity_inverted == result.polarity_inverted &&
+			      raw_result.trn1d_ratio_q3_13 == result.trn1d_ratio_q3_13 &&
+			      memcmp(raw_result.usable, result.usable, sizeof(result.usable)) == 0,
+			      "raw model mixed codec planes or training ratio");
+		} else {
+			CHECK(memcmp(&raw_result, &untouched_raw, sizeof(raw_result)) == 0,
+			      "rejected raw model changed output");
+		}
 		struct pcm_constellation common = result.usable[0];
 		for (unsigned interval = 0; interval < 6u; ++interval) {
 			CHECK(pcm_constellation_count(&result.usable[interval]) >= 40u, "too few measured levels");
@@ -359,12 +376,29 @@ static bool test_measured_evidence(void)
 			CHECK(pcm_dil_receiver_receive(&receiver, conditioned, raw), "evidence observation failed");
 			if (index == 71u) {
 				saved = receiver;
+				struct pcm_dil_result raw_result = untouched;
+				CHECK(!pcm_dil_receiver_finish_unconditioned(&receiver, &raw_result) &&
+				      memcmp(&raw_result, &untouched, sizeof(raw_result)) == 0,
+				      "binary prefix admitted a raw codec model");
 				CHECK(pcm_dil_receiver_finish(&receiver, &result) && result.measured &&
 				      !result.interval_model && result.trn1d_ratio_q3_13 == 8192u &&
 				      memcmp(&receiver, &saved, sizeof(saved)) == 0,
 				      "short traversal fabricated an interval model or changed continuation");
 			}
 		}
+		struct pcm_dil_receiver unoriented = receiver;
+		unoriented.received_cross = 0;
+		struct pcm_dil_result unoriented_result = untouched;
+		CHECK(!pcm_dil_receiver_finish_unconditioned(&unoriented, &unoriented_result) &&
+		      memcmp(&unoriented_result, &untouched, sizeof(unoriented_result)) == 0,
+		      "raw model invented an unobserved polarity");
+		struct pcm_dil_result raw_result = untouched;
+		CHECK(pcm_dil_receiver_finish_unconditioned(&receiver, &raw_result) == !unknown,
+		      "raw codec model ignored an unsupported magnitude");
+		CHECK(unknown ? memcmp(&raw_result, &untouched, sizeof(raw_result)) == 0 :
+		      (raw_result.use_unconditioned && raw_result.interval_model &&
+		       pcm_constellation_contains(&raw_result.usable[3], 47u)),
+		      "raw qualification retained a conditioning error or changed rejected output");
 		CHECK(pcm_dil_receiver_finish(&receiver, &result) &&
 		      result.interval_model == !unknown && result.trn1d_ratio_q3_13 == 8192u,
 		      "conditioned samples contaminated the raw substitution model");

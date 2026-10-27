@@ -8224,15 +8224,6 @@ static bool capture_v92_duplex_data(
 		if (channel_memory)
 			ac.phase3.v92_analog.upstream_lu_ucode = 60u;
 	}
-	if (offer && offer->downstream_robbed_pattern == 1u) {
-		/* A stable training code keeps binary gain acquisition independent
-		 * of the level substitutions that DIL is meant to discover. */
-		struct v90_pcm_symbol training;
-		CHECK(v90_pcm_symbol_make(&training, law, 90u, true), "training code");
-		uint8_t code = (training.octet & 1u) ? 90u : 91u;
-		ac.local_info1.v92_analog.training_ucode = code;
-		ac.phase3.v92_analog.local_info1a.training_ucode = code;
-	}
 	if (jp != NULL)
 		dc.phase3.v92_digital.jp = *jp;
 	if (long_cpd) {
@@ -8427,7 +8418,9 @@ static bool capture_v92_duplex_data(
 	      (unsigned long long)downstream_idle, (unsigned long long)expected_downstream_idle);
 	CHECK(upstream_received >= payload_frames && downstream_received >= payload_frames &&
 	      early_downstream_training_checked &&
-	      analog.downstream_equalizer.training_level > 0 &&
+	      (analog.downstream_dil.use_unconditioned ?
+		analog.downstream_equalizer.training_level == 0 :
+		analog.downstream_equalizer.training_level > 0) &&
 	      digital.downstream_equalizer.training_level == 0 &&
 	      upstream.rejection_checked && downstream.rejection_checked &&
 	      analog_boundary < digital_boundary && deadline_checked[0] && deadline_checked[1] &&
@@ -8555,6 +8548,24 @@ static bool test_v92_dil_polarity(void)
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		CHECK(run_v92_duplex_data(law, 3u, false, &offer),
 		      "PCM-upstream DIL lost raw pad evidence after polarity correction law %u", law);
+	return true;
+}
+
+static bool test_v92_dil_unconditioned(void)
+{
+	const struct v92_upstream_offer offer = {
+		.peer_mask = UINT32_C(1) << 9u, .local_maximum = 10u, .expected = 10u,
+		.downstream_rate = 52000u, .downstream_robbed_pattern = 1u,
+	};
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		struct v92_online_pair pair;
+		CHECK(capture_v92_duplex_data(law, 3u, false, &offer, NULL, 0u, &pair),
+		      "raw DIL did not retain 52k/36k data law %u", law);
+		CHECK(pair.analog.downstream_dil.measured &&
+		      pair.analog.downstream_dil.interval_model &&
+		      pair.analog.downstream_equalizer.training_level == 0,
+		      "raw DIL masks retained binary channel conditioning law %u", law);
+	}
 	return true;
 }
 
@@ -13336,6 +13347,7 @@ int main(int argc, char **argv)
 		{ "V.92 missing training response fallback", test_v92_missing_training },
 		{ "V.92 clipping selection retrain", test_v92_clipping_recovery },
 		{ "V.92 cleaned input through Phase 3", test_v92_phase3_cleaned_input },
+		{ "V.92 DIL selects unconditioned codec data", test_v92_dil_unconditioned },
 		{ "V.92 learns robbed bits in each frame interval", test_v92_dil_data },
 		{ "V.92 reversed DIL with robbed bits", test_v92_dil_polarity },
 		{ "V.90/V.92 conventional DIL and retrain", test_conventional_dil_retrain },

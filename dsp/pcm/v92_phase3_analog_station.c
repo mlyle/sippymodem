@@ -372,7 +372,8 @@ static enum v92_phase3_analog_station_result transmit_cpt(
 			    v90_pcm_mapping_power(&mapping, V90_PCM_MAPPING_CODEC,
 				    station->law, &lower, &limit) != V90_PCM_MAPPING_OK)
 				return V92_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
-			if (!pcm_dil_receiver_finish(&station->dil_receiver, &station->dil_result) ||
+			if ((!pcm_dil_receiver_finish_unconditioned(&station->dil_receiver, &station->dil_result) &&
+			     !pcm_dil_receiver_finish(&station->dil_receiver, &station->dil_result)) ||
 			    !v90_profile_select_measured_constellations(&mapping, limit,
 				    station->dil_result.usable,
 				    station->cpt_parameters.transmit_constellations,

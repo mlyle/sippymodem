@@ -20,6 +20,8 @@ struct pcm_dil_result {
 	bool interval_model;
 	bool measured;
 	bool polarity_inverted;
+	/* Usable levels belong to the unconditioned stream; switch atomically. */
+	bool use_unconditioned;
 };
 
 struct pcm_dil_receiver {
@@ -33,7 +35,8 @@ struct pcm_dil_receiver {
 	uint8_t lsb_models[PCM_CONSTELLATION_FRAME_INTERVALS];
 	uint8_t training_ucode;
 	uint64_t reference_energy;
-	int64_t received_cross;
+	int64_t received_cross, raw_received_cross;
+	uint8_t raw_polarities;
 	uint32_t symbols;
 	uint32_t limit;
 };
@@ -47,6 +50,14 @@ bool pcm_dil_receiver_receive(struct pcm_dil_receiver *receiver,
 	uint8_t octet, uint8_t unconditioned_octet);
 /* A deadline may end a traversal early. Unobserved levels remain unavailable. */
 bool pcm_dil_receiver_finish(const struct pcm_dil_receiver *receiver,
+	struct pcm_dil_result *result);
+
+/* Propose the unconditioned codec model only after repeated signed evidence
+ * across many levels identifies a fixed per-phase LSB transform. Its polarity
+ * must agree with the conditioned epoch. The owner must switch its conditioner
+ * with these masks before further reception; B1 remains independent validation.
+ * Unsupported or insufficient evidence leaves result unchanged. */
+bool pcm_dil_receiver_finish_unconditioned(const struct pcm_dil_receiver *receiver,
 	struct pcm_dil_result *result);
 
 #endif

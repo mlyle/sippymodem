@@ -3276,6 +3276,13 @@ static enum pcm_call_result sample_phase3(
 		if (result != PCM_CALL_OK)
 			return result;
 		*transmit_octet = g711_encode(call->law, sample);
+		if (call->downstream_equalizer.training_level &&
+		    call->state.phase3.v92_analog.dil_result.use_unconditioned) {
+			/* DIL chose this codec model and its masks before CPt. Switch
+			 * the current symbol too; retain every protocol/frame clock. */
+			call->downstream_equalizer = (struct pcm_downstream_equalizer){ 0 };
+			received_octet = unconditioned_octet;
+		}
 		result = v92_analog_phase3_result(
 			v92_phase3_analog_station_receive(
 				&call->state.phase3.v92_analog,
