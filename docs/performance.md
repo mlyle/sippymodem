@@ -285,3 +285,29 @@ fits 60 ms. Healthy 48k mu-law calls passed repeated 500-packet holds with
 exact delivered bytes; the recorded Conexant calls also retain exact sent
 PCM and G.711 bytes. These observations establish the tested boundary,
 not a guarantee under concurrent load.
+
+### Fixed history during candidate scoring
+
+The decoder reuses exact codec-level conversions for the fixed past of each
+candidate path. Its scratch belongs to one symbol and model; it stores no
+likelihoods or borrowed pointers. Coefficient products, subtraction order,
+fused rounding, joint gain integration and log-domain fallback are retained.
+This adds about 6.4 KiB of temporary frame scratch, with no persistent receiver
+growth or changes to validation cadence, queue bounds or recovery policy.
+
+A final matched-archive comparison against `0b028b78` used the same 356-module
+core, normal `-O2`, affinity and 160-sample callback setup. Each design ran
+twice in forward/reverse order, starting at or below 67 degrees C, with zero
+active firmware throttle bits. These are whole-call thread CPU maxima;
+three-callback sums exclude idle gaps.
+
+| Receive case | Previous worst packet / three | New worst packet / three | Outcome |
+| --- | ---: | ---: | --- |
+| A-law, 0.7 postcursor, three taps | 20.14 / 52.58 ms | 19.19 / 50.43 ms | Training still fails quality checks |
+| Mu-law, 0.375 postcursor, noise sigma 32, three taps | 18.73 / 53.11 ms | 17.99 / 51.16 ms | Verified data at 56k/44k |
+
+Both cases now fit the sampled 20/60-ms CPU budgets. The remaining 0.81-ms
+single-callback margin in the A-law stress case is small. This comparison
+excludes SIP/RTP, BBS work and concurrent host scheduling; it does not
+establish a deadline or call-capacity guarantee. Directed-rounding and
+original-score comparisons passed on both native and Pi builds.

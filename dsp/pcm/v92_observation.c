@@ -16,6 +16,7 @@
 #define V92_SCORE_SCALE 1e6
 
 enum { INTERVALS = V92_OBSERVATION_INTERVALS, TAPS = V92_OBSERVATION_TAPS };
+_Static_assert(INTERVALS <= sizeof(unsigned) * CHAR_BIT, "history tags must fit");
 _Static_assert((int)TAPS == (int)GRAM_FIT_COLUMNS, "Gram moment stride must match");
 _Static_assert(V92_OBSERVATION_STEPS < UINT16_MAX, "geometry tags must fit");
 _Static_assert((V92_OBSERVATION_CACHE & (V92_OBSERVATION_CACHE - 1)) == 0 &&
@@ -1332,28 +1333,53 @@ struct v92_observation_point v92_observation_point(struct v92_observation_cache 
 /* Build the same joint input for either numeric representation. */
 static double observation_likelihood(const struct v92_observation_cache *cache,
 	const struct v92_observation_values *a, const struct v92_observation_point *previous,
-	int32_t x, bool logarithmic)
+	int32_t x, bool logarithmic, struct v92_observation_history *history)
 {
 	const struct v92_observation *model = cache->model;
 	double likelihood = logarithmic ? -HUGE_VAL : 0.;
 	for (size_t i = 0; i < INTERVALS; i++) if (model->intervals[i].weight > 0.) {
-		const struct v92_observation_cell *cells[TAPS] = { a->cell + i };
-		int32_t input[TAPS] = { x };
-		for (unsigned j = 1; j < model->taps; j++) {
-			cells[j] = previous[j - 1].values.cell + i;
-			input[j] = previous[j - 1].x;
+		const struct v92_observation_interval *fit = model->intervals + i;
+		const struct v92_observation_cell *current = a->cell + i;
+		unsigned bit = 1u << i;
+		if (history && !logarithmic && !(history->prepared & bit)) {
+			bool stable = true;
+			for (unsigned j = 1; j < model->taps; j++) {
+				const struct v92_observation_cell *cell = previous[j - 1].values.cell + i;
+				stable &= cell->low == cell->high;
+				history->level[i][j - 1] = cell->low;
+			}
+			if (stable) history->stable |= bit;
+			history->prepared |= bit;
 		}
-		double value = compiled_likelihood(model->law, model->intervals + i, cells, input, model->taps,
-			cache->observed, cache->variance, cache->divisor, cache->width[i], cache->lower, cache->upper,
-			logarithmic);
+		double value;
+		if (history && !logarithmic && (history->stable & bit) && current->low == current->high) {
+			/* Retain the ordered products and subtracts, including fused
+			 * rounding. Only exact integer-to-double conversions are cached. */
+			double error = cache->observed;
+			error -= fit->coefficient[0] * current->low;
+			for (unsigned j = 1; j < model->taps; j++)
+				error -= fit->coefficient[j] * history->level[i][j - 1];
+			value = bin_likelihood(error, cache->variance, cache->divisor, cache->lower, cache->upper, false);
+		} else {
+			const struct v92_observation_cell *cells[TAPS] = { current };
+			int32_t input[TAPS] = { x };
+			for (unsigned j = 1; j < model->taps; j++) {
+				cells[j] = previous[j - 1].values.cell + i;
+				input[j] = previous[j - 1].x;
+			}
+			value = compiled_likelihood(model->law, fit, cells, input, model->taps,
+				cache->observed, cache->variance, cache->divisor, cache->width[i], cache->lower, cache->upper,
+				logarithmic);
+		}
 		likelihood = logarithmic ? log_add(likelihood, cache->log_weight[i] + value) :
-			likelihood + model->intervals[i].weight * value;
+			likelihood + fit->weight * value;
 	}
 	return likelihood;
 }
 
-uint64_t v92_observation_score(struct v92_observation_cache *cache, int32_t x,
-	const struct v92_observation_point *previous, uint64_t budget)
+uint64_t v92_observation_score_history(struct v92_observation_cache *cache, int32_t x,
+	const struct v92_observation_point *previous, uint64_t budget,
+	struct v92_observation_history *history)
 {
 	const struct v92_observation *model = cache->model;
 	if (model->input_coefficient)
@@ -1405,7 +1431,7 @@ uint64_t v92_observation_score(struct v92_observation_cache *cache, int32_t x,
 	 * negligible; it selects an evaluation method, never caps a score. */
 	double score = NAN;
 	if (fegetround() == FE_TONEAREST) {
-		double probability = observation_likelihood(cache, a, previous, x, false);
+		double probability = observation_likelihood(cache, a, previous, x, false, history);
 		if (probability >= 1e-200 && probability <= 1.)
 			score = -2. * V92_SCORE_SCALE * log(probability);
 	}
@@ -1413,7 +1439,7 @@ uint64_t v92_observation_score(struct v92_observation_cache *cache, int32_t x,
 	if (isfinite(score) && (score < .01 || fabs(score - nearbyint(score)) > .01)) {
 		value = score_value(score);
 	} else {
-		double likelihood = observation_likelihood(cache, a, previous, x, true);
+		double likelihood = observation_likelihood(cache, a, previous, x, true, NULL);
 		value = score_value(-2. * V92_SCORE_SCALE * likelihood);
 	}
 	if (vacant != V92_OBSERVATION_CACHE) {
@@ -1422,6 +1448,12 @@ uint64_t v92_observation_score(struct v92_observation_cache *cache, int32_t x,
 		cache->stamp[vacant] = cache->generation;
 	}
 	return value;
+}
+
+uint64_t v92_observation_score(struct v92_observation_cache *cache, int32_t x,
+	const struct v92_observation_point *previous, uint64_t budget)
+{
+	return v92_observation_score_history(cache, x, previous, budget, NULL);
 }
 
 struct v92_observation_range v92_observation_range(struct v92_observation_cache *cache, int32_t x)

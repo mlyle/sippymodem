@@ -1426,6 +1426,7 @@ static enum v92_pcm_frame_result decode_frame(
 		struct {
 			int64_t precoder;
 			struct v92_observation_point history[V92_OBSERVATION_TAPS - 1];
+			struct v92_observation_history scoring;
 			uint8_t y0;
 			int seed;
 		} model_paths[V92_PCM_RX_PATHS];
@@ -1434,6 +1435,7 @@ static enum v92_pcm_frame_result decode_frame(
 			bool seeding = seed_paths && visit < path_count;
 			uint8_t y0;
 			int64_t precoder = 0, prefilter = 0;
+			struct v92_observation_history *scoring = &model_paths[path].scoring;
 			struct v92_observation_point local_history[V92_OBSERVATION_TAPS - 1];
 			struct v92_observation_point *history = seed_paths ?
 				model_paths[path].history : local_history;
@@ -1455,6 +1457,7 @@ static enum v92_pcm_frame_result decode_frame(
 				if (filter_metric)
 					prefilter = prefilter_history(&receiver->mapping, &paths[path].state.filter);
 				if (model) {
+					if (seed_paths) v92_observation_history_reset(scoring);
 					const int32_t *previous = x_history(&receiver->mapping, &paths[path].state.filter);
 					for (unsigned i = 1; i < model->taps; i++)
 						history[i - 1] = v92_observation_point(&cache, previous[i - 1]);
@@ -1608,7 +1611,7 @@ static enum v92_pcm_frame_result decode_frame(
 						candidates[0].metric - paths[path].state.metric : UINT64_MAX;
 
 					cost = !present ? 0 :
-						v92_observation_score(&cache, precoder_output(precoder, u), history, budget);
+						v92_observation_score_history(&cache, precoder_output(precoder, u), history, budget, scoring);
 				} else if (cells) {
 					cost = cell_metric(cells + symbol, u, weight, present);
 				} else {

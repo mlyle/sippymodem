@@ -420,6 +420,48 @@ static void check_integer_scores(const struct v92_observation *fitted)
 	assert(fesetround(saved) == 0);
 }
 
+/* Reuse only the physical past across different current points and observed
+ * codec cells and noise estimates. Compare with a fresh general evaluation. */
+static void check_history_scores(const struct v92_observation *model,
+	const int32_t *x, const int16_t *y)
+{
+	struct history_workspace { struct v92_observation_cache reference, actual; };
+	struct history_workspace *work = malloc(sizeof(*work));
+	assert(work);
+	int saved = fegetround();
+	const int modes[] = { FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO };
+	for (unsigned m = 0; m < sizeof(modes) / sizeof(*modes); m++) {
+		assert(fesetround(modes[m]) == 0);
+		v92_observation_begin(&work->reference, model, .00001);
+		v92_observation_begin(&work->actual, model, .00001);
+		for (size_t i = TRAINING; i < SAMPLES; i += 17) {
+			struct v92_observation_point previous[V92_OBSERVATION_TAPS - 1];
+			for (unsigned j = 1; j < model->taps; j++)
+				previous[j - 1] = v92_observation_point(&work->actual, x[i - j]);
+			struct v92_observation_history history;
+			v92_observation_history_reset(&history);
+			const int32_t candidates[] = { x[i], x[i] ^ 1, x[i] / 2, 0, INT32_MIN, INT32_MAX };
+			for (unsigned cell = 0; cell < 3; cell++) {
+				work->reference.relative_noise = work->actual.relative_noise = cell * .00001;
+				double offset = ((int)cell - 1) * .25;
+				assert(v92_observation_symbol_level(&work->reference, y[i], y + i, offset));
+				assert(v92_observation_symbol_level(&work->actual, y[i], y + i, offset));
+				for (unsigned k = 0; k < sizeof(candidates) / sizeof(*candidates); k++) {
+					uint64_t expected = v92_observation_score(&work->reference, candidates[k], previous, UINT64_MAX);
+					uint64_t actual = v92_observation_score_history(&work->actual, candidates[k], previous, UINT64_MAX, &history);
+					assert(actual == expected);
+					const uint64_t budgets[] = { expected / 2, expected == UINT64_MAX ? UINT64_MAX : expected + 1 };
+					for (unsigned j = 0; j < 2; j++)
+						assert(v92_observation_score_history(&work->actual, candidates[k], previous, budgets[j], &history) ==
+						 v92_observation_score(&work->reference, candidates[k], previous, budgets[j]));
+				}
+			}
+		}
+	}
+	assert(fesetround(saved) == 0);
+	free(work);
+}
+
 static void check_scores(const struct v92_observation *model,
 	const int32_t *x, const int16_t *y)
 {
@@ -795,6 +837,7 @@ static void check_channel(enum g711_law law, double gain, unsigned taps,
 	double rms = sqrt(error / (SAMPLES - TRAINING));
 	assert(isfinite(rms) && rms < 100.);
 	check_scores(&model, x, y);
+	check_history_scores(&model, x, y);
 	if (gain == .125 && taps == 3) {
 		check_predictive_noise(&model);
 		check_predictive_boundaries(&model);

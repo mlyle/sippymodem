@@ -167,6 +167,25 @@ bool v92_observation_symbol_level(struct v92_observation_cache *cache,
 	int16_t observed, const int16_t *level, double offset);
 struct v92_observation_point v92_observation_point(
 	struct v92_observation_cache *cache, int32_t x);
+/* Frame-local scratch for one fixed candidate-path history. Reset when the
+ * previous points, model or rounding mode change. Levels are exact conversions,
+ * never pre-multiplied coefficients or observation-dependent likelihoods. */
+struct v92_observation_history {
+	double level[V92_OBSERVATION_INTERVALS][V92_OBSERVATION_TAPS - 1];
+	unsigned prepared, stable;
+};
+
+static inline void v92_observation_history_reset(struct v92_observation_history *history)
+{
+	history->prepared = history->stable = 0;
+}
+
+/* Same budget contract as score(). Exclusively owned history must not
+ * overlap the cache, model or previous points. It stores no borrowed pointers. */
+uint64_t v92_observation_score_history(struct v92_observation_cache *cache, int32_t x,
+	const struct v92_observation_point *previous, uint64_t budget,
+	struct v92_observation_history *history);
+
 /* Exact below budget; may return a conservative lower bound >= budget when
  * the candidate cannot win. UINT64_MAX requests an unbounded exact score.
  * previous contains model->taps - 1 points, newest first. */
