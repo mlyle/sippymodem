@@ -178,19 +178,18 @@ static int64_t moment(const struct v92_upstream_channel *channel,
 static bool solve_four_tap_channel(const struct v92_upstream_channel *channel,
 	double coefficients[TAPS])
 {
-	double system[GRAM_FIT_COLUMNS][GRAM_FIT_COLUMNS + 1], fit[4];
+	double normal[GRAM_FIT_MOMENTS], rhs[4], fit[4];
 	double observed = channel->observed_autocorrelation[0];
 
 	if (!(observed > 0.)) return false;
 	for (unsigned i = 0; i < 4; i++) {
-		for (unsigned j = 0; j < 4; j++)
-			system[i][j] = moment(channel, false, i, false, j) / observed;
-		system[i][4] = cross(channel, i, observed);
+		for (unsigned j = 0; j <= i; j++)
+			normal[gram_moment_index(i, j)] = moment(channel, false, i, false, j) / observed;
+		rhs[i] = cross(channel, i, observed);
 	}
-	if (!gram_eliminate(system, 4, 1e-8, NULL)) return false;
+	if (!gram_solve(normal, rhs, 4, 1e-8, fit, NULL)) return false;
 	double error = 1., feedback = 0.;
 	for (unsigned i = 0; i < 4; i++) {
-		fit[i] = system[i][4];
 		if (!isfinite(fit[i])) return false;
 		error -= fit[i] * cross(channel, i, observed);
 		if (i) feedback += fabs(fit[i]);

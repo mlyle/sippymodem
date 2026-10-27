@@ -60,18 +60,16 @@ static inline void gram_select(
 	}
 }
 
-/* Reduce an owned augmented Gram matrix in place. Keep the owner's pivot
- * floor and arithmetic order; normalization and fit admission stay outside.
- * The right-hand side is column count. Failure leaves partially reduced
- * scratch, but does not write the optional determinant. */
-static inline bool gram_eliminate(
+/* Reduce owned dense scratch after the caller validates count (1..4) and
+ * the finite, nonnegative pivot floor. Preserve arithmetic order and publish
+ * the optional determinant only on success. This is shared internally by
+ * packed raw solves and direct construction of normalized systems. */
+static inline bool gram_reduce(
 	double matrix[GRAM_FIT_COLUMNS][GRAM_FIT_COLUMNS + 1],
 	unsigned count, double minimum_pivot, double *determinant)
 {
 	double product = 1.;
 
-	if (!count || count > GRAM_FIT_COLUMNS ||
-	    !isfinite(minimum_pivot) || minimum_pivot < 0.) return false;
 	for (unsigned i = 0; i < count; i++) {
 		double pivot = matrix[i][i];
 		if (!(pivot > minimum_pivot)) return false;
@@ -83,6 +81,30 @@ static inline bool gram_eliminate(
 		}
 	}
 	if (determinant) *determinant = product;
+	return true;
+}
+
+/* Solve a packed symmetric system without changing its moments or RHS.
+ * Arrays cover count coefficients and count * (count + 1) / 2 moments.
+ * Keep the owner's pivot floor and arithmetic order; normalization and
+ * numeric admission stay outside. Failure writes neither fitted coefficients
+ * nor the optional determinant. Only active input/output entries are used;
+ * inputs and outputs must be separate. */
+static inline bool gram_solve(
+	const double *gram, const double *rhs, unsigned count,
+	double minimum_pivot, double *fitted, double *determinant)
+{
+	double matrix[GRAM_FIT_COLUMNS][GRAM_FIT_COLUMNS + 1];
+
+	if (!count || count > GRAM_FIT_COLUMNS ||
+	    !isfinite(minimum_pivot) || minimum_pivot < 0.) return false;
+	for (unsigned i = 0; i < count; i++) {
+		for (unsigned j = 0; j <= i; j++)
+			matrix[i][j] = matrix[j][i] = gram[gram_moment_index(i, j)];
+		matrix[i][count] = rhs[i];
+	}
+	if (!gram_reduce(matrix, count, minimum_pivot, determinant)) return false;
+	for (unsigned i = 0; i < count; i++) fitted[i] = matrix[i][count];
 	return true;
 }
 
@@ -111,7 +133,7 @@ static inline bool gram_fit(
 		}
 		matrix[i][count] = rhs[i] / scale[i];
 	}
-	if (!gram_eliminate(matrix, count, 0., &determinant)) return false;
+	if (!gram_reduce(matrix, count, 0., &determinant)) return false;
 	if (!(determinant > 64. * DBL_EPSILON)) return false;
 	for (unsigned i = 0; i < count; i++) {
 		fitted[i] = matrix[i][count] / scale[i];

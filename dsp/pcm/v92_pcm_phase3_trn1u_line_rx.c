@@ -173,8 +173,8 @@ static bool filtered_prefix_matches(
 	const int8_t signs[V92_PCM_PHASE3_TRN1U_LINE_SYNC_SYMBOLS],
 	int8_t *polarity)
 {
-	double system[GRAM_FIT_COLUMNS][GRAM_FIT_COLUMNS + 1] = { { 0 } };
-	double correlation[3], energy = 0.0;
+	double normal[GRAM_FIT_MOMENTS] = { 0 }, correlation[3] = { 0 };
+	double fitted[3], energy = 0.0;
 
 	/* The first two physical samples may still contain the previous signal.
 	 * Every fitted target below belongs to the known training prefix. */
@@ -183,27 +183,22 @@ static bool filtered_prefix_matches(
 		double sample = window_sample(receiver, index);
 
 		energy += sample * sample;
-		for (unsigned row = 0u; row < 3u; ++row) {
-			system[row][3] += signs[index - row] * sample;
-			for (unsigned column = 0u; column < 3u; ++column)
-				system[row][column] +=
-					signs[index - row] * signs[index - column];
-		}
+		double row[3];
+		for (unsigned tap = 0; tap < 3; ++tap) row[tap] = signs[index - tap];
+		gram_accumulate(normal, correlation, row, 3, sample);
 	}
 	if (!(energy > 0.0))
 		return false;
-	for (unsigned row = 0u; row < 3u; ++row)
-		correlation[row] = system[row][3];
-	if (!gram_eliminate(system, 3, 0., NULL))
+	if (!gram_solve(normal, correlation, 3, 0., fitted, NULL))
 		return false;
 	double explained = 0.0;
 
 	for (unsigned row = 0u; row < 3u; ++row)
-		explained += system[row][3] * correlation[row];
-	if (explained < 0.8 * energy || fabs(system[0][3]) <
-	    0.8 * fmax(fabs(system[1][3]), fabs(system[2][3])))
+		explained += fitted[row] * correlation[row];
+	if (explained < 0.8 * energy || fabs(fitted[0]) <
+	    0.8 * fmax(fabs(fitted[1]), fabs(fitted[2])))
 		return false;
-	*polarity = system[0][3] < 0.0 ? -1 : 1;
+	*polarity = fitted[0] < 0.0 ? -1 : 1;
 	return true;
 }
 

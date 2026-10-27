@@ -142,6 +142,12 @@ static void test_polynomial(unsigned count)
 	assert(memcmp(saved_rhs, rhs, sizeof(rhs)) == 0);
 	for (unsigned i = 0; i < count; i++) assert(fabs(fitted[i] - expected[i]) < 1e-7);
 	for (unsigned i = count; i < 4; i++) assert(fitted[i] == 99.);
+	double raw[4] = { 99., 99., 99., 99. };
+	assert(gram_solve(gram, rhs, count, 0., raw, NULL));
+	for (unsigned i = 0; i < count; i++) assert(fabs(raw[i] - expected[i]) < 1e-7);
+	for (unsigned i = count; i < 4; i++) assert(raw[i] == 99.);
+	assert(memcmp(saved_gram, gram, sizeof(gram)) == 0);
+	assert(memcmp(saved_rhs, rhs, sizeof(rhs)) == 0);
 }
 
 static void test_rejection(void)
@@ -173,41 +179,47 @@ static void test_rejection(void)
 	assert(!gram_fit(gram, rhs, 5, fitted));
 }
 
-static void test_elimination(void)
+static void test_raw_solver(void)
 {
-	double matrix[4][5] = {
-		{ 4., 2., 0., 8., 99. },
-		{ 2., 5., 1., 13., 99. },
-		{ 0., 1., 3., 5., 99. },
-		{ 99., 99., 99., 99., 99. },
-	};
+	double gram[GRAM_FIT_MOMENTS] = { 4., 2., 5., 0., 1., 3., NAN, NAN, NAN, NAN };
+	double rhs[4] = { 8., 13., 5., NAN }, fitted[4] = { 99., 99., 99., 99. };
+	double saved_gram[GRAM_FIT_MOMENTS], saved_rhs[4];
 	double determinant = 99.;
 
-	assert(gram_eliminate(matrix, 3, 0., &determinant));
+	memcpy(saved_gram, gram, sizeof(gram));
+	memcpy(saved_rhs, rhs, sizeof(rhs));
+	assert(gram_solve(gram, rhs, 3, 0., fitted, &determinant));
 	assert(determinant == 44.);
-	assert(matrix[0][3] == 1. && matrix[1][3] == 2. && matrix[2][3] == 1.);
-	for (unsigned i = 0; i < 4; i++) assert(matrix[i][4] == 99.);
-	for (unsigned i = 0; i < 5; i++) assert(matrix[3][i] == 99.);
+	assert(fitted[0] == 1. && fitted[1] == 2. && fitted[2] == 1. && fitted[3] == 99.);
+	assert(memcmp(saved_gram, gram, sizeof(gram)) == 0);
+	assert(memcmp(saved_rhs, rhs, sizeof(rhs)) == 0);
 
 	/* The channel designer's absolute pivot floor is intentionally different
 	 * from the normalized fit's determinant limit and prefix fit's zero floor. */
-	matrix[0][0] = 1e-8;
-	matrix[0][1] = 2e-8;
+	gram[0] = 1e-8;
+	rhs[0] = 2e-8;
+	fitted[0] = determinant = 99.;
+	assert(!gram_solve(gram, rhs, 1, 1e-8, fitted, &determinant));
+	assert(fitted[0] == 99. && determinant == 99.);
+	assert(gram_solve(gram, rhs, 1, 0., fitted, NULL) && fitted[0] == 2.);
+	gram[0] = nextafter(1e-8, INFINITY);
+	rhs[0] = gram[0] * 2.;
+	assert(gram_solve(gram, rhs, 1, 1e-8, fitted, NULL) && fitted[0] == 2.);
+
+	/* Rejection at a later pivot also leaves the complete output untouched. */
+	gram[0] = gram[1] = gram[2] = rhs[0] = rhs[1] = 1.;
+	for (unsigned i = 0; i < 4; i++) fitted[i] = 99.;
 	determinant = 99.;
-	assert(!gram_eliminate(matrix, 1, 1e-8, &determinant));
+	assert(!gram_solve(gram, rhs, 2, 0., fitted, &determinant));
+	for (unsigned i = 0; i < 4; i++) assert(fitted[i] == 99.);
 	assert(determinant == 99.);
-	assert(gram_eliminate(matrix, 1, 0., NULL) && matrix[0][1] == 2.);
-	matrix[0][0] = nextafter(1e-8, INFINITY);
-	matrix[0][1] = matrix[0][0] * 2.;
-	assert(gram_eliminate(matrix, 1, 1e-8, NULL) && matrix[0][1] == 2.);
-	matrix[0][0] = 0.;
-	assert(!gram_eliminate(matrix, 1, 0., &determinant) && determinant == 99.);
-	matrix[0][0] = NAN;
-	assert(!gram_eliminate(matrix, 1, 0., NULL));
-	assert(!gram_eliminate(matrix, 0, 0., NULL));
-	assert(!gram_eliminate(matrix, 5, 0., NULL));
-	assert(!gram_eliminate(matrix, 1, -1., NULL));
-	assert(!gram_eliminate(matrix, 1, NAN, NULL));
+	gram[0] = NAN;
+	assert(!gram_solve(gram, rhs, 1, 0., fitted, NULL));
+	assert(!gram_solve(NULL, NULL, 0, 0., NULL, &determinant));
+	assert(!gram_solve(NULL, NULL, 5, 0., NULL, &determinant));
+	assert(!gram_solve(gram, rhs, 1, -1., fitted, NULL));
+	assert(!gram_solve(gram, rhs, 1, NAN, fitted, NULL));
+	assert(determinant == 99.);
 }
 
 int main(void)
@@ -217,7 +229,7 @@ int main(void)
 	test_column_selection();
 	for (unsigned count = 1; count <= 4; count++) test_polynomial(count);
 	test_rejection();
-	test_elimination();
+	test_raw_solver();
 	puts("Gram fitting tests passed");
 	return 0;
 }
