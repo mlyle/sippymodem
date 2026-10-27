@@ -2259,7 +2259,7 @@ static bool test_repeat_search_contracts(void)
 	return true;
 }
 
-static bool test_repeat_history_recovery(bool acknowledged)
+static bool test_repeat_history_recovery(enum upstream_tail tail, bool acknowledged)
 {
 	unsigned recovered = 0;
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
@@ -2271,6 +2271,8 @@ static bool test_repeat_history_recovery(bool acknowledged)
 		struct v92_e2u_rx receiver, native;
 		struct v92_e2u_search search = { 0 };
 		struct v92_cpu_parameters cpu = cpu_parameters(law);
+		enum v92_control_event_type accepted_type = tail == SUVU_TAIL ?
+			V92_CONTROL_EVENT_SUVU : V92_CONTROL_EVENT_CPU;
 		CHECK(upstream_line(law, points, &wire, &line) &&
 		      v92_e2u_rx_init(&receiver, &line.signal, extended) == V92_E2U_RX_OK,
 		      "repeat history fixture failed");
@@ -2278,8 +2280,23 @@ static bool test_repeat_history_recovery(bool acknowledged)
 		native = receiver;
 		for (unsigned repeat = 0; repeat < 3; ++repeat) {
 			cpu.acknowledges_cpd = acknowledged && repeat != 0;
-			CHECK(v92_phase4_record_tx_handoff(&wire, &modulator) == V92_PHASE4_RECORD_TX_OK &&
-			      start_cpu_record(&wire, &modulator, &cpu, true), "repeat did not start");
+			CHECK(v92_phase4_record_tx_handoff(&wire, &modulator) == V92_PHASE4_RECORD_TX_OK,
+			      "repeat handoff failed");
+			if (tail == SUVU_TAIL) {
+				const struct v92_suvu_parameters status = {
+					.prefilter_level_db_q2_2 = -7, .wait_for_cpu = true,
+					.acknowledges_cpd = cpu.acknowledges_cpd,
+				};
+				uint8_t frame[V92_SUVU_FRAME_BYTES];
+				size_t frame_bits;
+				CHECK(v92_suvu_encode(&status,
+					v92_phase4_modulator_bits_per_symbol(points) * V92_SUVU_SYMBOLS_PER_FRAME,
+					frame, sizeof(frame), &frame_bits) == V92_SUVU_OK &&
+				      v92_phase4_record_tx_init(&wire, &modulator, frame, sizeof(frame), frame_bits) ==
+					V92_PHASE4_RECORD_TX_OK, "status repeat did not start");
+			} else {
+				CHECK(start_cpu_record(&wire, &modulator, &cpu, true), "parameter repeat did not start");
+			}
 			unsigned accepted = 0;
 			while (!v92_phase4_record_tx_is_complete(&wire)) {
 				int16_t sample;
@@ -2287,7 +2304,7 @@ static bool test_repeat_history_recovery(bool acknowledged)
 				CHECK(v92_phase4_record_tx_next(&wire, &sample) == V92_PHASE4_RECORD_TX_OK,
 				      "repeat generation failed");
 				/* Damage observed symbols, not the transmitter's coding state.
-				 * The last CPu then leaves erroneous descrambler memory. */
+				 * The last repeat then leaves erroneous descrambler memory. */
 				if (repeat == 2 && wire.frame_bit_count - wire.bit_index < 12)
 					sample = (int16_t)-sample;
 				sample = quantize(law, sample);
@@ -2295,7 +2312,7 @@ static bool test_repeat_history_recovery(bool acknowledged)
 				      V92_E2U_RX_OK && v92_e2u_rx_search(&native, &native_line, true, sample,
 				      &native_event) == V92_E2U_RX_OK, "repeat interior became E2u");
 				CHECK(event.type == native_event.type, "reference changed control admission");
-				accepted += event.type == V92_CONTROL_EVENT_CPU;
+				accepted += event.type == accepted_type;
 				if (event.type == V92_CONTROL_EVENT_CPU)
 					line.retained_cpu_bits = native_line.retained_cpu_bits =
 						(uint16_t)wire.frame_bit_count;
@@ -2330,8 +2347,8 @@ static bool test_repeat_history_recovery(bool acknowledged)
 				&search, &receiver, &line, true, sample, &event);
 			CHECK(result == (v92_phase4_record_tx_is_complete(&wire) ?
 			      V92_E2U_RX_COMPLETE : V92_E2U_RX_OK),
-			      "history marker failed law=%u points=%u extended=%u ack=%u result=%u",
-			      law, points, extended, acknowledged, result);
+			      "history marker failed law=%u points=%u extended=%u tail=%u ack=%u result=%u",
+			      law, points, extended, tail, acknowledged, result);
 			if (symbol > 4)
 				CHECK(v92_e2u_search_sample(&copied_search, &copied_receiver,
 				      &copied_line, true, sample, &event) == result &&
@@ -2409,7 +2426,10 @@ static bool test_isolated_marker_impulses(void)
 int main(void)
 {
 	if (!test_repeat_search_contracts() ||
-	    !test_repeat_history_recovery(false) || !test_repeat_history_recovery(true))
+	    !test_repeat_history_recovery(CPU_TAIL, false) ||
+	    !test_repeat_history_recovery(CPU_TAIL, true) ||
+	    !test_repeat_history_recovery(SUVU_TAIL, false) ||
+	    !test_repeat_history_recovery(SUVU_TAIL, true))
 		return 1;
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (int polarity = -1; polarity <= 1; polarity += 2)

@@ -218,7 +218,8 @@ bool v92_e2u_search_is_valid(const struct v92_e2u_search *search)
 	if (search->frame_bits) {
 		unsigned bits = v92_phase4_modulator_bits_per_symbol(search->coder.constellation);
 		if (!v92_phase4_modulator_is_valid(&search->coder) || !bits ||
-		    search->frame_bits < V92_CPU_MIN_FRAME_BITS ||
+		    (search->frame_bits < V92_CPU_MIN_FRAME_BITS &&
+		     search->frame_bits != V92_SUVU_FRAME_BITS) ||
 		    search->frame_bits > V92_CPU_MAX_FRAME_BITS ||
 		    search->frame_bits % (bits * V92_CPU_SYMBOLS_PER_FRAME) || search->bit_index % bits ||
 		    search->bit_index >= search->frame_bits)
@@ -248,29 +249,32 @@ static bool retain_repeat(struct v92_e2u_search *search,
 	const struct v92_upstream_control_line_rx *after,
 	const struct v92_control_event *event, unsigned bits, int16_t sample)
 {
-	if (event->type == V92_CONTROL_EVENT_SUVU || event->type == V92_CONTROL_EVENT_CPUS) {
+	if (event->type == V92_CONTROL_EVENT_CPUS) {
 		search->frame_bits = 0;
 		search->bit_index = 0;
 		search->candidate_active = false;
 	}
-	if (event->type != V92_CONTROL_EVENT_CPU)
+	if (event->type != V92_CONTROL_EVENT_CPU && event->type != V92_CONTROL_EVENT_SUVU)
 		return true;
 	search->frame_bits = 0;
 	search->bit_index = 0;
 	search->candidate_active = false;
 	const struct v92_control_rx *record = &before->control;
-	/* A valid CPu fixes the repeat's coding clock without confirming CPd.
+	/* A valid control record fixes its coding clock without confirming CPd.
 	 * The downstream owner still guards E2u against our acknowledgement;
-	 * E2u itself can confirm the exchange if the last CPu was damaged. */
-	if (!event->record.cpu.parameters.data_rate_number ||
-	    record->stage != V92_CONTROL_RX_RECEIVE_PARAMETERS ||
+	 * E2u itself can confirm the exchange if the last repeat was damaged. */
+	bool status = event->type == V92_CONTROL_EVENT_SUVU;
+	if ((status && (record->stage != V92_CONTROL_RX_RECEIVE_STATUS ||
+	     record->frame_bit_count != V92_SUVU_FRAME_BITS)) ||
+	    (!status && (!event->record.cpu.parameters.data_rate_number ||
+	     record->stage != V92_CONTROL_RX_RECEIVE_PARAMETERS)) ||
 	    record->frame_bit_count > V92_CPU_MAX_FRAME_BITS ||
 	    record->bit_index + bits != record->frame_bit_count ||
 	    !after->control.record_boundary)
 		return true;
 	/* The parser cleared its candidate after the CRC passed. Retain its
 	 * original wire prefix plus this sample's final group, not a re-encoded
-	 * CPu whose reserved/duplicate constellation rows may differ. */
+	 * record whose reserved/duplicate fields may differ. */
 	struct v92_upstream_rx signal = before->signal;
 	struct v92_upstream_decision decision;
 	if (v92_upstream_rx_sample(&signal, sample, &decision) != V92_UPSTREAM_RX_OK)
