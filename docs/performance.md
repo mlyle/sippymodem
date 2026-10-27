@@ -204,3 +204,29 @@ reuses exact coordinate-to-geometry lookups across symbols; it stores no
 observation-dependent scores and resets when the model is rebound. These
 changes retain both hypotheses, independent B1u validation, per-frame input
 checks, transactional prediction failures and all recovery thresholds.
+
+The follow-up measurements on `8f5968b2` rebuilt all 356 native core modules
+with GCC 14.2 and normal `-O2`. DSP ran on Pi core 2, with runs starting at or
+below 65 degrees C and no observed active throttling. The following maxima
+include acquisition, settling, payload and every three-packet window across
+phase transitions. Three-packet values take the larger CPU/elapsed maximum;
+single-packet values are thread CPU time. Each callback handles 160 samples
+(20 ms). These measurements include framing, LAPM and V.44, but exclude
+SIP/RTP, concurrent calls and BBS work. Rates below are digital transmit/receive.
+
+| Receive case | Data packets | Worst packet | Worst three | Data average |
+| --- | ---: | ---: | ---: | ---: |
+| A-law 56k/48k, four taps, 0.125 postcursor, digital caller | 500 | 19.28 ms | 54.53 ms | 17.12 ms |
+| A-law 56k/48k, four taps, 0.125 postcursor, digital answerer | 500 | 19.27 ms | 54.84 ms | 17.33 ms |
+| A-law 52k/40k, three taps, 0.375 postcursor | 100 | 17.83 ms | 49.23 ms | 11.26 ms |
+| A-law 52k/40k, four taps, 0.375 postcursor | 100 | 16.45 ms | 46.40 ms | 12.74 ms |
+| Mu-law 56k/48k, three taps, 0.125 postcursor | 100 | 7.08 ms | 21.18 ms | 5.77 ms |
+
+These five calls verified 307,977 payload bytes across both directions.
+The harder A-law 0.375/four-tap case requested 48k upstream, selected 45,333,
+and retrained during a longer hold. It remains a failed hold. Matched
+`8c95b7d2` and final builds retrained at exactly media packet 2351; their worst callback
+fell from 20.46 to 19.58 ms, and worst three from 59.82 to 56.00 ms. The receive
+quality failure therefore remains separate from the measured CPU overrun.
+The resulting 0.42-ms sampled margin is small and does not establish a
+deadline or concurrency guarantee.
