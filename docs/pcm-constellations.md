@@ -18,15 +18,34 @@ phases. For example, five 57-level sets and one 58-level set carry K=35 where
 an equal 58-level requirement cannot use masks containing only 57 levels in
 some phases. With five sign bits this carries 53,333 bit/s.
 
+An individual impaired phase can have fewer than the root's required levels
+while the other phases still have spare capacity. For example, fixed robbed
+bits on one phase can collapse approximately half its distinguishable levels.
+Requiring almost equal cardinalities then rejects a feasible higher-rate map.
+The generator adds fixed families for this case: count each phase's qualified
+levels through the existing upper rail, cap the scarce phases at each size
+from eight upward, and find the smallest common ceiling that lets the other
+phases cover the required radix product. Enumerate that ceiling and its floor
+only where they differ. The original family wins whenever it fits at the
+same distance. This preserves existing maps unless spacing strictly improves.
+
+These families are fixed before distance bisection. There are at most 103
+families through the existing rail: at most 64 assignments in the original
+family, and at most 32 in each added family because at least one phase has a
+fixed cap. This deliberately bounded search does not enumerate arbitrary
+six-cardinality vectors. It does not change the maximum enabled rate, power
+budget, sign redundancy, training constellation, or DIL qualification.
+
 For a proposed distance, greedily taking the lowest available positive level
 at each step minimizes every ordered magnitude. The first magnitude must be
 at least half the distance, so its negative counterpart also satisfies the
 spacing requirement. Since all word-occurrence weights are nonnegative,
 this gives the minimum power for that fixed cardinality and distance.
 Feasibility is monotone, permitting integer bisection across the family.
-Equal distance retains the common-cardinality baseline. Otherwise ties use
-the lower exact power ceiling, then a stable phase-pattern order. This is
-optimal within the stated family, not over arbitrary six-cardinality maps.
+Equal distance retains the common-cardinality baseline and original root
+family. Other ties use the lower exact power ceiling, then stable family
+and phase-pattern order. This is optimal within the stated family, not over
+arbitrary six-cardinality maps.
 
 ## Exact power without enumerating words
 
@@ -44,8 +63,8 @@ A*q * sum(all squared levels)
 
 Ascending cumulative sums of squared levels evaluate these three terms in
 constant work per phase. The generator prepares one ordered level prefix
-per phase and distance, then reuses it across the 64 assignments. A shared 16-bit
-limb accumulator preserves the complete numerator even when a direct
+per phase and distance, then reuses it across all family assignments. A shared
+16-bit limb accumulator preserves the complete numerator even when a direct
 64-bit product would overflow. Admission uses the exact ceiling of total
 power divided by 6*W, against the existing integer power limit.
 
@@ -64,8 +83,10 @@ Focused tests exercise mixed 57/58 capacity, exact power boundaries and failed
 selection without partial output. CP and CPu round trips and configuration
 checks cover both codecs. An independent small-K oracle enumerates subsets of
 qualified levels, using full radix-cycle occurrence counts to reject any
-better spacing within the family. Separate integer identities cover wide
-prefix products through K=42; existing exhaustive mapping tests also remain.
+better spacing within the family. The asymmetric oracle also exercises a
+scarce nine-level phase in each of the six positions, both laws, two power
+limits, and rejection without partial output. Separate integer identities cover
+wide prefix products through K=42; existing exhaustive mapping tests also remain.
 
 Design-call timing and full-call timing are different measurements. The
 former includes complete rate sweeps to bound selection work; the latter

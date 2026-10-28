@@ -63,11 +63,12 @@ bool v90_profile_select_measured_constellations(
 	struct pcm_constellation rows[V90_CP_MAX_CONSTELLATIONS],
 	uint8_t map[V90_CP_FRAME_INTERVALS], uint8_t *count);
 
-/* Maximize signed distance over the common-row baseline and at most 64
- * floor/ceiling sixth-root cardinality assignments (minimum eight levels).
- * Equal distance retains the baseline; otherwise ties prefer the lower exact
- * power ceiling, then pattern order. Each phase retains its DIL-qualified
- * mask; NULL permits the direct-codec level set. Capacity and power are exact
+/* Maximize signed distance over the common-row baseline, floor/ceiling
+ * sixth-root assignments, and fixed families that trade capacity out of
+ * scarce phases (minimum eight levels). Equal distance retains the original
+ * family; other ties prefer the lower exact power ceiling, then family and
+ * pattern order. Each phase retains its DIL-qualified mask; NULL permits the
+ * direct-codec level set. Capacity and power are exact
  * over all 2^K words. Regenerate at every rate; explicit peer maps stay owned
  * by their caller. Rejected calls leave rows, map and count unchanged. */
 bool v90_profile_generate_measured_constellations(enum g711_law law,

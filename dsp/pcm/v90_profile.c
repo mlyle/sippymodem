@@ -443,57 +443,149 @@ static uint32_t balanced_power(const struct spaced_levels levels[6],
 	return ceiling;
 }
 
-/* Search the equal-row baseline plus floor/ceiling sixth-root cardinalities.
- * Every family's feasibility is monotone in distance. Enumerate at most 64
- * phase assignments, reusing one ordered level prefix per phase and distance.
- * Prefer the existing baseline at equal distance; otherwise use the smallest
- * exact power ceiling, then the first pattern. This is a bounded family,
- * not a claim of global optimality over all six independent cardinalities. */
+struct cardinality_family {
+	uint8_t low[V90_CP_FRAME_INTERVALS];
+	uint8_t high[V90_CP_FRAME_INTERVALS];
+	unsigned choices;
+};
+
+/* Fix every family's cardinalities before distance bisection. A phase with
+ * fewer than the root's levels can trade capacity with less impaired phases.
+ * Sweep its cap, then find the smallest common ceiling for the other phases.
+ * Include the original root-1/root family first to preserve its tie order. */
+static unsigned data_families(const struct v90_pcm_mapping *mapping,
+	const struct pcm_constellation *available,
+	struct cardinality_family families[PCM_CONSTELLATION_UCODES])
+{
+	unsigned root = mapping->modulus[0], caps[V90_CP_FRAME_INTERVALS];
+	unsigned weak = 0, largest = 0, count = 1;
+	uint64_t words = UINT64_C(1) << mapping->modulus_bits, capacity = 1;
+
+	families[0].choices = (1u << V90_CP_FRAME_INTERVALS) - 1u;
+	for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++) {
+		families[0].low[slot] = (uint8_t)(root - 1u);
+		families[0].high[slot] = (uint8_t)root;
+	}
+	if (available == NULL)
+		return count;
+	for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++) {
+		struct spaced_levels levels;
+		prepare_levels(&levels, mapping->law, 1, available + slot);
+		caps[slot] = levels.size;
+		if (caps[slot] < V90_INITIAL_CONSTELLATION_SIZE)
+			return 0;
+		capacity *= caps[slot];
+		if (caps[slot] < root) {
+			weak |= 1u << slot;
+			if (caps[slot] > largest)
+				largest = caps[slot];
+		}
+	}
+	if (capacity < words)
+		return 0;
+	if (weak == 0)
+		return count;
+	/* There are at most 102 added caps through the existing 109-code rail. */
+	for (unsigned points = V90_INITIAL_CONSTELLATION_SIZE; points <= largest; points++) {
+		unsigned water = V90_INITIAL_CONSTELLATION_SIZE;
+		for (; water <= V90_CONSTELLATION_LAST_UCODE + 1; water++) {
+			capacity = 1;
+			for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++) {
+				unsigned size = weak & (1u << slot) ? points : water;
+				capacity *= caps[slot] < size ? caps[slot] : size;
+			}
+			if (capacity >= words)
+				break;
+		}
+		if (capacity < words)
+			continue;
+		struct cardinality_family *family = &families[count++];
+		family->choices = 0;
+		for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++) {
+			unsigned high = weak & (1u << slot) ? points : water;
+			unsigned low = weak & (1u << slot) ? points :
+				(water > V90_INITIAL_CONSTELLATION_SIZE ? water - 1u : water);
+			family->low[slot] = (uint8_t)(caps[slot] < low ? caps[slot] : low);
+			family->high[slot] = (uint8_t)(caps[slot] < high ? caps[slot] : high);
+			if (family->low[slot] != family->high[slot])
+				family->choices |= 1u << slot;
+		}
+	}
+	return count;
+}
+
+/* A fixed size vector's feasibility is monotone in distance. A union of
+ * fixed families therefore permits bisection, sharing one greedy level
+ * prefix per phase and distance. Preserve the old family at equal distance;
+ * otherwise prefer the lowest exact power ceiling, then family/pattern order.
+ * This is a bounded family, not optimization over arbitrary size vectors. */
 static bool select_balanced_constellations(const struct v90_pcm_mapping *mapping,
 	uint32_t maximum_power, const struct pcm_constellation *available,
 	struct pcm_constellation selected[V90_CP_FRAME_INTERVALS])
 {
 	uint32_t distance = 0;
 	bool found = select_spaced_constellations(mapping, maximum_power, available, selected, &distance);
-	unsigned size = mapping->modulus[0];
+	unsigned root = mapping->modulus[0];
+	if (root == V90_INITIAL_CONSTELLATION_SIZE)
+		return found;
+	struct cardinality_family families[PCM_CONSTELLATION_UCODES];
+	unsigned count = data_families(mapping, available, families);
+	if (count == 0)
+		return found;
 	uint64_t capacity = 1, words = UINT64_C(1) << mapping->modulus_bits;
-	for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++) capacity *= size;
-	if (size == V90_INITIAL_CONSTELLATION_SIZE || capacity == words) return found;
+	for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++)
+		capacity *= root;
+	if (count == 1 && capacity == words)
+		return found;
 	int16_t peak;
-	if (!g711_ucode_sample(mapping->law, V90_CONSTELLATION_LAST_UCODE, true, &peak)) return found;
-	uint32_t low = distance + 1, high = 2u * (uint32_t)peak / (2u * size - 1);
+	if (!g711_ucode_sample(mapping->law, V90_CONSTELLATION_LAST_UCODE, true, &peak))
+		return found;
+	uint32_t low = distance + 1u, high = 2u * (uint32_t)peak / (2u * root - 1u);
 	while (low <= high) {
-		uint32_t spacing = low + (high - low) / 2, best_power = UINT32_MAX;
-		unsigned best = 64;
+		uint32_t spacing = low + (high - low) / 2u, best_power = UINT32_MAX;
+		uint8_t best[V90_CP_FRAME_INTERVALS] = { 0 };
+		bool fits = false;
 		struct spaced_levels levels[V90_CP_FRAME_INTERVALS];
 		for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++)
 			prepare_levels(&levels[slot], mapping->law, spacing,
 				available ? available + slot : NULL);
-		for (unsigned pattern = 0; pattern < 64; pattern++) {
-			uint8_t sizes[V90_CP_FRAME_INTERVALS];
-			bool fits = true;
-			capacity = 1;
-			for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++) {
-				sizes[slot] = (uint8_t)(size - 1u + ((pattern >> slot) & 1u));
-				capacity *= sizes[slot];
-				fits &= sizes[slot] <= levels[slot].size;
-			}
-			if (!fits || capacity < words) continue;
-			uint32_t power = balanced_power(levels, sizes, mapping->modulus_bits);
-			if (power <= maximum_power && power < best_power) {
-				best = pattern; best_power = power;
-			}
+		for (unsigned family = 0; family < count; family++) {
+			const struct cardinality_family *f = &families[family];
+			unsigned pattern = 0;
+			do {
+				uint8_t sizes[V90_CP_FRAME_INTERVALS];
+				bool usable = true;
+				capacity = 1;
+				for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++) {
+					sizes[slot] = pattern & (1u << slot) ? f->high[slot] : f->low[slot];
+					capacity *= sizes[slot];
+					usable &= sizes[slot] <= levels[slot].size;
+				}
+				if (usable && capacity >= words) {
+					uint32_t power = balanced_power(levels, sizes, mapping->modulus_bits);
+					if (power <= maximum_power && power < best_power) {
+						fits = true;
+						best_power = power;
+						memcpy(best, sizes, sizeof(best));
+					}
+				}
+				/* Visit only branch subsets, in ascending pattern order. */
+				pattern = (pattern - f->choices) & f->choices;
+			} while (pattern != 0);
+			if (family == 0 && fits)
+				break;
 		}
-		if (best < 64) {
+		if (fits) {
 			for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++) {
 				selected[slot] = (struct pcm_constellation){ 0 };
-				unsigned count = size - 1u + ((best >> slot) & 1u);
-				for (unsigned point = 0; point < count; point++)
+				for (unsigned point = 0; point < best[slot]; point++)
 					pcm_constellation_add(&selected[slot], levels[slot].code[point]);
 			}
 			found = true;
-			low = spacing + 1;
-		} else high = spacing - 1;
+			low = spacing + 1u;
+		} else {
+			high = spacing - 1u;
+		}
 	}
 	return found;
 }

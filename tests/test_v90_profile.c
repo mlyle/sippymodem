@@ -879,16 +879,16 @@ static bool test_measured_data_capacity(void)
  * or the production greedy/bisection algorithm. These K=20 numerators fit
  * uint64_t. Minimize each phase independently for a fixed radix pattern. */
 static uint64_t subset_power(enum g711_law law, unsigned phase, unsigned size,
-	uint64_t stride, unsigned distance)
+	uint64_t stride, unsigned distance, unsigned points)
 {
 	const uint64_t words = UINT64_C(1) << 20;
 	uint64_t best = UINT64_MAX, cycle = stride * size;
-	for (unsigned subset = 0; subset < 4096; subset++) {
+	for (unsigned subset = 0; subset < (1u << points); subset++) {
 		if (bit_count_u8((uint8_t)subset) + bit_count_u8((uint8_t)(subset >> 8)) != size) continue;
 		int16_t levels[12], previous = 0;
 		unsigned count = 0;
 		bool fits = true;
-		for (unsigned point = 0; point < 12; point++) if (subset & (1u << point)) {
+		for (unsigned point = 0; point < points; point++) if (subset & (1u << point)) {
 			int16_t value;
 			if (!g711_ucode_sample(law, (uint8_t)(8 + 8 * point + phase % 2), true, &value)) return UINT64_MAX;
 			fits &= (previous ? (unsigned)(value - previous) : 2u * value) >= distance;
@@ -919,13 +919,118 @@ static bool exhaustive_family_fits(enum g711_law law, unsigned distance, uint32_
 		bool fits = true;
 		for (unsigned slot = 0; slot < 6; slot++) {
 			unsigned size = 10u + ((pattern >> slot) & 1u);
-			uint64_t power = subset_power(law, slot, size, stride, distance);
+			uint64_t power = subset_power(law, slot, size, stride, distance, 12);
 			if (power == UINT64_MAX) { fits = false; break; }
 			sum += power; stride *= size;
 		}
 		if (fits && sum <= (uint64_t)limit * words * 6u) return true;
 	}
 	return false;
+}
+
+/* K=20 with one nine-level phase: enumerate its eight/nine-point subsets
+ * and every ten/eleven-point assignment in the other five phases. */
+static bool exhaustive_asymmetric_fits(enum g711_law law, unsigned weak,
+	unsigned distance, uint32_t limit)
+{
+	const uint64_t words = UINT64_C(1) << 20;
+	for (unsigned small = 8; small <= 9; small++) {
+		for (unsigned pattern = 0; pattern < 64; pattern++) {
+			if (pattern & (1u << weak))
+				continue;
+			uint64_t capacity = 1;
+			unsigned sizes[6];
+			for (unsigned slot = 0; slot < 6; slot++) {
+				sizes[slot] = slot == weak ? small : 10u + ((pattern >> slot) & 1u);
+				capacity *= sizes[slot];
+			}
+			if (capacity < words)
+				continue;
+			uint64_t sum = 0, stride = 1;
+			bool fits = true;
+			for (unsigned slot = 0; slot < 6; slot++) {
+				uint64_t power = subset_power(law, slot, sizes[slot], stride, distance,
+					slot == weak ? 9 : 12);
+				if (power == UINT64_MAX) {
+					fits = false;
+					break;
+				}
+				sum += power;
+				stride *= sizes[slot];
+			}
+			if (fits && sum <= (uint64_t)limit * words * 6)
+				return true;
+		}
+	}
+	return false;
+}
+
+static bool test_asymmetric_optimality(void)
+{
+	const uint32_t limits[] = { 4000000, 16000000 };
+	unsigned accepted = 0;
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++) {
+		for (unsigned weak = 0; weak < 6; weak++) {
+			for (unsigned test = 0; test < ARRAY_LENGTH(limits); test++) {
+				struct pcm_constellation available[6] = { 0 };
+				for (unsigned slot = 0; slot < 6; slot++)
+					for (unsigned point = 0; point < (slot == weak ? 9u : 12u); point++)
+						pcm_constellation_add(&available[slot], (uint8_t)(8 + 8 * point + slot % 2));
+				struct v90_cp_parameters cp = {
+					.kind = V90_CP_DATA, .law = law, .selected_rate_index = 6,
+				};
+				bool ok = v90_profile_generate_measured_constellations(law, 6, 0, limits[test],
+					available, cp.transmit_constellations, cp.frame_constellation,
+					&cp.constellation_count);
+				if (!ok) {
+					CHECK(!exhaustive_asymmetric_fits(law, weak, 1, limits[test]),
+					      "asymmetric search missed feasible capacity");
+					continue;
+				}
+				accepted++;
+				struct v90_pcm_mapping mapping;
+				uint32_t floor, ceiling, distance = UINT32_MAX;
+				CHECK(v90_pcm_mapping_init(&mapping, &cp) == V90_PCM_MAPPING_OK &&
+				      mapping.modulus_bits == 20 &&
+				      v90_pcm_mapping_power(&mapping, V90_PCM_MAPPING_CODEC, law,
+					&floor, &ceiling) == V90_PCM_MAPPING_OK && ceiling <= limits[test],
+				      "asymmetric mapping power failed");
+				for (unsigned slot = 0; slot < 6; slot++) {
+					int16_t previous = 0, value;
+					for (unsigned code = 0; code < 128; code++) {
+						if (!pcm_constellation_contains(&mapping.transmit[slot], code))
+							continue;
+						CHECK(pcm_constellation_contains(&available[slot], code) &&
+						      g711_ucode_sample(law, code, true, &value),
+						      "asymmetric design left phase mask");
+						unsigned gap = previous ? (unsigned)(value - previous) : 2u * value;
+						if (gap < distance)
+							distance = gap;
+						previous = value;
+					}
+				}
+				CHECK(exhaustive_asymmetric_fits(law, weak, distance, limits[test]) &&
+				      !exhaustive_asymmetric_fits(law, weak, distance + 1, limits[test]),
+				      "asymmetric distance %u disagrees with exhaustive subsets", distance);
+				struct v90_cp_parameters saved = cp;
+				available[weak] = (struct pcm_constellation){ 0 };
+				for (unsigned point = 0; point < 7; point++)
+					pcm_constellation_add(&available[weak], (uint8_t)(8 + 8 * point + weak % 2));
+				CHECK(!v90_profile_generate_measured_constellations(law, 6, 0, limits[test],
+					available, cp.transmit_constellations, cp.frame_constellation,
+					&cp.constellation_count) && memcmp(&cp, &saved, sizeof(cp)) == 0,
+				      "short phase changed rejected output");
+				for (unsigned slot = 0; slot < 6; slot++)
+					available[slot] = available[weak];
+				CHECK(!v90_profile_generate_measured_constellations(law, 6, 0, limits[test],
+					available, cp.transmit_constellations, cp.frame_constellation,
+					&cp.constellation_count) && memcmp(&cp, &saved, sizeof(cp)) == 0,
+				      "insufficient whole-frame capacity changed output");
+			}
+		}
+	}
+	CHECK(accepted >= 12, "no asymmetric cases exercised");
+	return true;
 }
 
 static bool test_balanced_optimality(void)
@@ -1093,6 +1198,7 @@ int main(void)
 		{ "measured data capacity", test_measured_data_capacity },
 		{ "balanced measured capacity", test_balanced_measured_capacity },
 		{ "balanced exhaustive optimality", test_balanced_optimality },
+		{ "asymmetric exhaustive optimality", test_asymmetric_optimality },
 		{ "upstream policy", test_upstream_policy },
 		{ "rate bounds and transactionality", test_transactionality },
 	};
