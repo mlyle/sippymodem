@@ -33,6 +33,8 @@ struct v92_pcm_phase4_trn2u_line_rx {
 	struct qam_equalizer equalizer;
 	struct v92_pcm_phase4_trn2u reference;
 	struct v92_phase4_demodulator demodulator;
+	/* Preserve the known linear waveform across the FIR delay. Quantize
+	 * only when comparing a training decision with its codec-cell target. */
 	int16_t expected[
 		V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY];
 	uint64_t starting_input_samples;
@@ -54,8 +56,8 @@ struct v92_pcm_phase4_trn2u_line_rx {
 
 /* Exact physical-boundary continuation into upstream control records. The
  * equalizer still owns decision_delay accepted TRN2u symbols; their known
- * targets are linearized here so a successor can finish training adaptation
- * before switching to decision-directed control reception. */
+ * linear targets are retained here so a successor can finish training
+ * adaptation before switching to decision-directed control reception. */
 struct v92_pcm_phase4_trn2u_line_handoff {
 	struct qam_equalizer equalizer;
 	struct v92_phase4_demodulator demodulator;

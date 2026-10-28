@@ -164,35 +164,22 @@ static enum v92_phase4_digital_rx_result fail(
 }
 
 static bool observe_channel(
-	struct v92_phase4_digital_rx *receiver, int16_t expected,
+	struct v92_phase4_digital_rx *receiver, int16_t linear,
 	const struct qam_equalizer *equalizer,
-	const struct v92_phase4_demodulator *demodulator, enum g711_law law)
+	enum g711_law law)
 {
 	double raw = equalizer->history[equalizer->decision_delay].in_phase;
 
 	if (!isfinite(raw) || raw < -32768.0 || raw > 32768.0 || trunc(raw) != raw)
 		return false;
-	/* The acquisition FIR targets G.711 cells; the channel inverse needs
-	 * the linear training waveform. Using cell centres in the inverse
-	 * biases its gain, especially when LU lies near a companding boundary. */
-	for (uint8_t magnitude = 0u; magnitude < demodulator->constellation / 2u; ++magnitude) {
-		int16_t linear;
-
-		if (v92_phase4_modulator_level(demodulator->constellation,
-			    demodulator->lu, magnitude, expected < 0, &linear) != V92_PHASE4_MODULATOR_OK)
-			return false;
-		if (g711_quantize(law, linear) != expected)
-			continue;
-		if (!v92_upstream_channel_sample_owned(&receiver->channel, linear, (int32_t)raw))
-			return false;
-		/* Host DC/echo conditioning can move a sample within its original
-		 * cell without changing the direct mapping's G.711 point placement. */
-		if (receiver->channel.symbols > V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS &&
-		    g711_quantize(law, (int16_t)fmin(raw, INT16_MAX)) != expected)
-			receiver->channel_distorted = true;
-		return true;
-	}
-	return false;
+	if (!v92_upstream_channel_sample_owned(&receiver->channel, linear, (int32_t)raw))
+		return false;
+	/* The FIR compares codec cells; the channel inverse retains the original
+	 * linear target, including when multiple targets occupy the same cell. */
+	if (receiver->channel.symbols > V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS &&
+	    g711_quantize(law, (int16_t)fmin(raw, INT16_MAX)) != g711_quantize(law, linear))
+		receiver->channel_distorted = true;
+	return true;
 }
 
 static enum v92_phase4_digital_rx_result receive_training(
@@ -207,7 +194,7 @@ static enum v92_phase4_digital_rx_result receive_training(
 	if ((result == V92_PCM_PHASE4_TRN2U_LINE_RX_OK ||
 	     result == V92_PCM_PHASE4_TRN2U_LINE_RX_ALIGNED) &&
 	    !observe_channel(next, expected, &next->signal.trn2u.equalizer,
-		    &next->signal.trn2u.demodulator, next->signal.trn2u.law))
+		    next->signal.trn2u.law))
 		return fail(receiver);
 	if (result == V92_PCM_PHASE4_TRN2U_LINE_RX_OK)
 		return V92_PHASE4_DIGITAL_RX_OK;
@@ -256,7 +243,7 @@ static enum v92_phase4_digital_rx_result receive_control(
 	if (remaining &&
 	    (result == V92_UPSTREAM_CONTROL_LINE_RX_OK || result == V92_UPSTREAM_CONTROL_LINE_RX_EVENT) &&
 	    !observe_channel(next, expected, &signal->line.equalizer,
-		    &signal->line.demodulator, signal->line.law))
+		    signal->line.law))
 		return fail(receiver);
 	switch (result) {
 	case V92_UPSTREAM_CONTROL_LINE_RX_OK:

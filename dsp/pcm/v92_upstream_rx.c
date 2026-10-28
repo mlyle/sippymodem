@@ -142,7 +142,8 @@ static enum v92_upstream_rx_result sample(
 			next.line.law, generated.nearest_level);
 
 		nominal_level = generated.nearest_level;
-		adapt = selected == next.line.pending_training_targets[target_index];
+		adapt = selected == g711_quantize(next.line.law,
+			next.line.pending_training_targets[target_index]);
 		next.training_tail_remaining--;
 	}
 	if (adapt) {

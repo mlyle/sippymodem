@@ -23,7 +23,7 @@ static unsigned control_search_minimum(bool renegotiation)
 
 static bool targets_are_valid(
 	const struct v92_phase4_demodulator *demodulator,
-	enum g711_law law, const int16_t *targets)
+	const int16_t *targets)
 {
 	unsigned int bits = v92_phase4_modulator_bits_per_symbol(
 		demodulator->constellation);
@@ -31,9 +31,9 @@ static bool targets_are_valid(
 	int16_t points[V92_CONSTELLATION_8_POINT];
 	size_t count = 0;
 
-	/* All pending decisions share the same constellation and LU. Generate
-	 * its codec points once, retaining both signs: G.711 quantization is
-	 * not sign-symmetric near zero. No derived state survives this check. */
+	/* All pending targets share the same constellation and LU. Retain both
+	 * signs and the original linear levels; codec rounding belongs to the
+	 * decision comparison, not this delayed reference waveform. */
 	for (uint8_t sign = 0u; sign <= 1u; ++sign) {
 		for (unsigned int magnitude = 0u;
 		     magnitude < magnitudes; ++magnitude) {
@@ -45,7 +45,7 @@ static bool targets_are_valid(
 				    (uint8_t)magnitude, sign, &level) !=
 			    V92_PHASE4_MODULATOR_OK)
 				return false;
-			points[count++] = g711_quantize(law, level);
+			points[count++] = level;
 		}
 	}
 	for (size_t index = 0;
@@ -92,9 +92,7 @@ bool v92_pcm_phase4_trn2u_line_rx_is_valid(
 	       receiver->expected_index <
 		       V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY &&
 	       (receiver->polarity == -1 || receiver->polarity == 1) &&
-	       targets_are_valid(
-		       &receiver->demodulator, receiver->law,
-		       receiver->expected);
+	       targets_are_valid(&receiver->demodulator, receiver->expected);
 }
 
 bool v92_pcm_phase4_trn2u_line_rx_can_handoff(
@@ -134,9 +132,7 @@ bool v92_pcm_phase4_trn2u_line_handoff_is_valid(
 	       isfinite(handoff->output_bias) &&
 	       g711_law_is_valid(handoff->law) &&
 	       (handoff->polarity == -1 || handoff->polarity == 1) &&
-	       targets_are_valid(
-		       &handoff->demodulator, handoff->law,
-		       handoff->pending_training_targets);
+	       targets_are_valid(&handoff->demodulator, handoff->pending_training_targets);
 }
 
 enum v92_pcm_phase4_trn2u_line_rx_result
@@ -187,7 +183,7 @@ static bool initialize_targets(
 			    &receiver->reference, &level) !=
 		    V92_PCM_PHASE4_TRN2U_OK)
 			return false;
-		receiver->expected[index] = g711_quantize(receiver->law, level);
+		receiver->expected[index] = level;
 	}
 	return true;
 }
@@ -309,8 +305,8 @@ v92_pcm_phase4_trn2u_line_rx_sample(
 		    &next.reference, &raw_expected) !=
 	    V92_PCM_PHASE4_TRN2U_OK)
 		return fail(receiver);
-	next_expected = next.expected[next.expected_index];
-	next.expected[next.expected_index] = g711_quantize(next.law, raw_expected);
+	next_expected = g711_quantize(next.law, next.expected[next.expected_index]);
+	next.expected[next.expected_index] = raw_expected;
 	next.expected_index = (uint8_t)(
 		(next.expected_index + 1u) %
 		V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY);

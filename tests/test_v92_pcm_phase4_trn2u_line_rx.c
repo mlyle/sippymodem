@@ -678,7 +678,7 @@ static bool test_pending_target_membership(void)
 							usable = false;
 							continue;
 						}
-						first = quantize(law, raw);
+						first = raw;
 						member[(uint16_t)first] = true;
 					}
 				}

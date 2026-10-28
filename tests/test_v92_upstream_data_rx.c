@@ -265,9 +265,6 @@ static bool prepare_e2u_at_level(
 		      QAM_EQUALIZER_OK &&
 	      v92_phase4_modulator_level(constellation, measured_lu, 0u, 0u,
 			&level) == V92_PHASE4_MODULATOR_OK, "FIR did not become warm");
-	level = channel->law == G711_LAW_PCMU ?
-		g711_decode_pcmu(g711_encode_pcmu(level)) :
-		g711_decode_pcma(g711_encode_pcma(level));
 	for (size_t index = 0u; index < V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY; ++index)
 		handoff.pending_training_targets[index] = level;
 	CHECK(v92_upstream_rx_init(&signal, &handoff) == V92_UPSTREAM_RX_OK,
@@ -342,7 +339,7 @@ static bool test_data_initialization(void)
 				      v92_phase4_modulator_level(V92_CONSTELLATION_4_POINT, levels[level], 0, 0,
 					&target) == V92_PHASE4_MODULATOR_OK, "LU boundary fixture failed");
 				for (size_t i = 0; i < ARRAY_LENGTH(e2u_rx.signal.line.pending_training_targets); ++i)
-					e2u_rx.signal.line.pending_training_targets[i] = g711_quantize(law, target);
+					e2u_rx.signal.line.pending_training_targets[i] = target;
 				for (uint8_t rate = 1; rate <= V92_CPD_MAX_DATA_RATE_NUMBER; ++rate) {
 					struct v92_cpd_parameters cpd;
 					struct v92_pcm_mapping mapping;

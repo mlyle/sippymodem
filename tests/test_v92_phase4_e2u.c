@@ -252,7 +252,6 @@ static bool upstream_line(
 		    constellation, TEST_LU, 0u, 0u,
 		    &target) != V92_PHASE4_MODULATOR_OK)
 		return false;
-	target = quantize(law, target);
 	for (size_t index = 0u;
 	     index < V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY; ++index)
 		handoff.pending_training_targets[index] = target;

@@ -751,7 +751,7 @@ static bool run_e2u_carrier(enum g711_law law,
 	      "carrier level did not initialize");
 	for (size_t index = 0u;
 	     index < ARRAY_LENGTH(boundary.pending_training_targets); ++index)
-		boundary.pending_training_targets[index] = line_sample(law, 1, level);
+		boundary.pending_training_targets[index] = level;
 	CHECK(v92_upstream_rx_init(&signal, &boundary) == V92_UPSTREAM_RX_OK,
 	      "carrier line did not initialize");
 	/* The weakest legal point is a valid zero sequence after the scrambler
@@ -811,7 +811,7 @@ static bool run_shifted_e2u_carrier(enum g711_law law,
 		      V92_PHASE4_MODULATOR_OK,
 	      "shifted marker predecessor failed");
 	for (size_t i = 0; i < ARRAY_LENGTH(boundary.pending_training_targets); ++i)
-		boundary.pending_training_targets[i] = line_sample(law, 1, level);
+		boundary.pending_training_targets[i] = level;
 	CHECK(v92_upstream_rx_init(&signal, &boundary) == V92_UPSTREAM_RX_OK,
 	      "shifted marker signal failed");
 	level = line_sample(law, 1, level);

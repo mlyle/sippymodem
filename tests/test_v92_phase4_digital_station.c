@@ -272,6 +272,58 @@ static bool build_predecessor(
 	return v92_pcm_phase3_cpt_line_handoff_is_valid(handoff);
 }
 
+static bool test_linear_channel_targets(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		for (unsigned points = 4; points <= 8; points *= 2) {
+			for (int polarity = -1; polarity <= 1; polarity += 2) {
+				struct v92_pcm_phase3_cpt_line_handoff handoff;
+				struct v92_pcm_phase4_trn2u transmit, truth;
+				struct v92_phase4_digital_rx receiver;
+				CHECK(build_predecessor(law, points, 0, polarity, &transmit, &handoff) &&
+				      v92_pcm_phase4_trn2u_init(&truth, points, 0, TEST_LU) == V92_PCM_PHASE4_TRN2U_OK &&
+				      v92_phase4_digital_rx_init(&receiver, &handoff, points, law) == V92_PHASE4_DIGITAL_RX_OK,
+				      "linear-target receiver initialization failed");
+				int64_t sum = 0, energy = 0;
+				bool handed_off = false;
+				for (unsigned i = 0; i < V92_UPSTREAM_CHANNEL_SYMBOLS; ++i) {
+					int16_t raw, expected;
+					struct v92_control_event event = { 0 };
+					CHECK(v92_pcm_phase4_trn2u_next(&transmit, &raw) == V92_PCM_PHASE4_TRN2U_OK &&
+					      v92_pcm_phase4_trn2u_next(&truth, &expected) == V92_PCM_PHASE4_TRN2U_OK,
+					      "linear training source stopped");
+					enum v92_phase4_digital_rx_result result = v92_phase4_digital_rx_sample(
+						&receiver, line_sample(law, polarity, raw), &event);
+					CHECK(result == V92_PHASE4_DIGITAL_RX_OK || result == V92_PHASE4_DIGITAL_RX_ALIGNED,
+					      "linear-target observation failed: %u", result);
+					if (result == V92_PHASE4_DIGITAL_RX_ALIGNED) {
+						struct v92_pcm_phase4_trn2u tail = truth;
+						bool unquantized = false;
+						for (unsigned j = 0; j < V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY; ++j) {
+							int16_t target;
+							CHECK(v92_pcm_phase4_trn2u_next(&tail, &target) == V92_PCM_PHASE4_TRN2U_OK &&
+							      receiver.signal.control.signal.line.pending_training_targets[j] == target,
+							      "lost linear training target at handoff law=%u points=%u slot=%u", law, points, j);
+							unquantized |= target != g711_quantize(law, target);
+						}
+						CHECK(unquantized, "training-tail fixture did not distinguish codec centres");
+						handed_off = true;
+					}
+					if (i >= V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS) {
+						sum += expected;
+						energy += (int64_t)expected * expected;
+					}
+				}
+				CHECK(handed_off && receiver.channel.symbols == V92_UPSTREAM_CHANNEL_SYMBOLS &&
+				      receiver.channel.expected_sum == sum &&
+				      receiver.channel.expected_autocorrelation[0] == energy,
+				      "lost linear training evidence law=%u points=%u polarity=%d", law, points, polarity);
+			}
+		}
+	}
+	return true;
+}
+
 static bool cpu_equal(
 	const struct v92_cpu_parameters *left,
 	const struct v92_cpu_parameters *right)
@@ -2756,6 +2808,7 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "linear training tail and channel measurement", test_linear_channel_targets },
 		{ "generated digital station exchange", test_generated_exchange },
 		{ "full CPd ownership", test_full_cpd_ownership },
 		{ "paired analogue/digital station matrix",
