@@ -14,18 +14,24 @@ struct v92_residual {
 	bool active;
 };
 
-/* Owned linear projection before physical rounding or clipping. Geometry and
- * coefficients are validated at the boundary; inputs and retained outputs
- * must be finite. A frozen echo prediction uses the same arithmetic with its
- * own history, which need not fit the physical signed-16 sample bounds.
- * v92_residual_sample() separately enforces those bounds for receive state. */
-static inline double v92_residual_output(const struct v92_residual *filter, double raw)
+/* Linear part of the owned inverse, without its channel DC offset. A known
+ * echo contribution uses this projection with its own history and the same
+ * frozen parameters; it must not subtract the channel offset a second time.
+ * Geometry, coefficients and finite inputs are validated by the owner. */
+static inline double v92_residual_project(const struct v92_residual *filter, double raw)
 {
-	double corrected = raw - filter->offset;
+	double corrected = raw;
 	for (unsigned j = 0; j < filter->count; j++)
 		corrected -= filter->coefficient[j] * filter->history[
 			(filter->cursor + V92_RESIDUAL_LAGS - filter->delay[j]) % V92_RESIDUAL_LAGS];
 	return corrected;
+}
+
+/* Remove channel DC before the feedback projection, preserving arithmetic
+ * order. Physical rounding/clipping belongs to v92_residual_sample(). */
+static inline double v92_residual_output(const struct v92_residual *filter, double raw)
+{
+	return v92_residual_project(filter, raw - filter->offset);
 }
 
 static inline void v92_residual_retain(struct v92_residual *filter, double corrected)

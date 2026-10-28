@@ -19,7 +19,7 @@ void v92_echo_timing_reset(struct v92_echo_timing *timing)
 
 static bool same_inverse(const struct v92_residual *a, const struct v92_residual *b)
 {
-	if (a->active != b->active || a->count != b->count)
+	if (a->active != b->active || a->count != b->count || a->offset != b->offset)
 		return false;
 	for (unsigned j = 0; j < a->count; j++)
 		if (a->coefficient[j] != b->coefficient[j] || a->delay[j] != b->delay[j])
@@ -34,12 +34,10 @@ static void configure(struct v92_echo_timing *timing,
 	memset(timing, 0, sizeof(*timing));
 	timing->gain = line->calibration.gain;
 	timing->offset = line->calibration.offset;
-	timing->channel_offset = line->residual.offset;
 	timing->polarity = line->polarity;
 	timing->inverse = line->residual;
 	memset(timing->inverse.history, 0, sizeof(timing->inverse.history));
 	timing->inverse.cursor = 0;
-	timing->inverse.offset = 0;
 	timing->model_delay = delay;
 	timing->initialized = true;
 	/* Two selection/validation pairs, each half spanning 128 physical inputs. */
@@ -121,7 +119,6 @@ int v92_echo_timing_observe(
 		pcm_host_echo_window_delay_samples(echo);
 	if (!timing->initialized || timing->gain != line->calibration.gain ||
 	    timing->offset != line->calibration.offset || timing->polarity != line->polarity ||
-	    timing->channel_offset != line->residual.offset ||
 	    !same_inverse(&timing->inverse, &line->residual) ||
 	    timing->expected_sample != line->input_samples || timing->model_delay != delay)
 		configure(timing, line, &receiver->decoder.mapping, delay);
@@ -130,7 +127,7 @@ int v92_echo_timing_observe(
 	double corrected = (int32_t)cleaned * line->polarity;
 	if (line->residual.active) {
 		corrected = v92_residual_output(&line->residual, corrected);
-		projected = v92_residual_output(&timing->inverse, projected);
+		projected = v92_residual_project(&timing->inverse, projected);
 		v92_residual_retain(&timing->inverse, projected);
 	}
 	/* Match the actual inverse's physical bounds and rounding before calibration. */

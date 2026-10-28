@@ -29,6 +29,26 @@ static uint32_t random_value(uint32_t *seed)
 	return *seed;
 }
 
+static bool test_residual_projection(void)
+{
+	struct v92_residual filter = {
+		.active = true, .count = 2, .delay = { 2, 6 },
+		.coefficient = { .03125, -.015625 }, .offset = 123, .cursor = 9,
+	};
+	CHECK(v92_residual_is_valid(&filter), "invalid projection fixture");
+	CHECK(v92_residual_project(&filter, 0) == 0 &&
+	      v92_residual_output(&filter, 0) == -123,
+	      "known zero echo subtracted the channel DC offset");
+	filter.history[7] = 64;
+	filter.history[3] = -64;
+	struct v92_residual saved = filter;
+	CHECK(v92_residual_project(&filter, 20) == 17 &&
+	      v92_residual_output(&filter, 20) == -106 &&
+	      memcmp(&filter, &saved, sizeof(filter)) == 0,
+	      "projection changed feedback order, channel DC, or retained history");
+	return true;
+}
+
 static bool run_case(const struct channel_case *test)
 {
 	struct fixture *fixture = calloc(1, sizeof(*fixture));
@@ -101,6 +121,8 @@ static bool run_case(const struct channel_case *test)
 			memcpy(&fixture->saved, receiver, sizeof(*receiver));
 		int moved = v92_echo_timing_observe(timing, echo, receiver, PCM_HOST_ECHO_FILTER,
 			wire, received, cleaned, (int)i != test->gap);
+		CHECK(!timing->initialized || timing->inverse.offset == line->residual.offset,
+		      "echo projection lost its frozen channel parameters");
 		if (moved != 0) {
 			CHECK(finishing && memcmp(&fixture->saved, receiver, sizeof(*receiver)) == 0,
 			      "timing changed receive/coding state");
@@ -129,6 +151,17 @@ static bool run_case(const struct channel_case *test)
 	      test->shift, test->law, test->seed, test->host_gain);
 	CHECK(!expected || test->gap >= 0 || first - CHANGE <= 1000,
 	      "shift was too late for the quality recovery window");
+	if (test->inverse) {
+		line->residual.offset += 1;
+		memcpy(&fixture->saved, receiver, sizeof(*receiver));
+		uint8_t wire = g711_encode(test->law, 0);
+		int16_t received = (int16_t)lrint(test->host_gain * g711_decode(test->law, wire));
+		CHECK(v92_echo_timing_observe(timing, echo, receiver, PCM_HOST_ECHO_FILTER,
+		      wire, received, received, true) == 0 && timing->initialized &&
+		      timing->samples == 1 && timing->inverse.offset == line->residual.offset &&
+		      memcmp(&fixture->saved, receiver, sizeof(*receiver)) == 0,
+		      "changed channel DC reused old timing evidence or changed receive state");
+	}
 	/* A physical inverse overflow cannot seed timing just because calibration
 	 * would make it fit. Match the real inverse's strict signed-16 bounds. */
 	line->polarity = 1;
@@ -146,6 +179,7 @@ static bool run_case(const struct channel_case *test)
 
 int main(void)
 {
+	if (!test_residual_projection()) return 1;
 	unsigned cases = 0;
 	for (unsigned law = 0; law < 2; law++)
 		for (unsigned robbing = 0; robbing < 3; robbing++)
