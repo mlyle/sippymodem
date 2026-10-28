@@ -494,6 +494,45 @@ static bool test_biased_return_scan(int sign)
 	return true;
 }
 
+static bool test_shared_input_moments(void)
+{
+	struct pcm_echo_reference reference = {
+		.write = 3, .fill = 3, .scan_count = 3, .scan_samples = 1023,
+		.scan_input_energy = 1023u * 10000u,
+	};
+	const struct pcm_echo_reference_scan_result unchanged = { .sample_count = 123 };
+	struct pcm_echo_reference saved = reference;
+	struct pcm_echo_reference_scan_result scan = unchanged;
+
+	/* One corrupt reference bin must not discard the shared valid input
+	 * window. The second bin has a genuine return; the third has no energy. */
+	saved.scan_reference_sum[0] = INT64_MAX;
+	saved.scan_reference_energy[1] = saved.scan_input_energy;
+	saved.scan_cross_energy[1] = (int64_t)saved.scan_input_energy;
+	reference = saved;
+	CHECK(pcm_echo_reference_is_valid(&reference), "shared-input scan geometry is invalid");
+	CHECK(pcm_echo_reference_scan_observe(&reference, 0, &scan) ==
+		      PCM_ECHO_REFERENCE_SCAN_READY &&
+	      scan.best_window_delay_samples == 2u &&
+	      scan.best_correlation_ppm == 1000000u && scan.current_correlation_ppm == 0,
+	      "a bad reference bin suppressed another bin's valid return");
+	for (unsigned fault = 0; fault < 4; ++fault) {
+		reference = saved;
+		scan = unchanged;
+		switch (fault) {
+		case 0: reference.scan_input_sum = INT64_MAX; break;
+		case 1: reference.scan_input_sum = -INT64_MAX; break;
+		case 2: reference.scan_input_energy = 0; break;
+		case 3: reference.scan_input_sum = 1023u * 32768u; break;
+		}
+		CHECK(pcm_echo_reference_scan_observe(&reference, 0, &scan) ==
+			      PCM_ECHO_REFERENCE_OK &&
+		      memcmp(&scan, &unchanged, sizeof(scan)) == 0,
+		      "invalid shared input moments invented a report: fault %u", fault);
+	}
+	return true;
+}
+
 static bool test_large_centered_moments(bool varying_reference)
 {
 	struct pcm_echo_reference reference = { 0 }, saved;
@@ -560,6 +599,7 @@ int main(void)
 	    !test_dc_only_scan(true, INT16_MIN) || !test_dc_only_scan(false, 8) ||
 	    !test_dc_only_scan(false, INT16_MAX) ||
 	    !test_biased_return_scan(1) || !test_biased_return_scan(-1) ||
+	    !test_shared_input_moments() ||
 	    !test_large_centered_moments(false) || !test_large_centered_moments(true))
 		return 1;
 	puts("PCM echo reference tests passed");
