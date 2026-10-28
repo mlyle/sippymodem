@@ -210,24 +210,9 @@ uint32_t pcm_host_echo_window_delay_samples(
 	return header_is_valid(echo) ? pcm_echo_reference_current_delay(&echo->reference) : 0;
 }
 
-static enum pcm_host_echo_result read_filter_window(
-	const struct pcm_host_echo *echo,
-	int16_t references[PCM_HOST_ECHO_FILTER_TAPS])
-{
-	uint32_t delay = echo->retained_delay_samples ?
-		echo->retained_delay_samples : pcm_echo_reference_current_delay(&echo->reference);
-	enum pcm_echo_reference_result result =
-		pcm_echo_reference_read_window(
-			&echo->reference, delay,
-			references, PCM_HOST_ECHO_FILTER_TAPS);
-
-	return result == PCM_ECHO_REFERENCE_OK ?
-		PCM_HOST_ECHO_OK : PCM_HOST_ECHO_INVALID_STATE;
-}
-
 static bool estimate_echo(
 	const float coefficients[PCM_HOST_ECHO_FILTER_TAPS],
-	const int16_t references[PCM_HOST_ECHO_FILTER_TAPS],
+	const struct pcm_echo_reference *reference, size_t index,
 	double *estimate, double *energy)
 {
 	double predicted = 0.0;
@@ -235,11 +220,12 @@ static bool estimate_echo(
 
 	for (size_t tap = 0; tap < PCM_HOST_ECHO_FILTER_TAPS; ++tap) {
 		double coefficient = coefficients[tap];
-		double reference = references[tap];
+		double sample = reference->samples[index];
 
-		predicted += coefficient * reference;
+		predicted += coefficient * sample;
 		if (energy != NULL)
-			accumulated_energy += reference * reference;
+			accumulated_energy += sample * sample;
+		index = index == 0 ? PCM_ECHO_REFERENCE_HISTORY_SAMPLES - 1u : index - 1u;
 	}
 	/* Finite float coefficients times int16 references cannot overflow double
 	 * in 384 taps. Any nonfinite coefficient propagates to the final sum,
@@ -256,15 +242,17 @@ static enum pcm_host_echo_result predict_frozen_model(
 	const struct pcm_host_echo *echo, int16_t received_sample,
 	int16_t *cleaned_sample)
 {
-	int16_t references[PCM_HOST_ECHO_FILTER_TAPS];
+	size_t index;
+	uint32_t delay = echo->retained_delay_samples ?
+		echo->retained_delay_samples : pcm_echo_reference_current_delay(&echo->reference);
 	const float *coefficients = echo->retained_delay_samples ?
 		echo->retained_coefficients : echo->coefficients;
 	double estimate;
-	enum pcm_host_echo_result result = read_filter_window(echo, references);
 
-	if (result != PCM_HOST_ECHO_OK)
-		return result;
-	if (!estimate_echo(coefficients, references, &estimate, NULL))
+	if (pcm_echo_reference_window_index(&echo->reference, delay,
+		PCM_HOST_ECHO_FILTER_TAPS, &index) != PCM_ECHO_REFERENCE_OK)
+		return PCM_HOST_ECHO_INVALID_STATE;
+	if (!estimate_echo(coefficients, &echo->reference, index, &estimate, NULL))
 		return PCM_HOST_ECHO_NUMERIC_FAILURE;
 	*cleaned_sample = sample_round_s16((double)received_sample - estimate);
 	return PCM_HOST_ECHO_OK;
@@ -314,7 +302,7 @@ static enum pcm_host_echo_result prepare_training_step(
 	const struct pcm_host_echo *echo, int16_t received_sample,
 	struct training_step *step)
 {
-	int16_t references[PCM_HOST_ECHO_FILTER_TAPS];
+	size_t index;
 	double estimate;
 	double energy;
 	double error;
@@ -323,15 +311,15 @@ static enum pcm_host_echo_result prepare_training_step(
 	enum pcm_echo_reference_result window_result;
 
 	memset(step, 0, sizeof(*step));
-	window_result = pcm_echo_reference_read_window(
-		&echo->reference, pcm_echo_reference_current_delay(&echo->reference), references,
-		PCM_HOST_ECHO_FILTER_TAPS);
+	window_result = pcm_echo_reference_window_index(
+		&echo->reference, pcm_echo_reference_current_delay(&echo->reference),
+		PCM_HOST_ECHO_FILTER_TAPS, &index);
 	if (window_result == PCM_ECHO_REFERENCE_NOT_READY)
 		return PCM_HOST_ECHO_OK;
 	if (window_result != PCM_ECHO_REFERENCE_OK)
 		return PCM_HOST_ECHO_INVALID_STATE;
 	if (!estimate_echo(
-		    echo->coefficients, references, &estimate, &energy))
+		    echo->coefficients, &echo->reference, index, &estimate, &energy))
 		return PCM_HOST_ECHO_NUMERIC_FAILURE;
 	if (energy <= 0.0)
 		return PCM_HOST_ECHO_OK;
@@ -342,13 +330,15 @@ static enum pcm_host_echo_result prepare_training_step(
 		return PCM_HOST_ECHO_NUMERIC_FAILURE;
 	for (size_t tap = 0; tap < PCM_HOST_ECHO_FILTER_TAPS; ++tap) {
 		double coefficient = echo->coefficients[tap] +
-			scale * references[tap];
+			scale * echo->reference.samples[index];
 
 		if (!isfinite(coefficient) || coefficient > FLT_MAX ||
 		    coefficient < -FLT_MAX)
 			return PCM_HOST_ECHO_NUMERIC_FAILURE;
 		step->coefficients[tap] = (float)coefficient;
-		post_estimate += step->coefficients[tap] * references[tap];
+		/* Preserve the float product used by post-update qualification. */
+		post_estimate += step->coefficients[tap] * echo->reference.samples[index];
+		index = index == 0 ? PCM_ECHO_REFERENCE_HISTORY_SAMPLES - 1u : index - 1u;
 	}
 	if (!isfinite(post_estimate))
 		return PCM_HOST_ECHO_NUMERIC_FAILURE;

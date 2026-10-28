@@ -95,9 +95,13 @@ enum pcm_echo_reference_result pcm_echo_reference_push(
 enum pcm_echo_reference_result pcm_echo_reference_read_at_age(
 	const struct pcm_echo_reference *reference, uint32_t age,
 	int16_t *sample);
-enum pcm_echo_reference_result pcm_echo_reference_read_window(
+/* Locate a retained, newest-first window without copying samples. On success,
+ * *index names its first sample in reference->samples; subsequent samples
+ * walk backwards, wrapping at HISTORY_SAMPLES. Consume it before the owner
+ * pushes or resets history. Failure leaves *index unchanged. */
+enum pcm_echo_reference_result pcm_echo_reference_window_index(
 	const struct pcm_echo_reference *reference, uint32_t first_age,
-	int16_t *samples, size_t count);
+	size_t count, size_t *index);
 
 enum pcm_echo_reference_result pcm_echo_reference_start_scan(
 	struct pcm_echo_reference *reference,

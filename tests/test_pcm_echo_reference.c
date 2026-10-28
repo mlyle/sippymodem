@@ -62,7 +62,7 @@ static bool test_ring_and_contracts(void)
 		.best_window_delay_samples = 1234,
 	};
 	struct pcm_echo_reference_scan_result saved_scan = scan;
-	int16_t window[3] = { 11, 22, 33 };
+	size_t window_index = 1234;
 	int16_t output = 1234;
 
 	CHECK(pcm_echo_reference_is_valid(&reference),
@@ -113,25 +113,54 @@ static bool test_ring_and_contracts(void)
 		      &output) == PCM_ECHO_REFERENCE_OK &&
 		      output == reference_sample(7),
 	      "oldest wrapped sample changed");
-	CHECK(pcm_echo_reference_read_window(
-		      &reference, 1, window, 3) == PCM_ECHO_REFERENCE_OK &&
-	      window[0] == reference_sample(
-		      PCM_ECHO_REFERENCE_HISTORY_SAMPLES + 6u) &&
-	      window[1] == reference_sample(
-		      PCM_ECHO_REFERENCE_HISTORY_SAMPLES + 5u) &&
-	      window[2] == reference_sample(
-		      PCM_ECHO_REFERENCE_HISTORY_SAMPLES + 4u),
-	      "wrapped reference window changed");
-	CHECK(pcm_echo_reference_read_window(
-		      &reference, 1, NULL, 3) ==
+	for (size_t write = 0; write < PCM_ECHO_REFERENCE_HISTORY_SAMPLES; ++write) {
+		reference.write = write;
+		CHECK(pcm_echo_reference_window_index(&reference, 1,
+			PCM_ECHO_REFERENCE_MAX_WINDOW_SAMPLES, &window_index) == PCM_ECHO_REFERENCE_OK,
+		      "full window unavailable at write %zu", write);
+		for (size_t tap = 0; tap < PCM_ECHO_REFERENCE_MAX_WINDOW_SAMPLES; ++tap) {
+			int16_t expected;
+			size_t index = (window_index + PCM_ECHO_REFERENCE_HISTORY_SAMPLES - tap) %
+				PCM_ECHO_REFERENCE_HISTORY_SAMPLES;
+			CHECK(pcm_echo_reference_read_at_age(&reference, (uint32_t)tap + 1u,
+				&expected) == PCM_ECHO_REFERENCE_OK && reference.samples[index] == expected,
+			      "borrowed window changed at write %zu tap %zu", write, tap);
+		}
+	}
+	reference.write = 7;
+	window_index = 1234;
+	CHECK(pcm_echo_reference_window_index(&reference, 1, 3, NULL) ==
 		      PCM_ECHO_REFERENCE_INVALID_ARGUMENT &&
-	      pcm_echo_reference_read_window(
-		      &reference, 1, window, 0) ==
+	      pcm_echo_reference_window_index(&reference, 1, 0, &window_index) ==
 		      PCM_ECHO_REFERENCE_INVALID_ARGUMENT &&
-	      pcm_echo_reference_read_window(
-		      &reference, 1, (int16_t *)&reference, 3) ==
-		      PCM_ECHO_REFERENCE_INVALID_ARGUMENT,
-	      "invalid reference window was accepted");
+	      pcm_echo_reference_window_index(&reference, 1,
+		      PCM_ECHO_REFERENCE_MAX_WINDOW_SAMPLES + 1u, &window_index) ==
+		      PCM_ECHO_REFERENCE_INVALID_ARGUMENT &&
+	      pcm_echo_reference_window_index(&reference, 0, 3, &window_index) ==
+		      PCM_ECHO_REFERENCE_INVALID_ARGUMENT &&
+	      pcm_echo_reference_window_index(&reference, UINT32_MAX, 3, &window_index) ==
+		      PCM_ECHO_REFERENCE_INVALID_ARGUMENT &&
+	      pcm_echo_reference_window_index(&reference, PCM_ECHO_REFERENCE_HISTORY_SAMPLES,
+		      2, &window_index) == PCM_ECHO_REFERENCE_INVALID_ARGUMENT &&
+	      pcm_echo_reference_window_index(&reference, 1, 3, &reference.write) ==
+		      PCM_ECHO_REFERENCE_INVALID_ARGUMENT && window_index == 1234,
+	      "invalid reference window was accepted or changed output");
+	{
+		struct pcm_echo_reference empty = { 0 };
+		CHECK(pcm_echo_reference_push(&empty, 17) == PCM_ECHO_REFERENCE_OK &&
+		      pcm_echo_reference_push(&empty, 29) == PCM_ECHO_REFERENCE_OK &&
+		      pcm_echo_reference_window_index(&empty, 1, 2, &window_index) ==
+		      PCM_ECHO_REFERENCE_OK && window_index == 1 &&
+		      pcm_echo_reference_window_index(&empty, 2, 1, &window_index) ==
+		      PCM_ECHO_REFERENCE_OK && window_index == 0,
+		      "partially filled window changed");
+		window_index = 1234;
+		CHECK(pcm_echo_reference_window_index(&empty, 1, 3, &window_index) ==
+		      PCM_ECHO_REFERENCE_NOT_READY && window_index == 1234 &&
+		      pcm_echo_reference_window_index(NULL, 1, 3, &window_index) ==
+		      PCM_ECHO_REFERENCE_INVALID_STATE && window_index == 1234,
+		      "unavailable window changed output");
+	}
 
 	saved = reference;
 	CHECK(pcm_echo_reference_start_scan(&reference, 0,
