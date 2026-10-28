@@ -57,11 +57,6 @@ static double dot(const double *left, const double *right)
 	return result;
 }
 
-static double cross(const struct v92_upstream_channel *channel, int lag, double scale)
-{
-	return (double)channel->cross_correlation[V92_UPSTREAM_CHANNEL_PRECURSOR_LAGS + lag] / scale;
-}
-
 static int64_t moment(const struct v92_upstream_channel *channel,
 	bool left_observed, unsigned left, bool right_observed, unsigned right);
 
@@ -91,18 +86,34 @@ static bool short_inverse(double main, double post, double second,
 	return true;
 }
 
+/* Remove the constant term over the same shifted finite window as each
+ * product. Short forward fits must not treat DC bias as channel memory. */
+static int64_t covariance(const struct v92_upstream_channel *channel,
+	bool left_observed, unsigned left, bool right_observed, unsigned right)
+{
+	int64_t samples = channel->symbols - V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS;
+	int64_t left_sum = shifted_sum(channel, left_observed, left,
+		left_observed ? channel->observed_sum : channel->expected_sum);
+	int64_t right_sum = shifted_sum(channel, right_observed, right,
+		right_observed ? channel->observed_sum : channel->expected_sum);
+
+	return centered_product(moment(channel, left_observed, left, right_observed, right),
+		left_sum, right_sum, samples);
+}
+
 static bool solve_short_channel(const struct v92_upstream_channel *channel, double coefficients[TAPS])
 {
-	double scale = fmax(channel->expected_autocorrelation[0],
-		fmax(moment(channel, false, 1u, false, 1u), channel->observed_autocorrelation[0]));
+	double scale = fmax(covariance(channel, false, 0, false, 0),
+		fmax(covariance(channel, false, 1u, false, 1u), covariance(channel, true, 0, true, 0)));
 
 	if (!(scale > 0.0))
 		return false;
-	double xx = channel->expected_autocorrelation[0] / scale;
-	double pp = moment(channel, false, 1u, false, 1u) / scale;
-	double xp = channel->expected_autocorrelation[1] / scale;
-	double yy = channel->observed_autocorrelation[0] / scale;
-	double xy = cross(channel, 0, scale), py = cross(channel, 1, scale);
+	double xx = covariance(channel, false, 0, false, 0) / scale;
+	double pp = covariance(channel, false, 1u, false, 1u) / scale;
+	double xp = covariance(channel, false, 1, false, 0) / scale;
+	double yy = covariance(channel, true, 0, true, 0) / scale;
+	double xy = (double)covariance(channel, true, 0, false, 0) / scale;
+	double py = (double)covariance(channel, true, 0, false, 1) / scale;
 	double determinant = xx * pp - xp * xp;
 
 	/* Avoid fitting two nearly dependent training columns. These quality
@@ -118,10 +129,10 @@ static bool solve_short_channel(const struct v92_upstream_channel *channel, doub
 	/* Add a second delayed target only when the simpler fit was inadequate.
 	 * Eliminate its projection onto the first two columns, using exact
 	 * same-window moments rather than assuming stationarity at the edges. */
-	double ss = moment(channel, false, 2u, false, 2u) / scale;
-	double xs = channel->expected_autocorrelation[2] / scale;
-	double ps = moment(channel, false, 1u, false, 2u) / scale;
-	double sy = cross(channel, 2, scale);
+	double ss = covariance(channel, false, 2u, false, 2u) / scale;
+	double xs = covariance(channel, false, 2, false, 0) / scale;
+	double ps = covariance(channel, false, 1u, false, 2u) / scale;
+	double sy = (double)covariance(channel, true, 0, false, 2) / scale;
 	double x_projection = (xs * pp - ps * xp) / determinant;
 	double p_projection = (ps * xx - xs * xp) / determinant;
 	double remaining = ss - xs * x_projection - ps * p_projection;
@@ -179,19 +190,19 @@ static bool solve_four_tap_channel(const struct v92_upstream_channel *channel,
 	double coefficients[TAPS])
 {
 	double normal[GRAM_FIT_MOMENTS], rhs[4], fit[4];
-	double observed = channel->observed_autocorrelation[0];
+	double observed = covariance(channel, true, 0, true, 0);
 
 	if (!(observed > 0.)) return false;
 	for (unsigned i = 0; i < 4; i++) {
 		for (unsigned j = 0; j <= i; j++)
-			normal[gram_moment_index(i, j)] = moment(channel, false, i, false, j) / observed;
-		rhs[i] = cross(channel, i, observed);
+			normal[gram_moment_index(i, j)] = covariance(channel, false, i, false, j) / observed;
+		rhs[i] = (double)covariance(channel, true, 0, false, i) / observed;
 	}
 	if (!gram_solve(normal, rhs, 4, 1e-8, fit, NULL)) return false;
 	double error = 1., feedback = 0.;
 	for (unsigned i = 0; i < 4; i++) {
 		if (!isfinite(fit[i])) return false;
-		error -= fit[i] * cross(channel, i, observed);
+		error -= fit[i] * rhs[i];
 		if (i) feedback += fabs(fit[i]);
 	}
 	/* Sum |P1| < 1 is a sufficient stability condition for this third-order

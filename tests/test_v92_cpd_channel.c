@@ -628,9 +628,8 @@ static bool test_finite_window_inverse(bool strong_boundaries, int offset)
 }
 
 /* A constant added after the codec must not alter the learned linear
- * channel or its rate margin. Use a distant postcursor so every case takes
- * the general inverse rather than a special short-channel design. */
-static bool test_offset_invariance(void)
+ * channel or its rate margin, in either short or general inverse selection. */
+static bool test_offset_channel(unsigned kind)
 {
 	const int offset[] = { 0, 257, -509 };
 	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
@@ -643,7 +642,15 @@ static bool test_offset_invariance(void)
 		for (unsigned n = 0; n < V92_UPSTREAM_CHANNEL_SYMBOLS; ++n) {
 			memmove(history + 1, history, 9u * sizeof(history[0]));
 			history[0] = (int16_t)((int)(random_word(&random) % 4096u) - 2048);
-			int16_t sample = quantize(law, 0.7 * history[0] + 0.2 * history[4] - 0.1 * history[9]);
+			double filtered = 0.7 * history[0];
+
+			if (kind == 0)
+				filtered += 0.2 * history[4] - 0.1 * history[9];
+			if (kind >= 2)
+				filtered += 0.2 * history[1] - 0.1 * history[2];
+			if (kind == 3)
+				filtered += 0.05 * history[3];
+			int16_t sample = quantize(law, filtered);
 
 			for (unsigned i = 0; i < ARRAY_LENGTH(offset); ++i)
 				CHECK(v92_upstream_channel_sample(&channel[i], history[0], sample + offset[i]),
@@ -667,6 +674,14 @@ static bool test_offset_invariance(void)
 			}
 		}
 	}
+	return true;
+}
+
+static bool test_offset_invariance(void)
+{
+	/* General delayed, scalar, two-postcursor and three-postcursor fits. */
+	for (unsigned kind = 0; kind < 4; ++kind)
+		CHECK(test_offset_channel(kind), "offset channel %u failed", kind);
 	return true;
 }
 
