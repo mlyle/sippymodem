@@ -8820,8 +8820,8 @@ static bool v92_quality_backoff_contracts(const struct pcm_call *online)
 			 * failure or forgive its already-established recovery. */
 			if (call.state.data_path.v92_digital.upstream.line.plan.observation == V92_PCM_FRAME_CONSTELLATION) {
 				call.state.data_path.v92_digital.upstream.line.host.gain = 2.0;
-				call.state.data_path.v92_digital.upstream.line.host.lower = 2.0;
-				call.state.data_path.v92_digital.upstream.line.host.upper = 2.0;
+				call.state.data_path.v92_digital.upstream.line.host.bounds.lower = 2.0;
+				call.state.data_path.v92_digital.upstream.line.host.bounds.upper = 2.0;
 			}
 			CHECK(pcm_call_is_valid(&call), "quality boundary fixture is invalid");
 			enum pcm_call_result result = pcm_call_data_octet(&call,
@@ -8983,8 +8983,8 @@ static bool run_v92_no_path_recovery(enum g711_law law)
 	      "no-path recovery initial call failed");
 	struct pcm_call call = pair.digital;
 	const struct v92_upstream_data_rx *upstream = &call.state.data_path.v92_digital.upstream;
-	CHECK(upstream->model.valid && upstream->line.host.lower <= .75 &&
-	      upstream->line.host.upper >= .75, "no-path fixture did not fit its codec and host gain");
+	CHECK(upstream->model.valid && upstream->line.host.bounds.lower <= .75 &&
+	      upstream->line.host.bounds.upper >= .75, "no-path fixture did not fit its codec and host gain");
 
 	/* Damage real media and remove the trained host gain without an erasure
 	 * notification. The frozen codec model must reject the changed input.

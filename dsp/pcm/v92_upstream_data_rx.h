@@ -46,10 +46,11 @@ struct v92_upstream_data_line {
 	 * not analogue channel or mapping gain. Freeze before B1u validation;
 	 * zero gain means unidentified and preserves raw quality-score units. */
 	struct {
-		struct pcm_gain fit;
-		/* Retain the rounding interval too: the estimate alone cannot
-		 * certify a later, previously unseen wire level. */
-		double gain, lower, upper;
+		/* Acquire one rounding interval, then freeze it in place. Discard
+		 * correlation/energy at that boundary; later samples only verify
+		 * containment. The estimate alone cannot certify unseen levels. */
+		struct pcm_gain bounds;
+		double gain;
 	} host;
 	int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
 	int16_t wire[V92_PCM_MAPPING_FRAME_SYMBOLS];

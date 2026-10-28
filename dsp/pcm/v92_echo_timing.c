@@ -142,10 +142,9 @@ int v92_echo_timing_observe(
 	double observed = (lrint(corrected * line->polarity) * line->polarity - timing->offset) * timing->gain;
 	double midpoint = 0, half_width = 0;
 	if (line->host.gain > 0) {
-		struct pcm_gain bounds = { .lower = line->host.lower, .upper = line->host.upper };
 		struct g711_interval cell;
 		int16_t decoded = g711_decode(receiver->decoder.mapping.law, wire);
-		if (!pcm_gain_contains(&bounds, decoded, received) ||
+		if (!pcm_gain_contains(&line->host.bounds, decoded, received) ||
 		    !g711_quantization_interval(receiver->decoder.mapping.law, decoded, &cell)) {
 			v92_echo_timing_reset(timing);
 			return 0;

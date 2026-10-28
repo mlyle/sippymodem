@@ -211,11 +211,10 @@ static bool observation_offset(const struct v92_upstream_data_line *line,
 	int32_t physical = raw * line->polarity;
 	/* Test containment using the acquired rounding interval, not the
 	 * chosen point estimate. Do not narrow it using held-out data. */
-	struct pcm_gain gain = { .lower = line->host.lower, .upper = line->host.upper };
 	if (host == INT16_MIN || host == INT16_MAX ||
 	    physical <= INT16_MIN || physical >= INT16_MAX ||
 	    sample <= INT16_MIN || sample >= INT16_MAX ||
-	    !pcm_gain_contains(&gain, wire * line->polarity, host))
+	    !pcm_gain_contains(&line->host.bounds, wire * line->polarity, host))
 		return false;
 	/* Rounding the calibrated sample does not shift the codec interval. */
 	*offset = (raw - (int32_t)host * line->polarity - line->calibration.offset) * line->calibration.gain;
@@ -467,9 +466,7 @@ static bool wire_cells(const struct v92_upstream_data_line *line, enum g711_law 
 	    line->received_frames < V92_B1U_ACQUISITION_FRAMES - V92_PCM_RX_DELAY_FRAMES)
 		return false;
 	bool acquiring = line->received_frames < V92_B1U_ACQUISITION_FRAMES;
-	struct pcm_gain bounds = acquiring ? line->host.fit : (struct pcm_gain){
-		.lower = line->host.lower, .upper = line->host.upper,
-	};
+	const struct pcm_gain *bounds = &line->host.bounds;
 	double gain = line->host.gain;
 
 	/* Only actual wire/host pairs identify post-codec conditioning. During
@@ -477,7 +474,7 @@ static bool wire_cells(const struct v92_upstream_data_line *line, enum g711_law 
 	 * payload may verify its frozen bounds but must never refit the gain.
 	 * Let initial coding decisions settle before interval evidence changes
 	 * the ranking used by the independently bounded analogue gain fit. */
-	if (acquiring && !pcm_gain_estimate(&bounds, &gain))
+	if (acquiring && !pcm_gain_estimate(bounds, &gain))
 		return false;
 	if (gain <= 0.0)
 		return false;
@@ -488,7 +485,7 @@ static bool wire_cells(const struct v92_upstream_data_line *line, enum g711_law 
 		if (!line->wire_known[i] || !line->received[i] ||
 		    raw <= INT16_MIN || raw >= INT16_MAX ||
 		    host == INT16_MIN || host == INT16_MAX ||
-		    !pcm_gain_contains(&bounds, line->wire[i] * line->polarity, host) ||
+		    !pcm_gain_contains(bounds, line->wire[i] * line->polarity, host) ||
 		    !g711_quantization_interval(law, line->wire[i] * line->polarity, &cell))
 			return false;
 		double offset = line->raw[i] - (int32_t)host * line->polarity -

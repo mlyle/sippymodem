@@ -54,7 +54,7 @@ static bool run_case(const struct channel_case *test)
 	line->calibration.gain = 3.2 / test->host_gain;
 	line->polarity = test->seed & 1 ? 1 : -1;
 	line->received_frames = V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES;
-	line->host.gain = line->host.lower = line->host.upper = test->host_gain;
+	line->host.gain = line->host.bounds.lower = line->host.bounds.upper = test->host_gain;
 	if (test->inverse)
 		line->residual = (struct v92_residual){
 			.active = true, .count = 2, .delay = { 4, 6 },

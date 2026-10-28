@@ -361,7 +361,7 @@ static bool test_data_initialization(void)
 								CHECK(v92_pcm_frame_rx_init_constellation(&expected.decoder, &mapping) ==
 									V92_PCM_FRAME_OK, "constellation initialization fixture failed");
 								expected.line.calibration.gain = plan.gain;
-								pcm_gain_init(&expected.line.host.fit);
+								pcm_gain_init(&expected.line.host.bounds);
 								expected.line.delay_remaining = plan.delay -
 									V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY;
 							} else {
@@ -1187,8 +1187,8 @@ static bool b1u_switch_contracts(const struct v92_upstream_data_rx *initial,
 					expected.line.calibration.correlation = expected.line.calibration.energy = 0;
 					expected.line.calibration.raw_sum = expected.line.calibration.target_sum = 0;
 					expected.line.calibration.samples = 0;
-					pcm_gain_init(&expected.line.host.fit);
-					expected.line.host.gain = expected.line.host.lower = expected.line.host.upper = 0;
+					pcm_gain_init(&expected.line.host.bounds);
+					expected.line.host.gain = 0;
 					CHECK(v92_pcm_frame_rx_init_constellation(&expected.decoder, mapping) == V92_PCM_FRAME_OK,
 					      "boundary decoder fixture failed");
 					v92_upstream_model_init(&expected);
@@ -1317,8 +1317,8 @@ static bool test_fast_finish(enum g711_law law, uint8_t old_rate, uint8_t new_ra
 				line.calibration.correlation = line.calibration.energy = 0;
 				line.calibration.raw_sum = line.calibration.target_sum = 0;
 				line.calibration.samples = 0;
-				pcm_gain_init(&line.host.fit);
-				line.host.gain = line.host.lower = line.host.upper = 0.0;
+				pcm_gain_init(&line.host.bounds);
+				line.host.gain = 0.0;
 				CHECK(!rx.model.valid && rx.model.acquiring, "new B1u retained the old codec model");
 			}
 			else {
@@ -2682,6 +2682,7 @@ static bool check_codec_model(struct codec_model_workspace *work, int polarity, 
 	struct v92_phase4_record_tx e2u_tx;
 	struct v92_e2u_rx e2u_rx;
 	struct v92_observation frozen[2];
+	struct pcm_gain frozen_host_bounds = { 0 };
 	uint8_t codes[(FRAMES + 34 + PREFIX) * V92_PCM_MAPPING_FRAME_SYMBOLS];
 	uint32_t random = 0x35791bdu;
 	int16_t previous = 0, second = 0;
@@ -2722,11 +2723,11 @@ static bool check_codec_model(struct codec_model_workspace *work, int polarity, 
 		if (fault == 0)
 			work->invalid.line.host.gain = .75;
 		else if (fault == 1)
-			work->invalid.line.host.fit.lower = NAN;
+			work->invalid.line.host.bounds.lower = NAN;
 		else if (fault == 2)
-			work->invalid.line.host.fit.energy = -1;
+			work->invalid.line.host.bounds.energy = -1;
 		else
-			work->invalid.line.host.fit.upper = -1;
+			work->invalid.line.host.bounds.upper = -1;
 		CHECK(!v92_upstream_data_rx_is_valid(&work->invalid), "invalid host acquisition accepted");
 	}
 	previous = second = 0;
@@ -2830,8 +2831,10 @@ static bool check_codec_model(struct codec_model_workspace *work, int polarity, 
 			CHECK(deferred ? work->receiver.model.fitting && !work->receiver.model.valid :
 				work->receiver.model.valid == 3u && !work->receiver.model.acquiring,
 				"codec B1u acquisition boundary changed");
+			frozen_host_bounds = work->receiver.line.host.bounds;
 			CHECK(fabs(work->receiver.line.host.gain - .75) < 1e-12 &&
-			      memory_region_is_zero(&work->receiver.line.host.fit, sizeof(work->receiver.line.host.fit)),
+			      frozen_host_bounds.lower <= .75 && frozen_host_bounds.upper >= .75 &&
+			      frozen_host_bounds.correlation == 0. && frozen_host_bounds.energy == 0.,
 			      "host gain did not freeze at the acquisition boundary");
 			if (!deferred) memcpy(frozen, work->receiver.model.model, sizeof(frozen));
 		} else if (work->receiver.line.received_frames > V92_B1U_ACQUISITION_FRAMES) {
@@ -2841,10 +2844,10 @@ static bool check_codec_model(struct codec_model_workspace *work, int polarity, 
 			}
 			CHECK(memcmp(frozen, work->receiver.model.model, sizeof(frozen)) == 0 &&
 			      fabs(work->receiver.line.host.gain - .75) < 1e-12 &&
-			      memory_region_is_zero(&work->receiver.line.host.fit, sizeof(work->receiver.line.host.fit)),
+			      memcmp(&frozen_host_bounds, &work->receiver.line.host.bounds, sizeof(frozen_host_bounds)) == 0,
 			      "held-out B1u or payload retrained the codec models");
 		} else {
-			CHECK(work->receiver.line.host.gain == 0.0 && pcm_gain_is_valid(&work->receiver.line.host.fit),
+			CHECK(work->receiver.line.host.gain == 0.0 && pcm_gain_is_valid(&work->receiver.line.host.bounds),
 			      "host gain froze before the acquisition boundary");
 		}
 		if (deferred && work->receiver.line.received_frames == V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
@@ -2931,22 +2934,26 @@ static bool check_codec_model(struct codec_model_workspace *work, int polarity, 
 			V92_UPSTREAM_DATA_RX_NO_PATH && !memcmp(&work->conditioned, &work->retained, sizeof(work->retained)) &&
 			!memcmp(&out, &before, sizeof(out)), "conditioning fault changed coding state or payload");
 	}
-	for (unsigned fault = 0; fault < 7; ++fault) {
+	for (unsigned fault = 0; fault < 9; ++fault) {
 		work->invalid = work->saved;
 		if (fault == 0)
 			work->invalid.line.host.gain = NAN;
 		else if (fault == 1)
 			work->invalid.line.host.gain = -1;
 		else if (fault == 2)
-			work->invalid.line.host.lower = NAN;
+			work->invalid.line.host.bounds.lower = NAN;
 		else if (fault == 3)
-			work->invalid.line.host.upper = INFINITY;
+			work->invalid.line.host.bounds.upper = INFINITY;
 		else if (fault == 4)
-			work->invalid.line.host.lower = work->invalid.line.host.gain + .1;
+			work->invalid.line.host.bounds.lower = work->invalid.line.host.gain + .1;
 		else if (fault == 5)
-			work->invalid.line.host.upper = work->invalid.line.host.gain - .1;
+			work->invalid.line.host.bounds.upper = work->invalid.line.host.gain - .1;
+		else if (fault == 6)
+			pcm_gain_init(&work->invalid.line.host.bounds);
+		else if (fault == 7)
+			work->invalid.line.host.bounds.correlation = 1.;
 		else
-			pcm_gain_init(&work->invalid.line.host.fit);
+			work->invalid.line.host.bounds.energy = 1.;
 		CHECK(!v92_upstream_data_rx_is_valid(&work->invalid), "invalid frozen host gain accepted");
 	}
 	/* With no new likelihood evidence, equally ranked codec hypotheses can
