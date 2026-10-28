@@ -182,19 +182,8 @@ static enum v92_phase4_analog_station_result note_cpd(
 	     (station->cpd.acknowledges_cpu && !base.acknowledges_cpu)))
 		return V92_PHASE4_ANALOG_STATION_FAILED;
 	selected = *parameters;
-	if (station->cpd_received || station->transmit.control.renegotiation) {
-		const struct v92_cpd_parameters *previous = &station->mapping.cpd;
-		if (!selected.modulus_present)
-			memcpy(selected.modulus, previous->modulus, sizeof(selected.modulus));
-		if (!selected.filters_present)
-			memcpy(selected.filter, previous->filter, sizeof(selected.filter));
-		if (!selected.constellations_present) {
-			memcpy(selected.constellation, previous->constellation, sizeof(selected.constellation));
-			memcpy(selected.frame_constellation, previous->frame_constellation,
-			       sizeof(selected.frame_constellation));
-		}
-		selected.modulus_present = selected.filters_present = selected.constellations_present = true;
-	}
+	if (station->cpd_received || station->transmit.control.renegotiation)
+		v92_cpd_inherit_tables(&selected, &station->mapping.cpd);
 	if (v92_pcm_mapping_init(&mapping, station->transmit.control.cpu.law, &selected) != V92_PCM_MAPPING_OK)
 		return V92_PHASE4_ANALOG_STATION_FAILED;
 	if (station->cpd_received) {

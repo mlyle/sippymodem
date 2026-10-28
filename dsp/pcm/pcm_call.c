@@ -4866,15 +4866,7 @@ static bool v92_fast_analog_receive(struct pcm_call *call, uint8_t octet)
 		/* Parameter-mode CPd may inherit omitted sections from the preceding
 		 * selection, but cannot change a selection already acknowledged here. */
 		const struct v92_cpd_parameters *old = &fast->mapping.cpd;
-		if (!selected.modulus_present)
-			memcpy(selected.modulus, old->modulus, sizeof(selected.modulus));
-		if (!selected.filters_present)
-			memcpy(selected.filter, old->filter, sizeof(selected.filter));
-		if (!selected.constellations_present) {
-			memcpy(selected.constellation, old->constellation, sizeof(selected.constellation));
-			memcpy(selected.frame_constellation, old->frame_constellation, sizeof(selected.frame_constellation));
-		}
-		selected.modulus_present = selected.filters_present = selected.constellations_present = true;
+		v92_cpd_inherit_tables(&selected, old);
 		struct v92_pcm_mapping mapping;
 		ack = selected.acknowledges_cpu;
 		selected.acknowledges_cpu = old->acknowledges_cpu;

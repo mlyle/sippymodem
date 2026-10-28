@@ -124,6 +124,46 @@ static struct v92_cpd_parameters selection(unsigned int sections)
 	return parameters;
 }
 
+static bool test_table_inheritance(void)
+{
+	for (unsigned sections = 0; sections < 8; ++sections) {
+		struct v92_cpd_parameters previous = selection(7);
+		struct v92_cpd_parameters update = selection(sections);
+		struct v92_cpd_parameters expected = selection(7);
+
+		/* Present tables replace different preceding values. Omitted tables
+		 * retain the fixture, so every combination has the same full result. */
+		if (sections & 1u)
+			for (unsigned i = 0; i < V92_CPD_MODULUS_COUNT; ++i)
+				previous.modulus[i]++;
+		if (sections & 2u)
+			for (unsigned i = 0; i < V92_CPD_FILTER_SECTION_COUNT; ++i)
+				previous.filter[i].coefficient[0] = (int16_t)(123 + i);
+		if (sections & 4u)
+			for (unsigned i = 0; i < V92_CPD_MAX_CONSTELLATIONS; ++i)
+				for (unsigned j = 0; j < previous.constellation[i].count; ++j)
+					previous.constellation[i].positive_linear[j]++;
+		struct v92_cpd_parameters saved = previous;
+		update.four_times_gain_q0_16 = expected.four_times_gain_q0_16 = 1234;
+		update.data_rate_number = expected.data_rate_number = 1;
+		update.trellis = expected.trellis = V92_CPD_TRELLIS_16_STATE;
+		update.extend_e2u = expected.extend_e2u = false;
+		update.acknowledges_cpu = expected.acknowledges_cpu = false;
+		CHECK(v92_cpd_parameters_are_valid(&previous) &&
+		      v92_cpd_parameters_are_valid(&update),
+		      "inheritance fixture is not canonical: sections %u", sections);
+		v92_cpd_inherit_tables(&update, &previous);
+		CHECK(parameters_equal(&update, &expected) &&
+		      parameters_equal(&previous, &saved) &&
+		      v92_cpd_parameters_are_valid(&update),
+		      "table inheritance changed selection fields or tables: sections %u", sections);
+		v92_cpd_inherit_tables(&update, &previous);
+		CHECK(parameters_equal(&update, &expected),
+		      "completed selection inherited tables again: sections %u", sections);
+	}
+	return true;
+}
+
 static struct v92_cpd_base_parameters base_parameters(
 	const struct v92_cpd_parameters *parameters)
 {
@@ -768,6 +808,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "filter response length", test_filter_response_length },
+		{ "table inheritance", test_table_inheritance },
 		{ "cleardown wire image", test_cleardown_wire_image },
 		{ "base encoding", test_base_encoding },
 		{ "optional section matrix", test_optional_section_matrix },

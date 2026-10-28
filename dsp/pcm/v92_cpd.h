@@ -8,6 +8,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 enum {
 	V92_CPD_FRAME_INTERVALS = 6,
@@ -134,6 +135,25 @@ struct v92_cpd_parameters {
 	bool filters_present;
 	bool constellations_present;
 };
+
+/* Complete omitted tables from the preceding selection. Both records must
+ * be canonical CPd parameters and previous must contain all three tables.
+ * Fixed fields, including the new acknowledgment, belong to the update. */
+static inline void v92_cpd_inherit_tables(
+	struct v92_cpd_parameters *selected,
+	const struct v92_cpd_parameters *previous)
+{
+	if (!selected->modulus_present)
+		memcpy(selected->modulus, previous->modulus, sizeof(selected->modulus));
+	if (!selected->filters_present)
+		memcpy(selected->filter, previous->filter, sizeof(selected->filter));
+	if (!selected->constellations_present) {
+		memcpy(selected->constellation, previous->constellation, sizeof(selected->constellation));
+		memcpy(selected->frame_constellation, previous->frame_constellation,
+		       sizeof(selected->frame_constellation));
+	}
+	selected->modulus_present = selected->filters_present = selected->constellations_present = true;
+}
 
 bool v92_cpd_parameters_are_valid(
 	const struct v92_cpd_parameters *parameters);
