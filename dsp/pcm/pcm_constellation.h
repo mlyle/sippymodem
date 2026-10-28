@@ -23,6 +23,11 @@ struct pcm_constellation {
 	uint8_t ucode_mask[PCM_CONSTELLATION_MASK_BYTES];
 };
 
+/* Row tables are packed bitmap planes; copies and comparisons include no
+ * padding or non-membership state between consecutive masks. */
+_Static_assert(sizeof(struct pcm_constellation) == PCM_CONSTELLATION_MASK_BYTES,
+	       "constellation rows must contain only packed membership bits");
+
 /* Callers supply owned storage and a validated Ucode below 128. */
 static inline void pcm_constellation_add(
 	struct pcm_constellation *constellation, uint8_t ucode)

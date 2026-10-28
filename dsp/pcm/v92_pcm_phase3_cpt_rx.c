@@ -205,16 +205,10 @@ static bool parameters_match(
 	    memcmp(first->frame_constellation, second->frame_constellation,
 		   sizeof(first->frame_constellation)) != 0)
 		return false;
-	for (size_t index = 0; index < V92_CPT_MAX_CONSTELLATIONS; ++index) {
-		if (memcmp(first->transmit_constellations[index].ucode_mask,
-			   second->transmit_constellations[index].ucode_mask,
-			   PCM_CONSTELLATION_MASK_BYTES) != 0 ||
-		    memcmp(first->codec_constellations[index].ucode_mask,
-			   second->codec_constellations[index].ucode_mask,
-			   PCM_CONSTELLATION_MASK_BYTES) != 0)
-			return false;
-	}
-	return true;
+	return memcmp(first->transmit_constellations, second->transmit_constellations,
+		      sizeof(first->transmit_constellations)) == 0 &&
+	       memcmp(first->codec_constellations, second->codec_constellations,
+		      sizeof(first->codec_constellations)) == 0;
 }
 
 static enum v92_pcm_phase3_cpt_rx_result accept_frame(

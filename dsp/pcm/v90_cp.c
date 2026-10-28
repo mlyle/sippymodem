@@ -85,17 +85,12 @@ bool v90_cp_parameters_are_equal(
 	    memcmp(left->frame_constellation, right->frame_constellation,
 		   sizeof(left->frame_constellation)) != 0)
 		return false;
-	for (size_t row = 0; row < left->constellation_count; ++row) {
-		if (memcmp(left->transmit_constellations[row].ucode_mask,
-			   right->transmit_constellations[row].ucode_mask,
-			   V90_CP_CONSTELLATION_MASK_BYTES) != 0 ||
-		    (left->codec_constellations_differ &&
-		     memcmp(left->codec_constellations[row].ucode_mask,
-			    right->codec_constellations[row].ucode_mask,
-			    V90_CP_CONSTELLATION_MASK_BYTES) != 0))
-			return false;
-	}
-	return true;
+	size_t bytes = left->constellation_count * sizeof(left->transmit_constellations[0]);
+	return memcmp(left->transmit_constellations, right->transmit_constellations,
+		      bytes) == 0 &&
+	       (!left->codec_constellations_differ ||
+		memcmp(left->codec_constellations, right->codec_constellations,
+		       bytes) == 0);
 }
 
 size_t v90_cp_frame_bits(const struct v90_cp_parameters *parameters)
