@@ -7953,7 +7953,8 @@ static bool test_lapm_idle_supervision(void)
 
 static bool test_lapm_acknowledgement_progress(void)
 {
-	enum { DATA = 2, DISC = 3, STALL, ACK, PEER_BUSY, LOCAL_BUSY };
+	enum { DATA = 2, DISC = 3, STALL, ACK, PEER_BUSY, LOCAL_BUSY, EARLY_ACK,
+	       INFORMATION_POLLS = 4 };
 	static const uint8_t starts[] = { 0, 127 };
 	static const uint8_t payload[] = { 'X', 'Y' };
 	struct modem_driver driver = {
@@ -7962,7 +7963,7 @@ static bool test_lapm_acknowledgement_progress(void)
 	};
 
 	for (size_t start = 0; start < ARRAY_LENGTH(starts); ++start)
-	for (unsigned scenario = STALL; scenario <= LOCAL_BUSY; ++scenario) {
+	for (unsigned scenario = STALL; scenario <= EARLY_ACK; ++scenario) {
 		struct modem *m = create_compat_modem(&driver, driver.name);
 		frame_t *outgoing;
 		unsigned base = starts[start];
@@ -8023,11 +8024,12 @@ static bool test_lapm_acknowledgement_progress(void)
 				break;
 			}
 			CHECK(l->state == DATA && l->stalled_polls == expiry &&
-			      modem_ec_take_retrain_request(m) == (expiry == 2) &&
+			      modem_ec_take_retrain_request(m) ==
+				      (scenario != EARLY_ACK && expiry == INFORMATION_POLLS) &&
 			      !modem_ec_take_retrain_request(m),
 			      "nonadvancing enquiries did not request exactly one recovery");
-			if (expiry == 2) {
-				CHECK(modem_ec_resume_after_retrain(m) == 0 && l->stalled_polls == 2 &&
+			if (expiry == INFORMATION_POLLS) {
+				CHECK(modem_ec_resume_after_retrain(m) == 0 && l->stalled_polls == INFORMATION_POLLS &&
 				      l->stalled_retrain, "physical recovery reset data-progress history");
 			}
 			while ((outgoing = m->packer.hdlc.get_tx_frame(l)) != NULL) {
@@ -8043,10 +8045,14 @@ static bool test_lapm_acknowledgement_progress(void)
 			      "unchanged acknowledgement lost or consumed pending data");
 			m->packer.hdlc.tx_complete(l, outgoing);
 			CHECK(!modem_ec_transmit_idle(m), "retry or unchanged N(R) falsely completed transmission");
-			if (expiry == 2 && scenario != STALL)
+			if ((expiry == INFORMATION_POLLS && scenario != STALL) ||
+			    (scenario == EARLY_ACK && expiry == 2))
 				break;
 		}
-		if (scenario == ACK) {
+		if (scenario == ACK || scenario == EARLY_ACK) {
+			CHECK(scenario != EARLY_ACK ||
+			      (l->stalled_polls == 2 && !l->stalled_retrain),
+			      "third information attempt was interrupted by physical recovery");
 			wire[2] = (uint8_t)(((base + 1) & 127) << 1); /* RR F=0 advances V(A). */
 			m->packer.hdlc.rx_complete(l, &incoming);
 			CHECK(!l->stalled_polls && !l->stalled_retrain && l->va == ((base + 1) & 127),

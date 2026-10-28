@@ -71,6 +71,9 @@ enum {
 	LAPM_TIMER_FALLBACK_BIT_RATE = 57600,
 	/* Allow two unanswered control retries before physical recovery. */
 	LAPM_RETRAIN_POLLS = 2,
+	/* Answered enquiries can still precede information loss. Give retained
+	 * I frames more ARQ attempts before replacing the physical epoch. */
+	LAPM_INFORMATION_RETRAIN_POLLS = 4,
 	/* Let a slow peer answer the third SABME before physical recovery. */
 	LAPM_ESTABLISHMENT_RETRAIN_POLLS = 3,
 	/* Faster XIDs must not shorten the initial physical-recovery allowance. */
@@ -1900,7 +1903,8 @@ bool modem_ec_take_retrain_request(struct modem *m)
 	    l->busy || l->peer_busy ||
 	    m->bit_timer <= 0 || m->bit_timer_func != t401_timeout ||
 	    (l->retrain_poll ? l->rtx_count - l->retrain_poll < polls :
-	     (l->rtx_count < polls && l->stalled_polls < polls)) ||
+	     (l->rtx_count < polls &&
+	      l->stalled_polls < LAPM_INFORMATION_RETRAIN_POLLS)) ||
 	    l->stalled_retrain)
 		return false;
 	/* A usable receive direction need not imply a usable transmit direction.
