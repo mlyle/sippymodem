@@ -367,8 +367,12 @@ static enum v92_e2u_rx_result search_sample(
 	if (search != NULL) {
 		if (!eligible || boundary)
 			repeat.candidate_active = false;
+		const struct v92_phase4_demodulator *observed = &control->signal.line.demodulator;
+		/* Identical coding memories make this trial identical to the ordinary one. */
 		if (eligible && boundary && repeat.frame_bits && !repeat.bit_index &&
-		    control->repeat_confirmed && control->repeat_symbols * bits == repeat.frame_bits) {
+		    control->repeat_confirmed && control->repeat_symbols * bits == repeat.frame_bits &&
+		    (repeat.coder.scrambler.history != observed->descrambler.history ||
+		     repeat.coder.previous_encoded_sign != observed->previous_encoded_sign)) {
 			if (v92_e2u_rx_init(&repeat.repeated, &control->signal, extended) != V92_E2U_RX_OK)
 				return fail(receiver);
 			repeat.repeated.signal.line.demodulator.descrambler = repeat.coder.scrambler;
