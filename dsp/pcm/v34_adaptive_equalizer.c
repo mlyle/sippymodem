@@ -297,27 +297,19 @@ enum v34_adaptive_equalizer_result v34_adaptive_equalizer_push(
 	return V34_ADAPTIVE_EQUALIZER_OK;
 }
 
-static int16_t feedback_in_phase(
-	const struct v34_adaptive_equalizer_feedback *feedback)
-{
-	/* Feedback coefficients walk the three retained inputs oldest first.
-	 * Keep the legacy negative rounding bias in the real projection. */
-	uint32_t accumulator = fir_read_ring_s16(feedback->in_phase_history,
-		feedback->coefficient_a, 3, 2, 1) - UINT32_C(0x2000) -
-		fir_read_ring_s16(feedback->quadrature_history,
-			feedback->coefficient_b, 3, 2, 1);
-
-	return shifted_s16(accumulator, 14);
-}
-
-static int16_t feedback_shift_and_quadrature(
+static struct v34_analytic_sample predict_feedback_and_shift(
 	struct v34_adaptive_equalizer_feedback *feedback)
 {
-	uint32_t accumulator = UINT32_C(0x2000) +
-		fir_read_ring_s16(feedback->in_phase_history,
-			feedback->coefficient_b, 3, 2, 1) +
-		fir_read_ring_s16(feedback->quadrature_history,
-			feedback->coefficient_a, 3, 2, 1);
+	/* Coefficients walk the three retained inputs oldest first. Preserve
+	 * the opposite rounding biases and modulo-2^32 complex accumulation. */
+	uint32_t real = 0u - UINT32_C(0x2000);
+	uint32_t imaginary = UINT32_C(0x2000);
+
+	for (size_t tap = 0; tap < 3; ++tap)
+		fir_accumulate_complex_s16(feedback->in_phase_history[2u - tap],
+			feedback->quadrature_history[2u - tap],
+			feedback->coefficient_a[tap], feedback->coefficient_b[tap],
+			&real, &imaginary);
 
 	/* Each filter evaluation advances the four-word history: once for the
 	 * received decision and once again when the resulting error is learned. */
@@ -325,21 +317,22 @@ static int16_t feedback_shift_and_quadrature(
 		3 * sizeof(feedback->in_phase_history[0]));
 	memmove(feedback->quadrature_history + 1, feedback->quadrature_history,
 		3 * sizeof(feedback->quadrature_history[0]));
-	return shifted_s16(accumulator, 14);
+	return (struct v34_analytic_sample){
+		.in_phase = shifted_s16(real, 14),
+		.quadrature = shifted_s16(imaginary, 14),
+	};
 }
 
 static struct v34_analytic_sample apply_feedback(
 	struct v34_adaptive_equalizer_feedback *feedback,
 	struct v34_analytic_sample input)
 {
-	int16_t predicted_in_phase = feedback_in_phase(feedback);
-	int16_t predicted_quadrature =
-		feedback_shift_and_quadrature(feedback);
+	struct v34_analytic_sample predicted = predict_feedback_and_shift(feedback);
 	struct v34_analytic_sample output = {
 		.in_phase = wrap_s16_from_s32(
-			(int32_t)input.in_phase + predicted_in_phase),
+			(int32_t)input.in_phase + predicted.in_phase),
 		.quadrature = wrap_s16_from_s32(
-			(int32_t)input.quadrature + predicted_quadrature),
+			(int32_t)input.quadrature + predicted.quadrature),
 	};
 
 	feedback->in_phase_history[0] = input.in_phase;
@@ -414,13 +407,11 @@ static struct v34_analytic_sample update_feedback_filter(
 	struct v34_adaptive_equalizer_feedback *feedback,
 	struct v34_analytic_sample decision_error)
 {
-	int16_t predicted_in_phase = feedback_in_phase(feedback);
-	int16_t predicted_quadrature =
-		feedback_shift_and_quadrature(feedback);
+	struct v34_analytic_sample predicted = predict_feedback_and_shift(feedback);
 	int16_t error_in_phase = wrap_s16_from_s32(
-		(int32_t)decision_error.in_phase + predicted_in_phase);
+		(int32_t)decision_error.in_phase + predicted.in_phase);
 	int16_t error_quadrature = wrap_s16_from_s32(
-		(int32_t)decision_error.quadrature + predicted_quadrature);
+		(int32_t)decision_error.quadrature + predicted.quadrature);
 
 	feedback->in_phase_history[0] = decision_error.in_phase;
 	feedback->quadrature_history[0] = decision_error.quadrature;

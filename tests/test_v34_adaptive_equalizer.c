@@ -701,6 +701,28 @@ static int16_t feedback_oracle_sample(int64_t sum)
 		(int16_t)((int32_t)sample - 65536);
 }
 
+static struct v34_analytic_sample feedback_projection_oracle(
+	const struct v34_adaptive_equalizer_feedback *feedback)
+{
+	int64_t real = -8192, imaginary = 8192;
+
+	/* Widen the whole convolution, then wrap once. Read history in age
+	 * order, independently of the filter's tap walk. */
+	for (unsigned age = 0; age < 3; ++age) {
+		int64_t a = feedback->coefficient_a[2 - age];
+		int64_t b = feedback->coefficient_b[2 - age];
+		int64_t x = feedback->in_phase_history[age];
+		int64_t y = feedback->quadrature_history[age];
+
+		real += a * x - b * y;
+		imaginary += b * x + a * y;
+	}
+	return (struct v34_analytic_sample){
+		.in_phase = feedback_oracle_sample(real),
+		.quadrature = feedback_oracle_sample(imaginary),
+	};
+}
+
 static bool test_feedback_full_scale_projection(void)
 {
 	const int16_t edges[] = { INT16_MIN, INT16_MAX, -1, 0, 1 };
@@ -710,12 +732,14 @@ static bool test_feedback_full_scale_projection(void)
 		struct v34_adaptive_equalizer equalizer;
 		struct v34_adaptive_equalizer_observation observation;
 		struct v34_adaptive_equalizer_feedback saved;
-		int64_t real = -8192, imaginary = 8192;
+		struct v34_analytic_sample predicted;
+		bool learn = (trial & 1u) != 0;
 
 		CHECK(v34_adaptive_equalizer_init(&equalizer) ==
 			      V34_ADAPTIVE_EQUALIZER_OK &&
 		      v34_adaptive_equalizer_set_feedback_mode(&equalizer,
-			      V34_ADAPTIVE_EQUALIZER_FEEDBACK_APPLY) ==
+			      V34_ADAPTIVE_EQUALIZER_FEEDBACK_APPLY |
+				      (learn ? V34_ADAPTIVE_EQUALIZER_FEEDBACK_LEARN : 0)) ==
 			      V34_ADAPTIVE_EQUALIZER_OK,
 		      "full-scale feedback owner did not initialize");
 		for (unsigned i = 0; i < 3; ++i) {
@@ -731,22 +755,12 @@ static bool test_feedback_full_scale_projection(void)
 				edges[(trial / 5 + i) % 5] : next_sample(&random);
 		}
 		saved = equalizer.feedback;
-		/* Widen the complete complex convolution, then wrap once. Read
-		 * history in age order, independently of the filter's tap walk. */
-		for (unsigned age = 0; age < 3; ++age) {
-			int64_t a = saved.coefficient_a[2 - age];
-			int64_t b = saved.coefficient_b[2 - age];
-			int64_t x = saved.in_phase_history[age];
-			int64_t y = saved.quadrature_history[age];
-
-			real += a * x - b * y;
-			imaginary += b * x + a * y;
-		}
+		predicted = feedback_projection_oracle(&saved);
 		CHECK(push_zero_symbol(&equalizer) &&
 		      v34_adaptive_equalizer_observe(&equalizer, &observation) ==
 			      V34_ADAPTIVE_EQUALIZER_OK &&
-		      observation.decision.in_phase == feedback_oracle_sample(real) &&
-		      observation.decision.quadrature == feedback_oracle_sample(imaginary),
+		      observation.decision.in_phase == predicted.in_phase &&
+		      observation.decision.quadrature == predicted.quadrature,
 		      "full-scale feedback projection changed at trial %u", trial);
 		for (unsigned i = 0; i < 4; ++i) {
 			CHECK(equalizer.feedback.in_phase_history[i] ==
@@ -759,7 +773,43 @@ static bool test_feedback_full_scale_projection(void)
 			     sizeof(saved.coefficient_a)) == 0 &&
 		      memcmp(equalizer.feedback.coefficient_b, saved.coefficient_b,
 			     sizeof(saved.coefficient_b)) == 0,
-		      "frozen feedback coefficients changed");
+		      "feedback prediction changed coefficients before commit");
+		/* A zero semantic error still learns the second feedback prediction.
+		 * Widen that projection and coefficient update independently, checking
+		 * the second history advance as well as frozen-mode preservation. */
+		saved = equalizer.feedback;
+		if (learn) {
+			predicted = feedback_projection_oracle(&saved);
+			int64_t error_i = predicted.in_phase;
+			int64_t error_q = predicted.quadrature;
+
+			for (unsigned i = 3; i != 0; --i) {
+				saved.in_phase_history[i] = saved.in_phase_history[i - 1];
+				saved.quadrature_history[i] = saved.quadrature_history[i - 1];
+			}
+			saved.in_phase_history[0] = 0;
+			saved.quadrature_history[0] = 0;
+			for (unsigned i = 0; i < 3; ++i) {
+				int64_t x = saved.in_phase_history[3 - i];
+				int64_t y = saved.quadrature_history[3 - i];
+				uint16_t a = (uint32_t)(INT64_C(65536) * saved.coefficient_a[i] -
+					x * error_i - y * error_q + 32768) >> 16;
+				uint16_t b = (uint32_t)(INT64_C(65536) * saved.coefficient_b[i] -
+					x * error_q + y * error_i + 32768) >> 16;
+
+				saved.coefficient_a[i] = a <= INT16_MAX ? a : (int32_t)a - 65536;
+				saved.coefficient_b[i] = b <= INT16_MAX ? b : (int32_t)b - 65536;
+			}
+		}
+		struct v34_adaptive_equalizer_decision decision = {
+			.observation = observation,
+			.target = observation.decision,
+			.adaptation = V34_ADAPTIVE_EQUALIZER_SKIP,
+		};
+		CHECK(v34_adaptive_equalizer_commit(&equalizer, &decision) ==
+			      V34_ADAPTIVE_EQUALIZER_OK &&
+		      memcmp(&equalizer.feedback, &saved, sizeof(saved)) == 0,
+		      "full-scale feedback learning changed at trial %u", trial);
 	}
 	return true;
 }
