@@ -2,6 +2,7 @@
 
 #include "v34_training_line.h"
 
+#include "datapump_transmit.h"
 #include "v34_phase3_s_sequence.h"
 #include "memory_region.h"
 #include "sample_math.h"
@@ -14,6 +15,15 @@ static const double V34_EQUAL_POWER_RMS =
 	0.70710678118654752440084436210485;
 static const double V34_POWER_TOLERANCE = 1e-9;
 static const double V34_TRAINING_MAXIMUM_POINT_POWER = 9.0 / 5.0;
+
+uint16_t v34_training_line_tail_samples(
+	const struct v34_phase3_profile *profile)
+{
+	return (uint16_t)(datapump_symbol_tail(8000,
+		profile->symbol_rate_numerator, profile->symbol_rate_denominator,
+		V34_TRAINING_LINE_PULSE_TAIL_SYMBOLS + 1u) +
+		V34_TRAINING_LINE_FILTER_TAIL_SAMPLES);
+}
 
 enum calibration_stage {
 	CALIBRATE_SYMBOLS,

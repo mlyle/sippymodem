@@ -9,9 +9,6 @@
 enum {
 	S_LAST_ROTATION = 3,
 	DECODER_POWER_Q15 = 0x2000,
-	MAX_TAIL_SAMPLES =
-		((V34_TRAINING_LINE_PULSE_TAIL_SYMBOLS + 1u) * 8000u +
-		 2399u) / 2400u + V34_TRAINING_LINE_FILTER_TAIL_SAMPLES,
 };
 
 bool v34_cleardown_is_valid(const struct v34_cleardown *cleardown)
@@ -41,7 +38,7 @@ bool v34_cleardown_is_valid(const struct v34_cleardown *cleardown)
 		       v34_station_peer_role(cleardown->transmit_mp.role) &&
 	       cleardown->receive_line.timing.transmitting_profile.local_role ==
 		       cleardown->receive_mp.transmitting_role &&
-	       cleardown->tail_samples <= MAX_TAIL_SAMPLES &&
+	       cleardown->tail_samples <= V34_TRAINING_LINE_MAX_TAIL_SAMPLES &&
 	       cleardown->stage >= V34_CLEARDOWN_S &&
 	       cleardown->stage <= V34_CLEARDOWN_FINISHED &&
 	       (cleardown->stage == V34_CLEARDOWN_S ||
@@ -113,15 +110,6 @@ enum v34_cleardown_result v34_cleardown_init(
 	return V34_CLEARDOWN_OK;
 }
 
-static uint16_t tail_samples(const struct v34_training_line *line)
-{
-	return (uint16_t)(((V34_TRAINING_LINE_PULSE_TAIL_SYMBOLS + 1u) *
-		8000u * line->profile.symbol_rate_denominator +
-		line->profile.symbol_rate_numerator - 1u) /
-		line->profile.symbol_rate_numerator +
-		V34_TRAINING_LINE_FILTER_TAIL_SAMPLES);
-}
-
 static bool next_point(
 	struct v34_cleardown *cleardown, struct qam_point *point)
 {
@@ -154,7 +142,7 @@ static bool next_point(
 		    cleardown->peer_parameters.acknowledges_peer_mp) {
 			cleardown->stage = V34_CLEARDOWN_TAIL;
 			cleardown->tail_samples =
-				tail_samples(&cleardown->transmit_line);
+				v34_training_line_tail_samples(&cleardown->transmit_line.profile);
 			*point = (struct qam_point){ 0 };
 			return true;
 		}

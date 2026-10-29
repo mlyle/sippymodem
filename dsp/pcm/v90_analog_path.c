@@ -14,10 +14,6 @@
 
 enum {
 	CLEARDOWN_RECORDS = 2,
-	/* The slowest admitted upstream is 2400 symbols/s. */
-	CLEARDOWN_MAX_TAIL_SAMPLES =
-		((V34_TRAINING_LINE_PULSE_TAIL_SYMBOLS + 1u) * 8000u +
-		 2399u) / 2400u + V34_TRAINING_LINE_FILTER_TAIL_SAMPLES,
 };
 
 static bool control_mapping_matches(
@@ -107,7 +103,7 @@ bool v90_analog_path_is_valid(const struct v90_analog_path *path)
 {
 	if (path == NULL || !g711_law_is_valid(path->law) ||
 	    path->cleardown_records > CLEARDOWN_RECORDS ||
-	    path->cleardown_tail_samples > CLEARDOWN_MAX_TAIL_SAMPLES ||
+	    path->cleardown_tail_samples > V34_TRAINING_LINE_MAX_TAIL_SAMPLES ||
 	    (path->cleardown_records != 0u &&
 	     path->upstream_stage != V90_ANALOG_PATH_UPSTREAM_CP) ||
 	    (path->cleardown_requested && !path->rate_renegotiation_active &&
@@ -718,7 +714,7 @@ enum v90_analog_path_result v90_analog_path_start_cleardown(
 	struct v90_analog_path *path)
 {
 	const struct v34_phase3_profile *profile;
-	uint32_t tail_samples;
+	uint16_t tail_samples;
 	enum v90_analog_path_result result;
 
 	if (!v90_analog_path_is_valid(path) || path->failed)
@@ -737,18 +733,14 @@ enum v90_analog_path_result v90_analog_path_start_cleardown(
 	}
 	/* Include the already accepted final CP point, then flush every pulse
 	 * history point and the sample-rate pre-emphasis filter. */
-	tail_samples = ((V34_TRAINING_LINE_PULSE_TAIL_SYMBOLS + 1u) *
-		8000u * profile->symbol_rate_denominator +
-		profile->symbol_rate_numerator - 1u) /
-		profile->symbol_rate_numerator +
-		V34_TRAINING_LINE_FILTER_TAIL_SAMPLES;
+	tail_samples = v34_training_line_tail_samples(profile);
 	if (path->upstream_stage != V90_ANALOG_PATH_UPSTREAM_CP) {
 		result = begin_rate_renegotiation(path);
 		if (result != V90_ANALOG_PATH_RATE_RENEGOTIATION)
 			return result;
 	}
 	path->cleardown_requested = true;
-	path->cleardown_tail_samples = (uint16_t)tail_samples;
+	path->cleardown_tail_samples = tail_samples;
 	return V90_ANALOG_PATH_OK;
 }
 

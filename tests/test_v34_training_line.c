@@ -180,6 +180,67 @@ static bool test_continuous_points(void)
 	return true;
 }
 
+static bool test_tail_flush(void)
+{
+	struct v34_info1_probe_result probe = {
+		.high_carrier = true,
+		.projected_data_rate_2400_bps_units = 1,
+	};
+	for (unsigned rate = 0; rate < V34_SYMBOL_RATE_COUNT; ++rate) {
+		for (unsigned filter = 0;
+		     filter <= V34_INFO1_MAX_PREEMPHASIS_FILTER_INDEX; ++filter) {
+			struct v34_phase3_profile profile;
+			struct v34_training_line line;
+			probe.preemphasis_filter_index = (uint8_t)filter;
+			CHECK(v34_phase3_profile_init(&profile, V34_CALLING_STATION,
+				      (enum v34_symbol_rate)rate, &probe, 0, 0) ==
+				      V34_PHASE3_PROFILE_OK &&
+			      v34_training_line_init(&line, &profile, 8000, 5000) ==
+				      V34_TRAINING_LINE_OK,
+			      "tail fixture failed at %u/%u", rate, filter);
+			unsigned bound = v34_training_line_tail_samples(&profile);
+			CHECK(bound <= V34_TRAINING_LINE_MAX_TAIL_SAMPLES,
+			      "tail exceeds admitted bound at %u/%u", rate, filter);
+			/* Fill every pulse tap, then cover every phase of the rational
+			 * sample/symbol clocks (their longest period is 35 samples).
+			 * Each cloned line contains an accepted, still-active point. */
+			for (unsigned at = 0; at < 240; ++at) {
+				struct qam_point point = generated_point(at);
+				int16_t sample;
+				bool accepted;
+				CHECK(v34_training_line_sample(&line,
+					      v34_training_line_needs_point(&line) ? &point : NULL,
+					      &sample, &accepted) == V34_TRAINING_LINE_OK,
+				      "tail fixture stopped at %u/%u/%u", rate, filter, at);
+				if (at < 200)
+					continue;
+				struct v34_training_line tail = line;
+				struct qam_point zero = { 0 };
+				for (unsigned n = 0; n < bound + 16u; ++n) {
+					CHECK(v34_training_line_sample(&tail,
+						      v34_training_line_needs_point(&tail) ? &zero : NULL,
+						      &sample, &accepted) == V34_TRAINING_LINE_OK &&
+					      (n < bound || sample == 0),
+					      "active tail after bound at %u/%u/%u/%u",
+					      rate, filter, at, n);
+					if (n + 1u != bound)
+						continue;
+					for (unsigned tap = 0; tap < V34_PULSE_TAPS; ++tap)
+						CHECK(tail.carrier.in_phase_history[tap] == 0 &&
+						      tail.carrier.quadrature_history[tap] == 0,
+						      "tail retained a pulse point at %u/%u/%u",
+						      rate, filter, at);
+					for (unsigned tap = 0; tap < V34_PREEMPHASIS_TAPS; ++tap)
+						CHECK(tail.carrier.preemphasis_history[tap] == 0,
+						      "tail retained line-filter input at %u/%u/%u",
+						      rate, filter, at);
+				}
+			}
+		}
+	}
+	return true;
+}
+
 static bool advance_to_point_boundary(struct v34_training_line *line)
 {
 	while (!v34_training_line_needs_point(line)) {
@@ -571,6 +632,7 @@ int main(void)
 	} tests[] = {
 		{ "calibrated line power", test_calibrated_line_power },
 		{ "continuous points", test_continuous_points },
+		{ "complete pulse and line-filter tail", test_tail_flush },
 		{ "transactional contract", test_transactional_contract },
 		{ "initialization and overflow", test_initialization_and_overflow },
 		{ "disjoint sample buffers", test_disjoint_buffers },
