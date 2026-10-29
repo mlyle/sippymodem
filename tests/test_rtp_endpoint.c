@@ -609,6 +609,88 @@ static bool test_transmit_batch(void)
 	return true;
 }
 
+static bool test_paced_transmit(void)
+{
+	struct endpoint_fixture sender, receiver;
+	CHECK(open_fixture(&sender, 1, false, false) && open_fixture(&receiver, 2, false, false),
+	      "paced endpoints did not open");
+	struct sockaddr_in remote = receiver.endpoint.local_address;
+	CHECK(rtp_endpoint_set_remote(&sender.endpoint, &remote) == RTP_ENDPOINT_OK,
+	      "paced remote did not bind");
+	struct rtp_transmit *queue = rtp_transmit_create(10000000, 30000000, RTP_HEADER_SIZE + 80);
+	CHECK(queue != NULL, "cannot create paced queue");
+	sender.endpoint.transmit_queue = queue;
+	CHECK(rtp_endpoint_process_transmit(&sender.endpoint, 1000000000) == RTP_ENDPOINT_OK,
+	      "cannot set owner clock");
+	sender.stream.receiver.stats.samples_played = 123;
+	sender.stream.receiver.stats.samples_concealed = 7;
+	uint8_t encoded[80], expected[80], packet[RTP_HEADER_SIZE + 80];
+	int16_t decoded[80];
+	for (unsigned i = 0; i < 80; i++) {
+		expected[i] = encoded[i] = (uint8_t)(i * 3);
+		decoded[i] = g711_decode_pcmu(encoded[i]);
+	}
+	struct rtp_transmit_batch batch = { 0 };
+	CHECK(rtp_endpoint_begin_transmit_batch(&sender.endpoint, &batch) == RTP_ENDPOINT_OK &&
+	      rtp_endpoint_send_g711(&sender.endpoint, encoded, decoded, 80, packet, sizeof(packet)) == RTP_ENDPOINT_OK,
+	      "worker did not copy paced packet");
+	CHECK(rtp_transmit_get_status(queue).queued == 0 && sender.endpoint.stats.transmit_attempts == 0,
+	      "worker touched owner queue or socket");
+	CHECK(rtp_endpoint_finish_transmit_batch(&sender.endpoint) == RTP_ENDPOINT_OK,
+	      "owner did not admit worker batch");
+	memset(encoded, 0, sizeof(encoded));
+	memset(&batch, 0, sizeof(batch));
+	struct rtp_transmit_status status = rtp_transmit_get_status(queue);
+	CHECK(status.accepted == 1 && status.sent == 0 && status.queued == 1 &&
+	      sender.endpoint.stats.transmit_attempts == 0,
+	      "admission was reported as network completion");
+	CHECK(rtp_endpoint_transmit_wait_ns(&sender.endpoint, 1000000000) == 30000000 &&
+	      rtp_endpoint_process_transmit(&sender.endpoint, 1029999999) == RTP_ENDPOINT_OK,
+	      "owner ignored send deadline");
+	CHECK(recv(receiver.endpoint.socket_fd, packet, sizeof(packet), 0) < 0 &&
+	      (errno == EAGAIN || errno == EWOULDBLOCK), "paced packet escaped early");
+	/* A DSP job may already be advancing these counters when the owner sends.
+	 * The immutable admission snapshot must supply the send recording. */
+	sender.stream.receiver.stats.samples_played = 999;
+	sender.stream.receiver.stats.samples_concealed = 11;
+	CHECK(rtp_endpoint_process_transmit(&sender.endpoint, 1030000000) == RTP_ENDPOINT_OK &&
+	      recv(receiver.endpoint.socket_fd, packet, sizeof(packet), 0) == (ssize_t)sizeof(packet) &&
+	      !memcmp(packet + RTP_HEADER_SIZE, expected, sizeof(expected)),
+	      "paced datagram lost copied G.711 bytes");
+	CHECK(sender.recordings.packet_calls == 2 &&
+	      sender.recordings.packets[0].event == RECORD_PACKET_QUEUED &&
+	      sender.recordings.packets[1].event == RECORD_PACKET_SENT &&
+	      sender.recordings.packets[1].playout_samples == 130 &&
+	      sender.recordings.packets[1].concealed_samples == 7,
+	      "send record used live DSP state instead of its packet snapshot");
+	CHECK(rtp_transmit_get_status(queue).sent == 1 && sender.endpoint.stats.transmit_sent == 1,
+	      "actual network send was not retired");
+	CHECK(rtp_endpoint_process_transmit(&sender.endpoint, 1040000000) == RTP_ENDPOINT_OK &&
+	      rtp_endpoint_send_g711(&sender.endpoint, expected, decoded, 80, packet, sizeof(packet)) == RTP_ENDPOINT_OK,
+	      "cannot queue cancellation frame");
+	rtp_endpoint_clear_remote(&sender.endpoint);
+	CHECK(rtp_transmit_get_status(queue).canceled == 1 &&
+	      rtp_endpoint_process_transmit(&sender.endpoint, 1100000000) == RTP_ENDPOINT_OK,
+	      "retired call retained pending output");
+	CHECK(recv(receiver.endpoint.socket_fd, packet, sizeof(packet), 0) < 0 &&
+	      (errno == EAGAIN || errno == EWOULDBLOCK), "canceled packet reached old call");
+	CHECK(rtp_endpoint_set_remote(&sender.endpoint, &remote) == RTP_ENDPOINT_OK &&
+	      rtp_endpoint_send_g711(&sender.endpoint, expected, decoded, 80, packet, sizeof(packet)) == RTP_ENDPOINT_OK,
+	      "cannot reuse cleared endpoint");
+	CHECK(close(sender.endpoint.socket_fd) == 0, "cannot inject socket failure");
+	CHECK(rtp_endpoint_process_transmit(&sender.endpoint, 1130000000) == RTP_ENDPOINT_SYSTEM_ERROR &&
+	      sender.endpoint.last_system_error == EBADF && rtp_transmit_get_status(queue).queued == 1 &&
+	      rtp_transmit_get_status(queue).sent == 1,
+	      "failed network send lost head, cause, or accounting");
+	sender.endpoint.socket_fd = NET_INVALID_SOCKET;
+	rtp_endpoint_close(&sender.endpoint);
+	CHECK(rtp_transmit_get_status(queue).queued == 0 && rtp_transmit_get_status(queue).canceled == 2,
+	      "closed endpoint retained stale packets");
+	rtp_transmit_destroy(queue);
+	rtp_endpoint_close(&receiver.endpoint);
+	return true;
+}
+
 struct test_case {
 	const char *name;
 	bool (*run)(void);
@@ -624,6 +706,7 @@ int main(void)
 		{ "symmetric remote learning", test_symmetric_remote_learning },
 		{ "lifecycle validation", test_lifecycle_validation },
 		{ "owner transmit batch", test_transmit_batch },
+		{ "paced owner transmit", test_paced_transmit },
 		{ "packet timeline", test_packet_timeline },
 		{ "bounded drain and call cleanup", test_bounded_drain_and_call_cleanup },
 	};

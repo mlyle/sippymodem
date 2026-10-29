@@ -268,6 +268,7 @@ static void record_packet(void *context, const struct recording_packet *packet)
 		[RECORD_PACKET_LATE] = "late",
 		[RECORD_PACKET_EARLY] = "early",
 		[RECORD_PACKET_REJECTED] = "rejected",
+		[RECORD_PACKET_QUEUED] = "queued",
 	};
 	struct recording_files *files = context;
 	char line[192];
@@ -276,7 +277,7 @@ static void record_packet(void *context, const struct recording_packet *packet)
 	if (recording_files_last_result(files) != RECORDING_FILES_OK)
 		return;
 	if (packet == NULL || packet->event < RECORD_PACKET_SENT ||
-	    packet->event > RECORD_PACKET_REJECTED || packet->payload_type > 127) {
+	    packet->event > RECORD_PACKET_QUEUED || packet->payload_type > 127) {
 		invalid_block(files);
 		return;
 	}

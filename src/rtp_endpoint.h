@@ -4,6 +4,7 @@
 #define RTP_ENDPOINT_H
 
 #include "rtp_stream.h"
+#include "rtp_transmit.h"
 
 #include "net_socket.h"
 #include <stdbool.h>
@@ -51,6 +52,10 @@ struct rtp_transmit_batch {
 		packets[MEDIA_MAX_CATCHUP_FRAMES];
 };
 
+struct rtp_transmit_observation {
+	uint64_t playout_samples, concealed_samples;
+};
+
 struct rtp_endpoint {
 	net_socket socket_fd;
 #ifdef _WIN32
@@ -68,6 +73,11 @@ struct rtp_endpoint {
 	bool discard_pending; /* Bounded cleanup of the previous media incarnation. */
 	struct rtp_endpoint_stats stats;
 	struct rtp_transmit_batch *transmit_batch;
+	/* Optional borrowed queue. Only the native owner accesses it;
+	 * DSP jobs keep using the existing copied batch. */
+	struct rtp_transmit *transmit_queue;
+	uint64_t transmit_now_ns;
+	struct rtp_transmit_observation transmit_observations[RTP_TRANSMIT_CAPACITY];
 };
 
 void rtp_endpoint_config_init(
@@ -121,10 +131,16 @@ enum rtp_endpoint_result rtp_endpoint_send_g711(
 	uint8_t *packet_workspace,
 	size_t packet_capacity);
 
+/* Native owner only, including while a DSP batch is in flight. Actual-send
+ * records use the queued packet's receive-cursor snapshot. */
+enum rtp_endpoint_result rtp_endpoint_process_transmit(struct rtp_endpoint *endpoint, uint64_t now_ns);
+uint64_t rtp_endpoint_transmit_wait_ns(const struct rtp_endpoint *endpoint, uint64_t now_ns);
+
 const char *rtp_endpoint_result_name(
 	enum rtp_endpoint_result result);
 
-/* send/send_g711 copy packets without socket I/O; finish emits them.
+/* send/send_g711 copy packets without socket I/O; finish hands the batch
+ * to the owner transport for immediate sending or bounded queue admission.
  * A full batch is an explicit error. No buffer pointer survives finish. */
 enum rtp_endpoint_result rtp_endpoint_begin_transmit_batch(
 	struct rtp_endpoint *endpoint, struct rtp_transmit_batch *batch);

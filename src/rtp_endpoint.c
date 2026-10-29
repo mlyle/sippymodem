@@ -173,6 +173,7 @@ void rtp_endpoint_close(
 		net_socket_close(endpoint->socket_fd);
 	endpoint->socket_fd = NET_INVALID_SOCKET;
 	endpoint->discard_pending = false;
+	(void)rtp_transmit_clear(endpoint->transmit_queue);
 	memset(&endpoint->local_address, 0, sizeof(endpoint->local_address));
 	endpoint->remote_configured = false;
 	endpoint->remote_learned = false;
@@ -222,6 +223,7 @@ enum rtp_endpoint_result rtp_endpoint_set_remote(
 		return RTP_ENDPOINT_OK;
 
 	discard_queued_datagrams(endpoint);
+	(void)rtp_transmit_clear(endpoint->transmit_queue);
 	rtp_receiver_restart(&endpoint->stream->receiver);
 	endpoint->remote_learned = false;
 	memset(&endpoint->learned_address, 0, sizeof(endpoint->learned_address));
@@ -235,6 +237,7 @@ void rtp_endpoint_clear_remote(
 {
 	if (endpoint == NULL)
 		return;
+	(void)rtp_transmit_clear(endpoint->transmit_queue);
 	if (endpoint->socket_fd != NET_INVALID_SOCKET)
 		discard_queued_datagrams(endpoint);
 	endpoint->remote_configured = false;
@@ -302,7 +305,7 @@ static bool source_is_allowed(struct rtp_endpoint *endpoint,
 
 static void record_packet(
 	struct rtp_endpoint *endpoint, const uint8_t *packet, size_t packet_size,
-	enum recording_packet_event event)
+	enum recording_packet_event event, const struct rtp_transmit_observation *snapshot)
 {
 	const struct media_recorder *recorder = &endpoint->stream->recorder;
 	const struct rtp_receiver_stats *stats = &endpoint->stream->receiver.stats;
@@ -324,9 +327,9 @@ static void record_packet(
 		observation.payload_type = view.header.payload_type;
 		observation.marker = view.header.marker;
 		observation.payload_octets = (uint32_t)view.payload_size;
-		observation.playout_samples = stats->samples_played + stats->samples_concealed +
-			stats->samples_prefilled + stats->samples_idle;
-		observation.concealed_samples = stats->samples_concealed;
+		observation.playout_samples = snapshot != NULL ? snapshot->playout_samples :
+			stats->samples_played + stats->samples_concealed + stats->samples_prefilled + stats->samples_idle;
+		observation.concealed_samples = snapshot != NULL ? snapshot->concealed_samples : stats->samples_concealed;
 		recorder->packet(recorder->context, &observation);
 	}
 	errno = saved_error;
@@ -362,7 +365,7 @@ static void route_datagram(struct rtp_endpoint *endpoint,
 		receive_result == RTP_RECEIVE_ACCEPTED ? RECORD_PACKET_ACCEPTED :
 		receive_result == RTP_RECEIVE_LATE ? RECORD_PACKET_LATE :
 		receive_result == RTP_RECEIVE_TOO_EARLY ? RECORD_PACKET_EARLY :
-		RECORD_PACKET_REJECTED);
+		RECORD_PACKET_REJECTED, NULL);
 	if (receive_result == RTP_RECEIVE_ACCEPTED ||
 	    receive_result == RTP_RECEIVE_LATE ||
 	    receive_result == RTP_RECEIVE_TOO_EARLY)
@@ -428,7 +431,7 @@ enum rtp_endpoint_result rtp_endpoint_drain(
 
 static enum rtp_endpoint_result send_packet(struct rtp_endpoint *endpoint,
 	const uint8_t *packet_workspace, size_t packet_size,
-	const struct sockaddr_in *remote_address)
+	const struct sockaddr_in *remote_address, const struct rtp_transmit_observation *snapshot)
 {
 	ptrdiff_t sent;
 	endpoint->stats.transmit_attempts++;
@@ -443,7 +446,7 @@ static enum rtp_endpoint_result send_packet(struct rtp_endpoint *endpoint,
 	int send_error = sent < 0 ? net_socket_error() : EIO;
 	record_packet(endpoint, packet_workspace, packet_size,
 		sent == (ptrdiff_t)packet_size ? RECORD_PACKET_SENT :
-		RECORD_PACKET_SEND_FAILED);
+		RECORD_PACKET_SEND_FAILED, snapshot);
 	if (sent != (ptrdiff_t)packet_size) {
 		endpoint->last_system_error = send_error;
 		endpoint->stats.transmit_errors++;
@@ -457,6 +460,54 @@ static enum rtp_endpoint_result send_packet(struct rtp_endpoint *endpoint,
 		RECORD_OCTETS, MEDIA_SAMPLE_RATE,
 		packet_workspace + RTP_HEADER_SIZE, packet_size - RTP_HEADER_SIZE);
 	return RTP_ENDPOINT_OK;
+}
+
+static enum rtp_endpoint_result send_or_queue(struct rtp_endpoint *endpoint,
+	const uint8_t *packet, size_t size, const struct sockaddr_in *remote)
+{
+	if (endpoint->transmit_queue == NULL)
+		return send_packet(endpoint, packet, size, remote, NULL);
+	struct rtp_transmit_status status = rtp_transmit_get_status(endpoint->transmit_queue);
+	if (rtp_transmit_queue(endpoint->transmit_queue, packet, size, endpoint->transmit_now_ns) != RTP_TRANSMIT_OK)
+		return RTP_ENDPOINT_MEDIA_ERROR;
+	const struct rtp_receiver_stats *stats = &endpoint->stream->receiver.stats;
+	struct rtp_transmit_observation snapshot = {
+		.playout_samples = stats->samples_played + stats->samples_concealed + stats->samples_prefilled + stats->samples_idle,
+		.concealed_samples = stats->samples_concealed,
+	};
+	endpoint->transmit_observations[status.accepted % RTP_TRANSMIT_CAPACITY] = snapshot;
+	record_packet(endpoint, packet, size, RECORD_PACKET_QUEUED, &snapshot);
+	return RTP_ENDPOINT_OK;
+}
+
+enum rtp_endpoint_result rtp_endpoint_process_transmit(struct rtp_endpoint *endpoint, uint64_t now_ns)
+{
+	if (endpoint == NULL)
+		return RTP_ENDPOINT_INVALID_ARGUMENT;
+	endpoint->transmit_now_ns = now_ns;
+	for (unsigned budget = 0; budget < MEDIA_MAX_CATCHUP_FRAMES; ++budget) {
+		size_t size;
+		const uint8_t *packet = rtp_transmit_peek(endpoint->transmit_queue, now_ns, &size);
+		if (packet == NULL)
+			break;
+		struct sockaddr_in remote;
+		if (!rtp_endpoint_transmit_remote(endpoint, &remote, NULL))
+			return RTP_ENDPOINT_NO_REMOTE;
+		struct rtp_transmit_status status = rtp_transmit_get_status(endpoint->transmit_queue);
+		const struct rtp_transmit_observation *snapshot = &endpoint->transmit_observations[
+			(status.sent + status.canceled) % RTP_TRANSMIT_CAPACITY];
+		enum rtp_endpoint_result result = send_packet(endpoint, packet, size, &remote, snapshot);
+		if (result != RTP_ENDPOINT_OK)
+			return result;
+		if (!rtp_transmit_sent(endpoint->transmit_queue, now_ns))
+			return RTP_ENDPOINT_MEDIA_ERROR;
+	}
+	return RTP_ENDPOINT_OK;
+}
+
+uint64_t rtp_endpoint_transmit_wait_ns(const struct rtp_endpoint *endpoint, uint64_t now_ns)
+{
+	return endpoint != NULL ? rtp_transmit_wait_ns(endpoint->transmit_queue, now_ns) : UINT64_MAX;
 }
 
 static enum rtp_endpoint_result send_frame(
@@ -482,6 +533,9 @@ static enum rtp_endpoint_result send_frame(
 	    (endpoint->transmit_batch->count >= MEDIA_MAX_CATCHUP_FRAMES ||
 	     count > RTP_ENDPOINT_MAX_DATAGRAM - RTP_HEADER_SIZE))
 		return RTP_ENDPOINT_MEDIA_ERROR;
+	if (endpoint->transmit_batch == NULL && endpoint->transmit_queue != NULL &&
+	    rtp_transmit_get_status(endpoint->transmit_queue).queued == RTP_TRANSMIT_CAPACITY)
+		return RTP_ENDPOINT_MEDIA_ERROR;
 	endpoint->last_media_error = codewords != NULL ?
 		rtp_stream_write_g711(
 			endpoint->stream, codewords, samples, count,
@@ -499,7 +553,7 @@ static enum rtp_endpoint_result send_frame(
 		memcpy(batch->packets[batch->count++].data, packet_workspace, packet_size);
 		return RTP_ENDPOINT_OK;
 	}
-	return send_packet(endpoint, packet_workspace, packet_size, &remote_address);
+	return send_or_queue(endpoint, packet_workspace, packet_size, &remote_address);
 }
 
 enum rtp_endpoint_result rtp_endpoint_send(
@@ -575,7 +629,7 @@ enum rtp_endpoint_result rtp_endpoint_finish_transmit_batch(struct rtp_endpoint 
 	if (count != 0 && !rtp_endpoint_transmit_remote(endpoint, &remote, NULL))
 		return RTP_ENDPOINT_NO_REMOTE;
 	for (unsigned int i = 0; i < count; ++i) {
-		enum rtp_endpoint_result result = send_packet(endpoint,
+		enum rtp_endpoint_result result = send_or_queue(endpoint,
 			batch->packets[i].data, batch->packets[i].size, &remote);
 		if (result != RTP_ENDPOINT_OK)
 			return result;

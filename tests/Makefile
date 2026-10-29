@@ -267,21 +267,21 @@ STREAM_TEST_OBJECTS := $(BUILD_DIR)/test_rtp_stream.o \
 	$(BUILD_DIR)/media.o $(BUILD_DIR)/g711.o
 ENDPOINT_TEST_BINARY := $(BUILD_DIR)/test_rtp_endpoint
 ENDPOINT_TEST_OBJECTS := $(BUILD_DIR)/test_rtp_endpoint.o \
-	$(BUILD_DIR)/rtp_endpoint.o $(BUILD_DIR)/net_socket.o \
+	$(BUILD_DIR)/rtp_endpoint.o $(BUILD_DIR)/rtp_transmit.o $(BUILD_DIR)/frame_pacer.o $(BUILD_DIR)/net_socket.o \
 	$(BUILD_DIR)/rtp_stream.o \
 	$(BUILD_DIR)/rtp_receiver.o $(BUILD_DIR)/rtp.o \
 	$(BUILD_DIR)/media.o $(BUILD_DIR)/g711.o
 SIP_RTP_TEST_BINARY := $(BUILD_DIR)/test_sip_rtp
 SIP_RTP_TEST_OBJECTS := $(BUILD_DIR)/test_sip_rtp.o \
 	$(BUILD_DIR)/sip_rtp.o \
-	$(BUILD_DIR)/rtp_endpoint.o $(BUILD_DIR)/net_socket.o \
+	$(BUILD_DIR)/rtp_endpoint.o $(BUILD_DIR)/rtp_transmit.o $(BUILD_DIR)/frame_pacer.o $(BUILD_DIR)/net_socket.o \
 	$(BUILD_DIR)/rtp_stream.o \
 	$(BUILD_DIR)/rtp_receiver.o $(BUILD_DIR)/rtp.o \
 	$(BUILD_DIR)/media.o $(BUILD_DIR)/g711.o
 RTP_RUNTIME_TEST_BINARY := $(BUILD_DIR)/test_rtp_runtime
 RTP_RUNTIME_TEST_OBJECTS := $(BUILD_DIR)/test_rtp_runtime.o \
 	$(BUILD_DIR)/rtp_runtime.o \
-	$(BUILD_DIR)/rtp_endpoint.o $(BUILD_DIR)/net_socket.o \
+	$(BUILD_DIR)/rtp_endpoint.o $(BUILD_DIR)/rtp_transmit.o $(BUILD_DIR)/frame_pacer.o $(BUILD_DIR)/net_socket.o \
 	$(BUILD_DIR)/rtp_stream.o \
 	$(BUILD_DIR)/rtp_receiver.o $(BUILD_DIR)/rtp.o \
 	$(BUILD_DIR)/config.o $(BUILD_DIR)/config_defaults.o $(BUILD_DIR)/log_target.o \
@@ -292,7 +292,7 @@ SIP_MEDIA_BRIDGE_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sip_media_bridge.o \
 	$(BUILD_DIR)/sip_media_bridge.o \
 	$(BUILD_DIR)/sip_rtp.o \
-	$(BUILD_DIR)/rtp_endpoint.o $(BUILD_DIR)/net_socket.o \
+	$(BUILD_DIR)/rtp_endpoint.o $(BUILD_DIR)/rtp_transmit.o $(BUILD_DIR)/frame_pacer.o $(BUILD_DIR)/net_socket.o \
 	$(BUILD_DIR)/rtp_stream.o \
 	$(BUILD_DIR)/rtp_receiver.o $(BUILD_DIR)/rtp.o \
 	$(BUILD_DIR)/media.o $(BUILD_DIR)/g711.o
@@ -302,7 +302,7 @@ SESSION_TEST_OBJECTS := $(BUILD_DIR)/test_session.o \
 	$(BUILD_DIR)/sip_media_bridge.o \
 	$(BUILD_DIR)/sip_rtp.o \
 	$(BUILD_DIR)/rtp_runtime.o \
-	$(BUILD_DIR)/rtp_endpoint.o $(BUILD_DIR)/net_socket.o \
+	$(BUILD_DIR)/rtp_endpoint.o $(BUILD_DIR)/rtp_transmit.o $(BUILD_DIR)/frame_pacer.o $(BUILD_DIR)/net_socket.o \
 	$(BUILD_DIR)/rtp_stream.o \
 	$(BUILD_DIR)/rtp_receiver.o $(BUILD_DIR)/rtp.o \
 	$(BUILD_DIR)/config.o $(BUILD_DIR)/config_defaults.o $(BUILD_DIR)/log_target.o \
@@ -327,7 +327,7 @@ HOST_TEST_OBJECTS := $(BUILD_DIR)/test_host.o \
 	$(BUILD_DIR)/sip_media_bridge.o \
 	$(BUILD_DIR)/sip_rtp.o \
 	$(BUILD_DIR)/rtp_runtime.o \
-	$(BUILD_DIR)/rtp_endpoint.o $(BUILD_DIR)/net_socket.o \
+	$(BUILD_DIR)/rtp_endpoint.o $(BUILD_DIR)/rtp_transmit.o $(BUILD_DIR)/frame_pacer.o $(BUILD_DIR)/net_socket.o \
 	$(BUILD_DIR)/rtp_stream.o \
 	$(BUILD_DIR)/rtp_receiver.o \
 	$(BUILD_DIR)/rtp.o \
@@ -3280,7 +3280,7 @@ DS0_SIP_TEST_BINARY := $(BUILD_DIR)/test_ds0_sip
 DS0_PPP_TEST_BINARY := $(BUILD_DIR)/test_ds0_ppp
 DS0_CODEC_TEST_BINARY := $(BUILD_DIR)/test_ds0_codec
 
-TEST_BINARIES := $(BUILD_DIR)/test_rtp_read_event $(NET_SOCKET_TEST_BINARY) $(RTP_SOCKET_ERROR_TEST_BINARY) $(MEDIA_WORKERS_TEST_BINARY) $(MEDIA_WORKERS_PIPE_TEST_BINARY) $(WAKE_SIGNAL_TEST_BINARIES) $(BUILD_DIR)/test_log_target $(BUILD_DIR)/test_log_buffer $(BUILD_DIR)/test_ds0_probe $(DS0_DATAPUMP_TEST_BINARY) $(DS0_PPP_TEST_BINARY) $(DS0_CODEC_TEST_BINARY) $(BUILD_DIR)/test_packet_stats $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
+TEST_BINARIES := $(BUILD_DIR)/test_rtp_transmit $(BUILD_DIR)/test_rtp_read_event $(NET_SOCKET_TEST_BINARY) $(RTP_SOCKET_ERROR_TEST_BINARY) $(MEDIA_WORKERS_TEST_BINARY) $(MEDIA_WORKERS_PIPE_TEST_BINARY) $(WAKE_SIGNAL_TEST_BINARIES) $(BUILD_DIR)/test_log_target $(BUILD_DIR)/test_log_buffer $(BUILD_DIR)/test_ds0_probe $(DS0_DATAPUMP_TEST_BINARY) $(DS0_PPP_TEST_BINARY) $(DS0_CODEC_TEST_BINARY) $(BUILD_DIR)/test_packet_stats $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(SIP_URI_TEST_BINARY) $(SDP_TEST_BINARY) $(G711_TEST_BINARY) \
 	$(SAMPLE_MATH_TEST_BINARY) $(BUILD_DIR)/test_gram_fit $(BUILD_DIR)/test_echo_timing $(BUILD_DIR)/test_echo_shift \
 	$(PCM_GAIN_TEST_BINARY) \
@@ -6368,3 +6368,9 @@ $(BUILD_DIR)/test_rtp_read_event: $(BUILD_DIR)/test_rtp_read_event.o $(filter-ou
 $(BUILD_DIR)/echo_timing.o: \
 	$(DSP_SOURCE_DIR)/echo_timing.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/rtp_transmit.o: ../src/rtp_transmit.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/test_rtp_transmit: $(BUILD_DIR)/test_rtp_transmit.o $(BUILD_DIR)/rtp_transmit.o $(BUILD_DIR)/frame_pacer.o
+	$(CC) $(LDFLAGS) -o $@ $^

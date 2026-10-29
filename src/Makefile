@@ -71,6 +71,7 @@ APP_SOURCES := \
 	recording_files.c \
 	rtp.c \
 	rtp_endpoint.c \
+	rtp_transmit.c \
 	rtp_receiver.c \
 	rtp_runtime.c \
 	rtp_stream.c \

@@ -51,11 +51,13 @@ enum recording_packet_event {
 	RECORD_PACKET_LATE,
 	RECORD_PACKET_EARLY,
 	RECORD_PACKET_REJECTED,
+	RECORD_PACKET_QUEUED,
 };
 
 /* Application socket-observation time, not kernel arrival or remote playout.
  * A zero time means the monotonic clock was unavailable. No payload or network
- * address is retained. Playout counters identify the local receive timeline. */
+ * address is retained. Playout counters identify the local receive timeline;
+ * queued sends retain the cursor captured at admission. */
 struct recording_packet {
 	enum recording_packet_event event;
 	uint64_t monotonic_ns;
@@ -71,7 +73,10 @@ struct recording_packet {
 
 /* The callback is synchronous.  Both the block and its data are borrowed for
  * the duration of the call; a recorder that needs them later must copy them.
- * The optional packet callback has the same ownership and lifetime contract. */
+ * The optional packet callback has the same ownership and lifetime contract.
+ * Shared SDK media can record owner-side sends concurrently with DSP decoding
+ * and preparation. The recorder must synchronize its context, and callbacks
+ * must not reenter modem or media controls. */
 struct media_recorder {
 	void *context;
 	void (*write)(void *context,
