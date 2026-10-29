@@ -31,12 +31,7 @@ static bool rotate_clockwise(
 
 	if (quarter_turns >= 4u)
 		return false;
-	for (uint8_t turn = 0; turn < quarter_turns; ++turn) {
-		int saved_in_phase = in_phase;
-
-		in_phase = quadrature;
-		quadrature = -saved_in_phase;
-	}
+	v34_grid_rotate_clockwise(&in_phase, &quadrature, quarter_turns);
 	if (in_phase < INT16_MIN || in_phase > INT16_MAX ||
 	    quadrature < INT16_MIN || quadrature > INT16_MAX)
 		return false;

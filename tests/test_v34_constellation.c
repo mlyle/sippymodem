@@ -16,6 +16,38 @@ static bool close_to(double left, double right)
 	return fabs(left - right) < TEST_TOLERANCE;
 }
 
+static bool test_grid_rotation(void)
+{
+	/* Independent signed permutation matrix. Negating widened INT16_MIN
+	 * must produce 32768; callers decide whether to narrow the result. */
+	static const int matrix[4][4] = {
+		{ 1, 0, 0, 1 }, { 0, 1, -1, 0 },
+		{ -1, 0, 0, -1 }, { 0, -1, 1, 0 },
+	};
+	static const int16_t companions[] = {
+		INT16_MIN, INT16_MIN + 1, -255, -1, 0, 1, 255, INT16_MAX,
+	};
+
+	for (int value = INT16_MIN; value <= INT16_MAX; ++value) {
+		for (size_t other = 0; other < ARRAY_LENGTH(companions); ++other) {
+			for (uint8_t turns = 0; turns < 4u; ++turns) {
+				int64_t expected_i = (int64_t)matrix[turns][0] * value +
+					(int64_t)matrix[turns][1] * companions[other];
+				int64_t expected_q = (int64_t)matrix[turns][2] * value +
+					(int64_t)matrix[turns][3] * companions[other];
+				int in_phase = value;
+				int quadrature = companions[other];
+
+				v34_grid_rotate_clockwise(&in_phase, &quadrature, turns);
+				CHECK(in_phase == expected_i && quadrature == expected_q,
+				      "rotation changed coordinates at %d/%d/%u",
+				      value, companions[other], turns);
+			}
+		}
+	}
+	return true;
+}
+
 static int grid_squared_magnitude(
 	const struct v34_grid_point *point)
 {
@@ -717,6 +749,7 @@ int main(void)
 		  test_indexed_quarter_superconstellation },
 		{ "quarter-superconstellation prefixes",
 		  test_quarter_superconstellation_prefixes },
+		{ "grid rotations", test_grid_rotation },
 		{ "point-zero rotations", test_point_zero_rotations },
 		{ "training decision validation", test_training_decision_validation },
 		{ "four-point training set", test_four_point_constellation },

@@ -79,31 +79,6 @@ struct qam_point v34_rotated_point_zero(
 	return qam_point_rotate_quarters(point, counterclockwise_quarter_turns);
 }
 
-static void rotate_clockwise_grid(
-	int *in_phase, int *quadrature, uint8_t turns)
-{
-	int saved;
-
-	switch (turns) {
-	case 0:
-		break;
-	case 1:
-		saved = *in_phase;
-		*in_phase = *quadrature;
-		*quadrature = -saved;
-		break;
-	case 2:
-		*in_phase = -*in_phase;
-		*quadrature = -*quadrature;
-		break;
-	case 3:
-		saved = *in_phase;
-		*in_phase = -*quadrature;
-		*quadrature = saved;
-		break;
-	}
-}
-
 static bool training_grid_coordinates(
 	enum v34_constellation_size constellation,
 	uint8_t quarter_point, uint8_t clockwise_quarter_turns,
@@ -114,7 +89,7 @@ static bool training_grid_coordinates(
 		return false;
 	*in_phase = (quarter_point & 1u) != 0u ? -3 : 1;
 	*quadrature = (quarter_point & 2u) != 0u ? -3 : 1;
-	rotate_clockwise_grid(
+	v34_grid_rotate_clockwise(
 		in_phase, quadrature, clockwise_quarter_turns);
 	return true;
 }
