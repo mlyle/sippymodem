@@ -140,6 +140,19 @@ static bool maximum_precoded_point_power(
 	return isfinite(*maximum) && *maximum > 0.0;
 }
 
+/* All callers stage their normalizer before publishing it. Keep the same
+ * multiplication order for measured, linear and replacement gains. */
+static bool apply_normalization_gain(
+	struct v34_power_normalizer *normalizer, double gain)
+{
+	normalizer->normalization_gain = gain;
+	normalizer->maximum_normalized_point_power =
+		normalizer->maximum_projected_point_power * gain * gain;
+	return isfinite(gain) && gain > 0.0 &&
+	       isfinite(normalizer->maximum_normalized_point_power) &&
+	       normalizer->maximum_normalized_point_power > 0.0;
+}
+
 enum v34_symbol_power_result v34_power_normalizer_init_linear(
 	struct v34_power_normalizer *normalizer,
 	const struct v34_mapping_parameters *parameters, double normalization_gain)
@@ -151,13 +164,9 @@ enum v34_symbol_power_result v34_power_normalizer_init_linear(
 	    !maximum_precoded_point_power(parameters, &generated.maximum_precoded_point_power))
 		return V34_SYMBOL_POWER_INVALID_ARGUMENT;
 	generated.parameters = *parameters;
-	generated.normalization_gain = normalization_gain;
 	generated.nonlinear_parameter = V34_NONLINEAR_THETA_ZERO;
 	generated.maximum_projected_point_power = generated.maximum_precoded_point_power;
-	generated.maximum_normalized_point_power = generated.maximum_projected_point_power *
-		normalization_gain * normalization_gain;
-	if (!isfinite(generated.maximum_normalized_point_power) ||
-	    generated.maximum_normalized_point_power <= 0.0)
+	if (!apply_normalization_gain(&generated, normalization_gain))
 		return V34_SYMBOL_POWER_NUMERIC_FAILURE;
 	*normalizer = generated;
 	return V34_SYMBOL_POWER_OK;
@@ -217,17 +226,10 @@ enum v34_symbol_power_result v34_power_normalizer_init(
 		precoded_measurement->mean_squared_magnitude;
 	generated.projected_mean_squared_magnitude =
 		projected_measurement->mean_squared_magnitude;
-	generated.normalization_gain =
-		1.0 / sqrt(projected_measurement->mean_squared_magnitude);
-	generated.maximum_normalized_point_power =
-		generated.maximum_projected_point_power *
-		generated.normalization_gain * generated.normalization_gain;
 	generated.calibration_symbol_count = precoded_measurement->symbol_count;
 	generated.nonlinear_parameter = nonlinear_parameter;
-	if (!isfinite(generated.normalization_gain) ||
-	    generated.normalization_gain <= 0.0 ||
-	    !isfinite(generated.maximum_normalized_point_power) ||
-	    generated.maximum_normalized_point_power <= 0.0)
+	if (!apply_normalization_gain(&generated,
+		1.0 / sqrt(projected_measurement->mean_squared_magnitude)))
 		return V34_SYMBOL_POWER_NUMERIC_FAILURE;
 	*normalizer = generated;
 	return V34_SYMBOL_POWER_OK;
@@ -242,12 +244,7 @@ enum v34_symbol_power_result v34_power_normalizer_set_gain(
 	    !isfinite(normalization_gain) || normalization_gain <= 0.0)
 		return V34_SYMBOL_POWER_INVALID_ARGUMENT;
 	updated = *normalizer;
-	updated.normalization_gain = normalization_gain;
-	updated.maximum_normalized_point_power =
-		updated.maximum_projected_point_power * normalization_gain *
-		normalization_gain;
-	if (!isfinite(updated.maximum_normalized_point_power) ||
-	    updated.maximum_normalized_point_power <= 0.0)
+	if (!apply_normalization_gain(&updated, normalization_gain))
 		return V34_SYMBOL_POWER_NUMERIC_FAILURE;
 	*normalizer = updated;
 	return V34_SYMBOL_POWER_OK;
