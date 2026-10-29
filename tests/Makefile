@@ -2048,6 +2048,7 @@ V92_PHASE3_DIGITAL_STATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/v92_phase3_analog_station.o \
 	$(BUILD_DIR)/pcm_dil_receiver.o \
 	$(BUILD_DIR)/v90_profile.o \
+	$(BUILD_DIR)/v34_frame_schedule.o \
 	$(BUILD_DIR)/pcm_rate.o \
 	$(BUILD_DIR)/mixed_radix.o \
 	$(V90_PCM_MAPPING_OBJECTS) \

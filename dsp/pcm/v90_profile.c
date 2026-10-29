@@ -2,6 +2,7 @@
 
 #include "v90_profile.h"
 #include "v34_profile.h"
+#include "v34_frame_schedule.h"
 #include "pcm_power.h"
 
 #include <math.h>
@@ -63,13 +64,6 @@ static struct v90_info0d digital_info0(enum g711_law law)
 static struct v34_info1c digital_info1(
 	const struct v90_upstream_selection *upstream)
 {
-	static const uint8_t projected_rates[V34_SYMBOL_RATE_COUNT] = {
-		[V34_SYMBOL_RATE_2400] = 9,
-		[V34_SYMBOL_RATE_2800] = 11,
-		[V34_SYMBOL_RATE_3000] = 12,
-		[V34_SYMBOL_RATE_3200] = 13,
-		[V34_SYMBOL_RATE_3429] = 14,
-	};
 	struct v34_info1c info1 = {
 		/* The probe spectrum does not provide a qualified offset estimate.
 		 * V.90 Table 9 / V.92 Table 17 require -512, not unmeasured zero. */
@@ -80,7 +74,10 @@ static struct v34_info1c digital_info1(
 	/* INFO1d advertises channel potential. The configured upstream bit-rate
 	 * limit is applied later when MP selects the data-mode parameters. */
 	for (size_t rate = 0; rate < V34_SYMBOL_RATE_COUNT; ++rate) {
-		uint8_t projected = projected_rates[rate];
+		/* Use ordinary V.34 frame capacity, retaining the PCM protocol's
+		 * exclusion of 2743 symbols/s from its conventional upstream. */
+		uint8_t projected = rate == V34_SYMBOL_RATE_2743 ? 0 :
+			v34_frame_geometry_maximum_rate((enum v34_symbol_rate)rate);
 
 		/* V.90 5.2 requires the digital modem to support both 3000 and
 		 * 3200 symbols/s.  The configured symbol-rate ceiling selects the
@@ -145,8 +142,7 @@ static enum v90_profile_result select_upstream(
 	if (!v34_symbol_rate_from_number(symbol_rate, &selected.symbol_rate) ||
 	    !v90_upstream_symbol_rate_is_valid(selected.symbol_rate))
 		return V90_PROFILE_UNSUPPORTED_RATE;
-	maximum_units = selected.symbol_rate == V34_SYMBOL_RATE_3000 ? 12u :
-			selected.symbol_rate == V34_SYMBOL_RATE_3200 ? 13u : 14u;
+	maximum_units = v34_frame_geometry_maximum_rate(selected.symbol_rate);
 	/* V.90 Tables 14/16: capabilities use 2400-bit/s steps. Automatic
 	 * selection includes 31.2/33.6k, subject to the peer's INFO1d and MP. */
 	for (unsigned int units = V90_MP_MINIMUM_RATE_2400_BPS_UNITS;

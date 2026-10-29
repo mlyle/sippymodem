@@ -377,6 +377,62 @@ static bool test_generated_profiles(void)
 	return true;
 }
 
+static bool test_digital_probe_capabilities(void)
+{
+	/* INFO1d describes channel potential even when MP limits data rates.
+	 * PCM excludes 2743 baud and must retain the 3200 fallback when the
+	 * analogue preference is 3000. Optional 3429 may be withdrawn. */
+	static const uint8_t potential[] = { 9, 0, 11, 12, 13, 14 };
+	static const struct {
+		unsigned clock, maximum;
+		bool suppress, advertise_3429;
+	} policies[] = {
+		{ 0, 19200, false, false }, { 0, 19200, true, false },
+		{ 0, 33600, false, true }, { 0, 33600, true, false },
+		{ 3000, 19200, false, false }, { 3000, 19200, true, false },
+		{ 3000, 33600, false, false }, { 3000, 33600, true, false },
+		{ 3200, 19200, false, false }, { 3200, 19200, true, false },
+		{ 3200, 33600, false, false }, { 3200, 33600, true, false },
+		{ 3429, 19200, false, true }, { 3429, 19200, true, false },
+		{ 3429, 33600, false, true }, { 3429, 33600, true, false },
+	};
+
+	for (unsigned protocol = 0; protocol < 3; ++protocol) {
+		for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+			for (size_t i = 0; i < ARRAY_LENGTH(policies); ++i) {
+				struct pcm_call_configuration configuration;
+				struct v90_upstream_policy policy = {
+					.minimum_bit_rate = 4800,
+					.maximum_bit_rate = policies[i].maximum,
+					.maximum_symbol_rate = policies[i].clock,
+					.suppress_optional_info1d_3429 = policies[i].suppress,
+				};
+				bool initialized = protocol == 0 ?
+					v90_profile_init(&configuration, V90_DIGITAL_MODEM,
+						law, 28000, 56000, &policy) == V90_PROFILE_OK :
+					v92_profile_init(&configuration, V90_DIGITAL_MODEM,
+						law, 28000, 56000, protocol == 1 ? 0 : 14,
+						&policy) == V92_PROFILE_OK;
+				CHECK(initialized, "digital probe matrix initialization failed");
+				const struct v34_info1c *info = protocol == 0 ?
+					&configuration.local_info1.digital :
+					&configuration.local_info1.v92_digital.v34;
+				for (unsigned rate = 0; rate < ARRAY_LENGTH(potential); ++rate) {
+					uint8_t expected = rate == V34_SYMBOL_RATE_3429 &&
+						!policies[i].advertise_3429 ? 0 : potential[rate];
+					CHECK(info->answer_transmit[rate]
+						.projected_data_rate_2400_bps_units == expected &&
+					      info->answer_transmit[rate].preemphasis_filter_index ==
+						(expected != 0 ? 6 : 0),
+					      "protocol %u law %u policy %zu rate %u",
+					      protocol, law, i, rate);
+				}
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_upstream_policy(void)
 {
 	const struct v90_upstream_policy policy = {
@@ -1217,6 +1273,7 @@ int main(void)
 		{ "balanced measured capacity", test_balanced_measured_capacity },
 		{ "balanced exhaustive optimality", test_balanced_optimality },
 		{ "asymmetric exhaustive optimality", test_asymmetric_optimality },
+		{ "digital probe capabilities", test_digital_probe_capabilities },
 		{ "upstream policy", test_upstream_policy },
 		{ "rate bounds and transactionality", test_transactionality },
 	};
