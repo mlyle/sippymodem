@@ -31,7 +31,7 @@ static bool rotate_clockwise(
 
 	if (quarter_turns >= 4u)
 		return false;
-	v34_grid_rotate_clockwise(&in_phase, &quadrature, quarter_turns);
+	qam_grid_rotate_clockwise(&in_phase, &quadrature, quarter_turns);
 	if (in_phase < INT16_MIN || in_phase > INT16_MAX ||
 	    quadrature < INT16_MIN || quadrature > INT16_MAX)
 		return false;

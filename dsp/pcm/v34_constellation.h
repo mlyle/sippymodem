@@ -23,32 +23,6 @@ struct v34_grid_point {
 	int16_t quadrature;
 };
 
-/* Exact clockwise quarter turns on distinct, writable widened coordinates.
- * Callers validate turns in [0, 3] and retain their output-width checks.
- * Coordinates must be negatable; widened int16_t inputs are safe. */
-static inline void v34_grid_rotate_clockwise(
-	int *in_phase, int *quadrature, uint8_t turns)
-{
-	int saved;
-
-	switch (turns) {
-	case 1:
-		saved = *in_phase;
-		*in_phase = *quadrature;
-		*quadrature = -saved;
-		break;
-	case 2:
-		*in_phase = -*in_phase;
-		*quadrature = -*quadrature;
-		break;
-	case 3:
-		saved = *in_phase;
-		*in_phase = -*quadrature;
-		*quadrature = saved;
-		break;
-	}
-}
-
 static inline bool v34_grid_point_is_bounded(
 	const struct v34_grid_point *point)
 {

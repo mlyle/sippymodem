@@ -110,6 +110,32 @@ static inline struct qam_point qam_point_rotate_quarters(
 	}
 }
 
+/* Exact clockwise quarter turns on distinct, writable widened coordinates.
+ * Callers validate turns in [0, 3] and retain their output-width checks.
+ * Coordinates must be negatable; widened int16_t inputs are safe. */
+static inline void qam_grid_rotate_clockwise(
+	int *in_phase, int *quadrature, uint8_t turns)
+{
+	int saved;
+
+	switch (turns) {
+	case 1:
+		saved = *in_phase;
+		*in_phase = *quadrature;
+		*quadrature = -saved;
+		break;
+	case 2:
+		*in_phase = -*in_phase;
+		*quadrature = -*quadrature;
+		break;
+	case 3:
+		saved = *in_phase;
+		*in_phase = -*quadrature;
+		*quadrature = saved;
+		break;
+	}
+}
+
 /* Raw complex quotient using the denominator power already measured by the
  * caller. As with multiplication, numeric validation belongs to the owner. */
 static inline struct qam_point qam_point_quotient(

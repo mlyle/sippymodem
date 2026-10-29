@@ -186,6 +186,38 @@ static bool test_quarter_rotation(void)
 	return true;
 }
 
+static bool test_grid_quarter_rotation(void)
+{
+	/* Independent signed permutation matrix. Negating widened INT16_MIN
+	 * must produce 32768; callers decide whether to narrow the result. */
+	static const int matrix[4][4] = {
+		{ 1, 0, 0, 1 }, { 0, 1, -1, 0 },
+		{ -1, 0, 0, -1 }, { 0, -1, 1, 0 },
+	};
+	static const int16_t companions[] = {
+		INT16_MIN, INT16_MIN + 1, -255, -1, 0, 1, 255, INT16_MAX,
+	};
+
+	for (int value = INT16_MIN; value <= INT16_MAX; ++value) {
+		for (size_t other = 0; other < ARRAY_LENGTH(companions); ++other) {
+			for (uint8_t turns = 0; turns < 4u; ++turns) {
+				int64_t expected_i = (int64_t)matrix[turns][0] * value +
+					(int64_t)matrix[turns][1] * companions[other];
+				int64_t expected_q = (int64_t)matrix[turns][2] * value +
+					(int64_t)matrix[turns][3] * companions[other];
+				int in_phase = value;
+				int quadrature = companions[other];
+
+				qam_grid_rotate_clockwise(&in_phase, &quadrature, turns);
+				CHECK(in_phase == expected_i && quadrature == expected_q,
+				      "rotation changed coordinates at %d/%d/%u",
+				      value, companions[other], turns);
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_point_validation(void)
 {
 	const struct qam_point finite = { 1.0, -2.0 };
@@ -1620,6 +1652,7 @@ int main(void)
 		{ "point validation", test_point_validation },
 		{ "point correlation", test_point_correlation },
 		{ "exact quarter rotation", test_quarter_rotation },
+		{ "integer grid rotation", test_grid_quarter_rotation },
 		{ "channel matching", test_channel_matching },
 		{ "carrier rotation", test_carrier_rotation },
 		{ "point quotient", test_point_quotient },

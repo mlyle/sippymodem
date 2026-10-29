@@ -89,7 +89,7 @@ static bool training_grid_coordinates(
 		return false;
 	*in_phase = (quarter_point & 1u) != 0u ? -3 : 1;
 	*quadrature = (quarter_point & 2u) != 0u ? -3 : 1;
-	v34_grid_rotate_clockwise(
+	qam_grid_rotate_clockwise(
 		in_phase, quadrature, clockwise_quarter_turns);
 	return true;
 }

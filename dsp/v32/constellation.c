@@ -174,35 +174,6 @@ static struct doubled_grid_point trellis_seed_point(
 	return point;
 }
 
-static struct doubled_grid_point trellis_subset_transform(
-	uint8_t subset, struct doubled_grid_point point)
-{
-	struct doubled_grid_point transformed;
-
-	switch (subset) {
-	case 0:
-	case 2:
-		return point;
-	case 1:
-	case 3:
-		return (struct doubled_grid_point){
-			.in_phase = -point.in_phase,
-			.quadrature = -point.quadrature,
-		};
-	case 4:
-	case 7:
-		transformed.in_phase = -point.quadrature;
-		transformed.quadrature = point.in_phase;
-		return transformed;
-	case 5:
-	case 6:
-		transformed.in_phase = point.quadrature;
-		transformed.quadrature = -point.in_phase;
-		return transformed;
-	}
-	return point;
-}
-
 enum v32_constellation_result
 v32_trellis_fixed_signal_point(
 	uint8_t data_bits_per_symbol, uint8_t signal_symbol,
@@ -210,6 +181,8 @@ v32_trellis_fixed_signal_point(
 {
 	struct doubled_grid_point grid_point;
 	struct v32_fixed_point next;
+	/* V.32bis subset rotations, in clockwise quarter turns. */
+	static const uint8_t subset_turns[8] = { 0, 2, 0, 2, 3, 1, 1, 3 };
 	uint8_t low_bit_count;
 	uint8_t low_mask;
 	uint8_t subset;
@@ -225,7 +198,8 @@ v32_trellis_fixed_signal_point(
 		data_bits_per_symbol,
 		subset == 2 || subset == 3 || subset == 4 || subset == 5,
 		(uint8_t)(signal_symbol & low_mask));
-	grid_point = trellis_subset_transform(subset, grid_point);
+	qam_grid_rotate_clockwise(
+		&grid_point.in_phase, &grid_point.quadrature, subset_turns[subset]);
 	next = (struct v32_fixed_point){
 		.i = (int16_t)(grid_point.in_phase *
 			      (V32_CONSTELLATION_GRID_UNIT / 2)),
