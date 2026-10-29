@@ -91,7 +91,7 @@ enum v90_spectral_shaper_result v90_spectral_shaper_init(
 
 static bool filter_frame(
 	const struct v90_spectral_shaper *shaper,
-	const struct v90_spectral_frame *frame,
+	const struct v90_spectral_frame *frame, const int16_t *magnitudes,
 	enum v90_spectral_rule rule,
 	struct spectral_filter_state *state, double *metric)
 {
@@ -104,20 +104,15 @@ static bool filter_frame(
 	double accumulated = 0.0;
 
 	for (size_t position = 0; position < frame_length; ++position) {
-		struct v90_pcm_symbol magnitude;
 		bool positive = v90_spectral_rule_apply(
 			frame->initial_signs[position], position, rule) != 0;
 		double x;
 		double y;
 		double v;
 
-		if (!v90_pcm_symbol_make(
-			    &magnitude, shaper->law,
-			    frame->ucodes[position], true))
-			return false;
-		/* The metric uses Table 1's signed linear value. Keep the
-		 * negative-zero wire character out of the filter calculation. */
-		x = positive ? magnitude.sample : -(double)magnitude.sample;
+		/* Branches change signs, never the linear PCM magnitudes. Keep
+		 * negative-zero wire characters out of the filter calculation. */
+		x = positive ? magnitudes[position] : -(double)magnitudes[position];
 		y = x - b1 * state->x + a1 * state->y;
 		v = y - b2 * state->y + a2 * state->v;
 		accumulated += v * v;
@@ -134,6 +129,7 @@ static bool filter_frame(
 
 static bool select_rule(
 	const struct v90_spectral_shaper *shaper, size_t horizon,
+	const int16_t magnitudes[V90_SPECTRAL_MAX_BUFFERED_FRAMES][V90_SPECTRAL_MAX_FRAME_SYMBOLS],
 	enum v90_spectral_rule *selected)
 {
 	unsigned int sequence_count = 1u << horizon;
@@ -160,8 +156,8 @@ static bool select_rule(
 					branch);
 
 			if (!filter_frame(
-				    shaper, &shaper->pending[frame], rule,
-				    &filter, &metric))
+				    shaper, &shaper->pending[frame], magnitudes[frame],
+				    rule, &filter, &metric))
 				return false;
 			state = (rule & 1u) != 0;
 		}
@@ -178,7 +174,7 @@ static bool select_rule(
 }
 
 static bool commit_first_frame(
-	struct v90_spectral_shaper *shaper,
+	struct v90_spectral_shaper *shaper, const int16_t *magnitudes,
 	enum v90_spectral_rule rule,
 	struct v90_spectral_output *output)
 {
@@ -195,7 +191,7 @@ static bool commit_first_frame(
 	double ignored_metric = 0.0;
 
 	if (!filter_frame(
-		    shaper, &shaper->pending[0], rule,
+		    shaper, &shaper->pending[0], magnitudes, rule,
 		    &filter, &ignored_metric))
 		return false;
 	for (size_t position = 0;
@@ -227,9 +223,22 @@ static enum v90_spectral_shaper_result emit_first(
 	struct v90_spectral_output *output)
 {
 	enum v90_spectral_rule selected;
+	int16_t magnitudes[V90_SPECTRAL_MAX_BUFFERED_FRAMES][V90_SPECTRAL_MAX_FRAME_SYMBOLS] = { 0 };
+	size_t length = shaping_frame_length(shaper->sign_redundancy);
 
-	if (!select_rule(shaper, horizon, &selected) ||
-	    !commit_first_frame(shaper, selected, output))
+	/* The same codewords occur on every candidate path. Decode each once
+	 * for this bounded horizon, including the selected frame's commit. */
+	for (size_t frame = 0; frame < horizon; ++frame) {
+		for (size_t symbol = 0; symbol < length; ++symbol) {
+			struct v90_pcm_symbol magnitude;
+			if (!v90_pcm_symbol_make(&magnitude, shaper->law,
+				    shaper->pending[frame].ucodes[symbol], true))
+				return V90_SPECTRAL_SHAPER_NUMERIC_FAILURE;
+			magnitudes[frame][symbol] = magnitude.sample;
+		}
+	}
+	if (!select_rule(shaper, horizon, magnitudes, &selected) ||
+	    !commit_first_frame(shaper, magnitudes[0], selected, output))
 		return V90_SPECTRAL_SHAPER_NUMERIC_FAILURE;
 	return V90_SPECTRAL_SHAPER_FRAME_READY;
 }
