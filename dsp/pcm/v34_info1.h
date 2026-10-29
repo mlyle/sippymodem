@@ -3,6 +3,8 @@
 #ifndef V34_INFO1_H
 #define V34_INFO1_H
 
+#include "v34_symbol_rate.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -20,16 +22,6 @@ enum {
 	V34_INFO1_MAX_DATA_RATE_2400_BPS_UNITS = 14,
 	V34_INFO1_FREQUENCY_OFFSET_UNAVAILABLE = -512,
 	V34_INFO1_MAX_FREQUENCY_OFFSET_1_50_HZ_UNITS = 511,
-};
-
-enum v34_symbol_rate {
-	V34_SYMBOL_RATE_2400,
-	V34_SYMBOL_RATE_2743,
-	V34_SYMBOL_RATE_2800,
-	V34_SYMBOL_RATE_3000,
-	V34_SYMBOL_RATE_3200,
-	V34_SYMBOL_RATE_3429,
-	V34_SYMBOL_RATE_COUNT,
 };
 
 enum v34_info1_result {

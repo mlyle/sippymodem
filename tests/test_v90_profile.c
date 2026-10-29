@@ -518,6 +518,24 @@ static bool test_upstream_policy(void)
 			      V90_PROFILE_UNSUPPORTED_RATE &&
 		      memcmp(&rejected, &saved, sizeof(rejected)) == 0,
 	      "impossible upstream policy changed its destination");
+	const unsigned int unsupported_baud[] = { 2400, 2743, 2800, 2600 };
+
+	for (size_t i = 0; i < ARRAY_LENGTH(unsupported_baud); ++i) {
+		const struct v90_upstream_policy unsupported = {
+			.maximum_symbol_rate = unsupported_baud[i],
+		};
+
+		CHECK(v90_profile_init(
+			      &rejected, V90_DIGITAL_MODEM, G711_LAW_PCMU,
+			      28000, 56000, &unsupported) == V90_PROFILE_UNSUPPORTED_RATE &&
+		      memcmp(&rejected, &saved, sizeof(rejected)) == 0 &&
+		      v90_profile_init(
+			      &rejected, V90_ANALOG_MODEM, G711_LAW_PCMU,
+			      28000, 56000, &unsupported) == V90_PROFILE_UNSUPPORTED_RATE &&
+		      memcmp(&rejected, &saved, sizeof(rejected)) == 0,
+		      "V.90 accepted unsupported upstream baud %u or changed state",
+		      unsupported_baud[i]);
+	}
 	return true;
 }
 

@@ -5,7 +5,40 @@
 
 #include "test.h"
 
+#include <limits.h>
 #include <string.h>
+
+static bool test_symbol_rate_labels(void)
+{
+	const unsigned long labels[] = { 2400, 2743, 2800, 3000, 3200, 3429 };
+
+	for (unsigned long number = 0; number <= UINT16_MAX; ++number) {
+		enum v34_symbol_rate expected = V34_SYMBOL_RATE_COUNT;
+		enum v34_symbol_rate actual = V34_SYMBOL_RATE_COUNT;
+
+		for (size_t i = 0; i < ARRAY_LENGTH(labels); ++i)
+			if (number == labels[i])
+				expected = (enum v34_symbol_rate)i;
+		CHECK(v34_symbol_rate_from_number(number, &actual) ==
+			      (expected != V34_SYMBOL_RATE_COUNT) && actual == expected,
+		      "baud label %lu changed selection or mutated rejected output", number);
+	}
+	for (size_t i = 0; i < ARRAY_LENGTH(labels); ++i) {
+		enum v34_symbol_rate rate = V34_SYMBOL_RATE_3000;
+
+		CHECK(!v34_symbol_rate_from_number(labels[i], NULL),
+		      "baud conversion accepted a missing output");
+		CHECK(!v34_symbol_rate_from_number(ULONG_MAX, &rate) &&
+		      rate == V34_SYMBOL_RATE_3000,
+		      "maximum-width invalid baud changed the output");
+#if ULONG_MAX > UINT32_MAX
+		CHECK(!v34_symbol_rate_from_number((1UL << 32) + labels[i], &rate) &&
+		      rate == V34_SYMBOL_RATE_3000,
+		      "wide baud wrapped into a valid label");
+#endif
+	}
+	return true;
+}
 
 static struct v34_info1c info1c_fixture(void)
 {
@@ -316,6 +349,7 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "symbol rate labels", test_symbol_rate_labels },
 		{ "INFO1c codec", test_info1c_codec },
 		{ "INFO1a codec", test_info1a_codec },
 		{ "frequency offsets", test_frequency_offsets },

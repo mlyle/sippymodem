@@ -15,33 +15,6 @@ enum {
 	V34_PHASE2_L2_AMPLITUDE = 4096,
 };
 
-static bool symbol_rate_from_number(
-	unsigned int number, enum v34_symbol_rate *symbol_rate)
-{
-	switch (number) {
-	case 2400:
-		*symbol_rate = V34_SYMBOL_RATE_2400;
-		return true;
-	case 2743:
-		*symbol_rate = V34_SYMBOL_RATE_2743;
-		return true;
-	case 2800:
-		*symbol_rate = V34_SYMBOL_RATE_2800;
-		return true;
-	case 3000:
-		*symbol_rate = V34_SYMBOL_RATE_3000;
-		return true;
-	case 3200:
-		*symbol_rate = V34_SYMBOL_RATE_3200;
-		return true;
-	case 3429:
-		*symbol_rate = V34_SYMBOL_RATE_3429;
-		return true;
-	default:
-		return false;
-	}
-}
-
 static uint16_t requested_rate_mask(
 	unsigned int minimum, unsigned int maximum)
 {
@@ -73,7 +46,7 @@ static uint16_t enabled_rates(
 	if (requested_symbol_rate == 0) {
 		selected = highest == V34_MIN_BIT_RATE / V34_RATE_STEP ?
 				   V34_SYMBOL_RATE_2400 : V34_SYMBOL_RATE_3429;
-	} else if (!symbol_rate_from_number(
+	} else if (!v34_symbol_rate_from_number(
 			   requested_symbol_rate, &selected)) {
 		return 0;
 	}

@@ -115,24 +115,6 @@ static struct v90_info1a analog_info1(
 	};
 }
 
-static bool upstream_symbol_rate(
-	unsigned int symbols_per_second, enum v34_symbol_rate *rate)
-{
-	switch (symbols_per_second) {
-	case 3000:
-		*rate = V34_SYMBOL_RATE_3000;
-		return true;
-	case 3200:
-		*rate = V34_SYMBOL_RATE_3200;
-		return true;
-	case 3429:
-		*rate = V34_SYMBOL_RATE_3429;
-		return true;
-	default:
-		return false;
-	}
-}
-
 static enum v90_profile_result select_upstream(
 	const struct v90_upstream_policy *policy,
 	struct v90_upstream_selection *selection)
@@ -160,7 +142,8 @@ static enum v90_profile_result select_upstream(
 	if (symbol_rate == 0)
 		symbol_rate = maximum <= 28800u ? 3000u :
 			      maximum <= 31200u ? 3200u : 3429u;
-	if (!upstream_symbol_rate(symbol_rate, &selected.symbol_rate))
+	if (!v34_symbol_rate_from_number(symbol_rate, &selected.symbol_rate) ||
+	    !v90_upstream_symbol_rate_is_valid(selected.symbol_rate))
 		return V90_PROFILE_UNSUPPORTED_RATE;
 	maximum_units = selected.symbol_rate == V34_SYMBOL_RATE_3000 ? 12u :
 			selected.symbol_rate == V34_SYMBOL_RATE_3200 ? 13u : 14u;

@@ -81,6 +81,7 @@
 #include <modem_frontend.h>
 #include <modem_debug.h>
 #include <pcm_rate.h>
+#include <v34_symbol_rate.h>
 
 #define AT_DBG(fmt...) // dprintf("at: " fmt)
 
@@ -540,18 +541,9 @@ static int process_plus_MS(struct modem *m, char *p, int *len)
 
 static int v34_baud_is_valid(unsigned long value)
 {
-	switch (value) {
-	case 0:
-	case 2400:
-	case 2743:
-	case 2800:
-	case 3000:
-	case 3200:
-	case 3429:
-		return 1;
-	default:
-		return 0;
-	}
+	enum v34_symbol_rate rate;
+
+	return value == 0 || v34_symbol_rate_from_number(value, &rate);
 }
 
 static int process_plus_V34B(struct modem *m, char *p, int *len)
