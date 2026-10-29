@@ -15,7 +15,9 @@ enum {
 	 * Initial B1u and online recovery use the same ceiling. */
 	V92_DATA_MAX_RMS_ERROR = 64,
 	V92_DATA_QUALITY_WINDOW_FRAMES = 128,
-	V92_DATA_QUALITY_BAD_WINDOWS = 3,
+	/* Ten 192 ms windows cover at least 1.8 seconds of sustained loss.
+	 * Sparse weak decisions can resolve without a physical retrain. */
+	V92_DATA_QUALITY_BAD_WINDOWS = 10,
 	V92_DATA_QUALITY_MAX_RETRAINS = 2,
 	/* 64 clean 192 ms windows separate recovered incidents. This is local
 	 * receiver policy, not a V.92 timer or permission to deliver weak data. */
@@ -31,7 +33,7 @@ enum v92_data_quality_result {
 
 /* PCM-upstream quality policy, separate from the frame decoder. A zero
  * initializer begins a new call. Each observation covers one twelve-symbol
- * frame before equalizer adaptation. Three consecutive bad 192 ms windows
+ * frame before equalizer adaptation. Ten consecutive bad 192 ms windows
  * request full retraining. A window is bad on excess residual or low-margin
  * sequence disagreement; a single uncertain window cannot force recovery.
  * A decoder-reported ambiguous payload or loss of all decoder paths requests

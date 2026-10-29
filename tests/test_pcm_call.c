@@ -9714,12 +9714,19 @@ static bool v92_rejected_control_recovery(const struct pcm_call *online, int16_t
 	/* A short Ru-like run followed by unrelated energy is not a rate request.
 	 * Neither is indefinite silence. Do not deliver ambiguous frames or
 	 * repeatedly defer recovery while waiting for missing control. */
+	const unsigned window_samples = V92_DATA_QUALITY_WINDOW_FRAMES *
+		V92_PCM_MAPPING_FRAME_SYMBOLS;
+	/* Allow a partial first window, the configured loss qualification, and
+	 * the unchanged 200 ms maximum control guard after qualification. */
+	const unsigned recovery_samples =
+		(V92_DATA_QUALITY_BAD_WINDOWS + 1u) * window_samples + 1600u;
+
 	for (unsigned budget = 0; budget <= V92_DATA_QUALITY_MAX_RETRAINS; ++budget) {
 		struct pcm_call call = *online;
 		unsigned guard_started = 0;
 		bool recovered = false;
 		call.pcm_upstream_quality.recovery.attempts = budget;
-		for (unsigned clock = 0; clock < 8000u; ++clock) {
+		for (unsigned clock = 0; clock < recovery_samples; ++clock) {
 			struct pcm_call_data_event event;
 			uint8_t octet;
 			int16_t sample = quiet ? 0 : clock < 180u ?

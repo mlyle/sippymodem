@@ -105,7 +105,7 @@ static bool test_invalid(void)
 	      memcmp(&before, &quality, sizeof(quality)) == 0, "invalid window accepted");
 	quality = (struct v92_data_quality){ .recovery.attempts = 3 };
 	CHECK(!v92_data_quality_is_valid(&quality), "invalid budget accepted");
-	quality = (struct v92_data_quality){ .recovery.bad_windows = 3 };
+	quality = (struct v92_data_quality){ .recovery.bad_windows = V92_DATA_QUALITY_BAD_WINDOWS };
 	CHECK(!v92_data_quality_is_valid(&quality), "invalid loss count accepted");
 	quality = (struct v92_data_quality){ .squared_error = 1 };
 	CHECK(!v92_data_quality_is_valid(&quality), "unowned measurement accepted");
@@ -142,15 +142,20 @@ static bool test_training_recovery(void)
 static bool test_uncertainty(void)
 {
 	struct v92_data_quality quality = { 0 };
-	const bool uncertain[] = { true, true, false, true, false, true, true, true };
+	bool uncertain[3 * V92_DATA_QUALITY_BAD_WINDOWS];
 	unsigned bad = 0;
 
+	/* Two interrupted runs must not combine into one persistent fault. */
+	for (unsigned n = 0; n < ARRAY_LENGTH(uncertain); ++n)
+		uncertain[n] = true;
+	uncertain[V92_DATA_QUALITY_BAD_WINDOWS - 1u] = false;
+	uncertain[2 * V92_DATA_QUALITY_BAD_WINDOWS - 1u] = false;
 	/* One disputed observation makes a weak window, not a payload erasure
 	 * or an immediate retrain. Good windows break the consecutive run. */
-	for (unsigned n = 0; n < sizeof(uncertain) / sizeof(uncertain[0]); ++n) {
+	for (unsigned n = 0; n < ARRAY_LENGTH(uncertain); ++n) {
 		for (unsigned f = 0; f < V92_DATA_QUALITY_WINDOW_FRAMES; ++f) {
 			bool weak = uncertain[n] && f == V92_DATA_QUALITY_WINDOW_FRAMES / 2u;
-			enum v92_data_quality_result expected = n == 7u &&
+			enum v92_data_quality_result expected = n + 1u == ARRAY_LENGTH(uncertain) &&
 				f + 1u == V92_DATA_QUALITY_WINDOW_FRAMES ?
 				V92_DATA_QUALITY_RETRAIN : V92_DATA_QUALITY_OK;
 

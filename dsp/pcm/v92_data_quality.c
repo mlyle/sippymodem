@@ -7,6 +7,13 @@
 #include <math.h>
 #include <stddef.h>
 
+/* PCM upstream always runs at 8000 symbols/s. Keep the shortest whole-window
+ * persistence that covers 1.8 seconds when the measurement geometry changes. */
+_Static_assert(V92_DATA_QUALITY_BAD_WINDOWS * V92_DATA_QUALITY_WINDOW_FRAMES *
+	V92_PCM_MAPPING_FRAME_SYMBOLS >= 1800 * 8, "quality persistence is too short");
+_Static_assert((V92_DATA_QUALITY_BAD_WINDOWS - 1) * V92_DATA_QUALITY_WINDOW_FRAMES *
+	V92_PCM_MAPPING_FRAME_SYMBOLS < 1800 * 8, "quality persistence has an extra window");
+
 bool v92_data_quality_is_valid(const struct v92_data_quality *quality)
 {
 	return quality != NULL && isfinite(quality->squared_error) &&
