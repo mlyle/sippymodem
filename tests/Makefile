@@ -2033,6 +2033,9 @@ V92_PCM_PHASE3_CPT_LINE_RX_TEST_OBJECTS := \
 	$(BUILD_DIR)/fractional_delay.o \
 	$(BUILD_DIR)/g711.o \
 	$(CRC16_CCITT_FALSE_OBJECT)
+V90_PCM_MAPPING_OBJECTS := $(BUILD_DIR)/v90_pcm_mapping.o \
+	$(BUILD_DIR)/v92_cpt.o $(BUILD_DIR)/v92_cpu.o
+
 V92_PHASE3_DIGITAL_STATION_TEST_BINARY := \
 	$(BUILD_DIR)/test_v92_phase3_digital_station
 V92_PHASE3_DIGITAL_STATION_TEST_OBJECTS := \
@@ -2047,7 +2050,7 @@ V92_PHASE3_DIGITAL_STATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/v90_profile.o \
 	$(BUILD_DIR)/pcm_rate.o \
 	$(BUILD_DIR)/mixed_radix.o \
-	$(BUILD_DIR)/v90_pcm_mapping.o \
+	$(V90_PCM_MAPPING_OBJECTS) \
 	$(BUILD_DIR)/v90_cp.o \
 	$(BUILD_DIR)/v90_dil_sequence.o \
 	$(BUILD_DIR)/v92_phase3_digital_station.o \
@@ -2203,7 +2206,7 @@ PCM_DOWNSTREAM_RX_TEST_OBJECTS := \
 	$(V92_CONTROL_RX_OBJECTS) \
 	$(BUILD_DIR)/v90_pcm_frame_decoder.o \
 	$(BUILD_DIR)/v90_pcm_frame_encoder.o \
-	$(BUILD_DIR)/v90_pcm_mapping.o \
+	$(V90_PCM_MAPPING_OBJECTS) \
 	$(MIXED_RADIX_OBJECT) \
 	$(BUILD_DIR)/v90_sign_decoder.o \
 	$(BUILD_DIR)/v90_sign_encoder.o \
@@ -2221,7 +2224,7 @@ V90_PCM_MAPPING_TEST_BINARY := \
 	$(BUILD_DIR)/test_v90_pcm_mapping
 V90_PCM_MAPPING_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v90_pcm_mapping.o \
-	$(BUILD_DIR)/v90_pcm_mapping.o \
+	$(V90_PCM_MAPPING_OBJECTS) \
 	$(MIXED_RADIX_OBJECT) \
 	$(BUILD_DIR)/v90_cp.o $(CRC16_CCITT_FALSE_OBJECT) \
 	$(BUILD_DIR)/g711.o
@@ -2230,7 +2233,7 @@ V90_PCM_FRAME_ENCODER_TEST_BINARY := \
 V90_PCM_FRAME_ENCODER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v90_pcm_frame_encoder.o \
 	$(BUILD_DIR)/v90_pcm_frame_encoder.o \
-	$(BUILD_DIR)/v90_pcm_mapping.o \
+	$(V90_PCM_MAPPING_OBJECTS) \
 	$(MIXED_RADIX_OBJECT) \
 	$(BUILD_DIR)/v90_sign_encoder.o \
 	$(BUILD_DIR)/v90_spectral_shaper.o \
@@ -2243,7 +2246,7 @@ V90_PCM_FRAME_DECODER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v90_pcm_frame_decoder.o \
 	$(BUILD_DIR)/v90_pcm_frame_decoder.o \
 	$(BUILD_DIR)/v90_pcm_frame_encoder.o \
-	$(BUILD_DIR)/v90_pcm_mapping.o \
+	$(V90_PCM_MAPPING_OBJECTS) \
 	$(MIXED_RADIX_OBJECT) \
 	$(BUILD_DIR)/v90_sign_decoder.o \
 	$(BUILD_DIR)/v90_sign_encoder.o \
@@ -2270,7 +2273,7 @@ V90_DOWNSTREAM_DATA_TX_TEST_OBJECTS := \
 	$(BUILD_DIR)/v90_downstream_data_tx.o \
 	$(BUILD_DIR)/v90_pcm_frame_decoder.o \
 	$(BUILD_DIR)/v90_pcm_frame_encoder.o \
-	$(BUILD_DIR)/v90_pcm_mapping.o \
+	$(V90_PCM_MAPPING_OBJECTS) \
 	$(MIXED_RADIX_OBJECT) \
 	$(BUILD_DIR)/v90_sign_decoder.o \
 	$(BUILD_DIR)/v90_sign_encoder.o \
@@ -2303,7 +2306,7 @@ V90_SPECTRAL_SHAPER_TEST_BINARY := \
 V90_SPECTRAL_SHAPER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v90_spectral_shaper.o \
 	$(BUILD_DIR)/v90_spectral_shaper.o \
-	$(BUILD_DIR)/v90_pcm_mapping.o \
+	$(V90_PCM_MAPPING_OBJECTS) \
 	$(MIXED_RADIX_OBJECT) \
 	$(BUILD_DIR)/v90_pcm_symbol.o \
 	$(BUILD_DIR)/v90_cp.o $(CRC16_CCITT_FALSE_OBJECT) \
@@ -2319,7 +2322,7 @@ PCM_DOWNSTREAM_TX_TEST_OBJECTS := \
 	$(BUILD_DIR)/v90_pcm_stream_rx.o \
 	$(BUILD_DIR)/v90_pcm_frame_decoder.o \
 	$(BUILD_DIR)/v90_pcm_frame_encoder.o \
-	$(BUILD_DIR)/v90_pcm_mapping.o \
+	$(V90_PCM_MAPPING_OBJECTS) \
 	$(MIXED_RADIX_OBJECT) \
 	$(BUILD_DIR)/v90_sign_decoder.o \
 	$(BUILD_DIR)/v90_sign_encoder.o \
@@ -2395,7 +2398,7 @@ V90_PCM_STREAM_RX_TEST_OBJECTS := \
 	$(BUILD_DIR)/v92_status_update.o \
 	$(BUILD_DIR)/v90_pcm_frame_decoder.o \
 	$(BUILD_DIR)/v90_pcm_frame_encoder.o \
-	$(BUILD_DIR)/v90_pcm_mapping.o \
+	$(V90_PCM_MAPPING_OBJECTS) \
 	$(MIXED_RADIX_OBJECT) \
 	$(BUILD_DIR)/v90_sign_decoder.o \
 	$(BUILD_DIR)/v90_sign_encoder.o \
@@ -2480,7 +2483,7 @@ V90_PHASE4_ANALOG_STATION_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/v90_mp.o \
 	$(V92_CONTROL_RX_OBJECTS) \
 	$(BUILD_DIR)/v90_pcm_frame_decoder.o \
-	$(BUILD_DIR)/v90_pcm_mapping.o \
+	$(V90_PCM_MAPPING_OBJECTS) \
 	$(MIXED_RADIX_OBJECT) \
 	$(BUILD_DIR)/v90_pcm_symbol.o \
 	$(BUILD_DIR)/v90_sign_decoder.o \
@@ -2727,7 +2730,7 @@ V90_PHASE4_E_LINE_RX_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_v90_phase4_e_line_rx.o \
 	$(BUILD_DIR)/v90_phase4_e_line_rx.o \
 	$(BUILD_DIR)/v90_upstream_rx.o \
-	$(BUILD_DIR)/v90_pcm_mapping.o \
+	$(V90_PCM_MAPPING_OBJECTS) \
 	$(MIXED_RADIX_OBJECT) \
 	$(filter-out $(BUILD_DIR)/test_v34_phase4_e_receiver.o, \
 		$(V34_PHASE4_E_RECEIVER_TEST_OBJECTS)) \
@@ -2747,7 +2750,7 @@ V90_PHASE4_DIGITAL_STATION_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_v90_phase4_digital_station.o \
 	$(BUILD_DIR)/v90_phase4_digital_station.o \
 	$(BUILD_DIR)/v90_phase4_ri.o \
-	$(BUILD_DIR)/v90_pcm_mapping.o \
+	$(V90_PCM_MAPPING_OBJECTS) \
 	$(MIXED_RADIX_OBJECT) \
 	$(BUILD_DIR)/v90_pcm_symbol.o \
 	$(BUILD_DIR)/v90_jd.o \

@@ -210,64 +210,72 @@ enum v90_pcm_mapping_result v90_pcm_mapping_init_v91(
 	return V90_PCM_MAPPING_OK;
 }
 
+/* Protocol validation stays with the caller. Resolve borrowed masks into
+ * one local mapping, then publish only after capacity/shaping validation.
+ * No received parameter record or constellation pointer is retained. */
+static enum v90_pcm_mapping_result finish_mapping(
+	struct v90_pcm_mapping *mapping, struct v90_pcm_mapping *initialized,
+	const struct pcm_constellation *transmit,
+	const struct pcm_constellation *codec,
+	const uint8_t frame_constellation[V90_CP_FRAME_INTERVALS], bool codec_differs)
+{
+	bool codec_counts_match = true;
+
+	if (!g711_law_is_valid(initialized->law))
+		return V90_PCM_MAPPING_INVALID_PARAMETERS;
+	initialized->sign_bits = (uint8_t)(V90_CP_FRAME_INTERVALS -
+		initialized->sign_redundancy);
+	initialized->modulus_bits = (uint8_t)(initialized->frame_bits -
+		initialized->sign_bits);
+	for (size_t interval = 0;
+	     interval < V90_CP_FRAME_INTERVALS; ++interval) {
+		uint8_t index = frame_constellation[interval];
+		uint8_t codec_count;
+
+		initialized->transmit[interval] = transmit[index];
+		initialized->codec[interval] =
+			codec_differs ? codec[index] : initialized->transmit[interval];
+		initialized->modulus[interval] =
+			pcm_constellation_count(&initialized->transmit[interval]);
+		codec_count = pcm_constellation_count(&initialized->codec[interval]);
+		if (codec_count != initialized->modulus[interval])
+			codec_counts_match = false;
+	}
+	if (!codec_differs || !codec_counts_match)
+		memcpy(initialized->codec, initialized->transmit,
+		       sizeof(initialized->codec));
+	initialized->codec_plane_differs =
+		mapping_planes_differ(initialized);
+	if (!v90_pcm_mapping_is_valid(initialized))
+		return V90_PCM_MAPPING_INVALID_PARAMETERS;
+	*mapping = *initialized;
+	return V90_PCM_MAPPING_OK;
+}
+
 enum v90_pcm_mapping_result v90_pcm_mapping_init_transmit(
 	struct v90_pcm_mapping *mapping,
 	const struct v90_cp_parameters *parameters, enum g711_law law)
 {
-	struct v90_pcm_mapping initialized = { 0 };
-	uint8_t base;
-	bool codec_counts_match = true;
-
 	if (mapping == NULL || parameters == NULL)
 		return V90_PCM_MAPPING_INVALID_ARGUMENT;
-	if (!g711_law_is_valid(law) ||
-	    !v90_cp_parameters_are_valid(parameters) ||
+	if (!v90_cp_parameters_are_valid(parameters) ||
 	    parameters->selected_rate_index == 0)
 		return V90_PCM_MAPPING_INVALID_PARAMETERS;
-	base = parameters->kind == V90_CP_TRAINING ?
-		       V90_PHASE4_RATE_BASE : V90_DATA_RATE_BASE;
-	initialized.kind = parameters->kind;
-	initialized.law = law;
-	initialized.frame_bits =
-		(uint8_t)(base + parameters->selected_rate_index);
-	initialized.sign_redundancy = parameters->sign_redundancy;
-	initialized.sign_bits =
-		(uint8_t)(V90_CP_FRAME_INTERVALS -
-			  parameters->sign_redundancy);
-	initialized.modulus_bits =
-		(uint8_t)(initialized.frame_bits - initialized.sign_bits);
-	initialized.spectral_lookahead = parameters->spectral_lookahead;
-	initialized.shaping_a1_q1_6 = parameters->shaping_a1_q1_6;
-	initialized.shaping_a2_q1_6 = parameters->shaping_a2_q1_6;
-	initialized.shaping_b1_q1_6 = parameters->shaping_b1_q1_6;
-	initialized.shaping_b2_q1_6 = parameters->shaping_b2_q1_6;
-	for (size_t interval = 0;
-	     interval < V90_CP_FRAME_INTERVALS; ++interval) {
-		uint8_t index = parameters->frame_constellation[interval];
-		uint8_t codec_count;
-
-		initialized.transmit[interval] =
-			parameters->transmit_constellations[index];
-		initialized.codec[interval] =
-			parameters->codec_constellations_differ ?
-				parameters->codec_constellations[index] :
-				initialized.transmit[interval];
-		initialized.modulus[interval] =
-			pcm_constellation_count(&initialized.transmit[interval]);
-		codec_count = pcm_constellation_count(&initialized.codec[interval]);
-		if (codec_count != initialized.modulus[interval])
-			codec_counts_match = false;
-	}
-	if (!parameters->codec_constellations_differ ||
-	    !codec_counts_match)
-		memcpy(initialized.codec, initialized.transmit,
-		       sizeof(initialized.codec));
-	initialized.codec_plane_differs =
-		mapping_planes_differ(&initialized);
-	if (!v90_pcm_mapping_is_valid(&initialized))
-		return V90_PCM_MAPPING_INVALID_PARAMETERS;
-	*mapping = initialized;
-	return V90_PCM_MAPPING_OK;
+	struct v90_pcm_mapping initialized = {
+		.kind = parameters->kind, .law = law,
+		.frame_bits = (uint8_t)((parameters->kind == V90_CP_TRAINING ?
+			V90_PHASE4_RATE_BASE : V90_DATA_RATE_BASE) +
+			parameters->selected_rate_index),
+		.sign_redundancy = parameters->sign_redundancy,
+		.spectral_lookahead = parameters->spectral_lookahead,
+		.shaping_a1_q1_6 = parameters->shaping_a1_q1_6,
+		.shaping_a2_q1_6 = parameters->shaping_a2_q1_6,
+		.shaping_b1_q1_6 = parameters->shaping_b1_q1_6,
+		.shaping_b2_q1_6 = parameters->shaping_b2_q1_6,
+	};
+	return finish_mapping(mapping, &initialized,
+		parameters->transmit_constellations, parameters->codec_constellations,
+		parameters->frame_constellation, parameters->codec_constellations_differ);
 }
 
 bool v90_pcm_mapping_matches_transmit(
@@ -330,68 +338,48 @@ enum v90_pcm_mapping_result v90_pcm_mapping_init_from_v92_cpt(
 	struct v90_pcm_mapping *mapping,
 	const struct v92_cpt_parameters *parameters, enum g711_law law)
 {
-	struct v90_cp_parameters common = { 0 };
-
 	if (mapping == NULL || parameters == NULL)
 		return V90_PCM_MAPPING_INVALID_ARGUMENT;
-	common = (struct v90_cp_parameters){
-		.kind = V90_CP_TRAINING,
-		.law = parameters->law,
-		.trn1d_ratio_q3_13 = parameters->trn1d_ratio_q3_13,
+	if (!v92_cpt_parameters_are_valid(parameters) ||
+	    parameters->selected_rate_index == 0)
+		return V90_PCM_MAPPING_INVALID_PARAMETERS;
+	struct v90_pcm_mapping initialized = {
+		.kind = V90_CP_TRAINING, .law = law,
+		.frame_bits = (uint8_t)(V90_PHASE4_RATE_BASE + parameters->selected_rate_index),
+		.sign_redundancy = parameters->sign_redundancy,
+		.spectral_lookahead = parameters->spectral_lookahead,
 		.shaping_a1_q1_6 = parameters->shaping_a1_q1_6,
 		.shaping_a2_q1_6 = parameters->shaping_a2_q1_6,
 		.shaping_b1_q1_6 = parameters->shaping_b1_q1_6,
 		.shaping_b2_q1_6 = parameters->shaping_b2_q1_6,
-		.selected_rate_index = parameters->selected_rate_index,
-		.sign_redundancy = parameters->sign_redundancy,
-		.spectral_lookahead = parameters->spectral_lookahead,
-		.constellation_count = parameters->constellation_count,
-		.codec_constellations_differ =
-			parameters->codec_constellations_differ,
 	};
-	memcpy(common.transmit_constellations,
-	       parameters->transmit_constellations,
-	       sizeof(common.transmit_constellations));
-	memcpy(common.codec_constellations,
-	       parameters->codec_constellations,
-	       sizeof(common.codec_constellations));
-	memcpy(common.frame_constellation, parameters->frame_constellation,
-	       sizeof(common.frame_constellation));
-	return v90_pcm_mapping_init_transmit(mapping, &common, law);
+	return finish_mapping(mapping, &initialized,
+		parameters->transmit_constellations, parameters->codec_constellations,
+		parameters->frame_constellation, parameters->codec_constellations_differ);
 }
 
 enum v90_pcm_mapping_result v90_pcm_mapping_init_from_v92_cpu(
 	struct v90_pcm_mapping *mapping,
 	const struct v92_cpu_parameters *parameters, enum g711_law law)
 {
-	struct v90_cp_parameters common = { 0 };
-
 	if (mapping == NULL || parameters == NULL)
 		return V90_PCM_MAPPING_INVALID_ARGUMENT;
-	common = (struct v90_cp_parameters){
-		.kind = V90_CP_DATA,
-		.law = parameters->law,
-		.trn1d_ratio_q3_13 = parameters->trn1d_ratio_q3_13,
+	if (!v92_cpu_parameters_are_valid(parameters) ||
+	    parameters->data_rate_number == 0)
+		return V90_PCM_MAPPING_INVALID_PARAMETERS;
+	struct v90_pcm_mapping initialized = {
+		.kind = V90_CP_DATA, .law = law,
+		.frame_bits = (uint8_t)(V90_DATA_RATE_BASE + parameters->data_rate_number),
+		.sign_redundancy = parameters->sign_redundancy,
+		.spectral_lookahead = parameters->spectral_lookahead_frames,
 		.shaping_a1_q1_6 = parameters->shaping_a1_q1_6,
 		.shaping_a2_q1_6 = parameters->shaping_a2_q1_6,
 		.shaping_b1_q1_6 = parameters->shaping_b1_q1_6,
 		.shaping_b2_q1_6 = parameters->shaping_b2_q1_6,
-		.selected_rate_index = parameters->data_rate_number,
-		.sign_redundancy = parameters->sign_redundancy,
-		.spectral_lookahead = parameters->spectral_lookahead_frames,
-		.constellation_count = parameters->constellation_count,
-		.codec_constellations_differ =
-			parameters->codec_constellations_differ,
 	};
-	memcpy(common.transmit_constellations,
-	       parameters->transmit_constellations,
-	       sizeof(common.transmit_constellations));
-	memcpy(common.codec_constellations,
-	       parameters->codec_constellations,
-	       sizeof(common.codec_constellations));
-	memcpy(common.frame_constellation, parameters->frame_constellation,
-	       sizeof(common.frame_constellation));
-	return v90_pcm_mapping_init_transmit(mapping, &common, law);
+	return finish_mapping(mapping, &initialized,
+		parameters->transmit_constellations, parameters->codec_constellations,
+		parameters->frame_constellation, parameters->codec_constellations_differ);
 }
 
 enum v90_pcm_mapping_result v90_pcm_mapping_encode_modulus(

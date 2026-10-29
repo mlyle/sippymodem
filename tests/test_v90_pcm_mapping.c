@@ -708,6 +708,59 @@ static bool test_v92_cpu_mapping(void)
 	return true;
 }
 
+/* Borrowed constellation tables must be rejected before indexing or publishing
+ * a mapping. Exercise both V.92 records, including late shaping rejection. */
+static bool test_v92_mapping_rejection(void)
+{
+	for (unsigned data = 0; data < 2; ++data) {
+		for (unsigned fault = 0; fault < 12; ++fault) {
+			struct v90_cp_parameters source = parameters(
+				data ? V90_CP_DATA : V90_CP_TRAINING, 13, 1,
+				data ? 32 : 8, true);
+			struct v90_pcm_mapping mapping, before;
+
+			switch (fault) {
+			case 0: source.selected_rate_index = 0; break;
+			case 1: source.selected_rate_index = 23; break;
+			case 2: source.sign_redundancy = 4; break;
+			case 3: source.spectral_lookahead = 4; break;
+			case 4: source.law = (enum g711_law)99; break;
+			case 5:
+				memset(source.transmit_constellations, 0,
+					sizeof(source.transmit_constellations));
+				break;
+			case 6: source.frame_constellation[0] = source.constellation_count; break;
+			case 7: source.constellation_count = 0; break;
+			case 8: source.constellation_count = V90_CP_MAX_CONSTELLATIONS + 1; break;
+			case 9: source.shaping_a1_q1_6 = 65; break;
+			case 10: source.shaping_b2_q1_6 = -65; break;
+			case 11: add_ucode(&source.transmit_constellations[2], 3); break;
+			}
+			memset(&mapping, 0xa5, sizeof(mapping));
+			before = mapping;
+			enum v90_pcm_mapping_result result;
+			if (data) {
+				struct v92_cpu_parameters cpu = v92_cpu_parameters(&source);
+				struct v92_cpu_parameters retained = cpu;
+				result = v90_pcm_mapping_init_from_v92_cpu(&mapping, &cpu, G711_LAW_PCMU);
+				CHECK(memcmp(&cpu, &retained, sizeof(cpu)) == 0,
+				      "CPu rejection changed received parameters at fault %u", fault);
+			} else {
+				struct v92_cpt_parameters cpt = v92_parameters(&source);
+				struct v92_cpt_parameters retained = cpt;
+				result = v90_pcm_mapping_init_from_v92_cpt(&mapping, &cpt, G711_LAW_PCMU);
+				CHECK(memcmp(&cpt, &retained, sizeof(cpt)) == 0,
+				      "CPt rejection changed received parameters at fault %u", fault);
+			}
+			CHECK(result == V90_PCM_MAPPING_INVALID_PARAMETERS &&
+			      memcmp(&mapping, &before, sizeof(mapping)) == 0,
+			      "V.92 %s fault %u changed output or escaped validation",
+			      data ? "CPu" : "CPt", fault);
+		}
+	}
+	return true;
+}
+
 static bool test_generated_inverse_mapping(void)
 {
 	struct v90_cp_parameters source = mixed_parameters();
@@ -1116,6 +1169,7 @@ int main(void)
 		  test_rate_renegotiation_mapping },
 		{ "V.92 CPt mapping", test_v92_cpt_mapping },
 		{ "V.92 CPu mapping", test_v92_cpu_mapping },
+		{ "V.92 transactional mapping rejection", test_v92_mapping_rejection },
 		{ "generated inverse mapping",
 		  test_generated_inverse_mapping },
 		{ "inverse rate boundaries",
