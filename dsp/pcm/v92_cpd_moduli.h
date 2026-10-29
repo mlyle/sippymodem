@@ -8,6 +8,24 @@
 
 _Static_assert(V92_CPD_MODULUS_COUNT == 12, "balanced capacity assumes twelve symbols");
 
+/* Minimum positive points for one constellation shared by all twelve
+ * intervals. Every fourth symbol also carries the trellis coset bit.
+ * With no precoder memory, outer representatives cannot reduce |x|. */
+static inline uint8_t v92_cpd_minimum_points(
+	const uint8_t moduli[V92_CPD_MODULUS_COUNT])
+{
+	uint8_t count = 0;
+
+	for (unsigned symbol = 0; symbol < V92_CPD_MODULUS_COUNT; ++symbol) {
+		unsigned required = symbol % 4u == 3u ? moduli[symbol] :
+			(moduli[symbol] + 1u) / 2u;
+
+		if (required > count)
+			count = (uint8_t)required;
+	}
+	return count;
+}
+
 /* Nine ordinary moduli are 2N and three trellis moduli are N. Their
  * product gives capacity = (2N)^9 N^3 = 512 (N^6)^2. For 1 <= N <= 64,
  * N^3 fits uint32_t, N^6 fits uint64_t and capacity fits 82 bits. */

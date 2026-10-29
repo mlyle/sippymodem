@@ -56,7 +56,6 @@ static bool direct_tables(
 {
 	unsigned int data_bits =
 		pcm_upstream_frame_bits(data_rate_number);
-	uint8_t point_count = 0u;
 	bool balanced = data_rate_number == 16u ||
 		(direct_channel && data_rate_number >= 15u);
 
@@ -86,18 +85,13 @@ static bool direct_tables(
 	for (size_t symbol = 0u;
 	     symbol < V92_CPD_MODULUS_COUNT; ++symbol) {
 		unsigned int exponent = data_bits / V92_CPD_MODULUS_COUNT;
-		uint8_t required;
 
 		if (symbol < data_bits % V92_CPD_MODULUS_COUNT)
 			exponent++;
 		if (!balanced)
 			parameters->modulus[symbol] = (uint8_t)(1u << exponent);
-		required = symbol % 4u == 3u ?
-			parameters->modulus[symbol] :
-			(uint8_t)((parameters->modulus[symbol] + 1u) / 2u);
-		if (point_count < required)
-			point_count = required;
 	}
+	uint8_t point_count = v92_cpd_minimum_points(parameters->modulus);
 	/* The 40k template has four representatives per modulus-32 value.
 	 * The identity precoder uses only the inner half; direct selection
 	 * omits the unreachable outer points before measuring B1u. */

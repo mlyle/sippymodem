@@ -3742,6 +3742,115 @@ static bool test_translated_acquisition(bool damaged)
 	return true;
 }
 
+/* Unused outer representatives can make a different clipped gain model
+ * explain different bits, even though the actual inner-point waveform is
+ * error-free. Exercise native calibration, held-out B1u and payload through
+ * two codec conversions, with a signal-aligned numerical training handoff. */
+static bool test_memoryless_codec(enum g711_law law, unsigned noise)
+{
+	enum { LU = 2620, BITS = 54, PAYLOAD = 128,
+		FRAMES = V92_B1U_FRAMES + PAYLOAD + V92_PCM_RX_DELAY_FRAMES };
+	struct v92_upstream_channel channel = { 0 };
+	uint32_t history = 0;
+	unsigned sign = 0;
+
+	for (unsigned n = 0; n < V92_UPSTREAM_CHANNEL_SYMBOLS; ++n) {
+		unsigned group = 0;
+		for (unsigned bit = 0; bit < 2; ++bit) {
+			unsigned scrambled = 1u ^ ((history >> 4) & 1u) ^ ((history >> 22) & 1u);
+
+			history = ((history << 1) | scrambled) & 0x7fffffu;
+			group |= scrambled << bit;
+		}
+		sign ^= group >> 1;
+		int16_t target = (sign ? -1 : 1) * ((group & 1u) ? 3515 : 1172);
+		int16_t first = g711_decode(law, g711_encode(law, (int16_t)lround(1.7 * target)));
+		int16_t observed = g711_decode(law, g711_encode(law, (int16_t)lround(first / 1.7)));
+
+		CHECK(v92_upstream_channel_sample(&channel, target, observed), "codec training failed");
+	}
+	struct v92_cpd_parameters cpd;
+	struct v92_upstream_plan plan;
+	struct v92_pcm_mapping mapping;
+	struct v92_pcm_frame_tx tx;
+	CHECK(v92_cpd_direct_init(&cpd, law, 10u, false) == V92_CPD_OK &&
+		v92_cpd_channel_design(&cpd, &channel, law, LU, &plan) &&
+		v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK &&
+		v92_pcm_frame_tx_init(&tx, &mapping) == V92_PCM_FRAME_OK, "codec mapping failed");
+	int16_t samples[(FRAMES + 8) * V92_PCM_MAPPING_FRAME_SYMBOLS];
+	uint8_t expected[PAYLOAD][BITS];
+	uint32_t random = UINT32_C(0x79d17531);
+	for (unsigned f = 0; f < FRAMES + 8u; ++f) {
+		uint8_t bits[BITS];
+		struct v92_pcm_frame frame;
+
+		payload(bits, BITS, f);
+		if (f < V92_B1U_FRAMES) memset(bits, 1, sizeof(bits));
+		if (f >= V92_B1U_FRAMES && f < V92_B1U_FRAMES + PAYLOAD)
+			memcpy(expected[f - V92_B1U_FRAMES], bits, sizeof(bits));
+		CHECK(v92_pcm_frame_encode(&tx, bits, BITS, &frame) == V92_PCM_FRAME_OK, "codec encode failed");
+		for (unsigned k = 0; k < V92_PCM_MAPPING_FRAME_SYMBOLS; ++k) {
+			int16_t sample;
+			CHECK(v92_pcm_frame_scale(cpd.four_times_gain_q0_16, LU, frame.v[k], &sample) ==
+				V92_PCM_FRAME_OK, "codec scale failed");
+			int16_t first = g711_decode(law, g711_encode(law, clamp_s16((int32_t)lround(1.7 * sample))));
+			random = random * UINT32_C(1664525) + UINT32_C(1013904223);
+			double jitter = noise * ((double)(random >> 16) / 32767.5 - 1.);
+			samples[f * V92_PCM_MAPPING_FRAME_SYMBOLS + k] = g711_decode(law,
+				g711_encode(law, clamp_s16((int32_t)lround(first / 1.7 + jitter))));
+		}
+	}
+	struct v92_pcm_phase4_trn2u_line_handoff handoff = {
+		.input_samples = 12000, .training_symbols = 12000, .law = law, .polarity = 1,
+	};
+	struct qam_point reference = { .in_phase = LU }, output;
+	bool ready = false;
+	CHECK(qam_equalizer_init_geometry(&handoff.equalizer, &reference, &reference,
+		V92_PCM_PHASE4_TRN2U_LINE_EQUALIZER_TAPS, V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY) == QAM_EQUALIZER_OK &&
+		v92_phase4_demodulator_init(&handoff.demodulator, V92_CONSTELLATION_4_POINT, 0, LU) ==
+		V92_PHASE4_MODULATOR_OK, "codec training handoff failed");
+	for (unsigned j = 0; j <= V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY; ++j)
+		CHECK(qam_equalizer_push(&handoff.equalizer, &reference, &output, &ready) == QAM_EQUALIZER_OK,
+			"codec handoff priming failed");
+	CHECK(ready && qam_equalizer_adapt(&handoff.equalizer, &output, 0.) == QAM_EQUALIZER_OK,
+		"codec handoff adaptation failed");
+	int16_t pending;
+	CHECK(v92_phase4_modulator_level(V92_CONSTELLATION_4_POINT, LU, 0, 0, &pending) ==
+		V92_PHASE4_MODULATOR_OK, "codec pending target failed");
+	for (unsigned j = 0; j < V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY; ++j)
+		handoff.pending_training_targets[j] = pending;
+	struct v92_upstream_rx signal;
+	CHECK(v92_upstream_rx_init(&signal, &handoff) == V92_UPSTREAM_RX_OK, "codec signal failed");
+	signal.training_tail_remaining = 0;
+	struct v92_upstream_data_rx *rx = calloc(1, sizeof(*rx));
+	CHECK(rx && v92_upstream_data_rx_init(rx, &signal, &mapping, &plan) == V92_UPSTREAM_DATA_RX_OK,
+		"codec receiver failed");
+	unsigned frames = 0, checked = 0;
+	for (unsigned n = V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY; frames < FRAMES; ++n) {
+		struct v92_upstream_data_frame frame;
+
+		CHECK(n < ARRAY_LENGTH(samples), "codec receiver exceeded source");
+		enum v92_upstream_data_rx_result result = fixture_octet_owned(rx,
+			g711_encode(law, samples[n]), samples[n], samples[n], true, &frame);
+		CHECK(result == V92_UPSTREAM_DATA_RX_OK || result == V92_UPSTREAM_DATA_RX_FRAME,
+			"codec receiver lost its path");
+		if (result != V92_UPSTREAM_DATA_RX_FRAME) continue;
+		unsigned f = frames++;
+		if (f < V92_PCM_RX_DELAY_FRAMES + V92_B1U_ACQUISITION_FRAMES) continue;
+		CHECK(frame.bit_count == BITS && !frame.ambiguous, "codec frame %u ambiguous, law %u noise %u", f, law, noise);
+		if (f < V92_PCM_RX_DELAY_FRAMES + V92_B1U_FRAMES) {
+			CHECK(!frame.b1u_mismatches, "codec held-out B1u mismatched");
+		} else {
+			CHECK(!memcmp(frame.bits, expected[f - V92_PCM_RX_DELAY_FRAMES - V92_B1U_FRAMES], BITS),
+				"codec payload bits changed");
+			checked++;
+		}
+	}
+	CHECK(checked == PAYLOAD && v92_upstream_data_rx_is_valid(rx), "codec payload incomplete");
+	free(rx);
+	return true;
+}
+
 /* A single final codec after a known linear channel must not acquire an
  * unnecessary first-codec model during B1u. Exercise channel selection and
  * the E2u-to-B1u handoff before checking independent payload bits. */
@@ -3944,6 +4053,8 @@ static bool test_translated_acquisition_seed(enum g711_law law,
 
 int main(void)
 {
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		if (!test_memoryless_codec(law, 0) || !test_memoryless_codec(law, 64)) return 1;
 	for (int polarity = -1; polarity <= 1; polarity += 2)
 		if (!test_codec_model(polarity, false, 19, false, true, polarity < 0 ? 1 : 40)) return 1;
 	const unsigned noise_peaks[] = { 0, 1, 512 };

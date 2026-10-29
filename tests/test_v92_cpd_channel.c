@@ -77,6 +77,79 @@ static uint32_t random_word(uint32_t *state)
 	return *state;
 }
 
+/* A wider legal alphabet must produce exactly the same B1u and payload
+ * with x=u. Check every rate, including odd moduli and the 32-state trellis,
+ * without depending on the point-spacing formula or minimum-size helper. */
+static bool test_memoryless_alphabet(void)
+{
+	struct v92_upstream_channel channel = { 0 };
+	uint32_t random = 0x87b31d5u;
+
+	for (unsigned n = 0; n < V92_UPSTREAM_CHANNEL_SYMBOLS; ++n) {
+		int16_t target = (int16_t)((int)(random_word(&random) % 8192u) - 4096);
+
+		CHECK(v92_upstream_channel_sample(&channel, target, target), "identity measurement failed");
+	}
+	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		for (unsigned rate = 1; rate <= V92_CPD_MAX_DATA_RATE_NUMBER; ++rate) {
+			struct v92_cpd_parameters compact, expanded, decoded;
+			struct v92_upstream_plan plan;
+			struct v92_pcm_mapping mapping[2];
+			struct v92_pcm_frame_tx tx[2];
+			struct v92_b1u_measurement measurement[2];
+			uint8_t wire[V92_CPD_MAX_FRAME_BYTES], bits[V92_PCM_MAPPING_MAX_BITS];
+			size_t compact_bits, expanded_bits;
+
+			CHECK(v92_cpd_direct_init(&compact, law, (uint8_t)rate, false) == V92_CPD_OK &&
+				v92_cpd_channel_design(&compact, &channel, law, LEVEL, &plan), "identity design failed");
+			CHECK(!compact.filter[V92_CPD_PRECODER_FEED_FORWARD].count &&
+				!compact.filter[V92_CPD_PRECODER_FEEDBACK].count, "identity retained memory");
+			unsigned count = compact.constellation[0].count;
+			bool minimal = false;
+
+			for (unsigned symbol = 0; symbol < V92_CPD_MODULUS_COUNT; ++symbol) {
+				unsigned step = compact.modulus[symbol] * (symbol % 4u == 3u ? 2u : 1u);
+
+				CHECK(2u * count >= step, "identity removed an equivalence class");
+				minimal |= 2u * (count - 1u) < step;
+			}
+			CHECK(minimal, "identity retained unnecessary outer points at rate %u", rate);
+			expanded = compact;
+			expanded.constellation[0].count = V92_CPD_MAX_CONSTELLATION_POINTS;
+			for (unsigned k = count; k < V92_CPD_MAX_CONSTELLATION_POINTS; ++k)
+				expanded.constellation[0].positive_linear[k] =
+					expanded.constellation[0].positive_linear[k - 1u] + 1;
+			CHECK(v92_cpd_encode(&compact, 17u, wire, sizeof(wire), &compact_bits) == V92_CPD_OK &&
+				v92_cpd_decode(wire, sizeof(wire), compact_bits, 17u, &decoded) == V92_CPD_OK &&
+				memcmp(&compact, &decoded, sizeof(compact)) == 0 &&
+				v92_cpd_encode(&expanded, 17u, wire, sizeof(wire), &expanded_bits) == V92_CPD_OK &&
+				expanded_bits - compact_bits ==
+				(V92_CPD_MAX_CONSTELLATION_POINTS - count) * V92_CPD_WORD_BITS,
+				"minimum alphabet did not round trip or save its point words");
+			CHECK(v92_pcm_frame_measure_b1u(&compact, law, &measurement[0]) == V92_PCM_FRAME_OK &&
+				v92_pcm_frame_measure_b1u(&expanded, law, &measurement[1]) == V92_PCM_FRAME_OK &&
+				memcmp(&measurement[0], &measurement[1], sizeof(measurement[0])) == 0,
+				"identity B1u energy or representative frequencies changed");
+			CHECK(v92_pcm_mapping_init(&mapping[0], law, &compact) == V92_PCM_MAPPING_OK &&
+				v92_pcm_mapping_init(&mapping[1], law, &expanded) == V92_PCM_MAPPING_OK &&
+				v92_pcm_frame_tx_init(&tx[0], &mapping[0]) == V92_PCM_FRAME_OK &&
+				v92_pcm_frame_tx_init(&tx[1], &mapping[1]) == V92_PCM_FRAME_OK, "identity TX failed");
+			for (unsigned frame = 0; frame < V92_B1U_FRAMES + 128u; ++frame) {
+				struct v92_pcm_frame output[2];
+
+				for (unsigned bit = 0; bit < mapping[0].data_bits_per_frame; ++bit)
+					bits[bit] = frame < V92_B1U_FRAMES ? 1u : random_word(&random) & 1u;
+				CHECK(v92_pcm_frame_encode(&tx[0], bits, mapping[0].data_bits_per_frame, &output[0]) == V92_PCM_FRAME_OK &&
+					v92_pcm_frame_encode(&tx[1], bits, mapping[1].data_bits_per_frame, &output[1]) == V92_PCM_FRAME_OK &&
+					memcmp(&output[0], &output[1], sizeof(output[0])) == 0 &&
+					memcmp(&tx[0].state, &tx[1].state, sizeof(tx[0].state)) == 0,
+					"identity waveform/state changed at law %u rate %u frame %u", law, rate, frame);
+			}
+		}
+	}
+	return true;
+}
+
 static int16_t quantize(enum g711_law law, double value)
 {
 	int16_t sample = (int16_t)lround(fmax(INT16_MIN, fmin(INT16_MAX, value)));
@@ -247,12 +320,20 @@ static bool test_channel_model(enum g711_law law, double main, double post, doub
 	if ((original.trellis == V92_CPD_TRELLIS_32_STATE && original.constellation[0].count == 32u) ||
 	    (rate == 16u && original.constellation[0].count == 27u))
 		original.constellation[0].count = 64u;
+	bool memoryless = cpd.filter[V92_CPD_PRECODER_FEEDBACK].count == 0u;
+	unsigned minimum = 0;
+	for (unsigned symbol = 0; symbol < V92_CPD_MODULUS_COUNT; ++symbol) {
+		unsigned required = symbol % 4u == 3u ? cpd.modulus[symbol] :
+			(cpd.modulus[symbol] + 1u) / 2u;
+
+		if (required > minimum) minimum = required;
+	}
 	if (original.constellation[0].count <= 16u) {
 		const struct v92_cpd_constellation *set = &cpd.constellation[0];
 
-		CHECK(set->count == 2u * original.constellation[0].count &&
-			set->positive_linear[0] == 256 && set->positive_linear[15] == 7936 &&
-			(set->count != 32u || set->positive_linear[31] == 16128),
+		CHECK(set->count == (memoryless ? minimum : 2u * original.constellation[0].count) &&
+			set->positive_linear[0] == 256 &&
+			set->positive_linear[set->count - 1u] == (2 * (int)set->count - 1) * 256,
 			"low-rate channel grid lost its spacing or outer representatives");
 		for (unsigned symbol = 0; symbol < V92_CPD_MODULUS_COUNT; ++symbol) {
 			unsigned step = cpd.modulus[symbol] * (symbol % 4u == 3u ? 2u : 1u);
@@ -263,7 +344,7 @@ static bool test_channel_model(enum g711_law law, double main, double post, doub
 
 				for (int eta = -(int)set->count; eta < set->count; ++eta)
 					choices += (unsigned)((eta % (int)step + (int)step) % (int)step) == residue;
-				CHECK(choices >= 2u, "rate %u interval %u residue %u has no precoder choice",
+				CHECK(choices >= (memoryless ? 1u : 2u), "rate %u interval %u residue %u has no precoder choice",
 					rate, symbol, residue);
 			}
 		}
@@ -273,10 +354,11 @@ static bool test_channel_model(enum g711_law law, double main, double post, doub
 		 * pinned without repeating the production formula. */
 		const struct v92_cpd_constellation *set = &cpd.constellation[0];
 
-		CHECK(set->count == 64u && set->positive_linear[0] == 35 &&
+		CHECK(set->count == (memoryless ? minimum : 64u) && set->positive_linear[0] == 35 &&
 			set->positive_linear[1] == 104 && set->positive_linear[15] == 1252 &&
-			set->positive_linear[31] == 3922 && set->positive_linear[47] == 10926 &&
-			set->positive_linear[63] == 30000, "dense channel spacing changed");
+			(set->count <= 31u || set->positive_linear[31] == 3922) &&
+			(set->count <= 47u || set->positive_linear[47] == 10926) &&
+			(set->count != 64u || set->positive_linear[63] == 30000), "dense channel spacing changed");
 		original.constellation[0] = *set;
 	} else if (original.constellation[0].count == 32u) {
 		for (unsigned point = 0; point < 32u; ++point)
@@ -285,6 +367,11 @@ static bool test_channel_model(enum g711_law law, double main, double post, doub
 		for (unsigned point = 0; point < original.constellation[0].count; ++point)
 			CHECK(g711_ucode_sample(law, (uint8_t)(2u * point + 1u), true,
 				&original.constellation[0].positive_linear[point]), "expected spacing failed");
+	}
+	if (memoryless) {
+		original.constellation[0].count = (uint8_t)minimum;
+		memset(original.constellation[0].positive_linear + minimum, 0,
+			(V92_CPD_MAX_CONSTELLATION_POINTS - minimum) * sizeof(int16_t));
 	}
 	CHECK(memcmp(&original, &cpd, sizeof(cpd)) == 0,
 		"channel design changed unrelated CPd selection");
@@ -867,7 +954,7 @@ static bool test_rate_selection(void)
 
 int main(void)
 {
-	if (!test_balanced_moduli() || !test_rate_selection() || !test_filter_padding() ||
+	if (!test_balanced_moduli() || !test_memoryless_alphabet() || !test_rate_selection() || !test_filter_padding() ||
 	    !test_training_changes() ||
 	    !test_rejections() || !test_receive_plan() ||
 	    !test_short_channel_selection(false) || !test_short_channel_selection(true) ||

@@ -535,6 +535,17 @@ static bool design(struct v92_cpd_parameters *parameters,
 					    &next.constellation[0].positive_linear[point]))
 					return false;
 		}
+		/* Retain the grid geometry, but do not advertise unused receive
+		 * hypotheses when x=u. Feedback still needs the outer choices to
+		 * cancel history. Z2/P2 alone do not affect representative selection. */
+		if (!v92_cpd_filter_response_length(&next.filter[V92_CPD_PRECODER_FEED_FORWARD]) &&
+		    !v92_cpd_filter_response_length(&next.filter[V92_CPD_PRECODER_FEEDBACK])) {
+			struct v92_cpd_constellation *points = &next.constellation[0];
+
+			points->count = v92_cpd_minimum_points(next.modulus);
+			memset(points->positive_linear + points->count, 0,
+				(V92_CPD_MAX_CONSTELLATION_POINTS - points->count) * sizeof(int16_t));
+		}
 		uint64_t point_energy;
 		if (!normalize_gain(&next, law, &point_energy))
 			return false;
