@@ -165,6 +165,8 @@ static bool test_creates_one_private_file_per_evidence_stream(void)
 		      strstr(fixture.paths[
 			     RECORD_TX_RTP_PAYLOAD_SENT],
 			     ".tx.rtp_payload.sent.8000hz.octets") != NULL &&
+		      strstr(fixture.paths[RECORD_RX_MODEM_RECEIVED],
+			     ".rx.modem_received.8000hz.octets") != NULL &&
 		      strstr(fixture.paths[RECORD_RTP_PACKETS], ".rtp.packets.tsv") != NULL,
 	      "recording paths do not identify their evidence format");
 	errno = 0;
@@ -228,6 +230,7 @@ static bool test_validates_prefix_and_paths(void)
 static bool test_writes_bounded_canonical_evidence(void)
 {
 	static const uint8_t payload[] = { 0xff, 0x7f, 0x12 };
+	static const uint8_t received[] = { 1, 0, 0, 1 };
 	static const int16_t samples[] = { 0x1234, -2, INT16_MIN, INT16_MAX };
 	static const uint8_t expected_pcm[] = {
 		0x34, 0x12, 0xfe, 0xff, 0x00, 0x80, 0xff, 0x7f,
@@ -237,6 +240,7 @@ static bool test_writes_bounded_canonical_evidence(void)
 	struct recording_files_stats stats;
 	uint8_t saved_payload[sizeof(payload)];
 	uint8_t saved_pcm[sizeof(expected_pcm)];
+	uint8_t saved_received[sizeof(received)];
 	bool passed;
 
 	CHECK(fixture_open(&fixture), "could not create evidence fixture");
@@ -252,15 +256,19 @@ static bool test_writes_bounded_canonical_evidence(void)
 			      recorder, RECORD_TX_MODEM_PCM,
 			      RECORD_S16_NATIVE,
 			      MEDIA_SAMPLE_RATE, samples,
-			      ARRAY_LENGTH(samples)),
+			      ARRAY_LENGTH(samples)) &&
+		      recording_emit(recorder, RECORD_RX_MODEM_RECEIVED,
+			      RECORD_OCTETS, MEDIA_SAMPLE_RATE,
+			      received, ARRAY_LENGTH(received)),
 	      "valid evidence blocks were rejected");
 	CHECK(recording_files_flush(fixture.files) == RECORDING_FILES_OK,
 	      "could not finish canonical evidence");
 	recording_files_get_stats(fixture.files, &stats);
 	passed = recording_files_last_result(fixture.files) ==
 			 RECORDING_FILES_OK &&
-		 stats.blocks_written == 2 &&
-		 stats.bytes_written == sizeof(payload) + sizeof(expected_pcm);
+		 stats.blocks_written == 3 &&
+		 stats.bytes_written ==
+			 sizeof(payload) + sizeof(expected_pcm) + sizeof(received);
 	recording_files_destroy(fixture.files);
 	fixture.files = NULL;
 	passed = passed &&
@@ -269,7 +277,10 @@ static bool test_writes_bounded_canonical_evidence(void)
 			 saved_payload, sizeof(saved_payload)) &&
 		 read_exact_file(fixture.paths[RECORD_TX_MODEM_PCM],
 				 saved_pcm, sizeof(saved_pcm)) &&
+		 read_exact_file(fixture.paths[RECORD_RX_MODEM_RECEIVED],
+				 saved_received, sizeof(saved_received)) &&
 		 memcmp(saved_payload, payload, sizeof(payload)) == 0 &&
+		 memcmp(saved_received, received, sizeof(received)) == 0 &&
 		 memcmp(saved_pcm, expected_pcm, sizeof(expected_pcm)) == 0;
 	fixture_close(&fixture);
 	CHECK(passed, "recorded evidence is incomplete or noncanonical");

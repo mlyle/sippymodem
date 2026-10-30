@@ -156,5 +156,11 @@ packet events, monotonic time, RTP sequence/timestamp/SSRC, payload type/size,
 and local playout/concealment counters. It contains no payload or addresses;
 associated signaling/media files still require private handling.
 
+`<prefix>.rx.modem_received.8000hz.octets` stores one byte per received modem
+input sample: `1` for a sample received over RTP and `0` for an erasure or
+startup fill. It aligns with `rx.modem_pcm` and preserves the validity mask
+passed to the DSP. Replays must use this stream to distinguish received silence
+from missing samples; audio and packet totals alone are insufficient.
+
 For unattended PTY operation, see the
 [systemd template](../examples/systemd/README.md).

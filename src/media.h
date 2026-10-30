@@ -27,6 +27,9 @@ enum recording_stream {
 	RECORD_TX_LINE_PCM,
 	RECORD_TX_RTP_PAYLOAD_PREPARED,
 	RECORD_TX_RTP_PAYLOAD_SENT,
+	/* One canonical octet per modem input sample: 1 received, 0 erased.
+	 * Kept alongside PCM so replay need not infer validity from silence. */
+	RECORD_RX_MODEM_RECEIVED,
 	/* Structured packet metadata uses the recorder's packet callback. */
 	RECORD_RTP_PACKETS,
 };

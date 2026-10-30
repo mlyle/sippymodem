@@ -197,6 +197,15 @@ enum audio_path_result audio_path_process_frame(
 		&path->recorder, RECORD_RX_MODEM_PCM,
 		RECORD_S16_NATIVE, MEDIA_SAMPLE_RATE,
 		receive_samples, path->frame_samples);
+	if (path->recorder.write != NULL) {
+		/* Reuse TX scratch before its output initialization. The synchronous
+		 * callback borrows these canonical octets, not native bool storage. */
+		for (size_t index = 0; index < path->frame_samples; ++index)
+			transmit_codewords[index] = received_mask[index] ? 1 : 0;
+		recording_emit(&path->recorder, RECORD_RX_MODEM_RECEIVED,
+			RECORD_OCTETS, MEDIA_SAMPLE_RATE,
+			transmit_codewords, path->frame_samples);
+	}
 	memset(transmit_samples, 0,
 	       path->frame_samples * sizeof(transmit_samples[0]));
 	memset(transmit_codewords,

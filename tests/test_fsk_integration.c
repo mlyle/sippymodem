@@ -95,8 +95,8 @@ struct integration_endpoint {
 };
 
 struct recording_capture {
-	size_t blocks[RECORD_TX_RTP_PAYLOAD_SENT + 1];
-	size_t units[RECORD_TX_RTP_PAYLOAD_SENT + 1];
+	size_t blocks[RECORD_RX_MODEM_RECEIVED + 1];
+	size_t units[RECORD_RX_MODEM_RECEIVED + 1];
 	bool invalid;
 };
 
@@ -423,7 +423,7 @@ static void capture_recording(
 	if (capture == NULL || block == NULL || block->data == NULL ||
 	    block->count == 0 ||
 	    block->stream < RECORD_RX_RTP_PAYLOAD_ARRIVAL ||
-	    block->stream > RECORD_TX_RTP_PAYLOAD_SENT) {
+	    block->stream > RECORD_RX_MODEM_RECEIVED) {
 		if (capture != NULL)
 			capture->invalid = true;
 		return;

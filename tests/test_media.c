@@ -103,6 +103,8 @@ static bool test_codec_metadata(void)
 		      strcmp(recording_stream_name(
 			     RECORD_TX_RTP_PAYLOAD_SENT),
 			     "tx.rtp_payload.sent") == 0 &&
+		      strcmp(recording_stream_name(RECORD_RX_MODEM_RECEIVED),
+			     "rx.modem_received") == 0 &&
 		      recording_stream_name(
 			      (enum recording_stream)99) == NULL,
 	      "recording stream names are not stable");

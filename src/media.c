@@ -7,7 +7,7 @@
 static bool recording_stream_is_valid(enum recording_stream stream)
 {
 	return stream >= RECORD_RX_RTP_PAYLOAD_ARRIVAL &&
-	       stream <= RECORD_TX_RTP_PAYLOAD_SENT;
+	       stream <= RECORD_RX_MODEM_RECEIVED;
 }
 
 static bool recording_format_is_valid(enum recording_format format)
@@ -62,6 +62,8 @@ const char *recording_stream_name(
 		return "tx.rtp_payload.prepared";
 	case RECORD_TX_RTP_PAYLOAD_SENT:
 		return "tx.rtp_payload.sent";
+	case RECORD_RX_MODEM_RECEIVED:
+		return "rx.modem_received";
 	case RECORD_RTP_PACKETS:
 		return "rtp.packets";
 	}

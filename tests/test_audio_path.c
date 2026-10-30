@@ -172,6 +172,7 @@ static enum modem_core_result process_core_g711(
 struct recording_capture {
 	enum recording_stream streams[TEST_RECORDINGS];
 	int16_t samples[TEST_RECORDINGS][TEST_FRAME_SAMPLES];
+	uint8_t received[TEST_FRAME_SAMPLES];
 	size_t calls;
 };
 
@@ -180,12 +181,14 @@ static void capture_recording(
 {
 	struct recording_capture *capture = context;
 
-	if (capture->calls < TEST_RECORDINGS &&
-	    block->format == RECORD_S16_NATIVE &&
-	    block->count == TEST_FRAME_SAMPLES) {
+	if (capture->calls < TEST_RECORDINGS && block->count == TEST_FRAME_SAMPLES) {
 		capture->streams[capture->calls] = block->stream;
-		memcpy(capture->samples[capture->calls], block->data,
-		       sizeof(capture->samples[0]));
+		if (block->format == RECORD_S16_NATIVE)
+			memcpy(capture->samples[capture->calls], block->data,
+			       sizeof(capture->samples[0]));
+		else if (block->stream == RECORD_RX_MODEM_RECEIVED &&
+			 block->format == RECORD_OCTETS)
+			memcpy(capture->received, block->data, sizeof(capture->received));
 	}
 	capture->calls++;
 }
@@ -235,14 +238,27 @@ static bool test_processes_gained_recorded_frame(void)
 		      memcmp(session.sent_samples, expected_transmit,
 			     sizeof(expected_transmit)) == 0,
 	      "audio path did not process or saturate the frame correctly");
-	CHECK(recordings.calls == 2 &&
+	CHECK(recordings.calls == 3 &&
 		      recordings.streams[0] == RECORD_RX_MODEM_PCM &&
-		      recordings.streams[1] == RECORD_TX_MODEM_PCM &&
+		      recordings.streams[1] == RECORD_RX_MODEM_RECEIVED &&
+		      recordings.streams[2] == RECORD_TX_MODEM_PCM &&
+		      memcmp(recordings.received, (uint8_t[]){ 1, 0, 1, 0 },
+			     sizeof(recordings.received)) == 0 &&
 		      memcmp(recordings.samples[0], core.expected_receive,
 			     sizeof(core.expected_receive)) == 0 &&
-		      memcmp(recordings.samples[1], core.transmit,
+		      memcmp(recordings.samples[2], core.transmit,
 			     sizeof(core.transmit)) == 0,
 	      "audio path recordings do not bracket the modem core");
+	/* Identical zero-valued samples can be real silence or missing audio. */
+	session.receive_samples[0] = session.receive_samples[1] = 0;
+	core.expected_receive[0] = core.expected_receive[1] = 0;
+	recordings.calls = 0;
+	CHECK(audio_path_process_frame(path) == AUDIO_PATH_OK &&
+		      core.receive_matched && core.mask_matched &&
+		      recordings.calls == 3 &&
+		      recordings.samples[0][0] == 0 && recordings.samples[0][1] == 0 &&
+		      recordings.received[0] == 1 && recordings.received[1] == 0,
+	      "recording confused received silence with an erasure");
 	CHECK(audio_path_last_media_result(path) ==
 		      MEDIA_OK &&
 		      audio_path_last_rtp_result(path) ==
@@ -288,7 +304,7 @@ static bool test_stops_at_each_failed_boundary(void)
 	CHECK(audio_path_process_frame(path) ==
 		      AUDIO_PATH_MODEM_ERROR &&
 		      core.calls == 1 && session.send_calls == 0 &&
-		      recordings.calls == 1,
+		      recordings.calls == 2,
 	      "modem failure crossed the transmit boundary");
 	core.result = MODEM_CORE_STOPPED;
 	CHECK(audio_path_process_frame(path) ==
@@ -299,7 +315,7 @@ static bool test_stops_at_each_failed_boundary(void)
 	recordings.calls = 0;
 	CHECK(audio_path_process_frame(path) ==
 		      AUDIO_PATH_TRANSMIT_ERROR &&
-		      session.send_calls == 1 && recordings.calls == 2 &&
+		      session.send_calls == 1 && recordings.calls == 3 &&
 		      audio_path_last_rtp_result(path) ==
 			      RTP_ENDPOINT_NO_REMOTE,
 	      "transmit failure was not retained at the RTP boundary");
@@ -405,9 +421,9 @@ static bool test_preserves_exact_transmit_codewords(void)
 			     sizeof(exact_codewords)) == 0 &&
 		      memcmp(session.sent_samples, decoded, sizeof(decoded)) == 0,
 	      "audio path re-encoded or changed exact G.711 output");
-	CHECK(recordings.calls == 2 &&
-		      recordings.streams[1] == RECORD_TX_MODEM_PCM &&
-		      memcmp(recordings.samples[1], decoded, sizeof(decoded)) == 0,
+	CHECK(recordings.calls == 3 &&
+		      recordings.streams[2] == RECORD_TX_MODEM_PCM &&
+		      memcmp(recordings.samples[2], decoded, sizeof(decoded)) == 0,
 	      "exact G.711 output did not retain canonical PCM evidence");
 	struct audio_levels levels = audio_path_take_levels(path);
 	CHECK(levels.transmit_peak == 32124,
@@ -430,7 +446,7 @@ static bool test_preserves_exact_transmit_codewords(void)
 	path = audio_path_create(&session, &config, &recorder, &modem_core);
 	CHECK(path != NULL && audio_path_process_frame(path) ==
 				      AUDIO_PATH_EXACT_OUTPUT_CONFLICT &&
-		      recordings.calls == 1 && session.send_g711_calls == 1 &&
+		      recordings.calls == 2 && session.send_g711_calls == 1 &&
 		      strcmp(audio_path_result_name(
 				     AUDIO_PATH_EXACT_OUTPUT_CONFLICT),
 			     "exact G.711 output conflicts with transmit gain") == 0,
