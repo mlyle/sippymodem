@@ -540,6 +540,65 @@ static bool test_contracts(void)
 	return true;
 }
 
+/* A finite cost equal to the search sentinel still has a valid first choice.
+ * These binary64 values make each complete horizon cost exactly DBL_MAX. */
+static bool test_maximum_finite_metric_choice(void)
+{
+	static const struct {
+		uint8_t lookahead;
+		double previous_v;
+	} fixtures[] = {
+		{ 0, 0x1.a20bd700c2c3ep+510 },
+		{ 1, 0x1.279a74590331cp+510 },
+		{ 3, 0x1.a20bd700c2c3ep+509 },
+	};
+	uint8_t ucodes[6] = { 0 };
+	uint8_t signs[6] = { 0 };
+
+	for (size_t index = 0; index < ARRAY_LENGTH(fixtures); ++index) {
+		double frame_metric = 0.0, metric = 0.0;
+		double previous_v = fixtures[index].previous_v;
+		uint8_t lookahead = fixtures[index].lookahead;
+
+		for (unsigned int symbol = 0; symbol < 6u; ++symbol)
+			frame_metric += previous_v * previous_v;
+		for (unsigned int frame = 0; frame <= lookahead; ++frame)
+			metric += frame_metric;
+		CHECK(metric == DBL_MAX, "maximum-metric fixture %zu changed", index);
+		for (unsigned int state = 0; state < 2u; ++state) {
+			struct v90_pcm_mapping mapping;
+			struct v90_spectral_shaper shaper;
+			struct v90_spectral_output output;
+			enum v90_spectral_rule first = state ?
+				V90_SPECTRAL_RULE_C : V90_SPECTRAL_RULE_A;
+
+			CHECK(make_mapping(&mapping, G711_LAW_PCMU, 1, lookahead),
+			      "maximum-metric mapping did not initialize");
+			mapping.shaping_a1_q1_6 = 0;
+			mapping.shaping_a2_q1_6 = 64;
+			mapping.shaping_b1_q1_6 = 0;
+			mapping.shaping_b2_q1_6 = 0;
+			CHECK(v90_spectral_shaper_init(&shaper, &mapping) ==
+			      V90_SPECTRAL_SHAPER_OK, "maximum-metric initialization failed");
+			for (unsigned int frame = 0; frame < lookahead; ++frame)
+				CHECK(v90_spectral_shaper_push(&shaper, ucodes, signs, 6,
+				      &output) == V90_SPECTRAL_SHAPER_BUFFERING,
+				      "maximum-metric lookahead did not buffer");
+			shaper.previous_v = previous_v;
+			shaper.trellis_state = state != 0;
+			CHECK(v90_spectral_shaper_push(&shaper, ucodes, signs, 6,
+			      &output) == V90_SPECTRAL_SHAPER_FRAME_READY &&
+			      output.rule == first && output.symbol_count == 6u &&
+			      shaper.previous_v == previous_v &&
+			      shaper.previous_x == 0.0 && shaper.previous_y == 0.0 &&
+			      !shaper.trellis_state && v90_spectral_shaper_is_valid(&shaper),
+			      "maximum-metric first choice lost its filter state (%zu/%u)",
+			      index, state);
+		}
+	}
+	return true;
+}
+
 struct test_case {
 	const char *name;
 	bool (*run)(void);
@@ -551,6 +610,7 @@ int main(void)
 		{ "generated all modes", test_generated_all_modes },
 		{ "rule ties and tail", test_rule_ties_and_tail },
 		{ "contracts", test_contracts },
+		{ "maximum finite metric choice", test_maximum_finite_metric_choice },
 	};
 	unsigned int failures = 0;
 

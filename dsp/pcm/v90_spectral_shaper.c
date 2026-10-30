@@ -12,6 +12,12 @@ struct spectral_filter_state {
 	double v;
 };
 
+/* Retain the chosen signs and their already-evaluated first-frame state. */
+struct spectral_choice {
+	enum v90_spectral_rule rule;
+	struct spectral_filter_state filter;
+};
+
 static size_t shaping_frame_length(uint8_t sign_redundancy)
 {
 	return sign_redundancy >= 1 && sign_redundancy <= 3 ?
@@ -130,11 +136,12 @@ static bool filter_frame(
 static bool select_rule(
 	const struct v90_spectral_shaper *shaper, size_t horizon,
 	const int16_t magnitudes[V90_SPECTRAL_MAX_BUFFERED_FRAMES][V90_SPECTRAL_MAX_FRAME_SYMBOLS],
-	enum v90_spectral_rule *selected)
+	struct spectral_choice *selected)
 {
 	unsigned int sequence_count = 1u << horizon;
 	double best_metric = DBL_MAX;
 	unsigned int best_sequence = 0;
+	struct spectral_filter_state best_filter;
 
 	/* Without lookahead the two paths share no filtering work. */
 	if (horizon == 1u) {
@@ -150,12 +157,16 @@ static bool select_rule(
 			if (!filter_frame(shaper, &shaper->pending[0], magnitudes[0],
 				    (enum v90_spectral_rule)(first + branch), &filter, &metric))
 				return false;
-			if (metric < best_metric) {
+			if (branch == 0 || metric < best_metric) {
 				best_metric = metric;
 				best_sequence = branch;
+				best_filter = filter;
 			}
 		}
-		*selected = (enum v90_spectral_rule)(first + best_sequence);
+		*selected = (struct spectral_choice) {
+			.rule = (enum v90_spectral_rule)(first + best_sequence),
+			.filter = best_filter,
+		};
 		return true;
 	}
 	struct spectral_filter_state prefix_filter[V90_SPECTRAL_MAX_BUFFERED_FRAMES];
@@ -203,39 +214,32 @@ static bool select_rule(
 				    rule, &filter, &metric))
 				return false;
 		}
-		if (metric < best_metric) {
+		if (sequence == 0 || metric < best_metric) {
 			best_metric = metric;
 			best_sequence = sequence;
+			/* Commit the first frame, not the lookahead's final state. */
+			best_filter = prefix_filter[1];
 		}
 	}
-	*selected = (enum v90_spectral_rule)(
-		(shaper->trellis_state ? V90_SPECTRAL_RULE_C :
-					 V90_SPECTRAL_RULE_A) +
-		(best_sequence >> (horizon - 1u)));
+	*selected = (struct spectral_choice) {
+		.rule = (enum v90_spectral_rule)(
+			(shaper->trellis_state ? V90_SPECTRAL_RULE_C :
+						 V90_SPECTRAL_RULE_A) +
+			(best_sequence >> (horizon - 1u))),
+		.filter = best_filter,
+	};
 	return true;
 }
 
 static bool commit_first_frame(
-	struct v90_spectral_shaper *shaper, const int16_t *magnitudes,
-	enum v90_spectral_rule rule,
+	struct v90_spectral_shaper *shaper, const struct spectral_choice *choice,
 	struct v90_spectral_output *output)
 {
-	struct spectral_filter_state filter = {
-		.x = shaper->previous_x,
-		.y = shaper->previous_y,
-		.v = shaper->previous_v,
-	};
 	struct v90_spectral_output generated = {
-		.rule = rule,
+		.rule = choice->rule,
 		.symbol_count = (uint8_t)shaping_frame_length(
 			shaper->sign_redundancy),
 	};
-	double ignored_metric = 0.0;
-
-	if (!filter_frame(
-		    shaper, &shaper->pending[0], magnitudes, rule,
-		    &filter, &ignored_metric))
-		return false;
 	for (size_t position = 0;
 	     position < generated.symbol_count; ++position) {
 		if (!v90_pcm_symbol_make(
@@ -243,14 +247,14 @@ static bool commit_first_frame(
 			    shaper->pending[0].ucodes[position],
 			    v90_spectral_rule_apply(
 				    shaper->pending[0].initial_signs[position],
-				    position, rule) != 0))
+				    position, choice->rule) != 0))
 			return false;
 	}
 	/* Nothing above changes the shaper on failure. */
-	shaper->previous_x = filter.x;
-	shaper->previous_y = filter.y;
-	shaper->previous_v = filter.v;
-	shaper->trellis_state = (rule & 1u) != 0;
+	shaper->previous_x = choice->filter.x;
+	shaper->previous_y = choice->filter.y;
+	shaper->previous_v = choice->filter.v;
+	shaper->trellis_state = (choice->rule & 1u) != 0;
 	shaper->pending_count--;
 	memmove(&shaper->pending[0], &shaper->pending[1],
 		shaper->pending_count * sizeof(shaper->pending[0]));
@@ -264,12 +268,12 @@ static enum v90_spectral_shaper_result emit_first(
 	struct v90_spectral_shaper *shaper, size_t horizon,
 	struct v90_spectral_output *output)
 {
-	enum v90_spectral_rule selected;
+	struct spectral_choice selected;
 	int16_t magnitudes[V90_SPECTRAL_MAX_BUFFERED_FRAMES][V90_SPECTRAL_MAX_FRAME_SYMBOLS] = { 0 };
 	size_t length = shaping_frame_length(shaper->sign_redundancy);
 
 	/* The same codewords occur on every candidate path. Decode each once
-	 * for this bounded horizon, including the selected frame's commit. */
+	 * for this bounded horizon. */
 	for (size_t frame = 0; frame < horizon; ++frame) {
 		for (size_t symbol = 0; symbol < length; ++symbol) {
 			struct v90_pcm_symbol magnitude;
@@ -280,7 +284,7 @@ static enum v90_spectral_shaper_result emit_first(
 		}
 	}
 	if (!select_rule(shaper, horizon, magnitudes, &selected) ||
-	    !commit_first_frame(shaper, magnitudes[0], selected, output))
+	    !commit_first_frame(shaper, &selected, output))
 		return V90_SPECTRAL_SHAPER_NUMERIC_FAILURE;
 	return V90_SPECTRAL_SHAPER_FRAME_READY;
 }
