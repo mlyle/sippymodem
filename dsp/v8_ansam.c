@@ -381,6 +381,12 @@ enum v8_ansam_result v8_ansam_observe_block(
 	struct v8_line_conditioner *conditioner,
 	const struct v8_line_conditioned_block *block, bool *detected)
 {
+	const struct memory_region regions[] = {
+		{ detector, sizeof(*detector) },
+		{ conditioner, sizeof(*conditioner) },
+		{ block, sizeof(*block) },
+		{ detected, sizeof(*detected) },
+	};
 	struct v8_ansam_detector next;
 	struct v8_line_conditioner next_line;
 
@@ -388,18 +394,7 @@ enum v8_ansam_result v8_ansam_observe_block(
 	    !v8_line_conditioner_is_valid(conditioner) ||
 	    conditioner->role != V8_CALLING_STATION || block == NULL ||
 	    detected == NULL ||
-	    memory_regions_overlap(
-		    detector, sizeof(*detector), conditioner, sizeof(*conditioner)) ||
-	    memory_regions_overlap(
-		    detector, sizeof(*detector), block, sizeof(*block)) ||
-	    memory_regions_overlap(
-		    conditioner, sizeof(*conditioner), block, sizeof(*block)) ||
-	    memory_regions_overlap(
-		    detector, sizeof(*detector), detected, sizeof(*detected)) ||
-	    memory_regions_overlap(
-		    conditioner, sizeof(*conditioner), detected, sizeof(*detected)) ||
-	    memory_regions_overlap(
-		    block, sizeof(*block), detected, sizeof(*detected)))
+	    memory_region_set_overlaps(regions, sizeof regions / sizeof *regions))
 		return V8_ANSAM_INVALID_ARGUMENT;
 
 	next = *detector;
@@ -431,20 +426,13 @@ enum v8_ansam_result v8_ansam_detect(
 	    count > SIZE_MAX / sizeof(*samples))
 		return V8_ANSAM_INVALID_ARGUMENT;
 	sample_bytes = count * sizeof(*samples);
-	if (memory_regions_overlap(
-		    detector, sizeof(*detector), detected, sizeof(*detected)) ||
-	    memory_regions_overlap(
-		    conditioner, sizeof(*conditioner), detected,
-		    sizeof(*detected)) ||
-	    memory_regions_overlap(
-		    detector, sizeof(*detector), samples, sample_bytes) ||
-	    memory_regions_overlap(
-		    conditioner, sizeof(*conditioner), samples, sample_bytes) ||
-	    memory_regions_overlap(
-		    detector, sizeof(*detector), conditioner,
-		    sizeof(*conditioner)) ||
-	    memory_regions_overlap(
-		    samples, sample_bytes, detected, sizeof(*detected)))
+	const struct memory_region regions[] = {
+		{ detector, sizeof(*detector) },
+		{ conditioner, sizeof(*conditioner) },
+		{ samples, sample_bytes },
+		{ detected, sizeof(*detected) },
+	};
+	if (memory_region_set_overlaps(regions, sizeof regions / sizeof *regions))
 		return V8_ANSAM_INVALID_ARGUMENT;
 	next = *detector;
 	next_line = *conditioner;

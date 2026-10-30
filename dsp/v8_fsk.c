@@ -161,6 +161,10 @@ enum v8_fsk_result v8_fsk_transmit_sample(
 	struct v8_fsk *fsk, uint8_t bit, int16_t *sample,
 	bool *bit_consumed)
 {
+	const struct memory_region regions[] = {
+		{ fsk, sizeof(*fsk) }, { sample, sizeof(*sample) },
+		{ bit_consumed, sizeof(*bit_consumed) },
+	};
 	struct v8_fsk_transmitter *transmitter;
 	uint16_t step;
 	uint64_t bit_progress;
@@ -169,13 +173,7 @@ enum v8_fsk_result v8_fsk_transmit_sample(
 
 	if (!fsk_is_configured(fsk) || bit > 1 || sample == NULL ||
 	    bit_consumed == NULL ||
-	    memory_regions_overlap(
-		    fsk, sizeof(*fsk), sample, sizeof(*sample)) ||
-	    memory_regions_overlap(
-		    fsk, sizeof(*fsk), bit_consumed, sizeof(*bit_consumed)) ||
-	    memory_regions_overlap(
-		    sample, sizeof(*sample), bit_consumed,
-		    sizeof(*bit_consumed)))
+	    memory_region_set_overlaps(regions, sizeof regions / sizeof *regions))
 		return V8_FSK_INVALID_ARGUMENT;
 	transmitter = &fsk->transmitter;
 	if (!transmitter->holding_bit) {
@@ -241,18 +239,17 @@ enum v8_fsk_result v8_fsk_receive_block(
 	struct v8_fsk *fsk, const struct v8_line_conditioned_block *block,
 	uint8_t *bit, bool *bit_ready)
 {
+	const struct memory_region regions[] = {
+		{ fsk, sizeof(*fsk) }, { block, sizeof(*block) },
+		{ bit, sizeof(*bit) }, { bit_ready, sizeof(*bit_ready) },
+	};
 	struct fsk_receiver next;
 	uint8_t received;
 	bool ready;
 
 	if (!fsk_is_configured(fsk) || block == NULL || bit == NULL ||
 	    bit_ready == NULL ||
-	    memory_regions_overlap(fsk, sizeof(*fsk), block, sizeof(*block)) ||
-	    memory_regions_overlap(fsk, sizeof(*fsk), bit, sizeof(*bit)) ||
-	    memory_regions_overlap(fsk, sizeof(*fsk), bit_ready, sizeof(*bit_ready)) ||
-	    memory_regions_overlap(block, sizeof(*block), bit, sizeof(*bit)) ||
-	    memory_regions_overlap(block, sizeof(*block), bit_ready, sizeof(*bit_ready)) ||
-	    memory_regions_overlap(bit, sizeof(*bit), bit_ready, sizeof(*bit_ready)))
+	    memory_region_set_overlaps(regions, sizeof regions / sizeof *regions))
 		return V8_FSK_INVALID_ARGUMENT;
 
 	next = fsk->receiver;
@@ -268,6 +265,10 @@ enum v8_fsk_result v8_fsk_receive_sample(
 	struct v8_fsk *fsk, int16_t sample, uint8_t *bit,
 	bool *bit_ready)
 {
+	const struct memory_region regions[] = {
+		{ fsk, sizeof(*fsk) }, { bit, sizeof(*bit) },
+		{ bit_ready, sizeof(*bit_ready) },
+	};
 	struct v8_line_conditioner next_line;
 	struct v8_line_conditioned_block block;
 	uint8_t received = 0;
@@ -275,11 +276,7 @@ enum v8_fsk_result v8_fsk_receive_sample(
 	bool ready = false;
 
 	if (!fsk_is_configured(fsk) || bit == NULL || bit_ready == NULL ||
-	    memory_regions_overlap(fsk, sizeof(*fsk), bit, sizeof(*bit)) ||
-	    memory_regions_overlap(
-		    fsk, sizeof(*fsk), bit_ready, sizeof(*bit_ready)) ||
-	    memory_regions_overlap(
-		    bit, sizeof(*bit), bit_ready, sizeof(*bit_ready)))
+	    memory_region_set_overlaps(regions, sizeof regions / sizeof *regions))
 		return V8_FSK_INVALID_ARGUMENT;
 	next_line = fsk->line;
 	if (v8_line_conditioner_process_sample(
