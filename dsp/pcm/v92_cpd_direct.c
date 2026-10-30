@@ -50,7 +50,7 @@ static bool direct_constellation(
 	return true;
 }
 
-static bool direct_tables(
+bool v92_cpd_direct_geometry(
 	struct v92_cpd_parameters *parameters, enum g711_law law,
 	uint8_t data_rate_number, bool extend_e2u, bool direct_channel)
 {
@@ -131,7 +131,7 @@ static bool initialize_direct(
 {
 	struct v92_b1u_measurement measurement;
 
-	if (!direct_tables(parameters, law, rate, extend_e2u, direct_channel) ||
+	if (!v92_cpd_direct_geometry(parameters, law, rate, extend_e2u, direct_channel) ||
 	    v92_pcm_frame_measure_b1u(parameters, law, &measurement) != V92_PCM_FRAME_OK)
 		return false;
 	memcpy(frequencies, measurement.signed_frequencies,

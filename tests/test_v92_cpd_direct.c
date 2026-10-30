@@ -188,6 +188,16 @@ static bool test_rate_and_law_matrix(void)
 				      (rate & 1u) != 0u) == V92_CPD_OK &&
 			      v92_cpd_parameters_are_valid(&cpd),
 			      "rate %u law %u did not generate", rate, law);
+			struct v92_cpd_parameters geometry;
+
+			CHECK(v92_cpd_direct_geometry(&geometry, (enum g711_law)law,
+				      rate, (rate & 1u) != 0u, false) &&
+			      geometry.four_times_gain_q0_16 == UINT16_MAX &&
+			      v92_cpd_parameters_are_valid(&geometry),
+			      "rate %u law %u geometry was not a fresh design seed", rate, law);
+			geometry.four_times_gain_q0_16 = cpd.four_times_gain_q0_16;
+			CHECK(memcmp(&geometry, &cpd, sizeof(cpd)) == 0,
+			      "rate %u law %u geometry changed normalized parameters", rate, law);
 			CHECK(cpd.data_rate_number == rate &&
 			      cpd.extend_e2u == ((rate & 1u) != 0u) &&
 			      !cpd.acknowledges_cpu &&
@@ -269,6 +279,13 @@ static bool test_transactionality(void)
 
 	memset(&cpd, 0x5a, sizeof(cpd));
 	before = cpd;
+	CHECK(!v92_cpd_direct_geometry(NULL, G711_LAW_PCMU, 1u, false, false) &&
+	      !v92_cpd_direct_geometry(&cpd, G711_LAW_PCMU, 0u, false, false) &&
+	      !v92_cpd_direct_geometry(&cpd, G711_LAW_PCMU,
+		      V92_CPD_MAX_DATA_RATE_NUMBER + 1u, false, false) &&
+	      !v92_cpd_direct_geometry(&cpd, (enum g711_law)99, 1u, false, false) &&
+	      memcmp(&cpd, &before, sizeof(cpd)) == 0,
+	      "invalid geometry changed its owner");
 	CHECK(v92_cpd_direct_init(
 		      &cpd, G711_LAW_PCMU, 0u, false) ==
 		      V92_CPD_INVALID_PARAMETERS &&

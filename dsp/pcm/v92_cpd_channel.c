@@ -484,9 +484,11 @@ static bool design(struct v92_cpd_parameters *parameters,
 		if (rate_mask) {
 			if (!(rate_mask & (UINT32_C(1) << (rate - 1))))
 				continue;
+			/* The filters and grid below determine B1u energy. A direct
+			 * template's power measurement would be discarded. */
 			if (rate == parameters->data_rate_number)
 				next = filtered;
-			else if (v92_cpd_direct_init(&next, law, rate, parameters->extend_e2u) != V92_CPD_OK)
+			else if (!v92_cpd_direct_geometry(&next, law, rate, parameters->extend_e2u, false))
 				continue;
 			memcpy(next.filter, filtered.filter, sizeof(next.filter));
 			next.acknowledges_cpu = parameters->acknowledges_cpu;

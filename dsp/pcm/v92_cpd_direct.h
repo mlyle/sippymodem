@@ -28,6 +28,15 @@ enum {
 		(V92_CPD_DIRECT_MAX_FRAME_BITS + 7) / 8,
 };
 
+/* Build an exclusively owned design candidate without measuring B1u.
+ * Gain is left at UINT16_MAX: the caller must normalize its final filters
+ * and constellation before using this on the line. direct_channel selects
+ * the level-aware direct search geometry; false preserves the initial
+ * template geometry, including outer feedback representatives. */
+bool v92_cpd_direct_geometry(
+	struct v92_cpd_parameters *parameters, enum g711_law law,
+	uint8_t data_rate_number, bool extend_e2u, bool direct_channel);
+
 /* Build a level-neutral initial CPd template for a direct PCM-upstream mapping. The
  * generated modulus, filter, and constellation sections are owned by the
  * result; later parameter-mode updates may use the compact CPd form.
