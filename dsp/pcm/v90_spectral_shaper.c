@@ -136,30 +136,72 @@ static bool select_rule(
 	double best_metric = DBL_MAX;
 	unsigned int best_sequence = 0;
 
+	/* Without lookahead the two paths share no filtering work. */
+	if (horizon == 1u) {
+		enum v90_spectral_rule first = shaper->trellis_state ?
+			V90_SPECTRAL_RULE_C : V90_SPECTRAL_RULE_A;
+
+		for (unsigned int branch = 0; branch < 2u; ++branch) {
+			struct spectral_filter_state filter = {
+				shaper->previous_x, shaper->previous_y, shaper->previous_v,
+			};
+			double metric = 0.0;
+
+			if (!filter_frame(shaper, &shaper->pending[0], magnitudes[0],
+				    (enum v90_spectral_rule)(first + branch), &filter, &metric))
+				return false;
+			if (metric < best_metric) {
+				best_metric = metric;
+				best_sequence = branch;
+			}
+		}
+		*selected = (enum v90_spectral_rule)(first + best_sequence);
+		return true;
+	}
+	struct spectral_filter_state prefix_filter[V90_SPECTRAL_MAX_BUFFERED_FRAMES];
+	double prefix_metric[V90_SPECTRAL_MAX_BUFFERED_FRAMES];
+
+	prefix_filter[0] = (struct spectral_filter_state) {
+		.x = shaper->previous_x,
+		.y = shaper->previous_y,
+		.v = shaper->previous_v,
+	};
+	prefix_metric[0] = 0.0;
+
 	for (unsigned int sequence = 0;
 	     sequence < sequence_count; ++sequence) {
-		struct spectral_filter_state filter = {
-			.x = shaper->previous_x,
-			.y = shaper->previous_y,
-			.v = shaper->previous_v,
-		};
-		bool state = shaper->trellis_state;
-		double metric = 0.0;
+		size_t first_frame = 0;
 
-		for (size_t frame = 0; frame < horizon; ++frame) {
+		/* Consecutive binary paths share the prefix before the carry.
+		 * Retain its filter and metric, evaluating only the changed suffix.
+		 * Visit leaves in the same order to preserve exact metric ties. */
+		if (sequence != 0) {
+			first_frame = horizon - 1u;
+			for (unsigned int carry = sequence;
+			     (carry & 1u) == 0; carry >>= 1)
+				first_frame--;
+		}
+		struct spectral_filter_state filter = prefix_filter[first_frame];
+		double metric = prefix_metric[first_frame];
+
+		for (size_t frame = first_frame; frame < horizon; ++frame) {
 			unsigned int branch =
 				(sequence >> (horizon - frame - 1u)) & 1u;
+			bool state = frame == 0 ? shaper->trellis_state :
+				((sequence >> (horizon - frame)) & 1u) != 0;
 			enum v90_spectral_rule rule =
 				(enum v90_spectral_rule)(
 					(state ? V90_SPECTRAL_RULE_C :
-						 V90_SPECTRAL_RULE_A) +
-					branch);
+						 V90_SPECTRAL_RULE_A) + branch);
 
+			if (frame != first_frame) {
+				prefix_filter[frame] = filter;
+				prefix_metric[frame] = metric;
+			}
 			if (!filter_frame(
 				    shaper, &shaper->pending[frame], magnitudes[frame],
 				    rule, &filter, &metric))
 				return false;
-			state = (rule & 1u) != 0;
 		}
 		if (metric < best_metric) {
 			best_metric = metric;
