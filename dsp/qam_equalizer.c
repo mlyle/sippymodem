@@ -333,14 +333,17 @@ enum qam_equalizer_result qam_equalizer_observe(
 static enum qam_equalizer_result adapt_decision(
 	struct qam_equalizer *equalizer,
 	struct qam_equalizer_observation *observation,
-	const struct qam_point *target, double adaptation)
+	const struct qam_point *target, double adaptation,
+	double basis_power, double *bias)
 {
 	struct qam_point coefficients[QAM_EQUALIZER_MAX_TAP_COUNT];
+	struct qam_point adjusted_target;
 	struct qam_point unrotated_target;
 	const struct qam_point *output, *unrotated_output, *history;
 	double phase, frequency, correction_phase;
 	double power = QAM_EQUALIZER_MINIMUM_POWER;
 	double coefficient_power = 0.0;
+	double next_bias = 0.0, bias_error = 0.0;
 
 	if (!qam_equalizer_is_valid(equalizer) ||
 	    !point_is_finite(target) ||
@@ -348,6 +351,18 @@ static enum qam_equalizer_result adapt_decision(
 	    (observation != NULL && memory_regions_overlap(equalizer,
 		    sizeof(*equalizer), observation, sizeof(*observation))))
 		return QAM_EQUALIZER_INVALID_ARGUMENT;
+	if (bias != NULL) {
+		if (!isfinite(*bias) || !isfinite(basis_power) || basis_power <= 0.0 ||
+		    memory_regions_overlap(equalizer, sizeof(*equalizer), bias, sizeof(*bias)))
+			return QAM_EQUALIZER_INVALID_ARGUMENT;
+		next_bias = *bias;
+		bias_error = target->in_phase - (equalizer->last_output.in_phase + *bias);
+		adjusted_target = *target;
+		adjusted_target.in_phase -= *bias;
+		if (!point_is_finite(&adjusted_target))
+			return QAM_EQUALIZER_INVALID_ARGUMENT;
+		target = &adjusted_target;
+	}
 	if (observation != NULL) {
 		if (!qam_equalizer_observation_is_pending(observation) ||
 		    observation->tap_count != equalizer->tap_count ||
@@ -402,6 +417,18 @@ static enum qam_equalizer_result adapt_decision(
 		power += qam_point_power(&history[index]);
 	if (!isfinite(power))
 		return QAM_EQUALIZER_INVALID_ARGUMENT;
+	if (bias != NULL) {
+		double total_power = power + basis_power;
+
+		if (!isfinite(total_power))
+			return QAM_EQUALIZER_INVALID_ARGUMENT;
+		/* Preserve the separate constant-coordinate and tap update order;
+		 * cancelling power algebraically changes floating-point rounding. */
+		next_bias += adaptation * basis_power / total_power * bias_error;
+		adaptation *= power / total_power;
+		if (!isfinite(next_bias))
+			return QAM_EQUALIZER_INVALID_ARGUMENT;
+	}
 	for (size_t index = 0; index < equalizer->tap_count; ++index) {
 		struct qam_point update = qam_point_correlation(&history[index], &error);
 
@@ -422,6 +449,8 @@ static enum qam_equalizer_result adapt_decision(
 		equalizer->can_adapt = false;
 	if (observation != NULL)
 		observation->pending = false;
+	if (bias != NULL)
+		*bias = next_bias;
 	return QAM_EQUALIZER_OK;
 }
 
@@ -429,7 +458,16 @@ enum qam_equalizer_result qam_equalizer_adapt(
 	struct qam_equalizer *equalizer,
 	const struct qam_point *target, double adaptation)
 {
-	return adapt_decision(equalizer, NULL, target, adaptation);
+	return adapt_decision(equalizer, NULL, target, adaptation, 0.0, NULL);
+}
+
+enum qam_equalizer_result qam_equalizer_adapt_bias(
+	struct qam_equalizer *equalizer, const struct qam_point *target,
+	double adaptation, double basis_power, double *bias)
+{
+	if (bias == NULL)
+		return QAM_EQUALIZER_INVALID_ARGUMENT;
+	return adapt_decision(equalizer, NULL, target, adaptation, basis_power, bias);
 }
 
 enum qam_equalizer_result
@@ -440,5 +478,5 @@ qam_equalizer_adapt_observation(
 {
 	if (observation == NULL)
 		return QAM_EQUALIZER_INVALID_ARGUMENT;
-	return adapt_decision(equalizer, observation, target, adaptation);
+	return adapt_decision(equalizer, observation, target, adaptation, 0.0, NULL);
 }

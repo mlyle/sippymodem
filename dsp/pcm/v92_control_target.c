@@ -86,10 +86,10 @@ bool v92_control_adapt(struct qam_equalizer *equalizer,
 	int16_t nominal, double adaptation, double *output_bias, bool learn_bias)
 {
 	int16_t gradient;
-	double bias, observed, step = adaptation;
+	double observed;
 	struct qam_point target;
 
-	if (!qam_equalizer_is_valid(equalizer) || demodulator == NULL ||
+	if (equalizer == NULL || demodulator == NULL ||
 	    output_bias == NULL ||
 	    !qam_adaptation_is_valid(adaptation) ||
 	    memory_regions_overlap(equalizer, sizeof(*equalizer),
@@ -99,26 +99,16 @@ bool v92_control_adapt(struct qam_equalizer *equalizer,
 	    memory_regions_overlap(demodulator, sizeof(*demodulator),
 		    output_bias, sizeof(*output_bias)) || !isfinite(*output_bias))
 		return false;
-	bias = *output_bias;
-	observed = equalizer->last_output.in_phase + bias;
+	observed = equalizer->last_output.in_phase + *output_bias;
 	if (!v92_control_target(law, demodulator, nominal, observed, &gradient))
 		return false;
-	if (learn_bias) {
-		double power = 1e-12;
-		double basis = (double)demodulator->lu * demodulator->lu;
-
-		for (unsigned i = 0; i < equalizer->tap_count; ++i)
-			power += qam_point_power(&equalizer->history[i]);
-		/* Scale the constant coordinate by LU so its learning time is
-		 * comparable to a signal tap, rather than one PCM unit. */
-		bias += adaptation * basis / (power + basis) * (gradient - observed);
-		step *= power / (power + basis);
-		if (!isfinite(bias))
-			return false;
-	}
-	target = (struct qam_point){ .in_phase = gradient - *output_bias };
-	if (qam_equalizer_adapt(equalizer, &target, step) != QAM_EQUALIZER_OK)
-		return false;
-	*output_bias = bias;
-	return true;
+	target = (struct qam_point){ .in_phase = gradient };
+	/* Scale the constant coordinate by LU so its learning time remains
+	 * comparable to a signal tap. The shared update owns normalization and
+	 * transactional validation; control decisions keep the frozen offset. */
+	if (learn_bias)
+		return qam_equalizer_adapt_bias(equalizer, &target, adaptation,
+			(double)demodulator->lu * demodulator->lu, output_bias) == QAM_EQUALIZER_OK;
+	target.in_phase -= *output_bias;
+	return qam_equalizer_adapt(equalizer, &target, adaptation) == QAM_EQUALIZER_OK;
 }

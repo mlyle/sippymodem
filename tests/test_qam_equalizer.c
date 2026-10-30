@@ -1303,6 +1303,157 @@ static bool test_validation(void)
 	return true;
 }
 
+/* Compose the separate FIR and constant-coordinate updates independently.
+ * Keep their operation order: even a one-ULP drift accumulates in training. */
+static enum qam_equalizer_result adapt_separate_bias(
+	struct qam_equalizer *equalizer, const struct qam_point *target,
+	double adaptation, double basis_power, double *bias)
+{
+	double power = 1e-12;
+	double next_bias;
+	struct qam_point adjusted = *target;
+	enum qam_equalizer_result result;
+
+	for (unsigned i = 0; i < equalizer->tap_count; ++i)
+		power += qam_point_power(&equalizer->history[i]);
+	next_bias = *bias + adaptation * basis_power / (power + basis_power) *
+		(target->in_phase - (equalizer->last_output.in_phase + *bias));
+	adaptation *= power / (power + basis_power);
+	adjusted.in_phase -= *bias;
+	result = qam_equalizer_adapt(equalizer, &adjusted, adaptation);
+	if (result == QAM_EQUALIZER_OK)
+		*bias = next_bias;
+	return result;
+}
+
+static bool test_bias_equivalence(void)
+{
+	const unsigned spans[] = { 1, 7, 31, 61 };
+	const struct qam_point reference = { 1.0, 0.0 };
+	uint32_t random = 19037;
+
+	for (unsigned span = 0; span < ARRAY_LENGTH(spans); ++span) {
+		for (unsigned carrier = 0; carrier < 2; ++carrier) {
+			struct qam_equalizer separate, joint;
+			double separate_bias = -0.173, joint_bias = separate_bias;
+
+			CHECK(qam_equalizer_init_geometry(&joint, &reference,
+				      &reference, spans[span], spans[span] / 2) ==
+				      QAM_EQUALIZER_OK,
+			      "joint bias fixture did not initialize");
+			if (carrier)
+				CHECK(qam_equalizer_enable_carrier_tracking(
+					      &joint, 0.001, 0.00001) == QAM_EQUALIZER_OK,
+				      "joint bias carrier fixture did not initialize");
+			separate = joint;
+			for (unsigned symbol = 0; symbol < 512; ++symbol) {
+				struct qam_point input = {
+					.in_phase = random_level(&random),
+					.quadrature = carrier ? random_level(&random) : 0.0,
+				};
+				struct qam_point target = { random_level(&random), 0.25 };
+				struct qam_point left, right;
+				bool left_ready, right_ready;
+				double step = symbol % 3 == 0 ? 0.0 : 0.02;
+				double basis = symbol % 2 ? 9.0 : 0.125;
+
+				CHECK(qam_equalizer_push(&separate, &input, &left,
+					      &left_ready) == QAM_EQUALIZER_OK &&
+				      qam_equalizer_push(&joint, &input, &right,
+					      &right_ready) == QAM_EQUALIZER_OK &&
+				      left_ready == right_ready,
+				      "joint bias input failed");
+				if (!left_ready)
+					continue;
+				/* Targets may reside in either owned object. */
+				const struct qam_point *old_target = &target;
+				const struct qam_point *new_target = &target;
+				if (symbol % 7 == 0) {
+					old_target = &separate.history[0];
+					new_target = &joint.history[0];
+				}
+				CHECK(adapt_separate_bias(&separate, old_target, step,
+					      basis, &separate_bias) == QAM_EQUALIZER_OK &&
+				      qam_equalizer_adapt_bias(&joint, new_target, step,
+					      basis, &joint_bias) == QAM_EQUALIZER_OK &&
+				      memcmp(&joint, &separate, sizeof(joint)) == 0 &&
+				      memcmp(&joint_bias, &separate_bias, sizeof(joint_bias)) == 0,
+				      "joint bias differed at span %u carrier %u symbol %u",
+				      spans[span], carrier, symbol);
+			}
+			struct qam_point old_owner = { separate_bias, 0.5 };
+			struct qam_point new_owner = old_owner;
+			struct qam_point output;
+			bool ready;
+			CHECK(qam_equalizer_push(&separate, &reference, &output, &ready) ==
+				      QAM_EQUALIZER_OK && ready &&
+			      qam_equalizer_push(&joint, &reference, &output, &ready) ==
+				      QAM_EQUALIZER_OK && ready &&
+			      adapt_separate_bias(&separate, &old_owner, 0.02, 9.0,
+				      &old_owner.in_phase) == QAM_EQUALIZER_OK &&
+			      qam_equalizer_adapt_bias(&joint, &new_owner, 0.02, 9.0,
+				      &new_owner.in_phase) == QAM_EQUALIZER_OK &&
+			      memcmp(&joint, &separate, sizeof(joint)) == 0 &&
+			      memcmp(&old_owner, &new_owner, sizeof(old_owner)) == 0,
+			      "joint bias changed an aliased target before consuming it");
+		}
+	}
+	return true;
+}
+
+static bool test_bias_rejection(void)
+{
+	const struct qam_point reference = { 1.0, 0.0 };
+	struct qam_equalizer fixture;
+	struct qam_point output;
+	bool ready;
+
+	CHECK(qam_equalizer_init_geometry(&fixture, &reference, &reference, 1, 0) ==
+		      QAM_EQUALIZER_OK &&
+	      qam_equalizer_push(&fixture, &reference, &output, &ready) ==
+		      QAM_EQUALIZER_OK && ready,
+	      "bias rejection fixture did not initialize");
+	for (unsigned invalid = 0; invalid < 13; ++invalid) {
+		struct qam_equalizer equalizer = fixture, saved;
+		struct qam_point target = reference;
+		double bias = 0.125, basis = 9.0, step = 0.02, saved_bias;
+		double *bias_pointer = &bias;
+		enum qam_equalizer_result expected = QAM_EQUALIZER_INVALID_ARGUMENT;
+
+		switch (invalid) {
+		case 0: basis = 0.0; break;
+		case 1: basis = -1.0; break;
+		case 2: basis = NAN; break;
+		case 3: basis = INFINITY; break;
+		case 4: bias = NAN; break;
+		case 5: bias = INFINITY; break;
+		case 6: bias_pointer = &equalizer.coefficients[0].in_phase; break;
+		case 7: bias_pointer = NULL; break;
+		case 8: target.in_phase = 1e200; break; /* Tap-power overflow. */
+		case 9: bias = -DBL_MAX; target.in_phase = DBL_MAX; break;
+		case 10: basis = DBL_MAX; equalizer.history[0].in_phase = 1e154; break;
+		case 11: step = NAN; break;
+		case 12:
+			equalizer.can_adapt = false;
+			expected = QAM_EQUALIZER_INVALID_STATE;
+			break;
+		}
+		saved = equalizer;
+		saved_bias = bias;
+		CHECK(qam_equalizer_adapt_bias(&equalizer, &target, step, basis,
+			      bias_pointer) == expected &&
+		      memcmp(&equalizer, &saved, sizeof(saved)) == 0 &&
+		      memcmp(&bias, &saved_bias, sizeof(bias)) == 0,
+		      "rejected bias update %u changed owned state", invalid);
+	}
+	CHECK(qam_equalizer_adapt_bias(NULL, &reference, 0.02, 9.0, &output.in_phase) ==
+		      QAM_EQUALIZER_INVALID_ARGUMENT &&
+	      qam_equalizer_adapt_bias(&fixture, NULL, 0.02, 9.0, &output.in_phase) ==
+		      QAM_EQUALIZER_INVALID_ARGUMENT,
+	      "bias update accepted missing input");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -1324,6 +1475,8 @@ int main(void)
 		{ "reference division boundaries", test_reference_division_boundaries },
 		{ "validation spans", test_validation_span },
 		{ "validation", test_validation },
+		{ "joint bias equivalence", test_bias_equivalence },
+		{ "joint bias rejection", test_bias_rejection },
 	};
 	unsigned int failures = 0;
 

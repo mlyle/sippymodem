@@ -154,6 +154,15 @@ enum qam_equalizer_result qam_equalizer_adapt(
 	struct qam_equalizer *equalizer,
 	const struct qam_point *target, double adaptation);
 
+/* Jointly adapt the FIR and a real offset added after its output. target is
+ * measured after adding the offset; basis_power is the finite positive
+ * power of the constant coordinate. Use one normalization sum for both
+ * updates, retaining raw history. bias must be separate from the equalizer;
+ * target may alias either owner. Rejection changes neither owner. */
+enum qam_equalizer_result qam_equalizer_adapt_bias(
+	struct qam_equalizer *equalizer, const struct qam_point *target,
+	double adaptation, double basis_power, double *bias);
+
 /* Apply and consume one delayed observation transactionally. The equalizer
  * may have accepted later symbols since the observation was produced. The
  * observation must not overlap the equalizer. The target may alias points in
