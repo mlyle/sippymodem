@@ -222,9 +222,11 @@ are not accepted. `LUucode` is `0` for the automatic transmit-level choice or
 specifying `LUucode`. The query omits unused optional fields, so the default
 response is `0`, and automatic enabled PCM upstream returns `1`.
 
-If automatic PCM-upstream training repeatedly fails at its 24 kbit/s minimum,
-the final recovery tries V.34 upstream. This can retain PCM downstream. The
-next call still uses the configured `+V92U` setting.
+If initial automatic PCM-upstream training repeatedly fails at its 24 kbit/s
+minimum, the final recovery tries V.34 upstream. This can retain PCM downstream.
+After both B1 directions qualify, automatic recovery retains the PCM-upstream
+offer through retraining and keeps the existing retry limits. The peer may
+still select V.34 upstream. Each new call uses the configured `+V92U` setting.
 
 V.91 is automatically offered in the default mode when both peers can use
 bidirectional digital PCM. Each receiver chooses a usable rate from measured

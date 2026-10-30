@@ -877,6 +877,8 @@ static bool call_is_valid(
 	bool child_failed;
 
 	if (call == NULL || call->v92_training_failures > 2u ||
+	    (call->pcm_upstream_trained &&
+	     (call->protocol != PCM_PROTOCOL_V92 || call->local_role != V90_DIGITAL_MODEM)) ||
 	    !stored_configuration_is_valid(call) ||
 	    call->qc_frame_interval >= V90_CP_FRAME_INTERVALS ||
 	    (call->qc_frame_pending ?
@@ -1342,8 +1344,8 @@ static enum pcm_call_result begin_retrain(
 	    next.v92_digital_phase4_configuration.upstream_selection == PCM_CALL_V92_UPSTREAM_DIRECT) {
 		if (next.v92_training_failures < 2u)
 			++next.v92_training_failures;
-		if (next.v92_training_failures == 2u) {
-			/* Rejected or unanswered PCM training needs a different
+		if (next.v92_training_failures == 2u && !next.pcm_upstream_trained) {
+			/* Initial rejected or unanswered PCM training needs a different
 			 * upstream procedure. The next INFO1d negotiates V.34 upstream;
 			 * keep PCM downstream, fixed mappings, and the host deadline. */
 			next.local_info1.v92_digital.pcm_upstream_supported = false;
@@ -1506,6 +1508,13 @@ static bool data_path_is_online_owned(const struct pcm_call *call)
 		       &call->state.data_path.digital);
 }
 
+static void remember_trained_pcm_upstream(struct pcm_call *call)
+{
+	if (!call->pcm_upstream_trained && call->local_role == V90_DIGITAL_MODEM &&
+	    uses_pcm_upstream(call) && data_path_is_online_owned(call))
+		call->pcm_upstream_trained = true;
+}
+
 static bool peer_b1_received(const struct pcm_call *call)
 {
 	if (call->stage != PCM_CALL_DATA_PATH)
@@ -1538,10 +1547,11 @@ static enum pcm_call_result retry_v92_upstream(struct pcm_call *call, bool backo
 			&call->pcm_upstream_quality);
 		if (quality != V92_DATA_QUALITY_RETRAIN)
 			return quality == V92_DATA_QUALITY_EXHAUSTED ? PCM_CALL_FAILED : PCM_CALL_NUMERIC_FAILURE;
-		conventional = backoff && rate == 1u && call->b1_deadline_armed &&
+		conventional = !call->pcm_upstream_trained && backoff &&
+			rate == 1u && call->b1_deadline_armed &&
 			call->v92_digital_phase4_configuration.upstream_selection == PCM_CALL_V92_UPSTREAM_DIRECT &&
 			call->pcm_upstream_quality.recovery.attempts == V92_DATA_QUALITY_MAX_RETRAINS;
-		/* Spend the last minimum-rate B1 recovery on V.34 upstream.
+		/* Spend the last minimum-rate initial B1 recovery on V.34 upstream.
 		 * Full retrain sends fresh INFO1d without PCM permission, so the
 		 * peer can retain PCM downstream and send conventional INFO1a.
 		 * Fixed mappings and missing media do not select this fallback. */
@@ -1847,6 +1857,7 @@ enum pcm_call_result pcm_call_v34_fallback_handoff(
 		.v92_phase4 = call->v92_digital_phase4_configuration,
 		.enabled_downstream_rate_mask = call->enabled_downstream_rate_mask,
 		.upstream_retry_ceiling = call->v92_upstream_retry_ceiling,
+		.pcm_upstream_trained = call->pcm_upstream_trained,
 		.round_trip_delay_samples = call->round_trip_delay_samples,
 		.phase2_nominal_amplitude = call->phase2_nominal_amplitude,
 		.law = call->law,
@@ -1888,6 +1899,7 @@ enum pcm_call_result pcm_call_init_from_v34(
 	initialized.peer_info0 = restart->peer_info0;
 	initialized.peer_info0_stored = true;
 	initialized.v92_upstream_retry_ceiling = restart->upstream_retry_ceiling;
+	initialized.pcm_upstream_trained = restart->pcm_upstream_trained;
 	initialized.round_trip_delay_samples = restart->round_trip_delay_samples;
 	initialized.round_trip_delay_stored = true;
 	/* Validate the retained INFO0 pair and ranging interval before accepting
@@ -5374,6 +5386,7 @@ enum pcm_call_result pcm_call_drain_receive_owned(struct pcm_call *call,
 		enum pcm_call_result received = receive_v92_frame(call, &frame, &event);
 		if (received != PCM_CALL_OK) return received;
 	}
+	remember_trained_pcm_upstream(call);
 	*emitted = event;
 	return PCM_CALL_OK;
 }
@@ -5534,6 +5547,8 @@ static enum pcm_call_result data_octet_owned(
 	}
 	if (result == PCM_CALL_OK)
 		result = advance_b1_deadline(call);
+	if (result == PCM_CALL_OK)
+		remember_trained_pcm_upstream(call);
 	if (result == PCM_CALL_OK &&
 	    (call->stage == PCM_CALL_DATA_PATH || call->v92_rate_renegotiation_active))
 		result = update_rate_renegotiation_deadline(call);

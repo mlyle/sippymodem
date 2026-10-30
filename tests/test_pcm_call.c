@@ -9025,42 +9025,44 @@ static bool v92_minimum_policy_contracts(const struct pcm_call *boundary)
 	CHECK(boundary->b1_deadline_armed &&
 	      boundary->state.data_path.v92_digital.upstream.decoder.mapping.cpd.data_rate_number == 1u,
 	      "minimum-rate policy requires an unfinished B1u");
-	for (unsigned fixed = 0u; fixed < 2u; ++fixed)
-		for (unsigned missing = 0u; missing < 2u; ++missing)
-			for (unsigned budget = 0u; budget <= V92_DATA_QUALITY_MAX_RETRAINS; ++budget) {
-				struct pcm_call call = *boundary;
-				struct pcm_call_data_event event;
-				uint8_t transmitted;
+	for (unsigned trained = 0u; trained < 2u; ++trained)
+		for (unsigned fixed = 0u; fixed < 2u; ++fixed)
+			for (unsigned missing = 0u; missing < 2u; ++missing)
+				for (unsigned budget = 0u; budget <= V92_DATA_QUALITY_MAX_RETRAINS; ++budget) {
+					struct pcm_call call = *boundary;
+					struct pcm_call_data_event event;
+					uint8_t transmitted;
 
-				if (fixed) {
-					struct v92_cpd_parameters cpd = call.state.data_path.v92_digital
-						.upstream.decoder.mapping.cpd;
+					if (fixed) {
+						struct v92_cpd_parameters cpd = call.state.data_path.v92_digital
+							.upstream.decoder.mapping.cpd;
 
-					call.v92_digital_phase4_configuration.upstream_selection =
-						PCM_CALL_V92_UPSTREAM_CONFIGURED;
-					call.v92_digital_phase4_configuration.cpd = cpd;
+						call.v92_digital_phase4_configuration.upstream_selection =
+							PCM_CALL_V92_UPSTREAM_CONFIGURED;
+						call.v92_digital_phase4_configuration.cpd = cpd;
+					}
+					call.pcm_upstream_trained = trained != 0u;
+					call.pcm_upstream_quality.recovery.attempts = budget;
+					CHECK(arm_v92_quality_failure(&call, missing ? 3u : 0u) &&
+					      pcm_call_is_valid(&call), "minimum-rate policy fixture is invalid");
+					enum pcm_call_result result = pcm_call_data_octet(&call,
+						silence_octet(call.law), 0, true, NULL, &transmitted, &event);
+					bool available = budget < V92_DATA_QUALITY_MAX_RETRAINS;
+					bool fallback = !trained && available && !fixed && !missing &&
+						budget + 1u >= V92_DATA_QUALITY_MAX_RETRAINS;
+					bool recover = available || fallback;
+
+					CHECK(result == (recover ? PCM_CALL_OK : PCM_CALL_FAILED) &&
+					      pcm_call_is_valid(&call) && event.kind == PCM_CALL_DATA_NONE &&
+					      call.local_info1.v92_digital.pcm_upstream_supported == !fallback &&
+					      call.pcm_upstream_quality.recovery.attempts == budget + available &&
+					      call.protocol == PCM_PROTOCOL_V92 && call.pcm_upstream_trained == (trained != 0u) &&
+					      call.enabled_downstream_rate_mask == boundary->enabled_downstream_rate_mask &&
+					      (recover ? call.stage == PCM_CALL_RETRAIN_SILENCE : call.failed),
+					      "minimum-rate recovery changed fixed mapping, media-loss handling, "
+					      "budget or mode: trained=%u fixed=%u missing=%u budget=%u result=%s",
+					      trained, fixed, missing, budget, pcm_call_result_name(result));
 				}
-				call.pcm_upstream_quality.recovery.attempts = budget;
-				CHECK(arm_v92_quality_failure(&call, missing ? 3u : 0u) &&
-				      pcm_call_is_valid(&call), "minimum-rate policy fixture is invalid");
-				enum pcm_call_result result = pcm_call_data_octet(&call,
-					silence_octet(call.law), 0, true, NULL, &transmitted, &event);
-				bool available = budget < V92_DATA_QUALITY_MAX_RETRAINS;
-				bool fallback = available && !fixed && !missing &&
-					budget + 1u >= V92_DATA_QUALITY_MAX_RETRAINS;
-				bool recover = available || fallback;
-
-				CHECK(result == (recover ? PCM_CALL_OK : PCM_CALL_FAILED) &&
-				      pcm_call_is_valid(&call) && event.kind == PCM_CALL_DATA_NONE &&
-				      call.local_info1.v92_digital.pcm_upstream_supported == !fallback &&
-				      call.pcm_upstream_quality.recovery.attempts == budget + available &&
-				      call.protocol == PCM_PROTOCOL_V92 &&
-				      call.enabled_downstream_rate_mask == boundary->enabled_downstream_rate_mask &&
-				      (recover ? call.stage == PCM_CALL_RETRAIN_SILENCE : call.failed),
-				      "minimum-rate recovery changed fixed mapping, media-loss handling, "
-				      "budget or mode: fixed=%u missing=%u budget=%u result=%s",
-				      fixed, missing, budget, pcm_call_result_name(result));
-			}
 	return true;
 }
 
@@ -9186,7 +9188,8 @@ static bool test_v92_training_rejections(void)
 
 /* Erase the upstream response until the digital station's own deadline.
  * The analogue peer keeps running, including its independent recovery. */
-static bool run_v92_missing_training(enum g711_law law, unsigned target, bool su, bool fixed)
+static bool run_v92_missing_training(enum g711_law law, unsigned target, bool su,
+	bool fixed, bool after_online)
 {
 	struct pcm_call_configuration ac = v92_configuration(V90_ANALOG_MODEM, law);
 	struct pcm_call_configuration dc = v92_configuration(V90_DIGITAL_MODEM, law);
@@ -9197,6 +9200,7 @@ static bool run_v92_missing_training(enum g711_law law, unsigned target, bool su
 	uint32_t frames[2] = { 0u, 0u };
 	unsigned timeouts = 0u;
 	bool erasing = false;
+	bool armed = !after_online, old_data = false;
 
 	CHECK(codec_v92_profile_init(&dc, V90_DIGITAL_MODEM, law, 28000u, 56000u, 1u, NULL) == V92_PROFILE_OK,
 	      "missing-training profile failed");
@@ -9206,11 +9210,15 @@ static bool run_v92_missing_training(enum g711_law law, unsigned target, bool su
 	}
 	CHECK(channel_init(&wire, law, 3u) && pcm_call_init(&calls[0], &ac) == PCM_CALL_OK &&
 	      pcm_call_init(&calls[1], &dc) == PCM_CALL_OK, "missing-training calls failed");
+	CHECK(!calls[0].pcm_upstream_trained && !calls[1].pcm_upstream_trained,
+	      "new call inherited trained PCM permission");
 	for (unsigned clock = 0u; clock < 4u * CALL_SAMPLE_LIMIT; ++clock) {
 		uint8_t rx[2], tx[2];
 		bool phase3 = calls[1].stage == PCM_CALL_PHASE3;
 
-		if (phase3 && timeouts < target &&
+		if (old_data && calls[0].stage != PCM_CALL_DATA_PATH)
+			old_data = false;
+		if (armed && phase3 && timeouts < target &&
 		    calls[1].state.phase3.v92_digital.receive_stage == (su ?
 			V92_PHASE3_DIGITAL_RECEIVE_SU_PHASE : V92_PHASE3_DIGITAL_RECEIVE_INITIAL))
 			erasing = true;
@@ -9221,11 +9229,21 @@ static bool run_v92_missing_training(enum g711_law law, unsigned target, bool su
 			struct pcm_call *call = &calls[side];
 			struct pcm_call_observation observation;
 
-			if (pcm_call_phase4_is_ready(call))
+			if (pcm_call_phase4_is_ready(call)) {
 				CHECK(pcm_call_start_data_path(call) == PCM_CALL_OK, "missing-training data handoff failed");
+				if (!armed)
+					CHECK(!call->pcm_upstream_trained, "PCM permission latched before B1");
+			}
 			if (call->stage == PCM_CALL_DATA_PATH) {
-				CHECK(v92_payload_sample(call, rx[side], decode_octet(law, rx[side]),
-					&sources[side], &frames[side], &tx[side]), "missing-training payload failed");
+				if (!armed || old_data) {
+					struct pcm_call_data_event event;
+					CHECK(pcm_call_data_octet(call, rx[side], decode_octet(law, rx[side]),
+						true, NULL, &tx[side], &event) == PCM_CALL_OK,
+					      "initial PCM idle or retiring data failed");
+				} else {
+					CHECK(v92_payload_sample(call, rx[side], decode_octet(law, rx[side]),
+						&sources[side], &frames[side], &tx[side]), "missing-training payload failed");
+				}
 			} else {
 				CHECK(pcm_call_octet(call, rx[side], decode_octet(law, rx[side]),
 					&tx[side], &observation) == PCM_CALL_OK, "missing-training recovery failed at %u side %u", clock, side);
@@ -9236,7 +9254,8 @@ static bool run_v92_missing_training(enum g711_law law, unsigned target, bool su
 			erasing = false;
 			++timeouts;
 			CHECK(!calls[1].retrain.peer_tone_retained &&
-			      calls[1].local_info1.v92_digital.pcm_upstream_supported == (fixed || timeouts < 2u),
+			      calls[1].local_info1.v92_digital.pcm_upstream_supported ==
+				      (after_online || fixed || timeouts < 2u),
 			      "local timeout did not select bounded upstream recovery: law %u Su %u fixed %u count %u", law, su, fixed, timeouts);
 		}
 		if (!calls[1].local_info1.v92_digital.pcm_upstream_supported) {
@@ -9245,8 +9264,18 @@ static bool run_v92_missing_training(enum g711_law law, unsigned target, bool su
 			return v92_conventional_recovery_data(calls, &wire, law);
 		}
 		if (pcm_call_is_online(&calls[0]) && pcm_call_is_online(&calls[1])) {
-			CHECK(timeouts == target && (target == 1u || fixed) &&
+			if (!armed) {
+				CHECK(!calls[0].pcm_upstream_trained && calls[1].pcm_upstream_trained &&
+				      pcm_call_start_retrain(&calls[1]) == PCM_CALL_OK &&
+				      calls[1].pcm_upstream_trained,
+				      "qualified PCM mode did not survive local retrain");
+				armed = old_data = true;
+				continue;
+			}
+			CHECK(timeouts == target && (after_online || target == 1u || fixed) &&
 			      !pcm_call_uses_conventional_upstream(&calls[1]), "transient loss or fixed mapping lost PCM");
+			if (after_online && (frames[0] < 64u || frames[1] < 64u))
+				continue;
 			return true;
 		}
 	}
@@ -9259,9 +9288,18 @@ static bool test_v92_missing_training(void)
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (unsigned su = 0u; su < 2u; ++su) {
 			for (unsigned target = 1u; target <= 2u; ++target)
-				CHECK(run_v92_missing_training(law, target, su, false), "missing-training recovery failed");
-			CHECK(run_v92_missing_training(law, 2u, su, true), "fixed training policy changed");
+				CHECK(run_v92_missing_training(law, target, su, false, false), "missing-training recovery failed");
+			CHECK(run_v92_missing_training(law, 2u, su, true, false), "fixed training policy changed");
 		}
+	return true;
+}
+
+static bool test_v92_trained_permission_recovery(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned su = 0u; su < 2u; ++su)
+			CHECK(run_v92_missing_training(law, 2u, su, false, true),
+			      "trained PCM permission recovery failed law %u Su %u", law, su);
 	return true;
 }
 
@@ -12876,6 +12914,7 @@ static bool check_v34_restart(
 			.direct_maximum_data_rate_number = 19u,
 		};
 		restart.upstream_retry_ceiling = 17u;
+		restart.pcm_upstream_trained = remote;
 	}
 	if (short_profile) {
 		restart.local_info0.v92_digital.short_phase2_requested = true;
@@ -12928,6 +12967,7 @@ static bool check_v34_restart(
 	      call.protocol == protocol &&
 	      call.enabled_downstream_rate_mask == restart.enabled_downstream_rate_mask &&
 	      call.v92_upstream_retry_ceiling == restart.upstream_retry_ceiling &&
+	      call.pcm_upstream_trained == restart.pcm_upstream_trained &&
 	      memcmp(&call.local_info1, &restart.local_info1,
 		     sizeof(restart.local_info1)) == 0 &&
 	      memcmp(&call.short_startup, &restart.short_startup,
@@ -13352,6 +13392,7 @@ int main(int argc, char **argv)
 	} tests[] = {
 		{ "V.92 repeated training rejection fallback", test_v92_training_rejections },
 		{ "V.92 missing training response fallback", test_v92_missing_training },
+		{ "V.92 trained PCM permission survives recovery", test_v92_trained_permission_recovery },
 		{ "V.92 clipping selection retrain", test_v92_clipping_recovery },
 		{ "V.92 cleaned input through Phase 3", test_v92_phase3_cleaned_input },
 		{ "V.92 DIL selects unconditioned codec data", test_v92_dil_unconditioned },

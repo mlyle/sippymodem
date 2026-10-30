@@ -216,6 +216,7 @@ struct pcm_fallback_restart {
 	uint8_t upstream_retry_ceiling;
 	enum pcm_protocol protocol;
 	enum g711_law law;
+	bool pcm_upstream_trained;
 };
 
 union pcm_call_phase3_state {
@@ -551,6 +552,9 @@ struct pcm_call {
 	bool failed;
 	/* Peer rejections and response timeouts before PCM Phase 4 reaches data. */
 	uint8_t v92_training_failures;
+	/* Both B1 directions qualified at least once. Keep PCM permission during
+	 * automatic recovery; initial training can still try conventional upstream. */
+	bool pcm_upstream_trained;
 };
 
 enum pcm_call_result pcm_call_init(
