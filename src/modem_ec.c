@@ -1261,82 +1261,52 @@ static int rx_info(struct lapm_state *l, frame_t *f)
 
 /* rx supervisory frame */
 
-static void rx_super_cmd(struct lapm_state *l, frame_t *f)
+static void rx_supervisory(struct lapm_state *l, frame_t *f)
 {
-	/* V.42 8.4.7: answer a poll with our current receive status. */
-	switch(FRAME_CTRL(f)) {
-	case FRAME_S_RR:
-	case FRAME_S_REJ:
-		l->peer_busy = 0;
-		if (!ack_info(l, FRAME_NR(f)))
-			return;
-		if (FRAME_CTRL(f) == FRAME_S_REJ && !l->rtx_count) {
-			TIMER_STOP(l);
-			reject_info(l);
-		}
-		if (FRAME_S_PF(f) || !tx_info(l))
-			tx_status(l, FRAME_ADDR(f), FRAME_S_PF(f));
-		break;
-	case FRAME_S_RNR:
-		/* going to peer_busy state */
-		l->peer_busy = 1;
-		l->stalled_polls = 0;
-		l->stalled_retrain = false;
-		if (!ack_info(l,FRAME_NR(f)))
-			return;
-		/* V.42 8.4.6: enquire even with no outstanding information,
-		 * but do not postpone an already transmitted status poll. */
-		if (!l->rtx_count)
-			TIMER_START(l);
-		if (FRAME_S_PF(f))
-			tx_status(l, l->rsp_addr, FRAME_S_PF(f));
-		break;
-	}
-}
+	unsigned control = FRAME_CTRL(f);
+	bool command = RX_IS_COMMAND(f);
+	bool pf = FRAME_S_PF(f);
+	bool retrain_response = !command && l->retrain_poll && l->rtx_count && pf;
 
-static void rx_super_rsp(struct lapm_state *l, frame_t *f)
-{
-	bool retrain_response = l->retrain_poll && l->rtx_count &&
-		FRAME_S_PF(f);
-
-	if (!l->rtx_count && FRAME_S_PF(f)) {
+	if (!command && !l->rtx_count && pf) {
 		EC_ERR("rx_super: unsolisited final response!\n");
 		return;
 	}
-	/* ack I frames <= nr -1 */
-	switch(FRAME_CTRL(f)) {
-	case FRAME_S_RR:
-		l->peer_busy = 0;
-		if (!ack_info(l,FRAME_NR(f)))
-			return;
-		if (l->rtx_count && FRAME_S_PF(f)) {
-			reject_info(l);
-			TIMER_STOP(l);
-		}
-		break;
-	case FRAME_S_RNR:
-		l->peer_busy = 1;
+	/* Only validated RR/RNR/REJ frames reach this owner. Both directions
+	 * acknowledge N(R) and publish peer flow control before processing the
+	 * poll/final exchange; RNR also clears the information-progress budget. */
+	l->peer_busy = control == FRAME_S_RNR;
+	if (l->peer_busy) {
 		l->stalled_polls = 0;
 		l->stalled_retrain = false;
-		if (!ack_info(l,FRAME_NR(f)))
-			return;
-		if (l->rtx_count && FRAME_S_PF(f)) {
-			reject_info(l);
-			TIMER_STOP(l); // fixme: need stop even on RNR ??
-		}
-		if (!l->rtx_count)
-			TIMER_START(l);
-		break;
-	case FRAME_S_REJ:
-		l->peer_busy = 0;
-		if (!ack_info(l,FRAME_NR(f)))
-			return;
-		if (!l->rtx_count || FRAME_S_PF(f)) {
-			reject_info(l);
-			TIMER_STOP(l);
-		}
-		break;
 	}
+	if (!ack_info(l, FRAME_NR(f)))
+		return;
+	if (command) {
+		if (control == FRAME_S_REJ && !l->rtx_count) {
+			TIMER_STOP(l);
+			reject_info(l);
+		}
+		if (control == FRAME_S_RNR) {
+			/* Enquire even with no outstanding information, without
+			 * postponing an already transmitted status poll. */
+			if (!l->rtx_count)
+				TIMER_START(l);
+			if (!pf)
+				return;
+		} else if (!pf && tx_info(l))
+			return;
+		/* V.42 8.4.7: answer a poll with our current receive status. */
+		tx_status(l, l->rsp_addr, pf);
+		return;
+	}
+	if ((l->rtx_count && pf) ||
+	    (control == FRAME_S_REJ && !l->rtx_count)) {
+		reject_info(l);
+		TIMER_STOP(l);
+	}
+	if (control == FRAME_S_RNR && !l->rtx_count)
+		TIMER_START(l);
 	if (retrain_response)
 		l->retrain_poll = 0;
 }
@@ -1669,10 +1639,7 @@ static void lapm_rx_complete(void *framer, frame_t *f)
 		rx_info(l,f);
 		break;
 	case FRAME_S:
-		if (RX_IS_COMMAND(f))
-			rx_super_cmd(l,f);
-		else
-			rx_super_rsp(l,f);
+		rx_supervisory(l, f);
 		break;
 	case FRAME_U:
 		if (RX_IS_COMMAND(f))
