@@ -1778,22 +1778,14 @@ static struct v34_info0 v34_info0_from_v90(
 	return capabilities;
 }
 
-enum pcm_call_result pcm_call_v34_fallback_handoff(
-	const struct pcm_call *call,
-	struct v34_phase2_handoff *handoff,
-	struct pcm_fallback_restart *restart)
+static enum pcm_call_result prepare_v34_fallback(
+	const struct pcm_call *call, struct v34_phase2_handoff *handoff)
 {
 	struct v34_phase2_handoff selected;
 	const struct v34_info0 *local_info0;
 	const struct v34_info0 *peer_info0;
 	int16_t receive_gain;
 
-	if (!pcm_call_is_valid(call) || handoff == NULL || restart == NULL ||
-	    memory_regions_overlap(call, sizeof(*call), handoff, sizeof(*handoff)) ||
-	    memory_regions_overlap(call, sizeof(*call), restart, sizeof(*restart)) ||
-	    memory_regions_overlap(
-		    handoff, sizeof(*handoff), restart, sizeof(*restart)))
-		return PCM_CALL_INVALID_ARGUMENT;
 	if (call->failed || call->stage != PCM_CALL_PHASE2 ||
 	    call->local_role != V90_DIGITAL_MODEM ||
 	    !call->peer_info0_stored || !call->round_trip_delay_stored ||
@@ -1821,6 +1813,27 @@ enum pcm_call_result pcm_call_v34_fallback_handoff(
 	};
 	if (!v34_phase2_handoff_is_valid(&selected))
 		return PCM_CALL_UNUSABLE_SELECTION;
+	*handoff = selected;
+	return PCM_CALL_OK;
+}
+
+enum pcm_call_result pcm_call_v34_fallback_handoff(
+	const struct pcm_call *call,
+	struct v34_phase2_handoff *handoff,
+	struct pcm_fallback_restart *restart)
+{
+	struct v34_phase2_handoff selected;
+	enum pcm_call_result result;
+
+	if (!pcm_call_is_valid(call) || handoff == NULL || restart == NULL ||
+	    memory_regions_overlap(call, sizeof(*call), handoff, sizeof(*handoff)) ||
+	    memory_regions_overlap(call, sizeof(*call), restart, sizeof(*restart)) ||
+	    memory_regions_overlap(
+		    handoff, sizeof(*handoff), restart, sizeof(*restart)))
+		return PCM_CALL_INVALID_ARGUMENT;
+	result = prepare_v34_fallback(call, &selected);
+	if (result != PCM_CALL_OK)
+		return result;
 	*handoff = selected;
 	*restart = (struct pcm_fallback_restart){
 		.protocol = call->protocol,
@@ -2296,8 +2309,14 @@ static enum pcm_call_result advance_phase2(
 		if (result != PCM_PHASE2_OK)
 			return PCM_CALL_SEQUENCE_MISMATCH;
 	}
-	if (pcm_phase2_is_ready_for_v34_fallback(&call->state.phase2))
-		return PCM_CALL_V34_FALLBACK_READY;
+	if (pcm_phase2_is_ready_for_v34_fallback(&call->state.phase2)) {
+		struct v34_phase2_handoff handoff;
+
+		/* Admit the fallback while unusable retrain selections can still
+		 * use the shared recovery path, before transferring the owner. */
+		enum pcm_call_result selected = prepare_v34_fallback(call, &handoff);
+		return selected == PCM_CALL_OK ? PCM_CALL_V34_FALLBACK_READY : selected;
+	}
 	return pcm_phase2_is_ready_for_phase3(&call->state.phase2) ?
 		       enter_phase3(call) : PCM_CALL_OK;
 }

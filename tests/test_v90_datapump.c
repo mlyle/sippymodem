@@ -1960,7 +1960,7 @@ static bool check_fallback_phase3_retrain(
 
 static bool run_fallback_restart(
 	enum g711_law law, bool remote, enum DP_ID protocol, uint8_t pcm_up_max_drn,
-	bool after_online)
+	bool after_online, bool unusable_reply)
 {
 	enum { BLOCK = MODEM_FRAG };
 	struct bit_endpoint digital_bits = { .transmit_seed = 7, .receive_seed = 19 };
@@ -1982,6 +1982,8 @@ static bool run_fallback_restart(
 	int16_t output[BLOCK];
 	bool substituted = false;
 	bool info1a_complete = false;
+	bool bad_attempted = false;
+	bool recovery_seen = false;
 	bool fallback = false;
 	bool retrain = false;
 	bool returned = false;
@@ -2034,6 +2036,13 @@ static bool run_fallback_restart(
 			result = dp->op->process(dp, input, output, BLOCK);
 			for (size_t index = 0; index < BLOCK; ++index)
 				to_analog[index] = encode(law, output[index]);
+		}
+		if (unusable_reply && !after_online && bad_attempted && result == DPSTAT_ERROR) {
+			CHECK(!fallback && !recovery_seen && phases == 0,
+			      "initial unusable fallback was admitted or retrained");
+			CHECK(dp->op->delete(dp) == 0,
+			      "rejected fallback owner was not released");
+			return true;
 		}
 		CHECK(result == DPSTAT_OK || result == DPSTAT_CONNECT ||
 		      result == DPSTAT_CHANGEDP,
@@ -2141,13 +2150,19 @@ static bool run_fallback_restart(
 					if (!substituted && (!after_online || phases != 0u) &&
 					    observation.phase2.kind ==
 						    PCM_PHASE2_EVENT_PEER_INFO1D_RECEIVED) {
-						const struct v34_info1a selected = {
+						struct v34_info1a selected = {
 							.call_transmit = { .high_carrier = true,
 								.projected_data_rate_2400_bps_units = 12 },
 							.answer_to_call_symbol_rate = V34_SYMBOL_RATE_3000,
 							.call_to_answer_symbol_rate = V34_SYMBOL_RATE_3000,
 						};
 						uint8_t payload[V34_INFO1A_PAYLOAD_BYTES];
+
+						if (unusable_reply && !bad_attempted) {
+							/* Valid framing with an unusable 2400-baud selection. */
+							selected = (struct v34_info1a){ 0 };
+							bad_attempted = true;
+						}
 
 						CHECK(pcm_phase2_receive_gain(&peer.state.phase2, &peer_gain) ==
 							      PCM_PHASE2_OK &&
@@ -2162,7 +2177,13 @@ static bool run_fallback_restart(
 						substituted = true;
 					}
 				}
-				if (substituted && !fallback) {
+				if (bad_attempted && !recovery_seen &&
+				    peer.stage == PCM_CALL_RETRAIN_SILENCE) {
+					recovery_seen = true;
+					substituted = info1a_complete = false;
+				}
+				if (substituted && !fallback &&
+				    (!bad_attempted || recovery_seen || !info1a_complete)) {
 					int16_t transmit = 0;
 
 					if (!info1a_complete)
@@ -2215,7 +2236,8 @@ static bool run_fallback_restart(
 			      "fallback retrain retained online datapump status");
 		}
 	}
-	CHECK(phases == expected_phases && returned && peer_returned &&
+	CHECK((!unusable_reply || (after_online && bad_attempted && recovery_seen)) &&
+	      phases == expected_phases && returned && peer_returned &&
 	      digital.dp->id == protocol && digital.tx_rate > 33600 &&
 	      digital.dsp_info.upstream_mode ==
 		      (pcm_up_max_drn != 0 ? MODEM_UPSTREAM_PCM : MODEM_UPSTREAM_V34),
@@ -2233,8 +2255,8 @@ static bool run_fallback_restarts(bool after_online)
 			enum DP_ID protocol = mode == 0 ? DP_V90 : DP_V92;
 			uint8_t pcm_up_max_drn = mode == 2u ? 4u : 0;
 
-			CHECK(run_fallback_restart(law, false, protocol, pcm_up_max_drn, after_online) &&
-			      run_fallback_restart(law, true, protocol, pcm_up_max_drn, after_online),
+			CHECK(run_fallback_restart(law, false, protocol, pcm_up_max_drn, after_online, false) &&
+			      run_fallback_restart(law, true, protocol, pcm_up_max_drn, after_online, false),
 			      "fallback retrain failed for law %u mode %u online %u",
 			      law, mode, after_online);
 		}
@@ -2254,6 +2276,21 @@ static bool test_online_fallback_restart(void)
 	return run_fallback_restarts(true);
 }
 
+static bool test_unusable_fallback_selection(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned int mode = 0; mode < 3u; ++mode) {
+			enum DP_ID protocol = mode == 0 ? DP_V90 : DP_V92;
+			uint8_t pcm_up_max_drn = mode == 2u ? 4u : 0;
+
+			CHECK(run_fallback_restart(law, false, protocol, pcm_up_max_drn, false, true) &&
+			      run_fallback_restart(law, false, protocol, pcm_up_max_drn, true, true) &&
+			      run_fallback_restart(law, true, protocol, pcm_up_max_drn, true, true),
+			      "unusable fallback recovery failed for law %u mode %u", law, mode);
+		}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -2266,6 +2303,7 @@ int main(void)
 		{ "V.92 data echo recovery", test_data_echo_recovery },
 		{ "PCM retrain after V.34 fallback", test_fallback_restart },
 		{ "online PCM retrain through V.34 fallback", test_online_fallback_restart },
+		{ "unusable V.34 fallback selection", test_unusable_fallback_selection },
 		{ "cleardown before CONNECT", test_training_cleardown },
 		{ "automatic upstream quality recovery", test_upstream_quality_recovery },
 		{ "automatic upstream quality downshift", test_upstream_quality_downshift },
