@@ -342,15 +342,10 @@ static bool select_point(
 
 	first += positive_modulo(offset - first, step);
 	for (int eta = first; eta < (int)constellation->count; eta += (int)step) {
-		uint8_t ordinal;
-		int16_t positive;
-		int16_t u;
+		int16_t u = v92_cpd_signed_point(constellation, eta);
 		int32_t x;
 		int64_t score;
 
-		ordinal = (uint8_t)(eta >= 0 ? eta : -eta - 1);
-		positive = constellation->positive_linear[ordinal];
-		u = eta >= 0 ? positive : (int16_t)-positive;
 		x = precoder_output(history, u);
 		score = x < 0 ? -(int64_t)x : (int64_t)x;
 		if (!found || score < best_score) {
@@ -961,13 +956,6 @@ static void candidate_replace(
 	candidates[parent] = added;
 }
 
-static int16_t signed_point(
-	const struct v92_cpd_constellation *constellation, int eta)
-{
-	return eta >= 0 ? constellation->positive_linear[eta] :
-		(int16_t)-constellation->positive_linear[-eta - 1];
-}
-
 /* Pick one legal point near the observation, accounting for this path's
  * channel history. This only orders visits: the envelope midpoint is not
  * a likelihood and must never exclude a point or admit a decoded word. */
@@ -986,7 +974,7 @@ static int model_seed(struct v92_observation_cache *cache,
 		unsigned mid = low + (high - low) / 2;
 		int eta = first + (int)(mid * step);
 		struct v92_observation_range range = v92_observation_range(cache,
-			precoder_output(precoder, signed_point(constellation, eta)));
+			precoder_output(precoder, v92_cpd_signed_point(constellation, eta)));
 
 		if (.5 * (range.low + range.high) < target) low = mid + 1;
 		else high = mid;
@@ -1313,7 +1301,7 @@ static enum v92_pcm_frame_result decode_frame(
 				UINT64_C(65536) : constellation_weight(receiver, samples[symbol]);
 
 			for (int eta = -(int)constellation->count; eta < constellation->count; ++eta) {
-				int16_t u = signed_point(constellation, eta);
+				int16_t u = v92_cpd_signed_point(constellation, eta);
 				uint64_t cost = cells ? cell_metric(cells + symbol, u,
 					weight, !received || received[symbol]) :
 					sample_metric(receiver, u, 0, samples[symbol], b1u,
@@ -1405,7 +1393,7 @@ static enum v92_pcm_frame_result decode_frame(
 		}
 		if (cache_points && !lookahead)
 			for (int eta = -(int)constellation->count; eta < constellation->count; ++eta) {
-				int16_t u = signed_point(constellation, eta);
+				int16_t u = v92_cpd_signed_point(constellation, eta);
 				int32_t v = receiver->observation == V92_PCM_FRAME_FILTER_OUTPUT ?
 					prefilter_output(&receiver->mapping, 0, u) : 0;
 
@@ -1542,7 +1530,7 @@ static enum v92_pcm_frame_result decode_frame(
 				while (low < high) {
 					int mid = low + (high - low) / 2;
 					struct v92_observation_range point = v92_observation_range(&cache,
-						precoder_output(precoder, signed_point(constellation, mid)));
+						precoder_output(precoder, v92_cpd_signed_point(constellation, mid)));
 
 					if (point.high < minimum) low = mid + 1;
 					else high = mid;
@@ -1552,7 +1540,7 @@ static enum v92_pcm_frame_result decode_frame(
 				while (low < high) {
 					int mid = low + (high - low) / 2;
 					struct v92_observation_range point = v92_observation_range(&cache,
-						precoder_output(precoder, signed_point(constellation, mid)));
+						precoder_output(precoder, v92_cpd_signed_point(constellation, mid)));
 
 					if (point.low <= maximum) low = mid + 1;
 					else high = mid;
@@ -1600,7 +1588,7 @@ static enum v92_pcm_frame_result decode_frame(
 					    !((requests & 2u) && digit == modulus - 1u))
 						continue;
 				}
-				int16_t u = signed_point(constellation, eta);
+				int16_t u = v92_cpd_signed_point(constellation, eta);
 				if (cache_points) {
 					cost = point_cost[symbol][eta + constellation->count];
 				} else if (model) {
@@ -1651,7 +1639,7 @@ static enum v92_pcm_frame_result decode_frame(
 			next[index].state.metric = candidate->path_metric;
 			frame->signed_index[symbol] = candidate->eta;
 			frame->digit[symbol] = candidate->digit;
-			frame->u[symbol] = signed_point(constellation, candidate->eta);
+			frame->u[symbol] = v92_cpd_signed_point(constellation, candidate->eta);
 			frame->y0[symbol] = candidate->y0;
 			filter_step(&receiver->mapping, &next[index].state.filter,
 				    frame->u[symbol], &frame->x[symbol], &frame->v[symbol]);

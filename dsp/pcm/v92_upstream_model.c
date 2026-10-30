@@ -252,7 +252,7 @@ static double residual_prefix_score(const struct v92_pcm_mapping *mapping,
 			double sample = raw[frame * V92_PCM_MAPPING_FRAME_SYMBOLS + symbol] * gain;
 			double distance = INFINITY;
 			for (int eta = first; eta < points->count; eta += modulus) {
-				double point = eta < 0 ? -points->positive_linear[-eta - 1] : points->positive_linear[eta];
+				double point = v92_cpd_signed_point(points, eta);
 				distance = fmin(distance, (sample - point) * (sample - point));
 			}
 			score += distance;

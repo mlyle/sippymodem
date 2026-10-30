@@ -114,8 +114,7 @@ static bool normalize_gain(
 	 * every search candidate on the live media thread. Energy is bounded by
 	 * 576 signed 16-bit samples, comfortably inside uint64_t. */
 	for (int eta = -(int)points->count; eta < points->count; ++eta) {
-		int u = eta < 0 ? -points->positive_linear[-eta - 1] :
-			points->positive_linear[eta];
+		int u = v92_cpd_signed_point(points, eta);
 		int64_t v = round_shift_s64_to_s32_saturating((int64_t)u * INT16_MAX, 15u);
 
 		energy += (uint64_t)(v * v) * frequencies[eta + V92_CPD_MAX_CONSTELLATION_POINTS];
@@ -190,8 +189,7 @@ static int input_margin(enum g711_law law, int lower, int upper)
 static int64_t point_gain(const struct v92_cpd_parameters *cpd, int eta)
 {
 	const struct v92_cpd_constellation *points = &cpd->constellation[0];
-	int u = eta < 0 ? -points->positive_linear[-eta - 1] :
-		points->positive_linear[eta];
+	int u = v92_cpd_signed_point(points, eta);
 	int32_t v = round_shift_s64_to_s32_saturating((int64_t)u * INT16_MAX, 15u);
 
 	return (int64_t)v * cpd->four_times_gain_q0_16;

@@ -115,6 +115,17 @@ struct v92_cpd_constellation {
 	uint8_t count;
 };
 
+/* Canonical signed index: -count..-1 select the negative outer..inner
+ * points, 0..count-1 the positive inner..outer points. The owner validates
+ * the constellation and bounds eta before this lookup. CPd positive levels
+ * exclude zero and INT16_MIN, so negation is exact in signed 16 bits. */
+static inline int16_t v92_cpd_signed_point(
+	const struct v92_cpd_constellation *constellation, int eta)
+{
+	return eta >= 0 ? constellation->positive_linear[eta] :
+		(int16_t)-constellation->positive_linear[-eta - 1];
+}
+
 /* V.92 Table 30 fields. Optional sections use a canonical representation:
  * absent sections and unused array entries are zero. Filter sections are z1,
  * p1, z2, and p2 in wire order. Constellation levels are positive, strictly

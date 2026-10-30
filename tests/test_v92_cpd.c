@@ -69,6 +69,36 @@ static bool test_filter_response_length(void)
 	return true;
 }
 
+static bool test_signed_constellation(void)
+{
+	struct v92_cpd_constellation points = { 0 };
+
+	for (unsigned count = 1; count <= V92_CPD_MAX_CONSTELLATION_POINTS; ++count) {
+		points.count = (uint8_t)count;
+		points.positive_linear[count - 1] = count == V92_CPD_MAX_CONSTELLATION_POINTS ?
+			INT16_MAX : (int16_t)(1u + 257u * (count - 1));
+		struct v92_cpd_constellation before = points;
+		int previous = INT16_MIN, sum = 0;
+		int64_t energy = 0, positive_energy = 0;
+
+		for (unsigned i = 0; i < count; ++i)
+			positive_energy += (int64_t)points.positive_linear[i] * points.positive_linear[i];
+		for (int eta = -(int)count; eta < (int)count; ++eta) {
+			int point = v92_cpd_signed_point(&points, eta);
+
+			CHECK(point > previous && point != 0 && (point < 0) == (eta < 0),
+			      "unordered signed constellation: count %u eta %d", count, eta);
+			sum += point;
+			energy += (int64_t)point * point;
+			previous = point;
+		}
+		CHECK(sum == 0 && energy == 2 * positive_energy &&
+		      memcmp(&points, &before, sizeof(points)) == 0,
+		      "signed constellation lost symmetry, energy or ownership: count %u", count);
+	}
+	return true;
+}
+
 static struct v92_cpd_parameters selection(unsigned int sections)
 {
 	struct v92_cpd_parameters parameters = {
@@ -808,6 +838,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "filter response length", test_filter_response_length },
+		{ "signed constellation", test_signed_constellation },
 		{ "table inheritance", test_table_inheritance },
 		{ "cleardown wire image", test_cleardown_wire_image },
 		{ "base encoding", test_base_encoding },
