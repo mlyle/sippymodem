@@ -161,6 +161,18 @@ static void accumulate_timing_window(struct echo_timing_window *to,
 	}
 }
 
+/* A ring window is at most two contiguous, reverse-ordered spans. */
+static void accumulate_prediction_span(
+	struct echo_timing_window *window, unsigned first,
+	const int32_t *end, unsigned count, int16_t input)
+{
+	for (unsigned i = 0; i < count; ++i) {
+		int32_t predicted = *--end;
+		window->cross[first + i] += (int64_t)input * predicted;
+		window->energy[first + i] += (int64_t)predicted * predicted;
+	}
+}
+
 void echo_timing_observe(struct echo_timing *t,
 	struct echo_timing_model *model, int16_t received, int16_t cleaned)
 {
@@ -182,15 +194,9 @@ void echo_timing_observe(struct echo_timing *t,
 		return;
 
 	t->fast.input += (int32_t)input * input;
-	for (unsigned candidate = 0; candidate < bins; ++candidate) {
-		int32_t predicted = t->prediction[index];
-		int64_t cross = (int64_t)input * predicted;
-		uint64_t energy = (int64_t)predicted * predicted;
-
-		t->fast.cross[candidate] += cross;
-		t->fast.energy[candidate] += energy;
-		index = index == 0 ? bins - 1 : index - 1;
-	}
+	unsigned split = index + 1u;
+	accumulate_prediction_span(&t->fast, 0, t->prediction + split, split, input);
+	accumulate_prediction_span(&t->fast, split, t->prediction + bins, bins - split, input);
 	if (++t->count % ECHO_TIMING_FAST_WINDOW != 0)
 		return;
 	accumulate_timing_window(&t->medium, &t->fast);
