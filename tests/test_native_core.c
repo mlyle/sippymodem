@@ -8834,6 +8834,157 @@ static bool test_lapm_peer_busy_timer(void)
 	return true;
 }
 
+struct lapm_stream_sink {
+	uint8_t bytes[1280];
+	size_t count;
+};
+
+static int capture_lapm_stream(void *context, const char *bytes, int count)
+{
+	struct lapm_stream_sink *sink = context;
+
+	if (count < 0 || (size_t)count > sizeof(sink->bytes) - sink->count)
+		return -1;
+	memcpy(sink->bytes + sink->count, bytes, (size_t)count);
+	sink->count += (size_t)count;
+	return count;
+}
+
+static bool exchange_lapm_stream(struct modem *modems[2])
+{
+	uint8_t bits[2][8];
+
+	for (unsigned side = 0; side < 2; ++side)
+		CHECK(modem_get_bits(modems[side], 8, bits[side], 8) == 8,
+		      "LAPM stream did not emit wire bytes");
+	for (unsigned side = 0; side < 2; ++side)
+		CHECK(modem_put_bits(modems[side ^ 1], 8, bits[side], 8) == 8,
+		      "LAPM stream did not accept wire bytes");
+	return true;
+}
+
+static bool lapm_stream_complete(
+	struct modem *modems[2], const struct lapm_stream_sink sinks[2], size_t count)
+{
+	return sinks[0].count == count && sinks[1].count == count &&
+	       modem_ec_transmit_idle(modems[0]) && modem_ec_transmit_idle(modems[1]);
+}
+
+static bool test_lapm_retrain_stream(void)
+{
+	static const unsigned rates[][2] = { { 1200, 1200 }, { 56000, 33600 }, { 56000, 36000 } };
+	static const unsigned types[] = { 0, MODEM_COMP_TYPE_V42BIS, MODEM_COMP_TYPE_V44 };
+	struct modem_driver driver = {
+		.name = "Paired LAPM retrain", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+
+	for (size_t codec = 0; codec < ARRAY_LENGTH(types); ++codec)
+	for (size_t rate = 0; rate < ARRAY_LENGTH(rates); ++rate)
+	for (unsigned direction = 0; direction < 2; ++direction)
+	for (unsigned boundary = 0; boundary < 3; ++boundary) {
+		struct modem *modems[2];
+		struct lapm_stream_sink sinks[2] = { 0 };
+		uint8_t expected[2][sizeof(sinks[0].bytes)];
+
+		for (unsigned side = 0; side < 2; ++side) {
+			struct modem *m = modems[side] = create_compat_modem(&driver, driver.name);
+
+			CHECK(m != NULL, "LAPM stream allocation failed");
+			m->caller = side;
+			m->cfg.ec = 1;
+			m->cfg.comp = codec ? 3 : 0;
+			m->cfg.comp_types = types[codec];
+			m->cfg.comp_dict_size = 512;
+			m->cfg.comp_max_string = 64;
+			m->rx_rate = rates[rate][side ^ 1];
+			m->tx_rate = rates[rate][side];
+			m->state = STATE_EC_ESTAB;
+			m->data_output = capture_lapm_stream;
+			m->data_output_context = &sinks[side];
+			CHECK(modem_comp_init(m) == 0 && modem_ec_init(m) == 0,
+			      "LAPM stream initialization failed");
+			modem_hdlc_start(m);
+			modem_ec_start(m);
+			m->get_bits = modem_hdlc_get_bits;
+			m->put_bits = modem_hdlc_put_bits;
+			for (size_t i = 0; i < sizeof(expected[side]); ++i)
+				expected[side][i] = (uint8_t)(i % 37 < 24 ?
+					'a' + (i + side) % 7 : i * 23 + side * 11);
+		}
+		/* Negotiate XID/SABME through actual HDLC/FCS. Configured rates
+		 * exercise the protocol timers;
+		 * this byte-clocked fixture does not model a physical datapump. */
+		for (unsigned step = 0; step < 4000 &&
+		     (modems[0]->state != STATE_MODEM_ONLINE ||
+		      modems[1]->state != STATE_MODEM_ONLINE); ++step)
+			CHECK(exchange_lapm_stream(modems), "LAPM stream establishment failed");
+		for (unsigned side = 0; side < 2; ++side) {
+			CHECK(modems[side]->state == STATE_MODEM_ONLINE &&
+			      (modem_ec_active_compression(modems[side]) == MODEM_EC_COMPRESSION_NONE) == (codec == 0) &&
+			      (modem_ec_active_compression(modems[side]) == MODEM_EC_COMPRESSION_V44) == (codec == 2),
+			      "LAPM stream negotiated the wrong compression (codec=%zu rate=%zu)", codec, rate);
+			CHECK(modem_data_write(modems[side], (const char *)expected[side], 256) == 256,
+			      "LAPM stream rejected warmup bytes");
+		}
+		for (unsigned step = 0; step < 20000 &&
+		     !lapm_stream_complete(modems, sinks, 256); ++step)
+			CHECK(exchange_lapm_stream(modems), "LAPM stream warmup failed");
+		CHECK(lapm_stream_complete(modems, sinks, 256), "LAPM stream warmup did not drain");
+		/* Build real compression history, then interrupt either an empty
+		 * link, queued DTE bytes, or a partly serialized retained I frame. */
+		if (boundary != 0)
+			for (unsigned side = 0; side < 2; ++side)
+				CHECK(modem_data_write(modems[side], (const char *)expected[side] + 256, 1024) == 1024,
+				      "LAPM stream rejected bytes before suspension");
+		if (boundary == 2) {
+			struct modem *m = modems[direction];
+			uint8_t bit;
+
+			for (unsigned step = 0; step < 512 &&
+			     (m->packer.hdlc.tx_frame == NULL || m->packer.hdlc.tx_frame->count == 0); ++step)
+				CHECK(modem_get_bits(m, 1, &bit, 1) == 1,
+				      "LAPM stream could not start an information frame");
+			CHECK(m->packer.hdlc.tx_frame != NULL && m->ec.lapm.va != m->ec.lapm.vs,
+			      "LAPM stream fixture lacks interrupted information");
+		}
+		/* Advance no protocol clock during the simulated physical pause.
+		 * Discard partial receive framing at each endpoint, in both orders. */
+		for (unsigned order = 0; order < 2; ++order) {
+			unsigned side = order ^ direction;
+			struct modem *m = modems[side];
+			uint8_t saved[sizeof(m->comp)];
+
+			memcpy(saved, &m->comp, sizeof(saved));
+			CHECK(modem_ec_resume_after_retrain(m) == 0 &&
+			      memcmp(saved, &m->comp, sizeof(saved)) == 0,
+			      "LAPM stream resumption changed compression history");
+			if (boundary == 2 && side == direction)
+				CHECK(m->ec.lapm.retrain_poll && m->ec.lapm.va != m->ec.lapm.vs,
+				      "LAPM stream lost interrupted information recovery");
+		}
+		if (boundary == 0)
+			for (unsigned side = 0; side < 2; ++side)
+				CHECK(modem_data_write(modems[side], (const char *)expected[side] + 256, 1024) == 1024,
+				      "LAPM stream rejected bytes after resumption");
+		for (unsigned step = 0; step < 50000 &&
+		     !lapm_stream_complete(modems, sinks, sizeof(sinks[0].bytes)); ++step)
+			CHECK(exchange_lapm_stream(modems), "LAPM stream resumption failed");
+		CHECK(lapm_stream_complete(modems, sinks, sizeof(sinks[0].bytes)),
+		      "LAPM stream did not finish (codec=%zu rate=%zu direction=%u boundary=%u)",
+		      codec, rate, direction, boundary);
+		for (unsigned side = 0; side < 2; ++side) {
+			CHECK(modems[side]->state == STATE_MODEM_ONLINE &&
+			      memcmp(sinks[side].bytes, expected[side ^ 1], sizeof(sinks[side].bytes)) == 0,
+			      "LAPM stream changed payload (codec=%zu rate=%zu direction=%u boundary=%u side=%u)",
+			      codec, rate, direction, boundary, side);
+			CHECK(modem_stop_now(modems[side]) == 0, "LAPM stream cleanup failed");
+			modem_delete(modems[side]);
+		}
+	}
+	return true;
+}
+
 static bool test_lapm_retrain_preserves_link_state(void)
 {
 	enum {
@@ -10913,6 +11064,7 @@ int main(void)
 		{ "LAPM acknowledgement progress", test_lapm_acknowledgement_progress },
 		{ "LAPM establishment recovery", test_lapm_establishment_recovery },
 		{ "bounded LAPM stalled retrain", test_lapm_stalled_retrain },
+		{ "LAPM retrain preserves compressed streams", test_lapm_retrain_stream },
 		{ "LAPM retrain preserves link state",
 		  test_lapm_retrain_preserves_link_state },
 		{ "retrain preserves V.42 detection", test_retrain_preserves_detection },
