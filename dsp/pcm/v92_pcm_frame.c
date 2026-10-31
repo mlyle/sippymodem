@@ -684,6 +684,8 @@ static bool noise_is_valid(const struct v92_pcm_frame_noise *noise)
 		return false;
 	unsigned symbols = noise->frames > V92_B1U_FRAMES / 2u && noise->frames < V92_B1U_FRAMES ?
 		(noise->frames - V92_B1U_FRAMES / 2u) * V92_PCM_MAPPING_FRAME_SYMBOLS : 0u;
+	if (noise->samples > symbols) return false;
+	symbols = noise->samples;
 	const double moments[] = { noise->signal_energy, noise->signal_fourth,
 		noise->error_energy, noise->error_signal_energy };
 	const double bounds[] = { 32768.0 * 32768.0, 32768.0 * 32768.0 * 32768.0 * 32768.0,
@@ -1180,7 +1182,7 @@ static bool b1u_digits(
 }
 
 static void train_noise(struct v92_pcm_frame_noise *noise,
-	const int16_t *samples, const int16_t *expected)
+	const int16_t *samples, const int16_t *expected, const bool *received)
 {
 	if (noise->frames == V92_B1U_FRAMES)
 		return;
@@ -1189,6 +1191,8 @@ static void train_noise(struct v92_pcm_frame_noise *noise,
 	 * subsequent control exchanges must not update this estimate. */
 	if (noise->frames >= V92_B1U_ACQUISITION_FRAMES) {
 		for (size_t i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i) {
+			if (received && !received[i]) continue;
+			noise->samples++;
 			double signal = expected[i], error = samples[i] - signal;
 			double square = signal * signal, residual = error * error;
 
@@ -1200,11 +1204,11 @@ static void train_noise(struct v92_pcm_frame_noise *noise,
 	}
 	if (++noise->frames != V92_B1U_FRAMES)
 		return;
-	double count = V92_B1U_SYMBOLS / 2u;
+	double count = noise->samples;
 	double determinant = count * noise->signal_fourth - noise->signal_energy * noise->signal_energy;
 	double slope = determinant > 0.0 ?
 		(count * noise->error_signal_energy - noise->error_energy * noise->signal_energy) / determinant : 0.0;
-	double average_error = noise->error_energy / count;
+	double average_error = count ? noise->error_energy / count : 0.;
 	/* Do not extrapolate near-zero variance at low amplitudes from this
 	 * short fit: retain the average B1u residual as a conservative noise
 	 * floor. Constant-amplitude or amplitude-independent noise keeps equal
@@ -1967,7 +1971,7 @@ static enum v92_pcm_frame_result decode_frame(
 		(V92_PCM_RX_PATHS - valid) * sizeof(receiver->paths[0]));
 	receiver->path_count = (uint8_t)valid;
 	if (b1u && receiver->observation == V92_PCM_FRAME_CONSTELLATION)
-		train_noise(&receiver->noise, samples, result.predicted_samples);
+		train_noise(&receiver->noise, samples, result.predicted_samples, received);
 	*decision = result;
 	if (likelihood) {
 		likelihood->cost = minimum_metric;

@@ -113,6 +113,8 @@ struct v92_pcm_frame_noise {
 	double error_energy, error_signal_energy;
 	double relative_variance;
 	uint8_t frames;
+	/* Actual received training symbols; erasures carry no noise evidence. */
+	uint16_t samples;
 };
 
 struct v92_pcm_frame_rx {

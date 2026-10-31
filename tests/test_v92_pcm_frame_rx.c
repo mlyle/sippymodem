@@ -1631,6 +1631,36 @@ static bool test_constellation_cells(enum g711_law law, double gain)
 			      "aliased cells changed receiver");
 			channel.cells = cells;
 		}
+		if (f == 26u) {
+			struct v92_pcm_frame_rx positive = rx, negative = rx;
+			struct v92_pcm_frame_decision pd, nd;
+			struct v92_pcm_frame_likelihood pl, nl;
+			uint8_t pb[V92_PCM_MAPPING_MAX_BITS], nb[V92_PCM_MAPPING_MAX_BITS];
+			bool received[V92_PCM_MAPPING_FRAME_SYMBOLS];
+			int16_t original = samples[5];
+
+			memset(received, true, sizeof(received));
+			received[5] = false;
+			channel.received = received;
+			samples[5] = INT16_MAX;
+			CHECK(v92_pcm_frame_decode_observed(&positive, samples, true, pb,
+			      mapping.data_bits_per_frame, &pd, &channel, &pl) == V92_PCM_FRAME_OK,
+			      "cell erasure rejected");
+			samples[5] = INT16_MIN;
+			CHECK(v92_pcm_frame_decode_observed(&negative, samples, true, nb,
+			      mapping.data_bits_per_frame, &nd, &channel, &nl) == V92_PCM_FRAME_OK &&
+			      !memcmp(&positive, &negative, sizeof(positive)) &&
+			      !memcmp(pb, nb, mapping.data_bits_per_frame) && !memcmp(&pl, &nl, sizeof(pl)),
+			      "erased sample influenced cell scoring or noise training");
+			CHECK(positive.noise.samples == rx.noise.samples + V92_PCM_MAPPING_FRAME_SYMBOLS - 1u &&
+			      positive.noise.frames == rx.noise.frames + 1u &&
+			      v92_pcm_frame_rx_is_valid(&positive),
+			      "erasure changed training time or included an absent observation");
+			CHECK(pd.squared_error != nd.squared_error,
+			      "cell erasure hid the physical residual");
+			samples[5] = original;
+			channel.received = NULL;
+		}
 		CHECK(v92_pcm_frame_decode_observed(&rx, samples, f < V92_B1U_FRAMES, decoded,
 		      mapping.data_bits_per_frame, &decision, &channel, &likelihood) == V92_PCM_FRAME_OK &&
 		      v92_pcm_frame_rx_is_valid(&rx), "cell decode failed: law %u frame %u", law, f);
