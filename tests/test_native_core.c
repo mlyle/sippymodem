@@ -6252,9 +6252,14 @@ static bool test_lapm_initial_sabme_progress(void)
 		unsigned long start = m->count;
 		CHECK(receive_initial_sabme_retry(m), "initial SABME failed");
 		m->state = 6; /* Recovery must preserve online command mode. */
+		for (unsigned retry = 0; retry < 300; ++retry)
+			CHECK(receive_initial_sabme_retry(m), "rapid SABME retry failed");
+		CHECK(m->ec.lapm.initial_sabme_retries == UINT8_MAX &&
+		      !modem_ec_take_retrain_request(m),
+		      "rapid setup retries wrapped the counter or shortened the allowance");
 		unsigned requests = 0;
 		int idle_timeout = m->bit_timer;
-		for (unsigned retry = 1; retry <= 300; ++retry) {
+		for (unsigned retry = 1; retry <= 20; ++retry) {
 			/* Model the recorded peer's 700 ms retries and the elapsed
 			 * bit timer in both directions. Every UA is lost. */
 			m->count += MODEM_RATE * 7 / 10;
@@ -6316,6 +6321,110 @@ static bool test_lapm_initial_sabme_progress(void)
 	CHECK(modem_ec_take_retrain_request(m), "qualified retries did not recover");
 	modem_ec_exit(m);
 	modem_delete(m);
+	return true;
+}
+
+static bool test_lapm_initial_sabme_deadline(void)
+{
+	struct modem_driver driver = {
+		.name = "LAPM initial SABME deadline", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	const unsigned rates[][2] = { { 1200, 1200 }, { 49333, 36000 } };
+	int16_t receive[MODEM_FRAG] = { 0 }, transmit[MODEM_FRAG];
+
+	for (unsigned rate = 0; rate < ARRAY_LENGTH(rates); ++rate)
+	for (unsigned wrap = 0; wrap < 2; ++wrap)
+	for (unsigned recovery = 0; recovery < 3; ++recovery)
+	for (unsigned heal = 0; heal < 2; ++heal) {
+		/* 0: completed physical retrain; 1: rejected; 2: unsupported. */
+		struct dp_operations operations = {
+			.name = driver.name, .create = create_retrain_dp,
+			.delete = delete_retrain_dp, .process = process_retrain_dp,
+			.retrain = recovery == 2 ? NULL : request_retrain_dp,
+		};
+		memset(&retrain_dp, 0, sizeof retrain_dp);
+		retrain_dp.retrain_result = recovery == 1 ? -1 : 0;
+		call_progress_override = &operations;
+		struct modem *m = create_compat_modem(&driver, driver.name);
+		CHECK(m != NULL && modem_dial(m) == 0, "SABME deadline did not start");
+		m->sample_timer_func = NULL;
+		m->state = 4;
+		m->caller = 0;
+		m->cfg.ec = 1;
+		m->cfg.comp = 0;
+		m->tx_rate = rates[rate][0];
+		m->rx_rate = rates[rate][1];
+		CHECK(modem_ec_init(m) == 0, "SABME deadline initialization failed");
+		modem_hdlc_start(m);
+		modem_ec_start(m);
+		m->get_bits = modem_hdlc_get_bits;
+		m->put_bits = modem_hdlc_put_bits;
+		m->count = wrap ? ULONG_MAX - 4 * MODEM_RATE : 0;
+		unsigned long start = m->count;
+		CHECK(receive_initial_sabme_retry(m), "SABME deadline did not link");
+		m->state = 6;
+		m->command = 1;
+		struct lapm_state *l = &m->ec.lapm;
+		for (unsigned retry = 1; retry <= 3; ++retry) {
+			m->count = start + retry * 3 * MODEM_RATE;
+			CHECK(receive_initial_sabme_retry(m), "SABME recovery retry failed");
+			modem_process(m, receive, transmit, MODEM_FRAG);
+		}
+		CHECK(retrain_dp.retrain_calls == (recovery != 2) && m->state == 6 && m->command,
+		      "SABME recovery escaped the owner loop or changed DTE mode");
+		if (recovery == 0) {
+			/* Training may take longer than either setup interval. No new
+			 * peer setup frames have been decoded during this gap. */
+			m->count += 30 * MODEM_RATE;
+			CHECK(!modem_ec_take_retrain_request(m) && l->state == 2 &&
+			      modem_ec_resume_after_retrain(m) == 0,
+			      "physical training consumed the confirmation interval");
+			start = m->count;
+		} else if (recovery == 1) {
+			start = l->initial_sabme_sample;
+		}
+		unsigned long allowance = (recovery == 2 ? 18 : 9) * MODEM_RATE;
+		for (unsigned retry = 1; retry <= 3; ++retry) {
+			/* These are new requests after the recovery attempt, or
+			 * continuing requests if no retrain operation exists. */
+			m->count = start + allowance - (4 - retry) * MODEM_RATE;
+			CHECK(receive_initial_sabme_retry(m), "confirmation interval ended early");
+			if (recovery == 0)
+				CHECK(modem_ec_resume_after_retrain(m) == 0 &&
+				      l->initial_sabme_sample == start,
+				      "duplicate resumption renewed the setup interval");
+			modem_process(m, receive, transmit, MODEM_FRAG);
+		}
+		m->count = start + allowance - 1;
+		CHECK(receive_initial_sabme_retry(m), "last permitted setup retry was rejected");
+		CHECK(m->state == 6 && m->command &&
+		      retrain_dp.retrain_calls == (recovery != 2),
+		      "confirmation retries restarted physical recovery");
+		uint8_t wire[] = { l->rsp_addr, heal ? 1 : 0x7f, 1 };
+		frame_t incoming = { .buf = wire, .count = heal ? 3 : 2 };
+		m->count++;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		if (heal) {
+			m->count += 30 * MODEM_RATE;
+			CHECK(!l->accept_sabme_retry && l->initial_sabme_recovery == LAPM_SABME_RECOVERY_NONE &&
+			      !modem_ec_take_retrain_request(m) && l->state == 2 &&
+			      m->state == 6 && m->disconnect_reason == NULL,
+			      "valid peer traffic did not cancel the setup deadline");
+		} else {
+			CHECK(l->state == 0 && strcmp(modem_call_phase(m), "cleardown") == 0 &&
+			      m->disconnect_local && m->disconnect_reason != NULL &&
+			      strcmp(m->disconnect_reason, "LAPM initial SABME made no progress") == 0,
+			      "continued SABME did not end the stalled call at its deadline");
+			for (unsigned tail = 0; tail < 2 && m->dp != NULL; ++tail)
+				modem_process(m, receive, transmit, MODEM_FRAG);
+			CHECK(m->dp == NULL && strcmp(modem_call_phase(m), "idle") == 0,
+			      "SABME deadline did not finish physical teardown");
+		}
+		CHECK(modem_stop_now(m) == 0, "SABME deadline cleanup failed");
+		modem_delete(m);
+		call_progress_override = NULL;
+	}
 	return true;
 }
 
@@ -11214,6 +11323,7 @@ int main(void)
 		{ "LAPM defaults without negotiation", test_lapm_default_establishment },
 		{ "LAPM connected SABME", test_lapm_connected_sabme },
 		{ "LAPM initial SABME progress", test_lapm_initial_sabme_progress },
+		{ "LAPM initial SABME deadline", test_lapm_initial_sabme_deadline },
 		{ "LAPM unnumbered response states", test_lapm_unnumbered_responses },
 		{ "LAPM disconnected DISC response", test_lapm_disconnected_disc },
 		{ "LAPM orderly release discards stream work", test_lapm_orderly_release },

@@ -249,6 +249,12 @@ enum lapm_reject_state {
 	LAPM_REJECT_SENT,
 };
 
+enum lapm_sabme_recovery {
+	LAPM_SABME_RECOVERY_NONE,
+	LAPM_SABME_RECOVERY_PENDING,
+	LAPM_SABME_RECOVERY_RESUMED,
+};
+
 /* lapm state */
 struct lapm_state {
         /* modem link */
@@ -265,6 +271,7 @@ struct lapm_state {
         bool accept_sabme_retry; /* answering DCE, before peer I/S traffic */
         u8 initial_sabme_retries;
         unsigned long initial_sabme_sample;
+        enum lapm_sabme_recovery initial_sabme_recovery;
         bool stalled_retrain;
         u8 stalled_polls; /* status enquiries without acknowledgement progress */
         u8  cmd_addr;

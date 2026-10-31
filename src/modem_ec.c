@@ -1343,6 +1343,7 @@ static void rx_unnum_cmd(struct lapm_state *l, frame_t *f)
 		bool already_linked = l->state == LAPM_DATA;
 		unsigned retries = l->initial_sabme_retries;
 		unsigned long initial_sample = l->initial_sabme_sample;
+		enum lapm_sabme_recovery recovery = l->initial_sabme_recovery;
 		bool recovery_used = l->stalled_retrain;
 
 		EC_DBG("sabme received.\n");
@@ -1357,6 +1358,20 @@ static void rx_unnum_cmd(struct lapm_state *l, frame_t *f)
 		if (!lapm_can_establish(l)) {
 			if (TX_DM(l, FRAME_U_PF(f)) != 0)
 				complete_link_release(l);
+			return;
+		}
+		/* Lost-UA retries may reset the link, but cannot hold the call
+		 * forever. Allow a second setup interval after physical recovery;
+		 * without a supported recovery, allow both intervals from setup.
+		 * Only another valid SABME can expire this budget: a physical
+		 * training gap is not evidence of a stalled link exchange. */
+		unsigned long allowance = LAPM_INITIAL_SABME_RECOVERY_SAMPLES *
+			(recovery == LAPM_SABME_RECOVERY_NONE ? 2UL : 1UL);
+		if (already_linked && retries >= LAPM_ESTABLISHMENT_RETRAIN_POLLS - 1 &&
+		    (unsigned long)(l->modem->count - initial_sample) >= allowance) {
+			modem_note_disconnect(l->modem, true,
+				"LAPM initial SABME made no progress");
+			complete_link_release(l);
 			return;
 		}
 		/* discard unacked I frames,
@@ -1379,6 +1394,7 @@ static void rx_unnum_cmd(struct lapm_state *l, frame_t *f)
 		l->initial_sabme_sample = already_linked ? initial_sample : l->modem->count;
 		l->initial_sabme_retries = already_linked ?
 			(retries < UINT8_MAX ? retries + 1 : UINT8_MAX) : 0;
+		l->initial_sabme_recovery = already_linked ? recovery : LAPM_SABME_RECOVERY_NONE;
 		if (already_linked)
 			l->stalled_retrain = recovery_used;
 		if (!already_linked)
@@ -1647,6 +1663,7 @@ static void lapm_rx_complete(void *framer, frame_t *f)
 		if (l->accept_sabme_retry) {
 			l->initial_sabme_retries = 0;
 			l->initial_sabme_sample = 0;
+			l->initial_sabme_recovery = LAPM_SABME_RECOVERY_NONE;
 		}
 		l->accept_sabme_retry = false;
 	}
@@ -1748,6 +1765,7 @@ static void reset_lapm_link(struct lapm_state *l)
 	l->accept_sabme_retry = false;
 	l->initial_sabme_retries = 0;
 	l->initial_sabme_sample = 0;
+	l->initial_sabme_recovery = LAPM_SABME_RECOVERY_NONE;
 	l->stalled_retrain = false;
 	l->reject = LAPM_REJECT_NONE;
 	l->vs = 0;
@@ -1911,6 +1929,11 @@ bool modem_ec_take_retrain_request(struct modem *m)
 	 * starting or resuming retraining does not. Peer flow control is not a
 	 * channel fault. */
 	l->stalled_retrain = true;
+	if (repeated_initial_sabme) {
+		l->initial_sabme_recovery = LAPM_SABME_RECOVERY_PENDING;
+		l->initial_sabme_sample = m->count;
+		l->initial_sabme_retries = 0;
+	}
 	return true;
 }
 
@@ -1951,6 +1974,13 @@ int modem_ec_resume_after_retrain(struct modem *m)
 			m->packer.hdlc.tx_preamble_flags =
 				lapm_originator_preamble_flags(m);
 		return 0;
+	}
+	if (l->initial_sabme_recovery == LAPM_SABME_RECOVERY_PENDING) {
+		/* Exclude physical training once, without letting repeated resume
+		 * notifications or further SABMEs renew the confirmation budget. */
+		l->initial_sabme_recovery = LAPM_SABME_RECOVERY_RESUMED;
+		l->initial_sabme_sample = m->count;
+		l->initial_sabme_retries = 0;
 	}
 	/* Probe every established link after the physical interruption, including
 	 * an empty retained window. Incoming commands can refresh T403 without
