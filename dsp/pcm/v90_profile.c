@@ -395,28 +395,18 @@ static void prepare_levels(struct spaced_levels *levels, enum g711_law law,
 	}
 }
 
-/* For radix M, stride A and R=floor((2^K-1)/A), label counts are
- * A*floor(R/M), plus A below R%M and 2^K-A*R at the boundary.
- * Summing the three prefix terms is exactly V.90 8.5.2, including
- * unused tuples. The shared limb accumulator preserves every low bit. */
 static uint32_t balanced_power(const struct spaced_levels levels[6],
 	const uint8_t sizes[6], unsigned bits)
 {
-	uint64_t words = UINT64_C(1) << bits, remaining = words - 1, stride = 1;
+	uint64_t remaining = (UINT64_C(1) << bits) - 1, stride = 1;
 	struct pcm_power_sum sum = { 0 };
 	uint32_t floor, ceiling;
 	for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++) {
 		const struct spaced_levels *row = &levels[slot];
 		unsigned size = sizes[slot];
-		unsigned boundary = (unsigned)(remaining % size);
-		uint64_t next = remaining / size;
-		uint64_t total = row->square[size];
-		pcm_power_accumulate(&sum, bits, stride * next, total);
-		pcm_power_accumulate(&sum, bits, stride, total - row->square[size - boundary]);
-		pcm_power_accumulate(&sum, bits, words - stride * remaining,
-			row->square[size - boundary] - row->square[size - boundary - 1]);
+		pcm_power_accumulate_levels(&sum, bits, remaining, stride, size, row->square);
 		stride *= size;
-		remaining = next;
+		remaining /= size;
 	}
 	pcm_power_bounds(&sum, bits, &floor, &ceiling);
 	return ceiling;

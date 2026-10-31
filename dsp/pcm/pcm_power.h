@@ -22,6 +22,27 @@ static inline void pcm_power_accumulate(struct pcm_power_sum *sum,
 	sum->fraction += lower & mask;
 }
 
+/* Exact V.90 8.5.2 power, with ascending level-square prefixes and the
+ * descending mixed-radix labels of 5.4.4.
+ * For stride A, R=floor((2^bits-1)/A) and radix M, each label occurs
+ * A*floor(R/M) times, plus A below R%M and 2^bits-A*R at that boundary.
+ * Callers supply 1 <= size <= 128, bits <= 42 and at most six radices.
+ * When A exceeds the word count, the empty extra prefix is skipped so
+ * every nonzero accumulation still has weight <= 2^bits. */
+static inline void pcm_power_accumulate_levels(struct pcm_power_sum *sum,
+	unsigned bits, uint64_t remaining, uint64_t stride,
+	unsigned size, const uint64_t *prefix)
+{
+	unsigned boundary = (unsigned)(remaining % size);
+	uint64_t next = remaining / size, total = prefix[size];
+
+	pcm_power_accumulate(sum, bits, stride * next, total);
+	if (boundary)
+		pcm_power_accumulate(sum, bits, stride, total - prefix[size - boundary]);
+	pcm_power_accumulate(sum, bits, (UINT64_C(1) << bits) - stride * remaining,
+		prefix[size - boundary] - prefix[size - boundary - 1]);
+}
+
 /* Normalize six phases whose mean square fits uint32_t. */
 static inline void pcm_power_bounds(const struct pcm_power_sum *sum,
 	unsigned bits, uint32_t *floor, uint32_t *ceiling)

@@ -139,7 +139,7 @@ enum v90_pcm_mapping_result v90_pcm_mapping_power(
 	enum v90_pcm_mapping_plane plane, enum g711_law law,
 	uint32_t *floor_power, uint32_t *ceiling_power)
 {
-	uint64_t words, remainder, stride = 1;
+	uint64_t remaining, stride = 1;
 	struct pcm_power_sum sum = { 0 };
 
 	if (mapping == NULL || floor_power == NULL || ceiling_power == NULL ||
@@ -148,39 +148,30 @@ enum v90_pcm_mapping_result v90_pcm_mapping_power(
 		return V90_PCM_MAPPING_INVALID_ARGUMENT;
 	if (!v90_pcm_mapping_is_valid(mapping))
 		return V90_PCM_MAPPING_INVALID_PARAMETERS;
-	words = UINT64_C(1) << mapping->modulus_bits;
-	remainder = words - 1u;
+	remaining = (UINT64_C(1) << mapping->modulus_bits) - 1u;
 	for (size_t interval = 0; interval < V90_CP_FRAME_INTERVALS; ++interval) {
 		const struct pcm_constellation *constellation =
 			plane == V90_PCM_MAPPING_CODEC ? &mapping->codec[interval] :
 				&mapping->transmit[interval];
-		uint64_t next = remainder / mapping->modulus[interval];
-		uint8_t boundary = remainder % mapping->modulus[interval];
-		uint8_t label = 0;
+		uint64_t prefix[PCM_CONSTELLATION_UCODES + 1];
+		unsigned size = 0;
 
-		/* Clause 5.4.4 labels descend in Ucode. The occurrence formula in
-		 * 8.5.2 accounts for unused tuples above the 2^K input range. */
-		for (int ucode = PCM_CONSTELLATION_UCODES - 1; ucode >= 0; --ucode) {
-			uint64_t occurrences;
-			uint32_t square;
+		prefix[0] = 0;
+
+		for (unsigned ucode = 0; ucode < PCM_CONSTELLATION_UCODES; ++ucode) {
 			int16_t level;
 
 			if (!pcm_constellation_contains(constellation, (uint8_t)ucode))
 				continue;
 			if (!g711_ucode_sample(law, (uint8_t)ucode, true, &level))
 				return V90_PCM_MAPPING_INVALID_PARAMETERS;
-			if (label < boundary)
-				occurrences = stride * (next + 1u);
-			else if (label == boundary)
-				occurrences = words - stride * (remainder - next);
-			else
-				occurrences = stride * next;
-			label++;
-			square = (uint32_t)((int32_t)level * level);
-			pcm_power_accumulate(&sum, mapping->modulus_bits, occurrences, square);
+			prefix[size + 1] = prefix[size] + (uint32_t)((int32_t)level * level);
+			size++;
 		}
+		pcm_power_accumulate_levels(&sum, mapping->modulus_bits,
+			remaining, stride, size, prefix);
 		stride *= mapping->modulus[interval];
-		remainder = next;
+		remaining /= mapping->modulus[interval];
 	}
 	pcm_power_bounds(&sum, mapping->modulus_bits, floor_power, ceiling_power);
 	return V90_PCM_MAPPING_OK;

@@ -35,6 +35,51 @@ static bool test_power_accumulation(void)
 	return true;
 }
 
+static bool test_power_prefix_counts(void)
+{
+	static const uint8_t sizes[][6] = {
+		{ 1, 1, 1, 1, 1, 1 },
+		{ 2, 3, 5, 7, 11, 13 },
+		{ 1, 2, 3, 7, 64, 128 },
+		{ 3, 1, 128, 1, 7, 64 },
+		{ 128, 128, 128, 128, 128, 128 },
+	};
+	for (size_t test = 0; test < ARRAY_LENGTH(sizes); test++) {
+		uint64_t prefix[6][129] = { { 0 } }, capacity = 1;
+		for (unsigned slot = 0; slot < 6; slot++) {
+			capacity *= sizes[test][slot];
+			for (unsigned i = 0; i < sizes[test][slot]; i++) {
+				uint64_t level = (i + 1u) * (239u + slot);
+				prefix[slot][i + 1] = prefix[slot][i] + level * level;
+			}
+		}
+		/* Include singleton alphabets and strides beyond the word count.
+		 * Enumerating small input spaces gives an independent exact oracle. */
+		for (unsigned bits = 0; bits <= 12 && (UINT64_C(1) << bits) <= capacity; bits++) {
+			uint64_t words = UINT64_C(1) << bits, expected = 0;
+			uint64_t remaining = words - 1, stride = 1;
+			struct pcm_power_sum sum = { 0 };
+			for (unsigned slot = 0; slot < 6; slot++) {
+				pcm_power_accumulate_levels(&sum, bits, remaining, stride,
+					sizes[test][slot], prefix[slot]);
+				stride *= sizes[test][slot];
+				remaining /= sizes[test][slot];
+			}
+			for (uint64_t word = 0; word < words; word++) {
+				uint64_t value = word;
+				for (unsigned slot = 0; slot < 6; slot++) {
+					unsigned size = sizes[test][slot], index = size - 1 - value % size;
+					expected += prefix[slot][index + 1] - prefix[slot][index];
+					value /= size;
+				}
+			}
+			CHECK(sum.whole * words + sum.fraction == expected,
+			      "prefix counts disagree with words: case %zu K=%u", test, bits);
+		}
+	}
+	return true;
+}
+
 static void add_ucode(
 	struct pcm_constellation *constellation, uint8_t ucode)
 {
@@ -1161,6 +1206,7 @@ int main(void)
 	static const struct test_case tests[] = {
 		{ "packed constellation rank", test_packed_constellation_rank },
 		{ "prefix power accumulator", test_power_accumulation },
+		{ "prefix power word counts", test_power_prefix_counts },
 		{ "exhaustive constellation power", test_mapping_power_exhaustive },
 		{ "exact constellation power bounds", test_mapping_power_bounds },
 		{ "training mapping", test_training_mapping },
