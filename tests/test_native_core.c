@@ -5445,9 +5445,15 @@ static bool test_lapm_xid_envelopes(void)
 	return true;
 }
 
-static bool run_lapm_startup_pair(unsigned tx_rate, unsigned rx_rate, bool long_adp)
+static bool run_lapm_startup_pair(
+	unsigned tx_rate, unsigned rx_rate, bool long_adp,
+	bool verify_data, unsigned compression)
 {
 	enum { LAPM_DATA_STATE = 2 };
+	static const uint8_t payload[2][8] = {
+		{ 0, 255, 13, 10, '+', 'A', 'a', 0x80 },
+		{ 0x80, 'b', 'B', '+', 10, 13, 255, 0 },
+	};
 	struct modem_driver driver = {
 		.name = "LAPM directional startup",
 		.start = unused_start,
@@ -5463,6 +5469,8 @@ static bool run_lapm_startup_pair(unsigned tx_rate, unsigned rx_rate, bool long_
 	};
 	unsigned phase[2] = { 0 };
 	unsigned answer_pattern_bits = 0;
+	struct factory_reply received[2] = { 0 };
+	bool submitted[2] = { false };
 	bool connected = false;
 
 	for (unsigned side = 0; side < 2; ++side) {
@@ -5474,13 +5482,20 @@ static bool run_lapm_startup_pair(unsigned tx_rate, unsigned rx_rate, bool long_
 		m->tx_rate = side == 0 ? tx_rate : rx_rate;
 		m->rx_rate = side == 0 ? rx_rate : tx_rate;
 		m->cfg.ec = m->cfg.ec_detector = 1;
-		m->cfg.comp = 0;
-		CHECK(modem_ec_init(m) == 0, "directional LAPM initialization failed");
+		m->cfg.comp = compression ? 3 : 0;
+		m->cfg.comp_types = compression;
+		m->cfg.comp_dict_size = 512;
+		m->cfg.comp_max_string = 64;
+		m->data_output = factory_reply_output;
+		m->data_output_context = &received[side];
+		CHECK(modem_comp_init(m) == 0 && modem_ec_init(m) == 0,
+		      "directional LAPM initialization failed");
 		modem_dp_connected(m);
 	}
 	/* Independent wire clocks expose a first XID that outruns the slower
 	 * answerer's ADP. Do not let a later T401 retry conceal that lost frame. */
-	for (unsigned tick = 0; tick < 8000 && !connected; ++tick) {
+	unsigned limit = verify_data ? 64000 : 8000;
+	for (unsigned tick = 0; tick < limit && !connected; ++tick) {
 		for (unsigned side = 0; side < 2; ++side) {
 			struct modem *m = peers[side];
 
@@ -5506,7 +5521,8 @@ static bool run_lapm_startup_pair(unsigned tx_rate, unsigned rx_rate, bool long_
 				}
 				CHECK(modem_put_bits(peers[1 - side], 1, &bit, 1) == 1,
 				      "directional LAPM exchange failed");
-				if (side == 0 && m->get_bits == modem_hdlc_get_bits &&
+				if (side == 0 && !submitted[0] && !submitted[1] &&
+				    m->get_bits == modem_hdlc_get_bits &&
 				    m->packer.hdlc.tx_frame != NULL)
 					CHECK(peers[1]->put_bits == modem_hdlc_put_bits,
 					      "first XID outran peer ADP: tx=%u rx=%u tick=%u",
@@ -5515,10 +5531,31 @@ static bool run_lapm_startup_pair(unsigned tx_rate, unsigned rx_rate, bool long_
 		}
 		connected = peers[0]->ec.lapm.state == LAPM_DATA_STATE &&
 			peers[1]->ec.lapm.state == LAPM_DATA_STATE;
+		if (verify_data) {
+			for (unsigned side = 0; side < 2; ++side) {
+				if (!submitted[side] && peers[side]->state == STATE_MODEM_ONLINE) {
+					CHECK(modem_data_write(peers[side], payload[side], sizeof(payload[side])) ==
+					      (int)sizeof(payload[side]), "initial LAPM bytes were not accepted");
+					submitted[side] = true;
+				}
+				connected &= submitted[side] && received[side].count == sizeof(payload[side]) &&
+					modem_ec_transmit_idle(peers[side]);
+			}
+		}
 	}
-	CHECK(connected, "directional LAPM needed an establishment retry: tx=%u rx=%u",
-	      tx_rate, rx_rate);
+	CHECK(connected, "directional LAPM did not finish: tx=%u rx=%u compression=%u data=%u",
+	      tx_rate, rx_rate, compression, verify_data);
 	for (unsigned side = 0; side < 2; ++side) {
+		if (verify_data) {
+			enum modem_ec_compression expected = compression == MODEM_COMP_TYPE_V44 ?
+				MODEM_EC_COMPRESSION_V44 : compression == MODEM_COMP_TYPE_V42BIS ?
+				MODEM_EC_COMPRESSION_V42BIS : MODEM_EC_COMPRESSION_NONE;
+
+			CHECK(!memcmp(received[side].bytes, payload[side ^ 1], sizeof(payload[side])),
+			      "initial LAPM payload was corrupted");
+			CHECK(modem_ec_active_compression(peers[side]) == expected,
+			      "initial LAPM compression mismatch");
+		}
 		peers[side]->dp = NULL;
 		modem_delete(peers[side]);
 	}
@@ -5577,10 +5614,28 @@ static bool test_lapm_directional_preamble(void)
 		modem_delete(m);
 		if (cases[index].tx >= 1200 && cases[index].tx <= 56000 &&
 		    cases[index].rx >= 1200 && cases[index].rx <= 56000)
-			CHECK(run_lapm_startup_pair(cases[index].tx, cases[index].rx, false) &&
-			      run_lapm_startup_pair(cases[index].tx, cases[index].rx, true),
+			CHECK(run_lapm_startup_pair(cases[index].tx, cases[index].rx, false, false, 0) &&
+			      run_lapm_startup_pair(cases[index].tx, cases[index].rx, true, false, 0),
 			      "directional LAPM startup failed");
 	}
+	return true;
+}
+
+static bool test_lapm_initial_data(void)
+{
+	static const unsigned rates[][2] = {
+		{ 1200, 1200 }, { 56000, 33600 }, { 56000, 36000 },
+	};
+	static const unsigned types[] = { 0, MODEM_COMP_TYPE_V42BIS, MODEM_COMP_TYPE_V44 };
+
+	/* Submit on each peer's first readiness indication. The other's slower
+	 * receive clock and ADP may still be completing; no DTE sleep is allowed. */
+	for (size_t codec = 0; codec < ARRAY_LENGTH(types); ++codec)
+	for (size_t rate = 0; rate < ARRAY_LENGTH(rates); ++rate)
+	for (unsigned reverse = 0; reverse < 2; ++reverse)
+	for (unsigned padding = 0; padding < 2; ++padding)
+		CHECK(run_lapm_startup_pair(rates[rate][reverse], rates[rate][reverse ^ 1],
+			padding != 0, true, types[codec]), "immediate LAPM exchange failed");
 	return true;
 }
 
@@ -11031,6 +11086,7 @@ int main(void)
 		{ "bounded LAPM XID envelopes", test_lapm_xid_envelopes },
 		{ "bounded LAPM compression retry", test_lapm_dual_compression_retry },
 		{ "LAPM directional preamble", test_lapm_directional_preamble },
+		{ "LAPM immediate startup data", test_lapm_initial_data },
 		{ "LAPM peer-flag preamble", test_lapm_peer_flag_preamble },
 		{ "LAPM receive backpressure", test_lapm_receive_backpressure },
 		{ "LAPM receiver-ready queue pressure", test_lapm_receiver_ready_queue_pressure },
