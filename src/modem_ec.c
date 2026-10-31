@@ -76,6 +76,7 @@ enum {
 	LAPM_INFORMATION_RETRAIN_POLLS = 4,
 	/* Let a slow peer answer the third SABME before physical recovery. */
 	LAPM_ESTABLISHMENT_RETRAIN_POLLS = 3,
+	LAPM_INITIAL_SABME_RECOVERY_SAMPLES = MODEM_RATE * 9,
 	/* Faster XIDs must not shorten the initial physical-recovery allowance. */
 	LAPM_XID_RETRAIN_POLLS = 9,
 };
@@ -1340,6 +1341,9 @@ static void rx_unnum_cmd(struct lapm_state *l, frame_t *f)
 	case FRAME_U_SABME:
 	{
 		bool already_linked = l->state == LAPM_DATA;
+		unsigned retries = l->initial_sabme_retries;
+		unsigned long initial_sample = l->initial_sabme_sample;
+		bool recovery_used = l->stalled_retrain;
 
 		EC_DBG("sabme received.\n");
 		/* V.42 8.4.9.1: connected SABME terminates the call except
@@ -1369,6 +1373,14 @@ static void rx_unnum_cmd(struct lapm_state *l, frame_t *f)
 		/* going to connected state */
 		l->state = LAPM_DATA;
 		TIMER_STOP(l);
+		/* Lost-UA retries still reset sequences and compression (8.3.2.1),
+		 * but cannot renew our evidence of missing forward progress. Keep
+		 * the one physical-recovery allowance across these link resets. */
+		l->initial_sabme_sample = already_linked ? initial_sample : l->modem->count;
+		l->initial_sabme_retries = already_linked ?
+			(retries < UINT8_MAX ? retries + 1 : UINT8_MAX) : 0;
+		if (already_linked)
+			l->stalled_retrain = recovery_used;
 		if (!already_linked)
 			modem_update_status(l->modem, STATUS_EC_LINK);
 		break;
@@ -1631,8 +1643,13 @@ static void lapm_rx_complete(void *framer, frame_t *f)
 		return;
 	/* Valid numbered traffic proves the peer has left establishment. This
 	 * history must survive sequence wrap and physical retraining. */
-	if (type != FRAME_U)
+	if (type != FRAME_U) {
+		if (l->accept_sabme_retry) {
+			l->initial_sabme_retries = 0;
+			l->initial_sabme_sample = 0;
+		}
 		l->accept_sabme_retry = false;
+	}
 	LAPM_PRINT_FRAME("rx",RX_IS_COMMAND(f),f,f->count);
 	switch(type) {
 	case FRAME_I:
@@ -1729,6 +1746,8 @@ static void reset_lapm_link(struct lapm_state *l)
 	l->peer_busy = 0;
 	l->retrain_poll = 0;
 	l->accept_sabme_retry = false;
+	l->initial_sabme_retries = 0;
+	l->initial_sabme_sample = 0;
 	l->stalled_retrain = false;
 	l->reject = LAPM_REJECT_NONE;
 	l->vs = 0;
@@ -1850,12 +1869,21 @@ bool modem_ec_take_retrain_request(struct modem *m)
 {
 	struct lapm_state *l;
 	bool establishing;
+	bool repeated_initial_sabme;
 	int polls;
 
 	if (m == NULL || !m->cfg.ec || m->get_bits != modem_hdlc_get_bits ||
 	    m->put_bits != modem_hdlc_put_bits)
 		return false;
 	l = &m->ec.lapm;
+	/* An answerer may repeatedly send UA while the peer stays in setup.
+	 * Each legal SABME retry restarts T403, so it cannot supervise this
+	 * failure. Use elapsed media and repeated requests, without changing
+	 * T401/N400 or treating ordinary peer flow control as a line fault. */
+	repeated_initial_sabme = l->state == LAPM_DATA && l->accept_sabme_retry &&
+		l->initial_sabme_retries >= LAPM_ESTABLISHMENT_RETRAIN_POLLS &&
+		(unsigned long)(m->count - l->initial_sabme_sample) >=
+			LAPM_INITIAL_SABME_RECOVERY_SAMPLES;
 	establishing = m->state == STATE_EC_ESTAB &&
 		((l->state == LAPM_IDLE && xid_pending(l)) ||
 		 l->state == LAPM_ESTAB);
@@ -1865,15 +1893,16 @@ bool modem_ec_take_retrain_request(struct modem *m)
 	 * least nine seconds for initial replies, including a slow peer that
 	 * answers after several XIDs. Anchor connected recovery to resumption
 	 * so older polls cannot shortcut its budget. */
-	if ((!establishing &&
-	     (l->state != LAPM_DATA || xid_pending(l))) ||
-	    l->busy || l->peer_busy ||
-	    m->bit_timer <= 0 || m->bit_timer_func != t401_timeout ||
-	    (l->retrain_poll ? l->rtx_count - l->retrain_poll < polls :
-	     (l->rtx_count < polls &&
-	      l->stalled_polls < LAPM_INFORMATION_RETRAIN_POLLS)) ||
-	    l->stalled_retrain)
+	if (l->busy || l->peer_busy || l->stalled_retrain)
 		return false;
+	if (!repeated_initial_sabme) {
+		if ((!establishing && (l->state != LAPM_DATA || xid_pending(l))) ||
+		    m->bit_timer <= 0 || m->bit_timer_func != t401_timeout ||
+		    (l->retrain_poll ? l->rtx_count - l->retrain_poll < polls :
+		     (l->rtx_count < polls &&
+		      l->stalled_polls < LAPM_INFORMATION_RETRAIN_POLLS)))
+			return false;
+	}
 	/* A usable receive direction need not imply a usable transmit direction.
 	 * This also applies to unanswered XID/SABME during establishment. Try
 	 * physical recovery once before the current transaction exhausts N400. Keep

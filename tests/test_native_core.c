@@ -6207,6 +6207,118 @@ static bool test_lapm_connected_sabme(void)
 	return true;
 }
 
+static bool receive_initial_sabme_retry(struct modem *m)
+{
+	struct lapm_state *l = &m->ec.lapm;
+	uint8_t wire[] = { l->rsp_addr, 0x7f };
+	frame_t incoming = { .buf = wire, .count = sizeof wire };
+	bool acknowledged = false;
+	frame_t *outgoing;
+
+	m->packer.hdlc.rx_complete(l, &incoming);
+	while ((outgoing = m->packer.hdlc.get_tx_frame(l)) != NULL) {
+		acknowledged |= outgoing->size == 2 && outgoing->buf[1] == 0x73;
+		m->packer.hdlc.tx_complete(l, outgoing);
+	}
+	CHECK(acknowledged && l->state == 2,
+	      "initial SABME retry did not receive UA");
+	return true;
+}
+
+static bool test_lapm_initial_sabme_progress(void)
+{
+	struct modem_driver driver = {
+		.name = "LAPM initial SABME progress", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	const unsigned rates[][2] = { { 1200, 1200 }, { 49333, 36000 } };
+
+	for (unsigned rate = 0; rate < ARRAY_LENGTH(rates); ++rate)
+	for (unsigned wrap = 0; wrap < 2; ++wrap) {
+		struct modem *m = create_compat_modem(&driver, driver.name);
+		CHECK(m != NULL, "SABME progress allocation failed");
+		m->caller = 0;
+		m->cfg.ec = 1;
+		m->cfg.comp = 0;
+		CHECK(modem_ec_init(m) == 0, "SABME progress initialization failed");
+		modem_hdlc_start(m);
+		modem_ec_start(m);
+		m->get_bits = modem_hdlc_get_bits;
+		m->put_bits = modem_hdlc_put_bits;
+		m->state = 4;
+		m->tx_rate = rates[rate][0];
+		m->rx_rate = rates[rate][1];
+		m->count = wrap ? ULONG_MAX - 4 * MODEM_RATE : 0;
+		unsigned long start = m->count;
+		CHECK(receive_initial_sabme_retry(m), "initial SABME failed");
+		m->state = 6; /* Recovery must preserve online command mode. */
+		unsigned requests = 0;
+		int idle_timeout = m->bit_timer;
+		for (unsigned retry = 1; retry <= 300; ++retry) {
+			/* Model the recorded peer's 700 ms retries and the elapsed
+			 * bit timer in both directions. Every UA is lost. */
+			m->count += MODEM_RATE * 7 / 10;
+			m->bit_timer -= (int)((m->tx_rate + m->rx_rate) * 7 / 10);
+			CHECK(m->bit_timer > 0, "idle supervision expired before a retry");
+			CHECK(receive_initial_sabme_retry(m), "repeated SABME failed");
+			CHECK(m->bit_timer == idle_timeout && m->state == 6,
+			      "retry changed the idle timer or DTE mode");
+			bool recover = modem_ec_take_retrain_request(m);
+			unsigned long elapsed = m->count - start;
+			CHECK(!recover || elapsed >= 9 * MODEM_RATE,
+			      "SABME recovery shortened the establishment allowance");
+			CHECK(elapsed < 9 * MODEM_RATE || requests || recover,
+			      "repeated SABME renewed the progress allowance");
+			if (recover) {
+				requests++;
+				CHECK(requests == 1 && !modem_ec_take_retrain_request(m),
+				      "SABME recovery was requested more than once");
+				CHECK(modem_ec_resume_after_retrain(m) == 0,
+				      "SABME recovery could not resume the retained link");
+			}
+		}
+		CHECK(requests == 1, "initial setup stalled without physical recovery");
+		/* Numbered peer traffic ends the lost-UA exception. A later
+		 * SABME has the ordinary connected-state termination semantics. */
+		struct lapm_state *l = &m->ec.lapm;
+		uint8_t wire[] = { l->rsp_addr, 1, 1 };
+		frame_t incoming = { .buf = wire, .count = sizeof wire };
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(!l->accept_sabme_retry && !modem_ec_take_retrain_request(m),
+		      "peer progress retained the initial setup watchdog");
+		wire[1] = 0x7f;
+		incoming.count = 2;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(l->state == 0, "connected SABME bypassed ordinary termination");
+		modem_ec_exit(m);
+		modem_delete(m);
+	}
+	/* Elapsed time alone is not evidence of repeated failed setup. */
+	struct modem *m = create_compat_modem(&driver, driver.name);
+	CHECK(m != NULL, "short SABME retry allocation failed");
+	m->caller = 0;
+	m->cfg.ec = 1;
+	m->cfg.comp = 0;
+	CHECK(modem_ec_init(m) == 0, "short SABME retry initialization failed");
+	modem_hdlc_start(m);
+	modem_ec_start(m);
+	m->get_bits = modem_hdlc_get_bits;
+	m->put_bits = modem_hdlc_put_bits;
+	m->state = 4;
+	CHECK(receive_initial_sabme_retry(m), "short initial SABME failed");
+	for (unsigned retry = 0; retry < 2; ++retry) {
+		m->count += MODEM_RATE;
+		CHECK(receive_initial_sabme_retry(m), "short SABME retry failed");
+	}
+	m->count = 12 * MODEM_RATE;
+	CHECK(!modem_ec_take_retrain_request(m), "too few retries caused recovery");
+	CHECK(receive_initial_sabme_retry(m), "third SABME retry failed");
+	CHECK(modem_ec_take_retrain_request(m), "qualified retries did not recover");
+	modem_ec_exit(m);
+	modem_delete(m);
+	return true;
+}
+
 static bool test_lapm_peer_ready_dm(void)
 {
 	struct modem_driver driver = {
@@ -11101,6 +11213,7 @@ int main(void)
 		{ "LAPM SABME establishment readiness", test_lapm_sabme_readiness },
 		{ "LAPM defaults without negotiation", test_lapm_default_establishment },
 		{ "LAPM connected SABME", test_lapm_connected_sabme },
+		{ "LAPM initial SABME progress", test_lapm_initial_sabme_progress },
 		{ "LAPM unnumbered response states", test_lapm_unnumbered_responses },
 		{ "LAPM disconnected DISC response", test_lapm_disconnected_disc },
 		{ "LAPM orderly release discards stream work", test_lapm_orderly_release },
