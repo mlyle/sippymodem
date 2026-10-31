@@ -1793,6 +1793,74 @@ static bool test_data_quality_rearm(void)
 	return true;
 }
 
+static bool test_quality_snapshot_contract(void)
+{
+	struct v34_adaptive_equalizer equalizer;
+	struct v34_data_quality policy, saved;
+	struct v34_adaptive_equalizer_quality zero = { 0 };
+
+	CHECK(!v34_adaptive_equalizer_quality_is_valid(NULL),
+	      "null quality snapshot was accepted");
+	CHECK(v34_adaptive_equalizer_init(&equalizer) == V34_ADAPTIVE_EQUALIZER_OK &&
+	      v34_data_quality_init(&policy) == V34_DATA_QUALITY_OK &&
+	      v34_data_quality_start(&policy, V34_SYMBOL_RATE_3200, 12, &zero, 1) ==
+		      V34_DATA_QUALITY_OK,
+	      "snapshot consumers did not initialize");
+	saved = policy;
+	for (unsigned trial = 0; trial < 7; ++trial) {
+		struct v34_adaptive_equalizer_quality measurement = { 0 };
+		uint8_t rate = 7;
+		bool valid = trial < 2;
+
+		if (trial == 1) {
+			measurement.window_position = V34_ADAPTIVE_EQUALIZER_QUALITY_SYMBOLS - 1;
+			measurement.recent_symbol_count = V34_ADAPTIVE_EQUALIZER_RECENT_SYMBOLS;
+			measurement.recent_decision_metric = INT16_MAX;
+			measurement.decision_metric = INT16_MAX;
+			measurement.feedback_metric = INT16_MAX;
+			measurement.decision_accumulator = UINT32_MAX;
+			measurement.feedback_accumulator = UINT32_MAX;
+			measurement.reference_accumulator = UINT32_MAX;
+			measurement.reference_metric = UINT32_MAX;
+			for (size_t i = 0; i < ARRAY_LENGTH(measurement.recent_error_blocks); ++i)
+				measurement.recent_error_blocks[i] = UINT32_MAX;
+		} else if (trial == 2) {
+			measurement.window_position = V34_ADAPTIVE_EQUALIZER_QUALITY_SYMBOLS;
+		} else if (trial == 3) {
+			measurement.recent_symbol_count = V34_ADAPTIVE_EQUALIZER_RECENT_SYMBOLS + 1;
+		} else if (trial == 4) {
+			measurement.recent_decision_metric = -1;
+		} else if (trial == 5) {
+			measurement.decision_metric = -1;
+		} else if (trial == 6) {
+			measurement.feedback_metric = -1;
+		}
+		struct v34_adaptive_equalizer_quality original = measurement;
+
+		equalizer.quality = measurement;
+		CHECK(v34_adaptive_equalizer_quality_is_valid(&measurement) == valid &&
+		      v34_adaptive_equalizer_is_valid(&equalizer) == valid,
+		      "measurement owner disagreed with snapshot bounds at trial %u", trial);
+		policy = saved;
+		CHECK(v34_data_quality_select_receive_rate(V34_SYMBOL_RATE_3200,
+			      0x3fff, 14, &measurement, &rate) ==
+			      (valid ? V34_DATA_QUALITY_OK : V34_DATA_QUALITY_INVALID_ARGUMENT) &&
+		      (valid || rate == 7), "rate selection disagreed at trial %u", trial);
+		CHECK(v34_data_quality_start(&policy, V34_SYMBOL_RATE_3200, 12,
+			      &measurement, 1) ==
+			      (valid ? V34_DATA_QUALITY_OK : V34_DATA_QUALITY_INVALID_ARGUMENT) &&
+		      (valid || memcmp(&policy, &saved, sizeof(policy)) == 0),
+		      "quality start disagreed at trial %u", trial);
+		policy = saved;
+		CHECK(v34_data_quality_observe(&policy, &measurement) ==
+			      (valid ? V34_DATA_QUALITY_OK : V34_DATA_QUALITY_INVALID_ARGUMENT) &&
+		      (valid || memcmp(&policy, &saved, sizeof(policy)) == 0) &&
+		      memcmp(&measurement, &original, sizeof(measurement)) == 0,
+		      "quality observe changed rejected state or measurement at trial %u", trial);
+	}
+	return true;
+}
+
 static bool test_data_quality_transactionality(void)
 {
 	struct v34_adaptive_equalizer_quality measurement = {
@@ -1908,7 +1976,7 @@ int main(void)
 	    !test_data_quality_duration() ||
 	    !test_recent_rate_measurement() ||
 	    !test_paired_data_quality_windows() || !test_data_quality_rearm() ||
-	    !test_data_quality_transactionality())
+	    !test_quality_snapshot_contract() || !test_data_quality_transactionality())
 		return 1;
 	return 0;
 }

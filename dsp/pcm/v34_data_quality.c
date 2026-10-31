@@ -70,19 +70,6 @@ static bool selected_threshold(
 	return selected > 0;
 }
 
-static bool measurement_is_valid(
-	const struct v34_adaptive_equalizer_quality *measurement)
-{
-	return measurement != NULL &&
-	       measurement->window_position <
-		       V34_ADAPTIVE_EQUALIZER_QUALITY_SYMBOLS &&
-	       measurement->recent_symbol_count <=
-		       V34_ADAPTIVE_EQUALIZER_RECENT_SYMBOLS &&
-	       measurement->recent_decision_metric >= 0 &&
-	       measurement->decision_metric >= 0 &&
-	       measurement->feedback_metric >= 0;
-}
-
 static uint8_t loss_windows(enum v34_symbol_rate symbol_rate)
 {
 	/* ceil(1.8 * baud / 1024), using exact fractional symbol rates.
@@ -162,7 +149,8 @@ enum v34_data_quality_result v34_data_quality_select_receive_rate(
 		measurement, sizeof(*measurement),
 		selected_rate_2400_bps_units,
 		sizeof(*selected_rate_2400_bps_units)) ||
-	    !measurement_is_valid(measurement) || enabled_rate_mask == 0u ||
+	    !v34_adaptive_equalizer_quality_is_valid(measurement) ||
+	    enabled_rate_mask == 0u ||
 	    (enabled_rate_mask & (uint16_t)~V34_RATE_PROFILE_MASK) != 0u ||
 	    maximum_rate_2400_bps_units == 0u ||
 	    maximum_rate_2400_bps_units > V34_RATE_PROFILE_UNITS)
@@ -203,7 +191,7 @@ enum v34_data_quality_result v34_data_quality_start(
 	    (symbols_per_decision != 1u && symbols_per_decision != 2u) ||
 	    memory_regions_overlap(
 		quality, sizeof(*quality), measurement, sizeof(*measurement)) ||
-	    !measurement_is_valid(measurement) ||
+	    !v34_adaptive_equalizer_quality_is_valid(measurement) ||
 	    !selected_threshold(
 		symbol_rate, primary_data_rate_2400_bps_units,
 		measurement->decision_metric, &threshold))
@@ -266,7 +254,7 @@ enum v34_data_quality_result v34_data_quality_observe(
 	if (quality == NULL || measurement == NULL ||
 	    memory_regions_overlap(
 		quality, sizeof(*quality), measurement, sizeof(*measurement)) ||
-	    !measurement_is_valid(measurement))
+	    !v34_adaptive_equalizer_quality_is_valid(measurement))
 		return V34_DATA_QUALITY_INVALID_ARGUMENT;
 	if (!v34_data_quality_is_valid(quality) || !quality->active)
 		return V34_DATA_QUALITY_INVALID_STATE;

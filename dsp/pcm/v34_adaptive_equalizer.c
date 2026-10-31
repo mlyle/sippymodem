@@ -52,17 +52,6 @@ static bool feedback_mode_is_valid(unsigned int mode)
 		V34_ADAPTIVE_EQUALIZER_FEEDBACK_APPLY)) == 0;
 }
 
-static bool quality_is_valid(
-	const struct v34_adaptive_equalizer_quality *quality)
-{
-	return quality->window_position <
-		       V34_ADAPTIVE_EQUALIZER_QUALITY_SYMBOLS &&
-	       quality->recent_symbol_count <=
-		       V34_ADAPTIVE_EQUALIZER_RECENT_SYMBOLS &&
-	       quality->recent_decision_metric >= 0 &&
-	       quality->decision_metric >= 0 && quality->feedback_metric >= 0;
-}
-
 static bool retained_is_clear(
 	const struct v34_adaptive_equalizer_retained *retained)
 {
@@ -112,7 +101,7 @@ bool v34_adaptive_equalizer_is_valid(
 	    equalizer->inputs_since_observation >
 		    V34_ADAPTIVE_EQUALIZER_INPUTS_PER_OBSERVATION ||
 	    !feedback_mode_is_valid(equalizer->feedback_mode) ||
-	    !quality_is_valid(&equalizer->quality) ||
+	    !v34_adaptive_equalizer_quality_is_valid(&equalizer->quality) ||
 	    equalizer->lineage == 0 || !retained_is_valid(equalizer))
 		return false;
 	if (equalizer->decision_pending)

@@ -201,6 +201,19 @@ struct v34_adaptive_equalizer_quality {
 	int16_t feedback_metric;
 };
 
+/* Validate a published quality snapshot without interpreting its accumulators.
+ * The measurement owner and rate/recovery policy share these bounds; partial
+ * windows and saturated unsigned sums remain valid measurement evidence. */
+static inline bool v34_adaptive_equalizer_quality_is_valid(
+	const struct v34_adaptive_equalizer_quality *quality)
+{
+	return quality != NULL &&
+	       quality->window_position < V34_ADAPTIVE_EQUALIZER_QUALITY_SYMBOLS &&
+	       quality->recent_symbol_count <= V34_ADAPTIVE_EQUALIZER_RECENT_SYMBOLS &&
+	       quality->recent_decision_metric >= 0 &&
+	       quality->decision_metric >= 0 && quality->feedback_metric >= 0;
+}
+
 /* Exact FIR inputs and carrier frame for one observation whose semantic
  * target depends on the following observation.  V.34 data decisions are
  * four-dimensional, so the physical equalizer must retain this bounded
