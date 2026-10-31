@@ -6,6 +6,30 @@
 #include <stdio.h>
 #include <string.h>
 
+static void test_density(void)
+{
+	assert(fabs(gaussian_density(0.) - .398942280401432678) < 1e-15);
+	assert(gaussian_density(-0.) == gaussian_density(0.));
+	assert(gaussian_density(1.) > gaussian_density(2.));
+	assert(gaussian_density(28.) > 0.);
+	assert(gaussian_density(INFINITY) == 0.);
+	assert(gaussian_density(-INFINITY) == 0.);
+	assert(isnan(gaussian_density(NAN)));
+	/* Integrate the density independently of its formula. The CDF helper
+	 * uses arguments in sqrt(2)-scaled units, which must agree with the
+	 * density's standard-deviation contract. Simpson's rule over [-2,2]
+	 * also checks normalization and symmetry in every rounding mode. */
+	double integral = 0.;
+	for (unsigned i = 0; i <= 512; ++i) {
+		double x = -2. + i / 128.;
+		assert(gaussian_density(x) == gaussian_density(-x));
+		integral += (i == 0 || i == 512 ? 1. : i % 2 ? 4. : 2.) *
+			gaussian_density(x);
+	}
+	integral /= 384.;
+	assert(fabs(integral - gaussian_probability(-sqrt(2.), sqrt(2.))) < 1e-9);
+}
+
 static void test_half_normal(void)
 {
 	const int16_t q[] = { 1 };
@@ -118,6 +142,7 @@ int main(void)
 	const int modes[] = { FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO };
 	for (unsigned i = 0; i < sizeof(modes) / sizeof(modes[0]); i++) {
 		assert(fesetround(modes[i]) == 0);
+		test_density();
 		test_half_normal();
 		test_independent_owners();
 		test_failure_atomicity();

@@ -5,6 +5,14 @@
 #include <fenv.h>
 #include <math.h>
 
+/* Unit-normal density at x standard deviations. Unlike the interval
+ * probability arguments below, x has not been divided by sqrt(2). Keep
+ * the shared E/M and Newton fits on the same density arithmetic. */
+static inline double gaussian_density(double x)
+{
+	return exp(-.5 * x * x) / sqrt(2. * acos(-1.));
+}
+
 /* On one side of zero, erfc(b)/erfc(a) <= exp(a*a-b*b).
  * A gap of 40 puts the subtracted tail below half an ulp of erfc(a),
  * including subnormal results. Directed rounding keeps the subtraction. */

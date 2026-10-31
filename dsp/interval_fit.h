@@ -20,8 +20,8 @@ static inline bool interval_fit_moments(double low, double high, double mean, do
 	double a = (low - mean) / sigma, b = (high - mean) / sigma;
 	double probability = gaussian_probability(a / sqrt(2.), b / sqrt(2.));
 	if (!(probability > 0.)) return false;
-	double pa = exp(-.5 * a * a) / sqrt(2. * acos(-1.));
-	double pb = exp(-.5 * b * b) / sqrt(2. * acos(-1.));
+	double pa = gaussian_density(a);
+	double pb = gaussian_density(b);
 	double shift = (pa - pb) / probability;
 	double ap = isfinite(a) ? a * pa : 0., bp = isfinite(b) ? b * pb : 0.;
 	*expected = mean + sigma * shift;

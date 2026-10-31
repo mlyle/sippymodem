@@ -170,8 +170,8 @@ static bool bin_fit_evaluate(struct bin_fit_data *data, const double *x,
 		/* Subnormal ratios retain the conditional-moment fallback. */
 		if (!(probability >= DBL_MIN && probability <= 1.)) return false;
 		*loss -= log(probability);
-		double ra = exp(-.5 * a * a) / sqrt(2. * acos(-1.)) / probability;
-		double rb = exp(-.5 * b * b) / sqrt(2. * acos(-1.)) / probability;
+		double ra = gaussian_density(a) / probability;
+		double rb = gaussian_density(b) / probability;
 		double ar = isfinite(a) ? a * ra : 0., br = isfinite(b) ? b * rb : 0.;
 		double va[BIN_FIT_COLUMNS] = { 0 }, vb[BIN_FIT_COLUMNS] = { 0 };
 		double g[BIN_FIT_COLUMNS] = { 0 };
