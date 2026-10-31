@@ -35,4 +35,11 @@ static inline double gaussian_probability(double a, double b)
 	return .5 * ((b >= 6. ? 1. : erf(b)) - (a <= -6. ? -1. : erf(a)));
 }
 
+/* Logarithm of the same interval mass, retaining finite ordering when
+ * probability underflows. Arguments are still scaled by sqrt(2)*sigma.
+ * Requires a <= b; bounds may be infinite for one-sided clipping. A
+ * nonfinite result signals an empty interval or unresolved numeric tail;
+ * check it before converting a scaled cost to an integer. */
+double gaussian_log_probability(double a, double b);
+
 #endif /* GAUSSIAN_H */

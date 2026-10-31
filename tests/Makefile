@@ -41,6 +41,7 @@ V34_NATIVE_SOURCE_NAMES := \
 V34_NATIVE_OBJECTS := \
 	$(V34_NATIVE_SOURCE_NAMES:%.c=$(BUILD_DIR)/%.o)
 PCM_RUNTIME_SOURCE_NAMES := \
+	gaussian.c \
 	pcm_gain.c \
 	pcm_octet_probe.c v91_profile.c v91_control.c v91_call.c v91_datapump.c \
 	pcm_dil_descriptor.c pcm_downstream_rx.c pcm_downstream_tx.c pcm_downstream_equalizer.c \
@@ -105,7 +106,7 @@ PCM_GAIN_TEST_OBJECTS := $(BUILD_DIR)/test_pcm_gain.o \
 	$(BUILD_DIR)/pcm_gain.o $(BUILD_DIR)/g711.o
 V92_OBSERVATION_TEST_BINARY := $(BUILD_DIR)/test_v92_observation
 V92_OBSERVATION_TEST_OBJECTS := $(BUILD_DIR)/test_v92_observation.o \
-	$(BUILD_DIR)/v92_observation.o $(BUILD_DIR)/g711.o
+	$(BUILD_DIR)/v92_observation.o $(BUILD_DIR)/g711.o $(BUILD_DIR)/gaussian.o
 CHANNEL_BENCH_TEST_BINARY := $(BUILD_DIR)/test_channel_bench
 CHANNEL_BENCH_TEST_OBJECTS := $(BUILD_DIR)/test_channel_bench.o \
 	$(BUILD_DIR)/channel_bench.o $(BUILD_DIR)/fractional_delay.o \
@@ -1918,6 +1919,7 @@ V92_PCM_FRAME_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v92_pcm_frame.o \
 	$(BUILD_DIR)/v92_pcm_frame.o \
 	$(BUILD_DIR)/v92_observation.o \
+	$(BUILD_DIR)/gaussian.o \
 	$(BUILD_DIR)/v92_pcm_mapping.o \
 	$(BUILD_DIR)/v92_cpd.o \
 	$(BUILD_DIR)/v34_framing.o \
@@ -6378,3 +6380,6 @@ $(BUILD_DIR)/rtp_transmit.o: ../src/rtp_transmit.c | $(BUILD_DIR)
 
 $(BUILD_DIR)/test_rtp_transmit: $(BUILD_DIR)/test_rtp_transmit.o $(BUILD_DIR)/rtp_transmit.o $(BUILD_DIR)/frame_pacer.o
 	$(CC) $(LDFLAGS) -o $@ $^
+
+$(BUILD_DIR)/gaussian.o: $(DSP_SOURCE_DIR)/gaussian.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<

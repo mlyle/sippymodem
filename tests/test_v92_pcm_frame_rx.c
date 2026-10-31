@@ -10,6 +10,7 @@
 #include "test.h"
 
 #include <limits.h>
+#include <fenv.h>
 #include <math.h>
 #include <string.h>
 
@@ -1549,7 +1550,7 @@ static bool test_observed_channel(enum g711_law law, unsigned taps, bool reorder
 	return true;
 }
 
-static bool test_constellation_cells(enum g711_law law, double gain)
+static bool test_constellation_cells(enum g711_law law, double gain, bool gaussian)
 {
 	struct v92_pcm_mapping mapping;
 	struct v92_pcm_frame_tx tx;
@@ -1565,7 +1566,8 @@ static bool test_constellation_cells(enum g711_law law, double gain)
 		struct v92_pcm_frame_decision decision;
 		struct v92_pcm_frame_likelihood likelihood;
 		struct v92_pcm_frame_cell cells[V92_PCM_MAPPING_FRAME_SYMBOLS];
-		struct v92_pcm_frame_channel channel = { .cells = cells };
+		struct v92_pcm_frame_channel channel = { .cells = cells,
+			.cell_sigma = gaussian ? 2. : 0. };
 		uint8_t bits[V92_PCM_MAPPING_MAX_BITS], decoded[V92_PCM_MAPPING_MAX_BITS];
 		int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
 		double expected_cost = 0;
@@ -1604,6 +1606,22 @@ static bool test_constellation_cells(enum g711_law law, double gain)
 			memset(&decision, 0xa5, sizeof(decision)); untouched = decision;
 			memset(&likelihood, 0xa5, sizeof(likelihood)); unchanged = likelihood;
 			memset(decoded, 0xa5, sizeof(decoded));
+			const double invalid_sigma[] = { NAN, INFINITY, -1., 32769. };
+			for (unsigned k = 0; k < ARRAY_LENGTH(invalid_sigma); ++k) {
+				channel.cell_sigma = invalid_sigma[k];
+				CHECK(v92_pcm_frame_decode_observed(&rx, samples, true, decoded,
+				      mapping.data_bits_per_frame, &decision, &channel, &likelihood) ==
+				      V92_PCM_FRAME_INVALID_PARAMETERS && !memcmp(&rx, &saved, sizeof(rx)) &&
+				      !memcmp(&decision, &untouched, sizeof(decision)) &&
+				      !memcmp(&likelihood, &unchanged, sizeof(likelihood)) && decoded[0] == 0xa5,
+				      "invalid cell noise was not transactional");
+			}
+			channel.cell_sigma = 2.; channel.cells = NULL;
+			CHECK(v92_pcm_frame_decode_observed(&rx, samples, true, decoded,
+			      mapping.data_bits_per_frame, &decision, &channel, &likelihood) ==
+			      V92_PCM_FRAME_INVALID_ARGUMENT && !memcmp(&rx, &saved, sizeof(rx)),
+			      "cell noise accepted without observation cells");
+			channel.cells = cells; channel.cell_sigma = gaussian ? 2. : 0.;
 			double upper = cells[11].upper;
 			cells[11].upper = NAN;
 			CHECK(v92_pcm_frame_decode_observed(&rx, samples, true, decoded,
@@ -1631,6 +1649,27 @@ static bool test_constellation_cells(enum g711_law law, double gain)
 			      "aliased cells changed receiver");
 			channel.cells = cells;
 		}
+		if (gaussian && f == 27u) {
+			struct v92_pcm_frame_rx tail = rx;
+			struct v92_pcm_frame_decision td;
+			struct v92_pcm_frame_likelihood tl;
+			struct v92_pcm_frame_cell remote[V92_PCM_MAPPING_FRAME_SYMBOLS];
+			struct v92_pcm_frame_channel narrow = { .cells = remote, .cell_sigma = 0x1p-20 };
+			uint8_t tb[V92_PCM_MAPPING_MAX_BITS];
+
+			for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
+				remote[i] = (struct v92_pcm_frame_cell){ encoded.u[i] + .25, encoded.u[i] + .5 };
+			/* Every nondegenerate cell has nonzero Gaussian mass, even
+			 * when that mass cannot be represented as a double. Its
+			 * scaled log cost still distinguishes legal coding paths. */
+			CHECK(v92_pcm_frame_decode_observed(&tail, samples, true, tb,
+			      mapping.data_bits_per_frame, &td, &narrow, &tl) == V92_PCM_FRAME_OK &&
+			      tl.cost < UINT64_MAX && !memcmp(td.frame.u, encoded.u, sizeof(encoded.u)),
+			      "underflowing Gaussian cells lost finite path ordering");
+		}
+		if (gaussian && f == 25u)
+			for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
+				cells[i] = (struct v92_pcm_frame_cell){ encoded.u[i], encoded.u[i] };
 		if (f == 26u) {
 			struct v92_pcm_frame_rx positive = rx, negative = rx;
 			struct v92_pcm_frame_decision pd, nd;
@@ -1665,7 +1704,7 @@ static bool test_constellation_cells(enum g711_law law, double gain)
 		      mapping.data_bits_per_frame, &decision, &channel, &likelihood) == V92_PCM_FRAME_OK &&
 		      v92_pcm_frame_rx_is_valid(&rx), "cell decode failed: law %u frame %u", law, f);
 		CHECK(!memcmp(decision.frame.u, encoded.u, sizeof(encoded.u)) &&
-		      decision.squared_error == expected_error && likelihood.cost == expected_cost,
+		      decision.squared_error == expected_error && (gaussian || likelihood.cost == expected_cost),
 		      "cell ranking changed points or hid physical residual: law %u frame %u", law, f);
 		for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
 			CHECK(likelihood.predicted_samples[i] == encoded.u[i], "cell prediction followed sample");
@@ -1864,6 +1903,19 @@ static bool test_spare_word_beam(unsigned damaged_frame, unsigned differential)
 	return true;
 }
 
+static bool test_gaussian_cell_rounding(void)
+{
+	int saved = fegetround();
+	const int modes[] = { FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO };
+	for (unsigned mode = 0; mode < ARRAY_LENGTH(modes); ++mode) {
+		CHECK(fesetround(modes[mode]) == 0, "rounding mode unavailable");
+		for (unsigned law = 0; law < 2; ++law)
+			if (!test_constellation_cells((enum g711_law)law, 1.25, true)) return false;
+	}
+	CHECK(fesetround(saved) == 0, "rounding mode restore failed");
+	return true;
+}
+
 int main(void)
 {
 	if (!test_spare_word_beam(64u, 1u) || !test_spare_word_beam(69u, 0u))
@@ -1878,8 +1930,10 @@ int main(void)
 		return 1;
 
 	for (unsigned int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
-		if (!test_constellation_cells((enum g711_law)law, 0.8) ||
-		    !test_constellation_cells((enum g711_law)law, 1.25)) return 1;
+		if (!test_constellation_cells((enum g711_law)law, 0.8, false) ||
+		    !test_constellation_cells((enum g711_law)law, 0.8, true) ||
+		    !test_constellation_cells((enum g711_law)law, 1.25, false) ||
+		    !test_constellation_cells((enum g711_law)law, 1.25, true)) return 1;
 		static const uint8_t rates[] = { 1u, 13u, 19u };
 		static const int16_t direct_44k_levels[] = { 2016, 4096, 7164, 8192 };
 		for (enum v92_cpd_trellis trellis = V92_CPD_TRELLIS_16_STATE;
@@ -1930,7 +1984,8 @@ int main(void)
 		    !test_control_epoch((enum g711_law)law, 13u, true))
 			return 1;
 	}
-	return run_stream(G711_LAW_PCMA, 16u, false, true) &&
+	return test_gaussian_cell_rounding() &&
+		run_stream(G711_LAW_PCMA, 16u, false, true) &&
 		test_noise_training(false) && test_noise_training(true) &&
 		test_rejection_and_training_evidence() ? 0 : 1;
 }

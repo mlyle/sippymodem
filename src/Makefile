@@ -113,6 +113,7 @@ SHARED_DSP_SOURCES := \
 	$(DSP_SOURCE_DIR)/fractional_delay.c \
 	$(DSP_SOURCE_DIR)/fixed_phase.c \
 	$(DSP_SOURCE_DIR)/g711.c \
+	$(DSP_SOURCE_DIR)/gaussian.c \
 	$(DSP_SOURCE_DIR)/mixed_radix.c \
 	$(DSP_SOURCE_DIR)/qam_equalizer.c \
 	$(DSP_SOURCE_DIR)/qam.c \

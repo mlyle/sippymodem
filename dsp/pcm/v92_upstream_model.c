@@ -5,6 +5,7 @@
 #include "v92_data_quality.h"
 #include "integer_math.h"
 #include "sample_math.h"
+#include "interval_fit.h"
 
 #include <limits.h>
 #include <math.h>
@@ -71,6 +72,10 @@ bool v92_upstream_model_is_valid(const struct v92_upstream_data_rx *receiver)
 {
 	const struct v92_upstream_model *model = &receiver->model;
 
+	if (!isfinite(model->residual_variance) || model->residual_variance < 0. ||
+	    (model->residual_variance && (!receiver->line.residual.active ||
+	     receiver->line.received_frames < V92_B1U_ACQUISITION_FRAMES)))
+		return false;
 	if (!v92_upstream_seed_is_valid(&model->seed) ||
 	    (model->seed.residual.active && (!model->residual_acquiring ||
 	     model->seed.gain < receiver->line.calibration.minimum ||
@@ -179,6 +184,8 @@ void v92_upstream_model_observe(struct v92_upstream_model *model,
 		for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; i++) {
 			model->x[offset + i] = decision->predicted_samples[i];
 			model->raw[offset + i] = line->raw[i];
+			model->wire[offset + i] = line->wire[i];
+			model->host[offset + i] = line->host_samples[i];
 		}
 		return;
 	}
@@ -368,13 +375,69 @@ static bool fit_residual(struct v92_upstream_model *model, struct v92_upstream_d
 	return selected;
 }
 
+/* Estimate only the noise distribution inside the actual final-codec bins.
+ * The selected physical correction, its two delays and gain stay frozen.
+ * Quantized centres alone conflate codec width with additive line noise.
+ * Use the same final acquisition span as residual selection; later B1u
+ * decisions and payload are never inputs to this fit. */
+static double fit_residual_variance(const struct v92_upstream_model *model,
+	const struct v92_upstream_data_line *line, bool selected,
+	enum g711_law law)
+{
+	enum { FIRST = V92_OBSERVATION_TRAINING -
+		V92_PCM_RX_DELAY_FRAMES * V92_PCM_MAPPING_FRAME_SYMBOLS };
+	_Static_assert((unsigned)FIRST >= (unsigned)V92_RESIDUAL_LAGS &&
+		(unsigned)FIRST < (unsigned)V92_OBSERVATION_TRAINING,
+		"noise acquisition needs preceding residual history");
+	if (!line->residual.active || line->host.gain <= 0.) return 0.;
+	double low[V92_OBSERVATION_TRAINING], high[V92_OBSERVATION_TRAINING];
+	double mean[V92_OBSERVATION_TRAINING], variance = 0.;
+	for (unsigned n = FIRST; n < V92_OBSERVATION_TRAINING; ++n) {
+		struct g711_interval bin;
+		if (!pcm_gain_contains(&line->host.bounds, line->polarity * model->wire[n], model->host[n]) ||
+		    !g711_quantization_interval(law, line->polarity * model->wire[n], &bin)) return 0.;
+		double correction = model->raw[n] - line->polarity * (double)model->host[n];
+		double lower = bin.lower == INT16_MIN ? -HUGE_VAL :
+			(bin.lower - .5) * line->host.gain;
+		double upper = bin.upper == INT16_MAX ? HUGE_VAL :
+			(bin.upper + .5) * line->host.gain;
+		low[n] = (line->polarity > 0 ? lower : -upper) + correction;
+		high[n] = (line->polarity > 0 ? upper : -lower) + correction;
+		double point = selected ? model->u[n] : model->x[n];
+		for (unsigned k = 0; k < line->residual.count; ++k) {
+			unsigned at = n - line->residual.delay[k];
+			point += line->residual.coefficient[k] *
+				(selected ? model->u[at] : model->x[at]);
+		}
+		mean[n] = point / line->calibration.gain + line->residual.offset;
+		double error = model->raw[n] - mean[n];
+		variance += error * error;
+	}
+	variance = fmax(1., variance / (V92_OBSERVATION_TRAINING - FIRST));
+	for (unsigned iteration = 0; iteration < 32; ++iteration) {
+		double total = 0., sigma = sqrt(variance);
+		for (unsigned n = FIRST; n < V92_OBSERVATION_TRAINING; ++n) {
+			double expected, deviation;
+			if (!interval_fit_moments(low[n], high[n], mean[n], variance,
+			    sigma, &expected, &deviation)) return 0.;
+			double error = expected - mean[n];
+			total += deviation + error * error;
+		}
+		variance = fmax(1., total / (V92_OBSERVATION_TRAINING - FIRST));
+		if (!isfinite(variance)) return 0.;
+	}
+	return variance;
+}
+
 void v92_upstream_model_fit(struct v92_upstream_model *model,
 	struct v92_upstream_data_line *line, struct v92_pcm_frame_rx *decoder)
 {
 	if (model->residual_acquiring) {
 		acquire_residual_points(model, line, decoder);
 		if (line->received_frames + 1u == V92_B1U_ACQUISITION_FRAMES) {
-			if (line->host.gain > 0. && fit_residual(model, line)) {
+			bool selected = line->host.gain > 0. && fit_residual(model, line);
+			model->residual_variance = fit_residual_variance(model, line, selected, decoder->mapping.law);
+			if (selected) {
 				/* Carry the selected acquisition's coding history into
 				 * independent decoding. Old erroneous decisions must not
 				 * poison the first validation bits through the descrambler.
@@ -611,6 +674,10 @@ enum v92_pcm_frame_result v92_upstream_model_decode(struct v92_upstream_model *m
 			result = v92_pcm_frame_acquire_model(decoder, line->samples, bits, count, decision);
 		} else if (wire_cells(line, decoder->mapping.law, cells)) {
 			struct v92_pcm_frame_channel channel = { .cells = cells };
+			if (line->received_frames < V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
+				double sigma = sqrt(model->residual_variance) * line->calibration.gain;
+				if (isfinite(sigma) && sigma <= 32768.) channel.cell_sigma = sigma;
+			}
 			struct v92_pcm_frame_likelihood likelihood;
 
 			result = v92_pcm_frame_decode_observed(decoder, line->samples,

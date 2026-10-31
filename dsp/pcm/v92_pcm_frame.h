@@ -336,6 +336,10 @@ struct v92_pcm_frame_channel {
 	 * No levels/offsets accompany these twelve finite, ordered intervals.
 	 * Their provenance must be independent of decoded candidate points. */
 	const struct v92_pcm_frame_cell *cells;
+	/* Frozen additive noise in constellation units. Zero retains distance
+	 * outside the codec cell; finite values through 32768 score its Gaussian
+	 * mass. Requires cells; a zero-width cell retains point-distance cost. */
+	double cell_sigma;
 	/* Optional aligned decoded wire levels before host gain. Each present
 	 * level must be a G.711 reconstruction value. NULL infers bins from
 	 * samples and the model's host gain. Arrays contain twelve symbols. */
@@ -363,8 +367,10 @@ struct v92_pcm_frame_likelihood {
 
 /* Decode calibrated samples using codec intervals or a frozen channel model.
  * Requires a constellation-coordinate receiver; fitted models additionally
- * require two x-history entries. Cells rank by distance outside the interval,
- * but retain the full linear predictions/residuals for quality assessment.
+ * require two x-history entries. Cells rank by distance outside the interval
+ * by default; cell_sigma selects Gaussian interval mass without changing
+ * point predictions. Both modes retain full linear predictions/residuals
+ * for quality assessment.
  * The channel and likelihood are required. Cost is the winning increment
  * before path-metric normalization; compare it only within a frozen epoch.
  * Near-tied merged histories retain disputed payload as ambiguous.

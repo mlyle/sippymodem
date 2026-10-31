@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "v92_pcm_frame.h"
+#include "gaussian.h"
 
 #include "v92_observation.h"
 
@@ -1047,10 +1048,17 @@ static uint64_t constellation_weight(const struct v92_pcm_frame_rx *receiver, in
 }
 
 static uint64_t cell_metric(const struct v92_pcm_frame_cell *cell,
-	int16_t point, uint64_t weight, bool present)
+	int16_t point, uint64_t weight, bool present, double sigma)
 {
 	double distance = fmax(cell->lower - point, fmax(point - cell->upper, 0.0));
 	double cost = present ? distance * distance * weight : 0.0;
+	if (present && sigma > 0. && cell->lower < cell->upper) {
+		double log_probability = gaussian_log_probability(
+			(cell->lower - point) / (sqrt(2.) * sigma),
+			(cell->upper - point) / (sqrt(2.) * sigma));
+		cost = isfinite(log_probability) ?
+			-2. * sigma * sigma * log_probability * weight : 0x1p64;
+	}
 
 	/* Compare with exactly representable 2^64 before converting to uint64_t. */
 	return cost >= 0x1p64 ? UINT64_MAX : (uint64_t)cost;
@@ -1262,6 +1270,9 @@ static enum v92_pcm_frame_result decode_frame(
 		return V92_PCM_FRAME_INVALID_ARGUMENT;
 	if (!owned && !v92_pcm_frame_rx_is_valid(receiver))
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
+	if (channel && (!isfinite(channel->cell_sigma) || channel->cell_sigma < 0. ||
+	    channel->cell_sigma > 32768. || (channel->cell_sigma && !cells)))
+		return V92_PCM_FRAME_INVALID_PARAMETERS;
 	if (cells) {
 		if (model || levels || offsets || receiver->observation != V92_PCM_FRAME_CONSTELLATION)
 			return V92_PCM_FRAME_INVALID_PARAMETERS;
@@ -1361,7 +1372,7 @@ static enum v92_pcm_frame_result decode_frame(
 			for (int eta = -(int)constellation->count; eta < constellation->count; ++eta) {
 				int16_t u = v92_cpd_signed_point(constellation, eta);
 				uint64_t cost = cells ? cell_metric(cells + symbol, u,
-					weight, !received || received[symbol]) :
+					weight, !received || received[symbol], channel->cell_sigma) :
 					sample_metric(receiver, u, 0, samples[symbol], b1u,
 						NULL, minimum_gain, maximum_gain, weight);
 				unsigned index = eta + constellation->count;
@@ -1659,7 +1670,7 @@ static enum v92_pcm_frame_result decode_frame(
 					cost = !present ? 0 :
 						v92_observation_score_history(&cache, precoder_output(precoder, u), history, budget, scoring);
 				} else if (cells) {
-					cost = cell_metric(cells + symbol, u, weight, present);
+					cost = cell_metric(cells + symbol, u, weight, present, channel->cell_sigma);
 				} else {
 					int32_t v = receiver->observation == V92_PCM_FRAME_FILTER_OUTPUT ?
 						prefilter_output(&receiver->mapping, prefilter,

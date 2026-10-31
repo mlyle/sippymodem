@@ -52,6 +52,9 @@ struct v92_upstream_model {
 	uint64_t cost[2];
 	/* Frozen single-codec quality prediction if neither tandem model fits. */
 	double scalar_gain;
+	/* Acquisition-only estimate of noise before the final codec. The
+	 * physical inverse and gain remain unchanged; held-out data never fits it. */
+	double residual_variance;
 	int16_t coefficient;
 	uint8_t valid, primary;
 	bool acquiring, residual_acquiring, fitting;
