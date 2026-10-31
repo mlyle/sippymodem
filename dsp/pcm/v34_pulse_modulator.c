@@ -289,20 +289,23 @@ static const int16_t *phase_coefficients(
 	if (fraction == 0)
 		return &profile->coefficients[(size_t)phase * V34_PULSE_TAPS];
 
-	/* The cubic phase weights are shared by every tap in this sample. */
+	/* Share the four cubic weights across every tap. Valid V.34 clocks
+	 * have at most 35 phases, so all weights/products fit int64_t. */
 	int64_t denominator = 2 * scale * scale * scale;
 	int64_t linear = fraction * scale * scale;
 	int64_t quadratic = fraction * fraction * scale;
 	int64_t cubic = fraction * fraction * fraction;
+	int64_t w0 = -linear + 2 * quadratic - cubic;
+	int64_t w1 = denominator - 5 * quadratic + 3 * cubic;
+	int64_t w2 = linear + 4 * quadratic - 3 * cubic;
+	int64_t w3 = -quadratic + cubic;
 
 	for (int symbol = 0; symbol < V34_PULSE_TAPS; ++symbol) {
 		int64_t p0 = source_coefficient(profile, phase - 1, symbol);
 		int64_t p1 = source_coefficient(profile, phase, symbol);
 		int64_t p2 = source_coefficient(profile, phase + 1, symbol);
 		int64_t p3 = source_coefficient(profile, phase + 2, symbol);
-		int64_t numerator = p1 * denominator + (-p0 + p2) * linear +
-			(2 * p0 - 5 * p1 + 4 * p2 - p3) * quadratic +
-			(-p0 + 3 * p1 - 3 * p2 + p3) * cubic;
+		int64_t numerator = p0 * w0 + p1 * w1 + p2 * w2 + p3 * w3;
 
 		interpolated[symbol] = clamp_s16(divide_round(numerator, denominator));
 	}
