@@ -442,9 +442,30 @@ void v92_upstream_model_progress(struct v92_upstream_data_rx *receiver)
 	model->fit.clock = stage == V92_FIT_REFINE ? V92_MODEL_REFINE_SAMPLES - 1 : V92_MODEL_SWEEP_SAMPLES - 1;
 }
 
+/* Identical fit bodies and coding state are not enough: the two hypotheses
+ * apply different input rounding. Prove it is identical for all future legal
+ * coordinates before discarding a duplicate. Compare also the suffix after
+ * input_coefficient so future model fields cannot silently escape this check.
+ * Byte comparisons are conservative: unequal padding simply keeps both. */
+static bool equivalent_models(const struct v92_upstream_data_rx *receiver)
+{
+	const struct v92_upstream_model *model = &receiver->model;
+	const struct v92_observation *a = &model->model[0], *b = &model->model[1];
+	size_t prefix = offsetof(struct v92_observation, input_coefficient);
+	size_t suffix = prefix + sizeof(a->input_coefficient);
+
+	return a->input_coefficient == 0 && b->input_coefficient == model->coefficient &&
+	       memcmp(a, b, prefix) == 0 &&
+	       memcmp((const unsigned char *)a + suffix, (const unsigned char *)b + suffix,
+		      sizeof(*a) - suffix) == 0 &&
+	       memcmp(&receiver->decoder, &model->alternate, sizeof(receiver->decoder)) == 0 &&
+	       v92_pcm_frame_input_rounding_is_identity(&receiver->decoder, model->coefficient);
+}
+
 /* Once every held-out B1u bit and its physical quality have qualified, a
  * decisively separated frozen channel need not retain a competing decoder.
- * Keep uncertain channels paired. This margin is sixteen times the decoder's
+ * Exact duplicates need no competing decoder either. Keep other uncertain
+ * channels paired. This margin is sixteen times the decoder's
  * ambiguity boundary; it is model-selection evidence, not a measured BER. */
 bool v92_upstream_model_finish_b1u(struct v92_upstream_data_rx *receiver)
 {
@@ -452,7 +473,8 @@ bool v92_upstream_model_finish_b1u(struct v92_upstream_data_rx *receiver)
 		receiver->model.fitting || receiver->model.valid != 3) return false;
 	struct v92_upstream_model *model = &receiver->model;
 	unsigned other = model->primary ^ 1u;
-	if (model->cost[other] < UINT64_C(16) * V92_PCM_RX_AMBIGUITY_COST) return false;
+	if (model->cost[other] < UINT64_C(16) * V92_PCM_RX_AMBIGUITY_COST &&
+	    !equivalent_models(receiver)) return false;
 	model->valid = (uint8_t)(1u << model->primary);
 	model->cost[other] = 0;
 	memset(&model->alternate, 0, sizeof(model->alternate));

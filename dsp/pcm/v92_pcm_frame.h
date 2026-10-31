@@ -250,6 +250,13 @@ enum v92_pcm_frame_result v92_pcm_frame_rx_init_constellation(
 	const struct v92_pcm_mapping *mapping);
 bool v92_pcm_frame_rx_is_valid(const struct v92_pcm_frame_rx *receiver);
 
+/* Prove Q15 input rounding leaves every reachable precoder coordinate x(n)
+ * unchanged, including each active path's history. Use the complete declared
+ * alphabet and a stable absolute feedback bound, never acquisition samples.
+ * False means unproved; no receiver state changes. */
+bool v92_pcm_frame_input_rounding_is_identity(
+	const struct v92_pcm_frame_rx *receiver, int16_t coefficient);
+
 /* One zero-initialized fit per B1u mapping epoch. Scores cover the ORIGINAL
  * training cell; an early frame cannot permanently exclude a level supported
  * by later training. The line owner discards this scratch after B1u. */

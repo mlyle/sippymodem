@@ -1482,9 +1482,82 @@ static bool test_b1u_measurement_contracts(void)
 	return true;
 }
 
+static bool test_input_rounding_identity(void)
+{
+	struct v92_cpd_parameters cpd = parameters(1u);
+	struct v92_pcm_mapping mapping;
+	struct v92_pcm_frame_rx receiver, saved;
+
+	CHECK(!v92_pcm_frame_input_rounding_is_identity(NULL, INT16_MAX),
+	      "null receiver proved input identity");
+	for (unsigned scenario = 0; scenario < 10; ++scenario) {
+		cpd = parameters(1u);
+		if (scenario == 1) {
+			cpd.filter[V92_CPD_PRECODER_FEED_FORWARD] =
+				(struct v92_cpd_filter){ .count = 2, .coefficient = { 256, -128 } };
+			cpd.filter[V92_CPD_PRECODER_FEEDBACK] =
+				(struct v92_cpd_filter){ .count = 2, .coefficient = { 512, -128 } };
+		}
+		if (scenario == 2 || scenario == 3)
+			cpd.constellation[0].positive_linear[cpd.constellation[0].count - 1] =
+				scenario == 2 ? 16383 : 16385;
+		if (scenario == 4)
+			cpd.filter[V92_CPD_PRECODER_FEEDBACK] =
+				(struct v92_cpd_filter){ .count = 2, .coefficient = { 8192, -8192 } };
+		if (scenario == 8)
+			cpd.filter[V92_CPD_PRECODER_FEED_FORWARD] =
+				(struct v92_cpd_filter){ .count = 1, .coefficient = { 256 } };
+		if (scenario == 9)
+			cpd.filter[V92_CPD_PRECODER_FEEDBACK] =
+				(struct v92_cpd_filter){ .count = 1, .coefficient = { INT16_MIN } };
+		CHECK(v92_pcm_mapping_init(&mapping, G711_LAW_PCMU, &cpd) == V92_PCM_MAPPING_OK &&
+		      v92_pcm_frame_rx_init_constellation(&receiver, &mapping) == V92_PCM_FRAME_OK,
+		      "identity fixture initialization failed: %u", scenario);
+		/* Every active path must be safe, including paths beyond the best. */
+		receiver.path_count = 2;
+		receiver.paths[1] = receiver.paths[0];
+		if (scenario == 5)
+			receiver.paths[1].filter.history[0] = INT32_MIN;
+		if (scenario == 8)
+			receiver.paths[1].filter.history[0] = INT32_MAX;
+		if (scenario == 6)
+			receiver.path_count = 0;
+		saved = receiver;
+		bool expected = scenario < 3;
+		int16_t coefficient = scenario == 7 ? 16384 : INT16_MAX;
+		CHECK(v92_pcm_frame_input_rounding_is_identity(&receiver, coefficient) == expected &&
+		      !memcmp(&receiver, &saved, sizeof(saved)),
+		      "input identity proof or const ownership changed: %u", scenario);
+		CHECK(!v92_pcm_frame_input_rounding_is_identity(&receiver, 0) &&
+		      !v92_pcm_frame_input_rounding_is_identity(&receiver, -1),
+		      "unsupported input rounding proved identity");
+		if (!expected) continue;
+		/* Exercise the actual precoder with arbitrary payloads, not B1u's
+		 * restricted alphabet. Both signs and the exact half-way boundary
+		 * also have a direct integer oracle below. */
+		struct v92_pcm_frame_tx transmitter;
+		CHECK(v92_pcm_frame_tx_init(&transmitter, &mapping) == V92_PCM_FRAME_OK,
+		      "identity transmitter initialization failed");
+		for (unsigned frame = 0; frame < 64; ++frame) {
+			uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
+			struct v92_pcm_frame output;
+			generated_bits(bits, mapping.data_bits_per_frame, frame);
+			CHECK(v92_pcm_frame_encode(&transmitter, bits, mapping.data_bits_per_frame, &output) ==
+			      V92_PCM_FRAME_OK, "identity precoder stopped");
+			for (size_t symbol = 0; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol)
+				CHECK(round_shift_s64_to_s32_saturating((int64_t)output.x[symbol] * coefficient, 15) ==
+				      output.x[symbol], "proved identity changed a future coordinate");
+		}
+	}
+	for (int32_t x = -16385; x <= 16385; ++x)
+		CHECK((round_shift_s64_to_s32_saturating((int64_t)x * INT16_MAX, 15) == x) ==
+		      (x >= -16384 && x <= 16384), "Q15 identity endpoint changed at %d", x);
+	return true;
+}
+
 int main(void)
 {
-	if (!test_b1u_measurement() || !test_b1u_measurement_contracts() ||
+	if (!test_input_rounding_identity() || !test_b1u_measurement() || !test_b1u_measurement_contracts() ||
 	    !test_b1u_output_range() || !test_b1u_oracle() || !test_b1u_coding_acquisition() ||
 	    !test_b1u_parity_completion() || !test_b1u_validation_history() ||
 	    !test_model_acquisition_boundary() || !test_metric_equivalence() ||

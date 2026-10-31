@@ -2666,6 +2666,72 @@ struct codec_model_workspace {
 	struct v92_upstream_data_rx paired;
 };
 
+static bool check_duplicate_models(struct codec_model_workspace *work)
+{
+	/* Isolate the selection boundary using an owned, valid fitted receiver.
+	 * Its production fixture uses nonidentity F1 and a different geometry;
+	 * construct a small declared alphabet with zero precoder memory here.
+	 * Payload agreement alone must never discard a distinct hypothesis. */
+	work->selected = work->receiver;
+	work->selected.model.coefficient = INT16_MAX;
+	struct v92_cpd_parameters *cpd = &work->selected.decoder.mapping.cpd;
+	memset(cpd->filter, 0, sizeof(cpd->filter));
+	cpd->filter[V92_CPD_PREFILTER_FEED_FORWARD].count = work->selected.line.plan.delay + 1;
+	cpd->filter[V92_CPD_PREFILTER_FEED_FORWARD].coefficient[work->selected.line.plan.delay] = INT16_MAX;
+	for (size_t set = 0; set < V92_CPD_MAX_CONSTELLATIONS; ++set)
+		for (size_t point = 0; point < cpd->constellation[set].count; ++point)
+			cpd->constellation[set].positive_linear[point] = (int16_t)(16 * (point + 1));
+	for (size_t path = 0; path < work->selected.decoder.path_count; ++path)
+		memset(&work->selected.decoder.paths[path].filter, 0, sizeof(work->selected.decoder.paths[path].filter));
+	work->selected.model.model[1] = work->selected.model.model[0];
+	work->selected.model.model[1].input_coefficient = work->selected.model.coefficient;
+	work->selected.model.alternate = work->selected.decoder;
+	memset(work->selected.model.cost, 0, sizeof(work->selected.model.cost));
+	work->paired = work->selected;
+	CHECK(v92_upstream_data_rx_is_valid(&work->paired), "duplicate fixture is invalid");
+	for (unsigned test = 0; test < 16; ++test) {
+		unsigned fault = test % 8;
+		work->selected = work->paired;
+		work->selected.model.primary = (uint8_t)(test / 8);
+		switch (fault) {
+		case 0: break;
+		case 1: work->selected.model.model[1].variance =
+			nextafter(work->selected.model.model[1].variance, INFINITY); break;
+		case 2: work->selected.model.alternate.paths[0].descrambler.history ^= 1; break;
+		case 3: work->selected.line.received_frames--; break;
+		case 4: work->selected.model.coefficient = 16384;
+			work->selected.model.model[1].input_coefficient = 16384; break;
+		case 5: work->selected.model.model[1].input_coefficient--; break;
+		case 6: work->selected.model.model[1].intervals[0].coefficient[0] =
+			nextafter(work->selected.model.model[1].intervals[0].coefficient[0], INFINITY); break;
+		case 7:
+			for (unsigned branch = 0; branch < 2; ++branch) {
+				struct v92_pcm_frame_rx *decoder = branch ?
+					&work->selected.model.alternate : &work->selected.decoder;
+				size_t x = decoder->mapping.cpd.filter[V92_CPD_PRECODER_FEED_FORWARD].count;
+				decoder->paths[0].filter.history[x] = INT32_MAX;
+			}
+			break;
+		}
+		work->selected_before = work->selected;
+		CHECK(v92_upstream_model_finish_b1u(&work->selected) == (fault == 0),
+		      "duplicate retirement proof changed at fault %u (coefficient=%d identity=%u)", fault,
+		      work->selected.model.coefficient, v92_pcm_frame_input_rounding_is_identity(&work->selected.decoder, work->selected.model.coefficient));
+		if (fault) {
+			CHECK(!memcmp(&work->selected, &work->selected_before, sizeof(work->selected)),
+			      "declined duplicate retirement changed receiver");
+			continue;
+		}
+		CHECK(work->selected.model.valid == (1u << work->selected.model.primary) &&
+		      !memcmp(&work->selected.decoder, &work->selected_before.decoder, sizeof(work->selected.decoder)) &&
+		      !memcmp(work->selected.model.model, work->selected_before.model.model, sizeof(work->selected.model.model)) &&
+		      !memcmp(&work->selected.line, &work->selected_before.line, sizeof(work->selected.line)) &&
+		      memory_region_is_zero(&work->selected.model.alternate, sizeof(work->selected.model.alternate)) &&
+		      v92_upstream_data_rx_is_valid(&work->selected), "duplicate retirement changed retained state");
+	}
+	return true;
+}
+
 static bool check_codec_model(struct codec_model_workspace *work, int polarity, bool rm, uint8_t rate, bool peer, bool echo, unsigned deferred_block)
 {
 	bool deferred = deferred_block != 0;
@@ -2851,6 +2917,7 @@ static bool check_codec_model(struct codec_model_workspace *work, int polarity, 
 			      "host gain froze before the acquisition boundary");
 		}
 		if (deferred && work->receiver.line.received_frames == V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
+			CHECK(check_duplicate_models(work), "duplicate model controls failed");
 			work->selected = work->receiver;
 			unsigned other = work->selected.model.primary ^ 1u;
 			work->selected.line.received_frames--;

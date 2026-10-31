@@ -754,6 +754,60 @@ bool v92_pcm_frame_rx_is_valid(const struct v92_pcm_frame_rx *receiver)
 	return normalized;
 }
 
+bool v92_pcm_frame_input_rounding_is_identity(
+	const struct v92_pcm_frame_rx *receiver, int16_t coefficient)
+{
+	if (coefficient <= 0 || !v92_pcm_frame_rx_is_valid(receiver))
+		return false;
+	const struct v92_pcm_mapping *mapping = &receiver->mapping;
+	const struct v92_cpd_parameters *cpd = &mapping->cpd;
+	const struct v92_cpd_filter *z = &cpd->filter[V92_CPD_PRECODER_FEED_FORWARD];
+	const struct v92_cpd_filter *p = &cpd->filter[V92_CPD_PRECODER_FEEDBACK];
+	uint64_t input = 0, forward = 0, feedback = 0;
+
+	for (size_t set = 0; set < V92_CPD_MAX_CONSTELLATIONS; ++set)
+		for (size_t point = 0; point < cpd->constellation[set].count; ++point) {
+			uint64_t value = (uint16_t)cpd->constellation[set].positive_linear[point];
+			if (value > input) input = value;
+		}
+	for (size_t i = 0; i < z->count; ++i) {
+		int value = z->coefficient[i];
+		forward += value < 0 ? -value : value;
+	}
+	for (size_t i = 0; i < p->count; ++i) {
+		int value = p->coefficient[i];
+		feedback += 2u * (value < 0 ? -value : value);
+	}
+	if (feedback >= 32768u)
+		return false;
+	uint64_t divisor = 32768u - feedback;
+	/* x = round((32768*u + Z*u_history + 2*P*x_history)/32768).
+	 * With |u| <= U, this M is an invariant bound on |x|. CPd permits
+	 * at most 384 coefficients, so the unsigned numerator is < 2^40. */
+	uint64_t bound = ((32768u + forward) * input + 16384u + divisor - 1u) / divisor;
+	if (bound > INT32_MAX)
+		return false;
+	int32_t limit = (int32_t)bound;
+	/* For 0 < coefficient < 32768, round(coefficient*x/32768)-x is
+	 * monotone. Zero at both endpoints proves identity at EVERY integer
+	 * inside, including negative half-way cases. */
+	if (round_shift_s64_to_s32_saturating((int64_t)limit * coefficient, 15u) != limit ||
+	    round_shift_s64_to_s32_saturating(-(int64_t)limit * coefficient, 15u) != -limit)
+		return false;
+	for (size_t path = 0; path < receiver->path_count; ++path) {
+		const struct v92_pcm_frame_filter_state *filter = &receiver->paths[path].filter;
+		const int32_t *u = u_history(filter), *x = x_history(mapping, filter);
+
+		for (size_t i = 0; i < z->count; ++i)
+			if ((int64_t)u[i] < -(int64_t)input || (int64_t)u[i] > (int64_t)input)
+				return false;
+		for (size_t i = 0; i < x_history_count(mapping); ++i)
+			if ((int64_t)x[i] < -(int64_t)limit || x[i] > limit)
+				return false;
+	}
+	return true;
+}
+
 static enum v92_pcm_frame_result initialize_receiver(
 	struct v92_pcm_frame_rx *receiver,
 	const struct v92_pcm_mapping *mapping, int16_t upstream_level,
