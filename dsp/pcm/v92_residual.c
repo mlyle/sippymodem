@@ -41,16 +41,6 @@ bool v92_residual_is_valid(const struct v92_residual *filter)
 	return norm <= .10;
 }
 
-static void features(const int32_t *points, unsigned n,
-	unsigned first, unsigned second, double x[4])
-{
-	unsigned k = 0;
-	x[k++] = points[n];
-	if (first) x[k++] = points[n - first];
-	if (second) x[k++] = points[n - second];
-	x[k] = 1.;
-}
-
 static bool prime_history(struct v92_residual *filter, const int32_t *raw)
 {
 	/* History holds inverse outputs, not raw observations. Run the same
@@ -125,8 +115,11 @@ bool v92_residual_fit(struct v92_residual *filter,
 			if (!v92_residual_is_valid(&candidate)) continue;
 			double error = 0.;
 			for (unsigned n = START; n < SAMPLES; n++) {
-				double x[4], residual = raw[n]; features(points, n, first, second, x);
-				for (unsigned j = 0; j < count; j++) residual -= fitted[j] * x[j];
+				double residual = raw[n] - fitted[0] * points[n];
+				unsigned column = 1;
+				if (first) residual -= fitted[column++] * points[n - first];
+				if (second) residual -= fitted[column++] * points[n - second];
+				residual -= fitted[column];
 				error += residual * residual;
 			}
 			/* BIC plus a delay-search penalty favors scalar/one-delay fits
