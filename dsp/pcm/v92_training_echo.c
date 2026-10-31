@@ -49,9 +49,7 @@ static bool fit(const struct v92_training_echo *timing, const unsigned *lags,
 	gram_select(timing->normal, timing->cross, columns, count + 1u, normal, cross);
 	if (!gram_fit(normal, cross, count + 1u, coefficient))
 		return false;
-	*error = timing->energy;
-	for (unsigned i = 0; i <= count; ++i)
-		*error -= coefficient[i] * cross[i];
+	*error = gram_residual(timing->energy, coefficient, cross, count + 1u);
 	return isfinite(*error);
 }
 

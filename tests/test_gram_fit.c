@@ -222,6 +222,42 @@ static void test_raw_solver(void)
 	assert(determinant == 99.);
 }
 
+static void test_residual(void)
+{
+	/* Orthogonal columns with a known least-squares projection. The
+	 * unexplained target component has energy four, independently of fit. */
+	double gram[GRAM_FIT_MOMENTS] = { 4., 0., 4. };
+	double rhs[GRAM_FIT_COLUMNS] = { 8., -4., NAN, NAN };
+	double fitted[GRAM_FIT_COLUMNS] = { 0., 0., NAN, NAN };
+	assert(gram_fit(gram, rhs, 2, fitted));
+	assert(fitted[0] == 2. && fitted[1] == -1.);
+	assert(gram_residual(24., fitted, rhs, 2) == 4.);
+	assert(gram_residual(20., fitted, rhs, 2) == 0.);
+	assert(gram_residual(19., fitted, rhs, 2) == -1.);
+
+	/* The trailing NaNs must not be read, and read-only inputs may alias. */
+	double same[] = { 2., -3., NAN };
+	assert(gram_residual(20., same, same, 2) == 7.);
+	assert(same[0] == 2. && same[1] == -3. && isnan(same[2]));
+	assert(gram_residual(7., NULL, NULL, 0) == 7.);
+	assert(signbit(gram_residual(-0., NULL, NULL, 0)));
+
+	/* A dot product followed by one subtraction would lose the unit. */
+	double coefficient[] = { 1., 1., 1. };
+	double cross[] = { 0x1p54, 1., -1. };
+	assert(gram_residual(0x1p54, coefficient, cross, 1) == 0.);
+	assert(gram_residual(0x1p54, coefficient, cross, 2) == -1.);
+	assert(gram_residual(0x1p54, coefficient, cross, 3) == 0.);
+	/* Bounds and nonfinite policy stay with the owner, without a hidden
+	 * noise floor, NaN replacement, or saturation in the reduction. */
+	cross[0] = INFINITY;
+	assert(isinf(gram_residual(1., coefficient, cross, 1)) &&
+	       signbit(gram_residual(1., coefficient, cross, 1)));
+	assert(isnan(gram_residual(INFINITY, coefficient, cross, 1)));
+	coefficient[0] = 0.;
+	assert(isnan(gram_residual(1., coefficient, cross, 1)));
+}
+
 int main(void)
 {
 	test_symmetric_moments();
@@ -230,6 +266,7 @@ int main(void)
 	for (unsigned count = 1; count <= 4; count++) test_polynomial(count);
 	test_rejection();
 	test_raw_solver();
+	test_residual();
 	puts("Gram fitting tests passed");
 	return 0;
 }

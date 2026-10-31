@@ -199,12 +199,12 @@ static bool solve_four_tap_channel(const struct v92_upstream_channel *channel,
 		rhs[i] = (double)covariance(channel, true, 0, false, i) / observed;
 	}
 	if (!gram_solve(normal, rhs, 4, 1e-8, fit, NULL)) return false;
-	double error = 1., feedback = 0.;
+	double feedback = 0.;
 	for (unsigned i = 0; i < 4; i++) {
 		if (!isfinite(fit[i])) return false;
-		error -= fit[i] * rhs[i];
 		if (i) feedback += fabs(fit[i]);
 	}
+	double error = gram_residual(1., fit, rhs, 4);
 	/* Sum |P1| < 1 is a sufficient stability condition for this third-order
 	 * recurrence; verify it again after quantization. Other channels still
 	 * use the general designer rather than an unproven short inverse. */

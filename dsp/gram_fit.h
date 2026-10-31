@@ -60,6 +60,20 @@ static inline void gram_select(
 	}
 }
 
+/* Unexplained energy of a least-squares fit: y'y - coefficient' X'y.
+ * Subtract each product in column order; accumulating the projection first
+ * changes rounding when most of the measured energy is explained. Arrays
+ * cover count columns; count zero reads neither. Return the raw residual,
+ * including negative roundoff or nonfinite values. Clamping, normalization
+ * and model admission belong to the owner, as does establishing a valid fit. */
+static inline double gram_residual(
+	double energy, const double *coefficient, const double *rhs, unsigned count)
+{
+	for (unsigned i = 0; i < count; ++i)
+		energy -= coefficient[i] * rhs[i];
+	return energy;
+}
+
 /* Reduce owned dense scratch after the caller validates count (1..4) and
  * the finite, nonnegative pivot floor. Preserve arithmetic order and publish
  * the optional determinant only on success. This is shared internally by

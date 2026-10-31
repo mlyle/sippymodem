@@ -596,8 +596,8 @@ static int fit_intervals_step(struct v92_observation_fit_work *w,
 			if (!(high > w->low)) return -1;
 			struct v92_observation_fit_interval fit = { .low = w->low, .high = high };
 			if (w->low > 0. && solve_channel(&w->moments, taps, fit.coefficient)) {
-				double error = w->moments.energy;
-				for (unsigned i = 0; i < taps; i++) error -= fit.coefficient[i] * w->moments.rhs[i];
+				double error = gram_residual(w->moments.energy,
+					fit.coefficient, w->moments.rhs, taps);
 				fit.error = fmax(0., error / (count - taps));
 				if (isfinite(fit.error)) {
 					for (size_t i = 0; i < INTERVALS; i++) {
