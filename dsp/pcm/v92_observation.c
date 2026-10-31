@@ -3,6 +3,7 @@
 #include "v92_observation_fit.h"
 #include "memory_region.h"
 #include "gram_fit.h"
+#include "interval_fit.h"
 #include "integer_math.h"
 #include "sample_math.h"
 
@@ -18,6 +19,7 @@
 enum { INTERVALS = V92_OBSERVATION_INTERVALS, TAPS = V92_OBSERVATION_TAPS };
 _Static_assert(INTERVALS <= sizeof(unsigned) * CHAR_BIT, "history tags must fit");
 _Static_assert((int)TAPS == (int)GRAM_FIT_COLUMNS, "Gram moment stride must match");
+_Static_assert((int)V92_OBSERVATION_TRAINING == (int)INTERVAL_FIT_SAMPLES, "fit scratch bound must match");
 _Static_assert(V92_OBSERVATION_STEPS < UINT16_MAX, "geometry tags must fit");
 _Static_assert((V92_OBSERVATION_CACHE & (V92_OBSERVATION_CACHE - 1)) == 0 &&
 	(V92_OBSERVATION_POINTS & (V92_OBSERVATION_POINTS - 1)) == 0,
@@ -45,28 +47,6 @@ static void collect_moments(struct v92_observation_fit_moments *moments,
 		gram_accumulate(moments->gram, moments->rhs, row, taps, y[j]);
 		moments->energy += (double)y[j] * y[j];
 	}
-}
-
-/* On one side of zero, erfc(b)/erfc(a) <= exp(a*a-b*b).
- * A gap of 40 puts the subtracted tail below half an ulp of erfc(a),
- * including subnormal results. Directed rounding keeps the subtraction. */
-static double positive_gaussian_probability(double a, double b)
-{
-	if (a >= 28.) return 0.;
-	double tail = erfc(a);
-	if (b >= 28. || ((b - a) * (b + a) >= 40. && fegetround() == FE_TONEAREST))
-		return .5 * tail;
-	return .5 * (tail - erfc(b));
-}
-
-/* Gaussian interval probability with arguments scaled by sqrt(2)*sigma.
- * erfc(28) is below half the smallest binary64 subnormal; erf(6) rounds
- * to one. These are representable-value tails, not probability cutoffs. */
-static double gaussian_probability(double a, double b)
-{
-	if (a > 0.) return positive_gaussian_probability(a, b);
-	if (b < 0.) return positive_gaussian_probability(-b, -a);
-	return .5 * ((b >= 6. ? 1. : erf(b)) - (a <= -6. ? -1. : erf(a)));
 }
 
 /* log P(N(0,1) > x). Beyond 12 sigma the decreasing asymptotic series
@@ -133,54 +113,17 @@ static double bin_cost(const int16_t *q, const double *low, const double *high,
 	return cost;
 }
 
-/* Conditional moments of a Gaussian inside the received codec interval.
- * Measuring only distance OUTSIDE the interval underestimates noise: a
- * prediction inside the bin is not evidence that no noise was present. */
-static bool bin_moments(double low, double high, double mean, double variance,
-	double sigma, double *expected, double *deviation)
-{
-	double a = (low - mean) / sigma, b = (high - mean) / sigma;
-	double probability = gaussian_probability(a / sqrt(2.), b / sqrt(2.));
-	if (!(probability > 0.)) return false;
-	double pa = exp(-.5 * a * a) / sqrt(2. * acos(-1.));
-	double pb = exp(-.5 * b * b) / sqrt(2. * acos(-1.));
-	double shift = (pa - pb) / probability;
-	double ap = isfinite(a) ? a * pa : 0., bp = isfinite(b) ? b * pb : 0.;
-	*expected = mean + sigma * shift;
-	*deviation = variance * fmax(0., 1. + (ap - bp) / probability - shift * shift);
-	return isfinite(*expected) && isfinite(*deviation);
-}
-
 /* Shared conditional-bin E/M updates. Owners supply their fixed Gram system,
  * observation range and initial noise. Scalar gain retains all 96 updates;
  * the channel fallback may stop at its existing convergence boundary. */
 static bool refine_bin_fit(double coefficient[TAPS], const int16_t *q,
 	const double *low, const double *high, size_t count, size_t first,
-	unsigned taps, struct v92_observation_fit_moments *m, double noise, bool converge, double *variance)
+	unsigned taps, const double gram[GRAM_FIT_MOMENTS], double noise, bool converge, double *variance)
 {
 	for (unsigned iteration = 0; iteration < 96; iteration++) {
-		double targets[V92_OBSERVATION_TRAINING], deviations[V92_OBSERVATION_TRAINING];
-		double next[TAPS] = { 0 }, next_noise = 0.;
-		/* Every bin in this update uses the same noise distribution. */
-		double sigma = sqrt(noise);
-		memset(m->rhs, 0, sizeof(m->rhs));
-		for (size_t j = first; j < count; j++) {
-			double mean = 0.;
-			for (unsigned i = 0; i < taps; i++) mean += coefficient[i] * q[j - i];
-			if (!bin_moments(low[j], high[j], mean, noise, sigma, targets + j, deviations + j)) return false;
-			for (unsigned i = 0; i < taps; i++) m->rhs[i] += q[j - i] * targets[j];
-		}
-		if (taps == 1u) {
-			next[0] = m->rhs[0] / m->gram[0];
-			if (!isfinite(next[0]) || next[0] <= 0.) return false;
-		} else if (!solve_channel(m, taps, next)) return false;
-		for (size_t j = first; j < count; j++) {
-			double residual = targets[j];
-			for (unsigned i = 0; i < taps; i++) residual -= next[i] * q[j - i];
-			next_noise += deviations[j] + residual * residual;
-		}
-		next_noise = fmax(1., next_noise / (count - first));
-		if (!isfinite(next_noise)) return false;
+		double next[TAPS], next_noise;
+		if (!interval_fit_step(coefficient, q, low, high, count, first, taps,
+			gram, noise, next, &next_noise)) return false;
 		bool settled = false;
 		if (converge) {
 			double change = 0.;
@@ -414,7 +357,7 @@ static bool fit_bin_channel(struct v92_observation_interval *fit, const int16_t 
 	struct v92_observation_fit_moments m;
 	collect_moments(&m, q, y, count, taps);
 	return refine_bin_fit(fit->coefficient, q, low, high, count, taps, taps,
-		&m, initial_noise, true, variance);
+		m.gram, initial_noise, true, variance);
 }
 
 /* The first-codec gain intervals come from the initial center fit. Select
@@ -1088,7 +1031,7 @@ bool v92_observation_fit_scalar(double *gain,
 	double coefficient[TAPS] = { xy / xx }, variance;
 	struct v92_observation_fit_moments m = { .gram = { xx } };
 	if (!refine_bin_fit(coefficient, training->linear, low, high, count, 0, 1,
-		&m, fmax(1., linear_error / count), false, &variance)) return false;
+		m.gram, fmax(1., linear_error / count), false, &variance)) return false;
 	double fitted = coefficient[0];
 
 	double error_energy = 0.;
