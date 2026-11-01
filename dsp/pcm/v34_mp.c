@@ -11,14 +11,8 @@
 enum {
 	V34_MP_TYPE_BIT = 18,
 	V34_MP_MAXIMUM_CALL_TO_ANSWER_RATE_FIRST_BIT = 20,
-	V34_MP_MAXIMUM_ANSWER_TO_CALL_RATE_FIRST_BIT = 24,
 	V34_MP_RATE_FIELD_BITS = 4,
 	V34_MP_AUXILIARY_CHANNEL_BIT = 28,
-	V34_MP_TRELLIS_FIRST_BIT = 29,
-	V34_MP_TRELLIS_BITS = 2,
-	V34_MP_NONLINEAR_ENCODING_BIT = 31,
-	V34_MP_EXPANDED_SHAPING_BIT = 32,
-	V34_MP_ACKNOWLEDGMENT_BIT = 33,
 	V34_MP_RATE_CAPABILITY_FIRST_BIT = 35,
 	V34_MP_ASYMMETRIC_RATES_BIT = 50,
 	V34_MP_TYPE0_CRC_FIRST_BIT = 69,
@@ -184,25 +178,16 @@ static void encode_common_parameters(
 		frame, V34_MP_MAXIMUM_CALL_TO_ANSWER_RATE_FIRST_BIT,
 		V34_MP_RATE_FIELD_BITS,
 		parameters->maximum_call_to_answer_rate_2400_bps_units);
-	packed_msb_write_lsb_field(
-		frame, V34_MP_MAXIMUM_ANSWER_TO_CALL_RATE_FIRST_BIT,
-		V34_MP_RATE_FIELD_BITS,
-		parameters->maximum_answer_to_call_rate_2400_bps_units);
 	packed_msb_set_bit(
 		frame, V34_MP_AUXILIARY_CHANNEL_BIT,
 		parameters->auxiliary_channel_enabled);
-	packed_msb_write_lsb_field(
-		frame, V34_MP_TRELLIS_FIRST_BIT, V34_MP_TRELLIS_BITS,
-		(uint16_t)parameters->remote_transmitter_trellis);
-	packed_msb_set_bit(
-		frame, V34_MP_NONLINEAR_ENCODING_BIT,
-		parameters->remote_transmitter_nonlinear_encoding);
-	packed_msb_set_bit(
-		frame, V34_MP_EXPANDED_SHAPING_BIT,
-		parameters->remote_transmitter_expanded_shaping);
-	packed_msb_set_bit(
-		frame, V34_MP_ACKNOWLEDGMENT_BIT,
-		parameters->acknowledges_peer_mp);
+	pcm_mp_write_modulation(frame, (struct pcm_mp_modulation){
+		.maximum_rate = parameters->maximum_answer_to_call_rate_2400_bps_units,
+		.trellis = parameters->remote_transmitter_trellis,
+		.nonlinear = parameters->remote_transmitter_nonlinear_encoding,
+		.expanded = parameters->remote_transmitter_expanded_shaping,
+		.acknowledges = parameters->acknowledges_peer_mp,
+	});
 	packed_msb_write_lsb_field(
 		frame, V34_MP_RATE_CAPABILITY_FIRST_BIT,
 		V34_MP_RATE_CAPABILITY_BITS,
@@ -215,27 +200,20 @@ static void encode_common_parameters(
 static void decode_common_parameters(
 	const uint8_t *frame, struct v34_mp_parameters *parameters)
 {
+	struct pcm_mp_modulation modulation = pcm_mp_read_modulation(frame);
+
 	parameters->maximum_call_to_answer_rate_2400_bps_units =
 		(uint8_t)packed_msb_read_lsb_field(
 			frame,
 			V34_MP_MAXIMUM_CALL_TO_ANSWER_RATE_FIRST_BIT,
 			V34_MP_RATE_FIELD_BITS);
-	parameters->maximum_answer_to_call_rate_2400_bps_units =
-		(uint8_t)packed_msb_read_lsb_field(
-			frame,
-			V34_MP_MAXIMUM_ANSWER_TO_CALL_RATE_FIRST_BIT,
-			V34_MP_RATE_FIELD_BITS);
+	parameters->maximum_answer_to_call_rate_2400_bps_units = modulation.maximum_rate;
 	parameters->auxiliary_channel_enabled =
 		packed_msb_bit(frame, V34_MP_AUXILIARY_CHANNEL_BIT) != 0;
-	parameters->remote_transmitter_trellis =
-		(enum v34_trellis_selection)packed_msb_read_lsb_field(
-			frame, V34_MP_TRELLIS_FIRST_BIT, V34_MP_TRELLIS_BITS);
-	parameters->remote_transmitter_nonlinear_encoding =
-		packed_msb_bit(frame, V34_MP_NONLINEAR_ENCODING_BIT) != 0;
-	parameters->remote_transmitter_expanded_shaping =
-		packed_msb_bit(frame, V34_MP_EXPANDED_SHAPING_BIT) != 0;
-	parameters->acknowledges_peer_mp =
-		packed_msb_bit(frame, V34_MP_ACKNOWLEDGMENT_BIT) != 0;
+	parameters->remote_transmitter_trellis = modulation.trellis;
+	parameters->remote_transmitter_nonlinear_encoding = modulation.nonlinear;
+	parameters->remote_transmitter_expanded_shaping = modulation.expanded;
+	parameters->acknowledges_peer_mp = modulation.acknowledges;
 	parameters->data_rate_capability_mask =
 		(uint16_t)packed_msb_read_lsb_field(
 			frame, V34_MP_RATE_CAPABILITY_FIRST_BIT,

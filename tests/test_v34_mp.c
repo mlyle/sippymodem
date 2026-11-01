@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <v34_mp.h>
+#include <pcm_mp.h>
 
 #include "test.h"
 
@@ -46,6 +47,47 @@ static struct v34_mp_parameters base_parameters(bool acknowledged)
 		.acknowledges_peer_mp = acknowledged,
 		.data_rate_capability_mask = 0x0fff,
 	};
+}
+
+static bool test_shared_modulation_fields(void)
+{
+	/* Check packed byte masks directly, including reserved rate/trellis
+	 * values. The reader preserves them for the record owner to reject.
+	 * All surrounding bits, including the next word's start bit, stay intact. */
+	for (unsigned fields = 0; fields < 512; ++fields) {
+		unsigned rate = fields & 15u, trellis = (fields >> 4) & 3u;
+		unsigned flags = fields >> 6;
+
+		for (unsigned fill = 0; fill < 256; ++fill) {
+			uint8_t frame[6], expected[6];
+			struct pcm_mp_modulation modulation = {
+				.maximum_rate = (uint8_t)rate,
+				.trellis = (enum v34_trellis_selection)trellis,
+				.nonlinear = (flags & 1u) != 0,
+				.expanded = (flags & 2u) != 0,
+				.acknowledges = (flags & 4u) != 0,
+			};
+			memset(frame, (int)fill, sizeof(frame));
+			memcpy(expected, frame, sizeof(expected));
+			expected[3] = (uint8_t)((fill & 0x08u) |
+				((rate & 1u) << 7) | ((rate & 2u) << 5) |
+				((rate & 4u) << 3) | ((rate & 8u) << 1) |
+				((trellis & 1u) << 2) | (trellis & 2u) | (flags & 1u));
+			expected[4] = (uint8_t)((fill & 0x3fu) |
+				((flags & 2u) << 6) | ((flags & 4u) << 4));
+			pcm_mp_write_modulation(frame, modulation);
+			CHECK(memcmp(frame, expected, sizeof(frame)) == 0,
+			      "shared MP write changed another field: %u/%u", fields, fill);
+			struct pcm_mp_modulation decoded = pcm_mp_read_modulation(expected);
+			CHECK(decoded.maximum_rate == modulation.maximum_rate &&
+			      decoded.trellis == modulation.trellis &&
+			      decoded.nonlinear == modulation.nonlinear &&
+			      decoded.expanded == modulation.expanded &&
+			      decoded.acknowledges == modulation.acknowledges,
+			      "shared MP read changed a field: %u/%u", fields, fill);
+		}
+	}
+	return true;
 }
 
 static struct v34_mp_type1_parameters type1_parameters(void)
@@ -1070,6 +1112,7 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "shared modulation fields", test_shared_modulation_fields },
 		{ "wire record comparison", test_record_comparison },
 		{ "stream receiver", test_stream_receiver },
 		{ "stream rejection and reacquisition",

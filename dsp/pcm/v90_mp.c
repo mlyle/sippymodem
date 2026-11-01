@@ -11,13 +11,6 @@
 
 enum {
 	V90_MP_TYPE_BIT = 18,
-	V90_MP_RATE_FIRST_BIT = 24,
-	V90_MP_RATE_BITS = 4,
-	V90_MP_TRELLIS_FIRST_BIT = 29,
-	V90_MP_TRELLIS_BITS = 2,
-	V90_MP_NONLINEAR_ENCODING_BIT = 31,
-	V90_MP_EXPANDED_SHAPING_BIT = 32,
-	V90_MP_ACKNOWLEDGMENT_BIT = 33,
 	V90_MP_RATE_CAPABILITY_FIRST_BIT = 36,
 	V90_MP_TYPE0_CRC_START_BIT = 68,
 	V90_MP_TYPE1_CRC_START_BIT = 170,
@@ -196,21 +189,13 @@ static void encode_common(
 {
 	pcm_control_frame_write_prefix(sequence);
 	packed_msb_set_bit(sequence, V90_MP_TYPE_BIT, type1);
-	packed_msb_write_lsb_field(
-		sequence, V90_MP_RATE_FIRST_BIT, V90_MP_RATE_BITS,
-		parameters->maximum_upstream_rate_2400_bps_units);
-	packed_msb_write_lsb_field(
-		sequence, V90_MP_TRELLIS_FIRST_BIT, V90_MP_TRELLIS_BITS,
-		(uint16_t)parameters->upstream_trellis);
-	packed_msb_set_bit(
-		sequence, V90_MP_NONLINEAR_ENCODING_BIT,
-		parameters->upstream_nonlinear_encoding);
-	packed_msb_set_bit(
-		sequence, V90_MP_EXPANDED_SHAPING_BIT,
-		parameters->upstream_expanded_shaping);
-	packed_msb_set_bit(
-		sequence, V90_MP_ACKNOWLEDGMENT_BIT,
-		parameters->acknowledges_cp);
+	pcm_mp_write_modulation(sequence, (struct pcm_mp_modulation){
+		.maximum_rate = parameters->maximum_upstream_rate_2400_bps_units,
+		.trellis = parameters->upstream_trellis,
+		.nonlinear = parameters->upstream_nonlinear_encoding,
+		.expanded = parameters->upstream_expanded_shaping,
+		.acknowledges = parameters->acknowledges_cp,
+	});
 	packed_msb_write_lsb_field(
 		sequence, V90_MP_RATE_CAPABILITY_FIRST_BIT,
 		V90_MP_RATE_CAPABILITY_BITS,
@@ -260,19 +245,13 @@ enum v90_mp_result v90_mp_encode(
 static void decode_common(
 	const uint8_t *sequence, struct v90_mp_parameters *parameters)
 {
-	parameters->maximum_upstream_rate_2400_bps_units =
-		(uint8_t)packed_msb_read_lsb_field(
-			sequence, V90_MP_RATE_FIRST_BIT, V90_MP_RATE_BITS);
-	parameters->upstream_trellis =
-		(enum v34_trellis_selection)packed_msb_read_lsb_field(
-			sequence, V90_MP_TRELLIS_FIRST_BIT,
-			V90_MP_TRELLIS_BITS);
-	parameters->upstream_nonlinear_encoding =
-		packed_msb_bit(sequence, V90_MP_NONLINEAR_ENCODING_BIT) != 0;
-	parameters->upstream_expanded_shaping =
-		packed_msb_bit(sequence, V90_MP_EXPANDED_SHAPING_BIT) != 0;
-	parameters->acknowledges_cp =
-		packed_msb_bit(sequence, V90_MP_ACKNOWLEDGMENT_BIT) != 0;
+	struct pcm_mp_modulation modulation = pcm_mp_read_modulation(sequence);
+
+	parameters->maximum_upstream_rate_2400_bps_units = modulation.maximum_rate;
+	parameters->upstream_trellis = modulation.trellis;
+	parameters->upstream_nonlinear_encoding = modulation.nonlinear;
+	parameters->upstream_expanded_shaping = modulation.expanded;
+	parameters->acknowledges_cp = modulation.acknowledges;
 	parameters->upstream_rate_capability_mask =
 		(uint16_t)packed_msb_read_lsb_field(
 			sequence, V90_MP_RATE_CAPABILITY_FIRST_BIT,
