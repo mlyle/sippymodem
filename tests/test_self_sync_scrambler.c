@@ -352,6 +352,49 @@ static bool test_validation(void)
 	return true;
 }
 
+static bool test_group_overlap(void)
+{
+	for (unsigned direction = 0; direction < 2; ++direction) {
+		enum self_sync_scrambler_result (*transform)(
+			struct self_sync_scrambler *, const struct self_sync_scrambler_config *,
+			uint8_t, unsigned int, uint8_t *) = direction ?
+			self_sync_descramble_group : self_sync_scramble_group;
+		for (size_t offset = 0; offset < sizeof(struct self_sync_scrambler); ++offset) {
+			struct self_sync_scrambler state = { .history = 0x123456 };
+			struct self_sync_scrambler saved = state;
+
+			CHECK(transform(&state, &test_configs[0], 3, 2,
+				      (uint8_t *)&state + offset) == SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT &&
+			      memcmp(&state, &saved, sizeof(state)) == 0,
+			      "group overwrote history at %u/%zu", direction, offset);
+		}
+		for (size_t offset = 0; offset < sizeof(struct self_sync_scrambler_config); ++offset) {
+			struct self_sync_scrambler state = { .history = 0x123456 };
+			struct self_sync_scrambler saved = state;
+			struct self_sync_scrambler_config config = test_configs[0], before = config;
+
+			CHECK(transform(&state, &config, 3, 2, (uint8_t *)&config + offset) ==
+				      SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT &&
+			      memcmp(&state, &saved, sizeof(state)) == 0 &&
+			      memcmp(&config, &before, sizeof(config)) == 0,
+			      "group overwrote configuration at %u/%zu", direction, offset);
+		}
+		union {
+			struct self_sync_scrambler state;
+			struct self_sync_scrambler_config config;
+		} overlapping = { .state = { 0 } };
+		/* A 32-bit history admits the overlaid bytes on either endianness. */
+		overlapping.config = test_configs[2];
+		uint8_t before[sizeof(overlapping)], output = 0xa5;
+		memcpy(before, &overlapping, sizeof(before));
+		CHECK(transform(&overlapping.state, &overlapping.config, 3, 2, &output) ==
+			      SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT && output == 0xa5 &&
+		      memcmp(before, &overlapping, sizeof(before)) == 0,
+		      "group accepted overlapping state/config at %u", direction);
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -364,6 +407,7 @@ int main(void)
 		{ "descrambler resynchronization",
 		  test_descrambler_resynchronization },
 		{ "validation", test_validation },
+		{ "group overlap", test_group_overlap },
 		{ "unpacked streams", test_unpacked_streams },
 		{ "unpacked rejection", test_unpacked_rejection },
 	};

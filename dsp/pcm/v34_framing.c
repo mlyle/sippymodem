@@ -87,6 +87,13 @@ bool v34_transmit_scrambler_is_valid(
 	       scrambler->polynomial == polynomial;
 }
 
+static bool output_is_separate(
+	const struct v34_scrambler *state, const uint8_t *output)
+{
+	return state != NULL && output != NULL &&
+	       !memory_regions_overlap(state, sizeof(*state), output, sizeof(*output));
+}
+
 static enum v34_framing_result transform_group(
 	struct v34_scrambler *state, uint8_t input,
 	unsigned int bit_count, uint8_t *output, bool descramble)
@@ -96,7 +103,7 @@ static enum v34_framing_result transform_group(
 	enum self_sync_scrambler_result result;
 	uint8_t transformed;
 
-	if (state == NULL || output == NULL)
+	if (!output_is_separate(state, output))
 		return V34_FRAMING_INVALID_ARGUMENT;
 	shared.history = state->history;
 	config = scrambler_config(state->polynomial);
@@ -179,7 +186,7 @@ v34_scramble_mapped_dibit(
 {
 	uint8_t scrambled_dibit;
 
-	if (mapped_dibit == NULL)
+	if (!output_is_separate(scrambler, mapped_dibit))
 		return V34_FRAMING_INVALID_ARGUMENT;
 	if (v34_scramble_group(
 		    scrambler, input_dibit, 2u, &scrambled_dibit) !=
@@ -210,7 +217,7 @@ v34_scramble_differential_dibit(
 	uint8_t rotation;
 
 	if (previous_clockwise_quarter_turns > 3u ||
-	    clockwise_quarter_turns == NULL)
+	    !output_is_separate(scrambler, clockwise_quarter_turns))
 		return V34_FRAMING_INVALID_ARGUMENT;
 	if (v34_scramble_mapped_dibit(
 		    scrambler, input_dibit, &increment) !=

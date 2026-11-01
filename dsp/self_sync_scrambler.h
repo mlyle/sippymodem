@@ -45,8 +45,8 @@ self_sync_scrambler_init(
 
 /*
  * Process between one and eight bits, most-significant bit first.  Scrambling
- * remembers output bits and descrambling remembers input bits.  Rejected calls
- * leave both the state and output untouched.
+ * remembers output bits and descrambling remembers input bits. State, config
+ * and output must be disjoint. Rejected calls leave all three untouched.
  */
 enum self_sync_scrambler_result
 self_sync_scramble_group(

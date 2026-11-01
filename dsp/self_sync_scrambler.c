@@ -76,7 +76,10 @@ static enum self_sync_scrambler_result transform_group(
 	if (!self_sync_scrambler_is_valid(state, config) ||
 	    bit_count == 0 ||
 	    bit_count > SELF_SYNC_MAX_GROUP_BITS ||
-	    ((unsigned int)input >> bit_count) != 0 || output == NULL)
+	    ((unsigned int)input >> bit_count) != 0 || output == NULL ||
+	    memory_regions_overlap(state, sizeof(*state), output, sizeof(*output)) ||
+	    memory_regions_overlap(state, sizeof(*state), config, sizeof(*config)) ||
+	    memory_regions_overlap(config, sizeof(*config), output, sizeof(*output)))
 		return SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT;
 	next = *state;
 	mask = history_mask(config);

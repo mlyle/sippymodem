@@ -626,6 +626,39 @@ static bool test_validation(void)
 	return true;
 }
 
+static bool test_scalar_output_overlap(void)
+{
+	for (unsigned polynomial = 0; polynomial < 2; ++polynomial)
+		for (size_t offset = 0; offset < sizeof(struct v34_scrambler); ++offset)
+			for (unsigned operation = 0; operation < 8; ++operation) {
+				struct v34_scrambler state;
+				memset(&state, 0xa5, sizeof(state));
+				CHECK(v34_scrambler_init(&state, (enum v34_scrambler_polynomial)polynomial) ==
+					      V34_FRAMING_OK, "overlap fixture did not initialize");
+				state.history = 0x123456;
+				uint8_t before[sizeof(state)];
+				memcpy(before, &state, sizeof(before));
+				uint8_t *output = (uint8_t *)&state + offset;
+				enum v34_framing_result result;
+
+				switch (operation) {
+				case 0: result = v34_scramble_group(&state, 3, 2, output); break;
+				case 1: result = v34_descramble_group(&state, 3, 2, output); break;
+				case 2: result = v34_scramble_mapped_dibit(&state, 3, output); break;
+				case 3: result = v34_descramble_mapped_dibit(&state, 3, output); break;
+				case 4: result = v34_scramble_differential_dibit(&state, 3, 1, output); break;
+				case 5: result = v34_descramble_differential_dibit(&state, 1, 2, output); break;
+				case 6: result = v34_descramble_control_symbol(&state, 1, 2, 0, 2, output); break;
+				default: result = v34_descramble_control_symbol(&state, 1, 2, 3, 4, output); break;
+				}
+				CHECK(result == V34_FRAMING_INVALID_ARGUMENT &&
+				      memcmp(before, &state, sizeof(before)) == 0,
+				      "scalar output changed owner at %u/%zu/%u",
+				      polynomial, offset, operation);
+			}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -646,6 +679,7 @@ int main(void)
 		{ "superframe inversion patterns",
 		  test_superframe_inversion_patterns },
 		{ "scrambler state rejection", test_state_rejection },
+		{ "scalar output overlap", test_scalar_output_overlap },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;
