@@ -1613,6 +1613,8 @@ static int receive_sample(
 
 static int enter_link(struct v22_datapump *datapump)
 {
+	bool retrained = datapump_is_retraining(datapump);
+
 	if (!datapump_set_link_rates(
 		    &datapump->dp, datapump->bit_rate, datapump->bit_rate))
 		return -1;
@@ -1635,6 +1637,10 @@ static int enter_link(struct v22_datapump *datapump)
 	discard_retrain_candidate(datapump);
 	datapump->retrain_peer_signal_received = false;
 	datapump->dp.status = DPSTAT_CONNECT;
+	/* Reframe retained LAPM before the next sample can deliver data. An
+	 * initial child link is still published by its negotiation parent. */
+	if (retrained && datapump->dp.modem->dp == &datapump->dp)
+		modem_dp_reconnected(datapump->dp.modem);
 	return 0;
 }
 

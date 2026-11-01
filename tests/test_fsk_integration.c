@@ -1033,7 +1033,8 @@ static bool exercise_retrain(
 	int pending_transmit_bits = 0;
 	int pending_transmit_chars = 0;
 	bool interrupt_exchange = id == DP_V92 && !raw_transport;
-	bool check_v32_resume = (id == DP_V32 || id == DP_V32BIS) && !raw_transport;
+	bool check_lapm_resume =
+		(id == DP_V22BIS || id == DP_V32 || id == DP_V32BIS) && !raw_transport;
 	bool resume_poll_seen = false;
 	unsigned retrain_quiet = 0, longest_retrain_quiet = 0;
 
@@ -1104,7 +1105,7 @@ static bool exercise_retrain(
 	/* LAPM recovery must interrupt a real outstanding information frame,
 	 * not merely queue terminal bytes behind an idle link or resume without
 	 * retraining.  Exact delivery of this payload is checked after recovery. */
-	if ((interrupt_exchange || check_v32_resume) &&
+	if ((interrupt_exchange || check_lapm_resume) &&
 	    (!initiator_retrains || !peer_retrains ||
 	     initiator->modem->ec.lapm.va == initiator->modem->ec.lapm.vs)) {
 		fprintf(stderr,
@@ -1254,8 +1255,8 @@ static bool exercise_retrain(
 			break;
 		}
 	}
-	if (check_v32_resume && !resume_poll_seen) {
-		fprintf(stderr, "V.32 retrain did not resume outstanding LAPM data\n");
+	if (check_lapm_resume && !resume_poll_seen) {
+		fprintf(stderr, "retrain did not resume outstanding LAPM data\n");
 		return false;
 	}
 	if (!completed ||
