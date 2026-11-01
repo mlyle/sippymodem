@@ -8609,7 +8609,7 @@ static bool test_lapm_passive_establishment_recovery(void)
 		.stop = unused_stop, .ioctl = unused_control,
 	};
 
-	for (unsigned reply = 0; reply < 3; ++reply)
+	for (unsigned reply = 0; reply < 4; ++reply)
 	for (unsigned late = 0; late < 2; ++late) {
 		struct modem *m = create_compat_modem(&driver, driver.name);
 		uint8_t bits[64], wire[] = {
@@ -8661,13 +8661,55 @@ static bool test_lapm_passive_establishment_recovery(void)
 			}
 			m->packer.hdlc.rx_complete(l, &incoming);
 			outgoing = m->packer.hdlc.get_tx_frame(l);
-			CHECK(outgoing != NULL && outgoing->buf[1] == (reply == 1 ? 0xaf : 0x73) &&
+			CHECK(outgoing != NULL && outgoing->buf[1] == (reply == 2 ? 0x73 : 0xaf) &&
 			      !l->passive_establishment_expired && !modem_ec_take_retrain_request(m),
-			      "valid initial request did not retire passive recovery");
+			      "valid initial request did not advance passive recovery");
 			m->packer.hdlc.tx_complete(l, outgoing);
-			CHECK((reply == 1 && !m->bit_timer && l->state == 0 && m->state == 4) ||
+			CHECK((reply != 2 && m->bit_timer == 9 * 2400 && l->state == 0 && m->state == 4) ||
 			      (reply == 2 && m->bit_timer > 0 && l->state == 2 && m->state == 5),
 			      "passive watchdog changed ordinary establishment");
+			if (reply == 1) {
+				/* Answering XID is progress, not an established link. Keep
+				 * a bounded SABME wait even if the peer repeats valid XID. */
+				while (m->bit_timer > 1) {
+					int n = m->bit_timer - 1;
+					if (n > (int)sizeof(bits)) n = sizeof(bits);
+					CHECK(modem_put_bits(m, 1, bits, n) == n &&
+					      !modem_ec_take_retrain_request(m), "SABME wait expired early");
+				}
+				if (late)
+					CHECK(modem_get_bits(m, 1, bits, 1) == 1 &&
+					      l->passive_establishment_expired, "SABME wait did not expire");
+				m->packer.hdlc.rx_complete(l, &incoming);
+				CHECK(m->bit_timer == (late ? 0 : 1) &&
+				      l->passive_establishment_expired == (late != 0),
+				      "duplicate XID renewed or cancelled SABME recovery");
+				if (!late)
+					CHECK(modem_get_bits(m, 1, bits, 1) == 1, "SABME expiry failed");
+				CHECK(modem_ec_take_retrain_request(m) && !modem_ec_take_retrain_request(m) &&
+				      l->state == 0 && !l->rtx_count && !m->bit_timer &&
+				      modem_ec_resume_after_retrain(m) == 0 && !modem_ec_take_retrain_request(m),
+				      "SABME wait did not allow exactly one retained physical recovery");
+			} else if (reply == 3) {
+				while (m->bit_timer > 1) {
+					int n = m->bit_timer - 1;
+					if (n > (int)sizeof(bits)) n = sizeof(bits);
+					CHECK(modem_put_bits(m, 1, bits, n) == n &&
+					      !modem_ec_take_retrain_request(m), "SABME completion budget expired early");
+				}
+				if (late)
+					CHECK(modem_get_bits(m, 1, bits, 1) == 1 &&
+					      l->passive_establishment_expired, "late SABME fixture did not expire");
+				wire[1] = 0x7f;
+				incoming.count = 2;
+				m->packer.hdlc.rx_complete(l, &incoming);
+				outgoing = m->packer.hdlc.get_tx_frame(l);
+				CHECK(outgoing != NULL && outgoing->buf[1] == 0x73 &&
+				      l->state == 2 && m->state == 5 && m->bit_timer > 0 &&
+				      !l->passive_establishment_expired && !modem_ec_take_retrain_request(m),
+				      "SABME after XID did not establish and retire passive recovery");
+				m->packer.hdlc.tx_complete(l, outgoing);
+			}
 		} else {
 			if (!late)
 				CHECK(modem_get_bits(m, 1, bits, 1) == 1, "passive expiry failed");

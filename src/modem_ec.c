@@ -792,6 +792,17 @@ static int tx_xid_command(struct lapm_state *l)
 	return queue_xid(l, l->cmd_addr, &prepared);
 }
 
+static void start_passive_wait(struct modem *m)
+{
+	uint64_t rate = (uint64_t)m->tx_rate + m->rx_rate;
+	uint64_t timeout = (rate ? rate : LAPM_TIMER_FALLBACK_BIT_RATE) *
+		LAPM_ESTABLISHMENT_RECOVERY_SECONDS;
+
+	m->bit_timer = timeout > INT_MAX ? INT_MAX : (int)timeout;
+	m->bit_timer_func = passive_establishment_timeout;
+	m->ec.lapm.passive_establishment_expired = false;
+}
+
 static int rx_xid_command(struct lapm_state *l, frame_t *f)
 {
 	struct lapm_xid_config config;
@@ -828,12 +839,11 @@ static int rx_xid_command(struct lapm_state *l, frame_t *f)
 		v44_character_path_destroy(candidate);
 		return -1;
 	}
-	/* The answerer's physical-recovery watchdog supervises only the first
-	 * request. A valid XID hands ownership to ordinary establishment. */
-	if (l->modem->bit_timer_func == passive_establishment_timeout) {
-		l->modem->bit_timer = 0;
-		l->passive_establishment_expired = false;
-	}
+	/* A valid XID leaves the answerer waiting for SABME with no local
+	 * transaction. Start that budget once; duplicate requests cannot renew it. */
+	if (!duplicate && !pending && l->modem->state == STATE_EC_ESTAB &&
+	    l->modem->bit_timer_func == passive_establishment_timeout)
+		start_passive_wait(l->modem);
 	/* V.42 8.10.2: a peer command does not confirm our own command.
 	 * Keep its timer, frozen offer, and codec setup until our response arrives.
 	 * A cached reply must not reapply old parameters or reset codec histories. */
@@ -1883,21 +1893,14 @@ void modem_ec_start(struct modem *m)
 		h->tx_preamble_complete = modem_ec_negotiate;
 	}
 	else {
-		uint64_t rate = (uint64_t)m->tx_rate + m->rx_rate;
-		uint64_t timeout = (rate ? rate : LAPM_TIMER_FALLBACK_BIT_RATE) *
-			LAPM_ESTABLISHMENT_RECOVERY_SECONDS;
-
 		h->tx_complete  = lapm_tx_complete;
 		h->get_tx_frame = lapm_get_tx_frame;
-		/* The answerer cannot originate protocol establishment (V.42
-		 * 7.2.2), but waiting silently also has no T401 retries to provoke
-		 * physical recovery. Allow the same nine seconds as the originator,
-		 * then request one retrain. This is local recovery policy, not a
-		 * V.42 timer. The duplex bit clock excludes physical training. */
-		if (m->state == STATE_EC_ESTAB) {
-			m->bit_timer = timeout > INT_MAX ? INT_MAX : (int)timeout;
-			m->bit_timer_func = passive_establishment_timeout;
-		}
+		/* The answerer cannot originate establishment (V.42 7.2.2).
+		 * Bound both passive waits: first request, then SABME after XID.
+		 * Nine active seconds permit one physical recovery; duplicate XIDs
+		 * cannot renew it. This is local policy, not a V.42 timer. */
+		if (m->state == STATE_EC_ESTAB)
+			start_passive_wait(m);
 	}
 	// fixme: improve BUSY becoming, remove packer_process()
 	m->packer_process = NULL;
