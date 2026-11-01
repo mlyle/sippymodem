@@ -689,7 +689,7 @@ enum v92_pcm_frame_result v92_upstream_model_decode(struct v92_upstream_model *m
 			struct v92_pcm_frame_channel channel = { .cells = cells, .cell_sigma = sigma };
 			struct v92_pcm_frame_likelihood likelihood;
 
-			result = v92_pcm_frame_decode_observed(decoder, line->samples,
+			result = v92_pcm_frame_decode_observed_owned(decoder, line->samples,
 				b1u, bits, count, decision, &channel, &likelihood);
 		} else {
 			result = v92_pcm_frame_decode(decoder, line->samples, b1u, bits, count, decision);

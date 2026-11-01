@@ -2052,7 +2052,7 @@ enum v92_pcm_frame_result v92_pcm_frame_decode_observed_owned(
 	const struct v92_pcm_frame_channel *channel,
 	struct v92_pcm_frame_likelihood *likelihood)
 {
-	if (!channel || !channel->model || !likelihood)
+	if (!channel || (!channel->model && !channel->cells) || !likelihood)
 		return V92_PCM_FRAME_INVALID_ARGUMENT;
 	return decode_frame(receiver, samples, b1u, bits, bit_count, decision,
 		channel, likelihood, false, true);

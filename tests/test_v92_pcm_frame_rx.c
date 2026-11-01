@@ -16,6 +16,25 @@
 
 enum { UPSTREAM_LEVEL = 4096, DATA_FRAMES = 1000 };
 
+static bool decisions_equal(const struct v92_pcm_frame_decision *left,
+	const struct v92_pcm_frame_decision *right)
+{
+	return left->squared_error == right->squared_error &&
+		left->uncertain == right->uncertain &&
+		left->bits_ready == right->bits_ready &&
+		left->ambiguous == right->ambiguous &&
+		left->b1u_mismatches == right->b1u_mismatches &&
+		left->rm == right->rm &&
+		left->frame.frame_sign == right->frame.frame_sign &&
+		!memcmp(left->frame.digit, right->frame.digit, sizeof(right->frame.digit)) &&
+		!memcmp(left->frame.y0, right->frame.y0, sizeof(right->frame.y0)) &&
+		!memcmp(left->frame.signed_index, right->frame.signed_index, sizeof(right->frame.signed_index)) &&
+		!memcmp(left->frame.u, right->frame.u, sizeof(right->frame.u)) &&
+		!memcmp(left->frame.x, right->frame.x, sizeof(right->frame.x)) &&
+		!memcmp(left->frame.v, right->frame.v, sizeof(right->frame.v)) &&
+		!memcmp(left->predicted_samples, right->predicted_samples, sizeof(right->predicted_samples));
+}
+
 static int16_t quantize(enum g711_law law, int16_t value)
 {
 	return law == G711_LAW_PCMU ?
@@ -1494,20 +1513,7 @@ static bool test_observed_channel(enum g711_law law, unsigned taps, bool reorder
 			&owned_likelihood) == V92_PCM_FRAME_OK && !memcmp(&owned, &rx, sizeof(rx)) &&
 			!memcmp(owned_bits, decoded, sizeof(decoded)) &&
 			!memcmp(&owned_likelihood, &likelihood, sizeof(likelihood)) &&
-			owned_decision.squared_error == decision.squared_error &&
-			owned_decision.uncertain == decision.uncertain &&
-			owned_decision.bits_ready == decision.bits_ready &&
-			owned_decision.ambiguous == decision.ambiguous &&
-			owned_decision.b1u_mismatches == decision.b1u_mismatches &&
-			owned_decision.rm == decision.rm &&
-			owned_decision.frame.frame_sign == decision.frame.frame_sign &&
-			!memcmp(owned_decision.frame.digit, decision.frame.digit, sizeof(decision.frame.digit)) &&
-			!memcmp(owned_decision.frame.y0, decision.frame.y0, sizeof(decision.frame.y0)) &&
-			!memcmp(owned_decision.frame.signed_index, decision.frame.signed_index, sizeof(decision.frame.signed_index)) &&
-			!memcmp(owned_decision.frame.u, decision.frame.u, sizeof(decision.frame.u)) &&
-			!memcmp(owned_decision.frame.x, decision.frame.x, sizeof(decision.frame.x)) &&
-			!memcmp(owned_decision.frame.v, decision.frame.v, sizeof(decision.frame.v)) &&
-			!memcmp(owned_decision.predicted_samples, decision.predicted_samples, sizeof(decision.predicted_samples)),
+			decisions_equal(&owned_decision, &decision),
 			"owned model decoding diverged: law %u taps %u frame %u", law, taps, f);
 		if (f == 72) {
 			struct v92_pcm_frame_decision other;
@@ -1603,7 +1609,13 @@ static bool test_constellation_cells(enum g711_law law, double gain, bool gaussi
 			expected_error += (uint64_t)(error * error);
 			expected_cost += (uint64_t)(distance * distance * (weight ? weight : 1u));
 		}
-		if (f == 24u) {
+		for (unsigned owned = 0; f == 24u && owned < 2; ++owned) {
+			enum v92_pcm_frame_result (*decode)(struct v92_pcm_frame_rx *,
+				const int16_t *, bool, uint8_t *, size_t,
+				struct v92_pcm_frame_decision *,
+				const struct v92_pcm_frame_channel *,
+				struct v92_pcm_frame_likelihood *) = owned ?
+				v92_pcm_frame_decode_observed_owned : v92_pcm_frame_decode_observed;
 			struct v92_pcm_frame_rx saved = rx;
 			struct v92_pcm_frame_decision untouched;
 			struct v92_pcm_frame_likelihood unchanged;
@@ -1614,7 +1626,7 @@ static bool test_constellation_cells(enum g711_law law, double gain, bool gaussi
 			const double invalid_sigma[] = { NAN, INFINITY, -1., 32769. };
 			for (unsigned k = 0; k < ARRAY_LENGTH(invalid_sigma); ++k) {
 				channel.cell_sigma = invalid_sigma[k];
-				CHECK(v92_pcm_frame_decode_observed(&rx, samples, true, decoded,
+				CHECK(decode(&rx, samples, true, decoded,
 				      mapping.data_bits_per_frame, &decision, &channel, &likelihood) ==
 				      V92_PCM_FRAME_INVALID_PARAMETERS && !memcmp(&rx, &saved, sizeof(rx)) &&
 				      !memcmp(&decision, &untouched, sizeof(decision)) &&
@@ -1622,21 +1634,21 @@ static bool test_constellation_cells(enum g711_law law, double gain, bool gaussi
 				      "invalid cell noise was not transactional");
 			}
 			channel.cell_sigma = 2.; channel.cells = NULL;
-			CHECK(v92_pcm_frame_decode_observed(&rx, samples, true, decoded,
+			CHECK(decode(&rx, samples, true, decoded,
 			      mapping.data_bits_per_frame, &decision, &channel, &likelihood) ==
 			      V92_PCM_FRAME_INVALID_ARGUMENT && !memcmp(&rx, &saved, sizeof(rx)),
 			      "cell noise accepted without observation cells");
 			channel.cells = cells; channel.cell_sigma = gaussian ? 2. : 0.;
 			double upper = cells[11].upper;
 			cells[11].upper = NAN;
-			CHECK(v92_pcm_frame_decode_observed(&rx, samples, true, decoded,
+			CHECK(decode(&rx, samples, true, decoded,
 			      mapping.data_bits_per_frame, &decision, &channel, &likelihood) ==
 			      V92_PCM_FRAME_INVALID_PARAMETERS && !memcmp(&rx, &saved, sizeof(rx)) &&
 			      !memcmp(&decision, &untouched, sizeof(decision)) &&
 			      !memcmp(&likelihood, &unchanged, sizeof(likelihood)) && decoded[0] == 0xa5,
 			      "invalid final cell was not transactional");
 			cells[11].upper = cells[11].lower - 1.0;
-			CHECK(v92_pcm_frame_decode_observed(&rx, samples, true, decoded,
+			CHECK(decode(&rx, samples, true, decoded,
 			      mapping.data_bits_per_frame, &decision, &channel, &likelihood) ==
 			      V92_PCM_FRAME_INVALID_PARAMETERS && !memcmp(&rx, &saved, sizeof(rx)),
 			      "reversed cell was accepted");
@@ -1648,20 +1660,20 @@ static bool test_constellation_cells(enum g711_law law, double gain, bool gaussi
 			};
 			for (unsigned k = 0; k < ARRAY_LENGTH(invalid_bounds); ++k) {
 				cells[11] = invalid_bounds[k];
-				CHECK(v92_pcm_frame_decode_observed(&rx, samples, true, decoded,
+				CHECK(decode(&rx, samples, true, decoded,
 				      mapping.data_bits_per_frame, &decision, &channel, &likelihood) ==
 				      V92_PCM_FRAME_INVALID_PARAMETERS && !memcmp(&rx, &saved, sizeof(rx)),
 				      "invalid infinite cell was accepted");
 			}
 			cells[11] = saved_cell;
 			channel.levels = incompatible_levels;
-			CHECK(v92_pcm_frame_decode_observed(&rx, samples, true, decoded,
+			CHECK(decode(&rx, samples, true, decoded,
 			      mapping.data_bits_per_frame, &decision, &channel, &likelihood) ==
 			      V92_PCM_FRAME_INVALID_PARAMETERS && !memcmp(&rx, &saved, sizeof(rx)),
 			      "cells accepted a conflicting observation source");
 			channel.levels = NULL;
 			channel.cells = (const struct v92_pcm_frame_cell *)&rx;
-			CHECK(v92_pcm_frame_decode_observed(&rx, samples, true, decoded,
+			CHECK(decode(&rx, samples, true, decoded,
 			      mapping.data_bits_per_frame, &decision, &channel, &likelihood) ==
 			      V92_PCM_FRAME_INVALID_ARGUMENT && !memcmp(&rx, &saved, sizeof(rx)),
 			      "aliased cells changed receiver");
@@ -1701,7 +1713,7 @@ static bool test_constellation_cells(enum g711_law law, double gain, bool gaussi
 				memcpy(copy, cells, sizeof(copy));
 				if (side) copy[0].upper = HUGE_VAL;
 				else copy[0].lower = -HUGE_VAL;
-				CHECK(v92_pcm_frame_decode_observed(&clipped, samples, true, cb,
+				CHECK(v92_pcm_frame_decode_observed_owned(&clipped, samples, true, cb,
 				      mapping.data_bits_per_frame, &cd, &tail, &cl) == V92_PCM_FRAME_OK &&
 				      cl.cost < UINT64_MAX, "Gaussian clipping tail was rejected");
 				tail.cell_sigma = 0.;
@@ -1735,7 +1747,7 @@ static bool test_constellation_cells(enum g711_law law, double gain, bool gaussi
 			      mapping.data_bits_per_frame, &pd, &channel, &pl) == V92_PCM_FRAME_OK,
 			      "cell erasure rejected");
 			samples[5] = INT16_MIN;
-			CHECK(v92_pcm_frame_decode_observed(&negative, samples, true, nb,
+			CHECK(v92_pcm_frame_decode_observed_owned(&negative, samples, true, nb,
 			      mapping.data_bits_per_frame, &nd, &channel, &nl) == V92_PCM_FRAME_OK &&
 			      !memcmp(&positive, &negative, sizeof(positive)) &&
 			      !memcmp(pb, nb, mapping.data_bits_per_frame) && !memcmp(&pl, &nl, sizeof(pl)),
@@ -1749,9 +1761,22 @@ static bool test_constellation_cells(enum g711_law law, double gain, bool gaussi
 			samples[5] = original;
 			channel.received = NULL;
 		}
+		struct v92_pcm_frame_rx owned = rx;
+		struct v92_pcm_frame_decision owned_decision;
+		struct v92_pcm_frame_likelihood owned_likelihood;
+		uint8_t owned_bits[sizeof(decoded)];
+		memset(decoded, 0xa5, sizeof(decoded));
+		memset(owned_bits, 0xa5, sizeof(owned_bits));
 		CHECK(v92_pcm_frame_decode_observed(&rx, samples, f < V92_B1U_FRAMES, decoded,
 		      mapping.data_bits_per_frame, &decision, &channel, &likelihood) == V92_PCM_FRAME_OK &&
 		      v92_pcm_frame_rx_is_valid(&rx), "cell decode failed: law %u frame %u", law, f);
+		CHECK(v92_pcm_frame_decode_observed_owned(&owned, samples, f < V92_B1U_FRAMES,
+		      owned_bits, mapping.data_bits_per_frame, &owned_decision, &channel,
+		      &owned_likelihood) == V92_PCM_FRAME_OK &&
+		      !memcmp(&owned, &rx, sizeof(rx)) && !memcmp(owned_bits, decoded, sizeof(decoded)) &&
+		      !memcmp(&owned_likelihood, &likelihood, sizeof(likelihood)) &&
+		      decisions_equal(&owned_decision, &decision),
+		      "owned cell decoding diverged: law %u Gaussian %u frame %u", law, gaussian, f);
 		CHECK(!memcmp(decision.frame.u, encoded.u, sizeof(encoded.u)) &&
 		      decision.squared_error == expected_error && (gaussian || likelihood.cost == expected_cost),
 		      "cell ranking changed points or hid physical residual: law %u frame %u", law, f);
