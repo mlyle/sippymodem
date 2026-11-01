@@ -607,12 +607,57 @@ static bool test_validation_and_transactionality(void)
 	return true;
 }
 
+static bool test_chronological_history(void)
+{
+	struct v34_phase3_profile selected = profile();
+	struct v90_upstream_training_rx line;
+	struct v34_analytic_sample decision = { INT16_MIN, INT16_MAX };
+	const struct v34_analytic_sample sentinel = decision;
+	const unsigned capacity = V90_UPSTREAM_TRAINING_RX_HISTORY_SYMBOLS;
+
+	CHECK(v90_upstream_training_rx_init(&line, &selected,
+		      TEST_INITIAL_RECEIVE_GAIN) == V90_UPSTREAM_TRAINING_RX_OK &&
+	      !v90_upstream_training_rx_recent_decision(&line, 0, &decision) &&
+	      memcmp(&decision, &sentinel, sizeof(decision)) == 0,
+	      "empty history published a decision");
+	/* Numbered arrivals make chronological order independent of physical
+	 * storage. Cover every partial fill and every full-ring write cursor. */
+	for (unsigned sequence = 0; sequence < 2u * capacity; ++sequence) {
+		line.recent_decisions[sequence % capacity] =
+			(struct v34_analytic_sample){ (int16_t)sequence, -(int16_t)sequence };
+		line.next_recent_decision = (sequence + 1u) % capacity;
+		line.recent_decision_count = sequence < capacity ? sequence + 1u : capacity;
+		for (unsigned index = 0; index < line.recent_decision_count; ++index) {
+			int16_t expected = (int16_t)(sequence + 1u - line.recent_decision_count + index);
+
+			CHECK(v90_upstream_training_rx_recent_decision(&line, index, &decision) &&
+			      decision.in_phase == expected && decision.quadrature == -expected,
+			      "history order changed at arrival %u, index %u", sequence, index);
+		}
+		decision = sentinel;
+		CHECK(!v90_upstream_training_rx_recent_decision(
+			      &line, line.recent_decision_count, &decision) &&
+		      memcmp(&decision, &sentinel, sizeof(decision)) == 0,
+		      "history read beyond its retained prefix");
+	}
+	for (unsigned invalid = 0; invalid < 3; ++invalid) {
+		line.recent_decision_count = invalid == 0 ? capacity + 1u : invalid == 1 ? capacity : 17;
+		line.next_recent_decision = invalid == 1 ? capacity : 16;
+		CHECK(!v90_upstream_training_rx_is_valid(&line) &&
+		      !v90_upstream_training_rx_recent_decision(&line, 0, &decision) &&
+		      memcmp(&decision, &sentinel, sizeof(decision)) == 0,
+		      "invalid history %u published a decision", invalid);
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "chronological upstream history", test_chronological_history },
 		{ "G.711 lines", test_g711_lines },
 		{ "fixed G.711 Ja lines", test_fixed_ja_lines },
 		{ "peer MD G.711 Ja lines", test_peer_md_lines },

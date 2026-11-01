@@ -3,6 +3,7 @@
 #include "v90_phase4_cp_line_rx.h"
 
 #include "memory_region.h"
+#include "ring_history.h"
 #include "v90_phase3.h"
 
 #include <stddef.h>
@@ -130,7 +131,7 @@ static bool receive_fixed_decision(
 struct decision_history_view {
 	const struct v34_analytic_sample *decisions;
 	size_t count;
-	size_t oldest;
+	size_t write;
 };
 
 static bool decision_history_view_init(
@@ -141,9 +142,7 @@ static bool decision_history_view_init(
 		return false;
 	view->decisions = upstream->recent_decisions;
 	view->count = upstream->recent_decision_count;
-	view->oldest = (upstream->next_recent_decision +
-		V90_UPSTREAM_TRAINING_RX_HISTORY_SYMBOLS - view->count) %
-		V90_UPSTREAM_TRAINING_RX_HISTORY_SYMBOLS;
+	view->write = upstream->next_recent_decision;
 	return true;
 }
 
@@ -152,11 +151,11 @@ static bool history_decision(
 	struct v34_analytic_sample *decision)
 {
 	if (view->count > V90_UPSTREAM_TRAINING_RX_HISTORY_SYMBOLS ||
-	    view->oldest >= V90_UPSTREAM_TRAINING_RX_HISTORY_SYMBOLS ||
+	    view->write >= V90_UPSTREAM_TRAINING_RX_HISTORY_SYMBOLS ||
 	    index >= view->count)
 		return false;
-	*decision = view->decisions[(view->oldest + index) %
-		V90_UPSTREAM_TRAINING_RX_HISTORY_SYMBOLS];
+	*decision = view->decisions[ring_index_at_age(view->write,
+		V90_UPSTREAM_TRAINING_RX_HISTORY_SYMBOLS, view->count - index)];
 	return true;
 }
 

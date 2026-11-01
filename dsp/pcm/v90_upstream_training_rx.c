@@ -3,6 +3,7 @@
 #include "v90_upstream_training_rx.h"
 
 #include "memory_region.h"
+#include "ring_history.h"
 #include "v34_constellation.h"
 
 #include <stddef.h>
@@ -32,19 +33,6 @@ static bool semantic_state_is_valid(
 		       V34_TRAINING_SEQUENCE_MIN_SYMBOLS;
 }
 
-static bool history_is_valid(
-	const struct v90_upstream_training_rx *receiver)
-{
-	return receiver->next_recent_decision <
-		       V90_UPSTREAM_TRAINING_RX_HISTORY_SYMBOLS &&
-	       receiver->recent_decision_count <=
-		       V90_UPSTREAM_TRAINING_RX_HISTORY_SYMBOLS &&
-	       (receiver->recent_decision_count ==
-			V90_UPSTREAM_TRAINING_RX_HISTORY_SYMBOLS ||
-		receiver->next_recent_decision ==
-			receiver->recent_decision_count);
-}
-
 bool v90_upstream_training_rx_is_valid(
 	const struct v90_upstream_training_rx *receiver)
 {
@@ -55,7 +43,9 @@ bool v90_upstream_training_rx_is_valid(
 	    receiver->line.equalizer.feedback_mode !=
 		    V34_ADAPTIVE_EQUALIZER_FEEDBACK_NONE ||
 	    !semantic_state_is_valid(receiver) ||
-	    !history_is_valid(receiver))
+	    !ring_history_state_is_valid(receiver->next_recent_decision,
+		    receiver->recent_decision_count,
+		    V90_UPSTREAM_TRAINING_RX_HISTORY_SYMBOLS))
 		return false;
 	if (receiver->initial.stage < V34_PHASE3_DECISION_RECEIVER_PP)
 		return receiver->tracking_symbols == 0u;
@@ -66,17 +56,13 @@ bool v90_upstream_training_rx_recent_decision(
 	const struct v90_upstream_training_rx *receiver, size_t index,
 	struct v34_analytic_sample *decision)
 {
-	size_t oldest;
-
 	if (!v90_upstream_training_rx_is_valid(receiver) || decision == NULL ||
 	    index >= receiver->recent_decision_count)
 		return false;
-	oldest = (receiver->next_recent_decision +
-		  V90_UPSTREAM_TRAINING_RX_HISTORY_SYMBOLS -
-		  receiver->recent_decision_count) %
-		 V90_UPSTREAM_TRAINING_RX_HISTORY_SYMBOLS;
-	*decision = receiver->recent_decisions[
-		(oldest + index) % V90_UPSTREAM_TRAINING_RX_HISTORY_SYMBOLS];
+	*decision = receiver->recent_decisions[ring_index_at_age(
+		receiver->next_recent_decision,
+		V90_UPSTREAM_TRAINING_RX_HISTORY_SYMBOLS,
+		receiver->recent_decision_count - index)];
 	return true;
 }
 
