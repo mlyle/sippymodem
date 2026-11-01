@@ -1107,6 +1107,44 @@ static bool test_asymmetric_optimality(void)
 	return true;
 }
 
+static bool test_fixed_unequal_cardinalities(void)
+{
+	/* Peer-owned V.91 maps need not share the generated V.90 sixth root.
+	 * Each mask supplies exactly its required levels, leaving one legal
+	 * result at the exact whole-frame power ceiling. */
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)
+		for (unsigned reverse = 0; reverse < 2; reverse++) {
+			struct pcm_constellation available[6] = { 0 }, rows[6];
+			uint8_t map[6], count;
+			for (unsigned slot = 0; slot < 6; slot++) {
+				unsigned size = 8u + (reverse ? 5u - slot : slot);
+				for (unsigned point = 0; point < size; point++)
+					pcm_constellation_add(available + slot,
+						(uint8_t)(8u + 7u * point + slot % 2u));
+			}
+			struct v90_pcm_mapping mapping;
+			uint32_t floor, ceiling;
+			CHECK(v90_pcm_mapping_init_v91(&mapping, law, 26, available) == V90_PCM_MAPPING_OK &&
+			      v90_pcm_mapping_power(&mapping, V90_PCM_MAPPING_CODEC, law,
+				      &floor, &ceiling) == V90_PCM_MAPPING_OK && ceiling > 1,
+			      "unequal fixed map setup failed");
+			CHECK(v90_profile_select_measured_constellations(&mapping, ceiling,
+				      available, rows, map, &count), "fixed map rejected exact power");
+			for (unsigned slot = 0; slot < 6; slot++)
+				CHECK(map[slot] < count && !memcmp(rows + map[slot], available + slot,
+					      sizeof(available[0])), "fixed map changed phase %u", slot);
+			struct pcm_constellation saved[6];
+			uint8_t saved_map[6], saved_count = count;
+			memcpy(saved, rows, sizeof(saved));
+			memcpy(saved_map, map, sizeof(saved_map));
+			CHECK(!v90_profile_select_measured_constellations(&mapping, ceiling - 1,
+				      available, rows, map, &count) && count == saved_count &&
+			      !memcmp(rows, saved, sizeof(rows)) && !memcmp(map, saved_map, sizeof(map)),
+			      "fixed map power rejection changed output");
+		}
+	return true;
+}
+
 static bool test_balanced_optimality(void)
 {
 	const uint32_t limits[] = { 4000000, 16000000 };
@@ -1272,6 +1310,7 @@ int main(void)
 		{ "measured data capacity", test_measured_data_capacity },
 		{ "balanced measured capacity", test_balanced_measured_capacity },
 		{ "balanced exhaustive optimality", test_balanced_optimality },
+		{ "fixed unequal cardinalities", test_fixed_unequal_cardinalities },
 		{ "asymmetric exhaustive optimality", test_asymmetric_optimality },
 		{ "digital probe capabilities", test_digital_probe_capabilities },
 		{ "upstream policy", test_upstream_policy },

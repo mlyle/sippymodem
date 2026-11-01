@@ -229,84 +229,9 @@ bool v90_profile_generate_data_template(uint8_t rate_index,
 	return true;
 }
 
-static bool spaced_constellation(struct pcm_constellation *constellation,
-	enum g711_law law, uint8_t size, uint32_t spacing,
-	const struct pcm_constellation *available)
-{
-	uint32_t threshold = (spacing + 1u) / 2u;
-
-	*constellation = (struct pcm_constellation){ 0 };
-	/* The lowest available level at each step minimizes power for this
-	 * distance. Include the innermost positive/negative pair, which evenly
-	 * spaced companded codes would leave particularly crowded. */
-	for (unsigned int code = 0; code <= V90_CONSTELLATION_LAST_UCODE; ++code) {
-		int16_t level;
-
-		if (!g711_ucode_sample(law, (uint8_t)code, true, &level))
-			return false;
-		if ((available != NULL && !pcm_constellation_contains(available, (uint8_t)code)) ||
-		    (uint32_t)level < threshold)
-			continue;
-		pcm_constellation_add(constellation, (uint8_t)code);
-		if (--size == 0)
-			return true;
-		threshold = (uint32_t)level + spacing;
-	}
-	return false;
-}
-
-/* Called only for a validated direct-law mapping. Preserve each modulus. */
-static bool select_spaced_constellations(const struct v90_pcm_mapping *mapping,
+static bool select_constellations(const struct v90_pcm_mapping *mapping,
 	uint32_t maximum_power, const struct pcm_constellation *available,
-	struct pcm_constellation constellations[V90_CP_FRAME_INTERVALS], uint32_t *distance)
-{
-	struct v90_pcm_mapping candidate = *mapping;
-	struct pcm_constellation best[V90_CP_FRAME_INTERVALS] = { 0 };
-	uint8_t size = mapping->modulus[0];
-	uint32_t best_distance = 0;
-	for (unsigned slot = 1; slot < V90_CP_FRAME_INTERVALS; slot++)
-		if (mapping->modulus[slot] > size) size = mapping->modulus[slot];
-	int16_t peak;
-	bool found = false;
-
-	if (!g711_ucode_sample(mapping->law, V90_CONSTELLATION_LAST_UCODE, true, &peak))
-		return false;
-	uint32_t low = 1, high = 2u * (uint32_t)peak / (2u * size - 1u);
-
-	/* At fixed K and cardinality, each ordered level has a nonnegative
-	 * exact 8.5.2 power weight. The greedy set minimizes every level for
-	 * a given distance, so feasibility is monotone and can be bisected. */
-	while (low <= high) {
-		uint32_t spacing = low + (high - low) / 2u;
-		uint32_t floor, ceiling;
-
-		bool fits = true;
-		for (size_t slot = 0; slot < V90_CP_FRAME_INTERVALS; ++slot) {
-			fits = spaced_constellation(&candidate.transmit[slot], mapping->law,
-				mapping->modulus[slot], spacing, available ? &available[slot] : NULL) && fits;
-			candidate.codec[slot] = candidate.transmit[slot];
-		}
-		if (!fits) {
-			high = spacing - 1u;
-			continue;
-		}
-		if (v90_pcm_mapping_power(&candidate, V90_PCM_MAPPING_CODEC,
-					 mapping->law, &floor, &ceiling) != V90_PCM_MAPPING_OK)
-			return false;
-		if (ceiling <= maximum_power) {
-			memcpy(best, candidate.transmit, sizeof(best));
-			best_distance = spacing;
-			found = true;
-			low = spacing + 1u;
-		} else
-			high = spacing - 1u;
-	}
-	if (found) {
-		memcpy(constellations, best, sizeof(best));
-		if (distance) *distance = best_distance;
-	}
-	return found;
-}
+	bool balance, struct pcm_constellation selected[V90_CP_FRAME_INTERVALS]);
 
 bool v90_profile_select_measured_constellations(
 	const struct v90_pcm_mapping *mapping, uint32_t maximum_power,
@@ -320,7 +245,7 @@ bool v90_profile_select_measured_constellations(
 	    !v90_pcm_mapping_is_valid(mapping) || mapping->codec_plane_differs ||
 	    maximum_power == 0)
 		return false;
-	return select_spaced_constellations(mapping, maximum_power, available, selected, NULL) &&
+	return select_constellations(mapping, maximum_power, available, false, selected) &&
 		pcm_constellations_pack(selected, rows, map, count);
 }
 
@@ -395,7 +320,7 @@ static void prepare_levels(struct spaced_levels *levels, enum g711_law law,
 	}
 }
 
-static uint32_t balanced_power(const struct spaced_levels levels[6],
+static uint32_t constellation_power(const struct spaced_levels levels[6],
 	const uint8_t sizes[6], unsigned bits)
 {
 	uint64_t remaining = (UINT64_C(1) << bits) - 1, stride = 1;
@@ -485,40 +410,53 @@ static unsigned data_families(const struct v90_pcm_mapping *mapping,
 
 /* A fixed size vector's feasibility is monotone in distance. A union of
  * fixed families therefore permits bisection, sharing one greedy level
- * prefix per phase and distance. Preserve the old family at equal distance;
+ * prefix per phase and distance. Preserve the original moduli at equal distance;
  * otherwise prefer the lowest exact power ceiling, then family/pattern order.
  * This is a bounded family, not optimization over arbitrary size vectors. */
-static bool select_balanced_constellations(const struct v90_pcm_mapping *mapping,
+static bool select_constellations(const struct v90_pcm_mapping *mapping,
 	uint32_t maximum_power, const struct pcm_constellation *available,
-	struct pcm_constellation selected[V90_CP_FRAME_INTERVALS])
+	bool balance, struct pcm_constellation selected[V90_CP_FRAME_INTERVALS])
 {
-	uint32_t distance = 0;
-	bool found = select_spaced_constellations(mapping, maximum_power, available, selected, &distance);
-	unsigned root = mapping->modulus[0];
-	if (root == V90_INITIAL_CONSTELLATION_SIZE)
-		return found;
-	struct cardinality_family families[PCM_CONSTELLATION_UCODES];
-	unsigned count = data_families(mapping, available, families);
-	if (count == 0)
-		return found;
+	unsigned root = mapping->modulus[0], largest = root;
 	uint64_t capacity = 1, words = UINT64_C(1) << mapping->modulus_bits;
-	for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++)
-		capacity *= root;
-	if (count == 1 && capacity == words)
-		return found;
+	struct cardinality_family families[PCM_CONSTELLATION_UCODES];
+	unsigned count = 0;
+	bool found = false;
 	int16_t peak;
+
+	for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++) {
+		if (mapping->modulus[slot] > largest)
+			largest = mapping->modulus[slot];
+		capacity *= root;
+	}
+	/* Only generated common-row maps may trade capacity between phases.
+	 * Peer-owned maps retain every interval's independent cardinality. */
+	if (balance && root != V90_INITIAL_CONSTELLATION_SIZE) {
+		count = data_families(mapping, available, families);
+		if (count == 1 && capacity == words)
+			count = 0;
+	}
 	if (!g711_ucode_sample(mapping->law, V90_CONSTELLATION_LAST_UCODE, true, &peak))
-		return found;
-	uint32_t low = distance + 1u, high = 2u * (uint32_t)peak / (2u * root - 1u);
+		return false;
+	uint32_t low = 1, high = 2u * (uint32_t)peak / (2u * largest - 1u);
 	while (low <= high) {
 		uint32_t spacing = low + (high - low) / 2u, best_power = UINT32_MAX;
 		uint8_t best[V90_CP_FRAME_INTERVALS] = { 0 };
-		bool fits = false;
+		bool fits = true;
 		struct spaced_levels levels[V90_CP_FRAME_INTERVALS];
 		for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++)
 			prepare_levels(&levels[slot], mapping->law, spacing,
 				available ? available + slot : NULL);
-		for (unsigned family = 0; family < count; family++) {
+		/* The original cardinalities win at equal distance. Both searches
+		 * use the same componentwise-minimal levels and exact power sum. */
+		for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++)
+			fits &= mapping->modulus[slot] <= levels[slot].size;
+		fits = fits && constellation_power(levels, mapping->modulus,
+			mapping->modulus_bits) <= maximum_power;
+		if (fits)
+			memcpy(best, mapping->modulus, sizeof(best));
+		unsigned family_count = fits ? 0 : count;
+		for (unsigned family = 0; family < family_count; family++) {
 			const struct cardinality_family *f = &families[family];
 			unsigned pattern = 0;
 			do {
@@ -531,7 +469,7 @@ static bool select_balanced_constellations(const struct v90_pcm_mapping *mapping
 					usable &= sizes[slot] <= levels[slot].size;
 				}
 				if (usable && capacity >= words) {
-					uint32_t power = balanced_power(levels, sizes, mapping->modulus_bits);
+					uint32_t power = constellation_power(levels, sizes, mapping->modulus_bits);
 					if (power <= maximum_power && power < best_power) {
 						fits = true;
 						best_power = power;
@@ -584,7 +522,7 @@ bool v90_profile_generate_measured_constellations(enum g711_law law,
 	generate_constellation(&parameters.transmit_constellations[0],
 		data_constellation_size(rate_index, sign_redundancy), V90_CONSTELLATION_LAST_UCODE);
 	return v90_pcm_mapping_init(&mapping, &parameters) == V90_PCM_MAPPING_OK &&
-		select_balanced_constellations(&mapping, maximum_power, available, selected) &&
+		select_constellations(&mapping, maximum_power, available, true, selected) &&
 		pcm_constellations_pack(selected, rows, map, count);
 }
 
