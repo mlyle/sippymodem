@@ -200,14 +200,11 @@ enum v90_phase4_cp_tx_result v90_phase4_cp_tx_next_owned(
 		return V90_PHASE4_CP_TX_INVALID_ARGUMENT;
 	if (tx->bit_index == tx->frame_bit_count)
 		return V90_PHASE4_CP_TX_RECORD_COMPLETE;
-	if (!v34_training_encode_packed_symbol(
-		    &tx->scrambler, tx->constellation, tx->frame, tx->bit_index,
-		    &tx->previous_clockwise_quarter_turns, point, quarter_point))
+	if (!v34_training_record_next(
+		    &tx->scrambler, tx->constellation, tx->frame, tx->frame_bit_count,
+		    &tx->bit_index, &tx->previous_clockwise_quarter_turns,
+		    point, quarter_point, clockwise_quarter_turns, record_complete))
 		return V90_PHASE4_CP_TX_INVALID_ARGUMENT;
-	/* The validated record and cursor contain whole symbols. */
-	tx->bit_index += v34_constellation_bits_per_symbol(tx->constellation);
-	*clockwise_quarter_turns = tx->previous_clockwise_quarter_turns;
-	*record_complete = tx->bit_index == tx->frame_bit_count;
 	return V90_PHASE4_CP_TX_OK;
 }
 

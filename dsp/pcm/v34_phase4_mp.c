@@ -260,16 +260,11 @@ enum v34_phase4_mp_result v34_phase4_mp_next(
 		return V34_PHASE4_MP_INVALID_ARGUMENT;
 	if (transmitter->bit_index == transmitter->frame_bit_count)
 		return V34_PHASE4_MP_RECORD_COMPLETE;
-	if (!v34_training_encode_packed_symbol(
+	if (!v34_training_record_next(
 		    &transmitter->scrambler, transmitter->constellation,
-		    transmitter->frame, transmitter->bit_index,
+		    transmitter->frame, transmitter->frame_bit_count, &transmitter->bit_index,
 		    &transmitter->previous_clockwise_quarter_turns,
-		    point, quarter_point))
+		    point, quarter_point, clockwise_quarter_turns, record_complete))
 		return V34_PHASE4_MP_INVALID_ARGUMENT;
-	/* The record is unchanged; one aligned symbol preserves valid bounds. */
-	transmitter->bit_index +=
-		v34_constellation_bits_per_symbol(transmitter->constellation);
-	*clockwise_quarter_turns = transmitter->previous_clockwise_quarter_turns;
-	*record_complete = transmitter->bit_index == transmitter->frame_bit_count;
 	return V34_PHASE4_MP_OK;
 }

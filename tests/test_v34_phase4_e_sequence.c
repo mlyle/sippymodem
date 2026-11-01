@@ -432,6 +432,10 @@ static bool test_training_symbol_rejection(void)
 	const struct qam_point sentinel = { 17.0, -29.0 };
 	struct qam_point point = sentinel;
 	uint8_t rotation = 2, quarter = 7;
+	const uint8_t frame[] = { 0xf0 };
+	size_t cursor = 0;
+	bool complete = true;
+	uint8_t emitted_rotation = 7;
 
 	CHECK(v34_transmit_scrambler_init(&scrambler, V34_CALLING_STATION) ==
 	      V34_FRAMING_OK, "training symbol setup failed");
@@ -451,6 +455,16 @@ static bool test_training_symbol_rejection(void)
 	      point.in_phase == sentinel.in_phase &&
 	      point.quadrature == sentinel.quadrature,
 	      "rejected training symbol changed history or outputs");
+	CHECK(!v34_training_record_next(&scrambler,
+		      (enum v34_constellation_size)8, frame, 4, &cursor,
+		      &rotation, &point, &quarter, &emitted_rotation, &complete) &&
+	      cursor == 0 && complete && rotation == 2 && quarter == 7 &&
+	      emitted_rotation == 7 &&
+	      scrambler.history == saved.history &&
+	      scrambler.polynomial == saved.polynomial &&
+	      point.in_phase == sentinel.in_phase &&
+	      point.quadrature == sentinel.quadrature,
+	      "rejected training record advanced its cursor or published outputs");
 	return true;
 }
 

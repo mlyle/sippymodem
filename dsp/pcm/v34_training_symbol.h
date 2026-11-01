@@ -37,20 +37,27 @@ static inline bool v34_training_encode_symbol(
 	return true;
 }
 
-/* The record owner validates a complete two- or four-bit symbol at bit_index.
+/* The record owner validates a complete two- or four-bit symbol at *bit_index.
  * Read its differential dibit first, followed by the mapped dibit when used.
- * The record stays read-only; the same atomic history/output update applies. */
-static inline bool v34_training_encode_packed_symbol(
+ * Advance the cursor and report completion only after encoding succeeds.
+ * The record stays read-only; state and output regions must be disjoint. */
+static inline bool v34_training_record_next(
 	struct v34_scrambler *scrambler,
 	enum v34_constellation_size constellation,
-	const uint8_t *frame, size_t bit_index,
-	uint8_t *rotation, struct qam_point *point, uint8_t *quarter_point)
+	const uint8_t *frame, size_t frame_bit_count, size_t *bit_index,
+	uint8_t *rotation, struct qam_point *point, uint8_t *quarter_point,
+	uint8_t *clockwise_quarter_turns, bool *record_complete)
 {
-	return v34_training_encode_symbol(scrambler, constellation,
-		(uint8_t)packed_msb_read_msb_field(frame, bit_index, 2u),
+	if (!v34_training_encode_symbol(scrambler, constellation,
+		(uint8_t)packed_msb_read_msb_field(frame, *bit_index, 2u),
 		constellation == V34_CONSTELLATION_16_POINT ?
-			(uint8_t)packed_msb_read_msb_field(frame, bit_index + 2u, 2u) : 0u,
-		rotation, point, quarter_point);
+			(uint8_t)packed_msb_read_msb_field(frame, *bit_index + 2u, 2u) : 0u,
+		rotation, point, quarter_point))
+		return false;
+	*bit_index += v34_constellation_bits_per_symbol(constellation);
+	*clockwise_quarter_turns = *rotation;
+	*record_complete = *bit_index == frame_bit_count;
+	return true;
 }
 
 #endif /* V34_TRAINING_SYMBOL_H */
