@@ -3,6 +3,7 @@
 #include "end_path.h"
 
 #include "memory_region.h"
+#include "rate_decision.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -105,40 +106,29 @@ static enum v32_end_path_result commit_observations(
 	struct v32_equalizer_observation *observation)
 {
 	while (receive_result == V32_RECEIVE_PATH_OBSERVATION_READY) {
-		struct v32_uncoded_receiver next_four_point;
-		struct v32_rate_signal_detector next_detector;
-		struct v32_uncoded_symbol symbol;
-		struct v32_rate_offer offer;
-		enum v32_rate_signal_event event;
+		struct v32_rate_decision decision;
 
-		next_four_point = path->four_point;
-		next_detector = path->detector;
-		if (v32_uncoded_receiver_observe(
-			    &next_four_point, V32_4800_BITS_PER_SYMBOL,
-			    observation, true, &symbol) !=
-			    V32_UNCODED_RECEIVER_OK ||
-		    v32_rate_signal_detector_observe(
-			    &next_detector, symbol.group, &event, &offer) !=
-			    V32_RATE_SIGNAL_OK)
+		if (!v32_rate_decision_prepare(
+			    &path->four_point, &path->detector, observation, &decision))
 			return V32_END_PATH_INVALID_STATE;
-		if (!event_is_allowed(path, event, &offer))
+		if (!event_is_allowed(path, decision.event, &decision.offer))
 			return V32_END_PATH_SEQUENCE_REJECTED;
 		if (path->receive.equalizer.adaptation ==
 		    path->target_adaptation) {
 			receive_result = v32_receive_path_commit(
-				&path->receive, &symbol.equalizer, observation);
+				&path->receive, &decision.symbol.equalizer, observation);
 		} else {
 			receive_result = v32_receive_path_commit_adaptation(
-				&path->receive, &symbol.equalizer,
+				&path->receive, &decision.symbol.equalizer,
 				path->target_adaptation, observation);
 		}
 		if (receive_result != V32_RECEIVE_PATH_OK &&
 		    receive_result != V32_RECEIVE_PATH_OBSERVATION_READY)
 			return V32_END_PATH_INVALID_STATE;
-		path->four_point = next_four_point;
-		path->detector = next_detector;
-		path->observation_epoch = symbol.equalizer.observation.epoch;
-		if (event == V32_END_SIGNAL_DETECTED) {
+		path->four_point = decision.four_point;
+		path->detector = decision.detector;
+		path->observation_epoch = decision.symbol.equalizer.observation.epoch;
+		if (decision.event == V32_END_SIGNAL_DETECTED) {
 			path->end_received = true;
 			return v32_end_path_header_is_valid(path) ?
 				       V32_END_PATH_COMPLETE :

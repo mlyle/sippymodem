@@ -9,6 +9,7 @@
 #include <end_path.h>
 #include <qam.h>
 #include <rate_path.h>
+#include <rate_decision.h>
 #include <trellis.h>
 
 #include "test.h"
@@ -1313,6 +1314,54 @@ static bool test_contracts(
 	return true;
 }
 
+static bool test_rate_decision_candidate(void)
+{
+	for (unsigned role = 0; role < 2; ++role) {
+		struct v32_uncoded_receiver four_point = { 0 };
+		struct v32_rate_signal_detector detector;
+		struct v32_equalizer_observation observation = {
+			.i = 4096, .q = 4096, .phase = 4096, .magnitude = 12000,
+			.epoch = 1, .lineage = 0x123456,
+		};
+		struct v32_rate_decision candidate, unchanged;
+
+		CHECK(v32_symbol_decoder_init(&four_point.decoder,
+			      (enum v32_transmitter_role)role, 0) == V32_FRAMING_OK &&
+		      v32_rate_signal_detector_init(&detector) == V32_RATE_SIGNAL_OK,
+		      "rate candidate fixture did not initialize");
+		struct v32_uncoded_receiver before_four_point = four_point;
+		struct v32_rate_signal_detector before_detector = detector;
+		CHECK(v32_rate_decision_prepare(
+			      &four_point, &detector, &observation, &candidate) &&
+		      memcmp(&four_point, &before_four_point, sizeof(four_point)) == 0 &&
+		      memcmp(&detector, &before_detector, sizeof(detector)) == 0 &&
+		      candidate.detector.dibits_seen > detector.dibits_seen &&
+		      v32_equalizer_observations_are_equal(
+			      &candidate.symbol.equalizer.observation, &observation) &&
+		      candidate.symbol.equalizer.adapt_on_error,
+		      "tentative rate decision changed an active owner or lost its observation");
+		memset(&candidate, 0x5a, sizeof(candidate));
+		memcpy(&unchanged, &candidate, sizeof(unchanged));
+		/* The detector fails after the candidate's four-point decode.
+		 * Neither that partial candidate nor the active decoder may escape. */
+		detector.dibits_seen = UINT8_MAX;
+		before_detector = detector;
+		CHECK(!v32_rate_decision_prepare(
+			      &four_point, &detector, &observation, &candidate) &&
+		      memcmp(&candidate, &unchanged, sizeof(candidate)) == 0 &&
+		      memcmp(&four_point, &before_four_point, sizeof(four_point)) == 0 &&
+		      memcmp(&detector, &before_detector, sizeof(detector)) == 0,
+		      "rejected rate detector published partial framing state");
+		detector = (struct v32_rate_signal_detector){ 0 };
+		observation.epoch = 0;
+		CHECK(!v32_rate_decision_prepare(
+			      &four_point, &detector, &observation, &candidate) &&
+		      memcmp(&candidate, &unchanged, sizeof(candidate)) == 0,
+		      "rejected observation changed the rate candidate");
+	}
+	return true;
+}
+
 static bool test_uncoded_phase_handoff(void)
 {
 	struct v32_end_path_handoff end = { 0 };
@@ -1422,6 +1471,7 @@ int main(void)
 	}
 	if (!test_cleardown(V32_CALLING_TRANSMITTER) ||
 	    !test_cleardown(V32_ANSWERING_TRANSMITTER) ||
+	    !test_rate_decision_candidate() ||
 	    !test_uncoded_phase_handoff() || !test_contracts(
 		    &conditioning, &started, &completed,
 		    &end_started, &end_completed, &completed_end_handoff,
