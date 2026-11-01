@@ -1027,15 +1027,27 @@ static int model_seed(struct v92_observation_cache *cache,
 	for (unsigned i = 1; i < cache->model->taps; ++i)
 		target -= .5 * (history[i - 1].values.low[i] + history[i - 1].values.high[i]);
 	unsigned low = 0, high = points;
+	double below = 0., above = 0.;
 	while (low < high) {
 		unsigned mid = low + (high - low) / 2;
 		int eta = first + (int)(mid * step);
 		struct v92_observation_range range = v92_observation_range(cache,
 			precoder_output(precoder, v92_cpd_signed_point(constellation, eta)));
 
-		if (.5 * (range.low + range.high) < target) low = mid + 1;
-		else high = mid;
+		double center = .5 * (range.low + range.high);
+		if (center < target) {
+			below = center;
+			low = mid + 1;
+		} else {
+			above = center;
+			high = mid;
+		}
 	}
+	/* An interior lower bound has visited both adjacent legal centers.
+	 * Start nearer the estimate; midpoint ties retain the upper point.
+	 * Exact likelihoods and conservative bounds still own admission. */
+	if (low && low < points && fabs(target - below) < fabs(above - target))
+		--low;
 	return first + (int)((low < points ? low : points - 1u) * step);
 }
 
