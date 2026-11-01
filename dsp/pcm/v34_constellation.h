@@ -23,6 +23,11 @@ struct v34_grid_point {
 	int16_t quadrature;
 };
 
+struct v34_constellation_extent {
+	uint16_t maximum_axis;
+	uint16_t maximum_squared_magnitude;
+};
+
 static inline bool v34_grid_point_is_bounded(
 	const struct v34_grid_point *point)
 {
@@ -98,6 +103,15 @@ v34_quarter_superconstellation_generate(
 enum v34_constellation_result
 v34_quarter_superconstellation_point(
 	size_t label, struct v34_grid_point *point);
+
+/* Exact envelope of labels [0, point_count). maximum_axis excludes the
+ * margin; squared magnitude includes an outward margin of 0, 1 or 2 grid
+ * units on both axes (the supported precoder half-grid steps). Rejection
+ * leaves extent unchanged. */
+enum v34_constellation_result
+v34_quarter_superconstellation_extent(
+	size_t point_count, unsigned margin,
+	struct v34_constellation_extent *extent);
 
 /* Recover the exact Figure 5 label for an unrotated quarter-
  * superconstellation point. The destination is unchanged when the point is

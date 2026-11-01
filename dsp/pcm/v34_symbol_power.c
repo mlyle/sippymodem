@@ -98,48 +98,6 @@ static bool measured_power_relation_is_valid(
 	       nearly_equal(precoded_mean, projected_mean);
 }
 
-static bool maximum_precoded_point_power(
-	const struct v34_mapping_parameters *parameters,
-	double *maximum)
-{
-	int64_t maximum_squared_q7 = 0;
-	int64_t half_grid_step_q7 =
-		(int64_t)v34_precoder_grid_step_for_mapping(parameters) *
-		V34_Q7_SCALE / 2;
-	size_t quarter_point_count = parameters->constellation_points / 4u;
-
-	/* c(n) is the nearest grid multiple to p(n), so each component of
-	 * c(n) - p(n) is bounded by half a grid step. Enumerating the mapper
-	 * labels and adding that residual outward gives a data-independent
-	 * envelope for x(n). */
-	for (size_t label = 0; label < quarter_point_count; ++label) {
-		struct v34_grid_point point;
-		int64_t in_phase;
-		int64_t quadrature;
-		int64_t squared_q7;
-
-		if (v34_quarter_superconstellation_point(
-			    label, &point) != V34_CONSTELLATION_OK)
-			return false;
-		in_phase =
-			(point.in_phase < 0 ? -(int64_t)point.in_phase :
-					      point.in_phase) *
-				V34_Q7_SCALE +
-			half_grid_step_q7;
-		quadrature =
-			(point.quadrature < 0 ? -(int64_t)point.quadrature :
-						 point.quadrature) *
-				V34_Q7_SCALE +
-			half_grid_step_q7;
-		squared_q7 = in_phase * in_phase + quadrature * quadrature;
-		if (squared_q7 > maximum_squared_q7)
-			maximum_squared_q7 = squared_q7;
-	}
-	*maximum = (double)maximum_squared_q7 /
-		((double)V34_Q7_SCALE * V34_Q7_SCALE);
-	return isfinite(*maximum) && *maximum > 0.0;
-}
-
 /* All callers stage their normalizer before publishing it. Keep the same
  * multiplication order for measured, linear and replacement gains. */
 static bool apply_normalization_gain(
@@ -158,13 +116,17 @@ enum v34_symbol_power_result v34_power_normalizer_init_linear(
 	const struct v34_mapping_parameters *parameters, double normalization_gain)
 {
 	struct v34_power_normalizer generated = { 0 };
+	struct v34_constellation_extent extent;
 
 	if (normalizer == NULL || !v34_mapping_parameters_is_valid(parameters) ||
 	    !isfinite(normalization_gain) || normalization_gain <= 0.0 ||
-	    !maximum_precoded_point_power(parameters, &generated.maximum_precoded_point_power))
+	    v34_quarter_superconstellation_extent(parameters->constellation_points / 4u,
+		v34_precoder_grid_step_for_mapping(parameters) / 2u, &extent) !=
+		    V34_CONSTELLATION_OK)
 		return V34_SYMBOL_POWER_INVALID_ARGUMENT;
 	generated.parameters = *parameters;
 	generated.nonlinear_parameter = V34_NONLINEAR_THETA_ZERO;
+	generated.maximum_precoded_point_power = extent.maximum_squared_magnitude;
 	generated.maximum_projected_point_power = generated.maximum_precoded_point_power;
 	if (!apply_normalization_gain(&generated, normalization_gain))
 		return V34_SYMBOL_POWER_NUMERIC_FAILURE;
@@ -182,6 +144,7 @@ enum v34_symbol_power_result v34_power_normalizer_init(
 		*projected_measurement)
 {
 	struct v34_power_normalizer generated = { 0 };
+	struct v34_constellation_extent extent;
 	enum v34_nonlinear_result nonlinear_result;
 
 	if (normalizer == NULL ||
@@ -197,12 +160,14 @@ enum v34_symbol_power_result v34_power_normalizer_init(
 		    nonlinear_parameter,
 		    precoded_measurement->mean_squared_magnitude) ||
 	    projected_measurement->mean_squared_magnitude <= 0.0 ||
-	    !maximum_precoded_point_power(
-		    parameters, &generated.maximum_precoded_point_power) ||
+	    v34_quarter_superconstellation_extent(parameters->constellation_points / 4u,
+		v34_precoder_grid_step_for_mapping(parameters) / 2u, &extent) !=
+		    V34_CONSTELLATION_OK ||
 	    !power_does_not_exceed(
 		    precoded_measurement->mean_squared_magnitude,
-		    generated.maximum_precoded_point_power))
+		    extent.maximum_squared_magnitude))
 		return V34_SYMBOL_POWER_INVALID_ARGUMENT;
+	generated.maximum_precoded_point_power = extent.maximum_squared_magnitude;
 	nonlinear_result = v34_nonlinear_project_power(
 		nonlinear_parameter,
 		precoded_measurement->mean_squared_magnitude,

@@ -11,6 +11,10 @@
 
 _Static_assert(sizeof(V34_QUARTER_POINTS) / sizeof(V34_QUARTER_POINTS[0]) ==
 	V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT, "generated constellation size");
+_Static_assert(INT64_C(2) * (V34_QUARTER_GRID_MIN - 2) *
+	(V34_QUARTER_GRID_MIN - 2) <= UINT16_MAX &&
+	INT64_C(2) * (V34_QUARTER_GRID_MAX + 2) *
+	(V34_QUARTER_GRID_MAX + 2) <= UINT16_MAX, "constellation envelope fits uint16_t");
 
 static const double V34_POINT_ZERO_COORDINATE =
 	0.70710678118654752440084436210485;
@@ -41,6 +45,33 @@ v34_quarter_superconstellation_point(
 	if (point == NULL || label >= V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT)
 		return V34_CONSTELLATION_INVALID_ARGUMENT;
 	*point = V34_QUARTER_POINTS[label];
+	return V34_CONSTELLATION_OK;
+}
+
+enum v34_constellation_result
+v34_quarter_superconstellation_extent(
+	size_t point_count, unsigned margin,
+	struct v34_constellation_extent *extent)
+{
+	struct v34_constellation_extent measured = { 0 };
+
+	if (extent == NULL || point_count == 0 ||
+	    point_count > V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT || margin > 2)
+		return V34_CONSTELLATION_INVALID_ARGUMENT;
+	for (size_t label = 0; label < point_count; ++label) {
+		struct v34_grid_point point = V34_QUARTER_POINTS[label];
+		unsigned real = point.in_phase < 0 ? -point.in_phase : point.in_phase;
+		unsigned imaginary = point.quadrature < 0 ? -point.quadrature : point.quadrature;
+		unsigned axis = real > imaginary ? real : imaginary;
+		unsigned power = (real + margin) * (real + margin) +
+			(imaginary + margin) * (imaginary + margin);
+
+		if (axis > measured.maximum_axis)
+			measured.maximum_axis = (uint16_t)axis;
+		if (power > measured.maximum_squared_magnitude)
+			measured.maximum_squared_magnitude = (uint16_t)power;
+	}
+	*extent = measured;
 	return V34_CONSTELLATION_OK;
 }
 

@@ -7,6 +7,7 @@
 #include <float.h>
 #include <limits.h>
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 static const double TEST_TOLERANCE = 1e-14;
@@ -101,6 +102,55 @@ static bool test_quarter_superconstellation(void)
 	CHECK(quarter_constellation_digest(points, ARRAY_LENGTH(points)) ==
 		      UINT64_C(0x79ad213cde9d9435),
 	      "quarter-superconstellation coordinate digest changed");
+	return true;
+}
+
+static bool test_quarter_constellation_envelope(void)
+{
+	struct v34_grid_point points[V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT];
+
+	CHECK(v34_quarter_superconstellation_generate(points, ARRAY_LENGTH(points)) ==
+	      V34_CONSTELLATION_OK, "envelope fixture generation failed");
+	for (unsigned margin = 0; margin <= 2; ++margin) {
+		int maximum_axis = 0, maximum_power = 0;
+
+		for (size_t label = 0; label < ARRAY_LENGTH(points); ++label) {
+			int real = points[label].in_phase, imaginary = points[label].quadrature;
+
+			if (abs(real) > maximum_axis) maximum_axis = abs(real);
+			if (abs(imaginary) > maximum_axis) maximum_axis = abs(imaginary);
+			/* Evaluate every corner of the allowed precoder residual box,
+			 * independently of the production absolute-coordinate shortcut. */
+			for (int dx = -(int)margin; dx <= (int)margin; ++dx)
+				for (int dy = -(int)margin; dy <= (int)margin; ++dy) {
+					int power = (real + dx) * (real + dx) +
+						(imaginary + dy) * (imaginary + dy);
+					if (power > maximum_power) maximum_power = power;
+				}
+			struct v34_constellation_extent extent;
+
+			CHECK(v34_quarter_superconstellation_extent(label + 1, margin, &extent) ==
+			      V34_CONSTELLATION_OK && extent.maximum_axis == maximum_axis &&
+			      extent.maximum_squared_magnitude == maximum_power,
+			      "incorrect envelope at prefix %zu, margin %u", label + 1, margin);
+		}
+	}
+	struct v34_constellation_extent extent = { 73, 117 };
+	const size_t invalid_counts[] = {
+		0, V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT + 1, SIZE_MAX,
+	};
+	for (size_t i = 0; i < ARRAY_LENGTH(invalid_counts); ++i)
+		CHECK(v34_quarter_superconstellation_extent(invalid_counts[i], 0, &extent) ==
+		      V34_CONSTELLATION_INVALID_ARGUMENT && extent.maximum_axis == 73 &&
+		      extent.maximum_squared_magnitude == 117,
+		      "invalid envelope count changed its output");
+	CHECK(v34_quarter_superconstellation_extent(1, 3, &extent) ==
+	      V34_CONSTELLATION_INVALID_ARGUMENT &&
+	      v34_quarter_superconstellation_extent(1, UINT_MAX, &extent) ==
+	      V34_CONSTELLATION_INVALID_ARGUMENT && extent.maximum_axis == 73 &&
+	      extent.maximum_squared_magnitude == 117 &&
+	      v34_quarter_superconstellation_extent(1, 0, NULL) ==
+	      V34_CONSTELLATION_INVALID_ARGUMENT, "invalid envelope margin or output accepted");
 	return true;
 }
 
@@ -713,6 +763,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "quarter superconstellation", test_quarter_superconstellation },
+		{ "quarter constellation envelope", test_quarter_constellation_envelope },
 		{ "indexed quarter superconstellation",
 		  test_indexed_quarter_superconstellation },
 		{ "quarter-superconstellation prefixes",

@@ -97,18 +97,15 @@ static enum v34_power_calibration_result generate_mapping_frame(
  * future mapper symbol; unresolved cases retain generated-stream validation. */
 static bool linear_precoder_is_bounded(const struct v34_4d_encoder *encoder)
 {
-	uint64_t maximum = 0, norm = 0;
+	struct v34_constellation_extent extent;
+	uint64_t norm = 0;
 	uint64_t grid = encoder->precoder.grid_step;
 
-	for (size_t label = 0; label < encoder->parameters.constellation_points / 4u; ++label) {
-		struct v34_grid_point point;
-		if (v34_quarter_superconstellation_point(label, &point) != V34_CONSTELLATION_OK)
-			return false;
-		uint64_t in_phase = magnitude_s16(point.in_phase);
-		uint64_t quadrature = magnitude_s16(point.quadrature);
-		if (in_phase > maximum) maximum = in_phase;
-		if (quadrature > maximum) maximum = quadrature;
-	}
+	if (v34_quarter_superconstellation_extent(
+		    encoder->parameters.constellation_points / 4u, 0, &extent) !=
+	    V34_CONSTELLATION_OK)
+		return false;
+	uint64_t maximum = extent.maximum_axis;
 	uint64_t history_bound = (maximum + grid / 2u) * V34_Q7_SCALE;
 	for (unsigned tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap) {
 		if (magnitude_s64(encoder->precoder.previous_symbols[tap].in_phase) > history_bound ||
