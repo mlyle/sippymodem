@@ -165,7 +165,9 @@ bool v92_downstream_control_is_valid(
 {
 	if (control == NULL ||
 	    !pcm_downstream_tx_is_valid(&control->transmit) ||
-	    !v92_cleardown_is_valid(&control->cleardown))
+	    !v92_cleardown_is_valid(&control->cleardown) ||
+	    (control->suvu_conflict_ignored &&
+	     (control->previous_cpu || !control->suvu_received)))
 		return false;
 	if (control->cleardown.active)
 		return control->transmit.protocol == PCM_PROTOCOL_V92 &&
@@ -393,6 +395,18 @@ enum v92_downstream_control_result v92_downstream_control_receive(
 	}
 	if (control->cleardown.active)
 		return V92_DOWNSTREAM_CONTROL_OK;
+	/* A structured decoding error can be a CRC-valid SUVu with fields that
+	 * contradict the selected group. Ignore one during unconfirmed startup;
+	 * do not apply its ACK or renew the Phase-4 deadline. Further conflicts
+	 * retain the ordinary bounded physical-recovery path. Rate exchanges,
+	 * silence agreement and already-confirmed selections remain strict. */
+	if (event.type == V92_CONTROL_EVENT_SUVU && !control->previous_cpu &&
+	    !control->peer_confirmation_received && control->suvu_received &&
+	    !control->suvu_conflict_ignored &&
+	    !suvu_selection_equal(&control->suvu, &event.record.suvu.parameters)) {
+		control->suvu_conflict_ignored = true;
+		return V92_DOWNSTREAM_CONTROL_OK;
+	}
 	if (!accept_event(control, &event)) {
 		fail(control);
 		return V92_DOWNSTREAM_CONTROL_REJECTED;

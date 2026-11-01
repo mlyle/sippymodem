@@ -49,6 +49,9 @@ struct v92_downstream_control {
 	bool e2u_received;
 	bool repeat_cpd;
 	bool failed;
+	/* One unconfirmed startup status may be a false CRC-valid codeword.
+	 * Never renew this allowance within the same control exchange. */
+	bool suvu_conflict_ignored;
 };
 
 /* previous_cpu permits short CPus in a new exchange; NULL requires long CPu.
@@ -66,8 +69,10 @@ bool v92_downstream_control_select(struct v92_downstream_control *control,
 bool v92_downstream_control_ready(struct v92_downstream_control *control);
 /* A valid CPu is retained and acknowledged even if initial SUVu was lost;
  * CPd still waits for actual SUVu, and Ed waits for the acknowledging CPd tail.
- * Damaged wire records are ignored. REJECTED latches failure on an incompatible
- * peer selection without replacing retained parameters; the call may retrain.
+ * Damaged wire records and one contradictory unconfirmed startup SUVu are
+ * ignored without acknowledging or replacing parameters. REJECTED latches
+ * failure on an incompatible peer selection without replacing retained
+ * parameters; the call may retrain.
  * ERROR denotes invalid input/owner state or an internal invariant failure.
  * Retry expiry waits through a whole valid peer record. */
 enum v92_downstream_control_result v92_downstream_control_receive(

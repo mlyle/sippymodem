@@ -11996,7 +11996,8 @@ static bool run_v92_clipping_recovery(bool persistent)
 
 /* The recorded status has a valid CRC, including its ignored reserved bits.
  * Deliver it through the peer's continuous modulator, after a prior status has
- * selected different fields. Recovery must reject it without changing modes. */
+ * selected different fields. One contradiction may be ignored during startup;
+ * repeated contradictions must still reach bounded physical recovery. */
 static bool run_v92_conflicting_status_recovery(
 	enum g711_law law, bool persistent, bool after_online)
 {
@@ -12010,6 +12011,8 @@ static bool run_v92_conflicting_status_recovery(
 	uint32_t frames[2] = { 0, 0 };
 	unsigned injected = 0;
 	bool in_epoch = false, requested = !after_online, payload_reset = !after_online;
+	bool control_seen = false, allowance_seen = false;
+	unsigned ignored = 0;
 
 	CHECK(v92_suvu_decode(conflict, sizeof(conflict), 72u, 24u, &decoded) == V92_SUVU_OK &&
 	      decoded.prefilter_level_db_q2_2 == -1 && decoded.wait_for_cpu &&
@@ -12033,18 +12036,40 @@ static bool run_v92_conflicting_status_recovery(
 					&tx[side], &event);
 				if (result != PCM_CALL_OK) {
 					CHECK(persistent && side == 1u && result == PCM_CALL_FAILED &&
-					      injected == V92_DATA_QUALITY_MAX_RETRAINS + 1u &&
+					      injected >= V92_DATA_QUALITY_MAX_RETRAINS + 1u &&
+					      ignored == V92_DATA_QUALITY_MAX_RETRAINS + 1u &&
 					      digital.pcm_upstream_quality.recovery.attempts == V92_DATA_QUALITY_MAX_RETRAINS &&
 					      pcm_call_is_valid(&digital) && pcm_call_has_failed(&digital) &&
 					      !pcm_call_is_online(&digital),
-					      "conflict recovery failed: law=%u online=%u side=%u injections=%u result=%s",
-					      law, after_online, side, injected, pcm_call_result_name(result));
+					      "conflict recovery failed: law=%u online=%u side=%u injections=%u ignored=%u result=%s",
+					      law, after_online, side, injected, ignored, pcm_call_result_name(result));
 					return true;
 				}
 			}
 		}
+		if (digital.stage == PCM_CALL_PHASE4 &&
+		    digital.state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL) {
+			const struct v92_downstream_control *control = &digital.state.phase4.v92.owner.digital.control;
+			CHECK(control_seen || !control->suvu_conflict_ignored,
+			      "new control exchange inherited a spent status allowance");
+			control_seen = true;
+			if (!allowance_seen && control->suvu_conflict_ignored) {
+				allowance_seen = true;
+				ignored++;
+			}
+		} else {
+			control_seen = false;
+			allowance_seen = false;
+		}
 		if (digital.stage != PCM_CALL_PHASE4)
 			in_epoch = false;
+		else if (persistent && analog.stage == PCM_CALL_PHASE4 &&
+			 analog.state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL) {
+			const struct v92_phase4_analog_tx *source = &analog.state.phase4.v92.owner.analog.station.transmit;
+			if (source->stage == V92_PHASE4_ANALOG_TX_SUVU &&
+			    source->signal.record.bit_index > 18u)
+				in_epoch = false;
+		}
 		if (requested && !in_epoch && (persistent || !injected) &&
 		    analog.stage == PCM_CALL_PHASE4 && digital.stage == PCM_CALL_PHASE4 &&
 		    analog.state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL &&
@@ -12058,6 +12083,25 @@ static bool run_v92_conflicting_status_recovery(
 				CHECK(source->signal.record.frame_bit_count == 72u &&
 				      control->suvu.prefilter_level_db_q2_2 != decoded.prefilter_level_db_q2_2,
 				      "conflicting status did not change an accepted selection");
+				if (!control->suvu_conflict_ignored && !control->peer_confirmation_received) {
+					struct v92_downstream_control saved = *control, checked = saved;
+					struct v92_control_event bad = { .type = V92_CONTROL_EVENT_SUVU,
+						.record.suvu = { .frame_result = V92_SUVU_OK, .parameters = decoded } };
+					saved.suvu_conflict_ignored = true;
+					CHECK(v92_downstream_control_receive(&checked, &bad) == V92_DOWNSTREAM_CONTROL_OK &&
+					      memcmp(&checked, &saved, sizeof(saved)) == 0,
+					      "ignored status changed parameters, ACKs, coding or retry state");
+					struct v92_control_event retry = bad;
+					retry.record.suvu.parameters = control->suvu;
+					CHECK(v92_downstream_control_receive(&checked, &retry) == V92_DOWNSTREAM_CONTROL_OK &&
+					      checked.suvu_conflict_ignored, "ordinary status renewed its conflict allowance");
+					saved = checked;
+					CHECK(v92_downstream_control_receive(&checked, &bad) == V92_DOWNSTREAM_CONTROL_REJECTED &&
+					      checked.failed, "repeated conflict escaped physical recovery");
+					checked.failed = false;
+					CHECK(memcmp(&checked, &saved, sizeof(saved)) == 0,
+					      "rejected status changed the retained selection");
+				}
 				memcpy(source->signal.record.frame, conflict, sizeof(conflict));
 				in_epoch = true;
 				injected++;
@@ -12078,8 +12122,8 @@ static bool run_v92_conflicting_status_recovery(
 				CHECK(pcm_call_start_retrain(&analog) == PCM_CALL_OK, "peer retrain did not start");
 				requested = true;
 			} else {
-				CHECK(!persistent && injected == 1u &&
-				      digital.pcm_upstream_quality.recovery.attempts == 1u,
+				CHECK(!persistent && injected == 1u && ignored == 1u &&
+				      digital.pcm_upstream_quality.recovery.attempts == 0u,
 				      "conflict recovery did not retain its budget");
 				return true;
 			}
