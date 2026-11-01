@@ -333,12 +333,13 @@ struct v92_pcm_frame_channel {
 	const struct v92_observation *model;
 	/* Alternative to a fitted model: actual final-codec input intervals
 	 * translated into calibrated constellation coordinates by the owner.
-	 * No levels/offsets accompany these twelve finite, ordered intervals.
+	 * No levels/offsets accompany these twelve ordered intervals.
 	 * Their provenance must be independent of decoded candidate points. */
 	const struct v92_pcm_frame_cell *cells;
 	/* Frozen additive noise in constellation units. Zero retains distance
 	 * outside the codec cell; finite values through 32768 score its Gaussian
-	 * mass. Requires cells; a zero-width cell retains point-distance cost. */
+	 * mass, allowing one infinite clipping boundary per cell. Otherwise cells
+	 * must be finite; a zero-width cell retains point-distance cost. */
 	double cell_sigma;
 	/* Optional aligned decoded wire levels before host gain. Each present
 	 * level must be a G.711 reconstruction value. NULL infers bins from

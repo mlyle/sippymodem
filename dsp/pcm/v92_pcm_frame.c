@@ -1277,8 +1277,11 @@ static enum v92_pcm_frame_result decode_frame(
 		if (model || levels || offsets || receiver->observation != V92_PCM_FRAME_CONSTELLATION)
 			return V92_PCM_FRAME_INVALID_PARAMETERS;
 		for (size_t i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
-			if (!isfinite(cells[i].lower) || !isfinite(cells[i].upper) ||
-			    cells[i].lower > cells[i].upper)
+			if (isnan(cells[i].lower) || isnan(cells[i].upper) ||
+			    cells[i].lower > cells[i].upper ||
+			    ((!isfinite(cells[i].lower) || !isfinite(cells[i].upper)) &&
+			     (!channel->cell_sigma ||
+			      (!isfinite(cells[i].lower) && !isfinite(cells[i].upper)))))
 				return V92_PCM_FRAME_INVALID_PARAMETERS;
 	}
 	if (acquire_model && (receiver->observation != V92_PCM_FRAME_CONSTELLATION ||

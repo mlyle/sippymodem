@@ -275,6 +275,28 @@ static bool test_quantization_interval_input_space(void)
 			while (upper < INT16_MAX &&
 			       reconstruct_sample(law, (int16_t)(upper + 1)) == level)
 				upper++;
+			struct g711_probability_interval bounds = g711_probability_bounds(
+				(struct g711_interval){ (int16_t)lower, (int16_t)upper });
+			CHECK(!!isfinite(bounds.lower) == (lower != INT16_MIN) &&
+			      !!isfinite(bounds.upper) == (upper != INT16_MAX),
+			      "probability interval did not extend codec saturation");
+			for (unsigned side = 0; side < 2; ++side) {
+				double boundary = side ? bounds.upper : bounds.lower;
+				if (!isfinite(boundary)) {
+					CHECK(boundary == (side ? HUGE_VAL : -HUGE_VAL) &&
+					      (side ? upper == INT16_MAX : lower == INT16_MIN),
+					      "probability interval lost a clipping boundary");
+					continue;
+				}
+				/* Independently round inputs just inside/outside each real
+				 * boundary, then use the encoder to identify their cells. */
+				int16_t inside = (int16_t)lround(boundary + (side ? -.25 : .25));
+				int16_t outside = (int16_t)lround(boundary + (side ? .25 : -.25));
+				CHECK(reconstruct_sample(law, inside) == level &&
+				      reconstruct_sample(law, outside) != level,
+				      "law %u real boundary %g disagrees with rounded input",
+				      (unsigned)law, boundary);
+			}
 			for (int32_t sample = lower; sample <= upper; ++sample) {
 				struct g711_interval interval;
 

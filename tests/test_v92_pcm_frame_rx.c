@@ -1588,6 +1588,11 @@ static bool test_constellation_cells(enum g711_law law, double gain, bool gaussi
 				.lower = cell.lower * gain + offset,
 				.upper = cell.upper * gain + offset,
 			};
+			if (gaussian) {
+				struct g711_probability_interval bounds = g711_probability_bounds(cell);
+				cells[i].lower = bounds.lower * gain + offset;
+				cells[i].upper = bounds.upper * gain + offset;
+			}
 			int64_t error = samples[i] - encoded.u[i];
 			double distance = fmax(cells[i].lower - encoded.u[i],
 				fmax(encoded.u[i] - cells[i].upper, 0.0));
@@ -1636,6 +1641,19 @@ static bool test_constellation_cells(enum g711_law law, double gain, bool gaussi
 			      V92_PCM_FRAME_INVALID_PARAMETERS && !memcmp(&rx, &saved, sizeof(rx)),
 			      "reversed cell was accepted");
 			cells[11].upper = upper;
+			struct v92_pcm_frame_cell saved_cell = cells[11];
+			const struct v92_pcm_frame_cell invalid_bounds[] = {
+				{ -HUGE_VAL, HUGE_VAL }, { HUGE_VAL, HUGE_VAL },
+				{ -HUGE_VAL, -HUGE_VAL }, { HUGE_VAL, 0. }, { 0., -HUGE_VAL },
+			};
+			for (unsigned k = 0; k < ARRAY_LENGTH(invalid_bounds); ++k) {
+				cells[11] = invalid_bounds[k];
+				CHECK(v92_pcm_frame_decode_observed(&rx, samples, true, decoded,
+				      mapping.data_bits_per_frame, &decision, &channel, &likelihood) ==
+				      V92_PCM_FRAME_INVALID_PARAMETERS && !memcmp(&rx, &saved, sizeof(rx)),
+				      "invalid infinite cell was accepted");
+			}
+			cells[11] = saved_cell;
 			channel.levels = incompatible_levels;
 			CHECK(v92_pcm_frame_decode_observed(&rx, samples, true, decoded,
 			      mapping.data_bits_per_frame, &decision, &channel, &likelihood) ==
@@ -1670,6 +1688,37 @@ static bool test_constellation_cells(enum g711_law law, double gain, bool gaussi
 		if (gaussian && f == 25u)
 			for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
 				cells[i] = (struct v92_pcm_frame_cell){ encoded.u[i], encoded.u[i] };
+		if (gaussian && f == 28u) {
+			/* A one-sided clipping tail must agree with a finite boundary
+			 * beyond every possible point's representable Gaussian tail. */
+			for (unsigned side = 0; side < 2; ++side) {
+				struct v92_pcm_frame_rx clipped = rx, finite = rx;
+				struct v92_pcm_frame_decision cd, fd;
+				struct v92_pcm_frame_likelihood cl, fl;
+				struct v92_pcm_frame_cell copy[V92_PCM_MAPPING_FRAME_SYMBOLS];
+				struct v92_pcm_frame_channel tail = { .cells = copy, .cell_sigma = 2. };
+				uint8_t cb[V92_PCM_MAPPING_MAX_BITS], fb[V92_PCM_MAPPING_MAX_BITS];
+				memcpy(copy, cells, sizeof(copy));
+				if (side) copy[0].upper = HUGE_VAL;
+				else copy[0].lower = -HUGE_VAL;
+				CHECK(v92_pcm_frame_decode_observed(&clipped, samples, true, cb,
+				      mapping.data_bits_per_frame, &cd, &tail, &cl) == V92_PCM_FRAME_OK &&
+				      cl.cost < UINT64_MAX, "Gaussian clipping tail was rejected");
+				tail.cell_sigma = 0.;
+				CHECK(v92_pcm_frame_decode_observed(&finite, samples, true, fb,
+				      mapping.data_bits_per_frame, &fd, &tail, &fl) ==
+				      V92_PCM_FRAME_INVALID_PARAMETERS && !memcmp(&finite, &rx, sizeof(rx)),
+				      "distance scoring admitted an infinite cell");
+				tail.cell_sigma = 2.;
+				if (side) copy[0].upper = 0x1p30;
+				else copy[0].lower = -0x1p30;
+				CHECK(v92_pcm_frame_decode_observed(&finite, samples, true, fb,
+				      mapping.data_bits_per_frame, &fd, &tail, &fl) == V92_PCM_FRAME_OK &&
+				      !memcmp(&clipped, &finite, sizeof(finite)) &&
+				      !memcmp(cb, fb, mapping.data_bits_per_frame) && !memcmp(&cl, &fl, sizeof(cl)),
+				      "one-sided Gaussian mass differs from its finite tail limit");
+			}
+		}
 		if (f == 26u) {
 			struct v92_pcm_frame_rx positive = rx, negative = rx;
 			struct v92_pcm_frame_decision pd, nd;

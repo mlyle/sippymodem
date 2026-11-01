@@ -397,10 +397,9 @@ static double fit_residual_variance(const struct v92_upstream_model *model,
 		if (!pcm_gain_contains(&line->host.bounds, line->polarity * model->wire[n], model->host[n]) ||
 		    !g711_quantization_interval(law, line->polarity * model->wire[n], &bin)) return 0.;
 		double correction = model->raw[n] - line->polarity * (double)model->host[n];
-		double lower = bin.lower == INT16_MIN ? -HUGE_VAL :
-			(bin.lower - .5) * line->host.gain;
-		double upper = bin.upper == INT16_MAX ? HUGE_VAL :
-			(bin.upper + .5) * line->host.gain;
+		struct g711_probability_interval bounds = g711_probability_bounds(bin);
+		double lower = bounds.lower * line->host.gain;
+		double upper = bounds.upper * line->host.gain;
 		low[n] = (line->polarity > 0 ? lower : -upper) + correction;
 		high[n] = (line->polarity > 0 ? upper : -lower) + correction;
 		double point = selected ? model->u[n] : model->x[n];
@@ -544,7 +543,8 @@ bool v92_upstream_model_finish_b1u(struct v92_upstream_data_rx *receiver)
 	return true;
 }
 
-static bool wire_cells(const struct v92_upstream_data_line *line, enum g711_law law,
+static bool wire_cells(const struct v92_upstream_data_line *line,
+	enum g711_law law, bool probability,
 	struct v92_pcm_frame_cell cells[V92_PCM_MAPPING_FRAME_SYMBOLS])
 {
 	if (line->plan.observation != V92_PCM_FRAME_CONSTELLATION ||
@@ -575,8 +575,15 @@ static bool wire_cells(const struct v92_upstream_data_line *line, enum g711_law 
 			return false;
 		double offset = line->raw[i] - (int32_t)host * line->polarity -
 			line->calibration.offset - line->correction[i];
-		double lower = line->polarity > 0 ? cell.lower : -(double)cell.upper;
-		double upper = line->polarity > 0 ? cell.upper : -(double)cell.lower;
+		double lower = cell.lower, upper = cell.upper;
+		if (probability) {
+			struct g711_probability_interval bounds = g711_probability_bounds(cell);
+			lower = bounds.lower; upper = bounds.upper;
+		}
+		if (line->polarity < 0) {
+			double swap = lower;
+			lower = -upper; upper = -swap;
+		}
 
 		cells[i] = (struct v92_pcm_frame_cell){
 			.lower = (lower * gain + offset) * line->calibration.gain,
@@ -669,15 +676,17 @@ enum v92_pcm_frame_result v92_upstream_model_decode(struct v92_upstream_model *m
 		if (validate && line->received_frames == V92_B1U_ACQUISITION_FRAMES)
 			model->alternate = *decoder;
 		struct v92_pcm_frame_cell cells[V92_PCM_MAPPING_FRAME_SYMBOLS];
+		double sigma = 0.;
+		if (model->residual_variance > 0. &&
+		    line->received_frames < V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
+			sigma = sqrt(model->residual_variance) * line->calibration.gain;
+			if (!isfinite(sigma) || sigma > 32768.) sigma = 0.;
+		}
 		enum v92_pcm_frame_result result;
 		if (model->acquiring) {
 			result = v92_pcm_frame_acquire_model(decoder, line->samples, bits, count, decision);
-		} else if (wire_cells(line, decoder->mapping.law, cells)) {
-			struct v92_pcm_frame_channel channel = { .cells = cells };
-			if (line->received_frames < V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
-				double sigma = sqrt(model->residual_variance) * line->calibration.gain;
-				if (isfinite(sigma) && sigma <= 32768.) channel.cell_sigma = sigma;
-			}
+		} else if (wire_cells(line, decoder->mapping.law, sigma > 0., cells)) {
+			struct v92_pcm_frame_channel channel = { .cells = cells, .cell_sigma = sigma };
 			struct v92_pcm_frame_likelihood likelihood;
 
 			result = v92_pcm_frame_decode_observed(decoder, line->samples,

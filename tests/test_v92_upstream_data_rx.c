@@ -4118,8 +4118,80 @@ static bool test_translated_acquisition_seed(enum g711_law law,
 	return true;
 }
 
+/* The channel owner must convert integer codec cells before Gaussian B1u
+ * scoring, then retain integer-distance cells when delayed B1u has drained. */
+static bool test_probability_cells(enum g711_law law, int polarity)
+{
+	struct v92_cpd_parameters cpd;
+	struct v92_pcm_mapping mapping;
+	struct v92_pcm_frame_tx tx;
+	struct v92_pcm_frame_rx decoder;
+	struct v92_upstream_model model = { .residual_variance = 4. };
+	struct v92_upstream_data_line line = {
+		.plan.observation = V92_PCM_FRAME_CONSTELLATION,
+		.calibration = { .gain = 1., .minimum = 1., .maximum = 1. },
+		.host = { .bounds = { .lower = 1., .upper = 1. }, .gain = 1. },
+		.residual.active = true, .polarity = polarity,
+	};
+	CHECK(v92_cpd_direct_init(&cpd, law, 4, false) == V92_CPD_OK &&
+	      v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK &&
+	      v92_pcm_frame_tx_init(&tx, &mapping) == V92_PCM_FRAME_OK &&
+	      v92_pcm_frame_rx_init_constellation(&decoder, &mapping) == V92_PCM_FRAME_OK,
+	      "probability-cell fixture initialization failed");
+	for (unsigned f = 0; f < V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES + 2u; ++f) {
+		struct v92_pcm_frame encoded;
+		struct v92_pcm_frame_decision decision, expected;
+		struct v92_pcm_frame_likelihood likelihood;
+		struct v92_pcm_frame_cell cells[V92_PCM_MAPPING_FRAME_SYMBOLS];
+		struct v92_pcm_frame_channel channel = { .cells = cells,
+			.cell_sigma = f < V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES ? 2. : 0. };
+		uint8_t bits[V92_PCM_MAPPING_MAX_BITS], decoded[V92_PCM_MAPPING_MAX_BITS];
+		uint8_t reference[V92_PCM_MAPPING_MAX_BITS];
+		double predictions[V92_PCM_MAPPING_FRAME_SYMBOLS];
+		memset(bits, 1, mapping.data_bits_per_frame);
+		if (f >= V92_B1U_FRAMES) payload(bits, mapping.data_bits_per_frame, f);
+		CHECK(v92_pcm_frame_encode(&tx, bits, mapping.data_bits_per_frame, &encoded) ==
+		      V92_PCM_FRAME_OK, "probability-cell source failed");
+		for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i) {
+			int16_t physical = g711_quantize(law, (int16_t)(polarity * encoded.u[i]));
+			struct g711_interval bin;
+			CHECK(g711_quantization_interval(law, physical, &bin), "probability cell missing");
+			struct g711_probability_interval bounds = channel.cell_sigma ?
+				g711_probability_bounds(bin) :
+				(struct g711_probability_interval){ bin.lower, bin.upper };
+			cells[i] = (struct v92_pcm_frame_cell){
+				polarity > 0 ? bounds.lower : -bounds.upper,
+				polarity > 0 ? bounds.upper : -bounds.lower,
+			};
+			line.raw[i] = line.samples[i] = line.wire[i] = polarity * physical;
+			line.host_samples[i] = physical;
+			line.received[i] = line.wire_known[i] = true;
+		}
+		if (f < V92_B1U_ACQUISITION_FRAMES) {
+			CHECK(v92_pcm_frame_decode(&decoder, line.samples, true, decoded,
+			      mapping.data_bits_per_frame, &decision) == V92_PCM_FRAME_OK,
+			      "probability-cell warmup failed");
+			continue;
+		}
+		line.received_frames = f;
+		struct v92_pcm_frame_rx compared = decoder;
+		CHECK(v92_pcm_frame_decode_observed(&compared, line.samples, f < V92_B1U_FRAMES,
+		      reference, mapping.data_bits_per_frame, &expected, &channel, &likelihood) ==
+		      V92_PCM_FRAME_OK && v92_upstream_model_decode(&model, &decoder, &line,
+		      decoded, &decision, predictions, NULL) == V92_PCM_FRAME_OK &&
+		      !memcmp(&decoder, &compared, sizeof(decoder)) &&
+		      !memcmp(decoded, reference, mapping.data_bits_per_frame),
+		      "upstream owner used inconsistent probability cells: law=%u polarity=%d frame=%u",
+		      law, polarity, f);
+	}
+	return true;
+}
+
 int main(void)
 {
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (int polarity = -1; polarity <= 1; polarity += 2)
+			if (!test_probability_cells(law, polarity)) return 1;
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		if (!test_memoryless_codec(law, 0) || !test_memoryless_codec(law, 64)) return 1;
 	for (int polarity = -1; polarity <= 1; polarity += 2)

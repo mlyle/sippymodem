@@ -399,8 +399,9 @@ static bool codec_bounds(enum g711_law law, double gain, int16_t observed,
 	struct g711_interval interval;
 	if (g711_quantize(law, reconstructed) != reconstructed ||
 		!g711_quantization_interval(law, reconstructed, &interval)) return false;
-	*lower = (interval.lower == INT16_MIN ? -HUGE_VAL : (interval.lower - .5) * gain) + offset - observed;
-	*upper = (interval.upper == INT16_MAX ? HUGE_VAL : (interval.upper + .5) * gain) + offset - observed;
+	struct g711_probability_interval bounds = g711_probability_bounds(interval);
+	*lower = bounds.lower * gain + offset - observed;
+	*upper = bounds.upper * gain + offset - observed;
 	/* A finite but unrepresentably large shift can erase the interval's
 	 * width. That is not a point observation with a perfect residual. */
 	return offset == 0. || *lower < *upper;

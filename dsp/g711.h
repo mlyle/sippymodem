@@ -3,6 +3,8 @@
 #ifndef G711_H
 #define G711_H
 
+#include <limits.h>
+#include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -53,6 +55,22 @@ struct g711_interval {
  * two PCMU zero codewords share one interval. Invalid calls leave it alone. */
 bool g711_quantization_interval(
 	enum g711_law law, int16_t sample, struct g711_interval *interval);
+
+struct g711_probability_interval {
+	double lower, upper;
+};
+
+/* Continuous input which rounds and clips into a valid integer codec cell.
+ * Half-sample ties have zero Gaussian mass; saturation extends the two outer
+ * cells to infinity. Keep integer cells for exact distance/geometry queries. */
+static inline struct g711_probability_interval g711_probability_bounds(
+	struct g711_interval interval)
+{
+	return (struct g711_probability_interval){
+		.lower = interval.lower == INT16_MIN ? -HUGE_VAL : interval.lower - .5,
+		.upper = interval.upper == INT16_MAX ? HUGE_VAL : interval.upper + .5,
+	};
+}
 
 /* V.90 and V.92 identify magnitudes with a seven-bit universal code.  The
  * sample form preserves the otherwise ambiguous PCMU negative-zero codeword
