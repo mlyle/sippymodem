@@ -465,15 +465,16 @@ static void check_history_scores(const struct v92_observation *model,
 /* Mixture taps must share their gain interval. Opposing delayed taps
  * cancel within each component; combining their independent extremes would
  * admit unrelated gains and force an unnecessary full likelihood. */
-static void check_coupled_bounds(const struct v92_observation *trained)
+static void check_coupled_bounds(const struct v92_observation *trained, bool disjoint)
 {
 	struct v92_observation model = *trained;
+	if (disjoint) model.variance = 4.;
 	for (unsigned i = 0; i < V92_OBSERVATION_INTERVALS; i++) {
 		/* Valid models admit a small excess in the sum of weights. */
 		model.intervals[i].weight = 1. / V92_OBSERVATION_INTERVALS + DBL_EPSILON;
 		model.intervals[i].coefficient[0] = 1.;
 		model.intervals[i].coefficient[1] = i & 1 ? .8 : -.8;
-		model.intervals[i].coefficient[2] = -model.intervals[i].coefficient[1];
+		model.intervals[i].coefficient[2] = disjoint ? 0. : -model.intervals[i].coefficient[1];
 		model.intervals[i].coefficient[3] = 0.;
 	}
 	assert(v92_observation_is_valid(&model));
@@ -488,7 +489,8 @@ static void check_coupled_bounds(const struct v92_observation *trained)
 		v92_observation_begin(cache + 1, &model, .00001);
 		for (unsigned p = 0; p < sizeof(points) / sizeof(*points); p++) {
 			struct v92_observation_point history[V92_OBSERVATION_TAPS - 1];
-			for (unsigned j = 1; j < model.taps; j++) history[j - 1] = v92_observation_point(cache, points[p]);
+			for (unsigned j = 1; j < model.taps; j++)
+				history[j - 1] = v92_observation_point(cache, disjoint ? 4096 : points[p]);
 			struct v92_observation_history fixed;
 			memset(&fixed, 0xa5, sizeof(fixed)); v92_observation_history_reset(&fixed);
 			for (unsigned cell = 0; cell < 3; cell++) {
@@ -502,6 +504,11 @@ static void check_coupled_bounds(const struct v92_observation *trained)
 					assert(actual <= exact);
 					assert(actual == exact || actual >= budgets[b]);
 					assert(actual == v92_observation_score(cache, points[p], history, budgets[b]));
+					/* Separated gain hypotheses straddle the observed cell,
+					 * but neither component can reach it. Their convex hull
+					 * must not force exact tail integration. */
+					if (disjoint && cell == 0 && points[p] == 1 && budgets[b] == 1)
+						assert(actual < exact);
 					pruned += budgets[b] == 1 && cell == 0 &&
 						(points[p] == 4096 || points[p] == -4096) && actual != exact;
 				}
@@ -889,7 +896,10 @@ static void check_channel(enum g711_law law, double gain, unsigned taps,
 	assert(isfinite(rms) && rms < 100.);
 	check_scores(&model, x, y);
 	check_history_scores(&model, x, y);
-	if (gain == 4. && count == TRAINING) check_coupled_bounds(&model);
+	if (gain == 4. && count == TRAINING) {
+		check_coupled_bounds(&model, false);
+		check_coupled_bounds(&model, true);
+	}
 	if (gain == .125 && taps == 3) {
 		check_predictive_noise(&model);
 		check_predictive_boundaries(&model);

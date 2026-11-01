@@ -1291,18 +1291,31 @@ static double observation_likelihood(const struct v92_observation_cache *cache,
 	return likelihood;
 }
 
-/* Each mixture uses one gain interval for every delayed input. Keep that
- * interval coupled while bounding its mean; the outer envelope may still
- * admit impossible combinations of first-codec gains. All outward margins
- * and the score-bound guard remain, including under directed rounding. */
-static bool interval_envelope(const struct v92_observation_cache *cache,
+static uint64_t envelope_score(const struct v92_observation_cache *cache, double low, double high)
+{
+	double distance = low - (cache->observed + cache->upper);
+	double opposite = cache->observed + cache->lower - high;
+	if (opposite > distance) distance = opposite;
+	if (distance < 0.) distance = 0.;
+	double bound = cache->bound_scale * distance * distance;
+	/* Cover the admitted 32-epsilon weight normalization tolerance too. */
+	if (isfinite(bound)) bound -= 64. * DBL_EPSILON * (V92_SCORE_SCALE + 1. + bound);
+	return isnan(bound) ? 0 : score_value(bound);
+}
+
+/* Bound each shared-gain component separately: their convex hull may
+ * contain the observation even when every component misses its codec cell.
+ * Mixture probability is no greater than the largest component bound,
+ * apart from the weight-normalization tolerance covered by envelope_score.
+ * Keep outward margins under every rounding mode. A component below the
+ * budget makes rejection impossible with this bound; return zero then. */
+static uint64_t interval_bound(const struct v92_observation_cache *cache,
 	const struct v92_observation_values *current,
 	const struct v92_observation_point *previous,
-	struct v92_observation_history *history, double minimum, double maximum,
-	double *low, double *high)
+	struct v92_observation_history *history, uint64_t budget)
 {
 	const struct v92_observation *model = cache->model;
-	*low = HUGE_VAL; *high = -HUGE_VAL;
+	uint64_t minimum = UINT64_MAX;
 	for (size_t i = 0; i < INTERVALS; i++) if (model->intervals[i].weight > 0.) {
 		const struct v92_observation_interval *fit = model->intervals + i;
 		unsigned bit = 1u << i;
@@ -1327,26 +1340,12 @@ static bool interval_envelope(const struct v92_observation_cache *cache,
 		if (u > v) { double swap = u; u = v; v = swap; }
 		u = u - cache->margin[0] + history->low[i];
 		v = v + cache->margin[0] + history->high[i];
-		if (!isfinite(u) || !isfinite(v)) return false;
-		if (u < *low) *low = u;
-		if (v > *high) *high = v;
-		/* One reachable component makes this envelope unable to reject.
-		 * Remaining components can only enlarge the union. */
-		if (*low <= maximum && *high >= minimum) return false;
+		if (!isfinite(u) || !isfinite(v)) return 0;
+		uint64_t value = envelope_score(cache, u, v);
+		if (value < minimum) minimum = value;
+		if (minimum < budget) return 0;
 	}
-	return true;
-}
-
-static uint64_t envelope_score(const struct v92_observation_cache *cache, double low, double high)
-{
-	double distance = low - (cache->observed + cache->upper);
-	double opposite = cache->observed + cache->lower - high;
-	if (opposite > distance) distance = opposite;
-	if (distance < 0.) distance = 0.;
-	double bound = cache->bound_scale * distance * distance;
-	/* Cover the admitted 32-epsilon weight normalization tolerance too. */
-	if (isfinite(bound)) bound -= 64. * DBL_EPSILON * (V92_SCORE_SCALE + 1. + bound);
-	return isnan(bound) ? 0 : score_value(bound);
+	return minimum;
 }
 
 uint64_t v92_observation_score_history(struct v92_observation_cache *cache, int32_t x,
@@ -1410,14 +1409,9 @@ uint64_t v92_observation_score_history(struct v92_observation_cache *cache, int3
 		if (budget != UINT64_MAX) {
 			struct v92_observation_history local;
 			if (!history) v92_observation_history_reset(&local);
-			double low, high;
-			double radius = sqrt((budget + 1. + 1e-9 * budget) / cache->bound_scale);
-			if (interval_envelope(cache, a, previous, history ? history : &local,
-				cache->observed + cache->lower - radius, cache->observed + cache->upper + radius,
-				&low, &high)) {
-				uint64_t minimum = envelope_score(cache, low, high);
-				if (minimum >= budget) return minimum;
-			}
+			uint64_t minimum = interval_bound(cache, a, previous,
+				history ? history : &local, budget);
+			if (minimum >= budget) return minimum;
 		}
 		double likelihood = observation_likelihood(cache, a, previous, x, true, NULL);
 		value = score_value(-2. * V92_SCORE_SCALE * likelihood);
