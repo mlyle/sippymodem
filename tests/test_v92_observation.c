@@ -520,6 +520,56 @@ static void check_coupled_bounds(const struct v92_observation *trained, bool dis
 	free(cache);
 }
 
+/* A validated model may still have coefficients whose weighted codec sums
+ * exceed binary64. Under toward-zero rounding overflow can remain finite.
+ * Such geometry must decline pruning rather than reject an exact candidate.
+ * Changing coefficients does not change the fitted gain-cell partition. */
+static void check_extreme_bounds(const struct v92_observation *trained)
+{
+	struct v92_observation model = *trained;
+	struct v92_observation_cache *cache = malloc(2 * sizeof(*cache));
+	assert(cache);
+	const int modes[] = { FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO };
+	const double scales[] = {
+		DBL_MAX / (65536. * V92_OBSERVATION_TAPS),
+		nextafter(DBL_MAX / (65536. * V92_OBSERVATION_TAPS), INFINITY), 1e308,
+	};
+	int saved = fegetround();
+	model.variance = 1e9;
+	model.quantizer_gain = .25;
+	model.input_coefficient = 32767;
+	for (unsigned mode = 0; mode < sizeof(modes) / sizeof(*modes); mode++) {
+		assert(fesetround(modes[mode]) == 0);
+		for (unsigned scale = 0; scale < sizeof(scales) / sizeof(*scales); scale++) {
+			for (unsigned i = 0; i < V92_OBSERVATION_INTERVALS; i++) {
+				model.intervals[i].coefficient[0] = scales[scale];
+				model.intervals[i].coefficient[1] = -scales[scale];
+				model.intervals[i].coefficient[2] = (i & 1 ? .25 : -.25) * scales[scale];
+				model.intervals[i].coefficient[3] = 0.;
+			}
+			assert(v92_observation_is_valid(&model));
+			v92_observation_begin(cache, &model, 0.);
+			v92_observation_begin(cache + 1, &model, 0.);
+			const int32_t input[] = { 33, INT32_MIN, 33, 33 };
+			struct v92_observation_point previous[V92_OBSERVATION_TAPS - 1];
+			for (unsigned j = 1; j < model.taps; j++)
+				previous[j - 1] = v92_observation_point(cache, input[j]);
+			int16_t level = quantize(model.law, 0);
+			assert(v92_observation_symbol_level(cache + 1, 0, &level, -.25));
+			uint64_t exact = v92_observation_score(cache + 1, input[0], previous, UINT64_MAX);
+			const uint64_t budgets[] = { 1, exact / 2, exact, exact == UINT64_MAX ? exact : exact + 1, UINT64_MAX };
+			for (unsigned b = 0; b < sizeof(budgets) / sizeof(*budgets); b++) {
+				assert(v92_observation_symbol_level(cache, 0, &level, -.25));
+				uint64_t actual = v92_observation_score(cache, input[0], previous, budgets[b]);
+				assert(actual <= exact && (actual == exact || actual >= budgets[b]));
+				assert(v92_observation_score(cache, input[0], previous, UINT64_MAX) == exact);
+			}
+		}
+	}
+	assert(fesetround(saved) == 0);
+	free(cache);
+}
+
 static void check_scores(const struct v92_observation *model,
 	const int32_t *x, const int16_t *y)
 {
@@ -1225,6 +1275,7 @@ int main(void)
 	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++) {
 		check_channel(law, 4., 4, TRAINING, &previous);
 		check_joint_transitions(&previous);
+		check_extreme_bounds(&previous);
 	}
 	/* Short and odd acquisition spans exercise both finite-window edges. */
 	const size_t counts[] = { TRAINING / 2, TRAINING - 3, TRAINING - 1 };

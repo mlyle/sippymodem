@@ -1134,7 +1134,12 @@ void v92_observation_begin_cached(struct v92_observation_cache *cache,
 			for (unsigned j = 0; j < model->taps; j++)
 				extent[j] = fmax(extent[j], fabs(fit->coefficient[j]));
 	}
-	for (unsigned i = 0; i < TAPS; i++) cache->margin[i] = 1e-12 * (1. + 65536. * extent[i]);
+	/* Keep all four weighted-codec sums and their margins representable.
+	 * Directed rounding can make overflow finite, so isfinite alone cannot
+	 * qualify an outward envelope. Infinity declines pruning, not scoring. */
+	for (unsigned i = 0; i < TAPS; i++)
+		cache->margin[i] = extent[i] > DBL_MAX / (65536. * TAPS) ?
+			HUGE_VAL : 1e-12 * (1. + 65536. * extent[i]);
 }
 
 bool v92_observation_symbol_level(struct v92_observation_cache *cache,
