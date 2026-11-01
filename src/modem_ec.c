@@ -76,12 +76,15 @@ enum {
 	LAPM_INFORMATION_RETRAIN_POLLS = 4,
 	/* Let a slow peer answer the third SABME before physical recovery. */
 	LAPM_ESTABLISHMENT_RETRAIN_POLLS = 3,
-	LAPM_INITIAL_SABME_RECOVERY_SAMPLES = MODEM_RATE * 9,
+	LAPM_ESTABLISHMENT_RECOVERY_SECONDS = 9,
+	LAPM_INITIAL_SABME_RECOVERY_SAMPLES =
+		MODEM_RATE * LAPM_ESTABLISHMENT_RECOVERY_SECONDS,
 	/* Faster XIDs must not shorten the initial physical-recovery allowance. */
 	LAPM_XID_RETRAIN_POLLS = 9,
 };
 
 static bool xid_pending(const struct lapm_state *l);
+static void passive_establishment_timeout(struct modem *m);
 
 /* The shared bit timer advances with both line directions. Express T401 in
  * elapsed time, and at slow rates leave room for a maximally stuffed frame
@@ -825,6 +828,12 @@ static int rx_xid_command(struct lapm_state *l, frame_t *f)
 		v44_character_path_destroy(candidate);
 		return -1;
 	}
+	/* The answerer's physical-recovery watchdog supervises only the first
+	 * request. A valid XID hands ownership to ordinary establishment. */
+	if (l->modem->bit_timer_func == passive_establishment_timeout) {
+		l->modem->bit_timer = 0;
+		l->passive_establishment_expired = false;
+	}
 	/* V.42 8.10.2: a peer command does not confirm our own command.
 	 * Keep its timer, frozen offer, and codec setup until our response arrives.
 	 * A cached reply must not reapply old parameters or reset codec histories. */
@@ -973,6 +982,7 @@ void modem_ec_update_timer_rate(struct modem *m, uint64_t previous_rate)
 	if (m == NULL || m->bit_timer <= 0 ||
 	    (m->bit_timer_func != t401_timeout &&
 	     m->bit_timer_func != t403_timeout &&
+	     m->bit_timer_func != passive_establishment_timeout &&
 	     m->get_bits != modem_detector_get_bits))
 		return;
 	rate = (uint64_t)m->rx_rate + m->tx_rate;
@@ -1767,6 +1777,7 @@ static void reset_lapm_link(struct lapm_state *l)
 	l->initial_sabme_sample = 0;
 	l->initial_sabme_recovery = LAPM_SABME_RECOVERY_NONE;
 	l->stalled_retrain = false;
+	l->passive_establishment_expired = false;
 	l->reject = LAPM_REJECT_NONE;
 	l->vs = 0;
 	l->va = 0;
@@ -1846,6 +1857,15 @@ static void modem_ec_negotiate(struct modem *m)
 	T401_START(l);
 }
 
+static void passive_establishment_timeout(struct modem *m)
+{
+	struct lapm_state *l = &m->ec.lapm;
+
+	if (m->state == STATE_EC_ESTAB && l->state == LAPM_IDLE &&
+	    !m->caller && !xid_pending(l))
+		l->passive_establishment_expired = true;
+}
+
 void modem_ec_start(struct modem *m)
 {
 	struct hdlc_state *h = &m->packer.hdlc;
@@ -1863,8 +1883,21 @@ void modem_ec_start(struct modem *m)
 		h->tx_preamble_complete = modem_ec_negotiate;
 	}
 	else {
+		uint64_t rate = (uint64_t)m->tx_rate + m->rx_rate;
+		uint64_t timeout = (rate ? rate : LAPM_TIMER_FALLBACK_BIT_RATE) *
+			LAPM_ESTABLISHMENT_RECOVERY_SECONDS;
+
 		h->tx_complete  = lapm_tx_complete;
 		h->get_tx_frame = lapm_get_tx_frame;
+		/* The answerer cannot originate protocol establishment (V.42
+		 * 7.2.2), but waiting silently also has no T401 retries to provoke
+		 * physical recovery. Allow the same nine seconds as the originator,
+		 * then request one retrain. This is local recovery policy, not a
+		 * V.42 timer. The duplex bit clock excludes physical training. */
+		if (m->state == STATE_EC_ESTAB) {
+			m->bit_timer = timeout > INT_MAX ? INT_MAX : (int)timeout;
+			m->bit_timer_func = passive_establishment_timeout;
+		}
 	}
 	// fixme: improve BUSY becoming, remove packer_process()
 	m->packer_process = NULL;
@@ -1888,12 +1921,15 @@ bool modem_ec_take_retrain_request(struct modem *m)
 	struct lapm_state *l;
 	bool establishing;
 	bool repeated_initial_sabme;
+	bool passive_establishment;
 	int polls;
 
 	if (m == NULL || !m->cfg.ec || m->get_bits != modem_hdlc_get_bits ||
 	    m->put_bits != modem_hdlc_put_bits)
 		return false;
 	l = &m->ec.lapm;
+	passive_establishment = m->state == STATE_EC_ESTAB &&
+		l->state == LAPM_IDLE && l->passive_establishment_expired;
 	/* An answerer may repeatedly send UA while the peer stays in setup.
 	 * Each legal SABME retry restarts T403, so it cannot supervise this
 	 * failure. Use elapsed media and repeated requests, without changing
@@ -1913,7 +1949,7 @@ bool modem_ec_take_retrain_request(struct modem *m)
 	 * so older polls cannot shortcut its budget. */
 	if (l->busy || l->peer_busy || l->stalled_retrain)
 		return false;
-	if (!repeated_initial_sabme) {
+	if (!repeated_initial_sabme && !passive_establishment) {
 		if ((!establishing && (l->state != LAPM_DATA || xid_pending(l))) ||
 		    m->bit_timer <= 0 || m->bit_timer_func != t401_timeout ||
 		    (l->retrain_poll ? l->rtx_count - l->retrain_poll < polls :
@@ -1929,6 +1965,7 @@ bool modem_ec_take_retrain_request(struct modem *m)
 	 * starting or resuming retraining does not. Peer flow control is not a
 	 * channel fault. */
 	l->stalled_retrain = true;
+	l->passive_establishment_expired = false;
 	if (repeated_initial_sabme) {
 		l->initial_sabme_recovery = LAPM_SABME_RECOVERY_PENDING;
 		l->initial_sabme_sample = m->count;

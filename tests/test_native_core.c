@@ -1693,7 +1693,7 @@ static bool test_v92_negotiated_lapm_bypasses_detection(void)
 				      "LAPM detection policy changed: case %zu role %u epoch %u",
 				      i, caller, epoch);
 				if (cases[i].bypass) {
-					CHECK(modem->bit_timer == 0 &&
+					CHECK(modem->bit_timer == (caller ? 0 : 9 * (26400 + 53333)) &&
 					      modem->packer.hdlc.framer == &modem->ec.lapm &&
 					      (modem->packer.hdlc.tx_preamble_flags != 0) ==
 						      (caller != 0),
@@ -8602,6 +8602,88 @@ static bool test_lapm_retrain_recovery_budget(void)
 	return true;
 }
 
+static bool test_lapm_passive_establishment_recovery(void)
+{
+	struct modem_driver driver = {
+		.name = "LAPM passive establishment", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+
+	for (unsigned reply = 0; reply < 3; ++reply)
+	for (unsigned late = 0; late < 2; ++late) {
+		struct modem *m = create_compat_modem(&driver, driver.name);
+		uint8_t bits[64], wire[] = {
+			3, 0xaf, 0x82, 0x80, 0, 6, 6, 1, 8, 8, 1, 1,
+		};
+		frame_t incoming = { .buf = wire, .count = sizeof(wire) };
+		frame_t *outgoing;
+
+		CHECK(m != NULL, "passive establishment allocation failed");
+		m->caller = 0;
+		m->state = 4;
+		m->cfg.ec = 1;
+		m->cfg.comp = 0;
+		m->rx_rate = 1200;
+		m->tx_rate = 52000;
+		CHECK(modem_ec_init(m) == 0, "passive establishment initialization failed");
+		modem_hdlc_start(m);
+		modem_ec_start(m);
+		m->get_bits = modem_hdlc_get_bits;
+		m->put_bits = modem_hdlc_put_bits;
+		struct lapm_state *l = &m->ec.lapm;
+		CHECK(m->bit_timer == 9 * (1200 + 52000),
+		      "passive wait did not allow nine seconds");
+		m->count += 30 * MODEM_RATE;
+		CHECK(!modem_ec_take_retrain_request(m) &&
+		      m->bit_timer == 9 * (1200 + 52000),
+		      "physical training consumed passive wait");
+		CHECK(modem_set_link_rates(m, 1200, 1200) == 0 &&
+		      m->bit_timer == 9 * 2400, "passive wait did not follow rate publication");
+		/* An invalid XID must not postpone recovery. */
+		incoming.count--;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(m->bit_timer == 9 * 2400, "malformed XID cancelled passive recovery");
+		incoming.count++;
+		memset(bits, 1, sizeof(bits));
+		while (m->bit_timer > 1) {
+			int n = m->bit_timer - 1;
+			if (n > (int)sizeof(bits)) n = sizeof(bits);
+			CHECK(modem_put_bits(m, 1, bits, n) == n &&
+			      !modem_ec_take_retrain_request(m), "passive recovery fired early");
+		}
+		if (late)
+			CHECK(modem_get_bits(m, 1, bits, 1) == 1 &&
+			      l->passive_establishment_expired, "passive wait did not expire");
+		if (reply) {
+			if (reply == 2) {
+				wire[1] = 0x7f; /* SABME P=1, default parameters. */
+				incoming.count = 2;
+			}
+			m->packer.hdlc.rx_complete(l, &incoming);
+			outgoing = m->packer.hdlc.get_tx_frame(l);
+			CHECK(outgoing != NULL && outgoing->buf[1] == (reply == 1 ? 0xaf : 0x73) &&
+			      !l->passive_establishment_expired && !modem_ec_take_retrain_request(m),
+			      "valid initial request did not retire passive recovery");
+			m->packer.hdlc.tx_complete(l, outgoing);
+			CHECK((reply == 1 && !m->bit_timer && l->state == 0 && m->state == 4) ||
+			      (reply == 2 && m->bit_timer > 0 && l->state == 2 && m->state == 5),
+			      "passive watchdog changed ordinary establishment");
+		} else {
+			if (!late)
+				CHECK(modem_get_bits(m, 1, bits, 1) == 1, "passive expiry failed");
+			CHECK(modem_ec_take_retrain_request(m) && !modem_ec_take_retrain_request(m) &&
+			      !m->bit_timer && l->state == 0 && m->state == 4 && !l->rtx_count,
+			      "passive wait did not request exactly one physical recovery");
+			CHECK(modem_ec_resume_after_retrain(m) == 0 &&
+			      !modem_ec_take_retrain_request(m) && !m->bit_timer,
+			      "physical resumption renewed passive recovery");
+		}
+		modem_ec_exit(m);
+		modem_delete(m);
+	}
+	return true;
+}
+
 static bool test_lapm_establishment_recovery(void)
 {
 	struct modem_driver driver = {
@@ -11341,6 +11423,7 @@ int main(void)
 		{ "LAPM post-retrain enquiry", test_lapm_post_retrain_enquiry },
 		{ "LAPM retrain recovery budget", test_lapm_retrain_recovery_budget },
 		{ "LAPM acknowledgement progress", test_lapm_acknowledgement_progress },
+		{ "LAPM passive establishment recovery", test_lapm_passive_establishment_recovery },
 		{ "LAPM establishment recovery", test_lapm_establishment_recovery },
 		{ "bounded LAPM stalled retrain", test_lapm_stalled_retrain },
 		{ "LAPM retrain preserves compressed streams", test_lapm_retrain_stream },

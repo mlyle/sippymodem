@@ -273,6 +273,7 @@ struct lapm_state {
         unsigned long initial_sabme_sample;
         enum lapm_sabme_recovery initial_sabme_recovery;
         bool stalled_retrain;
+        bool passive_establishment_expired;
         u8 stalled_polls; /* status enquiries without acknowledgement progress */
         u8  cmd_addr;
         u8  rsp_addr;
