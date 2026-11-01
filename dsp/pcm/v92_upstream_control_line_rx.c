@@ -74,29 +74,6 @@ static enum v92_upstream_control_line_rx_result fail(
 	return V92_UPSTREAM_CONTROL_LINE_RX_INTERNAL_ERROR;
 }
 
-static bool receive_group(
-	struct v92_control_rx *control, uint8_t group, unsigned int bits,
-	struct v92_control_event *event)
-{
-	struct v92_control_event emitted = { 0 };
-
-	for (unsigned int bit = 0u; bit < bits; ++bit) {
-		struct v92_control_event current;
-
-		if (v92_control_rx_receive_bit(
-			    control, (uint8_t)((group >> bit) & 1u),
-			    &current) != V92_CONTROL_RX_OK)
-			return false;
-		if (current.type == V92_CONTROL_EVENT_NONE)
-			continue;
-		if (emitted.type != V92_CONTROL_EVENT_NONE)
-			return false;
-		emitted = current;
-	}
-	*event = emitted;
-	return true;
-}
-
 static void track_repetition(struct v92_upstream_control_line_rx *receiver,
 	const struct v92_control_event *event, unsigned bits_per_symbol, size_t frame_bits)
 {
@@ -134,6 +111,7 @@ v92_upstream_control_line_rx_sample(
 	struct v92_upstream_control_line_rx next;
 	struct v92_control_event emitted = { 0 };
 	struct v92_upstream_decision decision;
+	uint8_t unpacked[3];
 	enum v92_upstream_rx_result signal_result;
 	unsigned int bits;
 
@@ -152,8 +130,12 @@ v92_upstream_control_line_rx_sample(
 		return fail(receiver);
 	bits = v92_phase4_modulator_bits_per_symbol(
 		next.signal.line.demodulator.constellation);
-	if (bits == 0u || !receive_group(
-				  &next.control, decision.group, bits, &emitted))
+	if (bits == 0u || bits > sizeof(unpacked))
+		return fail(receiver);
+	for (unsigned int bit = 0u; bit < bits; ++bit)
+		unpacked[bit] = (uint8_t)((decision.group >> bit) & 1u);
+	if (v92_control_rx_receive_bits(&next.control, unpacked, bits, &emitted) !=
+		V92_CONTROL_RX_OK)
 		return fail(receiver);
 	/* CPu selection is fixed for this exchange once its owner accepts it.
 	 * A damaged row-count header must not hold the parser past the next

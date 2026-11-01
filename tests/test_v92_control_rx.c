@@ -670,6 +670,149 @@ static bool test_recovery_and_rejection(void)
 	return true;
 }
 
+static bool events_match(const struct v92_control_event *left,
+	const struct v92_control_event *right)
+{
+	if (left->type != right->type)
+		return false;
+	switch (left->type) {
+	case V92_CONTROL_EVENT_NONE:
+		return true;
+	case V92_CONTROL_EVENT_SUVD:
+		return suvd_parameters_match(&left->record.suvd.parameters, &right->record.suvd.parameters);
+	case V92_CONTROL_EVENT_CPD:
+		return cpd_parameters_match(&left->record.cpd.parameters, &right->record.cpd.parameters);
+	case V92_CONTROL_EVENT_SUVU:
+		return suvu_parameters_match(&left->record.suvu.parameters, &right->record.suvu.parameters);
+	case V92_CONTROL_EVENT_CPU:
+		return cpu_parameters_match(&left->record.cpu.parameters, &right->record.cpu.parameters);
+	case V92_CONTROL_EVENT_CPUS:
+		return left->record.cpus.parameters.data_rate_number == right->record.cpus.parameters.data_rate_number &&
+		       left->record.cpus.parameters.acknowledges_cpd == right->record.cpus.parameters.acknowledges_cpd;
+	case V92_CONTROL_EVENT_SUVD_REJECTED:
+		return left->record.suvd.frame_result == right->record.suvd.frame_result;
+	case V92_CONTROL_EVENT_CPD_REJECTED:
+		return left->record.cpd.frame_result == right->record.cpd.frame_result;
+	case V92_CONTROL_EVENT_SUVU_REJECTED:
+		return left->record.suvu.frame_result == right->record.suvu.frame_result;
+	case V92_CONTROL_EVENT_CPU_REJECTED:
+		return left->record.cpu.frame_result == right->record.cpu.frame_result;
+	case V92_CONTROL_EVENT_CPUS_REJECTED:
+		return left->record.cpus.frame_result == right->record.cpus.frame_result;
+	}
+	return false;
+}
+
+static bool check_chunks(const uint8_t *frame, size_t bits, bool upstream,
+	unsigned width)
+{
+	static const size_t chunks[] = { 1u, 2u, 3u, 9u, 24u, 42u, 72u };
+
+	for (size_t trial = 0u; trial < sizeof(chunks) / sizeof(chunks[0]); ++trial) {
+		struct v92_control_rx reference, receiver;
+		CHECK((upstream ? v92_control_rx_init_upstream(&receiver, width) :
+			v92_control_rx_init_downstream(&receiver, width)) == V92_CONTROL_RX_OK,
+		      "chunk receiver initialization failed");
+		reference = receiver;
+		for (size_t first = 0u; first < bits + 7u;) {
+			uint8_t input[V92_CONTROL_UPSTREAM_DATA_MAX_BITS];
+			size_t count = chunks[trial];
+			struct v92_control_event expected = { 0 }, actual;
+
+			if (count > bits + 7u - first)
+				count = bits + 7u - first;
+			for (size_t bit = 0u; bit < count; ++bit) {
+				struct v92_control_event current;
+				input[bit] = first + bit < bits ? frame_bit(frame, first + bit) : 1u;
+				CHECK(v92_control_rx_receive_bit(&reference, input[bit], &current) ==
+					V92_CONTROL_RX_OK, "single-bit reference failed");
+				if (current.type != V92_CONTROL_EVENT_NONE) {
+					CHECK(expected.type == V92_CONTROL_EVENT_NONE,
+					      "test chunk unexpectedly contains multiple events");
+					expected = current;
+				}
+			}
+			CHECK(v92_control_rx_receive_bits(&receiver, input, count, &actual) ==
+				V92_CONTROL_RX_OK &&
+			      memcmp(&receiver, &reference, sizeof(receiver)) == 0 &&
+			      events_match(&actual, &expected),
+			      "chunk %zu changed control decisions/state at %zu", count, first);
+			first += count;
+		}
+	}
+	return true;
+}
+
+static bool test_chunks(void)
+{
+	uint8_t frame[V92_CPD_MAX_FRAME_BYTES];
+	size_t bits;
+	const struct v92_suvd_parameters suvd = { .acknowledges_cpu = true };
+	const struct v92_suvu_parameters suvu = { .wait_for_cpu = true };
+	const struct v92_cpd_parameters cpd = cpd_selection(7u);
+	const struct v92_cpu_parameters cpu = cpu_selection(6u, true);
+	const struct v92_cpus_parameters cpus = { .data_rate_number = 8u };
+
+	CHECK(v92_suvd_encode(&suvd, 17u, frame, sizeof(frame), &bits) == V92_SUVD_OK &&
+	      check_chunks(frame, bits, false, 17u), "SUVd chunk decisions differ");
+	flip_bit(frame, 39u);
+	CHECK(check_chunks(frame, bits, false, 17u), "damaged SUVd chunk decisions differ");
+	CHECK(v92_cpd_encode(&cpd, 30u, frame, sizeof(frame), &bits) == V92_CPD_OK &&
+	      check_chunks(frame, bits, false, 30u), "CPd chunk decisions differ");
+	CHECK(v92_suvu_encode(&suvu, 24u, frame, sizeof(frame), &bits) == V92_SUVU_OK &&
+	      check_chunks(frame, bits, true, 24u), "SUVu chunk decisions differ");
+	CHECK(v92_cpu_encode(&cpu, 36u, frame, sizeof(frame), &bits) == V92_CPU_OK &&
+	      check_chunks(frame, bits, true, 36u), "CPu chunk decisions differ");
+	flip_bit(frame, 25u);
+	CHECK(check_chunks(frame, bits, true, 36u), "damaged CPu chunk decisions differ");
+	CHECK(v92_cpus_encode(&cpus, 72u, frame, sizeof(frame), &bits) == V92_CPU_OK &&
+	      check_chunks(frame, bits, true, 72u), "CPus chunk decisions differ");
+
+	struct v92_control_rx receiver, before;
+	struct v92_control_event event, event_before;
+	uint8_t input[73] = { 0 };
+	CHECK(v92_control_rx_init_downstream(&receiver, 9u) == V92_CONTROL_RX_OK,
+	      "chunk contracts initialization failed");
+	before = receiver;
+	memset(&event, 0xa5, sizeof(event));
+	event_before = event;
+	input[71] = 2u;
+	CHECK(v92_control_rx_receive_bits(NULL, input, 1u, &event) ==
+		V92_CONTROL_RX_INVALID_ARGUMENT &&
+	      v92_control_rx_receive_bits(&receiver, NULL, 1u, &event) ==
+		V92_CONTROL_RX_INVALID_ARGUMENT &&
+	      v92_control_rx_receive_bits(&receiver, input, 1u, NULL) ==
+		V92_CONTROL_RX_INVALID_ARGUMENT &&
+	      v92_control_rx_receive_bits(&receiver, input, 72u, &event) ==
+		V92_CONTROL_RX_INVALID_ARGUMENT &&
+	      v92_control_rx_receive_bits(&receiver, input, 0u, &event) ==
+		V92_CONTROL_RX_INVALID_ARGUMENT &&
+	      v92_control_rx_receive_bits(&receiver, input, 73u, &event) ==
+		V92_CONTROL_RX_INVALID_ARGUMENT &&
+	      v92_control_rx_receive_bits(&receiver, receiver.frame, 1u, &event) ==
+		V92_CONTROL_RX_INVALID_ARGUMENT &&
+	      memcmp(&receiver, &before, sizeof(receiver)) == 0 &&
+	      memcmp(&event, &event_before, sizeof(event)) == 0,
+	      "invalid chunk changed receiver or event");
+
+	CHECK(v92_suvd_encode(&suvd, 9u, frame, sizeof(frame), &bits) == V92_SUVD_OK &&
+	      bits == 54u, "two-event fixture encoding failed");
+	for (size_t bit = 0u; bit < bits - 1u; ++bit)
+		CHECK(v92_control_rx_receive_bit(&receiver, frame_bit(frame, bit), &event) ==
+			V92_CONTROL_RX_OK, "two-event fixture prefix failed");
+	before = receiver;
+	event_before = event;
+	input[0] = frame_bit(frame, bits - 1u);
+	for (size_t bit = 0u; bit < bits; ++bit)
+		input[bit + 1u] = frame_bit(frame, bit);
+	CHECK(v92_control_rx_receive_bits(&receiver, input, bits + 1u, &event) ==
+		V92_CONTROL_RX_INTERNAL_ERROR &&
+	      memcmp(&receiver, &before, sizeof(receiver)) == 0 &&
+	      memcmp(&event, &event_before, sizeof(event)) == 0,
+	      "multiple events were lost or partially committed");
+	return true;
+}
+
 static bool test_contracts(void)
 {
 	struct v92_control_rx receiver;
@@ -738,6 +881,7 @@ int main(void)
 	    !test_short_recovery() ||
 	    !test_upstream_recovery_and_rejection() ||
 	    !test_recovery_and_rejection() ||
+	    !test_chunks() ||
 	    !test_contracts()) {
 		fprintf(stderr, "[  FAILED  ] V.92 control receiver\n");
 		return 1;

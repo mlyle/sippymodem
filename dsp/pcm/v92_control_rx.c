@@ -4,6 +4,7 @@
 
 #include "pcm_control_frame.h"
 #include "packed_bits.h"
+#include "memory_region.h"
 
 #include <string.h>
 
@@ -377,17 +378,41 @@ enum v92_control_rx_result v92_control_rx_receive_bit(
 	struct v92_control_rx *receiver, uint8_t bit,
 	struct v92_control_event *event)
 {
+	if (bit > 1u)
+		return V92_CONTROL_RX_INVALID_ARGUMENT;
+	return v92_control_rx_receive_bits(receiver, &bit, 1u, event);
+}
+
+enum v92_control_rx_result v92_control_rx_receive_bits(
+	struct v92_control_rx *receiver, const uint8_t *bits, size_t count,
+	struct v92_control_event *event)
+{
 	struct v92_control_rx next;
 	struct v92_control_event emitted = { 0 };
 
-	if (receiver == NULL || event == NULL || bit > 1u)
+	if (receiver == NULL || event == NULL || bits == NULL || count == 0u ||
+	    count > V92_CONTROL_UPSTREAM_DATA_MAX_BITS ||
+	    memory_regions_overlap(receiver, sizeof(*receiver), event, sizeof(*event)) ||
+	    memory_regions_overlap(receiver, sizeof(*receiver), bits, count) ||
+	    memory_regions_overlap(event, sizeof(*event), bits, count))
 		return V92_CONTROL_RX_INVALID_ARGUMENT;
 	if (!v92_control_rx_is_valid(receiver))
 		return V92_CONTROL_RX_INVALID_STATE;
 	next = *receiver;
-	next.record_boundary = false;
-	if (!receive_valid_bit(&next, bit, &emitted))
-		return V92_CONTROL_RX_INTERNAL_ERROR;
+	for (size_t bit = 0u; bit < count; ++bit) {
+		struct v92_control_event current = { 0 };
+
+		if (bits[bit] > 1u)
+			return V92_CONTROL_RX_INVALID_ARGUMENT;
+		next.record_boundary = false;
+		if (!receive_valid_bit(&next, bits[bit], &current))
+			return V92_CONTROL_RX_INTERNAL_ERROR;
+		if (current.type != V92_CONTROL_EVENT_NONE) {
+			if (emitted.type != V92_CONTROL_EVENT_NONE)
+				return V92_CONTROL_RX_INTERNAL_ERROR;
+			emitted = current;
+		}
+	}
 	if (!v92_control_rx_is_valid(&next))
 		return V92_CONTROL_RX_INTERNAL_ERROR;
 	*receiver = next;

@@ -114,9 +114,18 @@ bool v92_control_rx_is_valid(
 	const struct v92_control_rx *receiver);
 
 /* Consume one binary decision. Wire failures are events and reset the search;
- * invalid calls leave both receiver and event unchanged. */
+ * invalid calls leave both receiver and event unchanged. Receiver and event
+ * must be disjoint. */
 enum v92_control_rx_result v92_control_rx_receive_bit(
 	struct v92_control_rx *receiver, uint8_t bit,
+	struct v92_control_event *event);
+
+/* Consume 1..72 unpacked bits in transmission order, at most one event.
+ * A chunk may end after that event; record_boundary then remains clear.
+ * Input, receiver and event must be disjoint. Invalid input or a second
+ * event rejects the whole chunk without changing receiver or event. */
+enum v92_control_rx_result v92_control_rx_receive_bits(
+	struct v92_control_rx *receiver, const uint8_t *bits, size_t count,
 	struct v92_control_event *event);
 
 #endif /* V92_CONTROL_RX_H */

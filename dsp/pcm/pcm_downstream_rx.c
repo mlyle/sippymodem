@@ -307,24 +307,12 @@ static enum pcm_downstream_rx_result feed_v92_control_frame(
 	struct pcm_downstream_event *event)
 {
 	struct v92_control_event emitted = { 0 };
-	bool aligned = false;
-
-	for (size_t bit = 0u; bit < frame->bit_count; ++bit) {
-		struct v92_control_event current;
-
-		if (v92_control_rx_receive_bit(
-			    &receiver->control.v92, frame->bits[bit],
-			    &current) != V92_CONTROL_RX_OK)
-			return PCM_DOWNSTREAM_RX_INTERNAL_ERROR;
-		if (current.type == V92_CONTROL_EVENT_NONE)
-			continue;
-		if (emitted.type != V92_CONTROL_EVENT_NONE)
-			return PCM_DOWNSTREAM_RX_INTERNAL_ERROR;
-		emitted = current;
-		aligned = bit + 1u == frame->bit_count;
-	}
+	if (v92_control_rx_receive_bits(&receiver->control.v92, frame->bits,
+		    frame->bit_count, &emitted) != V92_CONTROL_RX_OK)
+		return PCM_DOWNSTREAM_RX_INTERNAL_ERROR;
 	if (emitted.type == V92_CONTROL_EVENT_NONE)
 		return PCM_DOWNSTREAM_RX_BUFFERING;
+	bool aligned = receiver->control.v92.record_boundary;
 	if (!aligned && emitted.type == V92_CONTROL_EVENT_SUVD) {
 		emitted.type = V92_CONTROL_EVENT_SUVD_REJECTED;
 		emitted.record.suvd.frame_result = V92_SUVD_INVALID_FRAME;
