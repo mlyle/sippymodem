@@ -36,6 +36,31 @@ struct v34_power_normalizer {
 	enum v34_nonlinear_parameter nonlinear_parameter;
 };
 
+/* Project a receive decision using an already validated normalizer. Unlike
+ * transmit normalization, the infinite decision lattice has no finite-peak
+ * admission check. Keep nonlinear projection before coordinate scaling.
+ * As with raw QAM arithmetic, the owner checks the scaled coordinates or
+ * residual for finiteness. Projection rejection leaves the output unchanged;
+ * validate the profile once per frame or slice, not once per candidate. */
+static inline enum v34_nonlinear_result v34_project_decision(
+	const struct v34_power_normalizer *normalizer,
+	const struct v34_q7_point *precoded, struct qam_point *normalized)
+{
+	struct qam_point point;
+	enum v34_nonlinear_result result;
+
+	if (normalizer == NULL || normalized == NULL)
+		return V34_NONLINEAR_INVALID_ARGUMENT;
+	result = v34_nonlinear_encode(normalizer->nonlinear_parameter,
+		normalizer->precoded_mean_squared_magnitude, precoded, &point);
+	if (result != V34_NONLINEAR_OK)
+		return result;
+	point.in_phase *= normalizer->normalization_gain;
+	point.quadrature *= normalizer->normalization_gain;
+	*normalized = point;
+	return V34_NONLINEAR_OK;
+}
+
 bool v34_symbol_power_measurement_is_valid(
 	const struct v34_symbol_power_measurement *measurement);
 

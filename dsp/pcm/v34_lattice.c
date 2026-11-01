@@ -61,13 +61,9 @@ static bool candidate_error(
 			.quadrature = (int32_t)candidate->quadrature * V34_Q7_SCALE,
 		};
 
-		if (v34_nonlinear_encode(
-			    normalizer->nonlinear_parameter,
-			    normalizer->precoded_mean_squared_magnitude,
-			    &precoded, &point) != V34_NONLINEAR_OK)
+		if (v34_project_decision(normalizer, &precoded, &point) !=
+		    V34_NONLINEAR_OK)
 			return false;
-		point.in_phase *= normalizer->normalization_gain;
-		point.quadrature *= normalizer->normalization_gain;
 	} else {
 		point = (struct qam_point){
 			.in_phase = candidate->in_phase,

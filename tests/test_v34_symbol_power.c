@@ -575,6 +575,49 @@ static bool test_linear_normalizer(void)
 	return true;
 }
 
+static bool test_decision_projection(void)
+{
+	struct v34_frame_geometry geometry;
+	struct v34_mapping_parameters mapping;
+	const struct v34_q7_point decision = { 255 * V34_Q7_SCALE, -255 * V34_Q7_SCALE };
+	const struct v34_symbol_power_measurement precoded = { 25.0, 256 };
+
+	CHECK(v34_frame_geometry_init(&geometry, V34_SYMBOL_RATE_3000, 8, false) ==
+	      V34_FRAME_SCHEDULE_OK &&
+	      v34_mapping_parameters_init(&mapping, &geometry, false) ==
+	      V34_MAPPING_PARAMETERS_OK, "decision geometry failed");
+	for (unsigned nonlinear = 0; nonlinear < 2; ++nonlinear) {
+		struct v34_power_normalizer normalizer;
+		const struct v34_symbol_power_measurement measured = {
+			nonlinear ? 30.0 : 25.0, 256,
+		};
+		struct qam_point projected, target, untouched = { 123.0, -456.0 };
+		long double zeta = nonlinear ? (5.0L / 16.0L) * (2 * 255 * 255) / 25.0L : 0.0L;
+		long double expected = 255.0L * (1.0L + zeta / 6.0L + zeta * zeta / 120.0L);
+
+		CHECK(v34_power_normalizer_init(&normalizer, &mapping,
+			      nonlinear ? V34_NONLINEAR_THETA_5_OVER_16 : V34_NONLINEAR_THETA_ZERO,
+			      &precoded, &measured) == V34_SYMBOL_POWER_OK &&
+		      v34_project_decision(&normalizer, &decision, &target) == V34_NONLINEAR_OK &&
+		      nearly_equal(target.in_phase, expected * normalizer.normalization_gain) &&
+		      nearly_equal(target.quadrature, -expected * normalizer.normalization_gain),
+		      "decision projection %u lost an outlying lattice decision", nonlinear);
+		CHECK(v34_nonlinear_encode(normalizer.nonlinear_parameter,
+			      normalizer.precoded_mean_squared_magnitude, &decision, &projected) ==
+			      V34_NONLINEAR_OK &&
+		      v34_normalize_power(&normalizer, &projected, &untouched) ==
+			      V34_SYMBOL_POWER_OUT_OF_RANGE &&
+		      untouched.in_phase == 123.0 && untouched.quadrature == -456.0,
+		      "receive projection relaxed transmit admission %u", nonlinear);
+		CHECK(v34_project_decision(NULL, &decision, &untouched) == V34_NONLINEAR_INVALID_ARGUMENT &&
+		      v34_project_decision(&normalizer, NULL, &untouched) == V34_NONLINEAR_INVALID_ARGUMENT &&
+		      v34_project_decision(&normalizer, &decision, NULL) == V34_NONLINEAR_INVALID_ARGUMENT &&
+		      untouched.in_phase == 123.0 && untouched.quadrature == -456.0,
+		      "rejected decision projection changed output %u", nonlinear);
+	}
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v34_symbol_power_measurement measurement = {
@@ -640,6 +683,7 @@ int main(void)
 		{ "normalized mean", test_normalized_mean },
 		{ "all power envelopes", test_all_power_envelopes },
 		{ "normalizer validation", test_normalizer_validation },
+		{ "receive decision projection", test_decision_projection },
 		{ "linear normalizer", test_linear_normalizer },
 		{ "validation", test_validation },
 	};
