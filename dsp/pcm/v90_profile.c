@@ -320,14 +320,32 @@ static void prepare_levels(struct spaced_levels *levels, enum g711_law law,
 	}
 }
 
-static uint32_t constellation_power(const struct spaced_levels levels[6],
+/* Equal DIL masks share one level prefix, while each phase keeps its own
+ * cardinality and exact word-occurrence power weights. Packed masks contain
+ * no padding; NULL gives every phase the same direct-codec level set. */
+static void level_sources(const struct pcm_constellation *available,
+	unsigned source[V90_CP_FRAME_INTERVALS])
+{
+	for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; ++slot) {
+		source[slot] = slot;
+		for (unsigned prior = 0; prior < slot; ++prior) {
+			if (available == NULL || memcmp(available + slot, available + prior,
+				    sizeof(*available)) == 0) {
+				source[slot] = source[prior];
+				break;
+			}
+		}
+	}
+}
+
+static uint32_t constellation_power(const struct spaced_levels *const levels[6],
 	const uint8_t sizes[6], unsigned bits)
 {
 	uint64_t remaining = (UINT64_C(1) << bits) - 1, stride = 1;
 	struct pcm_power_sum sum = { 0 };
 	uint32_t floor, ceiling;
 	for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++) {
-		const struct spaced_levels *row = &levels[slot];
+		const struct spaced_levels *row = levels[slot];
 		unsigned size = sizes[slot];
 		pcm_power_accumulate_levels(&sum, bits, remaining, stride, size, row->square);
 		stride *= size;
@@ -349,6 +367,7 @@ struct cardinality_family {
  * Include the original root-1/root family first to preserve its tie order. */
 static unsigned data_families(const struct v90_pcm_mapping *mapping,
 	const struct pcm_constellation *available,
+	const unsigned source[V90_CP_FRAME_INTERVALS],
 	struct cardinality_family families[PCM_CONSTELLATION_UCODES])
 {
 	unsigned root = mapping->modulus[0], caps[V90_CP_FRAME_INTERVALS];
@@ -363,9 +382,13 @@ static unsigned data_families(const struct v90_pcm_mapping *mapping,
 	if (available == NULL)
 		return count;
 	for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++) {
-		struct spaced_levels levels;
-		prepare_levels(&levels, mapping->law, 1, available + slot);
-		caps[slot] = levels.size;
+		if (source[slot] != slot) {
+			caps[slot] = caps[source[slot]];
+		} else {
+			struct spaced_levels levels;
+			prepare_levels(&levels, mapping->law, 1, available + slot);
+			caps[slot] = levels.size;
+		}
 		if (caps[slot] < V90_INITIAL_CONSTELLATION_SIZE)
 			return 0;
 		capacity *= caps[slot];
@@ -423,8 +446,13 @@ static bool select_constellations(const struct v90_pcm_mapping *mapping,
 	unsigned count = 0;
 	bool found = false;
 	int16_t peak;
+	unsigned source[V90_CP_FRAME_INTERVALS];
+	struct spaced_levels storage[V90_CP_FRAME_INTERVALS];
+	const struct spaced_levels *levels[V90_CP_FRAME_INTERVALS];
 
+	level_sources(available, source);
 	for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++) {
+		levels[slot] = &storage[source[slot]];
 		if (mapping->modulus[slot] > largest)
 			largest = mapping->modulus[slot];
 		capacity *= root;
@@ -432,7 +460,7 @@ static bool select_constellations(const struct v90_pcm_mapping *mapping,
 	/* Only generated common-row maps may trade capacity between phases.
 	 * Peer-owned maps retain every interval's independent cardinality. */
 	if (balance && root != V90_INITIAL_CONSTELLATION_SIZE) {
-		count = data_families(mapping, available, families);
+		count = data_families(mapping, available, source, families);
 		if (count == 1 && capacity == words)
 			count = 0;
 	}
@@ -443,14 +471,14 @@ static bool select_constellations(const struct v90_pcm_mapping *mapping,
 		uint32_t spacing = low + (high - low) / 2u, best_power = UINT32_MAX;
 		uint8_t best[V90_CP_FRAME_INTERVALS] = { 0 };
 		bool fits = true;
-		struct spaced_levels levels[V90_CP_FRAME_INTERVALS];
 		for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++)
-			prepare_levels(&levels[slot], mapping->law, spacing,
-				available ? available + slot : NULL);
+			if (source[slot] == slot)
+				prepare_levels(&storage[slot], mapping->law, spacing,
+					available ? available + slot : NULL);
 		/* The original cardinalities win at equal distance. Both searches
 		 * use the same componentwise-minimal levels and exact power sum. */
 		for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++)
-			fits &= mapping->modulus[slot] <= levels[slot].size;
+			fits &= mapping->modulus[slot] <= levels[slot]->size;
 		fits = fits && constellation_power(levels, mapping->modulus,
 			mapping->modulus_bits) <= maximum_power;
 		if (fits)
@@ -466,7 +494,7 @@ static bool select_constellations(const struct v90_pcm_mapping *mapping,
 				for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++) {
 					sizes[slot] = pattern & (1u << slot) ? f->high[slot] : f->low[slot];
 					capacity *= sizes[slot];
-					usable &= sizes[slot] <= levels[slot].size;
+					usable &= sizes[slot] <= levels[slot]->size;
 				}
 				if (usable && capacity >= words) {
 					uint32_t power = constellation_power(levels, sizes, mapping->modulus_bits);
@@ -486,7 +514,7 @@ static bool select_constellations(const struct v90_pcm_mapping *mapping,
 			for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++) {
 				selected[slot] = (struct pcm_constellation){ 0 };
 				for (unsigned point = 0; point < best[slot]; point++)
-					pcm_constellation_add(&selected[slot], levels[slot].code[point]);
+					pcm_constellation_add(&selected[slot], levels[slot]->code[point]);
 			}
 			found = true;
 			low = spacing + 1u;

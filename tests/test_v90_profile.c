@@ -1145,6 +1145,34 @@ static bool test_fixed_unequal_cardinalities(void)
 	return true;
 }
 
+static bool test_common_masks_fixed_cardinalities(void)
+{
+	/* The same DIL mask can serve phases with different peer-owned moduli.
+	 * Sharing available levels must not share their cardinality or weight. */
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++) {
+		struct pcm_constellation owned[6] = { 0 }, available[6], rows[6];
+		uint8_t map[6], count;
+		for (unsigned slot = 0; slot < 6; slot++)
+			for (unsigned point = 0; point < 8u + slot; point++)
+				pcm_constellation_add(owned + slot, (uint8_t)(8u + 7u * point));
+		for (unsigned slot = 0; slot < 6; slot++)
+			available[slot] = owned[5];
+		struct v90_pcm_mapping mapping;
+		uint32_t floor, ceiling;
+		CHECK(v90_pcm_mapping_init_v91(&mapping, law, 26, owned) == V90_PCM_MAPPING_OK &&
+		      v90_pcm_mapping_power(&mapping, V90_PCM_MAPPING_CODEC, law,
+			      &floor, &ceiling) == V90_PCM_MAPPING_OK,
+		      "common-mask fixed map setup failed");
+		CHECK(v90_profile_select_measured_constellations(&mapping, ceiling,
+			      available, rows, map, &count) && count == 6,
+		      "common masks lost independent cardinalities");
+		for (unsigned slot = 0; slot < 6; slot++)
+			CHECK(map[slot] < count && !memcmp(rows + map[slot], owned + slot,
+				      sizeof(owned[slot])), "common mask changed phase %u", slot);
+	}
+	return true;
+}
+
 static bool test_balanced_optimality(void)
 {
 	const uint32_t limits[] = { 4000000, 16000000 };
@@ -1311,6 +1339,7 @@ int main(void)
 		{ "balanced measured capacity", test_balanced_measured_capacity },
 		{ "balanced exhaustive optimality", test_balanced_optimality },
 		{ "fixed unequal cardinalities", test_fixed_unequal_cardinalities },
+		{ "common masks retain fixed cardinalities", test_common_masks_fixed_cardinalities },
 		{ "asymmetric exhaustive optimality", test_asymmetric_optimality },
 		{ "digital probe capabilities", test_digital_probe_capabilities },
 		{ "upstream policy", test_upstream_policy },
