@@ -297,10 +297,12 @@ static void push_history(int32_t *history, size_t count, int32_t value)
 	history[0] = value;
 }
 
+/* x belongs to this unchanged history. Reuse the selected precoder output
+ * before advancing either filter, including its rounding and saturation. */
 static void filter_step(
 	const struct v92_pcm_mapping *mapping,
 	struct v92_pcm_frame_filter_state *filter, int32_t u,
-	int32_t *x, int32_t *v)
+	int32_t x, int32_t *v)
 {
 	const struct v92_cpd_filter *z1 =
 		&mapping->cpd.filter[V92_CPD_PRECODER_FEED_FORWARD];
@@ -311,10 +313,9 @@ static void filter_step(
 	int32_t *x_values = u_values + z1->count;
 	int32_t *v_values = x_values + x_count;
 
-	*x = precoder_output(precoder_history(mapping, filter), u);
-	*v = prefilter_output(mapping, prefilter_history(mapping, filter), *x);
+	*v = prefilter_output(mapping, prefilter_history(mapping, filter), x);
 	push_history(u_values, z1->count, u);
-	push_history(x_values, x_count, *x);
+	push_history(x_values, x_count, x);
 	push_history(v_values, p2->count, *v);
 }
 
@@ -323,12 +324,13 @@ static bool select_point(
 	const struct v92_pcm_frame_filter_state *filter,
 	size_t symbol, uint8_t expected_digit,
 	const int16_t selected[V92_PCM_MAPPING_FRAME_SYMBOLS], uint8_t y0,
-	int16_t *eta_out, int16_t *u_out)
+	int16_t *eta_out, int16_t *u_out, int32_t *x_out)
 {
 	const struct v92_cpd_constellation *constellation;
 	int64_t best_score = 0;
 	int16_t best_eta = 0;
 	int16_t best_u = 0;
+	int32_t best_x = 0;
 	bool found = false;
 	int64_t history = precoder_history(mapping, filter);
 	uint8_t constellation_index =
@@ -354,12 +356,14 @@ static bool select_point(
 			best_score = score;
 			best_eta = (int16_t)eta;
 			best_u = u;
+			best_x = x;
 		}
 	}
 	if (!found)
 		return false;
 	*eta_out = best_eta;
 	*u_out = best_u;
+	*x_out = best_x;
 	return true;
 }
 
@@ -507,10 +511,11 @@ static bool encode_digits(const struct v92_pcm_mapping *mapping,
 
 		if (v34_convolutional_encoder_output(&state->trellis, &y0) != V34_TRELLIS_OK ||
 		    !select_point(mapping, &state->filter, symbol, frame->digit[symbol],
-			frame->signed_index, y0, &frame->signed_index[symbol], &frame->u[symbol]))
+			frame->signed_index, y0, &frame->signed_index[symbol], &frame->u[symbol],
+			&frame->x[symbol]))
 			return false;
 		frame->y0[symbol] = y0;
-		filter_step(mapping, &state->filter, frame->u[symbol], &frame->x[symbol],
+		filter_step(mapping, &state->filter, frame->u[symbol], frame->x[symbol],
 			&frame->v[symbol]);
 		if (symbol % V92_PCM_TRELLIS_INTERVAL_SYMBOLS == 3u &&
 		    !advance_trellis(&state->trellis, frame->signed_index, symbol))
@@ -1725,8 +1730,10 @@ static enum v92_pcm_frame_result decode_frame(
 			frame->digit[symbol] = candidate->digit;
 			frame->u[symbol] = v92_cpd_signed_point(constellation, candidate->eta);
 			frame->y0[symbol] = candidate->y0;
+			frame->x[symbol] = precoder_output(precoder_history(
+				&receiver->mapping, &next[index].state.filter), frame->u[symbol]);
 			filter_step(&receiver->mapping, &next[index].state.filter,
-				    frame->u[symbol], &frame->x[symbol], &frame->v[symbol]);
+				    frame->u[symbol], frame->x[symbol], &frame->v[symbol]);
 			/* Reconstructed error reports residuals, not input-cell rank.
 			 * Only retained paths need that quantized prediction. */
 			error = (int64_t)samples[symbol] - predicted_observation(receiver,
