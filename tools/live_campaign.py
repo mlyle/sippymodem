@@ -633,6 +633,19 @@ def _exercise_online(
     if not state.initial_data:
         if not state.detail:
             state.detail = "initial online data was not verified"
+        if state.report.protocol == "LAPM":
+            # Distinguish a missing greeting from an unusable data path.
+            # This diagnostic never upgrades the failed greeting grade.
+            progress.set("probing after missing initial greeting")
+            try:
+                verified, received = terminal.probe_online_ping(
+                    config.online_timeout_seconds
+                )
+                state.capture(leg, ONLINE_PING_REQUEST, received,
+                              phase="missing-greeting-ping")
+                state.exchanges[-1]["verified"] = verified
+            except (LiveTerminalError, OSError, TimeoutError):
+                state.detail += "; diagnostic PING exchange failed"
         return
     if state.report.protocol == "LAPM":
         # A banner proves only reception. Exercise the first outbound bytes

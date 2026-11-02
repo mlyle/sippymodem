@@ -250,7 +250,7 @@ while True:
                 if mode == "callback-request-errors":
                     os.write(master, b"\r\nERROR: unknown command; send HELP for a list\r\n")
                 online = True
-            elif mode in ("raw-wakeup", "wrong-link"):
+            elif mode in ("raw-wakeup", "wrong-link") or "no-banner" in mode:
                 os.write(master, connect_response())
                 online = True
             else:
@@ -289,6 +289,38 @@ while True:
 
 
 class LiveCampaignTests(unittest.TestCase):
+    def test_missing_lapm_greeting_gets_diagnostic_probe_without_regrading(self) -> None:
+        for responds in (True, False):
+            with self.subTest(responds=responds), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                script = root / "fake.py"
+                script.write_text(textwrap.dedent(FAKE_MODEM), encoding="utf-8")
+                mode = "pcm-retrain-no-banner"
+                if not responds:
+                    mode += "-initial-no-data"
+                scheduled = ScheduledAttempt(CASES_BY_NAME["v92-pcmup-24000-lapm-originator"], 1)
+                artifacts = self.artifacts(root, scheduled)
+                config = replace(self.config(root, script, mode), online_timeout_seconds=0.15)
+                with mock.patch("tools.live_terminal.time.sleep"):
+                    result = run_physical_attempt(
+                        config,
+                        FrozenBinary(root, Path(sys.executable), "a" * 40, "b" * 64, False),
+                        scheduled, 1, artifacts, True,
+                    )
+                self.assertTrue(result.connected)
+                self.assertFalse(result.initial_receive_data)
+                self.assertIsNone(result.initial_transmit_data)
+                self.assertFalse(result.initial_data)
+                self.assertEqual(result.maturity, MATURITY_CONNECT)
+                self.assertFalse(result.remote_retrain)
+                self.assertIn("initial online data was not verified", result.detail)
+                self.assertEqual((artifacts.legs["modem"] / "terminal-tx.bin").read_bytes(),
+                                 b"\r\n\r\nPING\r\n")
+                saved = json.loads((artifacts.directory / "result.json").read_text())
+                diagnostic = saved["exchanges"][-1]
+                self.assertEqual(diagnostic["phase"], "missing-greeting-ping")
+                self.assertEqual(diagnostic["verified"], responds)
+
     def test_initial_lapm_data_requires_both_directions_without_retraining(self) -> None:
         for role in ("originator", "callback"):
             for responds in (True, False):
