@@ -280,6 +280,22 @@ static int pair_input_margin(
 		(void)g711_quantization_interval(law, (int16_t)midpoint, &bin);
 		int low = lower_lu, high = upper_lu + 1;
 		int center = bin.lower + bin.upper;
+		/* For positive a,b and Q=2^18, round(a/Q)+round(b/Q) is either
+		 * floor((a+b)/Q) or that value plus one. Bound the crossing
+		 * before the exact search. Signed rounding is symmetric, including
+		 * half ties, so reflect negative pairs for the same positive bound. */
+		int64_t divisor = left >= 0 ? left + right : -left - right;
+		int64_t magnitude = left >= 0 ? center : -center;
+		int64_t lower_product = (magnitude - 1) * (INT64_C(1) << 18);
+		int64_t upper_product = magnitude * (INT64_C(1) << 18);
+		int64_t lower_bound = lower_product / divisor;
+		int64_t upper_bound = upper_product / divisor;
+		lower_bound += lower_product % divisor > 0;
+		upper_bound += upper_product % divisor > 0;
+		if (lower_bound > low)
+			low = lower_bound > high ? high : (int)lower_bound;
+		if (upper_bound < high)
+			high = upper_bound < low ? low : (int)upper_bound;
 
 		/* One bin-entry distance decreases while the other grows. Their
 		 * maximum is minimized at their crossing or its predecessor. */

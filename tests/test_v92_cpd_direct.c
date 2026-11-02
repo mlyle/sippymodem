@@ -642,13 +642,44 @@ static bool test_input_noise_margin(void)
 	return true;
 }
 
+static bool test_cell_selection_invariance(void)
+{
+	/* A full-cell optimum belongs to the reported codec cell. Choosing its
+	 * lower or upper integer as LU must retain the same wire parameters,
+	 * including the negative symbols' asymmetric codec-bin crossings. */
+	const int16_t nominal[] = { 4091, 5471, 7040, 7777 };
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (size_t i = 0; i < ARRAY_LENGTH(nominal); ++i) {
+			struct g711_interval cell;
+			struct v92_cpd_parameters cpd;
+			uint8_t expected[V92_CPD_DIRECT_MAX_FRAME_BYTES] = { 0 };
+			size_t expected_bits;
+			CHECK(g711_quantization_interval(law, nominal[i], &cell) &&
+			      v92_cpd_direct_select(&cpd, law, 19u, nominal[i], false) == V92_CPD_OK &&
+			      v92_cpd_encode(&cpd, 24u, expected, sizeof(expected),
+				      &expected_bits) == V92_CPD_OK,
+			      "full-cell reference selection failed");
+			const int16_t endpoints[] = { cell.lower, cell.upper };
+			for (size_t j = 0; j < ARRAY_LENGTH(endpoints); ++j) {
+				uint8_t actual[V92_CPD_DIRECT_MAX_FRAME_BYTES] = { 0 };
+				size_t bits;
+				CHECK(v92_cpd_direct_select(&cpd, law, 19u, endpoints[j], false) == V92_CPD_OK &&
+				      v92_cpd_encode(&cpd, 24u, actual, sizeof(actual), &bits) == V92_CPD_OK &&
+				      bits == expected_bits &&
+				      !memcmp(actual, expected, (bits + 7u) / 8u),
+				      "law %u LU %d changed at endpoint %d", law, nominal[i], endpoints[j]);
+			}
+		}
+	return true;
+}
+
 int main(void)
 {
 	if (!test_rate_and_law_matrix() || !test_known_boundaries() ||
 	    !test_transactionality() || !test_level_selection() ||
 	    !test_low_rate_cell_selection() || !test_full_cell_selection() ||
 	    !test_uncertain_symbol_ranges() ||
-	    !test_input_noise_margin())
+	    !test_input_noise_margin() || !test_cell_selection_invariance())
 		return 1;
 	return 0;
 }
