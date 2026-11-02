@@ -84,9 +84,10 @@ static enum v92_upstream_rx_result fail(struct v92_upstream_rx *receiver)
 static enum v92_upstream_rx_result sample(
 	struct v92_upstream_rx *receiver, int16_t input_sample,
 	bool known, uint8_t expected_group,
-	struct v92_upstream_decision *decision)
+	struct v92_upstream_decision *decision, bool staged)
 {
-	struct v92_upstream_rx next;
+	struct v92_upstream_rx snapshot;
+	struct v92_upstream_rx *next = receiver;
 	struct v92_upstream_decision generated;
 	struct qam_point output;
 	struct qam_point input;
@@ -101,7 +102,7 @@ static enum v92_upstream_rx_result sample(
 	    memory_regions_overlap(
 		    receiver, sizeof(*receiver), decision, sizeof(*decision)))
 		return V92_UPSTREAM_RX_INVALID_ARGUMENT;
-	if (!v92_upstream_rx_is_valid(receiver))
+	if (!staged && !v92_upstream_rx_is_valid(receiver))
 		return V92_UPSTREAM_RX_INVALID_STATE;
 	if (receiver->failed)
 		return V92_UPSTREAM_RX_FAILED;
@@ -111,70 +112,82 @@ static enum v92_upstream_rx_result sample(
 		receiver->line.demodulator.constellation);
 	if (known && (bits == 0u || expected_group >= (1u << bits)))
 		return V92_UPSTREAM_RX_INVALID_ARGUMENT;
-	if (known && receiver->training_tail_remaining == 0u) {
+	bool known_sequence = known && receiver->training_tail_remaining == 0u;
+	if (known_sequence) {
 		reference = reference_from(&receiver->line.demodulator);
 		if (v92_phase4_modulator_next(&reference, expected_group, &expected_level) !=
 		    V92_PHASE4_MODULATOR_OK)
 			return V92_UPSTREAM_RX_INVALID_STATE;
 	}
-	next = *receiver;
+	if (!staged) {
+		snapshot = *receiver;
+		next = &snapshot;
+	}
 	input = (struct qam_point){
-		.in_phase = next.line.polarity > 0 ?
+		.in_phase = next->line.polarity > 0 ?
 			input_sample : -(double)input_sample,
 	};
 	if (qam_equalizer_push(
-		    &next.line.equalizer, &input, &output, &ready) !=
+		    &next->line.equalizer, &input, &output, &ready) !=
 		    QAM_EQUALIZER_OK ||
 	    !ready)
 		return fail(receiver);
-	output.in_phase += next.line.output_bias;
+	output.in_phase += next->line.output_bias;
 	if (v92_phase4_demodulator_next(
-		    &next.line.demodulator, output.in_phase,
+		    &next->line.demodulator, output.in_phase,
 		    &generated.group, &generated.nearest_level) !=
 		    V92_PHASE4_MODULATOR_OK)
 		return fail(receiver);
 	nominal_level = known ? expected_level : generated.nearest_level;
-	if (next.training_tail_remaining != 0u) {
+	if (next->training_tail_remaining != 0u) {
 		size_t target_index =
 			V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY -
-			next.training_tail_remaining;
+			next->training_tail_remaining;
 		int16_t selected = g711_quantize(
-			next.line.law, generated.nearest_level);
+			next->line.law, generated.nearest_level);
 
 		nominal_level = generated.nearest_level;
-		adapt = selected == g711_quantize(next.line.law,
-			next.line.pending_training_targets[target_index]);
-		next.training_tail_remaining--;
+		adapt = selected == g711_quantize(next->line.law,
+			next->line.pending_training_targets[target_index]);
+		next->training_tail_remaining--;
 	}
 	if (adapt) {
-		if (!v92_control_adapt(&next.line.equalizer, next.line.law,
-				&next.line.demodulator, nominal_level, next.line.adaptation,
-				&next.line.output_bias, false))
+		if (!v92_control_adapt(&next->line.equalizer, next->line.law,
+				&next->line.demodulator, nominal_level, next->line.adaptation,
+				&next->line.output_bias, false))
 			return fail(receiver);
 	}
 	/* A known sequence owns its coding history. Preserve the observed decision
 	 * for error measurements, but keep an impulse from changing later targets
 	 * or the handoff into unknown data. The delayed training tail still owns
 	 * its distinct targets until all of those decisions have been consumed. */
-	if (known && receiver->training_tail_remaining == 0u) {
-		next.line.demodulator.descrambler = reference.scrambler;
-		next.line.demodulator.previous_encoded_sign = reference.previous_encoded_sign;
+	if (known_sequence) {
+		next->line.demodulator.descrambler = reference.scrambler;
+		next->line.demodulator.previous_encoded_sign = reference.previous_encoded_sign;
 	}
-	next.line.equalizer.can_adapt = false;
+	next->line.equalizer.can_adapt = false;
 	generated.equalized_level = output.in_phase;
-	next.line.input_samples++;
-	if (!v92_upstream_rx_is_valid(&next))
+	next->line.input_samples++;
+	if (!v92_upstream_rx_is_valid(next))
 		return fail(receiver);
-	*receiver = next;
+	if (!staged)
+		*receiver = *next;
 	*decision = generated;
 	return V92_UPSTREAM_RX_OK;
+}
+
+enum v92_upstream_rx_result v92_upstream_rx_sample_owned(
+	struct v92_upstream_rx *receiver, int16_t input_sample,
+	struct v92_upstream_decision *decision)
+{
+	return sample(receiver, input_sample, false, 0u, decision, true);
 }
 
 enum v92_upstream_rx_result v92_upstream_rx_sample(
 	struct v92_upstream_rx *receiver, int16_t input_sample,
 	struct v92_upstream_decision *decision)
 {
-	return sample(receiver, input_sample, false, 0u, decision);
+	return sample(receiver, input_sample, false, 0u, decision, false);
 }
 
 enum v92_upstream_rx_result v92_upstream_rx_sample_known(
@@ -182,7 +195,7 @@ enum v92_upstream_rx_result v92_upstream_rx_sample_known(
 	uint8_t expected_group, struct v92_upstream_decision *decision)
 {
 	return sample(
-		receiver, input_sample, true, expected_group, decision);
+		receiver, input_sample, true, expected_group, decision, false);
 }
 
 const char *v92_upstream_rx_result_name(enum v92_upstream_rx_result result)

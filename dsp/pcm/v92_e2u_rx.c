@@ -277,7 +277,7 @@ static bool retain_repeat(struct v92_e2u_search *search,
 	 * record whose reserved/duplicate fields may differ. */
 	struct v92_upstream_rx signal = before->signal;
 	struct v92_upstream_decision decision;
-	if (v92_upstream_rx_sample(&signal, sample, &decision) != V92_UPSTREAM_RX_OK)
+	if (v92_upstream_rx_sample_owned(&signal, sample, &decision) != V92_UPSTREAM_RX_OK)
 		return false;
 	memset(search->frame, 0, sizeof(search->frame));
 	memcpy(search->frame, record->frame, (record->frame_bit_count + 7u) / 8u);

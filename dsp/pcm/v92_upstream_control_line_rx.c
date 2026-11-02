@@ -120,7 +120,7 @@ v92_upstream_control_line_rx_sample(
 	if (receiver->signal.failed)
 		return V92_UPSTREAM_CONTROL_LINE_RX_FAILED;
 	next = *receiver;
-	signal_result = v92_upstream_rx_sample(
+	signal_result = v92_upstream_rx_sample_owned(
 		&next.signal, sample, &decision);
 	if (signal_result == V92_UPSTREAM_RX_FAILED)
 		return V92_UPSTREAM_CONTROL_LINE_RX_FAILED;

@@ -7,6 +7,7 @@
 #include "test.h"
 #include "v92_phase4_record_fixture.h"
 
+#include <float.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -1136,6 +1137,59 @@ static bool test_e2u_contracts(void)
 	return true;
 }
 
+static bool test_receiver_snapshot_rollback(void)
+{
+	for (unsigned law = 0; law < 2; ++law) {
+		struct v92_pcm_phase4_trn2u transmitter;
+		struct v92_pcm_phase4_trn2u_line_handoff handoff;
+		struct v92_upstream_control_line_rx control;
+		struct v92_upstream_decision untouched = {
+			.equalized_level = 123., .nearest_level = 456, .group = 2,
+		};
+		struct v92_control_event event = { .type = V92_CONTROL_EVENT_CPU };
+		struct v92_control_event before = event;
+
+		CHECK(build_boundary(law ? G711_LAW_PCMA : G711_LAW_PCMU,
+			V92_CONSTELLATION_4_POINT, 0, 1, &transmitter, &handoff) &&
+		      v92_upstream_control_line_rx_init(&control, &handoff) ==
+			V92_UPSTREAM_CONTROL_LINE_RX_OK,
+		      "rollback fixture did not initialize");
+		/* Valid state whose next adaptation overflows after the FIR history
+		 * and coding state have advanced. The outer transaction owns rollback. */
+		control.signal.training_tail_remaining = 0;
+		control.signal.line.output_bias = DBL_MAX;
+		CHECK(v92_upstream_control_line_rx_is_valid(&control),
+		      "numeric rollback fixture is invalid");
+		for (unsigned known = 0; known < 2; ++known) {
+			struct v92_upstream_rx signal = control.signal;
+			struct v92_upstream_rx expected = signal;
+			struct v92_upstream_decision decision = untouched;
+			expected.failed = true;
+			enum v92_upstream_rx_result result = known ?
+				v92_upstream_rx_sample_known(&signal, 1234, 0, &decision) :
+				v92_upstream_rx_sample(&signal, 1234, &decision);
+			CHECK(result == V92_UPSTREAM_RX_NUMERIC_FAILURE &&
+			      memcmp(&signal, &expected, sizeof(signal)) == 0 &&
+			      decisions_equal(&decision, &untouched),
+			      "standalone rollback changed state or decision, known=%u", known);
+		}
+		struct v92_upstream_rx staged = control.signal;
+		struct v92_upstream_decision decision = untouched;
+		CHECK(v92_upstream_rx_sample_owned(&staged, 1234, &decision) ==
+			V92_UPSTREAM_RX_NUMERIC_FAILURE && staged.failed &&
+		      decisions_equal(&decision, &untouched),
+		      "discarded snapshot changed a failed decision");
+		struct v92_upstream_control_line_rx expected = control;
+		expected.signal.failed = true;
+		CHECK(v92_upstream_control_line_rx_sample(&control, 1234, &event) ==
+			V92_UPSTREAM_CONTROL_LINE_RX_INTERNAL_ERROR &&
+		      memcmp(&control, &expected, sizeof(control)) == 0 &&
+		      memcmp(&event, &before, sizeof(event)) == 0,
+		      "composite rollback published partial signal or parser state");
+	}
+	return true;
+}
+
 static bool test_contracts(void)
 {
 	struct v92_pcm_phase4_trn2u transmitter;
@@ -1451,6 +1505,7 @@ int main(void)
 		{ "read-only upstream predictions", test_prediction_contracts },
 		{ "fresh and aliased control initialization", test_control_initialization },
 		{ "E2u contracts", test_e2u_contracts },
+		{ "receiver snapshot rollback", test_receiver_snapshot_rollback },
 		{ "control-line contracts", test_contracts },
 		{ "digital receive contracts", test_digital_receive_contracts },
 	};

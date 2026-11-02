@@ -54,6 +54,14 @@ enum v92_upstream_rx_result v92_upstream_rx_sample(
 	struct v92_upstream_rx *receiver, int16_t sample,
 	struct v92_upstream_decision *decision);
 
+/* Composite-owner path: receiver is a validated, unpublished local snapshot.
+ * Skip its repeated entry scan and copy; retain per-sample argument, counter
+ * and DSP checks. On non-OK the owner must discard the snapshot, which can
+ * contain partial progress. decision keeps the standalone output contract. */
+enum v92_upstream_rx_result v92_upstream_rx_sample_owned(
+	struct v92_upstream_rx *receiver, int16_t sample,
+	struct v92_upstream_decision *decision);
+
 /* Consume one sample while adapting a post-training decision against a known
  * input group rather than a possibly damaged nearest decision. After the
  * pending training tail, advance coding history from that known group while
