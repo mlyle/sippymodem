@@ -523,17 +523,25 @@ static bool select_constellations(const struct v90_pcm_mapping *mapping,
 		unsigned family_count = fits ? 0 : count;
 		for (unsigned family = 0; family < family_count; family++) {
 			const struct cardinality_family *f = &families[family];
+			unsigned choices = f->choices;
+			bool feasible = true;
+			/* At this distance, an unavailable low excludes the family;
+			 * an unavailable high merely fixes that phase to its low.
+			 * Every remaining high has the same capacity ratio, so the
+			 * precomputed minimum count still applies to these choices. */
+			for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++) {
+				feasible &= f->low[slot] <= levels[slot]->size;
+				if (f->high[slot] > levels[slot]->size)
+					choices &= ~(1u << slot);
+			}
+			if (!feasible || bit_count_u8((uint8_t)choices) < f->minimum_high)
+				continue;
 			unsigned pattern = 0;
 			do {
-				uint8_t sizes[V90_CP_FRAME_INTERVALS];
-				bool usable = true;
-				if (bit_count_u8((uint8_t)pattern) >= f->minimum_high)
-					for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++) {
+				if (bit_count_u8((uint8_t)pattern) >= f->minimum_high) {
+					uint8_t sizes[V90_CP_FRAME_INTERVALS];
+					for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++)
 						sizes[slot] = pattern & (1u << slot) ? f->high[slot] : f->low[slot];
-						usable &= sizes[slot] <= levels[slot]->size;
-					}
-				else usable = false;
-				if (usable) {
 					uint32_t power = constellation_power(levels, sizes, mapping->modulus_bits);
 					if (power <= maximum_power && power < best_power) {
 						fits = true;
@@ -541,8 +549,8 @@ static bool select_constellations(const struct v90_pcm_mapping *mapping,
 						memcpy(best, sizes, sizeof(best));
 					}
 				}
-				/* Visit only branch subsets, in ascending pattern order. */
-				pattern = (pattern - f->choices) & f->choices;
+				/* Visit feasible branch subsets in the original ascending order. */
+				pattern = (pattern - choices) & choices;
 			} while (pattern != 0);
 			if (family == 0 && fits)
 				break;
