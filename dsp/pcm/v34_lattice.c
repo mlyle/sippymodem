@@ -118,6 +118,12 @@ static enum v34_lattice_result slice_grid_subsets(
 	     (!point_is_finite(normalized_observation) ||
 	      !v34_power_normalizer_is_valid(normalizer))))
 		return V34_LATTICE_INVALID_ARGUMENT;
+	/* Reuse the four quadrature residue coordinates for plain-grid scoring. */
+	int16_t quadrature[V34_LATTICE_SUBSET_PERIOD / 2];
+	for (unsigned i = 0; normalizer == NULL &&
+	     i < V34_LATTICE_SUBSET_PERIOD / 2; ++i)
+		quadrature[i] = nearest_residue_coordinate(
+			channel_estimate->quadrature, 2 * (int)i + 1);
 	for (int in_phase_residue = 1; in_phase_residue < 8;
 	     in_phase_residue += 2) {
 		int16_t in_phase = nearest_residue_coordinate(
@@ -128,8 +134,10 @@ static enum v34_lattice_result slice_grid_subsets(
 			struct v34_lattice_candidate candidate = {
 				.channel_output = {
 					.in_phase = in_phase,
-					.quadrature = nearest_residue_coordinate(
-						channel_estimate->quadrature, quadrature_residue),
+					.quadrature = normalizer == NULL ?
+						quadrature[(quadrature_residue - 1) / 2] :
+						nearest_residue_coordinate(channel_estimate->quadrature,
+							quadrature_residue),
 				},
 			};
 			uint8_t label;
