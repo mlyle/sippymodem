@@ -870,13 +870,20 @@ static bool v92_rate_prefix_is_valid(const struct pcm_call *call)
 	}
 }
 
+/* A previously qualified PCM link gets one extra training attempt. Successful
+ * Phase 4 handoff resets this consecutive-failure count for either limit. */
+static unsigned v92_training_failure_limit(const struct pcm_call *call)
+{
+	return call->pcm_upstream_trained ? 3u : 2u;
+}
+
 static bool call_is_valid(
 	const struct pcm_call *call, bool owned_phase3)
 {
 	bool child_valid;
 	bool child_failed;
 
-	if (call == NULL || call->v92_training_failures > 2u ||
+	if (call == NULL || call->v92_training_failures > v92_training_failure_limit(call) ||
 	    (call->pcm_upstream_trained &&
 	     (call->protocol != PCM_PROTOCOL_V92 || call->local_role != V90_DIGITAL_MODEM)) ||
 	    !stored_configuration_is_valid(call) ||
@@ -1342,11 +1349,13 @@ static enum pcm_call_result begin_retrain(
 	    next.protocol == PCM_PROTOCOL_V92 && next.local_role == V90_DIGITAL_MODEM &&
 	    uses_pcm_upstream(&next) &&
 	    next.v92_digital_phase4_configuration.upstream_selection == PCM_CALL_V92_UPSTREAM_DIRECT) {
-		if (next.v92_training_failures < 2u)
+		unsigned limit = v92_training_failure_limit(&next);
+		if (next.v92_training_failures < limit)
 			++next.v92_training_failures;
-		if (next.v92_training_failures == 2u && !next.pcm_upstream_trained) {
-			/* Initial rejected or unanswered PCM training needs a different
-			 * upstream procedure. The next INFO1d negotiates V.34 upstream;
+		if (next.v92_training_failures == limit) {
+			/* Repeated rejected or unanswered PCM training needs a different
+			 * upstream procedure, even after a previously qualified link.
+			 * The next INFO1d negotiates V.34 upstream;
 			 * keep PCM downstream, fixed mappings, and the host deadline. */
 			next.local_info1.v92_digital.pcm_upstream_supported = false;
 			next.v92_upstream_retry_ceiling = 0u;

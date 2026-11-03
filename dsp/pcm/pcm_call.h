@@ -552,8 +552,8 @@ struct pcm_call {
 	bool failed;
 	/* Peer rejections and response timeouts before PCM Phase 4 reaches data. */
 	uint8_t v92_training_failures;
-	/* Both B1 directions qualified at least once. Keep PCM permission during
-	 * automatic recovery; initial training can still try conventional upstream. */
+	/* Both B1 directions qualified at least once. Retain this history through
+	 * recovery, with one extra failed exchange before conventional fallback. */
 	bool pcm_upstream_trained;
 };
 

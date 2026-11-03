@@ -9255,11 +9255,12 @@ static bool run_v92_missing_training(enum g711_law law, unsigned target, bool su
 			++timeouts;
 			CHECK(!calls[1].retrain.peer_tone_retained &&
 			      calls[1].local_info1.v92_digital.pcm_upstream_supported ==
-				      (after_online || fixed || timeouts < 2u),
+				      (fixed || timeouts < (after_online ? 3u : 2u)),
 			      "local timeout did not select bounded upstream recovery: law %u Su %u fixed %u count %u", law, su, fixed, timeouts);
 		}
 		if (!calls[1].local_info1.v92_digital.pcm_upstream_supported) {
-			CHECK(timeouts == 2u && !fixed && calls[1].pcm_upstream_quality.recovery.attempts == 0u,
+			CHECK(timeouts == (after_online ? 3u : 2u) && !fixed &&
+			      calls[1].pcm_upstream_quality.recovery.attempts == 0u,
 			      "missing-training fallback spent a data-quality recovery");
 			return v92_conventional_recovery_data(calls, &wire, law);
 		}
@@ -9272,7 +9273,8 @@ static bool run_v92_missing_training(enum g711_law law, unsigned target, bool su
 				armed = old_data = true;
 				continue;
 			}
-			CHECK(timeouts == target && (after_online || target == 1u || fixed) &&
+			CHECK(timeouts == target && !calls[1].v92_training_failures &&
+			      (target < (after_online ? 3u : 2u) || fixed) &&
 			      !pcm_call_uses_conventional_upstream(&calls[1]), "transient loss or fixed mapping lost PCM");
 			if (after_online && (frames[0] < 64u || frames[1] < 64u))
 				continue;
@@ -9297,9 +9299,13 @@ static bool test_v92_missing_training(void)
 static bool test_v92_trained_permission_recovery(void)
 {
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
-		for (unsigned su = 0u; su < 2u; ++su)
-			CHECK(run_v92_missing_training(law, 2u, su, false, true),
-			      "trained PCM permission recovery failed law %u Su %u", law, su);
+		for (unsigned su = 0u; su < 2u; ++su) {
+			for (unsigned target = 1u; target <= 3u; ++target)
+				CHECK(run_v92_missing_training(law, target, su, false, true),
+				      "trained PCM recovery failed law %u Su %u count %u", law, su, target);
+			CHECK(run_v92_missing_training(law, 3u, su, true, true),
+			      "trained fixed mapping changed law %u Su %u", law, su);
+		}
 	return true;
 }
 
