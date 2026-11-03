@@ -1454,6 +1454,167 @@ static bool test_bias_rejection(void)
 	return true;
 }
 
+static bool test_missing_history(void)
+{
+	const unsigned spans[] = { 1, 7, 21, QAM_EQUALIZER_MAX_TAP_COUNT };
+	const struct qam_point unity = { 1, 0 }, input = { 3, 0.5 }, target = { 1, -2 };
+
+	for (size_t span = 0; span < ARRAY_LENGTH(spans); span++) {
+		struct qam_equalizer equalizer;
+		struct qam_point output;
+		bool ready;
+		double bias = 2;
+
+		CHECK(qam_equalizer_init_geometry(&equalizer, &unity, &unity,
+			      spans[span], 0) == QAM_EQUALIZER_OK &&
+		      qam_equalizer_enable_carrier_tracking(&equalizer, 0.02, 0.001) ==
+			      QAM_EQUALIZER_OK, "missing-history fixture failed");
+		equalizer.carrier_frequency = 0.01;
+		for (unsigned n = 0; n <= spans[span] + 2; n++) {
+			bool available = n != 0 && n != 2;
+			struct qam_equalizer clock = equalizer;
+			struct qam_point clock_output;
+			bool clock_ready;
+
+			CHECK(qam_equalizer_push(&clock, &input, &clock_output, &clock_ready) ==
+				      QAM_EQUALIZER_OK &&
+			      (available ? qam_equalizer_push : qam_equalizer_push_erasure)(&equalizer, &input,
+				      &output, &ready) == QAM_EQUALIZER_OK && ready && clock_ready &&
+			      points_are_close(&output, &clock_output) &&
+			      memcmp(equalizer.history, clock.history, sizeof(clock.history)) == 0 &&
+			      equalizer.carrier_phase == clock.carrier_phase &&
+			      equalizer.fill == clock.fill,
+			      "missing input changed FIR/carrier clock at span%u sample%u", spans[span], n);
+			struct qam_equalizer before = equalizer;
+			double before_bias = bias;
+			CHECK(qam_equalizer_adapt_bias(&equalizer, &target, 0.1, 4, &bias) ==
+				      QAM_EQUALIZER_OK && !equalizer.can_adapt,
+			      "missing decision did not retire its gradient");
+			if (n - (n < 2 ? 0u : 2u) < spans[span]) {
+				/* A second loss starts a new full span, including zero-weight taps. */
+				before.can_adapt = false;
+				CHECK(equalizer.unavailable_history != 0 && bias == before_bias &&
+				      memcmp(&equalizer, &before, sizeof(before)) == 0,
+				      "concealed history trained span%u sample%u", spans[span], n);
+			} else {
+				CHECK(equalizer.unavailable_history == 0 && bias != before_bias &&
+				      memcmp(equalizer.coefficients, before.coefficients,
+					      sizeof(before.coefficients)) != 0,
+				      "received history did not resume learning at span%u", spans[span]);
+			}
+		}
+	}
+	/* Numeric silence is received media. Only the explicit flag prevents its
+	 * offset coordinate from learning toward a nonzero target. */
+	struct qam_equalizer received, erased;
+	struct qam_point output;
+	bool ready;
+	double received_bias = 2, erased_bias = 2;
+	CHECK(qam_equalizer_init_geometry(&received, &unity, &unity, 1, 0) == QAM_EQUALIZER_OK,
+	      "silence fixture failed");
+	erased = received;
+	CHECK(qam_equalizer_push(&received, &(struct qam_point){ 0 }, &output, &ready) ==
+		      QAM_EQUALIZER_OK &&
+	      qam_equalizer_push_erasure(&erased, &(struct qam_point){ 0 },
+		      &output, &ready) == QAM_EQUALIZER_OK &&
+	      qam_equalizer_adapt_bias(&received, &target, 0.1, 4, &received_bias) ==
+		      QAM_EQUALIZER_OK &&
+	      qam_equalizer_adapt_bias(&erased, &target, 0.1, 4, &erased_bias) ==
+		      QAM_EQUALIZER_OK && received_bias != 2 && erased_bias == 2,
+	      "numeric zero was confused with unavailable media");
+	return true;
+}
+
+static bool test_retained_missing_history(void)
+{
+	const struct qam_point unity = { 1, 0 }, input = { 2, 1 }, target = { 1, -1 };
+	struct qam_equalizer equalizer;
+	struct qam_equalizer_observation clean = { 0 }, missing = { 0 };
+	struct qam_point output;
+	bool ready;
+
+	CHECK(qam_equalizer_init_geometry(&equalizer, &unity, &unity, 7, 0) ==
+		      QAM_EQUALIZER_OK &&
+	      qam_equalizer_observe(&equalizer, &input, &clean, &ready) == QAM_EQUALIZER_OK &&
+	      ready && !clean.unavailable &&
+	      qam_equalizer_push_erasure(&equalizer, &input, &output, &ready) ==
+		      QAM_EQUALIZER_OK, "retained-history fixture failed");
+	struct qam_equalizer before = equalizer;
+	CHECK(qam_equalizer_adapt_observation(&equalizer, &clean, &target, 0.1) ==
+		      QAM_EQUALIZER_OK && !clean.pending &&
+	      memcmp(equalizer.coefficients, before.coefficients, sizeof(before.coefficients)) != 0,
+	      "new missing input suppressed a clean retained observation");
+	equalizer.can_adapt = false;
+	CHECK(qam_equalizer_observe(&equalizer, &input, &missing, &ready) == QAM_EQUALIZER_OK &&
+	      ready && missing.unavailable, "retained observation forgot missing tap history");
+	for (unsigned n = 0; n < equalizer.tap_count; n++) {
+		CHECK(qam_equalizer_push(&equalizer, &input, &output, &ready) == QAM_EQUALIZER_OK,
+		      "history refill failed");
+		equalizer.can_adapt = false;
+	}
+	before = equalizer;
+	CHECK(!equalizer.unavailable_history &&
+	      qam_equalizer_adapt_observation(&equalizer, &missing, &target, 0.1) ==
+		      QAM_EQUALIZER_OK && !missing.pending &&
+	      memcmp(&equalizer, &before, sizeof(before)) == 0 &&
+	      qam_equalizer_adapt_observation(&equalizer, &missing, &target, 0.1) ==
+		      QAM_EQUALIZER_INVALID_STATE,
+	      "later received media made a missing retained gradient valid");
+	CHECK(qam_equalizer_push_erasure(&equalizer, &input, &output, &ready) ==
+		      QAM_EQUALIZER_OK &&
+	      qam_equalizer_adapt(&equalizer, &target, 0.1) == QAM_EQUALIZER_OK &&
+	      qam_equalizer_extend_span(&equalizer, QAM_EQUALIZER_MAX_TAP_COUNT) ==
+		      QAM_EQUALIZER_OK,
+	      "missing-history handoff did not extend");
+	for (unsigned n = 1; n <= QAM_EQUALIZER_MAX_TAP_COUNT; n++) {
+		CHECK(qam_equalizer_push(&equalizer, &input, &output, &ready) == QAM_EQUALIZER_OK,
+		      "extended history did not advance");
+		before = equalizer;
+		CHECK(qam_equalizer_adapt(&equalizer, &target, 0.1) == QAM_EQUALIZER_OK,
+		      "extended decision did not retire");
+		CHECK((memcmp(equalizer.coefficients, before.coefficients,
+			      sizeof(before.coefficients)) == 0) == (n < QAM_EQUALIZER_MAX_TAP_COUNT),
+		      "span extension lost the missing sample at input%u", n);
+	}
+	return true;
+}
+
+static bool test_missing_input_boundaries(void)
+{
+	const struct qam_point unity = { 1, 0 };
+	struct qam_equalizer equalizer, before;
+	struct qam_point output = { 5, 6 }, saved = output;
+	bool ready = true;
+
+	CHECK(qam_equalizer_init_geometry(&equalizer, &unity, &unity, 7, 0) == QAM_EQUALIZER_OK,
+	      "missing boundary fixture failed");
+	before = equalizer;
+	CHECK(qam_equalizer_push_erasure(&equalizer, &(struct qam_point){ NAN, 0 },
+		      &output, &ready) == QAM_EQUALIZER_INVALID_ARGUMENT && ready &&
+	      memcmp(&equalizer, &before, sizeof(before)) == 0 &&
+	      memcmp(&output, &saved, sizeof(saved)) == 0,
+	      "unavailable numerical failure changed state or outputs");
+	equalizer.unavailable_history = (uint8_t)(equalizer.tap_count + 1);
+	before = equalizer;
+	CHECK(!qam_equalizer_is_valid(&equalizer) &&
+	      qam_equalizer_push_erasure(&equalizer, &unity, &output, &ready) ==
+		      QAM_EQUALIZER_INVALID_ARGUMENT && ready &&
+	      memcmp(&equalizer, &before, sizeof(before)) == 0,
+	      "availability outside owned history was accepted");
+	equalizer = (struct qam_equalizer){ 0 };
+	CHECK(qam_equalizer_init_geometry(&equalizer, &unity, &unity, 7, 0) == QAM_EQUALIZER_OK &&
+	      qam_equalizer_push_erasure(&equalizer, &unity, &output, &ready) == QAM_EQUALIZER_OK,
+	      "erased gradient rejection fixture failed");
+	before = equalizer;
+	CHECK(qam_equalizer_adapt(&equalizer, &(struct qam_point){ NAN, 0 }, 0.1) ==
+		      QAM_EQUALIZER_INVALID_ARGUMENT &&
+	      memcmp(&equalizer, &before, sizeof(before)) == 0 &&
+	      qam_equalizer_push_erasure(NULL, &unity, &output, &ready) ==
+		      QAM_EQUALIZER_INVALID_ARGUMENT,
+	      "missing media bypassed input validation");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -1477,6 +1638,9 @@ int main(void)
 		{ "validation", test_validation },
 		{ "joint bias equivalence", test_bias_equivalence },
 		{ "joint bias rejection", test_bias_rejection },
+		{ "missing FIR history", test_missing_history },
+		{ "retained missing FIR history", test_retained_missing_history },
+		{ "missing input boundaries", test_missing_input_boundaries },
 	};
 	unsigned int failures = 0;
 

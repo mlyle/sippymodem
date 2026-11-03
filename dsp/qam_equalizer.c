@@ -6,6 +6,9 @@
 #include <math.h>
 #include <stddef.h>
 
+_Static_assert(QAM_EQUALIZER_MAX_TAP_COUNT <= UINT8_MAX,
+	       "equalizer availability must fit its history countdown");
+
 static const double QAM_EQUALIZER_MINIMUM_POWER = 1e-12;
 static const double QAM_CARRIER_PI = 3.14159265358979323846;
 static const double QAM_CARRIER_TWO_PI = 6.28318530717958647692;
@@ -87,6 +90,7 @@ bool qam_equalizer_is_valid(
 	if (equalizer == NULL ||
 	    !geometry_is_valid(
 		    equalizer->tap_count, equalizer->decision_delay) ||
+	    equalizer->unavailable_history > equalizer->tap_count ||
 	    equalizer->fill > equalizer->decision_delay + 1u ||
 	    (equalizer->can_adapt &&
 	     equalizer->fill <= equalizer->decision_delay) ||
@@ -172,6 +176,8 @@ enum qam_equalizer_result qam_equalizer_extend_span(
 		equalizer->coefficients[index] = (struct qam_point){ 0 };
 		equalizer->history[index] = (struct qam_point){ 0 };
 	}
+	if (equalizer->unavailable_history != 0)
+		equalizer->unavailable_history += (uint8_t)(tap_count - equalizer->tap_count);
 	equalizer->tap_count = tap_count;
 	return QAM_EQUALIZER_OK;
 }
@@ -272,6 +278,8 @@ enum qam_equalizer_result qam_equalizer_push(
 	memmove(equalizer->history + 1, equalizer->history,
 		(equalizer->tap_count - 1u) * sizeof(input));
 	equalizer->history[0] = input;
+	if (equalizer->unavailable_history != 0)
+		equalizer->unavailable_history--;
 	if (equalizer->fill <= equalizer->decision_delay)
 		equalizer->fill++;
 	next_ready = equalizer->fill > equalizer->decision_delay;
@@ -286,6 +294,18 @@ enum qam_equalizer_result qam_equalizer_push(
 	if (next_ready)
 		*output = corrected;
 	return QAM_EQUALIZER_OK;
+}
+
+enum qam_equalizer_result qam_equalizer_push_erasure(
+	struct qam_equalizer *equalizer,
+	const struct qam_point *concealed,
+	struct qam_point *output, bool *ready)
+{
+	enum qam_equalizer_result result = qam_equalizer_push(
+		equalizer, concealed, output, ready);
+	if (result == QAM_EQUALIZER_OK)
+		equalizer->unavailable_history = (uint8_t)equalizer->tap_count;
+	return result;
 }
 
 enum qam_equalizer_result qam_equalizer_observe(
@@ -322,6 +342,7 @@ enum qam_equalizer_result qam_equalizer_observe(
 			.tap_count = equalizer->tap_count,
 			.decision_delay = equalizer->decision_delay,
 			.pending = true,
+			.unavailable = equalizer->unavailable_history != 0,
 			.carrier_tracking = equalizer->carrier_tracking,
 		};
 		memcpy(observation->history, equalizer->history,
@@ -371,6 +392,17 @@ static enum qam_equalizer_result adapt_decision(
 			return QAM_EQUALIZER_INVALID_STATE;
 	} else if (!equalizer->can_adapt) {
 		return QAM_EQUALIZER_INVALID_STATE;
+	}
+	/* An erased observation owns its clock interval, not a gradient. Keep
+	 * this check tied to the retained observation: a clean old decision may
+	 * still train after a newer input was lost, and the converse must not. */
+	if (observation != NULL ? observation->unavailable :
+	    equalizer->unavailable_history != 0) {
+		if (observation != NULL)
+			observation->pending = false;
+		else
+			equalizer->can_adapt = false;
+		return QAM_EQUALIZER_OK;
 	}
 	output = observation != NULL ? &observation->output : &equalizer->last_output;
 	unrotated_output = observation != NULL ? &observation->unrotated_output :

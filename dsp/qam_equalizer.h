@@ -6,6 +6,7 @@
 #include "qam.h"
 
 #include <stdbool.h>
+#include <stdint.h>
 
 enum {
 	QAM_EQUALIZER_DEFAULT_TAP_COUNT = 7,
@@ -45,6 +46,9 @@ struct qam_equalizer {
 	unsigned int fill;
 	bool can_adapt;
 	bool carrier_tracking;
+	/* Received inputs needed to flush the newest missing sample from the FIR.
+	 * New erasures restart the full span; clocks keep advancing meanwhile. */
+	uint8_t unavailable_history;
 };
 
 /* An explicitly owned gradient snapshot for a decision that becomes known
@@ -59,6 +63,7 @@ struct qam_equalizer_observation {
 	unsigned int tap_count;
 	unsigned int decision_delay;
 	bool pending;
+	bool unavailable;
 	bool carrier_tracking;
 };
 
@@ -133,6 +138,16 @@ bool qam_equalizer_is_handoff_ready(
 enum qam_equalizer_result qam_equalizer_push(
 	struct qam_equalizer *equalizer,
 	const struct qam_point *received,
+	struct qam_point *output, bool *ready);
+
+/* As push, explicitly marking this physical input as missing media.
+ * Unavailable input still advances history, delay and the held carrier clock.
+ * Direct or retained adaptation consumes an affected observation successfully
+ * without changing coefficients, offset or carrier estimates. Use push for received
+ * media, including numerical zeros. */
+enum qam_equalizer_result qam_equalizer_push_erasure(
+	struct qam_equalizer *equalizer,
+	const struct qam_point *concealed,
 	struct qam_point *output, bool *ready);
 
 /* Push one symbol while retaining the exact output and tap inputs needed for
