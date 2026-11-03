@@ -12503,6 +12503,58 @@ static bool test_generated_calls(void)
 	return true;
 }
 
+static bool test_initial_info0_restart(void)
+{
+	CHECK(pcm_call_restart_initial_info0(NULL) == PCM_CALL_INVALID_ARGUMENT, "null restart");
+	for (enum pcm_protocol protocol = PCM_PROTOCOL_V90; protocol <= PCM_PROTOCOL_V92; ++protocol)
+		for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+			struct pcm_call_configuration ac = protocol == PCM_PROTOCOL_V90 ?
+				configuration(V90_ANALOG_MODEM, law) : v92_configuration(V90_ANALOG_MODEM, law);
+			struct pcm_call_configuration dc = protocol == PCM_PROTOCOL_V90 ?
+				configuration(V90_DIGITAL_MODEM, law) : v92_configuration(V90_DIGITAL_MODEM, law);
+			struct pcm_call analog, digital, saved;
+			struct channel wire;
+			CHECK(pcm_call_init(&digital, &dc) == PCM_CALL_OK &&
+			      pcm_call_init(&analog, &ac) == PCM_CALL_OK && channel_init(&wire, law, 3), "init");
+			struct pcm_phase2 initial = digital.state.phase2;
+			for (unsigned i = 0; i < 80; ++i) {
+				struct pcm_call_observation observation;
+				uint8_t output, silence = silence_octet(law);
+				CHECK(pcm_call_octet(&digital, silence, decode_octet(law, silence),
+					      &output, &observation) == PCM_CALL_OK, "initial input");
+			}
+			saved = digital;
+			saved.state.phase2 = initial;
+			CHECK(pcm_call_restart_initial_info0(&digital) == PCM_CALL_OK &&
+			      !memcmp(&digital, &saved, sizeof(digital)), "restart changed configuration or call history");
+			bool accepted = false;
+			for (unsigned clock = 0; clock < 8000 && !accepted; ++clock) {
+				uint8_t rx[2], tx[2];
+				struct pcm_call_observation observation;
+				channel_receive(&wire, &rx[0], &rx[1]);
+				CHECK(pcm_call_octet(&analog, rx[0], decode_octet(law, rx[0]), &tx[0], &observation) == PCM_CALL_OK &&
+				      pcm_call_octet(&digital, rx[1], decode_octet(law, rx[1]), &tx[1], &observation) == PCM_CALL_OK,
+				      "INFO0 exchange");
+				channel_transmit(&wire, tx[0], tx[1]);
+				bool pending = !digital.peer_info0_stored && digital.stage == PCM_CALL_PHASE2 &&
+					digital.state.phase2.stage == PCM_PHASE2_RANGING;
+				if (pending) {
+					enum pcm_phase2_info0_exchange_state state =
+						digital.state.phase2.state.ranging.info0_exchange.state;
+					pending = state == PCM_PHASE2_INFO0_INITIAL || state == PCM_PHASE2_INFO0_REPEAT;
+				}
+				if (!pending) {
+					saved = digital;
+					CHECK(pcm_call_restart_initial_info0(&digital) == PCM_CALL_INVALID_STATE &&
+					      !memcmp(&digital, &saved, sizeof(digital)), "restart discarded accepted peer record");
+					accepted = true;
+				}
+			}
+			CHECK(accepted, "no peer INFO0 accepted");
+		}
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct pcm_call_configuration selected =
@@ -13533,6 +13585,7 @@ int main(int argc, char **argv)
 		{ "V.92 conflicting status bounded recovery", test_v92_conflicting_status_recovery },
 		{ "V.92 conditioned training bounded recovery", test_conditioning_recovery },
 		{ "shared call state comparison", test_call_state_comparison },
+		{ "initial INFO0 restart preserves call ownership", test_initial_info0_restart },
 	};
 	unsigned int failures = 0;
 	size_t first = 0, stride = 1;

@@ -1199,6 +1199,19 @@ static enum pcm_phase2_result initialize_phase2(struct pcm_call *call)
 			call->phase2_nominal_amplitude, &call->local_info0.digital);
 }
 
+enum pcm_call_result pcm_call_restart_initial_info0(struct pcm_call *call)
+{
+	if (!pcm_call_is_valid(call))
+		return PCM_CALL_INVALID_ARGUMENT;
+	if (call->stage != PCM_CALL_PHASE2 ||
+	    call->state.phase2.stage != PCM_PHASE2_RANGING ||
+	    call->peer_info0_stored || call->phase3_entry_stored || call->retrain_active ||
+	    (call->state.phase2.state.ranging.info0_exchange.state != PCM_PHASE2_INFO0_INITIAL &&
+	     call->state.phase2.state.ranging.info0_exchange.state != PCM_PHASE2_INFO0_REPEAT))
+		return PCM_CALL_INVALID_STATE;
+	return initialize_phase2(call) == PCM_PHASE2_OK ? PCM_CALL_OK : PCM_CALL_NUMERIC_FAILURE;
+}
+
 enum pcm_call_result pcm_call_init(
 	struct pcm_call *call,
 	const struct pcm_call_configuration *configuration)

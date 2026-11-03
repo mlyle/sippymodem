@@ -24,6 +24,9 @@ struct v8_pcm_handoff {
 	int16_t receive_tail[MODEM_FRAG - 1];
 	unsigned int tail_count;
 	bool quick_connect;
+	/* Ordinary callers retain their actual offers for a bounded missed-CJ
+	 * recovery. Answering and Quick Connect handoffs leave these unset. */
+	struct v8_menu call_menu, joint_menu;
 };
 
 bool v8_datapump_pcm_handoff(const struct dp *dp, struct v8_pcm_handoff *handoff);

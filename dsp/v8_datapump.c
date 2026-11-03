@@ -478,6 +478,10 @@ static int request_handoff(struct v8_datapump *datapump)
 	}
 	lapm = menu.lapm;
 selected:
+	if (!qc && datapump->caller) {
+		datapump->handoff.call_menu = datapump->handshake.calling.local_menu;
+		datapump->handoff.joint_menu = menu;
+	}
 	datapump->dp.modem->dp_requested = handoff;
 	datapump->dp.modem->dsp_info.pcm_role = pcm_role;
 	/* V.8 prot0 can select LAPM without ODP/ADP, but omitting prot0 does

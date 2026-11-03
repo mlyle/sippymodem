@@ -124,6 +124,7 @@ SHARED_DSP_SOURCES := \
 	$(DSP_SOURCE_DIR)/v8_ansam.c \
 	$(DSP_SOURCE_DIR)/v8_answering.c \
 	$(DSP_SOURCE_DIR)/v8_calling.c \
+	$(DSP_SOURCE_DIR)/v8_handoff.c \
 	$(DSP_SOURCE_DIR)/v8_datapump.c \
 	$(DSP_SOURCE_DIR)/v8_fsk.c \
 	$(DSP_SOURCE_DIR)/v8_framing.c \

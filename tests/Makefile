@@ -506,6 +506,7 @@ BUILTIN_DATAPUMP_OBJECTS := \
 	$(BUILD_DIR)/v8_ansam.o \
 	$(BUILD_DIR)/v8_answering.o \
 	$(BUILD_DIR)/v8_calling.o \
+	$(BUILD_DIR)/v8_handoff.o \
 	$(BUILD_DIR)/v8_datapump.o \
 	$(BUILD_DIR)/v8_fsk.o \
 	$(BUILD_DIR)/v8_framing.o \
@@ -573,6 +574,9 @@ V8_CALLING_TEST_OBJECTS := $(BUILD_DIR)/test_v8_calling.o \
 	$(BUILD_DIR)/fixed_phase.o \
 	$(BUILD_DIR)/v21.o \
 	$(BUILD_DIR)/fsk.o
+V8_HANDOFF_TEST_BINARY := $(BUILD_DIR)/test_v8_handoff
+V8_HANDOFF_TEST_OBJECTS := $(BUILD_DIR)/test_v8_handoff.o $(BUILD_DIR)/v8_handoff.o \
+	$(filter-out $(BUILD_DIR)/test_v8_calling.o,$(V8_CALLING_TEST_OBJECTS))
 V8_FSK_TEST_BINARY := $(BUILD_DIR)/test_v8_fsk
 V8_FSK_TEST_OBJECTS := $(BUILD_DIR)/test_v8_fsk.o \
 	$(BUILD_DIR)/v8_fsk.o \
@@ -3249,6 +3253,7 @@ FSK_INTEGRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/v8_ansam.o \
 	$(BUILD_DIR)/v8_answering.o \
 	$(BUILD_DIR)/v8_calling.o \
+	$(BUILD_DIR)/v8_handoff.o \
 	$(BUILD_DIR)/v8_datapump.o \
 	$(BUILD_DIR)/v8_fsk.o \
 	$(BUILD_DIR)/v8_framing.o \
@@ -3278,6 +3283,7 @@ FSK_INTEGRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/channel_bench.o \
 	$(BUILD_DIR)/media.o \
 	$(BUILD_DIR)/g711.o
+V8_HANDOFF_INTEGRATION_BINARY := $(BUILD_DIR)/test_v8_handoff_integration
 DS0_DATAPUMP_TEST_BINARY := $(BUILD_DIR)/test_ds0_datapump
 DS0_SIP_TEST_BINARY := $(BUILD_DIR)/test_ds0_sip
 DS0_PPP_TEST_BINARY := $(BUILD_DIR)/test_ds0_ppp
@@ -3335,6 +3341,8 @@ TEST_BINARIES := $(BUILD_DIR)/test_rtp_transmit $(BUILD_DIR)/test_rtp_read_event
 	$(FSK_TEST_BINARY) $(V8_ANSAM_TEST_BINARY) \
 	$(V8_ANSWERING_TEST_BINARY) \
 	$(V8_CALLING_TEST_BINARY) \
+	$(V8_HANDOFF_TEST_BINARY) \
+	$(V8_HANDOFF_INTEGRATION_BINARY) \
 	$(V8_FSK_TEST_BINARY) \
 	$(V8_LINE_CONDITIONER_TEST_BINARY) \
 	$(V8_FRAMING_TEST_BINARY) $(V8_MENU_TEST_BINARY) \
@@ -4767,6 +4775,10 @@ $(QAM_EQUALIZER_TEST_BINARY): $(QAM_EQUALIZER_TEST_OBJECTS)
 
 $(BINARY_EQUALIZER_TEST_BINARY): $(BINARY_EQUALIZER_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
+
+$(V8_HANDOFF_INTEGRATION_BINARY): $(BUILD_DIR)/test_v8_handoff_integration.o \
+	$(filter-out $(BUILD_DIR)/test_fsk_integration.o,$(FSK_INTEGRATION_TEST_OBJECTS))
+	$(CC) $(LDFLAGS) -Wl,--wrap=v8_cj_bit -o $@ $^ -lm
 
 $(FSK_INTEGRATION_TEST_BINARY): $(FSK_INTEGRATION_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
@@ -6245,6 +6257,12 @@ $(BUILD_DIR)/v8_answering.o: \
 
 $(BUILD_DIR)/v8_calling.o: \
 	$(DSP_SOURCE_DIR)/v8_calling.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(V8_HANDOFF_TEST_BINARY): $(V8_HANDOFF_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^ -lm
+
+$(BUILD_DIR)/v8_handoff.o: $(DSP_SOURCE_DIR)/v8_handoff.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v8_fsk.o: \

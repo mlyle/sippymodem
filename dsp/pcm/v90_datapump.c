@@ -12,6 +12,7 @@
 #include "pcm_call.h"
 #include "training_session.h"
 #include "v8_datapump.h"
+#include "v8_handoff.h"
 #include "v34_data_quality.h"
 #include "v34_datapump.h"
 #include "pcm_host_echo.h"
@@ -39,6 +40,7 @@ struct v90_datapump {
 	struct v34_data_quality upstream_quality;
 	struct pcm_v34_fallback_handoff fallback;
 	struct v8_pcm_handoff startup;
+	struct v8_handoff_retry v8_retry;
 	struct pcm_host_echo *host_echo;
 	enum v90_modem_role role;
 	enum pcm_protocol protocol;
@@ -126,6 +128,8 @@ static const char *progress_v90(const struct dp *dp)
 	const struct v90_datapump *datapump = dp->dp_data;
 	if (datapump == NULL || !datapump->call_started)
 		return "PCM/initializing";
+	if (datapump->v8_retry.remaining && datapump->v8_retry.transmitting)
+		return "phase2/retry-V8-CM-CJ";
 	const struct pcm_call *call = &datapump->call;
 	bool digital = call->local_role == V90_DIGITAL_MODEM;
 	bool conventional = pcm_call_uses_conventional_upstream(call);
@@ -304,6 +308,7 @@ static struct v90_datapump *v90_from_dp(struct dp *dp)
 	closed = datapump->call_started && datapump->call.stage == PCM_CALL_CLOSED;
 	disconnecting = datapump->call_started && pcm_call_is_disconnecting(&datapump->call);
 	if (&datapump->dp != dp || datapump->role != role ||
+	    datapump->v8_retry.remaining > V8_HANDOFF_WINDOW_SAMPLES ||
 	    (datapump->v8_fallback_ready &&
 	     (!datapump->startup.quick_connect || !datapump->call_started ||
 	      datapump->call.stage != PCM_CALL_QC)) ||
@@ -421,6 +426,13 @@ static struct dp *create_v90(
 	datapump->role = role;
 	datapump->protocol = protocol;
 	datapump->caller = caller != 0;
+	if (from_v8 && caller && role == V90_DIGITAL_MODEM && !datapump->startup.quick_connect) {
+		if (!v8_handoff_retry_init(&datapump->v8_retry,
+			    &datapump->startup.call_menu, &datapump->startup.joint_menu)) {
+			free(datapump);
+			return NULL;
+		}
+	}
 	datapump->maximum_pcm_upstream_data_rate_number =
 		maximum_pcm_upstream_data_rate_number;
 	if (role == V90_DIGITAL_MODEM) {
@@ -843,6 +855,31 @@ static bool process_octet(
 		(datapump->role == V90_ANALOG_MODEM ?
 		 datapump->call.state.data_path.analog.rate_renegotiation_active :
 		 datapump->call.state.data_path.digital.rate_renegotiation_active);
+
+	if (datapump->v8_retry.remaining) {
+		if (datapump->call.stage != PCM_CALL_PHASE2 ||
+		    datapump->call.state.phase2.stage != PCM_PHASE2_RANGING ||
+		    datapump->call.peer_info0_stored || datapump->call.retrain_active ||
+		    (datapump->call.state.phase2.state.ranging.info0_exchange.state != PCM_PHASE2_INFO0_INITIAL &&
+		     datapump->call.state.phase2.state.ranging.info0_exchange.state != PCM_PHASE2_INFO0_REPEAT)) {
+			/* Never reuse initial menu evidence during an online retrain. */
+			datapump->v8_retry.remaining = 0;
+		} else {
+			int16_t sample;
+			enum v8_handoff_result retry = v8_handoff_retry_sample(
+				&datapump->v8_retry, host_sample, received_available, &sample);
+			if (retry == V8_HANDOFF_INVALID)
+				return false;
+			if (retry == V8_HANDOFF_RESTART) {
+				if (pcm_call_restart_initial_info0(&datapump->call) != PCM_CALL_OK)
+					return false;
+			}
+			if (retry == V8_HANDOFF_SEND || retry == V8_HANDOFF_RESTART) {
+				*transmitted = g711_encode(datapump->media_law, sample);
+				return true;
+			}
+		}
+	}
 
 	/* The datapump is the serialized owner of a call that every public
 	 * transition validates.  Consult its stage directly here instead of

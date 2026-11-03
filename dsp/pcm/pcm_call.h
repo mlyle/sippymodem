@@ -561,6 +561,11 @@ enum pcm_call_result pcm_call_init(
 	struct pcm_call *call,
 	const struct pcm_call_configuration *configuration);
 
+/* Repeat only the initial INFO0 after a separately qualified V.8 recovery.
+ * No accepted peer record, training result, or retrain may be discarded.
+ * Configuration and the host's existing training deadline remain owned. */
+enum pcm_call_result pcm_call_restart_initial_info0(struct pcm_call *call);
+
 /* Begin immediately after the final QC1/QCA1 sample. The role-matched records
  * must contain exactly one ACK. This owns QTS/ANSpcm/TONEq and shares the final
  * 75 ms silence with Phase 2's receiver, without adding another quiet interval.
