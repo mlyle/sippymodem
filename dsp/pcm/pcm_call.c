@@ -1550,6 +1550,8 @@ static bool peer_b1_received(const struct pcm_call *call)
 			&call->state.data_path.digital);
 }
 
+static enum pcm_call_result begin_v92_rate_request(struct pcm_call *call, bool local);
+
 static enum pcm_call_result retry_v92_upstream(struct pcm_call *call, bool backoff)
 {
 	const struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
@@ -1597,7 +1599,17 @@ static enum pcm_call_result retry_v92_upstream(struct pcm_call *call, bool backo
 		call->v92_upstream_retry_step = call->b1_deadline_armed ?
 			(step < V92_STARTUP_RETRY_MAX_STEP ? step * 2u : step) : 0u;
 	}
-	result = begin_retrain(call, RETRAIN_LOCAL);
+	/* Known loss alone does not withdraw a trained path's negotiated mapping.
+	 * Reuse the independent Ru/Rd exchange before repeating channel probing.
+	 * Initial B1 and unusable selections still retrain. The quality budget
+	 * above bounds repeated loss, and the ordinary rate-exchange deadline
+	 * retains the full-retrain fallback. */
+	bool rate_recovery = !backoff && call->pcm_upstream_trained &&
+		!call->b1_deadline_armed && !call->retrain_active &&
+		path->fast.stage == PCM_CALL_V92_FAST_IDLE &&
+		path->downstream_stage == V92_PHASE4_E2U_DOWNSTREAM_DATA;
+	result = rate_recovery ? begin_v92_rate_request(call, true) :
+		begin_retrain(call, RETRAIN_LOCAL);
 	if (result != PCM_CALL_OK) {
 		call->v92_upstream_retry_ceiling = previous;
 		call->v92_upstream_retry_step = previous_step;

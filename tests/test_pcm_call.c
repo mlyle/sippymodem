@@ -8832,7 +8832,10 @@ static bool v92_quality_backoff_contracts(const struct pcm_call *online)
 			      pcm_call_is_valid(&call) && event.kind == PCM_CALL_DATA_NONE &&
 			      call.v92_upstream_retry_ceiling == (available && reason != 3u ? ceiling : online->v92_upstream_retry_ceiling) &&
 			      call.pcm_upstream_quality.recovery.attempts == budget + (available ? 1u : 0u) &&
-			      (available ? call.stage == PCM_CALL_RETRAIN_SILENCE : call.failed) &&
+			      (available ? (reason == 3u ?
+				call.stage == PCM_CALL_PHASE4 && call.v92_rate_renegotiation_active &&
+				call.state.phase4.v92.child == PCM_CALL_V92_PHASE4_RU :
+				call.stage == PCM_CALL_RETRAIN_SILENCE) : call.failed) &&
 			      memcmp(&call.v92_digital_phase4_configuration, configuration, sizeof(*configuration)) == 0,
 			      "quality recovery lost its rate ceiling, fixed mapping, or retry budget");
 		}
@@ -9552,6 +9555,7 @@ static bool test_v92_quality_rate_recovery(void)
 				uint32_t frames[2] = { 0u, 0u };
 				bool started[2] = { false, false };
 				unsigned loss_guard = 0u;
+				bool full_retrain_seen = false;
 				for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT; ++clock) {
 					uint8_t rx[2], tx[2];
 					struct pcm_call *calls[] = { &pair.analog, &pair.digital };
@@ -9559,6 +9563,8 @@ static bool test_v92_quality_rate_recovery(void)
 					channel_receive(&pair.wire, &rx[0], &rx[1]);
 					for (unsigned side = 0; side < 2u; ++side) {
 						struct pcm_call *call = calls[side];
+						full_retrain_seen |= call->stage == PCM_CALL_RETRAIN_SILENCE ||
+							call->stage == PCM_CALL_PHASE2 || call->stage == PCM_CALL_PHASE3;
 						if (pcm_call_phase4_is_ready(call)) {
 							CHECK(pcm_call_start_data_path(call) == PCM_CALL_OK, "quality recovery handoff failed");
 							started[side] = true;
@@ -9592,6 +9598,8 @@ static bool test_v92_quality_rate_recovery(void)
 					if (frames[0] >= 200u && frames[1] >= 200u)
 						break;
 				}
+				CHECK(epoch != 0u || !full_retrain_seen,
+				      "trained media loss repeated full channel probing");
 				uint8_t expected = fixed ? fixed_rate : rates[epoch + 1u];
 				CHECK(frames[0] >= 200u && frames[1] >= 200u &&
 				      pcm_call_is_online(&pair.analog) && pcm_call_is_online(&pair.digital) &&
