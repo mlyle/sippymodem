@@ -358,7 +358,8 @@ static uint32_t constellation_power(const struct spaced_levels *const levels[6],
 struct cardinality_family {
 	uint8_t low[V90_CP_FRAME_INTERVALS];
 	uint8_t high[V90_CP_FRAME_INTERVALS];
-	unsigned choices;
+	uint8_t choices;
+	uint8_t minimum_high;
 };
 
 /* Fix every family's cardinalities before distance bisection. A phase with
@@ -431,6 +432,32 @@ static unsigned data_families(const struct v90_pcm_mapping *mapping,
 	return count;
 }
 
+/* All variable phases in a family share one low/high pair. Capacity
+ * therefore depends only on the number of high choices, not their order.
+ * Replace one remaining low factor at a time; each division is exact. */
+static void prepare_capacity_counts(struct cardinality_family *families,
+	unsigned count, uint64_t words)
+{
+	for (unsigned family = 0; family < count; ++family) {
+		struct cardinality_family *f = &families[family];
+		uint64_t capacity = 1;
+		unsigned low = 1, high = 1, required = 0;
+		unsigned choices = bit_count_u8((uint8_t)f->choices);
+		for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; ++slot) {
+			capacity *= f->low[slot];
+			if (f->choices & (1u << slot)) {
+				low = f->low[slot];
+				high = f->high[slot];
+			}
+		}
+		while (capacity < words && required < choices) {
+			capacity = capacity / low * high;
+			++required;
+		}
+		f->minimum_high = capacity >= words ? required : choices + 1u;
+	}
+}
+
 /* A fixed size vector's feasibility is monotone in distance. A union of
  * fixed families therefore permits bisection, sharing one greedy level
  * prefix per phase and distance. Preserve the original moduli at equal distance;
@@ -466,6 +493,7 @@ static bool select_constellations(const struct v90_pcm_mapping *mapping,
 	}
 	if (!g711_ucode_sample(mapping->law, V90_CONSTELLATION_LAST_UCODE, true, &peak))
 		return false;
+	prepare_capacity_counts(families, count, words);
 	uint32_t low = 1, high = 2u * (uint32_t)peak / (2u * largest - 1u);
 	while (low <= high) {
 		uint32_t spacing = low + (high - low) / 2u, best_power = UINT32_MAX;
@@ -490,13 +518,13 @@ static bool select_constellations(const struct v90_pcm_mapping *mapping,
 			do {
 				uint8_t sizes[V90_CP_FRAME_INTERVALS];
 				bool usable = true;
-				capacity = 1;
-				for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++) {
-					sizes[slot] = pattern & (1u << slot) ? f->high[slot] : f->low[slot];
-					capacity *= sizes[slot];
-					usable &= sizes[slot] <= levels[slot]->size;
-				}
-				if (usable && capacity >= words) {
+				if (bit_count_u8((uint8_t)pattern) >= f->minimum_high)
+					for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++) {
+						sizes[slot] = pattern & (1u << slot) ? f->high[slot] : f->low[slot];
+						usable &= sizes[slot] <= levels[slot]->size;
+					}
+				else usable = false;
+				if (usable) {
 					uint32_t power = constellation_power(levels, sizes, mapping->modulus_bits);
 					if (power <= maximum_power && power < best_power) {
 						fits = true;
