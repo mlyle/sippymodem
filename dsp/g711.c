@@ -149,9 +149,7 @@ bool g711_ucode_octet(
 	if (!g711_law_is_valid(law) || ucode > UINT8_C(127) ||
 	    octet == NULL)
 		return false;
-	encoded = law == G711_LAW_PCMA ?
-			(uint8_t)(ucode ^ UINT8_C(0xd5)) :
-			(uint8_t)~ucode;
+	encoded = g711_ucode_positive_octet(law, ucode);
 	*octet = positive ? encoded : (uint8_t)(encoded ^ UINT8_C(0x80));
 	return true;
 }

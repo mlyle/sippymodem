@@ -139,7 +139,8 @@ enum v90_pcm_mapping_result v90_pcm_mapping_power(
 	enum v90_pcm_mapping_plane plane, enum g711_law law,
 	uint32_t *floor_power, uint32_t *ceiling_power)
 {
-	uint64_t remaining, stride = 1;
+	uint64_t remaining[V90_CP_FRAME_INTERVALS], stride[V90_CP_FRAME_INTERVALS];
+	unsigned source[V90_CP_FRAME_INTERVALS];
 	struct pcm_power_sum sum = { 0 };
 
 	if (mapping == NULL || floor_power == NULL || ceiling_power == NULL ||
@@ -148,30 +149,37 @@ enum v90_pcm_mapping_result v90_pcm_mapping_power(
 		return V90_PCM_MAPPING_INVALID_ARGUMENT;
 	if (!v90_pcm_mapping_is_valid(mapping))
 		return V90_PCM_MAPPING_INVALID_PARAMETERS;
-	remaining = (UINT64_C(1) << mapping->modulus_bits) - 1u;
-	for (size_t interval = 0; interval < V90_CP_FRAME_INTERVALS; ++interval) {
-		const struct pcm_constellation *constellation =
-			plane == V90_PCM_MAPPING_CODEC ? &mapping->codec[interval] :
-				&mapping->transmit[interval];
+	const struct pcm_constellation *rows = plane == V90_PCM_MAPPING_CODEC ?
+		mapping->codec : mapping->transmit;
+	pcm_constellation_sources(rows, source);
+	remaining[0] = (UINT64_C(1) << mapping->modulus_bits) - 1u;
+	stride[0] = 1;
+	for (unsigned slot = 1; slot < V90_CP_FRAME_INTERVALS; ++slot) {
+		remaining[slot] = remaining[slot - 1u] / mapping->modulus[slot - 1u];
+		stride[slot] = stride[slot - 1u] * mapping->modulus[slot - 1u];
+	}
+	/* Build each distinct row once, using only one prefix scratch. Its
+	 * intervals still have independent exact word-occurrence weights.
+	 * Integer sums are bounded and exact, so grouping changes no rounding. */
+	for (unsigned interval = 0; interval < V90_CP_FRAME_INTERVALS; ++interval) {
+		if (source[interval] != interval)
+			continue;
 		uint64_t prefix[PCM_CONSTELLATION_UCODES + 1];
 		unsigned size = 0;
 
 		prefix[0] = 0;
-
-		for (unsigned ucode = 0; ucode < PCM_CONSTELLATION_UCODES; ++ucode) {
-			int16_t level;
-
-			if (!pcm_constellation_contains(constellation, (uint8_t)ucode))
-				continue;
-			if (!g711_ucode_sample(law, (uint8_t)ucode, true, &level))
-				return V90_PCM_MAPPING_INVALID_PARAMETERS;
+		for (unsigned ucode = pcm_constellation_next(rows + interval, 0);
+		     ucode < PCM_CONSTELLATION_UCODES;
+		     ucode = pcm_constellation_next(rows + interval, ucode + 1u)) {
+			/* The mapping and iterator already bound law and Ucode. */
+			int16_t level = g711_decode(law, g711_ucode_positive_octet(law, (uint8_t)ucode));
 			prefix[size + 1] = prefix[size] + (uint32_t)((int32_t)level * level);
 			size++;
 		}
-		pcm_power_accumulate_levels(&sum, mapping->modulus_bits,
-			remaining, stride, size, prefix);
-		stride *= mapping->modulus[interval];
-		remaining /= mapping->modulus[interval];
+		for (unsigned slot = interval; slot < V90_CP_FRAME_INTERVALS; ++slot)
+			if (source[slot] == interval)
+				pcm_power_accumulate_levels(&sum, mapping->modulus_bits,
+					remaining[slot], stride[slot], size, prefix);
 	}
 	pcm_power_bounds(&sum, mapping->modulus_bits, floor_power, ceiling_power);
 	return V90_PCM_MAPPING_OK;

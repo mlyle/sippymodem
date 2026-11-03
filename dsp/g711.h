@@ -72,9 +72,16 @@ static inline struct g711_probability_interval g711_probability_bounds(
 	};
 }
 
-/* V.90 and V.92 identify magnitudes with a seven-bit universal code.  The
- * sample form preserves the otherwise ambiguous PCMU negative-zero codeword
- * as -1 so a later G.711 encoder reproduces the exact octet. */
+/* V.90 and V.92 identify magnitudes with a seven-bit universal code.
+ * Positive wire octet for an owner-validated law and Ucode; keep the
+ * arithmetic shared with the checked conversion below. */
+static inline uint8_t g711_ucode_positive_octet(enum g711_law law, uint8_t ucode)
+{
+	return (uint8_t)(ucode ^ (law == G711_LAW_PCMA ? 0xd5u : 0xffu));
+}
+
+/* Checked conversion. The sample form preserves the ambiguous PCMU
+ * negative-zero codeword as -1 so re-encoding reproduces its exact octet. */
 bool g711_ucode_octet(
 	enum g711_law law, uint8_t ucode, bool positive,
 	uint8_t *octet);

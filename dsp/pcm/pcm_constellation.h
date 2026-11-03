@@ -44,6 +44,31 @@ static inline bool pcm_constellation_contains(
 		(uint8_t)(1u << (ucode % 8u))) != 0;
 }
 
+/* First present Ucode at or above first, or 128 when exhausted. NULL
+ * denotes the implicit full alphabet used by direct-channel design. Walk
+ * packed membership bytes within the 128-code range; first >= 128 is exhausted and never dereferences the mask. */
+static inline unsigned pcm_constellation_next(
+	const struct pcm_constellation *constellation, unsigned first)
+{
+	if (first >= PCM_CONSTELLATION_UCODES)
+		return PCM_CONSTELLATION_UCODES;
+	if (constellation == NULL)
+		return first;
+	unsigned byte = first / 8u;
+	unsigned bits = constellation->ucode_mask[byte];
+
+	if ((bits & (1u << (first % 8u))) != 0)
+		return first;
+	bits &= 0xffu << (first % 8u);
+	for (;;) {
+		if (bits != 0)
+			return byte * 8u + (unsigned)__builtin_ctz(bits);
+		if (++byte == PCM_CONSTELLATION_MASK_BYTES)
+			return PCM_CONSTELLATION_UCODES;
+		bits = constellation->ucode_mask[byte];
+	}
+}
+
 static inline uint8_t pcm_constellation_count(
 	const struct pcm_constellation *constellation)
 {
@@ -117,6 +142,26 @@ static inline bool pcm_constellation_is_empty(
 	for (size_t index = 0; index < PCM_CONSTELLATION_MASK_BYTES; ++index)
 		used |= constellation->ucode_mask[index];
 	return used == 0;
+}
+
+/* Map each interval to its first identical row. Packed masks have no
+ * padding; NULL denotes one common implicit alphabet. Input masks and the
+ * six output indices occupy separate storage. Owners retain each interval's
+ * coding/power weights. No pointer or mutable cache survives the operation. */
+static inline void pcm_constellation_sources(
+	const struct pcm_constellation *intervals,
+	unsigned source[PCM_CONSTELLATION_FRAME_INTERVALS])
+{
+	for (unsigned slot = 0; slot < PCM_CONSTELLATION_FRAME_INTERVALS; ++slot) {
+		source[slot] = slot;
+		for (unsigned prior = 0; prior < slot; ++prior) {
+			if (intervals == NULL || memcmp(intervals + slot, intervals + prior,
+				    sizeof(*intervals)) == 0) {
+				source[slot] = source[prior];
+				break;
+			}
+		}
+	}
 }
 
 /* Pack six interval sets into the smallest ordered row table. Identical

@@ -303,38 +303,18 @@ static void prepare_levels(struct spaced_levels *levels, enum g711_law law,
 	uint32_t threshold = (distance + 1u) / 2u;
 	levels->size = 0;
 	levels->square[0] = 0;
-	for (unsigned code = 0; code <= V90_CONSTELLATION_LAST_UCODE; code++) {
+	for (unsigned code = pcm_constellation_next(available, 0);
+	     code <= V90_CONSTELLATION_LAST_UCODE;
+	     code = pcm_constellation_next(available, code + 1u)) {
 		int16_t value;
-		if (!g711_ucode_sample(law, (uint8_t)code, true, &value)) {
-			levels->size = 0;
-			return;
-		}
-		if ((available && !pcm_constellation_contains(available, (uint8_t)code)) ||
-		    (uint32_t)value < threshold)
+		value = g711_decode(law, g711_ucode_positive_octet(law, (uint8_t)code));
+		if ((uint32_t)value < threshold)
 			continue;
 		levels->code[levels->size] = (uint8_t)code;
 		levels->square[levels->size + 1] = levels->square[levels->size] +
 			(uint32_t)((int32_t)value * value);
 		levels->size++;
 		threshold = (uint32_t)value + distance;
-	}
-}
-
-/* Equal DIL masks share one level prefix, while each phase keeps its own
- * cardinality and exact word-occurrence power weights. Packed masks contain
- * no padding; NULL gives every phase the same direct-codec level set. */
-static void level_sources(const struct pcm_constellation *available,
-	unsigned source[V90_CP_FRAME_INTERVALS])
-{
-	for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; ++slot) {
-		source[slot] = slot;
-		for (unsigned prior = 0; prior < slot; ++prior) {
-			if (available == NULL || memcmp(available + slot, available + prior,
-				    sizeof(*available)) == 0) {
-				source[slot] = source[prior];
-				break;
-			}
-		}
 	}
 }
 
@@ -486,7 +466,7 @@ static bool select_constellations(const struct v90_pcm_mapping *mapping,
 	struct spaced_levels storage[V90_CP_FRAME_INTERVALS];
 	const struct spaced_levels *levels[V90_CP_FRAME_INTERVALS];
 
-	level_sources(available, source);
+	pcm_constellation_sources(available, source);
 	for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++) {
 		levels[slot] = &storage[source[slot]];
 		if (mapping->modulus[slot] > largest)

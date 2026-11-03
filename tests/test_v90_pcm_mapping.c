@@ -113,6 +113,18 @@ static bool test_packed_constellation_rank(void)
 			count += pcm_constellation_contains(&constellation, (uint8_t)ucode);
 		CHECK(pcm_constellation_count(&constellation) == count,
 		      "packed constellation count differs for pattern %zu", pattern);
+		unsigned next = pcm_constellation_next(&constellation, 0);
+		for (unsigned code = 0; code < PCM_CONSTELLATION_UCODES; ++code) {
+			if (!pcm_constellation_contains(&constellation, (uint8_t)code))
+				continue;
+			CHECK(next == code, "packed traversal skipped/reordered Ucode %u", code);
+			next = pcm_constellation_next(&constellation, next + 1u);
+		}
+		CHECK(next == PCM_CONSTELLATION_UCODES &&
+		      pcm_constellation_next(&constellation, UINT_MAX) == PCM_CONSTELLATION_UCODES &&
+		      pcm_constellation_next(NULL, PCM_CONSTELLATION_UCODES) == PCM_CONSTELLATION_UCODES &&
+		      pcm_constellation_next(NULL, 127) == 127,
+		      "packed traversal did not bound the alphabet");
 		for (unsigned int ucode = 0; ucode < PCM_CONSTELLATION_UCODES; ++ucode) {
 			uint8_t rank = 0xa5u;
 			uint8_t expected = 0;
@@ -246,25 +258,20 @@ static uint64_t labels_value(
 	return value;
 }
 
-static bool test_mapping_power_exhaustive(void)
+static bool mapping_power_matches_words(const struct v90_pcm_mapping *mapping)
 {
-	struct v90_cp_parameters source = mixed_parameters();
-	struct v90_pcm_mapping mapping;
-
-	CHECK(v90_pcm_mapping_init(&mapping, &source) == V90_PCM_MAPPING_OK &&
-	      mapping.modulus_bits == 14, "power fixture did not initialize");
 	for (int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
 		for (int plane = V90_PCM_MAPPING_TRANSMIT;
 		     plane <= V90_PCM_MAPPING_CODEC; ++plane) {
 			uint32_t squares[V90_CP_FRAME_INTERVALS][PCM_CONSTELLATION_UCODES];
-			uint64_t words = UINT64_C(1) << mapping.modulus_bits;
+			uint64_t words = UINT64_C(1) << mapping->modulus_bits;
 			uint64_t sum = 0;
 			uint32_t floor, ceiling;
 
 			for (size_t slot = 0; slot < V90_CP_FRAME_INTERVALS; ++slot) {
 				const struct pcm_constellation *row =
-					plane == V90_PCM_MAPPING_CODEC ? &mapping.codec[slot] :
-						&mapping.transmit[slot];
+					plane == V90_PCM_MAPPING_CODEC ? &mapping->codec[slot] :
+						&mapping->transmit[slot];
 				size_t label = 0;
 
 				for (int u = 127; u >= 0; --u) {
@@ -281,16 +288,55 @@ static bool test_mapping_power_exhaustive(void)
 			for (uint64_t word = 0; word < words; ++word) {
 				uint64_t value = word;
 				for (size_t slot = 0; slot < V90_CP_FRAME_INTERVALS; ++slot) {
-					sum += squares[slot][value % mapping.modulus[slot]];
-					value /= mapping.modulus[slot];
+					sum += squares[slot][value % mapping->modulus[slot]];
+					value /= mapping->modulus[slot];
 				}
 			}
-			CHECK(v90_pcm_mapping_power(&mapping, plane, law, &floor, &ceiling) ==
+			CHECK(v90_pcm_mapping_power(mapping, plane, law, &floor, &ceiling) ==
 				      V90_PCM_MAPPING_OK &&
 			      floor == sum / (6u * words) &&
 			      ceiling == (sum + 6u * words - 1u) / (6u * words),
 			      "power disagrees with exhaustive words: law %d plane %d", law, plane);
 		}
+	}
+	return true;
+}
+
+static bool test_mapping_power_exhaustive(void)
+{
+	struct v90_cp_parameters source = mixed_parameters();
+	struct v90_pcm_mapping mapping, original;
+	static const unsigned patterns[][V90_CP_FRAME_INTERVALS] = {
+		{ 0, 1, 2, 3, 4, 5 },
+		{ 0, 0, 0, 0, 0, 0 },
+		{ 0, 1, 0, 1, 0, 1 },
+		{ 0, 1, 2, 0, 1, 2 },
+		{ 0, 1, 0, 2, 1, 0 },
+	};
+
+	CHECK(v90_pcm_mapping_init(&original, &source) == V90_PCM_MAPPING_OK &&
+	      original.modulus_bits == 14, "power fixture did not initialize");
+	for (unsigned pattern = 0; pattern < ARRAY_LENGTH(patterns); ++pattern) {
+		uint64_t capacity = 1;
+
+		mapping = original;
+		for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; ++slot) {
+			unsigned row = patterns[pattern][slot];
+
+			mapping.transmit[slot] = original.transmit[row];
+			mapping.codec[slot] = original.codec[row];
+			mapping.modulus[slot] = original.modulus[row];
+			capacity *= mapping.modulus[slot];
+		}
+		mapping.modulus_bits = 0;
+		while ((capacity >>= 1) != 0)
+			mapping.modulus_bits++;
+		mapping.frame_bits = mapping.modulus_bits + mapping.sign_bits;
+		CHECK(v90_pcm_mapping_is_valid(&mapping), "shared row fixture %u failed", pattern);
+		struct v90_pcm_mapping before = mapping;
+		CHECK(mapping_power_matches_words(&mapping) &&
+		      memcmp(&mapping, &before, sizeof(mapping)) == 0,
+		      "shared row power/ownership differs: pattern %u", pattern);
 	}
 	return true;
 }
