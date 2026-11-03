@@ -1288,6 +1288,44 @@ static bool test_balanced_measured_capacity(void)
 	return true;
 }
 
+static bool test_maximum_phase_capacity(void)
+{
+	/* K=37 needs all five 109-level phases beside the nine-level phase:
+	 * 9*109^5 >= 2^37, but 9*108*109^4 < 2^37. Eight weak-phase levels
+	 * cannot fit even at the full rail; later caps must still be searched. */
+	for (unsigned weak = 0; weak < V90_CP_FRAME_INTERVALS; ++weak) {
+		struct pcm_constellation available[V90_CP_FRAME_INTERVALS] = { 0 };
+		struct pcm_constellation rows[V90_CP_MAX_CONSTELLATIONS], saved[V90_CP_MAX_CONSTELLATIONS];
+		uint8_t map[V90_CP_FRAME_INTERVALS], saved_map[V90_CP_FRAME_INTERVALS];
+		uint8_t count = 0;
+
+		for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; ++slot)
+			for (unsigned code = 0; code < (slot == weak ? 9u : 109u); ++code)
+				pcm_constellation_add(&available[slot], (uint8_t)code);
+		memset(rows, 0x5a, sizeof(rows));
+		memset(map, 0x5a, sizeof(map));
+		CHECK(v90_profile_generate_measured_constellations(
+			      G711_LAW_PCMA, 22, 1, UINT32_MAX, available, rows, map, &count) &&
+		      count == 2,
+		      "full-rail asymmetric capacity was missed at phase %u", weak);
+		for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; ++slot)
+			CHECK(map[slot] < count &&
+			      memcmp(&rows[map[slot]], &available[slot], sizeof(rows[0])) == 0,
+			      "full-rail capacity lost a required level at phase %u", slot);
+		memcpy(saved, rows, sizeof(saved));
+		memcpy(saved_map, map, sizeof(saved_map));
+		uint8_t saved_count = count;
+		/* Mu-law's zero cannot carry a sign. Removing it makes this same
+		 * mask family insufficient, without changing the prior selection. */
+		CHECK(!v90_profile_generate_measured_constellations(
+			      G711_LAW_PCMU, 22, 1, UINT32_MAX, available, rows, map, &count) &&
+		      memcmp(rows, saved, sizeof(rows)) == 0 &&
+		      memcmp(map, saved_map, sizeof(map)) == 0 && count == saved_count,
+		      "insufficient full-rail capacity changed output at phase %u", weak);
+	}
+	return true;
+}
+
 static bool test_data_template_capacity(void)
 {
 	struct pcm_constellation template = { 0 };
@@ -1341,6 +1379,7 @@ int main(void)
 		{ "fixed unequal cardinalities", test_fixed_unequal_cardinalities },
 		{ "common masks retain fixed cardinalities", test_common_masks_fixed_cardinalities },
 		{ "asymmetric exhaustive optimality", test_asymmetric_optimality },
+		{ "maximum phase capacity", test_maximum_phase_capacity },
 		{ "digital probe capabilities", test_digital_probe_capabilities },
 		{ "upstream policy", test_upstream_policy },
 		{ "rate bounds and transactionality", test_transactionality },

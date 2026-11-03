@@ -362,6 +362,18 @@ struct cardinality_family {
 	uint8_t minimum_high;
 };
 
+/* Capacity at these phase caps; six factors stay below 109^6. */
+static uint64_t capped_capacity(const unsigned caps[V90_CP_FRAME_INTERVALS],
+	unsigned weak, unsigned points, unsigned water)
+{
+	uint64_t capacity = 1;
+	for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; ++slot) {
+		unsigned size = weak & (1u << slot) ? points : water;
+		capacity *= caps[slot] < size ? caps[slot] : size;
+	}
+	return capacity;
+}
+
 /* Fix every family's cardinalities before distance bisection. A phase with
  * fewer than the root's levels can trade capacity with less impaired phases.
  * Sweep its cap, then find the smallest common ceiling for the other phases.
@@ -403,20 +415,17 @@ static unsigned data_families(const struct v90_pcm_mapping *mapping,
 		return 0;
 	if (weak == 0)
 		return count;
+	/* Increasing weak-phase caps cannot increase the least feasible ceiling
+	 * for the other phases. Keep that ceiling across the ascending sweep;
+	 * before any family fits, the full rail remains the upper bound. */
+	unsigned water = V90_CONSTELLATION_LAST_UCODE + 1u;
 	/* There are at most 102 added caps through the existing 109-code rail. */
 	for (unsigned points = V90_INITIAL_CONSTELLATION_SIZE; points <= largest; points++) {
-		unsigned water = V90_INITIAL_CONSTELLATION_SIZE;
-		for (; water <= V90_CONSTELLATION_LAST_UCODE + 1; water++) {
-			capacity = 1;
-			for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++) {
-				unsigned size = weak & (1u << slot) ? points : water;
-				capacity *= caps[slot] < size ? caps[slot] : size;
-			}
-			if (capacity >= words)
-				break;
-		}
-		if (capacity < words)
+		if (capped_capacity(caps, weak, points, water) < words)
 			continue;
+		while (water > V90_INITIAL_CONSTELLATION_SIZE &&
+		       capped_capacity(caps, weak, points, water - 1u) >= words)
+			--water;
 		struct cardinality_family *family = &families[count++];
 		family->choices = 0;
 		for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++) {
