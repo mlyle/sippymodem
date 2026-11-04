@@ -1858,6 +1858,7 @@ V92_PHASE3_DIGITAL_TX_TEST_OBJECTS := \
 	$(BUILD_DIR)/pcm_j_frame.o \
 	$(BUILD_DIR)/v90_phase3_sd.o \
 	$(BUILD_DIR)/v90_phase3_signs.o \
+	$(BUILD_DIR)/pcm_binary_sign.o \
 	$(BUILD_DIR)/v90_pcm_symbol.o \
 	$(BUILD_DIR)/v34_framing.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
@@ -1872,6 +1873,7 @@ V92_PHASE3_J_RECEIVER_TEST_OBJECTS := \
 	$(BUILD_DIR)/v92_j.o \
 	$(BUILD_DIR)/pcm_j_frame.o \
 	$(BUILD_DIR)/v90_phase3_signs.o \
+	$(BUILD_DIR)/pcm_binary_sign.o \
 	$(BUILD_DIR)/v90_pcm_symbol.o \
 	$(BUILD_DIR)/v34_framing.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
@@ -2199,7 +2201,8 @@ PCM_DOWNSTREAM_EQUALIZER_TEST_BINARY := $(BUILD_DIR)/test_pcm_downstream_equaliz
 PCM_DOWNSTREAM_EQUALIZER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_pcm_downstream_equalizer.o \
 	$(BUILD_DIR)/pcm_downstream_equalizer.o \
-	$(BUILD_DIR)/v90_phase3_signs.o $(BUILD_DIR)/v34_framing.o \
+	$(BUILD_DIR)/v90_phase3_signs.o $(BUILD_DIR)/pcm_binary_sign.o \
+	$(BUILD_DIR)/v34_framing.o \
 	$(BUILD_DIR)/self_sync_scrambler.o $(BUILD_DIR)/v90_pcm_symbol.o \
 	$(BUILD_DIR)/v90_phase4_ri.o $(BUILD_DIR)/v90_phase4_ri_search.o \
 	$(BUILD_DIR)/qam_equalizer.o $(BUILD_DIR)/qam.o $(BUILD_DIR)/g711.o
@@ -2527,6 +2530,7 @@ PCM_PHASE3_DIGITAL_PREFIX_TEST_OBJECTS := \
 	$(BUILD_DIR)/pcm_phase3_digital_prefix.o \
 	$(BUILD_DIR)/v90_phase3_sd.o \
 	$(BUILD_DIR)/v90_phase3_signs.o \
+	$(BUILD_DIR)/pcm_binary_sign.o \
 	$(BUILD_DIR)/v90_pcm_symbol.o \
 	$(BUILD_DIR)/v34_framing.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
@@ -2585,6 +2589,7 @@ V90_PHASE3_SIGNS_TEST_OBJECTS := \
 	$(BUILD_DIR)/pcm_phase3_j_receiver.o \
 	$(BUILD_DIR)/v92_j.o \
 	$(BUILD_DIR)/v90_phase3_signs.o \
+	$(BUILD_DIR)/pcm_binary_sign.o \
 	$(BUILD_DIR)/v90_pcm_symbol.o \
 	$(BUILD_DIR)/v90_jd.o \
 	$(PCM_J_FRAME_OBJECT) \
@@ -2603,6 +2608,7 @@ V90_PHASE3_DIGITAL_TX_TEST_OBJECTS := \
 	$(PCM_DIL_DESCRIPTOR_OBJECT) \
 	$(BUILD_DIR)/v90_phase3_sd.o \
 	$(BUILD_DIR)/v90_phase3_signs.o \
+	$(BUILD_DIR)/pcm_binary_sign.o \
 	$(BUILD_DIR)/v90_pcm_symbol.o \
 	$(BUILD_DIR)/v90_jd.o \
 	$(BUILD_DIR)/v92_j.o \

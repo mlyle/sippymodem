@@ -13,9 +13,9 @@ bool v90_phase3_signs_is_valid(
 	const struct v90_phase3_signs *signs)
 {
 	if (signs == NULL ||
-	    !v34_scrambler_is_valid(&signs->scrambler) ||
-	    signs->scrambler.polynomial != V34_POLYNOMIAL_GPC ||
-	    !g711_law_is_valid(signs->law) || signs->last_sign > 1 ||
+	    !pcm_binary_sign_is_valid(&signs->coding) ||
+	    signs->coding.scrambler.polynomial != V34_POLYNOMIAL_GPC ||
+	    !g711_law_is_valid(signs->law) ||
 	    signs->training_ucode < V90_INFO1A_MIN_TRAINING_UCODE ||
 	    signs->training_ucode > V90_INFO1A_MAX_TRAINING_UCODE ||
 	    (signs->phase != V90_PHASE3_SIGNS_TRN1D &&
@@ -27,8 +27,8 @@ bool v90_phase3_signs_is_valid(
 		       signs->trn1d_symbols %
 			       V90_PHASE3_TRN1D_ALIGNMENT == 0;
 	if (signs->trn1d_symbols == 0)
-		return signs->last_sign == 0 &&
-		       signs->scrambler.history == 0;
+		return signs->coding.previous_sign == 0 &&
+		       signs->coding.scrambler.history == 0;
 	return true;
 }
 
@@ -45,9 +45,9 @@ enum v90_phase3_sign_result v90_phase3_signs_init(
 	if (signs == NULL || !g711_law_is_valid(law) ||
 	    training_ucode < V90_INFO1A_MIN_TRAINING_UCODE ||
 	    training_ucode > V90_INFO1A_MAX_TRAINING_UCODE ||
-	    v34_scrambler_init(
-		    &initialized.scrambler, V34_POLYNOMIAL_GPC) !=
-		    V34_FRAMING_OK)
+	    pcm_binary_sign_init(
+		    &initialized.coding, V34_POLYNOMIAL_GPC) !=
+		    PCM_BINARY_SIGN_OK)
 		return V90_PHASE3_SIGNS_INVALID_ARGUMENT;
 	*signs = initialized;
 	return V90_PHASE3_SIGNS_OK;
@@ -77,10 +77,10 @@ enum v90_phase3_sign_result v90_phase3_signs_next_trn1d(
 		return V90_PHASE3_SIGNS_INVALID_STATE;
 	next = *signs;
 	if (v34_scramble_group(
-		    &next.scrambler, 1, 1, &sign) != V34_FRAMING_OK ||
+		    &next.coding.scrambler, 1, 1, &sign) != V34_FRAMING_OK ||
 	    !make_symbol(&next, sign, &generated))
 		return V90_PHASE3_SIGNS_INVALID_STATE;
-	next.last_sign = sign;
+	next.coding.previous_sign = sign;
 	next.trn1d_symbols++;
 	*signs = next;
 	*symbol = generated;
@@ -107,7 +107,6 @@ enum v90_phase3_sign_result v90_phase3_signs_next_jd_bit(
 {
 	struct v90_phase3_signs next;
 	struct v90_pcm_symbol generated;
-	uint8_t scrambled;
 	uint8_t sign;
 
 	if (signs == NULL || symbol == NULL || bit > 1)
@@ -116,14 +115,11 @@ enum v90_phase3_sign_result v90_phase3_signs_next_jd_bit(
 	    signs->phase != V90_PHASE3_SIGNS_JD)
 		return V90_PHASE3_SIGNS_INVALID_STATE;
 	next = *signs;
-	if (v34_scramble_group(
-		    &next.scrambler, bit, 1, &scrambled) !=
-		    V34_FRAMING_OK)
+	if (pcm_binary_sign_encode(&next.coding, bit, &sign) !=
+		    PCM_BINARY_SIGN_OK)
 		return V90_PHASE3_SIGNS_INVALID_STATE;
-	sign = scrambled ^ next.last_sign;
 	if (!make_symbol(&next, sign, &generated))
 		return V90_PHASE3_SIGNS_INVALID_STATE;
-	next.last_sign = sign;
 	*signs = next;
 	*symbol = generated;
 	return V90_PHASE3_SIGNS_OK;

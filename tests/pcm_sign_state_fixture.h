@@ -58,13 +58,12 @@ static inline bool pcm_j_receivers_equal(
 	const struct pcm_phase3_j_receiver *left,
 	const struct pcm_phase3_j_receiver *right)
 {
-	if (!pcm_scramblers_equal(&left->descrambler, &right->descrambler) ||
+	if (!pcm_binary_sign_states_equal(&left->coding, &right->coding) ||
 	    left->protocol != right->protocol || left->law != right->law ||
 	    left->stage != right->stage ||
 	    left->trn1d_symbols != right->trn1d_symbols ||
 	    memcmp(left->frame, right->frame, sizeof(left->frame)) != 0 ||
 	    left->training_ucode != right->training_ucode ||
-	    left->last_sign != right->last_sign ||
 	    left->frame_bits != right->frame_bits ||
 	    left->prime_zero_bits != right->prime_zero_bits ||
 	    left->prime_candidate != right->prime_candidate)

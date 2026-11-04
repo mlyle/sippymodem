@@ -23,12 +23,11 @@ static bool base_state_is_valid(
 	const struct pcm_phase3_j_receiver *receiver)
 {
 	return pcm_protocol_is_valid(receiver->protocol) &&
-	       v34_scrambler_is_valid(&receiver->descrambler) &&
-	       receiver->descrambler.polynomial == V34_POLYNOMIAL_GPC &&
+	       pcm_binary_sign_is_valid(&receiver->coding) &&
+	       receiver->coding.scrambler.polynomial == V34_POLYNOMIAL_GPC &&
 	       g711_law_is_valid(receiver->law) && stage_is_valid(receiver->stage) &&
 	       receiver->training_ucode >= V90_INFO1A_MIN_TRAINING_UCODE &&
 	       receiver->training_ucode <= V90_INFO1A_MAX_TRAINING_UCODE &&
-	       receiver->last_sign <= 1 &&
 	       receiver->frame_bits <= PCM_J_FRAME_BITS &&
 	       receiver->prime_zero_bits <= V90_PHASE3_JD_PRIME_BITS;
 }
@@ -44,8 +43,8 @@ bool pcm_phase3_j_receiver_is_valid(
 		       receiver->prime_zero_bits == 0 &&
 		       !receiver->prime_candidate &&
 		       (receiver->trn1d_symbols != 0 ||
-			(receiver->last_sign == 0 &&
-			 receiver->descrambler.history == 0));
+			(receiver->coding.previous_sign == 0 &&
+			 receiver->coding.scrambler.history == 0));
 	case PCM_PHASE3_J_RECEIVER_JD_SEARCH:
 		return receiver->trn1d_symbols >=
 			       V90_PHASE3_TRN1D_MIN_SYMBOLS &&
@@ -103,9 +102,9 @@ enum pcm_phase3_j_receiver_result pcm_phase3_j_receiver_init(
 	    !g711_law_is_valid(law) ||
 	    training_ucode < V90_INFO1A_MIN_TRAINING_UCODE ||
 	    training_ucode > V90_INFO1A_MAX_TRAINING_UCODE ||
-	    v34_scrambler_init(
-		    &initialized.descrambler, V34_POLYNOMIAL_GPC) !=
-		    V34_FRAMING_OK)
+	    pcm_binary_sign_init(
+		    &initialized.coding, V34_POLYNOMIAL_GPC) !=
+		    PCM_BINARY_SIGN_OK)
 		return PCM_PHASE3_J_RECEIVER_INVALID_ARGUMENT;
 	*receiver = initialized;
 	return PCM_PHASE3_J_RECEIVER_OK;
@@ -128,18 +127,13 @@ enum pcm_phase3_j_receiver_result pcm_phase3_j_receiver_begin_jd_search(
 static enum pcm_phase3_j_receiver_result receive_trn1d(
 	struct pcm_phase3_j_receiver *receiver, uint8_t sign)
 {
-	uint8_t bit;
-
 	if (receiver->trn1d_symbols == UINT32_MAX ||
-	    v34_descramble_group(
-		    &receiver->descrambler, sign, 1, &bit) !=
-		    V34_FRAMING_OK)
+	    pcm_binary_sign_track_scrambler_output(&receiver->coding, sign) !=
+		    PCM_BINARY_SIGN_OK)
 		return PCM_PHASE3_J_RECEIVER_INVALID_SEQUENCE;
 	/* Keep the self-synchronizing GPC history moving across
 	 * individual slicing errors. Repeated CRC-protected J records, not
 	 * error-free training ones, authorize the next protocol transitions. */
-	(void)bit;
-	receiver->last_sign = sign;
 	receiver->trn1d_symbols++;
 	return receiver->trn1d_symbols == V90_PHASE3_TRN1D_MIN_SYMBOLS ?
 		       PCM_PHASE3_J_RECEIVER_TRN1D_READY :
@@ -275,13 +269,10 @@ static enum pcm_phase3_j_receiver_result receive_record_bit(
 static enum pcm_phase3_j_receiver_result receive_record(
 	struct pcm_phase3_j_receiver *receiver, uint8_t sign)
 {
-	uint8_t differential = sign ^ receiver->last_sign;
 	uint8_t bit;
 
-	receiver->last_sign = sign;
-	if (v34_descramble_group(
-		    &receiver->descrambler, differential, 1, &bit) !=
-	    V34_FRAMING_OK)
+	if (pcm_binary_sign_decode(&receiver->coding, sign, &bit) !=
+	    PCM_BINARY_SIGN_OK)
 		return PCM_PHASE3_J_RECEIVER_INVALID_STATE;
 	return receive_record_bit(receiver, bit);
 }

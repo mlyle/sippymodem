@@ -462,12 +462,12 @@ v90_phase3_digital_station_transmit_handoff(
 		return V90_PHASE3_DIGITAL_STATION_INVALID_STATE;
 	signs = &station->transmit.sequence.signs;
 	generated = (struct v90_phase3_downstream_handoff){
-		.scrambler = signs->scrambler,
+		.scrambler = signs->coding.scrambler,
 		.jd = station->jd,
 		.law = signs->law,
 		.trn1d_symbols = signs->trn1d_symbols,
 		.training_ucode = signs->training_ucode,
-		.last_sign = signs->last_sign,
+		.last_sign = signs->coding.previous_sign,
 	};
 	if (!v90_phase3_downstream_handoff_is_valid(&generated))
 		return V90_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE;

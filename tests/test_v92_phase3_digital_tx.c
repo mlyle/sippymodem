@@ -294,7 +294,7 @@ static bool run_timeline(enum g711_law law, bool nonzero_dil, uint32_t duration)
 		      "could not complete SCR");
 	CHECK(transmitter.stage == PCM_PHASE3_DIGITAL_TX_COMPLETE &&
 	      transmitter.scr_symbols == 12 &&
-	      transmitter.sequence.signs.last_sign == last_sign &&
+	      transmitter.sequence.signs.coding.previous_sign == last_sign &&
 	      pcm_phase3_digital_tx_finish_scr(&transmitter) ==
 		      PCM_PHASE3_DIGITAL_TX_OK,
 	      "SCR did not finish on a six-symbol boundary");

@@ -4,7 +4,7 @@
 #define PCM_PHASE3_J_RECEIVER_H
 
 #include "pcm_protocol.h"
-#include "v34_framing.h"
+#include "pcm_binary_sign.h"
 #include "v90_jd.h"
 #include "v90_pcm_symbol.h"
 #include "v92_j.h"
@@ -38,7 +38,7 @@ enum pcm_phase3_j_receiver_result {
  * controls record interpretation and makes V.92-only states unreachable
  * for a V.90 call. */
 struct pcm_phase3_j_receiver {
-	struct v34_scrambler descrambler;
+	struct pcm_binary_sign coding;
 	union {
 		struct v90_jd_parameters v90;
 		struct {
@@ -52,7 +52,6 @@ struct pcm_phase3_j_receiver {
 	uint32_t trn1d_symbols;
 	uint8_t frame[PCM_J_FRAME_BYTES];
 	uint8_t training_ucode;
-	uint8_t last_sign;
 	uint8_t frame_bits;
 	uint8_t prime_zero_bits;
 	bool prime_candidate;

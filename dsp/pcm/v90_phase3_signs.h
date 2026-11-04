@@ -3,7 +3,7 @@
 #ifndef V90_PHASE3_SIGNS_H
 #define V90_PHASE3_SIGNS_H
 
-#include "v34_framing.h"
+#include "pcm_binary_sign.h"
 #include "v90_info1.h"
 #include "v90_jd.h"
 #include "v90_pcm_symbol.h"
@@ -62,12 +62,11 @@ static inline bool v90_phase3_downstream_handoff_is_valid(
 /* Owns the digital modem's GPC scrambler and differential sign continuity
  * from TRN1d through every Jd repetition and the terminating Jd-prime. */
 struct v90_phase3_signs {
-	struct v34_scrambler scrambler;
+	struct pcm_binary_sign coding;
 	enum g711_law law;
 	enum v90_phase3_sign_phase phase;
 	uint32_t trn1d_symbols;
 	uint8_t training_ucode;
-	uint8_t last_sign;
 };
 
 enum v90_phase3_sign_result v90_phase3_signs_init(

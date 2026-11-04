@@ -96,10 +96,10 @@ static bool run_prefix(enum g711_law law, uint32_t trn1d_symbols)
 	      pcm_phase3_digital_prefix_handoff(&prefix, &handoff) ==
 		      PCM_PHASE3_DIGITAL_PREFIX_OK &&
 	      handoff.phase == V90_PHASE3_SIGNS_TRN1D &&
-	      handoff.scrambler.history ==
-		      prefix.sequence.signs.scrambler.history &&
+	      handoff.coding.scrambler.history ==
+		      prefix.sequence.signs.coding.scrambler.history &&
 	      handoff.trn1d_symbols == trn1d_symbols &&
-	      handoff.last_sign == final_sign,
+	      handoff.coding.previous_sign == final_sign,
 	      "shared prefix handoff changed coding state for law %u",
 	      (unsigned int)law);
 	{
