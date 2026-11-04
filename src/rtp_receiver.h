@@ -53,6 +53,7 @@ struct rtp_receiver {
 	size_t prefill_remaining;
 	uint32_t clock_timestamp;
 	uint32_t buffered_timestamp;
+	size_t source_packet_samples;
 	size_t clock_pending_samples;
 };
 
@@ -80,6 +81,11 @@ struct rtp_playout_status {
 	uint32_t ssrc;
 	uint32_t timestamp;
 	uint32_t partial_timestamp;
+	/* Highest successfully buffered source time; playout/concealment never
+	 * advances this value. Lead includes holes and remaining prefill. */
+	uint32_t source_timestamp;
+	size_t source_packet_samples;
+	size_t clock_lead_samples;
 	size_t partial_samples;
 };
 

@@ -86,12 +86,12 @@ writable and can make the owner spin. Deadline-driven adapter passes retry
 output. Enable peer-input `POLLIN` only for ready DATA with `tx_free > 0`;
 continue observing hangup/EOF while input is paused. This also avoids spinning
 on queued peer bytes during COMMAND or transmit backpressure.
-See [media clock](media-clock.md) for remote pacing and gap recovery.
+See [media clock](media-clock.md) for source-clock pacing and receive reserves.
 
 The default server limit is eight lines, with a maximum of 32 using the bundled
 SDK. Defaults are automatic V.92/V.34 upstream, V.91 enabled, automatic digital
 role, LAPM with raw fallback, both compression types, PCMU, 20-ms packets,
-60-ms remote gap hold, 60-second whole-attempt timeout, 4096-byte TX and
+60-ms reorder reserve plus one local frame, 60-second whole-attempt timeout, 4096-byte TX and
 16384-byte RX queues. PCM upstream requires its explicit config switch.
 
 ## Readiness, calls and generations

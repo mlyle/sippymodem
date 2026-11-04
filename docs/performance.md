@@ -119,7 +119,9 @@ across native media blocks. Both channel hypotheses and all independent B1
 checks remain. After successful B1 validation, a sufficiently separated
 channel releases the competing decoder; uncertain channels keep both.
 The temporary observation queue is bounded to 1,280 samples and drains
-accepted input after remote media retirement. It adds no steady-state prefill.
+accepted input after remote media retirement. This DSP queue adds no
+steady-state prefill; the separate RTP reserve is described in
+[media clocking](media-clock.md).
 
 The following measurements capture the initial scheduling change with
 normal `-O2` builds, one Pi core pinned for
@@ -184,7 +186,7 @@ Every final measured training maximum, including elapsed-timer measurements,
 fit the 20-ms packet and 60-ms three-packet budgets. The stronger four-tap
 case also shows why moving work needs a data-phase check: catch-up increases
 its data peak even as training bursts shrink. Normal-channel startup takes
-roughly 100–140 ms more media time; steady-state input has no added prefill.
+roughly 100–140 ms more media time. These DSP timings exclude the RTP reserve.
 These sampled results do not guarantee deadlines on every channel or under
 concurrent host load.
 

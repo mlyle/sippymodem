@@ -148,6 +148,23 @@ static bool step(struct sippymodem_server *server, uint64_t *now)
 	return true;
 }
 
+static bool wait_for_peer_retirement(struct sippymodem_server *server,
+	struct sippymodem_line *peer, uint64_t *now)
+{
+	struct sippymodem_status status = { 0 };
+	for (unsigned int i = 0; i < 1000; ++i) {
+		EXPECT(step(server, now));
+		EXPECT(sippymodem_get_status(peer, &status) == SIPPYMODEM_OK);
+		if (status.phase == SIPPYMODEM_IDLE && status.sip_state == SIPPYMODEM_SIP_IDLE)
+			break;
+	}
+	CHECK(status.phase == SIPPYMODEM_IDLE && status.sip_state == SIPPYMODEM_SIP_IDLE,
+	      "peer still retiring: phase=%u SIP=%u", status.phase, status.sip_state);
+	/* Publish any media retirement deferred by the final carrier callback
+	 * before sending a fresh INVITE to this same in-process peer. */
+	return step(server, now);
+}
+
 /* A watchdog turns a reintroduced process-wide join into a bounded failure. */
 static void *stall_watchdog(void *unused)
 {
@@ -692,6 +709,7 @@ static bool test_compressed_command_and_fd_eof(void)
 	}
 	EXPECT(eof && received == 8 && memcmp(payload, result, 8) == 0);
 	EXPECT(sippymodem_fd_poll_fd(adapter) == -1);
+	EXPECT(wait_for_peer_retirement(server, answerer, &now));
 	enum sippymodem_result dial = SIPPYMODEM_BUSY;
 	for (unsigned int i = 0; i < 8 && dial == SIPPYMODEM_BUSY; ++i) {
 		dial = sippymodem_dial(caller, target, &generation);
@@ -746,8 +764,7 @@ static bool test_compressed_command_and_fd_eof(void)
 		EXPECT(sippymodem_fd_poll_fd(adapter) == -1);
 		sippymodem_fd_destroy(adapter);
 		if (closure_case == 0) {
-			for (unsigned int i = 0; i < 200; ++i)
-				EXPECT(step(server, &now));
+			EXPECT(wait_for_peer_retirement(server, answerer, &now));
 			EXPECT(sippymodem_dial(caller, target, &generation) == SIPPYMODEM_OK);
 		}
 	}

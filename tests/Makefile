@@ -315,6 +315,10 @@ AUDIO_PATH_TEST_OBJECTS := $(BUILD_DIR)/test_audio_path.o \
 FRAME_CLOCK_TEST_BINARY := $(BUILD_DIR)/test_frame_clock
 FRAME_CLOCK_TEST_OBJECTS := $(BUILD_DIR)/test_frame_clock.o \
 	$(BUILD_DIR)/frame_clock.o $(BUILD_DIR)/frame_pacer.o
+RECEIVE_CLOCK_TEST_BINARY := $(BUILD_DIR)/test_receive_clock
+RECEIVE_CLOCK_TEST_OBJECTS := $(BUILD_DIR)/test_receive_clock.o \
+	$(BUILD_DIR)/receive_clock.o $(BUILD_DIR)/frame_clock.o $(BUILD_DIR)/frame_pacer.o \
+	$(BUILD_DIR)/rtp_receiver.o $(BUILD_DIR)/rtp.o
 AUDIO_SCHEDULER_TEST_BINARY := $(BUILD_DIR)/test_audio_scheduler
 AUDIO_SCHEDULER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_audio_scheduler.o \
@@ -323,6 +327,7 @@ AUDIO_SCHEDULER_TEST_OBJECTS := \
 HOST_TEST_BINARY := $(BUILD_DIR)/test_host
 HOST_TEST_OBJECTS := $(BUILD_DIR)/test_host.o \
 	$(BUILD_DIR)/host.o \
+	$(BUILD_DIR)/receive_clock.o \
 	$(BUILD_DIR)/frame_pacer.o \
 	$(BUILD_DIR)/session.o \
 	$(BUILD_DIR)/sip_media_bridge.o \
@@ -3319,7 +3324,7 @@ TEST_BINARIES := $(BUILD_DIR)/test_pcm_tx_recovery $(BUILD_DIR)/test_rtp_transmi
 	$(STREAM_TEST_BINARY) $(ENDPOINT_TEST_BINARY) $(SIP_RTP_TEST_BINARY) \
 	$(RTP_RUNTIME_TEST_BINARY) $(SIP_MEDIA_BRIDGE_TEST_BINARY) \
 	$(SESSION_TEST_BINARY) $(AUDIO_PATH_TEST_BINARY) \
-	$(FRAME_CLOCK_TEST_BINARY) $(AUDIO_SCHEDULER_TEST_BINARY) \
+	$(FRAME_CLOCK_TEST_BINARY) $(RECEIVE_CLOCK_TEST_BINARY) $(AUDIO_SCHEDULER_TEST_BINARY) \
 	$(HOST_TEST_BINARY) $(RECORDING_FILES_TEST_BINARY) \
 	$(SLMODEM_ADAPTER_TEST_BINARY) $(SLMODEM_CALLS_TEST_BINARY) \
 	$(SLMODEM_DRIVER_TEST_BINARY) $(SLMODEM_TERMINAL_TEST_BINARY) \
@@ -4923,6 +4928,12 @@ $(BUILD_DIR)/frame_clock.o: \
 $(BUILD_DIR)/frame_pacer.o: \
 	../src/frame_pacer.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/receive_clock.o: ../src/receive_clock.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(RECEIVE_CLOCK_TEST_BINARY): $(RECEIVE_CLOCK_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^
 
 $(BUILD_DIR)/audio_scheduler.o: \
 	../src/audio_scheduler.c | $(BUILD_DIR)

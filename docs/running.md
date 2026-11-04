@@ -85,7 +85,7 @@ The executable reads these settings once at startup:
 | `SIP_CODEC` | `PCMU`; also `PCMA` or `CLEARMODE` where the bearer permits it |
 | `SIP_FRAME_MS` | `10` for the executable; native library defaults to `20` |
 | `SIP_REMOTE_CLOCK` | `1`; pace media from accepted incoming RTP |
-| `SIP_JB_MS` | `60`; gap-recovery hold with remote clocking, prefill with local clocking |
+| `SIP_JB_MS` | `60`; remote reorder reserve plus one local frame, or fixed prefill with local clocking; `0` selects direct receive timing |
 | `SIP_GAIN`, `SIP_TX_GAIN`, `SIP_RX_GAIN` | Linear gains, default `1.0`; direction-specific settings override the shared value |
 | `SIP_PCM_CODEC_GRID` | `0`; enable only for a known direct digital codec path with no analog conversion |
 | `SIP_AUTO_ANSWER` | `0`; when `1`, SIP accepts incoming calls and starts the answering modem without waiting for `ATA` |

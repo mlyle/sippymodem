@@ -1,101 +1,87 @@
 # RTP receive clock and playout
 
-The default receive clock processes contiguous RTP audio when it arrives.
-There is no fixed playout prefill. This keeps modem turnaround short on an
-ordered digital path while retaining bounded storage for delayed processing.
+The default processes modem frames on a paced clock with a 60 ms reorder reserve.
+Accepted RTP source timestamps discipline its average frequency. Packet arrival
+jitter therefore does not directly become a pause or burst in the outgoing
+carrier. RTP timestamps still advance by the actual payload sample count;
+this changes scheduling, not the negotiated 8 kHz sample rate or modem bit rate.
 
-RTP can arrive out of order or be lost. Timestamps describe the media timeline;
-packet arrival time is a different clock. These are the roles defined in
-[RFC 3550, sections 1 and 5.1](https://www.rfc-editor.org/rfc/rfc3550.html#section-5.1).
-A modem benefits from recovering a reordered packet because concealment
-introduces missing waveform samples. Waiting on every packet would instead
-delay every training response, including calls with no reordering.
+Timestamps describe the media timeline, while arrival time is a separate clock
+([RFC 3550, sections 1 and 5.1](https://www.rfc-editor.org/rfc/rfc3550.html#section-5.1)).
+A receive reserve allows a late predecessor to arrive before its samples are
+needed. A lost packet is concealed at its playout deadline and retains a false
+received mask. Neither ordering nor missing receive media stops transmission.
+The remote receiver's jitter buffer protects its own direction; it cannot
+recover a missing packet on our receive path.
 
-## Jitter policy
+## Settings
 
-- `SIP_REMOTE_CLOCK=1`: `SIP_JB_MS`, default 60 ms, is the maximum wait for a
-  missing interval before already buffered future audio. Contiguous audio
-  plays immediately. One continuous hole receives one deadline, even if it
-  spans several frames. After expiry, missing samples are concealed and their
-  received mask stays false.
-- `SIP_JB_MS=0` removes that recovery wait. Reordering in one socket drain is
-  still recovered. A predecessor arriving in a later drain may be too late.
-- An incomplete frame retains its fragments until completion. If the peer
-  stops sending and waits for a response, a deadline of at least one nominal
-  frame, or the larger jitter setting, completes the clock interval once.
-  Only the missing tail is concealed; a late tail cannot supply another tick.
-- `SIP_REMOTE_CLOCK=0`: the same jitter setting remains fixed prefill before
-  wall-clock playout. The scheduler then advances at the configured rate.
+- `SIP_REMOTE_CLOCK=1`, `SIP_JB_MS>0`: paced source-clock tracking with fixed
+  receive prefill. Add one configured local frame to the requested reorder
+  reserve: each DSP invocation consumes a whole frame at once, including
+  its tail. The default total is 70 ms for the executable's 10 ms frames,
+  or 80 ms for the library's 20 ms frames. Each direction configured this
+  way incurs that receive delay. This costs turnaround latency in exchange
+  for stable carrier timing through network jitter and reordering.
+- `SIP_REMOTE_CLOCK=1`, `SIP_JB_MS=0`: direct receive-driven operation without
+  fixed prefill. Contiguous received sample time releases DSP/transmit credit.
+  Reordering within one socket drain is recovered, but a predecessor arriving
+  later may already be lost. An incomplete frame waits at most one nominal
+  frame before its missing tail is concealed. This mode retains the existing
+  low-latency software/digital behavior.
+- `SIP_REMOTE_CLOCK=0`: independent nominal local clock with the configured
+  fixed prefill. It does not follow the peer's oscillator; sustained clock
+  mismatch can eventually exhaust its reserve or receive window.
 
-The separate two-second timestamp storage bounds a processing backlog. It is
-not two seconds of playout delay. A new SSRC retires queued clock credit and
-wait deadlines. A new call also resets its rate allowance.
+All modes retain bounded timestamp storage and received-sample provenance.
+The remote modes retain a separate two-second source timestamp window for
+processing backlogs. That storage is not two seconds of prefill.
 
-Each direction needs its own receive storage. The peer's jitter buffer protects
-its receiver from jitter in our transmissions; it cannot repair a missing or
-reordered packet on our receive path. Our bounded slots also support ordering,
-duplicate rejection and batches delivered together. None of these requires a
-fixed prefill when the next remote-clocked samples are already contiguous.
+## Clock discipline and work bounds
 
-## Receive-driven pacing
+Paced operation observes source-clock lead relative to playout, including
+known holes but excluding rejected future timestamps. Only newly accepted
+source time updates the frequency loop. Duplicate or reordered old payload,
+concealment and malformed packets do not create oscillator observations.
+Missing input holds the last frequency; it cannot slowly freeze transmission.
 
-Accepted RTP sample time supplies transmit and DSP credit, including lost
-intervals. Before the first accepted RTP, the modem sends at the nominal local
-rate. Some symmetric RTP gateways need several sequential packets to learn
-the return address; a single seed packet can leave both ends waiting. Startup
-processes at most one frame per nominal interval, without a catch-up burst.
-The first accepted stream, including a partial frame, switches immediately to
-receive-driven timing. An already received stream supplies its own startup
-credit, and later loss of an established stream does not restart the local
-clock.
+A four-observation average reduces packetization noise. The loop accounts
+for both local and received block sizes; packet batching is not oscillator
+drift. Slow proportional/integral correction follows oscillator drift; bounded faster correction handles larger
+source-rate differences. Clock pull is limited to 3/4..4/3 of nominal. A source
+outside the sustainable range can underrun the receive reserve or exceed the
+future window; discarded future samples remain visible as `early_samples`.
 
-The ceiling is exactly four thirds of the configured sample rate. A token
-interval is three quarters of a nominal frame: 20 ms becomes 15 ms; 10 ms
-becomes 7.5 ms. At most four frames can run immediately, including across
-repeated event-loop passes. Idle time restores only that burst. Pending RTP
-credit remains queued; the event loop waits for the later of the recovery and
-pacing deadlines and still polls signaling. Backward or saturated timestamps
-cannot create unlimited credit. Each pass also processes at most four frames.
+Each owner pass processes at most four frames. A shared token-bucket primitive
+also limits repeated same-time passes: at most four immediate frames, followed
+by one token per 3/4 nominal frame. Thus a 10 ms frame has a 7.5 ms ceiling interval,
+and a 20 ms frame has 15 ms. Idle time cannot accumulate a larger burst. A host
+scheduling backlog keeps its outstanding deadline and drains under that ceiling;
+it is not also mistaken for oscillator drift. No waveform samples are inserted,
+dropped or resampled to correct clock frequency.
 
-This ceiling is an application policy, not a new negotiated RTP sample rate.
-The RTP timestamp still advances by the number of payload samples; the status
-bit rate describes the nominal modem sample timeline. Normal 8 kHz peers
-supply normal 8 kHz progress. A software feedback path can advance faster in
-wall time, bounded by this ceiling. RFC 3550 does not prescribe a 60 ms buffer
-or this four-thirds ceiling.
+A new SSRC resets frequency acquisition and receive state, while preserving
+pacing credit. A new media lifecycle resets both. Backward owner timestamps
+cannot renew credit. Deadline overflow ends media processing rather than
+spinning or wrapping time.
 
-An independent sender faster than the ceiling cannot be slowed by our scheduler.
-Its future timestamps accumulate in the bounded receive window. Samples beyond
-that window are rejected and counted in the receiver's `early_samples` statistic;
-continued excess input therefore loses packets. A software feedback peer follows
-the rate of our replies, while an independent peer must keep its own clock within
-the sustainable receive rate.
+Before the first source stream, outgoing media runs at the nominal rate.
+This lets symmetric RTP gateways qualify the return route from several
+sequential packets. Five seconds without accepted complete RTP clock progress
+ends an established call or startup. Startup sends, malformed input and
+rejected future packets do not refresh that watchdog.
 
-Five seconds without accepted complete RTP clock progress ends the call,
-including startup. Sending startup packets or receiving malformed packets
-does not extend that deadline.
+## Regression coverage
 
-## Measured receive delay
+Native tests drive the actual timestamp receiver and paced clock through
+one-hour streams with positive/negative 50, 100, 500, 1000 ppm offsets, delayed
+and reordered packets, clock-rate steps, timestamp wrap and wide pull through
+4/3 nominal. Distinct sample bytes and received masks verify ordering and
+provenance. Separate cases check one unrecoverable packet and a 100 ms owner
+pause. Further cases use different local and remote packet sizes, from 1 ms
+local frames to the largest supported executable frame. Host tests cover a receive hole without a
+transmit hold, watchdog expiry and independent media lifecycles.
 
-A controlled loopback study sent 64 packets of 160 G.711 samples, with a
-one-millisecond simulated owner loop. Delay below is measured
-from arrival to delivery of received samples. In the reorder case, packet 3
-of every eight arrived 30 ms late, after its successor in a separate drain.
-
-| Remote jitter setting | Ordered mean / maximum delay | Reorder mean / maximum delay | Reorder samples lost |
-| --- | --- | --- | ---: |
-| 0 ms | 0 / 0 ms | 0 / 0 ms | 1,280 |
-| 20 ms | 0 / 0 ms | 1.25 / 10 ms | 0 |
-| 60 ms | 0 / 0 ms | 1.25 / 10 ms | 0 |
-
-The earlier fixed 60-ms prefill added 60 ms on the ordered trace. Gap recovery
-adds delay only on an actual missing interval. A lost packet still
-requires concealment; the hold cannot recover a packet that never arrives.
-This study supports bounded receive storage and a gap hold, while showing
-that ordered remote-clocked audio needs no fixed prefill.
-
-A feedback test using real UDP sockets advances exactly 84 twenty-millisecond
-frames over 1.2 seconds of simulated owner time: four burst frames and
-80 paced frames. Actual native DS0 calls verify that this pacing reaches the
-bearer; their frame-body throughput and framing overhead are documented under
-[raw digital calls](ds0.md).
+The explicit zero-buffer feedback test still advances 84 twenty-millisecond
+frames in 1.2 seconds: four burst frames plus 80 paced frames. Raw digital framing
+and throughput are described under [raw digital calls](ds0.md).

@@ -311,9 +311,15 @@ static bool test_buffers_remote_clock_backlog(void)
 	}
 	CHECK(receiver->stats.early_samples == 0,
 	      "remote-clock backlog discarded future media");
-	CHECK(receiver->config.prefill_samples == 0 &&
+	CHECK(receiver->config.prefill_samples == 24 &&
 	      !rtp_runtime_playout_status(runtime).gap,
-	      "remote-clock storage added fixed playout latency");
+	      "paced receive reserve differs from configured delay");
+	for (unsigned frame = 0; frame < 3; ++frame) {
+		struct rtp_playout_report report;
+		CHECK(rtp_receiver_play(receiver, played, NULL, sizeof(played), &report) &&
+		      report.prefill_samples == sizeof(played) && report.received_samples == 0,
+		      "prefill consumed or fabricated received backlog");
+	}
 	for (size_t frame = 0; frame < FRAME_COUNT; ++frame) {
 		CHECK(rtp_receiver_play(
 			      receiver, played, NULL, sizeof(played), NULL),

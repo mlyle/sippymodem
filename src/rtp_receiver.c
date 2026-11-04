@@ -30,6 +30,7 @@ static void start_stream(struct rtp_receiver *receiver,
 	receiver->prefill_remaining = receiver->config.prefill_samples;
 	receiver->clock_timestamp = packet->header.timestamp;
 	receiver->buffered_timestamp = packet->header.timestamp;
+	receiver->source_packet_samples = 0;
 	receiver->clock_pending_samples = 0;
 }
 
@@ -92,6 +93,7 @@ void rtp_receiver_restart(
 	receiver->prefill_remaining = 0;
 	receiver->clock_timestamp = 0;
 	receiver->buffered_timestamp = 0;
+	receiver->source_packet_samples = 0;
 	receiver->clock_pending_samples = 0;
 }
 
@@ -162,8 +164,10 @@ enum rtp_receive_result rtp_receiver_push(
 		buffered = true;
 		buffered_end = timestamp + 1;
 	}
-	if (buffered && timestamp_is_before(receiver->buffered_timestamp, buffered_end))
+	if (buffered && timestamp_is_before(receiver->buffered_timestamp, buffered_end)) {
 		receiver->buffered_timestamp = buffered_end;
+		receiver->source_packet_samples = packet->payload_size;
+	}
 	if (buffered &&
 	    timestamp_is_before(receiver->clock_timestamp, buffered_end)) {
 		uint32_t elapsed = buffered_end - receiver->clock_timestamp;
@@ -211,6 +215,10 @@ struct rtp_playout_status rtp_receiver_playout_status(
 	status.stream_active = true;
 	status.ssrc = receiver->ssrc;
 	status.timestamp = receiver->play_timestamp;
+	status.source_timestamp = receiver->buffered_timestamp;
+	status.source_packet_samples = receiver->source_packet_samples;
+	int32_t lead = (int32_t)(receiver->buffered_timestamp - receiver->play_timestamp);
+	status.clock_lead_samples = (lead > 0 ? (size_t)lead : 0) + receiver->prefill_remaining;
 	status.partial_samples = receiver->clock_pending_samples % count;
 	status.partial_timestamp = receiver->clock_timestamp -
 		(uint32_t)status.partial_samples;

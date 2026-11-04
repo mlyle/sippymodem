@@ -34,7 +34,7 @@ struct sip_config {
 struct media_config {
 	enum media_codec codec;
 	unsigned int rtp_listen_port;
-	/* Remote clock: maximum hold for a real RTP gap; local clock: prefill. */
+	/* Remote reorder reserve plus one local frame; local timing uses prefill. */
 	unsigned int jitter_buffer_ms;
 	unsigned int frame_duration_ms;
 	bool remote_clock;
@@ -46,6 +46,15 @@ struct media_config {
 struct recording_config {
 	char prefix[APP_CONFIG_TEXT_MAX];
 };
+
+/* The next DSP block consumes a whole local frame at once. Keep that frame
+ * in addition to the reorder reserve, including with smaller peer packets.
+ * Called after validating both durations. Zero keeps direct timing. */
+static inline unsigned media_receive_prefill_ms(const struct media_config *config)
+{
+	return config->remote_clock && config->jitter_buffer_ms ?
+	       config->jitter_buffer_ms + config->frame_duration_ms : config->jitter_buffer_ms;
+}
 
 struct app_config {
 	enum log_target log_target; /* Compatibility executable output only. */

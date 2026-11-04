@@ -83,7 +83,10 @@ static bool calculate_storage(const struct media_config *config,
 		    UINT_MAX / SAMPLES_PER_MILLISECOND)
 		return false;
 	frame = config->frame_duration_ms * SAMPLES_PER_MILLISECOND;
-	prefill = config->jitter_buffer_ms * SAMPLES_PER_MILLISECOND;
+	size_t prefill_ms = media_receive_prefill_ms(config);
+	if (prefill_ms > (size_t)INT32_MAX / SAMPLES_PER_MILLISECOND)
+		return false;
+	prefill = prefill_ms * SAMPLES_PER_MILLISECOND;
 	if (frame > RTP_ENDPOINT_MAX_DATAGRAM -
 			    RTP_HEADER_SIZE ||
 	    frame > (size_t)INT32_MAX /
@@ -98,9 +101,8 @@ static bool calculate_storage(const struct media_config *config,
 			REMOTE_CLOCK_BACKLOG_MILLISECONDS *
 			SAMPLES_PER_MILLISECOND;
 
-		/* A remote-clocked host consumes every accepted packet immediately,
-		 * without adding this reserve to playout latency.  Keep enough future
-		 * timestamps to survive an ordinary process-scheduling pause; otherwise
+		/* Keep future-timestamp storage separate from the receive prefill.
+		 * A paced host must survive an ordinary process-scheduling pause; otherwise
 		 * the first packet beyond the small wall-clock catch-up window is rejected
 		 * and can no longer provide the clock event needed to catch up. */
 		if (playout_window < remote_backlog)
@@ -138,9 +140,7 @@ struct rtp_runtime *rtp_runtime_create(
 		return NULL;
 	runtime->endpoint.socket_fd = NET_INVALID_SOCKET;
 	runtime->frame_samples = frame_samples;
-	stream_config.prefill_samples =
-		config->remote_clock ? 0 :
-		config->jitter_buffer_ms * SAMPLES_PER_MILLISECOND;
+	stream_config.prefill_samples = media_receive_prefill_ms(config) * SAMPLES_PER_MILLISECOND;
 	runtime->packet_capacity =
 		RTP_HEADER_SIZE + runtime->frame_samples;
 	runtime->slots = calloc(slot_count, sizeof(runtime->slots[0]));

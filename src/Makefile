@@ -62,6 +62,7 @@ APP_SOURCES := \
 	config.c \
 	frame_clock.c \
 	frame_pacer.c \
+	receive_clock.c \
 	host.c \
 	lapm_v44_session.c \
 	log_target.c \

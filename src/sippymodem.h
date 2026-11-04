@@ -133,7 +133,7 @@ struct sippymodem_line_config {
 	size_t rx_capacity;
 	unsigned int rtp_port;
 	unsigned int frame_ms;
-	/* Remote clock: maximum hold for a real RTP gap; local clock: prefill. */
+	/* Remote reorder reserve plus one local frame; local timing uses prefill. */
 	unsigned int jitter_ms;
 	/* Whole call attempt including early SIP media; 1000..600000, default 60000. */
 	unsigned int call_timeout_ms;
@@ -212,8 +212,9 @@ struct sippymodem_event {
 void sippymodem_server_config_init(struct sippymodem_server_config *config);
 /* Queue defaults are 4096 TX / 16384 RX; accepted capacities are 16..1048576.
  * Default is automatic V.92, V.34 upstream, V.91 enabled, LAPM with raw fallback,
- * both compression types, PCMU, 20 ms packets and a 60 ms gap hold. Remote
- * receive clock is enabled without fixed playout prefill. */
+ * both compression types, PCMU, 20 ms packets and a 60 ms reorder reserve
+ * (80 ms total receive prefill). Remote clock tracking is enabled; zero reserve
+ * selects direct receive timing. */
 void sippymodem_line_config_init(struct sippymodem_line_config *config);
 struct sippymodem_server *sippymodem_server_create(
 	const struct sippymodem_server_config *config);
