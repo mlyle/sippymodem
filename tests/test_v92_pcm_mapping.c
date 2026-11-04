@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <v92_pcm_mapping.h>
+#include <pcm_moduli.h>
 
 #include "test.h"
 
@@ -333,6 +334,41 @@ static bool test_decode_contracts(void)
 	return true;
 }
 
+static bool test_pcm_moduli_capacity(void)
+{
+	uint8_t moduli[PCM_UPSTREAM_FRAME_SYMBOLS];
+	memset(moduli, 128, sizeof(moduli));
+	CHECK(pcm_moduli_have_capacity(moduli, 6, 42) &&
+	      !pcm_moduli_have_capacity(moduli, 6, 43) &&
+	      pcm_moduli_have_capacity(moduli, 12, 84) &&
+	      !pcm_moduli_have_capacity(moduli, 12, 85),
+	      "capacity lost an exact power-of-two boundary");
+	memset(moduli, 255, sizeof(moduli));
+	CHECK(pcm_moduli_have_capacity(moduli, 8, 63) &&
+	      !pcm_moduli_have_capacity(moduli, 8, 64) &&
+	      pcm_moduli_have_capacity(moduli, 9, 71) &&
+	      !pcm_moduli_have_capacity(moduli, 9, 72),
+	      "native-to-wide capacity transition changed the bound");
+	CHECK(pcm_moduli_have_capacity(moduli, 12, 95) &&
+	      !pcm_moduli_have_capacity(moduli, 12, 96),
+	      "largest byte moduli overflowed their 96-bit bound");
+	memset(moduli, 7, sizeof(moduli));
+	CHECK(pcm_moduli_have_capacity(moduli, 12, 33) &&
+	      !pcm_moduli_have_capacity(moduli, 12, 34),
+	      "uneven capacity rounded through a binary boundary");
+	memset(moduli, 1, sizeof(moduli));
+	CHECK(pcm_moduli_have_capacity(moduli, 12, 0) &&
+	      !pcm_moduli_have_capacity(moduli, 12, 1), "unit moduli changed capacity");
+	moduli[11] = 0;
+	CHECK(!pcm_moduli_have_capacity(moduli, 12, 0), "late zero modulus accepted");
+	CHECK(!pcm_moduli_have_capacity(NULL, 6, 0) &&
+	      !pcm_moduli_have_capacity(moduli, 0, 0) &&
+	      !pcm_moduli_have_capacity(moduli, 13, 0) &&
+	      !pcm_moduli_have_capacity(moduli, 6, UINT_MAX),
+	      "invalid capacity span or width accepted");
+	return true;
+}
+
 struct test_case {
 	const char *name;
 	bool (*run)(void);
@@ -341,6 +377,7 @@ struct test_case {
 int main(void)
 {
 	static const struct test_case tests[] = {
+		{ "PCM modulus capacity", test_pcm_moduli_capacity },
 		{ "rate matrix", test_rate_matrix },
 		{ "phase constellations", test_phase_constellations },
 		{ "rejection and transactionality",

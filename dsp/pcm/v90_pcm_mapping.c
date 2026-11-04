@@ -3,6 +3,7 @@
 #include "v90_pcm_mapping.h"
 
 #include "mixed_radix.h"
+#include "pcm_moduli.h"
 #include "pcm_power.h"
 #include "v92_cpt.h"
 #include "v92_cpu.h"
@@ -27,23 +28,6 @@ static bool modulus_bits_are_valid(
 	return kind == V90_CP_DATA &&
 	       bits >= V90_DATA_MIN_MODULUS_BITS &&
 	       bits <= V90_DATA_MAX_MODULUS_BITS;
-}
-
-static bool mapping_capacity_is_valid(
-	const struct v90_pcm_mapping *mapping)
-{
-	uint64_t product = 1;
-
-	if (mapping->modulus_bits >= 64)
-		return false;
-	for (size_t interval = 0;
-	     interval < V90_CP_FRAME_INTERVALS; ++interval) {
-		if (mapping->modulus[interval] == 0 ||
-		    product > UINT64_MAX / mapping->modulus[interval])
-			return false;
-		product *= mapping->modulus[interval];
-	}
-	return product >= (UINT64_C(1) << mapping->modulus_bits);
 }
 
 static bool mapping_planes_differ(
@@ -105,7 +89,8 @@ bool v90_pcm_mapping_is_valid(const struct v90_pcm_mapping *mapping)
 	}
 	return mapping->codec_plane_differs ==
 		       mapping_planes_differ(mapping) &&
-	       mapping_capacity_is_valid(mapping);
+	       pcm_moduli_have_capacity(mapping->modulus, V90_CP_FRAME_INTERVALS,
+		       mapping->modulus_bits);
 }
 
 bool v90_pcm_mapping_equal(
