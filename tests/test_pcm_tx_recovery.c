@@ -31,12 +31,16 @@ int main(void)
 		uint64_t now = excluded == 5 ? 8000 : excluded == 6 ? 200000 : 16000;
 		assert(!pcm_tx_recovery_eligible(&recovery, now, &rejected));
 	}
-	recovery.used = recovery.pending = recovery.applied = true;
+	pcm_tx_recovery_arm(&recovery, 16000);
+	assert(recovery.used && recovery.pending && !pcm_tx_recovery_ready(&recovery, 15999));
+	assert(!pcm_tx_recovery_ready(&recovery, 16000 + MODEM_RATE / 10 - 1));
+	assert(pcm_tx_recovery_ready(&recovery, 16000 + MODEM_RATE / 10));
+	recovery.applied = true;
 	pcm_tx_recovery_note(&recovery, 16000, 1);
 	assert(recovery.phase == 4);
 	pcm_tx_recovery_progress(&recovery, 128);
 	assert(recovery.ack_generation == 128 && !recovery.phase && !recovery.used &&
-	       !recovery.pending && !recovery.applied);
+	       !recovery.pending && !recovery.applied && !pcm_tx_recovery_ready(&recovery, 20000));
 	assert(!pcm_tx_recovery_eligible(&recovery, 16000, &evidence));
 	pcm_tx_recovery_note(&recovery, 16000, 1);
 	pcm_tx_recovery_progress(&recovery, 128);

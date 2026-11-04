@@ -8382,6 +8382,7 @@ static bool test_lapm_post_retrain_enquiry(void)
 		uint8_t wire[] = { 0, 0x0f, 0 };
 		frame_t incoming = { .buf = wire, .count = 2 };
 		frame_t *outgoing;
+		struct modem_tx_recovery observation;
 		CHECK(m != NULL, "enquiry allocation failed");
 		m->caller = caller;
 		m->cfg.ec = 1;
@@ -8407,6 +8408,9 @@ static bool test_lapm_post_retrain_enquiry(void)
 		      l->rtx_count == 1 && !l->peer_busy && l->va == l->vs &&
 		      m->bit_timer_func != idle_timeout,
 		      "clean post-retrain link did not verify outgoing reception");
+		/* Observe real numbered feedback after the receive reframe's media
+		 * quarantine. Advancing this evidence clock must not renew T401. */
+		m->count = 2 * MODEM_RATE;
 		outgoing = m->packer.hdlc.get_tx_frame(l);
 		CHECK(outgoing != NULL && outgoing->buf[0] == l->cmd_addr &&
 		      outgoing->buf[1] == 1 && outgoing->buf[2] == 1, "enquiry lacks RR P=1");
@@ -8433,18 +8437,54 @@ static bool test_lapm_post_retrain_enquiry(void)
 			      "peer poll lost its final response");
 			m->packer.hdlc.tx_complete(l, outgoing);
 		}
+		CHECK(modem_ec_get_tx_recovery(m, &observation) && observation.peer_noack &&
+		      observation.receive_healthy && !observation.first_retry,
+		      "a peer command authorized recovery before the first expiry");
+		m->count += 3 * MODEM_RATE;
 		m->bit_timer_func(m);
 		CHECK(l->rtx_count == 2 && !modem_ec_take_retrain_request(m),
 		      "post-retrain enquiry requested another physical recovery");
+		CHECK(modem_ec_get_tx_recovery(m, &observation) &&
+		      observation.first_retry == !recovered && !observation.peer_noack,
+		      "old feedback qualified an unanswered enquiry");
 		remaining = m->bit_timer;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(modem_ec_get_tx_recovery(m, &observation) && observation.peer_noack &&
+		      observation.receive_healthy && observation.first_retry == !recovered &&
+		      l->va == l->vs && l->retrain_poll && m->bit_timer == remaining && source.calls == 0,
+		      "fresh enquiry feedback consumed data or changed supervision");
+		while ((outgoing = m->packer.hdlc.get_tx_frame(l)) != NULL)
+			m->packer.hdlc.tx_complete(l, outgoing);
+		if (!recovered) {
+			wire[1] = 5; /* RNR supersedes the earlier ready poll. */
+			m->packer.hdlc.rx_complete(l, &incoming);
+			CHECK(modem_ec_get_tx_recovery(m, &observation) && !observation.first_retry &&
+			      !observation.peer_noack, "RNR retained ready-peer evidence");
+			while ((outgoing = m->packer.hdlc.get_tx_frame(l)) != NULL)
+				m->packer.hdlc.tx_complete(l, outgoing);
+			wire[1] = 1;
+			wire[2] = 1; /* First ready poll clears the prior RNR state. */
+			m->packer.hdlc.rx_complete(l, &incoming);
+			CHECK(modem_ec_get_tx_recovery(m, &observation) && !observation.peer_noack,
+			      "flow-control release revived an old peer poll");
+			wire[2] = 1;
+			m->packer.hdlc.rx_complete(l, &incoming);
+			CHECK(modem_ec_get_tx_recovery(m, &observation) && observation.peer_noack &&
+			      observation.first_retry, "fresh ready feedback did not qualify the enquiry retry");
+		}
+
 		CHECK(modem_ec_resume_after_retrain(m) == 0 && l->rtx_count == 2 &&
 		      m->bit_timer == remaining && l->stalled_retrain == (bool)recovered &&
 		      !modem_ec_take_retrain_request(m), "resumption renewed the recovery budget");
 		if (heal) {
+			uint64_t feedback_generation = observation.ack_generation;
 			wire[0] = l->cmd_addr;
 			m->packer.hdlc.rx_complete(l, &incoming);
 			CHECK(!l->rtx_count && !l->retrain_poll && !l->stalled_retrain &&
 			      m->bit_timer_func == idle_timeout, "final response did not restore supervision");
+			CHECK(modem_ec_get_tx_recovery(m, &observation) && !observation.first_retry &&
+			      !observation.peer_noack && observation.ack_generation != feedback_generation,
+			      "empty-window final response retained its timing hypothesis");
 			while ((outgoing = m->packer.hdlc.get_tx_frame(l)) != NULL) {
 				m->packer.hdlc.tx_complete(l, outgoing);
 				if (source.calls) break;
@@ -8473,6 +8513,120 @@ static bool test_lapm_post_retrain_enquiry(void)
 			      "unanswered enquiry exceeded ordinary N400");
 		}
 		CHECK(modem_stop_now(m) == 0, "enquiry cleanup failed");
+		modem_delete(m);
+	}
+	return true;
+}
+
+/* A physical repair's confirmation is a counted retry, not an L-RESUME
+ * side effect. Keep the ordinary timeout and retained DTE ownership. */
+static bool test_lapm_tx_recovery_probe(void)
+{
+	struct modem_driver driver = {
+		.name = "LAPM recovery query", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	enum { QUEUED, NEW, FULL, EXHAUSTED };
+	CHECK(!modem_ec_probe_after_tx_recovery(NULL), "null recovery accepted");
+	for (unsigned caller = 0; caller < 2; ++caller)
+	for (unsigned scenario = QUEUED; scenario <= EXHAUSTED; ++scenario)
+	for (unsigned heal = 0; heal < 2; ++heal) {
+		struct modem *m = create_compat_modem(&driver, driver.name);
+		uint8_t wire[] = { 0, 0x0f, 0 };
+		frame_t incoming = { .buf = wire, .count = 2 }, *outgoing;
+		struct lapm_host_read source = { .count = 1 };
+		CHECK(m != NULL, "recovery query allocation failed");
+		m->caller = caller;
+		m->cfg.ec = 1;
+		m->cfg.comp = 0;
+		m->rx_rate = m->tx_rate = 4800;
+		m->state = 4;
+		CHECK(modem_ec_init(m) == 0, "recovery query initialization failed");
+		m->caller = 0;
+		modem_update_status(m, STATUS_PACK_LINK);
+		m->caller = caller;
+		struct lapm_state *l = &m->ec.lapm;
+		wire[0] = l->cmd_addr;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		outgoing = m->packer.hdlc.get_tx_frame(l);
+		CHECK(outgoing != NULL && outgoing->buf[1] == 0x7f, "query fixture lacks SABME");
+		m->packer.hdlc.tx_complete(l, outgoing);
+		wire[1] = 0x73;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(l->state == 2 && m->state == 5 && modem_ec_resume_after_retrain(m) == 0,
+		      "recovery query fixture did not resume");
+		outgoing = m->packer.hdlc.get_tx_frame(l);
+		CHECK(outgoing != NULL && outgoing->buf[2] == 1, "query fixture lacks initial poll");
+		m->packer.hdlc.tx_complete(l, outgoing);
+		m->bit_timer_func(m);
+		if (scenario != QUEUED)
+			while ((outgoing = m->packer.hdlc.get_tx_frame(l)) != NULL)
+				m->packer.hdlc.tx_complete(l, outgoing);
+		if (scenario == FULL) {
+			CHECK(fill_lapm_control_queue(m), "query fixture control queue did not fill");
+			l->peer_busy = 0;
+		}
+		if (scenario == EXHAUSTED) {
+			l->rtx_count = 5;
+			l->retrain_poll = 4;
+		}
+		m->dev_data = &source;
+		m->get_chars = counted_lapm_source;
+		m->bit_timer /= 2;
+		int remaining = m->bit_timer, retries = l->rtx_count;
+		void (*timeout)(struct modem *) = m->bit_timer_func;
+		struct lapm_state before = *l;
+		bool accepted = scenario <= NEW;
+		CHECK(modem_ec_probe_after_tx_recovery(m) == accepted &&
+		      m->bit_timer == remaining && m->bit_timer_func == timeout &&
+		      l->rtx_count == retries + (scenario == NEW) && l->retrain_poll == before.retrain_poll &&
+		      l->stalled_retrain == accepted && l->va == l->vs && source.calls == 0,
+		      "recovery query changed its deadline, budget, or payload (case %u)", scenario);
+		if (!accepted) {
+			CHECK(lapm_states_equal(l, &before), "failed query changed LAPM state");
+		} else {
+			before = *l;
+			for (unsigned repeat = 0; repeat < 3; ++repeat)
+				CHECK(!modem_ec_probe_after_tx_recovery(m) && lapm_states_equal(l, &before),
+				      "repeated recovery renewed the query allowance");
+			CHECK(modem_ec_resume_after_retrain(m) == 0 && l->rtx_count == before.rtx_count &&
+			      m->bit_timer == remaining && !modem_ec_take_retrain_request(m),
+			      "resumption renewed a consumed recovery grant");
+			unsigned polls = scenario == NEW ? 2 : 1; /* Already emitted queries. */
+			while ((outgoing = m->packer.hdlc.get_tx_frame(l)) != NULL) {
+				CHECK(outgoing->size == 3 && outgoing->buf[0] == l->cmd_addr &&
+				      outgoing->buf[1] == 1 && outgoing->buf[2] == 1,
+				      "recovery query lacks a current RR/P=1");
+				++polls;
+				m->packer.hdlc.tx_complete(l, outgoing);
+			}
+			CHECK(polls == (unsigned)l->rtx_count, "a recovery query escaped retry accounting");
+			if (heal) {
+				wire[0] = l->cmd_addr;
+				wire[1] = wire[2] = 1;
+				incoming.count = 3;
+				m->packer.hdlc.rx_complete(l, &incoming);
+				CHECK(!l->rtx_count && !l->retrain_poll && !l->stalled_retrain,
+				      "solicited final did not release the recovery query");
+				outgoing = m->packer.hdlc.get_tx_frame(l);
+				CHECK(outgoing != NULL && outgoing->buf[1] == 0 && source.calls == 1,
+				      "confirmed repair did not release retained DTE input");
+				m->packer.hdlc.tx_complete(l, outgoing);
+			} else {
+				while (l->state == 2 && polls <= 5) {
+					m->bit_timer_func(m);
+					while ((outgoing = m->packer.hdlc.get_tx_frame(l)) != NULL) {
+						CHECK(outgoing->buf[1] == 1 && outgoing->buf[2] == 1,
+						      "unanswered query emitted payload");
+						++polls;
+						m->packer.hdlc.tx_complete(l, outgoing);
+					}
+				}
+				CHECK(polls == 5 && l->state == 0 && !m->bit_timer && source.calls == 0,
+				      "physical recovery exceeded N400");
+			}
+		}
+		CHECK(modem_stop_now(m) == 0, "recovery query cleanup failed");
 		modem_delete(m);
 	}
 	return true;
@@ -11589,6 +11743,7 @@ int main(void)
 		{ "LAPM peer-busy timer", test_lapm_peer_busy_timer },
 		{ "LAPM idle supervision", test_lapm_idle_supervision },
 		{ "LAPM post-retrain enquiry", test_lapm_post_retrain_enquiry },
+		{ "LAPM physical recovery query", test_lapm_tx_recovery_probe },
 		{ "LAPM retrain recovery budget", test_lapm_retrain_recovery_budget },
 		{ "LAPM acknowledgement progress", test_lapm_acknowledgement_progress },
 		{ "LAPM passive establishment recovery", test_lapm_passive_establishment_recovery },

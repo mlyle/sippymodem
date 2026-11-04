@@ -33,3 +33,9 @@ bool modem_ec_get_tx_recovery(const struct modem *modem,
 	*observation = (struct modem_tx_recovery){0};
 	return false;
 }
+
+bool modem_ec_probe_after_tx_recovery(struct modem *modem)
+{
+	(void)modem;
+	return false;
+}

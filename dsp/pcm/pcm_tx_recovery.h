@@ -8,7 +8,7 @@
 /* Owned by one host datapump. Timing is a hypothesis until both the peer's
  * feedback and ordinary LAPM supervision qualify an action. */
 struct pcm_tx_recovery {
-	uint64_t ack_generation, event_sample;
+	uint64_t ack_generation, event_sample, poll_sample;
 	unsigned phase;
 	bool used, pending, applied;
 };
@@ -18,6 +18,21 @@ static inline void pcm_tx_recovery_progress(struct pcm_tx_recovery *recovery,
 {
 	if (recovery->ack_generation != ack_generation)
 		*recovery = (struct pcm_tx_recovery){ .ack_generation = ack_generation };
+}
+
+/* First allow an ordinary final to return after the peer's retry poll. This
+ * bounded media guard prevents colliding/lost replies from authorizing an
+ * immediate phase change. LAPM's T401 deadline continues unchanged. */
+static inline void pcm_tx_recovery_arm(struct pcm_tx_recovery *recovery, uint64_t now)
+{
+	recovery->used = recovery->pending = true;
+	recovery->poll_sample = now;
+}
+
+static inline bool pcm_tx_recovery_ready(const struct pcm_tx_recovery *recovery, uint64_t now)
+{
+	return recovery->pending && now >= recovery->poll_sample &&
+		now - recovery->poll_sample >= MODEM_RATE / 10;
 }
 
 static inline void pcm_tx_recovery_note(struct pcm_tx_recovery *recovery,

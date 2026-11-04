@@ -1282,6 +1282,12 @@ static int rx_info(struct lapm_state *l, frame_t *f)
 
 /* rx supervisory frame */
 
+static void note_tx_progress(struct lapm_state *l)
+{
+	++l->ack_generation;
+	l->peer_noack = false;
+}
+
 static void rx_supervisory(struct lapm_state *l, frame_t *f)
 {
 	unsigned control = FRAME_CTRL(f);
@@ -1300,6 +1306,7 @@ static void rx_supervisory(struct lapm_state *l, frame_t *f)
 	if (l->peer_busy) {
 		l->stalled_polls = 0;
 		l->stalled_retrain = false;
+		l->peer_noack = false;
 	}
 	if (!ack_info(l, FRAME_NR(f)))
 		return;
@@ -1328,8 +1335,12 @@ static void rx_supervisory(struct lapm_state *l, frame_t *f)
 	}
 	if (control == FRAME_S_RNR && !l->rtx_count)
 		TIMER_START(l);
-	if (retrain_response)
+	if (retrain_response) {
 		l->retrain_poll = 0;
+		/* A solicited final confirms the outgoing enquiry even with no
+		 * information to acknowledge. Retire its physical timing hypothesis. */
+		note_tx_progress(l);
+	}
 }
 
 
@@ -1695,16 +1706,15 @@ static void lapm_rx_complete(void *framer, frame_t *f)
 		/* Even an unsolicited final can show that the peer received the
 		 * old information. Cancel a timing hypothesis before dispatch;
 		 * protocol acceptance and actual VA advancement remain unchanged. */
-		if (FRAME_NR(f) != l->va) {
-			++l->ack_generation;
-			l->peer_noack = false;
-		}
-		/* A command RR/Poll with unchanged N(R) explicitly reports that
-		 * outstanding information has not arrived. Idle flags and final
-		 * responses alone do not establish that forward-direction fact. */
+		if (FRAME_NR(f) != l->va)
+			note_tx_progress(l);
+		/* Retain a ready peer command/Poll while information is outstanding
+		 * or our post-retrain enquiry awaits its final response. A command
+		 * never completes that enquiry. Fresh reverse feedback, a physical
+		 * timing hypothesis and its ordinary first retry must still agree. */
 		if (type == FRAME_S && FRAME_CTRL(f) == FRAME_S_RR &&
 		    RX_IS_COMMAND(f) && FRAME_S_PF(f) && FRAME_NR(f) == l->va &&
-		    l->va != l->vs && !l->peer_busy) {
+		    (l->va != l->vs || l->retrain_poll) && !l->peer_busy) {
 			l->peer_noack = true;
 			l->peer_noack_sample = m->count;
 		}
@@ -1965,10 +1975,41 @@ bool modem_ec_get_tx_recovery(const struct modem *m,
 	observation->receive_healthy = health->present && m->count >= health->quarantine &&
 		m->count >= health->latest && m->count - health->latest <=
 			(health->numbered ? MODEM_RATE : MODEM_RATE / 10);
-	observation->first_retry = !l->busy && !l->peer_busy && !l->stalled_retrain &&
-		l->va != l->vs && l->sent_info != l->info_list &&
-		m->bit_timer > 0 && m->bit_timer_func == t401_timeout &&
+	bool information_retry = l->va != l->vs && l->sent_info != l->info_list &&
 		l->rtx_count == 1 && l->stalled_polls == 1 && !l->retrain_poll;
+	/* New information is held behind this enquiry, so it cannot provide an
+	 * outstanding I-frame. Anchor its first expiry to the retained retry
+	 * count; resumption must not create a new timer or retry allowance. */
+	bool enquiry_retry = l->retrain_poll > 0 && l->rtx_count > 0 &&
+		l->rtx_count - l->retrain_poll == 1;
+	observation->first_retry = !l->busy && !l->peer_busy && !l->stalled_retrain &&
+		m->bit_timer > 0 && m->bit_timer_func == t401_timeout &&
+		(information_retry || enquiry_retry);
+	return true;
+}
+
+/* A short physical repair may start after the current T401 poll has already
+ * left HDLC. Queue a fresh query behind that exchange, not before advancing
+ * the PCM coder: advancing can consume a new mapping frame. Charge any new
+ * command to N400 and consume the same one-shot physical-recovery allowance.
+ * This is a local recovery policy; L-RESUME itself still only unfreezes T401. */
+bool modem_ec_probe_after_tx_recovery(struct modem *m)
+{
+	struct modem_tx_recovery observation;
+	if (!modem_ec_get_tx_recovery(m, &observation) || !observation.first_retry)
+		return false;
+	struct lapm_state *l = &m->ec.lapm;
+	for (frame_t *f = l->tx_ctrl; f != l->ctrl_list; f = f->next) {
+		if (FRAME_TYPE(f) == FRAME_S && FRAME_ADDR(f) == l->cmd_addr && FRAME_S_PF(f)) {
+			l->stalled_retrain = true;
+			return true;
+		}
+	}
+	if (l->rtx_count >= LAPM_MAX_RTX || l->ctrl_list->next == l->tx_ctrl ||
+	    tx_status(l, l->cmd_addr, 1) != 0)
+		return false;
+	++l->rtx_count;
+	l->stalled_retrain = true;
 	return true;
 }
 

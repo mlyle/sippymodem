@@ -603,6 +603,9 @@ struct modem_tx_recovery {
 };
 extern bool modem_ec_get_tx_recovery(const struct modem *m,
 	struct modem_tx_recovery *observation);
+/* After an accepted physical repair, queue its confirmation using the retained
+ * N400 allowance. Does not renew T401 or the physical-recovery allowance. */
+extern bool modem_ec_probe_after_tx_recovery(struct modem *m);
 extern void modem_hdlc_receive_gap(struct modem *m, uint64_t end_sample);
 /* Consume a bounded request; the host invokes retrain outside DSP callbacks. */
 extern bool modem_ec_take_retrain_request(struct modem *m);

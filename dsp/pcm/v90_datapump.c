@@ -719,7 +719,7 @@ static void apply_transmit_recovery(struct v90_datapump *datapump)
 	if (!transmit_recovery_observation(datapump, &observation))
 		return;
 	struct pcm_tx_recovery *recovery = &datapump->transmit_recovery;
-	if (!recovery->pending)
+	if (!pcm_tx_recovery_ready(recovery, dp->modem->count))
 		return;
 	recovery->pending = false;
 	if (!pcm_tx_recovery_eligible(recovery, dp->modem->count, &observation))
@@ -749,10 +749,10 @@ static void service_link_v90(struct dp *dp)
 		recovery->applied = false;
 		/* Failure leaves the existing T401/full-recovery path untouched.
 		 * A successful short exchange already owns its bounded deadline. */
-		v90_datapump_start_rate_renegotiation(dp, false);
+		if (v90_datapump_start_rate_renegotiation(dp, false))
+			modem_ec_probe_after_tx_recovery(dp->modem);
 	} else if (!recovery->used && pcm_tx_recovery_eligible(recovery, dp->modem->count, &observation)) {
-		recovery->used = true;
-		recovery->pending = true;
+		pcm_tx_recovery_arm(recovery, dp->modem->count);
 	}
 }
 
