@@ -691,10 +691,29 @@ static bool transmit_recovery_observation(struct v90_datapump *datapump,
 	    call->phase3_entry.selection.upstream != PCM_UPSTREAM_PCM ||
 	    !training_session_is_online(&datapump->training) || !pcm_call_is_online_owned(call) ||
 	    !modem_ec_get_tx_recovery(datapump->dp.modem, observation)) {
+		/* A physical interruption consumes the owned allowance, including
+		 * a peer/manual retrain that preempts this deferred request. Only
+		 * an otherwise online owner may return an unstarted allowance. */
+		if (datapump->transmit_recovery.pending &&
+		    training_session_is_online(&datapump->training) && pcm_call_is_online_owned(call))
+			modem_ec_cancel_retrain_request(datapump->dp.modem,
+				datapump->transmit_recovery.deferred_grant);
 		datapump->transmit_recovery = (struct pcm_tx_recovery){0};
 		return false;
 	}
-	pcm_tx_recovery_progress(&datapump->transmit_recovery, observation->ack_generation);
+	struct pcm_tx_recovery *recovery = &datapump->transmit_recovery;
+	if (recovery->pending && recovery->deferred_grant && observation->recovery_active &&
+	    recovery->deferred_grant == observation->grant_generation) {
+		/* Retiring a timing hypothesis is not necessarily accepted I-frame
+		 * progress. Keep the owned full fallback until the grant itself is
+		 * released; an ignored/zero-progress Final must not swallow it. */
+		if (recovery->ack_generation != observation->ack_generation) {
+			recovery->ack_generation = observation->ack_generation;
+			recovery->phase = 0;
+		}
+	} else {
+		pcm_tx_recovery_progress(recovery, observation->ack_generation);
+	}
 	return true;
 }
 
@@ -706,36 +725,41 @@ static void note_transmit_timing(struct v90_datapump *datapump, int shift)
 	pcm_tx_recovery_note(&datapump->transmit_recovery, datapump->dp.modem->count, shift);
 }
 
-/* Recheck at the next media boundary, then advance only the outgoing coder.
- * Discard at most five network symbols; LAPM retains every unacknowledged
- * byte. Do not move receive coordinates, reset compression or replace the
- * active call union from within a frame-source callback. */
-static void apply_transmit_recovery(struct v90_datapump *datapump)
+/* Advance at most five network symbols. LAPM owns every unacknowledged
+ * byte; a physical repair must not replace ARQ or compression state. */
+static bool advance_transmit_recovery(struct v90_datapump *datapump)
 {
-	struct dp *dp = &datapump->dp;
-	if (!datapump->transmit_recovery.pending)
-		return;
-	struct modem_tx_recovery observation;
-	if (!transmit_recovery_observation(datapump, &observation))
-		return;
-	struct pcm_tx_recovery *recovery = &datapump->transmit_recovery;
-	if (!pcm_tx_recovery_ready(recovery, dp->modem->count))
-		return;
-	recovery->pending = false;
-	if (!pcm_tx_recovery_eligible(recovery, dp->modem->count, &observation))
-		return;
 	struct pcm_call_v92_digital_data *path = &datapump->call.state.data_path.v92_digital;
 	struct v90_downstream_data_stream *stream = &path->downstream.data;
 	if (path->downstream_stage != V92_PHASE4_E2U_DOWNSTREAM_DATA ||
 	    !v90_downstream_data_stream_is_online(stream))
-		return;
-	for (unsigned i = 0; i < recovery->phase; ++i) {
+		return false;
+	for (unsigned i = 0; i < datapump->transmit_recovery.phase; ++i) {
 		struct v90_pcm_symbol discarded;
 		if (v90_downstream_data_stream_next_owned(stream, source_pcm_frame,
 			datapump, &discarded) != V90_DOWNSTREAM_DATA_STREAM_OK)
-			return;
+			return false;
 	}
-	recovery->applied = true;
+	return true;
+}
+
+/* Preserve the existing first-retry peer-confirmed path at its media boundary.
+ * A deferred full grant is handled atomically by service_link after RX has
+ * finished, so a Final cannot arrive between phase mutation and the exchange. */
+static void apply_transmit_recovery(struct v90_datapump *datapump)
+{
+	struct dp *dp = &datapump->dp;
+	struct pcm_tx_recovery *recovery = &datapump->transmit_recovery;
+	if (!recovery->pending || recovery->deferred_grant)
+		return;
+	struct modem_tx_recovery observation;
+	if (!transmit_recovery_observation(datapump, &observation) ||
+	    !pcm_tx_recovery_ready(recovery, dp->modem->count))
+		return;
+	recovery->pending = false;
+	if (pcm_tx_recovery_eligible(recovery, dp->modem->count, &observation) &&
+	    advance_transmit_recovery(datapump))
+		recovery->applied = true;
 }
 
 static void service_link_v90(struct dp *dp)
@@ -745,14 +769,48 @@ static void service_link_v90(struct dp *dp)
 	if (datapump == NULL || !transmit_recovery_observation(datapump, &observation))
 		return;
 	struct pcm_tx_recovery *recovery = &datapump->transmit_recovery;
-	if (recovery->applied) {
+	if (recovery->deferred_grant) {
+		uint64_t grant = recovery->deferred_grant;
+		if (!observation.recovery_active || observation.grant_generation != grant) {
+			recovery->pending = false;
+			recovery->deferred_grant = 0;
+			return;
+		}
+		if (!pcm_tx_recovery_ready(recovery, dp->modem->count))
+			return;
+		recovery->pending = false;
+		recovery->deferred_grant = 0;
+		if (observation.flow_controlled) {
+			modem_ec_cancel_retrain_request(dp->modem, grant);
+			return;
+		}
+		/* The grant already belongs to this owner. Failed or retired phase
+		 * evidence keeps the normal full repair; it must not swallow it. */
+		if (pcm_tx_recovery_second_eligible(recovery, dp->modem->count, &observation) &&
+		    advance_transmit_recovery(datapump) &&
+		    v90_datapump_start_rate_renegotiation(dp, false)) {
+			modem_ec_probe_after_tx_recovery(dp->modem, grant);
+		} else {
+			retrain_v90(dp);
+		}
+	} else if (recovery->applied) {
 		recovery->applied = false;
-		/* Failure leaves the existing T401/full-recovery path untouched.
-		 * A successful short exchange already owns its bounded deadline. */
 		if (v90_datapump_start_rate_renegotiation(dp, false))
-			modem_ec_probe_after_tx_recovery(dp->modem);
-	} else if (!recovery->used && pcm_tx_recovery_eligible(recovery, dp->modem->count, &observation)) {
-		pcm_tx_recovery_arm(recovery, dp->modem->count);
+			modem_ec_probe_after_tx_recovery(dp->modem, 0);
+	} else if (!recovery->used) {
+		if (pcm_tx_recovery_eligible(recovery, dp->modem->count, &observation)) {
+			pcm_tx_recovery_arm(recovery, dp->modem->count);
+		} else if (pcm_tx_recovery_second_eligible(recovery, dp->modem->count, &observation) &&
+			   modem_ec_take_retrain_request(dp->modem)) {
+			/* Claim the already due allowance before deferring it. The host's
+			 * subsequent check cannot start a second physical owner. */
+			if (modem_ec_get_tx_recovery(dp->modem, &observation)) {
+				recovery->deferred_grant = observation.grant_generation;
+				pcm_tx_recovery_arm(recovery, dp->modem->count);
+			} else {
+				retrain_v90(dp);
+			}
+		}
 	}
 }
 

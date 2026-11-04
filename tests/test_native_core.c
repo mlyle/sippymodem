@@ -8527,7 +8527,7 @@ static bool test_lapm_tx_recovery_probe(void)
 		.stop = unused_stop, .ioctl = unused_control,
 	};
 	enum { QUEUED, NEW, FULL, EXHAUSTED };
-	CHECK(!modem_ec_probe_after_tx_recovery(NULL), "null recovery accepted");
+	CHECK(!modem_ec_probe_after_tx_recovery(NULL, 0), "null recovery accepted");
 	for (unsigned caller = 0; caller < 2; ++caller)
 	for (unsigned scenario = QUEUED; scenario <= EXHAUSTED; ++scenario)
 	for (unsigned heal = 0; heal < 2; ++heal) {
@@ -8577,7 +8577,7 @@ static bool test_lapm_tx_recovery_probe(void)
 		void (*timeout)(struct modem *) = m->bit_timer_func;
 		struct lapm_state before = *l;
 		bool accepted = scenario <= NEW;
-		CHECK(modem_ec_probe_after_tx_recovery(m) == accepted &&
+		CHECK(modem_ec_probe_after_tx_recovery(m, 0) == accepted &&
 		      m->bit_timer == remaining && m->bit_timer_func == timeout &&
 		      l->rtx_count == retries + (scenario == NEW) && l->retrain_poll == before.retrain_poll &&
 		      l->stalled_retrain == accepted && l->va == l->vs && source.calls == 0,
@@ -8587,7 +8587,7 @@ static bool test_lapm_tx_recovery_probe(void)
 		} else {
 			before = *l;
 			for (unsigned repeat = 0; repeat < 3; ++repeat)
-				CHECK(!modem_ec_probe_after_tx_recovery(m) && lapm_states_equal(l, &before),
+				CHECK(!modem_ec_probe_after_tx_recovery(m, 0) && lapm_states_equal(l, &before),
 				      "repeated recovery renewed the query allowance");
 			CHECK(modem_ec_resume_after_retrain(m) == 0 && l->rtx_count == before.rtx_count &&
 			      m->bit_timer == remaining && !modem_ec_take_retrain_request(m),
@@ -9122,6 +9122,126 @@ static bool test_lapm_transmit_recovery_observations(void)
 	      "bad FCS retained healthy receive evidence");
 	for (unsigned side = 0; side < 2; ++side)
 		modem_delete(ends[side]);
+	return true;
+}
+
+/* Deferred physical recovery owns a generation, not a renewable timer. */
+static bool test_lapm_deferred_recovery_grant(void)
+{
+	enum { ONLINE = 5, DATA = 2, IDLE = 0 };
+	struct modem_driver driver = {
+		.name = "Deferred LAPM recovery", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	static const uint8_t payload[] = { 'A' };
+	for (unsigned caller = 0; caller < 2; ++caller)
+	for (unsigned queued = 0; queued < 2; ++queued)
+	for (unsigned heal = 0; heal < 2; ++heal) {
+		struct modem *m = create_compat_modem(&driver, driver.name);
+		CHECK(m != NULL, "grant allocation failed");
+		uint64_t stale = 0;
+		for (unsigned epoch = 0; epoch < 2; ++epoch) {
+			m->caller = caller;
+			m->cfg.ec = 1;
+			m->cfg.comp = 0;
+			m->rx_rate = m->tx_rate = 36000;
+			CHECK(modem_ec_init(m) == 0, "grant initialization failed");
+			modem_hdlc_start(m);
+			/* This owner test starts after startup; passive framing avoids
+			 * an unclocked preamble. Integration tests cover both roles. */
+			m->caller = 0;
+			modem_ec_start(m);
+			m->caller = caller;
+			m->state = ONLINE;
+			m->ec.lapm.state = DATA;
+			m->get_bits = modem_hdlc_get_bits;
+			m->put_bits = modem_hdlc_put_bits;
+			m->get_chars = scripted_lapm_source;
+			lapm_source.data = payload;
+			lapm_source.length = 1;
+			lapm_source.offset = 0;
+			struct lapm_state *l = &m->ec.lapm;
+			frame_t *out = m->packer.hdlc.get_tx_frame(l);
+			CHECK(out != NULL && !(out->buf[1] & 1),
+			      "grant lacks retained information");
+			m->packer.hdlc.tx_complete(l, out);
+			unsigned polls = 0;
+			for (unsigned expiry = 1; expiry <= 2; ++expiry) {
+				m->count += 3 * MODEM_RATE;
+				m->bit_timer_func(m);
+				if (expiry == 1 || !queued)
+					while ((out = m->packer.hdlc.get_tx_frame(l)) != NULL) {
+						CHECK(out->size == 3 && out->buf[1] == 1 &&
+						      (out->buf[2] & 1), "grant emitted non-poll");
+						++polls;
+						m->packer.hdlc.tx_complete(l, out);
+					}
+			}
+			struct modem_tx_recovery observation;
+			CHECK(modem_ec_get_tx_recovery(m, &observation) &&
+			      observation.second_information_retry && !observation.first_retry &&
+			      !observation.peer_noack, "second retry facts incorrect");
+			int timer = m->bit_timer;
+			void (*timeout)(struct modem *) = m->bit_timer_func;
+			CHECK(modem_ec_take_retrain_request(m) &&
+			      modem_ec_get_tx_recovery(m, &observation), "grant not claimed");
+			uint64_t returned = observation.grant_generation;
+			CHECK(returned && observation.recovery_active &&
+			      !modem_ec_take_retrain_request(m) &&
+			      !modem_ec_cancel_retrain_request(m, 0) &&
+			      !modem_ec_cancel_retrain_request(m, stale), "stale grant changed owner");
+			CHECK(modem_ec_cancel_retrain_request(m, returned) &&
+			      !modem_ec_cancel_retrain_request(m, returned) &&
+			      m->bit_timer == timer && m->bit_timer_func == timeout &&
+			      l->rtx_count == 2 && l->va != l->vs,
+			      "returning unstarted grant changed supervision or data");
+			CHECK(modem_ec_take_retrain_request(m) &&
+			      modem_ec_get_tx_recovery(m, &observation), "returned grant not reusable");
+			uint64_t owned = observation.grant_generation;
+			CHECK(owned != returned && !modem_ec_cancel_retrain_request(m, returned) &&
+			      !modem_ec_probe_after_tx_recovery(m, returned),
+			      "stale grant consumed a new owner");
+			CHECK(modem_ec_probe_after_tx_recovery(m, owned) &&
+			      m->recovery_sequence == owned && m->bit_timer == timer &&
+			      m->bit_timer_func == timeout && l->rtx_count == (queued ? 2 : 3),
+			      "owned confirmation changed timer, grant, or retry charge");
+			CHECK(!modem_ec_probe_after_tx_recovery(m, owned) &&
+			      !modem_ec_cancel_retrain_request(m, owned),
+			      "used grant was renewed or returned");
+			while ((out = m->packer.hdlc.get_tx_frame(l)) != NULL) {
+				++polls;
+				m->packer.hdlc.tx_complete(l, out);
+			}
+			CHECK(polls == (unsigned)l->rtx_count &&
+			      !modem_ec_probe_after_tx_recovery(m, owned),
+			      "duplicate confirmation emitted an uncounted poll");
+			CHECK(modem_ec_resume_after_retrain(m) == 0 && m->bit_timer == timer &&
+			      !modem_ec_take_retrain_request(m), "resumption renewed a granted recovery");
+			if (heal) {
+				uint8_t wire[] = { l->cmd_addr, 1, (uint8_t)((l->vs << 1) | 1) };
+				frame_t reply = { .buf = wire, .count = 3 };
+				m->packer.hdlc.rx_complete(l, &reply);
+				CHECK(l->va == l->vs && !l->stalled_retrain && !l->rtx_count &&
+				      !modem_ec_cancel_retrain_request(m, owned), "ACK did not retire grant");
+			} else {
+				while (l->state == DATA && polls <= 5) {
+					m->bit_timer_func(m);
+					while ((out = m->packer.hdlc.get_tx_frame(l)) != NULL) {
+						++polls;
+						m->packer.hdlc.tx_complete(l, out);
+					}
+					CHECK(!modem_ec_take_retrain_request(m),
+					      "failed granted repair got another allowance");
+				}
+				CHECK(l->state == IDLE && polls == 5 && !m->bit_timer,
+				      "granted recovery exceeded N400");
+			}
+			stale = owned;
+			CHECK(modem_stop_now(m) == 0 && m->recovery_sequence == owned,
+			      "call stop reset grant identity");
+		}
+		modem_delete(m);
+	}
 	return true;
 }
 
@@ -11749,6 +11869,7 @@ int main(void)
 		{ "LAPM passive establishment recovery", test_lapm_passive_establishment_recovery },
 		{ "LAPM establishment recovery", test_lapm_establishment_recovery },
 		{ "LAPM transmit recovery observations", test_lapm_transmit_recovery_observations },
+		{ "deferred LAPM recovery grant", test_lapm_deferred_recovery_grant },
 		{ "bounded LAPM stalled retrain", test_lapm_stalled_retrain },
 		{ "LAPM retrain preserves compressed streams", test_lapm_retrain_stream },
 		{ "LAPM retrain preserves link state",

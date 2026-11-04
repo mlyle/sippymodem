@@ -1968,6 +1968,9 @@ bool modem_ec_get_tx_recovery(const struct modem *m,
 		return false;
 	const struct hdlc_receive_health *health = &m->packer.hdlc.receive_health;
 	observation->ack_generation = l->ack_generation;
+	observation->grant_generation = m->recovery_sequence;
+	observation->recovery_active = l->stalled_retrain;
+	observation->flow_controlled = l->busy || l->peer_busy;
 	observation->peer_poll_sample = l->peer_noack_sample;
 	observation->receive_sample = health->latest;
 	observation->peer_noack = l->peer_noack && m->count >= l->peer_noack_sample &&
@@ -1982,9 +1985,30 @@ bool modem_ec_get_tx_recovery(const struct modem *m,
 	 * count; resumption must not create a new timer or retry allowance. */
 	bool enquiry_retry = l->retrain_poll > 0 && l->rtx_count > 0 &&
 		l->rtx_count - l->retrain_poll == 1;
+	observation->second_information_retry = l->va != l->vs && l->sent_info != l->info_list &&
+		l->rtx_count == 2 && l->stalled_polls == 2 && !l->retrain_poll &&
+		m->bit_timer > 0 && m->bit_timer_func == t401_timeout;
 	observation->first_retry = !l->busy && !l->peer_busy && !l->stalled_retrain &&
 		m->bit_timer > 0 && m->bit_timer_func == t401_timeout &&
 		(information_retry || enquiry_retry);
+	return true;
+}
+
+static void claim_retrain_request(struct lapm_state *l)
+{
+	l->stalled_retrain = true;
+	l->modem->recovery_probed = false;
+	if (++l->modem->recovery_sequence == 0)
+		++l->modem->recovery_sequence;
+}
+
+bool modem_ec_cancel_retrain_request(struct modem *m, uint64_t grant)
+{
+	struct modem_tx_recovery observation;
+	if (!grant || !modem_ec_get_tx_recovery(m, &observation) ||
+	    !observation.recovery_active || observation.grant_generation != grant || m->recovery_probed)
+		return false;
+	m->ec.lapm.stalled_retrain = false;
 	return true;
 }
 
@@ -1993,15 +2017,19 @@ bool modem_ec_get_tx_recovery(const struct modem *m,
  * the PCM coder: advancing can consume a new mapping frame. Charge any new
  * command to N400 and consume the same one-shot physical-recovery allowance.
  * This is a local recovery policy; L-RESUME itself still only unfreezes T401. */
-bool modem_ec_probe_after_tx_recovery(struct modem *m)
+bool modem_ec_probe_after_tx_recovery(struct modem *m, uint64_t grant)
 {
 	struct modem_tx_recovery observation;
-	if (!modem_ec_get_tx_recovery(m, &observation) || !observation.first_retry)
+	if (!modem_ec_get_tx_recovery(m, &observation) ||
+	    (grant ? (!observation.recovery_active || observation.grant_generation != grant || m->recovery_probed ||
+		      !observation.second_information_retry || observation.flow_controlled) :
+		     !observation.first_retry))
 		return false;
 	struct lapm_state *l = &m->ec.lapm;
 	for (frame_t *f = l->tx_ctrl; f != l->ctrl_list; f = f->next) {
 		if (FRAME_TYPE(f) == FRAME_S && FRAME_ADDR(f) == l->cmd_addr && FRAME_S_PF(f)) {
-			l->stalled_retrain = true;
+			if (!grant) claim_retrain_request(l);
+			m->recovery_probed = true;
 			return true;
 		}
 	}
@@ -2009,7 +2037,8 @@ bool modem_ec_probe_after_tx_recovery(struct modem *m)
 	    tx_status(l, l->cmd_addr, 1) != 0)
 		return false;
 	++l->rtx_count;
-	l->stalled_retrain = true;
+	if (!grant) claim_retrain_request(l);
+	m->recovery_probed = true;
 	return true;
 }
 
@@ -2061,7 +2090,7 @@ bool modem_ec_take_retrain_request(struct modem *m)
 	 * Acknowledgement progress or a recovered idle link rearms the allowance;
 	 * starting or resuming retraining does not. Peer flow control is not a
 	 * channel fault. */
-	l->stalled_retrain = true;
+	claim_retrain_request(l);
 	l->passive_establishment_expired = false;
 	if (repeated_initial_sabme) {
 		l->initial_sabme_recovery = LAPM_SABME_RECOVERY_PENDING;

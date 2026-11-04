@@ -5,10 +5,10 @@
 #include "modem.h"
 #include "v90_cp.h"
 
-/* Owned by one host datapump. Timing is a hypothesis until both the peer's
- * feedback and ordinary LAPM supervision qualify an action. */
+/* Owned by one host datapump. A timing hypothesis needs peer feedback at
+ * the first retry, or the already due full-recovery grant for a quiet peer. */
 struct pcm_tx_recovery {
-	uint64_t ack_generation, event_sample, poll_sample;
+	uint64_t ack_generation, event_sample, poll_sample, deferred_grant;
 	unsigned phase;
 	bool used, pending, applied;
 };
@@ -20,7 +20,7 @@ static inline void pcm_tx_recovery_progress(struct pcm_tx_recovery *recovery,
 		*recovery = (struct pcm_tx_recovery){ .ack_generation = ack_generation };
 }
 
-/* First allow an ordinary final to return after the peer's retry poll. This
+/* First allow an ordinary Final to return after the retry query. This
  * bounded media guard prevents colliding/lost replies from authorizing an
  * immediate phase change. LAPM's T401 deadline continues unchanged. */
 static inline void pcm_tx_recovery_arm(struct pcm_tx_recovery *recovery, uint64_t now)
@@ -49,14 +49,29 @@ static inline void pcm_tx_recovery_note(struct pcm_tx_recovery *recovery,
 	recovery->event_sample = now;
 }
 
-static inline bool pcm_tx_recovery_eligible(const struct pcm_tx_recovery *recovery,
+static inline bool pcm_tx_recovery_timing_valid(const struct pcm_tx_recovery *recovery,
 	uint64_t now, const struct modem_tx_recovery *observation)
 {
 	return recovery->ack_generation == observation->ack_generation &&
-		recovery->phase && observation->first_retry && observation->peer_noack &&
+		recovery->phase &&
 		observation->receive_healthy && observation->receive_sample >= recovery->event_sample &&
-		observation->peer_poll_sample >= recovery->event_sample && now >= recovery->event_sample &&
+		now >= recovery->event_sample &&
 		now - recovery->event_sample <= 15u * MODEM_RATE;
+}
+
+static inline bool pcm_tx_recovery_eligible(const struct pcm_tx_recovery *recovery,
+	uint64_t now, const struct modem_tx_recovery *observation)
+{
+	return pcm_tx_recovery_timing_valid(recovery, now, observation) &&
+		observation->first_retry && observation->peer_noack &&
+		observation->peer_poll_sample >= recovery->event_sample;
+}
+
+static inline bool pcm_tx_recovery_second_eligible(const struct pcm_tx_recovery *recovery,
+	uint64_t now, const struct modem_tx_recovery *observation)
+{
+	return pcm_tx_recovery_timing_valid(recovery, now, observation) &&
+		observation->second_information_retry && !observation->flow_controlled;
 }
 
 #endif

@@ -31,6 +31,13 @@ int main(void)
 		uint64_t now = excluded == 5 ? 8000 : excluded == 6 ? 200000 : 16000;
 		assert(!pcm_tx_recovery_eligible(&recovery, now, &rejected));
 	}
+	struct modem_tx_recovery second = evidence;
+	second.first_retry = second.peer_noack = false;
+	second.second_information_retry = true;
+	assert(!pcm_tx_recovery_eligible(&recovery, 16000, &second));
+	assert(pcm_tx_recovery_second_eligible(&recovery, 16000, &second));
+	second.flow_controlled = true;
+	assert(!pcm_tx_recovery_second_eligible(&recovery, 16000, &second));
 	pcm_tx_recovery_arm(&recovery, 16000);
 	assert(recovery.used && recovery.pending && !pcm_tx_recovery_ready(&recovery, 15999));
 	assert(!pcm_tx_recovery_ready(&recovery, 16000 + MODEM_RATE / 10 - 1));

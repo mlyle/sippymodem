@@ -358,6 +358,9 @@ struct modem {
 	char caller_number[128]; /* Current incoming identity; cleared at call end. */
 	unsigned rx_rate;
 	unsigned tx_rate;
+	/* Monotonic recovery grants, retained across calls and AT resets. */
+	uint64_t recovery_sequence;
+	bool recovery_probed;
 	/* Pending frontend escape event. */
 	unsigned event;
 	unsigned new_event;
@@ -598,14 +601,18 @@ extern bool modem_ec_can_establish(const struct modem *m);
 /* Read-only facts on the owner's 8 kHz media clock. No timer or allowance
  * changes: optional physical recovery must retain normal LAPM supervision. */
 struct modem_tx_recovery {
-	uint64_t ack_generation, peer_poll_sample, receive_sample;
+	uint64_t ack_generation, peer_poll_sample, receive_sample, grant_generation;
 	bool first_retry, peer_noack, receive_healthy;
+	bool second_information_retry, flow_controlled, recovery_active;
 };
 extern bool modem_ec_get_tx_recovery(const struct modem *m,
 	struct modem_tx_recovery *observation);
 /* After an accepted physical repair, queue its confirmation using the retained
- * N400 allowance. Does not renew T401 or the physical-recovery allowance. */
-extern bool modem_ec_probe_after_tx_recovery(struct modem *m);
+ * N400 allowance. Zero selects first-retry admission; a nonzero grant must
+ * already belong to this owner. Does not renew T401 or the recovery allowance. */
+extern bool modem_ec_probe_after_tx_recovery(struct modem *m, uint64_t grant);
+/* Only the owner of an unstarted grant may return it. Stale grants are inert. */
+extern bool modem_ec_cancel_retrain_request(struct modem *m, uint64_t grant);
 extern void modem_hdlc_receive_gap(struct modem *m, uint64_t end_sample);
 /* Consume a bounded request; the host invokes retrain outside DSP callbacks. */
 extern bool modem_ec_take_retrain_request(struct modem *m);
