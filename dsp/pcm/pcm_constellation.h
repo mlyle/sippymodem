@@ -144,24 +144,29 @@ static inline bool pcm_constellation_is_empty(
 	return used == 0;
 }
 
-/* Map each interval to its first identical row. Packed masks have no
- * padding; NULL denotes one common implicit alphabet. Input masks and the
- * six output indices occupy separate storage. Owners retain each interval's
- * coding/power weights. No pointer or mutable cache survives the operation. */
+/* First identical row, or count when absent. Owners bound count by six and
+ * supply the queried row; packed masks contain no padding. */
+static inline unsigned pcm_constellation_find(
+	const struct pcm_constellation *rows, unsigned count,
+	const struct pcm_constellation *value)
+{
+	for (unsigned row = 0; row < count; ++row)
+		if (memcmp(rows + row, value, sizeof(*rows)) == 0)
+			return row;
+	return count;
+}
+
+/* Map each interval to its first identical row. Input masks and the six
+ * output indices occupy separate storage; NULL denotes one common implicit
+ * alphabet. Owners retain each interval's coding/power weights. No pointer
+ * or mutable cache survives the operation. */
 static inline void pcm_constellation_sources(
 	const struct pcm_constellation *intervals,
 	unsigned source[PCM_CONSTELLATION_FRAME_INTERVALS])
 {
-	for (unsigned slot = 0; slot < PCM_CONSTELLATION_FRAME_INTERVALS; ++slot) {
-		source[slot] = slot;
-		for (unsigned prior = 0; prior < slot; ++prior) {
-			if (intervals == NULL || memcmp(intervals + slot, intervals + prior,
-				    sizeof(*intervals)) == 0) {
-				source[slot] = source[prior];
-				break;
-			}
-		}
-	}
+	for (unsigned slot = 0; slot < PCM_CONSTELLATION_FRAME_INTERVALS; ++slot)
+		source[slot] = intervals == NULL ? 0 :
+			pcm_constellation_find(intervals, slot, intervals + slot);
 }
 
 /* Pack six interval sets into the smallest ordered row table. Identical
@@ -179,12 +184,10 @@ static inline bool pcm_constellations_pack(
 	for (unsigned interval = 0; interval < PCM_CONSTELLATION_FRAME_INTERVALS; ++interval) {
 		if (pcm_constellation_is_empty(&intervals[interval]))
 			return false;
-		uint8_t row = 0;
-		while (row < used && memcmp(&packed[row], &intervals[interval], sizeof(packed[row])) != 0)
-			++row;
+		unsigned row = pcm_constellation_find(packed, used, intervals + interval);
 		if (row == used)
 			packed[used++] = intervals[interval];
-		indices[interval] = row;
+		indices[interval] = (uint8_t)row;
 	}
 	memcpy(rows, packed, sizeof(packed));
 	memcpy(map, indices, sizeof(indices));

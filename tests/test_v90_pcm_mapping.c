@@ -98,6 +98,88 @@ static void fill_constellation(
 				  V90_CP_CONSTELLATION_UCODES));
 }
 
+static bool check_constellation_partition(const uint8_t groups[6], unsigned count)
+{
+	struct pcm_constellation distinct[6] = { 0 }, intervals[6], packed[6], alias[6];
+	struct pcm_constellation expected[6] = { 0 }, codec[6] = { 0 };
+	uint8_t map[6], used;
+	unsigned source[6], first[6];
+
+	memset(first, 0xff, sizeof(first));
+	for (unsigned row = 0; row < count; ++row) {
+		add_ucode(&distinct[row], (uint8_t)row);
+		add_ucode(&distinct[row], (uint8_t)(127u - row));
+		expected[row] = distinct[row];
+	}
+	for (unsigned slot = 0; slot < 6; ++slot) {
+		intervals[slot] = distinct[groups[slot]];
+		if (first[groups[slot]] == UINT_MAX)
+			first[groups[slot]] = slot;
+	}
+	pcm_constellation_sources(intervals, source);
+	for (unsigned slot = 0; slot < 6; ++slot)
+		CHECK(source[slot] == first[groups[slot]] &&
+		      pcm_constellation_find(intervals, slot, intervals + slot) == first[groups[slot]],
+		      "row source differs for interval %u", slot);
+	CHECK(pcm_constellations_pack(intervals, packed, map, &used) &&
+	      used == count && memcmp(map, groups, sizeof(map)) == 0 &&
+	      memcmp(packed, expected, sizeof(packed)) == 0 &&
+	      pcm_constellations_are_canonical(packed, codec, map, used, false),
+	      "partition with %u rows did not pack canonically", count);
+	memcpy(alias, intervals, sizeof(alias));
+	CHECK(pcm_constellations_pack(alias, alias, map, &used) &&
+	      used == count && memcmp(map, groups, sizeof(map)) == 0 &&
+	      memcmp(alias, expected, sizeof(alias)) == 0,
+	      "packing an aliased interval plane changed its rows");
+	for (unsigned empty = 0; empty < 6; ++empty) {
+		struct pcm_constellation rejected[6];
+		uint8_t saved_map[6];
+
+		memcpy(alias, intervals, sizeof(alias));
+		alias[empty] = (struct pcm_constellation){ { 0 } };
+		memcpy(rejected, alias, sizeof(rejected));
+		memcpy(saved_map, map, sizeof(saved_map));
+		uint8_t saved_used = used;
+		CHECK(!pcm_constellations_pack(alias, alias, map, &used) &&
+		      memcmp(alias, rejected, sizeof(alias)) == 0 &&
+		      memcmp(map, saved_map, sizeof(map)) == 0 && used == saved_used,
+		      "empty interval %u changed rejected packing outputs", empty);
+	}
+	return true;
+}
+
+/* Restricted-growth labels enumerate all 203 partitions of six intervals,
+ * including common, distinct and interleaved rows, independently of packing. */
+static bool constellation_partitions(uint8_t groups[6], unsigned slot,
+	unsigned count, unsigned *cases)
+{
+	if (slot == 6) {
+		++*cases;
+		return check_constellation_partition(groups, count);
+	}
+	for (unsigned group = 0; group <= count; ++group) {
+		groups[slot] = (uint8_t)group;
+		if (!constellation_partitions(groups, slot + 1u,
+			count + (group == count), cases))
+			return false;
+	}
+	return true;
+}
+
+static bool test_constellation_packing(void)
+{
+	uint8_t groups[6] = { 0 };
+	unsigned cases = 0, source[6];
+
+	CHECK(constellation_partitions(groups, 1, 1, &cases) && cases == 203,
+	      "did not verify every six-interval partition");
+	pcm_constellation_sources(NULL, source);
+	for (unsigned slot = 0; slot < 6; ++slot)
+		CHECK(source[slot] == 0,
+		      "implicit alphabet did not share its first row");
+	return true;
+}
+
 static bool test_packed_constellation_rank(void)
 {
 	struct pcm_constellation constellation;
@@ -1251,6 +1333,7 @@ int main(void)
 {
 	static const struct test_case tests[] = {
 		{ "packed constellation rank", test_packed_constellation_rank },
+		{ "shared constellation packing", test_constellation_packing },
 		{ "prefix power accumulator", test_power_accumulation },
 		{ "prefix power word counts", test_power_prefix_counts },
 		{ "exhaustive constellation power", test_mapping_power_exhaustive },
