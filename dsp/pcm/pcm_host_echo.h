@@ -92,6 +92,22 @@ bool pcm_host_echo_has_weak_margin(const struct pcm_host_echo *echo);
 uint32_t pcm_host_echo_window_delay_samples(
 	const struct pcm_host_echo *echo);
 
+/* Already validated owner, as after a successful prediction. Return the
+ * frozen model's effective delay only when this mode enables subtraction.
+ * FILTER can inspect a suspended model; FILTER_DATA must leave it bypassed.
+ * A replacement's acquisition window never substitutes for its retained fit. */
+static inline uint32_t pcm_host_echo_active_delay_owned(
+	const struct pcm_host_echo *echo, enum pcm_host_echo_mode mode)
+{
+	if (echo == NULL ||
+	    (mode != PCM_HOST_ECHO_FILTER && mode != PCM_HOST_ECHO_FILTER_DATA) ||
+	    (mode == PCM_HOST_ECHO_FILTER_DATA && echo->filter_suspended) ||
+	    (!echo->filter_ready && !echo->retained_delay_samples))
+		return 0;
+	return echo->retained_delay_samples ? echo->retained_delay_samples :
+		pcm_echo_reference_current_delay(&echo->reference);
+}
+
 /* Reposition a qualified frozen model after independently confirmed timing
  * evidence. Preserve its coefficients and TX history; reject an unavailable
  * reference window without mutation. */

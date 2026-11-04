@@ -101,13 +101,11 @@ int v92_echo_timing_observe(
 {
 	if (timing == NULL)
 		return 0;
-	if (echo == NULL || receiver == NULL || !available || receiver->failed ||
+	uint32_t delay = pcm_host_echo_active_delay_owned(echo, mode);
+	if (!delay || receiver == NULL || !available || receiver->failed ||
 	    receiver->line.plan.observation != V92_PCM_FRAME_CONSTELLATION ||
 	    receiver->line.received_frames < V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES ||
 	    receiver->line.delay_remaining || receiver->input.count || receiver->model.valid || receiver->model.scalar_gain ||
-	    (!echo->filter_ready && !echo->retained_delay_samples) ||
-	    (mode != PCM_HOST_ECHO_FILTER && mode != PCM_HOST_ECHO_FILTER_DATA) ||
-	    (mode == PCM_HOST_ECHO_FILTER_DATA && echo->filter_suspended) ||
 	    received == INT16_MIN || received == INT16_MAX ||
 	    cleaned == INT16_MIN || cleaned == INT16_MAX ||
 	    receiver->line.input_samples == UINT64_MAX) {
@@ -115,8 +113,6 @@ int v92_echo_timing_observe(
 		return 0;
 	}
 	const struct v92_upstream_data_line *line = &receiver->line;
-	uint32_t delay = echo->retained_delay_samples ? echo->retained_delay_samples :
-		pcm_host_echo_window_delay_samples(echo);
 	if (!timing->initialized || timing->gain != line->calibration.gain ||
 	    timing->offset != line->calibration.offset || timing->polarity != line->polarity ||
 	    !same_inverse(&timing->inverse, &line->residual) ||

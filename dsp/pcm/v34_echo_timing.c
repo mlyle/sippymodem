@@ -95,18 +95,14 @@ bool v34_echo_timing_prepare(struct v34_echo_timing *timing,
 
 	if (timing == NULL)
 		return false;
-	if (echo == NULL || receiver == NULL || data == NULL || !receiver->initialized ||
-	    (mode != PCM_HOST_ECHO_FILTER && mode != PCM_HOST_ECHO_FILTER_DATA) ||
-	    (mode == PCM_HOST_ECHO_FILTER_DATA && echo->filter_suspended) ||
-	    (!echo->filter_ready && !echo->retained_delay_samples) ||
+	model_delay = pcm_host_echo_active_delay_owned(echo, mode);
+	if (!model_delay || receiver == NULL || data == NULL || !receiver->initialized ||
 	    prediction < INT16_MIN || prediction > INT16_MAX ||
 	    cleaned == INT16_MIN || cleaned == INT16_MAX ||
 	    received == INT16_MIN || received == INT16_MAX ||
 	    receiver->equalizer.feedback_mode != V34_ADAPTIVE_EQUALIZER_FEEDBACK_NONE ||
 	    receiver->equalizer.epoch > INT64_MAX / 2u - V34_ECHO_TIMING_HISTORY)
 		goto unsupported;
-	model_delay = echo->retained_delay_samples ? echo->retained_delay_samples :
-		pcm_echo_reference_current_delay(&echo->reference);
 	channel = &data->data_receiver.channel_receiver;
 	profile = &receiver->timing.transmitting_profile;
 	if (channel->conditioner.normalizer.nonlinear_parameter != 0 ||

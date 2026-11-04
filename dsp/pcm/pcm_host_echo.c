@@ -239,12 +239,10 @@ static bool estimate_echo(
 }
 
 static enum pcm_host_echo_result predict_frozen_model(
-	const struct pcm_host_echo *echo, int16_t received_sample,
+	const struct pcm_host_echo *echo, uint32_t delay, int16_t received_sample,
 	int16_t *cleaned_sample)
 {
 	size_t index;
-	uint32_t delay = echo->retained_delay_samples ?
-		echo->retained_delay_samples : pcm_echo_reference_current_delay(&echo->reference);
 	const float *coefficients = echo->retained_delay_samples ?
 		echo->retained_coefficients : echo->coefficients;
 	double estimate;
@@ -271,10 +269,9 @@ enum pcm_host_echo_result pcm_host_echo_predict(
 	    memory_regions_overlap(
 		    echo, sizeof(*echo), cleaned_sample, sizeof(*cleaned_sample)))
 		return PCM_HOST_ECHO_INVALID_ARGUMENT;
-	if (mode_is_filtering(mode) &&
-	    (mode != PCM_HOST_ECHO_FILTER_DATA || !echo->filter_suspended) &&
-	    (echo->filter_ready || echo->retained_delay_samples)) {
-		result = predict_frozen_model(echo, received_sample, &generated);
+	uint32_t delay = pcm_host_echo_active_delay_owned(echo, mode);
+	if (delay) {
+		result = predict_frozen_model(echo, delay, received_sample, &generated);
 		if (result != PCM_HOST_ECHO_OK)
 			return result;
 	}
@@ -485,10 +482,9 @@ static void commit_training_step(
 static enum pcm_host_echo_result retime_active_model(
 	struct pcm_host_echo *echo, int delay_change_samples)
 {
-	if (!echo->filter_ready && !echo->retained_delay_samples)
+	uint32_t active = pcm_host_echo_active_delay_owned(echo, PCM_HOST_ECHO_FILTER);
+	if (!active)
 		return PCM_HOST_ECHO_INVALID_STATE;
-	uint32_t active = echo->retained_delay_samples ?
-		echo->retained_delay_samples : pcm_echo_reference_current_delay(&echo->reference);
 	int64_t delay = (int64_t)active + delay_change_samples;
 	if (delay_change_samples == 0 ||
 	    delay_change_samples < -ECHO_TIMING_RADIUS ||
@@ -556,13 +552,14 @@ static enum pcm_host_echo_result observe_timing(
 {
 	if (!mode_is_filtering(mode) && echo->timing.fill != 0)
 		memset(&echo->timing, 0, sizeof(echo->timing));
-	if (mode_is_filtering(mode) &&
-	    (echo->filter_ready || echo->retained_delay_samples)) {
+	/* Confidence monitoring observes a suspended frozen model too. */
+	uint32_t delay = pcm_host_echo_active_delay_owned(echo, PCM_HOST_ECHO_FILTER);
+	if (mode_is_filtering(mode) && delay) {
 		int16_t monitored = cleaned_sample;
 
 		if (mode == PCM_HOST_ECHO_FILTER_DATA && echo->filter_suspended) {
 			enum pcm_host_echo_result result =
-				predict_frozen_model(echo, received_sample, &monitored);
+				predict_frozen_model(echo, delay, received_sample, &monitored);
 			if (result != PCM_HOST_ECHO_OK)
 				return result;
 		}

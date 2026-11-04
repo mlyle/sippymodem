@@ -55,6 +55,7 @@ struct v34_echo_timing {
 void v34_echo_timing_reset(struct v34_echo_timing *timing);
 
 /* Prepare one reference sample using the receiver's pre-sample controls.
+ * The echo owner was validated by the prediction for this sample.
  * Only a linear, unprecoded data constellation is currently supported.
  * Unsupported configuration or a discontinuity discards prior evidence. */
 bool v34_echo_timing_prepare(

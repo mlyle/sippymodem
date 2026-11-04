@@ -220,6 +220,47 @@ static bool test_half_sample_prediction(void)
 	return true;
 }
 
+static bool test_active_filter_delay(void)
+{
+	struct pcm_host_echo echo, saved;
+	CHECK(pcm_host_echo_init(&echo) == PCM_HOST_ECHO_OK &&
+	      pcm_host_echo_active_delay_owned(NULL, PCM_HOST_ECHO_FILTER) == 0 &&
+	      pcm_host_echo_active_delay_owned(&echo, PCM_HOST_ECHO_FILTER) == 0,
+	      "unqualified filter exposed an active delay");
+	uint32_t window = pcm_host_echo_window_delay_samples(&echo);
+	for (unsigned i = 0; i < window + PCM_HOST_ECHO_FILTER_TAPS + 80u; ++i)
+		CHECK(pcm_echo_reference_push(&echo.reference, 1) == PCM_ECHO_REFERENCE_OK,
+		      "filter delay reference did not fill");
+	echo.train_samples = PCM_HOST_ECHO_TRAIN_MIN_SAMPLES;
+	echo.train_peak = PCM_HOST_ECHO_READY_MIN_PEAK;
+	echo.coefficients[0] = 1;
+	for (unsigned retained = 0; retained < 2; ++retained) {
+		echo.filter_ready = !retained;
+		echo.delay_acquired = retained;
+		echo.retained_delay_samples = retained ? window + 8 : 0;
+		echo.retained_coefficients[0] = retained ? 2 : 0;
+		for (unsigned suspended = 0; suspended < 2; ++suspended) {
+			echo.filter_suspended = suspended;
+			CHECK(pcm_host_echo_is_valid(&echo), "filter delay fixture invalid");
+			for (unsigned mode = PCM_HOST_ECHO_BYPASS; mode <= PCM_HOST_ECHO_FILTER_DATA; ++mode) {
+				bool active = mode == PCM_HOST_ECHO_FILTER ||
+					(mode == PCM_HOST_ECHO_FILTER_DATA && !suspended);
+				uint32_t expected = active ? window + (retained ? 8 : 0) : 0;
+				saved = echo;
+				int16_t cleaned;
+				CHECK(pcm_host_echo_active_delay_owned(&echo, mode) == expected &&
+				      pcm_host_echo_predict(&echo, mode, 20, &cleaned) == PCM_HOST_ECHO_OK &&
+				      cleaned == (active ? 20 - (retained ? 2 : 1) : 20) &&
+				      pcm_host_echo_window_delay_samples(&echo) == window &&
+				      memcmp(&echo, &saved, sizeof(echo)) == 0,
+				      "active delay differs from subtraction or mutates its owner: retained=%u suspended=%u mode=%u",
+				      retained, suspended, mode);
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_prediction_numeric_bounds(void)
 {
 	struct pcm_host_echo echo;
@@ -1478,7 +1519,7 @@ int main(void)
 		if (!test_unrelated_input_does_not_train(
 			UINT32_C(0x31415927) + trial * 7919u, trial % 2 ? 30000 : 1000))
 			return 1;
-	if (!test_observation_contracts() ||
+	if (!test_active_filter_delay() || !test_observation_contracts() ||
 	    !test_explicit_observation(PCM_HOST_ECHO_BYPASS, false, 0) ||
 	    !test_explicit_observation(PCM_HOST_ECHO_TRAIN, false, 0) ||
 	    !test_explicit_observation(PCM_HOST_ECHO_FILTER, false, 98) ||
