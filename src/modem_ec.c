@@ -1686,6 +1686,28 @@ static void lapm_rx_complete(void *framer, frame_t *f)
 			l->initial_sabme_recovery = LAPM_SABME_RECOVERY_NONE;
 		}
 		l->accept_sabme_retry = false;
+		struct modem *m = l->modem;
+		struct hdlc_receive_health *health = &m->packer.hdlc.receive_health;
+		if (m->count >= health->quarantine) {
+			health->latest = m->count;
+			health->numbered = health->present = true;
+		}
+		/* Even an unsolicited final can show that the peer received the
+		 * old information. Cancel a timing hypothesis before dispatch;
+		 * protocol acceptance and actual VA advancement remain unchanged. */
+		if (FRAME_NR(f) != l->va) {
+			++l->ack_generation;
+			l->peer_noack = false;
+		}
+		/* A command RR/Poll with unchanged N(R) explicitly reports that
+		 * outstanding information has not arrived. Idle flags and final
+		 * responses alone do not establish that forward-direction fact. */
+		if (type == FRAME_S && FRAME_CTRL(f) == FRAME_S_RR &&
+		    RX_IS_COMMAND(f) && FRAME_S_PF(f) && FRAME_NR(f) == l->va &&
+		    l->va != l->vs && !l->peer_busy) {
+			l->peer_noack = true;
+			l->peer_noack_sample = m->count;
+		}
 	}
 	LAPM_PRINT_FRAME("rx",RX_IS_COMMAND(f),f,f->count);
 	switch(type) {
@@ -1787,6 +1809,8 @@ static void reset_lapm_link(struct lapm_state *l)
 	l->initial_sabme_sample = 0;
 	l->initial_sabme_recovery = LAPM_SABME_RECOVERY_NONE;
 	l->stalled_retrain = false;
+	++l->ack_generation;
+	l->peer_noack = false;
 	l->passive_establishment_expired = false;
 	l->reject = LAPM_REJECT_NONE;
 	l->vs = 0;
@@ -1917,6 +1941,35 @@ void modem_ec_stop(struct modem *m)
 	h->tx_preamble_flags = 0;
 	h->tx_preamble_complete = NULL;
 	lapm_disconnect(l);
+}
+
+bool modem_ec_get_tx_recovery(const struct modem *m,
+	struct modem_tx_recovery *observation)
+{
+	if (observation == NULL)
+		return false;
+	*observation = (struct modem_tx_recovery){0};
+	if (m == NULL || !m->cfg.ec ||
+	    m->get_bits != modem_hdlc_get_bits || m->put_bits != modem_hdlc_put_bits ||
+	    (m->state != STATE_MODEM_ONLINE && m->state != STATE_COMMAND_ONLINE))
+		return false;
+	const struct lapm_state *l = &m->ec.lapm;
+	if (l->state != LAPM_DATA || xid_pending(l))
+		return false;
+	const struct hdlc_receive_health *health = &m->packer.hdlc.receive_health;
+	observation->ack_generation = l->ack_generation;
+	observation->peer_poll_sample = l->peer_noack_sample;
+	observation->receive_sample = health->latest;
+	observation->peer_noack = l->peer_noack && m->count >= l->peer_noack_sample &&
+		m->count - l->peer_noack_sample <= MODEM_RATE;
+	observation->receive_healthy = health->present && m->count >= health->quarantine &&
+		m->count >= health->latest && m->count - health->latest <=
+			(health->numbered ? MODEM_RATE : MODEM_RATE / 10);
+	observation->first_retry = !l->busy && !l->peer_busy && !l->stalled_retrain &&
+		l->va != l->vs && l->sent_info != l->info_list &&
+		m->bit_timer > 0 && m->bit_timer_func == t401_timeout &&
+		l->rtx_count == 1 && l->stalled_polls == 1 && !l->retrain_poll;
+	return true;
 }
 
 bool modem_ec_take_retrain_request(struct modem *m)

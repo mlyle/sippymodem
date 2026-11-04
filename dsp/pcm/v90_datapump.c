@@ -16,6 +16,7 @@
 #include "v34_data_quality.h"
 #include "v34_datapump.h"
 #include "pcm_host_echo.h"
+#include "pcm_tx_recovery.h"
 #include "v34_echo_timing.h"
 #include "v90_info1.h"
 #include "v90_mp.h"
@@ -56,6 +57,7 @@ struct v90_datapump {
 	struct v34_echo_timing echo_timing;
 	struct v92_training_echo training_echo;
 	struct v92_echo_timing pcm_echo_timing;
+	struct pcm_tx_recovery transmit_recovery;
 };
 
 static struct dp *create_v90(
@@ -71,6 +73,7 @@ static int process_v90_g711(
 	uint8_t *transmit_codewords, void *transmit_samples,
 	int count, bool *exact_output);
 static int retrain_v90(struct dp *dp);
+static void service_link_v90(struct dp *dp);
 static int hangup_v90(struct dp *dp);
 static const char *progress_v90(const struct dp *dp);
 static struct dp_link_rates link_rates_v90(const struct dp *dp);
@@ -85,6 +88,7 @@ static const struct dp_operations v90_operations = {
 	.process = process_v90,
 	.process_g711 = process_v90_g711,
 	.retrain = retrain_v90,
+	.service_link = service_link_v90,
 	.hangup = hangup_v90,
 	.progress = progress_v90,
 	.link_rates = link_rates_v90,
@@ -675,6 +679,83 @@ static bool source_pcm_frame(
 		bits, bit_count);
 }
 
+/* A short exchange retains the six-symbol PCM frame phase (V.92 9.8).
+ * An echo-delay jump is only a hypothesis about outgoing timing: do nothing
+ * until valid peer feedback and the existing first T401 retry agree. */
+static bool transmit_recovery_observation(struct v90_datapump *datapump,
+	struct modem_tx_recovery *observation)
+{
+	struct pcm_call *call = &datapump->call;
+	if (datapump->protocol != PCM_PROTOCOL_V92 || datapump->role != V90_DIGITAL_MODEM ||
+	    !datapump->call_started || call->stage != PCM_CALL_DATA_PATH ||
+	    call->phase3_entry.selection.upstream != PCM_UPSTREAM_PCM ||
+	    !training_session_is_online(&datapump->training) || !pcm_call_is_online_owned(call) ||
+	    !modem_ec_get_tx_recovery(datapump->dp.modem, observation)) {
+		datapump->transmit_recovery = (struct pcm_tx_recovery){0};
+		return false;
+	}
+	pcm_tx_recovery_progress(&datapump->transmit_recovery, observation->ack_generation);
+	return true;
+}
+
+static void note_transmit_timing(struct v90_datapump *datapump, int shift)
+{
+	struct modem_tx_recovery observation;
+	if (!transmit_recovery_observation(datapump, &observation))
+		return;
+	pcm_tx_recovery_note(&datapump->transmit_recovery, datapump->dp.modem->count, shift);
+}
+
+/* Recheck at the next media boundary, then advance only the outgoing coder.
+ * Discard at most five network symbols; LAPM retains every unacknowledged
+ * byte. Do not move receive coordinates, reset compression or replace the
+ * active call union from within a frame-source callback. */
+static void apply_transmit_recovery(struct v90_datapump *datapump)
+{
+	struct dp *dp = &datapump->dp;
+	if (!datapump->transmit_recovery.pending)
+		return;
+	struct modem_tx_recovery observation;
+	if (!transmit_recovery_observation(datapump, &observation))
+		return;
+	struct pcm_tx_recovery *recovery = &datapump->transmit_recovery;
+	if (!recovery->pending)
+		return;
+	recovery->pending = false;
+	if (!pcm_tx_recovery_eligible(recovery, dp->modem->count, &observation))
+		return;
+	struct pcm_call_v92_digital_data *path = &datapump->call.state.data_path.v92_digital;
+	struct v90_downstream_data_stream *stream = &path->downstream.data;
+	if (path->downstream_stage != V92_PHASE4_E2U_DOWNSTREAM_DATA ||
+	    !v90_downstream_data_stream_is_online(stream))
+		return;
+	for (unsigned i = 0; i < recovery->phase; ++i) {
+		struct v90_pcm_symbol discarded;
+		if (v90_downstream_data_stream_next_owned(stream, source_pcm_frame,
+			datapump, &discarded) != V90_DOWNSTREAM_DATA_STREAM_OK)
+			return;
+	}
+	recovery->applied = true;
+}
+
+static void service_link_v90(struct dp *dp)
+{
+	struct v90_datapump *datapump = v90_from_dp(dp);
+	struct modem_tx_recovery observation;
+	if (datapump == NULL || !transmit_recovery_observation(datapump, &observation))
+		return;
+	struct pcm_tx_recovery *recovery = &datapump->transmit_recovery;
+	if (recovery->applied) {
+		recovery->applied = false;
+		/* Failure leaves the existing T401/full-recovery path untouched.
+		 * A successful short exchange already owns its bounded deadline. */
+		v90_datapump_start_rate_renegotiation(dp, false);
+	} else if (!recovery->used && pcm_tx_recovery_eligible(recovery, dp->modem->count, &observation)) {
+		recovery->used = true;
+		recovery->pending = true;
+	}
+}
+
 static bool deliver_bits(
 	struct v90_datapump *datapump,
 	const uint8_t *bits, size_t bit_count)
@@ -1104,6 +1185,7 @@ static int process_v90_g711(
 		modem_note_disconnect(dp->modem, true, "PCM initialization rejected");
 		goto failure;
 	}
+	apply_transmit_recovery(datapump);
 	if (datapump->call.stage == PCM_CALL_CLOSED) {
 		datapump_mute_g711(law, transmit_codewords, transmit_samples, count);
 		*exact_output = true;
@@ -1142,13 +1224,16 @@ static int process_v90_g711(
 			    PCM_HOST_ECHO_OK)
 			goto failure;
 		if (datapump->host_echo != NULL) {
-			if (v92_echo_timing_observe(&datapump->pcm_echo_timing, datapump->host_echo,
-				    pcm_upstream_receiver(datapump), echo_mode, receive_codewords[index],
-				    receive_samples[index], cleaned_sample,
-				    received_mask == NULL || received_mask[index]) != 0 &&
-			    pcm_host_echo_predict(datapump->host_echo, echo_mode,
-				    receive_samples[index], &cleaned_sample) != PCM_HOST_ECHO_OK)
-				goto failure;
+			int timing_shift = v92_echo_timing_observe(&datapump->pcm_echo_timing, datapump->host_echo,
+				pcm_upstream_receiver(datapump), echo_mode, receive_codewords[index],
+				receive_samples[index], cleaned_sample,
+				received_mask == NULL || received_mask[index]);
+			if (timing_shift != 0) {
+				note_transmit_timing(datapump, timing_shift);
+				if (pcm_host_echo_predict(datapump->host_echo, echo_mode,
+					receive_samples[index], &cleaned_sample) != PCM_HOST_ECHO_OK)
+					goto failure;
+			}
 			int delay_change;
 			training_echo = v92_training_echo_observe(&datapump->training_echo,
 				datapump->host_echo, upstream_training_receiver(datapump), echo_mode,

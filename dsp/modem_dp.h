@@ -84,6 +84,10 @@ struct dp_operations {
 			     int cnt, bool *exact_output);
 	/* Start an in-band retrain without releasing the data-link state. */
 	int (*retrain)(struct dp *);
+	/* Optional bounded link maintenance, called between media fragments.
+	 * Never replace a call's active state from a source/sink callback.
+	 * This does not consume or renew the host's full-retrain allowance. */
+	void (*service_link)(struct dp *);
 	/* Begin a bounded in-band cleardown.  A successful callback keeps the
 	 * datapump runnable until process() or process_g711() returns
 	 * DPSTAT_DISCONNECT after its final line symbol has drained. */

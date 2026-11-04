@@ -8845,6 +8845,132 @@ static bool test_lapm_establishment_recovery(void)
 	return true;
 }
 
+static bool test_lapm_transmit_recovery_observations(void)
+{
+	struct modem_driver driver = {
+		.name = "LAPM recovery observations", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	struct modem *ends[2];
+	static const uint8_t payload[] = { 'A' };
+	struct modem_tx_recovery observation[2];
+	for (unsigned side = 0; side < 2; ++side) {
+		struct modem *m = ends[side] = create_compat_modem(&driver, driver.name);
+		CHECK(m != NULL, "recovery observation allocation failed");
+		m->cfg.ec = 1;
+		m->cfg.ec_tx_info_size = 1;
+		m->rx_rate = m->tx_rate = 36000;
+		CHECK(modem_ec_init(m) == 0, "recovery observation initialization failed");
+		modem_hdlc_start(m);
+		modem_ec_start(m);
+		m->state = 5;
+		m->ec.lapm.state = 2;
+		m->get_bits = modem_hdlc_get_bits;
+		m->put_bits = modem_hdlc_put_bits;
+		m->get_chars = scripted_lapm_source;
+		lapm_source.data = payload;
+		lapm_source.length = sizeof(payload);
+		lapm_source.offset = 0;
+		frame_t *outgoing = m->packer.hdlc.get_tx_frame(&m->ec.lapm);
+		CHECK(outgoing != NULL, "recovery observation lacks outstanding information");
+		m->packer.hdlc.tx_complete(&m->ec.lapm, outgoing);
+		CHECK(modem_ec_get_tx_recovery(m, &observation[side]) &&
+		      !observation[side].peer_noack && !observation[side].receive_healthy &&
+		      !observation[side].first_retry,
+		      "fresh link fabricated recovery evidence");
+	}
+	struct modem *m = ends[0];
+	struct lapm_state *l = &m->ec.lapm;
+	uint8_t wire[] = { l->cmd_addr, 1, 1 };
+	frame_t incoming = { .buf = wire, .count = sizeof(wire) };
+	m->count = 8000;
+	m->packer.hdlc.rx_complete(l, &incoming);
+	CHECK(modem_ec_get_tx_recovery(m, &observation[0]) &&
+	      observation[0].receive_healthy && !observation[0].peer_noack,
+	      "final response was treated as a peer command poll");
+	wire[0] = l->rsp_addr;
+	m->packer.hdlc.rx_complete(l, &incoming);
+	l->rtx_count = 1;
+	l->stalled_polls = 1;
+	CHECK(modem_ec_get_tx_recovery(m, &observation[0]) &&
+	      observation[0].first_retry && observation[0].peer_noack &&
+	      observation[0].peer_poll_sample == m->count,
+	      "valid unanswered command poll did not qualify existing first retry");
+	CHECK(modem_ec_get_tx_recovery(ends[1], &observation[1]) &&
+	      !observation[1].peer_noack && !observation[1].receive_healthy &&
+	      !observation[1].first_retry,
+	      "receive feedback leaked across modem instances");
+	struct modem *other = ends[1];
+	uint8_t late[] = { other->ec.lapm.cmd_addr, 1, 3 };
+	frame_t unsolicited = { .buf = late, .count = sizeof(late) };
+	uint64_t other_generation = observation[1].ack_generation;
+	other->packer.hdlc.rx_complete(&other->ec.lapm, &unsolicited);
+	CHECK(modem_ec_get_tx_recovery(other, &observation[1]) &&
+	      observation[1].ack_generation != other_generation && other->ec.lapm.va == 0,
+	      "ignored final retained a timing hypothesis or changed protocol acceptance");
+	wire[1] = 5;
+	m->packer.hdlc.rx_complete(l, &incoming);
+	CHECK(modem_ec_get_tx_recovery(m, &observation[0]) &&
+	      !observation[0].first_retry, "peer RNR permitted physical intervention");
+	wire[0] = l->cmd_addr;
+	wire[1] = 1;
+	wire[2] = 3;
+	uint64_t generation = observation[0].ack_generation;
+	m->packer.hdlc.rx_complete(l, &incoming);
+	CHECK(modem_ec_get_tx_recovery(m, &observation[0]) &&
+	      observation[0].ack_generation != generation && !observation[0].peer_noack,
+	      "ACK progress retained an old no-ack hypothesis");
+	/* Return VA to zero through real I/ACK transactions, not by changing
+	 * its value behind the protocol owner's back. */
+	for (unsigned i = 1; i < 128; ++i) {
+		lapm_source.offset = 0;
+		frame_t *outgoing = m->packer.hdlc.get_tx_frame(l);
+		while (outgoing != NULL && (outgoing->buf[1] & 1)) {
+			m->packer.hdlc.tx_complete(l, outgoing);
+			outgoing = m->packer.hdlc.get_tx_frame(l);
+		}
+		CHECK(outgoing != NULL, "sequence-wrap fixture lost information %u", i);
+		m->packer.hdlc.tx_complete(l, outgoing);
+		wire[2] = (uint8_t)(l->vs << 1);
+		m->packer.hdlc.rx_complete(l, &incoming);
+	}
+	CHECK(l->va == 0 && modem_ec_get_tx_recovery(m, &observation[0]) &&
+	      observation[0].ack_generation == generation + 128 && !observation[0].peer_noack,
+	      "sequence wrap revived stale recovery evidence");
+	modem_hdlc_receive_gap(m, m->count + 80);
+	m->packer.hdlc.rx_complete(l, &incoming);
+	CHECK(modem_ec_get_tx_recovery(m, &observation[0]) &&
+	      !observation[0].receive_healthy, "numbered frame bypassed erasure quarantine");
+	m->count += 8080;
+	m->packer.hdlc.rx_complete(l, &incoming);
+	CHECK(modem_ec_get_tx_recovery(m, &observation[0]) &&
+	      observation[0].receive_healthy, "fresh numbered evidence did not leave quarantine");
+	m->state = 6;
+	CHECK(modem_ec_get_tx_recovery(m, &observation[0]),
+	      "online command mode hid retained link evidence");
+	m->state = 5;
+	m->cfg.ec = 0;
+	CHECK(!modem_ec_get_tx_recovery(m, &observation[0]),
+	      "raw mode exposed LAPM recovery evidence");
+	m->cfg.ec = 1;
+	CHECK(!modem_ec_get_tx_recovery(NULL, &observation[0]) &&
+	      !modem_ec_get_tx_recovery(m, NULL), "invalid observation query accepted");
+	CHECK(modem_hdlc_reframe(m) == 0 && modem_ec_get_tx_recovery(m, &observation[0]) &&
+	      !observation[0].receive_healthy, "physical reframe retained receive evidence");
+	uint8_t flag = 0x7e, bad[5] = {0};
+	for (unsigned i = 0; i < 10; ++i)
+		CHECK(modem_hdlc_put_bits(m, 8, &flag, 1) == 1, "idle observation failed");
+	CHECK(modem_ec_get_tx_recovery(m, &observation[0]) && observation[0].receive_healthy,
+	      "verified idle flags did not restore receive health");
+	CHECK(modem_hdlc_put_bits(m, 8, bad, sizeof(bad)) == sizeof(bad) &&
+	      modem_hdlc_put_bits(m, 8, &flag, 1) == 1 &&
+	      modem_ec_get_tx_recovery(m, &observation[0]) && !observation[0].receive_healthy,
+	      "bad FCS retained healthy receive evidence");
+	for (unsigned side = 0; side < 2; ++side)
+		modem_delete(ends[side]);
+	return true;
+}
+
 static bool test_lapm_stalled_retrain(void)
 {
 	enum { ONLINE = 5, LAPM_DATA_STATE = 2, LAPM_IDLE_STATE = 0 };
@@ -11467,6 +11593,7 @@ int main(void)
 		{ "LAPM acknowledgement progress", test_lapm_acknowledgement_progress },
 		{ "LAPM passive establishment recovery", test_lapm_passive_establishment_recovery },
 		{ "LAPM establishment recovery", test_lapm_establishment_recovery },
+		{ "LAPM transmit recovery observations", test_lapm_transmit_recovery_observations },
 		{ "bounded LAPM stalled retrain", test_lapm_stalled_retrain },
 		{ "LAPM retrain preserves compressed streams", test_lapm_retrain_stream },
 		{ "LAPM retrain preserves link state",

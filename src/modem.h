@@ -275,6 +275,10 @@ struct lapm_state {
         bool stalled_retrain;
         bool passive_establishment_expired;
         u8 stalled_polls; /* status enquiries without acknowledgement progress */
+        /* Valid peer feedback for physical recovery; never infer ACK progress
+         * from a wrapped seven-bit sequence number. */
+        uint64_t ack_generation, peer_noack_sample;
+        bool peer_noack;
         u8  cmd_addr;
         u8  rsp_addr;
         u8 vs;
@@ -448,6 +452,11 @@ struct modem {
 			struct hdlc_frame *tx_frame;
 			struct hdlc_frame *rx_frame;
 			struct hdlc_rx rx;
+			struct hdlc_receive_health {
+				uint64_t latest, quarantine;
+				unsigned idle_flags;
+				bool numbered, present;
+			} receive_health;
 			struct raw_text_probe raw_text;
 			struct bits_state raw_bits;
 			bool raw_fallback_disabled;
@@ -586,6 +595,15 @@ extern void modem_ec_stop(struct modem *m);
 extern const char *modem_ec_protocol_step(const struct modem *m);
 /* Whether the host still accepts LAPM establishment for this call. */
 extern bool modem_ec_can_establish(const struct modem *m);
+/* Read-only facts on the owner's 8 kHz media clock. No timer or allowance
+ * changes: optional physical recovery must retain normal LAPM supervision. */
+struct modem_tx_recovery {
+	uint64_t ack_generation, peer_poll_sample, receive_sample;
+	bool first_retry, peer_noack, receive_healthy;
+};
+extern bool modem_ec_get_tx_recovery(const struct modem *m,
+	struct modem_tx_recovery *observation);
+extern void modem_hdlc_receive_gap(struct modem *m, uint64_t end_sample);
 /* Consume a bounded request; the host invokes retrain outside DSP callbacks. */
 extern bool modem_ec_take_retrain_request(struct modem *m);
 extern int modem_ec_resume_after_retrain(struct modem *m);

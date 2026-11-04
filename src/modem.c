@@ -857,6 +857,12 @@ static void modem_dp_process_frame(struct modem *m, enum g711_law law,
 		cnt = count;
 		if (cnt > m->frag)
 			cnt = m->frag;
+		if (received_mask != NULL && m->put_bits == modem_hdlc_put_bits)
+			for (unsigned i = 0; i < cnt; ++i)
+				if (!received_mask[i]) {
+					modem_hdlc_receive_gap(m, (uint64_t)m->count + cnt);
+					break;
+				}
 		//MODEM_DBG("%d: running dp %s...\n", m->count,dp->name);
 		if (receive_codewords != NULL &&
 		    m->dp->op->process_g711 != NULL)
@@ -914,6 +920,9 @@ static void modem_dp_process_frame(struct modem *m, enum g711_law law,
 			stop_processing = true;
 			break;
 		}
+		if (ret == DPSTAT_OK && IS_STATE_ONLINE(m->state) && m->dp != NULL &&
+		    m->dp->op->service_link != NULL)
+			m->dp->op->service_link(m->dp);
 		/* Bit timers run inside datapump source/sink callbacks. Defer a
 		 * link-quality retrain until the datapump has returned, and never
 		 * turn it into an unsolicited terminal CONNECT or reset LAPM. */

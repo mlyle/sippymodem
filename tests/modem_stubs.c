@@ -24,3 +24,12 @@ __attribute__((weak)) void modem_note_disconnect(struct modem *modem, bool local
 	(void)local;
 	(void)reason;
 }
+
+/* Bare DSP fixtures supply bits directly and have no LAPM owner. */
+bool modem_ec_get_tx_recovery(const struct modem *modem,
+	struct modem_tx_recovery *observation)
+{
+	(void)modem;
+	*observation = (struct modem_tx_recovery){0};
+	return false;
+}

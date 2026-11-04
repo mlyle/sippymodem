@@ -894,6 +894,39 @@ static bool hdlc_observe_raw_text(struct modem *m, unsigned bit)
 	return true;
 }
 
+void modem_hdlc_receive_gap(struct modem *m, uint64_t end_sample)
+{
+	if (m == NULL || m->put_bits != modem_hdlc_put_bits)
+		return;
+	struct hdlc_receive_health *health = &m->packer.hdlc.receive_health;
+	*health = (struct hdlc_receive_health){ .quarantine =
+		end_sample > UINT64_MAX - MODEM_RATE ? UINT64_MAX : end_sample + MODEM_RATE };
+}
+
+static void hdlc_observe_receive(struct modem *m, unsigned events)
+{
+	struct hdlc_receive_health *health = &m->packer.hdlc.receive_health;
+	if (m->count < health->quarantine)
+		return;
+	if (events & (HDLC_RX_PARTIAL | HDLC_RX_SHORT | HDLC_RX_BAD_FCS |
+		      HDLC_RX_ABORT | HDLC_RX_OVERFLOW | HDLC_RX_ACQUIRE | HDLC_RX_FRAME)) {
+		health->present = false;
+		health->idle_flags = 0;
+	}
+	if (events & HDLC_RX_FLAG) {
+		if (events & HDLC_RX_IDLE) {
+			if (health->idle_flags < 8)
+				++health->idle_flags;
+			if (health->idle_flags == 8) {
+				health->latest = m->count;
+				health->numbered = false;
+				health->present = true;
+			}
+		} else
+			health->idle_flags = 0;
+	}
+}
+
 int modem_hdlc_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt)
 {
 	if (m == NULL || nbits < 1 || nbits > 8 || bit_cnt < 0 ||
@@ -909,6 +942,8 @@ int modem_hdlc_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt)
 		for (int bit = nbits - 1; bit >= 0; --bit) {
 			unsigned events = hdlc_rx_bit(&h->rx,
 				(bit_buf[group] >> bit) & 1u, h->rx_frame->buf, h->rx_frame->size);
+			if (events)
+				hdlc_observe_receive(m, events);
 			if (events & HDLC_RX_FRAME)
 				h->raw_fallback_disabled = true;
 			if (hdlc_can_probe_text(m) && hdlc_observe_raw_text(
@@ -950,6 +985,7 @@ static void hdlc_reset_physical_framing(
 	h->tx_frame = NULL;
 	h->tx_ones = 0;
 	hdlc_rx_reset(&h->rx);
+	h->receive_health = (struct hdlc_receive_health){0};
 	h->raw_text = (struct raw_text_probe){0};
 	h->raw_bits = (struct bits_state){0};
 	h->rx_frame->count = 0;

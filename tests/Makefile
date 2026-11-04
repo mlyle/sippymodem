@@ -3289,7 +3289,7 @@ DS0_SIP_TEST_BINARY := $(BUILD_DIR)/test_ds0_sip
 DS0_PPP_TEST_BINARY := $(BUILD_DIR)/test_ds0_ppp
 DS0_CODEC_TEST_BINARY := $(BUILD_DIR)/test_ds0_codec
 
-TEST_BINARIES := $(BUILD_DIR)/test_rtp_transmit $(BUILD_DIR)/test_rtp_read_event $(NET_SOCKET_TEST_BINARY) $(RTP_SOCKET_ERROR_TEST_BINARY) $(MEDIA_WORKERS_TEST_BINARY) $(MEDIA_WORKERS_PIPE_TEST_BINARY) $(WAKE_SIGNAL_TEST_BINARIES) $(BUILD_DIR)/test_log_target $(BUILD_DIR)/test_log_buffer $(BUILD_DIR)/test_ds0_probe $(DS0_DATAPUMP_TEST_BINARY) $(DS0_PPP_TEST_BINARY) $(DS0_CODEC_TEST_BINARY) $(BUILD_DIR)/test_packet_stats $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
+TEST_BINARIES := $(BUILD_DIR)/test_pcm_tx_recovery $(BUILD_DIR)/test_rtp_transmit $(BUILD_DIR)/test_rtp_read_event $(NET_SOCKET_TEST_BINARY) $(RTP_SOCKET_ERROR_TEST_BINARY) $(MEDIA_WORKERS_TEST_BINARY) $(MEDIA_WORKERS_PIPE_TEST_BINARY) $(WAKE_SIGNAL_TEST_BINARIES) $(BUILD_DIR)/test_log_target $(BUILD_DIR)/test_log_buffer $(BUILD_DIR)/test_ds0_probe $(DS0_DATAPUMP_TEST_BINARY) $(DS0_PPP_TEST_BINARY) $(DS0_CODEC_TEST_BINARY) $(BUILD_DIR)/test_packet_stats $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(SIP_URI_TEST_BINARY) $(SDP_TEST_BINARY) $(G711_TEST_BINARY) \
 	$(SAMPLE_MATH_TEST_BINARY) $(BUILD_DIR)/test_gram_fit $(BUILD_DIR)/test_interval_fit $(BUILD_DIR)/test_echo_timing $(BUILD_DIR)/test_echo_shift \
 	$(PCM_GAIN_TEST_BINARY) \
@@ -3706,6 +3706,9 @@ $(BUILD_DIR)/test_echo_timing: $(BUILD_DIR)/test_echo_timing.o $(BUILD_DIR)/echo
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(BUILD_DIR)/test_echo_shift: $(BUILD_DIR)/test_echo_shift.o
+	$(CC) $(LDFLAGS) -o $@ $^
+
+$(BUILD_DIR)/test_pcm_tx_recovery: $(BUILD_DIR)/test_pcm_tx_recovery.o
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(PCM_GAIN_TEST_BINARY): $(PCM_GAIN_TEST_OBJECTS)
