@@ -57,7 +57,6 @@ bool v34_data_line_receiver_is_valid(
 	const struct v34_data_line_receiver *receiver)
 {
 	return receiver != NULL &&
-	       v34_phase3_profile_is_valid(&receiver->transmitting_profile) &&
 	       v34_frame_geometry_is_valid(&receiver->geometry) &&
 	       receiver->transmitting_profile.symbol_rate ==
 		       receiver->geometry.symbol_rate &&
@@ -99,8 +98,6 @@ enum v34_data_receive_result v34_data_line_receiver_init(
 	struct v34_data_line_receiver initialized = { 0 };
 
 	if (receiver == NULL || line == NULL || configuration == NULL ||
-	    !v34_phase3_profile_is_valid(
-		    &configuration->transmitting_profile) ||
 	    !v34_frame_geometry_is_valid(&configuration->geometry) ||
 	    configuration->transmitting_profile.symbol_rate !=
 		    configuration->geometry.symbol_rate ||

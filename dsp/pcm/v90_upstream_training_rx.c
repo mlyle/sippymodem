@@ -37,7 +37,6 @@ bool v90_upstream_training_rx_is_valid(
 	const struct v90_upstream_training_rx *receiver)
 {
 	if (receiver == NULL ||
-	    !v34_phase3_profile_is_valid(&receiver->transmitting_profile) ||
 	    !v34_line_receiver_matches_profile(
 		    &receiver->line, &receiver->transmitting_profile) ||
 	    receiver->line.equalizer.feedback_mode !=

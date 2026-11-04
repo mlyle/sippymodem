@@ -148,7 +148,6 @@ bool v34_phase34_receiver_is_valid(
 	    receiver->pending_count > V34_PHASE34_PENDING_FRAMES ||
 	    receiver->confirmed_count > receiver->pending_count ||
 	    (receiver->stage != V34_PHASE34_RECEIVER_DATA && receiver->pending_count != 0u) ||
-	    !v34_phase3_profile_is_valid(&receiver->transmitting_profile) ||
 	    !v34_constellation_size_is_valid(receiver->phase4_constellation) ||
 	    !v34_line_receiver_matches_profile(
 		    &receiver->line, &receiver->transmitting_profile) ||

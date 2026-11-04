@@ -39,6 +39,9 @@ enum v34_line_receiver_result v34_line_receiver_init(
 	enum v34_adaptive_equalizer_feedback_mode feedback_mode);
 bool v34_line_receiver_is_valid(
 	const struct v34_line_receiver *receiver);
+/* Match every requested profile field against the validated owned profile.
+ * This also validates the request, including an alias of the owned copy;
+ * callers need not validate it separately. Null arguments are rejected. */
 bool v34_line_receiver_matches_profile(
 	const struct v34_line_receiver *receiver,
 	const struct v34_phase3_profile *transmitting_profile);

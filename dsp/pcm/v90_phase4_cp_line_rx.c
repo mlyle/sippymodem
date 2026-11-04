@@ -12,7 +12,6 @@ bool v90_phase4_cp_line_rx_is_valid(
 	const struct v90_phase4_cp_line_rx *rx)
 {
 	return rx != NULL &&
-	       v34_phase3_profile_is_valid(&rx->transmitting_profile) &&
 	       v34_line_receiver_matches_profile(
 		       &rx->line, &rx->transmitting_profile) &&
 	       v34_receive_timing_is_acquired(&rx->line.timing) &&
