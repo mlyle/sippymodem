@@ -136,7 +136,11 @@ int v92_echo_timing_observe(
 		v92_echo_timing_reset(timing);
 		return 0;
 	}
-	double observed = (lrint(corrected * line->polarity) * line->polarity - timing->offset) * timing->gain;
+	/* Match each input's slow data correction without restarting the timing
+	 * window on every bias update. Older observations already carry their
+	 * own correction; the acquired gain and physical inverse remain fixed. */
+	double observed = (lrint(corrected * line->polarity) * line->polarity -
+		timing->offset - line->tracking.bias) * timing->gain;
 	double midpoint = 0, half_width = 0;
 	if (line->host.gain > 0) {
 		struct g711_interval cell;

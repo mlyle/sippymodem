@@ -25,6 +25,9 @@ enum {
 	FIT_QUEUE_SAMPLES = FIT_HOLD_SAMPLES +
 		(V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES - V92_B1U_ACQUISITION_FRAMES) *
 		(B1_WORK_SAMPLES - V92_PCM_MAPPING_FRAME_SYMBOLS) + 3 * B1_WORK_SAMPLES,
+	/* 192 ms of consecutive reliable decisions; quarter-error updates give
+	 * a 0.667 s small-signal time constant at 8 kHz. */
+	BIAS_WINDOW_FRAMES = 128,
 };
 _Static_assert((int)V92_UPSTREAM_INPUT_QUEUE >= (int)FIT_QUEUE_SAMPLES,
 	"fitting and independent B1 validation must fit in retained input");
@@ -59,6 +62,29 @@ static bool host_gain_is_valid(const struct v92_upstream_data_line *line)
 		bounds->correlation == 0. && bounds->energy == 0.;
 }
 
+static bool tracks_bias(const struct v92_upstream_data_line *line,
+	const struct v92_upstream_model *model)
+{
+	return line->plan.observation == V92_PCM_FRAME_CONSTELLATION &&
+	       line->received_frames >= V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES &&
+	       line->residual.active && line->host.gain > 0. &&
+	       model->residual_variance > 0. && !model->valid && !model->scalar_gain;
+}
+
+static bool bias_is_valid(const struct v92_upstream_data_rx *receiver)
+{
+	const struct v92_upstream_data_line *line = &receiver->line;
+	if (!isfinite(line->tracking.bias) || !isfinite(line->tracking.error_sum) ||
+	    line->tracking.frames >= BIAS_WINDOW_FRAMES ||
+	    (!line->tracking.frames && line->tracking.error_sum != 0.)) return false;
+	if (line->tracking.bias == 0. && !line->tracking.frames) return true;
+	double limit = V92_DATA_MAX_RMS_ERROR * line->host.gain;
+	return tracks_bias(line, &receiver->model) &&
+	       fabs(line->tracking.bias) <= limit / 2. &&
+	       fabs(line->tracking.error_sum) <=
+		line->tracking.frames * V92_PCM_MAPPING_FRAME_SYMBOLS * limit * (1. + 1e-12);
+}
+
 bool v92_upstream_data_rx_is_valid(
 	const struct v92_upstream_data_rx *receiver)
 {
@@ -78,7 +104,7 @@ bool v92_upstream_data_rx_is_valid(
 		    (receiver->line.received_frames < V92_PCM_RX_DELAY_FRAMES ?
 			     receiver->line.received_frames : V92_PCM_RX_DELAY_FRAMES) ||
 	    !v92_upstream_model_is_valid(receiver) ||
-	    !v92_residual_is_valid(&receiver->line.residual))
+	    !v92_residual_is_valid(&receiver->line.residual) || !bias_is_valid(receiver))
 		return false;
 	if (receiver->line.plan.observation == V92_PCM_FRAME_CONSTELLATION) {
 		const struct v92_upstream_data_line *line = &receiver->line;
@@ -260,6 +286,7 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_start_b1u(
 	struct v92_upstream_data_line line = receiver->line;
 	line.plan = *plan;
 	line.received_frames = 0;
+	memset(&line.tracking, 0, sizeof(line.tracking));
 	if (plan->observation == V92_PCM_FRAME_CONSTELLATION) {
 		double ratio = plan->gain / receiver->line.plan.gain;
 		line.calibration.gain *= ratio;
@@ -347,6 +374,49 @@ static bool paired_b1(const struct v92_upstream_data_rx *receiver)
 		receiver->line.received_frames < V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES;
 }
 
+static void track_bias(struct v92_upstream_data_line *line,
+	const struct v92_upstream_model *model, const struct v92_pcm_frame_rx *decoder,
+	const struct v92_pcm_frame_decision *decision, double error_sum, double squared_error)
+{
+	if (!tracks_bias(line, model)) return;
+	double ceiling = V92_DATA_MAX_RMS_ERROR * line->host.gain;
+	bool trusted = decision->bits_ready && !decision->uncertain && !decision->ambiguous &&
+		decision->rm == V92_PCM_FRAME_RM_NONE &&
+		squared_error <= V92_PCM_MAPPING_FRAME_SYMBOLS * ceiling * ceiling;
+	for (unsigned i = 0; trusted && i < V92_PCM_MAPPING_FRAME_SYMBOLS; i++)
+		trusted = line->received[i] && line->wire_known[i] &&
+			line->host_samples[i] != INT16_MIN && line->host_samples[i] != INT16_MAX &&
+			line->raw[i] > INT16_MIN && line->raw[i] < INT16_MAX &&
+			line->samples[i] != INT16_MIN && line->samples[i] != INT16_MAX &&
+			pcm_gain_contains(&line->host.bounds, line->wire[i] * line->polarity,
+				line->host_samples[i]);
+	if (!trusted) {
+		line->tracking.error_sum = 0.;
+		line->tracking.frames = 0;
+		return;
+	}
+	line->tracking.error_sum += error_sum;
+	if (++line->tracking.frames != BIAS_WINDOW_FRAMES) return;
+	/* Keep the total shift below a quarter of every used signed-point gap,
+	 * and half the existing physical error ceiling. Each update moves at
+	 * most 1/16 of that bound. Never change the gain or residual inverse. */
+	double spacing = INFINITY;
+	for (unsigned phase = 0; phase < V92_PCM_MAPPING_PHASES; phase++) {
+		const struct v92_cpd_constellation *points = &decoder->mapping.cpd.constellation[
+			decoder->mapping.cpd.frame_constellation[phase]];
+		spacing = fmin(spacing, 2. * points->positive_linear[0]);
+		for (unsigned i = 1; i < points->count; i++)
+			spacing = fmin(spacing, points->positive_linear[i] - points->positive_linear[i - 1]);
+	}
+	double bound = fmin(ceiling / 2., spacing / (4. * line->calibration.gain));
+	double step = line->tracking.error_sum /
+		(4. * BIAS_WINDOW_FRAMES * V92_PCM_MAPPING_FRAME_SYMBOLS);
+	step = fmax(-bound / 16., fmin(bound / 16., step));
+	line->tracking.bias = fmax(-bound, fmin(bound, line->tracking.bias + step));
+	line->tracking.error_sum = 0.;
+	line->tracking.frames = 0;
+}
+
 static enum v92_upstream_data_rx_result receive_frame(
 	struct v92_upstream_data_rx *receiver, struct v92_upstream_data_line *line,
 	struct v92_upstream_data_frame *frame)
@@ -361,6 +431,7 @@ static enum v92_upstream_data_rx_result receive_frame(
 	struct v92_pcm_frame_decision decision;
 	double predictions[V92_PCM_MAPPING_FRAME_SYMBOLS];
 	struct v92_upstream_data_frame generated = { 0 };
+	double error_sum = 0.;
 	enum v92_pcm_frame_result result;
 	bool b1u = line->received_frames < V92_B1U_FRAMES;
 	bool raw = line->plan.observation == V92_PCM_FRAME_CONSTELLATION;
@@ -418,9 +489,10 @@ static enum v92_upstream_data_rx_result receive_frame(
 			 * units. G.711 conversion preceded any host conditioning: a
 			 * second quantization here would invent different wire cells.
 			 * Retain actual companding noise and unclipped prediction error. */
-			double error = line->raw[symbol] - line->calibration.offset - line->correction[symbol] -
+			double error = line->raw[symbol] - v92_upstream_line_offset(line) - line->correction[symbol] -
 				predictions[symbol] / line->calibration.gain;
 
+			error_sum += error;
 			generated.squared_error += error * error;
 			if (!isfinite(generated.squared_error))
 				return fail(receiver, V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE);
@@ -468,6 +540,7 @@ static enum v92_upstream_data_rx_result receive_frame(
 		generated.ambiguous = decision.ambiguous;
 		generated.b1u_mismatches = decision.b1u_mismatches;
 	}
+	track_bias(line, &model, &decoder, &decision, error_sum, generated.squared_error);
 	observe_host_gain(line);
 	if (raw && !model.acquiring)
 		fit_offset(line);
@@ -540,7 +613,7 @@ static enum v92_upstream_data_rx_result decode_sample(
 		line->host_samples[line->symbol_count] = wire_known ? host_sample : 0;
 		line->received[line->symbol_count] = wire_known && available;
 		line->samples[line->symbol_count] = sample_round_s16(
-			(line->raw[line->symbol_count] - line->calibration.offset -
+			(line->raw[line->symbol_count] - v92_upstream_line_offset(line) -
 			 line->correction[line->symbol_count]) * line->calibration.gain);
 		if (++line->symbol_count == V92_PCM_MAPPING_FRAME_SYMBOLS)
 			return receive_frame(receiver, line, frame);

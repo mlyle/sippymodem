@@ -1609,7 +1609,7 @@ static bool test_rejection_and_failure(void)
 	receiver.decoder.observation = V92_PCM_FRAME_FILTER_OUTPUT;
 	CHECK(!v92_upstream_data_rx_is_valid(&receiver), "conflicting receive coordinates accepted");
 	saved_frame = frame;
-	for (unsigned int mutation = 0u; mutation < 15u; ++mutation) {
+	for (unsigned int mutation = 0u; mutation < 20u; ++mutation) {
 		receiver = saved;
 		switch (mutation) {
 		case 0: receiver.line.calibration.gain = NAN; break;
@@ -1627,6 +1627,11 @@ static bool test_rejection_and_failure(void)
 		case 12: receiver.line.calibration.samples = 1u; break;
 		case 13: receiver.line.calibration.samples = V92_B1U_SYMBOLS; break;
 		case 14: receiver.line.calibration.raw_sum = 1.0; break;
+		case 15: receiver.line.tracking.bias = NAN; break;
+		case 16: receiver.line.tracking.frames = 128; break;
+		case 17: receiver.line.tracking.error_sum = INFINITY; break;
+		case 18: receiver.line.tracking.error_sum = 1.; break;
+		case 19: receiver.line.tracking.bias = 1.; break;
 		}
 		struct v92_upstream_data_rx invalid = receiver;
 
@@ -1683,6 +1688,7 @@ enum channel_fault {
 	CHANNEL_LOSS,
 	CHANNEL_EXCESSIVE_OFFSET,
 	CHANNEL_RESIDUAL,
+	CHANNEL_DRIFT,
 };
 
 /* E2u recognizes its last control symbol after already consuming ten B1u
@@ -1701,6 +1707,7 @@ static bool check_channel_plan(
 	enum g711_law law, int polarity, bool extended, bool biased, bool conditioned,
 	bool changed_history, bool wire, int offset, enum channel_fault fault, const int *seed_offset)
 {
+	const unsigned data_frames = fault == CHANNEL_DRIFT ? 1536u : DATA_FRAMES;
 	/* Match the captured marginal B1u's training amplitude. */
 	int16_t lu = offset ? TEST_LU / 2 : TEST_LU;
 	struct channel channel = {
@@ -1717,7 +1724,8 @@ static bool check_channel_plan(
 	struct v92_upstream_data_line trained;
 	uint8_t expected[V92_PCM_MAPPING_MAX_BITS];
 	unsigned int source_frames = 0u, leading = 0u, delivered = 0u;
-	double b1_error = 0.0, comparison_error = 0.0;
+	double b1_error = 0.0, comparison_error = 0.0, drift_sum = 0.;
+	unsigned drift_samples = 0;
 	unsigned comparison_bad_bits = 0u, comparison_payload = 0u;
 	bool bad_b1 = false;
 	uint32_t random = UINT32_C(9376271);
@@ -1802,8 +1810,8 @@ static bool check_channel_plan(
 		work->comparison_rx.line.calibration.minimum = work->comparison_rx.line.calibration.maximum = plan.gain;
 	else
 		work->comparison_rx.line.polarity = -polarity;
-	for (unsigned int symbol = 0u; delivered < DATA_FRAMES &&
-	     symbol < (V92_B1U_FRAMES + DATA_FRAMES + V92_PCM_RX_DELAY_FRAMES + 6u) *
+	for (unsigned int symbol = 0u; delivered < data_frames &&
+	     symbol < (V92_B1U_FRAMES + data_frames + V92_PCM_RX_DELAY_FRAMES + 6u) *
 		     V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
 		int16_t sample;
 		struct v92_upstream_data_frame frame;
@@ -1833,7 +1841,22 @@ static bool check_channel_plan(
 			random = random * UINT32_C(1664525) + UINT32_C(1013904223);
 			sample += (int)(random >> 24) - 128;
 		}
+		if (fault == CHANNEL_DRIFT) {
+			/* Change the physical pre-codec DC after B1u, not decoder state.
+			 * Ramp two units per 128 frames to twelve, then hold for a second. */
+			unsigned drift = 2u * (delivered / 128u);
+			if (drift > 12u) drift = 12u;
+			channel.offset = offset + (offset < 0 ? -(int)drift : (int)drift);
+		}
+		struct channel unshifted = channel;
+		unshifted.offset = offset;
 		int16_t input = wire_sample(&channel, sample);
+		if (fault == CHANNEL_DRIFT && delivered >= data_frames - 512) {
+			/* Quantization can swallow a pre-codec offset. Measure the actual
+			 * physical change against the same known transmitted waveform. */
+			drift_sum += polarity * (input - wire_sample(&unshifted, sample));
+			drift_samples++;
+		}
 		bool first_frame = work->receiver.line.received_frames == 0u &&
 			work->receiver.line.symbol_count == V92_PCM_MAPPING_FRAME_SYMBOLS - 1u;
 		struct v92_pcm_frame_decision predicted;
@@ -1947,7 +1970,7 @@ static bool check_channel_plan(
 			for (unsigned i = 0; i < frame.bit_count; ++i)
 				bad_b1 |= frame.bits[i] != 1u;
 		}
-		if (fault && fault != CHANNEL_RESIDUAL && work->receiver.line.received_frames == V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
+		if (fault && fault != CHANNEL_RESIDUAL && fault != CHANNEL_DRIFT && work->receiver.line.received_frames == V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
 			double host_gain = conditioned ? .75 : 1.0;
 			if (fault == CHANNEL_NOISE)
 				CHECK(b1_error / (host_gain * host_gain) >
@@ -1967,6 +1990,9 @@ static bool check_channel_plan(
 		if (work->receiver.line.received_frames >= V92_B1U_ACQUISITION_FRAMES)
 			CHECK(memory_region_is_zero(&work->receiver.model.seed, sizeof(work->receiver.model.seed)),
 			      "acquisition seed survived into held-out B1u");
+		if (work->receiver.line.received_frames <= V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES)
+			CHECK(memory_region_is_zero(&work->receiver.line.tracking, sizeof(work->receiver.line.tracking)),
+			      "DC tracking changed independent B1u");
 		if (frame.bit_count == 0u || frame.b1u)
 			continue;
 		payload(expected, mapping.data_bits_per_frame, delivered);
@@ -1976,9 +2002,16 @@ static bool check_channel_plan(
 		      law, polarity, wire, delivered);
 		++delivered;
 	}
+	if (fault == CHANNEL_DRIFT) {
+		double observed = drift_sum / drift_samples;
+		CHECK(drift_samples > 5000 && fabs(observed) > 2. &&
+		      fabs(work->receiver.line.tracking.bias - observed) < 4.,
+		      "data DC tracking missed observed drift: observed=%g bias=%g law=%u polarity=%d host=%g",
+		      observed, work->receiver.line.tracking.bias, law, polarity, work->receiver.line.host.gain);
+	}
 	struct v92_upstream_data_line saved = work->receiver.line;
 
-	CHECK(delivered == DATA_FRAMES, "channel-plan data did not arrive");
+	CHECK(delivered == data_frames, "channel-plan data did not arrive");
 	/* Qualify the same held-out window as the call owner. Acquisition
 	 * residual is still reported and independently checked above. */
 	double quality_gain = wire ? work->receiver.line.host.gain : 1.0;
@@ -1990,7 +2023,7 @@ static bool check_channel_plan(
 	      work->receiver.line.calibration.minimum, work->receiver.line.calibration.maximum, plan.gain,
 	      work->receiver.line.residual.offset, work->receiver.line.residual.delay[0], work->receiver.line.residual.delay[1],
 	      work->receiver.line.residual.coefficient[0], work->receiver.line.residual.coefficient[1]);
-	CHECK(comparison_payload == DATA_FRAMES, "comparison channel shortened payload");
+	CHECK(comparison_payload == data_frames, "comparison channel shortened payload");
 	if (offset) {
 		CHECK(fabs(work->receiver.line.calibration.offset + work->receiver.line.residual.offset - offset * (conditioned ? .75 : 1.0)) < 16.0,
 		      "offset fit missed the physical bias: %g expected %g", work->receiver.line.calibration.offset + work->receiver.line.residual.offset,
@@ -2013,7 +2046,7 @@ static bool check_channel_plan(
 		      V92_B1U_VALIDATION_SYMBOLS * V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
 		      "inverted constellation did not acquire valid B1u");
 	}
-	if (fault == CHANNEL_RESIDUAL) {
+	if (fault == CHANNEL_RESIDUAL || fault == CHANNEL_DRIFT) {
 		work->lost = work->receiver;
 		struct v92_upstream_data_frame output, unchanged;
 		memset(&output, 0xa5, sizeof(output)); unchanged = output;
@@ -2021,6 +2054,8 @@ static bool check_channel_plan(
 		      fixture_octet(&work->lost, channel.code, 0, false, &output) == V92_UPSTREAM_DATA_RX_NO_PATH &&
 		      work->lost.failed && v92_upstream_data_rx_is_valid(&work->lost) &&
 		      !memcmp(&output, &unchanged, sizeof(output)) &&
+		      !memcmp(&work->lost.line.tracking, &work->receiver.line.tracking,
+			      sizeof(work->receiver.line.tracking)) &&
 		      !memcmp(&work->lost.line.residual, &work->receiver.line.residual, sizeof(work->receiver.line.residual)),
 		      "missing data media advanced residual history or corrupted receiver state");
 	}
@@ -2030,6 +2065,35 @@ static bool check_channel_plan(
 	      v92_upstream_data_rx_reset_control(&work->receiver) == V92_UPSTREAM_DATA_RX_OK &&
 	      memcmp(&saved, &work->receiver.line, sizeof(saved)) == 0,
 	      "control reset changed channel plan or line timing");
+	if (fault == CHANNEL_DRIFT) {
+		/* A plausible decoded frame cannot certify inconsistent wire/host
+		 * evidence. Seed a nearly complete window, then corrupt only the host
+		 * witness: it must discard the window without moving the bias. */
+		work->lost = work->receiver;
+		work->lost.line.tracking.frames = 127;
+		work->lost.line.tracking.error_sum = 100.;
+		for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; i++) {
+			int16_t sample;
+			struct v92_upstream_data_frame frame;
+			CHECK(v92_upstream_data_tx_next(&transmitter, source, &source_frames, &sample) ==
+			      V92_UPSTREAM_DATA_TX_OK, "host-witness source failed");
+			int16_t input = wire_sample(&channel, sample);
+			enum v92_upstream_data_rx_result result = fixture_octet_owned(&work->lost,
+				channel.code, input, input + 2, true, &frame);
+			CHECK(result == (i + 1 == V92_PCM_MAPPING_FRAME_SYMBOLS ?
+			      V92_UPSTREAM_DATA_RX_FRAME : V92_UPSTREAM_DATA_RX_OK), "host-witness decode failed");
+		}
+		CHECK(work->lost.line.tracking.bias == saved.tracking.bias &&
+		      work->lost.line.tracking.frames == 0 && work->lost.line.tracking.error_sum == 0.,
+		      "inconsistent host evidence trained data DC");
+		work->lost = work->receiver;
+		work->lost.line.tracking.bias = V92_DATA_MAX_RMS_ERROR * work->lost.line.host.gain;
+		CHECK(!v92_upstream_data_rx_is_valid(&work->lost), "unbounded data DC was accepted");
+		work->lost = work->receiver;
+		CHECK(v92_upstream_data_rx_start_b1u(&work->lost, &mapping, &plan) == V92_UPSTREAM_DATA_RX_OK &&
+		      memory_region_is_zero(&work->lost.line.tracking, sizeof(work->lost.line.tracking)) &&
+		      v92_upstream_data_rx_is_valid(&work->lost), "new B1u retained data DC tracking");
+	}
 	return true;
 }
 
@@ -4189,6 +4253,11 @@ static bool test_probability_cells(enum g711_law law, int polarity)
 
 int main(void)
 {
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (int polarity = -1; polarity <= 1; polarity += 2)
+			for (unsigned conditioned = 0; conditioned < 2; conditioned++)
+				if (!test_channel_plan(law, polarity, false, false, conditioned, false,
+				    true, polarity * 128, CHANNEL_DRIFT)) return 1;
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (int polarity = -1; polarity <= 1; polarity += 2)
 			if (!test_probability_cells(law, polarity)) return 1;

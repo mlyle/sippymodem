@@ -52,6 +52,12 @@ struct v92_upstream_data_line {
 		struct pcm_gain bounds;
 		double gain;
 	} host;
+	/* Slow data-only correction, separate from frozen acquisition. A window
+	 * contains only consecutive confident frames with complete wire media. */
+	struct {
+		double bias, error_sum;
+		uint16_t frames;
+	} tracking;
 	int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
 	int16_t wire[V92_PCM_MAPPING_FRAME_SYMBOLS];
 	/* Gain-only physical samples, before echo subtraction or polarity. */
@@ -67,6 +73,11 @@ struct v92_upstream_data_line {
 	uint8_t symbol_count;
 	int8_t polarity;
 };
+
+static inline double v92_upstream_line_offset(const struct v92_upstream_data_line *line)
+{
+	return line->calibration.offset + line->tracking.bias;
+}
 
 enum { V92_UPSTREAM_INPUT_QUEUE = 1280 };
 struct v92_upstream_input {
@@ -132,7 +143,14 @@ struct v92_upstream_data_frame {
  * media after fitting takes ordinary no-path recovery.
  * A linear channel path with complete wire/host evidence also fits a bounded
  * constant offset at the end of acquisition. Subtract it in decoding, wire
- * cells and residuals; validation and payload never update the fit.
+ * cells and residuals; validation and payload never update the fit. After
+ * independent B1u drains, a linear residual channel may separately track
+ * slow DC drift using consecutive confident data frames. Displacement and
+ * slew are bounded by physical constellation spacing and host gain; uncertain,
+ * clipped or missing media never trains this correction. Gain and the
+ * acquired residual filter remain frozen, and quality uses the complete
+ * current-frame error before any update. New B1u discards this data-only
+ * correction.
  * When actual wire codes are supplied, the same acquisition interval fits
  * post-codec host gain for call-level quality scoring, independently of the
  * mapping's calibration gain. Missing or inconsistent pairs close this fit.

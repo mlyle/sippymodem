@@ -14,7 +14,7 @@ struct channel_case {
 	unsigned seed, robbing, peak, noise, transient;
 	double host_gain;
 	int shift, gap;
-	bool inverse, nonuniform, unrelated;
+	bool inverse, nonuniform, unrelated, drift;
 };
 
 struct fixture {
@@ -98,11 +98,13 @@ static bool run_case(const struct channel_case *test)
 		double source = points->positive_linear[(random_value(&seed) >> 16) % points->count];
 		if (random_value(&seed) & 0x10000)
 			source = -source;
-		double peer = source / line->calibration.gain;
+		line->tracking.bias = test->drift ? 2. * (i / 1536u) * test->host_gain : 0.;
+		double target = source / line->calibration.gain + line->tracking.bias;
+		double peer = target;
 		if (test->inverse) {
 			peer += line->residual.coefficient[0] * target_history[(i + 12 - 4) % 12] +
 				line->residual.coefficient[1] * target_history[(i + 12 - 6) % 12] + line->residual.offset;
-			target_history[i % 12] = source / line->calibration.gain;
+			target_history[i % 12] = target;
 		}
 		int actual_shift = i >= CHANGE && (!test->transient || i < CHANGE + test->transient) ? test->shift : 0;
 		int model_shift = (int)pcm_host_echo_window_delay_samples(echo) - (int)original_delay;
@@ -119,8 +121,11 @@ static bool run_case(const struct channel_case *test)
 			timing->window.position + 1 == timing->window.points;
 		if (finishing)
 			memcpy(&fixture->saved, receiver, sizeof(*receiver));
+		uint64_t prior_samples = timing->samples;
 		int moved = v92_echo_timing_observe(timing, echo, receiver, PCM_HOST_ECHO_FILTER,
 			wire, received, cleaned, (int)i != test->gap);
+		CHECK(!test->drift || !i || i % 1536u || timing->samples == prior_samples + 1,
+		      "a data bias update restarted the echo timing window");
 		CHECK(!timing->initialized || timing->inverse.offset == line->residual.offset,
 		      "echo projection lost its frozen channel parameters");
 		if (moved != 0) {
@@ -181,6 +186,16 @@ int main(void)
 {
 	if (!test_residual_projection()) return 1;
 	unsigned cases = 0;
+	for (unsigned law = 0; law < 2; law++)
+		for (int shift = -97; shift <= 97; shift += 97)
+			for (unsigned g = 0; g < 3; g++) {
+				const double gains[] = { .75, 1., 2. };
+				struct channel_case test = { .law = law, .seed = g + 1, .host_gain = gains[g],
+					.peak = 300, .noise = 4, .inverse = true, .shift = shift,
+					.drift = true, .gap = -1 };
+				if (!run_case(&test)) return 1;
+				cases++;
+			}
 	for (unsigned law = 0; law < 2; law++)
 		for (unsigned robbing = 0; robbing < 3; robbing++)
 			for (unsigned seed = 1; seed <= 4; seed++) {

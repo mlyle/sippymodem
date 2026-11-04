@@ -214,7 +214,7 @@ void v92_upstream_model_observe(struct v92_upstream_model *model,
 static bool observation_offset(const struct v92_upstream_data_line *line,
 	int32_t raw, int16_t wire, int16_t host, double *offset)
 {
-	double sample = (raw - line->calibration.offset) * line->calibration.gain;
+	double sample = (raw - v92_upstream_line_offset(line)) * line->calibration.gain;
 	int32_t physical = raw * line->polarity;
 	/* Test containment using the acquired rounding interval, not the
 	 * chosen point estimate. Do not narrow it using held-out data. */
@@ -224,7 +224,7 @@ static bool observation_offset(const struct v92_upstream_data_line *line,
 	    !pcm_gain_contains(&line->host.bounds, wire * line->polarity, host))
 		return false;
 	/* Rounding the calibrated sample does not shift the codec interval. */
-	*offset = (raw - (int32_t)host * line->polarity - line->calibration.offset) * line->calibration.gain;
+	*offset = (raw - (int32_t)host * line->polarity - v92_upstream_line_offset(line)) * line->calibration.gain;
 	return isfinite(*offset);
 }
 
@@ -574,7 +574,7 @@ static bool wire_cells(const struct v92_upstream_data_line *line,
 		    !g711_quantization_interval(law, line->wire[i] * line->polarity, &cell))
 			return false;
 		double offset = line->raw[i] - (int32_t)host * line->polarity -
-			line->calibration.offset - line->correction[i];
+			v92_upstream_line_offset(line) - line->correction[i];
 		double lower = cell.lower, upper = cell.upper;
 		if (probability) {
 			struct g711_probability_interval bounds = g711_probability_bounds(cell);
