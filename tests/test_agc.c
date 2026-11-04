@@ -85,6 +85,33 @@ static bool test_q10_sample_scaling(void)
 	return true;
 }
 
+static bool test_q10_input_power(void)
+{
+	static const uint32_t powers[] = {
+		0, 1, 1023, 1024, 1048575, 1048576, 1000000, 9600000,
+		UINT32_MAX / 2, UINT32_MAX,
+	};
+	for (unsigned n = 0; n < ARRAY_LENGTH(powers); ++n) {
+		uint32_t previous = powers[n];
+		for (uint32_t gain = 0; gain <= UINT16_MAX; ++gain) {
+			uint32_t limit = agc_input_power_q10((uint16_t)gain, powers[n]);
+			CHECK(limit <= previous, "power limit increased with gain=%u", gain);
+			previous = limit;
+			if (gain <= 1024) {
+				CHECK(limit == powers[n], "unity-or-lower gain changed nominal power");
+			} else {
+				/* Characterize exact floor rounding without repeating division. */
+				uint64_t square = (uint64_t)gain * gain;
+				uint64_t scaled = (uint64_t)powers[n] * 1048576;
+				CHECK((uint64_t)limit * square <= scaled &&
+				      ((uint64_t)limit + 1) * square > scaled,
+				      "power conversion lost exact floor or overflowed at gain=%u", gain);
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_fixed_square_root_profile(void)
 {
 	uint32_t value = 1;
@@ -355,7 +382,7 @@ static bool test_level_measurement_contract(void)
 
 int main(void)
 {
-	if (!test_q10_sample_scaling() ||
+	if (!test_q10_sample_scaling() || !test_q10_input_power() ||
 	    !test_fixed_square_root_profile() || !test_exact_arithmetic() ||
 	    !test_smoothing_weight_contract() ||
 	    !test_lifecycle_and_contracts() ||

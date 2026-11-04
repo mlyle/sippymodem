@@ -2,6 +2,7 @@
 
 #include "v34_datapump.h"
 
+#include "agc.h"
 #include "datapump_link.h"
 #include "datapump_media.h"
 #include "datapump_timing.h"
@@ -490,15 +491,9 @@ static bool enter_link(struct v34_datapump *datapump)
 	/* Apply the trained Q10 gain to the carrier test as well as decoding.
 	 * Retain this floor through retraining, where the new gain is not ready.
 	 * Never raise the existing floor for stronger signals. */
-	uint32_t gain = (uint32_t)
-		datapump->call.state.phase4.receive.line.timing.gain.gain;
-	uint32_t unity = 1u << V34_GAIN_FRACTION_BITS;
-
-	datapump->carrier_power_floor = DATAPUMP_MIN_QAM_LINE_POWER;
-	if (gain > unity)
-		datapump->carrier_power_floor = (uint32_t)(
-			(uint64_t)DATAPUMP_MIN_QAM_LINE_POWER * unity * unity /
-			(gain * gain));
+	datapump->carrier_power_floor = agc_input_power_q10(
+		(uint16_t)datapump->call.state.phase4.receive.line.timing.gain.gain,
+		DATAPUMP_MIN_QAM_LINE_POWER);
 	datapump->data_quality = data_quality;
 	datapump->missing_carrier_samples = 0;
 	datapump->carrier_recovery_samples = 0;

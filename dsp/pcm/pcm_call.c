@@ -5,6 +5,7 @@
 #include "v90_phase4_owned.h"
 #include "pcm_phase3_owned.h"
 #include "pcm_power.h"
+#include "agc.h"
 
 #include "memory_region.h"
 #include "packed_bits.h"
@@ -2513,8 +2514,6 @@ static uint32_t retrain_silence_ceiling(
 {
 	const struct v90_digital_path *path;
 	const struct v34_line_receiver *line;
-	uint64_t gain;
-	const uint64_t unity = UINT64_C(1) << V34_GAIN_FRACTION_BITS;
 
 	if (!pcm_call_uses_conventional_upstream(call) ||
 	    call->local_role != V90_DIGITAL_MODEM ||
@@ -2535,15 +2534,12 @@ static uint32_t retrain_silence_ceiling(
 		else
 			line = &startup->state.data.line;
 	}
-	gain = (uint16_t)line->timing.gain.gain;
-	if (gain <= unity)
-		return nominal_window_energy;
 	/* The trained Q5.10 multiplier compensates conventional upstream loss.
 	 * Scale guard, pause, and raw tone power by its square; otherwise decodable
 	 * weak QAM can retain a silence-only pause and weak Tone A is never heard.
 	 * The largest numerator is 9600000 * 1024^2 (<2^44); positive int16 gain
 	 * leaves even the smaller pause ceiling >=4096. No rounding can yield 0. */
-	return (uint32_t)(nominal_window_energy * unity * unity / (gain * gain));
+	return agc_input_power_q10((uint16_t)line->timing.gain.gain, nominal_window_energy);
 }
 
 static bool retrain_candidate_is_active(

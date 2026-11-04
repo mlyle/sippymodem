@@ -42,6 +42,18 @@ static inline int16_t agc_scale_q10(
 	return product < 0 ? -32512 : 32512;
 }
 
+/* Convert a post-gain power limit to raw-input units using a nonnegative
+ * Q10 sample gain. Gains at or below unity retain the nominal limit; this
+ * conversion only lowers raw carrier and quiet thresholds.
+ * Truncate exactly; the largest numerator is below 2^52 and a uint16_t gain
+ * squared fits uint32_t. The owner chooses the limit and acquisition stage. */
+static inline uint32_t agc_input_power_q10(uint16_t gain, uint32_t nominal)
+{
+	if (gain <= 1024u)
+		return nominal;
+	return (uint32_t)(((uint64_t)nominal << 20) / ((uint32_t)gain * gain));
+}
+
 enum agc_result {
 	AGC_OK,
 	AGC_INVALID_ARGUMENT,
