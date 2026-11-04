@@ -170,7 +170,11 @@ enum rtp_transmit_result rtp_transmit_queue(struct rtp_transmit *transmit,
 	if (transmit->count == RTP_TRANSMIT_CAPACITY)
 		return RTP_TRANSMIT_FULL;
 	struct transmit_clock next = transmit->clock;
-	bool reset = !next.started || (!transmit->count && now_ns > next.next_deadline_ns);
+	/* A brief underrun must not add another reserve to an already late
+	 * packet. Preserve the learned clock while its lateness fits within
+	 * that reserve; a longer break starts a fresh producer epoch. */
+	uint64_t restart = add_u64_saturating(next.next_deadline_ns, next.reserve_ns);
+	bool reset = !next.started || (!transmit->count && now_ns > restart);
 	if (reset)
 		reset_clock(&next);
 	uint64_t deadline;

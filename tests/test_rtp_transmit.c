@@ -87,7 +87,7 @@ static bool test_bounds(void)
 	return true;
 }
 
-enum production_kind { STEADY, HOLD, BATCH };
+enum production_kind { STEADY, HOLD, BATCH, UNDERRUN };
 
 static uint64_t admission(unsigned n, uint64_t frame, unsigned numerator, unsigned denominator,
 	enum production_kind kind)
@@ -97,6 +97,10 @@ static uint64_t admission(unsigned n, uint64_t frame, unsigned numerator, unsign
 		time = UINT64_C(1000000000) + (uint64_t)(n / 4) * 4 * frame;
 	if (kind == HOLD && n >= 500 && n <= 502)
 		time = UINT64_C(1000000000) + 502 * frame;
+	/* The 21 ms hold exceeds a 20 ms reserve by 1 ms. Resuming must not add
+	 * another full reserve to a stream that is only one millisecond late. */
+	if (kind == UNDERRUN && n >= 500 && n <= 502)
+		time = UINT64_C(1000000000) + 502 * frame + frame / 10;
 	return time;
 }
 
@@ -104,7 +108,8 @@ static bool clock_case(uint64_t frame, unsigned numerator, unsigned denominator,
 	enum production_kind kind)
 {
 	enum { COUNT = 1200 };
-	struct rtp_transmit *queue = rtp_transmit_create(frame, 30000000, sizeof(uint64_t));
+	struct rtp_transmit *queue = rtp_transmit_create(frame,
+		kind == UNDERRUN ? 2 * frame : 30000000, sizeof(uint64_t));
 	CHECK(queue != NULL, "clock queue allocation");
 	uint64_t now = 1000000000, sent_times[COUNT], largest_gap = 0;
 	unsigned produced = 0, sent = 0;
@@ -215,7 +220,8 @@ static bool test_feedback(void)
 
 int main(void)
 {
-	if (!test_bytes_and_bounds() || !test_epochs() || !test_bounds() || !test_clocks() || !test_feedback())
+	if (!test_bytes_and_bounds() || !test_epochs() || !test_bounds() || !test_clocks() ||
+	    !clock_case(10000000, 1, 1, UNDERRUN) || !test_feedback())
 		return 1;
 	puts("RTP transmit byte ownership, bounds, epochs, clock matrix, feedback and cancellation passed");
 	return 0;
