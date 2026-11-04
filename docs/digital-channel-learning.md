@@ -2,9 +2,10 @@
 
 The digital-to-digital path measures received octets with `pcm_octet_probe`
 and selects a mapping with `v91_profile`. This differs from analogue V.92
-upstream selection, whose [noise and power model](pcm-constellations.md)
-works before the codec. A digital path can have pads, law conversions,
-polarity changes, or robbed bits even when its RTP transport is lossless.
+upstream selection, whose [channel inverse and power model](pcm-upstream-channel.md)
+account for the analogue path and codec. A digital path can have pads, law
+conversions, polarity changes, or robbed bits even when its RTP transport is
+lossless.
 
 ## Select distinguishable receive sets
 
