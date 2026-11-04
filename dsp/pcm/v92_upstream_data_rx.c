@@ -404,9 +404,7 @@ static void track_bias(struct v92_upstream_data_line *line,
 	for (unsigned phase = 0; phase < V92_PCM_MAPPING_PHASES; phase++) {
 		const struct v92_cpd_constellation *points = &decoder->mapping.cpd.constellation[
 			decoder->mapping.cpd.frame_constellation[phase]];
-		spacing = fmin(spacing, 2. * points->positive_linear[0]);
-		for (unsigned i = 1; i < points->count; i++)
-			spacing = fmin(spacing, points->positive_linear[i] - points->positive_linear[i - 1]);
+		spacing = fmin(spacing, v92_cpd_constellation_minimum_gap(points));
 	}
 	double bound = fmin(ceiling / 2., spacing / (4. * line->calibration.gain));
 	double step = line->tracking.error_sum /

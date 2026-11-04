@@ -99,6 +99,61 @@ static bool test_signed_constellation(void)
 	return true;
 }
 
+/* Independent geometry oracle: compare every pair in the explicit signed
+ * alphabet, rather than assuming adjacent points or a special central gap. */
+static int32_t exhaustive_signed_gap(const struct v92_cpd_constellation *points)
+{
+	int32_t signed_points[2 * V92_CPD_MAX_CONSTELLATION_POINTS];
+	int32_t gap = INT32_MAX;
+
+	for (unsigned i = 0; i < points->count; ++i) {
+		signed_points[2 * i] = points->positive_linear[i];
+		signed_points[2 * i + 1] = -(int32_t)points->positive_linear[i];
+	}
+	for (unsigned i = 0; i < 2u * points->count; ++i)
+		for (unsigned j = 0; j < i; ++j) {
+			int32_t difference = signed_points[i] - signed_points[j];
+			if (difference < 0) difference = -difference;
+			if (difference < gap) gap = difference;
+		}
+	return gap;
+}
+
+static bool test_constellation_minimum_gap(void)
+{
+	static const int16_t catalog[] = {
+		1, 2, 3, 4, 7, 16, 127, 255, 256, 257, 16384, INT16_MAX,
+	};
+
+	for (unsigned mask = 1; mask < (1u << ARRAY_LENGTH(catalog)); ++mask) {
+		struct v92_cpd_constellation points = { 0 };
+		for (unsigned i = 0; i < ARRAY_LENGTH(catalog); ++i)
+			if (mask & (1u << i))
+				points.positive_linear[points.count++] = catalog[i];
+		struct v92_cpd_constellation before = points;
+		CHECK(v92_cpd_constellation_minimum_gap(&points) == exhaustive_signed_gap(&points) &&
+		      memcmp(&before, &points, sizeof(points)) == 0,
+		      "signed gap differs from all-pairs oracle for mask %u", mask);
+	}
+	struct v92_cpd_constellation points = { 0 };
+	for (unsigned count = 1; count <= V92_CPD_MAX_CONSTELLATION_POINTS; ++count) {
+		points.count = (uint8_t)count;
+		points.positive_linear[count - 1] = count == V92_CPD_MAX_CONSTELLATION_POINTS ?
+			INT16_MAX : (int16_t)(129u + 257u * (count - 1));
+		CHECK(v92_cpd_constellation_minimum_gap(&points) == exhaustive_signed_gap(&points),
+		      "full-width signed gap differs at count %u", count);
+	}
+	/* Positive points can be uniformly spaced without the signed alphabet
+	 * having that spacing. Echo timing's positive-only step is different. */
+	points = (struct v92_cpd_constellation){ .positive_linear = { 100, 500, 900 }, .count = 3 };
+	CHECK(v92_cpd_constellation_minimum_gap(&points) == 200,
+	      "central signed gap was replaced by positive-point spacing");
+	points = (struct v92_cpd_constellation){ .positive_linear = { INT16_MAX }, .count = 1 };
+	CHECK(v92_cpd_constellation_minimum_gap(&points) == 65534,
+	      "singleton signed gap narrowed to 16 bits");
+	return true;
+}
+
 static struct v92_cpd_parameters selection(unsigned int sections)
 {
 	struct v92_cpd_parameters parameters = {
@@ -839,6 +894,7 @@ int main(void)
 	} tests[] = {
 		{ "filter response length", test_filter_response_length },
 		{ "signed constellation", test_signed_constellation },
+		{ "signed constellation minimum gap", test_constellation_minimum_gap },
 		{ "table inheritance", test_table_inheritance },
 		{ "cleardown wire image", test_cleardown_wire_image },
 		{ "base encoding", test_base_encoding },

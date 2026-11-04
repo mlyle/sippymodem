@@ -554,11 +554,7 @@ static bool design(struct v92_cpd_parameters *parameters,
 		aligned.gain = 32768.0 * 262144.0 / (z2_scale * next.four_times_gain_q0_16 * upstream_level);
 		if (rate_mask && !codec_model) {
 			const struct v92_cpd_constellation *points = &next.constellation[0];
-			int gap = 2 * points->positive_linear[0];
-
-			for (unsigned i = 1; i < points->count; i++)
-				if (points->positive_linear[i] - points->positive_linear[i - 1] < gap)
-					gap = points->positive_linear[i] - points->positive_linear[i - 1];
+			int32_t gap = v92_cpd_constellation_minimum_gap(points);
 			/* Estimate noise in constellation coordinates from the same
 			 * channel inverse and actual B1u energy. Require three estimated
 			 * standard deviations to either nearest decision boundary. This

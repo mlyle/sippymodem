@@ -126,6 +126,24 @@ static inline int16_t v92_cpd_signed_point(
 		(int16_t)-constellation->positive_linear[-eta - 1];
 }
 
+/* Minimum separation in the complete symmetric signed alphabet, including
+ * the central pair -first,+first. The owner supplies a validated nonempty
+ * constellation; a singleton positive table still has two signed points.
+ * Widen before doubling: the largest possible gap is 65534. */
+static inline int32_t v92_cpd_constellation_minimum_gap(
+	const struct v92_cpd_constellation *constellation)
+{
+	int32_t gap = 2 * (int32_t)constellation->positive_linear[0];
+
+	for (unsigned i = 1; i < constellation->count; ++i) {
+		int32_t adjacent = (int32_t)constellation->positive_linear[i] -
+			constellation->positive_linear[i - 1];
+		if (adjacent < gap)
+			gap = adjacent;
+	}
+	return gap;
+}
+
 /* V.92 Table 30 fields. Optional sections use a canonical representation:
  * absent sections and unused array entries are zero. Filter sections are z1,
  * p1, z2, and p2 in wire order. Constellation levels are positive, strictly
