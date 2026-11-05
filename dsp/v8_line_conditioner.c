@@ -15,6 +15,7 @@ enum {
 	V8_LINE_POWER_WEIGHT_Q15 =
 		(0x8000 + V8_LINE_POWER_HISTORY_SAMPLES / 2) /
 		V8_LINE_POWER_HISTORY_SAMPLES,
+	V8_LINE_GAIN_CORRECTION_LIMIT = 1000,
 };
 
 static const int16_t V8_CALLER_ENTRANCE_FILTER[] = {
@@ -58,6 +59,9 @@ bool v8_line_conditioner_is_valid(
 	       gain_mode_is_valid(conditioner->gain_mode) &&
 	       conditioner->gain != 0 &&
 	       (int16_t)conditioner->gain > 0 &&
+	       conditioner->filtered_energy <= INT16_MAX &&
+	       magnitude_s16(wrap_s16_from_s32(conditioner->gain_delta)) <=
+		       V8_LINE_GAIN_CORRECTION_LIMIT &&
 	       conditioner->power_index < V8_LINE_POWER_HISTORY_SAMPLES &&
 	       conditioner->input_count < V8_LINE_INPUT_QUEUE_SAMPLES &&
 	       conditioner->overflow_count < 10;
@@ -120,7 +124,7 @@ static void adapt_gain(
 	delta = arithmetic_shift_right_u32(
 		(uint32_t)(gain_step(conditioner->gain_mode) * deviation), 16) +
 		(int16_t)conditioner->gain_delta;
-	if (magnitude_s16(wrap_s16_from_s32(delta)) <= 1000) {
+	if (magnitude_s16(wrap_s16_from_s32(delta)) <= V8_LINE_GAIN_CORRECTION_LIMIT) {
 		conditioner->gain_delta = (uint16_t)delta;
 		return;
 	}

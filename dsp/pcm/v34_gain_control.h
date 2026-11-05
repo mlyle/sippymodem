@@ -34,9 +34,9 @@ struct v34_gain_control {
 	uint32_t energy_accumulator;
 	/* One sample clock owns history insertion and correction cadence. */
 	uint16_t history_index;
-	uint16_t average_energy;
+	uint16_t average_energy; /* Nonnegative signed-16 smoothed energy. */
 	int16_t gain; /* Nonnegative Q5.10 sample multiplier. */
-	int16_t correction;
+	int16_t correction; /* Retained integral correction in [-500, 500]. */
 	enum v34_gain_mode mode;
 	bool initialized;
 };

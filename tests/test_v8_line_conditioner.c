@@ -185,6 +185,38 @@ static bool test_clipping_recovery(void)
 	return true;
 }
 
+static bool test_correction_state_bounds(void)
+{
+	for (unsigned mode = V8_LINE_GAIN_FROZEN; mode <= V8_LINE_GAIN_COARSE; ++mode)
+	for (unsigned scenario = 0; scenario < 8; ++scenario) {
+		struct v8_line_conditioner line;
+		struct v8_line_conditioned_block block = { .samples = { 11, 12, 13, 14 } };
+		struct v8_line_conditioned_block saved_block = block;
+		bool ready = true;
+		CHECK(v8_line_conditioner_init(&line, V8_ANSWERING_STATION) ==
+			      V8_LINE_CONDITIONER_OK, "gain state fixture did not initialize");
+		line.gain_mode = (enum v8_line_gain_mode)mode;
+		line.filtered_energy = scenario < 2 ?
+			(scenario ? UINT16_MAX : (uint16_t)INT16_MAX + 1u) : INT16_MAX;
+		line.gain_delta = scenario < 2 ? 0 :
+			(uint16_t)(int16_t[]){ 0, 0, -1001, 1001, INT16_MIN, INT16_MAX, -1000, 1000 }[scenario];
+		bool valid = scenario >= 6;
+		CHECK(v8_line_conditioner_is_valid(&line) == valid,
+		      "line state accepted an unbounded energy or correction (%u)", scenario);
+		if (valid)
+			continue;
+		struct v8_line_conditioner saved = line;
+		CHECK(v8_line_conditioner_process_sample(&line, 0, &block, &ready) ==
+			      V8_LINE_CONDITIONER_INVALID_ARGUMENT &&
+		      v8_line_conditioner_set_gain_mode(&line, V8_LINE_GAIN_FINE) ==
+			      V8_LINE_CONDITIONER_INVALID_ARGUMENT &&
+		      v8_line_states_equal(&line, &saved) &&
+		      v8_line_blocks_equal(&block, &saved_block) && ready,
+		      "invalid gain state changed state or output");
+	}
+	return true;
+}
+
 static bool test_contracts(void)
 {
 	struct v8_line_conditioner line;
@@ -264,6 +296,7 @@ int main(void)
 	} tests[] = {
 		{ "exact profiles", test_exact_profiles },
 		{ "clipping recovery", test_clipping_recovery },
+		{ "correction state bounds", test_correction_state_bounds },
 		{ "contracts", test_contracts },
 	};
 	unsigned int failures = 0;

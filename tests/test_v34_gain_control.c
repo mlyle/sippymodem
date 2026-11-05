@@ -136,6 +136,41 @@ static bool test_saturation(void)
 	return true;
 }
 
+static bool test_correction_state_bounds(void)
+{
+	for (unsigned mode = 0; mode < 2; ++mode)
+	for (unsigned scenario = 0; scenario < 8; ++scenario) {
+		struct v34_gain_control control;
+		struct v34_analytic_sample output = { 11, 12 }, saved_output = output;
+		int16_t scalar = 13;
+		CHECK(v34_gain_control_init(&control, 1024) == V34_GAIN_CONTROL_OK,
+		      "gain state fixture did not initialize");
+		control.mode = mode ? V34_GAIN_FROZEN : V34_GAIN_TRACKING;
+		control.average_energy = scenario < 2 ?
+			(scenario ? UINT16_MAX : (uint16_t)INT16_MAX + 1u) : INT16_MAX;
+		control.correction = scenario < 2 ? 0 :
+			(int16_t[]){ 0, 0, -501, 501, INT16_MIN, INT16_MAX, -500, 500 }[scenario];
+		bool valid = scenario >= 6;
+		CHECK(v34_gain_control_is_valid(&control) == valid,
+		      "gain state accepted an unbounded energy or correction (%u)", scenario);
+		if (valid)
+			continue;
+		struct v34_gain_control saved = control;
+		CHECK(v34_gain_control_process(&control,
+			      (struct v34_analytic_sample){ 0 }, &output) ==
+			      V34_GAIN_CONTROL_INVALID_STATE &&
+		      v34_gain_control_process_info(&control, 0, &scalar) ==
+			      V34_GAIN_CONTROL_INVALID_STATE &&
+		      v34_gain_control_refresh_level(&control) == V34_GAIN_CONTROL_INVALID_STATE &&
+		      v34_gain_control_set_mode(&control, V34_GAIN_TRACKING) ==
+			      V34_GAIN_CONTROL_INVALID_STATE &&
+		      memcmp(&control, &saved, sizeof(control)) == 0 &&
+		      memcmp(&output, &saved_output, sizeof(output)) == 0 && scalar == 13,
+		      "invalid gain state changed state or output");
+	}
+	return true;
+}
+
 static bool test_gain_bounds(void)
 {
 	/* Exercise both corrections over every valid Q10 gain, including zero
@@ -157,12 +192,14 @@ static bool test_gain_bounds(void)
 				control.history[index] = 1000;
 			control.history_index = V34_GAIN_HISTORY_SAMPLES - 1u;
 			control.gain = (int16_t)gain;
-			control.correction = decrease ? 2000 : -2000;
+			control.correction = decrease ? 500 : -500;
+			control.average_energy = decrease ? 10000 : 0;
 			control.mode = frozen ? V34_GAIN_FROZEN : V34_GAIN_TRACKING;
 			expected = control;
 			expected.history[V34_GAIN_HISTORY_SAMPLES - 1u] = 0;
 			expected.history_index = 0;
 			if (!frozen) {
+				expected.average_energy = decrease ? 8500 : 0;
 				expected.correction = 0;
 				if (decrease || gain <= 0x6a00)
 					expected.gain = (int16_t)(gain *
@@ -595,6 +632,7 @@ int main(void)
 		{ "INFO scalar ownership", test_info_ownership },
 		{ "saturation", test_saturation },
 		{ "bounded gain corrections", test_gain_bounds },
+		{ "correction state bounds", test_correction_state_bounds },
 		{ "ownership", test_ownership },
 		{ "measured acquisition refresh", test_measured_refresh },
 		{ "refresh correction continuation", test_refresh_continuation },

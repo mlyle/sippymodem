@@ -51,6 +51,8 @@ bool v34_gain_control_is_valid(const struct v34_gain_control *control)
 {
 	return control != NULL && control->initialized &&
 	       control->history_index < V34_GAIN_HISTORY_SAMPLES &&
+	       control->average_energy <= INT16_MAX &&
+	       magnitude_s16(control->correction) <= V34_GAIN_CORRECTION_LIMIT &&
 	       control->gain >= 0 &&
 	       (control->mode == V34_GAIN_TRACKING ||
 		control->mode == V34_GAIN_FROZEN);
