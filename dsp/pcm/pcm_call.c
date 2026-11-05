@@ -776,7 +776,8 @@ static bool v92_data_path_is_valid(const struct pcm_call *call)
 		stage = path->downstream_stage;
 		if ((stage != V92_PHASE4_E2U_DOWNSTREAM_TRAINING &&
 		     stage != V92_PHASE4_E2U_DOWNSTREAM_DATA) ||
-		    !v92_upstream_data_rx_is_valid(&path->upstream) || !v92_fast_is_valid(call) ||
+		    !v92_upstream_data_rx_is_valid(&path->upstream) ||
+		    !v92_b1_sync_is_valid(&path->b1_sync, &path->upstream) || !v92_fast_is_valid(call) ||
 		    !v92_ru_line_rx_is_valid(&path->ru) ||
 		    path->ru.constellation != call->phase3_configuration.v92_digital.jp.rate_renegotiation_constellation ||
 		    !v90_pcm_mapping_is_valid(&path->training_mapping) ||
@@ -4396,6 +4397,8 @@ static bool start_v92_data_path(struct pcm_call *next, const struct pcm_call *ca
 		/* Decline a stale gain or incompatible observation domain. A seed
 		 * never bypasses fresh fitting or the held-out B1u quality gate. */
 		(void)v92_upstream_model_seed(&path->upstream, &call->state.phase4.v92.upstream_seed);
+		if (!v92_b1_sync_init(&path->b1_sync, &from->receive, &path->upstream))
+			return false;
 		if (!v92_ru_line_rx_init_after_e2u(&path->ru, &from->receive) ||
 		    !v92_data_quality_restart(&next->pcm_upstream_quality))
 			return false;
@@ -5312,7 +5315,7 @@ static enum pcm_call_result v92_data_octet_owned(
 			path->upstream.line.received_frames >= V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES &&
 			!v92_peer_b1_received_owned(call);
 		received = path->upstream.failed || startup_rejected ? V92_UPSTREAM_DATA_RX_OK :
-			v92_upstream_data_rx_octet_owned(&path->upstream,
+			v92_b1_sync_octet_owned(&path->b1_sync, &path->upstream,
 				received_octet, received_sample, host_sample, received_available, &frame);
 		if (received == V92_UPSTREAM_DATA_RX_NO_PATH) {
 			if (path->fast.control.cleardown.active)
@@ -5405,13 +5408,16 @@ enum pcm_call_result pcm_call_drain_receive_owned(struct pcm_call *call,
 		&call->state.data_path.v92_digital.upstream, &frame);
 	if (result == V92_UPSTREAM_DATA_RX_NO_PATH) {
 		struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
+		path->b1_sync = (struct v92_b1_sync){ 0 };
 		if (call->b1_deadline_armed) path->b1u_decode_failed = true;
 		guard_v92_upstream_failure(path);
 		*emitted = event;
 		return PCM_CALL_OK;
 	}
-	if (result != V92_UPSTREAM_DATA_RX_OK && result != V92_UPSTREAM_DATA_RX_FRAME)
+	if (result != V92_UPSTREAM_DATA_RX_OK && result != V92_UPSTREAM_DATA_RX_FRAME) {
+		call->state.data_path.v92_digital.b1_sync = (struct v92_b1_sync){ 0 };
 		return PCM_CALL_NUMERIC_FAILURE;
+	}
 	if (result == V92_UPSTREAM_DATA_RX_FRAME) {
 		enum pcm_call_result received = receive_v92_frame(call, &frame, &event);
 		if (received != PCM_CALL_OK) return received;

@@ -20,6 +20,7 @@
 #include "v92_phase4_e2u.h"
 #include "v92_rate_pause.h"
 #include "v92_upstream_data_rx.h"
+#include "v92_b1_sync.h"
 #include "v92_upstream_data_tx.h"
 #include "v92_ru_line_rx.h"
 #include "v92_pcm_phase3_ru.h"
@@ -400,6 +401,7 @@ struct pcm_call_v92_fast_exchange {
 
 struct pcm_call_v92_digital_data {
 	struct v92_upstream_data_rx upstream;
+	struct v92_b1_sync b1_sync;
 	struct pcm_call_v92_fast_exchange fast;
 	struct v92_ru_line_rx ru;
 	struct v90_pcm_mapping training_mapping;

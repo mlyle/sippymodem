@@ -13,6 +13,7 @@
 #include <v92_upstream_control.h>
 #include <v92_upstream_data_rx.h>
 #include <v92_upstream_data_tx.h>
+#include <v92_b1_sync.h>
 
 #include "test.h"
 #include "integer_math.h"
@@ -23,6 +24,27 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+
+static struct v92_upstream_data_rx *sync_target;
+static bool sync_inject;
+static unsigned sync_calls;
+extern enum v92_upstream_data_rx_result __real_v92_upstream_data_rx_octet_owned(
+	struct v92_upstream_data_rx *, uint8_t, int16_t, int16_t, bool,
+	struct v92_upstream_data_frame *);
+enum v92_upstream_data_rx_result __wrap_v92_upstream_data_rx_octet_owned(
+	struct v92_upstream_data_rx *receiver, uint8_t code, int16_t sample,
+	int16_t host, bool available, struct v92_upstream_data_frame *frame)
+{
+	if (receiver == sync_target) {
+		++sync_calls;
+		if (sync_inject) {
+			sync_inject = false;
+			receiver->failed = true;
+			return V92_UPSTREAM_DATA_RX_NO_PATH;
+		}
+	}
+	return __real_v92_upstream_data_rx_octet_owned(receiver, code, sample, host, available, frame);
+}
 
 /* Keep numerical waveform and rejection oracles independent of the media
  * scheduler. They supply no next physical sample until the current fit ends.
@@ -4251,8 +4273,159 @@ static bool test_probability_cells(enum g711_law law, int polarity)
 	return true;
 }
 
+static bool check_b1_sync_state(const struct v92_b1_sync *sync,
+	const struct v92_upstream_data_rx *receiver)
+{
+	CHECK(v92_b1_sync_is_valid(sync, receiver), "B1 sync fixture is invalid");
+	for (unsigned fault = 0; fault < 12; ++fault) {
+		struct v92_b1_sync bad = *sync;
+		switch (fault) {
+		case 0: bad.stage = 4; break;
+		case 1: bad.head = V92_UPSTREAM_INPUT_QUEUE; break;
+		case 2: bad.count = V92_UPSTREAM_INPUT_QUEUE + 1; break;
+		case 3: bad.candidate = V92_B1_SYNC_SHIFT / 12 + 1; break;
+		case 4: bad.shift = 1; break;
+		case 5: bad.best_score = NAN; break;
+		case 6: bad.first_score = -1.; break;
+		case 7: bad.digits[0][0] = 255; break;
+		case 8: bad.input[bad.head].flags = 1; break;
+		case 9: bad.input[(bad.head + bad.count + 1) % V92_UPSTREAM_INPUT_QUEUE].flags = 3; break;
+		case 10: bad.handoff.failed = true; break;
+		case 11: bad.stage = 0; break;
+		}
+		CHECK(!v92_b1_sync_is_valid(&bad, receiver), "invalid B1 sync state accepted: %u", fault);
+	}
+	struct v92_upstream_data_frame frame, before;
+	memset(&frame, 0xa5, sizeof(frame)); before = frame;
+	struct v92_b1_sync copy = *sync;
+	CHECK(v92_b1_sync_octet_owned(NULL, (struct v92_upstream_data_rx *)receiver,
+	      0, 0, 0, true, &frame) == V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT &&
+	      v92_b1_sync_octet_owned(&copy, (struct v92_upstream_data_rx *)receiver,
+	      0, 0, 0, true, (struct v92_upstream_data_frame *)&copy) == V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT &&
+	      !memcmp(&copy, sync, sizeof(copy)) && !memcmp(&frame, &before, sizeof(frame)),
+	      "rejected B1 sync call changed output/state");
+	return true;
+}
+
+static bool test_b1_sync(enum g711_law law, int polarity, unsigned prefix, unsigned fault)
+{
+	struct {
+		struct v92_upstream_data_rx rx;
+		struct v92_b1_sync sync;
+	} *work = calloc(1, sizeof(*work));
+	CHECK(work, "B1 sync allocation failed");
+	struct channel channel = { .gain = 1., .law = law, .polarity = polarity };
+	struct v92_phase4_record_tx e2u_tx;
+	struct v92_e2u_rx e2u_rx;
+	struct v92_cpd_parameters cpd;
+	struct v92_pcm_mapping mapping;
+	struct v92_pcm_frame_tx tx;
+	struct v92_upstream_plan plan = {
+		.gain = 1., .delay = V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY,
+		.observation = V92_PCM_FRAME_CONSTELLATION,
+	};
+	CHECK(prepare_e2u(&channel, false, &e2u_tx, &e2u_rx) &&
+	      v92_cpd_direct_init(&cpd, law, 9, false) == V92_CPD_OK &&
+	      v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK &&
+	      v92_pcm_frame_tx_init(&tx, &mapping) == V92_PCM_FRAME_OK &&
+	      v92_upstream_data_rx_init(&work->rx, &e2u_rx.signal, &mapping, &plan) == V92_UPSTREAM_DATA_RX_OK &&
+	      v92_b1_sync_init(&work->sync, &e2u_rx.signal, &work->rx), "B1 sync setup failed");
+	CHECK(check_b1_sync_state(&work->sync, &work->rx), "B1 sync initial contract failed");
+	struct v92_pcm_frame encoded = { 0 };
+	unsigned delivered = 0, leading = 0, held = 0, mismatch = 0, ambiguous = 0, selected = 0;
+	bool failed = false, searched = false;
+	sync_target = &work->rx;
+	sync_inject = prefix != 0;
+	for (unsigned clock = 0; clock < prefix + 100 * 12; ++clock) {
+		if (clock >= prefix && (clock - prefix) % 12 == 0) {
+			unsigned f = (clock - prefix) / 12;
+			uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
+			if (f < V92_B1U_FRAMES) memset(bits, 1, mapping.data_bits_per_frame);
+			else payload(bits, mapping.data_bits_per_frame, f - V92_B1U_FRAMES);
+			if (fault == 1 && f == 40) bits[7] = 0;
+			CHECK(v92_pcm_frame_encode(&tx, bits, mapping.data_bits_per_frame, &encoded) == V92_PCM_FRAME_OK,
+			      "B1 sync source failed");
+		}
+		int16_t raw = clock < prefix ? 0 : polarity * encoded.u[(clock - prefix) % 12];
+		uint8_t code = g711_encode(law, raw);
+		int16_t sample = g711_decode(law, code);
+		struct v92_upstream_data_frame frame = { 0 };
+		sync_calls = 0;
+		enum v92_upstream_data_rx_result result = v92_b1_sync_octet_owned(&work->sync,
+			&work->rx, code, sample, sample, !(fault == 2 && clock == 100), &frame);
+		CHECK(sync_calls <= 2 && v92_upstream_data_rx_is_valid(&work->rx) &&
+		      v92_b1_sync_is_valid(&work->sync, &work->rx),
+		      "B1 sync work/state bound failed at %u result %u", clock, result);
+		searched |= work->sync.stage == 2;
+		if (clock == 1 && work->sync.stage == 2)
+			CHECK(check_b1_sync_state(&work->sync, &work->rx), "B1 sync search contract failed");
+		if (work->sync.stage == 3) selected = work->sync.shift;
+		if (result == V92_UPSTREAM_DATA_RX_NO_PATH) { failed = true; break; }
+		CHECK(result == V92_UPSTREAM_DATA_RX_OK || result == V92_UPSTREAM_DATA_RX_FRAME,
+		      "B1 sync stopped at %u: %u", clock, result);
+		if (result != V92_UPSTREAM_DATA_RX_FRAME) continue;
+		if (frame.b1u && frame.bit_count && work->rx.line.received_frames >
+		    V92_B1U_ACQUISITION_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
+			++held;
+			mismatch |= frame.b1u_mismatches;
+			ambiguous |= frame.ambiguous;
+		}
+		if (fault == 1 && held == 24) break;
+		if (frame.bit_count && !frame.b1u) {
+			uint8_t expected[V92_PCM_MAPPING_MAX_BITS];
+			payload(expected, mapping.data_bits_per_frame, delivered);
+			if (!delivered) {
+				bool ones = true;
+				for (unsigned i = 0; i < frame.bit_count; ++i) ones &= frame.bits[i] == 1;
+				if (ones) { CHECK(++leading <= 1, "B1 sync leaked excess training"); continue; }
+			}
+			CHECK(!frame.ambiguous && !memcmp(expected, frame.bits, frame.bit_count),
+			      "B1 sync payload mismatch: prefix %u frame %u", prefix, delivered);
+			if (++delivered == 16) break;
+		}
+	}
+	sync_target = NULL;
+	sync_inject = false;
+	if (fault == 2 || prefix > V92_B1_SYNC_SHIFT + 12)
+		CHECK(failed && !delivered, "unavailable B1 did not take bounded failure");
+	else if (fault == 1)
+		CHECK(held == 24 && (mismatch == V92_B1U_BOTH_MISMATCH || ambiguous),
+		      "alignment retry certified corrupted held-out B1");
+	else
+		CHECK(!failed && delivered == 16 && held == 24 && mismatch != V92_B1U_BOTH_MISMATCH &&
+		      !ambiguous && (!prefix || (searched && selected == prefix - 12)),
+		      "B1 sync did not retain exact payload: prefix %u selected %u delivered %u held %u mask %u ambiguous %u",
+		      prefix, selected, delivered, held, mismatch, ambiguous);
+	if (!fault && !failed) {
+		struct v92_upstream_data_frame frame, before;
+		memset(&frame, 0xa5, sizeof(frame)); before = frame;
+		sync_target = &work->rx;
+		sync_inject = true;
+		CHECK(memory_region_is_zero(&work->sync, sizeof(work->sync)) &&
+		      v92_b1_sync_octet_owned(&work->sync, &work->rx, 0, 0, 0, true, &frame) ==
+			V92_UPSTREAM_DATA_RX_NO_PATH && work->rx.failed &&
+		      memory_region_is_zero(&work->sync, sizeof(work->sync)) && !memcmp(&frame, &before, sizeof(frame)),
+		      "payload failure started a new B1 search or changed output");
+		sync_target = NULL;
+		sync_inject = false;
+	}
+	free(work);
+	return true;
+}
+
 int main(void)
 {
+	{
+		fprintf(stderr, "[ RUN      ] PCM upstream bounded B1 alignment\n");
+		const unsigned prefixes[] = { 0, 48, 96, 144, 288 };
+		for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+			for (int polarity = -1; polarity <= 1; polarity += 2)
+				for (unsigned i = 0; i < ARRAY_LENGTH(prefixes); ++i)
+					if (!test_b1_sync(law, polarity, prefixes[i], 0)) return 1;
+		if (!test_b1_sync(G711_LAW_PCMU, 1, 96, 1) || !test_b1_sync(G711_LAW_PCMU, 1, 96, 2)) return 1;
+		fprintf(stderr, "[       OK ] PCM upstream bounded B1 alignment\n");
+		if (getenv("B1_SYNC_ONLY")) return 0;
+	}
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (int polarity = -1; polarity <= 1; polarity += 2)
 			for (unsigned conditioned = 0; conditioned < 2; conditioned++)
