@@ -725,27 +725,10 @@ static void note_transmit_timing(struct v90_datapump *datapump, int shift)
 	pcm_tx_recovery_note(&datapump->transmit_recovery, datapump->dp.modem->count, shift);
 }
 
-/* Advance at most five network symbols. LAPM owns every unacknowledged
- * byte; a physical repair must not replace ARQ or compression state. */
-static bool advance_transmit_recovery(struct v90_datapump *datapump)
-{
-	struct pcm_call_v92_digital_data *path = &datapump->call.state.data_path.v92_digital;
-	struct v90_downstream_data_stream *stream = &path->downstream.data;
-	if (path->downstream_stage != V92_PHASE4_E2U_DOWNSTREAM_DATA ||
-	    !v90_downstream_data_stream_is_online(stream))
-		return false;
-	for (unsigned i = 0; i < datapump->transmit_recovery.phase; ++i) {
-		struct v90_pcm_symbol discarded;
-		if (v90_downstream_data_stream_next_owned(stream, source_pcm_frame,
-			datapump, &discarded) != V90_DOWNSTREAM_DATA_STREAM_OK)
-			return false;
-	}
-	return true;
-}
-
 /* Preserve the existing first-retry peer-confirmed path at its media boundary.
  * A deferred full grant is handled atomically by service_link after RX has
- * finished, so a Final cannot arrive between phase mutation and the exchange. */
+ * finished. The short exchange owns resynchronization: an echo-delay change
+ * must not discard generated data or mutate a stream before it can start. */
 static void apply_transmit_recovery(struct v90_datapump *datapump)
 {
 	struct dp *dp = &datapump->dp;
@@ -757,8 +740,7 @@ static void apply_transmit_recovery(struct v90_datapump *datapump)
 	    !pcm_tx_recovery_ready(recovery, dp->modem->count))
 		return;
 	recovery->pending = false;
-	if (pcm_tx_recovery_eligible(recovery, dp->modem->count, &observation) &&
-	    advance_transmit_recovery(datapump))
+	if (pcm_tx_recovery_eligible(recovery, dp->modem->count, &observation))
 		recovery->applied = true;
 }
 
@@ -787,7 +769,6 @@ static void service_link_v90(struct dp *dp)
 		/* The grant already belongs to this owner. Failed or retired phase
 		 * evidence keeps the normal full repair; it must not swallow it. */
 		if (pcm_tx_recovery_second_eligible(recovery, dp->modem->count, &observation) &&
-		    advance_transmit_recovery(datapump) &&
 		    v90_datapump_start_rate_renegotiation(dp, false)) {
 			modem_ec_probe_after_tx_recovery(dp->modem, grant);
 		} else {

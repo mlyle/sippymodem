@@ -14,6 +14,8 @@
 #include <modem.h>
 #include <v8_datapump.h>
 #include <v92_echo_timing.h>
+#include <pcm_call.h>
+#include <v90_downstream_data_stream.h>
 
 #include "test.h"
 
@@ -95,6 +97,55 @@ static struct {
 	uint64_t input_sample;
 } echo_recovery;
 
+/* A rejected physical request must preserve every generated network symbol.
+ * Model eligibility here; native-core tests cover real LAPM timers/windows.
+ * The peer still receives the ordinary channel without a clock slip. */
+static struct {
+	bool enabled;
+	unsigned phase, requests, generated, extra;
+} transmit_recovery;
+
+extern bool __real_modem_ec_get_tx_recovery(
+	const struct modem *, struct modem_tx_recovery *);
+
+bool __wrap_modem_ec_get_tx_recovery(
+	const struct modem *modem, struct modem_tx_recovery *observation)
+{
+	if (!transmit_recovery.enabled || !echo_recovery.injected ||
+	    modem->dsp_info.pcm_role != MODEM_PCM_ROLE_DIGITAL)
+		return __real_modem_ec_get_tx_recovery(modem, observation);
+	*observation = (struct modem_tx_recovery){
+		.first_retry = true, .peer_noack = true, .receive_healthy = true,
+		.receive_sample = modem->count, .peer_poll_sample = modem->count,
+	};
+	return true;
+}
+
+extern enum pcm_call_result __real_pcm_call_start_rate_renegotiation(struct pcm_call *);
+
+enum pcm_call_result __wrap_pcm_call_start_rate_renegotiation(struct pcm_call *call)
+{
+	if (!transmit_recovery.enabled)
+		return __real_pcm_call_start_rate_renegotiation(call);
+	++transmit_recovery.requests;
+	return PCM_CALL_INVALID_STATE;
+}
+
+extern enum v90_downstream_data_stream_result __real_v90_downstream_data_stream_next_owned(
+	struct v90_downstream_data_stream *, pcm_frame_source, void *, struct v90_pcm_symbol *);
+
+enum v90_downstream_data_stream_result __wrap_v90_downstream_data_stream_next_owned(
+	struct v90_downstream_data_stream *stream, pcm_frame_source source,
+	void *context, struct v90_pcm_symbol *symbol)
+{
+	enum v90_downstream_data_stream_result result =
+		__real_v90_downstream_data_stream_next_owned(stream, source, context, symbol);
+	if (transmit_recovery.enabled && result == V90_DOWNSTREAM_DATA_STREAM_OK &&
+	    ++transmit_recovery.generated > 1u)
+		++transmit_recovery.extra;
+	return result;
+}
+
 extern int __real_v92_echo_timing_observe(struct v92_echo_timing *, struct pcm_host_echo *,
 	const struct v92_upstream_data_rx *, enum pcm_host_echo_mode, uint8_t, int16_t, int16_t, bool);
 
@@ -117,7 +168,7 @@ int __wrap_v92_echo_timing_observe(struct v92_echo_timing *timing, struct pcm_ho
 		echo_recovery.input_sample = receiver->line.input_samples;
 		/* Inject only the notification. Physical shift detection has its
 		 * own channel tests; this checks the adapter's consume boundary. */
-		return 97;
+		return transmit_recovery.enabled ? 96 + (int)transmit_recovery.phase : 97;
 	}
 	return result;
 }
@@ -976,6 +1027,10 @@ static bool run_pcm_pair(
 			CHECK(dc_remover_process(
 				      &digital_frontend, &digital_receive, 1) == DC_REMOVER_OK,
 			      "V.90 digital receive front end failed at octet %zu", octet);
+		if (transmit_recovery.enabled) {
+			digital.count = octet;
+			transmit_recovery.generated = 0;
+		}
 		digital_result = operations->process_g711(
 			digital_dp, law,
 			&digital_received_octet, &digital_receive, NULL,
@@ -1014,6 +1069,8 @@ static bool run_pcm_pair(
 		      analog_transmit == decode(law, next_analog),
 		      "analogue V.90 path failed at octet %zu", octet);
 		analog_to_digital = next_analog;
+		if (transmit_recovery.enabled && operations->service_link != NULL)
+			operations->service_link(digital_dp);
 		if (!training_rates_seen && octet % MODEM_FRAG == 0) {
 			struct dp_link_rates rates = datapump_get_link_rates(digital_dp);
 
@@ -1766,6 +1823,27 @@ static bool test_data_echo_recovery(void)
 	return true;
 }
 
+static bool test_rejected_timing_recovery(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		for (unsigned phase = 1; phase < 6; ++phase) {
+			memset(&echo_recovery, 0, sizeof(echo_recovery));
+			echo_recovery.enabled = echo_recovery.data_mode = true;
+			memset(&transmit_recovery, 0, sizeof(transmit_recovery));
+			transmit_recovery.enabled = true;
+			transmit_recovery.phase = phase;
+			bool passed = run_pcm_pair(DP_V92, 4, law, 41333, 0, 0, 28000, 0,
+				MAXIMUM_RATE_RECEIVED_BITS, true, MODEM_PCM_ROLE_NONE, false,
+				UNITY_GAIN_Q15, RETURNED_ECHO_STABLE, UPSTREAM_CHANNEL_CLEAN);
+			echo_recovery.enabled = transmit_recovery.enabled = false;
+			CHECK(passed && transmit_recovery.requests == 1 && !transmit_recovery.extra,
+				"law %u phase %u rejected recovery discarded symbols: requests=%u extra=%u",
+				law, phase, transmit_recovery.requests, transmit_recovery.extra);
+		}
+	}
+	return true;
+}
+
 static bool test_v92_quantized_host_echo(void)
 {
 	/* Quantize the combined upstream and independent returned echo, then
@@ -2301,6 +2379,7 @@ int main(void)
 		{ "V.92 Quick Connect fallback deadline", test_qc_adapter_timeout },
 		{ "V.92 training echo recovery", test_training_echo_recovery },
 		{ "V.92 data echo recovery", test_data_echo_recovery },
+		{ "rejected PCM timing recovery preserves data", test_rejected_timing_recovery },
 		{ "PCM retrain after V.34 fallback", test_fallback_restart },
 		{ "online PCM retrain through V.34 fallback", test_online_fallback_restart },
 		{ "unusable V.34 fallback selection", test_unusable_fallback_selection },
