@@ -1329,15 +1329,20 @@ static int process_v90_g711(
 			} else {
 				v34_echo_timing_reset(&datapump->echo_timing);
 			}
-			/* Projected timing was observed before the receiver. Record the
-			 * actual TX once, without observing that sample a second time. */
-			enum pcm_host_echo_result echo_result =
-				training_echo == V92_TRAINING_ECHO_UNOBSERVED ?
-				pcm_host_echo_advance_predicted(datapump->host_echo, echo_mode,
-					receive_samples[index], cleaned_sample, transmit_samples[index]) :
-				pcm_host_echo_advance_reference(datapump->host_echo, echo_mode,
-					receive_samples[index], transmit_samples[index]);
-			if (echo_result != PCM_HOST_ECHO_OK)
+			/* General frozen-model timing can confirm the same playout step
+			 * as the PCM lattice monitor. Retain its notification for guarded
+			 * transmit recovery instead of moving only the echo model. The
+			 * projected training view has already observed this sample. */
+			if (training_echo == V92_TRAINING_ECHO_UNOBSERVED) {
+				int delay_change = 0;
+				if (pcm_host_echo_observe_timing(datapump->host_echo, echo_mode,
+					    receive_samples[index], cleaned_sample, &delay_change) != PCM_HOST_ECHO_OK)
+					goto failure;
+				if (delay_change)
+					note_transmit_timing(datapump, delay_change);
+			}
+			if (pcm_host_echo_advance_reference(datapump->host_echo, echo_mode,
+				    receive_samples[index], transmit_samples[index]) != PCM_HOST_ECHO_OK)
 				goto failure;
 			/* Retain qualified cancellation through retrain ranging, but
 			 * reacquire it for the new Phase 3/TRN1d epoch. Old margin and

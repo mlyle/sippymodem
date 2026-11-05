@@ -122,7 +122,7 @@ enum v34_call_result __wrap_v34_call_init_from_phase2(
  * the adapter refreshes one unconsumed input and advances TX exactly once. */
 static struct {
 	bool enabled, data_mode, injected, recovered, refreshed, advanced, mismatch;
-	uint32_t symbol, sample, injected_sample, advances, predictions;
+	uint32_t symbol, sample, injected_sample, advances, predictions, observations;
 	struct pcm_host_echo *echo;
 	/* Borrowed only until this same input's TX advance callback. */
 	const struct v92_upstream_data_rx *receiver;
@@ -283,29 +283,33 @@ enum pcm_host_echo_result __wrap_pcm_host_echo_advance_reference(
 	    echo_recovery.sample == echo_recovery.injected_sample && echo == echo_recovery.echo) {
 		echo_recovery.mismatch |= (!echo_recovery.data_mode && !echo_recovery.recovered) ||
 			!echo_recovery.refreshed || echo_recovery.predictions != 1;
+		if (echo_recovery.data_mode) {
+			echo_recovery.mismatch |= echo_recovery.recovered ||
+				echo_recovery.observations != 1 || echo_recovery.receiver == NULL ||
+				echo_recovery.receiver->line.input_samples != echo_recovery.input_sample + 1;
+			echo_recovery.receiver = NULL;
+		}
 		echo_recovery.advanced = true;
 		++echo_recovery.advances;
 	}
 	return __real_pcm_host_echo_advance_reference(echo, mode, raw, tx);
 }
 
-extern enum pcm_host_echo_result __real_pcm_host_echo_advance_predicted(
-	struct pcm_host_echo *, enum pcm_host_echo_mode, int16_t, int16_t, int16_t);
+extern enum pcm_host_echo_result __real_pcm_host_echo_observe_timing(
+	struct pcm_host_echo *, enum pcm_host_echo_mode, int16_t, int16_t, int *);
 
-enum pcm_host_echo_result __wrap_pcm_host_echo_advance_predicted(
+enum pcm_host_echo_result __wrap_pcm_host_echo_observe_timing(
 	struct pcm_host_echo *echo, enum pcm_host_echo_mode mode,
-	int16_t raw, int16_t cleaned, int16_t tx)
+	int16_t raw, int16_t cleaned, int *change)
 {
 	if (echo_recovery.enabled && echo_recovery.data_mode && echo_recovery.injected &&
 	    echo_recovery.sample == echo_recovery.injected_sample && echo == echo_recovery.echo) {
 		echo_recovery.mismatch |= echo_recovery.recovered || !echo_recovery.refreshed ||
 			echo_recovery.predictions != 1 || echo_recovery.receiver == NULL ||
 			echo_recovery.receiver->line.input_samples != echo_recovery.input_sample + 1;
-		echo_recovery.advanced = true;
-		echo_recovery.receiver = NULL;
-		++echo_recovery.advances;
+		++echo_recovery.observations;
 	}
-	return __real_pcm_host_echo_advance_predicted(echo, mode, raw, cleaned, tx);
+	return __real_pcm_host_echo_observe_timing(echo, mode, raw, cleaned, change);
 }
 
 extern bool __real_v34_echo_timing_prepare(struct v34_echo_timing *,
@@ -1831,6 +1835,7 @@ static bool test_training_echo_recovery(void)
 		echo_recovery.enabled = false;
 		CHECK(passed && echo_recovery.injected && echo_recovery.recovered &&
 			echo_recovery.refreshed && echo_recovery.predictions == 1 &&
+			echo_recovery.observations == 0 &&
 			echo_recovery.advanced && echo_recovery.advances == 1 && !echo_recovery.mismatch,
 			"law %u training recovery did not preserve the adapter boundary", law);
 	}
@@ -1848,6 +1853,7 @@ static bool test_data_echo_recovery(void)
 		echo_recovery.enabled = false;
 		CHECK(passed && echo_recovery.injected && !echo_recovery.recovered &&
 			echo_recovery.refreshed && echo_recovery.predictions == 1 &&
+			echo_recovery.observations == 1 &&
 			echo_recovery.advanced && echo_recovery.advances == 1 &&
 			echo_recovery.receiver == NULL && !echo_recovery.mismatch,
 			"law %u data retime changed the input/advance boundary", law);

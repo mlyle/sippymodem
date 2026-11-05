@@ -52,6 +52,9 @@ enum {
 	V32_TRAINING_FRAME_LIMIT = 900,
 	LINK_DRAIN_FRAME_LIMIT = 400,
 	DATA_FRAME_LIMIT = 400,
+	/* A playout fault must recover within the live startup data budget.
+	 * Fault-free cases retain their existing shorter bound. */
+	PLAYOUT_DATA_FRAME_LIMIT = 15 * MODEM_RATE / SIP_FRAME_SAMPLES,
 	RETRAIN_FRAME_LIMIT = 500,
 	V32_RETRAIN_FRAME_LIMIT = 750,
 	/* Nonzero V.92 DIL adds about four seconds to full retraining. */
@@ -66,6 +69,16 @@ enum {
 	V32_MIN_HALF_DUPLEX_GAP_FRAMES = 16,
 	REPLAY_MAX_SAMPLES = MODEM_RATE * 180,
 	V22_REPLAY_CONNECT_SAMPLES = MODEM_RATE * 15,
+};
+
+/* The far-end playout delay also delays its returned echo. The reverse
+ * transmitter keeps its own sample clock; it is not delayed with playout. */
+struct playout_link {
+	uint8_t forward[128];
+	int16_t echo[2048];
+	uint64_t forward_samples;
+	uint64_t reverse_samples;
+	unsigned delay;
 };
 
 struct integration_endpoint {
@@ -92,6 +105,8 @@ struct integration_endpoint {
 	bool profile_cpu;
 	bool delay_one_sample;
 	uint8_t prior_codeword;
+	struct playout_link *playout_forward;
+	struct playout_link *playout_reverse;
 };
 
 struct recording_capture {
@@ -168,6 +183,8 @@ struct modem_test_case {
 	bool startup_robbed_bits;
 	bool conventional_upstream;
 	bool factory_transport;
+	bool playout_echo;
+	unsigned playout_step_samples;
 	enum integration_impairment impairment;
 };
 
@@ -603,6 +620,33 @@ static bool deliver_media_frame(
 
 	memcpy(destination->receive_codewords, source->transmit_codewords,
 	       sizeof(destination->receive_codewords));
+	if (destination->playout_forward || destination->playout_reverse) {
+		if (!codec_law(codec, &law))
+			return false;
+		for (unsigned i = 0; i < SIP_FRAME_SAMPLES; ++i) {
+			if (destination->playout_forward) {
+				struct playout_link *link = destination->playout_forward;
+				uint64_t sample = link->forward_samples++;
+				link->forward[sample % ARRAY_LENGTH(link->forward)] =
+					destination->receive_codewords[i];
+				uint8_t played = sample >= link->delay ?
+					link->forward[(sample - link->delay) % ARRAY_LENGTH(link->forward)] :
+					encode_codeword(law, 0);
+				destination->receive_codewords[i] = played;
+				link->echo[sample % ARRAY_LENGTH(link->echo)] = decode_codeword(law, played);
+			} else {
+				struct playout_link *link = destination->playout_reverse;
+				uint64_t sample = link->reverse_samples++;
+				/* More than one packet of delay makes delivery order immaterial. */
+				int echo = sample >= 1290 ?
+					link->echo[(sample - 1290) % ARRAY_LENGTH(link->echo)] / 4 : 0;
+				int mixed = decode_codeword(law, destination->receive_codewords[i]) + echo;
+				if (mixed > INT16_MAX) mixed = INT16_MAX;
+				if (mixed < INT16_MIN) mixed = INT16_MIN;
+				destination->receive_codewords[i] = encode_codeword(law, mixed);
+			}
+		}
+	}
 	if (destination->delay_codewords) {
 		for (size_t index = 0; index < SIP_FRAME_SAMPLES; ++index) {
 			uint8_t delayed = destination->delayed_codewords[
@@ -2501,6 +2545,7 @@ static bool run_media_call(
 	struct integration_endpoint caller;
 	struct integration_endpoint answerer;
 	struct media_frame_delay caller_delay = { 0 };
+	struct playout_link playout = { 0 };
 	struct recording_capture capture = { 0 };
 	struct v22_rate_monitor caller_rate_monitor;
 	const struct media_recorder recorder = {
@@ -2573,6 +2618,14 @@ static bool run_media_call(
 			       test_case->minimum_caller_rate_signal_sample)),
 	      "%s integration endpoints did not initialize", test_case->name);
 	caller.robbed_bits = answerer.robbed_bits = test_case->startup_robbed_bits;
+	if (test_case->playout_echo) {
+		CHECK(test_case->playout_step_samples < ARRAY_LENGTH(playout.forward),
+		      "playout step exceeds retained history");
+		struct integration_endpoint *analog = test_case->digital_caller ? &answerer : &caller;
+		struct integration_endpoint *digital = test_case->digital_caller ? &caller : &answerer;
+		analog->playout_forward = &playout;
+		digital->playout_reverse = &playout;
+	}
 	if (v8_datapump_uses_pcm(test_case->id) ||
 	    v8_datapump_uses_pcm(answerer_id)) {
 		CHECK(modem_set_sreg(caller.modem, SREG_CONNNECT_MSG_FORMAT, 1) == 0 &&
@@ -2942,6 +2995,7 @@ static bool run_media_call(
 	      answerer.output_count,
 	      answerer.output_count != 0 ? answerer.output[0] : 0);
 
+	playout.delay = test_case->playout_step_samples;
 	CHECK(modem_write(caller.modem, (const char *)caller_payload,
 			  (int)sizeof(caller_payload)) ==
 		      (int)sizeof(caller_payload) &&
@@ -2950,7 +3004,9 @@ static bool run_media_call(
 		      (int)sizeof(answer_payload),
 	      "%s terminals did not accept full-duplex payloads",
 	      test_case->name);
-	for (unsigned int frame = 0; frame < DATA_FRAME_LIMIT; ++frame) {
+	unsigned data_frame_limit = test_case->playout_echo ?
+		PLAYOUT_DATA_FRAME_LIMIT : DATA_FRAME_LIMIT;
+	for (unsigned int frame = 0; frame < data_frame_limit; ++frame) {
 		CHECK(process_test_frame(
 			      &caller, &answerer, codec, &recorder,
 			      &caller_delay,
@@ -2960,6 +3016,9 @@ static bool run_media_call(
 		      test_case->name);
 		if (caller.output_count >= sizeof(answer_payload) &&
 		    answerer.output_count >= sizeof(caller_payload)) {
+			if (test_case->playout_echo)
+				fprintf(stderr, "[ FIRST DATA ] %s after %u ms\n", test_case->name,
+					(frame + 1) * 20);
 			transferred = true;
 			break;
 		}
@@ -2983,7 +3042,7 @@ static bool run_media_call(
 	      (modem_ec_active_compression(caller.modem) == MODEM_EC_COMPRESSION_V44 &&
 	       modem_ec_active_compression(answerer.modem) == MODEM_EC_COMPRESSION_V44),
 	      "%s did not negotiate V.44 in both directions", test_case->name);
-	if (connected_id == DP_V92 && !test_case->raw_transport)
+	if (connected_id == DP_V92 && !test_case->raw_transport && !test_case->playout_echo)
 		CHECK(exercise_v92_rate_exchange(&caller, &answerer, codec, &recorder),
 		      "%s rate exchange did not preserve outstanding LAPM data", test_case->name);
 	if (test_case->test_quality_recovery)
@@ -3075,13 +3134,14 @@ static bool run_media_call(
 	}
 	/* Automatic quality recovery can lower the upstream rate. Exercise it
 	 * after the fixed-rate ATO1 checks, before protocol cleardown. */
-	if (connected_id == DP_V92 && !test_case->raw_transport) {
+	if (connected_id == DP_V92 && !test_case->raw_transport && !test_case->playout_echo) {
 		CHECK(exercise_v92_media_loss(&caller, &answerer, codec, &recorder),
 		      "%s media loss did not preserve outstanding LAPM data", test_case->name);
 		CHECK(exercise_pcm_sample_slip(&caller, &answerer, codec, &recorder, false),
 		      "%s upstream slip did not preserve outstanding LAPM data", test_case->name);
 	}
-	if ((connected_id == DP_V90 || connected_id == DP_V92) && !test_case->raw_transport)
+	if ((connected_id == DP_V90 || connected_id == DP_V92) && !test_case->raw_transport &&
+	    !test_case->playout_echo)
 		CHECK(exercise_pcm_sample_slip(&caller, &answerer, codec, &recorder, true),
 		      "%s downstream slip did not preserve outstanding LAPM data", test_case->name);
 	if (connected_id == DP_V91) {
@@ -5361,6 +5421,39 @@ static bool run_factory_pcm_cases(const char *filter, bool *selected)
 	return true;
 }
 
+static bool run_playout_cases(const char *filter, bool *selected)
+{
+	static const unsigned steps[] = { 0, 80, 114 };
+	static const enum media_codec codecs[] = { MEDIA_CODEC_PCMU, MEDIA_CODEC_PCMA };
+	for (unsigned digital = 0; digital < 2; ++digital) {
+		for (unsigned i = 0; i < ARRAY_LENGTH(steps); ++i) {
+			char name[96];
+			snprintf(name, sizeof(name), "V.92 coupled playout %u samples digital %s",
+				 steps[i], digital ? "caller" : "answerer");
+			struct modem_test_case test = {
+				.id = DP_V92, .name = name,
+				.selection_command = "AT+MS=92,0,28000,28000+V92Q=0+V92U=1,28000\r",
+				.caller_tx_rate = 28000, .caller_rx_rate = 28000,
+				.answerer_tx_rate = 28000, .answerer_rx_rate = 28000,
+				.training_frame_limit = 1500,
+				.requires_v8 = true, .requires_exact_g711 = true,
+				.require_lapm = true, .digital_caller = digital,
+				.playout_echo = true, .playout_step_samples = steps[i],
+			};
+			if (filter && filter[0] && !strstr(name, filter))
+				continue;
+			*selected = true;
+			for (unsigned law = 0; law < ARRAY_LENGTH(codecs); ++law) {
+				fprintf(stderr, "[ RUN      ] %s over %s\n", name, codec_name(codecs[law]));
+				if (!run_media_call(&test, codecs[law]))
+					return false;
+				fprintf(stderr, "[       OK ] %s over %s\n", name, codec_name(codecs[law]));
+			}
+		}
+	}
+	return true;
+}
+
 int main(void)
 {
 	const char *v32_recording_path =
@@ -6438,6 +6531,8 @@ int main(void)
 	if (!run_factory_pcm_cases(integration_filter, &integration_case_selected))
 		return 1;
 	if (!run_factory_startup_cases(integration_filter, &integration_case_selected))
+		return 1;
+	if (!run_playout_cases(integration_filter, &integration_case_selected))
 		return 1;
 	for (size_t standard = 0; standard < ARRAY_LENGTH(test_cases);
 	     ++standard) {

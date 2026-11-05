@@ -4714,7 +4714,7 @@ $(V92_PROFILE_TEST_BINARY): $(V92_PROFILE_TEST_OBJECTS)
 $(V90_DATAPUMP_TEST_BINARY): $(V90_DATAPUMP_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -Wl,--wrap=v34_echo_timing_prepare \
 		-Wl,--wrap=v92_training_echo_observe -Wl,--wrap=pcm_call_recover_upstream_training \
-		-Wl,--wrap=v92_echo_timing_observe -Wl,--wrap=pcm_host_echo_advance_predicted \
+		-Wl,--wrap=v92_echo_timing_observe -Wl,--wrap=pcm_host_echo_observe_timing \
 		-Wl,--wrap=modem_ec_get_tx_recovery -Wl,--wrap=pcm_call_start_rate_renegotiation \
 		-Wl,--wrap=v90_downstream_data_stream_next_owned \
 		-Wl,--wrap=v34_call_init_from_phase2 \
