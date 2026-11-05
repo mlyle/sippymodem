@@ -86,8 +86,11 @@ static double distance(const struct v92_cpd_constellation *points,
 			else
 				high = middle;
 		}
-		error = fmin(fabs(x - points->positive_linear[low]),
-			     fabs(x - points->positive_linear[high]));
+		/* The search brackets this interior input, so both directed
+		 * distances are nonnegative without absolute values. */
+		double below = x - points->positive_linear[low];
+		double above = points->positive_linear[high] - x;
+		error = below < above ? below : above;
 	}
 	error -= half_width;
 	return error > 0 ? error * error : 0;

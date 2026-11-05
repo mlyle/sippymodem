@@ -49,6 +49,88 @@ static bool test_residual_projection(void)
 	return true;
 }
 
+/* Compare the complete shift score plane with an exhaustive signed-alphabet
+ * oracle. Cover table endpoints, interior points, and cells overlapping more
+ * than one point, independently of the monitor's search and uniform shortcut. */
+static bool test_constellation_scores(void)
+{
+	const unsigned counts[] = { 1, 2, 32, V92_CPD_MAX_CONSTELLATION_POINTS };
+	const float widths[] = { 0, .25f, 1000 };
+	struct fixture *fixture = calloc(1, sizeof(*fixture));
+	CHECK(fixture != NULL, "score fixture allocation failed");
+	for (unsigned c = 0; c < ARRAY_LENGTH(counts); ++c)
+		for (unsigned irregular = 0; irregular < 2; ++irregular)
+			for (unsigned w = 0; w < ARRAY_LENGTH(widths); ++w) {
+				memset(fixture, 0, sizeof(*fixture));
+				struct pcm_host_echo *echo = &fixture->echo;
+				struct v92_upstream_data_rx *receiver = &fixture->receiver;
+				struct v92_upstream_data_line *line = &receiver->line;
+				struct v92_echo_timing *timing = &fixture->timing;
+				CHECK(pcm_host_echo_init(echo) == PCM_HOST_ECHO_OK,
+				      "score echo initialization failed");
+				echo->reference.fill = PCM_ECHO_REFERENCE_HISTORY_SAMPLES;
+				echo->filter_ready = echo->delay_acquired = true;
+				echo->train_samples = PCM_HOST_ECHO_TRAIN_MIN_SAMPLES;
+				echo->train_peak = 256;
+				line->plan.observation = V92_PCM_FRAME_CONSTELLATION;
+				line->calibration.gain = 1;
+				line->polarity = 1;
+				line->received_frames = V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES;
+				struct v92_cpd_constellation *points =
+					&receiver->decoder.mapping.cpd.constellation[0];
+				points->count = (uint8_t)counts[c];
+				for (unsigned j = 0; j < points->count; ++j)
+					points->positive_linear[j] = points->count == 1 ? INT16_MAX :
+						(int16_t)(irregular ? 2 + j * (j + 1) : 3 + 7 * j);
+				CHECK(v92_echo_timing_observe(timing, echo, receiver,
+				      PCM_HOST_ECHO_FILTER, 0, 0, 0, true) == 0 &&
+				      timing->initialized, "score monitor initialization failed");
+				/* Seed a full, disjoint history; this call scores exactly one
+				 * observation without completing the selection window. */
+				timing->samples = ECHO_TIMING_BINS + 2;
+				timing->expected_sample = line->input_samples;
+				const unsigned mask = V92_ECHO_TIMING_HISTORY - 1;
+				unsigned at = (unsigned)timing->samples & mask;
+				unsigned center = (at + V92_ECHO_TIMING_HISTORY -
+					ECHO_TIMING_RADIUS) & mask;
+				for (unsigned j = 0; j < V92_ECHO_TIMING_HISTORY; ++j) {
+					unsigned point = (j / 4) % points->count;
+					float value = points->positive_linear[point];
+					if (j % 4 == 1 && point + 1 < points->count)
+						value = (value + points->positive_linear[point + 1]) * .5f;
+					else if (j % 4 >= 2)
+						value += j % 4 == 2 ? -.25f : .25f;
+					timing->prediction[j] = j & 1 ? -value : value;
+				}
+				timing->prediction[center] = 0;
+				float observed = w == 0 ? 0 : 123.25f;
+				timing->observation[center] = observed;
+				timing->half_width[center] = widths[w];
+				memcpy(&fixture->saved, receiver, sizeof(*receiver));
+				CHECK(v92_echo_timing_observe(timing, echo, receiver,
+				      PCM_HOST_ECHO_FILTER, 0, 0, 0, true) == 0 &&
+				      timing->window.position == 1 &&
+				      memcmp(&fixture->saved, receiver, sizeof(*receiver)) == 0,
+				      "single score observation changed receive state or cadence");
+				for (unsigned j = 0; j < ECHO_TIMING_BINS; ++j) {
+					unsigned shifted = (center + V92_ECHO_TIMING_HISTORY +
+						ECHO_TIMING_RADIUS - j) & mask;
+					double input = (double)observed - timing->prediction[shifted];
+					double best = INFINITY;
+					for (int point = -(int)points->count; point < points->count; ++point) {
+						double distance = fabs(input - v92_cpd_signed_point(points, point));
+						distance = fmax(distance - widths[w], 0);
+						best = fmin(best, distance * distance);
+					}
+					CHECK(timing->window.score[0][j] == best,
+					      "wrong score for count %u irregular %u width %g bin %u",
+					      points->count, irregular, (double)widths[w], j);
+				}
+			}
+	free(fixture);
+	return true;
+}
+
 static bool run_case(const struct channel_case *test)
 {
 	struct fixture *fixture = calloc(1, sizeof(*fixture));
@@ -185,6 +267,7 @@ static bool run_case(const struct channel_case *test)
 int main(void)
 {
 	if (!test_residual_projection()) return 1;
+	if (!test_constellation_scores()) return 1;
 	unsigned cases = 0;
 	for (unsigned law = 0; law < 2; law++)
 		for (int shift = -97; shift <= 97; shift += 97)
