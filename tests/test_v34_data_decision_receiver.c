@@ -434,10 +434,11 @@ static bool rejected_call_preserves_outputs(
 {
 	struct v34_data_decision_receiver saved_receiver = *receiver;
 	struct v34_data_decision_output saved_output = *output;
+	enum v34_data_receive_result result =
+		v34_data_decision_receiver_observe(receiver, input, output);
 
-	return v34_data_decision_receiver_observe(
-		       receiver, input, output) == expected &&
-	       v34_data_decision_receivers_equal(receiver, &saved_receiver) &&
+	CHECK(result == expected, "expected rejection %d, received %d", expected, result);
+	return v34_data_decision_receivers_equal(receiver, &saved_receiver) &&
 	       memcmp(output, &saved_output, sizeof(*output)) == 0;
 }
 
@@ -591,6 +592,56 @@ static bool test_unrepresentable_feedback(void)
 	return true;
 }
 
+static bool test_second_symbol_failure(void)
+{
+	for (size_t mode = 0; mode < ARRAY_LENGTH(CONFIGURATIONS); ++mode) {
+		struct fixture fixture;
+		struct v34_data_decision_receiver expected;
+		struct v34_data_decision_output output, expected_output;
+		struct v34_power_normalizer *normalizer;
+		struct v34_adaptive_equalizer_observation input = {
+			.decision = { 3238, -3238 }, .epoch = 1u, .lineage = 1u,
+		};
+
+		CHECK(initialize_fixture(&fixture, &CONFIGURATIONS[mode]) &&
+		      v34_data_decision_receiver_observe(&fixture.receiver,
+			      &input, &output) == V34_DATA_RECEIVE_OK,
+		      "mode %zu: first symbol failed", mode);
+		expected = fixture.receiver;
+		normalizer = &fixture.receiver
+			.data_receiver.channel_receiver.conditioner.normalizer;
+		/* Finite, valid configuration whose inverse exceeds the lattice's
+		 * fixed range. Reject after entering the child, with a retained first
+		 * symbol, rather than through the adapter's argument validation. */
+		CHECK(v34_power_normalizer_set_gain(normalizer, 1e-100) ==
+			      V34_SYMBOL_POWER_OK &&
+		      v34_data_decision_receiver_is_valid(&fixture.receiver),
+		      "mode %zu: range-failure fixture is invalid", mode);
+		input.epoch++;
+		input.lineage++;
+		memset(&output, 0x5a, sizeof(output));
+		CHECK(rejected_call_preserves_outputs(&fixture.receiver, &input,
+			      &output, V34_DATA_RECEIVE_OUT_OF_RANGE),
+		      "mode %zu: failed second symbol changed state or output", mode);
+		*normalizer = expected.data_receiver.channel_receiver.conditioner.normalizer;
+		CHECK(v34_data_decision_receivers_equal(&fixture.receiver, &expected) &&
+		      fixture.receiver.has_first_symbol,
+		      "mode %zu: failed pair lost its first symbol", mode);
+		CHECK(v34_data_decision_receiver_observe(&fixture.receiver, &input,
+			      &output) == V34_DATA_RECEIVE_INTERVAL_READY &&
+		      v34_data_decision_receiver_observe(&expected, &input,
+			      &expected_output) == V34_DATA_RECEIVE_INTERVAL_READY &&
+		      v34_data_decision_receivers_equal(&fixture.receiver, &expected) &&
+		      equalizer_decisions_match(&output.equalizer[0],
+			      &expected_output.equalizer[0]) &&
+		      equalizer_decisions_match(&output.equalizer[1],
+			      &expected_output.equalizer[1]) &&
+		      current_matches(&output.current, &expected_output.current),
+		      "mode %zu: retry differed from an uninterrupted pair", mode);
+	}
+	return true;
+}
+
 static bool test_cancel_interval(void)
 {
 	struct fixture fixture;
@@ -711,6 +762,7 @@ int main(void)
 		{ "retained path validation", test_retained_path_validation },
 		{ "generated pair path", test_generated_pair_path },
 		{ "unrepresentable feedback", test_unrepresentable_feedback },
+		{ "second symbol failure", test_second_symbol_failure },
 		{ "cancel partial interval", test_cancel_interval },
 		{ "validation and transactionality",
 		  test_validation_and_transactionality },

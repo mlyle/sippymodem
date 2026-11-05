@@ -100,7 +100,6 @@ v34_data_decision_receiver_observe(
 		{ observation, sizeof(*observation) },
 		{ output, sizeof(*output) },
 	};
-	struct v34_data_decision_receiver next;
 	struct v34_data_decision_output generated = { 0 };
 	struct qam_point normalized[V34_2D_SYMBOLS_PER_4D_INTERVAL];
 	struct qam_point targets[V34_2D_SYMBOLS_PER_4D_INTERVAL];
@@ -126,11 +125,13 @@ v34_data_decision_receiver_observe(
 		*output = generated;
 		return V34_DATA_RECEIVE_OK;
 	}
-	next = *receiver;
 	normalized[1] = normalized_observation(observation);
-	normalized[0] = normalized_observation(&next.first_observation);
+	normalized[0] = normalized_observation(&receiver->first_observation);
+	/* The child owns rollback and returns only finite decision targets.
+	 * After its commit, fixed-range rejection merely skips adaptation; no
+	 * remaining operation can fail or needs a second decoder snapshot. */
 	result = v34_data_channel_receiver_advance(
-		&next.data_receiver, normalized, &generated.current, targets,
+		&receiver->data_receiver, normalized, &generated.current, targets,
 		&generated.received);
 	if (result == V34_DATA_RECEIVE_OK)
 		result = V34_DATA_RECEIVE_INTERVAL_READY;
@@ -141,11 +142,9 @@ v34_data_decision_receiver_observe(
 		return result;
 	for (size_t symbol = 0; symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
 		const struct v34_adaptive_equalizer_observation *input =
-			symbol == 0 ? &next.first_observation : observation;
+			symbol == 0 ? &receiver->first_observation : observation;
 		bool representable;
 
-		if (!point_is_finite(&targets[symbol]))
-			return V34_DATA_RECEIVE_NUMERIC_FAILURE;
 		representable = fixed_target(&targets[symbol], &fixed_targets[symbol]);
 		/* The trellis makes present-time decisions on an infinite lattice.
 		 * Noise can select a finite point beyond the equalizer's fixed range.
@@ -162,14 +161,13 @@ v34_data_decision_receiver_observe(
 					V34_ADAPTIVE_EQUALIZER_SKIP,
 			};
 	}
-	next.first_observation =
+	receiver->first_observation =
 		(struct v34_adaptive_equalizer_observation){ 0 };
-	next.has_first_symbol = false;
+	receiver->has_first_symbol = false;
 	/* The child preserves its configuration and receive invariants. Clearing
 	 * the retained symbol establishes this owner's remaining invariant. */
 	if (!v34_data_receive_emits_mapping_frame(result))
 		generated.received = (struct v34_received_mapping_frame){ 0 };
-	*receiver = next;
 	*output = generated;
 	return result;
 }

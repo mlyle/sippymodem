@@ -36,9 +36,9 @@ bool v34_data_channel_receiver_is_receiving_b1(
 
 /* Accept one equalized, unit-average-power 4-D interval. `current` and
  * `decision_targets` always receive the present-time hard channel decision
- * and its exact normalized line symbols after a successful call. `received`
- * changes only for MAPPING_FRAME_READY or either B1 result. State and every
- * output are unchanged on failure. Separate instances are independent;
+ * and its finite, exact normalized line symbols after a successful call.
+ * `received` changes only for MAPPING_FRAME_READY or either B1 result. State
+ * and every output are unchanged on failure. Separate instances are independent;
  * serialize calls that advance the same instance. */
 enum v34_data_receive_result
 v34_data_channel_receiver_advance(
