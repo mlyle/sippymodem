@@ -19,6 +19,7 @@
 
 #include "test.h"
 
+#include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -84,6 +85,37 @@ struct bit_endpoint {
 /* Keep the corrupt-B1 guard regression's physical stimulus: the optional
  * delay witness must not rescue it before the B1 check is exercised. */
 static bool echo_timing_enabled = true;
+
+/* Observe the owned line created by an actual PCM-to-V.34 transfer. The
+ * power request is relative to the probing reference, not a fresh profile. */
+static struct {
+	bool enabled, observed;
+	int16_t nominal_amplitude;
+	double target_rms;
+	uint8_t reduction_db;
+} fallback_power;
+
+extern enum v34_call_result __real_v34_call_init_from_phase2(
+	struct v34_call *, const struct v34_call_configuration *,
+	const struct v34_phase2_handoff *);
+
+enum v34_call_result __wrap_v34_call_init_from_phase2(
+	struct v34_call *call, const struct v34_call_configuration *configuration,
+	const struct v34_phase2_handoff *handoff)
+{
+	enum v34_call_result result =
+		__real_v34_call_init_from_phase2(call, configuration, handoff);
+
+	if (fallback_power.enabled && result == V34_CALL_OK) {
+		const struct v34_training_line *line = &call->state.phase3.transmit.line;
+
+		fallback_power.observed = true;
+		fallback_power.nominal_amplitude = call->phase2_nominal_amplitude;
+		fallback_power.target_rms = line->target_rms;
+		fallback_power.reduction_db = line->profile.transmit_power_reduction_db;
+	}
+	return result;
+}
 
 /* Inject timing notifications at real TRN2u and data boundaries. Physical
  * shift detection has separate channel controls; these fixtures check that
@@ -1987,13 +2019,30 @@ static bool check_fallback_phase3_retrain(
 	struct modem *modem, enum g711_law law, bool retraining)
 {
 	const struct dp_operations *operations = v34_datapump_operations(DP_V34);
-	struct dp *dp = operations->create(
-		modem, DP_V34, 0, MODEM_RATE, MODEM_FRAG, operations);
+	struct pcm_v34_fallback_handoff handoff;
+	struct v34_phase3_profile caller, answerer;
+	struct dp *dp;
 	struct v34_phase2_tone_transmitter tone;
 	int16_t input[MODEM_FRAG];
 	int16_t output[MODEM_FRAG];
 	int status = DPSTAT_OK;
 
+	CHECK(v90_datapump_v34_fallback_handoff(modem->dp, &handoff) &&
+	      v34_phase2_handoff_profiles(&handoff.phase2, &caller, &answerer) ==
+		      V34_PHASE2_SELECTION_OK,
+	      "fallback power agreement unavailable");
+	memset(&fallback_power, 0, sizeof(fallback_power));
+	fallback_power.enabled = true;
+	dp = operations->create(modem, DP_V34, 0, MODEM_RATE, MODEM_FRAG, operations);
+	fallback_power.enabled = false;
+	double expected_rms = handoff.restart.phase2_nominal_amplitude / sqrt(2.0) *
+		pow(10.0, -(double)caller.transmit_power_reduction_db / 20.0);
+	CHECK(dp != NULL && fallback_power.observed &&
+	      fallback_power.nominal_amplitude == handoff.restart.phase2_nominal_amplitude &&
+	      fallback_power.reduction_db == caller.transmit_power_reduction_db &&
+	      fabs(fallback_power.target_rms - expected_rms) < 1e-8,
+	      "fallback changed the negotiated power reference: target=%.6f expected=%.6f",
+	      fallback_power.target_rms, expected_rms);
 	CHECK(dp != NULL &&
 	      v34_phase2_tone_transmitter_init(
 		      &tone, V34_ANSWERING_STATION, 6000) == V34_PHASE2_TONE_OK,
@@ -2229,6 +2278,7 @@ static bool run_fallback_restart(
 					    observation.phase2.kind ==
 						    PCM_PHASE2_EVENT_PEER_INFO1D_RECEIVED) {
 						struct v34_info1a selected = {
+							.common = { .minimum_peer_power_reduction_db = 5 },
 							.call_transmit = { .high_carrier = true,
 								.projected_data_rate_2400_bps_units = 12 },
 							.answer_to_call_symbol_rate = V34_SYMBOL_RATE_3000,

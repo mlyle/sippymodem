@@ -4717,6 +4717,7 @@ $(V90_DATAPUMP_TEST_BINARY): $(V90_DATAPUMP_TEST_OBJECTS)
 		-Wl,--wrap=v92_echo_timing_observe -Wl,--wrap=pcm_host_echo_advance_predicted \
 		-Wl,--wrap=modem_ec_get_tx_recovery -Wl,--wrap=pcm_call_start_rate_renegotiation \
 		-Wl,--wrap=v90_downstream_data_stream_next_owned \
+		-Wl,--wrap=v34_call_init_from_phase2 \
 		-Wl,--wrap=pcm_host_echo_predict -Wl,--wrap=pcm_host_echo_advance_reference -o $@ $^ -lm
 
 $(V34_PHASE2_DPSK_TEST_BINARY): $(V34_PHASE2_DPSK_TEST_OBJECTS)

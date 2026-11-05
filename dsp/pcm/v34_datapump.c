@@ -317,6 +317,13 @@ static struct dp *create_v34(
 			modem->max_rate, modem->v34_symbol_rate);
 	if (profile_result != V34_PROFILE_OK)
 		return NULL;
+	if (from_pcm) {
+		/* INFO1a's reduction is relative to the nominal power used for
+		 * PCM probing. A fresh V.34 profile would lower that reference
+		 * again before applying the peer's negotiated reduction. */
+		configuration.phase2_nominal_amplitude = fallback.restart.phase2_nominal_amplitude;
+		configuration.phase3.nominal_peak_amplitude = fallback.restart.phase2_nominal_amplitude;
+	}
 	datapump = calloc(1, sizeof(*datapump));
 	if (datapump == NULL)
 		return NULL;
