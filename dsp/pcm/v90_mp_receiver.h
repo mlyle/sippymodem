@@ -47,7 +47,8 @@ bool v90_mp_receiver_is_valid(
 
 /* Consume exactly one binary decision. Valid input always advances state;
  * rejected wire records are reported as events rather than call failures.
- * Invalid calls leave receiver and event unchanged. */
+ * Receiver and event storage must be disjoint. Invalid calls leave receiver
+ * and event unchanged. */
 enum v90_mp_receiver_result v90_mp_receive_bit(
 	struct v90_mp_receiver *receiver, uint8_t bit,
 	struct v90_mp_event *event);

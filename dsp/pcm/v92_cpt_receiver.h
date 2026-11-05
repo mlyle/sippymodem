@@ -42,8 +42,8 @@ bool v92_cpt_receiver_is_valid(
 enum v92_cpt_result v92_cpt_receiver_begin_after_sync(
 	struct v92_cpt_receiver *receiver);
 
-/* Consume one decoded CPt bit. Rejected calls change neither receiver state
- * nor the caller's event. */
+/* Consume one decoded CPt bit. Receiver and event storage must be disjoint.
+ * Rejected calls change neither receiver state nor the caller's event. */
 enum v92_cpt_result v92_cpt_receiver_receive_bit(
 	struct v92_cpt_receiver *receiver, uint8_t bit,
 	struct v92_cpt_receive_event *event);

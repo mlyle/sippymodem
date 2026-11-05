@@ -194,7 +194,8 @@ enum v34_mp_result v34_mp_type1_decode(
 
 /* Search a continuous descrambled bit stream for the 17-one MP prefix, infer
  * the record length from its type bit, and emit only CRC-validated typed
- * parameters. A rejected call leaves state and event unchanged. */
+ * parameters. Receiver and event storage must be disjoint. A rejected call
+ * leaves state and event unchanged. */
 enum v34_mp_result v34_mp_receiver_init(
 	struct v34_mp_receiver *receiver);
 bool v34_mp_receiver_is_valid(

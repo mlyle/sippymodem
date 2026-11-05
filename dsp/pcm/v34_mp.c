@@ -5,6 +5,7 @@
 #include "pcm_mp.h"
 #include "pcm_control_frame.h"
 #include "packed_bits.h"
+#include "memory_region.h"
 
 #include <string.h>
 
@@ -400,7 +401,8 @@ enum v34_mp_result v34_mp_receive_bit(
 	struct v34_mp_receive_event emitted = { 0 };
 
 	if (!v34_mp_receiver_is_valid(receiver) || bit > 1u ||
-	    event == NULL)
+	    event == NULL || memory_regions_overlap(
+		    receiver, sizeof(*receiver), event, sizeof(*event)))
 		return V34_MP_INVALID_ARGUMENT;
 	next = *receiver;
 	if (pcm_mp_receiver_receive_bit(&next.wire, bit,

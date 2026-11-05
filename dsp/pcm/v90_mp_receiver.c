@@ -2,6 +2,8 @@
 
 #include "v90_mp_receiver.h"
 
+#include "memory_region.h"
+
 _Static_assert((unsigned)V90_MP_MAXIMUM_SEQUENCE_BITS == PCM_MP_MAX_FRAME_BITS,
 	"shared MP storage must cover the V.90 sequence");
 
@@ -73,7 +75,8 @@ enum v90_mp_receiver_result v90_mp_receive_bit(
 	struct v90_mp_event emitted = { 0 };
 	size_t type0_bits, type1_bits;
 
-	if (receiver == NULL || event == NULL || bit > 1u)
+	if (receiver == NULL || event == NULL || bit > 1u ||
+	    memory_regions_overlap(receiver, sizeof(*receiver), event, sizeof(*event)))
 		return V90_MP_RECEIVER_INVALID_ARGUMENT;
 	if (!frame_lengths(receiver, &type0_bits, &type1_bits) ||
 	    !pcm_mp_receiver_is_valid(&receiver->wire, type0_bits, type1_bits))

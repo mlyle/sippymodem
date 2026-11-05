@@ -334,12 +334,46 @@ static bool test_contracts(void)
 	return true;
 }
 
+static bool test_event_buffer_ownership(void)
+{
+	union {
+		struct v90_mp_receiver receiver;
+		struct v90_mp_event event;
+		max_align_t alignment;
+	} arena[3];
+	unsigned char before[sizeof(arena)];
+	struct v90_mp_event event;
+	const ptrdiff_t offsets[] = {
+		-(ptrdiff_t)_Alignof(struct v90_mp_event), 0,
+		sizeof(struct v90_mp_receiver) - _Alignof(struct v90_mp_event),
+	};
+
+	for (size_t i = 0; i < ARRAY_LENGTH(offsets); ++i) {
+		memset(arena, 0xa5, sizeof(arena));
+		CHECK(v90_mp_receiver_init(&arena[1].receiver, 17) == V90_MP_RECEIVER_OK,
+		      "ownership fixture did not initialize");
+		for (unsigned bit = 0; bit < 8; ++bit)
+			CHECK(v90_mp_receive_bit(&arena[1].receiver, 1, &event) == V90_MP_RECEIVER_OK,
+			      "ownership prefix did not arrive");
+		memcpy(before, arena, sizeof(arena));
+		struct v90_mp_event *overlap = (void *)(
+			(unsigned char *)&arena + (ptrdiff_t)sizeof(arena[0]) + offsets[i]);
+		CHECK(v90_mp_receive_bit(&arena[1].receiver, 1, overlap) ==
+			      V90_MP_RECEIVER_INVALID_ARGUMENT &&
+		      memcmp(before, arena, sizeof(arena)) == 0,
+		      "overlapping event at offset %td was accepted or changed storage",
+		      offsets[i]);
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "event buffer ownership", test_event_buffer_ownership },
 		{ "continuous records", test_continuous_records },
 		{ "rejection and recovery", test_rejection_and_recovery },
 		{ "overlapping reacquisition", test_overlapping_reacquisition },

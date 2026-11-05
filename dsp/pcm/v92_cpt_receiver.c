@@ -2,6 +2,8 @@
 
 #include "v92_cpt_receiver.h"
 
+#include "memory_region.h"
+
 _Static_assert((unsigned)V92_CPT_MAX_FRAME_BITS == PCM_CONTROL_MAX_FRAME_BITS,
 	"control receive storage must cover the complete frame");
 
@@ -49,7 +51,8 @@ enum v92_cpt_result v92_cpt_receiver_receive_bit(
 	struct v92_cpt_receiver next;
 	struct v92_cpt_receive_event emitted = { 0 };
 
-	if (!v92_cpt_receiver_is_valid(receiver) || bit > 1u || event == NULL)
+	if (!v92_cpt_receiver_is_valid(receiver) || bit > 1u || event == NULL ||
+	    memory_regions_overlap(receiver, sizeof(*receiver), event, sizeof(*event)))
 		return V92_CPT_INVALID_ARGUMENT;
 	next = *receiver;
 	/* Accept a peer that sets the first post-CRC fill bit in an otherwise

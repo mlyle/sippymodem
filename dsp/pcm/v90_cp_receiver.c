@@ -2,6 +2,8 @@
 
 #include "v90_cp_receiver.h"
 
+#include "memory_region.h"
+
 _Static_assert((unsigned)V90_CP_MAX_FRAME_BITS == PCM_CONTROL_MAX_FRAME_BITS,
 	"control receive storage must cover the complete frame");
 
@@ -32,7 +34,8 @@ enum v90_cp_result v90_cp_receiver_receive_bit(
 	struct v90_cp_receiver next;
 	struct v90_cp_receive_event emitted = { 0 };
 
-	if (!v90_cp_receiver_is_valid(receiver) || bit > 1u || event == NULL)
+	if (!v90_cp_receiver_is_valid(receiver) || bit > 1u || event == NULL ||
+	    memory_regions_overlap(receiver, sizeof(*receiver), event, sizeof(*event)))
 		return V90_CP_INVALID_ARGUMENT;
 	next = *receiver;
 	struct pcm_control_receive_event received =
