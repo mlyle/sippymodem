@@ -19,8 +19,8 @@ static bool stage_is_valid(enum pcm_downstream_rx_stage stage)
 static bool mp_is_fresh(const struct v90_mp_receiver *receiver)
 {
 	return v90_mp_receiver_is_valid(receiver) &&
-	       receiver->stage == V90_MP_SEARCH_SYNC &&
-	       receiver->sync_one_count == 0;
+	       receiver->wire.stage == PCM_MP_SEARCH_SYNC &&
+	       receiver->wire.sync_one_count == 0;
 }
 
 static bool v92_control_is_fresh(const struct v92_control_rx *receiver)
@@ -121,7 +121,7 @@ bool pcm_downstream_rx_is_valid(
 		       receiver->ed_bit_errors == 0;
 	if (!receiver->ed_requested || receiver->mp_prime_boundary ||
 	    (receiver->protocol == PCM_PROTOCOL_V90 ?
-		     receiver->control.mp.stage != V90_MP_SEARCH_SYNC :
+		     receiver->control.mp.wire.stage != PCM_MP_SEARCH_SYNC :
 		     !control_is_fresh(receiver)))
 		return false;
 	if (receiver->stage == PCM_DOWNSTREAM_RX_ED_SEARCH)
@@ -433,7 +433,7 @@ static enum pcm_downstream_rx_result receive_ed_frame(
 		 * candidate intact and restart the Ed window; it may be the record
 		 * already accepted by the sender's spectral lookahead. */
 		if (result != PCM_DOWNSTREAM_RX_BUFFERING ||
-		    receiver->control.mp.stage != V90_MP_SEARCH_SYNC) {
+		    receiver->control.mp.wire.stage != PCM_MP_SEARCH_SYNC) {
 			receiver->stage = PCM_DOWNSTREAM_RX_MP_SEARCH;
 			receiver->ed_frames = 0;
 			receiver->ed_bit_errors = 0;

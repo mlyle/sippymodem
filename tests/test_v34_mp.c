@@ -242,7 +242,7 @@ static bool test_stream_receiver(void)
 	      event.frame_result == V34_MP_OK &&
 	      v34_mp_parameters_are_equal(&event.parameters.type0, &type0) &&
 	      v34_mp_receiver_is_valid(&receiver) &&
-	      receiver.stage == V34_MP_SEARCH_SYNC,
+	      receiver.wire.stage == PCM_MP_SEARCH_SYNC,
 	      "MP stream receiver changed a Type 0 record");
 	CHECK(receive_packed_frame(
 		      &receiver, type1_frame,
@@ -251,7 +251,7 @@ static bool test_stream_receiver(void)
 	      event.frame_result == V34_MP_OK &&
 	      v34_mp_type1_parameters_are_equal(&event.parameters.type1, &type1) &&
 	      v34_mp_receiver_is_valid(&receiver) &&
-	      receiver.stage == V34_MP_SEARCH_SYNC,
+	      receiver.wire.stage == PCM_MP_SEARCH_SYNC,
 	      "MP stream receiver changed a Type 1 record");
 	return true;
 }
@@ -342,8 +342,8 @@ static bool test_stream_truncation_recovery(void)
 			      "MP retry accepted the wrong record");
 			accepted++;
 		}
-		CHECK(accepted == 1u && receiver.stage == V34_MP_SEARCH_SYNC &&
-		      receiver.sync_one_count == 0u,
+		CHECK(accepted == 1u && receiver.wire.stage == PCM_MP_SEARCH_SYNC &&
+		      receiver.wire.sync_one_count == 0u,
 		      "lost retry old=%u next=%u prefix=%zu", old, next, prefix);
 	}
 	return true;
@@ -375,22 +375,34 @@ static bool test_stream_validation(void)
 	      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
 	      memcmp(&event, &saved_event, sizeof(event)) == 0,
 	      "invalid MP stream input mutated state or event");
-	receiver.sync_one_count =
+	receiver.wire.sync_one_count =
 		V34_MP_TYPE0_FRAME_SYNC_BITS + 1u;
 	CHECK(!v34_mp_receiver_is_valid(&receiver),
 	      "MP stream receiver accepted an excessive sync run");
 	receiver = saved;
-	receiver.stage = (enum v34_mp_receive_stage)3;
+	receiver.wire.stage = (enum pcm_mp_receive_stage)3;
 	CHECK(!v34_mp_receiver_is_valid(&receiver),
 	      "MP stream receiver accepted an unknown stage");
 	receiver = saved;
-	receiver.bit_index = 1;
+	receiver.wire.bit_index = 1;
 	CHECK(!v34_mp_receiver_is_valid(&receiver),
 	      "MP stream receiver accepted a search cursor");
 	receiver = saved;
-	receiver.frame[0] = 1;
+	receiver.wire.frame[0] = 1;
 	CHECK(!v34_mp_receiver_is_valid(&receiver),
 	      "MP stream receiver accepted stale frame storage");
+	receiver = saved;
+	for (unsigned bit = 0; bit < 19u; ++bit)
+		CHECK(v34_mp_receive_bit(&receiver, bit < 17u, &event) == V34_MP_OK,
+		      "MP Type 0 header did not arrive");
+	receiver.wire.frame_bit_count = PCM_MP_MAX_FRAME_BITS;
+	saved = receiver;
+	event = saved_event;
+	CHECK(!v34_mp_receiver_is_valid(&receiver) &&
+	      v34_mp_receive_bit(&receiver, 0, &event) == V34_MP_INVALID_ARGUMENT &&
+	      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
+	      memcmp(&event, &saved_event, sizeof(event)) == 0,
+	      "MP stream accepted another format's length or changed rejected state");
 	return true;
 }
 

@@ -3,6 +3,7 @@
 #ifndef V34_MP_H
 #define V34_MP_H
 
+#include "pcm_mp_receiver.h"
 #include "v34_precoder.h"
 #include "v34_trellis.h"
 
@@ -171,18 +172,8 @@ struct v34_mp_receive_event {
 	union v34_mp_received_parameters parameters;
 };
 
-enum v34_mp_receive_stage {
-	V34_MP_SEARCH_SYNC,
-	V34_MP_RECEIVE_TYPE,
-	V34_MP_RECEIVE_FRAME,
-};
-
 struct v34_mp_receiver {
-	uint8_t frame[V34_MP_TYPE1_FRAME_BYTES];
-	size_t frame_bit_count;
-	size_t bit_index;
-	uint8_t sync_one_count;
-	enum v34_mp_receive_stage stage;
+	struct pcm_mp_receiver wire;
 };
 
 /* Frames are packed in transmission order, most-significant bit first within

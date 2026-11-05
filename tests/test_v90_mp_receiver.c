@@ -130,8 +130,8 @@ static bool test_continuous_records(void)
 		      event.type == V90_MP_EVENT_NONE,
 		      "TRN2d suffix emitted at bit %zu", bit);
 	}
-	CHECK(receiver.stage == V90_MP_SEARCH_SYNC &&
-	      receiver.sync_one_count == V90_MP_FRAME_SYNC_BITS,
+	CHECK(receiver.wire.stage == PCM_MP_SEARCH_SYNC &&
+	      receiver.wire.sync_one_count == V90_MP_FRAME_SYNC_BITS,
 	      "TRN2d suffix did not saturate the sync detector");
 
 	CHECK(encode_record(&type0, FRAME_BITS, sequence, &bit_count) &&
@@ -148,7 +148,7 @@ static bool test_continuous_records(void)
 	      event.frame_result == V90_MP_OK &&
 	      records_match(&event.record, &type1, FRAME_BITS) &&
 	      v90_mp_receiver_is_valid(&receiver) &&
-	      receiver.stage == V90_MP_SEARCH_SYNC,
+	      receiver.wire.stage == PCM_MP_SEARCH_SYNC,
 	      "continuous Type 1 MP changed");
 	return true;
 }
@@ -213,12 +213,12 @@ static bool test_overlapping_reacquisition(void)
 	 * candidate before its nominal end. The newer 17-one run must win. */
 	CHECK(feed_bits(
 		      &receiver, valid, 0, 40, &event, false) &&
-	      receiver.stage == V90_MP_RECEIVE_SEQUENCE &&
+	      receiver.wire.stage == PCM_MP_READ_FRAME &&
 	      feed_bits(
 		      &receiver, valid, 0, bit_count, &event, true) &&
 	      event.type == V90_MP_EVENT_TYPE1 &&
 	      records_match(&event.record, &source, FRAME_BITS) &&
-	      receiver.stage == V90_MP_SEARCH_SYNC,
+	      receiver.wire.stage == PCM_MP_SEARCH_SYNC,
 	      "MP receiver lost an overlapping newer prefix");
 	return true;
 }
@@ -262,8 +262,8 @@ static bool test_truncation_recovery(void)
 				      "MP retry accepted the wrong record");
 				accepted++;
 			}
-			CHECK(accepted == 1u && receiver.stage == V90_MP_SEARCH_SYNC &&
-			      receiver.sync_one_count == 0u,
+			CHECK(accepted == 1u && receiver.wire.stage == PCM_MP_SEARCH_SYNC &&
+			      receiver.wire.sync_one_count == 0u,
 			      "lost retry width=%u old=%u next=%u prefix=%zu",
 			      width, old, next, prefix);
 		}
@@ -302,15 +302,28 @@ static bool test_contracts(void)
 	      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
 	      memcmp(&event, &saved_event, sizeof(event)) == 0,
 	      "invalid MP receive call changed state or event");
-	receiver.stage = (enum v90_mp_receive_stage)3;
+	receiver.wire.stage = (enum pcm_mp_receive_stage)3;
 	CHECK(!v90_mp_receiver_is_valid(&receiver) &&
 	      v90_mp_receive_bit(&receiver, 0, &event) ==
 		      V90_MP_RECEIVER_INVALID_STATE,
 	      "MP receiver accepted an unknown stage");
 	receiver = saved;
-	receiver.sequence[0] = 1;
+	receiver.wire.frame[0] = 1;
 	CHECK(!v90_mp_receiver_is_valid(&receiver),
 	      "MP receiver accepted stale candidate storage");
+	receiver = saved;
+	for (unsigned bit = 0; bit < 19u; ++bit)
+		CHECK(v90_mp_receive_bit(&receiver, bit < 17u, &event) ==
+			      V90_MP_RECEIVER_OK,
+		      "MP Type 0 header did not arrive");
+	receiver.wire.frame_bit_count = PCM_MP_MAX_FRAME_BITS;
+	saved = receiver;
+	event = saved_event;
+	CHECK(!v90_mp_receiver_is_valid(&receiver) &&
+	      v90_mp_receive_bit(&receiver, 0, &event) == V90_MP_RECEIVER_INVALID_STATE &&
+	      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
+	      memcmp(&event, &saved_event, sizeof(event)) == 0,
+	      "MP receiver accepted a length outside its type/alignment or changed rejected state");
 	CHECK(strcmp(v90_mp_receiver_result_name(
 		     V90_MP_RECEIVER_INVALID_STATE),
 		     "invalid state") == 0 &&

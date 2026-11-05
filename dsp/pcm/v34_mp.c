@@ -335,54 +335,20 @@ enum v34_mp_result v34_mp_type1_decode(
 	return V34_MP_OK;
 }
 
-static bool receive_stage_is_valid(enum v34_mp_receive_stage stage)
-{
-	return stage == V34_MP_SEARCH_SYNC ||
-	       stage == V34_MP_RECEIVE_TYPE ||
-	       stage == V34_MP_RECEIVE_FRAME;
-}
+_Static_assert((unsigned)V34_MP_TYPE1_FRAME_BITS <= PCM_MP_MAX_FRAME_BITS,
+	"shared MP storage must cover the V.34 frame");
 
-bool v34_mp_receiver_is_valid(
-	const struct v34_mp_receiver *receiver)
+bool v34_mp_receiver_is_valid(const struct v34_mp_receiver *receiver)
 {
-	if (receiver == NULL ||
-	    receiver->sync_one_count > V34_MP_TYPE0_FRAME_SYNC_BITS ||
-	    receiver->bit_index > V34_MP_TYPE1_FRAME_BITS ||
-	    !receive_stage_is_valid(receiver->stage) ||
-	    !packed_msb_tail_is_zero(
-		    receiver->frame, receiver->bit_index,
-		    sizeof(receiver->frame)))
-		return false;
-	switch (receiver->stage) {
-	case V34_MP_SEARCH_SYNC:
-		return receiver->frame_bit_count == 0 &&
-		       receiver->bit_index == 0;
-	case V34_MP_RECEIVE_TYPE:
-		return receiver->frame_bit_count == 0 &&
-		       receiver->bit_index == V34_MP_TYPE_BIT &&
-		       receiver->sync_one_count == 0 &&
-		       pcm_control_frame_prefix_is_valid(receiver->frame);
-	case V34_MP_RECEIVE_FRAME:
-		return (receiver->frame_bit_count ==
-				V34_MP_TYPE0_FRAME_BITS ||
-			receiver->frame_bit_count ==
-				V34_MP_TYPE1_FRAME_BITS) &&
-		       receiver->bit_index > V34_MP_TYPE_BIT &&
-		       receiver->bit_index < receiver->frame_bit_count &&
-		       receiver->sync_one_count == 0 &&
-		       pcm_control_frame_prefix_is_valid(receiver->frame) &&
-		       packed_msb_bit(receiver->frame, V34_MP_TYPE_BIT) ==
-			       (uint8_t)(receiver->frame_bit_count ==
-					 V34_MP_TYPE1_FRAME_BITS);
-	}
-	return false;
+	return receiver != NULL && pcm_mp_receiver_is_valid(&receiver->wire,
+		V34_MP_TYPE0_FRAME_BITS, V34_MP_TYPE1_FRAME_BITS);
 }
 
 enum v34_mp_result v34_mp_receiver_init(
 	struct v34_mp_receiver *receiver)
 {
 	struct v34_mp_receiver initialized = {
-		.stage = V34_MP_SEARCH_SYNC,
+		.wire.stage = PCM_MP_SEARCH_SYNC,
 	};
 
 	if (receiver == NULL ||
@@ -392,23 +358,6 @@ enum v34_mp_result v34_mp_receiver_init(
 	return V34_MP_OK;
 }
 
-static void clear_receive_frame(struct v34_mp_receiver *receiver)
-{
-	memset(receiver->frame, 0, sizeof(receiver->frame));
-	receiver->frame_bit_count = 0;
-	receiver->bit_index = 0;
-	receiver->sync_one_count = 0;
-	receiver->stage = V34_MP_SEARCH_SYNC;
-}
-
-static void begin_receive_frame(struct v34_mp_receiver *receiver)
-{
-	clear_receive_frame(receiver);
-	pcm_control_frame_write_prefix(receiver->frame);
-	receiver->bit_index = V34_MP_TYPE_BIT;
-	receiver->stage = V34_MP_RECEIVE_TYPE;
-}
-
 static void complete_receive_frame(
 	struct v34_mp_receiver *receiver,
 	struct v34_mp_receive_event *event)
@@ -416,11 +365,11 @@ static void complete_receive_frame(
 	enum v34_mp_result result;
 	uint8_t suffix_ones;
 
-	if (receiver->frame_bit_count == V34_MP_TYPE0_FRAME_BITS) {
+	if (receiver->wire.frame_bit_count == V34_MP_TYPE0_FRAME_BITS) {
 		struct v34_mp_parameters parameters;
 
 		result = v34_mp_type0_decode(
-			receiver->frame, sizeof(receiver->frame), &parameters);
+			receiver->wire.frame, sizeof(receiver->wire.frame), &parameters);
 		if (result == V34_MP_OK) {
 			event->type = V34_MP_RECEIVE_TYPE0;
 			event->parameters.type0 = parameters;
@@ -429,7 +378,7 @@ static void complete_receive_frame(
 		struct v34_mp_type1_parameters parameters;
 
 		result = v34_mp_type1_decode(
-			receiver->frame, sizeof(receiver->frame), &parameters);
+			receiver->wire.frame, sizeof(receiver->wire.frame), &parameters);
 		if (result == V34_MP_OK) {
 			event->type = V34_MP_RECEIVE_TYPE1;
 			event->parameters.type1 = parameters;
@@ -439,41 +388,8 @@ static void complete_receive_frame(
 	if (result != V34_MP_OK)
 		event->type = V34_MP_RECEIVE_REJECTED;
 	/* Rejection can occur inside the next valid record's sync prefix. */
-	suffix_ones = result == V34_MP_OK ? 0u :
-		pcm_control_frame_trailing_ones(
-			receiver->frame, receiver->bit_index);
-	clear_receive_frame(receiver);
-	receiver->sync_one_count = suffix_ones;
-}
-
-static void receive_frame_bit(
-	struct v34_mp_receiver *receiver, uint8_t bit,
-	struct v34_mp_receive_event *event)
-{
-	if (receiver->stage == V34_MP_SEARCH_SYNC) {
-		if (pcm_control_frame_sync_bit(
-			    &receiver->sync_one_count, bit != 0u))
-			begin_receive_frame(receiver);
-		return;
-	}
-
-	/* Mandatory start bits exclude this prefix inside a valid MP. */
-	if (bit == 0u && pcm_control_frame_trailing_ones(
-			receiver->frame, receiver->bit_index) ==
-				V34_MP_TYPE0_FRAME_SYNC_BITS) {
-		begin_receive_frame(receiver);
-		return;
-	}
-	packed_msb_set_bit(receiver->frame, receiver->bit_index, bit != 0);
-	receiver->bit_index++;
-	if (receiver->stage == V34_MP_RECEIVE_TYPE) {
-		receiver->frame_bit_count = bit != 0 ?
-			V34_MP_TYPE1_FRAME_BITS :
-			V34_MP_TYPE0_FRAME_BITS;
-		receiver->stage = V34_MP_RECEIVE_FRAME;
-	}
-	if (receiver->bit_index == receiver->frame_bit_count)
-		complete_receive_frame(receiver, event);
+	suffix_ones = result == V34_MP_OK ? 0u : receiver->wire.sync_one_count;
+	pcm_mp_receiver_clear(&receiver->wire, suffix_ones);
 }
 
 enum v34_mp_result v34_mp_receive_bit(
@@ -487,7 +403,9 @@ enum v34_mp_result v34_mp_receive_bit(
 	    event == NULL)
 		return V34_MP_INVALID_ARGUMENT;
 	next = *receiver;
-	receive_frame_bit(&next, bit, &emitted);
+	if (pcm_mp_receiver_receive_bit(&next.wire, bit,
+		    V34_MP_TYPE0_FRAME_BITS, V34_MP_TYPE1_FRAME_BITS))
+		complete_receive_frame(&next, &emitted);
 	if (!v34_mp_receiver_is_valid(&next))
 		return V34_MP_INVALID_ARGUMENT;
 	*receiver = next;

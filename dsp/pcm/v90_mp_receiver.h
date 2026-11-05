@@ -4,6 +4,7 @@
 #define V90_MP_RECEIVER_H
 
 #include "v90_mp.h"
+#include "pcm_mp_receiver.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -31,22 +32,12 @@ struct v90_mp_event {
 	struct v90_mp_record record;
 };
 
-enum v90_mp_receive_stage {
-	V90_MP_SEARCH_SYNC,
-	V90_MP_RECEIVE_TYPE,
-	V90_MP_RECEIVE_SEQUENCE,
-};
-
 /* Incremental detector for one continuous, descrambled Phase 4 bit stream.
  * The saturated sync count allows an arbitrary TRN2d suffix of ones to flow
  * directly into the first MP start bit. */
 struct v90_mp_receiver {
-	uint8_t sequence[V90_MP_MAXIMUM_SEQUENCE_BYTES];
-	size_t sequence_bit_count;
-	size_t bit_index;
-	uint8_t sync_one_count;
+	struct pcm_mp_receiver wire;
 	uint8_t training_frame_bits;
-	enum v90_mp_receive_stage stage;
 };
 
 enum v90_mp_receiver_result v90_mp_receiver_init(

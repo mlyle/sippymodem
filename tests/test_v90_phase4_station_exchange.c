@@ -333,13 +333,13 @@ static bool verify_repeated_mp_recovery(
 		    receiver->stage == PCM_DOWNSTREAM_RX_MP_SEARCH &&
 		    receiver->stream.pending_count ==
 			    V90_CP_FRAME_INTERVALS - 1u &&
-		    receiver->control.mp.stage == V90_MP_RECEIVE_SEQUENCE &&
-		    receiver->control.mp.bit_index >
+		    receiver->control.mp.wire.stage == PCM_MP_READ_FRAME &&
+		    receiver->control.mp.wire.bit_index >
 			    V90_MP_FRAME_SYNC_BITS + 1u &&
-		    receiver->control.mp.bit_index +
+		    receiver->control.mp.wire.bit_index +
 			    receiver->stream.decoder.mapping.frame_bits +
 			    V34_SCRAMBLER_BITS <
-			    receiver->control.mp.sequence_bit_count) {
+			    receiver->control.mp.wire.frame_bit_count) {
 			CHECK(alter_last_modulus_symbol(
 				      receiver, &symbol.pcm.octet),
 			      "could not corrupt one valid MP symbol");
@@ -608,18 +608,18 @@ static bool verify_final_downstream_exchange(
 			const struct pcm_downstream_rx *receiver =
 				&analog_path.downstream.training;
 
-			if (receiver->control.mp.stage != V90_MP_RECEIVE_SEQUENCE)
+			if (receiver->control.mp.wire.stage != PCM_MP_READ_FRAME)
 				current_mp_damaged = false;
 			if (!current_mp_damaged && digital_path.downstream_stage ==
 				    V90_DIGITAL_PATH_DOWNSTREAM_TRAINING &&
 			    digital_path.downstream.training.stage == PCM_DOWNSTREAM_TX_MP &&
 			    receiver->stage == PCM_DOWNSTREAM_RX_MP_SEARCH &&
 			    receiver->stream.pending_count == V90_CP_FRAME_INTERVALS - 1u &&
-			    receiver->control.mp.stage == V90_MP_RECEIVE_SEQUENCE &&
-			    receiver->control.mp.bit_index > V90_MP_FRAME_SYNC_BITS + 1u &&
-			    receiver->control.mp.bit_index +
+			    receiver->control.mp.wire.stage == PCM_MP_READ_FRAME &&
+			    receiver->control.mp.wire.bit_index > V90_MP_FRAME_SYNC_BITS + 1u &&
+			    receiver->control.mp.wire.bit_index +
 				    receiver->stream.decoder.mapping.frame_bits +
-				    V34_SCRAMBLER_BITS < receiver->control.mp.sequence_bit_count) {
+				    V34_SCRAMBLER_BITS < receiver->control.mp.wire.frame_bit_count) {
 				CHECK(alter_last_modulus_symbol(receiver, &digital_octet),
 				      "could not damage the first MP");
 				mp_damaged = true;

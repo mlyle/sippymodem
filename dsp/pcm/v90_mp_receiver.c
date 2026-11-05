@@ -2,56 +2,24 @@
 
 #include "v90_mp_receiver.h"
 
-#include "pcm_control_frame.h"
-#include "packed_bits.h"
+_Static_assert((unsigned)V90_MP_MAXIMUM_SEQUENCE_BITS == PCM_MP_MAX_FRAME_BITS,
+	"shared MP storage must cover the V.90 sequence");
 
-#include <string.h>
-
-static bool stage_is_valid(enum v90_mp_receive_stage stage)
+static bool frame_lengths(const struct v90_mp_receiver *receiver,
+	size_t *type0_bits, size_t *type1_bits)
 {
-	return stage == V90_MP_SEARCH_SYNC ||
-	       stage == V90_MP_RECEIVE_TYPE ||
-	       stage == V90_MP_RECEIVE_SEQUENCE;
+	return receiver != NULL && v90_mp_sequence_size(V90_MP_RECORD_TYPE0,
+		receiver->training_frame_bits, type0_bits) == V90_MP_OK &&
+	       v90_mp_sequence_size(V90_MP_RECORD_TYPE1,
+		       receiver->training_frame_bits, type1_bits) == V90_MP_OK;
 }
 
-bool v90_mp_receiver_is_valid(
-	const struct v90_mp_receiver *receiver)
+bool v90_mp_receiver_is_valid(const struct v90_mp_receiver *receiver)
 {
-	size_t expected;
-	enum v90_mp_record_type type;
+	size_t type0_bits, type1_bits;
 
-	if (receiver == NULL || !stage_is_valid(receiver->stage) ||
-	    receiver->sync_one_count > V90_MP_FRAME_SYNC_BITS ||
-	    receiver->bit_index > V90_MP_MAXIMUM_SEQUENCE_BITS ||
-	    !packed_msb_tail_is_zero(
-		    receiver->sequence, receiver->bit_index,
-		    sizeof(receiver->sequence)) ||
-	    v90_mp_sequence_size(
-		    V90_MP_RECORD_TYPE0, receiver->training_frame_bits,
-		    &expected) != V90_MP_OK)
-		return false;
-	if (receiver->stage == V90_MP_SEARCH_SYNC)
-		return receiver->sequence_bit_count == 0 &&
-		       receiver->bit_index == 0;
-	if (!pcm_control_frame_prefix_is_valid(receiver->sequence) ||
-	    receiver->sync_one_count !=
-		    pcm_control_frame_trailing_ones(
-			    receiver->sequence, receiver->bit_index))
-		return false;
-	if (receiver->stage == V90_MP_RECEIVE_TYPE)
-		return receiver->sequence_bit_count == 0 &&
-		       receiver->bit_index == V90_MP_FRAME_SYNC_BITS + 1u &&
-		       receiver->sync_one_count == 0;
-	type = packed_msb_bit(receiver->sequence, V90_MP_FRAME_SYNC_BITS + 1u) !=
-		       0 ?
-		       V90_MP_RECORD_TYPE1 :
-		       V90_MP_RECORD_TYPE0;
-	return v90_mp_sequence_size(
-		       type, receiver->training_frame_bits, &expected) ==
-		       V90_MP_OK &&
-	       receiver->sequence_bit_count == expected &&
-	       receiver->bit_index > V90_MP_FRAME_SYNC_BITS + 1u &&
-	       receiver->bit_index < receiver->sequence_bit_count;
+	return frame_lengths(receiver, &type0_bits, &type1_bits) &&
+	       pcm_mp_receiver_is_valid(&receiver->wire, type0_bits, type1_bits);
 }
 
 enum v90_mp_receiver_result v90_mp_receiver_init(
@@ -59,7 +27,7 @@ enum v90_mp_receiver_result v90_mp_receiver_init(
 {
 	struct v90_mp_receiver initialized = {
 		.training_frame_bits = training_frame_bits,
-		.stage = V90_MP_SEARCH_SYNC,
+		.wire.stage = PCM_MP_SEARCH_SYNC,
 	};
 	size_t ignored;
 
@@ -75,31 +43,14 @@ enum v90_mp_receiver_result v90_mp_receiver_init(
 	return V90_MP_RECEIVER_OK;
 }
 
-static void clear_candidate(struct v90_mp_receiver *receiver)
-{
-	memset(receiver->sequence, 0, sizeof(receiver->sequence));
-	receiver->sequence_bit_count = 0;
-	receiver->bit_index = 0;
-	receiver->sync_one_count = 0;
-	receiver->stage = V90_MP_SEARCH_SYNC;
-}
-
-static void begin_candidate(struct v90_mp_receiver *receiver)
-{
-	clear_candidate(receiver);
-	pcm_control_frame_write_prefix(receiver->sequence);
-	receiver->bit_index = V90_MP_FRAME_SYNC_BITS + 1u;
-	receiver->stage = V90_MP_RECEIVE_TYPE;
-}
-
 static void finish_candidate(
 	struct v90_mp_receiver *receiver, struct v90_mp_event *event)
 {
 	struct v90_mp_record record;
 	enum v90_mp_result result = v90_mp_decode(
-		receiver->sequence, receiver->sequence_bit_count,
+		receiver->wire.frame, receiver->wire.frame_bit_count,
 		receiver->training_frame_bits, &record);
-	uint8_t suffix_ones = receiver->sync_one_count;
+	uint8_t suffix_ones = receiver->wire.sync_one_count;
 
 	event->frame_result = result;
 	if (result == V90_MP_OK) {
@@ -110,39 +61,8 @@ static void finish_candidate(
 	} else {
 		event->type = V90_MP_EVENT_REJECTED;
 	}
-	clear_candidate(receiver);
 	/* Rejection can occur inside the next valid record's sync prefix. */
-	if (result != V90_MP_OK)
-		receiver->sync_one_count = suffix_ones;
-}
-
-static void receive_valid_bit(
-	struct v90_mp_receiver *receiver, uint8_t bit,
-	struct v90_mp_event *event)
-{
-	if (pcm_control_frame_sync_bit(&receiver->sync_one_count, bit != 0u)) {
-		/* A valid MP cannot contain 17 consecutive ones between its
-		 * mandatory start bits, so this is an unambiguous newer prefix. */
-		begin_candidate(receiver);
-		return;
-	}
-	if (receiver->stage == V90_MP_SEARCH_SYNC)
-		return;
-	packed_msb_set_bit(
-		receiver->sequence, receiver->bit_index, bit != 0);
-	receiver->bit_index++;
-	if (receiver->stage == V90_MP_RECEIVE_TYPE) {
-		enum v90_mp_record_type type = bit != 0 ?
-					       V90_MP_RECORD_TYPE1 :
-					       V90_MP_RECORD_TYPE0;
-
-		(void)v90_mp_sequence_size(
-			type, receiver->training_frame_bits,
-			&receiver->sequence_bit_count);
-		receiver->stage = V90_MP_RECEIVE_SEQUENCE;
-	}
-	if (receiver->bit_index == receiver->sequence_bit_count)
-		finish_candidate(receiver, event);
+	pcm_mp_receiver_clear(&receiver->wire, result == V90_MP_OK ? 0 : suffix_ones);
 }
 
 enum v90_mp_receiver_result v90_mp_receive_bit(
@@ -151,14 +71,17 @@ enum v90_mp_receiver_result v90_mp_receive_bit(
 {
 	struct v90_mp_receiver next;
 	struct v90_mp_event emitted = { 0 };
+	size_t type0_bits, type1_bits;
 
 	if (receiver == NULL || event == NULL || bit > 1u)
 		return V90_MP_RECEIVER_INVALID_ARGUMENT;
-	if (!v90_mp_receiver_is_valid(receiver))
+	if (!frame_lengths(receiver, &type0_bits, &type1_bits) ||
+	    !pcm_mp_receiver_is_valid(&receiver->wire, type0_bits, type1_bits))
 		return V90_MP_RECEIVER_INVALID_STATE;
 	next = *receiver;
-	receive_valid_bit(&next, bit, &emitted);
-	if (!v90_mp_receiver_is_valid(&next))
+	if (pcm_mp_receiver_receive_bit(&next.wire, bit, type0_bits, type1_bits))
+		finish_candidate(&next, &emitted);
+	if (!pcm_mp_receiver_is_valid(&next.wire, type0_bits, type1_bits))
 		return V90_MP_RECEIVER_INTERNAL_ERROR;
 	*receiver = next;
 	*event = emitted;

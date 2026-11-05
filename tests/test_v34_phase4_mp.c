@@ -372,7 +372,7 @@ static bool test_decision_type_error_recovery(void)
 			      &plain) == V34_PHASE4_MP_OK &&
 		      receive_current_record(&link.transmitter, &link.receiver,
 			      4u, &event) && event.type == V34_MP_RECEIVE_NO_EVENT &&
-		      link.receiver.records.frame_bit_count == V34_MP_TYPE1_FRAME_BITS,
+		      link.receiver.records.wire.frame_bit_count == V34_MP_TYPE1_FRAME_BITS,
 		      "symbol error did not change Type 0 into Type 1");
 		CHECK((next == 0u ?
 			v34_phase4_mp_start_next_type0_record(
@@ -499,7 +499,7 @@ static bool test_receiver_validation(void)
 	CHECK(!v34_phase4_mp_receiver_is_valid(&receiver),
 	      "Phase 4 receiver accepted a role/polynomial mismatch");
 	receiver = saved;
-	receiver.records.bit_index = 1;
+	receiver.records.wire.bit_index = 1;
 	CHECK(!v34_phase4_mp_receiver_is_valid(&receiver),
 	      "Phase 4 receiver accepted a corrupt record parser");
 	return true;
