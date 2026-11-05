@@ -779,6 +779,13 @@ static void service_link_v90(struct dp *dp)
 		if (v90_datapump_start_rate_renegotiation(dp, false))
 			modem_ec_probe_after_tx_recovery(dp->modem, 0);
 	} else if (!recovery->used) {
+		/* Repeated peer polls can keep T403 alive while our empty transmit
+		 * window has no T401. Verify that direction before any physical
+		 * repair; a received Final retires the timing hypothesis normally. */
+		if (pcm_tx_recovery_timing_valid(recovery, dp->modem->count, &observation) &&
+		    observation.peer_noack && observation.peer_poll_sample >= recovery->event_sample &&
+		    modem_ec_verify_tx(dp->modem))
+			return;
 		if (pcm_tx_recovery_eligible(recovery, dp->modem->count, &observation)) {
 			pcm_tx_recovery_arm(recovery, dp->modem->count);
 		} else if (pcm_tx_recovery_second_eligible(recovery, dp->modem->count, &observation) &&

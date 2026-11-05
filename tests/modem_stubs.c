@@ -41,6 +41,12 @@ bool modem_ec_probe_after_tx_recovery(struct modem *modem, uint64_t grant)
 	return false;
 }
 
+bool modem_ec_verify_tx(struct modem *modem)
+{
+	(void)modem;
+	return false;
+}
+
 bool modem_ec_take_retrain_request(struct modem *modem)
 {
 	(void)modem;

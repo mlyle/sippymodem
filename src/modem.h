@@ -607,6 +607,9 @@ struct modem_tx_recovery {
 };
 extern bool modem_ec_get_tx_recovery(const struct modem *m,
 	struct modem_tx_recovery *observation);
+/* Verify an otherwise idle transmit direction with an ordinary status enquiry.
+ * Requires fresh ready-peer feedback; an existing enquiry is never renewed. */
+extern bool modem_ec_verify_tx(struct modem *m);
 /* After an accepted physical repair, queue its confirmation using the retained
  * N400 allowance. Zero selects first-retry admission; a nonzero grant must
  * already belong to this owner. Does not renew T401 or the recovery allowance. */

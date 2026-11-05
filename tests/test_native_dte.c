@@ -492,7 +492,7 @@ static bool online_lapm_progress(void)
 		modem->ec.lapm.rtx_count = 1;
 		EXPECT(strcmp(modem_protocol_step(modem), "LAPM/status-enquiry") == 0);
 		modem->ec.lapm.retrain_poll = 1;
-		EXPECT(strcmp(modem_protocol_step(modem), "LAPM/retrain-enquiry") == 0);
+		EXPECT(strcmp(modem_protocol_step(modem), "LAPM/link-verification") == 0);
 		modem->ec.lapm.peer_busy = 1;
 		EXPECT(strcmp(modem_protocol_step(modem), "LAPM/peer-busy") == 0);
 		/* A physical recovery must still expose its DSP progress, even

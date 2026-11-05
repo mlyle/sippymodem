@@ -8369,6 +8369,126 @@ static bool test_lapm_acknowledgement_progress(void)
 	return true;
 }
 
+static bool test_lapm_idle_tx_verification(void)
+{
+	struct modem_driver driver = {
+		.name = "Idle transmit verification", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	enum { HEAL, HEAL_RETRY, NO_FINAL, NO_POLL, STALE, LOCAL_BUSY, PEER_BUSY, RECOVERING, PENDING };
+	for (unsigned caller = 0; caller < 2; ++caller)
+	for (unsigned scenario = HEAL; scenario <= PENDING; ++scenario) {
+		struct modem *m = create_compat_modem(&driver, driver.name);
+		CHECK(m != NULL, "verification allocation failed");
+		m->caller = caller;
+		m->cfg.ec = 1;
+		m->cfg.comp = 0;
+		m->rx_rate = m->tx_rate = 4800;
+		m->state = 4;
+		CHECK(modem_ec_init(m) == 0, "verification initialization failed");
+		m->caller = 0;
+		modem_update_status(m, STATUS_PACK_LINK);
+		m->caller = caller;
+		struct lapm_state *l = &m->ec.lapm;
+		uint8_t wire[] = { l->cmd_addr, 0x0f, 0 };
+		frame_t incoming = { .buf = wire, .count = 2 };
+		m->packer.hdlc.rx_complete(l, &incoming);
+		frame_t *outgoing = m->packer.hdlc.get_tx_frame(l);
+		CHECK(outgoing != NULL && outgoing->buf[1] == 0x7f, "fixture lacks SABME");
+		m->packer.hdlc.tx_complete(l, outgoing);
+		wire[1] = 0x73;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(l->state == 2 && m->state == 5, "fixture did not connect");
+		m->count = 2 * MODEM_RATE;
+		wire[0] = l->rsp_addr;
+		wire[1] = scenario == PEER_BUSY ? 5 : 1;
+		wire[2] = 1;
+		incoming.count = 3;
+		if (scenario != NO_POLL) {
+			m->packer.hdlc.rx_complete(l, &incoming);
+			while ((outgoing = m->packer.hdlc.get_tx_frame(l)) != NULL)
+				m->packer.hdlc.tx_complete(l, outgoing);
+		}
+		if (scenario == STALE) m->count += 2 * MODEM_RATE;
+		if (scenario == LOCAL_BUSY) l->busy = 1;
+		if (scenario == RECOVERING) l->stalled_retrain = true;
+		struct lapm_host_read source = { .count = 1 };
+		m->dev_data = &source;
+		m->get_chars = counted_lapm_source;
+		if (scenario == PENDING) {
+			outgoing = m->packer.hdlc.get_tx_frame(l);
+			CHECK(outgoing != NULL && !(outgoing->buf[1] & 1), "fixture lacks I frame");
+			m->packer.hdlc.tx_complete(l, outgoing);
+		}
+		int remaining = m->bit_timer;
+		unsigned retries = l->rtx_count;
+		uint64_t grant = m->recovery_sequence;
+		bool accepted = modem_ec_verify_tx(m);
+		CHECK(accepted == (scenario <= NO_FINAL), "idle verification admission mismatch");
+		if (!accepted) {
+			CHECK(m->bit_timer == remaining && l->rtx_count == (int)retries &&
+			      !l->retrain_poll && m->recovery_sequence == grant,
+			      "rejected verification changed supervision");
+		} else {
+			CHECK(l->rtx_count == 1 && l->retrain_poll == 1 && !source.calls &&
+			      m->recovery_sequence == grant && !l->stalled_retrain,
+			      "verification consumed payload or claimed physical recovery");
+			outgoing = m->packer.hdlc.get_tx_frame(l);
+			CHECK(outgoing != NULL && outgoing->buf[0] == l->cmd_addr &&
+			      outgoing->buf[1] == 1 && outgoing->buf[2] == 1,
+			      "verification did not send RR P=1");
+			m->packer.hdlc.tx_complete(l, outgoing);
+			CHECK(m->packer.hdlc.get_tx_frame(l) == NULL && !source.calls,
+			      "verification dequeued pending payload");
+			m->bit_timer /= 2;
+			remaining = m->bit_timer;
+			CHECK(!modem_ec_verify_tx(m) && m->bit_timer == remaining && l->rtx_count == 1,
+			      "repeated verification renewed its deadline");
+			/* Peer commands must retain our T401 even with an empty window. */
+			m->packer.hdlc.rx_complete(l, &incoming);
+			CHECK(m->bit_timer == remaining && l->rtx_count == 1 && l->retrain_poll == 1,
+			      "peer poll postponed verification");
+			while ((outgoing = m->packer.hdlc.get_tx_frame(l)) != NULL)
+				m->packer.hdlc.tx_complete(l, outgoing);
+			if (scenario != HEAL) {
+				m->count += 3 * MODEM_RATE;
+				m->bit_timer_func(m);
+				m->packer.hdlc.rx_complete(l, &incoming);
+			}
+			struct modem_tx_recovery observation;
+			CHECK(modem_ec_get_tx_recovery(m, &observation) &&
+			      observation.first_retry == (scenario != HEAL) &&
+			      observation.peer_noack && observation.receive_healthy &&
+			      !modem_ec_take_retrain_request(m), "verification skipped ordinary first retry");
+			uint64_t generation = observation.ack_generation;
+			if (scenario <= HEAL_RETRY) {
+				wire[0] = l->cmd_addr; /* Solicited Final, N(R)=0. */
+				m->packer.hdlc.rx_complete(l, &incoming);
+				CHECK(!l->rtx_count && !l->retrain_poll && !l->peer_busy &&
+				      modem_ec_get_tx_recovery(m, &observation) &&
+				      observation.ack_generation != generation && !observation.peer_noack,
+				      "Final did not retire idle verification");
+				while ((outgoing = m->packer.hdlc.get_tx_frame(l)) != NULL) {
+					m->packer.hdlc.tx_complete(l, outgoing);
+					if (source.calls) break;
+				}
+				CHECK(source.calls == 1 && l->vs == 1, "verified link did not resume payload");
+			} else {
+				for (unsigned retry = 0; retry < 6 && l->state == 2; ++retry) {
+					while ((outgoing = m->packer.hdlc.get_tx_frame(l)) != NULL)
+						m->packer.hdlc.tx_complete(l, outgoing);
+					m->bit_timer_func(m);
+				}
+				CHECK(l->state != 2 && !source.calls && source.count == 1,
+				      "unanswered verification escaped N400 or discarded payload");
+			}
+		}
+		modem_ec_exit(m);
+		modem_delete(m);
+	}
+	return true;
+}
+
 static bool test_lapm_post_retrain_enquiry(void)
 {
 	struct modem_driver driver = {
@@ -11969,6 +12089,7 @@ int main(void)
 		{ "LAPM acknowledgement progress", test_lapm_acknowledgement_progress },
 		{ "LAPM passive establishment recovery", test_lapm_passive_establishment_recovery },
 		{ "LAPM establishment recovery", test_lapm_establishment_recovery },
+		{ "LAPM idle transmit verification", test_lapm_idle_tx_verification },
 		{ "LAPM transmit recovery observations", test_lapm_transmit_recovery_observations },
 		{ "deferred LAPM recovery grant", test_lapm_deferred_recovery_grant },
 		{ "bounded LAPM stalled retrain", test_lapm_stalled_retrain },

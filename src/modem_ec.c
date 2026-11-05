@@ -273,7 +273,7 @@ const char *modem_ec_protocol_step(const struct modem *m)
 			return "LAPM/peer-busy";
 		if (m->ec.lapm.rtx_count)
 			return m->ec.lapm.retrain_poll ?
-				"LAPM/retrain-enquiry" : "LAPM/status-enquiry";
+				"LAPM/link-verification" : "LAPM/status-enquiry";
 		return NULL;
 	default: return NULL;
 	}
@@ -1710,13 +1710,13 @@ static void lapm_rx_complete(void *framer, frame_t *f)
 		 * protocol acceptance and actual VA advancement remain unchanged. */
 		if (FRAME_NR(f) != l->va)
 			note_tx_progress(l);
-		/* Retain a ready peer command/Poll while information is outstanding
-		 * or our post-retrain enquiry awaits its final response. A command
-		 * never completes that enquiry. Fresh reverse feedback, a physical
-		 * timing hypothesis and its ordinary first retry must still agree. */
+		/* Retain a ready peer command/Poll, including on an idle link. A
+		 * command does not confirm our outgoing direction. The PCM owner
+		 * can use an independent timing hypothesis to request an ordinary
+		 * enquiry; physical recovery still requires its first T401 expiry. */
 		if (type == FRAME_S && FRAME_CTRL(f) == FRAME_S_RR &&
 		    RX_IS_COMMAND(f) && FRAME_S_PF(f) && FRAME_NR(f) == l->va &&
-		    (l->va != l->vs || l->retrain_poll) && !l->peer_busy) {
+		    !l->peer_busy) {
 			l->peer_noack = true;
 			l->peer_noack_sample = m->count;
 		}
@@ -2102,6 +2102,43 @@ bool modem_ec_take_retrain_request(struct modem *m)
 	return true;
 }
 
+static int start_tx_enquiry(struct lapm_state *l)
+{
+	struct modem *m = l->modem;
+	if (l->retrain_poll)
+		return 0;
+	if (l->rtx_count) {
+		l->retrain_poll = l->rtx_count;
+		return 0;
+	}
+	if (tx_status(l, l->cmd_addr, 1) != 0)
+		return -1;
+	/* Preserve an existing T401 deadline and retry budget (V.42 7.11). */
+	if (m->bit_timer <= 0 || m->bit_timer_func != t401_timeout)
+		T401_START(l);
+	/* The first poll is already queued; its F=1 response is solicited. */
+	l->rtx_count = 1;
+	l->retrain_poll = 1;
+	return 0;
+}
+
+bool modem_ec_verify_tx(struct modem *m)
+{
+	struct modem_tx_recovery observation;
+	if (!modem_ec_get_tx_recovery(m, &observation) ||
+	    observation.flow_controlled || observation.recovery_active ||
+	    !observation.receive_healthy || !observation.peer_noack)
+		return false;
+	struct lapm_state *l = &m->ec.lapm;
+	if (l->va != l->vs || l->sent_info != l->info_list ||
+	    l->rtx_count || l->retrain_poll)
+		return false;
+	/* Incoming commands restart T403 without proving that our replies arrive.
+	 * Verify the idle direction under ordinary T401/N400, retaining payload
+	 * behind the query until its Final, as after a physical interruption. */
+	return start_tx_enquiry(l) == 0;
+}
+
 int modem_ec_resume_after_retrain(struct modem *m)
 {
 	struct lapm_state *l;
@@ -2152,21 +2189,7 @@ int modem_ec_resume_after_retrain(struct modem *m)
 	 * confirming the outgoing direction; retain ordinary T401/N400 recovery. */
 	/* The enquiry's rtx_count already gates information. Preserve the peer's
 	 * actual RNR state and continue under retained T401/N400. */
-	if (l->retrain_poll)
-		return 0;
-	if (l->rtx_count) {
-		l->retrain_poll = l->rtx_count;
-		return 0;
-	}
-	if (tx_status(l, l->cmd_addr, 1) != 0)
-		return -1;
-	/* V.42 7.10.2/7.11: resume an existing T401 without renewing it. */
-	if (m->bit_timer <= 0 || m->bit_timer_func != t401_timeout)
-		T401_START(l);
-	/* The first poll is already queued; its F=1 response is solicited. */
-	l->rtx_count = 1;
-	l->retrain_poll = 1;
-	return 0;
+	return start_tx_enquiry(l);
 }
 
 int modem_ec_init(struct modem *m)
