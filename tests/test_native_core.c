@@ -9360,6 +9360,106 @@ static bool test_lapm_stalled_retrain(void)
 	return true;
 }
 
+static bool test_lapm_recovery_receive_acknowledgement(void)
+{
+	struct modem_driver driver = {
+		.name = "LAPM recovery acknowledgement", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	static const uint8_t first[] = { 'A' }, pending[] = { 'Y' };
+
+	for (unsigned recovery = 0; recovery < 2; ++recovery)
+	for (unsigned caller = 0; caller < 2; ++caller) {
+		struct modem *m = create_compat_modem(&driver, driver.name);
+		CHECK(m != NULL, "recovery acknowledgement allocation failed");
+		m->caller = caller;
+		m->cfg.ec = 1;
+		m->cfg.comp = 0;
+		m->cfg.ec_tx_info_size = 1;
+		m->rx_rate = m->tx_rate = 4800;
+		m->state = 4;
+		CHECK(modem_ec_init(m) == 0, "recovery acknowledgement initialization failed");
+		m->caller = 0;
+		modem_update_status(m, STATUS_PACK_LINK);
+		m->caller = caller;
+		struct lapm_state *l = &m->ec.lapm;
+		uint8_t wire[] = { l->cmd_addr, 0x0f, 0 };
+		frame_t incoming = { .buf = wire, .count = 2 };
+		m->packer.hdlc.rx_complete(l, &incoming);
+		frame_t *outgoing = m->packer.hdlc.get_tx_frame(l);
+		CHECK(outgoing && outgoing->buf[1] == 0x7f, "recovery fixture lacks SABME");
+		m->packer.hdlc.tx_complete(l, outgoing);
+		wire[1] = 0x73;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(l->state == 2 && m->state == 5, "recovery fixture did not connect");
+
+		m->get_chars = scripted_lapm_source;
+		lapm_source.data = first;
+		lapm_source.length = sizeof(first);
+		lapm_source.offset = 0;
+		outgoing = m->packer.hdlc.get_tx_frame(l);
+		CHECK(outgoing && outgoing->size == 4 && outgoing->buf[3] == 'A',
+		      "recovery fixture lacks outstanding information");
+		m->packer.hdlc.tx_complete(l, outgoing);
+		if (recovery) {
+			m->bit_timer_func(m);
+			outgoing = m->packer.hdlc.get_tx_frame(l);
+			CHECK(outgoing && outgoing->buf[0] == l->cmd_addr &&
+			      outgoing->buf[1] == 1 && outgoing->buf[2] == 1 && l->rtx_count == 1,
+			      "recovery fixture lacks a transmitted status enquiry");
+			m->packer.hdlc.tx_complete(l, outgoing);
+		}
+		int timer = m->bit_timer;
+		lapm_source.data = pending;
+		lapm_source.length = sizeof(pending);
+		lapm_source.offset = 0;
+		memset(&lapm_sink, 0, sizeof(lapm_sink));
+		lapm_sink.result = 1;
+		m->put_chars = scripted_lapm_sink;
+		/* No poll and no acknowledgement of our outstanding A. A queued Y
+		 * can piggyback N(R) only while information transmission is allowed. */
+		uint8_t data[] = { l->rsp_addr, 0, 0, 'X' };
+		frame_t info = { .buf = data, .count = sizeof(data) };
+		m->packer.hdlc.rx_complete(l, &info);
+		CHECK(l->vr == 1 && l->va == 0 && l->vs == 1 &&
+		      l->rtx_count == (int)recovery && m->bit_timer == timer &&
+		      lapm_sink.length == 1 && lapm_sink.data[0] == 'X',
+		      "incoming information changed the outstanding enquiry");
+		outgoing = m->packer.hdlc.get_tx_frame(l);
+		if (recovery) {
+			CHECK(outgoing && outgoing->buf[0] == l->rsp_addr &&
+			      outgoing->buf[1] == 1 && outgoing->buf[2] == 2 && !lapm_source.offset,
+			      "recovery deferred its receive ACK to held information");
+			m->packer.hdlc.tx_complete(l, outgoing);
+			CHECK(m->packer.hdlc.get_tx_frame(l) == NULL && !lapm_source.offset &&
+			      l->rtx_count == 1 && m->bit_timer == timer,
+			      "receive acknowledgement bypassed timer recovery");
+			wire[0] = l->cmd_addr;
+			wire[1] = 1;
+			wire[2] = 3; /* RR F=1, N(R)=1 acknowledges A. */
+			incoming.count = 3;
+			m->packer.hdlc.rx_complete(l, &incoming);
+			CHECK(!l->rtx_count && l->va == 1, "Final did not release recovery");
+			outgoing = m->packer.hdlc.get_tx_frame(l);
+		}
+		CHECK(outgoing && outgoing->size == 4 && outgoing->buf[1] == 2 &&
+		      outgoing->buf[2] == 2 && outgoing->buf[3] == 'Y' && lapm_source.offset == 1,
+		      "queued information lost its payload or receive acknowledgement");
+		m->packer.hdlc.tx_complete(l, outgoing);
+		wire[0] = l->cmd_addr;
+		wire[1] = 1;
+		wire[2] = 4; /* RR N(R)=2 acknowledges the complete local stream. */
+		incoming.count = 3;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(l->va == 2 && l->vs == 2 && modem_ec_transmit_idle(m),
+		      "recovered information did not finish transmission");
+		modem_delete(m);
+	}
+	memset(&lapm_source, 0, sizeof(lapm_source));
+	memset(&lapm_sink, 0, sizeof(lapm_sink));
+	return true;
+}
+
 static bool test_lapm_peer_busy_acknowledgement(void)
 {
 	enum { LAPM_DATA_STATE = 2, RR = 1, RNR = 5, REJ = 9 };
@@ -11859,6 +11959,7 @@ int main(void)
 		{ "LAPM acknowledgement window", test_lapm_acknowledgement_window },
 		{ "LAPM repeated sequence error poll", test_lapm_repeated_sequence_error_poll },
 		{ "LAPM peer-busy acknowledgement", test_lapm_peer_busy_acknowledgement },
+		{ "LAPM recovery receive acknowledgement", test_lapm_recovery_receive_acknowledgement },
 		{ "LAPM supervisory command polls", test_lapm_supervisory_polls },
 		{ "LAPM peer-busy timer", test_lapm_peer_busy_timer },
 		{ "LAPM idle supervision", test_lapm_idle_supervision },

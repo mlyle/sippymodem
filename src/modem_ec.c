@@ -1274,7 +1274,9 @@ static int rx_info(struct lapm_state *l, frame_t *f)
 	/* response I,RR,RNR */
 	if (l->busy)
 		TX_RNR(l,FRAME_ADDR(f),FRAME_I_PF(f));
-	else if ( l->peer_busy || FRAME_I_PF(f) ||
+	/* Timer recovery holds outgoing I frames until Final; they cannot
+	 * carry the acknowledgement of newly accepted peer information. */
+	else if ( l->peer_busy || l->rtx_count || FRAME_I_PF(f) ||
 		  !tx_info(l) )
 		TX_RR(l,FRAME_ADDR(f),FRAME_I_PF(f));
 	return 0;
