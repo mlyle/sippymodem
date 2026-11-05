@@ -41,7 +41,9 @@ bool v34_channel_frame_receiver_is_valid(
  * corresponding exact nonlinear-projected, power-normalized line symbols for
  * decision-directed channel adaptation. `decided_frame` changes only when
  * `frame_ready` becomes true after traceback. State and every output are
- * unchanged on failure. Advance one instance from only one thread at a time. */
+ * unchanged on failure. Buffers must be disjoint from the receiver and each
+ * other, except `normalized` may equal `decision_targets` for exact in-place
+ * replacement. Advance one instance from only one thread at a time. */
 enum v34_data_receive_result
 v34_channel_frame_receiver_advance(
 	struct v34_channel_frame_receiver *receiver,

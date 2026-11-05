@@ -2,6 +2,7 @@
 
 #include "v34_data_line_receiver.h"
 
+#include "memory_region.h"
 #include "v34_constellation.h"
 #include "v34_survivor.h"
 
@@ -324,6 +325,11 @@ enum v34_data_receive_result v34_data_line_receiver_sample(
 	struct v34_survivor_decision *current,
 	struct v34_received_mapping_frame *received)
 {
+	const struct memory_region regions[] = {
+		{ receiver, receiver == NULL ? 0 : sizeof(*receiver) },
+		{ current, sizeof(*current) },
+		{ received, sizeof(*received) },
+	};
 	struct v34_data_line_receiver next;
 	struct v34_line_receiver line;
 	struct v34_adaptive_equalizer_observation observation;
@@ -337,8 +343,9 @@ enum v34_data_receive_result v34_data_line_receiver_sample(
 	bool candidate_after;
 	bool had_first;
 
-	if (!v34_data_line_receiver_is_valid(receiver) || current == NULL ||
-	    received == NULL)
+	if (current == NULL || received == NULL ||
+	    memory_region_set_overlaps(regions, sizeof regions / sizeof *regions) ||
+	    !v34_data_line_receiver_is_valid(receiver))
 		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	if (receiver->failed)
 		return V34_DATA_RECEIVE_FAILED;

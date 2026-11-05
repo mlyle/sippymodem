@@ -2,6 +2,8 @@
 
 #include "v34_channel_frame_receiver.h"
 
+#include "memory_region.h"
+
 #include <stddef.h>
 #include <string.h>
 
@@ -135,13 +137,23 @@ v34_channel_frame_receiver_advance(
 	struct v34_decided_4d_interval decided_frame[V34_4D_INTERVALS_PER_MAPPING_FRAME],
 	bool *frame_ready)
 {
+	const struct memory_region regions[] = {
+		{ receiver, receiver == NULL ? 0 : sizeof(*receiver) },
+		{ normalized, V34_2D_SYMBOLS_PER_4D_INTERVAL * sizeof(*normalized) },
+		{ current, sizeof(*current) },
+		{ decision_targets, normalized == decision_targets ? 0 :
+			V34_2D_SYMBOLS_PER_4D_INTERVAL * sizeof(*decision_targets) },
+		{ decided_frame, V34_4D_INTERVALS_PER_MAPPING_FRAME * sizeof(*decided_frame) },
+		{ frame_ready, sizeof(*frame_ready) },
+	};
 	struct v34_channel_frame_receiver next;
 	struct v34_channel_frame_output output;
 	enum v34_data_receive_result result;
 
-	if (!v34_channel_frame_receiver_is_valid(receiver) ||
-	    normalized == NULL || current == NULL || decision_targets == NULL ||
-	    decided_frame == NULL || frame_ready == NULL)
+	if (normalized == NULL || current == NULL || decision_targets == NULL ||
+	    decided_frame == NULL || frame_ready == NULL ||
+	    memory_region_set_overlaps(regions, sizeof regions / sizeof *regions) ||
+	    !v34_channel_frame_receiver_is_valid(receiver))
 		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	next = *receiver;
 	result = v34_channel_frame_receiver_advance_owned(&next, normalized, &output);

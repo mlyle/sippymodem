@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "v90_phase4_line_fixture.h"
+#include "v34_state_fixture.h"
 
 #include <g711.h>
 #include <v90_phase3_analog_line_rx.h>
@@ -17,6 +18,15 @@ enum {
 	NOMINAL_AMPLITUDE = 6000,
 	TEST_INITIAL_RECEIVE_GAIN = 0x0600,
 };
+
+static bool upstream_states_equal(const struct v90_upstream_training_rx *left,
+	const struct v90_upstream_training_rx *right)
+{
+	struct v90_upstream_training_rx snapshots[2] = { *left, *right };
+	v34_snapshot_line_receiver(&snapshots[0].line);
+	v34_snapshot_line_receiver(&snapshots[1].line);
+	return memcmp(&snapshots[0], &snapshots[1], sizeof(*left)) == 0;
+}
 
 static struct v34_phase3_profile default_profile(void)
 {
@@ -244,8 +254,8 @@ bool v90_phase4_line_fixture_init_for_profile(
 			    v90_phase3_return_line_rx_handoff(
 				    &return_receive, &generated_receive) !=
 				    V90_PHASE3_RETURN_LINE_RX_OK ||
-			    memcmp(&generated_receive.upstream, &return_receive.upstream,
-				   sizeof(generated_receive.upstream)) != 0 ||
+			    !upstream_states_equal(
+				&generated_receive.upstream, &return_receive.upstream) ||
 			    memcmp(&generated_receive.precoder, &return_receive.precoder,
 				   sizeof(generated_receive.precoder)) != 0)
 				return false;

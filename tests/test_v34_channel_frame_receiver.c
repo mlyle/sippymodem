@@ -378,9 +378,14 @@ static bool test_generated_channel_round_trip(void)
 						      "mode %zu delayed rejection changed state or outputs", mode);
 					}
 				}
+				struct qam_point *published_targets = frame_index & 1u ?
+					normalized : decision_targets;
 				result = v34_data_channel_receiver_advance(
 					&fixture.receiver, normalized, &current,
-					decision_targets, &received);
+					published_targets, &received);
+				if (published_targets == normalized)
+					memcpy(decision_targets, normalized,
+					       sizeof(decision_targets));
 				CHECK(v34_channel_frame_receivers_equal(
 					      &standalone, &fixture.receiver.channel_receiver) &&
 				      memcmp(&standalone_output.current, &current, sizeof(current)) == 0 &&
@@ -475,6 +480,143 @@ static bool outputs_are_unchanged_after(
 	       memcmp(&received, &saved_received, sizeof(received)) == 0;
 }
 
+static bool test_channel_buffer_ownership(void)
+{
+	struct fixture fixture;
+	struct qam_point input[2] = { { 0, 0 }, { 0, 0 } };
+	struct {
+		struct v34_survivor_decision current;
+		struct qam_point targets[2];
+		struct v34_decided_4d_interval frame[4];
+		bool ready;
+	} output;
+	union {
+		struct v34_survivor_decision current;
+		struct qam_point points[3];
+		struct v34_decided_4d_interval frame[4];
+	} shared;
+	unsigned char saved_output[sizeof(output)], saved_shared[sizeof(shared)];
+
+	CHECK(initialize_fixture(&fixture, &CONFIGURATIONS[0]),
+	      "channel ownership fixture did not initialize");
+	struct v34_channel_frame_receiver *channel = &fixture.receiver.channel_receiver;
+	struct v34_channel_frame_receiver saved = *channel;
+	for (unsigned first = 0; first < 6; ++first)
+		for (unsigned second = first + 1; second < 6; ++second) {
+			const void *args[] = {
+				channel, input, &output.current, output.targets,
+				output.frame, &output.ready,
+			};
+			memset(&output, 0xa5, sizeof(output));
+			memset(&shared, 0, sizeof(shared));
+			memcpy(saved_output, &output, sizeof(output));
+			memcpy(saved_shared, &shared, sizeof(shared));
+			if (first == 0)
+				args[second] = channel;
+			else
+				args[first] = args[second] = &shared;
+			/* Exact in-place symbols are supported; partial overlap is not. */
+			if (first == 1 && second == 3)
+				args[second] = shared.points + 1;
+			CHECK(v34_channel_frame_receiver_advance(
+				      channel, args[1], (void *)args[2], (void *)args[3],
+				      (void *)args[4], (void *)args[5]) ==
+				      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
+			      v34_channel_frame_receivers_equal(channel, &saved) &&
+			      memcmp(&output, saved_output, sizeof(output)) == 0 &&
+			      memcmp(&shared, saved_shared, sizeof(shared)) == 0,
+			      "channel alias pair %u/%u changed state or outputs", first, second);
+		}
+	struct v34_channel_frame_receiver separate = saved;
+	struct v34_channel_frame_output expected;
+	CHECK(v34_channel_frame_receiver_advance(
+		      &separate, input, &expected.current, expected.targets,
+		      expected.frame, &expected.ready) == V34_DATA_RECEIVE_OK &&
+	      v34_channel_frame_receiver_advance(
+		      channel, input, &output.current, input, output.frame,
+		      &output.ready) == V34_DATA_RECEIVE_OK &&
+	      v34_channel_frame_receivers_equal(channel, &separate) &&
+	      point_matches(&input[0], &expected.targets[0]) &&
+	      point_matches(&input[1], &expected.targets[1]),
+	      "in-place channel targets changed the transaction");
+	return true;
+}
+
+static bool test_buffer_ownership(void)
+{
+	struct fixture fixture;
+	struct qam_point input[2] = { { 0, 0 }, { 0, 0 } };
+	struct v34_survivor_decision current;
+	struct qam_point targets[2];
+	struct v34_received_mapping_frame received;
+	union {
+		struct v34_survivor_decision current;
+		struct qam_point points[3];
+		struct v34_received_mapping_frame received;
+	} shared;
+	unsigned char saved_shared[sizeof(shared)];
+
+	CHECK(initialize_fixture(&fixture, &CONFIGURATIONS[0]),
+	      "ownership fixture did not initialize");
+	struct v34_data_channel_receiver saved = fixture.receiver;
+	memset(&shared, 0, sizeof(shared));
+	memcpy(saved_shared, &shared, sizeof(shared));
+	const struct {
+		const struct qam_point *input;
+		struct v34_survivor_decision *current;
+		struct qam_point *targets;
+		struct v34_received_mapping_frame *received;
+	} aliases[] = {
+		{ (const void *)&fixture.receiver, &current, targets, &received },
+		{ input, (void *)&fixture.receiver, targets, &received },
+		{ input, &current, (void *)&fixture.receiver, &received },
+		{ input, &current, targets, (void *)&fixture.receiver },
+		{ input, &shared.current, shared.points, &received },
+		{ input, &shared.current, targets, &shared.received },
+		{ input, &current, shared.points, &shared.received },
+		{ shared.points, &shared.current, targets, &received },
+		{ shared.points, &current, targets, &shared.received },
+		{ shared.points, &current, shared.points + 1, &received },
+	};
+	for (size_t i = 0; i < ARRAY_LENGTH(aliases); ++i) {
+		memset(&current, 0xa5, sizeof(current));
+		memset(targets, 0x3c, sizeof(targets));
+		memset(&received, 0x5a, sizeof(received));
+		unsigned char saved_current[sizeof(current)];
+		unsigned char saved_targets[sizeof(targets)];
+		unsigned char saved_received[sizeof(received)];
+		memcpy(saved_current, &current, sizeof(current));
+		memcpy(saved_targets, targets, sizeof(targets));
+		memcpy(saved_received, &received, sizeof(received));
+		CHECK(v34_data_channel_receiver_advance(
+			      &fixture.receiver, aliases[i].input, aliases[i].current,
+			      aliases[i].targets, aliases[i].received) ==
+			      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
+		      v34_data_channel_receivers_equal(&fixture.receiver, &saved) &&
+		      memcmp(&shared, saved_shared, sizeof(shared)) == 0 &&
+		      memcmp(&current, saved_current, sizeof(current)) == 0 &&
+		      memcmp(targets, saved_targets, sizeof(targets)) == 0 &&
+		      memcmp(&received, saved_received, sizeof(received)) == 0,
+		      "alias case %zu advanced state or changed outputs", i);
+	}
+	/* All inputs are consumed before target publication, so exact in-place
+	 * replacement remains supported while partial overlap is rejected. */
+	struct v34_data_channel_receiver separate = saved;
+	struct v34_survivor_decision expected;
+	struct qam_point expected_targets[2];
+	CHECK(v34_data_channel_receiver_advance(
+		      &separate, input, &expected, expected_targets, &received) ==
+		      V34_DATA_RECEIVE_OK &&
+	      v34_data_channel_receiver_advance(
+		      &fixture.receiver, input, &current, input, &received) ==
+		      V34_DATA_RECEIVE_OK &&
+	      v34_data_channel_receivers_equal(&fixture.receiver, &separate) &&
+	      point_matches(&input[0], &expected_targets[0]) &&
+	      point_matches(&input[1], &expected_targets[1]),
+	      "in-place target publication changed the channel transaction");
+	return true;
+}
+
 static bool test_validation_and_rollback(void)
 {
 	struct fixture fixture;
@@ -567,6 +709,8 @@ int main(void)
 		{ "generated channel round trip",
 		  test_generated_channel_round_trip },
 		{ "validation and rollback", test_validation_and_rollback },
+		{ "buffer ownership", test_buffer_ownership },
+		{ "channel buffer ownership", test_channel_buffer_ownership },
 	};
 	unsigned int failures = 0;
 

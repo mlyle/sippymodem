@@ -2,6 +2,8 @@
 
 #include "v34_data_channel_receiver.h"
 
+#include "memory_region.h"
+
 #include <stddef.h>
 #include <string.h>
 
@@ -69,15 +71,25 @@ v34_data_channel_receiver_advance(
 		decision_targets[V34_2D_SYMBOLS_PER_4D_INTERVAL],
 	struct v34_received_mapping_frame *received)
 {
+	const struct memory_region regions[] = {
+		{ receiver, receiver == NULL ? 0 : sizeof(*receiver) },
+		{ normalized, V34_2D_SYMBOLS_PER_4D_INTERVAL * sizeof(*normalized) },
+		{ current, sizeof(*current) },
+		/* Inputs are consumed before target publication. */
+		{ decision_targets, normalized == decision_targets ? 0 :
+			V34_2D_SYMBOLS_PER_4D_INTERVAL * sizeof(*decision_targets) },
+		{ received, sizeof(*received) },
+	};
 	struct v34_channel_frame_receiver next_channel;
 	struct v34_channel_frame_output output;
 	struct v34_received_mapping_frame generated_received;
 	enum v34_data_receive_result channel_status;
 	enum v34_data_receive_result data_status = V34_DATA_RECEIVE_OK;
 
-	if (!v34_data_channel_receiver_is_valid(receiver) ||
-	    normalized == NULL || current == NULL || decision_targets == NULL ||
-	    received == NULL)
+	if (normalized == NULL || current == NULL || decision_targets == NULL ||
+	    received == NULL ||
+	    memory_region_set_overlaps(regions, sizeof regions / sizeof *regions) ||
+	    !v34_data_channel_receiver_is_valid(receiver))
 		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	/* One private channel transaction spans both present-time decisions and
 	 * the delayed mapping decode. The child must not snapshot it again. */

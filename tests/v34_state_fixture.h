@@ -98,14 +98,11 @@ static inline void v34_snapshot_data_channel_receiver(
 	v34_snapshot_parameters(&receiver->data_receiver.mapping_decoder.parameters);
 }
 
-static inline void v34_snapshot_data_decisions(
-	struct v34_data_decision_receiver *receiver)
+static inline void v34_snapshot_observation(
+	struct v34_adaptive_equalizer_observation *observation)
 {
-	struct v34_adaptive_equalizer_observation *observation =
-		&receiver->first_observation;
 	unsigned char bytes[sizeof(*observation)] = { 0 };
 
-	v34_snapshot_data_channel_receiver(&receiver->data_receiver);
 #define COPY(field) memcpy(bytes + offsetof(struct v34_adaptive_equalizer_observation, field), \
 	&observation->field, sizeof(observation->field))
 	COPY(decision);
@@ -115,9 +112,24 @@ static inline void v34_snapshot_data_decisions(
 	memcpy(observation, bytes, sizeof(bytes));
 }
 
+static inline void v34_snapshot_line_receiver(struct v34_line_receiver *receiver)
+{
+	v34_snapshot_observation(&receiver->latest_observation);
+	v34_snapshot_observation(&receiver->equalizer.pending_observation);
+	v34_snapshot_observation(&receiver->equalizer.retained.observation);
+}
+
+static inline void v34_snapshot_data_decisions(
+	struct v34_data_decision_receiver *receiver)
+{
+	v34_snapshot_data_channel_receiver(&receiver->data_receiver);
+	v34_snapshot_observation(&receiver->first_observation);
+}
+
 static inline void v34_snapshot_data_receiver(
 	struct v34_data_line_receiver *receiver)
 {
+	v34_snapshot_line_receiver(&receiver->line);
 	v34_snapshot_geometry(&receiver->geometry);
 	v34_snapshot_data_decisions(&receiver->decisions);
 }
@@ -141,6 +153,8 @@ RECEIVER_EQUAL(v34_data_channel_receivers_equal, v34_data_channel_receiver,
 	v34_snapshot_data_channel_receiver)
 RECEIVER_EQUAL(v34_data_decision_receivers_equal, v34_data_decision_receiver,
 	v34_snapshot_data_decisions)
+RECEIVER_EQUAL(v34_line_receivers_equal, v34_line_receiver,
+	v34_snapshot_line_receiver)
 RECEIVER_EQUAL(v34_data_line_receivers_equal, v34_data_line_receiver,
 	v34_snapshot_data_receiver)
 #undef RECEIVER_EQUAL

@@ -38,7 +38,9 @@ bool v34_data_channel_receiver_is_receiving_b1(
  * `decision_targets` always receive the present-time hard channel decision
  * and its finite, exact normalized line symbols after a successful call.
  * `received` changes only for MAPPING_FRAME_READY or either B1 result. State
- * and every output are unchanged on failure. Separate instances are independent;
+ * and every output are unchanged on failure. Buffers must be disjoint from the
+ * receiver and each other, except `normalized` may equal `decision_targets`
+ * for exact in-place replacement. Separate instances are independent;
  * serialize calls that advance the same instance. */
 enum v34_data_receive_result
 v34_data_channel_receiver_advance(

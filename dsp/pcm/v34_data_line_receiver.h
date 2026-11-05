@@ -66,7 +66,8 @@ bool v34_data_line_receiver_get_rate_renegotiation_detection(
 
 /* Consume one signed line sample. `current` changes for every interval result;
  * `received` changes only for a mapping-frame or B1 result. Invalid calls and
- * calls after failure leave the receiver and both outputs unchanged. */
+ * calls after failure leave the receiver and both outputs unchanged. Both
+ * outputs must be disjoint from each other and the receiver. */
 enum v34_data_receive_result v34_data_line_receiver_sample(
 	struct v34_data_line_receiver *receiver, int16_t sample,
 	struct v34_survivor_decision *current,

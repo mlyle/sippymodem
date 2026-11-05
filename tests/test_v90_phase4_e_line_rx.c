@@ -78,7 +78,7 @@ static bool fixed_data_handoff_matches(
 
 	return v34_adaptive_equalizer_set_data_carrier_tracking(
 		       &expected.equalizer, true) == V34_ADAPTIVE_EQUALIZER_OK &&
-	       memcmp(data, &expected, sizeof(*data)) == 0;
+	       v34_line_receivers_equal(data, &expected);
 }
 
 static bool verify_online_marker(
@@ -134,6 +134,25 @@ static bool verify_online_marker(
 			      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
 		      v34_data_line_receivers_equal(&rejected, &saved),
 		      "invalid data sample changed the physical receiver");
+		union {
+			struct v34_survivor_decision current;
+			struct v34_received_mapping_frame received;
+		} shared;
+		memset(&shared, 0xa5, sizeof(shared));
+		unsigned char saved_shared[sizeof(shared)];
+		memcpy(saved_shared, &shared, sizeof(shared));
+		CHECK(v34_data_line_receiver_sample(
+			      &rejected, 123, (void *)&rejected, &received) ==
+			      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
+		      v34_data_line_receiver_sample(
+			      &rejected, 123, &current, (void *)&rejected) ==
+			      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
+		      v34_data_line_receiver_sample(
+			      &rejected, 123, &shared.current, &shared.received) ==
+			      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
+		      v34_data_line_receivers_equal(&rejected, &saved) &&
+		      memcmp(&shared, saved_shared, sizeof(shared)) == 0,
+		      "aliased data sample advanced the physical receiver");
 		rejected.failed = true;
 		saved = rejected;
 		CHECK(v34_data_line_receiver_sample(
@@ -442,9 +461,13 @@ static bool run_line(
 			.maximum_upstream_rate_2400_bps_units = 0;
 		memset(&rejected, 0xa5, sizeof(rejected));
 		saved_rejected = rejected;
-		CHECK(v90_phase4_e_line_rx_sample(&e_rx, 1234) ==
-			      V90_PHASE4_E_LINE_RX_COMPLETE &&
-		      memcmp(&e_rx, &saved, sizeof(e_rx)) == 0 &&
+		enum v90_phase4_e_line_rx_result terminal =
+			v90_phase4_e_line_rx_sample(&e_rx, 1234);
+		struct v90_phase4_e_line_rx observed = e_rx;
+		v34_snapshot_line_receiver(&observed.line);
+		v34_snapshot_line_receiver(&saved.line);
+		CHECK(terminal == V90_PHASE4_E_LINE_RX_COMPLETE &&
+		      memcmp(&observed, &saved, sizeof(observed)) == 0 &&
 		      v90_upstream_rx_start_after_e(NULL, &e_rx, &mp) ==
 			      V90_UPSTREAM_DATA_INVALID_ARGUMENT &&
 		      v90_upstream_rx_start_after_e(
