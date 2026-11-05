@@ -21,32 +21,6 @@ enum {
 	V34_GAIN_ENERGY_HISTORY_Q15 = 0x6ccd,
 };
 
-static void correct_gain(
-	struct v34_gain_control *control, int16_t correction_gain)
-{
-	int16_t delta = wrap_s16_from_s32(
-		(int32_t)control->average_energy - V34_GAIN_TARGET_ENERGY);
-	int16_t delta_magnitude = absolute_wrap_s16(delta);
-	int32_t correction_step;
-	int16_t next_correction;
-	int16_t correction_magnitude;
-
-	if (wrap_s16_from_s32((int32_t)delta_magnitude -
-		     V34_GAIN_ENERGY_DEADBAND) <= 0)
-		return;
-	correction_step = arithmetic_shift_right_u32(
-		(uint32_t)((int32_t)correction_gain * delta), 16);
-	next_correction = wrap_s16_from_s32(
-		(int32_t)control->correction + correction_step);
-	correction_magnitude = absolute_wrap_s16(next_correction);
-	control->correction = next_correction;
-	if (wrap_s16_from_s32((int32_t)correction_magnitude -
-		     V34_GAIN_CORRECTION_LIMIT) <= 0)
-		return;
-	control->correction = 0;
-	control->gain = agc_step_gain_q10(control->gain, next_correction > 0);
-}
-
 bool v34_gain_control_is_valid(const struct v34_gain_control *control)
 {
 	return control != NULL && control->initialized &&
@@ -169,7 +143,13 @@ static enum v34_gain_control_result process(
 				control->average_energy = sample_smooth_energy_q15(
 					control->average_energy, next_energy,
 					V34_GAIN_ENERGY_HISTORY_Q15);
-				correct_gain(control, correction_gain);
+				struct agc_gain_update update = agc_correct_gain_q10(
+					control->gain, control->correction,
+					control->average_energy, V34_GAIN_TARGET_ENERGY,
+					V34_GAIN_ENERGY_DEADBAND, correction_gain,
+					V34_GAIN_CORRECTION_LIMIT);
+				control->gain = update.gain;
+				control->correction = update.correction;
 			}
 		}
 		control->energy_accumulator = 0;

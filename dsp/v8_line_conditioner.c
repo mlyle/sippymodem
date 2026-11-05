@@ -110,28 +110,18 @@ static int16_t gain_step(enum v8_line_gain_mode mode)
 static void adapt_gain(
 	struct v8_line_conditioner *conditioner, uint32_t block_energy)
 {
-	int32_t deviation;
-	int32_t delta;
-
 	conditioner->filtered_energy = sample_smooth_energy_q15(
 		conditioner->filtered_energy, block_energy, V8_LINE_ENERGY_HISTORY_Q15);
 	if (conditioner->gain_mode == V8_LINE_GAIN_FROZEN)
 		return;
 
-	deviation = (int16_t)conditioner->filtered_energy - 4000;
-	if (magnitude_s16(wrap_s16_from_s32(deviation)) <= 2000)
-		return;
-	delta = arithmetic_shift_right_u32(
-		(uint32_t)(gain_step(conditioner->gain_mode) * deviation), 16) +
-		(int16_t)conditioner->gain_delta;
-	if (magnitude_s16(wrap_s16_from_s32(delta)) <= V8_LINE_GAIN_CORRECTION_LIMIT) {
-		conditioner->gain_delta = (uint16_t)delta;
-		return;
-	}
-
-	conditioner->gain_delta = 0;
-	conditioner->gain = (uint16_t)agc_step_gain_q10(
-		(int16_t)conditioner->gain, delta > 0);
+	struct agc_gain_update update = agc_correct_gain_q10(
+		(int16_t)conditioner->gain,
+		wrap_s16_from_s32(conditioner->gain_delta),
+		conditioner->filtered_energy, 4000, 2000,
+		gain_step(conditioner->gain_mode), V8_LINE_GAIN_CORRECTION_LIMIT);
+	conditioner->gain = (uint16_t)update.gain;
+	conditioner->gain_delta = (uint16_t)update.correction;
 }
 
 static void condition_block(

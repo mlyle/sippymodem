@@ -22,6 +22,32 @@ static inline int16_t agc_step_gain_q10(int16_t gain, bool decrease)
 	return multiply_shift_s16(gain, decrease ? 0x390a : 0x47cf, 14);
 }
 
+struct agc_gain_update {
+	int16_t gain, correction;
+};
+
+/* Integrate an energy error outside its deadband. Exceeding the correction
+ * limit spends one gain step and clears the integral. The owner supplies a
+ * nonnegative Q10 gain and factor; all unsigned inputs are <= INT16_MAX,
+ * and the retained correction is in [-limit, limit]. Products and the wide
+ * integral fit int32_t; narrow only when retaining a bounded correction.
+ * Owners retain the measurement clock, freeze and clipping policies. */
+static inline struct agc_gain_update agc_correct_gain_q10(
+	int16_t gain, int16_t correction, uint16_t energy, uint16_t target,
+	uint16_t deadband, int16_t factor, uint16_t limit)
+{
+	int32_t error = (int32_t)energy - target;
+
+	if (error >= -(int32_t)deadband && error <= (int32_t)deadband)
+		return (struct agc_gain_update){ gain, correction };
+	int32_t next = correction + arithmetic_shift_right_u32(
+		(uint32_t)((int32_t)factor * error), 16);
+
+	if (next >= -(int32_t)limit && next <= (int32_t)limit)
+		return (struct agc_gain_update){ gain, (int16_t)next };
+	return (struct agc_gain_update){ agc_step_gain_q10(gain, next > 0), 0 };
+}
+
 /* Q10 sample gain with pre-rounding clipping to +/-32512 outside the signed
  * 26-bit product range. Inside that range, add rounding (0 or 512), shift,
  * and retain the low 16 bits. If supplied, clipped is set on every call. */
