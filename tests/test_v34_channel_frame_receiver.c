@@ -5,6 +5,7 @@
 #include <v34_data_channel_receiver.h>
 
 #include "test.h"
+#include "v34_state_fixture.h"
 
 #include <float.h>
 #include <limits.h>
@@ -24,6 +25,27 @@ static const struct v34_q14_coefficient COEFFICIENTS[] = {
 	{ -2048, 1024 },
 	{ 1024, -2048 },
 };
+
+static bool reject_mapping;
+static unsigned mapping_rejections;
+
+enum v34_data_receive_result __real_v34_data_receiver_receive_mapping_frame(
+	struct v34_data_receiver *receiver,
+	const struct v34_decided_4d_interval decided[V34_4D_INTERVALS_PER_MAPPING_FRAME],
+	struct v34_received_mapping_frame *received);
+
+enum v34_data_receive_result __wrap_v34_data_receiver_receive_mapping_frame(
+	struct v34_data_receiver *receiver,
+	const struct v34_decided_4d_interval decided[V34_4D_INTERVALS_PER_MAPPING_FRAME],
+	struct v34_received_mapping_frame *received)
+{
+	if (reject_mapping) {
+		reject_mapping = false;
+		mapping_rejections++;
+		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
+	}
+	return __real_v34_data_receiver_receive_mapping_frame(receiver, decided, received);
+}
 
 struct configuration {
 	enum v34_symbol_rate symbol_rate;
@@ -253,6 +275,7 @@ static bool test_generated_channel_round_trip(void)
 		uint32_t random = UINT32_C(0x47d25631) ^ (uint32_t)mode;
 		size_t received_frames = 0;
 		size_t transmitted_frames;
+		unsigned rejections_before = mapping_rejections;
 
 		CHECK(initialize_fixture(&fixture, configuration),
 		      "channel receiver mode %zu did not initialize", mode);
@@ -283,6 +306,9 @@ static bool test_generated_channel_round_trip(void)
 				struct v34_survivor_decision current;
 				struct v34_received_mapping_frame received;
 				struct v34_received_mapping_frame saved_received;
+				struct v34_channel_frame_receiver standalone =
+					fixture.receiver.channel_receiver;
+				struct v34_channel_frame_output standalone_output;
 				enum v34_data_receive_result result;
 				enum v34_data_receive_result expected_result;
 				uint8_t inversion_bit = (uint8_t)(
@@ -315,9 +341,53 @@ static bool test_generated_channel_round_trip(void)
 				}
 				memset(&received, 0xa5, sizeof(received));
 				saved_received = received;
+				memset(&standalone_output, 0x5a, sizeof(standalone_output));
+				CHECK(v34_channel_frame_receiver_advance(
+					      &standalone, normalized, &standalone_output.current,
+					      standalone_output.targets, standalone_output.frame,
+					      &standalone_output.ready) == V34_DATA_RECEIVE_OK,
+				      "mode %zu standalone channel rejected input", mode);
+				/* A delayed mapping rejection happens after the channel has
+				 * decoded a complete interval. Preserve that interval and all
+				 * outputs so the same input can be retried without a reset. */
+				if (mapping_rejections == rejections_before) {
+					struct v34_data_channel_receiver saved = fixture.receiver;
+					struct v34_survivor_decision saved_current;
+					struct qam_point saved_targets[V34_2D_SYMBOLS_PER_4D_INTERVAL];
+
+					memset(&current, 0x3c, sizeof(current));
+					saved_current = current;
+					memset(decision_targets, 0x5a, sizeof(decision_targets));
+					memcpy(saved_targets, decision_targets, sizeof(saved_targets));
+					reject_mapping = true;
+					result = v34_data_channel_receiver_advance(
+						&fixture.receiver, normalized, &current,
+						decision_targets, &received);
+					reject_mapping = false;
+					if (mapping_rejections == rejections_before) {
+						CHECK(result == V34_DATA_RECEIVE_OK,
+						      "mode %zu rejected before delayed mapping", mode);
+						/* Re-run the accepted prefix from the same state. */
+						fixture.receiver = saved;
+					} else {
+						CHECK(result == V34_DATA_RECEIVE_INVALID_ARGUMENT &&
+						      v34_data_channel_receivers_equal(&fixture.receiver, &saved) &&
+						      memcmp(&current, &saved_current, sizeof(current)) == 0 &&
+						      memcmp(decision_targets, saved_targets, sizeof(saved_targets)) == 0 &&
+						      memcmp(&received, &saved_received, sizeof(received)) == 0,
+						      "mode %zu delayed rejection changed state or outputs", mode);
+					}
+				}
 				result = v34_data_channel_receiver_advance(
 					&fixture.receiver, normalized, &current,
 					decision_targets, &received);
+				CHECK(v34_channel_frame_receivers_equal(
+					      &standalone, &fixture.receiver.channel_receiver) &&
+				      memcmp(&standalone_output.current, &current, sizeof(current)) == 0 &&
+				      memcmp(standalone_output.targets, decision_targets,
+					     sizeof(decision_targets)) == 0 &&
+				      standalone_output.ready == v34_data_receive_emits_mapping_frame(result),
+				      "mode %zu standalone and composite channel paths differ", mode);
 				CHECK(result <=
 					      V34_DATA_RECEIVE_B1_COMPLETE &&
 				      current_decision_matches(
@@ -363,7 +433,8 @@ static bool test_generated_channel_round_trip(void)
 			      "mode %zu frame %zu feedback history drifted", mode,
 			      frame_index);
 		}
-		CHECK(received_frames ==
+		CHECK(mapping_rejections == rejections_before + 1 &&
+		      received_frames ==
 			      transmitted_frames - PIPELINE_MAPPING_FRAMES &&
 		      !v34_data_channel_receiver_is_receiving_b1(
 			      &fixture.receiver) &&
@@ -398,7 +469,7 @@ static bool outputs_are_unchanged_after(
 	return v34_data_channel_receiver_advance(
 		       receiver, normalized, &current, targets, &received) ==
 		       expected_result &&
-	       memcmp(receiver, &saved_receiver, sizeof(*receiver)) == 0 &&
+	       v34_data_channel_receivers_equal(receiver, &saved_receiver) &&
 	       memcmp(&current, &saved_current, sizeof(current)) == 0 &&
 	       memcmp(targets, saved_targets, sizeof(targets)) == 0 &&
 	       memcmp(&received, &saved_received, sizeof(received)) == 0;
@@ -440,8 +511,7 @@ static bool test_validation_and_rollback(void)
 		      CONFIGURATIONS[1].trellis,
 		      CONFIGURATIONS[1].transmitting_role) ==
 		      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
-	      memcmp(&fixture.receiver, &saved_receiver,
-		     sizeof(fixture.receiver)) == 0,
+	      v34_data_channel_receivers_equal(&fixture.receiver, &saved_receiver),
 	      "invalid initialization changed the receiver");
 	invalid[1].quadrature = NAN;
 	CHECK(outputs_are_unchanged_after(

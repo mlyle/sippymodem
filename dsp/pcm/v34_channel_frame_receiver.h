@@ -54,4 +54,21 @@ v34_channel_frame_receiver_advance(
 		decided_frame[V34_4D_INTERVALS_PER_MAPPING_FRAME],
 	bool *frame_ready);
 
+/* Composite-owner staging: the caller supplies a validated, unpublished
+ * receiver copy and disjoint scratch output. On failure discard both; partial
+ * channel updates are permitted here. Commit the receiver and publish outputs
+ * only after all subsequent decoding succeeds. No borrowed pointer is retained. */
+struct v34_channel_frame_output {
+	struct v34_survivor_decision current;
+	struct qam_point targets[V34_2D_SYMBOLS_PER_4D_INTERVAL];
+	struct v34_decided_4d_interval frame[V34_4D_INTERVALS_PER_MAPPING_FRAME];
+	bool ready;
+};
+
+enum v34_data_receive_result
+v34_channel_frame_receiver_advance_owned(
+	struct v34_channel_frame_receiver *receiver,
+	const struct qam_point normalized[V34_2D_SYMBOLS_PER_4D_INTERVAL],
+	struct v34_channel_frame_output *output);
+
 #endif /* V34_CHANNEL_FRAME_RECEIVER_H */

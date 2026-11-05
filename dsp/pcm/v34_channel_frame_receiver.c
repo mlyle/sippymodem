@@ -129,74 +129,81 @@ correct_receive_history(
 enum v34_data_receive_result
 v34_channel_frame_receiver_advance(
 	struct v34_channel_frame_receiver *receiver,
-	const struct qam_point
-		normalized[V34_2D_SYMBOLS_PER_4D_INTERVAL],
+	const struct qam_point normalized[V34_2D_SYMBOLS_PER_4D_INTERVAL],
 	struct v34_survivor_decision *current,
-	struct qam_point
-		decision_targets[V34_2D_SYMBOLS_PER_4D_INTERVAL],
-	struct v34_decided_4d_interval
-		decided_frame[V34_4D_INTERVALS_PER_MAPPING_FRAME],
+	struct qam_point decision_targets[V34_2D_SYMBOLS_PER_4D_INTERVAL],
+	struct v34_decided_4d_interval decided_frame[V34_4D_INTERVALS_PER_MAPPING_FRAME],
 	bool *frame_ready)
 {
 	struct v34_channel_frame_receiver next;
-	struct v34_precoder tentative_precoder;
-	struct qam_point precoded_estimates
-		[V34_2D_SYMBOLS_PER_4D_INTERVAL];
-	struct qam_point channel_estimates
-		[V34_2D_SYMBOLS_PER_4D_INTERVAL];
-	struct v34_survivor_decision generated_current;
-	struct qam_point generated_targets
-		[V34_2D_SYMBOLS_PER_4D_INTERVAL];
-	struct v34_decided_4d_interval generated_frame
-		[V34_4D_INTERVALS_PER_MAPPING_FRAME];
-	bool generated_ready;
-	enum v34_channel_conditioner_result condition_result;
-	enum v34_precoder_result prediction_result;
-	enum v34_channel_frame_decoder_result frame_result;
+	struct v34_channel_frame_output output;
+	enum v34_data_receive_result result;
 
 	if (!v34_channel_frame_receiver_is_valid(receiver) ||
 	    normalized == NULL || current == NULL || decision_targets == NULL ||
 	    decided_frame == NULL || frame_ready == NULL)
 		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	next = *receiver;
+	result = v34_channel_frame_receiver_advance_owned(&next, normalized, &output);
+	if (result != V34_DATA_RECEIVE_OK)
+		return result;
+	*receiver = next;
+	*current = output.current;
+	memcpy(decision_targets, output.targets, sizeof(output.targets));
+	*frame_ready = output.ready;
+	if (output.ready)
+		memcpy(decided_frame, output.frame, sizeof(output.frame));
+	return V34_DATA_RECEIVE_OK;
+}
+
+enum v34_data_receive_result
+v34_channel_frame_receiver_advance_owned(
+	struct v34_channel_frame_receiver *receiver,
+	const struct qam_point
+		normalized[V34_2D_SYMBOLS_PER_4D_INTERVAL],
+	struct v34_channel_frame_output *output)
+{
+	struct v34_precoder tentative_precoder;
+	struct qam_point precoded_estimates
+		[V34_2D_SYMBOLS_PER_4D_INTERVAL];
+	struct qam_point channel_estimates
+		[V34_2D_SYMBOLS_PER_4D_INTERVAL];
+	enum v34_channel_conditioner_result condition_result;
+	enum v34_precoder_result prediction_result;
+	enum v34_channel_frame_decoder_result frame_result;
+
+	if (receiver == NULL || normalized == NULL || output == NULL)
+		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	condition_result = v34_channel_condition_interval(
-		&next.conditioner, normalized, precoded_estimates);
+		&receiver->conditioner, normalized, precoded_estimates);
 	if (condition_result != V34_CHANNEL_CONDITIONER_OK)
 		return conditioner_result(condition_result);
-	tentative_precoder = next.receive_precoder;
+	tentative_precoder = receiver->receive_precoder;
 	prediction_result = v34_precoder_reconstruct_interval(
 		&tentative_precoder, precoded_estimates, channel_estimates);
 	if (prediction_result != V34_PRECODER_OK)
 		return precoder_result(prediction_result);
-	frame_result = next.conditioner.normalizer.nonlinear_parameter ==
+	frame_result = receiver->conditioner.normalizer.nonlinear_parameter ==
 			       V34_NONLINEAR_THETA_5_OVER_16 &&
 		       v34_precoder_coefficients_are_zero(
-			       next.receive_precoder.coefficients) ?
+			       receiver->receive_precoder.coefficients) ?
 		v34_channel_frame_decoder_advance_projected(
-			&next.frame_decoder, channel_estimates, normalized,
-			&next.conditioner.normalizer, &generated_current,
-			generated_frame, &generated_ready) :
+			&receiver->frame_decoder, channel_estimates, normalized,
+			&receiver->conditioner.normalizer, &output->current,
+			output->frame, &output->ready) :
 		v34_channel_frame_decoder_advance(
-			&next.frame_decoder, channel_estimates, &generated_current,
-			generated_frame, &generated_ready);
+			&receiver->frame_decoder, channel_estimates, &output->current,
+			output->frame, &output->ready);
 	if (frame_result != V34_CHANNEL_FRAME_DECODER_OK)
 		return decoder_result(frame_result);
 	{
 		enum v34_data_receive_result result =
 			correct_receive_history(
-				&next.receive_precoder, &next.conditioner.normalizer,
-				&generated_current, generated_targets);
+				&receiver->receive_precoder, &receiver->conditioner.normalizer,
+				&output->current, output->targets);
 
 		if (result != V34_DATA_RECEIVE_OK)
 			return result;
 	}
-	/* Checked child operations preserve their histories; the normalizer,
-	 * mapping and matching precoder coefficients have not changed. */
-	*receiver = next;
-	*current = generated_current;
-	memcpy(decision_targets, generated_targets, sizeof(generated_targets));
-	*frame_ready = generated_ready;
-	if (generated_ready)
-		memcpy(decided_frame, generated_frame, sizeof(generated_frame));
 	return V34_DATA_RECEIVE_OK;
 }

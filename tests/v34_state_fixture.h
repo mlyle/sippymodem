@@ -83,13 +83,18 @@ static inline void v34_snapshot_channel_frame_decoder(
 	v34_snapshot_parameters(&decoder->channel_decoder.parameters);
 }
 
+static inline void v34_snapshot_channel_frame_receiver(
+	struct v34_channel_frame_receiver *receiver)
+{
+	v34_snapshot_channel_frame_decoder(&receiver->frame_decoder);
+	v34_snapshot_parameters(&receiver->conditioner.normalizer.parameters);
+}
+
 static inline void v34_snapshot_data_channel_receiver(
 	struct v34_data_channel_receiver *receiver)
 {
-	v34_snapshot_channel_frame_decoder(&receiver->channel_receiver.frame_decoder);
+	v34_snapshot_channel_frame_receiver(&receiver->channel_receiver);
 	v34_snapshot_geometry(&receiver->data_receiver.schedule.geometry);
-	v34_snapshot_parameters(
-		&receiver->channel_receiver.conditioner.normalizer.parameters);
 	v34_snapshot_parameters(&receiver->data_receiver.mapping_decoder.parameters);
 }
 
@@ -130,6 +135,8 @@ static inline bool name(const struct type *left, const struct type *right) \
 
 RECEIVER_EQUAL(v34_channel_frame_decoders_equal, v34_channel_frame_decoder,
 	v34_snapshot_channel_frame_decoder)
+RECEIVER_EQUAL(v34_channel_frame_receivers_equal, v34_channel_frame_receiver,
+	v34_snapshot_channel_frame_receiver)
 RECEIVER_EQUAL(v34_data_channel_receivers_equal, v34_data_channel_receiver,
 	v34_snapshot_data_channel_receiver)
 RECEIVER_EQUAL(v34_data_decision_receivers_equal, v34_data_decision_receiver,
