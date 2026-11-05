@@ -50,6 +50,41 @@ static uint16_t rate_bit(uint8_t rate_2400_bps_units)
 		 V90_MP_MINIMUM_RATE_2400_BPS_UNITS));
 }
 
+static bool check_b1_queries(const struct v90_upstream_rx *receiver)
+{
+	struct v90_upstream_rx copy = *receiver;
+	struct v34_data_line_receiver *line = &copy.state.data;
+	struct v34_data_decision_receiver *decisions = &line->decisions;
+	bool b1 = copy.stage == V90_UPSTREAM_RX_STAGE_B1;
+
+	CHECK(v90_upstream_rx_is_valid(&copy) &&
+	      v34_data_line_receiver_is_receiving_b1(line) == b1 &&
+	      v34_data_decision_receiver_is_receiving_b1(decisions) == b1 &&
+	      v34_data_channel_receiver_is_receiving_b1(
+		      &decisions->data_receiver) == b1,
+	      "B1 queries disagree with the validated receive phase");
+	line->failed = true;
+	CHECK(v34_data_line_receiver_is_valid(line) &&
+	      !v34_data_line_receiver_is_receiving_b1(line) &&
+	      !v90_upstream_rx_is_valid(&copy),
+	      "a failed line remained usable in an active receive phase");
+	copy.failed = true;
+	CHECK(v90_upstream_rx_is_valid(&copy) == b1 &&
+	      v90_upstream_rx_has_failed(&copy) == b1,
+	      "failed B1 ownership changed or failed data became complete");
+	/* Failure latches do not permit a structurally corrupt decoder. */
+	decisions->data_receiver.channel_receiver.frame_decoder
+		.channel_schedule.geometry.high_mapping_frame_bits = 0;
+	CHECK(!v34_data_line_receiver_is_valid(line) &&
+	      !v34_data_line_receiver_is_receiving_b1(line) &&
+	      !v34_data_decision_receiver_is_receiving_b1(decisions) &&
+	      !v34_data_channel_receiver_is_receiving_b1(
+		      &decisions->data_receiver) &&
+	      !v90_upstream_rx_is_valid(&copy),
+	      "B1 query bypassed complete decoder validation");
+	return true;
+}
+
 static void add_ucode(
 	struct pcm_constellation *constellation, uint8_t ucode)
 {
@@ -603,6 +638,8 @@ static bool run_line(
 			} else if (result == V90_UPSTREAM_RX_E_COMPLETE) {
 				CHECK(memcmp(&event, &saved, sizeof(event)) == 0,
 				      "E changed the CP event output");
+				CHECK(check_b1_queries(&receiver),
+				      "initial B1 state queries failed");
 				e_received = true;
 			} else {
 				b1_received = true;
@@ -651,6 +688,8 @@ static bool run_line(
 		      handoff_valid ?
 			      (unsigned int)data_handoff.decisions
 				      .data_receiver.data_receiver.b1_error_bits : 0);
+		CHECK(check_b1_queries(&receiver),
+		      "completed B1 state queries failed");
 	}
 	/* B1 trains the dense data constellation. Require convergence by its
 	 * last mapping frame above, then verify actual online bits below;

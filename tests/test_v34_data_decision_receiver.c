@@ -500,6 +500,11 @@ static bool test_retained_path_validation(void)
 				channel->receive_precoder.coefficients[0].real++;
 				break;
 			}
+			CHECK(!v34_data_decision_receiver_is_receiving_b1(&corrupt) &&
+			      !v34_data_channel_receiver_is_receiving_b1(
+				      &corrupt.data_receiver),
+			      "mode %zu fault %u: B1 query accepted corrupt decoder state",
+			      mode, fault);
 			memset(&output, 0x5a, sizeof(output));
 			CHECK(rejected_call_preserves_outputs(
 				      &corrupt, &input, &output, V34_DATA_RECEIVE_INVALID_STATE),
@@ -515,7 +520,7 @@ static bool test_retained_path_validation(void)
 			CHECK(v34_channel_frame_receiver_advance(
 				      channel, normalized, &current, targets, frame, &ready) ==
 				      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
-			      memcmp(channel, &saved, sizeof(saved)) == 0 &&
+			      v34_channel_frame_receivers_equal(channel, &saved) &&
 			      memcmp(&current, &saved_current, sizeof(current)) == 0 &&
 			      memcmp(targets, saved_targets, sizeof(targets)) == 0 &&
 			      memcmp(frame, saved_frame, sizeof(frame)) == 0 && ready,

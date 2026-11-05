@@ -143,17 +143,19 @@ bool v90_upstream_rx_is_valid(const struct v90_upstream_rx *receiver)
 			!v90_phase4_e_line_rx_is_complete(
 				&receiver->state.e));
 	case V90_UPSTREAM_RX_STAGE_B1:
-		return v34_data_line_receiver_is_valid(&receiver->state.data) &&
-		       (receiver->failed ||
-			v34_data_line_receiver_is_receiving_b1(
-				&receiver->state.data));
 	case V90_UPSTREAM_RX_STAGE_COMPLETE:
-		return !receiver->failed &&
-		       v34_data_line_receiver_is_valid(&receiver->state.data) &&
-		       !v34_data_line_receiver_has_failed(
-			       &receiver->state.data) &&
-		       !v34_data_line_receiver_is_receiving_b1(
-			       &receiver->state.data);
+		if (!v34_data_line_receiver_is_valid(&receiver->state.data))
+			return false;
+		/* The line owner validates its complete decoder once. Read the
+		 * phase flags from that same snapshot, including failed B1 state. */
+		if (receiver->stage == V90_UPSTREAM_RX_STAGE_B1)
+			return receiver->failed ||
+			       (!receiver->state.data.failed &&
+				receiver->state.data.decisions.data_receiver
+					.data_receiver.b1_active);
+		return !receiver->failed && !receiver->state.data.failed &&
+		       !receiver->state.data.decisions.data_receiver
+				.data_receiver.b1_active;
 	}
 	return false;
 }

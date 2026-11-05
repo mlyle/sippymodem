@@ -48,8 +48,7 @@ bool v34_data_decision_receiver_is_receiving_b1(
 	const struct v34_data_decision_receiver *receiver)
 {
 	return v34_data_decision_receiver_is_valid(receiver) &&
-	       v34_data_channel_receiver_is_receiving_b1(
-		       &receiver->data_receiver);
+	       receiver->data_receiver.data_receiver.b1_active;
 }
 
 static struct qam_point normalized_observation(

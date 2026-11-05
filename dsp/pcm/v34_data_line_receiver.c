@@ -137,7 +137,7 @@ bool v34_data_line_receiver_is_receiving_b1(
 	const struct v34_data_line_receiver *receiver)
 {
 	return v34_data_line_receiver_is_valid(receiver) && !receiver->failed &&
-	       v34_data_decision_receiver_is_receiving_b1(&receiver->decisions);
+	       receiver->decisions.data_receiver.data_receiver.b1_active;
 }
 
 bool v34_data_line_receiver_detects_rate_renegotiation(
@@ -362,15 +362,13 @@ enum v34_data_receive_result v34_data_line_receiver_sample(
 	next.line = line;
 	candidate_before = next.rate_renegotiation.enabled &&
 		next.rate_renegotiation.s.candidate;
-	result = v34_data_decision_receiver_is_receiving_b1(&next.decisions) ?
+	/* The owner validated the complete decoder before advancing only line
+	 * DSP. B1 leaves the initialized marker policy untouched. */
+	result = next.decisions.data_receiver.data_receiver.b1_active ?
 		V34_DATA_RECEIVE_OK :
 		observe_rate_renegotiation(
 			&next.rate_renegotiation, &observation,
 			&rrn_adaptation, &rrn_control);
-	if (v34_data_decision_receiver_is_receiving_b1(&next.decisions)) {
-		rrn_adaptation = (struct v34_phase3_s_adaptation){ 0 };
-		rrn_control = false;
-	}
 	if (result == V34_DATA_RECEIVE_RATE_RENEGOTIATION) {
 		if (!complete_rate_renegotiation_boundary(
 			    &next, &observation) ||
