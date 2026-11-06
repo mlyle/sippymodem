@@ -701,30 +701,52 @@ static bool run_echo_call(
 	return connected;
 }
 
-static bool check_erased_echo(const struct endpoint *endpoint)
+static bool check_data_erasure(
+	const struct endpoint *endpoint, bool initially_held, bool nonzero)
 {
 	struct v34_call call = endpoint->call;
 	struct pcm_host_echo expected = call.echo;
 	uint64_t transmitted = call.state.phase4.transmit.data.line.generated_samples;
 	uint64_t received_epoch = call.state.phase4.receive.line.equalizer.epoch;
 
-	CHECK(v34_phase34_receiver_set_data_erasure(&call.state.phase4.receive, true) ==
+	CHECK(v34_receive_timing_set_feedback_held(&call.state.phase4.receive.line.timing,
+						 initially_held) == V34_RECEIVE_TIMING_OK &&
+	      v34_phase34_receiver_set_data_erasure(&call.state.phase4.receive, true) ==
 		      V34_PHASE34_RECEIVER_OK,
-	      "echo erasure did not start");
+	      "data erasure did not start");
+	/* Independent coast reference: use the existing explicit hold for the
+	 * whole interval. Erasure alone must preserve the same clock lineage. */
+	struct v34_call held = call;
+	CHECK(v34_receive_timing_set_feedback_held(&held.state.phase4.receive.line.timing,
+						 true) == V34_RECEIVE_TIMING_OK,
+	      "reference clock hold failed");
 	memset(&expected.timing, 0, sizeof(expected.timing));
 	for (unsigned sample = 0; sample < 80u; ++sample) {
 		struct v34_call_observation observation;
+		struct v34_call_observation held_observation;
 		struct v34_received_mapping_frame received;
-		int16_t output;
+		struct v34_received_mapping_frame held_received;
+		int16_t output, held_output;
+		static const int16_t concealment[] = { 12000, -9000, 5000, -13000 };
+		int16_t input = nonzero ? concealment[sample % ARRAY_LENGTH(concealment)] : 0;
 
-		CHECK(v34_call_sample(&call, 0, NULL, NULL, &output, &observation,
+		CHECK(v34_call_sample(&held, input, NULL, NULL, &held_output,
+				     &held_observation, &held_received) == V34_CALL_OK &&
+		      v34_call_sample(&call, input, NULL, NULL, &output, &observation,
 				     &received) == V34_CALL_OK &&
+		      output == held_output &&
 		      (observation.events.phase4 &
 		       V34_PHASE4_EXCHANGE_EVENT_MAPPING_FRAME_RECEIVED) == 0u &&
 		      pcm_echo_reference_push(&expected.reference, output) ==
 			      PCM_ECHO_REFERENCE_OK,
 		      "erased echo sample failed at %u", sample);
 	}
+	CHECK(v34_receive_timing_set_feedback_held(&held.state.phase4.receive.line.timing,
+						 initially_held) == V34_RECEIVE_TIMING_OK &&
+	      memcmp(&call.state.phase4.receive.line.timing,
+		     &held.state.phase4.receive.line.timing,
+		     sizeof(struct v34_receive_timing)) == 0,
+	      "unavailable input changed the learned clock or its prior hold");
 	CHECK(v34_call_is_online(&call) &&
 	      call.state.phase4.transmit.data.line.generated_samples == transmitted + 80u &&
 	      call.state.phase4.receive.line.equalizer.epoch > received_epoch &&
@@ -748,7 +770,10 @@ static bool check_echo_call(
 	      pcm_host_echo_window_delay_samples(&filtered.call.echo) +
 		      PCM_HOST_ECHO_FILTER_TAPS > echo_delay,
 	      "%s-station echo model was not retained", station);
-	return check_erased_echo(&filtered);
+	return check_data_erasure(&filtered, false, false) &&
+	       check_data_erasure(&filtered, false, true) &&
+	       check_data_erasure(&filtered, true, false) &&
+	       check_data_erasure(&filtered, true, true);
 }
 
 static bool test_echo_calls(void)

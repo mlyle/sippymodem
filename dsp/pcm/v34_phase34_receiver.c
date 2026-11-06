@@ -582,9 +582,20 @@ static enum v34_phase34_receiver_result receive_line_sample(
 	struct v34_adaptive_equalizer_observation observation;
 	enum v34_line_receiver_result line_result;
 	enum v34_phase34_receiver_result result;
+	bool hold = receiver->data_erasure &&
+		!receiver->line.timing.timing.feedback_held;
 
+	/* Concealment carries no clock-error evidence. Keep the input filters
+	 * and fractional clock moving at their learned correction, just as
+	 * erased data decisions already coast the equalizer and carrier. */
+	if (hold && v34_receive_timing_set_feedback_held(
+		    &receiver->line.timing, true) != V34_RECEIVE_TIMING_OK)
+		return fail(receiver, V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
 	line_result = v34_line_receiver_sample(
 		&receiver->line, sample, &observation);
+	if (hold && v34_receive_timing_set_feedback_held(
+		    &receiver->line.timing, false) != V34_RECEIVE_TIMING_OK)
+		return fail(receiver, V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
 	if (line_result == V34_LINE_RECEIVER_OK)
 		return V34_PHASE34_RECEIVER_OK;
 	if (line_result == V34_LINE_RECEIVER_TIMING_ACQUIRED)
