@@ -14,29 +14,13 @@ struct exact_fraction {
 static bool symbol_rate_fraction(
 	enum v34_symbol_rate rate, struct exact_fraction *fraction)
 {
-	switch (rate) {
-	case V34_SYMBOL_RATE_2400:
-		*fraction = (struct exact_fraction){ 2400, 1 };
-		return true;
-	case V34_SYMBOL_RATE_2743:
-		*fraction = (struct exact_fraction){ 19200, 7 };
-		return true;
-	case V34_SYMBOL_RATE_2800:
-		*fraction = (struct exact_fraction){ 2800, 1 };
-		return true;
-	case V34_SYMBOL_RATE_3000:
-		*fraction = (struct exact_fraction){ 3000, 1 };
-		return true;
-	case V34_SYMBOL_RATE_3200:
-		*fraction = (struct exact_fraction){ 3200, 1 };
-		return true;
-	case V34_SYMBOL_RATE_3429:
-		*fraction = (struct exact_fraction){ 24000, 7 };
-		return true;
-	case V34_SYMBOL_RATE_COUNT:
-		break;
-	}
-	return false;
+	const struct v34_symbol_rate_parameters *parameters =
+		v34_symbol_rate_parameters(rate);
+
+	if (parameters == NULL)
+		return false;
+	*fraction = (struct exact_fraction){ parameters->numerator, parameters->denominator };
+	return true;
 }
 
 bool v34_symbol_rate_matches(

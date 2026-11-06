@@ -72,21 +72,16 @@ static bool selected_threshold(
 
 static uint8_t loss_windows(enum v34_symbol_rate symbol_rate)
 {
-	/* ceil(1.8 * baud / 1024), using exact fractional symbol rates.
+	/* ceil(1.8 * baud / window_symbols), using exact fractional symbol rates.
 	 * In particular, six windows at 24000/7 baud last only 1.792 s. */
-	switch (symbol_rate) {
-	case V34_SYMBOL_RATE_2400:
-	case V34_SYMBOL_RATE_2743:
-	case V34_SYMBOL_RATE_2800:
-		return 5;
-	case V34_SYMBOL_RATE_3000:
-	case V34_SYMBOL_RATE_3200:
-		return 6;
-	case V34_SYMBOL_RATE_3429:
-		return 7;
-	default:
+	const struct v34_symbol_rate_parameters *parameters =
+		v34_symbol_rate_parameters(symbol_rate);
+
+	if (parameters == NULL)
 		return 0;
-	}
+	uint32_t divisor = 5u * parameters->denominator *
+		V34_ADAPTIVE_EQUALIZER_QUALITY_SYMBOLS;
+	return (uint8_t)((9u * parameters->numerator + divisor - 1u) / divisor);
 }
 
 bool v34_data_quality_is_valid(const struct v34_data_quality *quality)

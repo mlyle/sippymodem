@@ -6,48 +6,12 @@
 
 #include <stddef.h>
 
-struct symbol_rate_geometry {
-	uint8_t data_frames_per_superframe;
-	uint8_t mapping_frames_per_data_frame;
-	uint8_t minimum_primary_rate_2400_bps_units;
-	uint8_t maximum_primary_rate_2400_bps_units;
-};
-
-static bool symbol_rate_geometry(
-	enum v34_symbol_rate symbol_rate,
-	struct symbol_rate_geometry *geometry)
-{
-	switch (symbol_rate) {
-	case V34_SYMBOL_RATE_2400:
-		*geometry = (struct symbol_rate_geometry){ 7, 12, 1, 9 };
-		return true;
-	case V34_SYMBOL_RATE_2743:
-		*geometry = (struct symbol_rate_geometry){ 8, 12, 2, 11 };
-		return true;
-	case V34_SYMBOL_RATE_2800:
-		*geometry = (struct symbol_rate_geometry){ 7, 14, 2, 11 };
-		return true;
-	case V34_SYMBOL_RATE_3000:
-		*geometry = (struct symbol_rate_geometry){ 7, 15, 2, 12 };
-		return true;
-	case V34_SYMBOL_RATE_3200:
-		*geometry = (struct symbol_rate_geometry){ 7, 16, 2, 13 };
-		return true;
-	case V34_SYMBOL_RATE_3429:
-		*geometry = (struct symbol_rate_geometry){ 8, 15, 2, 14 };
-		return true;
-	case V34_SYMBOL_RATE_COUNT:
-		break;
-	}
-	return false;
-}
-
 uint8_t v34_frame_geometry_maximum_rate(enum v34_symbol_rate symbol_rate)
 {
-	struct symbol_rate_geometry geometry;
+	const struct v34_symbol_rate_parameters *geometry =
+		v34_symbol_rate_parameters(symbol_rate);
 
-	return symbol_rate_geometry(symbol_rate, &geometry) ?
-		       geometry.maximum_primary_rate_2400_bps_units : 0;
+	return geometry != NULL ? geometry->maximum_primary_rate_2400_bps_units : 0;
 }
 
 static enum v34_frame_schedule_result derive_geometry(
@@ -56,50 +20,51 @@ static enum v34_frame_schedule_result derive_geometry(
 	bool auxiliary_channel_enabled,
 	struct v34_frame_geometry *geometry)
 {
-	struct symbol_rate_geometry rate;
+	const struct v34_symbol_rate_parameters *rate =
+		v34_symbol_rate_parameters(symbol_rate);
 	uint16_t primary_bits_per_frame;
 	uint16_t data_bits_per_frame;
 	uint8_t auxiliary_bits_per_frame;
 	uint8_t high_mapping_frame_bits;
 	uint8_t high_mapping_frame_count;
 
-	if (!symbol_rate_geometry(symbol_rate, &rate) ||
+	if (rate == NULL ||
 	    primary_data_rate_2400_bps_units == 0 ||
 	    primary_data_rate_2400_bps_units >
 		    V34_INFO1_MAX_DATA_RATE_2400_BPS_UNITS)
 		return V34_FRAME_SCHEDULE_INVALID_ARGUMENT;
 	if (primary_data_rate_2400_bps_units <
-		    rate.minimum_primary_rate_2400_bps_units ||
+		    rate->minimum_primary_rate_2400_bps_units ||
 	    primary_data_rate_2400_bps_units >
-		    rate.maximum_primary_rate_2400_bps_units)
+		    rate->maximum_primary_rate_2400_bps_units)
 		return V34_FRAME_SCHEDULE_UNSUPPORTED_SELECTION;
 
 	/* R * 0.28 / J is 96 bits per 2400 bit/s when J=7, and 84
 	 * bits when J=8. The optional 200 bit/s channel contributes 8 or 7. */
 	primary_bits_per_frame =
 		(uint16_t)primary_data_rate_2400_bps_units *
-		(rate.data_frames_per_superframe == 7u ? 96u : 84u);
+		(rate->data_frames_per_superframe == 7u ? 96u : 84u);
 	auxiliary_bits_per_frame = auxiliary_channel_enabled ?
-		(rate.data_frames_per_superframe == 7u ? 8u : 7u) :
+		(rate->data_frames_per_superframe == 7u ? 8u : 7u) :
 		0u;
 	data_bits_per_frame =
 		primary_bits_per_frame + auxiliary_bits_per_frame;
 	high_mapping_frame_bits = (uint8_t)(
-		(data_bits_per_frame + rate.mapping_frames_per_data_frame - 1u) /
-		rate.mapping_frames_per_data_frame);
+		(data_bits_per_frame + rate->mapping_frames_per_data_frame - 1u) /
+		rate->mapping_frames_per_data_frame);
 	high_mapping_frame_count = (uint8_t)(
 		data_bits_per_frame -
 		(uint16_t)(high_mapping_frame_bits - 1u) *
-			rate.mapping_frames_per_data_frame);
+			rate->mapping_frames_per_data_frame);
 	*geometry = (struct v34_frame_geometry){
 		.symbol_rate = symbol_rate,
 		.data_bits_per_frame = data_bits_per_frame,
 		.primary_data_rate_2400_bps_units =
 			primary_data_rate_2400_bps_units,
 		.data_frames_per_superframe =
-			rate.data_frames_per_superframe,
+			rate->data_frames_per_superframe,
 		.mapping_frames_per_data_frame =
-			rate.mapping_frames_per_data_frame,
+			rate->mapping_frames_per_data_frame,
 		.high_mapping_frame_bits = high_mapping_frame_bits,
 		.high_mapping_frame_count = high_mapping_frame_count,
 		.auxiliary_bits_per_frame = auxiliary_bits_per_frame,
