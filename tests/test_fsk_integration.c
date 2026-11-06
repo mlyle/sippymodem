@@ -105,6 +105,7 @@ struct integration_endpoint {
 	unsigned robbed_position;
 	bool profile_cpu;
 	bool delay_one_sample;
+	bool concealment_matches_signal;
 	uint8_t prior_codeword;
 	struct playout_link *playout_forward;
 	struct playout_link *playout_reverse;
@@ -569,7 +570,7 @@ static bool process_transmit_frame(
 	CHECK(endpoint->erased_samples <= SIP_FRAME_SAMPLES, "invalid media erasure fixture");
 	for (size_t index = 0; index < SIP_FRAME_SAMPLES; ++index) {
 		received_mask[index] = index >= endpoint->erased_samples;
-		if (!received_mask[index]) {
+		if (!received_mask[index] && !endpoint->concealment_matches_signal) {
 			endpoint->receive_codewords[index] = (uint8_t)silence;
 			endpoint->receive[index] = decode_codeword(law, (uint8_t)silence);
 		}
@@ -589,6 +590,7 @@ static bool process_transmit_frame(
 		endpoint->process_samples += SIP_FRAME_SAMPLES;
 	}
 	endpoint->erased_samples = 0;
+	endpoint->concealment_matches_signal = false;
 	if (!exact_output)
 		return media_encode(
 			       codec, endpoint->transmit, SIP_FRAME_SAMPLES,
@@ -1771,14 +1773,43 @@ static bool exercise_v34_media_gap(
 		for (unsigned i = 0; i < sizeof(payload[side]); ++i)
 			payload[side][i] = (uint8_t)noise_state_next(&random);
 	}
-	for (unsigned lost_side = 0; lost_side < 2u; ++lost_side) {
-		ends[lost_side]->erased_samples = 80u;
-		/* Clock the missing 10 ms and recovery tail. Raw bytes spanning the
+	for (unsigned fault = 0; fault < 4u; ++fault) {
+		unsigned lost_side = fault % 2u;
+		bool retained_signal = fault >= 2u;
+
+		if (retained_signal) {
+			uint8_t burst[4u * sizeof(payload[0])];
+			for (size_t index = 0; index < sizeof(burst); ++index)
+				burst[index] = payload[1u - lost_side][index % sizeof(payload[0])];
+			ends[lost_side]->output_count = 0;
+			CHECK(modem_write(ends[1u - lost_side]->modem,
+					  (const char *)burst, sizeof(burst)) == sizeof(burst),
+			      "V.34 concealment payload setup failed");
+			for (unsigned frame = 0;
+			     frame < 100u && ends[lost_side]->output_count == 0u; ++frame)
+				CHECK(process_sip_frame(caller, answerer, codec, recorder) &&
+				      endpoint_drain(caller) && endpoint_drain(answerer),
+				      "V.34 concealment payload did not advance");
+			CHECK(ends[lost_side]->output_count != 0u &&
+			      ends[lost_side]->output_count < sizeof(burst),
+			      "V.34 concealment did not interrupt an active payload");
+			ends[lost_side]->output_count = 0;
+		}
+		ends[lost_side]->erased_samples = retained_signal ? SIP_FRAME_SAMPLES : 80u;
+		/* Concealment may match the real signal, including valid payload.
+		 * Its amplitude cannot turn known unavailable input into evidence. */
+		ends[lost_side]->concealment_matches_signal = retained_signal;
+		/* Clock the missing interval and recovery tail. Raw bytes spanning the
 		 * gap may be corrupt; later bytes must not retain a framing offset. */
-		for (unsigned frame = 0; frame < 50u; ++frame)
+		for (unsigned frame = 0; frame < 75u; ++frame) {
 			CHECK(process_sip_frame(caller, answerer, codec, recorder) &&
 			      endpoint_drain(caller) && endpoint_drain(answerer),
 			      "V.34 gap recovery media failed");
+			CHECK(!retained_signal || frame != 0u ||
+			      ends[lost_side]->output_count == 0u,
+			      "V.34 side %u exposed %zu bytes from unavailable input",
+			      lost_side, ends[lost_side]->output_count);
+		}
 		for (unsigned side = 0; side < 2u; ++side) {
 			CHECK(modem_is_online(ends[side]->modem, DP_V34) &&
 			      !ends[side]->modem->cfg.ec, "V.34 gap lost its raw link");
@@ -1801,11 +1832,12 @@ static bool exercise_v34_media_gap(
 	return true;
 }
 
-static bool exercise_v92_media_loss(
+static bool exercise_lapm_media_loss(
 	struct integration_endpoint *caller, struct integration_endpoint *answerer,
-	enum media_codec codec, const struct media_recorder *recorder)
+	enum DP_ID id, enum media_codec codec, const struct media_recorder *recorder)
 {
 	enum { PAYLOAD = 128 };
+	bool pcm_upstream = id == DP_V92;
 	struct integration_endpoint *ends[] = { caller, answerer };
 	struct dp *owned[] = { caller->modem->dp, answerer->modem->dp };
 	uint32_t rates[2][2] = {
@@ -1819,9 +1851,9 @@ static bool exercise_v92_media_loss(
 
 	for (unsigned side = 0; side < 2u; ++side) {
 		struct modem *m = ends[side]->modem;
-		CHECK(modem_is_online(m, DP_V92) && m->cfg.ec && !m->ec.lapm.retrain_poll &&
-		      m->dsp_info.upstream_mode == MODEM_UPSTREAM_PCM,
-		      "media loss fixture requires a settled PCM LAPM link");
+		CHECK(modem_is_online(m, id) && m->cfg.ec && !m->ec.lapm.retrain_poll &&
+		      (!pcm_upstream || m->dsp_info.upstream_mode == MODEM_UPSTREAM_PCM),
+		      "media loss fixture requires a settled LAPM link");
 		ends[side]->output_count = 0;
 		uint32_t random = UINT32_C(0x45524153) + side;
 		for (unsigned i = 0; i < PAYLOAD; ++i)
@@ -1840,10 +1872,11 @@ static bool exercise_v92_media_loss(
 		      ends[side]->output_count < PAYLOAD,
 		      "media loss did not interrupt side %u's partial LAPM frame", side);
 		retained[side] = m->ec.lapm;
-		/* A 10 ms hole in PCM upstream must cause autonomous recovery,
-		 * not require ATO1 or discard the acknowledged link's queues. */
-		if (m->dsp_info.pcm_role == MODEM_PCM_ROLE_DIGITAL)
-			ends[side]->erased_samples = 80u;
+		/* PCM upstream recovers autonomously; conventional V.34 coasts the
+		 * interval. Neither may discard the acknowledged link's queues. */
+		if (!pcm_upstream || m->dsp_info.pcm_role == MODEM_PCM_ROLE_DIGITAL)
+			ends[side]->erased_samples = pcm_upstream ? 80u : SIP_FRAME_SAMPLES;
+		ends[side]->concealment_matches_signal = !pcm_upstream;
 		CHECK(modem_write(m, (const char *)payload[side] + PAYLOAD, PAYLOAD) == PAYLOAD,
 		      "media loss fixture did not retain following terminal data");
 	}
@@ -1853,6 +1886,7 @@ static bool exercise_v92_media_loss(
 		for (unsigned side = 0; side < 2u; ++side) {
 			struct modem *m = ends[side]->modem;
 			CHECK(m->dp == owned[side] && m->cfg.ec && !m->command &&
+			      (pcm_upstream || modem_is_online(m, DP_V34)) &&
 			      m->ec.lapm.state == retained[side].state &&
 			      m->ec.lapm.v44_path == retained[side].v44_path &&
 			      lapm_v44_sessions_equal(&m->ec.lapm.v44_session,
@@ -1868,17 +1902,18 @@ static bool exercise_v92_media_loss(
 		if (settled == 25u)
 			break;
 	}
-	CHECK(poll_seen[0] && poll_seen[1] && settled == 25u &&
-	      caller->modem->dsp_info.upstream_mode == MODEM_UPSTREAM_PCM &&
-	      answerer->modem->dsp_info.upstream_mode == MODEM_UPSTREAM_PCM &&
+	CHECK(poll_seen[0] == pcm_upstream && poll_seen[1] == pcm_upstream && settled == 25u &&
+	      (!pcm_upstream ||
+	       (caller->modem->dsp_info.upstream_mode == MODEM_UPSTREAM_PCM &&
+	        answerer->modem->dsp_info.upstream_mode == MODEM_UPSTREAM_PCM)) &&
 	      memcmp(caller->output, payload[1], sizeof(payload[1])) == 0 &&
 	      memcmp(answerer->output, payload[0], sizeof(payload[0])) == 0,
-	      "media loss recovery lost ordered PCM LAPM data (polls=%d/%d outputs=%zu/%zu settled=%u)",
+	      "media loss recovery lost ordered LAPM data (polls=%d/%d outputs=%zu/%zu settled=%u)",
 	      poll_seen[0], poll_seen[1], caller->output_count, answerer->output_count, settled);
 	for (unsigned side = 0; side < 2; ++side)
 		CHECK(ends[side]->modem->tx_rate == rates[side][0] &&
 		      ends[side]->modem->rx_rate == rates[side][1],
-		      "known media loss unnecessarily lowered the negotiated PCM rates");
+		      "known media loss unnecessarily lowered the negotiated rates");
 	return true;
 }
 
@@ -3086,6 +3121,9 @@ static bool run_media_call(
 		if (connected_id == DP_V34 && test_case->raw_transport)
 			CHECK(exercise_v34_media_gap(&caller, &answerer, codec, &recorder),
 			      "%s did not recover after a short media gap", test_case->name);
+		if (connected_id == DP_V34 && !test_case->raw_transport)
+			CHECK(exercise_lapm_media_loss(&caller, &answerer, DP_V34, codec, &recorder),
+			      "%s media loss did not preserve outstanding LAPM data", test_case->name);
 		CHECK(caller.modem->cfg.ec == !test_case->raw_transport &&
 		      answerer.modem->cfg.ec == !test_case->raw_transport,
 		      "%s did not retain its requested transport", test_case->name);
@@ -3169,7 +3207,7 @@ static bool run_media_call(
 	/* Automatic quality recovery can lower the upstream rate. Exercise it
 	 * after the fixed-rate ATO1 checks, before protocol cleardown. */
 	if (connected_id == DP_V92 && !test_case->raw_transport && !test_case->playout_echo) {
-		CHECK(exercise_v92_media_loss(&caller, &answerer, codec, &recorder),
+		CHECK(exercise_lapm_media_loss(&caller, &answerer, DP_V92, codec, &recorder),
 		      "%s media loss did not preserve outstanding LAPM data", test_case->name);
 		CHECK(exercise_pcm_sample_slip(&caller, &answerer, codec, &recorder, false),
 		      "%s upstream slip did not preserve outstanding LAPM data", test_case->name);

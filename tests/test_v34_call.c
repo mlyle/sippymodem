@@ -701,6 +701,38 @@ static bool run_echo_call(
 	return connected;
 }
 
+static bool check_erased_echo(const struct endpoint *endpoint)
+{
+	struct v34_call call = endpoint->call;
+	struct pcm_host_echo expected = call.echo;
+	uint64_t transmitted = call.state.phase4.transmit.data.line.generated_samples;
+	uint64_t received_epoch = call.state.phase4.receive.line.equalizer.epoch;
+
+	CHECK(v34_phase34_receiver_set_data_erasure(&call.state.phase4.receive, true) ==
+		      V34_PHASE34_RECEIVER_OK,
+	      "echo erasure did not start");
+	memset(&expected.timing, 0, sizeof(expected.timing));
+	for (unsigned sample = 0; sample < 80u; ++sample) {
+		struct v34_call_observation observation;
+		struct v34_received_mapping_frame received;
+		int16_t output;
+
+		CHECK(v34_call_sample(&call, 0, NULL, NULL, &output, &observation,
+				     &received) == V34_CALL_OK &&
+		      (observation.events.phase4 &
+		       V34_PHASE4_EXCHANGE_EVENT_MAPPING_FRAME_RECEIVED) == 0u &&
+		      pcm_echo_reference_push(&expected.reference, output) ==
+			      PCM_ECHO_REFERENCE_OK,
+		      "erased echo sample failed at %u", sample);
+	}
+	CHECK(v34_call_is_online(&call) &&
+	      call.state.phase4.transmit.data.line.generated_samples == transmitted + 80u &&
+	      call.state.phase4.receive.line.equalizer.epoch > received_epoch &&
+	      memcmp(&call.echo, &expected, sizeof(expected)) == 0,
+	      "erased input changed the echo model or stopped its transmit reference");
+	return true;
+}
+
 static bool check_echo_call(
 	enum v34_station_role role, bool pcma,
 	size_t echo_delay, size_t line_delay)
@@ -716,7 +748,7 @@ static bool check_echo_call(
 	      pcm_host_echo_window_delay_samples(&filtered.call.echo) +
 		      PCM_HOST_ECHO_FILTER_TAPS > echo_delay,
 	      "%s-station echo model was not retained", station);
-	return true;
+	return check_erased_echo(&filtered);
 }
 
 static bool test_echo_calls(void)

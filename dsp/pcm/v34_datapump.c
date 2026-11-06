@@ -559,10 +559,16 @@ static bool observe_online_quality(struct v34_datapump *datapump)
 }
 
 static bool fragment_has_carrier(
-	const int16_t *samples, int count, uint32_t power_floor)
+	const int16_t *samples, const bool *received_mask,
+	int count, uint32_t power_floor)
 {
 	int offset;
 
+	/* Generated playout can have carrier power, even when it repeats valid
+	 * payload. Reuse the erasure/recovery guard without stopping line time. */
+	for (int index = 0; received_mask != NULL && index < count; ++index)
+		if (!received_mask[index])
+			return false;
 	if (count <= V34_CARRIER_WINDOW_SAMPLES)
 		return datapump_qam_line_power_above(samples, count, power_floor);
 	for (offset = 0;
@@ -593,7 +599,6 @@ static int process_v34(
 	struct dp *dp, void *receive_buffer, void *transmit_buffer, int count,
 	const bool *received_mask)
 {
-	(void)received_mask;
 	struct v34_datapump *datapump = v34_from_dp(dp);
 	const int16_t *receive = receive_buffer;
 	int16_t *transmit = transmit_buffer;
@@ -629,7 +634,7 @@ static int process_v34(
 		return DPSTAT_OK;
 	}
 	carrier_present = fragment_has_carrier(
-		receive, count, datapump->carrier_power_floor);
+		receive, received_mask, count, datapump->carrier_power_floor);
 	if (training_session_is_online(&datapump->training)) {
 		carrier_erased =
 			datapump->call.state.phase4.receive.data_erasure;

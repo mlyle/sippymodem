@@ -1016,6 +1016,7 @@ enum v34_call_result v34_call_sample(
 	bool retrain_requested = false;
 	struct v34_line_receiver before;
 	bool observe_echo;
+	bool receive_erased;
 
 	if (!v34_call_is_valid(call) || transmit_sample == NULL ||
 	    observation == NULL || received == NULL ||
@@ -1030,6 +1031,8 @@ enum v34_call_result v34_call_sample(
 		return V34_CALL_NUMERIC_FAILURE;
 	}
 	emitted.processed = call->stage;
+	receive_erased = call->stage == V34_CALL_PHASE4 &&
+		call->state.phase4.receive.data_erasure;
 	/* Every consumed host sample retains its actual transmit reference,
 	 * including Phase 2 and silence. TRAIN preserves raw receive input;
 	 * Each duplex phase monitors the frozen model. */
@@ -1110,9 +1113,16 @@ enum v34_call_result v34_call_sample(
 	} else {
 		v34_echo_timing_reset(&call->echo_timing);
 	}
-	echo_advanced = pcm_host_echo_advance_predicted(
-		&call->echo, echo_mode, received_sample, conditioned,
-		generated) == PCM_HOST_ECHO_OK;
+	/* An erased data interval still clocks actual TX into the reference,
+	 * but cannot qualify or suspend a frozen echo model from concealment. */
+	if (receive_erased)
+		echo_advanced = pcm_host_echo_reset_timing(&call->echo) == PCM_HOST_ECHO_OK &&
+			pcm_host_echo_advance_reference(&call->echo, echo_mode,
+				received_sample, generated) == PCM_HOST_ECHO_OK;
+	else
+		echo_advanced = pcm_host_echo_advance_predicted(
+			&call->echo, echo_mode, received_sample, conditioned,
+			generated) == PCM_HOST_ECHO_OK;
 	if (!echo_advanced)
 		result = V34_CALL_NUMERIC_FAILURE;
 	if (echo_mode == PCM_HOST_ECHO_TRAIN &&
