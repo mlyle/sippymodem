@@ -184,6 +184,9 @@ struct pcm_call_configuration {
 	enum pcm_protocol protocol;
 	enum v90_modem_role local_role;
 	enum g711_law law;
+	/* Digital-originator compatibility policy, applied after INFO0 chooses
+	 * V.90. A V.92 offer can negotiate down without changing its template. */
+	bool suppress_v90_info1d_3429;
 	/* Rates locally enabled for the PCM downstream. The digital station
 	 * advertises this mask in Jd; the analogue station intersects it with
 	 * the received Jd before sending data CP. */
@@ -218,6 +221,7 @@ struct pcm_fallback_restart {
 	enum pcm_protocol protocol;
 	enum g711_law law;
 	bool pcm_upstream_trained;
+	bool suppress_v90_info1d_3429;
 };
 
 union pcm_call_phase3_state {
@@ -557,6 +561,7 @@ struct pcm_call {
 	/* Both B1 directions qualified at least once. Retain this history through
 	 * recovery, with one extra failed exchange before conventional fallback. */
 	bool pcm_upstream_trained;
+	bool suppress_v90_info1d_3429;
 };
 
 enum pcm_call_result pcm_call_init(

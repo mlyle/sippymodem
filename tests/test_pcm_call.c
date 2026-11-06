@@ -915,6 +915,72 @@ static bool test_info1d_peer_capabilities(void)
 	return true;
 }
 
+static bool check_info1d_protocol_policy(
+	enum g711_law law, bool peer_v92, bool suppress)
+{
+	struct pcm_call_configuration ac = peer_v92 ?
+		v92_configuration(V90_ANALOG_MODEM, law) :
+		configuration(V90_ANALOG_MODEM, law);
+	struct pcm_call_configuration dc = v92_configuration(V90_DIGITAL_MODEM, law);
+	struct pcm_call analog, digital;
+	struct channel channel;
+
+	dc.suppress_v90_info1d_3429 = suppress;
+	CHECK(channel_init(&channel, law, 3u) &&
+	      pcm_call_init(&analog, &ac) == PCM_CALL_OK &&
+	      pcm_call_init(&digital, &dc) == PCM_CALL_OK,
+	      "negotiated INFO1d policy endpoints did not initialize");
+	for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT; ++clock) {
+		struct pcm_call_observation ao, digital_observation;
+		uint8_t ar, dr, at, dt;
+
+		channel_receive(&channel, &ar, &dr);
+		CHECK(pcm_call_octet(&analog, ar, decode_octet(law, ar), &at, &ao) ==
+			      PCM_CALL_OK &&
+		      pcm_call_octet(&digital, dr, decode_octet(law, dr), &dt,
+			      &digital_observation) == PCM_CALL_OK,
+		      "negotiated INFO1d policy stopped at %zu", clock);
+		channel_transmit(&channel, at, dt);
+		if (ao.phase2.kind == PCM_PHASE2_EVENT_PEER_INFO1D_RECEIVED) {
+			const struct pcm_info1d *wire = &analog.state.phase2.state.info1.digital;
+			const struct v34_info1c *offer = peer_v92 ?
+				&wire->record.v92.v34 : &wire->record.v90;
+			bool omitted = offer->answer_transmit[V34_SYMBOL_RATE_3429]
+				.projected_data_rate_2400_bps_units == 0;
+
+			CHECK(digital.protocol == (peer_v92 ? PCM_PROTOCOL_V92 : PCM_PROTOCOL_V90) &&
+			      omitted == (suppress && !peer_v92) &&
+			      offer->answer_transmit[V34_SYMBOL_RATE_3000]
+				      .projected_data_rate_2400_bps_units != 0 &&
+			      offer->answer_transmit[V34_SYMBOL_RATE_3200]
+				      .projected_data_rate_2400_bps_units != 0 &&
+			      (!peer_v92 || wire->record.v92.pcm_upstream_supported),
+			      "INFO1d changed the wrong protocol/rate: peer V.92=%u policy=%u",
+			      peer_v92, suppress);
+			CHECK(digital.suppress_v90_info1d_3429 == suppress &&
+			      digital.local_info1.v92_digital.v34.answer_transmit[V34_SYMBOL_RATE_3429]
+				      .projected_data_rate_2400_bps_units ==
+				      dc.local_info1.v92_digital.v34.answer_transmit[V34_SYMBOL_RATE_3429]
+					      .projected_data_rate_2400_bps_units &&
+			      digital.local_info1.v92_digital.pcm_upstream_supported ==
+				      dc.local_info1.v92_digital.pcm_upstream_supported,
+			      "INFO1d selection changed the retained proposal or policy");
+			return true;
+		}
+	}
+	CHECK(false, "negotiated INFO1d policy did not reach its peer");
+}
+
+static bool test_info1d_protocol_policy(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned peer_v92 = 0; peer_v92 < 2; ++peer_v92)
+			for (unsigned suppress = 0; suppress < 2; ++suppress)
+				CHECK(check_info1d_protocol_policy(law, peer_v92, suppress),
+				      "law %u lost negotiated INFO1d policy", (unsigned)law);
+	return true;
+}
+
 static bool endpoint_init_with_dil(
 	struct endpoint *endpoint, enum v90_modem_role role,
 	enum g711_law law, uint32_t enabled_downstream_rate_mask,
@@ -13016,6 +13082,7 @@ static bool check_v34_restart(
 		configuration(V90_DIGITAL_MODEM, law);
 	struct pcm_fallback_restart restart = {
 		.protocol = protocol,
+		.suppress_v90_info1d_3429 = true,
 		.local_info0 = selected.local_info0,
 		.peer_info0.analog = analog_info0(),
 		.local_info1 = selected.local_info1,
@@ -13097,6 +13164,7 @@ static bool check_v34_restart(
 	      call.enabled_downstream_rate_mask == restart.enabled_downstream_rate_mask &&
 	      call.v92_upstream_retry_ceiling == restart.upstream_retry_ceiling &&
 	      call.pcm_upstream_trained == restart.pcm_upstream_trained &&
+	      call.suppress_v90_info1d_3429 == restart.suppress_v90_info1d_3429 &&
 	      memcmp(&call.local_info1, &restart.local_info1,
 		     sizeof(restart.local_info1)) == 0 &&
 	      memcmp(&call.short_startup, &restart.short_startup,
@@ -13542,6 +13610,7 @@ int main(int argc, char **argv)
 		{ "Phase 2 input ownership", test_phase2_input_ownership },
 		{ "V.92 measured INFO1d wire offers", test_v92_measured_info1d },
 		{ "PCM INFO1d respects peer capabilities", test_info1d_peer_capabilities },
+		{ "PCM INFO1d retains negotiated V.90 policy", test_info1d_protocol_policy },
 		{ "PCM INFO1a respects peer training power", test_info1a_training_power },
 		{ "PCM probe-response timeout recovery", test_probe_response_timeout },
 		{ "lost initial probe responses recover online data", test_initial_probe_loss },

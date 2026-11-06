@@ -927,6 +927,8 @@ static bool start_call(
 		     datapump->maximum_pcm_upstream_data_rate_number, &upstream) !=
 		     V92_PROFILE_OK))
 		return false;
+	configuration.suppress_v90_info1d_3429 =
+		datapump->role == V90_DIGITAL_MODEM && datapump->caller;
 	if (datapump->role == V90_ANALOG_MODEM && datapump->protocol == PCM_PROTOCOL_V92) {
 		unsigned int lu_ucode = datapump->dp.modem->v92_upstream_lu_ucode;
 

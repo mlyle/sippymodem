@@ -1224,6 +1224,7 @@ enum pcm_call_result pcm_call_init(
 		return PCM_CALL_INVALID_ARGUMENT;
 	initialized.protocol = configuration->protocol;
 	initialized.local_role = configuration->local_role;
+	initialized.suppress_v90_info1d_3429 = configuration->suppress_v90_info1d_3429;
 	initialized.local_info0 = configuration->local_info0;
 	initialized.phase2_nominal_amplitude = configuration->phase2_nominal_amplitude;
 	if (initialize_phase2(&initialized) != PCM_PHASE2_OK)
@@ -1894,6 +1895,7 @@ enum pcm_call_result pcm_call_v34_fallback_handoff(
 		.enabled_downstream_rate_mask = call->enabled_downstream_rate_mask,
 		.upstream_retry_ceiling = call->v92_upstream_retry_ceiling,
 		.pcm_upstream_trained = call->pcm_upstream_trained,
+		.suppress_v90_info1d_3429 = call->suppress_v90_info1d_3429,
 		.round_trip_delay_samples = call->round_trip_delay_samples,
 		.phase2_nominal_amplitude = call->phase2_nominal_amplitude,
 		.law = call->law,
@@ -1919,6 +1921,7 @@ enum pcm_call_result pcm_call_init_from_v34(
 	configuration = (struct pcm_call_configuration){
 		.protocol = restart->protocol,
 		.local_role = V90_DIGITAL_MODEM,
+		.suppress_v90_info1d_3429 = restart->suppress_v90_info1d_3429,
 		.law = restart->law,
 		.enabled_downstream_rate_mask = restart->enabled_downstream_rate_mask,
 		.phase2_nominal_amplitude = restart->phase2_nominal_amplitude,
@@ -2192,6 +2195,12 @@ static enum pcm_call_result start_digital_info1(struct pcm_call *call)
 		    &measurement, configured, &capabilities, &selected) !=
 	    V34_PHASE2_SELECTION_OK)
 		return PCM_CALL_NUMERIC_FAILURE;
+	/* Apply the V.90 caller policy to the negotiated protocol, including
+	 * a V.92 offer declined by the peer. Retain the original proposal for
+	 * retrains and leave genuine V.92 projections intact. */
+	if (!v92 && call->suppress_v90_info1d_3429)
+		selected.answer_transmit[V34_SYMBOL_RATE_3429]
+			.projected_data_rate_2400_bps_units = 0;
 	if (v92) {
 		struct v92_info1d info1 = call->local_info1.v92_digital;
 

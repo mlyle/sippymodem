@@ -5410,7 +5410,7 @@ static bool run_factory_pcm_cases(const char *filter, bool *selected)
 				char name[100], fixed[100];
 				bool digital_caller = answering ? peer_digital : !peer_digital;
 				enum DP_ID peer_id = protocol == 90 ? DP_V90 : DP_V92;
-				unsigned upstream_rate = digital_caller && answering && protocol == 90 ? 31200 : 33600;
+				unsigned upstream_rate = digital_caller && protocol == 90 ? 31200 : 33600;
 				struct modem_test_case test = {
 					.id = answering ? peer_id : DP_V92,
 					.answerer_id = answering ? DP_V92 : peer_id,
