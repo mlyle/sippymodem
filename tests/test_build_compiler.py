@@ -3,9 +3,11 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import subprocess
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,9 +38,15 @@ class CompilerBuildTests(unittest.TestCase):
         ]
         if cache_directory is not None:
             arguments.append(f"CCACHE_DIR={cache_directory}")
+        environment = os.environ.copy()
+        # Test the fragment's defaults, independently of the parent build's
+        # exported cache settings (including CCACHE= exporting empty values).
+        environment.pop("CCACHE_DIR", None)
+        environment.pop("CCACHE_BASEDIR", None)
         output = subprocess.run(
             arguments,
             cwd=directory,
+            env=environment,
             check=True,
             text=True,
             stdout=subprocess.PIPE,
@@ -76,6 +84,17 @@ class CompilerBuildTests(unittest.TestCase):
         self.assertEqual(compiler, "clang")
         self.assertEqual(cxx, "clang++")
         self.assertEqual(cache_directory, "")
+
+    def test_default_cache_ignores_parent_cache_settings(self) -> None:
+        for directory in ("", "/parent-build/cache"):
+            with self.subTest(directory=directory), mock.patch.dict(
+                os.environ,
+                {"CCACHE_DIR": directory, "CCACHE_BASEDIR": "/parent-build"},
+            ):
+                _compiler, _cxx, actual = self.values(
+                    ROOT, "clang", "/tool/ccache"
+                )
+                self.assertEqual(actual, str(ROOT / ".build" / "ccache"))
 
     def test_direct_subdirectory_build_uses_shared_cache(self) -> None:
         compiler, cxx, cache_directory = self.values(
