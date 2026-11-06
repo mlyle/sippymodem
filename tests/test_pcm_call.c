@@ -5687,11 +5687,17 @@ static bool check_rrn_response_deadline(
 	return true;
 }
 
+enum rate_request { OBSERVED_RATE_REQUEST, LOWER_UPSTREAM_REQUEST, REPEAT_RATE_REQUEST };
+
 static bool run_paired_remote_rate_renegotiation(
 	enum g711_law law,
 	enum v34_constellation_size rate_renegotiation_constellation,
-	bool downshift, enum pcm_protocol protocol)
+	enum rate_request request, enum pcm_protocol protocol)
 {
+	bool downshift = request == LOWER_UPSTREAM_REQUEST;
+	bool explicit_request = request != OBSERVED_RATE_REQUEST;
+	enum pcm_call_result (*request_rate)(struct pcm_call *) = downshift ?
+		pcm_call_downshift_upstream : pcm_call_start_rate_renegotiation;
 	struct channel channel;
 	struct endpoint analog;
 	struct endpoint digital;
@@ -5765,21 +5771,21 @@ static bool run_paired_remote_rate_renegotiation(
 		      &digital.call, &digital_rates[0], &digital_rates[1]) &&
 	      analog_rates[0] == digital_rates[1] &&
 	      analog_rates[1] == digital_rates[0] &&
-	      (downshift || complete_rate_renegotiation_monitor(
+	      (explicit_request || complete_rate_renegotiation_monitor(
 		      &digital.call.state.data_path.digital.upstream.data
 			       .rate_renegotiation)) &&
 	      pcm_call_is_valid(&digital.call),
 	      "law %u paired RRN could not seed the digital request",
 	      (unsigned int)law);
-	if (downshift) {
+	if (explicit_request) {
 		struct pcm_call limited = digital.call;
 		struct v90_mp_parameters *mp = v90_mp_record_mutable_common(
 			&limited.state.data_path.digital.local_mp);
 		mp->upstream_rate_capability_mask = (uint16_t)(1u <<
 			(limited.state.data_path.digital.upstream_rate_2400_bps_units - 2u));
 		struct pcm_call before = limited;
-		CHECK(pcm_call_downshift_upstream(&limited) == PCM_CALL_UNUSABLE_SELECTION &&
-		      memcmp(&before, &limited, sizeof(before)) == 0,
+		CHECK(!downshift || (pcm_call_downshift_upstream(&limited) == PCM_CALL_UNUSABLE_SELECTION &&
+		      memcmp(&before, &limited, sizeof(before)) == 0),
 		      "minimum-rate downshift mutated the call");
 		CHECK(v34_receive_timing_set_data_frozen(
 			      &digital.call.state.data_path.digital.upstream.data.line.timing,
@@ -5787,17 +5793,21 @@ static bool run_paired_remote_rate_renegotiation(
 		      digital.call.state.data_path.digital.upstream.data.line.timing.timing.mode ==
 			      V34_TIMING_CONTROL_LOCKED,
 		      "could not model the quality policy's frozen data clock");
+		struct v90_mp_record offer = digital.call.state.data_path.digital.local_mp;
 		before = analog.call;
-		CHECK(pcm_call_downshift_upstream(&analog.call) == PCM_CALL_INVALID_STATE &&
+		CHECK(request_rate(&analog.call) == PCM_CALL_INVALID_STATE &&
 		      memcmp(&before, &analog.call, sizeof(before)) == 0 &&
-		      pcm_call_downshift_upstream(&digital.call) == PCM_CALL_OK &&
+		      request_rate(&digital.call) == PCM_CALL_OK &&
 		      digital.call.state.data_path.digital.upstream.data.line.timing.timing.mode !=
 			      V34_TIMING_CONTROL_LOCKED,
-		      "digital downshift failed or analogue request changed state");
+		      "digital rate request failed or analogue request changed state");
 		before = digital.call;
-		CHECK(pcm_call_downshift_upstream(&digital.call) == PCM_CALL_INVALID_STATE &&
+		CHECK(downshift || memcmp(&offer, &before.state.data_path.digital.local_mp,
+			      sizeof(offer)) == 0,
+		      "repeat exchange changed the rate offer");
+		CHECK(request_rate(&digital.call) == PCM_CALL_INVALID_STATE &&
 		      memcmp(&before, &digital.call, sizeof(before)) == 0,
-		      "duplicate downshift changed an active exchange");
+		      "duplicate rate request changed an active exchange");
 		/* Withhold the response beyond the old bounded frame queue's
 		 * capacity. Old data must neither overflow it nor acknowledge CP. */
 		struct pcm_call stalled = digital.call;
@@ -5808,15 +5818,15 @@ static bool run_paired_remote_rate_renegotiation(
 				      true, NULL, &octet, &event) == PCM_CALL_OK &&
 			      event.kind == PCM_CALL_DATA_NONE &&
 			      stalled.stage == PCM_CALL_DATA_PATH,
-			      "unanswered downshift overflowed or exposed data at %zu", clock);
+			      "unanswered rate request overflowed or exposed data at %zu", clock);
 		}
 		CHECK(stalled.rate_renegotiation_deadline_armed &&
 		      !stalled.state.data_path.digital.data_mapping_ready &&
 		      !stalled.state.data_path.digital.downstream.training.mp_prime_requested,
-		      "unanswered downshift acknowledged absent CP");
+		      "unanswered rate request acknowledged absent CP");
 		digital_started = true;
 	}
-	for (size_t sample = 0; !downshift && sample < 64u; ++sample) {
+	for (size_t sample = 0; !explicit_request && sample < 64u; ++sample) {
 		struct v34_line_receiver expected =
 			digital.call.state.data_path.digital.upstream.data.line;
 		struct v34_adaptive_equalizer_observation observation;
@@ -6151,6 +6161,13 @@ static bool run_paired_remote_rate_renegotiation(
 		      pcm_call_get_data_rates(&analog.call, &rx, &tx) &&
 		      tx == digital_rates[0] && rx == digital_rates[1] - 4800u,
 		      "downshift did not negotiate the next common rate");
+	} else if (explicit_request) {
+		uint32_t tx, rx;
+		CHECK(pcm_call_get_data_rates(&digital.call, &tx, &rx) &&
+		      tx == digital_rates[0] && rx == digital_rates[1] &&
+		      pcm_call_get_data_rates(&analog.call, &rx, &tx) &&
+		      tx == digital_rates[0] && rx == digital_rates[1],
+		      "repeated rate offer changed negotiated rates");
 	}
 	CHECK(cleardown_checked, "paired RRN never exercised control cancellation");
 	CHECK(analog_started && rd_detected && rd_bar_started &&
@@ -6190,9 +6207,11 @@ static bool test_paired_remote_rate_renegotiation(void)
 				CONSTELLATIONS[index];
 
 			CHECK(run_paired_remote_rate_renegotiation(
-				      law, constellation, false, PCM_PROTOCOL_V90) &&
-			      run_paired_remote_rate_renegotiation(law, constellation, true, PCM_PROTOCOL_V90) &&
-			      run_paired_remote_rate_renegotiation(law, constellation, true, PCM_PROTOCOL_V92),
+				      law, constellation, OBSERVED_RATE_REQUEST, PCM_PROTOCOL_V90) &&
+			      run_paired_remote_rate_renegotiation(law, constellation, LOWER_UPSTREAM_REQUEST, PCM_PROTOCOL_V90) &&
+			      run_paired_remote_rate_renegotiation(law, constellation, LOWER_UPSTREAM_REQUEST, PCM_PROTOCOL_V92) &&
+			      run_paired_remote_rate_renegotiation(law, constellation, REPEAT_RATE_REQUEST, PCM_PROTOCOL_V90) &&
+			      run_paired_remote_rate_renegotiation(law, constellation, REPEAT_RATE_REQUEST, PCM_PROTOCOL_V92),
 			      "law %u constellation %u paired RRN failed",
 			      (unsigned int)law,
 			      (unsigned int)constellation);

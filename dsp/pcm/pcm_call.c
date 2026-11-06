@@ -4782,6 +4782,20 @@ enum pcm_call_result pcm_call_start_rate_renegotiation(struct pcm_call *call)
 {
 	if (!pcm_call_is_valid(call))
 		return PCM_CALL_INVALID_ARGUMENT;
+	if (pcm_call_uses_conventional_upstream(call)) {
+		if (call->local_role != V90_DIGITAL_MODEM || !pcm_call_is_online(call) ||
+		    call->retrain_active || rate_renegotiation_is_active_owned(call) ||
+		    cleardown_is_active_owned(call))
+			return PCM_CALL_INVALID_STATE;
+		struct pcm_call next = *call;
+		if (v90_digital_path_start_rate_renegotiation(&next.state.data_path.digital) !=
+			    V90_DIGITAL_PATH_OK ||
+		    begin_rate_renegotiation_control(&next) != PCM_CALL_OK ||
+		    !pcm_call_is_valid(&next))
+			return PCM_CALL_NUMERIC_FAILURE;
+		*call = next;
+		return PCM_CALL_OK;
+	}
 	if (!uses_pcm_upstream(call) || !pcm_call_is_online(call) || call->retrain_active)
 		return PCM_CALL_INVALID_STATE;
 	struct pcm_call next = *call;

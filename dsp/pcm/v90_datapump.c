@@ -538,6 +538,7 @@ static bool start_parameter_exchange(struct dp *dp, bool fast, bool request_sile
 	struct pcm_call call;
 
 	if (datapump == NULL || !datapump->call_started ||
+	    pcm_call_uses_conventional_upstream(&datapump->call) ||
 	    !training_session_is_online(&datapump->training))
 		return false;
 	training = datapump->training;
@@ -679,16 +680,17 @@ static bool source_pcm_frame(
 		bits, bit_count);
 }
 
-/* A short exchange retains the six-symbol PCM frame phase (V.92 9.8).
+/* A short exchange retains the six-symbol PCM frame phase (V.90 9.6/V.92 9.8).
  * An echo-delay jump is only a hypothesis about outgoing timing: do nothing
  * until valid peer feedback and the existing first T401 retry agree. */
 static bool transmit_recovery_observation(struct v90_datapump *datapump,
 	struct modem_tx_recovery *observation)
 {
 	struct pcm_call *call = &datapump->call;
-	if (datapump->protocol != PCM_PROTOCOL_V92 || datapump->role != V90_DIGITAL_MODEM ||
+	if (datapump->role != V90_DIGITAL_MODEM ||
 	    !datapump->call_started || call->stage != PCM_CALL_DATA_PATH ||
-	    call->phase3_entry.selection.upstream != PCM_UPSTREAM_PCM ||
+	    (pcm_call_uses_conventional_upstream(call) &&
+	     call->state.data_path.digital.rate_renegotiation_active) ||
 	    !training_session_is_online(&datapump->training) || !pcm_call_is_online_owned(call) ||
 	    !modem_ec_get_tx_recovery(datapump->dp.modem, observation)) {
 		/* A physical interruption consumes the owned allowance, including
@@ -744,6 +746,15 @@ static void apply_transmit_recovery(struct v90_datapump *datapump)
 		recovery->applied = true;
 }
 
+static bool start_transmit_rate_recovery(struct v90_datapump *datapump)
+{
+	/* Conventional upstream already owns a continuous data-path exchange.
+	 * Keep LAPM and carrier running as for a receive-quality downshift. */
+	if (pcm_call_uses_conventional_upstream(&datapump->call))
+		return pcm_call_start_rate_renegotiation(&datapump->call) == PCM_CALL_OK;
+	return v90_datapump_start_rate_renegotiation(&datapump->dp, false);
+}
+
 static void service_link_v90(struct dp *dp)
 {
 	struct v90_datapump *datapump = v90_from_dp(dp);
@@ -769,14 +780,14 @@ static void service_link_v90(struct dp *dp)
 		/* The grant already belongs to this owner. Failed or retired phase
 		 * evidence keeps the normal full repair; it must not swallow it. */
 		if (pcm_tx_recovery_second_eligible(recovery, dp->modem->count, &observation) &&
-		    v90_datapump_start_rate_renegotiation(dp, false)) {
+		    start_transmit_rate_recovery(datapump)) {
 			modem_ec_probe_after_tx_recovery(dp->modem, grant);
 		} else {
 			retrain_v90(dp);
 		}
 	} else if (recovery->applied) {
 		recovery->applied = false;
-		if (v90_datapump_start_rate_renegotiation(dp, false))
+		if (start_transmit_rate_recovery(datapump))
 			modem_ec_probe_after_tx_recovery(dp->modem, 0);
 	} else if (!recovery->used) {
 		/* Repeated peer polls can keep T403 alive while our empty transmit
@@ -1324,8 +1335,10 @@ static int process_v90_g711(
 				v34_echo_timing_prepare(&datapump->echo_timing,
 					datapump->host_echo, echo_mode, &before, &data->decisions,
 					receive_samples[index], cleaned_sample);
-				v34_echo_timing_observe(&datapump->echo_timing,
+				int timing_shift = v34_echo_timing_observe(&datapump->echo_timing,
 					datapump->host_echo, &data->line);
+				if (timing_shift)
+					note_transmit_timing(datapump, timing_shift);
 			} else {
 				v34_echo_timing_reset(&datapump->echo_timing);
 			}

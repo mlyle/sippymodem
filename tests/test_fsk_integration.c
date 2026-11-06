@@ -5425,29 +5425,42 @@ static bool run_playout_cases(const char *filter, bool *selected)
 {
 	static const unsigned steps[] = { 0, 80, 114 };
 	static const enum media_codec codecs[] = { MEDIA_CODEC_PCMU, MEDIA_CODEC_PCMA };
-	for (unsigned digital = 0; digital < 2; ++digital) {
-		for (unsigned i = 0; i < ARRAY_LENGTH(steps); ++i) {
-			char name[96];
-			snprintf(name, sizeof(name), "V.92 coupled playout %u samples digital %s",
-				 steps[i], digital ? "caller" : "answerer");
-			struct modem_test_case test = {
-				.id = DP_V92, .name = name,
-				.selection_command = "AT+MS=92,0,28000,28000+V92Q=0+V92U=1,28000\r",
-				.caller_tx_rate = 28000, .caller_rx_rate = 28000,
-				.answerer_tx_rate = 28000, .answerer_rx_rate = 28000,
-				.training_frame_limit = 1500,
-				.requires_v8 = true, .requires_exact_g711 = true,
-				.require_lapm = true, .digital_caller = digital,
-				.playout_echo = true, .playout_step_samples = steps[i],
-			};
-			if (filter && filter[0] && !strstr(name, filter))
-				continue;
-			*selected = true;
-			for (unsigned law = 0; law < ARRAY_LENGTH(codecs); ++law) {
-				fprintf(stderr, "[ RUN      ] %s over %s\n", name, codec_name(codecs[law]));
-				if (!run_media_call(&test, codecs[law]))
-					return false;
-				fprintf(stderr, "[       OK ] %s over %s\n", name, codec_name(codecs[law]));
+	/* Keep both upstream procedures on the same asymmetric playout channel. */
+	for (unsigned mode = 0; mode < 3; ++mode) {
+		bool conventional = mode != 0;
+		unsigned protocol = mode == 1 ? 90 : 92;
+		unsigned upstream = conventional ? 28800 : 28000;
+		char command[128];
+		snprintf(command, sizeof(command), "AT+MS=%u,0,28000,28000+V92Q=0%s\r",
+			 protocol, conventional ? "+V92U=0+V90U=28800,28800,3200" : "+V92U=1,28000");
+		for (unsigned digital = 0; digital < 2; ++digital) {
+			for (unsigned i = 0; i < ARRAY_LENGTH(steps); ++i) {
+				char name[96];
+				snprintf(name, sizeof(name), "V.%u %s playout %u samples digital %s",
+					 protocol, conventional ? "conventional" : "coupled",
+					 steps[i], digital ? "caller" : "answerer");
+				struct modem_test_case test = {
+					.id = protocol == 90 ? DP_V90 : DP_V92, .name = name,
+					.selection_command = command,
+					.caller_tx_rate = digital ? 28000 : upstream,
+					.caller_rx_rate = digital ? upstream : 28000,
+					.answerer_tx_rate = digital ? upstream : 28000,
+					.answerer_rx_rate = digital ? 28000 : upstream,
+					.training_frame_limit = 1500,
+					.requires_v8 = true, .requires_exact_g711 = true,
+					.require_lapm = true, .digital_caller = digital,
+					.conventional_upstream = conventional,
+					.playout_echo = true, .playout_step_samples = steps[i],
+				};
+				if (filter && filter[0] && !strstr(name, filter))
+					continue;
+				*selected = true;
+				for (unsigned law = 0; law < ARRAY_LENGTH(codecs); ++law) {
+					fprintf(stderr, "[ RUN      ] %s over %s\n", name, codec_name(codecs[law]));
+					if (!run_media_call(&test, codecs[law]))
+						return false;
+					fprintf(stderr, "[       OK ] %s over %s\n", name, codec_name(codecs[law]));
+				}
 			}
 		}
 	}

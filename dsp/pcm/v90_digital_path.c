@@ -288,32 +288,12 @@ enum v90_digital_path_result v90_digital_path_start_cleardown(
 	return V90_DIGITAL_PATH_OK;
 }
 
-enum v90_digital_path_result v90_digital_path_downshift_upstream(
-	struct v90_digital_path *path)
+static enum v90_digital_path_result start_rate_request(
+	struct v90_digital_path *path, const struct v90_mp_record *mp)
 {
 	struct v90_pcm_mapping control;
-	struct v90_mp_record mp;
-	const struct v90_mp_parameters *parameters;
-	uint8_t rate;
-	uint8_t maximum;
 
-	if (!v90_digital_path_is_valid(path) || path->failed)
-		return V90_DIGITAL_PATH_INVALID_ARGUMENT;
-	if (!v90_digital_path_is_online(path) || path->rate_renegotiation_active ||
-	    path->cleardown_requested)
-		return V90_DIGITAL_PATH_SEQUENCE_MISMATCH;
-	mp = path->local_mp;
-	parameters = v90_mp_record_common(&mp);
-	maximum = path->upstream_rate_2400_bps_units - 1u;
-	if (maximum > parameters->maximum_upstream_rate_2400_bps_units)
-		maximum = parameters->maximum_upstream_rate_2400_bps_units;
-	rate = v34_mp_highest_enabled_rate(
-		(uint16_t)((parameters->upstream_rate_capability_mask &
-			    path->peer_upstream_rate_mask) << 1), maximum);
-	if (rate == 0)
-		return V90_DIGITAL_PATH_NO_COMMON_RATE;
-	if (!v90_mp_record_limit_maximum_upstream_rate(&mp, rate) ||
-	    v90_pcm_mapping_init_rate_renegotiation(
+	if (v90_pcm_mapping_init_rate_renegotiation(
 		    &control, &path->training_mapping,
 		    &path->data_mapping) != V90_PCM_MAPPING_OK)
 		return V90_DIGITAL_PATH_INVALID_PARAMETERS;
@@ -323,7 +303,7 @@ enum v90_digital_path_result v90_digital_path_downshift_upstream(
 	if (v34_receive_timing_set_data_frozen(
 		    &path->upstream.data.line.timing, false) != V34_RECEIVE_TIMING_OK)
 		return V90_DIGITAL_PATH_INTERNAL_ERROR;
-	path->local_mp = mp;
+	path->local_mp = *mp;
 	path->control_mapping = control;
 	path->downstream_stage = V90_DIGITAL_PATH_DOWNSTREAM_DATA_DRAIN;
 	path->pending_upstream_count = 0u;
@@ -333,6 +313,40 @@ enum v90_digital_path_result v90_digital_path_downshift_upstream(
 	path->data_mapping_ready = false;
 	path->rate_renegotiation_active = true;
 	return V90_DIGITAL_PATH_OK;
+}
+
+enum v90_digital_path_result v90_digital_path_start_rate_renegotiation(
+	struct v90_digital_path *path)
+{
+	if (!v90_digital_path_is_valid(path) || path->failed)
+		return V90_DIGITAL_PATH_INVALID_ARGUMENT;
+	if (!v90_digital_path_is_online(path) || path->rate_renegotiation_active ||
+	    path->cleardown_requested)
+		return V90_DIGITAL_PATH_SEQUENCE_MISMATCH;
+	return start_rate_request(path, &path->local_mp);
+}
+
+enum v90_digital_path_result v90_digital_path_downshift_upstream(
+	struct v90_digital_path *path)
+{
+	if (!v90_digital_path_is_valid(path) || path->failed)
+		return V90_DIGITAL_PATH_INVALID_ARGUMENT;
+	if (!v90_digital_path_is_online(path) || path->rate_renegotiation_active ||
+	    path->cleardown_requested)
+		return V90_DIGITAL_PATH_SEQUENCE_MISMATCH;
+	struct v90_mp_record mp = path->local_mp;
+	const struct v90_mp_parameters *parameters = v90_mp_record_common(&mp);
+	uint8_t maximum = path->upstream_rate_2400_bps_units - 1u;
+	if (maximum > parameters->maximum_upstream_rate_2400_bps_units)
+		maximum = parameters->maximum_upstream_rate_2400_bps_units;
+	uint8_t rate = v34_mp_highest_enabled_rate(
+		(uint16_t)((parameters->upstream_rate_capability_mask &
+			    path->peer_upstream_rate_mask) << 1), maximum);
+	if (rate == 0)
+		return V90_DIGITAL_PATH_NO_COMMON_RATE;
+	if (!v90_mp_record_limit_maximum_upstream_rate(&mp, rate))
+		return V90_DIGITAL_PATH_INVALID_PARAMETERS;
+	return start_rate_request(path, &mp);
 }
 
 static enum v90_digital_path_result stream_result(

@@ -604,7 +604,10 @@ bool pcm_call_is_full_retraining(const struct pcm_call *call);
  * UNUSABLE_SELECTION means no lower permitted rate. Rejection changes nothing. */
 enum pcm_call_result pcm_call_downshift_upstream(struct pcm_call *call);
 
-/* Initiate a PCM-upstream rate exchange from either online endpoint.
+/* Initiate an exchange without withdrawing a rate. With conventional upstream,
+ * only the digital endpoint initiates: drain data, send Rd/CP/MP and continue
+ * data_octet(). Carrier stays online; the normal response deadline applies.
+ * PCM upstream supports either online endpoint:
  * Drain the accepted data frame before Ru/Rd; subsequent media uses octet()
  * through Phase 4 and the ordinary start_data_path() handoff. No new host
  * frame is consumed until data resumes after B1. Full retrain remains separate.

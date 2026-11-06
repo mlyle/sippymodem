@@ -130,6 +130,12 @@ bool v90_digital_path_upstream_is_online(
 	const struct v90_digital_path *path);
 bool v90_digital_path_is_online(const struct v90_digital_path *path);
 
+/* Repeat Rd/CP/MP with the current rate offer and trained receiver. Drain
+ * accepted downstream data before Rd; suppress upstream payload until new B1.
+ * Invalid or active exchanges are rejected without mutation. */
+enum v90_digital_path_result v90_digital_path_start_rate_renegotiation(
+	struct v90_digital_path *path);
+
 /* Request the next lower common upstream rate with Rd/CP/MP, retaining the
  * trained line. No lower rate or an invalid state leaves the path unchanged. */
 enum v90_digital_path_result v90_digital_path_downshift_upstream(
