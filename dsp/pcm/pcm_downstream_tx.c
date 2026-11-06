@@ -1028,14 +1028,52 @@ static struct pcm_downstream_symbol pop_symbol(
 	return symbol;
 }
 
-static enum pcm_downstream_tx_result next_symbol(
+/* Advance an unpublished snapshot. Each public entry point validates and
+ * commits all of its owned state and outputs together. */
+static enum pcm_downstream_tx_result generate_symbol(
 	struct pcm_downstream_tx *transmitter,
 	struct pcm_downstream_source_record *source_record,
 	struct pcm_downstream_symbol *symbol)
 {
-	struct pcm_downstream_tx next;
 	struct pcm_downstream_symbol generated;
 	enum pcm_downstream_tx_result result = PCM_DOWNSTREAM_TX_OK;
+
+	if (transmitter->queue_count == 0 && transmitter->finish_requested) {
+		result = drain_encoder(transmitter);
+	} else if (transmitter->queue_count == 0) {
+		for (size_t attempt = 0;
+		     attempt <= transmitter->encoder.mapping.spectral_lookahead &&
+		     transmitter->queue_count == 0 && !transmitter->finish_requested;
+		     ++attempt) {
+			result = generate_frame(transmitter, source_record);
+			if (result != PCM_DOWNSTREAM_TX_OK)
+				break;
+		}
+		if (result == PCM_DOWNSTREAM_TX_OK &&
+		    transmitter->queue_count == 0 && transmitter->finish_requested)
+			result = drain_encoder(transmitter);
+		else if (result == PCM_DOWNSTREAM_TX_OK &&
+			 transmitter->queue_count == 0)
+			result = PCM_DOWNSTREAM_TX_INTERNAL_ERROR;
+	}
+	if (result != PCM_DOWNSTREAM_TX_OK && result != PCM_DOWNSTREAM_TX_COMPLETE)
+		return result;
+	if (result == PCM_DOWNSTREAM_TX_OK)
+		generated = pop_symbol(transmitter);
+	if (!pcm_downstream_tx_is_valid(transmitter))
+		return PCM_DOWNSTREAM_TX_INTERNAL_ERROR;
+	if (result == PCM_DOWNSTREAM_TX_OK)
+		*symbol = generated;
+	return result;
+}
+
+enum pcm_downstream_tx_result pcm_downstream_tx_next(
+	struct pcm_downstream_tx *transmitter,
+	struct pcm_downstream_symbol *symbol)
+{
+	struct pcm_downstream_tx next;
+	struct pcm_downstream_symbol generated;
+	enum pcm_downstream_tx_result result;
 
 	if (transmitter == NULL || symbol == NULL ||
 	    memory_regions_overlap(transmitter, sizeof(*transmitter),
@@ -1046,51 +1084,13 @@ static enum pcm_downstream_tx_result next_symbol(
 	if (transmitter->complete)
 		return PCM_DOWNSTREAM_TX_COMPLETE;
 	next = *transmitter;
-	if (next.queue_count == 0 && next.finish_requested) {
-		result = drain_encoder(&next);
-		if (result == PCM_DOWNSTREAM_TX_COMPLETE) {
-			if (!pcm_downstream_tx_is_valid(&next))
-				return PCM_DOWNSTREAM_TX_INTERNAL_ERROR;
-			*transmitter = next;
-			return PCM_DOWNSTREAM_TX_COMPLETE;
-		}
-	} else if (next.queue_count == 0) {
-		for (size_t attempt = 0;
-		     attempt <= next.encoder.mapping.spectral_lookahead &&
-		     next.queue_count == 0 && !next.finish_requested;
-		     ++attempt) {
-			result = generate_frame(&next, source_record);
-			if (result != PCM_DOWNSTREAM_TX_OK)
-				break;
-		}
-		if (result == PCM_DOWNSTREAM_TX_OK &&
-		    next.queue_count == 0 && next.finish_requested)
-			result = drain_encoder(&next);
-		else if (result == PCM_DOWNSTREAM_TX_OK &&
-			 next.queue_count == 0)
-			result = PCM_DOWNSTREAM_TX_INTERNAL_ERROR;
-	}
-	if (result == PCM_DOWNSTREAM_TX_COMPLETE) {
-		if (!pcm_downstream_tx_is_valid(&next))
-			return PCM_DOWNSTREAM_TX_INTERNAL_ERROR;
-		*transmitter = next;
-		return PCM_DOWNSTREAM_TX_COMPLETE;
-	}
-	if (result != PCM_DOWNSTREAM_TX_OK)
+	result = generate_symbol(&next, NULL, &generated);
+	if (result != PCM_DOWNSTREAM_TX_OK && result != PCM_DOWNSTREAM_TX_COMPLETE)
 		return result;
-	generated = pop_symbol(&next);
-	if (!pcm_downstream_tx_is_valid(&next))
-		return PCM_DOWNSTREAM_TX_INTERNAL_ERROR;
 	*transmitter = next;
-	*symbol = generated;
-	return PCM_DOWNSTREAM_TX_OK;
-}
-
-enum pcm_downstream_tx_result pcm_downstream_tx_next(
-	struct pcm_downstream_tx *transmitter,
-	struct pcm_downstream_symbol *symbol)
-{
-	return next_symbol(transmitter, NULL, symbol);
+	if (result == PCM_DOWNSTREAM_TX_OK)
+		*symbol = generated;
+	return result;
 }
 
 enum pcm_downstream_tx_result pcm_downstream_tx_next_source_record(
@@ -1135,7 +1135,7 @@ enum pcm_downstream_tx_result pcm_downstream_tx_next_source_record(
 		return PCM_DOWNSTREAM_TX_INVALID_ARGUMENT;
 	next_transmitter = *transmitter;
 	next_record = *record;
-	result = next_symbol(
+	result = generate_symbol(
 		&next_transmitter, &next_record, &generated);
 	if (result != PCM_DOWNSTREAM_TX_OK)
 		return result;
