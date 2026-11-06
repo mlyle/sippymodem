@@ -96,6 +96,14 @@ the CONNECT stage, with an initial-transmit failure reason. Raw calls retain
 their initial receive check. Historical results leave the direction checks
 unknown and keep their original grades.
 
+Set `initial_failure_observation_seconds` to a value from 0 to 60 to observe
+automatic recovery after a failed LAPM PING. The default, 0, adds no wait.
+The observer sends nothing and requests no retrain. It reports a delayed
+reply in `initial_recovery_data` and the additional wait in
+`initial_recovery_seconds`; the original initial-data grade and maturity
+remain unchanged. The `initial-recovery` capture also retains partial replies
+that cross the original deadline.
+
 Each `result.json` indexes the terminal captures in `exchanges`, with the call
 leg, test phase, collection time, and byte offsets into `terminal-tx.bin` and
 `terminal-rx.bin`. Raw calls retain separate exchanges for the first probe

@@ -81,6 +81,7 @@ ROOT_KEYS = frozenset(
         "callback_release_seconds",
         "online_timeout_seconds",
         "online_settle_seconds",
+        "initial_failure_observation_seconds",
         "retrain_timeout_seconds",
         "cleanup_timeout_seconds",
         "inter_call_seconds",
@@ -132,6 +133,7 @@ class CampaignConfig:
     busy_retry_limit: int
     reference_name: str = "ata"
     callback_port: int | None = None
+    initial_failure_observation_seconds: float = 0
 
     def environment(self, purpose: str) -> dict[str, str]:
         values = {
@@ -440,6 +442,12 @@ def load_campaign_config(path: Path) -> CampaignConfig:
             "online_settle_seconds",
             0,
             10,
+        ),
+        initial_failure_observation_seconds=_number(
+            value.get("initial_failure_observation_seconds", 0),
+            "initial_failure_observation_seconds",
+            0,
+            60,
         ),
         retrain_timeout_seconds=_number(
             value.get("retrain_timeout_seconds", 42),

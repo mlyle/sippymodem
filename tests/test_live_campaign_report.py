@@ -69,6 +69,25 @@ class LiveCampaignReportTests(unittest.TestCase):
             b"since the last accepted commands\r\nADVISORY: 4 invalid commands"
         ), (0, 0))
 
+    def test_late_recovery_is_reported_without_upgrading_initial_data(self) -> None:
+        case = cases_for_suite("smoke")[0]
+        result = self.result(
+            case_name=case.name, family=case.family, role=case.role,
+            connected=True, protocol="LAPM", initial_data=False,
+            initial_receive_data=True, initial_transmit_data=False,
+            initial_recovery_data=True, initial_recovery_seconds=10.4,
+            retrain_requested=False,
+        )
+        dashboard = render_dashboard(
+            (case,), 1, (result,), revision="c" * 40,
+            campaign_id="test", elapsed_seconds=1, recent_limit=1,
+        )
+        self.assertEqual(result.maturity, MATURITY_CONNECT)
+        self.assertFalse(result.successful())
+        self.assertIn("Initial checks: RX=1/1 TX=0/1", dashboard)
+        self.assertIn("Initial recovery: late PONG=1/1 (initial grades unchanged)", dashboard)
+        self.assertIn("initial-rx=1/tx=0 late-pong=1(+10.4s)", dashboard)
+
     def test_peer_input_warning_prevents_success_without_erasing_markers(self) -> None:
         case = cases_for_suite("smoke")[0]
         for field in ("peer_unknown_commands", "peer_invalid_command_burst"):

@@ -156,6 +156,10 @@ class AttemptResult:
     # raw calls continue to verify initial reception only.
     initial_receive_data: bool | None = None
     initial_transmit_data: bool | None = None
+    # An optional read-only wait for the original PING after its failed
+    # deadline. These fields never upgrade initial_data or maturity.
+    initial_recovery_data: bool | None = None
+    initial_recovery_seconds: float | None = None
 
     @property
     def profile_mismatch(self) -> bool:
@@ -611,6 +615,13 @@ def render_dashboard(
             f"/{len(transmitted)}; legacy connected={legacy} (direction checks unknown)"
         )
         rows.append("New LAPM D requires initial RX and TX; raw D verifies RX only")
+    recovered = [result for result in results
+                 if result.initial_recovery_data is not None]
+    if recovered:
+        rows.append(
+            f"Initial recovery: late PONG={sum(r.initial_recovery_data is True for r in recovered)}"
+            f"/{len(recovered)} (initial grades unchanged)"
+        )
     warnings = [result for result in results
                 if result.peer_unknown_commands or result.peer_invalid_command_burst]
     if warnings:
@@ -720,6 +731,10 @@ def render_dashboard(
                     else str(int(result.initial_transmit_data))
                 )
                 status += f" initial-rx={int(result.initial_receive_data)}/tx={transmitted}"
+            if not request and result.initial_recovery_data is not None:
+                status += f" late-pong={int(result.initial_recovery_data)}"
+                if result.initial_recovery_seconds is not None:
+                    status += f"(+{result.initial_recovery_seconds:.1f}s)"
             if not request and (result.peer_unknown_commands or result.peer_invalid_command_burst):
                 status += f" peer-input={result.peer_unknown_commands}/{result.peer_invalid_command_burst}"
             sequence = f"{index + 1:03d}{'+' if result.extra else ' '}"

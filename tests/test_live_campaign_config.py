@@ -76,6 +76,7 @@ class LiveCampaignConfigTests(unittest.TestCase):
             self.assertEqual(config.callback_marker_timeout_seconds, 7)
             self.assertEqual(config.callback_return_timeout_seconds, 180)
             self.assertEqual(config.retrain_timeout_seconds, 42)
+            self.assertEqual(config.initial_failure_observation_seconds, 0)
             self.assertEqual(config.inter_call_seconds, 7)
             self.assertEqual(config.busy_retry_seconds, 10)
             self.assertEqual(config.busy_retry_limit, 9)
@@ -116,6 +117,23 @@ class LiveCampaignConfigTests(unittest.TestCase):
             self.write(path, value)
             with self.assertRaisesRegex(CampaignConfigError, "retrain_timeout"):
                 load_campaign_config(path)
+
+    def test_initial_failure_observation_is_optional_and_bounded(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "campaign.json"
+            value = self.value(root)
+            value["initial_failure_observation_seconds"] = 0.25
+            self.write(path, value)
+            self.assertEqual(
+                load_campaign_config(path).initial_failure_observation_seconds, 0.25
+            )
+            for seconds in (-1, 61, True):
+                with self.subTest(seconds=seconds):
+                    value["initial_failure_observation_seconds"] = seconds
+                    self.write(path, value)
+                    with self.assertRaisesRegex(CampaignConfigError, "initial_failure_observation"):
+                        load_campaign_config(path)
 
     def test_child_environment_scrubs_inherited_private_values(self) -> None:
         environment = child_environment(

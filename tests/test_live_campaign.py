@@ -186,6 +186,11 @@ while True:
             commands = bytes(buffer).replace(b"\r", b"\n").split(b"\n")
             buffer.clear()
             pings += 1
+            if mode.endswith("initial-split-pong"):
+                os.write(master, pong[:12])
+                time.sleep(0.25)
+                os.write(master, pong[12:])
+                continue
             if mode.endswith("peer-no-data") and not retrained and pings > 1:
                 continue
             if mode.endswith("initial-no-data"):
@@ -300,7 +305,10 @@ class LiveCampaignTests(unittest.TestCase):
                     mode += "-initial-no-data"
                 scheduled = ScheduledAttempt(CASES_BY_NAME["v92-pcmup-24000-lapm-originator"], 1)
                 artifacts = self.artifacts(root, scheduled)
-                config = replace(self.config(root, script, mode), online_timeout_seconds=0.15)
+                config = replace(
+                    self.config(root, script, mode), online_timeout_seconds=0.15,
+                    initial_failure_observation_seconds=0 if responds else 0.1,
+                )
                 with mock.patch("tools.live_terminal.time.sleep"):
                     result = run_physical_attempt(
                         config,
@@ -317,9 +325,13 @@ class LiveCampaignTests(unittest.TestCase):
                 self.assertEqual((artifacts.legs["modem"] / "terminal-tx.bin").read_bytes(),
                                  b"\r\n\r\nPING\r\n")
                 saved = json.loads((artifacts.directory / "result.json").read_text())
-                diagnostic = saved["exchanges"][-1]
+                diagnostic = next(
+                    item for item in saved["exchanges"]
+                    if item["phase"] == "missing-greeting-ping"
+                )
                 self.assertEqual(diagnostic["phase"], "missing-greeting-ping")
                 self.assertEqual(diagnostic["verified"], responds)
+                self.assertEqual(result.initial_recovery_data, None if responds else False)
 
     def test_initial_lapm_data_requires_both_directions_without_retraining(self) -> None:
         for role in ("originator", "callback"):
@@ -361,6 +373,56 @@ class LiveCampaignTests(unittest.TestCase):
                     self.assertEqual(saved["exchanges"][-1]["phase"], "initial-ping")
                     if not responds:
                         self.assertIn("initial transmit", result.detail)
+
+    def test_late_original_pong_never_upgrades_initial_grade(self) -> None:
+        for role in ("originator", "callback"):
+            for responds in (False, True):
+                with self.subTest(role=role, responds=responds), \
+                        tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    script = root / "fake.py"
+                    script.write_text(textwrap.dedent(FAKE_MODEM), encoding="utf-8")
+                    mode = "pcm-retrain-initial-split-pong" if responds else "pcm-retrain-initial-no-data"
+                    if role == "callback":
+                        mode = "callback-" + mode
+                    case = CASES_BY_NAME[f"v92-pcmup-24000-lapm-{role}"]
+                    scheduled = ScheduledAttempt(case, 1)
+                    artifacts = self.artifacts(root, scheduled)
+                    config = replace(
+                        self.config(root, script, mode, root / "callback-ready"),
+                        online_timeout_seconds=0.05,
+                        initial_failure_observation_seconds=0.5,
+                    )
+                    with mock.patch("tools.live_terminal.time.sleep"):
+                        result = run_physical_attempt(
+                            config,
+                            FrozenBinary(root, Path(sys.executable), "a" * 40, "b" * 64, False),
+                            scheduled, 1, artifacts, True,
+                        )
+                    self.assertTrue(result.connected)
+                    self.assertTrue(result.initial_receive_data)
+                    self.assertFalse(result.initial_transmit_data)
+                    self.assertFalse(result.initial_data)
+                    self.assertEqual(result.initial_recovery_data, responds)
+                    self.assertIsNotNone(result.initial_recovery_seconds)
+                    self.assertGreaterEqual(result.initial_recovery_seconds, 0)
+                    self.assertEqual(result.maturity, MATURITY_CONNECT)
+                    self.assertFalse(result.successful())
+                    self.assertFalse(result.remote_retrain)
+                    self.assertFalse(result.retrain_connected)
+                    self.assertEqual(result.detail, "initial transmit data was not verified")
+                    leg = "answer" if role == "callback" else "modem"
+                    self.assertEqual(
+                        (artifacts.legs[leg] / "terminal-tx.bin").read_bytes(),
+                        b"\r\n\r\nPING\r\n",
+                    )
+                    received = (artifacts.legs[leg] / "terminal-rx.bin").read_bytes()
+                    self.assertEqual(received.count(b"GETTY:PONG:"), int(responds))
+                    saved = json.loads((artifacts.directory / "result.json").read_text())
+                    self.assertEqual(saved["exchanges"][-1]["phase"], "initial-recovery")
+                    self.assertEqual(saved["exchanges"][-1]["tx_bytes"], 0)
+                    self.assertEqual(saved["exchanges"][-1]["verified"], responds)
+                    self.assertEqual(saved["result"]["initial_recovery_data"], responds)
 
     def test_lapm_checks_peer_retrain_data_before_local_retrain(self) -> None:
         for role in ("originator", "callback"):

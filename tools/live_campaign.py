@@ -425,6 +425,8 @@ class _AttemptState:
     initial_data: bool = False
     initial_receive_data: bool | None = None
     initial_transmit_data: bool | None = None
+    initial_recovery_data: bool | None = None
+    initial_recovery_seconds: float | None = None
     callback_request_attempted: bool = False
     callback_request_maturity: str | None = None
     callback_request_report: ConnectReport = field(default_factory=ConnectReport)
@@ -604,6 +606,38 @@ def _case_connect_error(
     )
 
 
+def _observe_initial_recovery(
+    terminal: ModemTerminal,
+    state: _AttemptState,
+    leg: str,
+    config: CampaignConfig,
+    progress: _AttemptProgress,
+) -> None:
+    seconds = config.initial_failure_observation_seconds
+    if not seconds:
+        return
+    # Retain partial replies across the original deadline. A clipped seed
+    # must not invent a line boundary for the anchored PONG expression.
+    _, received = state.captures[leg]
+    seed = bytes(received[-512:])
+    if len(received) > 512:
+        seed = b"\x00" + seed
+    progress.set("observing initial data recovery")
+    started = time.monotonic()
+    state.initial_recovery_data = False
+    try:
+        match, received = terminal._exchange_online(
+            b"", ONLINE_PONG_RE, seconds, initial=seed
+        )
+        state.initial_recovery_data = match is not None
+        state.capture(leg, b"", received, phase="initial-recovery")
+        state.exchanges[-1]["verified"] = state.initial_recovery_data
+    except (LiveTerminalError, OSError, TimeoutError):
+        # Preserve the original failure and any complete captured exchange.
+        pass
+    state.initial_recovery_seconds = round(time.monotonic() - started, 6)
+
+
 def _exercise_online(
     terminal: ModemTerminal,
     state: _AttemptState,
@@ -644,6 +678,8 @@ def _exercise_online(
                 state.capture(leg, ONLINE_PING_REQUEST, received,
                               phase="missing-greeting-ping")
                 state.exchanges[-1]["verified"] = verified
+                if not verified:
+                    _observe_initial_recovery(terminal, state, leg, config, progress)
             except (LiveTerminalError, OSError, TimeoutError):
                 state.detail += "; diagnostic PING exchange failed"
         return
@@ -665,6 +701,7 @@ def _exercise_online(
         state.initial_data = verified
         if not verified:
             state.detail = "initial transmit data was not verified"
+            _observe_initial_recovery(terminal, state, leg, config, progress)
             return
     if not retrain:
         return
@@ -1159,6 +1196,8 @@ def run_physical_attempt(
         initial_data=state.initial_data,
         initial_receive_data=state.initial_receive_data,
         initial_transmit_data=state.initial_transmit_data,
+        initial_recovery_data=state.initial_recovery_data,
+        initial_recovery_seconds=state.initial_recovery_seconds,
         callback_request_attempted=state.callback_request_attempted,
         callback_request_maturity=state.callback_request_maturity,
         callback_request_modulation=state.callback_request_report.modulation,
