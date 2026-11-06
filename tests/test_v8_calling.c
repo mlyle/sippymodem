@@ -254,7 +254,7 @@ static bool pcm_refusal_negotiation(const uint8_t *information, size_t count)
 		int16_t receive = 0, transmit = 0;
 		bool replaced = false;
 
-		CHECK(v8_pcm_call_menu_init(&local,
+		CHECK(v8_pcm_call_menu_init(&local, V8_MODULATION_V34_DUPLEX,
 				digital ? V8_PCM_DIGITAL : V8_PCM_ANALOG,
 				digital ? V8_PSTN_DIGITAL : 0, true) == V8_MENU_OK &&
 		      v8_calling_init(&calling, &local) == V8_CALLING_OK &&
@@ -475,7 +475,7 @@ static bool qc_caller_init(struct v8_calling *calling, bool digital, bool lapm)
 	};
 
 	request.signal.qts_index = digital ? 2 : 10;
-	CHECK(v8_pcm_call_menu_init(&menu, digital ? V8_PCM_DIGITAL :
+	CHECK(v8_pcm_call_menu_init(&menu, V8_MODULATION_V34_DUPLEX, digital ? V8_PCM_DIGITAL :
 		      V8_PCM_ANALOG, 0, lapm) == V8_MENU_OK &&
 	      v8_calling_init(calling, &menu) == V8_CALLING_OK &&
 	      v8_calling_enable_quick_connect(calling, &request) == V8_CALLING_OK,
@@ -545,7 +545,7 @@ static bool qc_pair(bool digital, unsigned lapm, enum g711_law law,
 
 	response.signal.qts_index = digital ? 8 : 1;
 	CHECK(qc_caller_init(&calling, digital, (lapm & 1u) != 0) &&
-	      v8_pcm_call_menu_init(&menu, digital ? V8_PCM_ANALOG :
+	      v8_pcm_call_menu_init(&menu, V8_MODULATION_V34_DUPLEX, digital ? V8_PCM_ANALOG :
 		      V8_PCM_DIGITAL, 0, response.lapm) == V8_MENU_OK &&
 	      v8_answering_init(&answering, &menu) == V8_ANSWERING_OK &&
 	      (!admitted || v8_answering_enable_quick_connect(&answering,
@@ -607,7 +607,7 @@ static bool qc_fallback(enum g711_law law, bool impaired, unsigned variant)
 	CHECK(qc_caller_init(&calling, true, true) &&
 	      v8_fsk_init(&answerer, V8_ANSWERING_STATION) == V8_FSK_OK &&
 	      v8_ansam_generator_init(&ansam, 16000, true) == V8_ANSAM_OK &&
-	      v8_pcm_call_menu_init(&menu, V8_PCM_ANALOG, 0, true) == V8_MENU_OK &&
+	      v8_pcm_call_menu_init(&menu, V8_MODULATION_V34_DUPLEX, V8_PCM_ANALOG, 0, true) == V8_MENU_OK &&
 	      v8_menu_encode(&menu, information, sizeof(information), &count) ==
 		      V8_MENU_OK &&
 	      v8_control_generator_init(&jm, information, count) == V8_FRAMING_OK,
@@ -714,7 +714,7 @@ static bool test_quick_connect_validation(void)
 		};
 		int16_t receive = 0, transmit = 123;
 
-		CHECK(v8_pcm_call_menu_init(&menu, V8_PCM_DIGITAL, 0, true) == V8_MENU_OK,
+		CHECK(v8_pcm_call_menu_init(&menu, V8_MODULATION_V34_DUPLEX, V8_PCM_DIGITAL, 0, true) == V8_MENU_OK,
 		      "QC validation menu");
 		if (mutation == 6)
 			CHECK(v8_call_menu_init(&menu, V8_MODULATION_V34_DUPLEX, true) ==
@@ -735,7 +735,7 @@ static bool test_quick_connect_validation(void)
 		case 9:
 			request.sender = V90_ANALOG_MODEM;
 			request.signal.qts_index = 15;
-			CHECK(v8_pcm_call_menu_init(&menu, V8_PCM_ANALOG, 0, true) ==
+			CHECK(v8_pcm_call_menu_init(&menu, V8_MODULATION_V34_DUPLEX, V8_PCM_ANALOG, 0, true) ==
 				      V8_MENU_OK && v8_calling_init(&calling, &menu) ==
 				      V8_CALLING_OK, "on-hold fixture");
 			break;

@@ -99,22 +99,19 @@ enum v8_menu_result v8_call_menu_init(
 }
 
 enum v8_menu_result v8_pcm_call_menu_init(
-	struct v8_menu *menu, uint8_t pcm_availability,
+	struct v8_menu *menu, uint16_t modulations, uint8_t pcm_availability,
 	uint8_t pstn_access, bool lapm)
 {
-	struct v8_menu initialized = {
-		.call_function = V8_CALL_DATA,
-		.modulations = V8_MODULATION_V34_DUPLEX,
-		.modulation_octets = 1,
-		.pcm_availability = pcm_availability,
-		.pstn_access = pstn_access,
-		.pcm_present = true,
-		.pstn_access_present = true,
-		.lapm = lapm,
-	};
+	struct v8_menu initialized;
 
 	if (menu == NULL ||
-	    (pcm_availability & (V8_PCM_ANALOG | V8_PCM_DIGITAL | V8_PCM_V91)) == 0 ||
+	    v8_call_menu_init(&initialized, modulations, lapm) != V8_MENU_OK)
+		return V8_MENU_INVALID_ARGUMENT;
+	initialized.pcm_availability = pcm_availability;
+	initialized.pstn_access = pstn_access;
+	initialized.pcm_present = true;
+	initialized.pstn_access_present = true;
+	if ((pcm_availability & (V8_PCM_ANALOG | V8_PCM_DIGITAL | V8_PCM_V91)) == 0 ||
 	    !menu_is_valid(&initialized))
 		return V8_MENU_INVALID_ARGUMENT;
 	*menu = initialized;

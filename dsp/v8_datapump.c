@@ -244,30 +244,34 @@ static struct dp *create_v8(
 			if (fallback_datapump(modem, (enum v8_modulation)bit) != 0)
 				offered |= bit;
 	}
-	menu_result = v8_call_menu_init(&local_menu, offered, lapm);
-	if (menu_result != V8_MENU_OK)
-		return NULL;
 	if (v8_datapump_uses_pcm(id)) {
+		uint8_t pcm_availability;
+		uint8_t pstn_access;
+
 		role_policy = modem_get_sreg(modem, SREG_V90_DIGITAL_INDICATION);
 		if (role_policy > MODEM_PCM_POLICY_AUTO)
 			return NULL;
 		digital = role_policy == MODEM_PCM_POLICY_DIGITAL;
-		local_menu.pcm_present = true;
-		local_menu.pstn_access_present = true;
-		local_menu.pcm_availability = role_policy == MODEM_PCM_POLICY_AUTO ?
+		pcm_availability = role_policy == MODEM_PCM_POLICY_AUTO ?
 			V8_PCM_ANALOG | V8_PCM_DIGITAL : digital ? V8_PCM_DIGITAL : V8_PCM_ANALOG;
-		local_menu.pstn_access = role_policy != MODEM_PCM_POLICY_ANALOG ? V8_PSTN_DIGITAL : 0;
+		pstn_access = role_policy != MODEM_PCM_POLICY_ANALOG ? V8_PSTN_DIGITAL : 0;
 		/* Nailed V.90/V.92 retain their requested protocol. Automatic
 		 * digital peers may select the standard bidirectional PCM mode. */
 		if (id == DP_V91) {
-			local_menu.pcm_availability = V8_PCM_V91;
-			local_menu.pstn_access = V8_PSTN_DIGITAL;
+			pcm_availability = V8_PCM_V91;
+			pstn_access = V8_PSTN_DIGITAL;
 		} else if (id == DP_V92 && MODEM_AUTOMODE(modem) &&
 			   modem_get_sreg_flag(modem, SREG_V91_ENABLED) &&
 			   role_policy != MODEM_PCM_POLICY_ANALOG && modem->max_rate >= 28000) {
-			local_menu.pcm_availability |= V8_PCM_V91;
+			pcm_availability |= V8_PCM_V91;
 		}
+		menu_result = v8_pcm_call_menu_init(&local_menu, offered,
+			pcm_availability, pstn_access, lapm);
+	} else {
+		menu_result = v8_call_menu_init(&local_menu, offered, lapm);
 	}
+	if (menu_result != V8_MENU_OK)
+		return NULL;
 	datapump = calloc(1, sizeof(*datapump));
 	if (datapump == NULL)
 		return NULL;

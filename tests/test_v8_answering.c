@@ -115,7 +115,7 @@ static bool test_pcm_with_non_pcm_peer(void)
 	CHECK(v8_call_menu_init(&v34, V8_MODULATION_V34_DUPLEX, true) == V8_MENU_OK,
 	      "V.34 menu setup failed");
 	for (unsigned int digital = 0; digital < 2; ++digital) {
-		CHECK(v8_pcm_call_menu_init(&pcm,
+		CHECK(v8_pcm_call_menu_init(&pcm, V8_MODULATION_V34_DUPLEX,
 			      digital ? V8_PCM_DIGITAL : V8_PCM_ANALOG,
 			      digital ? V8_PSTN_DIGITAL : 0, true) == V8_MENU_OK &&
 		      negotiate_menus(&v34, &pcm, V8_MODULATION_V34_DUPLEX, false) &&
@@ -133,7 +133,7 @@ static bool test_v91_without_legacy_match(void)
 	};
 	struct v8_menu call, answer;
 
-	CHECK(v8_pcm_call_menu_init(&call, V8_PCM_V91, V8_PSTN_DIGITAL,
+	CHECK(v8_pcm_call_menu_init(&call, V8_MODULATION_V34_DUPLEX, V8_PCM_V91, V8_PSTN_DIGITAL,
 		      true) == V8_MENU_OK, "V.91 menu setup failed");
 	answer = call;
 	for (size_t i = 0; i < ARRAY_LENGTH(fallbacks); ++i) {
@@ -455,10 +455,10 @@ static bool qc_answer_case(bool digital, unsigned lapm, enum g711_law law,
 		request.sender = V90_ANALOG_MODEM;
 		request.signal.qts_index = 15; /* On-hold cleardown, not startup. */
 	}
-	CHECK(v8_pcm_call_menu_init(&answer_menu, digital ? V8_PCM_DIGITAL :
+	CHECK(v8_pcm_call_menu_init(&answer_menu, V8_MODULATION_V34_DUPLEX, digital ? V8_PCM_DIGITAL :
 		      V8_PCM_ANALOG, digital ? V8_PSTN_DIGITAL : 0,
 		      response.lapm) == V8_MENU_OK &&
-	      v8_pcm_call_menu_init(&call_menu, digital ? V8_PCM_ANALOG :
+	      v8_pcm_call_menu_init(&call_menu, V8_MODULATION_V34_DUPLEX, digital ? V8_PCM_ANALOG :
 		      V8_PCM_DIGITAL, digital ? 0 : V8_PSTN_DIGITAL,
 		      request.lapm) == V8_MENU_OK &&
 	      v8_answering_init(&answering, &answer_menu) == V8_ANSWERING_OK &&
@@ -589,7 +589,7 @@ static bool test_quick_connect_validation(void)
 		};
 		int16_t silence = 0, transmit;
 
-		CHECK(v8_pcm_call_menu_init(&menu, V8_PCM_DIGITAL,
+		CHECK(v8_pcm_call_menu_init(&menu, V8_MODULATION_V34_DUPLEX, V8_PCM_DIGITAL,
 			      V8_PSTN_DIGITAL, true) == V8_MENU_OK, "QC validation menu");
 		switch (mutation) {
 		case 2: response.acknowledgment = false; break;

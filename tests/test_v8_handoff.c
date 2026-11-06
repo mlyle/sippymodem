@@ -18,8 +18,9 @@ static bool setup(struct v8_handoff_retry *retry, struct peer *peer, bool change
 	struct v8_menu local, analog, joint;
 	uint8_t information[V8_MAX_INFORMATION_OCTETS];
 	size_t count;
-	CHECK(v8_pcm_call_menu_init(&local, V8_PCM_DIGITAL, V8_PSTN_DIGITAL, true) == V8_MENU_OK &&
-	      v8_pcm_call_menu_init(&analog, V8_PCM_ANALOG, 0, true) == V8_MENU_OK &&
+	CHECK(v8_pcm_call_menu_init(&local, V8_MODULATION_V34_DUPLEX,
+		      V8_PCM_DIGITAL, V8_PSTN_DIGITAL, true) == V8_MENU_OK &&
+	      v8_pcm_call_menu_init(&analog, V8_MODULATION_V34_DUPLEX, V8_PCM_ANALOG, 0, true) == V8_MENU_OK &&
 	      v8_joint_menu_select(&local, &analog, &joint) == V8_MENU_OK &&
 	      v8_handoff_retry_init(retry, &local, &joint), "retry init");
 	if (changed) joint.lapm = false;

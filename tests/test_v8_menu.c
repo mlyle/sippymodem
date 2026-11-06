@@ -265,7 +265,7 @@ static bool test_pcm_categories(void)
 	size_t encoded_count;
 
 	CHECK(v8_pcm_call_menu_init(
-		      &menu, V8_PCM_ANALOG | V8_PCM_DIGITAL,
+		      &menu, V8_MODULATION_V34_DUPLEX, V8_PCM_ANALOG | V8_PCM_DIGITAL,
 		      V8_PSTN_DIGITAL, true) == V8_MENU_OK &&
 	      v8_menu_encode(
 		      &menu, encoded, sizeof(encoded), &encoded_count) ==
@@ -283,7 +283,7 @@ static bool test_pcm_categories(void)
 	      decoded.lapm,
 	      "V.8 digital PCM categories changed");
 	CHECK(v8_pcm_call_menu_init(
-		      &menu, V8_PCM_ANALOG, 0, false) == V8_MENU_OK &&
+		      &menu, V8_MODULATION_V34_DUPLEX, V8_PCM_ANALOG, 0, false) == V8_MENU_OK &&
 	      v8_menu_encode(
 		      &menu, encoded, sizeof(encoded), &encoded_count) ==
 		      V8_MENU_OK &&
@@ -304,6 +304,41 @@ static bool test_pcm_categories(void)
 	      decoded.pstn_access == 0 && decoded.pcm_present &&
 	      decoded.pstn_access_present,
 	      "V.8 repeated identical PSTN access was not tolerated");
+	return true;
+}
+
+static bool test_pcm_fallback_menu(void)
+{
+	static const uint8_t expected[] = {
+		0xc1, 0x65, 0x13, 0x94, 0x2a, 0x8d, 0x67,
+	};
+	const uint16_t modulations = V8_MODULATION_V34_DUPLEX |
+		V8_MODULATION_V32 | V8_MODULATION_V22 |
+		V8_MODULATION_V23_DUPLEX | V8_MODULATION_V21;
+	struct v8_menu menu;
+	struct v8_menu saved;
+	struct v8_menu decoded;
+	uint8_t encoded[V8_MAX_INFORMATION_OCTETS];
+	size_t count;
+
+	CHECK(v8_pcm_call_menu_init(&menu, modulations,
+		      V8_PCM_ANALOG | V8_PCM_DIGITAL, V8_PSTN_DIGITAL, true) == V8_MENU_OK &&
+	      v8_menu_encode(&menu, encoded, sizeof(encoded), &count) == V8_MENU_OK &&
+	      count == sizeof(expected) && memcmp(encoded, expected, count) == 0 &&
+	      v8_menu_decode(encoded, count, &decoded) == V8_MENU_OK &&
+	      decoded.modulations == modulations && decoded.modulation_octets == 3,
+	      "PCM constructor changed legacy fallback capabilities or wire categories");
+	saved = menu;
+	CHECK(v8_pcm_call_menu_init(&menu, V8_MODULATION_V21,
+		      V8_PCM_ANALOG, 0, false) == V8_MENU_INVALID_ARGUMENT &&
+	      memcmp(&menu, &saved, sizeof(menu)) == 0 &&
+	      v8_pcm_call_menu_init(&menu, 0,
+		      V8_PCM_DIGITAL, V8_PSTN_DIGITAL, true) == V8_MENU_INVALID_ARGUMENT &&
+	      memcmp(&menu, &saved, sizeof(menu)) == 0 &&
+	      v8_pcm_call_menu_init(&menu, UINT16_MAX,
+		      V8_PCM_DIGITAL, V8_PSTN_DIGITAL, true) == V8_MENU_INVALID_ARGUMENT &&
+	      memcmp(&menu, &saved, sizeof(menu)) == 0,
+	      "invalid PCM fallback capabilities changed the destination");
 	return true;
 }
 
@@ -347,16 +382,16 @@ static bool test_pcm_category_rejection(void)
 		      conflicting_access, ARRAY_LENGTH(conflicting_access),
 		      V8_MENU_MALFORMED) &&
 	      v8_pcm_call_menu_init(
-		      &unchanged, 0, 0, false) == V8_MENU_INVALID_ARGUMENT &&
+		      &unchanged, V8_MODULATION_V34_DUPLEX, 0, 0, false) == V8_MENU_INVALID_ARGUMENT &&
 	      memcmp(&unchanged, &saved, sizeof(unchanged)) == 0 &&
 	      v8_pcm_call_menu_init(
-		      &unchanged, V8_PCM_ALL + 1u, 0, false) ==
+		      &unchanged, V8_MODULATION_V34_DUPLEX, V8_PCM_ALL + 1u, 0, false) ==
 		      V8_MENU_INVALID_ARGUMENT &&
 	      v8_pcm_call_menu_init(
-		      &unchanged, V8_PCM_ANALOG,
+		      &unchanged, V8_MODULATION_V34_DUPLEX, V8_PCM_ANALOG,
 		      V8_PSTN_ALL + 1u, false) == V8_MENU_INVALID_ARGUMENT &&
 	      v8_pcm_call_menu_init(
-		      NULL, V8_PCM_ANALOG, 0, false) ==
+		      NULL, V8_MODULATION_V34_DUPLEX, V8_PCM_ANALOG, 0, false) ==
 		      V8_MENU_INVALID_ARGUMENT,
 	      "V.8 PCM category coupling accepted malformed state");
 	return true;
@@ -506,9 +541,9 @@ static bool test_pcm_role_selection(void)
 	struct v8_pcm_roles roles;
 
 	CHECK(v8_pcm_call_menu_init(
-		      &call_menu, V8_PCM_ANALOG, 0, false) == V8_MENU_OK &&
+		      &call_menu, V8_MODULATION_V34_DUPLEX, V8_PCM_ANALOG, 0, false) == V8_MENU_OK &&
 	      v8_pcm_call_menu_init(
-		      &answer_menu, V8_PCM_DIGITAL,
+		      &answer_menu, V8_MODULATION_V34_DUPLEX, V8_PCM_DIGITAL,
 		      V8_PSTN_DIGITAL, false) == V8_MENU_OK &&
 	      v8_joint_menu_select(
 		      &call_menu, &answer_menu, &joint_menu) == V8_MENU_OK &&
@@ -522,11 +557,11 @@ static bool test_pcm_role_selection(void)
 	      roles.answerer == V8_PCM_ROLE_DIGITAL,
 	      "V.8 did not choose a digital answer modem");
 	CHECK(v8_pcm_call_menu_init(
-		      &call_menu, V8_PCM_DIGITAL,
+		      &call_menu, V8_MODULATION_V34_DUPLEX, V8_PCM_DIGITAL,
 		      V8_PSTN_CALL_CELLULAR | V8_PSTN_DIGITAL,
 		      false) == V8_MENU_OK &&
 	      v8_pcm_call_menu_init(
-		      &answer_menu, V8_PCM_ANALOG,
+		      &answer_menu, V8_MODULATION_V34_DUPLEX, V8_PCM_ANALOG,
 		      V8_PSTN_ANSWER_CELLULAR, false) == V8_MENU_OK &&
 	      v8_joint_menu_select(
 		      &call_menu, &answer_menu, &joint_menu) == V8_MENU_OK &&
@@ -556,10 +591,10 @@ static bool test_pcm_role_fallback(void)
 	const struct v8_pcm_roles expected_saved = roles;
 
 	CHECK(v8_pcm_call_menu_init(
-		      &call_menu, V8_PCM_ANALOG | V8_PCM_DIGITAL,
+		      &call_menu, V8_MODULATION_V34_DUPLEX, V8_PCM_ANALOG | V8_PCM_DIGITAL,
 		      V8_PSTN_DIGITAL, false) == V8_MENU_OK &&
 	      v8_pcm_call_menu_init(
-		      &answer_menu, V8_PCM_ANALOG | V8_PCM_DIGITAL,
+		      &answer_menu, V8_MODULATION_V34_DUPLEX, V8_PCM_ANALOG | V8_PCM_DIGITAL,
 		      V8_PSTN_DIGITAL, false) == V8_MENU_OK &&
 	      v8_joint_menu_select(
 		      &call_menu, &answer_menu, &joint_menu) == V8_MENU_OK &&
@@ -570,9 +605,9 @@ static bool test_pcm_role_fallback(void)
 	      joint_menu.pcm_availability == V8_PCM_DIGITAL,
 	      "V.8 did not resolve the dual-digital role in its joint menu");
 	CHECK(v8_pcm_call_menu_init(
-		      &call_menu, V8_PCM_ANALOG, 0, false) == V8_MENU_OK &&
+		      &call_menu, V8_MODULATION_V34_DUPLEX, V8_PCM_ANALOG, 0, false) == V8_MENU_OK &&
 	      v8_pcm_call_menu_init(
-		      &answer_menu, V8_PCM_DIGITAL, 0, false) == V8_MENU_OK &&
+		      &answer_menu, V8_MODULATION_V34_DUPLEX, V8_PCM_DIGITAL, 0, false) == V8_MENU_OK &&
 	      v8_joint_menu_select(
 		      &call_menu, &answer_menu, &joint_menu) == V8_MENU_OK &&
 	      !joint_menu.pcm_present && joint_menu.pcm_availability == 0 &&
@@ -597,7 +632,7 @@ static bool test_pcm_with_non_pcm_peer(void)
 	size_t count;
 
 	for (unsigned int digital = 0; digital < 2; ++digital) {
-		CHECK(v8_pcm_call_menu_init(&pcm,
+		CHECK(v8_pcm_call_menu_init(&pcm, V8_MODULATION_V34_DUPLEX,
 			      digital ? V8_PCM_DIGITAL : V8_PCM_ANALOG,
 			      digital ? V8_PSTN_DIGITAL : 0, true) == V8_MENU_OK,
 		      "PCM capability setup failed");
@@ -763,7 +798,7 @@ static bool test_empty_pcm_refusal(void)
 	      detected.pstn_access == 0,
 	      "V.8 repeated empty PCM refusal was rejected");
 	for (unsigned int digital = 0; digital < 2; ++digital) {
-		CHECK(v8_pcm_call_menu_init(&caller,
+		CHECK(v8_pcm_call_menu_init(&caller, V8_MODULATION_V34_DUPLEX,
 				digital ? V8_PCM_DIGITAL : V8_PCM_ANALOG,
 				digital ? V8_PSTN_DIGITAL : 0, true) == V8_MENU_OK &&
 		      v8_joint_menu_select(&caller, &detected, &joint) == V8_MENU_OK &&
@@ -801,7 +836,7 @@ static bool test_unindicated_pcm_roles(void)
 		      decoded.lapm && !decoded.pcm_present && decoded.pcm_availability == 0,
 		      "unindicated PCM role %u blocked conventional negotiation", availability);
 		for (unsigned digital = 0; digital < 2; ++digital) {
-			CHECK(v8_pcm_call_menu_init(&caller,
+			CHECK(v8_pcm_call_menu_init(&caller, V8_MODULATION_V34_DUPLEX,
 				      digital ? V8_PCM_DIGITAL : V8_PCM_ANALOG,
 				      digital ? V8_PSTN_DIGITAL : 0, true) == V8_MENU_OK &&
 			      v8_joint_menu_select(&caller, &decoded, &joint) == V8_MENU_OK &&
@@ -837,7 +872,7 @@ static bool test_empty_pcm_refusal_without_access(void)
 	      detected.pcm_availability == 0 && !detected.pstn_access_present,
 	      "empty PCM extension without PSTN access blocked repeated JM");
 	for (unsigned int digital = 0; digital < 2; ++digital) {
-		CHECK(v8_pcm_call_menu_init(&caller,
+		CHECK(v8_pcm_call_menu_init(&caller, V8_MODULATION_V34_DUPLEX,
 				digital ? V8_PCM_DIGITAL : V8_PCM_ANALOG,
 				digital ? V8_PSTN_DIGITAL : 0, true) == V8_MENU_OK &&
 		      v8_joint_menu_select(&caller, &detected, &joint) == V8_MENU_OK &&
@@ -1065,10 +1100,10 @@ static bool test_bidirectional_pcm_roles(void)
 	uint8_t information[V8_MAX_INFORMATION_OCTETS];
 	size_t count;
 	for (unsigned mask = 0; mask < 16; ++mask) {
-		CHECK(v8_pcm_call_menu_init(&caller,
+		CHECK(v8_pcm_call_menu_init(&caller, V8_MODULATION_V34_DUPLEX,
 		      V8_PCM_ANALOG | V8_PCM_DIGITAL | ((mask & 1) ? V8_PCM_V91 : 0),
 		      (mask & 4) ? V8_PSTN_DIGITAL : 0, true) == V8_MENU_OK &&
-		      v8_pcm_call_menu_init(&answerer,
+		      v8_pcm_call_menu_init(&answerer, V8_MODULATION_V34_DUPLEX,
 		      V8_PCM_ANALOG | V8_PCM_DIGITAL | ((mask & 2) ? V8_PCM_V91 : 0),
 		      (mask & 8) ? V8_PSTN_DIGITAL : 0, true) == V8_MENU_OK &&
 		      v8_joint_menu_select(&caller, &answerer, &joint) == V8_MENU_OK &&
@@ -1084,7 +1119,8 @@ static bool test_bidirectional_pcm_roles(void)
 			CHECK(roles.caller == V8_PCM_ROLE_ANALOG && roles.answerer == V8_PCM_ROLE_DIGITAL,
 			      "legacy digital answerer preference changed");
 	}
-	CHECK(v8_pcm_call_menu_init(&caller, V8_PCM_V91, V8_PSTN_DIGITAL, false) == V8_MENU_OK &&
+	CHECK(v8_pcm_call_menu_init(&caller, V8_MODULATION_V34_DUPLEX,
+		      V8_PCM_V91, V8_PSTN_DIGITAL, false) == V8_MENU_OK &&
 	      v8_joint_menu_select(&caller, &caller, &joint) == V8_MENU_OK &&
 	      v8_pcm_select_roles(&caller, &joint, &roles) == V8_MENU_OK &&
 	      roles.caller == V8_PCM_ROLE_DIGITAL && roles.answerer == V8_PCM_ROLE_DIGITAL,
@@ -1162,6 +1198,7 @@ int main(void)
 		{ "menu usability", test_menu_usability },
 		{ "decode round trip", test_decode_round_trip },
 		{ "PCM categories", test_pcm_categories },
+		{ "PCM fallback menu", test_pcm_fallback_menu },
 		{ "PCM category rejection", test_pcm_category_rejection },
 		{ "future categories", test_future_categories },
 		{ "decode rejection", test_decode_rejection },

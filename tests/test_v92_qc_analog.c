@@ -110,8 +110,10 @@ static bool test_phase1(void)
 
 			request.signal.qts_index = digital_caller ? 2 : 7;
 			response.signal.qts_index = digital_caller ? 7 : 2;
-			CHECK(v8_pcm_call_menu_init(&cm, digital_caller ? V8_PCM_DIGITAL : V8_PCM_ANALOG, 0, true) == V8_MENU_OK &&
-			      v8_pcm_call_menu_init(&jm, digital_caller ? V8_PCM_ANALOG : V8_PCM_DIGITAL, 0, false) == V8_MENU_OK &&
+			CHECK(v8_pcm_call_menu_init(&cm, V8_MODULATION_V34_DUPLEX,
+				      digital_caller ? V8_PCM_DIGITAL : V8_PCM_ANALOG, 0, true) == V8_MENU_OK &&
+			      v8_pcm_call_menu_init(&jm, V8_MODULATION_V34_DUPLEX,
+				      digital_caller ? V8_PCM_ANALOG : V8_PCM_DIGITAL, 0, false) == V8_MENU_OK &&
 			      v8_calling_init(&caller, &cm) == V8_CALLING_OK &&
 			      v8_answering_init(&answer, &jm) == V8_ANSWERING_OK &&
 			      v8_calling_enable_quick_connect(&caller, &request) == V8_CALLING_OK &&

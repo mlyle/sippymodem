@@ -1996,6 +1996,104 @@ static bool test_v8_datapump_mapping(void)
 	return true;
 }
 
+static bool test_v8_pcm_menu_wire(void)
+{
+	static const enum DP_ID ids[] = { DP_V90, DP_V91, DP_V92 };
+	struct modem_driver driver = {
+		.name = "V.8 PCM menu wire test",
+		.start = unused_start,
+		.stop = unused_stop,
+		.ioctl = unused_control,
+	};
+	const struct dp_operations *operations = v8_datapump_operations(DP_V8);
+
+	for (size_t mode = 0; mode < ARRAY_LENGTH(ids); ++mode)
+		for (unsigned policy = MODEM_PCM_POLICY_ANALOG;
+		     policy <= MODEM_PCM_POLICY_AUTO; ++policy)
+			for (unsigned setting = 0; setting < 4; ++setting) {
+				bool automatic = (setting & 2u) != 0;
+				bool lapm = (setting & 1u) != 0;
+				struct modem *modem = create_compat_modem(&driver, "PCM menu");
+				struct v8_ansam_generator ansam;
+				struct v8_fsk monitor;
+				struct v8_control_receiver framing;
+				int16_t receive[MODEM_FRAG], transmit[MODEM_FRAG];
+				uint8_t expected[] = { 0xc1, 0x65, 0x2a, 0x8d, 0x47, 0, 0 };
+				uint8_t information[V8_MAX_INFORMATION_OCTETS];
+				size_t count = 0, expected_count = 5;
+				unsigned complete = 0;
+				bool sequence_open = false;
+
+				CHECK(modem != NULL && operations != NULL,
+				      "PCM wire fixture did not initialize");
+				MODEM_AUTOMODE(modem) = automatic;
+				CHECK(modem_set_sreg(modem, SREG_V90_DIGITAL_INDICATION, policy) == 0 &&
+				      process_at_command(modem, "AT+V91=1") == 0 &&
+				      process_at_command(modem, lapm ? "AT\\N4" : "AT\\N0") == 0 &&
+				      v8_ansam_generator_init(&ansam, 4600, true) == V8_ANSAM_OK &&
+				      v8_fsk_init(&monitor, V8_ANSWERING_STATION) == V8_FSK_OK &&
+				      v8_control_receiver_init(&framing) == V8_FRAMING_OK,
+				      "PCM wire fixture configuration failed");
+				uint8_t availability = ids[mode] == DP_V91 ? V8_PCM_V91 :
+					policy == MODEM_PCM_POLICY_AUTO ? V8_PCM_ANALOG | V8_PCM_DIGITAL :
+					policy == MODEM_PCM_POLICY_DIGITAL ? V8_PCM_DIGITAL : V8_PCM_ANALOG;
+				if (automatic && ids[mode] == DP_V92 && policy != MODEM_PCM_POLICY_ANALOG)
+					availability |= V8_PCM_V91;
+				expected[3] = ids[mode] == DP_V91 || policy != MODEM_PCM_POLICY_ANALOG ?
+					0x8d : 0x0d;
+				expected[4] = 0x07 | (availability << 5);
+				if (automatic) {
+					memmove(expected + 4, expected + 2, 3);
+					expected[2] = 0x13;
+					expected[3] = 0x94;
+					expected_count += 2;
+				}
+				if (!lapm) {
+					size_t protocol = automatic ? 4 : 2;
+					memmove(expected + protocol, expected + protocol + 1, 2);
+					expected_count--;
+				}
+				struct dp *dp = operations->create(modem, ids[mode], 1,
+					MODEM_RATE, MODEM_FRAG, operations);
+				CHECK(dp != NULL, "PCM wire datapump did not initialize");
+				for (unsigned frame = 0; complete < 2 &&
+				     frame < 7 * MODEM_RATE / MODEM_FRAG; ++frame) {
+					CHECK(v8_ansam_generate(&ansam, receive, MODEM_FRAG) == V8_ANSAM_OK &&
+					      operations->process(dp, receive, transmit, MODEM_FRAG) == DPSTAT_OK,
+					      "PCM wire training failed");
+					for (unsigned i = 0; i < MODEM_FRAG; ++i) {
+						uint8_t bit;
+						bool ready;
+						struct v8_control_event event;
+						CHECK(v8_fsk_receive_sample(&monitor, transmit[i], &bit, &ready) == V8_FSK_OK,
+						      "PCM wire demodulation failed");
+						if (!ready)
+							continue;
+						CHECK(v8_control_receive_bit(&framing, bit, &event) == V8_FRAMING_OK,
+						      "PCM wire framing failed");
+						if (event.type == V8_CONTROL_SEQUENCE_START) {
+							if (sequence_open) {
+								CHECK(count == expected_count &&
+								      memcmp(information, expected, count) == 0,
+								      "PCM wire menu changed: id=%u policy=%u setting=%u",
+								      ids[mode], policy, setting);
+								complete++;
+							}
+							sequence_open = true;
+							count = 0;
+						} else if (event.type == V8_CONTROL_INFORMATION_OCTET) {
+							CHECK(count < sizeof(information), "PCM wire menu overflowed");
+							information[count++] = event.octet;
+						}
+					}
+				}
+				CHECK(complete >= 2, "PCM datapump did not transmit complete CM sequences");
+				operations->delete(dp);
+				modem_delete(modem);
+			}
+	return true;
+}
+
 static bool test_v8_handoff(void)
 {
 	static const struct {
@@ -2224,7 +2322,7 @@ static bool test_v91_pcm_handoff_without_v34(void)
 				      MODEM_PCM_POLICY_DIGITAL) == 0,
 			      "V.91 local policy setup");
 			MODEM_AUTOMODE(m) = true;
-			CHECK(v8_pcm_call_menu_init(&peer_menu, V8_PCM_V91,
+			CHECK(v8_pcm_call_menu_init(&peer_menu, V8_MODULATION_V34_DUPLEX, V8_PCM_V91,
 				      V8_PSTN_DIGITAL, true) == V8_MENU_OK,
 			      "V.91 peer menu setup");
 			peer_menu.modulations = cases[scenario].modulation;
@@ -11986,6 +12084,7 @@ int main(void)
 		{ "escape holds candidate bytes", test_escape_holds_candidate_bytes },
 		{ "V.8 datapump mapping", test_v8_datapump_mapping },
 		{ "V.8 handoff", test_v8_handoff },
+		{ "V.8 PCM menu wire", test_v8_pcm_menu_wire },
 		{ "V.91 PCM handoff without V.34", test_v91_pcm_handoff_without_v34 },
 		{ "V.91 repeated INFO0 escape", test_v91_info0_escape },
 		{ "V.42 detection deadline", test_v42_detection_deadline },

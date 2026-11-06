@@ -105,8 +105,10 @@ struct v8_menu_detector {
 
 enum v8_menu_result v8_call_menu_init(
 	struct v8_menu *menu, uint16_t modulations, bool lapm);
+/* Add PCM and PSTN categories while retaining the supplied legacy fallback
+ * capabilities. The destination is unchanged on rejection. */
 enum v8_menu_result v8_pcm_call_menu_init(
-	struct v8_menu *menu, uint8_t pcm_availability,
+	struct v8_menu *menu, uint16_t modulations, uint8_t pcm_availability,
 	uint8_t pstn_access, bool lapm);
 /* Members must be initialized. PCM-only V.91 offers are usable; empty
  * refusal menus remain encodable and decodable. */
