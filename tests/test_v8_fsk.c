@@ -8,6 +8,7 @@
 #include "test.h"
 #include "v8_line_state_fixture.h"
 
+#include <math.h>
 #include <string.h>
 
 enum test_codec {
@@ -64,12 +65,10 @@ static bool test_station_channels(void)
 		      &caller.receiver.channel, &v21_channel_2) &&
 	      channel_matches(
 		      &answerer.receiver.channel, &v21_channel_1) &&
-	      caller.transmitter.mark_phase_step == 1004 &&
-	      caller.transmitter.space_phase_step == 1208 &&
-	      answerer.transmitter.mark_phase_step == 1690 &&
-	      answerer.transmitter.space_phase_step == 1894 &&
-	      caller.transmitter.gain == 0x3ead &&
-	      answerer.transmitter.gain == 0x3ead,
+	      channel_matches(&caller.transmitter.source.channel, &v21_channel_1) &&
+	      channel_matches(&answerer.transmitter.source.channel, &v21_channel_2) &&
+	      caller.transmitter.source.tones.amplitude == 0x3ead &&
+	      answerer.transmitter.source.tones.amplitude == 0x3ead,
 	      "V.8 FSK stations selected the wrong V.21 channels");
 	return true;
 }
@@ -98,9 +97,11 @@ static bool test_configured_receiver_channel(void)
 
 static bool test_transmit_oracle(void)
 {
+	/* Reviewed 32-bit continuous-phase source plus the retained V.8 FIR.
+	 * The separate nominal-tone and clock tests constrain this wire change. */
 	static const uint64_t expected_hash[] = {
-		UINT64_C(0x0946f673c1b431e4),
-		UINT64_C(0xa87832e2a321791b),
+		UINT64_C(0xe0ae01d6334beaa4),
+		UINT64_C(0x448f815c4704b6e0),
 	};
 	static const unsigned int expected_periods[] = { 27, 27, 26 };
 
@@ -136,6 +137,149 @@ static bool test_transmit_oracle(void)
 			      period_index == ARRAY_LENGTH(expected_periods),
 		      "V.8 FSK role %u wire hash changed: %#llx",
 		      role, (unsigned long long)hash);
+	}
+	return true;
+}
+
+/* At 300 baud, 10,000 samples end on exactly 375 symbol boundaries.
+ * Changing the input between those boundaries must not replace a held bit. */
+static bool test_transmit_clock_latching(void)
+{
+	for (enum v8_station_role role = V8_CALLING_STATION;
+	     role <= V8_ANSWERING_STATION; ++role) {
+		struct v8_fsk actual, held;
+		uint8_t bit = 0;
+		unsigned symbols = 0;
+		CHECK(v8_fsk_init(&actual, role) == V8_FSK_OK &&
+		      v8_fsk_init(&held, role) == V8_FSK_OK, "FSK latch initialization");
+		for (unsigned n = 0; n < 10000; ++n) {
+			bool boundary = n == 0 || n * 3 / 80 != (n - 1) * 3 / 80;
+			uint8_t offered = (uint8_t)((n * 17 / 13) & 1);
+			bool consumed, held_consumed;
+			int16_t sample, held_sample;
+			CHECK(v8_fsk_can_accept_bit(&actual) == boundary,
+			      "FSK role %d readiness at sample %u", role, n);
+			if (boundary) bit = offered;
+			CHECK(v8_fsk_transmit_sample(&actual, offered, &sample, &consumed) == V8_FSK_OK &&
+			      v8_fsk_transmit_sample(&held, bit, &held_sample, &held_consumed) == V8_FSK_OK &&
+			      sample == held_sample && consumed == held_consumed &&
+			      consumed == ((n + 1) * 3 / 80 != n * 3 / 80),
+			      "FSK role %d clock or held bit changed at sample %u", role, n);
+			symbols += consumed;
+		}
+		CHECK(symbols == 375 && v8_fsk_can_accept_bit(&actual),
+		      "FSK role %d fractional clock drifted", role);
+	}
+	return true;
+}
+
+/* Project a full second onto the nominal tone, independently of oscillator
+ * phase or its implementation. After the unchanged FIR has settled, its
+ * calibrated waveform is about 4,000 peak PCM units. Integer output rounding
+ * permits one unit RMS residual, without accepting the old frequency offset. */
+static bool test_transmit_spectrum(void)
+{
+	const double tau = 6.28318530717958647693;
+	for (enum v8_station_role role = V8_CALLING_STATION;
+	     role <= V8_ANSWERING_STATION; ++role) {
+		const struct fsk_channel *channel = role == V8_CALLING_STATION ?
+			&v21_channel_1 : &v21_channel_2;
+		for (unsigned bit = 0; bit < 2; ++bit) {
+			struct v8_fsk fsk;
+			double energy = 0, in_phase = 0, quadrature = 0, sum = 0;
+			unsigned hz = bit ? channel->mark_frequency_hz : channel->space_frequency_hz;
+			CHECK(v8_fsk_init(&fsk, role) == V8_FSK_OK, "FSK spectrum initialization");
+			for (unsigned n = 0; n < 8064; ++n) {
+				int16_t sample;
+				bool consumed;
+				CHECK(v8_fsk_transmit_sample(&fsk, bit, &sample, &consumed) == V8_FSK_OK,
+				      "FSK spectrum stopped");
+				if (n < 64) continue;
+				double phase = tau * hz * (n - 64) / 8000;
+				in_phase += sample * cos(phase);
+				quadrature += sample * sin(phase);
+				energy += (double)sample * sample;
+				sum += sample;
+			}
+			in_phase /= 4000;
+			quadrature /= 4000;
+			double amplitude = hypot(in_phase, quadrature);
+			double residual = energy / 8000 - amplitude * amplitude / 2 -
+				(sum / 8000) * (sum / 8000);
+			CHECK(amplitude > 3900 && amplitude < 4100 && residual > -1e-6 && residual < 1,
+			      "FSK role %d bit %u nominal tone/power changed: amplitude %.6f residual %.6f",
+			      role, bit, amplitude, residual);
+		}
+	}
+	return true;
+}
+
+static bool test_configured_transmitter_channel(void)
+{
+	for (enum v8_station_role role = V8_CALLING_STATION;
+	     role <= V8_ANSWERING_STATION; ++role) {
+		for (unsigned fault = 0; fault < 6; ++fault) {
+			struct v8_fsk fsk, saved;
+			int16_t sample = 123;
+			bool consumed = true;
+			CHECK(v8_fsk_init(&fsk, role) == V8_FSK_OK, "FSK invalid transmitter setup");
+			switch (fault) {
+			case 0: fsk.transmitter.source.channel.metric_smoothing_shift ^= 1; break;
+			case 1: fsk.transmitter.source.tones.mark_phase_step ^= 1; break;
+			case 2: fsk.transmitter.source.tones.amplitude--; break;
+			case 3: fsk.transmitter.source.held_bit = 2; break;
+			case 4: fsk.transmitter.source.symbol_accumulator = 8000; break;
+			case 5: fsk.transmitter.source.tones.sample_rate = 4000; break;
+			}
+			saved = fsk;
+			CHECK(!v8_fsk_can_accept_bit(&fsk) &&
+			      v8_fsk_transmit_sample(&fsk, 1, &sample, &consumed) == V8_FSK_INVALID_ARGUMENT &&
+			      sample == 123 && consumed && !memcmp(&saved, &fsk, sizeof(fsk)),
+			      "FSK role %d malformed transmitter %u mutated", role, fault);
+		}
+	}
+	return true;
+}
+
+/* Preserve the historical advance-before-output phase convention while
+ * sharing the normal FSK oscillator and clock. The phase oracle integrates
+ * nominal frequencies independently; the separate FIR instance isolates
+ * this oscillator boundary from the already checked V.8 filter response. */
+static bool test_transmit_transition_phase(void)
+{
+	for (enum v8_station_role role = V8_CALLING_STATION;
+	     role <= V8_ANSWERING_STATION; ++role) {
+		struct v8_fsk actual, filter;
+		const struct fsk_channel *channel = role == V8_CALLING_STATION ?
+			&v21_channel_1 : &v21_channel_2;
+		uint32_t phase = UINT32_C(0x40000000);
+		uint8_t held = 0;
+
+		CHECK(v8_fsk_init(&actual, role) == V8_FSK_OK &&
+		      v8_fsk_init(&filter, role) == V8_FSK_OK,
+		      "phase oracle initialization");
+		for (unsigned n = 0; n < 10000; ++n) {
+			uint8_t offered = (uint8_t)((n * 17 / 13) & 1);
+			bool boundary = n == 0 ||
+				n * 3 / 80 != (n - 1) * 3 / 80;
+			uint64_t frequency;
+			int16_t raw, expected, sample;
+			bool consumed;
+
+			if (boundary)
+				held = offered;
+			frequency = held ? channel->mark_frequency_hz :
+				channel->space_frequency_hz;
+			phase += (uint32_t)(((frequency << 32) + 4000) / 8000);
+			raw = (int16_t)lround(0x3ead * sin((double)phase *
+				(6.283185307179586476925286766559 / 4294967296.0)));
+			CHECK(v8_fsk_filter_transmit_sample(
+				      &filter, raw, &expected) == V8_FSK_OK &&
+			      v8_fsk_transmit_sample(
+				      &actual, offered, &sample, &consumed) == V8_FSK_OK &&
+			      sample == expected,
+			      "FSK role %d transition phase changed at %u", role, n);
+		}
 	}
 	return true;
 }
@@ -270,7 +414,7 @@ static bool test_transmit_ownership(void)
 			(void *)&fsk->role,
 		};
 		bool *consumed_aliases[] = {
-			&fsk->transmitter.holding_bit,
+			&fsk->transmitter.source.holding_bit,
 			(void *)&fsk->line.input_count,
 			&fsk->receiver.timing_locked,
 			(void *)&fsk->role,
@@ -493,8 +637,10 @@ static bool test_validation_and_reset(void)
 		      &fsk, 1, &sample, &ready) == V8_FSK_OK &&
 	      v8_fsk_reset(&fsk) == V8_FSK_OK &&
 	      fsk.role == V8_ANSWERING_STATION &&
-	      fsk.transmitter.carrier_phase == 0 &&
-	      fsk.transmitter.bit_progress == 0 &&
+	      fsk.transmitter.source.tones.carrier_phase ==
+		      UINT32_C(0x40000000) + fsk.transmitter.source.tones.mark_phase_step &&
+	      fsk.transmitter.source.symbol_accumulator == 0 &&
+	      !fsk.transmitter.source.holding_bit &&
 	      fsk.transmitter.filter_history[33] == 0x1000 &&
 	      fsk.receiver.history_count == 0,
 	      "V.8 FSK reset did not preserve role and clear stream state");
@@ -510,6 +656,10 @@ int main(void)
 		{ "station channels", test_station_channels },
 		{ "configured receiver channel", test_configured_receiver_channel },
 		{ "transmit oracle", test_transmit_oracle },
+		{ "transmit clock and latching", test_transmit_clock_latching },
+		{ "transmit spectrum", test_transmit_spectrum },
+		{ "transmit transition phase", test_transmit_transition_phase },
+		{ "configured transmitter channel", test_configured_transmitter_channel },
 		{ "menu audio round trip", test_menu_audio_round_trip },
 		{ "transmit ownership", test_transmit_ownership },
 		{ "receive rollback", test_receive_rollback },

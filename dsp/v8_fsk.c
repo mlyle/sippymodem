@@ -2,7 +2,6 @@
 
 #include "v8_fsk.h"
 
-#include "fixed_phase.h"
 #include "fir.h"
 #include "integer_math.h"
 #include "memory_region.h"
@@ -10,11 +9,6 @@
 #include "v21.h"
 
 enum {
-	V8_FSK_SAMPLE_RATE = 8000,
-	V8_FSK_BIT_RATE = 300,
-	V8_FSK_PHASE_UNITS = 8192,
-	V8_FSK_PHASE_MASK = V8_FSK_PHASE_UNITS - 1,
-	V8_FSK_PHASE_SHIFT = 5,
 	V8_FSK_TRANSMIT_GAIN = 0x3ead,
 	V8_FSK_HISTORY_SEED_INDEX = 33,
 };
@@ -40,14 +34,6 @@ _Static_assert(
 	(unsigned int)V8_FSK_HISTORY_SEED_INDEX <
 		(unsigned int)V8_FSK_TRANSMIT_FILTER_TAPS,
 	"V.8 transmit history seed left the filter");
-
-static uint16_t phase_step(unsigned int frequency_hz)
-{
-	uint32_t scaled = frequency_hz * V8_FSK_PHASE_UNITS;
-
-	return (uint16_t)((scaled + V8_FSK_SAMPLE_RATE / 2u) /
-			  V8_FSK_SAMPLE_RATE);
-}
 
 static bool role_channels(
 	enum v8_station_role role,
@@ -76,28 +62,20 @@ static const int16_t *transmit_filter(enum v8_station_role role)
 	return NULL;
 }
 
-static bool transmitter_is_valid(
-	const struct v8_fsk_transmitter *transmitter,
-	const struct fsk_channel *channel)
-{
-	return transmitter != NULL && channel != NULL &&
-	       transmitter->carrier_phase < V8_FSK_PHASE_UNITS &&
-	       transmitter->bit_progress < V8_FSK_SAMPLE_RATE &&
-	       transmitter->mark_phase_step ==
-		       phase_step(channel->mark_frequency_hz) &&
-	       transmitter->space_phase_step ==
-		       phase_step(channel->space_frequency_hz) &&
-	       transmitter->gain == V8_FSK_TRANSMIT_GAIN &&
-	       transmitter->held_bit <= 1;
-}
-
 static bool fsk_is_configured(const struct v8_fsk *fsk)
 {
 	const struct fsk_channel *transmit;
 	const struct fsk_channel *receive;
 
 	return fsk != NULL && role_channels(fsk->role, &transmit, &receive) &&
-	       transmitter_is_valid(&fsk->transmitter, transmit) &&
+	       fsk_transmitter_is_valid(&fsk->transmitter.source) &&
+	       fsk_channels_match(&fsk->transmitter.source.channel, transmit) &&
+	       fsk->transmitter.source.tones.amplitude == V8_FSK_TRANSMIT_GAIN &&
+	       fsk->transmitter.source.held_bit <= 1 &&
+	       fsk->transmitter.source.tones.mark_phase_step ==
+		       phase_step_u32(8000, transmit->mark_frequency_hz, 1) &&
+	       fsk->transmitter.source.tones.space_phase_step ==
+		       phase_step_u32(8000, transmit->space_frequency_hz, 1) &&
 	       v8_line_conditioner_is_valid(&fsk->line) &&
 	       fsk->line.role == fsk->role &&
 	       fsk_channels_match(&fsk->receiver.channel, receive);
@@ -113,11 +91,14 @@ enum v8_fsk_result v8_fsk_init(
 
 	if (fsk == NULL || !role_channels(role, &transmit, &receive))
 		return V8_FSK_INVALID_ARGUMENT;
-	initialized.transmitter = (struct v8_fsk_transmitter){
-		.mark_phase_step = phase_step(transmit->mark_frequency_hz),
-		.space_phase_step = phase_step(transmit->space_frequency_hz),
-		.gain = V8_FSK_TRANSMIT_GAIN,
-	};
+	if (fsk_transmitter_init(&initialized.transmitter.source, transmit,
+		    V8_FSK_TRANSMIT_GAIN) != FSK_OK)
+		return V8_FSK_INVALID_ARGUMENT;
+	/* Begin the first mark near the old cosine phase; subsequent samples
+	 * use the same continuous oscillator and bit clock as online V.21. */
+	initialized.transmitter.source.tones.carrier_phase = UINT32_C(0x40000000) +
+		initialized.transmitter.source.tones.mark_phase_step;
+	initialized.transmitter.source.held_bit = 1;
 	initialized.transmitter
 		.filter_history[V8_FSK_HISTORY_SEED_INDEX] = 0x1000;
 	if (v8_line_conditioner_init(&initialized.line, role) !=
@@ -144,7 +125,7 @@ bool v8_fsk_can_accept_bit(
 	const struct v8_fsk *fsk)
 {
 	return fsk_is_configured(fsk) &&
-	       !fsk->transmitter.holding_bit;
+	       fsk_transmitter_can_accept_bit(&fsk->transmitter.source);
 }
 
 static int16_t filter_sample(
@@ -166,8 +147,6 @@ enum v8_fsk_result v8_fsk_transmit_sample(
 		{ bit_consumed, sizeof(*bit_consumed) },
 	};
 	struct v8_fsk_transmitter *transmitter;
-	uint16_t step;
-	uint64_t bit_progress;
 	int16_t generated;
 	bool consumed = false;
 
@@ -176,26 +155,20 @@ enum v8_fsk_result v8_fsk_transmit_sample(
 	    memory_region_set_overlaps(regions, sizeof regions / sizeof *regions))
 		return V8_FSK_INVALID_ARGUMENT;
 	transmitter = &fsk->transmitter;
-	if (!transmitter->holding_bit) {
-		transmitter->held_bit = bit;
-		transmitter->holding_bit = true;
+	/* The shared source retains the next output phase. Preserve V.8's
+	 * advance-before-output convention at a new symbol, including a first
+	 * space, without advancing a held bit or duplicating its sample clock. */
+	if (fsk_transmitter_can_accept_bit(&transmitter->source)) {
+		const struct fsk_tone_generator *tones = &transmitter->source.tones;
+		uint32_t previous = transmitter->source.held_bit ?
+			tones->mark_phase_step : tones->space_phase_step;
+		uint32_t next = bit ? tones->mark_phase_step : tones->space_phase_step;
+		transmitter->source.tones.carrier_phase += next - previous;
 	}
-	step = transmitter->held_bit ? transmitter->mark_phase_step :
-		transmitter->space_phase_step;
-	transmitter->carrier_phase = (uint16_t)(
-		(transmitter->carrier_phase + step) & V8_FSK_PHASE_MASK);
-	generated = multiply_shift_s16(
-		fixed_phase_cosine_u8_q14(
-			(uint8_t)(transmitter->carrier_phase >> V8_FSK_PHASE_SHIFT)),
-		transmitter->gain, 14);
-	generated = filter_sample(
-		transmitter, transmit_filter(fsk->role), generated);
-	bit_progress = transmitter->bit_progress;
-	consumed = phase_advance_u64(
-		&bit_progress, V8_FSK_SAMPLE_RATE, V8_FSK_BIT_RATE, NULL);
-	if (consumed)
-		transmitter->holding_bit = false;
-	transmitter->bit_progress = (uint16_t)bit_progress;
+	if (fsk_transmitter_sample(&transmitter->source, bit, &generated,
+		    &consumed) != FSK_OK)
+		return V8_FSK_INVALID_ARGUMENT;
+	generated = filter_sample(transmitter, transmit_filter(fsk->role), generated);
 	*sample = generated;
 	*bit_consumed = consumed;
 	return V8_FSK_OK;

@@ -20,13 +20,7 @@ enum {
 
 struct v8_fsk_transmitter {
 	int16_t filter_history[V8_FSK_TRANSMIT_FILTER_TAPS];
-	uint16_t carrier_phase;
-	uint16_t bit_progress;
-	uint16_t mark_phase_step;
-	uint16_t space_phase_step;
-	int16_t gain;
-	uint8_t held_bit;
-	bool holding_bit;
+	struct fsk_transmitter source;
 };
 
 struct v8_fsk {
