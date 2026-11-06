@@ -14,7 +14,7 @@ enum v34_channel_conditioner_result {
 	V34_CHANNEL_CONDITIONER_NUMERIC_FAILURE,
 };
 
-/* Immutable receive scaling derived from the peer's selected data mapping.
+/* Owned receive scaling derived from the peer's selected data mapping.
  * Keeping an owned copy makes each modem instance independent and permits
  * concurrent point conditioning without synchronization. */
 struct v34_channel_conditioner {

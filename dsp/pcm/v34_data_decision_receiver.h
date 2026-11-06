@@ -4,6 +4,7 @@
 #define V34_DATA_DECISION_RECEIVER_H
 
 #include "v34_adaptive_equalizer.h"
+#include "v34_b1_gain.h"
 #include "v34_data_channel_receiver.h"
 #include "v34_data_receive.h"
 
@@ -19,6 +20,7 @@ enum {
  * interval is retained until the second permits one joint channel decision. */
 struct v34_data_decision_receiver {
 	struct v34_data_channel_receiver data_receiver;
+	struct v34_b1_gain b1_gain;
 	struct v34_adaptive_equalizer_observation first_observation;
 	bool has_first_symbol;
 };

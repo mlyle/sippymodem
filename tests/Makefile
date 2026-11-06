@@ -1104,6 +1104,7 @@ V34_DATA_DECISION_RECEIVER_TEST_BINARY := \
 V34_DATA_DECISION_RECEIVER_TEST_OBJECTS = \
 	$(BUILD_DIR)/test_v34_data_decision_receiver.o \
 	$(BUILD_DIR)/v34_data_decision_receiver.o \
+	$(BUILD_DIR)/v34_b1_gain.o $(BUILD_DIR)/v34_data_points.o \
 	$(sort $(filter-out \
 		$(BUILD_DIR)/test_v34_channel_frame_receiver.o \
 		$(BUILD_DIR)/test_v34_data_mapping.o \
@@ -1216,6 +1217,7 @@ V34_RECEIVE_PRIMITIVE_OBJECTS := \
 V34_DATA_LINE_RECEIVER_OBJECTS := \
 	$(sort $(BUILD_DIR)/v34_data_line_receiver.o \
 		$(BUILD_DIR)/v34_data_decision_receiver.o \
+		$(BUILD_DIR)/v34_b1_gain.o \
 		$(BUILD_DIR)/v34_phase3_s_receiver.o \
 		$(BUILD_DIR)/qam.o \
 		$(V34_RECEIVE_PRIMITIVE_OBJECTS) \
@@ -5253,6 +5255,9 @@ $(BUILD_DIR)/v34_data_channel_receiver.o: \
 
 $(BUILD_DIR)/v34_data_decision_receiver.o: \
 	$(DSP_PCM_SOURCE_DIR)/v34_data_decision_receiver.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v34_b1_gain.o: $(DSP_PCM_SOURCE_DIR)/v34_b1_gain.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v34_data_line_receiver.o: \

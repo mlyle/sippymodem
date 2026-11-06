@@ -11,7 +11,12 @@ bool v34_data_decision_receiver_is_valid(
 	const struct v34_data_decision_receiver *receiver)
 {
 	if (receiver == NULL ||
-	    !v34_data_channel_receiver_is_valid(&receiver->data_receiver))
+	    !v34_data_channel_receiver_is_valid(&receiver->data_receiver) ||
+	    !v34_b1_gain_is_valid(&receiver->b1_gain))
+		return false;
+	if (receiver->b1_gain.active && receiver->b1_gain.count !=
+	    2u * receiver->data_receiver.channel_receiver.frame_decoder
+		    .channel_decoder.survivor.path_intervals + receiver->has_first_symbol)
 		return false;
 	return receiver->has_first_symbol ?
 		       v34_adaptive_equalizer_observation_is_valid(
@@ -40,6 +45,8 @@ v34_data_decision_receiver_init(
 		    transmitting_role) != V34_DATA_RECEIVE_OK ||
 	    !v34_data_decision_receiver_is_valid(&initialized))
 		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
+	v34_b1_gain_init(&initialized.b1_gain, normalizer, geometry,
+		coefficients, selection, transmitting_role);
 	*receiver = initialized;
 	return V34_DATA_RECEIVE_OK;
 }
@@ -85,6 +92,8 @@ v34_data_decision_receiver_cancel_interval(
 	receiver->first_observation =
 		(struct v34_adaptive_equalizer_observation){ 0 };
 	receiver->has_first_symbol = false;
+	/* An abandoned half-pair no longer has a known B1 waveform position. */
+	receiver->b1_gain = (struct v34_b1_gain){ 0 };
 	return V34_DATA_RECEIVE_OK;
 }
 
@@ -114,6 +123,9 @@ v34_data_decision_receiver_observe(
 	if (!v34_adaptive_equalizer_observation_is_valid(observation))
 		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	if (!receiver->has_first_symbol) {
+		if (receiver->data_receiver.data_receiver.b1_active)
+			(void)v34_b1_gain_apply(&receiver->b1_gain,
+				&receiver->data_receiver.channel_receiver.conditioner.normalizer);
 		generated.equalizer[0] =
 			(struct v34_adaptive_equalizer_decision){
 				.observation = *observation,
@@ -121,6 +133,11 @@ v34_data_decision_receiver_observe(
 			};
 		receiver->first_observation = *observation;
 		receiver->has_first_symbol = true;
+		if (receiver->data_receiver.data_receiver.b1_active) {
+			struct qam_point point = normalized_observation(observation);
+			v34_b1_gain_observe(&receiver->b1_gain,
+				&receiver->data_receiver.channel_receiver.conditioner.normalizer, &point);
+		}
 		*output = generated;
 		return V34_DATA_RECEIVE_OK;
 	}
@@ -139,6 +156,11 @@ v34_data_decision_receiver_observe(
 	if (result != V34_DATA_RECEIVE_INTERVAL_READY &&
 	    !v34_data_receive_emits_mapping_frame(result))
 		return result;
+	/* Observe only accepted input. A rejected second symbol must leave the
+	 * fit and the retained first symbol available for an identical retry. */
+	if (receiver->data_receiver.data_receiver.b1_active)
+		v34_b1_gain_observe(&receiver->b1_gain,
+			&receiver->data_receiver.channel_receiver.conditioner.normalizer, &normalized[1]);
 	for (size_t symbol = 0; symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
 		const struct v34_adaptive_equalizer_observation *input =
 			symbol == 0 ? &receiver->first_observation : observation;

@@ -54,6 +54,7 @@ struct fixture {
 	struct v34_data_channel_receiver model;
 	uint64_t epoch;
 	uint64_t lineage;
+	bool corrupt_b1;
 };
 
 static uint32_t next_generated_word(uint32_t *state)
@@ -138,7 +139,7 @@ static bool transmit_frame(
 	    V34_FRAME_SCHEDULE_OK)
 		return false;
 	for (size_t bit = 0; bit < mapping_frame.primary_bits; ++bit)
-		primary[bit] = b1 ? 1u :
+		primary[bit] = b1 && !fixture->corrupt_b1 ? 1u :
 			(uint8_t)(next_generated_word(&random) >> 31);
 	if (b1)
 		auxiliary_bit = 1u;
@@ -667,6 +668,9 @@ static bool test_cancel_interval(void)
 		      V34_DATA_RECEIVE_INVALID_STATE &&
 	      v34_data_decision_receivers_equal(&fixture.receiver, &saved),
 	      "empty-interval cancellation changed the receiver");
+	/* Cancelling abandons acquisition evidence, without advancing either
+	 * the channel or data decoder. */
+	saved.b1_gain = (struct v34_b1_gain){ 0 };
 	CHECK(v34_data_decision_receiver_observe(
 		      &fixture.receiver, &input, &output) == V34_DATA_RECEIVE_OK &&
 	      fixture.receiver.has_first_symbol &&
@@ -758,6 +762,234 @@ static bool test_validation_and_transactionality(void)
 	return true;
 }
 
+static bool test_b1_gain_windows(void)
+{
+	static const struct { double fit_db, held_db; bool apply; } cases[] = {
+		{ 0, 0, false }, { .05, .05, false }, { -.05, -.05, false },
+		{ .25, .25, true }, { -.25, -.25, true },
+		{ .75, .75, false }, { -.75, -.75, false },
+		{ .25, 0, false }, { .25, -.25, false },
+	};
+	struct fixture fixture;
+
+	CHECK(initialize_fixture(&fixture, &CONFIGURATIONS[0]), "gain fixture initialization");
+	for (size_t c = 0; c < ARRAY_LENGTH(cases); ++c) {
+		struct v34_b1_gain fit = fixture.receiver.b1_gain;
+		struct v34_power_normalizer normalizer = fixture.mapping.normalizer;
+		struct v34_power_normalizer saved = normalizer;
+
+		CHECK(fit.active && v34_b1_gain_is_valid(&fit), "gain template unavailable");
+		for (unsigned i = 0; i < V34_B1_GAIN_POINTS; ++i) {
+			struct v34_b1_gain before = fit;
+			double scale = pow(10., (i < V34_B1_GAIN_FIT_POINTS ?
+				cases[c].fit_db : cases[c].held_db) / 20.);
+			struct qam_point point = {
+				fit.expected[i].in_phase * scale,
+				fit.expected[i].quadrature * scale,
+			};
+
+			CHECK(!v34_b1_gain_apply(&fit, &normalizer) &&
+			      v34_b1_gains_equal(&fit, &before) &&
+			      v34_normalizers_equal(&normalizer, &saved), "premature gain application");
+			v34_b1_gain_observe(&fit, &normalizer, &point);
+		}
+		CHECK(v34_b1_gain_apply(&fit, &normalizer) == cases[c].apply && !fit.active &&
+		      v34_power_normalizer_is_valid(&normalizer), "gain window case %zu", c);
+		CHECK(cases[c].apply ?
+		      fabs(normalizer.normalization_gain / saved.normalization_gain -
+			      pow(10., cases[c].fit_db / 20.)) < 1e-12 :
+		      v34_normalizers_equal(&normalizer, &saved), "gain result case %zu", c);
+		struct v34_b1_gain retired = fit;
+		struct v34_power_normalizer applied = normalizer;
+		CHECK(!v34_b1_gain_apply(&fit, &normalizer) &&
+		      v34_b1_gains_equal(&fit, &retired) &&
+		      v34_normalizers_equal(&normalizer, &applied), "gain applied twice");
+	}
+	return true;
+}
+
+static bool test_b1_gain_invalid_evidence(void)
+{
+	struct fixture fixture;
+	CHECK(initialize_fixture(&fixture, &CONFIGURATIONS[0]), "invalid gain fixture");
+	for (unsigned c = 0; c < 7; ++c) {
+		struct v34_b1_gain fit = fixture.receiver.b1_gain;
+		struct v34_power_normalizer normalizer = fixture.mapping.normalizer;
+		struct qam_point observed = fit.expected[0];
+
+		if (c == 0) observed.in_phase = NAN;
+		if (c == 1) observed.quadrature = INFINITY;
+		if (c == 2) normalizer.normalization_gain *= 1.01;
+		if (c == 3) fit.expected[0].in_phase = INFINITY;
+		if (c == 4) memset(fit.expected, 0, sizeof(fit.expected));
+		if (c == 5) fit.expected[0].in_phase = 1e300;
+		if (c == 6) observed.in_phase = 1e300;
+		for (unsigned i = 0; i < V34_B1_GAIN_POINTS; ++i)
+			v34_b1_gain_observe(&fit, &normalizer, &observed);
+		CHECK(!fit.active && !v34_b1_gain_apply(&fit, &normalizer),
+		      "invalid evidence qualified case %u", c);
+	}
+	struct v34_b1_gain fit = fixture.receiver.b1_gain, saved = fit;
+	CHECK(!v34_b1_gain_apply(&fit, (struct v34_power_normalizer *)&fit) &&
+	      !v34_b1_gain_apply(&fit, NULL) && v34_b1_gains_equal(&fit, &saved),
+	      "invalid gain destination changed acquisition");
+	v34_b1_gain_init(&fit, NULL, NULL, NULL, V34_TRELLIS_16_STATE, V34_CALLING_STATION);
+	CHECK(v34_b1_gain_is_valid(&fit) && !fit.active, "unsupported gain initialization");
+	return true;
+}
+
+static bool test_b1_gain_retry_and_cancel(void)
+{
+	struct fixture fixture;
+	struct v34_data_decision_output output;
+	struct v34_adaptive_equalizer_observation input;
+	struct qam_point quantized;
+	double scale = pow(10., .25 / 20.);
+
+	CHECK(initialize_fixture(&fixture, &CONFIGURATIONS[0]), "gain retry fixture");
+	for (unsigned i = 0; i < 15; ++i) {
+		struct qam_point point = fixture.receiver.b1_gain.expected[i];
+		point.in_phase *= scale;
+		point.quadrature *= scale;
+		CHECK(make_observation(&fixture, &point, &quantized, &input) &&
+		      v34_data_decision_receiver_observe(&fixture.receiver, &input, &output) ==
+			      (i & 1 ? V34_DATA_RECEIVE_INTERVAL_READY : V34_DATA_RECEIVE_OK),
+		      "gain prefix reception");
+	}
+	struct v34_data_decision_receiver saved = fixture.receiver;
+	struct v34_data_decision_receiver cancelled = saved;
+	CHECK(saved.b1_gain.count == 15 && saved.b1_gain.active &&
+	      v34_data_decision_receiver_cancel_interval(&cancelled) == V34_DATA_RECEIVE_OK &&
+	      !cancelled.b1_gain.active && !cancelled.has_first_symbol &&
+	      v34_data_channel_receivers_equal(&cancelled.data_receiver, &saved.data_receiver) &&
+	      v34_data_decision_receivers_equal(&fixture.receiver, &saved),
+	      "cancellation advanced a decoder or changed another receiver");
+	struct qam_point point = saved.b1_gain.expected[15];
+	point.in_phase *= scale;
+	point.quadrature *= scale;
+	CHECK(make_observation(&fixture, &point, &quantized, &input), "gain last held point");
+	struct v34_power_normalizer *normalizer =
+		&fixture.receiver.data_receiver.channel_receiver.conditioner.normalizer;
+	CHECK(v34_power_normalizer_set_gain(normalizer, 1e-100) == V34_SYMBOL_POWER_OK &&
+	      rejected_call_preserves_outputs(&fixture.receiver, &input, &output,
+		      V34_DATA_RECEIVE_OUT_OF_RANGE) && fixture.receiver.b1_gain.count == 15,
+	      "failed sixteenth symbol consumed gain evidence");
+	*normalizer = saved.data_receiver.channel_receiver.conditioner.normalizer;
+	CHECK(v34_data_decision_receiver_observe(&fixture.receiver, &input, &output) ==
+		      V34_DATA_RECEIVE_INTERVAL_READY && fixture.receiver.b1_gain.count == 16 &&
+	      fixture.receiver.b1_gain.active &&
+	      normalizer->normalization_gain == fixture.mapping.normalizer.normalization_gain,
+	      "sixteenth-symbol retry applied gain before the next first symbol");
+	struct v34_adaptive_equalizer_observation invalid = { 0 };
+	CHECK(rejected_call_preserves_outputs(&fixture.receiver, &invalid, &output,
+		      V34_DATA_RECEIVE_INVALID_ARGUMENT), "invalid seventeenth symbol applied gain");
+	CHECK(v34_data_decision_receiver_observe(&fixture.receiver, &input, &output) ==
+		      V34_DATA_RECEIVE_OK && !fixture.receiver.b1_gain.active &&
+	      fabs(normalizer->normalization_gain /
+		      fixture.mapping.normalizer.normalization_gain - scale) < .001,
+	      "qualified gain did not apply exactly at the next first symbol");
+	struct v34_data_channel_receiver channel = fixture.receiver.data_receiver;
+	CHECK(v34_data_decision_receiver_cancel_interval(&fixture.receiver) == V34_DATA_RECEIVE_OK &&
+	      v34_data_channel_receivers_equal(&fixture.receiver.data_receiver, &channel) &&
+	      !fixture.receiver.b1_gain.active, "cancel undid a committed calibration");
+	return true;
+}
+
+static bool test_b1_gain_scaled_data(void)
+{
+	for (size_t mode = 0; mode < ARRAY_LENGTH(CONFIGURATIONS); ++mode)
+		for (int sign = -1; sign <= 1; ++sign) {
+			struct fixture fixture;
+			double scale = pow(10., sign * .25 / 20.);
+			size_t emitted = 0, verified = 0, b1_complete = 0;
+			CHECK(initialize_fixture(&fixture, &CONFIGURATIONS[mode]), "scaled fixture");
+			unsigned b1_frames = fixture.mapping.schedule.geometry.mapping_frames_per_data_frame;
+			for (size_t frame = 0; frame < b1_frames + PIPELINE_MAPPING_FRAMES + 4; ++frame) {
+				struct v34_transmitted_mapping_frame transmitted;
+				CHECK(transmit_frame(&fixture, &CONFIGURATIONS[mode], frame, &transmitted),
+				      "scaled B1 transmission");
+				for (unsigned i = 0; i < V34_SYMBOLS_PER_MAPPING_FRAME; ++i) {
+					struct qam_point point, quantized;
+					struct v34_adaptive_equalizer_observation input;
+					struct v34_data_decision_output output;
+					CHECK(v34_normalize_power(&fixture.mapping.normalizer,
+						      &transmitted.projected_symbol[i], &point) == V34_SYMBOL_POWER_OK,
+					      "scaled point normalization");
+					point.in_phase *= scale;
+					point.quadrature *= scale;
+					CHECK(make_observation(&fixture, &point, &quantized, &input), "scaled observation");
+					enum v34_data_receive_result result = v34_data_decision_receiver_observe(
+						&fixture.receiver, &input, &output);
+					CHECK(result == V34_DATA_RECEIVE_OK || result == V34_DATA_RECEIVE_INTERVAL_READY ||
+					      v34_data_receive_emits_mapping_frame(result),
+					      "scaled receive failed mode=%zu sign=%d result=%d", mode, sign, result);
+					if (!v34_data_receive_emits_mapping_frame(result)) continue;
+					if (result == V34_DATA_RECEIVE_B1_COMPLETE) b1_complete++;
+					if (emitted >= b1_frames) {
+						uint32_t random = UINT32_C(0x4f8d23a1) ^ (uint32_t)emitted;
+						for (unsigned bit = 0; bit < output.received.primary_bit_count; ++bit)
+							CHECK(output.received.primary_bits[bit] ==
+							      (uint8_t)(next_generated_word(&random) >> 31),
+							      "scaled data mismatch mode=%zu sign=%d frame=%zu", mode, sign, emitted);
+						verified++;
+					}
+					emitted++;
+				}
+			}
+			CHECK(b1_complete == 1 && verified != 0 &&
+			      v34_data_receiver_b1_is_qualified(&fixture.receiver.data_receiver.data_receiver),
+			      "scaled B1 did not qualify mode=%zu sign=%d", mode, sign);
+			double ratio = fixture.receiver.data_receiver.channel_receiver.conditioner.normalizer
+				.normalization_gain / fixture.mapping.normalizer.normalization_gain;
+			CHECK(fabs(ratio - scale) < .001 && !fixture.receiver.b1_gain.active,
+			      "gain did not retire at the expected scale");
+		}
+	return true;
+}
+
+static bool test_b1_gain_rejects_corruption(void)
+{
+	for (size_t mode = 0; mode < ARRAY_LENGTH(CONFIGURATIONS); ++mode)
+		for (unsigned fault = 0; fault < 3; ++fault) {
+			struct fixture fixture;
+			const struct configuration *c = &CONFIGURATIONS[mode];
+			CHECK(initialize_fixture(&fixture, c), "corrupt gain fixture");
+			fixture.corrupt_b1 = fault == 0;
+			if (fault == 1)
+				CHECK(v34_data_decision_receiver_init(&fixture.receiver,
+					      &fixture.mapping.normalizer, &fixture.mapping.schedule.geometry,
+					      c->expanded, COEFFICIENTS, c->trellis,
+					      c->transmitting_role ^ 1u) == V34_DATA_RECEIVE_OK,
+				      "wrong-role receiver fixture");
+			unsigned frames = fixture.mapping.schedule.geometry.mapping_frames_per_data_frame +
+				PIPELINE_MAPPING_FRAMES + 1;
+			for (unsigned frame = 0; frame < frames; ++frame) {
+				struct v34_transmitted_mapping_frame transmitted;
+				CHECK(transmit_frame(&fixture, c, frame, &transmitted), "corrupt B1 generation");
+				for (unsigned i = 0; i < V34_SYMBOLS_PER_MAPPING_FRAME; ++i) {
+					if (fault == 2 && frame == 0 && i == 0)
+						continue; /* A one-symbol displacement is not gain error. */
+					struct qam_point point, quantized;
+					struct v34_adaptive_equalizer_observation input;
+					struct v34_data_decision_output output;
+					CHECK(v34_normalize_power(&fixture.mapping.normalizer,
+						      &transmitted.projected_symbol[i], &point) == V34_SYMBOL_POWER_OK &&
+					      make_observation(&fixture, &point, &quantized, &input), "corrupt B1 observation");
+					enum v34_data_receive_result result = v34_data_decision_receiver_observe(
+						&fixture.receiver, &input, &output);
+					CHECK(result == V34_DATA_RECEIVE_OK || result == V34_DATA_RECEIVE_INTERVAL_READY ||
+					      v34_data_receive_emits_mapping_frame(result), "corrupt B1 decode failed");
+				}
+			}
+			CHECK(!v34_data_receiver_b1_is_qualified(&fixture.receiver.data_receiver.data_receiver) &&
+			      fixture.receiver.data_receiver.data_receiver.b1_error_bits != 0 &&
+			      fixture.receiver.data_receiver.channel_receiver.conditioner.normalizer.normalization_gain ==
+				      fixture.mapping.normalizer.normalization_gain,
+			      "invalid B1 qualified or changed calibration: mode=%zu fault=%u", mode, fault);
+		}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -769,6 +1001,11 @@ int main(void)
 		{ "unrepresentable feedback", test_unrepresentable_feedback },
 		{ "second symbol failure", test_second_symbol_failure },
 		{ "cancel partial interval", test_cancel_interval },
+		{ "B1 independent gain windows", test_b1_gain_windows },
+		{ "B1 invalid gain evidence", test_b1_gain_invalid_evidence },
+		{ "B1 gain retry and cancellation", test_b1_gain_retry_and_cancel },
+		{ "B1 scaled data", test_b1_gain_scaled_data },
+		{ "B1 corrupt waveform rejection", test_b1_gain_rejects_corruption },
 		{ "validation and transactionality",
 		  test_validation_and_transactionality },
 	};
