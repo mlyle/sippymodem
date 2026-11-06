@@ -118,6 +118,8 @@ enum fsk_result fsk_tone_generator_sample(
 	uint8_t bit,
 	int16_t *sample);
 
+bool fsk_transmitter_is_valid(const struct fsk_transmitter *transmitter);
+
 enum fsk_result fsk_transmitter_init(
 	struct fsk_transmitter *transmitter,
 	const struct fsk_channel *channel,

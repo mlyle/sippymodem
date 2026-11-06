@@ -120,17 +120,18 @@ enum fsk_result fsk_transmitter_init(
 	return FSK_OK;
 }
 
-bool fsk_transmitter_can_accept_bit(
-	const struct fsk_transmitter *transmitter)
+bool fsk_transmitter_is_valid(const struct fsk_transmitter *transmitter)
 {
 	return transmitter != NULL &&
 	       symbol_rate_is_valid(&transmitter->channel) &&
-	       transmitter->symbol_accumulator <
-		       symbol_period_units(&transmitter->channel) &&
+	       transmitter->symbol_accumulator < symbol_period_units(&transmitter->channel) &&
 	       tone_generator_is_valid(&transmitter->tones) &&
-	       transmitter->tones.sample_rate ==
-		       transmitter->channel.sample_rate &&
-	       !transmitter->holding_bit;
+	       transmitter->tones.sample_rate == transmitter->channel.sample_rate;
+}
+
+bool fsk_transmitter_can_accept_bit(const struct fsk_transmitter *transmitter)
+{
+	return fsk_transmitter_is_valid(transmitter) && !transmitter->holding_bit;
 }
 
 enum fsk_result fsk_transmitter_sample(
@@ -139,14 +140,9 @@ enum fsk_result fsk_transmitter_sample(
 {
 	uint64_t period_units;
 
-	if (transmitter == NULL || sample == NULL || bit_consumed == NULL ||
-	    !symbol_rate_is_valid(&transmitter->channel) ||
-	    !tone_generator_is_valid(&transmitter->tones) ||
-	    transmitter->tones.sample_rate != transmitter->channel.sample_rate)
+	if (!fsk_transmitter_is_valid(transmitter) || sample == NULL || bit_consumed == NULL)
 		return FSK_INVALID_ARGUMENT;
 	period_units = symbol_period_units(&transmitter->channel);
-	if (transmitter->symbol_accumulator >= period_units)
-		return FSK_INVALID_ARGUMENT;
 	if (!transmitter->holding_bit) {
 		transmitter->held_bit = bit & 1u;
 		transmitter->holding_bit = true;
