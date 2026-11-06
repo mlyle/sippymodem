@@ -3,6 +3,7 @@
 #include "v34_b1_gain.h"
 
 #include "memory_region.h"
+#include "qam.h"
 
 #include <math.h>
 #include <string.h>
@@ -83,20 +84,18 @@ void v34_b1_gain_observe(struct v34_b1_gain *fit,
 	}
 	const struct qam_point *expected = &fit->expected[fit->count];
 	if (fit->count < V34_B1_GAIN_FIT_POINTS) {
-		fit->correlation += expected->in_phase * observed->in_phase +
-			expected->quadrature * observed->quadrature;
-		fit->energy += expected->in_phase * expected->in_phase +
-			expected->quadrature * expected->quadrature;
+		fit->correlation += qam_point_correlation(expected, observed).in_phase;
+		fit->energy += qam_point_power(expected);
 		if (fit->count + 1u == V34_B1_GAIN_FIT_POINTS)
 			fit->gain = fit->energy > 0 ? fit->correlation / fit->energy : 0;
 	} else {
-		double ip = observed->in_phase - expected->in_phase;
-		double qp = observed->quadrature - expected->quadrature;
+		struct qam_point scaled = {
+			fit->gain * expected->in_phase,
+			fit->gain * expected->quadrature,
+		};
 
-		fit->held_error += ip * ip + qp * qp;
-		ip = observed->in_phase - fit->gain * expected->in_phase;
-		qp = observed->quadrature - fit->gain * expected->quadrature;
-		fit->held_scaled_error += ip * ip + qp * qp;
+		fit->held_error += qam_point_distance_squared(observed, expected);
+		fit->held_scaled_error += qam_point_distance_squared(observed, &scaled);
 	}
 	fit->count++;
 	if (!v34_b1_gain_is_valid(fit))
