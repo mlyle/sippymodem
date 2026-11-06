@@ -55,6 +55,38 @@ static bool make_mapping(
 	       V90_PCM_MAPPING_OK;
 }
 
+static bool make_differing_mapping(
+	struct v90_pcm_mapping *mapping, enum g711_law network_law,
+	uint8_t lookahead)
+{
+	struct v90_cp_parameters parameters = {
+		.kind = V90_CP_DATA,
+		.law = network_law == G711_LAW_PCMU ?
+			G711_LAW_PCMA : G711_LAW_PCMU,
+		.shaping_a1_q1_6 = 64,
+		.selected_rate_index = 10,
+		.sign_redundancy = 1,
+		.spectral_lookahead = lookahead,
+		.constellation_count = V90_CP_FRAME_INTERVALS,
+		.codec_constellations_differ = true,
+	};
+
+	/* Six distinct, non-power-of-two sets exercise phase indexing and the
+	 * truncated mixed-radix word space. The codec's law and Ucodes differ
+	 * from those sent on the digital network. */
+	for (unsigned phase = 0; phase < V90_CP_FRAME_INTERVALS; ++phase) {
+		parameters.frame_constellation[phase] = (uint8_t)phase;
+		for (unsigned level = 0; level < 18; ++level) {
+			add_ucode(&parameters.transmit_constellations[phase],
+				(uint8_t)(1 + phase + 6 * level));
+			add_ucode(&parameters.codec_constellations[phase],
+				(uint8_t)(5 + phase + 4 * level));
+		}
+	}
+	return v90_pcm_mapping_init_transmit(mapping, &parameters, network_law) ==
+	       V90_PCM_MAPPING_OK;
+}
+
 static void generate_bits(
 	uint8_t *bits, size_t bit_count, size_t frame)
 {
@@ -103,6 +135,26 @@ static bool receive_frame(struct receiver *receiver)
 	     symbol < V90_CP_FRAME_INTERVALS; ++symbol) {
 		ucodes[symbol] = receiver->pending[symbol].ucode;
 		signs[symbol] = receiver->pending[symbol].positive ? 1u : 0u;
+		if (receiver->decoder.decision_plane == V90_PCM_MAPPING_CODEC) {
+			/* Independent wire/codec fixture: do not use native rank,
+			 * select, or symbol parsing to undo the transmitter. */
+			const struct v90_pcm_symbol *s = receiver->pending + symbol;
+			bool alaw = receiver->decoder.mapping.law == G711_LAW_PCMA;
+			unsigned u = (s->octet ^ (alaw ? 0x55u : 0x7fu)) & 127u;
+			unsigned positive = s->octet >> 7;
+			unsigned segment = u / 16u, quantizer = u % 16u;
+			int level = alaw ? (segment == 0 ? 8 + 16 * quantizer :
+				(264 + 16 * quantizer) << (segment - 1)) :
+				((132 + 8 * quantizer) << segment) - 132;
+			CHECK(u == s->ucode && positive == (unsigned)s->positive &&
+			      s->sample == (positive ? level : -level) &&
+			      u >= 1 + symbol && u <= 103 + symbol &&
+			      (u - 1 - symbol) % 6 == 0,
+			      "invalid network symbol at phase %zu", symbol);
+			unsigned label = (103 + (unsigned)symbol - u) / 6;
+			ucodes[symbol] = (uint8_t)(73 + symbol - 4 * label);
+			signs[symbol] = (uint8_t)positive;
+		}
 	}
 	if (v90_pcm_frame_decoder_decode(
 		    &receiver->decoder, ucodes, signs,
@@ -139,7 +191,8 @@ static bool receive_output(
 }
 
 static bool run_stream(
-	enum g711_law law, uint8_t redundancy, uint8_t lookahead)
+	enum g711_law law, uint8_t redundancy, uint8_t lookahead,
+	bool differing_planes)
 {
 	struct v90_pcm_mapping mapping;
 	struct v90_downstream_data_tx transmitter;
@@ -148,12 +201,18 @@ static bool run_stream(
 	uint8_t data[V90_PCM_FRAME_MAX_BITS];
 	uint8_t accepted = 0;
 
-	CHECK(make_mapping(&mapping, law, redundancy, lookahead) &&
+	CHECK((differing_planes ? make_differing_mapping(&mapping, law, lookahead) :
+		make_mapping(&mapping, law, redundancy, lookahead)) &&
 	      v90_downstream_data_tx_init(&transmitter, &mapping) ==
 		      V90_DOWNSTREAM_DATA_TX_OK &&
 	      receiver_init(&receiver, &mapping) &&
 	      transmitter.scrambler.history == 0,
 	      "data epoch did not initialize for law %d", law);
+	if (differing_planes) {
+		CHECK(mapping.law == law && mapping.codec_plane_differs,
+		      "codec parameters changed the network encoding");
+		receiver.decoder.decision_plane = V90_PCM_MAPPING_CODEC;
+	}
 	for (size_t frame = 0;
 	     frame < V90_PHASE4_B1D_FRAMES; ++frame) {
 		struct v90_pcm_frame_output output;
@@ -354,7 +413,13 @@ static bool test_contract(void)
 
 int main(void)
 {
-	return run_stream(G711_LAW_PCMU, 3, 3) &&
-	       run_stream(G711_LAW_PCMA, 3, 3) &&
-	       run_stream(G711_LAW_PCMU, 0, 0) && test_contract() ? 0 : 1;
+	if (!run_stream(G711_LAW_PCMU, 3, 3, false) ||
+	    !run_stream(G711_LAW_PCMA, 3, 3, false) ||
+	    !run_stream(G711_LAW_PCMU, 0, 0, false) || !test_contract())
+		return 1;
+	for (uint8_t lookahead = 0; lookahead <= 3; ++lookahead)
+		if (!run_stream(G711_LAW_PCMU, 1, lookahead, true) ||
+		    !run_stream(G711_LAW_PCMA, 1, lookahead, true))
+			return 1;
+	return 0;
 }
