@@ -99,7 +99,8 @@ static struct dp *create_v8(
 	int max_fragment, const struct dp_operations *operations);
 static int delete_v8(struct dp *dp);
 static int process_v8(
-	struct dp *dp, void *receive, void *transmit, int count);
+	struct dp *dp, void *receive, void *transmit, int count,
+	const bool *received_mask);
 static const char *progress_v8(const struct dp *dp);
 static int process_v8_g711(struct dp *, enum g711_law, const uint8_t *, void *,
 	const bool *, uint8_t *, void *, int, bool *);
@@ -846,9 +847,10 @@ static int observe_legacy_answer(struct v8_datapump *datapump, const int16_t *re
 	return DPSTAT_OK;
 }
 
-static int process_legacy(struct v8_datapump *datapump, const int16_t *receive, void *transmit, int count)
+static int process_legacy(struct v8_datapump *datapump, const int16_t *receive, void *transmit, int count,
+	const bool *received_mask)
 {
-	int result = datapump->legacy->op->process(datapump->legacy, (void *)receive, transmit, count);
+	int result = datapump->legacy->op->process(datapump->legacy, (void *)receive, transmit, count, received_mask);
 
 	datapump->legacy_samples += (unsigned)count;
 	if (result == DPSTAT_CONNECT)
@@ -896,7 +898,8 @@ bool v8_datapump_answer_tone_complete(const struct dp *dp)
 	return datapump != NULL && datapump->legacy_answer;
 }
 
-static int process_v8(struct dp *dp, void *receive_buffer, void *transmit_buffer, int count)
+static int process_v8(struct dp *dp, void *receive_buffer, void *transmit_buffer, int count,
+	const bool *received_mask)
 {
 	struct v8_datapump *datapump = v8_from_dp(dp);
 	const int16_t *receive = receive_buffer;
@@ -927,7 +930,7 @@ static int process_v8(struct dp *dp, void *receive_buffer, void *transmit_buffer
 	if (observe_legacy_answer(datapump, receive, count) != DPSTAT_OK)
 		return DPSTAT_ERROR;
 	if (datapump->legacy != NULL)
-		return process_legacy(datapump, receive, transmit_buffer, count);
+		return process_legacy(datapump, receive, transmit_buffer, count, received_mask);
 	if (datapump->legacy_answer) {
 		memset(transmit_buffer, 0, (size_t)count * sizeof(*receive));
 		datapump->legacy_samples += (unsigned)count;
@@ -1069,7 +1072,7 @@ static int process_v8_g711(struct dp *dp, enum g711_law law, const uint8_t *code
 			memset(transmit, 0, (size_t)count * sizeof(int16_t));
 			dp->status = DPSTAT_CHANGEDP;
 			result = DPSTAT_CHANGEDP;
-		} else result = process_v8(dp, receive, transmit, count);
-	} else result = process_v8(dp, receive, transmit, count);
+		} else result = process_v8(dp, receive, transmit, count, available);
+	} else result = process_v8(dp, receive, transmit, count, available);
 	return result;
 }

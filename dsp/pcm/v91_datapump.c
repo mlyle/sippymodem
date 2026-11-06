@@ -273,7 +273,8 @@ static int process_g711(struct dp *dp, enum g711_law law, const uint8_t *input,
 	return DPSTAT_OK;
 }
 
-static int process_linear(struct dp *dp, void *input, void *output, int count)
+static int process_linear(struct dp *dp, void *input, void *output, int count,
+	const bool *received_mask)
 {
 	struct v91_datapump *pump = owner(dp);
 	uint8_t receive[MODEM_FRAG], transmit[MODEM_FRAG];
@@ -283,7 +284,7 @@ static int process_linear(struct dp *dp, void *input, void *output, int count)
 	enum g711_law law = pump->started ? pump->call.local_info.law : G711_LAW_PCMU;
 	for (int i = 0; i < count; ++i)
 		receive[i] = g711_encode(law, ((int16_t *)input)[i]);
-	return process_g711(dp, law, receive, input, NULL, transmit, output, count, &exact);
+	return process_g711(dp, law, receive, input, received_mask, transmit, output, count, &exact);
 }
 
 static const struct dp_operations operations = {

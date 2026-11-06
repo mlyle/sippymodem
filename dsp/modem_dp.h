@@ -71,12 +71,15 @@ struct dp_operations {
 			     int caller, int srate, int max_frag,
 			     const struct dp_operations *);
 	int (*delete)(struct dp *);
-	int (*process)(struct dp *, void *in, void *out, int cnt);
+	/* Both processing callbacks borrow received_mask for cnt samples without
+	 * retaining it: false identifies generated playout, not a received zero.
+	 * NULL means provenance is unavailable. The datapump owns loss recovery. */
+	int (*process)(struct dp *, void *in, void *out, int cnt,
+		       const bool *received_mask);
 	/* The caller initializes exact_output to false. An implementation may
 	 * set it only after producing every transmit codeword in this fragment;
 	 * otherwise the linear transmit samples remain authoritative.
-	 * received_mask is borrowed for cnt samples: false means generated playout,
-	 * not a received zero symbol. NULL means provenance is unavailable. */
+	 * The same sample-availability contract applies to this exact path. */
 	int (*process_g711)(struct dp *, enum g711_law law,
 			     const u8 *receive_codewords, void *receive_samples,
 			     const bool *received_mask,

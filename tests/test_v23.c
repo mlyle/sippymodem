@@ -156,10 +156,10 @@ static bool process_pair(
 
 	*originator_status = pair->operations->process(
 		pair->originator, originator_input,
-		pair->originator_output, FRAME_SAMPLES);
+		pair->originator_output, FRAME_SAMPLES, NULL);
 	*answerer_status = pair->operations->process(
 		pair->answerer, pair->originator_output,
-		pair->answerer_output, FRAME_SAMPLES);
+		pair->answerer_output, FRAME_SAMPLES, NULL);
 	memcpy(
 		pair->answerer_to_originator, pair->answerer_output,
 		sizeof(pair->answerer_to_originator));

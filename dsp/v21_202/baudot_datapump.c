@@ -35,7 +35,8 @@ static struct dp *create_baudot(
 	int max_fragment, const struct dp_operations *operations);
 static int delete_baudot(struct dp *dp);
 static int process_baudot(
-	struct dp *dp, void *receive, void *transmit, int count);
+	struct dp *dp, void *receive, void *transmit, int count,
+	const bool *received_mask);
 
 static int tx_tail_samples(const struct dp *dp);
 static const struct dp_operations baudot_operations = {
@@ -247,8 +248,10 @@ static int enter_link(struct baudot_datapump *datapump)
 }
 
 static int process_baudot(
-	struct dp *dp, void *receive_buffer, void *transmit_buffer, int count)
+	struct dp *dp, void *receive_buffer, void *transmit_buffer, int count,
+	const bool *received_mask)
 {
+	(void)received_mask;
 	struct baudot_datapump *datapump = baudot_from_dp(dp);
 	const int16_t *receive = receive_buffer;
 	int16_t *transmit = transmit_buffer;

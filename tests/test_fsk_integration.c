@@ -4871,7 +4871,7 @@ static bool run_fsk300_mark_qualification(
 		}
 		if (!valid)
 			break;
-		status = operations->process(dp, receive, transmit, (int)count);
+		status = operations->process(dp, receive, transmit, (int)count, NULL);
 		at += count;
 		if (status == DPSTAT_CONNECT) {
 			connected = at;
@@ -4967,7 +4967,7 @@ static bool run_bell103_probe_response(unsigned fragment, unsigned reply_delay_m
 			if (fragment == 7)
 				receive[i] = g711_decode_pcma(g711_encode_pcma(receive[i]));
 		}
-		int status = ops->process(modem.dp, receive, transmit, (int)count);
+		int status = ops->process(modem.dp, receive, transmit, (int)count, NULL);
 		CHECK(status == DPSTAT_OK || status == DPSTAT_CONNECT,
 		      "Bell probe failed at %u", at);
 		for (unsigned i = 0; i < count; ++i) {
@@ -5052,7 +5052,7 @@ static bool test_fsk_startup_carrier_withdrawal(void)
 				if (fragments[case_index] == 7)
 					receive[i] = g711_decode_pcma(g711_encode_pcma(receive[i]));
 			}
-			int status = ops->process(modem.dp, receive, transmit, (int)count);
+			int status = ops->process(modem.dp, receive, transmit, (int)count, NULL);
 			CHECK(status == DPSTAT_OK || status == DPSTAT_CONNECT,
 			      "withdrawn startup failed at sample %u", at);
 			if (status == DPSTAT_CONNECT) {

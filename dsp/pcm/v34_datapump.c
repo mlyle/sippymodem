@@ -54,7 +54,8 @@ static struct dp *create_v34(
 	int max_fragment, const struct dp_operations *operations);
 static int delete_v34(struct dp *dp);
 static int process_v34(
-	struct dp *dp, void *receive, void *transmit, int count);
+	struct dp *dp, void *receive, void *transmit, int count,
+	const bool *received_mask);
 static int retrain_v34(struct dp *dp);
 static int hangup_v34(struct dp *dp);
 static const char *progress_v34(const struct dp *dp);
@@ -589,8 +590,10 @@ static bool set_data_erasure(
 }
 
 static int process_v34(
-	struct dp *dp, void *receive_buffer, void *transmit_buffer, int count)
+	struct dp *dp, void *receive_buffer, void *transmit_buffer, int count,
+	const bool *received_mask)
 {
+	(void)received_mask;
 	struct v34_datapump *datapump = v34_from_dp(dp);
 	const int16_t *receive = receive_buffer;
 	int16_t *transmit = transmit_buffer;

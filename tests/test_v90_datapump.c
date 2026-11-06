@@ -485,7 +485,7 @@ static bool qc_adapter_step(struct modem *modem, enum g711_law law,
 		*status = old->op->process_g711(old, law, input, receive, NULL,
 			output, transmit, (int)count, &exact);
 	else
-		*status = old->op->process(old, receive, transmit, (int)count);
+		*status = old->op->process(old, receive, transmit, (int)count, NULL);
 	if (!exact)
 		for (unsigned i = 0; i < count; ++i)
 			output[i] = encode(law, transmit[i]);
@@ -1988,7 +1988,7 @@ static bool test_validation(void)
 	      !v90_datapump_start_rate_renegotiation(datapump, false),
 	      "invalid or unstarted datapump accepted a rate exchange");
 	CHECK(datapump != NULL && operations->process(
-		      datapump, &receive_sample, &transmit_sample, 1) ==
+		      datapump, &receive_sample, &transmit_sample, 1, NULL) ==
 		      DPSTAT_ERROR && transmit_sample == 0,
 	      "V.90 accepted lossy linear-PCM processing");
 	CHECK(operations->process_g711(
@@ -2064,7 +2064,7 @@ static bool check_fallback_phase3_retrain(
 				      V34_PHASE2_TONE_OK, "fallback peer tone failed");
 			input[i] = decode(law, encode(law, sample));
 		}
-		status = dp->op->process(dp, input, output, MODEM_FRAG);
+		status = dp->op->process(dp, input, output, MODEM_FRAG, NULL);
 		if (status == DPSTAT_CHANGEDP)
 			break;
 		CHECK(status == DPSTAT_OK, "fallback Phase 3 probe failed");
@@ -2166,7 +2166,7 @@ static bool run_fallback_restart(
 			result = dp->op->process_g711(dp, law, to_digital, input, NULL,
 						   to_analog, output, BLOCK, &exact);
 		else {
-			result = dp->op->process(dp, input, output, BLOCK);
+			result = dp->op->process(dp, input, output, BLOCK, NULL);
 			for (size_t index = 0; index < BLOCK; ++index)
 				to_analog[index] = encode(law, output[index]);
 		}

@@ -440,8 +440,10 @@ static int delete_retrain_dp(struct dp *datapump)
 }
 
 static int process_retrain_dp(
-	struct dp *datapump, void *receive, void *transmit, int count)
+	struct dp *datapump, void *receive, void *transmit, int count,
+	const bool *received_mask)
 {
+	(void)received_mask;
 	(void)receive;
 	if (datapump != &retrain_dp.datapump || transmit == NULL || count <= 0)
 		return DPSTAT_ERROR;
@@ -461,7 +463,8 @@ static int request_retrain_dp(struct dp *datapump)
 }
 
 static int process_stalled_lapm_dp(
-	struct dp *datapump, void *receive, void *transmit, int count)
+	struct dp *datapump, void *receive, void *transmit, int count,
+	const bool *received_mask)
 {
 	unsigned before = retrain_dp.retrain_calls;
 	uint8_t bit;
@@ -471,7 +474,7 @@ static int process_stalled_lapm_dp(
 	modem_get_bits(datapump->modem, 1, &bit, 1);
 	if (retrain_dp.retrain_calls != before)
 		return DPSTAT_ERROR;
-	return process_retrain_dp(datapump, receive, transmit, count);
+	return process_retrain_dp(datapump, receive, transmit, count, received_mask);
 }
 
 static int request_hangup_dp(struct dp *datapump)
@@ -491,7 +494,7 @@ static int process_hangup_g711(
 
 	if (count <= 0)
 		return DPSTAT_ERROR;
-	result = process_retrain_dp(datapump, receive, transmit, count);
+	result = process_retrain_dp(datapump, receive, transmit, count, received_mask);
 
 	(void)receive_codewords;
 	(void)received_mask;
@@ -1279,8 +1282,10 @@ static int delete_g711_dp(struct dp *datapump)
 }
 
 static int process_g711_dp(
-	struct dp *datapump, void *receive, void *transmit, int count)
+	struct dp *datapump, void *receive, void *transmit, int count,
+	const bool *received_mask)
 {
+	(void)received_mask;
 	(void)receive;
 	if (datapump != &g711_dp.datapump || transmit == NULL || count <= 0)
 		return DPSTAT_ERROR;
@@ -1346,6 +1351,117 @@ static bool test_v8_tones_allow_transmit_gain(void)
 				operations->delete(dp);
 				modem_delete(modem);
 			}
+	return true;
+}
+
+struct linear_availability_fixture {
+	struct dp owners[2];
+	const bool *expected_mask;
+	unsigned created, deleted, calls, consumed, missing;
+	bool change_datapump, failed;
+};
+
+static struct dp *create_linear_availability_dp(
+	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
+	int max_fragment, const struct dp_operations *operations)
+{
+	struct linear_availability_fixture *fixture = modem->dev_data;
+
+	if (fixture == NULL || fixture->created >= ARRAY_LENGTH(fixture->owners) ||
+	    id != DP_CALLPROG || caller != 1 || sample_rate != MODEM_RATE ||
+	    max_fragment != MODEM_FRAG)
+		return NULL;
+	struct dp *dp = &fixture->owners[fixture->created++];
+	*dp = (struct dp){ .id = id, .modem = modem, .op = operations };
+	return dp;
+}
+
+static int delete_linear_availability_dp(struct dp *dp)
+{
+	struct linear_availability_fixture *fixture = dp->modem->dev_data;
+
+	fixture->deleted++;
+	dp->op = NULL;
+	return 0;
+}
+
+static int process_linear_availability_dp(
+	struct dp *dp, void *receive, void *transmit, int count,
+	const bool *received_mask)
+{
+	struct linear_availability_fixture *fixture = dp->modem->dev_data;
+	const bool *expected = fixture->expected_mask == NULL ? NULL :
+		fixture->expected_mask + fixture->consumed;
+	unsigned expected_count = fixture->consumed == 0 ? MODEM_FRAG : 3;
+
+	if (receive == NULL || transmit == NULL || count <= 0 || count > MODEM_FRAG) {
+		fixture->failed = true;
+		return DPSTAT_ERROR;
+	}
+	fixture->calls++;
+	fixture->failed |= count != (int)expected_count || received_mask != expected;
+	if (received_mask == expected && count == (int)expected_count)
+		for (int i = 0; received_mask != NULL && i < count; ++i)
+			fixture->missing += !received_mask[i];
+	fixture->consumed += (unsigned)count;
+	memset(transmit, 0, (size_t)count * sizeof(int16_t));
+	if (fixture->change_datapump && fixture->calls == 1) {
+		dp->modem->dp_requested = DP_CALLPROG;
+		return DPSTAT_CHANGEDP;
+	}
+	return DPSTAT_OK;
+}
+
+static bool test_linear_datapump_availability(void)
+{
+	struct modem_driver driver = {
+		.name = "linear availability test",
+		.start = unused_start, .stop = unused_stop, .ioctl = unused_control,
+	};
+	const struct dp_operations operations = {
+		.name = "linear availability test",
+		.create = create_linear_availability_dp,
+		.delete = delete_linear_availability_dp,
+		.process = process_linear_availability_dp,
+	};
+	uint8_t codewords[MODEM_FRAG + 3], output[MODEM_FRAG + 3];
+	int16_t receive[MODEM_FRAG + 3] = { 0 }, transmit[MODEM_FRAG + 3];
+	bool mask[MODEM_FRAG + 3];
+
+	memset(codewords, 0xff, sizeof(codewords));
+	for (size_t i = 0; i < ARRAY_LENGTH(mask); ++i)
+		mask[i] = i != 0 && i != MODEM_FRAG - 1 &&
+			i != MODEM_FRAG && i != MODEM_FRAG + 2;
+	for (unsigned change = 0; change < 2; ++change)
+		for (unsigned path = 0; path < 3; ++path) {
+			struct linear_availability_fixture fixture = {
+				.expected_mask = path == 2 ? mask : NULL,
+				.change_datapump = change != 0,
+			};
+			struct modem *modem = create_compat_modem(&driver, "linear availability test");
+			CHECK(modem != NULL, "linear availability modem creation failed");
+			modem->dev_data = &fixture;
+			call_progress_override = &operations;
+			CHECK(modem_dial(modem) == 0, "linear availability call failed");
+			bool exact = true;
+			if (path == 0)
+				modem_process(modem, receive, transmit, ARRAY_LENGTH(receive));
+			else
+				modem_process_g711(modem, G711_LAW_PCMU, codewords, receive,
+					fixture.expected_mask, output, transmit, ARRAY_LENGTH(receive), &exact);
+			bool passed = !fixture.failed && fixture.calls == 2 &&
+				fixture.consumed == ARRAY_LENGTH(receive) &&
+				fixture.missing == (path == 2 ? 4u : 0u) &&
+				fixture.created == 1u + change && fixture.deleted == change &&
+				(path == 0 || !exact);
+			int stopped = modem_stop_now(modem);
+			bool cleaned = fixture.deleted == fixture.created;
+			modem_delete(modem);
+			call_progress_override = NULL;
+			CHECK(passed && stopped == 0 && cleaned,
+			      "linear availability lost mask/fragment/owner: path=%u change=%u",
+			      path, change);
+		}
 	return true;
 }
 
@@ -2059,7 +2175,7 @@ static bool test_v8_pcm_menu_wire(void)
 				for (unsigned frame = 0; complete < 2 &&
 				     frame < 7 * MODEM_RATE / MODEM_FRAG; ++frame) {
 					CHECK(v8_ansam_generate(&ansam, receive, MODEM_FRAG) == V8_ANSAM_OK &&
-					      operations->process(dp, receive, transmit, MODEM_FRAG) == DPSTAT_OK,
+					      operations->process(dp, receive, transmit, MODEM_FRAG, NULL) == DPSTAT_OK,
 					      "PCM wire training failed");
 					for (unsigned i = 0; i < MODEM_FRAG; ++i) {
 						uint8_t bit;
@@ -2227,10 +2343,10 @@ static bool test_v8_handoff(void)
 		     ++frame) {
 			answering_status = operations->process(
 				answering_dp, calling_audio, answering_audio,
-				MODEM_FRAG);
+				MODEM_FRAG, NULL);
 			calling_status = operations->process(
 				calling_dp, answering_audio, calling_audio,
-				MODEM_FRAG);
+				MODEM_FRAG, NULL);
 			CHECK((answering_status == DPSTAT_OK ||
 			       answering_status == DPSTAT_CHANGEDP) &&
 			      (calling_status == DPSTAT_OK ||
@@ -2337,7 +2453,7 @@ static bool test_v91_pcm_handoff_without_v34(void)
 				if (caller)
 					CHECK(v8_answering_process(&answering, &local, &remote, 1) ==
 					      V8_ANSWERING_OK, "V.91 peer answer failed");
-				status = v8->process(negotiation, &remote, &local, 1);
+				status = v8->process(negotiation, &remote, &local, 1, NULL);
 				CHECK(status == DPSTAT_OK || status == DPSTAT_CHANGEDP,
 				      "V.91 handoff failed: caller=%u scenario=%zu sample=%u",
 				      caller, scenario, sample);
@@ -2473,7 +2589,7 @@ static bool run_v91_info0_escape(bool caller, enum g711_law law,
 		int status = dp->id == DP_V91 ?
 			dp->op->process_g711(dp, law, input, received, available,
 				output, sent, MODEM_FRAG, &exact) :
-			dp->op->process(dp, received, sent, MODEM_FRAG);
+			dp->op->process(dp, received, sent, MODEM_FRAG, NULL);
 		CHECK(status != DPSTAT_ERROR && status != DPSTAT_DISCONNECT,
 		      "V.91 escape datapump failed: caller=%u law=%u signal=%u sample=%u",
 		      caller, law, signal, sample);
@@ -2973,7 +3089,7 @@ static bool test_automatic_startup_deadline(void)
 			for (unsigned i = 0; scenario >= 2 && i < MODEM_FRAG; ++i)
 				CHECK(single_tone_transmitter_sample(&tone, &rx[i]) == SINGLE_TONE_OK,
 				      "deadline tone generation failed");
-			result = ops->process(dp, rx, tx, MODEM_FRAG);
+			result = ops->process(dp, rx, tx, MODEM_FRAG, NULL);
 			samples += MODEM_FRAG;
 		}
 		CHECK(result == DPSTAT_NOANSWER && samples <= seconds * MODEM_RATE + MODEM_FRAG &&
@@ -3017,9 +3133,9 @@ static bool test_v8_fallback_limits(void)
 		      "restricted V.8 handshakes failed to initialize");
 		for (unsigned int frame = 0; result == DPSTAT_OK &&
 		     frame < 12u * MODEM_RATE / MODEM_FRAG; ++frame) {
-			result = ops->process(answering, tx, rx, MODEM_FRAG);
+			result = ops->process(answering, tx, rx, MODEM_FRAG, NULL);
 			if (result == DPSTAT_OK)
-				result = ops->process(calling, rx, tx, MODEM_FRAG);
+				result = ops->process(calling, rx, tx, MODEM_FRAG, NULL);
 		}
 		CHECK(result == DPSTAT_ERROR && caller->dp_requested == 0 &&
 		      answerer->dp_requested == 0,
@@ -3076,7 +3192,7 @@ static bool test_v8_legacy_v32(void)
 				    sample + i < MODEM_RATE * 4 / 10)
 					rx[i] = 0;
 			}
-			result = ops->process(dp, rx, scenario == 5 ? rx : tx, MODEM_FRAG);
+			result = ops->process(dp, rx, scenario == 5 ? rx : tx, MODEM_FRAG, NULL);
 			CHECK(result == DPSTAT_OK || result == DPSTAT_CHANGEDP,
 			      "legacy detector failed scenario %u", scenario);
 			CHECK(result != DPSTAT_CHANGEDP || sample >= MODEM_RATE * 9 / 10,
@@ -10936,7 +11052,7 @@ static bool test_v21_originator_answers_brief_mark(void)
 		}
 		memset(transmit, 1, sizeof(transmit));
 		CHECK(operations->process(
-			      datapump, receive, transmit, (int)count) ==
+			      datapump, receive, transmit, (int)count, NULL) ==
 			      DPSTAT_OK &&
 			      samples_are_silent(transmit, count),
 		      "V.21 originator transmitted before acquiring answer mark");
@@ -10949,7 +11065,7 @@ static bool test_v21_originator_answers_brief_mark(void)
 		memset(receive, 0, sizeof(receive));
 		memset(transmit, 1, sizeof(transmit));
 		CHECK(operations->process(
-			      datapump, receive, transmit, (int)count) ==
+			      datapump, receive, transmit, (int)count, NULL) ==
 			      DPSTAT_OK &&
 			      samples_are_silent(transmit, count),
 		      "V.21 originator transmitted during its 160 ms guard");
@@ -10957,7 +11073,7 @@ static bool test_v21_originator_answers_brief_mark(void)
 	}
 	memset(transmit, 0, sizeof(transmit));
 	CHECK(operations->process(
-		      datapump, receive, transmit, MODEM_FRAG) == DPSTAT_OK &&
+		      datapump, receive, transmit, MODEM_FRAG, NULL) == DPSTAT_OK &&
 		      !samples_are_silent(transmit, MODEM_FRAG),
 	      "V.21 originator did not answer a 15 ms mark");
 	CHECK(operations->delete(datapump) == 0,
@@ -10980,7 +11096,7 @@ static bool process_owned_datapump(struct dp *dp)
 			receive_codewords, receive, NULL, transmit_codewords, transmit,
 			MODEM_FRAG, &exact);
 	} else {
-		status = dp->op->process(dp, receive, transmit, MODEM_FRAG);
+		status = dp->op->process(dp, receive, transmit, MODEM_FRAG, NULL);
 	}
 	CHECK(status == DPSTAT_OK || status == DPSTAT_CONNECT,
 	      "%s stopped after another modem changed ownership (status %d)",
@@ -11164,7 +11280,7 @@ static bool test_call_progress_supports_independent_modems(void)
 	CHECK(operations->delete(calls[0]) == 0,
 	      "call progress did not release one owned instance");
 	memset(transmit, 1, sizeof(transmit));
-	CHECK(operations->process(calls[1], receive, transmit, MODEM_FRAG) == DPSTAT_OK &&
+	CHECK(operations->process(calls[1], receive, transmit, MODEM_FRAG, NULL) == DPSTAT_OK &&
 		      samples_are_silent(transmit, MODEM_FRAG),
 	      "remaining call progress stopped processing silently");
 	calls[0] = operations->create(
@@ -11384,7 +11500,7 @@ static bool test_builtin_datapump_lifecycle(void)
 	memset(transmit, 1, sizeof(transmit));
 	CHECK(v8 != NULL && v8->id == DP_V8 &&
 		      v8_operations->process(
-			      v8, receive, transmit, MODEM_FRAG) == DPSTAT_OK &&
+			      v8, receive, transmit, MODEM_FRAG, NULL) == DPSTAT_OK &&
 		      v8_operations->delete(v8) == 0,
 	      "V.8 did not own and release its calling handshake");
 	for (size_t index = 0; index < ARRAY_LENGTH(transmit); ++index)
@@ -11398,7 +11514,7 @@ static bool test_builtin_datapump_lifecycle(void)
 	memset(transmit, 1, sizeof(transmit));
 	CHECK(v22 != NULL &&
 		      v22_operations->process(
-			      v22, receive, transmit, MODEM_FRAG) == DPSTAT_OK &&
+			      v22, receive, transmit, MODEM_FRAG, NULL) == DPSTAT_OK &&
 		      samples_are_silent(transmit, MODEM_FRAG) &&
 		      v22_operations->delete(v22) == 0,
 	      "V.22 600 data pump did not wait silently and release cleanly");
@@ -11409,7 +11525,7 @@ static bool test_builtin_datapump_lifecycle(void)
 	memset(transmit, 1, sizeof(transmit));
 	CHECK(v22 != NULL &&
 		      v22_operations->process(
-			      v22, receive, transmit, MODEM_FRAG) == DPSTAT_OK &&
+			      v22, receive, transmit, MODEM_FRAG, NULL) == DPSTAT_OK &&
 		      v22_operations->delete(v22) == 0,
 	      "V.22 data pump did not wait silently and release cleanly");
 	for (size_t index = 0; index < ARRAY_LENGTH(transmit); ++index)
@@ -11461,7 +11577,7 @@ static bool test_builtin_datapump_lifecycle(void)
 			      "V.32 line-artifact generation failed");
 		memset(transmit, 1, sizeof(transmit));
 		CHECK(v32_operations->process(
-			      v32, receive, transmit, (int)count) == DPSTAT_OK &&
+			      v32, receive, transmit, (int)count, NULL) == DPSTAT_OK &&
 			      samples_are_silent(transmit, count),
 		      "V.32 caller treated a low-frequency artifact as QAM");
 		presented += count;
@@ -11477,7 +11593,7 @@ static bool test_builtin_datapump_lifecycle(void)
 			      "V.32 answer tone generation failed");
 		memset(transmit, 1, sizeof(transmit));
 		CHECK(v32_operations->process(
-			      v32, receive, transmit, (int)count) == DPSTAT_OK &&
+			      v32, receive, transmit, (int)count, NULL) == DPSTAT_OK &&
 			      samples_are_silent(transmit, count),
 		      "V.32 caller transmitted before its answer-tone guard");
 		presented += count;
@@ -11492,7 +11608,7 @@ static bool test_builtin_datapump_lifecycle(void)
 				      SINGLE_TONE_OK,
 			      "V.32 guarded answer tone generation failed");
 		CHECK(v32_operations->process(
-			      v32, receive, transmit, (int)count) == DPSTAT_OK,
+			      v32, receive, transmit, (int)count, NULL) == DPSTAT_OK,
 		      "V.32 calling-carrier frame failed");
 		for (size_t index = 0; index < count; ++index)
 			v32_calling_power +=
@@ -11536,7 +11652,7 @@ static bool test_builtin_datapump_lifecycle(void)
 	memset(transmit, 1, sizeof(transmit));
 	CHECK(v34 != NULL && v34->id == DP_V34 &&
 		      v34_operations->process(
-			      v34, receive, transmit, MODEM_FRAG) == DPSTAT_OK &&
+			      v34, receive, transmit, MODEM_FRAG, NULL) == DPSTAT_OK &&
 		      v34_operations->delete(v34) == 0,
 	      "V.34 data pump did not retain and release its call state");
 	{
@@ -11585,7 +11701,7 @@ static bool test_builtin_datapump_lifecycle(void)
 	memset(transmit, 1, sizeof(transmit));
 	CHECK(baudot != NULL &&
 		      baudot_operations->process(
-			      baudot, receive, transmit, MODEM_FRAG) ==
+			      baudot, receive, transmit, MODEM_FRAG, NULL) ==
 			      DPSTAT_CONNECT &&
 		      baudot->status == DPSTAT_CONNECT && modem->tx_rate == 45 &&
 		      modem->rx_rate == 45 &&
@@ -11604,7 +11720,7 @@ static bool test_builtin_datapump_lifecycle(void)
 		transmit[index] = INT16_MAX;
 	}
 	CHECK(operations->process(
-		      call_progress, receive, transmit, MODEM_FRAG) == DPSTAT_OK,
+		      call_progress, receive, transmit, MODEM_FRAG, NULL) == DPSTAT_OK,
 	      "SIP call-progress frame failed");
 	for (size_t index = 0; index < ARRAY_LENGTH(transmit); ++index)
 		CHECK(transmit[index] == 0,
@@ -12109,6 +12225,7 @@ int main(void)
 		  test_raw_answerer_discards_detection_residue },
 		{ "source-built core lifecycle",
 		  test_core_has_no_external_dsp_owner },
+		{ "linear data-pump sample availability", test_linear_datapump_availability },
 		{ "G.711 data-pump input", test_g711_datapump_input },
 		{ "V.8 linear output", test_v8_tones_allow_transmit_gain },
 		{ "receive DC front end", test_receive_dc_frontend },

@@ -211,8 +211,10 @@ static int process_g711(struct dp *dp, enum g711_law law, const uint8_t *input,
 	*exact = true;
 	return pump->closing ? DPSTAT_DISCONNECT : DPSTAT_OK;
 }
-static int process(struct dp *dp, void *input, void *output, int count)
+static int process(struct dp *dp, void *input, void *output, int count,
+	const bool *received_mask)
 {
+	(void)received_mask;
 	(void)input;
 	if (output != NULL && count > 0 && count <= MODEM_FRAG) memset(output, 0, (size_t)count * sizeof(int16_t));
 	if (dp != NULL && dp->modem != NULL)

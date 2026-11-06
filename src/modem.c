@@ -870,7 +870,7 @@ static void modem_dp_process_frame(struct modem *m, enum g711_law law,
 				m->dp, law, receive_codewords, in, received_mask,
 				transmit_codewords, out, cnt, &fragment_exact);
 		else {
-			ret = m->dp->op->process(m->dp,in,out,cnt);
+			ret = m->dp->op->process(m->dp, in, out, cnt, received_mask);
 			fragment_exact = false;
 		}
 		/* A packet may cross between linear tones and exact PCM/DS0.

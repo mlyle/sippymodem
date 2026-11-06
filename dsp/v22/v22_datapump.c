@@ -151,7 +151,8 @@ static struct dp *create_v22(
 	int max_fragment, const struct dp_operations *operations);
 static int delete_v22(struct dp *dp);
 static int process_v22(
-	struct dp *dp, void *receive, void *transmit, int count);
+	struct dp *dp, void *receive, void *transmit, int count,
+	const bool *received_mask);
 static int retrain_v22(struct dp *dp);
 static const char *progress_v22(const struct dp *dp)
 {
@@ -1770,8 +1771,10 @@ static bool carrier_is_present(
 }
 
 static int process_v22(
-	struct dp *dp, void *receive_buffer, void *transmit_buffer, int count)
+	struct dp *dp, void *receive_buffer, void *transmit_buffer, int count,
+	const bool *received_mask)
 {
+	(void)received_mask;
 	struct v22_datapump *datapump = v22_from_dp(dp);
 	const int16_t *receive = receive_buffer;
 	int16_t *transmit = transmit_buffer;

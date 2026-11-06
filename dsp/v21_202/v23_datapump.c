@@ -93,7 +93,8 @@ static struct dp *create_v23(
 	int max_fragment, const struct dp_operations *operations);
 static int delete_v23(struct dp *dp);
 static int process_v23(
-	struct dp *dp, void *receive, void *transmit, int count);
+	struct dp *dp, void *receive, void *transmit, int count,
+	const bool *received_mask);
 
 static int tx_tail_samples(const struct dp *dp);
 static const struct dp_operations v23_operations = {
@@ -344,8 +345,10 @@ static int advance_training(
 }
 
 static int process_v23(struct dp *dp, void *receive_buffer,
-		       void *transmit_buffer, int count)
+		       void *transmit_buffer, int count,
+	const bool *received_mask)
 {
+	(void)received_mask;
 	struct v23_datapump *datapump = v23_from_dp(dp);
 	const int16_t *receive = receive_buffer;
 	int16_t *transmit = transmit_buffer;

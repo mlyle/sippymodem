@@ -13,7 +13,8 @@ static struct dp *create_call_progress(
 	int max_fragment, const struct dp_operations *operations);
 static int delete_call_progress(struct dp *dp);
 static int process_call_progress(
-	struct dp *dp, void *receive, void *transmit, int count);
+	struct dp *dp, void *receive, void *transmit, int count,
+	const bool *received_mask);
 
 static const struct dp_operations call_progress_operations = {
 	.name = "SIP call progress",
@@ -61,8 +62,10 @@ static int delete_call_progress(struct dp *dp)
 }
 
 static int process_call_progress(
-	struct dp *dp, void *receive, void *transmit, int count)
+	struct dp *dp, void *receive, void *transmit, int count,
+	const bool *received_mask)
 {
+	(void)received_mask;
 	if (count <= 0 || count > MODEM_FRAG || transmit == NULL)
 		return DPSTAT_ERROR;
 	memset(transmit, 0, (size_t)count * sizeof(int16_t));

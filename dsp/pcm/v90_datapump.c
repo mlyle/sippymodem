@@ -65,7 +65,8 @@ static struct dp *create_v90(
 	int max_fragment, const struct dp_operations *operations);
 static int delete_v90(struct dp *dp);
 static int process_v90(
-	struct dp *dp, void *receive, void *transmit, int count);
+	struct dp *dp, void *receive, void *transmit, int count,
+	const bool *received_mask);
 static int process_v90_g711(
 	struct dp *dp, enum g711_law law,
 	const uint8_t *receive_codewords, void *receive_samples,
@@ -640,8 +641,10 @@ static bool observe_upstream_quality(struct v90_datapump *datapump)
 }
 
 static int process_v90(
-	struct dp *dp, void *receive, void *transmit, int count)
+	struct dp *dp, void *receive, void *transmit, int count,
+	const bool *received_mask)
 {
+	(void)received_mask;
 	(void)dp;
 	(void)receive;
 	if (transmit != NULL && count > 0 && count <= MODEM_FRAG)

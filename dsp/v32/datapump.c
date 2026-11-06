@@ -114,7 +114,8 @@ static struct dp *create_v32(
 static int delete_v32(struct dp *dp);
 static int retrain_v32(struct dp *dp);
 static int process_v32(
-	struct dp *dp, void *receive, void *transmit, int count);
+	struct dp *dp, void *receive, void *transmit, int count,
+	const bool *received_mask);
 static int enter_link(struct v32_datapump *datapump);
 static const char *progress_v32(const struct dp *dp);
 
@@ -1683,8 +1684,10 @@ static int receive_fixed_path_sample(
 }
 
 static int process_v32(
-	struct dp *dp, void *receive_buffer, void *transmit_buffer, int count)
+	struct dp *dp, void *receive_buffer, void *transmit_buffer, int count,
+	const bool *received_mask)
 {
+	(void)received_mask;
 	struct v32_datapump *datapump = v32_from_dp(dp);
 	const int16_t *receive = receive_buffer;
 	int16_t *transmit = transmit_buffer;

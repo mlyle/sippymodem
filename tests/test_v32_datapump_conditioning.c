@@ -83,7 +83,7 @@ static bool process_sample(
 	const struct dp_operations *operations, struct dp *datapump, int16_t receive,
 	int16_t *transmit)
 {
-	return operations->process(datapump, &receive, transmit, 1) == DPSTAT_OK;
+	return operations->process(datapump, &receive, transmit, 1, NULL) == DPSTAT_OK;
 }
 
 static bool is_quiet_sample(int16_t sample)
@@ -470,7 +470,7 @@ static bool test_answerer_requires_fresh_conditioning(void)
 			      "peer cleardown source stopped");
 			received = mix_samples(answerer_transmit, caller_transmit);
 			status = operations->process(
-				datapump, &received, &answerer_transmit, 1);
+				datapump, &received, &answerer_transmit, 1, NULL);
 			CHECK(status == DPSTAT_OK || status == DPSTAT_ERROR,
 			      "peer cleardown incorrectly connected: %d", status);
 			disconnected = status == DPSTAT_ERROR;
@@ -507,7 +507,7 @@ static bool test_answerer_requires_fresh_conditioning(void)
 		CHECK(disconnected && cleared && answerer_transmit == 0,
 		      "peer refusal did not finish a bounded on-wire cleardown");
 		received = 0;
-		CHECK(operations->process(datapump, &received, &answerer_transmit, 1) ==
+		CHECK(operations->process(datapump, &received, &answerer_transmit, 1, NULL) ==
 			      DPSTAT_ERROR && answerer_transmit == 0,
 		      "cleardown failure was not latched");
 	}
@@ -544,16 +544,16 @@ static bool test_training_deadline(void)
 	for (unsigned int frame = 0;
 	     frame < MODEM_RATE / MODEM_FRAG; ++frame)
 		CHECK(operations->process(
-			      datapump, receive, transmit, MODEM_FRAG) ==
+			      datapump, receive, transmit, MODEM_FRAG, NULL) ==
 			      DPSTAT_OK,
 		      "V.32 training expired before its inclusive deadline");
 	transmit[0] = INT16_MAX;
-	CHECK(operations->process(datapump, receive, transmit, 1) ==
+	CHECK(operations->process(datapump, receive, transmit, 1, NULL) ==
 		      DPSTAT_ERROR &&
 	      transmit[0] == 0,
 	      "V.32 training did not fail closed after its deadline");
 	transmit[0] = INT16_MAX;
-	CHECK(operations->process(datapump, receive, transmit, 1) ==
+	CHECK(operations->process(datapump, receive, transmit, 1, NULL) ==
 		      DPSTAT_ERROR &&
 	      transmit[0] == 0,
 	      "V.32 training failure was not latched");
