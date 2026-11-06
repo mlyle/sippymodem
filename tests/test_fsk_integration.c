@@ -17,6 +17,7 @@
 #include <v23_datapump.h>
 #include <datapump.h>
 #include <datapump_link.h>
+#include <pcm_rate.h>
 #include <v8_ansam.h>
 #include <v8_datapump.h>
 #include <v34_datapump.h>
@@ -3038,6 +3039,39 @@ static bool run_media_call(
 	CHECK(!require_lapm ||
 		      (caller.modem->cfg.ec && answerer.modem->cfg.ec),
 	      "%s did not retain its required LAPM transport", test_case->name);
+	if (test_case->playout_echo) {
+		unsigned upstream = test_case->digital_caller ?
+			caller.modem->rx_rate : caller.modem->tx_rate;
+		unsigned downstream = test_case->digital_caller ?
+			caller.modem->tx_rate : caller.modem->rx_rate;
+		unsigned upstream_cap = test_case->digital_caller ?
+			test_case->caller_rx_rate : test_case->caller_tx_rate;
+		unsigned expected_downstream = test_case->digital_caller ?
+			test_case->caller_tx_rate : test_case->caller_rx_rate;
+		struct dp_link_rates c = datapump_get_link_rates(caller.modem->dp);
+		struct dp_link_rates a = datapump_get_link_rates(answerer.modem->dp);
+		double upstream_baud = test_case->digital_caller ?
+			c.receive_baud : c.transmit_baud;
+		/* +V92U supplies a ceiling: recovery may infer a safer PCM plan.
+		 * Check its rate grid and 8-kbaud procedure rather than requiring
+		 * an unchanged rate or accepting a conventional fallback. */
+		bool upstream_valid = test_case->conventional_upstream ?
+			upstream == upstream_cap && upstream_baud > 0 && upstream_baud <= 3200 :
+			pcm_upstream_data_rate_number(upstream) != 0 && upstream_baud == MODEM_RATE;
+		CHECK(modem_is_online(caller.modem, connected_id) &&
+		      modem_is_online(answerer.modem, answerer_connected_id) &&
+		      downstream == expected_downstream &&
+		      upstream_valid && upstream <= upstream_cap &&
+		      c.transmit_baud == a.receive_baud && c.receive_baud == a.transmit_baud &&
+		      caller.modem->tx_rate == answerer.modem->rx_rate &&
+		      caller.modem->rx_rate == answerer.modem->tx_rate,
+		      "%s playout recovery missed its modulation/rate contract "
+		      "(caller=%u/%u answerer=%u/%u upstream baud=%g)", test_case->name,
+		      caller.modem->tx_rate, caller.modem->rx_rate,
+		      answerer.modem->tx_rate, answerer.modem->rx_rate, upstream_baud);
+		fprintf(stderr, "[ DATA RATES ] %s down=%u up=%u\n",
+			test_case->name, downstream, upstream);
+	}
 	CHECK(!test_case->require_v44 ||
 	      (modem_ec_active_compression(caller.modem) == MODEM_EC_COMPRESSION_V44 &&
 	       modem_ec_active_compression(answerer.modem) == MODEM_EC_COMPRESSION_V44),
@@ -5425,27 +5459,45 @@ static bool run_playout_cases(const char *filter, bool *selected)
 {
 	static const unsigned steps[] = { 0, 80, 114 };
 	static const enum media_codec codecs[] = { MEDIA_CODEC_PCMU, MEDIA_CODEC_PCMA };
-	/* Keep both upstream procedures on the same asymmetric playout channel. */
-	for (unsigned mode = 0; mode < 3; ++mode) {
-		bool conventional = mode != 0;
-		unsigned protocol = mode == 1 ? 90 : 92;
-		unsigned upstream = conventional ? 28800 : 28000;
+	static const struct {
+		unsigned protocol, downstream, upstream;
+		bool conventional;
+	} modes[] = {
+		{ 92, 28000, 28000, false },
+		{ 90, 28000, 28800, true },
+		{ 92, 28000, 28800, true },
+		{ 92, 52000, 36000, false },
+		{ 92, 52000, 28800, true },
+	};
+	/* Exercise the same startup deadline at higher rates too: changing the
+	 * PCM mapping density must not hide loss of the first LAPM payload. */
+	for (unsigned mode = 0; mode < ARRAY_LENGTH(modes); ++mode) {
+		bool conventional = modes[mode].conventional;
+		unsigned protocol = modes[mode].protocol;
+		unsigned downstream = modes[mode].downstream;
+		unsigned upstream = modes[mode].upstream;
 		char command[128];
-		snprintf(command, sizeof(command), "AT+MS=%u,0,28000,28000+V92Q=0%s\r",
-			 protocol, conventional ? "+V92U=0+V90U=28800,28800,3200" : "+V92U=1,28000");
+		if (conventional)
+			snprintf(command, sizeof(command),
+				 "AT+MS=%u,0,%u,%u+V92Q=0+V92U=0+V90U=%u,%u,3200\r",
+				 protocol, downstream, downstream, upstream, upstream);
+		else
+			snprintf(command, sizeof(command),
+				 "AT+MS=%u,0,%u,%u+V92Q=0+V92U=1,%u\r",
+				 protocol, downstream, downstream, upstream);
 		for (unsigned digital = 0; digital < 2; ++digital) {
 			for (unsigned i = 0; i < ARRAY_LENGTH(steps); ++i) {
-				char name[96];
-				snprintf(name, sizeof(name), "V.%u %s playout %u samples digital %s",
+				char name[128];
+				snprintf(name, sizeof(name), "V.%u %s playout %u samples digital %s down %u up %u",
 					 protocol, conventional ? "conventional" : "coupled",
-					 steps[i], digital ? "caller" : "answerer");
+					 steps[i], digital ? "caller" : "answerer", downstream, upstream);
 				struct modem_test_case test = {
 					.id = protocol == 90 ? DP_V90 : DP_V92, .name = name,
 					.selection_command = command,
-					.caller_tx_rate = digital ? 28000 : upstream,
-					.caller_rx_rate = digital ? upstream : 28000,
-					.answerer_tx_rate = digital ? upstream : 28000,
-					.answerer_rx_rate = digital ? 28000 : upstream,
+					.caller_tx_rate = digital ? downstream : upstream,
+					.caller_rx_rate = digital ? upstream : downstream,
+					.answerer_tx_rate = digital ? upstream : downstream,
+					.answerer_rx_rate = digital ? downstream : upstream,
 					.training_frame_limit = 1500,
 					.requires_v8 = true, .requires_exact_g711 = true,
 					.require_lapm = true, .digital_caller = digital,
