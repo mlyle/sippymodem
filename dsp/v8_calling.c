@@ -2,6 +2,8 @@
 
 #include "v8_calling.h"
 
+#include "memory_region.h"
+
 #include <string.h>
 
 static bool qc_request_is_usable(const struct v8_menu *menu,
@@ -405,7 +407,11 @@ enum v8_calling_result v8_calling_process(
 
 	if (!calling_is_valid(calling) ||
 	    count > V8_CALLING_MAX_FRAGMENT_SAMPLES ||
-	    ((receive == NULL || transmit == NULL) && count != 0))
+	    ((receive == NULL || transmit == NULL) && count != 0) ||
+	    memory_regions_overlap(calling, sizeof(*calling),
+		    receive, count * sizeof(*receive)) ||
+	    memory_regions_overlap(calling, sizeof(*calling),
+		    transmit, count * sizeof(*transmit)))
 		return V8_CALLING_INVALID_ARGUMENT;
 	if (count == 0)
 		return calling->terminal_result;

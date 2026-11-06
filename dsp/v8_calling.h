@@ -81,7 +81,9 @@ enum v8_calling_result v8_calling_enable_quick_connect(
 enum v8_calling_result v8_calling_delegate_phase2_silence(
 	struct v8_calling *calling);
 /* COMPLETE transfers the next sample to the selected datapump after the CJ
- * tail and following 75-ms quiet interval, unless explicitly delegated. */
+ * tail and following 75-ms quiet interval, unless explicitly delegated.
+ * Nonempty sample buffers must not overlap the owner; they may overlap each
+ * other. Rejected calls leave the owner and output unchanged. */
 enum v8_calling_result v8_calling_process(
 	struct v8_calling *calling, const int16_t *receive,
 	int16_t *transmit, size_t count);

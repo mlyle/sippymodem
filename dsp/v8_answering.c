@@ -2,6 +2,8 @@
 
 #include "v8_answering.h"
 
+#include "memory_region.h"
+
 #include <string.h>
 
 enum {
@@ -378,7 +380,11 @@ enum v8_answering_result v8_answering_process(
 
 	if (!answering_is_valid(answering) ||
 	    count > V8_ANSWERING_MAX_FRAGMENT_SAMPLES ||
-	    ((receive == NULL || transmit == NULL) && count != 0))
+	    ((receive == NULL || transmit == NULL) && count != 0) ||
+	    memory_regions_overlap(answering, sizeof(*answering),
+		    receive, count * sizeof(*receive)) ||
+	    memory_regions_overlap(answering, sizeof(*answering),
+		    transmit, count * sizeof(*transmit)))
 		return V8_ANSWERING_INVALID_ARGUMENT;
 	if (count == 0)
 		return answering->terminal_result;

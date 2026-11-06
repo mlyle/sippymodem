@@ -672,6 +672,65 @@ static bool test_validation(void)
 	return true;
 }
 
+static bool test_fragment_buffers(void)
+{
+	for (unsigned role = 0; role < 2; ++role) {
+		const int invalid = role ? V8_ANSWERING_INVALID_ARGUMENT : V8_CALLING_INVALID_ARGUMENT;
+		const int ok = role ? V8_ANSWERING_OK : V8_CALLING_OK;
+		struct v8_calling calling;
+		struct v8_answering answering;
+		int16_t input[V8_CALLING_MAX_FRAGMENT_SAMPLES];
+		int16_t expected[V8_CALLING_MAX_FRAGMENT_SAMPLES];
+		int16_t storage[V8_CALLING_MAX_FRAGMENT_SAMPLES + 1];
+		unsigned char saved[sizeof(calling) + sizeof(answering)];
+		unsigned char advanced[sizeof(saved)];
+		void *owner = role ? (void *)&answering : (void *)&calling;
+		size_t size = role ? sizeof(answering) : sizeof(calling);
+		int16_t *inside = role ? &answering.fsk.transmitter.source.tones.amplitude :
+			&calling.fsk.transmitter.source.tones.amplitude;
+		int16_t receive = 0, transmit = 123;
+
+		CHECK(endpoints_init(&calling, &answering,
+			      V8_MODULATION_V34_DUPLEX, V8_MODULATION_V34_DUPLEX),
+		      "fragment ownership fixture did not initialize");
+		memcpy(saved, owner, size);
+		int result = role ? v8_answering_process(&answering, &receive, inside, 1) :
+			v8_calling_process(&calling, &receive, inside, 1);
+		CHECK(result == invalid && memcmp(saved, owner, size) == 0,
+		      "role %u accepted output inside its owner", role);
+		result = role ? v8_answering_process(&answering, inside, &transmit, 1) :
+			v8_calling_process(&calling, inside, &transmit, 1);
+		CHECK(result == invalid && transmit == 123 && memcmp(saved, owner, size) == 0,
+		      "role %u changed state/output for input inside its owner", role);
+		result = role ? v8_answering_process(&answering, inside, inside, 0) :
+			v8_calling_process(&calling, inside, inside, 0);
+		CHECK(result == ok && memcmp(saved, owner, size) == 0,
+		      "role %u rejected an empty aliased fragment", role);
+
+		for (size_t i = 0; i < ARRAY_LENGTH(input); ++i)
+			input[i] = (int16_t)((int)(i % 7u) * 17 - 30);
+		result = role ? v8_answering_process(&answering, input, expected,
+				ARRAY_LENGTH(input)) :
+			v8_calling_process(&calling, input, expected, ARRAY_LENGTH(input));
+		CHECK(result == ok, "role %u rejected disjoint buffers", role);
+		memcpy(advanced, owner, size);
+		for (unsigned overlap = 0; overlap < 3; ++overlap) {
+			int16_t *rx = storage + (overlap == 2);
+			int16_t *tx = storage + (overlap == 1);
+
+			memcpy(owner, saved, size);
+			memcpy(rx, input, sizeof(input));
+			result = role ? v8_answering_process(&answering, rx, tx,
+					ARRAY_LENGTH(input)) :
+				v8_calling_process(&calling, rx, tx, ARRAY_LENGTH(input));
+			CHECK(result == ok && memcmp(tx, expected, sizeof(expected)) == 0 &&
+			      memcmp(owner, advanced, size) == 0,
+			      "role %u changed overlapping I/O semantics %u", role, overlap);
+		}
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -688,6 +747,7 @@ int main(void)
 		{ "call menu timeout", test_call_menu_timeout },
 		{ "CJ timeout", test_cj_timeout },
 		{ "CJ completion fallback", test_cj_completion_fallback },
+		{ "fragment buffer ownership", test_fragment_buffers },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

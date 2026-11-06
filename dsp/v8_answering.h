@@ -87,7 +87,9 @@ enum v8_answering_result v8_answering_enable_quick_connect(
 	const struct v92_qc1_message *response);
 /* COMPLETE transfers the next sample to the selected datapump. That owner
  * emits the post-CJ silence while already listening for its peer. QC_COMPLETE
- * instead hands off to the short-Phase-1 signal exchange described above. */
+ * instead hands off to the short-Phase-1 signal exchange described above.
+ * Nonempty sample buffers must not overlap the owner; they may overlap each
+ * other. Rejected calls leave the owner and output unchanged. */
 enum v8_answering_result v8_answering_process(
 	struct v8_answering *answering, const int16_t *receive,
 	int16_t *transmit, size_t count);
