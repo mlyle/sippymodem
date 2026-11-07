@@ -74,12 +74,7 @@ bool qam_equalizer_observation_is_pending(
 	    (!observation->carrier_tracking &&
 	     observation->carrier_phase != 0.0))
 		return false;
-	for (size_t index = 0; index < observation->tap_count;
-	     ++index) {
-		if (!point_is_finite(&observation->history[index]))
-			return false;
-	}
-	return true;
+	return qam_points_are_finite(observation->history, observation->tap_count);
 }
 
 bool qam_equalizer_is_valid(

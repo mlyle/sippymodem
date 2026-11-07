@@ -177,6 +177,19 @@ static inline bool point_is_finite(const struct qam_point *point)
 	       isfinite(point->quadrature);
 }
 
+/* Check an owned readable span in order, stopping at the first nonfinite
+ * point. Empty spans access nothing; owners retain their geometry bounds.
+ * Finite coordinates have no power or magnitude limit here. */
+static inline bool qam_points_are_finite(const struct qam_point *points, size_t count)
+{
+	if (points == NULL && count != 0)
+		return false;
+	for (size_t index = 0; index < count; ++index)
+		if (!point_is_finite(points + index))
+			return false;
+	return true;
+}
+
 /* Finite squared magnitude also proves both coordinates finite: squares
  * cannot cancel infinity or NaN. Require power strictly above 1e-12.
  * Optional power may alias a coordinate; rejection leaves it unchanged. */

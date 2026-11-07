@@ -21,10 +21,7 @@ bool v34_b1_gain_is_valid(const struct v34_b1_gain *fit)
 	    (fit->count >= V34_B1_GAIN_FIT_POINTS &&
 	     (!isfinite(fit->gain) || fit->gain <= 0 || fit->energy <= 0)))
 		return false;
-	for (unsigned i = 0; i < V34_B1_GAIN_POINTS; ++i)
-		if (!point_is_finite(&fit->expected[i]))
-			return false;
-	return true;
+	return qam_points_are_finite(fit->expected, V34_B1_GAIN_POINTS);
 }
 
 void v34_b1_gain_init(struct v34_b1_gain *fit,

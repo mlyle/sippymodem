@@ -218,6 +218,34 @@ static bool test_grid_quarter_rotation(void)
 	return true;
 }
 
+static bool test_point_span_validation(void)
+{
+	struct qam_point points[17];
+	const double poison[] = { NAN, INFINITY, -INFINITY };
+
+	CHECK(qam_points_are_finite(NULL, 0) && !qam_points_are_finite(NULL, 1),
+	      "empty/nonempty point spans changed null ownership");
+	for (size_t count = 0; count <= ARRAY_LENGTH(points); ++count) {
+		for (size_t index = 0; index < ARRAY_LENGTH(points); ++index)
+			points[index] = (struct qam_point){ DBL_MAX, -0.0 };
+		CHECK(qam_points_are_finite(points, count),
+		      "finite large coordinates acquired a power bound");
+		for (size_t index = 0; index < ARRAY_LENGTH(points); ++index)
+			for (unsigned axis = 0; axis < 2; ++axis)
+				for (size_t bad = 0; bad < ARRAY_LENGTH(poison); ++bad) {
+					points[index] = axis ? (struct qam_point){ DBL_MAX, poison[bad] } :
+						(struct qam_point){ poison[bad], -0.0 };
+					struct qam_point saved[ARRAY_LENGTH(points)];
+					memcpy(saved, points, sizeof(points));
+					CHECK(qam_points_are_finite(points, count) == (index >= count) &&
+					      memcmp(points, saved, sizeof(points)) == 0,
+					      "point span read outside its count or changed input");
+					points[index] = (struct qam_point){ DBL_MAX, -0.0 };
+				}
+	}
+	return true;
+}
+
 static bool test_point_validation(void)
 {
 	const struct qam_point finite = { 1.0, -2.0 };
@@ -1650,6 +1678,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "point validation", test_point_validation },
+		{ "point span validation", test_point_span_validation },
 		{ "point correlation", test_point_correlation },
 		{ "exact quarter rotation", test_quarter_rotation },
 		{ "integer grid rotation", test_grid_quarter_rotation },

@@ -474,10 +474,7 @@ static bool matched_history_is_valid(
 {
 	if (demodulator->matched_history_count > QAM_INTERPOLATION_HISTORY)
 		return false;
-	for (size_t index = 0; index < QAM_INTERPOLATION_HISTORY; ++index)
-		if (!point_is_finite(&demodulator->matched_history[index]))
-			return false;
-	return true;
+	return qam_points_are_finite(demodulator->matched_history, QAM_INTERPOLATION_HISTORY);
 }
 
 static bool clock_tracking_filter_is_valid(
