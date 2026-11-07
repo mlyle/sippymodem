@@ -11464,6 +11464,109 @@ static bool test_v92_upstream_negotiation(void)
 	return true;
 }
 
+static bool capture_v92_rate_b1(struct v92_online_pair *pair, struct pcm_call *incomplete)
+{
+	bool captured = false;
+	CHECK(pcm_call_start_rate_renegotiation(&pair->analog) == PCM_CALL_OK,
+	      "B1 rate request did not start");
+	for (unsigned clock = 0u; clock < 40000u; ++clock) {
+		uint8_t rx[2], tx[2];
+		struct pcm_call *calls[] = { &pair->analog, &pair->digital };
+		channel_receive(&pair->wire, &rx[0], &rx[1]);
+		for (unsigned role = 0u; role < 2u; ++role) {
+			struct pcm_call *call = calls[role];
+			if (pcm_call_phase4_is_ready(call))
+				CHECK(pcm_call_start_data_path(call) == PCM_CALL_OK, "B1 rate handoff failed");
+			if (call->stage == PCM_CALL_DATA_PATH) {
+				struct pcm_call_data_event event;
+				CHECK(pcm_call_data_octet(call, rx[role], decode_octet(call->law, rx[role]),
+					true, NULL, &tx[role], &event) == PCM_CALL_OK, "rate B1 receive failed");
+			} else {
+				struct pcm_call_observation observation;
+				CHECK(pcm_call_octet(call, rx[role], decode_octet(call->law, rx[role]),
+					&tx[role], &observation) == PCM_CALL_OK, "rate B1 control failed");
+			}
+		}
+		channel_transmit(&pair->wire, tx[0], tx[1]);
+		if (!captured && pair->digital.stage == PCM_CALL_DATA_PATH &&
+		    pair->digital.v92_rate_renegotiation_active &&
+		    pair->digital.state.data_path.v92_digital.upstream.line.received_frames ==
+			V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES - 1u) {
+			*incomplete = pair->digital;
+			captured = true;
+		}
+		if (captured && pcm_call_is_online(&pair->analog) && pcm_call_is_online(&pair->digital))
+			return true;
+	}
+	CHECK(false, "rate exchange did not finish B1");
+}
+
+static bool test_v92_rate_b1_recovery(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		const struct v92_upstream_offer offer = {
+			.peer_mask = (UINT32_C(1) << 10u) - 1u,
+			.local_maximum = 10u, .expected = 10u,
+		};
+		struct v92_online_pair pair;
+		struct pcm_call incomplete;
+		CHECK(capture_v92_duplex_data(law, 3u, false, &offer, NULL, 0u, &pair),
+		      "rate B1 recovery fixture did not train");
+		CHECK(capture_v92_rate_b1(&pair, &incomplete), "rate B1 fixture did not complete Ru/Rd");
+		/* Isolate the deadline policy on a trained, owned receiver. A peer
+		 * Ru can complete CPu/CPd yet produce low-residual B1u with wrong
+		 * bits. It must not retry that mapping indefinitely at the same rate.
+		 * Other cases retain incomplete/lost-media timeout behavior. */
+		for (unsigned reason = 0u; reason < 5u; ++reason)
+		for (unsigned fixed = 0u; fixed < 2u; ++fixed)
+		for (unsigned budget = 0u; budget <= V92_DATA_QUALITY_MAX_RETRAINS; ++budget) {
+			struct pcm_call call = reason == 2u ? incomplete : pair.digital;
+			struct pcm_call_v92_digital_data *path = &call.state.data_path.v92_digital;
+			struct pcm_call_data_event event;
+			uint8_t octet;
+			call.retrain_active = true;
+			call.v92_rate_renegotiation_active = true;
+			call.rate_renegotiation_deadline_armed = true;
+			call.rate_renegotiation_deadline_remaining_samples = 1u;
+			call.pcm_upstream_quality.recovery.attempts = budget;
+			path->b1u_decode_failed = true;
+			path->b1u_mismatches = V92_B1U_BOTH_MISMATCH;
+			if (reason == 1u) {
+				path->b1u_decode_failed = false;
+				path->b1u_mismatches = 0u;
+				path->b1u_squared_error = 1.0 + (double)V92_B1U_VALIDATION_SYMBOLS *
+					V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR;
+			} else if (reason == 3u) {
+				path->pending_media_loss = true;
+				path->quality_guard_samples = 2u;
+			} else if (reason == 4u && !fixed) {
+				call.v92_upstream_retry_ceiling = 8u;
+			}
+			if (fixed) {
+				call.v92_digital_phase4_configuration.upstream_selection = PCM_CALL_V92_UPSTREAM_CONFIGURED;
+				call.v92_digital_phase4_configuration.cpd = path->upstream.decoder.mapping.cpd;
+				call.v92_digital_phase4_configuration.cpd.acknowledges_cpu = false;
+			}
+			struct pcm_call_v92_digital_phase4_configuration configuration = call.v92_digital_phase4_configuration;
+			bool rejected = reason != 2u && reason != 3u;
+			bool available = !rejected || budget < V92_DATA_QUALITY_MAX_RETRAINS;
+			uint8_t ceiling = reason == 4u && !fixed ? 8u : rejected && !fixed && available ? 9u : 0u;
+			CHECK(pcm_call_is_valid(&call), "rate B1 deadline fixture invalid law %u reason %u", law, reason);
+			enum pcm_call_result result = pcm_call_data_octet(&call,
+				silence_octet(law), 0, true, NULL, &octet, &event);
+			CHECK(result == (available ? PCM_CALL_OK : PCM_CALL_FAILED) && pcm_call_is_valid(&call) &&
+			      (available ? call.stage == PCM_CALL_RETRAIN_SILENCE : call.failed) &&
+			      event.kind == PCM_CALL_DATA_NONE && call.v92_upstream_retry_ceiling == ceiling &&
+			      call.pcm_upstream_quality.recovery.attempts == budget + (rejected && available ? 1u : 0u) &&
+			      memcmp(&configuration, &call.v92_digital_phase4_configuration, sizeof(configuration)) == 0,
+			      "rate B1 recovery lost ceiling/budget/mapping: law %u reason %u fixed %u budget %u result %s ceiling %u attempts %u",
+			      law, reason, fixed, budget, pcm_call_result_name(result), call.v92_upstream_retry_ceiling,
+			      call.pcm_upstream_quality.recovery.attempts);
+		}
+	}
+	return true;
+}
+
 static bool test_v92_b1_rate_recovery(void)
 {
 	/* First prove that codec noise alone need not force the old 48k->40k
@@ -13670,6 +13773,7 @@ int main(int argc, char **argv)
 		{ "V.92 local and simultaneous rate exchange", test_v92_rate_request },
 		{ "V.92 peer-limited upstream data", test_v92_upstream_negotiation },
 		{ "V.92 failed B1 rate recovery", test_v92_b1_rate_recovery },
+		{ "V.92 rejected rate-exchange B1 recovery", test_v92_rate_b1_recovery },
 		{ "V.92 downstream reselection through retrain", test_v92_downstream_reselection },
 		{ "V.92 received lookahead limits", test_v92_received_lookahead },
 		{ "V.92 upstream reselection through retrain", test_v92_upstream_reselection },

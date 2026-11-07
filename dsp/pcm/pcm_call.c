@@ -4606,14 +4606,29 @@ static enum pcm_call_result update_rate_renegotiation_deadline(
 		call->rate_renegotiation_deadline_armed = true;
 		return PCM_CALL_OK;
 	}
-	call->rate_renegotiation_deadline_remaining_samples--;
-	if (call->rate_renegotiation_deadline_remaining_samples != 0u)
+	/* Keep the last live tick until recovery commits, including exhaustion. */
+	if (call->rate_renegotiation_deadline_remaining_samples > 1u) {
+		call->rate_renegotiation_deadline_remaining_samples--;
 		return PCM_CALL_OK;
+	}
 	if (pcm_call_is_disconnecting(call))
 		return PCM_CALL_CLEARDOWN_COMPLETE;
 	/* V.90 9.6 bounds the response to 5000 ms plus two round-trip delays.
 	 * Use the same bounded recovery policy for PCM Ru/control/B1, not as
 	 * a purported V.92 normative timer. */
+	if (uses_pcm_upstream(call) && call->stage == PCM_CALL_DATA_PATH &&
+	    call->local_role == V90_DIGITAL_MODEM) {
+		const struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
+
+		/* Completed but rejected B1u is evidence against the new mapping,
+		 * just as at initial startup. Reuse its bounded rate recovery rather
+		 * than repeating the same selection after every Ru timeout. Missing
+		 * B1 or known media loss does not justify lowering the rate. */
+		if ((path->fast.stage == PCM_CALL_V92_FAST_IDLE || path->fast.b1_started) &&
+		    path->upstream.line.received_frames >= V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES &&
+		    !path->pending_media_loss && !v92_peer_b1_received_owned(call))
+			return retry_v92_upstream(call, true);
+	}
 	return begin_retrain(call, RETRAIN_LOCAL);
 }
 
