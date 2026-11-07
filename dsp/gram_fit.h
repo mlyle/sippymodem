@@ -36,9 +36,8 @@ static inline void gram_accumulate(
 {
 	for (unsigned i = 0; i < count; ++i) {
 		rhs[i] += row[i] * target;
-		unsigned first = gram_moment_index(i, 0);
 		for (unsigned j = 0; j <= i; ++j)
-			moments[first + j] += row[i] * row[j];
+			*moments++ += row[i] * row[j];
 	}
 }
 
