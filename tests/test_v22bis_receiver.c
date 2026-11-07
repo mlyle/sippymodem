@@ -107,6 +107,118 @@ static bool test_channel_tracking(void)
 	return true;
 }
 
+static bool test_read_only_slicing(void)
+{
+	static const struct qam_point channels[] = {
+		{ 1., 0. }, { .72, -.31 }, { -.24, .83 },
+	};
+	const double unit = 1. / sqrt(18.);
+	struct qam_point reference;
+
+	CHECK(v22bis_1200_constellation_point(0, &reference) == V22_FRAMING_OK,
+	      "slicer reference was not generated");
+	for (size_t c = 0; c < ARRAY_LENGTH(channels); ++c) {
+		struct v22bis_receiver receiver;
+		struct qam_point received = complex_multiply(&channels[c], &reference);
+
+		CHECK(v22bis_receiver_init(&receiver, &received) == V22BIS_RECEIVER_OK,
+		      "slicer channel %zu did not initialize", c);
+		for (unsigned started = 0; started < 2; ++started) {
+			receiver.v22bis_started = started != 0;
+			receiver.decoder.phase_quadrant = 3;
+			struct v22bis_receiver saved = receiver;
+
+			/* Unique square-grid decisions, including points between and
+			 * outside the constellation. Derive labels from quadrant and
+			 * independent axis thresholds, without a candidate search. */
+			for (int x = -7; x <= 7; x += 2) {
+				for (int y = -7; y <= 7; y += 2) {
+					unsigned quadrant = x < 0 ? (y < 0 ? 2u : 1u) : (y < 0 ? 3u : 0u);
+					int a = quadrant & 1u ? y : x;
+					int b = quadrant & 1u ? x : y;
+					uint8_t expected = (uint8_t)(quadrant * 4u +
+						(a < -4 || a > 4) + 2u * (b < -4 || b > 4));
+					struct qam_point ideal = { x * .5 * unit, y * .5 * unit };
+					uint8_t symbol = UINT8_MAX;
+
+					received = complex_multiply(&channels[c], &ideal);
+					CHECK(v22bis_receiver_slice(&receiver, &received, &symbol) ==
+						      V22BIS_RECEIVER_OK && symbol == expected &&
+					      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
+					      "read-only slicer changed channel/phase or label at %zu/%u/%d/%d",
+					      c, started, x, y);
+				}
+			}
+		}
+	}
+	return true;
+}
+
+static bool test_slicing_boundaries(void)
+{
+	struct v22bis_receiver receiver, saved;
+	struct qam_point reference;
+	const double unit = 1. / sqrt(18.);
+	const struct qam_point tied[] = { { 0., 0. }, { 0., unit },
+		{ 0., -unit }, { unit, 0. }, { -unit, 0. } };
+	static const uint8_t expected[] = { 0, 0, 8, 0, 4 };
+	const struct qam_point invalid[] = { { NAN, 0. }, { 0., INFINITY }, { DBL_MAX, 0. } };
+	uint8_t symbol = UINT8_MAX;
+
+	CHECK(v22bis_1200_constellation_point(0, &reference) == V22_FRAMING_OK &&
+	      v22bis_receiver_init(&receiver, &reference) == V22BIS_RECEIVER_OK,
+	      "slicer boundary fixture did not initialize");
+	saved = receiver;
+	for (size_t i = 0; i < ARRAY_LENGTH(tied); ++i)
+		CHECK(v22bis_receiver_slice(&receiver, &tied[i], &symbol) ==
+			      V22BIS_RECEIVER_OK && symbol == expected[i],
+		      "slicer tie %zu did not retain the lowest symbol", i);
+	{
+		uint8_t bits[V22BIS_BITS_PER_SYMBOL] = { 9, 9, 9, 9 };
+
+		CHECK(v22bis_receiver_decode(&receiver, &tied[0], bits) ==
+			      V22BIS_RECEIVER_INVALID_ARGUMENT &&
+		      bits[0] == 9 && bits[1] == 9 && bits[2] == 9 && bits[3] == 9 &&
+		      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
+		      "read-only zero observation relaxed payload admission");
+	}
+	for (size_t i = 0; i < ARRAY_LENGTH(invalid); ++i) {
+		symbol = UINT8_MAX;
+		CHECK(v22bis_receiver_slice(&receiver, &invalid[i], &symbol) ==
+			      V22BIS_RECEIVER_INVALID_ARGUMENT && symbol == UINT8_MAX,
+		      "slicer invalid point %zu changed output", i);
+	}
+	CHECK(v22bis_receiver_slice(NULL, &reference, &symbol) == V22BIS_RECEIVER_INVALID_ARGUMENT &&
+	      v22bis_receiver_slice(&receiver, NULL, &symbol) == V22BIS_RECEIVER_INVALID_ARGUMENT &&
+	      v22bis_receiver_slice(&receiver, &reference, NULL) == V22BIS_RECEIVER_INVALID_ARGUMENT &&
+	      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
+	      "slicer rejected input changed state");
+	for (size_t offset = 0; offset < sizeof(receiver); ++offset)
+		CHECK(v22bis_receiver_slice(&receiver, &reference, (uint8_t *)&receiver + offset) ==
+			      V22BIS_RECEIVER_INVALID_ARGUMENT &&
+		      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
+		      "slicer output overlap changed receiver at %zu", offset);
+	for (size_t offset = 0; offset < sizeof(reference); ++offset) {
+		struct qam_point inplace = reference;
+		uint8_t *output = (uint8_t *)&inplace + offset;
+
+		CHECK(v22bis_receiver_slice(&receiver, &inplace, output) == V22BIS_RECEIVER_OK &&
+		      *output == 1 && memcmp(&receiver, &saved, sizeof(receiver)) == 0,
+		      "slicer input/output alias failed at %zu", offset);
+	}
+	CHECK(v22bis_receiver_slice(&receiver, &receiver.gain.channel_gain, &symbol) ==
+		      V22BIS_RECEIVER_OK && memcmp(&receiver, &saved, sizeof(receiver)) == 0,
+	      "slicer input alias changed receiver");
+	receiver.decoder.phase_quadrant = QPSK_QUADRANT_COUNT;
+	saved = receiver;
+	symbol = UINT8_MAX;
+	CHECK(v22bis_receiver_slice(&receiver, &reference, &symbol) ==
+		      V22BIS_RECEIVER_INVALID_ARGUMENT && symbol == UINT8_MAX &&
+	      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
+	      "slicer accepted invalid decoder state");
+	return true;
+}
+
 static struct qam_point add_relative_error(
 	const struct qam_point *point, double error_amplitude)
 {
@@ -367,6 +479,8 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "adaptive channel tracking", test_channel_tracking },
+		{ "read-only constellation slicing", test_read_only_slicing },
+		{ "slicing ties and ownership", test_slicing_boundaries },
 		{ "V.22 reference threshold", test_v22_match_threshold },
 		{ "V.22 transition tracking", test_v22_transition_tracking },
 		{ "validation", test_validation },

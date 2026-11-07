@@ -1152,42 +1152,6 @@ static uint8_t v22_retrain_phase_label(uint8_t quarter_turns)
 				    quarter_turns;
 }
 
-static int v22bis_hard_symbol(
-	const struct v22_datapump *datapump,
-	const struct qam_point *point, uint8_t *symbol)
-{
-	double best_error = HUGE_VAL;
-	uint8_t best_symbol = 0;
-
-	if (!datapump_uses_v22bis(datapump) || point == NULL ||
-	    !point_is_finite(point) || symbol == NULL ||
-	    !datapump->v22bis_receiver_initialized ||
-	    !v22bis_receiver_is_valid(&datapump->v22bis_receiver))
-		return -1;
-	for (uint8_t candidate = 0; candidate < V22BIS_SYMBOL_COUNT;
-	     ++candidate) {
-		struct qam_point ideal;
-		struct qam_point predicted;
-		double error;
-
-		if (v22bis_constellation_point(candidate, &ideal) !=
-			    V22_FRAMING_OK ||
-		    qam_gain_predict(
-			    &datapump->v22bis_receiver.gain, &ideal,
-			    &predicted) != QAM_GAIN_OK)
-			return -1;
-		error = qam_point_distance_squared(point, &predicted);
-		if (isfinite(error) && error < best_error) {
-			best_error = error;
-			best_symbol = candidate;
-		}
-	}
-	if (!isfinite(best_error))
-		return -1;
-	*symbol = best_symbol;
-	return 0;
-}
-
 static int remember_retrain_symbol(
 	struct v22_datapump *datapump, uint8_t symbol,
 	bool discard_oldest)
@@ -1422,7 +1386,9 @@ static int detect_online_retrain(
 	*started = false;
 	if (!datapump->has_previous_receive_point)
 		return 0;
-	if (v22bis_hard_symbol(datapump, point, &absolute_symbol) != 0)
+	if (!datapump->v22bis_receiver_initialized ||
+	    v22bis_receiver_slice(&datapump->v22bis_receiver, point,
+		    &absolute_symbol) != V22BIS_RECEIVER_OK)
 		return -1;
 	previous_quadrant =
 		datapump->v22bis_receiver.decoder.phase_quadrant;

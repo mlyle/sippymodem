@@ -35,6 +35,14 @@ enum v22bis_receiver_result
 v22bis_receiver_track_v22(
 	struct v22bis_receiver *receiver, uint8_t quarter_turns,
 	const struct qam_point *point);
+/* Slice a finite point using the learned channel, without advancing gain,
+ * differential phase or descrambler state. Equal distances retain the lowest
+ * symbol index. Zero is allowed for retrain observation; payload admission
+ * remains with decode(). Input may alias receiver or output, but output must
+ * not overlap receiver. Rejection preserves receiver and output. */
+enum v22bis_receiver_result v22bis_receiver_slice(
+	const struct v22bis_receiver *receiver,
+	const struct qam_point *point, uint8_t *symbol);
 /* Input may overlap the receiver or output; output must not overlap the
  * receiver. Rejected calls preserve receiver and output. */
 enum v22bis_receiver_result v22bis_receiver_decode(

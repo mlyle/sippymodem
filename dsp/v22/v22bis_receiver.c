@@ -110,16 +110,68 @@ v22bis_receiver_track_v22(
 	return V22BIS_RECEIVER_OK;
 }
 
+/* Both callers validate their inputs and use distinct local outputs. Keep
+ * the numerical search inline so payload decoding retains its existing
+ * validation and the ideal point already constructed for gain tracking. */
+static inline bool nearest_symbol(
+	const struct qam_gain *gain, const struct qam_point *point,
+	uint8_t *symbol, struct qam_point *ideal_point)
+{
+	uint8_t best_symbol = 0;
+	struct qam_point best_point = { 0 };
+	double best_error = DBL_MAX;
+
+	for (uint8_t candidate = 0; candidate < V22BIS_SYMBOL_COUNT;
+	     ++candidate) {
+		struct qam_point ideal;
+		struct qam_point predicted;
+		double error;
+
+		if (v22bis_constellation_point(
+			    candidate, &ideal) != V22_FRAMING_OK)
+			return false;
+		if (qam_gain_predict(
+			    gain, &ideal, &predicted) !=
+		    QAM_GAIN_OK)
+			return false;
+		error = qam_point_distance_squared(point, &predicted);
+		if (isfinite(error) && error < best_error) {
+			best_error = error;
+			best_symbol = candidate;
+			best_point = ideal;
+		}
+	}
+	if (best_error == DBL_MAX)
+		return false;
+	*symbol = best_symbol;
+	*ideal_point = best_point;
+	return true;
+}
+
+enum v22bis_receiver_result v22bis_receiver_slice(
+	const struct v22bis_receiver *receiver,
+	const struct qam_point *point, uint8_t *symbol)
+{
+	struct qam_point ideal;
+
+	if (!v22bis_receiver_is_valid(receiver) ||
+	    !point_is_finite(point) || symbol == NULL ||
+	    memory_regions_overlap(receiver, sizeof(*receiver),
+			   symbol, sizeof(*symbol)) ||
+	    !nearest_symbol(&receiver->gain, point, symbol, &ideal))
+		return V22BIS_RECEIVER_INVALID_ARGUMENT;
+	return V22BIS_RECEIVER_OK;
+}
+
 enum v22bis_receiver_result v22bis_receiver_decode(
 	struct v22bis_receiver *receiver,
 	const struct qam_point *point,
 	uint8_t bits[V22BIS_BITS_PER_SYMBOL])
 {
 	struct v22bis_receiver next;
-	struct qam_point best_point = { 0 };
+	struct qam_point best_point;
 	uint8_t decoded[V22BIS_BITS_PER_SYMBOL];
-	uint8_t best_symbol = 0;
-	double best_error = DBL_MAX;
+	uint8_t best_symbol;
 
 	if (!v22bis_receiver_is_valid(receiver) ||
 	    !qam_point_nonzero_power(point, NULL) || bits == NULL ||
@@ -127,27 +179,7 @@ enum v22bis_receiver_result v22bis_receiver_decode(
 			   bits, V22BIS_BITS_PER_SYMBOL))
 		return V22BIS_RECEIVER_INVALID_ARGUMENT;
 	next = *receiver;
-	for (uint8_t symbol = 0; symbol < V22BIS_SYMBOL_COUNT;
-	     ++symbol) {
-		struct qam_point candidate;
-		struct qam_point predicted;
-		double error;
-
-		if (v22bis_constellation_point(
-			    symbol, &candidate) != V22_FRAMING_OK)
-			return V22BIS_RECEIVER_INVALID_ARGUMENT;
-		if (qam_gain_predict(
-			    &next.gain, &candidate, &predicted) !=
-		    QAM_GAIN_OK)
-			return V22BIS_RECEIVER_INVALID_ARGUMENT;
-		error = qam_point_distance_squared(point, &predicted);
-		if (isfinite(error) && error < best_error) {
-			best_error = error;
-			best_symbol = symbol;
-			best_point = candidate;
-		}
-	}
-	if (best_error == DBL_MAX ||
+	if (!nearest_symbol(&next.gain, point, &best_symbol, &best_point) ||
 	    v22bis_symbol_decode(
 		    &next.decoder, best_symbol, decoded) !=
 		    V22_FRAMING_OK)
