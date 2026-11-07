@@ -518,7 +518,9 @@ static int detector_accept_pattern_character(struct modem *m,
 
 static int raw_text_observe(struct raw_text_probe *text, u8 character)
 {
+	enum { ESCAPE = 1, CSI_PARAMETERS, CSI_INTERMEDIATES };
 	bool newline = character == '\r' || character == '\n';
+	bool escaped = false;
 
 	if (text->adp_next != 0) {
 		if (character == text->adp_next) {
@@ -527,32 +529,55 @@ static int raw_text_observe(struct raw_text_probe *text, u8 character)
 		}
 		text->adp_next = 0;
 	}
-	if (!text->confirmed && !newline && character != '\t' &&
-	    (character < 0x20 || character > 0x7e)) {
-		text->length = 0;
-		return 0;
+	if (!text->confirmed) {
+		/* Retain bounded ANSI CSI prefixes with the eventual raw prompt.
+		 * Formatting alone is not evidence that this peer is sending text. */
+		if (!text->escape && character == 0x1b) {
+			text->escape = ESCAPE;
+			escaped = true;
+		} else if (text->escape) {
+			escaped = true;
+			if (text->escape == ESCAPE && character == '[')
+				text->escape = CSI_PARAMETERS;
+			else if (text->escape >= CSI_PARAMETERS && character >= 0x40 && character <= 0x7e)
+				text->escape = 0;
+			else if (text->escape == CSI_PARAMETERS && character >= 0x30 && character <= 0x3f) {
+				/* Parameter bytes precede optional intermediate bytes. */
+			} else if (text->escape >= CSI_PARAMETERS && character >= 0x20 && character <= 0x2f)
+				text->escape = CSI_INTERMEDIATES;
+			else {
+				*text = (struct raw_text_probe){0};
+				return 0;
+			}
+		} else if (!newline && character != '\t' &&
+			   (character < 0x20 || character > 0x7e)) {
+			*text = (struct raw_text_probe){0};
+			return 0;
+		}
 	}
 	if (text->length == sizeof(text->bytes))
 		return -1;
 	text->bytes[text->length++] = character;
 	if (text->confirmed)
 		return 0;
+	if (escaped)
+		return 0;
+	++text->characters;
 	/* V.42 ADP decodes as printable E/C characters. Repeated answer
 	 * patterns can outlast detection and must not become a raw prompt.
 	 * Either pair alignment is possible when the HDLC probe begins. */
 	if (text->length >= 4) {
 		const u8 *tail = text->bytes + text->length - 4;
 		if (!memcmp(tail, "ECEC", 4) || !memcmp(tail, "CECE", 4)) {
-			text->adp_next = tail[2];
-			text->length = 0;
+			*text = (struct raw_text_probe){ .adp_next = tail[2] };
 			return 0;
 		}
 	}
 	/* Require adjacent line endings, a short line, or a printable prompt. */
-	if ((newline && (text->length >= 4 ||
+	if ((newline && (text->characters >= 4 ||
 	     (text->length >= 2 &&
 	      (text->bytes[text->length - 2] == '\r' ||
-	       text->bytes[text->length - 2] == '\n')))) || text->length == 32)
+	       text->bytes[text->length - 2] == '\n')))) || text->characters == 32)
 		text->confirmed = true;
 	return 0;
 }

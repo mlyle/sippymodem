@@ -321,9 +321,9 @@ struct modem_call_report {
 /* modem struct */
 struct raw_text_probe {
 	u8 bytes[128];
-	unsigned int length;
+	unsigned int length, characters;
 	bool confirmed;
-	u8 adp_next;
+	u8 adp_next, escape;
 };
 
 struct modem {

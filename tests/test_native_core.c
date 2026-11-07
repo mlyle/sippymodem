@@ -11873,7 +11873,7 @@ static bool test_v42_late_originator_detection(void)
 
 static bool test_lapm_raw_text_fallback(void)
 {
-	enum { RAW_TEXT, REQUIRED, ESTABLISHED, VALID_FRAME, REFRAMED, IN_FRAME, BAD_STOP, ADP_ONLY, ADP_TEXT };
+	enum { RAW_TEXT, REQUIRED, ESTABLISHED, VALID_FRAME, REFRAMED, IN_FRAME, BAD_STOP, ADP_ONLY, ADP_TEXT, ANSI_TEXT };
 	struct modem_driver driver = {
 		.name = "LAPM raw fallback", .start = unused_start,
 		.stop = unused_stop, .ioctl = unused_control,
@@ -11881,12 +11881,13 @@ static bool test_lapm_raw_text_fallback(void)
 
 	for (unsigned caller = 0; caller <= 1; ++caller)
 	for (unsigned batch = 0; batch <= 1; ++batch)
-	for (unsigned test = RAW_TEXT; test <= ADP_TEXT; ++test)
+	for (unsigned test = RAW_TEXT; test <= ANSI_TEXT; ++test)
 	for (unsigned width = 1; width <= 8; ++width) {
 		struct modem *m = create_compat_modem(&driver, "LAPM raw fallback");
 		struct dp dp = { .id = DP_V22BIS, .modem = m };
 		struct modem source = { .get_chars = scripted_lapm_source };
-		const char *text = test == ADP_ONLY ? "" :
+		const char *text = test == ANSI_TEXT ? "e more time...\x1b[0m\x1b[2K\rWelcome" :
+			test == ADP_ONLY ? "" :
 			test == BAD_STOP ? "\r\n" : "\r\nWelcome";
 		uint8_t bits[1024], groups[1024], received[128], output;
 		int result_pipe[2];
@@ -11991,7 +11992,7 @@ static bool test_lapm_raw_text_fallback(void)
 			CHECK(modem_put_bits(m, width, groups, group_count) == (int)group_count,
 			      "raw fallback final batch failed");
 		ssize_t length = read(result_pipe[0], received, sizeof(received));
-		if (test == RAW_TEXT || test == ADP_TEXT) {
+		if (test == RAW_TEXT || test == ADP_TEXT || test == ANSI_TEXT) {
 			CHECK(m->get_bits == modem_async_get_bits && !m->cfg.ec && !m->cfg.comp &&
 			      length == (ssize_t)strlen(text) && !memcmp(received, text, strlen(text)) &&
 			      m->xmit.count == 1 && m->xmit.buf[m->xmit.tail] == 'Z' &&
@@ -12018,6 +12019,9 @@ static bool test_v42_raw_text_detection(void)
 	static const char *const lines[] = {
 		"\r\nWelcome", "\n\rLogin:", "\r\r", "login:\r", "hello\n",
 		"A printable banner with no newline yet",
+		"e more time...\x1b[0m\x1b[2K\rGood!\r\n",
+		"\x1b[?25l\x1b[38;5;42mLogin:\r",
+		"\x1b[0mA printable banner with no newline yet",
 	};
 	struct modem_driver driver = {
 		.name = "V.42 text reply", .start = unused_start,
@@ -12025,7 +12029,7 @@ static bool test_v42_raw_text_detection(void)
 	};
 
 	for (unsigned caller = 0; caller <= 1; ++caller)
-	for (unsigned width = 1; width <= 8; width *= 2) {
+	for (unsigned width = 1; width <= 8; ++width) {
 		for (size_t line = 0; line < ARRAY_LENGTH(lines); ++line) {
 			struct modem *m = create_compat_modem(&driver, "V.42 text reply");
 			struct dp dp = { .id = DP_V22BIS, .modem = m };

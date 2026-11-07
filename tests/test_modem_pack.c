@@ -705,7 +705,7 @@ static bool test_v42_rejects_bad_detection_stops(void)
 static bool test_v42_text_requires_framing(void)
 {
 	static const struct {
-		uint8_t characters[6];
+		uint8_t characters[64];
 		unsigned count;
 		int bad_stop;
 	} cases[] = {
@@ -713,6 +713,8 @@ static bool test_v42_text_requires_framing(void)
 		{ { '\r', '\n' }, 2, 0 },
 		{ { '\r', '\n' }, 2, 1 },
 		{ { ' ', '\b', 0, ' ', '\b', 0 }, 6, -1 },
+		{ "\x1b[12345678901234567890123456789012", 34, -1 },
+		{ "\x1b[1;2;3;4;5;6;7;8;9;10;11;12;13m", 32, -1 },
 	};
 
 	for (unsigned caller = 0; caller <= 1; ++caller)
@@ -722,7 +724,7 @@ static bool test_v42_text_requires_framing(void)
 				.caller = caller, .tx_rate = 2400, .rx_rate = 2400,
 				.cfg = { .ec = 1, .ec_detector = 1 },
 			};
-			uint8_t bits[128];
+			uint8_t bits[512];
 			size_t count = 0;
 
 			memset(bits, 1, sizeof(bits));
