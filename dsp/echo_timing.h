@@ -66,6 +66,15 @@ static inline bool echo_timing_is_valid(const struct echo_timing *t)
 	       t->fast.candidate < ECHO_TIMING_BINS;
 }
 
+/* Invalidate evidence without clearing its backing arrays. fill == 0 is the
+ * empty state; observe clears storage before admitting its next sample. The
+ * model's independent suspension policy is unchanged. */
+static inline void echo_timing_reset(struct echo_timing *t)
+{
+	t->write = t->received_write = t->fill = t->count = 0;
+	t->slow.candidate = t->medium.candidate = t->fast.candidate = 0;
+}
+
 /* The owner validates state and supplies its frozen prediction as
  * received-cleaned. Clipped samples reset evidence. Zero initialization resets
  * the monitor; model.suspended reports confidence after each observation. */

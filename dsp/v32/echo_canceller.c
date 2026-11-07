@@ -97,7 +97,7 @@ enum v32_echo_result v32_echo_canceller_start_adaptation(
 		return V32_ECHO_INVALID_ARGUMENT;
 	if (canceller->pending_samples)
 		return V32_ECHO_INVALID_STATE;
-	memset(&canceller->far_timing, 0, sizeof(canceller->far_timing));
+	echo_timing_reset(&canceller->far_timing);
 	canceller->pending_far_delay_symbols = 0;
 	canceller->far_suspended = false;
 	canceller->adaptation = adaptation;

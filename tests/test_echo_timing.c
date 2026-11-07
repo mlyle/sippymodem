@@ -101,16 +101,37 @@ static void check_windows(struct echo_timing *timing, unsigned seed)
 
 int main(void)
 {
-	struct echo_timing timing = { 0 }, zero = { 0 };
+	struct echo_timing timing = { 0 };
 	struct echo_timing_model model = { .retime = reject_retime };
 
 	check_windows(&timing, 0x21b5u);
 	echo_timing_observe(&timing, &model, INT16_MAX, 0);
-	assert(memcmp(&timing, &zero, sizeof(timing)) == 0);
+	assert(echo_timing_is_valid(&timing) && timing.fill == 0 && timing.count == 0);
 	check_windows(&timing, 0x72c9u);
 	echo_timing_observe(&timing, &model, 0, INT16_MIN);
-	assert(memcmp(&timing, &zero, sizeof(timing)) == 0);
+	assert(echo_timing_is_valid(&timing) && timing.fill == 0 && timing.count == 0);
 	check_windows(&timing, 0x8ef3u);
+
+	/* Repeated invalidation must discard every old scale and both histories
+	 * before new samples contribute, even when backing storage is nonzero. */
+	memset(&timing, 0xa5, sizeof(timing));
+	for (unsigned n = 0; n < 160; n++) {
+		echo_timing_reset(&timing);
+		assert(echo_timing_is_valid(&timing));
+		assert(timing.fill == 0 && timing.count == 0);
+	}
+	check_windows(&timing, 0x59a7u);
+
+	/* A clipped run keeps evidence empty and preserves the owner's separate
+	 * confidence policy; fresh observations must rebuild every window. */
+	model.suspended = true;
+	for (unsigned n = 0; n < 160; n++) {
+		echo_timing_observe(&timing, &model, INT16_MIN, 0);
+		assert(echo_timing_is_valid(&timing) && timing.fill == 0);
+		assert(model.suspended);
+	}
+	check_windows(&timing, 0x74d1u);
+
 	timing.count = ECHO_TIMING_WINDOW;
 	assert(!echo_timing_is_valid(&timing));
 	timing.count = 0;

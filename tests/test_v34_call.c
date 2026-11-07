@@ -720,7 +720,6 @@ static bool check_data_erasure(
 	CHECK(v34_receive_timing_set_feedback_held(&held.state.phase4.receive.line.timing,
 						 true) == V34_RECEIVE_TIMING_OK,
 	      "reference clock hold failed");
-	memset(&expected.timing, 0, sizeof(expected.timing));
 	for (unsigned sample = 0; sample < 80u; ++sample) {
 		struct v34_call_observation observation;
 		struct v34_call_observation held_observation;
@@ -747,6 +746,12 @@ static bool check_data_erasure(
 		     &held.state.phase4.receive.line.timing,
 		     sizeof(struct v34_receive_timing)) == 0,
 	      "unavailable input changed the learned clock or its prior hold");
+	CHECK(echo_timing_is_valid(&call.echo.timing) &&
+	      call.echo.timing.fill == 0 && call.echo.timing.count == 0,
+	      "erased input retained active echo timing evidence");
+	/* Empty evidence may retain backing arrays until observations resume.
+	 * Continue comparing the complete model and TX history outside it. */
+	expected.timing = call.echo.timing;
 	CHECK(v34_call_is_online(&call) &&
 	      call.state.phase4.transmit.data.line.generated_samples == transmitted + 80u &&
 	      call.state.phase4.receive.line.equalizer.epoch > received_epoch &&

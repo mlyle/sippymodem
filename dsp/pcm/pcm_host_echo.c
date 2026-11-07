@@ -99,7 +99,7 @@ bool pcm_host_echo_is_valid(const struct pcm_host_echo *echo)
 static enum pcm_host_echo_result restart_training(
 	struct pcm_host_echo *echo, uint32_t delay)
 {
-	memset(&echo->timing, 0, sizeof(echo->timing));
+	echo_timing_reset(&echo->timing);
 	memset(echo->coefficients, 0, sizeof(echo->coefficients));
 	echo->prediction_energy = 0;
 	echo->input_energy = 0;
@@ -513,7 +513,7 @@ enum pcm_host_echo_result pcm_host_echo_retime(
 		return PCM_HOST_ECHO_INVALID_STATE;
 	enum pcm_host_echo_result result = retime_active_model(echo, delay_change_samples);
 	if (result == PCM_HOST_ECHO_OK)
-		memset(&echo->timing, 0, sizeof(echo->timing));
+		echo_timing_reset(&echo->timing);
 	return result;
 }
 
@@ -551,7 +551,7 @@ static enum pcm_host_echo_result observe_timing(
 	int16_t received_sample, int16_t cleaned_sample, int *delay_change)
 {
 	if (!mode_is_filtering(mode) && echo->timing.fill != 0)
-		memset(&echo->timing, 0, sizeof(echo->timing));
+		echo_timing_reset(&echo->timing);
 	/* Confidence monitoring observes a suspended frozen model too. */
 	uint32_t delay = pcm_host_echo_active_delay_owned(echo, PCM_HOST_ECHO_FILTER);
 	if (mode_is_filtering(mode) && delay) {
@@ -590,7 +590,7 @@ enum pcm_host_echo_result pcm_host_echo_reset_timing(struct pcm_host_echo *echo)
 {
 	if (!header_is_valid(echo))
 		return PCM_HOST_ECHO_INVALID_STATE;
-	memset(&echo->timing, 0, sizeof(echo->timing));
+	echo_timing_reset(&echo->timing);
 	return PCM_HOST_ECHO_OK;
 }
 

@@ -1505,10 +1505,15 @@ static bool test_explicit_observation(enum pcm_host_echo_mode mode, bool retaine
 	/* A new observation view must not retain the preceding view's evidence. */
 	echo.filter_suspended = true;
 	memcpy(&legacy, &echo, sizeof(echo));
-	memset(&legacy.timing, 0, sizeof(legacy.timing));
 	CHECK(pcm_host_echo_reset_timing(&echo) == PCM_HOST_ECHO_OK &&
 	      pcm_host_echo_reset_timing(&echo) == PCM_HOST_ECHO_OK &&
-	      memcmp(&echo, &legacy, sizeof(echo)) == 0,
+	      echo_timing_is_valid(&echo.timing) &&
+	      echo.timing.fill == 0 && echo.timing.count == 0,
+	      "timing reset retained active evidence");
+	/* Empty timing storage may be cleared lazily. Everything outside that
+	 * workspace, including confidence and the TX clock, must stay exact. */
+	legacy.timing = echo.timing;
+	CHECK(memcmp(&echo, &legacy, sizeof(echo)) == 0,
 	      "timing reset changed filters, confidence or reference history");
 	return true;
 }

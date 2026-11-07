@@ -132,7 +132,7 @@ static bool finish_timing_window(struct echo_timing *timing,
 		if (timing_is_qualified(&combined, 2 * samples, 36) &&
 		    model->retime(model->owner, (int)best - (int)radius)) {
 			model->suspended = false;
-			memset(timing, 0, sizeof(*timing));
+			echo_timing_reset(timing);
 			return true;
 		}
 	}
@@ -177,13 +177,16 @@ void echo_timing_observe(struct echo_timing *t,
 	struct echo_timing_model *model, int16_t received, int16_t cleaned)
 {
 	const unsigned bins = ECHO_TIMING_BINS;
-	unsigned index = t->write;
 
 	if (cleaned == INT16_MIN || cleaned == INT16_MAX ||
 	    received == INT16_MIN || received == INT16_MAX) {
-		memset(t, 0, sizeof(*t));
+		echo_timing_reset(t);
 		return;
 	}
+	if (t->fill == 0)
+		memset(t, 0, sizeof(*t));
+	unsigned index = t->write;
+
 	t->prediction[index] = (int32_t)received - cleaned;
 	int16_t input = t->received[t->received_write];
 	t->received[t->received_write] = received;
