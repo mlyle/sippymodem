@@ -316,6 +316,34 @@ static bool test_smoothing(void)
 	return true;
 }
 
+static bool check_nonnegative_remainder(int32_t value, uint32_t modulus)
+{
+	int32_t remainder = nonnegative_remainder_s32(value, modulus);
+
+	/* These two properties uniquely identify the mathematical residue;
+	 * widening the congruence check also covers INT32_MIN safely. */
+	CHECK(remainder >= 0 && (uint32_t)remainder < modulus &&
+	      ((int64_t)value - remainder) % modulus == 0,
+	      "noncanonical residue: value=%d modulus=%u result=%d",
+	      value, modulus, remainder);
+	return true;
+}
+
+static bool test_nonnegative_remainder(void)
+{
+	for (uint32_t modulus = 1; modulus <= 256; ++modulus)
+		for (int32_t value = -1024; value <= 1024; ++value)
+			CHECK(check_nonnegative_remainder(value, modulus), "PCM index residue failed");
+	static const int32_t values[] = {
+		INT32_MIN, INT32_MIN + 1, -65537, -1, 0, 1, 65537, INT32_MAX,
+	};
+	static const uint32_t moduli[] = { 1, 2, 3, 127, 256, 65535, INT32_MAX };
+	for (size_t v = 0; v < ARRAY_LENGTH(values); ++v)
+		for (size_t m = 0; m < ARRAY_LENGTH(moduli); ++m)
+			CHECK(check_nonnegative_remainder(values[v], moduli[m]), "full-width residue failed");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -324,6 +352,7 @@ int main(void)
 	} tests[] = {
 		{ "byte bit count", test_byte_bit_count },
 		{ "bit width", test_bit_width },
+		{ "nonnegative residue", test_nonnegative_remainder },
 		{ "zero and symmetry", test_zero_and_symmetry },
 		{ "full-width values", test_full_width_values },
 		{ "scaled comparison", test_scaled_comparison },

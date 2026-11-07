@@ -22,6 +22,16 @@ static inline unsigned int bit_width_unsigned(unsigned int value)
 		       (unsigned int)__builtin_clz(value) : 0u;
 }
 
+/* Mathematical residue in [0, modulus). The owner supplies a divisor in
+ * 1..INT32_MAX; unlike signed %, negative coordinates still select the same
+ * congruence class as their positive representatives. */
+static inline int32_t nonnegative_remainder_s32(int32_t value, uint32_t modulus)
+{
+	int32_t reduced = value % (int32_t)modulus;
+
+	return reduced < 0 ? reduced + (int32_t)modulus : reduced;
+}
+
 /* Interpret the low fixed-width word without relying on implementation-defined
  * unsigned-to-signed conversions. */
 static inline int32_t wrap_s32_from_u32(uint32_t value)

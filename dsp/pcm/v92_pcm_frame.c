@@ -124,13 +124,6 @@ enum v92_pcm_frame_result v92_pcm_frame_tx_reset_control(
 	return V92_PCM_FRAME_OK;
 }
 
-static int positive_modulo(int value, unsigned int modulus)
-{
-	int reduced = value % (int)modulus;
-
-	return reduced < 0 ? reduced + (int)modulus : reduced;
-}
-
 static size_t x_history_length(size_t feedback, size_t feed_forward)
 {
 	if (feed_forward)
@@ -220,7 +213,7 @@ static int equivalence_offset(size_t symbol,
 		return 0;
 	size_t base = symbol - 3u;
 
-	return positive_modulo(selected[base] + selected[base + 1u] +
+	return nonnegative_remainder_s32(selected[base] + selected[base + 1u] +
 		selected[base + 2u] + y0, 2u);
 }
 
@@ -343,7 +336,7 @@ static bool select_point(
 	int first = -(int)constellation->count;
 	int offset = equivalence_offset(symbol, selected, y0) + (int)(stride * expected_digit);
 
-	first += positive_modulo(offset - first, step);
+	first += nonnegative_remainder_s32(offset - first, step);
 	for (int eta = first; eta < (int)constellation->count; eta += (int)step) {
 		int16_t u = v92_cpd_signed_point(constellation, eta);
 		int32_t x;
@@ -1640,14 +1633,14 @@ static enum v92_pcm_frame_result decode_frame(
 			unsigned step = known ? stride * modulus : stride;
 			int residue = offset + (known ? (int)(stride * paths[path].known_digits[symbol]) : 0);
 
-			first_eta += positive_modulo(residue - first_eta, step);
-			unsigned next_digit = (unsigned)positive_modulo((first_eta - offset) / (int)stride, modulus);
+			first_eta += nonnegative_remainder_s32(residue - first_eta, step);
+			unsigned next_digit = (unsigned)nonnegative_remainder_s32((first_eta - offset) / (int)stride, modulus);
 			int seed_eta = end_eta;
 			if (seed_paths) {
 				/* Retain the full legal class's seed: heap trimming may
 				 * tighten between visits and must not move it. */
 				int first = -(int)constellation->count;
-				first += positive_modulo(residue - first, step);
+				first += nonnegative_remainder_s32(residue - first, step);
 				if (seeding)
 					model_paths[path].seed = model_seed(&cache, constellation, precoder, history, first, step);
 				seed_eta = model_paths[path].seed;
@@ -1655,7 +1648,7 @@ static enum v92_pcm_frame_result decode_frame(
 					if (seed_eta < first_eta || seed_eta >= end_eta) continue;
 					first_eta = seed_eta;
 					end_eta = seed_eta + (int)step;
-					next_digit = positive_modulo((first_eta - offset) / (int)stride, modulus);
+					next_digit = nonnegative_remainder_s32((first_eta - offset) / (int)stride, modulus);
 				}
 			}
 

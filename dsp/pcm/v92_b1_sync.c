@@ -2,6 +2,7 @@
 #include "v92_b1_sync.h"
 
 #include "memory_region.h"
+#include "integer_math.h"
 
 #include <float.h>
 #include <math.h>
@@ -117,11 +118,15 @@ static double score(const struct v92_b1_sync *sync,
 			double input = sync->input[delay + shift + f * V92_PCM_MAPPING_FRAME_SYMBOLS + i].sample *
 				(double)receiver->line.polarity * receiver->line.plan.gain;
 			double best = DBL_MAX;
-			for (int eta = -(int)c->count; eta < c->count; ++eta)
-				if ((eta - sync->digits[f - 1][i]) % mapping->cpd.modulus[i] == 0) {
-					double error = input - v92_cpd_signed_point(c, eta);
-					best = fmin(best, error * error);
-				}
+			unsigned modulus = mapping->cpd.modulus[i];
+			int first = -(int)c->count;
+			first += nonnegative_remainder_s32(sync->digits[f - 1][i] - first, modulus);
+			/* Visit the same signed class as the frame coder, in order.
+			 * Other classes cannot satisfy this known mixed-radix digit. */
+			for (int eta = first; eta < c->count; eta += (int)modulus) {
+				double error = input - v92_cpd_signed_point(c, eta);
+				best = fmin(best, error * error);
+			}
 			total += best;
 		}
 	return total;
