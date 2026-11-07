@@ -161,6 +161,7 @@ struct modem_test_case {
 	int32_t answerer_conditioning_shift_q16;
 	unsigned int minimum_caller_rate_signals;
 	unsigned int minimum_caller_rate_signal_sample;
+	unsigned int quality_recovery_rates[2];
 	bool answer_tone_prefix_modulated;
 	bool omit_answer_tone;
 	bool unanswered_v22_prefix;
@@ -1494,7 +1495,7 @@ static bool contains_pcm_rate_signal(const uint8_t *octets, size_t count, enum g
 	return false;
 }
 
-static bool exercise_v34_establishment_quality(
+static bool exercise_establishment_quality(
 	struct integration_endpoint *caller, struct integration_endpoint *answerer,
 	unsigned int side, enum media_codec codec, const struct media_recorder *recorder)
 {
@@ -1514,13 +1515,15 @@ static bool exercise_v34_establishment_quality(
 	      !strcmp(modem_call_phase(ends[side]->modem), "error-control-negotiation") &&
 	      ends[side]->receive_bench.effect_count == 0 &&
 	      channel_bench_init(&ends[side]->receive_bench, &noise, 1) == CHANNEL_BENCH_OK,
-	      "V.34 establishment fault missed the pre-CONNECT boundary");
+	      "modem establishment fault missed the pre-CONNECT boundary");
+	bool v32 = v8_datapump_modulation(ends[side]->modem->dp->id) ==
+		V8_MODULATION_V32;
 	for (frame = 0; frame < 200; ++frame) {
 		CHECK(process_sip_frame(caller, answerer, codec, recorder) &&
 		      endpoint_drain(caller) && endpoint_drain(answerer) &&
 		      caller->modem->dp == owned[0] && answerer->modem->dp == owned[1] &&
 		      caller->stops == 0 && answerer->stops == 0,
-		      "V.34 establishment fault lost the call at frame %u "
+		      "modem establishment fault lost the call at frame %u "
 		      "(caller=%s/%s, answerer=%s/%s)", frame,
 		      modem_protocol_step(caller->modem),
 		      caller->modem->disconnect_reason ? caller->modem->disconnect_reason : "no disconnect",
@@ -1529,15 +1532,17 @@ static bool exercise_v34_establishment_quality(
 		CHECK((ends[side]->modem->get_chars == NULL ||
 		       ends[side]->modem->put_chars == NULL) &&
 		      !output_contains(ends[side], "CONNECT"),
-		      "V.34 exposed CONNECT before impaired LAPM establishment");
-		if (!strcmp(modem_protocol_step(ends[side]->modem), "retrain/silence-tone")) {
+		      "modem exposed CONNECT before impaired LAPM establishment");
+		const char *step = modem_protocol_step(ends[side]->modem);
+		if (v32 ? strstr(step, "quality-retrain") != NULL :
+		    !strcmp(step, "retrain/silence-tone")) {
 			requested = true;
 			break;
 		}
 	}
 	channel_bench_destroy(&ends[side]->receive_bench);
 	CHECK(requested && frame >= 80,
-	      "V.34 side %u did not recover sustained quality loss before CONNECT (frame %u)",
+	      "modem side %u did not recover sustained quality loss before CONNECT (frame %u)",
 	      side, frame);
 	/* The ordinary call loop must now establish LAPM and exchange exact
 	 * bilateral payloads over the retained call after the fault is removed. */
@@ -1546,7 +1551,8 @@ static bool exercise_v34_establishment_quality(
 
 static bool exercise_v32_quality_recovery(
 	struct integration_endpoint *caller, struct integration_endpoint *answerer,
-	enum DP_ID id, enum media_codec codec, const struct media_recorder *recorder)
+	enum DP_ID id, enum media_codec codec, const struct media_recorder *recorder,
+	const unsigned int expected_rates[2])
 {
 	struct integration_endpoint *ends[] = { caller, answerer };
 	struct dp *owned[] = { caller->modem->dp, answerer->modem->dp };
@@ -1559,6 +1565,8 @@ static bool exercise_v32_quality_recovery(
 	for (unsigned side = 0; side < ARRAY_LENGTH(ends); ++side) {
 		bool requested = false, recovered = false;
 		unsigned frame;
+		unsigned expected_rate = expected_rates[side] ? expected_rates[side] :
+			ends[side]->modem->rx_rate;
 		/* Allow the receiver's initial settling interval to finish. */
 		for (frame = 0; frame < 60; ++frame) {
 			CHECK(process_sip_frame(caller, answerer, codec, recorder) &&
@@ -1599,6 +1607,12 @@ static bool exercise_v32_quality_recovery(
 			}
 		}
 		CHECK(recovered, "V.32 side %u did not finish quality retrain", side);
+		for (unsigned end = 0; end < ARRAY_LENGTH(ends); ++end)
+			CHECK(ends[end]->modem->rx_rate == expected_rate &&
+			      ends[end]->modem->tx_rate == expected_rate,
+			      "V.32 quality recovery at side %u selected %u/%u, expected %u",
+			      side, ends[end]->modem->tx_rate, ends[end]->modem->rx_rate,
+			      expected_rate);
 		for (unsigned end = 0; end < ARRAY_LENGTH(ends); ++end)
 			CHECK(modem_write(ends[end]->modem, payloads[end], sizeof(payloads[end])) ==
 				      sizeof(payloads[end]), "recovered modem rejected payload");
@@ -2891,7 +2905,7 @@ static bool run_media_call(
 			    target->modem->get_bits == modem_hdlc_get_bits &&
 			    target->modem->put_bits == modem_hdlc_put_bits &&
 			    !strcmp(modem_call_phase(target->modem), "error-control-negotiation")) {
-				CHECK(exercise_v34_establishment_quality(&caller, &answerer,
+				CHECK(exercise_establishment_quality(&caller, &answerer,
 					      test_case->establishment_quality_side - 1, codec, &recorder),
 				      "%s did not recover during LAPM setup", test_case->name);
 				establishment_quality_exercised = true;
@@ -3115,7 +3129,8 @@ static bool run_media_call(
 		CHECK(exercise_v92_rate_exchange(&caller, &answerer, codec, &recorder),
 		      "%s rate exchange did not preserve outstanding LAPM data", test_case->name);
 	if (test_case->test_quality_recovery)
-		CHECK(exercise_v32_quality_recovery(&caller, &answerer, connected_id, codec, &recorder),
+		CHECK(exercise_v32_quality_recovery(&caller, &answerer, connected_id, codec, &recorder,
+			      test_case->quality_recovery_rates),
 		      "%s sustained-quality recovery failed", test_case->name);
 	if (test_case->test_retrain) {
 		if (connected_id == DP_V34 && test_case->raw_transport)
@@ -3129,7 +3144,7 @@ static bool run_media_call(
 		      "%s did not retain its requested transport", test_case->name);
 		CHECK(exercise_retrain(
 				      &caller, &answerer, &answerer, connected_id,
-				      test_case->answerer_rx_rate, codec, &recorder,
+				      answerer.modem->rx_rate, codec, &recorder,
 				      &caller_delay,
 				      test_case->caller_delay_frames, 0,
 				      test_case->raw_transport,
@@ -3141,7 +3156,7 @@ static bool run_media_call(
 		      test_case->name);
 		CHECK(exercise_retrain(
 				      &caller, &answerer, &caller, connected_id,
-				      test_case->caller_rx_rate, codec, &recorder,
+				      caller.modem->rx_rate, codec, &recorder,
 				      &caller_delay,
 				      test_case->caller_delay_frames, 1,
 				      test_case->raw_transport, false,
@@ -6093,6 +6108,58 @@ int main(void)
 			.test_retrain = true,
 			.test_quality_recovery = true,
 			.raw_transport = true,
+		},
+		{
+			.id = DP_V32BIS,
+			.name = "V.32bis quality backoff with configured floor",
+			.selection_command = "AT+MS=132,1,9600,14400\r",
+			.caller_tx_rate = V32_14400_BIT_RATE,
+			.caller_rx_rate = V32_14400_BIT_RATE,
+			.answerer_tx_rate = V32_14400_BIT_RATE,
+			.answerer_rx_rate = V32_14400_BIT_RATE,
+			.quality_recovery_rates = { V32_12000_BIT_RATE, V32_9600_BIT_RATE },
+			.automode = true,
+			.test_retrain = true,
+			.test_quality_recovery = true,
+		},
+		{
+			.id = DP_V32,
+			.name = "V.32 quality backoff with sparse rates",
+			.selection_command = "AT+MS=32,1,4800,9600\r",
+			.caller_tx_rate = V32_9600_BIT_RATE,
+			.caller_rx_rate = V32_9600_BIT_RATE,
+			.answerer_tx_rate = V32_9600_BIT_RATE,
+			.answerer_rx_rate = V32_9600_BIT_RATE,
+			.quality_recovery_rates = { V32_4800_BIT_RATE, V32_4800_BIT_RATE },
+			.automode = true,
+			.test_retrain = true,
+			.test_quality_recovery = true,
+		},
+		{
+			.id = DP_V32BIS,
+			.name = "V.32bis caller quality backoff during LAPM setup",
+			.selection_command = "AT+MS=132,1,9600,14400\r",
+			.training_frame_limit = V32_TRAINING_FRAME_LIMIT + V32_RETRAIN_FRAME_LIMIT,
+			.caller_tx_rate = V32_12000_BIT_RATE,
+			.caller_rx_rate = V32_12000_BIT_RATE,
+			.answerer_tx_rate = V32_12000_BIT_RATE,
+			.answerer_rx_rate = V32_12000_BIT_RATE,
+			.automode = true,
+			.test_retrain = true,
+			.establishment_quality_side = 1,
+		},
+		{
+			.id = DP_V32BIS,
+			.name = "V.32bis answerer quality backoff during LAPM setup",
+			.selection_command = "AT+MS=132,1,9600,14400\r",
+			.training_frame_limit = V32_TRAINING_FRAME_LIMIT + V32_RETRAIN_FRAME_LIMIT,
+			.caller_tx_rate = V32_12000_BIT_RATE,
+			.caller_rx_rate = V32_12000_BIT_RATE,
+			.answerer_tx_rate = V32_12000_BIT_RATE,
+			.answerer_rx_rate = V32_12000_BIT_RATE,
+			.automode = true,
+			.test_retrain = true,
+			.establishment_quality_side = 2,
 		},
 		{
 			.id = DP_V32BIS,

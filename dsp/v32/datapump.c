@@ -480,7 +480,8 @@ static struct v32_datapump *v32_from_dp(struct dp *dp)
 	    !qam_modulator_is_valid(&datapump->modulator) ||
 	    !v32_startup_is_valid(&datapump->startup) ||
 	    datapump->startup.role != endpoint_role(datapump->caller) ||
-	    datapump->startup.supported_rates != rate_capabilities(dp->modem, dp->id) ||
+	    (datapump->startup.supported_rates &
+	     ~rate_capabilities(dp->modem, dp->id)) != 0 ||
 	    (!training_session_has_failed(&datapump->training) &&
 	     training_session_is_online(&datapump->training) !=
 		     v32_startup_is_complete(&datapump->startup)) ||
@@ -620,15 +621,27 @@ static struct dp *create_v32(
 }
 
 static int prepare_retrain(
-	struct v32_datapump *datapump, enum training_origin origin)
+	struct v32_datapump *datapump, enum training_origin origin,
+	bool quality_retrain)
 {
+	uint8_t rates = datapump->startup.supported_rates;
+
+	/* A failed data rate is not made more usable by offering it again.
+	 * Keep every permitted lower choice, or retain the selected rate when
+	 * the configured minimum leaves none. The active offer owns this ceiling
+	 * for the rest of the call, including peer and manual retrains. */
+	if (quality_retrain) {
+		uint8_t lower = rates & (datapump->startup.selected_rate - 1u);
+
+		rates = lower ? lower : datapump->startup.selected_rate;
+	}
 	if (initialize_protocol(
-		    datapump, rate_capabilities(datapump->dp.modem, datapump->dp.id),
-		    true) != 0 ||
+		    datapump, rates, true) != 0 ||
 	    training_session_start_retrain(
 		    &datapump->training, origin) != TRAINING_SESSION_OK)
 		return -1;
 	datapump->dp.status = DPSTAT_OK;
+	datapump->quality_retrain = quality_retrain;
 	return 0;
 }
 
@@ -644,7 +657,7 @@ static int retrain_v32(struct dp *dp)
 	if (!training_session_is_online(&datapump->training))
 		return -1;
 	next = *datapump;
-	if (prepare_retrain(&next, TRAINING_LOCAL_RETRAIN) != 0)
+	if (prepare_retrain(&next, TRAINING_LOCAL_RETRAIN, false) != 0)
 		return -1;
 	*datapump = next;
 	if (!datapump->dp.modem->cfg.ec)
@@ -1599,14 +1612,14 @@ static int receive_fixed_path_sample(
 			return -1;
 		/* V.32bis 8, note 2: an R4 with no enabled common rate must
 		 * finish the exchange with at least 64T of E before clearing.
-		 * Keep the configured minimum; do not decode control as payload. */
+		 * Keep the configured minimum and retained quality ceiling; do not
+		 * decode control as payload. */
 		bool incompatible_rate = batch.rate_request.rates != 0 &&
-			!(batch.rate_request.rates & rate_capabilities(
-				datapump->dp.modem, datapump->dp.id));
+			!(batch.rate_request.rates & datapump->startup.supported_rates);
 		if (batch.cleardown_requested || incompatible_rate) {
 			modem_note_disconnect(datapump->dp.modem, incompatible_rate,
 				incompatible_rate ?
-				"V.32bis rate request has no configured common rate" :
+				"V.32bis rate request has no enabled common rate" :
 				"remote V.32bis cleardown request");
 			datapump->fixed_path.stage = V32_FIXED_ONLINE_CLEARDOWN;
 			datapump->cleardown_symbols = 0;
@@ -1623,9 +1636,8 @@ static int receive_fixed_path_sample(
 
 			if (prepare_retrain(
 				    &next, quality_retrain ? TRAINING_LOCAL_RETRAIN :
-					TRAINING_REMOTE_RETRAIN) != 0)
+					TRAINING_REMOTE_RETRAIN, quality_retrain) != 0)
 				return -1;
-			next.quality_retrain = quality_retrain;
 			*datapump = next;
 			if (!datapump->dp.modem->cfg.ec)
 				modem_async_retrain(datapump->dp.modem);
