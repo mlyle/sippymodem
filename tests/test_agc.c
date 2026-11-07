@@ -380,13 +380,67 @@ static bool test_level_measurement_contract(void)
 	return true;
 }
 
+static bool test_owned_level_measurement(void)
+{
+	static const size_t counts[] = {
+		1, 2, 9, 35, 36, 37, 80, 144, 160, 255, 256, UINT16_MAX,
+	};
+	int16_t samples[UINT16_MAX];
+	int16_t saved[UINT16_MAX];
+	uint32_t random = 1;
+	bool wrapped_energy = false;
+
+	for (unsigned pattern = 0; pattern < 5; ++pattern) {
+		for (size_t i = 0; i < ARRAY_LENGTH(samples); ++i) {
+			random = random * UINT32_C(1664525) + UINT32_C(1013904223);
+			uint16_t word = (uint16_t)(random >> 16);
+			int16_t value = word <= INT16_MAX ? (int16_t)word :
+				(int16_t)((int32_t)word - 65536);
+
+			switch (pattern) {
+			case 0: value = INT16_MIN; break;
+			case 1: value = INT16_MAX; break;
+			case 2: value = i % 2 ? INT16_MIN : INT16_MAX; break;
+			case 3: value = (int16_t)((int)(i % 73) - 36); break;
+			}
+			samples[i] = value;
+		}
+		memcpy(saved, samples, sizeof(samples));
+		for (size_t c = 0; c < ARRAY_LENGTH(counts); ++c) {
+			uint64_t energy = 0;
+			int16_t checked = -1;
+
+			for (size_t i = 0; i < counts[c]; ++i) {
+				/* Independent wide floor division; retain modular energy
+				 * only after summing. The root has its own profile oracle. */
+				int64_t product = (int64_t)samples[i] * 910;
+				int64_t scaled = product >= 0 ? product / 32768 :
+					-((-product + 32767) / 32768);
+
+				energy += (uint64_t)(scaled * samples[i]);
+			}
+			wrapped_energy |= energy > UINT32_MAX;
+			int16_t expected = (int16_t)fixed_square_root_u32((uint32_t)energy);
+
+			CHECK(agc_measure_level_s16(samples, counts[c], &checked) == AGC_OK &&
+			      checked == expected &&
+			      agc_measure_owned_level_s16(samples, counts[c]) == expected,
+			      "owned level differs at pattern=%u count=%zu", pattern, counts[c]);
+		}
+		CHECK(memcmp(samples, saved, sizeof(samples)) == 0,
+		      "level measurement changed owned input");
+	}
+	CHECK(wrapped_energy, "level cases did not exercise modular accumulation");
+	return true;
+}
+
 int main(void)
 {
 	if (!test_q10_sample_scaling() || !test_q10_input_power() ||
 	    !test_fixed_square_root_profile() || !test_exact_arithmetic() ||
 	    !test_smoothing_weight_contract() ||
 	    !test_lifecycle_and_contracts() ||
-	    !test_level_measurement_contract())
+	    !test_level_measurement_contract() || !test_owned_level_measurement())
 		return 1;
 	puts("AGC tests passed");
 	return 0;

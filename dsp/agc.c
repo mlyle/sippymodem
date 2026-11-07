@@ -3,13 +3,8 @@
 #include "agc.h"
 #include "integer_math.h"
 #include "memory_region.h"
-#include "sample_math.h"
 
 #include <stdint.h>
-
-enum {
-	AGC_ENERGY_SCALE_Q15 = 0x038e,
-};
 
 enum agc_result agc_measure_level_s16(
 	const int16_t *samples, size_t count, int16_t *level)
@@ -22,8 +17,7 @@ enum agc_result agc_measure_level_s16(
 		    samples, count * sizeof(*samples), level, sizeof(*level)))
 		return AGC_INVALID_ARGUMENT;
 
-	measured = wrap_s16_from_s32(
-		(int32_t)sample_level_s16(samples, count, AGC_ENERGY_SCALE_Q15));
+	measured = agc_measure_owned_level_s16(samples, count);
 	*level = measured;
 	return AGC_OK;
 }
@@ -106,8 +100,7 @@ enum agc_result agc_process(
 		return AGC_INVALID_ARGUMENT;
 
 	next = *control;
-	if (agc_measure_level_s16(input, count, &level) != AGC_OK)
-		return AGC_INVALID_STATE;
+	level = agc_measure_owned_level_s16(input, count);
 	block_gain = next.gain_mantissa_q15;
 	active = !((block_gain == 0 &&
 		    level < next.config.acquisition_threshold) ||

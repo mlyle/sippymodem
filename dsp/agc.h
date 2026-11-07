@@ -4,12 +4,22 @@
 #define AGC_H
 
 #include "integer_math.h"
+#include "sample_math.h"
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
 enum { AGC_Q10_INCREASE_CEILING = 0x6a00 };
+
+/* Measure 1..UINT16_MAX readable, owned samples after boundary validation.
+ * Keep the shared Q15 weight, per-sample floor, modulo-2^32 accumulation
+ * and legacy square root identical to the checked measurement below. */
+static inline int16_t agc_measure_owned_level_s16(
+	const int16_t *samples, size_t count)
+{
+	return wrap_s16_from_s32((int32_t)sample_level_s16(samples, count, 0x038e));
+}
 
 /* Step a nonnegative Q10 gain by the shared receive-control Q14 factors.
  * Decrease always applies; increase holds gains above the existing ceiling.

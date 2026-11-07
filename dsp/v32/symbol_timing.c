@@ -360,13 +360,8 @@ enum v32_symbol_timing_result v32_symbol_timing_process(
 		int16_t error = filter_error(&next, symbol);
 
 		if (next.startup_gate_enabled) {
-			int16_t level;
-
-			if (agc_measure_level_s16(
-				    next.startup_samples,
-				    V32_SYMBOL_TIMING_STARTUP_SAMPLES,
-				    &level) != AGC_OK)
-				return V32_SYMBOL_TIMING_INVALID_STATE;
+			int16_t level = agc_measure_owned_level_s16(
+				next.startup_samples, V32_SYMBOL_TIMING_STARTUP_SAMPLES);
 			if (level > STARTUP_LEVEL_THRESHOLD)
 				next.startup_gate_enabled = false;
 			else

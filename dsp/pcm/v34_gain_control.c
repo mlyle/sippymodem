@@ -78,9 +78,8 @@ enum v34_gain_control_result v34_gain_control_refresh_level(
 
 	if (!v34_gain_control_is_valid(control))
 		return V34_GAIN_CONTROL_INVALID_STATE;
-	if (agc_measure_level_s16(control->history,
-				  V34_GAIN_HISTORY_SAMPLES, &level) != AGC_OK)
-		return V34_GAIN_CONTROL_INVALID_STATE;
+	level = agc_measure_owned_level_s16(control->history,
+		V34_GAIN_HISTORY_SAMPLES);
 	if (level <= V34_GAIN_MINIMUM_LEVEL ||
 	    control->gain >= AGC_Q10_INCREASE_CEILING)
 		return V34_GAIN_CONTROL_OK;
@@ -133,12 +132,8 @@ static enum v34_gain_control_result process(
 		control->energy_accumulator = next_energy;
 	} else {
 		if (control->mode == V34_GAIN_TRACKING) {
-			int16_t level;
-
-			/* Fixed-size owned history and a distinct local output satisfy
-			 * the level helper's entire validation contract. */
-			(void)agc_measure_level_s16(control->history,
-				V34_GAIN_HISTORY_SAMPLES, &level);
+			int16_t level = agc_measure_owned_level_s16(
+				control->history, V34_GAIN_HISTORY_SAMPLES);
 			if (level > V34_GAIN_MINIMUM_LEVEL) {
 				control->average_energy = sample_smooth_energy_q15(
 					control->average_energy, next_energy,
