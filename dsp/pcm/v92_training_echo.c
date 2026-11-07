@@ -42,7 +42,7 @@ static bool target(const struct v92_pcm_phase4_trn2u_line_rx *receiver,
 static bool fit(const struct v92_training_echo *timing, const unsigned *lags,
 	unsigned count, double *coefficient, double *error)
 {
-	double normal[GRAM_FIT_MOMENTS] = { 0 }, cross[4] = { 0 };
+	double normal[GRAM_FIT_MOMENTS], cross[4];
 	unsigned columns[4];
 	for (unsigned i = 0; i < count; ++i) columns[i] = lags[i];
 	columns[count] = V92_TRAINING_ECHO_LAGS;

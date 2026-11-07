@@ -90,7 +90,7 @@ bool v92_residual_fit(struct v92_residual *filter,
 			if (first) columns[used++] = first;
 			if (second) columns[used++] = second;
 			columns[used] = MOMENT_COLUMNS - 1;
-			double gram[GRAM_FIT_MOMENTS] = { 0 }, rhs[4] = { 0 }, fitted[4];
+			double gram[GRAM_FIT_MOMENTS], rhs[4], fitted[4];
 			gram_select(moments, cross, columns, count, gram, rhs);
 			if (!gram_fit(gram, rhs, count, fitted)) continue;
 			/* Constrain the main gain, then refit the other coefficients at
@@ -98,7 +98,7 @@ bool v92_residual_fit(struct v92_residual *filter,
 			 * wrong delay merely because its unconstrained gain was in range. */
 			if (fitted[0] < 1. / maximum || fitted[0] > 1. / minimum) {
 				double fixed = fmax(1. / maximum, fmin(1. / minimum, fitted[0]));
-				double reduced[GRAM_FIT_MOMENTS] = { 0 }, target[4], other[4];
+				double reduced[GRAM_FIT_MOMENTS], target[4], other[4];
 				const unsigned remaining[3] = { 1, 2, 3 };
 				gram_select(gram, rhs, remaining, count - 1, reduced, target);
 				for (unsigned i = 1; i < count; i++)

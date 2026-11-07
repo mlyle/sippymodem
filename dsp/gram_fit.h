@@ -131,7 +131,7 @@ static inline bool gram_fit(
 	const double rhs[GRAM_FIT_COLUMNS], unsigned count,
 	double fitted[GRAM_FIT_COLUMNS])
 {
-	double matrix[GRAM_FIT_COLUMNS][GRAM_FIT_COLUMNS + 1] = { { 0 } };
+	double matrix[GRAM_FIT_COLUMNS][GRAM_FIT_COLUMNS + 1];
 	double scale[GRAM_FIT_COLUMNS], determinant = 1.;
 
 	if (!count || count > GRAM_FIT_COLUMNS) return false;
