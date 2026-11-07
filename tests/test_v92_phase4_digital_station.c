@@ -324,6 +324,92 @@ static bool test_linear_channel_targets(void)
 	return true;
 }
 
+/* The peer stops after its original minimum, without waiting for SUVd.
+ * A local measurement reset must neither eat that first SUVu nor contaminate
+ * channel moments with its control symbols. */
+static bool test_retimed_training_boundary(void)
+{
+	static const unsigned retimes[] = { 512u, 4971u,
+		V92_UPSTREAM_CHANNEL_SYMBOLS - V92_UPSTREAM_CHANNEL_MIN_FIT_SYMBOLS };
+
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned points = 4; points <= 8; points *= 2)
+			for (unsigned run = 0; run < ARRAY_LENGTH(retimes); ++run) {
+				struct v92_pcm_phase3_cpt_line_handoff handoff;
+				struct v92_pcm_phase4_trn2u transmit, truth;
+				struct v92_phase4_digital_rx receiver;
+				struct v92_control_event event = { 0 };
+				const struct v92_suvu_parameters suvu = { .wait_for_cpu = true };
+				struct v92_phase4_record_tx control;
+				unsigned discarded = 0, events = 0;
+
+				CHECK(build_predecessor(law, points, 0, 1, &transmit, &handoff) &&
+				      v92_phase4_digital_rx_init(&receiver, &handoff, points, law) ==
+					V92_PHASE4_DIGITAL_RX_OK, "retimed receiver setup failed");
+				while (transmit.emitted_symbols < V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS) {
+					int16_t raw;
+					CHECK(v92_pcm_phase4_trn2u_next(&transmit, &raw) == V92_PCM_PHASE4_TRN2U_OK,
+					      "retimed source stopped");
+					enum v92_phase4_digital_rx_result result = v92_phase4_digital_rx_sample(
+						&receiver, line_sample(law, 1, raw), &event);
+					CHECK(result == V92_PHASE4_DIGITAL_RX_OK || result == V92_PHASE4_DIGITAL_RX_ALIGNED,
+					      "retimed training receive failed: %u", result);
+					if (!discarded && receiver.channel.symbols >= retimes[run]) {
+						discarded = receiver.channel.symbols;
+						CHECK(v92_phase4_digital_rx_restart_measurement(&receiver) ==
+							V92_PHASE4_DIGITAL_RX_OK, "measurement reset failed");
+					}
+				}
+				CHECK(discarded && receiver.stage == V92_PHASE4_DIGITAL_RX_CONTROL,
+				      "measurement reset extended peer training: law %u points %u reset %u", law, points, discarded);
+				CHECK(v92_record_fixture_start_suvu(&control, &transmit.modulator, &suvu),
+				      "first peer control setup failed");
+				for (unsigned repeat = 0; repeat < 2; ++repeat) {
+					if (repeat)
+						CHECK(v92_record_fixture_start_suvu(&control, NULL, &suvu), "control repeat failed");
+					while (!v92_phase4_record_tx_is_complete(&control)) {
+						int16_t raw;
+						CHECK(v92_phase4_record_tx_next(&control, &raw) == V92_PHASE4_RECORD_TX_OK,
+						      "first peer control source stopped");
+						enum v92_phase4_digital_rx_result result = v92_phase4_digital_rx_sample(
+							&receiver, line_sample(law, 1, raw), &event);
+						CHECK(result == V92_PHASE4_DIGITAL_RX_OK || result == V92_PHASE4_DIGITAL_RX_EVENT,
+						      "first peer control receive failed: %u", result);
+						if (result == V92_PHASE4_DIGITAL_RX_EVENT) {
+							CHECK(event.type == V92_CONTROL_EVENT_SUVU &&
+							      event.record.suvu.frame_result == V92_SUVU_OK &&
+							      event.record.suvu.parameters.wait_for_cpu,
+							      "retiming corrupted first peer control");
+							++events;
+						}
+					}
+				}
+				/* Independently retain only targets following the discarded span
+				 * and the new settling interval; no control symbol may enter. */
+				int64_t sum = 0, energy = 0;
+				CHECK(v92_pcm_phase4_trn2u_init(&truth, points, 0, TEST_LU) ==
+					V92_PCM_PHASE4_TRN2U_OK, "target oracle setup failed");
+				for (unsigned n = 0; n < V92_UPSTREAM_CHANNEL_SYMBOLS; ++n) {
+					int16_t target;
+					CHECK(v92_pcm_phase4_trn2u_next(&truth, &target) == V92_PCM_PHASE4_TRN2U_OK,
+					      "target oracle stopped");
+					if (n >= discarded + V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS) {
+						sum += target;
+						energy += (int64_t)target * target;
+					}
+				}
+				CHECK(receiver.channel.expected_sum == sum &&
+				      receiver.channel.expected_autocorrelation[0] == energy,
+				      "control contaminated retimed channel evidence");
+				CHECK(events && v92_phase4_digital_rx_channel_ready(&receiver) &&
+				      receiver.channel.symbols == V92_UPSTREAM_CHANNEL_SYMBOLS - discarded &&
+				      v92_upstream_channel_has_stable_gain(&receiver.channel),
+				      "retimed channel lost its known span: law %u points %u reset %u count %u events %u",
+				      law, points, discarded, receiver.channel.symbols, events);
+			}
+	return true;
+}
+
 static bool cpu_equal(
 	const struct v92_cpu_parameters *left,
 	const struct v92_cpu_parameters *right)
@@ -2809,6 +2895,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "linear training tail and channel measurement", test_linear_channel_targets },
+		{ "retimed training preserves first peer control", test_retimed_training_boundary },
 		{ "generated digital station exchange", test_generated_exchange },
 		{ "full CPd ownership", test_full_cpd_ownership },
 		{ "paired analogue/digital station matrix",

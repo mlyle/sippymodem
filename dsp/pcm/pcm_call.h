@@ -590,9 +590,9 @@ enum pcm_call_result pcm_call_init_qc(
 enum pcm_call_result pcm_call_start_retrain(struct pcm_call *call);
 
 /* A confirmed conditioning change invalidated the partial channel measurement.
- * Before SUVd, collect fresh training without restarting either coding
- * direction. Once SUVd is enabled, use a full retrain because the peer may
- * have already ended its known training.
+ * Before SUVd, use the remaining known training without restarting either
+ * coding direction if enough remains for a fit. Otherwise, or once SUVd is
+ * enabled, use a full retrain. Never extend the peer's original training span.
  * Consume the shared automatic recovery budget; never replenish it here.
  * Only digital V.92 TRN2u accepts this request; short rate exchanges do not.
  * Exhaustion returns FAILED. Every non-OK result leaves the owner unchanged.

@@ -13585,19 +13585,24 @@ static bool run_conditioning_recovery(enum g711_law law, uint32_t trigger, bool 
 				CHECK(pcm_call_start_data_path(call) == PCM_CALL_OK, "recovered data handoff failed");
 			if (call->stage == PCM_CALL_DATA_PATH) {
 				CHECK(!persistent && v92_payload_sample(call, rx[side], decode_octet(law, rx[side]),
-					&source[side], &frames[side], &tx[side]), "persistent damage reached data");
+					&source[side], &frames[side], &tx[side]),
+				      "conditioning data failed: law %u trigger %u persistent %u side %u clock %u injections %u",
+				      law, trigger, persistent, side, clock, injections);
 			} else {
 				struct pcm_call_observation event;
 				CHECK(pcm_call_octet(call, rx[side], decode_octet(law, rx[side]),
 					&tx[side], &event) == PCM_CALL_OK, "conditioning call stopped at %u", clock);
 			}
 		}
-		CHECK(persistent || !injections || !pcm_call_is_full_retraining(&digital),
+		CHECK(persistent || trigger > V92_UPSTREAM_CHANNEL_SYMBOLS -
+		      V92_UPSTREAM_CHANNEL_MIN_FIT_SYMBOLS || !injections ||
+		      !pcm_call_is_full_retraining(&digital),
 		      "measurement-only recovery restarted full training at %u", clock);
 		if ((persistent || !injections) && digital.stage == PCM_CALL_PHASE4 &&
 		    digital.state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL &&
 		    digital.state.phase4.v92.owner.digital.receive.stage == V92_PHASE4_DIGITAL_RX_TRN2U &&
-		    digital.state.phase4.v92.owner.digital.receive.channel.symbols >= trigger) {
+		    digital.state.phase4.v92.owner.digital.receive.channel.symbols >=
+			(persistent && injections ? 512u : trigger)) {
 			struct pcm_call before = digital, expected = digital;
 			struct pcm_call rejected = digital;
 			rejected.failed = true;
@@ -13633,23 +13638,39 @@ static bool run_conditioning_recovery(enum g711_law law, uint32_t trigger, bool 
 				      "conditioning exhaustion changed state or replenished budget");
 				return true;
 			}
-			/* The physical stream and both coding directions are untouched.
-			 * Only the contaminated evidence and recovery allowance change. */
-			struct v92_phase4_digital_rx *measurement =
-				&expected.state.phase4.v92.owner.digital.receive;
-			measurement->measurement_start_symbol = measurement->signal.trn2u.trained_symbols;
-			measurement->channel = (struct v92_upstream_channel){ 0 };
-			measurement->channel_distorted = false;
-			CHECK(v92_data_quality_retrain(&expected.pcm_upstream_quality) == V92_DATA_QUALITY_RETRAIN &&
-			      result == PCM_CALL_OK &&
-			      memcmp(&digital, &expected, sizeof(digital)) == 0 &&
-			      !pcm_call_is_full_retraining(&digital) &&
-			      digital.v92_upstream_retry_ceiling == before.v92_upstream_retry_ceiling,
-			      "conditioning recovery changed waveform policy or rate ceiling");
-			/* A repeated request has no new measurement to invalidate. */
-			saved = digital;
-			CHECK(pcm_call_recover_upstream_training(&digital) == PCM_CALL_INVALID_STATE &&
-			      memcmp(&digital, &saved, sizeof(saved)) == 0, "repeated request restarted recovery");
+			if (before.state.phase4.v92.owner.digital.receive.signal.trn2u.trained_symbols >
+			    V92_UPSTREAM_CHANNEL_SYMBOLS - V92_UPSTREAM_CHANNEL_MIN_FIT_SYMBOLS) {
+				CHECK(result == PCM_CALL_OK && pcm_call_is_full_retraining(&digital) &&
+				      digital.pcm_upstream_quality.recovery.attempts ==
+					before.pcm_upstream_quality.recovery.attempts + 1u,
+				      "late correction did not start a bounded fresh exchange");
+				struct v92_phase4_digital_rx rejected_rx =
+					before.state.phase4.v92.owner.digital.receive;
+				struct v92_phase4_digital_rx saved_rx = rejected_rx;
+				CHECK(v92_phase4_digital_rx_restart_measurement(&rejected_rx) ==
+					V92_PHASE4_DIGITAL_RX_INVALID_STATE &&
+				      memcmp(&rejected_rx, &saved_rx, sizeof(saved_rx)) == 0,
+				      "late receiver accepted an undersized measurement");
+			} else {
+				/* An early correction preserves the waveform and coding directions.
+				 * Only contaminated evidence and the recovery allowance change. */
+				struct v92_phase4_digital_rx *measurement =
+					&expected.state.phase4.v92.owner.digital.receive;
+				measurement->measurement_start_symbol = measurement->signal.trn2u.trained_symbols;
+				measurement->channel = (struct v92_upstream_channel){ 0 };
+				measurement->channel_distorted = false;
+				CHECK(v92_data_quality_retrain(&expected.pcm_upstream_quality) == V92_DATA_QUALITY_RETRAIN &&
+				      result == PCM_CALL_OK &&
+				      memcmp(&digital, &expected, sizeof(digital)) == 0 &&
+				      pcm_call_is_full_retraining(&digital) == pcm_call_is_full_retraining(&before) &&
+				      digital.v92_upstream_retry_ceiling == before.v92_upstream_retry_ceiling,
+				      "conditioning recovery changed waveform policy or rate ceiling: law %u trigger %u persistent %u injection %u result %u",
+				      law, trigger, persistent, injections, result);
+				/* A repeated request has no new measurement to invalidate. */
+				saved = digital;
+				CHECK(pcm_call_recover_upstream_training(&digital) == PCM_CALL_INVALID_STATE &&
+				      memcmp(&digital, &saved, sizeof(saved)) == 0, "repeated request restarted recovery");
+			}
 		}
 		if (!control_checked && digital.stage == PCM_CALL_PHASE4 &&
 		    digital.state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL &&
@@ -13676,10 +13697,14 @@ static bool run_conditioning_recovery(enum g711_law law, uint32_t trigger, bool 
 
 static bool test_conditioning_recovery(void)
 {
+	const unsigned triggers[] = { 512u,
+		V92_UPSTREAM_CHANNEL_SYMBOLS - V92_UPSTREAM_CHANNEL_MIN_FIT_SYMBOLS,
+		V92_UPSTREAM_CHANNEL_SYMBOLS - V92_UPSTREAM_CHANNEL_MIN_FIT_SYMBOLS + 1u, 11900u };
+
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
-		for (unsigned late = 0; late < 2; ++late)
+		for (unsigned run = 0; run < ARRAY_LENGTH(triggers); ++run)
 			for (unsigned persistent = 0; persistent < 2; ++persistent)
-				CHECK(run_conditioning_recovery(law, late ? 11900u : 512u, persistent != 0),
+				CHECK(run_conditioning_recovery(law, triggers[run], persistent != 0),
 				      "conditioning recovery failed");
 	return true;
 }

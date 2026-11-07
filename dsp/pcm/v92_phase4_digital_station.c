@@ -176,7 +176,7 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_select_upstrea
 	if (!v92_phase4_digital_station_is_valid(station) || station->control.failed ||
 	    (station->control.transmit_stage != V92_DOWNSTREAM_CONTROL_INITIAL_SUVD &&
 	     station->control.transmit_stage != V92_DOWNSTREAM_CONTROL_READY_FOR_CPD) ||
-	    station->receive.channel.symbols != V92_UPSTREAM_CHANNEL_SYMBOLS)
+	    !v92_phase4_digital_rx_channel_ready(&station->receive))
 		return V92_PHASE4_DIGITAL_STATION_INVALID_STATE;
 	if (!v92_upstream_plan_is_valid(plan) || cpd->acknowledges_cpu ||
 	    !v92_downstream_control_select(&station->control, cpd))
@@ -266,7 +266,7 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_transmit(
 	 * enables the inherited mapping at initialization instead. */
 	if (!station->control.cleardown.active &&
 	    !station->control.transmit.control_configured &&
-	    station->receive.channel.symbols == V92_UPSTREAM_CHANNEL_SYMBOLS &&
+	    v92_phase4_digital_rx_channel_ready(&station->receive) &&
 	    !v92_downstream_control_ready(&station->control))
 		return fail(station);
 	if (!v92_downstream_control_transmit(&station->control, network_octet))

@@ -12,8 +12,9 @@
  * spread dense constellation points, balance higher-rate moduli across trellis
  * groups, and normalize actual filtered B1u power. Rate and trellis remain
  * fixed. The matching LOCAL receive
- * plan carries gain and delay separately. A complete 12000-symbol measurement
- * and a positive trained LU are required. Rejected calls change nothing;
+ * plan carries gain and delay separately. A frozen known-training span of at least
+ * V92_UPSTREAM_CHANNEL_MIN_FIT_SYMBOLS and a positive trained LU are required.
+ * Rejected calls change nothing;
  * parameters, channel and plan storage must not overlap. */
 bool v92_cpd_channel_design(struct v92_cpd_parameters *parameters,
 	const struct v92_upstream_channel *channel, enum g711_law law,

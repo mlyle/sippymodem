@@ -1306,9 +1306,9 @@ static int process_v90_g711(
 				goto failure;
 			}
 			if (training_echo == V92_TRAINING_ECHO_RETIMED) {
-				/* Discard the old measurement while the known training and
-				 * coding continue. Predict this unconsumed sample again at
-				 * the corrected delay; timing was already observed once. */
+				/* Invalidate old measurement evidence, using a fresh exchange
+				 * if too little known training remains. Predict this unconsumed
+				 * sample again; timing was already observed once. */
 				enum pcm_call_result result = pcm_call_recover_upstream_training(&datapump->call);
 				if (result != PCM_CALL_OK) {
 					modem_note_disconnect(dp->modem, true, result == PCM_CALL_FAILED ?

@@ -427,8 +427,8 @@ static bool design(struct v92_cpd_parameters *parameters,
 	struct v92_cpd_parameters next;
 	struct v92_upstream_plan aligned = { .observation = V92_PCM_FRAME_CONSTELLATION, .delay = DELAY };
 
-	if (parameters == NULL || plan == NULL || !v92_upstream_channel_is_valid(channel) ||
-	    channel->symbols != V92_UPSTREAM_CHANNEL_SYMBOLS || upstream_level <= 0 ||
+	if (parameters == NULL || plan == NULL || !v92_upstream_channel_can_fit(channel) ||
+	    upstream_level <= 0 ||
 	    !g711_law_is_valid(law) || !v92_cpd_parameters_are_valid(parameters) ||
 	    !parameters->filters_present || !parameters->constellations_present || !parameters->modulus_present ||
 	    memory_regions_overlap(parameters, sizeof(*parameters), channel, sizeof(*channel)) ||

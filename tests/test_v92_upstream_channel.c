@@ -172,7 +172,14 @@ static bool test_gain_fit(void)
 		struct v92_upstream_channel channel = { 0 };
 
 		for (int n = 0; n < V92_UPSTREAM_CHANNEL_SYMBOLS; ++n) {
-			CHECK(!v92_upstream_channel_fits_gain(&channel), "incomplete gain fit accepted");
+			if (n < V92_UPSTREAM_CHANNEL_MIN_FIT_SYMBOLS)
+				CHECK(!v92_upstream_channel_can_fit(&channel) &&
+				      !v92_upstream_channel_fits_gain(&channel), "short gain fit accepted");
+			else if (n == V92_UPSTREAM_CHANNEL_MIN_FIT_SYMBOLS ||
+			         n == V92_UPSTREAM_CHANNEL_MIN_FIT_SYMBOLS + 137)
+				CHECK(v92_upstream_channel_can_fit(&channel) &&
+				      v92_upstream_channel_fits_gain(&channel) == cases[index].fits,
+				      "partial gain fit changed classification for case %zu at %d", index, n);
 			int16_t target = expected(n, false) / 4;
 			int32_t input = (int32_t)(cases[index].gain * target +
 				cases[index].postcursor * (expected(n - 1, false) / 4) +

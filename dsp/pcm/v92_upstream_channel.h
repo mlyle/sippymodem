@@ -23,6 +23,11 @@ enum {
 	V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS = 512,
 	V92_UPSTREAM_CHANNEL_SYMBOLS = V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS,
 	V92_UPSTREAM_CHANNEL_WINDOW_SYMBOLS = 512,
+	/* Eight settled gain windows, with more than twenty observations per
+	 * joint inverse coefficient. A retimed fit may use the remaining known
+	 * TRN2u span; it must not extend that span into peer control. */
+	V92_UPSTREAM_CHANNEL_MIN_FIT_SYMBOLS = V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS +
+		8 * V92_UPSTREAM_CHANNEL_WINDOW_SYMBOLS,
 	V92_UPSTREAM_CHANNEL_WINDOWS = (V92_UPSTREAM_CHANNEL_SYMBOLS -
 		V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS + V92_UPSTREAM_CHANNEL_WINDOW_SYMBOLS - 1) /
 		V92_UPSTREAM_CHANNEL_WINDOW_SYMBOLS,
@@ -62,13 +67,17 @@ struct v92_upstream_channel {
 
 bool v92_upstream_channel_is_valid(const struct v92_upstream_channel *channel);
 
+/* Sufficient accumulated evidence, not permission to consume control as
+ * training. The enclosing receiver freezes its known-target span first. */
+bool v92_upstream_channel_can_fit(const struct v92_upstream_channel *channel);
+
 /* Compare short-window scalar fits, allowing for residual ISI/noise. This
  * conservative local policy detects changing gain/alignment; it does not
- * prove that an arbitrary channel is time invariant. Complete measurement
- * only; leaves all evidence unchanged. */
+ * prove that an arbitrary channel is time invariant. At least eight settled gain windows;
+ * leaves all evidence unchanged. */
 bool v92_upstream_channel_has_stable_gain(const struct v92_upstream_channel *channel);
 
-/* A completed, energetic training measurement fits one positive gain with
+/* An energetic fit-ready training measurement fits one positive gain with
  * at most 1% relative RMS residual. This selects whether the existing receive
  * FIR suffices; it is not a substitute for B1u or online quality checks. */
 bool v92_upstream_channel_fits_gain(const struct v92_upstream_channel *channel);

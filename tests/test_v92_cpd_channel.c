@@ -238,7 +238,7 @@ static bool test_filter_padding(void)
 	return true;
 }
 
-static bool test_channel_model(enum g711_law law, double main, double post, double second, uint8_t rate, int32_t phase)
+static bool test_channel_span(enum g711_law law, double main, double post, double second, uint8_t rate, int32_t phase, unsigned measured)
 {
 	/* Intermediate power-of-two moduli concentrated large points in some
 	 * trellis slots. At the higher LU used by native calls, those symbols
@@ -265,7 +265,7 @@ static bool test_channel_model(enum g711_law law, double main, double post, doub
 		training_symbols(target, ARRAY_LENGTH(target));
 		fractional_delay_init(&delay);
 		CHECK(fractional_delay_set_phase(&delay, phase) == FRACTIONAL_DELAY_OK, "training timing failed");
-		for (unsigned n = 0; n < ARRAY_LENGTH(target); ++n) {
+		for (unsigned n = 0; n < measured + FRACTIONAL_DELAY_CENTER; ++n) {
 			int16_t input;
 
 			CHECK(fractional_delay_process(&delay, target[n], &input) == FRACTIONAL_DELAY_OK,
@@ -275,7 +275,7 @@ static bool test_channel_model(enum g711_law law, double main, double post, doub
 					quantize(law, input)), "timing measurement failed");
 		}
 	} else {
-		for (unsigned i = 0; i < V92_UPSTREAM_CHANNEL_SYMBOLS; ++i) {
+		for (unsigned i = 0; i < measured; ++i) {
 			int16_t expected = (int16_t)((int)(random_word(&random) % 8192u) - 4096);
 
 			CHECK(v92_upstream_channel_sample(&channel, expected,
@@ -476,6 +476,24 @@ static bool test_channel_model(enum g711_law law, double main, double post, doub
 		}
 	}
 	CHECK(delivered == payload_frames, "wrong payload count");
+	return true;
+}
+
+static bool test_channel_model(enum g711_law law, double main, double post, double second, uint8_t rate, int32_t phase)
+{
+	return test_channel_span(law, main, post, second, rate, phase, V92_UPSTREAM_CHANNEL_SYMBOLS);
+}
+
+/* Minimum and partial final windows still need real B1u and independent
+ * payload decoding through the fitted wire filters, including strong ISI. */
+static bool test_partial_training(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned extra = 0; extra <= 137; extra += 137)
+			for (uint8_t rate = 10; rate <= 19; rate += 3)
+				CHECK(test_channel_span(law, 0.55, 0.43, 0.0, rate, 0,
+					V92_UPSTREAM_CHANNEL_MIN_FIT_SYMBOLS + extra),
+				      "partial training failed: law %u rate %u extra %u", law, rate, extra);
 	return true;
 }
 
@@ -954,7 +972,7 @@ static bool test_rate_selection(void)
 
 int main(void)
 {
-	if (!test_balanced_moduli() || !test_memoryless_alphabet() || !test_rate_selection() || !test_filter_padding() ||
+	if (!test_partial_training() || !test_balanced_moduli() || !test_memoryless_alphabet() || !test_rate_selection() || !test_filter_padding() ||
 	    !test_training_changes() ||
 	    !test_rejections() || !test_receive_plan() ||
 	    !test_short_channel_selection(false) || !test_short_channel_selection(true) ||

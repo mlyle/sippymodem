@@ -49,6 +49,16 @@ struct v92_phase4_digital_rx {
 	bool failed;
 };
 
+/* Valid, exclusively owned receive state. Pending FIR targets still belong
+ * to training; only their completed handoff freezes a fit-ready window. */
+static inline bool v92_phase4_digital_rx_channel_ready(
+	const struct v92_phase4_digital_rx *receiver)
+{
+	return receiver->stage == V92_PHASE4_DIGITAL_RX_CONTROL &&
+	       receiver->signal.control.signal.training_tail_remaining == 0u &&
+	       receiver->channel.symbols >= V92_UPSTREAM_CHANNEL_MIN_FIT_SYMBOLS;
+}
+
 enum v92_phase4_digital_rx_result v92_phase4_digital_rx_init(
 	struct v92_phase4_digital_rx *receiver,
 	const struct v92_pcm_phase3_cpt_line_handoff *handoff,
@@ -76,7 +86,8 @@ bool v92_phase4_digital_rx_is_receiving_control(
 
 /* Discard only a nonempty initial TRN2u channel measurement after a known
  * conditioning change. Preserve the line, reference and delayed decisions;
- * control stays deferred until a fresh complete measurement is available.
+ * the original TRN2u/control boundary remains unchanged. The owner requires
+ * enough known training to fit, or begins a fresh exchange instead.
  * Invalid or repeated requests leave the receiver unchanged. */
 enum v92_phase4_digital_rx_result v92_phase4_digital_rx_restart_measurement(
 	struct v92_phase4_digital_rx *receiver);

@@ -68,7 +68,7 @@ struct v92_phase4_digital_handoff {
 
 /* Continue from the exact Phase 3 receive handoff and the already-running
  * downstream TRN2d/SUVd transmitter. If control is not configured yet, defer
- * SUVd until the complete channel measurement. Otherwise the supplied SUVd
+ * SUVd until the known training window is frozen and fit-ready. Otherwise the supplied SUVd
  * must match the inherited selection. Retain complete CPd in the wire owner;
  * acknowledging CPu changes no filters or constellation tables. */
 enum v92_phase4_digital_station_result v92_phase4_digital_station_init(

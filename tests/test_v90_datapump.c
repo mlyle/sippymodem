@@ -122,6 +122,8 @@ enum v34_call_result __wrap_v34_call_init_from_phase2(
  * the adapter refreshes one unconsumed input and advances TX exactly once. */
 static struct {
 	bool enabled, data_mode, injected, recovered, refreshed, advanced, mismatch;
+	bool expect_full_retrain;
+	uint32_t trigger_symbol;
 	uint32_t symbol, sample, injected_sample, advances, predictions, observations;
 	struct pcm_host_echo *echo;
 	/* Borrowed only until this same input's TX advance callback. */
@@ -222,7 +224,7 @@ enum v92_training_echo_result __wrap_v92_training_echo_observe(
 	enum v92_training_echo_result result = __real_v92_training_echo_observe(
 		timing, echo, line, mode, raw, cleaned, available, change);
 	if (echo_recovery.enabled && !echo_recovery.data_mode && !echo_recovery.injected && line != NULL &&
-	    line->reference.emitted_symbols >= 9000 && result == V92_TRAINING_ECHO_OBSERVED) {
+	    line->reference.emitted_symbols >= echo_recovery.trigger_symbol && result == V92_TRAINING_ECHO_OBSERVED) {
 		echo_recovery.injected = true;
 		echo_recovery.symbol = line->reference.emitted_symbols;
 		echo_recovery.injected_sample = echo_recovery.sample;
@@ -248,9 +250,11 @@ enum pcm_call_result __wrap_pcm_call_recover_upstream_training(struct pcm_call *
 	enum pcm_call_result result = __real_pcm_call_recover_upstream_training(call);
 	if (echo_recovery.enabled) {
 		echo_recovery.recovered = result == PCM_CALL_OK;
+		bool full = pcm_call_is_full_retraining(call);
 		echo_recovery.mismatch |= result != PCM_CALL_OK ||
-			call->stage != PCM_CALL_PHASE4 ||
-			call->state.phase4.v92.owner.digital.receive.channel.symbols != 0 ||
+			full != echo_recovery.expect_full_retrain ||
+			(!full && (call->stage != PCM_CALL_PHASE4 ||
+			 call->state.phase4.v92.owner.digital.receive.channel.symbols != 0)) ||
 			call->pcm_upstream_quality.recovery.attempts != attempts + 1u;
 	}
 	return result;
@@ -1826,19 +1830,22 @@ static bool test_v92_pcm_host_echo(void)
 
 static bool test_training_echo_recovery(void)
 {
-	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
-		memset(&echo_recovery, 0, sizeof(echo_recovery));
-		echo_recovery.enabled = true;
-		bool passed = run_pcm_pair(DP_V92, 4, law, 41333, 0, 0, 28000, 0,
-			MAXIMUM_RATE_RECEIVED_BITS, true, MODEM_PCM_ROLE_NONE, false, UNITY_GAIN_Q15,
-			RETURNED_ECHO_STABLE, UPSTREAM_CHANNEL_CLEAN);
-		echo_recovery.enabled = false;
-		CHECK(passed && echo_recovery.injected && echo_recovery.recovered &&
-			echo_recovery.refreshed && echo_recovery.predictions == 1 &&
-			echo_recovery.observations == 0 &&
-			echo_recovery.advanced && echo_recovery.advances == 1 && !echo_recovery.mismatch,
-			"law %u training recovery did not preserve the adapter boundary", law);
-	}
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned late = 0; late < 2; ++late) {
+			memset(&echo_recovery, 0, sizeof(echo_recovery));
+			echo_recovery.enabled = true;
+			echo_recovery.trigger_symbol = late ? 9000u : 5000u;
+			echo_recovery.expect_full_retrain = late != 0;
+			bool passed = run_pcm_pair(DP_V92, 4, law, 41333, 0, 0, 28000, 0,
+				MAXIMUM_RATE_RECEIVED_BITS, true, MODEM_PCM_ROLE_NONE, false, UNITY_GAIN_Q15,
+				RETURNED_ECHO_STABLE, UPSTREAM_CHANNEL_CLEAN);
+			echo_recovery.enabled = false;
+			CHECK(passed && echo_recovery.injected && echo_recovery.recovered &&
+				echo_recovery.refreshed && echo_recovery.predictions == 1 &&
+				echo_recovery.observations == 0 &&
+				echo_recovery.advanced && echo_recovery.advances == 1 && !echo_recovery.mismatch,
+				"law %u late %u training recovery did not preserve the adapter boundary", law, late);
+		}
 	return true;
 }
 

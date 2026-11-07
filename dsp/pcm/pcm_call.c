@@ -3619,9 +3619,12 @@ enum pcm_call_result pcm_call_recover_upstream_training(struct pcm_call *call)
 	    call->state.phase4.v92.owner.digital.receive.signal.trn2u.renegotiation)
 		return PCM_CALL_INVALID_STATE;
 	struct pcm_call next = *call;
-	/* Once SUVd is enabled, the peer may already be ending TRN2u. It
-	 * cannot supply another full measurement without a fresh exchange. */
-	if (next.state.phase4.v92.owner.digital.control.transmit.control_configured) {
+	/* The peer may leave TRN2u after its original 12000T, even before
+	 * receiving SUVd (V.92 9.6.2.1.1). A late correction needs a fresh
+	 * exchange rather than fitting an undersized or control-tainted span. */
+	if (next.state.phase4.v92.owner.digital.control.transmit.control_configured ||
+	    next.state.phase4.v92.owner.digital.receive.signal.trn2u.trained_symbols >
+		V92_UPSTREAM_CHANNEL_SYMBOLS - V92_UPSTREAM_CHANNEL_MIN_FIT_SYMBOLS) {
 		enum pcm_call_result result = recover_v92_training(&next);
 		if (result == PCM_CALL_OK)
 			*call = next;
@@ -4116,8 +4119,7 @@ static enum pcm_call_result sample_v92_phase4(
 	{
 		const struct v92_jd *jd = &call->phase3_configuration.v92_digital.jd;
 		struct v92_phase4_digital_station *station = &call->state.phase4.v92.owner.digital;
-		bool measured = station->receive.stage != V92_PHASE4_DIGITAL_RX_TRN2U &&
-			station->receive.channel.symbols == V92_UPSTREAM_CHANNEL_SYMBOLS;
+		bool measured = v92_phase4_digital_rx_channel_ready(&station->receive);
 		bool cpu_received = station->control.cpu_received;
 		const struct v92_cpu_parameters *cpu = &call->state.phase4.v92.owner.digital.control.cpu;
 		enum v92_phase4_digital_station_result station_result = prefix_sent ?
@@ -4143,8 +4145,7 @@ static enum pcm_call_result sample_v92_phase4(
 		 * A scalar gain change already belongs to the trained receive FIR.
 		 * Redesigning CPd for it can destroy the direct constellation's
 		 * quantizer spacing without providing useful channel compensation. */
-		if (!measured && station->receive.stage != V92_PHASE4_DIGITAL_RX_TRN2U &&
-		    station->receive.channel.symbols == V92_UPSTREAM_CHANNEL_SYMBOLS &&
+		if (!measured && v92_phase4_digital_rx_channel_ready(&station->receive) &&
 		    station->receive.channel_distorted &&
 		    !v92_upstream_channel_fits_gain(&station->receive.channel) &&
 		    call->v92_digital_phase4_configuration.upstream_selection == PCM_CALL_V92_UPSTREAM_DIRECT) {

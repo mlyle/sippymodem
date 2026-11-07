@@ -82,7 +82,7 @@ enum v92_phase4_digital_rx_result v92_phase4_digital_rx_restart_measurement(
 	    state_has_failed(receiver) || receiver->signal.trn2u.renegotiation ||
 	    receiver->channel.symbols == 0u ||
 	    receiver->signal.trn2u.trained_symbols >
-		UINT32_MAX - V92_UPSTREAM_CHANNEL_SYMBOLS - V92_PCM_PHASE4_TRN2U_ALIGNMENT)
+		V92_UPSTREAM_CHANNEL_SYMBOLS - V92_UPSTREAM_CHANNEL_MIN_FIT_SYMBOLS)
 		return V92_PHASE4_DIGITAL_RX_INVALID_STATE;
 	receiver->channel = (struct v92_upstream_channel){ 0 };
 	receiver->channel_distorted = false;
@@ -199,12 +199,9 @@ static enum v92_phase4_digital_rx_result receive_training(
 	if (result == V92_PCM_PHASE4_TRN2U_LINE_RX_OK)
 		return V92_PHASE4_DIGITAL_RX_OK;
 	if (result == V92_PCM_PHASE4_TRN2U_LINE_RX_ALIGNED) {
-		/* The FIR still owes its delayed targets. Its control successor
-		 * completes those samples before the channel can be selected. */
-		if (next->measurement_start_symbol &&
-		    next->channel.symbols + V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY <
-		    V92_UPSTREAM_CHANNEL_SYMBOLS)
-			return V92_PHASE4_DIGITAL_RX_OK;
+		/* V.92 9.6.2.1.1 allows SUVu after the original 12000T span;
+		 * a measurement reset cannot extend the peer's TRN2u. The control
+		 * successor finishes delayed FIR targets before channel selection. */
 		struct v92_pcm_phase4_trn2u_line_handoff handoff;
 		struct v92_upstream_control_line_rx control;
 

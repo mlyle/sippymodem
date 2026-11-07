@@ -73,6 +73,12 @@ bool v92_upstream_channel_is_valid(const struct v92_upstream_channel *channel)
 	return true;
 }
 
+bool v92_upstream_channel_can_fit(const struct v92_upstream_channel *channel)
+{
+	return v92_upstream_channel_is_valid(channel) &&
+	       channel->symbols >= V92_UPSTREAM_CHANNEL_MIN_FIT_SYMBOLS;
+}
+
 bool v92_upstream_channel_sample(
 	struct v92_upstream_channel *channel, int16_t expected, int32_t observed)
 {
@@ -127,13 +133,12 @@ bool v92_upstream_channel_sample_owned(
 
 bool v92_upstream_channel_has_stable_gain(const struct v92_upstream_channel *channel)
 {
-	if (!v92_upstream_channel_is_valid(channel) ||
-	    channel->symbols != V92_UPSTREAM_CHANNEL_SYMBOLS)
+	if (!v92_upstream_channel_can_fit(channel))
 		return false;
 	double lower = -DBL_MAX, upper = DBL_MAX;
 	unsigned used = channel->symbols - V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS;
 
-	for (unsigned i = 0; i < V92_UPSTREAM_CHANNEL_WINDOWS; ++i) {
+	for (unsigned i = 0; i < V92_UPSTREAM_CHANNEL_WINDOWS && window_symbols(used, i); ++i) {
 		const struct v92_upstream_channel_window *window = &channel->window[i];
 		double xx = window->expected_energy, xy = window->cross, yy = window->observed_energy;
 
@@ -158,8 +163,7 @@ bool v92_upstream_channel_has_stable_gain(const struct v92_upstream_channel *cha
 
 bool v92_upstream_channel_fits_gain(const struct v92_upstream_channel *channel)
 {
-	if (!v92_upstream_channel_is_valid(channel) ||
-	    channel->symbols != V92_UPSTREAM_CHANNEL_SYMBOLS)
+	if (!v92_upstream_channel_can_fit(channel))
 		return false;
 	int64_t cross = channel->cross_correlation[V92_UPSTREAM_CHANNEL_PRECURSOR_LAGS];
 	int64_t expected = channel->expected_autocorrelation[0];
