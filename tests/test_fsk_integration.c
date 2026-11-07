@@ -3133,6 +3133,10 @@ static bool run_media_call(
 			      test_case->quality_recovery_rates),
 		      "%s sustained-quality recovery failed", test_case->name);
 	if (test_case->test_retrain) {
+		/* Adaptive V.32 cases declare their rate after both quality faults.
+		 * Other cases retain their original fixed-rate expectations. */
+		unsigned quality_rate = test_case->quality_recovery_rates[1];
+
 		if (connected_id == DP_V34 && test_case->raw_transport)
 			CHECK(exercise_v34_media_gap(&caller, &answerer, codec, &recorder),
 			      "%s did not recover after a short media gap", test_case->name);
@@ -3144,7 +3148,8 @@ static bool run_media_call(
 		      "%s did not retain its requested transport", test_case->name);
 		CHECK(exercise_retrain(
 				      &caller, &answerer, &answerer, connected_id,
-				      answerer.modem->rx_rate, codec, &recorder,
+				      quality_rate ? quality_rate : test_case->answerer_rx_rate,
+				      codec, &recorder,
 				      &caller_delay,
 				      test_case->caller_delay_frames, 0,
 				      test_case->raw_transport,
@@ -3156,7 +3161,8 @@ static bool run_media_call(
 		      test_case->name);
 		CHECK(exercise_retrain(
 				      &caller, &answerer, &caller, connected_id,
-				      caller.modem->rx_rate, codec, &recorder,
+				      quality_rate ? quality_rate : test_case->caller_rx_rate,
+				      codec, &recorder,
 				      &caller_delay,
 				      test_case->caller_delay_frames, 1,
 				      test_case->raw_transport, false,
