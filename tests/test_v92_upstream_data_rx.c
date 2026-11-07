@@ -4263,6 +4263,62 @@ static bool test_translated_acquisition_seed(enum g711_law law,
 	return true;
 }
 
+static bool test_noise_acquisition_zero_cells(int polarity)
+{
+	double variance[2], gain[2], offset[2];
+	for (unsigned sign = 0; sign < 2; ++sign) {
+		struct v92_upstream_data_rx rx = { 0 };
+		struct v92_cpd_parameters cpd;
+		struct v92_pcm_mapping mapping;
+		CHECK(v92_cpd_direct_init(&cpd, G711_LAW_PCMU, 1, false) == V92_CPD_OK &&
+		      v92_pcm_mapping_init(&mapping, G711_LAW_PCMU, &cpd) == V92_PCM_MAPPING_OK &&
+		      v92_pcm_frame_rx_init_constellation(&rx.decoder, &mapping) == V92_PCM_FRAME_OK,
+		      "noise-cell mapping failed");
+		rx.model.residual_acquiring = true;
+		rx.line.polarity = polarity;
+		rx.line.plan.observation = V92_PCM_FRAME_CONSTELLATION;
+		rx.line.plan.gain = rx.line.calibration.gain = 1.;
+		rx.line.calibration.minimum = .9;
+		rx.line.calibration.maximum = 1.1;
+		rx.line.host.gain = 1.;
+		pcm_gain_init(&rx.line.host.bounds);
+		/* Stage physical-fit acquisition decisions, not a coded B1 pass.
+		 * Both arms have identical decoded samples and predictions; only
+		 * the received zero character differs. Its physical input cell
+		 * determines whether a small positive prediction needs extra noise. */
+		for (unsigned f = 0; f < V92_B1U_ACQUISITION_FRAMES; ++f) {
+			struct v92_pcm_frame_decision decision = { 0 };
+			rx.line.received_frames = f;
+			for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i) {
+				unsigned n = f * V92_PCM_MAPPING_FRAME_SYMBOLS + i;
+				uint8_t code = n % 5 == 0 ? (sign ? 0xff : 0x7f) :
+					g711_encode_pcmu((int16_t)((int)((n * 7919u) % 2000u) - 1000));
+				int16_t wire = g711_decode_pcmu(code);
+				decision.predicted_samples[i] = polarity * (n % 5 == 0 ? 4 : wire);
+				rx.line.octet[i] = code;
+				rx.line.raw[i] = rx.line.wire[i] = polarity * wire;
+				rx.line.host_samples[i] = wire;
+				rx.line.wire_known[i] = rx.line.received[i] = true;
+				CHECK(pcm_gain_observe(&rx.line.host.bounds, wire, wire), "host gain failed");
+			}
+			v92_upstream_model_observe(&rx.model, &decision, &rx.line);
+		}
+		v92_upstream_model_fit(&rx.model, &rx.line, &rx.decoder);
+		++rx.line.received_frames;
+		CHECK(rx.line.residual.active && v92_upstream_model_is_valid(&rx) &&
+		      memory_region_is_zero(rx.model.wire, sizeof(rx.model.wire)),
+		      "noise acquisition did not freeze and clear its scratch");
+		variance[sign] = rx.model.residual_variance;
+		gain[sign] = rx.line.calibration.gain;
+		offset[sign] = rx.line.residual.offset;
+	}
+	CHECK(gain[0] == gain[1] && offset[0] == offset[1], "wire character changed physical fit");
+	CHECK(variance[0] > variance[1] + 1. && variance[1] >= 1.,
+	      "noise fit merged PCMU zero cells: polarity=%d negative=%g positive=%g",
+	      polarity, variance[0], variance[1]);
+	return true;
+}
+
 /* The channel owner must convert integer codec cells before Gaussian B1u
  * scoring, then retain integer-distance cells when delayed B1u has drained. */
 static bool test_probability_cells(enum g711_law law, int polarity)
@@ -4490,6 +4546,9 @@ static bool test_b1_sync(enum g711_law law, int polarity, unsigned prefix, unsig
 
 int main(void)
 {
+	fprintf(stderr, "[ RUN      ] PCM upstream noise acquisition retains zero cells\n");
+	if (!test_noise_acquisition_zero_cells(-1) || !test_noise_acquisition_zero_cells(1)) return 1;
+	fprintf(stderr, "[       OK ] PCM upstream noise acquisition retains zero cells\n");
 	{
 		fprintf(stderr, "[ RUN      ] PCM upstream bounded B1 alignment\n");
 		const unsigned prefixes[] = { 0, 48, 96, 144, 288 };

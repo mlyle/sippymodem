@@ -184,7 +184,7 @@ void v92_upstream_model_observe(struct v92_upstream_model *model,
 		for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; i++) {
 			model->x[offset + i] = decision->predicted_samples[i];
 			model->raw[offset + i] = line->raw[i];
-			model->wire[offset + i] = line->wire[i];
+			model->wire_octet[offset + i] = line->octet[i];
 			model->host[offset + i] = line->host_samples[i];
 		}
 		return;
@@ -394,8 +394,9 @@ static double fit_residual_variance(const struct v92_upstream_model *model,
 	double mean[V92_OBSERVATION_TRAINING], variance = 0.;
 	for (unsigned n = FIRST; n < V92_OBSERVATION_TRAINING; ++n) {
 		struct g711_interval bin;
-		if (!pcm_gain_contains(&line->host.bounds, line->polarity * model->wire[n], model->host[n]) ||
-		    !g711_quantization_interval(law, line->polarity * model->wire[n], &bin)) return 0.;
+		int16_t wire = g711_decode(law, model->wire_octet[n]);
+		if (!pcm_gain_contains(&line->host.bounds, wire, model->host[n]) ||
+		    !g711_octet_interval(law, model->wire_octet[n], &bin)) return 0.;
 		double correction = model->raw[n] - line->polarity * (double)model->host[n];
 		struct g711_probability_interval bounds = g711_probability_bounds(bin);
 		double lower = bounds.lower * line->host.gain;
