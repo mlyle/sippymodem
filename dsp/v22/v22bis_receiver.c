@@ -130,10 +130,10 @@ static inline bool nearest_symbol(
 		if (v22bis_constellation_point(
 			    candidate, &ideal) != V22_FRAMING_OK)
 			return false;
-		if (qam_gain_predict(
-			    gain, &ideal, &predicted) !=
-		    QAM_GAIN_OK)
-			return false;
+		/* Callers validate the gain once. Finite gain power bounds each
+		 * coordinate by sqrt(DBL_MAX); ideal coordinates are <=3/sqrt(18),
+		 * so the complex products and their sums remain finite. */
+		predicted = qam_point_multiply(&gain->channel_gain, &ideal);
 		error = qam_point_distance_squared(point, &predicted);
 		if (isfinite(error) && error < best_error) {
 			best_error = error;

@@ -111,6 +111,11 @@ static bool test_read_only_slicing(void)
 {
 	static const struct qam_point channels[] = {
 		{ 1., 0. }, { .72, -.31 }, { -.24, .83 },
+		/* Near the admitted power floor and finite-power ceiling. Some
+		 * far-candidate distances overflow; the nearest must still win. */
+		{ 0x1.1p-20, 0. }, { 0., -0x1.1p-20 },
+		{ -0x1p510, 0x1p509 }, { 0x1.8p511, 0. },
+		{ 0., 0x1.8p511 }, { 0x1p510, 0x1p510 },
 	};
 	const double unit = 1. / sqrt(18.);
 	struct qam_point reference;
