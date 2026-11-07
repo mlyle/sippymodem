@@ -61,13 +61,18 @@ struct v32_echo_canceller {
 	uint16_t pending_far_delay_symbols;
 	bool far_suspended;
 	double adaptation;
+	/* The first successful phase measures this symbol's fixed reference
+	 * window. Retain its energy across partial process calls; clear it
+	 * after the last phase, before any reference or delay changes. */
+	double reference_energy;
 	/* Zero awaits a reference; a push grants three matched samples. */
 	uint8_t pending_samples;
 	bool adapting;
 };
 
 /* Cheap bounds and lifecycle checks shared with the line frontend. This does
- * not scan reference samples or coefficients; is_valid performs that scan. */
+ * not scan reference samples or coefficients; is_valid also checks that
+ * retained symbol energy matches the fixed reference window. */
 bool v32_echo_canceller_header_is_valid(
 	const struct v32_echo_canceller *canceller);
 

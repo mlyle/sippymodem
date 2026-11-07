@@ -42,9 +42,17 @@ bool v32_echo_canceller_header_is_valid(
 			canceller->near_delay_symbols,
 			canceller->pending_far_delay_symbols))) &&
 	       canceller->pending_samples <= V32_ECHO_PHASE_COUNT &&
+	       isfinite(canceller->reference_energy) &&
+	       canceller->reference_energy >= 0.0 &&
+	       ((canceller->pending_samples != 0 &&
+	         canceller->pending_samples != V32_ECHO_PHASE_COUNT) ||
+	        canceller->reference_energy == 0.0) &&
 	       qam_adaptation_is_valid(canceller->adaptation) &&
 	       (!canceller->adapting || canceller->adaptation > 0.0);
 }
+
+static struct qam_point tap_reference(
+	const struct v32_echo_canceller *canceller, size_t window, size_t tap);
 
 bool v32_echo_canceller_is_valid(
 	const struct v32_echo_canceller *canceller)
@@ -72,7 +80,19 @@ bool v32_echo_canceller_is_valid(
 			}
 		}
 	}
-	return finite;
+	if (!finite)
+		return false;
+	if (canceller->pending_samples != 0 &&
+	    canceller->pending_samples != V32_ECHO_PHASE_COUNT) {
+		double energy = 0.0;
+		for (size_t window = 0; window < V32_ECHO_WINDOW_COUNT; ++window)
+			for (size_t tap = 0; tap < V32_ECHO_WINDOW_SYMBOLS; ++tap) {
+				struct qam_point point = tap_reference(canceller, window, tap);
+				energy += qam_point_power(&point);
+			}
+		return energy == canceller->reference_energy;
+	}
+	return true;
 }
 
 enum v32_echo_result v32_echo_canceller_init(
@@ -154,7 +174,7 @@ static struct qam_point tap_reference(
 		canceller->reference_write, V32_ECHO_REFERENCE_CAPACITY, age + 1u)];
 }
 
-static bool prediction_and_energy(
+static inline bool prediction_and_energy(
 	const struct v32_echo_canceller *canceller, size_t phase,
 	double *prediction, double *energy, double *far_prediction)
 {
@@ -174,16 +194,18 @@ static bool prediction_and_energy(
 			predicted += value;
 			if (window == V32_ECHO_DELAYED_WINDOW)
 				far += value;
-			reference_energy += qam_point_power(&point);
+			if (energy != NULL)
+				reference_energy += qam_point_power(&point);
 		}
 	}
 	*far_prediction = far;
 	*prediction = predicted;
-	*energy = reference_energy;
-	/* Finite energy proves all active reference coordinates finite. Any
-	 * nonfinite coefficient also makes the real correlation nonfinite,
-	 * including infinity times zero; later additions cannot repair it.
-	 * Keep the full-state scan in is_valid, outside this per-sample path. */
+	if (energy != NULL)
+		*energy = reference_energy;
+	/* Every real correlation includes both reference coordinates. A
+	 * nonfinite coordinate or coefficient propagates, including infinity
+	 * times zero. Energy is measured only on the first phase; the owner
+	 * keeps that reference window fixed through all three phases. */
 	return isfinite(predicted) && isfinite(reference_energy) && isfinite(far);
 }
 
@@ -238,6 +260,7 @@ enum v32_echo_result v32_echo_canceller_process(
 	struct qam_point updated[V32_ECHO_PHASE_COUNT]
 				[V32_ECHO_WINDOW_COUNT][V32_ECHO_WINDOW_SYMBOLS];
 	size_t bytes;
+	double energy;
 
 	if (!v32_echo_canceller_header_is_valid(canceller))
 		return V32_ECHO_INVALID_STATE;
@@ -257,15 +280,17 @@ enum v32_echo_result v32_echo_canceller_process(
 		return V32_ECHO_INVALID_ARGUMENT;
 	if (!canceller->pending_samples)
 		return V32_ECHO_INVALID_STATE;
+	energy = canceller->reference_energy;
 	for (size_t index = 0; index < count; ++index) {
-		double energy;
 		double prediction;
 		size_t phase = V32_ECHO_PHASE_COUNT - canceller->pending_samples + index;
 
 		if (!isfinite(received[index]))
 			return V32_ECHO_INVALID_ARGUMENT;
-		if (!prediction_and_energy(
-			    canceller, phase, &prediction, &energy, &far[index]))
+		bool predicted = phase == 0 ?
+			prediction_and_energy(canceller, phase, &prediction, &energy, &far[index]) :
+			prediction_and_energy(canceller, phase, &prediction, NULL, &far[index]);
+		if (!predicted)
 			return V32_ECHO_INVALID_STATE;
 		error[index] = received[index] - prediction;
 		if (!isfinite(error[index]) || !isfinite(error[index] + far[index]))
@@ -278,6 +303,7 @@ enum v32_echo_result v32_echo_canceller_process(
 		    !prepare_update(canceller, phase, scale, updated[index]))
 			return V32_ECHO_INVALID_STATE;
 	}
+	canceller->reference_energy = energy;
 	/* Commit only after every requested phase passes preflight. Retain the
 	 * checked values rather than walking the reference and computing twice. */
 	for (size_t index = 0; index < count; ++index) {
@@ -302,6 +328,7 @@ enum v32_echo_result v32_echo_canceller_process(
 			canceller->far_suspended = model.suspended;
 		}
 		if (--canceller->pending_samples == 0) {
+			canceller->reference_energy = 0.0;
 			if (canceller->pending_far_delay_symbols) {
 				canceller->round_trip_symbols =
 					canceller->pending_far_delay_symbols;

@@ -858,12 +858,60 @@ static bool test_near_only_step(void)
 	return run_frozen_delay_chunks(0, &hash, true);
 }
 
+static bool test_symbol_energy_lifecycle(void)
+{
+	struct v32_echo_canceller canceller, saved;
+	const struct qam_point reference = { 3., 4. };
+	double input[] = { 10., 20., 30. }, output[] = { -1., -2., -3. };
+	CHECK(v32_echo_canceller_init(&canceller, 0, V32_ECHO_MIN_ROUND_TRIP_SYMBOLS) == V32_ECHO_OK &&
+	      v32_echo_canceller_start_adaptation(&canceller, .2) == V32_ECHO_OK &&
+	      v32_echo_canceller_push_reference(&canceller, &reference) == V32_ECHO_OK,
+	      "energy lifecycle fixture failed");
+	CHECK(canceller.reference_energy == 0. && canceller.pending_samples == 3 &&
+	      v32_echo_canceller_process(&canceller, input, output, 1) == V32_ECHO_OK &&
+	      canceller.reference_energy == 25. && canceller.pending_samples == 2,
+	      "first phase did not retain the fixed reference energy");
+	saved = canceller;
+	canceller.reference_energy = 24.;
+	CHECK(!v32_echo_canceller_is_valid(&canceller), "full validation missed stale energy");
+	canceller = saved;
+	const double invalid[] = { 20., NAN };
+	double rejected[] = { -7., -8. };
+	CHECK(v32_echo_canceller_process(&canceller, invalid, rejected, 2) == V32_ECHO_INVALID_ARGUMENT &&
+	      !memcmp(&saved, &canceller, sizeof(saved)) && rejected[0] == -7. && rejected[1] == -8.,
+	      "late invalid input changed partial-symbol energy or outputs");
+	const double corrupt[] = { -1., INFINITY, NAN };
+	for (unsigned i = 0; i < ARRAY_LENGTH(corrupt); ++i) {
+		canceller.reference_energy = corrupt[i];
+		struct v32_echo_canceller invalid_state = canceller;
+		CHECK(!v32_echo_canceller_is_valid(&canceller) &&
+		      v32_echo_canceller_process(&canceller, input + 1, rejected, 1) == V32_ECHO_INVALID_STATE &&
+		      !memcmp(&invalid_state, &canceller, sizeof(canceller)) && rejected[0] == -7.,
+		      "corrupt partial-symbol energy was accepted");
+	}
+	canceller = saved;
+	CHECK(v32_echo_canceller_process(&canceller, input + 1, output + 1, 2) == V32_ECHO_OK &&
+	      canceller.reference_energy == 0. && canceller.pending_samples == 0,
+	      "last phase retained stale energy");
+	canceller.reference_energy = 25.;
+	CHECK(!v32_echo_canceller_header_is_valid(&canceller), "idle symbol accepted stale energy");
+	canceller.reference_energy = 0.;
+	CHECK(v32_echo_canceller_push_reference(&canceller, &reference) == V32_ECHO_OK &&
+	      v32_echo_canceller_process(&canceller, input, output, 2) == V32_ECHO_OK &&
+	      canceller.reference_energy == 50. && canceller.pending_samples == 1 &&
+	      v32_echo_canceller_process(&canceller, input + 2, output + 2, 1) == V32_ECHO_OK &&
+	      canceller.reference_energy == 0. && canceller.pending_samples == 0,
+	      "two-plus-one phases lost the new reference window");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "symbol energy lifecycle", test_symbol_energy_lifecycle },
 		{ "near-only delay step", test_near_only_step },
 		{ "frozen delay chunk equivalence",
 		  test_frozen_delay_chunk_equivalence },
