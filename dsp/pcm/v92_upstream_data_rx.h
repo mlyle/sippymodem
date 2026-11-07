@@ -60,6 +60,10 @@ struct v92_upstream_data_line {
 	} tracking;
 	int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
 	int16_t wire[V92_PCM_MAPPING_FRAME_SYMBOLS];
+	/* Supplied wire characters, before polarity normalization. wire_known
+	 * and received retain their provenance, including unavailable media.
+	 * Decoded levels alone lose the distinction between PCMU signed zeros. */
+	uint8_t octet[V92_PCM_MAPPING_FRAME_SYMBOLS];
 	/* Gain-only physical samples, before echo subtraction or polarity. */
 	int16_t host_samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
 	bool wire_known[V92_PCM_MAPPING_FRAME_SYMBOLS];

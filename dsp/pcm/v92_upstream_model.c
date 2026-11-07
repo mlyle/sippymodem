@@ -571,7 +571,7 @@ static bool wire_cells(const struct v92_upstream_data_line *line,
 		    raw <= INT16_MIN || raw >= INT16_MAX ||
 		    host == INT16_MIN || host == INT16_MAX ||
 		    !pcm_gain_contains(bounds, line->wire[i] * line->polarity, host) ||
-		    !g711_quantization_interval(law, line->wire[i] * line->polarity, &cell))
+		    !g711_octet_interval(law, line->octet[i], &cell))
 			return false;
 		double offset = line->raw[i] - (int32_t)host * line->polarity -
 			v92_upstream_line_offset(line) - line->correction[i];

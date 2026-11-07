@@ -314,6 +314,42 @@ static bool test_quantization_interval_input_space(void)
 	return true;
 }
 
+static bool test_octet_interval_input_space(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		unsigned intervals = 0;
+		/* Enumerate encoder runs independently of reconstructed levels:
+		 * the negative-zero run must stop before input zero. */
+		for (int32_t lower = INT16_MIN; lower <= INT16_MAX; ) {
+			uint8_t code = g711_encode(law, (int16_t)lower);
+			int32_t upper = lower;
+
+			while (upper < INT16_MAX &&
+			       g711_encode(law, (int16_t)(upper + 1)) == code)
+				upper++;
+			struct g711_interval interval;
+
+			CHECK(g711_octet_interval(law, code, &interval) &&
+			      interval.lower == lower && interval.upper == upper,
+			      "law %u octet %02x lost exact [%d,%d] input cell",
+			      law, code, (int)lower, (int)upper);
+			lower = upper + 1;
+			intervals++;
+		}
+		CHECK(intervals == 256, "law %u lost an exact octet cell", law);
+	}
+	struct g711_interval negative, positive, reconstructed;
+
+	CHECK(g711_octet_interval(G711_LAW_PCMU, 0x7f, &negative) &&
+	      g711_octet_interval(G711_LAW_PCMU, 0xff, &positive) &&
+	      g711_quantization_interval(G711_LAW_PCMU, 0, &reconstructed) &&
+	      negative.lower == -3 && negative.upper == -1 &&
+	      positive.lower == 0 && positive.upper == 3 &&
+	      reconstructed.lower == -3 && reconstructed.upper == 3,
+	      "exact and reconstructed PCMU zeros lost their separate contracts");
+	return true;
+}
+
 static bool test_quantization_interval_rejection(void)
 {
 	struct g711_interval interval = { 123, 456 };
@@ -325,6 +361,12 @@ static bool test_quantization_interval_rejection(void)
 	CHECK(!g711_quantization_interval(G711_LAW_PCMU, 0, NULL) &&
 	      !g711_quantization_interval(G711_LAW_PCMA, 0, NULL),
 	      "NULL interval output was accepted");
+	CHECK(!g711_octet_interval((enum g711_law)-1, 0, &interval) &&
+	      !g711_octet_interval((enum g711_law)2, 0, &interval) &&
+	      !g711_octet_interval(G711_LAW_PCMU, 0, NULL) &&
+	      !g711_octet_interval(G711_LAW_PCMA, 0, NULL) &&
+	      interval.lower == 123 && interval.upper == 456,
+	      "invalid exact-octet interval changed output");
 	return true;
 }
 
@@ -429,6 +471,7 @@ int main(void)
 		{ "all linear samples", test_all_linear_samples },
 		{ "quantization interval edges", test_quantization_interval_edges },
 		{ "quantization interval input space", test_quantization_interval_input_space },
+		{ "exact octet interval input space", test_octet_interval_input_space },
 		{ "quantization interval rejection", test_quantization_interval_rejection },
 		{ "V.90 Ucode space", test_ucode_space },
 		{ "V.90 Ucode boundaries", test_ucode_boundaries },

@@ -50,6 +50,13 @@ struct g711_interval {
 	int16_t lower, upper;
 };
 
+/* Exact integer encoder preimage of one network character. Unlike a
+ * reconstructed-level interval, PCMU's two zero characters retain their
+ * separate negative and nonnegative input cells. Invalid calls leave output
+ * unchanged. */
+bool g711_octet_interval(
+	enum g711_law law, uint8_t octet, struct g711_interval *interval);
+
 /* Inclusive 16-bit input range with the same encode/decode result as sample.
  * This is a reconstructed-level interval, not an exact-octet interval: the
  * two PCMU zero codewords share one interval. Invalid calls leave it alone. */

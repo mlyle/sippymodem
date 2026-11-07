@@ -136,9 +136,12 @@ bool v92_upstream_data_rx_is_valid(
 			    (!line->residual.active && line->correction[i] != 0) ||
 			    (line->received[i] && !line->wire_known[i]) ||
 			    (!line->wire_known[i] && line->wire[i] != 0) ||
+			    (!line->wire_known[i] && line->octet[i] != 0) ||
+			    (line->wire_known[i] && line->wire[i] != line->polarity *
+				g711_decode(receiver->decoder.mapping.law, line->octet[i])) ||
 			    (!line->wire_known[i] && line->host_samples[i] != 0) ||
 			    (i >= line->symbol_count && (line->raw[i] != 0 || line->samples[i] != 0 || line->correction[i] != 0 ||
-				line->wire[i] != 0 || line->host_samples[i] != 0 ||
+				line->wire[i] != 0 || line->octet[i] != 0 || line->host_samples[i] != 0 ||
 				line->wire_known[i] || line->received[i])))
 				return false;
 		return true;
@@ -549,6 +552,7 @@ static enum v92_upstream_data_rx_result receive_frame(
 	memset(line->samples, 0, sizeof(line->samples));
 	memset(line->correction, 0, sizeof(line->correction));
 	memset(line->wire, 0, sizeof(line->wire));
+	memset(line->octet, 0, sizeof(line->octet));
 	memset(line->host_samples, 0, sizeof(line->host_samples));
 	memset(line->wire_known, 0, sizeof(line->wire_known));
 	memset(line->received, 0, sizeof(line->received));
@@ -607,6 +611,7 @@ static enum v92_upstream_data_rx_result decode_sample(
 		line->correction[line->symbol_count] = correction;
 		line->wire[line->symbol_count] = wire_known ? line->polarity *
 			g711_decode(receiver->decoder.mapping.law, code) : 0;
+		line->octet[line->symbol_count] = wire_known ? code : 0;
 		line->wire_known[line->symbol_count] = wire_known;
 		line->host_samples[line->symbol_count] = wire_known ? host_sample : 0;
 		line->received[line->symbol_count] = wire_known && available;

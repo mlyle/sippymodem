@@ -425,6 +425,65 @@ static bool test_data_initialization(void)
 	return true;
 }
 
+static bool test_wire_octet_ownership(void)
+{
+	for (int polarity = -1; polarity <= 1; polarity += 2) {
+		struct channel channel = {
+			.law = G711_LAW_PCMU, .gain = 1., .polarity = polarity,
+		};
+		struct v92_phase4_record_tx e2u_tx;
+		struct v92_e2u_rx e2u_rx;
+		struct v92_cpd_parameters cpd;
+		struct v92_pcm_mapping mapping;
+		struct v92_upstream_data_rx receiver;
+		struct v92_upstream_data_frame frame;
+		const struct v92_upstream_plan plan = {
+			.observation = V92_PCM_FRAME_CONSTELLATION, .gain = 1.,
+			.delay = V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY,
+		};
+
+		CHECK(prepare_e2u(&channel, false, &e2u_tx, &e2u_rx) &&
+		      v92_cpd_direct_init(&cpd, channel.law, 1, false) == V92_CPD_OK &&
+		      v92_pcm_mapping_init(&mapping, channel.law, &cpd) == V92_PCM_MAPPING_OK &&
+		      v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping, &plan) ==
+			V92_UPSTREAM_DATA_RX_OK, "wire character fixture failed");
+		CHECK(fixture_octet_owned(&receiver, 0x7f, 0, 0, true, &frame) ==
+			V92_UPSTREAM_DATA_RX_OK &&
+		      fixture_sample_owned(&receiver, 0, &frame) == V92_UPSTREAM_DATA_RX_OK &&
+		      fixture_octet_owned(&receiver, 0xff, 0, 0, true, &frame) ==
+			V92_UPSTREAM_DATA_RX_OK &&
+		      fixture_octet_owned(&receiver, 0x7f, 0, 0, false, &frame) ==
+			V92_UPSTREAM_DATA_RX_OK &&
+		      receiver.line.symbol_count == 4 &&
+		      receiver.line.octet[0] == 0x7f && receiver.line.wire_known[0] &&
+		      receiver.line.octet[1] == 0 && !receiver.line.wire_known[1] &&
+		      receiver.line.octet[2] == 0xff && receiver.line.wire_known[2] &&
+		      receiver.line.octet[3] == 0x7f && receiver.line.wire_known[3] &&
+		      !receiver.line.received[3] &&
+		      receiver.line.wire[0] == 0 && receiver.line.wire[2] == 0 &&
+		      v92_upstream_data_rx_is_valid(&receiver),
+		      "raw line lost exact zero characters or invented wire evidence");
+		struct v92_upstream_data_rx changed = receiver;
+
+		changed.line.octet[0] = 0xfe;
+		CHECK(!v92_upstream_data_rx_is_valid(&changed),
+		      "wire character inconsistent with its decoded level was accepted");
+		changed = receiver;
+		changed.line.octet[1] = 0xff;
+		CHECK(!v92_upstream_data_rx_is_valid(&changed),
+		      "unknown wire character retained invented evidence");
+		changed = receiver;
+		changed.line.octet[4] = 0xff;
+		CHECK(!v92_upstream_data_rx_is_valid(&changed),
+		      "unused wire character retained stale evidence");
+		CHECK(v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping, &plan) ==
+			V92_UPSTREAM_DATA_RX_OK &&
+		      memory_region_is_zero(receiver.line.octet, sizeof(receiver.line.octet)),
+		      "new receive epoch retained wire characters");
+	}
+	return true;
+}
+
 struct idle_source {
 	unsigned int frames;
 	unsigned int idle_frames;
@@ -4208,6 +4267,15 @@ static bool test_translated_acquisition_seed(enum g711_law law,
  * scoring, then retain integer-distance cells when delayed B1u has drained. */
 static bool test_probability_cells(enum g711_law law, int polarity)
 {
+	/* Independent exact-code oracle, including both mu-law zero cells. */
+	struct g711_interval bins[256];
+	for (unsigned i = 0; i < ARRAY_LENGTH(bins); ++i)
+		bins[i] = (struct g711_interval){ INT16_MAX, INT16_MIN };
+	for (int value = INT16_MIN; value <= INT16_MAX; ++value) {
+		uint8_t code = g711_encode(law, (int16_t)value);
+		if (value < bins[code].lower) bins[code].lower = (int16_t)value;
+		bins[code].upper = (int16_t)value;
+	}
 	struct v92_cpd_parameters cpd;
 	struct v92_pcm_mapping mapping;
 	struct v92_pcm_frame_tx tx;
@@ -4239,9 +4307,15 @@ static bool test_probability_cells(enum g711_law law, int polarity)
 		CHECK(v92_pcm_frame_encode(&tx, bits, mapping.data_bits_per_frame, &encoded) ==
 		      V92_PCM_FRAME_OK, "probability-cell source failed");
 		for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i) {
-			int16_t physical = g711_quantize(law, (int16_t)(polarity * encoded.u[i]));
-			struct g711_interval bin;
-			CHECK(g711_quantization_interval(law, physical, &bin), "probability cell missing");
+			uint8_t code = g711_encode(law, (int16_t)(polarity * encoded.u[i]));
+			/* Equal reconstructed zero does not authorize merging the
+			 * likelihoods of distinct supplied wire characters. */
+			if (law == G711_LAW_PCMU && i == 0 &&
+			    (f == V92_B1U_ACQUISITION_FRAMES ||
+			     f == V92_B1U_ACQUISITION_FRAMES + 1u))
+				code = f == V92_B1U_ACQUISITION_FRAMES ? 0x7f : 0xff;
+			int16_t physical = g711_decode(law, code);
+			struct g711_interval bin = bins[code];
 			struct g711_probability_interval bounds = channel.cell_sigma ?
 				g711_probability_bounds(bin) :
 				(struct g711_probability_interval){ bin.lower, bin.upper };
@@ -4250,6 +4324,7 @@ static bool test_probability_cells(enum g711_law law, int polarity)
 				polarity > 0 ? bounds.upper : -bounds.lower,
 			};
 			line.raw[i] = line.samples[i] = line.wire[i] = polarity * physical;
+			line.octet[i] = code;
 			line.host_samples[i] = physical;
 			line.received[i] = line.wire_known[i] = true;
 		}
@@ -4618,6 +4693,7 @@ int main(void)
 		for (int polarity = -1; polarity <= 1; polarity += 2)
 			for (unsigned i = 0u; i < ARRAY_LENGTH(rm_rates); ++i)
 				if (!run_stream(law, polarity, false, rm_rates[i], 1.0, 0.0, STREAM_RM)) return 1;
-	return test_single_codec(G711_LAW_PCMU) && test_single_codec(G711_LAW_PCMA) &&
+	return test_wire_octet_ownership() &&
+		test_single_codec(G711_LAW_PCMU) && test_single_codec(G711_LAW_PCMA) &&
 		test_owned_boundaries() && test_rejection_and_failure() ? 0 : 1;
 }

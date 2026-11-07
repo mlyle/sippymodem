@@ -94,25 +94,22 @@ int16_t g711_decode_pcma(uint8_t octet)
 	return (int16_t)(((code & 0x80) != 0) ? magnitude : -magnitude);
 }
 
-bool g711_quantization_interval(
-	enum g711_law law, int16_t sample, struct g711_interval *interval)
+static struct g711_interval octet_interval(enum g711_law law, uint8_t octet)
 {
-	if (!g711_law_is_valid(law) || interval == NULL)
-		return false;
 	int lower, upper;
 
 	if (law == G711_LAW_PCMU) {
-		unsigned code = (uint8_t)~g711_encode_pcmu(sample) & 0x7fu;
+		unsigned code = (uint8_t)~octet & 0x7fu;
 		unsigned shift = (code >> 4u) + 3u;
 
 		/* Invert the encoder's biased segment bin. The top bin includes
-		 * saturation; both signed zero codewords reconstruct to one level. */
+		 * saturation. Keep the exact signed-zero character's input range. */
 		lower = (int)((16u + (code & 15u)) << shift) - G711_PCMU_BIAS;
 		upper = (int)((17u + (code & 15u)) << shift) - G711_PCMU_BIAS - 1;
 		if (code == 0u) {
-			lower = -3;
-			upper = 3;
-		} else if (sample < 0) {
+			lower = octet & 0x80u ? 0 : -3;
+			upper = octet & 0x80u ? 3 : -1;
+		} else if (!(octet & 0x80u)) {
 			int positive_lower = lower;
 
 			lower = code == 127u ? INT16_MIN : -upper;
@@ -121,7 +118,7 @@ bool g711_quantization_interval(
 			upper = INT16_MAX;
 		}
 	} else {
-		unsigned code = (g711_encode_pcma(sample) ^ G711_PCMA_POSITIVE_MASK) & 0x7fu;
+		unsigned code = (octet ^ G711_PCMA_POSITIVE_MASK) & 0x7fu;
 		unsigned segment = code >> 4u;
 		unsigned width = segment == 0u ? 16u : 1u << (segment + 3u);
 
@@ -129,14 +126,35 @@ bool g711_quantization_interval(
 		 * the discarded low input bits before complementing a negative bin. */
 		lower = (int)(((code & 15u) + (segment == 0u ? 0u : 16u)) * width);
 		upper = lower + (int)width - 1;
-		if (sample < 0) {
+		if (!(octet & 0x80u)) {
 			int positive_lower = lower;
 
 			lower = -upper - 1;
 			upper = -positive_lower - 1;
 		}
 	}
-	*interval = (struct g711_interval){ (int16_t)lower, (int16_t)upper };
+	return (struct g711_interval){ (int16_t)lower, (int16_t)upper };
+}
+
+bool g711_octet_interval(
+	enum g711_law law, uint8_t octet, struct g711_interval *interval)
+{
+	if (!g711_law_is_valid(law) || interval == NULL)
+		return false;
+	*interval = octet_interval(law, octet);
+	return true;
+}
+
+bool g711_quantization_interval(
+	enum g711_law law, int16_t sample, struct g711_interval *interval)
+{
+	if (!g711_law_is_valid(law) || interval == NULL)
+		return false;
+	*interval = octet_interval(law, g711_encode(law, sample));
+	/* This API identifies reconstructed levels, so retain its union of the
+	 * two PCMU zero cells even when the caller's original sign is known. */
+	if (law == G711_LAW_PCMU && sample >= -3 && sample <= 3)
+		*interval = (struct g711_interval){ -3, 3 };
 	return true;
 }
 
