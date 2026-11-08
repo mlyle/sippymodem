@@ -14,8 +14,16 @@ struct v92_observation_fit_moments {
 struct v92_observation_fit_boundary { double at; unsigned next; };
 
 enum v92_observation_fit_stage {
-	V92_FIT_IDLE, V92_FIT_SWEEP, V92_FIT_CENTER,
+	V92_FIT_IDLE, V92_FIT_SCALAR, V92_FIT_SWEEP, V92_FIT_CENTER,
 	V92_FIT_REFINE, V92_FIT_WEIGHTS, V92_FIT_GEOMETRY, V92_FIT_VALIDATE,
+};
+
+enum { V92_SCALAR_FIT_UPDATES = 96, V92_SCALAR_FIT_BATCH = 12,
+	V92_SCALAR_FIT_STEPS = V92_SCALAR_FIT_UPDATES / V92_SCALAR_FIT_BATCH };
+
+struct v92_scalar_fit {
+	double gain, variance, linear_error, xx;
+	unsigned iterations;
 };
 
 /* Receiver-owned fitting scratch. No borrowed pointer survives a call.
@@ -24,7 +32,11 @@ enum v92_observation_fit_stage {
  * A suspended fit can be discarded or restarted without publishing a model. */
 struct v92_observation_fit_work {
 	struct v92_observation model;
-	struct v92_observation_fit_interval fits[V92_OBSERVATION_INTERVALS];
+	/* Scalar admission precedes gain-cell fitting; the owners are exclusive. */
+	union {
+		struct v92_observation_fit_interval fits[V92_OBSERVATION_INTERVALS];
+		struct { struct v92_scalar_fit fit; double low, high; } scalar;
+	};
 	struct v92_observation_fit_boundary events[V92_OBSERVATION_TRAINING];
 	struct v92_observation_fit_moments moments;
 	size_t heap[V92_OBSERVATION_TRAINING], used;
@@ -48,7 +60,7 @@ enum v92_observation_fit_result {
  * means no fit. Call step only after successful begin, using that immutable
  * training and an output disjoint from both scratch and training.
  *
- * Each step handles at most 1024 gain-cell solves/codec transitions, one
+ * Each step handles at most twelve scalar updates, 1024 gain-cell solves/codec transitions, one
  * retained channel refinement (including its existing bounded fallback), or
  * one final admission stage. MORE and DECLINED leave output unchanged. READY
  * publishes the complete model and ends the job. No partially fitted model
@@ -57,5 +69,13 @@ bool v92_observation_fit_begin(struct v92_observation_fit_work *work,
 	const struct v92_observation_training *training);
 enum v92_observation_fit_result v92_observation_fit_step(struct v92_observation_fit_work *work,
 	const struct v92_observation_training *training, struct v92_observation *output);
+
+/* Same immutable-training and exclusive-scratch contract, for the scalar
+ * fallback alone. Actual wire levels are required. MORE and DECLINED leave
+ * gain unchanged; READY publishes the same completed fit as fit_scalar(). */
+bool v92_observation_scalar_begin(struct v92_observation_fit_work *work,
+	const struct v92_observation_training *training);
+enum v92_observation_fit_result v92_observation_scalar_step(struct v92_observation_fit_work *work,
+	const struct v92_observation_training *training, double *gain);
 
 #endif /* V92_OBSERVATION_FIT_H */

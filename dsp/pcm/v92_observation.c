@@ -28,8 +28,9 @@ _Static_assert(V92_OBSERVATION_SPANS == 1024, "coordinate hash uses its upper te
 
 static bool codec_bounds(enum g711_law law, double gain, int16_t observed,
 	const int16_t *level, double offset, double *lower, double *upper);
-static bool fit_scalar_cells(double *gain, const struct v92_observation_training *training,
-	const double *low, const double *high);
+static bool begin_scalar(struct v92_scalar_fit *fit, const struct v92_observation_training *training);
+static enum v92_observation_fit_result step_scalar(struct v92_scalar_fit *fit,
+	const struct v92_observation_training *training, const double *low, const double *high, double *gain);
 
 static bool solve_channel(const struct v92_observation_fit_moments *moments, unsigned taps, double fitted[TAPS])
 {
@@ -79,24 +80,20 @@ static double bin_cost(const int16_t *q, const double *low, const double *high,
 	return cost;
 }
 
-/* Shared conditional-bin E/M updates. Owners supply their fixed Gram system,
- * observation range and initial noise. Scalar gain retains all 96 updates;
- * the channel fallback may stop at its existing convergence boundary. */
+/* Channel fallback retains its existing convergence boundary and update cap.
+ * Scalar admission drives the same interval update in smaller work batches. */
 static bool refine_bin_fit(double coefficient[TAPS], const int16_t *q,
 	const double *low, const double *high, size_t count, size_t first,
-	unsigned taps, const double gram[GRAM_FIT_MOMENTS], double noise, bool converge, double *variance)
+	unsigned taps, const double gram[GRAM_FIT_MOMENTS], double noise, double *variance)
 {
 	for (unsigned iteration = 0; iteration < 96; iteration++) {
 		double next[TAPS], next_noise;
 		if (!interval_fit_step(coefficient, q, low, high, count, first, taps,
 			gram, noise, next, &next_noise)) return false;
-		bool settled = false;
-		if (converge) {
-			double change = 0.;
-			for (unsigned i = 0; i < taps; i++) change += fabs(next[i] - coefficient[i]);
-			settled = fabs(next_noise - noise) < 1e-8 * (1. + noise) &&
-				change < 1e-10 * (1. + next[0]);
-		}
+		double change = 0.;
+		for (unsigned i = 0; i < taps; i++) change += fabs(next[i] - coefficient[i]);
+		bool settled = fabs(next_noise - noise) < 1e-8 * (1. + noise) &&
+			change < 1e-10 * (1. + next[0]);
 		memcpy(coefficient, next, sizeof(next)); noise = next_noise;
 		if (settled) break;
 	}
@@ -323,7 +320,7 @@ static bool fit_bin_channel(struct v92_observation_interval *fit, const int16_t 
 	struct v92_observation_fit_moments m;
 	collect_moments(&m, q, y, count, taps);
 	return refine_bin_fit(fit->coefficient, q, low, high, count, taps, taps,
-		m.gram, initial_noise, true, variance);
+		m.gram, initial_noise, variance);
 }
 
 /* The first-codec gain intervals come from the initial center fit. Select
@@ -811,8 +808,8 @@ static bool prefer_linear(const struct v92_observation *model,
 /* A positive scalar may explain all wire cells even when gain one does
  * not. Intersect their open gain constraints, then check the actual integer
  * codec: a rounded half-boundary is not proof of a noiseless explanation. */
-static bool scalar_explains_cells(const struct v92_observation_training *training,
-	const double *lower, const double *upper)
+static bool scalar_cell_interval(const struct v92_observation_training *training,
+	const double *lower, const double *upper, double *minimum, double *maximum)
 {
 	if (!training->levels) return false;
 	double low = 0., high = HUGE_VAL;
@@ -828,12 +825,17 @@ static bool scalar_explains_cells(const struct v92_observation_training *trainin
 		if (!(low < high)) return false;
 	}
 	if (!isfinite(low) || !isfinite(high)) return false;
+	*minimum = low; *maximum = high;
+	return true;
+}
+
+static bool scalar_explains_cells(const struct v92_observation_training *training,
+	double gain, double low, double high)
+{
 	/* Admission must agree with the scalar fallback actually used by the
 	 * receiver, not just a different feasible gain. Keep that fitter and
 	 * validate its reconstruction before declining a tandem hypothesis. */
-	double gain;
-	if (!fit_scalar_cells(&gain, training, lower, upper) ||
-	    !(gain > low && gain < high)) return false;
+	if (!(gain > low && gain < high)) return false;
 	for (size_t i = training->taps; i < training->count; ++i) {
 		double offset = training->offsets ? training->offsets[i] : 0.;
 		double physical = (gain * training->linear[i] - offset) / training->host_gain;
@@ -894,11 +896,15 @@ bool v92_observation_fit_begin(struct v92_observation_fit_work *w,
 	memset(w, 0, sizeof(*w));
 	if (energy == 0. || linear_error == 0.) return false;
 	bool linear;
-	if (!training_cells(training, w->lower, w->upper, &linear) ||
-	    (training->levels && (linear || scalar_explains_cells(training, w->lower, w->upper))))
+	if (!training_cells(training, w->lower, w->upper, &linear) || (training->levels && linear))
 		return false;
 	w->linear_error = linear_error;
 	w->model.energy = energy;
+	if (scalar_cell_interval(training, w->lower, w->upper, &w->scalar.low, &w->scalar.high) &&
+	    begin_scalar(&w->scalar.fit, training)) {
+		w->stage = V92_FIT_SCALAR;
+		return true;
+	}
 	fit_intervals_begin(w, training->law, training->input, training->sample, training->count, training->taps);
 	w->stage = V92_FIT_SWEEP;
 	return true;
@@ -911,7 +917,16 @@ enum v92_observation_fit_result v92_observation_fit_step(struct v92_observation_
 	const int16_t *y = training->sample;
 	size_t count = training->count;
 	enum g711_law law = training->law;
-	if (w->stage == V92_FIT_SWEEP) {
+	if (w->stage == V92_FIT_SCALAR) {
+		double gain;
+		enum v92_observation_fit_result result = step_scalar(&w->scalar.fit,
+			training, w->lower, w->upper, &gain);
+		if (result == V92_OBSERVATION_FIT_MORE) return result;
+		if (result == V92_OBSERVATION_FIT_READY &&
+		    scalar_explains_cells(training, gain, w->scalar.low, w->scalar.high)) goto decline;
+		fit_intervals_begin(w, law, x, y, count, training->taps);
+		w->stage = V92_FIT_SWEEP;
+	} else if (w->stage == V92_FIT_SWEEP) {
 		int result = fit_intervals_step(w, law, x, y, count, training->taps);
 		if (result < 0) goto decline;
 		if (result) w->stage = V92_FIT_CENTER;
@@ -970,11 +985,15 @@ bool v92_observation_fit_scalar(double *gain,
 {
 	if (!training_is_valid(gain, sizeof(*gain), training) || !training->levels) return false;
 	double low[V92_OBSERVATION_TRAINING], high[V92_OBSERVATION_TRAINING];
-	return training_cells(training, low, high, NULL) && fit_scalar_cells(gain, training, low, high);
+	struct v92_scalar_fit fit;
+	if (!training_cells(training, low, high, NULL) || !begin_scalar(&fit, training)) return false;
+	enum v92_observation_fit_result result;
+	do { result = step_scalar(&fit, training, low, high, gain); }
+	while (result == V92_OBSERVATION_FIT_MORE);
+	return result == V92_OBSERVATION_FIT_READY;
 }
 
-static bool fit_scalar_cells(double *gain, const struct v92_observation_training *training,
-	const double *low, const double *high)
+static bool begin_scalar(struct v92_scalar_fit *fit, const struct v92_observation_training *training)
 {
 	double xx = 0., xy = 0., linear_error = 0.;
 	size_t count = training->count;
@@ -983,22 +1002,57 @@ static bool fit_scalar_cells(double *gain, const struct v92_observation_training
 		xx += x * x; xy += x * y; linear_error += (x - y) * (x - y);
 	}
 	if (!(xx > 0. && xy > 0. && linear_error > 0.)) return false;
-	double coefficient[TAPS] = { xy / xx }, variance;
-	struct v92_observation_fit_moments m = { .gram = { xx } };
-	if (!refine_bin_fit(coefficient, training->linear, low, high, count, 0, 1,
-		m.gram, fmax(1., linear_error / count), false, &variance)) return false;
-	double fitted = coefficient[0];
+	*fit = (struct v92_scalar_fit){ .gain = xy / xx, .xx = xx, .linear_error = linear_error,
+		.variance = fmax(1., linear_error / count) };
+	return true;
+}
+
+static enum v92_observation_fit_result step_scalar(struct v92_scalar_fit *fit,
+	const struct v92_observation_training *training, const double *low, const double *high, double *gain)
+{
+	double coefficient[TAPS] = { fit->gain }, gram[GRAM_FIT_MOMENTS] = { fit->xx };
+	double noise = fit->variance;
+	for (unsigned i = 0; i < V92_SCALAR_FIT_BATCH && fit->iterations < V92_SCALAR_FIT_UPDATES; i++) {
+		double next[TAPS], next_noise;
+		if (!interval_fit_step(coefficient, training->linear, low, high, training->count, 0, 1,
+			gram, noise, next, &next_noise)) return V92_OBSERVATION_FIT_DECLINED;
+		memcpy(coefficient, next, sizeof(next)); noise = next_noise;
+		fit->iterations++;
+	}
+	fit->gain = coefficient[0]; fit->variance = noise;
+	if (fit->iterations < V92_SCALAR_FIT_UPDATES) return V92_OBSERVATION_FIT_MORE;
+	double fitted = fit->gain;
 
 	double error_energy = 0.;
-	for (size_t i = 0; i < count; i++) {
+	for (size_t i = 0; i < training->count; i++) {
 		double predicted = v92_observation_predict_scalar(training->law, fitted,
 			training->host_gain, training->linear[i], training->offsets ? training->offsets[i] : 0.);
 		double error = training->sample[i] - predicted;
 		error_energy += error * error;
 	}
-	if (!isfinite(error_energy) || error_energy >= linear_error) return false;
+	if (!isfinite(error_energy) || error_energy >= fit->linear_error) return V92_OBSERVATION_FIT_DECLINED;
 	*gain = fitted;
+	return V92_OBSERVATION_FIT_READY;
+}
+
+bool v92_observation_scalar_begin(struct v92_observation_fit_work *w,
+	const struct v92_observation_training *training)
+{
+	if (!training_is_valid(w, sizeof(*w), training) || !training->levels) return false;
+	memset(w, 0, sizeof(*w));
+	if (!training_cells(training, w->lower, w->upper, NULL) || !begin_scalar(&w->scalar.fit, training))
+		return false;
+	w->stage = V92_FIT_SCALAR;
 	return true;
+}
+
+enum v92_observation_fit_result v92_observation_scalar_step(struct v92_observation_fit_work *w,
+	const struct v92_observation_training *training, double *gain)
+{
+	if (w->stage != V92_FIT_SCALAR) return V92_OBSERVATION_FIT_DECLINED;
+	enum v92_observation_fit_result result = step_scalar(&w->scalar.fit, training, w->lower, w->upper, gain);
+	if (result != V92_OBSERVATION_FIT_MORE) w->stage = V92_FIT_IDLE;
+	return result;
 }
 
 static size_t find_span(const struct v92_observation_cache *cache, int32_t x)

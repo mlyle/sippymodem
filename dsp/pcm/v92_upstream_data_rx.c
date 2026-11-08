@@ -17,7 +17,9 @@ enum {
 	B1_WORK_SAMPLES_PER_TAP = 6,
 	FIT_SWEEP_STEPS = (2 * (V92_OBSERVATION_TRAINING - 1) * 128 + 1023) / 1024 + 1,
 	FIT_HOLD_SAMPLES = 2 * ((FIT_SWEEP_STEPS + 5) * V92_MODEL_SWEEP_SAMPLES +
-		V92_OBSERVATION_INTERVALS * V92_MODEL_REFINE_SAMPLES),
+		V92_SCALAR_FIT_STEPS * V92_MODEL_SCALAR_SAMPLES +
+		V92_OBSERVATION_INTERVALS * V92_MODEL_REFINE_SAMPLES) +
+		V92_MODEL_SWEEP_SAMPLES + V92_SCALAR_FIT_STEPS * V92_MODEL_SCALAR_SAMPLES,
 	/* Retained validation adds the difference between scoring credit and
 	 * decoded symbols. Three work quanta cover the native 40-sample block
 	 * boundary and the fitting stage's reserved credit. */

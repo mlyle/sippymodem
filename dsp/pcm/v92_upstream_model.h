@@ -25,9 +25,11 @@ static inline unsigned v92_upstream_model_taps(const struct v92_pcm_mapping *map
 	return feedback->count >= 3 && feedback->coefficient[2] ? 4 : 3;
 }
 
-/* Native fitting cadence, in accepted 8 kHz inputs. More expensive retained
- * channel refinements get a longer interval than one gain-sweep slice. */
-enum { V92_MODEL_SWEEP_SAMPLES = 3, V92_MODEL_REFINE_SAMPLES = 12 };
+/* Native fitting cadence in 8 kHz input/drain work ticks. Scalar batches
+ * stay at least 40 ticks apart: at most four batches per 160-sample block.
+ * Retained channel refinements also get longer than a gain-sweep slice. */
+enum { V92_MODEL_SWEEP_SAMPLES = 3, V92_MODEL_REFINE_SAMPLES = 12,
+	V92_MODEL_SCALAR_SAMPLES = 40 };
 
 /* One acquisition per mapping epoch, followed by immutable channel fits.
  * Fractional and rounded prefilter hypotheses share the line input, but not

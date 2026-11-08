@@ -83,7 +83,8 @@ static inline double v92_upstream_line_offset(const struct v92_upstream_data_lin
 	return line->calibration.offset + line->tracking.bias;
 }
 
-enum { V92_UPSTREAM_INPUT_QUEUE = 1280 };
+/* Retain startup input while scalar/channel work yields between blocks. */
+enum { V92_UPSTREAM_INPUT_QUEUE = 2304 };
 struct v92_upstream_input {
 	int16_t sample, host;
 	uint8_t code, flags;

@@ -1130,6 +1130,58 @@ static void check_noise_fit(enum g711_law law, unsigned sigma)
 		law, sigma, measured, model.variance);
 }
 
+/* Interleave two scalar owners under each rounding mode. Restart a partial
+ * job after bad wire evidence, and move the other without retaining pointers
+ * into its discarded storage. Nothing may publish before the final batch. */
+static void check_scalar_resumable(const struct v92_observation_training *training)
+{
+	const int modes[] = { FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO };
+	int saved = fegetround();
+	for (unsigned mode = 0; mode < sizeof(modes) / sizeof(modes[0]); mode++) {
+		assert(fesetround(modes[mode]) == 0);
+		struct v92_observation_training t[2] = { *training, *training };
+		t[1].count--;
+		struct v92_observation_fit_work work[3], *active[2] = { work, work + 1 };
+		double expected[2] = { -1., -1. }, actual[2] = { -1., -1. };
+		bool accepted[2], done[2] = { false, false }, restarted = false, moved = false;
+		unsigned steps[2] = { 0, 0 };
+		for (unsigned i = 0; i < 2; i++) {
+			accepted[i] = v92_observation_fit_scalar(expected + i, t + i);
+			assert(v92_observation_scalar_begin(active[i], t + i));
+		}
+		for (unsigned turn = 0; !done[0] || !done[1]; turn++) {
+			unsigned i = turn % 3 == 0 ? 1 : 0;
+			if (done[i]) continue;
+			unsigned before = active[i]->scalar.fit.iterations;
+			enum v92_observation_fit_result result = v92_observation_scalar_step(active[i], t + i, actual + i);
+			assert(active[i]->scalar.fit.iterations - before <= V92_SCALAR_FIT_BATCH);
+			assert(++steps[i] <= V92_SCALAR_FIT_STEPS);
+			if (result == V92_OBSERVATION_FIT_MORE) {
+				assert(actual[i] == -1.);
+				if (i == 0 && steps[i] == 2 && !restarted) {
+					int16_t levels[TRAINING];
+					memcpy(levels, t[i].levels, t[i].count * sizeof(*levels));
+					levels[0] = 1;
+					struct v92_observation_training bad = t[i]; bad.levels = levels;
+					assert(!v92_observation_scalar_begin(active[i], &bad));
+					assert(v92_observation_scalar_begin(active[i], t + i));
+					restarted = true; steps[i] = 0;
+				} else if (i == 1 && steps[i] == 3 && !moved) {
+					work[2] = *active[i]; memset(active[i], 0, sizeof(*active[i]));
+					active[i] = work + 2; moved = true;
+				}
+			} else {
+				assert((result == V92_OBSERVATION_FIT_READY) == accepted[i]);
+				assert(memcmp(actual + i, expected + i, sizeof(*actual)) == 0);
+				if (accepted[i]) assert(steps[i] == V92_SCALAR_FIT_STEPS);
+				done[i] = true;
+			}
+		}
+		assert(restarted && moved);
+	}
+	assert(fesetround(saved) == 0);
+}
+
 /* One physical codec after a linear source and independently known echo.
  * The fit only sees the training prefix; different later points and echo
  * validate prediction without pretending quantized centres are noiseless. */
@@ -1155,6 +1207,7 @@ static void check_scalar(enum g711_law law, double host_gain)
 	double fitted = 0.;
 	assert(v92_observation_fit_scalar(&fitted, &training));
 	assert(fabs(fitted - actual_gain) < .002);
+	check_scalar_resumable(&training);
 	double error = 0., linear_error = 0.;
 	for (unsigned i = TRAINING; i < SAMPLES; i++) {
 		double predicted = v92_observation_predict_scalar(law, fitted, host_gain, u[i], offsets[i]);

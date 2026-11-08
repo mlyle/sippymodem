@@ -53,9 +53,13 @@ static void fixture_complete_fit(struct v92_upstream_data_rx *receiver,
 	enum v92_upstream_data_rx_result result)
 {
 	if (result != V92_UPSTREAM_DATA_RX_FRAME) return;
-	unsigned steps = 0;
+	unsigned steps = 0, scalar_at = 0;
 	while (receiver->model.fitting) {
 		assert(++steps < 2048);
+		if (!receiver->model.fit.clock && receiver->model.fit.work.stage == V92_FIT_SCALAR) {
+			assert(!scalar_at || steps - scalar_at >= V92_MODEL_SCALAR_SAMPLES);
+			scalar_at = steps;
+		}
 		v92_upstream_model_progress(receiver);
 	}
 }
@@ -2668,7 +2672,8 @@ struct scalar_model_workspace {
 	struct v92_upstream_data_rx invalid;
 };
 
-static bool check_scalar_model(struct scalar_model_workspace *work, enum g711_law law, int polarity, bool wrong_bit)
+static bool check_scalar_model(struct scalar_model_workspace *work, enum g711_law law, int polarity,
+	bool wrong_bit, unsigned block)
 {
 	enum { FRAMES = V92_B1U_FRAMES + 24 + V92_PCM_RX_DELAY_FRAMES, PREFIX = 6 };
 	struct channel channel = { .gain = .9, .law = law, .polarity = polarity };
@@ -2681,7 +2686,8 @@ static bool check_scalar_model(struct scalar_model_workspace *work, enum g711_la
 	struct v92_e2u_rx e2u_rx;
 	uint8_t codes[(FRAMES + PREFIX) * V92_PCM_MAPPING_FRAME_SYMBOLS];
 	uint32_t random = UINT32_C(0x35791bd);
-	unsigned delivered = 0, bad = 0;
+	unsigned delivered = 0, bad = 0, peak = 0, scalar_batches = 0;
+	bool fitting_seen = false;
 	double frozen = 0., error = 0., linear_error = 0.;
 	for (unsigned i = 0; i < V92_UPSTREAM_CHANNEL_SYMBOLS; i++) {
 		random = random * UINT32_C(1664525) + UINT32_C(1013904223);
@@ -2717,35 +2723,60 @@ static bool check_scalar_model(struct scalar_model_workspace *work, enum g711_la
 		}
 	}
 	for (unsigned i = V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY; work->receiver.line.received_frames < FRAMES; i++) {
+		bool eof = block && i >= (unsigned)plan.delay + FRAMES * V92_PCM_MAPPING_FRAME_SYMBOLS;
+		CHECK(i < sizeof(codes) + 4 * V92_UPSTREAM_INPUT_QUEUE, "scalar drain did not finish");
+		CHECK(eof || i < sizeof(codes), "scalar fixture input exhausted");
+		if (block && (i - V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY) % block == 0) {
+			scalar_batches = 0;
+			v92_upstream_data_rx_begin_block_owned(&work->receiver, block);
+		}
+		if (block && work->receiver.model.fitting && !work->receiver.model.fit.clock &&
+		    work->receiver.model.fit.work.stage == V92_FIT_SCALAR)
+			CHECK(++scalar_batches <= (block + V92_MODEL_SCALAR_SAMPLES - 1) / V92_MODEL_SCALAR_SAMPLES,
+			      "scalar work exceeded the native block budget");
 		struct v92_upstream_data_frame frame = { 0 }, compared = { 0 };
 		work->independent = work->receiver;
 		work->linear = work->receiver;
 		work->linear.model.scalar_gain = 0.;
-		int16_t host = law == G711_LAW_PCMU ? g711_decode_pcmu(codes[i]) : g711_decode_pcma(codes[i]);
+		uint8_t code = eof ? 0 : codes[i];
+		int16_t host = law == G711_LAW_PCMU ? g711_decode_pcmu(code) : g711_decode_pcma(code);
 		int16_t sample = host - polarity * codec_echo(i);
-		enum v92_upstream_data_rx_result result = fixture_octet_owned(
-			&work->receiver, codes[i], sample, host, true, &frame);
+		enum v92_upstream_data_rx_result result = eof ? v92_upstream_data_rx_drain_owned(&work->receiver, &frame) :
+			(block ? v92_upstream_data_rx_octet_owned : fixture_octet_owned)(
+				&work->receiver, code, sample, host, true, &frame);
 		CHECK(result == V92_UPSTREAM_DATA_RX_OK || result == V92_UPSTREAM_DATA_RX_FRAME,
 			"scalar receiver stopped: %u at %u", result, i);
-		CHECK(fixture_octet_owned(&work->independent, codes[i], sample, host, true, &compared) == result &&
+		CHECK((eof ? v92_upstream_data_rx_drain_owned(&work->independent, &compared) :
+			(block ? v92_upstream_data_rx_octet_owned : fixture_octet_owned)(
+				&work->independent, code, sample, host, true, &compared)) == result &&
 		      !memcmp(&work->receiver, &work->independent, sizeof(work->receiver)) && !memcmp(&frame, &compared, sizeof(frame)) &&
 		      v92_upstream_data_rx_is_valid(&work->receiver), "scalar receivers shared mutable state");
+		if (work->receiver.input.count > peak) peak = work->receiver.input.count;
+		fitting_seen |= work->receiver.model.fitting;
 		if (result != V92_UPSTREAM_DATA_RX_FRAME) continue;
 		/* Removing only the quality predictor must leave every coding
 		 * decision intact. Its original residual remains an independent
 		 * comparison, not a fitting target during held-out B1u. */
 		if (frozen) {
-			CHECK(fixture_octet_owned(&work->linear, codes[i], sample, host, true, &compared) == result &&
+			CHECK((eof ? v92_upstream_data_rx_drain_owned(&work->linear, &compared) :
+				(block ? v92_upstream_data_rx_octet_owned : fixture_octet_owned)(
+					&work->linear, code, sample, host, true, &compared)) == result &&
 			      !memcmp(&work->linear.decoder, &work->receiver.decoder, sizeof(work->linear.decoder)) &&
 			      compared.bit_count == frame.bit_count && compared.ambiguous == frame.ambiguous &&
 			      !memcmp(compared.bits, frame.bits, frame.bit_count), "scalar predictor changed decoded bits");
 			if (work->receiver.line.received_frames <= V92_B1U_FRAMES) linear_error += compared.squared_error;
 		}
 		if (work->receiver.line.received_frames == V92_B1U_ACQUISITION_FRAMES) {
-			CHECK(!work->receiver.model.acquiring && !work->receiver.model.valid && work->receiver.model.scalar_gain > 0.,
+			CHECK(block ? work->receiver.model.fitting :
+				!work->receiver.model.acquiring && !work->receiver.model.valid && work->receiver.model.scalar_gain > 0.,
 				"single codec fit missing: tandem=%u scalar=%g", work->receiver.model.valid, work->receiver.model.scalar_gain);
 			frozen = work->receiver.model.scalar_gain;
 		} else if (work->receiver.line.received_frames > V92_B1U_ACQUISITION_FRAMES) {
+			if (!frozen) {
+				CHECK(!work->receiver.model.acquiring && !work->receiver.model.valid && work->receiver.model.scalar_gain > 0.,
+				      "deferred scalar fit missing");
+				frozen = work->receiver.model.scalar_gain;
+			}
 			CHECK(work->receiver.model.scalar_gain == frozen, "held-out data changed scalar fit");
 			if (work->receiver.line.received_frames <= V92_B1U_FRAMES) error += frame.squared_error;
 		}
@@ -2765,6 +2796,12 @@ static bool check_scalar_model(struct scalar_model_workspace *work, enum g711_la
 	CHECK(error / V92_B1U_VALIDATION_SYMBOLS < V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
 		"scalar B1u RMS failed: %g", sqrt(error / V92_B1U_VALIDATION_SYMBOLS));
 	CHECK(error < linear_error, "single-codec prediction did not improve held-out quality");
+	if (block) {
+		CHECK(fitting_seen && peak && peak < V92_UPSTREAM_INPUT_QUEUE && !work->receiver.input.count,
+		      "deferred scalar input accounting failed");
+		printf("Deferred scalar peak retained samples=%u\n", peak);
+		return true;
+	}
 	work->saved = work->receiver;
 	struct v92_upstream_data_frame output, before;
 	memset(&output, 0xa5, sizeof(output)); before = output;
@@ -2813,11 +2850,11 @@ static bool check_scalar_model(struct scalar_model_workspace *work, enum g711_la
 	return true;
 }
 
-static bool test_scalar_model(enum g711_law law, int polarity, bool wrong_bit)
+static bool test_scalar_model(enum g711_law law, int polarity, bool wrong_bit, unsigned block)
 {
 	struct scalar_model_workspace *work = malloc(sizeof(*work));
 	CHECK(work, "scalar model workspace allocation failed");
-	bool result = check_scalar_model(work, law, polarity, wrong_bit);
+	bool result = check_scalar_model(work, law, polarity, wrong_bit, block);
 	free(work);
 	return result;
 }
@@ -4639,7 +4676,8 @@ int main(void)
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)
 		for (int polarity = -1; polarity <= 1; polarity += 2)
 			for (unsigned fault = 0; fault < 2; fault++)
-				if (!test_scalar_model(law, polarity, fault)) return 1;
+				if (!test_scalar_model(law, polarity, fault, 0) ||
+				    !test_scalar_model(law, polarity, fault, 160)) return 1;
 	/* Minimal 48k alphabets must preserve payload after real B1u level
 	 * refinement, not merely separate symbols at a nominal training LU. */
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)

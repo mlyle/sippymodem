@@ -122,7 +122,9 @@ bool v92_upstream_model_is_valid(const struct v92_upstream_data_rx *receiver)
 		return false;
 	if (model->fitting)
 		return model->acquiring && !model->residual_acquiring && (model->valid == 0 || model->valid == 1) &&
-			model->fit.candidate < 2 && model->fit.clock < V92_MODEL_REFINE_SAMPLES &&
+			model->fit.candidate <= 2 && (model->fit.candidate < 2 || (!model->valid &&
+			 (model->fit.work.stage == V92_FIT_IDLE || model->fit.work.stage == V92_FIT_SCALAR))) &&
+			model->fit.clock < V92_MODEL_SCALAR_SAMPLES &&
 			model->fit.work.stage <= V92_FIT_VALIDATE && receiver->line.received_frames == V92_B1U_ACQUISITION_FRAMES;
 	if (model->acquiring)
 		return model->valid == 0u && model->primary == 0u &&
@@ -492,6 +494,14 @@ void v92_upstream_model_progress(struct v92_upstream_data_rx *receiver)
 	};
 	enum v92_observation_fit_result result = V92_OBSERVATION_FIT_MORE;
 	unsigned stage = model->fit.work.stage;
+	if (candidate == 2) {
+		if (!stage) {
+			if (!v92_observation_scalar_begin(&model->fit.work, &training))
+				result = V92_OBSERVATION_FIT_DECLINED;
+		} else result = v92_observation_scalar_step(&model->fit.work, &training, &model->scalar_gain);
+		if (result != V92_OBSERVATION_FIT_MORE) goto complete;
+		goto schedule;
+	}
 	if (!stage) {
 		for (size_t i = 0; i < V92_OBSERVATION_TRAINING; i++)
 			model->fit.input[i] = candidate ? round_shift_s64_to_s32_saturating(
@@ -506,16 +516,17 @@ void v92_upstream_model_progress(struct v92_upstream_data_rx *receiver)
 		memset(&model->model[candidate], 0, sizeof(model->model[candidate]));
 	if (result != V92_OBSERVATION_FIT_MORE) {
 		model->fit.candidate++;
-		if (model->fit.candidate == 2) {
-			if (model->valid) model->primary = (model->valid & 1u) ? 0 : 1;
-			else v92_observation_fit_scalar(&model->scalar_gain, &training);
-			memset(&model->alternate, 0, sizeof(model->alternate));
-			if (model->valid == 3) model->alternate = receiver->decoder;
-			close_acquisition(model);
-			return;
-		}
+		if (model->fit.candidate == 2 && model->valid) goto complete;
 	}
-	model->fit.clock = stage == V92_FIT_REFINE ? V92_MODEL_REFINE_SAMPLES - 1 : V92_MODEL_SWEEP_SAMPLES - 1;
+schedule:
+	model->fit.clock = (stage == V92_FIT_SCALAR ? V92_MODEL_SCALAR_SAMPLES :
+		stage == V92_FIT_REFINE ? V92_MODEL_REFINE_SAMPLES : V92_MODEL_SWEEP_SAMPLES) - 1;
+	return;
+complete:
+	if (model->valid) model->primary = (model->valid & 1u) ? 0 : 1;
+	memset(&model->alternate, 0, sizeof(model->alternate));
+	if (model->valid == 3) model->alternate = receiver->decoder;
+	close_acquisition(model);
 }
 
 /* Identical fit bodies and coding state are not enough: the two hypotheses
