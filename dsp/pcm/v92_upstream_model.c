@@ -72,6 +72,9 @@ bool v92_upstream_model_is_valid(const struct v92_upstream_data_rx *receiver)
 {
 	const struct v92_upstream_model *model = &receiver->model;
 
+	if (receiver->decoder.kind == V92_PCM_RX_INDEPENDENT &&
+	    (model->acquiring || model->fitting || model->valid || model->scalar_gain))
+		return false;
 	if (!isfinite(model->residual_variance) || model->residual_variance < 0. ||
 	    (model->residual_variance && (!receiver->line.residual.active ||
 	     receiver->line.received_frames < V92_B1U_ACQUISITION_FRAMES)))
@@ -151,23 +154,29 @@ void v92_upstream_model_init(struct v92_upstream_data_rx *receiver)
 
 	memset(model, 0, sizeof(*model));
 	memset(&receiver->line.residual, 0, sizeof(receiver->line.residual));
+	/* Decide the observation owner once, before sample acquisition. */
 	model->residual_acquiring = receiver->line.plan.observation == V92_PCM_FRAME_CONSTELLATION;
-	if (receiver->line.plan.observation != V92_PCM_FRAME_CONSTELLATION ||
-	    delay >= filter->count || filter->coefficient[delay] <= 0)
-		return;
+	bool stateful = receiver->line.plan.observation == V92_PCM_FRAME_CONSTELLATION &&
+		delay < filter->count && filter->coefficient[delay] > 0;
 	for (unsigned i = 0u; i < filter->count; ++i)
 		if (i != delay && filter->coefficient[i])
-			return;
+			stateful = false;
 	for (unsigned i = 0u; i < cpd->filter[V92_CPD_PREFILTER_FEEDBACK].count; ++i)
 		if (cpd->filter[V92_CPD_PREFILTER_FEEDBACK].coefficient[i])
-			return;
+			stateful = false;
 	if (filter->count > history + 1u)
 		history = filter->count - 1u;
 	if (history < 2u)
-		return;
-	model->coefficient = filter->coefficient[delay];
-	model->acquiring = true;
-	model->residual_acquiring = false;
+		stateful = false;
+	if (stateful) {
+		model->coefficient = filter->coefficient[delay];
+		model->acquiring = true;
+		model->residual_acquiring = false;
+	} else if (model->residual_acquiring) {
+		/* An ineligible radix keeps the history decoder; no wire capability
+		 * is removed. No later stateful likelihood is fitted in this path. */
+		(void)v92_pcm_frame_rx_use_independent(&receiver->decoder);
+	}
 }
 
 void v92_upstream_model_observe(struct v92_upstream_model *model,
@@ -277,7 +286,7 @@ static void acquire_residual_points(struct v92_upstream_model *model,
 	const struct v92_upstream_data_line *line, const struct v92_pcm_frame_rx *decoder)
 {
 	unsigned first = (unsigned)line->received_frames;
-	unsigned states = v34_trellis_state_count(decoder->paths[0].trellis.selection);
+	unsigned states = v34_trellis_state_count((enum v34_trellis_selection)decoder->mapping.cpd.trellis);
 	bool known = residual_coding_is_known(model, states);
 
 	if (first < 3) return;
@@ -429,7 +438,7 @@ static double fit_residual_variance(const struct v92_upstream_model *model,
 	return variance;
 }
 
-void v92_upstream_model_fit(struct v92_upstream_model *model,
+bool v92_upstream_model_fit(struct v92_upstream_model *model,
 	struct v92_upstream_data_line *line, struct v92_pcm_frame_rx *decoder)
 {
 	if (model->residual_acquiring) {
@@ -443,25 +452,29 @@ void v92_upstream_model_fit(struct v92_upstream_model *model,
 				 * poison the first validation bits through the descrambler.
 				 * Retain the physical-frame quality clock. */
 				struct v92_pcm_frame_noise noise = decoder->noise;
+				bool independent = decoder->kind == V92_PCM_RX_INDEPENDENT;
 				*decoder = model->alternate;
 				decoder->noise = noise;
+				if (independent && v92_pcm_frame_rx_use_independent(decoder) != V92_PCM_FRAME_OK)
+					return false;
 			}
 			close_acquisition(model);
 		}
-		return;
+		return true;
 	}
 
 	if (!model->acquiring || line->received_frames + 1u != V92_B1U_ACQUISITION_FRAMES)
-		return;
-	if (line->host.gain <= 0.) { close_acquisition(model); return; }
+		return true;
+	if (line->host.gain <= 0.) { close_acquisition(model); return true; }
 	memset(&model->alternate, 0, sizeof(model->alternate));
 	for (size_t i = 0; i < V92_OBSERVATION_TRAINING; i++) {
 		if (!observation_offset(line, model->raw[i], model->wire[i], model->host[i], model->fit.offsets + i)) {
-			close_acquisition(model); return;
+			close_acquisition(model); return true;
 		}
 		model->fit.samples[i] = sample_round_s16((model->raw[i] - line->calibration.offset) * line->calibration.gain);
 	}
 	model->fitting = true;
+	return true;
 }
 
 void v92_upstream_model_progress(struct v92_upstream_data_rx *receiver)
@@ -605,7 +618,7 @@ static bool recover_acquisition(const struct v92_upstream_model *model,
 {
 	if (!model->residual_acquiring ||
 	    (model->seed.residual.active &&
-	     v34_trellis_state_count(decoder->paths[0].trellis.selection) > V92_PCM_RX_PATHS) ||
+	     v34_trellis_state_count((enum v34_trellis_selection)decoder->mapping.cpd.trellis) > V92_PCM_RX_PATHS) ||
 	    !model->alternate.path_count || line->received_frames < 3u ||
 	    line->received_frames >= V92_B1U_ACQUISITION_FRAMES)
 		return false;
@@ -634,6 +647,9 @@ static bool recover_acquisition(const struct v92_upstream_model *model,
 	}
 	if (v92_pcm_frame_acquire_model(&recovered, line->samples, bits,
 	    decoder->mapping.data_bits_per_frame, decision) != V92_PCM_FRAME_OK)
+		return false;
+	bool independent = decoder->kind == V92_PCM_RX_INDEPENDENT;
+	if (independent && v92_pcm_frame_rx_use_independent(&recovered) != V92_PCM_FRAME_OK)
 		return false;
 	*decoder = recovered;
 	return true;

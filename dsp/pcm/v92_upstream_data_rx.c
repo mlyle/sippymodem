@@ -545,7 +545,8 @@ static enum v92_upstream_data_rx_result receive_frame(
 	observe_host_gain(line);
 	if (raw && !model.acquiring)
 		fit_offset(line);
-	v92_upstream_model_fit(&model, line, &decoder);
+	if (!v92_upstream_model_fit(&model, line, &decoder))
+		return fail(receiver, V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE);
 	line->received_frames++;
 	line->symbol_count = 0u;
 	memset(line->observations, 0, sizeof(line->observations));

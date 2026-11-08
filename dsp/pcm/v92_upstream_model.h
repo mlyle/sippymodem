@@ -99,7 +99,7 @@ bool v92_upstream_model_has_alternate(const struct v92_upstream_data_rx *receive
  * Optional geometry is epoch-owned scratch; reset on new fit publication. */
 void v92_upstream_model_observe(struct v92_upstream_model *model,
 	const struct v92_pcm_frame_decision *decision, const struct v92_upstream_data_line *line);
-void v92_upstream_model_fit(struct v92_upstream_model *model,
+bool v92_upstream_model_fit(struct v92_upstream_model *model,
 	struct v92_upstream_data_line *line, struct v92_pcm_frame_rx *decoder);
 enum v92_pcm_frame_result v92_upstream_model_decode(struct v92_upstream_model *model,
 	struct v92_pcm_frame_rx *decoder, const struct v92_upstream_data_line *line,

@@ -183,14 +183,19 @@ static bool check_control_reset(const struct v92_upstream_data_rx *receiver)
 			struct v92_pcm_frame_rx *decoder = branch ?
 				&actual.model.alternate : &actual.decoder;
 
-			if (fault == 0u) decoder->path_count = 0u;
-			if (fault == 1u) decoder->paths[0].differential = 2u;
-			if (fault == 2u) decoder->paths[0].pending[0][0] = 2u;
-			if (fault == 3u) actual.failed = true;
-			if (fault == 4u) {
-				decoder->paths[0].differential = 2u;
-				actual.failed = true;
+			if (decoder->kind == V92_PCM_RX_INDEPENDENT) {
+				unsigned best = 0;
+				while (decoder->independent.metric[best] == UINT64_MAX) ++best;
+				struct v92_survivor_context *context = &decoder->independent.context[best];
+				if (fault == 0u) decoder->independent.states = 0;
+				if (fault == 1u || fault == 4u) context->sign = 2;
+				if (fault == 2u) context->pending[0].hi |= UINT64_C(1) << 63;
+			} else {
+				if (fault == 0u) decoder->path_count = 0u;
+				if (fault == 1u || fault == 4u) decoder->paths[0].differential = 2u;
+				if (fault == 2u) decoder->paths[0].pending[0][0] = 2u;
 			}
+			if (fault == 3u || fault == 4u) actual.failed = true;
 			expected = actual;
 			CHECK(v92_upstream_data_rx_reset_control(&actual) ==
 				(fault == 3u ? V92_UPSTREAM_DATA_RX_FAILED : V92_UPSTREAM_DATA_RX_INVALID_STATE) &&
@@ -203,6 +208,15 @@ static bool check_control_reset(const struct v92_upstream_data_rx *receiver)
 	for (unsigned branch = 0u; branch < (paired ? 2u : 1u); ++branch) {
 		struct v92_pcm_frame_rx *decoder = branch ? &actual.model.alternate : &actual.decoder;
 
+		if (decoder->kind == V92_PCM_RX_INDEPENDENT)
+			for (unsigned n = 0; n < decoder->independent.states; ++n) {
+				if (decoder->independent.metric[n] == UINT64_MAX) continue;
+				struct v92_survivor_context *context = &decoder->independent.context[n];
+				context->gpa = 7;
+				context->sign = 1;
+				context->rm_frames = V92_PCM_RM_QUALIFY_FRAMES;
+				context->rm_prime_frames = 2;
+			}
 		for (size_t path = 0u; path < decoder->path_count; ++path) {
 			decoder->paths[path].descrambler.history = 7u;
 			decoder->paths[path].differential = 1u;
@@ -215,6 +229,14 @@ static bool check_control_reset(const struct v92_upstream_data_rx *receiver)
 	for (unsigned branch = 0u; branch < (paired ? 2u : 1u); ++branch) {
 		struct v92_pcm_frame_rx *decoder = branch ? &expected.model.alternate : &expected.decoder;
 
+		if (decoder->kind == V92_PCM_RX_INDEPENDENT)
+			for (unsigned n = 0; n < decoder->independent.states; ++n) {
+				if (decoder->independent.metric[n] == UINT64_MAX) continue;
+				struct v92_survivor_context *context = &decoder->independent.context[n];
+				context->gpa = 0;
+				context->sign = 0;
+				context->rm_frames = context->rm_prime_frames = 0;
+			}
 		for (size_t path = 0u; path < decoder->path_count; ++path) {
 			decoder->paths[path].descrambler.history = 0u;
 			decoder->paths[path].differential = 0u;
@@ -398,6 +420,12 @@ static bool test_data_initialization(void)
 							      V92_UPSTREAM_DATA_RX_OK && v92_upstream_data_rx_is_valid(&receiver),
 							      "fresh handoff rejected: law %u rate %u domain %u level %d gain %a",
 							      law, rate, domain, levels[level], gains[gain]);
+							if (domain && rate == 1u)
+								CHECK(receiver.decoder.kind == V92_PCM_RX_INDEPENDENT,
+								      "eligible constellation channel retained the history beam");
+							if (!domain)
+								CHECK(receiver.decoder.kind == V92_PCM_RX_HISTORY,
+								      "filter-output channel discarded its history owner");
 							if (domain) {
 								CHECK(check_calibration_interval(&receiver, levels[level]),
 								      "calibration interval contract failed");

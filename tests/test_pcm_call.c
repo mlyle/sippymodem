@@ -7159,6 +7159,18 @@ static bool v92_bad_b1_stays_clamped(const struct pcm_call *boundary)
 enum b1_bit_fault { B1_SOURCE_FAULT, B1_HISTORY_FAULT, B1_HISTORY_LATE_FAULT,
 	B1_HISTORY_AMBIGUOUS, B1_MIXED_EXPLANATIONS };
 
+static void alter_b1_history(struct v92_pcm_frame_rx *decoder)
+{
+	if (decoder->kind == V92_PCM_RX_INDEPENDENT) {
+		for (unsigned i = 0; i < decoder->independent.states; ++i)
+			if (decoder->independent.metric[i] != UINT64_MAX)
+				decoder->independent.context[i].gpa ^= 1u;
+	} else {
+		for (unsigned i = 0; i < decoder->path_count; ++i)
+			decoder->paths[i].descrambler.history ^= 1u;
+	}
+}
+
 static bool v92_b1_bit_validation(const struct pcm_call *boundary, unsigned fault_frame,
 	enum b1_bit_fault fault)
 {
@@ -7191,20 +7203,27 @@ static bool v92_b1_bit_validation(const struct pcm_call *boundary, unsigned faul
 		    (fault == B1_HISTORY_LATE_FAULT && frame == V92_B1U_FRAMES - 1u))
 			bits[0] = 0u;
 		if (fault != B1_SOURCE_FAULT && frame == V92_B1U_ACQUISITION_FRAMES)
-			for (unsigned i = 0; i < path->upstream.decoder.path_count; i++)
-				path->upstream.decoder.paths[i].descrambler.history ^= 1;
+			alter_b1_history(&path->upstream.decoder);
 		if (fault == B1_HISTORY_AMBIGUOUS &&
-		    frame == V92_B1U_ACQUISITION_FRAMES + V92_PCM_RX_DELAY_FRAMES)
-			for (unsigned i = 0; i < path->upstream.decoder.path_count; i++)
-				path->upstream.decoder.paths[i].ambiguous_frames |= 1;
+		    frame == V92_B1U_ACQUISITION_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
+			struct v92_pcm_frame_rx *decoder = &path->upstream.decoder;
+
+			if (decoder->kind == V92_PCM_RX_INDEPENDENT) {
+				for (unsigned i = 0; i < decoder->independent.states; ++i)
+					if (decoder->independent.metric[i] != UINT64_MAX)
+						decoder->independent.context[i].margin[0] = 0;
+			} else {
+				for (unsigned i = 0; i < decoder->path_count; ++i)
+					decoder->paths[i].ambiguous_frames |= 1;
+			}
+		}
 		if (fault == B1_MIXED_EXPLANATIONS && frame == V92_B1U_ACQUISITION_FRAMES + 1u) {
 			/* The first word has only a source mismatch. Change both ends'
 			 * GPA histories so later source words are ones but no longer
 			 * match the zero-initialized code stream. Neither explanation
 			 * covers this complete interval, despite per-word alternatives. */
 			tx.state.scrambler.history ^= 1;
-			for (unsigned i = 0; i < path->upstream.decoder.path_count; i++)
-				path->upstream.decoder.paths[i].descrambler.history ^= 1;
+			alter_b1_history(&path->upstream.decoder);
 		}
 		CHECK(v92_pcm_frame_encode(&tx, bits, tx.mapping.data_bits_per_frame, &encoded) == V92_PCM_FRAME_OK,
 		      "wrong-B1u encoding failed");
@@ -7233,7 +7252,8 @@ static bool v92_b1_bit_validation(const struct pcm_call *boundary, unsigned faul
 				return true;
 			}
 			CHECK(event.kind == PCM_CALL_DATA_NONE && !pcm_call_is_online(&damaged),
-			      "wrong B1u or its undecided tail opened the host at frame %u", frame);
+			      "wrong B1u or its undecided tail opened the host: fault %u kind %u frame %u",
+			      fault, path->upstream.decoder.kind, frame);
 			if (result == PCM_CALL_UNUSABLE_SELECTION || damaged.stage == PCM_CALL_RETRAIN_SILENCE) {
 				CHECK(boundary->v92_digital_phase4_configuration.upstream_selection ==
 					      PCM_CALL_V92_UPSTREAM_DIRECT &&
