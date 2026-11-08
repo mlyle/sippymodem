@@ -53,36 +53,22 @@ static bool select_carrier(
 	const struct v34_phase3_profile *profile,
 	enum v34_s_tone_carrier *carrier)
 {
-	switch (profile->symbol_rate) {
-	case V34_SYMBOL_RATE_2400:
-		*carrier = profile->high_carrier ?
-			V34_S_TONE_CARRIER_1800 : V34_S_TONE_CARRIER_1600;
-		return true;
-	case V34_SYMBOL_RATE_2743:
-		/* The low 1646-Hz carrier is covered by the adjacent 1680-Hz
-		 * resonator; the high selection is 1829 Hz. */
-		*carrier = profile->high_carrier ?
-			V34_S_TONE_CARRIER_1829 : V34_S_TONE_CARRIER_1680;
-		return true;
-	case V34_SYMBOL_RATE_2800:
-		*carrier = profile->high_carrier ?
-			V34_S_TONE_CARRIER_1867 : V34_S_TONE_CARRIER_1680;
-		return true;
-	case V34_SYMBOL_RATE_3000:
-		*carrier = profile->high_carrier ?
-			V34_S_TONE_CARRIER_2000 : V34_S_TONE_CARRIER_1800;
-		return true;
-	case V34_SYMBOL_RATE_3200:
-		*carrier = profile->high_carrier ?
-			V34_S_TONE_CARRIER_1920 : V34_S_TONE_CARRIER_1829;
-		return true;
-	case V34_SYMBOL_RATE_3429:
-		*carrier = V34_S_TONE_CARRIER_1959;
-		return true;
-	case V34_SYMBOL_RATE_COUNT:
-		break;
-	}
-	return false;
+	static const enum v34_s_tone_carrier carriers[][2] = {
+		[V34_SYMBOL_RATE_2400] = { V34_S_TONE_CARRIER_1600, V34_S_TONE_CARRIER_1800 },
+		/* The low 1646-Hz carrier uses the adjacent 1680-Hz resonator. */
+		[V34_SYMBOL_RATE_2743] = { V34_S_TONE_CARRIER_1680, V34_S_TONE_CARRIER_1829 },
+		[V34_SYMBOL_RATE_2800] = { V34_S_TONE_CARRIER_1680, V34_S_TONE_CARRIER_1867 },
+		[V34_SYMBOL_RATE_3000] = { V34_S_TONE_CARRIER_1800, V34_S_TONE_CARRIER_2000 },
+		[V34_SYMBOL_RATE_3200] = { V34_S_TONE_CARRIER_1829, V34_S_TONE_CARRIER_1920 },
+		[V34_SYMBOL_RATE_3429] = { V34_S_TONE_CARRIER_1959, V34_S_TONE_CARRIER_1959 },
+	};
+	_Static_assert(sizeof(carriers) / sizeof(carriers[0]) == V34_SYMBOL_RATE_COUNT,
+		       "S detector selections must cover every symbol rate");
+
+	if ((unsigned)profile->symbol_rate >= V34_SYMBOL_RATE_COUNT)
+		return false;
+	*carrier = carriers[profile->symbol_rate][profile->high_carrier];
+	return true;
 }
 
 bool v34_s_tone_detector_is_valid(

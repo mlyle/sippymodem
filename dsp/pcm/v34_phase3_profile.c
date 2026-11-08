@@ -37,31 +37,21 @@ static bool carrier_ratio(
 	enum v34_symbol_rate rate, bool high_carrier,
 	struct exact_fraction *ratio)
 {
-	switch (rate) {
-	case V34_SYMBOL_RATE_2400:
-		*ratio = high_carrier ?
-			(struct exact_fraction){ 3, 4 } :
-			(struct exact_fraction){ 2, 3 };
-		return true;
-	case V34_SYMBOL_RATE_2743:
-	case V34_SYMBOL_RATE_2800:
-	case V34_SYMBOL_RATE_3000:
-		*ratio = high_carrier ?
-			(struct exact_fraction){ 2, 3 } :
-			(struct exact_fraction){ 3, 5 };
-		return true;
-	case V34_SYMBOL_RATE_3200:
-		*ratio = high_carrier ?
-			(struct exact_fraction){ 3, 5 } :
-			(struct exact_fraction){ 4, 7 };
-		return true;
-	case V34_SYMBOL_RATE_3429:
-		*ratio = (struct exact_fraction){ 4, 7 };
-		return true;
-	case V34_SYMBOL_RATE_COUNT:
-		break;
-	}
-	return false;
+	static const struct exact_fraction ratios[][2] = {
+		[V34_SYMBOL_RATE_2400] = { { 2, 3 }, { 3, 4 } },
+		[V34_SYMBOL_RATE_2743] = { { 3, 5 }, { 2, 3 } },
+		[V34_SYMBOL_RATE_2800] = { { 3, 5 }, { 2, 3 } },
+		[V34_SYMBOL_RATE_3000] = { { 3, 5 }, { 2, 3 } },
+		[V34_SYMBOL_RATE_3200] = { { 4, 7 }, { 3, 5 } },
+		[V34_SYMBOL_RATE_3429] = { { 4, 7 }, { 4, 7 } },
+	};
+	_Static_assert(sizeof(ratios) / sizeof(ratios[0]) == V34_SYMBOL_RATE_COUNT,
+		       "carrier ratios must cover every symbol rate");
+
+	if ((unsigned)rate >= V34_SYMBOL_RATE_COUNT)
+		return false;
+	*ratio = ratios[rate][high_carrier];
+	return true;
 }
 
 static struct exact_fraction carrier_frequency(

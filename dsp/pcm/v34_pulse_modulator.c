@@ -37,37 +37,21 @@ static bool selected_profile(
 	enum v34_symbol_rate symbol_rate,
 	struct pulse_profile *profile)
 {
-	switch (symbol_rate) {
-	case V34_SYMBOL_RATE_2400:
-		*profile = (struct pulse_profile){
-			v34_pulse_coefficients_2400, 4,
-		};
-		return true;
-	case V34_SYMBOL_RATE_2743:
-	case V34_SYMBOL_RATE_2800:
-		*profile = (struct pulse_profile){
-			v34_pulse_coefficients_2800, 24,
-		};
-		return true;
-	case V34_SYMBOL_RATE_3000:
-		*profile = (struct pulse_profile){
-			v34_pulse_coefficients_3000, 16,
-		};
-		return true;
-	case V34_SYMBOL_RATE_3200:
-		*profile = (struct pulse_profile){
-			v34_pulse_coefficients_3200_v34, 3,
-		};
-		return true;
-	case V34_SYMBOL_RATE_3429:
-		*profile = (struct pulse_profile){
-			v34_pulse_coefficients_3429, 14,
-		};
-		return true;
-	case V34_SYMBOL_RATE_COUNT:
-		break;
-	}
-	return false;
+	static const struct pulse_profile profiles[] = {
+		[V34_SYMBOL_RATE_2400] = { v34_pulse_coefficients_2400, 4 },
+		[V34_SYMBOL_RATE_2743] = { v34_pulse_coefficients_2800, 24 },
+		[V34_SYMBOL_RATE_2800] = { v34_pulse_coefficients_2800, 24 },
+		[V34_SYMBOL_RATE_3000] = { v34_pulse_coefficients_3000, 16 },
+		[V34_SYMBOL_RATE_3200] = { v34_pulse_coefficients_3200_v34, 3 },
+		[V34_SYMBOL_RATE_3429] = { v34_pulse_coefficients_3429, 14 },
+	};
+	_Static_assert(sizeof(profiles) / sizeof(profiles[0]) == V34_SYMBOL_RATE_COUNT,
+		       "pulse profiles must cover every symbol rate");
+
+	if ((unsigned)symbol_rate >= V34_SYMBOL_RATE_COUNT)
+		return false;
+	*profile = profiles[symbol_rate];
+	return true;
 }
 
 static bool occupied_band_fits(
