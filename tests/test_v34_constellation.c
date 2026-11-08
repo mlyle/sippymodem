@@ -401,24 +401,25 @@ static bool test_sixteen_point_constellation(void)
 	return true;
 }
 
+static const struct v34_analytic_sample fixed_four_point[] = {
+	{ 2289, 2289 },
+	{ 2289, -2290 },
+	{ -2290, -2290 },
+	{ -2290, 2289 },
+};
+static const struct v34_analytic_sample fixed_sixteen_point[] = {
+	{ 1024, 1024 }, { -3072, 1024 },
+	{ 1024, -3072 }, { -3072, -3072 },
+	{ 1024, -1024 }, { 1024, 3072 },
+	{ -3072, -1024 }, { -3072, 3072 },
+	{ -1024, -1024 }, { 3072, -1024 },
+	{ -1024, 3072 }, { 3072, 3072 },
+	{ -1024, 1024 }, { -1024, -3072 },
+	{ 3072, 1024 }, { 3072, -3072 },
+};
+
 static bool test_fixed_training_constellations(void)
 {
-	static const struct v34_analytic_sample four_point[] = {
-		{ 2289, 2289 },
-		{ 2289, -2290 },
-		{ -2290, -2290 },
-		{ -2290, 2289 },
-	};
-	static const struct v34_analytic_sample sixteen_point[] = {
-		{ 1024, 1024 }, { -3072, 1024 },
-		{ 1024, -3072 }, { -3072, -3072 },
-		{ 1024, -1024 }, { 1024, 3072 },
-		{ -3072, -1024 }, { -3072, 3072 },
-		{ -1024, -1024 }, { 3072, -1024 },
-		{ -1024, 3072 }, { 3072, 3072 },
-		{ -1024, 1024 }, { -1024, -3072 },
-		{ 3072, 1024 }, { 3072, -3072 },
-	};
 	static const struct v34_analytic_sample perturbations[] = {
 		{ 0, 0 },
 		{ 211, -173 },
@@ -429,8 +430,8 @@ static bool test_fixed_training_constellations(void)
 		const struct v34_analytic_sample *points;
 		uint8_t quarters;
 	} fixtures[] = {
-		{ V34_CONSTELLATION_4_POINT, four_point, 1 },
-		{ V34_CONSTELLATION_16_POINT, sixteen_point, 4 },
+		{ V34_CONSTELLATION_4_POINT, fixed_four_point, 1 },
+		{ V34_CONSTELLATION_16_POINT, fixed_sixteen_point, 4 },
 	};
 
 	for (size_t fixture = 0; fixture < ARRAY_LENGTH(fixtures);
@@ -495,6 +496,118 @@ static bool test_fixed_training_constellations(void)
 			      decision.quarter_point == 0 &&
 			      decision.clockwise_quarter_turns == 0,
 			      "fixed tie order changed for fixture %zu", fixture);
+		}
+	}
+	return true;
+}
+/* Use literal label-ordered points, not the production point generator. */
+static bool check_training_slice(enum v34_constellation_size constellation,
+	const struct v34_analytic_sample *fixed, const struct qam_point *floating,
+	unsigned count, struct v34_analytic_sample input, struct qam_point observed)
+{
+	uint64_t best_fixed = UINT64_MAX;
+	double best_float = DBL_MAX;
+	unsigned fixed_label = 0, float_label = 0;
+	unsigned quarters = count / 4;
+
+	for (unsigned i = 0; i < count; ++i) {
+		int64_t x = (int32_t)input.in_phase - fixed[i].in_phase;
+		int64_t y = (int32_t)input.quadrature - fixed[i].quadrature;
+		uint64_t distance = (uint64_t)(x * x + y * y);
+		double dx = observed.in_phase - floating[i].in_phase;
+		double dy = observed.quadrature - floating[i].quadrature;
+		double error = dx * dx + dy * dy;
+
+		if (distance < best_fixed) {
+			best_fixed = distance;
+			fixed_label = i;
+		}
+		if (error < best_float) {
+			best_float = error;
+			float_label = i;
+		}
+	}
+	struct v34_fixed_training_decision decision;
+	uint8_t quarter = 0xa5, rotation = 0x5a;
+
+	CHECK(v34_training_constellation_fixed_slice(constellation, input, &decision) ==
+	      V34_CONSTELLATION_OK && decision.quarter_point == fixed_label % quarters &&
+	      decision.clockwise_quarter_turns == fixed_label / quarters &&
+	      decision.target.in_phase == fixed[fixed_label].in_phase &&
+	      decision.target.quadrature == fixed[fixed_label].quadrature,
+	      "fixed oracle mismatch at %d/%d, constellation %u", input.in_phase,
+	      input.quadrature, constellation);
+	CHECK(v34_training_constellation_slice(constellation, &observed, &quarter, &rotation) ==
+	      V34_CONSTELLATION_OK && quarter == float_label % quarters &&
+	      rotation == float_label / quarters,
+	      "floating oracle mismatch at %.17g/%.17g, constellation %u",
+	      observed.in_phase, observed.quadrature, constellation);
+	return true;
+}
+
+static bool test_training_slicer_oracle(void)
+{
+	static const int16_t boundaries[] = {
+		INT16_MIN, -4097, -3072, -2049, -2048, -2047, -1024, -1,
+		0, 1, 1024, 2047, 2048, 2049, 3072, 4097, INT16_MAX,
+	};
+	static const struct qam_point invalid[] = {
+		{ DBL_MAX, 0 }, { 0, -DBL_MAX }, { NAN, 1 }, { 1, INFINITY },
+	};
+	for (unsigned family = 0; family < 2; ++family) {
+		enum v34_constellation_size constellation = family ?
+			V34_CONSTELLATION_16_POINT : V34_CONSTELLATION_4_POINT;
+		const struct v34_analytic_sample *fixed = family ?
+			fixed_sixteen_point : fixed_four_point;
+		unsigned count = family ? 16 : 4;
+		double unit = family ? 0.31622776601683793319988935444327 :
+			0.70710678118654752440084436210485;
+		struct qam_point floating[16];
+
+		for (unsigned i = 0; i < count; ++i)
+			floating[i] = (struct qam_point){
+				(family ? fixed[i].in_phase / 1024 :
+				 (fixed[i].in_phase > 0 ? 1 : -1)) * unit,
+				(family ? fixed[i].quadrature / 1024 :
+				 (fixed[i].quadrature > 0 ? 1 : -1)) * unit,
+			};
+		/* Cover every signed input coordinate on each axis with a permuted
+		 * partner, plus all interior tie crossings and their neighbours. */
+		for (uint32_t i = 0; i <= UINT16_MAX; ++i) {
+			struct v34_analytic_sample point = {
+				(int16_t)((int32_t)i - 32768),
+				(int16_t)((int32_t)((i * 25173u + 13849u) & 65535u) - 32768),
+			};
+			struct qam_point observed = {
+				point.in_phase / 8192., point.quadrature / 8192.,
+			};
+			CHECK(check_training_slice(constellation, fixed, floating, count,
+			      point, observed), "dense training slice");
+		}
+		for (size_t x = 0; x < ARRAY_LENGTH(boundaries); ++x)
+			for (size_t y = 0; y < ARRAY_LENGTH(boundaries); ++y) {
+				struct v34_analytic_sample point = { boundaries[x], boundaries[y] };
+				for (int side = -1; side <= 1; ++side) {
+					struct qam_point observed = {
+						boundaries[x] / 1024. * unit,
+						boundaries[y] / 1024. * unit,
+					};
+					if (side) {
+						observed.in_phase = nextafter(observed.in_phase,
+							side < 0 ? -INFINITY : INFINITY);
+						observed.quadrature = nextafter(observed.quadrature,
+							side < 0 ? INFINITY : -INFINITY);
+					}
+					CHECK(check_training_slice(constellation, fixed, floating,
+					      count, point, observed), "boundary training slice");
+				}
+			}
+		for (size_t i = 0; i < ARRAY_LENGTH(invalid); ++i) {
+			uint8_t quarter = 0xa5, rotation = 0x5a;
+			CHECK(v34_training_constellation_slice(constellation, &invalid[i],
+			      &quarter, &rotation) == V34_CONSTELLATION_INVALID_ARGUMENT &&
+			      quarter == 0xa5 && rotation == 0x5a,
+			      "unrepresentable distance changed outputs at %zu", i);
 		}
 	}
 	return true;
@@ -774,6 +887,7 @@ int main(void)
 		{ "sixteen-point training set", test_sixteen_point_constellation },
 		{ "fixed training sets", test_fixed_training_constellations },
 		{ "training signal qualification", test_training_signal_qualification },
+		{ "training slicer independent oracle", test_training_slicer_oracle },
 		{ "training-constellation slicing",
 		  test_training_constellation_slicing },
 		{ "validation", test_validation },

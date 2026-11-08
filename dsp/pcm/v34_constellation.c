@@ -110,19 +110,32 @@ struct qam_point v34_rotated_point_zero(
 	return qam_point_rotate_quarters(point, counterclockwise_quarter_turns);
 }
 
-static bool training_grid_coordinates(
-	enum v34_constellation_size constellation,
+/* Labels are checked at the public boundary or bounded by the slicer loops. */
+static void training_grid_coordinates(
 	uint8_t quarter_point, uint8_t clockwise_quarter_turns,
 	int *in_phase, int *quadrature)
 {
-	if (!v34_training_decision_is_valid(
-		    constellation, quarter_point, clockwise_quarter_turns))
-		return false;
 	*in_phase = (quarter_point & 1u) != 0u ? -3 : 1;
 	*quadrature = (quarter_point & 2u) != 0u ? -3 : 1;
 	qam_grid_rotate_clockwise(
 		in_phase, quadrature, clockwise_quarter_turns);
-	return true;
+}
+
+static struct qam_point training_point(
+	enum v34_constellation_size constellation,
+	uint8_t quarter_point, uint8_t clockwise_quarter_turns)
+{
+	double grid_unit = constellation == V34_CONSTELLATION_4_POINT ?
+		V34_POINT_ZERO_COORDINATE : V34_SIXTEEN_POINT_GRID_UNIT;
+	int in_phase;
+	int quadrature;
+
+	training_grid_coordinates(quarter_point, clockwise_quarter_turns,
+		&in_phase, &quadrature);
+	return (struct qam_point){
+		.in_phase = in_phase * grid_unit,
+		.quadrature = quadrature * grid_unit,
+	};
 }
 
 enum v34_constellation_result
@@ -131,28 +144,10 @@ v34_training_constellation_point(
 	uint8_t quarter_point, uint8_t clockwise_quarter_turns,
 	struct qam_point *point)
 {
-	double grid_unit;
-	int in_phase;
-	int quadrature;
-
-	if (point == NULL || !training_grid_coordinates(
-		    constellation, quarter_point, clockwise_quarter_turns,
-		    &in_phase, &quadrature))
+	if (point == NULL || !v34_training_decision_is_valid(
+		    constellation, quarter_point, clockwise_quarter_turns))
 		return V34_CONSTELLATION_INVALID_ARGUMENT;
-	switch (constellation) {
-	case V34_CONSTELLATION_4_POINT:
-		grid_unit = V34_POINT_ZERO_COORDINATE;
-		break;
-	case V34_CONSTELLATION_16_POINT:
-		grid_unit = V34_SIXTEEN_POINT_GRID_UNIT;
-		break;
-	default:
-		return V34_CONSTELLATION_INVALID_ARGUMENT;
-	}
-	*point = (struct qam_point){
-		.in_phase = in_phase * grid_unit,
-		.quadrature = quadrature * grid_unit,
-	};
+	*point = training_point(constellation, quarter_point, clockwise_quarter_turns);
 	return V34_CONSTELLATION_OK;
 }
 
@@ -178,13 +173,10 @@ v34_training_constellation_slice(
 				1u;
 	for (uint8_t rotation = 0; rotation < 4u; ++rotation) {
 		for (uint8_t quarter = 0; quarter < quarter_count; ++quarter) {
-			struct qam_point candidate;
+			struct qam_point candidate = training_point(
+				constellation, quarter, rotation);
 			double distance;
 
-			if (v34_training_constellation_point(
-				    constellation, quarter, rotation,
-				    &candidate) != V34_CONSTELLATION_OK)
-				return V34_CONSTELLATION_INVALID_ARGUMENT;
 			distance = qam_point_distance_squared(point, &candidate);
 			if (!isfinite(distance) || distance >= best_distance)
 				continue;
@@ -201,20 +193,16 @@ v34_training_constellation_slice(
 	return V34_CONSTELLATION_OK;
 }
 
-enum v34_constellation_result
-v34_training_constellation_fixed_point(
+static struct v34_analytic_sample training_fixed_point(
 	enum v34_constellation_size constellation,
-	uint8_t quarter_point, uint8_t clockwise_quarter_turns,
-	struct v34_analytic_sample *point)
+	uint8_t quarter_point, uint8_t clockwise_quarter_turns)
 {
 	struct v34_analytic_sample generated;
 	int in_phase;
 	int quadrature;
 
-	if (point == NULL || !training_grid_coordinates(
-		    constellation, quarter_point, clockwise_quarter_turns,
-		    &in_phase, &quadrature))
-		return V34_CONSTELLATION_INVALID_ARGUMENT;
+	training_grid_coordinates(quarter_point, clockwise_quarter_turns,
+		&in_phase, &quadrature);
 	if (constellation == V34_CONSTELLATION_4_POINT) {
 		generated.in_phase = in_phase > 0 ? 2289 : -2290;
 		generated.quadrature = quadrature > 0 ? 2289 : -2290;
@@ -222,7 +210,19 @@ v34_training_constellation_fixed_point(
 		generated.in_phase = (int16_t)(in_phase * 1024);
 		generated.quadrature = (int16_t)(quadrature * 1024);
 	}
-	*point = generated;
+	return generated;
+}
+
+enum v34_constellation_result
+v34_training_constellation_fixed_point(
+	enum v34_constellation_size constellation,
+	uint8_t quarter_point, uint8_t clockwise_quarter_turns,
+	struct v34_analytic_sample *point)
+{
+	if (point == NULL || !v34_training_decision_is_valid(
+		    constellation, quarter_point, clockwise_quarter_turns))
+		return V34_CONSTELLATION_INVALID_ARGUMENT;
+	*point = training_fixed_point(constellation, quarter_point, clockwise_quarter_turns);
 	return V34_CONSTELLATION_OK;
 }
 
@@ -248,7 +248,6 @@ v34_training_constellation_fixed_slice(
 	struct v34_fixed_training_decision generated = { 0 };
 	uint64_t best_distance = UINT64_MAX;
 	uint8_t quarter_count;
-	bool found = false;
 
 	if (!v34_constellation_size_is_valid(constellation) ||
 	    decision == NULL)
@@ -256,13 +255,10 @@ v34_training_constellation_fixed_slice(
 	quarter_count = constellation == V34_CONSTELLATION_16_POINT ? 4u : 1u;
 	for (uint8_t rotation = 0; rotation < 4u; ++rotation) {
 		for (uint8_t quarter = 0; quarter < quarter_count; ++quarter) {
-			struct v34_analytic_sample target;
+			struct v34_analytic_sample target = training_fixed_point(
+				constellation, quarter, rotation);
 			uint64_t distance;
 
-			if (v34_training_constellation_fixed_point(
-				    constellation, quarter, rotation, &target) !=
-			    V34_CONSTELLATION_OK)
-				return V34_CONSTELLATION_INVALID_ARGUMENT;
 			distance = sample_pair_distance_s16(point.in_phase, point.quadrature,
 				target.in_phase, target.quadrature);
 			if (distance >= best_distance)
@@ -273,11 +269,9 @@ v34_training_constellation_fixed_slice(
 				.quarter_point = quarter,
 				.clockwise_quarter_turns = rotation,
 			};
-			found = true;
 		}
 	}
-	if (!found)
-		return V34_CONSTELLATION_INVALID_ARGUMENT;
+	/* At least four candidates, each with a distance <= 2 * 65535^2. */
 	*decision = generated;
 	return V34_CONSTELLATION_OK;
 }
