@@ -31,6 +31,8 @@ struct v90_downstream_data_stream {
 	uint64_t accepted_frames;
 	uint64_t transmitted_symbols;
 	uint8_t queue_count;
+	/* Source closure precedes encoder draining when queued symbols remain. */
+	bool finish_requested;
 };
 
 /* Start the fresh B1d epoch at the exact boundary after a completed Ed. */
@@ -47,9 +49,11 @@ bool v90_downstream_data_stream_is_valid(
 bool v90_downstream_data_stream_is_online(
 	const struct v90_downstream_data_stream *stream);
 
-/* End source acquisition and emit every symbol already accepted by the
- * frame encoder. COMPLETE consumes no network character. A complete stream
- * always ends on the six-symbol data-frame boundary required before Rd. */
+/* End source acquisition on the first accepted call and emit every symbol
+ * already accepted by the frame encoder. Network-clock requests may consume
+ * queued symbols but cannot reopen the source. COMPLETE consumes no network
+ * character. A complete stream always ends on the six-symbol data-frame
+ * boundary required before Rd. */
 enum v90_downstream_data_stream_result v90_downstream_data_stream_finish(
 	struct v90_downstream_data_stream *stream,
 	struct v90_pcm_symbol *symbol);

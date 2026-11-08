@@ -1444,6 +1444,121 @@ static bool test_continuous_streams(void)
 	return true;
 }
 
+static bool verify_source_closure(
+	enum g711_law law, uint8_t redundancy, uint8_t lookahead,
+	size_t consumed)
+{
+	struct v90_pcm_mapping mapping;
+	struct v90_downstream_data_stream stream = { 0 };
+	struct data_source source = { 0 };
+	struct v90_pcm_symbol symbol;
+	struct v90_pcm_symbol expected[
+		V90_CP_FRAME_INTERVALS * (V90_SPECTRAL_MAX_LOOKAHEAD + 2u)];
+	size_t expected_count = 0;
+	size_t actual_count = 0;
+
+	CHECK(make_mapping_with_shaping(
+		      &mapping, law, V90_CP_DATA, redundancy, lookahead) &&
+	      v90_downstream_data_tx_init(&stream.transmitter, &mapping) ==
+		      V90_DOWNSTREAM_DATA_TX_OK,
+	      "source-closure fixture did not initialize");
+	source.bit_count = mapping.frame_bits;
+	for (size_t index = 0;
+	     source.frame_count == 0 && index < MAXIMUM_DATA_SYMBOLS; ++index)
+		CHECK(v90_downstream_data_stream_next(
+			      &stream, source_data_frame, &source, &symbol) ==
+			      V90_DOWNSTREAM_DATA_STREAM_OK,
+		      "source-closure fixture stopped before data");
+	CHECK(source.frame_count == 1 && stream.queue_count == 5,
+	      "fixture did not retain the first data frame");
+	for (size_t index = 0; index < consumed; ++index)
+		CHECK(v90_downstream_data_stream_next(
+			      &stream, source_data_frame, &source, &symbol) ==
+			      V90_DOWNSTREAM_DATA_STREAM_OK,
+		      "fixture could not consume queued data");
+	struct v90_downstream_data_stream reference = stream;
+	uint64_t accepted = stream.accepted_frames;
+
+	/* A finish-only drain supplies the same accepted tail for comparison
+	 * with callers that alternate completion and network-clock requests. */
+	for (;;) {
+		enum v90_downstream_data_stream_result result =
+			v90_downstream_data_stream_finish(&reference, &symbol);
+
+		if (result == V90_DOWNSTREAM_DATA_STREAM_COMPLETE)
+			break;
+		CHECK(result == V90_DOWNSTREAM_DATA_STREAM_OK &&
+		      expected_count < ARRAY_LENGTH(expected),
+		      "reference tail did not finish within its bound");
+		expected[expected_count++] = symbol;
+	}
+	enum v90_downstream_data_stream_result result =
+		v90_downstream_data_stream_finish(&stream, &symbol);
+
+	for (;;) {
+		if (result == V90_DOWNSTREAM_DATA_STREAM_COMPLETE)
+			break;
+		CHECK(result == V90_DOWNSTREAM_DATA_STREAM_OK &&
+		      actual_count < expected_count &&
+		      symbol.ucode == expected[actual_count].ucode &&
+		      symbol.positive == expected[actual_count].positive &&
+		      symbol.octet == expected[actual_count].octet &&
+		      symbol.sample == expected[actual_count].sample,
+		      "completion changed accepted tail symbol %zu", actual_count);
+		actual_count++;
+		if (stream.transmitter.stage == V90_DOWNSTREAM_DATA_TX_STAGE_DATA &&
+		    stream.queue_count != 0) {
+			result = actual_count % 2u ?
+				v90_downstream_data_stream_next(
+					&stream, source_data_frame, &source, &symbol) :
+				v90_downstream_data_stream_next_owned(
+					&stream, source_data_frame, &source, &symbol);
+			continue;
+		}
+		struct v90_downstream_data_stream saved = stream;
+		struct v90_pcm_symbol untouched;
+
+		memset(&untouched, 0xa5, sizeof(untouched));
+		symbol = untouched;
+		CHECK(v90_downstream_data_stream_next(
+			      &stream, source_data_frame, &source, &symbol) ==
+			      V90_DOWNSTREAM_DATA_STREAM_INVALID_STATE &&
+		      v90_downstream_data_stream_next_owned(
+			      &stream, source_data_frame, &source, &symbol) ==
+			      V90_DOWNSTREAM_DATA_STREAM_INVALID_STATE &&
+		      source.frame_count == 1 &&
+		      memcmp(&stream, &saved, sizeof(stream)) == 0 &&
+		      memcmp(&symbol, &untouched, sizeof(symbol)) == 0,
+		      "completion reopened the source or changed rejected output");
+		result = v90_downstream_data_stream_finish(&stream, &symbol);
+	}
+	struct v90_downstream_data_stream saved = stream;
+
+	CHECK(actual_count == expected_count && source.frame_count == 1 &&
+	      stream.accepted_frames == accepted && stream.queue_count == 0 &&
+	      stream.transmitted_symbols == accepted * V90_CP_FRAME_INTERVALS &&
+	      v90_downstream_data_stream_is_valid(&stream) &&
+	      v90_downstream_data_stream_finish(&stream, &symbol) ==
+		      V90_DOWNSTREAM_DATA_STREAM_COMPLETE &&
+	      memcmp(&stream, &saved, sizeof(stream)) == 0,
+	      "completion lost accepted data or was not idempotent");
+	return true;
+}
+
+static bool test_source_closure(void)
+{
+	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (uint8_t redundancy = 0; redundancy <= 3; ++redundancy)
+			for (uint8_t lookahead = 0; lookahead <= 3; ++lookahead)
+				for (size_t consumed = 0; consumed < V90_CP_FRAME_INTERVALS;
+				     ++consumed)
+					CHECK(verify_source_closure(
+						      law, redundancy, lookahead, consumed),
+					      "source closure failed: law %u Sr %u lookahead %u queue %zu",
+					      law, redundancy, lookahead, consumed);
+	return true;
+}
+
 static bool test_contracts(void)
 {
 	struct v90_pcm_mapping mapping;
@@ -1516,6 +1631,10 @@ static bool test_contracts(void)
 		      v90_downstream_data_stream_is_valid(&queued),
 		      "queued public symbol diverged from the owned path");
 	}
+	invalid_stream = stream;
+	invalid_stream.finish_requested = true;
+	CHECK(!v90_downstream_data_stream_is_valid(&invalid_stream),
+	      "source closure was accepted before the data boundary");
 	invalid_stream = stream;
 	invalid_stream.transmitter.stage =
 		V90_DOWNSTREAM_DATA_TX_STAGE_COMPLETE + 1;
@@ -1702,6 +1821,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "continuous streams", test_continuous_streams },
+		{ "source closure with queued data and shaping tail", test_source_closure },
 		{ "Rd and Rd-bar sequence", test_rd_sequence },
 		{ "Rd/Rt and phase reversal detection", test_rrn_detection },
 		{ "Rd/Rt phase reversal rejection and recovery", test_rrn_rejection },
