@@ -73,6 +73,13 @@ bool v90_upstream_training_rx_has_failed(
 bool v90_upstream_training_rx_is_tracking(
 	const struct v90_upstream_training_rx *receiver);
 
+/* Conventional upstream may cross a protocol boundary only with an analogue
+ * peer profile, acquired timing, and no unresolved physical observation.
+ * This does not establish completion of Ja or the return S/S-bar marker;
+ * the protocol owner must qualify its own metadata before handing off. */
+bool v90_upstream_training_rx_is_handoff_ready(
+	const struct v90_upstream_training_rx *receiver);
+
 /* Copy one retained fixed decision in oldest-to-newest order. Rejected calls
  * leave the destination unchanged. */
 bool v90_upstream_training_rx_recent_decision(

@@ -4,7 +4,6 @@
 
 #include "memory_region.h"
 #include "v34_constellation.h"
-#include "v90_phase3.h"
 
 #include <stddef.h>
 
@@ -12,12 +11,7 @@ bool v90_phase3_return_line_rx_is_valid(
 	const struct v90_phase3_return_line_rx *rx)
 {
 	return rx != NULL &&
-	       v90_phase3_analog_profile_is_valid(
-		       &rx->upstream.transmitting_profile) &&
-	       v90_upstream_training_rx_is_tracking(&rx->upstream) &&
-	       v34_receive_timing_is_acquired(&rx->upstream.line.timing) &&
-	       !rx->upstream.line.equalizer.decision_pending &&
-	       !rx->upstream.line.equalizer.retained.pending &&
+	       v90_upstream_training_rx_is_handoff_ready(&rx->upstream) &&
 	       v90_phase3_return_marker_is_valid(&rx->marker) &&
 	       v34_precoder_recommendation_is_valid(&rx->precoder) &&
 	       (!rx->handoff_draining ||
@@ -230,12 +224,7 @@ bool v90_phase3_return_line_handoff_is_valid(
 	const struct v90_phase3_return_line_handoff *handoff)
 {
 	return handoff != NULL &&
-	       v90_phase3_analog_profile_is_valid(
-		       &handoff->upstream.transmitting_profile) &&
-	       v90_upstream_training_rx_is_tracking(&handoff->upstream) &&
-	       v34_receive_timing_is_acquired(&handoff->upstream.line.timing) &&
-	       !handoff->upstream.line.equalizer.decision_pending &&
-	       !handoff->upstream.line.equalizer.retained.pending &&
+	       v90_upstream_training_rx_is_handoff_ready(&handoff->upstream) &&
 	       v34_phase3_s_detection_is_valid(&handoff->marker) &&
 	       v34_precoder_recommendation_is_valid(&handoff->precoder);
 }

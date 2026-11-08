@@ -5,6 +5,7 @@
 #include "memory_region.h"
 #include "ring_history.h"
 #include "v34_constellation.h"
+#include "v90_phase3.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -76,6 +77,17 @@ bool v90_upstream_training_rx_is_tracking(
 {
 	return v90_upstream_training_rx_is_valid(receiver) && !receiver->failed &&
 	       receiver->stage == V90_UPSTREAM_TRAINING_RX_TRACKING;
+}
+
+bool v90_upstream_training_rx_is_handoff_ready(
+	const struct v90_upstream_training_rx *receiver)
+{
+	return receiver != NULL &&
+	       v90_phase3_analog_profile_is_valid(&receiver->transmitting_profile) &&
+	       v90_upstream_training_rx_is_tracking(receiver) &&
+	       v34_receive_timing_is_acquired(&receiver->line.timing) &&
+	       !receiver->line.equalizer.decision_pending &&
+	       !receiver->line.equalizer.retained.pending;
 }
 
 enum v90_upstream_training_rx_result v90_upstream_training_rx_init(

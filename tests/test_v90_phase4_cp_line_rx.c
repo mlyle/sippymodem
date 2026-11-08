@@ -449,6 +449,7 @@ static bool test_fixed_handoff_contract(void)
 	}
 	CHECK(observed && invalid.upstream.line.equalizer.decision_pending &&
 	      v90_upstream_training_rx_is_tracking(&invalid.upstream) &&
+	      !v90_upstream_training_rx_is_handoff_ready(&invalid.upstream) &&
 	      !v90_phase3_return_line_handoff_is_valid(&invalid) &&
 	      v90_phase4_cp_line_rx_init(&rx, &invalid, V34_CONSTELLATION_4_POINT) ==
 		      V90_PHASE4_CP_LINE_RX_INVALID_ARGUMENT &&
@@ -460,6 +461,7 @@ static bool test_fixed_handoff_contract(void)
 	      invalid.upstream.line.equalizer.retained.pending &&
 	      !invalid.upstream.line.equalizer.decision_pending &&
 	      v90_upstream_training_rx_is_tracking(&invalid.upstream) &&
+	      !v90_upstream_training_rx_is_handoff_ready(&invalid.upstream) &&
 	      !v90_phase3_return_line_handoff_is_valid(&invalid) &&
 	      v90_phase4_cp_line_rx_init(&rx, &invalid, V34_CONSTELLATION_4_POINT) ==
 		      V90_PHASE4_CP_LINE_RX_INVALID_ARGUMENT &&

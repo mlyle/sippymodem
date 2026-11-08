@@ -150,12 +150,7 @@ bool v90_phase3_analog_line_handoff_is_valid(
 	const struct v90_phase3_analog_line_handoff *handoff)
 {
 	return handoff != NULL &&
-	       v90_phase3_analog_profile_is_valid(
-		       &handoff->upstream.transmitting_profile) &&
-	       v90_upstream_training_rx_is_tracking(&handoff->upstream) &&
-	       v34_receive_timing_is_acquired(&handoff->upstream.line.timing) &&
-	       !handoff->upstream.line.equalizer.decision_pending &&
-	       !handoff->upstream.line.equalizer.retained.pending &&
+	       v90_upstream_training_rx_is_handoff_ready(&handoff->upstream) &&
 	       handoff->upstream.initial.j.received_symbols ==
 		       V34_TRAINING_SEQUENCE_MIN_SYMBOLS &&
 	       v34_precoder_recommendation_is_valid(&handoff->ja.precoder) &&

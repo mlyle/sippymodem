@@ -197,6 +197,17 @@ static bool check_fixed_sample_rejection(
 	struct v34_adaptive_equalizer_observation observation = { 0 };
 	bool pending = false;
 
+	CHECK(!v90_upstream_training_rx_is_handoff_ready(NULL) &&
+	      v90_upstream_training_rx_is_handoff_ready(&rx) &&
+	      memcmp(&rx, &saved, sizeof(rx)) == 0,
+	      "trained readiness changed the receiver or rejected its boundary");
+	CHECK(v90_upstream_training_rx_init(
+		      &rx, &trained->transmitting_profile, 32767) ==
+		      V90_UPSTREAM_TRAINING_RX_OK &&
+	      !v90_upstream_training_rx_is_handoff_ready(&rx),
+	      "untrained receiver was ready for a protocol handoff");
+	rx = saved;
+
 	CHECK(v90_upstream_training_rx_sample(NULL, 0, &decision) ==
 		      V90_UPSTREAM_TRAINING_RX_INVALID_ARGUMENT &&
 	      v90_upstream_training_rx_sample(&rx, 0, NULL) ==
@@ -208,7 +219,8 @@ static bool check_fixed_sample_rejection(
 	      memcmp(&decision, &saved_decision, sizeof(decision)) == 0,
 	      "invalid or aliased fixed sample changed owner or output");
 	rx.tracking_constellation = (enum v34_constellation_size)8;
-	CHECK(!v90_upstream_training_rx_is_valid(&rx),
+	CHECK(!v90_upstream_training_rx_is_valid(&rx) &&
+	      !v90_upstream_training_rx_is_handoff_ready(&rx),
 	      "invalid tracking constellation was accepted");
 	rx = saved;
 	rx.line.initialized = false;
@@ -221,7 +233,8 @@ static bool check_fixed_sample_rejection(
 	rx = *trained;
 	rx.failed = true;
 	saved = rx;
-	CHECK(v90_upstream_training_rx_sample(&rx, 0, &decision) ==
+	CHECK(!v90_upstream_training_rx_is_handoff_ready(&rx) &&
+	      v90_upstream_training_rx_sample(&rx, 0, &decision) ==
 		      V90_UPSTREAM_TRAINING_RX_FAILED &&
 	      memcmp(&rx, &saved, sizeof(rx)) == 0 &&
 	      memcmp(&decision, &saved_decision, sizeof(decision)) == 0,
@@ -239,7 +252,8 @@ static bool check_fixed_sample_rejection(
 		      "could not leave a fixed observation pending");
 		pending = result == V34_LINE_RECEIVER_OBSERVATION_READY;
 	}
-	CHECK(pending && v90_upstream_training_rx_is_tracking(&rx),
+	CHECK(pending && v90_upstream_training_rx_is_tracking(&rx) &&
+	      !v90_upstream_training_rx_is_handoff_ready(&rx),
 	      "unresolved fixed observation did not remain valid");
 	saved = rx;
 	saved.failed = true;
