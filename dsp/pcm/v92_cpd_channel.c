@@ -419,6 +419,48 @@ static bool normalize_gain(struct v92_cpd_parameters *cpd, enum g711_law law, ui
 	return cpd->four_times_gain_q0_16 != 0u;
 }
 
+static void trim_outer_points(struct v92_cpd_parameters *cpd)
+{
+	if (v92_cpd_filter_response_length(&cpd->filter[V92_CPD_PRECODER_FEED_FORWARD]))
+		return;
+	struct v92_cpd_constellation *points = &cpd->constellation[0];
+	unsigned minimum = v92_cpd_minimum_points(cpd->modulus);
+	const struct v92_cpd_filter *feedback = &cpd->filter[V92_CPD_PRECODER_FEEDBACK];
+	uint32_t magnitude = 0;
+
+	for (unsigned i = 0; i < feedback->count; ++i) {
+		int32_t coefficient = feedback->coefficient[i];
+		magnitude += coefficient < 0 ? -coefficient : coefficient;
+	}
+	if (magnitude) {
+		for (unsigned i = 0; i < V92_CPD_FRAME_INTERVALS; ++i)
+			if (cpd->frame_constellation[i] != 0)
+				return;
+		/* For u=(2*eta+1)*L and N minimum positive points, U=(2N-1)L
+		 * bounds the inner representatives. From zero history, feedback
+		 * norm q gives |x| <= (U+1/2)/(1-q). If its history stays strictly
+		 * below L-1/2, rounding cannot make an outer representative win
+		 * minimum |x|. Equivalently q*2NL < L-1/2. Keep the comparison
+		 * integral and strict, including the half-sample rounding margin. */
+		unsigned level = points->positive_linear[0];
+
+		if (!level || minimum > points->count)
+			return;
+		for (unsigned i = 0; i < points->count; ++i)
+			if ((unsigned)points->positive_linear[i] != (2u * i + 1u) * level)
+				return;
+		if ((uint64_t)4 * minimum * level * magnitude >=
+		    (uint64_t)(2u * level - 1u) * 16384u)
+			return;
+	}
+	/* Unreachable representatives cost CPd words and create receive
+	 * hypotheses without adding transmitter choices. Z2/P2 do not affect
+	 * representative selection. The memoryless case also permits any grid. */
+	points->count = minimum;
+	memset(points->positive_linear + minimum, 0,
+		(V92_CPD_MAX_CONSTELLATION_POINTS - minimum) * sizeof(int16_t));
+}
+
 static bool design(struct v92_cpd_parameters *parameters,
 	const struct v92_upstream_channel *channel, enum g711_law law,
 	int16_t upstream_level, struct v92_upstream_plan *plan, uint32_t rate_mask)
@@ -537,17 +579,7 @@ static bool design(struct v92_cpd_parameters *parameters,
 					    &next.constellation[0].positive_linear[point]))
 					return false;
 		}
-		/* Retain the grid geometry, but do not advertise unused receive
-		 * hypotheses when x=u. Feedback still needs the outer choices to
-		 * cancel history. Z2/P2 alone do not affect representative selection. */
-		if (!v92_cpd_filter_response_length(&next.filter[V92_CPD_PRECODER_FEED_FORWARD]) &&
-		    !v92_cpd_filter_response_length(&next.filter[V92_CPD_PRECODER_FEEDBACK])) {
-			struct v92_cpd_constellation *points = &next.constellation[0];
-
-			points->count = v92_cpd_minimum_points(next.modulus);
-			memset(points->positive_linear + points->count, 0,
-				(V92_CPD_MAX_CONSTELLATION_POINTS - points->count) * sizeof(int16_t));
-		}
+		trim_outer_points(&next);
 		uint64_t point_energy;
 		if (!normalize_gain(&next, law, &point_energy))
 			return false;

@@ -150,6 +150,75 @@ static bool test_memoryless_alphabet(void)
 	return true;
 }
 
+/* With L=256 the strict rounded-history bound is |P1|<584 for 36k
+ * (N=14), and <511 for 37.333k (N=16, including its odd first modulus).
+ * Compare complete encoder state/waveforms against the untrimmed alphabet,
+ * including both signs and the first excluded coefficient at that boundary. */
+static bool test_weak_feedback_alphabet(uint8_t rate)
+{
+	unsigned minimum = rate == 10 ? 14 : 16;
+	int limit = rate == 10 ? 584 : 511;
+	const int coefficients[] = { 40, -40, limit - 1, 1 - limit, limit, -limit };
+	uint32_t random = 0x5381a70du;
+
+	for (unsigned c = 0; c < ARRAY_LENGTH(coefficients); ++c) {
+		struct v92_upstream_channel channel = { 0 };
+		int16_t previous = 0;
+
+		for (unsigned n = 0; n < V92_UPSTREAM_CHANNEL_SYMBOLS; ++n) {
+			int16_t target = (int16_t)((int)(random_word(&random) % 8192u) - 4096);
+			int32_t observed = (int32_t)lround(target + coefficients[c] * previous / 16384.0);
+
+			CHECK(v92_upstream_channel_sample(&channel, target, observed), "weak measurement failed");
+			previous = target;
+		}
+		for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+			struct v92_cpd_parameters compact, expanded;
+			struct v92_upstream_plan plan;
+			struct v92_pcm_mapping mapping[2];
+			struct v92_pcm_frame_tx tx[2];
+			struct v92_b1u_measurement measurement[2];
+			uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
+			bool trimmed = abs(coefficients[c]) < limit;
+
+			CHECK(v92_cpd_direct_init(&compact, law, rate, false) == V92_CPD_OK &&
+				v92_cpd_channel_design(&compact, &channel, law, LEVEL, &plan), "weak design failed");
+			CHECK(compact.filter[V92_CPD_PRECODER_FEEDBACK].count == 1 &&
+				compact.filter[V92_CPD_PRECODER_FEEDBACK].coefficient[0] == -coefficients[c] &&
+				compact.constellation[0].count == (trimmed ? minimum : 32),
+				"weak bound changed at coefficient %d: P1=%d points=%u", coefficients[c],
+				compact.filter[V92_CPD_PRECODER_FEEDBACK].coefficient[0], compact.constellation[0].count);
+			if (!trimmed)
+				continue;
+			expanded = compact;
+			expanded.constellation[0].count = 32;
+			for (unsigned i = minimum; i < 32; ++i)
+				expanded.constellation[0].positive_linear[i] = (2u * i + 1u) * 256u;
+			CHECK(v92_pcm_frame_measure_b1u(&compact, law, &measurement[0]) == V92_PCM_FRAME_OK &&
+				v92_pcm_frame_measure_b1u(&expanded, law, &measurement[1]) == V92_PCM_FRAME_OK &&
+				memcmp(&measurement[0], &measurement[1], sizeof(measurement[0])) == 0,
+				"weak B1u energy or representative frequencies changed");
+			CHECK(v92_pcm_mapping_init(&mapping[0], law, &compact) == V92_PCM_MAPPING_OK &&
+				v92_pcm_mapping_init(&mapping[1], law, &expanded) == V92_PCM_MAPPING_OK &&
+				v92_pcm_frame_tx_init(&tx[0], &mapping[0]) == V92_PCM_FRAME_OK &&
+				v92_pcm_frame_tx_init(&tx[1], &mapping[1]) == V92_PCM_FRAME_OK, "weak TX failed");
+			for (unsigned frame = 0; frame < V92_B1U_FRAMES + 2000u; ++frame) {
+				struct v92_pcm_frame output[2];
+
+				for (unsigned bit = 0; bit < mapping[0].data_bits_per_frame; ++bit)
+					bits[bit] = frame < V92_B1U_FRAMES ? 1u :
+						frame % 7u == 0 ? 0u : frame % 7u == 1 ? bit & 1u : random_word(&random) & 1u;
+				CHECK(v92_pcm_frame_encode(&tx[0], bits, mapping[0].data_bits_per_frame, &output[0]) == V92_PCM_FRAME_OK &&
+					v92_pcm_frame_encode(&tx[1], bits, mapping[1].data_bits_per_frame, &output[1]) == V92_PCM_FRAME_OK &&
+					memcmp(&output[0], &output[1], sizeof(output[0])) == 0 &&
+					memcmp(&tx[0].state, &tx[1].state, sizeof(tx[0].state)) == 0,
+					"weak waveform/state changed at law %u coefficient %d frame %u", law, coefficients[c], frame);
+			}
+		}
+	}
+	return true;
+}
+
 static int16_t quantize(enum g711_law law, double value)
 {
 	int16_t sample = (int16_t)lround(fmax(INT16_MIN, fmin(INT16_MAX, value)));
@@ -972,7 +1041,9 @@ static bool test_rate_selection(void)
 
 int main(void)
 {
-	if (!test_partial_training() || !test_balanced_moduli() || !test_memoryless_alphabet() || !test_rate_selection() || !test_filter_padding() ||
+	if (!test_partial_training() || !test_balanced_moduli() || !test_memoryless_alphabet() ||
+	    !test_weak_feedback_alphabet(10) || !test_weak_feedback_alphabet(11) ||
+	    !test_rate_selection() || !test_filter_padding() ||
 	    !test_training_changes() ||
 	    !test_rejections() || !test_receive_plan() ||
 	    !test_short_channel_selection(false) || !test_short_channel_selection(true) ||
