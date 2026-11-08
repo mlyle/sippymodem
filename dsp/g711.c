@@ -158,6 +158,45 @@ bool g711_quantization_interval(
 	return true;
 }
 
+bool g711_octet_interval_lsb(enum g711_law law, uint8_t octet,
+	enum g711_lsb_mode mode, struct g711_interval *interval)
+{
+	if (!g711_law_is_valid(law) || !g711_lsb_mode_is_valid(mode) || interval == NULL)
+		return false;
+	if (mode == G711_LSB_UNCHANGED)
+		return g711_octet_interval(law, octet, interval);
+	if (g711_apply_lsb(octet, mode) != octet)
+		return false;
+	struct g711_interval a = octet_interval(law, octet & 0xfeu);
+	struct g711_interval b = octet_interval(law, octet | 1u);
+
+	*interval = (struct g711_interval){
+		.lower = a.lower < b.lower ? a.lower : b.lower,
+		.upper = a.upper > b.upper ? a.upper : b.upper,
+	};
+	return true;
+}
+
+bool g711_level_interval_lsb(enum g711_law law, int16_t level,
+	enum g711_lsb_mode mode, struct g711_interval *interval)
+{
+	struct g711_interval next;
+
+	if (!g711_law_is_valid(law) || !g711_lsb_mode_is_valid(mode) || interval == NULL ||
+	    g711_quantize(law, level) != level)
+		return false;
+	if (mode == G711_LSB_UNCHANGED)
+		return g711_quantization_interval(law, level, interval);
+	if (!g711_octet_interval_lsb(law, g711_encode(law, level), mode, &next))
+		return false;
+	/* For forced one, the signed zero outputs also merge their adjacent
+	 * +/-8 cells. A decoded zero alone cannot recover the wire sign. */
+	if (law == G711_LAW_PCMU && level == 0)
+		next.lower = (int16_t)-next.upper;
+	*interval = next;
+	return true;
+}
+
 bool g711_ucode_octet(
 	enum g711_law law, uint8_t ucode, bool positive,
 	uint8_t *octet)

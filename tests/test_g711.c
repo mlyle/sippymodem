@@ -458,6 +458,71 @@ struct test_case {
 	bool (*run)(void);
 };
 
+static bool test_lsb_intervals(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		for (enum g711_lsb_mode mode = G711_LSB_UNCHANGED; mode <= G711_LSB_ONE; ++mode) {
+			int low[256], high[256];
+			unsigned count[256] = { 0 };
+			int level_low[256], level_high[256];
+			unsigned level_count[256] = { 0 };
+
+			for (unsigned code = 0; code < 256; ++code) {
+				low[code] = 32768;
+				high[code] = -32769;
+				level_low[code] = 32768;
+				level_high[code] = -32769;
+			}
+			for (int x = INT16_MIN; x <= INT16_MAX; ++x) {
+				uint8_t original = g711_encode(law, (int16_t)x);
+				uint8_t wire = mode == G711_LSB_UNCHANGED ? original :
+					(uint8_t)((original & 254u) | (mode == G711_LSB_ONE));
+				CHECK(g711_apply_lsb(original, mode) == wire, "wrong wire operation");
+				uint8_t level_code = g711_encode(law, g711_decode(law, wire));
+				struct g711_interval bin;
+
+				CHECK(g711_level_interval_lsb(law, g711_decode(law, wire), mode, &bin) &&
+				      x >= bin.lower && x <= bin.upper, "lost level preimage %u/%u/%d", law, mode, x);
+				if (x < low[wire]) low[wire] = x;
+				if (x > high[wire]) high[wire] = x;
+				count[wire]++;
+				if (x < level_low[level_code]) level_low[level_code] = x;
+				if (x > level_high[level_code]) level_high[level_code] = x;
+				level_count[level_code]++;
+			}
+			for (unsigned code = 0; code < 256; ++code) {
+				struct g711_interval bin = { 123, 456 };
+				bool accepted = g711_octet_interval_lsb(law, (uint8_t)code, mode, &bin);
+
+				CHECK(accepted == (count[code] != 0), "wrong code reachability %u/%u/%u", law, mode, code);
+				CHECK(accepted ? bin.lower == low[code] && bin.upper == high[code] &&
+				      count[code] == (unsigned)(bin.upper - bin.lower + 1) :
+				      bin.lower == 123 && bin.upper == 456,
+				      "wrong or mutated octet preimage %u/%u/%u", law, mode, code);
+				int16_t level = g711_decode(law, (uint8_t)code);
+				unsigned canonical = g711_encode(law, level);
+				bin = (struct g711_interval){ 123, 456 };
+				accepted = g711_level_interval_lsb(law, level, mode, &bin);
+				CHECK(accepted == (level_count[canonical] != 0), "wrong level reachability %u/%u/%u", law, mode, code);
+				CHECK(accepted ? bin.lower == level_low[canonical] && bin.upper == level_high[canonical] &&
+				      level_count[canonical] == (unsigned)(bin.upper - bin.lower + 1) :
+				      bin.lower == 123 && bin.upper == 456,
+				      "wrong or mutated reconstructed-level preimage %u/%u/%u", law, mode, code);
+			}
+		}
+	}
+	struct g711_interval bin = { 123, 456 };
+	CHECK(!g711_octet_interval_lsb(G711_LAW_PCMU, 0, (enum g711_lsb_mode)-1, &bin) &&
+	      !g711_level_interval_lsb(G711_LAW_PCMU, 0, (enum g711_lsb_mode)3, &bin) &&
+	      !g711_level_interval_lsb(G711_LAW_PCMA, 9, G711_LSB_ONE, &bin) &&
+	      !g711_octet_interval_lsb((enum g711_law)2, 0, G711_LSB_ZERO, &bin) &&
+	      !g711_level_interval_lsb(G711_LAW_PCMU, 8, G711_LSB_ONE, &bin) &&
+	      !g711_octet_interval_lsb(G711_LAW_PCMA, 0, G711_LSB_ZERO, NULL) &&
+	      !g711_level_interval_lsb(G711_LAW_PCMA, 8, G711_LSB_ONE, NULL) &&
+	      bin.lower == 123 && bin.upper == 456, "invalid LSB interval mutated output");
+	return true;
+}
+
 int main(void)
 {
 	static const struct test_case tests[] = {
@@ -476,6 +541,7 @@ int main(void)
 		{ "V.90 Ucode space", test_ucode_space },
 		{ "V.90 Ucode boundaries", test_ucode_boundaries },
 		{ "V.90 Ucode rejection", test_ucode_rejection_is_transactional },
+		{ "known wire LSB preimages", test_lsb_intervals },
 	};
 	unsigned int failures = 0;
 

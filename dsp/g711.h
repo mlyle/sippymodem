@@ -13,6 +13,26 @@ enum g711_law {
 	G711_LAW_PCMA,
 };
 
+/* A known network operation on the least significant codeword bit. Zero
+ * initialization keeps the original codec; this does not infer an impairment. */
+enum g711_lsb_mode {
+	G711_LSB_UNCHANGED,
+	G711_LSB_ZERO,
+	G711_LSB_ONE,
+};
+
+static inline bool g711_lsb_mode_is_valid(enum g711_lsb_mode mode)
+{
+	return mode == G711_LSB_UNCHANGED || mode == G711_LSB_ZERO || mode == G711_LSB_ONE;
+}
+
+/* mode is already validated by the owner, as with encode/decode's law. */
+static inline uint8_t g711_apply_lsb(uint8_t octet, enum g711_lsb_mode mode)
+{
+	return mode == G711_LSB_UNCHANGED ? octet :
+		(uint8_t)((octet & 0xfeu) | (mode == G711_LSB_ONE));
+}
+
 static inline bool g711_law_is_valid(enum g711_law law)
 {
 	return law == G711_LAW_PCMU || law == G711_LAW_PCMA;
@@ -62,6 +82,15 @@ bool g711_octet_interval(
  * two PCMU zero codewords share one interval. Invalid calls leave it alone. */
 bool g711_quantization_interval(
 	enum g711_law law, int16_t sample, struct g711_interval *interval);
+
+/* Exact preimage after a known wire-bit operation. A forced bit merges two
+ * adjacent original cells. Reject an observed octet inconsistent with mode;
+ * preserve the output on rejection. The level form requires an exact codec
+ * reconstruction and retains the union of PCMU's signed zero characters. */
+bool g711_octet_interval_lsb(enum g711_law law, uint8_t octet,
+	enum g711_lsb_mode mode, struct g711_interval *interval);
+bool g711_level_interval_lsb(enum g711_law law, int16_t level,
+	enum g711_lsb_mode mode, struct g711_interval *interval);
 
 struct g711_probability_interval {
 	double lower, upper;
