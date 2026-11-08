@@ -15,6 +15,9 @@
 #include <stddef.h>
 #include <string.h>
 
+_Static_assert(V92_PCM_MAPPING_FRAME_SYMBOLS % V92_OBSERVATION_PHASES == 0,
+	"each frame starts at the same final-codec phase");
+
 enum {
 	V92_PCM_TRELLIS_INTERVAL_SYMBOLS = 4,
 	V92_PCM_GAIN_SHIFT = 18,
@@ -1708,9 +1711,9 @@ static enum v92_pcm_frame_result decode_frame(
 		    !g711_quantization_interval(receiver->mapping.law, samples[symbol], &cell))
 			return V92_PCM_FRAME_INVALID_PARAMETERS;
 
-		if (model && present && !v92_observation_symbol_level(&cache,
+		if (model && present && !v92_observation_symbol_phase(&cache,
 			samples[symbol], levels ? levels + symbol : NULL,
-			offsets ? offsets[symbol] : 0.))
+			offsets ? offsets[symbol] : 0., symbol % V92_OBSERVATION_PHASES))
 			return V92_PCM_FRAME_INVALID_PARAMETERS;
 
 		if (receiver->observation == V92_PCM_FRAME_CONSTELLATION && !model && !lookahead) {
@@ -2214,7 +2217,8 @@ static enum v92_pcm_frame_result decode_frame(
 			int32_t input[V92_OBSERVATION_TAPS];
 			for (unsigned i = 0; i < model->taps; i++)
 				input[i] = symbol >= i ? result.frame.x[symbol - i] : previous[i - symbol - 1];
-			estimated[symbol] = v92_observation_predict(model, input, offsets ? offsets[symbol] : 0.);
+			estimated[symbol] = v92_observation_predict_phase(model, input, offsets ? offsets[symbol] : 0.,
+				symbol % V92_OBSERVATION_PHASES);
 			if (!isfinite(estimated[symbol]))
 				return V92_PCM_FRAME_NO_PATH;
 		}

@@ -4431,7 +4431,7 @@ $(V92_UPSTREAM_DATA_TX_TEST_BINARY): $(V92_UPSTREAM_DATA_TX_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V92_PCM_FRAME_RX_TEST_BINARY): $(V92_PCM_FRAME_RX_TEST_OBJECTS)
-	$(CC) $(LDFLAGS) -Wl,--wrap=v92_observation_predict -o $@ $^ -lm
+	$(CC) $(LDFLAGS) -Wl,--wrap=v92_observation_predict_phase -o $@ $^ -lm
 
 $(V92_UPSTREAM_DATA_RX_TEST_BINARY): $(V92_UPSTREAM_DATA_RX_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -Wl,--wrap=v92_upstream_data_rx_octet_owned -o $@ $^ -lm

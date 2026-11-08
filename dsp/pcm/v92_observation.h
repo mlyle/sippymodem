@@ -16,6 +16,7 @@ enum {
 	V92_OBSERVATION_POINTS = 1024,
 	V92_OBSERVATION_SPANS = 1024,
 	V92_OBSERVATION_TAPS = 4,
+	V92_OBSERVATION_PHASES = 6,
 };
 
 /* A log-uniform first-codec gain interval and its fitted channel taps.
@@ -46,6 +47,10 @@ struct v92_observation {
 	size_t count;
 	unsigned taps;
 	enum g711_law law;
+	/* Final-codec wire operation, repeated every six input symbols. It does
+	 * not change the first-codec geometry shared by every phase. */
+	enum g711_lsb_mode lsb[V92_OBSERVATION_PHASES];
+	uint8_t lsb_mask;
 	/* Zero means identity; otherwise apply the known one-tap CPd prefilter
 	 * rounding before the unknown first-codec gain. Delay is line-owned. */
 	int16_t input_coefficient;
@@ -70,6 +75,10 @@ struct v92_observation_training {
 	unsigned taps;
 	double host_gain;
 	enum g711_law law;
+	/* Optional six-phase final-codec description, starting at input[0].
+	 * The owner must identify and freeze this independently of held-out
+	 * decisions. Requires levels. Borrowed during fit; NULL keeps the codec. */
+	const enum g711_lsb_mode *lsb;
 };
 
 /* Fit Q(g*input), the selected channel taps and noise, then a final codec.
@@ -104,6 +113,8 @@ bool v92_observation_fit_scalar(double *gain,
 	const struct v92_observation_training *training);
 double v92_observation_predict_scalar(enum g711_law law, double gain,
 	double host_gain, int16_t linear, double offset);
+double v92_observation_predict_scalar_lsb(enum g711_law law, double gain,
+	double host_gain, int16_t linear, double offset, enum g711_lsb_mode mode);
 
 struct v92_observation_point {
 	struct v92_observation_values values;
@@ -165,6 +176,10 @@ bool v92_observation_symbol(struct v92_observation_cache *cache, int16_t observe
  * the conditioned sample may stand in for missing wire evidence. */
 bool v92_observation_symbol_level(struct v92_observation_cache *cache,
 	int16_t observed, const int16_t *level, double offset);
+/* Explicit physical phase for a periodic final codec. Phase-less entry
+ * points reject models with a wire-bit operation instead of guessing phase. */
+bool v92_observation_symbol_phase(struct v92_observation_cache *cache,
+	int16_t observed, const int16_t *level, double offset, unsigned phase);
 struct v92_observation_point v92_observation_point(
 	struct v92_observation_cache *cache, int32_t x);
 /* Frame-local scratch for one fixed candidate-path history. Reset when the
@@ -208,5 +223,7 @@ struct v92_observation_range v92_observation_range(
  * Non-finite output means no prediction, never a zero residual. */
 double v92_observation_predict(const struct v92_observation *model,
 	const int32_t *input, double offset);
+double v92_observation_predict_phase(const struct v92_observation *model,
+	const int32_t *input, double offset, unsigned phase);
 
 #endif /* V92_OBSERVATION_H */

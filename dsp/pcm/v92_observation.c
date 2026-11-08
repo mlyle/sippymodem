@@ -27,7 +27,7 @@ _Static_assert((V92_OBSERVATION_CACHE & (V92_OBSERVATION_CACHE - 1)) == 0 &&
 _Static_assert(V92_OBSERVATION_SPANS == 1024, "coordinate hash uses its upper ten bits");
 
 static bool codec_bounds(enum g711_law law, double gain, int16_t observed,
-	const int16_t *level, double offset, double *lower, double *upper);
+	const int16_t *level, double offset, enum g711_lsb_mode mode, double *lower, double *upper);
 static bool begin_scalar(struct v92_scalar_fit *fit, const struct v92_observation_training *training);
 static enum v92_observation_fit_result step_scalar(struct v92_scalar_fit *fit,
 	const struct v92_observation_training *training, const double *low, const double *high, double *gain);
@@ -376,13 +376,14 @@ static int16_t scaled(enum g711_law law, double gain, int32_t x)
 /* Bounds relative to the host sample. Use the same arithmetic for training
  * and scoring, including subnormal gain and one-sided codec clipping. */
 static bool codec_bounds(enum g711_law law, double gain, int16_t observed,
-	const int16_t *level, double offset, double *lower, double *upper)
+	const int16_t *level, double offset, enum g711_lsb_mode mode, double *lower, double *upper)
 {
 	if (!isfinite(offset) || (offset != 0. && !level)) return false;
 	int16_t reconstructed = level ? *level : scaled(law, 1. / gain, observed);
 	struct g711_interval interval;
 	if (g711_quantize(law, reconstructed) != reconstructed ||
-		!g711_quantization_interval(law, reconstructed, &interval)) return false;
+		!(mode == G711_LSB_UNCHANGED ? g711_quantization_interval(law, reconstructed, &interval) :
+		  g711_level_interval_lsb(law, reconstructed, mode, &interval))) return false;
 	struct g711_probability_interval bounds = g711_probability_bounds(interval);
 	*lower = bounds.lower * gain + offset - observed;
 	*upper = bounds.upper * gain + offset - observed;
@@ -402,7 +403,9 @@ static bool training_cells(const struct v92_observation_training *training,
 		double lower, upper;
 		if (!codec_bounds(training->law, training->host_gain, training->sample[i],
 			training->levels ? training->levels + i : NULL,
-			training->offsets ? training->offsets[i] : 0., &lower, &upper)) return false;
+			training->offsets ? training->offsets[i] : 0.,
+			training->lsb ? training->lsb[i % V92_OBSERVATION_PHASES] : G711_LSB_UNCHANGED,
+			&lower, &upper)) return false;
 		if (linear && i >= training->taps) {
 			double error = (double)training->sample[i] - training->linear[i];
 			*linear &= error + lower < 0. && error + upper > 0.;
@@ -710,6 +713,12 @@ bool v92_observation_is_valid(const struct v92_observation *model)
 		model->input_coefficient < 0 ||
 		!isfinite(model->energy) || model->energy <= 0. || model->first[0] != INT32_MIN)
 		return false;
+	unsigned lsb_mask = 0;
+	for (unsigned phase = 0; phase < V92_OBSERVATION_PHASES; ++phase) {
+		if (!g711_lsb_mode_is_valid(model->lsb[phase])) return false;
+		if (model->lsb[phase] != G711_LSB_UNCHANGED) lsb_mask |= 1u << phase;
+	}
+	if (lsb_mask != model->lsb_mask) return false;
 	double total = 0.;
 	for (size_t i = 0; i < INTERVALS; i++) {
 		const struct v92_observation_interval *fit = model->intervals + i;
@@ -756,6 +765,12 @@ static bool training_is_valid(const void *output, size_t size,
 		(levels && memory_regions_overlap(output, size, levels, count * sizeof(*levels))) ||
 		(offsets && (!levels || memory_regions_overlap(output, size, offsets,
 			count * sizeof(*offsets))))) return false;
+	if (training->lsb) {
+		if (!levels || memory_regions_overlap(output, size, training->lsb,
+		    V92_OBSERVATION_PHASES * sizeof(*training->lsb))) return false;
+		for (unsigned phase = 0; phase < V92_OBSERVATION_PHASES; ++phase)
+			if (!g711_lsb_mode_is_valid(training->lsb[phase])) return false;
+	}
 	if (offsets)
 		for (size_t i = 0; i < count; i++)
 			if (!isfinite(offsets[i])) return false;
@@ -775,6 +790,7 @@ static bool prefer_linear(const struct v92_observation *model,
 		double lower, upper;
 		if (!codec_bounds(training->law, training->host_gain, training->sample[i],
 			training->levels + i, training->offsets ? training->offsets[i] : 0.,
+			training->lsb ? training->lsb[i % V92_OBSERVATION_PHASES] : G711_LSB_UNCHANGED,
 			&lower, &upper)) return false;
 		double error = (double)training->sample[i] - training->linear[i];
 		double probability = gaussian_log_probability((error + lower) / divisor,
@@ -789,8 +805,8 @@ static bool prefer_linear(const struct v92_observation *model,
 	v92_observation_begin(&cache, model, 0.);
 	uint64_t fitted = 0;
 	for (size_t i = model->taps; i < training->count; ++i) {
-		if (!v92_observation_symbol_level(&cache, training->sample[i],
-			training->levels + i, training->offsets ? training->offsets[i] : 0.))
+		if (!v92_observation_symbol_phase(&cache, training->sample[i],
+			training->levels + i, training->offsets ? training->offsets[i] : 0., i % V92_OBSERVATION_PHASES))
 			return false;
 		struct v92_observation_point previous[V92_OBSERVATION_TAPS - 1];
 		for (unsigned tap = 1; tap < model->taps; ++tap)
@@ -843,7 +859,8 @@ static bool scalar_explains_cells(const struct v92_observation_training *trainin
 		double offset = training->offsets ? training->offsets[i] : 0.;
 		double physical = (gain * training->linear[i] - offset) / training->host_gain;
 		if (!isfinite(physical) ||
-		    g711_quantize(training->law, sample_round_s16(physical)) != training->levels[i])
+		    g711_decode(training->law, g711_apply_lsb(g711_encode(training->law, sample_round_s16(physical)),
+			training->lsb ? training->lsb[i % V92_OBSERVATION_PHASES] : G711_LSB_UNCHANGED)) != training->levels[i])
 			return false;
 	}
 	return true;
@@ -860,6 +877,12 @@ static bool initialize_fit(struct v92_observation_fit_work *w,
 	double energy = w->model.energy, linear_error = w->linear_error;
 	w->model = (struct v92_observation){ .law = law, .taps = taps, .energy = energy / (count - taps),
 		.variance = fmax(1., w->fits[0].error), .quantizer_gain = training->host_gain };
+	if (training->lsb)
+		for (unsigned phase = 0; phase < V92_OBSERVATION_PHASES; ++phase) {
+			w->model.lsb[phase] = training->lsb[phase];
+			if (training->lsb[phase] != G711_LSB_UNCHANGED) w->model.lsb_mask |= 1u << phase;
+		}
+
 	double total = 0;
 	for (size_t i = 0; i < INTERVALS; i++) {
 		w->fits[i].weight = exp(-.5 * (count - taps) * (w->fits[i].error - w->fits[0].error) / w->model.variance) *
@@ -993,17 +1016,23 @@ bool v92_observation_fit(struct v92_observation *model,
 	return result == V92_OBSERVATION_FIT_READY;
 }
 
-double v92_observation_predict_scalar(enum g711_law law, double gain,
-	double host_gain, int16_t linear, double offset)
+double v92_observation_predict_scalar_lsb(enum g711_law law, double gain,
+	double host_gain, int16_t linear, double offset, enum g711_lsb_mode mode)
 {
 	if ((law != G711_LAW_PCMU && law != G711_LAW_PCMA) ||
 	    !isfinite(gain) || gain <= 0. || !isfinite(host_gain) || host_gain <= 0. ||
-	    !isfinite(offset)) return NAN;
+	    !isfinite(offset) || !g711_lsb_mode_is_valid(mode)) return NAN;
 	double physical = (gain * linear - offset) / host_gain;
 	if (!isfinite(physical)) return NAN;
 	int16_t sample = sample_round_s16(physical);
-	double prediction = host_gain * g711_quantize(law, sample) + offset;
+	double prediction = host_gain * g711_decode(law, g711_apply_lsb(g711_encode(law, sample), mode)) + offset;
 	return isfinite(prediction) ? prediction : NAN;
+}
+
+double v92_observation_predict_scalar(enum g711_law law, double gain,
+	double host_gain, int16_t linear, double offset)
+{
+	return v92_observation_predict_scalar_lsb(law, gain, host_gain, linear, offset, G711_LSB_UNCHANGED);
 }
 
 bool v92_observation_fit_scalar(double *gain,
@@ -1051,8 +1080,9 @@ static enum v92_observation_fit_result step_scalar(struct v92_scalar_fit *fit,
 
 	double error_energy = 0.;
 	for (size_t i = 0; i < training->count; i++) {
-		double predicted = v92_observation_predict_scalar(training->law, fitted,
-			training->host_gain, training->linear[i], training->offsets ? training->offsets[i] : 0.);
+		double predicted = v92_observation_predict_scalar_lsb(training->law, fitted,
+			training->host_gain, training->linear[i], training->offsets ? training->offsets[i] : 0.,
+			training->lsb ? training->lsb[i % V92_OBSERVATION_PHASES] : G711_LSB_UNCHANGED);
 		double error = training->sample[i] - predicted;
 		error_energy += error * error;
 	}
@@ -1218,17 +1248,18 @@ void v92_observation_begin_cached(struct v92_observation_cache *cache,
 			HUGE_VAL : 1e-12 * (1. + 65536. * extent[i]);
 }
 
-bool v92_observation_symbol_level(struct v92_observation_cache *cache,
-	int16_t observed, const int16_t *level, double offset)
+bool v92_observation_symbol_phase(struct v92_observation_cache *cache,
+	int16_t observed, const int16_t *level, double offset, unsigned phase)
 {
 	const struct v92_observation *model = cache->model;
-	if (!isfinite(cache->relative_noise) || cache->relative_noise < 0.) return false;
+	if (phase >= V92_OBSERVATION_PHASES || !isfinite(cache->relative_noise) || cache->relative_noise < 0.) return false;
 	double variance = model->variance * (1. + cache->relative_noise * (double)observed * observed) /
 		(1. + cache->relative_noise * model->energy);
 	double scale = V92_SCORE_SCALE / variance;
 	if (!isfinite(variance) || variance <= 0. || !isfinite(scale) || scale <= 0.) return false;
 	double lower, upper;
-	if (!codec_bounds(model->law, model->quantizer_gain, observed, level, offset, &lower, &upper)) return false;
+	if (!codec_bounds(model->law, model->quantizer_gain, observed, level, offset,
+		model->lsb[phase], &lower, &upper)) return false;
 	if (++cache->generation == 0) {
 		memset(cache->stamp, 0, sizeof(cache->stamp));
 		cache->generation = 1;
@@ -1240,6 +1271,12 @@ bool v92_observation_symbol_level(struct v92_observation_cache *cache,
 	cache->bound_scale = scale;
 	cache->divisor = sqrt(2. * variance);
 	return true;
+}
+
+bool v92_observation_symbol_level(struct v92_observation_cache *cache,
+	int16_t observed, const int16_t *level, double offset)
+{
+	return !cache->model->lsb_mask && v92_observation_symbol_phase(cache, observed, level, offset, 0);
 }
 
 bool v92_observation_symbol(struct v92_observation_cache *cache, int16_t observed)
@@ -1526,27 +1563,40 @@ struct v92_observation_range v92_observation_range(struct v92_observation_cache 
  * Work in host coordinates so a tiny codec gain cannot overflow variance.
  * erfc(28) is unrepresentable, as in gaussian_probability; this is a
  * numeric tail boundary, not a channel-noise cutoff. */
-static double codec_mean(enum g711_law law, double mean, double variance, double gain)
+static double codec_mean(enum g711_law law, double mean, double variance, double gain,
+	enum g711_lsb_mode mode)
 {
 	if (!isfinite(mean) || !isfinite(variance) || variance <= 0. ||
 	    !isfinite(gain) || gain <= 0.) return NAN;
 	double divisor = sqrt(variance) * sqrt(2.);
-	int16_t center = g711_quantize(law, sample_round_s16(mean / gain));
-	double prediction = center;
+	uint8_t center_code = g711_encode(law, sample_round_s16(mean / gain));
+	int16_t center = g711_decode(law, center_code);
+	double prediction = mode == G711_LSB_UNCHANGED ? center :
+		g711_decode(law, g711_apply_lsb(center_code, mode));
 	bool nearest = fegetround() == FE_TONEAREST;
 	for (int direction = -1; direction <= 1; direction += 2) {
 		int16_t level = center;
+		uint8_t code = center_code;
 		for (unsigned step = 0; step < 256; step++) {
 			struct g711_interval bin;
-			if (!g711_quantization_interval(law, level, &bin)) return NAN;
+			/* The unchanged codec merges its two zero reconstructions.
+			 * Forcing zero maps their wire signs to opposite +/-8 levels,
+			 * so walk exact code cells when a wire operation is present. */
+			if (!(mode == G711_LSB_UNCHANGED ?
+			    g711_quantization_interval(law, level, &bin) :
+			    g711_octet_interval(law, code, &bin))) return NAN;
 			int edge = direction < 0 ? bin.lower : bin.upper;
 			if (edge == (direction < 0 ? INT16_MIN : INT16_MAX)) break;
 			double boundary = (edge + direction * .5) * gain;
 			double distance = direction * (boundary - mean) / divisor;
 			if (distance >= 28.) break;
-			int16_t next = g711_quantize(law, (int16_t)(edge + direction));
+			uint8_t next_code = g711_encode(law, (int16_t)(edge + direction));
+			int16_t next = g711_decode(law, next_code);
 			double tail = erfc(distance);
-			prediction += (next - level) * .5 * tail;
+			int jump = mode == G711_LSB_UNCHANGED ? next - level :
+				g711_decode(law, g711_apply_lsb(next_code, mode)) -
+				g711_decode(law, g711_apply_lsb(code, mode));
+			prediction += jump * .5 * tail;
 			/* Later tails decrease and have this same sign. Any int16
 			 * level jump has half-magnitude below 32768. If even that
 			 * bound rounds away, every remaining addition would too.
@@ -1554,15 +1604,16 @@ static double codec_mean(enum g711_law law, double mean, double variance, double
 			if (nearest && prediction + direction * 32768. * tail == prediction)
 				break;
 			level = next;
+			code = next_code;
 		}
 	}
 	return gain * prediction;
 }
 
-double v92_observation_predict(const struct v92_observation *model,
-	const int32_t *input, double offset)
+double v92_observation_predict_phase(const struct v92_observation *model,
+	const int32_t *input, double offset, unsigned phase)
 {
-	if (!(model->quantizer_gain > 0.) || !isfinite(offset)) return NAN;
+	if (!(model->quantizer_gain > 0.) || !isfinite(offset) || phase >= V92_OBSERVATION_PHASES) return NAN;
 	int32_t x[TAPS];
 	for (unsigned j = 0; j < model->taps; j++)
 		x[j] = model->input_coefficient ? round_shift_s64_to_s32_saturating(
@@ -1578,9 +1629,15 @@ double v92_observation_predict(const struct v92_observation *model,
 			double linear = 0.;
 			for (unsigned j = 0; j < model->taps; j++) linear += p->coefficient[j] * sweep.value[j];
 			prediction += weight * codec_mean(model->law, linear - offset,
-				model->variance, model->quantizer_gain);
+				model->variance, model->quantizer_gain, model->lsb[phase]);
 		}
 		if (sweep.failed) return NAN;
 	}
 	return prediction + offset;
+}
+
+double v92_observation_predict(const struct v92_observation *model,
+	const int32_t *input, double offset)
+{
+	return model->lsb_mask ? NAN : v92_observation_predict_phase(model, input, offset, 0);
 }

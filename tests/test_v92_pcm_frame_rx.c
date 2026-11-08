@@ -1276,20 +1276,22 @@ static bool test_rejection_and_training_evidence(void)
 }
 
 static unsigned failed_prediction, prediction_count;
-double __real_v92_observation_predict(const struct v92_observation *, const int32_t *, double);
-double __wrap_v92_observation_predict(const struct v92_observation *model, const int32_t *x, double offset)
+double __real_v92_observation_predict_phase(const struct v92_observation *, const int32_t *, double, unsigned);
+double __wrap_v92_observation_predict_phase(const struct v92_observation *model, const int32_t *x, double offset, unsigned phase)
 {
 	if (++prediction_count == failed_prediction) return NAN;
-	return __real_v92_observation_predict(model, x, offset);
+	return __real_v92_observation_predict_phase(model, x, offset, phase);
 }
 
 static void channel_samples(enum g711_law law, unsigned taps, const struct v92_pcm_frame *frame,
-	int16_t memory[3], int16_t levels[12], int16_t samples[12])
+	int16_t memory[3], int16_t levels[12], int16_t samples[12], enum g711_lsb_mode mode)
 {
 	for (unsigned i = 0; i < 12; i++) {
 		int16_t q = quantize(law, (int16_t)round(.5 * frame->x[i]));
 		levels[i] = quantize(law, (int16_t)round(1.8 * q + .16 * memory[0] +
 			.04 * memory[1] + (taps == 4 ? .03 * memory[2] : 0.)));
+		if (i % V92_OBSERVATION_PHASES == 5)
+			levels[i] = g711_decode(law, g711_apply_lsb(g711_encode(law, levels[i]), mode));
 		samples[i] = (int16_t)round(.75 * levels[i]);
 		memory[2] = memory[1]; memory[1] = memory[0]; memory[0] = q;
 	}
@@ -1435,7 +1437,7 @@ static bool observed_merged_payload(const struct v92_pcm_frame_rx *before,
 	return true;
 }
 
-static bool test_observed_channel(enum g711_law law, unsigned taps, bool reorder)
+static bool test_observed_channel(enum g711_law law, unsigned taps, bool reorder, enum g711_lsb_mode mode)
 {
 	struct v92_cpd_parameters cpd;
 	struct v92_pcm_mapping mapping;
@@ -1457,14 +1459,18 @@ static bool test_observed_channel(enum g711_law law, unsigned taps, bool reorder
 			V92_PCM_FRAME_OK, "training encode failed");
 		memcpy(x + 12 * f, frame.x, sizeof(frame.x));
 		memcpy(u + 12 * f, frame.u, sizeof(frame.u));
-		channel_samples(law, taps, &frame, memory, wire + 12 * f, y + 12 * f);
+		channel_samples(law, taps, &frame, memory, wire + 12 * f, y + 12 * f, mode);
 	}
 	struct v92_observation model;
+	enum g711_lsb_mode lsb[V92_OBSERVATION_PHASES] = { 0 };
+	lsb[5] = mode;
 	const struct v92_observation_training training = {
 		.input = x, .linear = u, .sample = y, .levels = wire,
 		.count = ARRAY_LENGTH(x), .taps = taps, .host_gain = .75, .law = law,
+		.lsb = mode == G711_LSB_UNCHANGED ? NULL : lsb,
 	};
 	CHECK(v92_observation_fit(&model, &training), "fit failed");
+	CHECK(model.lsb[5] == mode && model.lsb_mask == (mode ? 32 : 0), "fit lost wire phases");
 	struct v92_observation frozen = model;
 	struct v92_observation_geometry geometry;
 	memset(&geometry, 0xa5, sizeof(geometry));
@@ -1480,7 +1486,7 @@ static bool test_observed_channel(enum g711_law law, unsigned taps, bool reorder
 		source_bits(bits, mapping.data_bits_per_frame, f);
 		CHECK(v92_pcm_frame_encode(&tx, bits, mapping.data_bits_per_frame, &frame) ==
 			V92_PCM_FRAME_OK, "payload encode failed");
-		channel_samples(law, taps, &frame, memory, levels, samples);
+		channel_samples(law, taps, &frame, memory, levels, samples, mode);
 		if (f == 60 && (!observed_rejection(&rx, &model, samples, levels) ||
 			!observed_merged_payload(&rx, &model, samples, levels))) return false;
 		struct v92_pcm_frame_channel channel = { .model = &model, .levels = levels, .received = received };
@@ -2025,8 +2031,9 @@ int main(void)
 		}
 
 		for (unsigned taps = 3; taps <= 4; taps++)
-			if (!test_observed_channel((enum g711_law)law, taps, false) ||
-			    !test_observed_channel((enum g711_law)law, taps, true)) return 1;
+			for (enum g711_lsb_mode mode = G711_LSB_UNCHANGED; mode <= G711_LSB_ONE; ++mode)
+				if (!test_observed_channel((enum g711_law)law, taps, false, mode) ||
+				    !test_observed_channel((enum g711_law)law, taps, true, mode)) return 1;
 
 		for (size_t level = 0u; level < ARRAY_LENGTH(direct_44k_levels); ++level)
 			if (!test_direct_44k_level((enum g711_law)law, direct_44k_levels[level]))
