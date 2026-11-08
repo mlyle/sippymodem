@@ -7704,6 +7704,8 @@ static bool v92_data_error_contracts(const struct pcm_call *online)
 }
 
 struct v92_upstream_offer {
+	/* Zero retains the usual training level. */
+	uint8_t training_ucode;
 	uint32_t peer_mask;
 	uint8_t local_maximum;
 	/* Zero expects exhaustion after bounded recovery and a fresh peer offer. */
@@ -8328,6 +8330,8 @@ static bool capture_v92_duplex_data(
 		 * deliberate tandem quantization stays inside the B1 quality bound. */
 		if (channel_memory)
 			ac.phase3.v92_analog.upstream_lu_ucode = 60u;
+		if (offer->training_ucode)
+			ac.phase3.v92_analog.upstream_lu_ucode = offer->training_ucode;
 	}
 	if (jp != NULL)
 		dc.phase3.v92_digital.jp = *jp;
@@ -8733,6 +8737,22 @@ static bool test_v92_trn2u_recovery(void)
 				      pair.digital.v92_upstream_retry_ceiling == 0u,
 				      "successful training reset its budget or downshifted an unmeasured rate");
 		}
+	return true;
+}
+
+static bool test_v92_weak_postcursor_data(void)
+{
+	/* The four training levels can hide this tandem-quantized echo below
+	 * the scalar residual bound. Dense payload levels still need CPd
+	 * compensation; require exact data through the negotiated wire path. */
+	const struct v92_upstream_offer offer = {
+		.peer_mask = UINT32_C(1) << 9, .local_maximum = 10u, .expected = 10u,
+		.training_ucode = 80u, .postcursor = .008,
+		.payload_frames = 4000u, .downstream_rate = 52000u,
+	};
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		CHECK(run_v92_duplex_data(law, 3u, false, &offer),
+		      "law %u lost weak-postcursor PCM data", law);
 	return true;
 }
 
@@ -13797,6 +13817,7 @@ int main(int argc, char **argv)
 		  test_v92_phase4_control },
 		{ "V.92 continuous duplex PCM data", test_v92_duplex_data },
 		{ "V.92 damaged TRN2u recovers within budget", test_v92_trn2u_recovery },
+		{ "V.92 weak-postcursor PCM data", test_v92_weak_postcursor_data },
 		{ "V.92 two-postcursor PCM data", test_v92_two_postcursor_data },
 		{ "V.92 PCM cell search", test_v92_cell_search },
 		{ "V.92 codec-noise likelihood and recovery", test_v92_codec_noise_recovery },
