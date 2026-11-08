@@ -114,7 +114,7 @@ static bool make_handoff(
 		.echo_gain_q15 = echo_gain_q15,
 		.polarity = polarity,
 	};
-	if (qam_equalizer_init_geometry(
+	if (qam_equalizer_init(
 		    &equalizer, &reference, &reference,
 		    V92_PCM_PHASE3_TRN1U_LINE_EQUALIZER_TAPS,
 		    V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY) !=
@@ -566,7 +566,7 @@ static bool test_affine_contracts(void)
 	bool ready;
 	double bias = 13;
 
-	CHECK(qam_equalizer_init_geometry(&equalizer, &reference, &reference, 1, 0) ==
+	CHECK(qam_equalizer_init(&equalizer, &reference, &reference, 1, 0) ==
 		      QAM_EQUALIZER_OK &&
 	      v92_phase4_demodulator_init(&demodulator, V92_CONSTELLATION_4_POINT, 0, TEST_LU) ==
 		      V92_PHASE4_MODULATOR_OK &&

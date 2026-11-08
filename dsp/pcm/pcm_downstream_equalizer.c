@@ -20,7 +20,7 @@ bool pcm_downstream_equalizer_init(struct pcm_downstream_equalizer *equalizer,
 	const struct qam_point unity = { 1.0, 0.0 };
 
 	if (equalizer == NULL || !g711_law_is_valid(law) || training_level <= 0 ||
-	    qam_equalizer_init_geometry(&next.filter, &unity, &unity, 3, 0) != QAM_EQUALIZER_OK)
+	    qam_equalizer_init(&next.filter, &unity, &unity, 3, 0) != QAM_EQUALIZER_OK)
 		return false;
 	/* A causal span preserves symbol boundaries as the binary-trained
 	 * filter moves through control and data reception. */

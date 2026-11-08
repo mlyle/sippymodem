@@ -116,27 +116,6 @@ bool qam_equalizer_is_handoff_ready(
 enum qam_equalizer_result qam_equalizer_init(
 	struct qam_equalizer *equalizer,
 	const struct qam_point *received_reference,
-	const struct qam_point *transmitted_reference)
-{
-	return qam_equalizer_init_span(
-		equalizer, received_reference, transmitted_reference,
-		QAM_EQUALIZER_DEFAULT_TAP_COUNT);
-}
-
-enum qam_equalizer_result qam_equalizer_init_span(
-	struct qam_equalizer *equalizer,
-	const struct qam_point *received_reference,
-	const struct qam_point *transmitted_reference,
-	unsigned int tap_count)
-{
-	return qam_equalizer_init_geometry(
-		equalizer, received_reference, transmitted_reference, tap_count,
-		QAM_EQUALIZER_DELAY);
-}
-
-enum qam_equalizer_result qam_equalizer_init_geometry(
-	struct qam_equalizer *equalizer,
-	const struct qam_point *received_reference,
 	const struct qam_point *transmitted_reference,
 	unsigned int tap_count, unsigned int decision_delay)
 {

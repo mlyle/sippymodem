@@ -226,7 +226,7 @@ static bool build_predecessor(
 	struct qam_point output = { 0 };
 	bool ready = false;
 
-	CHECK(qam_equalizer_init_geometry(
+	CHECK(qam_equalizer_init(
 		      &equalizer, &reference, &reference,
 		      V92_PCM_PHASE3_TRN1U_LINE_EQUALIZER_TAPS,
 		      V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY) ==

@@ -119,7 +119,7 @@ static bool initialize_equalizer(
 		.in_phase = level,
 	};
 
-	return qam_equalizer_init_geometry(
+	return qam_equalizer_init(
 		       equalizer, &reference, &reference,
 		       V92_PCM_PHASE3_TRN1U_LINE_EQUALIZER_TAPS,
 		       V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY) ==

@@ -11,6 +11,8 @@
 #include <string.h>
 
 enum {
+	TEST_TAP_COUNT = 7,
+	TEST_DELAY = 3,
 	TEST_MAGNITUDE = 4096,
 };
 
@@ -21,7 +23,8 @@ static bool trained_equalizer(struct qam_equalizer *equalizer)
 	};
 
 	if (qam_equalizer_init(
-		    equalizer, &reference, &reference) != QAM_EQUALIZER_OK)
+		    equalizer, &reference, &reference,
+		    TEST_TAP_COUNT, TEST_DELAY) != QAM_EQUALIZER_OK)
 		return false;
 	for (size_t index = 0; index <= equalizer->decision_delay; ++index) {
 		struct qam_point output;
@@ -181,7 +184,7 @@ static bool check_immediate_adaptation(
 	struct binary_equalizer receiver;
 	unsigned delay = tap_count - 1u;
 
-	CHECK(qam_equalizer_init_geometry(&trained, &reference, &reference,
+	CHECK(qam_equalizer_init(&trained, &reference, &reference,
 	      tap_count, delay) == QAM_EQUALIZER_OK, "immediate test geometry failed");
 	for (unsigned i = 0; i <= delay; ++i) {
 		struct qam_point output;

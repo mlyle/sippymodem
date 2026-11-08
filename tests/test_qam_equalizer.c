@@ -10,6 +10,8 @@
 #include <string.h>
 
 enum {
+	TEST_TAP_COUNT = 7,
+	TEST_DELAY = 3,
 	TRAINING_SYMBOLS = 1024,
 	PAYLOAD_SYMBOLS = 576,
 	CHANNEL_TAPS = 4,
@@ -111,13 +113,14 @@ static bool test_delay_and_flat_channel(void)
 	bool ready = true;
 
 	CHECK(qam_equalizer_init(
-		      &equalizer, &received_reference, &reference) ==
+		      &equalizer, &received_reference, &reference,
+		      TEST_TAP_COUNT, TEST_DELAY) ==
 		      QAM_EQUALIZER_OK &&
 	      qam_equalizer_is_valid(&equalizer) &&
 	      !qam_equalizer_is_handoff_ready(&equalizer),
 	      "flat equalizer fixture did not initialize");
 	for (unsigned int index = 0;
-	     index < QAM_EQUALIZER_DELAY; ++index) {
+	     index < TEST_DELAY; ++index) {
 		struct qam_point input = {
 			.in_phase = (double)index + 1.0,
 			.quadrature = 1.0 - (double)index,
@@ -164,7 +167,7 @@ static bool test_instance_selected_delay(void)
 	struct qam_point output = { 0 };
 	bool ready = true;
 
-	CHECK(qam_equalizer_init_geometry(
+	CHECK(qam_equalizer_init(
 		      &centered, &reference, &reference,
 		      QAM_EQUALIZER_MAX_TAP_COUNT, centered_delay) ==
 		      QAM_EQUALIZER_OK &&
@@ -192,10 +195,10 @@ static bool test_instance_selected_delay(void)
 		CHECK(qam_equalizer_observe(
 			      &centered, &reference, &observation, &ready) ==
 			      QAM_EQUALIZER_OK && ready &&
-		      qam_equalizer_init_geometry(
+		      qam_equalizer_init(
 			      &default_delay, &reference, &reference,
 			      QAM_EQUALIZER_MAX_TAP_COUNT,
-			      QAM_EQUALIZER_DELAY) == QAM_EQUALIZER_OK,
+			      TEST_DELAY) == QAM_EQUALIZER_OK,
 		      "decision-delay observation fixture did not initialize");
 		saved_default = default_delay;
 		saved_observation = observation;
@@ -231,10 +234,12 @@ static bool test_generated_isi_channel(void)
 	unsigned int trained_errors = 0;
 
 	CHECK(qam_equalizer_init(
-		      &baseline, &received_reference, &reference) ==
+		      &baseline, &received_reference, &reference,
+		      TEST_TAP_COUNT, TEST_DELAY) ==
 		      QAM_EQUALIZER_OK &&
 	      qam_equalizer_init(
-		      &trained, &received_reference, &reference) ==
+		      &trained, &received_reference, &reference,
+		      TEST_TAP_COUNT, TEST_DELAY) ==
 		      QAM_EQUALIZER_OK,
 	      "ISI equalizer fixture did not initialize");
 	for (unsigned int symbol = 0;
@@ -283,17 +288,17 @@ static bool test_generated_isi_channel(void)
 			CHECK(qam_equalizer_adapt(
 				      &trained,
 				      &transmitted[
-					      QAM_EQUALIZER_DELAY],
+					      TEST_DELAY],
 				      0.2) == QAM_EQUALIZER_OK,
 			      "ISI training failed at symbol %u", symbol);
 			continue;
 		}
 		baseline_errors += !same_decision(
 			&baseline_output,
-			&transmitted[QAM_EQUALIZER_DELAY]);
+			&transmitted[TEST_DELAY]);
 		trained_errors += !same_decision(
 			&trained_output,
-			&transmitted[QAM_EQUALIZER_DELAY]);
+			&transmitted[TEST_DELAY]);
 		{
 			struct qam_point decision = {
 				.in_phase = nearest_level(trained_output.in_phase),
@@ -330,9 +335,13 @@ static bool test_carrier_frequency_tracking(void)
 	unsigned int held_errors = 0;
 	double held_frequency;
 
-	CHECK(qam_equalizer_init(&baseline, &reference, &reference) ==
+	CHECK(qam_equalizer_init(
+		      &baseline, &reference, &reference,
+		      TEST_TAP_COUNT, TEST_DELAY) ==
 		      QAM_EQUALIZER_OK &&
-	      qam_equalizer_init(&tracked, &reference, &reference) ==
+	      qam_equalizer_init(
+		      &tracked, &reference, &reference,
+		      TEST_TAP_COUNT, TEST_DELAY) ==
 		      QAM_EQUALIZER_OK &&
 	      qam_equalizer_enable_carrier_tracking(
 		      &tracked, 1.0 / 4.0, 1.0 / 8192.0) ==
@@ -369,7 +378,7 @@ static bool test_carrier_frequency_tracking(void)
 		      "carrier tracker rejected symbol %u", symbol);
 		if (!tracked_ready)
 			continue;
-		target = transmitted[QAM_EQUALIZER_DELAY];
+		target = transmitted[TEST_DELAY];
 		if (symbol >= CARRIER_TRACKING_SETTLE_SYMBOLS) {
 			baseline_errors += !same_quadrant(
 				&baseline_observation.output, &target);
@@ -420,7 +429,7 @@ static bool test_carrier_frequency_tracking(void)
 			      &tracked, &received, &observation, &ready) ==
 			      QAM_EQUALIZER_OK && ready,
 		      "held carrier tracker rejected symbol %u", symbol);
-		target = transmitted[QAM_EQUALIZER_DELAY];
+		target = transmitted[TEST_DELAY];
 		if (offset >= CARRIER_HOLD_SETTLE_SYMBOLS)
 			held_errors += !same_quadrant(
 				&observation.output, &target);
@@ -461,7 +470,9 @@ static bool test_carrier_decision_policy(void)
 	bool bounded_ready = false;
 	bool slowed_ready = false;
 
-	CHECK(qam_equalizer_init(&unbounded, &reference, &reference) ==
+	CHECK(qam_equalizer_init(
+		      &unbounded, &reference, &reference,
+		      TEST_TAP_COUNT, TEST_DELAY) ==
 		      QAM_EQUALIZER_OK &&
 	      qam_equalizer_enable_carrier_tracking(
 		      &unbounded, 0.25, 1.0 / 8192.0) ==
@@ -479,7 +490,7 @@ static bool test_carrier_decision_policy(void)
 	      slowed.carrier_proportional_gain == (double)0.05,
 	      "carrier decision policy was rejected");
 	for (unsigned int index = 0;
-	     index <= QAM_EQUALIZER_DELAY; ++index) {
+	     index <= TEST_DELAY; ++index) {
 		CHECK(qam_equalizer_observe(
 			      &unbounded, &reference,
 			      &unbounded_observation, &unbounded_ready) ==
@@ -526,12 +537,13 @@ static bool test_instance_selected_span(void)
 	unsigned int long_errors = 0;
 
 	CHECK(qam_equalizer_init(
-		      &short_span, &reference, &reference) ==
+		      &short_span, &reference, &reference,
+		      TEST_TAP_COUNT, TEST_DELAY) ==
 		      QAM_EQUALIZER_OK &&
-	      qam_equalizer_init_span(
+	      qam_equalizer_init(
 		      &long_span, &reference, &reference,
-		      QAM_EQUALIZER_MAX_TAP_COUNT) == QAM_EQUALIZER_OK &&
-	      short_span.tap_count == QAM_EQUALIZER_DEFAULT_TAP_COUNT &&
+		      QAM_EQUALIZER_MAX_TAP_COUNT, TEST_DELAY) == QAM_EQUALIZER_OK &&
+	      short_span.tap_count == TEST_TAP_COUNT &&
 	      long_span.tap_count == QAM_EQUALIZER_MAX_TAP_COUNT,
 	      "equalizer spans did not initialize independently");
 	for (unsigned int symbol = 0;
@@ -568,19 +580,19 @@ static bool test_instance_selected_span(void)
 		if (symbol < LONG_TRAINING_SYMBOLS) {
 			CHECK(qam_equalizer_adapt(
 				      &short_span,
-				      &transmitted[QAM_EQUALIZER_DELAY],
+				      &transmitted[TEST_DELAY],
 				      0.3) == QAM_EQUALIZER_OK &&
 			      qam_equalizer_adapt(
 				      &long_span,
-				      &transmitted[QAM_EQUALIZER_DELAY],
+				      &transmitted[TEST_DELAY],
 				      0.3) == QAM_EQUALIZER_OK,
 			      "span training failed at symbol %u", symbol);
 			continue;
 		}
 		short_errors += !same_decision(
-			&short_output, &transmitted[QAM_EQUALIZER_DELAY]);
+			&short_output, &transmitted[TEST_DELAY]);
 		long_errors += !same_decision(
-			&long_output, &transmitted[QAM_EQUALIZER_DELAY]);
+			&long_output, &transmitted[TEST_DELAY]);
 	}
 	CHECK(short_errors > LONG_PAYLOAD_SYMBOLS / 8u && long_errors == 0,
 	      "long echo produced %u errors with the selected span versus %u "
@@ -599,7 +611,7 @@ static bool test_instance_selected_span(void)
 		saved_observation = observation;
 		CHECK(qam_equalizer_adapt_observation(
 			      &long_span, &observation,
-			      &transmitted[QAM_EQUALIZER_DELAY], 0.1) ==
+			      &transmitted[TEST_DELAY], 0.1) ==
 			      QAM_EQUALIZER_INVALID_STATE &&
 		      memcmp(&long_span, &saved_long, sizeof(long_span)) == 0 &&
 		      memcmp(&observation, &saved_observation,
@@ -620,7 +632,7 @@ static bool test_immediate_observations(void)
 	for (size_t span = 0; span < ARRAY_LENGTH(spans); ++span) {
 		for (unsigned int tracking = 0; tracking < 2u; ++tracking) {
 			struct qam_equalizer direct, retained;
-			CHECK(qam_equalizer_init_geometry(&direct, &received_reference,
+			CHECK(qam_equalizer_init(&direct, &received_reference,
 				&reference, spans[span], spans[span] / 2u) == QAM_EQUALIZER_OK,
 			      "immediate adaptation fixture failed");
 			if (tracking)
@@ -680,23 +692,24 @@ static bool test_delayed_observations(void)
 	bool ready = true;
 
 	CHECK(ARRAY_LENGTH(transmitted) ==
-		      QAM_EQUALIZER_DELAY + 2u &&
+		      TEST_DELAY + 2u &&
 	      qam_equalizer_init(
-		      &equalizer, &received_reference, &transmitted[0]) ==
+		      &equalizer, &received_reference, &transmitted[0],
+		      TEST_TAP_COUNT, TEST_DELAY) ==
 		      QAM_EQUALIZER_OK,
 	      "delayed observation fixture did not initialize");
 	for (size_t index = 0; index < ARRAY_LENGTH(transmitted); ++index) {
 		struct qam_point received =
 			multiply(gain, transmitted[index]);
 		struct qam_equalizer_observation *destination =
-			index <= QAM_EQUALIZER_DELAY ?
+			index <= TEST_DELAY ?
 				&observation[0] :
 				&observation[1];
 
 		CHECK(qam_equalizer_observe(
 			      &equalizer, &received, destination, &ready) ==
 			      QAM_EQUALIZER_OK &&
-		      ready == (index >= QAM_EQUALIZER_DELAY),
+		      ready == (index >= TEST_DELAY),
 		      "delayed observation push %zu changed readiness", index);
 	}
 	CHECK(qam_equalizer_observation_is_pending(
@@ -820,9 +833,10 @@ static bool test_span_extension(void)
 	bool extended_ready = false;
 
 	CHECK(qam_equalizer_init(
-		      &baseline, &reference, &reference) == QAM_EQUALIZER_OK,
+		      &baseline, &reference, &reference,
+		      TEST_TAP_COUNT, TEST_DELAY) == QAM_EQUALIZER_OK,
 	      "extension fixture did not initialize");
-	for (unsigned int index = 0; index <= QAM_EQUALIZER_DELAY; ++index) {
+	for (unsigned int index = 0; index <= TEST_DELAY; ++index) {
 		struct qam_point output = { 0 };
 		bool ready;
 
@@ -906,7 +920,7 @@ static bool test_product_boundaries(void)
 	struct qam_point saved_point;
 	bool ready = false;
 
-	CHECK(qam_equalizer_init_geometry(&equalizer, &unity, &gain, 1, 0) ==
+	CHECK(qam_equalizer_init(&equalizer, &unity, &gain, 1, 0) ==
 		      QAM_EQUALIZER_OK &&
 	      qam_equalizer_push(&equalizer, &point, &point, &ready) ==
 		      QAM_EQUALIZER_OK && ready &&
@@ -931,7 +945,7 @@ static bool test_product_boundaries(void)
 		      memcmp(&observation, &before, sizeof(observation)) == 0,
 		      "observed product overflow changed state/output");
 	}
-	CHECK(qam_equalizer_init_geometry(&equalizer, &unity, &large, 1, 0) ==
+	CHECK(qam_equalizer_init(&equalizer, &unity, &large, 1, 0) ==
 		      QAM_EQUALIZER_OK &&
 	      qam_equalizer_push(&equalizer, &large, &point, &ready) ==
 		      QAM_EQUALIZER_OK && ready && point.in_phase == 0x1p1022,
@@ -967,7 +981,9 @@ static bool test_output_ownership(void)
 	struct qam_point output = { 4.0, 5.0 }, saved_output = output;
 	bool ready = true;
 
-	CHECK(qam_equalizer_init(&equalizer, &reference, &reference) ==
+	CHECK(qam_equalizer_init(
+		      &equalizer, &reference, &reference,
+		      TEST_TAP_COUNT, TEST_DELAY) ==
 		      QAM_EQUALIZER_OK,
 	      "ownership fixture did not initialize");
 	saved = equalizer;
@@ -1015,7 +1031,7 @@ static bool test_output_ownership(void)
 		for (unsigned int slot = 0; slot < 4; ++slot) {
 			struct qam_equalizer_observation retained = { 0 }, copied;
 			const struct qam_point received = { 2.0, 3.0 };
-			CHECK(qam_equalizer_init_geometry(&equalizer, &reference, &reference,
+			CHECK(qam_equalizer_init(&equalizer, &reference, &reference,
 				      7, 0) == QAM_EQUALIZER_OK &&
 			      qam_equalizer_enable_carrier_tracking(&equalizer, 0.1, 0.01) ==
 				      QAM_EQUALIZER_OK, "owned adaptation fixture failed");
@@ -1070,7 +1086,7 @@ static bool test_adaptation_power_boundaries(void)
 				struct qam_point output;
 				bool ready;
 
-				CHECK(qam_equalizer_init_geometry(&equalizer, &reference,
+				CHECK(qam_equalizer_init(&equalizer, &reference,
 					      &reference, cases[index].taps, 0) == QAM_EQUALIZER_OK &&
 				      (!carrier || qam_equalizer_enable_carrier_tracking(
 					      &equalizer, 0.1, 0.01) == QAM_EQUALIZER_OK),
@@ -1118,19 +1134,19 @@ static bool test_reference_division_boundaries(void)
 		{ 0.0, -0.0 }, { 1e-6, 0.0 }, { nextafter(1e-6, 0.0), 0.0 },
 	};
 
-	CHECK(qam_equalizer_init_geometry(&equalizer, &received, &transmitted, 1, 0) ==
+	CHECK(qam_equalizer_init(&equalizer, &received, &transmitted, 1, 0) ==
 		      QAM_EQUALIZER_OK && equalizer.coefficients[0].in_phase == 0x1p40 &&
 	      equalizer.coefficients[0].quadrature == 0.0,
 	      "finite inverse rejected large transmitted-reference power");
 	saved = equalizer;
 	for (size_t index = 0; index < ARRAY_LENGTH(too_small); ++index)
-		CHECK(qam_equalizer_init_geometry(&equalizer, &above, &too_small[index], 1, 0) ==
+		CHECK(qam_equalizer_init(&equalizer, &above, &too_small[index], 1, 0) ==
 			      QAM_EQUALIZER_INVALID_ARGUMENT &&
-		      qam_equalizer_init_geometry(&equalizer, &too_small[index], &unity, 1, 0) ==
+		      qam_equalizer_init(&equalizer, &too_small[index], &unity, 1, 0) ==
 			      QAM_EQUALIZER_INVALID_ARGUMENT &&
 		      memcmp(&equalizer, &saved, sizeof(saved)) == 0,
 		      "invalid reference %zu changed the equalizer", index);
-	CHECK(qam_equalizer_init_geometry(&equalizer, &above, &above, 1, 0) ==
+	CHECK(qam_equalizer_init(&equalizer, &above, &above, 1, 0) ==
 		      QAM_EQUALIZER_OK && equalizer.coefficients[0].in_phase == 1.0,
 	      "just-above-threshold references rejected");
 	return true;
@@ -1144,7 +1160,7 @@ static bool test_validation_span(void)
 
 	for (size_t span = 0; span < ARRAY_LENGTH(spans); ++span) {
 		struct qam_equalizer initial;
-		CHECK(qam_equalizer_init_geometry(&initial, &reference, &reference,
+		CHECK(qam_equalizer_init(&initial, &reference, &reference,
 			spans[span], spans[span] / 2) == QAM_EQUALIZER_OK,
 		      "validation span fixture failed");
 		for (size_t tap = 0; tap < QAM_EQUALIZER_MAX_TAP_COUNT; ++tap)
@@ -1182,30 +1198,36 @@ static bool test_validation(void)
 	bool saved_ready = ready;
 
 	CHECK(qam_equalizer_init(
-		      &equalizer, &reference, &reference) ==
+		      &equalizer, &reference, &reference, TEST_TAP_COUNT, TEST_DELAY) ==
 		      QAM_EQUALIZER_OK,
 	      "validation equalizer did not initialize");
 	saved = equalizer;
-	CHECK(qam_equalizer_init(NULL, &reference, &reference) ==
+	CHECK(qam_equalizer_init(
+		      NULL, &reference, &reference,
+		      TEST_TAP_COUNT, TEST_DELAY) ==
 		      QAM_EQUALIZER_INVALID_ARGUMENT &&
-	      qam_equalizer_init_span(
+	      qam_equalizer_init(
 		      &equalizer, &reference, &reference,
-		      QAM_EQUALIZER_DELAY) == QAM_EQUALIZER_INVALID_ARGUMENT &&
-	      qam_equalizer_init_span(
+		      TEST_DELAY, TEST_DELAY) == QAM_EQUALIZER_INVALID_ARGUMENT &&
+	      qam_equalizer_init(
 		      &equalizer, &reference, &reference,
-		      QAM_EQUALIZER_MAX_TAP_COUNT + 1u) ==
+		      QAM_EQUALIZER_MAX_TAP_COUNT + 1u, TEST_DELAY) ==
 		      QAM_EQUALIZER_INVALID_ARGUMENT &&
-	      qam_equalizer_init_geometry(
+	      qam_equalizer_init(
 		      &equalizer, &reference, &reference, 0, 0) ==
 		      QAM_EQUALIZER_INVALID_ARGUMENT &&
-	      qam_equalizer_init_geometry(
+	      qam_equalizer_init(
 		      &equalizer, &reference, &reference,
 		      QAM_EQUALIZER_MAX_TAP_COUNT,
 		      QAM_EQUALIZER_MAX_TAP_COUNT) ==
 		      QAM_EQUALIZER_INVALID_ARGUMENT &&
-	      qam_equalizer_init(&equalizer, &zero, &reference) ==
+	      qam_equalizer_init(
+		      &equalizer, &zero, &reference,
+		      TEST_TAP_COUNT, TEST_DELAY) ==
 		      QAM_EQUALIZER_INVALID_ARGUMENT &&
-	      qam_equalizer_init(&equalizer, &invalid, &reference) ==
+	      qam_equalizer_init(
+		      &equalizer, &invalid, &reference,
+		      TEST_TAP_COUNT, TEST_DELAY) ==
 		      QAM_EQUALIZER_INVALID_ARGUMENT &&
 	      qam_equalizer_push(
 		      &equalizer, &invalid, &output, &ready) ==
@@ -1282,7 +1304,7 @@ static bool test_validation(void)
 		      QAM_EQUALIZER_OK && qam_equalizer_is_valid(&carrier),
 	      "carrier frequency hold was not valid and idempotent");
 	pending = equalizer;
-	for (unsigned int index = 0; index <= QAM_EQUALIZER_DELAY; ++index) {
+	for (unsigned int index = 0; index <= TEST_DELAY; ++index) {
 		CHECK(qam_equalizer_push(
 			      &pending, &reference, &output, &ready) ==
 			      QAM_EQUALIZER_OK,
@@ -1337,7 +1359,7 @@ static bool test_bias_equivalence(void)
 			struct qam_equalizer separate, joint;
 			double separate_bias = -0.173, joint_bias = separate_bias;
 
-			CHECK(qam_equalizer_init_geometry(&joint, &reference,
+			CHECK(qam_equalizer_init(&joint, &reference,
 				      &reference, spans[span], spans[span] / 2) ==
 				      QAM_EQUALIZER_OK,
 			      "joint bias fixture did not initialize");
@@ -1408,7 +1430,7 @@ static bool test_bias_rejection(void)
 	struct qam_point output;
 	bool ready;
 
-	CHECK(qam_equalizer_init_geometry(&fixture, &reference, &reference, 1, 0) ==
+	CHECK(qam_equalizer_init(&fixture, &reference, &reference, 1, 0) ==
 		      QAM_EQUALIZER_OK &&
 	      qam_equalizer_push(&fixture, &reference, &output, &ready) ==
 		      QAM_EQUALIZER_OK && ready,
@@ -1465,7 +1487,7 @@ static bool test_missing_history(void)
 		bool ready;
 		double bias = 2;
 
-		CHECK(qam_equalizer_init_geometry(&equalizer, &unity, &unity,
+		CHECK(qam_equalizer_init(&equalizer, &unity, &unity,
 			      spans[span], 0) == QAM_EQUALIZER_OK &&
 		      qam_equalizer_enable_carrier_tracking(&equalizer, 0.02, 0.001) ==
 			      QAM_EQUALIZER_OK, "missing-history fixture failed");
@@ -1510,7 +1532,7 @@ static bool test_missing_history(void)
 	struct qam_point output;
 	bool ready;
 	double received_bias = 2, erased_bias = 2;
-	CHECK(qam_equalizer_init_geometry(&received, &unity, &unity, 1, 0) == QAM_EQUALIZER_OK,
+	CHECK(qam_equalizer_init(&received, &unity, &unity, 1, 0) == QAM_EQUALIZER_OK,
 	      "silence fixture failed");
 	erased = received;
 	CHECK(qam_equalizer_push(&received, &(struct qam_point){ 0 }, &output, &ready) ==
@@ -1533,7 +1555,7 @@ static bool test_retained_missing_history(void)
 	struct qam_point output;
 	bool ready;
 
-	CHECK(qam_equalizer_init_geometry(&equalizer, &unity, &unity, 7, 0) ==
+	CHECK(qam_equalizer_init(&equalizer, &unity, &unity, 7, 0) ==
 		      QAM_EQUALIZER_OK &&
 	      qam_equalizer_observe(&equalizer, &input, &clean, &ready) == QAM_EQUALIZER_OK &&
 	      ready && !clean.unavailable &&
@@ -1586,7 +1608,7 @@ static bool test_missing_input_boundaries(void)
 	struct qam_point output = { 5, 6 }, saved = output;
 	bool ready = true;
 
-	CHECK(qam_equalizer_init_geometry(&equalizer, &unity, &unity, 7, 0) == QAM_EQUALIZER_OK,
+	CHECK(qam_equalizer_init(&equalizer, &unity, &unity, 7, 0) == QAM_EQUALIZER_OK,
 	      "missing boundary fixture failed");
 	before = equalizer;
 	CHECK(qam_equalizer_push_erasure(&equalizer, &(struct qam_point){ NAN, 0 },
@@ -1602,7 +1624,7 @@ static bool test_missing_input_boundaries(void)
 	      memcmp(&equalizer, &before, sizeof(before)) == 0,
 	      "availability outside owned history was accepted");
 	equalizer = (struct qam_equalizer){ 0 };
-	CHECK(qam_equalizer_init_geometry(&equalizer, &unity, &unity, 7, 0) == QAM_EQUALIZER_OK &&
+	CHECK(qam_equalizer_init(&equalizer, &unity, &unity, 7, 0) == QAM_EQUALIZER_OK &&
 	      qam_equalizer_push_erasure(&equalizer, &unity, &output, &ready) == QAM_EQUALIZER_OK,
 	      "erased gradient rejection fixture failed");
 	before = equalizer;

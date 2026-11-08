@@ -281,7 +281,7 @@ static bool prepare_e2u_at_level(
 			constellation, 0u, measured_lu) == V92_PHASE4_MODULATOR_OK &&
 	      v92_phase4_record_tx_init_e2u(transmitter, &modulator, extended) ==
 		      V92_PHASE4_RECORD_TX_OK &&
-	      qam_equalizer_init_geometry(&handoff.equalizer, &reference, &reference,
+	      qam_equalizer_init(&handoff.equalizer, &reference, &reference,
 			V92_PCM_PHASE4_TRN2U_LINE_EQUALIZER_TAPS,
 			V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY) == QAM_EQUALIZER_OK,
 	      "E2u fixture initialization failed");
@@ -4045,7 +4045,7 @@ static bool test_memoryless_codec(enum g711_law law, unsigned noise)
 	};
 	struct qam_point reference = { .in_phase = LU }, output;
 	bool ready = false;
-	CHECK(qam_equalizer_init_geometry(&handoff.equalizer, &reference, &reference,
+	CHECK(qam_equalizer_init(&handoff.equalizer, &reference, &reference,
 		V92_PCM_PHASE4_TRN2U_LINE_EQUALIZER_TAPS, V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY) == QAM_EQUALIZER_OK &&
 		v92_phase4_demodulator_init(&handoff.demodulator, V92_CONSTELLATION_4_POINT, 0, LU) ==
 		V92_PHASE4_MODULATOR_OK, "codec training handoff failed");

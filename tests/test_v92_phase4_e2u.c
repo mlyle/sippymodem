@@ -225,7 +225,7 @@ static bool upstream_line(
 	    v92_phase4_demodulator_init(
 		    &handoff.demodulator, constellation,
 		    0u, TEST_LU) != V92_PHASE4_MODULATOR_OK ||
-	    qam_equalizer_init_geometry(
+	    qam_equalizer_init(
 		    &handoff.equalizer, &reference, &reference,
 		    V92_PCM_PHASE4_TRN2U_LINE_EQUALIZER_TAPS,
 		    V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY) !=
