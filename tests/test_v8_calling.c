@@ -7,6 +7,8 @@
 #include "test.h"
 
 #include <string.h>
+#include <stdlib.h>
+#include <math.h>
 
 enum remote_answer_state {
 	REMOTE_ANSWER_SIGNAL,
@@ -752,6 +754,149 @@ static bool test_quick_connect_validation(void)
 	return true;
 }
 
+static bool test_cm_retry_fragments(void)
+{
+	enum { SAMPLES = 12 * 8000 };
+	struct v8_calling scalar, fragmented;
+	struct v8_ansam_generator tone;
+	struct v8_menu menu;
+	int16_t *rx = calloc(SAMPLES, sizeof(*rx));
+	int16_t *one = calloc(SAMPLES, sizeof(*one));
+	int16_t *many = calloc(SAMPLES, sizeof(*many));
+	CHECK(rx && one && many &&
+	      v8_call_menu_init(&menu, V8_MODULATION_V34_DUPLEX, true) == V8_MENU_OK &&
+	      v8_calling_init(&scalar, &menu) == V8_CALLING_OK &&
+	      v8_calling_init(&fragmented, &menu) == V8_CALLING_OK &&
+	      v8_ansam_generator_init(&tone, 10000, true) == V8_ANSAM_OK &&
+	      v8_ansam_generate(&tone, rx, SAMPLES) == V8_ANSAM_OK,
+	      "persistent ANSam fixture failed");
+	unsigned menu_at = 0, quiet_at = 0, quiet_samples = 0, retries = 0, timeout = 0;
+	for (unsigned i = 0; i < SAMPLES; ++i) {
+		if (!menu_at && scalar.state == V8_CALLING_EXCHANGE_MENUS)
+			menu_at = i;
+		unsigned before = scalar.cm_retry.quiet_remaining;
+		enum v8_calling_result result = v8_calling_process(&scalar, rx + i, one + i, 1);
+		CHECK(result == V8_CALLING_OK || result == V8_CALLING_MENU_TIMEOUT,
+		      "persistent answer failed at %u: %u", i, result);
+		if (!before && scalar.cm_retry.quiet_remaining) {
+			++retries;
+			quiet_at = i;
+		}
+		if (before || scalar.cm_retry.quiet_remaining) {
+			CHECK(one[i] == 0, "quiet interval emitted sample %u", i);
+			++quiet_samples;
+		}
+		if (result == V8_CALLING_MENU_TIMEOUT && !timeout)
+			timeout = i;
+		/* Interleave a separate owner using larger fragments. */
+		if (i % 160 == 159) {
+			result = v8_calling_process(&fragmented, rx + i - 159, many + i - 159, 160);
+			CHECK(result == V8_CALLING_OK || result == V8_CALLING_MENU_TIMEOUT,
+			      "fragmented persistent answer failed");
+		}
+	}
+	CHECK(retries == 1 && quiet_at == menu_at + 16000 - 1 && quiet_samples == 8800 &&
+	      timeout == menu_at + V8_CALLING_MENU_TIMEOUT_SAMPLES - 1 &&
+	      memcmp(one, many, SAMPLES * sizeof(*one)) == 0 &&
+	      memcmp(&scalar, &fragmented, sizeof(scalar)) == 0,
+	      "retry changed fragment ownership or deadline: %u %u/%u %u %u/%u",
+	      retries, quiet_at, menu_at, quiet_samples, timeout,
+	      menu_at + V8_CALLING_MENU_TIMEOUT_SAMPLES - 1);
+	free(many);
+	free(one);
+	free(rx);
+	return true;
+}
+
+static bool test_cm_retry_late_menu(void)
+{
+	struct v8_calling calling;
+	struct v8_menu menu;
+	struct remote_answerer answerer;
+	CHECK(v8_call_menu_init(&menu, V8_MODULATION_V34_DUPLEX, true) == V8_MENU_OK &&
+	      v8_calling_init(&calling, &menu) == V8_CALLING_OK &&
+	      remote_answerer_init(&answerer, V8_MODULATION_V34_DUPLEX),
+	      "late JM fixture failed");
+	unsigned menu_at = 0;
+	bool confirmed_in_quiet = false;
+	for (unsigned i = 0; i < 12 * 8000 && !v8_calling_is_complete(&calling); ++i) {
+		if (!menu_at && calling.state == V8_CALLING_EXCHANGE_MENUS)
+			menu_at = i;
+		int16_t rx, tx;
+		enum remote_answer_state saved = answerer.state;
+		/* Receive CM normally, but delay the peer's JM until our quiet
+		 * interval. Keep its physical answer-tone/filter clock continuous. */
+		if (!menu_at || i - menu_at < 19200)
+			answerer.state = REMOTE_ANSWER_SIGNAL;
+		CHECK(remote_answerer_transmit(&answerer, &rx), "late peer TX failed");
+		answerer.state = saved;
+		unsigned quiet = calling.cm_retry.quiet_remaining;
+		CHECK(v8_calling_process(&calling, &rx, &tx, 1) == V8_CALLING_OK &&
+		      remote_answerer_receive(&answerer, tx), "late JM processing failed");
+		if (quiet && calling.state == V8_CALLING_SEND_CJ)
+			confirmed_in_quiet = true;
+	}
+	CHECK(confirmed_in_quiet && calling.negotiated && answerer.cj_detected &&
+	      v8_calling_is_complete(&calling) && calling.cm_retry.quiet_remaining == 0,
+	      "quiet retry lost JM/CJ or negotiated carrier");
+	return true;
+}
+
+static bool test_cm_retry_rejection(void)
+{
+	for (unsigned kind = 0; kind < 5; ++kind) {
+		struct v8_calling calling;
+		struct v8_menu menu;
+		CHECK(v8_call_menu_init(&menu, V8_MODULATION_V34_DUPLEX, true) == V8_MENU_OK &&
+		      v8_calling_init(&calling, &menu) == V8_CALLING_OK,
+		      "answer rejection fixture failed");
+		calling.state = V8_CALLING_EXCHANGE_MENUS;
+		bool retried = false;
+		for (unsigned i = 0; i < 17000; ++i) {
+			/* Silence, plain ANS, unrelated carrier, and ANSam whose recent
+			 * half is silent must never authorize a TX interruption. */
+			double frequency = kind == 2 ? 1650. : 2100.;
+			double amplitude = kind == 0 || (kind == 3 && i >= 12800) ? 0. : 10000.;
+			double envelope = kind == 3 ? 1. + .2 * cos(2. * 3.141592653589793 * 15. * i / 8000.) : 1.;
+			if (kind == 4 && (i / 3600) % 2)
+				amplitude = -amplitude;
+			int16_t rx = (int16_t)lround(amplitude * envelope * cos(2. * 3.141592653589793 * frequency * i / 8000.)), tx;
+			CHECK(v8_calling_process(&calling, &rx, &tx, 1) == V8_CALLING_OK,
+			      "negative answer processing failed");
+			retried |= calling.cm_retry.quiet_remaining != 0;
+		}
+		CHECK(calling.cm_retry.decided && !retried, "non-ANSam evidence retried CM: %u", kind);
+	}
+	return true;
+}
+
+static bool test_cm_retry_validation(void)
+{
+	struct v8_calling original;
+	struct v8_menu menu;
+	CHECK(v8_call_menu_init(&menu, V8_MODULATION_V34_DUPLEX, true) == V8_MENU_OK &&
+	      v8_calling_init(&original, &menu) == V8_CALLING_OK, "retry validation fixture failed");
+	for (unsigned fault = 0; fault < 8; ++fault) {
+		struct v8_calling calling = original, before;
+		switch (fault) {
+		case 0: calling.cm_retry.samples = 1600; break;
+		case 1: calling.cm_retry.windows = 5; break;
+		case 2: calling.cm_retry.mask = 1; break;
+		case 3: calling.cm_retry.quiet_remaining = 8801; break;
+		case 4: calling.cm_retry.energy = NAN; break;
+		case 5: calling.cm_retry.history[0][1] = INFINITY; break;
+		case 6: calling.cm_retry.windows = 4; break;
+		case 7: calling.cm_retry.quiet_remaining = 1; break;
+		}
+		before = calling;
+		int16_t rx = 0, tx = 123;
+		CHECK(v8_calling_process(&calling, &rx, &tx, 1) == V8_CALLING_INVALID_ARGUMENT &&
+		      tx == 123 && memcmp(&before, &calling, sizeof(calling)) == 0,
+		      "invalid retry state %u changed owner or output", fault);
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -765,6 +910,10 @@ int main(void)
 		{ "no common modulation", test_no_common_modulation },
 		{ "answer signal timeout", test_answer_signal_timeout },
 		{ "menu timeout", test_menu_timeout },
+		{ "CM retry fragment ownership", test_cm_retry_fragments },
+		{ "CM retry late joint menu", test_cm_retry_late_menu },
+		{ "CM retry rejects stale and non-ANSam evidence", test_cm_retry_rejection },
+		{ "CM retry validation", test_cm_retry_validation },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

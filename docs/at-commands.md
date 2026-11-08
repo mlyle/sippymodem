@@ -171,6 +171,13 @@ Baudot is an explicit selection rather than a default fallback. Use
 `AT+MS=45,0,45,45` for 45.45 baud or `AT+MS=45,0,50,50` for 50 baud;
 its configured integer rate bounds must admit 45 or 50.
 
+As a compatibility recovery beyond the normal V.8 CM/JM exchange, the caller
+may insert one 1.1-second transmit gap after two seconds of unanswered CM.
+This requires fresh modulated ANSam evidence; silence and plain answer tone
+do not qualify. Reception continues throughout, a valid JM ends the gap,
+and the original negotiation timeout stays in force. Quick Connect excludes
+this recovery.
+
 V.34 receive-quality recovery remains active while V.42 detection and LAPM
 establishment are in progress, before `CONNECT`. Retraining preserves the
 pending error-control negotiation and its retry budget.

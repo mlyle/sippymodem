@@ -3,8 +3,97 @@
 #include "v8_calling.h"
 
 #include "memory_region.h"
+#include "integer_math.h"
 
+#include <math.h>
 #include <string.h>
+
+enum {
+	CM_PROBE_WINDOW = V8_ANSAM_SAMPLE_RATE / 5,
+	CM_PROBE_WINDOWS = 4,
+	CM_RETRY_DECISION = 2 * V8_ANSAM_SAMPLE_RATE,
+	CM_PROBE_START = CM_RETRY_DECISION - CM_PROBE_WINDOWS * CM_PROBE_WINDOW,
+	CM_RETRY_QUIET = V8_ANSAM_SAMPLE_RATE * 11 / 10,
+};
+
+/* 2*cos(2*pi*f/8000), f = 2085, 2100, 2115 Hz. Each 200-ms window
+ * contains integral cycles, so these projections are orthogonal. */
+static const double cm_probe_coefficients[3] = {
+	-0.13341853419990202, -0.15691819145568975, -0.18039607008171848,
+};
+
+static bool retry_is_valid(const struct v8_calling *calling)
+{
+	if (calling->cm_retry.samples >= CM_PROBE_WINDOW ||
+	    calling->cm_retry.windows > CM_PROBE_WINDOWS ||
+	    calling->cm_retry.mask >> calling->cm_retry.windows ||
+	    calling->cm_retry.quiet_remaining > CM_RETRY_QUIET ||
+	    !isfinite(calling->cm_retry.energy) || calling->cm_retry.energy < 0. ||
+	    calling->cm_retry.energy > (double)CM_PROBE_WINDOW * 32768. * 32768. ||
+	    (calling->cm_retry.windows == CM_PROBE_WINDOWS &&
+	     (!calling->cm_retry.decided || calling->cm_retry.samples)) ||
+	    (calling->cm_retry.quiet_remaining &&
+	     (!calling->cm_retry.decided || calling->cm_retry.windows != CM_PROBE_WINDOWS ||
+	      calling->state != V8_CALLING_EXCHANGE_MENUS)))
+		return false;
+	for (unsigned f = 0; f < 3; ++f)
+		for (unsigned i = 0; i < 2; ++i)
+			if (!isfinite(calling->cm_retry.history[f][i]) ||
+			    fabs(calling->cm_retry.history[f][i]) > 2. * CM_PROBE_WINDOW * 32768.)
+				return false;
+	return true;
+}
+
+static void observe_cm_answer(struct v8_calling *calling, int16_t sample)
+{
+	calling->cm_retry.energy += (double)sample * sample;
+	for (unsigned f = 0; f < 3; ++f) {
+		double *history = calling->cm_retry.history[f];
+		double next = sample + cm_probe_coefficients[f] * history[0] - history[1];
+		history[1] = history[0];
+		history[0] = next;
+	}
+	if (++calling->cm_retry.samples != CM_PROBE_WINDOW)
+		return;
+	double amplitude[3];
+	for (unsigned f = 0; f < 3; ++f) {
+		const double *history = calling->cm_retry.history[f];
+		double power = history[0] * history[0] + history[1] * history[1] -
+			cm_probe_coefficients[f] * history[0] * history[1];
+		amplitude[f] = 2. * sqrt(fmax(0., power)) / CM_PROBE_WINDOW;
+	}
+	double carrier = amplitude[1] * amplitude[1] / 2.;
+	double power = calling->cm_retry.energy / CM_PROBE_WINDOW;
+	double residual = fmax(0., power - carrier -
+		(amplitude[0] * amplitude[0] + amplitude[2] * amplitude[2]) / 2.);
+	double depth = amplitude[1] > 0. ? (amplitude[0] + amplitude[2]) / amplitude[1] : 0.;
+	bool good = amplitude[1] >= 256. && carrier >= .6 * power &&
+		depth >= .10 && depth <= .35 && amplitude[0] >= .5 * amplitude[2] &&
+		amplitude[2] >= .5 * amplitude[0] && residual <= .04 * carrier;
+	calling->cm_retry.mask |= (uint8_t)(good << calling->cm_retry.windows);
+	++calling->cm_retry.windows;
+	calling->cm_retry.samples = 0;
+	calling->cm_retry.energy = 0.;
+	memset(calling->cm_retry.history, 0, sizeof(calling->cm_retry.history));
+	if (calling->cm_retry.windows == CM_PROBE_WINDOWS) {
+		calling->cm_retry.decided = true;
+		/* One reversal may spoil a window; old evidence alone cannot retry. */
+		if (bit_count_u8(calling->cm_retry.mask) >= 2 && (calling->cm_retry.mask & 12u))
+			calling->cm_retry.quiet_remaining = CM_RETRY_QUIET;
+	}
+}
+
+static bool restart_cm_transmitter(struct v8_calling *calling)
+{
+	struct v8_calling fresh;
+	if (v8_calling_init(&fresh, &calling->local_menu) != V8_CALLING_OK)
+		return false;
+	/* Receive filters and partially received JM belong to the live exchange. */
+	calling->fsk.transmitter = fresh.fsk.transmitter;
+	calling->call_menu_bits = fresh.call_menu_bits;
+	calling->transmit_bit = fresh.transmit_bit;
+	return true;
+}
 
 static bool qc_request_is_usable(const struct v8_menu *menu,
 	const struct v92_qc1_message *request)
@@ -28,7 +117,7 @@ static bool qc_response_is_usable(const struct v8_calling *calling,
 
 static bool calling_is_valid(const struct v8_calling *calling)
 {
-	if (calling == NULL || !v8_menu_is_usable(&calling->local_menu) ||
+	if (calling == NULL || !retry_is_valid(calling) || !v8_menu_is_usable(&calling->local_menu) ||
 	    !v8_ansam_detector_is_valid(&calling->answer_signal) ||
 	    (unsigned int)calling->state > V8_CALLING_FAILED ||
 	    (unsigned int)calling->terminal_result >
@@ -149,6 +238,7 @@ enum v8_calling_result v8_calling_enable_quick_connect(
 		return V8_CALLING_INVALID_ARGUMENT;
 	calling->qc_request = *request;
 	calling->qc_enabled = true;
+	calling->cm_retry.decided = true;
 	return V8_CALLING_OK;
 }
 
@@ -159,6 +249,7 @@ static enum v8_calling_result fail(
 	calling->state = V8_CALLING_FAILED;
 	calling->terminal_result = result;
 	calling->state_samples = 0;
+	calling->cm_retry.quiet_remaining = 0;
 	return result;
 }
 
@@ -263,8 +354,26 @@ static enum v8_calling_result exchange_menu_sample(
 		calling->negotiated_menu = joint_menu;
 		calling->selected_modulation = modulation;
 		calling->negotiated = true;
+		if (calling->cm_retry.quiet_remaining) {
+			/* No virtual CM octet was emitted during silence. CJ starts on
+			 * a fresh TX boundary; retain all received JM evidence. */
+			if (!restart_cm_transmitter(calling))
+				return V8_CALLING_INVALID_ARGUMENT;
+			calling->cm_retry.quiet_remaining = 0;
+			*transmit = 0;
+		}
 		enter_state(calling, V8_CALLING_SEND_CJ);
 		return V8_CALLING_OK;
+	}
+	if (!calling->cm_retry.decided && calling->state_samples >= CM_PROBE_START)
+		observe_cm_answer(calling, receive);
+	if (calling->cm_retry.quiet_remaining) {
+		/* Compatibility recovery for an answerer still transmitting ANSam
+		 * after two seconds of CM. Keep RX and the original timeout running;
+		 * only one 1.1-second TX gap is permitted. QC excludes this recovery. */
+		*transmit = 0;
+		if (--calling->cm_retry.quiet_remaining == 0 && !restart_cm_transmitter(calling))
+			return V8_CALLING_INVALID_ARGUMENT;
 	}
 	calling->state_samples++;
 	if (calling->state_samples ==
