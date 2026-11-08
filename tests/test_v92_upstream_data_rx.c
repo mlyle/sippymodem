@@ -2673,7 +2673,7 @@ struct scalar_model_workspace {
 };
 
 static bool check_scalar_model(struct scalar_model_workspace *work, enum g711_law law, int polarity,
-	bool wrong_bit, unsigned block)
+	bool wrong_bit, unsigned block, uint8_t rate)
 {
 	enum { FRAMES = V92_B1U_FRAMES + 24 + V92_PCM_RX_DELAY_FRAMES, PREFIX = 6 };
 	struct channel channel = { .gain = .9, .law = law, .polarity = polarity };
@@ -2686,7 +2686,7 @@ static bool check_scalar_model(struct scalar_model_workspace *work, enum g711_la
 	struct v92_e2u_rx e2u_rx;
 	uint8_t codes[(FRAMES + PREFIX) * V92_PCM_MAPPING_FRAME_SYMBOLS];
 	uint32_t random = UINT32_C(0x35791bd);
-	unsigned delivered = 0, bad = 0, peak = 0, scalar_batches = 0;
+	unsigned delivered = 0, bad = 0, peak = 0, scalar_batches = 0, scalar_quanta = 0;
 	bool fitting_seen = false;
 	double frozen = 0., error = 0., linear_error = 0.;
 	for (unsigned i = 0; i < V92_UPSTREAM_CHANNEL_SYMBOLS; i++) {
@@ -2695,7 +2695,7 @@ static bool check_scalar_model(struct scalar_model_workspace *work, enum g711_la
 		CHECK(v92_upstream_channel_sample(&measured, sample, polarity * wire_sample(&channel, sample)),
 			"scalar channel measurement failed");
 	}
-	CHECK(v92_cpd_direct_select(&cpd, law, 19u, TEST_LU, false) == V92_CPD_OK &&
+	CHECK(v92_cpd_direct_select(&cpd, law, rate, TEST_LU, false) == V92_CPD_OK &&
 	      v92_cpd_channel_design(&cpd, &measured, law, TEST_LU, &plan) &&
 	      v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK &&
 	      v92_pcm_frame_tx_init(&transmitter, &mapping) == V92_PCM_FRAME_OK &&
@@ -2731,9 +2731,11 @@ static bool check_scalar_model(struct scalar_model_workspace *work, enum g711_la
 			v92_upstream_data_rx_begin_block_owned(&work->receiver, block);
 		}
 		if (block && work->receiver.model.fitting && !work->receiver.model.fit.clock &&
-		    work->receiver.model.fit.work.stage == V92_FIT_SCALAR)
+		    work->receiver.model.fit.work.stage == V92_FIT_SCALAR) {
+			scalar_quanta++;
 			CHECK(++scalar_batches <= (block + V92_MODEL_SCALAR_SAMPLES - 1) / V92_MODEL_SCALAR_SAMPLES,
 			      "scalar work exceeded the native block budget");
+		}
 		struct v92_upstream_data_frame frame = { 0 }, compared = { 0 };
 		work->independent = work->receiver;
 		work->linear = work->receiver;
@@ -2799,6 +2801,12 @@ static bool check_scalar_model(struct scalar_model_workspace *work, enum g711_la
 	if (block) {
 		CHECK(fitting_seen && peak && peak < V92_UPSTREAM_INPUT_QUEUE && !work->receiver.input.count,
 		      "deferred scalar input accounting failed");
+		/* The 36k PCMU geometry exercises scalar admission. One solve and
+		 * one shared completion must suffice; a duplicate solve or fallback
+		 * would exceed this bound. Held-out bits above remain independent. */
+		if (rate == 10 && law == G711_LAW_PCMU && polarity == 1)
+			CHECK(scalar_quanta <= V92_SCALAR_FIT_STEPS + 1u,
+			      "scalar admission/fallback repeated completed work: %u", scalar_quanta);
 		printf("Deferred scalar peak retained samples=%u\n", peak);
 		return true;
 	}
@@ -2850,11 +2858,11 @@ static bool check_scalar_model(struct scalar_model_workspace *work, enum g711_la
 	return true;
 }
 
-static bool test_scalar_model(enum g711_law law, int polarity, bool wrong_bit, unsigned block)
+static bool test_scalar_model(enum g711_law law, int polarity, bool wrong_bit, unsigned block, uint8_t rate)
 {
 	struct scalar_model_workspace *work = malloc(sizeof(*work));
 	CHECK(work, "scalar model workspace allocation failed");
-	bool result = check_scalar_model(work, law, polarity, wrong_bit, block);
+	bool result = check_scalar_model(work, law, polarity, wrong_bit, block, rate);
 	free(work);
 	return result;
 }
@@ -4676,8 +4684,10 @@ int main(void)
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)
 		for (int polarity = -1; polarity <= 1; polarity += 2)
 			for (unsigned fault = 0; fault < 2; fault++)
-				if (!test_scalar_model(law, polarity, fault, 0) ||
-				    !test_scalar_model(law, polarity, fault, 160)) return 1;
+				if (!test_scalar_model(law, polarity, fault, 0, 19) ||
+				    !test_scalar_model(law, polarity, fault, 160, 19)) return 1;
+	for (unsigned fault = 0; fault < 2; fault++)
+		if (!test_scalar_model(G711_LAW_PCMU, 1, fault, 160, 10)) return 1;
 	/* Minimal 48k alphabets must preserve payload after real B1u level
 	 * refinement, not merely separate symbols at a nominal training LU. */
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)

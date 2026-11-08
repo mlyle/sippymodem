@@ -74,6 +74,9 @@ struct v92_upstream_model {
 		struct v92_pcm_frame_rx alternate;
 		struct {
 			struct v92_observation_fit_work work;
+			/* One fixed acquisition/codec epoch, shared only across the
+			 * two first-codec input-rounding hypotheses and fallback. */
+			struct v92_scalar_fit_result scalar_result;
 			int32_t input[V92_OBSERVATION_TRAINING];
 			int16_t samples[V92_OBSERVATION_TRAINING];
 			double offsets[V92_OBSERVATION_TRAINING];

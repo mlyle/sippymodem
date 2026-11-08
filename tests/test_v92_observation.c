@@ -1249,6 +1249,8 @@ static void check_scalar_resumable(const struct v92_observation_training *traini
 			assert(++steps[i] <= V92_SCALAR_FIT_STEPS);
 			if (result == V92_OBSERVATION_FIT_MORE) {
 				assert(actual[i] == -1.);
+				assert(active[i]->scalar_result.status == V92_OBSERVATION_FIT_MORE &&
+				       active[i]->scalar_result.gain == 0.);
 				if (i == 0 && steps[i] == 2 && !restarted) {
 					int16_t levels[TRAINING];
 					memcpy(levels, t[i].levels, t[i].count * sizeof(*levels));
@@ -1264,6 +1266,10 @@ static void check_scalar_resumable(const struct v92_observation_training *traini
 			} else {
 				assert((result == V92_OBSERVATION_FIT_READY) == accepted[i]);
 				assert(memcmp(actual + i, expected + i, sizeof(*actual)) == 0);
+				assert(active[i]->scalar_result.status == result);
+				assert(active[i]->scalar_result.gain == (accepted[i] ? actual[i] : 0.));
+				assert(active[i]->scalar_result.rounding == modes[mode] &&
+				       v92_scalar_fit_result_can_reuse(active[i]->scalar_result));
 				if (accepted[i]) assert(steps[i] == V92_SCALAR_FIT_STEPS);
 				done[i] = true;
 			}
@@ -1276,6 +1282,152 @@ static void check_scalar_resumable(const struct v92_observation_training *traini
 /* One physical codec after a linear source and independently known echo.
  * The fit only sees the training prefix; different later points and echo
  * validate prediction without pretending quantized centres are noiseless. */
+static enum v92_observation_fit_result finish_fit(
+	struct v92_observation_fit_work *work,
+	const struct v92_observation_training *training,
+	struct v92_observation *output, enum v92_observation_fit_result result,
+	unsigned *scalar_steps)
+{
+	unsigned steps = 0;
+	while (result == V92_OBSERVATION_FIT_MORE) {
+		*scalar_steps += work->stage == V92_FIT_SCALAR;
+		result = v92_observation_fit_step(work, training, output);
+		assert(++steps <= 256);
+	}
+	return result;
+}
+
+/* A completed admission result remains useful after the tandem fit declines.
+ * Reuse it with a different first-codec input, not different physical cells. */
+static void check_scalar_reuse(const struct v92_observation_training *training)
+{
+	const int modes[] = { FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO };
+	int rounding = fegetround();
+	for (unsigned mode = 0; mode < sizeof(modes) / sizeof(modes[0]); mode++) {
+		assert(fesetround(modes[mode]) == 0);
+		struct v92_observation_fit_work *work = calloc(3, sizeof(*work));
+		struct v92_observation output[3] = { 0 };
+		struct v92_observation_training other = *training;
+		int32_t input[TRAINING];
+		unsigned steps[3] = { 0 };
+		assert(work);
+		for (unsigned i = 0; i < training->count; i++)
+			input[i] = round_shift_s64_to_s32_saturating((int64_t)training->input[i] * 13753, 15);
+		other.input = input;
+		bool begun = v92_observation_fit_begin(work, training);
+		assert(work->scalar_result.status == V92_OBSERVATION_FIT_MORE);
+		finish_fit(work, training, output, begun ? V92_OBSERVATION_FIT_MORE :
+			V92_OBSERVATION_FIT_DECLINED, steps);
+		struct v92_scalar_fit_result completed = work->scalar_result;
+		assert(completed.status == V92_OBSERVATION_FIT_READY);
+		assert(v92_scalar_fit_result_can_reuse(completed) && completed.rounding == modes[mode]);
+		double scalar = 0.;
+		assert(v92_observation_fit_scalar(&scalar, training) &&
+		       memcmp(&scalar, &completed.gain, sizeof(scalar)) == 0);
+		/* A new job may have another rounding mode. It must not consume
+		 * a completed result from the previous numerical context. */
+		assert(fesetround(modes[(mode + 1u) % 4u]) == 0);
+		assert(!v92_scalar_fit_result_can_reuse(completed) &&
+		       v92_observation_fit_begin(work + 2, &other));
+		work[0] = work[2];
+		assert(v92_observation_fit_finish_scalar_owned(work + 2, &other,
+			completed) == V92_OBSERVATION_FIT_DECLINED &&
+		       memcmp(work, work + 2, sizeof(*work)) == 0);
+		assert(fesetround(modes[mode]) == 0 && v92_scalar_fit_result_can_reuse(completed));
+		assert(v92_observation_fit_begin(work + 1, &other) &&
+		       v92_observation_fit_begin(work + 2, &other) &&
+		       work[1].stage == V92_FIT_SCALAR && work[2].stage == V92_FIT_SCALAR);
+
+		/* A value copy must survive destruction of its former owner. Invalid
+		 * or unavailable evidence and invalid begin preserve the new job. */
+		work[0] = work[2];
+		const struct v92_scalar_fit_result invalid[] = {
+			{ .status = V92_OBSERVATION_FIT_MORE },
+			{ .status = (enum v92_observation_fit_result)-1 },
+			{ .status = V92_OBSERVATION_FIT_READY, .gain = 0. },
+			{ .status = V92_OBSERVATION_FIT_READY, .gain = -1. },
+			{ .status = V92_OBSERVATION_FIT_READY, .gain = NAN },
+			{ .status = V92_OBSERVATION_FIT_READY, .gain = INFINITY },
+			{ .status = V92_OBSERVATION_FIT_DECLINED, .gain = 1. },
+			{ .status = V92_OBSERVATION_FIT_READY, .gain = 1., .rounding = -1 },
+		};
+		for (unsigned i = 0; i < sizeof(invalid) / sizeof(invalid[0]); i++) {
+			assert(v92_observation_fit_finish_scalar_owned(work + 2, &other,
+				invalid[i]) == V92_OBSERVATION_FIT_DECLINED);
+			assert(memcmp(work, work + 2, sizeof(*work)) == 0);
+		}
+		struct v92_observation_training bad = other;
+		bad.count = 0;
+		assert(!v92_observation_fit_begin(work + 2, &bad) &&
+		       memcmp(work, work + 2, sizeof(*work)) == 0);
+		enum v92_observation_fit_result reused = v92_observation_fit_finish_scalar_owned(
+			work + 2, &other, completed);
+		enum v92_observation_fit_result fresh = finish_fit(work + 1, &other,
+			output + 1, V92_OBSERVATION_FIT_MORE, steps + 1);
+		reused = finish_fit(work + 2, &other, output + 2, reused, steps + 2);
+		assert(fresh == reused && steps[1] == V92_SCALAR_FIT_STEPS && steps[2] == 0);
+		assert(memcmp(output + 1, output + 2, sizeof(*output)) == 0 &&
+		       work[1].training_cost == work[2].training_cost &&
+		       work[1].scalar_result.status == work[2].scalar_result.status &&
+		       memcmp(&work[1].scalar_result.gain, &work[2].scalar_result.gain,
+			      sizeof(completed.gain)) == 0);
+		assert(v92_observation_scalar_begin(work + 2, &other) &&
+		       work[2].scalar_result.status == V92_OBSERVATION_FIT_MORE &&
+		       work[2].scalar_result.gain == 0.);
+		free(work);
+	}
+	assert(fesetround(rounding) == 0);
+}
+
+/* Only the last sample constrains scalar admission after the causal prefix.
+ * The full scalar solve is dominated by the other three exact codewords and
+ * cannot improve reconstruction. Its DECLINED is a real completed result. */
+static void check_scalar_decline_reuse(enum g711_law law)
+{
+	int16_t u[4], y[4];
+	int32_t x[4], other[4];
+	const int values[] = { 16000, 12000, -14000, 1000 };
+	for (unsigned i = 0; i < 4; i++) {
+		x[i] = u[i] = y[i] = quantize(law, values[i]);
+		other[i] = 2 * x[i];
+	}
+	y[3] = quantize(law, u[3] - (law == G711_LAW_PCMU ? 33 : 17));
+	struct v92_observation_training t = { .input = x, .linear = u,
+		.sample = y, .levels = y, .count = 4, .taps = 3, .host_gain = 1., .law = law };
+	struct v92_observation_fit_work *work = calloc(3, sizeof(*work));
+	struct v92_observation output[3] = { 0 };
+	unsigned steps[3] = { 0 };
+	assert(work && v92_observation_fit_begin(work, &t) && work->stage == V92_FIT_SCALAR);
+	finish_fit(work, &t, output, V92_OBSERVATION_FIT_MORE, steps);
+	struct v92_scalar_fit_result completed = work->scalar_result;
+	assert(completed.status == V92_OBSERVATION_FIT_DECLINED && completed.gain == 0.);
+	double gain = -1.;
+	assert(!v92_observation_fit_scalar(&gain, &t) && gain == -1. &&
+	       v92_observation_scalar_begin(work, &t));
+	enum v92_observation_fit_result result;
+	do { result = v92_observation_scalar_step(work, &t, &gain); }
+	while (result == V92_OBSERVATION_FIT_MORE);
+	assert(result == V92_OBSERVATION_FIT_DECLINED && gain == -1. &&
+	       work->scalar_result.status == V92_OBSERVATION_FIT_DECLINED);
+	t.input = other;
+	assert(v92_observation_fit_begin(work + 1, &t) &&
+	       v92_observation_fit_begin(work + 2, &t) && work[2].stage == V92_FIT_SCALAR);
+	enum v92_observation_fit_result reused = v92_observation_fit_finish_scalar_owned(
+		work + 2, &t, completed);
+	assert(reused == V92_OBSERVATION_FIT_MORE && work[2].stage == V92_FIT_SWEEP);
+	result = finish_fit(work + 1, &t, output + 1, V92_OBSERVATION_FIT_MORE, steps + 1);
+	reused = finish_fit(work + 2, &t, output + 2, reused, steps + 2);
+	assert(result == reused && steps[1] == V92_SCALAR_FIT_STEPS && steps[2] == 0 &&
+	       memcmp(output + 1, output + 2, sizeof(*output)) == 0 &&
+	       work[1].training_cost == work[2].training_cost);
+	/* A generic linear-explained begin decline grants no scalar result. */
+	t.sample = t.levels = u;
+	assert(!v92_observation_fit_begin(work, &t) &&
+	       work->scalar_result.status == V92_OBSERVATION_FIT_MORE &&
+	       work->scalar_result.gain == 0.);
+	free(work);
+}
+
 static void check_scalar(enum g711_law law, double host_gain)
 {
 	int32_t x[SAMPLES];
@@ -1299,6 +1451,7 @@ static void check_scalar(enum g711_law law, double host_gain)
 	assert(v92_observation_fit_scalar(&fitted, &training));
 	assert(fabs(fitted - actual_gain) < .002);
 	check_scalar_resumable(&training);
+	check_scalar_reuse(&training);
 	double error = 0., linear_error = 0.;
 	for (unsigned i = TRAINING; i < SAMPLES; i++) {
 		double predicted = v92_observation_predict_scalar(law, fitted, host_gain, u[i], offsets[i]);
@@ -1417,6 +1570,8 @@ static void check_joint_transitions(const struct v92_observation *model)
 int main(void)
 {
 	check_scalar_rounding();
+	check_scalar_decline_reuse(G711_LAW_PCMU);
+	check_scalar_decline_reuse(G711_LAW_PCMA);
 	check_pruned_cost();
 	check_coincident_fit(G711_LAW_PCMU);
 	check_coincident_fit(G711_LAW_PCMA);

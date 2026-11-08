@@ -5,6 +5,9 @@
 #include "v92_observation.h"
 #include "gram_fit.h"
 
+#include <fenv.h>
+#include <float.h>
+
 struct v92_observation_fit_interval {
 	double low, high, coefficient[V92_OBSERVATION_TAPS], error, weight;
 };
@@ -20,6 +23,35 @@ enum v92_observation_fit_stage {
 
 enum { V92_SCALAR_FIT_UPDATES = 96, V92_SCALAR_FIT_BATCH = 12,
 	V92_SCALAR_FIT_STEPS = V92_SCALAR_FIT_UPDATES / V92_SCALAR_FIT_BATCH };
+
+enum v92_observation_fit_result {
+	V92_OBSERVATION_FIT_MORE, V92_OBSERVATION_FIT_READY, V92_OBSERVATION_FIT_DECLINED,
+};
+
+/* Explicit completion from the scalar solver. MORE is unavailable, not a
+ * declined fit. READY alone carries a positive finite gain. */
+struct v92_scalar_fit_result {
+	double gain;
+	enum v92_observation_fit_result status;
+	int rounding;
+};
+
+static inline bool v92_scalar_fit_result_is_valid(struct v92_scalar_fit_result r)
+{
+	return r.status == V92_OBSERVATION_FIT_READY ?
+		r.gain > 0. && r.gain <= DBL_MAX :
+		(r.status == V92_OBSERVATION_FIT_MORE ||
+		 r.status == V92_OBSERVATION_FIT_DECLINED) && r.gain == 0.;
+}
+
+/* A completed value is reusable only in its original numerical context.
+ * An unavailable rounding-mode query retains ordinary, uncached fitting. */
+static inline bool v92_scalar_fit_result_can_reuse(struct v92_scalar_fit_result r)
+{
+	return v92_scalar_fit_result_is_valid(r) &&
+	       r.status != V92_OBSERVATION_FIT_MORE &&
+	       r.rounding >= 0 && r.rounding == fegetround();
+}
 
 struct v92_scalar_fit {
 	double gain, variance, linear_error, xx;
@@ -52,12 +84,11 @@ struct v92_observation_fit_work {
 	 * pruned/declined fits and scalar-only jobs publish no cost.
 	 * Invalid begin grants no new result and can preserve the previous job. */
 	uint64_t training_cost;
+	/* Completed scalar work survives a later tandem-fit decline. A generic
+	 * decline cannot supply this result. Begin invalidates it as above. */
+	struct v92_scalar_fit_result scalar_result;
 	enum v92_observation_fit_stage stage;
 	unsigned cursor;
-};
-
-enum v92_observation_fit_result {
-	V92_OBSERVATION_FIT_MORE, V92_OBSERVATION_FIT_READY, V92_OBSERVATION_FIT_DECLINED,
 };
 
 /* Internal exclusively owned continuation. Begin validates the same training
@@ -75,9 +106,22 @@ bool v92_observation_fit_begin(struct v92_observation_fit_work *work,
 enum v92_observation_fit_result v92_observation_fit_step(struct v92_observation_fit_work *work,
 	const struct v92_observation_training *training, struct v92_observation *output);
 
+/* Internal continuation for a validated job at the scalar stage. The completed
+ * result must belong to identical immutable linear/sample/wire/offset
+ * coordinates, count, taps, law, host gain and rounding mode. Input may
+ * differ. Unavailable/malformed results return DECLINED without changing the
+ * job. Valid completion returns MORE to start its gain sweep, or DECLINED
+ * to end the fit when the scalar exactly explains the cells. This never
+ * publishes a model or retains a pointer. */
+enum v92_observation_fit_result v92_observation_fit_finish_scalar_owned(
+	struct v92_observation_fit_work *work,
+	const struct v92_observation_training *training,
+	struct v92_scalar_fit_result result);
+
 /* Same immutable-training and exclusive-scratch contract, for the scalar
  * fallback alone. Actual wire levels are required. MORE and DECLINED leave
- * gain unchanged; READY publishes the same completed fit as fit_scalar(). */
+ * gain unchanged; READY publishes the same completed fit as fit_scalar().
+ * A terminal step also retains its explicit scalar_result. */
 bool v92_observation_scalar_begin(struct v92_observation_fit_work *work,
 	const struct v92_observation_training *training);
 enum v92_observation_fit_result v92_observation_scalar_step(struct v92_observation_fit_work *work,

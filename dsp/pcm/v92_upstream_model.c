@@ -122,6 +122,7 @@ bool v92_upstream_model_is_valid(const struct v92_upstream_data_rx *receiver)
 		return false;
 	if (model->fitting)
 		return model->acquiring && !model->residual_acquiring && (model->valid == 0 || model->valid == 1) &&
+			v92_scalar_fit_result_is_valid(model->fit.scalar_result) &&
 			model->fit.candidate <= 2 && (model->fit.candidate < 2 || (!model->valid &&
 			 (model->fit.work.stage == V92_FIT_IDLE || model->fit.work.stage == V92_FIT_SCALAR))) &&
 			model->fit.clock < V92_MODEL_SCALAR_SAMPLES &&
@@ -495,6 +496,11 @@ void v92_upstream_model_progress(struct v92_upstream_data_rx *receiver)
 	enum v92_observation_fit_result result = V92_OBSERVATION_FIT_MORE;
 	unsigned stage = model->fit.work.stage;
 	if (candidate == 2) {
+		if (!stage && v92_scalar_fit_result_can_reuse(model->fit.scalar_result)) {
+			if (model->fit.scalar_result.status == V92_OBSERVATION_FIT_READY)
+				model->scalar_gain = model->fit.scalar_result.gain;
+			goto complete;
+		}
 		if (!stage) {
 			if (!v92_observation_scalar_begin(&model->fit.work, &training))
 				result = V92_OBSERVATION_FIT_DECLINED;
@@ -507,7 +513,18 @@ void v92_upstream_model_progress(struct v92_upstream_data_rx *receiver)
 			model->fit.input[i] = candidate ? round_shift_s64_to_s32_saturating(
 				(int64_t)model->x[i] * model->coefficient, 15u) : model->x[i];
 		if (!v92_observation_fit_begin(&model->fit.work, &training)) result = V92_OBSERVATION_FIT_DECLINED;
+	} else if (stage == V92_FIT_SCALAR &&
+		   v92_scalar_fit_result_can_reuse(model->fit.scalar_result)) {
+		/* Keep begin and scalar completion in separate work quanta. Reuse
+		 * removes iterations without combining their peak work. */
+		result = v92_observation_fit_finish_scalar_owned(
+			&model->fit.work, &training, model->fit.scalar_result);
 	} else result = v92_observation_fit_step(&model->fit.work, &training, &model->model[candidate]);
+	/* Only input rounding changes between these two fits. All scalar
+	 * coordinates stay frozen until acquisition closes, including on a
+	 * later tandem decline. An unexecuted solver supplies no result. */
+	if (model->fit.work.scalar_result.status != V92_OBSERVATION_FIT_MORE)
+		model->fit.scalar_result = model->fit.work.scalar_result;
 	if (result == V92_OBSERVATION_FIT_READY) {
 		model->model[candidate].input_coefficient = candidate ? model->coefficient : 0;
 		v92_observation_geometry_reset(&receiver->geometry[candidate]);

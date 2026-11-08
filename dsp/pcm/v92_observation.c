@@ -914,6 +914,27 @@ bool v92_observation_fit_begin(struct v92_observation_fit_work *w,
 	return true;
 }
 
+enum v92_observation_fit_result v92_observation_fit_finish_scalar_owned(
+	struct v92_observation_fit_work *w,
+	const struct v92_observation_training *training,
+	struct v92_scalar_fit_result result)
+{
+	if (w->stage != V92_FIT_SCALAR || !v92_scalar_fit_result_is_valid(result) ||
+	    result.status == V92_OBSERVATION_FIT_MORE || result.rounding != fegetround())
+		return V92_OBSERVATION_FIT_DECLINED;
+	w->scalar_result = result;
+	if (result.status == V92_OBSERVATION_FIT_READY &&
+	    scalar_explains_cells(training, result.gain, w->scalar.low, w->scalar.high)) {
+		w->training_cost = UINT64_MAX;
+		w->stage = V92_FIT_IDLE;
+		return V92_OBSERVATION_FIT_DECLINED;
+	}
+	fit_intervals_begin(w, training->law, training->input, training->sample,
+		training->count, training->taps);
+	w->stage = V92_FIT_SWEEP;
+	return V92_OBSERVATION_FIT_MORE;
+}
+
 enum v92_observation_fit_result v92_observation_fit_step(struct v92_observation_fit_work *w,
 	const struct v92_observation_training *training, struct v92_observation *output)
 {
@@ -922,14 +943,14 @@ enum v92_observation_fit_result v92_observation_fit_step(struct v92_observation_
 	size_t count = training->count;
 	enum g711_law law = training->law;
 	if (w->stage == V92_FIT_SCALAR) {
-		double gain;
+		double gain = 0.;
 		enum v92_observation_fit_result result = step_scalar(&w->scalar.fit,
 			training, w->lower, w->upper, &gain);
 		if (result == V92_OBSERVATION_FIT_MORE) return result;
-		if (result == V92_OBSERVATION_FIT_READY &&
-		    scalar_explains_cells(training, gain, w->scalar.low, w->scalar.high)) goto decline;
-		fit_intervals_begin(w, law, x, y, count, training->taps);
-		w->stage = V92_FIT_SWEEP;
+		return v92_observation_fit_finish_scalar_owned(w, training,
+			(struct v92_scalar_fit_result){ .status = result,
+				.gain = result == V92_OBSERVATION_FIT_READY ? gain : 0.,
+				.rounding = fegetround() });
 	} else if (w->stage == V92_FIT_SWEEP) {
 		int result = fit_intervals_step(w, law, x, y, count, training->taps);
 		if (result < 0) goto decline;
@@ -1057,7 +1078,12 @@ enum v92_observation_fit_result v92_observation_scalar_step(struct v92_observati
 {
 	if (w->stage != V92_FIT_SCALAR) return V92_OBSERVATION_FIT_DECLINED;
 	enum v92_observation_fit_result result = step_scalar(&w->scalar.fit, training, w->lower, w->upper, gain);
-	if (result != V92_OBSERVATION_FIT_MORE) w->stage = V92_FIT_IDLE;
+	if (result != V92_OBSERVATION_FIT_MORE) {
+		w->scalar_result = (struct v92_scalar_fit_result){ .status = result,
+			.gain = result == V92_OBSERVATION_FIT_READY ? *gain : 0.,
+			.rounding = fegetround() };
+		w->stage = V92_FIT_IDLE;
+	}
 	return result;
 }
 
