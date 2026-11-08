@@ -170,7 +170,9 @@ static const char *progress_v90(const struct dp *dp)
 			case V92_PHASE3_DIGITAL_RECEIVE_SU_PHASE:
 			case V92_PHASE3_DIGITAL_RECEIVE_SU_RESPONSE: return "phase3/Jd-Jp/Su";
 			case V92_PHASE3_DIGITAL_RECEIVE_SECOND_TRN1U: return "phase3/TRN1u-DIL";
-			case V92_PHASE3_DIGITAL_RECEIVE_CPT: return "phase3/wait-CPt-E1u";
+			case V92_PHASE3_DIGITAL_RECEIVE_CPT:
+				return call->state.phase3.v92_digital.receive.cpt.signs.matching_records ?
+					"phase3/CPt-valid-wait-E1u" : "phase3/wait-CPt";
 			case V92_PHASE3_DIGITAL_RECEIVE_COMPLETE: return "phase3/complete";
 			}
 		} else {
