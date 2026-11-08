@@ -702,8 +702,7 @@ bool v92_pcm_frame_rx_is_valid(const struct v92_pcm_frame_rx *receiver)
 	bool normalized = false;
 
 	if (receiver == NULL || !v92_pcm_mapping_is_valid(&receiver->mapping) ||
-	    receiver->path_count == 0u ||
-	    receiver->path_count > V92_PCM_RX_PATHS ||
+	    (receiver->kind != V92_PCM_RX_HISTORY && receiver->kind != V92_PCM_RX_INDEPENDENT) ||
 	    receiver->pending_frames > V92_PCM_RX_DELAY_FRAMES ||
 	    receiver->post_b1_frames > receiver->pending_frames ||
 	    receiver->b1u_frames > V92_B1U_FRAMES ||
@@ -728,6 +727,13 @@ bool v92_pcm_frame_rx_is_valid(const struct v92_pcm_frame_rx *receiver)
 	default:
 		return false;
 	}
+	if (receiver->kind == V92_PCM_RX_INDEPENDENT)
+		return receiver->observation == V92_PCM_FRAME_CONSTELLATION &&
+			receiver->path_count == 0 && receiver->independent.fill == receiver->pending_frames &&
+			receiver->independent.selection == selected &&
+			receiver->independent.data_bits == receiver->mapping.data_bits_per_frame &&
+			v92_survivor_is_valid(&receiver->independent);
+	if (!receiver->path_count || receiver->path_count > V92_PCM_RX_PATHS) return false;
 	for (size_t index = 0u; index < receiver->path_count; ++index) {
 		const struct v92_pcm_frame_rx_path *path = &receiver->paths[index];
 
@@ -758,7 +764,8 @@ bool v92_pcm_frame_rx_is_valid(const struct v92_pcm_frame_rx *receiver)
 bool v92_pcm_frame_input_rounding_is_identity(
 	const struct v92_pcm_frame_rx *receiver, int16_t coefficient)
 {
-	if (coefficient <= 0 || !v92_pcm_frame_rx_is_valid(receiver))
+	if (coefficient <= 0 || !v92_pcm_frame_rx_is_valid(receiver) ||
+	    receiver->kind != V92_PCM_RX_HISTORY)
 		return false;
 	const struct v92_pcm_mapping *mapping = &receiver->mapping;
 	const struct v92_cpd_parameters *cpd = &mapping->cpd;
@@ -860,6 +867,129 @@ enum v92_pcm_frame_result v92_pcm_frame_rx_init_constellation(
 	return initialize_receiver(receiver, mapping, 0, V92_PCM_FRAME_CONSTELLATION);
 }
 
+enum v92_pcm_frame_result v92_pcm_frame_rx_use_independent(struct v92_pcm_frame_rx *receiver)
+{
+
+	if (!receiver)
+		return V92_PCM_FRAME_INVALID_ARGUMENT;
+
+	if (!v92_pcm_frame_rx_is_valid(receiver) ||
+	    receiver->observation != V92_PCM_FRAME_CONSTELLATION)
+		return V92_PCM_FRAME_INVALID_PARAMETERS;
+
+	if (receiver->kind == V92_PCM_RX_INDEPENDENT)
+		return V92_PCM_FRAME_OK;
+
+	struct v92_survivor seeded;
+
+	if (!v92_survivor_init(&seeded, &receiver->mapping))
+		return V92_PCM_FRAME_INVALID_PARAMETERS;
+
+	seeded.fill = receiver->pending_frames;
+
+	for (unsigned n = 0; n < seeded.states; n++)
+		seeded.metric[n] = UINT64_MAX;
+
+	for (unsigned i = 0; i < receiver->path_count; i++) {
+
+		const struct v92_pcm_frame_rx_path *p = receiver->paths + i;
+		unsigned n = p->trellis.state;
+
+		if (p->metric >= seeded.metric[n])
+			continue;
+
+		struct v92_survivor_context *c = seeded.context + n;
+		memset(c, 0, sizeof *c);
+
+		for (unsigned j = 0; j < V92_SURVIVOR_MARGINS; j++)
+			c->margin[j] = UINT64_MAX;
+
+		for (unsigned j = 0; j < seeded.fill; j++) {
+
+			for (unsigned bit = 0; bit < seeded.data_bits; bit++) {
+
+				if (bit < 64)
+					c->pending[j].lo |= (uint64_t)p->pending[j][bit] << bit;
+
+				else
+					c->pending[j].hi |= (uint64_t)p->pending[j][bit]
+							    << (bit - 64);
+			}
+
+			if ((p->ambiguous_frames >> j) & 1)
+				c->margin[j] = 0;
+		}
+
+		c->gpa = p->descrambler.history;
+		c->sign = p->differential;
+
+		c->code_mismatches = p->b1u_code_mismatches;
+		c->nondata = p->nondata_frames;
+
+		c->rm_frames = p->rm_frames;
+		c->rm_prime_frames = p->rm_prime_frames;
+
+		seeded.metric[n] = p->metric;
+	}
+
+	/* All near-equivalent coding hypotheses retain their unresolved evidence,
+	 * including a loser encountered before the final minimum for its state. */
+	for (unsigned i = 0; i < receiver->path_count; i++) {
+
+		const struct v92_pcm_frame_rx_path *p = receiver->paths + i;
+		unsigned n = p->trellis.state;
+
+		uint64_t gap = p->metric - seeded.metric[n];
+		struct v92_survivor_context *c = seeded.context + n;
+
+		if (gap == 0)
+			c->code_mismatches |= p->b1u_code_mismatches;
+
+		for (unsigned j = 0; j < seeded.fill; j++) {
+
+			bool differs = (((c->nondata ^ p->nondata_frames) >> j) & 1) != 0;
+
+			for (unsigned bit = 0; bit < seeded.data_bits; bit++)
+				differs |= (bit < 64 ? ((c->pending[j].lo >> bit) & 1)
+						     : ((c->pending[j].hi >> (bit - 64)) & 1)) !=
+					   p->pending[j][bit];
+
+			uint64_t other =
+			    differs || ((p->ambiguous_frames >> j) & 1) ? gap : UINT64_MAX;
+
+			if (other < c->margin[j])
+				c->margin[j] = other;
+		}
+
+		if (c->gpa != p->descrambler.history || c->sign != p->differential ||
+		    c->rm_frames != p->rm_frames || c->rm_prime_frames != p->rm_prime_frames)
+			for (unsigned j = seeded.fill; j <= seeded.fill + 2u; j++)
+				if (gap < c->margin[j])
+					c->margin[j] = gap;
+	}
+
+	/* Match free B1 acquisition's initial polarity alternative. This is a
+	 * coding hypothesis, not a constraint on received source bits. */
+	if (!receiver->noise.frames && !receiver->pending_frames && receiver->path_count == 1 &&
+	    seeded.selection == V34_TRELLIS_64_STATE) {
+
+		unsigned n = receiver->paths[0].trellis.state, other = n ^ 32u;
+
+		seeded.context[other] = seeded.context[n];
+		seeded.context[other].sign ^= 1;
+
+		seeded.metric[other] = seeded.metric[n];
+	}
+
+	memset(receiver->paths, 0, sizeof receiver->paths);
+	receiver->independent = seeded;
+
+	receiver->kind = V92_PCM_RX_INDEPENDENT;
+	receiver->path_count = 0;
+
+	return V92_PCM_FRAME_OK;
+}
+
 enum v92_pcm_frame_result v92_pcm_frame_rx_reset_control(
 	struct v92_pcm_frame_rx *receiver)
 {
@@ -869,6 +999,10 @@ enum v92_pcm_frame_result v92_pcm_frame_rx_reset_control(
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
 	/* Pending words retain their evidence; new control is not B1u. */
 	receiver->b1u_frames = V92_B1U_FRAMES;
+	if (receiver->kind == V92_PCM_RX_INDEPENDENT) {
+		v92_survivor_reset_control_owned(&receiver->independent);
+		return V92_PCM_FRAME_OK;
+	}
 	for (size_t index = 0u; index < receiver->path_count; ++index) {
 		receiver->paths[index].descrambler.history = 0u;
 		receiver->paths[index].differential = 0u;
@@ -1241,6 +1375,109 @@ static void train_noise(struct v92_pcm_frame_noise *noise,
 	};
 }
 
+static enum v92_pcm_frame_result decode_independent(
+    struct v92_pcm_frame_rx *receiver, const int16_t *samples, bool b1u, uint8_t *bits,
+    struct v92_pcm_frame_decision *decision, const uint64_t costs[12][V92_SURVIVOR_POINTS],
+    const struct v34_scrambler *expected_state, const uint8_t *expected, bool expect_b1u,
+    const bool *received, bool cells, struct v92_pcm_frame_likelihood *likelihood)
+{
+
+	struct v92_survivor scratch;
+	struct v92_survivor_output decoded;
+
+	struct v92_survivor_word coded = {0};
+
+	if (expect_b1u)
+		for (unsigned bit = 0; bit < receiver->mapping.data_bits_per_frame; bit++) {
+
+			if (bit < 64)
+				coded.lo |= (uint64_t)expected[bit] << bit;
+			else
+				coded.hi |= (uint64_t)expected[bit] << (bit - 64);
+		}
+
+	if (!v92_survivor_advance_owned(&receiver->independent, costs, b1u,
+					expect_b1u ? &coded : NULL, &decoded, &scratch))
+		return V92_PCM_FRAME_NO_PATH;
+
+	struct v92_pcm_frame_decision result = {
+	    .bits_ready = decoded.ready,
+	    .ambiguous = decoded.ready && decoded.margin == 0,
+	    .uncertain = !b1u && cells && decoded.uncertainty_margin <= decoded.frame_cost / 4,
+	    .b1u_mismatches = decoded.code_mismatch ? V92_B1U_CODE_MISMATCH : 0,
+	    .rm = decoded.rm};
+
+	for (unsigned symbol = 0; symbol < 12; symbol++) {
+
+		unsigned phase = receiver->mapping.cpd.frame_constellation[symbol % 6];
+
+		int eta = decoded.eta[symbol];
+		unsigned modulus = receiver->mapping.cpd.modulus[symbol];
+
+		int value = symbol % 4 == 3 ? (eta - (eta & 1)) / 2 : eta;
+
+		result.frame.signed_index[symbol] = eta;
+
+		result.frame.digit[symbol] =
+		    (uint8_t)((value % (int)modulus + (int)modulus) % modulus);
+
+		result.frame.y0[symbol] = (uint8_t)(eta & 1);
+
+		result.frame.u[symbol] =
+		    v92_cpd_signed_point(receiver->mapping.cpd.constellation + phase, eta);
+
+		result.predicted_samples[symbol] = result.frame.u[symbol];
+
+		int64_t error = (int64_t)samples[symbol] - result.frame.u[symbol];
+		result.squared_error += (uint64_t)(error * error);
+	}
+
+	/* The new differential state is the top bit of the observed packed word. */
+	for (unsigned symbol = 12; symbol-- > 0;)
+		if (receiver->independent.bits[symbol]) {
+
+			result.frame.frame_sign =
+			    (uint8_t)((result.frame.digit[symbol] >>
+				       (receiver->independent.bits[symbol] - 1)) &
+				      1);
+			break;
+		}
+
+	if (decoded.ready)
+		for (unsigned bit = 0; bit < receiver->mapping.data_bits_per_frame; bit++) {
+
+			bits[bit] = (uint8_t)(bit < 64 ? ((decoded.word.lo >> bit) & 1)
+						       : ((decoded.word.hi >> (bit - 64)) & 1));
+
+			if (!bits[bit])
+				result.b1u_mismatches |= V92_B1U_SOURCE_MISMATCH;
+		}
+
+	receiver->pending_frames = receiver->independent.fill;
+
+	if (expect_b1u) {
+		receiver->b1u_scrambler = *expected_state;
+		receiver->b1u_frames++;
+	}
+
+	if (b1u)
+		receiver->post_b1_frames = 0;
+	else if (receiver->post_b1_frames < V92_PCM_RX_DELAY_FRAMES)
+		receiver->post_b1_frames++;
+
+	if (b1u)
+		train_noise(&receiver->noise, samples, result.predicted_samples, received);
+
+	if (likelihood) {
+		likelihood->cost = decoded.cost;
+		for (unsigned i = 0; i < 12; i++)
+			likelihood->predicted_samples[i] = result.predicted_samples[i];
+	}
+
+	*decision = result;
+	return V92_PCM_FRAME_OK;
+}
+
 static enum v92_pcm_frame_result decode_frame(
 	struct v92_pcm_frame_rx *receiver,
 	const int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS], bool b1u,
@@ -1311,6 +1548,9 @@ static enum v92_pcm_frame_result decode_frame(
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
 	if (bit_count != receiver->mapping.data_bits_per_frame)
 		return V92_PCM_FRAME_OUT_OF_RANGE;
+	if (receiver->kind == V92_PCM_RX_INDEPENDENT &&
+	    (acquire_model || model || receiver->observation != V92_PCM_FRAME_CONSTELLATION))
+		return V92_PCM_FRAME_INVALID_PARAMETERS;
 	struct v34_scrambler b1u_scrambler = receiver->b1u_scrambler;
 	uint8_t expected[V92_PCM_MAPPING_MAX_BITS];
 	bool expect_b1u = receiver->b1u_frames < V92_B1U_FRAMES;
@@ -1406,6 +1646,12 @@ static enum v92_pcm_frame_result decode_frame(
 				}
 			}
 		}
+	}
+
+	if (receiver->kind == V92_PCM_RX_INDEPENDENT) {
+		if (!lookahead) return V92_PCM_FRAME_INVALID_PARAMETERS;
+		return decode_independent(receiver,samples,b1u,bits,decision,point_cost,
+			&b1u_scrambler,expected,expect_b1u,received,cells!=NULL,likelihood);
 	}
 
 	for (size_t index = 0u; index < path_count; ++index) {

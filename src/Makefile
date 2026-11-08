@@ -243,6 +243,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v92_cpd.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_pcm_mapping.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_pcm_frame.c \
+	$(DSP_PCM_SOURCE_DIR)/v92_survivor.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_upstream_data_tx.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_upstream_data_rx.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_b1_sync.c \

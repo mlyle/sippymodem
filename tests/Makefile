@@ -1931,6 +1931,7 @@ V92_PCM_FRAME_TEST_BINARY := $(BUILD_DIR)/test_v92_pcm_frame
 V92_PCM_FRAME_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v92_pcm_frame.o \
 	$(BUILD_DIR)/v92_pcm_frame.o \
+	$(BUILD_DIR)/v92_survivor.o \
 	$(BUILD_DIR)/v92_observation.o \
 	$(BUILD_DIR)/gaussian.o \
 	$(BUILD_DIR)/v92_pcm_mapping.o \
@@ -5653,6 +5654,10 @@ $(BUILD_DIR)/v92_pcm_mapping.o: \
 
 $(BUILD_DIR)/v92_pcm_frame.o: \
 	$(DSP_PCM_SOURCE_DIR)/v92_pcm_frame.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v92_survivor.o: \
+	$(DSP_PCM_SOURCE_DIR)/v92_survivor.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v92_cpd_direct.o: \

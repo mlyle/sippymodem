@@ -6,6 +6,7 @@
 #include "v34_framing.h"
 #include "v34_trellis.h"
 #include "v92_pcm_mapping.h"
+#include "v92_survivor.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -18,15 +19,12 @@ enum {
 	V92_B1U_SYMBOLS = V92_B1U_FRAMES * V92_PCM_MAPPING_FRAME_SYMBOLS,
 	V92_B1U_VALIDATION_SYMBOLS = (V92_B1U_FRAMES - V92_B1U_ACQUISITION_FRAMES) *
 		V92_PCM_MAPPING_FRAME_SYMBOLS,
-	/* 120-symbol (15 ms) traceback with bounded competing histories. */
+	/* Filter-dependent hypotheses; independent scores use physical states. */
 	V92_PCM_RX_PATHS = 32,
-	V92_PCM_RX_DELAY_FRAMES = 10,
 	/* Observation costs are -2e6 log likelihood. Do not settle conflicting
 	 * payload below roughly 150:1 evidence when future histories merge.
 	 * This is receiver recovery policy, not a wire-protocol requirement. */
 	V92_PCM_RX_AMBIGUITY_COST = 10000000,
-	/* Qualify 240T inside the 384T request, before its 24T prime tail. */
-	V92_PCM_RM_QUALIFY_FRAMES = 20,
 	/* Includes the enlarged final (clipped) positive PCMU cell. */
 	V92_PCM_LEVEL_FIT_POINTS = 2048,
 };
@@ -92,13 +90,6 @@ struct v92_pcm_frame_rx_path {
 	uint8_t rm_prime_frames;
 };
 
-enum v92_pcm_frame_rm {
-	V92_PCM_FRAME_RM_NONE,
-	V92_PCM_FRAME_RM_SIGNAL,
-	V92_PCM_FRAME_RM_PRIME,
-	V92_PCM_FRAME_RM_COMPLETE,
-};
-
 enum v92_pcm_frame_observation {
 	V92_PCM_FRAME_FILTER_OUTPUT,
 	V92_PCM_FRAME_CONSTELLATION,
@@ -117,12 +108,21 @@ struct v92_pcm_frame_noise {
 	uint16_t samples;
 };
 
+enum v92_pcm_rx_kind {
+	V92_PCM_RX_HISTORY,
+	V92_PCM_RX_INDEPENDENT,
+};
+
 struct v92_pcm_frame_rx {
-	/* Fixed until reinitialization: history storage uses the declared filter
-	 * lengths. Path equivalence may ignore zero response tails, but retains
-	 * x history for any supported channel model selected on a later frame. */
+	/* Fixed mapping for the coding epoch. The history owner retains declared
+	 * filter memories for later stateful likelihoods; the independent owner
+	 * is selected only for residual-only constellation observations. */
 	struct v92_pcm_mapping mapping;
-	struct v92_pcm_frame_rx_path paths[V92_PCM_RX_PATHS];
+	union {
+		struct v92_pcm_frame_rx_path paths[V92_PCM_RX_PATHS];
+		struct v92_survivor independent;
+	};
+	enum v92_pcm_rx_kind kind;
 	struct v92_pcm_frame_noise noise;
 	/* Counts actual decoded words, independently of the quality-fit clock.
 	 * An acquisition candidate that skips a control prefix starts its own
@@ -277,6 +277,14 @@ enum v92_pcm_frame_result v92_pcm_frame_rx_refine_level(
 	struct v92_pcm_frame_rx *receiver, struct v92_pcm_level_fit *fit,
 	const struct v92_pcm_frame *frame,
 	const int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS]);
+
+/* Explicit residual-only constellation owner. Full-capacity power-of-two
+ * mappings are eligible; rejection preserves the existing decoder. The caller
+ * must keep future observations independent of filter history. Current
+ * decisions expose mapping coordinates; filter x/v coordinates are unavailable
+ * for this owner and must not be used to fit a stateful observation model. */
+enum v92_pcm_frame_result v92_pcm_frame_rx_use_independent(
+	struct v92_pcm_frame_rx *receiver);
 
 /* Receive the matching control boundary. Reset descrambler and differential
  * state on EVERY surviving path, retaining metrics, ambiguity, filters,
