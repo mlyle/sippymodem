@@ -154,37 +154,28 @@ static bool select_paths(
 
 	for (uint8_t predecessor = 0; predecessor < state_count;
 	     ++predecessor) {
-		struct v34_convolutional_encoder origin = {
-			.state = predecessor,
-			.selection = survivor->selection,
-		};
-		uint8_t convolutional_output;
+		uint8_t convolutional_output = predecessor & 1u;
 
 		if (survivor->path_metric[predecessor] == DBL_MAX)
 			continue;
-		if (v34_convolutional_encoder_output(
-			    &origin, &convolutional_output) !=
-		    V34_TRELLIS_OK)
-			return false;
 		for (uint8_t branch = 0; branch < branches->count; ++branch) {
-			struct v34_convolutional_encoder next = origin;
+			uint8_t next;
 			double metric;
 
 			if (branches->branch[branch].convolutional_output !=
 			    convolutional_output)
 				continue;
-			if (v34_convolutional_encoder_advance(
-				    &next,
-				    &branches->branch[branch].convolutional_input) !=
-			    V34_TRELLIS_OK)
-				return false;
+			/* advance() has checked both owners and every branch. */
+			next = v34_convolutional_next_state_owned(
+				survivor->selection, predecessor,
+				&branches->branch[branch].convolutional_input);
 			metric = survivor->path_metric[predecessor] +
 				 branches->branch[branch].squared_error;
-			if (!isfinite(metric) || metric >= next_metric[next.state])
+			if (!isfinite(metric) || metric >= next_metric[next])
 				continue;
-			next_metric[next.state] = metric;
-			step->predecessor[next.state] = predecessor;
-			step->branch_index[next.state] = branch;
+			next_metric[next] = metric;
+			step->predecessor[next] = predecessor;
+			step->branch_index[next] = branch;
 		}
 	}
 	for (uint8_t state = 0; state < state_count; ++state) {

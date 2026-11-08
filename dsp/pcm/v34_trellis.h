@@ -96,4 +96,11 @@ v34_convolutional_encoder_advance(
 	struct v34_convolutional_encoder *encoder,
 	const struct v34_convolutional_input *input);
 
+/* Pure inner step for an owner that has validated selection, state and the
+ * four binary inputs. Neither the input nor any encoder is retained or
+ * modified. Checked callers use encoder_advance() above. */
+uint8_t v34_convolutional_next_state_owned(
+	enum v34_trellis_selection selection, uint8_t state,
+	const struct v34_convolutional_input *input);
+
 #endif /* V34_TRELLIS_H */

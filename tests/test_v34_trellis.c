@@ -331,6 +331,14 @@ static bool test_all_state_transitions(void)
 				uint8_t expected = model_next_state(
 					selections[mode], state, &input);
 				uint8_t y0 = UINT8_MAX;
+				struct v34_convolutional_input saved = input;
+				uint8_t owned = v34_convolutional_next_state_owned(
+					selections[mode], state, &input);
+
+				CHECK(owned == expected &&
+				      memcmp(&input, &saved, sizeof(input)) == 0,
+				      "owned mode %zu state %u input %#x changed the transition or input",
+				      mode, state, packed);
 
 				CHECK(v34_convolutional_encoder_is_valid(
 					      &encoder) &&
@@ -541,7 +549,8 @@ static bool test_validation(void)
 	      v34_convolutional_encoder_init(
 		      &encoder, (enum v34_trellis_selection)3) ==
 		      V34_TRELLIS_INVALID_ARGUMENT &&
-	      memcmp(&encoder, &saved_encoder, sizeof(encoder)) == 0,
+	      encoder.state == saved_encoder.state &&
+	      encoder.selection == saved_encoder.selection,
 	      "invalid encoder initialization changed its destination");
 	input = (struct v34_convolutional_input){ 0 };
 	CHECK(v34_convolutional_encoder_output(NULL, &y0) ==
@@ -553,7 +562,8 @@ static bool test_validation(void)
 	      v34_convolutional_encoder_advance(&encoder, NULL) ==
 		      V34_TRELLIS_INVALID_ARGUMENT &&
 	      y0 == UINT8_MAX &&
-	      memcmp(&encoder, &saved_encoder, sizeof(encoder)) == 0,
+	      encoder.state == saved_encoder.state &&
+	      encoder.selection == saved_encoder.selection,
 	      "invalid encoder operation changed state or output");
 	encoder.state = 16;
 	CHECK(!v34_convolutional_encoder_is_valid(&encoder) &&
@@ -564,7 +574,8 @@ static bool test_validation(void)
 	input.y4 = 2;
 	CHECK(v34_convolutional_encoder_advance(&encoder, &input) ==
 		      V34_TRELLIS_INVALID_ARGUMENT &&
-	      memcmp(&encoder, &saved_encoder, sizeof(encoder)) == 0,
+	      encoder.state == saved_encoder.state &&
+	      encoder.selection == saved_encoder.selection,
 	      "invalid convolutional input changed encoder state");
 	return true;
 }

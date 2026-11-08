@@ -208,6 +208,21 @@ static uint8_t advance_64_state(
 	return packed;
 }
 
+uint8_t v34_convolutional_next_state_owned(
+	enum v34_trellis_selection selection, uint8_t state,
+	const struct v34_convolutional_input *input)
+{
+	switch (selection) {
+	case V34_TRELLIS_16_STATE:
+		return advance_16_state(state, input);
+	case V34_TRELLIS_32_STATE:
+		return advance_32_state(state, input);
+	case V34_TRELLIS_64_STATE:
+		return advance_64_state(state, input);
+	}
+	return 0;
+}
+
 enum v34_trellis_result
 v34_convolutional_encoder_advance(
 	struct v34_convolutional_encoder *encoder,
@@ -219,17 +234,8 @@ v34_convolutional_encoder_advance(
 	    !v34_convolutional_input_is_valid(input))
 		return V34_TRELLIS_INVALID_ARGUMENT;
 	next = *encoder;
-	switch (next.selection) {
-	case V34_TRELLIS_16_STATE:
-		next.state = advance_16_state(next.state, input);
-		break;
-	case V34_TRELLIS_32_STATE:
-		next.state = advance_32_state(next.state, input);
-		break;
-	case V34_TRELLIS_64_STATE:
-		next.state = advance_64_state(next.state, input);
-		break;
-	}
+	next.state = v34_convolutional_next_state_owned(
+		next.selection, next.state, input);
 	if (!v34_convolutional_encoder_is_valid(&next))
 		return V34_TRELLIS_INVALID_ARGUMENT;
 	*encoder = next;
