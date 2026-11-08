@@ -54,6 +54,14 @@ struct v8_calling {
 	struct v92_qc1_receiver qc_receiver;
 	struct v92_qc1_message qc_request;
 	struct v92_qc1_message qc_response;
+	/* One bounded compatibility retry. Four streaming 200-ms projections
+	 * distinguish fresh ANSam from silence or unmodulated answer tone. */
+	struct {
+		double history[3][2], energy;
+		uint16_t samples, quiet_remaining;
+		uint8_t windows, mask;
+		bool decided;
+	} cm_retry;
 	enum v8_modulation selected_modulation;
 	enum v8_calling_state state;
 	enum v8_calling_result terminal_result;
