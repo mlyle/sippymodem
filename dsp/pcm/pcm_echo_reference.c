@@ -294,9 +294,14 @@ enum pcm_echo_reference_result pcm_echo_reference_scan_observe(
 	input_energy = square_s16(received_sample);
 	reference->scan_input_energy = add_u64_saturating(
 		reference->scan_input_energy, input_energy);
+	size_t cursor = ring_index_at_age(reference->write,
+		PCM_ECHO_REFERENCE_HISTORY_SAMPLES, reference->scan_pre_samples + 1u);
 	for (uint32_t index = 0; index < reference->scan_count; ++index) {
-		uint32_t age = index + 1u + reference->scan_pre_samples;
-		int16_t sample = sample_at_age(reference, age);
+		int16_t sample = reference->samples[cursor];
+
+		if (cursor == 0u)
+			cursor = PCM_ECHO_REFERENCE_HISTORY_SAMPLES;
+		--cursor;
 		int64_t cross;
 		cross = (int64_t)sample * received_sample;
 		/* Valid first moments cannot overflow their 47-bit bound. Keep
