@@ -14,7 +14,7 @@ struct v92_observation_fit_moments {
 struct v92_observation_fit_boundary { double at; unsigned next; };
 
 enum v92_observation_fit_stage {
-	V92_FIT_IDLE, V92_FIT_SWEEP, V92_FIT_CENTER, V92_FIT_BOUNDS,
+	V92_FIT_IDLE, V92_FIT_SWEEP, V92_FIT_CENTER,
 	V92_FIT_REFINE, V92_FIT_WEIGHTS, V92_FIT_GEOMETRY, V92_FIT_VALIDATE,
 };
 
@@ -31,6 +31,7 @@ struct v92_observation_fit_work {
 	int16_t q[V92_OBSERVATION_TRAINING];
 	double low, end, linear_error;
 	bool pending;
+	/* Host-coordinate codec cells, prepared once before fitting. */
 	double lower[V92_OBSERVATION_TRAINING], upper[V92_OBSERVATION_TRAINING];
 	double costs[V92_OBSERVATION_INTERVALS], variances[V92_OBSERVATION_INTERVALS];
 	int16_t bins[V92_OBSERVATION_INTERVALS][V92_OBSERVATION_TRAINING];

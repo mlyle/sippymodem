@@ -860,6 +860,20 @@ static void check_resumable(const struct v92_observation_training *training,
 	memcpy(before, output, sizeof(before));
 	assert(v92_observation_fit_begin(work, training));
 	assert(v92_observation_fit_begin(work + 1, &shorter));
+	/* A bad wire cell must not leave a resumable job using the preceding
+	 * acquisition's bounds. Include unused history and the scored tail,
+	 * then restart beside the untouched first owner. */
+	int16_t levels[TRAINING];
+	const size_t invalid[] = { 0, shorter.taps, shorter.count - 1 };
+	for (unsigned j = 0; j < sizeof(invalid) / sizeof(invalid[0]); j++) {
+		memcpy(levels, shorter.levels, shorter.count * sizeof(*levels));
+		levels[invalid[j]] = 1; /* Neither law reconstructs this level. */
+		struct v92_observation_training bad = shorter;
+		bad.levels = levels;
+		assert(!v92_observation_fit_begin(work + 1, &bad));
+		assert(!memcmp(output + 1, before + 1, sizeof(*output)));
+		assert(v92_observation_fit_begin(work + 1, &shorter));
+	}
 	bool done[2] = { false, false };
 	unsigned steps[2] = { 0, 0 };
 	for (unsigned turn = 0; !done[0] || !done[1]; turn++) {

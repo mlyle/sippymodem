@@ -28,6 +28,8 @@ _Static_assert(V92_OBSERVATION_SPANS == 1024, "coordinate hash uses its upper te
 
 static bool codec_bounds(enum g711_law law, double gain, int16_t observed,
 	const int16_t *level, double offset, double *lower, double *upper);
+static bool fit_scalar_cells(double *gain, const struct v92_observation_training *training,
+	const double *low, const double *high);
 
 static bool solve_channel(const struct v92_observation_fit_moments *moments, unsigned taps, double fitted[TAPS])
 {
@@ -327,21 +329,6 @@ static bool fit_bin_channel(struct v92_observation_interval *fit, const int16_t 
 /* The first-codec gain intervals come from the initial center fit. Select
  * noise from the best likelihood fit, then compare all retained hypotheses
  * under that common variance and their log-uniform gain prior. */
-static bool refit_bins_begin(struct v92_observation_fit_work *w,
-	const int16_t *y, const int16_t *levels, const double *offsets, size_t count)
-{
-	struct v92_observation *model = &w->model;
-	for (size_t j = 0; j < count; j++) {
-		double lower, upper;
-		if (!codec_bounds(model->law, model->quantizer_gain, y[j],
-			levels ? levels + j : NULL, offsets ? offsets[j] : 0., &lower, &upper))
-			return false;
-		w->lower[j] = y[j] + lower;
-		w->upper[j] = y[j] + upper;
-	}
-	return true;
-}
-
 static void refit_bins_step(struct v92_observation_fit_work *w,
 	const int32_t *x, const int16_t *y, size_t count, unsigned i)
 {
@@ -405,6 +392,28 @@ static bool codec_bounds(enum g711_law law, double gain, int16_t observed,
 	/* A finite but unrepresentably large shift can erase the interval's
 	 * width. That is not a point observation with a perfect residual. */
 	return offset == 0. || *lower < *upper;
+}
+
+/* Prepare one immutable set of host-coordinate cells for both scalar and
+ * channel fitting. Test the unchanged predictor using relative bounds before
+ * adding the sample: that arithmetic matters at directed-rounding edges. */
+static bool training_cells(const struct v92_observation_training *training,
+	double *low, double *high, bool *linear)
+{
+	if (linear) *linear = true;
+	for (size_t i = 0; i < training->count; i++) {
+		double lower, upper;
+		if (!codec_bounds(training->law, training->host_gain, training->sample[i],
+			training->levels ? training->levels + i : NULL,
+			training->offsets ? training->offsets[i] : 0., &lower, &upper)) return false;
+		if (linear && i >= training->taps) {
+			double error = (double)training->sample[i] - training->linear[i];
+			*linear &= error + lower < 0. && error + upper > 0.;
+		}
+		low[i] = training->sample[i] + lower;
+		high[i] = training->sample[i] + upper;
+	}
+	return true;
 }
 
 static int16_t magnitude_code(enum g711_law law, int32_t x, unsigned magnitude)
@@ -799,42 +808,21 @@ static bool prefer_linear(const struct v92_observation *model,
 	return false;
 }
 
-/* If the unchanged linear predictor lies strictly inside every actual codec
- * cell, its zero-noise likelihood is already maximal. Do not let the numeric
- * variance floor reward unnecessary structure that moves within those cells.
- * This is model admission, not a noise estimate for the remaining channels. */
-static bool linear_explains_cells(const struct v92_observation_training *training)
-{
-	if (!training->levels) return false;
-	for (size_t i = training->taps; i < training->count; i++) {
-		double lower, upper;
-		if (!codec_bounds(training->law, training->host_gain, training->sample[i],
-			training->levels + i, training->offsets ? training->offsets[i] : 0.,
-			&lower, &upper)) return false;
-		double error = (double)training->sample[i] - training->linear[i];
-		if (!(error + lower < 0. && error + upper > 0.)) return false;
-	}
-	return true;
-}
-
 /* A positive scalar may explain all wire cells even when gain one does
  * not. Intersect their open gain constraints, then check the actual integer
  * codec: a rounded half-boundary is not proof of a noiseless explanation. */
-static bool scalar_explains_cells(const struct v92_observation_training *training)
+static bool scalar_explains_cells(const struct v92_observation_training *training,
+	const double *lower, const double *upper)
 {
 	if (!training->levels) return false;
 	double low = 0., high = HUGE_VAL;
 	for (size_t i = training->taps; i < training->count; ++i) {
-		double lower, upper, x = training->linear[i];
-		if (!codec_bounds(training->law, training->host_gain, training->sample[i],
-			training->levels + i, training->offsets ? training->offsets[i] : 0.,
-			&lower, &upper)) return false;
-		lower += training->sample[i]; upper += training->sample[i];
+		double x = training->linear[i];
 		if (x == 0.) {
-			if (!(lower < 0. && upper > 0.)) return false;
+			if (!(lower[i] < 0. && upper[i] > 0.)) return false;
 			continue;
 		}
-		double a = lower / x, b = upper / x;
+		double a = lower[i] / x, b = upper[i] / x;
 		low = fmax(low, x > 0. ? a : b);
 		high = fmin(high, x > 0. ? b : a);
 		if (!(low < high)) return false;
@@ -844,7 +832,7 @@ static bool scalar_explains_cells(const struct v92_observation_training *trainin
 	 * receiver, not just a different feasible gain. Keep that fitter and
 	 * validate its reconstruction before declining a tandem hypothesis. */
 	double gain;
-	if (!v92_observation_fit_scalar(&gain, training) ||
+	if (!fit_scalar_cells(&gain, training, lower, upper) ||
 	    !(gain > low && gain < high)) return false;
 	for (size_t i = training->taps; i < training->count; ++i) {
 		double offset = training->offsets ? training->offsets[i] : 0.;
@@ -904,8 +892,11 @@ bool v92_observation_fit_begin(struct v92_observation_fit_work *w,
 		energy += (double)training->sample[i] * training->sample[i]; linear_error += error * error;
 	}
 	memset(w, 0, sizeof(*w));
-	if (energy == 0. || linear_error == 0. || linear_explains_cells(training) ||
-		scalar_explains_cells(training)) return false;
+	if (energy == 0. || linear_error == 0.) return false;
+	bool linear;
+	if (!training_cells(training, w->lower, w->upper, &linear) ||
+	    (training->levels && (linear || scalar_explains_cells(training, w->lower, w->upper))))
+		return false;
 	w->linear_error = linear_error;
 	w->model.energy = energy;
 	fit_intervals_begin(w, training->law, training->input, training->sample, training->count, training->taps);
@@ -926,9 +917,6 @@ enum v92_observation_fit_result v92_observation_fit_step(struct v92_observation_
 		if (result) w->stage = V92_FIT_CENTER;
 	} else if (w->stage == V92_FIT_CENTER) {
 		if (!initialize_fit(w, training)) goto decline;
-		w->stage = V92_FIT_BOUNDS;
-	} else if (w->stage == V92_FIT_BOUNDS) {
-		if (!refit_bins_begin(w, y, training->levels, training->offsets, count)) goto decline;
 		w->stage = V92_FIT_REFINE;
 	} else if (w->stage == V92_FIT_REFINE) {
 		refit_bins_step(w, x, y, count, w->cursor++);
@@ -982,14 +970,16 @@ bool v92_observation_fit_scalar(double *gain,
 {
 	if (!training_is_valid(gain, sizeof(*gain), training) || !training->levels) return false;
 	double low[V92_OBSERVATION_TRAINING], high[V92_OBSERVATION_TRAINING];
+	return training_cells(training, low, high, NULL) && fit_scalar_cells(gain, training, low, high);
+}
+
+static bool fit_scalar_cells(double *gain, const struct v92_observation_training *training,
+	const double *low, const double *high)
+{
 	double xx = 0., xy = 0., linear_error = 0.;
 	size_t count = training->count;
 	for (size_t i = 0; i < count; i++) {
-		double lower, upper, x = training->linear[i], y = training->sample[i];
-		if (!codec_bounds(training->law, training->host_gain, training->sample[i],
-			training->levels + i, training->offsets ? training->offsets[i] : 0.,
-			&lower, &upper)) return false;
-		low[i] = y + lower; high[i] = y + upper;
+		double x = training->linear[i], y = training->sample[i];
 		xx += x * x; xy += x * y; linear_error += (x - y) * (x - y);
 	}
 	if (!(xx > 0. && xy > 0. && linear_error > 0.)) return false;
