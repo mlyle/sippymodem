@@ -77,9 +77,11 @@ bool v92_upstream_channel_can_fit(const struct v92_upstream_channel *channel);
  * leaves all evidence unchanged. */
 bool v92_upstream_channel_has_stable_gain(const struct v92_upstream_channel *channel);
 
-/* An energetic fit-ready training measurement fits one positive gain with
- * at most 1% relative RMS residual. This selects whether the existing receive
- * FIR suffices; it is not a substitute for B1u or online quality checks. */
+/* An energetic fit-ready measurement fits one positive gain with at most 1%
+ * relative RMS residual and no resolved delayed-target component over the
+ * retained P1 autocorrelation lags. Six estimated standard errors distinguish
+ * coherent memory from residual noise; this local model-selection safeguard
+ * is not a BER bound or a substitute for B1u and online quality checks. */
 bool v92_upstream_channel_fits_gain(const struct v92_upstream_channel *channel);
 
 /* Polarity reversal of -32768 can produce +32768, hence the wider observed

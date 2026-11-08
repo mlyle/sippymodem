@@ -5,6 +5,7 @@
 #include "test.h"
 
 #include <limits.h>
+#include <math.h>
 #include <string.h>
 
 static int16_t expected(int index, bool full_scale)
@@ -162,6 +163,8 @@ static bool test_gain_fit(void)
 		{ 1.25, 0.0, 0.0, true },
 		{ 0.75, 0.0, 0.003, true },
 		{ 0.75, 0.0, 0.02, false },
+		{ 0.75, 0.003, 0.0, false },
+		{ 0.75, -0.003, 0.003, false },
 		{ 0.75, 0.02, 0.0, false },
 		{ 0.75, 0.10, 0.0, false },
 		{ -0.75, 0.0, 0.0, false },
@@ -217,7 +220,48 @@ static bool test_gain_fit(void)
 	return true;
 }
 
+static bool test_weak_postcursors(void)
+{
+	static const unsigned delays[] = { 1, 2, 17, V92_UPSTREAM_CHANNEL_P1_TAPS };
+
+	for (unsigned d = 0; d < ARRAY_LENGTH(delays); ++d) {
+		struct v92_upstream_channel channel = { 0 };
+
+		for (int n = 0; n < V92_UPSTREAM_CHANNEL_SYMBOLS; ++n) {
+			int16_t target = expected(n, false) / 4;
+			int32_t input = (int32_t)lround(.75 * target +
+				.003 * (expected(n - (int)delays[d], false) / 4));
+
+			CHECK(v92_upstream_channel_sample(&channel, target, input), "weak channel failed");
+			if (channel.symbols == V92_UPSTREAM_CHANNEL_MIN_FIT_SYMBOLS ||
+			    channel.symbols == V92_UPSTREAM_CHANNEL_MIN_FIT_SYMBOLS + 137 ||
+			    channel.symbols == V92_UPSTREAM_CHANNEL_SYMBOLS) {
+				struct v92_upstream_channel saved = channel;
+
+				/* Directly measure the scalar's remaining sample energy.
+				 * Its small size must not hide a known causal component. */
+				double xx = channel.expected_autocorrelation[0];
+				double xy = channel.cross_correlation[V92_UPSTREAM_CHANNEL_PRECURSOR_LAGS];
+				double yy = channel.observed_autocorrelation[0];
+
+				CHECK(yy - xy * xy / xx < .0001 * yy &&
+				      !v92_upstream_channel_fits_gain(&channel) &&
+				      memcmp(&channel, &saved, sizeof(channel)) == 0,
+				      "weak lag %u accepted at %u symbols or changed evidence", delays[d], channel.symbols);
+			}
+		}
+	}
+	/* A constant target makes every delayed column dependent. Such a
+	 * column contributes no independent evidence against an exact gain. */
+	struct v92_upstream_channel constant = { 0 };
+	for (unsigned n = 0; n < V92_UPSTREAM_CHANNEL_SYMBOLS; ++n)
+		CHECK(v92_upstream_channel_sample(&constant, 2000, 1000), "constant channel failed");
+	CHECK(v92_upstream_channel_fits_gain(&constant), "dependent exact gain rejected");
+	return true;
+}
+
 int main(void)
 {
-	return test_correlations(false) && test_correlations(true) && test_rejection() && test_gain_fit() ? 0 : 1;
+	return test_correlations(false) && test_correlations(true) && test_rejection() &&
+		test_gain_fit() && test_weak_postcursors() ? 0 : 1;
 }

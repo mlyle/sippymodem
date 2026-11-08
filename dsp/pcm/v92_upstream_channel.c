@@ -161,6 +161,41 @@ bool v92_upstream_channel_has_stable_gain(const struct v92_upstream_channel *cha
 	return lower <= upper;
 }
 
+static bool gain_residual_has_memory(const struct v92_upstream_channel *channel,
+	double xx, double yy, double xy)
+{
+	double gain = xy / xx, residual = fmax(0., yy - gain * xy);
+	double delayed_energy = xx;
+	unsigned samples = channel->symbols - V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS;
+
+	for (unsigned lag = 1; lag <= V92_UPSTREAM_CHANNEL_P1_TAPS; ++lag) {
+		/* Shift the target's finite window, not its observed input. The
+		 * retained boundaries give its exact energy, including the prefix
+		 * before measurement, without consuming control as training. */
+		double begin = channel->expected_boundary[lag - 1u];
+		double end = channel->expected_history[lag - 1u];
+		delayed_energy += begin * begin - end * end;
+		double cross = channel->expected_autocorrelation[lag];
+		double innovation = delayed_energy - cross * cross / xx;
+
+		if (innovation <= 64. * DBL_EPSILON * delayed_energy)
+			continue;
+		/* Remove the fitted current target from both columns. A small
+		 * total residual can still contain a resolved delayed component
+		 * which a scalar receive model cannot cancel. Six estimated
+		 * standard errors select a model, not a BER or V.92 wire limit. */
+		double correlation = channel->cross_correlation[
+			V92_UPSTREAM_CHANNEL_PRECURSOR_LAGS + lag] - gain * cross;
+		double explained = correlation * correlation / innovation;
+		double remaining = fmax(0., residual - explained);
+
+		if (explained > 64. * DBL_EPSILON * yy &&
+		    explained * (samples - 2u) > 36. * remaining)
+			return true;
+	}
+	return false;
+}
+
 bool v92_upstream_channel_fits_gain(const struct v92_upstream_channel *channel)
 {
 	if (!v92_upstream_channel_can_fit(channel))
@@ -180,5 +215,6 @@ bool v92_upstream_channel_fits_gain(const struct v92_upstream_channel *channel)
 	if (wide_compare(explained, energy) > 0)
 		return false;
 	wide_multiply_u32(wide_subtract(energy, explained), 10000, &residual);
-	return wide_compare(residual, energy) <= 0;
+	return wide_compare(residual, energy) <= 0 &&
+	       !gain_residual_has_memory(channel, expected, observed, cross);
 }
