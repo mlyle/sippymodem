@@ -506,16 +506,31 @@ static bool test_shared_input_moments(void)
 
 	/* One corrupt reference bin must not discard the shared valid input
 	 * window. The second bin has a genuine return; the third has no energy. */
-	saved.scan_reference_sum[0] = INT64_MAX;
 	saved.scan_reference_energy[1] = saved.scan_input_energy;
 	saved.scan_cross_energy[1] = (int64_t)saved.scan_input_energy;
-	reference = saved;
-	CHECK(pcm_echo_reference_is_valid(&reference), "shared-input scan geometry is invalid");
-	CHECK(pcm_echo_reference_scan_observe(&reference, 0, &scan) ==
-		      PCM_ECHO_REFERENCE_SCAN_READY &&
-	      scan.best_window_delay_samples == 2u &&
-	      scan.best_correlation_ppm == 1000000u && scan.current_correlation_ppm == 0,
-	      "a bad reference bin suppressed another bin's valid return");
+	for (unsigned fault = 0; fault < 5; ++fault) {
+		reference = saved;
+		scan = unchanged;
+		switch (fault) {
+		case 0: reference.scan_reference_sum[0] = INT64_MAX; break;
+		case 1: reference.scan_reference_sum[0] = INT64_MIN; break;
+		case 2: reference.scan_reference_sum[0] = 1024u * 32768u + 1u; break;
+		case 3:
+			reference.scan_reference_sum[0] = 1024;
+			reference.scan_reference_energy[0] = 1024;
+			break;
+		case 4:
+			reference.scan_reference_sum[0] = -1024;
+			reference.scan_reference_energy[0] = 1024;
+			break;
+		}
+		CHECK(pcm_echo_reference_is_valid(&reference), "shared-input scan geometry is invalid");
+		CHECK(pcm_echo_reference_scan_observe(&reference, 0, &scan) ==
+			      PCM_ECHO_REFERENCE_SCAN_READY &&
+		      scan.best_window_delay_samples == 2u &&
+		      scan.best_correlation_ppm == 1000000u && scan.current_correlation_ppm == 0,
+		      "a bad reference bin suppressed another bin's valid return: fault %u", fault);
+	}
 	for (unsigned fault = 0; fault < 4; ++fault) {
 		reference = saved;
 		scan = unchanged;

@@ -152,22 +152,33 @@ static long double moment_value(struct wide_uint value)
 	return (long double)value.high * 18446744073709551616.0L + value.low;
 }
 
+/* Center signed-sample moments exactly before converting to floating point.
+ * Invalid sums and constant windows provide no timing evidence. Use this
+ * same boundary for the shared input and every reference-delay candidate. */
+static inline bool centered_energy(
+	uint32_t samples, uint64_t energy, int64_t sum, struct wide_uint *centered)
+{
+	struct wide_uint total = wide_product_u64(energy, samples);
+	struct wide_uint mean = wide_product_u64(magnitude_s64(sum), magnitude_s64(sum));
+
+	if (magnitude_s64(sum) > (uint64_t)samples * 32768u ||
+	    wide_compare(total, mean) <= 0)
+		return false;
+	*centered = wide_subtract(total, mean);
+	return true;
+}
+
 static long double correlation_score(
 	const struct pcm_echo_reference *scan, uint32_t index,
 	long double input_variance)
 {
 	int64_t reference_sum = scan->scan_reference_sum[index];
 	struct wide_uint count = wide_from_u64(scan->scan_samples);
-	struct wide_uint reference = wide_multiply(
-		wide_from_u64(scan->scan_reference_energy[index]), count);
-	struct wide_uint reference_mean = wide_product_u64(
-		magnitude_s64(reference_sum), magnitude_s64(reference_sum));
-	uint64_t sum_bound = (uint64_t)scan->scan_samples * 32768u;
+	struct wide_uint reference;
 
-	if (magnitude_s64(reference_sum) > sum_bound ||
-	    wide_compare(reference, reference_mean) <= 0)
+	if (!centered_energy(scan->scan_samples,
+		scan->scan_reference_energy[index], reference_sum, &reference))
 		return -1.0L;
-	reference = wide_subtract(reference, reference_mean);
 	struct wide_uint cross = wide_subtract(
 		wide_multiply(wide_from_s64(scan->scan_cross_energy[index]), count),
 		wide_multiply(wide_from_s64(reference_sum), wide_from_s64(scan->scan_input_sum)));
@@ -209,15 +220,11 @@ static bool find_best_scan(
 	*current_score = -1.0L;
 	/* Every delay bin observes the same received window. Center and qualify
 	 * that window once; each score still owns its reference/cross moments. */
-	struct wide_uint input = wide_multiply(wide_from_u64(reference->scan_input_energy),
-		wide_from_u64(reference->scan_samples));
-	struct wide_uint input_mean = wide_product_u64(
-		magnitude_s64(reference->scan_input_sum), magnitude_s64(reference->scan_input_sum));
-	if (!reference->scan_samples ||
-	    magnitude_s64(reference->scan_input_sum) > (uint64_t)reference->scan_samples * 32768u ||
-	    wide_compare(input, input_mean) <= 0)
+	struct wide_uint input;
+	if (!centered_energy(reference->scan_samples,
+		reference->scan_input_energy, reference->scan_input_sum, &input))
 		return false;
-	long double input_variance = moment_value(wide_subtract(input, input_mean));
+	long double input_variance = moment_value(input);
 	for (uint32_t index = 0; index < reference->scan_count; ++index) {
 		long double score = correlation_score(reference, index, input_variance);
 
