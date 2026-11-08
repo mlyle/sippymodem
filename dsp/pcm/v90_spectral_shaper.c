@@ -141,34 +141,6 @@ static bool select_rule(
 	unsigned int sequence_count = 1u << horizon;
 	double best_metric = DBL_MAX;
 	unsigned int best_sequence = 0;
-	struct spectral_filter_state best_filter;
-
-	/* Without lookahead the two paths share no filtering work. */
-	if (horizon == 1u) {
-		enum v90_spectral_rule first = shaper->trellis_state ?
-			V90_SPECTRAL_RULE_C : V90_SPECTRAL_RULE_A;
-
-		for (unsigned int branch = 0; branch < 2u; ++branch) {
-			struct spectral_filter_state filter = {
-				shaper->previous_x, shaper->previous_y, shaper->previous_v,
-			};
-			double metric = 0.0;
-
-			if (!filter_frame(shaper, &shaper->pending[0], magnitudes[0],
-				    (enum v90_spectral_rule)(first + branch), &filter, &metric))
-				return false;
-			if (branch == 0 || metric < best_metric) {
-				best_metric = metric;
-				best_sequence = branch;
-				best_filter = filter;
-			}
-		}
-		*selected = (struct spectral_choice) {
-			.rule = (enum v90_spectral_rule)(first + best_sequence),
-			.filter = best_filter,
-		};
-		return true;
-	}
 	struct spectral_filter_state prefix_filter[V90_SPECTRAL_MAX_BUFFERED_FRAMES];
 	double prefix_metric[V90_SPECTRAL_MAX_BUFFERED_FRAMES];
 
@@ -178,6 +150,8 @@ static bool select_rule(
 		.v = shaper->previous_v,
 	};
 	prefix_metric[0] = 0.0;
+	struct spectral_filter_state first_filter = prefix_filter[0];
+	struct spectral_filter_state best_filter = first_filter;
 
 	for (unsigned int sequence = 0;
 	     sequence < sequence_count; ++sequence) {
@@ -213,12 +187,17 @@ static bool select_rule(
 				    shaper, &shaper->pending[frame], magnitudes[frame],
 				    rule, &filter, &metric))
 				return false;
+			/* The committed state changes only when the first branch
+			 * changes. Retain it across all leaves sharing that prefix,
+			 * including a one-frame horizon with no lookahead state. */
+			if (frame == 0)
+				first_filter = filter;
 		}
 		if (sequence == 0 || metric < best_metric) {
 			best_metric = metric;
 			best_sequence = sequence;
 			/* Commit the first frame, not the lookahead's final state. */
-			best_filter = prefix_filter[1];
+			best_filter = first_filter;
 		}
 	}
 	*selected = (struct spectral_choice) {

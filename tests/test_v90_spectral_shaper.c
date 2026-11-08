@@ -4,6 +4,7 @@
 
 #include "test.h"
 
+#include <fenv.h>
 #include <float.h>
 #include <math.h>
 #include <stdint.h>
@@ -311,6 +312,11 @@ static bool test_generated_all_modes(void)
 						      "mode %u/%u/%u frame %zu chose a non-minimal rule",
 						      law_index, redundancy,
 						      lookahead, frame);
+						CHECK(shaper.previous_x == oracle.filter.x &&
+						      shaper.previous_y == oracle.filter.y &&
+						      shaper.previous_v == oracle.filter.v,
+						      "mode %u/%u/%u frame %zu committed lookahead state",
+						      law_index, redundancy, lookahead, frame);
 						seen_rules |= (uint8_t)(
 							1u << actual.rule);
 					}
@@ -333,6 +339,11 @@ static bool test_generated_all_modes(void)
 					CHECK(outputs_equal(&actual, &expected),
 					      "mode %u/%u/%u tail frame differed",
 					      law_index, redundancy, lookahead);
+					CHECK(shaper.previous_x == oracle.filter.x &&
+					      shaper.previous_y == oracle.filter.y &&
+					      shaper.previous_v == oracle.filter.v,
+					      "mode %u/%u/%u tail committed lookahead state",
+					      law_index, redundancy, lookahead);
 					seen_rules |= (uint8_t)(1u << actual.rule);
 				}
 				CHECK(v90_spectral_shaper_is_valid(&shaper) &&
@@ -351,6 +362,23 @@ static bool test_generated_all_modes(void)
 	CHECK(seen_rules == 0x0fu,
 	      "generated cases did not exercise every inversion rule (0x%02x)",
 	      seen_rules);
+	return true;
+}
+
+static bool test_generated_rounding_modes(void)
+{
+	static const int modes[] = {
+		FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO,
+	};
+	int saved = fegetround();
+	CHECK(saved != -1, "cannot read rounding mode");
+	for (size_t index = 0; index < ARRAY_LENGTH(modes); ++index) {
+		CHECK(fesetround(modes[index]) == 0, "cannot set rounding mode");
+		bool passed = test_generated_all_modes();
+		int restored = fesetround(saved);
+		CHECK(passed && restored == 0,
+		      "generated cases failed in rounding mode %zu", index);
+	}
 	return true;
 }
 
@@ -607,7 +635,7 @@ struct test_case {
 int main(void)
 {
 	static const struct test_case tests[] = {
-		{ "generated all modes", test_generated_all_modes },
+		{ "generated all rounding modes", test_generated_rounding_modes },
 		{ "rule ties and tail", test_rule_ties_and_tail },
 		{ "contracts", test_contracts },
 		{ "maximum finite metric choice", test_maximum_finite_metric_choice },
