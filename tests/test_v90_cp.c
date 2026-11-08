@@ -327,6 +327,23 @@ static bool test_canonical_masks(void)
 		      valid.transmit_constellations, valid.codec_constellations,
 		      NULL, valid.constellation_count, false),
 	      "canonical layout accepted missing storage");
+	/* Ignored row contents still require a bounded map and its exact wire
+	 * extent. Every byte-valued index is checked in every interval; a sparse
+	 * map is admitted only by the zero-rate wire contract, not canonical data. */
+	for (unsigned count = 1; count <= V90_CP_MAX_CONSTELLATIONS; ++count) {
+		for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; ++slot) {
+			for (unsigned index = 0; index <= UINT8_MAX; ++index) {
+				changed = valid;
+				changed.selected_rate_index = 0;
+				changed.constellation_count = (uint8_t)count;
+				changed.frame_constellation[slot] = (uint8_t)index;
+				CHECK(v90_cp_parameters_are_valid(&changed) ==
+				      (index == count - 1u),
+				      "ignored CP map changed extent: count %u slot %u index %u",
+				      count, slot, index);
+			}
+		}
+	}
 	changed = valid;
 	memset(&changed.transmit_constellations[0], 0,
 	       sizeof(changed.transmit_constellations[0]));

@@ -21,6 +21,10 @@ enum {
 	CPD_CRC_BITS = 16,
 };
 
+_Static_assert((int)V92_CPD_FRAME_INTERVALS == (int)PCM_CONSTELLATION_FRAME_INTERVALS &&
+	       (int)V92_CPD_MAX_CONSTELLATIONS == (int)PCM_CONSTELLATION_MAX_ROWS,
+	       "CPd shares the six-interval constellation map");
+
 struct cpd_wire {
 	const uint8_t *input;
 	uint8_t *output;
@@ -106,18 +110,13 @@ static bool constellation_is_canonical(
 static bool constellations_are_valid(
 	const struct v92_cpd_parameters *parameters)
 {
-	uint8_t referenced = 0u;
+	uint8_t referenced = pcm_constellation_map_used(
+		parameters->frame_constellation, V92_CPD_MAX_CONSTELLATIONS);
 	uint8_t populated = 0u;
 	bool saw_empty = false;
 
-	for (size_t interval = 0u;
-	     interval < V92_CPD_FRAME_INTERVALS; ++interval) {
-		uint8_t index = parameters->frame_constellation[interval];
-
-		if (index >= V92_CPD_MAX_CONSTELLATIONS)
-			return false;
-		referenced |= (uint8_t)(1u << index);
-	}
+	if (referenced == 0)
+		return false;
 	for (size_t index = 0u;
 	     index < V92_CPD_MAX_CONSTELLATIONS; ++index) {
 		const struct v92_cpd_constellation *constellation =
@@ -133,14 +132,8 @@ static bool constellations_are_valid(
 			return false;
 		populated |= (uint8_t)(1u << index);
 	}
-	if (!parameters->constellations_present) {
-		for (size_t interval = 0u;
-		     interval < V92_CPD_FRAME_INTERVALS; ++interval) {
-			if (parameters->frame_constellation[interval] != 0u)
-				return false;
-		}
-		return populated == 0u;
-	}
+	if (!parameters->constellations_present)
+		return referenced == 1u && populated == 0u;
 	/* Table 30 requires each selected set to exist, not every set to be used. */
 	return (referenced & populated) == referenced;
 }

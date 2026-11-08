@@ -38,21 +38,13 @@ bool v90_cp_parameters_are_valid(
 	    (parameters->upstream_rate_mask & ~V90_CP_UPSTREAM_RATE_MASK) != 0)
 		return false;
 	if (constellations_are_unused(parameters)) {
-		uint8_t declared_count = 1u;
+		/* CPs and cleardown ignore row contents and intermediate holes,
+		 * but their wire extent still ends at the greatest referenced row. */
+		uint8_t used = pcm_constellation_map_used(
+			parameters->frame_constellation, parameters->constellation_count);
 
-		/* V.90 8.5.2/9.7 ignore CPs and cleardown constellations. Keep
-		 * the bounds needed to frame and CRC-check their wire records. */
-		if (parameters->constellation_count == 0u ||
-		    parameters->constellation_count > V90_CP_MAX_CONSTELLATIONS)
-			return false;
-		for (size_t interval = 0; interval < V90_CP_FRAME_INTERVALS; ++interval) {
-			if (parameters->frame_constellation[interval] >=
-			    parameters->constellation_count)
-				return false;
-			if (parameters->frame_constellation[interval] >= declared_count)
-				declared_count = parameters->frame_constellation[interval] + 1u;
-		}
-		return declared_count == parameters->constellation_count;
+		return used != 0 &&
+		       (used & (1u << (parameters->constellation_count - 1u))) != 0;
 	}
 	return pcm_constellations_are_canonical(
 		       parameters->transmit_constellations,

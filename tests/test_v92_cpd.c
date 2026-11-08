@@ -633,6 +633,23 @@ static bool test_parameter_validation(void)
 	struct v92_cpd_parameters valid = selection(7u);
 	struct v92_cpd_parameters invalid;
 
+	/* The absent table requires an all-zero map. An explicit table permits
+	 * unused populated rows, but every interval must reference an existing
+	 * row. Check all byte-valued labels in each interval before any shift. */
+	for (unsigned present = 0; present <= 1; ++present) {
+		struct v92_cpd_parameters mapped = selection(present ? 4u : 0u);
+		memset(mapped.frame_constellation, 0, sizeof(mapped.frame_constellation));
+		for (unsigned slot = 0; slot < V92_CPD_FRAME_INTERVALS; ++slot) {
+			for (unsigned index = 0; index <= UINT8_MAX; ++index) {
+				mapped.frame_constellation[slot] = (uint8_t)index;
+				CHECK(v92_cpd_parameters_are_valid(&mapped) ==
+				      (present ? index < 3u : index == 0u),
+				      "CPd map admission changed: present %u slot %u index %u",
+				      present, slot, index);
+			}
+			mapped.frame_constellation[slot] = 0;
+		}
+	}
 	invalid = valid;
 	invalid.data_rate_number = V92_CPD_MAX_DATA_RATE_NUMBER + 1u;
 	CHECK(invalid_parameters_are_rejected(&invalid),

@@ -169,6 +169,25 @@ static inline void pcm_constellation_sources(
 			pcm_constellation_find(intervals, slot, intervals + slot);
 }
 
+/* Referenced-row bitmap for a six-interval map, or zero for missing storage,
+ * an invalid row count, or an out-of-range index. Every valid map references
+ * at least one row, so zero is unambiguous. Check before shifting by an
+ * untrusted index; sparse maps remain valid for wire framing/compaction. */
+static inline uint8_t pcm_constellation_map_used(
+	const uint8_t map[PCM_CONSTELLATION_FRAME_INTERVALS], uint8_t count)
+{
+	uint8_t used = 0;
+
+	if (map == NULL || count == 0 || count > PCM_CONSTELLATION_MAX_ROWS)
+		return 0;
+	for (size_t interval = 0; interval < PCM_CONSTELLATION_FRAME_INTERVALS; ++interval) {
+		if (map[interval] >= count)
+			return 0;
+		used |= (uint8_t)(1u << map[interval]);
+	}
+	return used;
+}
+
 /* Pack six interval sets into the smallest ordered row table. Identical
  * intervals share one row. Input may alias rows; rejected sets change nothing. */
 static inline bool pcm_constellations_pack(
@@ -209,17 +228,11 @@ static inline bool pcm_constellations_compact(
 	uint8_t remap[PCM_CONSTELLATION_MAX_ROWS] = { 0 };
 	uint8_t compact_count = 0;
 
-	if (transmit == NULL || codec == NULL || frame_constellation == NULL ||
-	    count == NULL || *count == 0 || *count > PCM_CONSTELLATION_MAX_ROWS)
+	if (transmit == NULL || codec == NULL || count == NULL)
 		return false;
-	for (size_t interval = 0;
-	     interval < PCM_CONSTELLATION_FRAME_INTERVALS; ++interval) {
-		uint8_t index = frame_constellation[interval];
-
-		if (index >= *count)
-			return false;
-		used |= (uint8_t)(1u << index);
-	}
+	used = pcm_constellation_map_used(frame_constellation, *count);
+	if (used == 0)
+		return false;
 	for (size_t index = 0; index < *count; ++index) {
 		if ((used & (1u << index)) != 0 &&
 		    (pcm_constellation_is_empty(&transmit[index]) ||
@@ -259,18 +272,10 @@ static inline bool pcm_constellations_are_canonical(
 {
 	uint8_t used = 0;
 
-	if (transmit == NULL || codec == NULL || frame_constellation == NULL ||
-	    count == 0 || count > PCM_CONSTELLATION_MAX_ROWS)
+	if (transmit == NULL || codec == NULL)
 		return false;
-	for (size_t interval = 0;
-	     interval < PCM_CONSTELLATION_FRAME_INTERVALS; ++interval) {
-		uint8_t index = frame_constellation[interval];
-
-		if (index >= count)
-			return false;
-		used |= (uint8_t)(1u << index);
-	}
-	if (used != (uint8_t)((1u << count) - 1u))
+	used = pcm_constellation_map_used(frame_constellation, count);
+	if (used == 0 || used != (uint8_t)((1u << count) - 1u))
 		return false;
 	for (size_t index = 0; index < PCM_CONSTELLATION_MAX_ROWS; ++index) {
 		bool active = index < count;
