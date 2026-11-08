@@ -846,6 +846,37 @@ static void check_predictive_boundaries(const struct v92_observation *trained)
 	assert(fesetround(saved) == 0);
 }
 
+/* Recompute the entire cost without any pruning budget. The independent
+ * codec-cell integration also checks the two scored endpoints. */
+static uint64_t training_score(const struct v92_observation *model,
+	const struct v92_observation_training *training)
+{
+	struct v92_observation_cache cache;
+	v92_observation_begin(&cache, model, 0.);
+	uint64_t total = 0;
+	for (size_t i = model->taps; i < training->count; i++) {
+		double offset = training->offsets ? training->offsets[i] : 0.;
+		assert(v92_observation_symbol_level(&cache, training->sample[i], training->levels + i, offset));
+		struct v92_observation_point previous[V92_OBSERVATION_TAPS - 1];
+		int32_t input[V92_OBSERVATION_TAPS];
+		input[0] = training->input[i];
+		for (unsigned k = 1; k < model->taps; k++) {
+			input[k] = training->input[i - k];
+			previous[k - 1] = v92_observation_point(&cache, input[k]);
+		}
+		uint64_t cost = v92_observation_score(&cache, input[0], previous, UINT64_MAX);
+		assert(cost != UINT64_MAX && cost <= UINT64_MAX - total);
+		total += cost;
+		if (i == model->taps || i + 1 == training->count) {
+			double prediction;
+			uint64_t reference = independent_score(model, input, training->sample[i],
+				training->levels[i], offset, &prediction);
+			assert(cost <= reference + 1 && reference <= cost + 1);
+		}
+	}
+	return total;
+}
+
 /* Interleave different acquisition spans, suspend and restart one owner,
  * and ensure an incomplete job never publishes a decoder model. */
 static void check_resumable(const struct v92_observation_training *training,
@@ -854,12 +885,12 @@ static void check_resumable(const struct v92_observation_training *training,
 	struct v92_observation_training shorter = *training;
 	shorter.count--;
 	struct v92_observation other, output[2], before[2];
-	struct v92_observation_fit_work work[2];
+	struct v92_observation_fit_work work[3], *active[2] = { work, work + 1 };
 	assert(v92_observation_fit(&other, &shorter));
 	memset(output, 0x5a, sizeof(output));
 	memcpy(before, output, sizeof(before));
-	assert(v92_observation_fit_begin(work, training));
-	assert(v92_observation_fit_begin(work + 1, &shorter));
+	assert(v92_observation_fit_begin(active[0], training));
+	assert(v92_observation_fit_begin(active[1], &shorter));
 	/* A bad wire cell must not leave a resumable job using the preceding
 	 * acquisition's bounds. Include unused history and the scored tail,
 	 * then restart beside the untouched first owner. */
@@ -870,9 +901,10 @@ static void check_resumable(const struct v92_observation_training *training,
 		levels[invalid[j]] = 1; /* Neither law reconstructs this level. */
 		struct v92_observation_training bad = shorter;
 		bad.levels = levels;
-		assert(!v92_observation_fit_begin(work + 1, &bad));
+		assert(!v92_observation_fit_begin(active[1], &bad));
+		assert(active[1]->training_cost == UINT64_MAX);
 		assert(!memcmp(output + 1, before + 1, sizeof(*output)));
-		assert(v92_observation_fit_begin(work + 1, &shorter));
+		assert(v92_observation_fit_begin(active[1], &shorter));
 	}
 	bool done[2] = { false, false };
 	unsigned steps[2] = { 0, 0 };
@@ -880,18 +912,41 @@ static void check_resumable(const struct v92_observation_training *training,
 		unsigned i = turn % 3 == 0 ? 1 : 0;
 		if (done[i]) continue;
 		const struct v92_observation_training *t = i ? &shorter : training;
-		enum v92_observation_fit_result result = v92_observation_fit_step(work + i, t, output + i);
+		assert(active[i]->training_cost == UINT64_MAX);
+		enum v92_observation_fit_result result = v92_observation_fit_step(active[i], t, output + i);
 		assert(++steps[i] < 128);
 		assert(result != V92_OBSERVATION_FIT_DECLINED);
 		if (result == V92_OBSERVATION_FIT_MORE) {
+			assert(active[i]->training_cost == UINT64_MAX);
 			assert(!memcmp(output + i, before + i, sizeof(*output)));
 			if (i == 1 && steps[i] == 3)
-				assert(v92_observation_fit_begin(work + i, t));
+				assert(v92_observation_fit_begin(active[i], t));
+			if (i == 1 && steps[i] == 5) {
+				work[2] = *active[i]; memset(active[i], 0, sizeof(*active[i]));
+				active[i] = work + 2;
+			}
 		} else {
 			done[i] = true;
 			assert(steps[i] > 3 && v92_observation_is_valid(output + i));
 			assert(!memcmp(output + i, i ? &other : expected, sizeof(*output)));
+			assert(active[i]->training_cost == training_score(output + i, t));
 		}
+	}
+	struct v92_observation_training invalid_training = *training;
+	invalid_training.count = 0;
+	uint64_t previous_cost = active[0]->training_cost;
+	assert(!v92_observation_fit_begin(active[0], &invalid_training));
+	assert(active[0]->training_cost == previous_cost);
+	if (!training->offsets) {
+		struct v92_observation_training inferred = *training;
+		inferred.levels = NULL;
+		assert(v92_observation_fit_begin(active[0], &inferred));
+		enum v92_observation_fit_result result;
+		do {
+			result = v92_observation_fit_step(active[0], &inferred, output);
+			assert(active[0]->training_cost == UINT64_MAX);
+		} while (result == V92_OBSERVATION_FIT_MORE);
+		assert(result == V92_OBSERVATION_FIT_READY && !memcmp(output, expected, sizeof(*output)));
 	}
 }
 
@@ -915,9 +970,43 @@ static void check_coincident_fit(enum g711_law law)
 	enum v92_observation_fit_result result;
 	do {
 		result = v92_observation_fit_step(&work, &training, &output);
+		assert(work.training_cost == UINT64_MAX);
 		assert(++steps < 128 && !memcmp(&output, &before, sizeof(output)));
 	} while (result == V92_OBSERVATION_FIT_MORE);
 	assert(result == V92_OBSERVATION_FIT_DECLINED && steps > 2);
+}
+
+/* A noisy single-codec channel reaches final admission, where the tandem
+ * candidate loses to linear. Its pruned sum must not become an exact cost. */
+static void check_pruned_cost(void)
+{
+	int32_t x[TRAINING];
+	int16_t y[TRAINING], u[TRAINING];
+	uint32_t state = 7;
+	for (unsigned i = 0; i < TRAINING; i++) {
+		x[i] = (int32_t)(random_value(&state) % 40001) - 20000;
+		double mean = .63 * x[i] + (i ? .07 * x[i - 1] : 0.) -
+			(i > 1 ? .02 * x[i - 2] : 0.);
+		u[i] = (int16_t)lround(mean);
+		y[i] = quantize(G711_LAW_PCMU, mean + (int)(random_value(&state) % 129) - 64);
+	}
+	const struct v92_observation_training training = {
+		.input = x, .linear = u, .sample = y, .levels = y,
+		.count = TRAINING, .taps = 3, .host_gain = 1., .law = G711_LAW_PCMU,
+	};
+	struct v92_observation_fit_work work;
+	struct v92_observation output, before;
+	memset(&output, 0xa5, sizeof(output)); before = output;
+	assert(v92_observation_fit_begin(&work, &training));
+	enum v92_observation_fit_result result;
+	unsigned stage;
+	do {
+		stage = work.stage;
+		result = v92_observation_fit_step(&work, &training, &output);
+		assert(work.training_cost == UINT64_MAX);
+		assert(!memcmp(&output, &before, sizeof(output)));
+	} while (result == V92_OBSERVATION_FIT_MORE);
+	assert(stage == V92_FIT_VALIDATE && result == V92_OBSERVATION_FIT_DECLINED);
 }
 
 static void check_channel(enum g711_law law, double gain, unsigned taps,
@@ -1048,6 +1137,7 @@ static void check_conditioned_channel(enum g711_law law, double host_gain)
 	};
 	assert(v92_observation_fit(&model, &training));
 	check_fit_witness(&model, x, wire, offsets, host_gain);
+	check_resumable(&training, &model);
 	struct v92_observation_cache cache;
 	/* Transaction checks compare unused scratch slots too. */
 	memset(&cache, 0xa5, sizeof(cache));
@@ -1154,6 +1244,7 @@ static void check_scalar_resumable(const struct v92_observation_training *traini
 			if (done[i]) continue;
 			unsigned before = active[i]->scalar.fit.iterations;
 			enum v92_observation_fit_result result = v92_observation_scalar_step(active[i], t + i, actual + i);
+			assert(active[i]->training_cost == UINT64_MAX);
 			assert(active[i]->scalar.fit.iterations - before <= V92_SCALAR_FIT_BATCH);
 			assert(++steps[i] <= V92_SCALAR_FIT_STEPS);
 			if (result == V92_OBSERVATION_FIT_MORE) {
@@ -1326,6 +1417,7 @@ static void check_joint_transitions(const struct v92_observation *model)
 int main(void)
 {
 	check_scalar_rounding();
+	check_pruned_cost();
 	check_coincident_fit(G711_LAW_PCMU);
 	check_coincident_fit(G711_LAW_PCMA);
 	const double gains[] = { .00002, .02, .125, 4., 16.39453125, 21.859375, 512. };

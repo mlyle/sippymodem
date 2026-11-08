@@ -47,6 +47,11 @@ struct v92_observation_fit_work {
 	double lower[V92_OBSERVATION_TRAINING], upper[V92_OBSERVATION_TRAINING];
 	double costs[V92_OBSERVATION_INTERVALS], variances[V92_OBSERVATION_INTERVALS];
 	int16_t bins[V92_OBSERVATION_INTERVALS][V92_OBSERVATION_TRAINING];
+	/* Exact sum from completed final admission; only a current READY grants
+	 * access. UINT64_MAX means unavailable: missing/unscorable wire evidence,
+	 * pruned/declined fits and scalar-only jobs publish no cost.
+	 * Invalid begin grants no new result and can preserve the previous job. */
+	uint64_t training_cost;
 	enum v92_observation_fit_stage stage;
 	unsigned cursor;
 };

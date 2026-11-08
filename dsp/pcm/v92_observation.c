@@ -766,7 +766,7 @@ static bool training_is_valid(const void *output, size_t size,
  * same noise variance. Extra codec structure must improve on the existing
  * linear prediction, not just move closer to quantized sample centres. */
 static bool prefer_linear(const struct v92_observation *model,
-	const struct v92_observation_training *training)
+	const struct v92_observation_training *training, uint64_t *training_cost)
 {
 	if (!training->levels) return false;
 	uint64_t linear = 0;
@@ -802,6 +802,9 @@ static bool prefer_linear(const struct v92_observation *model,
 		if (cost >= linear - fitted) return true;
 		fitted += cost;
 	}
+	/* Every term completed below its pruning budget. Retain this exact
+	 * score for the fit owner; a rejected lower bound is never evidence. */
+	*training_cost = fitted;
 	return false;
 }
 
@@ -894,6 +897,7 @@ bool v92_observation_fit_begin(struct v92_observation_fit_work *w,
 		energy += (double)training->sample[i] * training->sample[i]; linear_error += error * error;
 	}
 	memset(w, 0, sizeof(*w));
+	w->training_cost = UINT64_MAX;
 	if (energy == 0. || linear_error == 0.) return false;
 	bool linear;
 	if (!training_cells(training, w->lower, w->upper, &linear) || (training->levels && linear))
@@ -943,13 +947,14 @@ enum v92_observation_fit_result v92_observation_fit_step(struct v92_observation_
 		if (!compile_geometry(&w->model) || !v92_observation_is_valid(&w->model)) goto decline;
 		w->stage = V92_FIT_VALIDATE;
 	} else if (w->stage == V92_FIT_VALIDATE) {
-		if (prefer_linear(&w->model, training)) goto decline;
+		if (prefer_linear(&w->model, training, &w->training_cost)) goto decline;
 		*output = w->model;
 		w->stage = V92_FIT_IDLE;
 		return V92_OBSERVATION_FIT_READY;
 	} else goto decline;
 	return V92_OBSERVATION_FIT_MORE;
 decline:
+	w->training_cost = UINT64_MAX;
 	w->stage = V92_FIT_IDLE;
 	return V92_OBSERVATION_FIT_DECLINED;
 }
@@ -1040,6 +1045,7 @@ bool v92_observation_scalar_begin(struct v92_observation_fit_work *w,
 {
 	if (!training_is_valid(w, sizeof(*w), training) || !training->levels) return false;
 	memset(w, 0, sizeof(*w));
+	w->training_cost = UINT64_MAX;
 	if (!training_cells(training, w->lower, w->upper, NULL) || !begin_scalar(&w->scalar.fit, training))
 		return false;
 	w->stage = V92_FIT_SCALAR;
