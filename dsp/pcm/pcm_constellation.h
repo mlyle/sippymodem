@@ -4,6 +4,7 @@
 #define PCM_CONSTELLATION_H
 
 #include "integer_math.h"
+#include "memory_region.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -135,13 +136,8 @@ static inline bool pcm_constellation_descending_select(
 static inline bool pcm_constellation_is_empty(
 	const struct pcm_constellation *constellation)
 {
-	uint8_t used = 0;
-
-	if (constellation == NULL)
-		return false;
-	for (size_t index = 0; index < PCM_CONSTELLATION_MASK_BYTES; ++index)
-		used |= constellation->ucode_mask[index];
-	return used == 0;
+	return constellation != NULL && memory_region_is_zero(
+		constellation->ucode_mask, sizeof(constellation->ucode_mask));
 }
 
 /* First identical row, or count when absent. Owners bound count by six and

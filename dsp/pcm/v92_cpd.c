@@ -3,6 +3,7 @@
 #include "v92_cpd.h"
 
 #include "integer_math.h"
+#include "memory_region.h"
 #include "pcm_control_frame.h"
 #include "packed_bits.h"
 
@@ -49,12 +50,9 @@ static bool filter_is_canonical(const struct v92_cpd_filter *filter)
 {
 	if (filter->count > V92_CPD_MAX_SECTION_COEFFICIENTS)
 		return false;
-	for (size_t index = filter->count;
-	     index < V92_CPD_MAX_SECTION_COEFFICIENTS; ++index) {
-		if (filter->coefficient[index] != 0)
-			return false;
-	}
-	return true;
+	return memory_region_is_zero(filter->coefficient + filter->count,
+		(V92_CPD_MAX_SECTION_COEFFICIENTS - filter->count) *
+			sizeof(filter->coefficient[0]));
 }
 
 static bool filters_are_valid(const struct v92_cpd_parameters *parameters)
@@ -76,13 +74,8 @@ static bool filters_are_valid(const struct v92_cpd_parameters *parameters)
 
 static bool modulus_is_valid(const struct v92_cpd_parameters *parameters)
 {
-	if (parameters->modulus_present)
-		return true;
-	for (size_t index = 0u; index < V92_CPD_MODULUS_COUNT; ++index) {
-		if (parameters->modulus[index] != 0u)
-			return false;
-	}
-	return true;
+	return parameters->modulus_present ||
+	       memory_region_is_zero(parameters->modulus, sizeof(parameters->modulus));
 }
 
 static bool constellation_is_canonical(
@@ -99,12 +92,9 @@ static bool constellation_is_canonical(
 			return false;
 		previous = current;
 	}
-	for (size_t index = constellation->count;
-	     index < V92_CPD_MAX_CONSTELLATION_POINTS; ++index) {
-		if (constellation->positive_linear[index] != 0)
-			return false;
-	}
-	return true;
+	return memory_region_is_zero(constellation->positive_linear + constellation->count,
+		(V92_CPD_MAX_CONSTELLATION_POINTS - constellation->count) *
+			sizeof(constellation->positive_linear[0]));
 }
 
 static bool constellations_are_valid(

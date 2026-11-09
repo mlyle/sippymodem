@@ -707,6 +707,75 @@ static bool test_parameter_validation(void)
 	return true;
 }
 
+static bool test_canonical_table_tails(void)
+{
+	/* Declared integer entries belong to the wire record; every remaining
+	 * entry must be zero. Exercise every count, including empty/full tails,
+	 * and both bytes of the first and last undeclared signed coefficient. */
+	for (unsigned section = 0; section < V92_CPD_FILTER_SECTION_COUNT; ++section) {
+		for (unsigned count = 0; count <= V92_CPD_MAX_SECTION_COEFFICIENTS; ++count) {
+			struct v92_cpd_parameters parameters = cleardown();
+			struct v92_cpd_filter *filter = &parameters.filter[section];
+
+			parameters.filters_present = true;
+			filter->count = (uint16_t)count;
+			if (count)
+				filter->coefficient[count - 1] = INT16_MIN;
+			CHECK(v92_cpd_parameters_are_valid(&parameters),
+			      "declared filter rejected: section %u count %u", section, count);
+			if (count == V92_CPD_MAX_SECTION_COEFFICIENTS)
+				continue;
+			filter->coefficient[count] = 1;
+			CHECK(invalid_parameters_are_rejected(&parameters),
+			      "first undeclared filter tap accepted: section %u count %u", section, count);
+			filter->coefficient[count] = 0;
+			filter->coefficient[V92_CPD_MAX_SECTION_COEFFICIENTS - 1] = 256;
+			CHECK(invalid_parameters_are_rejected(&parameters),
+			      "last undeclared filter tap accepted: section %u count %u", section, count);
+		}
+	}
+	for (unsigned row = 0; row < V92_CPD_MAX_CONSTELLATIONS; ++row) {
+		for (unsigned count = 0; count <= V92_CPD_MAX_CONSTELLATION_POINTS; ++count) {
+			struct v92_cpd_parameters parameters = cleardown();
+			struct v92_cpd_constellation *points = &parameters.constellation[row];
+
+			/* Earlier rows keep the populated list contiguous. */
+			for (unsigned previous = 0; previous < row; ++previous) {
+				parameters.constellation[previous].count = 1;
+				parameters.constellation[previous].positive_linear[0] = 1;
+			}
+			parameters.constellations_present = row != 0 || count != 0;
+			points->count = (uint8_t)count;
+			for (unsigned i = 0; i < count; ++i)
+				points->positive_linear[i] = (int16_t)(i + 1);
+			CHECK(v92_cpd_parameters_are_valid(&parameters),
+			      "declared constellation rejected: row %u count %u", row, count);
+			if (count == V92_CPD_MAX_CONSTELLATION_POINTS)
+				continue;
+			points->positive_linear[count] = 1;
+			CHECK(invalid_parameters_are_rejected(&parameters),
+			      "first undeclared level accepted: row %u count %u", row, count);
+			points->positive_linear[count] = 0;
+			points->positive_linear[V92_CPD_MAX_CONSTELLATION_POINTS - 1] = 256;
+			CHECK(invalid_parameters_are_rejected(&parameters),
+			      "last undeclared level accepted: row %u count %u", row, count);
+		}
+	}
+	for (unsigned slot = 0; slot < V92_CPD_MODULUS_COUNT; ++slot) {
+		for (unsigned bit = 0; bit < 8; ++bit) {
+			struct v92_cpd_parameters parameters = cleardown();
+
+			parameters.modulus[slot] = (uint8_t)(1u << bit);
+			CHECK(invalid_parameters_are_rejected(&parameters),
+			      "absent modulus bit accepted: slot %u bit %u", slot, bit);
+			parameters.modulus_present = true;
+			CHECK(v92_cpd_parameters_are_valid(&parameters),
+			      "present modulus bit rejected: slot %u bit %u", slot, bit);
+		}
+	}
+	return true;
+}
+
 static bool test_wire_rejection_and_contracts(void)
 {
 	struct v92_cpd_parameters parameters = cleardown();
@@ -919,6 +988,7 @@ int main(void)
 		{ "unselected constellations", test_unselected_constellations },
 		{ "maximum extent", test_maximum_extent },
 		{ "parameter validation", test_parameter_validation },
+		{ "canonical table tails", test_canonical_table_tails },
 		{ "wire rejection and contracts", test_wire_rejection_and_contracts },
 	};
 	unsigned int failures = 0u;
