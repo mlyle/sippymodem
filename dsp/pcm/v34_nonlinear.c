@@ -20,6 +20,12 @@ bool v34_nonlinear_configuration_is_valid(
 	       (parameter == V34_NONLINEAR_THETA_ZERO || mean_squared_magnitude > 0.0);
 }
 
+/* V.34 nonlinear radial projection, shared by both directions. */
+static double projection_polynomial(double zeta)
+{
+	return 1.0 + zeta / 6.0 + zeta * zeta / 120.0;
+}
+
 static enum v34_nonlinear_result projection_factor(
 	enum v34_nonlinear_parameter parameter,
 	double mean_squared_magnitude, double squared_magnitude,
@@ -36,7 +42,7 @@ static enum v34_nonlinear_result projection_factor(
 		double zeta = V34_NONLINEAR_THETA * squared_magnitude /
 			mean_squared_magnitude;
 
-		generated = 1.0 + zeta / 6.0 + zeta * zeta / 120.0;
+		generated = projection_polynomial(zeta);
 	}
 	if (!isfinite(generated))
 		return V34_NONLINEAR_NUMERIC_FAILURE;
@@ -62,7 +68,7 @@ static bool projected_zeta_is_below(
 {
 	if (isfinite(projected_power) && projected_power > 0.0) {
 		double factor =
-			1.0 + zeta / 6.0 + zeta * zeta / 120.0;
+			projection_polynomial(zeta);
 		double mapped = zeta * factor * factor;
 
 		return isfinite(mapped) && mapped < projected_power;
@@ -224,7 +230,7 @@ v34_nonlinear_unproject(
 	if (inverse_zeta(projected_log_power, &zeta) !=
 	    V34_NONLINEAR_OK)
 		return V34_NONLINEAR_NUMERIC_FAILURE;
-	factor = 1.0 + zeta / 6.0 + zeta * zeta / 120.0;
+	factor = projection_polynomial(zeta);
 	if (isfinite(factor)) {
 		generated.in_phase /= factor;
 		generated.quadrature /= factor;
