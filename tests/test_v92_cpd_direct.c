@@ -4,11 +4,14 @@
 
 #include <v92_cpd_direct.h>
 #include <v92_pcm_frame.h>
+#include <v92_observation_fit.h>
+#include <v92_data_quality.h>
 #include <integer_math.h>
 
 #include "test.h"
 
 #include <limits.h>
+#include <math.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -711,13 +714,114 @@ static bool test_cell_selection_invariance(void)
 	return true;
 }
 
+/* The transmitted sparse alphabet passes through two codecs and causal
+ * postcursors. A forced final bit changes the input-cell center; fitting
+ * reconstructed output levels alone can discard the useful gain seeds. */
+static bool periodic_channel_frame(const struct v92_cpd_parameters *cpd,
+	enum g711_law law, int16_t level, unsigned taps, enum g711_lsb_mode mode,
+	const struct v92_pcm_frame *frame, int16_t memory[3],
+	int16_t wire[12], int16_t sample[12])
+{
+	for (unsigned i = 0; i < 12; ++i) {
+		int16_t physical;
+		CHECK(v92_pcm_frame_scale(cpd->four_times_gain_q0_16, level, frame->v[i], &physical) ==
+		      V92_PCM_FRAME_OK, "first codec scaling failed");
+		int16_t point = g711_quantize(law, physical);
+		double filtered = 1.8 * point + .16 * memory[0] + .04 * memory[1] +
+			(taps == 4 ? .03 * memory[2] : 0.);
+		CHECK(filtered > INT16_MIN && filtered < INT16_MAX, "channel fixture clipped");
+		uint8_t code = g711_encode(law, (int16_t)round(filtered));
+		if (i % 6u == 1) code = g711_apply_lsb(code, mode);
+		wire[i] = g711_decode(law, code);
+		sample[i] = (int16_t)round(.75 * wire[i]);
+		memory[2] = memory[1]; memory[1] = memory[0]; memory[0] = point;
+	}
+	return true;
+}
+
+static bool test_periodic_channel_fit(void)
+{
+	static const struct { enum g711_law law; unsigned rate, taps; bool upper;
+		enum g711_lsb_mode mode; } cases[] = {
+		{ G711_LAW_PCMA, 9, 4, false, G711_LSB_ZERO },
+		{ G711_LAW_PCMA, 1, 3, true, G711_LSB_ZERO },
+		{ G711_LAW_PCMA, 1, 3, true, G711_LSB_ONE },
+		{ G711_LAW_PCMU, 10, 4, false, G711_LSB_ZERO },
+	};
+	for (unsigned c = 0; c < ARRAY_LENGTH(cases); ++c) {
+		struct v92_cpd_parameters cpd;
+		struct v92_pcm_mapping mapping;
+		struct v92_pcm_frame_tx tx;
+		struct g711_interval cell;
+		enum g711_law law = cases[c].law;
+		CHECK(v92_cpd_direct_select(&cpd, law, cases[c].rate, 4096, false) == V92_CPD_OK &&
+		      g711_quantization_interval(law, 4096, &cell), "periodic profile failed");
+		cpd.filter[V92_CPD_PREFILTER_FEED_FORWARD].count = cases[c].taps;
+		int16_t level = cases[c].upper ? cell.upper : 4096;
+		CHECK(v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK &&
+		      v92_pcm_frame_tx_init(&tx, &mapping) == V92_PCM_FRAME_OK, "periodic coder failed");
+		int32_t input[V92_OBSERVATION_TRAINING];
+		int16_t linear[V92_OBSERVATION_TRAINING], wire[V92_OBSERVATION_TRAINING];
+		int16_t sample[V92_OBSERVATION_TRAINING], memory[3] = { 0 };
+		uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
+		memset(bits, 1, sizeof(bits));
+		for (unsigned f = 0; f < V92_B1U_ACQUISITION_FRAMES; ++f) {
+			struct v92_pcm_frame frame;
+			CHECK(v92_pcm_frame_encode(&tx, bits, mapping.data_bits_per_frame, &frame) == V92_PCM_FRAME_OK &&
+			      periodic_channel_frame(&cpd, law, level, cases[c].taps, cases[c].mode,
+				      &frame, memory, wire + 12 * f, sample + 12 * f), "acquisition failed");
+			memcpy(input + 12 * f, frame.x, sizeof(frame.x));
+			memcpy(linear + 12 * f, frame.u, sizeof(frame.u));
+		}
+		enum g711_lsb_mode pattern[V92_OBSERVATION_PHASES] = { [1] = cases[c].mode };
+		const struct v92_observation_training training = {
+			.input = input, .linear = linear, .levels = wire, .sample = sample,
+			.count = V92_OBSERVATION_TRAINING, .taps = cases[c].taps,
+			.host_gain = .75, .law = law, .lsb = pattern,
+		};
+		struct v92_observation model;
+		CHECK(v92_observation_fit(&model, &training), "periodic fit %u was declined", c);
+		int32_t history[4];
+		for (unsigned i = 0; i < 4; ++i) history[i] = input[V92_OBSERVATION_TRAINING - 1 - i];
+		double error[2] = { 0 };
+		unsigned count[2] = { 0 };
+		uint32_t random = UINT32_C(0x62d71a95);
+		for (unsigned f = V92_B1U_ACQUISITION_FRAMES; f < V92_B1U_FRAMES + 32u; ++f) {
+			if (f >= V92_B1U_FRAMES)
+				for (unsigned i = 0; i < mapping.data_bits_per_frame; ++i) {
+					random = random * UINT32_C(1664525) + UINT32_C(1013904223);
+					bits[i] = (uint8_t)(random >> 31);
+				}
+			struct v92_pcm_frame frame;
+			int16_t levels[12], received[12];
+			CHECK(v92_pcm_frame_encode(&tx, bits, mapping.data_bits_per_frame, &frame) == V92_PCM_FRAME_OK &&
+			      periodic_channel_frame(&cpd, law, level, cases[c].taps, cases[c].mode,
+				      &frame, memory, levels, received), "held channel failed");
+			unsigned part = f >= V92_B1U_FRAMES;
+			for (unsigned i = 0; i < 12; ++i) {
+				for (unsigned j = 3; j != 0; --j) history[j] = history[j - 1];
+				history[0] = frame.x[i];
+				double residual = received[i] - v92_observation_predict_phase(&model, history, 0., i % 6u);
+				error[part] += residual * residual; count[part]++;
+			}
+		}
+		for (unsigned part = 0; part < 2; ++part)
+			CHECK(isfinite(error[part]) && error[part] <= count[part] *
+			      (.75 * V92_DATA_MAX_RMS_ERROR) * (.75 * V92_DATA_MAX_RMS_ERROR),
+			      "periodic fit %u %s RMS %.6f exceeds existing quality ceiling", c,
+			      part ? "payload" : "B1", sqrt(error[part] / count[part]));
+	}
+	return true;
+}
+
 int main(void)
 {
 	if (!test_rate_and_law_matrix() || !test_known_boundaries() ||
 	    !test_transactionality() || !test_compact_direct_geometry() || !test_level_selection() ||
 	    !test_low_rate_cell_selection() || !test_full_cell_selection() ||
 	    !test_uncertain_symbol_ranges() ||
-	    !test_input_noise_margin() || !test_cell_selection_invariance())
+	    !test_input_noise_margin() || !test_cell_selection_invariance() ||
+	    !test_periodic_channel_fit())
 		return 1;
 	return 0;
 }

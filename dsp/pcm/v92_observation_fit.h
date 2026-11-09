@@ -83,7 +83,17 @@ struct v92_observation_fit_work {
 	/* Host-coordinate codec cells, prepared once before fitting. */
 	double lower[V92_OBSERVATION_TRAINING], upper[V92_OBSERVATION_TRAINING];
 	double costs[V92_OBSERVATION_INTERVALS], variances[V92_OBSERVATION_INTERVALS];
-	int16_t bins[V92_OBSERVATION_INTERVALS][V92_OBSERVATION_TRAINING];
+	/* Gain ranking and conditional-bin refinement own these bytes in
+	 * separate stages. Integer targets and dyadic row scales keep seed
+	 * normal-equation updates exact without enlarging the scratch. */
+	union {
+		int16_t bins[V92_OBSERVATION_INTERVALS][V92_OBSERVATION_TRAINING];
+		struct {
+			int16_t target[V92_OBSERVATION_TRAINING];
+			uint8_t shift[V92_OBSERVATION_TRAINING];
+			uint32_t total;
+		} seed;
+	};
 	/* Exact sum from completed final admission; only a current READY grants
 	 * access. UINT64_MAX means unavailable: missing/unscorable wire evidence,
 	 * pruned/declined fits and scalar-only jobs publish no cost.
@@ -95,6 +105,12 @@ struct v92_observation_fit_work {
 	enum v92_observation_fit_stage stage;
 	unsigned cursor;
 };
+
+_Static_assert(sizeof(((struct v92_observation_fit_work *)0)->seed) <=
+	sizeof(((struct v92_observation_fit_work *)0)->bins),
+	"seed ranking reuses refinement storage");
+_Static_assert(V92_OBSERVATION_TRAINING < 512,
+	"288 bounded integer rows with weights <=16384 fit binary64 exactly");
 
 /* Internal exclusively owned continuation. Begin validates the same training
  * contract as fit(); scratch may not overlap training or its arrays. MORE

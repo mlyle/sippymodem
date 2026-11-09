@@ -41,14 +41,17 @@ static bool solve_channel(const struct v92_observation_fit_moments *moments, uns
  * delayed integer features. Preserve each moment's sample order through
  * the shared packed accumulator; fit admission stays with the caller. */
 static void collect_moments(struct v92_observation_fit_moments *moments,
-	const int16_t *q, const int16_t *y, size_t count, unsigned taps)
+	const int16_t *q, const int16_t *y, size_t count, unsigned taps,
+	const uint8_t *shift)
 {
 	*moments = (struct v92_observation_fit_moments){ 0 };
 	for (size_t j = taps; j < count; j++) {
-		double row[TAPS];
-		for (unsigned i = 0; i < taps; i++) row[i] = q[j - i];
-		gram_accumulate(moments->gram, moments->rhs, row, taps, y[j]);
-		moments->energy += (double)y[j] * y[j];
+		if (shift && shift[j] == UINT8_MAX) continue;
+		double row[TAPS], scale = shift ? (double)(1u << shift[j]) : 1.;
+		for (unsigned i = 0; i < taps; i++) row[i] = scale * q[j - i];
+		double target = scale * y[j];
+		gram_accumulate(moments->gram, moments->rhs, row, taps, target);
+		moments->energy += target * target;
 	}
 }
 
@@ -318,7 +321,7 @@ static bool fit_bin_channel(struct v92_observation_interval *fit, const int16_t 
 	if (fit_bin_channel_newton(fit->coefficient, q, low, high, count, taps, initial_noise, variance))
 		return true;
 	struct v92_observation_fit_moments m;
-	collect_moments(&m, q, y, count, taps);
+	collect_moments(&m, q, y, count, taps, NULL);
 	return refine_bin_fit(fit->coefficient, q, low, high, count, taps, taps,
 		m.gram, initial_noise, variance);
 }
@@ -535,6 +538,25 @@ static inline void update_interior_moments(struct v92_observation_fit_moments *m
 	}
 }
 
+/* With unequal codec cells each affected row has its own fixed weight.
+ * Weights are powers of four <=16384 and targets/features are int16: all
+ * 288-row products and incremental sums remain exact in binary64. */
+static void update_seed_moments(struct v92_observation_fit_work *w,
+	size_t j, size_t count, unsigned taps, double change, double square)
+{
+	for (unsigned a = 0; a < taps; ++a) {
+		size_t row = j + a;
+		if (row < taps || row >= count || w->seed.shift[row] == UINT8_MAX) continue;
+		double weight = (double)(1u << (2u * w->seed.shift[row]));
+		w->moments.rhs[a] += change * weight * w->seed.target[row];
+		w->moments.gram[gram_moment_index(a, a)] += square * weight;
+		for (unsigned b = 0; b < taps; ++b)
+			if (b != a)
+				w->moments.gram[gram_moment_index(a, b)] +=
+					change * weight * w->q[row - b];
+	}
+}
+
 static void fit_intervals_begin(struct v92_observation_fit_work *w,
 	enum g711_law law, const int32_t *x, const int16_t *y, size_t count, unsigned taps)
 {
@@ -553,7 +575,9 @@ static void fit_intervals_begin(struct v92_observation_fit_work *w,
 			child = parent;
 		}
 	}
-	collect_moments(&w->moments, w->q, y, count, taps);
+	collect_moments(&w->moments, w->q,
+		w->seed.total ? w->seed.target : y, count, taps,
+		w->seed.total ? w->seed.shift : NULL);
 }
 
 static int fit_intervals_step(struct v92_observation_fit_work *w,
@@ -573,7 +597,7 @@ static int fit_intervals_step(struct v92_observation_fit_work *w,
 			if (w->low > 0. && solve_channel(&w->moments, taps, fit.coefficient)) {
 				double error = gram_residual(w->moments.energy,
 					fit.coefficient, w->moments.rhs, taps);
-				fit.error = fmax(0., error / (count - taps));
+				fit.error = fmax(0., error / (w->seed.total ? w->seed.total : count - taps));
 				if (isfinite(fit.error)) {
 					for (size_t i = 0; i < INTERVALS; i++) {
 						if (fit.error >= w->fits[i].error) continue;
@@ -594,7 +618,9 @@ static int fit_intervals_step(struct v92_observation_fit_work *w,
 			int16_t value = magnitude_code(law, x[j], w->events[j].next);
 			double change = value - w->q[j], square = (double)value * value - (double)w->q[j] * w->q[j];
 			/* Window edges omit different rows and retain their individual updates. */
-			if (j >= taps && j + taps <= count) {
+			if (w->seed.total) {
+				update_seed_moments(w, j, count, taps, change, square);
+			} else if (j >= taps && j + taps <= count) {
 				if (taps == 3)
 					update_interior_moments(&w->moments, w->q, y, 3, j, change, square);
 				else
@@ -910,6 +936,44 @@ static bool initialize_fit(struct v92_observation_fit_work *w,
 	return true;
 }
 
+/* A known forced bit displaces the output from the center of its input
+ * cell. Rank rough gains by cell centers and inverse squared cell widths.
+ * Round widths upward to powers of two and bound their ratio at128:1 so
+ * integer target/feature moments retain exact binary64 accumulation. The
+ * common host gain cancels from relative widths. Final likelihood uses the
+ * original exact cells, not these rough targets or rounded widths. */
+static bool seed_targets(struct v92_observation_fit_work *w,
+	const struct v92_observation_training *training)
+{
+	bool forced = false;
+	if (training->lsb)
+		for (unsigned i = 0; i < V92_OBSERVATION_PHASES; ++i)
+			forced |= training->lsb[i] != G711_LSB_UNCHANGED;
+	if (!forced) return true;
+	unsigned widest = 0;
+	for (size_t i = 0; i < training->count; ++i) {
+		w->seed.target[i] = training->sample[i];
+		w->seed.shift[i] = UINT8_MAX;
+		if (!isfinite(w->lower[i]) || !isfinite(w->upper[i])) continue;
+		struct g711_interval cell;
+		if (!g711_level_interval_lsb(training->law, training->levels[i],
+			training->lsb[i % V92_OBSERVATION_PHASES], &cell)) return false;
+		unsigned width = (unsigned)((int)cell.upper - cell.lower + 1);
+		unsigned exponent = bit_width_unsigned(width - 1u);
+		w->seed.shift[i] = (uint8_t)exponent;
+		if (exponent > widest) widest = exponent;
+		w->seed.target[i] = sample_round_s16(.5 * w->lower[i] + .5 * w->upper[i]);
+	}
+	for (size_t i = 0; i < training->count; ++i) {
+		if (w->seed.shift[i] == UINT8_MAX) continue;
+		unsigned shift = widest - w->seed.shift[i];
+		w->seed.shift[i] = (uint8_t)(shift > 7u ? 7u : shift);
+		if (i >= training->taps)
+			w->seed.total += 1u << (2u * w->seed.shift[i]);
+	}
+	return w->seed.total != 0;
+}
+
 enum v92_observation_fit_result v92_observation_fit_begin(struct v92_observation_fit_work *w,
 	const struct v92_observation_training *training)
 {
@@ -928,6 +992,7 @@ enum v92_observation_fit_result v92_observation_fit_begin(struct v92_observation
 	if (training->levels && linear && scalar_explains_cells(training, 1., 0., HUGE_VAL))
 		return V92_OBSERVATION_FIT_EXPLAINED;
 	if (energy == 0. || linear_error == 0.) return V92_OBSERVATION_FIT_DECLINED;
+	if (!seed_targets(w, training)) return V92_OBSERVATION_FIT_DECLINED;
 	w->linear_error = linear_error;
 	w->model.energy = energy;
 	if (scalar_cell_interval(training, w->lower, w->upper, &w->scalar.low, &w->scalar.high) &&

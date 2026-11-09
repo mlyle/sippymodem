@@ -1326,6 +1326,46 @@ static void check_channel(enum g711_law law, double gain, unsigned taps,
 	printf("V.92 observation law=%u taps=%u gain=%.9g count=%zu heldout_rms=%.6f\n", law, taps, gain, count, rms);
 }
 
+/* Reconstruct each complete normal equation independently of the
+ * incremental gain-boundary updates. Integer targets and dyadic weights
+ * make the differently ordered sums exactly comparable. */
+static void check_seed_moments(const struct v92_observation_fit_work *work,
+	const struct v92_observation_training *training)
+{
+	if (work->stage != V92_FIT_SWEEP && work->stage != V92_FIT_CENTER) return;
+	double gram[GRAM_FIT_MOMENTS] = { 0 }, rhs[V92_OBSERVATION_TAPS] = { 0 }, energy = 0.;
+	unsigned total = 0;
+	for (size_t row = training->taps; row < training->count; ++row) {
+		unsigned weight = 1;
+		int16_t target = training->sample[row];
+		if (work->seed.total) {
+			unsigned shift = work->seed.shift[row];
+			if (shift == UINT8_MAX) {
+				assert(!isfinite(work->lower[row]) || !isfinite(work->upper[row]));
+				continue;
+			}
+			assert(shift <= 7);
+			weight = 1u << (2u * shift);
+			target = work->seed.target[row];
+		}
+		total += weight;
+		for (unsigned i = 0; i < training->taps; ++i) {
+			rhs[i] += (double)weight * work->q[row - i] * target;
+			for (unsigned j = 0; j <= i; ++j)
+				gram[gram_moment_index(i, j)] +=
+					(double)weight * work->q[row - i] * work->q[row - j];
+		}
+		energy += (double)weight * target * target;
+	}
+	assert(!work->seed.total || total == work->seed.total);
+	assert(energy == work->moments.energy);
+	for (unsigned i = 0; i < training->taps; ++i) {
+		assert(rhs[i] == work->moments.rhs[i]);
+		for (unsigned j = 0; j <= i; ++j)
+			assert(gram[gram_moment_index(i, j)] == work->moments.gram[gram_moment_index(i, j)]);
+	}
+}
+
 /* Fit only the known prefix. Each physical phase has a separate positive
  * wire-operation case; unknown later inputs test the frozen reconstruction.
  * Incremental publication and its exact cost must agree with synchronous fit. */
@@ -1357,10 +1397,12 @@ static void check_periodic_training(enum g711_law law, unsigned taps,
 	struct v92_observation_fit_work work;
 	memset(&model, 0x5a, sizeof(model)); before = model;
 	assert(v92_observation_fit_begin(&work, &training) == V92_OBSERVATION_FIT_MORE);
+	check_seed_moments(&work, &training);
 	enum v92_observation_fit_result result;
 	unsigned steps = 0;
 	do {
 		result = v92_observation_fit_step(&work, &training, &model);
+		check_seed_moments(&work, &training);
 		assert(++steps < 128);
 		if (result == V92_OBSERVATION_FIT_MORE)
 			assert(!memcmp(&model, &before, sizeof(model)) && work.training_cost == UINT64_MAX);
