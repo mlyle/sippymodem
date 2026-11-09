@@ -10,6 +10,8 @@ _Static_assert((unsigned)V92_ECHO_TIMING_HISTORY > (unsigned)ECHO_TIMING_BINS,
 	       "retain both sides of the echo shift search");
 _Static_assert((V92_ECHO_TIMING_HISTORY & (V92_ECHO_TIMING_HISTORY - 1)) == 0,
 	       "echo history is a power-of-two ring");
+_Static_assert(V92_PCM_MAPPING_FRAME_SYMBOLS % V92_PCM_MAPPING_PHASES == 0,
+	       "receive frame wraps must preserve the constellation phase");
 
 void v92_echo_timing_reset(struct v92_echo_timing *timing)
 {
@@ -172,7 +174,6 @@ int v92_echo_timing_observe(
 	timing->prediction[at] = (float)projected;
 	timing->observation[at] = (float)(observed + midpoint);
 	timing->half_width[at] = (float)half_width;
-	timing->phase[at] = line->symbol_count % V92_PCM_MAPPING_PHASES;
 	++timing->samples;
 	if (timing->samples < ECHO_TIMING_BINS || timing->samples % V92_ECHO_TIMING_STRIDE)
 		return 0;
@@ -180,7 +181,12 @@ int v92_echo_timing_observe(
 	 * has also contracted through more than 300 inputs before any scoring. */
 	unsigned center = (at + V92_ECHO_TIMING_HISTORY - ECHO_TIMING_RADIUS) & mask;
 	double x = timing->observation[center] + timing->prediction[center];
-	unsigned set = receiver->decoder.mapping.cpd.frame_constellation[timing->phase[center]];
+	/* Supported input advances the receiver phase once per physical sample.
+	 * Read the center's phase from that clock, independent of ring wrapping:
+	 * the power-of-two history length is not a multiple of the phase cycle. */
+	unsigned phase = (line->symbol_count + V92_PCM_MAPPING_PHASES -
+		ECHO_TIMING_RADIUS % V92_PCM_MAPPING_PHASES) % V92_PCM_MAPPING_PHASES;
+	unsigned set = receiver->decoder.mapping.cpd.frame_constellation[phase];
 	const struct v92_cpd_constellation *points = &receiver->decoder.mapping.cpd.constellation[set];
 	unsigned part = echo_shift_part(&timing->window);
 	for (unsigned i = 0; i < ECHO_TIMING_BINS; i++) {

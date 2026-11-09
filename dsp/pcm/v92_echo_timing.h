@@ -21,7 +21,6 @@ struct v92_echo_timing {
 	float prediction[V92_ECHO_TIMING_HISTORY];
 	float observation[V92_ECHO_TIMING_HISTORY];
 	float half_width[V92_ECHO_TIMING_HISTORY];
-	uint8_t phase[V92_ECHO_TIMING_HISTORY];
 	struct v92_residual inverse;
 	double gain, offset;
 	double step[V92_CPD_MAX_CONSTELLATIONS];
