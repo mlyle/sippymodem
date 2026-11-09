@@ -118,6 +118,66 @@ static bool test_zero_region_alignment_and_bounds(void)
 	return true;
 }
 
+static bool test_byte_masks(void)
+{
+	uint8_t bytes[17] = { 0 };
+
+	CHECK(!memory_region_bits_are_clear(NULL, 0, 0) &&
+	      !memory_region_bits_are_clear(NULL, 17, UINT8_MAX) &&
+	      memory_region_bits_are_clear(bytes, 0, UINT8_MAX),
+	      "masked region null/empty contract changed");
+	for (unsigned mask = 0; mask <= UINT8_MAX; ++mask) {
+		for (unsigned value = 0; value <= UINT8_MAX; ++value) {
+			for (size_t index = 0; index < sizeof(bytes); ++index) {
+				bytes[index] = (uint8_t)value;
+				CHECK(memory_region_bits_are_clear(bytes, sizeof(bytes),
+					      (uint8_t)mask) == ((value & mask) == 0),
+				      "mask %u byte %zu value %u misclassified", mask, index, value);
+				bytes[index] = 0;
+			}
+		}
+	}
+	return true;
+}
+
+static bool test_byte_mask_alignment_and_bounds(void)
+{
+	static const uint8_t masks[] = { 0, 1, 0x55, 0x80, 0xaa, 0xfe, 0xff };
+
+	for (size_t offset = 0; offset < 16u; ++offset) {
+		for (size_t size = 0; size <= 33u; ++size) {
+			uint8_t *storage = malloc(offset + size + 1u);
+
+			CHECK(storage != NULL, "masked-region fixture allocation failed");
+			for (size_t m = 0; m < ARRAY_LENGTH(masks); ++m) {
+				uint8_t *region = storage + offset + 1u;
+				uint8_t mask = masks[m];
+
+				memset(storage, UINT8_MAX, offset + size + 1u);
+				memset(region, (uint8_t)~mask, size);
+				CHECK(memory_region_bits_are_clear(region, size, mask),
+				      "allowed bits rejected at %zu/%zu mask %u", offset, size, mask);
+				for (size_t index = 0; index < size; ++index) {
+					for (unsigned bit = 0; bit < 8; ++bit) {
+						if (!(mask & (1u << bit)))
+							continue;
+						region[index] |= (uint8_t)(1u << bit);
+						CHECK(!memory_region_bits_are_clear(region, size, mask) &&
+						      memory_region_bits_are_clear(region, index, mask) &&
+						      memory_region_bits_are_clear(region + index + 1u,
+							      size - index - 1u, mask),
+						      "masked bit escaped bounds at %zu/%zu/%zu/%u/%u",
+						      offset, size, index, mask, bit);
+						region[index] = (uint8_t)~mask;
+					}
+				}
+			}
+			free(storage);
+		}
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -128,6 +188,8 @@ int main(void)
 		{ "empty regions", test_empty_regions },
 		{ "region sets", test_region_sets },
 		{ "zero regions", test_zero_regions },
+		{ "byte masks", test_byte_masks },
+		{ "byte mask alignment and bounds", test_byte_mask_alignment_and_bounds },
 		{ "zero region alignment and bounds", test_zero_region_alignment_and_bounds },
 	};
 	unsigned int failures = 0;

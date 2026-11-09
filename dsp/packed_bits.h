@@ -125,24 +125,7 @@ static inline void packed_msb_write_msb_field(
 static inline bool unpacked_bits_are_binary(
 	const uint8_t *bits, size_t count)
 {
-	if (bits == NULL)
-		return false;
-	/* Each byte is a bit. Check whole words without alignment or aliasing
-	 * assumptions; every byte's upper seven bits must be clear. */
-	while (count >= sizeof(uint64_t)) {
-		uint64_t word;
-
-		memcpy(&word, bits, sizeof(word));
-		if (word & UINT64_C(0xfefefefefefefefe))
-			return false;
-		bits += sizeof(word);
-		count -= sizeof(word);
-	}
-	for (size_t index = 0; index < count; ++index) {
-		if (bits[index] > 1u)
-			return false;
-	}
-	return true;
+	return memory_region_bits_are_clear(bits, count, UINT8_C(0xfe));
 }
 
 /* Return true when every bit after used_bit_count is zero. */

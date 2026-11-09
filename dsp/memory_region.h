@@ -58,29 +58,38 @@ static inline bool memory_region_set_overlaps(
 	return false;
 }
 
-/* Validate a caller-owned byte region without relying on object alignment. */
-static inline bool memory_region_is_zero(const void *region, size_t size)
+/* Require each byte's masked bits to be clear. Whole-word loads use memcpy
+ * to avoid alignment/aliasing assumptions and never read past size. The
+ * repeated byte mask is independent of byte order. NULL is rejected even
+ * for an empty region; a nonnull empty region accesses no storage. */
+static inline bool memory_region_bits_are_clear(
+	const void *region, size_t size, uint8_t mask)
 {
 	const uint8_t *bytes = region;
+	uint64_t word_mask = UINT64_C(0x0101010101010101) * mask;
 
 	if (bytes == NULL)
 		return false;
-	/* Inspect whole words without alignment or aliasing assumptions, and
-	 * never read beyond the caller's region (including its final byte). */
 	while (size >= sizeof(uint64_t)) {
 		uint64_t word;
 
 		memcpy(&word, bytes, sizeof(word));
-		if (word != 0u)
+		if (word & word_mask)
 			return false;
 		bytes += sizeof(word);
 		size -= sizeof(word);
 	}
 	for (size_t index = 0; index < size; ++index) {
-		if (bytes[index] != 0u)
+		if (bytes[index] & mask)
 			return false;
 	}
 	return true;
+}
+
+/* Validate a caller-owned byte region without relying on object alignment. */
+static inline bool memory_region_is_zero(const void *region, size_t size)
+{
+	return memory_region_bits_are_clear(region, size, UINT8_MAX);
 }
 
 #endif
