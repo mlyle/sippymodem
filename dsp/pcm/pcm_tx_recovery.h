@@ -20,19 +20,22 @@ static inline void pcm_tx_recovery_progress(struct pcm_tx_recovery *recovery,
 		*recovery = (struct pcm_tx_recovery){ .ack_generation = ack_generation };
 }
 
-/* First allow an ordinary Final to return after the retry query. This
- * bounded media guard prevents colliding/lost replies from authorizing an
- * immediate phase change. LAPM's T401 deadline continues unchanged. */
+/* First allow an ordinary Final to return after the retry query. The guard
+ * includes the measured round trip as well as local framing/processing slack;
+ * otherwise a long path can be interrupted before its reply arrives.
+ * LAPM's T401 deadline continues unchanged. */
 static inline void pcm_tx_recovery_arm(struct pcm_tx_recovery *recovery, uint64_t now)
 {
 	recovery->used = recovery->pending = true;
 	recovery->poll_sample = now;
 }
 
-static inline bool pcm_tx_recovery_ready(const struct pcm_tx_recovery *recovery, uint64_t now)
+static inline bool pcm_tx_recovery_ready(const struct pcm_tx_recovery *recovery,
+	uint64_t now, uint16_t round_trip_delay_samples)
 {
 	return recovery->pending && now >= recovery->poll_sample &&
-		now - recovery->poll_sample >= MODEM_RATE / 10;
+		now - recovery->poll_sample >=
+			MODEM_RATE / 10 + (uint32_t)round_trip_delay_samples;
 }
 
 static inline void pcm_tx_recovery_note(struct pcm_tx_recovery *recovery,

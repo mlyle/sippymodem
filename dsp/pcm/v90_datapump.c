@@ -744,7 +744,8 @@ static void apply_transmit_recovery(struct v90_datapump *datapump)
 		return;
 	struct modem_tx_recovery observation;
 	if (!transmit_recovery_observation(datapump, &observation) ||
-	    !pcm_tx_recovery_ready(recovery, dp->modem->count))
+	    !pcm_tx_recovery_ready(recovery, dp->modem->count,
+		    datapump->call.round_trip_delay_samples))
 		return;
 	recovery->pending = false;
 	if (pcm_tx_recovery_eligible(recovery, dp->modem->count, &observation))
@@ -774,7 +775,8 @@ static void service_link_v90(struct dp *dp)
 			recovery->deferred_grant = 0;
 			return;
 		}
-		if (!pcm_tx_recovery_ready(recovery, dp->modem->count))
+		if (!pcm_tx_recovery_ready(recovery, dp->modem->count,
+			    datapump->call.round_trip_delay_samples))
 			return;
 		recovery->pending = false;
 		recovery->deferred_grant = 0;

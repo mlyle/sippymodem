@@ -20,6 +20,7 @@
 #include <v90_datapump.h>
 #include <v90_profile.h>
 #include <pcm_rate.h>
+#include <pcm_tx_recovery.h>
 
 #include "test.h"
 #include "lapm_state_fixture.h"
@@ -8675,6 +8676,17 @@ static bool test_lapm_idle_tx_verification(void)
 			      observation.peer_noack && observation.receive_healthy &&
 			      !modem_ec_take_retrain_request(m), "verification skipped ordinary first retry");
 			uint64_t generation = observation.ack_generation;
+			struct pcm_tx_recovery timing = {
+				.ack_generation = generation, .phase = 1,
+			};
+			if (scenario == HEAL_RETRY) {
+				/* The reply needs 1903 samples to make its round trip.
+				 * Keep the retry guard open beyond the old 100 ms limit. */
+				pcm_tx_recovery_arm(&timing, m->count);
+				m->count += 1903;
+				CHECK(!pcm_tx_recovery_ready(&timing, m->count, 1903),
+				      "physical recovery preempted the delayed Final");
+			}
 			if (scenario <= HEAL_RETRY) {
 				wire[0] = l->cmd_addr; /* Solicited Final, N(R)=0. */
 				m->packer.hdlc.rx_complete(l, &incoming);
@@ -8682,6 +8694,12 @@ static bool test_lapm_idle_tx_verification(void)
 				      modem_ec_get_tx_recovery(m, &observation) &&
 				      observation.ack_generation != generation && !observation.peer_noack,
 				      "Final did not retire idle verification");
+				if (scenario == HEAL_RETRY) {
+					pcm_tx_recovery_progress(&timing, observation.ack_generation);
+					CHECK(!timing.pending &&
+					      !pcm_tx_recovery_ready(&timing, m->count + MODEM_RATE, 1903),
+					      "delayed Final retained a physical recovery request");
+				}
 				while ((outgoing = m->packer.hdlc.get_tx_frame(l)) != NULL) {
 					m->packer.hdlc.tx_complete(l, outgoing);
 					if (source.calls) break;
