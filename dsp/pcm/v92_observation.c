@@ -393,8 +393,9 @@ static bool codec_bounds(enum g711_law law, double gain, int16_t observed,
 }
 
 /* Prepare one immutable set of host-coordinate cells for both scalar and
- * channel fitting. Test the unchanged predictor using relative bounds before
- * adding the sample: that arithmetic matters at directed-rounding edges. */
+ * channel fitting. Screen the unchanged predictor using relative bounds
+ * before adding the sample; directed-rounding edges depend on this order.
+ * Containment alone is not a proof: require the forward integer codec too. */
 static bool training_cells(const struct v92_observation_training *training,
 	double *low, double *high, bool *linear)
 {
@@ -923,7 +924,8 @@ bool v92_observation_fit_begin(struct v92_observation_fit_work *w,
 	w->training_cost = UINT64_MAX;
 	if (energy == 0. || linear_error == 0.) return false;
 	bool linear;
-	if (!training_cells(training, w->lower, w->upper, &linear) || (training->levels && linear))
+	if (!training_cells(training, w->lower, w->upper, &linear) ||
+	    (training->levels && linear && scalar_explains_cells(training, 1., 0., HUGE_VAL)))
 		return false;
 	w->linear_error = linear_error;
 	w->model.energy = energy;

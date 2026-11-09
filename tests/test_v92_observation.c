@@ -761,6 +761,55 @@ static void check_scalar_codec_cells(enum g711_law law, bool translated)
 	}
 }
 
+/* Rounded interval endpoints can falsely contain a target whose actual
+ * encoder reconstruction lies in the adjacent cell. A positive verdict must
+ * survive the forward integer codec, in the active rounding context. */
+static void check_unit_cell_boundary(void)
+{
+	const struct {
+		enum g711_law law;
+		int16_t linear, observed, level, adjacent;
+		double gain, offset;
+	} cases[] = {
+		{ G711_LAW_PCMU, -16000, -15489, -31100, -32124, 1., 0x1.e7dbfffffffffp+13 },
+		{ G711_LAW_PCMA, -1000, -961, -5504, -5760, 0x1.3333333333333p-2, 0x1.58dffffffffffp+9 },
+	};
+	const int modes[] = { FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO };
+	int saved = fegetround();
+	for (unsigned c = 0; c < sizeof(cases) / sizeof(cases[0]); ++c)
+		for (unsigned m = 0; m < sizeof(modes) / sizeof(modes[0]); ++m) {
+			assert(fesetround(modes[m]) == 0);
+			int32_t x[4]; int16_t u[4], y[4], levels[4]; double offsets[4];
+			volatile double gain = cases[c].gain, offset = cases[c].offset;
+			for (unsigned i = 0; i < 4; ++i) {
+				x[i] = u[i] = cases[c].linear; y[i] = cases[c].observed;
+				levels[i] = cases[c].level; offsets[i] = offset;
+			}
+			struct v92_observation_training t = { .input = x, .linear = u,
+				.sample = y, .levels = levels, .offsets = offsets, .count = 4,
+				.taps = 3, .host_gain = gain, .law = cases[c].law };
+			struct v92_observation_fit_work work;
+			bool begun = v92_observation_fit_begin(&work, &t);
+			enum v92_observation_fit_result result = V92_OBSERVATION_FIT_MORE;
+			int16_t reconstructed = quantize(cases[c].law, (u[3] - offset) / gain);
+			assert(begun || reconstructed == levels[3]);
+			if (modes[m] == FE_TONEAREST) {
+				assert(reconstructed == cases[c].adjacent && begun);
+				struct v92_observation output, before;
+				memset(&output, 0x5a, sizeof(output)); before = output;
+				unsigned steps = 0;
+				while (result == V92_OBSERVATION_FIT_MORE) {
+					result = v92_observation_fit_step(&work, &t, &output);
+					assert(++steps <= V92_SCALAR_FIT_STEPS && !memcmp(&output, &before, sizeof(output)));
+				}
+				assert(result == V92_OBSERVATION_FIT_DECLINED &&
+				       work.scalar_result.status == V92_OBSERVATION_FIT_READY);
+				assert(quantize(cases[c].law, (work.scalar_result.gain * u[3] - offset) / gain) == levels[3]);
+			}
+		}
+	assert(fesetround(saved) == 0);
+}
+
 static void check_rebinding(const struct v92_observation *a, const struct v92_observation *b)
 {
 	struct v92_observation_cache cache;
@@ -1825,6 +1874,7 @@ int main(void)
 	for (unsigned law = 0; law < 2; law++)
 		for (unsigned translated = 0; translated < 2; translated++) {
 			check_scalar_codec_cells(law, translated);
+			check_unit_cell_boundary();
 			check_single_codec_cells(law, 1.25, translated);
 			check_single_codec_cells(law, 1.9586004197173543, translated);
 		}
