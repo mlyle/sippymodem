@@ -910,11 +910,11 @@ static bool initialize_fit(struct v92_observation_fit_work *w,
 	return true;
 }
 
-bool v92_observation_fit_begin(struct v92_observation_fit_work *w,
+enum v92_observation_fit_result v92_observation_fit_begin(struct v92_observation_fit_work *w,
 	const struct v92_observation_training *training)
 {
 	if (!training_is_valid(w, sizeof(*w), training) ||
-		(training->taps != 3 && training->taps != 4) || training->count <= training->taps) return false;
+		(training->taps != 3 && training->taps != 4) || training->count <= training->taps) return V92_OBSERVATION_FIT_DECLINED;
 	double energy = 0., linear_error = 0.;
 	for (size_t i = training->taps; i < training->count; i++) {
 		double error = (double)training->sample[i] - training->linear[i];
@@ -922,21 +922,22 @@ bool v92_observation_fit_begin(struct v92_observation_fit_work *w,
 	}
 	memset(w, 0, sizeof(*w));
 	w->training_cost = UINT64_MAX;
-	if (energy == 0. || linear_error == 0.) return false;
 	bool linear;
-	if (!training_cells(training, w->lower, w->upper, &linear) ||
-	    (training->levels && linear && scalar_explains_cells(training, 1., 0., HUGE_VAL)))
-		return false;
+	if (!training_cells(training, w->lower, w->upper, &linear))
+		return V92_OBSERVATION_FIT_DECLINED;
+	if (training->levels && linear && scalar_explains_cells(training, 1., 0., HUGE_VAL))
+		return V92_OBSERVATION_FIT_EXPLAINED;
+	if (energy == 0. || linear_error == 0.) return V92_OBSERVATION_FIT_DECLINED;
 	w->linear_error = linear_error;
 	w->model.energy = energy;
 	if (scalar_cell_interval(training, w->lower, w->upper, &w->scalar.low, &w->scalar.high) &&
 	    begin_scalar(&w->scalar.fit, training)) {
 		w->stage = V92_FIT_SCALAR;
-		return true;
+		return V92_OBSERVATION_FIT_MORE;
 	}
 	fit_intervals_begin(w, training->law, training->input, training->sample, training->count, training->taps);
 	w->stage = V92_FIT_SWEEP;
-	return true;
+	return V92_OBSERVATION_FIT_MORE;
 }
 
 enum v92_observation_fit_result v92_observation_fit_finish_scalar_owned(
@@ -952,7 +953,7 @@ enum v92_observation_fit_result v92_observation_fit_finish_scalar_owned(
 	    scalar_explains_cells(training, result.gain, w->scalar.low, w->scalar.high)) {
 		w->training_cost = UINT64_MAX;
 		w->stage = V92_FIT_IDLE;
-		return V92_OBSERVATION_FIT_DECLINED;
+		return V92_OBSERVATION_FIT_EXPLAINED;
 	}
 	fit_intervals_begin(w, training->law, training->input, training->sample,
 		training->count, training->taps);
@@ -1010,7 +1011,7 @@ bool v92_observation_fit(struct v92_observation *model,
 {
 	if (!training_is_valid(model, sizeof(*model), training)) return false;
 	struct v92_observation_fit_work work;
-	if (!v92_observation_fit_begin(&work, training)) return false;
+	if (v92_observation_fit_begin(&work, training) != V92_OBSERVATION_FIT_MORE) return false;
 	enum v92_observation_fit_result result;
 	do {
 		result = v92_observation_fit_step(&work, training, model);

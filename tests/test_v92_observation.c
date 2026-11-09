@@ -728,6 +728,9 @@ static void check_single_codec_cells(enum g711_law law, double host_gain, bool t
 	};
 	assert(!v92_observation_fit(&model, &training));
 	assert(memcmp(&model, &before, sizeof(model)) == 0);
+	struct v92_observation_fit_work work;
+	assert(v92_observation_fit_begin(&work, &training) == V92_OBSERVATION_FIT_EXPLAINED);
+	assert(work.training_cost == UINT64_MAX && work.scalar_result.status == V92_OBSERVATION_FIT_MORE);
 }
 
 /* A small calibration bias can cross codec cells on a bipolar grid.
@@ -758,7 +761,74 @@ static void check_scalar_codec_cells(enum g711_law law, bool translated)
 		};
 		assert(!v92_observation_fit(&model, &training));
 		assert(memcmp(&model, &before, sizeof(model)) == 0);
+		struct v92_observation_fit_work work;
+		enum v92_observation_fit_result result = v92_observation_fit_begin(&work, &training);
+		unsigned steps = 0;
+		while (result == V92_OBSERVATION_FIT_MORE) {
+			result = v92_observation_fit_step(&work, &training, &model);
+			assert(++steps < 128 && memcmp(&model, &before, sizeof(model)) == 0);
+		}
+		assert((result == V92_OBSERVATION_FIT_EXPLAINED || result == V92_OBSERVATION_FIT_DECLINED) &&
+		       work.training_cost == UINT64_MAX);
+		if (result == V92_OBSERVATION_FIT_EXPLAINED) {
+			double gain = work.scalar_result.status == V92_OBSERVATION_FIT_READY ?
+				work.scalar_result.gain : 1.;
+			for (unsigned i = training.taps; i < training.count; ++i)
+				assert(quantize(law, (gain * u[i] - offsets[i]) / host_gain) == levels[i]);
+		}
 	}
+}
+
+/* Equal source coordinates with distinct disjoint codec cells cannot have
+ * a noiseless scalar explanation. A positive verdict proves only the supplied
+ * codec/training context; a later invalid begin must not repeat that verdict. */
+static void check_cell_explanation_rounding(enum g711_law law)
+{
+	enum { COUNT = 8 };
+	int32_t x[COUNT];
+	int16_t u[COUNT], y[COUNT];
+	for (unsigned i = 0; i < COUNT; ++i) {
+		x[i] = u[i] = 1000;
+		y[i] = quantize(law, 1100);
+	}
+	struct v92_observation_training t = { .input = x, .linear = u,
+		.sample = y, .levels = y, .count = COUNT, .taps = 3, .host_gain = 1., .law = law };
+	struct v92_observation_fit_work work;
+	struct v92_observation output, before;
+	memset(&output, 0x5a, sizeof(output)); before = output;
+	enum v92_observation_fit_result result = v92_observation_fit_begin(&work, &t);
+	assert(result == V92_OBSERVATION_FIT_MORE && work.stage == V92_FIT_SCALAR);
+	unsigned steps = 0;
+	while (result == V92_OBSERVATION_FIT_MORE) {
+		result = v92_observation_fit_step(&work, &t, &output);
+		assert(++steps <= V92_SCALAR_FIT_STEPS && !memcmp(&output, &before, sizeof(output)));
+	}
+	assert(result == V92_OBSERVATION_FIT_EXPLAINED &&
+	       work.scalar_result.status == V92_OBSERVATION_FIT_READY && work.training_cost == UINT64_MAX);
+	for (unsigned i = t.taps; i < t.count; ++i)
+		assert(quantize(law, work.scalar_result.gain * u[i]) == y[i]);
+	struct v92_observation_fit_work saved = work;
+	struct v92_observation_training bad = t; bad.count = 0;
+	assert(v92_observation_fit_begin(&work, &bad) == V92_OBSERVATION_FIT_DECLINED &&
+	       !memcmp(&work, &saved, sizeof(work)));
+	/* A verdict from one codec cannot certify different forced-bit cells. */
+	enum g711_lsb_mode lsb[V92_OBSERVATION_PHASES];
+	for (unsigned i = 0; i < V92_OBSERVATION_PHASES; ++i)
+		lsb[i] = g711_encode(law, y[3]) & 1u ? G711_LSB_ZERO : G711_LSB_ONE;
+	struct v92_observation_training changed = t; changed.lsb = lsb;
+	assert(v92_observation_fit_begin(&work, &changed) == V92_OBSERVATION_FIT_DECLINED);
+	y[COUNT - 1] = quantize(law, 1900);
+	result = v92_observation_fit_begin(&work, &t); steps = 0;
+	while (result == V92_OBSERVATION_FIT_MORE) {
+		result = v92_observation_fit_step(&work, &t, &output);
+		assert(++steps < 128);
+	}
+	assert(result != V92_OBSERVATION_FIT_EXPLAINED);
+	/* Exact sample centres without actual wire evidence are not a cell proof. */
+	t.levels = NULL; t.linear = y;
+	assert(v92_observation_fit_begin(&work, &t) == V92_OBSERVATION_FIT_DECLINED);
+	t.levels = y;
+	assert(v92_observation_fit_begin(&work, &t) == V92_OBSERVATION_FIT_EXPLAINED);
 }
 
 /* Rounded interval endpoints can falsely contain a target whose actual
@@ -789,12 +859,11 @@ static void check_unit_cell_boundary(void)
 				.sample = y, .levels = levels, .offsets = offsets, .count = 4,
 				.taps = 3, .host_gain = gain, .law = cases[c].law };
 			struct v92_observation_fit_work work;
-			bool begun = v92_observation_fit_begin(&work, &t);
-			enum v92_observation_fit_result result = V92_OBSERVATION_FIT_MORE;
+			enum v92_observation_fit_result result = v92_observation_fit_begin(&work, &t);
 			int16_t reconstructed = quantize(cases[c].law, (u[3] - offset) / gain);
-			assert(begun || reconstructed == levels[3]);
+			assert(result != V92_OBSERVATION_FIT_EXPLAINED || reconstructed == levels[3]);
 			if (modes[m] == FE_TONEAREST) {
-				assert(reconstructed == cases[c].adjacent && begun);
+				assert(reconstructed == cases[c].adjacent && result == V92_OBSERVATION_FIT_MORE);
 				struct v92_observation output, before;
 				memset(&output, 0x5a, sizeof(output)); before = output;
 				unsigned steps = 0;
@@ -802,11 +871,22 @@ static void check_unit_cell_boundary(void)
 					result = v92_observation_fit_step(&work, &t, &output);
 					assert(++steps <= V92_SCALAR_FIT_STEPS && !memcmp(&output, &before, sizeof(output)));
 				}
-				assert(result == V92_OBSERVATION_FIT_DECLINED &&
+				assert(result == V92_OBSERVATION_FIT_EXPLAINED &&
 				       work.scalar_result.status == V92_OBSERVATION_FIT_READY);
 				assert(quantize(cases[c].law, (work.scalar_result.gain * u[3] - offset) / gain) == levels[3]);
 			}
 		}
+	assert(fesetround(saved) == 0);
+}
+
+static void check_cell_explanation(enum g711_law law)
+{
+	const int modes[] = { FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO };
+	int saved = fegetround();
+	for (unsigned i = 0; i < sizeof(modes) / sizeof(modes[0]); ++i) {
+		assert(fesetround(modes[i]) == 0);
+		check_cell_explanation_rounding(law);
+	}
 	assert(fesetround(saved) == 0);
 }
 
@@ -1064,8 +1144,8 @@ static void check_resumable(const struct v92_observation_training *training,
 	assert(v92_observation_fit(&other, &shorter));
 	memset(output, 0x5a, sizeof(output));
 	memcpy(before, output, sizeof(before));
-	assert(v92_observation_fit_begin(active[0], training));
-	assert(v92_observation_fit_begin(active[1], &shorter));
+	assert(v92_observation_fit_begin(active[0], training) == V92_OBSERVATION_FIT_MORE);
+	assert(v92_observation_fit_begin(active[1], &shorter) == V92_OBSERVATION_FIT_MORE);
 	/* A bad wire cell must not leave a resumable job using the preceding
 	 * acquisition's bounds. Include unused history and the scored tail,
 	 * then restart beside the untouched first owner. */
@@ -1076,10 +1156,10 @@ static void check_resumable(const struct v92_observation_training *training,
 		levels[invalid[j]] = 1; /* Neither law reconstructs this level. */
 		struct v92_observation_training bad = shorter;
 		bad.levels = levels;
-		assert(!v92_observation_fit_begin(active[1], &bad));
+		assert(v92_observation_fit_begin(active[1], &bad) == V92_OBSERVATION_FIT_DECLINED);
 		assert(active[1]->training_cost == UINT64_MAX);
 		assert(!memcmp(output + 1, before + 1, sizeof(*output)));
-		assert(v92_observation_fit_begin(active[1], &shorter));
+		assert(v92_observation_fit_begin(active[1], &shorter) == V92_OBSERVATION_FIT_MORE);
 	}
 	bool done[2] = { false, false };
 	unsigned steps[2] = { 0, 0 };
@@ -1095,7 +1175,7 @@ static void check_resumable(const struct v92_observation_training *training,
 			assert(active[i]->training_cost == UINT64_MAX);
 			assert(!memcmp(output + i, before + i, sizeof(*output)));
 			if (i == 1 && steps[i] == 3)
-				assert(v92_observation_fit_begin(active[i], t));
+				assert(v92_observation_fit_begin(active[i], t) == V92_OBSERVATION_FIT_MORE);
 			if (i == 1 && steps[i] == 5) {
 				work[2] = *active[i]; memset(active[i], 0, sizeof(*active[i]));
 				active[i] = work + 2;
@@ -1110,12 +1190,12 @@ static void check_resumable(const struct v92_observation_training *training,
 	struct v92_observation_training invalid_training = *training;
 	invalid_training.count = 0;
 	uint64_t previous_cost = active[0]->training_cost;
-	assert(!v92_observation_fit_begin(active[0], &invalid_training));
+	assert(v92_observation_fit_begin(active[0], &invalid_training) == V92_OBSERVATION_FIT_DECLINED);
 	assert(active[0]->training_cost == previous_cost);
 	if (!training->offsets) {
 		struct v92_observation_training inferred = *training;
 		inferred.levels = NULL;
-		assert(v92_observation_fit_begin(active[0], &inferred));
+		assert(v92_observation_fit_begin(active[0], &inferred) == V92_OBSERVATION_FIT_MORE);
 		enum v92_observation_fit_result result;
 		do {
 			result = v92_observation_fit_step(active[0], &inferred, output);
@@ -1140,7 +1220,7 @@ static void check_coincident_fit(enum g711_law law)
 	struct v92_observation_fit_work work;
 	struct v92_observation output, before;
 	memset(&output, 0x5a, sizeof(output)); before = output;
-	assert(v92_observation_fit_begin(&work, &training));
+	assert(v92_observation_fit_begin(&work, &training) == V92_OBSERVATION_FIT_MORE);
 	unsigned steps = 0;
 	enum v92_observation_fit_result result;
 	do {
@@ -1172,7 +1252,7 @@ static void check_pruned_cost(void)
 	struct v92_observation_fit_work work;
 	struct v92_observation output, before;
 	memset(&output, 0xa5, sizeof(output)); before = output;
-	assert(v92_observation_fit_begin(&work, &training));
+	assert(v92_observation_fit_begin(&work, &training) == V92_OBSERVATION_FIT_MORE);
 	enum v92_observation_fit_result result;
 	unsigned stage;
 	do {
@@ -1276,7 +1356,7 @@ static void check_periodic_training(enum g711_law law, unsigned taps,
 	struct v92_observation model, whole, before;
 	struct v92_observation_fit_work work;
 	memset(&model, 0x5a, sizeof(model)); before = model;
-	assert(v92_observation_fit_begin(&work, &training));
+	assert(v92_observation_fit_begin(&work, &training) == V92_OBSERVATION_FIT_MORE);
 	enum v92_observation_fit_result result;
 	unsigned steps = 0;
 	do {
@@ -1546,7 +1626,7 @@ static void check_scalar_reuse(const struct v92_observation_training *training)
 		for (unsigned i = 0; i < training->count; i++)
 			input[i] = round_shift_s64_to_s32_saturating((int64_t)training->input[i] * 13753, 15);
 		other.input = input;
-		bool begun = v92_observation_fit_begin(work, training);
+		bool begun = v92_observation_fit_begin(work, training) == V92_OBSERVATION_FIT_MORE;
 		assert(work->scalar_result.status == V92_OBSERVATION_FIT_MORE);
 		finish_fit(work, training, output, begun ? V92_OBSERVATION_FIT_MORE :
 			V92_OBSERVATION_FIT_DECLINED, steps);
@@ -1560,14 +1640,14 @@ static void check_scalar_reuse(const struct v92_observation_training *training)
 		 * a completed result from the previous numerical context. */
 		assert(fesetround(modes[(mode + 1u) % 4u]) == 0);
 		assert(!v92_scalar_fit_result_can_reuse(completed) &&
-		       v92_observation_fit_begin(work + 2, &other));
+		       v92_observation_fit_begin(work + 2, &other) == V92_OBSERVATION_FIT_MORE);
 		work[0] = work[2];
 		assert(v92_observation_fit_finish_scalar_owned(work + 2, &other,
 			completed) == V92_OBSERVATION_FIT_DECLINED &&
 		       memcmp(work, work + 2, sizeof(*work)) == 0);
 		assert(fesetround(modes[mode]) == 0 && v92_scalar_fit_result_can_reuse(completed));
-		assert(v92_observation_fit_begin(work + 1, &other) &&
-		       v92_observation_fit_begin(work + 2, &other) &&
+		assert(v92_observation_fit_begin(work + 1, &other) == V92_OBSERVATION_FIT_MORE &&
+		       v92_observation_fit_begin(work + 2, &other) == V92_OBSERVATION_FIT_MORE &&
 		       work[1].stage == V92_FIT_SCALAR && work[2].stage == V92_FIT_SCALAR);
 
 		/* A value copy must survive destruction of its former owner. Invalid
@@ -1575,6 +1655,8 @@ static void check_scalar_reuse(const struct v92_observation_training *training)
 		work[0] = work[2];
 		const struct v92_scalar_fit_result invalid[] = {
 			{ .status = V92_OBSERVATION_FIT_MORE },
+			{ .status = V92_OBSERVATION_FIT_EXPLAINED },
+			{ .status = V92_OBSERVATION_FIT_EXPLAINED, .gain = 1. },
 			{ .status = (enum v92_observation_fit_result)-1 },
 			{ .status = V92_OBSERVATION_FIT_READY, .gain = 0. },
 			{ .status = V92_OBSERVATION_FIT_READY, .gain = -1. },
@@ -1590,7 +1672,7 @@ static void check_scalar_reuse(const struct v92_observation_training *training)
 		}
 		struct v92_observation_training bad = other;
 		bad.count = 0;
-		assert(!v92_observation_fit_begin(work + 2, &bad) &&
+		assert(v92_observation_fit_begin(work + 2, &bad) == V92_OBSERVATION_FIT_DECLINED &&
 		       memcmp(work, work + 2, sizeof(*work)) == 0);
 		enum v92_observation_fit_result reused = v92_observation_fit_finish_scalar_owned(
 			work + 2, &other, completed);
@@ -1629,7 +1711,7 @@ static void check_scalar_decline_reuse(enum g711_law law)
 	struct v92_observation_fit_work *work = calloc(3, sizeof(*work));
 	struct v92_observation output[3] = { 0 };
 	unsigned steps[3] = { 0 };
-	assert(work && v92_observation_fit_begin(work, &t) && work->stage == V92_FIT_SCALAR);
+	assert(work && v92_observation_fit_begin(work, &t) == V92_OBSERVATION_FIT_MORE && work->stage == V92_FIT_SCALAR);
 	finish_fit(work, &t, output, V92_OBSERVATION_FIT_MORE, steps);
 	struct v92_scalar_fit_result completed = work->scalar_result;
 	assert(completed.status == V92_OBSERVATION_FIT_DECLINED && completed.gain == 0.);
@@ -1642,8 +1724,8 @@ static void check_scalar_decline_reuse(enum g711_law law)
 	assert(result == V92_OBSERVATION_FIT_DECLINED && gain == -1. &&
 	       work->scalar_result.status == V92_OBSERVATION_FIT_DECLINED);
 	t.input = other;
-	assert(v92_observation_fit_begin(work + 1, &t) &&
-	       v92_observation_fit_begin(work + 2, &t) && work[2].stage == V92_FIT_SCALAR);
+	assert(v92_observation_fit_begin(work + 1, &t) == V92_OBSERVATION_FIT_MORE &&
+	       v92_observation_fit_begin(work + 2, &t) == V92_OBSERVATION_FIT_MORE && work[2].stage == V92_FIT_SCALAR);
 	enum v92_observation_fit_result reused = v92_observation_fit_finish_scalar_owned(
 		work + 2, &t, completed);
 	assert(reused == V92_OBSERVATION_FIT_MORE && work[2].stage == V92_FIT_SWEEP);
@@ -1652,9 +1734,9 @@ static void check_scalar_decline_reuse(enum g711_law law)
 	assert(result == reused && steps[1] == V92_SCALAR_FIT_STEPS && steps[2] == 0 &&
 	       memcmp(output + 1, output + 2, sizeof(*output)) == 0 &&
 	       work[1].training_cost == work[2].training_cost);
-	/* A generic linear-explained begin decline grants no scalar result. */
+	/* Unit-cell evidence is distinct from a completed scalar solve. */
 	t.sample = t.levels = u;
-	assert(!v92_observation_fit_begin(work, &t) &&
+	assert(v92_observation_fit_begin(work, &t) == V92_OBSERVATION_FIT_EXPLAINED &&
 	       work->scalar_result.status == V92_OBSERVATION_FIT_MORE &&
 	       work->scalar_result.gain == 0.);
 	free(work);
@@ -1874,6 +1956,7 @@ int main(void)
 	for (unsigned law = 0; law < 2; law++)
 		for (unsigned translated = 0; translated < 2; translated++) {
 			check_scalar_codec_cells(law, translated);
+			check_cell_explanation(law);
 			check_unit_cell_boundary();
 			check_single_codec_cells(law, 1.25, translated);
 			check_single_codec_cells(law, 1.9586004197173543, translated);

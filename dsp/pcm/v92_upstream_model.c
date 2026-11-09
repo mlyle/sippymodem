@@ -512,7 +512,7 @@ void v92_upstream_model_progress(struct v92_upstream_data_rx *receiver)
 		for (size_t i = 0; i < V92_OBSERVATION_TRAINING; i++)
 			model->fit.input[i] = candidate ? round_shift_s64_to_s32_saturating(
 				(int64_t)model->x[i] * model->coefficient, 15u) : model->x[i];
-		if (!v92_observation_fit_begin(&model->fit.work, &training)) result = V92_OBSERVATION_FIT_DECLINED;
+		result = v92_observation_fit_begin(&model->fit.work, &training);
 	} else if (stage == V92_FIT_SCALAR &&
 		   v92_scalar_fit_result_can_reuse(model->fit.scalar_result)) {
 		/* Keep begin and scalar completion in separate work quanta. Reuse
@@ -529,7 +529,7 @@ void v92_upstream_model_progress(struct v92_upstream_data_rx *receiver)
 		model->model[candidate].input_coefficient = candidate ? model->coefficient : 0;
 		v92_observation_geometry_reset(&receiver->geometry[candidate]);
 		model->valid |= (uint8_t)(1u << candidate);
-	} else if (result == V92_OBSERVATION_FIT_DECLINED)
+	} else if (result != V92_OBSERVATION_FIT_MORE)
 		memset(&model->model[candidate], 0, sizeof(model->model[candidate]));
 	if (result != V92_OBSERVATION_FIT_MORE) {
 		model->fit.candidate++;

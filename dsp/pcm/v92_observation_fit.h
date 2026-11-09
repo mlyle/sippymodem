@@ -26,6 +26,11 @@ enum { V92_SCALAR_FIT_UPDATES = 96, V92_SCALAR_FIT_BATCH = 12,
 
 enum v92_observation_fit_result {
 	V92_OBSERVATION_FIT_MORE, V92_OBSERVATION_FIT_READY, V92_OBSERVATION_FIT_DECLINED,
+	/* The supplied final codec has a positive linear/scalar explanation
+	 * for every scored training cell. No tandem model is published. This
+	 * is scoped to this immutable training/operation/phase context, not
+	 * a scalar solver result or independent B1u qualification. */
+	V92_OBSERVATION_FIT_EXPLAINED,
 };
 
 /* Explicit completion from the scalar solver. MORE is unavailable, not a
@@ -92,16 +97,18 @@ struct v92_observation_fit_work {
 };
 
 /* Internal exclusively owned continuation. Begin validates the same training
- * contract as fit(); scratch may not overlap training or its arrays. False
- * means no fit. Call step only after successful begin, using that immutable
- * training and an output disjoint from both scratch and training.
+ * contract as fit(); scratch may not overlap training or its arrays. MORE
+ * starts a job; EXPLAINED proves unit-gain codec cells already suffice;
+ * DECLINED grants no such evidence. Rejected input can preserve an old job
+ * but never returns its earlier explanation. Call step only after MORE,
+ * using the same immutable training and an output disjoint from both scratch and training.
  *
  * Each step handles at most twelve scalar updates, 1024 gain-cell solves/codec transitions, one
  * retained channel refinement (including its existing bounded fallback), or
- * one final admission stage. MORE and DECLINED leave output unchanged. READY
+ * one final admission stage. MORE, EXPLAINED and DECLINED leave output unchanged. READY
  * publishes the complete model and ends the job. No partially fitted model
  * is usable for decoding or B1 admission. */
-bool v92_observation_fit_begin(struct v92_observation_fit_work *work,
+enum v92_observation_fit_result v92_observation_fit_begin(struct v92_observation_fit_work *work,
 	const struct v92_observation_training *training);
 enum v92_observation_fit_result v92_observation_fit_step(struct v92_observation_fit_work *work,
 	const struct v92_observation_training *training, struct v92_observation *output);
@@ -112,7 +119,7 @@ enum v92_observation_fit_result v92_observation_fit_step(struct v92_observation_
  * phase and rounding mode. A null-codec result cannot cross a changed
  * operation pattern. Input may
  * differ. Unavailable/malformed results return DECLINED without changing the
- * job. Valid completion returns MORE to start its gain sweep, or DECLINED
+ * job. Valid completion returns MORE to start its gain sweep, or EXPLAINED
  * to end the fit when the scalar exactly explains the cells. This never
  * publishes a model or retains a pointer. */
 enum v92_observation_fit_result v92_observation_fit_finish_scalar_owned(
