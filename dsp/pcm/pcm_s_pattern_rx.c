@@ -2,6 +2,8 @@
 
 #include "pcm_s_pattern_rx.h"
 
+#include "ring_history.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -20,8 +22,8 @@ bool pcm_s_pattern_rx_is_valid(
 	if (receiver == NULL || !g711_law_is_valid(receiver->law) ||
 	    !stage_is_valid(receiver->stage) ||
 	    receiver->signal_ucode > 127u ||
-	    receiver->history_count > PCM_S_PATTERN_ACQUISITION_SYMBOLS ||
-	    receiver->history_cursor >= PCM_S_PATTERN_ACQUISITION_SYMBOLS ||
+	    !ring_history_state_is_valid(receiver->history_cursor,
+		    receiver->history_count, PCM_S_PATTERN_ACQUISITION_SYMBOLS) ||
 	    receiver->next_phase >= PCM_S_PATTERN_SYMBOLS ||
 	    (receiver->level != 0 &&
 	     (receiver->level < MIN_SAMPLED_LEVEL ||
@@ -30,10 +32,7 @@ bool pcm_s_pattern_rx_is_valid(
 
 	switch (receiver->stage) {
 	case PCM_S_PATTERN_RX_SEARCH:
-		return (receiver->history_count ==
-				PCM_S_PATTERN_ACQUISITION_SYMBOLS ||
-			receiver->history_cursor == receiver->history_count) &&
-		       receiver->next_phase == 0 &&
+		return receiver->next_phase == 0 &&
 		       receiver->bar_candidate_symbols == 0 &&
 		       receiver->bar_symbols == 0 && receiver->bar_errors == 0;
 	case PCM_S_PATTERN_RX_LOCKED:

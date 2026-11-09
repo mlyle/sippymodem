@@ -4,6 +4,7 @@
 
 #include "memory_region.h"
 #include "phase.h"
+#include "ring_history.h"
 
 #include <limits.h>
 #include <math.h>
@@ -145,10 +146,8 @@ static bool detector_header_is_valid(
 	if (detector->phase_step != phase_step_u32(
 		    detector->profile.sample_rate_hz,
 		    detector->profile.frequency_hz, 1) ||
-	    detector->history_index >= window_samples ||
-	    detector->history_count > window_samples ||
-	    (detector->history_count < window_samples &&
-	     detector->history_index != detector->history_count) ||
+	    !ring_history_state_is_valid(detector->history_index,
+		    detector->history_count, window_samples) ||
 	    !isfinite(detector->in_phase) ||
 	    fabs(detector->in_phase) > maximum_projection ||
 	    !isfinite(detector->quadrature) ||

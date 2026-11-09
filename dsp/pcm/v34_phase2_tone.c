@@ -3,6 +3,7 @@
 #include "v34_phase2_tone.h"
 
 #include "phase.h"
+#include "ring_history.h"
 #include "v34_gain_control.h"
 
 #include <limits.h>
@@ -368,14 +369,8 @@ static bool retrain_silence_state_is_valid(
 	uint64_t energy = 0;
 	int32_t sum = 0;
 
-	if (detector->silence_history_index >=
-		    V34_RETRAIN_SILENCE_WINDOW_SAMPLES ||
-	    detector->silence_history_count >
-		    V34_RETRAIN_SILENCE_WINDOW_SAMPLES ||
-	    (detector->silence_history_count <
-		     V34_RETRAIN_SILENCE_WINDOW_SAMPLES &&
-	     detector->silence_history_index !=
-		     detector->silence_history_count) ||
+	if (!ring_history_state_is_valid(detector->silence_history_index,
+		    detector->silence_history_count, V34_RETRAIN_SILENCE_WINDOW_SAMPLES) ||
 	    detector->silence_glitch_samples >
 		    V34_RETRAIN_MAX_SILENCE_GLITCH_SAMPLES ||
 	    (detector->silence_samples != 0 &&

@@ -5,6 +5,7 @@
 #include "constellation.h"
 #include "integer_math.h"
 #include "memory_region.h"
+#include "ring_history.h"
 #include "sample_math.h"
 #include "trellis_profile.h"
 
@@ -41,12 +42,8 @@ static bool decoder_header_is_valid(
 	return decoder != NULL &&
 	       v32_trellis_profile_for_data_bits(
 		       decoder->data_bits_per_symbol) != NULL &&
-	       decoder->active_slot < V32_TRELLIS_DECODER_TRACEBACK_SYMBOLS &&
-	       decoder->history_fill <=
-		       V32_TRELLIS_DECODER_TRACEBACK_SYMBOLS &&
-	       (decoder->history_fill ==
-			V32_TRELLIS_DECODER_TRACEBACK_SYMBOLS ||
-		decoder->active_slot == decoder->history_fill) &&
+	       ring_history_state_is_valid(decoder->active_slot,
+		       decoder->history_fill, V32_TRELLIS_DECODER_TRACEBACK_SYMBOLS) &&
 	       decoder->previous_differential_output <
 		       V32_TRELLIS_QUADRANT_COUNT;
 }
