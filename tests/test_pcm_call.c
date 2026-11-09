@@ -11539,12 +11539,13 @@ static bool capture_v92_rate_b1(struct v92_online_pair *pair, struct pcm_call *i
 	CHECK(false, "rate exchange did not finish B1");
 }
 
-static bool run_v92_b1_timing_recovery(enum g711_law law, unsigned initiator, size_t delay)
+static bool run_v92_b1_timing_recovery(enum g711_law law, unsigned initiator, size_t delay, bool lost_path)
 {
 	struct v92_online_pair pair;
 	const struct v92_upstream_offer offer = {
 		.peer_mask = (UINT32_C(1) << 10u) - 1u,
 		.local_maximum = 10u, .expected = 10u,
+		.postcursor = lost_path ? .008 : 0.,
 	};
 	CHECK(capture_v92_duplex_data(law, delay, false, &offer, NULL, 0u, &pair),
 	      "initial pair failed");
@@ -11558,6 +11559,7 @@ static bool run_v92_b1_timing_recovery(enum g711_law law, unsigned initiator, si
 	CHECK(pcm_call_start_rate_renegotiation(calls[initiator]) == PCM_CALL_OK, "short failed");
 	bool retried = false, entered[2] = { false, false };
 	unsigned damage = 0u;
+	uint32_t noise = UINT32_C(0x81374aef);
 	struct pcm_payload_source source[2] = { { .reject = true }, { .reject = true } };
 	uint32_t frames[2] = { 0 };
 	uint64_t idle[2] = { 0 };
@@ -11574,8 +11576,21 @@ static bool run_v92_b1_timing_recovery(enum g711_law law, unsigned initiator, si
 			if (call->stage == PCM_CALL_DATA_PATH) {
 				if (!retried && role == 1u && call->v92_rate_renegotiation_active) {
 					uint64_t received = call->state.data_path.v92_digital.upstream.line.received_frames;
-					if (received >= V92_B1U_ACQUISITION_FRAMES && received < V92_B1U_FRAMES) {
-						rx[role] = silence_octet(law);
+					/* Fitting retains physical input; its queued tail is ahead
+					 * of decoded frames. Damage physical B1, not later data. */
+					uint64_t physical = received * V92_PCM_MAPPING_FRAME_SYMBOLS +
+						call->state.data_path.v92_digital.upstream.line.symbol_count +
+						call->state.data_path.v92_digital.upstream.input.count;
+					uint64_t frame = lost_path ? physical / V92_PCM_MAPPING_FRAME_SYMBOLS : received;
+					if (frame >= V92_B1U_ACQUISITION_FRAMES + (lost_path ? V92_PCM_RX_DELAY_FRAMES : 0u) &&
+					    frame < V92_B1U_FRAMES) {
+						if (lost_path) {
+							noise = noise * UINT32_C(1664525) + UINT32_C(1013904223);
+							int32_t value = (int32_t)(noise >> 16);
+							rx[role] = encode_octet(law, (int16_t)(value > INT16_MAX ? value - 65536 : value));
+						} else {
+							rx[role] = silence_octet(law);
+						}
 						++damage;
 					}
 				}
@@ -11598,11 +11613,15 @@ static bool run_v92_b1_timing_recovery(enum g711_law law, unsigned initiator, si
 		}
 		channel_transmit(&pair.wire, tx[0], tx[1]);
 		struct pcm_call *digital = &pair.digital;
-		/* Model a correction after B1's verdict, while the peer is in data. */
+		/* Model an accepted correction after B1's verdict or a hard decoder
+		 * failure. Both need a fresh epoch, rather than continued decoding. */
 		if (!retried && digital->stage == PCM_CALL_DATA_PATH && digital->v92_rate_renegotiation_active &&
-		    digital->state.data_path.v92_digital.upstream.line.received_frames >=
-			    V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES && clock >= 22000u) {
+		    (lost_path ? digital->state.data_path.v92_digital.upstream.failed :
+		     digital->state.data_path.v92_digital.upstream.line.received_frames >=
+			    V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES && clock >= 22000u)) {
 			CHECK(damage && !pcm_call_is_online(digital), "injection did not reject B1");
+			CHECK(!lost_path || digital->state.data_path.v92_digital.upstream.line.received_frames <
+			      V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES, "lost-path case completed B1");
 			struct pcm_call before = *digital;
 			for (unsigned budget = 0u; budget <= V92_DATA_QUALITY_MAX_RETRAINS; ++budget) {
 				struct pcm_call test = before;
@@ -11633,6 +11652,34 @@ static bool run_v92_b1_timing_recovery(enum g711_law law, unsigned initiator, si
 				CHECK(pcm_call_octet(&test, silence_octet(law), 0, &octet, &event) == PCM_CALL_OK &&
 				      pcm_call_is_full_retraining(&test), "fresh exchange lost timeout fallback");
 			}
+			if (lost_path) {
+				struct pcm_call tone = before;
+				struct v34_phase2_tone_transmitter peer;
+				bool checked = false;
+				enum v34_station_role role = tone.retrain.detector.tone.local_role ==
+					V34_CALLING_STATION ? V34_ANSWERING_STATION : V34_CALLING_STATION;
+				CHECK(v34_phase2_tone_transmitter_init(&peer, role, 4800) ==
+				      V34_PHASE2_TONE_OK, "peer retrain tone failed");
+				for (unsigned clock = 0; clock < 1600u && tone.stage == PCM_CALL_DATA_PATH; ++clock) {
+					int16_t sample = 0;
+					if (clock >= 560u)
+						CHECK(v34_phase2_tone_transmitter_sample(&peer, &sample) == V34_PHASE2_TONE_OK,
+						      "peer tone stopped");
+					uint8_t input = encode_octet(law, sample), output;
+					struct pcm_call_data_event event;
+					CHECK(pcm_call_data_octet(&tone, input, decode_octet(law, input), true, NULL,
+						&output, &event) == PCM_CALL_OK, "peer retrain failed");
+					if (!checked && tone.stage == PCM_CALL_DATA_PATH && tone.retrain.detector.tone_samples) {
+						struct pcm_call saved = tone;
+						CHECK(pcm_call_recover_upstream_b1(&tone) == PCM_CALL_INVALID_STATE &&
+						      memcmp(&tone, &saved, sizeof(tone)) == 0, "timing recovery replaced peer retrain");
+						checked = true;
+					}
+				}
+				CHECK(checked && pcm_call_is_full_retraining(&tone) && tone.retrain.peer_tone_retained &&
+				      tone.pcm_upstream_quality.recovery.attempts == before.pcm_upstream_quality.recovery.attempts,
+				      "partial B1 lost peer retrain priority");
+			}
 			struct pcm_call bad = before;
 			bad.state.data_path.v92_digital.pending_media_loss = true;
 			bad.state.data_path.v92_digital.quality_guard_samples = 2u;
@@ -11656,12 +11703,15 @@ static bool test_v92_b1_timing_recovery(void)
 {
 	/* Damage the held-out B1 samples in a real two-peer short exchange.
 	 * Model a later accepted echo correction; a fresh exchange must restore
-	 * exact payload without qualifying old B1 or replenishing recovery. */
+	 * exact payload without qualifying old B1 or replenishing recovery.
+	 * The second fault loses every path before the delayed B1 verdict. */
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (unsigned initiator = 0u; initiator < 2u; ++initiator)
 			for (unsigned path = 0u; path < 2u; ++path)
-				CHECK(run_v92_b1_timing_recovery(law, initiator, path ? 13u : 3u),
-				      "B1 timing recovery failed for law %u initiator %u path %u", law, initiator, path);
+				for (unsigned lost = 0u; lost < 2u; ++lost)
+					CHECK(run_v92_b1_timing_recovery(law, initiator, path ? 13u : 3u, lost),
+					      "B1 timing recovery failed for law %u initiator %u path %u fault %u",
+					      law, initiator, path, lost);
 	return true;
 }
 
@@ -11677,6 +11727,9 @@ static bool test_v92_rate_b1_recovery(void)
 		CHECK(capture_v92_duplex_data(law, 3u, false, &offer, NULL, 0u, &pair),
 		      "rate B1 recovery fixture did not train");
 		CHECK(capture_v92_rate_b1(&pair, &incomplete), "rate B1 fixture did not complete Ru/Rd");
+		struct pcm_call saved = incomplete;
+		CHECK(pcm_call_recover_upstream_b1(&incomplete) == PCM_CALL_INVALID_STATE &&
+		      memcmp(&incomplete, &saved, sizeof(saved)) == 0, "healthy partial B1 restarted");
 		/* Isolate the deadline policy on a trained, owned receiver. A peer
 		 * Ru can complete CPu/CPd yet produce low-residual B1u with wrong
 		 * bits. It must not retry that mapping indefinitely at the same rate.

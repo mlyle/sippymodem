@@ -599,9 +599,11 @@ enum pcm_call_result pcm_call_start_retrain(struct pcm_call *call);
  * The host must retain its overall training deadline across this recovery. */
 enum pcm_call_result pcm_call_recover_upstream_training(struct pcm_call *call);
 
-/* After an accepted host echo retime, replace a completed rejected B1u in
- * an already trained short exchange. This bounded compatibility recovery
- * reuses Rd/Ru for a peer that has emitted E2u/B1; V.92 9.8 specifies ordinary
+/* After an accepted host echo retime, replace rejected B1u or a guarded
+ * post-acquisition decoder failure in an already trained short exchange.
+ * Partial failures leave a peer retrain candidate alone. This bounded
+ * compatibility recovery reuses Rd/Ru for a peer that has emitted E2u/B1.
+ * V.92 9.8 specifies ordinary
  * initiation in data mode, not recovery from our rejected local B1.
  * Charge the shared quality budget; retain rate policy and require fresh B1.
  * Every non-OK result leaves the owner unchanged. The host must retain its

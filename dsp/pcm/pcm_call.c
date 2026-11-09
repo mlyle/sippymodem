@@ -4847,10 +4847,14 @@ enum pcm_call_result pcm_call_recover_upstream_b1(struct pcm_call *call)
 	    call->stage != PCM_CALL_DATA_PATH || pcm_call_is_disconnecting(call))
 		return PCM_CALL_INVALID_STATE;
 	const struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
+	bool complete = path->upstream.line.received_frames >= V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES;
+	bool lost = path->upstream.failed && path->quality_guard_samples &&
+		path->upstream.line.received_frames > V92_B1U_ACQUISITION_FRAMES &&
+		!retrain_candidate_is_active(&call->retrain.detector,
+			256u * 256u * V34_RETRAIN_SILENCE_WINDOW_SAMPLES);
 	if (path->fast.stage != PCM_CALL_V92_FAST_IDLE || path->pending_media_loss ||
 	    path->downstream_stage != V92_PHASE4_E2U_DOWNSTREAM_DATA ||
-	    path->upstream.line.received_frames < V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES ||
-	    v92_peer_b1_received_owned(call))
+	    (!complete && !lost) || v92_peer_b1_received_owned(call))
 		return PCM_CALL_INVALID_STATE;
 	struct pcm_call next = *call;
 	enum v92_data_quality_result quality = v92_data_quality_retrain(&next.pcm_upstream_quality);
@@ -4859,7 +4863,10 @@ enum pcm_call_result pcm_call_recover_upstream_b1(struct pcm_call *call)
 	enum pcm_call_result result = begin_v92_rate_request(&next, true);
 	if (result != PCM_CALL_OK)
 		return result;
-	/* The rejected B1 fit belongs to the previous echo alignment. Reuse
+	/* A lost decoder cannot reach a final B1 verdict. Its guarded,
+	 * post-acquisition failure also needs a new coding epoch; a peer's
+	 * silence/tone candidate retains priority over this partial case.
+	 * The rejected B1 fit belongs to the previous echo alignment. Reuse
 	 * the negotiated channel, but require fresh fitting and held-out B1. */
 	memset(&next.state.phase4.v92.upstream_seed, 0, sizeof(next.state.phase4.v92.upstream_seed));
 	/* This is a fresh Rd/Ru procedure, bounded by a charged allowance.
