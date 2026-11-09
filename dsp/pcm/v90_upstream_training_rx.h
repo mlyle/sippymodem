@@ -68,8 +68,6 @@ enum v90_upstream_training_rx_result v90_upstream_training_rx_init(
 	int16_t initial_receive_gain);
 bool v90_upstream_training_rx_is_valid(
 	const struct v90_upstream_training_rx *receiver);
-bool v90_upstream_training_rx_has_failed(
-	const struct v90_upstream_training_rx *receiver);
 bool v90_upstream_training_rx_is_tracking(
 	const struct v90_upstream_training_rx *receiver);
 

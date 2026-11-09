@@ -401,15 +401,6 @@ enum v90_phase3_digital_station_result v90_phase3_digital_station_receive_owned(
 }
 
 enum v90_phase3_digital_station_result
-v90_phase3_digital_station_advance_completed_receive(
-	struct v90_phase3_digital_station *station, int16_t sample)
-{
-	if (!v90_phase3_digital_station_is_valid(station))
-		return V90_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT;
-	return v90_phase3_digital_station_advance_completed_receive_owned(station, sample);
-}
-
-enum v90_phase3_digital_station_result
 v90_phase3_digital_station_advance_completed_receive_owned(
 	struct v90_phase3_digital_station *station, int16_t sample)
 {

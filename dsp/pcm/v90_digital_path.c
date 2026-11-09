@@ -929,36 +929,6 @@ enum v90_digital_path_result v90_digital_path_transmit(
 	return result;
 }
 
-enum v90_digital_path_result v90_digital_path_receive_sample(
-	struct v90_digital_path *path, int16_t received_sample,
-	struct v34_received_mapping_frame *received)
-{
-	struct v34_received_mapping_frame frame = { 0 };
-	bool frame_ready = false;
-	enum v90_digital_path_result result;
-
-	if (!v90_digital_path_is_valid(path) || received == NULL ||
-	    memory_regions_overlap(path, sizeof(*path), received, sizeof(*received)))
-		return V90_DIGITAL_PATH_INVALID_ARGUMENT;
-	if (path->failed)
-		return V90_DIGITAL_PATH_FAILED;
-	result = receive_upstream(
-		path, received_sample, &frame,
-		path->rate_renegotiation_active, &frame_ready);
-	if (result != V90_DIGITAL_PATH_OK &&
-	    result != V90_DIGITAL_PATH_UPSTREAM_FRAME &&
-	    result != V90_DIGITAL_PATH_CLEARDOWN_COMPLETE &&
-	    result != V90_DIGITAL_PATH_RATE_RENEGOTIATION)
-		path->failed = true;
-	if (!v90_digital_path_is_valid(path)) {
-		path->failed = true;
-		result = V90_DIGITAL_PATH_INTERNAL_ERROR;
-	}
-	if (frame_ready)
-		*received = frame;
-	return result;
-}
-
 static enum v90_digital_path_result sample_owned(
 	struct v90_digital_path *path, int16_t received_sample,
 	pcm_frame_source source, void *source_context,

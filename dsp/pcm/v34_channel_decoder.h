@@ -54,25 +54,10 @@ v34_channel_decoder_advance(
 	struct v34_decided_4d_interval *decided,
 	bool *decided_ready);
 
-/* Decode one zero-precoder interval while evaluating the same lattice
- * candidates in the nonlinear-encoded signal plane.  The conditioned
- * estimates still define the bounded candidate search; `normalized` is the
- * original equalizer output used for branch distances. */
-enum v34_channel_decoder_result
-v34_channel_decoder_advance_projected(
-	struct v34_channel_decoder *decoder,
-	const struct qam_point
-		estimates[V34_2D_SYMBOLS_PER_4D_INTERVAL],
-	const struct qam_point
-		normalized[V34_2D_SYMBOLS_PER_4D_INTERVAL],
-	const struct v34_power_normalizer *normalizer,
-	uint8_t inversion_bit,
-	struct v34_survivor_decision *current,
-	struct v34_decided_4d_interval *decided,
-	bool *decided_ready);
-
-/* Internal owned boundary. The owner has validated decoder state, all
- * disjoint input/output regions, inversion_bit, and either both projection
+/* Internal owned boundary. Optional normalized estimates evaluate lattice
+ * candidates in the nonlinear-encoded signal plane. The frame owner has
+ * validated decoder state, disjoint input/output regions, inversion_bit, and
+ * either both projection
  * arguments or neither, including normalizer validity. Samples and numeric
  * decoder work remain checked.
  * The same failure/rollback contract applies without repeating immutable

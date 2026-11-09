@@ -148,16 +148,12 @@ enum v90_digital_path_result v90_digital_path_downshift_upstream(
 enum v90_digital_path_result v90_digital_path_start_cleardown(
 	struct v90_digital_path *path);
 
-/* Clock the independent downstream transmitter or upstream receiver.  These
- * directional operations let a call controller keep outgoing data continuous
- * while it qualifies an incoming full-retrain preamble. */
+/* Clock the independent downstream transmitter while the call controller
+ * qualifies an incoming full-retrain preamble. */
 enum v90_digital_path_result v90_digital_path_transmit(
 	struct v90_digital_path *path,
 	pcm_frame_source source, void *source_context,
 	uint8_t *transmit_octet);
-enum v90_digital_path_result v90_digital_path_receive_sample(
-	struct v90_digital_path *path, int16_t received_sample,
-	struct v34_received_mapping_frame *received);
 
 /* Consume one upstream line sample and produce one simultaneous G.711 network
  * character. Downstream output is generated before the received sample changes

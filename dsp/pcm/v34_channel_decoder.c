@@ -143,8 +143,6 @@ static enum v34_channel_decoder_result advance_path(
 static bool advance_regions_overlap(
 	const struct v34_channel_decoder *decoder,
 	const struct qam_point *estimates,
-	const struct qam_point *normalized,
-	const struct v34_power_normalizer *normalizer,
 	const struct v34_survivor_decision *current,
 	const struct v34_decided_4d_interval *decided, const bool *ready)
 {
@@ -153,8 +151,6 @@ static bool advance_regions_overlap(
 	const struct memory_region regions[] = {
 		{ decoder, sizeof(*decoder) },
 		{ estimates, estimates_size },
-		{ normalized, normalized == NULL ? 0u : estimates_size },
-		{ normalizer, normalizer == NULL ? 0u : sizeof(*normalizer) },
 		{ current, sizeof(*current) },
 		{ decided, sizeof(*decided) },
 		{ ready, sizeof(*ready) },
@@ -219,28 +215,6 @@ enum v34_channel_decoder_result v34_channel_decoder_advance_owned(
 	return V34_CHANNEL_DECODER_OK;
 }
 
-static enum v34_channel_decoder_result advance(
-	struct v34_channel_decoder *decoder,
-	const struct qam_point estimates[V34_2D_SYMBOLS_PER_4D_INTERVAL],
-	const struct qam_point normalized[V34_2D_SYMBOLS_PER_4D_INTERVAL],
-	const struct v34_power_normalizer *normalizer,
-	uint8_t inversion_bit, struct v34_survivor_decision *current,
-	struct v34_decided_4d_interval *decided, bool *decided_ready)
-{
-	if (decoder == NULL || estimates == NULL || current == NULL ||
-	    decided == NULL || decided_ready == NULL || inversion_bit > 1u ||
-	    ((normalized == NULL) != (normalizer == NULL)) ||
-	    (normalizer != NULL && !v34_power_normalizer_is_valid(normalizer)) ||
-	    advance_regions_overlap(
-		    decoder, estimates, normalized, normalizer, current, decided,
-		    decided_ready) ||
-	    !v34_channel_decoder_is_valid(decoder))
-		return V34_CHANNEL_DECODER_INVALID_ARGUMENT;
-	return v34_channel_decoder_advance_owned(
-		decoder, estimates, normalized, normalizer, inversion_bit, current,
-		decided, decided_ready);
-}
-
 enum v34_channel_decoder_result
 v34_channel_decoder_advance(
 	struct v34_channel_decoder *decoder,
@@ -251,21 +225,12 @@ v34_channel_decoder_advance(
 	struct v34_decided_4d_interval *decided,
 	bool *decided_ready)
 {
-	return advance(
+	if (decoder == NULL || estimates == NULL || current == NULL ||
+	    decided == NULL || decided_ready == NULL || inversion_bit > 1u ||
+	    advance_regions_overlap(decoder, estimates, current, decided, decided_ready) ||
+	    !v34_channel_decoder_is_valid(decoder))
+		return V34_CHANNEL_DECODER_INVALID_ARGUMENT;
+	return v34_channel_decoder_advance_owned(
 		decoder, estimates, NULL, NULL, inversion_bit, current, decided,
 		decided_ready);
-}
-
-enum v34_channel_decoder_result
-v34_channel_decoder_advance_projected(
-	struct v34_channel_decoder *decoder,
-	const struct qam_point estimates[V34_2D_SYMBOLS_PER_4D_INTERVAL],
-	const struct qam_point normalized[V34_2D_SYMBOLS_PER_4D_INTERVAL],
-	const struct v34_power_normalizer *normalizer,
-	uint8_t inversion_bit, struct v34_survivor_decision *current,
-	struct v34_decided_4d_interval *decided, bool *decided_ready)
-{
-	return advance(
-		decoder, estimates, normalized, normalizer, inversion_bit, current,
-		decided, decided_ready);
 }

@@ -66,12 +66,6 @@ bool v90_upstream_training_rx_recent_decision(
 	return true;
 }
 
-bool v90_upstream_training_rx_has_failed(
-	const struct v90_upstream_training_rx *receiver)
-{
-	return v90_upstream_training_rx_is_valid(receiver) && receiver->failed;
-}
-
 bool v90_upstream_training_rx_is_tracking(
 	const struct v90_upstream_training_rx *receiver)
 {

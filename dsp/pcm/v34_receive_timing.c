@@ -94,16 +94,6 @@ bool v34_receive_timing_is_acquired(
 	       timing->timing.mode != V34_TIMING_CONTROL_INITIAL_PHASE;
 }
 
-bool v34_receive_timing_matches_profile(
-	const struct v34_receive_timing *timing,
-	const struct v34_phase3_profile *transmitting_profile)
-{
-	return v34_receive_timing_is_valid(timing) &&
-	       v34_phase3_profile_is_valid(transmitting_profile) &&
-	       v34_phase3_profile_is_equal(
-		       &timing->transmitting_profile, transmitting_profile);
-}
-
 enum v34_receive_timing_result v34_receive_timing_freeze_gain(
 	struct v34_receive_timing *timing)
 {

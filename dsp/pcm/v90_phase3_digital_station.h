@@ -76,13 +76,6 @@ enum v90_phase3_digital_station_result v90_phase3_digital_station_transmit(
 enum v90_phase3_digital_station_result v90_phase3_digital_station_receive(
 	struct v90_phase3_digital_station *station, int16_t sample);
 
-/* Consume a conventional physical sample in the fixed upstream receiver after
- * the final return completes while the independent DIL transmitter reaches its
- * segment boundary. The completed return marker is frozen. The ordinary
- * receive entry point continues to reject calls after completion. */
-enum v90_phase3_digital_station_result
-v90_phase3_digital_station_advance_completed_receive(
-	struct v90_phase3_digital_station *station, int16_t sample);
 
 bool v90_phase3_digital_station_transmit_complete(
 	const struct v90_phase3_digital_station *station);

@@ -72,9 +72,6 @@ bool v34_receive_timing_is_valid(
 	const struct v34_receive_timing *timing);
 bool v34_receive_timing_is_acquired(
 	const struct v34_receive_timing *timing);
-bool v34_receive_timing_matches_profile(
-	const struct v34_receive_timing *timing,
-	const struct v34_phase3_profile *transmitting_profile);
 
 /* Freeze the AGC at a qualified training boundary. */
 enum v34_receive_timing_result v34_receive_timing_freeze_gain(
