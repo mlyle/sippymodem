@@ -336,10 +336,48 @@ static bool quantized_points_are_distinct(
 	return true;
 }
 
+/* The fourth symbol of each trellis group needs twice the representatives.
+ * A direct 34.667--37.333k mapping can keep every modulus a power of two
+ * while fitting all symbols into sixteen positive points. Check capacity
+ * independently of the constructor's bit-placement order. */
+static bool test_compact_direct_geometry(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (uint8_t rate = 9u; rate <= 11u; ++rate) {
+			struct v92_cpd_parameters cpd, template;
+			struct wide_uint capacity = wide_from_u64(1);
+			struct wide_uint smaller = wide_from_u64(1);
+			struct wide_uint required = wide_shift_left(wide_from_u64(1),
+				pcm_upstream_frame_bits(rate));
+
+			CHECK(v92_cpd_direct_geometry(&cpd, law, rate, false, true) &&
+			      v92_cpd_direct_geometry(&template, law, rate, false, false) &&
+			      cpd.constellation[0].count == 16u &&
+			      template.constellation[0].count == 32u,
+			      "compact direct geometry changed the template or alphabet");
+			for (unsigned symbol = 0u; symbol < V92_CPD_MODULUS_COUNT; ++symbol) {
+				unsigned modulus = cpd.modulus[symbol];
+				unsigned factor = symbol % 4u == 3u ? 1u : 2u;
+
+				CHECK(modulus && !(modulus & (modulus - 1u)) &&
+				      modulus <= factor * 16u,
+				      "direct symbol %u lost its bounded power-of-two modulus", symbol);
+				wide_multiply_u32(capacity, modulus, &capacity);
+				/* Eight positive points cannot carry this rate even when
+				 * every ordinary/trellis modulus uses its maximum. */
+				wide_multiply_u32(smaller, factor * 8u, &smaller);
+			}
+			CHECK(wide_compare(capacity, required) == 0 &&
+			      wide_compare(smaller, required) < 0,
+			      "compact direct geometry changed capacity or missed a smaller alphabet");
+		}
+	return true;
+}
+
 static bool test_level_selection(void)
 {
 	static const int16_t levels[] = { 4092, 4096, 4224, 5987, 7040, 7139, 7164 };
-	static const uint8_t rates[] = { 1, 4, 13, 15, 16, 17, 18, 19 };
+	static const uint8_t rates[] = { 1, 4, 9, 10, 11, 13, 15, 16, 17, 18, 19 };
 
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (size_t level = 0u; level < ARRAY_LENGTH(levels); ++level)
@@ -676,7 +714,7 @@ static bool test_cell_selection_invariance(void)
 int main(void)
 {
 	if (!test_rate_and_law_matrix() || !test_known_boundaries() ||
-	    !test_transactionality() || !test_level_selection() ||
+	    !test_transactionality() || !test_compact_direct_geometry() || !test_level_selection() ||
 	    !test_low_rate_cell_selection() || !test_full_cell_selection() ||
 	    !test_uncertain_symbol_ranges() ||
 	    !test_input_noise_margin() || !test_cell_selection_invariance())

@@ -85,8 +85,16 @@ bool v92_cpd_direct_geometry(
 	for (size_t symbol = 0u;
 	     symbol < V92_CPD_MODULUS_COUNT; ++symbol) {
 		unsigned int exponent = data_bits / V92_CPD_MODULUS_COUNT;
+		unsigned int rank = (unsigned int)symbol;
 
-		if (symbol < data_bits % V92_CPD_MODULUS_COUNT)
+		/* At 34.667--37.333k, assigning an extra bit to a fourth
+		 * symbol doubles the positive alphabet for its trellis coset.
+		 * Put the extra bits in ordinary intervals first: the exact
+		 * power-of-two capacity is unchanged, with 16 rather than 32
+		 * positive points. Preserve the level-neutral template. */
+		if (direct_channel && data_rate_number >= 9u && data_rate_number <= 11u)
+			rank = symbol % 4u == 3u ? 9u + symbol / 4u : symbol - symbol / 4u;
+		if (rank < data_bits % V92_CPD_MODULUS_COUNT)
 			exponent++;
 		if (!balanced)
 			parameters->modulus[symbol] = (uint8_t)(1u << exponent);
