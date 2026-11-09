@@ -46,7 +46,6 @@ struct v34_training_line {
 	double output_gain;
 	double raw_rms;
 	double raw_peak;
-	double target_rms;
 	uint64_t generated_samples;
 	int16_t nominal_peak_amplitude;
 };

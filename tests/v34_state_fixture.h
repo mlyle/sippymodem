@@ -214,7 +214,6 @@ static inline bool v34_training_lines_equal(
 		      sizeof(left->output_gain)) == 0 &&
 	       memcmp(&left->raw_rms, &right->raw_rms, sizeof(left->raw_rms)) == 0 &&
 	       memcmp(&left->raw_peak, &right->raw_peak, sizeof(left->raw_peak)) == 0 &&
-	       memcmp(&left->target_rms, &right->target_rms, sizeof(left->target_rms)) == 0 &&
 	       left->generated_samples == right->generated_samples &&
 	       left->nominal_peak_amplitude == right->nominal_peak_amplitude;
 }

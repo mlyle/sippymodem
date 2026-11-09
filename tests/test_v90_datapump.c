@@ -111,7 +111,7 @@ enum v34_call_result __wrap_v34_call_init_from_phase2(
 
 		fallback_power.observed = true;
 		fallback_power.nominal_amplitude = call->phase2_nominal_amplitude;
-		fallback_power.target_rms = line->target_rms;
+		fallback_power.target_rms = line->output_gain * line->raw_rms;
 		fallback_power.reduction_db = line->profile.transmit_power_reduction_db;
 	}
 	return result;

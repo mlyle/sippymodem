@@ -49,6 +49,16 @@ static uint32_t calibration_sample_count(
 	return count <= UINT32_MAX ? (uint32_t)count : 0;
 }
 
+/* Target power is derived from the retained request, not separate mutable
+ * calibration state. Preserve the multiplication order at both boundaries. */
+static double target_rms(const struct v34_training_line *line)
+{
+	double reduction_gain = pow(
+		10.0, -(double)line->profile.transmit_power_reduction_db / 20.0);
+
+	return line->nominal_peak_amplitude * V34_EQUAL_POWER_RMS * reduction_gain;
+}
+
 static enum v34_training_line_result calibrate_power(
 	struct v34_training_line *line)
 {
@@ -125,7 +135,7 @@ static enum v34_training_line_result calibrate_power(
 		return V34_TRAINING_LINE_NUMERIC_FAILURE;
 	line->raw_rms = (double)sqrtl(sum_squares / generated_samples);
 	line->raw_peak = peak;
-	line->output_gain = line->target_rms / line->raw_rms;
+	line->output_gain = target_rms(line) / line->raw_rms;
 	if (!isfinite(line->raw_rms) || line->raw_rms <= 0.0 ||
 	    !isfinite(line->output_gain) || line->output_gain <= 0.0)
 		return V34_TRAINING_LINE_NUMERIC_FAILURE;
@@ -137,27 +147,18 @@ static enum v34_training_line_result calibrate_power(
 static bool power_metadata_is_valid(
 	const struct v34_training_line *line)
 {
-	double reduction_gain;
 	double expected_target;
 	double scale;
 
 	if (line->nominal_peak_amplitude <= 0 ||
 	    !isfinite(line->output_gain) || line->output_gain <= 0.0 ||
 	    !isfinite(line->raw_rms) || line->raw_rms <= 0.0 ||
-	    !isfinite(line->raw_peak) || line->raw_peak <= 0.0 ||
-	    !isfinite(line->target_rms) || line->target_rms <= 0.0)
+	    !isfinite(line->raw_peak) || line->raw_peak <= 0.0)
 		return false;
-	reduction_gain = pow(
-		10.0,
-		-(double)line->profile.transmit_power_reduction_db / 20.0);
-	expected_target = line->nominal_peak_amplitude *
-		V34_EQUAL_POWER_RMS * reduction_gain;
+	expected_target = target_rms(line);
 	scale = fmax(1.0, expected_target);
 	return isfinite(expected_target) &&
-	       fabs(line->target_rms - expected_target) <=
-		       V34_POWER_TOLERANCE * scale &&
-	       fabs(line->output_gain * line->raw_rms -
-		    line->target_rms) <=
+	       fabs(line->output_gain * line->raw_rms - expected_target) <=
 		       V34_POWER_TOLERANCE * scale &&
 	       line->raw_peak * line->output_gain <= INT16_MAX - 0.5;
 }
@@ -184,7 +185,6 @@ enum v34_training_line_result v34_training_line_init(
 {
 	struct v34_training_line initialized = { 0 };
 	struct qam_channel channel;
-	double reduction_gain;
 	enum v34_line_channel_result channel_result;
 	enum v34_training_line_result result;
 
@@ -193,19 +193,13 @@ enum v34_training_line_result v34_training_line_init(
 		return V34_TRAINING_LINE_INVALID_ARGUMENT;
 	initialized.profile = *profile;
 	initialized.nominal_peak_amplitude = nominal_peak_amplitude;
-	reduction_gain = pow(
-		10.0, -(double)profile->transmit_power_reduction_db / 20.0);
-	initialized.target_rms = nominal_peak_amplitude *
-		V34_EQUAL_POWER_RMS * reduction_gain;
 	channel_result = v34_line_channel_init(
 		profile, sample_rate, &channel);
 	if (channel_result != V34_LINE_CHANNEL_OK)
 		return channel_result == V34_LINE_CHANNEL_OUT_OF_RANGE ?
 		       V34_TRAINING_LINE_OUT_OF_RANGE :
 		       V34_TRAINING_LINE_INVALID_ARGUMENT;
-	if (!isfinite(initialized.target_rms) ||
-	    initialized.target_rms <= 0.0 ||
-	    v34_pulse_modulator_init(
+	if (v34_pulse_modulator_init(
 		    &initialized.carrier, profile, &channel,
 		    V34_TRAINING_MAXIMUM_POINT_POWER) !=
 		    V34_PULSE_MODULATOR_OK)

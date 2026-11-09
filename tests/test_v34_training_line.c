@@ -63,7 +63,6 @@ static bool test_calibrated_line_power(void)
 				      &line, &profile, 8000,
 				      V34_TRAINING_LINE_REFERENCE_AMPLITUDE) ==
 				      V34_TRAINING_LINE_OK &&
-			      fabs(line.target_rms - full_power) <= 1e-9 &&
 			      fabs(line.output_gain * line.raw_rms - full_power) <=
 				      1e-9 &&
 			      line.raw_peak * line.output_gain < INT16_MAX,
@@ -87,7 +86,6 @@ static bool test_calibrated_line_power(void)
 			      &line, &profile, 8000,
 			      V34_TRAINING_LINE_REFERENCE_AMPLITUDE) ==
 			      V34_TRAINING_LINE_OK &&
-		      fabs(line.target_rms - expected_power) <= 1e-9 &&
 		      fabs(line.output_gain * line.raw_rms - expected_power) <=
 			      1e-9,
 		      "calibrated %u dB line reduction changed", reduction);
@@ -479,7 +477,7 @@ static bool test_late_sample_rollback(void)
 
 			/* Valid calibration metadata does not bound all history. */
 			bad.output_gain = gains[gain];
-			bad.raw_rms = bad.target_rms / bad.output_gain;
+			bad.raw_rms = (line.output_gain * line.raw_rms) / bad.output_gain;
 			bad.raw_peak = bad.raw_rms;
 			struct v34_training_line before = bad;
 
@@ -506,7 +504,7 @@ static bool test_late_sample_rollback(void)
 	return true;
 }
 
-static bool test_calibrated_filter_ownership(void)
+static bool test_calibrated_line_ownership(void)
 {
 	struct v34_phase3_profile profile = profile_fixture();
 	struct v34_training_line line;
@@ -527,14 +525,18 @@ static bool test_calibrated_filter_ownership(void)
 	for (unsigned int phase = 0; phase < 2u; ++phase) {
 		const struct qam_point *supplied = phase == 0u ? &point : NULL;
 
-		for (unsigned int owner = 0; owner < 2u; ++owner) {
+		for (unsigned int owner = 0; owner < 4u; ++owner) {
 			struct v34_training_line bad = line;
 			struct v34_training_line before;
 
 			if (owner == 0u)
 				bad.carrier.preemphasis_filter_index ^= 1u;
-			else
+			else if (owner == 1u)
 				bad.profile.preemphasis_filter_index ^= 1u;
+			else if (owner == 2u)
+				bad.nominal_peak_amplitude++;
+			else
+				bad.profile.transmit_power_reduction_db ^= 1u;
 			before = bad;
 			sample = 1234;
 			accepted = true;
@@ -548,7 +550,7 @@ static bool test_calibrated_filter_ownership(void)
 				      V34_TRAINING_LINE_INVALID_ARGUMENT &&
 			      memcmp(&bad, &before, sizeof(bad)) == 0 &&
 			      sample == 1234 && accepted,
-			      "inconsistent calibrated filter was used or mutated");
+			      "inconsistent line power or filter was used or mutated");
 		}
 		CHECK(v34_training_line_sample(&line, supplied, &sample,
 					       &accepted) == V34_TRAINING_LINE_OK &&
@@ -637,7 +639,7 @@ int main(void)
 		{ "initialization and overflow", test_initialization_and_overflow },
 		{ "disjoint sample buffers", test_disjoint_buffers },
 		{ "late sample rollback", test_late_sample_rollback },
-		{ "calibrated filter ownership", test_calibrated_filter_ownership },
+		{ "calibrated line ownership", test_calibrated_line_ownership },
 		{ "profile validation", test_profile_validation },
 	};
 	unsigned int failures = 0;
