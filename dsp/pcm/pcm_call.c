@@ -4836,6 +4836,45 @@ enum pcm_call_result pcm_call_start_rate_renegotiation(struct pcm_call *call)
 	return PCM_CALL_OK;
 }
 
+enum pcm_call_result pcm_call_recover_upstream_b1(struct pcm_call *call)
+{
+	if (!pcm_call_is_valid(call))
+		return PCM_CALL_INVALID_ARGUMENT;
+	if (call->failed || call->protocol != PCM_PROTOCOL_V92 ||
+	    call->local_role != V90_DIGITAL_MODEM || !uses_pcm_upstream(call) ||
+	    !call->pcm_upstream_trained || !call->retrain_active ||
+	    !call->v92_rate_renegotiation_active || call->b1_deadline_armed ||
+	    call->stage != PCM_CALL_DATA_PATH || pcm_call_is_disconnecting(call))
+		return PCM_CALL_INVALID_STATE;
+	const struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
+	if (path->fast.stage != PCM_CALL_V92_FAST_IDLE || path->pending_media_loss ||
+	    path->downstream_stage != V92_PHASE4_E2U_DOWNSTREAM_DATA ||
+	    path->upstream.line.received_frames < V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES ||
+	    v92_peer_b1_received_owned(call))
+		return PCM_CALL_INVALID_STATE;
+	struct pcm_call next = *call;
+	enum v92_data_quality_result quality = v92_data_quality_retrain(&next.pcm_upstream_quality);
+	if (quality != V92_DATA_QUALITY_RETRAIN)
+		return quality == V92_DATA_QUALITY_EXHAUSTED ? PCM_CALL_FAILED : PCM_CALL_NUMERIC_FAILURE;
+	enum pcm_call_result result = begin_v92_rate_request(&next, true);
+	if (result != PCM_CALL_OK)
+		return result;
+	/* The rejected B1 fit belongs to the previous echo alignment. Reuse
+	 * the negotiated channel, but require fresh fitting and held-out B1. */
+	memset(&next.state.phase4.v92.upstream_seed, 0, sizeof(next.state.phase4.v92.upstream_seed));
+	/* This is a fresh Rd/Ru procedure, bounded by a charged allowance.
+	 * The datapump retains its outer training transaction and deadline. */
+	next.rate_renegotiation_deadline_armed = false;
+	next.rate_renegotiation_deadline_remaining_samples = 0u;
+	result = update_rate_renegotiation_deadline(&next);
+	if (result != PCM_CALL_OK)
+		return result;
+	if (!pcm_call_is_valid(&next))
+		return PCM_CALL_NUMERIC_FAILURE;
+	*call = next;
+	return PCM_CALL_OK;
+}
+
 static bool begin_v92_analog_fast(struct pcm_call *call)
 {
 	struct pcm_call_v92_analog_data *path = &call->state.data_path.v92_analog;

@@ -11539,6 +11539,132 @@ static bool capture_v92_rate_b1(struct v92_online_pair *pair, struct pcm_call *i
 	CHECK(false, "rate exchange did not finish B1");
 }
 
+static bool run_v92_b1_timing_recovery(enum g711_law law, unsigned initiator, size_t delay)
+{
+	struct v92_online_pair pair;
+	const struct v92_upstream_offer offer = {
+		.peer_mask = (UINT32_C(1) << 10u) - 1u,
+		.local_maximum = 10u, .expected = 10u,
+	};
+	CHECK(capture_v92_duplex_data(law, delay, false, &offer, NULL, 0u, &pair),
+	      "initial pair failed");
+	struct pcm_call *calls[] = { &pair.analog, &pair.digital };
+	CHECK(pcm_call_recover_upstream_b1(NULL) == PCM_CALL_INVALID_ARGUMENT, "null accepted");
+	for (unsigned role = 0u; role < 2u; ++role) {
+		struct pcm_call before = *calls[role];
+		CHECK(pcm_call_recover_upstream_b1(calls[role]) == PCM_CALL_INVALID_STATE &&
+		      memcmp(&before, calls[role], sizeof(before)) == 0, "online call changed");
+	}
+	CHECK(pcm_call_start_rate_renegotiation(calls[initiator]) == PCM_CALL_OK, "short failed");
+	bool retried = false, entered[2] = { false, false };
+	unsigned damage = 0u;
+	struct pcm_payload_source source[2] = { { .reject = true }, { .reject = true } };
+	uint32_t frames[2] = { 0 };
+	uint64_t idle[2] = { 0 };
+	for (unsigned clock = 0u; clock < 60000u; ++clock) {
+		uint8_t rx[2], tx[2];
+		channel_receive(&pair.wire, &rx[0], &rx[1]);
+		for (unsigned role = 0u; role < 2u; ++role) {
+			struct pcm_call *call = calls[role];
+			if (pcm_call_phase4_is_ready(call)) {
+				CHECK(pcm_call_start_data_path(call) == PCM_CALL_OK, "handoff failed");
+				if (retried)
+					entered[role] = true;
+			}
+			if (call->stage == PCM_CALL_DATA_PATH) {
+				if (!retried && role == 1u && call->v92_rate_renegotiation_active) {
+					uint64_t received = call->state.data_path.v92_digital.upstream.line.received_frames;
+					if (received >= V92_B1U_ACQUISITION_FRAMES && received < V92_B1U_FRAMES) {
+						rx[role] = silence_octet(law);
+						++damage;
+					}
+				}
+				if (retried && entered[role]) {
+					CHECK(v92_payload_sample_with_idle(call, rx[role], decode_octet(law, rx[role]),
+						&source[role], &frames[role], &tx[role], &idle[role]),
+					      "payload failed law %u role %u", law, role);
+				} else {
+					struct pcm_call_data_event event;
+					CHECK(pcm_call_data_octet(call, rx[role], decode_octet(law, rx[role]),
+						true, NULL, &tx[role], &event) == PCM_CALL_OK, "data failed");
+				}
+			} else {
+				struct pcm_call_observation event;
+				CHECK(pcm_call_octet(call, rx[role], decode_octet(law, rx[role]),
+					&tx[role], &event) == PCM_CALL_OK, "control failed");
+			}
+			CHECK(pcm_call_is_valid(call) && !pcm_call_is_full_retraining(call),
+			      "full fallback law %u role %u clock %u retried %u", law, role, clock, retried);
+		}
+		channel_transmit(&pair.wire, tx[0], tx[1]);
+		struct pcm_call *digital = &pair.digital;
+		/* Model a correction after B1's verdict, while the peer is in data. */
+		if (!retried && digital->stage == PCM_CALL_DATA_PATH && digital->v92_rate_renegotiation_active &&
+		    digital->state.data_path.v92_digital.upstream.line.received_frames >=
+			    V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES && clock >= 22000u) {
+			CHECK(damage && !pcm_call_is_online(digital), "injection did not reject B1");
+			struct pcm_call before = *digital;
+			for (unsigned budget = 0u; budget <= V92_DATA_QUALITY_MAX_RETRAINS; ++budget) {
+				struct pcm_call test = before;
+				test.pcm_upstream_quality.recovery.attempts = budget;
+				struct pcm_call saved = test;
+				enum pcm_call_result result = pcm_call_recover_upstream_b1(&test);
+				CHECK(result == (budget == V92_DATA_QUALITY_MAX_RETRAINS ? PCM_CALL_FAILED : PCM_CALL_OK),
+				      "budget %u result %u", budget, result);
+				if (result == PCM_CALL_FAILED) {
+					CHECK(memcmp(&test, &saved, sizeof(test)) == 0, "exhaustion mutated");
+					continue;
+				}
+				CHECK(pcm_call_is_valid(&test) && test.stage == PCM_CALL_PHASE4 &&
+				      test.v92_rate_renegotiation_active && !pcm_call_is_online(&test) &&
+				      test.pcm_upstream_quality.recovery.attempts == budget + 1u &&
+				      test.v92_upstream_retry_ceiling == before.v92_upstream_retry_ceiling &&
+				      memcmp(&test.v92_digital_phase4_configuration, &before.v92_digital_phase4_configuration,
+					      sizeof(test.v92_digital_phase4_configuration)) == 0,
+				      "recovery changed policy or readiness");
+				CHECK(!test.state.phase4.v92.upstream_seed.residual.active &&
+				      test.state.phase4.v92.upstream_seed.gain == 0.0, "retained failed B1 fit");
+				saved = test;
+				CHECK(pcm_call_recover_upstream_b1(&test) == PCM_CALL_INVALID_STATE &&
+				      memcmp(&test, &saved, sizeof(test)) == 0, "control restarted again");
+				test.rate_renegotiation_deadline_remaining_samples = 1u;
+				struct pcm_call_observation event;
+				uint8_t octet;
+				CHECK(pcm_call_octet(&test, silence_octet(law), 0, &octet, &event) == PCM_CALL_OK &&
+				      pcm_call_is_full_retraining(&test), "fresh exchange lost timeout fallback");
+			}
+			struct pcm_call bad = before;
+			bad.state.data_path.v92_digital.pending_media_loss = true;
+			bad.state.data_path.v92_digital.quality_guard_samples = 2u;
+			struct pcm_call saved = bad;
+			CHECK(pcm_call_is_valid(&bad) && pcm_call_recover_upstream_b1(&bad) == PCM_CALL_INVALID_STATE &&
+			      memcmp(&bad, &saved, sizeof(bad)) == 0, "loss accepted timing-only recovery");
+			CHECK(pcm_call_recover_upstream_b1(digital) == PCM_CALL_OK, "fresh B1 request rejected");
+			retried = true;
+		}
+		if (retried && frames[0] >= 1000u && frames[1] >= 1000u) {
+			CHECK(pcm_call_is_online(&pair.analog) && pcm_call_is_online(&pair.digital) &&
+			      pair.digital.pcm_upstream_quality.recovery.attempts == 1u,
+			      "new epoch not ready or recovery budget lost");
+			return true;
+		}
+	}
+	CHECK(false, "short recovery did not complete");
+}
+
+static bool test_v92_b1_timing_recovery(void)
+{
+	/* Damage the held-out B1 samples in a real two-peer short exchange.
+	 * Model a later accepted echo correction; a fresh exchange must restore
+	 * exact payload without qualifying old B1 or replenishing recovery. */
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned initiator = 0u; initiator < 2u; ++initiator)
+			for (unsigned path = 0u; path < 2u; ++path)
+				CHECK(run_v92_b1_timing_recovery(law, initiator, path ? 13u : 3u),
+				      "B1 timing recovery failed for law %u initiator %u path %u", law, initiator, path);
+	return true;
+}
+
 static bool test_v92_rate_b1_recovery(void)
 {
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
@@ -13838,6 +13964,7 @@ int main(int argc, char **argv)
 		{ "V.92 peer-limited upstream data", test_v92_upstream_negotiation },
 		{ "V.92 failed B1 rate recovery", test_v92_b1_rate_recovery },
 		{ "V.92 rejected rate-exchange B1 recovery", test_v92_rate_b1_recovery },
+		{ "V.92 B1 recovery after echo retiming", test_v92_b1_timing_recovery },
 		{ "V.92 downstream reselection through retrain", test_v92_downstream_reselection },
 		{ "V.92 received lookahead limits", test_v92_received_lookahead },
 		{ "V.92 upstream reselection through retrain", test_v92_upstream_reselection },

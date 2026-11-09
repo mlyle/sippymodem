@@ -1360,8 +1360,14 @@ static int process_v90_g711(
 				if (pcm_host_echo_observe_timing(datapump->host_echo, echo_mode,
 					    receive_samples[index], cleaned_sample, &delay_change) != PCM_HOST_ECHO_OK)
 					goto failure;
-				if (delay_change)
+				if (delay_change) {
 					note_transmit_timing(datapump, delay_change);
+					enum pcm_call_result recovery = pcm_call_recover_upstream_b1(&datapump->call);
+					if (recovery == PCM_CALL_OK)
+						datapump->upstream_quality_ready = false;
+					else if (recovery != PCM_CALL_INVALID_STATE && recovery != PCM_CALL_FAILED)
+						goto failure;
+				}
 			}
 			if (pcm_host_echo_advance_reference(datapump->host_echo, echo_mode,
 				    receive_samples[index], transmit_samples[index]) != PCM_HOST_ECHO_OK)
