@@ -190,6 +190,21 @@ static inline bool qam_points_are_finite(const struct qam_point *points, size_t 
 	return true;
 }
 
+/* Reduce a complete owned readable span to zero or one without stopping at
+ * an invalid point. Fixed-size full-state validators can vectorize this
+ * reduction; variable spans can retain the fail-fast check above. Empty spans
+ * access nothing and finite coordinates have no power or magnitude limit. */
+static inline unsigned qam_points_finite_reduction(const struct qam_point *points, size_t count)
+{
+	if (points == NULL && count != 0)
+		return 0;
+	unsigned finite = 1;
+	for (size_t index = 0; index < count; ++index)
+		finite &= !!isfinite(points[index].in_phase) &
+			  !!isfinite(points[index].quadrature);
+	return finite;
+}
+
 /* Finite squared magnitude also proves both coordinates finite: squares
  * cannot cancel infinity or NaN. Require power strictly above 1e-12.
  * Optional power may alias a coordinate; rejection leaves it unchanged. */

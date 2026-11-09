@@ -57,29 +57,14 @@ static struct qam_point tap_reference(
 bool v32_echo_canceller_is_valid(
 	const struct v32_echo_canceller *canceller)
 {
-	/* Keep the complete scan as a full-width reduction so it can vectorize. */
-	unsigned int finite = 1;
-
 	if (!v32_echo_canceller_header_is_valid(canceller))
 		return false;
-	for (size_t index = 0; index < V32_ECHO_REFERENCE_CAPACITY;
-	     ++index) {
-		finite &= !!isfinite(canceller->reference[index].in_phase) &
-			  !!isfinite(canceller->reference[index].quadrature);
-	}
-	for (size_t phase = 0; phase < V32_ECHO_PHASE_COUNT; ++phase) {
-		for (size_t window = 0;
-		     window < V32_ECHO_WINDOW_COUNT; ++window) {
-			for (size_t tap = 0;
-			     tap < V32_ECHO_WINDOW_SYMBOLS; ++tap) {
-				const struct qam_point *point =
-					&canceller->coefficients[phase][window][tap];
-
-				finite &= !!isfinite(point->in_phase) &
-					  !!isfinite(point->quadrature);
-			}
-		}
-	}
+	unsigned finite = qam_points_finite_reduction(
+		canceller->reference, V32_ECHO_REFERENCE_CAPACITY);
+	for (size_t phase = 0; phase < V32_ECHO_PHASE_COUNT; ++phase)
+		for (size_t window = 0; window < V32_ECHO_WINDOW_COUNT; ++window)
+			finite &= qam_points_finite_reduction(
+				canceller->coefficients[phase][window], V32_ECHO_WINDOW_SYMBOLS);
 	if (!finite)
 		return false;
 	if (canceller->pending_samples != 0 &&

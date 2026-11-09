@@ -223,12 +223,15 @@ static bool test_point_span_validation(void)
 	struct qam_point points[17];
 	const double poison[] = { NAN, INFINITY, -INFINITY };
 
-	CHECK(qam_points_are_finite(NULL, 0) && !qam_points_are_finite(NULL, 1),
+	CHECK(qam_points_are_finite(NULL, 0) && !qam_points_are_finite(NULL, 1) &&
+	      qam_points_finite_reduction(NULL, 0) == 1 &&
+	      qam_points_finite_reduction(NULL, 1) == 0,
 	      "empty/nonempty point spans changed null ownership");
 	for (size_t count = 0; count <= ARRAY_LENGTH(points); ++count) {
 		for (size_t index = 0; index < ARRAY_LENGTH(points); ++index)
 			points[index] = (struct qam_point){ DBL_MAX, -0.0 };
-		CHECK(qam_points_are_finite(points, count),
+		CHECK(qam_points_are_finite(points, count) &&
+		      qam_points_finite_reduction(points, count) == 1,
 		      "finite large coordinates acquired a power bound");
 		for (size_t index = 0; index < ARRAY_LENGTH(points); ++index)
 			for (unsigned axis = 0; axis < 2; ++axis)
@@ -238,6 +241,7 @@ static bool test_point_span_validation(void)
 					struct qam_point saved[ARRAY_LENGTH(points)];
 					memcpy(saved, points, sizeof(points));
 					CHECK(qam_points_are_finite(points, count) == (index >= count) &&
+					      qam_points_finite_reduction(points, count) == (unsigned)(index >= count) &&
 					      memcmp(points, saved, sizeof(points)) == 0,
 					      "point span read outside its count or changed input");
 					points[index] = (struct qam_point){ DBL_MAX, -0.0 };
