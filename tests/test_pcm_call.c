@@ -13754,7 +13754,7 @@ static bool test_v92_owned_phase_octets(void)
 				enum pcm_call_result checked_result = pcm_call_octet(
 					&checked, silence, 0, &checked_octet, &checked_event);
 				enum pcm_call_result owned_result = pcm_call_octet_owned(
-					&owned, silence, 0, 0, &owned_octet, &owned_event);
+					&owned, silence, 0, 0, true, &owned_octet, &owned_event);
 
 				CHECK(checked_result == PCM_CALL_OK && owned_result == checked_result &&
 				      checked_octet == owned_octet &&
@@ -13766,7 +13766,7 @@ static bool test_v92_owned_phase_octets(void)
 			}
 			struct pcm_call before = owned;
 			struct pcm_call_observation event;
-			CHECK(pcm_call_octet_owned(&owned, silence, 0, 0,
+			CHECK(pcm_call_octet_owned(&owned, silence, 0, 0, true,
 				(uint8_t *)&owned, &event) == PCM_CALL_INVALID_ARGUMENT &&
 			      memcmp(&owned, &before, sizeof(owned)) == 0,
 			      "V.92 owned phase accepted aliased output");

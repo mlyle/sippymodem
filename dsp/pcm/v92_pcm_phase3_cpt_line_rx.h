@@ -72,12 +72,14 @@ bool v92_pcm_phase3_cpt_line_rx_has_failed(
 	const struct v92_pcm_phase3_cpt_line_rx *receiver);
 
 /* Consume one signed 8 kHz sample. Successful calls always produce one hard
- * sign because the inherited equalizer is full. event changes on SIGN and
- * EVENT; invalid, terminal, and failed calls change neither state nor event.
+ * sign because the inherited equalizer is full. Concealed input advances the
+ * clock but cannot adapt the FIR until that history has cleared. event changes
+ * on SIGN and EVENT; invalid, terminal, and failed calls change neither state
+ * nor event.
  * A terminal DSP failure consumes the sample and latches failure. */
 enum v92_pcm_phase3_cpt_line_rx_result
 v92_pcm_phase3_cpt_line_rx_sample(
-	struct v92_pcm_phase3_cpt_line_rx *receiver, int16_t sample,
+	struct v92_pcm_phase3_cpt_line_rx *receiver, int16_t sample, bool received_available,
 	struct v92_pcm_phase3_cpt_rx_event *event);
 
 bool v92_pcm_phase3_cpt_line_rx_parameters(

@@ -35,9 +35,11 @@ bool binary_equalizer_is_valid(
 /* Consume one signed sample and produce its polarity-normalized hard sign.
  * The widened input preserves a 16-bit sample minus a signed DC estimate.
  * A trained equalizer always yields one decision. Rejected calls preserve
- * state and output. sign storage must not overlap the receiver. */
+ * state and output. Erasures advance history and decisions while inhibiting
+ * adaptation until the concealed input leaves the FIR. sign storage must not
+ * overlap the receiver. */
 enum binary_equalizer_result binary_equalizer_receive(
-	struct binary_equalizer *receiver, int32_t sample,
+	struct binary_equalizer *receiver, int32_t sample, bool received_available,
 	uint8_t *sign);
 
 

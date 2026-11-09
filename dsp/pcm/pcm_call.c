@@ -3333,7 +3333,7 @@ static bool qc_wait_for_frame(struct pcm_call *call)
 
 static enum pcm_call_result sample_phase3(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
-	uint8_t unconditioned_octet, uint8_t *transmit_octet)
+	bool received_available, uint8_t unconditioned_octet, uint8_t *transmit_octet)
 {
 	enum pcm_call_result result;
 
@@ -3370,7 +3370,7 @@ static enum pcm_call_result sample_phase3(
 		result = v92_digital_phase3_result(
 			v92_phase3_digital_station_receive(
 				&call->state.phase3.v92_digital,
-				received_sample));
+				received_sample, received_available));
 	} else if (call->local_role == V90_ANALOG_MODEM) {
 		int16_t sample;
 
@@ -3499,7 +3499,7 @@ static enum pcm_call_result v92_downstream_transmit_result(
 
 static enum pcm_call_result sample_v92_mixed_phase3(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
-	uint8_t *transmit_octet)
+	bool received_available, uint8_t *transmit_octet)
 {
 	enum pcm_call_result result;
 
@@ -3528,20 +3528,20 @@ static enum pcm_call_result sample_v92_mixed_phase3(
 		result = v92_digital_phase3_result(
 			v92_phase3_digital_station_receive(
 				&mixed->phase3,
-				received_sample));
+				received_sample, received_available));
 	}
 	return result == PCM_CALL_OK ? advance_phase3(call) : result;
 }
 
 static enum pcm_call_result sample_mixed_phase3(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
-	uint8_t *transmit_octet)
+	bool received_available, uint8_t *transmit_octet)
 {
 	enum pcm_call_result result;
 
 	if (uses_pcm_upstream(call))
 		return sample_v92_mixed_phase3(
-			call, received_octet, received_sample, transmit_octet);
+			call, received_octet, received_sample, received_available, transmit_octet);
 
 	if (call->local_role == V90_ANALOG_MODEM) {
 		struct pcm_call_analog_mixed_state *mixed =
@@ -5738,7 +5738,7 @@ enum pcm_call_result pcm_call_data_octet_owned(
 
 static enum pcm_call_result call_octet(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
-	int16_t host_sample,
+	int16_t host_sample, bool received_available,
 	uint8_t *transmit_octet,
 	struct pcm_call_observation *observation, bool owned)
 {
@@ -5794,11 +5794,12 @@ static enum pcm_call_result call_octet(
 		break;
 	case PCM_CALL_PHASE3:
 		result = sample_phase3(
-			call, received_octet, received_sample, unconditioned_octet, &generated);
+			call, received_octet, received_sample, received_available,
+			unconditioned_octet, &generated);
 		break;
 	case PCM_CALL_PHASE3_MIXED:
 		result = sample_mixed_phase3(
-			call, received_octet, received_sample, &generated);
+			call, received_octet, received_sample, received_available, &generated);
 		break;
 	case PCM_CALL_PHASE4:
 		result = sample_phase4(
@@ -5853,16 +5854,16 @@ enum pcm_call_result pcm_call_octet(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
 	uint8_t *transmit_octet, struct pcm_call_observation *observation)
 {
-	return call_octet(call, received_octet, received_sample, received_sample,
+	return call_octet(call, received_octet, received_sample, received_sample, true,
 		transmit_octet, observation, false);
 }
 
 enum pcm_call_result pcm_call_octet_owned(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
-	int16_t host_sample,
+	int16_t host_sample, bool received_available,
 	uint8_t *transmit_octet, struct pcm_call_observation *observation)
 {
-	return call_octet(call, received_octet, received_sample, host_sample,
+	return call_octet(call, received_octet, received_sample, host_sample, received_available,
 		transmit_octet, observation, true);
 }
 

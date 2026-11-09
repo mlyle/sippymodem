@@ -458,12 +458,13 @@ static enum v92_phase3_digital_station_result receive_second_trn1u(
 }
 
 static enum v92_phase3_digital_station_result receive_cpt(
-	struct v92_phase3_digital_station *station, int16_t sample)
+	struct v92_phase3_digital_station *station, int16_t sample,
+	bool received_available)
 {
 	struct v92_pcm_phase3_cpt_rx_event event;
 	enum v92_pcm_phase3_cpt_line_rx_result result =
 		v92_pcm_phase3_cpt_line_rx_sample(
-			&station->receive.cpt, sample, &event);
+			&station->receive.cpt, sample, received_available, &event);
 
 	if (result == V92_PCM_PHASE3_CPT_LINE_RX_SIGN)
 		return V92_PHASE3_DIGITAL_STATION_OK;
@@ -530,7 +531,8 @@ bool v92_phase3_digital_station_receive_complete(
 }
 
 enum v92_phase3_digital_station_result v92_phase3_digital_station_receive(
-	struct v92_phase3_digital_station *station, int16_t sample)
+	struct v92_phase3_digital_station *station, int16_t sample,
+	bool received_available)
 {
 	struct v92_phase3_digital_station next;
 	enum v92_phase3_digital_station_result result;
@@ -563,7 +565,7 @@ enum v92_phase3_digital_station_result v92_phase3_digital_station_receive(
 		result = receive_second_trn1u(&next, sample);
 		break;
 	case V92_PHASE3_DIGITAL_RECEIVE_CPT:
-		result = receive_cpt(&next, sample);
+		result = receive_cpt(&next, sample, received_available);
 		break;
 	case V92_PHASE3_DIGITAL_RECEIVE_COMPLETE:
 		return V92_PHASE3_DIGITAL_STATION_COMPLETE;

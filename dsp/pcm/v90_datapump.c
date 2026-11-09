@@ -1044,7 +1044,7 @@ static bool process_octet(
 		struct pcm_call_observation observation;
 
 		result = pcm_call_octet_owned(
-			&datapump->call, received, received_sample, host_sample,
+			&datapump->call, received, received_sample, host_sample, received_available,
 			transmitted, &observation);
 	}
 	if (result == PCM_CALL_V34_FALLBACK_READY) {

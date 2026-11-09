@@ -60,7 +60,7 @@ static bool check_polarity(int8_t polarity)
 	      "polarity %d receiver did not initialize", polarity);
 	for (size_t index = 0; index < 8u; ++index)
 		CHECK(binary_equalizer_receive(
-			      &receiver, positive, &sign) ==
+			      &receiver, positive, true, &sign) ==
 			      BINARY_EQUALIZER_OK &&
 		      sign == 0u,
 		      "positive decision %zu changed for polarity %d",
@@ -68,12 +68,12 @@ static bool check_polarity(int8_t polarity)
 	for (size_t index = 0;
 	     index < receiver.equalizer.decision_delay; ++index)
 		CHECK(binary_equalizer_receive(
-			      &receiver, negative, &sign) ==
+			      &receiver, negative, true, &sign) ==
 			      BINARY_EQUALIZER_OK &&
 		      sign == 0u,
 		      "decision delay changed at %zu for polarity %d",
 		      index, polarity);
-	CHECK(binary_equalizer_receive(&receiver, negative, &sign) ==
+	CHECK(binary_equalizer_receive(&receiver, negative, true, &sign) ==
 		      BINARY_EQUALIZER_OK &&
 	      sign == 1u,
 	      "negative decision changed for polarity %d", polarity);
@@ -154,9 +154,9 @@ static bool test_contracts(void)
 		      BINARY_EQUALIZER_OK,
 	      "contract receiver did not initialize");
 	before = receiver;
-	CHECK(binary_equalizer_receive(NULL, 0, &sign) ==
+	CHECK(binary_equalizer_receive(NULL, 0, true, &sign) ==
 		      BINARY_EQUALIZER_INVALID_ARGUMENT &&
-	      binary_equalizer_receive(&receiver, 0, NULL) ==
+	      binary_equalizer_receive(&receiver, 0, true, NULL) ==
 		      BINARY_EQUALIZER_INVALID_ARGUMENT &&
 	      states_equal(&receiver, &before) &&
 	      sign == 0xa5u,
@@ -165,7 +165,7 @@ static bool test_contracts(void)
 	before = receiver;
 	CHECK(!binary_equalizer_is_valid(NULL) &&
 	      !binary_equalizer_is_valid(&receiver) &&
-	      binary_equalizer_receive(&receiver, 0, &sign) ==
+	      binary_equalizer_receive(&receiver, 0, true, &sign) ==
 		      BINARY_EQUALIZER_INVALID_STATE &&
 	      states_equal(&receiver, &before) &&
 	      sign == 0xa5u,
@@ -217,7 +217,7 @@ static bool check_immediate_adaptation(
 			observation.output.in_phase < 0.0 ? -TEST_MAGNITUDE : TEST_MAGNITUDE };
 		CHECK(qam_equalizer_adapt_observation(&trained, &observation, &target,
 		      adaptation) == QAM_EQUALIZER_OK &&
-		      binary_equalizer_receive(&receiver, sample, &sign) == BINARY_EQUALIZER_OK &&
+		      binary_equalizer_receive(&receiver, sample, true, &sign) == BINARY_EQUALIZER_OK &&
 		      sign == (uint8_t)(target.in_phase < 0.0) &&
 		      memcmp(&receiver.equalizer, &trained, sizeof(trained)) == 0,
 		      "immediate/retained mismatch at step %zu", i);
@@ -253,10 +253,47 @@ static bool test_failed_adaptation_preserves_owner(void)
 	CHECK(binary_equalizer_init(&receiver, &trained, TEST_MAGNITUDE, .125, 1) ==
 	      BINARY_EQUALIZER_OK, "failure test owner rejected prematurely");
 	before = receiver;
-	CHECK(binary_equalizer_receive(&receiver, TEST_MAGNITUDE, &sign) ==
+	CHECK(binary_equalizer_receive(&receiver, TEST_MAGNITUDE, true, &sign) ==
 	      BINARY_EQUALIZER_INTERNAL_ERROR && sign == 0xa5 &&
 	      states_equal(&receiver, &before),
 	      "failed immediate adaptation changed owner or output");
+	return true;
+}
+
+static bool test_erasure_preserves_training(void)
+{
+	for (int polarity = -1; polarity <= 1; polarity += 2) {
+		struct qam_equalizer trained;
+		struct binary_equalizer receiver;
+		uint8_t sign;
+
+		CHECK(trained_equalizer(&trained) && binary_equalizer_init(&receiver,
+		      &trained, TEST_MAGNITUDE, .125, polarity) == BINARY_EQUALIZER_OK,
+		      "erasure fixture did not initialize");
+		for (unsigned i = 0; i < 80; i++) {
+			CHECK(binary_equalizer_receive(&receiver, 64, false, &sign) ==
+			      BINARY_EQUALIZER_OK && sign <= 1 &&
+			      receiver.equalizer.unavailable_history == TEST_TAP_COUNT &&
+			      receiver.equalizer.history[0].in_phase == polarity * 64 &&
+			      memcmp(receiver.equalizer.coefficients, trained.coefficients,
+				     sizeof(trained.coefficients)) == 0,
+			      "erasure changed trained taps or stopped the input clock");
+		}
+		for (unsigned i = 1; i < TEST_TAP_COUNT; i++)
+			CHECK(binary_equalizer_receive(&receiver,
+			      polarity * TEST_MAGNITUDE / 2, true, &sign) == BINARY_EQUALIZER_OK &&
+			      receiver.equalizer.unavailable_history == TEST_TAP_COUNT - i &&
+			      memcmp(receiver.equalizer.coefficients, trained.coefficients,
+				     sizeof(trained.coefficients)) == 0,
+			      "concealed FIR history contributed an adaptation gradient");
+		CHECK(binary_equalizer_receive(&receiver,
+		      polarity * TEST_MAGNITUDE / 2, true, &sign) == BINARY_EQUALIZER_OK &&
+		      receiver.equalizer.unavailable_history == 0 &&
+		      !receiver.equalizer.can_adapt &&
+		      memcmp(receiver.equalizer.coefficients, trained.coefficients,
+			     sizeof(trained.coefficients)) != 0,
+		      "clean history did not resume adaptation");
+	}
 	return true;
 }
 
@@ -270,7 +307,7 @@ static bool test_output_ownership(void)
 	      "output-ownership fixture did not initialize");
 	before = receiver;
 	for (size_t byte = 0; byte < sizeof(receiver); ++byte)
-		CHECK(binary_equalizer_receive(&receiver, -TEST_MAGNITUDE,
+		CHECK(binary_equalizer_receive(&receiver, -TEST_MAGNITUDE, true,
 			      (uint8_t *)&receiver + byte) == BINARY_EQUALIZER_INVALID_ARGUMENT &&
 		      states_equal(&receiver, &before),
 		      "sign output changed owner at byte %zu", byte);
@@ -292,5 +329,8 @@ int main(void)
 		return 1;
 	}
 	fprintf(stderr, "[       OK ] binary equalizer contracts\n");
+	fprintf(stderr, "[ RUN      ] binary equalizer erased history\n");
+	if (!test_erasure_preserves_training()) return 1;
+	fprintf(stderr, "[       OK ] binary equalizer erased history\n");
 	return 0;
 }

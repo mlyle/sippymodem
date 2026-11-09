@@ -97,11 +97,14 @@ enum v92_phase3_digital_station_result v92_phase3_digital_station_transmit(
 /* Consume one signed 8 kHz sample. Su phase and both TRN1u equalizers are
  * internal continuous stages. With DIL, CPt requests Ri and E1u requests
  * Ri-bar; without DIL, Ri precedes CPt and CPt requests Ri-bar. E1u exposes
- * the exact receive handoff in either case. After E1u, COMPLETE still consumes
+ * the exact receive handoff in either case. During CPt, availability inhibits
+ * learning from concealment while keeping the receive clock continuous.
+ * After E1u, COMPLETE still consumes
  * and retains samples in early_trn2u. Retire this owner as soon as both
  * directions complete, then deliver those samples to the Phase 4 receiver. */
 enum v92_phase3_digital_station_result v92_phase3_digital_station_receive(
-	struct v92_phase3_digital_station *station, int16_t sample);
+	struct v92_phase3_digital_station *station, int16_t sample,
+	bool received_available);
 
 bool v92_phase3_digital_station_transmit_complete(
 	const struct v92_phase3_digital_station *station);

@@ -104,11 +104,11 @@ static enum v92_pcm_phase3_cpt_line_rx_result fail_sample(
 }
 
 static bool receive_sign(struct binary_equalizer *line,
-	struct v92_pcm_phase3_cpt_rx *signs, int32_t sample,
+	struct v92_pcm_phase3_cpt_rx *signs, int32_t sample, bool received_available,
 	struct v92_pcm_phase3_cpt_rx_event *event)
 {
 	uint8_t sign;
-	return binary_equalizer_receive(line, sample, &sign) == BINARY_EQUALIZER_OK &&
+	return binary_equalizer_receive(line, sample, received_available, &sign) == BINARY_EQUALIZER_OK &&
 	       v92_pcm_phase3_cpt_rx_receive(signs, sign, event) == V92_PCM_PHASE3_CPT_RX_OK;
 }
 
@@ -120,7 +120,7 @@ static void discard_alternate(struct v92_pcm_phase3_cpt_line_rx *receiver)
 
 enum v92_pcm_phase3_cpt_line_rx_result
 v92_pcm_phase3_cpt_line_rx_sample(
-	struct v92_pcm_phase3_cpt_line_rx *receiver, int16_t sample,
+	struct v92_pcm_phase3_cpt_line_rx *receiver, int16_t sample, bool received_available,
 	struct v92_pcm_phase3_cpt_rx_event *event)
 {
 	struct v92_pcm_phase3_cpt_line_rx next;
@@ -138,11 +138,11 @@ v92_pcm_phase3_cpt_line_rx_sample(
 	next.input_samples++;
 	int32_t centered = (int32_t)sample - next.dc_offset;
 	bool primary_ok = receive_sign(&next.line, &next.signs,
-		next.alternate_active ? sample : centered, &emitted);
+		next.alternate_active ? sample : centered, received_available, &emitted);
 	if (next.alternate_active) {
 		struct v92_pcm_phase3_cpt_rx_event other = { 0 };
 		bool alternate_ok = receive_sign(&next.alternate.line,
-			&next.alternate.signs, centered, &other);
+			&next.alternate.signs, centered, received_available, &other);
 		if (primary_ok && emitted.type == V92_PCM_PHASE3_CPT_RX_PARAMETERS) {
 			next.dc_offset = 0;
 			discard_alternate(&next);

@@ -202,7 +202,7 @@ static bool check_trn1u_without_su_reversal(
 		struct v90_pcm_symbol symbol;
 
 		CHECK(v92_pcm_phase3_trn1u_next(&training, &symbol) == V92_PCM_PHASE3_TRN1U_OK &&
-		      v92_phase3_digital_station_receive(&digital, symbol.sample) ==
+		      v92_phase3_digital_station_receive(&digital, symbol.sample, true) ==
 			      V92_PHASE3_DIGITAL_STATION_OK,
 		      "obscured Su response lost training at symbol %u", n);
 	}
@@ -375,7 +375,7 @@ static bool run_exchange(enum g711_law law, unsigned delay,
 					digital.receive.initial.sequence.ja.line.magnitude / 256.0) : 0u;
 			enum v92_phase3_digital_station_result result =
 				v92_phase3_digital_station_receive(
-					&digital, delivered);
+					&digital, delivered, true);
 
 			upstream_delay[cursor] = sample;
 			CHECK(result == V92_PHASE3_DIGITAL_STATION_OK ||
@@ -479,7 +479,7 @@ static bool run_exchange(enum g711_law law, unsigned delay,
 		      !v92_phase3_digital_station_receive_complete(&digital) &&
 		      v92_phase3_digital_station_transmit(&digital, &octet) ==
 			      V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
-		      v92_phase3_digital_station_receive(&digital, 1234) ==
+		      v92_phase3_digital_station_receive(&digital, 1234, true) ==
 			      V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
 		      octet == 0xa5 &&
 		      memcmp(&digital, &saved, sizeof(digital)) == 0,
@@ -528,7 +528,7 @@ static bool run_delayed_ri(enum g711_law law)
 			      V92_PHASE3_ANALOG_STATION_OK &&
 		      v92_phase3_analog_station_transmit(&analog, NULL, &sample) ==
 			      V92_PHASE3_ANALOG_STATION_OK &&
-		      v92_phase3_digital_station_receive(&digital, media_sample(law, sample)) ==
+		      v92_phase3_digital_station_receive(&digital, media_sample(law, sample), true) ==
 			      V92_PHASE3_DIGITAL_STATION_OK, "delayed-Ri startup failed at %zu", i);
 		studying = analog.receive_stage == V92_PHASE3_ANALOG_RECEIVE_RI &&
 			digital.downstream.stage == PCM_PHASE3_DIGITAL_TX_SCR;
@@ -708,7 +708,7 @@ static bool run_nonzero_dil(enum g711_law law)
 				      FRACTIONAL_DELAY_OK, "peer sample delay failed");
 		{
 			enum v92_phase3_digital_station_result result =
-				v92_phase3_digital_station_receive(&digital, media_sample(law, sample));
+				v92_phase3_digital_station_receive(&digital, media_sample(law, sample), true);
 			CHECK(result == V92_PHASE3_DIGITAL_STATION_OK ||
 			      result == V92_PHASE3_DIGITAL_STATION_COMPLETE,
 			      "nonzero-DIL receive failed at %zu: %s", index,
@@ -753,10 +753,10 @@ static bool run_nonzero_dil(enum g711_law law)
 		      "Ri-bar overlap lost the TRN2u epoch: %u symbol / %u coding errors",
 		      receiver.symbol_errors, receiver.coding_errors);
 		while (digital.early_trn2u_samples < ARRAY_LENGTH(digital.early_trn2u))
-			CHECK(v92_phase3_digital_station_receive(&digital, 0) ==
+			CHECK(v92_phase3_digital_station_receive(&digital, 0, true) ==
 				      V92_PHASE3_DIGITAL_STATION_COMPLETE,
 			      "bounded overlap rejected a permitted sample");
-		CHECK(v92_phase3_digital_station_receive(&digital, 0) ==
+		CHECK(v92_phase3_digital_station_receive(&digital, 0, true) ==
 			      V92_PHASE3_DIGITAL_STATION_SEQUENCE_MISMATCH &&
 		      v92_phase3_digital_station_has_failed(&digital),
 		      "unpaced overlap exceeded its bound");
@@ -1010,7 +1010,7 @@ static bool test_digital_contracts(void)
 	      "pre-Ja silence changed digital state");
 	CHECK(v92_phase3_digital_station_transmit(NULL, &octet) ==
 		      V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
-	      v92_phase3_digital_station_receive(NULL, 0) ==
+	      v92_phase3_digital_station_receive(NULL, 0, true) ==
 		      V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
 	      v92_phase3_digital_station_receive_handoff(
 		      &station, NULL) ==

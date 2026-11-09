@@ -145,7 +145,7 @@ enum v92_pcm_phase3_ja_line_rx_result v92_pcm_phase3_ja_line_rx_sample(
 		return V92_PCM_PHASE3_JA_LINE_RX_INVALID_STATE;
 	next = *receiver;
 	next.input_samples++;
-	if (binary_equalizer_receive(&next.line, sample, &sign) !=
+	if (binary_equalizer_receive(&next.line, sample, true, &sign) !=
 	    BINARY_EQUALIZER_OK)
 		return fail_sample(receiver, &next);
 	if (next.stage == V92_PCM_PHASE3_JA_LINE_RX_SEARCHING)

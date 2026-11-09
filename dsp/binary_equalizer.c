@@ -39,7 +39,7 @@ enum binary_equalizer_result binary_equalizer_init(
 }
 
 enum binary_equalizer_result binary_equalizer_receive(
-	struct binary_equalizer *receiver, int32_t sample,
+	struct binary_equalizer *receiver, int32_t sample, bool received_available,
 	uint8_t *sign)
 {
 	struct binary_equalizer next;
@@ -58,10 +58,10 @@ enum binary_equalizer_result binary_equalizer_receive(
 	input = (struct qam_point){
 		.in_phase = next.polarity > 0 ? sample : -(double)sample,
 	};
-	if (qam_equalizer_push(
-		    &next.equalizer, &input, &output, &ready) !=
-		    QAM_EQUALIZER_OK ||
-	    !ready)
+	enum qam_equalizer_result pushed = received_available ?
+		qam_equalizer_push(&next.equalizer, &input, &output, &ready) :
+		qam_equalizer_push_erasure(&next.equalizer, &input, &output, &ready);
+	if (pushed != QAM_EQUALIZER_OK || !ready)
 		return BINARY_EQUALIZER_INTERNAL_ERROR;
 	decision = output.in_phase < 0.0 ? 1u : 0u;
 	target = (struct qam_point){

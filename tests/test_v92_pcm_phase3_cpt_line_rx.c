@@ -117,7 +117,8 @@ struct offset_channel {
 };
 
 static bool check_channel(enum g711_law law, bool impaired,
-	unsigned damaged_descriptors, const struct offset_channel *offset)
+	unsigned damaged_descriptors, const struct offset_channel *offset,
+	unsigned erased_symbols)
 {
 	struct channel_bench_effect_spec effects[5] = {
 		{
@@ -162,7 +163,7 @@ static bool check_channel(enum g711_law law, bool impaired,
 	bool e1u_seen = false;
 	unsigned rejected_records = 0u;
 	unsigned ucode = offset ? offset->ucode : TEST_UCODE;
-	unsigned extra_training = offset ? 16008u : 0u;
+	unsigned extra_training = offset || erased_symbols ? 16008u : 0u;
 	int expected_polarity = offset ? offset->polarity : impaired ? -1 : 1;
 	double dc = 0.0, previous = 0.0;
 	int16_t raw_history[V92_PCM_PHASE3_TRN1U_LINE_EQUALIZER_TAPS] = { 0 };
@@ -233,6 +234,13 @@ static bool check_channel(enum g711_law law, bool impaired,
 		      "CPt line channel failed at %zu", index);
 		if (offset)
 			sample += offset->offset;
+		/* Network concealment occupies real sample time. The transmitter
+		 * continues TRN1u while the receiver must preserve its trained FIR. */
+		bool received_available = index < V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS + 2200u ||
+			index >= V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS + 2200u + erased_symbols;
+		if (!received_available)
+			sample = g711_quantize(law, 0);
+
 		memmove(raw_history + 1, raw_history,
 			sizeof(raw_history) - sizeof(raw_history[0]));
 		raw_history[0] = sample;
@@ -265,7 +273,7 @@ static bool check_channel(enum g711_law law, bool impaired,
 			struct v92_pcm_phase3_cpt_rx_event event;
 			enum v92_pcm_phase3_cpt_line_rx_result result =
 				v92_pcm_phase3_cpt_line_rx_sample(
-					&receiver, sample, &event);
+					&receiver, sample, received_available, &event);
 
 			CHECK(result == V92_PCM_PHASE3_CPT_LINE_RX_SIGN ||
 			      result == V92_PCM_PHASE3_CPT_LINE_RX_EVENT,
@@ -357,7 +365,7 @@ static bool check_channel(enum g711_law law, bool impaired,
 			      &receiver, &previous_sign) &&
 		      previous_sign == transmitter.coding.previous_sign &&
 		      v92_pcm_phase3_cpt_line_rx_sample(
-			      &receiver, 0, &event) ==
+			      &receiver, 0, true, &event) ==
 			      V92_PCM_PHASE3_CPT_LINE_RX_DONE &&
 		      receiver_states_equal(&receiver, &before) &&
 		      memcmp(&event, &before_event, sizeof(event)) == 0,
@@ -395,21 +403,34 @@ static bool check_channel(enum g711_law law, bool impaired,
 
 static bool check_line(enum g711_law law, bool impaired, unsigned damaged)
 {
-	return check_channel(law, impaired, damaged, NULL);
+	return check_channel(law, impaired, damaged, NULL, 0);
 }
 
 static bool test_offset_channel(void)
 {
 	const struct offset_channel recovery = { 65, 128, 0.5, -1, true };
-	CHECK(check_channel(G711_LAW_PCMA, true, 0, &recovery),
+	CHECK(check_channel(G711_LAW_PCMA, true, 0, &recovery, 0),
 	      "CPt did not recover the weak offset channel");
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)
 		for (int polarity = -1; polarity <= 1; polarity += 2)
 			for (int dc = -128; dc <= 128; dc += 256) {
 				const struct offset_channel channel = { 91, dc, 0.5, polarity, false };
-				CHECK(check_channel(law, true, 0, &channel),
+				CHECK(check_channel(law, true, 0, &channel, 0),
 				      "CPt offset control failed law=%u polarity=%d offset=%d",
 				      law, polarity, dc);
+			}
+	return true;
+}
+
+static bool test_receive_gap(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)
+		for (int polarity = -1; polarity <= 1; polarity += 2)
+			for (unsigned gap = 40; gap <= 160; gap *= 2) {
+				const struct offset_channel channel = { 91, 128, 0.5, polarity, false };
+				CHECK(check_channel(law, true, 0, &channel, gap),
+				      "CPt failed after erased TRN1u: law=%u polarity=%d gap=%u",
+				      law, polarity, gap);
 			}
 	return true;
 }
@@ -499,9 +520,9 @@ static bool test_contracts(void)
 	memset(&event, 0xa5, sizeof(event));
 	before_event = event;
 	before = receiver;
-	CHECK(v92_pcm_phase3_cpt_line_rx_sample(NULL, 0, &event) ==
+	CHECK(v92_pcm_phase3_cpt_line_rx_sample(NULL, 0, true, &event) ==
 			      V92_PCM_PHASE3_CPT_LINE_RX_INVALID_ARGUMENT &&
-	      v92_pcm_phase3_cpt_line_rx_sample(&receiver, 0, NULL) ==
+	      v92_pcm_phase3_cpt_line_rx_sample(&receiver, 0, true, NULL) ==
 			      V92_PCM_PHASE3_CPT_LINE_RX_INVALID_ARGUMENT &&
 	      receiver_states_equal(&receiver, &before) &&
 	      memcmp(&event, &before_event, sizeof(event)) == 0,
@@ -512,13 +533,13 @@ static bool test_contracts(void)
 	receiver.starting_input_samples = receiver.input_samples + 1u;
 	before = receiver;
 	CHECK(!v92_pcm_phase3_cpt_line_rx_is_valid(&receiver) &&
-	      v92_pcm_phase3_cpt_line_rx_sample(&receiver, 0, &event) ==
+	      v92_pcm_phase3_cpt_line_rx_sample(&receiver, 0, true, &event) ==
 		      V92_PCM_PHASE3_CPT_LINE_RX_INVALID_ARGUMENT &&
 	      receiver_states_equal(&receiver, &before),
 	      "CPT line accepted an input clock before its handoff");
 	receiver.starting_input_samples = origin;
 	receiver.input_samples = UINT64_MAX - 1u;
-	CHECK(v92_pcm_phase3_cpt_line_rx_sample(&receiver, 0, &event) ==
+	CHECK(v92_pcm_phase3_cpt_line_rx_sample(&receiver, 0, true, &event) ==
 		      V92_PCM_PHASE3_CPT_LINE_RX_SIGN &&
 	      receiver.input_samples == UINT64_MAX &&
 	      receiver.starting_input_samples == origin,
@@ -526,7 +547,7 @@ static bool test_contracts(void)
 
 	before = receiver;
 	CHECK(v92_pcm_phase3_cpt_line_rx_is_valid(&receiver) &&
-	      v92_pcm_phase3_cpt_line_rx_sample(&receiver, 0, &event) ==
+	      v92_pcm_phase3_cpt_line_rx_sample(&receiver, 0, true, &event) ==
 		      V92_PCM_PHASE3_CPT_LINE_RX_INVALID_STATE &&
 	      receiver_states_equal(&receiver, &before),
 	      "overflowing CPt line sample changed state");
@@ -560,7 +581,7 @@ static bool test_offset_contracts(void)
 		handoff.dc_offset = INT16_MIN;
 		CHECK(v92_pcm_phase3_cpt_line_rx_init(&receiver, &handoff) ==
 		      V92_PCM_PHASE3_CPT_LINE_RX_OK && receiver.alternate_active &&
-		      v92_pcm_phase3_cpt_line_rx_sample(&receiver, INT16_MAX, &event) ==
+		      v92_pcm_phase3_cpt_line_rx_sample(&receiver, INT16_MAX, true, &event) ==
 		      V92_PCM_PHASE3_CPT_LINE_RX_SIGN &&
 		      receiver.alternate.line.equalizer.history[0].in_phase == polarity * 65535.0,
 		      "centered input was clipped for polarity %d", polarity);
@@ -572,7 +593,7 @@ static bool test_offset_contracts(void)
 		if (fault == 2) invalid.alternate.line.polarity *= -1;
 		before = invalid;
 		CHECK(!v92_pcm_phase3_cpt_line_rx_is_valid(&invalid) &&
-		      v92_pcm_phase3_cpt_line_rx_sample(&invalid, 0, &event) ==
+		      v92_pcm_phase3_cpt_line_rx_sample(&invalid, 0, true, &event) ==
 		      V92_PCM_PHASE3_CPT_LINE_RX_INVALID_ARGUMENT &&
 		      receiver_states_equal(&invalid, &before),
 		      "invalid offset state %u changed receiver", fault);
@@ -614,6 +635,7 @@ int main(void)
 		{ "exact PCMA line", test_exact_pcma },
 		{ "impaired PCMA line", test_impaired_pcma },
 		{ "offset channel", test_offset_channel },
+		{ "erased TRN1u preserves CPt acquisition", test_receive_gap },
 		{ "lost preamble, CRC and E1u", test_lost_preamble },
 		{ "contracts", test_contracts },
 		{ "offset contracts", test_offset_contracts },

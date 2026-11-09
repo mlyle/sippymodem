@@ -716,10 +716,11 @@ enum pcm_call_result pcm_call_octet(
  * boundary; avoid repeating the full graph check for every phase character.
  * host_sample is the sample before echo cancellation, paired with the raw
  * codeword for host-gain measurement. received_sample remains the cleaned
- * physical input to the signal receiver. */
+ * physical input to the signal receiver. received_available carries media
+ * loss to the CPt receiver without stopping either direction's clock. */
 enum pcm_call_result pcm_call_octet_owned(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
-	int16_t host_sample,
+	int16_t host_sample, bool received_available,
 	uint8_t *transmit_octet,
 	struct pcm_call_observation *observation);
 
