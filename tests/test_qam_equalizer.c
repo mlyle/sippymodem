@@ -20,8 +20,6 @@ enum {
 	LONG_PAYLOAD_SYMBOLS = 1024,
 	CARRIER_TRACKING_SYMBOLS = 8192,
 	CARRIER_TRACKING_SETTLE_SYMBOLS = 768,
-	CARRIER_HOLD_SYMBOLS = 2048,
-	CARRIER_HOLD_SETTLE_SYMBOLS = 64,
 };
 
 static const double CARRIER_DRIFT_RADIANS_PER_SYMBOL = 0.01;
@@ -332,8 +330,6 @@ static bool test_carrier_frequency_tracking(void)
 	uint32_t random = UINT32_C(0x504c4c21);
 	unsigned int baseline_errors = 0;
 	unsigned int tracked_errors = 0;
-	unsigned int held_errors = 0;
-	double held_frequency;
 
 	CHECK(qam_equalizer_init(
 		      &baseline, &reference, &reference,
@@ -400,129 +396,6 @@ static bool test_carrier_frequency_tracking(void)
 	      "carrier drift produced %u tracked errors versus %u without "
 	      "tracking at frequency %.6g",
 	      tracked_errors, baseline_errors, tracked.carrier_frequency);
-	held_frequency = tracked.carrier_frequency;
-	CHECK(qam_equalizer_hold_carrier_frequency(&tracked) ==
-		      QAM_EQUALIZER_OK &&
-	      tracked.carrier_integral_gain == 0.0,
-	      "carrier frequency hold was rejected");
-	for (unsigned int offset = 0; offset < CARRIER_HOLD_SYMBOLS; ++offset) {
-		unsigned int symbol = CARRIER_TRACKING_SYMBOLS + offset;
-		struct qam_equalizer_observation observation = { 0 };
-		struct qam_point received;
-		struct qam_point target;
-		struct qam_point feedback;
-		bool ready;
-
-		for (size_t index = ARRAY_LENGTH(transmitted) - 1u;
-		     index != 0; --index)
-			transmitted[index] = transmitted[index - 1u];
-		transmitted[0] = (struct qam_point){
-			.in_phase = (fixture_random(&random) & 1u) != 0u ?
-				-unit_coordinate : unit_coordinate,
-			.quadrature = (fixture_random(&random) & 1u) != 0u ?
-				-unit_coordinate : unit_coordinate,
-		};
-		received = rotate(
-			transmitted[0],
-			CARRIER_DRIFT_RADIANS_PER_SYMBOL * symbol);
-		CHECK(qam_equalizer_observe(
-			      &tracked, &received, &observation, &ready) ==
-			      QAM_EQUALIZER_OK && ready,
-		      "held carrier tracker rejected symbol %u", symbol);
-		target = transmitted[TEST_DELAY];
-		if (offset >= CARRIER_HOLD_SETTLE_SYMBOLS)
-			held_errors += !same_quadrant(
-				&observation.output, &target);
-		/* One unreliable data decision may move proportional phase, but it
-		 * must not bias the frequency learned from training. */
-		feedback = offset == 0u ?
-			rotate(target, 3.14159265358979323846 / 2.0) : target;
-		CHECK(qam_equalizer_adapt_observation(
-			      &tracked, &observation, &feedback, 0.0) ==
-			      QAM_EQUALIZER_OK,
-		      "held carrier tracker did not consume symbol %u", symbol);
-	}
-	CHECK(held_errors == 0 && tracked.carrier_frequency == held_frequency,
-	      "held carrier accumulated %u errors or changed frequency %.6g to %.6g",
-	      held_errors, held_frequency, tracked.carrier_frequency);
-	return true;
-}
-
-static bool test_carrier_decision_policy(void)
-{
-	static const double unit_coordinate =
-		0.70710678118654752440084436210485;
-	const struct qam_point reference = {
-		unit_coordinate,
-		unit_coordinate,
-	};
-	const struct qam_point wrong = {
-		-unit_coordinate,
-		unit_coordinate,
-	};
-	struct qam_equalizer unbounded;
-	struct qam_equalizer bounded;
-	struct qam_equalizer slowed;
-	struct qam_equalizer_observation unbounded_observation = { 0 };
-	struct qam_equalizer_observation bounded_observation = { 0 };
-	struct qam_equalizer_observation slowed_observation = { 0 };
-	bool unbounded_ready = false;
-	bool bounded_ready = false;
-	bool slowed_ready = false;
-
-	CHECK(qam_equalizer_init(
-		      &unbounded, &reference, &reference,
-		      TEST_TAP_COUNT, TEST_DELAY) ==
-		      QAM_EQUALIZER_OK &&
-	      qam_equalizer_enable_carrier_tracking(
-		      &unbounded, 0.25, 1.0 / 8192.0) ==
-		      QAM_EQUALIZER_OK &&
-	      qam_equalizer_hold_carrier_frequency(&unbounded) ==
-		      QAM_EQUALIZER_OK,
-	      "carrier-error fixtures did not initialize");
-	bounded = unbounded;
-	slowed = unbounded;
-	CHECK(qam_equalizer_set_carrier_error_limit(&bounded, 0.25) ==
-		      QAM_EQUALIZER_OK &&
-	      bounded.carrier_error_limit == 0.25 &&
-	      qam_equalizer_set_carrier_proportional_gain(&slowed, 0.05) ==
-		      QAM_EQUALIZER_OK &&
-	      slowed.carrier_proportional_gain == (double)0.05,
-	      "carrier decision policy was rejected");
-	for (unsigned int index = 0;
-	     index <= TEST_DELAY; ++index) {
-		CHECK(qam_equalizer_observe(
-			      &unbounded, &reference,
-			      &unbounded_observation, &unbounded_ready) ==
-			      QAM_EQUALIZER_OK &&
-		      qam_equalizer_observe(
-			      &bounded, &reference,
-			      &bounded_observation, &bounded_ready) ==
-			      QAM_EQUALIZER_OK &&
-		      qam_equalizer_observe(
-			      &slowed, &reference,
-			      &slowed_observation, &slowed_ready) ==
-			      QAM_EQUALIZER_OK &&
-		      unbounded_ready == bounded_ready &&
-		      unbounded_ready == slowed_ready,
-		      "carrier-error fixture rejected symbol %u", index);
-	}
-	CHECK(unbounded_ready &&
-	      qam_equalizer_adapt_observation(
-		      &unbounded, &unbounded_observation, &wrong, 0.0) ==
-		      QAM_EQUALIZER_OK &&
-	      qam_equalizer_adapt_observation(
-		      &bounded, &bounded_observation, &wrong, 0.0) ==
-		      QAM_EQUALIZER_OK &&
-	      qam_equalizer_adapt_observation(
-		      &slowed, &slowed_observation, &wrong, 0.0) ==
-		      QAM_EQUALIZER_OK &&
-	      fabs(unbounded.carrier_phase - 0.25) < 1e-12 &&
-	      fabs(bounded.carrier_phase - 0.0625) < 1e-12 &&
-	      fabs(slowed.carrier_phase - 0.05) < 1e-12,
-	      "carrier decision policy produced phases %.12g, %.12g, and %.12g",
-	      unbounded.carrier_phase, bounded.carrier_phase,
-	      slowed.carrier_phase);
 	return true;
 }
 
@@ -1254,20 +1127,6 @@ static bool test_validation(void)
 		      QAM_EQUALIZER_INVALID_ARGUMENT &&
 	      memcmp(&equalizer, &saved, sizeof(equalizer)) == 0,
 	      "invalid carrier-loop gains changed the equalizer");
-	CHECK(qam_equalizer_hold_carrier_frequency(NULL) ==
-		      QAM_EQUALIZER_INVALID_ARGUMENT &&
-	      qam_equalizer_hold_carrier_frequency(&equalizer) ==
-		      QAM_EQUALIZER_INVALID_STATE &&
-	      qam_equalizer_set_carrier_proportional_gain(NULL, 0.05) ==
-		      QAM_EQUALIZER_INVALID_ARGUMENT &&
-	      qam_equalizer_set_carrier_proportional_gain(
-		      &equalizer, 0.05) == QAM_EQUALIZER_INVALID_STATE &&
-	      qam_equalizer_set_carrier_error_limit(NULL, 0.25) ==
-		      QAM_EQUALIZER_INVALID_ARGUMENT &&
-	      qam_equalizer_set_carrier_error_limit(&equalizer, 0.25) ==
-		      QAM_EQUALIZER_INVALID_STATE &&
-	      memcmp(&equalizer, &saved, sizeof(equalizer)) == 0,
-	      "invalid carrier tracking policy changed the equalizer");
 	carrier = equalizer;
 	CHECK(qam_equalizer_enable_carrier_tracking(
 		      &carrier, 0.25, 0.001) == QAM_EQUALIZER_OK &&
@@ -1277,32 +1136,8 @@ static bool test_validation(void)
 	CHECK(qam_equalizer_enable_carrier_tracking(
 		      &carrier, 0.25, 0.001) ==
 		      QAM_EQUALIZER_INVALID_STATE &&
-	      qam_equalizer_set_carrier_error_limit(&carrier, NAN) ==
-		      QAM_EQUALIZER_INVALID_ARGUMENT &&
-	      qam_equalizer_set_carrier_error_limit(&carrier, 0.0) ==
-		      QAM_EQUALIZER_INVALID_ARGUMENT &&
-	      qam_equalizer_set_carrier_error_limit(&carrier, -0.25) ==
-		      QAM_EQUALIZER_INVALID_ARGUMENT &&
-	      qam_equalizer_set_carrier_proportional_gain(&carrier, NAN) ==
-		      QAM_EQUALIZER_INVALID_ARGUMENT &&
-	      qam_equalizer_set_carrier_proportional_gain(&carrier, 0.0) ==
-		      QAM_EQUALIZER_INVALID_ARGUMENT &&
-	      qam_equalizer_set_carrier_proportional_gain(&carrier, 1.1) ==
-		      QAM_EQUALIZER_INVALID_ARGUMENT &&
-	      qam_equalizer_set_carrier_proportional_gain(
-		      &carrier, 0.0005) ==
-		      QAM_EQUALIZER_INVALID_ARGUMENT &&
 	      memcmp(&carrier, &saved, sizeof(carrier)) == 0,
-	      "invalid carrier policy was not transactional");
-	CHECK(qam_equalizer_hold_carrier_frequency(&carrier) ==
-		      QAM_EQUALIZER_OK &&
-	      carrier.carrier_integral_gain == 0.0 &&
-	      qam_equalizer_set_carrier_proportional_gain(&carrier, 0.05) ==
-		      QAM_EQUALIZER_OK &&
-	      carrier.carrier_proportional_gain == (double)0.05 &&
-	      qam_equalizer_hold_carrier_frequency(&carrier) ==
-		      QAM_EQUALIZER_OK && qam_equalizer_is_valid(&carrier),
-	      "carrier frequency hold was not valid and idempotent");
+	      "carrier tracking accepted a second initialization");
 	pending = equalizer;
 	for (unsigned int index = 0; index <= TEST_DELAY; ++index) {
 		CHECK(qam_equalizer_push(
@@ -1647,7 +1482,6 @@ int main(void)
 		{ "instance-selected decision delay", test_instance_selected_delay },
 		{ "generated ISI channel", test_generated_isi_channel },
 		{ "carrier-frequency tracking", test_carrier_frequency_tracking },
-		{ "carrier decision policy", test_carrier_decision_policy },
 		{ "instance-selected channel span", test_instance_selected_span },
 		{ "delayed observations", test_delayed_observations },
 		{ "immediate observation equivalence", test_immediate_observations },

@@ -30,8 +30,6 @@ static bool carrier_state_is_valid(const struct qam_equalizer *equalizer)
 	    equalizer->carrier_phase > QAM_CARRIER_PI ||
 	    !isfinite(equalizer->carrier_frequency) ||
 	    fabs(equalizer->carrier_frequency) > QAM_CARRIER_MAX_FREQUENCY ||
-	    !isfinite(equalizer->carrier_error_limit) ||
-	    equalizer->carrier_error_limit < 0.0 ||
 	    !isfinite(equalizer->last_carrier_phase) ||
 	    equalizer->last_carrier_phase < -QAM_CARRIER_PI ||
 	    equalizer->last_carrier_phase > QAM_CARRIER_PI)
@@ -170,44 +168,6 @@ enum qam_equalizer_result qam_equalizer_enable_carrier_tracking(
 	equalizer->carrier_proportional_gain = proportional_gain;
 	equalizer->carrier_integral_gain = integral_gain;
 	equalizer->carrier_tracking = true;
-	return QAM_EQUALIZER_OK;
-}
-
-enum qam_equalizer_result qam_equalizer_hold_carrier_frequency(
-	struct qam_equalizer *equalizer)
-{
-	if (!qam_equalizer_is_valid(equalizer))
-		return QAM_EQUALIZER_INVALID_ARGUMENT;
-	if (!equalizer->carrier_tracking)
-		return QAM_EQUALIZER_INVALID_STATE;
-	equalizer->carrier_integral_gain = 0.0;
-	return QAM_EQUALIZER_OK;
-}
-
-enum qam_equalizer_result qam_equalizer_set_carrier_proportional_gain(
-	struct qam_equalizer *equalizer, double proportional_gain)
-{
-	if (!qam_equalizer_is_valid(equalizer) ||
-	    !isfinite(proportional_gain) || proportional_gain <= 0.0 ||
-	    proportional_gain > 1.0)
-		return QAM_EQUALIZER_INVALID_ARGUMENT;
-	if (!equalizer->carrier_tracking)
-		return QAM_EQUALIZER_INVALID_STATE;
-	if (proportional_gain < equalizer->carrier_integral_gain)
-		return QAM_EQUALIZER_INVALID_ARGUMENT;
-	equalizer->carrier_proportional_gain = proportional_gain;
-	return QAM_EQUALIZER_OK;
-}
-
-enum qam_equalizer_result qam_equalizer_set_carrier_error_limit(
-	struct qam_equalizer *equalizer, double maximum_error)
-{
-	if (!qam_equalizer_is_valid(equalizer) ||
-	    !isfinite(maximum_error) || maximum_error <= 0.0)
-		return QAM_EQUALIZER_INVALID_ARGUMENT;
-	if (!equalizer->carrier_tracking)
-		return QAM_EQUALIZER_INVALID_STATE;
-	equalizer->carrier_error_limit = maximum_error;
 	return QAM_EQUALIZER_OK;
 }
 
@@ -396,12 +356,6 @@ static enum qam_equalizer_result adapt_decision(
 			/* The V.34 cross-product detector naturally gives weak
 			 * decisions less authority than a unit-angle error. */
 			double error = qam_point_correlation(output, target).quadrature;
-			if (equalizer->carrier_error_limit > 0.0) {
-				if (error > equalizer->carrier_error_limit)
-					error = equalizer->carrier_error_limit;
-				else if (error < -equalizer->carrier_error_limit)
-					error = -equalizer->carrier_error_limit;
-			}
 			if (!isfinite(error))
 				return QAM_EQUALIZER_INVALID_ARGUMENT;
 			frequency += equalizer->carrier_integral_gain * error;

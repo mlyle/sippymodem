@@ -99,9 +99,10 @@ static bool states_equal(
 		SAME_FIELD(last_output) && SAME_FIELD(last_unrotated_output) &&
 		SAME_FIELD(carrier_phase) && SAME_FIELD(carrier_frequency) &&
 		SAME_FIELD(carrier_proportional_gain) && SAME_FIELD(carrier_integral_gain) &&
-		SAME_FIELD(carrier_error_limit) && SAME_FIELD(last_carrier_phase) &&
+		SAME_FIELD(last_carrier_phase) &&
 		SAME_FIELD(tap_count) && SAME_FIELD(decision_delay) && SAME_FIELD(fill) &&
-		SAME_FIELD(can_adapt) && SAME_FIELD(carrier_tracking);
+		SAME_FIELD(can_adapt) && SAME_FIELD(carrier_tracking) &&
+		SAME_FIELD(unavailable_history);
 #undef SAME_FIELD
 	return equal && left->polarity == right->polarity &&
 		memcmp(&left->magnitude, &right->magnitude, sizeof(left->magnitude)) == 0 &&
@@ -196,8 +197,7 @@ static bool check_immediate_adaptation(
 	}
 	if (tracking) {
 		CHECK(qam_equalizer_enable_carrier_tracking(&trained, .01, .001) ==
-		      QAM_EQUALIZER_OK && qam_equalizer_set_carrier_error_limit(
-		      &trained, .25) == QAM_EQUALIZER_OK, "carrier setup failed");
+		      QAM_EQUALIZER_OK, "carrier setup failed");
 		trained.carrier_phase = .031;
 		trained.carrier_frequency = .002;
 	}
