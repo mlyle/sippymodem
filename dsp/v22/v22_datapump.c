@@ -143,6 +143,7 @@ struct v22_datapump {
 	bool retrain_candidate_deliver;
 	bool rate_signal_late_candidate;
 	bool rate_signal_reply_sent;
+	bool answer_mark_reacquire_pending;
 	bool originator;
 };
 
@@ -341,6 +342,13 @@ static struct v22_datapump *v22_from_dp(struct dp *dp)
 		      V22_RETRAIN_RETRY_SAMPLES)) ||
 	    (datapump->rate_signal_reply_sent &&
 	     !datapump->rate_signal_late_candidate) ||
+	    (datapump->answer_mark_reacquire_pending &&
+	     (!datapump->originator || !datapump_uses_v22bis(datapump) ||
+	      datapump->training_state != V22_TRAINING_WAIT_SCRAMBLED_MARK ||
+	      !datapump->has_previous_receive_point ||
+	      !qam_demodulator_has_timing_lock(&datapump->demodulator) ||
+	      datapump->rate_signal_detector.present ||
+	      datapump->rate_signal_detector.alternating_symbols < 2u)) ||
 	    (!datapump_uses_v22bis(datapump) &&
 	     (datapump->v22bis_receiver_initialized ||
 	      datapump->v22bis_confirm_bits != 0 ||
@@ -913,6 +921,7 @@ static int observe_v22bis_rate_signal(
 		return -1;
 	*handled = false;
 	if (event == V22BIS_RATE_SIGNAL_STARTED) {
+		datapump->answer_mark_reacquire_pending = false;
 		/* A retrying peer decides at its S1 boundary whether we replied.
 		 * Start after the stable prefix, then require the complete S1 before
 		 * advancing our own transition clocks. */
@@ -1261,6 +1270,7 @@ static int reset_v22_receive_path(struct v22_datapump *datapump, bool retain_sig
 	datapump->previous_receive_point = (struct qam_point){ 0 };
 	datapump->has_previous_receive_point = false;
 	datapump->v22bis_receiver_initialized = false;
+	datapump->answer_mark_reacquire_pending = false;
 	return 0;
 }
 
@@ -1845,8 +1855,18 @@ static int process_v22(
 				 * the filter history so the short S1 suffix can acquire
 				 * timing before its scrambled-mark transition. A late
 				 * reciprocal S1 must retain its complete prefix. */
-				if (reset_v22_receive_path(datapump, !acquiring_mark) != 0)
+				if (datapump_uses_v22bis(datapump) &&
+				    datapump->training_state == V22_TRAINING_WAIT_SCRAMBLED_MARK &&
+				    datapump->has_previous_receive_point &&
+				    qam_demodulator_has_timing_lock(&datapump->demodulator) &&
+				    datapump->rate_signal_detector.alternating_symbols >= 2u) {
+					/* Tone loss can lag a usable finite S1 clock. Let its
+					 * existing qualifier finish; a broken prefix below
+					 * falls back to the same retained-signal acquisition. */
+					datapump->answer_mark_reacquire_pending = true;
+				} else if (reset_v22_receive_path(datapump, !acquiring_mark) != 0) {
 					return DPSTAT_ERROR;
+				}
 			}
 		}
 		if (generate_sample(datapump, &transmit[index]) != 0 ||
@@ -1857,6 +1877,15 @@ static int process_v22(
 		    advance_training_timer(datapump, &linked) != 0) {
 			memset(transmit, 0, (size_t)count * sizeof(*transmit));
 			return DPSTAT_ERROR;
+		}
+		if (datapump->answer_mark_reacquire_pending) {
+			if (datapump->training_state != V22_TRAINING_WAIT_SCRAMBLED_MARK ||
+			    datapump->rate_signal_detector.present) {
+				datapump->answer_mark_reacquire_pending = false;
+			} else if (datapump->rate_signal_detector.alternating_symbols < 2u &&
+				   reset_v22_receive_path(datapump, true) != 0) {
+				return DPSTAT_ERROR;
+			}
 		}
 		if (datapump->training_state == V22_TRAINING_ONLINE &&
 		    datapump->carrier_return_hold_samples != 0)

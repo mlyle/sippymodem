@@ -3787,7 +3787,7 @@ static bool run_v22_mark_qualification(void)
  * components of the generated mark, keeping its fitted fundamental continuous
  * with the following S1. Starting the RRC filter with the receiver would give
  * timing acquisition an onset that is absent on an already ringing line. */
-static bool run_v22bis_mark_transition(unsigned phase, enum g711_law law)
+static bool run_v22bis_mark_transition(unsigned phase, enum g711_law law, bool repeat_s1)
 {
 	static const char *const commands[] = {
 		"ATZ\r", "ATE0\r", "ATX3\r", "AT\\N0\r", "AT+DS=0,0\r",
@@ -3807,7 +3807,7 @@ static bool run_v22bis_mark_transition(unsigned phase, enum g711_law law)
 	struct qam_point point;
 	unsigned quadrant = 0, rate_symbols = 0;
 	size_t transition = SIZE_MAX, data_at = SIZE_MAX, data_bit = 0;
-	bool started_2400 = false, connected = false, payload = false;
+	bool started_2400 = false, connected = false, payload = false, repeated = false;
 	double cc = 0, ss = 0, cs = 0, yc = 0, ys = 0;
 	double omega = 2 * acos(-1.0) * 2250.1 / MODEM_RATE;
 	const size_t warm_samples = MODEM_RATE + phase;
@@ -3843,11 +3843,19 @@ static bool run_v22bis_mark_transition(unsigned phase, enum g711_law law)
 	double quadrature = (ys * cc - yc * cs) / (cc * ss - cs * cs);
 
 	endpoint.output_count = 0;
-	for (size_t sample = 0; sample < 4u * MODEM_RATE; ++sample) {
+	for (size_t sample = 0; sample < (repeat_s1 ? 6u : 4u) * MODEM_RATE; ++sample) {
 		bool ready = qam_modulator_can_accept_symbol(&modulator), accepted;
 		int16_t generated;
 
 		if (ready) {
+			/* An unanswered first S1 is followed by another complete
+			 * marker, using the same continuous carrier and symbol clock. */
+			if (repeat_s1 && !repeated && transition != SIZE_MAX &&
+			    sample - transition >= MODEM_RATE * 6u / 5u) {
+				rate_symbols = 0;
+				transition = SIZE_MAX;
+				repeated = true;
+			}
 			if (sample < mark_samples) {
 				quadrant = (quadrant + 3u) & 3u;
 				CHECK(v22bis_1200_constellation_point(quadrant, &point) ==
@@ -3867,7 +3875,7 @@ static bool run_v22bis_mark_transition(unsigned phase, enum g711_law law)
 					      V22_FRAMING_OK, "V.22bis mark encoder failed");
 				}
 				/* The answerer switches 600 ms after beginning its S1. */
-				if (sample - transition < MODEM_RATE / 2u) {
+				if ((repeat_s1 && !repeated) || sample - transition < MODEM_RATE / 2u) {
 					uint8_t next;
 
 					CHECK(v22_symbol_encode(&encoder, 1, 1, &next, true) ==
@@ -3927,7 +3935,7 @@ static bool test_v22bis_mark_transition(void)
 
 	for (size_t law = 0; law < ARRAY_LENGTH(laws); ++law)
 		for (unsigned phase = 0; phase < 14; ++phase)
-			CHECK(run_v22bis_mark_transition(phase, laws[law]),
+			CHECK(run_v22bis_mark_transition(phase, laws[law], false),
 			      "V.22bis steady-mark phase sweep failed");
 	return true;
 }

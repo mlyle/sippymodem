@@ -3604,6 +3604,7 @@ TEST_BINARIES := $(BUILD_DIR)/test_pcm_tx_recovery $(BUILD_DIR)/test_rtp_transmi
 	$(QAM_TEST_BINARY) \
 	$(QAM_EQUALIZER_TEST_BINARY) \
 	$(BINARY_EQUALIZER_TEST_BINARY) \
+	$(BUILD_DIR)/test_v22_startup \
 	$(FSK_INTEGRATION_TEST_BINARY)
 ifeq ($(PJSIP_AVAILABLE),yes)
 TEST_BINARIES += $(PJSIP_TEST_BINARY) $(LIBRARY_TEST_BINARY) $(DS0_SIP_TEST_BINARY) $(BUILD_DIR)/test_library_wait
@@ -4804,6 +4805,11 @@ $(V8_HANDOFF_INTEGRATION_BINARY): $(BUILD_DIR)/test_v8_handoff_integration.o \
 
 $(FSK_INTEGRATION_TEST_BINARY): $(FSK_INTEGRATION_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
+
+$(BUILD_DIR)/test_v22_startup: $(BUILD_DIR)/test_v22_startup.o \
+	$(filter-out $(BUILD_DIR)/test_fsk_integration.o,$(FSK_INTEGRATION_TEST_OBJECTS))
+	$(CC) $(LDFLAGS) -Wl,--wrap=single_tone_detector_sample \
+		-Wl,--wrap=v22bis_rate_signal_observe -Wl,--wrap=qam_demodulator_reacquire -o $@ $^ -lm
 
 $(BUILD_DIR)/%.o: %.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
