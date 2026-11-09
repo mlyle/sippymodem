@@ -2140,11 +2140,12 @@ static bool test_corrupted_cpu_tail(enum g711_law law,
 	      line.control.bit_index == prefix_bits &&
 	      v92_phase4_record_tx_init_e2u(&wire, &modulator, extended) == V92_PHASE4_RECORD_TX_OK,
 	      "corrupted-tail recovery lost the confirmed boundary");
-	struct v92_upstream_control_line_rx unretained = line, unconfirmed = line;
-	struct v92_e2u_rx unretained_e2u = e2u, unconfirmed_e2u = e2u;
+	struct v92_upstream_control_line_rx unretained = line, unconfirmed = line, unreferenced = line;
+	struct v92_e2u_rx unretained_e2u = e2u, unconfirmed_e2u = e2u, unreferenced_e2u = e2u;
 	struct v92_e2u_search unretained_search = search, unconfirmed_search = search;
+	struct v92_e2u_search unreferenced_search = { 0 };
 	unretained.retained_cpu_bits = 0;
-	unconfirmed.repeat_confirmed = false;
+	unconfirmed.repeat_confirmed = unreferenced.repeat_confirmed = false;
 	/* 72 bits span whole mapping frames in both constellations; 76 do not. */
 	bool marker_allowed = prefix_bits != 72u;
 	while (!v92_phase4_record_tx_is_complete(&wire)) {
@@ -2160,9 +2161,12 @@ static bool test_corrupted_cpu_tail(enum g711_law law,
 		if (prefix_bits) {
 			CHECK(v92_e2u_search_sample(&unretained_search, &unretained_e2u, &unretained, true,
 				      quantize(law, sample), &event) == V92_E2U_RX_OK &&
-			      v92_e2u_search_sample(&unconfirmed_search, &unconfirmed_e2u, &unconfirmed, true,
+			      v92_e2u_search_sample(&unreferenced_search, &unreferenced_e2u, &unreferenced, true,
 				      quantize(law, sample), &event) == V92_E2U_RX_OK,
-			      "partial header bypassed CPu selection or repetition confirmation");
+			      "partial header bypassed CPu selection or its literal/confirmed clock");
+			CHECK(v92_e2u_search_sample(&unconfirmed_search, &unconfirmed_e2u, &unconfirmed, true,
+				      quantize(law, sample), &event) == result && !unconfirmed.repeat_confirmed,
+			      "retained literal clock changed measured repetition confirmation");
 		}
 	}
 	return true;
@@ -2258,7 +2262,7 @@ static bool test_repeat_search_contracts(void)
 	return true;
 }
 
-static bool test_repeat_history_recovery(enum upstream_tail tail, bool acknowledged)
+static bool test_repeat_history_recovery(enum upstream_tail tail, bool acknowledged, unsigned intact, unsigned damaged)
 {
 	unsigned recovered = 0;
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
@@ -2277,8 +2281,8 @@ static bool test_repeat_history_recovery(enum upstream_tail tail, bool acknowled
 		      "repeat history fixture failed");
 		native_line = line;
 		native = receiver;
-		for (unsigned repeat = 0; repeat < 3; ++repeat) {
-			cpu.acknowledges_cpd = acknowledged && repeat != 0;
+		for (unsigned repeat = 0; repeat < intact + damaged; ++repeat) {
+			cpu.acknowledges_cpd = acknowledged && (intact == 1 || repeat != 0);
 			CHECK(v92_phase4_record_tx_handoff(&wire, &modulator) == V92_PHASE4_RECORD_TX_OK,
 			      "repeat handoff failed");
 			if (tail == SUVU_TAIL) {
@@ -2304,7 +2308,7 @@ static bool test_repeat_history_recovery(enum upstream_tail tail, bool acknowled
 				      "repeat generation failed");
 				/* Damage observed symbols, not the transmitter's coding state.
 				 * The last repeat then leaves erroneous descrambler memory. */
-				if (repeat == 2 && wire.frame_bit_count - wire.bit_index < 12)
+				if (repeat >= intact && wire.frame_bit_count - wire.bit_index < 12)
 					sample = (int16_t)-sample;
 				sample = quantize(law, sample);
 				CHECK(v92_e2u_search_sample(&search, &receiver, &line, true, sample, &event) ==
@@ -2316,9 +2320,9 @@ static bool test_repeat_history_recovery(enum upstream_tail tail, bool acknowled
 					line.retained_cpu_bits = native_line.retained_cpu_bits =
 						(uint16_t)wire.frame_bit_count;
 			}
-			CHECK(accepted == (repeat < 2), "damaged repeat was admitted");
+			CHECK(accepted == (repeat < intact), "damaged repeat was admitted at %u", repeat);
 		}
-		CHECK(line.repeat_confirmed &&
+		CHECK(line.repeat_confirmed == (intact > 1) &&
 		      v92_phase4_record_tx_handoff(&wire, &modulator) == V92_PHASE4_RECORD_TX_OK &&
 		      v92_phase4_record_tx_init_e2u(&wire, &modulator, extended) == V92_PHASE4_RECORD_TX_OK,
 		      "repeat reference lost its coding clock");
@@ -2364,6 +2368,9 @@ static bool test_repeat_history_recovery(enum upstream_tail tail, bool acknowled
 				copied_search = search;
 			}
 		}
+		CHECK(receiver.signal.line.demodulator.descrambler.history == wire.modulator.scrambler.history &&
+		      receiver.signal.line.demodulator.previous_encoded_sign == wire.modulator.previous_encoded_sign,
+		      "recovered E2u did not hand off the transmitter's exact coding history");
 		recovered += ordinary != V92_E2U_RX_COMPLETE;
 		CHECK(v92_e2u_search_is_valid(&search) &&
 		      (ordinary == V92_E2U_RX_COMPLETE ?
@@ -2425,10 +2432,12 @@ static bool test_isolated_marker_impulses(void)
 int main(void)
 {
 	if (!test_repeat_search_contracts() ||
-	    !test_repeat_history_recovery(CPU_TAIL, false) ||
-	    !test_repeat_history_recovery(CPU_TAIL, true) ||
-	    !test_repeat_history_recovery(SUVU_TAIL, false) ||
-	    !test_repeat_history_recovery(SUVU_TAIL, true))
+	    !test_repeat_history_recovery(CPU_TAIL, false, 1, 64) ||
+	    !test_repeat_history_recovery(CPU_TAIL, true, 1, 64) ||
+	    !test_repeat_history_recovery(CPU_TAIL, false, 2, 1) ||
+	    !test_repeat_history_recovery(CPU_TAIL, true, 2, 1) ||
+	    !test_repeat_history_recovery(SUVU_TAIL, false, 2, 1) ||
+	    !test_repeat_history_recovery(SUVU_TAIL, true, 2, 1))
 		return 1;
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (int polarity = -1; polarity <= 1; polarity += 2)

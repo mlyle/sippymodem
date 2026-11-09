@@ -244,11 +244,13 @@ static bool advance_repeat(struct v92_e2u_search *search, unsigned bits, int16_t
 	return true;
 }
 
-static bool retain_repeat(struct v92_e2u_search *search,
+bool v92_e2u_search_retain_record_owned(struct v92_e2u_search *search,
 	const struct v92_upstream_control_line_rx *before,
 	const struct v92_upstream_control_line_rx *after,
-	const struct v92_control_event *event, unsigned bits, int16_t sample)
+	const struct v92_control_event *event, int16_t sample)
 {
+	unsigned bits = v92_phase4_modulator_bits_per_symbol(
+		after->signal.line.demodulator.constellation);
 	if (event->type == V92_CONTROL_EVENT_CPUS) {
 		search->frame_bits = 0;
 		search->bit_index = 0;
@@ -349,15 +351,22 @@ static enum v92_e2u_rx_result search_sample(
 	/* An accepted CPu fixes its wire extent before a second intact repeat
 	 * confirms the clock. At that retained period an idle parser cannot
 	 * erase E2u just because the preceding repeat lost its sync/header.
-	 * Partial headers still require the confirmed-clock rule below. */
+	 * Partial headers require the retained-reference or confirmed-clock rule below. */
 	unsigned bits = v92_phase4_modulator_bits_per_symbol(
 		control->signal.line.demodulator.constellation);
+	/* One selected CPu already fixes a possible repetition period. Keep
+	 * that literal/coder hypothesis alongside ordinary received history;
+	 * it does not assert that a second intact record was received. */
+	bool repeat_clock = control->repeat_confirmed ||
+		(search != NULL && repeat.frame_bits &&
+		 repeat.frame_bits == control->retained_cpu_bits &&
+		 control->repeat_symbols * bits == repeat.frame_bits);
 	bool selected_cpu_boundary = control->retained_cpu_bits &&
 		control->repeat_symbols * bits == control->retained_cpu_bits &&
 		!control->repeat_remaining &&
 		control->control.stage == V92_CONTROL_RX_SEARCH_SYNC;
 	bool boundary = selected_cpu_boundary || control->control.record_boundary ||
-		(control->repeat_confirmed && !control->repeat_remaining &&
+		(repeat_clock && !control->repeat_remaining &&
 		 (control->control.stage == V92_CONTROL_RX_SEARCH_SYNC ||
 		  (control->retained_cpu_bits &&
 		   control->control.bit_index % control->control.alignment_bits != 0u)));
@@ -370,7 +379,7 @@ static enum v92_e2u_rx_result search_sample(
 		const struct v92_phase4_demodulator *observed = &control->signal.line.demodulator;
 		/* Identical coding memories make this trial identical to the ordinary one. */
 		if (eligible && boundary && repeat.frame_bits && !repeat.bit_index &&
-		    control->repeat_confirmed && control->repeat_symbols * bits == repeat.frame_bits &&
+		    repeat_clock && control->repeat_symbols * bits == repeat.frame_bits &&
 		    (repeat.coder.scrambler.history != observed->descrambler.history ||
 		     repeat.coder.previous_encoded_sign != observed->previous_encoded_sign)) {
 			if (v92_e2u_rx_init(&repeat.repeated, &control->signal, extended) != V92_E2U_RX_OK)
@@ -422,7 +431,7 @@ static enum v92_e2u_rx_result search_sample(
 	if (search != NULL) {
 		if (line.control.record_boundary)
 			repeat.candidate_active = false;
-		if (!retain_repeat(&repeat, control, &line, &emitted, bits, sample))
+		if (!v92_e2u_search_retain_record_owned(&repeat, control, &line, &emitted, sample))
 			return fail(receiver);
 		*search = repeat;
 	}

@@ -1624,6 +1624,7 @@ static bool run_paired_station_exchange(
 			      &digital, &downstream_octet) ==
 			      V92_PHASE4_DIGITAL_STATION_OK,
 		      "paired digital transmit stopped at %zu", symbol);
+		bool had_cpu = digital.control.cpu_received;
 		digital_result = v92_phase4_digital_station_receive(
 			&digital,
 			line_sample(law, polarity, upstream_sample));
@@ -1631,6 +1632,16 @@ static bool run_paired_station_exchange(
 		      digital_result == V92_PHASE4_DIGITAL_STATION_EVENT,
 		      "paired digital receive stopped at %zu: %s", symbol,
 		      v92_phase4_digital_station_result_name(digital_result));
+		if (!had_cpu && digital.control.cpu_received) {
+			struct v92_cpu_parameters retained;
+			CHECK(digital.searching_e2u && digital.e2u_search.bit_index == 0 &&
+			      digital.e2u_search.frame_bits == digital.receive.signal.control.retained_cpu_bits &&
+			      v92_cpu_decode(digital.e2u_search.frame, sizeof(digital.e2u_search.frame),
+				      digital.e2u_search.frame_bits,
+				      digital.receive.signal.control.control.alignment_bits, &retained) == V92_CPU_OK &&
+			      cpu_equal(&retained, &digital.control.cpu),
+			      "first accepted CPu lost its literal repeat reference");
+		}
 		analog_result = v92_phase4_analog_station_receive(
 			&analog, downstream_octet);
 		CHECK(analog_result == V92_PHASE4_ANALOG_STATION_OK ||

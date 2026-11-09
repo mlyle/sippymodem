@@ -198,6 +198,8 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_receive(
 	if (station->searching_e2u && v92_e2u_rx_is_complete(&station->e2u))
 		return V92_PHASE4_DIGITAL_STATION_INVALID_STATE;
 	enum v92_phase4_digital_rx_result result;
+	struct v92_upstream_control_line_rx before;
+	bool record_ending = false;
 	if (station->searching_e2u) {
 		enum v92_e2u_rx_result received = v92_e2u_search_sample(
 			&station->e2u_search, &station->e2u, &station->receive.signal.control,
@@ -210,6 +212,16 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_receive(
 		result = event.type == V92_CONTROL_EVENT_NONE ? V92_PHASE4_DIGITAL_RX_OK :
 			V92_PHASE4_DIGITAL_RX_EVENT;
 	} else {
+		/* Copy only at a possible record end. The parser clears its wire
+		 * buffer on acceptance, before this owner can start E2u search. */
+		if (v92_phase4_digital_rx_is_receiving_control(&station->receive)) {
+			const struct v92_upstream_control_line_rx *line = &station->receive.signal.control;
+			unsigned bits = v92_phase4_modulator_bits_per_symbol(line->signal.line.demodulator.constellation);
+			record_ending = line->control.frame_bit_count &&
+				line->control.bit_index + bits == line->control.frame_bit_count;
+			if (record_ending)
+				before = *line;
+		}
 		result = v92_phase4_digital_rx_sample(&station->receive, sample, &event);
 	}
 	enum v92_downstream_control_result control_result =
@@ -244,6 +256,9 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_receive(
 		    v92_e2u_rx_init(&station->e2u, &station->receive.signal.control.signal, cpd.extend_e2u) != V92_E2U_RX_OK)
 			return fail(station);
 		station->searching_e2u = true;
+		if (record_ending && !v92_e2u_search_retain_record_owned(&station->e2u_search,
+			    &before, &station->receive.signal.control, &event, sample))
+			return fail(station);
 	}
 	if ((result != V92_PHASE4_DIGITAL_RX_OK && result != V92_PHASE4_DIGITAL_RX_ALIGNED &&
 	     result != V92_PHASE4_DIGITAL_RX_EVENT) || !v92_phase4_digital_station_is_valid(station))

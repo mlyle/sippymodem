@@ -61,6 +61,15 @@ struct v92_e2u_search {
  * All four arguments are distinct owned objects; the native search contract
  * below applies, including eligibility and no mutation on rejected calls. */
 bool v92_e2u_search_is_valid(const struct v92_e2u_search *search);
+/* Validated, distinct control owners immediately before/after one sample.
+ * Retain an accepted record's literal wire bits and final coder before the
+ * station switches from control reception to marker search. Rejected records
+ * never supply a reference. False reports a processing failure. */
+bool v92_e2u_search_retain_record_owned(
+	struct v92_e2u_search *search,
+	const struct v92_upstream_control_line_rx *before,
+	const struct v92_upstream_control_line_rx *after,
+	const struct v92_control_event *event, int16_t sample);
 enum v92_e2u_rx_result v92_e2u_search_sample(
 	struct v92_e2u_search *search, struct v92_e2u_rx *receiver,
 	struct v92_upstream_control_line_rx *control, bool eligible, int16_t sample,
