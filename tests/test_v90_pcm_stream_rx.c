@@ -491,6 +491,108 @@ static bool test_contracts(void)
 	return true;
 }
 
+/* Measure the actual slicer's raw integer decision regions, including codec
+ * rounding and ties. This is a symbol-channel oracle, not B1 admission. */
+static bool verify_postcursor_margin(enum g711_law law, uint8_t first)
+{
+	struct v90_cp_parameters parameters = {
+		.kind = V90_CP_DATA, .law = law, .selected_rate_index = 1,
+		.sign_redundancy = 1, .constellation_count = 1,
+	};
+	struct v90_pcm_mapping mapping;
+	uint8_t decision[256], index[256], octet[16];
+	int16_t point[16];
+	int lower[16], upper[16];
+	unsigned occurrences[16] = { 0 };
+
+	memset(index, UINT8_MAX, sizeof(index));
+	for (unsigned i = 0; i < 8; ++i)
+		add_ucode(parameters.transmit_constellations, first + i);
+	CHECK(v90_pcm_mapping_init(&mapping, &parameters) == V90_PCM_MAPPING_OK,
+	      "postcursor mapping did not initialize");
+	for (unsigned i = 0; i < 16; ++i) {
+		CHECK(g711_ucode_octet(law, first + i % 8, i < 8, octet + i),
+		      "postcursor alphabet failed");
+		point[i] = g711_decode(law, octet[i]);
+		index[octet[i]] = i;
+		lower[i] = INT16_MAX;
+		upper[i] = INT16_MIN;
+	}
+	for (unsigned byte = 0; byte < 256; ++byte) {
+		struct v90_pcm_stream_rx rx;
+		struct v90_pcm_stream_frame frame;
+		CHECK(v90_pcm_stream_rx_init(&rx, &mapping, V90_PCM_MAPPING_TRANSMIT) ==
+		      V90_PCM_STREAM_RX_OK &&
+		      v90_pcm_stream_rx_receive_octet(&rx, byte, &frame) ==
+		      V90_PCM_STREAM_RX_BUFFERING && rx.pending_count == 1 &&
+		      g711_ucode_octet(law, rx.pending_ucodes[0], rx.pending_signs[0],
+			      decision + byte), "native slicer rejected byte %u", byte);
+	}
+	for (int sample = INT16_MIN; sample <= INT16_MAX; ++sample) {
+		unsigned i = index[decision[g711_encode(law, sample)]];
+		CHECK(i < 16, "slicer chose a point outside its alphabet");
+		if (sample < lower[i]) lower[i] = sample;
+		if (sample > upper[i]) upper[i] = sample;
+		++occurrences[i];
+	}
+	int minimum = point[15], maximum = point[7];
+	unsigned bound = 32768;
+	for (unsigned i = 0; i < 16; ++i) {
+		CHECK(occurrences[i] == (unsigned)(upper[i] - lower[i] + 1) &&
+		      lower[i] <= point[i] && point[i] <= upper[i],
+		      "decision region is not a contiguous interval around its point");
+		/* C division truncates towards zero. Translate inclusive sample
+		 * bounds to inclusive numerator bounds before dividing by 32768. */
+		int64_t low = lower[i] > 0 ? (int64_t)lower[i] * 32768 :
+			((int64_t)lower[i] - 1) * 32768 + 1;
+		int64_t high = upper[i] < 0 ? (int64_t)upper[i] * 32768 :
+			((int64_t)upper[i] + 1) * 32768 - 1;
+		int64_t nominal = (int64_t)point[i] * 32768;
+		if (point[i] > minimum) {
+			uint64_t q = (nominal - low) / (point[i] - minimum);
+			if (q < bound) bound = q;
+		}
+		if (point[i] < maximum) {
+			uint64_t q = (high - nominal) / (maximum - point[i]);
+			if (q < bound) bound = q;
+		}
+	}
+	CHECK(bound < 32768, "multiple points survived a full-symbol substitution");
+	/* Independently enumerate all coefficients and predecessor/current
+	 * symbols through the first counterexample. No fitted path or target
+	 * feedback enters the receiver. This also checks the bound is maximal. */
+	unsigned failures = 0;
+	for (unsigned q = 0; q <= bound + 1; ++q)
+		for (unsigned previous = 0; previous < 16; ++previous)
+			for (unsigned current = 0; current < 16; ++current) {
+				int64_t n = (int64_t)(32768 - q) * point[current] +
+					(int64_t)q * point[previous];
+				uint8_t received = g711_encode(law, n / 32768);
+				bool correct = decision[received] == octet[current];
+				CHECK(q > bound || correct,
+				      "postcursor bound failed law=%u first=%u q=%u", law, first, q);
+				failures += !correct;
+			}
+	CHECK(failures > 0, "first out-of-bound coefficient has no native witness");
+	return true;
+}
+
+static bool test_postcursor_margins(void)
+{
+	static const uint8_t first[] = { 1, 12, 72, 120 };
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned i = 0; i < ARRAY_LENGTH(first); ++i)
+			CHECK(verify_postcursor_margin(law, first[i]),
+			      "postcursor decision-region matrix failed");
+	/* A pure codeword pipe preserves negative zero. An additional physical
+	 * decode/encode does not: zero amplitude cannot convey its sign bit. */
+	uint8_t negative;
+	CHECK(g711_ucode_octet(G711_LAW_PCMU, 0, false, &negative) &&
+	      g711_encode_pcmu(g711_decode_pcmu(negative)) != negative,
+	      "tandem-channel model accidentally preserved a zero-amplitude sign");
+	return true;
+}
+
 struct test_case {
 	const char *name;
 	bool (*run)(void);
@@ -502,6 +604,7 @@ int main(void)
 		{ "generated sequences", test_generated_sequences },
 		{ "descrambled bits", test_descrambled_bits },
 		{ "noisy octets", test_noisy_octets },
+		{ "quantized postcursor decision margins", test_postcursor_margins },
 		{ "contracts", test_contracts },
 	};
 	unsigned int failures = 0;

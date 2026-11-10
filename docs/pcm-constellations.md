@@ -93,3 +93,59 @@ former includes complete rate sweeps to bound selection work; the latter
 must also cover the DSP, framing, compression and training transitions.
 Neither synthetic self-calls nor exact replay of a received recording proves
 interoperability with every physical digital peer.
+
+## Decision margins after a quantized postcursor
+
+Linear minimum spacing does not by itself describe a sampled channel with
+memory. Consider the specific integer model
+
+```
+z = trunc(((32768 - q)*c + q*p) / 32768)
+y = G711(z)
+```
+
+Here `c` is the current transmitted reconstruction, `p` is its predecessor,
+and `q` is a nonnegative first-order postcursor coefficient. The receiver
+uses its fixed native hard slicer after this additional codec. This models a
+quantized causal channel; a pure codeword pipe and a physical ADC are different
+channels. In particular, decoding and re-encoding mu-law negative zero loses
+its sign even when `q` is zero.
+
+For each signed point `c`, enumerate the encoder and native slicer to obtain
+its inclusive raw-input decision region `[L(c), U(c)]`. Verify that this region
+is contiguous and contains `c`. These regions include codec cells, polarity,
+saturation and the slicer's tie rule; reconstructed-level midpoints alone
+are insufficient. Wider linear spacing or a lower bit rate need not enlarge
+all of these regions relative to the predecessor's peak amplitude.
+
+For division that truncates toward zero, the inclusive numerator bounds are:
+
+```
+A = L*32768                 if L > 0, else (L-1)*32768 + 1
+B = U*32768                 if U < 0, else (U+1)*32768 - 1
+```
+
+Let `p_min` and `p_max` be the preceding phase's extreme signed points. For
+`p_min < c`, the lower constraint is
+`q <= floor((32768*c - A)/(c - p_min))`. For `p_max > c`, the upper constraint
+is `q <= floor((B - 32768*c)/(p_max - c))`. Their minimum over current points
+and phases, capped at 32768, guarantees unchanged symbol decisions for every
+predecessor and every integer coefficient from zero through that bound.
+Monotonicity of the channel and contiguous decision regions make the extrema
+sufficient. The bound is specific to this model, not a BER estimate.
+
+The stream-receiver regression obtains decisions through normal native receive
+calls, exhausts every signed 16-bit encoder input, and independently enumerates
+all symbol pairs and coefficients through the first failing coefficient. It
+covers both laws, low-level polarity, a codec segment boundary and saturation.
+It does not fit a receiver, replace B1 admission, or enable a new selector.
+
+A channel-aware design can use these margins alongside exact radix capacity,
+occupation-weighted power, peak limits and noise tolerance. Improving only
+postcursor tolerance can reduce ordinary linear spacing; equal worst-case
+noise radius also does not prove equal average error probability. A proposed
+layout needs independent channel/noise holdouts and native control, B1 and
+payload qualification. An automatically selected rate additionally needs a
+receiver-owned, independently acquired channel bound that remains valid for
+the epoch. Missing channel evidence must not be replaced with an assumed
+postcursor coefficient. Existing generated selection remains unchanged.
