@@ -1831,6 +1831,90 @@ static unsigned parity_weight(unsigned word)
 	       ((word >> 2) & 1u) + ((word >> 3) & 1u);
 }
 
+static bool test_16_state_pair_partition(void)
+{
+	uint8_t next[16][16], partition[256], refined[256];
+	unsigned incoming[16] = { 0 };
+	for (unsigned state = 0; state < 16; ++state) {
+		for (unsigned word = 0; word < 16; ++word) {
+			next[state][word] = UINT8_MAX;
+			if (parity_weight(word) % 2u != (state & 1u)) continue;
+			unsigned residues = 0;
+			for (unsigned j = 0; j < 4; ++j)
+				residues |= ((word >> j) & 1u) << (2 * j);
+			CHECK(parity_next((uint8_t)state, residues, &next[state][word]),
+			      "pair transition failed");
+			++incoming[next[state][word]];
+		}
+		for (unsigned other = 0; other < 16; ++other)
+			partition[state * 16 + other] = state != other;
+	}
+	for (unsigned state = 0; state < 16; ++state)
+		CHECK(incoming[state] == 8, "uniform parity words lost uniform state mass");
+
+	/* Label a branch by the XOR of its two parity words. Refine diagonal
+	 * versus off-diagonal pairs by labelled successor-class sets. No XOR
+	 * linearity of the encoder's numeric state representation is assumed. */
+	const unsigned expected[] = { 6, 18, 20, 20 };
+	unsigned groups = 0;
+	bool stable = false;
+	for (unsigned pass = 0; pass < ARRAY_LENGTH(expected); ++pass) {
+		uint32_t signature[256][16] = { { 0 } };
+		for (unsigned node = 0; node < 256; ++node)
+			for (unsigned d = 0; d < 16; ++d)
+				for (unsigned a = 0; a < 16; ++a) {
+					unsigned s = next[node / 16][a];
+					unsigned t = next[node % 16][a ^ d];
+					if (s < 16 && t < 16)
+						signature[node][d] |= UINT32_C(1) << partition[s * 16 + t];
+				}
+		groups = 0;
+		for (unsigned node = 0; node < 256; ++node) {
+			unsigned representative = 0;
+			while (representative < node &&
+			       (partition[representative] != partition[node] ||
+				memcmp(signature[representative], signature[node], sizeof(signature[node]))))
+				++representative;
+			refined[node] = representative < node ? refined[representative] : (uint8_t)groups++;
+		}
+		CHECK(groups == expected[pass], "pair partition has %u classes at pass %u", groups, pass);
+		stable = memcmp(partition, refined, sizeof(partition)) == 0;
+		memcpy(partition, refined, sizeof(partition));
+		CHECK(stable == (pass + 1 == ARRAY_LENGTH(expected)), "pair partition convergence changed");
+	}
+	CHECK(stable && groups == 20, "labelled pair partition did not converge");
+
+	/* Minimum-cost equivalence does not generally preserve path counts.
+	 * Verify multiplicities separately before using this partition in a
+	 * sum of overlaps. Every member must have the same labelled counts. */
+	uint8_t multiplicity[20][16][20] = { { { 0 } } };
+	unsigned members[20] = { 0 }, diagonal[20] = { 0 };
+	for (unsigned node = 0; node < 256; ++node) {
+		unsigned group = partition[node];
+		uint8_t counts[16][20] = { { 0 } };
+		for (unsigned d = 0; d < 16; ++d)
+			for (unsigned a = 0; a < 16; ++a) {
+				unsigned s = next[node / 16][a];
+				unsigned t = next[node % 16][a ^ d];
+				if (s < 16 && t < 16) ++counts[d][partition[s * 16 + t]];
+			}
+		if (!members[group]) memcpy(multiplicity[group], counts, sizeof(counts));
+		CHECK(memcmp(multiplicity[group], counts, sizeof(counts)) == 0,
+		      "pair class %u loses labelled transition multiplicity", group);
+		++members[group];
+		diagonal[group] += node / 16 == node % 16;
+	}
+	unsigned diagonal_groups = 0;
+	for (unsigned group = 0; group < groups; ++group) {
+		CHECK(members[group] == 8 || members[group] == 32, "pair class size changed");
+		CHECK(!diagonal[group] || (diagonal[group] == 8 && members[group] == 8),
+		      "pair class mixes diagonal and off-diagonal states");
+		diagonal_groups += diagonal[group] != 0;
+	}
+	CHECK(diagonal_groups == 2, "pair partition lost a diagonal class");
+	return true;
+}
+
 static bool test_16_state_parity_distance(void)
 {
 	struct { uint8_t word, next; } step[16][8];
@@ -1906,6 +1990,7 @@ int main(void)
 	    !test_model_acquisition_boundary() || !test_metric_equivalence() ||
 	    !test_rate_matrix_and_reset() ||
 	    !test_transmitter_equation_matrix() || !test_16_state_parity_distance() ||
+	    !test_16_state_pair_partition() ||
 	    !test_filters() || !test_causal_filter_history() ||
 	    !test_delayed_filter_stream() || !test_level_refinement() ||
 	    !test_pending_bit_validation() || !test_receiver_initialization() ||
