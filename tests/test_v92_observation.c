@@ -76,9 +76,9 @@ static double independent_mean_lsb(enum g711_law law, double mean, double sigma,
  * partition their union for all active inputs, and evaluate one point per
  * constant codec cell. This does not use the model's compiled geometry,
  * cached cells, transition formula, or likelihood implementation. */
-static uint64_t independent_score_phase(const struct v92_observation *model,
+static uint64_t independent_score_wire(const struct v92_observation *model,
 	const int32_t *input, int16_t observed, int16_t level, double offset,
-	unsigned phase, double *prediction)
+	unsigned phase, const uint8_t *octet, double *prediction)
 {
 	double thresholds[256];
 	size_t transitions = 0;
@@ -93,15 +93,16 @@ static uint64_t independent_score_phase(const struct v92_observation *model,
 	enum g711_lsb_mode mode = model->lsb[phase];
 	/* Independent preimage of the observed reconstruction. */
 	int low = INT16_MAX, high = INT16_MIN;
-	if (mode == G711_LSB_UNCHANGED) {
-		assert(g711_quantization_interval(model->law, level, &bin));
+	if (!octet && mode == G711_LSB_UNCHANGED) {
+		assert(g711_quantization_interval(model->law, model->inverted ? -level : level, &bin));
 		low = bin.lower; high = bin.upper;
 	}
-	for (int value = INT16_MIN; mode != G711_LSB_UNCHANGED && value <= INT16_MAX; ++value) {
+	for (int value = INT16_MIN; (octet || mode != G711_LSB_UNCHANGED) && value <= INT16_MAX; ++value) {
 		unsigned code = g711_encode(model->law, value);
 		unsigned mapped = mode == G711_LSB_UNCHANGED ? code :
 			(code & 254u) | (mode == G711_LSB_ONE);
-		if (g711_decode(model->law, mapped) == level) {
+		if (octet ? mapped == *octet :
+		    g711_decode(model->law, mapped) == (model->inverted ? -level : level)) {
 			if (value < low) low = value;
 			if (value > high) high = value;
 		}
@@ -110,6 +111,9 @@ static uint64_t independent_score_phase(const struct v92_observation *model,
 	bin = (struct g711_interval){ low, high };
 	double lower = bin.lower == INT16_MIN ? -HUGE_VAL : (bin.lower - .5) * model->quantizer_gain;
 	double upper = bin.upper == INT16_MAX ? HUGE_VAL : (bin.upper + .5) * model->quantizer_gain;
+	if (model->inverted) {
+		double previous = lower; lower = -upper; upper = -previous;
+	}
 	lower += offset - observed;
 	upper += offset - observed;
 	double likelihood = 0.;
@@ -134,8 +138,9 @@ static uint64_t independent_score_phase(const struct v92_observation *model,
 			double error = observed;
 			for (unsigned k = 0; k < model->taps; k++)
 				error -= fit->coefficient[k] * quantize(model->law, gain * input[k]);
-			*prediction += fit->weight * model->quantizer_gain *
-				independent_mean_lsb(model->law, (observed - error - offset) / model->quantizer_gain,
+			*prediction += fit->weight * model->quantizer_gain * (model->inverted ? -1 : 1) *
+				independent_mean_lsb(model->law, (model->inverted ? -1 : 1) *
+					(observed - error - offset) / model->quantizer_gain,
 					sqrt(model->variance) / model->quantizer_gain, mode) *
 				log1p((cuts[j] - cuts[j - 1]) / cuts[j - 1]) / log1p((fit->high - fit->low) / fit->low);
 			double probability;
@@ -152,6 +157,13 @@ static uint64_t independent_score_phase(const struct v92_observation *model,
 		likelihood += fit->weight * integral / log1p((fit->high - fit->low) / fit->low);
 	}
 	return (uint64_t)(-2e6 * log(fmin(1., fmax(1e-300, likelihood))));
+}
+
+static uint64_t independent_score_phase(const struct v92_observation *model,
+	const int32_t *input, int16_t observed, int16_t level, double offset,
+	unsigned phase, double *prediction)
+{
+	return independent_score_wire(model, input, observed, level, offset, phase, NULL, prediction);
 }
 
 static uint64_t independent_score(const struct v92_observation *model,
@@ -1034,8 +1046,11 @@ static uint64_t training_score(const struct v92_observation *model,
 	uint64_t total = 0;
 	for (size_t i = model->taps; i < training->count; i++) {
 		double offset = training->offsets ? training->offsets[i] : 0.;
-		assert(v92_observation_symbol_phase(&cache, training->sample[i], training->levels + i, offset,
-			i % V92_OBSERVATION_PHASES));
+		assert(training->octets ?
+			v92_observation_symbol_octet(&cache, training->sample[i], training->octets[i],
+				offset, i % V92_OBSERVATION_PHASES) :
+			v92_observation_symbol_phase(&cache, training->sample[i], training->levels + i,
+				offset, i % V92_OBSERVATION_PHASES));
 		struct v92_observation_point previous[V92_OBSERVATION_TAPS - 1];
 		int32_t input[V92_OBSERVATION_TAPS];
 		input[0] = training->input[i];
@@ -1048,8 +1063,9 @@ static uint64_t training_score(const struct v92_observation *model,
 		total += cost;
 		if (i == model->taps || i + 1 == training->count) {
 			double prediction;
-			uint64_t reference = independent_score_phase(model, input, training->sample[i],
-				training->levels[i], offset, i % V92_OBSERVATION_PHASES, &prediction);
+			uint64_t reference = independent_score_wire(model, input, training->sample[i],
+				training->levels[i], offset, i % V92_OBSERVATION_PHASES,
+				training->octets ? training->octets + i : NULL, &prediction);
 			assert(cost <= reference + 1 && reference <= cost + 1);
 		}
 	}
@@ -1370,10 +1386,11 @@ static void check_seed_moments(const struct v92_observation_fit_work *work,
  * wire-operation case; unknown later inputs test the frozen reconstruction.
  * Incremental publication and its exact cost must agree with synchronous fit. */
 static void check_periodic_training(enum g711_law law, unsigned taps,
-	enum g711_lsb_mode operation, unsigned phase)
+	enum g711_lsb_mode operation, unsigned phase, bool inverted)
 {
 	int32_t x[SAMPLES];
 	int16_t q[SAMPLES], y[SAMPLES], linear[SAMPLES];
+	uint8_t octets[SAMPLES];
 	enum g711_lsb_mode pattern[V92_OBSERVATION_PHASES] = { 0 };
 	uint32_t seed = UINT32_C(0x182dab72);
 	pattern[phase] = operation;
@@ -1385,13 +1402,15 @@ static void check_periodic_training(enum g711_law law, unsigned taps,
 		double baseline = 4. * (.63 * x[i] + (i ? .07 * x[i - 1] : 0.) -
 			(i > 1 ? .02 * x[i - 2] : 0.) + (taps == 4 && i > 2 ? .03 * x[i - 3] : 0.));
 		assert(fabs(observed) < INT16_MAX && fabs(baseline) < INT16_MAX);
-		y[i] = g711_decode(law, g711_apply_lsb(g711_encode(law, (int16_t)round(observed)),
-			pattern[i % V92_OBSERVATION_PHASES]));
+		octets[i] = g711_apply_lsb(g711_encode(law,
+			(int16_t)round(inverted ? -observed : observed)), pattern[i % V92_OBSERVATION_PHASES]);
+		y[i] = (inverted ? -1 : 1) * g711_decode(law, octets[i]);
 		linear[i] = (int16_t)round(baseline);
 	}
 	const struct v92_observation_training training = {
 		.input = x, .linear = linear, .sample = y, .levels = y,
 		.count = TRAINING, .taps = taps, .host_gain = 1., .law = law, .lsb = pattern,
+		.octets = octets, .inverted = inverted,
 	};
 	struct v92_observation model, whole, before;
 	struct v92_observation_fit_work work;
@@ -1815,7 +1834,7 @@ static void check_scalar(enum g711_law law, double host_gain, enum g711_lsb_mode
 	double error = 0., linear_error = 0.;
 	for (unsigned i = TRAINING; i < SAMPLES; i++) {
 		enum g711_lsb_mode operation = lsb[i % V92_OBSERVATION_PHASES];
-		double predicted = v92_observation_predict_scalar_lsb(law, fitted, host_gain, u[i], offsets[i], operation);
+		double predicted = v92_observation_predict_scalar_lsb(law, fitted, host_gain, u[i], offsets[i], operation, false);
 		int16_t sample = (int16_t)fmax(INT16_MIN, fmin(INT16_MAX,
 			round((fitted * u[i] - offsets[i]) / host_gain)));
 		unsigned code = g711_encode(law, sample);
@@ -1858,7 +1877,7 @@ static void check_scalar(enum g711_law law, double host_gain, enum g711_lsb_mode
 	levels[TRAINING - 1] = quantize(law, 0);
 	memset(u, 0, sizeof(u));
 	assert(!v92_observation_fit_scalar(&fitted, &training) && fitted == before);
-	assert(isnan(v92_observation_predict_scalar_lsb(law, 1., 1., 0, 0., (enum g711_lsb_mode)3)));
+	assert(isnan(v92_observation_predict_scalar_lsb(law, 1., 1., 0, 0., (enum g711_lsb_mode)3, false)));
 	assert(isnan(v92_observation_predict_scalar((enum g711_law)-1, 1., 1., 0, 0.)));
 	assert(isnan(v92_observation_predict_scalar(law, NAN, 1., 0, 0.)));
 	assert(isnan(v92_observation_predict_scalar(law, 0., 1., 0, 0.)));
@@ -1892,6 +1911,9 @@ static void check_scalar_rounding(void)
 					double offset = -physical[i];
 					double expected = quantize(law, physical[i]) + offset;
 					assert(v92_observation_predict_scalar(law, 1., 1., 0, offset) == expected);
+					double reflected = -quantize(law, -physical[i]) + offset;
+					assert(v92_observation_predict_scalar_lsb(law, 1., 1., 0, offset,
+						G711_LSB_UNCHANGED, true) == reflected);
 				}
 		}
 	}
@@ -1933,13 +1955,132 @@ static void check_joint_transitions(const struct v92_observation *model)
 		}
 }
 
+/* Enumerate integer encoder inputs independently of the interval helpers.
+ * Original code cells, physical reflection and forward prediction must agree. */
+static void check_original_wire(const struct v92_observation *trained)
+{
+	struct v92_observation model = *trained;
+	model.variance = model.quantizer_gain = 1.;
+	for (unsigned i = 0; i < V92_OBSERVATION_INTERVALS; i++) {
+		memset(model.intervals[i].coefficient, 0, sizeof(model.intervals[i].coefficient));
+		model.intervals[i].coefficient[0] = 1.;
+	}
+	assert(v92_observation_is_valid(&model));
+	for (enum g711_lsb_mode mode = G711_LSB_UNCHANGED; mode <= G711_LSB_ONE; mode++) {
+		int low[256], high[256];
+		for (unsigned code = 0; code < 256; code++) { low[code] = INT16_MAX; high[code] = INT16_MIN; }
+		for (int value = INT16_MIN; value <= INT16_MAX; value++) {
+			unsigned code = g711_encode(model.law, value);
+			if (mode != G711_LSB_UNCHANGED) code = (code & 254u) | (mode == G711_LSB_ONE);
+			if (value < low[code]) low[code] = value;
+			if (value > high[code]) high[code] = value;
+		}
+		model.lsb_mask = mode == G711_LSB_UNCHANGED ? 0 : 1u << 4;
+		model.lsb[4] = mode;
+		for (unsigned inverted = 0; inverted < 2; inverted++) {
+			model.inverted = inverted;
+			assert(v92_observation_is_valid(&model));
+			struct v92_observation_cache cache;
+			memset(&cache, 0xa5, sizeof(cache));
+			v92_observation_begin(&cache, &model, 0.);
+			for (unsigned code = 0; code < 256; code++) {
+				int16_t observed = (inverted ? -1 : 1) * g711_decode(model.law, code);
+				if (low[code] > high[code]) {
+					unsigned char before[sizeof(cache)];
+					memcpy(before, &cache, sizeof(cache));
+					assert(!v92_observation_symbol_octet(&cache, observed, code, .25, 4));
+					assert(!memcmp(before, &cache, sizeof(cache)));
+					continue;
+				}
+				double a = low[code] == INT16_MIN ? -INFINITY : low[code] - .5;
+				double b = high[code] == INT16_MAX ? INFINITY : high[code] + .5;
+				double lower = (inverted ? -b : a) + .25 - observed;
+				double upper = (inverted ? -a : b) + .25 - observed;
+				assert(v92_observation_symbol_octet(&cache, observed, code, .25, 4));
+				assert(cache.lower == lower && cache.upper == upper);
+				/* Compare the Gaussian mean predictor with a complete sum over raw
+				 * integer cells. No received character enters this prediction. */
+				int32_t input[V92_OBSERVATION_TAPS] = { 0 };
+				double offset = -observed + .5;
+				double actual = v92_observation_predict_phase(&model, input, offset, 4);
+				double expected = (inverted ? -1 : 1) * independent_mean_lsb(model.law,
+					(inverted ? -1 : 1) * (quantize(model.law, 0) - offset), 1., mode) + offset;
+				assert(isfinite(actual) && fabs(actual - expected) < 1e-7);
+			}
+			for (int value = INT16_MIN; value <= INT16_MAX; value++) {
+				int physical = inverted ? -value : value;
+				if (physical > INT16_MAX) physical = INT16_MAX;
+				unsigned code = g711_encode(model.law, physical);
+				if (mode != G711_LSB_UNCHANGED) code = (code & 254u) | (mode == G711_LSB_ONE);
+				double expected = (inverted ? -1 : 1) * g711_decode(model.law, code);
+				assert(v92_observation_predict_scalar_lsb(model.law, 1., 1., value, 0., mode, inverted) == expected);
+			}
+		}
+	}
+
+	if (model.law == G711_LAW_PCMU) {
+		model.inverted = false;
+		memset(model.lsb, 0, sizeof(model.lsb)); model.lsb_mask = 0;
+		struct v92_observation_cache cache;
+		memset(&cache, 0xa5, sizeof(cache));
+		v92_observation_begin(&cache, &model, 0.);
+		uint64_t cost[2];
+		for (unsigned sign = 0; sign < 2; sign++) {
+			assert(v92_observation_symbol_octet(&cache, 0, sign ? 255 : 127, 0., 0));
+			struct v92_observation_point previous[V92_OBSERVATION_TAPS - 1];
+			for (unsigned k = 0; k + 1 < model.taps; k++)
+				previous[k] = v92_observation_point(&cache, 0);
+			cost[sign] = v92_observation_score(&cache, 0, previous, UINT64_MAX);
+		}
+		assert(cost[0] > cost[1] && cost[0] != UINT64_MAX);
+	}
+	/* Reconstructed zero alone cannot distinguish signs; original characters
+	 * must not grant an explanation for the opposite input sign. */
+	if (model.law == G711_LAW_PCMU) {
+		struct v92_observation_fit_work *work = malloc(sizeof(*work));
+		assert(work);
+		int32_t x[12];
+		int16_t linear[12], samples[12] = { 0 };
+		uint8_t octets[12];
+		for (unsigned inverted = 0; inverted < 2; inverted++)
+			for (int sign = -1; sign <= 1; sign += 2)
+				for (unsigned code = 127; code <= 255; code += 128) {
+					for (unsigned i = 0; i < 12; i++) { x[i] = linear[i] = sign; octets[i] = code; }
+					struct v92_observation_training training = {
+						.input = x, .linear = linear, .sample = samples, .levels = samples,
+						.octets = octets, .inverted = inverted, .count = 12,
+						.taps = 3, .host_gain = 1., .law = model.law,
+					};
+					bool matching = code == g711_encode_pcmu(inverted ? -sign : sign);
+					enum v92_observation_fit_result result = v92_observation_fit_begin(work, &training);
+					assert((result == V92_OBSERVATION_FIT_EXPLAINED) == matching);
+					training.octets = NULL;
+					assert(v92_observation_fit_begin(work, &training) == V92_OBSERVATION_FIT_EXPLAINED);
+					unsigned char before[sizeof(*work)];
+					memcpy(before, work, sizeof(*work));
+					training.octets = (const uint8_t *)work;
+					assert(v92_observation_fit_begin(work, &training) == V92_OBSERVATION_FIT_DECLINED &&
+						!memcmp(work, before, sizeof(before)));
+					training.octets = octets; training.levels = NULL;
+					assert(v92_observation_fit_begin(work, &training) == V92_OBSERVATION_FIT_DECLINED &&
+						!memcmp(work, before, sizeof(before)));
+					training.levels = samples; octets[0] = 0;
+					assert(v92_observation_fit_begin(work, &training) == V92_OBSERVATION_FIT_DECLINED &&
+						!memcmp(work, before, sizeof(before)));
+				}
+		free(work);
+	}
+	printf("V.92 original-wire cells and polarity law=%u checks passed\n",model.law);
+}
+
 int main(void)
 {
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)
 		for (unsigned taps = 3; taps <= 4; taps++)
 			for (enum g711_lsb_mode operation = G711_LSB_ZERO; operation <= G711_LSB_ONE; operation++)
 				for (unsigned phase = 0; phase < V92_OBSERVATION_PHASES; phase++)
-					check_periodic_training(law, taps, operation, phase);
+					for (unsigned inverted = 0; inverted < 2; inverted++)
+						check_periodic_training(law, taps, operation, phase, inverted);
 	check_scalar_rounding();
 	check_scalar_decline_reuse(G711_LAW_PCMU);
 	check_scalar_decline_reuse(G711_LAW_PCMA);
@@ -1960,6 +2101,7 @@ int main(void)
 			check_channel(law, gains[i], 3, TRAINING, &previous);
 	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++) {
 		check_channel(law, 4., 4, TRAINING, &previous);
+		check_original_wire(&previous);
 		check_joint_transitions(&previous);
 		check_extreme_bounds(&previous);
 	}

@@ -50,6 +50,7 @@ static void close_acquisition(struct v92_upstream_model *model)
 	memset(model->u, 0, sizeof(model->u));
 	memset(model->wire, 0, sizeof(model->wire));
 	memset(model->host, 0, sizeof(model->host));
+	memset(model->octets, 0, sizeof(model->octets));
 }
 
 bool v92_upstream_model_has_alternate(const struct v92_upstream_data_rx *receiver)
@@ -139,6 +140,7 @@ bool v92_upstream_model_is_valid(const struct v92_upstream_data_rx *receiver)
 			continue;
 		if (!v92_observation_is_valid(&model->model[i]) ||
 		    model->model[i].law != receiver->decoder.mapping.law ||
+		    model->model[i].inverted != (receiver->line.polarity < 0) ||
 		    model->model[i].input_coefficient != (i ? model->coefficient : 0))
 			return false;
 	}
@@ -215,6 +217,7 @@ void v92_upstream_model_observe(struct v92_upstream_model *model,
 	memcpy(model->raw + offset, line->raw, sizeof(line->raw));
 	memcpy(model->wire + offset, line->wire, sizeof(line->wire));
 	memcpy(model->host + offset, line->host_samples, sizeof(line->host_samples));
+	memcpy(model->octets + offset, line->octet, sizeof(line->octet));
 }
 
 /* Echo subtraction is independent of the decoded candidate. Identify gain
@@ -491,6 +494,7 @@ void v92_upstream_model_progress(struct v92_upstream_data_rx *receiver)
 		.taps = v92_upstream_model_taps(&receiver->decoder.mapping),
 		.host_gain = receiver->line.host.gain * receiver->line.calibration.gain,
 		.law = receiver->decoder.mapping.law,
+		.octets = model->octets, .inverted = receiver->line.polarity < 0,
 	};
 	enum v92_observation_fit_result result = V92_OBSERVATION_FIT_MORE;
 	unsigned stage = model->fit.work.stage;
@@ -744,9 +748,10 @@ enum v92_pcm_frame_result v92_upstream_model_decode(struct v92_upstream_model *m
 		if (result != V92_PCM_FRAME_OK)
 			return result;
 		for (unsigned i = 0u; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i) {
-			predictions[i] = model->scalar_gain ? v92_observation_predict_scalar(
+			predictions[i] = model->scalar_gain ? v92_observation_predict_scalar_lsb(
 				decoder->mapping.law, model->scalar_gain, line->host.gain * line->calibration.gain,
-				decision->predicted_samples[i], offsets[i]) : decision->predicted_samples[i];
+				decision->predicted_samples[i], offsets[i], G711_LSB_UNCHANGED,
+				line->polarity < 0) : decision->predicted_samples[i];
 			if (!isfinite(predictions[i])) return V92_PCM_FRAME_NO_PATH;
 		}
 		if (validate) {
@@ -782,7 +787,7 @@ enum v92_pcm_frame_result v92_upstream_model_decode(struct v92_upstream_model *m
 			continue;
 		struct v92_pcm_frame_channel channel = {
 			.model = &model->model[i], .geometry = geometry ? &geometry[i] : NULL,
-			.levels = line->wire, .received = line->received,
+			.levels = line->wire, .octets = line->octet, .received = line->received,
 			.offsets = offsets,
 		};
 		enum v92_pcm_frame_result result = v92_pcm_frame_decode_observed_owned(branch[i],

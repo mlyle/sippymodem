@@ -349,10 +349,13 @@ struct v92_pcm_frame_channel {
 	 * mass, allowing one infinite clipping boundary per cell. Otherwise cells
 	 * must be finite; a zero-width cell retains point-distance cost. */
 	double cell_sigma;
-	/* Optional aligned decoded wire levels before host gain. Each present
-	 * level must be a G.711 reconstruction value. NULL infers bins from
+	/* Optional aligned decoded wire levels, polarity-normalized before host
+	 * gain. Each present level must be a G.711 reconstruction value. NULL infers bins from
 	 * samples and the model's host gain. Arrays contain twelve symbols. */
 	const int16_t *levels;
+	/* Optional original characters before the model's polarity correction.
+	 * Requires matching levels and preserves exact PCMU signed-zero cells. */
+	const uint8_t *octets;
 	/* Optional independent affine host corrections, in sample coordinates.
 	 * Requires levels; see v92_observation_training. All twelve must be
 	 * finite, including erased positions (whose quality is still reported). */

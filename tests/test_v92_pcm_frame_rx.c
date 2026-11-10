@@ -1284,14 +1284,17 @@ double __wrap_v92_observation_predict_phase(const struct v92_observation *model,
 }
 
 static void channel_samples(enum g711_law law, unsigned taps, const struct v92_pcm_frame *frame,
-	int16_t memory[3], int16_t levels[12], int16_t samples[12], enum g711_lsb_mode mode)
+	int16_t memory[3], int16_t levels[12], int16_t samples[12], enum g711_lsb_mode mode,
+	bool inverted, uint8_t octets[12])
 {
 	for (unsigned i = 0; i < 12; i++) {
 		int16_t q = quantize(law, (int16_t)round(.5 * frame->x[i]));
-		levels[i] = quantize(law, (int16_t)round(1.8 * q + .16 * memory[0] +
-			.04 * memory[1] + (taps == 4 ? .03 * memory[2] : 0.)));
-		if (i % V92_OBSERVATION_PHASES == 5)
-			levels[i] = g711_decode(law, g711_apply_lsb(g711_encode(law, levels[i]), mode));
+		double physical = 1.8 * q + .16 * memory[0] +
+			.04 * memory[1] + (taps == 4 ? .03 * memory[2] : 0.);
+		uint8_t code = g711_encode(law, (int16_t)round(inverted ? -physical : physical));
+		if (i % V92_OBSERVATION_PHASES == 5) code = g711_apply_lsb(code, mode);
+		levels[i] = (inverted ? -1 : 1) * g711_decode(law, code);
+		if (octets) octets[i] = code;
 		samples[i] = (int16_t)round(.75 * levels[i]);
 		memory[2] = memory[1]; memory[1] = memory[0]; memory[0] = q;
 	}
@@ -1311,6 +1314,28 @@ static bool observed_rejection(struct v92_pcm_frame_rx *rx,
 	struct v92_observation_geometry geometry;
 	memset(&geometry, 0xa5, sizeof(geometry));
 	v92_observation_geometry_reset(&geometry);
+	uint8_t codes[12];
+	for (unsigned i = 0; i < ARRAY_LENGTH(codes); i++)
+		codes[i] = g711_encode(model->law, model->inverted ? -levels[i] : levels[i]);
+	for (unsigned fault = 0; fault < 3; fault++) {
+		channel.octets = fault == 0 ? bits : codes;
+		channel.levels = fault == 1 ? NULL : levels;
+		if (fault == 2) {
+			/* A valid original character that disagrees with its purported
+			 * normalized level is an invalid observation contract. */
+			codes[11] = g711_decode(model->law, 0) ==
+				(model->inverted ? -levels[11] : levels[11]) ? 1 : 0;
+		}
+		CHECK(v92_pcm_frame_decode_observed(rx, samples, false, bits,
+			rx->mapping.data_bits_per_frame, &decision, &channel, &likelihood) ==
+			(fault == 0 ? V92_PCM_FRAME_INVALID_ARGUMENT : V92_PCM_FRAME_INVALID_PARAMETERS) &&
+			!memcmp(rx, &initial, sizeof(initial)) && !memcmp(bits, saved_bits, sizeof(bits)) &&
+			!memcmp(&decision, &saved_decision, sizeof(decision)) &&
+			!memcmp(&likelihood, &saved_likelihood, sizeof(likelihood)),
+			"invalid original-character contract changed decoder/output: %u", fault);
+	}
+	channel.octets = NULL;
+	channel.levels = levels;
 	const unsigned failures[] = { 1, 6, 12, 0 };
 	for (unsigned i = 0; i < ARRAY_LENGTH(failures); i++) {
 		double gain = model->quantizer_gain;
@@ -1437,7 +1462,8 @@ static bool observed_merged_payload(const struct v92_pcm_frame_rx *before,
 	return true;
 }
 
-static bool test_observed_channel(enum g711_law law, unsigned taps, bool reorder, enum g711_lsb_mode mode)
+static bool test_observed_channel(enum g711_law law, unsigned taps, bool reorder,
+	enum g711_lsb_mode mode, bool inverted)
 {
 	struct v92_cpd_parameters cpd;
 	struct v92_pcm_mapping mapping;
@@ -1452,6 +1478,7 @@ static bool test_observed_channel(enum g711_law law, unsigned taps, bool reorder
 	int16_t u[V92_OBSERVATION_TRAINING], y[V92_OBSERVATION_TRAINING];
 	int16_t wire[V92_OBSERVATION_TRAINING], memory[3] = { 0 };
 	uint8_t bits[V92_PCM_MAPPING_MAX_BITS], decoded[V92_PCM_MAPPING_MAX_BITS];
+	uint8_t octets[V92_OBSERVATION_TRAINING];
 	memset(bits, 1, mapping.data_bits_per_frame);
 	for (unsigned f = 0; f < V92_B1U_ACQUISITION_FRAMES; f++) {
 		struct v92_pcm_frame frame;
@@ -1459,7 +1486,7 @@ static bool test_observed_channel(enum g711_law law, unsigned taps, bool reorder
 			V92_PCM_FRAME_OK, "training encode failed");
 		memcpy(x + 12 * f, frame.x, sizeof(frame.x));
 		memcpy(u + 12 * f, frame.u, sizeof(frame.u));
-		channel_samples(law, taps, &frame, memory, wire + 12 * f, y + 12 * f, mode);
+		channel_samples(law, taps, &frame, memory, wire + 12 * f, y + 12 * f, mode, inverted, octets + 12 * f);
 	}
 	struct v92_observation model;
 	enum g711_lsb_mode lsb[V92_OBSERVATION_PHASES] = { 0 };
@@ -1468,6 +1495,7 @@ static bool test_observed_channel(enum g711_law law, unsigned taps, bool reorder
 		.input = x, .linear = u, .sample = y, .levels = wire,
 		.count = ARRAY_LENGTH(x), .taps = taps, .host_gain = .75, .law = law,
 		.lsb = mode == G711_LSB_UNCHANGED ? NULL : lsb,
+		.octets = octets, .inverted = inverted,
 	};
 	CHECK(v92_observation_fit(&model, &training), "fit failed");
 	CHECK(model.lsb[5] == mode && model.lsb_mask == (mode ? 32 : 0), "fit lost wire phases");
@@ -1482,15 +1510,16 @@ static bool test_observed_channel(enum g711_law law, unsigned taps, bool reorder
 		struct v92_pcm_frame_decision decision;
 		struct v92_pcm_frame_likelihood likelihood;
 		int16_t levels[12], samples[12];
+		uint8_t codes[12];
 		bool received[12]; memset(received, true, sizeof(received));
 		source_bits(bits, mapping.data_bits_per_frame, f);
 		CHECK(v92_pcm_frame_encode(&tx, bits, mapping.data_bits_per_frame, &frame) ==
 			V92_PCM_FRAME_OK, "payload encode failed");
-		channel_samples(law, taps, &frame, memory, levels, samples, mode);
+		channel_samples(law, taps, &frame, memory, levels, samples, mode, inverted, codes);
 		if (f == 60 && (!observed_rejection(&rx, &model, samples, levels) ||
 			!observed_merged_payload(&rx, &model, samples, levels))) return false;
-		struct v92_pcm_frame_channel channel = { .model = &model, .levels = levels, .received = received };
-		if (f == 50) { channel.levels = NULL; channel.received = NULL; }
+		struct v92_pcm_frame_channel channel = { .model = &model, .levels = levels, .octets = codes, .received = received };
+		if (f == 50) { channel.levels = NULL; channel.octets = NULL; channel.received = NULL; }
 		/* Histories are not sorted by likelihood. Rotate their storage at
 		 * every frame boundary so a visit-order optimization cannot
 		 * depend on the first parent's identity to retain the correct word.
@@ -2032,8 +2061,9 @@ int main(void)
 
 		for (unsigned taps = 3; taps <= 4; taps++)
 			for (enum g711_lsb_mode mode = G711_LSB_UNCHANGED; mode <= G711_LSB_ONE; ++mode)
-				if (!test_observed_channel((enum g711_law)law, taps, false, mode) ||
-				    !test_observed_channel((enum g711_law)law, taps, true, mode)) return 1;
+				for (unsigned inverted = 0; inverted < 2; inverted++)
+					if (!test_observed_channel((enum g711_law)law, taps, false, mode, inverted) ||
+					    !test_observed_channel((enum g711_law)law, taps, true, mode, inverted)) return 1;
 
 		for (size_t level = 0u; level < ARRAY_LENGTH(direct_44k_levels); ++level)
 			if (!test_direct_44k_level((enum g711_law)law, direct_44k_levels[level]))

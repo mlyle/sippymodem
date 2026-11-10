@@ -131,10 +131,10 @@ enum v92_observation_fit_result v92_observation_fit_step(struct v92_observation_
 
 /* Internal continuation for a validated job at the scalar stage. The completed
  * result must belong to identical immutable linear/sample/wire/offset
- * coordinates, count, taps, law, host gain, final-codec operations/physical
- * phase and rounding mode. A null-codec result cannot cross a changed
- * operation pattern. Input may
- * differ. Unavailable/malformed results return DECLINED without changing the
+ * coordinates, original characters, polarity, count, taps, law, host gain,
+ * final-codec operations/physical phase and rounding mode. A null-codec
+ * result cannot cross a changed operation pattern. Input may differ.
+ * Unavailable/malformed results return DECLINED without changing the
  * job. Valid completion returns MORE to start its gain sweep, or EXPLAINED
  * to end the fit when the scalar exactly explains the cells. This never
  * publishes a model or retains a pointer. */

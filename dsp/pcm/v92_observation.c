@@ -27,7 +27,8 @@ _Static_assert((V92_OBSERVATION_CACHE & (V92_OBSERVATION_CACHE - 1)) == 0 &&
 _Static_assert(V92_OBSERVATION_SPANS == 1024, "coordinate hash uses its upper ten bits");
 
 static bool codec_bounds(enum g711_law law, double gain, int16_t observed,
-	const int16_t *level, double offset, enum g711_lsb_mode mode, double *lower, double *upper);
+	const int16_t *level, double offset, enum g711_lsb_mode mode,
+	const uint8_t *octet, bool inverted, double *lower, double *upper);
 static bool begin_scalar(struct v92_scalar_fit *fit, const struct v92_observation_training *training);
 static enum v92_observation_fit_result step_scalar(struct v92_scalar_fit *fit,
 	const struct v92_observation_training *training, const double *low, const double *high, double *gain);
@@ -376,20 +377,37 @@ static int16_t scaled(enum g711_law law, double gain, int32_t x)
 	return g711_quantize(law, sample_round_s16(gain * x));
 }
 
+/* Preserve the original physical cell before normalizing polarity. Level-only
+ * callers retain their documented union of the two PCMU zero cells. */
+static bool codec_cell(enum g711_law law, int16_t normalized,
+	const uint8_t *octet, bool inverted, enum g711_lsb_mode mode,
+	struct g711_interval *interval)
+{
+	int32_t level = inverted ? -(int32_t)normalized : normalized;
+	if (level < INT16_MIN || level > INT16_MAX) return false;
+	if (octet)
+		return g711_decode(law, *octet) == level &&
+			g711_octet_interval_lsb(law, *octet, mode, interval);
+	return g711_quantize(law, (int16_t)level) == level &&
+		(mode == G711_LSB_UNCHANGED ?
+		 g711_quantization_interval(law, (int16_t)level, interval) :
+		 g711_level_interval_lsb(law, (int16_t)level, mode, interval));
+}
+
 /* Bounds relative to the host sample. Use the same arithmetic for training
  * and scoring, including subnormal gain and one-sided codec clipping. */
 static bool codec_bounds(enum g711_law law, double gain, int16_t observed,
-	const int16_t *level, double offset, enum g711_lsb_mode mode, double *lower, double *upper)
+	const int16_t *level, double offset, enum g711_lsb_mode mode,
+	const uint8_t *octet, bool inverted, double *lower, double *upper)
 {
 	if (!isfinite(offset) || (offset != 0. && !level)) return false;
-	int16_t reconstructed = level ? *level : scaled(law, 1. / gain, observed);
+	int16_t reconstructed = level ? *level : inverted ?
+		-scaled(law, 1. / gain, -(int32_t)observed) : scaled(law, 1. / gain, observed);
 	struct g711_interval interval;
-	if (g711_quantize(law, reconstructed) != reconstructed ||
-		!(mode == G711_LSB_UNCHANGED ? g711_quantization_interval(law, reconstructed, &interval) :
-		  g711_level_interval_lsb(law, reconstructed, mode, &interval))) return false;
+	if (!codec_cell(law, reconstructed, octet, inverted, mode, &interval)) return false;
 	struct g711_probability_interval bounds = g711_probability_bounds(interval);
-	*lower = bounds.lower * gain + offset - observed;
-	*upper = bounds.upper * gain + offset - observed;
+	*lower = (inverted ? -bounds.upper : bounds.lower) * gain + offset - observed;
+	*upper = (inverted ? -bounds.lower : bounds.upper) * gain + offset - observed;
 	/* A finite but unrepresentably large shift can erase the interval's
 	 * width. That is not a point observation with a perfect residual. */
 	return offset == 0. || *lower < *upper;
@@ -409,6 +427,7 @@ static bool training_cells(const struct v92_observation_training *training,
 			training->levels ? training->levels + i : NULL,
 			training->offsets ? training->offsets[i] : 0.,
 			training->lsb ? training->lsb[i % V92_OBSERVATION_PHASES] : G711_LSB_UNCHANGED,
+			training->octets ? training->octets + i : NULL, training->inverted,
 			&lower, &upper)) return false;
 		if (linear && i >= training->taps) {
 			double error = (double)training->sample[i] - training->linear[i];
@@ -790,6 +809,8 @@ static bool training_is_valid(const void *output, size_t size,
 		memory_regions_overlap(output, size, u, count * sizeof(*u)) ||
 		memory_regions_overlap(output, size, y, count * sizeof(*y)) ||
 		(levels && memory_regions_overlap(output, size, levels, count * sizeof(*levels))) ||
+		(training->octets && (!levels || memory_regions_overlap(output, size,
+			training->octets, count * sizeof(*training->octets)))) ||
 		(offsets && (!levels || memory_regions_overlap(output, size, offsets,
 			count * sizeof(*offsets))))) return false;
 	if (training->lsb) {
@@ -801,6 +822,11 @@ static bool training_is_valid(const void *output, size_t size,
 	if (offsets)
 		for (size_t i = 0; i < count; i++)
 			if (!isfinite(offsets[i])) return false;
+	if (training->octets)
+		for (size_t i = 0; i < count; i++) {
+			int level = g711_decode(law, training->octets[i]);
+			if (levels[i] != (training->inverted ? -level : level)) return false;
+		}
 	return true;
 }
 
@@ -818,6 +844,7 @@ static bool prefer_linear(const struct v92_observation *model,
 		if (!codec_bounds(training->law, training->host_gain, training->sample[i],
 			training->levels + i, training->offsets ? training->offsets[i] : 0.,
 			training->lsb ? training->lsb[i % V92_OBSERVATION_PHASES] : G711_LSB_UNCHANGED,
+			training->octets ? training->octets + i : NULL, training->inverted,
 			&lower, &upper)) return false;
 		double error = (double)training->sample[i] - training->linear[i];
 		double probability = gaussian_log_probability((error + lower) / divisor,
@@ -832,8 +859,13 @@ static bool prefer_linear(const struct v92_observation *model,
 	v92_observation_begin(&cache, model, 0.);
 	uint64_t fitted = 0;
 	for (size_t i = model->taps; i < training->count; ++i) {
-		if (!v92_observation_symbol_phase(&cache, training->sample[i],
-			training->levels + i, training->offsets ? training->offsets[i] : 0., i % V92_OBSERVATION_PHASES))
+		double offset = training->offsets ? training->offsets[i] : 0.;
+		bool valid = training->octets ?
+			v92_observation_symbol_octet(&cache, training->sample[i],
+				training->octets[i], offset, i % V92_OBSERVATION_PHASES) :
+			v92_observation_symbol_phase(&cache, training->sample[i],
+				training->levels + i, offset, i % V92_OBSERVATION_PHASES);
+		if (!valid)
 			return false;
 		struct v92_observation_point previous[V92_OBSERVATION_TAPS - 1];
 		for (unsigned tap = 1; tap < model->taps; ++tap)
@@ -885,9 +917,13 @@ static bool scalar_explains_cells(const struct v92_observation_training *trainin
 	for (size_t i = training->taps; i < training->count; ++i) {
 		double offset = training->offsets ? training->offsets[i] : 0.;
 		double physical = (gain * training->linear[i] - offset) / training->host_gain;
-		if (!isfinite(physical) ||
-		    g711_decode(training->law, g711_apply_lsb(g711_encode(training->law, sample_round_s16(physical)),
-			training->lsb ? training->lsb[i % V92_OBSERVATION_PHASES] : G711_LSB_UNCHANGED)) != training->levels[i])
+		if (!isfinite(physical)) return false;
+		uint8_t code = g711_apply_lsb(g711_encode(training->law,
+			sample_round_s16(training->inverted ? -physical : physical)),
+			training->lsb ? training->lsb[i % V92_OBSERVATION_PHASES] : G711_LSB_UNCHANGED);
+		int level = g711_decode(training->law, code);
+		if ((training->octets && code != training->octets[i]) ||
+		    (training->inverted ? -level : level) != training->levels[i])
 			return false;
 	}
 	return true;
@@ -903,7 +939,8 @@ static bool initialize_fit(struct v92_observation_fit_work *w,
 	enum g711_law law = training->law;
 	double energy = w->model.energy, linear_error = w->linear_error;
 	w->model = (struct v92_observation){ .law = law, .taps = taps, .energy = energy / (count - taps),
-		.variance = fmax(1., w->fits[0].error), .quantizer_gain = training->host_gain };
+		.variance = fmax(1., w->fits[0].error), .quantizer_gain = training->host_gain,
+		.inverted = training->inverted };
 	if (training->lsb)
 		for (unsigned phase = 0; phase < V92_OBSERVATION_PHASES; ++phase) {
 			w->model.lsb[phase] = training->lsb[phase];
@@ -956,7 +993,8 @@ static bool seed_targets(struct v92_observation_fit_work *w,
 		w->seed.shift[i] = UINT8_MAX;
 		if (!isfinite(w->lower[i]) || !isfinite(w->upper[i])) continue;
 		struct g711_interval cell;
-		if (!g711_level_interval_lsb(training->law, training->levels[i],
+		if (!codec_cell(training->law, training->levels[i],
+			training->octets ? training->octets + i : NULL, training->inverted,
 			training->lsb[i % V92_OBSERVATION_PHASES], &cell)) return false;
 		unsigned width = (unsigned)((int)cell.upper - cell.lower + 1);
 		unsigned exponent = bit_width_unsigned(width - 1u);
@@ -1085,22 +1123,25 @@ bool v92_observation_fit(struct v92_observation *model,
 }
 
 double v92_observation_predict_scalar_lsb(enum g711_law law, double gain,
-	double host_gain, int16_t linear, double offset, enum g711_lsb_mode mode)
+	double host_gain, int16_t linear, double offset, enum g711_lsb_mode mode,
+	bool inverted)
 {
 	if ((law != G711_LAW_PCMU && law != G711_LAW_PCMA) ||
 	    !isfinite(gain) || gain <= 0. || !isfinite(host_gain) || host_gain <= 0. ||
 	    !isfinite(offset) || !g711_lsb_mode_is_valid(mode)) return NAN;
 	double physical = (gain * linear - offset) / host_gain;
 	if (!isfinite(physical)) return NAN;
-	int16_t sample = sample_round_s16(physical);
-	double prediction = host_gain * g711_decode(law, g711_apply_lsb(g711_encode(law, sample), mode)) + offset;
+	int16_t sample = sample_round_s16(inverted ? -physical : physical);
+	int level = g711_decode(law, g711_apply_lsb(g711_encode(law, sample), mode));
+	double prediction = host_gain * (inverted ? -level : level) + offset;
 	return isfinite(prediction) ? prediction : NAN;
 }
 
 double v92_observation_predict_scalar(enum g711_law law, double gain,
 	double host_gain, int16_t linear, double offset)
 {
-	return v92_observation_predict_scalar_lsb(law, gain, host_gain, linear, offset, G711_LSB_UNCHANGED);
+	return v92_observation_predict_scalar_lsb(law, gain, host_gain, linear, offset,
+		G711_LSB_UNCHANGED, false);
 }
 
 bool v92_observation_fit_scalar(double *gain,
@@ -1150,7 +1191,8 @@ static enum v92_observation_fit_result step_scalar(struct v92_scalar_fit *fit,
 	for (size_t i = 0; i < training->count; i++) {
 		double predicted = v92_observation_predict_scalar_lsb(training->law, fitted,
 			training->host_gain, training->linear[i], training->offsets ? training->offsets[i] : 0.,
-			training->lsb ? training->lsb[i % V92_OBSERVATION_PHASES] : G711_LSB_UNCHANGED);
+			training->lsb ? training->lsb[i % V92_OBSERVATION_PHASES] : G711_LSB_UNCHANGED,
+			training->inverted);
 		double error = training->sample[i] - predicted;
 		error_energy += error * error;
 	}
@@ -1316,8 +1358,9 @@ void v92_observation_begin_cached(struct v92_observation_cache *cache,
 			HUGE_VAL : 1e-12 * (1. + 65536. * extent[i]);
 }
 
-bool v92_observation_symbol_phase(struct v92_observation_cache *cache,
-	int16_t observed, const int16_t *level, double offset, unsigned phase)
+static bool observation_symbol(struct v92_observation_cache *cache,
+	int16_t observed, const int16_t *level, const uint8_t *octet,
+	double offset, unsigned phase)
 {
 	const struct v92_observation *model = cache->model;
 	if (phase >= V92_OBSERVATION_PHASES || !isfinite(cache->relative_noise) || cache->relative_noise < 0.) return false;
@@ -1327,7 +1370,7 @@ bool v92_observation_symbol_phase(struct v92_observation_cache *cache,
 	if (!isfinite(variance) || variance <= 0. || !isfinite(scale) || scale <= 0.) return false;
 	double lower, upper;
 	if (!codec_bounds(model->law, model->quantizer_gain, observed, level, offset,
-		model->lsb[phase], &lower, &upper)) return false;
+		model->lsb[phase], octet, model->inverted, &lower, &upper)) return false;
 	if (++cache->generation == 0) {
 		memset(cache->stamp, 0, sizeof(cache->stamp));
 		cache->generation = 1;
@@ -1339,6 +1382,20 @@ bool v92_observation_symbol_phase(struct v92_observation_cache *cache,
 	cache->bound_scale = scale;
 	cache->divisor = sqrt(2. * variance);
 	return true;
+}
+
+bool v92_observation_symbol_phase(struct v92_observation_cache *cache,
+	int16_t observed, const int16_t *level, double offset, unsigned phase)
+{
+	return observation_symbol(cache, observed, level, NULL, offset, phase);
+}
+
+bool v92_observation_symbol_octet(struct v92_observation_cache *cache,
+	int16_t observed, uint8_t octet, double offset, unsigned phase)
+{
+	int level = g711_decode(cache->model->law, octet);
+	int16_t normalized = cache->model->inverted ? -level : level;
+	return observation_symbol(cache, observed, &normalized, &octet, offset, phase);
 }
 
 bool v92_observation_symbol_level(struct v92_observation_cache *cache,
@@ -1696,8 +1753,10 @@ double v92_observation_predict_phase(const struct v92_observation *model,
 			double weight = p->weight * log1p((sweep.end - sweep.begin) / sweep.begin) / width;
 			double linear = 0.;
 			for (unsigned j = 0; j < model->taps; j++) linear += p->coefficient[j] * sweep.value[j];
-			prediction += weight * codec_mean(model->law, linear - offset,
+			double mean = linear - offset;
+			double value = codec_mean(model->law, model->inverted ? -mean : mean,
 				model->variance, model->quantizer_gain, model->lsb[phase]);
+			prediction += weight * (model->inverted ? -value : value);
 		}
 		if (sweep.failed) return NAN;
 	}

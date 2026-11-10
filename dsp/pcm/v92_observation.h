@@ -54,12 +54,16 @@ struct v92_observation {
 	/* Zero means identity; otherwise apply the known one-tap CPd prefilter
 	 * rounding before the unknown first-codec gain. Delay is line-owned. */
 	int16_t input_coefficient;
+	/* Physical polarity before the final codec; channel coordinates remain
+	 * normalized. Reflection does not commute with integer companding. */
+	bool inverted;
 };
 
 /* Borrowed, aligned samples from at most the first 24 known B1u frames.
- * input precedes the first codec; sample follows the final codec and positive
- * host gain. levels optionally supplies decoded wire levels before host gain,
- * avoiding inference from sample. linear is the existing linear prediction. */
+ * input precedes the first codec; sample follows the final codec, positive
+ * host gain and polarity normalization. levels optionally supplies normalized
+ * decoded wire levels before host gain, avoiding inference from sample.
+ * linear is the existing linear prediction. */
 struct v92_observation_training {
 	const int32_t *input;
 	const int16_t *linear, *sample, *levels;
@@ -79,6 +83,11 @@ struct v92_observation_training {
 	 * The owner must identify and freeze this independently of held-out
 	 * decisions. Requires levels. Borrowed during fit; NULL keeps the codec. */
 	const enum g711_lsb_mode *lsb;
+	/* Optional original characters, before polarity normalization. Requires
+	 * levels, which must equal their decoded values in normalized coordinates.
+	 * Unlike levels alone, these preserve the two PCMU zero cells. */
+	const uint8_t *octets;
+	bool inverted;
 };
 
 /* Fit Q(g*input), the selected channel taps and noise, then a final codec.
@@ -108,13 +117,16 @@ bool v92_observation_is_valid(const struct v92_observation *model);
  * freeze the result before held-out bits and line-quality validation.
  * predict_scalar takes a linear constellation point, never the observed value;
  * host_gain and offset describe the same final-codec affine transform as above.
+ * The LSB variant reflects the physical input before integer rounding and
+ * companding, then restores normalized polarity after the wire operation.
  * It returns NAN for invalid parameters or unrepresentable arithmetic. */
 bool v92_observation_fit_scalar(double *gain,
 	const struct v92_observation_training *training);
 double v92_observation_predict_scalar(enum g711_law law, double gain,
 	double host_gain, int16_t linear, double offset);
 double v92_observation_predict_scalar_lsb(enum g711_law law, double gain,
-	double host_gain, int16_t linear, double offset, enum g711_lsb_mode mode);
+	double host_gain, int16_t linear, double offset, enum g711_lsb_mode mode,
+	bool inverted);
 
 struct v92_observation_point {
 	struct v92_observation_values values;
@@ -180,6 +192,10 @@ bool v92_observation_symbol_level(struct v92_observation_cache *cache,
  * points reject models with a wire-bit operation instead of guessing phase. */
 bool v92_observation_symbol_phase(struct v92_observation_cache *cache,
 	int16_t observed, const int16_t *level, double offset, unsigned phase);
+/* Exact original-character cell, reflected by the model's physical polarity.
+ * No supplied or inferred reconstruction may replace the original character. */
+bool v92_observation_symbol_octet(struct v92_observation_cache *cache,
+	int16_t observed, uint8_t octet, double offset, unsigned phase);
 struct v92_observation_point v92_observation_point(
 	struct v92_observation_cache *cache, int32_t x);
 /* Frame-local scratch for one fixed candidate-path history. Reset when the

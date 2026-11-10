@@ -1492,6 +1492,7 @@ static enum v92_pcm_frame_result decode_frame(
 	const struct v92_observation *model = channel ? channel->model : NULL;
 	const struct v92_pcm_frame_cell *cells = channel ? channel->cells : NULL;
 	const int16_t *levels = channel ? channel->levels : NULL;
+	const uint8_t *octets = channel ? channel->octets : NULL;
 	const double *offsets = channel ? channel->offsets : NULL;
 	const bool *received = channel ? channel->received : NULL;
 	struct frame_path banks[2][V92_PCM_RX_PATHS];
@@ -1509,6 +1510,7 @@ static enum v92_pcm_frame_result decode_frame(
 		{ channel, channel ? sizeof(*channel) : 0u },
 		{ likelihood, likelihood ? sizeof(*likelihood) : 0u },
 		{ levels, levels ? V92_PCM_MAPPING_FRAME_SYMBOLS * sizeof(*levels) : 0u },
+		{ octets, octets ? V92_PCM_MAPPING_FRAME_SYMBOLS * sizeof(*octets) : 0u },
 		{ offsets, offsets ? V92_PCM_MAPPING_FRAME_SYMBOLS * sizeof(*offsets) : 0u },
 		{ received, received ? V92_PCM_MAPPING_FRAME_SYMBOLS * sizeof(*received) : 0u },
 		{ cells, cells ? V92_PCM_MAPPING_FRAME_SYMBOLS * sizeof(*cells) : 0u },
@@ -1524,7 +1526,7 @@ static enum v92_pcm_frame_result decode_frame(
 	    channel->cell_sigma > 32768. || (channel->cell_sigma && !cells)))
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
 	if (cells) {
-		if (model || levels || offsets || receiver->observation != V92_PCM_FRAME_CONSTELLATION)
+		if (model || levels || octets || offsets || receiver->observation != V92_PCM_FRAME_CONSTELLATION)
 			return V92_PCM_FRAME_INVALID_PARAMETERS;
 		for (size_t i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
 			if (isnan(cells[i].lower) || isnan(cells[i].upper) ||
@@ -1536,6 +1538,8 @@ static enum v92_pcm_frame_result decode_frame(
 	}
 	if (acquire_model && (receiver->observation != V92_PCM_FRAME_CONSTELLATION ||
 	    !b1u || receiver->noise.frames >= V92_B1U_ACQUISITION_FRAMES))
+		return V92_PCM_FRAME_INVALID_PARAMETERS;
+	if (octets && (!model || !levels))
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
 	if (offsets) {
 		if (!model || !levels)
@@ -1711,10 +1715,19 @@ static enum v92_pcm_frame_result decode_frame(
 		    !g711_quantization_interval(receiver->mapping.law, samples[symbol], &cell))
 			return V92_PCM_FRAME_INVALID_PARAMETERS;
 
-		if (model && present && !v92_observation_symbol_phase(&cache,
-			samples[symbol], levels ? levels + symbol : NULL,
-			offsets ? offsets[symbol] : 0., symbol % V92_OBSERVATION_PHASES))
-			return V92_PCM_FRAME_INVALID_PARAMETERS;
+		if (model && present) {
+			double offset = offsets ? offsets[symbol] : 0.;
+			unsigned phase = symbol % V92_OBSERVATION_PHASES;
+			if (octets) {
+				int level = g711_decode(model->law, octets[symbol]);
+				if (levels[symbol] != (model->inverted ? -level : level) ||
+				    !v92_observation_symbol_octet(&cache, samples[symbol],
+					    octets[symbol], offset, phase))
+					return V92_PCM_FRAME_INVALID_PARAMETERS;
+			} else if (!v92_observation_symbol_phase(&cache, samples[symbol],
+				levels ? levels + symbol : NULL, offset, phase))
+				return V92_PCM_FRAME_INVALID_PARAMETERS;
+		}
 
 		if (receiver->observation == V92_PCM_FRAME_CONSTELLATION && !model && !lookahead) {
 			/* Companding noise grows with amplitude. Estimate reliability

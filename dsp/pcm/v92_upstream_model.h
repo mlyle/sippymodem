@@ -47,8 +47,8 @@ struct v92_upstream_model {
 		struct {
 			int32_t x[V92_OBSERVATION_TRAINING], raw[V92_OBSERVATION_TRAINING];
 			int16_t u[V92_OBSERVATION_TRAINING];
-			/* Codec fitting uses reconstructed levels; residual-noise
-			 * fitting uses exact characters, including both PCMU zeros.
+			/* Codec fitting retains levels and original characters below;
+			 * residual-noise fitting instead reuses this level storage.
 			 * The acquisition modes are exclusive and clear this scratch
 			 * before independent B1u validation. */
 			union {
@@ -56,6 +56,7 @@ struct v92_upstream_model {
 				uint8_t wire_octet[V92_OBSERVATION_TRAINING];
 			};
 			int16_t host[V92_OBSERVATION_TRAINING];
+			uint8_t octets[V92_OBSERVATION_TRAINING];
 		};
 		struct v92_pcm_level_fit level;
 	};
