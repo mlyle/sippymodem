@@ -194,8 +194,79 @@ static bool test_estimate_clamping(void)
 	return true;
 }
 
+static bool test_observed_cells(void)
+{
+	static const double scales[] = { .125, .5, .75, 1., 4., 16.39453125 };
+	for (unsigned law = 0; law < 2; ++law) {
+		struct g711_interval cells[256];
+		for (size_t i = 0; i < ARRAY_LENGTH(scales); ++i) {
+			struct pcm_gain gain = {
+				.lower = scales[i], .upper = scales[i],
+				.correlation = 75., .energy = 100.,
+			};
+			struct pcm_gain saved = gain;
+			for (unsigned code = 0; code < 256; ++code) {
+				int16_t sample = host_sample(g711_decode(law, code), scales[i]);
+				CHECK(pcm_gain_observed_cell(&gain, law, code, sample, cells + code),
+				      "aligned pair rejected: law %u gain %g code %u", law, scales[i], code);
+				CHECK(g711_encode(law, cells[code].lower) == code &&
+				      g711_encode(law, cells[code].upper) == code &&
+				      (cells[code].lower == INT16_MIN ||
+				       g711_encode(law, cells[code].lower - 1) != code) &&
+				      (cells[code].upper == INT16_MAX ||
+				       g711_encode(law, cells[code].upper + 1) != code),
+				      "cell is not the exact encoder preimage: law %u code %u", law, code);
+			}
+			CHECK(memcmp(&gain, &saved, sizeof(gain)) == 0,
+			      "observed cells narrowed or refitted frozen gain");
+		}
+		for (int32_t x = INT16_MIN; x <= INT16_MAX; ++x) {
+			uint8_t code = g711_encode(law, (int16_t)x);
+			CHECK(cells[code].lower <= x && x <= cells[code].upper,
+			      "encoder input %d escaped its returned cell", (int)x);
+		}
+		if (law == G711_LAW_PCMU)
+			CHECK(cells[0x7f].lower == -3 && cells[0x7f].upper == -1 &&
+			      cells[0xff].lower == 0 && cells[0xff].upper == 3,
+			      "signed-zero wire cells were merged");
+	}
+	struct pcm_gain unknown;
+	struct g711_interval zero;
+	double estimate = -1.;
+	pcm_gain_init(&unknown);
+	CHECK(pcm_gain_observed_cell(&unknown, G711_LAW_PCMU, 0x7f, 0, &zero) &&
+	      zero.lower == -3 && zero.upper == -1 &&
+	      !pcm_gain_estimate(&unknown, &estimate) && estimate == -1. &&
+	      unknown.lower == 0. && isinf(unknown.upper) && unknown.energy == 0. &&
+	      unknown.correlation == 0., "a compatible zero invented gain evidence");
+	return true;
+}
+
+static bool test_observed_cell_rejections(void)
+{
+	struct pcm_gain gain = { .lower = .75, .upper = .75 };
+	struct pcm_gain saved = gain;
+	struct g711_interval cell = { 1234, 5678 };
+	CHECK(!pcm_gain_observed_cell(NULL, G711_LAW_PCMU, 0xff, 0, &cell) &&
+	      !pcm_gain_observed_cell(&gain, (enum g711_law)-1, 0xff, 0, &cell) &&
+	      !pcm_gain_observed_cell(&gain, G711_LAW_PCMA + 1, 0xff, 0, &cell) &&
+	      !pcm_gain_observed_cell(&gain, G711_LAW_PCMU, 0xff, 1, &cell) &&
+	      !pcm_gain_observed_cell(&gain, G711_LAW_PCMU, 0xff, 0, NULL) &&
+	      !pcm_gain_observed_cell(&gain, G711_LAW_PCMU, 0xff, 0,
+		      (struct g711_interval *)(void *)&gain.lower) &&
+	      cell.lower == 1234 && cell.upper == 5678 &&
+	      memcmp(&gain, &saved, sizeof(gain)) == 0,
+	      "rejected cell changed output or gain owner");
+	gain.lower = NAN;
+	CHECK(!pcm_gain_observed_cell(&gain, G711_LAW_PCMU, 0xff, 0, &cell) &&
+	      cell.lower == 1234 && cell.upper == 5678 && isnan(gain.lower),
+	      "invalid gain produced a cell or changed outputs");
+	return true;
+}
+
 int main(void)
 {
 	return test_input_space() && test_clipping_and_ties() &&
-		test_frozen_bounds() && test_estimate_clamping() && test_rejections() ? 0 : 1;
+		test_frozen_bounds() && test_estimate_clamping() && test_rejections() &&
+		test_observed_cells() && test_observed_cell_rejections() ? 0 : 1;
 }

@@ -49,6 +49,16 @@ bool pcm_gain_contains(const struct pcm_gain *gain, int16_t wire, int16_t sample
 	return intersect_sample(gain, wire, sample, &lower, &upper);
 }
 
+bool pcm_gain_observed_cell(const struct pcm_gain *gain, enum g711_law law,
+	uint8_t octet, int16_t sample, struct g711_interval *interval)
+{
+	if (!interval || !g711_law_is_valid(law) ||
+	    memory_regions_overlap(gain, sizeof(*gain), interval, sizeof(*interval)) ||
+	    !pcm_gain_contains(gain, g711_decode(law, octet), sample))
+		return false;
+	return g711_octet_interval(law, octet, interval);
+}
+
 bool pcm_gain_observe(struct pcm_gain *gain, int16_t wire, int16_t sample)
 {
 	double lower, upper;

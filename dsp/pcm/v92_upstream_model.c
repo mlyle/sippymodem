@@ -406,9 +406,8 @@ static double fit_residual_variance(const struct v92_upstream_model *model,
 	double mean[V92_OBSERVATION_TRAINING], variance = 0.;
 	for (unsigned n = FIRST; n < V92_OBSERVATION_TRAINING; ++n) {
 		struct g711_interval bin;
-		int16_t wire = g711_decode(law, model->wire_octet[n]);
-		if (!pcm_gain_contains(&line->host.bounds, wire, model->host[n]) ||
-		    !g711_octet_interval(law, model->wire_octet[n], &bin)) return 0.;
+		if (!pcm_gain_observed_cell(&line->host.bounds, law,
+		    model->wire_octet[n], model->host[n], &bin)) return 0.;
 		double correction = model->raw[n] - line->polarity * (double)model->host[n];
 		struct g711_probability_interval bounds = g711_probability_bounds(bin);
 		double lower = bounds.lower * line->host.gain;
@@ -612,8 +611,7 @@ static bool wire_cells(const struct v92_upstream_data_line *line,
 		if (!line->wire_known[i] || !line->received[i] ||
 		    raw <= INT16_MIN || raw >= INT16_MAX ||
 		    host == INT16_MIN || host == INT16_MAX ||
-		    !pcm_gain_contains(bounds, line->wire[i] * line->polarity, host) ||
-		    !g711_octet_interval(law, line->octet[i], &cell))
+		    !pcm_gain_observed_cell(bounds, law, line->octet[i], host, &cell))
 			return false;
 		double offset = line->raw[i] - (int32_t)host * line->polarity -
 			v92_upstream_line_offset(line) - line->correction[i];

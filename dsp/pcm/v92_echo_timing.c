@@ -154,9 +154,8 @@ int v92_echo_timing_observe(
 	double midpoint = 0, half_width = 0;
 	if (line->host.gain > 0) {
 		struct g711_interval cell;
-		int16_t decoded = g711_decode(receiver->decoder.mapping.law, wire);
-		if (!pcm_gain_contains(&line->host.bounds, decoded, received) ||
-		    !g711_octet_interval(receiver->decoder.mapping.law, wire, &cell)) {
+		if (!pcm_gain_observed_cell(&line->host.bounds,
+		    receiver->decoder.mapping.law, wire, received, &cell)) {
 			v92_echo_timing_reset(timing);
 			return 0;
 		}

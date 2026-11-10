@@ -3,6 +3,8 @@
 #ifndef PCM_GAIN_H
 #define PCM_GAIN_H
 
+#include "g711.h"
+
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -30,6 +32,17 @@ bool pcm_gain_observe(struct pcm_gain *gain, int16_t wire, int16_t sample);
  * the frozen interval, never update it. This checks interval compatibility,
  * not reconstruction by the point estimate or model/line quality. */
 bool pcm_gain_contains(const struct pcm_gain *gain, int16_t wire, int16_t sample);
+
+/* Verify an actually received, aligned wire/host pair against supplied bounds
+ * and return the exact integer codec preimage of its original character.
+ * PCMU zero characters retain their distinct cells. This neither estimates
+ * gain nor applies polarity, echo subtraction, or a candidate impairment.
+ * Compatibility does not establish that a gain has been identified.
+ * Clipped host samples retain the same compatibility semantics as contains;
+ * callers separately decide whether their observation can remain affine.
+ * Rejection preserves output; output must not overlap the gain owner. */
+bool pcm_gain_observed_cell(const struct pcm_gain *gain, enum g711_law law,
+	uint8_t octet, int16_t sample, struct g711_interval *interval);
 
 /* Clamp the uncensored least-squares estimate to the surviving interval.
  * No finite upper bound or no nonzero correlation leaves output unchanged.
