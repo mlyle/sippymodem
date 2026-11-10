@@ -13,6 +13,10 @@ _Static_assert((V92_ECHO_TIMING_HISTORY & (V92_ECHO_TIMING_HISTORY - 1)) == 0,
 _Static_assert(V92_PCM_MAPPING_FRAME_SYMBOLS % V92_PCM_MAPPING_PHASES == 0,
 	       "receive frame wraps must preserve the constellation phase");
 
+_Static_assert(V92_ECHO_TIMING_HISTORY % V92_ECHO_TIMING_STRIDE == 0 &&
+	       ECHO_TIMING_RADIUS % V92_ECHO_TIMING_STRIDE == 0,
+	       "delayed scoring must preserve the observation stride");
+
 void v92_echo_timing_reset(struct v92_echo_timing *timing)
 {
 	if (timing != NULL)
@@ -172,15 +176,20 @@ int v92_echo_timing_observe(
 	const unsigned mask = V92_ECHO_TIMING_HISTORY - 1;
 	unsigned at = (unsigned)timing->samples & mask;
 	timing->prediction[at] = (float)projected;
-	timing->observation[at] = (float)(observed + midpoint);
-	timing->half_width[at] = (float)half_width;
+	/* Scoring consumes the last input of each stride, delayed by radius.
+	 * Earlier inputs may replace this slot until that last input arrives;
+	 * every physical prediction is still needed by the shift hypotheses. */
+	unsigned observation = at / V92_ECHO_TIMING_STRIDE;
+	timing->observation[observation] = (float)(observed + midpoint);
+	timing->half_width[observation] = (float)half_width;
 	++timing->samples;
 	if (timing->samples < ECHO_TIMING_BINS || timing->samples % V92_ECHO_TIMING_STRIDE)
 		return 0;
 	/* Wait for both sides of each hypothesis. Initial inverse-history error
 	 * has also contracted through more than 300 inputs before any scoring. */
 	unsigned center = (at + V92_ECHO_TIMING_HISTORY - ECHO_TIMING_RADIUS) & mask;
-	double x = timing->observation[center] + timing->prediction[center];
+	observation = center / V92_ECHO_TIMING_STRIDE;
+	double x = timing->observation[observation] + timing->prediction[center];
 	/* Supported input advances the receiver phase once per physical sample.
 	 * Read the center's phase from that clock, independent of ring wrapping:
 	 * the power-of-two history length is not a multiple of the phase cycle. */
@@ -192,7 +201,7 @@ int v92_echo_timing_observe(
 	for (unsigned i = 0; i < ECHO_TIMING_BINS; i++) {
 		unsigned shifted = (center + V92_ECHO_TIMING_HISTORY + ECHO_TIMING_RADIUS - i) & mask;
 		timing->window.score[part][i] += distance(points, timing->step[set],
-			timing->inverse_step[set], timing->half_width[center], x - timing->prediction[shifted]);
+			timing->inverse_step[set], timing->half_width[observation], x - timing->prediction[shifted]);
 	}
 	int shift = echo_shift_advance(&timing->window, .5);
 	if (shift != 0) {

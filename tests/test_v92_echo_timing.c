@@ -171,8 +171,8 @@ static bool test_constellation_scores(void)
 				}
 				timing->prediction[center] = 0;
 				float observed = w == 0 ? 0 : 123.25f;
-				timing->observation[center] = observed;
-				timing->half_width[center] = widths[w];
+				timing->observation[center / V92_ECHO_TIMING_STRIDE] = observed;
+				timing->half_width[center / V92_ECHO_TIMING_STRIDE] = widths[w];
 				memcpy(&fixture->saved, receiver, sizeof(*receiver));
 				CHECK(v92_echo_timing_observe(timing, echo, receiver,
 				      PCM_HOST_ECHO_FILTER, 0, 0, 0, true) == 0 &&
@@ -254,8 +254,8 @@ static bool test_phase_clock(void)
 			for (unsigned j = 0; j < V92_ECHO_TIMING_HISTORY; j++)
 				timing->prediction[j] = (float)((int)(j % 97) * 16 - 768);
 			timing->prediction[center] = 0;
-			timing->observation[center] = 123.25f;
-			timing->half_width[center] = .25f;
+			timing->observation[center / V92_ECHO_TIMING_STRIDE] = 123.25f;
+			timing->half_width[center / V92_ECHO_TIMING_STRIDE] = .25f;
 			memcpy(&fixture->saved, receiver, sizeof(*receiver));
 			CHECK(v92_echo_timing_observe(timing, echo, receiver,
 			      PCM_HOST_ECHO_FILTER, 0, 0, 0, true) == 0 &&
@@ -275,6 +275,85 @@ static bool test_phase_clock(void)
 				      first, prefixes[n], j, set);
 			}
 		}
+	free(fixture);
+	return true;
+}
+
+/* Compare sampled score inputs with full physical history derived from the
+ * encoder. Vary cells on every input across several ring wraps, so a stride
+ * slot cannot accidentally stand for its first or most recently read input. */
+static bool test_observation_cadence(void)
+{
+	struct fixture *fixture = calloc(1, sizeof(*fixture));
+	CHECK(fixture != NULL, "cadence fixture allocation failed");
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		int lower[256], upper[256];
+		for (unsigned byte = 0; byte < 256; ++byte) {
+			lower[byte] = INT32_MAX;
+			upper[byte] = INT32_MIN;
+		}
+		for (int sample = INT16_MIN; sample <= INT16_MAX; ++sample) {
+			uint8_t byte = g711_encode(law, (int16_t)sample);
+			if (sample < lower[byte]) lower[byte] = sample;
+			if (sample > upper[byte]) upper[byte] = sample;
+		}
+		for (int polarity = -1; polarity <= 1; polarity += 2) {
+			float midpoint[V92_ECHO_TIMING_HISTORY], width[V92_ECHO_TIMING_HISTORY];
+			unsigned phase[V92_ECHO_TIMING_HISTORY];
+			memset(fixture, 0, sizeof(*fixture));
+			struct pcm_host_echo *echo = &fixture->echo;
+			struct v92_upstream_data_rx *receiver = &fixture->receiver;
+			struct v92_upstream_data_line *line = &receiver->line;
+			struct v92_echo_timing *timing = &fixture->timing;
+			CHECK(pcm_host_echo_init(echo) == PCM_HOST_ECHO_OK, "cadence echo init failed");
+			echo->reference.fill = PCM_ECHO_REFERENCE_HISTORY_SAMPLES;
+			echo->filter_ready = echo->delay_acquired = true;
+			line->plan.observation = V92_PCM_FRAME_CONSTELLATION;
+			line->polarity = polarity;
+			line->calibration.gain = 2;
+			line->host.gain = line->host.bounds.lower = line->host.bounds.upper = .5;
+			line->received_frames = V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES;
+			receiver->decoder.mapping.law = law;
+			for (unsigned j = 0; j < V92_PCM_MAPPING_PHASES; ++j) {
+				receiver->decoder.mapping.cpd.frame_constellation[j] = (uint8_t)j;
+				struct v92_cpd_constellation *points = &receiver->decoder.mapping.cpd.constellation[j];
+				points->count = 2;
+				points->positive_linear[0] = (int16_t)(800 + 81 * j);
+				points->positive_linear[1] = (int16_t)(2000 + 61 * j);
+			}
+			for (unsigned i = 0; i < 3 * V92_ECHO_TIMING_HISTORY + ECHO_TIMING_BINS; ++i) {
+				uint8_t byte = g711_encode(law, (int16_t)((int)((i * 433u) % 60001u) - 30000));
+				int16_t host = (int16_t)lrint(.5 * g711_decode(law, byte));
+				unsigned at = i % V92_ECHO_TIMING_HISTORY;
+				midpoint[at] = (float)(polarity * (lower[byte] + upper[byte]) * .5);
+				width[at] = (float)((upper[byte] - lower[byte]) * .5);
+				phase[at] = line->symbol_count % V92_PCM_MAPPING_PHASES;
+				/* Isolate this observation's whole score plane. All echo
+				 * predictions are zero, so no candidate may win a retime. */
+				memset(timing->window.score, 0, sizeof(timing->window.score));
+				timing->window.position = 0;
+				CHECK(v92_echo_timing_observe(timing, echo, receiver, PCM_HOST_ECHO_FILTER,
+				      byte, host, host, true) == 0 && timing->samples == i + 1,
+				      "cadence input restarted the monitor at %u", i);
+				if (timing->window.position) {
+					unsigned center = (i - ECHO_TIMING_RADIUS) % V92_ECHO_TIMING_HISTORY;
+					const struct v92_cpd_constellation *points =
+						&receiver->decoder.mapping.cpd.constellation[phase[center]];
+					double best = INFINITY;
+					for (int k = -(int)points->count; k < points->count; ++k) {
+						double error = fabs(midpoint[center] - v92_cpd_signed_point(points, k));
+						error = fmax(error - width[center], 0.);
+						best = fmin(best, error * error);
+					}
+					for (unsigned j = 0; j < ECHO_TIMING_BINS; ++j)
+						CHECK(timing->window.score[0][j] == best,
+						      "cadence mismatch law=%u polarity=%d input=%u bin=%u", law, polarity, i, j);
+				}
+				line->input_samples++;
+				line->symbol_count = (line->symbol_count + 1) % V92_PCM_MAPPING_FRAME_SYMBOLS;
+			}
+		}
+	}
 	free(fixture);
 	return true;
 }
@@ -416,6 +495,9 @@ int main(void)
 {
 	if (!test_residual_projection()) return 1;
 	if (!test_wire_cells()) return 1;
+	fprintf(stderr, "[ RUN      ] PCM echo timing observation cadence\n");
+	if (!test_observation_cadence()) return 1;
+	fprintf(stderr, "[       OK ] PCM echo timing observation cadence\n");
 	if (!test_constellation_scores()) return 1;
 	fprintf(stderr, "[ RUN      ] PCM echo timing phase clock\n");
 	if (!test_phase_clock()) return 1;

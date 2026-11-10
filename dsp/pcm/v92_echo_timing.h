@@ -10,6 +10,7 @@
 enum {
 	V92_ECHO_TIMING_HISTORY = 1024,
 	V92_ECHO_TIMING_STRIDE = 4,
+	V92_ECHO_TIMING_OBSERVATIONS = V92_ECHO_TIMING_HISTORY / V92_ECHO_TIMING_STRIDE,
 	V92_ECHO_TIMING_WINDOW_SAMPLES = 256,
 };
 
@@ -19,8 +20,8 @@ enum {
 struct v92_echo_timing {
 	struct echo_shift_window window;
 	float prediction[V92_ECHO_TIMING_HISTORY];
-	float observation[V92_ECHO_TIMING_HISTORY];
-	float half_width[V92_ECHO_TIMING_HISTORY];
+	float observation[V92_ECHO_TIMING_OBSERVATIONS];
+	float half_width[V92_ECHO_TIMING_OBSERVATIONS];
 	struct v92_residual inverse;
 	double gain, offset;
 	double step[V92_CPD_MAX_CONSTELLATIONS];
