@@ -187,35 +187,30 @@ void v92_upstream_model_init(struct v92_upstream_data_rx *receiver)
 void v92_upstream_model_observe(struct v92_upstream_model *model,
 	const struct v92_pcm_frame_decision *decision, const struct v92_upstream_data_line *line)
 {
-	const struct v92_pcm_frame *frame = &decision->frame;
 	if (model->residual_acquiring) {
 		for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; i++)
 			if (!line->wire_known[i] || !line->received[i]) {
 				close_acquisition(model);
 				return;
 			}
-		size_t offset = line->received_frames * V92_PCM_MAPPING_FRAME_SYMBOLS;
-		for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; i++) {
-			model->x[offset + i] = decision->predicted_samples[i];
-			model->raw[offset + i] = line->raw[i];
-			model->wire_octet[offset + i] = line->octet[i];
-			model->host[offset + i] = line->host_samples[i];
-		}
+	} else if (!model->acquiring || line->received_frames >= V92_B1U_ACQUISITION_FRAMES) {
 		return;
 	}
-	if (!model->acquiring || line->received_frames >= V92_B1U_ACQUISITION_FRAMES)
-		return;
 	size_t offset = line->received_frames * V92_PCM_MAPPING_FRAME_SYMBOLS;
-
-	/* V.92 6.4.2 permits any representative in the encoded residue class.
-	 * Known B1u bits constrain that class, not the peer's power-selection
-	 * policy. Train from the received points and reconstructed filter state,
-	 * never a locally encoded waveform. The held-out half of B1u still
-	 * validates the resulting fit with unconstrained bit decisions. */
-	memcpy(model->x + offset, frame->x, sizeof(frame->x));
-	memcpy(model->u + offset, frame->u, sizeof(frame->u));
+	if (model->residual_acquiring) {
+		for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; i++)
+			model->x[offset + i] = decision->predicted_samples[i];
+	} else {
+		/* V.92 6.4.2 permits any representative in the encoded residue
+		 * class. Known B1u bits constrain that class, not the peer's power
+		 * selection. Retain received points and reconstructed filter state;
+		 * held-out B1u still uses unconstrained bit decisions. */
+		const struct v92_pcm_frame *frame = &decision->frame;
+		memcpy(model->x + offset, frame->x, sizeof(frame->x));
+		memcpy(model->u + offset, frame->u, sizeof(frame->u));
+		memcpy(model->wire + offset, line->wire, sizeof(line->wire));
+	}
 	memcpy(model->raw + offset, line->raw, sizeof(line->raw));
-	memcpy(model->wire + offset, line->wire, sizeof(line->wire));
 	memcpy(model->host + offset, line->host_samples, sizeof(line->host_samples));
 	memcpy(model->octets + offset, line->octet, sizeof(line->octet));
 }
@@ -410,7 +405,7 @@ static double fit_residual_variance(const struct v92_upstream_model *model,
 	for (unsigned n = FIRST; n < V92_OBSERVATION_TRAINING; ++n) {
 		struct g711_interval bin;
 		if (!pcm_gain_observed_cell(&line->host.bounds, law,
-		    model->wire_octet[n], model->host[n], &bin)) return 0.;
+		    model->octets[n], model->host[n], &bin)) return 0.;
 		double correction = model->raw[n] - line->polarity * (double)model->host[n];
 		struct g711_probability_interval bounds = g711_probability_bounds(bin);
 		double lower = bounds.lower * line->host.gain;

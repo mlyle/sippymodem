@@ -4379,7 +4379,8 @@ static bool test_noise_acquisition_zero_cells(int polarity)
 		v92_upstream_model_fit(&rx.model, &rx.line, &rx.decoder);
 		++rx.line.received_frames;
 		CHECK(rx.line.residual.active && v92_upstream_model_is_valid(&rx) &&
-		      memory_region_is_zero(rx.model.wire, sizeof(rx.model.wire)),
+		      memory_region_is_zero(rx.model.wire, sizeof(rx.model.wire)) &&
+		      memory_region_is_zero(rx.model.octets, sizeof(rx.model.octets)),
 		      "noise acquisition did not freeze and clear its scratch");
 		variance[sign] = rx.model.residual_variance;
 		gain[sign] = rx.line.calibration.gain;
