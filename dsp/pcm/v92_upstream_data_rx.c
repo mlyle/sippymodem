@@ -420,6 +420,26 @@ static void track_bias(struct v92_upstream_data_line *line,
 	line->tracking.frames = 0;
 }
 
+/* Stage and publish disjoint line transactions with the same coordinate
+ * owner. Raw reception never reads equalizer observations: retain the
+ * receiver's initialized inactive storage rather than transacting it. */
+static void copy_line(struct v92_upstream_data_line *to,
+	const struct v92_upstream_data_line *from)
+{
+	if (from->plan.observation != V92_PCM_FRAME_CONSTELLATION) {
+		*to = *from;
+		return;
+	}
+	const size_t tail = offsetof(struct v92_upstream_data_line, plan);
+	_Static_assert(offsetof(struct v92_upstream_data_line, plan) ==
+		offsetof(struct v92_upstream_data_line, observations) +
+		sizeof(((struct v92_upstream_data_line *)0)->observations),
+		"line transaction must retain every field after the observations");
+	memcpy(to, from, offsetof(struct v92_upstream_data_line, raw) + sizeof(from->raw));
+	memcpy((unsigned char *)to + tail, (const unsigned char *)from + tail,
+		sizeof(*to) - tail);
+}
+
 static enum v92_upstream_data_rx_result receive_frame(
 	struct v92_upstream_data_rx *receiver, struct v92_upstream_data_line *line,
 	struct v92_upstream_data_frame *frame)
@@ -551,7 +571,7 @@ static enum v92_upstream_data_rx_result receive_frame(
 		return fail(receiver, V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE);
 	line->received_frames++;
 	line->symbol_count = 0u;
-	memset(line->observations, 0, sizeof(line->observations));
+	memset(line->observations, 0, raw ? sizeof(line->raw) : sizeof(line->observations));
 	memset(line->samples, 0, sizeof(line->samples));
 	memset(line->correction, 0, sizeof(line->correction));
 	memset(line->wire, 0, sizeof(line->wire));
@@ -564,7 +584,7 @@ static enum v92_upstream_data_rx_result receive_frame(
 	if (alternate_active)
 		memcpy(&receiver->model.alternate, &model.alternate,
 			sizeof(model) - model_core);
-	receiver->line = *line;
+	copy_line(&receiver->line, line);
 	if (budgeted) receiver->input.frame_budget--;
 	*frame = generated;
 	return V92_UPSTREAM_DATA_RX_FRAME;
@@ -599,7 +619,7 @@ static enum v92_upstream_data_rx_result decode_sample(
 		 receiver->line.equalizer.fill > receiver->line.equalizer.decision_delay);
 	line = direct ? &receiver->line : &next;
 	if (!direct)
-		next = receiver->line;
+		copy_line(&next, &receiver->line);
 	if (line->plan.observation == V92_PCM_FRAME_CONSTELLATION) {
 		++line->input_samples;
 		if (line->delay_remaining != 0u) {
