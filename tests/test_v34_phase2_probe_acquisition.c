@@ -147,25 +147,18 @@ static bool stream_to_measurement(struct test_stream *stream)
 					      stream->leading_samples &&
 			      event.probe_energy_fraction > 0.99,
 			      "probe acquisition diagnostics changed");
-		if (event.kind == V34_PHASE2_PROBE_ACQUISITION_EVENT_L2_STARTED)
-			CHECK(v34_phase2_probe_acquisition_receive_gain(
-				      &stream->acquisition, &l1_receive_gain) ==
-				      V34_PHASE2_PROBE_ACQUISITION_OK &&
+		if (event.kind == V34_PHASE2_PROBE_ACQUISITION_EVENT_L2_STARTED) {
+			l1_receive_gain = stream->acquisition.gain.gain;
+			CHECK(stream->acquisition.gain.mode == V34_GAIN_FROZEN &&
 			      l1_receive_gain > 0,
 			      "probe acquisition did not freeze L1 gain");
-		if (event.kind ==
-		    V34_PHASE2_PROBE_ACQUISITION_EVENT_MEASUREMENT_READY) {
-			int16_t measured_receive_gain = 0;
-
-			CHECK(event.l2_samples ==
-				      V34_PHASE2_PROBE_L1_SAMPLES &&
-			      v34_phase2_probe_acquisition_receive_gain(
-				      &stream->acquisition,
-				      &measured_receive_gain) ==
-				      V34_PHASE2_PROBE_ACQUISITION_OK &&
-			      measured_receive_gain == l1_receive_gain,
-			      "L2 measurement changed the frozen L1 gain");
 		}
+		if (event.kind ==
+		    V34_PHASE2_PROBE_ACQUISITION_EVENT_MEASUREMENT_READY)
+			CHECK(event.l2_samples == V34_PHASE2_PROBE_L1_SAMPLES &&
+			      stream->acquisition.gain.mode == V34_GAIN_FROZEN &&
+			      stream->acquisition.gain.gain == l1_receive_gain,
+			      "L2 measurement changed the frozen L1 gain");
 	}
 	CHECK(stream->acquisition.phase ==
 		      V34_PHASE2_PROBE_ACQUISITION_RECEIVING &&
@@ -207,14 +200,11 @@ static bool test_short_l2(void)
 		      event.kind == V34_PHASE2_PROBE_ACQUISITION_EVENT_COMPLETED &&
 		      event.l2_samples == V34_PHASE2_PROBE_PERIOD_SAMPLES &&
 		      v34_phase2_probe_acquisition_measure(
-			      &stream.acquisition, &measurement) ==
+			      &stream.acquisition, &measurement, &gain) ==
 			      V34_PHASE2_PROBE_ACQUISITION_OK &&
 		      measurement.l1.sample_count == V34_PHASE2_PROBE_L1_SAMPLES &&
 		      measurement.l2.sample_count == V34_PHASE2_PROBE_PERIOD_SAMPLES &&
 		      v34_phase2_probe_measurement_is_valid(&measurement) &&
-		      v34_phase2_probe_acquisition_receive_gain(
-			      &stream.acquisition, &gain) ==
-			      V34_PHASE2_PROBE_ACQUISITION_OK &&
 		      gain == TEST_RECEIVE_GAIN[codec],
 		      "short L2 handoff changed measurement or L1 gain: codec %d", codec);
 	}
@@ -237,10 +227,7 @@ static bool check_measurement_and_completion(
 	CHECK(stream_init(&stream, codec, leading_samples) &&
 	      stream_to_measurement(&stream) &&
 	      v34_phase2_probe_acquisition_measure(
-		      &stream.acquisition, &measurement) ==
-		      V34_PHASE2_PROBE_ACQUISITION_OK &&
-	      v34_phase2_probe_acquisition_receive_gain(
-		      &stream.acquisition, &receive_gain) ==
+		      &stream.acquisition, &measurement, &receive_gain) ==
 		      V34_PHASE2_PROBE_ACQUISITION_OK &&
 	      receive_gain == TEST_RECEIVE_GAIN[codec],
 	      "probe measurement did not complete for codec %d", codec);
@@ -265,7 +252,7 @@ static bool check_measurement_and_completion(
 		      "extended L2 emitted an event at sample %u", index);
 	}
 	CHECK(v34_phase2_probe_acquisition_measure(
-		      &stream.acquisition, &measurement) ==
+		      &stream.acquisition, &measurement, &receive_gain) ==
 		      V34_PHASE2_PROBE_ACQUISITION_OK &&
 	      measurement.l2_samples ==
 		      V34_PHASE2_PROBE_L1_SAMPLES +
@@ -274,9 +261,6 @@ static bool check_measurement_and_completion(
 		      0 &&
 	      memcmp(&measurement.l2, &initial.l2, sizeof(measurement.l2)) ==
 		      0 &&
-	      v34_phase2_probe_acquisition_receive_gain(
-		      &stream.acquisition, &receive_gain) ==
-		      V34_PHASE2_PROBE_ACQUISITION_OK &&
 	      receive_gain == initial_receive_gain,
 	      "extended L2 changed fixed probe measurements");
 	CHECK(v34_phase2_probe_acquisition_sample(
@@ -289,12 +273,22 @@ static bool check_measurement_and_completion(
 			      TEST_EXTRA_L2_SAMPLES &&
 	      stream.acquisition.phase ==
 		      V34_PHASE2_PROBE_ACQUISITION_COMPLETE &&
-	      v34_phase2_probe_acquisition_receive_gain(
-		      &stream.acquisition, &receive_gain) ==
+	      v34_phase2_probe_acquisition_measure(
+		      &stream.acquisition, &measurement, &receive_gain) ==
 		      V34_PHASE2_PROBE_ACQUISITION_OK &&
 	      receive_gain == initial_receive_gain,
 	      "probe acquisition did not complete without consuming the next signal");
 	before = stream.acquisition;
+	initial = measurement;
+	CHECK(v34_phase2_probe_acquisition_measure(
+		      &stream.acquisition, &measurement, &stream.acquisition.gain.gain) ==
+		      V34_PHASE2_PROBE_ACQUISITION_INVALID_ARGUMENT &&
+	      v34_phase2_probe_acquisition_measure(
+		      &stream.acquisition, &measurement, (int16_t *)(void *)&measurement) ==
+		      V34_PHASE2_PROBE_ACQUISITION_INVALID_ARGUMENT &&
+	      memcmp(&stream.acquisition, &before, sizeof(before)) == 0 &&
+	      memcmp(&measurement, &initial, sizeof(initial)) == 0,
+	      "probe handoff changed state or output on aliased gain");
 	CHECK(v34_phase2_probe_acquisition_sample(
 		      &stream.acquisition, 1234, false, &event) ==
 		      V34_PHASE2_PROBE_ACQUISITION_OK &&
@@ -436,10 +430,7 @@ static bool test_validation(void)
 	      memcmp(&acquisition, &before, sizeof(before)) == 0 &&
 	      memcmp(&event, &event_before, sizeof(event)) == 0 &&
 	      v34_phase2_probe_acquisition_measure(
-		      &acquisition, &measurement) ==
-		      V34_PHASE2_PROBE_ACQUISITION_INVALID_ARGUMENT &&
-	      v34_phase2_probe_acquisition_receive_gain(
-		      &acquisition, &receive_gain) ==
+		      &acquisition, &measurement, &receive_gain) ==
 		      V34_PHASE2_PROBE_ACQUISITION_INVALID_ARGUMENT &&
 	      memcmp(&measurement, &measurement_before, sizeof(measurement)) ==
 		      0 &&
@@ -473,16 +464,13 @@ static bool test_validation(void)
 		      &acquisition, 0, false, NULL) ==
 		      V34_PHASE2_PROBE_ACQUISITION_INVALID_ARGUMENT &&
 	      v34_phase2_probe_acquisition_measure(
-		      NULL, &measurement) ==
+		      NULL, &measurement, &receive_gain) ==
 		      V34_PHASE2_PROBE_ACQUISITION_INVALID_ARGUMENT &&
 	      v34_phase2_probe_acquisition_measure(
-		      &acquisition, NULL) ==
+		      &acquisition, NULL, &receive_gain) ==
 		      V34_PHASE2_PROBE_ACQUISITION_INVALID_ARGUMENT &&
-	      v34_phase2_probe_acquisition_receive_gain(
-		      NULL, &receive_gain) ==
-		      V34_PHASE2_PROBE_ACQUISITION_INVALID_ARGUMENT &&
-	      v34_phase2_probe_acquisition_receive_gain(
-		      &acquisition, NULL) ==
+	      v34_phase2_probe_acquisition_measure(
+		      &acquisition, &measurement, NULL) ==
 		      V34_PHASE2_PROBE_ACQUISITION_INVALID_ARGUMENT,
 	      "probe acquisition null validation changed");
 	return true;

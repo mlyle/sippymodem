@@ -139,6 +139,7 @@ static bool check_reciprocal_probe(
 	enum test_codec codec, size_t delay_samples)
 {
 	struct v34_phase2_probe_receiver_measurement measurement;
+	int16_t receive_gain;
 	struct v34_phase2_reciprocal_probe caller_terminal;
 	struct probe_observation observation;
 	struct test_pair pair;
@@ -246,8 +247,9 @@ static bool check_reciprocal_probe(
 			      .control.round_trip_delay_samples,
 	      "final Tone A did not end caller L2 within its RTD-adjusted bound");
 	CHECK(v34_phase2_reciprocal_probe_measure(
-		      &pair.answerer.reciprocal_probe, &measurement) ==
+		      &pair.answerer.reciprocal_probe, &measurement, &receive_gain) ==
 		      PHASE2_RECIPROCAL_PROBE_OK &&
+	      receive_gain > 0 &&
 	      measurement.l1.sample_count ==
 		      V34_PHASE2_PROBE_L1_SAMPLES &&
 	      measurement.l2.sample_count ==
@@ -467,10 +469,7 @@ static bool test_completed_concurrent_probe_handoff(void)
 	CHECK(v34_phase2_probe_turnaround_is_valid(&answerer_turnaround) &&
 	      v34_phase2_probe_acquisition_measure(
 		      &answerer_turnaround.initial_probe.concurrent_receive,
-		      &expected) == V34_PHASE2_PROBE_ACQUISITION_OK &&
-	      v34_phase2_probe_acquisition_receive_gain(
-		      &answerer_turnaround.initial_probe.concurrent_receive,
-		      &expected_gain) == V34_PHASE2_PROBE_ACQUISITION_OK &&
+		      &expected, &expected_gain) == V34_PHASE2_PROBE_ACQUISITION_OK &&
 	      v34_phase2_reciprocal_probe_init(
 		      &answerer, &answerer_turnaround) ==
 		      PHASE2_RECIPROCAL_PROBE_OK,
@@ -480,10 +479,7 @@ static bool test_completed_concurrent_probe_handoff(void)
 	      answerer.control.path.receive.phase ==
 		      V34_PHASE2_PROBE_ACQUISITION_COMPLETE &&
 	      v34_phase2_reciprocal_probe_measure(
-		      &answerer, &retained) ==
-		      PHASE2_RECIPROCAL_PROBE_OK &&
-	      v34_phase2_reciprocal_probe_receive_gain(
-		      &answerer, &retained_gain) ==
+		      &answerer, &retained, &retained_gain) ==
 		      PHASE2_RECIPROCAL_PROBE_OK &&
 	      memcmp(&retained, &expected, sizeof(retained)) == 0 &&
 	      retained_gain == expected_gain,
@@ -682,6 +678,7 @@ static bool test_late_tone_after_l2_limit(void)
 static bool test_validation(void)
 {
 	struct v34_phase2_probe_turnaround caller_turnaround;
+	int16_t receive_gain;
 	struct v34_phase2_probe_turnaround answerer_turnaround;
 	struct v34_phase2_probe_turnaround unready;
 	struct v34_phase2_reciprocal_probe probe;
@@ -745,7 +742,7 @@ static bool test_validation(void)
 	invalid.control.phase =
 		PHASE2_RECIPROCAL_PROBE_SIGNAL_A_RECEIVING;
 	CHECK(!v34_phase2_reciprocal_probe_is_valid(&invalid) &&
-	      v34_phase2_reciprocal_probe_measure(&probe, NULL) ==
+	      v34_phase2_reciprocal_probe_measure(&probe, NULL, &receive_gain) ==
 		      PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT &&
 	      strcmp(
 		      phase2_reciprocal_probe_result_name(

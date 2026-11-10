@@ -564,13 +564,8 @@ static bool enter_reciprocal_probe(
 		    V34_PHASE2_PROBE_ACQUISITION_COMPLETE &&
 	    !phase2->remote_probe_stored) {
 		if (v34_phase2_initial_probe_measure(
-			    initial, &measurement) !=
-			    PHASE2_INITIAL_PROBE_OK ||
-		    v34_phase2_initial_probe_receive_gain(
-			    initial, &receive_gain) !=
-			    PHASE2_INITIAL_PROBE_OK ||
-		    !v34_phase2_probe_measurement_is_valid(&measurement) ||
-		    receive_gain <= 0)
+			    initial, &measurement,
+			    &receive_gain) != PHASE2_INITIAL_PROBE_OK)
 			return false;
 		retain_concurrent = true;
 	}
@@ -690,15 +685,8 @@ static bool sample_initial_probe(
 		int16_t receive_gain;
 
 		if (v34_phase2_initial_probe_measure(
-			    &phase2->state.initial_probe,
-			    &measurement) !=
-		    PHASE2_INITIAL_PROBE_OK ||
-		    v34_phase2_initial_probe_receive_gain(
-			    &phase2->state.initial_probe, &receive_gain) !=
-			    PHASE2_INITIAL_PROBE_OK ||
-		    !v34_phase2_probe_measurement_is_valid(
-			    &measurement) ||
-		    receive_gain <= 0)
+			    &phase2->state.initial_probe, &measurement,
+			    &receive_gain) != PHASE2_INITIAL_PROBE_OK)
 			return false;
 		phase2->remote_probe = measurement;
 		phase2->remote_receive_gain = receive_gain;
@@ -768,16 +756,8 @@ static bool sample_reciprocal_probe(
 		int16_t receive_gain;
 
 		if (v34_phase2_reciprocal_probe_measure(
-			    &phase2->state.reciprocal_probe,
-			    &measurement) !=
-		    PHASE2_RECIPROCAL_PROBE_OK ||
-		    v34_phase2_reciprocal_probe_receive_gain(
-			    &phase2->state.reciprocal_probe,
-			    &receive_gain) !=
-			    PHASE2_RECIPROCAL_PROBE_OK ||
-		    !v34_phase2_probe_measurement_is_valid(
-			    &measurement) ||
-		    receive_gain <= 0)
+			    &phase2->state.reciprocal_probe, &measurement,
+			    &receive_gain) != PHASE2_RECIPROCAL_PROBE_OK)
 			return false;
 		phase2->remote_probe = measurement;
 		phase2->remote_receive_gain = receive_gain;

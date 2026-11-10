@@ -67,6 +67,7 @@ static bool check_early_probe_prefix(enum test_codec codec, bool early)
 	struct v34_phase2_initial_probe transmit_only;
 	struct v34_phase2_probe_sequence source;
 	struct v34_phase2_probe_receiver_measurement measurement;
+	int16_t receive_gain;
 	uint16_t tail = 0;
 	bool injected = false, measured = false, handed_off = false;
 	bool completed = false;
@@ -150,7 +151,7 @@ static bool check_early_probe_prefix(enum test_codec codec, bool early)
 		}
 	}
 	CHECK(completed && source.samples_emitted == 2 * V34_PHASE2_PROBE_L1_SAMPLES + 1 &&
-	      v34_phase2_initial_probe_measure(&initial, &measurement) ==
+	      v34_phase2_initial_probe_measure(&initial, &measurement, &receive_gain) ==
 		      PHASE2_INITIAL_PROBE_OK,
 	      "probe prefix lost samples (codec=%d early=%d samples=%u complete=%d)",
 	      codec, early, source.samples_emitted, completed);
@@ -251,6 +252,7 @@ static bool check_initial_probe_turn(
 	enum test_codec codec, size_t delay_samples)
 {
 	struct v34_phase2_probe_receiver_measurement measurement;
+	int16_t receive_gain;
 	struct test_pair pair;
 	struct turn_observation observation;
 	size_t stable_samples = 0;
@@ -321,8 +323,9 @@ static bool check_initial_probe_turn(
 			      .round_trip_delay_samples,
 	      "tone response did not end answerer L2 within its bound");
 	CHECK(v34_phase2_initial_probe_measure(
-		      &pair.caller.initial_probe, &measurement) ==
+		      &pair.caller.initial_probe, &measurement, &receive_gain) ==
 		      PHASE2_INITIAL_PROBE_OK &&
+	      receive_gain > 0 &&
 	      measurement.l1.sample_count ==
 		      V34_PHASE2_PROBE_L1_SAMPLES &&
 	      measurement.l2.sample_count ==
@@ -471,10 +474,7 @@ static bool test_answerer_receives_concurrent_probe(void)
 	      answerer.concurrent_receive.phase ==
 		      V34_PHASE2_PROBE_ACQUISITION_COMPLETE &&
 	      v34_phase2_initial_probe_measure(
-		      &answerer, &measurement) ==
-		      PHASE2_INITIAL_PROBE_OK &&
-	      v34_phase2_initial_probe_receive_gain(
-		      &answerer, &receive_gain) ==
+		      &answerer, &measurement, &receive_gain) ==
 		      PHASE2_INITIAL_PROBE_OK &&
 	      measurement.l1.sample_count ==
 		      V34_PHASE2_PROBE_L1_SAMPLES &&
@@ -848,10 +848,7 @@ static bool test_concurrent_probe_crosses_turnaround(void)
 	}
 	CHECK(complete &&
 	      v34_phase2_initial_probe_measure(
-		      &turnaround.initial_probe, &measurement) ==
-		      PHASE2_INITIAL_PROBE_OK &&
-	      v34_phase2_initial_probe_receive_gain(
-		      &turnaround.initial_probe, &receive_gain) ==
+		      &turnaround.initial_probe, &measurement, &receive_gain) ==
 		      PHASE2_INITIAL_PROBE_OK &&
 	      measurement.l1.sample_count ==
 		      V34_PHASE2_PROBE_L1_SAMPLES &&
@@ -1162,6 +1159,7 @@ static bool test_validation(void)
 	struct v34_info0 local_capabilities =
 		test_v34_phase2_capabilities(
 			V34_CALLING_STATION);
+	int16_t receive_gain;
 	struct v34_phase2_ranging unready;
 	struct v34_phase2_ranging caller_ranging;
 	struct v34_phase2_ranging answerer_ranging;
@@ -1229,7 +1227,7 @@ static bool test_validation(void)
 	invalid.control.phase =
 		PHASE2_INITIAL_PROBE_SIGNAL_A_TRANSMITTING;
 	CHECK(!v34_phase2_initial_probe_is_valid(&invalid) &&
-	      v34_phase2_initial_probe_measure(&probe, NULL) ==
+	      v34_phase2_initial_probe_measure(&probe, NULL, &receive_gain) ==
 		      PHASE2_INITIAL_PROBE_INVALID_ARGUMENT,
 	      "validation contract changed");
 	return true;

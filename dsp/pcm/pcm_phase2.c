@@ -929,15 +929,8 @@ static bool sample_initial_probe(
 	case PHASE2_INITIAL_PROBE_EVENT_REMOTE_PROBE_COMPLETE:
 		if (phase2->local_role != V90_DIGITAL_MODEM ||
 		    v90_phase2_initial_probe_measure(
-			    &phase2->state.initial_probe,
-			    &phase2->remote_probe) != PHASE2_INITIAL_PROBE_OK ||
-		    v90_phase2_initial_probe_receive_gain(
-			    &phase2->state.initial_probe,
-			    &phase2->remote_receive_gain) !=
-			    PHASE2_INITIAL_PROBE_OK ||
-		    !v34_phase2_probe_measurement_is_valid(
-			    &phase2->remote_probe) ||
-		    phase2->remote_receive_gain <= 0)
+			    &phase2->state.initial_probe, &phase2->remote_probe,
+			    &phase2->remote_receive_gain) != PHASE2_INITIAL_PROBE_OK)
 			return false;
 		phase2->remote_probe_stored = true;
 		if (!enter_turnaround(phase2, event))
@@ -1015,15 +1008,8 @@ static bool sample_reciprocal_probe(
 	case PHASE2_RECIPROCAL_PROBE_EVENT_REMOTE_PROBE_MEASURED:
 		if (phase2->local_role != V90_ANALOG_MODEM ||
 		    v90_phase2_reciprocal_probe_measure(
-			    &phase2->state.reciprocal_probe,
-			    &phase2->remote_probe) != PHASE2_RECIPROCAL_PROBE_OK ||
-		    v90_phase2_reciprocal_probe_receive_gain(
-			    &phase2->state.reciprocal_probe,
-			    &phase2->remote_receive_gain) !=
-			    PHASE2_RECIPROCAL_PROBE_OK ||
-		    !v34_phase2_probe_measurement_is_valid(
-			    &phase2->remote_probe) ||
-		    phase2->remote_receive_gain <= 0)
+			    &phase2->state.reciprocal_probe, &phase2->remote_probe,
+			    &phase2->remote_receive_gain) != PHASE2_RECIPROCAL_PROBE_OK)
 			return false;
 		phase2->remote_probe_stored = true;
 		event->kind = PCM_PHASE2_EVENT_READY_FOR_INFO1;

@@ -225,26 +225,13 @@ static const struct v34_phase2_probe_acquisition *receive_acquisition(
 
 enum phase2_initial_probe_result v34_phase2_initial_probe_measure(
 	const struct v34_phase2_initial_probe *probe,
-	struct v34_phase2_probe_receiver_measurement *measurement)
-{
-	const struct v34_phase2_probe_acquisition *receive = receive_acquisition(probe);
-
-	if (receive == NULL || measurement == NULL ||
-	    v34_phase2_probe_acquisition_measure(receive, measurement) !=
-		    V34_PHASE2_PROBE_ACQUISITION_OK)
-		return PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
-	return PHASE2_INITIAL_PROBE_OK;
-}
-
-enum phase2_initial_probe_result
-v34_phase2_initial_probe_receive_gain(
-	const struct v34_phase2_initial_probe *probe,
+	struct v34_phase2_probe_receiver_measurement *measurement,
 	int16_t *receive_gain)
 {
 	const struct v34_phase2_probe_acquisition *receive = receive_acquisition(probe);
 
-	if (receive == NULL || receive_gain == NULL ||
-	    v34_phase2_probe_acquisition_receive_gain(receive, receive_gain) !=
+	if (v34_phase2_probe_acquisition_measure(
+		    receive, measurement, receive_gain) !=
 		    V34_PHASE2_PROBE_ACQUISITION_OK)
 		return PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
 	return PHASE2_INITIAL_PROBE_OK;

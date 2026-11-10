@@ -869,6 +869,7 @@ static bool check_initial_probe(enum test_codec codec)
 	struct test_delay_line analog_to_digital = { 0 };
 	struct test_delay_line digital_to_analog = { 0 };
 	struct v34_phase2_probe_receiver_measurement measurement;
+	int16_t receive_gain;
 	struct v90_phase2_probe_turnaround analog_turnaround;
 	struct v90_phase2_probe_turnaround digital_turnaround;
 	struct v90_phase2_reciprocal_probe analog_reciprocal;
@@ -942,15 +943,16 @@ static bool check_initial_probe(enum test_codec codec)
 		      analog.probe.ranging.control.round_trip_delay_samples,
 	      "V.90 analog modem ended L2 outside its bounded window");
 	CHECK(v90_phase2_initial_probe_measure(
-		      &digital.probe, &measurement) ==
+		      &digital.probe, &measurement, &receive_gain) ==
 		      PHASE2_INITIAL_PROBE_OK &&
+	      receive_gain > 0 &&
 	      measurement.l1.sample_count == V34_PHASE2_PROBE_L1_SAMPLES &&
 	      measurement.l2.sample_count == V34_PHASE2_PROBE_L1_SAMPLES &&
 	      measurement.l2_samples >= V34_PHASE2_PROBE_L1_SAMPLES &&
 	      measurement.l1.harmonics[0].mean_square > 0.0 &&
 	      measurement.l2.harmonics[0].mean_square > 0.0 &&
 	      v90_phase2_initial_probe_measure(
-		      &analog.probe, &measurement) ==
+		      &analog.probe, &measurement, &receive_gain) ==
 		      PHASE2_INITIAL_PROBE_INVALID_ARGUMENT,
 	      "V.90 digital probe measurement was unavailable or malformed");
 	{
@@ -1085,15 +1087,16 @@ static bool check_initial_probe(enum test_codec codec)
 		      "V.90 reciprocal probe did not complete both role handoffs");
 	}
 	CHECK(v90_phase2_reciprocal_probe_measure(
-		      &analog_reciprocal, &measurement) ==
+		      &analog_reciprocal, &measurement, &receive_gain) ==
 		      PHASE2_RECIPROCAL_PROBE_OK &&
+	      receive_gain > 0 &&
 	      measurement.l1.sample_count == V34_PHASE2_PROBE_L1_SAMPLES &&
 	      measurement.l2.sample_count == V34_PHASE2_PROBE_L1_SAMPLES &&
 	      measurement.l2_samples == V34_PHASE2_PROBE_L1_SAMPLES &&
 	      measurement.l1.harmonics[0].mean_square > 0.0 &&
 	      measurement.l2.harmonics[0].mean_square > 0.0 &&
 	      v90_phase2_reciprocal_probe_measure(
-		      &digital_reciprocal, &measurement) ==
+		      &digital_reciprocal, &measurement, &receive_gain) ==
 		      PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT,
 		      "V.90 analog reciprocal-probe measurement was unavailable");
 	{

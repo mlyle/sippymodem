@@ -271,22 +271,6 @@ static bool receive_probe_sample(
 }
 
 enum v34_phase2_probe_acquisition_result
-v34_phase2_probe_acquisition_receive_gain(
-	const struct v34_phase2_probe_acquisition *acquisition,
-	int16_t *receive_gain)
-{
-	if (!v34_phase2_probe_acquisition_is_valid(acquisition) ||
-	    receive_gain == NULL ||
-	    memory_regions_overlap(
-		    acquisition, sizeof(*acquisition),
-		    receive_gain, sizeof(*receive_gain)) ||
-	    acquisition->gain.mode != V34_GAIN_FROZEN)
-		return V34_PHASE2_PROBE_ACQUISITION_INVALID_ARGUMENT;
-	*receive_gain = acquisition->gain.gain;
-	return V34_PHASE2_PROBE_ACQUISITION_OK;
-}
-
-enum v34_phase2_probe_acquisition_result
 v34_phase2_probe_acquisition_sample(
 	struct v34_phase2_probe_acquisition *acquisition,
 	int16_t received_sample, bool finish_l2,
@@ -325,13 +309,27 @@ v34_phase2_probe_acquisition_sample(
 enum v34_phase2_probe_acquisition_result
 v34_phase2_probe_acquisition_measure(
 	const struct v34_phase2_probe_acquisition *acquisition,
-	struct v34_phase2_probe_receiver_measurement *measurement)
+	struct v34_phase2_probe_receiver_measurement *measurement,
+	int16_t *receive_gain)
 {
+	struct v34_phase2_probe_receiver_measurement measured;
+	const struct memory_region regions[] = {
+		{ acquisition, sizeof(*acquisition) },
+		{ measurement, sizeof(*measurement) },
+		{ receive_gain, sizeof(*receive_gain) },
+	};
+
 	if (!v34_phase2_probe_acquisition_is_valid(acquisition) ||
-	    measurement == NULL ||
+	    acquisition->gain.mode != V34_GAIN_FROZEN ||
+	    acquisition->gain.gain <= 0 ||
+	    measurement == NULL || receive_gain == NULL ||
+	    memory_region_set_overlaps(regions, 3) ||
 	    v34_phase2_probe_receiver_measure(
-		    &acquisition->receiver, measurement) !=
-		    V34_PHASE2_PROBE_RECEIVER_OK)
+		    &acquisition->receiver, &measured) !=
+		    V34_PHASE2_PROBE_RECEIVER_OK ||
+	    !v34_phase2_probe_measurement_is_valid(&measured))
 		return V34_PHASE2_PROBE_ACQUISITION_INVALID_ARGUMENT;
+	*measurement = measured;
+	*receive_gain = acquisition->gain.gain;
 	return V34_PHASE2_PROBE_ACQUISITION_OK;
 }

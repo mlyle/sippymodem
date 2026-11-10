@@ -98,7 +98,8 @@ enum phase2_reciprocal_probe_result phase2_reciprocal_probe_measure(
 	const struct phase2_probe_turnaround *completed_turnaround,
 	const struct phase2_initial_probe *completed_initial_probe,
 	const struct phase2_info0_exchange *exchange,
-	struct v34_phase2_probe_receiver_measurement *measurement);
+	struct v34_phase2_probe_receiver_measurement *measurement,
+	int16_t *receive_gain);
 
 const char *phase2_reciprocal_probe_result_name(
 	enum phase2_reciprocal_probe_result result);
