@@ -3,7 +3,9 @@
 #include "pcm_r.h"
 
 #include "v90_pcm_symbol.h"
+#include "pcm_level_mean.h"
 
+#include <math.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -37,6 +39,13 @@ static bool candidates_are_valid(
 {
 	for (size_t index = 0;
 	     index < PCM_R_RX_HYPOTHESES; ++index) {
+		if (!isfinite(receiver->mean_error[index]) ||
+		    fabs(receiver->mean_error[index]) > 1.0 ||
+		    ((must_be_clear ?
+		      !(receiver->locked_hypotheses & (UINT16_C(1) << index)) :
+		      receiver->candidate_runs[index] == 0) &&
+		     receiver->mean_error[index] != 0.0))
+			return false;
 		if (receiver->candidate_runs[index] >
 		    PCM_R_RX_MIN_SYMBOLS)
 			return false;
@@ -115,7 +124,7 @@ bool pcm_r_rx_is_complete(
 static bool symbol_matches(
 	const struct pcm_r_rx *receiver,
 	const struct v90_pcm_symbol *symbol, uint8_t interval,
-	bool inverted, bool bar, bool *matched)
+	unsigned hypothesis, bool bar, bool *matched, double *mean_error)
 {
 	uint8_t expected_ucode;
 	const struct pcm_constellation *plane =
@@ -128,19 +137,62 @@ static bool symbol_matches(
 		    &plane[interval % V90_CP_FRAME_INTERVALS], 0,
 		    &expected_ucode))
 		return false;
-	if (inverted)
+	if (hypothesis >= V90_CP_FRAME_INTERVALS)
 		expected_positive = !expected_positive;
 	if (bar)
 		expected_positive = !expected_positive;
-	*matched = symbol->ucode == expected_ucode &&
-		   symbol->positive == expected_positive;
+	*matched = false;
+	*mean_error = 0.0;
+	if (symbol->positive != expected_positive)
+		return true;
+	/* Anchor each new hypothesis at the mapped level, then average ripple.
+	 * Also keep the first reversed character exact: it anchors the frame
+	 * phase and has the preceding R character's polarity, without an edge. */
+	if (symbol->ucode != expected_ucode &&
+	    ((receiver->stage == PCM_R_RX_SEARCH &&
+	      receiver->candidate_runs[hypothesis] == 0) ||
+	     (bar && receiver->stage == PCM_R_RX_SIGNAL)))
+		return true;
+	if (symbol->ucode == expected_ucode &&
+	    receiver->mean_error[hypothesis] == 0.0) {
+		*matched = true;
+		return true;
+	}
+	struct v90_pcm_symbol expected;
+	struct g711_interval cell;
+	if (!v90_pcm_symbol_make(&expected, receiver->mapping.law,
+		    expected_ucode, expected_positive) ||
+	    !g711_octet_interval(receiver->mapping.law, expected.octet, &cell))
+		return false;
+	/* Normalize by the expected cell width, never by an observed gain.
+	 * The zero prior is the fixed mapping target. Wrong polarity, amplitude
+	 * failure and discarded hypotheses clear it; silence cannot train it.
+	 * Constant adjacent levels still fail the full 240-symbol requirement. */
+	double polarity = expected_positive ? 1.0 : -1.0;
+	double width = (double)cell.upper - cell.lower + 1.0;
+	double error = polarity * ((double)symbol->sample - expected.sample) / width;
+	double lower = (expected_positive ? cell.lower - (double)expected.sample :
+		expected.sample - (double)cell.upper) / width;
+	double upper = (expected_positive ? cell.upper - (double)expected.sample :
+		expected.sample - (double)cell.lower) / width;
+	*mean_error = pcm_level_mean(receiver->mean_error[hypothesis], error);
+	*matched = *mean_error >= lower && *mean_error <= upper;
 	return true;
+}
+
+static void retain_hypotheses(struct pcm_r_rx *receiver, uint16_t mask)
+{
+	receiver->locked_hypotheses = mask;
+	for (unsigned i = 0; i < PCM_R_RX_HYPOTHESES; ++i)
+		if (!(mask & (UINT16_C(1) << i)))
+			receiver->mean_error[i] = 0.0;
 }
 
 static void reset_search(struct pcm_r_rx *receiver)
 {
 	memset(receiver->candidate_runs, 0,
 	       sizeof(receiver->candidate_runs));
+	memset(receiver->mean_error, 0, sizeof(receiver->mean_error));
 	receiver->stage = PCM_R_RX_SEARCH;
 	receiver->locked_hypotheses = 0;
 	receiver->phase = 0;
@@ -163,16 +215,18 @@ static enum pcm_r_rx_result search(
 			(uint8_t)((phase + offset) %
 				  signal_period(receiver->signal));
 		bool matched;
+		double mean_error;
 
 		if (!symbol_matches(
 			    receiver, symbol, interval,
-			    hypothesis >= V90_CP_FRAME_INTERVALS,
-			    false, &matched))
+			    hypothesis, false, &matched, &mean_error))
 			return PCM_R_RX_INTERNAL_ERROR;
 		if (!matched) {
 			receiver->candidate_runs[hypothesis] = 0;
+			receiver->mean_error[hypothesis] = 0.0;
 			continue;
 		}
+		receiver->mean_error[hypothesis] = mean_error;
 		if (receiver->candidate_runs[hypothesis] <
 		    PCM_R_RX_MIN_SYMBOLS)
 			receiver->candidate_runs[hypothesis]++;
@@ -184,7 +238,7 @@ static enum pcm_r_rx_result search(
 		(uint8_t)((phase + 1u) % signal_period(receiver->signal));
 	if (saturated == 0)
 		return PCM_R_RX_BUFFERING;
-	receiver->locked_hypotheses = saturated;
+	retain_hypotheses(receiver, saturated);
 	receiver->stage = PCM_R_RX_SIGNAL;
 	memset(receiver->candidate_runs, 0,
 	       sizeof(receiver->candidate_runs));
@@ -221,6 +275,7 @@ static enum pcm_r_rx_result receive_locked_r(
 		uint16_t bit = (uint16_t)(UINT16_C(1) << hypothesis);
 		uint8_t interval;
 		bool matched;
+		double observed, mean_error = 0.0;
 
 		if ((receiver->locked_hypotheses & bit) == 0)
 			continue;
@@ -229,30 +284,32 @@ static enum pcm_r_rx_result receive_locked_r(
 				     signal_period(receiver->signal));
 		if (!symbol_matches(
 			    receiver, symbol, interval,
-			    hypothesis >= V90_CP_FRAME_INTERVALS,
-			    false, &matched))
+			    hypothesis, false, &matched, &observed))
 			return PCM_R_RX_INTERNAL_ERROR;
-		if (matched)
+		if (matched) {
 			r |= bit;
-		if (interval % V90_CP_FRAME_INTERVALS != 0)
-			continue;
-		if (!symbol_matches(
-			    receiver, symbol, interval,
-			    hypothesis >= V90_CP_FRAME_INTERVALS,
-			    true, &matched))
-			return PCM_R_RX_INTERNAL_ERROR;
-		if (matched)
-			bar |= bit;
+			mean_error = observed;
+		}
+		if (interval % V90_CP_FRAME_INTERVALS == 0) {
+			if (!symbol_matches(receiver, symbol, interval,
+				    hypothesis, true, &matched, &observed))
+				return PCM_R_RX_INTERNAL_ERROR;
+			if (matched) {
+				bar |= bit;
+				mean_error = observed;
+			}
+		}
+		receiver->mean_error[hypothesis] = mean_error;
 	}
 	if (bar != 0) {
-		receiver->locked_hypotheses = bar;
+		retain_hypotheses(receiver, bar);
 		receiver->stage = PCM_R_RX_BAR;
 		receiver->bar_symbols = 1;
 		advance_phase(receiver);
 		return PCM_R_RX_BAR_STARTED;
 	}
 	if (r != 0) {
-		receiver->locked_hypotheses = r;
+		retain_hypotheses(receiver, r);
 		advance_phase(receiver);
 		return PCM_R_RX_BUFFERING;
 	}
@@ -271,6 +328,7 @@ static enum pcm_r_rx_result receive_r_bar(
 		uint16_t bit = (uint16_t)(UINT16_C(1) << hypothesis);
 		uint8_t interval;
 		bool matched;
+		double mean_error;
 
 		if ((receiver->locked_hypotheses & bit) == 0)
 			continue;
@@ -279,15 +337,16 @@ static enum pcm_r_rx_result receive_r_bar(
 				     signal_period(receiver->signal));
 		if (!symbol_matches(
 			    receiver, symbol, interval,
-			    hypothesis >= V90_CP_FRAME_INTERVALS,
-			    true, &matched))
+			    hypothesis, true, &matched, &mean_error))
 			return PCM_R_RX_INTERNAL_ERROR;
-		if (matched)
+		if (matched) {
 			matched_hypotheses |= bit;
+			receiver->mean_error[hypothesis] = mean_error;
+		}
 	}
 	if (matched_hypotheses == 0)
 		return restart_after_mismatch(receiver, symbol);
-	receiver->locked_hypotheses = matched_hypotheses;
+	retain_hypotheses(receiver, matched_hypotheses);
 	receiver->bar_symbols++;
 	advance_phase(receiver);
 	if (receiver->bar_symbols ==

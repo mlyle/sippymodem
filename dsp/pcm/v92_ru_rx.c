@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "v92_ru_rx.h"
+#include "pcm_level_mean.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -58,7 +59,7 @@ enum v92_ru_rx_result v92_ru_rx_sample(struct v92_ru_rx *receiver,
 	else if (receiver->mean_level == 0)
 		receiver->mean_level = level;
 	else
-		receiver->mean_level += (level - receiver->mean_level) / 6.0;
+		receiver->mean_level = pcm_level_mean(receiver->mean_level, level);
 	matched = level > 0 && fabs(receiver->mean_level - receiver->lu) <= receiver->lu * 0.25;
 	ru = !reversed && matched;
 	bar = reversed && matched;

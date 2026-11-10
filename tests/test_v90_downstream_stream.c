@@ -9,6 +9,7 @@
 #include "test.h"
 #include "pcm_downstream_state_fixture.h"
 
+#include <math.h>
 #include <string.h>
 
 enum {
@@ -663,6 +664,145 @@ static bool test_rrn_rejection(void)
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (enum pcm_r_signal signal = PCM_R_RD; signal <= PCM_R_RT; ++signal)
 			CHECK(run_rrn_rejection(law, signal), "R rejection law=%u signal=%u", law, signal);
+	return true;
+}
+
+/* Sweep codec-cell boundaries, including the highest code, without adapting
+ * the expected constellation to the received amplitude. The isolated lower
+ * codes reproduce quantized sign-edge ripple seen on a causal line. */
+static bool verify_r_cell(enum g711_law law, enum pcm_r_signal signal,
+	uint8_t peak, unsigned offset, bool inverted,
+	enum v90_pcm_mapping_plane plane, int wrong_level)
+{
+	struct v90_cp_parameters parameters = {
+		.kind = signal == PCM_R_RT ? V90_CP_TRAINING : V90_CP_DATA,
+		.law = law,
+		.selected_rate_index = signal == PCM_R_RT ? FRAME_BITS - 8 : 1,
+		.sign_redundancy = 2,
+		.constellation_count = 1,
+	};
+	struct v90_pcm_mapping mapping;
+	struct pcm_r_rx rx;
+	for (unsigned i = 0; i < 8; ++i)
+		add_ucode(&parameters.transmit_constellations[0], peak - i);
+	CHECK(v90_pcm_mapping_init(&mapping, &parameters) == V90_PCM_MAPPING_OK &&
+	      pcm_r_rx_init(&rx, &mapping, plane, signal) == PCM_R_RX_OK,
+	      "cell fixture law=%u signal=%u peak=%u", law, signal, peak);
+	unsigned end = wrong_level ? 1200u : PCM_R_SEQUENCE_SYMBOLS;
+	for (unsigned i = offset; i < end; ++i) {
+		bool bar = !wrong_level && i >= PCM_R_SYMBOLS;
+		bool positive = signal == PCM_R_RF ? i % 4u < 2u : i % 6u < 3u;
+		unsigned ripple_period = signal == PCM_R_RF ? 12u : 3u;
+		int ucode = peak + wrong_level;
+		if (!wrong_level && i % ripple_period == 0 && i != PCM_R_SYMBOLS)
+			ucode--;
+		uint8_t octet;
+		CHECK(g711_ucode_octet(law, ucode, positive != (inverted != bar), &octet),
+		      "cell source failed");
+		enum pcm_r_rx_result result = pcm_r_rx_receive(&rx, octet);
+		CHECK(result <= PCM_R_RX_BAR_COMPLETE && pcm_r_rx_is_valid(&rx),
+		      "cell receive failed law=%u signal=%u peak=%u i=%u result=%u",
+		      law, signal, peak, i, result);
+		if (result == PCM_R_RX_SIGNAL_DETECTED)
+			CHECK(i + 1u - offset >= PCM_R_RX_MIN_SYMBOLS,
+			      "ripple shortened the acquisition requirement");
+		if (wrong_level) {
+			CHECK(result == PCM_R_RX_BUFFERING && !pcm_r_rx_signal_detected(&rx),
+			      "constant adjacent amplitude acquired law=%u signal=%u peak=%u delta=%d i=%u",
+			      law, signal, peak, wrong_level, i);
+		} else if (i == PCM_R_SYMBOLS) {
+			CHECK(result == PCM_R_RX_BAR_STARTED, "ripple lost frame reversal");
+		} else if (i + 1u == end) {
+			CHECK(result == PCM_R_RX_BAR_COMPLETE && pcm_r_rx_is_complete(&rx),
+			      "ripple did not complete law=%u signal=%u peak=%u", law, signal, peak);
+		} else {
+			CHECK(result == PCM_R_RX_BUFFERING || result == PCM_R_RX_SIGNAL_DETECTED,
+			      "ripple detected an early reversal");
+		}
+	}
+	return true;
+}
+
+static bool test_r_cell_bounds(void)
+{
+	static const uint8_t peaks[] = { 7, 15, 16, 30, 31, 32, 46, 47, 48,
+		62, 63, 64, 78, 79, 80, 94, 95, 96, 110, 111, 112, 126, 127 };
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (enum pcm_r_signal signal = PCM_R_RD; signal <= PCM_R_RF; ++signal)
+			for (unsigned j = 0; j < ARRAY_LENGTH(peaks); ++j)
+				for (int wrong = -1; wrong <= 1; ++wrong) {
+					if (wrong == 1 && peaks[j] == 127)
+						continue;
+					CHECK(verify_r_cell(law, signal, peaks[j],
+					      j % (signal == PCM_R_RF ? 12u : 6u), j % 2u,
+					      j % 2u ? V90_PCM_MAPPING_CODEC : V90_PCM_MAPPING_TRANSMIT, wrong),
+					      "R cell boundary matrix failed");
+				}
+	return true;
+}
+
+static bool test_r_mean_contracts(void)
+{
+	struct v90_pcm_mapping mapping;
+	struct pcm_r_rx initial, rx, saved;
+	static const double invalid[] = { NAN, INFINITY, -INFINITY, 1.01, -1.01 };
+	CHECK(make_mapping(&mapping, G711_LAW_PCMU, V90_CP_DATA) &&
+	      pcm_r_rx_init(&initial, &mapping, V90_PCM_MAPPING_TRANSMIT,
+		      PCM_R_RD) == PCM_R_RX_OK, "mean contract fixture failed");
+	for (unsigned active = 0; active < 2; ++active)
+		for (unsigned i = 0; i < ARRAY_LENGTH(invalid); ++i) {
+			rx = initial;
+			rx.candidate_runs[0] = active;
+			rx.mean_error[0] = invalid[i];
+			saved = rx;
+			CHECK(!pcm_r_rx_is_valid(&rx) &&
+			      pcm_r_rx_receive(&rx, 0xff) == PCM_R_RX_INVALID_STATE &&
+			      memcmp(&rx, &saved, sizeof(rx)) == 0,
+			      "invalid mean mutated receiver active=%u i=%u", active, i);
+		}
+	rx = initial;
+	rx.mean_error[0] = 0.1;
+	saved = rx;
+	CHECK(!pcm_r_rx_is_valid(&rx) &&
+	      pcm_r_rx_receive(&rx, 0xff) == PCM_R_RX_INVALID_STATE &&
+	      memcmp(&rx, &saved, sizeof(rx)) == 0,
+	      "inactive hypothesis retained amplitude history");
+	return true;
+}
+
+/* Real scrambled all-one idle and changing payload, including the B1 epoch,
+ * must not be reinterpreted as R merely because some signs happen to match. */
+static bool test_r_data_rejection(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		struct v90_pcm_mapping mapping;
+		struct v90_downstream_data_tx tx;
+		struct pcm_r_rx rx[2];
+		CHECK(make_mapping(&mapping, law, V90_CP_DATA) &&
+		      v90_downstream_data_tx_init(&tx, &mapping) == V90_DOWNSTREAM_DATA_TX_OK,
+		      "data rejection fixture failed");
+		for (unsigned r = 0; r < 2; ++r)
+			CHECK(pcm_r_rx_init(&rx[r], &mapping, V90_PCM_MAPPING_TRANSMIT,
+				      r ? PCM_R_RF : PCM_R_RD) == PCM_R_RX_OK,
+			      "data rejection detector failed");
+		for (unsigned i = 0; i < 512; ++i) {
+			struct v90_pcm_frame_output output = { 0 };
+			uint8_t bits[V90_PCM_FRAME_MAX_BITS];
+			memset(bits, 1, sizeof(bits));
+			if (i >= 256)
+				make_data_bits(bits, mapping.frame_bits, i);
+			enum v90_downstream_data_tx_result result =
+				v90_downstream_data_tx_b1d_complete(&tx) ?
+				v90_downstream_data_tx_process(&tx, bits, mapping.frame_bits, &output) :
+				v90_downstream_data_tx_next_b1d(&tx, &output);
+			CHECK(result == V90_DOWNSTREAM_DATA_TX_BUFFERING ||
+			      result == V90_DOWNSTREAM_DATA_TX_SYMBOLS_READY, "data source failed");
+			for (unsigned n = 0; n < output.symbol_count; ++n)
+				for (unsigned r = 0; r < 2; ++r)
+					CHECK(pcm_r_rx_receive(&rx[r], output.symbols[n].octet) ==
+					      PCM_R_RX_BUFFERING, "scrambled data mistaken for R");
+		}
+	}
 	return true;
 }
 
@@ -1826,6 +1966,9 @@ int main(void)
 		{ "Rd/Rt and phase reversal detection", test_rrn_detection },
 		{ "Rd/Rt phase reversal rejection and recovery", test_rrn_rejection },
 		{ "Rd receiver contracts", test_rrn_contracts },
+		{ "R codec-cell ripple and adjacent-level rejection", test_r_cell_bounds },
+		{ "R amplitude history contracts", test_r_mean_contracts },
+		{ "R scrambled idle and payload rejection", test_r_data_rejection },
 		{ "Rf sequence and rejection matrix", test_rf_matrix },
 		{ "Rf contracts and recovery", test_rf_contracts },
 		{ "Rf to V.92 control handoff", test_rf_control_handoff },
