@@ -1803,6 +1803,100 @@ static bool test_independent_owner(void)
 	return true;
 }
 
+static bool parity_next(uint8_t state, unsigned residues, uint8_t *next)
+{
+	struct v34_grid_point a = {
+		2 * (int)(residues & 3u) + 1,
+		2 * (int)((residues >> 2) & 3u) + 1,
+	};
+	struct v34_grid_point b = {
+		2 * (int)((residues >> 4) & 3u) + 1,
+		2 * (int)((residues >> 6) & 3u) + 1,
+	};
+	struct v34_convolutional_input input;
+	uint8_t first, second;
+
+	CHECK(v34_grid_subset_label(&a, &first) == V34_TRELLIS_OK &&
+	      v34_grid_subset_label(&b, &second) == V34_TRELLIS_OK &&
+	      v34_convolutional_input_from_subset_labels(first, second, &input) ==
+		      V34_TRELLIS_OK, "parity kernel rejected a grid point");
+	*next = v34_convolutional_next_state_owned(V34_TRELLIS_16_STATE, state, &input);
+	CHECK(*next < 16, "parity kernel returned an invalid state");
+	return true;
+}
+
+static unsigned parity_weight(unsigned word)
+{
+	return (word & 1u) + ((word >> 1) & 1u) +
+	       ((word >> 2) & 1u) + ((word >> 3) & 1u);
+}
+
+static bool test_16_state_parity_distance(void)
+{
+	struct { uint8_t word, next; } step[16][8];
+	uint16_t distance[16][16];
+
+	for (unsigned state = 0; state < 16; ++state) {
+		for (unsigned low = 0; low < 8; ++low) {
+			unsigned word = low | (((state & 1u) ^
+				parity_weight(low) % 2u) << 3);
+			unsigned residues = 0;
+			for (unsigned j = 0; j < 4; ++j)
+				residues |= ((word >> j) & 1u) << (2 * j);
+			step[state][low].word = (uint8_t)word;
+			CHECK(parity_next((uint8_t)state, residues, &step[state][low].next),
+			      "parity transition failed");
+			for (unsigned high = 0; high < 16; ++high) {
+				unsigned shifted = residues;
+				uint8_t next;
+				for (unsigned j = 0; j < 4; ++j)
+					shifted |= ((high >> j) & 1u) << (2 * j + 1);
+				CHECK(parity_next((uint8_t)state, shifted, &next) &&
+				      next == step[state][low].next,
+				      "higher index bits changed a 16-state transition");
+			}
+		}
+		for (unsigned low = 0; low < 8; ++low)
+			CHECK(step[state][low].next == step[state][low ^ 7u].next,
+			      "complementing four parities did not remerge");
+		for (unsigned other = 0; other < 16; ++other)
+			distance[state][other] = UINT16_MAX;
+	}
+	/* Start after the first different wire word. Subsequent identical words
+	 * cost zero, but cannot turn the empty event into a distance-zero pass. */
+	for (unsigned s = 0; s < 16; ++s)
+		for (unsigned a = 0; a < 8; ++a)
+			for (unsigned b = 0; b < 8; ++b) if (a != b) {
+				uint16_t *d = &distance[step[s][a].next][step[s][b].next];
+				unsigned weight = parity_weight(step[s][a].word ^ step[s][b].word);
+				if (weight < *d) *d = (uint16_t)weight;
+			}
+	/* Nonnegative weights admit a loop-free minimizer on 16*16 state pairs.
+	 * Relax to a fixed point instead of imposing a short event horizon. */
+	bool changed = true;
+	for (unsigned pass = 0; pass < 256 && changed; ++pass) {
+		changed = false;
+		for (unsigned s = 0; s < 16; ++s)
+			for (unsigned t = 0; t < 16; ++t) if (distance[s][t] != UINT16_MAX)
+				for (unsigned a = 0; a < 8; ++a)
+					for (unsigned b = 0; b < 8; ++b) {
+						unsigned weight = parity_weight(step[s][a].word ^ step[t][b].word);
+						uint16_t *d = &distance[step[s][a].next][step[t][b].next];
+						unsigned candidate = distance[s][t] + weight;
+						if (candidate < *d) {
+							*d = (uint16_t)candidate;
+							changed = true;
+						}
+					}
+	}
+	CHECK(!changed, "parity distance relaxation did not converge");
+	unsigned minimum = UINT16_MAX;
+	for (unsigned s = 0; s < 16; ++s)
+		if (distance[s][s] < minimum) minimum = distance[s][s];
+	CHECK(minimum == 4, "16-state PCM parity distance is %u instead of four", minimum);
+	return true;
+}
+
 int main(void)
 {
 	if (!test_input_rounding_identity() || !test_b1u_measurement() || !test_b1u_measurement_contracts() ||
@@ -1811,7 +1905,7 @@ int main(void)
 	    !test_independent_owner() ||
 	    !test_model_acquisition_boundary() || !test_metric_equivalence() ||
 	    !test_rate_matrix_and_reset() ||
-	    !test_transmitter_equation_matrix() ||
+	    !test_transmitter_equation_matrix() || !test_16_state_parity_distance() ||
 	    !test_filters() || !test_causal_filter_history() ||
 	    !test_delayed_filter_stream() || !test_level_refinement() ||
 	    !test_pending_bit_validation() || !test_receiver_initialization() ||
