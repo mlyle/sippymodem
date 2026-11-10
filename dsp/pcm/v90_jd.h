@@ -50,4 +50,8 @@ enum v90_jd_result v90_jd_decode(
 	const uint8_t *frame, size_t frame_capacity,
 	struct v90_jd_parameters *parameters);
 
+/* Validate a locally owned encoded record, including zero reserved bits.
+ * Unlike peer decoding, this requires the canonical transmit payload. */
+bool v90_jd_frame_is_canonical(const uint8_t *frame, size_t frame_capacity);
+
 #endif

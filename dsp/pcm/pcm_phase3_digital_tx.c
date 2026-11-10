@@ -25,48 +25,19 @@ static bool stage_is_valid(enum pcm_phase3_digital_tx_stage stage)
 	       stage <= PCM_PHASE3_DIGITAL_TX_COMPLETE;
 }
 
-static bool v90_jd_frame_is_valid(const uint8_t *frame)
-{
-	struct v90_jd_parameters parameters;
-	uint8_t canonical[PCM_J_FRAME_BYTES];
-
-	return v90_jd_decode(
-		       frame, PCM_J_FRAME_BYTES, &parameters) == V90_JD_OK &&
-	       v90_jd_encode(
-		       &parameters, canonical, sizeof(canonical)) == V90_JD_OK &&
-	       memcmp(frame, canonical, sizeof(canonical)) == 0;
-}
-
-static bool v92_jd_frame_is_valid(const uint8_t *frame)
-{
-	struct v92_jd jd;
-	uint8_t canonical[PCM_J_FRAME_BYTES];
-
-	return v92_jd_decode(frame, PCM_J_FRAME_BYTES, &jd) == V92_J_OK &&
-	       v92_jd_encode(&jd, canonical, sizeof(canonical)) == V92_J_OK &&
-	       memcmp(frame, canonical, sizeof(canonical)) == 0;
-}
-
-static bool v92_jp_frame_is_valid(const uint8_t *frame)
-{
-	struct v92_jp jp;
-	uint8_t canonical[PCM_J_FRAME_BYTES];
-
-	return v92_jp_decode(frame, PCM_J_FRAME_BYTES, &jp) == V92_J_OK &&
-	       v92_jp_encode(&jp, canonical, sizeof(canonical)) == V92_J_OK &&
-	       memcmp(frame, canonical, sizeof(canonical)) == 0;
-}
-
 static bool frames_are_valid(
 	const struct pcm_phase3_digital_tx *transmitter)
 {
 	if (transmitter->protocol == PCM_PROTOCOL_V90)
-		return v90_jd_frame_is_valid(transmitter->jd_frame) &&
+		return v90_jd_frame_is_canonical(
+			       transmitter->jd_frame, sizeof(transmitter->jd_frame)) &&
 		       memory_region_is_zero(
 			       transmitter->jp_frame,
 			       sizeof(transmitter->jp_frame));
-	return v92_jd_frame_is_valid(transmitter->jd_frame) &&
-	       v92_jp_frame_is_valid(transmitter->jp_frame);
+	return v92_jd_frame_is_canonical(
+		       transmitter->jd_frame, sizeof(transmitter->jd_frame)) &&
+	       v92_jp_frame_is_canonical(
+		       transmitter->jp_frame, sizeof(transmitter->jp_frame));
 }
 
 static bool dil_is_unstarted(const struct v90_dil_sequence *dil)

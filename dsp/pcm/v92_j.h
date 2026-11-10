@@ -63,4 +63,10 @@ enum v92_j_result v92_jp_encode(
 enum v92_j_result v92_jp_decode(
 	const uint8_t *frame, size_t frame_capacity, struct v92_jp *jp);
 
+/* Locally owned records require the canonical payload, including zero
+ * reserved bits and the selected record identifier. Peer decoders above
+ * continue to ignore reserved bits after validating the CRC. */
+bool v92_jd_frame_is_canonical(const uint8_t *frame, size_t frame_capacity);
+bool v92_jp_frame_is_canonical(const uint8_t *frame, size_t frame_capacity);
+
 #endif /* V92_J_H */

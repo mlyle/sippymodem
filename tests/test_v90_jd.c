@@ -130,6 +130,7 @@ static bool test_reserved_bits(void)
 	replace_crc(frame);
 	CHECK(v90_jd_decode(frame, sizeof(frame), &decoded) == V90_JD_OK &&
 	      parameters_equal(&selected, &decoded) &&
+	      !v90_jd_frame_is_canonical(frame, sizeof(frame)) &&
 	      v90_jd_encode(&decoded, frame, sizeof(frame)) == V90_JD_OK &&
 	      memcmp(frame, canonical, sizeof(frame)) == 0,
 	      "Jd reserved bits were interpreted or not canonicalized");
@@ -228,6 +229,48 @@ static bool test_validation(void)
 	return true;
 }
 
+static bool test_canonical_frames(void)
+{
+	struct v90_jd_parameters selected = parameters();
+	uint8_t frame[V90_JD_FRAME_BYTES + 1u];
+	uint8_t saved[sizeof(frame)];
+
+	memset(frame, 0xa5, sizeof(frame));
+	CHECK(v90_jd_encode(&selected, frame, sizeof(frame)) == V90_JD_OK &&
+	      v90_jd_frame_is_canonical(frame, V90_JD_FRAME_BYTES) &&
+	      v90_jd_frame_is_canonical(frame, sizeof(frame)),
+	      "canonical Jd rejected or trailing capacity interpreted");
+	memcpy(saved, frame, sizeof(saved));
+	for (size_t bit = 0; bit < V90_JD_FRAME_BITS; ++bit) {
+		memcpy(frame, saved, sizeof(frame));
+		replace_bit(frame, bit, reference_bit(frame, bit) ^ 1u);
+		CHECK(!v90_jd_frame_is_canonical(frame, sizeof(frame)),
+		      "canonical Jd accepted changed wire bit %zu", bit);
+	}
+	for (size_t bit = 41; bit <= 46; ++bit) {
+		struct v90_jd_parameters decoded;
+
+		memcpy(frame, saved, sizeof(frame));
+		replace_bit(frame, bit, 1);
+		replace_crc(frame);
+		CHECK(v90_jd_decode(frame, sizeof(frame), &decoded) == V90_JD_OK &&
+		      parameters_equal(&selected, &decoded) &&
+		      !v90_jd_frame_is_canonical(frame, sizeof(frame)),
+		      "canonical Jd accepted reserved bit %zu with valid CRC", bit);
+	}
+	memcpy(frame, saved, sizeof(frame));
+	replace_bit(frame, 49, 0);
+	replace_bit(frame, 50, 0);
+	replace_crc(frame);
+	CHECK(!v90_jd_frame_is_canonical(frame, sizeof(frame)) &&
+	      !v90_jd_frame_is_canonical(NULL, V90_JD_FRAME_BYTES),
+	      "canonical Jd accepted zero lookahead or null frame");
+	for (size_t capacity = 0; capacity < V90_JD_FRAME_BYTES; ++capacity)
+		CHECK(!v90_jd_frame_is_canonical(saved, capacity),
+		      "canonical Jd accepted truncated capacity %zu", capacity);
+	return true;
+}
+
 struct test_case {
 	const char *name;
 	bool (*run)(void);
@@ -240,6 +283,7 @@ int main(void)
 		{ "reserved bits", test_reserved_bits },
 		{ "frame rejection", test_frame_rejection },
 		{ "validation and transactionality", test_validation },
+		{ "canonical local frames", test_canonical_frames },
 	};
 	unsigned int failures = 0;
 

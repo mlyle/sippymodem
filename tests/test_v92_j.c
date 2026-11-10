@@ -158,6 +158,7 @@ static bool test_reserved_bits_and_record_kind(void)
 		      PCM_J_FRAME_OK &&
 	      v92_jd_decode(frame, sizeof(frame), &decoded_jd) == V92_J_OK &&
 	      jd_equal(&jd, &decoded_jd) &&
+	      !v92_jd_frame_is_canonical(frame, sizeof(frame)) &&
 	      v92_jd_encode(&decoded_jd, frame, sizeof(frame)) == V92_J_OK &&
 	      pcm_j_frame_decode(frame, sizeof(frame), &payload) ==
 		      PCM_J_FRAME_OK &&
@@ -171,6 +172,7 @@ static bool test_reserved_bits_and_record_kind(void)
 		      PCM_J_FRAME_OK &&
 	      v92_jp_decode(frame, sizeof(frame), &decoded_jp) == V92_J_OK &&
 	      jp_equal(&jp, &decoded_jp) &&
+	      !v92_jp_frame_is_canonical(frame, sizeof(frame)) &&
 	      v92_jp_encode(&decoded_jp, frame, sizeof(frame)) == V92_J_OK &&
 	      pcm_j_frame_decode(frame, sizeof(frame), &payload) ==
 		      PCM_J_FRAME_OK &&
@@ -267,6 +269,58 @@ static bool test_rejection_and_contracts(void)
 	return true;
 }
 
+static bool test_canonical_frames(void)
+{
+	const uint32_t payloads[] = {
+		UINT32_C(0xc02a5a5a), UINT32_C(0x300080b0),
+	};
+	bool (*const validate[])(const uint8_t *, size_t) = {
+		v92_jd_frame_is_canonical, v92_jp_frame_is_canonical,
+	};
+
+	for (size_t record = 0; record < ARRAY_LENGTH(payloads); ++record) {
+		uint8_t frame[V92_J_FRAME_BYTES + 1u];
+		uint8_t saved[sizeof(frame)];
+
+		memset(frame, 0xa5, sizeof(frame));
+		CHECK(pcm_j_frame_encode(payloads[record], frame, sizeof(frame)) ==
+			      PCM_J_FRAME_OK &&
+		      validate[record](frame, V92_J_FRAME_BYTES) &&
+		      validate[record](frame, sizeof(frame)) &&
+		      !validate[record ^ 1u](frame, sizeof(frame)),
+		      "canonical J record %zu changed payload/kind/capacity", record);
+		memcpy(saved, frame, sizeof(saved));
+		for (size_t bit = 0; bit < V92_J_FRAME_BITS; ++bit) {
+			memcpy(frame, saved, sizeof(frame));
+			flip_bit(frame, bit);
+			CHECK(!validate[record](frame, sizeof(frame)),
+			      "canonical J record %zu accepted changed wire bit %zu",
+			      record, bit);
+		}
+		for (size_t bit = 0; bit < PCM_J_FRAME_PAYLOAD_BITS; ++bit) {
+			uint32_t payload = payloads[record] ^ (UINT32_C(1) << bit);
+			bool expected = record == 0 ?
+				(payload & ~UINT32_C(0xc03fffff)) == 0 &&
+				(payload >> 30) != 0 :
+				(payload & ~UINT32_C(0x7000ffff)) == 0 &&
+				(payload & (UINT32_C(1) << 28)) != 0;
+
+			CHECK(pcm_j_frame_encode(payload, frame, sizeof(frame)) ==
+				      PCM_J_FRAME_OK &&
+			      validate[record](frame, sizeof(frame)) == expected,
+			      "canonical J record %zu changed valid-CRC payload bit %zu",
+			      record, bit);
+		}
+		CHECK(!validate[record](NULL, V92_J_FRAME_BYTES),
+		      "canonical J record %zu accepted a null frame", record);
+		for (size_t capacity = 0; capacity < V92_J_FRAME_BYTES; ++capacity)
+			CHECK(!validate[record](saved, capacity),
+			      "canonical J record %zu accepted capacity %zu",
+			      record, capacity);
+	}
+	return true;
+}
+
 struct test_case {
 	const char *name;
 	bool (*run)(void);
@@ -280,6 +334,7 @@ int main(void)
 		{ "reserved bits and record kind",
 		  test_reserved_bits_and_record_kind },
 		{ "rejection and contracts", test_rejection_and_contracts },
+		{ "canonical local frames", test_canonical_frames },
 	};
 	unsigned int failures = 0;
 

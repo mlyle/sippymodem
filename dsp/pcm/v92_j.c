@@ -61,6 +61,26 @@ static uint32_t jd_payload(const struct v92_jd *jd)
 		       LOOKAHEAD_FIRST_BIT;
 }
 
+static struct v92_jd decode_jd_payload(uint32_t payload)
+{
+	return (struct v92_jd){
+		.data_rate_capability_mask = payload & V92_JD_RATE_CAPABILITY_MASK,
+		.maximum_spectral_shaping_lookahead =
+			(uint8_t)(payload >> LOOKAHEAD_FIRST_BIT),
+	};
+}
+
+bool v92_jd_frame_is_canonical(const uint8_t *frame, size_t frame_capacity)
+{
+	struct v92_jd decoded;
+	uint32_t payload;
+
+	if (pcm_j_frame_decode(frame, frame_capacity, &payload) != PCM_J_FRAME_OK)
+		return false;
+	decoded = decode_jd_payload(payload);
+	return v92_jd_is_valid(&decoded) && jd_payload(&decoded) == payload;
+}
+
 enum v92_j_result v92_jd_encode(
 	const struct v92_jd *jd, uint8_t *frame, size_t frame_capacity)
 {
@@ -86,12 +106,7 @@ enum v92_j_result v92_jd_decode(
 		return frame_result(result);
 	if ((payload & (UINT32_C(1) << RECORD_IDENTIFIER_BIT)) != 0)
 		return V92_J_WRONG_RECORD;
-	decoded = (struct v92_jd){
-		.data_rate_capability_mask =
-			payload & V92_JD_RATE_CAPABILITY_MASK,
-		.maximum_spectral_shaping_lookahead =
-			(uint8_t)(payload >> LOOKAHEAD_FIRST_BIT),
-	};
+	decoded = decode_jd_payload(payload);
 	if (!v92_jd_is_valid(&decoded))
 		return V92_J_INVALID_FRAME;
 	*jd = decoded;
@@ -110,6 +125,30 @@ static uint32_t jp_payload(const struct v92_jp *jp)
 	    V92_CONSTELLATION_8_POINT)
 		payload |= UINT32_C(1) << RENEGOTIATION_CONSTELLATION_BIT;
 	return payload;
+}
+
+static struct v92_jp decode_jp_payload(uint32_t payload)
+{
+	return (struct v92_jp){
+		.su_phase_extension_q16 = (uint16_t)payload,
+		.training_constellation =
+			(payload & (UINT32_C(1) << TRAINING_CONSTELLATION_BIT)) != 0 ?
+				V92_CONSTELLATION_8_POINT : V92_CONSTELLATION_4_POINT,
+		.rate_renegotiation_constellation =
+			(payload & (UINT32_C(1) << RENEGOTIATION_CONSTELLATION_BIT)) != 0 ?
+				V92_CONSTELLATION_8_POINT : V92_CONSTELLATION_4_POINT,
+	};
+}
+
+bool v92_jp_frame_is_canonical(const uint8_t *frame, size_t frame_capacity)
+{
+	struct v92_jp decoded;
+	uint32_t payload;
+
+	if (pcm_j_frame_decode(frame, frame_capacity, &payload) != PCM_J_FRAME_OK)
+		return false;
+	decoded = decode_jp_payload(payload);
+	return v92_jp_is_valid(&decoded) && jp_payload(&decoded) == payload;
 }
 
 enum v92_j_result v92_jp_encode(
@@ -137,20 +176,7 @@ enum v92_j_result v92_jp_decode(
 		return frame_result(result);
 	if ((payload & (UINT32_C(1) << RECORD_IDENTIFIER_BIT)) == 0)
 		return V92_J_WRONG_RECORD;
-	decoded = (struct v92_jp){
-		.su_phase_extension_q16 =
-			(uint16_t)payload,
-		.training_constellation =
-			(payload & (UINT32_C(1) <<
-				    TRAINING_CONSTELLATION_BIT)) != 0 ?
-				V92_CONSTELLATION_8_POINT :
-				V92_CONSTELLATION_4_POINT,
-		.rate_renegotiation_constellation =
-			(payload & (UINT32_C(1) <<
-				    RENEGOTIATION_CONSTELLATION_BIT)) != 0 ?
-				V92_CONSTELLATION_8_POINT :
-				V92_CONSTELLATION_4_POINT,
-	};
+	decoded = decode_jp_payload(payload);
 	if (!v92_jp_is_valid(&decoded))
 		return V92_J_INVALID_FRAME;
 	*jp = decoded;

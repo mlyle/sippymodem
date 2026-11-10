@@ -100,6 +100,18 @@ static struct v90_jd_parameters decode_payload(uint32_t payload)
 	};
 }
 
+bool v90_jd_frame_is_canonical(const uint8_t *frame, size_t frame_capacity)
+{
+	struct v90_jd_parameters decoded;
+	uint32_t payload;
+
+	if (pcm_j_frame_decode(frame, frame_capacity, &payload) != PCM_J_FRAME_OK)
+		return false;
+	decoded = decode_payload(payload);
+	return v90_jd_parameters_are_valid(&decoded) &&
+	       encode_payload(&decoded) == payload;
+}
+
 enum v90_jd_result v90_jd_decode(
 	const uint8_t *frame, size_t frame_capacity,
 	struct v90_jd_parameters *parameters)
