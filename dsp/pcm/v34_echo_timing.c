@@ -159,13 +159,15 @@ bool v34_echo_timing_prepare(struct v34_echo_timing *timing,
 			.epoch = half,
 			.real = round_shift_s32_word_to_s16((uint32_t)filtered.in_phase, 14) / scale,
 			.imaginary = round_shift_s32_word_to_s16((uint32_t)filtered.quadrature, 14) / scale,
-			.cosine = receiver->equalizer.rotate_in_phase / 16384.0,
-			.sine = -receiver->equalizer.rotate_quadrature / 16384.0,
 		};
 		/* A replacement reference awaits its own received observation. */
 		if (half % V34_ECHO_TIMING_OBSERVATION_STRIDE == 0)
 			timing->observations[(half / V34_ECHO_TIMING_OBSERVATION_STRIDE) %
-				V34_ECHO_TIMING_OBSERVATIONS].epoch = 0;
+				V34_ECHO_TIMING_OBSERVATIONS] =
+				(struct v34_echo_timing_observation){
+					.cosine = receiver->equalizer.rotate_in_phase / 16384.0,
+					.sine = -receiver->equalizer.rotate_quadrature / 16384.0,
+				};
 		if (timing->first_half == 0)
 			timing->drain_half = timing->first_half = half;
 		timing->latest_half = half;
@@ -189,10 +191,10 @@ static int observe_point(struct v34_echo_timing *timing,
 {
 	unsigned part = echo_shift_part(&timing->normal);
 	unsigned fast_part = echo_shift_part(&timing->fast);
-	double x = observation->real + point->real * point->cosine -
-		point->imaginary * point->sine;
-	double y = observation->imaginary + point->real * point->sine +
-		point->imaginary * point->cosine;
+	double x = observation->real + point->real * observation->cosine -
+		point->imaginary * observation->sine;
+	double y = observation->imaginary + point->real * observation->sine +
+		point->imaginary * observation->cosine;
 
 	for (unsigned i = 0; i < V34_ECHO_TIMING_BINS; ++i) {
 		const struct v34_echo_timing_bin *bin = &timing->bins[i];
@@ -210,8 +212,8 @@ static int observe_point(struct v34_echo_timing *timing,
 			real += reference->real * bin->weight[j];
 			imaginary += reference->imaginary * bin->weight[j];
 		}
-		double cosine = point->cosine * bin->cosine - point->sine * bin->sine;
-		double sine = point->sine * bin->cosine + point->cosine * bin->sine;
+		double cosine = observation->cosine * bin->cosine - observation->sine * bin->sine;
+		double sine = observation->sine * bin->cosine + observation->cosine * bin->sine;
 		double cost = distance(x - real * cosine + imaginary * sine) +
 			distance(y - real * sine - imaginary * cosine);
 		timing->normal.score[part][i] += cost;
@@ -247,11 +249,9 @@ int v34_echo_timing_observe(struct v34_echo_timing *timing,
 			struct v34_echo_timing_observation *received = &timing->observations[
 				(half / V34_ECHO_TIMING_OBSERVATION_STRIDE) % V34_ECHO_TIMING_OBSERVATIONS];
 
-			*received = (struct v34_echo_timing_observation){
-				.epoch = half,
-				.real = observation->decision.in_phase / timing->scale,
-				.imaginary = observation->decision.quadrature / timing->scale,
-			};
+			received->epoch = half;
+			received->real = observation->decision.in_phase / timing->scale;
+			received->imaginary = observation->decision.quadrature / timing->scale;
 		}
 	}
 	/* At most two new half-symbols are available per host sample. Leave the

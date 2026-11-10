@@ -827,8 +827,15 @@ static bool check_echo_observation_replacement(struct endpoint *caller,
 			continue;
 		struct v34_echo_timing_observation *received = &timing.observations[
 			(half / V34_ECHO_TIMING_OBSERVATION_STRIDE) % V34_ECHO_TIMING_OBSERVATIONS];
+		float cosine = data->line.equalizer.rotate_in_phase / 16384.0;
+		float sine = -data->line.equalizer.rotate_quadrature / 16384.0;
+
+		CHECK(received->epoch == 0 && received->cosine == cosine &&
+		      received->sine == sine,
+		      "prepared observation lost its pre-sample carrier rotation");
 		*received = (struct v34_echo_timing_observation){
 			.epoch = half, .real = 1., .imaginary = -1.,
+			.cosine = -2., .sine = 2.,
 		};
 		/* Replay the pre-sample cursor. Replacing that reference must retire
 		 * its old observation even when the epoch itself has not changed. */
@@ -836,8 +843,9 @@ static bool check_echo_observation_replacement(struct endpoint *caller,
 		timing.receiver_epoch = data->line.equalizer.epoch;
 		CHECK(v34_echo_timing_prepare(&timing, &caller->call.echo,
 			PCM_HOST_ECHO_FILTER, &data->line, &data->semantic.data, 0, 0) &&
-		      timing.latest_half == half && received->epoch == 0,
-		      "replaced reference retained a stale observation");
+		      timing.latest_half == half && received->epoch == 0 &&
+		      received->cosine == cosine && received->sine == sine,
+		      "replaced reference retained a stale observation or carrier rotation");
 		return true;
 	}
 	CHECK(false, "no aligned echo observation was available");

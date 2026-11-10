@@ -25,13 +25,16 @@ struct v34_echo_timing_bin {
 struct v34_echo_timing_point {
 	uint64_t epoch;
 	float real, imaginary;
-	float cosine, sine;
 };
 
-/* Equalizer observations occur at one out of four half-symbol epochs. */
+/* Equalizer observations occur at one out of four half-symbol epochs.
+ * Capture carrier rotation while preparing that epoch's reference, before
+ * the real receiver advances its controls. Other reference points need no
+ * rotation; interpolation uses only their unrotated coordinates. */
 struct v34_echo_timing_observation {
 	uint64_t epoch;
 	float real, imaginary;
+	float cosine, sine;
 };
 
 /* Owned beside the echo model, outside transactionally copied receive paths.
