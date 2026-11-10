@@ -370,56 +370,72 @@ static bool acquire_mapping_frame(
 	return true;
 }
 
+/* A queued frame changes only its point cursor. The line owner already stages
+ * its waveform, so retain just that cursor until emission succeeds. */
+static enum v34_data_stream_result emit_sample(
+	struct v34_data_stream *stream, int16_t *sample, bool *symbol_accepted)
+{
+	uint8_t cursor = stream->points.next_point;
+	struct qam_point point;
+	const struct qam_point *supplied = NULL;
+	enum v34_data_stream_result result;
+
+	if (v34_training_line_needs_point(&stream->line)) {
+		result = points_result(v34_data_points_next(&stream->points, &point));
+		if (result != V34_DATA_STREAM_OK)
+			return result;
+		supplied = &point;
+	}
+	result = line_result(v34_training_line_sample(
+		&stream->line, supplied, sample, symbol_accepted));
+	if (result != V34_DATA_STREAM_OK)
+		stream->points.next_point = cursor;
+	return result;
+}
+
 enum v34_data_stream_result v34_data_stream_sample(
 	struct v34_data_stream *stream,
 	v34_mapping_frame_source source, void *source_context,
 	int16_t *sample, bool *symbol_accepted)
 {
 	struct v34_data_stream next;
+	const struct memory_region regions[] = {
+		{ stream, sizeof(*stream) },
+		{ sample, sizeof(*sample) },
+		{ symbol_accepted, sizeof(*symbol_accepted) },
+	};
 	struct v34_mapping_frame request;
 	uint8_t primary_bits[V34_MAX_MAPPING_FRAME_BITS];
 	uint8_t auxiliary_bit;
 	const uint8_t *auxiliary;
 	int16_t generated_sample;
 	bool generated_accepted;
-	struct qam_point point;
-	const struct qam_point *point_pointer = NULL;
 	enum v34_data_stream_result result;
 
 	if (!v34_data_stream_is_valid(stream) || sample == NULL ||
-	    symbol_accepted == NULL)
+	    symbol_accepted == NULL ||
+	    memory_region_set_overlaps(regions, sizeof regions / sizeof *regions))
 		return V34_DATA_STREAM_INVALID_ARGUMENT;
+	if (!v34_data_points_needs_mapping_frame(&stream->points))
+		return emit_sample(stream, sample, symbol_accepted);
+
+	/* The source and mapper can change more than a cursor. Stage them together
+	 * with the line only at this mapping-frame acquisition boundary. */
 	next = *stream;
-	if (v34_data_points_needs_mapping_frame(&next.points)) {
-		if (next.b1_active &&
-		    v34_frame_schedule_is_complete(&next.points.schedule))
-			next.b1_active = false;
-		result = points_result(v34_data_points_preview_mapping_frame(
-			&next.points, &request));
-		if (result != V34_DATA_STREAM_OK)
-			return result;
-		if (!acquire_mapping_frame(
-			    &next, source, source_context, &request, primary_bits,
-			    &auxiliary_bit))
-			return V34_DATA_STREAM_SOURCE_FAILURE;
-		auxiliary = request.carries_auxiliary_bit ?
-			&auxiliary_bit : NULL;
-		result = points_result(v34_data_points_queue_mapping_frame(
-			&next.points, primary_bits, request.primary_bits,
-			auxiliary));
-		if (result != V34_DATA_STREAM_OK)
-			return result;
-	}
-	if (v34_training_line_needs_point(&next.line)) {
-		result = points_result(v34_data_points_next(
-			&next.points, &point));
-		if (result != V34_DATA_STREAM_OK)
-			return result;
-		point_pointer = &point;
-	}
-	result = line_result(v34_training_line_sample(
-		&next.line, point_pointer, &generated_sample,
-		&generated_accepted));
+	if (next.b1_active && v34_frame_schedule_is_complete(&next.points.schedule))
+		next.b1_active = false;
+	result = points_result(v34_data_points_preview_mapping_frame(&next.points, &request));
+	if (result != V34_DATA_STREAM_OK)
+		return result;
+	if (!acquire_mapping_frame(
+		    &next, source, source_context, &request, primary_bits, &auxiliary_bit))
+		return V34_DATA_STREAM_SOURCE_FAILURE;
+	auxiliary = request.carries_auxiliary_bit ? &auxiliary_bit : NULL;
+	result = points_result(v34_data_points_queue_mapping_frame(
+		&next.points, primary_bits, request.primary_bits, auxiliary));
+	if (result != V34_DATA_STREAM_OK)
+		return result;
+	result = emit_sample(&next, &generated_sample, &generated_accepted);
 	if (result != V34_DATA_STREAM_OK)
 		return result;
 	if (!v34_data_stream_is_valid(&next))

@@ -23,6 +23,18 @@ struct stream_configuration {
 };
 
 static unsigned int line_calibrations;
+static bool reject_line_sample;
+
+extern __typeof__(v34_training_line_sample) __real_v34_training_line_sample;
+
+enum v34_training_line_result __wrap_v34_training_line_sample(
+	struct v34_training_line *line, const struct qam_point *point,
+	int16_t *sample, bool *accepted)
+{
+	if (reject_line_sample)
+		return V34_TRAINING_LINE_CLIPPING_RISK;
+	return __real_v34_training_line_sample(line, point, sample, accepted);
+}
 
 enum v34_power_calibration_result __real_v34_line_power_calibration_begin(
 	struct v34_line_power_calibration *, const struct v34_frame_schedule *,
@@ -705,6 +717,68 @@ static bool test_transactional_boundaries(void)
 	return true;
 }
 
+static bool test_waveform_rollback(void)
+{
+	struct stream_configuration configuration = configuration_fixture();
+	struct v34_data_stream initial;
+
+	CHECK(initialize_stream(&initial, &configuration), "stream initialization failed");
+	for (unsigned phase = 0; phase < 3; ++phase) {
+		struct v34_data_stream stream = initial;
+		int16_t sample = 1234;
+		bool accepted = true;
+
+		if (phase != 0) {
+			CHECK(v34_data_stream_sample(&stream, NULL, NULL,
+				      &sample, &accepted) == V34_DATA_STREAM_OK,
+			      "could not queue the first mapping frame");
+			for (unsigned i = 0; i < 8 &&
+			     v34_training_line_needs_point(&stream.line) != (phase == 1); ++i)
+				CHECK(v34_data_stream_sample(&stream, NULL, NULL,
+					      &sample, &accepted) == V34_DATA_STREAM_OK,
+				      "could not reach the requested symbol boundary");
+			CHECK(!v34_data_points_needs_mapping_frame(&stream.points) &&
+			      v34_training_line_needs_point(&stream.line) == (phase == 1),
+			      "queued-frame boundary was not reached");
+		}
+		struct v34_data_stream before = stream;
+		sample = 1234;
+		accepted = true;
+		reject_line_sample = true;
+		enum v34_data_stream_result result = v34_data_stream_sample(
+			&stream, NULL, NULL, &sample, &accepted);
+		reject_line_sample = false;
+		CHECK(result == V34_DATA_STREAM_CLIPPING_RISK &&
+		      v34_data_streams_equal(&stream, &before) && sample == 1234 && accepted,
+		      "waveform rejection changed state or outputs at boundary %u", phase);
+	}
+	return true;
+}
+
+static bool test_sample_aliases(void)
+{
+	struct stream_configuration configuration = configuration_fixture();
+	struct v34_data_stream stream;
+	struct source_fixture source = { 0, SOURCE_GENERATED };
+	int16_t sample = 1234;
+	bool accepted = true;
+
+	CHECK(initialize_stream(&stream, &configuration) && advance_to_b1_handoff(&stream),
+	      "host-source boundary was not reached");
+	struct v34_data_stream before = stream;
+	CHECK(v34_data_stream_sample(&stream, generated_source, &source,
+		      &stream.line.nominal_peak_amplitude, &accepted) ==
+		      V34_DATA_STREAM_INVALID_ARGUMENT &&
+	      v34_data_stream_sample(&stream, generated_source, &source,
+		      &sample, &stream.b1_active) == V34_DATA_STREAM_INVALID_ARGUMENT &&
+	      v34_data_stream_sample(&stream, generated_source, &source,
+		      &sample, (bool *)(void *)&sample) == V34_DATA_STREAM_INVALID_ARGUMENT &&
+	      source.calls == 0 && v34_data_streams_equal(&stream, &before) &&
+	      sample == 1234 && accepted,
+	      "aliased outputs changed the owner, called the source, or published output");
+	return true;
+}
+
 static bool test_incremental_preparation(void)
 {
 	static const uint32_t BUDGETS[] = { 1, 23, UINT32_MAX };
@@ -785,6 +859,8 @@ int main(void)
 		{ "initialization failures", test_initialization_failures },
 		{ "B1 and host handoff", test_b1_and_host_handoff },
 		{ "transactional boundaries", test_transactional_boundaries },
+		{ "waveform rollback", test_waveform_rollback },
+		{ "sample aliases", test_sample_aliases },
 	};
 	unsigned int failures = 0;
 

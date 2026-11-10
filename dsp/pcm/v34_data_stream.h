@@ -91,7 +91,8 @@ bool v34_data_stream_is_transmitting_b1(
 
 /* Emit one line sample. Mapping-frame acquisition, queueing, B1 handoff, and
  * line emission commit together; rejected calls leave the stream and both
- * outputs unchanged. The source itself owns any external read side effects. */
+ * outputs unchanged. Owner and outputs must be disjoint. The source itself
+ * owns any external read side effects. */
 enum v34_data_stream_result v34_data_stream_sample(
 	struct v34_data_stream *stream,
 	v34_mapping_frame_source source, void *source_context,
