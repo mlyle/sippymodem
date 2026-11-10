@@ -434,6 +434,112 @@ static bool test_transactionality(void)
 	return true;
 }
 
+static bool test_independent_projection(void)
+{
+	for (unsigned taps = V34_EQUALIZER_CENTER_TAPS;
+	     taps <= V34_EQUALIZER_MAX_TAPS; ++taps) {
+		struct v34_equalizer live, expected;
+		struct v34_equalizer_history history;
+		CHECK(v34_equalizer_init_geometry(&live, taps, 2) == V34_EQUALIZER_OK,
+		      "projection geometry failed");
+		live.index = taps / 2u;
+		for (unsigned j = 0; j < taps; ++j) {
+			live.in_phase_delay[j] = patterned_word(j, 1);
+			live.quadrature_delay[j] = patterned_word(j, 2);
+		}
+		expected = live;
+		memset(expected.in_phase_delay, 0, sizeof(expected.in_phase_delay));
+		memset(expected.quadrature_delay, 0, sizeof(expected.quadrature_delay));
+		CHECK(v34_equalizer_history_init(&history, &live) == V34_EQUALIZER_OK &&
+		      history.index == live.index && history.tap_count == taps,
+		      "projection history did not inherit ring geometry");
+		for (unsigned i = 0; i < 3u * taps; ++i) {
+			/* Changing coefficients are borrowed afresh; the live signal
+			 * history and residues must never become projection state. */
+			for (unsigned j = 0; j < taps; ++j) {
+				live.in_phase_coefficient[j] = patterned_word(j + i, 3);
+				live.quadrature_coefficient[j] = patterned_word(j + i, 4);
+				live.in_phase_residue[j] = (uint16_t)patterned_word(j + i, 5);
+				live.quadrature_residue[j] = (uint16_t)patterned_word(j + i, 6);
+			}
+			memcpy(expected.in_phase_coefficient, live.in_phase_coefficient,
+			       sizeof(expected.in_phase_coefficient));
+			memcpy(expected.quadrature_coefficient, live.quadrature_coefficient,
+			       sizeof(expected.quadrature_coefficient));
+			struct v34_equalizer saved = live;
+			struct v34_analytic_sample sample = {
+				patterned_word(i, 7), patterned_word(i, 8),
+			};
+			struct v34_equalizer_accumulator actual, reference;
+			CHECK(v34_equalizer_push(&expected, sample) == V34_EQUALIZER_OK &&
+			      v34_equalizer_project(&history, &live, sample, &actual) == V34_EQUALIZER_OK,
+			      "projection rejected valid history");
+			reference_filter(&expected, &reference);
+			CHECK(actual.in_phase == reference.in_phase && actual.quadrature == reference.quadrature &&
+			      history.index == expected.index && memcmp(&live, &saved, sizeof(live)) == 0 &&
+			      memcmp(history.in_phase_delay, expected.in_phase_delay,
+				     sizeof(history.in_phase_delay)) == 0 &&
+			      memcmp(history.quadrature_delay, expected.quadrature_delay,
+				     sizeof(history.quadrature_delay)) == 0,
+			      "projection changed coefficients or fixed-point result: taps=%u i=%u", taps, i);
+		}
+	}
+	return true;
+}
+
+static bool test_projection_rejection(void)
+{
+	struct v34_equalizer live, saved;
+	struct v34_equalizer_history history, before;
+	struct v34_equalizer_accumulator output = { 123, -456 }, original = output;
+	struct v34_analytic_sample sample = { INT16_MIN, INT16_MAX };
+	CHECK(v34_equalizer_init(&live) == V34_EQUALIZER_OK &&
+	      v34_equalizer_history_init(&history, &live) == V34_EQUALIZER_OK,
+	      "projection setup failed");
+	saved = live;
+	before = history;
+	CHECK(v34_equalizer_history_init(NULL, &live) == V34_EQUALIZER_INVALID_ARGUMENT &&
+	      v34_equalizer_history_init(&history, NULL) == V34_EQUALIZER_INVALID_STATE &&
+	      v34_equalizer_history_init((struct v34_equalizer_history *)&live, &live) ==
+		      V34_EQUALIZER_INVALID_ARGUMENT &&
+	      v34_equalizer_project(NULL, &live, sample, &output) == V34_EQUALIZER_INVALID_ARGUMENT &&
+	      v34_equalizer_project(&history, NULL, sample, &output) == V34_EQUALIZER_INVALID_STATE &&
+	      v34_equalizer_project(&history, &live, sample, NULL) == V34_EQUALIZER_INVALID_ARGUMENT &&
+	      v34_equalizer_project((struct v34_equalizer_history *)&live, &live, sample, &output) ==
+		      V34_EQUALIZER_INVALID_ARGUMENT &&
+	      v34_equalizer_project(&history, &live, sample,
+		      (struct v34_equalizer_accumulator *)&history.quadrature_delay[2]) ==
+		      V34_EQUALIZER_INVALID_ARGUMENT &&
+	      v34_equalizer_project(&history, &live, sample,
+		      (struct v34_equalizer_accumulator *)&live.in_phase_coefficient[2]) ==
+		      V34_EQUALIZER_INVALID_ARGUMENT &&
+	      memcmp(&history, &before, sizeof(history)) == 0 &&
+	      memcmp(&live, &saved, sizeof(live)) == 0 &&
+	      memcmp(&output, &original, sizeof(output)) == 0,
+	      "projection alias rejection changed state or output");
+	for (unsigned invalid = 0; invalid < 3; ++invalid) {
+		history = before;
+		if (invalid == 0) history.index = history.tap_count;
+		if (invalid == 1) history.tap_count--;
+		if (invalid == 2) history.tap_count = 0;
+		struct v34_equalizer_history bad = history;
+		CHECK(v34_equalizer_project(&history, &live, sample, &output) ==
+			      V34_EQUALIZER_INVALID_STATE &&
+		      memcmp(&history, &bad, sizeof(history)) == 0 &&
+		      memcmp(&live, &saved, sizeof(live)) == 0 &&
+		      memcmp(&output, &original, sizeof(output)) == 0,
+		      "invalid projection history was consumed");
+	}
+	history = before;
+	live.initialized = false;
+	CHECK(v34_equalizer_project(&history, &live, sample, &output) == V34_EQUALIZER_INVALID_STATE &&
+	      v34_equalizer_history_init(&history, &live) == V34_EQUALIZER_INVALID_STATE &&
+	      memcmp(&history, &before, sizeof(history)) == 0 &&
+	      memcmp(&output, &original, sizeof(output)) == 0,
+	      "invalid coefficient owner changed projection");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -445,6 +551,8 @@ int main(void)
 		{ "bounded geometry", test_bounded_geometry },
 		{ "retained history", test_retained_history },
 		{ "transactionality", test_transactionality },
+		{ "independent projection", test_independent_projection },
+		{ "projection rejection", test_projection_rejection },
 	};
 	unsigned int failures = 0;
 

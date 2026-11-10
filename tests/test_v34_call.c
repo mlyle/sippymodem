@@ -839,7 +839,7 @@ static bool check_echo_observation_replacement(struct endpoint *caller,
 		};
 		/* Replay the pre-sample cursor. Replacing that reference must retire
 		 * its old observation even when the epoch itself has not changed. */
-		timing.reference_equalizer.index = data->line.equalizer.equalizer.index;
+		timing.reference_history.index = data->line.equalizer.equalizer.index;
 		timing.receiver_epoch = data->line.equalizer.epoch;
 		CHECK(v34_echo_timing_prepare(&timing, &caller->call.echo,
 			PCM_HOST_ECHO_FILTER, &data->line, &data->semantic.data, 0, 0) &&

@@ -42,6 +42,15 @@ struct v34_equalizer {
 	bool initialized;
 };
 
+/* An independently clocked signal projected through borrowed coefficients.
+ * No adaptive coefficients, residues or receiver pointers belong here. */
+struct v34_equalizer_history {
+	int16_t in_phase_delay[V34_EQUALIZER_MAX_TAPS];
+	int16_t quadrature_delay[V34_EQUALIZER_MAX_TAPS];
+	uint32_t index;
+	uint16_t tap_count;
+};
+
 enum v34_equalizer_result v34_equalizer_init(
 	struct v34_equalizer *equalizer);
 /* Select a bounded half-symbol span and whole-symbol output delay. The
@@ -62,6 +71,19 @@ enum v34_equalizer_result v34_equalizer_push(
  * exact modulo-2^32 fixed-point arithmetic for the receive controller. */
 enum v34_equalizer_result v34_equalizer_filter(
 	const struct v34_equalizer *equalizer,
+	struct v34_equalizer_accumulator *output);
+
+/* Start an empty independent history at the live equalizer's ring position.
+ * project borrows its current coefficients synchronously, pushes one sample,
+ * and evaluates the same exact FIR. Histories, coefficient owner and output
+ * must be disjoint. Rejection changes none of them; no pointer is retained. */
+enum v34_equalizer_result v34_equalizer_history_init(
+	struct v34_equalizer_history *history,
+	const struct v34_equalizer *equalizer);
+enum v34_equalizer_result v34_equalizer_project(
+	struct v34_equalizer_history *history,
+	const struct v34_equalizer *equalizer,
+	struct v34_analytic_sample sample,
 	struct v34_equalizer_accumulator *output);
 
 /* Adapt every tap while retaining the low Q16 residue. */

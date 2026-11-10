@@ -81,43 +81,92 @@ enum v34_equalizer_result v34_equalizer_push(
 
 static void accumulate_tap(
 	const struct v34_equalizer *equalizer,
+	const int16_t *in_phase_delay, const int16_t *quadrature_delay,
 	size_t sample_index, size_t coefficient_index,
 	uint32_t *in_phase, uint32_t *quadrature)
 {
 	fir_accumulate_complex_s16(
-		equalizer->in_phase_delay[sample_index],
-		equalizer->quadrature_delay[sample_index],
+		in_phase_delay[sample_index], quadrature_delay[sample_index],
 		equalizer->in_phase_coefficient[coefficient_index],
 		equalizer->quadrature_coefficient[coefficient_index],
 		in_phase, quadrature);
 }
 
-enum v34_equalizer_result v34_equalizer_filter(
+static struct v34_equalizer_accumulator filter_history(
 	const struct v34_equalizer *equalizer,
-	struct v34_equalizer_accumulator *output)
+	const int16_t *in_phase_delay, const int16_t *quadrature_delay,
+	uint32_t index)
 {
 	struct v34_equalizer_accumulator generated;
 	uint32_t in_phase = 0;
 	uint32_t quadrature = 0;
 	size_t coefficient = 0;
 
+	for (size_t sample = index;
+	     sample < equalizer->tap_count; ++sample, ++coefficient)
+		accumulate_tap(equalizer, in_phase_delay, quadrature_delay, sample, coefficient,
+			       &in_phase, &quadrature);
+	for (size_t sample = 0; sample < index;
+	     ++sample, ++coefficient)
+		accumulate_tap(equalizer, in_phase_delay, quadrature_delay, sample, coefficient,
+			       &in_phase, &quadrature);
+	generated.in_phase = (int32_t)in_phase;
+	generated.quadrature = (int32_t)quadrature;
+	return generated;
+}
+
+enum v34_equalizer_result v34_equalizer_filter(
+	const struct v34_equalizer *equalizer,
+	struct v34_equalizer_accumulator *output)
+{
 	if (output == NULL || memory_regions_overlap(
 		    equalizer, equalizer == NULL ? 0 : sizeof(*equalizer),
 		    output, sizeof(*output)))
 		return V34_EQUALIZER_INVALID_ARGUMENT;
 	if (!v34_equalizer_is_valid(equalizer))
 		return V34_EQUALIZER_INVALID_STATE;
-	for (size_t sample = equalizer->index;
-	     sample < equalizer->tap_count; ++sample, ++coefficient)
-		accumulate_tap(equalizer, sample, coefficient,
-			       &in_phase, &quadrature);
-	for (size_t sample = 0; sample < equalizer->index;
-	     ++sample, ++coefficient)
-		accumulate_tap(equalizer, sample, coefficient,
-			       &in_phase, &quadrature);
-	generated.in_phase = (int32_t)in_phase;
-	generated.quadrature = (int32_t)quadrature;
-	*output = generated;
+	*output = filter_history(equalizer, equalizer->in_phase_delay,
+		equalizer->quadrature_delay, equalizer->index);
+	return V34_EQUALIZER_OK;
+}
+
+enum v34_equalizer_result v34_equalizer_history_init(
+	struct v34_equalizer_history *history,
+	const struct v34_equalizer *equalizer)
+{
+	if (history == NULL || memory_regions_overlap(history, sizeof(*history),
+		    equalizer, equalizer == NULL ? 0 : sizeof(*equalizer)))
+		return V34_EQUALIZER_INVALID_ARGUMENT;
+	if (!v34_equalizer_is_valid(equalizer))
+		return V34_EQUALIZER_INVALID_STATE;
+	*history = (struct v34_equalizer_history){
+		.index = equalizer->index, .tap_count = equalizer->tap_count,
+	};
+	return V34_EQUALIZER_OK;
+}
+
+enum v34_equalizer_result v34_equalizer_project(
+	struct v34_equalizer_history *history,
+	const struct v34_equalizer *equalizer,
+	struct v34_analytic_sample sample,
+	struct v34_equalizer_accumulator *output)
+{
+	if (history == NULL || output == NULL ||
+	    memory_regions_overlap(history, sizeof(*history), output, sizeof(*output)) ||
+	    memory_regions_overlap(history, sizeof(*history),
+		    equalizer, equalizer == NULL ? 0 : sizeof(*equalizer)) ||
+	    memory_regions_overlap(output, sizeof(*output),
+		    equalizer, equalizer == NULL ? 0 : sizeof(*equalizer)))
+		return V34_EQUALIZER_INVALID_ARGUMENT;
+	if (!v34_equalizer_is_valid(equalizer) ||
+	    history->tap_count != equalizer->tap_count || history->index >= history->tap_count)
+		return V34_EQUALIZER_INVALID_STATE;
+	uint32_t index = history->index;
+	history->in_phase_delay[index] = sample.in_phase;
+	history->quadrature_delay[index] = sample.quadrature;
+	history->index = index + 1u == history->tap_count ? 0 : index + 1u;
+	*output = filter_history(equalizer, history->in_phase_delay,
+		history->quadrature_delay, history->index);
 	return V34_EQUALIZER_OK;
 }
 

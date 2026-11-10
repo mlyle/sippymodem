@@ -41,7 +41,7 @@ struct v34_echo_timing_observation {
  * All input pointers are borrowed only for the duration of a call. */
 struct v34_echo_timing {
 	struct v34_receive_timing reference_timing;
-	struct v34_equalizer reference_equalizer;
+	struct v34_equalizer_history reference_history;
 	struct v34_echo_timing_point history[V34_ECHO_TIMING_HISTORY];
 	struct v34_echo_timing_observation observations[V34_ECHO_TIMING_OBSERVATIONS];
 	struct v34_echo_timing_bin bins[V34_ECHO_TIMING_BINS];

@@ -51,11 +51,9 @@ static bool configure(struct v34_echo_timing *timing,
 	if (v34_timing_filter_init(&timing->reference_timing.timing_filter) !=
 	    V34_TIMING_FILTER_OK)
 		return false;
-	timing->reference_equalizer = receiver->equalizer.equalizer;
-	memset(timing->reference_equalizer.in_phase_delay, 0,
-	       sizeof(timing->reference_equalizer.in_phase_delay));
-	memset(timing->reference_equalizer.quadrature_delay, 0,
-	       sizeof(timing->reference_equalizer.quadrature_delay));
+	if (v34_equalizer_history_init(&timing->reference_history,
+		    &receiver->equalizer.equalizer) != V34_EQUALIZER_OK)
+		return false;
 	for (unsigned i = 0; i < V34_ECHO_TIMING_BINS; ++i) {
 		struct v34_echo_timing_bin *bin = &timing->bins[i];
 		int delta = (int)i - V34_ECHO_TIMING_RADIUS;
@@ -121,7 +119,8 @@ bool v34_echo_timing_prepare(struct v34_echo_timing *timing,
 	if (!timing->initialized || timing->model_delay != model_delay || timing->scale != scale ||
 	    timing->symbol_rate != rate || timing->carrier_frequency != carrier ||
 	    timing->receiver_epoch != receiver->equalizer.epoch ||
-	    timing->reference_equalizer.index != receiver->equalizer.equalizer.index) {
+	    timing->reference_history.index != receiver->equalizer.equalizer.index ||
+	    timing->reference_history.tap_count != receiver->equalizer.equalizer.tap_count) {
 		if (!configure(timing, receiver, scale, rate, carrier, model_delay))
 			goto unsupported;
 	}
@@ -138,12 +137,6 @@ bool v34_echo_timing_prepare(struct v34_echo_timing *timing,
 		&timing->reference_timing, prediction, &samples);
 	if (result != V34_RECEIVE_TIMING_OK && result != V34_RECEIVE_TIMING_SAMPLES_READY)
 		goto unsupported;
-	memcpy(timing->reference_equalizer.in_phase_coefficient,
-	       receiver->equalizer.equalizer.in_phase_coefficient,
-	       sizeof(timing->reference_equalizer.in_phase_coefficient));
-	memcpy(timing->reference_equalizer.quadrature_coefficient,
-	       receiver->equalizer.equalizer.quadrature_coefficient,
-	       sizeof(timing->reference_equalizer.quadrature_coefficient));
 	for (unsigned i = 0; i < samples.count; ++i) {
 		struct v34_equalizer_accumulator filtered;
 		uint64_t half = 2u * receiver->equalizer.epoch +
@@ -151,9 +144,8 @@ bool v34_echo_timing_prepare(struct v34_echo_timing *timing,
 		struct v34_echo_timing_point *point =
 			&timing->history[half % V34_ECHO_TIMING_HISTORY];
 
-		if (v34_equalizer_push(&timing->reference_equalizer, samples.sample[i]) !=
-		    V34_EQUALIZER_OK || v34_equalizer_filter(
-			&timing->reference_equalizer, &filtered) != V34_EQUALIZER_OK)
+		if (v34_equalizer_project(&timing->reference_history,
+		    &receiver->equalizer.equalizer, samples.sample[i], &filtered) != V34_EQUALIZER_OK)
 			goto unsupported;
 		*point = (struct v34_echo_timing_point){
 			.epoch = half,
@@ -232,7 +224,7 @@ int v34_echo_timing_observe(struct v34_echo_timing *timing,
 	if (timing == NULL || !timing->initialized || !timing->prepared)
 		return 0;
 	timing->prepared = false;
-	if (echo == NULL || receiver == NULL || timing->reference_equalizer.index !=
+	if (echo == NULL || receiver == NULL || timing->reference_history.index !=
 	    receiver->equalizer.equalizer.index || timing->latest_half !=
 	    2u * receiver->equalizer.epoch + receiver->equalizer.inputs_since_observation) {
 		v34_echo_timing_reset(timing);
