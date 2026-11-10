@@ -297,6 +297,67 @@ static bool test_erasure_preserves_training(void)
 	return true;
 }
 
+static bool test_failed_push_and_carrier_rollback(void)
+{
+	static const unsigned spans[] = { 7, QAM_EQUALIZER_MAX_TAP_COUNT };
+	static const int32_t samples[] = { INT32_MIN, -4096, 0, INT32_MAX };
+	const struct qam_point reference = { .in_phase = TEST_MAGNITUDE };
+
+	for (size_t s = 0; s < ARRAY_LENGTH(spans); ++s) {
+		for (unsigned tracking = 0; tracking < 2; ++tracking) {
+			struct qam_equalizer trained;
+			struct binary_equalizer receiver, before;
+			unsigned taps = spans[s];
+
+			CHECK(qam_equalizer_init(&trained, &reference, &reference,
+			      taps, taps - 1u) == QAM_EQUALIZER_OK,
+			      "rollback geometry failed");
+			for (unsigned i = 0; i < taps; ++i) {
+				struct qam_point output;
+				bool ready;
+				CHECK(qam_equalizer_push(&trained, &reference, &output,
+				      &ready) == QAM_EQUALIZER_OK && (!ready ||
+				      qam_equalizer_adapt(&trained, &reference, 0.0) ==
+				      QAM_EQUALIZER_OK), "rollback history failed");
+			}
+			if (tracking) {
+				CHECK(qam_equalizer_enable_carrier_tracking(&trained,
+				      .01, .001) == QAM_EQUALIZER_OK, "rollback carrier setup failed");
+				trained.carrier_phase = .031;
+				trained.carrier_frequency = .002;
+			}
+			/* Push succeeds and advances carrier/history. The otherwise
+			 * unused large input then overflows adaptation's energy sum. */
+			trained.history[1].in_phase = DBL_MAX / 4.0;
+			trained.history[taps - 1u] = (struct qam_point){ .123456, .654321 };
+			CHECK(binary_equalizer_init(&receiver, &trained, TEST_MAGNITUDE,
+			      .125, -1) == BINARY_EQUALIZER_OK, "rollback setup failed");
+			before = receiver;
+			for (size_t i = 0; i < ARRAY_LENGTH(samples); ++i) {
+				uint8_t sign = 0xa5;
+				CHECK(binary_equalizer_receive(&receiver, samples[i], true,
+				      &sign) == BINARY_EQUALIZER_INTERNAL_ERROR && sign == 0xa5 &&
+				      states_equal(&receiver, &before),
+				      "late failure changed span %u carrier %u sample %zu", taps, tracking, i);
+			}
+			/* An overflowing filter rejects before shifting anything.
+			 * Test both ordinary and erased input without undoing it twice. */
+			receiver.equalizer.coefficients[1].in_phase = 2.0;
+			receiver.equalizer.history[0].in_phase = DBL_MAX * .75;
+			before = receiver;
+			for (unsigned available = 0; available < 2; ++available) {
+				uint8_t sign = 0xa5;
+				CHECK(binary_equalizer_receive(&receiver, 0, available != 0,
+				      &sign) == BINARY_EQUALIZER_INTERNAL_ERROR && sign == 0xa5 &&
+				      states_equal(&receiver, &before),
+				      "early failure changed span %u carrier %u availability %u",
+				      taps, tracking, available);
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_output_ownership(void)
 {
 	struct qam_equalizer trained;
@@ -324,7 +385,8 @@ int main(void)
 	fprintf(stderr, "[       OK ] binary equalizer decisions\n");
 	fprintf(stderr, "[ RUN      ] binary equalizer contracts\n");
 	if (!test_contracts() || !test_immediate_adaptation() ||
-	    !test_failed_adaptation_preserves_owner() || !test_output_ownership()) {
+	    !test_failed_adaptation_preserves_owner() ||
+	    !test_failed_push_and_carrier_rollback() || !test_output_ownership()) {
 		fprintf(stderr, "[  FAILED  ] binary equalizer contracts\n");
 		return 1;
 	}
