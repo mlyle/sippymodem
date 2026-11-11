@@ -3,6 +3,7 @@
 #include "wide_uint.h"
 
 #include <v92_pcm_frame.h>
+#include <v92_b1.h>
 
 #include <integer_math.h>
 
@@ -1981,9 +1982,85 @@ static bool test_16_state_parity_distance(void)
 	return true;
 }
 
+static bool test_b1_digits(void)
+{
+	const uint8_t rates[] = { 1, 7, 13, 19 };
+	const uint32_t histories[] = { 0, UINT32_C(0x123456), UINT32_C(0x7fffff) };
+	for (unsigned law = 0; law < 2; ++law)
+		for (unsigned rate = 0; rate < ARRAY_LENGTH(rates); ++rate)
+			for (unsigned seed = 0; seed < ARRAY_LENGTH(histories); ++seed)
+				for (uint8_t initial = 0; initial < 2; ++initial) {
+					struct v92_cpd_parameters cpd = parameters(rates[rate]);
+					struct v92_pcm_mapping mapping;
+					CHECK(v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK,
+					      "B1 digit mapping failed");
+					struct v34_scrambler scrambler = {
+						.polynomial = V34_POLYNOMIAL_GPA, .history = histories[seed],
+					};
+					struct v34_scrambler reference = scrambler;
+					uint8_t differential = initial, reference_differential = initial;
+					for (unsigned frame = 0; frame < V92_B1U_FRAMES; ++frame) {
+						uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
+						uint8_t expected[V92_PCM_MAPPING_FRAME_SYMBOLS], sign;
+						uint8_t digits[V92_PCM_MAPPING_FRAME_SYMBOLS + 2];
+						memset(digits, 0xa5, sizeof(digits));
+						for (unsigned bit = 0; bit < mapping.data_bits_per_frame; ++bit)
+							CHECK(v34_scramble_group(&reference, 1, 1, &bits[bit]) == V34_FRAMING_OK,
+							      "B1 serial reference failed");
+						CHECK(v92_pcm_mapping_encode(&mapping, bits, mapping.data_bits_per_frame,
+							&reference_differential, expected, &sign) == V92_PCM_MAPPING_OK &&
+						      v92_b1_digits(&mapping, &scrambler, &differential, digits + 1),
+						      "B1 digit generation failed");
+						CHECK(memcmp(digits + 1, expected, sizeof(expected)) == 0 &&
+						      differential == reference_differential &&
+						      scrambler.history == reference.history &&
+						      digits[0] == 0xa5 && digits[sizeof(digits) - 1] == 0xa5,
+						      "B1 digit or coding history mismatch at frame %u", frame);
+					}
+				}
+	return true;
+}
+
+static bool test_b1_class_error(void)
+{
+	const unsigned counts[] = { 1, 2, 3, 7, 13, 32, 63, 127, 128 };
+	const unsigned moduli[] = { 1, 2, 3, 4, 7, 16, 31, 64, 127, 255 };
+	const double observations[] = { -1e9, -32768, -256.5, -0.0, 0.25, 255.5, 32767, 1e9 };
+	for (unsigned shape = 0; shape < 2; ++shape)
+		for (unsigned count = 0; count < ARRAY_LENGTH(counts); ++count) {
+			struct v92_cpd_constellation points = { .count = counts[count] };
+			for (unsigned i = 0; i < points.count; ++i)
+				points.positive_linear[i] = shape ? 1 + i * i + i : 1 + i * 127;
+			for (unsigned radix = 0; radix < ARRAY_LENGTH(moduli); ++radix) {
+				unsigned modulus = moduli[radix];
+				if (modulus > 2u * points.count)
+					continue;
+				for (unsigned digit = 0; digit < modulus; ++digit)
+					for (unsigned sample = 0; sample < ARRAY_LENGTH(observations); ++sample) {
+						double observed = observations[sample], expected = INFINITY;
+						/* Enumerate every signed point and select its class independently. */
+						for (int eta = -(int)points.count; eta < points.count; ++eta) {
+							int residue = eta % (int)modulus;
+							if (residue < 0) residue += modulus;
+							if ((unsigned)residue != digit) continue;
+							double level = eta < 0 ? -points.positive_linear[-eta - 1] :
+								points.positive_linear[eta];
+							double error = observed - level;
+							if (error * error < expected) expected = error * error;
+						}
+						CHECK(v92_b1_class_error(&points, modulus, digit, observed) == expected,
+						      "B1 class distance differed for count %u modulus %u digit %u",
+						      points.count, modulus, digit);
+					}
+			}
+		}
+	return true;
+}
+
 int main(void)
 {
-	if (!test_input_rounding_identity() || !test_b1u_measurement() || !test_b1u_measurement_contracts() ||
+	if (!test_b1_digits() || !test_b1_class_error() ||
+	    !test_input_rounding_identity() || !test_b1u_measurement() || !test_b1u_measurement_contracts() ||
 	    !test_b1u_output_range() || !test_b1u_oracle() || !test_b1u_coding_acquisition() ||
 	    !test_b1u_parity_completion() || !test_b1u_validation_history(false, V92_CPD_TRELLIS_16_STATE) ||
 	    !test_independent_owner() ||

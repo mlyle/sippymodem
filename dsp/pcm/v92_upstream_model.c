@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "v92_upstream_model.h"
+#include "v92_b1.h"
 #include "v92_upstream_data_rx.h"
 #include "v92_data_quality.h"
 #include "integer_math.h"
@@ -252,27 +253,17 @@ static double residual_prefix_score(const struct v92_pcm_mapping *mapping,
 	if (v34_scrambler_init(&scrambler, V34_POLYNOMIAL_GPA) != V34_FRAMING_OK)
 		return INFINITY;
 	for (unsigned frame = prefix; frame < 4; frame++) {
-		uint8_t bits[V92_PCM_MAPPING_MAX_BITS], digits[V92_PCM_MAPPING_FRAME_SYMBOLS], sign;
-		memset(bits, 1, mapping->data_bits_per_frame);
-		if (v34_scramble_unpacked_bits(&scrambler, bits, mapping->data_bits_per_frame, bits) != V34_FRAMING_OK ||
-		    v92_pcm_mapping_encode_owned(mapping, bits, mapping->data_bits_per_frame,
-			&differential, digits, &sign) != V92_PCM_MAPPING_OK)
+		uint8_t digits[V92_PCM_MAPPING_FRAME_SYMBOLS];
+		if (!v92_b1_digits(mapping, &scrambler, &differential, digits))
 			return INFINITY;
 		if (frame == 0) continue;
 		for (unsigned symbol = 0; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; symbol++) {
 			if (symbol % 4 == 3) continue;
 			const struct v92_cpd_constellation *points = &mapping->cpd.constellation[
 				mapping->cpd.frame_constellation[symbol % V92_PCM_MAPPING_PHASES]];
-			int modulus = mapping->cpd.modulus[symbol];
-			int first = -(int)points->count;
-			first += ((int)digits[symbol] - first) % modulus;
 			double sample = raw[frame * V92_PCM_MAPPING_FRAME_SYMBOLS + symbol] * gain;
-			double distance = INFINITY;
-			for (int eta = first; eta < points->count; eta += modulus) {
-				double point = v92_cpd_signed_point(points, eta);
-				distance = fmin(distance, (sample - point) * (sample - point));
-			}
-			score += distance;
+			score += v92_b1_class_error(points, mapping->cpd.modulus[symbol],
+				digits[symbol], sample);
 		}
 	}
 	return score;

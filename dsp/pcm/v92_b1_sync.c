@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #include "v92_b1_sync.h"
+#include "v92_b1.h"
 
 #include "memory_region.h"
-#include "integer_math.h"
 
 #include <float.h>
 #include <math.h>
@@ -84,16 +84,11 @@ bool v92_b1_sync_is_valid(const struct v92_b1_sync *sync,
 static bool known_words(struct v92_b1_sync *sync, const struct v92_pcm_mapping *mapping)
 {
 	struct v34_scrambler scrambler;
-	uint8_t differential = 0, sign;
+	uint8_t differential = 0;
 	if (v34_scrambler_init(&scrambler, V34_POLYNOMIAL_GPA) != V34_FRAMING_OK)
 		return false;
 	for (unsigned f = 0; f < V92_B1_SYNC_WORDS; ++f) {
-		uint8_t ones[V92_PCM_MAPPING_MAX_BITS], scrambled[V92_PCM_MAPPING_MAX_BITS];
-		memset(ones, 1, mapping->data_bits_per_frame);
-		if (v34_scramble_unpacked_bits(&scrambler, ones, mapping->data_bits_per_frame,
-			scrambled) != V34_FRAMING_OK ||
-		    v92_pcm_mapping_encode_owned(mapping, scrambled, mapping->data_bits_per_frame,
-			&differential, sync->digits[f], &sign) != V92_PCM_MAPPING_OK)
+		if (!v92_b1_digits(mapping, &scrambler, &differential, sync->digits[f]))
 			return false;
 	}
 	return true;
@@ -117,17 +112,8 @@ static double score(const struct v92_b1_sync *sync,
 				mapping->cpd.frame_constellation[i % V92_PCM_MAPPING_PHASES]];
 			double input = sync->input[delay + shift + f * V92_PCM_MAPPING_FRAME_SYMBOLS + i].sample *
 				(double)receiver->line.polarity * receiver->line.plan.gain;
-			double best = DBL_MAX;
-			unsigned modulus = mapping->cpd.modulus[i];
-			int first = -(int)c->count;
-			first += nonnegative_remainder_s32(sync->digits[f - 1][i] - first, modulus);
-			/* Visit the same signed class as the frame coder, in order.
-			 * Other classes cannot satisfy this known mixed-radix digit. */
-			for (int eta = first; eta < c->count; eta += (int)modulus) {
-				double error = input - v92_cpd_signed_point(c, eta);
-				best = fmin(best, error * error);
-			}
-			total += best;
+			total += v92_b1_class_error(c, mapping->cpd.modulus[i],
+				sync->digits[f - 1][i], input);
 		}
 	return total;
 }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "v92_pcm_frame.h"
+#include "v92_b1.h"
 #include "gaussian.h"
 
 #include "v92_observation.h"
@@ -1322,18 +1323,10 @@ static bool b1u_digits(
 	uint8_t digits[V92_PCM_MAPPING_FRAME_SYMBOLS])
 {
 	struct v34_scrambler scrambler = path->descrambler;
-	uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
 	uint8_t differential = path->differential;
-	uint8_t sign;
 
-	memset(bits, 1, receiver->mapping.data_bits_per_frame);
-	if (v34_scramble_unpacked_bits(
-		    &scrambler, bits, receiver->mapping.data_bits_per_frame,
-		    bits) != V34_FRAMING_OK)
-		return false;
-	return v92_pcm_mapping_encode(
-		&receiver->mapping, bits, receiver->mapping.data_bits_per_frame,
-		&differential, digits, &sign) == V92_PCM_MAPPING_OK;
+	return v92_pcm_mapping_is_valid(&receiver->mapping) &&
+	       v92_b1_digits(&receiver->mapping, &scrambler, &differential, digits);
 }
 
 static void train_noise(struct v92_pcm_frame_noise *noise,
