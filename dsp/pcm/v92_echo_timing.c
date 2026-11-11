@@ -4,6 +4,7 @@
 
 #include <limits.h>
 #include <math.h>
+#include <stddef.h>
 #include <string.h>
 
 _Static_assert((unsigned)V92_ECHO_TIMING_HISTORY > (unsigned)ECHO_TIMING_BINS,
@@ -16,6 +17,10 @@ _Static_assert(V92_PCM_MAPPING_FRAME_SYMBOLS % V92_PCM_MAPPING_PHASES == 0,
 _Static_assert(V92_ECHO_TIMING_HISTORY % V92_ECHO_TIMING_STRIDE == 0 &&
 	       ECHO_TIMING_RADIUS % V92_ECHO_TIMING_STRIDE == 0,
 	       "delayed scoring must preserve the observation stride");
+_Static_assert(V92_CPD_MAX_CONSTELLATION_POINTS <= UINT8_MAX + 1u,
+	       "point brackets fit in byte indices");
+_Static_assert((V92_ECHO_TIMING_POINT_BINS << V92_ECHO_TIMING_POINT_SHIFT) ==
+	       INT16_MAX + 1u, "point bins cover the positive input domain");
 
 void v92_echo_timing_reset(struct v92_echo_timing *timing)
 {
@@ -33,11 +38,35 @@ static bool same_inverse(const struct v92_residual *a, const struct v92_residual
 	return true;
 }
 
+/* For x in [L,U), the nearest point lies between the last point <= L and
+ * the first point >= U, clamped to the alphabet's endpoints. Monotone
+ * cursors build exact brackets even for tightly clustered alphabets. */
+static void configure_ranges(struct v92_echo_range *range,
+	const struct v92_cpd_constellation *points)
+{
+	unsigned low = 0, high = 0;
+
+	for (unsigned bin = 0; bin < V92_ECHO_TIMING_POINT_BINS; bin++) {
+		int lower = (int)(bin << V92_ECHO_TIMING_POINT_SHIFT);
+		int upper = lower + (1 << V92_ECHO_TIMING_POINT_SHIFT);
+
+		while (low + 1 < points->count &&
+		       points->positive_linear[low + 1] <= lower)
+			low++;
+		while (high + 1 < points->count &&
+		       points->positive_linear[high] < upper)
+			high++;
+		range[bin] = (struct v92_echo_range){ low, high };
+	}
+}
+
 static void configure(struct v92_echo_timing *timing,
 	const struct v92_upstream_data_line *line,
 	const struct v92_pcm_mapping *mapping, uint32_t delay)
 {
-	memset(timing, 0, sizeof(*timing));
+	/* Nonuniform banks rebuild every cache entry below. Uniform banks never
+	 * read the cache, so leave it out of the common epoch reset. */
+	memset(timing, 0, offsetof(struct v92_echo_timing, range));
 	timing->gain = line->calibration.gain;
 	timing->offset = line->calibration.offset;
 	timing->polarity = line->polarity;
@@ -60,6 +89,8 @@ static void configure(struct v92_echo_timing *timing,
 			}
 		timing->step[j] = step;
 		timing->inverse_step[j] = step > 0 ? 1. / step : 0;
+		if (step == 0)
+			configure_ranges(timing->range[j], points);
 	}
 }
 
@@ -67,7 +98,8 @@ static void configure(struct v92_echo_timing *timing,
  * Uniform alphabets need no table search or per-candidate division. The
  * interior index is bounded by the point count before conversion to integer. */
 static double distance(const struct v92_cpd_constellation *points,
-	double step, double inverse_step, double half_width, double x)
+	double step, double inverse_step, double half_width, double x,
+	const struct v92_echo_range *ranges)
 {
 	x = fabs(x);
 	double first = points->positive_linear[0];
@@ -84,7 +116,11 @@ static double distance(const struct v92_cpd_constellation *points,
 			error -= step;
 		error = fabs(error);
 	} else {
-		unsigned low = 0, high = points->count - 1;
+		/* Interior positive x is below INT16_MAX before conversion.
+		 * The bin narrows the search; scoring retains the fractional x. */
+		const struct v92_echo_range *range =
+			&ranges[(unsigned)x >> V92_ECHO_TIMING_POINT_SHIFT];
+		unsigned low = range->low, high = range->high;
 		while (high - low > 1) {
 			unsigned middle = low + (high - low) / 2;
 			if (points->positive_linear[middle] < x)
@@ -105,6 +141,21 @@ static double distance(const struct v92_cpd_constellation *points,
 	}
 	error -= half_width;
 	return error > 0 ? error * error : 0;
+}
+
+static inline void score_shifts(struct v92_echo_timing *timing,
+	const struct v92_cpd_constellation *points, unsigned center,
+	unsigned part, double x, double half_width, double step,
+	double inverse_step, const struct v92_echo_range *ranges)
+{
+	const unsigned mask = V92_ECHO_TIMING_HISTORY - 1;
+
+	for (unsigned i = 0; i < ECHO_TIMING_BINS; i++) {
+		unsigned shifted = (center + V92_ECHO_TIMING_HISTORY +
+			ECHO_TIMING_RADIUS - i) & mask;
+		timing->window.score[part][i] += distance(points, step,
+			inverse_step, half_width, x - timing->prediction[shifted], ranges);
+	}
 }
 
 int v92_echo_timing_observe(
@@ -198,11 +249,15 @@ int v92_echo_timing_observe(
 	unsigned set = receiver->decoder.mapping.cpd.frame_constellation[phase];
 	const struct v92_cpd_constellation *points = &receiver->decoder.mapping.cpd.constellation[set];
 	unsigned part = echo_shift_part(&timing->window);
-	for (unsigned i = 0; i < ECHO_TIMING_BINS; i++) {
-		unsigned shifted = (center + V92_ECHO_TIMING_HISTORY + ECHO_TIMING_RADIUS - i) & mask;
-		timing->window.score[part][i] += distance(points, timing->step[set],
-			timing->inverse_step[set], timing->half_width[observation], x - timing->prediction[shifted]);
-	}
+	/* Alphabet geometry is fixed across this window's hypotheses. Keep the
+	 * uniform kernel independent of the nonuniform cache. */
+	if (timing->step[set] > 0)
+		score_shifts(timing, points, center, part, x,
+			timing->half_width[observation], timing->step[set],
+			timing->inverse_step[set], NULL);
+	else
+		score_shifts(timing, points, center, part, x,
+			timing->half_width[observation], 0, 0, timing->range[set]);
 	int shift = echo_shift_advance(&timing->window, .5);
 	if (shift != 0) {
 		bool applied = pcm_host_echo_retime(echo, shift) == PCM_HOST_ECHO_OK;

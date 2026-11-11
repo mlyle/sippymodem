@@ -126,9 +126,12 @@ static bool test_constellation_scores(void)
 	struct fixture *fixture = calloc(1, sizeof(*fixture));
 	CHECK(fixture != NULL, "score fixture allocation failed");
 	for (unsigned c = 0; c < ARRAY_LENGTH(counts); ++c)
-		for (unsigned irregular = 0; irregular < 2; ++irregular)
+		for (unsigned irregular = 0; irregular < 4; ++irregular)
 			for (unsigned w = 0; w < ARRAY_LENGTH(widths); ++w) {
-				memset(fixture, 0, sizeof(*fixture));
+				memset(&fixture->echo, 0, sizeof(fixture->echo));
+				memset(&fixture->receiver, 0, sizeof(fixture->receiver));
+				/* Reuse timing storage across different mapping epochs. */
+				v92_echo_timing_reset(&fixture->timing);
 				struct pcm_host_echo *echo = &fixture->echo;
 				struct v92_upstream_data_rx *receiver = &fixture->receiver;
 				struct v92_upstream_data_line *line = &receiver->line;
@@ -146,9 +149,19 @@ static bool test_constellation_scores(void)
 				struct v92_cpd_constellation *points =
 					&receiver->decoder.mapping.cpd.constellation[0];
 				points->count = (uint8_t)counts[c];
-				for (unsigned j = 0; j < points->count; ++j)
-					points->positive_linear[j] = points->count == 1 ? INT16_MAX :
-						(int16_t)(irregular ? 2 + j * (j + 1) : 3 + 7 * j);
+				for (unsigned j = 0; j < points->count; ++j) {
+					unsigned value = 3 + 7 * j;
+
+					if (points->count == 1)
+						value = INT16_MAX;
+					else if (irregular == 1)
+						value = 2 + j * (j + 1);
+					else if (irregular == 2)
+						value = 1 + j * 32766u / (points->count - 1u);
+					else if (irregular == 3)
+						value = 16000 + j + j / 3;
+					points->positive_linear[j] = (int16_t)value;
+				}
 				CHECK(v92_echo_timing_observe(timing, echo, receiver,
 				      PCM_HOST_ECHO_FILTER, 0, 0, 0, true) == 0 &&
 				      timing->initialized, "score monitor initialization failed");
