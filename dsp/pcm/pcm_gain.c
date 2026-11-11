@@ -50,13 +50,24 @@ bool pcm_gain_contains(const struct pcm_gain *gain, int16_t wire, int16_t sample
 }
 
 bool pcm_gain_observed_cell(const struct pcm_gain *gain, enum g711_law law,
-	uint8_t octet, int16_t sample, struct g711_interval *interval)
+	uint8_t octet, int16_t sample, int polarity,
+	bool probability, struct pcm_gain_interval *interval)
 {
-	if (!interval || !g711_law_is_valid(law) ||
+	struct g711_interval cell;
+
+	if (!interval || (polarity != 1 && polarity != -1) || !g711_law_is_valid(law) ||
 	    memory_regions_overlap(gain, sizeof(*gain), interval, sizeof(*interval)) ||
-	    !pcm_gain_contains(gain, g711_decode(law, octet), sample))
+	    !pcm_gain_contains(gain, g711_decode(law, octet), sample) ||
+	    !g711_octet_interval(law, octet, &cell))
 		return false;
-	return g711_octet_interval(law, octet, interval);
+	struct g711_probability_interval bounds = probability ?
+		g711_probability_bounds(cell) :
+		(struct g711_probability_interval){ cell.lower, cell.upper };
+	*interval = (struct pcm_gain_interval){
+		.lower = polarity > 0 ? bounds.lower : -bounds.upper,
+		.upper = polarity > 0 ? bounds.upper : -bounds.lower,
+	};
+	return true;
 }
 
 bool pcm_gain_observe(struct pcm_gain *gain, int16_t wire, int16_t sample)

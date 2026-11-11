@@ -33,16 +33,19 @@ bool pcm_gain_observe(struct pcm_gain *gain, int16_t wire, int16_t sample);
  * not reconstruction by the point estimate or model/line quality. */
 bool pcm_gain_contains(const struct pcm_gain *gain, int16_t wire, int16_t sample);
 
-/* Verify an actually received, aligned wire/host pair against supplied bounds
- * and return the exact integer codec preimage of its original character.
- * PCMU zero characters retain their distinct cells. This neither estimates
- * gain nor applies polarity, echo subtraction, or a candidate impairment.
- * Compatibility does not establish that a gain has been identified.
- * Clipped host samples retain the same compatibility semantics as contains;
- * callers separately decide whether their observation can remain affine.
- * Rejection preserves output; output must not overlap the gain owner. */
+struct pcm_gain_interval {
+	double lower, upper;
+};
+
+/* Verify the original wire/host pair against frozen gain bounds, then return
+ * its codec cell in the receiver's polarity, before scaling or translation.
+ * Use continuous bounds for probability calculations, including saturation
+ * tails, and integer endpoints for distances. Both preserve the distinct
+ * PCMU zero cells. Clipped host samples retain the semantics of contains.
+ * Rejection preserves output, which must not overlap the gain owner. */
 bool pcm_gain_observed_cell(const struct pcm_gain *gain, enum g711_law law,
-	uint8_t octet, int16_t sample, struct g711_interval *interval);
+	uint8_t octet, int16_t sample, int polarity,
+	bool probability, struct pcm_gain_interval *interval);
 
 /* Clamp the uncensored least-squares estimate to the surviving interval.
  * No finite upper bound or no nonzero correlation leaves output unchanged.

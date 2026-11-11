@@ -153,16 +153,17 @@ int v92_echo_timing_observe(
 		timing->offset - line->tracking.bias) * timing->gain;
 	double midpoint = 0, half_width = 0;
 	if (line->host.gain > 0) {
-		struct g711_interval cell;
+		struct pcm_gain_interval cell;
 		if (!pcm_gain_observed_cell(&line->host.bounds,
-		    receiver->decoder.mapping.law, wire, received, &cell)) {
+		    receiver->decoder.mapping.law, wire, received,
+		    line->polarity, false, &cell)) {
 			v92_echo_timing_reset(timing);
 			return 0;
 		}
 		/* Move the actual wire cell by known echo/residual subtraction.
 		 * Held-out input verifies, but never refits, the host gain. */
-		double lower = (line->polarity > 0 ? cell.lower : -(double)cell.upper) * line->host.gain;
-		double upper = (line->polarity > 0 ? cell.upper : -(double)cell.lower) * line->host.gain;
+		double lower = cell.lower * line->host.gain;
+		double upper = cell.upper * line->host.gain;
 		midpoint = ((lower + upper) * .5 - (int32_t)received * line->polarity) * timing->gain;
 		half_width = (upper - lower) * .5 * timing->gain;
 	}

@@ -403,15 +403,13 @@ static double fit_residual_variance(const struct v92_upstream_model *model,
 	double low[V92_OBSERVATION_TRAINING], high[V92_OBSERVATION_TRAINING];
 	double mean[V92_OBSERVATION_TRAINING], variance = 0.;
 	for (unsigned n = FIRST; n < V92_OBSERVATION_TRAINING; ++n) {
-		struct g711_interval bin;
+		struct pcm_gain_interval cell;
 		if (!pcm_gain_observed_cell(&line->host.bounds, law,
-		    model->octets[n], model->host[n], &bin)) return 0.;
+		    model->octets[n], model->host[n],
+		    line->polarity, true, &cell)) return 0.;
 		double correction = model->raw[n] - line->polarity * (double)model->host[n];
-		struct g711_probability_interval bounds = g711_probability_bounds(bin);
-		double lower = bounds.lower * line->host.gain;
-		double upper = bounds.upper * line->host.gain;
-		low[n] = (line->polarity > 0 ? lower : -upper) + correction;
-		high[n] = (line->polarity > 0 ? upper : -lower) + correction;
+		low[n] = cell.lower * line->host.gain + correction;
+		high[n] = cell.upper * line->host.gain + correction;
 		double point = selected ? model->u[n] : model->x[n];
 		for (unsigned k = 0; k < line->residual.count; ++k) {
 			unsigned at = n - line->residual.delay[k];
@@ -604,29 +602,20 @@ static bool wire_cells(const struct v92_upstream_data_line *line,
 	if (gain <= 0.0)
 		return false;
 	for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i) {
-		struct g711_interval cell;
+		struct pcm_gain_interval cell;
 		int32_t raw = line->raw[i] * line->polarity;
 		int16_t host = line->host_samples[i];
 		if (!line->wire_known[i] || !line->received[i] ||
 		    raw <= INT16_MIN || raw >= INT16_MAX ||
 		    host == INT16_MIN || host == INT16_MAX ||
-		    !pcm_gain_observed_cell(bounds, law, line->octet[i], host, &cell))
+		    !pcm_gain_observed_cell(bounds, law, line->octet[i], host,
+			line->polarity, probability, &cell))
 			return false;
 		double offset = line->raw[i] - (int32_t)host * line->polarity -
 			v92_upstream_line_offset(line) - line->correction[i];
-		double lower = cell.lower, upper = cell.upper;
-		if (probability) {
-			struct g711_probability_interval bounds = g711_probability_bounds(cell);
-			lower = bounds.lower; upper = bounds.upper;
-		}
-		if (line->polarity < 0) {
-			double swap = lower;
-			lower = -upper; upper = -swap;
-		}
-
 		cells[i] = (struct v92_pcm_frame_cell){
-			.lower = (lower * gain + offset) * line->calibration.gain,
-			.upper = (upper * gain + offset) * line->calibration.gain,
+			.lower = (cell.lower * gain + offset) * line->calibration.gain,
+			.upper = (cell.upper * gain + offset) * line->calibration.gain,
 		};
 	}
 	return true;

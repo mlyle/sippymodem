@@ -207,8 +207,10 @@ static bool test_observed_cells(void)
 			struct pcm_gain saved = gain;
 			for (unsigned code = 0; code < 256; ++code) {
 				int16_t sample = host_sample(g711_decode(law, code), scales[i]);
-				CHECK(pcm_gain_observed_cell(&gain, law, code, sample, cells + code),
+				struct pcm_gain_interval cell, inverted, continuous, inverted_continuous;
+				CHECK(pcm_gain_observed_cell(&gain, law, code, sample, 1, false, &cell),
 				      "aligned pair rejected: law %u gain %g code %u", law, scales[i], code);
+				cells[code] = (struct g711_interval){ cell.lower, cell.upper };
 				CHECK(g711_encode(law, cells[code].lower) == code &&
 				      g711_encode(law, cells[code].upper) == code &&
 				      (cells[code].lower == INT16_MIN ||
@@ -216,6 +218,15 @@ static bool test_observed_cells(void)
 				      (cells[code].upper == INT16_MAX ||
 				       g711_encode(law, cells[code].upper + 1) != code),
 				      "cell is not the exact encoder preimage: law %u code %u", law, code);
+				CHECK(pcm_gain_observed_cell(&gain, law, code, sample, -1, false, &inverted) &&
+				      inverted.lower == -cell.upper && inverted.upper == -cell.lower &&
+				      pcm_gain_observed_cell(&gain, law, code, sample, 1, true, &continuous) &&
+				      continuous.lower == (cell.lower == INT16_MIN ? -INFINITY : cell.lower - .5) &&
+				      continuous.upper == (cell.upper == INT16_MAX ? INFINITY : cell.upper + .5) &&
+				      pcm_gain_observed_cell(&gain, law, code, sample, -1, true, &inverted_continuous) &&
+				      inverted_continuous.lower == -continuous.upper &&
+				      inverted_continuous.upper == -continuous.lower,
+				      "polarity or continuous bounds changed codec cell: law %u code %u", law, code);
 			}
 			CHECK(memcmp(&gain, &saved, sizeof(gain)) == 0,
 			      "observed cells narrowed or refitted frozen gain");
@@ -231,10 +242,10 @@ static bool test_observed_cells(void)
 			      "signed-zero wire cells were merged");
 	}
 	struct pcm_gain unknown;
-	struct g711_interval zero;
+	struct pcm_gain_interval zero;
 	double estimate = -1.;
 	pcm_gain_init(&unknown);
-	CHECK(pcm_gain_observed_cell(&unknown, G711_LAW_PCMU, 0x7f, 0, &zero) &&
+	CHECK(pcm_gain_observed_cell(&unknown, G711_LAW_PCMU, 0x7f, 0, 1, false, &zero) &&
 	      zero.lower == -3 && zero.upper == -1 &&
 	      !pcm_gain_estimate(&unknown, &estimate) && estimate == -1. &&
 	      unknown.lower == 0. && isinf(unknown.upper) && unknown.energy == 0. &&
@@ -246,19 +257,21 @@ static bool test_observed_cell_rejections(void)
 {
 	struct pcm_gain gain = { .lower = .75, .upper = .75 };
 	struct pcm_gain saved = gain;
-	struct g711_interval cell = { 1234, 5678 };
-	CHECK(!pcm_gain_observed_cell(NULL, G711_LAW_PCMU, 0xff, 0, &cell) &&
-	      !pcm_gain_observed_cell(&gain, (enum g711_law)-1, 0xff, 0, &cell) &&
-	      !pcm_gain_observed_cell(&gain, G711_LAW_PCMA + 1, 0xff, 0, &cell) &&
-	      !pcm_gain_observed_cell(&gain, G711_LAW_PCMU, 0xff, 1, &cell) &&
-	      !pcm_gain_observed_cell(&gain, G711_LAW_PCMU, 0xff, 0, NULL) &&
-	      !pcm_gain_observed_cell(&gain, G711_LAW_PCMU, 0xff, 0,
-		      (struct g711_interval *)(void *)&gain.lower) &&
+	struct pcm_gain_interval cell = { 1234, 5678 };
+	CHECK(!pcm_gain_observed_cell(NULL, G711_LAW_PCMU, 0xff, 0, 1, false, &cell) &&
+	      !pcm_gain_observed_cell(&gain, (enum g711_law)-1, 0xff, 0, 1, false, &cell) &&
+	      !pcm_gain_observed_cell(&gain, G711_LAW_PCMA + 1, 0xff, 0, 1, false, &cell) &&
+	      !pcm_gain_observed_cell(&gain, G711_LAW_PCMU, 0xff, 1, 1, false, &cell) &&
+	      !pcm_gain_observed_cell(&gain, G711_LAW_PCMU, 0xff, 0, 0, false, &cell) &&
+	      !pcm_gain_observed_cell(&gain, G711_LAW_PCMU, 0xff, 0, 2, true, &cell) &&
+	      !pcm_gain_observed_cell(&gain, G711_LAW_PCMU, 0xff, 0, 1, false, NULL) &&
+	      !pcm_gain_observed_cell(&gain, G711_LAW_PCMU, 0xff, 0, 1, false,
+		      (struct pcm_gain_interval *)(void *)&gain.lower) &&
 	      cell.lower == 1234 && cell.upper == 5678 &&
 	      memcmp(&gain, &saved, sizeof(gain)) == 0,
 	      "rejected cell changed output or gain owner");
 	gain.lower = NAN;
-	CHECK(!pcm_gain_observed_cell(&gain, G711_LAW_PCMU, 0xff, 0, &cell) &&
+	CHECK(!pcm_gain_observed_cell(&gain, G711_LAW_PCMU, 0xff, 0, 1, false, &cell) &&
 	      cell.lower == 1234 && cell.upper == 5678 && isnan(gain.lower),
 	      "invalid gain produced a cell or changed outputs");
 	return true;
