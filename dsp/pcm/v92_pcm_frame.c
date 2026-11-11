@@ -2071,22 +2071,9 @@ static enum v92_pcm_frame_result decode_frame(
 		if (mapped == V92_PCM_MAPPING_OK) {
 			/* An isolated in-range RM-like word can be genuine payload.
 			 * Preserve coding until the repeated request qualifies. */
-			for (size_t bit = 0u; bit < bit_count;) {
-				unsigned count = bit_count - bit > 8u ? 8u : (unsigned)(bit_count - bit);
-				uint8_t group = 0u;
-
-				for (unsigned i = 0u; i < count; ++i) {
-					if (candidate_bits[bit + i] > 1u)
-						return V92_PCM_FRAME_INVALID_PARAMETERS;
-					group = (uint8_t)((group << 1) | candidate_bits[bit + i]);
-				}
-				if (v34_descramble_group(&state->descrambler, group,
-							count, &group) != V34_FRAMING_OK)
-					return V92_PCM_FRAME_INVALID_PARAMETERS;
-				for (unsigned i = 0u; i < count; ++i)
-					candidate_bits[bit + i] = (uint8_t)((group >> (count - 1u - i)) & 1u);
-				bit += count;
-			}
+			if (v34_descramble_unpacked_bits(&state->descrambler,
+				candidate_bits, bit_count, candidate_bits) != V34_FRAMING_OK)
+				return V92_PCM_FRAME_INVALID_PARAMETERS;
 		}
 		if (rm_state(state) != V92_PCM_FRAME_RM_NONE) {
 			/* Qualification exceeds lookahead: every queued word belongs
