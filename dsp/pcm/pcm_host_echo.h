@@ -108,6 +108,13 @@ static inline uint32_t pcm_host_echo_active_delay_owned(
 		pcm_echo_reference_current_delay(&echo->reference);
 }
 
+/* Pure, unrounded projection of the active frozen coefficients at an
+ * explicitly available TX-history window. The owner has validated echo;
+ * prediction is nonnull and disjoint. Failure leaves the output unchanged.
+ * This does not qualify a delay or change cancellation/timing state. */
+enum pcm_host_echo_result pcm_host_echo_project_owned(
+	const struct pcm_host_echo *echo, uint32_t delay, double *prediction);
+
 /* Reposition a qualified frozen model after independently confirmed timing
  * evidence. Preserve its coefficients and TX history; reject an unavailable
  * reference window without mutation. */

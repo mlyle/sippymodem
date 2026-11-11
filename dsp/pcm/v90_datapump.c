@@ -24,6 +24,7 @@
 #include "v92_profile.h"
 #include "v92_training_echo.h"
 #include "v92_echo_timing.h"
+#include "v92_b1_echo.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -57,6 +58,7 @@ struct v90_datapump {
 	struct v34_echo_timing echo_timing;
 	struct v92_training_echo training_echo;
 	struct v92_echo_timing pcm_echo_timing;
+	struct v92_b1_echo b1_echo;
 	struct pcm_tx_recovery transmit_recovery;
 };
 
@@ -980,6 +982,30 @@ static bool start_call(
 	return true;
 }
 
+static bool accept_b1_echo(void *context)
+{
+	struct v90_datapump *datapump = context;
+	return v92_b1_echo_accept_owned(&datapump->b1_echo, datapump->host_echo);
+}
+
+static bool prepare_b1_echo(struct v90_datapump *datapump, uint8_t wire,
+	int16_t raw, int16_t cleaned, bool available)
+{
+	const struct pcm_call *call = &datapump->call;
+	if (call->protocol == PCM_PROTOCOL_V92 && call->local_role == V90_DIGITAL_MODEM &&
+	    call->stage == PCM_CALL_DATA_PATH && !pcm_call_uses_conventional_upstream(call) &&
+	    call->v92_rate_renegotiation_active) {
+		const struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
+		if (path->fast.stage == PCM_CALL_V92_FAST_IDLE && !path->pending_media_loss &&
+		    !path->quality_guard_samples && path->upstream.line.plan.observation == V92_PCM_FRAME_FILTER_OUTPUT &&
+		    !path->upstream.line.delay_remaining)
+			return v92_b1_echo_observe_owned(&datapump->b1_echo, datapump->host_echo,
+				&path->upstream, wire, raw, cleaned, available);
+	}
+	v92_b1_echo_reset(&datapump->b1_echo);
+	return false;
+}
+
 static bool process_octet(
 	struct v90_datapump *datapump, uint8_t received,
 	int16_t received_sample, int16_t host_sample, bool received_available,
@@ -1036,10 +1062,17 @@ static bool process_octet(
 	    pcm_call_phase4_is_ready_owned(&datapump->call) &&
 	    pcm_call_start_data_path(&datapump->call) != PCM_CALL_OK)
 		return false;
+	bool alternate_ready = prepare_b1_echo(datapump, received, host_sample, received_sample, received_available);
 	if (datapump->call.stage == PCM_CALL_DATA_PATH) {
-		result = pcm_call_data_octet_owned(
+		const struct pcm_call_b1_alternate alternate = {
+			.receiver = &datapump->b1_echo.receiver,
+			.quality = &datapump->b1_echo.quality,
+			.accept = accept_b1_echo,
+			.context = datapump,
+		};
+		result = pcm_call_data_octet_alternate_owned(
 			&datapump->call, received, received_sample, host_sample, received_available, &sources,
-			transmitted, &event);
+			alternate_ready ? &alternate : NULL, transmitted, &event);
 	} else {
 		struct pcm_call_observation observation;
 
@@ -1257,6 +1290,7 @@ static int process_v90_g711(
 		*exact_output = true;
 		return DPSTAT_DISCONNECT;
 	}
+	v92_b1_echo_begin_block_owned(&datapump->b1_echo, (unsigned)count);
 	bool receive_block_started = false;
 	for (int index = 0; index < count; ++index) {
 		if (!receive_block_started)
@@ -1325,6 +1359,7 @@ static int process_v90_g711(
 					goto failure;
 			}
 		}
+		uint32_t predicted_delay = pcm_host_echo_active_delay_owned(datapump->host_echo, echo_mode);
 		if (!process_octet(
 			    datapump, receive_codewords[index],
 			    cleaned_sample, receive_samples[index], received_mask == NULL || received_mask[index],
@@ -1339,6 +1374,13 @@ static int process_v90_g711(
 			return DPSTAT_DISCONNECT;
 		}
 		if (datapump->host_echo != NULL) {
+			/* B1u adoption can retime the model after this input is decoded.
+			 * Refresh only its timing view before observation; do not decode
+			 * again or advance the physical TX/RX clock twice. */
+			if (predicted_delay != pcm_host_echo_active_delay_owned(datapump->host_echo, echo_mode) &&
+			    pcm_host_echo_predict(datapump->host_echo, echo_mode,
+				    receive_samples[index], &cleaned_sample) != PCM_HOST_ECHO_OK)
+				goto failure;
 			data = upstream_data_receiver(datapump);
 			if (observe_echo && data != NULL) {
 				v34_echo_timing_prepare(&datapump->echo_timing,

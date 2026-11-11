@@ -412,20 +412,13 @@ struct pcm_call_v92_digital_data {
 	union v92_phase4_e2u_digital_downstream downstream;
 	struct v92_cpu_parameters cpu;
 	enum v92_phase4_e2u_downstream_stage downstream_stage;
-	/* Quality-score residual over post-acquisition B1u validation only,
-	 * with identified post-codec host gain removed. */
-	double b1u_squared_error;
+	struct v92_b1_quality b1u_quality;
 	/* An established failure awaits bounded peer-control detection. Freeze
 	 * quality until the guard expires or accepted control replaces it;
 	 * expiry charges one retry without scoring the same frame again. */
 	uint16_t quality_guard_samples;
 	/* A known media hole requires recovery, not a lower mapping rate. */
 	bool pending_media_loss;
-	/* Missing media can reject B1u before the first delayed decision. */
-	bool b1u_decode_failed;
-	/* Each bit rejects one independent explanation over the WHOLE held-out
-	 * interval. Never choose a different explanation for each frame. */
-	uint8_t b1u_mismatches;
 };
 
 union pcm_call_data_path_state {
@@ -453,6 +446,17 @@ struct pcm_call_observation {
 	enum pcm_call_stage processed;
 	enum pcm_call_stage next;
 	struct pcm_phase2_event phase2;
+};
+
+/* One transient alternate at the final delayed B1u frame. The serialized
+ * media owner supplies fully received native evidence for this same epoch.
+ * accept commits its independently confirmed physical correction, returning
+ * false without mutation on failure. No pointer survives the current call. */
+struct pcm_call_b1_alternate {
+	const struct v92_upstream_data_rx *receiver;
+	const struct v92_b1_quality *quality;
+	bool (*accept)(void *context);
+	void *context;
 };
 
 struct pcm_call_data_sources {
@@ -780,6 +784,16 @@ enum pcm_call_result pcm_call_data_octet_owned(
 	const struct pcm_call_data_sources *sources,
 	uint8_t *transmit_octet,
 	struct pcm_call_data_event *event);
+
+/* Same exclusive-owner path, with an optional precomputed B1u alternate.
+ * Only a rejected final B1u verdict can adopt it. Training, TX, control,
+ * quality gates and readiness still advance in the ordinary call owner. */
+enum pcm_call_result pcm_call_data_octet_alternate_owned(
+	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
+	int16_t host_sample, bool received_available,
+	const struct pcm_call_data_sources *sources,
+	const struct pcm_call_b1_alternate *alternate,
+	uint8_t *transmit_octet, struct pcm_call_data_event *event);
 
 const char *pcm_call_result_name(enum pcm_call_result result);
 

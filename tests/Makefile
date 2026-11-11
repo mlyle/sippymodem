@@ -2181,6 +2181,8 @@ V92_UPSTREAM_CONTROL_LINE_RX_TEST_OBJECTS := $(sort \
 		$(V92_CONTROL_RX_TEST_OBJECTS)))
 V92_UPSTREAM_DATA_RX_TEST_BINARY := $(BUILD_DIR)/test_v92_upstream_data_rx
 V92_UPSTREAM_DATA_RX_TEST_OBJECTS := $(sort \
+	$(BUILD_DIR)/v92_b1_echo.o $(BUILD_DIR)/v92_data_quality.o \
+	$(BUILD_DIR)/pcm_host_echo.o $(BUILD_DIR)/pcm_echo_reference.o $(BUILD_DIR)/echo_timing.o \
 	$(BUILD_DIR)/v92_b1_sync.o \
 	$(BUILD_DIR)/v92_upstream_control.o \
 	$(BUILD_DIR)/v92_upstream_model.o $(BUILD_DIR)/v92_residual.o $(BUILD_DIR)/pcm_gain.o \
@@ -2371,6 +2373,8 @@ V92_PHASE4_DIGITAL_STATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v92_phase4_digital_station.o \
 	$(V92_PHASE4_DIGITAL_STATION_OBJECTS)
 V92_UPSTREAM_DATA_RX_TEST_OBJECTS := $(sort \
+	$(BUILD_DIR)/v92_b1_echo.o $(BUILD_DIR)/v92_data_quality.o \
+	$(BUILD_DIR)/pcm_host_echo.o $(BUILD_DIR)/pcm_echo_reference.o $(BUILD_DIR)/echo_timing.o \
 	$(V92_UPSTREAM_DATA_RX_TEST_OBJECTS) \
 	$(BUILD_DIR)/v92_phase4_digital_station.o \
 	$(BUILD_DIR)/v92_downstream_control.o \
@@ -5691,6 +5695,9 @@ $(BUILD_DIR)/v92_b1_sync.o: $(DSP_PCM_SOURCE_DIR)/v92_b1_sync.c | $(BUILD_DIR)
 
 $(BUILD_DIR)/v92_upstream_model.o: \
 	$(DSP_PCM_SOURCE_DIR)/v92_upstream_model.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v92_b1_echo.o: $(DSP_PCM_SOURCE_DIR)/v92_b1_echo.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v92_data_quality.o: \

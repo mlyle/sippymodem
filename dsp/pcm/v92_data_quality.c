@@ -3,6 +3,7 @@
 #include "v92_data_quality.h"
 
 #include "v92_pcm_mapping.h"
+#include "v92_upstream_data_rx.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -82,4 +83,42 @@ enum v92_data_quality_result v92_data_quality_observe(
 		return v92_data_quality_retrain(quality);
 	*quality = next;
 	return V92_DATA_QUALITY_OK;
+}
+
+bool v92_b1_quality_is_valid(const struct v92_b1_quality *quality, uint64_t frames)
+{
+	return quality != NULL && isfinite(quality->squared_error) &&
+	       quality->squared_error >= 0.0 &&
+	       quality->mismatches <= V92_B1U_BOTH_MISMATCH &&
+	       (quality->mismatches != V92_B1U_BOTH_MISMATCH || quality->failed) &&
+	       (frames > V92_B1U_ACQUISITION_FRAMES || quality->squared_error == 0.0);
+}
+
+bool v92_b1_quality_is_ready(const struct v92_b1_quality *quality, uint64_t frames)
+{
+	return v92_b1_quality_is_valid(quality, frames) &&
+	       frames >= V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES &&
+	       !quality->failed && quality->squared_error <= (double)V92_B1U_VALIDATION_SYMBOLS *
+		       V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR;
+}
+
+bool v92_b1_quality_observe_owned(struct v92_b1_quality *quality, uint64_t frames,
+	double host_gain, const struct v92_upstream_data_frame *frame)
+{
+	/* Fitting owns the first half. Score residuals only in the next half,
+	 * then let delayed bit decisions complete the same held-out interval. */
+	if (frames > V92_B1U_ACQUISITION_FRAMES && frames <= V92_B1U_FRAMES) {
+		double error = quality->squared_error +
+			v92_upstream_quality_error(host_gain, frame->squared_error);
+		if (!isfinite(error))
+			return false;
+		quality->squared_error = error;
+	}
+	if (frame->b1u && frame->bit_count != 0u &&
+	    frames > V92_B1U_ACQUISITION_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
+		quality->failed |= frame->ambiguous;
+		quality->mismatches |= frame->b1u_mismatches;
+		quality->failed |= quality->mismatches == V92_B1U_BOTH_MISMATCH;
+	}
+	return true;
 }

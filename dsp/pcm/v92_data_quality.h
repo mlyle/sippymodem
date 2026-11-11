@@ -24,6 +24,30 @@ enum {
 	V92_DATA_QUALITY_REARM_WINDOWS = 64,
 };
 
+/* Independent B1u evidence follows the receiver's acquisition split. Missing
+ * media may reject it before any delayed bit decision. Mismatch bits reject
+ * whole-interval explanations; never choose a new explanation per frame. */
+struct v92_b1_quality {
+	double squared_error;
+	uint8_t mismatches;
+	bool failed;
+};
+
+struct v92_upstream_data_frame;
+bool v92_b1_quality_is_valid(const struct v92_b1_quality *quality, uint64_t frames);
+bool v92_b1_quality_is_ready(const struct v92_b1_quality *quality, uint64_t frames);
+/* Already owned/validated receiver and evidence. A nonfinite accumulated
+ * residual is rejected without changing evidence. */
+bool v92_b1_quality_observe_owned(struct v92_b1_quality *quality, uint64_t frames,
+	double host_gain, const struct v92_upstream_data_frame *frame);
+
+/* Remove measured post-codec host gain only. Channel/mapping gain remains
+ * part of the residual; keep the original frame metric for diagnostics. */
+static inline double v92_upstream_quality_error(double host_gain, double error)
+{
+	return host_gain > 0.0 ? error / host_gain / host_gain : error;
+}
+
 enum v92_data_quality_result {
 	V92_DATA_QUALITY_OK,
 	V92_DATA_QUALITY_RETRAIN,

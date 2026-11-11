@@ -1470,7 +1470,7 @@ static bool test_call_state_comparison(void)
 			after.state.data_path.v92_digital.upstream.input.samples[0].sample = 1;
 			CHECK(!call_states_equal(&before, &after), "call comparison lost queued media");
 			after.state.data_path.v92_digital.upstream.input.samples[0].sample = 0;
-			after.state.data_path.v92_digital.b1u_squared_error = -0.0;
+			after.state.data_path.v92_digital.b1u_quality.squared_error = -0.0;
 			CHECK(!call_states_equal(&before, &after), "call comparison lost exact floating-point bits");
 		}
 	}
@@ -7128,11 +7128,11 @@ static bool v92_bad_b1_stays_clamped(const struct pcm_call *boundary)
 
 	while (erased.state.data_path.v92_digital.upstream.line.delay_remaining != 0u)
 		CHECK(pcm_call_data_octet(&erased, silence, 0, false, NULL, &transmitted, &event) ==
-			      PCM_CALL_OK && !erased.state.data_path.v92_digital.b1u_decode_failed,
+			      PCM_CALL_OK && !erased.state.data_path.v92_digital.b1u_quality.failed,
 		      "media loss in the unused input delay rejected B1u");
 	CHECK(pcm_call_data_octet(&erased, silence, 0, false, NULL, &transmitted, &event) ==
 		      PCM_CALL_OK && pcm_call_is_valid(&erased) && !pcm_call_is_online(&erased) &&
-	      event.kind == PCM_CALL_DATA_NONE && erased.state.data_path.v92_digital.b1u_decode_failed &&
+	      event.kind == PCM_CALL_DATA_NONE && erased.state.data_path.v92_digital.b1u_quality.failed &&
 	      erased.state.data_path.v92_digital.pending_media_loss &&
 	      erased.state.data_path.v92_digital.quality_guard_samples != 0,
 	      "first missing B1u sample did not reject training before delayed decisions");
@@ -7145,7 +7145,7 @@ static bool v92_bad_b1_stays_clamped(const struct pcm_call *boundary)
 		      "missing B1u opened the host or failed before its deadline");
 	}
 	CHECK(damaged.state.data_path.v92_digital.upstream.line.received_frames == V92_B1U_FRAMES &&
-	      damaged.state.data_path.v92_digital.b1u_squared_error > 0.0 &&
+	      damaged.state.data_path.v92_digital.b1u_quality.squared_error > 0.0 &&
 	      damaged.b1_deadline_armed, "known B1u digits hid missing waveform evidence");
 	damaged.b1_deadline_remaining_samples = 1u;
 	CHECK(pcm_call_is_valid(&damaged) &&
@@ -7242,11 +7242,11 @@ static bool v92_b1_bit_validation(const struct pcm_call *boundary, unsigned faul
 
 			if (acquisition && frame == V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES - 1u &&
 			    symbol == V92_PCM_MAPPING_FRAME_SYMBOLS - 1u) {
-				CHECK(result == PCM_CALL_OK && !path->b1u_decode_failed &&
+				CHECK(result == PCM_CALL_OK && !path->b1u_quality.failed &&
 				      !damaged.b1_deadline_armed && pcm_call_is_valid(&damaged),
 				      "corrected acquisition bit rejected the held-out B1u: result=%s bits=%u armed=%u error=%g",
-				      pcm_call_result_name(result), path->b1u_decode_failed, damaged.b1_deadline_armed,
-				      path->b1u_squared_error);
+				      pcm_call_result_name(result), path->b1u_quality.failed, damaged.b1_deadline_armed,
+				      path->b1u_quality.squared_error);
 				CHECK(fault != B1_HISTORY_FAULT || pcm_call_is_online(&damaged),
 				      "clean independent code words did not establish readiness");
 				return true;
@@ -7273,8 +7273,8 @@ static bool v92_b1_bit_validation(const struct pcm_call *boundary, unsigned faul
 			CHECK(result == PCM_CALL_OK, "wrong B1u recovery failed");
 		}
 	}
-	CHECK(path->b1u_decode_failed &&
-	      path->b1u_squared_error < V92_B1U_SYMBOLS &&
+	CHECK(path->b1u_quality.failed &&
+	      path->b1u_quality.squared_error < V92_B1U_SYMBOLS &&
 	      damaged.b1_deadline_armed && pcm_call_is_valid(&damaged),
 	      "small residual concealed a wrong B1u bit");
 	damaged.b1_deadline_remaining_samples = 1u;
@@ -7332,7 +7332,7 @@ static bool run_wrong_direct_b1(enum g711_law law, bool fault)
 				const struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
 				CHECK(path->upstream.line.plan.observation == V92_PCM_FRAME_FILTER_OUTPUT,
 				      "wrong B1 fixture lost direct observation");
-				b1_error = path->b1u_squared_error;
+				b1_error = path->b1u_quality.squared_error;
 				received_frames = path->upstream.line.received_frames;
 			}
 			struct pcm_call_data_event event;
@@ -7595,12 +7595,12 @@ static bool run_v92_b1_quality_window(enum g711_law law)
 			      (side == 0u || pcm_call_is_online(call) || event.kind == PCM_CALL_DATA_NONE),
 			      "B1 quality window failed or released undecided payload");
 			if (boundary)
-				CHECK(path->b1u_squared_error == validation,
+				CHECK(path->b1u_quality.squared_error == validation,
 				      "B1 acquisition error contaminated validation: law=%u frame=%u got=%g wanted=%g",
-				      law, checked, path->b1u_squared_error, validation);
+				      law, checked, path->b1u_quality.squared_error, validation);
 			if (boundary && checked == V92_B1U_ACQUISITION_FRAMES) {
 				struct pcm_call invalid = *call;
-				invalid.state.data_path.v92_digital.b1u_squared_error = 1.0;
+				invalid.state.data_path.v92_digital.b1u_quality.squared_error = 1.0;
 				CHECK(!pcm_call_is_valid(&invalid), "B1 accepted validation error before validation began");
 			}
 		}
@@ -7612,9 +7612,9 @@ static bool run_v92_b1_quality_window(enum g711_law law)
 			      "B1 fixture missed acquisition transient: law=%u frames=%u acquisition=%g validation=%g",
 			      law, checked, acquisition, validation);
 			struct pcm_call limit = calls[1];
-			limit.state.data_path.v92_digital.b1u_squared_error = ceiling;
+			limit.state.data_path.v92_digital.b1u_quality.squared_error = ceiling;
 			CHECK(pcm_call_is_valid(&limit) && pcm_call_is_online(&limit), "B1 rejected exact validation bound");
-			limit.state.data_path.v92_digital.b1u_squared_error++;
+			limit.state.data_path.v92_digital.b1u_quality.squared_error++;
 			CHECK(pcm_call_is_valid(&limit) && !pcm_call_is_online(&limit),
 			      "B1 used acquisition symbols in its validation bound");
 			return true;
@@ -10623,7 +10623,7 @@ static bool run_v92_fast_response(struct v92_online_pair *pair, unsigned hangup)
 		up_frames, down_frames, finishing, new_upstream, call->state.data_path.v92_digital.fast.stage,
 		(unsigned long long)call->state.data_path.v92_digital.fast.b1_frame, call->state.data_path.v92_digital.fast.b1_started,
 		(unsigned long long)call->state.data_path.v92_digital.upstream.line.received_frames,
-		call->state.data_path.v92_digital.b1u_decode_failed, call->state.data_path.v92_digital.b1u_squared_error);
+		call->state.data_path.v92_digital.b1u_quality.failed, call->state.data_path.v92_digital.b1u_quality.squared_error);
 }
 
 static bool test_v92_fast_response(void)
@@ -11502,15 +11502,18 @@ static bool test_v92_upstream_negotiation(void)
 	return true;
 }
 
-static bool capture_v92_rate_b1(struct v92_online_pair *pair, struct pcm_call *incomplete)
+static bool capture_v92_rate_b1(struct v92_online_pair *pair, struct pcm_call *incomplete, uint8_t tail[12])
 {
 	bool captured = false;
+	unsigned tail_count = 0;
 	CHECK(pcm_call_start_rate_renegotiation(&pair->analog) == PCM_CALL_OK,
 	      "B1 rate request did not start");
 	for (unsigned clock = 0u; clock < 40000u; ++clock) {
 		uint8_t rx[2], tx[2];
 		struct pcm_call *calls[] = { &pair->analog, &pair->digital };
 		channel_receive(&pair->wire, &rx[0], &rx[1]);
+		if (captured && tail_count < 12)
+			tail[tail_count++] = rx[1];
 		for (unsigned role = 0u; role < 2u; ++role) {
 			struct pcm_call *call = calls[role];
 			if (pcm_call_phase4_is_ready(call))
@@ -11715,6 +11718,80 @@ static bool test_v92_b1_timing_recovery(void)
 	return true;
 }
 
+struct b1_alternate_commit {
+	unsigned calls;
+	bool allow;
+};
+
+static bool accept_b1_alternate(void *context)
+{
+	struct b1_alternate_commit *commit = context;
+	++commit->calls;
+	return commit->allow;
+}
+
+static bool test_b1_alternate_boundary(const struct pcm_call *incomplete, const uint8_t tail[12])
+{
+	struct pcm_call *calls = malloc(3 * sizeof(*calls));
+	struct v92_upstream_data_rx *alternate_rx = malloc(sizeof(*alternate_rx));
+	CHECK(calls && alternate_rx, "B1 alternate fixture allocation failed");
+	struct pcm_call *before = &calls[0], *expected = &calls[1], *actual = &calls[2];
+	*before = *incomplete;
+	struct pcm_call_data_event event;
+	uint8_t tx;
+	for (unsigned i = 0; i < 11; ++i)
+		CHECK(pcm_call_data_octet(before, tail[i], decode_octet(before->law, tail[i]), true,
+			NULL, &tx, &event) == PCM_CALL_OK, "B1 alternate prelude failed");
+	CHECK(before->v92_rate_renegotiation_active && before->state.data_path.v92_digital.upstream.line.received_frames ==
+	      V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES - 1, "B1 alternate lost its short-exchange boundary");
+	for (unsigned fault = 0; fault < 10; ++fault) {
+		*expected = *before;
+		struct pcm_call_v92_digital_data *path = &expected->state.data_path.v92_digital;
+		path->upstream.input.frame_limited = true;
+		path->upstream.input.frame_budget = 7;
+		path->upstream.input.frame_credit = 3;
+		*actual = *expected;
+		int16_t sample = decode_octet(before->law, tail[11]);
+		CHECK(pcm_call_data_octet(expected, tail[11], sample, true, NULL, &tx, &event) == PCM_CALL_OK,
+		      "B1 alternate reference frame failed");
+		*alternate_rx = path->upstream;
+		struct v92_b1_quality quality = path->b1u_quality;
+		CHECK(v92_b1_quality_is_ready(&quality, alternate_rx->line.received_frames),
+		      "B1 alternate reference did not qualify");
+		struct b1_alternate_commit commit = { .allow = fault != 8 };
+		struct pcm_call_b1_alternate alternate = {
+			.receiver = alternate_rx, .quality = &quality,
+			.accept = accept_b1_alternate, .context = &commit,
+		};
+		path = &actual->state.data_path.v92_digital;
+		if (fault != 1)
+			path->b1u_quality.squared_error = 1.0 + (double)V92_B1U_VALIDATION_SYMBOLS *
+				V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR;
+		if (fault == 2) quality.failed = true;
+		if (fault == 3) quality.squared_error = path->b1u_quality.squared_error;
+		if (fault == 4) alternate_rx->line.input_samples++;
+		if (fault == 5) alternate_rx->decoder.mapping.cpd.data_rate_number = 0;
+		if (fault == 6) alternate_rx->input.count = 1;
+		if (fault == 9) alternate_rx->line.received_frames--;
+		bool available = fault != 7;
+		uint8_t output;
+		CHECK(pcm_call_data_octet_alternate_owned(actual, tail[11], sample, sample, available,
+			NULL, &alternate, &output, &event) == PCM_CALL_OK && pcm_call_is_valid(actual) &&
+		      event.kind == PCM_CALL_DATA_NONE && output == tx,
+		      "B1 alternate changed TX/readiness invariants: fault=%u", fault);
+		CHECK(commit.calls == (fault == 0 || fault == 8),
+		      "B1 alternate committed before validation: fault=%u calls=%u", fault, commit.calls);
+		if (fault == 0 || fault == 1)
+			CHECK(call_states_equal(expected, actual), "B1 alternate did not publish ordinary native state");
+		else
+			CHECK(!v92_b1_quality_is_ready(&path->b1u_quality, path->upstream.line.received_frames),
+			      "rejected B1 alternate qualified the original receiver");
+	}
+	free(alternate_rx);
+	free(calls);
+	return true;
+}
+
 static bool test_v92_rate_b1_recovery(void)
 {
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
@@ -11726,10 +11803,12 @@ static bool test_v92_rate_b1_recovery(void)
 		struct pcm_call incomplete;
 		CHECK(capture_v92_duplex_data(law, 3u, false, &offer, NULL, 0u, &pair),
 		      "rate B1 recovery fixture did not train");
-		CHECK(capture_v92_rate_b1(&pair, &incomplete), "rate B1 fixture did not complete Ru/Rd");
+		uint8_t tail[12];
+		CHECK(capture_v92_rate_b1(&pair, &incomplete, tail) && test_b1_alternate_boundary(&incomplete, tail),
+		      "rate B1 fixture did not complete Ru/Rd or protect alternate publication");
 		struct pcm_call saved = incomplete;
 		CHECK(pcm_call_recover_upstream_b1(&incomplete) == PCM_CALL_INVALID_STATE &&
-		      memcmp(&incomplete, &saved, sizeof(saved)) == 0, "healthy partial B1 restarted");
+		      call_states_equal(&incomplete, &saved), "healthy partial B1 restarted");
 		/* Isolate the deadline policy on a trained, owned receiver. A peer
 		 * Ru can complete CPu/CPd yet produce low-residual B1u with wrong
 		 * bits. It must not retry that mapping indefinitely at the same rate.
@@ -11746,12 +11825,12 @@ static bool test_v92_rate_b1_recovery(void)
 			call.rate_renegotiation_deadline_armed = true;
 			call.rate_renegotiation_deadline_remaining_samples = 1u;
 			call.pcm_upstream_quality.recovery.attempts = budget;
-			path->b1u_decode_failed = true;
-			path->b1u_mismatches = V92_B1U_BOTH_MISMATCH;
+			path->b1u_quality.failed = true;
+			path->b1u_quality.mismatches = V92_B1U_BOTH_MISMATCH;
 			if (reason == 1u) {
-				path->b1u_decode_failed = false;
-				path->b1u_mismatches = 0u;
-				path->b1u_squared_error = 1.0 + (double)V92_B1U_VALIDATION_SYMBOLS *
+				path->b1u_quality.failed = false;
+				path->b1u_quality.mismatches = 0u;
+				path->b1u_quality.squared_error = 1.0 + (double)V92_B1U_VALIDATION_SYMBOLS *
 					V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR;
 			} else if (reason == 3u) {
 				path->pending_media_loss = true;

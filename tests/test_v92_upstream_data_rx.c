@@ -14,6 +14,8 @@
 #include <v92_upstream_data_rx.h>
 #include <v92_upstream_data_tx.h>
 #include <v92_b1_sync.h>
+#include <v92_b1_echo.h>
+#include <inttypes.h>
 
 #include "test.h"
 #include "integer_math.h"
@@ -4618,8 +4620,172 @@ static bool test_b1_sync(enum g711_law law, int polarity, unsigned prefix, unsig
 	return true;
 }
 
+struct b1_echo_owner {
+	struct v92_b1_echo recovery;
+	struct pcm_host_echo echo;
+	struct v92_upstream_data_rx primary;
+	struct v92_upstream_data_tx transmitter;
+	struct channel channel;
+};
+
+static int16_t echo_reference_sample(unsigned clock, unsigned salt)
+{
+	uint32_t x = (clock + salt) * UINT32_C(1664525) + UINT32_C(1013904223);
+	x ^= x >> 13;
+	return (int16_t)((int)(x % 16001) - 8000);
+}
+
+static bool init_b1_echo_owner(struct b1_echo_owner *owner, enum g711_law law, unsigned salt)
+{
+	struct v92_phase4_record_tx e2u_tx;
+	struct v92_e2u_rx e2u_rx;
+	struct v92_upstream_rx handoff;
+	struct v92_cpd_parameters cpd;
+	struct v92_pcm_mapping mapping;
+	owner->channel = (struct channel){ .law = law, .gain = 1, .polarity = 1 };
+	CHECK(v92_cpd_direct_select(&cpd, law, 1, 2048, false) == V92_CPD_OK &&
+	      v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK &&
+	      v92_upstream_data_tx_init(&owner->transmitter, &mapping, 2048) == V92_UPSTREAM_DATA_TX_OK &&
+	      prepare_e2u_at_level(&owner->channel, false, &e2u_tx, &e2u_rx, 2048, 2048, .002, V92_CONSTELLATION_4_POINT), "B1 echo setup failed");
+	while (!v92_e2u_rx_is_complete(&e2u_rx)) {
+		int16_t sample;
+		if (!v92_phase4_record_tx_is_complete(&e2u_tx))
+			CHECK(v92_phase4_record_tx_next(&e2u_tx, &sample) == V92_PHASE4_RECORD_TX_OK,
+			      "B1 echo E2u stopped");
+		else
+			CHECK(v92_upstream_data_tx_next(&owner->transmitter, NULL, NULL, &sample) == V92_UPSTREAM_DATA_TX_OK,
+			      "B1 echo lookahead stopped");
+		enum v92_e2u_rx_result result = v92_e2u_rx_sample(&e2u_rx, wire_sample(&owner->channel, sample));
+		CHECK(result == V92_E2U_RX_OK || result == V92_E2U_RX_COMPLETE, "B1 echo E2u failed");
+	}
+	CHECK(v92_e2u_rx_handoff(&e2u_rx, &handoff) == V92_E2U_RX_OK &&
+	      v92_upstream_data_rx_init(&owner->primary, &handoff, &mapping, &direct_plan) == V92_UPSTREAM_DATA_RX_OK &&
+	      pcm_host_echo_init(&owner->echo) == PCM_HOST_ECHO_OK,
+	      "B1 echo handoff failed");
+	/* Supply a valid, explicitly frozen one-tap model. Recovery may move
+	 * this known model but must never estimate replacement coefficients. */
+	for (unsigned i = 0; i < 2000; ++i)
+		CHECK(pcm_echo_reference_push(&owner->echo.reference, echo_reference_sample(i, salt)) == PCM_ECHO_REFERENCE_OK,
+		      "B1 echo history fill failed");
+	CHECK(pcm_echo_reference_start_scan(&owner->echo.reference, 900, PCM_HOST_ECHO_FILTER_PRE_SAMPLES) ==
+	      PCM_ECHO_REFERENCE_OK, "B1 echo delay setup failed");
+	owner->echo.filter_ready = true;
+	owner->echo.train_samples = PCM_HOST_ECHO_TRAIN_MIN_SAMPLES;
+	owner->echo.train_peak = 8000;
+	owner->echo.coefficients[0] = .012f;
+	if (law == G711_LAW_PCMA) {
+		owner->echo.retained_delay_samples = 900;
+		owner->echo.retained_coefficients[0] = owner->echo.coefficients[0];
+		owner->echo.coefficients[0] = .05f;
+		owner->echo.filter_ready = false;
+		owner->echo.delay_acquired = true;
+	}
+	CHECK(pcm_host_echo_is_valid(&owner->echo), "B1 echo model invalid");
+	return true;
+}
+
+static bool run_b1_echo_owners(unsigned block, unsigned fault)
+{
+	struct b1_echo_owner *owners = calloc(2, sizeof(*owners));
+	CHECK(owners, "B1 echo owner allocation failed");
+	const int shifts[] = { 26, -41 };
+	bool offered[2] = {false, false};
+	for (unsigned side = 0; side < 2; ++side)
+		CHECK(init_b1_echo_owner(&owners[side], side, side * 7919), "B1 echo owner initialization failed");
+	for (unsigned i = 0; i < V92_B1_ECHO_INPUTS; ++i)
+		for (unsigned side = 0; side < 2; ++side) {
+			struct b1_echo_owner *owner = &owners[side];
+			int16_t signal, cleaned;
+			unsigned salt = side * 7919;
+			int shift = shifts[side] + (fault == 5 && i >= 400 ? 37 : 0);
+			CHECK(v92_upstream_data_tx_next(&owner->transmitter, NULL, NULL, &signal) == V92_UPSTREAM_DATA_TX_OK,
+			      "B1 echo source stopped");
+			int16_t raw = g711_quantize(side, (int16_t)lround(signal + (double).012f *
+				echo_reference_sample((unsigned)(2000 + (int)i - 900 - shift), salt)));
+			if (fault == 6 && i == 200)
+				raw = INT16_MAX;
+			double projected = -1;
+			CHECK(pcm_host_echo_project_owned(&owner->echo, 900, &projected) == PCM_HOST_ECHO_OK &&
+			      (fault == 3 && i > 200 ? isfinite(projected) :
+			       projected == (double).012f * echo_reference_sample(2000 + i - 900, salt)),
+			      "B1 echo projection changed native arithmetic or chose the replacement model");
+			double sentinel = 123.0;
+			CHECK(pcm_host_echo_project_owned(&owner->echo, owner->echo.reference.fill + 1, &sentinel) ==
+			      PCM_HOST_ECHO_INVALID_STATE && sentinel == 123.0, "unavailable projection changed output");
+			CHECK(pcm_host_echo_predict(&owner->echo, PCM_HOST_ECHO_FILTER, raw, &cleaned) == PCM_HOST_ECHO_OK,
+			      "B1 echo prediction failed");
+			if (i % block == 0)
+				v92_b1_echo_begin_block_owned(&owner->recovery, block);
+			unsigned budget = owner->recovery.budget;
+			unsigned replayed = owner->recovery.replayed;
+			if (fault == 3 && i == 200) {
+				float *coefficients = owner->echo.retained_delay_samples ?
+					owner->echo.retained_coefficients : owner->echo.coefficients;
+				coefficients[1] = .001f;
+			}
+			if (fault == 4 && i == 200)
+				owner->primary.line.input_samples++;
+			bool available = !((fault == 1 && i == 88) || (fault == 2 && i == 200));
+			bool ready = v92_b1_echo_observe_owned(&owner->recovery, &owner->echo, &owner->primary,
+				g711_encode(side, raw), raw, cleaned, available);
+			CHECK(owner->recovery.budget <= budget && replayed <= owner->recovery.replayed &&
+			      owner->recovery.replayed - replayed <= 2,
+			      "B1 echo exceeded its bounded replay budget");
+			CHECK(!ready || (i + 1 == V92_B1_ECHO_INPUTS && !offered[side]),
+			      "B1 echo supplied premature/repeated evidence");
+			offered[side] |= ready;
+			struct v92_upstream_data_frame frame;
+			/* Keep the ordinary decoder clocking, including when a fault
+			 * has made the isolated candidate ineligible. */
+			if (!owner->primary.failed) {
+				enum v92_upstream_data_rx_result result = v92_upstream_data_rx_octet_owned(
+					&owner->primary, g711_encode(side, raw), cleaned, raw, true, &frame);
+				CHECK(result == V92_UPSTREAM_DATA_RX_OK || result == V92_UPSTREAM_DATA_RX_FRAME ||
+				      result == V92_UPSTREAM_DATA_RX_NO_PATH, "B1 echo primary failed");
+			}
+			CHECK(pcm_echo_reference_push(&owner->echo.reference, echo_reference_sample(2000 + i, salt)) ==
+			      PCM_ECHO_REFERENCE_OK, "B1 echo history stopped");
+		}
+	for (unsigned side = 0; side < 2; ++side) {
+		struct b1_echo_owner *owner = &owners[side];
+		CHECK(offered[side] == (fault == 0),
+		      "B1 echo offer mismatch: side=%u block=%u fault=%u count=%u replay=%u shift=%d correlation=%g frames=%" PRIu64 " error=%g",
+		      side, block, fault, owner->recovery.count, owner->recovery.replayed, owner->recovery.fit.shift,
+		      owner->recovery.fit.correlation_squared, owner->recovery.receiver.line.received_frames,
+		      owner->recovery.quality.squared_error);
+		if (!fault) {
+			CHECK(owner->recovery.fit.shift == shifts[side] &&
+			      v92_upstream_data_rx_is_valid(&owner->recovery.receiver) &&
+			      v92_b1_echo_accept_owned(&owner->recovery, &owner->echo) &&
+			      pcm_host_echo_active_delay_owned(&owner->echo, PCM_HOST_ECHO_FILTER) == (uint32_t)(900 + shifts[side]) &&
+			      !v92_b1_echo_accept_owned(&owner->recovery, &owner->echo), "B1 echo commit failed/repeated");
+		} else {
+			CHECK(pcm_host_echo_active_delay_owned(&owner->echo, PCM_HOST_ECHO_FILTER) == 900 &&
+			      !v92_b1_echo_accept_owned(&owner->recovery, &owner->echo), "declined B1 echo changed delay");
+		}
+		v92_b1_echo_reset(&owner->recovery);
+		CHECK(owner->recovery.count == 0 && owner->recovery.replayed == 0,
+		      "B1 echo reset retained the previous epoch");
+	}
+	free(owners);
+	return true;
+}
+
+static bool test_b1_echo_owners(void)
+{
+	const unsigned blocks[] = { 40, 80, 160, 240 };
+	for (unsigned b = 0; b < ARRAY_LENGTH(blocks); ++b)
+		CHECK(run_b1_echo_owners(blocks[b], 0), "B1 echo owner/block isolation failed");
+	for (unsigned fault = 1; fault <= 6; ++fault)
+		CHECK(run_b1_echo_owners(80, fault), "B1 echo decline isolation failed");
+	return true;
+}
+
 int main(void)
 {
+	fprintf(stderr, "[ RUN      ] PCM B1 echo recovery ownership\n");
+	if (!test_b1_echo_owners()) return 1;
+	fprintf(stderr, "[       OK ] PCM B1 echo recovery ownership\n");
 	fprintf(stderr, "[ RUN      ] PCM upstream noise acquisition retains zero cells\n");
 	if (!test_noise_acquisition_zero_cells(-1) || !test_noise_acquisition_zero_cells(1)) return 1;
 	fprintf(stderr, "[       OK ] PCM upstream noise acquisition retains zero cells\n");

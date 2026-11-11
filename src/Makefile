@@ -211,6 +211,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/pcm_host_echo.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_training_echo.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_echo_timing.c \
+	$(DSP_PCM_SOURCE_DIR)/v92_b1_echo.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_info0.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_info0.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_qc1.c \

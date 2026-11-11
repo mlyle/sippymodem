@@ -786,12 +786,7 @@ static bool v92_data_path_is_valid(const struct pcm_call *call)
 		    (path->pending_media_loss && !path->quality_guard_samples) ||
 		    (path->upstream.failed && !call->failed &&
 		     (!path->quality_guard_samples || path->fast.stage != PCM_CALL_V92_FAST_IDLE)) ||
-		    !isfinite(path->b1u_squared_error) ||
-		    path->b1u_squared_error < 0.0 ||
-		    path->b1u_mismatches > V92_B1U_BOTH_MISMATCH ||
-		    (path->b1u_mismatches == V92_B1U_BOTH_MISMATCH && !path->b1u_decode_failed) ||
-		    (path->upstream.line.received_frames <= V92_B1U_ACQUISITION_FRAMES &&
-		     path->b1u_squared_error != 0.0) ||
+		    !v92_b1_quality_is_valid(&path->b1u_quality, path->upstream.line.received_frames) ||
 		    v90_pcm_mapping_init_from_v92_cpu(&expected, cpu, call->law) !=
 			    V90_PCM_MAPPING_OK)
 			return false;
@@ -1494,10 +1489,7 @@ static bool v92_peer_b1_received_owned(const struct pcm_call *call)
 	 * before reporting online. A small residual alone does not prove that
 	 * a dense constellation can carry data on the measured channel. */
 	return (path->fast.stage == PCM_CALL_V92_FAST_IDLE || path->fast.b1_started) &&
-	       path->upstream.line.received_frames >= V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES &&
-	       !path->b1u_decode_failed &&
-	       path->b1u_squared_error <= (double)V92_B1U_VALIDATION_SYMBOLS *
-		       V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR;
+	       v92_b1_quality_is_ready(&path->b1u_quality, path->upstream.line.received_frames);
 }
 
 static bool v92_local_b1_sent_owned(const struct pcm_call *call)
@@ -5176,15 +5168,6 @@ static bool v92_fast_receive(struct pcm_call *call, const struct v92_upstream_da
 	return true;
 }
 
-static double v92_quality_error(const struct pcm_call_v92_digital_data *path,
-	double squared_error)
-{
-	/* Remove only measured post-codec host gain, never mapping or analogue
-	 * channel gain. Keep the frame's original residual as diagnostic evidence. */
-	double gain = path->upstream.line.host.gain;
-	return gain > 0.0 ? squared_error / gain / gain : squared_error;
-}
-
 static enum pcm_call_result observe_v92_data_quality(
 	struct pcm_call *call, const struct v92_upstream_data_frame *frame,
 	struct pcm_call_data_event *event)
@@ -5195,7 +5178,7 @@ static enum pcm_call_result observe_v92_data_quality(
 
 	if (path->quality_guard_samples)
 		return PCM_CALL_OK;
-	double error = v92_quality_error(path, frame->squared_error);
+	double error = v92_upstream_quality_error(path->upstream.line.host.gain, frame->squared_error);
 	quality = v92_data_quality_observe(&next, error,
 		frame->ambiguous, frame->uncertain);
 	if (quality == V92_DATA_QUALITY_OK) {
@@ -5210,33 +5193,52 @@ static enum pcm_call_result observe_v92_data_quality(
 	return PCM_CALL_OK;
 }
 
-static enum pcm_call_result receive_v92_frame(struct pcm_call *call,
-	const struct v92_upstream_data_frame *frame, struct pcm_call_data_event *emitted)
+static void receive_b1_alternate(struct pcm_call *call,
+	const struct pcm_call_b1_alternate *alternate)
 {
 	struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
-	/* The first half fits the receive model. Score only the
-	 * following validation frames: a corrected acquisition error
-	 * must not force another retrain on a now-usable channel. */
-	if (path->upstream.line.received_frames > V92_B1U_ACQUISITION_FRAMES &&
-	    path->upstream.line.received_frames <= V92_B1U_FRAMES) {
-		double error = path->b1u_squared_error + v92_quality_error(path, frame->squared_error);
+	if (alternate == NULL || !call->v92_rate_renegotiation_active ||
+	    path->fast.stage != PCM_CALL_V92_FAST_IDLE || path->pending_media_loss ||
+	    path->quality_guard_samples || v92_peer_b1_received_owned(call))
+		return;
+	const struct v92_upstream_data_rx *rx = alternate->receiver;
+	const struct v92_b1_quality *quality = alternate->quality;
+	if (rx == NULL || quality == NULL || alternate->accept == NULL || rx->failed ||
+	    rx->line.plan.observation != V92_PCM_FRAME_FILTER_OUTPUT ||
+	    path->upstream.line.plan.observation != V92_PCM_FRAME_FILTER_OUTPUT ||
+	    rx->line.received_frames != V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES ||
+	    rx->line.received_frames != path->upstream.line.received_frames ||
+	    rx->line.input_samples != path->upstream.line.input_samples ||
+	    rx->input.count || path->upstream.input.count ||
+	    !v92_pcm_mapping_equal(&rx->decoder.mapping, &path->upstream.decoder.mapping) ||
+	    !v92_upstream_data_rx_is_valid(rx) ||
+	    !v92_b1_quality_is_valid(quality, rx->line.received_frames) ||
+	    !v92_b1_quality_is_ready(quality, rx->line.received_frames))
+		return;
+	/* Everything fallible precedes publication. The physical owner commits
+	 * its confirmed delay before these pointer-free receive values replace
+	 * the rejected verdict. No payload has escaped this B1u epoch. */
+	if (alternate->accept(alternate->context)) {
+		bool limited = path->upstream.input.frame_limited;
+		unsigned budget = path->upstream.input.frame_budget;
+		unsigned credit = path->upstream.input.frame_credit;
+		path->upstream = *rx;
+		path->upstream.input.frame_limited = limited;
+		path->upstream.input.frame_budget = budget;
+		path->upstream.input.frame_credit = credit;
+		path->b1u_quality = *quality;
+	}
+}
 
-		if (!isfinite(error))
-			return PCM_CALL_NUMERIC_FAILURE;
-		path->b1u_squared_error = error;
-	}
-	/* Apply the acquisition split after traceback too. A correct
-	 * scrambled word can retain bad acquisition GPA history in its
-	 * source bits; conversely a peer may resume source ones from an
-	 * uncertain history. Require one independent explanation across
-	 * the whole interval, without excusing ambiguity or missing media. */
-	if (frame->b1u && frame->bit_count != 0u &&
-	    path->upstream.line.received_frames >
-		    V92_B1U_ACQUISITION_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
-		path->b1u_decode_failed |= frame->ambiguous;
-		path->b1u_mismatches |= frame->b1u_mismatches;
-		path->b1u_decode_failed |= path->b1u_mismatches == V92_B1U_BOTH_MISMATCH;
-	}
+static enum pcm_call_result receive_v92_frame(struct pcm_call *call,
+	const struct v92_upstream_data_frame *frame, struct pcm_call_data_event *emitted,
+	const struct pcm_call_b1_alternate *alternate)
+{
+	struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
+	if (!v92_b1_quality_observe_owned(&path->b1u_quality, path->upstream.line.received_frames,
+		    path->upstream.line.host.gain, frame))
+		return PCM_CALL_NUMERIC_FAILURE;
+	receive_b1_alternate(call, alternate);
 	if (v92_peer_b1_received_owned(call))
 		(void)v92_upstream_model_finish_b1u(&path->upstream);
 	/* The decoder's lookahead can still deliver B1u bits after
@@ -5252,7 +5254,7 @@ static enum pcm_call_result v92_data_octet_owned(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
 	int16_t host_sample, bool received_available,
 	const struct pcm_call_data_sources *sources, uint8_t *generated,
-	struct pcm_call_data_event *emitted)
+	struct pcm_call_data_event *emitted, const struct pcm_call_b1_alternate *alternate)
 {
 	if (call->local_role == V90_ANALOG_MODEM) {
 		struct pcm_call_v92_analog_data *path = &call->state.data_path.v92_analog;
@@ -5362,9 +5364,9 @@ static enum pcm_call_result v92_data_octet_owned(
 				if (v92_upstream_data_rx_start_b1u(&path->upstream, &mapping, &plan) != V92_UPSTREAM_DATA_RX_OK ||
 				    !v92_data_quality_restart(&call->pcm_upstream_quality))
 					return PCM_CALL_NUMERIC_FAILURE;
-				path->b1u_squared_error = 0.0;
-				path->b1u_decode_failed = false;
-				path->b1u_mismatches = 0u;
+				path->b1u_quality.squared_error = 0.0;
+				path->b1u_quality.failed = false;
+				path->b1u_quality.mismatches = 0u;
 				path->fast.b1_started = true;
 			}
 		} else {
@@ -5385,7 +5387,7 @@ static enum pcm_call_result v92_data_octet_owned(
 		 * neither this sample nor its loss notification. */
 		if (!received_available && !path->upstream.line.delay_remaining) {
 			if (!v92_peer_b1_received_owned(call))
-				path->b1u_decode_failed = true;
+				path->b1u_quality.failed = true;
 			if (!path->quality_guard_samples) {
 				path->pending_media_loss = true;
 				guard_v92_upstream_failure(path);
@@ -5411,7 +5413,7 @@ static enum pcm_call_result v92_data_octet_owned(
 			 * B1u. Clamp the failed decoder while the independent tone
 			 * detector qualifies it; neither retry nor lower the rate yet. */
 			if (call->b1_deadline_armed)
-				path->b1u_decode_failed = true;
+				path->b1u_quality.failed = true;
 			guard_v92_upstream_failure(path);
 			received = V92_UPSTREAM_DATA_RX_OK;
 		}
@@ -5459,7 +5461,7 @@ static enum pcm_call_result v92_data_octet_owned(
 			return retry_v92_upstream(call, backoff);
 		}
 		if (received == V92_UPSTREAM_DATA_RX_FRAME)
-			return receive_v92_frame(call, &frame, emitted);
+			return receive_v92_frame(call, &frame, emitted, alternate);
 	}
 	return PCM_CALL_OK;
 }
@@ -5494,7 +5496,7 @@ enum pcm_call_result pcm_call_drain_receive_owned(struct pcm_call *call,
 	if (result == V92_UPSTREAM_DATA_RX_NO_PATH) {
 		struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
 		path->b1_sync = (struct v92_b1_sync){ 0 };
-		if (call->b1_deadline_armed) path->b1u_decode_failed = true;
+		if (call->b1_deadline_armed) path->b1u_quality.failed = true;
 		guard_v92_upstream_failure(path);
 		*emitted = event;
 		return PCM_CALL_OK;
@@ -5504,7 +5506,7 @@ enum pcm_call_result pcm_call_drain_receive_owned(struct pcm_call *call,
 		return PCM_CALL_NUMERIC_FAILURE;
 	}
 	if (result == V92_UPSTREAM_DATA_RX_FRAME) {
-		enum pcm_call_result received = receive_v92_frame(call, &frame, &event);
+		enum pcm_call_result received = receive_v92_frame(call, &frame, &event, NULL);
 		if (received != PCM_CALL_OK) return received;
 	}
 	remember_trained_pcm_upstream(call);
@@ -5517,7 +5519,7 @@ static enum pcm_call_result data_octet_owned(
 	int16_t host_sample, bool received_available,
 	const struct pcm_call_data_sources *sources,
 	uint8_t *transmit_octet,
-	struct pcm_call_data_event *event)
+	struct pcm_call_data_event *event, const struct pcm_call_b1_alternate *alternate)
 {
 	const struct pcm_call_data_sources idle = { 0 };
 	struct pcm_call_data_event emitted = { 0 };
@@ -5576,7 +5578,7 @@ static enum pcm_call_result data_octet_owned(
 	generated = g711_encode(call->law, 0);
 	if (uses_pcm_upstream(call)) {
 		result = v92_data_octet_owned(call, received_octet, received_sample, host_sample, received_available,
-			sources, &generated, &emitted);
+			sources, &generated, &emitted, alternate);
 		if (retrain_candidate)
 			emitted = (struct pcm_call_data_event){ 0 };
 	} else if (call->local_role == V90_ANALOG_MODEM) {
@@ -5705,7 +5707,7 @@ enum pcm_call_result pcm_call_data_octet(
 		return PCM_CALL_INVALID_STATE;
 	result = data_octet_owned(
 		call, received_octet, received_sample, received_sample, received_available, sources,
-		&generated, &emitted);
+		&generated, &emitted, NULL);
 	if (result == PCM_CALL_SOURCE_FAILURE)
 		return result;
 	if (!pcm_call_owned_state_is_valid(call)) {
@@ -5724,6 +5726,17 @@ enum pcm_call_result pcm_call_data_octet_owned(
 	uint8_t *transmit_octet,
 	struct pcm_call_data_event *event)
 {
+	return pcm_call_data_octet_alternate_owned(call, received_octet, received_sample,
+		host_sample, received_available, sources, NULL, transmit_octet, event);
+}
+
+enum pcm_call_result pcm_call_data_octet_alternate_owned(
+	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
+	int16_t host_sample, bool received_available,
+	const struct pcm_call_data_sources *sources,
+	const struct pcm_call_b1_alternate *alternate,
+	uint8_t *transmit_octet, struct pcm_call_data_event *event)
+{
 	if (call == NULL || transmit_octet == NULL || event == NULL ||
 	    outputs_overlap(call, transmit_octet, event, sizeof(*event)))
 		return PCM_CALL_INVALID_ARGUMENT;
@@ -5733,7 +5746,7 @@ enum pcm_call_result pcm_call_data_octet_owned(
 		return PCM_CALL_INVALID_STATE;
 	return data_octet_owned(
 		call, received_octet, received_sample, host_sample, received_available, sources,
-		transmit_octet, event);
+		transmit_octet, event, alternate);
 }
 
 static enum pcm_call_result call_octet(

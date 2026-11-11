@@ -2,6 +2,7 @@
 
 #include <v92_data_quality.h>
 #include <v92_pcm_mapping.h>
+#include <v92_upstream_data_rx.h>
 
 #include "test.h"
 
@@ -245,9 +246,64 @@ static bool test_ambiguous_rearm_boundary(void)
 	return true;
 }
 
+static bool test_b1_evidence(void)
+{
+	struct v92_b1_quality quality = { 0 };
+	struct v92_upstream_data_frame frame = {
+		.squared_error = 4.0 * V92_PCM_MAPPING_FRAME_SYMBOLS *
+			V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
+		.bit_count = 1, .b1u = true, .ambiguous = true,
+		.b1u_mismatches = V92_B1U_BOTH_MISMATCH,
+	};
+	for (unsigned n = 1; n <= V92_B1U_ACQUISITION_FRAMES; ++n)
+		CHECK(v92_b1_quality_observe_owned(&quality, n, 2.0, &frame) &&
+		      quality.squared_error == 0.0 && !quality.failed && !quality.mismatches,
+		      "acquisition contaminated independent evidence");
+	frame.ambiguous = false;
+	frame.b1u_mismatches = 0;
+	for (unsigned n = V92_B1U_ACQUISITION_FRAMES + 1;
+	     n <= V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES; ++n) {
+		CHECK(v92_b1_quality_observe_owned(&quality, n, 2.0, &frame), "B1 evidence failed");
+		CHECK(v92_b1_quality_is_valid(&quality, n) &&
+		      v92_b1_quality_is_ready(&quality, n) ==
+			(n == V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES),
+		      "B1 readiness skipped the delayed held-out boundary");
+	}
+	CHECK(quality.squared_error == (double)V92_B1U_VALIDATION_SYMBOLS *
+	      V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
+	      "B1 metric lost gain normalization or included the delayed tail");
+	const unsigned end = V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES;
+	quality.squared_error += 1;
+	CHECK(!v92_b1_quality_is_ready(&quality, end), "B1 residual bound weakened");
+	quality = (struct v92_b1_quality){0};
+	frame.b1u_mismatches = V92_B1U_CODE_MISMATCH;
+	CHECK(v92_b1_quality_observe_owned(&quality, end - 1, 1, &frame) && !quality.failed,
+	      "one remaining explanation rejected B1");
+	frame.b1u_mismatches = V92_B1U_BOTH_MISMATCH ^ V92_B1U_CODE_MISMATCH;
+	CHECK(v92_b1_quality_observe_owned(&quality, end, 1, &frame) && quality.failed &&
+	      !v92_b1_quality_is_ready(&quality, end), "B1 changed explanation between frames");
+	quality = (struct v92_b1_quality){0};
+	frame.b1u_mismatches = 0;
+	frame.ambiguous = true;
+	CHECK(v92_b1_quality_observe_owned(&quality, end, 1, &frame) && quality.failed,
+	      "ambiguous held-out bits qualified");
+	quality = (struct v92_b1_quality){ .failed = true };
+	frame.ambiguous = false;
+	CHECK(v92_b1_quality_observe_owned(&quality, end, 1, &frame) && quality.failed,
+	      "late decisions cleared a prior media-loss failure");
+	quality = (struct v92_b1_quality){ .squared_error = DBL_MAX };
+	frame.squared_error = DBL_MAX;
+	struct v92_b1_quality before = quality;
+	CHECK(!v92_b1_quality_observe_owned(&quality, V92_B1U_FRAMES, 1, &frame) &&
+	      !memcmp(&quality, &before, sizeof(quality)), "B1 overflow changed evidence");
+	CHECK(!v92_b1_quality_is_valid(NULL, end) && !v92_b1_quality_is_ready(NULL, end),
+	      "null B1 evidence accepted");
+	return true;
+}
+
 int main(void)
 {
-	return test_windows() && test_ambiguity() && test_uncertainty() && test_training_recovery() &&
+	return test_b1_evidence() && test_windows() && test_ambiguity() && test_uncertainty() && test_training_recovery() &&
 		test_healthy_rearm() && test_interrupted_healthy_credit() &&
 		test_ambiguous_rearm_boundary() && test_invalid() ? 0 : 1;
 }

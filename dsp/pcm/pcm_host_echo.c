@@ -238,9 +238,8 @@ static bool estimate_echo(
 	return true;
 }
 
-static enum pcm_host_echo_result predict_frozen_model(
-	const struct pcm_host_echo *echo, uint32_t delay, int16_t received_sample,
-	int16_t *cleaned_sample)
+enum pcm_host_echo_result pcm_host_echo_project_owned(
+	const struct pcm_host_echo *echo, uint32_t delay, double *prediction)
 {
 	size_t index;
 	const float *coefficients = echo->retained_delay_samples ?
@@ -252,6 +251,18 @@ static enum pcm_host_echo_result predict_frozen_model(
 		return PCM_HOST_ECHO_INVALID_STATE;
 	if (!estimate_echo(coefficients, &echo->reference, index, &estimate, NULL))
 		return PCM_HOST_ECHO_NUMERIC_FAILURE;
+	*prediction = estimate;
+	return PCM_HOST_ECHO_OK;
+}
+
+static enum pcm_host_echo_result predict_frozen_model(
+	const struct pcm_host_echo *echo, uint32_t delay, int16_t received_sample,
+	int16_t *cleaned_sample)
+{
+	double estimate;
+	enum pcm_host_echo_result result = pcm_host_echo_project_owned(echo, delay, &estimate);
+	if (result != PCM_HOST_ECHO_OK)
+		return result;
 	*cleaned_sample = sample_round_s16((double)received_sample - estimate);
 	return PCM_HOST_ECHO_OK;
 }
