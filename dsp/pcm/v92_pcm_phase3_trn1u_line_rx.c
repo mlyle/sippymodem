@@ -191,10 +191,7 @@ static bool filtered_prefix_matches(
 		return false;
 	if (!gram_solve(normal, correlation, 3, 0., fitted, NULL))
 		return false;
-	double explained = 0.0;
-
-	for (unsigned row = 0u; row < 3u; ++row)
-		explained += fitted[row] * correlation[row];
+	double explained = gram_project(0., fitted, correlation, 3);
 	if (explained < 0.8 * energy || fabs(fitted[0]) <
 	    0.8 * fmax(fabs(fitted[1]), fabs(fitted[2])))
 		return false;

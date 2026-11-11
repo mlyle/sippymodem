@@ -48,21 +48,15 @@ static unsigned int pp_phase(uint16_t symbol)
 static struct qam_point unit_circle_point(unsigned int phase)
 {
 	struct qam_point point = { 1.0, 0.0 };
+	const struct qam_point rotation = {
+		V34_COSINE_PI_OVER_SIX, V34_SINE_PI_OVER_SIX,
+	};
 
 	/* Equation 10-1 uses only twelfth roots of unity. Generate the selected
 	 * root with the same fixed 30-degree rotation instead of retaining the
 	 * recommendation's 48-point period as a coefficient table. */
-	for (unsigned int turn = 0; turn < phase; ++turn) {
-		double in_phase =
-			point.in_phase * V34_COSINE_PI_OVER_SIX -
-			point.quadrature * V34_SINE_PI_OVER_SIX;
-		double quadrature =
-			point.in_phase * V34_SINE_PI_OVER_SIX +
-			point.quadrature * V34_COSINE_PI_OVER_SIX;
-
-		point.in_phase = in_phase;
-		point.quadrature = quadrature;
-	}
+	for (unsigned int turn = 0; turn < phase; ++turn)
+		point = qam_point_multiply(&point, &rotation);
 	return point;
 }
 
