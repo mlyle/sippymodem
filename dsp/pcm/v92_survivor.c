@@ -141,49 +141,39 @@ static void retain_future_warning(struct v92_survivor_context *c, unsigned fill,
 static void build_branches(const struct v92_survivor *s, unsigned group,
 			   const uint64_t costs[12][V92_SURVIVOR_POINTS], struct branch *b)
 {
-	struct {
+	struct symbol_choice {
 		uint64_t cost, alternate;
 		int eta;
 		unsigned digit;
 	} choice[4][4];
-	for (unsigned i = 0; i < 4; i++)
-		for (unsigned residue = 0; residue < 4; residue++) {
-			unsigned symbol = 4 * group + i;
-			uint64_t best = UINT64_MAX, alternate = UINT64_MAX;
-			int selected = 0;
-			unsigned digit = 0;
-			for (int eta = -(int)s->count[symbol]; eta < (int)s->count[symbol]; eta++)
-				if (nonnegative_remainder_s32(eta, 4) == (int32_t)residue) {
-					uint64_t cost = costs[symbol][eta + s->count[symbol]];
-					unsigned value =
-					    nonnegative_remainder_s32(i == 3 ? (eta - (eta & 1)) / 2 : eta,
-							 1u << s->bits[symbol]);
-					if (cost < best) {
-						best = cost;
-						selected = eta;
-						digit = value;
-					}
-				}
-			/* Recompute the nearest different coding digit after the winner changes. */
-			alternate = UINT64_MAX;
-			if (best != UINT64_MAX)
-				for (int eta = -(int)s->count[symbol]; eta < (int)s->count[symbol];
-				     eta++)
-					if (nonnegative_remainder_s32(eta, 4) == (int32_t)residue) {
-						unsigned value = nonnegative_remainder_s32(
-						    i == 3 ? (eta - (eta & 1)) / 2 : eta,
-						    1u << s->bits[symbol]);
-						if (value != digit &&
-						    costs[symbol][eta + s->count[symbol]] <
-							alternate)
-							alternate =
-							    costs[symbol][eta + s->count[symbol]];
-					}
-			choice[i][residue].cost = best;
-			choice[i][residue].alternate = alternate;
-			choice[i][residue].eta = selected;
-			choice[i][residue].digit = digit;
+	for (unsigned i = 0; i < 4; i++) {
+		unsigned symbol = 4 * group + i;
+		for (unsigned residue = 0; residue < 4; residue++)
+			choice[i][residue] = (struct symbol_choice){
+				.cost = UINT64_MAX, .alternate = UINT64_MAX,
+			};
+		/* Each residue retains a winner and its cheapest different digit.
+		 * A new winner with a different digit makes the old winner that
+		 * alternative. A better point for the same digit leaves it alone.
+		 * Ascending eta preserves the first minimum when costs tie. */
+		for (int eta = -(int)s->count[symbol]; eta < (int)s->count[symbol]; eta++) {
+			struct symbol_choice *c = &choice[i][nonnegative_remainder_s32(eta, 4)];
+			uint64_t cost = costs[symbol][eta + s->count[symbol]];
+			if (cost >= c->alternate)
+				continue;
+			unsigned digit = nonnegative_remainder_s32(
+				i == 3 ? (eta - (eta & 1)) / 2 : eta, 1u << s->bits[symbol]);
+			if (cost < c->cost) {
+				if (digit != c->digit)
+					c->alternate = c->cost;
+				c->cost = cost;
+				c->eta = eta;
+				c->digit = digit;
+			} else if (digit != c->digit) {
+				c->alternate = cost;
+			}
 		}
+	}
 	for (unsigned j = 0; j < s->branches; j++)
 		b[j] = (struct branch){.cost = UINT64_MAX, .alternate = UINT64_MAX};
 	for (unsigned word = 0; word < 256; word++) {
