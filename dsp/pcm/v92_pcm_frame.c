@@ -1032,18 +1032,16 @@ struct frame_path {
 /* Pending payload and unused filter capacity do not change while extending
  * a frame. Keep their source path by origin and restore them once the beam
  * settles, instead of copying them at every symbol. */
-static void copy_frame_path(struct frame_path *destination,
-	const struct frame_path *source, size_t history_bytes)
+static void copy_path_state(struct v92_pcm_frame_rx_path *destination,
+	const struct v92_pcm_frame_rx_path *source, size_t history_bytes)
 {
-	const size_t history_offset = offsetof(struct frame_path, state) +
-		offsetof(struct v92_pcm_frame_rx_path, filter) +
+	const size_t history_offset = offsetof(struct v92_pcm_frame_rx_path, filter) +
 		offsetof(struct v92_pcm_frame_filter_state, history);
 	const size_t after_history = history_offset +
-		sizeof(destination->state.filter.history);
-	const size_t pending_offset = offsetof(struct frame_path, state) +
-		offsetof(struct v92_pcm_frame_rx_path, pending);
+		sizeof(destination->filter.history);
+	const size_t pending_offset = offsetof(struct v92_pcm_frame_rx_path, pending);
 	const size_t after_pending = pending_offset +
-		sizeof(destination->state.pending);
+		sizeof(destination->pending);
 
 	memcpy(destination, source, history_offset + history_bytes);
 	memcpy((char *)destination + after_history,
@@ -1052,6 +1050,15 @@ static void copy_frame_path(struct frame_path *destination,
 	memcpy((char *)destination + after_pending,
 	       (const char *)source + after_pending,
 	       sizeof(*destination) - after_pending);
+}
+
+static void copy_frame_path(struct frame_path *destination,
+	const struct frame_path *source, size_t history_bytes)
+{
+	destination->origin = source->origin;
+	copy_path_state(&destination->state, &source->state, history_bytes);
+	memcpy(&destination->frame, &source->frame,
+	       sizeof(*destination) - offsetof(struct frame_path, frame));
 }
 
 static enum v92_pcm_frame_rm rm_state(const struct v92_pcm_frame_rx_path *path)
@@ -1655,9 +1662,10 @@ static enum v92_pcm_frame_result decode_frame(
 	}
 
 	for (size_t index = 0u; index < path_count; ++index) {
-		paths[index] = (struct frame_path){
-			.state = receiver->paths[index], .origin = (uint8_t)index,
-		};
+		paths[index].origin = (uint8_t)index;
+		copy_path_state(&paths[index].state, &receiver->paths[index], history_bytes);
+		memset(&paths[index].frame, 0,
+		       sizeof(paths[index]) - offsetof(struct frame_path, frame));
 		if (known && !b1u_digits(receiver, &paths[index].state,
 				      paths[index].known_digits))
 			return V92_PCM_FRAME_INVALID_PARAMETERS;
@@ -1684,7 +1692,7 @@ static enum v92_pcm_frame_result decode_frame(
 	 * initial coding history without constraining the received B1u bits. */
 	if (initial && path_count == 1u &&
 	    receiver->mapping.cpd.trellis == V92_CPD_TRELLIS_64_STATE) {
-		paths[1] = paths[0];
+		copy_frame_path(&paths[1], &paths[0], history_bytes);
 		paths[1].state.trellis.state ^= 32u;
 		paths[1].state.differential ^= 1u;
 		++path_count;
