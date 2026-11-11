@@ -180,26 +180,10 @@ static bool receive_remote_probe(
 {
 	struct v34_phase2_probe_acquisition *receive =
 		&probe->path.receive;
+	bool finish_l2 = receive->receiver.phase ==
+		V34_PHASE2_PROBE_RECEIVER_WAIT_L2_END;
 
 	*transmit_sample = 0;
-	if (receive->receiver.phase ==
-	    V34_PHASE2_PROBE_RECEIVER_WAIT_L2_END) {
-		if (v34_phase2_probe_acquisition_sample(
-			    receive, received_sample, true,
-			    &event->receive_event) !=
-			    V34_PHASE2_PROBE_ACQUISITION_OK ||
-		    !reset_remote_tone_detector(exchange) ||
-		    !phase2_info0_exchange_observe_tone(
-			    exchange, received_sample, &event->tone_event) ||
-		    !phase2_info0_exchange_generate_tone(
-			    exchange, transmit_sample))
-			return false;
-		probe->phase =
-			PHASE2_INITIAL_PROBE_SIGNAL_B_TONE;
-		event->kind =
-			PHASE2_INITIAL_PROBE_EVENT_REMOTE_PROBE_COMPLETE;
-		return true;
-	}
 	/* The estimated probe edge can precede the end of peer Tone A.
 	 * Track that tone during the nominal search
 	 * before deciding whether its failed capture may be extended once. */
@@ -208,9 +192,20 @@ static bool receive_remote_probe(
 		    exchange, received_sample, &event->tone_event))
 		return false;
 	if (v34_phase2_probe_acquisition_sample(
-		    receive, received_sample, false, &event->receive_event) !=
+		    receive, received_sample, finish_l2, &event->receive_event) !=
 	    V34_PHASE2_PROBE_ACQUISITION_OK)
 		return false;
+	if (finish_l2) {
+		if (!reset_remote_tone_detector(exchange) ||
+		    !phase2_info0_exchange_observe_tone(
+			    exchange, received_sample, &event->tone_event) ||
+		    !phase2_info0_exchange_generate_tone(
+			    exchange, transmit_sample))
+			return false;
+		probe->phase = PHASE2_INITIAL_PROBE_SIGNAL_B_TONE;
+		event->kind = PHASE2_INITIAL_PROBE_EVENT_REMOTE_PROBE_COMPLETE;
+		return true;
+	}
 	switch (event->receive_event.kind) {
 	case V34_PHASE2_PROBE_ACQUISITION_EVENT_NOT_FOUND:
 		if (initial_call && !receive->synchronizer.extended &&
@@ -247,7 +242,6 @@ static bool transmit_local_probe(
 {
 	struct v34_phase2_probe_sequence *transmit =
 		&probe->path.transmit;
-	bool remote_tone_started;
 
 	if (transmit->phase == V34_PHASE2_PROBE_SEQUENCE_PHASE_L2 ||
 	    transmit->phase == V34_PHASE2_PROBE_SEQUENCE_PHASE_LIMIT_REACHED) {
@@ -259,15 +253,13 @@ static bool transmit_local_probe(
 			    exchange, received_sample, &event->tone_event))
 			return false;
 	}
-	remote_tone_started = event->tone_event.kind ==
-			      V34_PHASE2_TONE_STARTED;
-	if (remote_tone_started &&
-	    transmit->samples_emitted > V34_PHASE2_PROBE_L1_SAMPLES) {
-		if (v34_phase2_probe_sequence_sample(
-			    transmit, true, transmit_sample,
-			    &event->transmit_event) !=
-		    V34_PHASE2_PROBE_SEQUENCE_OK)
-			return false;
+	bool finish_l2 = event->tone_event.kind == V34_PHASE2_TONE_STARTED &&
+		transmit->samples_emitted > V34_PHASE2_PROBE_L1_SAMPLES;
+	if (v34_phase2_probe_sequence_sample(
+		    transmit, finish_l2, transmit_sample, &event->transmit_event) !=
+	    V34_PHASE2_PROBE_SEQUENCE_OK)
+		return false;
+	if (finish_l2) {
 		probe->phase =
 			PHASE2_INITIAL_PROBE_SIGNAL_A_TONE;
 		probe->tone_wait_samples = 0;
@@ -275,10 +267,6 @@ static bool transmit_local_probe(
 			PHASE2_INITIAL_PROBE_EVENT_LOCAL_PROBE_COMPLETE;
 		return true;
 	}
-	if (v34_phase2_probe_sequence_sample(
-		    transmit, false, transmit_sample, &event->transmit_event) !=
-	    V34_PHASE2_PROBE_SEQUENCE_OK)
-		return false;
 	if (event->transmit_event.kind ==
 	    V34_PHASE2_PROBE_SEQUENCE_EVENT_LIMIT_REACHED)
 		probe->phase = PHASE2_INITIAL_PROBE_SIGNAL_A_WAIT_TONE;

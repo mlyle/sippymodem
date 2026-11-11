@@ -198,36 +198,28 @@ static bool transmit_local_probe(
 {
 	struct v34_phase2_probe_sequence *transmit =
 		&probe->path.transmit;
-	bool remote_tone_started;
 
 	if (!phase2_info0_exchange_observe_tone(
 		    exchange, received_sample, &event->tone_event))
 		return false;
-	remote_tone_started =
-		event->tone_event.kind == V34_PHASE2_TONE_STARTED;
-	if (remote_tone_started &&
+	bool finish_l2 = event->tone_event.kind == V34_PHASE2_TONE_STARTED &&
 	    ((transmit->phase == V34_PHASE2_PROBE_SEQUENCE_PHASE_L2 &&
 	      transmit->samples_emitted > V34_PHASE2_PROBE_L1_SAMPLES) ||
 	     transmit->phase ==
-		     V34_PHASE2_PROBE_SEQUENCE_PHASE_LIMIT_REACHED)) {
-		if (v34_phase2_probe_sequence_sample(
-			    transmit, true, transmit_sample,
-			    &event->transmit_event) !=
-			    V34_PHASE2_PROBE_SEQUENCE_OK ||
-		    event->transmit_event.kind !=
-			    V34_PHASE2_PROBE_SEQUENCE_EVENT_COMPLETED)
-			return false;
+		     V34_PHASE2_PROBE_SEQUENCE_PHASE_LIMIT_REACHED);
+	if (v34_phase2_probe_sequence_sample(
+		    transmit, finish_l2, transmit_sample,
+		    &event->transmit_event) != V34_PHASE2_PROBE_SEQUENCE_OK ||
+	    (finish_l2 && event->transmit_event.kind !=
+		     V34_PHASE2_PROBE_SEQUENCE_EVENT_COMPLETED))
+		return false;
+	if (finish_l2) {
 		probe->phase = PHASE2_RECIPROCAL_PROBE_SIGNAL_B_COMPLETE;
 		probe->signal_b_tone_wait_samples = 0;
 		event->kind =
 			PHASE2_RECIPROCAL_PROBE_EVENT_LOCAL_PROBE_ACKNOWLEDGED;
 		return true;
 	}
-	if (v34_phase2_probe_sequence_sample(
-		    transmit, false, transmit_sample,
-		    &event->transmit_event) !=
-	    V34_PHASE2_PROBE_SEQUENCE_OK)
-		return false;
 	if (event->transmit_event.kind ==
 	    V34_PHASE2_PROBE_SEQUENCE_EVENT_LIMIT_REACHED)
 		probe->phase = PHASE2_RECIPROCAL_PROBE_SIGNAL_B_WAIT_TONE;
@@ -265,15 +257,16 @@ static bool receive_remote_probe(
 {
 	struct v34_phase2_probe_acquisition *receive =
 		&probe->path.receive;
+	bool finish_l2 = receive->receiver.phase ==
+		V34_PHASE2_PROBE_RECEIVER_WAIT_L2_END;
 
 	*transmit_sample = 0;
-	if (receive->receiver.phase ==
-	    V34_PHASE2_PROBE_RECEIVER_WAIT_L2_END) {
-		if (v34_phase2_probe_acquisition_sample(
-			    receive, received_sample, true,
-			    &event->receive_event) !=
-			    V34_PHASE2_PROBE_ACQUISITION_OK ||
-		    event->receive_event.kind !=
+	if (v34_phase2_probe_acquisition_sample(
+		    receive, received_sample, finish_l2,
+		    &event->receive_event) != V34_PHASE2_PROBE_ACQUISITION_OK)
+		return false;
+	if (finish_l2) {
+		if (event->receive_event.kind !=
 			    V34_PHASE2_PROBE_ACQUISITION_EVENT_COMPLETED ||
 		    !phase2_info0_exchange_generate_tone(
 			    exchange, transmit_sample))
@@ -283,11 +276,6 @@ static bool receive_remote_probe(
 			PHASE2_RECIPROCAL_PROBE_EVENT_REMOTE_PROBE_MEASURED;
 		return true;
 	}
-	if (v34_phase2_probe_acquisition_sample(
-		    receive, received_sample, false,
-		    &event->receive_event) !=
-	    V34_PHASE2_PROBE_ACQUISITION_OK)
-		return false;
 	switch (event->receive_event.kind) {
 	case V34_PHASE2_PROBE_ACQUISITION_EVENT_NOT_FOUND:
 		if (probe->signal_a_reversal_elapsed_samples >=
