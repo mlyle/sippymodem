@@ -59,6 +59,19 @@ static inline void gram_select(
 	}
 }
 
+/* Evaluate a real projection in column order, including the owner's seed
+ * before the first product. Adding a separately reduced dot product changes
+ * rounding when terms cancel. Arrays cover count columns and may alias;
+ * count zero reads neither. Bounds and nonfinite admission stay with the
+ * owner, without a solver-specific column limit or a hidden noise floor. */
+static inline double gram_project(
+	double initial, const double *coefficient, const double *row, unsigned count)
+{
+	for (unsigned i = 0; i < count; ++i)
+		initial += coefficient[i] * row[i];
+	return initial;
+}
+
 /* Unexplained energy of a least-squares fit: y'y - coefficient' X'y.
  * Subtract each product in column order; accumulating the projection first
  * changes rounding when most of the measured energy is explained. Arrays

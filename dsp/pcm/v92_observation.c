@@ -129,8 +129,7 @@ static bool bin_fit_evaluate(struct bin_fit_data *data, const double *x,
 	memset(gradient, 0, BIN_FIT_COLUMNS * sizeof(*gradient));
 	memset(hessian, 0, BIN_FIT_COLUMNS * BIN_FIT_COLUMNS * sizeof(double));
 	for (size_t j = 0; j < data->count; j++) {
-		double mean = 0.;
-		for (unsigned i = 0; i < data->taps; i++) mean += x[i] * data->q[j][i];
+		double mean = gram_project(0., x, data->q[j], data->taps);
 		double a = x[data->taps] * data->low[j] - mean;
 		double b = x[data->taps] * data->high[j] - mean;
 		double probability = gaussian_probability(a / sqrt(2.), b / sqrt(2.));
@@ -187,8 +186,7 @@ static bool bin_fit_direction(unsigned taps, const double *gradient,
 		memset(step, 0, BIN_FIT_COLUMNS * sizeof(*step));
 		if (!gram_fit(gram, rhs, taps, step)) continue;
 		if (!fixed) {
-			double sum = gradient[taps];
-			for (unsigned i = 0; i < taps; i++) sum += hessian[taps][i] * step[i];
+			double sum = gram_project(gradient[taps], hessian[taps], step, taps);
 			step[taps] = -sum / precision;
 		}
 		double product = 0.;
@@ -270,8 +268,7 @@ static bool fit_bin_channel_newton(double coefficient[TAPS], const int16_t *q,
 			direction = bin_fit_direction(taps, gradient, hessian, true, step, &regularization);
 		}
 		if (!direction) return false;
-		double product = 0.;
-		for (unsigned i = 0; i <= taps; i++) product += gradient[i] * step[i];
+		double product = gram_project(0., gradient, step, taps + 1u);
 		if (-product * .5 < 1e-12 * (1. + fabs(loss)) && (!regularization || norm < 1e-8) &&
 		    (!fixed || gradient[taps] <= 0.))
 			return bin_fit_commit(&data, x, coefficient, variance);

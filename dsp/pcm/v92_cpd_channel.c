@@ -48,15 +48,6 @@ static int64_t shifted_sum(const struct v92_upstream_channel *channel,
 	return sum;
 }
 
-static double dot(const double *left, const double *right)
-{
-	double result = 0.0;
-
-	for (size_t i = 0; i < TAPS; ++i)
-		result += left[i] * right[i];
-	return result;
-}
-
 static int64_t moment(const struct v92_upstream_channel *channel,
 	bool left_observed, unsigned left, bool right_observed, unsigned right);
 
@@ -323,7 +314,8 @@ static double inverse_error(const struct inverse_system *system,
 	double normal[TAPS];
 
 	apply_normal(system, coefficients, 0.0, normal);
-	return system->target - 2.0 * dot(coefficients, system->rhs) + dot(coefficients, normal);
+	return system->target - 2.0 * gram_project(0., coefficients, system->rhs, TAPS) +
+		gram_project(0., coefficients, normal, TAPS);
 }
 
 static bool solve(const struct inverse_system *system, double coefficients[TAPS])
@@ -341,13 +333,13 @@ static bool solve(const struct inverse_system *system, double coefficients[TAPS]
 	memcpy(residual, rhs, sizeof(residual));
 	memcpy(direction, rhs, sizeof(direction));
 	memset(coefficients, 0, TAPS * sizeof(*coefficients));
-	double norm = dot(residual, residual), initial_norm = norm;
+	double norm = gram_project(0., residual, residual, TAPS), initial_norm = norm;
 
 	if (!(norm > 1.0e-24) || !isfinite(norm))
 		return false;
 	for (unsigned iteration = 0; iteration < 4u * TAPS; ++iteration) {
 		apply_normal(system, direction, regularization, normal);
-		double denominator = dot(direction, normal);
+		double denominator = gram_project(0., direction, normal, TAPS);
 
 		if (!(denominator > 0.0) || !isfinite(denominator))
 			return false;
@@ -357,7 +349,7 @@ static bool solve(const struct inverse_system *system, double coefficients[TAPS]
 			coefficients[tap] += step * direction[tap];
 			residual[tap] -= step * normal[tap];
 		}
-		double next_norm = dot(residual, residual);
+		double next_norm = gram_project(0., residual, residual, TAPS);
 
 		if (!isfinite(next_norm))
 			return false;

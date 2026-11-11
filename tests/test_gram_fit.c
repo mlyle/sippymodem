@@ -258,6 +258,40 @@ static void test_residual(void)
 	assert(isnan(gram_residual(1., coefficient, cross, 1)));
 }
 
+static void test_projection(void)
+{
+	/* The seed participates before every column, rather than after a dot
+	 * reduction. The second prefix retains the unit lost by regrouping. */
+	double coefficient[] = { 1., 1., NAN };
+	double row[] = { -0x1p54, 1., NAN };
+	assert(gram_project(0x1p54, coefficient, row, 1) == 0.);
+	assert(gram_project(0x1p54, coefficient, row, 2) == 1.);
+	assert(gram_project(7., NULL, NULL, 0) == 7.);
+	assert(signbit(gram_project(-0., NULL, NULL, 0)));
+
+	/* Projections also serve larger channel systems than the Gram solver.
+	 * Use exact integer products and an independent closed-form total. */
+	double left[38], right[38];
+	for (unsigned i = 0; i < 37; ++i) {
+		left[i] = i;
+		right[i] = (double)i - 3.;
+	}
+	left[37] = right[37] = NAN;
+	assert(gram_project(11., left, right, 37) ==
+	       11. + 36. * 37. * 73. / 6. - 3. * 36. * 37. / 2.);
+	double same[] = { 2., -3., NAN };
+	assert(gram_project(7., same, same, 2) == 20.);
+	assert(same[0] == 2. && same[1] == -3. && isnan(same[2]));
+
+	/* Retain raw arithmetic, including exceptional products. */
+	row[0] = INFINITY;
+	assert(isinf(gram_project(1., coefficient, row, 1)) &&
+	       !signbit(gram_project(1., coefficient, row, 1)));
+	assert(isnan(gram_project(-INFINITY, coefficient, row, 1)));
+	coefficient[0] = 0.;
+	assert(isnan(gram_project(1., coefficient, row, 1)));
+}
+
 int main(void)
 {
 	test_symmetric_moments();
@@ -267,6 +301,7 @@ int main(void)
 	test_rejection();
 	test_raw_solver();
 	test_residual();
+	test_projection();
 	puts("Gram fitting tests passed");
 	return 0;
 }
