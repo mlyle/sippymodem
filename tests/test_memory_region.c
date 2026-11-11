@@ -34,13 +34,13 @@ static bool test_empty_regions(void)
 
 static bool test_region_sets(void)
 {
-	uint8_t storage[32];
+	uint8_t storage[40];
 
 	CHECK(!memory_region_set_overlaps(NULL, 0) &&
 	      memory_region_set_overlaps(NULL, 1) &&
 	      memory_region_set_overlaps(NULL, 3),
 	      "missing memory-region list validation changed");
-	for (size_t count = 2; count <= 4; ++count) {
+	for (size_t count = 2; count <= 5; ++count) {
 		struct memory_region *regions = malloc(count * sizeof(*regions));
 
 		CHECK(regions != NULL, "memory-region fixture allocation failed");
@@ -58,6 +58,9 @@ static bool test_region_sets(void)
 				regions[right].size = 0;
 				CHECK(!memory_region_set_overlaps(regions, count),
 				      "empty set member overlapped at %zu/%zu/%zu", count, left, right);
+				regions[right].data = NULL;
+				CHECK(!memory_region_set_overlaps(regions, count),
+				      "absent set member overlapped at %zu/%zu/%zu", count, left, right);
 				regions[right].size = 4;
 				regions[right].data = storage + 8 * left + 4;
 				CHECK(!memory_region_set_overlaps(regions, count),

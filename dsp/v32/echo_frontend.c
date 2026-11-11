@@ -189,6 +189,12 @@ enum v32_echo_result v32_echo_frontend_sample(
 	const struct v32_echo_reference *accepted_reference,
 	double *cleaned, bool *cleaned_ready)
 {
+	const struct memory_region regions[] = {
+		{ frontend, sizeof(*frontend) },
+		{ cleaned, sizeof(*cleaned) },
+		{ cleaned_ready, sizeof(*cleaned_ready) },
+		{ accepted_reference, accepted_reference ? sizeof(*accepted_reference) : 0 },
+	};
 	struct v32_echo_frontend_filter next_filter;
 	struct qam_point overwritten = { 0 };
 	double next_cleaned;
@@ -203,22 +209,7 @@ enum v32_echo_result v32_echo_frontend_sample(
 	if (!v32_echo_frontend_header_is_valid(frontend))
 		return V32_ECHO_INVALID_STATE;
 	if (cleaned == NULL || cleaned_ready == NULL ||
-	    memory_regions_overlap(cleaned, sizeof(*cleaned),
-			   frontend, sizeof(*frontend)) ||
-	    memory_regions_overlap(cleaned_ready, sizeof(*cleaned_ready),
-			   frontend, sizeof(*frontend)) ||
-	    memory_regions_overlap(cleaned, sizeof(*cleaned),
-			   cleaned_ready, sizeof(*cleaned_ready)) ||
-	    (accepted_reference != NULL &&
-	     (memory_regions_overlap(
-		      accepted_reference, sizeof(*accepted_reference),
-			     frontend, sizeof(*frontend)) ||
-	      memory_regions_overlap(
-		      accepted_reference, sizeof(*accepted_reference),
-			     cleaned, sizeof(*cleaned)) ||
-	      memory_regions_overlap(
-		      accepted_reference, sizeof(*accepted_reference),
-			     cleaned_ready, sizeof(*cleaned_ready)))))
+	    memory_region_set_overlaps(regions, 4))
 		return V32_ECHO_INVALID_ARGUMENT;
 	produces = frontend->filter.inputs_needed == 1;
 	expects_reference = produces && frontend->echo.pending_samples == 0;

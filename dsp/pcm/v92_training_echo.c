@@ -109,16 +109,16 @@ enum v92_training_echo_result v92_training_echo_observe(
 	enum pcm_host_echo_mode mode, int16_t received, int16_t cleaned,
 	bool available, int *delay_change)
 {
+	const struct memory_region regions[] = {
+		{ timing, sizeof(*timing) },
+		{ echo, sizeof(*echo) },
+		{ delay_change, sizeof(*delay_change) },
+		{ receiver, receiver ? sizeof(*receiver) : 0 },
+	};
 	if (timing == NULL || echo == NULL || delay_change == NULL ||
 	    (mode != PCM_HOST_ECHO_BYPASS && mode != PCM_HOST_ECHO_TRAIN &&
 	     mode != PCM_HOST_ECHO_FILTER && mode != PCM_HOST_ECHO_FILTER_DATA) ||
-	    memory_regions_overlap(timing, sizeof(*timing), echo, sizeof(*echo)) ||
-	    memory_regions_overlap(timing, sizeof(*timing), delay_change, sizeof(*delay_change)) ||
-	    memory_regions_overlap(echo, sizeof(*echo), delay_change, sizeof(*delay_change)) ||
-	    (receiver != NULL &&
-	     (memory_regions_overlap(receiver, sizeof(*receiver), timing, sizeof(*timing)) ||
-	      memory_regions_overlap(receiver, sizeof(*receiver), echo, sizeof(*echo)) ||
-	      memory_regions_overlap(receiver, sizeof(*receiver), delay_change, sizeof(*delay_change)))))
+	    memory_region_set_overlaps(regions, 4))
 		return V92_TRAINING_ECHO_ERROR;
 	if (timing->fill > V92_TRAINING_ECHO_LAGS || timing->count > FIT_SAMPLES ||
 	    (!timing->active && (timing->ready || timing->view || timing->fill || timing->count)) ||

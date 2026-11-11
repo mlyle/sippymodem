@@ -281,6 +281,12 @@ enum v32_receive_path_result v32_receive_path_sample_paused(
 	const struct v32_echo_reference *accepted_reference,
 	double *cleaned, bool *cleaned_ready)
 {
+	const struct memory_region regions[] = {
+		{ path, sizeof(*path) },
+		{ cleaned, sizeof(*cleaned) },
+		{ cleaned_ready, sizeof(*cleaned_ready) },
+		{ accepted_reference, accepted_reference ? sizeof(*accepted_reference) : 0 },
+	};
 	struct v32_echo_frontend next_echo;
 	double next_cleaned;
 	bool next_ready;
@@ -292,24 +298,7 @@ enum v32_receive_path_result v32_receive_path_sample_paused(
 	    path->echo.echo.adapting)
 		return V32_RECEIVE_PATH_INVALID_STATE;
 	if (cleaned == NULL || cleaned_ready == NULL ||
-	    memory_regions_overlap(
-		    path, sizeof(*path), cleaned, sizeof(*cleaned)) ||
-	    memory_regions_overlap(
-		    path, sizeof(*path), cleaned_ready,
-		    sizeof(*cleaned_ready)) ||
-	    memory_regions_overlap(
-		    cleaned, sizeof(*cleaned), cleaned_ready,
-		    sizeof(*cleaned_ready)) ||
-	    (accepted_reference != NULL &&
-	     (memory_regions_overlap(
-		     path, sizeof(*path), accepted_reference,
-		     sizeof(*accepted_reference)) ||
-	      memory_regions_overlap(
-		     accepted_reference, sizeof(*accepted_reference),
-		     cleaned, sizeof(*cleaned)) ||
-	      memory_regions_overlap(
-		     accepted_reference, sizeof(*accepted_reference),
-		     cleaned_ready, sizeof(*cleaned_ready)))))
+	    memory_region_set_overlaps(regions, 4))
 		return V32_RECEIVE_PATH_INVALID_ARGUMENT;
 	next_echo = path->echo;
 	result = v32_echo_frontend_sample(
