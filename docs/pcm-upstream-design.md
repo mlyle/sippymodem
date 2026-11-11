@@ -178,3 +178,67 @@ separately: B1 and payload do not have the same distribution. A proposed
 layout must satisfy each power bound and the peak bound independently,
 retain the native nearest gain normalization, and be checked across the
 gain uncertainty. A few gain samples can miss narrow codec-cell regressions.
+
+## Larger trellises need a complete event comparison
+
+A larger trellis can separate isolated index errors without improving the
+closest complete error event. For the direct 36 and 40 kbit/s geometries,
+the 16-, 32-, and 64-state coders can be compared using the full pair graph,
+with the actual subset labels and native state transitions. These two maps
+have exactly full radix capacity. The trellis transition for a four-symbol
+interval depends on each index modulo four; its legal parity sum still
+equals incoming Y0.
+Three four-symbol phases cover both the frame layout and six-symbol robbing
+period. The graphs have 768, 3,072, and 12,288 nodes, respectively.
+
+One exact diagnostic metric is the sum of squared differences between
+reconstructed G.711 samples, after native prefilter rounding, transmit gain,
+encoding, and any known bit forcing. This is Euclidean separation in the
+post-codec observation space. It is not a likelihood for noise before the
+codec, a BER estimate, or a substitute for the overlap metric above.
+
+At upstream level 4,096, the following are minimum nontrivial finite-event
+squared separations. Each entry lists **16 / 32 / 64 states**. The robbed-bit
+column takes the worst of forcing bit zero or one at each of the six phases;
+only one sample in six is forced.
+
+| Mapping | Transparent | Worst one-in-six robbing |
+| --- | --- | --- |
+| 36k, mu-law | 589,824 / 589,824 / 737,280 | 507,904 / 491,520 / 491,520 |
+| 36k, A-law | 262,144 / 262,144 / 327,680 | 131,072 / 131,072 / 131,072 |
+| 40k, mu-law | 147,456 / 147,456 / 184,320 | 99,328 / 99,328 / 99,328 |
+| 40k, A-law | 123,904 / 123,904 / 154,880 | 87,552 / 87,552 / 87,552 |
+
+The comparison holds the geometry fixed. Both retaining the selected gain
+and independently recomputing each coder's nearest native B1 gain give these
+results: the representable F remains 61 at 36k and 32 at 40k. Native B1
+energies differ, but the rounded gains do not. Uniform-source payload power
+and peak are therefore equal across the three coders at each geometry.
+This result does not establish behavior at other upstream levels or gains.
+
+For a lower-bound certificate, assign each pair node a nonnegative potential
+no larger than the claimed distance. Require every diagonal target to have
+that distance, every first-different edge from a reachable diagonal state to
+bound its destination potential, and every later edge to satisfy
+h(destination) <= h(source) + edge cost.
+The inequalities bound paths of arbitrary finite length. An attaining source
+pair supplies the upper bound. All 312 combinations of law, rate, coder,
+gain policy, and wire mode were checked this way, including 348,880,896 edge
+inequalities. Separate C and Python constructions agreed on every edge cost.
+Every attaining pair was emitted by normally initialized native transmitters
+after B1; complete encoder states merged after a common physical suffix,
+and eight common source frames then produced identical output. An independent
+integer encoder reproduced the source witnesses and codec observations.
+
+Four adjacent opposite-parity changes already limit the transparent 16- and
+32-state cases. The 64-state coder raises this minimum by 25 percent in
+squared distance, about 0.97 dB, but does not improve the worst robbed-bit
+case here. Robbing can make some different indices produce identical wire
+octets, allowing inexpensive intermediate trellis steps. Code families are
+not nested: at 36k mu-law, the 32-state worst robbed-bit distance is slightly
+lower than the 16-state distance.
+
+Consequently, stronger isolated-symbol separation does not justify a blanket
+increase in trellis size. Compare complete phase-dependent events, event
+counts, actual channel likelihoods, and receiver cost before changing a
+selection. These measurements leave rate and coder selection unchanged.
