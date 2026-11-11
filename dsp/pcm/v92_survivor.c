@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 #include "v92_survivor.h"
+#include "integer_math.h"
 #include <limits.h>
 #include <string.h>
 
@@ -10,11 +11,6 @@ struct branch {
 	struct v92_survivor_word word;
 	int16_t eta[4];
 };
-static uint64_t add_cost(uint64_t a, uint64_t b)
-{
-	return a > UINT64_MAX - b ? UINT64_MAX : a + b;
-}
-
 static int word_equal(struct v92_survivor_word a, struct v92_survivor_word b)
 {
 	return a.lo == b.lo && a.hi == b.hi;
@@ -36,11 +32,6 @@ static void word_set(struct v92_survivor_word *a, unsigned at, unsigned bit)
 		a->lo |= (uint64_t)bit << at;
 	else
 		a->hi |= (uint64_t)bit << (at - 64);
-}
-
-static unsigned positive_mod(int eta, unsigned modulus)
-{
-	return (eta % (int)modulus + (int)modulus) % modulus;
 }
 
 static unsigned branch_index(enum v34_trellis_selection s, unsigned y0,
@@ -162,10 +153,10 @@ static void build_branches(const struct v92_survivor *s, unsigned group,
 			int selected = 0;
 			unsigned digit = 0;
 			for (int eta = -(int)s->count[symbol]; eta < (int)s->count[symbol]; eta++)
-				if (positive_mod(eta, 4) == residue) {
+				if (nonnegative_remainder_s32(eta, 4) == (int32_t)residue) {
 					uint64_t cost = costs[symbol][eta + s->count[symbol]];
 					unsigned value =
-					    positive_mod(i == 3 ? (eta - (eta & 1)) / 2 : eta,
+					    nonnegative_remainder_s32(i == 3 ? (eta - (eta & 1)) / 2 : eta,
 							 1u << s->bits[symbol]);
 					if (cost < best) {
 						best = cost;
@@ -178,8 +169,8 @@ static void build_branches(const struct v92_survivor *s, unsigned group,
 			if (best != UINT64_MAX)
 				for (int eta = -(int)s->count[symbol]; eta < (int)s->count[symbol];
 				     eta++)
-					if (positive_mod(eta, 4) == residue) {
-						unsigned value = positive_mod(
+					if (nonnegative_remainder_s32(eta, 4) == (int32_t)residue) {
+						unsigned value = nonnegative_remainder_s32(
 						    i == 3 ? (eta - (eta & 1)) / 2 : eta,
 						    1u << s->bits[symbol]);
 						if (value != digit &&
@@ -201,7 +192,7 @@ static void build_branches(const struct v92_survivor *s, unsigned group,
 		for (unsigned i = 0; i < 4; i++) {
 			unsigned r = (word >> (2 * i)) & 3, symbol = 4 * group + i;
 			uint64_t cost = choice[i][r].cost;
-			candidate.cost = add_cost(candidate.cost, cost);
+			candidate.cost = add_u64_saturating(candidate.cost, cost);
 			candidate.eta[i] = choice[i][r].eta;
 			if (cost != UINT64_MAX && choice[i][r].alternate != UINT64_MAX &&
 			    choice[i][r].alternate - cost < delta)
@@ -212,7 +203,7 @@ static void build_branches(const struct v92_survivor *s, unsigned group,
 		}
 		if (candidate.cost == UINT64_MAX)
 			continue;
-		candidate.alternate = add_cost(candidate.cost, delta);
+		candidate.alternate = add_u64_saturating(candidate.cost, delta);
 		struct branch *slot = b + s->classes[word];
 		if (candidate.cost < slot->cost) {
 			struct branch old = *slot;
@@ -246,7 +237,7 @@ static int advance_group(struct v92_survivor *s, unsigned group, const struct br
 				unsigned n = s->next[state][branch];
 				if (n == UINT8_MAX)
 					continue;
-				uint64_t value = add_cost(s->metric[state], b[branch].cost);
+				uint64_t value = add_u64_saturating(s->metric[state], b[branch].cost);
 				if (value < metric[n]) {
 					metric[n] = value;
 					origin[n] = state;
@@ -275,7 +266,7 @@ static int advance_group(struct v92_survivor *s, unsigned group, const struct br
 				if (n == UINT8_MAX || b[branch].cost == UINT64_MAX ||
 				    (origin[n] == state && selected[n] == branch))
 					continue;
-				uint64_t value = add_cost(s->metric[state], b[branch].cost);
+				uint64_t value = add_u64_saturating(s->metric[state], b[branch].cost);
 				if (value == UINT64_MAX)
 					continue;
 				uint64_t gap = value - metric[n];
@@ -298,7 +289,7 @@ static int advance_group(struct v92_survivor *s, unsigned group, const struct br
 						     (((winner->nondata ^ loser->nondata) >> i) &
 						      1))
 						? gap
-						: add_cost(gap, inherited);
+						: add_u64_saturating(gap, inherited);
 					if (alt < winner->margin[i])
 						winner->margin[i] = alt;
 				}
@@ -365,7 +356,7 @@ bool v92_survivor_advance_owned(struct v92_survivor *s,
 		build_branches(scratch, group, costs, branches);
 		if (!advance_group(scratch, group, branches, &removed))
 			return false;
-		total = add_cost(total, removed);
+		total = add_u64_saturating(total, removed);
 	}
 	for (unsigned n = 0; n < scratch->states; n++)
 		if (scratch->metric[n] != UINT64_MAX)
@@ -398,7 +389,7 @@ bool v92_survivor_advance_owned(struct v92_survivor *s,
 				uint64_t margin = !word_equal(result.word, other->pending[0]) ||
 							  ((chosen->nondata ^ other->nondata) & 1)
 						      ? gap
-						      : add_cost(gap, other->margin[0]);
+						      : add_u64_saturating(gap, other->margin[0]);
 				if (margin < result.margin)
 					result.margin = margin;
 				if (gap == 0 && (other->code_mismatches & 1))
@@ -424,13 +415,13 @@ bool v92_survivor_advance_owned(struct v92_survivor *s,
 			for (unsigned i = 0; i <= scratch->fill + 2u; i++)
 				if (other->margin[i] < margin)
 					margin = other->margin[i];
-			margin = differs ? gap : add_cost(gap, margin);
+			margin = differs ? gap : add_u64_saturating(gap, margin);
 			if (margin < result.uncertainty_margin)
 				result.uncertainty_margin = margin;
 		}
 	for (unsigned i = 0; i < 12; i++)
 		result.frame_cost =
-		    add_cost(result.frame_cost, costs[i][result.eta[i] + scratch->count[i]]);
+		    add_u64_saturating(result.frame_cost, costs[i][result.eta[i] + scratch->count[i]]);
 	for (unsigned n = 0; n < scratch->states; n++)
 		if (scratch->metric[n] != UINT64_MAX) {
 			struct v92_survivor_context *c = scratch->context + n;

@@ -1422,7 +1422,7 @@ static enum v92_pcm_frame_result decode_independent(
 		result.frame.signed_index[symbol] = eta;
 
 		result.frame.digit[symbol] =
-		    (uint8_t)((value % (int)modulus + (int)modulus) % modulus);
+		    (uint8_t)nonnegative_remainder_s32(value, modulus);
 
 		result.frame.y0[symbol] = (uint8_t)(eta & 1);
 

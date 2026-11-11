@@ -341,6 +341,14 @@ static bool test_nonnegative_remainder(void)
 	for (size_t v = 0; v < ARRAY_LENGTH(values); ++v)
 		for (size_t m = 0; m < ARRAY_LENGTH(moduli); ++m)
 			CHECK(check_nonnegative_remainder(values[v], moduli[m]), "full-width residue failed");
+	for (unsigned shift = 0; shift < 31; ++shift) {
+		uint32_t modulus = UINT32_C(1) << shift;
+		for (size_t v = 0; v < ARRAY_LENGTH(values); ++v)
+			CHECK(check_nonnegative_remainder(values[v], modulus), "power-of-two residue failed");
+		CHECK(check_nonnegative_remainder((int32_t)modulus - 1, modulus) &&
+		      check_nonnegative_remainder(-(int32_t)modulus - 1, modulus),
+		      "power-of-two boundary residue failed");
+	}
 	return true;
 }
 

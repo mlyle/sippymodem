@@ -27,6 +27,10 @@ static inline unsigned int bit_width_unsigned(unsigned int value)
  * congruence class as their positive representatives. */
 static inline int32_t nonnegative_remainder_s32(int32_t value, uint32_t modulus)
 {
+	/* Conversion to uint32_t adds a multiple of every power-of-two divisor
+	 * in the supported range, so masking also gives the negative residue. */
+	if ((modulus & (modulus - 1u)) == 0)
+		return (int32_t)((uint32_t)value & (modulus - 1u));
 	int32_t reduced = value % (int32_t)modulus;
 
 	return reduced < 0 ? reduced + (int32_t)modulus : reduced;
