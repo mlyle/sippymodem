@@ -842,6 +842,64 @@ static bool test_cm_retry_late_menu(void)
 	return true;
 }
 
+static bool test_cm_retry_menu_progress(void)
+{
+	for (unsigned kind = 0; kind < 4; ++kind) {
+		enum g711_law law = (enum g711_law)(kind / 2);
+		bool malformed = kind % 2 != 0;
+		struct v8_calling calling;
+		struct v8_menu menu;
+		struct remote_answerer answerer;
+		CHECK(v8_call_menu_init(&menu, V8_MODULATION_V34_DUPLEX, true) == V8_MENU_OK &&
+		      v8_calling_init(&calling, &menu) == V8_CALLING_OK &&
+		      remote_answerer_init(&answerer, V8_MODULATION_V34_DUPLEX),
+		      "progressing JM fixture failed");
+		unsigned menu_at = 0, zeros = 0, timeout = 0;
+		bool partial_at_retry = false;
+		for (unsigned i = 0; i < 12 * 8000 && !v8_calling_is_complete(&calling); ++i) {
+			if (!menu_at && calling.state == V8_CALLING_EXCHANGE_MENUS)
+				menu_at = i;
+			int16_t rx, tx;
+			enum remote_answer_state saved = answerer.state;
+			if (malformed && saved == REMOTE_JOINT_MENU)
+				answerer.joint_menu_bits.information[0] = 0;
+			/* Start JM just before the compatibility decision. Its first
+			 * preamble arrives while recent ANSam evidence is still valid. */
+			if (!menu_at || i - menu_at < 15000)
+				answerer.state = REMOTE_ANSWER_SIGNAL;
+			CHECK(remote_answerer_transmit(&answerer, &rx), "progressing peer TX failed");
+			answerer.state = saved;
+			rx = g711_quantize(law, rx);
+			enum v8_calling_result result = v8_calling_process(&calling, &rx, &tx, 1);
+			if (result == V8_CALLING_MENU_TIMEOUT) {
+				CHECK(malformed, "valid progressing JM timed out");
+				timeout = i;
+				break;
+			}
+			CHECK(result == V8_CALLING_OK &&
+			      remote_answerer_receive(&answerer, g711_quantize(law, tx)),
+			      "progressing JM processing failed");
+			if (menu_at && i - menu_at == 15999)
+				partial_at_retry = calling.joint_menu_detector.sequence_open && !calling.negotiated;
+			if (calling.state == V8_CALLING_EXCHANGE_MENUS &&
+			    calling.joint_menu_detector.sequence_open) {
+				zeros = tx == 0 ? zeros + 1 : 0;
+				CHECK(zeros < 80, "CM interrupted a progressing JM over codec %u", law);
+			}
+		}
+		CHECK(partial_at_retry, "JM did not straddle retry over codec %u", law);
+		if (malformed) {
+			CHECK(!calling.negotiated && !answerer.cj_detected &&
+			      timeout == menu_at + V8_CALLING_MENU_TIMEOUT_SAMPLES - 1,
+			      "partial invalid menu accepted or changed deadline over codec %u", law);
+		} else {
+			CHECK(calling.negotiated && answerer.cj_detected &&
+			      v8_calling_is_complete(&calling), "progressing JM did not complete over codec %u", law);
+		}
+	}
+	return true;
+}
+
 static bool test_cm_retry_rejection(void)
 {
 	for (unsigned kind = 0; kind < 5; ++kind) {
@@ -912,6 +970,7 @@ int main(void)
 		{ "menu timeout", test_menu_timeout },
 		{ "CM retry fragment ownership", test_cm_retry_fragments },
 		{ "CM retry late joint menu", test_cm_retry_late_menu },
+		{ "CM preserves progressing joint menu", test_cm_retry_menu_progress },
 		{ "CM retry rejects stale and non-ANSam evidence", test_cm_retry_rejection },
 		{ "CM retry validation", test_cm_retry_validation },
 		{ "validation", test_validation },

@@ -77,8 +77,11 @@ static void observe_cm_answer(struct v8_calling *calling, int16_t sample)
 	memset(calling->cm_retry.history, 0, sizeof(calling->cm_retry.history));
 	if (calling->cm_retry.windows == CM_PROBE_WINDOWS) {
 		calling->cm_retry.decided = true;
-		/* One reversal may spoil a window; old evidence alone cannot retry. */
-		if (bit_count_u8(calling->cm_retry.mask) >= 2 && (calling->cm_retry.mask & 12u))
+		/* JM framing supersedes older ANSam evidence. Keep CM running
+		 * while the peer's repeated menu is still being confirmed.
+		 * One reversal may spoil a window; old evidence alone cannot retry. */
+		if (!calling->joint_menu_detector.sequence_open &&
+		    bit_count_u8(calling->cm_retry.mask) >= 2 && (calling->cm_retry.mask & 12u))
 			calling->cm_retry.quiet_remaining = CM_RETRY_QUIET;
 	}
 }
