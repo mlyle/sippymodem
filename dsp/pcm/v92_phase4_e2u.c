@@ -31,7 +31,8 @@ static bool analog_state_is_valid(
 	size_t expected_symbols;
 
 	if (!v92_phase4_record_tx_is_valid(&state->transmit) ||
-	    !downstream_stage_is_valid(state->downstream_stage) ||
+	    (!downstream_stage_is_valid(state->downstream_stage) &&
+	     state->downstream_stage != V92_PHASE4_E2U_DOWNSTREAM_CLEARDOWN) ||
 	    !v92_cpu_parameters_are_valid(&state->cpu) ||
 	    !v92_pcm_mapping_is_valid(&state->mapping) ||
 	    state->mapping.law != state->cpu.law ||
@@ -136,6 +137,7 @@ bool v92_phase4_e2u_is_complete(const struct v92_phase4_e2u *owner)
 	if (!v92_phase4_e2u_is_valid(owner) || owner->failed)
 		return false;
 	return owner->local_role == V90_ANALOG_MODEM ?
+		owner->state.analog.downstream_stage != V92_PHASE4_E2U_DOWNSTREAM_CLEARDOWN &&
 		!owner->state.analog.finishing_control &&
 		v92_phase4_record_tx_is_complete(
 			&owner->state.analog.transmit) :
@@ -314,6 +316,8 @@ enum v90_downstream_data_rx_result v92_downstream_receive_owned(
 	enum pcm_downstream_rx_result result;
 	struct pcm_downstream_rx *receive;
 
+	if (*stage == V92_PHASE4_E2U_DOWNSTREAM_CLEARDOWN)
+		return V90_DOWNSTREAM_DATA_RX_PEER_CLEARDOWN;
 	if (*stage == V92_PHASE4_E2U_DOWNSTREAM_DATA)
 		return v90_downstream_data_rx_receive_octet(
 			&downstream->data, octet, frame);
@@ -339,9 +343,16 @@ enum v90_downstream_data_rx_result v92_downstream_receive_owned(
 	    result == PCM_DOWNSTREAM_RX_MP_REJECTED)
 		return V90_DOWNSTREAM_DATA_RX_INVALID_SYMBOL;
 	if (result == PCM_DOWNSTREAM_RX_CPD) {
+		if (event.control.type != V92_CONTROL_EVENT_CPD ||
+		    event.control.record.cpd.frame_result != V92_CPD_OK)
+			return V90_DOWNSTREAM_DATA_RX_INVALID_SYMBOL;
+		/* CPd drn=0 terminates the exchange, including a record straddling
+		 * the control handoff. Never apply it as a new data selection. */
+		if (event.control.record.cpd.parameters.data_rate_number == 0u) {
+			*stage = V92_PHASE4_E2U_DOWNSTREAM_CLEARDOWN;
+			return V90_DOWNSTREAM_DATA_RX_PEER_CLEARDOWN;
+		}
 		if (*stage == V92_PHASE4_E2U_DOWNSTREAM_PAUSE ||
-		    event.control.type != V92_CONTROL_EVENT_CPD ||
-		    event.control.record.cpd.frame_result != V92_CPD_OK ||
 		    !retain_matching_cpd(
 			    mapping,
 			    &event.control.record.cpd.parameters))
@@ -537,6 +548,9 @@ enum v92_phase4_e2u_result v92_phase4_e2u_next(
 		return V92_PHASE4_E2U_INVALID_ARGUMENT;
 	if (owner->failed)
 		return V92_PHASE4_E2U_FAILED;
+	if (owner->local_role == V90_ANALOG_MODEM &&
+	    owner->state.analog.downstream_stage == V92_PHASE4_E2U_DOWNSTREAM_CLEARDOWN)
+		return V92_PHASE4_E2U_PEER_CLEARDOWN;
 	if (v92_phase4_e2u_is_complete(owner))
 		return V92_PHASE4_E2U_COMPLETE;
 	next = *owner;
@@ -558,6 +572,12 @@ enum v92_phase4_e2u_result v92_phase4_e2u_next(
 		received = v92_downstream_receive_owned(
 			&state->downstream, &state->downstream_stage,
 			&state->cpu, &state->mapping, received_octet, &frame);
+		if (received == V90_DOWNSTREAM_DATA_RX_PEER_CLEARDOWN) {
+			if (!v92_phase4_e2u_is_valid(&next))
+				return fail(owner);
+			*owner = next;
+			return V92_PHASE4_E2U_PEER_CLEARDOWN;
+		}
 		if (received != V90_DOWNSTREAM_DATA_RX_BUFFERING &&
 		    received != V90_DOWNSTREAM_DATA_RX_B1D_FRAME &&
 		    received != V90_DOWNSTREAM_DATA_RX_B1D_COMPLETE &&
@@ -732,6 +752,8 @@ const char *v92_phase4_e2u_result_name(enum v92_phase4_e2u_result result)
 		return "invalid state";
 	case V92_PHASE4_E2U_INTERNAL_ERROR:
 		return "internal error";
+	case V92_PHASE4_E2U_PEER_CLEARDOWN:
+		return "peer cleardown";
 	}
 	return "unknown";
 }

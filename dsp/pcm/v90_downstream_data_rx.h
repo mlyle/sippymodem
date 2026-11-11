@@ -27,6 +27,8 @@ enum v90_downstream_data_rx_result {
 	V90_DOWNSTREAM_DATA_RX_INVALID_SYMBOL,
 	V90_DOWNSTREAM_DATA_RX_OUT_OF_RANGE,
 	V90_DOWNSTREAM_DATA_RX_INTERNAL_ERROR,
+	/* A pending V.92 zero-rate CPd can finish after the E2u/B1 handoff. */
+	V90_DOWNSTREAM_DATA_RX_PEER_CLEARDOWN,
 };
 
 /* Own the fresh receive epoch that begins after Ed. The PCM decoder, GPC

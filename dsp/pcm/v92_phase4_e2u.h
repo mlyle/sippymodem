@@ -22,6 +22,7 @@ enum v92_phase4_e2u_result {
 	V92_PHASE4_E2U_INVALID_PARAMETERS,
 	V92_PHASE4_E2U_INVALID_STATE,
 	V92_PHASE4_E2U_INTERNAL_ERROR,
+	V92_PHASE4_E2U_PEER_CLEARDOWN,
 };
 
 enum v92_phase4_e2u_downstream_stage {
@@ -30,6 +31,9 @@ enum v92_phase4_e2u_downstream_stage {
 	/* Own the training union through Ed and the following silence. Ed
 	 * completion does not change mappings or discard either coder. */
 	V92_PHASE4_E2U_DOWNSTREAM_PAUSE,
+	/* Terminal analogue receive state; retain the training parser and both
+	 * selected mappings for diagnostics, without admitting B1/data. */
+	V92_PHASE4_E2U_DOWNSTREAM_CLEARDOWN,
 };
 
 union v92_phase4_e2u_analog_downstream {
@@ -124,6 +128,9 @@ bool v92_phase4_e2u_is_data_ready(const struct v92_phase4_e2u *owner);
  * role-owned output is required; the other may be NULL and is untouched.
  * Present outputs must not overlap one another or the owner.
  * COMPLETE consumes the final E2u interval.
+ * PEER_CLEARDOWN consumes a CRC-valid zero-rate CPd and preserves the
+ * selected mappings and output. Further calls return the same result without
+ * advancing either direction; completion/handoff remain unavailable.
  * A contradictory decoded control record returns SEQUENCE_MISMATCH and
  * latches failure without committing its parameters or output. */
 enum v92_phase4_e2u_result v92_phase4_e2u_next(
@@ -141,6 +148,8 @@ enum v92_phase4_e2u_result v92_phase4_e2u_handoff(
  * outputs must be distinct. A transmit SOURCE_FAILURE consumes nothing.
  * Receive BUFFERING includes accepted control records and the Ed boundary;
  * subsequent B1d/data results retain the shared downstream receiver contract.
+ * PEER_CLEARDOWN retains the training parser in terminal CLEARDOWN stage,
+ * leaves frame and both selected mappings untouched, and repeats without work.
  * PAUSE instead retains the complete Ed coder unchanged: transmit sends Ucode
  * 0, receive ignores silence/Rt until its owner resumes after Rt-bar. The
  * owner retains six-symbol alignment and exclusively detects/times that step. */

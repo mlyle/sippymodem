@@ -2048,6 +2048,120 @@ static bool run_pause_confirmation(enum g711_law law, enum v92_constellation_siz
 	return true;
 }
 
+/* A complete zero-rate record may straddle the control handoff. Exercise the
+ * literal wire tail at E2u and through the receiver shared with B1/data. */
+static bool test_late_cpd(enum g711_law law, unsigned remaining,
+	unsigned kind, bool shared_receiver, bool pause)
+{
+	struct v92_cpd_parameters full;
+	struct v92_pcm_mapping mapping;
+	struct v92_cpd_base_parameters selected;
+	struct pcm_downstream_tx transmit;
+	struct pcm_downstream_rx receive, before[3];
+	struct v92_phase4_record_tx upstream;
+	struct v92_upstream_control_line_rx unused;
+	uint8_t octets[3];
+	bool damaged = kind == 1u;
+	bool cleardown = kind < 2u;
+
+	CHECK(v92_cpd_direct_init(&full, law, 12u, false) == V92_CPD_OK &&
+	      v92_pcm_mapping_init(&mapping, law, &full) == V92_PCM_MAPPING_OK,
+	      "late CPd mapping setup failed");
+	selected = (struct v92_cpd_base_parameters){
+		.four_times_gain_q0_16 = full.four_times_gain_q0_16,
+		.data_rate_number = full.data_rate_number,
+		.trellis = full.trellis,
+	};
+	CHECK(prepare_downstream(law, 3u, &selected, &transmit, &receive, false, false) &&
+	      upstream_line(law, V92_CONSTELLATION_4_POINT, &upstream, &unused),
+	      "late CPd predecessor failed");
+	if (cleardown) selected.data_rate_number = 0u;
+	if (kind == 3u) selected.data_rate_number--;
+	uint8_t sequence[V92_CPD_BASE_MAX_FRAME_BYTES];
+	struct pcm_downstream_source_record record = {
+		.sequence = sequence, .sequence_capacity = sizeof(sequence),
+	};
+	CHECK(v92_cpd_encode_base(&selected, transmit.encoder.mapping.frame_bits,
+		sequence, sizeof(sequence), &record.sequence_bits) == V92_CPD_OK,
+	      "late CPd source failed");
+	if (damaged) {
+		/* Table30 bit35 changes gain, retaining drn=0 but not its CRC. */
+		packed_msb_set_bit(sequence, 35u, !packed_msb_bit(sequence, 35u));
+	}
+	for (unsigned index = 0u; index < 1000u; ++index) {
+		struct pcm_downstream_symbol symbol;
+		struct pcm_downstream_event event;
+		before[index % 3u] = receive;
+		CHECK((record.complete ? pcm_downstream_tx_next(&transmit, &symbol) :
+			pcm_downstream_tx_next_source_record(&transmit, &record, &symbol)) == PCM_DOWNSTREAM_TX_OK,
+		      "late CPd wire source stopped");
+		octets[index % 3u] = symbol.pcm.octet;
+		enum pcm_downstream_rx_result decoded =
+			pcm_downstream_rx_receive(&receive, symbol.pcm.octet, &event);
+		if (decoded != PCM_DOWNSTREAM_RX_CPD && decoded != PCM_DOWNSTREAM_RX_CPD_REJECTED)
+			continue;
+		CHECK(decoded == (damaged ? PCM_DOWNSTREAM_RX_CPD_REJECTED : PCM_DOWNSTREAM_RX_CPD) &&
+		      event.control.record.cpd.frame_result == (damaged ? V92_CPD_CRC_MISMATCH : V92_CPD_OK) &&
+		      index + 1u >= remaining,
+		      "late CPd wire record did not retain its expected CRC result");
+		unsigned first = index + 1u - remaining;
+		struct v92_phase4_analog_handoff handoff = {
+			.transmit = upstream, .receive = before[first % 3u],
+			.cpu = cpu_parameters(law), .mapping = mapping, .pause = pause,
+		};
+		struct v92_phase4_e2u owner;
+		CHECK(v92_phase4_e2u_init_analog(&owner, &handoff) == V92_PHASE4_E2U_OK,
+		      "late CPd handoff failed");
+		for (unsigned sample = first; sample <= index; ++sample) {
+			struct v90_pcm_stream_frame frame, saved_frame;
+			int16_t output = 1234;
+			struct v92_phase4_e2u_analog_state *state = &owner.state.analog;
+			bool terminal = sample == index && cleardown && !damaged;
+			bool mismatch = sample == index && kind == 3u;
+			memset(&frame, 0xa5, sizeof(frame));
+			saved_frame = frame;
+			if (shared_receiver) {
+				enum v90_downstream_data_rx_result result = v92_downstream_receive_owned(
+					&state->downstream, &state->downstream_stage, &state->cpu,
+					&state->mapping, octets[sample % 3u], &frame);
+				CHECK(result == (terminal ? V90_DOWNSTREAM_DATA_RX_PEER_CLEARDOWN :
+					mismatch ? V90_DOWNSTREAM_DATA_RX_INVALID_SYMBOL : V90_DOWNSTREAM_DATA_RX_BUFFERING) &&
+				      memcmp(&frame, &saved_frame, sizeof(frame)) == 0,
+				      "shared late CPd result/output mismatch: law%u kind%u tail%u", law, kind, remaining);
+			} else {
+				enum v92_phase4_e2u_result result = v92_phase4_e2u_next(
+					&owner, octets[sample % 3u], 0, NULL, &output);
+				CHECK(result == (terminal ? V92_PHASE4_E2U_PEER_CLEARDOWN :
+					mismatch ? V92_PHASE4_E2U_FAILED : V92_PHASE4_E2U_OK) &&
+				      ((!terminal && !mismatch) || output == 1234),
+				      "E2u late CPd result/output mismatch: law%u kind%u tail%u: %s",
+				      law, kind, remaining, v92_phase4_e2u_result_name(result));
+			}
+			CHECK(v92_pcm_mapping_equal(&state->mapping, &mapping) &&
+			      memcmp(&state->cpu, &handoff.cpu, sizeof(state->cpu)) == 0,
+			      "late CPd replaced a selected mapping");
+			if (terminal) {
+				struct v92_phase4_e2u saved = owner;
+				struct v92_phase4_e2u_handoff next, saved_next;
+				memset(&next, 0xa5, sizeof(next));
+				saved_next = next;
+				CHECK(v92_phase4_e2u_is_valid(&owner) && !v92_phase4_e2u_has_failed(&owner) &&
+				      !v92_phase4_e2u_is_complete(&owner) && !v92_phase4_e2u_is_data_ready(&owner) &&
+				      v92_phase4_e2u_handoff(&owner, &next) == V92_PHASE4_E2U_INVALID_STATE &&
+				      memcmp(&next, &saved_next, sizeof(next)) == 0 &&
+				      v92_phase4_e2u_next(&owner, 0u, 0, NULL, &output) == V92_PHASE4_E2U_PEER_CLEARDOWN &&
+				      v92_downstream_receive_owned(&state->downstream, &state->downstream_stage,
+					&state->cpu, &state->mapping, 0u, &frame) == V90_DOWNSTREAM_DATA_RX_PEER_CLEARDOWN &&
+				      output == 1234 && memcmp(&frame, &saved_frame, sizeof(frame)) == 0 &&
+				      memcmp(&owner, &saved, sizeof(owner)) == 0,
+				      "late cleardown advanced a terminal owner or admitted data");
+			}
+		}
+		return true;
+	}
+	CHECK(false, "late CPd never completed");
+}
+
 static bool test_contracts(void)
 {
 	struct v92_phase4_e2u owner;
@@ -2431,6 +2545,13 @@ static bool test_isolated_marker_impulses(void)
 
 int main(void)
 {
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned remaining = 1u; remaining <= 3u; ++remaining)
+			for (unsigned kind = 0u; kind < 4u; ++kind)
+				for (unsigned shared = 0u; shared < 2u; ++shared) {
+					if (!test_late_cpd(law, remaining, kind, shared != 0u, false)) return 1;
+					if (kind < 2u && !test_late_cpd(law, remaining, kind, shared != 0u, true)) return 1;
+				}
 	if (!test_repeat_search_contracts() ||
 	    !test_repeat_history_recovery(CPU_TAIL, false, 1, 64) ||
 	    !test_repeat_history_recovery(CPU_TAIL, true, 1, 64) ||

@@ -560,6 +560,12 @@ static bool v92_analog_phase4_state_is_valid(const struct pcm_call *call)
 
 static bool cleardown_is_active_owned(const struct pcm_call *call)
 {
+	if (uses_pcm_upstream(call) && call->local_role == V90_ANALOG_MODEM &&
+	    call->stage == PCM_CALL_PHASE4 &&
+	    call->state.phase4.v92.child == PCM_CALL_V92_PHASE4_E2U &&
+	    call->state.phase4.v92.owner.e2u.state.analog.downstream_stage ==
+		V92_PHASE4_E2U_DOWNSTREAM_CLEARDOWN)
+		return true;
 	if (uses_pcm_upstream(call) && call->stage == PCM_CALL_PHASE4 &&
 	    call->state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL)
 		return call->local_role == V90_ANALOG_MODEM ?
@@ -3850,6 +3856,8 @@ static enum pcm_call_result v92_e2u_result(
 		return PCM_CALL_FAILED;
 	case V92_PHASE4_E2U_SEQUENCE_MISMATCH:
 		return PCM_CALL_SEQUENCE_MISMATCH;
+	case V92_PHASE4_E2U_PEER_CLEARDOWN:
+		return PCM_CALL_CLEARDOWN_COMPLETE;
 	case V92_PHASE4_E2U_INVALID_PARAMETERS:
 		return PCM_CALL_UNUSABLE_SELECTION;
 	case V92_PHASE4_E2U_INVALID_STATE:
@@ -5324,6 +5332,8 @@ static enum pcm_call_result v92_data_octet_owned(
 		received = v92_downstream_receive_owned(&path->downstream,
 			&path->downstream_stage, &path->cpu, &path->upstream.encoder.mapping,
 			received_octet, &frame);
+		if (received == V90_DOWNSTREAM_DATA_RX_PEER_CLEARDOWN)
+			return PCM_CALL_CLEARDOWN_COMPLETE;
 		if (received == V90_DOWNSTREAM_DATA_RX_DATA_FRAME) {
 			if (!suppress_frame && v90_downstream_data_rx_b1d_qualified(&path->downstream.data)) {
 				emitted->frame.downstream = frame;

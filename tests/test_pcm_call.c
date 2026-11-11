@@ -11127,6 +11127,72 @@ static bool v92_call_cleardown(const struct v92_online_pair *online, unsigned in
 	return true;
 }
 
+/* The receiver tests supply real CRC-valid tails. At the enclosing call
+ * boundary, a terminal E2u must drain its FIR even as a deadline expires. */
+static bool v92_late_cpd_close_contracts(const struct pcm_call *boundary)
+{
+	struct pcm_downstream_tx transmit;
+	struct pcm_downstream_rx receive, tail;
+	const struct v90_pcm_mapping *mapping = &boundary->state.phase4.v92.training_mapping;
+	const struct v92_suvd_parameters status = { .acknowledges_cpu = true };
+	const struct v92_cpd_base_parameters zero = { .four_times_gain_q0_16 = 1u };
+	uint8_t final_octet = 0u;
+	bool found = false, started = false;
+	CHECK(pcm_downstream_tx_init(&transmit, PCM_PROTOCOL_V92, mapping) == PCM_DOWNSTREAM_TX_OK &&
+	      pcm_downstream_tx_start_suvd(&transmit, &status) == PCM_DOWNSTREAM_TX_OK &&
+	      pcm_downstream_rx_init(&receive, PCM_PROTOCOL_V92, mapping, V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK,
+	      "late CPd call wire fixture failed");
+	for (unsigned clock = 0u; clock < 40000u; ++clock) {
+		struct pcm_downstream_symbol symbol;
+		struct pcm_downstream_event event;
+		if (!started && pcm_downstream_tx_is_v92_control_boundary(&transmit)) {
+			CHECK(pcm_downstream_tx_start_cpd(&transmit, &zero) == PCM_DOWNSTREAM_TX_OK,
+			      "late CPd call source did not start");
+			started = true;
+		}
+		tail = receive;
+		CHECK(pcm_downstream_tx_next(&transmit, &symbol) == PCM_DOWNSTREAM_TX_OK,
+		      "late CPd call source stopped");
+		if (pcm_downstream_rx_receive(&receive, symbol.pcm.octet, &event) == PCM_DOWNSTREAM_RX_CPD) {
+			CHECK(event.control.record.cpd.frame_result == V92_CPD_OK &&
+			      event.control.record.cpd.parameters.data_rate_number == 0u,
+			      "late CPd call wire did not decode a zero rate");
+			final_octet = symbol.pcm.octet;
+			found = true;
+			break;
+		}
+	}
+	CHECK(found, "late CPd call source never completed");
+	for (unsigned pending = 0u; pending < 2u; ++pending) {
+		struct pcm_call call = *boundary;
+		struct v92_phase4_e2u *owner = &call.state.phase4.v92.owner.e2u;
+		CHECK(call.local_role == V90_ANALOG_MODEM && call.stage == PCM_CALL_PHASE4 &&
+		      call.state.phase4.v92.child == PCM_CALL_V92_PHASE4_E2U &&
+		      owner->state.analog.downstream_stage != V92_PHASE4_E2U_DOWNSTREAM_DATA,
+		      "late CPd call fixture has no retained training receiver");
+		owner->state.analog.downstream.training = tail;
+		call.rate_renegotiation_deadline_remaining_samples = 1u;
+		for (unsigned tap = 0u; tap < FRACTIONAL_DELAY_TAPS; ++tap)
+			call.upstream_transmit_delay.history[tap] = pending ? (int16_t)(tap + 1u) : 0;
+		CHECK(pcm_call_is_valid(&call) && !pcm_call_is_disconnecting(&call),
+		      "late CPd call snapshot was terminal before its valid CRC");
+		unsigned clock = 0u;
+		for (; clock <= FRACTIONAL_DELAY_TAPS && call.stage != PCM_CALL_CLOSED; ++clock) {
+			struct pcm_call_observation observation;
+			uint8_t octet;
+			enum pcm_call_result result = pcm_call_octet(&call,
+				clock ? silence_octet(call.law) : final_octet, 0, &octet, &observation);
+			CHECK((result == PCM_CALL_OK || result == PCM_CALL_CLEARDOWN_COMPLETE) &&
+			      pcm_call_is_valid(&call) && !call.failed && pcm_call_is_disconnecting(&call) &&
+			      call.stage != PCM_CALL_RETRAIN_SILENCE && !pcm_call_phase4_is_ready(&call),
+			      "terminal E2u retrained or failed during filter drain: %s", pcm_call_result_name(result));
+		}
+		CHECK(call.stage == PCM_CALL_CLOSED && clock == (pending ? FRACTIONAL_DELAY_TAPS + 1u : 1u),
+		      "late CPd closure did not respect the finite filter tail: %u", clock);
+	}
+	return true;
+}
+
 static bool test_v92_rate_request(void)
 {
 	const unsigned rates[] = { 1u, 19u, 13u };
@@ -11265,6 +11331,8 @@ static bool test_v92_rate_request(void)
 						for (unsigned role = 0; role < 2u; ++role) {
 							if (!(e2u_checked & (1u << role)) && calls[role]->stage == PCM_CALL_PHASE4 &&
 							    calls[role]->state.phase4.v92.child == PCM_CALL_V92_PHASE4_E2U) {
+								if (role == 0u)
+									CHECK(v92_late_cpd_close_contracts(calls[role]), "late CPd call closure failed");
 								CHECK(v92_call_cleardown(&pair, 1u << role), "E2u pause cleardown failed");
 								e2u_checked |= 1u << role;
 							}
