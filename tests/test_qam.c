@@ -1675,6 +1675,33 @@ static bool test_validation(void)
 	return true;
 }
 
+static bool test_fir_accumulation(void)
+{
+	const struct qam_point coefficients[] = { { 2, 1 }, { -1, 3 } };
+	const struct qam_point history[] = { { 4, -2 }, { 1, 5 } };
+	struct qam_point result = qam_fir_accumulate(
+		(struct qam_point){ 7, -3 }, coefficients, history, 2);
+
+	CHECK(result.in_phase == 1 && result.quadrature == -5,
+	      "complex FIR product or seed changed");
+	struct qam_point first = qam_fir_accumulate(
+		(struct qam_point){ 7, -3 }, coefficients, history, 1);
+	first = qam_fir_accumulate(first, coefficients + 1, history + 1, 1);
+	CHECK(qam_points_equal(&first, &result), "split FIR changed tap order");
+	const struct qam_point unity[] = { { 1, 0 }, { 1, 0 } };
+	const struct qam_point cancellation[] = { { -0x1p54, 0x1p54 }, { 1, -1 } };
+
+	result = qam_fir_accumulate((struct qam_point){ 0x1p54, -0x1p54 },
+		unity, cancellation, 2);
+	CHECK(result.in_phase == 1 && result.quadrature == -1,
+	      "FIR accumulated taps before its seed");
+	const struct qam_point zero = { -0.0, 0.0 };
+
+	result = qam_fir_accumulate(zero, NULL, NULL, 0);
+	CHECK(qam_points_equal(&result, &zero), "empty FIR changed its seed");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -1684,6 +1711,7 @@ int main(void)
 		{ "point validation", test_point_validation },
 		{ "point span validation", test_point_span_validation },
 		{ "point correlation", test_point_correlation },
+		{ "ordered FIR accumulation", test_fir_accumulation },
 		{ "exact quarter rotation", test_quarter_rotation },
 		{ "integer grid rotation", test_grid_quarter_rotation },
 		{ "channel matching", test_channel_matching },

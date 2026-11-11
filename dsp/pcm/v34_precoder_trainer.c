@@ -105,14 +105,8 @@ enum v34_precoder_trainer_result v34_precoder_trainer_observe(
 		.in_phase = decision->in_phase - target->in_phase,
 		.quadrature = decision->quadrature - target->quadrature,
 	};
-	feedback_error = decision_error;
-	for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap) {
-		struct qam_point prediction = qam_point_multiply(
-			&next.coefficients[tap], &next.error_history[tap]);
-
-		feedback_error.in_phase += prediction.in_phase;
-		feedback_error.quadrature += prediction.quadrature;
-	}
+	feedback_error = qam_fir_accumulate(decision_error,
+		next.coefficients, next.error_history, V34_PRECODER_TAP_COUNT);
 	if (!point_is_finite(&decision_error) ||
 	    !point_is_finite(&feedback_error))
 		return V34_PRECODER_TRAINER_NUMERIC_FAILURE;

@@ -193,15 +193,9 @@ enum qam_equalizer_result qam_equalizer_push(
 		return QAM_EQUALIZER_INVALID_ARGUMENT;
 	input = *received;
 	/* Evaluate the shifted FIR before committing any history or output. */
-	for (size_t index = 0; index < equalizer->tap_count;
-	     ++index) {
-		struct qam_point term = qam_point_multiply(
-			&equalizer->coefficients[index],
-			index == 0 ? &input : &equalizer->history[index - 1u]);
-
-		filtered.in_phase += term.in_phase;
-		filtered.quadrature += term.quadrature;
-	}
+	filtered = qam_fir_accumulate(filtered, equalizer->coefficients, &input, 1);
+	filtered = qam_fir_accumulate(filtered, equalizer->coefficients + 1,
+		equalizer->history, equalizer->tap_count - 1u);
 	if (!point_is_finite(&filtered))
 		return QAM_EQUALIZER_INVALID_ARGUMENT;
 	correction_phase = equalizer->carrier_phase;

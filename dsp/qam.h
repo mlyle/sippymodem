@@ -86,6 +86,24 @@ static inline struct qam_point qam_point_multiply(
 	};
 }
 
+/* Ordered complex FIR accumulation from a caller-supplied seed. Keep the
+ * multiply/add order, including the seed before the first tap; summing the
+ * taps separately changes cancellation and rounding. Callers validate spans
+ * and numerical results. Count zero accesses neither array. No state changes. */
+static inline struct qam_point qam_fir_accumulate(
+	struct qam_point sum, const struct qam_point *coefficients,
+	const struct qam_point *history, size_t count)
+{
+	for (size_t tap = 0; tap < count; ++tap) {
+		struct qam_point term = qam_point_multiply(
+			&coefficients[tap], &history[tap]);
+
+		sum.in_phase += term.in_phase;
+		sum.quadrature += term.quadrature;
+	}
+	return sum;
+}
+
 /* Counterclockwise carrier rotation in radians. Numeric validation and phase
  * wrapping belong to the caller, just as for the raw complex product. */
 static inline struct qam_point qam_point_rotate(
