@@ -1747,6 +1747,29 @@ static enum v92_pcm_frame_result decode_frame(
 					minimum_gain, maximum_gain, weight);
 			}
 
+		/* Integer LU steps can skip cells, so cached filter costs need not
+		 * be unimodal. Their prefix/suffix minima are monotone and bound
+		 * every point, including disconnected low-cost regions. */
+		uint64_t prefix[2 * V92_CPD_MAX_CONSTELLATION_POINTS];
+		uint64_t suffix[2 * V92_CPD_MAX_CONSTELLATION_POINTS];
+		bool cached_filter = cache_points &&
+			receiver->observation == V92_PCM_FRAME_FILTER_OUTPUT;
+
+		if (cached_filter) {
+			unsigned points = 2u * constellation->count;
+			uint64_t left = UINT64_MAX, right = UINT64_MAX;
+
+			for (unsigned i = 0; i < points; ++i) {
+				uint64_t cost = point_cost[symbol][i];
+
+				if (cost < left) left = cost;
+				prefix[i] = left;
+				cost = point_cost[symbol][points - 1u - i];
+				if (cost < right) right = cost;
+				suffix[points - 1u - i] = right;
+			}
+		}
+
 		/* First give every history one likely candidate. Otherwise the
 		 * first history fills the beam with distant points, leaving a loose
 		 * scoring budget until later histories are reached. The second pass
@@ -1853,6 +1876,28 @@ static enum v92_pcm_frame_result decode_frame(
 				while (low < high) {
 					unsigned mid = low + (high - low) / 2;
 					if (costs[mid] < budget) low = mid + 1;
+					else high = mid;
+				}
+				end_eta = (int)low - constellation->count;
+			}
+			/* Discard only tails with no point below the strict heap budget.
+			 * Retain interior holes and the original eta/tie order. */
+			if (cached_filter && count == V92_PCM_RX_PATHS) {
+				uint64_t budget = candidates[0].metric - paths[path].state.metric;
+				unsigned low = 0, high = 2u * constellation->count;
+
+				while (low < high) {
+					unsigned mid = low + (high - low) / 2u;
+
+					if (prefix[mid] >= budget) low = mid + 1u;
+					else high = mid;
+				}
+				first_eta = (int)low - constellation->count;
+				high = 2u * constellation->count;
+				while (low < high) {
+					unsigned mid = low + (high - low) / 2u;
+
+					if (suffix[mid] < budget) low = mid + 1u;
 					else high = mid;
 				}
 				end_eta = (int)low - constellation->count;
