@@ -82,12 +82,6 @@ static bool nearly_equal(double left, double right)
 	return fabs(left - right) <= V34_POWER_COMPARISON_EPSILON * scale;
 }
 
-static bool power_does_not_exceed(double power, double maximum)
-{
-	return power <= maximum ||
-	       power / maximum <= 1.0 + V34_POWER_COMPARISON_EPSILON;
-}
-
 static bool measured_power_relation_is_valid(
 	enum v34_nonlinear_parameter nonlinear_parameter,
 	double precoded_mean, double projected_mean)
@@ -163,7 +157,7 @@ enum v34_symbol_power_result v34_power_normalizer_init(
 	    v34_quarter_superconstellation_extent(parameters->constellation_points / 4u,
 		v34_precoder_grid_step_for_mapping(parameters) / 2u, &extent) !=
 		    V34_CONSTELLATION_OK ||
-	    !power_does_not_exceed(
+	    !qam_power_does_not_exceed(
 		    precoded_measurement->mean_squared_magnitude,
 		    extent.maximum_squared_magnitude))
 		return V34_SYMBOL_POWER_INVALID_ARGUMENT;
@@ -178,7 +172,7 @@ enum v34_symbol_power_result v34_power_normalizer_init(
 		return V34_SYMBOL_POWER_NUMERIC_FAILURE;
 	if (nonlinear_result != V34_NONLINEAR_OK)
 		return V34_SYMBOL_POWER_INVALID_ARGUMENT;
-	if (!power_does_not_exceed(
+	if (!qam_power_does_not_exceed(
 		    projected_measurement->mean_squared_magnitude,
 		    generated.maximum_projected_point_power) ||
 	    !measured_power_relation_is_valid(
@@ -238,7 +232,7 @@ bool v34_power_normalizer_is_valid(
 	    normalizer->projected_mean_squared_magnitude < 0.0 ||
 	    !isfinite(normalizer->maximum_precoded_point_power) ||
 	    normalizer->maximum_precoded_point_power <= 0.0 ||
-	    !power_does_not_exceed(
+	    !qam_power_does_not_exceed(
 		    normalizer->precoded_mean_squared_magnitude,
 		    normalizer->maximum_precoded_point_power) ||
 	    !measured_power_relation_is_valid(
@@ -257,7 +251,7 @@ bool v34_power_normalizer_is_valid(
 		expected_gain * expected_gain;
 	return normalizer->maximum_projected_point_power ==
 		       expected_maximum_projected &&
-	       power_does_not_exceed(
+	       qam_power_does_not_exceed(
 		       normalizer->projected_mean_squared_magnitude,
 		       normalizer->maximum_projected_point_power) &&
 	       isfinite(expected_gain) && expected_gain > 0.0 &&
@@ -282,7 +276,7 @@ enum v34_symbol_power_result v34_normalize_power(
 	projected_power = qam_point_power(projected_point);
 	if (!isfinite(projected_power))
 		return V34_SYMBOL_POWER_NUMERIC_FAILURE;
-	if (!power_does_not_exceed(
+	if (!qam_power_does_not_exceed(
 		    projected_power, normalizer->maximum_projected_point_power))
 		return V34_SYMBOL_POWER_OUT_OF_RANGE;
 	generated = (struct qam_point){
@@ -294,7 +288,7 @@ enum v34_symbol_power_result v34_normalize_power(
 	normalized_power = qam_point_power(&generated);
 	if (!isfinite(normalized_power))
 		return V34_SYMBOL_POWER_NUMERIC_FAILURE;
-	if (!power_does_not_exceed(
+	if (!qam_power_does_not_exceed(
 		    normalized_power,
 		    normalizer->maximum_normalized_point_power))
 		return V34_SYMBOL_POWER_NUMERIC_FAILURE;

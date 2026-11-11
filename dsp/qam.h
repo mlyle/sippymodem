@@ -261,6 +261,15 @@ static inline bool qam_point_divide(
 	return true;
 }
 
+/* Compare an owned nonnegative power with a positive limit. Keep the direct
+ * comparison before the relative-roundoff allowance; scaling the limit can
+ * overflow, and regrouping this division changes boundary rounding. Owners
+ * retain their finite-value admission and choose the power being bounded. */
+static inline bool qam_power_does_not_exceed(double power, double maximum)
+{
+	return power <= maximum || power / maximum <= 1.0 + 1e-12;
+}
+
 /* Accept a finite point whose squared magnitude fits a finite positive limit.
  * A small relative tolerance covers floating-point roundoff at the boundary. */
 static inline bool qam_point_fits_power(
@@ -272,9 +281,7 @@ static inline bool qam_point_fits_power(
 	    maximum_point_power <= 0.0)
 		return false;
 	power = qam_point_power(point);
-	return isfinite(power) &&
-	       (power <= maximum_point_power ||
-		power / maximum_point_power <= 1.0 + 1e-12);
+	return isfinite(power) && qam_power_does_not_exceed(power, maximum_point_power);
 }
 
 struct qam_active_symbol {

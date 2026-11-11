@@ -252,6 +252,7 @@ static bool test_point_span_validation(void)
 
 static bool test_point_validation(void)
 {
+	const double relative_limit = 1.0 + 1e-12;
 	const struct qam_point finite = { 1.0, -2.0 };
 	const struct qam_point bad_in_phase = { NAN, 0.0 };
 	const struct qam_point bad_quadrature = { 0.0, INFINITY };
@@ -266,6 +267,15 @@ static bool test_point_validation(void)
 	struct qam_point rejected_alias = { 1e-6, 0.0 };
 	double power = 7.0;
 
+	CHECK(qam_power_does_not_exceed(0.0, DBL_TRUE_MIN) &&
+	      qam_power_does_not_exceed(DBL_TRUE_MIN, DBL_TRUE_MIN) &&
+	      !qam_power_does_not_exceed(2.0 * DBL_TRUE_MIN, DBL_TRUE_MIN) &&
+	      qam_power_does_not_exceed(relative_limit, 1.0) &&
+	      !qam_power_does_not_exceed(nextafter(relative_limit, INFINITY), 1.0) &&
+	      qam_power_does_not_exceed(DBL_MAX, DBL_MAX) &&
+	      !qam_power_does_not_exceed(INFINITY, DBL_MAX) &&
+	      !qam_power_does_not_exceed(NAN, 1.0),
+	      "shared power limit changed its relative boundary or overflow handling");
 	CHECK(qam_point_power(&finite) == 5.0 &&
 	      qam_point_power(&invalid_power[0]) == 0.0 &&
 	      !signbit(qam_point_power(&invalid_power[0])) &&
