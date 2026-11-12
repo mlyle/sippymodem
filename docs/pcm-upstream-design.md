@@ -871,3 +871,73 @@ enumeration and held-window validation still need resumable scheduling.
 It does not establish a production selector, modem-packet cost or field
 reliability improvement. Retain original acquisition strips, unresolved
 candidates, ordinary B1 validation and decoded-payload qualification.
+
+## Bound the complete scalar learning job
+
+Projection budgeting is insufficient if observation collection, target indexing
+or held-window checks still run to completion in one media callback. Extend the
+same owned continuation to every stage: initialize codec cells, count phase
+coverage, index targets, enumerate profiles, collect strips, project, copy the
+acquisition constraints, and validate both held windows and counterfactuals.
+Share one bounded heapsort mechanism between target indexing and projection.
+The fixed six-phase checks remain constant work; loops over observations,
+targets or candidates advance only within the supplied transition budget.
+
+The complete private prototype owns up to 860 observations and 861 target IDs,
+including the DC prior. It copies input rows by value and keeps the original
+physical phase labels, including relabeled controls and erasures. Enumerate all
+729 six-phase profiles; observed low-bit masks admit at most 64 for fitting.
+A partially evaluated or unvisited profile stays unknown. Acquisition
+feasibility is not final qualification: both held windows must still pass
+against the frozen acquisition constraints. Publish the final result only
+when the whole job finishes. Cancellation and replacement use monotonic job
+generations; call and coding-epoch identities remain separate caller-supplied
+provenance that a production adapter must verify.
+
+On the host and Pi, all 7,344 existing qualification cases match the original
+pairwise oracle exactly at budgets of 1, 64 and 100,000 transitions. Both answers
+and total work are invariant under those partitions. Another 64 synthetic
+cases use the full 861-target workspace, both codec laws, polarity, DC, noise,
+forced-bit profiles, erasures and held-phase relabeling. They match the oracle
+at budgets of 1 and 128, again with identical work. Host address/undefined-
+behavior sanitizers and a fresh source-only build reproduce these results.
+Lifecycle checks cover cancellation at each of 15 execution stages, stale
+operations, zero work, full input queues, generation exhaustion and two
+interleaved owners.
+
+The complete owner occupies 114,184 bytes on both hosts and reuses its
+projection scratch. Allocate and initialize it outside the media hot path.
+Codec cells are cached per owner and law, with their first initialization
+spread over 768 transitions. A conservative accounting for the maximum
+workspace and 64 compatible profiles bounds a job below four million
+constant-work transitions. This is an algorithmic bound, not a time bound.
+The existing matrix needs at most 93,042 transitions per job; the largest
+synthetic case needs 833,275, with another 768 on first use of a codec law.
+
+Isolated Pi measurements for these two cases, 32 jobs per case and budget,
+include the first cold initialization and retain all scheduling outliers:
+
+| Transition budget | Largest step, existing case | Largest step, synthetic case | Largest three-step sum, synthetic case |
+| --- | ---: | ---: | ---: |
+| 64 | 11.6 us | 20.7 us | 28.6 us |
+| 512 | 35.3 us | 29.3 us | 49.3 us |
+| 2,048 | 44.0 us | 55.3 us | 125.3 us |
+| 8,192 | 167.3 us | 154.5 us | 458.1 us |
+
+The hardware timer measures each processing invocation; the three-step sum
+excludes idle time and never crosses a job boundary. Input loading, allocation
+and result retrieval are outside these intervals. The synthetic case needs
+13,020 warm invocations at budget 64, but 102 at budget 8,192. If a scheduler
+supplied one such budget every 10 ms, those would consume about 130 seconds
+and 1.02 seconds of scheduling slots respectively. That is a scheduling
+example, not measured modem training latency. The observed maximum depends
+on the machine and workload; these figures establish neither hard deadlines
+nor whole-modem CPU headroom.
+
+This completes a bounded scalar prototype, not its production integration.
+A native adapter still needs authoritative target/sample ownership, coding-
+epoch invalidation, an explicit training deadline and work allocation, and a
+conservative outcome when the deadline expires with candidates unresolved.
+Ordinary B1 and decoded-payload validation remain necessary. No payload BER,
+FIR-channel admission guarantee or physical-call reliability gain follows
+from matching this scalar oracle.
