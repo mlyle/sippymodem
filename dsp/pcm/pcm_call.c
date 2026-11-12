@@ -5215,6 +5215,7 @@ static void receive_b1_alternate(struct pcm_call *call,
 	    rx->line.received_frames != V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES ||
 	    rx->line.received_frames != path->upstream.line.received_frames ||
 	    rx->line.input_samples != path->upstream.line.input_samples ||
+	    rx->line.polarity != path->upstream.line.polarity ||
 	    rx->input.count || path->upstream.input.count ||
 	    !v92_pcm_mapping_equal(&rx->decoder.mapping, &path->upstream.decoder.mapping) ||
 	    !v92_upstream_data_rx_is_valid(rx) ||

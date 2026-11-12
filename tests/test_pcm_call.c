@@ -11812,7 +11812,7 @@ static bool test_b1_alternate_boundary(const struct pcm_call *incomplete, const 
 			NULL, &tx, &event) == PCM_CALL_OK, "B1 alternate prelude failed");
 	CHECK(before->v92_rate_renegotiation_active && before->state.data_path.v92_digital.upstream.line.received_frames ==
 	      V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES - 1, "B1 alternate lost its short-exchange boundary");
-	for (unsigned fault = 0; fault < 10; ++fault) {
+	for (unsigned fault = 0; fault < 11; ++fault) {
 		*expected = *before;
 		struct pcm_call_v92_digital_data *path = &expected->state.data_path.v92_digital;
 		path->upstream.input.frame_limited = true;
@@ -11841,6 +11841,12 @@ static bool test_b1_alternate_boundary(const struct pcm_call *incomplete, const 
 		if (fault == 5) alternate_rx->decoder.mapping.cpd.data_rate_number = 0;
 		if (fault == 6) alternate_rx->input.count = 1;
 		if (fault == 9) alternate_rx->line.received_frames--;
+		if (fault == 10) {
+			/* A valid decoder and completed B1 do not authorize changing
+			 * the physical sign of subsequent receive samples. */
+			alternate_rx->line.polarity = -alternate_rx->line.polarity;
+			CHECK(v92_upstream_data_rx_is_valid(alternate_rx), "polarity fixture is invalid");
+		}
 		bool available = fault != 7;
 		uint8_t output;
 		CHECK(pcm_call_data_octet_alternate_owned(actual, tail[11], sample, sample, available,
