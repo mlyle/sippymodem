@@ -397,3 +397,62 @@ field BER or resilience to echo. Keep this prototype outside the production
 receiver. A next design must reduce branch-combination and witness-copying
 cost, preserve the required histories, and beat the existing receiver on
 complete channel tests before changing negotiated maps or decoder policy.
+
+## Bound finite precoder representatives before changing the map
+
+Observed pattern peaks do not bound every payload. For the three captured
+filter selections above, `z1` and `p2` are absent and the signed alphabet is
+`u(eta) = 512*eta + 256`, initially with `-32 <= eta < 32`. The precoder is
+`x = round(u + sum(p1[i]*x_history[i])/16384)`, with half-way cases rounded
+away from zero. It selects the equivalent representative with smallest
+rounded `abs(x)`. Treating `u` as an arbitrary bounded input loses this
+selection rule: all three filters have `sum(abs(p1)) > 16384`, so a simple
+absolute-feedback contraction cannot establish the useful bound.
+
+Instead, assume every history sample lies in `[-X,X]`. The exact Q15 history
+accumulator lies in `[-2*B*X,2*B*X]`, where `B = sum(abs(p1))`. For each digit
+and fourth-symbol coset, enumerate its finite equivalent representatives.
+The greatest nearest-representative distance over that interval occurs at
+an endpoint or a midpoint between adjacent representatives. Check these
+points with integer rounding. If every resulting magnitude is at most `X`,
+induction from zero filter history proves the bound for every later source
+word, including B1 and control words under that fixed selection. Enlarging
+the tested set to every residue class safely includes all trellis choices.
+
+The captured partial-capacity maps pass with `X = 7168`. Their finite
+alphabets reach at least 2304 units in each direction for every residue
+class. The full-capacity proposal increases the covering radius to 8192,
+but leaves only 256 units of minimum outer reach. That proof passes for two
+filters and fails for the third. Injected history values within the trial
+cube produce native outputs of `+8258` and `-8258`, matching an independent
+integer calculation. Those histories have not been shown source-reachable;
+this rejects the proposed invariant, rather than demonstrating a bad call.
+An ablation omitting interval endpoints incorrectly accepts that case.
+
+One additional positive level, 16640, and its negative counterpart raise the
+minimum outer reach to 768 without changing the full-capacity moduli, source
+rate or covering radius. This guarded proposal proves `abs(x) <= 8192` for
+all three filters. The native independent receiver accepts its 33-positive-
+point alphabet. Native CPd encoding and decoding round-trip all three maps;
+the additional 17 payload bits fit existing fill at the tested 30-bit frame
+alignment. B1 energy and the selected F values match the unguarded
+full-capacity proposal.
+
+With `p2` absent, the FIR output also obeys
+`abs(v) <= round(X*sum(abs(z2))/32768)`. Applying the native F and LU scaling
+gives unclipped local sample bounds no greater than 7149 for the captured
+maps and 8028 for the guarded proposal. These exclude local signed-16-bit
+sample clipping from zero history with those fixed coefficients and gains.
+They do not bound channel overshoot, remote codec saturation, or echo.
+
+Qualification includes 552 native injected-history controls and 1666 small
+alphabet cases exhaustively checking 626,052 point costs against the sparse
+interval calculation. Stream checks cover 926,208 native symbols across nine
+mapping/filter arms; every proved bound holds throughout its applicable arms.
+An independent fixed-point encoder reproduces
+the 308,736 newly generated guarded symbols, including coding states and
+energies. None uses the guard points: those streams remain identical to the
+unguarded proposal. The bound therefore supplies a design safeguard, without
+an observed power, BER or speed improvement. Keep the proposal out of
+production until complete channel, receiver-cost and interoperability tests
+justify selecting it; the production negotiation remains unchanged.
