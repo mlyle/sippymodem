@@ -636,3 +636,86 @@ precoder representatives and coding state must remain with the native frame
 owner. A production detector still needs noise-aware channel fitting, bounded
 native work, lifecycle and phase-transfer tests, and physical interoperability.
 Keep the full-capacity proposal outside production while those gaps remain.
+
+## Carry coefficient uncertainty while identifying wire operations
+
+Known B1 targets add information that sparse TRN2 can omit. The accepted CPd,
+LU, native precoder reset and physical sample epoch must own those targets;
+held-out decoded payload is not an input to the learner.
+
+For a proposed six-phase operation vector, use the exact network-character
+preimage from `g711_octet_interval_lsb`. A forced bit joins two adjacent
+original cells. Preserve the separate mu-law zero characters. With a scalar
+channel, a known target `t`, cell `[L,U]` and bounded pre-codec noise `e`, each
+observation supplies a strip in the shared gain/offset plane:
+
+```text
+L - 0.5 - e <= gain * t + offset <= U + 0.5 + e
+```
+
+Closed half-sample endpoints conservatively include rounding ties. Repeated
+targets tighten the same strip across different codec phases and across
+training/B1. They cannot be assigned independent latent character values.
+Intersect the strips for each retained operation vector, preserving an
+unknown result when more than one survives.
+
+The full fixed family has 729 vectors. Once every physical phase has an
+observation, at most 64 remain before channel fitting: a forced phase can
+produce only its forced low bit, so observing both bit values excludes both
+forcing modes. Missing a phase leaves the operation unknown. This reduction
+uses no at-most-one-robbed-phase assumption.
+
+A private exact-arithmetic study uses native 36k direct mappings, both laws,
+four/eight-point TRN2, two levels per law, both polarities and controlled
+gain/DC/noise. Acquisition is 288 TRN2 samples plus B1 indices 4..127. The
+first four B1 observations are discarded to separate unknown intervening
+channel history. Two later 224-sample B1 windows validate the frozen model.
+The scalar prior allows either gain sign, magnitude 1/16..16, offset
+-32768..32767, and noise peak four. These are study assumptions, not AT
+settings or general limits on a telephone channel.
+
+Freezing the centroid of a feasible coefficient polygon loses uncertainty:
+a valid held-out character may require a different coefficient still allowed
+by acquisition. Retaining the polygon avoids that error. A temporary
+intersection checks whether one coefficient can explain all validation
+observations; it does not replace the acquisition polygon or change the
+already selected operation vector. To confirm a forced phase, test the whole
+validation window after removing that operation. Infeasibility supplies
+collective evidence even when no individual character rejects every allowed
+coefficient by itself.
+
+| Synthetic qualification | Frozen point | Polygon, individual witnesses | Polygon, collective witnesses |
+| --- | ---: | ---: | ---: |
+| Clean full-family cases | 5716/5832 | 5585/5832 | 5652/5832 |
+| Bounded scalar variations | 467/720 | 712/720 | 714/720 |
+
+Every in-class case retains its true profile; no qualified selection is
+wrong in the tested matrix. The extra clean declines show the cost of fresh
+forcing evidence; the polygon rule is not a universal acceptance improvement.
+Unmodeled postcursors, excess noise and later gain changes decline in the
+selected controls. Physical-index relabeling preserves the model, while
+missing observations retain their original indices. Accepted phase-change
+controls have uniform operations, for which that change has no effect.
+
+Independent exact elimination of offset agrees with 5,840 coefficient
+projections on the host, including validation intersections. A compact
+15-C-module source closure reproduces all 64 native traces on a cold host
+build and the Pi. The Pi also reproduces all 7,344 cases for all three oracle
+variants exactly. These are arithmetic and native-input checks, not packet
+performance measurements.
+
+The four/eight-point comparisons preserve identical native B1 targets and
+codewords at each law/level. At mu-law LU2048, eight-point training removes
+116 acquisition ambiguities, but 64 fully forced profiles still lack fresh
+collective B1 evidence. Its native alphabet peak is 3128 versus 2748 for
+four-point training, at nearly the same alphabet RMS. Raising LU also changes
+the level-selected CPd mapping, so those results cannot isolate an amplitude
+effect or justify a new transmit-power default.
+
+This is an oracle for scalar-channel identifiability. It does not decode
+native payload, implement a native selector, measure its packet cost, or
+prove a noisy FIR/whole-call false-alarm bound. Production work should extend
+the shared codec-interval fitter for richer channels, preserve per-call
+coding/phase ownership and uncertainty, and retain ordinary B1 and decoded
+payload validation. The full-capacity mapping still has its separately
+measured wire-event weaknesses.
