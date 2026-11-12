@@ -20,6 +20,10 @@ struct v92_upstream_decision {
 	double equalized_level;
 	int16_t nearest_level;
 	uint8_t group;
+
+	/* Known-sequence reference after the training tail; otherwise nearest_level.
+	 * This is the nominal level before codec-aware adaptation. */
+	int16_t reference_level;
 };
 
 /* Own the continuous, trained PCM-upstream equalizer and control demodulator
@@ -38,13 +42,6 @@ enum v92_upstream_rx_result v92_upstream_rx_init(
 	const struct v92_pcm_phase4_trn2u_line_handoff *handoff);
 bool v92_upstream_rx_is_valid(const struct v92_upstream_rx *receiver);
 bool v92_upstream_rx_has_failed(const struct v92_upstream_rx *receiver);
-
-/* Predict the equalizer-coordinate level for a known next input group without
- * changing receiver state. level must not overlap receiver; rejected calls
- * leave level unchanged. This is the reference used by E2u. */
-bool v92_upstream_rx_expected_level(
-	const struct v92_upstream_rx *receiver, uint8_t input_group,
-	int16_t *level);
 
 /* Consume one signed 8 kHz sample and return one earliest-bit-first group.
  * Invalid and terminal calls leave receiver and decision unchanged. A new

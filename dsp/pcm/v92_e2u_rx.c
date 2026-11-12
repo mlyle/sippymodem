@@ -172,8 +172,6 @@ enum v92_e2u_rx_result v92_e2u_rx_sample(
 			}
 		}
 	}
-	if (!v92_upstream_rx_expected_level(&next.signal, 0u, &expected))
-		return fail(receiver);
 	result = v92_upstream_rx_sample_known(
 		&next.signal, sample, 0u, &decision);
 	if (result == V92_UPSTREAM_RX_FAILED)
@@ -182,6 +180,7 @@ enum v92_e2u_rx_result v92_e2u_rx_sample(
 		return V92_E2U_RX_INVALID_STATE;
 	if (result != V92_UPSTREAM_RX_OK)
 		return fail(receiver);
+	expected = decision.reference_level;
 	double input = next.signal.line.equalizer.history[next.carrier_tap].in_phase;
 	next.carrier_energy += input * input;
 	next.carrier_peak = fmax(next.carrier_peak, input * input);

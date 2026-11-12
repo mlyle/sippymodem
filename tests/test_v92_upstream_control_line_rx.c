@@ -25,7 +25,8 @@ static bool decisions_equal(
 	return memcmp(&left->equalized_level, &right->equalized_level,
 		       sizeof(left->equalized_level)) == 0 &&
 	       left->nearest_level == right->nearest_level &&
-	       left->group == right->group;
+	       left->group == right->group &&
+	       left->reference_level == right->reference_level;
 }
 
 static void add_ucode(
@@ -667,14 +668,13 @@ static bool run_known_symbol_error(enum g711_law law,
 		.previous_encoded_sign = signal.line.demodulator.previous_encoded_sign,
 	};
 	for (unsigned i = 0; i < 32u; ++i) {
-		int16_t raw, expected;
+		int16_t raw;
 		CHECK(v92_phase4_modulator_next(&transmitter, group, &raw) ==
-			V92_PHASE4_MODULATOR_OK &&
-		      v92_upstream_rx_expected_level(&signal, group, &expected) && expected == raw,
-		      "known reference followed an erroneous decision at %u", i);
+			V92_PHASE4_MODULATOR_OK, "known reference did not generate at %u", i);
 		int16_t received = i == error_symbol ? (int16_t)-raw : raw;
 		CHECK(v92_upstream_rx_sample_known(&signal,
 			line_sample(law, polarity, received), group, &decision) == V92_UPSTREAM_RX_OK &&
+		      decision.reference_level == raw &&
 		      (decision.group != group) == (i == error_symbol),
 		      "one physical error changed later known decisions at %u", i);
 	}
@@ -858,90 +858,82 @@ static bool test_shifted_e2u_carrier(void)
 	return true;
 }
 
-static bool run_prediction_contracts(
+static bool run_reference_contracts(
 	enum g711_law law, enum v92_constellation_size points,
 	uint8_t previous_sign, int8_t polarity)
 {
 	struct v92_pcm_phase4_trn2u transmitter;
 	struct v92_pcm_phase4_trn2u_line_handoff boundary;
-	struct {
-		int16_t before;
-		struct v92_upstream_rx receiver;
-		int16_t after;
-	} outputs = { 0 };
-	struct v92_upstream_rx saved;
+	struct v92_upstream_rx receiver;
+	struct v92_upstream_decision untouched = {
+		.equalized_level = 123.0, .nearest_level = 456, .group = 0xa5,
+		.reference_level = 789,
+	};
 	unsigned int groups =
 		1u << v92_phase4_modulator_bits_per_symbol(points);
+	static const unsigned int tails[] = {
+		0u, 1u, V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY,
+	};
 
 	CHECK(build_boundary(law, points, previous_sign, polarity,
 			     &transmitter, &boundary) &&
-	      v92_upstream_rx_init(&outputs.receiver, &boundary) ==
-		      V92_UPSTREAM_RX_OK,
-	      "prediction boundary did not initialize");
-	for (unsigned int tail = 0u; tail < 2u; ++tail) {
-		outputs.receiver.training_tail_remaining = tail != 0u ?
-			V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY : 0u;
-		saved = outputs.receiver;
+	      v92_upstream_rx_init(&receiver, &boundary) == V92_UPSTREAM_RX_OK,
+	      "reference boundary did not initialize");
+	for (size_t tail = 0u; tail < ARRAY_LENGTH(tails); ++tail) {
+		receiver.training_tail_remaining = tails[tail];
+		struct v92_upstream_rx saved = receiver;
 		for (unsigned int group = 0u; group < groups; ++group) {
 			const struct v92_phase4_demodulator *demodulator =
-				&outputs.receiver.line.demodulator;
+				&saved.line.demodulator;
 			struct v92_phase4_modulator reference = {
 				.scrambler = demodulator->descrambler,
 				.constellation = demodulator->constellation,
 				.lu = demodulator->lu,
-				.previous_encoded_sign =
-					demodulator->previous_encoded_sign,
+				.previous_encoded_sign = demodulator->previous_encoded_sign,
 			};
 			int16_t expected;
-
-			CHECK(v92_phase4_modulator_next(
-				      &reference, (uint8_t)group, &expected) ==
-				      V92_PHASE4_MODULATOR_OK &&
-			      v92_upstream_rx_expected_level(
-				      &outputs.receiver, (uint8_t)group, &outputs.before) &&
-			      v92_upstream_rx_expected_level(
-				      &outputs.receiver, (uint8_t)group, &outputs.after) &&
-			      outputs.before == expected && outputs.after == expected &&
-			      memcmp(&outputs.receiver, &saved, sizeof(saved)) == 0,
-			      "prediction changed state or disagreed law=%u points=%u group=%u",
-			      law, points, group);
-			CHECK(!v92_upstream_rx_expected_level(
-				      &outputs.receiver, (uint8_t)group,
-				      &outputs.receiver.line.demodulator.lu) &&
-			      !v92_upstream_rx_expected_level(
-				      &outputs.receiver, (uint8_t)group,
-				      &outputs.receiver.line.pending_training_targets[0]) &&
-			      memcmp(&outputs.receiver, &saved, sizeof(saved)) == 0,
-			      "prediction accepted an output within its receive owner");
+			CHECK(v92_phase4_modulator_next(&reference, group, &expected) ==
+				V92_PHASE4_MODULATOR_OK, "reference did not generate");
+			for (unsigned int known = 0u; known < 2u; ++known) {
+				struct v92_upstream_decision decision = untouched;
+				receiver = saved;
+				enum v92_upstream_rx_result result = known ?
+					v92_upstream_rx_sample_known(&receiver, 0, group, &decision) :
+					v92_upstream_rx_sample(&receiver, 0, &decision);
+				CHECK(result == V92_UPSTREAM_RX_OK &&
+				      decision.reference_level == (known && tails[tail] == 0u ?
+					      expected : decision.nearest_level),
+				      "reference differed law=%u points=%u group=%u tail=%u known=%u",
+				      law, points, group, tails[tail], known);
+			}
 		}
+		receiver = saved;
 	}
-	outputs.receiver.failed = true;
-	saved = outputs.receiver;
-	outputs.after = 123;
-	CHECK(!v92_upstream_rx_expected_level(
-		      &outputs.receiver, 0u, &outputs.after) &&
-	      outputs.after == 123 &&
-	      memcmp(&outputs.receiver, &saved, sizeof(saved)) == 0,
-	      "failed prediction changed state or output");
-	outputs.receiver.failed = false;
-	outputs.receiver.line.demodulator.lu = 0;
-	saved = outputs.receiver;
-	CHECK(!v92_upstream_rx_expected_level(
-		      &outputs.receiver, 0u, &outputs.after) &&
-	      outputs.after == 123 &&
-	      memcmp(&outputs.receiver, &saved, sizeof(saved)) == 0,
-	      "invalid prediction changed state or output");
+	/* A rejected receive must not publish even the added reference field. */
+	for (unsigned int failed = 0u; failed < 2u; ++failed) {
+		receiver.failed = failed != 0u;
+		if (!failed)
+			receiver.line.demodulator.lu = 0;
+		struct v92_upstream_rx saved = receiver;
+		struct v92_upstream_decision decision = untouched;
+		CHECK(v92_upstream_rx_sample_known(&receiver, 0, 0, &decision) ==
+			      (failed ? V92_UPSTREAM_RX_FAILED : V92_UPSTREAM_RX_INVALID_STATE) &&
+		      decisions_equal(&decision, &untouched) &&
+		      memcmp(&receiver, &saved, sizeof(saved)) == 0,
+		      "rejected known receive changed state or output");
+		receiver.line.demodulator.lu = boundary.demodulator.lu;
+	}
 	return true;
 }
 
-static bool test_prediction_contracts(void)
+static bool test_reference_contracts(void)
 {
 	for (unsigned int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (unsigned int points = 4u; points <= 8u; points += 4u)
 			for (uint8_t sign = 0u; sign <= 1u; ++sign)
 				for (int8_t polarity = -1; polarity <= 1; polarity += 2)
-					CHECK(run_prediction_contracts(law, points, sign, polarity),
-					      "prediction contract matrix stopped");
+					CHECK(run_reference_contracts(law, points, sign, polarity),
+					      "reference contract matrix stopped");
 	return true;
 }
 
@@ -1057,10 +1049,10 @@ static bool test_e2u_contracts(void)
 		.equalized_level = 123.0,
 		.nearest_level = 123,
 		.group = UINT8_C(0xa5),
+		.reference_level = 789,
 	};
 	struct v92_upstream_decision decision_saved;
 	struct v92_upstream_rx ready_saved;
-	int16_t expected_level = 123;
 	static const char *const names[] = {
 		"ok", "complete", "no match", "failed", "invalid argument",
 		"invalid state", "numeric failure",
@@ -1075,11 +1067,10 @@ static bool test_e2u_contracts(void)
 	ready.training_tail_remaining = 0u;
 	ready_saved = ready;
 	decision_saved = decision;
-	CHECK(!v92_upstream_rx_expected_level(NULL, 0u, &expected_level) &&
-	      !v92_upstream_rx_expected_level(&ready, 0u, NULL) &&
-	      !v92_upstream_rx_expected_level(&ready, 4u, &expected_level) &&
-	      expected_level == 123 &&
-	      v92_upstream_rx_expected_level(&ready, 0u, &expected_level) &&
+	CHECK(v92_upstream_rx_sample_known(NULL, 0, 0, &decision) ==
+		      V92_UPSTREAM_RX_INVALID_ARGUMENT &&
+	      v92_upstream_rx_sample_known(&ready, 0, 0, NULL) ==
+		      V92_UPSTREAM_RX_INVALID_ARGUMENT &&
 	      v92_upstream_rx_sample_known(
 		      &ready, 0, 4u, &decision) ==
 		      V92_UPSTREAM_RX_INVALID_ARGUMENT &&
@@ -1145,6 +1136,7 @@ static bool test_receiver_snapshot_rollback(void)
 		struct v92_upstream_control_line_rx control;
 		struct v92_upstream_decision untouched = {
 			.equalized_level = 123., .nearest_level = 456, .group = 2,
+			.reference_level = 789,
 		};
 		struct v92_control_event event = { .type = V92_CONTROL_EVENT_CPU };
 		struct v92_control_event before = event;
@@ -1202,6 +1194,7 @@ static bool test_contracts(void)
 		.equalized_level = 123.0,
 		.nearest_level = 123,
 		.group = UINT8_C(0xa5),
+		.reference_level = 789,
 	};
 	struct v92_upstream_decision decision_before;
 	struct v92_upstream_control_line_rx receiver;
@@ -1502,7 +1495,7 @@ int main(void)
 		{ "known-symbol error isolation", test_known_symbol_error },
 		{ "E2u carrier qualification", test_e2u_carrier },
 		{ "E2u learned input delay", test_shifted_e2u_carrier },
-		{ "read-only upstream predictions", test_prediction_contracts },
+		{ "upstream decision references", test_reference_contracts },
 		{ "fresh and aliased control initialization", test_control_initialization },
 		{ "E2u contracts", test_e2u_contracts },
 		{ "receiver snapshot rollback", test_receiver_snapshot_rollback },

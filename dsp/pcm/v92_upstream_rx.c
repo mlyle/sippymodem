@@ -31,32 +31,6 @@ static struct v92_phase4_modulator reference_from(
 	};
 }
 
-bool v92_upstream_rx_expected_level(
-	const struct v92_upstream_rx *receiver, uint8_t input_group,
-	int16_t *level)
-{
-	struct v92_phase4_modulator reference;
-	unsigned int bits;
-	int16_t generated;
-
-	if (!v92_upstream_rx_is_valid(receiver) || receiver->failed ||
-	    level == NULL ||
-	    memory_regions_overlap(
-		    receiver, sizeof(*receiver), level, sizeof(*level)))
-		return false;
-	bits = v92_phase4_modulator_bits_per_symbol(
-		receiver->line.demodulator.constellation);
-	if (bits == 0u || input_group >= (1u << bits))
-		return false;
-	reference = reference_from(&receiver->line.demodulator);
-	if (v92_phase4_modulator_next(
-		    &reference, input_group, &generated) !=
-	    V92_PHASE4_MODULATOR_OK)
-		return false;
-	*level = generated;
-	return true;
-}
-
 enum v92_upstream_rx_result v92_upstream_rx_init(
 	struct v92_upstream_rx *receiver,
 	const struct v92_pcm_phase4_trn2u_line_handoff *handoff)
@@ -167,6 +141,7 @@ static enum v92_upstream_rx_result sample(
 	}
 	next->line.equalizer.can_adapt = false;
 	generated.equalized_level = output.in_phase;
+	generated.reference_level = nominal_level;
 	next->line.input_samples++;
 	if (!v92_upstream_rx_is_valid(next))
 		return fail(receiver);
