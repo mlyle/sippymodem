@@ -713,9 +713,63 @@ the level-selected CPd mapping, so those results cannot isolate an amplitude
 effect or justify a new transmit-power default.
 
 This is an oracle for scalar-channel identifiability. It does not decode
-native payload, implement a native selector, measure its packet cost, or
+native payload, provide a production selector, measure its packet cost, or
 prove a noisy FIR/whole-call false-alarm bound. Production work should extend
 the shared codec-interval fitter for richer channels, preserve per-call
 coding/phase ownership and uncertainty, and retain ordinary B1 and decoded
 payload validation. The full-capacity mapping still has its separately
 measured wire-event weaknesses.
+
+
+## Project scalar coefficient bounds with exact native arithmetic
+
+A scalar gain/DC feasibility test need not clip rational polygons. Retain the
+per-target lower/upper strips and eliminate the common DC term. For doubled
+cell bounds `l_i` and `u_i`, two observations require:
+
+```text
+l_i <= 2 * t_i * gain + 2 * offset <= u_i
+2 * (t_j - t_i) * gain <= u_j - l_i
+```
+
+Every lower/upper pair therefore supplies one exact rational gain bound.
+Include the DC prior as a zero-target strip and intersect the permitted
+positive and negative gain intervals separately. A zero left coefficient
+with a negative right side is infeasible; closed equality can retain a single
+point. Neither zero-area feasible sets nor an unresolved gain sign should
+be discarded as numerical failures.
+
+Keep the original strips after projecting. A gain interval alone loses the
+coupling to offset and is insufficient for later validation. Temporary joint
+constraints must explain both held windows with one acquisition-compatible
+coefficient pair. Removing a forced phase is tested separately in each held
+window against the unchanged acquisition strips, preserving the collective
+counterfactual rule above. Missing samples retain their physical indices.
+
+With signed-16 targets and the study's codec/noise bounds, a projected bound
+has numerator magnitude at most 131084 and positive denominator at most
+131070. Comparing two bounds needs integer products below 2^35, so signed
+64-bit arithmetic suffices without compiler-specific wider integers or
+floating-point tolerances. These bounds depend on this scalar model and its
+fixed priors; adding FIR taps requires a different elimination strategy.
+
+A private native prototype reproduces all 7,344 collective-oracle cases on
+the host and Pi: feasible profile lists, decisions, selected gain projections,
+and held-window counterfactuals agree exactly. Its host ASan/UBSan run agrees
+too. A compact source package regenerates all 64 native input traces and the
+entire observation stream; expected profiles are absent from solver input.
+
+| Whole offline scalar qualification | Median | Largest observed |
+| --- | ---: | ---: |
+| Host, two builds | 0.136–0.152 ms | 0.821 ms |
+| Pi | 0.270 ms | 0.963 ms |
+
+These timings exclude input generation/I/O and native payload decoding.
+They are not packet-deadline or multi-call capacity measurements. The tested
+cases need at most 81,024 lower/upper-pair checks and 41 distinct targets,
+including the DC prior and temporary held constraints. The general bounded
+workspace allows many more targets than this matrix exercises. Production
+integration still needs incremental work limits, an unknown result while any
+candidate is unresolved, authoritative call/phase ownership, and unchanged
+ordinary B1/payload verification. The prototype does not establish a noisy
+FIR false-alarm bound or physical interoperability.
