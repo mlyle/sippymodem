@@ -86,12 +86,13 @@ static inline double pam_distance_squared(const int16_t *points, unsigned count,
 			else
 				high = middle;
 		}
-#if defined(__x86_64__)
-		/* Bracketed directed distances avoid an x86 libm minimum call. */
+		/* Brackets make both directed distances nonnegative. */
 		double below = x - points[low], above = points[high] - x;
+#if defined(__x86_64__)
+		/* Avoid an x86 libm minimum call. */
 		error = below < above ? below : above;
 #else
-		error = fmin(fabs(x - points[low]), fabs(x - points[high]));
+		error = fmin(below, above);
 #endif
 	}
 	error -= half_width;
