@@ -456,3 +456,42 @@ unguarded proposal. The bound therefore supplies a design safeguard, without
 an observed power, BER or speed improvement. Keep the proposal out of
 production until complete channel, receiver-cost and interoperability tests
 justify selecting it; the production negotiation remains unchanged.
+
+## Preserve the symbol schedule in the amplitude invariant
+
+The full-capacity map admits a tighter proof without extra guard points.
+Its twelve moduli are `[32,32,32,16,32,32,32,16,16,16,16,16]`.
+The convolutional coset doubles the representative spacing on each fourth
+symbol. Thus a period of candidate bounds is
+`X = [8192,8192,8192,8192,8192,8192,8192,8192,4096,4096,4096,8192]`.
+Treating all history positions as 8192 discards these three smaller bounds.
+
+At phase `j`, bound the exact history accumulator by
+`H[j] = 2*sum(abs(p1[k])*X[(j-1-k) mod 12])`. Apply the same finite-set
+endpoint and adjacent-midpoint checks to `[-H[j],H[j]]`, using that phase's
+representative classes. Every phase maps into its proposed bound for all
+three captured filters. Zero history satisfies every phase, so induction
+proves the bounds for every source word under the fixed mapping, including
+B1 and RM/RM-prime frames. Neither particular payload patterns nor a particular
+trellis path establish this result; checking all residue classes includes
+all of their possible choices.
+
+For the previously failing filter, the largest phase-specific accumulator
+limit is 272,498,688, versus 278,986,752 for the independent cube. Its injected
+8258-output corner violates the smaller history bounds and cannot arise from
+zero history under this mapping. The extra outer points are also unnecessary
+for these filters: their nearest decision midpoint remains at least 132
+output units beyond the permitted history interval, leaving a strict margin
+even after integer rounding. They are never selected. Guarded and unguarded
+source encoders therefore have identical coding histories, B1 energies and
+payload waveforms at the same gain; their advertised CPd records still differ.
+
+Qualification checks all nine mapping/filter arms, 57,456 native corner and
+random-history cases, and 38,016 distinct native source symbols, including
+adaptive digit choices inverted into actual source bits. An independent
+encoder reproduces every field and coding state of those trajectories.
+An exhaustive small-alphabet check compares 2,137,050 point costs across
+750 systems and 2250 phase cases with the sparse extrema calculation.
+This resolves the conservative amplitude-bound gap. It does not establish
+better BER, lower receiver cost, channel headroom or interoperability, and
+does not change production mapping selection.
