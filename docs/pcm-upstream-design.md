@@ -825,3 +825,49 @@ maximum. Envelope scratch costs about 45 KiB, with a further 1.7 KiB target
 index per group. Production integration still needs owned resumable scratch
 and bounded steps; completing a whole offline job quickly does not establish
 a per-packet work limit. An unfinished candidate must remain unknown.
+
+## Resume exact projection within an explicit work budget
+
+Envelope construction can pause without changing the feasible set. Keep the
+input strips, sorting indices, two envelopes, active segments and partial
+result in one reusable owner. Copy each accepted strip into that owner;
+retain no caller buffers. Publish a result only after both gain signs have
+finished. Use a new job generation on restart, rejecting stale operations
+without touching the replacement job. Bind that job to the physical coding
+and sample epoch separately; a job token alone does not prove provenance.
+
+Split execution into constant-work transitions: one heap level, target
+validation, envelope append or pop, active-line advance, or segment
+intersection. Each step consumes at most its supplied transition budget;
+zero budget changes nothing. Exhausting a budget means unfinished work,
+never infeasibility. Validate capacity, flags and integer bounds before
+accepting input. Require distinct target coordinates after collection;
+duplicates are an input error, while contradictory bounds are a valid
+empty feasible set. Preserve closed endpoint contacts.
+
+A private native implementation reproduces the same 7,344 qualification
+cases, 2,816 shuffled projections and 2,022 independent rational-oracle
+cases on the host and Pi. Another 2,048 cases cover the full accepted
+integer range, each with five different budgets: answers and total work
+agree across all partitions. Lifecycle checks cover cancellation at each
+execution stage, restart, stale generations, zero budget and capacity.
+Host address/undefined-behavior sanitizer checks preserve the qualification
+and shuffled-projection results too.
+
+For `n` targets, a conservative bound is
+`2*n*ceil(log2(n)) + 30*n + 32` transitions, including sorting. This bounds
+algorithmic work, not execution time. The 861-target bound is 43,082;
+the synthetic curved-envelope case uses 16,224. At 64 transitions per step
+on Pi, that case averages 0.578 microseconds, with an observed maximum of
+2.148 microseconds and a three-step sum maximum of 3.444 microseconds.
+The unsliced projection averages 133.969 microseconds. Timing excludes
+input loading and idle time; scheduling outliers remain in the samples.
+Other budgets have larger outliers, so these are not hard deadline bounds.
+
+The owner occupies 55,296 bytes on both measured hosts, including input
+and envelope storage. Reuse it outside the modem hot stack. This prototype
+only bounds projection: target indexing, observation collection, candidate
+enumeration and held-window validation still need resumable scheduling.
+It does not establish a production selector, modem-packet cost or field
+reliability improvement. Retain original acquisition strips, unresolved
+candidates, ordinary B1 validation and decoded-payload qualification.
