@@ -773,3 +773,55 @@ integration still needs incremental work limits, an unknown result while any
 candidate is unresolved, authoritative call/phase ownership, and unchanged
 ordinary B1/payload verification. The prototype does not establish a noisy
 FIR false-alarm bound or physical interoperability.
+
+## Bound projection work with exact envelopes
+
+The pairwise offset elimination above has an equivalent envelope form:
+
+```text
+max_i(l_i - 2 * t_i * gain) <= min_j(u_j - 2 * t_j * gain)
+```
+
+Sort the target coordinates and build the maximum lower-bound envelope and
+the minimum upper-bound envelope. Their active lines change only at exact
+rational intersections. Walking those changes across each permitted gain
+interval finds the same closed feasible set, including single-point contact.
+With distinct targets, deterministic heapsort and two monotone hulls replace
+the quadratic pair scan with O(n log n) work. The original strips remain the
+authority for offset coupling and subsequent held-window checks.
+
+Projection is only part of the cost. Building envelopes alone slowed the
+usual qualification matrix. Both implementations still searched a list for
+each observation's target strip. Index the known physical targets once, then
+retain a target-to-strip index in each temporary group. This removes repeated
+searches across profiles and counterfactual checks. Target identities do not
+depend on received cells: preparing their indices must not use held
+observations to constrain acquisition or choose a profile.
+
+A second private native prototype combines envelopes with target indexing.
+All 7,344 oracle cases retain identical feasible profiles, qualification
+decisions, exact gain bounds and held-window counterfactuals on the host and
+Pi. Independent rational arithmetic on the host also agrees on 2,022 boundary
+and randomized projections. Another 2,816 shuffled groups exercise up to 861
+distinct targets on both hosts; host ASan/UBSan checks cover those projections
+and the complete qualification matrix. A fresh build from sources and the
+fixed input fixture reproduces the decisions and projections.
+
+Six alternating runs per arm give the following complete offline fitting-job
+costs. Take the median runtime for each case before summarizing the matrix;
+these are neither media-packet costs nor scheduler-independent upper bounds.
+
+| Host / implementation | Median case | 99th percentile | Slowest case median |
+| --- | ---: | ---: | ---: |
+| Host, pair scan | 0.155 ms | 0.448 ms | 0.558 ms |
+| Host, indexed envelopes | 0.136 ms | 0.379 ms | 0.471 ms |
+| Pi, pair scan | 0.270 ms | 0.787 ms | 0.957 ms |
+| Pi, indexed envelopes | 0.253 ms | 0.625 ms | 0.633 ms |
+
+At the general workspace limit, isolated 861-target projection medians fall
+from 2.07 to 0.060 ms on the host and 4.12 to 0.090 ms on the Pi. This larger
+synthetic alphabet is separate from the qualification matrix's 41-target
+maximum. Envelope scratch costs about 45 KiB, with a further 1.7 KiB target
+index per group. Production integration still needs owned resumable scratch
+and bounded steps; completing a whole offline job quickly does not establish
+a per-packet work limit. An unfinished candidate must remain unknown.
