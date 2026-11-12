@@ -8,6 +8,13 @@
 #include <limits.h>
 #include <string.h>
 
+/* Predictions are differences of unclipped int16 samples. Even two
+ * UINT16_MAX-sample windows keep cross below 2^48, energy below 2^49,
+ * and twice the cancellation improvement below 2^52. Only confidence
+ * products need 128 bits; evidence differences fit signed 64 bits. */
+_Static_assert(ECHO_TIMING_WINDOW <= UINT16_MAX,
+	       "echo timing evidence must fit its observation counter");
+
 static bool prediction_is_qualified(
 	int64_t cross, uint64_t energy, uint64_t input,
 	unsigned samples, unsigned strength)
@@ -21,12 +28,6 @@ static bool prediction_is_qualified(
 	return wide_compare(explained, required) >= 0;
 }
 
-/* The evidence differences fit signed 128 bits even at 64-bit boundaries. */
-static bool evidence_is_positive(struct wide_uint value)
-{
-	return (value.high >> 63) == 0 && (value.high != 0 || value.low != 0);
-}
-
 static bool prediction_is_harmful(
 	int64_t cross, uint64_t energy, uint64_t input,
 	unsigned samples, unsigned strength)
@@ -34,13 +35,13 @@ static bool prediction_is_harmful(
 	/* Subtraction changes energy by prediction_energy - 2 * cross.
 	 * Require that increase to exceed the uncertainty of the cross term;
 	 * its factor of two contributes four to the variance bound. */
-	struct wide_uint excess = wide_subtract(wide_from_u64(energy),
-		wide_shift_left(wide_from_s64(cross), 1));
+	int64_t excess = (int64_t)energy - 2 * cross;
 	struct wide_uint increase, required;
 
-	if (energy == 0 || !evidence_is_positive(excess))
+	if (energy == 0 || excess <= 0)
 		return false;
-	wide_multiply_u32(wide_multiply(excess, excess), samples, &increase);
+	wide_multiply_u32(wide_product_u64((uint64_t)excess, (uint64_t)excess),
+		samples, &increase);
 	wide_multiply_u32(wide_product_u64(input, energy), strength, &required);
 	required = wide_shift_left(required, 2);
 	return wide_compare(increase, required) >= 0;
@@ -56,14 +57,12 @@ static bool timing_is_qualified(
 	 * each window and 36 together; short windows require material returns
 	 * too. Agreement and a half-prediction-energy improvement are
 	 * required so unrelated input cannot win just by choosing another bin. */
-	struct wide_uint improvement = wide_subtract(wide_shift_left(
-		wide_subtract(wide_from_s64(e->cross), wide_from_s64(e->current_cross)), 1),
-		wide_subtract(wide_from_u64(e->energy), wide_from_u64(e->current_energy)));
+	int64_t improvement = 2 * (e->cross - e->current_cross) -
+		((int64_t)e->energy - (int64_t)e->current_energy);
 
 	return prediction_is_qualified(e->cross, e->energy, e->input,
 				       samples, strength) &&
-	       evidence_is_positive(improvement) &&
-	       wide_compare(wide_shift_left(improvement, 1), wide_from_u64(e->energy)) >= 0;
+	       improvement > 0 && (uint64_t)improvement * 2 >= e->energy;
 }
 
 static bool finish_timing_window(struct echo_timing *timing,

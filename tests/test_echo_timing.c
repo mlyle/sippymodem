@@ -99,6 +99,33 @@ static void check_windows(struct echo_timing *timing, unsigned seed)
 	}
 }
 
+/* Exercise the largest admitted sample difference through two complete
+ * slow windows. Confidence must distinguish a slightly harmful prediction
+ * from a slightly useful one without changing the accumulated moments. */
+static void check_extreme_windows(struct echo_timing *timing)
+{
+	for (unsigned sign = 0; sign < 2; sign++) {
+		int16_t received = sign ? -32767 : 32766;
+		int16_t cleaned = sign ? 32766 : -32767;
+		int32_t predicted = (int32_t)received - cleaned;
+		struct echo_timing_model model = {
+			.require_support = true, .retime = reject_retime,
+		};
+
+		echo_timing_reset(timing);
+		for (unsigned n = 0; n < ECHO_TIMING_BINS + 2 * ECHO_TIMING_WINDOW - 1; n++)
+			echo_timing_observe(timing, &model, received, cleaned);
+		assert(echo_timing_is_valid(timing) && timing->count == 0);
+		assert(timing->slow.first.current_cross ==
+		       (int64_t)received * predicted * ECHO_TIMING_WINDOW);
+		assert(timing->slow.first.current_energy ==
+		       (uint64_t)((int64_t)predicted * predicted) * ECHO_TIMING_WINDOW);
+		assert(timing->slow.first.input ==
+		       (uint64_t)((int32_t)received * received) * ECHO_TIMING_WINDOW);
+		assert(model.suspended == (sign == 0));
+	}
+}
+
 int main(void)
 {
 	struct echo_timing timing = { 0 };
@@ -131,6 +158,8 @@ int main(void)
 		assert(model.suspended);
 	}
 	check_windows(&timing, 0x74d1u);
+
+	check_extreme_windows(&timing);
 
 	timing.count = ECHO_TIMING_WINDOW;
 	assert(!echo_timing_is_valid(&timing));
