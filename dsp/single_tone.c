@@ -278,16 +278,13 @@ static void add_observation(
 		detector->in_phase -= old->in_phase;
 		detector->quadrature -= old->quadrature;
 		detector->line_energy -= old->energy;
-	} else {
-		detector->history_count++;
 	}
 	detector->in_phase += current.in_phase;
 	detector->quadrature += current.quadrature;
 	detector->line_energy += current.energy;
 	*old = current;
-	detector->history_index =
-		(detector->history_index + 1u) %
-		detector->profile.window_samples;
+	ring_history_advance(&detector->history_index,
+		&detector->history_count, detector->profile.window_samples);
 }
 
 static struct single_tone_measurement measure_valid_detector(
