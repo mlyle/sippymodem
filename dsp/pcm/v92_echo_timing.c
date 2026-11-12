@@ -55,13 +55,8 @@ static void configure(struct v92_echo_timing *timing,
 	timing->window.points = V92_ECHO_TIMING_WINDOW_SAMPLES / V92_ECHO_TIMING_STRIDE;
 	for (unsigned j = 0; j < V92_CPD_MAX_CONSTELLATIONS; j++) {
 		const struct v92_cpd_constellation *points = &mapping->cpd.constellation[j];
-		if (points->count < 2)
-			continue;
-		double step = pam_distance_step(points->positive_linear, points->count);
-		timing->step[j] = step;
-		timing->inverse_step[j] = step > 0 ? 1. / step : 0;
-		if (step == 0)
-			pam_distance_ranges(timing->range[j], points->positive_linear, points->count);
+		pam_distance_prepare(points->positive_linear, points->count,
+			&timing->step[j], &timing->inverse_step[j], timing->range[j]);
 	}
 }
 
@@ -75,7 +70,7 @@ static inline void score_shifts(struct v92_echo_timing *timing,
 	for (unsigned i = 0; i < ECHO_TIMING_BINS; i++) {
 		unsigned shifted = (center + V92_ECHO_TIMING_HISTORY +
 			ECHO_TIMING_RADIUS - i) & mask;
-		timing->window.score[part][i] += pam_distance_squared_cached(
+		timing->window.score[part][i] += pam_distance_squared(
 			points->positive_linear, points->count, step, inverse_step,
 			half_width, x - timing->prediction[shifted], ranges);
 	}

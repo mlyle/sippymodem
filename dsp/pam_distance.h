@@ -4,8 +4,6 @@
 #define PAM_DISTANCE_H
 
 #include <math.h>
-#include <stdbool.h>
-#include <stddef.h>
 #include <stdint.h>
 
 enum {
@@ -20,25 +18,28 @@ struct pam_distance_range {
 	uint8_t low, high;
 };
 
-/* The owner supplies 1..256 strictly increasing positive signed-16-bit
- * levels. A zero step denotes a singleton or a nonuniform alphabet. */
-static inline double pam_distance_step(const int16_t *points, unsigned count)
+/* Prepare an owned alphabet of 0..256 strictly increasing positive signed-
+ * 16-bit levels. Empty and singleton alphabets need no brackets; uniform
+ * alphabets leave them untouched too. No alphabet pointer is retained. */
+static inline void pam_distance_prepare(const int16_t *points, unsigned count,
+	double *step, double *inverse_step, struct pam_distance_range *ranges)
 {
+	*step = *inverse_step = 0;
 	if (count < 2)
-		return 0;
-	double step = points[1] - points[0];
-	for (unsigned i = 2; i < count; ++i)
-		if (points[i] - points[i - 1] != step)
-			return 0;
-	return step;
-}
+		return;
+	double spacing = points[1] - points[0];
+	unsigned i = 2;
+	while (i < count && points[i] - points[i - 1] == spacing)
+		i++;
+	if (i == count) {
+		*step = spacing;
+		*inverse_step = 1. / spacing;
+		return;
+	}
 
-/* Optional owned search brackets. For x in [L,U), retain the last point
- * <= L and the first >= U, clamped to the endpoints. Monotone cursors
- * preserve exact brackets even when many points share one bin. */
-static inline void pam_distance_ranges(struct pam_distance_range *ranges,
-	const int16_t *points, unsigned count)
-{
+	/* For x in [L,U), retain the last point <= L and the first >= U,
+	 * clamped to the endpoints. Monotone cursors preserve exact brackets
+	 * even when many points share one bin. */
 	unsigned low = 0, high = 0;
 	for (unsigned bin = 0; bin < PAM_DISTANCE_BINS; ++bin) {
 		int lower = (int)(bin << PAM_DISTANCE_BIN_SHIFT);
@@ -53,13 +54,12 @@ static inline void pam_distance_ranges(struct pam_distance_range *ranges,
 
 /* Squared distance from [x-half_width,x+half_width] to the symmetric signed
  * alphabet. The validated owner supplies finite x, nonnegative finite
- * half_width and a finite squared residual; step is from pam_distance_step and
- * inverse_step is 1/step when positive. No alphabet pointer is retained.
+ * half_width and a finite squared residual, with 1..256 levels prepared above.
  * Uniform alphabets never read ranges and need no division or search.
- * Nonuniform alphabets may omit ranges for a full binary search. */
-static inline double pam_distance_score(const int16_t *points, unsigned count,
+ * Nonuniform alphabets always use their owner's search brackets. */
+static inline double pam_distance_squared(const int16_t *points, unsigned count,
 	double step, double inverse_step, double half_width, double x,
-	const struct pam_distance_range *ranges, bool cached)
+	const struct pam_distance_range *ranges)
 {
 	x = fabs(x);
 	double first = points[0], last = points[count - 1];
@@ -76,13 +76,9 @@ static inline double pam_distance_score(const int16_t *points, unsigned count,
 		error = fabs(error);
 	} else {
 		/* Interior x is positive and below INT16_MAX before conversion. */
-		unsigned low = 0, high = count - 1;
-		if (cached) {
-			const struct pam_distance_range *range =
-				&ranges[(unsigned)x >> PAM_DISTANCE_BIN_SHIFT];
-			low = range->low;
-			high = range->high;
-		}
+		const struct pam_distance_range *range =
+			&ranges[(unsigned)x >> PAM_DISTANCE_BIN_SHIFT];
+		unsigned low = range->low, high = range->high;
 		while (high - low > 1) {
 			unsigned middle = low + (high - low) / 2;
 			if (points[middle] < x)
@@ -100,24 +96,6 @@ static inline double pam_distance_score(const int16_t *points, unsigned count,
 	}
 	error -= half_width;
 	return error > 0 ? error * error : 0;
-}
-
-/* Optional brackets for callers that choose their search at run time. */
-static inline double pam_distance_squared(const int16_t *points, unsigned count,
-	double step, double inverse_step, double half_width, double x,
-	const struct pam_distance_range *ranges)
-{
-	return pam_distance_score(points, count, step, inverse_step, half_width, x,
-		ranges, ranges != NULL);
-}
-
-/* A configured owner guarantees brackets for every nonuniform alphabet.
- * Keep that invariant explicit so its hot loop needs no null-cache branch. */
-static inline double pam_distance_squared_cached(const int16_t *points, unsigned count,
-	double step, double inverse_step, double half_width, double x,
-	const struct pam_distance_range *ranges)
-{
-	return pam_distance_score(points, count, step, inverse_step, half_width, x, ranges, true);
 }
 
 #endif /* PAM_DISTANCE_H */

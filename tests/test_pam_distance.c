@@ -3,6 +3,7 @@
 #include "pam_distance.h"
 #include "test.h"
 
+#include <stdbool.h>
 #include <string.h>
 
 /* Enumerate both signs and every point, independently of search brackets
@@ -24,15 +25,11 @@ static bool check_observation(const int16_t *points, unsigned count, double step
 	const double widths[] = { 0, .25, 64 };
 	for (unsigned i = 0; i < ARRAY_LENGTH(widths); ++i) {
 		double expected = exhaustive(points, count, x, widths[i]);
-		double cached = pam_distance_squared(points, count, step,
+		double actual = pam_distance_squared(points, count, step,
 			step > 0 ? 1. / step : 0, widths[i], x, ranges);
-		double uncached = pam_distance_squared(points, count, step,
-			step > 0 ? 1. / step : 0, widths[i], x, NULL);
-		double required = pam_distance_squared_cached(points, count, step,
-			step > 0 ? 1. / step : 0, widths[i], x, ranges);
-		CHECK(required == cached && cached == uncached && fabs(cached - expected) <= 1e-12 * fmax(1., expected),
-		      "distance mismatch: count=%u x=%.17g width=%g got=%.17g/%.17g expected=%.17g",
-		      count, x, widths[i], cached, uncached, expected);
+		CHECK(fabs(actual - expected) <= 1e-12 * fmax(1., expected),
+		      "distance mismatch: count=%u x=%.17g width=%g got=%.17g expected=%.17g",
+		      count, x, widths[i], actual, expected);
 	}
 	return true;
 }
@@ -40,19 +37,25 @@ static bool check_observation(const int16_t *points, unsigned count, double step
 static bool check_alphabet(const int16_t *points, unsigned count, double expected_step)
 {
 	struct pam_distance_range ranges[PAM_DISTANCE_BINS];
-	double step = pam_distance_step(points, count);
+	memset(ranges, 0xff, sizeof(ranges));
+	double step = -1, inverse_step = -1;
+	pam_distance_prepare(points, count, &step, &inverse_step, ranges);
 	CHECK(step == expected_step, "incorrect uniform step: %g expected %g", step, expected_step);
-	pam_distance_ranges(ranges, points, count);
+	CHECK(inverse_step == (step > 0 ? 1. / step : 0), "incorrect reciprocal step");
 	for (unsigned bin = 0; bin < PAM_DISTANCE_BINS; ++bin) {
 		unsigned low = ranges[bin].low, high = ranges[bin].high;
 		int lower = (int)(bin << PAM_DISTANCE_BIN_SHIFT);
 		int upper = lower + (1 << PAM_DISTANCE_BIN_SHIFT);
-		CHECK(low <= high && high < count &&
-		      (low == 0 || points[low] <= lower) &&
-		      (low + 1 == count || points[low + 1] > lower) &&
-		      (high + 1 == count || points[high] >= upper) &&
-		      (high == 0 || points[high - 1] < upper),
-		      "invalid bracket: bin=%u range=%u..%u count=%u", bin, low, high, count);
+		if (step > 0 || count == 1) {
+			CHECK(low == UINT8_MAX && high == UINT8_MAX, "preparation touched unused brackets");
+		} else {
+			CHECK(low <= high && high < count &&
+			      (low == 0 || points[low] <= lower) &&
+			      (low + 1 == count || points[low + 1] > lower) &&
+			      (high + 1 == count || points[high] >= upper) &&
+			      (high == 0 || points[high - 1] < upper),
+			      "invalid bracket: bin=%u range=%u..%u count=%u", bin, low, high, count);
+		}
 		const double offsets[] = { -.25, 0, .25, 63.75, 64 };
 		for (unsigned i = 0; i < ARRAY_LENGTH(offsets); ++i)
 			for (int sign = -1; sign <= 1; sign += 2)
@@ -73,17 +76,15 @@ static bool check_alphabet(const int16_t *points, unsigned count, double expecte
 	const double outside[] = { -1e150, -65536, -.0, 0, 65536, 1e150 };
 	for (unsigned i = 0; i < ARRAY_LENGTH(outside); ++i)
 		CHECK(check_observation(points, count, step, ranges, outside[i]), "outside alphabet failed");
-	/* Uniform scoring promises not to consult optional search brackets. */
-	if (step > 0) {
-		memset(ranges, 0xff, sizeof(ranges));
-		CHECK(check_observation(points, count, step, ranges, .5 * (points[0] + points[1])),
-		      "uniform scoring read unused brackets");
-	}
 	return true;
 }
 
 int main(void)
 {
+	double step = -1, inverse_step = -1;
+	pam_distance_prepare(NULL, 0, &step, &inverse_step, NULL);
+	if (step != 0 || inverse_step != 0)
+		return 1;
 	const int16_t singleton[] = { 32767 };
 	const int16_t endpoints[] = { 1, 32767 };
 	const int16_t uniform[] = { 3, 10, 17, 24, 31 };
@@ -97,6 +98,6 @@ int main(void)
 	    !check_alphabet(clustered, ARRAY_LENGTH(clustered), 0) ||
 	    !check_alphabet(maximum, ARRAY_LENGTH(maximum), 0))
 		return 1;
-	puts("PAM distance: cached, uniform and full searches match exhaustive signed alphabets");
+	puts("PAM distance: owned preparation and scoring match exhaustive signed alphabets");
 	return 0;
 }

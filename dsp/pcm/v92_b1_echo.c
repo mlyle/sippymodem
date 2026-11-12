@@ -146,7 +146,7 @@ static double raw_cost(const struct v92_b1_echo *recovery, unsigned i,
 	unsigned phase = mapping->cpd.frame_constellation[i % V92_PCM_MAPPING_PHASES];
 	const struct v92_cpd_constellation *points = &mapping->cpd.constellation[phase];
 	double gain = recovery->receiver.line.plan.gain;
-	return pam_distance_squared_cached(points->positive_linear, points->count,
+	return pam_distance_squared(points->positive_linear, points->count,
 		recovery->step[phase], recovery->inverse_step[phase], 0.,
 		(raw - prediction) * gain, recovery->ranges[phase]) / (gain * gain);
 }
@@ -328,10 +328,8 @@ static bool start(struct v92_b1_echo *recovery, const struct pcm_host_echo *echo
 	if (receiver->line.plan.observation == V92_PCM_FRAME_CONSTELLATION) {
 		for (unsigned c = 0; c < V92_CPD_MAX_CONSTELLATIONS; ++c) {
 			const struct v92_cpd_constellation *points = &receiver->decoder.mapping.cpd.constellation[c];
-			recovery->step[c] = pam_distance_step(points->positive_linear, points->count);
-			recovery->inverse_step[c] = recovery->step[c] > 0 ? 1. / recovery->step[c] : 0.;
-			if (points->count && !recovery->step[c])
-				pam_distance_ranges(recovery->ranges[c], points->positive_linear, points->count);
+			pam_distance_prepare(points->positive_linear, points->count,
+				&recovery->step[c], &recovery->inverse_step[c], recovery->ranges[c]);
 		}
 	} else {
 		struct v92_upstream_data_tx tx;
