@@ -242,3 +242,90 @@ Consequently, stronger isolated-symbol separation does not justify a blanket
 increase in trellis size. Compare complete phase-dependent events, event
 counts, actual channel likelihoods, and receiver cost before changing a
 selection. These measurements leave rate and coder selection unchanged.
+
+## Check persistence after an incorrect trellis decision
+
+Positive minimum finite-event distance does not bound how long two different
+trellis states can produce identical observations after an earlier divergence.
+Inspect the zero-cost edges between off-diagonal nodes of the same pair graph.
+A directed cycle permits arbitrarily long identical observations while the
+states remain different. An acyclic graph admits a finite bound: assign each
+node an integer rank that strictly increases along every such edge. A path
+cannot contain more edges than the largest rank minus the smallest rank.
+Include the sample/robbing phase in the node; merging phase-dependent edges
+can create cycles that the physical sequence cannot follow.
+
+For the 312 direct-template cases above, 128 have a zero-cost off-diagonal
+cycle and 184 have acyclic certificates. All transparent cases are acyclic;
+their longest paths contain 3, 4, and 5 four-symbol intervals for the 16-,
+32-, and 64-state coders. These lengths count transitions that leave both
+endpoints off the diagonal. Some robbed-bit cases have finite paths as long
+as nine intervals. The following counts include the two gain policies;
+each entry has 24 robbed-bit cases, excluding transparent transmission.
+
+| Mapping | Cyclic cases: 16 / 32 / 64 states |
+| --- | --- |
+| 36k, mu-law | 0 / 0 / 0 |
+| 40k, mu-law | 12 / 0 / 12 |
+| 36k, A-law | 20 / 24 / 24 |
+| 40k, A-law | 12 / 12 / 12 |
+
+Every case has an attaining source-level witness from normally initialized
+native transmitters. Cyclic witnesses repeat their zero-cost loop 40 times,
+producing 480 or more identical wire octets, followed by complete encoder
+state remerge and eight common source frames. Independent integer encoding
+agrees with every emitted symbol. Rank inequalities certify all zero-cost
+edges in the acyclic cases; explicit closed walks certify the cyclic cases.
+
+Every first-different edge from a common state still has positive cost.
+Entering the ambiguous region requires a prior divergence. A perfectly
+observed clean-start stream therefore retains the earlier separation result.
+The constructed payloads establish possible persistence, without estimating
+its frequency in ordinary traffic or a field BER. In particular, these
+results justify neither shortening the current decoder delay nor choosing
+a coder solely from its minimum distance or state count.
+
+## Qualify the geometry actually negotiated
+
+The direct-template graph assumes an identity precoder, a memoryless
+prefilter, and exactly full radix capacity. Recent successful 36k Conexant
+calls in both laws instead selected 16-state coding, moduli
+`[28,28,28,14]` repeated three times, a 90-tap precoder feedback section,
+and an 85-tap prefilter. Passive capture preserved 620,560 actual startup
+samples exactly in transmitted PCM and RTP octets. Three filter selections
+were captured, including a repeated startup before one call connected.
+
+Here the radix product is 29,027,283,136,151,552 for 54 source bits, about
+1.61134 times the required capacity. Approximately 37.94% of the radix words
+are unused for a fixed incoming differential state. Equal independent digit
+probabilities would assign weight to impossible source words. Precoder
+history also changes which equivalent signed representative is selected,
+and the prefilter spreads its effect across later samples. Applying the
+memoryless graph directly would discard both constraints.
+
+One bounded design experiment keeps those learned filters and the full
+32-positive-point alphabet, but substitutes the direct 54-bit full-capacity
+moduli and recomputes the nearest native B1 gain. This makes the mapping
+eligible for the existing independent trellis receiver. The measured
+transmitter tradeoff across the three selections was:
+
+| Selection | B1 F: current / full capacity | Payload mean power change | Largest observed amplitude change |
+| --- | --- | --- | --- |
+| mu-law | 62 / 61 | +2.03% | +13.19% |
+| A-law, first startup | 62 / 60 | -1.41% | +11.65% |
+| A-law, repeated startup | 62 / 61 | +2.01% | +6.68% |
+
+Each arm starts with 48 B1 frames, then encodes 1,024 payload frames for
+each of eight fixed or pseudorandom source patterns. Power and amplitude
+include native prefilter rounding and F normalization; the common transmit
+LU factor cancels in the comparison. An independent fixed-point encoder
+reproduced all 617,472 symbols and recorded coding states, including
+history-dependent representative selection. These are observed pattern
+peaks, rather than a bound over all payloads.
+
+Receiver eligibility establishes an implementation opportunity. Performance,
+codec-cell separation, and interoperability still require a complete channel
+and receiver experiment, with the matching receive gain updated for the new
+F. Recorded peer responses cannot grade a counterfactual CPd selection.
+Keep the negotiated geometry unchanged until that qualification demonstrates
+both useful receiver savings and sufficient power, peak, and error margin.
