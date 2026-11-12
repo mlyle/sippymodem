@@ -495,3 +495,76 @@ An exhaustive small-alphabet check compares 2,137,050 point costs across
 This resolves the conservative amplitude-bound gap. It does not establish
 better BER, lower receiver cost, channel headroom or interoperability, and
 does not change production mapping selection.
+
+## Compare complete wire sequences under separate power limits
+
+Native B1 normalization does not equalize payload power between maps.
+The full-capacity proposal used about 14% less payload power in a first
+matched-channel pilot. Increasing its source level to equalize payload power
+also increases B1 power. Treat these as two separate constraints: choose the
+largest integer source level whose native B1 power is at most `B` and whose
+calibration-stream mean payload power is at most `D`. Check the next integer
+level as well; native sample rounding prevents relying solely on square-root
+rescaling. A finite calibration mean is not an all-payload power bound.
+
+A controlled comparison uses the native channel designer for
+`H(z) = 1 + 0.25*z^-1 + 0.0625*z^-4`, both companding laws, and the existing
+36k partial-radix map versus the full-capacity 54-bit schedule. It retains the
+same designed filters and point alphabet within each pair and recalculates
+the native B1 gain. Illustrative limits are 17 million squared PCM units per
+B1 symbol and 18 million for the mean payload symbol. Eight source streams
+choose the levels; three other seeds and both polarities check reception.
+These are experiment budgets, not normative transmit-power limits. The
+held-out general-channel payload means are 18.03 and 17.75 million,
+respectively, so the finite validation powers are close rather than identical.
+
+All 72 clean cases across flat, short, and general channel designs pass.
+The native E2u/B1/payload API is exercised with a seeded inverse-channel
+training handoff; blind TRN2u acquisition and the outer call owner are outside
+this fixture. Applying captured wire filters to an unrelated identity channel
+with an assumed receive gain failed the pilot and is excluded from grading.
+
+On the general channel, the full-capacity map naturally selects the independent
+decoder. Seven paired runs per law and held-out seed give 1,008 measured
+80-sample packets per map on each host. Counter-based elapsed times are:
+
+| Host and map | Mean packet, ms | Largest packet, ms | Largest three-packet sum, ms |
+| --- | --- | --- | --- |
+| Ryzen 7 5825U, current | 1.041 | 2.881 | 6.192 |
+| Ryzen 7 5825U, full capacity | 0.448 | 2.034 | 4.576 |
+| Pi 5, current | 1.712 | 4.200 | 11.045 |
+| Pi 5, full capacity | 0.771 | 2.855 | 7.007 |
+
+The three-packet sums exclude idle time. These are B1/payload receive costs;
+E2u, CPd construction, transmit work, SIP and RTP are outside packet timing.
+They do not establish whole-modem capacity or a hard worst-case bound.
+
+Robustness prevents promotion. A 30-profile matrix, including clean controls,
+checks DC, noise, all six one-in-six robbed-bit phases with either forced
+value, postcursor changes, known echo subtraction, and combined impairments.
+The current map passes 269/360 cases and full capacity 246/360, with 25 paired
+wins and 48 losses. Sixteen proposal cases pass the native B1 predicate yet
+produce 192 wrong payload bits, including 22 wrong frames without ambiguity
+or uncertainty warnings. No current-map case has wrong payload bits in this
+matrix. These are finite source-bit results, not physical call success rates
+or a demonstrated failure of the complete call/LAPM owner. Robbing introduced
+after clean B1 also produces proposal errors, so B1 calibration alone does
+not explain the weakness.
+
+One mu-law proposal witness changes twelve source bits. Re-encoding both
+valid source sequences through the native transmitter and known channel
+produces received code streams differing at only two sample positions. Their
+final scrambler, trellis, differential, filter, output-queue and channel states
+are equal, making this a closed event for that fixed periodic channel.
+The same source perturbation changes 625 received codewords in the current
+map over the checked interval; its final states still differ. This comparison
+does not determine the current map's minimum distance. The proposal streams
+remain distinguishable, so this is not an exact wire collision. Selecting the
+history decoder also reproduces the erroneous decision in this witness.
+
+Keep the proposal outside production. A useful design objective must price
+complete quantized wire events, their persistence and robbed-bit phase,
+alongside both power constraints and receiver cost. Radix capacity,
+amplitude bounds, clean payload tests and decoder eligibility do not supply
+that evidence by themselves. Native source builds on both hosts reproduce
+the selected regression; three receive cases pass Valgrind without errors.
