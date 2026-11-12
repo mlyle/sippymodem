@@ -8,6 +8,12 @@
 
 #include <limits.h>
 #include <math.h>
+#include <string.h>
+
+/* The history remains in its owner; per-sample scratch stages the tail. */
+_Static_assert(offsetof(struct single_tone_detector, profile) ==
+               sizeof(((struct single_tone_detector *)0)->history),
+               "detector history must precede its metadata");
 
 static const double SINGLE_TONE_MIN_LINE_POWER = 256.0 * 256.0;
 static const double SINGLE_TONE_DEFAULT_MIN_CARRIER_SHARE = 0.70;
@@ -261,11 +267,10 @@ enum single_tone_result single_tone_detector_reset(
 	return single_tone_detector_init_profile(detector, &profile);
 }
 
-static void add_observation(
-	struct single_tone_detector *detector, int16_t sample)
+static struct single_tone_observation prepare_observation(
+	struct single_tone_detector *detector,
+	const struct single_tone_observation *old, int16_t sample)
 {
-	struct single_tone_observation *old =
-		&detector->history[detector->history_index];
 	double radians = phase_radians_u32(detector->phase);
 	struct single_tone_observation current = {
 		.in_phase = (double)sample * cos(radians),
@@ -282,9 +287,9 @@ static void add_observation(
 	detector->in_phase += current.in_phase;
 	detector->quadrature += current.quadrature;
 	detector->line_energy += current.energy;
-	*old = current;
 	ring_history_advance(&detector->history_index,
 		&detector->history_count, detector->profile.window_samples);
+	return current;
 }
 
 static struct single_tone_measurement measure_valid_detector(
@@ -455,6 +460,15 @@ static bool observe_reversal(
 	return false;
 }
 
+/* Only metadata is staged; unrelated history never enters scratch. */
+static inline void copy_metadata(struct single_tone_detector *to,
+	const struct single_tone_detector *from)
+{
+	const size_t offset = offsetof(struct single_tone_detector, profile);
+
+	memcpy((char *)to + offset, (const char *)from + offset, sizeof(*to) - offset);
+}
+
 static enum single_tone_result observe(
 	struct single_tone_detector *detector, int16_t sample,
 	struct single_tone_event *event,
@@ -477,9 +491,10 @@ static enum single_tone_result observe(
 	    event == NULL || memory_region_set_overlaps(outputs, 3) ||
 	    detector->interruption == SINGLE_TONE_SUPPRESSING)
 		return SINGLE_TONE_INVALID_ARGUMENT;
-	next = *detector;
+	copy_metadata(&next, detector);
 	was_present = next.tone_present;
-	add_observation(&next, sample);
+	struct single_tone_observation current = prepare_observation(
+		&next, &detector->history[detector->history_index], sample);
 	measurement = measure_valid_detector(&next);
 	qualifies = measurement_qualifies(&next, &measurement);
 	emitted.kind = acquire_or_release(
@@ -489,9 +504,10 @@ static enum single_tone_result observe(
 		    &next, qualifies, &emitted.reversal_delay_samples))
 		emitted.kind = SINGLE_TONE_PHASE_REVERSED;
 	if (!detector_header_is_valid(&next) ||
-	    !observation_is_valid(&next.history[detector->history_index]))
+	    !observation_is_valid(&current))
 		return SINGLE_TONE_INVALID_ARGUMENT;
-	*detector = next;
+	detector->history[detector->history_index] = current;
+	copy_metadata(detector, &next);
 	*event = emitted;
 	if (observed != NULL) {
 		measurement.tone_present = next.tone_present;

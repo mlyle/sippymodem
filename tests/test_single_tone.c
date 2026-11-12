@@ -577,6 +577,57 @@ static bool test_observation_output_contracts(void)
 	return true;
 }
 
+static bool test_history_preservation_at_wrap(void)
+{
+	struct single_tone_detector detector, before;
+	struct single_tone_event event;
+	struct single_tone_measurement measurement;
+
+	CHECK(single_tone_detector_init(&detector, TEST_CARRIER_HZ) == SINGLE_TONE_OK,
+	      "history wrap fixture failed");
+	detector.profile.window_samples = 40;
+	detector.history_count = 40;
+	detector.history_index = 39;
+	/* Distinct valid records include the inactive half of the ring. A
+	 * per-sample update replaces one record, preserving every other byte. */
+	for (unsigned i = 0; i < SINGLE_TONE_MAX_WINDOW_SAMPLES; ++i) {
+		detector.history[i] = (struct single_tone_observation){
+			.in_phase = i * 0.5, .quadrature = -(double)i * 0.25,
+			.energy = i * i,
+		};
+		if (i < 40) {
+			detector.in_phase += detector.history[i].in_phase;
+			detector.quadrature += detector.history[i].quadrature;
+			detector.line_energy += detector.history[i].energy;
+		}
+	}
+	CHECK(single_tone_detector_is_valid(&detector), "seeded history is invalid");
+	before = detector;
+	CHECK(single_tone_detector_observe_owned(
+		      &detector, 123, &event, &measurement) == SINGLE_TONE_OK &&
+	      single_tone_detector_is_valid(&detector),
+	      "history wrap observation failed");
+	for (unsigned i = 0; i < SINGLE_TONE_MAX_WINDOW_SAMPLES; ++i) {
+		if (i == 39) {
+			CHECK(detector.history[i].in_phase == 123 && detector.history[i].quadrature == 0 &&
+			      detector.history[i].energy == 123 * 123,
+			      "replacement history record is wrong");
+		} else {
+			CHECK(memcmp(&detector.history[i], &before.history[i],
+				     sizeof(detector.history[i])) == 0,
+			      "untouched history record %u changed", i);
+		}
+	}
+	CHECK(detector.history_index == 0 && detector.history_count == 40 &&
+	      detector.phase == before.phase + before.phase_step &&
+	      detector.in_phase == before.in_phase - before.history[39].in_phase + 123 &&
+	      detector.quadrature == before.quadrature - before.history[39].quadrature &&
+	      detector.line_energy == before.line_energy - before.history[39].energy + 123 * 123 &&
+	      event.kind == SINGLE_TONE_NO_EVENT && measurement.ready && !measurement.tone_present,
+	      "history wrap changed metadata or measured state");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -588,6 +639,7 @@ int main(void)
 		{ "configurable carrier share", test_configurable_carrier_share },
 		{ "transactional validation", test_validation_is_transactional },
 		{ "history and numeric rejection", test_history_and_numeric_rejection },
+		{ "history preservation at wrap", test_history_preservation_at_wrap },
 		{ "owned observation equivalence", test_owned_observation },
 		{ "observation output contracts", test_observation_output_contracts },
 	};
