@@ -211,6 +211,12 @@ enum v92_e2u_rx_result v92_e2u_rx_sample(
 	return next.matched ? V92_E2U_RX_COMPLETE : V92_E2U_RX_NO_MATCH;
 }
 
+static bool candidate_is_valid(const struct v92_e2u_rx *candidate)
+{
+	return v92_e2u_rx_is_valid(candidate) && !candidate->failed &&
+		candidate->received_symbols < candidate->expected_symbols;
+}
+
 bool v92_e2u_search_is_valid(const struct v92_e2u_search *search)
 {
 	if (search == NULL)
@@ -225,10 +231,54 @@ bool v92_e2u_search_is_valid(const struct v92_e2u_search *search)
 		    search->bit_index >= search->frame_bits)
 			return false;
 	}
-	return !search->candidate_active ||
-		(search->frame_bits && v92_e2u_rx_is_valid(&search->repeated) &&
-		 !search->repeated.failed &&
-		 search->repeated.received_symbols < search->repeated.expected_symbols);
+	return (!search->candidate_active ||
+		(search->frame_bits && candidate_is_valid(&search->repeated))) &&
+		(!search->acknowledgment_active ||
+		 (search->frame_bits == V92_SUVU_FRAME_BITS &&
+		  candidate_is_valid(&search->acknowledgment)));
+}
+
+/* The final SUVu may acknowledge CPd just before E2u (V.92 9.6.2.1.2/4).
+ * A damaged record cannot replace the literal reference, but its changed ACK
+ * and CRC also change the following marker's coding history. Scrambling and
+ * differential sign are linear: encode the XOR of the two canonical records
+ * from zero and apply that state difference to the literal repeat. Reserved
+ * bits cancel, including their CRC contribution; the received frame is never
+ * repaired or admitted. This hypothesis changes only the last repeat. */
+static bool acknowledgment_coder(const struct v92_e2u_search *search,
+	unsigned bits, struct v92_phase4_modulator *coder)
+{
+	struct v92_suvu_parameters parameters;
+	uint8_t before[V92_SUVU_FRAME_BYTES], after[V92_SUVU_FRAME_BYTES];
+	size_t count;
+	if (search->frame_bits != V92_SUVU_FRAME_BITS ||
+	    v92_suvu_decode(search->frame, sizeof(search->frame), search->frame_bits,
+		    bits * V92_CPU_SYMBOLS_PER_FRAME, &parameters) != V92_SUVU_OK ||
+	    parameters.acknowledges_cpd ||
+	    v92_suvu_encode(&parameters, bits * V92_CPU_SYMBOLS_PER_FRAME,
+		    before, sizeof(before), &count) != V92_SUVU_OK)
+		return false;
+	parameters.acknowledges_cpd = true;
+	if (v92_suvu_encode(&parameters, bits * V92_CPU_SYMBOLS_PER_FRAME,
+		    after, sizeof(after), &count) != V92_SUVU_OK)
+		return false;
+	struct v34_scrambler difference;
+	uint8_t sign = 0;
+	if (v34_scrambler_init(&difference, V34_POLYNOMIAL_GPA) != V34_FRAMING_OK)
+		return false;
+	for (unsigned bit = 0; bit < V92_SUVU_FRAME_BITS; ++bit) {
+		uint8_t output;
+		if (v34_scramble_group(&difference,
+			    packed_msb_bit(before, bit) ^ packed_msb_bit(after, bit),
+			    1, &output) != V34_FRAMING_OK)
+			return false;
+		if ((bit + 1u) % bits == 0u)
+			sign ^= output;
+	}
+	*coder = search->coder;
+	coder->scrambler.history ^= difference.history;
+	coder->previous_encoded_sign ^= sign;
+	return true;
 }
 
 static bool advance_repeat(struct v92_e2u_search *search, unsigned bits, int16_t lu)
@@ -255,12 +305,14 @@ bool v92_e2u_search_retain_record_owned(struct v92_e2u_search *search,
 		search->frame_bits = 0;
 		search->bit_index = 0;
 		search->candidate_active = false;
+		search->acknowledgment_active = false;
 	}
 	if (event->type != V92_CONTROL_EVENT_CPU && event->type != V92_CONTROL_EVENT_SUVU)
 		return true;
 	search->frame_bits = 0;
 	search->bit_index = 0;
 	search->candidate_active = false;
+	search->acknowledgment_active = false;
 	const struct v92_control_rx *record = &before->control;
 	/* A valid control record fixes its coding clock without confirming CPd.
 	 * The downstream owner still guards E2u against our acknowledgement;
@@ -323,13 +375,17 @@ static enum v92_e2u_rx_result search_sample(
 	if (search != NULL && search->frame_bits &&
 	    search->coder.constellation != control->signal.line.demodulator.constellation)
 		return V92_E2U_RX_INVALID_STATE;
-	if (search != NULL && search->candidate_active &&
-	    (search->repeated.expected_symbols != receiver->expected_symbols ||
-	     search->repeated.signal.line.law != control->signal.line.law ||
-	     search->repeated.signal.line.demodulator.constellation != control->signal.line.demodulator.constellation ||
-	     search->repeated.signal.line.polarity != control->signal.line.polarity ||
-	     search->repeated.signal.line.renegotiation != control->signal.line.renegotiation))
-		return V92_E2U_RX_INVALID_STATE;
+	if (search != NULL) {
+		const struct v92_e2u_rx *candidate[] = { &search->repeated, &search->acknowledgment };
+		bool active[] = { search->candidate_active, search->acknowledgment_active };
+		for (unsigned i = 0; i < 2; ++i)
+			if (active[i] && (candidate[i]->expected_symbols != receiver->expected_symbols ||
+			    candidate[i]->signal.line.law != control->signal.line.law ||
+			    candidate[i]->signal.line.demodulator.constellation != control->signal.line.demodulator.constellation ||
+			    candidate[i]->signal.line.polarity != control->signal.line.polarity ||
+			    candidate[i]->signal.line.renegotiation != control->signal.line.renegotiation))
+				return V92_E2U_RX_INVALID_STATE;
+	}
 	if (receiver->failed || control->signal.failed)
 		return V92_E2U_RX_FAILED;
 	if (receiver->matched)
@@ -374,8 +430,10 @@ static enum v92_e2u_rx_result search_sample(
 	    v92_e2u_rx_init(&next, &control->signal, extended) != V92_E2U_RX_OK)
 		return fail(receiver);
 	if (search != NULL) {
-		if (!eligible || boundary)
+		if (!eligible || boundary) {
 			repeat.candidate_active = false;
+			repeat.acknowledgment_active = false;
+		}
 		const struct v92_phase4_demodulator *observed = &control->signal.line.demodulator;
 		/* Identical coding memories make this trial identical to the ordinary one. */
 		if (eligible && boundary && repeat.frame_bits && !repeat.bit_index &&
@@ -387,6 +445,16 @@ static enum v92_e2u_rx_result search_sample(
 			repeat.repeated.signal.line.demodulator.descrambler = repeat.coder.scrambler;
 			repeat.repeated.signal.line.demodulator.previous_encoded_sign = repeat.coder.previous_encoded_sign;
 			repeat.candidate_active = true;
+			struct v92_phase4_modulator acknowledgment;
+			if (acknowledgment_coder(&repeat, bits, &acknowledgment) &&
+			    (acknowledgment.scrambler.history != observed->descrambler.history ||
+			     acknowledgment.previous_encoded_sign != observed->previous_encoded_sign)) {
+				if (v92_e2u_rx_init(&repeat.acknowledgment, &control->signal, extended) != V92_E2U_RX_OK)
+					return fail(receiver);
+				repeat.acknowledgment.signal.line.demodulator.descrambler = acknowledgment.scrambler;
+				repeat.acknowledgment.signal.line.demodulator.previous_encoded_sign = acknowledgment.previous_encoded_sign;
+				repeat.acknowledgment_active = true;
+			}
 		}
 		if (!advance_repeat(&repeat, bits, control->signal.line.demodulator.lu))
 			return fail(receiver);
@@ -400,6 +468,7 @@ static enum v92_e2u_rx_result search_sample(
 		if (trial == V92_E2U_RX_COMPLETE) {
 			if (search != NULL) {
 				repeat.candidate_active = false;
+				repeat.acknowledgment_active = false;
 				*search = repeat;
 			}
 			*receiver = next;
@@ -409,19 +478,24 @@ static enum v92_e2u_rx_result search_sample(
 		if (trial != V92_E2U_RX_OK && trial != V92_E2U_RX_NO_MATCH)
 			return fail(receiver);
 	}
-	if (search != NULL && repeat.candidate_active) {
-		enum v92_e2u_rx_result trial = v92_e2u_rx_sample(&repeat.repeated, sample);
-		if (trial == V92_E2U_RX_COMPLETE) {
-			repeat.candidate_active = false;
-			*receiver = repeat.repeated;
-			*search = repeat;
-			*event = (struct v92_control_event){ 0 };
-			return V92_E2U_RX_COMPLETE;
+	if (search != NULL) {
+		struct v92_e2u_rx *candidate[] = { &repeat.repeated, &repeat.acknowledgment };
+		bool *active[] = { &repeat.candidate_active, &repeat.acknowledgment_active };
+		for (unsigned i = 0; i < 2; ++i) {
+			if (!*active[i]) continue;
+			enum v92_e2u_rx_result trial = v92_e2u_rx_sample(candidate[i], sample);
+			if (trial == V92_E2U_RX_COMPLETE) {
+				repeat.candidate_active = repeat.acknowledgment_active = false;
+				*receiver = *candidate[i];
+				*search = repeat;
+				*event = (struct v92_control_event){ 0 };
+				return V92_E2U_RX_COMPLETE;
+			}
+			if (trial == V92_E2U_RX_NO_MATCH)
+				*active[i] = false;
+			else if (trial != V92_E2U_RX_OK)
+				return fail(receiver);
 		}
-		if (trial == V92_E2U_RX_NO_MATCH)
-			repeat.candidate_active = false;
-		else if (trial != V92_E2U_RX_OK)
-			return fail(receiver);
 	}
 	if (result != V92_UPSTREAM_CONTROL_LINE_RX_OK && result != V92_UPSTREAM_CONTROL_LINE_RX_EVENT)
 		return fail(receiver);
@@ -429,8 +503,10 @@ static enum v92_e2u_rx_result search_sample(
 	    v92_e2u_rx_init(&next, &line.signal, extended) != V92_E2U_RX_OK)
 		return fail(receiver);
 	if (search != NULL) {
-		if (line.control.record_boundary)
+		if (line.control.record_boundary) {
 			repeat.candidate_active = false;
+			repeat.acknowledgment_active = false;
+		}
 		if (!v92_e2u_search_retain_record_owned(&repeat, control, &line, &emitted, sample))
 			return fail(receiver);
 		*search = repeat;

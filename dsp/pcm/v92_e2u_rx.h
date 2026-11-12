@@ -46,14 +46,17 @@ struct v92_e2u_rx {
 
 /* Optional repeat evidence has one owner per Phase 4 exchange. Validated SUVu
  * or nonzero-rate CPu supplies exact wire bits and an independent coder.
- * The second marker trial never replaces the ordinary receive-history trial. */
+ * Literal and final-acknowledgment marker trials never replace the ordinary
+ * receive-history trial or admit an unverified control record. */
 struct v92_e2u_search {
 	struct v92_e2u_rx repeated;
+	struct v92_e2u_rx acknowledgment;
 	struct v92_phase4_modulator coder;
 	uint8_t frame[V92_CPU_MAX_FRAME_BYTES];
 	uint16_t frame_bits;
 	uint16_t bit_index;
 	bool candidate_active;
+	bool acknowledgment_active;
 };
 
 /* Zero initialization starts an exchange; copy this state at a live handoff.

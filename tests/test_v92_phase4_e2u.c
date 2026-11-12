@@ -34,6 +34,12 @@ enum upstream_tail {
 	CPU_TAIL,
 };
 
+enum acknowledgment_change {
+	ACK_UNCHANGED,
+	ACK_CHANGED,
+	ACK_CHANGED_THEN_VERIFIED,
+};
+
 static void add_ucode(
 	struct pcm_constellation *constellation, uint8_t ucode)
 {
@@ -2373,10 +2379,22 @@ static bool test_repeat_search_contracts(void)
 	CHECK(v92_e2u_search_is_valid(&search) &&
 	      v92_e2u_search_sample(&search, &receiver, &line, true, 0, &event) == V92_E2U_RX_INVALID_STATE,
 	      "incompatible marker extension crossed a copied search");
+	search.candidate_active = false;
+	search.acknowledgment = receiver;
+	search.acknowledgment_active = true;
+	CHECK(!v92_e2u_search_is_valid(&search) &&
+	      v92_e2u_search_sample(&search, &receiver, &line, true, 0, &event) == V92_E2U_RX_INVALID_STATE,
+	      "a parameter record supplied a status-acknowledgment hypothesis");
+	search.frame_bits = V92_SUVU_FRAME_BITS;
+	search.acknowledgment.expected_symbols = V92_PHASE4_E2U_EXTENDED_SYMBOLS;
+	CHECK(v92_e2u_search_is_valid(&search) &&
+	      v92_e2u_search_sample(&search, &receiver, &line, true, 0, &event) == V92_E2U_RX_INVALID_STATE,
+	      "incompatible acknowledgment marker extension crossed a copied search");
 	return true;
 }
 
-static bool test_repeat_history_recovery(enum upstream_tail tail, bool acknowledged, unsigned intact, unsigned damaged)
+static bool test_repeat_history_recovery(enum upstream_tail tail, bool acknowledged, unsigned intact,
+	unsigned damaged, enum acknowledgment_change change_ack)
 {
 	unsigned recovered = 0;
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
@@ -2395,8 +2413,12 @@ static bool test_repeat_history_recovery(enum upstream_tail tail, bool acknowled
 		      "repeat history fixture failed");
 		native_line = line;
 		native = receiver;
-		for (unsigned repeat = 0; repeat < intact + damaged; ++repeat) {
+		for (unsigned repeat = 0; repeat < intact + damaged +
+		     2u * (change_ack == ACK_CHANGED_THEN_VERIFIED); ++repeat) {
+			bool corrupted = repeat >= intact && repeat < intact + damaged;
 			cpu.acknowledges_cpd = acknowledged && (intact == 1 || repeat != 0);
+			if (change_ack && repeat >= intact)
+				cpu.acknowledges_cpd = true;
 			CHECK(v92_phase4_record_tx_handoff(&wire, &modulator) == V92_PHASE4_RECORD_TX_OK,
 			      "repeat handoff failed");
 			if (tail == SUVU_TAIL) {
@@ -2408,9 +2430,19 @@ static bool test_repeat_history_recovery(enum upstream_tail tail, bool acknowled
 				size_t frame_bits;
 				CHECK(v92_suvu_encode(&status,
 					v92_phase4_modulator_bits_per_symbol(points) * V92_SUVU_SYMBOLS_PER_FRAME,
-					frame, sizeof(frame), &frame_bits) == V92_SUVU_OK &&
-				      v92_phase4_record_tx_init(&wire, &modulator, frame, sizeof(frame), frame_bits) ==
-					V92_PHASE4_RECORD_TX_OK, "status repeat did not start");
+					frame, sizeof(frame), &frame_bits) == V92_SUVU_OK,
+				      "status repeat did not encode");
+				if (change_ack) {
+					uint16_t payload;
+					unsigned width = v92_phase4_modulator_bits_per_symbol(points) * 12u;
+					CHECK(v92_status_update_decode(frame, sizeof(frame), frame_bits, width, &payload) ==
+						V92_STATUS_UPDATE_OK &&
+					      v92_status_update_encode(payload | 0x55u, width, frame, sizeof(frame),
+						&frame_bits) == V92_STATUS_UPDATE_OK,
+					      "reserved literal bits did not retain their CRC");
+				}
+				CHECK(v92_phase4_record_tx_init(&wire, &modulator, frame, sizeof(frame), frame_bits) ==
+				      V92_PHASE4_RECORD_TX_OK, "status repeat did not start");
 			} else {
 				CHECK(start_cpu_record(&wire, &modulator, &cpu, true), "parameter repeat did not start");
 			}
@@ -2422,7 +2454,7 @@ static bool test_repeat_history_recovery(enum upstream_tail tail, bool acknowled
 				      "repeat generation failed");
 				/* Damage observed symbols, not the transmitter's coding state.
 				 * The last repeat then leaves erroneous descrambler memory. */
-				if (repeat >= intact && wire.frame_bit_count - wire.bit_index < 12)
+				if (corrupted && wire.frame_bit_count - wire.bit_index < 12)
 					sample = (int16_t)-sample;
 				sample = quantize(law, sample);
 				CHECK(v92_e2u_search_sample(&search, &receiver, &line, true, sample, &event) ==
@@ -2434,8 +2466,16 @@ static bool test_repeat_history_recovery(enum upstream_tail tail, bool acknowled
 					line.retained_cpu_bits = native_line.retained_cpu_bits =
 						(uint16_t)wire.frame_bit_count;
 			}
-			CHECK(accepted == (repeat < intact), "damaged repeat was admitted at %u", repeat);
+			/* A damaged coding tail can hide the first clean sync prefix.
+			 * The next complete clean repeat must retire both hypotheses. */
+			if (!(change_ack == ACK_CHANGED_THEN_VERIFIED && repeat == intact + damaged))
+				CHECK(accepted == !corrupted,
+				      "control admission changed at repeat %u: accepted=%u corrupted=%u",
+				      repeat, accepted, corrupted);
 		}
+		if (change_ack == ACK_CHANGED_THEN_VERIFIED)
+			CHECK(!search.candidate_active && !search.acknowledgment_active,
+			      "a verified acknowledgment retained speculative marker state");
 		CHECK(line.repeat_confirmed == (intact > 1) &&
 		      v92_phase4_record_tx_handoff(&wire, &modulator) == V92_PHASE4_RECORD_TX_OK &&
 		      v92_phase4_record_tx_init_e2u(&wire, &modulator, extended) == V92_PHASE4_RECORD_TX_OK,
@@ -2457,7 +2497,8 @@ static bool test_repeat_history_recovery(enum upstream_tail tail, bool acknowled
 			sample = quantize(law, sample);
 			CHECK(v92_e2u_search_sample(&guarded_search, &guarded_receiver,
 				      &guarded_line, false, sample, &event) == V92_E2U_RX_OK &&
-			      !v92_e2u_rx_is_complete(&guarded_receiver),
+			      !v92_e2u_rx_is_complete(&guarded_receiver) &&
+			      !guarded_search.candidate_active && !guarded_search.acknowledgment_active,
 			      "repeat reference bypassed response eligibility");
 			ordinary = v92_e2u_rx_search(&native, &native_line, true, sample, &event);
 			enum v92_e2u_rx_result result = v92_e2u_search_sample(
@@ -2491,7 +2532,8 @@ static bool test_repeat_history_recovery(enum upstream_tail tail, bool acknowled
 		       receiver.bit_errors == native.bit_errors && receiver.correlation == native.correlation :
 		       receiver.bit_errors == 0), "restored marker changed native priority or retained coding errors");
 	}
-	CHECK(recovered > 0, "history regression did not distinguish the original receiver");
+	CHECK(change_ack == ACK_CHANGED_THEN_VERIFIED || recovered > 0,
+	      "history regression did not distinguish the original receiver");
 	return true;
 }
 
@@ -2553,12 +2595,14 @@ int main(void)
 					if (kind < 2u && !test_late_cpd(law, remaining, kind, shared != 0u, true)) return 1;
 				}
 	if (!test_repeat_search_contracts() ||
-	    !test_repeat_history_recovery(CPU_TAIL, false, 1, 64) ||
-	    !test_repeat_history_recovery(CPU_TAIL, true, 1, 64) ||
-	    !test_repeat_history_recovery(CPU_TAIL, false, 2, 1) ||
-	    !test_repeat_history_recovery(CPU_TAIL, true, 2, 1) ||
-	    !test_repeat_history_recovery(SUVU_TAIL, false, 2, 1) ||
-	    !test_repeat_history_recovery(SUVU_TAIL, true, 2, 1))
+	    !test_repeat_history_recovery(CPU_TAIL, false, 1, 64, ACK_UNCHANGED) ||
+	    !test_repeat_history_recovery(CPU_TAIL, true, 1, 64, ACK_UNCHANGED) ||
+	    !test_repeat_history_recovery(CPU_TAIL, false, 2, 1, ACK_UNCHANGED) ||
+	    !test_repeat_history_recovery(CPU_TAIL, true, 2, 1, ACK_UNCHANGED) ||
+	    !test_repeat_history_recovery(SUVU_TAIL, false, 2, 1, ACK_UNCHANGED) ||
+	    !test_repeat_history_recovery(SUVU_TAIL, true, 2, 1, ACK_UNCHANGED) ||
+	    !test_repeat_history_recovery(SUVU_TAIL, false, 2, 1, ACK_CHANGED) ||
+	    !test_repeat_history_recovery(SUVU_TAIL, false, 2, 1, ACK_CHANGED_THEN_VERIFIED))
 		return 1;
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (int polarity = -1; polarity <= 1; polarity += 2)
