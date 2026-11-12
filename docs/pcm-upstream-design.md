@@ -329,3 +329,71 @@ and receiver experiment, with the matching receive gain updated for the new
 F. Recorded peer responses cannot grade a counterfactual CPd selection.
 Keep the negotiated geometry unchanged until that qualification demonstrates
 both useful receiver savings and sufficient power, peak, and error margin.
+
+## Enforce source capacity inside an independent-cost decoder
+
+A partial-radix map need not enumerate every digit combination to reject
+unused source words. Let `P` be the radix product, `X` the ordinary radix
+integer before differential reflection, `U = 2^K - 1`, and
+`H = floor((P - 1) / 2)`. A data word is legal when `X <= U`. Its outgoing
+differential state is the incoming state XOR `X > H`. These are separate
+constraints: preserving the source-range comparison alone is insufficient
+for a general map.
+
+Process digits from least to most significant. An unequal higher digit
+replaces the comparison accumulated so far; an equal digit preserves it.
+Carry both comparisons alongside the convolutional state and incoming
+differential bit. Comparing one prefix integer against two fixed thresholds
+has at most five reachable comparison pairs, rather than nine independent
+pairs. Four-symbol branch costs can be factored through the existing
+2D subset labels. Keeping two distinct ordinary radix words per equivalent
+state also provides a within-frame runner-up; physical representatives of
+the same word must not occupy both slots.
+
+A private native prototype reproduced both ranked words, their costs and
+physical witnesses against exhaustive enumeration of 1,296,080 legal walks.
+The cases cover 16-, 32-, and 64-state coding, unused capacity, odd products,
+ties, erasures, and saturated costs. A deliberate ablation which forgets the
+half-capacity comparison loses a cheaper legal winner: one eight-symbol map
+returns cost 71 instead of 68. Source-range checking alone must therefore
+not become the generic receiver contract.
+
+There is a useful guarded specialization. If the final, most significant
+radix is even, `X > H` depends only on whether that digit lies in its upper
+half. Earlier prefixes then need only the three source-range comparisons.
+The captured `[28,28,28,14]` maps satisfy this condition. The specialization
+rejects odd final radices and matches another 946,226 exhaustively enumerated
+walks. Both versions also pass native mixed-radix witness checks above 64
+bits. These checks establish the independent-cost block calculation, not
+end-to-end decoding or the validity of shortening traceback.
+
+The cost remains material. On a Ryzen 7 5825U, a single pinned worker was
+measured with invariant-TSC counters over 300 consecutive 10 ms sample
+batches per case. Three captured filter selections, three trellis sizes,
+and clean, bounded-offset, and zero-observation inputs were exercised.
+Only the 16-state selection was observed in those calls; larger coders are
+counterfactual stress cases. Across those inputs:
+
+| Private block decoder | Mean batch cost, ms | Worst batch, ms | Worst three consecutive batches, ms |
+| --- | --- | --- | --- |
+| Generic, 16 states | 1.73–1.85 | 3.30 | 7.51 |
+| Even-final specialization, 16 states | 1.60–1.70 | 3.12 | 8.01 |
+| Generic, 64 states | 9.97–10.44 | 13.01 | 34.07 |
+| Even-final specialization, 64 states | 8.25–8.59 | 11.23 | 30.34 |
+
+The three-batch figures sum processing time and exclude idle intervals.
+The prototype allocates about 379 KiB of owned scratch, still sized for all
+nine comparison codes. Point-cost construction is included in these times.
+The current complete frame receiver took 0.66–0.92 ms on average in the same
+harness, with a 1.75 ms worst batch and 4.24 ms worst three. Its bounded
+search and additional decoding work differ from the prototype; these are
+separate measurements, not an interchangeable implementation comparison.
+
+In particular, the block model omits stateful precoder likelihood, GPA and
+payload history, RM/control handling, and B1 acquisition policy. Retaining
+scalar end-state metrics does not restore those histories. Synthetic clean
+samples from the native transmitter verify coding witnesses, rather than
+field BER or resilience to echo. Keep this prototype outside the production
+receiver. A next design must reduce branch-combination and witness-copying
+cost, preserve the required histories, and beat the existing receiver on
+complete channel tests before changing negotiated maps or decoder policy.
