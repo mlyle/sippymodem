@@ -61,17 +61,12 @@ enum phase2_info1_result pcm_phase2_info1_init_short_digital(
 	struct pcm_phase2_info1_exchange *exchange,
 	const struct pcm_startup_selection *startup, uint16_t remaining_samples);
 
-/* INFO1 transport and deadlines are shared. These constructors nail the
- * record codecs to one immutable protocol before the digital modem sends
- * INFO1d or the analog modem begins listening for it. */
-enum phase2_info1_result pcm_phase2_info1_init_v90_digital(
+/* INFO1 transport and deadlines are shared. The tagged record fixes its
+ * immutable codec before the digital modem sends INFO1d. */
+enum phase2_info1_result pcm_phase2_info1_init_digital(
 	struct pcm_phase2_info1_exchange *exchange,
 	const struct v90_phase2_reciprocal_probe *completed_probe,
-	const struct v34_info1c *local_info1d);
-enum phase2_info1_result pcm_phase2_info1_init_v92_digital(
-	struct pcm_phase2_info1_exchange *exchange,
-	const struct v90_phase2_reciprocal_probe *completed_probe,
-	const struct v92_info1d *local_info1d);
+	const struct pcm_info1d *local_info1d);
 
 enum phase2_info1_result pcm_phase2_info1_init_v90_analog(
 	struct pcm_phase2_info1_exchange *exchange,

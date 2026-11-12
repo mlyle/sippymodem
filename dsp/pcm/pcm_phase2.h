@@ -168,11 +168,10 @@ enum pcm_phase2_result pcm_phase2_startup_selection(
 
 /* Full Phase 2 supplies mode policy at the two explicit INFO1 boundaries.
  * The digital modem sends INFO1d immediately; the analog modem continues
- * Tone A until peer_info1d() succeeds and one reply function supplies INFO1a. */
-enum pcm_phase2_result pcm_phase2_start_v90_digital_info1(
-	struct pcm_phase2 *phase2, const struct v34_info1c *local_info1d);
-enum pcm_phase2_result pcm_phase2_start_v92_digital_info1(
-	struct pcm_phase2 *phase2, const struct v92_info1d *local_info1d);
+ * Tone A until peer_info1d() succeeds and one reply function supplies INFO1a.
+ * The digital record's protocol must match the negotiated selection. */
+enum pcm_phase2_result pcm_phase2_start_digital_info1(
+	struct pcm_phase2 *phase2, const struct pcm_info1d *local_info1d);
 enum pcm_phase2_result pcm_phase2_start_analog_info1(
 	struct pcm_phase2 *phase2);
 /* Short Phase 2 has no probe or INFO1d. The analogue caller supplies its

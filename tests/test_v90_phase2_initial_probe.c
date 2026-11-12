@@ -142,6 +142,15 @@ static struct v92_info1d v92_digital_info1(enum test_info1_mode mode)
 	return info1d;
 }
 
+static struct pcm_info1d tagged_digital_info1(enum test_info1_mode mode)
+{
+	return mode == TEST_INFO1_V90 ? (struct pcm_info1d){
+		.protocol = PCM_PROTOCOL_V90, .record.v90 = digital_info1(),
+	} : (struct pcm_info1d){
+		.protocol = PCM_PROTOCOL_V92, .record.v92 = v92_digital_info1(mode),
+	};
+}
+
 static struct v92_pcm_info1a pcm_analog_info1(void)
 {
 	return (struct v92_pcm_info1a){
@@ -451,8 +460,7 @@ static bool check_v34_fallback_info1a(
 {
 	struct pcm_phase2_info1_exchange digital;
 	struct v34_phase2_info_audio_transmitter peer;
-	struct v34_info1c local = digital_info1();
-	struct v92_info1d local_v92 = v92_digital_info1(mode);
+	struct pcm_info1d local = tagged_digital_info1(mode);
 	struct pcm_phase2_info1_event event;
 	struct v34_info1a decoded;
 	uint8_t retained_payload[V34_INFO1A_PAYLOAD_BYTES];
@@ -463,10 +471,8 @@ static bool check_v34_fallback_info1a(
 	CHECK(v34_info1a_decode(
 		      payload, V34_INFO1A_PAYLOAD_BYTES, V34_INFO1A_PAYLOAD_BITS,
 		      &decoded) == V34_INFO1_OK &&
-	      (mode == TEST_INFO1_V90 ? pcm_phase2_info1_init_v90_digital(
-		      &digital, digital_probe, &local) :
-	       pcm_phase2_info1_init_v92_digital(
-		      &digital, digital_probe, &local_v92)) == PHASE2_INFO1_OK,
+	      pcm_phase2_info1_init_digital(
+		      &digital, digital_probe, &local) == PHASE2_INFO1_OK,
 	      "captured V.34 fallback INFO1a fixture was invalid");
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
 		int16_t transmit;
@@ -523,6 +529,7 @@ static bool check_info1_exchange(
 {
 	struct v34_info1c v90_info1d = digital_info1();
 	struct v92_info1d v92_info1d = v92_digital_info1(mode);
+	struct pcm_info1d tagged = tagged_digital_info1(mode);
 	struct v90_info1a conventional = analog_info1();
 	struct v92_pcm_info1a pcm = pcm_analog_info1();
 	struct pcm_phase2_info1_exchange analog;
@@ -549,17 +556,23 @@ static bool check_info1_exchange(
 
 	memset(&untouched, 0xa5, sizeof(untouched));
 	untouched_before = untouched;
+	struct pcm_info1d invalid = tagged;
+	invalid.protocol = (enum pcm_protocol)17;
+	CHECK(pcm_phase2_info1_init_digital(&untouched, digital_probe, &invalid) ==
+		      PHASE2_INFO1_INVALID_ARGUMENT &&
+	      memcmp(&untouched, &untouched_before, sizeof(untouched)) == 0,
+	      "invalid INFO1d protocol tag mutated the exchange");
 	if (mode == TEST_INFO1_V90) {
 		wrong_role_rejected = pcm_phase2_info1_init_v90_analog(
 			&untouched, digital_probe) ==
 			PHASE2_INFO1_INVALID_ARGUMENT &&
-			pcm_phase2_info1_init_v90_digital(
-				&untouched, analog_probe, &v90_info1d) ==
+			pcm_phase2_info1_init_digital(
+				&untouched, analog_probe, &tagged) ==
 				PHASE2_INFO1_INVALID_ARGUMENT;
 		initialized = pcm_phase2_info1_init_v90_analog(
 			&analog, analog_probe) == PHASE2_INFO1_OK &&
-			pcm_phase2_info1_init_v90_digital(
-				&digital, digital_probe, &v90_info1d) ==
+			pcm_phase2_info1_init_digital(
+				&digital, digital_probe, &tagged) ==
 				PHASE2_INFO1_OK &&
 			v34_info1c_encode(
 				&v90_info1d, expected_digital,
@@ -568,13 +581,13 @@ static bool check_info1_exchange(
 		wrong_role_rejected = pcm_phase2_info1_init_v92_analog(
 			&untouched, digital_probe) ==
 			PHASE2_INFO1_INVALID_ARGUMENT &&
-			pcm_phase2_info1_init_v92_digital(
-				&untouched, analog_probe, &v92_info1d) ==
+			pcm_phase2_info1_init_digital(
+				&untouched, analog_probe, &tagged) ==
 				PHASE2_INFO1_INVALID_ARGUMENT;
 		initialized = pcm_phase2_info1_init_v92_analog(
 			&analog, analog_probe) == PHASE2_INFO1_OK &&
-			pcm_phase2_info1_init_v92_digital(
-				&digital, digital_probe, &v92_info1d) ==
+			pcm_phase2_info1_init_digital(
+				&digital, digital_probe, &tagged) ==
 				PHASE2_INFO1_OK &&
 			v92_info1d_encode(
 				&v92_info1d, expected_digital,
@@ -1188,6 +1201,7 @@ static bool check_phase2_controller(
 	};
 	struct v34_info1c v90_info1d = digital_info1();
 	struct v92_info1d v92_info1d = v92_digital_info1(mode);
+	struct pcm_info1d tagged = tagged_digital_info1(mode);
 	struct v90_info1a conventional_info1a = analog_info1();
 	struct v92_pcm_info1a pcm_info1a = pcm_analog_info1();
 	struct pcm_phase2 analog;
@@ -1343,11 +1357,8 @@ static bool check_phase2_controller(
 	      "PCM Phase 2 mode %d lost a probe handoff", mode);
 	{
 		struct pcm_phase2 recovery = digital;
-		bool started = mode == TEST_INFO1_V90 ?
-			pcm_phase2_start_v90_digital_info1(
-				&recovery, &v90_info1d) == PCM_PHASE2_OK :
-			pcm_phase2_start_v92_digital_info1(
-				&recovery, &v92_info1d) == PCM_PHASE2_OK;
+		bool started = pcm_phase2_start_digital_info1(
+			&recovery, &tagged) == PCM_PHASE2_OK;
 		bool recovering = false;
 
 		CHECK(started,
@@ -1391,20 +1402,20 @@ static bool check_phase2_controller(
 		struct pcm_startup_selection analog_startup;
 		struct pcm_startup_selection digital_startup;
 		struct pcm_phase2 before = digital;
-		bool wrong_protocol_rejected = mode == TEST_INFO1_V90 ?
-			pcm_phase2_start_v92_digital_info1(
-				&digital, &v92_info1d) ==
-				PCM_PHASE2_INVALID_STATE :
-			pcm_phase2_start_v90_digital_info1(
-				&digital, &v90_info1d) ==
-				PCM_PHASE2_INVALID_STATE;
+		struct pcm_info1d wrong = tagged_digital_info1(mode == TEST_INFO1_V90 ?
+			TEST_INFO1_V92_CONVENTIONAL : TEST_INFO1_V90);
+		struct pcm_info1d invalid = tagged;
+		invalid.protocol = (enum pcm_protocol)17;
+		CHECK(pcm_phase2_start_digital_info1(&digital, &invalid) ==
+			      PCM_PHASE2_INVALID_ARGUMENT &&
+		      pcm_phase2_owners_equal(&digital, &before),
+		      "invalid INFO1d protocol tag mutated PCM Phase 2");
+		bool wrong_protocol_rejected = pcm_phase2_start_digital_info1(
+			&digital, &wrong) == PCM_PHASE2_INVALID_STATE;
 		bool unchanged_after_rejection =
 			pcm_phase2_owners_equal(&digital, &before);
-		bool digital_started = mode == TEST_INFO1_V90 ?
-			pcm_phase2_start_v90_digital_info1(
-				&digital, &v90_info1d) == PCM_PHASE2_OK :
-			pcm_phase2_start_v92_digital_info1(
-				&digital, &v92_info1d) == PCM_PHASE2_OK;
+		bool digital_started = pcm_phase2_start_digital_info1(
+			&digital, &tagged) == PCM_PHASE2_OK;
 
 		CHECK(pcm_phase2_startup_selection(
 			      &analog, &analog_startup) == PCM_PHASE2_OK &&

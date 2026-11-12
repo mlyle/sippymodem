@@ -585,38 +585,19 @@ static enum pcm_phase2_result enter_info1(
 	return PCM_PHASE2_OK;
 }
 
-enum pcm_phase2_result pcm_phase2_start_v90_digital_info1(
-	struct pcm_phase2 *phase2, const struct v34_info1c *local_info1d)
+enum pcm_phase2_result pcm_phase2_start_digital_info1(
+	struct pcm_phase2 *phase2, const struct pcm_info1d *local_info1d)
 {
 	struct pcm_phase2_info1_exchange exchange;
 
 	if (!pcm_phase2_is_valid(phase2) ||
-	    !v34_info1c_is_valid(local_info1d))
+	    !pcm_info1d_is_valid(local_info1d))
 		return PCM_PHASE2_INVALID_ARGUMENT;
-	if (phase2->startup.protocol != PCM_PROTOCOL_V90 ||
+	if (phase2->startup.protocol != local_info1d->protocol ||
 	    phase2->local_role != V90_DIGITAL_MODEM ||
 	    !ready_for_info1(phase2))
 		return PCM_PHASE2_INVALID_STATE;
-	if (pcm_phase2_info1_init_v90_digital(
-		    &exchange, &phase2->state.reciprocal_probe,
-		    local_info1d) != PHASE2_INFO1_OK)
-		return PCM_PHASE2_INVALID_STATE;
-	return enter_info1(phase2, &exchange);
-}
-
-enum pcm_phase2_result pcm_phase2_start_v92_digital_info1(
-	struct pcm_phase2 *phase2, const struct v92_info1d *local_info1d)
-{
-	struct pcm_phase2_info1_exchange exchange;
-
-	if (!pcm_phase2_is_valid(phase2) ||
-	    !v92_info1d_is_valid(local_info1d))
-		return PCM_PHASE2_INVALID_ARGUMENT;
-	if (phase2->startup.protocol != PCM_PROTOCOL_V92 ||
-	    phase2->local_role != V90_DIGITAL_MODEM ||
-	    !ready_for_info1(phase2))
-		return PCM_PHASE2_INVALID_STATE;
-	if (pcm_phase2_info1_init_v92_digital(
+	if (pcm_phase2_info1_init_digital(
 		    &exchange, &phase2->state.reciprocal_probe,
 		    local_info1d) != PHASE2_INFO1_OK)
 		return PCM_PHASE2_INVALID_STATE;

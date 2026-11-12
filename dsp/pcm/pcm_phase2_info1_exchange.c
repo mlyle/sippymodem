@@ -156,18 +156,25 @@ bool pcm_phase2_info1_retry_pending(
 	       exchange->info1d_resends == 0u;
 }
 
-static enum phase2_info1_result initialize_digital(
+enum phase2_info1_result pcm_phase2_info1_init_digital(
 	struct pcm_phase2_info1_exchange *exchange,
 	const struct v90_phase2_reciprocal_probe *completed_probe,
-	const struct pcm_info1d *local_info1d, const uint8_t *payload)
+	const struct pcm_info1d *local_info1d)
 {
 	struct pcm_phase2_info1_exchange initialized = { 0 };
+	uint8_t payload[V34_INFO1C_PAYLOAD_BYTES];
 
-	if (exchange == NULL || payload == NULL ||
+	if (exchange == NULL ||
 	    !pcm_info1d_is_valid(local_info1d) ||
 	    !v90_phase2_reciprocal_probe_is_valid(completed_probe) ||
 	    !phase2_reciprocal_probe_is_complete(&completed_probe->control) ||
 	    probe_role(completed_probe) != V90_DIGITAL_MODEM)
+		return PHASE2_INFO1_INVALID_ARGUMENT;
+	if (local_info1d->protocol == PCM_PROTOCOL_V90 ?
+	    v34_info1c_encode(&local_info1d->record.v90, payload,
+		    sizeof(payload)) != V34_INFO1_OK :
+	    v92_info1d_encode(&local_info1d->record.v92, payload,
+		    sizeof(payload)) != V92_INFO1D_OK)
 		return PHASE2_INFO1_INVALID_ARGUMENT;
 	initialized.digital = *local_info1d;
 	initialized.protocol = local_info1d->protocol;
@@ -182,38 +189,6 @@ static enum phase2_info1_result initialize_digital(
 		return PHASE2_INFO1_INVALID_ARGUMENT;
 	*exchange = initialized;
 	return PHASE2_INFO1_OK;
-}
-
-enum phase2_info1_result pcm_phase2_info1_init_v90_digital(
-	struct pcm_phase2_info1_exchange *exchange,
-	const struct v90_phase2_reciprocal_probe *completed_probe,
-	const struct v34_info1c *local_info1d)
-{
-	struct pcm_info1d tagged;
-	uint8_t payload[V34_INFO1C_PAYLOAD_BYTES];
-
-	if (pcm_info1d_init_v90(&tagged, local_info1d) != PCM_INFO1_OK ||
-	    v34_info1c_encode(local_info1d, payload, sizeof(payload)) !=
-		    V34_INFO1_OK)
-		return PHASE2_INFO1_INVALID_ARGUMENT;
-	return initialize_digital(
-		exchange, completed_probe, &tagged, payload);
-}
-
-enum phase2_info1_result pcm_phase2_info1_init_v92_digital(
-	struct pcm_phase2_info1_exchange *exchange,
-	const struct v90_phase2_reciprocal_probe *completed_probe,
-	const struct v92_info1d *local_info1d)
-{
-	struct pcm_info1d tagged;
-	uint8_t payload[V92_INFO1D_PAYLOAD_BYTES];
-
-	if (pcm_info1d_init_v92(&tagged, local_info1d) != PCM_INFO1_OK ||
-	    v92_info1d_encode(local_info1d, payload, sizeof(payload)) !=
-		    V92_INFO1D_OK)
-		return PHASE2_INFO1_INVALID_ARGUMENT;
-	return initialize_digital(
-		exchange, completed_probe, &tagged, payload);
 }
 
 static enum phase2_info1_result initialize_analog(

@@ -2184,6 +2184,7 @@ static enum pcm_call_result start_digital_info1(struct pcm_call *call)
 	struct v34_info0 capabilities = v34_info0_from_v90(peer);
 	struct v34_phase2_probe_receiver_measurement measurement;
 	struct v34_info1c selected;
+	struct pcm_info1d info1 = { .protocol = call->protocol };
 	enum pcm_phase2_result result;
 
 	if (pcm_phase2_measure_remote_probe(
@@ -2200,17 +2201,14 @@ static enum pcm_call_result start_digital_info1(struct pcm_call *call)
 		selected.answer_transmit[V34_SYMBOL_RATE_3429]
 			.projected_data_rate_2400_bps_units = 0;
 	if (v92) {
-		struct v92_info1d info1 = call->local_info1.v92_digital;
-
 		/* Full V.92 Phase 2 shares V.90's measured upstream probe
 		 * groups. Bit 70 is PCM permission, not a carrier selection. */
 		selected.answer_transmit[V34_SYMBOL_RATE_3429].high_carrier = false;
-		info1.v34 = selected;
-		result = pcm_phase2_start_v92_digital_info1(
-			&call->state.phase2, &info1);
+		info1.record.v92 = call->local_info1.v92_digital;
+		info1.record.v92.v34 = selected;
 	} else
-		result = pcm_phase2_start_v90_digital_info1(
-			&call->state.phase2, &selected);
+		info1.record.v90 = selected;
+	result = pcm_phase2_start_digital_info1(&call->state.phase2, &info1);
 	if (result != PCM_PHASE2_OK)
 		return PCM_CALL_SEQUENCE_MISMATCH;
 	return PCM_CALL_OK;
