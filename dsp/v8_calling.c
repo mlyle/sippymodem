@@ -338,6 +338,16 @@ static enum v8_calling_result exchange_menu_sample(
 		    &calling->joint_menu_detector, received_bit, &remote_menu,
 		    &confirmed) != V8_MENU_OK)
 		return V8_CALLING_INVALID_ARGUMENT;
+	if (calling->cm_retry.quiet_remaining &&
+	    calling->joint_menu_detector.sequence_open) {
+		/* Resume CM as soon as JM framing arrives, before menu confirmation.
+		 * Keeping the compatibility gap could make the peer abandon JM for
+		 * absent CM. Restart only TX; retain the live receive evidence. */
+		if (!restart_cm_transmitter(calling))
+			return V8_CALLING_INVALID_ARGUMENT;
+		calling->cm_retry.quiet_remaining = 0;
+		*transmit = 0;
+	}
 	if (confirmed) {
 		enum v8_menu_result selection_result;
 
@@ -357,14 +367,6 @@ static enum v8_calling_result exchange_menu_sample(
 		calling->negotiated_menu = joint_menu;
 		calling->selected_modulation = modulation;
 		calling->negotiated = true;
-		if (calling->cm_retry.quiet_remaining) {
-			/* No virtual CM octet was emitted during silence. CJ starts on
-			 * a fresh TX boundary; retain all received JM evidence. */
-			if (!restart_cm_transmitter(calling))
-				return V8_CALLING_INVALID_ARGUMENT;
-			calling->cm_retry.quiet_remaining = 0;
-			*transmit = 0;
-		}
 		enter_state(calling, V8_CALLING_SEND_CJ);
 		return V8_CALLING_OK;
 	}

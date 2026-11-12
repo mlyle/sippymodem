@@ -810,35 +810,63 @@ static bool test_cm_retry_fragments(void)
 
 static bool test_cm_retry_late_menu(void)
 {
-	struct v8_calling calling;
-	struct v8_menu menu;
-	struct remote_answerer answerer;
-	CHECK(v8_call_menu_init(&menu, V8_MODULATION_V34_DUPLEX, true) == V8_MENU_OK &&
-	      v8_calling_init(&calling, &menu) == V8_CALLING_OK &&
-	      remote_answerer_init(&answerer, V8_MODULATION_V34_DUPLEX),
-	      "late JM fixture failed");
-	unsigned menu_at = 0;
-	bool confirmed_in_quiet = false;
-	for (unsigned i = 0; i < 12 * 8000 && !v8_calling_is_complete(&calling); ++i) {
-		if (!menu_at && calling.state == V8_CALLING_EXCHANGE_MENUS)
-			menu_at = i;
-		int16_t rx, tx;
-		enum remote_answer_state saved = answerer.state;
-		/* Receive CM normally, but delay the peer's JM until our quiet
-		 * interval. Keep its physical answer-tone/filter clock continuous. */
-		if (!menu_at || i - menu_at < 19200)
-			answerer.state = REMOTE_ANSWER_SIGNAL;
-		CHECK(remote_answerer_transmit(&answerer, &rx), "late peer TX failed");
-		answerer.state = saved;
-		unsigned quiet = calling.cm_retry.quiet_remaining;
-		CHECK(v8_calling_process(&calling, &rx, &tx, 1) == V8_CALLING_OK &&
-		      remote_answerer_receive(&answerer, tx), "late JM processing failed");
-		if (quiet && calling.state == V8_CALLING_SEND_CJ)
-			confirmed_in_quiet = true;
+	for (unsigned kind = 0; kind < 4; ++kind) {
+		enum g711_law law = (enum g711_law)(kind / 2);
+		bool malformed = kind % 2 != 0;
+		struct v8_calling calling;
+		struct v8_menu menu;
+		struct remote_answerer answerer;
+		CHECK(v8_call_menu_init(&menu, V8_MODULATION_V34_DUPLEX, true) == V8_MENU_OK &&
+		      v8_calling_init(&calling, &menu) == V8_CALLING_OK &&
+		      remote_answerer_init(&answerer, V8_MODULATION_V34_DUPLEX),
+		      "late JM fixture failed");
+		unsigned menu_at = 0, zeros = 0, timeout = 0;
+		bool saw_quiet = false, partial_in_quiet = false;
+		for (unsigned i = 0; i < 12 * 8000 && !v8_calling_is_complete(&calling); ++i) {
+			if (!menu_at && calling.state == V8_CALLING_EXCHANGE_MENUS)
+				menu_at = i;
+			int16_t rx, tx;
+			enum remote_answer_state saved = answerer.state;
+			if (malformed && saved == REMOTE_JOINT_MENU)
+				answerer.joint_menu_bits.information[0] = 0;
+			/* Start JM after the compatibility gap has begun. Keep the
+			 * answer tone/filter clock and the caller's RX history live. */
+			if (!menu_at || i - menu_at < 19200)
+				answerer.state = REMOTE_ANSWER_SIGNAL;
+			CHECK(remote_answerer_transmit(&answerer, &rx), "late peer TX failed");
+			answerer.state = saved;
+			bool quiet = calling.cm_retry.quiet_remaining != 0;
+			saw_quiet |= quiet;
+			rx = g711_quantize(law, rx);
+			enum v8_calling_result result = v8_calling_process(&calling, &rx, &tx, 1);
+			if (result == V8_CALLING_MENU_TIMEOUT) {
+				CHECK(malformed, "valid late JM timed out over codec %u", law);
+				timeout = i;
+				break;
+			}
+			CHECK(result == V8_CALLING_OK &&
+			      remote_answerer_receive(&answerer, g711_quantize(law, tx)),
+			      "late JM processing failed");
+			if (quiet && calling.joint_menu_detector.sequence_open && !calling.negotiated)
+				partial_in_quiet = true;
+			if (calling.state == V8_CALLING_EXCHANGE_MENUS &&
+			    calling.joint_menu_detector.sequence_open) {
+				zeros = tx == 0 ? zeros + 1 : 0;
+				CHECK(zeros < 80, "CM remained silent after late JM framing over codec %u", law);
+			}
+		}
+		CHECK(saw_quiet && partial_in_quiet && calling.cm_retry.decided &&
+		      calling.cm_retry.quiet_remaining == 0,
+		      "late JM did not interrupt the existing compatibility gap over codec %u", law);
+		if (malformed) {
+			CHECK(!calling.negotiated && !answerer.cj_detected &&
+			      timeout == menu_at + V8_CALLING_MENU_TIMEOUT_SAMPLES - 1,
+			      "malformed late JM accepted or extended deadline over codec %u", law);
+		} else {
+			CHECK(calling.negotiated && answerer.cj_detected && v8_calling_is_complete(&calling),
+			      "late JM lost negotiation or CJ over codec %u", law);
+		}
 	}
-	CHECK(confirmed_in_quiet && calling.negotiated && answerer.cj_detected &&
-	      v8_calling_is_complete(&calling) && calling.cm_retry.quiet_remaining == 0,
-	      "quiet retry lost JM/CJ or negotiated carrier");
 	return true;
 }
 
