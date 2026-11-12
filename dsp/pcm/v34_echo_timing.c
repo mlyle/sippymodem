@@ -85,7 +85,6 @@ bool v34_echo_timing_prepare(struct v34_echo_timing *timing,
 {
 	const struct v34_channel_frame_receiver *channel;
 	const struct v34_phase3_profile *profile;
-	struct v34_receive_timing next;
 	struct v34_receive_timing_samples samples = { 0 };
 	double scale, rate, carrier;
 	uint32_t model_delay;
@@ -124,15 +123,24 @@ bool v34_echo_timing_prepare(struct v34_echo_timing *timing,
 		if (!configure(timing, receiver, scale, rate, carrier, model_delay))
 			goto unsupported;
 	}
-	/* Copy controls, retaining only the reference's signal histories. Its
-	 * timing error never feeds the real receiver's clock or carrier loops. */
-	next = receiver->timing;
-	next.analytic = timing->reference_timing.analytic;
-	memcpy(next.input, timing->reference_timing.input, sizeof(next.input));
-	next.previous = timing->reference_timing.previous;
-	next.current = timing->reference_timing.current;
-	next.timing_filter = timing->reference_timing.timing_filter;
-	timing->reference_timing = next;
+	/* Refresh controls without copying the reference's analytic, input or
+	 * prefilter histories. Its timing error never feeds the real loops. */
+	struct v34_receive_timing *reference = &timing->reference_timing;
+	const struct v34_receive_timing *control = &receiver->timing;
+	reference->gain = control->gain;
+	reference->s_detector = control->s_detector;
+	reference->carrier = control->carrier;
+	reference->timing = control->timing;
+	reference->transmitting_profile = control->transmitting_profile;
+	memcpy(reference->timing_observations, control->timing_observations,
+	       sizeof(reference->timing_observations));
+	reference->input_read = control->input_read;
+	reference->input_count = control->input_count;
+	reference->input_advance_pending = control->input_advance_pending;
+	reference->timing_output_count = control->timing_output_count;
+	reference->current_valid = control->current_valid;
+	reference->reanchor_at_s = control->reanchor_at_s;
+	reference->initialized = control->initialized;
 	enum v34_receive_timing_result result = v34_receive_timing_sample(
 		&timing->reference_timing, prediction, &samples);
 	if (result != V34_RECEIVE_TIMING_OK && result != V34_RECEIVE_TIMING_SAMPLES_READY)
