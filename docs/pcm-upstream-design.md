@@ -941,3 +941,63 @@ conservative outcome when the deadline expires with candidates unresolved.
 Ordinary B1 and decoded-payload validation remain necessary. No payload BER,
 FIR-channel admission guarantee or physical-call reliability gain follows
 from matching this scalar oracle.
+
+## Bind learning to the native receive clock
+
+The native Phase 4 channel measurement consumes echo-cleaned, polarity-
+normalized samples. Its known targets retain the original linear training
+levels, while the scalar learner's intervals describe the original received
+G.711 codewords. These are different coordinates. Re-encoding the cleaned
+sample does not recover the observed codec cell or its robbed-bit evidence.
+Preserve the original octet, availability and physical sample index together;
+keep echo correction and its uncertainty explicit in any extended model.
+
+A private observer follows this ownership through complete native software
+calls. The CPt handoff supplies the receive counter and buffered early TRN2u
+span. Their difference binds the next training input to the physical clock.
+The FIR decision delay then locates the original octet corresponding to each
+known target. The final ten pending targets still belong to TRN2u when the
+receiver starts consuming control. The existing early-sample bound is 216;
+a 227-entry sidecar covers that overlap, the ten-sample delay and the current
+sample without retaining a complete training waveform. This sidecar belongs
+to the call owner and must preserve missing samples' clock positions.
+
+Across 32 native calls, the observer checks 936,000 observations in 78 separate
+training epochs, including both codec laws, polarity reversal, echo, marked
+erasures, and either forced low bit at each of six phases. Original octets
+and availability match the simulated wire at every recorded index. Delayed
+cleaned samples match the actual FIR history, and target symbol classes match
+the independently recorded transmitter waveform. This last check establishes
+symbol alignment, not exact source amplitudes: some epochs transmit multiple
+nearby levels for the same nominal target. Eight uninstrumented controls have
+identical media and payload streams. A fresh build of the complete native core
+reproduces four representative calls, including failed startup cases.
+
+For a qualification check before CPd selection, use only TRN2u: 512 acquisition
+observations at indices 512..1023 and two held windows of 128 observations at
+4096..4223 and 8192..8319. Keep every epoch separate. The original-byte scalar
+model qualifies three epochs, leaves 68 ambiguous, rejects five as infeasible,
+and rejects two in held validation. These repeated epochs are not independent
+physical reliability trials. Sparse training remains insufficient to authorize
+most selections; ambiguity must retain the existing conservative path.
+
+Two deliberately invalid adapters demonstrate why input ownership is part of
+qualification. Re-encoding echo-cleaned samples qualifies five epochs instead
+of three. Erasing every 37th sample while preserving the physical clock leaves
+the outcomes unchanged, but compressing that clock qualifies 35 epochs,
+including 32 robbed-bit epochs incorrectly selecting an unchanged-bit profile.
+Shifting only the held targets by one symbol qualifies none. All 390 cases
+match the original exact pairwise oracle at work budgets of 1 and 8,192;
+work counts also match between partitions, and address/undefined-behavior
+sanitizers preserve the results. Correct arithmetic cannot repair invalid
+sample labels or invented codec observations.
+
+The native call matrix also exposes an unresolved startup limitation. Within
+its fixed 55-second observation span, forcing a zero bit every sixth sample
+delivers bidirectional payload at all six phases with mu-law and three phases
+with A-law. Forcing a one bit delivers none at either law's six phases. These
+are deterministic fixture results with the current receiver, not field success
+rates or proof that a longer call cannot connect. The learner remains private;
+this study changes neither rate selection, training deadlines nor call grades.
+Production integration still needs per-call/coding-epoch invalidation, bounded
+work scheduling, and ordinary B1 and decoded-payload qualification.
