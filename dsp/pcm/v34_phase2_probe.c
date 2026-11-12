@@ -2,7 +2,8 @@
 
 #include "v34_phase2_probe.h"
 
-#include <limits.h>
+#include "sample_math.h"
+
 #include <math.h>
 #include <stddef.h>
 
@@ -111,7 +112,7 @@ v34_phase2_probe_transmitter_sample(
 	enum v34_phase2_probe_level level, int16_t *sample)
 {
 	double level_gain;
-	long generated;
+	int16_t generated;
 	uint16_t next_index;
 
 	if (!v34_phase2_probe_transmitter_is_valid(transmitter) ||
@@ -120,15 +121,14 @@ v34_phase2_probe_transmitter_sample(
 	level_gain = level == V34_PHASE2_PROBE_L1 ?
 			     V34_PHASE2_PROBE_L1_GAIN :
 			     1.0;
-	generated = lround(
-		normalized_probe_sample(transmitter->period_index) *
-		(double)transmitter->nominal_amplitude * level_gain);
-	if (generated < INT16_MIN || generated > INT16_MAX)
+	if (!sample_round_checked_s16(
+		    normalized_probe_sample(transmitter->period_index) *
+		    (double)transmitter->nominal_amplitude * level_gain, &generated))
 		return V34_PHASE2_PROBE_INVALID_ARGUMENT;
 	next_index = (uint16_t)(transmitter->period_index + 1u);
 	if (next_index == V34_PHASE2_PROBE_PERIOD_SAMPLES)
 		next_index = 0;
 	transmitter->period_index = next_index;
-	*sample = (int16_t)generated;
+	*sample = generated;
 	return V34_PHASE2_PROBE_OK;
 }

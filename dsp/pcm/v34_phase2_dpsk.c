@@ -5,6 +5,7 @@
 #include "fir.h"
 #include "integer_math.h"
 #include "phase.h"
+#include "sample_math.h"
 
 #include <limits.h>
 #include <math.h>
@@ -95,7 +96,7 @@ static bool transmitter_metadata_is_valid(
 static bool normalize_info_carrier_power(
 	struct qam_modulator *carrier, long nominal_peak_amplitude)
 {
-	long shaped_peak_amplitude;
+	int16_t shaped_peak_amplitude;
 
 	if (!qam_modulator_is_valid(carrier) || nominal_peak_amplitude <= 0 ||
 	    nominal_peak_amplitude > INT16_MAX)
@@ -105,12 +106,11 @@ static bool normalize_info_carrier_power(
 	 * carrier power relative to an unshaped tone. Undo that peak bound so the
 	 * unit-energy root-raised-cosine pulse retains nominal carrier power. The
 	 * adjusted amplitude remains a safe peak bound for the common modulator. */
-	shaped_peak_amplitude = lround(
-		(double)nominal_peak_amplitude * carrier->pulse_normalization);
-	if (shaped_peak_amplitude <= 0 ||
-	    shaped_peak_amplitude > INT16_MAX)
+	if (!sample_round_checked_s16(
+		    (double)nominal_peak_amplitude * carrier->pulse_normalization,
+		    &shaped_peak_amplitude) || shaped_peak_amplitude <= 0)
 		return false;
-	carrier->amplitude = (int16_t)shaped_peak_amplitude;
+	carrier->amplitude = shaped_peak_amplitude;
 	return qam_modulator_is_valid(carrier);
 }
 
