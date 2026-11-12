@@ -568,3 +568,71 @@ alongside both power constraints and receiver cost. Radix capacity,
 amplitude bounds, clean payload tests and decoder eligibility do not supply
 that evidence by themselves. Native source builds on both hosts reproduce
 the selected regression; three receive cases pass Valgrind without errors.
+
+## Require identifiable evidence for a codec phase
+
+A known-phase codec-cell model still needs a way to identify that phase.
+Sparse training can make a wire operation invisible. At native four-point
+TRN2u level 2048 on a flat mu-law channel, the four signed samples are
+`-2748,-916,916,2748`, encoding as `39,4f,cf,b9` in hexadecimal. Every codeword
+already has its low bit set. Forcing that bit to one at any one-in-six phase
+therefore leaves every possible training sequence unchanged. Longer training
+cannot distinguish those channel hypotheses. In a native valid-source
+example at the same level, that operation changes 69 current-map payload
+codewords, or 81 proposal codewords, over 1,152 payload samples. These counts
+demonstrate a future observation difference, not payload decoding errors or
+a power-matched comparison between maps.
+
+An exhaustive native check of complete, non-clipping alphabets gives:
+
+| Training points | Law | Integer LU choices | Choices with an invisible forced value |
+| --- | --- | ---: | ---: |
+| 4 | mu-law | 24,422 | 13,555 |
+| 4 | A-law | 24,422 | 13,236 |
+| 8 | mu-law | 21,449 | 3,336 |
+| 8 | A-law | 21,449 | 3,290 |
+
+The check enumerates both signs and every magnitude, rather than one finite
+training prefix. These are mathematical counts over native integer levels,
+not a distribution of modem operating levels or call probabilities. More
+training levels reduce this flat-channel ambiguity, while increasing the
+number of signal histories that a finite observation window must cover.
+
+A private inference pilot conditions observed codewords on five consecutive
+known TRN2u symbols. With a stationary channel whose memory is at most four
+previous symbols, identical histories must have the same pre-operation
+codeword, even with unknown fixed gain, offset and polarity. For each of
+thirteen hypotheses (unchanged, or either forced value at one of six phases),
+intersect the possible original characters across repeated histories.
+Select only a unique hypothesis with enough distinct operation witnesses.
+Freeze its character sets before checking two later, disjoint windows.
+Carry the physical sample phase across window boundaries and media gaps.
+
+Using 4,096 acquisition samples after a 512-sample settling prefix and two
+2,048-sample validation windows, the pilot qualifies 889 of 936 noiseless
+synthetic cases without a wrong selection. It declines 35 ambiguous cases
+and 12 cases with insufficient acquisition witnesses. The declared channel
+families are flat, one 25% postcursor, and
+`1 + 0.25*z^-1 + 0.0625*z^-4`. Another 368 controls check fixed gain, offset,
+polarity, missing observations and reference relabeling. The 32-unit noise,
+unmodeled seventh-lag, later gain-change and later phase-change controls all
+decline qualification.
+This exact-history pilot is deliberately limited to the declared memory and
+stationarity assumptions; it supplies no arbitrary-channel false-alarm bound.
+
+For the earlier general-channel payload matrix, 96 distinct training cases
+identify the phase/value without reading payload or its expected bits.
+Applying those frozen results to 288 native receive cases reproduces the
+supplied-phase oracle's functional results: zero wrong payload bits, with
+ordinary B1 readiness still rejecting the same cases. Current and proposal
+complete passes remain 96/144 and 90/144 respectively. Deliberately shifting
+the data phase origin by one sample restores the selected 12-bit mu-law and
+6-bit A-law payload errors. Phase ownership belongs to the physical sample
+epoch, including control transitions and receiver delays.
+
+Retain an explicit unknown operation when training does not distinguish the
+hypotheses. Dense B1 observations can provide additional evidence, but their
+precoder representatives and coding state must remain with the native frame
+owner. A production detector still needs noise-aware channel fitting, bounded
+native work, lifecycle and phase-transfer tests, and physical interoperability.
+Keep the full-capacity proposal outside production while those gaps remain.
