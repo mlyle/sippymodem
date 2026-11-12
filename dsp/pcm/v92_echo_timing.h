@@ -4,6 +4,7 @@
 #define V92_ECHO_TIMING_H
 
 #include "echo_shift.h"
+#include "pam_distance.h"
 #include "pcm_host_echo.h"
 #include "v92_upstream_data_rx.h"
 
@@ -12,13 +13,6 @@ enum {
 	V92_ECHO_TIMING_STRIDE = 4,
 	V92_ECHO_TIMING_OBSERVATIONS = V92_ECHO_TIMING_HISTORY / V92_ECHO_TIMING_STRIDE,
 	V92_ECHO_TIMING_WINDOW_SAMPLES = 256,
-	V92_ECHO_TIMING_POINT_SHIFT = 6,
-	V92_ECHO_TIMING_POINT_BINS =
-		(INT16_MAX + 1u) >> V92_ECHO_TIMING_POINT_SHIFT,
-};
-
-struct v92_echo_range {
-	uint8_t low, high;
 };
 
 /* Owned beside the frozen echo model, outside transactional frame decoding.
@@ -39,8 +33,8 @@ struct v92_echo_timing {
 	bool initialized;
 	/* Keep last: configure resets the prefix and rebuilds nonuniform banks.
 	 * Generated from this epoch's alphabet; no borrowed mapping pointers. */
-	struct v92_echo_range range[V92_CPD_MAX_CONSTELLATIONS]
-		[V92_ECHO_TIMING_POINT_BINS];
+	struct pam_distance_range range[V92_CPD_MAX_CONSTELLATIONS]
+		[PAM_DISTANCE_BINS];
 };
 
 void v92_echo_timing_reset(struct v92_echo_timing *timing);

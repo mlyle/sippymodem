@@ -19,8 +19,6 @@ _Static_assert(V92_ECHO_TIMING_HISTORY % V92_ECHO_TIMING_STRIDE == 0 &&
 	       "delayed scoring must preserve the observation stride");
 _Static_assert(V92_CPD_MAX_CONSTELLATION_POINTS <= UINT8_MAX + 1u,
 	       "point brackets fit in byte indices");
-_Static_assert((V92_ECHO_TIMING_POINT_BINS << V92_ECHO_TIMING_POINT_SHIFT) ==
-	       INT16_MAX + 1u, "point bins cover the positive input domain");
 
 void v92_echo_timing_reset(struct v92_echo_timing *timing)
 {
@@ -36,28 +34,6 @@ static bool same_inverse(const struct v92_residual *a, const struct v92_residual
 		if (a->coefficient[j] != b->coefficient[j] || a->delay[j] != b->delay[j])
 			return false;
 	return true;
-}
-
-/* For x in [L,U), the nearest point lies between the last point <= L and
- * the first point >= U, clamped to the alphabet's endpoints. Monotone
- * cursors build exact brackets even for tightly clustered alphabets. */
-static void configure_ranges(struct v92_echo_range *range,
-	const struct v92_cpd_constellation *points)
-{
-	unsigned low = 0, high = 0;
-
-	for (unsigned bin = 0; bin < V92_ECHO_TIMING_POINT_BINS; bin++) {
-		int lower = (int)(bin << V92_ECHO_TIMING_POINT_SHIFT);
-		int upper = lower + (1 << V92_ECHO_TIMING_POINT_SHIFT);
-
-		while (low + 1 < points->count &&
-		       points->positive_linear[low + 1] <= lower)
-			low++;
-		while (high + 1 < points->count &&
-		       points->positive_linear[high] < upper)
-			high++;
-		range[bin] = (struct v92_echo_range){ low, high };
-	}
 }
 
 static void configure(struct v92_echo_timing *timing,
@@ -81,80 +57,27 @@ static void configure(struct v92_echo_timing *timing,
 		const struct v92_cpd_constellation *points = &mapping->cpd.constellation[j];
 		if (points->count < 2)
 			continue;
-		double step = points->positive_linear[1] - points->positive_linear[0];
-		for (unsigned i = 2; i < points->count; i++)
-			if (points->positive_linear[i] - points->positive_linear[i - 1] != step) {
-				step = 0;
-				break;
-			}
+		double step = pam_distance_step(points->positive_linear, points->count);
 		timing->step[j] = step;
 		timing->inverse_step[j] = step > 0 ? 1. / step : 0;
 		if (step == 0)
-			configure_ranges(timing->range[j], points);
+			pam_distance_ranges(timing->range[j], points->positive_linear, points->count);
 	}
-}
-
-/* Distance from a translated input cell to the nearest signed CPd point.
- * Uniform alphabets need no table search or per-candidate division. The
- * interior index is bounded by the point count before conversion to integer. */
-static double distance(const struct v92_cpd_constellation *points,
-	double step, double inverse_step, double half_width, double x,
-	const struct v92_echo_range *ranges)
-{
-	x = fabs(x);
-	double first = points->positive_linear[0];
-	double last = points->positive_linear[points->count - 1];
-	double error;
-	if (x <= first) {
-		error = first - x;
-	} else if (x >= last) {
-		error = x - last;
-	} else if (step > 0) {
-		unsigned lower = (unsigned)((x - first) * inverse_step);
-		error = x - (first + lower * step);
-		if (error > step * .5)
-			error -= step;
-		error = fabs(error);
-	} else {
-		/* Interior positive x is below INT16_MAX before conversion.
-		 * The bin narrows the search; scoring retains the fractional x. */
-		const struct v92_echo_range *range =
-			&ranges[(unsigned)x >> V92_ECHO_TIMING_POINT_SHIFT];
-		unsigned low = range->low, high = range->high;
-		while (high - low > 1) {
-			unsigned middle = low + (high - low) / 2;
-			if (points->positive_linear[middle] < x)
-				low = middle;
-			else
-				high = middle;
-		}
-#if defined(__x86_64__)
-		/* The search brackets this input. Directed distances avoid the
-		 * x86 libm minimum call; other targets retain their native minimum. */
-		double below = x - points->positive_linear[low];
-		double above = points->positive_linear[high] - x;
-		error = below < above ? below : above;
-#else
-		error = fmin(fabs(x - points->positive_linear[low]),
-			     fabs(x - points->positive_linear[high]));
-#endif
-	}
-	error -= half_width;
-	return error > 0 ? error * error : 0;
 }
 
 static inline void score_shifts(struct v92_echo_timing *timing,
 	const struct v92_cpd_constellation *points, unsigned center,
 	unsigned part, double x, double half_width, double step,
-	double inverse_step, const struct v92_echo_range *ranges)
+	double inverse_step, const struct pam_distance_range *ranges)
 {
 	const unsigned mask = V92_ECHO_TIMING_HISTORY - 1;
 
 	for (unsigned i = 0; i < ECHO_TIMING_BINS; i++) {
 		unsigned shifted = (center + V92_ECHO_TIMING_HISTORY +
 			ECHO_TIMING_RADIUS - i) & mask;
-		timing->window.score[part][i] += distance(points, step,
-			inverse_step, half_width, x - timing->prediction[shifted], ranges);
+		timing->window.score[part][i] += pam_distance_squared_cached(
+			points->positive_linear, points->count, step, inverse_step,
+			half_width, x - timing->prediction[shifted], ranges);
 	}
 }
 
