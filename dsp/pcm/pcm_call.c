@@ -5203,15 +5203,18 @@ static void receive_b1_alternate(struct pcm_call *call,
 	const struct pcm_call_b1_alternate *alternate)
 {
 	struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
-	if (alternate == NULL || !call->v92_rate_renegotiation_active ||
+	if (alternate == NULL ||
+	    (!call->v92_rate_renegotiation_active &&
+	     path->upstream.line.plan.observation != V92_PCM_FRAME_CONSTELLATION) ||
 	    path->fast.stage != PCM_CALL_V92_FAST_IDLE || path->pending_media_loss ||
 	    path->quality_guard_samples || v92_peer_b1_received_owned(call))
 		return;
 	const struct v92_upstream_data_rx *rx = alternate->receiver;
 	const struct v92_b1_quality *quality = alternate->quality;
 	if (rx == NULL || quality == NULL || alternate->accept == NULL || rx->failed ||
-	    rx->line.plan.observation != V92_PCM_FRAME_FILTER_OUTPUT ||
-	    path->upstream.line.plan.observation != V92_PCM_FRAME_FILTER_OUTPUT ||
+	    rx->line.plan.observation != path->upstream.line.plan.observation ||
+	    rx->line.plan.gain != path->upstream.line.plan.gain ||
+	    rx->line.plan.delay != path->upstream.line.plan.delay ||
 	    rx->line.received_frames != V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES ||
 	    rx->line.received_frames != path->upstream.line.received_frames ||
 	    rx->line.input_samples != path->upstream.line.input_samples ||

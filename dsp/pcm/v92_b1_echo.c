@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "v92_b1_echo.h"
+#include "pam_distance.h"
 #include "gram_fit.h"
 #include "sample_math.h"
 #include "v92_upstream_data_tx.h"
@@ -18,7 +19,7 @@ enum {
 	B1_SAMPLES = V92_B1_ECHO_SAMPLES,
 	FIT_FIRST = 24, FIT_END = 128, FIT_READY = FIT_END + 16,
 	FIT_SAMPLES = FIT_END - FIT_FIRST, HELD = 200,
-	SCORE_END = FIT_READY + 2 * HELD,
+	SCORE_END = FIT_READY + 2 * HELD, CONSTELLATION_MODEL = 3,
 };
 enum { IDLE, ACTIVE, FINISHED, COMMITTED };
 _Static_assert(SCORE_END + 24 <= B1_SAMPLES, "holdout exceeds known B1u");
@@ -135,6 +136,43 @@ static const double *prediction_row(const struct v92_b1_echo_fit *fit,
 	return prediction + (int)i + fit->alignment;
 }
 
+/* Score a raw-coordinate B1u against the mapping's signed alphabet. The
+ * precoder may select different representatives; no prescribed waveform is
+ * used as a reference. Geometry and coordinates stay frozen with the copy. */
+static double raw_cost(const struct v92_b1_echo *recovery, unsigned i,
+	int16_t raw, double prediction)
+{
+	const struct v92_pcm_mapping *mapping = &recovery->receiver.decoder.mapping;
+	unsigned phase = mapping->cpd.frame_constellation[i % V92_PCM_MAPPING_PHASES];
+	const struct v92_cpd_constellation *points = &mapping->cpd.constellation[phase];
+	double gain = recovery->receiver.line.plan.gain;
+	return pam_distance_squared_cached(points->positive_linear, points->count,
+		recovery->step[phase], recovery->inverse_step[phase], 0.,
+		(raw - prediction) * gain, recovery->ranges[phase]) / (gain * gain);
+}
+
+static bool fit_raw(struct v92_b1_echo *recovery)
+{
+	struct v92_b1_echo_fit *fit = &recovery->fit;
+	*fit = (struct v92_b1_echo_fit){ .model = CONSTELLATION_MODEL };
+	double cost[BINS] = {0};
+	for (unsigned i = FIT_FIRST; i < FIT_END; ++i)
+		for (unsigned j = 0; j < BINS; ++j)
+			cost[j] += raw_cost(recovery, i, recovery->raw[i],
+				recovery->prediction[i + 2 * RADIUS - j]);
+	unsigned chosen = 0;
+	for (unsigned j = 1; j < BINS; ++j)
+		if (cost[j] < cost[chosen])
+			chosen = j;
+	unsigned runner = chosen ? 0 : 1;
+	for (unsigned j = 0; j < BINS; ++j)
+		if (j != chosen && cost[j] < cost[runner])
+			runner = j;
+	fit->shift = (int)chosen - RADIUS;
+	fit->runner = (int)runner - RADIUS;
+	return isfinite(cost[chosen]);
+}
+
 static bool fit_delay(struct v92_b1_echo_fit *fit, const int16_t *ideal, const int16_t *host,
 	const double *prediction, enum g711_law law)
 {
@@ -189,10 +227,27 @@ static bool fit_delay(struct v92_b1_echo_fit *fit, const int16_t *ideal, const i
 	return isfinite(best);
 }
 
-static void observe_delay(const struct v92_b1_echo_fit *fit, struct v92_b1_echo_evidence *ev,
+static void observe_delay(const struct v92_b1_echo *recovery, struct v92_b1_echo_evidence *ev,
 	const double *prediction, int16_t raw, unsigned i)
 {
+	const struct v92_b1_echo_fit *fit = &recovery->fit;
 	const double *p = prediction_row(fit, prediction, i);
+	if (fit->model == CONSTELLATION_MODEL) {
+		double error[BINS];
+		for (unsigned j = 0; j < BINS; ++j) {
+			error[j] = raw_cost(recovery, i, raw, p[2 * RADIUS - j]);
+			ev->score[j] += error[j];
+		}
+		double good = error[fit->shift + RADIUS];
+		double old = error[RADIUS] - good, runner = error[fit->runner + RADIUS] - good;
+		ev->old_sum += old;
+		ev->old_square += old * old;
+		ev->runner_sum += runner;
+		ev->runner_square += runner * runner;
+		++ev->count;
+		return;
+	}
+
 	double r = raw - fit->target[i];
 	double good = r - p[RADIUS - fit->shift];
 	good *= good;
@@ -254,7 +309,8 @@ static bool start(struct v92_b1_echo *recovery, const struct pcm_host_echo *echo
 	const struct v92_upstream_data_rx *receiver)
 {
 	uint32_t delay = pcm_host_echo_active_delay_owned(echo, PCM_HOST_ECHO_FILTER);
-	if (receiver->line.plan.observation != V92_PCM_FRAME_FILTER_OUTPUT ||
+	if ((receiver->line.plan.observation != V92_PCM_FRAME_FILTER_OUTPUT &&
+	     receiver->line.plan.observation != V92_PCM_FRAME_CONSTELLATION) ||
 	    receiver->failed || receiver->line.received_frames || receiver->line.symbol_count ||
 	    receiver->line.delay_remaining || receiver->input.count || delay <= RADIUS)
 		return false;
@@ -269,13 +325,24 @@ static bool start(struct v92_b1_echo *recovery, const struct pcm_host_echo *echo
 	recovery->receiver = *receiver;
 	recovery->receiver.input.frame_limited = false;
 	recovery->receiver.input.frame_budget = recovery->receiver.input.frame_credit = 0;
-	struct v92_upstream_data_tx tx;
-	if (v92_upstream_data_tx_init(&tx, &receiver->decoder.mapping,
+	if (receiver->line.plan.observation == V92_PCM_FRAME_CONSTELLATION) {
+		for (unsigned c = 0; c < V92_CPD_MAX_CONSTELLATIONS; ++c) {
+			const struct v92_cpd_constellation *points = &receiver->decoder.mapping.cpd.constellation[c];
+			recovery->step[c] = pam_distance_step(points->positive_linear, points->count);
+			recovery->inverse_step[c] = recovery->step[c] > 0 ? 1. / recovery->step[c] : 0.;
+			if (points->count && !recovery->step[c])
+				pam_distance_ranges(recovery->ranges[c], points->positive_linear, points->count);
+		}
+	} else {
+		struct v92_upstream_data_tx tx;
+		if (v92_upstream_data_tx_init(&tx, &receiver->decoder.mapping,
 		    receiver->decoder.upstream_level) != V92_UPSTREAM_DATA_TX_OK)
-		return false;
-	for (unsigned i = 0; i < B1_SAMPLES; ++i)
-		if (v92_upstream_data_tx_next(&tx, NULL, NULL, &recovery->ideal[i]) != V92_UPSTREAM_DATA_TX_OK)
 			return false;
+		for (unsigned i = 0; i < B1_SAMPLES; ++i)
+			if (v92_upstream_data_tx_next(&tx, NULL, NULL, &recovery->ideal[i]) != V92_UPSTREAM_DATA_TX_OK)
+				return false;
+	}
+
 	recovery->stage = ACTIVE;
 	return true;
 }
@@ -345,7 +412,11 @@ bool v92_b1_echo_observe_owned(struct v92_b1_echo *recovery,
 		goto decline;
 	if (!available || raw == INT16_MIN || raw == INT16_MAX ||
 	    recovery->count >= V92_B1_ECHO_INPUTS || receiver->failed || receiver->input.count ||
-	    receiver->line.input_samples != recovery->clock + recovery->count || !model_unchanged(recovery, echo))
+	    receiver->line.input_samples != recovery->clock + recovery->count ||
+	    receiver->line.plan.observation != recovery->receiver.line.plan.observation ||
+	    receiver->line.plan.gain != recovery->receiver.line.plan.gain ||
+	    receiver->line.plan.delay != recovery->receiver.line.plan.delay ||
+	    receiver->line.polarity != recovery->receiver.line.polarity || !model_unchanged(recovery, echo))
 		goto decline;
 	unsigned i = recovery->count++;
 	if (!capture(recovery, echo, i, code, raw, cleaned))
@@ -354,13 +425,15 @@ bool v92_b1_echo_observe_owned(struct v92_b1_echo *recovery,
 		for (unsigned k = 0; k < FIT_READY; ++k)
 			if (sample_round_s16(recovery->raw[k] - recovery->prediction[k + RADIUS]) != recovery->cleaned[k])
 				goto decline;
-		if (!fit_delay(&recovery->fit, recovery->ideal, recovery->raw, recovery->prediction,
-			    receiver->decoder.mapping.law) || !recovery->fit.shift)
+		if (!(receiver->line.plan.observation == V92_PCM_FRAME_CONSTELLATION ?
+		    fit_raw(recovery) :
+		    fit_delay(&recovery->fit, recovery->ideal, recovery->raw, recovery->prediction,
+			    receiver->decoder.mapping.law)) || !recovery->fit.shift)
 			goto decline;
 	}
 	if (i >= FIT_READY && i < SCORE_END) {
 		unsigned h = (i - FIT_READY) / HELD;
-		observe_delay(&recovery->fit, &recovery->held[h], recovery->prediction, raw,
+		observe_delay(recovery, &recovery->held[h], recovery->prediction, raw,
 			(unsigned)((int)i - recovery->fit.alignment));
 		if (recovery->held[h].count == HELD) {
 			double old_z, runner_z;

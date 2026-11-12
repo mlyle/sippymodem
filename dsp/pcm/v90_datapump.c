@@ -993,11 +993,13 @@ static bool prepare_b1_echo(struct v90_datapump *datapump, uint8_t wire,
 {
 	const struct pcm_call *call = &datapump->call;
 	if (call->protocol == PCM_PROTOCOL_V92 && call->local_role == V90_DIGITAL_MODEM &&
-	    call->stage == PCM_CALL_DATA_PATH && !pcm_call_uses_conventional_upstream(call) &&
-	    call->v92_rate_renegotiation_active) {
+	    call->stage == PCM_CALL_DATA_PATH && !pcm_call_uses_conventional_upstream(call)) {
 		const struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
 		if (path->fast.stage == PCM_CALL_V92_FAST_IDLE && !path->pending_media_loss &&
-		    !path->quality_guard_samples && path->upstream.line.plan.observation == V92_PCM_FRAME_FILTER_OUTPUT &&
+		    !path->quality_guard_samples &&
+		    (path->upstream.line.plan.observation == V92_PCM_FRAME_CONSTELLATION ||
+		     (call->v92_rate_renegotiation_active &&
+		      path->upstream.line.plan.observation == V92_PCM_FRAME_FILTER_OUTPUT)) &&
 		    !path->upstream.line.delay_remaining)
 			return v92_b1_echo_observe_owned(&datapump->b1_echo, datapump->host_echo,
 				&path->upstream, wire, raw, cleaned, available);

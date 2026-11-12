@@ -20,6 +20,7 @@
 #include "test.h"
 #include "integer_math.h"
 #include "packed_bits.h"
+#include "sample_math.h"
 
 #include <assert.h>
 #include <float.h>
@@ -4781,8 +4782,168 @@ static bool test_b1_echo_owners(void)
 	return true;
 }
 
+static int16_t raw_echo_reference(unsigned clock, unsigned salt)
+{
+	uint32_t x = clock + salt + UINT32_C(0x9e3779b9);
+	x = (x ^ (x >> 16)) * UINT32_C(0x7feb352d);
+	x = (x ^ (x >> 15)) * UINT32_C(0x846ca68b);
+	x ^= x >> 16;
+	return (int16_t)((int)(x % 16001) - 8000);
+}
+
+/* Continue real source-coded payload immediately after replacing the rejected
+ * raw B1 receiver. Both the native delayed decisions and echo history must
+ * survive publication; a B1-only residual check would miss that boundary. */
+static bool run_raw_b1_echo(enum g711_law law, int polarity, unsigned block,
+	int shift, bool retained, unsigned fault)
+{
+	struct {
+		struct pcm_host_echo echo;
+		struct v92_b1_echo recovery;
+		struct v92_upstream_data_rx primary;
+		struct v92_pcm_frame_tx tx;
+	} *owner = calloc(1, sizeof(*owner));
+	CHECK(owner, "raw B1 owner allocation failed");
+	struct channel channel = { .gain = 1., .law = law, .polarity = polarity };
+	struct v92_phase4_record_tx e2u_tx;
+	struct v92_e2u_rx e2u_rx;
+	struct v92_cpd_parameters cpd;
+	struct v92_pcm_mapping mapping;
+	struct v92_upstream_plan plan = {
+		.gain = 1., .delay = V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY,
+		.observation = V92_PCM_FRAME_CONSTELLATION,
+	};
+	CHECK(prepare_e2u(&channel, false, &e2u_tx, &e2u_rx) &&
+	      v92_cpd_direct_select(&cpd, law, 10, 4096, false) == V92_CPD_OK &&
+	      v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK &&
+	      v92_pcm_frame_tx_init(&owner->tx, &mapping) == V92_PCM_FRAME_OK &&
+	      v92_upstream_data_rx_init(&owner->primary, &e2u_rx.signal, &mapping, &plan) == V92_UPSTREAM_DATA_RX_OK &&
+	      pcm_host_echo_init(&owner->echo) == PCM_HOST_ECHO_OK, "raw B1 setup failed");
+	unsigned salt = law * 7919;
+	for (unsigned i = 0; i < 2000; ++i)
+		CHECK(pcm_echo_reference_push(&owner->echo.reference, raw_echo_reference(i, salt)) ==
+		      PCM_ECHO_REFERENCE_OK, "raw B1 history fill failed");
+	CHECK(pcm_echo_reference_start_scan(&owner->echo.reference, 900, PCM_HOST_ECHO_FILTER_PRE_SAMPLES) ==
+	      PCM_ECHO_REFERENCE_OK, "raw B1 reference setup failed");
+	owner->echo.filter_ready = true;
+	owner->echo.train_samples = PCM_HOST_ECHO_TRAIN_MIN_SAMPLES;
+	owner->echo.train_peak = 8000;
+	owner->echo.coefficients[0] = .025f;
+	if (retained) {
+		owner->echo.retained_delay_samples = 900;
+		owner->echo.retained_coefficients[0] = .025f;
+		owner->echo.coefficients[0] = .05f;
+		owner->echo.filter_ready = false;
+		owner->echo.delay_acquired = true;
+	}
+	CHECK(pcm_host_echo_is_valid(&owner->echo), "raw B1 frozen model invalid");
+	struct v92_pcm_frame encoded = {0};
+	struct v92_b1_quality quality = {0};
+	unsigned offered = 0, delivered = 0;
+	for (unsigned i = 0; i < 180 * V92_PCM_MAPPING_FRAME_SYMBOLS; ++i) {
+		unsigned f = i / V92_PCM_MAPPING_FRAME_SYMBOLS;
+		if (i % V92_PCM_MAPPING_FRAME_SYMBOLS == 0) {
+			uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
+			if (f < V92_B1U_FRAMES) memset(bits, 1, mapping.data_bits_per_frame);
+			else payload(bits, mapping.data_bits_per_frame, f - V92_B1U_FRAMES);
+			CHECK(v92_pcm_frame_encode(&owner->tx, bits, mapping.data_bits_per_frame, &encoded) ==
+			      V92_PCM_FRAME_OK, "raw B1 source stopped");
+		}
+		int actual_shift = shift + (fault == 5 && i >= 400 ? 37 : 0);
+		int16_t raw = g711_quantize(law, sample_round_s16(
+			polarity * encoded.u[i % V92_PCM_MAPPING_FRAME_SYMBOLS] + (double).025f *
+			raw_echo_reference((unsigned)(2000 + (int)i - 900 - actual_shift), salt)));
+		if (fault == 2 && i == 200) raw = INT16_MAX;
+		if (fault == 3 && i == 200) {
+			float *coefficients = retained ? owner->echo.retained_coefficients : owner->echo.coefficients;
+			coefficients[1] = .001f;
+		}
+		if (fault == 4 && i == 200) owner->primary.line.input_samples++;
+		if (fault == 6 && i == 200) owner->primary.line.plan.gain *= 1.01;
+		if (fault == 7 && i == 200) owner->primary.line.polarity = -owner->primary.line.polarity;
+		if (fault == 8 && i == 200) owner->primary.line.plan.delay++;
+		int16_t cleaned;
+		CHECK(pcm_host_echo_predict(&owner->echo, PCM_HOST_ECHO_FILTER, raw, &cleaned) ==
+		      PCM_HOST_ECHO_OK, "raw B1 echo prediction failed");
+		if (fault == 9 && i == 200) {
+			owner->primary.input.samples[0] = (struct v92_upstream_input){ cleaned, raw,
+				g711_encode(law, raw), 3 };
+			owner->primary.input.count = 1;
+			CHECK(v92_upstream_data_rx_is_valid(&owner->primary), "queued raw B1 fixture invalid");
+		}
+		if (i % block == 0) v92_b1_echo_begin_block_owned(&owner->recovery, block);
+		unsigned replayed = owner->recovery.replayed, budget = owner->recovery.budget;
+		bool available = !(fault == 1 && i == 88);
+		bool ready = !offered && v92_b1_echo_observe_owned(&owner->recovery, &owner->echo,
+			&owner->primary, g711_encode(law, raw), raw, cleaned, available);
+		CHECK(owner->recovery.replayed >= replayed && owner->recovery.replayed - replayed <= 2 &&
+		      owner->recovery.budget <= budget, "raw B1 exceeded replay budget");
+		if (!owner->primary.failed) {
+			struct v92_upstream_data_frame frame;
+			enum v92_upstream_data_rx_result result = v92_upstream_data_rx_octet_owned(&owner->primary,
+				g711_encode(law, raw), cleaned, raw, available, &frame);
+			CHECK(result == V92_UPSTREAM_DATA_RX_OK || result == V92_UPSTREAM_DATA_RX_FRAME ||
+			      result == V92_UPSTREAM_DATA_RX_NO_PATH, "raw B1 primary stopped: %u", result);
+			if (result == V92_UPSTREAM_DATA_RX_FRAME) {
+				CHECK(v92_b1_quality_observe_owned(&quality, owner->primary.line.received_frames,
+				      owner->primary.line.host.gain, &frame), "raw B1 quality failed");
+				if ((offered || !shift) && !frame.b1u && frame.bit_count) {
+					uint8_t expected[V92_PCM_MAPPING_MAX_BITS];
+					payload(expected, mapping.data_bits_per_frame, delivered);
+					CHECK(!frame.ambiguous && frame.bit_count == mapping.data_bits_per_frame &&
+					      !memcmp(expected, frame.bits, frame.bit_count),
+					      "raw B1 continuation lost frame %u", delivered);
+					++delivered;
+				}
+			}
+		}
+		if (ready) {
+			CHECK(!fault && shift && i + 1 == V92_B1_ECHO_INPUTS &&
+			      !v92_b1_quality_is_ready(&quality, owner->primary.line.received_frames) &&
+			      owner->recovery.fit.shift == shift &&
+			      v92_upstream_data_rx_is_valid(&owner->recovery.receiver) &&
+			      v92_b1_echo_accept_owned(&owner->recovery, &owner->echo), "raw B1 publication failed");
+			owner->primary = owner->recovery.receiver;
+			quality = owner->recovery.quality;
+			++offered;
+		}
+		CHECK(pcm_echo_reference_push(&owner->echo.reference, raw_echo_reference(2000 + i, salt)) ==
+		      PCM_ECHO_REFERENCE_OK, "raw B1 history stopped");
+		if ((fault && i + 1 == V92_B1_ECHO_INPUTS) || delivered == 32) break;
+	}
+	CHECK(offered == (!fault && shift != 0) && (fault || (delivered == 32 &&
+	      v92_b1_quality_is_ready(&quality, owner->primary.line.received_frames))),
+	      "raw B1 result: law=%u polarity=%d block=%u shift=%d retained=%u fault=%u offers=%u data=%u",
+	      law, polarity, block, shift, retained, fault, offered, delivered);
+	CHECK(pcm_host_echo_active_delay_owned(&owner->echo, PCM_HOST_ECHO_FILTER) ==
+	      (uint32_t)(900 + (offered ? shift : 0)) &&
+	      !v92_b1_echo_accept_owned(&owner->recovery, &owner->echo), "raw B1 retimed twice or after rejection");
+	free(owner);
+	return true;
+}
+
+static bool test_raw_b1_echo(void)
+{
+	const unsigned blocks[] = {40, 80, 160, 240};
+	for (unsigned law = 0; law < 2; ++law)
+		for (int polarity = -1; polarity <= 1; polarity += 2)
+			for (unsigned retained = 0; retained < 2; ++retained) {
+				for (int shift = -120; shift <= 120; shift += 120)
+					for (unsigned b = 0; b < ARRAY_LENGTH(blocks); ++b)
+						CHECK(run_raw_b1_echo(law, polarity, blocks[b], shift, retained, 0),
+						      "raw B1 continuation failed");
+				for (unsigned fault = 1; fault <= 9; ++fault)
+					CHECK(run_raw_b1_echo(law, polarity, 80, 120, retained, fault),
+					      "raw B1 fault rejection failed");
+			}
+	return true;
+}
+
 int main(void)
 {
+	fprintf(stderr, "[ RUN      ] PCM raw B1 echo recovery and payload continuity\n");
+	if (!test_raw_b1_echo()) return 1;
+	fprintf(stderr, "[       OK ] PCM raw B1 echo recovery and payload continuity\n");
 	fprintf(stderr, "[ RUN      ] PCM B1 echo recovery ownership\n");
 	if (!test_b1_echo_owners()) return 1;
 	fprintf(stderr, "[       OK ] PCM B1 echo recovery ownership\n");

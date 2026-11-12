@@ -3,6 +3,7 @@
 #define V92_B1_ECHO_H
 
 #include "pcm_host_echo.h"
+#include "pam_distance.h"
 #include "v92_data_quality.h"
 #include "v92_upstream_data_rx.h"
 
@@ -32,6 +33,10 @@ struct v92_b1_echo_evidence {
  * begins a call. The working receiver is copied once at the B1u handoff; it
  * is not part of the frequently reset metadata prefix. */
 struct v92_b1_echo {
+	/* Mapping-owned distance geometry for raw constellation observations. */
+	double step[V92_CPD_MAX_CONSTELLATIONS];
+	double inverse_step[V92_CPD_MAX_CONSTELLATIONS];
+	struct pam_distance_range ranges[V92_CPD_MAX_CONSTELLATIONS][PAM_DISTANCE_BINS];
 	struct v92_b1_echo_fit fit;
 	struct v92_b1_echo_evidence held[2];
 	struct v92_b1_quality quality;
@@ -52,8 +57,8 @@ void v92_b1_echo_reset(struct v92_b1_echo *recovery);
 void v92_b1_echo_begin_block_owned(struct v92_b1_echo *recovery, unsigned samples);
 
 /* Called before the ordinary receiver consumes this input. The enclosing
- * owner qualifies a short B1u epoch and validates echo/receiver. Missing media,
- * clipping, queued input or any model/clock change abandon the attempt.
+ * owner qualifies an initial raw or short B1u epoch and validates echo/receiver.
+ * Missing media, clipping, queued input or any model/clock change abandon it.
  * Work is bounded by two replay submissions per input and ceil(1.3 times
  * the block length) submissions per block.
  * True supplies a complete native alternate for this input only; the ordinary
