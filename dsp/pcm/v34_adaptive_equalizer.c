@@ -149,7 +149,7 @@ v34_adaptive_equalizer_set_feedback_mode(
 	struct v34_adaptive_equalizer *equalizer,
 	enum v34_adaptive_equalizer_feedback_mode mode)
 {
-	struct v34_adaptive_equalizer next;
+	uint64_t lineage;
 
 	if (!v34_adaptive_equalizer_is_valid(equalizer))
 		return V34_ADAPTIVE_EQUALIZER_INVALID_STATE;
@@ -160,13 +160,14 @@ v34_adaptive_equalizer_set_feedback_mode(
 		return V34_ADAPTIVE_EQUALIZER_INVALID_STATE;
 	if (equalizer->feedback_mode == (uint8_t)mode)
 		return V34_ADAPTIVE_EQUALIZER_OK;
-	next = *equalizer;
-	next.feedback_mode = (uint8_t)mode;
-	next.lineage = lineage_word(
-		lineage_tag(next.lineage, 1), (uint16_t)mode);
-	if (!v34_adaptive_equalizer_is_valid(&next))
+	/* No retained decision spans a control change. The validated mode and
+	 * nonzero tag preserve validity without copying filter/sample history. */
+	lineage = lineage_word(
+		lineage_tag(equalizer->lineage, 1), (uint16_t)mode);
+	if (lineage == 0)
 		return V34_ADAPTIVE_EQUALIZER_INVALID_STATE;
-	*equalizer = next;
+	equalizer->feedback_mode = (uint8_t)mode;
+	equalizer->lineage = lineage;
 	return V34_ADAPTIVE_EQUALIZER_OK;
 }
 
@@ -174,7 +175,7 @@ enum v34_adaptive_equalizer_result
 v34_adaptive_equalizer_set_data_carrier_tracking(
 	struct v34_adaptive_equalizer *equalizer, bool data_tracking)
 {
-	struct v34_adaptive_equalizer next;
+	uint64_t lineage;
 
 	if (!v34_adaptive_equalizer_is_valid(equalizer))
 		return V34_ADAPTIVE_EQUALIZER_INVALID_STATE;
@@ -183,13 +184,12 @@ v34_adaptive_equalizer_set_data_carrier_tracking(
 		return V34_ADAPTIVE_EQUALIZER_INVALID_STATE;
 	if (equalizer->data_carrier_tracking == data_tracking)
 		return V34_ADAPTIVE_EQUALIZER_OK;
-	next = *equalizer;
-	next.data_carrier_tracking = data_tracking;
-	next.lineage = lineage_word(
-		lineage_tag(next.lineage, 7), data_tracking ? 1u : 0u);
-	if (!v34_adaptive_equalizer_is_valid(&next))
+	lineage = lineage_word(
+		lineage_tag(equalizer->lineage, 7), data_tracking ? 1u : 0u);
+	if (lineage == 0)
 		return V34_ADAPTIVE_EQUALIZER_INVALID_STATE;
-	*equalizer = next;
+	equalizer->data_carrier_tracking = data_tracking;
+	equalizer->lineage = lineage;
 	return V34_ADAPTIVE_EQUALIZER_OK;
 }
 

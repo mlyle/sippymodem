@@ -130,27 +130,23 @@ static enum v32_equalizer_result set_control(
 	struct v32_equalizer *equalizer,
 	enum equalizer_control control, unsigned int value)
 {
-	struct v32_equalizer next;
-
 	if (!v32_equalizer_is_valid(equalizer))
 		return V32_EQUALIZER_INVALID_STATE;
 	if (equalizer->decision_pending)
 		return V32_EQUALIZER_DECISION_PENDING;
-	next = *equalizer;
+	/* Only bounded controls change; retain the filter and sample history in
+	 * place. Complete argument checks before changing either control or tag. */
 	if (control == CONTROL_ADAPTATION) {
 		if (value > V32_EQUALIZER_ADAPTATION_FINE)
 			return V32_EQUALIZER_INVALID_ARGUMENT;
-		next.adaptation = (enum v32_equalizer_adaptation)value;
+		equalizer->adaptation = (enum v32_equalizer_adaptation)value;
 	} else if (control == CONTROL_CARRIER_TRACKING) {
-		next.carrier_tracking = value != 0;
+		equalizer->carrier_tracking = value != 0;
 	} else {
-		next.carrier_training_symbols = 0;
+		equalizer->carrier_training_symbols = 0;
 	}
-	next.lineage = lineage_word(
-		lineage_tag(next.lineage, (uint16_t)control), value);
-	if (!v32_equalizer_is_valid(&next))
-		return V32_EQUALIZER_INVALID_STATE;
-	*equalizer = next;
+	equalizer->lineage = lineage_word(
+		lineage_tag(equalizer->lineage, (uint16_t)control), value);
 	return V32_EQUALIZER_OK;
 }
 

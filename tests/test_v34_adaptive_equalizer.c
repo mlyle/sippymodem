@@ -930,6 +930,42 @@ static bool test_discard_lineage_zero(void)
 	return true;
 }
 
+static bool test_control_lineage_zero(void)
+{
+	struct v34_adaptive_equalizer equalizer;
+	struct v34_adaptive_equalizer saved;
+	/* Valid tags whose next feedback-LEARN / data-tracking-true update
+	 * would wrap to zero. Neither operation may partially change its owner. */
+	const uint64_t lineage[] = {
+		UINT64_C(0x8187372419b576c4), UINT64_C(0x1eb3d7d379a25bce),
+	};
+
+	for (unsigned control = 0; control < ARRAY_LENGTH(lineage); ++control) {
+		CHECK(v34_adaptive_equalizer_init(&equalizer) ==
+			      V34_ADAPTIVE_EQUALIZER_OK,
+		      "zero-lineage control fixture failed");
+		equalizer.lineage = lineage[control];
+		CHECK(v34_adaptive_equalizer_is_valid(&equalizer),
+		      "zero-lineage control fixture is invalid");
+		saved = equalizer;
+		enum v34_adaptive_equalizer_result result = control == 0 ?
+			v34_adaptive_equalizer_set_feedback_mode(
+				&equalizer, V34_ADAPTIVE_EQUALIZER_FEEDBACK_LEARN) :
+			v34_adaptive_equalizer_set_data_carrier_tracking(&equalizer, true);
+		CHECK(result == V34_ADAPTIVE_EQUALIZER_INVALID_STATE &&
+		      memcmp(&equalizer, &saved, sizeof(equalizer)) == 0,
+		      "zero-lineage control %u changed the owner", control);
+		CHECK(v34_adaptive_equalizer_set_feedback_mode(
+			      &equalizer, V34_ADAPTIVE_EQUALIZER_FEEDBACK_NONE) ==
+			      V34_ADAPTIVE_EQUALIZER_OK &&
+		      v34_adaptive_equalizer_set_data_carrier_tracking(&equalizer, false) ==
+			      V34_ADAPTIVE_EQUALIZER_OK &&
+		      memcmp(&equalizer, &saved, sizeof(equalizer)) == 0,
+		      "same-value controls changed the owner");
+	}
+	return true;
+}
+
 static bool test_feedback_training_boundary(void)
 {
 	struct v34_adaptive_equalizer equalizer;
@@ -1970,6 +2006,7 @@ int main(void)
 	    !test_feedback_full_scale_projection() ||
 	    !test_feedback_and_discard_lifecycle() ||
 	    !test_discard_lineage_zero() ||
+	    !test_control_lineage_zero() ||
 	    !test_feedback_training_boundary() ||
 	    !test_tracking_boundary() || !test_decision_quality_window() ||
 	    !test_transactionality() || !test_data_quality_policy() ||
