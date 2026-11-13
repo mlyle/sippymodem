@@ -1001,3 +1001,46 @@ rates or proof that a longer call cannot connect. The learner remains private;
 this study changes neither rate selection, training deadlines nor call grades.
 Production integration still needs per-call/coding-epoch invalidation, bounded
 work scheduling, and ordinary B1 and decoded-payload qualification.
+
+## Construct levels from frozen observation bounds
+
+A finite catalog can fail to admit a rate even when another level geometry
+separates under the same channel evidence. Keep catalog failure distinct from
+an impossibility result. A complementary constructor can work directly from
+the frozen phase, gain, offset and robbed-bit explanations.
+
+For a proposed bound `A` on every emitted sample, propagate each signed level
+through every retained explanation and every allowed filter history. Include
+integer rounding, codec cells and the declared additive error. Order codec
+characters by their input cells, not their unsigned byte values. Conservative
+lower and upper ranks then describe the possible observations of `+x` and
+`-x`. A shared alphabet must separate both signs and work at its weakest
+physical robbed-bit position.
+
+When those endpoints are monotone in `x`, select the earliest next positive
+level whose positive interval follows the previous positive interval and
+whose negative interval precedes the previous negative interval. The first
+level must also separate its own two signs. This gives an ordered candidate
+without assuming uniformly spaced linear levels or codec reconstruction
+points. It is a constructor within the chosen amplitude bound and common
+alphabet family, not a proof of optimal modem capacity.
+
+Power normalization belongs inside this search. Uniformly shrinking the CPd
+levels generally makes B1 normalization enlarge them again. For each rate,
+obtain valid moduli and check their exact product. Choose the starting level
+near the occupation-weighted B1 power target, then recompute the native
+prefilter energy, representable gain and emitted samples. Recheck separation
+at those actual samples and reject any amplitude-bound violation. A monotone
+pre-normalization search does not make quantized normalization monotone.
+Reuse B1 magnitude frequencies only where unchanged mapper index choices
+have been established; `v92_pcm_frame_measure_b1u()` remains the independent
+normalization check.
+
+Keep the existing catalog alongside this constructor: a finite amplitude
+sweep or a common alphabet can miss a better layout, especially when only
+some physical positions are robbed. Freeze selected levels and their complete
+observation support before payload validation. Native B1 and payload decoding,
+CPd wire roundtrips and independent source-extremum checks protect different
+boundaries. They do not establish the assumed noise bound, future channel
+stationarity, physical BER or a production acquisition deadline. The current
+production selector is unchanged by this construction study.
