@@ -4,6 +4,7 @@
 
 #include "test.h"
 
+#include <fenv.h>
 #include <limits.h>
 #include <math.h>
 #include <stdbool.h>
@@ -368,7 +369,7 @@ static bool test_transmit_output_ownership(void)
 	return true;
 }
 
-static bool test_level_range(void)
+static bool check_level_range(void)
 {
 	for (unsigned int points = 4u; points <= 8u; points += 4u) {
 		unsigned int bits = points == 4u ? 2u : 3u;
@@ -447,6 +448,25 @@ static bool test_level_range(void)
 				}
 			}
 		}
+	}
+	return true;
+}
+
+static bool test_level_range(void)
+{
+	static const int modes[] = {
+		FE_TONEAREST, FE_UPWARD, FE_DOWNWARD, FE_TOWARDZERO,
+	};
+	int original = fegetround();
+
+	CHECK(original != -1, "could not read the rounding mode");
+	for (size_t index = 0; index < ARRAY_LENGTH(modes); ++index) {
+		bool selected = fesetround(modes[index]) == 0;
+		bool valid = selected && check_level_range();
+		bool restored = fesetround(original) == 0;
+
+		CHECK(valid && restored, "Phase 4 LU range differed at rounding mode %d",
+		      modes[index]);
 	}
 	return true;
 }

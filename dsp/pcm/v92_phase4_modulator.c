@@ -56,12 +56,17 @@ static inline bool raw_level(
 static bool parameters_are_valid(
 	enum v92_constellation_size constellation, int16_t lu)
 {
-	unsigned int count = magnitude_count(constellation);
-	int16_t outer_level;
+	unsigned int points = (unsigned int)constellation;
 
-	return count != 0 && raw_level(
-		constellation, lu, (uint8_t)(count - 1u), 0u,
-		&outer_level);
+	if (lu <= 0 || magnitude_count(constellation) == 0)
+		return false;
+	/* The outer magnitude is LU * (M-1) / sqrt((M*M-1)/3).
+	 * Positive nearest rounding fits int16 iff it is below 32767.5.
+	 * Squaring and cancelling M-1 gives this exact integer bound;
+	 * every intermediate is below 2^37 for four/eight points and int16 LU.
+	 * Keep actual level generation and its rounding in raw_level(). */
+	return UINT64_C(12) * (uint64_t)lu * (uint64_t)lu * (points - 1u) <
+		UINT64_C(65535) * UINT64_C(65535) * (points + 1u);
 }
 
 enum v92_phase4_modulator_result v92_phase4_modulator_level(
