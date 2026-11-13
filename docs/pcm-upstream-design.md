@@ -1194,3 +1194,64 @@ integration still needs eligible native learner output that preserves every
 surviving alternative, qualified physical-phase provenance, actual coding/B1
 geometry admission, CPd promotion and whole-call training deadlines. The
 production selector and live rates remain unchanged.
+
+## Publish every frozen channel explanation
+
+The scalar learner's single qualified projection is not a replacement for the
+fractional-channel model union. A native producer must retain each surviving
+fractional phase, gain/DC box and physical robbed-position mask together.
+Do not publish a preferred model or discard an alternative because a downstream
+consumer cannot represent it.
+
+A private native prototype copies the known source waveform, observed octets,
+availability and supplied physical-phase labels into one owner. It computes
+one phase's predictions with the native 31-tap FIR and reuses that scratch for
+every requested robbed-position hypothesis. Two outward interval-tightening
+passes, each limited to twelve sweeps, retain conservative acquisition boxes;
+the first uses at most 1,024 acquisition rows and the second uses them all.
+Saturated codec-cell preimages extend to infinity. The declared phase grid,
+gain and DC priors, nonnegative gain, and additive-error bound remain model
+assumptions.
+
+Keep acquisition boxes frozen while checking two fresh held windows against
+their union. Held data must not silently refit them. Return models only after
+both windows pass; incomplete, cancelled and stale jobs cannot publish them.
+Copy model results by value and retain independent call, coding, model and
+physical-binding identities. These identities do not themselves prove that
+the adapter supplied the correct source waveform or physical clock labels.
+
+The owner occupies 516,816 bytes, including capacity for 20,000 source/observed
+rows, 1,025 declared phases, eight physical-mask hypotheses and all 8,200 model
+alternatives. Allocate it outside media processing and per-sample call copies.
+Each continuation transition handles bounded FIR, observation or bookkeeping
+work; it never scans an unbounded observation or candidate list internally.
+
+Host and Pi checks reproduce all 3,979 boxes from the preceding 24 synthetic
+native-TRN2 fits and reject four corrupted held-window controls. Host budgets
+of 1, 128 and 8,192 transitions produce identical answers and work counts.
+Another 96 cases cover saturated observations, physical-phase relabeling and
+erasures. Independent exact rational clipping retains every vertex of 389
+nonempty gain/DC polygons inside the published boxes. Capacity and lifecycle
+checks preserve all 8,200 alternatives. Host ASan/UBSan and focused Memcheck
+checks pass without memory errors or retained allocations.
+
+Two representative fits, four repetitions each, give these Pi 5 elapsed
+hardware-counter measurements. Three-step sums stay within a job and exclude
+the driver's input, output and idle time; no timing outliers are removed.
+
+| Transition budget | Mean step range | Largest step | Largest three-step sum |
+| --- | ---: | ---: | ---: |
+| 128 | 6.0--7.4 us | 37.9 us | 59.2 us |
+| 1,024 | 47.7--58.9 us | 126.7 us | 303.3 us |
+| 8,192 | 381.5--470.8 us | 762.5 us | 1,928.3 us |
+| 65,536 | 3.08--3.76 ms | 5.08 ms | 14.96 ms |
+
+The larger-work fixture still takes about four seconds of total processing.
+The Pi run reaches 82.1 degrees C and records current firmware flag `0x8`.
+These component measurements do not prove a live training deadline or
+multi-call headroom. Reduce total work and qualify actual acquisition scheduling
+before integration. Preserve model-specific robbed masks when constructing
+per-phase observation support: replacing their correlation with one global
+mask changes the represented set. Native coding/B1 admission, CPd promotion
+and physical-epoch ownership remain required. The production selector and
+live rates are unchanged.
