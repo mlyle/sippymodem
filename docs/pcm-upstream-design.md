@@ -1044,3 +1044,48 @@ CPd wire roundtrips and independent source-extremum checks protect different
 boundaries. They do not establish the assumed noise bound, future channel
 stationarity, physical BER or a production acquisition deadline. The current
 production selector is unchanged by this construction study.
+
+## Use identified robbed-bit positions separately
+
+A common alphabet pays the robbed-bit penalty at every position. If frozen
+training explanations identify affected physical positions, construct each
+phase's signed support separately. In a one-in-six model, five positions can
+use finer alphabets while the affected position keeps wider separation. Retain
+the union of every surviving phase hypothesis; a preferred hypothesis alone
+does not justify removing uncertainty.
+
+Bind this to the actual sample clock and filter delay. A source symbol at
+phase `j` reaches the codec at `(j + delay) % 6`; the declared 31-tap study
+filter has delay 15. Rotating the classifier without that binding produces
+incorrect or unclassified observations even when its level arithmetic is
+correct. This is not a universal fixed delay for the production receiver.
+
+The twelve moduli must fit their phase alphabets, including the reduced
+trellis intervals, and their exact product must cover the selected data bits.
+Measure B1 occupation separately by phase before combining power: summing
+point-index frequencies across different alphabets loses their amplitudes.
+Recompute one shared gain, then recheck every emitted signed level against
+its phase's support and the common source-amplitude bound.
+
+A bounded private construction study uses eight frozen native-training cases
+with one-in-six robbing, both codec laws, and the same stationary FIR, gain,
+offset and additive-error bounds as the common-alphabet study. All eight
+retain one physical robbed-position hypothesis. Separate alphabets improve
+the best catalog/common-constructor rate in six cases and preserve it in two;
+two reach 72 bits per twelve samples, or 48 kbit/s. This is conditional
+capacity under the supplied model, not a physical-call rate result.
+
+The selected maps survive native CPd wire roundtrips at two alignments and
+actual TRN2 history carried into B1 and 4,096 payload frames per case: all
+2,072,576 payload bits decode correctly. Independent native filter extrema
+and gain/offset corners agree with every signed classifier support. Removing
+the true channel, earlier selected rates and descriptive case identifiers
+reproduces the same maps and supports. Payload mean-square power is
+0.956--1.009 times B1 power in these streams, with no source clipping; those
+measurements do not establish an arbitrary payload's power or line compliance.
+
+This finite constructor takes about twenty seconds for the eight-case host
+study, including native geometry preparation. It needs bounded scheduling
+before live use. Production integration also needs qualified physical-phase
+ownership, coding-epoch invalidation and conservative ambiguous-model
+handling. The production selector, defaults and live rates remain unchanged.
