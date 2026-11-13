@@ -1255,3 +1255,65 @@ per-phase observation support: replacing their correlation with one global
 mask changes the represented set. Native coding/B1 admission, CPd promotion
 and physical-epoch ownership remain required. The production selector and
 live rates are unchanged.
+
+## Apply each model's robbed-position mask before combining support
+
+Keep each fractional phase, gain/DC box and physical mask paired while
+constructing observation bounds. Applying the OR of all surviving masks to
+every box invents combinations that acquisition did not retain. It can
+unnecessarily widen support and reduce the set of separable constellation
+points. Compute each model's masked bounds first, then take their per-phase
+signed interval hull. This hull remains conservative; it does not preserve
+holes or prove that one stationary model explains an entire data stream.
+
+The compact inverse-threshold representation can do this without storing a
+curve for every model or source magnitude. Retain four monotone curves for
+each of six physical positions. For an increasing codec-rank function, let
+`T[k]` be the first source magnitude whose rank reaches `k`. Robbing expands
+each lower endpoint to an even rank and each upper endpoint to an odd rank:
+
+- Lower endpoint: `T_even[k] = T[k + (k & 1)]`.
+- Upper endpoint: `T_odd[k] = T[k - (k & 1)]`.
+
+Retain the rank-zero and rank-256 sentinels. In particular, an upper endpoint
+of rank zero expands to rank one. Inverting negative ranks around 255 gives
+the same parity rules. Merge lower-envelope thresholds by maximum and
+upper-envelope thresholds by minimum, separately for each physical position.
+One base threshold needs at most two updates in each of the six positions;
+there is no model-list scan inside a query or continuation transition.
+
+A private native adapter accepts every qualified producer model by value,
+including its own mask, and supports all 8,200 alternatives. Its six sets of
+four curves occupy 12,336 bytes; the complete adapter occupies 12,528 bytes.
+The fitter and support owner remain outside per-sample call-state copies.
+Advance at most 128 bounded transitions per call. Fence publication with the
+fitter job generation as well as call, coding, model and physical-binding
+identities. Recheck source readiness when constructing and consuming a
+candidate batch: cancelling a fit must invalidate an already prepared batch.
+These checks require the caller's serialized, qualified fitter owner; identity
+fields do not establish physical source or phase binding by themselves.
+
+Independent forward enumeration checks 9,437,184 complete support cells across
+both laws, all 64 masks and all six phase rotations. Another 4,128,768 checks
+cover actual native FIR rounding and saturation, gain/DC endpoints and robbed
+octets. The integrated host and Pi runs preserve all 3,979 fitted models,
+withhold four corrupted-held cases, and verify 138 research candidates against
+the independent signed bounds. Host budgets of one and 128 transitions give
+identical threshold curves and work counts. Capacity, aliasing, cancellation and stale
+result checks pass; host ASan/UBSan and focused Memcheck checks also pass.
+
+Two verified runs per host give these elapsed reference-counter measurements
+for the support adapter at a budget of 128 transitions. All raw samples are
+retained; three-step sums never cross a job boundary.
+
+| Host | Mean step | Largest step | Largest three-step sum |
+| --- | ---: | ---: | ---: |
+| Ryzen | 2.27--2.39 us | 631.82 us | 635.41 us |
+| Pi 5 | 3.96 us | 31.54 us | 40.39 us |
+
+The Ryzen scheduling outlier is included. The Pi reaches 77.1 degrees C with
+no active firmware flags at sampled instants. These are support-component
+measurements, excluding fitting, geometry construction and driver I/O; they
+do not establish whole-packet or live training deadlines. Physical binding,
+native coding/B1 admission and CPd promotion remain unqualified. The prototype
+does not change production selection or live rates.
