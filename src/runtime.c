@@ -49,8 +49,7 @@ struct modem_runtime {
 	bool trace_started;
 	uint64_t trace_time_ns;
 	uint64_t progress_time_ns;
-	const char *trace_step;
-	const char *trace_phase;
+	struct modem_progress trace_progress;
 	unsigned int trace_disconnect_sequence;
 };
 
@@ -418,9 +417,11 @@ static void trace_call(struct modem_runtime *runtime, uint64_t now_ns)
 	if (!runtime->trace_enabled || !modem_host_is_open(runtime->host))
 		return;
 	const struct dp *dp = runtime->modem->dp;
-	const char *phase = modem_call_phase(runtime->modem);
-	const char *step = modem_protocol_step(runtime->modem);
-	char text[384];
+	struct modem_progress current;
+	modem_get_progress(runtime->modem, &current);
+	const char *phase = current.phase;
+	const char *step = current.step;
+	char text[512];
 	struct sip_trace_record record = {
 		.origin = SIP_TRACE_ADAPTER,
 		.level = 3,
@@ -431,9 +432,7 @@ static void trace_call(struct modem_runtime *runtime, uint64_t now_ns)
 	bool heartbeat = !runtime->trace_started ||
 		(now_ns > runtime->trace_time_ns &&
 		 now_ns - runtime->trace_time_ns >= UINT64_C(1000000000));
-	bool changed = runtime->trace_step == NULL ||
-		strcmp(step, runtime->trace_step) != 0 ||
-		strcmp(phase, runtime->trace_phase) != 0;
+	bool changed = memcmp(&current, &runtime->trace_progress, sizeof(current)) != 0;
 	bool progress = runtime->trace_started && changed &&
 		now_ns > runtime->progress_time_ns &&
 		now_ns - runtime->progress_time_ns >= UINT64_C(500000000);
@@ -463,8 +462,7 @@ static void trace_call(struct modem_runtime *runtime, uint64_t now_ns)
 		}
 		if (changed) {
 			runtime->progress_time_ns = now_ns;
-			runtime->trace_phase = phase;
-			runtime->trace_step = step;
+			runtime->trace_progress = current;
 		}
 	}
 	trace_disconnect(runtime);

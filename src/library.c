@@ -36,8 +36,7 @@ struct sippymodem_line {
 	struct log_buffer logs;
 	struct sippymodem_log_record log_storage[SIPPYMODEM_LOG_CAPACITY];
 	uint64_t log_time;
-	char log_step[128];
-	char log_phase[48];
+	struct modem_progress log_progress;
 	unsigned int id, slot;
 	uint64_t sip_generation;
 	uint64_t attempt_deadline;
@@ -185,18 +184,22 @@ static void log_event(struct sippymodem_line *line, enum sippymodem_event_type t
 static void log_progress(struct sippymodem_line *line)
 {
 	if (!line->active || (line->status.phase != SIPPYMODEM_TRAINING &&
-	    line->status.phase != SIPPYMODEM_DIALING))
+	    line->status.phase != SIPPYMODEM_DIALING && line->status.phase != SIPPYMODEM_ONLINE))
 		return;
-	const char *phase = modem_call_phase(line_modem(line));
-	const char *step = modem_protocol_step(line_modem(line));
-	bool changed = strcmp(line->log_phase, phase) != 0 || strcmp(line->log_step, step) != 0;
+	struct modem_progress current;
+	modem_get_progress(line_modem(line), &current);
+	/* Observe online link supervision and one transition back to ordinary
+	 * data without adding periodic logs to an otherwise healthy data call. */
+	if (line->status.phase == SIPPYMODEM_ONLINE &&
+	    !current.link_waiting && !line->log_progress.link_waiting)
+		return;
+	bool changed = memcmp(&line->log_progress, &current, sizeof(current)) != 0;
 	uint64_t interval = changed ? UINT64_C(250000000) : UINT64_C(1000000000);
-	if (line->log_phase[0] != '\0' && line->server->now - line->log_time < interval)
+	if (line->log_progress.phase[0] != '\0' && line->server->now - line->log_time < interval)
 		return;
 	log_line(line, SIPPYMODEM_LOG_DEBUG, "progress phase=%s step=%s tx=%u rx=%u",
-		phase, step, line->status.tx_bps, line->status.rx_bps);
-	snprintf(line->log_phase, sizeof(line->log_phase), "%s", phase);
-	snprintf(line->log_step, sizeof(line->log_step), "%s", step);
+		current.phase, current.step, line->status.tx_bps, line->status.rx_bps);
+	line->log_progress = current;
 	line->log_time = line->server->now;
 }
 
@@ -324,7 +327,7 @@ static void begin_call(struct sippymodem_line *line)
 	line->finish_requested = false;
 	line->finish_pending = 1;
 	line->log_time = 0;
-	line->log_phase[0] = line->log_step[0] = '\0';
+	memset(&line->log_progress, 0, sizeof(line->log_progress));
 	line->status.state_sequence++;
 	line->active = true;
 	line_modem(line)->disconnect_reason = NULL;

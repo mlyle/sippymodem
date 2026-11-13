@@ -222,6 +222,13 @@ const char *modem_protocol_step(const struct modem *modem)
 	return capture.protocol_step != NULL ? capture.protocol_step : "training";
 }
 
+void modem_get_progress(const struct modem *modem, struct modem_progress *progress)
+{
+	memset(progress, 0, sizeof(*progress));
+	snprintf(progress->phase, sizeof(progress->phase), "%s", modem_call_phase(modem));
+	snprintf(progress->step, sizeof(progress->step), "%s", modem_protocol_step(modem));
+}
+
 const char *sip_call_state_name(enum sip_call_state state)
 {
 	return state == SIP_CALL_CONNECTED ? "connected" : "idle";
@@ -1045,14 +1052,16 @@ static bool test_protocol_trace_bounds_and_retained_failure(void)
 	int saved = dup(STDERR_FILENO);
 	CHECK(saved >= 0 && dup2(fileno(stream), STDERR_FILENO) >= 0,
 	      "cannot redirect protocol trace");
-	capture.protocol_step = "V.8/wait-ANSam";
+	char progress[128] = "LAPM/link-verification physical=rate-change/Rd-wait-S-Sbar";
+	capture.protocol_step = progress;
 	(void)modem_runtime_step(runtime, 0, NULL, NULL, NULL);
 	struct modem *modem = modem_runtime_modem(runtime);
 	const struct dp_operations operations = { .name = "PCM V.90/V.92", .link_rates = trace_test_rates };
 	struct dp dp = { .modem = modem, .op = &operations };
 	modem->dp = &dp;
 	for (uint64_t ms = 20; ms <= 980; ms += 20) {
-		capture.protocol_step = ms < 500 ? "V.8/CM-wait-JM" : "phase2/INFO0";
+		if (ms == 500)
+			snprintf(progress, sizeof(progress), "LAPM/link-verification physical=rate-change/CP-MP-E-B1");
 		(void)modem_runtime_step(runtime, ms * UINT64_C(1000000), NULL, NULL, NULL);
 	}
 	(void)modem_runtime_step(runtime, UINT64_C(1000000000), NULL, NULL, NULL);
@@ -1090,7 +1099,9 @@ static bool test_protocol_trace_bounds_and_retained_failure(void)
 		++updates;
 	for (char *p = output; (p = strstr(p, "DISCONNECT ")) != NULL; ++p)
 		++failures;
-	CHECK(updates == 1 && failures == 3 && strstr(output, "step=phase2/INFO0") &&
+	CHECK(updates == 1 && failures == 3 &&
+	      strstr(output, "step=LAPM/link-verification physical=rate-change/Rd-wait-S-Sbar") &&
+	      strstr(output, "TRAIN phase=training step=LAPM/link-verification physical=rate-change/CP-MP-E-B1") &&
 	      strstr(output, "TX=45333bps/8000baud RX=26400bps/3428.57baud") &&
 	      strstr(output, "DISCONNECT origin=local phase=training step=V.8/CM-wait-JM reason=menu exchange timeout; we ended the call") &&
 	      strstr(output, "DISCONNECT origin=remote phase=training step=V.8/CM-wait-JM reason=remote SIP call ended; the peer ended the call"),

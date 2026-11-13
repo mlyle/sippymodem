@@ -546,6 +546,16 @@ extern int modem_set_link_rates(struct modem *m, uint32_t transmit_rate, uint32_
 /* Borrowed static name of the host call phase; no state is changed. */
 extern const char *modem_call_phase(const struct modem *m);
 extern const char *modem_protocol_step(const struct modem *m);
+/* Owned, zero-filled diagnostic snapshot, read under the modem owner's
+ * serialization. The primary step is unchanged; a hidden physical step is
+ * appended as physical=... when link supervision takes precedence. Strings
+ * that exceed the bounded storage end in an explicit ellipsis. */
+struct modem_progress {
+	char phase[48];
+	char step[256];
+	bool link_waiting;
+};
+extern void modem_get_progress(const struct modem *m, struct modem_progress *progress);
 /* Retain the earliest cause; reason must be a process-lifetime literal. */
 extern void modem_note_disconnect(struct modem *m, bool local, const char *reason);
 /* Refresh active negotiated facts; completed reports remain immutable. */

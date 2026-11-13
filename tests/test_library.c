@@ -3,6 +3,7 @@
 #include <sippymodem.h>
 #include <sippymodem_fd.h>
 #include "g711.h"
+#include "modem.h"
 #include "test.h"
 #include "sdk_io.h"
 #include <pjsip.h>
@@ -59,7 +60,19 @@ ssize_t __wrap_recv(int fd, void *bytes, size_t count, int flags)
 	return __real_recv(fd, bytes, count, flags);
 }
 
-struct modem;
+/* Override only the diagnostic input, on the serialized owner thread.
+ * Carrier, modem state, payload and worker execution remain real. */
+static const char *diagnostic_step;
+void __real_modem_get_progress(const struct modem *, struct modem_progress *);
+void __wrap_modem_get_progress(const struct modem *modem, struct modem_progress *progress)
+{
+	__real_modem_get_progress(modem, progress);
+	if (diagnostic_step != NULL) {
+		progress->link_waiting = true;
+		snprintf(progress->step, sizeof(progress->step), "%s", diagnostic_step);
+	}
+}
+
 static atomic_uint dsp_epoch, dsp_count;
 static atomic_bool wrong_dsp_thread, stall_enabled, stall_expired;
 static atomic_uintptr_t stalled_modem;
@@ -353,6 +366,37 @@ static bool test_owned_loopback(void)
 		EXPECT(logs[i].line_id == remote.line_id && (logs[i].generation == 0 || logs[i].generation == remote.generation));
 	EXPECT(remote.modulation == 21 && local.modulation == 21);
 	EXPECT(remote.tx_bps == 300 && remote.rx_bps == 300);
+	/* Online LAPM supervision must expose changing physical progress and
+	 * log its recovery once, without periodic logs during ordinary data. */
+	const char *diagnostic_steps[] = {
+		"LAPM/link-verification physical=rate-change/Rd-wait-S-Sbar",
+		"LAPM/link-verification physical=rate-change/CP-MP-E-B1",
+		NULL, NULL
+	};
+	for (unsigned int phase = 0; phase < 4; ++phase) {
+		diagnostic_step = diagnostic_steps[phase];
+		for (unsigned int i = 0; i < (phase == 3 ? 1200U : 600U); ++i)
+			EXPECT(step(server, &now));
+		diagnostic_step = NULL;
+		EXPECT(sippymodem_get_status(caller, &local) == SIPPYMODEM_OK);
+		EXPECT(local.ready && local.carrier && local.generation == generation);
+		EXPECT(sippymodem_read_log(caller, &log_cursor, logs, SIPPYMODEM_LOG_CAPACITY,
+			&log_count, &log_missed) == (phase < 3 ? SIPPYMODEM_OK : SIPPYMODEM_AGAIN) &&
+			log_missed == 0);
+		unsigned int progress_count = 0;
+		for (size_t i = 0; i < log_count; ++i) {
+			if (strncmp(logs[i].text, "progress ", 9) != 0)
+				continue;
+			++progress_count;
+			EXPECT(logs[i].line_id == local.line_id && logs[i].generation == generation);
+			EXPECT(strstr(logs[i].text, "phase=online ") != NULL && !logs[i].truncated);
+			if (phase < 2)
+				EXPECT(strstr(logs[i].text, diagnostic_steps[phase]) != NULL);
+			else
+				EXPECT(strstr(logs[i].text, "physical=") == NULL);
+		}
+		EXPECT(progress_count == (phase < 3 ? 1U : 0U));
+	}
 	const unsigned char literal[] = { 0, '+', '+', '+', '\r', 'A', 'T', 0x11, 0x13, 255 };
 	size_t accepted = 0, received = 0;
 	EXPECT(send_when_available(server, &now, caller, literal, sizeof(literal), &accepted, step));

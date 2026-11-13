@@ -463,7 +463,7 @@ static bool local_lapm_retry_cause(void)
 }
 
 static int report_dp_delete(struct dp *dp) { (void)dp; return 0; }
-static char report_progress[96];
+static char report_progress[384];
 static const char *report_dp_progress(const struct dp *dp)
 { (void)dp; return report_progress; }
 
@@ -493,6 +493,21 @@ static bool online_lapm_progress(void)
 		EXPECT(strcmp(modem_protocol_step(modem), "LAPM/status-enquiry") == 0);
 		modem->ec.lapm.retrain_poll = 1;
 		EXPECT(strcmp(modem_protocol_step(modem), "LAPM/link-verification") == 0);
+		/* A short exchange retains carrier while LAPM holds information.
+		 * Both facts must survive the next mutation of a callback buffer. */
+		snprintf(report_progress, sizeof(report_progress), "rate-change/Rd-wait-S-Sbar");
+		struct modem_progress progress, repeated;
+		modem_get_progress(modem, &progress);
+		modem_get_progress(modem, &repeated);
+		EXPECT(memcmp(&progress, &repeated, sizeof(progress)) == 0);
+		EXPECT(progress.link_waiting && strcmp(progress.phase,
+			i == 0 ? "online" : "online-command") == 0);
+		EXPECT(strcmp(progress.step,
+			"LAPM/link-verification physical=rate-change/Rd-wait-S-Sbar") == 0);
+		snprintf(report_progress, sizeof(report_progress), "rate-change/CP-MP-E-B1");
+		EXPECT(strstr(progress.step, "physical=rate-change/Rd-wait-S-Sbar") != NULL);
+		EXPECT(datapump.status == DPSTAT_CONNECT && modem->state == states[i] &&
+		       modem->ec.lapm.rtx_count == 1 && modem->ec.lapm.retrain_poll == 1);
 		modem->ec.lapm.peer_busy = 1;
 		EXPECT(strcmp(modem_protocol_step(modem), "LAPM/peer-busy") == 0);
 		/* A physical recovery must still expose its DSP progress, even
@@ -507,6 +522,15 @@ static bool online_lapm_progress(void)
 		modem->ec.lapm.peer_busy = modem->ec.lapm.rtx_count = modem->ec.lapm.retrain_poll = 0;
 		EXPECT(strcmp(modem_protocol_step(modem), report_progress) == 0);
 	}
+	struct modem_progress progress;
+	memset(report_progress, 'R', sizeof(report_progress) - 1);
+	report_progress[sizeof(report_progress) - 1] = '\0';
+	modem_get_progress(modem, &progress);
+	EXPECT(!progress.link_waiting && strlen(progress.step) == sizeof(progress.step) - 1 &&
+	       strcmp(progress.step + sizeof(progress.step) - 4, "...") == 0);
+	modem_get_progress(NULL, &progress);
+	EXPECT(!progress.link_waiting && strcmp(progress.phase, "unknown") == 0 &&
+	       strcmp(progress.step, "unknown") == 0);
 	modem->dp = NULL;
 	modem_delete(modem);
 	return true;

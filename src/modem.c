@@ -287,17 +287,20 @@ const char *modem_call_phase(const struct modem *m)
 }
 
 
-const char *modem_protocol_step(const struct modem *m)
+static const char *link_step(const struct modem *m)
 {
 	/* A ready carrier can still have a blocked data link. Physical recovery
 	 * keeps its DSP step instead of reporting the retained LAPM state. */
 	if (m != NULL && m->dp != NULL && m->dp->status == DPSTAT_CONNECT &&
 	    (m->state == STATE_EC_ESTAB || m->state == STATE_EC_DISC ||
 	     IS_STATE_ONLINE(m->state))) {
-		const char *step = modem_ec_protocol_step(m);
-		if (step != NULL)
-			return step;
+		return modem_ec_protocol_step(m);
 	}
+	return NULL;
+}
+
+static const char *physical_step(const struct modem *m)
+{
 	if (m != NULL && m->dp != NULL && m->dp->op != NULL &&
 	    m->dp->op->progress != NULL) {
 		const char *step = m->dp->op->progress(m->dp);
@@ -305,6 +308,29 @@ const char *modem_protocol_step(const struct modem *m)
 			return step;
 	}
 	return modem_call_phase(m);
+}
+
+const char *modem_protocol_step(const struct modem *m)
+{
+	const char *step = link_step(m);
+	return step != NULL ? step : physical_step(m);
+}
+
+void modem_get_progress(const struct modem *m, struct modem_progress *progress)
+{
+	if (progress == NULL)
+		return;
+	const char *physical = physical_step(m);
+	const char *link = link_step(m);
+	bool hidden = link != NULL && strcmp(link, physical) != 0;
+
+	memset(progress, 0, sizeof(*progress));
+	progress->link_waiting = link != NULL;
+	snprintf(progress->phase, sizeof(progress->phase), "%s", modem_call_phase(m));
+	int length = snprintf(progress->step, sizeof(progress->step), "%s%s%s",
+		link != NULL ? link : physical, hidden ? " physical=" : "", hidden ? physical : "");
+	if (length >= (int)sizeof(progress->step))
+		memcpy(progress->step + sizeof(progress->step) - 4, "...", 4);
 }
 
 void modem_note_disconnect(struct modem *m, bool local, const char *reason)
