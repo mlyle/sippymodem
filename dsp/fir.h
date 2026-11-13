@@ -83,10 +83,16 @@ static inline uint32_t fir_read_ring_s16(
 {
 	uint32_t sum = 0;
 
-	for (size_t tap = 0; tap < count; ++tap) {
-		sum += (uint32_t)((int32_t)history[index] * coefficients[tap * stride]);
-		index = index == 0 ? count - 1 : index - 1;
-	}
+	/* At most two contiguous spans, preserving the newest-first tap order.
+	 * Empty histories do not inspect index or either input pointer. */
+	size_t first = count != 0 ? index + 1u : 0;
+
+	for (size_t tap = 0; tap < first; ++tap)
+		sum += (uint32_t)((int32_t)history[index - tap] *
+				  coefficients[tap * stride]);
+	for (size_t tap = first; tap < count; ++tap)
+		sum += (uint32_t)((int32_t)history[count - 1u - (tap - first)] *
+				  coefficients[tap * stride]);
 	return sum;
 }
 

@@ -196,6 +196,8 @@ static bool test_read_ring(void)
 
 	CHECK(fir_read_ring_s16(NULL, NULL, 0, 0, 1) == 0,
 	      "empty ring FIR accessed storage");
+	CHECK(fir_read_ring_s16(NULL, NULL, 0, SIZE_MAX, SIZE_MAX) == 0,
+	      "empty ring FIR inspected an unused cursor or stride");
 	for (size_t count = 1; count <= ARRAY_LENGTH(history); ++count) {
 		for (size_t stride = 1; stride <= 10; ++stride) {
 			for (size_t trial = 0; trial < 3; ++trial) {
