@@ -934,6 +934,70 @@ static bool test_output_ownership(void)
 	return true;
 }
 
+static bool test_normalization_history_ownership(void)
+{
+	const struct qam_point unity = { 1.0, 0.0 }, target = { 2.0, -1.0 };
+	struct qam_equalizer fixture, equalizer, saved;
+	struct qam_equalizer_observation observation = { 0 }, retained;
+	struct qam_point output;
+	bool ready;
+
+	CHECK(qam_equalizer_init(&fixture, &unity, &unity, 1, 0) == QAM_EQUALIZER_OK &&
+	      qam_equalizer_push(&fixture, &unity, &output, &ready) ==
+		      QAM_EQUALIZER_OK && ready, "normalization fixture failed");
+	/* Finite coordinates are valid even when their squared power overflows.
+	 * An unavailable observation consumes its clock without a gradient. */
+	for (unsigned mode = 0; mode < 3; ++mode) {
+		equalizer = fixture;
+		equalizer.history[0].in_phase = DBL_MAX;
+		if (mode == 1) equalizer.unavailable_history = 1;
+		if (mode == 2) equalizer.can_adapt = false;
+		saved = equalizer;
+		CHECK(qam_equalizer_is_valid(&equalizer),
+		      "finite history acquired an unintended power bound");
+		enum qam_equalizer_result expected = mode == 0 ? QAM_EQUALIZER_INVALID_ARGUMENT :
+			mode == 1 ? QAM_EQUALIZER_OK : QAM_EQUALIZER_INVALID_STATE;
+		CHECK(qam_equalizer_adapt(&equalizer, &target, 0.1) == expected,
+		      "normalization moved ahead of pending/erasure checks (mode %u)", mode);
+		if (mode == 1) saved.can_adapt = false;
+		CHECK(memcmp(&equalizer, &saved, sizeof(saved)) == 0,
+		      "overflowing history changed a skipped/rejected gradient");
+	}
+
+	CHECK(qam_equalizer_observe(&fixture, &unity, &observation, &ready) ==
+		      QAM_EQUALIZER_OK && ready, "retained normalization fixture failed");
+	equalizer = fixture;
+	equalizer.history[0].in_phase = DBL_MAX;
+	saved = fixture;
+	retained = observation;
+	CHECK(qam_equalizer_adapt_observation(&equalizer, &observation, &target, 0.1) ==
+		      QAM_EQUALIZER_OK &&
+	      qam_equalizer_adapt_observation(&saved, &retained, &target, 0.1) ==
+		      QAM_EQUALIZER_OK &&
+	      memcmp(equalizer.coefficients, saved.coefficients,
+		      sizeof(equalizer.coefficients)) == 0 &&
+	      equalizer.history[0].in_phase == DBL_MAX && !observation.pending,
+	      "retained adaptation normalized against the newer live history");
+	for (unsigned erased = 0; erased < 2; ++erased) {
+		equalizer = fixture;
+		observation = retained;
+		observation.pending = true;
+		observation.unavailable = erased;
+		observation.history[0].in_phase = DBL_MAX;
+		saved = equalizer;
+		retained = observation;
+		CHECK(qam_equalizer_observation_is_pending(&observation) &&
+		      qam_equalizer_adapt_observation(&equalizer, &observation, &target, 0.1) ==
+			      (erased ? QAM_EQUALIZER_OK : QAM_EQUALIZER_INVALID_ARGUMENT),
+		      "retained history lost its own overflow/erasure boundary");
+		if (erased) retained.pending = false;
+		CHECK(memcmp(&equalizer, &saved, sizeof(saved)) == 0 &&
+		      memcmp(&observation, &retained, sizeof(retained)) == 0,
+		      "retained overflow changed an owner or rejected observation");
+	}
+	return true;
+}
+
 static bool test_adaptation_power_boundaries(void)
 {
 	const struct qam_point reference = { 1.0, 0.0 };
@@ -1488,6 +1552,7 @@ int main(void)
 		{ "span extension", test_span_extension },
 		{ "product boundaries", test_product_boundaries },
 		{ "output ownership", test_output_ownership },
+		{ "normalization history ownership", test_normalization_history_ownership },
 		{ "adaptation power boundaries", test_adaptation_power_boundaries },
 		{ "reference division boundaries", test_reference_division_boundaries },
 		{ "validation spans", test_validation_span },

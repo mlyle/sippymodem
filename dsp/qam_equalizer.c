@@ -58,9 +58,11 @@ static bool geometry_is_valid(
 	       tap_count <= QAM_EQUALIZER_MAX_TAP_COUNT;
 }
 
-bool qam_equalizer_observation_is_pending(
-	const struct qam_equalizer_observation *observation)
+static bool observation_is_pending(
+	const struct qam_equalizer_observation *observation, double *history_power)
 {
+	double power = QAM_EQUALIZER_MINIMUM_POWER;
+
 	if (observation == NULL || !observation->pending ||
 	    !geometry_is_valid(
 		    observation->tap_count, observation->decision_delay) ||
@@ -72,13 +74,28 @@ bool qam_equalizer_observation_is_pending(
 	    (!observation->carrier_tracking &&
 	     observation->carrier_phase != 0.0))
 		return false;
-	return qam_points_are_finite(observation->history, observation->tap_count);
+	for (size_t index = 0; index < observation->tap_count; ++index) {
+		if (!point_is_finite(&observation->history[index]))
+			return false;
+		if (history_power != NULL)
+			power += qam_point_power(&observation->history[index]);
+	}
+	if (history_power != NULL)
+		*history_power = power;
+	return true;
 }
 
-bool qam_equalizer_is_valid(
-	const struct qam_equalizer *equalizer)
+bool qam_equalizer_observation_is_pending(
+	const struct qam_equalizer_observation *observation)
+{
+	return observation_is_pending(observation, NULL);
+}
+
+static bool state_is_valid(
+	const struct qam_equalizer *equalizer, double *history_power)
 {
 	double coefficient_power = 0.0;
+	double power = QAM_EQUALIZER_MINIMUM_POWER;
 
 	if (equalizer == NULL ||
 	    !geometry_is_valid(
@@ -98,9 +115,19 @@ bool qam_equalizer_is_valid(
 			return false;
 		coefficient_power +=
 			qam_point_power(&equalizer->coefficients[index]);
+		if (history_power != NULL)
+			power += qam_point_power(&equalizer->history[index]);
 	}
+	if (history_power != NULL)
+		*history_power = power;
 	return isfinite(coefficient_power) &&
 	       coefficient_power > QAM_EQUALIZER_MINIMUM_POWER;
+}
+
+bool qam_equalizer_is_valid(
+	const struct qam_equalizer *equalizer)
+{
+	return state_is_valid(equalizer, NULL);
 }
 
 bool qam_equalizer_is_handoff_ready(
@@ -294,7 +321,13 @@ static enum qam_equalizer_result adapt_decision(
 	double coefficient_power = 0.0;
 	double next_bias = 0.0, bias_error = 0.0;
 
-	if (!qam_equalizer_is_valid(equalizer) ||
+	/* Direct adaptation uses this history for normalization too. Keep its
+	 * ordered sum in the validation pass; retained observations own a
+	 * different history and still measure that snapshot below. Overflow of
+	 * finite history is checked at the original normalization boundary. */
+	bool valid = observation != NULL ? qam_equalizer_is_valid(equalizer) :
+		state_is_valid(equalizer, &power);
+	if (!valid ||
 	    !point_is_finite(target) ||
 	    !qam_adaptation_is_valid(adaptation) ||
 	    (observation != NULL && memory_regions_overlap(equalizer,
@@ -313,7 +346,7 @@ static enum qam_equalizer_result adapt_decision(
 		target = &adjusted_target;
 	}
 	if (observation != NULL) {
-		if (!qam_equalizer_observation_is_pending(observation) ||
+		if (!observation_is_pending(observation, &power) ||
 		    observation->tap_count != equalizer->tap_count ||
 		    observation->decision_delay != equalizer->decision_delay ||
 		    observation->carrier_tracking != equalizer->carrier_tracking)
@@ -367,8 +400,6 @@ static enum qam_equalizer_result adapt_decision(
 		.in_phase = unrotated_target.in_phase - unrotated_output->in_phase,
 		.quadrature = unrotated_target.quadrature - unrotated_output->quadrature,
 	};
-	for (size_t index = 0; index < equalizer->tap_count; ++index)
-		power += qam_point_power(&history[index]);
 	if (!isfinite(power))
 		return QAM_EQUALIZER_INVALID_ARGUMENT;
 	if (bias != NULL) {
