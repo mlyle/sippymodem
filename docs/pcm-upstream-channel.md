@@ -7,6 +7,54 @@ matching local receive plan. This is separate from the generated
 [downstream constellations](pcm-constellations.md) and
 [digital-to-digital channel learning](digital-channel-learning.md).
 
+## Keep source and receive coordinates distinct
+
+The analogue transmitter scales its TRN2u levels from its own LU. The digital
+receiver reconstructs known targets using a measured receive level. Their
+symbol classes agree, but their numerical amplitudes need not. A gain fitted
+between those targets and raw codec cells therefore includes the coordinate
+conversion; it is not automatically the physical gain for arbitrary CPd data
+levels. Data uses the accepted CPd filters and 4G together with the analogue
+transmitter's retained LU, including signed integer rounding.
+
+There is also physical transmit memory after the training or data coder.
+The analogue owner retains Su's fractional-delay filter and sample history
+through TRN2u, control records, B1u and payload. At zero fractional phase it
+is an exact fifteen-sample delay. At nonzero phase, neighboring symbols can
+move one nominal symbol across codec-cell boundaries. A small timing shift
+is not permission to treat that path as memoryless. Resetting this filter
+at a protocol handoff would change the trained channel.
+
+For the quantized transmit filter, before saturation,
+
+```
+y[n] = round(sum(c[k] * u[n - k], k = 0..30) / 32768)
+```
+
+Here `u` is the actual scaled coder output and `c` contains Q15 coefficients.
+If every input in that history satisfies `abs(u) <= A`, an interval around
+`c[15] * u[n - 15] / 32768` has radius
+
+```
+A * sum(abs(c[k]), k != 15) / 32768 + 0.5
+```
+
+The 0.5 bounds final rounding in amplitude units. Apply saturation to both
+interval endpoints when clipping is possible. The amplitude bound must cover
+all legal payload histories, including CPd prefilter activity; a training
+peak alone does not establish it. This box bound is conservative and can be
+much wider than the residual on a fixed training sequence.
+
+A raw codec-cell model must account for this memory and the training-to-data
+coordinate conversion before certifying CPd candidates. Distinct abstract
+levels are insufficient. A memoryless symbol certificate needs disjoint
+observed codec sets under every retained channel explanation and allowed
+history. A sequence decoder may distinguish overlapping symbol sets, but
+that needs a joint coding/channel argument rather than this scalar certificate.
+Robbed-bit phase belongs to the original physical sample clock, including
+missing samples. Re-encoding equalized samples or compressing that clock
+changes the evidence rather than resolving impairment uncertainty.
+
 ## Fit the channel inverse
 
 Let `t[n]` be the known training target and `r[n]` the measured receive
