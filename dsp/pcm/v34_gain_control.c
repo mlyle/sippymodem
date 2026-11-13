@@ -103,20 +103,27 @@ enum v34_gain_control_result v34_gain_control_refresh_level(
 	return V34_GAIN_CONTROL_OK;
 }
 
-static enum v34_gain_control_result process(
-	struct v34_gain_control *control,
-	struct v34_analytic_sample input,
+static enum v34_gain_control_result check_output(
+	const struct v34_gain_control *control, const void *output, size_t size)
+{
+	if (!v34_gain_control_is_valid(control))
+		return V34_GAIN_CONTROL_INVALID_STATE;
+	if (output == NULL || memory_regions_overlap(
+			control, sizeof(*control), output, size))
+		return V34_GAIN_CONTROL_INVALID_ARGUMENT;
+	return V34_GAIN_CONTROL_OK;
+}
+
+/* Both public sample forms validate their actual output before advancing the
+ * same history and correction clock. No fallible operation follows here. */
+static enum v34_gain_control_result process_sample(
+	struct v34_gain_control *control, struct v34_analytic_sample input,
 	struct v34_analytic_sample *output,
 	uint32_t rounding, int16_t correction_gain)
 {
 	struct v34_analytic_sample generated;
 	uint32_t next_energy;
 
-	if (!v34_gain_control_is_valid(control))
-		return V34_GAIN_CONTROL_INVALID_STATE;
-	if (output == NULL || memory_regions_overlap(
-			control, sizeof(*control), output, sizeof(*output)))
-		return V34_GAIN_CONTROL_INVALID_ARGUMENT;
 	control->history[control->history_index] = input.in_phase;
 	control->history_index = (uint16_t)(control->history_index + 1u);
 	if (control->history_index == V34_GAIN_HISTORY_SAMPLES)
@@ -158,7 +165,12 @@ enum v34_gain_control_result v34_gain_control_process(
 	struct v34_analytic_sample input,
 	struct v34_analytic_sample *output)
 {
-	return process(control, input, output, V34_GAIN_ROUNDING,
+	enum v34_gain_control_result result =
+		check_output(control, output, sizeof(*output));
+
+	if (result != V34_GAIN_CONTROL_OK)
+		return result;
+	return process_sample(control, input, output, V34_GAIN_ROUNDING,
 		V34_GAIN_CORRECTION_Q15);
 }
 
@@ -166,18 +178,14 @@ enum v34_gain_control_result v34_gain_control_process_info(
 	struct v34_gain_control *control, int16_t input, int16_t *output)
 {
 	struct v34_analytic_sample generated;
-	enum v34_gain_control_result result;
+	enum v34_gain_control_result result =
+		check_output(control, output, sizeof(*output));
 
-	if (!v34_gain_control_is_valid(control))
-		return V34_GAIN_CONTROL_INVALID_STATE;
-	if (output == NULL || memory_regions_overlap(
-			control, sizeof(*control), output, sizeof(*output)))
-		return V34_GAIN_CONTROL_INVALID_ARGUMENT;
-	result = process(control,
-		(struct v34_analytic_sample){ .in_phase = input }, &generated,
-		0, V34_GAIN_INFO_CORRECTION_Q15);
 	if (result != V34_GAIN_CONTROL_OK)
 		return result;
+	process_sample(control,
+		(struct v34_analytic_sample){ .in_phase = input }, &generated,
+		0, V34_GAIN_INFO_CORRECTION_Q15);
 	*output = generated.in_phase;
 	return V34_GAIN_CONTROL_OK;
 }
