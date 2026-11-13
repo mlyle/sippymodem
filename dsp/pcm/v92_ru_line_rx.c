@@ -60,7 +60,7 @@ enum v92_ru_rx_result v92_ru_line_rx_sample(struct v92_ru_line_rx *receiver,
 		return V92_RU_RX_INVALID_STATE;
 	next = *receiver;
 	input = (struct qam_point){ .in_phase = next.polarity * (double)sample };
-	if (qam_equalizer_push(&next.equalizer, &input, &output, &ready) !=
+	if (qam_equalizer_push_owned(&next.equalizer, &input, &output, &ready) !=
 	    QAM_EQUALIZER_OK || !ready)
 		return V92_RU_RX_INVALID_STATE;
 	/* Ru uses the retained FIR without adapting it. Discard this output's

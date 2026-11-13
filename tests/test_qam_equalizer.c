@@ -1500,6 +1500,50 @@ static bool test_retained_missing_history(void)
 	return true;
 }
 
+static bool test_owned_push_boundaries(void)
+{
+	const struct qam_point unity = { 1, 0 };
+	struct qam_point output = { 3, 4 }, saved;
+	struct qam_equalizer equalizer, before;
+	bool ready = false;
+
+	CHECK(qam_equalizer_init(&equalizer, &unity, &unity, 7, 0) == QAM_EQUALIZER_OK &&
+	      qam_equalizer_is_valid(&equalizer), "owned push fixture failed");
+	equalizer.unavailable_history = 3;
+	/* Input may share the output: snapshot it before committing history. */
+	CHECK(qam_equalizer_push_owned(&equalizer, &output, &output, &ready) ==
+		      QAM_EQUALIZER_OK && ready && output.in_phase == 3 && output.quadrature == 4 &&
+	      equalizer.history[0].in_phase == 3 && equalizer.history[0].quadrature == 4 &&
+	      equalizer.last_output.in_phase == 3 && equalizer.last_output.quadrature == 4 &&
+	      equalizer.can_adapt && equalizer.unavailable_history == 2 &&
+	      qam_equalizer_is_valid(&equalizer), "owned push lost output or history ownership");
+	before = equalizer;
+	saved = output;
+	CHECK(qam_equalizer_push_owned(&equalizer, &(struct qam_point){ NAN, 0 },
+		      &output, &ready) == QAM_EQUALIZER_INVALID_ARGUMENT &&
+	      qam_equalizer_push_owned(&equalizer, &unity, &equalizer.history[0], &ready) ==
+		      QAM_EQUALIZER_INVALID_ARGUMENT &&
+	      qam_equalizer_push_owned(&equalizer, &unity, &output, &equalizer.can_adapt) ==
+		      QAM_EQUALIZER_INVALID_ARGUMENT &&
+	      qam_equalizer_push_owned(NULL, &unity, &output, &ready) ==
+		      QAM_EQUALIZER_INVALID_ARGUMENT && ready &&
+	      memcmp(&equalizer, &before, sizeof(before)) == 0 &&
+	      memcmp(&output, &saved, sizeof(saved)) == 0,
+	      "owned push bypassed finite-input or output-overlap checks");
+	/* A valid state can still overflow its next convolution. Keep this
+	 * arithmetic check even though the owner supplied validation. */
+	equalizer.coefficients[1].in_phase = 1e150;
+	equalizer.history[0].in_phase = 1e200;
+	before = equalizer;
+	CHECK(qam_equalizer_is_valid(&equalizer) &&
+	      qam_equalizer_push_owned(&equalizer, &unity, &output, &ready) ==
+		      QAM_EQUALIZER_INVALID_ARGUMENT && ready &&
+	      memcmp(&equalizer, &before, sizeof(before)) == 0 &&
+	      memcmp(&output, &saved, sizeof(saved)) == 0,
+	      "owned push committed a nonfinite FIR result");
+	return true;
+}
+
 static bool test_missing_input_boundaries(void)
 {
 	const struct qam_point unity = { 1, 0 };
@@ -1561,6 +1605,7 @@ int main(void)
 		{ "joint bias rejection", test_bias_rejection },
 		{ "missing FIR history", test_missing_history },
 		{ "retained missing FIR history", test_retained_missing_history },
+		{ "owned push boundaries", test_owned_push_boundaries },
 		{ "missing input boundaries", test_missing_input_boundaries },
 	};
 	unsigned int failures = 0;

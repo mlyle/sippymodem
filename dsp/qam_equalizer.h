@@ -101,6 +101,14 @@ enum qam_equalizer_result qam_equalizer_push(
 	const struct qam_point *received,
 	struct qam_point *output, bool *ready);
 
+/* Same push under exclusive ownership of an already validated equalizer.
+ * The caller preserves that valid state until this call; input/output bounds
+ * and arithmetic are still checked, with no mutation on failure. */
+enum qam_equalizer_result qam_equalizer_push_owned(
+	struct qam_equalizer *equalizer,
+	const struct qam_point *received,
+	struct qam_point *output, bool *ready);
+
 /* As push, explicitly marking this physical input as missing media.
  * Unavailable input still advances history, delay and the held carrier clock.
  * Direct or retained adaptation consumes an affected observation successfully

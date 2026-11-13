@@ -198,7 +198,7 @@ enum qam_equalizer_result qam_equalizer_enable_carrier_tracking(
 	return QAM_EQUALIZER_OK;
 }
 
-enum qam_equalizer_result qam_equalizer_push(
+enum qam_equalizer_result qam_equalizer_push_owned(
 	struct qam_equalizer *equalizer,
 	const struct qam_point *received,
 	struct qam_point *output, bool *ready)
@@ -214,7 +214,7 @@ enum qam_equalizer_result qam_equalizer_push(
 	double correction_phase;
 	bool next_ready;
 
-	if (!qam_equalizer_is_valid(equalizer) ||
+	if (equalizer == NULL ||
 	    !point_is_finite(received) || output == NULL || ready == NULL ||
 	    memory_region_set_overlaps(outputs, 3))
 		return QAM_EQUALIZER_INVALID_ARGUMENT;
@@ -249,6 +249,16 @@ enum qam_equalizer_result qam_equalizer_push(
 	if (next_ready)
 		*output = corrected;
 	return QAM_EQUALIZER_OK;
+}
+
+enum qam_equalizer_result qam_equalizer_push(
+	struct qam_equalizer *equalizer,
+	const struct qam_point *received,
+	struct qam_point *output, bool *ready)
+{
+	if (!qam_equalizer_is_valid(equalizer))
+		return QAM_EQUALIZER_INVALID_ARGUMENT;
+	return qam_equalizer_push_owned(equalizer, received, output, ready);
 }
 
 enum qam_equalizer_result qam_equalizer_push_erasure(
