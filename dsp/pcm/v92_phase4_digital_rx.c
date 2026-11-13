@@ -224,6 +224,26 @@ static enum v92_phase4_digital_rx_result receive_training(
 	return fail(receiver);
 }
 
+static enum v92_phase4_digital_rx_result control_result(
+	struct v92_phase4_digital_rx *receiver,
+	enum v92_upstream_control_line_rx_result result)
+{
+	switch (result) {
+	case V92_UPSTREAM_CONTROL_LINE_RX_OK:
+		return V92_PHASE4_DIGITAL_RX_OK;
+	case V92_UPSTREAM_CONTROL_LINE_RX_EVENT:
+		return V92_PHASE4_DIGITAL_RX_EVENT;
+	case V92_UPSTREAM_CONTROL_LINE_RX_FAILED:
+		return V92_PHASE4_DIGITAL_RX_FAILED;
+	case V92_UPSTREAM_CONTROL_LINE_RX_INVALID_STATE:
+		return V92_PHASE4_DIGITAL_RX_INVALID_STATE;
+	case V92_UPSTREAM_CONTROL_LINE_RX_INVALID_ARGUMENT:
+	case V92_UPSTREAM_CONTROL_LINE_RX_INTERNAL_ERROR:
+		break;
+	}
+	return fail(receiver);
+}
+
 static enum v92_phase4_digital_rx_result receive_control(
 	struct v92_phase4_digital_rx *receiver,
 	struct v92_phase4_digital_rx *next, int16_t sample,
@@ -242,20 +262,26 @@ static enum v92_phase4_digital_rx_result receive_control(
 	    !observe_channel(next, expected, &signal->line.equalizer,
 		    signal->line.law))
 		return fail(receiver);
-	switch (result) {
-	case V92_UPSTREAM_CONTROL_LINE_RX_OK:
-		return V92_PHASE4_DIGITAL_RX_OK;
-	case V92_UPSTREAM_CONTROL_LINE_RX_EVENT:
-		return V92_PHASE4_DIGITAL_RX_EVENT;
-	case V92_UPSTREAM_CONTROL_LINE_RX_FAILED:
-		return V92_PHASE4_DIGITAL_RX_FAILED;
-	case V92_UPSTREAM_CONTROL_LINE_RX_INVALID_STATE:
-		return V92_PHASE4_DIGITAL_RX_INVALID_STATE;
-	case V92_UPSTREAM_CONTROL_LINE_RX_INVALID_ARGUMENT:
-	case V92_UPSTREAM_CONTROL_LINE_RX_INTERNAL_ERROR:
-		break;
-	}
-	return fail(receiver);
+	return control_result(receiver, result);
+}
+
+static enum v92_phase4_digital_rx_result receive_frozen_control(
+	struct v92_phase4_digital_rx *receiver, int16_t sample,
+	struct v92_control_event *event)
+{
+	struct v92_upstream_control_line_rx next = receiver->signal.control;
+	struct v92_control_event emitted = { 0 };
+	enum v92_phase4_digital_rx_result result = control_result(receiver,
+		v92_upstream_control_line_rx_sample(&next, sample, &emitted));
+
+	if (result != V92_PHASE4_DIGITAL_RX_OK && result != V92_PHASE4_DIGITAL_RX_EVENT)
+		return result;
+	/* The checked child preserves its training extent and empty tail. The
+	 * channel, stage and measurement boundary are frozen, so updating this
+	 * line preserves the enclosing invariants without copying its channel. */
+	receiver->signal.control = next;
+	*event = emitted;
+	return result;
 }
 
 enum v92_phase4_digital_rx_result v92_phase4_digital_rx_sample(
@@ -274,6 +300,9 @@ enum v92_phase4_digital_rx_result v92_phase4_digital_rx_sample(
 		return V92_PHASE4_DIGITAL_RX_INVALID_STATE;
 	if (state_has_failed(receiver))
 		return V92_PHASE4_DIGITAL_RX_FAILED;
+	if (receiver->stage != V92_PHASE4_DIGITAL_RX_TRN2U &&
+	    receiver->signal.control.signal.training_tail_remaining == 0u)
+		return receive_frozen_control(receiver, sample, event);
 	next = *receiver;
 	result = next.stage == V92_PHASE4_DIGITAL_RX_TRN2U ?
 			 receive_training(receiver, &next, sample) :
