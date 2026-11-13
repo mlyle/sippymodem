@@ -173,6 +173,14 @@ static bool fit_raw(struct v92_b1_echo *recovery)
 	return isfinite(cost[chosen]);
 }
 
+/* Keep the constant term first, followed by current and previous input.
+ * Scoring and the retained winner must use the same projection order. */
+static double linear_target(const double beta[3], const int16_t *x, unsigned i)
+{
+	unsigned previous = i ? i - 1 : B1_SAMPLES - 1;
+	return beta[0] + beta[1] * x[i] + beta[2] * x[previous];
+}
+
 static bool fit_delay(struct v92_b1_echo_fit *fit, const int16_t *ideal, const int16_t *host,
 	const double *prediction, enum g711_law law)
 {
@@ -187,43 +195,43 @@ static bool fit_delay(struct v92_b1_echo_fit *fit, const int16_t *ideal, const i
 	if (!linear_fit(ideal, y, beta) || !tandem(ideal, y, 0., law, codec) ||
 		!tandem(ideal, y, beta[2], law, post_codec) || !linear_fit(post_codec, y, quant_beta))
 		return false;
-	double targets[3][B1_SAMPLES];
-	double costs[3][BINS] = {{0}};
-	for (unsigned i = 0; i < B1_SAMPLES; ++i) {
-		unsigned previous = i ? i - 1 : B1_SAMPLES - 1;
-		targets[0][i] = codec[i];
-		targets[1][i] = quant_beta[0] + quant_beta[1]*post_codec[i] + quant_beta[2]*post_codec[previous];
-		targets[2][i] = beta[0] + beta[1]*ideal[i] + beta[2]*ideal[previous];
-	}
-	for (unsigned i = FIT_FIRST; i < FIT_END; ++i) {
-		const double *p = prediction_row(fit, prediction, i);
-		for (unsigned m = 0; m < 3; ++m) {
-			double residual = y[i] - targets[m][i];
-			for (unsigned j = 0; j < BINS; ++j) {
-				double e = residual - p[2 * RADIUS - j];
-				costs[m][j] += e * e;
-			}
-		}
-	}
+	/* Each model owns one score pass. Preserve sample order within every
+	 * delay bin and model/bin order when resolving equal costs. */
 	double best = DBL_MAX;
 	for (unsigned m = 0; m < 3; ++m) {
+		double costs[BINS] = { 0 };
+		const double *coefficient = m == 1 ? quant_beta : beta;
+		const int16_t *x = m == 1 ? post_codec : ideal;
+		for (unsigned i = FIT_FIRST; i < FIT_END; ++i) {
+			const double *p = prediction_row(fit, prediction, i);
+			double target = m ? linear_target(coefficient, x, i) : codec[i];
+			double residual = y[i] - target;
+			for (unsigned j = 0; j < BINS; ++j) {
+				double e = residual - p[2 * RADIUS - j];
+				costs[j] += e * e;
+			}
+		}
 		for (unsigned j = 0; j < BINS; ++j) {
-			double cost = costs[m][j] * (m ? 1.03 : 1.);
+			double cost = costs[j] * (m ? 1.03 : 1.);
 			if (cost < best) {
 				best = cost;
 				fit->model = m;
 				fit->shift = (int)j - RADIUS;
 			}
 		}
+		if (fit->model == m) {
+			unsigned chosen = fit->shift + RADIUS;
+			unsigned runner = chosen ? 0 : 1;
+			for (unsigned j = 0; j < BINS; ++j)
+				if (j != chosen && costs[j] < costs[runner])
+					runner = j;
+			fit->runner = (int)runner - RADIUS;
+		}
 	}
-	unsigned chosen = fit->shift + RADIUS;
-	unsigned runner = chosen ? 0 : 1;
-	for (unsigned j = 0; j < BINS; ++j)
-		if (j != chosen && costs[fit->model][j] < costs[fit->model][runner])
-			runner = j;
-	fit->runner = (int)runner - RADIUS;
 	for (unsigned i = 0; i < B1_SAMPLES; ++i)
-		fit->target[i] = targets[fit->model][i];
+		fit->target[i] = fit->model ? linear_target(
+			fit->model == 1 ? quant_beta : beta,
+			fit->model == 1 ? post_codec : ideal, i) : codec[i];
 	return isfinite(best);
 }
 
