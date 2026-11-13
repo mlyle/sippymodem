@@ -203,7 +203,7 @@ static inline void adapt_tap(
 	}
 }
 
-static inline void adapt_history(
+void v34_equalizer_adapt_owned(
 	struct v34_equalizer *equalizer,
 	const int16_t *restrict in_phase_delay, const int16_t *restrict quadrature_delay,
 	uint32_t index, struct v34_analytic_sample error, bool center_only)
@@ -247,7 +247,7 @@ enum v34_equalizer_result v34_equalizer_adapt_history(
 	    memory_regions_overlap(equalizer, sizeof(*equalizer), in_phase_delay, bytes) ||
 	    memory_regions_overlap(equalizer, sizeof(*equalizer), quadrature_delay, bytes))
 		return V34_EQUALIZER_INVALID_ARGUMENT;
-	adapt_history(equalizer, in_phase_delay, quadrature_delay,
+	v34_equalizer_adapt_owned(equalizer, in_phase_delay, quadrature_delay,
 		index, error, center_only);
 	return V34_EQUALIZER_OK;
 }
@@ -258,7 +258,7 @@ enum v34_equalizer_result v34_equalizer_adapt(
 {
 	if (!v34_equalizer_is_valid(equalizer))
 		return V34_EQUALIZER_INVALID_STATE;
-	adapt_history(equalizer, equalizer->in_phase_delay, equalizer->quadrature_delay,
+	v34_equalizer_adapt_owned(equalizer, equalizer->in_phase_delay, equalizer->quadrature_delay,
 		equalizer->index, error, false);
 	return V34_EQUALIZER_OK;
 }
@@ -269,7 +269,7 @@ enum v34_equalizer_result v34_equalizer_adapt_center(
 {
 	if (!v34_equalizer_is_valid(equalizer))
 		return V34_EQUALIZER_INVALID_STATE;
-	adapt_history(equalizer, equalizer->in_phase_delay, equalizer->quadrature_delay,
+	v34_equalizer_adapt_owned(equalizer, equalizer->in_phase_delay, equalizer->quadrature_delay,
 		equalizer->index, error, true);
 	return V34_EQUALIZER_OK;
 }

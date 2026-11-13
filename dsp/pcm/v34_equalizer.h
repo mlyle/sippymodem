@@ -107,4 +107,14 @@ enum v34_equalizer_result v34_equalizer_adapt_history(
 	const int16_t *in_phase_delay, const int16_t *quadrature_delay,
 	uint32_t index, struct v34_analytic_sample error, bool center_only);
 
+/* Owned decision path after validating the equalizer and its observation.
+ * Both histories cover tap_count samples and index is within that span.
+ * Histories may be this equalizer's own delays or separate retained inputs;
+ * they must not overlap coefficient/residue storage. This total fixed-point
+ * update changes only coefficients/residues and retains no pointers. */
+void v34_equalizer_adapt_owned(
+	struct v34_equalizer *equalizer,
+	const int16_t *in_phase_delay, const int16_t *quadrature_delay,
+	uint32_t index, struct v34_analytic_sample error, bool center_only);
+
 #endif /* V34_EQUALIZER_H */

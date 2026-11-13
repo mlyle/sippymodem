@@ -966,6 +966,83 @@ static bool test_control_lineage_zero(void)
 	return true;
 }
 
+static bool test_commit_lineage_zero(void)
+{
+	/* A full decision toward (2100,-1300), at power0x7000, maps the
+	 * first tag to zero. Two such decisions map the second tag to zero. */
+	const uint64_t lineage[] = {
+		UINT64_C(0x914bcfaafae3c2a9), UINT64_C(0x29f4e994bbd36e6c),
+	};
+
+	for (unsigned fixture = 0; fixture < 3; ++fixture) {
+		struct v34_adaptive_equalizer equalizer, saved;
+		struct v34_adaptive_equalizer_decision decisions[2];
+		unsigned count = fixture == 0 ? 1 : 2;
+
+		CHECK(v34_adaptive_equalizer_init(&equalizer) ==
+			      V34_ADAPTIVE_EQUALIZER_OK,
+		      "zero-lineage commit fixture failed");
+		for (unsigned i = 0; i < count; ++i) {
+			struct v34_adaptive_equalizer_observation observation;
+
+			CHECK(push_zero_symbol(&equalizer) &&
+			      v34_adaptive_equalizer_observe(&equalizer, &observation) ==
+				      V34_ADAPTIVE_EQUALIZER_OK,
+			      "zero-lineage commit observation failed");
+			decisions[i] = (struct v34_adaptive_equalizer_decision){
+				.observation = observation,
+				.target = { 2100, -1300 },
+				.decoder_power_q15 = 0x7000,
+				.adaptation = V34_ADAPTIVE_EQUALIZER_FULL,
+			};
+			if (i + 1 < count)
+				CHECK(v34_adaptive_equalizer_retain_observation(
+					      &equalizer, &observation) ==
+					      V34_ADAPTIVE_EQUALIZER_OK,
+				      "zero-lineage commit retention failed");
+		}
+		equalizer.lineage = lineage[fixture == 2];
+		equalizer.pending_observation.lineage = equalizer.lineage;
+		decisions[count - 1].observation.lineage = equalizer.lineage;
+		CHECK(v34_adaptive_equalizer_is_valid(&equalizer),
+		      "zero-lineage commit owner is invalid");
+		saved = equalizer;
+		enum v34_adaptive_equalizer_result result = count == 1 ?
+			v34_adaptive_equalizer_commit(&equalizer, decisions) :
+			v34_adaptive_equalizer_commit_pair(&equalizer, decisions);
+		CHECK(result == V34_ADAPTIVE_EQUALIZER_INVALID_STATE &&
+		      memcmp(&equalizer, &saved, sizeof(equalizer)) == 0,
+		      "zero-lineage commit %u partially changed its owner", fixture);
+	}
+	return true;
+}
+
+static bool test_commit_carrier_bounds(void)
+{
+	for (unsigned phase = 0; phase < 0x2000; ++phase) {
+		struct v34_adaptive_equalizer equalizer;
+		struct v34_adaptive_equalizer_observation observation;
+
+		CHECK(v34_adaptive_equalizer_init(&equalizer) ==
+			      V34_ADAPTIVE_EQUALIZER_OK &&
+		      push_zero_symbol(&equalizer) &&
+		      v34_adaptive_equalizer_observe(&equalizer, &observation) ==
+			      V34_ADAPTIVE_EQUALIZER_OK,
+		      "carrier-bound commit fixture failed");
+		equalizer.carrier_phase_fraction = (uint16_t)phase;
+		struct v34_adaptive_equalizer_decision decision = {
+			.observation = observation,
+			.decoder_power_q15 = 1,
+			.adaptation = V34_ADAPTIVE_EQUALIZER_FULL,
+		};
+		CHECK(v34_adaptive_equalizer_commit(&equalizer, &decision) ==
+			      V34_ADAPTIVE_EQUALIZER_OK &&
+		      v34_adaptive_equalizer_is_valid(&equalizer),
+		      "carrier position %u left valid commit bounds", phase);
+	}
+	return true;
+}
+
 static bool test_feedback_training_boundary(void)
 {
 	struct v34_adaptive_equalizer equalizer;
@@ -2007,6 +2084,7 @@ int main(void)
 	    !test_feedback_and_discard_lifecycle() ||
 	    !test_discard_lineage_zero() ||
 	    !test_control_lineage_zero() ||
+	    !test_commit_lineage_zero() || !test_commit_carrier_bounds() ||
 	    !test_feedback_training_boundary() ||
 	    !test_tracking_boundary() || !test_decision_quality_window() ||
 	    !test_transactionality() || !test_data_quality_policy() ||

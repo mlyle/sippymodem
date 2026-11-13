@@ -630,18 +630,23 @@ v34_adaptive_equalizer_retain_observation(
 	return V34_ADAPTIVE_EQUALIZER_OK;
 }
 
-static enum v34_adaptive_equalizer_result adapt_retained(
-	struct v34_equalizer *equalizer,
-	const struct v34_adaptive_equalizer_retained *retained,
-	struct v34_analytic_sample error, bool center_only)
+static uint64_t decision_lineage(uint64_t lineage,
+	const struct v34_adaptive_equalizer_decision *decision)
 {
-	return v34_equalizer_adapt_history(equalizer,
-		retained->in_phase_delay, retained->quadrature_delay,
-		retained->equalizer_index, error, center_only) == V34_EQUALIZER_OK ?
-		V34_ADAPTIVE_EQUALIZER_OK : V34_ADAPTIVE_EQUALIZER_INVALID_STATE;
+	return lineage_word(
+		lineage_word(lineage_word(
+			lineage_word(
+				lineage_tag(lineage, 3),
+				(uint16_t)decision->target.in_phase),
+			(uint16_t)decision->target.quadrature),
+		(uint16_t)decision->decoder_power_q15),
+		(uint16_t)decision->adaptation);
 }
 
-static enum v34_adaptive_equalizer_result apply_decision(
+/* Both commit paths preflight the complete transaction. Fixed-point updates
+ * preserve geometry, carrier and quality bounds; only the lineage can reject
+ * a valid decision, and that is checked before changing either symbol. */
+static void apply_decision(
 	struct v34_adaptive_equalizer *equalizer,
 	const struct v34_adaptive_equalizer_decision *decision,
 	const struct v34_adaptive_equalizer_observation *observation,
@@ -693,55 +698,30 @@ static enum v34_adaptive_equalizer_result apply_decision(
 				16),
 		};
 		update_quality(&equalizer->quality, demodulated, rotated_target);
-		if (decision->adaptation == V34_ADAPTIVE_EQUALIZER_FULL) {
-			if (retained != NULL) {
-				if (adapt_retained(
-					    &equalizer->equalizer, retained, error,
-					    false) != V34_ADAPTIVE_EQUALIZER_OK)
-					return V34_ADAPTIVE_EQUALIZER_INVALID_STATE;
-			} else if (v34_equalizer_adapt(
-					   &equalizer->equalizer, error) !=
-				   V34_EQUALIZER_OK) {
-				return V34_ADAPTIVE_EQUALIZER_INVALID_STATE;
+		if (decision->adaptation == V34_ADAPTIVE_EQUALIZER_FULL ||
+		    decision->adaptation == V34_ADAPTIVE_EQUALIZER_CENTER ||
+		    decision->adaptation == V34_ADAPTIVE_EQUALIZER_CENTER_TAPS) {
+			bool center = decision->adaptation != V34_ADAPTIVE_EQUALIZER_FULL;
+			const struct v34_equalizer *filter = &equalizer->equalizer;
+
+			if (center) {
+				error.in_phase = wrap_s16_from_s32((int32_t)error.in_phase * 2);
+				error.quadrature = wrap_s16_from_s32((int32_t)error.quadrature * 2);
 			}
-		} else if (decision->adaptation ==
-				   V34_ADAPTIVE_EQUALIZER_CENTER ||
-			   decision->adaptation ==
-				   V34_ADAPTIVE_EQUALIZER_CENTER_TAPS) {
-			error.in_phase = wrap_s16_from_s32(
-				(int32_t)error.in_phase * 2);
-			error.quadrature = wrap_s16_from_s32(
-				(int32_t)error.quadrature * 2);
-			if (retained != NULL) {
-				if (adapt_retained(
-					    &equalizer->equalizer, retained, error,
-					    true) != V34_ADAPTIVE_EQUALIZER_OK)
-					return V34_ADAPTIVE_EQUALIZER_INVALID_STATE;
-			} else if (v34_equalizer_adapt_center(
-					   &equalizer->equalizer, error) !=
-				   V34_EQUALIZER_OK) {
-				return V34_ADAPTIVE_EQUALIZER_INVALID_STATE;
-			}
+			v34_equalizer_adapt_owned(&equalizer->equalizer,
+				retained != NULL ? retained->in_phase_delay : filter->in_phase_delay,
+				retained != NULL ? retained->quadrature_delay : filter->quadrature_delay,
+				retained != NULL ? retained->equalizer_index : filter->index,
+				error, center);
 		}
 	}
-	equalizer->lineage = lineage_word(
-		lineage_word(lineage_word(
-			lineage_word(
-				lineage_tag(equalizer->lineage, 3),
-				(uint16_t)decision->target.in_phase),
-			(uint16_t)decision->target.quadrature),
-		(uint16_t)decision->decoder_power_q15),
-		(uint16_t)decision->adaptation);
-	return equalizer->lineage == 0u ?
-		       V34_ADAPTIVE_EQUALIZER_INVALID_STATE :
-		       V34_ADAPTIVE_EQUALIZER_OK;
 }
 
 enum v34_adaptive_equalizer_result v34_adaptive_equalizer_commit(
 	struct v34_adaptive_equalizer *equalizer,
 	const struct v34_adaptive_equalizer_decision *decision)
 {
-	struct v34_adaptive_equalizer next;
+	uint64_t lineage;
 
 	if (decision == NULL ||
 	    memory_regions_overlap(
@@ -756,17 +736,14 @@ enum v34_adaptive_equalizer_result v34_adaptive_equalizer_commit(
 		    &decision->observation,
 		    &equalizer->pending_observation))
 		return V34_ADAPTIVE_EQUALIZER_INVALID_ARGUMENT;
-	next = *equalizer;
-	if (apply_decision(
-		    &next, decision, &next.pending_observation,
-		    next.pending_demodulated, next.pending_rotate_in_phase,
-		    next.pending_rotate_quadrature, NULL) !=
-	    V34_ADAPTIVE_EQUALIZER_OK)
+	lineage = decision_lineage(equalizer->lineage, decision);
+	if (lineage == 0)
 		return V34_ADAPTIVE_EQUALIZER_INVALID_STATE;
-	clear_pending(&next);
-	if (!v34_adaptive_equalizer_is_valid(&next))
-		return V34_ADAPTIVE_EQUALIZER_INVALID_STATE;
-	*equalizer = next;
+	apply_decision(equalizer, decision, &equalizer->pending_observation,
+		equalizer->pending_demodulated, equalizer->pending_rotate_in_phase,
+		equalizer->pending_rotate_quadrature, NULL);
+	clear_pending(equalizer);
+	equalizer->lineage = lineage;
 	return V34_ADAPTIVE_EQUALIZER_OK;
 }
 
@@ -774,7 +751,7 @@ enum v34_adaptive_equalizer_result v34_adaptive_equalizer_commit_pair(
 	struct v34_adaptive_equalizer *equalizer,
 	const struct v34_adaptive_equalizer_decision decisions[2])
 {
-	struct v34_adaptive_equalizer next;
+	uint64_t first_lineage, lineage;
 
 	if (decisions == NULL ||
 	    memory_regions_overlap(
@@ -793,23 +770,19 @@ enum v34_adaptive_equalizer_result v34_adaptive_equalizer_commit_pair(
 		    &decisions[1].observation,
 		    &equalizer->pending_observation))
 		return V34_ADAPTIVE_EQUALIZER_INVALID_ARGUMENT;
-	next = *equalizer;
-	if (apply_decision(
-		    &next, &decisions[0], &next.retained.observation,
-		    next.retained.demodulated, next.retained.rotate_in_phase,
-		    next.retained.rotate_quadrature, &next.retained) !=
-		    V34_ADAPTIVE_EQUALIZER_OK ||
-	    apply_decision(
-		    &next, &decisions[1], &next.pending_observation,
-		    next.pending_demodulated, next.pending_rotate_in_phase,
-		    next.pending_rotate_quadrature, NULL) !=
-		    V34_ADAPTIVE_EQUALIZER_OK)
+	first_lineage = decision_lineage(equalizer->lineage, &decisions[0]);
+	lineage = decision_lineage(first_lineage, &decisions[1]);
+	if (first_lineage == 0 || lineage == 0)
 		return V34_ADAPTIVE_EQUALIZER_INVALID_STATE;
-	clear_retained(&next);
-	clear_pending(&next);
-	if (!v34_adaptive_equalizer_is_valid(&next))
-		return V34_ADAPTIVE_EQUALIZER_INVALID_STATE;
-	*equalizer = next;
+	apply_decision(equalizer, &decisions[0], &equalizer->retained.observation,
+		equalizer->retained.demodulated, equalizer->retained.rotate_in_phase,
+		equalizer->retained.rotate_quadrature, &equalizer->retained);
+	apply_decision(equalizer, &decisions[1], &equalizer->pending_observation,
+		equalizer->pending_demodulated, equalizer->pending_rotate_in_phase,
+		equalizer->pending_rotate_quadrature, NULL);
+	clear_retained(equalizer);
+	clear_pending(equalizer);
+	equalizer->lineage = lineage;
 	return V34_ADAPTIVE_EQUALIZER_OK;
 }
 
