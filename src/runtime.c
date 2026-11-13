@@ -17,6 +17,7 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -448,13 +449,15 @@ static void trace_call(struct modem_runtime *runtime, uint64_t now_ns)
 			runtime->trace_time_ns = now_ns;
 			levels = modem_host_take_audio_levels(runtime->host);
 			length = snprintf(text, sizeof(text),
-				"CALL sip=%s phase=%s datapump=%s step=%s TX=%s RX=%s TX-peak=%u/32768 RX-peak=%u/32768\n",
+				"CALL sip=%s phase=%s datapump=%s step=%s TX=%s RX=%s TX-peak=%u/32768 RX-peak=%u/32768 mono_ns=%" PRIu64 " dsp_samples=%lu\n",
 				sip_call_state_name(runtime->calls->state), phase,
 				dp != NULL && dp->op != NULL && dp->op->name != NULL ? dp->op->name : "none",
-				step, transmit, receive, levels.transmit_peak, levels.receive_peak);
+				step, transmit, receive, levels.transmit_peak, levels.receive_peak,
+				now_ns, runtime->modem->count);
 		} else {
 			length = snprintf(text, sizeof(text),
-				"TRAIN phase=%s step=%s\n", phase, step);
+				"TRAIN phase=%s step=%s mono_ns=%" PRIu64 " dsp_samples=%lu\n",
+				phase, step, now_ns, runtime->modem->count);
 		}
 		if (length > 0 && (size_t)length < sizeof(text)) {
 			record.size = (size_t)length;

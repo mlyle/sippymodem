@@ -125,6 +125,9 @@ account, or multiple accounts routed to line pools, embed
 `SIP_TRACE=1` reports `CALL` once per second, including SIP state, modem phase,
 datapump, current protocol step, directional bit/symbol rates, and audio peaks.
 `TRAIN` reports changing training steps at most twice per second.
+Both include `mono_ns`, the monotonic observation time in nanoseconds, and
+`dsp_samples`, the modem's processed-sample counter. The sample counter resets
+when modem processing starts or stops; it is not a clock shared across calls.
 `DISCONNECT` retains the first cause and says whether the local modem or peer
 ended the call. A rate marked `?` is still unknown. The reported line bitrate
 is before framing and compression.

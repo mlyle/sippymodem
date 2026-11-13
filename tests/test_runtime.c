@@ -1011,6 +1011,7 @@ static bool test_call_trace_is_rate_limited(void)
 	capture.call = (struct sip_call_event){ .state = SIP_CALL_CONNECTED };
 	capture.emit_call = true;
 	(void)modem_runtime_step(runtime, 999999999, NULL, NULL, NULL);
+	modem_runtime_modem(runtime)->count = 98765;
 	(void)modem_runtime_step(runtime, 1000000000, NULL, NULL, NULL);
 	(void)modem_runtime_step(runtime, 1000000000, NULL, NULL, NULL);
 	(void)modem_runtime_step(runtime, 0, NULL, NULL, NULL);
@@ -1026,7 +1027,8 @@ static bool test_call_trace_is_rate_limited(void)
 	CHECK(reads == 2, "call trace exceeded once per second or missed the boundary");
 	CHECK(output_size != 0, "call trace emitted no output");
 	CHECK(strstr(output, "CALL sip=idle phase=training datapump=none step=training TX=?bps/?baud RX=?bps/?baud TX-peak=32768/32768 RX-peak=1000/32768") &&
-	      strstr(output, "CALL sip=connected phase=training datapump=none step=training TX=?bps/?baud RX=?bps/?baud TX-peak=0/32768 RX-peak=0/32768"),
+	      strstr(output, "CALL sip=connected phase=training datapump=none step=training TX=?bps/?baud RX=?bps/?baud TX-peak=0/32768 RX-peak=0/32768 mono_ns=1000000000 dsp_samples=98765\n") &&
+	      strstr(output, "mono_ns=0 dsp_samples=0\n"),
 	      "call trace lost state or retained peaks when no frames arrived");
 	return true;
 }
@@ -1056,6 +1058,7 @@ static bool test_protocol_trace_bounds_and_retained_failure(void)
 	capture.protocol_step = progress;
 	(void)modem_runtime_step(runtime, 0, NULL, NULL, NULL);
 	struct modem *modem = modem_runtime_modem(runtime);
+	modem->count = 43210;
 	const struct dp_operations operations = { .name = "PCM V.90/V.92", .link_rates = trace_test_rates };
 	struct dp dp = { .modem = modem, .op = &operations };
 	modem->dp = &dp;
@@ -1101,7 +1104,7 @@ static bool test_protocol_trace_bounds_and_retained_failure(void)
 		++failures;
 	CHECK(updates == 1 && failures == 3 &&
 	      strstr(output, "step=LAPM/link-verification physical=rate-change/Rd-wait-S-Sbar") &&
-	      strstr(output, "TRAIN phase=training step=LAPM/link-verification physical=rate-change/CP-MP-E-B1") &&
+	      strstr(output, "TRAIN phase=training step=LAPM/link-verification physical=rate-change/CP-MP-E-B1 mono_ns=500000000 dsp_samples=43210\n") &&
 	      strstr(output, "TX=45333bps/8000baud RX=26400bps/3428.57baud") &&
 	      strstr(output, "DISCONNECT origin=local phase=training step=V.8/CM-wait-JM reason=menu exchange timeout; we ended the call") &&
 	      strstr(output, "DISCONNECT origin=remote phase=training step=V.8/CM-wait-JM reason=remote SIP call ended; the peer ended the call"),
