@@ -5,6 +5,7 @@
 #include "memory_region.h"
 
 #include <stdint.h>
+#include <string.h>
 
 enum agc_result agc_measure_level_s16(
 	const int16_t *samples, size_t count, int16_t *level)
@@ -127,15 +128,16 @@ enum agc_result agc_process(
 	if (!agc_is_valid(&next))
 		return AGC_INVALID_STATE;
 
-	for (size_t index = 0; index < count; ++index) {
-		if (!active) {
-			output[index] = 0;
-		} else {
+	if (!active) {
+		memset(output, 0, bytes);
+	} else {
+		uint16_t shift = (uint16_t)next.gain_shift & 0x1fu;
+
+		for (size_t index = 0; index < count; ++index) {
 			int32_t product =
 				(int32_t)input[index] * next.gain_mantissa_q15;
 			int32_t normalized = arithmetic_shift_right_u32(
 				(uint32_t)product, 15u);
-			uint16_t shift = (uint16_t)next.gain_shift & 0x1fu;
 
 			output[index] = clamp_s16(
 				(int64_t)normalized * (INT64_C(1) << shift));
