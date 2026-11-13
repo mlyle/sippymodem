@@ -1089,3 +1089,46 @@ study, including native geometry preparation. It needs bounded scheduling
 before live use. Production integration also needs qualified physical-phase
 ownership, coding-epoch invalidation and conservative ambiguous-model
 handling. The production selector, defaults and live rates remain unchanged.
+
+## Keep constellation candidates across phase hypotheses
+
+When the robbed position is uncertain, widen every source phase that any
+surviving physical-position hypothesis can affect. Keep the common-support
+construction as a fallback. Select against the complete union before payload;
+choosing a preferred phase and validating it afterward loses that protection.
+
+Do not require all clean positions to have the same alphabet size. Native B1
+occupation, twelve radices and one integer normalization gain interact. A
+smaller alphabet at an additional clean position can improve this joint
+trade-off. A layout discovered while considering a worse channel may therefore
+also improve a better channel. Keep it as a candidate and recheck its complete
+signed support there. Within a shared candidate set, adding uncertainty cannot
+increase the admitted maximum rate. An apparent increase from separate finite
+searches identifies a search restriction, not new channel capacity.
+
+A private study reuses the eight stationary training-fit boxes above and
+introduces hypothetical physical-position sets `{3}`, `{3,4}`, `{1,3,5}` and
+`{0,1,2,3,4,5}`. The added positions were not observed surviving those original
+training fits. Each set widens its affected source positions using the declared
+15-sample filter delay. Rechecking winners across these sets improves two
+single-position constructions by two bits per twelve-sample frame without
+changing their channel assumptions. All 32 final maps retain at least the
+previous common-support rate.
+
+In one A-law case, the constructed rates are 48 kbit/s for the known position,
+46.667 kbit/s for either tested two- or three-position set, and 38.667 kbit/s
+when any position is possible. These are conditional construction results,
+not physical-call rates or optima over arbitrary uncertainty sets. The finite
+32-case search takes about 29 seconds on the study host, before independent
+validation; it is not suitable for synchronous live training work.
+
+The frozen maps pass native CPd roundtrips at alignments 17 and 24, followed by
+actual TRN2 history, B1 and 4,096 payload frames at every declared position:
+96 runs verify 23,969,792 payload bits without errors. Independent native FIR
+extrema, gain/offset corners and literal codec intervals agree with every
+signed support. Removing true-channel fields, descriptive identifiers and
+catalog choices reproduces the selected maps. Separate structured payload
+streams range from 0.917 to 1.081 times B1 mean-square power without clipping;
+this does not establish arbitrary-payload power compliance. Production phase
+ownership, bounded acquisition and coding-epoch invalidation remain required.
+The production selector and live rates are unchanged.
