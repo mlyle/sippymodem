@@ -319,6 +319,47 @@ static bool test_wrapped_history_keeps_tap_order(void)
 	return true;
 }
 
+static bool test_owned_processing_boundary(void)
+{
+	struct fractional_delay delay, before;
+	int16_t output = 1234;
+
+	fractional_delay_init(&delay);
+	memcpy(&before, &delay, sizeof(before));
+	CHECK(fractional_delay_process_owned(NULL, 42, &output) ==
+		      FRACTIONAL_DELAY_INVALID_ARGUMENT && output == 1234 &&
+	      fractional_delay_process_owned(&delay, 42, NULL) ==
+		      FRACTIONAL_DELAY_INVALID_ARGUMENT &&
+	      memcmp(&before, &delay, sizeof(delay)) == 0,
+	      "owned delay changed state or output on invalid arguments");
+	for (unsigned position = FRACTIONAL_DELAY_TAPS; position <= UINT8_MAX; ++position) {
+		delay.history_position = (uint8_t)position;
+		memcpy(&before, &delay, sizeof(before));
+		CHECK(fractional_delay_process_owned(&delay, 42, &output) ==
+			      FRACTIONAL_DELAY_INVALID_STATE && output == 1234 &&
+		      memcmp(&before, &delay, sizeof(delay)) == 0,
+		      "owned delay consumed input at invalid ring position %u", position);
+	}
+	/* Preserve the streaming API's existing ability to write into its
+	 * history. An integer phase selects exactly the sample fifteen taps
+	 * behind the new input, even when the output replaces that input. */
+	for (unsigned position = 0; position < FRACTIONAL_DELAY_TAPS; ++position) {
+		fractional_delay_init(&delay);
+		for (unsigned tap = 0; tap < FRACTIONAL_DELAY_TAPS; ++tap)
+			delay.history[tap] = (int16_t)(tap * 17u);
+		delay.history_position = (uint8_t)position;
+		int16_t expected = delay.history[(position + FRACTIONAL_DELAY_TAPS -
+			FRACTIONAL_DELAY_CENTER) % FRACTIONAL_DELAY_TAPS];
+		CHECK(fractional_delay_process_owned(&delay, INT16_MIN,
+			      &delay.history[position]) == FRACTIONAL_DELAY_OK &&
+		      delay.history[position] == expected &&
+		      delay.history_position == (position + 1u) % FRACTIONAL_DELAY_TAPS &&
+		      fractional_delay_is_valid(&delay),
+		      "owned delay changed the integer/history-alias contract at %u", position);
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -326,6 +367,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "exact integer endpoints", test_integer_endpoints_are_exact },
+		{ "owned processing boundary", test_owned_processing_boundary },
 		{ "wrapped history tap order", test_wrapped_history_keeps_tap_order },
 		{ "fractional DC gain", test_fractional_phases_preserve_dc },
 		{ "all phases preserve a valid stream",

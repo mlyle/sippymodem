@@ -169,7 +169,7 @@ enum v92_su_result v92_su_next(
 	if (result == V92_SU_INVALID_STATE || !v92_su_is_valid(&next))
 		return V92_SU_INVALID_STATE;
 	filtered = *delay;
-	filter_result = fractional_delay_process(
+	filter_result = fractional_delay_process_owned(
 		&filtered, sample, &generated);
 	if (filter_result == FRACTIONAL_DELAY_OK &&
 	    filtered.phase_q16 != next.phase_q16)

@@ -472,7 +472,7 @@ enum v92_phase3_analog_station_result v92_phase3_analog_station_transmit(
 	 * TRN1u/CPt and TRN2u take over. Su already advances it internally. */
 	if (result == V92_PHASE3_ANALOG_STATION_OK &&
 	    station->transmit_stage != V92_PHASE3_ANALOG_TRANSMIT_SU &&
-	    fractional_delay_process(&next.transmit_delay, generated, &generated) !=
+	    fractional_delay_process_owned(&next.transmit_delay, generated, &generated) !=
 		    FRACTIONAL_DELAY_OK)
 		result = V92_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
 	if (result != V92_PHASE3_ANALOG_STATION_OK ||

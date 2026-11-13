@@ -46,6 +46,12 @@ enum fractional_delay_result fractional_delay_process(
 	int16_t input,
 	int16_t *output);
 
+/* Exclusive owner after initialization, phase configuration or full validation.
+ * Coefficients and phase must remain validated; skips their repeated scan.
+ * Pointer and ring-position errors consume no input and change no output. */
+enum fractional_delay_result fractional_delay_process_owned(
+	struct fractional_delay *delay, int16_t input, int16_t *output);
+
 /* Interpolate between samples[1] and samples[2] with one finite neighbor on
  * either side. A fraction of zero or one returns the corresponding endpoint
  * exactly. Rejected calls leave output unchanged. Keeping this small primitive

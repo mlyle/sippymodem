@@ -179,7 +179,7 @@ enum fractional_delay_result fractional_delay_set_phase(
 	return FRACTIONAL_DELAY_OK;
 }
 
-enum fractional_delay_result fractional_delay_process(
+enum fractional_delay_result fractional_delay_process_owned(
 	struct fractional_delay *delay, int16_t input, int16_t *output)
 {
 	int64_t filtered = 0;
@@ -187,7 +187,7 @@ enum fractional_delay_result fractional_delay_process(
 
 	if (delay == NULL || output == NULL)
 		return FRACTIONAL_DELAY_INVALID_ARGUMENT;
-	if (!fractional_delay_is_valid(delay))
+	if (delay->history_position >= FRACTIONAL_DELAY_TAPS)
 		return FRACTIONAL_DELAY_INVALID_STATE;
 	history = delay->history_position;
 	delay->history[history] = input;
@@ -205,4 +205,14 @@ enum fractional_delay_result fractional_delay_process(
 		delay->history_position = 0;
 	*output = round_shift_s64_to_s16_saturating(filtered, 15u);
 	return FRACTIONAL_DELAY_OK;
+}
+
+enum fractional_delay_result fractional_delay_process(
+	struct fractional_delay *delay, int16_t input, int16_t *output)
+{
+	if (delay == NULL || output == NULL)
+		return FRACTIONAL_DELAY_INVALID_ARGUMENT;
+	if (!fractional_delay_is_valid(delay))
+		return FRACTIONAL_DELAY_INVALID_STATE;
+	return fractional_delay_process_owned(delay, input, output);
 }

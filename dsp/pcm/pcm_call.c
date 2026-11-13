@@ -4210,7 +4210,7 @@ static enum pcm_call_result filter_v92_upstream(struct pcm_call *call,
 	} else if (result != PCM_CALL_OK) {
 		return result;
 	}
-	if (fractional_delay_process(&call->upstream_transmit_delay,
+	if (fractional_delay_process_owned(&call->upstream_transmit_delay,
 		    sample, &sample) != FRACTIONAL_DELAY_OK)
 		return PCM_CALL_NUMERIC_FAILURE;
 	*octet = g711_encode(call->law, sample);
