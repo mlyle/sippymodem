@@ -1135,43 +1135,62 @@ The production selector and live rates are unchanged.
 
 ## Bound support preparation and candidate lifetimes
 
-A native constructor needs an owned input boundary before it can become live
-training work. Copy frozen signed codec-rank intervals in bounded chunks,
-checking their direction and endpoint ordering. Derive the first usable level
-and each next-separated-level link from that copy. Publish the snapshot only
-after both copying and link preparation finish; retain no source-buffer
-pointers. Monotone envelopes let each link reuse its predecessor's lower bound
-without replacing the bounded binary search with an unbounded scan.
+Represent a monotone codec-rank bound by its first source magnitude at each
+rank threshold, using peak + 1 when the threshold is never reached. Four
+ascending curves cover positive lower/upper bounds and reflected negative
+upper/lower bounds. A union's lower-envelope thresholds take the maximum
+across models; upper-envelope thresholds take the minimum. This retains the
+complete surviving model union without storing a cell at every source level.
+Codec LSB forcing swaps adjacent ranks; widen the affected phase's lower
+rank to even and upper rank to odd before testing separation.
 
-Keep call, coding, model and physical-phase-binding generations with the
-snapshot and every candidate batch. The owner explicitly begins or cancels
-preparation. Reject stale work without modifying a newer snapshot; reject a
-late result without cancelling current work. Recheck those generations before
-promoting a candidate to CPd. A returned-echo delay estimate alone does not
-establish the outgoing physical-phase binding.
+Compile one frozen fractional-FIR/gain/DC box at a time, using native filter
+coefficients, outward projection and the shared saturated sample quantizer.
+Reject an unsupported non-monotone model rather than silently dropping it.
+Copy its values and retain no source-buffer pointer. Limit each continuation
+to 128 bisection or merge iterations; publish support only after every
+expected model contributes. Invert the thresholds to find separated levels.
 
-A private native prototype copies or prepares at most 128 support cells per
-operation and constructs at most 25 candidates for one prepared geometry.
-Packed rank bounds and a 16-bit link use six bytes per cell, reducing the
-previous array storage by 40%. The largest supported snapshot needs 1.125 MiB;
-the eight studied snapshots use at most 607.2 KiB each. Do not place this
-storage inside a per-sample copied call state.
+Keep call, coding, model and physical-phase-binding generations with support
+and every candidate batch. The owner explicitly begins or cancels preparation.
+Reject stale work without modifying newer support, and reject a late result
+without cancelling current work. Retain the used geometry weights, counts and
+normalization level by value. Recheck generations before CPd promotion. A
+returned-echo delay estimate alone does not establish outgoing phase binding.
 
-All 658,992 prepared cells and 5,896 geometry steps match the earlier native
-construction, retaining the same 6,342 admissions. Host and Pi checks cover
-451 lifecycle and bounds assertions; host ASan/UBSan and Memcheck also pass.
-For this Pi 5 sample, hardware-counter measurements of individual work units
-are:
+A private native prototype uses 2,056 bytes for four 257-entry threshold arrays
+and 2,208 bytes for its complete support owner, including the current model.
+The preceding literal-cell representation used up to 607.2 KiB at the studied
+peaks, or 1.125 MiB at its maximum peak. Candidate batches, geometry and the
+upstream fitter's storage are additional; keep training ownership outside a
+per-sample copied call state.
+
+Eight synthetic fit sets supply 927 model boxes. All 658,992 virtual cells,
+minimum levels and separation links match the earlier arrays. All 5,896
+geometry steps retain 6,342 admissions, with complete candidate comparisons
+against the earlier native constructor and frozen semantic digests. Host and
+Pi checks include 105,025 lifecycle/bounds assertions and 1,920 native FIR,
+gain/DC, noise and LSB corner checks. All 64 robbed-position masks are tested;
+maximum model count and peak are exercised separately. Host ASan/UBSan and
+Memcheck also pass.
+
+Threshold lookup trades additional computation for memory. This Pi 5 sample
+measures the following individual work units with hardware counters:
 
 | Work unit | Mean | Maximum | Maximum sum of three consecutive units |
 | --- | ---: | ---: | ---: |
-| Copy and validate up to 128 cells | 0.71 us | 9.41 us | 10.76 us |
-| Derive up to 128 separation links | 3.11 us | 9.15 us | 16.09 us |
-| Construct one geometry's candidate batch | 9.47 us | 49.02 us | 129.15 us |
+| Copy and compile one model | 1.59 us | 4.52 us | 8.02 us |
+| Up to 128 projection/bisection/merge iterations | 4.01 us | 24.41 us | 37.15 us |
+| Construct one geometry's candidate batch | 51.06 us | 421.80 us | 931.13 us |
 
-These are work units, not complete media packets or hard real-time bounds.
-They exclude channel learning, raw support construction, native B1 geometry
-preparation and CPd promotion. The fixtures use one selected peak from each
-of eight synthetic fits, rather than every peak or uncertainty set. Live
-integration still needs those remaining costs, ownership transitions and
-whole-call training deadlines verified. Production selection is unchanged.
+Measured model preprocessing and support projection total 0.409 seconds across
+these eight fit sets; the largest individual fit takes 160.04 ms. All 5,896
+candidate batches total 0.301 seconds. These are elapsed work observations,
+not complete media packets or hard real-time bounds. They exclude fixed owner
+initialization, channel learning, input I/O and native B1 geometry preparation.
+
+The inputs use one previously selected peak per synthetic fit. Production
+integration still needs eligible native learner output that preserves every
+surviving alternative, qualified physical-phase provenance, actual coding/B1
+geometry admission, CPd promotion and whole-call training deadlines. The
+production selector and live rates remain unchanged.
