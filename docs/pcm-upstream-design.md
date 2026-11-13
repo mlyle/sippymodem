@@ -1132,3 +1132,46 @@ streams range from 0.917 to 1.081 times B1 mean-square power without clipping;
 this does not establish arbitrary-payload power compliance. Production phase
 ownership, bounded acquisition and coding-epoch invalidation remain required.
 The production selector and live rates are unchanged.
+
+## Bound support preparation and candidate lifetimes
+
+A native constructor needs an owned input boundary before it can become live
+training work. Copy frozen signed codec-rank intervals in bounded chunks,
+checking their direction and endpoint ordering. Derive the first usable level
+and each next-separated-level link from that copy. Publish the snapshot only
+after both copying and link preparation finish; retain no source-buffer
+pointers. Monotone envelopes let each link reuse its predecessor's lower bound
+without replacing the bounded binary search with an unbounded scan.
+
+Keep call, coding, model and physical-phase-binding generations with the
+snapshot and every candidate batch. The owner explicitly begins or cancels
+preparation. Reject stale work without modifying a newer snapshot; reject a
+late result without cancelling current work. Recheck those generations before
+promoting a candidate to CPd. A returned-echo delay estimate alone does not
+establish the outgoing physical-phase binding.
+
+A private native prototype copies or prepares at most 128 support cells per
+operation and constructs at most 25 candidates for one prepared geometry.
+Packed rank bounds and a 16-bit link use six bytes per cell, reducing the
+previous array storage by 40%. The largest supported snapshot needs 1.125 MiB;
+the eight studied snapshots use at most 607.2 KiB each. Do not place this
+storage inside a per-sample copied call state.
+
+All 658,992 prepared cells and 5,896 geometry steps match the earlier native
+construction, retaining the same 6,342 admissions. Host and Pi checks cover
+451 lifecycle and bounds assertions; host ASan/UBSan and Memcheck also pass.
+For this Pi 5 sample, hardware-counter measurements of individual work units
+are:
+
+| Work unit | Mean | Maximum | Maximum sum of three consecutive units |
+| --- | ---: | ---: | ---: |
+| Copy and validate up to 128 cells | 0.71 us | 9.41 us | 10.76 us |
+| Derive up to 128 separation links | 3.11 us | 9.15 us | 16.09 us |
+| Construct one geometry's candidate batch | 9.47 us | 49.02 us | 129.15 us |
+
+These are work units, not complete media packets or hard real-time bounds.
+They exclude channel learning, raw support construction, native B1 geometry
+preparation and CPd promotion. The fixtures use one selected peak from each
+of eight synthetic fits, rather than every peak or uncertainty set. Live
+integration still needs those remaining costs, ownership transitions and
+whole-call training deadlines verified. Production selection is unchanged.
