@@ -6,17 +6,19 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Read a signed 32-bit history and 16-bit coefficient convolution without
+/* Read a signed 32-bit stream and strided 16-bit stream convolution without
  * scaling, rounding or changing either array. Each product is exact; the
  * caller must bound count and values so every partial sum fits int64_t. Count zero
- * accesses neither array and returns zero. */
+ * accesses neither array and returns zero. The signed stride is +1 or -1;
+ * the second pointer names its first tap and every indexed tap must be readable. */
 static inline int64_t fir_read_s32_s16(
-	const int32_t *history, const int16_t *coefficients, size_t count)
+	const int32_t *history, const int16_t *coefficients, size_t count,
+	ptrdiff_t stride)
 {
 	int64_t sum = 0;
 
 	for (size_t tap = 0; tap < count; ++tap)
-		sum += (int64_t)history[tap] * coefficients[tap];
+		sum += (int64_t)history[tap] * coefficients[(ptrdiff_t)tap * stride];
 	return sum;
 }
 

@@ -284,6 +284,41 @@ static bool test_cubic_interpolation(void)
 	return true;
 }
 
+static bool test_wrapped_history_keeps_tap_order(void)
+{
+	const int32_t phases[] = { -65536, -32768, -9029, 0, 9029, 32768, 65536 };
+	uint32_t random = UINT32_C(0x315a9c42);
+
+	for (size_t phase = 0; phase < ARRAY_LENGTH(phases); ++phase) {
+		struct fractional_delay delay;
+		int16_t newest[FRACTIONAL_DELAY_TAPS] = { 0 };
+
+		fractional_delay_init(&delay);
+		CHECK(fractional_delay_set_phase(&delay, phases[phase]) ==
+		      FRACTIONAL_DELAY_OK, "wrapped history phase was rejected");
+		for (unsigned i = 0; i < 8u * FRACTIONAL_DELAY_TAPS; ++i) {
+			random = random * UINT32_C(1664525) + UINT32_C(1013904223);
+			int16_t input = i % 3 == 0 ? INT16_MIN : i % 3 == 1 ? INT16_MAX :
+				(int16_t)((int32_t)(random >> 16) - 32768);
+			int16_t output;
+			int64_t sum = 0;
+
+			memmove(newest + 1, newest, sizeof(newest) - sizeof(newest[0]));
+			newest[0] = input;
+			for (unsigned tap = 0; tap < FRACTIONAL_DELAY_TAPS; ++tap)
+				sum += (int64_t)newest[tap] * delay.coefficients_q15[tap];
+			int64_t expected = sum < 0 ? -((-sum + 16384) / 32768) :
+				(sum + 16384) / 32768;
+			expected = expected > INT16_MAX ? INT16_MAX :
+				expected < INT16_MIN ? INT16_MIN : expected;
+			CHECK(fractional_delay_process(&delay, input, &output) ==
+			      FRACTIONAL_DELAY_OK && output == expected,
+			      "wrapped history changed at phase %d sample %u", phases[phase], i);
+		}
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -291,6 +326,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "exact integer endpoints", test_integer_endpoints_are_exact },
+		{ "wrapped history tap order", test_wrapped_history_keeps_tap_order },
 		{ "fractional DC gain", test_fractional_phases_preserve_dc },
 		{ "all phases preserve a valid stream",
 		  test_all_phases_preserve_valid_stream },

@@ -236,9 +236,9 @@ static int64_t precoder_history(
 	const int32_t *x_values = x_history(mapping, filter);
 
 	return fir_read_s32_s16(u_values, feed_forward->coefficient,
-				feed_forward->count) +
+				feed_forward->count, 1) +
 	       2 * fir_read_s32_s16(x_values, feedback->coefficient,
-				    feedback->count);
+				    feedback->count, 1);
 }
 
 static int64_t prefilter_history(
@@ -253,9 +253,9 @@ static int64_t prefilter_history(
 	const int32_t *v_values = v_history(mapping, filter);
 
 	return fir_read_s32_s16(x_values, feed_forward->coefficient + 1,
-				feed_forward->count ? feed_forward->count - 1u : 0u) +
+				feed_forward->count ? feed_forward->count - 1u : 0u, 1) +
 	       2 * fir_read_s32_s16(v_values, feedback->coefficient,
-				    feedback->count);
+				    feedback->count, 1);
 }
 
 /* A path's past inputs are fixed across candidate points. Retain the full

@@ -3,6 +3,7 @@
 #include "fractional_delay.h"
 
 #include "integer_math.h"
+#include "fir.h"
 
 #include <limits.h>
 #include <math.h>
@@ -190,12 +191,15 @@ enum fractional_delay_result fractional_delay_process(
 		return FRACTIONAL_DELAY_INVALID_STATE;
 	history = delay->history_position;
 	delay->history[history] = input;
-	for (size_t tap = 0; tap < FRACTIONAL_DELAY_TAPS; ++tap) {
-		filtered += (int64_t)delay->coefficients_q15[tap] *
-			delay->history[history];
-		history = history == 0 ? FRACTIONAL_DELAY_TAPS - 1u :
-			history - 1u;
-	}
+	/* Newest-first taps occupy at most two reverse contiguous spans. */
+	size_t first = history + 1u;
+
+	filtered = fir_read_s32_s16(delay->coefficients_q15,
+		delay->history + history, first, -1) +
+		fir_read_s32_s16(delay->coefficients_q15 + first,
+			delay->history + FRACTIONAL_DELAY_TAPS - 1u,
+			FRACTIONAL_DELAY_TAPS - first, -1);
+
 	delay->history_position++;
 	if (delay->history_position == FRACTIONAL_DELAY_TAPS)
 		delay->history_position = 0;

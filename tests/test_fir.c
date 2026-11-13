@@ -19,11 +19,11 @@ static bool test_mixed_width_convolution(void)
 	int16_t coefficients[384], saved_coefficients[384];
 	uint32_t random = UINT32_C(0x384f17a9);
 
-	CHECK(fir_read_s32_s16(NULL, NULL, 0) == 0,
+	CHECK(fir_read_s32_s16(NULL, NULL, 0, 1) == 0 &&
+	      fir_read_s32_s16(NULL, NULL, 0, -1) == 0,
 	      "empty mixed-width FIR accessed storage");
 	for (size_t count = 0; count <= ARRAY_LENGTH(coefficients); ++count) {
 		for (unsigned trial = 0; trial < 8; ++trial) {
-			int64_t high_sum = 0, low_sum = 0;
 
 			for (size_t i = 0; i < ARRAY_LENGTH(history); ++i) {
 				random = random * UINT32_C(1664525) + UINT32_C(1013904223);
@@ -35,18 +35,26 @@ static bool test_mixed_width_convolution(void)
 					trial == 2 ? (i % 2 ? INT16_MIN : INT16_MAX) : next_sample(&random);
 			memcpy(saved, history, sizeof(saved));
 			memcpy(saved_coefficients, coefficients, sizeof(coefficients));
-			/* Independently split each 32-bit input into signed high and
-			 * unsigned low halves. Recombine only after both convolutions. */
-			for (size_t i = 0; i < count; ++i) {
-				int64_t low = (uint16_t)(uint32_t)history[i + 1];
-				int64_t high = ((int64_t)history[i + 1] - low) / 65536;
+			for (int stride = -1; stride <= 1; stride += 2) {
+				int64_t high_sum = 0, low_sum = 0;
+				/* Split the wide input independently; reverse only the
+				 * narrow operand, keeping every partial sum exact. */
+				for (size_t i = 0; i < count; ++i) {
+					int64_t low = (uint16_t)(uint32_t)history[i + 1];
+					int64_t high = ((int64_t)history[i + 1] - low) / 65536;
+					size_t index = stride < 0 ? count - 1u - i : i;
 
-				low_sum += low * coefficients[i];
-				high_sum += high * coefficients[i];
+					low_sum += low * coefficients[index];
+					high_sum += high * coefficients[index];
+				}
+				const int16_t *first = coefficients +
+					(stride < 0 && count ? count - 1u : 0u);
+				CHECK(fir_read_s32_s16(history + 1, first, count, stride) ==
+					      high_sum * 65536 + low_sum,
+				      "mixed-width FIR changed at count=%zu trial=%u stride=%d",
+				      count, trial, stride);
 			}
-			CHECK(fir_read_s32_s16(history + 1, coefficients, count) ==
-				      high_sum * 65536 + low_sum,
-			      "mixed-width FIR changed at count=%zu trial=%u", count, trial);
+
 			CHECK(memcmp(saved, history, sizeof(saved)) == 0 &&
 			      memcmp(saved_coefficients, coefficients, sizeof(coefficients)) == 0,
 			      "mixed-width FIR changed input storage or guards");
@@ -55,7 +63,7 @@ static bool test_mixed_width_convolution(void)
 	const int32_t cancellation[] = { INT32_MIN, INT32_MIN, 1 };
 	const int16_t signs[] = { INT16_MIN, INT16_MAX, 1 };
 
-	CHECK(fir_read_s32_s16(cancellation, signs, 3) == INT64_C(2147483649),
+	CHECK(fir_read_s32_s16(cancellation, signs, 3, 1) == INT64_C(2147483649),
 	      "mixed-width FIR lost full-scale cancellation");
 	return true;
 }
