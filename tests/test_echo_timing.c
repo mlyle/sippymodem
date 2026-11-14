@@ -50,6 +50,8 @@ static void check_windows(struct echo_timing *timing, unsigned seed)
 	int16_t input[SAMPLES], prediction[SAMPLES];
 	int64_t cross[ECHO_TIMING_BINS] = { 0 };
 	uint64_t energy[ECHO_TIMING_BINS] = { 0 }, input_energy = 0;
+	uint64_t medium_energy[ECHO_TIMING_BINS] = { 0 };
+	uint64_t slow_energy[ECHO_TIMING_BINS] = { 0 };
 	unsigned count = 0;
 	struct echo_timing_model model = { .retime = reject_retime };
 
@@ -74,6 +76,9 @@ static void check_windows(struct echo_timing *timing, unsigned seed)
 			(int16_t)(input[n] - prediction[n]));
 		assert(echo_timing_is_valid(timing));
 		if (count == ECHO_TIMING_FAST_WINDOW) {
+			for (unsigned i = 0; i < ECHO_TIMING_BINS; i++) {
+				medium_energy[i] += energy[i];
+			}
 			check_evidence(&timing->fast, input, prediction, n,
 				ECHO_TIMING_FAST_WINDOW);
 			if ((n + 2 - ECHO_TIMING_BINS) % ECHO_TIMING_MEDIUM_WINDOW == 0)
@@ -85,6 +90,19 @@ static void check_windows(struct echo_timing *timing, unsigned seed)
 			assert(timing->fast.first.input == input_energy);
 			assert(timing->fast.first.current_cross == cross[ECHO_TIMING_RADIUS]);
 			assert(timing->fast.first.current_energy == energy[ECHO_TIMING_RADIUS]);
+			/* Completed fast blocks contribute every lag exactly once.
+			 * Check all bins, including ring wraps and scale resets. */
+			if ((n + 2 - ECHO_TIMING_BINS) % ECHO_TIMING_MEDIUM_WINDOW == 0) {
+				for (unsigned i = 0; i < ECHO_TIMING_BINS; i++)
+					slow_energy[i] += medium_energy[i];
+				memset(medium_energy, 0, sizeof(medium_energy));
+			}
+			if ((n + 2 - ECHO_TIMING_BINS) % ECHO_TIMING_WINDOW == 0)
+				memset(slow_energy, 0, sizeof(slow_energy));
+			assert(memcmp(timing->medium.energy, medium_energy,
+				sizeof(medium_energy)) == 0);
+			assert(memcmp(timing->slow.energy, slow_energy,
+				sizeof(slow_energy)) == 0);
 			count = 0;
 			input_energy = 0;
 			memset(cross, 0, sizeof(cross));
@@ -95,7 +113,6 @@ static void check_windows(struct echo_timing *timing, unsigned seed)
 			(n + 2 - ECHO_TIMING_BINS) % ECHO_TIMING_WINDOW));
 		assert(timing->fast.input == input_energy);
 		assert(memcmp(timing->fast.cross, cross, sizeof(cross)) == 0);
-		assert(memcmp(timing->fast.energy, energy, sizeof(energy)) == 0);
 	}
 }
 

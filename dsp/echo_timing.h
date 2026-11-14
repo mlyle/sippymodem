@@ -15,6 +15,7 @@ enum {
 	ECHO_TIMING_WINDOW = 8192,
 	ECHO_TIMING_MEDIUM_WINDOW = 2048,
 	ECHO_TIMING_FAST_WINDOW = 128,
+	ECHO_TIMING_HISTORY = ECHO_TIMING_BINS + ECHO_TIMING_FAST_WINDOW - 1,
 };
 
 _Static_assert(ECHO_TIMING_MEDIUM_WINDOW % ECHO_TIMING_FAST_WINDOW == 0 &&
@@ -36,7 +37,9 @@ struct echo_timing_window {
 };
 
 struct echo_timing {
-	int32_t prediction[ECHO_TIMING_BINS];
+	/* Retain one complete fast window at every candidate delay. Energies
+	 * are derived only at its boundary; cross terms still advance per input. */
+	int32_t prediction[ECHO_TIMING_HISTORY];
 	/* Predictions span both sides of the delayed input. Retain only the
 	 * input delay itself, reading its oldest sample before overwriting it. */
 	int16_t received[ECHO_TIMING_RADIUS];
@@ -58,7 +61,7 @@ struct echo_timing_model {
 
 static inline bool echo_timing_is_valid(const struct echo_timing *t)
 {
-	return t != 0 && t->write < ECHO_TIMING_BINS &&
+	return t != 0 && t->write < ECHO_TIMING_HISTORY &&
 	       t->received_write < ECHO_TIMING_RADIUS && t->fill <= ECHO_TIMING_BINS &&
 	       t->count < ECHO_TIMING_WINDOW &&
 	       t->slow.candidate < ECHO_TIMING_BINS &&

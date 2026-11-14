@@ -12,6 +12,8 @@
  * UINT16_MAX-sample windows keep cross below 2^48, energy below 2^49,
  * and twice the cancellation improvement below 2^52. Only confidence
  * products need 128 bits; evidence differences fit signed 64 bits. */
+_Static_assert(ECHO_TIMING_HISTORY <= UINT16_MAX,
+	       "echo timing history must fit its write counter");
 _Static_assert(ECHO_TIMING_WINDOW <= UINT16_MAX,
 	       "echo timing evidence must fit its observation counter");
 
@@ -168,7 +170,32 @@ static void accumulate_prediction_span(
 	for (unsigned i = 0; i < count; ++i) {
 		int32_t predicted = *--end;
 		window->cross[first + i] += (int64_t)input * predicted;
-		window->energy[first + i] += (int64_t)predicted * predicted;
+	}
+}
+
+/* Every fast-window energy is a sum of 128 consecutive prediction squares.
+ * Walk the same retained history once, then slide that sum across delays.
+ * Integer sums keep the original exact result, including its bounds. */
+static void measure_fast_energy(struct echo_timing *timing, unsigned newest)
+{
+	uint64_t energy = 0;
+	unsigned oldest = newest;
+
+	for (unsigned i = 0; i < ECHO_TIMING_FAST_WINDOW; ++i) {
+		int64_t sample = timing->prediction[oldest];
+		energy += (uint64_t)(sample * sample);
+		oldest = oldest == 0 ? ECHO_TIMING_HISTORY - 1u : oldest - 1u;
+	}
+	timing->fast.energy[0] = energy;
+	for (unsigned i = 1; i < ECHO_TIMING_BINS; ++i) {
+		int64_t leaving = timing->prediction[newest];
+		int64_t entering = timing->prediction[oldest];
+
+		energy -= (uint64_t)(leaving * leaving);
+		energy += (uint64_t)(entering * entering);
+		timing->fast.energy[i] = energy;
+		newest = newest == 0 ? ECHO_TIMING_HISTORY - 1u : newest - 1u;
+		oldest = oldest == 0 ? ECHO_TIMING_HISTORY - 1u : oldest - 1u;
 	}
 }
 
@@ -191,16 +218,17 @@ void echo_timing_observe(struct echo_timing *t,
 	t->received[t->received_write] = received;
 	if (++t->received_write == ECHO_TIMING_RADIUS)
 		t->received_write = 0;
-	t->write = (index + 1) % bins;
+	t->write = index + 1u == ECHO_TIMING_HISTORY ? 0u : index + 1u;
 	if (t->fill < bins && ++t->fill < bins)
 		return;
 
 	t->fast.input += (int32_t)input * input;
-	unsigned split = index + 1u;
-	accumulate_prediction_span(&t->fast, 0, t->prediction + split, split, input);
-	accumulate_prediction_span(&t->fast, split, t->prediction + bins, bins - split, input);
+	unsigned split = index + 1u < bins ? index + 1u : bins;
+	accumulate_prediction_span(&t->fast, 0, t->prediction + index + 1u, split, input);
+	accumulate_prediction_span(&t->fast, split, t->prediction + ECHO_TIMING_HISTORY, bins - split, input);
 	if (++t->count % ECHO_TIMING_FAST_WINDOW != 0)
 		return;
+	measure_fast_energy(t, index);
 	accumulate_timing_window(&t->medium, &t->fast);
 	if (finish_timing_window(t, model, &t->fast, ECHO_TIMING_FAST_WINDOW))
 		return;
