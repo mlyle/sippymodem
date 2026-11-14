@@ -15,9 +15,22 @@ static inline int64_t fir_read_s32_s16(
 	const int32_t *history, const int16_t *coefficients, size_t count,
 	ptrdiff_t stride)
 {
-	int64_t sum = 0;
+	if (count == 0)
+		return 0;
+	if (count == 1)
+		return (int64_t)history[0] * coefficients[0];
 
-	for (size_t tap = 0; tap < count; ++tap)
+	int64_t sum = 0;
+	size_t tap = 0;
+
+	/* Four full-width products have absolute sum at most 2^48.
+	 * Commit their exact sum at the same scalar-prefix boundary. */
+	for (; count - tap >= 4; tap += 4)
+		sum += (int64_t)history[tap] * coefficients[(ptrdiff_t)tap * stride] +
+		       (int64_t)history[tap + 1] * coefficients[(ptrdiff_t)(tap + 1) * stride] +
+		       (int64_t)history[tap + 2] * coefficients[(ptrdiff_t)(tap + 2) * stride] +
+		       (int64_t)history[tap + 3] * coefficients[(ptrdiff_t)(tap + 3) * stride];
+	for (; tap < count; ++tap)
 		sum += (int64_t)history[tap] * coefficients[(ptrdiff_t)tap * stride];
 	return sum;
 }

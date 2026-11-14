@@ -5,6 +5,7 @@
 #include "test.h"
 
 #include <limits.h>
+#include <stdlib.h>
 #include <string.h>
 
 static int16_t next_sample(uint32_t *state)
@@ -65,6 +66,37 @@ static bool test_mixed_width_convolution(void)
 
 	CHECK(fir_read_s32_s16(cancellation, signs, 3, 1) == INT64_C(2147483649),
 	      "mixed-width FIR lost full-scale cancellation");
+	return true;
+}
+
+static bool test_mixed_width_long_cancellation(void)
+{
+	enum { COUNT = 524289 };
+	int32_t *history = malloc(COUNT * sizeof(*history));
+	int16_t *coefficients = malloc(COUNT * sizeof(*coefficients));
+
+	if (history == NULL || coefficients == NULL) {
+		free(history);
+		free(coefficients);
+		CHECK(false, "long mixed-width FIR allocation failed");
+	}
+	for (size_t tap = 0; tap < COUNT; ++tap) {
+		history[tap] = INT32_MIN;
+		coefficients[tap] = tap % 2 ? INT16_MAX : INT16_MIN;
+	}
+	/* Every adjacent pair sums to 2^31, followed by one 2^46 term.
+	 * Scalar prefixes fit int64_t, but separate even/odd or four-way
+	 * signed accumulators would overflow before cancellation. */
+	int64_t expected = (INT64_C(1) << 46) +
+		(int64_t)(COUNT / 2) * (INT64_C(1) << 31);
+	int64_t forward = fir_read_s32_s16(history, coefficients, COUNT, 1);
+	int64_t reverse = fir_read_s32_s16(
+		history, coefficients + COUNT - 1, COUNT, -1);
+
+	free(history);
+	free(coefficients);
+	CHECK(forward == expected && reverse == expected,
+	      "long mixed-width FIR lost full-scale cancellation");
 	return true;
 }
 
@@ -293,7 +325,8 @@ static bool test_symmetric_ring(void)
 
 int main(void)
 {
-	return test_mixed_width_convolution() && test_complex_accumulation() &&
+	return test_mixed_width_convolution() &&
+	       test_mixed_width_long_cancellation() && test_complex_accumulation() &&
 	       test_full_width_convolution() &&
 	       test_impulse_order() && test_read_ring() &&
 	       test_symmetric_ring() ? 0 : 1;
