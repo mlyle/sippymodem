@@ -1416,3 +1416,48 @@ These checks supply the additive intervals. They do not estimate or prove an
 actual modem's echo-error bound, certify arbitrary host preprocessing, or
 qualify physical captures and CPd promotion. Production rates and waveforms
 are unchanged.
+
+
+## Keep the data observation's conditioning estimate
+
+A safe global echo interval is not a substitute for retaining the estimate
+available to the decoder. For the scalar observation `code(s + e + n)`, let
+`s` be a candidate source, `e` the known estimate, and `n` an independently
+bounded residual in `[-R,R]`. If the original raw code has integer preimage
+`[L,U]`, candidate `s` permits estimates in `[L-s-R,U-s+R]`.
+
+Two candidates are confusable at the same known estimate only when their
+estimate intervals intersect together. Discarding that estimate instead
+allows each alternative to use a different estimate from the global range.
+The resulting union can erase much of the usable alphabet even when the
+residual bound is small. Continue using the original raw code cell, including
+its model-specific robbed-bit alternative; do not re-encode a cleaned sample.
+
+A separate integer scalar study chooses fixed symmetric alphabets across
+all estimates in `[-1024,1024]`, with peak source amplitude 16000 and residual
+bound 8. The counts below are positive levels; each has a negative partner.
+
+| Codec and physical position | Global estimate union | Decode with estimate |
+| --- | ---: | ---: |
+| PCMU, intact | 7 | 58 |
+| PCMU, robbed | 6 | 31 |
+| PCMA, intact | 7 | 59 |
+| PCMA, robbed | 6 | 32 |
+
+Intact and robbed positions keep separate alphabets. These counts assume
+unity gain, no FIR or DC, integer sources and corrections, and no clipping
+inside the selected signal bounds. They are not V.92 constellations or line
+bitrates. Monotone raw preimages permit a greedy minimum-successor construction;
+independent dynamic programming agrees on 240 small-domain cases.
+
+Host, Pi and sanitizer results agree across 96 larger cases. Checks cover
+393,216 exact preimages, 6,144 directly enumerated pair comparisons, and
+146,774,602 native encoder observations of the selected alphabets. Negative
+witnesses demonstrate collisions both when the estimate is discarded and
+when the true residual reaches 9 after declaring a bound of 8.
+
+Preserve conditioning identity and its justified uncertainty through actual
+candidate decoding. This study does not qualify a physical echo-error bound
+or continuous-valued preprocessing. Keep declining conditioned fits at the
+existing raw-rank publication boundary until that decoder-domain contract,
+its real channel model, and its call/coding epochs are qualified together.
