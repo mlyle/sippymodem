@@ -1641,8 +1641,9 @@ For a native codec cell `[L,U)` and noise bound `R`, a positive sample permits
 `(L-R)/s[i] <= g < (U+R)/s[i]`; negative samples reverse the endpoints. Intersect
 unions of cells having the required LSB across each repeating position,
 retaining endpoint inclusion. A surviving gain constructs an intact wire word
-that the signalling replacement leaves unchanged. Absence of this witness
-only excludes a same-gain collision, not explanations with different gains.
+that the signalling replacement leaves unchanged. With a common pre-overwrite
+channel support, this also exhausts intact-versus-fixed-pattern intersections
+with independently chosen gains, as shown below.
 
 A concrete native example uses the 40k PCMU direct mapping, 16-state trellis,
 upstream level 4096 and gain normalization from its B1 energy. Within gain
@@ -1677,3 +1678,51 @@ deterministic bit stream. These results neither qualify a physical call's noise
 bound nor establish BER, a safe rate or a shorter B1 duration. Retain unresolved
 phase/pattern alternatives until held-out evidence separates them, and carry
 their union into constellation metrics. Production negotiation is unchanged.
+
+## Use projection identity only for intact-versus-robbed comparisons
+
+Let `S` contain the possible wire words before signalling replacement for one
+known transmitted word and the declared channel uncertainty. A fixed overwrite
+`P` is idempotent: `P(P(z)) = P(z)`. Therefore
+`S ∩ P(S) = {z ∈ S : P(z) = z}`. Every output of `P` is fixed by `P`; conversely,
+a fixed word in `S` is also its own image. The transparency search above is
+thus complete for intact versus that fixed pattern, even when the competing
+explanations may choose different gains or noise within the same support.
+It need not enumerate two gains for this particular comparison.
+
+This identity requires the same pre-overwrite support and a fixed idempotent
+operation at the observation boundary. It does not identify two different
+robbed patterns or distinguish different transmitted payload words. Those
+comparisons can still require independent gains in the competing explanations.
+
+An actual native 36k PCMU example uses the 16-state trellis, upstream level
+4096 and its first 24 B1 samples. Within `[63/64,65/64]`, two robbed models
+produce the same word with these parameters; forced bits are listed in order
+of successive robbed slots, and phase is zero based:
+
+| Robbed phase | Repeating forced bits | Gain |
+| --- | --- | --- |
+| 1 | 1111 | 5756/5811 |
+| 5 | 1101 | 5755/5811 |
+
+Before replacement, octets at indices 13 and 17 are `(40,168)` for the first
+model and `(41,169)` for the second. Both produce `(41,168)` after replacement;
+the remaining observed octets agree too. There is no common-gain alias for
+this pair anywhere in that interval. A same-gain pairwise check would miss it.
+
+Exact forward supports compare 97 unique hypotheses: intact plus six phases
+of all sixteen four-bit patterns, including shorter repeating patterns.
+Across 24 selected native cases, independent-gain comparisons find 56 extra
+ambiguous pairs, counting each case separately. They cover both laws,
+36k/40k, that trellis
+and level, three B1 prefix lengths and the two gain intervals above, without
+noise. All eight selected full 576-sample B1 cases separate these hypotheses;
+that does not qualify a noisy call or justify shortening training.
+
+Host and Pi agree on 111744 pair comparisons per host, with inverted-support
+and direct set-intersection checks sharing the codec and waveforms, plus
+native-code witnesses. The projection identity also passes 5308416 finite-set
+checks over 81 overwrite
+operators, including controls rejecting its extension to different projections,
+different base supports or non-idempotent operations. This strengthens the
+intact-versus-robbed analysis; it establishes no BER, rate or payload guarantee.
