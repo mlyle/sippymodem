@@ -1726,3 +1726,54 @@ checks over 81 overwrite
 operators, including controls rejecting its extension to different projections,
 different base supports or non-idempotent operations. This strengthens the
 intact-versus-robbed analysis; it establishes no BER, rate or payload guarantee.
+
+## Budget gain uncertainty when qualifying signalling exposure
+
+Noiseless separation need not survive a small additive uncertainty. Under the
+same model, bracket the noise bound at which an intact word can also explain
+a fixed one-in-six signalling overwrite. The gain stays constant throughout
+each word. Noise may vary independently at each sample; this is worst-case
+support, not an averaging or stochastic-noise calculation.
+
+For the full 576-sample native B1 words with 16-state trellis and upstream
+level 4096, each table entry gives `L / U` in signed 16-bit PCM input units.
+No intact-versus-fixed-pattern collision exists for any noise bound at or
+below `L`; a constructive collision exists at bound `U`. The gap is exactly
+`1/256` unit. The two gain intervals are closed.
+
+| Native word | Gain `[63/64,65/64]`: L / U | Gain `[15/16,17/16]`: L / U |
+| --- | --- | --- |
+| PCMU 36k | 28.234375 / 28.23828125 | 28.234375 / 28.23828125 |
+| PCMU 40k | 10.46484375 / 10.46875 | 0.26171875 / 0.265625 |
+| PCMA 36k | 47.87109375 / 47.875 | 47.63671875 / 47.640625 |
+| PCMA 40k | 45.33203125 / 45.3359375 | 44 / 44.00390625 |
+
+These are properties of these generated words and their normalization, not
+general codec rankings. In particular, the wider gain interval makes the
+selected PCMU 40k word ambiguous with much less additive uncertainty.
+Treat gain confidence and additive uncertainty jointly when qualifying a
+training-derived impairment model.
+
+Even a full word need not expose every pattern without noise. The native
+40k PCMU word at upstream level 2048 and 16-state trellis has a witness at
+gain `496839/491194`: forcing four repeating ones at zero-based robbed phase
+zero changes none of its 576 observed octets. This gain lies in both intervals
+above. Across all three trellises and three upstream levels, nine of the 66
+full-word gain-range cases already have a noiseless collision. All 66 selected
+48-sample prefix cases do. Three saturated native waveforms are excluded
+before this analysis, leaving 33 waveforms and 132 cases in total.
+
+Exact rational inverse intervals and separate forward gain-cell enumeration
+agree at all 189 tested endpoints, with 48 additional boundary controls per
+host. Every feasible endpoint has a native-code transparency witness. Host
+and Pi results agree exactly, and the reviewed native generator sources still
+match the current encoder. These calculations share the codec and qualified
+waveforms; they are not an independent standards implementation.
+
+The comparison is complete for intact versus each fixed overwrite with the
+same pre-overwrite support, by the projection identity above. It does not
+qualify separation between two robbed models or different payloads. Retain
+unresolved signalling hypotheses and test their union on held-out data;
+training duration alone does not justify choosing one. No physical noise
+bound, BER, safe rate, shorter B1 or production negotiation change follows
+from these model-specific bounds.
