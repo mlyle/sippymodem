@@ -1833,3 +1833,59 @@ noise measurements. They support carrying every unresolved channel explanation
 into held-out decisions, rather than selecting one because training is long.
 They do not establish a safe rate, shorter B1 or a codec ranking, and change
 no production negotiation policy.
+
+## Bound pre-codec noise on complete error events
+
+A bounded-noise radius answers a different design question from summed squared
+separation or a stochastic overlap. For two transmitted samples, find the
+infimum of radii permitting a common observed codec octet, with separate
+noise in each explanation before floor/G.711. Search exact cell preimages,
+including their half-open upper edges. For a known shared robbed phase, forcing
+bit zero or one gives the same equality classes: octets agree after replacement
+exactly when their values with bit zero masked agree. The phase still matters.
+
+Combine sample costs with a maximum, then minimize over legal branch pairs and
+complete diverging/remerging paths. A minimax graph replaces the summed edge
+metric above. Integer-scaled radii retain an additional open-endpoint flag.
+Clipped node potentials satisfy `h(destination) <= max(h(source), edge)`;
+first-different seeds bound their destinations and every diagonal target has
+the claimed cost. An attaining native source pair supplies the opposite bound.
+This covers arbitrary finite events rather than a selected bit-flip bank.
+
+For the full-capacity, memoryless direct mappings at upstream level 4096,
+normalize each coder's native B1 gain independently. At known unity channel
+gain, all three trellises give the same minimum radius below. Units are signed
+16-bit PCM input units; open means collision requires a strictly larger radius,
+while closed means collision already exists at that radius.
+
+| Mapping | Transparent | Worst known one-in-six phase |
+| --- | --- | --- |
+| 36k, mu-law | 119, open | 119, open |
+| 40k, mu-law | 76, open | 76, open |
+| 36k, A-law | 140, closed | 140, closed |
+| 40k, A-law | 89, closed | 85, closed |
+
+A larger coder can require errors at more positions without increasing their
+maximum required amplitude. For example, attaining transparent 36k events
+change four symbols with 16/32 states and seven with 64 states, but all have
+the same radius here. This leaves the earlier summed-distance result intact;
+neither criterion alone describes a stochastic channel or decoder BER.
+
+Gain samples can miss an interior weakness. The 36k mu-law radius is 135.8125
+at gain `63/64` and 134.1875 at `65/64`, versus 119 at unity. These are separate
+known-gain channels, not a solution for a continuous gain interval or competing
+explanations with independently fitted gains.
+
+Across both laws, both rates, three coders, three known gains and seven wire
+modes, host and Pi agree on all 252 graphs. Independent C/Python constructions
+agree on 677376 branch weights; 281788416 potential inequalities and a separate
+threshold-reachability algorithm check the optima. Every native source witness
+fully remerges coding state and produces eight common continuation frames;
+independent integer encoding and native forward noise/codec witnesses agree.
+These checks share the reviewed native encoder and codec definitions, not an
+independent standards implementation.
+
+Use these bounds to reject incomplete constellation objectives. They do not
+qualify uncertain signalling models, stateful learned filters, continuous gain
+uncertainty, native finite traceback, actual channel noise or physical interop.
+No safe rate, BER, shorter decoder delay or negotiation change follows.
