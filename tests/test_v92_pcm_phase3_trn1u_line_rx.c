@@ -332,6 +332,13 @@ static bool test_contracts(void)
 	      v92_pcm_phase3_trn1u_line_rx_is_valid(&receiver) &&
 	      !v92_pcm_phase3_trn1u_line_rx_is_complete(&receiver),
 	      "TRN1u line initialization contracts failed");
+	struct v92_pcm_phase3_trn1u_line_rx corrupt = receiver;
+	corrupt.equalizer.coefficients[0].in_phase = NAN;
+	before = corrupt;
+	CHECK(v92_pcm_phase3_trn1u_line_rx_sample(&corrupt, 0) ==
+	      V92_PCM_PHASE3_TRN1U_LINE_RX_INVALID_ARGUMENT &&
+	      memcmp(&corrupt, &before, sizeof(corrupt)) == 0,
+	      "corrupt owned TRN1u filter changed state");
 	for (unsigned fault = 0; fault < 3; fault++) {
 		struct v92_pcm_phase3_trn1u_line_rx invalid = receiver;
 		if (fault == 0) invalid.sample_sum = 1;

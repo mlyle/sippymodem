@@ -219,6 +219,15 @@ static bool test_validation_and_transactionality(void)
 	      !v34_phase3_pp_receiver_is_valid(&corrupt) &&
 	      !v34_phase3_pp_receiver_is_complete(&corrupt),
 	      "PP receiver validation changed");
+	const struct qam_point point = { 1.0, 1.0 };
+	CHECK(v34_phase3_pp_receive_point(&receiver, &point) ==
+	      V34_PHASE3_PP_RECEIVER_OK, "PP seed failed");
+	receiver.equalizer.coefficients[0].in_phase = NAN;
+	saved = receiver;
+	CHECK(v34_phase3_pp_receive_point(&receiver, &point) ==
+	      V34_PHASE3_PP_RECEIVER_INVALID_ARGUMENT &&
+	      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
+	      "corrupt owned PP filter changed state");
 	return true;
 }
 

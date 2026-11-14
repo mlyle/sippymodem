@@ -281,7 +281,9 @@ static bool train_sample(
 	if (!next_reference_sign(&receiver->reference, &expected_sign))
 		return false;
 	push_expected(receiver, expected_sign);
-	if (qam_equalizer_push(
+	/* Entry validation or initialization owns this filter; successful
+	 * pushes and adaptation preserve it through the alignment replay. */
+	if (qam_equalizer_push_owned(
 		    &receiver->equalizer, &input, &output, &ready) !=
 	    QAM_EQUALIZER_OK)
 		return false;

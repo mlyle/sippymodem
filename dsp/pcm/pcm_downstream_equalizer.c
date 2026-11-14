@@ -45,7 +45,7 @@ bool pcm_downstream_equalizer_train(struct pcm_downstream_equalizer *equalizer,
 	struct qam_point target = {
 		(sample > 0 ? next.training_level : -next.training_level) / 32768.0, 0.0
 	};
-	if (qam_equalizer_push(&next.filter, &input, &output, &ready) != QAM_EQUALIZER_OK || !ready ||
+	if (qam_equalizer_push_owned(&next.filter, &input, &output, &ready) != QAM_EQUALIZER_OK || !ready ||
 	    qam_equalizer_adapt(&next.filter, &target, 0.1) != QAM_EQUALIZER_OK)
 		return false;
 	*equalizer = next;
@@ -67,7 +67,7 @@ bool pcm_downstream_equalizer_receive(struct pcm_downstream_equalizer *equalizer
 	}
 	int16_t sample = g711_decode(equalizer->law, octet);
 	struct qam_point input = { sample / 32768.0, 0.0 };
-	if (qam_equalizer_push(&equalizer->filter, &input, &output, &ready) != QAM_EQUALIZER_OK || !ready)
+	if (qam_equalizer_push_owned(&equalizer->filter, &input, &output, &ready) != QAM_EQUALIZER_OK || !ready)
 		return false;
 	double linear = output.in_phase * 32768.0;
 	/* Preserve exact input codewords, including signed PCM zero, on an

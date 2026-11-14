@@ -117,7 +117,8 @@ enum v34_phase3_pp_receiver_result v34_phase3_pp_receive_point(
 		if (!next.seeded && !seed_equalizer(&next, received, &target))
 			return V34_PHASE3_PP_RECEIVER_NUMERIC_FAILURE;
 	}
-	if (qam_equalizer_push(
+	/* Entry validation or the checked seed owns this unpublished filter. */
+	if (qam_equalizer_push_owned(
 		    &next.equalizer, received, &output, &ready) !=
 	    QAM_EQUALIZER_OK)
 		return V34_PHASE3_PP_RECEIVER_NUMERIC_FAILURE;
