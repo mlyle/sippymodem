@@ -269,6 +269,38 @@ static bool test_v22_match_threshold(void)
 	return true;
 }
 
+static bool test_v22_reference_power_limits(void)
+{
+	struct v22bis_receiver receiver;
+	struct qam_point reference = { 0.8, -0.2 };
+	bool matches = true;
+
+	CHECK(v22bis_receiver_init(&receiver, &reference) == V22BIS_RECEIVER_OK,
+	      "reference-power fixture did not initialize");
+	/* Valid channel power need not imply usable power at the 1200-bit/s
+	 * reference element. Keep that separate floor after gain validation. */
+	receiver.gain.channel_gain = (struct qam_point){ 1.25e-6, 0. };
+	struct v22bis_receiver saved = receiver;
+	CHECK(v22bis_receiver_is_valid(&receiver) &&
+	      v22bis_receiver_matches_v22(&receiver, &reference, &matches) ==
+		      V22BIS_RECEIVER_INVALID_ARGUMENT && matches &&
+	      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
+	      "unusable reference power changed the owner or result");
+
+	receiver.gain.channel_gain = (struct qam_point){ 0x1.8p511, 0. };
+	for (uint8_t quadrant = 0; quadrant < QPSK_QUADRANT_COUNT; ++quadrant) {
+		struct qam_point ideal;
+		CHECK(v22bis_1200_constellation_point(quadrant, &ideal) == V22_FRAMING_OK,
+		      "large reference point was not generated");
+		struct qam_point received = qam_point_multiply(&receiver.gain.channel_gain, &ideal);
+		matches = false;
+		CHECK(v22bis_receiver_matches_v22(&receiver, &received, &matches) ==
+			      V22BIS_RECEIVER_OK && matches,
+		      "finite reference was lost to an overflowing distant candidate");
+	}
+	return true;
+}
+
 static bool test_v22_transition_tracking(void)
 {
 	static const uint8_t turns[] = { 1, 3, 0, 2, 3, 1, 1, 0 };
@@ -487,6 +519,7 @@ int main(void)
 		{ "read-only constellation slicing", test_read_only_slicing },
 		{ "slicing ties and ownership", test_slicing_boundaries },
 		{ "V.22 reference threshold", test_v22_match_threshold },
+		{ "V.22 reference power limits", test_v22_reference_power_limits },
 		{ "V.22 transition tracking", test_v22_transition_tracking },
 		{ "validation", test_validation },
 		{ "output ownership", test_output_ownership },

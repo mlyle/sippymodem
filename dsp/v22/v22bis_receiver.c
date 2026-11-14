@@ -62,11 +62,12 @@ v22bis_receiver_matches_v22(
 		double predicted_power;
 
 		if (v22bis_1200_constellation_point(quadrant, &ideal) !=
-			    V22_FRAMING_OK ||
-		    qam_gain_predict(
-			    &receiver->gain, &ideal, &predicted) !=
-		    QAM_GAIN_OK)
+			    V22_FRAMING_OK)
 			return V22BIS_RECEIVER_INVALID_ARGUMENT;
+		/* The owner already validated the gain. As in payload slicing,
+		 * project directly; the power check below also rejects nonfinite
+		 * results while retaining the reference's minimum-power bound. */
+		predicted = qam_point_multiply(&receiver->gain.channel_gain, &ideal);
 		error = qam_point_distance_squared(point, &predicted);
 		if (!qam_point_nonzero_power(&predicted, &predicted_power))
 			return V22BIS_RECEIVER_INVALID_ARGUMENT;
