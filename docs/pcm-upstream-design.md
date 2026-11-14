@@ -1623,3 +1623,57 @@ amplitudes jointly against the qualified gain/noise range, retain surviving
 channel hypotheses, and verify the resulting metric on held-out observations.
 Existing V.91 DIL already probes every octet and both signs; its training and
 production rate selection remain unchanged.
+
+## Check native training against the complete signalling pattern
+
+One robbed position in six need not force the same bit on every occurrence.
+[G.704 (10/1998), 3.1.3.2](https://www.itu.int/rec/dologin_pub.asp?id=T-REC-G.704-199810-I%21%21PDF-E&lang=e&type=items)
+assigns separate A/B bits in a twelve-frame multiframe and A/B/C/D bits in a
+24-frame multiframe. A stable pattern therefore needs a phase and its whole
+repeating bit word. This model holds those bits fixed over the observations;
+it does not cover signalling changes, slips or multiple robbed positions.
+
+Test exposure using actual encoder samples, including scrambling, coding,
+prefilter history and Q15 scaling. For each position `i`, take the observation
+as `G711(floor(g*s[i] + n[i]))`, followed by the signalling-bit replacement.
+The gain `g` is shared across the word; each `n[i]` is independently bounded.
+For a native codec cell `[L,U)` and noise bound `R`, a positive sample permits
+`(L-R)/s[i] <= g < (U+R)/s[i]`; negative samples reverse the endpoints. Intersect
+unions of cells having the required LSB across each repeating position,
+retaining endpoint inclusion. A surviving gain constructs an intact wire word
+that the signalling replacement leaves unchanged. Absence of this witness
+only excludes a same-gain collision, not explanations with different gains.
+
+A concrete native example uses the 40k PCMU direct mapping, 16-state trellis,
+upstream level 4096 and gain normalization from its B1 energy. Within gain
+`[63/64,65/64]`, its first 48 B1 samples expose all constant-bit and twelve-slot
+patterns without noise, but two 24-slot patterns remain transparent. One has
+zero-based robbed phase 1, repeating bits `1110`, and gain `118609/116864`.
+Its eight affected octets are `231,231,47,192,175,231,211,42`; replacement
+changes none. A constant forced-bit check would miss this ambiguity.
+
+For that trellis and level, all four selected 576-sample native B1 words have
+no same-gain transparency witness without noise. With independently bounded
+noise `[-32,32]` in 16-bit PCM units and the same gain interval, the surviving
+pattern counts are:
+
+| Mapping | Constant bit, out of 12 | Four-bit word, out of 96 |
+| --- | ---: | ---: |
+| PCMU 36k | 1 | 8 |
+| PCMU 40k | 7 | 49 |
+| PCMA 36k | 0 | 0 |
+| PCMA 40k | 0 | 0 |
+
+These are worst-case support collisions, not their probabilities. The native
+study covers both laws, 36k/40k, all three trellises, three upstream levels,
+gain intervals `[63/64,65/64]` and `[15/16,17/16]`, and noise bounds
+`0,8,32,64,128`. Three of 36 waveforms saturate and
+are excluded from the bounded analysis; the remaining 33 yield 3960 prefix
+cases. Independent forward gain-cell enumeration checks 120 selected native
+cases, with additional endpoint controls and constructive native-code witnesses.
+Native waveform generation shares encoder primitives with its grouping check;
+it is not an independent standards implementation. Payload prefixes use one
+deterministic bit stream. These results neither qualify a physical call's noise
+bound nor establish BER, a safe rate or a shorter B1 duration. Retain unresolved
+phase/pattern alternatives until held-out evidence separates them, and carry
+their union into constellation metrics. Production negotiation is unchanged.
