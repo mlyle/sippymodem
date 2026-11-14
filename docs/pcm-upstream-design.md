@@ -1365,3 +1365,54 @@ echo-error bounds, physical-capture validation, native coding/B1 admission,
 CPd promotion and live scheduling remain required. The prototype supplies a
 native clock witness; identity fields alone cannot establish those remaining
 facts. Production selection and live rates remain unchanged.
+
+## Condition raw observations with bounded additive corrections
+
+Do not encode an echo-cleaned sample and treat that new octet as captured
+wire evidence. Subtraction and G.711 quantization do not commute. Keep the
+original octet, physical phase and availability, together with a declared
+interval for the additive contribution in the raw codec's linear domain.
+This interval is an assumption until a separate echo/conditioning owner has
+qualified and bound it to the actual observation epoch.
+
+Let `C(code)` be the raw octet's continuous input cell, including its robbed-bit
+alternative when applicable and the declared noise allowance. For an additive
+contribution in `[e_low,e_high]`, constrain the unconditioned forward prediction
+`gain * filtered_source + dc` to:
+
+```
+[C(code).lower - e_high, C(code).upper - e_low]
+```
+
+Keep outward numerical bounds and the infinite ends of saturated cells.
+Zero correction uses the original cell unchanged. A research extension stores
+the interval by value in each training row; invalid or reversed bounds reject
+without advancing either owner. Concealed inputs still advance the witnessed
+source and physical clocks without contributing observations. The row is
+16 bytes and the fitter owner is 716,816 bytes, outside per-sample DSP copies;
+the native capture owner remains 128 bytes.
+
+A conditioned training fit does not establish an unconditioned data alphabet.
+Mark the fitted observation domain explicitly. The research raw-rank support
+adapter declines conditioned fits, preserving its previous output. Before
+using these fits for constellation selection, account for the data decoder's
+raw-cell correction and uncertainty, as well as the conditioning epoch.
+Reusing the smaller post-subtraction codec cell would repeat the original
+mistake at that boundary.
+
+Host and Pi checks cover 15,728,640 raw-cell cases over both laws, signed
+inputs, forced robbed-bit values, noise, offset intervals and saturation.
+A smaller subtraction experiment finds 15,477 inputs whose true source falls
+outside the cell fabricated by re-encoding the cleaned sample; these are
+synthetic counterexamples, not field error rates. Forty-eight native training
+cases retain the declared model across both laws, four/eight-point sources,
+both initial signs, three physical rotations and two correction widths.
+Both corrupted held groups are withheld under both laws, and omitting the
+required bounds rejects both law controls. The preceding 64 unconditioned
+native cases still pass. Invalid-bound rollback and stale conditioning-epoch
+checks protect the new boundary; ASan/UBSan and focused Memcheck pass.
+
+These checks supply the additive intervals. They do not estimate or prove an
+actual modem's echo-error bound, certify arbitrary host preprocessing, or
+qualify physical captures and CPd promotion. Production rates and waveforms
+are unchanged.
