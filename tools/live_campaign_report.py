@@ -160,6 +160,10 @@ class AttemptResult:
     # deadline. These fields never upgrade initial_data or maturity.
     initial_recovery_data: bool | None = None
     initial_recovery_seconds: float | None = None
+    # A new PING after a missed greeting is a separate diagnostic exchange.
+    # It never upgrades initial receive/transmit checks or maturity.
+    initial_diagnostic_data: bool | None = None
+    initial_diagnostic_seconds: float | None = None
 
     @property
     def profile_mismatch(self) -> bool:
@@ -615,6 +619,13 @@ def render_dashboard(
             f"/{len(transmitted)}; legacy connected={legacy} (direction checks unknown)"
         )
         rows.append("New LAPM D requires initial RX and TX; raw D verifies RX only")
+    diagnostic = [result for result in results
+                  if result.initial_diagnostic_data is not None]
+    if diagnostic:
+        rows.append(
+            f"After missed greeting: diagnostic PONG={sum(r.initial_diagnostic_data is True for r in diagnostic)}"
+            f"/{len(diagnostic)} (initial grades unchanged)"
+        )
     recovered = [result for result in results
                  if result.initial_recovery_data is not None]
     if recovered:
@@ -731,6 +742,10 @@ def render_dashboard(
                     else str(int(result.initial_transmit_data))
                 )
                 status += f" initial-rx={int(result.initial_receive_data)}/tx={transmitted}"
+            if not request and result.initial_diagnostic_data is not None:
+                status += f" diagnostic-pong={int(result.initial_diagnostic_data)}"
+                if result.initial_diagnostic_seconds is not None:
+                    status += f"({result.initial_diagnostic_seconds:.1f}s)"
             if not request and result.initial_recovery_data is not None:
                 status += f" late-pong={int(result.initial_recovery_data)}"
                 if result.initial_recovery_seconds is not None:

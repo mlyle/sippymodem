@@ -427,6 +427,8 @@ class _AttemptState:
     initial_transmit_data: bool | None = None
     initial_recovery_data: bool | None = None
     initial_recovery_seconds: float | None = None
+    initial_diagnostic_data: bool | None = None
+    initial_diagnostic_seconds: float | None = None
     callback_request_attempted: bool = False
     callback_request_maturity: str | None = None
     callback_request_report: ConnectReport = field(default_factory=ConnectReport)
@@ -671,16 +673,22 @@ def _exercise_online(
             # Distinguish a missing greeting from an unusable data path.
             # This diagnostic never upgrades the failed greeting grade.
             progress.set("probing after missing initial greeting")
+            started = time.monotonic()
+            state.initial_diagnostic_data = False
             try:
                 verified, received = terminal.probe_online_ping(
                     config.online_timeout_seconds
                 )
+                state.initial_diagnostic_seconds = round(time.monotonic() - started, 6)
+                state.initial_diagnostic_data = verified
                 state.capture(leg, ONLINE_PING_REQUEST, received,
                               phase="missing-greeting-ping")
                 state.exchanges[-1]["verified"] = verified
                 if not verified:
                     _observe_initial_recovery(terminal, state, leg, config, progress)
             except (LiveTerminalError, OSError, TimeoutError):
+                if state.initial_diagnostic_seconds is None:
+                    state.initial_diagnostic_seconds = round(time.monotonic() - started, 6)
                 state.detail += "; diagnostic PING exchange failed"
         return
     if state.report.protocol == "LAPM":
@@ -1198,6 +1206,8 @@ def run_physical_attempt(
         initial_transmit_data=state.initial_transmit_data,
         initial_recovery_data=state.initial_recovery_data,
         initial_recovery_seconds=state.initial_recovery_seconds,
+        initial_diagnostic_data=state.initial_diagnostic_data,
+        initial_diagnostic_seconds=state.initial_diagnostic_seconds,
         callback_request_attempted=state.callback_request_attempted,
         callback_request_maturity=state.callback_request_maturity,
         callback_request_modulation=state.callback_request_report.modulation,

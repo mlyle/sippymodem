@@ -88,6 +88,29 @@ class LiveCampaignReportTests(unittest.TestCase):
         self.assertIn("Initial recovery: late PONG=1/1 (initial grades unchanged)", dashboard)
         self.assertIn("initial-rx=1/tx=0 late-pong=1(+10.4s)", dashboard)
 
+    def test_missing_greeting_diagnostic_is_separate_from_initial_and_late_data(self) -> None:
+        case = cases_for_suite("smoke")[0]
+        for responds in (True, False):
+            with self.subTest(responds=responds):
+                result = self.result(
+                    case_name=case.name, family=case.family, role=case.role,
+                    connected=True, protocol="LAPM", initial_data=False,
+                    initial_receive_data=False, initial_diagnostic_data=responds,
+                    initial_diagnostic_seconds=2.5, retrain_requested=False,
+                )
+                dashboard = render_dashboard(
+                    (case,), 1, (result,), revision="c" * 40,
+                    campaign_id="test", elapsed_seconds=1, recent_limit=1,
+                )
+                self.assertEqual(result.maturity, MATURITY_CONNECT)
+                self.assertFalse(result.successful())
+                self.assertIsNone(result.initial_transmit_data)
+                self.assertIsNone(result.initial_recovery_data)
+                self.assertIn("Initial checks: RX=0/1 TX=0/0", dashboard)
+                self.assertIn(f"After missed greeting: diagnostic PONG={int(responds)}/1", dashboard)
+                self.assertIn(f"initial-rx=0/tx=- diagnostic-pong={int(responds)}(2.5s)", dashboard)
+                self.assertNotIn("late-pong=", dashboard)
+
     def test_peer_input_warning_prevents_success_without_erasing_markers(self) -> None:
         case = cases_for_suite("smoke")[0]
         for field in ("peer_unknown_commands", "peer_invalid_command_burst"):

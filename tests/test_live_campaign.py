@@ -332,6 +332,12 @@ class LiveCampaignTests(unittest.TestCase):
                 self.assertEqual(diagnostic["phase"], "missing-greeting-ping")
                 self.assertEqual(diagnostic["verified"], responds)
                 self.assertEqual(result.initial_recovery_data, None if responds else False)
+                self.assertEqual(result.initial_diagnostic_data, responds)
+                self.assertIsNotNone(result.initial_diagnostic_seconds)
+                self.assertGreaterEqual(result.initial_diagnostic_seconds, 0)
+                self.assertEqual(saved["result"]["initial_diagnostic_data"], responds)
+                self.assertEqual(saved["result"]["initial_diagnostic_seconds"],
+                                 result.initial_diagnostic_seconds)
 
     def test_initial_lapm_data_requires_both_directions_without_retraining(self) -> None:
         for role in ("originator", "callback"):
