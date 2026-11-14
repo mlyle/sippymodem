@@ -1078,6 +1078,7 @@ static bool exercise_retrain(
 	unsigned int transmit_rate;
 	uint32_t pending_transmit_data = 0;
 	unsigned int completion_frames = 0;
+	enum modem_ec_compression compression[2];
 	int pending_transmit_bits = 0;
 	int pending_transmit_chars = 0;
 	bool interrupt_exchange = id == DP_V92 && !raw_transport;
@@ -1089,6 +1090,8 @@ static bool exercise_retrain(
 	if (caller == NULL || answerer == NULL || initiator == NULL ||
 	    sequence >= ARRAY_LENGTH(caller_payloads))
 		return false;
+	compression[0] = modem_ec_active_compression(caller->modem);
+	compression[1] = modem_ec_active_compression(answerer->modem);
 	peer = initiator == caller ? answerer : caller;
 	if (initiator->modem->dp == NULL ||
 	    initiator->modem->dp->op == NULL || peer->modem->dp == NULL ||
@@ -1319,6 +1322,11 @@ static bool exercise_retrain(
 			answerer->modem->dp != NULL ? answerer->modem->dp->status : 0,
 			caller->modem->state, answerer->modem->state,
 			caller->output_count, answerer->output_count);
+		return false;
+	}
+	if (modem_ec_active_compression(caller->modem) != compression[0] ||
+	    modem_ec_active_compression(answerer->modem) != compression[1]) {
+		fprintf(stderr, "full retrain changed negotiated compression\n");
 		return false;
 	}
 	if (id == DP_V92 && !output_contains(initiator, "Upstream: PCM\r\n")) {
@@ -1682,8 +1690,10 @@ static bool exercise_v92_rate_exchange(
 		for (unsigned side = 0; side < 2; ++side) {
 			struct modem *m = endpoints[side]->modem;
 			frame_t *tx = m->packer.hdlc.tx_frame;
+			/* count == size still owns the FCS: HDLC clears tx_frame
+			 * only after appending it to the serializer. */
 			CHECK(m->ec.lapm.va != m->ec.lapm.vs && tx != NULL &&
-			      (tx->buf[1] & 1u) == 0 && tx->count > 0 && tx->count < tx->size &&
+			      (tx->buf[1] & 1u) == 0 && tx->count > 0 && tx->count <= tx->size &&
 			      endpoints[side]->output_count < PAYLOAD,
 			      "side %u has no outstanding partial LAPM frame", side);
 			retained[side] = m->ec.lapm;
@@ -3146,29 +3156,28 @@ static bool run_media_call(
 		CHECK(caller.modem->cfg.ec == !test_case->raw_transport &&
 		      answerer.modem->cfg.ec == !test_case->raw_transport,
 		      "%s did not retain its requested transport", test_case->name);
-		CHECK(exercise_retrain(
-				      &caller, &answerer, &answerer, connected_id,
-				      quality_rate ? quality_rate : test_case->answerer_rx_rate,
-				      codec, &recorder,
-				      &caller_delay,
-				      test_case->caller_delay_frames, 0,
+		/* V.44 keeps one compression history through four full retrains,
+		 * reversing the initiator order after the first pair. */
+		unsigned retrains = connected_id == DP_V92 && test_case->require_v44 ? 4u : 2u;
+		for (unsigned round = 0; round < retrains; ++round) {
+			struct integration_endpoint *initiator =
+				round == 0 || round == 3 ? &answerer : &caller;
+			unsigned bit_rate = initiator == &caller ?
+				test_case->caller_rx_rate : test_case->answerer_rx_rate;
+
+			CHECK(exercise_retrain(
+				      &caller, &answerer, initiator, connected_id,
+				      quality_rate ? quality_rate : bit_rate,
+				      codec, &recorder, &caller_delay,
+				      test_case->caller_delay_frames, round & 1u,
 				      test_case->raw_transport,
-				      test_case->id == DP_V22BIS &&
-					      test_case->raw_transport &&
-					      codec == MEDIA_CODEC_PCMU,
-				      false, -1),
-		      "%s answerer retrain did not reconnect and pass data",
-		      test_case->name);
-		CHECK(exercise_retrain(
-				      &caller, &answerer, &caller, connected_id,
-				      quality_rate ? quality_rate : test_case->caller_rx_rate,
-				      codec, &recorder,
-				      &caller_delay,
-				      test_case->caller_delay_frames, 1,
-				      test_case->raw_transport, false,
-				      test_case->id == DP_V22BIS, -1),
-		      "%s caller retrain did not reconnect and pass data",
-		      test_case->name);
+				      round == 0 && test_case->id == DP_V22BIS &&
+					      test_case->raw_transport && codec == MEDIA_CODEC_PCMU,
+				      round == 1 && test_case->id == DP_V22BIS, -1),
+			      "%s retrain %u by %s did not reconnect and pass data",
+			      test_case->name, round + 1,
+			      initiator == &caller ? "caller" : "answerer");
+		}
 		/* An eager peer can begin its reciprocal S1 after the stable 20 ms
 		 * prefix, while our complete 100 ms S1 is still in flight. */
 		if (test_case->id == DP_V22BIS)
@@ -6537,6 +6546,41 @@ int main(void)
 			.requires_exact_g711 = true,
 			.require_lapm = true,
 			.require_v44 = true,
+			.digital_caller = true,
+		},
+		{
+			.id = DP_V92,
+			.name = "V.92 52000/36000 PCM duplex V.44 rate exchange and retrain",
+			.cleardown_initiators = 1u,
+			.selection_command =
+				"AT+MS=92,0,52000,52000+V92Q=0+V92U=1,36000+DS=3,2\r",
+			.caller_tx_rate = 36000,
+			.caller_rx_rate = 52000,
+			.answerer_tx_rate = 52000,
+			.answerer_rx_rate = 36000,
+			.training_frame_limit = 2500,
+			.requires_v8 = true,
+			.requires_exact_g711 = true,
+			.require_lapm = true,
+			.require_v44 = true,
+			.test_retrain = true,
+		},
+		{
+			.id = DP_V92,
+			.name = "V.92 52000/36000 PCM duplex V.44 rate exchange and retrain with digital caller",
+			.cleardown_initiators = 1u,
+			.selection_command =
+				"AT+MS=92,0,52000,52000+V92Q=0+V92U=1,36000+DS=3,2\r",
+			.caller_tx_rate = 52000,
+			.caller_rx_rate = 36000,
+			.answerer_tx_rate = 36000,
+			.answerer_rx_rate = 52000,
+			.training_frame_limit = 2500,
+			.requires_v8 = true,
+			.requires_exact_g711 = true,
+			.require_lapm = true,
+			.require_v44 = true,
+			.test_retrain = true,
 			.digital_caller = true,
 		},
 		{
