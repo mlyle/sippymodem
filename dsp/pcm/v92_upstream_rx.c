@@ -101,7 +101,8 @@ static enum v92_upstream_rx_result sample(
 		.in_phase = next->line.polarity > 0 ?
 			input_sample : -(double)input_sample,
 	};
-	if (qam_equalizer_push(
+	/* The receive owner already validated the FIR before this sample. */
+	if (qam_equalizer_push_owned(
 		    &next->line.equalizer, &input, &output, &ready) !=
 		    QAM_EQUALIZER_OK ||
 	    !ready)

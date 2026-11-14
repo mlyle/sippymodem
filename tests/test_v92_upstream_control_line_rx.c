@@ -8,6 +8,7 @@
 #include "v92_phase4_record_fixture.h"
 
 #include <float.h>
+#include <math.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -266,6 +267,33 @@ static bool receive_sample(
 
 static bool check_digital_failures(const struct v92_phase4_digital_rx *receiver)
 {
+	/* Both stages own the shared FIR. Reject corrupt geometry or taps before
+	 * an owned push can consume input, including the control-stage handoff. */
+	for (unsigned fault = 0; fault < 4; ++fault) {
+		struct v92_phase4_digital_rx rejected = *receiver;
+		struct qam_equalizer *equalizer =
+			rejected.stage == V92_PHASE4_DIGITAL_RX_TRN2U ?
+			&rejected.signal.trn2u.equalizer :
+			&rejected.signal.control.signal.line.equalizer;
+		struct v92_control_event event = { .type = V92_CONTROL_EVENT_CPU };
+		struct v92_control_event before = event;
+
+		if (fault == 0)
+			equalizer->tap_count = 0;
+		else if (fault == 1)
+			equalizer->tap_count = QAM_EQUALIZER_MAX_TAP_COUNT + 1u;
+		else if (fault == 2)
+			equalizer->coefficients[0].in_phase = NAN;
+		else
+			equalizer->history[0].in_phase = NAN;
+		struct v92_phase4_digital_rx saved = rejected;
+
+		CHECK(v92_phase4_digital_rx_sample(&rejected, 1234, &event) ==
+			V92_PHASE4_DIGITAL_RX_INVALID_STATE &&
+		      memcmp(&rejected, &saved, sizeof(saved)) == 0 &&
+		      memcmp(&event, &before, sizeof(event)) == 0,
+		      "invalid FIR consumed input stage=%u fault=%u", receiver->stage, fault);
+	}
 	for (unsigned fault = 0u; fault < 4u; ++fault) {
 		struct v92_phase4_digital_rx rejected = *receiver;
 		struct v92_control_event event = { .type = V92_CONTROL_EVENT_CPU };

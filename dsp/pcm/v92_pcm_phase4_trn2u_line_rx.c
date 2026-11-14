@@ -318,7 +318,8 @@ static enum v92_pcm_phase4_trn2u_line_rx_result sample(
 	input = (struct qam_point){
 		.in_phase = next->polarity > 0 ? input_sample : -(double)input_sample,
 	};
-	if (qam_equalizer_push(
+	/* The receive owner already validated the FIR before this sample. */
+	if (qam_equalizer_push_owned(
 		    &next->equalizer, &input, &output, &ready) !=
 		    QAM_EQUALIZER_OK ||
 	    !ready)
