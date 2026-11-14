@@ -78,7 +78,7 @@ static inline uint32_t sample_pair_wrapped_distance_s16(
 }
 
 /* Round an already-scaled sample, rejecting nonfinite or clipping inputs.
- * Check before lround so conversion is defined even with a 32-bit long.
+ * Bound the input before truncating it to a signed 32-bit integer.
  * Ties go away from zero, independently of the active rounding mode.
  * Rejection leaves the destination unchanged. */
 static inline bool sample_round_checked_s16(double value, int16_t *sample)
@@ -86,7 +86,11 @@ static inline bool sample_round_checked_s16(double value, int16_t *sample)
 	if (sample == NULL ||
 	    !(value > INT16_MIN - 0.5 && value < INT16_MAX + 0.5))
 		return false;
-	*sample = (int16_t)lround(value);
+	int32_t whole = (int32_t)value;
+	/* This bounded subtraction is exact in every rounding mode. */
+	double remainder = value - whole;
+
+	*sample = (int16_t)(whole + (remainder >= 0.5) - (remainder <= -0.5));
 	return true;
 }
 
