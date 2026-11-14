@@ -1889,3 +1889,77 @@ Use these bounds to reject incomplete constellation objectives. They do not
 qualify uncertain signalling models, stateful learned filters, continuous gain
 uncertainty, native finite traceback, actual channel noise or physical interop.
 No safe rate, BER, shorter decoder delay or negotiation change follows.
+
+## Screen level banks with both event bounds and the native receiver
+
+Complete-event separation is a useful design constraint, but maximizing one
+separation measure is insufficient. A bounded 36k study compared the current
+linear bank against 260 cubic banks per law. Keep the 54-bit modulus capacity,
+identity prefilter and 16-state coder; normalize every candidate from its actual
+48-frame B1u waveform and round-trip its native CPd record. Admit candidates
+only when actual scaled B1u energy and the equal-weight per-interval signed
+alphabet mean square are no larger than the baseline. The latter is a declared
+power comparison, not a normative power or payload-distribution proof.
+
+For positive index `i=0..15`, let `x=2*i+1`. Generate the family by rounding
+`P*x*(4*31^2+s*x^2)/((s+4)*31^3)` to the nearest positive integer, with
+`P` in `{8192,12000,20000,30000}` and integer `s=0..64`. Include the exact
+current bank separately. At LU 4096 the retained candidate has `P=20000`,
+`s=2` and native gain field F=27. Its B1u energy is 9,339,177,147 versus
+9,792,004,992, its alphabet mean square is 15,624,841.9375 versus 16,491,472,
+and its peak sample increases from 7,564 to 8,437. These are different power
+and peak constraints; the larger peak remains a qualification cost.
+
+The objective is the minimum complete-event bounded-noise radius over three
+separate known shared gains, `63/64`, `1`, and `65/64`, and transparent or any
+one known one-in-six robbed phase. It does not combine independently uncertain
+channel explanations or certify the continuous interval between gain samples.
+Using the pre-codec floor/G.711 model from the preceding section gives:
+
+| Law | Current bank | Candidate bank |
+| --- | --- | --- |
+| mu-law | 119, open | 164, open |
+| A-law | 116.6875, closed | 168.640625, closed |
+
+The search rejects 110 candidates by power and bounds 405 by a single tested
+channel that cannot beat the incumbent. Independent branch construction,
+clipped potentials, threshold reachability and fully remerging native source
+pairs check the finalists, all pruned banks and three earlier incumbents.
+All 660 retained certificates were reread; host and Pi agree on their native
+source witnesses. This establishes the result within the declared finite
+family and channel models, rather than a global constellation optimum.
+Normalizing the same positive table with the 32-state coder instead gives
+F=28 and exceeds both comparison budgets. Recheck power for every coder.
+
+The native receiver supplies a counterexample to selecting the candidate
+universally. For each law and noise peak, use sixteen predeclared deterministic
+payload/noise seeds, clean B1u, and bounded noise introduced after eight payload
+frames. Check all 400 payload frames exactly. The direct raw-constellation
+path starts at a valid first-B1u handoff, receives actual wire octets, and gives:
+
+| Noise peak | Law | Current exact-payload passes | Candidate passes |
+| --- | --- | --- | --- |
+| 192 | mu-law | 7/16 | 15/16 |
+| 192 | A-law | 16/16 | 15/16 |
+| 224 | mu-law | 0/16 | 0/16 |
+| 224 | A-law | 10/16 | 0/16 |
+
+Both banks pass all sixteen cases at noise peak 160 in both laws. The separate
+E2u/filter-output fixture also regresses at A-law peak 224, from 9/16 to 0/16;
+its mu-law peak-192 results are 11/16 and 15/16. Keep these receive paths
+separate. The raw fixture does not qualify E2u alignment. Noise rounding in
+these fixtures uses the existing nearest-integer quantizer; the event bound
+uses floor. These case counts are neither BER estimates nor field call rates.
+
+A companion complete-event distance check in squared decoded G.711 units does
+not explain away the A-law failure: at unity gain its transparent distance rises
+from 262,144 to 495,616, and its worst known robbed-phase distance from 131,072 to 437,248.
+For mu-law those pairs are 589,824 to 518,400 and 507,904 to 512,704. Neither
+this metric nor the bounded-noise radius alone predicts the implemented
+receiver's response to noise introduced after training. The failures do not
+by themselves identify a traceback, acquisition or decision-metric bug.
+
+Retain the current selector. Any proposed replacement must also qualify actual
+receiver coordinates, training uncertainty, transient noise, physical gain and
+peak headroom. No default, wire timing, admission threshold or physical-call
+grade changes follow from this study.
