@@ -1503,3 +1503,52 @@ coding epoch. Joint sequence inference can use stronger information than
 this per-symbol union, but needs its own qualified contract. Keep the research
 support adapter's rejection of conditioned fits until this boundary is qualified.
 Production selection remains unchanged.
+
+## Share unknown gain across a complete observation sequence
+
+A union over the allowed gain for each symbol discards information when one
+unknown gain actually applies throughout a sequence. Competing candidate
+sequences may still use different gains; each explanation must keep its own
+gain consistent across all positions. Known additive estimates and the known
+robbed-position pattern remain shared between explanations.
+
+For the same synthetic observation `G711(floor(g*s_i + e_i + n_i))`, a positive
+source `s_i`, raw integer codec preimage `[L,U]` and real noise bound `R` give:
+
+```
+(L - e_i - R) / s_i <= g < (U + 1 - e_i + R) / s_i
+```
+
+Intersect the gain constraints across positions, preserving their open and
+closed endpoints; negative sources reverse the inequality and endpoints.
+A candidate needs one admissible gain for the complete observed wire vector.
+This is a sequence contract, not permission to reuse a fitted point gain as
+though it were exact for all alternatives.
+
+For example, with intact PCMU or PCMA, zero estimate and noise, and gain in
+`[15/16,17/16]`, the individual symbols 13500 and 14900 have overlapping wire
+supports. Yet the two-symbol words `(13500,14900)` and `(14900,13500)` have
+disjoint supports under a constant gain. In contrast, a word and its exact
+1.04-scaled copy can coincide using gains 1.04 and 1. Joint inference does not
+resolve arbitrary scale ambiguity. Repeating the same pair three times adds
+no worst-case separation in the repeated-coordinate controls.
+
+Exact gain-cell enumeration and an independent inverse-cell interval search
+agree on 636 selected two- and six-symbol comparisons. They cover both laws,
+known intact, one-of-six robbed and all-robbed patterns, both forced bit
+values, zero or alternating additive estimates, and residual bounds 0 and 8.
+In 128 comparisons a marginal collision disappears under the constant-gain
+constraint. These counts describe selected examples, not alphabet capacity,
+V.92 codebooks, BER or achievable rates. They do not model precoder/filter
+memory or establish an actual channel's gain stability.
+
+Host and Pi results and witnesses agree. Checks include 131072 native codec
+inputs, 4448 native witness observations, 4072 strict-boundary controls and
+216 repeated-pair controls; sanitized codec enumeration agrees too. Explicit
+native counterexamples restore an alias when gain may drift between symbols,
+even though every gain remains inside the declared interval. A future decoder
+must therefore retain a qualified shared-gain or gain-drift constraint with its
+coding, filtering and conditioning epoch, including in traceback alternatives.
+Do not infer that contract merely from an immutable training fit. Keep declining
+conditioned fits at the existing publication boundary; production selection
+remains unchanged.
