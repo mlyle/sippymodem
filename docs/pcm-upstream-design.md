@@ -1317,3 +1317,51 @@ measurements, excluding fitting, geometry construction and driver I/O; they
 do not establish whole-packet or live training deadlines. Physical binding,
 native coding/B1 admission and CPd promotion remain unqualified. The prototype
 does not change production selection or live rates.
+
+## Bind training rows without conflating the three clocks
+
+The native TRN2u receiver's reference runs ten symbols ahead of its delayed
+training decisions. The channel model's causal 31-tap FIR independently has a
+fifteen-sample centre. Keep both offsets separate from the physical receive
+clock used to label robbed-bit positions. A delayed decision target is not the
+source waveform for the incoming sample.
+
+A private native adapter copies the current training generator by value,
+including its coding history and differential sign. If its next physical
+source symbol is `S[n]`, a row at physical clock `T+r` carries `S[n+15+r]`.
+Thirty unobserved prefix rows fill the model FIR. The fifteen-symbol source
+lead cancels that FIR's centre; the observation's phase remains `(T+r)%6`.
+Consequently this bound support consumer applies no additional mask-phase
+shift. The preceding causal-source fixtures still use a fifteen-sample shift;
+changing the generic consumer globally would confuse the two representations.
+
+Check each accepted native input against the copied coding state and physical
+and receiver counters. Erasures advance both clocks without supplying fit
+coverage. Require fifteen actual trailing training inputs to witness the final
+source lookahead; at closure the source and native generator states agree.
+A short Ru/TRN2u exchange cannot manufacture these observations. Preserve the
+preceding receive plan when the actual exchange cannot qualify a new model.
+Fence publication and late support use with the live call, coding, model and
+physical-binding stamps and fitter generation. Current discontinuities cancel
+the job; stale requests leave the current owner intact. The capture owner uses
+128 bytes and retains no receiver or fitter pointers.
+
+Host and Pi checks cover 64 positive native training cases: both codec laws,
+four/eight-point alphabets, both initial signs, all six physical phases,
+concealed inputs, and collection restarted after already accepted training.
+The declared channel survives every positive fit. Both corrupted held groups
+are withheld under both laws. Four-point native Ru handoffs under both laws
+withhold a fresh fit at the short boundary and retain coding when training
+continues sufficiently. These checks are not full SIP or E2u exchanges.
+The matrix verifies 62,968 rows, 57,200 observed support cells, 16 lifecycle
+cases and 192 source/support alias boundaries. Using delayed decision targets
+mislabels 51,524 rows; adding the FIR centre again changes 813,688 signed
+support cells. These are alignment diagnostics, not BER measurements.
+The complete native source closure passes ASan/UBSan and Memcheck, and the Pi
+reproduces the host results with verified source hashes.
+
+Actual call-owner and RTP/source integration, qualified host-conditioning and
+echo-error bounds, physical-capture validation, native coding/B1 admission,
+CPd promotion and live scheduling remain required. The prototype supplies a
+native clock witness; identity fields alone cannot establish those remaining
+facts. Production selection and live rates remain unchanged.
