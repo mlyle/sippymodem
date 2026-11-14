@@ -2106,9 +2106,19 @@ static bool check_channel_plan(
 		if (work->receiver.line.received_frames >= V92_B1U_ACQUISITION_FRAMES)
 			CHECK(memory_region_is_zero(&work->receiver.model.seed, sizeof(work->receiver.model.seed)),
 			      "acquisition seed survived into held-out B1u");
-		if (work->receiver.line.received_frames <= V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES)
-			CHECK(memory_region_is_zero(&work->receiver.line.tracking, sizeof(work->receiver.line.tracking)),
-			      "DC tracking changed independent B1u");
+		if (work->receiver.line.received_frames > V92_B1U_ACQUISITION_FRAMES &&
+		    work->receiver.line.received_frames <= V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
+			CHECK(work->receiver.line.residual.offset == trained.residual.offset &&
+			      work->receiver.line.residual.count == trained.residual.count &&
+			      memcmp(work->receiver.line.residual.coefficient, trained.residual.coefficient,
+				     sizeof(trained.residual.coefficient)) == 0 &&
+			      memcmp(work->receiver.line.residual.delay, trained.residual.delay,
+				     sizeof(trained.residual.delay)) == 0,
+			      "held-out tracking refitted the physical inverse");
+			CHECK(fabs(work->receiver.line.tracking.bias) <=
+			      V92_DATA_MAX_RMS_ERROR * work->receiver.line.host.gain / 2.,
+			      "held-out tracking exceeded its physical bound");
+		}
 		if (frame.bit_count == 0u || frame.b1u)
 			continue;
 		payload(expected, mapping.data_bits_per_frame, delivered);
@@ -4939,8 +4949,120 @@ static bool test_raw_b1_echo(void)
 	return true;
 }
 
+/* Settling channel DC after acquisition must not turn validation into a
+ * second known-symbol fit. Encode independent B1 words, then introduce drift
+ * using the transmitter clock. The two small postcursors and codec precede
+ * reception; receiver decisions never affect the supplied waveform. */
+static bool run_b1_drift(enum g711_law law, int polarity, int amplitude,
+	unsigned noise, int wrong_bit, enum v92_cpd_trellis trellis)
+{
+	struct channel channel = { .gain = 1., .law = law, .polarity = polarity };
+	struct v92_phase4_record_tx control_tx;
+	struct v92_e2u_rx control_rx;
+	struct v92_cpd_parameters cpd;
+	struct v92_pcm_mapping mapping;
+	struct v92_pcm_frame_tx tx;
+	const struct v92_upstream_plan plan = {
+		.observation = V92_PCM_FRAME_CONSTELLATION, .gain = 3.55,
+		.delay = V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY,
+	};
+	struct v92_upstream_data_rx *rx = calloc(1, sizeof(*rx));
+	CHECK(rx, "B1 drift receiver allocation");
+	CHECK(prepare_e2u_at_level(&channel, false, &control_tx, &control_rx,
+	      1096, 1096, .002, V92_CONSTELLATION_4_POINT) &&
+	      v92_cpd_direct_init(&cpd, law, 10, false) == V92_CPD_OK,
+	      "B1 drift profile");
+	cpd.trellis = trellis;
+	/* A legal linear CPd bank avoids codec aliases in the zero-drift control. */
+	for (unsigned c = 0; c < V92_CPD_MAX_CONSTELLATIONS; ++c)
+		for (unsigned i = 0; i < cpd.constellation[c].count; ++i)
+			cpd.constellation[c].positive_linear[i] = (int16_t)((2 * i + 1) * 256);
+	CHECK(v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK &&
+	      mapping.data_bits_per_frame == 54 &&
+	      v92_pcm_frame_tx_init(&tx, &mapping) == V92_PCM_FRAME_OK &&
+	      v92_upstream_data_rx_init(rx, &control_rx.signal, &mapping, &plan) ==
+	      V92_UPSTREAM_DATA_RX_OK && rx->line.delay_remaining == 0,
+	      "B1 drift initialization");
+	struct v92_b1_quality quality = {0};
+	struct v92_upstream_data_line trained = {0};
+	unsigned cursor = 0, errors = 0, delivered = 0;
+	double history[6] = {0}, peak_bias = 0.;
+	uint32_t random = 9376271;
+	for (unsigned f = 0; f < V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES; ++f) {
+		struct v92_pcm_frame encoded;
+		uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
+		memset(bits, 1, mapping.data_bits_per_frame);
+		if (wrong_bit >= 0 && f == 40) bits[wrong_bit] = 0;
+		CHECK(v92_pcm_frame_encode(&tx, bits, mapping.data_bits_per_frame, &encoded) ==
+		      V92_PCM_FRAME_OK, "B1 drift encode");
+		for (unsigned k = 0; k < V92_PCM_MAPPING_FRAME_SYMBOLS; ++k) {
+			unsigned progress = f < 24 ? 0 : f < 48 ? f - 23 : 24;
+			random = random * 1664525u + 1013904223u;
+			int perturb = noise ? (int)(random % (2 * noise + 1)) - (int)noise : 0;
+			double raw = (encoded.u[k] - .027 * history[(cursor + 2) % 6] +
+				.011 * history[cursor]) / 3.55 + 128. + (double)amplitude * progress / 24. + perturb;
+			CHECK(fabs(raw) < 32000., "B1 drift clipped");
+			history[cursor] = encoded.u[k]; cursor = (cursor + 1) % 6;
+			uint8_t code = g711_encode(law, polarity * (int16_t)lround(raw));
+			int16_t host = g711_decode(law, code);
+			struct v92_upstream_data_frame frame = {0};
+			enum v92_upstream_data_rx_result q =
+				fixture_octet_owned(rx, code, host, host, true, &frame);
+			CHECK((q == V92_UPSTREAM_DATA_RX_OK || q == V92_UPSTREAM_DATA_RX_FRAME) &&
+			      v92_upstream_data_rx_is_valid(rx), "B1 drift receive");
+			if (q != V92_UPSTREAM_DATA_RX_FRAME) continue;
+			unsigned n = (unsigned)rx->line.received_frames;
+			if (n == V92_B1U_ACQUISITION_FRAMES) trained = rx->line;
+			if (n > V92_B1U_ACQUISITION_FRAMES)
+				CHECK(!memcmp(&rx->line.calibration, &trained.calibration, sizeof(trained.calibration)) &&
+				      !memcmp(&rx->line.host, &trained.host, sizeof(trained.host)) &&
+				      rx->line.residual.offset == trained.residual.offset &&
+				      rx->line.residual.count == trained.residual.count &&
+				      !memcmp(rx->line.residual.delay, trained.residual.delay, sizeof(trained.residual.delay)) &&
+				      !memcmp(rx->line.residual.coefficient, trained.residual.coefficient,
+				              sizeof(trained.residual.coefficient)), "B1 drift refitted acquisition");
+			CHECK(v92_b1_quality_observe_owned(&quality, n, rx->line.host.gain, &frame),
+			      "B1 drift quality");
+			peak_bias = fmax(peak_bias, fabs(rx->line.tracking.bias));
+			if (n > 34 && frame.bit_count) {
+				++delivered;
+				for (unsigned bit = 0; bit < frame.bit_count; ++bit)
+					errors += frame.bits[bit] != 1;
+			}
+		}
+	}
+	bool expected = wrong_bit < 0 && abs(amplitude) <= 64;
+	CHECK(v92_b1_quality_is_ready(&quality, rx->line.received_frames) == expected,
+	      "B1 drift verdict law=%u polarity=%d drift=%d noise=%u trellis=%u wrong=%d",
+	      law, polarity, amplitude, noise, trellis, wrong_bit);
+	CHECK(peak_bias <= 32. + 1e-12 && (!expected || (!errors && delivered == 24)),
+	      "B1 drift accepted wrong or incomplete data");
+	free(rx);
+	return true;
+}
+
+static bool test_b1_drift(void)
+{
+	for (unsigned law = 0; law < 2; ++law)
+		for (int polarity = -1; polarity <= 1; polarity += 2)
+			for (unsigned trellis = 0; trellis < 3; ++trellis) {
+				for (int amplitude = -128; amplitude <= 128; amplitude += 64)
+					for (unsigned noise = 0; noise <= 16; noise += 16)
+						CHECK(run_b1_drift(law, polarity, amplitude, noise, -1, trellis),
+						      "B1 drift control failed");
+				for (int amplitude = -64; amplitude <= 64; amplitude += 64)
+					for (int bit = 0; bit < 54; ++bit)
+						CHECK(run_b1_drift(law, polarity, amplitude, 16, bit, trellis),
+						      "B1 drift concealed a wrong training bit");
+			}
+	return true;
+}
+
 int main(void)
 {
+	fprintf(stderr, "[ RUN      ] bounded decision-directed B1 drift\n");
+	if (!test_b1_drift()) return 1;
+	fprintf(stderr, "[       OK ] bounded decision-directed B1 drift\n");
 	fprintf(stderr, "[ RUN      ] PCM raw B1 echo recovery and payload continuity\n");
 	if (!test_raw_b1_echo()) return 1;
 	fprintf(stderr, "[       OK ] PCM raw B1 echo recovery and payload continuity\n");

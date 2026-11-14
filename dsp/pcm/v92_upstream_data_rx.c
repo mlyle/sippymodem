@@ -68,7 +68,7 @@ static bool tracks_bias(const struct v92_upstream_data_line *line,
 	const struct v92_upstream_model *model)
 {
 	return line->plan.observation == V92_PCM_FRAME_CONSTELLATION &&
-	       line->received_frames >= V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES &&
+	       line->received_frames >= V92_B1U_ACQUISITION_FRAMES &&
 	       line->residual.active && line->host.gain > 0. &&
 	       model->residual_variance > 0. && !model->valid && !model->scalar_gain;
 }
@@ -400,8 +400,13 @@ static void track_bias(struct v92_upstream_data_line *line,
 		line->tracking.frames = 0;
 		return;
 	}
+	/* Held-out B1u decisions need to follow settling DC within its short
+	 * window. Use the same bounded, decision-directed update as payload;
+	 * never supply the expected B1u bits to this tracker. */
+	const unsigned window = line->received_frames < V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES ?
+		1u : BIAS_WINDOW_FRAMES;
 	line->tracking.error_sum += error_sum;
-	if (++line->tracking.frames != BIAS_WINDOW_FRAMES) return;
+	if (++line->tracking.frames != window) return;
 	/* Keep the total shift below a quarter of every used signed-point gap,
 	 * and half the existing physical error ceiling. Each update moves at
 	 * most 1/16 of that bound. Never change the gain or residual inverse. */
@@ -413,7 +418,7 @@ static void track_bias(struct v92_upstream_data_line *line,
 	}
 	double bound = fmin(ceiling / 2., spacing / (4. * line->calibration.gain));
 	double step = line->tracking.error_sum /
-		(4. * BIAS_WINDOW_FRAMES * V92_PCM_MAPPING_FRAME_SYMBOLS);
+		(4. * window * V92_PCM_MAPPING_FRAME_SYMBOLS);
 	step = fmax(-bound / 16., fmin(bound / 16., step));
 	line->tracking.bias = fmax(-bound, fmin(bound, line->tracking.bias + step));
 	line->tracking.error_sum = 0.;

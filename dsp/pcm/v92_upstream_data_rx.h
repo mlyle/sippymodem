@@ -52,8 +52,9 @@ struct v92_upstream_data_line {
 		struct pcm_gain bounds;
 		double gain;
 	} host;
-	/* Slow data-only correction, separate from frozen acquisition. A window
-	 * contains only consecutive confident frames with complete wire media. */
+	/* Bounded decision-directed correction, separate from frozen acquisition.
+	 * Track each confident held-out B1u frame, then average payload windows.
+	 * Both require consecutive confident decisions and complete wire media. */
 	struct {
 		double bias, error_sum;
 		uint16_t frames;
