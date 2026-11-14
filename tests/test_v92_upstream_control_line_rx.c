@@ -293,6 +293,36 @@ static bool check_digital_failures(const struct v92_phase4_digital_rx *receiver)
 		      memcmp(&event, &before, sizeof(before)) == 0,
 		      "digital failure contract changed stage=%u fault=%u", receiver->stage, fault);
 	}
+	if (receiver->stage == V92_PHASE4_DIGITAL_RX_TRN2U) {
+		for (unsigned fault = 0; fault < 3; ++fault) {
+			struct v92_phase4_digital_rx rejected = *receiver;
+			struct v92_control_event event = { .type = V92_CONTROL_EVENT_CPU };
+			struct v92_control_event before = event;
+
+			if (fault == 0)
+				rejected.signal.trn2u.output_bias = DBL_MAX;
+			else if (fault == 1) {
+				rejected.signal.trn2u.input_samples = UINT64_MAX;
+				rejected.signal.trn2u.starting_input_samples =
+					UINT64_MAX - rejected.signal.trn2u.trained_symbols;
+			}
+			CHECK(v92_phase4_digital_rx_is_valid(&rejected),
+			      "training rollback fixture is invalid");
+			struct v92_phase4_digital_rx expected = rejected;
+
+			if (fault == 0)
+				expected.failed = true;
+			enum v92_phase4_digital_rx_result result =
+				v92_phase4_digital_rx_sample(&rejected, 1234,
+					fault == 2 ? (struct v92_control_event *)(void *)&rejected.channel : &event);
+			CHECK(result == (fault == 0 ? V92_PHASE4_DIGITAL_RX_NUMERIC_FAILURE :
+				fault == 1 ? V92_PHASE4_DIGITAL_RX_INVALID_STATE :
+				V92_PHASE4_DIGITAL_RX_INVALID_ARGUMENT) &&
+			      memcmp(&rejected, &expected, sizeof(rejected)) == 0 &&
+			      memcmp(&event, &before, sizeof(event)) == 0,
+			      "training rollback changed fault=%u", fault);
+		}
+	}
 	if (receiver->stage != V92_PHASE4_DIGITAL_RX_TRN2U &&
 	    receiver->signal.control.signal.training_tail_remaining == 0u) {
 		for (unsigned fault = 0; fault < 3; ++fault) {

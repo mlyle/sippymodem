@@ -275,11 +275,12 @@ static enum v92_pcm_phase4_trn2u_line_rx_result fail(
 	return V92_PCM_PHASE4_TRN2U_LINE_RX_NUMERIC_FAILURE;
 }
 
-enum v92_pcm_phase4_trn2u_line_rx_result
-v92_pcm_phase4_trn2u_line_rx_sample(
-	struct v92_pcm_phase4_trn2u_line_rx *receiver, int16_t sample)
+static enum v92_pcm_phase4_trn2u_line_rx_result sample(
+	struct v92_pcm_phase4_trn2u_line_rx *receiver, int16_t input_sample,
+	bool staged)
 {
-	struct v92_pcm_phase4_trn2u_line_rx next;
+	struct v92_pcm_phase4_trn2u_line_rx snapshot;
+	struct v92_pcm_phase4_trn2u_line_rx *next = receiver;
 	struct qam_point output;
 	struct qam_point input;
 	double error;
@@ -292,7 +293,8 @@ v92_pcm_phase4_trn2u_line_rx_sample(
 	int16_t raw_expected;
 	bool ready;
 
-	if (!v92_pcm_phase4_trn2u_line_rx_is_valid(receiver))
+	if (receiver == NULL ||
+	    (!staged && !v92_pcm_phase4_trn2u_line_rx_is_valid(receiver)))
 		return V92_PCM_PHASE4_TRN2U_LINE_RX_INVALID_ARGUMENT;
 	if (receiver->failed)
 		return V92_PCM_PHASE4_TRN2U_LINE_RX_FAILED;
@@ -300,61 +302,83 @@ v92_pcm_phase4_trn2u_line_rx_sample(
 	    receiver->trained_symbols ==
 		    UINT32_MAX - V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY)
 		return V92_PCM_PHASE4_TRN2U_LINE_RX_INVALID_STATE;
-	next = *receiver;
+	if (!staged) {
+		snapshot = *receiver;
+		next = &snapshot;
+	}
 	if (v92_pcm_phase4_trn2u_next(
-		    &next.reference, &raw_expected) !=
+		    &next->reference, &raw_expected) !=
 	    V92_PCM_PHASE4_TRN2U_OK)
 		return fail(receiver);
-	next_expected = g711_quantize(next.law, next.expected[next.expected_index]);
-	next.expected[next.expected_index] = raw_expected;
-	next.expected_index = (uint8_t)(
-		(next.expected_index + 1u) %
+	next_expected = g711_quantize(next->law, next->expected[next->expected_index]);
+	next->expected[next->expected_index] = raw_expected;
+	next->expected_index = (uint8_t)(
+		(next->expected_index + 1u) %
 		V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY);
 	input = (struct qam_point){
-		.in_phase = next.polarity > 0 ? sample : -(double)sample,
+		.in_phase = next->polarity > 0 ? input_sample : -(double)input_sample,
 	};
 	if (qam_equalizer_push(
-		    &next.equalizer, &input, &output, &ready) !=
+		    &next->equalizer, &input, &output, &ready) !=
 		    QAM_EQUALIZER_OK ||
 	    !ready)
 		return fail(receiver);
-	output.in_phase += next.output_bias;
+	output.in_phase += next->output_bias;
 	if (v92_phase4_demodulator_next(
-			      &next.demodulator, output.in_phase,
+			      &next->demodulator, output.in_phase,
 			      &decoded_group, &selected_level) !=
 			      V92_PHASE4_MODULATOR_OK)
 		return fail(receiver);
-	selected = g711_quantize(next.law, selected_level);
+	selected = g711_quantize(next->law, selected_level);
 	bits = v92_phase4_modulator_bits_per_symbol(
-		next.demodulator.constellation);
+		next->demodulator.constellation);
 	if (bits == 0u)
 		return fail(receiver);
 	training_group = (uint8_t)((1u << bits) - 1u);
 	error = output.in_phase - next_expected;
 	if (!isfinite(error) ||
-	    !isfinite(next.squared_error_sum + error * error))
+	    !isfinite(next->squared_error_sum + error * error))
 		return fail(receiver);
 	if (selected == next_expected) {
 		/* Retain nominal residual evidence above; only the training
 		 * gradient allows the uncertainty inherited from TRN1u's LU. */
-		if (!v92_control_adapt(&next.equalizer, next.law, &next.demodulator,
-				selected_level, next.adaptation, &next.output_bias, true))
+		if (!v92_control_adapt(&next->equalizer, next->law, &next->demodulator,
+				selected_level, next->adaptation, &next->output_bias, true))
 			return fail(receiver);
 	} else {
-		next.equalizer.can_adapt = false;
-		next.symbol_errors++;
+		next->equalizer.can_adapt = false;
+		next->symbol_errors++;
 	}
 	if (decoded_group != training_group)
-		next.coding_errors++;
-	next.squared_error_sum += error * error;
-	next.input_samples++;
-	next.trained_symbols++;
-	if (!v92_pcm_phase4_trn2u_line_rx_is_valid(&next))
-		return fail(receiver);
-	*receiver = next;
-	return v92_pcm_phase4_trn2u_line_rx_can_handoff(receiver) ?
+		next->coding_errors++;
+	next->squared_error_sum += error * error;
+	next->input_samples++;
+	next->trained_symbols++;
+	if (!staged) {
+		if (!v92_pcm_phase4_trn2u_line_rx_is_valid(next))
+			return fail(receiver);
+		*receiver = *next;
+	}
+	return next->reference.emitted_symbols >=
+			control_search_minimum(next->renegotiation) &&
+	       next->reference.emitted_symbols %
+			V92_PCM_PHASE4_TRN2U_ALIGNMENT == 0u ?
 		       V92_PCM_PHASE4_TRN2U_LINE_RX_ALIGNED :
 		       V92_PCM_PHASE4_TRN2U_LINE_RX_OK;
+}
+
+enum v92_pcm_phase4_trn2u_line_rx_result
+v92_pcm_phase4_trn2u_line_rx_sample(
+	struct v92_pcm_phase4_trn2u_line_rx *receiver, int16_t input_sample)
+{
+	return sample(receiver, input_sample, false);
+}
+
+enum v92_pcm_phase4_trn2u_line_rx_result
+v92_pcm_phase4_trn2u_line_rx_sample_owned(
+	struct v92_pcm_phase4_trn2u_line_rx *receiver, int16_t input_sample)
+{
+	return sample(receiver, input_sample, true);
 }
 
 const char *v92_pcm_phase4_trn2u_line_rx_result_name(

@@ -115,6 +115,14 @@ enum v92_pcm_phase4_trn2u_line_rx_result
 v92_pcm_phase4_trn2u_line_rx_sample(
 	struct v92_pcm_phase4_trn2u_line_rx *receiver, int16_t sample);
 
+/* Composite-owner path: receiver is a validated, unpublished local snapshot.
+ * Skip repeated entry/exit scans and its nested copy; retain counter and DSP
+ * checks. The owner validates the enclosing state before publishing success
+ * and discards the snapshot on any failure, including partial DSP progress. */
+enum v92_pcm_phase4_trn2u_line_rx_result
+v92_pcm_phase4_trn2u_line_rx_sample_owned(
+	struct v92_pcm_phase4_trn2u_line_rx *receiver, int16_t sample);
+
 const char *v92_pcm_phase4_trn2u_line_rx_result_name(
 	enum v92_pcm_phase4_trn2u_line_rx_result result);
 

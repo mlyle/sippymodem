@@ -188,7 +188,7 @@ static enum v92_phase4_digital_rx_result receive_training(
 {
 	int16_t expected = next->signal.trn2u.expected[next->signal.trn2u.expected_index];
 	enum v92_pcm_phase4_trn2u_line_rx_result result =
-		v92_pcm_phase4_trn2u_line_rx_sample(
+		v92_pcm_phase4_trn2u_line_rx_sample_owned(
 			&next->signal.trn2u, sample);
 
 	if ((result == V92_PCM_PHASE4_TRN2U_LINE_RX_OK ||

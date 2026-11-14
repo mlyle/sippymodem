@@ -237,8 +237,15 @@ static bool run_line(
 			      V92_PCM_PHASE4_TRN2U_OK,
 		      "TRN2u transmitter failed at %zu", symbol);
 		line = channel_sample(&channel, law, raw);
+		struct v92_pcm_phase4_trn2u_line_rx owned = receiver;
+		enum v92_pcm_phase4_trn2u_line_rx_result owned_result =
+			v92_pcm_phase4_trn2u_line_rx_sample_owned(&owned, line);
 		result = v92_pcm_phase4_trn2u_line_rx_sample(
 			&receiver, line);
+		CHECK(owned_result == result &&
+		      v92_pcm_phase4_trn2u_line_rx_is_valid(&owned) &&
+		      memcmp(&owned, &receiver, sizeof(owned)) == 0,
+		      "owned TRN2u snapshot differs at %zu", symbol);
 		CHECK(v92_phase4_modulator_next(
 			      &decoded_oracle,
 			      (uint8_t)((1u <<
