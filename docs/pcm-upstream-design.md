@@ -1586,3 +1586,40 @@ controls. This is a sufficient example, not a minimum training duration or
 proof under unknown gain and noise. Carry the qualified phase or surviving
 hypotheses through physical alignment and coding epochs, and verify them on
 held-out observations before freezing a phase-specific channel metric.
+
+## Expose probe bits throughout the gain interval
+
+Complementary LSBs at nominal gain need not remain complementary after channel
+gain and quantization. For example, the PCMU levels 13947 and 13435 encode as
+148 and 149 at unit gain. At gain `12668/13435`, inside `[15/16,17/16]`, their
+floored inputs 13150 and 12668 both encode as 150. Forcing zero at any robbed
+slot becomes invisible even without noise, using the same gain for both
+explanations. Nominal bit coverage alone cannot qualify an impairment probe.
+
+Consider six copies of each level as a twelve-sample probe. In the synthetic
+bounded-noise model above, with zero additive estimate, gain in
+`[63/64,65/64]` and noise in `[-64,64]`, it leaves overlapping supports among
+intact and the twelve fixed phase/forced-bit hypotheses. Repeating it to make
+24 samples preserves the ambiguity. Instead, append six copies each of 8827
+and 8315 for PCMU, or use 13055/12543 followed by 8959/8447 for PCMA. These
+selected 24-sample probes separate all thirteen hypotheses over that entire
+uncertainty range, even when competing explanations use different gains.
+They use the same nominal peak and less mean-square source energy than the
+repeated probe.
+
+This protection has bounds. Under gain in `[15/16,17/16]` and noise in
+`[-64,64]`, even the two-amplitude probes retain ambiguities. None of six
+selected third-amplitude additions removes all of them. Repetition cannot
+remove a worst-case support collision under independently bounded noise:
+repeat its witness with the same gain. That result does not describe averaging
+under a stochastic noise model.
+
+Exact forward gain-cell rectangles and separate inverse-cell intersections
+agree on 10452 comparisons in 134 selected cases. Host and Pi results and
+native witnesses agree, with explicit half-open endpoint controls. These
+physical training words do not establish legal encoder paths, minimum probe
+length, capacity, BER or the uncertainty of an actual call. Design probe
+amplitudes jointly against the qualified gain/noise range, retain surviving
+channel hypotheses, and verify the resulting metric on held-out observations.
+Existing V.91 DIL already probes every octet and both signs; its training and
+production rate selection remain unchanged.
