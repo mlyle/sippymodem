@@ -1461,3 +1461,45 @@ candidate decoding. This study does not qualify a physical echo-error bound
 or continuous-valued preprocessing. Keep declining conditioned fits at the
 existing raw-rank publication boundary until that decoder-domain contract,
 its real channel model, and its call/coding epochs are qualified together.
+
+## Bound gain uncertainty in the conditioned data alphabet
+
+Keeping the decoder's additive estimate does not make the fitted channel gain
+exact. Alternatives may use different gains inside the retained uncertainty
+bound unless the decoder jointly constrains that gain across its whole
+observation sequence. Keep the observed estimate shared; retain the permitted
+variation of quantities that remain unobserved.
+
+A scalar extension uses `G711(floor(g*s + e + n))`, with known integer `e`,
+real residual `n` bounded by `R`, and positive real gain in a declared interval.
+The floor is explicit synthetic preprocessing, not an assertion about every
+host or physical codec. For raw integer preimage `[L,U]` and candidate forward
+range `[l_s,u_s]` before adding `e`, the feasible estimate interval is:
+
+```
+L - u_s <= e < U + 1 - l_s
+```
+
+Preserve its open upper endpoint. Competing candidates collide when their
+feasible intervals share an allowed integer estimate. Native input enumeration
+agrees with this exact rational construction, and all 32 unity-gain controls
+retain the earlier study's counts.
+
+At peak 16000, estimate extent 1024 and residual bound 8, PCMU's intact
+positive-level count falls from 58 with known unity gain to 52 for uncertainty
+`+/-1/256`, then 40 for `+/-1/64`. The corresponding robbed-position counts
+are 31, 29 and 25. These are fixed symmetric scalar alphabets, not line rates
+or V.92 parameter selections.
+
+Host and Pi agree on 160 larger cases, 180 small-domain optimality checks,
+902,936 selected-pair separation checks and 4,898,780 native observations.
+Eight exact rational counterexamples show collisions after omitting or
+exceeding the gain bound; the sanitizer outputs agree. This supplies bounds
+for the experiment rather than qualifying an actual modem's estimation error.
+
+Before publishing a conditioned data alphabet, bind the correct host
+quantizer, gain and correction uncertainty to the native decoder and its
+coding epoch. Joint sequence inference can use stronger information than
+this per-symbol union, but needs its own qualified contract. Keep the research
+support adapter's rejection of conditioned fits until this boundary is qualified.
+Production selection remains unchanged.
