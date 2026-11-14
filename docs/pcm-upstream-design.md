@@ -1777,3 +1777,59 @@ unresolved signalling hypotheses and test their union on held-out data;
 training duration alone does not justify choosing one. No physical noise
 bound, BER, safe rate, shorter B1 or production negotiation change follows
 from these model-specific bounds.
+
+## Compare two robbed explanations before selecting a channel model
+
+A signalling model may fit the known training word while another robbed
+model explains the same observations with a different gain. Compare their
+complete output supports; the projection identity for intact-versus-robbed
+comparisons does not establish this pairwise result. Keep one gain per word
+in each explanation and independently bounded noise at every sample.
+
+An exact finite comparison is possible under the model above. Split each
+closed gain interval at every codec-cell boundary shifted by either noise
+endpoint and divided by each nonzero transmitted sample. Include every cut
+and one interior point between consecutive cuts. Every sample's possible
+codeword set stays constant within each open interval. The Cartesian product
+of these representatives therefore covers both independently chosen gains,
+including endpoint-only intersections. Apply each fixed signalling overwrite
+to its codeword sets and intersect the resulting supports at every sample.
+
+The selected 576-sample native B1 words use the 16-state trellis and upstream
+level 4096. Across both laws, 36k/40k, both gain intervals and noise bounds
+0, 8 and 32, all 4656 pairs of the 97 hypotheses were checked in each of
+24 cases. The 96 robbed hypotheses cover all six phases of all sixteen
+four-bit patterns. Different patterns at the same robbed phase cannot agree:
+they force different observed bits at a position present in the word.
+
+For the selected PCMU words, bracket the first collision between two robbed
+models. Entries are `L / U` in signed 16-bit PCM input units: no pair collides
+at or below `L`, and a constructive collision exists at `U`. Every gap is
+`1/256` unit; both gain ranges are closed.
+
+| Native word | Gain `[63/64,65/64]`: L / U | Gain `[15/16,17/16]`: L / U |
+| --- | --- | --- |
+| PCMU 36k | 66.67578125 / 66.6796875 | 56.44921875 / 56.453125 |
+| PCMU 40k | 10.46484375 / 10.46875 | 0.26171875 / 0.265625 |
+
+The two comparison questions have different answers. At noise bound 32,
+the selected PCMU 36k word has eight intact-versus-robbed ambiguities in
+each gain range but no ambiguity between two robbed models. The selected
+PCMU 40k word has 774 ambiguous robbed-model pairs in each gain range;
+a common-gain restriction finds only 771. Equal-gain witnesses happen to
+attain the first-collision brackets above, but that does not make an
+equal-gain comparison complete at other uncertainty bounds.
+
+Host and Pi agree exactly. Direct wire-word hashing checks every pair in
+eight additional noiseless native-prefix cases. Separate Cartesian support
+enumeration checks 52 selected noisy or endpoint pair cases; native codec
+witnesses also verify the six independent-gain-only pair instances and the
+four bracket endpoints. These checks share qualified native waveforms and
+codec definitions, not an independent standards encoder. The reviewed native
+generator inputs still match the current encoder.
+
+These are known-word support bounds, not payload-distance, BER or physical
+noise measurements. They support carrying every unresolved channel explanation
+into held-out decisions, rather than selecting one because training is long.
+They do not establish a safe rate, shorter B1 or a codec ranking, and change
+no production negotiation policy.
