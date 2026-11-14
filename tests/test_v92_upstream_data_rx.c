@@ -1931,6 +1931,8 @@ static bool check_channel_plan(
 		     V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
 		int16_t sample;
 		struct v92_upstream_data_frame frame;
+		/* Compare defined bytes even while the decoder buffers a frame. */
+		memset(&frame, 0xa5, sizeof(frame));
 
 		bool injected = false;
 		if (fault == CHANNEL_WRONG_B1 && transmitter.b1u_symbols_remaining == V92_PCM_MAPPING_FRAME_SYMBOLS &&
@@ -1997,7 +1999,7 @@ static bool check_channel_plan(
 			work->owned = work->receiver;
 			struct v92_upstream_data_frame output;
 
-			memset(&frame, 0xa5, sizeof(frame)); output = frame;
+			memcpy(&output, &frame, sizeof(output));
 			bool available = fault != CHANNEL_LOSS || work->receiver.line.received_frames != 20u;
 			result = fixture_octet(&work->receiver, channel.code, input, available, &frame);
 			CHECK(fixture_octet_owned(&work->owned, channel.code, input, input,
