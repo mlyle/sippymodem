@@ -489,6 +489,20 @@ static bool online_lapm_progress(void)
 		modem->state = states[i];
 		EXPECT(modem_ec_protocol_step(modem) == NULL);
 		EXPECT(strcmp(modem_protocol_step(modem), report_progress) == 0);
+		modem->ec.lapm.accept_sabme_retry = true;
+		EXPECT(strcmp(modem_protocol_step(modem), report_progress) == 0);
+		modem->ec.lapm.initial_sabme_retries = 1;
+		struct lapm_state saved_link;
+		memcpy(&saved_link, &modem->ec.lapm, sizeof(saved_link));
+		EXPECT(strcmp(modem_protocol_step(modem), "LAPM/repeated-peer-SABME") == 0);
+		struct modem_progress establishing;
+		modem_get_progress(modem, &establishing);
+		EXPECT(establishing.link_waiting &&
+		       strstr(establishing.step, "LAPM/repeated-peer-SABME") != NULL &&
+		       memcmp(&saved_link, &modem->ec.lapm, sizeof(saved_link)) == 0);
+		modem->ec.lapm.accept_sabme_retry = false;
+		EXPECT(strcmp(modem_protocol_step(modem), report_progress) == 0);
+		modem->ec.lapm.accept_sabme_retry = true;
 		modem->ec.lapm.rtx_count = 1;
 		EXPECT(strcmp(modem_protocol_step(modem), "LAPM/status-enquiry") == 0);
 		modem->ec.lapm.retrain_poll = 1;
@@ -520,6 +534,8 @@ static bool online_lapm_progress(void)
 		datapump.status = DPSTAT_CONNECT;
 		snprintf(report_progress, sizeof(report_progress), "data/PCM-both-directions");
 		modem->ec.lapm.peer_busy = modem->ec.lapm.rtx_count = modem->ec.lapm.retrain_poll = 0;
+		modem->ec.lapm.accept_sabme_retry = false;
+		modem->ec.lapm.initial_sabme_retries = 0;
 		EXPECT(strcmp(modem_protocol_step(modem), report_progress) == 0);
 	}
 	struct modem_progress progress;

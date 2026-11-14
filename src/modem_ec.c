@@ -274,6 +274,10 @@ const char *modem_ec_protocol_step(const struct modem *m)
 		if (m->ec.lapm.rtx_count)
 			return m->ec.lapm.retrain_poll ?
 				"LAPM/link-verification" : "LAPM/status-enquiry";
+		/* Local DATA follows our UA, but repeated peer SABME means the
+		 * peer has not completed establishment. Do not label it idle data. */
+		if (m->ec.lapm.accept_sabme_retry && m->ec.lapm.initial_sabme_retries)
+			return "LAPM/repeated-peer-SABME";
 		return NULL;
 	default: return NULL;
 	}
