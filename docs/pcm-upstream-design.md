@@ -1552,3 +1552,37 @@ coding, filtering and conditioning epoch, including in traceback alternatives.
 Do not infer that contract merely from an immutable training fit. Keep declining
 conditioned fits at the existing publication boundary; production selection
 remains unchanged.
+
+## Qualify robbed-bit phase before using a phase-specific metric
+
+A fixed one-in-six robbed-bit channel is a shared channel parameter. If its
+phase is unknown, complete competing explanations can use different fixed
+phases, just as they can use different gains inside the qualified gain
+interval. Requiring both alternatives to use the true phase assumes that
+training has already identified it. Allowing a fresh phase at every symbol
+would instead describe a different, stronger impairment.
+
+A simple native-code example needs no gain or noise uncertainty. Under PCMU,
+levels 13947 and 13435 encode as 148 and 149. Consider six-symbol words with
+level 13435 only at position zero or only at position one, and 13947 elsewhere.
+For every common fixed robbed position they remain distinguishable. If each
+explanation chooses its own position, forcing the LSB to zero there makes
+both observations six copies of code 148. PCMA has the analogous code
+188/189 example. These physical level words are not asserted to be legal
+complete V.90/V.92 encoder paths.
+
+Exact forward gain-cell enumeration and separate inverse-cell intersections
+agree on 6912 phase-pair comparisons in 192 selected cases. Permitting unknown
+phase introduces 64 additional ambiguities. Choosing levels from different
+LSB pairs protects the unit-gain examples but loses that protection in some
+cases with gain uncertainty. Neither result establishes a codebook capacity,
+a line rate, or an error probability.
+
+Known training can identify phase, but it must expose the impairment. At unit
+gain with no additive uncertainty, one six-symbol probe leaves six of the
+12 phase/forced-bit hypotheses producing unchanged output. A second probe
+with complementary LSBs distinguishes all 12 in the selected native-code
+controls. This is a sufficient example, not a minimum training duration or
+proof under unknown gain and noise. Carry the qualified phase or surviving
+hypotheses through physical alignment and coding epochs, and verify them on
+held-out observations before freezing a phase-specific channel metric.
