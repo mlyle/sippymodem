@@ -3,7 +3,6 @@
 #include "framing.h"
 
 #include "memory_region.h"
-#include "self_sync_scrambler.h"
 
 #include <stddef.h>
 
@@ -20,22 +19,19 @@ scrambler_config(enum v32_transmitter_role role)
 bool v32_scrambler_is_valid(
 	const struct v32_scrambler *scrambler)
 {
-	struct self_sync_scrambler shared;
-
-	if (scrambler == NULL)
-		return false;
-	shared.history = scrambler->history;
-	return self_sync_scrambler_is_valid(
-		&shared, scrambler_config(scrambler->transmitter_role));
+	return scrambler != NULL && self_sync_scrambler_is_valid(
+		&scrambler->feedback, scrambler_config(scrambler->transmitter_role));
 }
 
 enum v32_framing_result v32_scrambler_init(
 	struct v32_scrambler *scrambler,
 	enum v32_transmitter_role transmitter_role)
 {
-	if (scrambler == NULL || scrambler_config(transmitter_role) == NULL)
+	if (scrambler == NULL ||
+	    self_sync_scrambler_init(
+		    &scrambler->feedback, scrambler_config(transmitter_role)) !=
+		    SELF_SYNC_SCRAMBLER_OK)
 		return V32_FRAMING_INVALID_ARGUMENT;
-	scrambler->history = 0;
 	scrambler->transmitter_role = transmitter_role;
 	return V32_FRAMING_OK;
 }
@@ -44,27 +40,21 @@ static enum v32_framing_result transform_group(
 	struct v32_scrambler *state, uint8_t input,
 	unsigned int bit_count, uint8_t *output, bool descramble)
 {
-	struct self_sync_scrambler shared;
 	const struct self_sync_scrambler_config *config;
 	enum self_sync_scrambler_result result;
-	uint8_t transformed;
 
 	if (state == NULL || output == NULL ||
 	    memory_regions_overlap(state, sizeof(*state), output, sizeof(*output)))
 		return V32_FRAMING_INVALID_ARGUMENT;
-	shared.history = state->history;
 	config = scrambler_config(state->transmitter_role);
 	if (descramble)
 		result = self_sync_descramble_group(
-			&shared, config, input, bit_count, &transformed);
+			&state->feedback, config, input, bit_count, output);
 	else
 		result = self_sync_scramble_group(
-			&shared, config, input, bit_count, &transformed);
-	if (result != SELF_SYNC_SCRAMBLER_OK)
-		return V32_FRAMING_INVALID_ARGUMENT;
-	state->history = shared.history;
-	*output = transformed;
-	return V32_FRAMING_OK;
+			&state->feedback, config, input, bit_count, output);
+	return result == SELF_SYNC_SCRAMBLER_OK ?
+		V32_FRAMING_OK : V32_FRAMING_INVALID_ARGUMENT;
 }
 
 enum v32_framing_result v32_scramble_dibit(

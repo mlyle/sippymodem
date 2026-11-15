@@ -41,7 +41,7 @@ bool v32_conditioning_transmitter_is_valid(
 		    &transmitter->trn_encoder.scrambler))
 		return false;
 	if (transmitter->emitted_symbols <= V32_CONDITIONING_FIXED_SYMBOLS)
-		return transmitter->trn_encoder.scrambler.history == 0 &&
+		return transmitter->trn_encoder.scrambler.feedback.history == 0 &&
 		       transmitter->trn_encoder.phase_quadrant == V32_SIGNAL_A;
 	return true;
 }

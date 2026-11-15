@@ -264,8 +264,8 @@ static bool run_generated_role(
 	      role, retained);
 	CHECK(handoff.decoder.phase_quadrant ==
 		      expected_decoder.phase_quadrant &&
-	      handoff.decoder.descrambler.history ==
-		      expected_decoder.descrambler.history &&
+	      handoff.decoder.descrambler.feedback.history ==
+		      expected_decoder.descrambler.feedback.history &&
 	      handoff.decoder.descrambler.transmitter_role ==
 		      expected_decoder.descrambler.transmitter_role,
 	      "generated conditioning framing changed for role %d/%d",

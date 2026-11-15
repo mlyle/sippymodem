@@ -4,6 +4,7 @@
 #define V32_FRAMING_H
 
 #include "differential_qpsk.h"
+#include "self_sync_scrambler.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -29,7 +30,7 @@ enum v32_framing_result {
 };
 
 struct v32_scrambler {
-	uint32_t history;
+	struct self_sync_scrambler feedback;
 	enum v32_transmitter_role transmitter_role;
 };
 

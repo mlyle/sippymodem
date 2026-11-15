@@ -54,7 +54,7 @@ static bool scramblers_match(
 	const struct v32_scrambler *first,
 	const struct v32_scrambler *second)
 {
-	return first->history == second->history &&
+	return first->feedback.history == second->feedback.history &&
 	       first->transmitter_role == second->transmitter_role;
 }
 
@@ -91,8 +91,8 @@ static bool make_prior_framing(
 		      output == input,
 		      "prior framing for role %u diverged at %zu", role, index);
 	}
-	CHECK(encoder->scrambler.history != 0 &&
-	      encoder->scrambler.history == decoder->descrambler.history,
+	CHECK(encoder->scrambler.feedback.history != 0 &&
+	      encoder->scrambler.feedback.history == decoder->descrambler.feedback.history,
 	      "prior framing for role %u did not leave continuous history",
 	      role);
 	return true;
@@ -292,7 +292,7 @@ static bool test_contracts(uint8_t bits_per_symbol)
 	CHECK(v32_symbol_decoder_init(
 		      &seed, V32_CALLING_TRANSMITTER, 0) == V32_FRAMING_OK,
 	      "contract descrambler did not initialize");
-	seed.descrambler.history = 0x123456;
+	seed.descrambler.feedback.history = 0x123456;
 	CHECK(v32_uncoded_receiver_init(&receiver, &seed) ==
 		      V32_UNCODED_RECEIVER_OK &&
 	      v32_uncoded_receiver_is_valid(&receiver) &&
@@ -301,9 +301,9 @@ static bool test_contracts(uint8_t bits_per_symbol)
 	/* Define padding before the bytewise rejection snapshots. Preserve the
 	 * initialized fields, then keep every fixture and snapshot byte intact. */
 	memset(&saved_receiver, 0, sizeof(saved_receiver));
-	memcpy(&saved_receiver.decoder.descrambler.history,
-	       &receiver.decoder.descrambler.history,
-	       sizeof(receiver.decoder.descrambler.history));
+	memcpy(&saved_receiver.decoder.descrambler.feedback.history,
+	       &receiver.decoder.descrambler.feedback.history,
+	       sizeof(receiver.decoder.descrambler.feedback.history));
 	memcpy(&saved_receiver.decoder.descrambler.transmitter_role,
 	       &receiver.decoder.descrambler.transmitter_role,
 	       sizeof(receiver.decoder.descrambler.transmitter_role));
@@ -412,7 +412,7 @@ static bool test_contracts(uint8_t bits_per_symbol)
 				QPSK_QUADRANT_COUNT;
 			break;
 		case 1:
-			invalid_receiver.decoder.descrambler.history =
+			invalid_receiver.decoder.descrambler.feedback.history =
 				UINT32_C(1) << 23;
 			break;
 		default:

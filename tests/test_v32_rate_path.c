@@ -276,7 +276,7 @@ static bool source_next_selected_point(struct generated_source *source)
 	}
 	source->selected_symbols++;
 	if (source->selected_symbols == source->confirmation_symbols)
-		source->b1_history = source->rate_encoder.scrambler.history;
+		source->b1_history = source->rate_encoder.scrambler.feedback.history;
 	return true;
 }
 
@@ -505,7 +505,7 @@ static bool complete_conditioning(
 
 #define COPY(field) memcpy(bytes + offsetof(struct v32_symbol_decoder, field), \
 	&handoff->decoder.field, sizeof(handoff->decoder.field))
-		COPY(descrambler.history);
+		COPY(descrambler.feedback.history);
 		COPY(descrambler.transmitter_role);
 		COPY(phase_quadrant);
 #undef COPY
@@ -702,8 +702,8 @@ static bool run_role(
 	      rate_handoff.observation_epoch == path.observation_epoch &&
 	      rate_handoff.four_point.decoder.phase_quadrant ==
 		      path.four_point.decoder.phase_quadrant &&
-	      rate_handoff.four_point.decoder.descrambler.history ==
-		      path.four_point.decoder.descrambler.history,
+	      rate_handoff.four_point.decoder.descrambler.feedback.history ==
+		      path.four_point.decoder.descrambler.feedback.history,
 	      "rate handoff changed the aligned receiver for role %d", role);
 	*completed = path;
 	if (role == V32_CALLING_TRANSMITTER &&
@@ -795,8 +795,8 @@ static bool run_role(
 		      source.selected_offer.rates &&
 	      end_handoff.receive.equalizer.adaptation == end_adaptation &&
 	      end_handoff.observation_epoch == end.observation_epoch &&
-	      end_handoff.four_point.decoder.descrambler.history ==
-		      end.four_point.decoder.descrambler.history,
+	      end_handoff.four_point.decoder.descrambler.feedback.history ==
+		      end.four_point.decoder.descrambler.feedback.history,
 	      "end handoff changed the selected receiver for role %d", role);
 	*end_completed = end;
 	*completed_end_handoff = end_handoff;
@@ -868,7 +868,7 @@ static bool run_role(
 	      selected_offer->rates,
 	      selected_offer->trellis_at_highest_rate);
 	if (b1.mode == V32_B1_MODE_UNCODED)
-		CHECK(b1.receiver.uncoded.decoder.descrambler.history ==
+		CHECK(b1.receiver.uncoded.decoder.descrambler.feedback.history ==
 			      source.b1_history && b1.b1_matches,
 		      "uncoded B1 descrambler changed for role %d", role);
 	if (b1.mode == V32_B1_MODE_TRELLIS)
@@ -1380,7 +1380,7 @@ static bool test_uncoded_phase_handoff(void)
 				      (enum v32_transmitter_role)role, phase) ==
 				      V32_FRAMING_OK,
 			      "phase handoff framing did not initialize");
-			end.four_point.decoder.descrambler.history = 0x123456;
+			end.four_point.decoder.descrambler.feedback.history = 0x123456;
 			for (unsigned int mode = 0; mode < 2; ++mode) {
 				struct v32_b1_path b1;
 				uint8_t bits = mode == 0 ? 2 : 4;
@@ -1396,7 +1396,7 @@ static bool test_uncoded_phase_handoff(void)
 				      b1.data_bits_per_symbol == bits &&
 				      b1.receiver.uncoded.decoder.phase_quadrant ==
 					      (mode == 0 ? phase : 0) &&
-				      b1.receiver.uncoded.decoder.descrambler.history ==
+				      b1.receiver.uncoded.decoder.descrambler.feedback.history ==
 					      0x123456 &&
 				      b1.receiver.uncoded.decoder.descrambler
 					      .transmitter_role ==

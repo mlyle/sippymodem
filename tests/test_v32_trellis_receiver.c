@@ -65,8 +65,8 @@ static bool make_continuous_framing(
 		      "continuous framing for role %u diverged at %zu", role,
 		      index);
 	}
-	CHECK(transmitter->history != 0 &&
-	      transmitter->history == receiver->history,
+	CHECK(transmitter->feedback.history != 0 &&
+	      transmitter->feedback.history == receiver->feedback.history,
 	      "continuous framing for role %u did not retain history", role);
 	return true;
 }
@@ -182,7 +182,7 @@ static bool test_b1_payload_boundary(uint8_t b1_symbols)
 	}
 	for (size_t lane_index = 0; lane_index < TEST_LANES; ++lane_index)
 		lanes[lane_index].b1_history =
-			lanes[lane_index].transmitter_scrambler.history;
+			lanes[lane_index].transmitter_scrambler.feedback.history;
 
 	for (size_t symbol = 0; symbol < TEST_PAYLOAD_GROUPS; ++symbol) {
 		for (size_t lane_index = 0;
@@ -205,7 +205,7 @@ static bool test_b1_payload_boundary(uint8_t b1_symbols)
 			      "lane %zu payload %zu did not transmit", lane_index,
 			      symbol);
 			lane->payload_history[slot] =
-				lane->transmitter_scrambler.history;
+				lane->transmitter_scrambler.feedback.history;
 			CHECK(v32_trellis_receiver_decode(
 				      &lane->receiver, &observation, &received) ==
 				      V32_TRELLIS_RECEIVER_OK,
@@ -220,7 +220,7 @@ static bool test_b1_payload_boundary(uint8_t b1_symbols)
 					CHECK(v32_trellis_receiver_b1_is_confirmed(
 						      &lane->receiver) ==
 						      (lane_index != 0) &&
-					      lane->receiver.descrambler.history ==
+					      lane->receiver.descrambler.feedback.history ==
 						      lane->b1_history,
 					      "lane %zu B1 result or history changed",
 					      lane_index);
@@ -236,7 +236,7 @@ static bool test_b1_payload_boundary(uint8_t b1_symbols)
 				CHECK(received.ready &&
 				      received.group ==
 					      lane->payload[expected_slot] &&
-				      lane->receiver.descrambler.history ==
+				      lane->receiver.descrambler.feedback.history ==
 					      lane->payload_history[expected_slot],
 				      "lane %zu payload %zu was %u, expected %u",
 				      lane_index, expected_symbol, received.group,
@@ -311,7 +311,7 @@ static bool test_contracts(void)
 		      &descrambler, V32_CALLING_TRANSMITTER) ==
 		      V32_FRAMING_OK,
 	      "contract descrambler did not initialize");
-	descrambler.history = 0x123456;
+	descrambler.feedback.history = 0x123456;
 	CHECK(v32_trellis_receiver_init(
 		      &receiver, &descrambler, V32_TRELLIS_MIN_DATA_BITS,
 				V32_STARTUP_CONFIRMATION_SYMBOLS) ==

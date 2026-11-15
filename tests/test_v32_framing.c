@@ -169,8 +169,8 @@ static bool test_symbol_round_trip(void)
 				      role, initial, index);
 			}
 			CHECK(encoder.phase_quadrant == decoder.phase_quadrant &&
-				      encoder.scrambler.history ==
-					      decoder.descrambler.history,
+				      encoder.scrambler.feedback.history ==
+					      decoder.descrambler.feedback.history,
 			      "V.32 symbol endpoints diverged");
 		}
 	}
@@ -230,8 +230,8 @@ static bool test_trn_round_trip_and_transition(void)
 				      role, initial, index);
 			}
 			CHECK(encoder.phase_quadrant == decoder.phase_quadrant &&
-				      encoder.scrambler.history ==
-					      decoder.descrambler.history,
+				      encoder.scrambler.feedback.history ==
+					      decoder.descrambler.feedback.history,
 			      "V.32 TRN endpoints diverged");
 		}
 	}
@@ -292,8 +292,8 @@ static bool test_9600_round_trip_and_transition(void)
 				      role, initial, index);
 			}
 			CHECK(encoder.phase_quadrant == decoder.phase_quadrant &&
-				      encoder.scrambler.history ==
-					      decoder.descrambler.history,
+				      encoder.scrambler.feedback.history ==
+					      decoder.descrambler.feedback.history,
 			      "V.32 9600 endpoints diverged");
 		}
 	}
@@ -313,7 +313,7 @@ static bool test_descrambler_resynchronization(void)
 			      &decoder, V32_CALLING_TRANSMITTER) ==
 			      V32_FRAMING_OK,
 	      "V.32 resynchronization endpoints did not initialize");
-	decoder.history = UINT32_C(0x5a4c31);
+	decoder.feedback.history = UINT32_C(0x5a4c31);
 	for (size_t index = 0; index < TEST_RESYNC_DIBITS; ++index) {
 		uint8_t input = (uint8_t)(fixture_random(&random) & 3u);
 		uint8_t encoded;
@@ -328,7 +328,7 @@ static bool test_descrambler_resynchronization(void)
 			      (index < 12 || output == input),
 		      "V.32 descrambler did not synchronize at %zu", index);
 	}
-	CHECK(encoder.history == decoder.history,
+	CHECK(encoder.feedback.history == decoder.feedback.history,
 	      "V.32 descrambler history did not converge");
 	return true;
 }
@@ -366,7 +366,7 @@ static bool test_three_bit_group_round_trip(void)
 			      "V.32 three-bit framing changed at %u/%zu", role,
 			      index);
 		}
-		CHECK(encoder.history == decoder.history,
+		CHECK(encoder.feedback.history == decoder.feedback.history,
 		      "V.32 three-bit framing histories diverged");
 	}
 	return true;
@@ -377,7 +377,7 @@ static bool test_group_state_rejection(void)
 	for (unsigned int direction = 0; direction < 2; ++direction) {
 		for (unsigned int bad = 0; bad < 3; ++bad) {
 			struct v32_scrambler state = {
-				.history = bad == 0 ? UINT32_C(1) << V32_SCRAMBLER_BITS : 0,
+				.feedback.history = bad == 0 ? UINT32_C(1) << V32_SCRAMBLER_BITS : 0,
 				.transmitter_role = bad == 1 ? (enum v32_transmitter_role)2 :
 					V32_CALLING_TRANSMITTER,
 			};
@@ -415,7 +415,7 @@ static bool test_symbol_rejection(void)
 		for (unsigned int role = 0; role < 2; ++role) {
 			for (unsigned int bad = 0; bad < 7; ++bad) {
 				struct v32_scrambler scrambler = {
-					.history = bad == 3 ?
+					.feedback.history = bad == 3 ?
 						UINT32_C(1) << V32_SCRAMBLER_BITS :
 						UINT32_C(0x5a1234),
 					.transmitter_role = (enum v32_transmitter_role)(
@@ -505,7 +505,7 @@ static bool test_framing_output_ownership(void)
 					uint8_t output;
 
 					memset(&group_initial, 0xa5, sizeof(group_initial));
-					group_initial.owner.history = UINT32_C(0x7fffff);
+					group_initial.owner.feedback.history = UINT32_C(0x7fffff);
 					group_initial.owner.transmitter_role = role;
 					memcpy(&group_expected, &group_initial, sizeof(group_expected));
 					CHECK(transform_owned_group(&group_expected.owner, mode,
@@ -543,11 +543,11 @@ static bool test_framing_output_ownership(void)
 					uint8_t symbol, output;
 
 					memset(&encoder_initial, 0xa5, sizeof(encoder_initial));
-					encoder_initial.owner.scrambler.history = UINT32_C(0x7fffff);
+					encoder_initial.owner.scrambler.feedback.history = UINT32_C(0x7fffff);
 					encoder_initial.owner.scrambler.transmitter_role = role;
 					encoder_initial.owner.phase_quadrant = phase;
 					memset(&decoder_initial, 0xa5, sizeof(decoder_initial));
-					decoder_initial.owner.descrambler.history = UINT32_C(0x7fffff);
+					decoder_initial.owner.descrambler.feedback.history = UINT32_C(0x7fffff);
 					decoder_initial.owner.descrambler.transmitter_role = role;
 					decoder_initial.owner.phase_quadrant = phase;
 					memcpy(&encoder_expected, &encoder_initial, sizeof(encoder_expected));
@@ -643,7 +643,7 @@ static bool test_validation(void)
 			     sizeof(scrambler)) == 0 &&
 		      output == UINT8_MAX,
 	      "V.32 framing accepted invalid input or mutated state");
-	scrambler.history = UINT32_C(1) << V32_SCRAMBLER_BITS;
+	scrambler.feedback.history = UINT32_C(1) << V32_SCRAMBLER_BITS;
 	CHECK(!v32_scrambler_is_valid(&scrambler),
 	      "V.32 framing accepted corrupt history");
 	return true;

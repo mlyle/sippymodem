@@ -620,8 +620,8 @@ static bool check_role(enum v32_transmitter_role role)
 	CHECK(v32_conditioning_receiver_framing_state(
 		      &receiver, &decoder) ==
 		      V32_CONDITIONING_RECEIVER_OK &&
-		      decoder.descrambler.history ==
-			      transmitter.trn_encoder.scrambler.history &&
+		      decoder.descrambler.feedback.history ==
+			      transmitter.trn_encoder.scrambler.feedback.history &&
 		      decoder.descrambler.transmitter_role == role &&
 		      decoder.phase_quadrant == 0,
 	      "V.32 conditioning framing state changed for role %d", role);

@@ -89,7 +89,7 @@ static bool check_conditioning_sequence(
 			      &transmitter, &final_state) ==
 			      V32_CONDITIONING_OK &&
 		      final_state.phase_quadrant == reference.phase_quadrant &&
-		      final_state.scrambler.history == reference.scrambler.history,
+		      final_state.scrambler.feedback.history == reference.scrambler.feedback.history,
 	      "V.32 conditioning final framing state changed for role %d", role);
 	quadrant = UINT8_MAX;
 	CHECK(v32_conditioning_transmitter_next(

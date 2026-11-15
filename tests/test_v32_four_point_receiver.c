@@ -197,8 +197,8 @@ static bool test_conditioning_rate_and_data_continuity(void)
 			}
 			CHECK(receiver.decoder.phase_quadrant ==
 				      encoder.phase_quadrant &&
-			      receiver.decoder.descrambler.history ==
-				      encoder.scrambler.history &&
+			      receiver.decoder.descrambler.feedback.history ==
+				      encoder.scrambler.feedback.history &&
 			      receiver.decoder.descrambler.transmitter_role ==
 				      encoder.scrambler.transmitter_role,
 			      "four-point endpoints diverged at %u/%u",
