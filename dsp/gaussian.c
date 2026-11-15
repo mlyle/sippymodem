@@ -39,3 +39,18 @@ double gaussian_log_probability(double a, double b)
 	double high = gaussian_log_tail(b * sqrt(2.));
 	return low + log(-expm1(high - low));
 }
+
+bool gaussian_interval_moments(double low, double high, double mean, double variance,
+	double sigma, double *expected, double *deviation)
+{
+	double a = (low - mean) / sigma, b = (high - mean) / sigma;
+	double probability = gaussian_probability(a / sqrt(2.), b / sqrt(2.));
+	if (!(probability > 0.)) return false;
+	double pa = gaussian_density(a);
+	double pb = gaussian_density(b);
+	double shift = (pa - pb) / probability;
+	double ap = isfinite(a) ? a * pa : 0., bp = isfinite(b) ? b * pb : 0.;
+	*expected = mean + sigma * shift;
+	*deviation = variance * fmax(0., 1. + (ap - bp) / probability - shift * shift);
+	return isfinite(*expected) && isfinite(*deviation);
+}

@@ -3726,7 +3726,7 @@ $(SAMPLE_MATH_TEST_BINARY): $(SAMPLE_MATH_TEST_OBJECTS)
 $(BUILD_DIR)/test_gram_fit: $(BUILD_DIR)/test_gram_fit.o
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
-$(BUILD_DIR)/test_interval_fit: $(BUILD_DIR)/test_interval_fit.o
+$(BUILD_DIR)/test_interval_fit: $(BUILD_DIR)/test_interval_fit.o $(BUILD_DIR)/gaussian.o
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(BUILD_DIR)/test_pam_distance: $(BUILD_DIR)/test_pam_distance.o $(BUILD_DIR)/pam_distance.o

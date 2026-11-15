@@ -30,6 +30,21 @@ static void test_density(void)
 	assert(fabs(integral - gaussian_probability(-sqrt(2.), sqrt(2.))) < 1e-9);
 }
 
+static void test_untruncated_moments(void)
+{
+	const double means[] = { -1234., 0., 5678. };
+	const double scales[] = { 1., 4., 256. };
+	for (unsigned i = 0; i < 3; ++i) {
+		double expected, deviation, variance = scales[i] * scales[i];
+		assert(gaussian_interval_moments(-INFINITY, INFINITY, means[i],
+			variance, scales[i], &expected, &deviation));
+		assert(expected == means[i] && deviation == variance);
+	}
+	double expected = 91., deviation = 92.;
+	assert(!gaussian_interval_moments(2., 2., 0., 1., 1.,
+		&expected, &deviation));
+}
+
 static void test_half_normal(void)
 {
 	const int16_t q[] = { 1 };
@@ -143,6 +158,7 @@ int main(void)
 	for (unsigned i = 0; i < sizeof(modes) / sizeof(modes[0]); i++) {
 		assert(fesetround(modes[i]) == 0);
 		test_density();
+		test_untruncated_moments();
 		test_half_normal();
 		test_independent_owners();
 		test_failure_atomicity();

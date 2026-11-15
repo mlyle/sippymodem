@@ -3,6 +3,7 @@
 #define GAUSSIAN_H
 
 #include <fenv.h>
+#include <stdbool.h>
 #include <math.h>
 
 /* Unit-normal density at x standard deviations. Unlike the interval
@@ -41,5 +42,14 @@ static inline double gaussian_probability(double a, double b)
  * nonfinite result signals an empty interval or unresolved numeric tail;
  * check it before converting a scaled cost to an integer. */
 double gaussian_log_probability(double a, double b);
+
+/* Conditional mean and variance inside [low, high]; bounds may be infinite.
+ * The caller supplies a finite mean, positive finite variance and its positive
+ * square root sigma, computed once for a batch. Distance outside the interval
+ * alone underestimates noise even when a prediction falls inside the bin.
+ * Output pointers must be valid
+ * and distinct. On failure discard both outputs; no pointer is retained. */
+bool gaussian_interval_moments(double low, double high, double mean, double variance,
+	double sigma, double *expected, double *deviation);
 
 #endif /* GAUSSIAN_H */

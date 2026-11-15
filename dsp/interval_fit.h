@@ -11,24 +11,6 @@
 
 enum { INTERVAL_FIT_SAMPLES = 288 };
 
-/* Conditional moments of a Gaussian inside the received codec interval.
- * Measuring only distance OUTSIDE the interval underestimates noise: a
- * prediction inside the bin is not evidence that no noise was present. */
-static inline bool interval_fit_moments(double low, double high, double mean, double variance,
-	double sigma, double *expected, double *deviation)
-{
-	double a = (low - mean) / sigma, b = (high - mean) / sigma;
-	double probability = gaussian_probability(a / sqrt(2.), b / sqrt(2.));
-	if (!(probability > 0.)) return false;
-	double pa = gaussian_density(a);
-	double pb = gaussian_density(b);
-	double shift = (pa - pb) / probability;
-	double ap = isfinite(a) ? a * pa : 0., bp = isfinite(b) ? b * pb : 0.;
-	*expected = mean + sigma * shift;
-	*deviation = variance * fmax(0., 1. + (ap - bp) / probability - shift * shift);
-	return isfinite(*expected) && isfinite(*deviation);
-}
-
 /* One bounded conditional-bin E/M update over delayed integer features.
  * The owner supplies its fixed packed Gram system, coefficient/noise seed,
  * and received intervals. Fit 1..4 taps over [first,count), with preceding
@@ -57,7 +39,7 @@ static inline bool interval_fit_step(const double coefficient[GRAM_FIT_COLUMNS],
 	for (size_t j = first; j < count; j++) {
 		double mean = 0.;
 		for (unsigned i = 0; i < taps; i++) mean += coefficient[i] * q[j - i];
-		if (!interval_fit_moments(low[j], high[j], mean, noise, sigma,
+		if (!gaussian_interval_moments(low[j], high[j], mean, noise, sigma,
 			targets + j, deviations + j)) return false;
 		for (unsigned i = 0; i < taps; i++) rhs[i] += q[j - i] * targets[j];
 	}

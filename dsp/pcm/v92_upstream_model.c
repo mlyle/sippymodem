@@ -416,7 +416,7 @@ static double fit_residual_variance(const struct v92_upstream_model *model,
 		double total = 0., sigma = sqrt(variance);
 		for (unsigned n = FIRST; n < V92_OBSERVATION_TRAINING; ++n) {
 			double expected, deviation;
-			if (!interval_fit_moments(low[n], high[n], mean[n], variance,
+			if (!gaussian_interval_moments(low[n], high[n], mean[n], variance,
 			    sigma, &expected, &deviation)) return 0.;
 			double error = expected - mean[n];
 			total += deviation + error * error;
