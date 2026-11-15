@@ -84,106 +84,33 @@ static bool test_constructors(void)
 	return true;
 }
 
-static bool run_selection(
-	const struct pcm_startup_selection *startup,
-	const struct pcm_info1d *digital, const uint8_t *payload,
-	enum pcm_info1_result expected,
-	enum pcm_upstream_mode expected_upstream)
-{
-	struct pcm_info1_selection selected;
-	uint8_t saved[sizeof(selected)];
-
-	memset(&selected, 0xa5, sizeof(selected));
-	memcpy(saved, &selected, sizeof(saved));
-	CHECK(pcm_info1_select(
-		      startup, digital, payload, V90_INFO1A_PAYLOAD_BYTES,
-		      V90_INFO1A_PAYLOAD_BITS, &selected) == expected,
-	      "INFO1 selection returned the wrong result");
-	if (expected != PCM_INFO1_OK)
-		return memcmp(&selected, saved, sizeof(saved)) == 0;
-	return pcm_info1_selection_is_valid(&selected) &&
-	       selected.startup.protocol == startup->protocol &&
-	       selected.startup.phase2 == startup->phase2 &&
-	       selected.digital.protocol == digital->protocol &&
-	       selected.upstream == expected_upstream &&
-	       (selected.upstream == PCM_UPSTREAM_V34 ?
-			selected.analog.conventional.training_ucode == 78 &&
-			selected.analog.conventional.upstream_symbol_rate ==
-				V34_SYMBOL_RATE_3200 &&
-			selected.analog.conventional
-				.frequency_offset_1_50_hz_units == 9 :
-			selected.analog.pcm.maximum_total_coefficients == 256 &&
-			selected.analog.pcm.maximum_section_coefficients == 128 &&
-			selected.analog.pcm.training_ucode == 78);
-}
-
 static bool test_selection_matrix(void)
 {
-	struct v34_info1c base = v90_digital();
-	struct v92_info1d unsupported = { .v34 = base };
-	struct v92_info1d supported = {
-		.v34 = base,
-		.pcm_upstream_supported = true,
-	};
-	struct pcm_info1d v90;
-	struct pcm_info1d v92_without_pcm;
-	struct pcm_info1d v92_with_pcm;
-	struct v90_info1a conventional_record = conventional();
-	struct v92_pcm_info1a pcm_record = pcm();
-	uint8_t conventional_payload[V90_INFO1A_PAYLOAD_BYTES];
-	uint8_t pcm_payload[V92_PCM_INFO1A_PAYLOAD_BYTES];
-	struct pcm_startup_selection v90_startup = {
-		.protocol = PCM_PROTOCOL_V90,
-		.phase2 = PCM_PHASE2_FULL,
-	};
+	for (unsigned protocol = PCM_PROTOCOL_V90; protocol <= PCM_PROTOCOL_V92;
+	     ++protocol) {
+		for (unsigned offer = 0; offer <= 1; ++offer) {
+			struct pcm_info1_selection selected = {
+				.startup = { protocol, PCM_PHASE2_FULL },
+				.digital.protocol = protocol,
+				.upstream = PCM_UPSTREAM_V34,
+				.analog.conventional = conventional(),
+			};
 
-	CHECK(pcm_info1d_init_v90(&v90, &base) == PCM_INFO1_OK &&
-	      pcm_info1d_init_v92(&v92_without_pcm, &unsupported) ==
-		      PCM_INFO1_OK &&
-	      pcm_info1d_init_v92(&v92_with_pcm, &supported) ==
-		      PCM_INFO1_OK &&
-	      v90_info1a_encode(
-		      &conventional_record, conventional_payload,
-		      sizeof(conventional_payload)) == V90_INFO1_OK &&
-	      v92_pcm_info1a_encode(
-		      &pcm_record, pcm_payload, sizeof(pcm_payload)) ==
-		      V92_PCM_INFO1A_OK,
-	      "INFO1 selection fixtures did not initialize");
-	CHECK(run_selection(
-		      &v90_startup, &v90, conventional_payload, PCM_INFO1_OK,
-		      PCM_UPSTREAM_V34) &&
-	      run_selection(
-		      &v90_startup, &v90, pcm_payload,
-		      PCM_INFO1_PCM_UNAVAILABLE, PCM_UPSTREAM_PCM),
-	      "V.90 upstream selection changed");
-	for (unsigned int short_phase2 = 0; short_phase2 <= 1;
-	     ++short_phase2) {
-		enum pcm_info1_result success = short_phase2 ?
-			PCM_INFO1_INVALID_RECORD : PCM_INFO1_OK;
-		enum pcm_info1_result unavailable = short_phase2 ?
-			PCM_INFO1_INVALID_RECORD : PCM_INFO1_PCM_UNAVAILABLE;
-		struct pcm_startup_selection startup = {
-			.protocol = PCM_PROTOCOL_V92,
-			.phase2 = short_phase2 ? PCM_PHASE2_SHORT :
-						 PCM_PHASE2_FULL,
-		};
-
-		CHECK(run_selection(
-			      &startup, &v92_without_pcm,
-			      conventional_payload, success,
-			      PCM_UPSTREAM_V34) &&
-		      run_selection(
-			      &startup, &v92_without_pcm, pcm_payload,
-			      unavailable,
-			      PCM_UPSTREAM_PCM) &&
-		      run_selection(
-			      &startup, &v92_with_pcm,
-			      conventional_payload, success,
-			      PCM_UPSTREAM_V34) &&
-		      run_selection(
-			      &startup, &v92_with_pcm, pcm_payload,
-			      success, PCM_UPSTREAM_PCM),
-		      "V.92 full/short selection %u changed", short_phase2);
+			if (protocol == PCM_PROTOCOL_V90)
+				selected.digital.record.v90 = v90_digital();
+			else
+				selected.digital.record.v92 = (struct v92_info1d){
+					.v34 = v90_digital(),
+					.pcm_upstream_supported = offer,
+				};
+			CHECK(pcm_info1_selection_is_valid(&selected),
+			      "full conventional selection requires PCM support");
+			selected.upstream = PCM_UPSTREAM_PCM;
+			selected.analog.pcm = pcm();
+			CHECK(pcm_info1_selection_is_valid(&selected) ==
+				      (protocol == PCM_PROTOCOL_V92 && offer),
+			      "full PCM selection ignored protocol or offered capability");
+		}
 	}
 	return true;
 }
@@ -330,7 +257,6 @@ static bool test_short_storage_and_full_boundary(void)
 	struct pcm_info1_selection sent = short_conventional(), decoded;
 	struct v92_info1d record = { .v34 = v90_digital(), .pcm_upstream_supported = true };
 	struct pcm_info1d digital;
-	struct pcm_startup_selection full = { PCM_PROTOCOL_V92, PCM_PHASE2_FULL };
 	uint8_t payload[V90_INFO1A_PAYLOAD_BYTES];
 	uint8_t saved[sizeof(payload)];
 
@@ -344,10 +270,15 @@ static bool test_short_storage_and_full_boundary(void)
 	      V90_INFO1A_PAYLOAD_BITS, &decoded) == PCM_INFO1_OK &&
 	      pcm_info1_selection_is_valid(&decoded) && decoded.short_high_carrier,
 	      "aliased decoding lost the short INFO1a selection");
-	CHECK(pcm_info1d_init_v92(&digital, &record) == PCM_INFO1_OK &&
-	      pcm_info1_select(&full, &digital, saved, sizeof(saved),
-	      V90_INFO1A_PAYLOAD_BITS, &decoded) == PCM_INFO1_OK &&
-	      pcm_info1_selection_is_valid(&decoded), "full decision fixture failed");
+	CHECK(pcm_info1d_init_v92(&digital, &record) == PCM_INFO1_OK,
+	      "full digital record fixture failed");
+	decoded = (struct pcm_info1_selection){
+		.startup = { PCM_PROTOCOL_V92, PCM_PHASE2_FULL },
+		.digital = digital,
+		.analog.conventional = conventional(),
+		.upstream = PCM_UPSTREAM_V34,
+	};
+	CHECK(pcm_info1_selection_is_valid(&decoded), "full decision fixture failed");
 	memset(payload, 0xa5, sizeof(payload));
 	memcpy(saved, payload, sizeof(payload));
 	CHECK(pcm_info1_encode_short(&decoded, payload, sizeof(payload)) == PCM_INFO1_INVALID_RECORD &&
@@ -358,68 +289,31 @@ static bool test_short_storage_and_full_boundary(void)
 
 static bool test_validation(void)
 {
-	struct v34_info1c base = v90_digital();
-	struct v92_info1d v92_record = {
-		.v34 = base,
-		.pcm_upstream_supported = true,
-	};
-	struct pcm_info1d v90;
-	struct pcm_info1d v92;
-	struct pcm_startup_selection startup = {
-		.protocol = PCM_PROTOCOL_V90,
-		.phase2 = PCM_PHASE2_FULL,
-	};
-	struct pcm_startup_selection invalid_startup = startup;
-	struct pcm_info1_selection selected;
-	uint8_t malformed[V90_INFO1A_PAYLOAD_BYTES] = { 0 };
-	uint8_t saved[sizeof(selected)];
+	struct pcm_info1_selection valid = {
+		.startup = { PCM_PROTOCOL_V90, PCM_PHASE2_FULL },
+		.digital = { .record.v90 = v90_digital(), .protocol = PCM_PROTOCOL_V90 },
+		.analog.conventional = conventional(),
+		.upstream = PCM_UPSTREAM_V34,
+	}, invalid = valid;
 
-	CHECK(pcm_info1d_init_v90(&v90, &base) == PCM_INFO1_OK &&
-	      pcm_info1d_init_v92(&v92, &v92_record) == PCM_INFO1_OK,
-	      "validation fixtures did not initialize");
-	memset(&selected, 0xa5, sizeof(selected));
-	memcpy(saved, &selected, sizeof(saved));
-	invalid_startup.phase2 = PCM_PHASE2_SHORT;
-	CHECK(pcm_info1_select(
-		      &startup, &v92, malformed, sizeof(malformed),
-		      V90_INFO1A_PAYLOAD_BITS, &selected) ==
-		      PCM_INFO1_PROTOCOL_MISMATCH &&
-	      pcm_info1_select(
-		      &invalid_startup, &v90, malformed, sizeof(malformed),
-		      V90_INFO1A_PAYLOAD_BITS, &selected) ==
-		      PCM_INFO1_INVALID_RECORD &&
-	      pcm_info1_select(
-		      &startup, &v90, malformed, sizeof(malformed),
-		      V90_INFO1A_PAYLOAD_BITS, &selected) ==
-		      PCM_INFO1_INVALID_PAYLOAD &&
-	      pcm_info1_select(
-		      &startup, &v90, malformed, sizeof(malformed),
-		      V90_INFO1A_PAYLOAD_BITS - 1u, &selected) ==
-		      PCM_INFO1_INVALID_PAYLOAD &&
-	      pcm_info1_select(
-		      NULL, &v90, malformed, sizeof(malformed),
-		      V90_INFO1A_PAYLOAD_BITS, &selected) ==
-		      PCM_INFO1_INVALID_ARGUMENT &&
-	      pcm_info1_select(
-		      &startup, NULL, malformed, sizeof(malformed),
-		      V90_INFO1A_PAYLOAD_BITS, &selected) ==
-		      PCM_INFO1_INVALID_ARGUMENT &&
-	      pcm_info1_select(
-		      &startup, &v90, NULL, sizeof(malformed),
-		      V90_INFO1A_PAYLOAD_BITS, &selected) ==
-		      PCM_INFO1_INVALID_ARGUMENT &&
-	      pcm_info1_select(
-		      &startup, &v90, malformed, sizeof(malformed),
-		      V90_INFO1A_PAYLOAD_BITS, NULL) ==
-		      PCM_INFO1_INVALID_ARGUMENT &&
-	      pcm_info1_select(
-		      &startup, &v90, malformed, sizeof(malformed) - 1u,
-		      V90_INFO1A_PAYLOAD_BITS, &selected) ==
-		      PCM_INFO1_INVALID_ARGUMENT &&
-	      memcmp(&selected, saved, sizeof(saved)) == 0,
-	      "invalid INFO1 selection changed output or result");
-	CHECK(!pcm_info1_selection_is_valid(NULL),
-	      "INFO1 validation changed");
+	CHECK(pcm_info1_selection_is_valid(&valid) &&
+	      !pcm_info1_selection_is_valid(NULL), "full validation fixture failed");
+	invalid.digital.protocol = PCM_PROTOCOL_V92;
+	CHECK(!pcm_info1_selection_is_valid(&invalid),
+	      "selection accepted different startup and digital protocols");
+	invalid = valid;
+	invalid.startup.phase2 = PCM_PHASE2_SHORT;
+	CHECK(!pcm_info1_selection_is_valid(&invalid), "V.90 accepted short startup");
+	invalid = valid;
+	invalid.digital.record.v90.answer_transmit[V34_SYMBOL_RATE_3000]
+		.preemphasis_filter_index = 11;
+	CHECK(!pcm_info1_selection_is_valid(&invalid), "selection accepted invalid INFO1d");
+	invalid = valid;
+	invalid.analog.conventional.training_ucode = V90_INFO1A_MIN_TRAINING_UCODE - 1;
+	CHECK(!pcm_info1_selection_is_valid(&invalid), "selection accepted invalid INFO1a");
+	invalid = valid;
+	invalid.upstream = (enum pcm_upstream_mode)17;
+	CHECK(!pcm_info1_selection_is_valid(&invalid), "selection accepted unknown upstream");
 	return true;
 }
 

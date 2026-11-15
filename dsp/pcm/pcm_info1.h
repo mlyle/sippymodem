@@ -21,9 +21,7 @@ enum pcm_info1_result {
 	PCM_INFO1_OK,
 	PCM_INFO1_INVALID_ARGUMENT,
 	PCM_INFO1_INVALID_RECORD,
-	PCM_INFO1_PROTOCOL_MISMATCH,
 	PCM_INFO1_INVALID_PAYLOAD,
-	PCM_INFO1_PCM_UNAVAILABLE,
 };
 
 union pcm_info1d_record {
@@ -74,14 +72,6 @@ enum pcm_info1_result pcm_info1d_init_v90(
 	struct pcm_info1d *info1d, const struct v34_info1c *record);
 enum pcm_info1_result pcm_info1d_init_v92(
 	struct pcm_info1d *info1d, const struct v92_info1d *record);
-
-/* Decode the full-Phase-2 analog INFO1 payload against the digital INFO1d.
- * Malformed or unsupported input leaves selection unchanged. */
-enum pcm_info1_result pcm_info1_select(
-	const struct pcm_startup_selection *startup,
-	const struct pcm_info1d *digital, const uint8_t *analog_payload,
-	size_t payload_capacity, size_t payload_bit_count,
-	struct pcm_info1_selection *selection);
 
 /* V.92 9.4 and Amendment 1 Tables 18/19: short Phase 2 exchanges only INFO1a.
  * Both INFO0 records must already have selected short Phase 2. The owner

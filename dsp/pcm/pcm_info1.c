@@ -77,82 +77,12 @@ enum pcm_info1_result pcm_info1d_init_v92(
 	return PCM_INFO1_OK;
 }
 
-static enum pcm_info1_result select_conventional(
-	struct pcm_info1_selection *selected,
-	const uint8_t *payload, size_t payload_capacity,
-	size_t payload_bit_count)
-{
-	if (v90_info1a_decode(
-		    payload, payload_capacity, payload_bit_count,
-		    &selected->analog.conventional) != V90_INFO1_OK)
-		return PCM_INFO1_INVALID_PAYLOAD;
-	selected->upstream = PCM_UPSTREAM_V34;
-	return PCM_INFO1_OK;
-}
-
-static enum pcm_info1_result select_pcm(
-	struct pcm_info1_selection *selected,
-	const uint8_t *payload, size_t payload_capacity,
-	size_t payload_bit_count)
-{
-	if (v92_pcm_info1a_decode(
-		    payload, payload_capacity, payload_bit_count,
-		    &selected->analog.pcm) != V92_PCM_INFO1A_OK)
-		return PCM_INFO1_INVALID_PAYLOAD;
-	if (selected->startup.protocol != PCM_PROTOCOL_V92)
-		return PCM_INFO1_PCM_UNAVAILABLE;
-	if (selected->startup.phase2 == PCM_PHASE2_FULL &&
-	    !selected->digital.record.v92.pcm_upstream_supported)
-		return PCM_INFO1_PCM_UNAVAILABLE;
-	selected->upstream = PCM_UPSTREAM_PCM;
-	return PCM_INFO1_OK;
-}
-
-enum pcm_info1_result pcm_info1_select(
-	const struct pcm_startup_selection *startup,
-	const struct pcm_info1d *digital, const uint8_t *analog_payload,
-	size_t payload_capacity, size_t payload_bit_count,
-	struct pcm_info1_selection *selection)
-{
-	struct pcm_info1_selection selected = { 0 };
-	enum pcm_info1_result result;
-
-	if (startup == NULL || digital == NULL || analog_payload == NULL ||
-	    selection == NULL ||
-	    payload_capacity < V90_INFO1A_PAYLOAD_BYTES)
-		return PCM_INFO1_INVALID_ARGUMENT;
-	if (!pcm_startup_selection_is_valid(startup) ||
-	    startup->phase2 != PCM_PHASE2_FULL ||
-	    !pcm_info1d_is_valid(digital))
-		return PCM_INFO1_INVALID_RECORD;
-	if (startup->protocol != digital->protocol)
-		return PCM_INFO1_PROTOCOL_MISMATCH;
-	if (payload_bit_count != V90_INFO1A_PAYLOAD_BITS)
-		return PCM_INFO1_INVALID_PAYLOAD;
-	selected.startup = *startup;
-	selected.digital = *digital;
-	result = select_conventional(
-		&selected, analog_payload, payload_capacity,
-		payload_bit_count);
-	if (result != PCM_INFO1_OK)
-		result = select_pcm(
-			&selected, analog_payload, payload_capacity,
-			payload_bit_count);
-	if (result != PCM_INFO1_OK)
-		return result;
-	if (!pcm_info1_selection_is_valid(&selected))
-		return PCM_INFO1_INVALID_RECORD;
-	*selection = selected;
-	return PCM_INFO1_OK;
-}
-
 enum pcm_info1_result pcm_info1_select_short(
 	const struct pcm_startup_selection *startup,
 	const uint8_t *analog_payload, size_t payload_capacity,
 	size_t payload_bit_count, struct pcm_info1_selection *selection)
 {
 	struct pcm_info1_selection selected = { 0 };
-	enum pcm_info1_result result;
 
 	if (startup == NULL || analog_payload == NULL || selection == NULL ||
 	    payload_capacity < V90_INFO1A_PAYLOAD_BYTES)
@@ -161,19 +91,19 @@ enum pcm_info1_result pcm_info1_select_short(
 	    startup->phase2 != PCM_PHASE2_SHORT)
 		return PCM_INFO1_INVALID_RECORD;
 	selected.startup = *startup;
-	result = select_conventional(
-		&selected, analog_payload, payload_capacity, payload_bit_count);
-	if (result == PCM_INFO1_OK) {
+	if (v90_info1a_decode(analog_payload, payload_capacity,
+		    payload_bit_count, &selected.analog.conventional) == V90_INFO1_OK) {
+		selected.upstream = PCM_UPSTREAM_V34;
 		selected.short_high_carrier = packed_msb_bit(
 			analog_payload, SHORT_HIGH_CARRIER_BIT);
 		selected.analog.conventional.frequency_offset_1_50_hz_units =
 			V34_INFO1_FREQUENCY_OFFSET_UNAVAILABLE;
 	} else {
-		result = select_pcm(
-			&selected, analog_payload, payload_capacity, payload_bit_count);
+		if (v92_pcm_info1a_decode(analog_payload, payload_capacity,
+			    payload_bit_count, &selected.analog.pcm) != V92_PCM_INFO1A_OK)
+			return PCM_INFO1_INVALID_PAYLOAD;
+		selected.upstream = PCM_UPSTREAM_PCM;
 	}
-	if (result != PCM_INFO1_OK)
-		return result;
 	if (!pcm_info1_selection_is_valid(&selected))
 		return PCM_INFO1_INVALID_RECORD;
 	*selection = selected;

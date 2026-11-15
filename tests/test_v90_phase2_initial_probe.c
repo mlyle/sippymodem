@@ -249,12 +249,22 @@ static bool check_pcm_info1d_retry(
 	/* A checksum-valid but unusable reply may arrive after timeout. It
 	 * must not advance the expired deadline or prevent a later good reply. */
 	for (unsigned int attempt = 0; attempt < 2u; ++attempt) {
-		const uint8_t invalid_payload[V90_INFO1A_PAYLOAD_BYTES] = {
+		uint8_t invalid_payload[V90_INFO1A_PAYLOAD_BYTES] = {
 			[2] = UINT8_C(0x03), [3] = UINT8_C(0x80),
 		};
 		uint32_t deadline = late.control.peer_deadline_elapsed_samples;
 		bool rejected = false;
 
+		/* A valid PCM selection is also unusable when INFO1d did not
+		 * offer it. Exercise the live decoder, including V.90 refusal. */
+		if (attempt == 1u && (initial->protocol == PCM_PROTOCOL_V90 ||
+		    !initial->digital.record.v92.pcm_upstream_supported)) {
+			struct v92_pcm_info1a unoffered = pcm_analog_info1();
+
+			CHECK(v92_pcm_info1a_encode(&unoffered, invalid_payload,
+				      sizeof(invalid_payload)) == V92_PCM_INFO1A_OK,
+			      "unoffered PCM INFO1a fixture failed");
+		}
 		CHECK(v34_phase2_info_audio_transmitter_init(
 			      &peer, V34_ANSWERING_STATION, TEST_AMPLITUDE,
 			      invalid_payload, V90_INFO1A_PAYLOAD_BITS) ==
