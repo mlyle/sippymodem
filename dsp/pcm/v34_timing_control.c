@@ -4,6 +4,7 @@
 
 #include "integer_math.h"
 #include "memory_region.h"
+#include "sample_math.h"
 
 #include <limits.h>
 #include <stddef.h>
@@ -327,28 +328,15 @@ static int32_t timing_phase_error(
 	int16_t early_imag = observations[early + 2u];
 	int16_t late_real = observations[late];
 	int16_t late_imag = observations[late + 2u];
-	uint32_t early_energy = multiply_low_s32(early_real, early_real) +
-				(uint32_t)multiply_low_s32(early_imag, early_imag);
-	uint32_t late_energy = multiply_low_s32(late_real, late_real) +
-			       (uint32_t)multiply_low_s32(late_imag, late_imag);
-	int16_t shift_count = 0;
-	uint32_t mask = UINT32_C(0x80000000);
-	unsigned int shift;
+	uint32_t early_energy = sample_pair_power_s16(early_real, early_imag);
+	uint32_t late_energy = sample_pair_power_s16(late_real, late_imag);
+	/* Normalize both energies to 16 bits, including the full-scale 2^31 pair. */
+	unsigned shift = bit_width_unsigned((early_energy | late_energy) >> 16);
 	uint32_t early_normalized;
 	uint32_t late_normalized;
 	uint32_t sum;
 	uint32_t numerator;
 
-	if (wrap_s32_from_u32(early_energy) >= 0 &&
-	    wrap_s32_from_u32(late_energy) >= 0) {
-		do {
-			mask >>= 1;
-			shift_count = (int16_t)(uint16_t)(shift_count + 1);
-			if ((early_energy & mask) != 0)
-				break;
-		} while ((late_energy & mask) == 0 && shift_count <= 15);
-	}
-	shift = (unsigned int)(16 - shift_count) & 31u;
 	early_normalized = (uint16_t)arithmetic_shift_right_u32(
 		early_energy, shift);
 	late_normalized = (uint16_t)arithmetic_shift_right_u32(

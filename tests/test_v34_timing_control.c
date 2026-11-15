@@ -153,6 +153,47 @@ static bool test_exact_control(void)
 	return true;
 }
 
+static bool test_energy_boundaries(void)
+{
+	static const int16_t edge[] = {
+		INT16_MIN, INT16_MIN + 1, -32767, -8192, -256, -128, -1,
+		0, 1, 127, 128, 255, 256, 8191, INT16_MAX,
+	};
+	uint64_t hash = UINT64_C(1469598103934665603);
+
+	for (unsigned role = 0; role < 2; ++role)
+		for (unsigned full = 0; full < 2; ++full) {
+			struct v34_timing_control control;
+
+			CHECK(v34_timing_control_init(&control, 8000, 3200, 1, role) ==
+				V34_TIMING_CONTROL_OK &&
+				v34_timing_control_begin_acquisition(&control, full != 0) ==
+				V34_TIMING_CONTROL_OK, "boundary timing fixture failed");
+			for (unsigned word = 0; word < 15u * 15u * 15u * 15u; ++word) {
+				unsigned rest = word;
+				int16_t values[4];
+
+				for (unsigned i = 0; i < 4; ++i) {
+					values[i] = edge[rest % ARRAY_LENGTH(edge)];
+					rest /= ARRAY_LENGTH(edge);
+				}
+				int16_t observations[V34_TIMING_CONTROL_OBSERVATIONS] = {
+					values[0], values[1], values[2], values[3],
+					values[0], values[1], values[2],
+				};
+				uint16_t increment;
+
+				CHECK(v34_timing_control_process(&control, observations, &increment) ==
+					V34_TIMING_CONTROL_OK && increment == control.phase_increment,
+					"energy boundary control failed at %u/%u/%u", role, full, word);
+				hash = hash_u16(hash_state(hash, &control), increment);
+			}
+		}
+	CHECK(hash == UINT64_C(0x0d9567418053460b),
+		"timing energy boundary oracle changed: %#llx", (unsigned long long)hash);
+	return true;
+}
+
 static bool test_ownership(void)
 {
 	struct v34_timing_control control;
@@ -574,6 +615,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "exact control", test_exact_control },
+		{ "energy boundaries", test_energy_boundaries },
 		{ "ownership", test_ownership },
 		{ "data freeze", test_data_freeze },
 		{ "data profile", test_data_profile },
