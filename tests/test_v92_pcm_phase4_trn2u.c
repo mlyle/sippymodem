@@ -63,7 +63,7 @@ static bool check_sequence(
 		      TEST_LU) == V92_PCM_PHASE4_TRN2U_OK &&
 	      v34_scrambler_init(&descrambler, V34_POLYNOMIAL_GPA) ==
 		      V34_FRAMING_OK &&
-	      trn2u.modulator.scrambler.history == 0u &&
+	      trn2u.modulator.scrambler.feedback.history == 0u &&
 	      trn2u.modulator.scrambler.polynomial == V34_POLYNOMIAL_GPA &&
 	      trn2u.modulator.previous_encoded_sign ==
 		      initial_previous_sign &&
@@ -104,7 +104,7 @@ static bool check_sequence(
 			      V92_PCM_PHASE4_TRN2U_OK &&
 		      sample == expected &&
 		      trn2u.modulator.previous_encoded_sign == encoded_sign &&
-		      trn2u.modulator.scrambler.history == expected_history &&
+		      trn2u.modulator.scrambler.feedback.history == expected_history &&
 		      trn2u.emitted_symbols == symbol_index + 1u &&
 		      v92_pcm_phase4_trn2u_is_valid(&trn2u),
 		      "TRN2u sequence differed at symbol %zu", symbol_index);

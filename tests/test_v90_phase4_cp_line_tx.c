@@ -467,7 +467,7 @@ static bool verify_continuation(
 		      "CP waveform diverged at sample %zu", sample_index);
 		if (!started_data &&
 		    v90_phase4_cp_tx_record_is_complete(&model_symbols)) {
-			uint32_t history = model_symbols.scrambler.history;
+			uint32_t history = model_symbols.scrambler.feedback.history;
 			uint8_t rotation =
 				model_symbols.previous_clockwise_quarter_turns;
 
@@ -478,7 +478,7 @@ static bool verify_continuation(
 			      v90_phase4_cp_tx_start_next_record(
 				      &model_symbols, &data) ==
 				      V90_PHASE4_CP_TX_OK &&
-			      tx.symbols.scrambler.history == history &&
+			      tx.symbols.scrambler.feedback.history == history &&
 			      tx.symbols.previous_clockwise_quarter_turns ==
 				      rotation,
 			      "CP line did not continue at the record boundary");

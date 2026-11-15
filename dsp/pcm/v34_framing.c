@@ -3,8 +3,6 @@
 #include "v34_framing.h"
 #include "packed_bits.h"
 
-#include "self_sync_scrambler.h"
-
 #include <stddef.h>
 
 static const struct self_sync_scrambler_config *
@@ -37,30 +35,20 @@ static bool transmit_polynomial(
 bool v34_scrambler_is_valid(
 	const struct v34_scrambler *scrambler)
 {
-	struct self_sync_scrambler shared;
-
-	if (scrambler == NULL)
-		return false;
-	shared.history = scrambler->history;
-	return self_sync_scrambler_is_valid(
-		&shared, scrambler_config(scrambler->polynomial));
+	return scrambler != NULL && self_sync_scrambler_is_valid(
+		&scrambler->feedback, scrambler_config(scrambler->polynomial));
 }
 
 enum v34_framing_result v34_scrambler_init(
 	struct v34_scrambler *scrambler,
 	enum v34_scrambler_polynomial polynomial)
 {
-	struct v34_scrambler next = { 0 };
-	struct self_sync_scrambler shared;
-
 	if (scrambler == NULL ||
 	    self_sync_scrambler_init(
-		    &shared, scrambler_config(polynomial)) !=
+		    &scrambler->feedback, scrambler_config(polynomial)) !=
 		    SELF_SYNC_SCRAMBLER_OK)
 		return V34_FRAMING_INVALID_ARGUMENT;
-	next.history = shared.history;
-	next.polynomial = polynomial;
-	*scrambler = next;
+	scrambler->polynomial = polynomial;
 	return V34_FRAMING_OK;
 }
 
@@ -98,26 +86,20 @@ static enum v34_framing_result transform_group(
 	struct v34_scrambler *state, uint8_t input,
 	unsigned int bit_count, uint8_t *output, bool descramble)
 {
-	struct self_sync_scrambler shared;
 	const struct self_sync_scrambler_config *config;
 	enum self_sync_scrambler_result result;
-	uint8_t transformed;
 
 	if (!output_is_separate(state, output))
 		return V34_FRAMING_INVALID_ARGUMENT;
-	shared.history = state->history;
 	config = scrambler_config(state->polynomial);
 	if (descramble)
 		result = self_sync_descramble_group(
-			&shared, config, input, bit_count, &transformed);
+			&state->feedback, config, input, bit_count, output);
 	else
 		result = self_sync_scramble_group(
-			&shared, config, input, bit_count, &transformed);
-	if (result != SELF_SYNC_SCRAMBLER_OK)
-		return V34_FRAMING_INVALID_ARGUMENT;
-	state->history = shared.history;
-	*output = transformed;
-	return V34_FRAMING_OK;
+			&state->feedback, config, input, bit_count, output);
+	return result == SELF_SYNC_SCRAMBLER_OK ?
+		V34_FRAMING_OK : V34_FRAMING_INVALID_ARGUMENT;
 }
 
 enum v34_framing_result v34_scramble_group(
@@ -138,7 +120,6 @@ static enum v34_framing_result transform_unpacked_bits(
 	struct v34_scrambler *state, const uint8_t *input,
 	size_t bit_count, uint8_t *output, bool descramble)
 {
-	struct self_sync_scrambler shared;
 	const struct self_sync_scrambler_config *config;
 	enum self_sync_scrambler_result result;
 
@@ -146,16 +127,13 @@ static enum v34_framing_result transform_unpacked_bits(
 	    memory_regions_overlap(state, sizeof(*state), input, bit_count) ||
 	    memory_regions_overlap(state, sizeof(*state), output, bit_count))
 		return V34_FRAMING_INVALID_ARGUMENT;
-	shared.history = state->history;
 	config = scrambler_config(state->polynomial);
 	result = descramble ? self_sync_descramble_unpacked_bits(
-		&shared, config, input, bit_count, output) :
+		&state->feedback, config, input, bit_count, output) :
 		self_sync_scramble_unpacked_bits(
-			&shared, config, input, bit_count, output);
-	if (result != SELF_SYNC_SCRAMBLER_OK)
-		return V34_FRAMING_INVALID_ARGUMENT;
-	state->history = shared.history;
-	return V34_FRAMING_OK;
+			&state->feedback, config, input, bit_count, output);
+	return result == SELF_SYNC_SCRAMBLER_OK ?
+		V34_FRAMING_OK : V34_FRAMING_INVALID_ARGUMENT;
 }
 
 enum v34_framing_result v34_scramble_unpacked_bits(

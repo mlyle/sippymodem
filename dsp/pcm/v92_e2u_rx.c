@@ -275,7 +275,7 @@ static bool acknowledgment_coder(const struct v92_e2u_search *search,
 			sign ^= output;
 	}
 	*coder = search->coder;
-	coder->scrambler.history ^= difference.history;
+	coder->scrambler.feedback.history ^= difference.feedback.history;
 	coder->previous_encoded_sign ^= sign;
 	return true;
 }
@@ -437,7 +437,7 @@ static enum v92_e2u_rx_result search_sample(
 		/* Identical coding memories make this trial identical to the ordinary one. */
 		if (eligible && boundary && repeat.frame_bits && !repeat.bit_index &&
 		    repeat_clock && control->repeat_symbols * bits == repeat.frame_bits &&
-		    (repeat.coder.scrambler.history != observed->descrambler.history ||
+		    (repeat.coder.scrambler.feedback.history != observed->descrambler.feedback.history ||
 		     repeat.coder.previous_encoded_sign != observed->previous_encoded_sign)) {
 			if (v92_e2u_rx_init(&repeat.repeated, &control->signal, extended) != V92_E2U_RX_OK)
 				return fail(receiver);
@@ -446,7 +446,7 @@ static enum v92_e2u_rx_result search_sample(
 			repeat.candidate_active = true;
 			struct v92_phase4_modulator acknowledgment;
 			if (acknowledgment_coder(&repeat, bits, &acknowledgment) &&
-			    (acknowledgment.scrambler.history != observed->descrambler.history ||
+			    (acknowledgment.scrambler.feedback.history != observed->descrambler.feedback.history ||
 			     acknowledgment.previous_encoded_sign != observed->previous_encoded_sign)) {
 				if (v92_e2u_rx_init(&repeat.acknowledgment, &control->signal, extended) != V92_E2U_RX_OK)
 					return fail(receiver);

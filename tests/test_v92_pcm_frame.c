@@ -170,7 +170,7 @@ static bool test_b1u_coding_acquisition(void)
 				 * The transmitter's zero-state reset has separate oracle tests.
 				 * A small gain error must not lock in the wrong early history. */
 				memset(bits, 1, count);
-				tx.state.scrambler.history = changed_history;
+				tx.state.scrambler.feedback.history = changed_history;
 				unsigned validated = 0u, payload = 0u;
 				for (unsigned f = 0u; f < V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES + 4u; ++f) {
 					uint8_t decoded[V92_PCM_MAPPING_MAX_BITS + 1u];
@@ -1209,7 +1209,7 @@ static bool test_b1u_validation_history(bool independent, enum v92_cpd_trellis s
 							rx.independent.context[i].gpa ^= 1;
 				} else
 					for (unsigned i = 0; i < rx.path_count; i++)
-						rx.paths[i].descrambler.history ^= 1;
+						rx.paths[i].descrambler.feedback.history ^= 1;
 			}
 			struct v92_pcm_frame frame;
 			struct v92_pcm_frame_decision decision;
@@ -1995,7 +1995,7 @@ static bool test_b1_digits(void)
 					CHECK(v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK,
 					      "B1 digit mapping failed");
 					struct v34_scrambler scrambler = {
-						.polynomial = V34_POLYNOMIAL_GPA, .history = histories[seed],
+						.polynomial = V34_POLYNOMIAL_GPA, .feedback.history = histories[seed],
 					};
 					struct v34_scrambler reference = scrambler;
 					uint8_t differential = initial, reference_differential = initial;
@@ -2013,7 +2013,7 @@ static bool test_b1_digits(void)
 						      "B1 digit generation failed");
 						CHECK(memcmp(digits + 1, expected, sizeof(expected)) == 0 &&
 						      differential == reference_differential &&
-						      scrambler.history == reference.history &&
+						      scrambler.feedback.history == reference.feedback.history &&
 						      digits[0] == 0xa5 && digits[sizeof(digits) - 1] == 0xa5,
 						      "B1 digit or coding history mismatch at frame %u", frame);
 					}

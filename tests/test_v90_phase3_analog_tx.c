@@ -25,7 +25,7 @@ static bool trn_matches(
 	const struct v34_training_sequence *left,
 	const struct v34_training_sequence *right)
 {
-	return left->scrambler.history == right->scrambler.history &&
+	return left->scrambler.feedback.history == right->scrambler.feedback.history &&
 	       left->scrambler.polynomial == right->scrambler.polynomial &&
 	       left->role == right->role &&
 	       left->last_clockwise_quarter_turns ==

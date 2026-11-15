@@ -225,7 +225,7 @@ static bool check_control_reset(const struct v92_upstream_data_rx *receiver)
 				context->rm_prime_frames = 2;
 			}
 		for (size_t path = 0u; path < decoder->path_count; ++path) {
-			decoder->paths[path].descrambler.history = 7u;
+			decoder->paths[path].descrambler.feedback.history = 7u;
 			decoder->paths[path].differential = 1u;
 			decoder->paths[path].rm_frames = V92_PCM_RM_QUALIFY_FRAMES;
 			decoder->paths[path].rm_prime_frames = 2u;
@@ -245,7 +245,7 @@ static bool check_control_reset(const struct v92_upstream_data_rx *receiver)
 				context->rm_frames = context->rm_prime_frames = 0;
 			}
 		for (size_t path = 0u; path < decoder->path_count; ++path) {
-			decoder->paths[path].descrambler.history = 0u;
+			decoder->paths[path].descrambler.feedback.history = 0u;
 			decoder->paths[path].differential = 0u;
 			decoder->paths[path].rm_frames = 0u;
 			decoder->paths[path].rm_prime_frames = 0u;
@@ -784,7 +784,7 @@ static bool run_stream(enum g711_law law, int8_t polarity, bool extended,
 		    (source_frames == 16u || source_frames == 18u)) {
 			struct v92_upstream_data_tx expected = transmitter;
 
-			expected.encoder.state.scrambler.history = 0u;
+			expected.encoder.state.scrambler.feedback.history = 0u;
 			expected.encoder.state.differential = 0u;
 			CHECK(v92_upstream_data_tx_reset_control(&transmitter) ==
 				      V92_UPSTREAM_DATA_TX_OK &&
@@ -797,7 +797,7 @@ static bool run_stream(enum g711_law law, int8_t polarity, bool extended,
 			struct v92_upstream_data_rx expected = receiver;
 
 			for (size_t path = 0u; path < expected.decoder.path_count; ++path) {
-				expected.decoder.paths[path].descrambler.history = 0u;
+				expected.decoder.paths[path].descrambler.feedback.history = 0u;
 				expected.decoder.paths[path].differential = 0u;
 			}
 			CHECK(v92_upstream_data_rx_reset_control(&receiver) ==
@@ -871,7 +871,7 @@ static bool run_stream(enum g711_law law, int8_t polarity, bool extended,
 				const struct v92_pcm_frame_rx_path *state = &receiver.decoder.paths[path];
 				retained |= state->trellis.state == b1u_reference.state.trellis.state &&
 					state->differential == b1u_reference.state.differential &&
-					state->descrambler.history == b1u_reference.state.scrambler.history &&
+					state->descrambler.feedback.history == b1u_reference.state.scrambler.feedback.history &&
 					memcmp(&state->filter, &b1u_reference.state.filter,
 						sizeof(state->filter)) == 0;
 			}
@@ -1871,7 +1871,7 @@ static bool check_channel_plan(
 		      lu, lu, 0.002, V92_CONSTELLATION_4_POINT), "channel-plan fixture failed");
 	/* A receive-side coding-context mismatch must settle without poisoning
 	 * the gain fit. This tests acquisition, not a different normative seed. */
-	transmitter.encoder.state.scrambler.history = changed_history;
+	transmitter.encoder.state.scrambler.feedback.history = changed_history;
 	/* A sparse training-level estimate can bias the nominal inverse without
 	 * changing the peer's CPd waveform. Known B1u must refine that scalar. */
 	if (biased)
@@ -2516,7 +2516,7 @@ static bool test_rate_request_line(enum g711_law law, int polarity,
 	      v92_pcm_phase4_trn2u_line_rx_init_after_ru(&training_rx, &ru) ==
 		V92_PCM_PHASE4_TRN2U_LINE_RX_OK &&
 	      memcmp(&training_rx.equalizer, &ru.equalizer, sizeof(ru.equalizer)) == 0 &&
-	      training_rx.demodulator.descrambler.history == 0 &&
+	      training_rx.demodulator.descrambler.feedback.history == 0 &&
 	      training_rx.demodulator.previous_encoded_sign == 0 && training_rx.renegotiation,
 	      "Ru-bar handoff lost filter history or failed to reset coding");
 	CHECK(rate_exchange_init(&exchange, &ru, &cpd, &plan), "rate exchange did not start");
@@ -2930,7 +2930,7 @@ static bool check_duplicate_models(struct codec_model_workspace *work)
 		case 0: break;
 		case 1: work->selected.model.model[1].variance =
 			nextafter(work->selected.model.model[1].variance, INFINITY); break;
-		case 2: work->selected.model.alternate.paths[0].descrambler.history ^= 1; break;
+		case 2: work->selected.model.alternate.paths[0].descrambler.feedback.history ^= 1; break;
 		case 3: work->selected.line.received_frames--; break;
 		case 4: work->selected.model.coefficient = 16384;
 			work->selected.model.model[1].input_coefficient = 16384; break;
@@ -3043,7 +3043,7 @@ static bool check_codec_model(struct codec_model_workspace *work, int polarity, 
 		/* Both coding hypotheses must retain two closely-spaced control
 		 * epochs even while older payload is still in traceback. */
 		if (rm ? f == RM_END : f == V92_B1U_FRAMES + 16u || f == V92_B1U_FRAMES + 18u) {
-			transmitter.state.scrambler.history = 0u;
+			transmitter.state.scrambler.feedback.history = 0u;
 			transmitter.state.differential = 0u;
 		}
 		CHECK((rm && f >= RM_START && f < RM_END ?

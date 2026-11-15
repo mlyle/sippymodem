@@ -7167,7 +7167,7 @@ static void alter_b1_history(struct v92_pcm_frame_rx *decoder)
 				decoder->independent.context[i].gpa ^= 1u;
 	} else {
 		for (unsigned i = 0; i < decoder->path_count; ++i)
-			decoder->paths[i].descrambler.history ^= 1u;
+			decoder->paths[i].descrambler.feedback.history ^= 1u;
 	}
 }
 
@@ -7222,7 +7222,7 @@ static bool v92_b1_bit_validation(const struct pcm_call *boundary, unsigned faul
 			 * GPA histories so later source words are ones but no longer
 			 * match the zero-initialized code stream. Neither explanation
 			 * covers this complete interval, despite per-word alternatives. */
-			tx.state.scrambler.history ^= 1;
+			tx.state.scrambler.feedback.history ^= 1;
 			alter_b1_history(&path->upstream.decoder);
 		}
 		CHECK(v92_pcm_frame_encode(&tx, bits, tx.mapping.data_bits_per_frame, &encoded) == V92_PCM_FRAME_OK,
@@ -7457,7 +7457,7 @@ static bool run_downstream_b1_validation(unsigned mode, enum g711_law law, unsig
 					(fault == 4u ? 3u : V90_PHASE4_B1D_FRAMES - 1u) && !stream->queue_count) {
 					/* A valid waveform with a wrong scrambled bit may settle
 					 * early, but a late error must prevent qualification. */
-					stream->transmitter.scrambler.history ^= UINT32_C(1) << 22u;
+					stream->transmitter.scrambler.feedback.history ^= UINT32_C(1) << 22u;
 					injected = true;
 				}
 			}

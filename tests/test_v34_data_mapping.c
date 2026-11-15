@@ -75,7 +75,7 @@ static bool test_prepared_b1_mapping(void)
 	      first.schedule.data_frame_in_superframe + 1u ==
 		      first.schedule.geometry.data_frames_per_superframe &&
 	      first.schedule.next_mapping_frame == 0 &&
-	      first.scrambler.history == 0 &&
+	      first.scrambler.feedback.history == 0 &&
 	      first.scrambler.polynomial == V34_POLYNOMIAL_GPC &&
 	      reverse.scrambler.polynomial == V34_POLYNOMIAL_GPA,
 	      "prepared mapping did not begin at the directional B1 boundary");
@@ -154,7 +154,7 @@ static bool test_validation_and_transactionality(void)
 		      &prepared, &profile, &parameters, false) ==
 		      V34_DATA_MAPPING_OK,
 	      "validation fixture did not initialize");
-	prepared.scrambler.history = 1;
+	prepared.scrambler.feedback.history = 1;
 	CHECK(!v34_data_mapping_is_valid(NULL) &&
 	      !v34_data_mapping_is_valid(&prepared),
 	      "advanced scrambler was accepted as a fresh B1 mapping");

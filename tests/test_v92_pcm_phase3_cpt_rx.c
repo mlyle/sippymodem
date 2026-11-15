@@ -468,8 +468,8 @@ static bool test_contracts(void)
 	      receiver.stage == V92_PCM_PHASE3_CPT_RX_SEARCHING &&
 	      receiver.sync.stage == V92_PHASE3_SYNC_SEARCHING &&
 	      receiver.sync.trained_symbols == training.trained_symbols &&
-	      receiver.sync.training.scrambler.history ==
-		      training.training.scrambler.history &&
+	      receiver.sync.training.scrambler.feedback.history ==
+		      training.training.scrambler.feedback.history &&
 	      receiver.sync.training.previous_sign ==
 		      training.training.previous_sign,
 	      "trained CPt initialization lost synchronizer state");

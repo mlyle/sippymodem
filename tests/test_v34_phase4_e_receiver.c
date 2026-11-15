@@ -35,7 +35,7 @@ static bool receivers_are_equal(
 	const struct v34_phase4_e_receiver *left,
 	const struct v34_phase4_e_receiver *right)
 {
-	return left->descrambler.history == right->descrambler.history &&
+	return left->descrambler.feedback.history == right->descrambler.feedback.history &&
 	       left->descrambler.polynomial == right->descrambler.polynomial &&
 	       left->transmitting_role == right->transmitting_role &&
 	       left->constellation == right->constellation &&
@@ -175,7 +175,7 @@ static bool test_search_across_repeated_mp_prime(void)
 		      "E search did not complete at 20 consecutive bits");
 	}
 	CHECK(v34_phase4_e_receiver_is_complete(&receiver) &&
-	      receiver.descrambler.history == e.scrambler.history &&
+	      receiver.descrambler.feedback.history == e.scrambler.feedback.history &&
 	      receiver.previous_clockwise_quarter_turns ==
 		      e.previous_clockwise_quarter_turns,
 	      "E search lost scrambler or phase continuity");
@@ -216,8 +216,8 @@ static bool check_sequence(
 	CHECK(v34_phase4_e_receiver_is_complete(&fixture.receiver) &&
 	      fixture.receiver.received_bits ==
 		      V34_PHASE4_E_BITS &&
-	      fixture.receiver.descrambler.history ==
-		      fixture.transmitter.scrambler.history &&
+	      fixture.receiver.descrambler.feedback.history ==
+		      fixture.transmitter.scrambler.feedback.history &&
 	      fixture.receiver.previous_clockwise_quarter_turns ==
 		      fixture.transmitter.previous_clockwise_quarter_turns,
 	      "E receiver did not finish on the transmitter boundary");

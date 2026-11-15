@@ -191,7 +191,7 @@ static bool verify_record(
 		CHECK(emitted_quarter == quarter &&
 		      emitted_rotation == rotation &&
 		      points_are_close(&emitted, &expected) &&
-		      tx->scrambler.history == reference->history &&
+		      tx->scrambler.feedback.history == reference->history &&
 		      tx->previous_clockwise_quarter_turns == rotation &&
 		      tx->bit_index == first_bit + symbol_bits &&
 		      complete == (first_bit + symbol_bits == frame_bits) &&
@@ -252,7 +252,7 @@ static bool verify_scr(
 		      emitted_quarter == quarter &&
 		      emitted_rotation == rotation &&
 		      points_are_close(&emitted, &expected) &&
-		      tx->scrambler.history == reference->history &&
+		      tx->scrambler.feedback.history == reference->history &&
 		      tx->previous_clockwise_quarter_turns == rotation &&
 		      tx->bit_index == saved_bit_index &&
 		      memcmp(tx->frame, saved_frame, sizeof(saved_frame)) == 0 &&
@@ -299,26 +299,26 @@ static bool test_roles_constellations_and_continuity(void)
 			CHECK(v90_phase4_cp_tx_init(
 				      &tx, roles[role], constellations[constellation],
 				      &training) == V90_PHASE4_CP_TX_OK &&
-			      tx.scrambler.history == 0 &&
+			      tx.scrambler.feedback.history == 0 &&
 			      tx.previous_clockwise_quarter_turns == 0 &&
 			      verify_record(&tx, &reference, &training) &&
 			      verify_scr(&tx, &reference, 11u),
 			      "first CPt failed for role/constellation %zu/%zu",
 			      role, constellation);
-			history = tx.scrambler.history;
+			history = tx.scrambler.feedback.history;
 			rotation = tx.previous_clockwise_quarter_turns;
 			CHECK(v90_phase4_cp_tx_start_next_record(
 				      &tx, &repeated) == V90_PHASE4_CP_TX_OK &&
-			      tx.scrambler.history == history &&
+			      tx.scrambler.feedback.history == history &&
 			      tx.previous_clockwise_quarter_turns == rotation &&
 			      verify_record(&tx, &reference, &repeated),
 			      "repeated CPt failed for role/constellation %zu/%zu",
 			      role, constellation);
-			history = tx.scrambler.history;
+			history = tx.scrambler.feedback.history;
 			rotation = tx.previous_clockwise_quarter_turns;
 			CHECK(v90_phase4_cp_tx_start_next_record(
 				      &tx, &data) == V90_PHASE4_CP_TX_OK &&
-			      tx.scrambler.history == history &&
+			      tx.scrambler.feedback.history == history &&
 			      tx.previous_clockwise_quarter_turns == rotation &&
 			      verify_record(&tx, &reference, &data),
 			      "CP data failed for role/constellation %zu/%zu",

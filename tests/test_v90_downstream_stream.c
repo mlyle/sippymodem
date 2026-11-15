@@ -1143,7 +1143,7 @@ static bool run_v92_rt_resume(enum g711_law law, uint8_t redundancy, uint8_t loo
 	      memcmp(&tx, &resumed_tx, sizeof(tx)) == 0 && memcmp(&rx, &resumed_rx, sizeof(rx)) == 0,
 	      "Rt reentry accepted an unfinished exchange");
 	records = 0;
-	uint32_t history = before_tx.scrambler.history;
+	uint32_t history = before_tx.scrambler.feedback.history;
 	uint8_t previous_sign = 1u;
 	for (unsigned i = 0; i < 1000u && records < 3u; ++i) {
 		struct pcm_downstream_symbol symbol;

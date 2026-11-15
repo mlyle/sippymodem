@@ -193,8 +193,8 @@ static bool check_complete_sequence(
 	CHECK(v92_pcm_phase3_cpt_tx_start(&transmitter) ==
 		      V92_PCM_PHASE3_CPT_TX_OK &&
 	      transmitter.stage == V92_PCM_PHASE3_CPT_TX_PREAMBLE &&
-	      transmitter.coding.scrambler.history ==
-		      transmitter.trn1u.scrambler.history &&
+	      transmitter.coding.scrambler.feedback.history ==
+		      transmitter.trn1u.scrambler.feedback.history &&
 	      transmitter.coding.previous_sign == reference.previous_sign,
 	      "CPt did not preserve TRN1u coding history");
 	before = transmitter;
@@ -383,7 +383,7 @@ static bool test_contracts(void)
 		V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS;
 	CHECK(pcm_binary_sign_init_from_scrambler(
 		      &transmitter.coding, &transmitter.trn1u.scrambler,
-		      (uint8_t)(transmitter.trn1u.scrambler.history & 1u)) ==
+		      (uint8_t)(transmitter.trn1u.scrambler.feedback.history & 1u)) ==
 		      PCM_BINARY_SIGN_OK,
 	      "CPt overflow coding fixture did not initialize");
 	transmitter.preamble_symbols = V92_PCM_PHASE3_CPT_PREAMBLE_SYMBOLS;

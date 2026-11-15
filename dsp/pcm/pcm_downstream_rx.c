@@ -193,7 +193,7 @@ bool pcm_downstream_rx_is_fresh(
 {
 	if (!pcm_downstream_rx_is_valid(receiver) ||
 	    receiver->stage != PCM_DOWNSTREAM_RX_TRN2D ||
-	    receiver->stream.descrambler.history != 0 ||
+	    receiver->stream.descrambler.feedback.history != 0 ||
 	    receiver->stream.decoder.signs.previous_odd != 0 ||
 	    receiver->stream.decoder.signs.previous_pcm_sign != 0 ||
 	    receiver->stream.decoder.signs.trellis_state ||

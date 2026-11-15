@@ -33,7 +33,7 @@ static bool check_sequence(enum g711_law law, uint8_t lu_ucode)
 		      V92_PCM_PHASE3_TRN1U_OK &&
 	      v92_pcm_phase3_trn1u_is_valid(&trn1u) &&
 	      trn1u.scrambler.polynomial == V34_POLYNOMIAL_GPA &&
-	      trn1u.scrambler.history == 0u &&
+	      trn1u.scrambler.feedback.history == 0u &&
 	      trn1u.emitted_symbols == 0u &&
 	      !v92_pcm_phase3_trn1u_can_handoff(&trn1u),
 	      "TRN1u did not initialize for law %u LU %u",

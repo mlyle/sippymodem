@@ -30,7 +30,7 @@ bool v34_phase3_j_sequence_is_equal(
 	const struct v34_phase3_j_sequence *right)
 {
 	return left != NULL && right != NULL &&
-	       left->scrambler.history == right->scrambler.history &&
+	       left->scrambler.feedback.history == right->scrambler.feedback.history &&
 	       left->scrambler.polynomial == right->scrambler.polynomial &&
 	       left->role == right->role &&
 	       left->remote_constellation == right->remote_constellation &&

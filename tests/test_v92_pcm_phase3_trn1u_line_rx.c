@@ -56,7 +56,7 @@ static bool check_channel(
 		source_symbols++;
 		if (source_symbols == V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS) {
 			expected_previous_sign = symbol_sign(&symbol);
-			expected_history = source.scrambler.history;
+			expected_history = source.scrambler.feedback.history;
 		}
 		sample = symbol.sample;
 		CHECK(channel_bench_process(&bench, &sample, 1u) ==
@@ -101,7 +101,7 @@ static bool check_channel(
 	      receiver.sample_sum == sample_sum &&
 	      handoff.dc_offset == lround((double)sample_sum / sample_count) &&
 	      handoff.sync.training.previous_sign == expected_previous_sign &&
-	      handoff.sync.training.scrambler.history == expected_history,
+	      handoff.sync.training.scrambler.feedback.history == expected_history,
 	      "TRN1u line handoff lost coding or equalizer delay");
 	{
 		struct v92_pcm_phase3_trn1u_line_rx before = receiver;

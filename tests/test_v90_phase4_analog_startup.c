@@ -324,7 +324,7 @@ static bool run_cpt_first_exchange(enum g711_law law)
 		uint8_t received;
 		uint8_t transmitted;
 		uint32_t history_before = station->transmit.symbols
-			.scrambler.history;
+			.scrambler.feedback.history;
 		bool was_early_scr =
 			startup.stage == V90_PHASE4_STARTUP_CONTINUING &&
 			!startup.state.continuing.receive_ready;
@@ -370,7 +370,7 @@ static bool run_cpt_first_exchange(enum g711_law law)
 
 			early_scr_octets++;
 			scrambled_ones_seen |=
-				symbols_after->scrambler.history != history_before;
+				symbols_after->scrambler.feedback.history != history_before;
 		}
 		downstream_octets += was_downstream;
 		if (startup.stage == V90_PHASE4_STARTUP_CONTINUING &&

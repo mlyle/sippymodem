@@ -64,7 +64,7 @@ static bool transmitters_are_equal(
 	const struct v34_phase4_mp *right)
 {
 	return memcmp(left->frame, right->frame, sizeof(left->frame)) == 0 &&
-	       left->scrambler.history == right->scrambler.history &&
+	       left->scrambler.feedback.history == right->scrambler.feedback.history &&
 	       left->scrambler.polynomial == right->scrambler.polynomial &&
 	       left->role == right->role &&
 	       left->constellation == right->constellation &&
@@ -92,7 +92,7 @@ static void reference_mapper_init(
 	const struct v34_training_sequence *trn)
 {
 	*mapper = (struct reference_mapper){
-		.history = trn->scrambler.history,
+		.history = trn->scrambler.feedback.history,
 		.primary_tap_delay =
 			trn->role == V34_CALLING_STATION ? 18u : 5u,
 		.previous_clockwise_quarter_turns =
@@ -429,7 +429,7 @@ static bool test_receiver_validation(void)
 		      V34_CONSTELLATION_4_POINT, NULL) &&
 	      v34_phase4_mp_receiver_init_from_trn(&seeded, &trn) ==
 		      V34_PHASE4_MP_RECEIVER_OK &&
-	      seeded.descrambler.history == trn.scrambler.history &&
+	      seeded.descrambler.feedback.history == trn.scrambler.feedback.history &&
 	      seeded.descrambler.polynomial == trn.scrambler.polynomial &&
 	      seeded.previous_clockwise_quarter_turns ==
 		      trn.last_clockwise_quarter_turns &&
@@ -554,7 +554,7 @@ static bool verify_encoded_record(
 		      complete == (symbol + 1u == symbol_count) &&
 		      points_are_close(&point, &expected) &&
 		      transmitter->bit_index == first_bit + symbol_bits &&
-		      transmitter->scrambler.history == reference->history &&
+		      transmitter->scrambler.feedback.history == reference->history &&
 		      transmitter->previous_clockwise_quarter_turns ==
 			      reference->previous_clockwise_quarter_turns &&
 		      memcmp(transmitter->frame, expected_frame,
@@ -650,8 +650,8 @@ static bool test_role_and_constellation_records(void)
 			      v34_phase4_mp_is_valid(&transmitter) &&
 			      !v34_phase4_mp_record_is_complete(
 				      &transmitter) &&
-			      transmitter.scrambler.history ==
-				      trn.scrambler.history &&
+			      transmitter.scrambler.feedback.history ==
+				      trn.scrambler.feedback.history &&
 			      transmitter.scrambler.polynomial ==
 				      trn.scrambler.polynomial &&
 			      transmitter.previous_clockwise_quarter_turns ==
@@ -676,7 +676,7 @@ static bool test_role_and_constellation_records(void)
 			      "MP record %zu/%zu failed", role_index,
 			      constellation_index);
 			{
-				uint32_t history = transmitter.scrambler.history;
+				uint32_t history = transmitter.scrambler.feedback.history;
 				uint8_t rotation =
 					transmitter.previous_clockwise_quarter_turns;
 
@@ -686,7 +686,7 @@ static bool test_role_and_constellation_records(void)
 				      transmitter.bit_index == 0 &&
 				      transmitter.frame_bit_count ==
 					      V34_MP_TYPE1_FRAME_BITS &&
-				      transmitter.scrambler.history == history &&
+				      transmitter.scrambler.feedback.history == history &&
 				      transmitter.previous_clockwise_quarter_turns ==
 					      rotation,
 				      "MP-prime transition %zu/%zu reset mapper state",

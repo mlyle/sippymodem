@@ -39,7 +39,7 @@ static bool sequences_are_equal(
 	const struct v34_phase4_e_sequence *left,
 	const struct v34_phase4_e_sequence *right)
 {
-	return left->scrambler.history == right->scrambler.history &&
+	return left->scrambler.feedback.history == right->scrambler.feedback.history &&
 	       left->scrambler.polynomial == right->scrambler.polynomial &&
 	       left->role == right->role &&
 	       left->constellation == right->constellation &&
@@ -148,7 +148,7 @@ static void reference_mapper_init(
 	const struct v34_phase4_mp *mp)
 {
 	*mapper = (struct reference_mapper){
-		.history = mp->scrambler.history,
+		.history = mp->scrambler.feedback.history,
 		.primary_tap_delay =
 			mp->role == V34_CALLING_STATION ? 18u : 5u,
 		.previous_clockwise_quarter_turns =
@@ -193,7 +193,7 @@ static bool verify_sequence(
 		      emitted_rotation == rotation &&
 		      points_are_close(&point, &expected) &&
 		      sequence->emitted_bits == (symbol + 1u) * symbol_bits &&
-		      sequence->scrambler.history == reference->history &&
+		      sequence->scrambler.feedback.history == reference->history &&
 		      sequence->previous_clockwise_quarter_turns ==
 			      reference->previous_clockwise_quarter_turns &&
 		      v34_phase4_e_sequence_is_valid(sequence) &&
@@ -254,7 +254,7 @@ static bool test_roles_constellations_and_records(void)
 				CHECK(v34_phase4_e_sequence_init_from_mp(
 					      &sequence, &mp) ==
 					      V34_PHASE4_E_SEQUENCE_OK &&
-				      sequence.scrambler.history == mp.scrambler.history &&
+				      sequence.scrambler.feedback.history == mp.scrambler.feedback.history &&
 				      sequence.scrambler.polynomial ==
 					      mp.scrambler.polynomial &&
 				      sequence.previous_clockwise_quarter_turns ==
@@ -327,7 +327,7 @@ static bool test_validation(void)
 	struct v34_phase4_mp mp;
 	struct v34_phase4_e_sequence sequence = {
 		.scrambler = {
-			.history = 7,
+			.feedback.history = 7,
 			.polynomial = V34_POLYNOMIAL_GPC,
 		},
 		.role = V34_CALLING_STATION,
@@ -416,7 +416,7 @@ static bool test_validation(void)
 	CHECK(!v34_phase4_e_sequence_is_valid(&sequence),
 	      "E accepted an invalid constellation");
 	sequence = saved;
-	sequence.scrambler.history = UINT32_C(1) <<
+	sequence.scrambler.feedback.history = UINT32_C(1) <<
 		V34_SCRAMBLER_BITS;
 	CHECK(!v34_phase4_e_sequence_is_valid(&sequence) &&
 	      !v34_phase4_e_sequence_is_valid(NULL) &&
@@ -439,7 +439,7 @@ static bool test_training_symbol_rejection(void)
 
 	CHECK(v34_transmit_scrambler_init(&scrambler, V34_CALLING_STATION) ==
 	      V34_FRAMING_OK, "training symbol setup failed");
-	scrambler.history = 0x654321;
+	scrambler.feedback.history = 0x654321;
 	struct v34_scrambler saved = scrambler;
 	/* Both errors occur after the differential dibit could advance history:
 	 * the second dibit is invalid, or constellation mapping rejects the size. */
@@ -449,7 +449,7 @@ static bool test_training_symbol_rejection(void)
 	      !v34_training_encode_symbol(&scrambler,
 		      (enum v34_constellation_size)8, 3u, 3u,
 		      &rotation, &point, &quarter) &&
-	      scrambler.history == saved.history &&
+	      scrambler.feedback.history == saved.feedback.history &&
 	      scrambler.polynomial == saved.polynomial &&
 	      rotation == 2 && quarter == 7 &&
 	      point.in_phase == sentinel.in_phase &&
@@ -460,7 +460,7 @@ static bool test_training_symbol_rejection(void)
 		      &rotation, &point, &quarter, &emitted_rotation, &complete) &&
 	      cursor == 0 && complete && rotation == 2 && quarter == 7 &&
 	      emitted_rotation == 7 &&
-	      scrambler.history == saved.history &&
+	      scrambler.feedback.history == saved.feedback.history &&
 	      scrambler.polynomial == saved.polynomial &&
 	      point.in_phase == sentinel.in_phase &&
 	      point.quadrature == sentinel.quadrature,

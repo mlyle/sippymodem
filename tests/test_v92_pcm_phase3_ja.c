@@ -100,7 +100,7 @@ static bool check_stream(
 	      tx.upstream_rate_mask == rate_mask &&
 	      tx.dil_segments == request.downstream.segment_count &&
 	      tx.coding.previous_sign == history[trn1u_symbols - 1u] &&
-	      tx.coding.scrambler.history == trn1u.scrambler.history &&
+	      tx.coding.scrambler.feedback.history == trn1u.scrambler.feedback.history &&
 	      memcmp(tx.descriptor, descriptor, sizeof(descriptor)) == 0 &&
 	      !v92_pcm_phase3_ja_tx_can_stop(&tx),
 	      "Ja did not initialize for law %u LU %u mask 0x%05x",

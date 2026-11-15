@@ -2512,10 +2512,10 @@ static bool test_repeat_history_recovery(enum upstream_tail tail, bool acknowled
 				      &copied_line, true, sample, &event) == result &&
 				      receiver.bit_errors == copied_receiver.bit_errors &&
 				      receiver.correlation == copied_receiver.correlation &&
-				      receiver.signal.line.demodulator.descrambler.history ==
-					      copied_receiver.signal.line.demodulator.descrambler.history &&
+				      receiver.signal.line.demodulator.descrambler.feedback.history ==
+					      copied_receiver.signal.line.demodulator.descrambler.feedback.history &&
 				      search.bit_index == copied_search.bit_index &&
-				      search.coder.scrambler.history == copied_search.coder.scrambler.history,
+				      search.coder.scrambler.feedback.history == copied_search.coder.scrambler.feedback.history,
 				      "interleaved copied search lost its in-progress marker");
 			if (symbol++ == 4) {
 				copied_receiver = receiver;
@@ -2523,7 +2523,7 @@ static bool test_repeat_history_recovery(enum upstream_tail tail, bool acknowled
 				copied_search = search;
 			}
 		}
-		CHECK(receiver.signal.line.demodulator.descrambler.history == wire.modulator.scrambler.history &&
+		CHECK(receiver.signal.line.demodulator.descrambler.feedback.history == wire.modulator.scrambler.feedback.history &&
 		      receiver.signal.line.demodulator.previous_encoded_sign == wire.modulator.previous_encoded_sign,
 		      "recovered E2u did not hand off the transmitter's exact coding history");
 		recovered += ordinary != V92_E2U_RX_COMPLETE;

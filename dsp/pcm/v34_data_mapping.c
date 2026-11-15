@@ -38,7 +38,7 @@ bool v34_data_mapping_is_valid(
 	       v34_transmit_scrambler_is_valid(
 		       &mapping->scrambler,
 		       mapping->transmitting_profile.local_role) &&
-	       mapping->scrambler.history == 0 &&
+	       mapping->scrambler.feedback.history == 0 &&
 	       encoder_is_at_b1_start(&mapping->encoder) &&
 	       v34_power_normalizer_is_valid(&mapping->normalizer) &&
 	       v34_mapping_parameters_are_equal(

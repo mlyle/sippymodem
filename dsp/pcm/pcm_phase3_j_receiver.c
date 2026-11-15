@@ -44,7 +44,7 @@ bool pcm_phase3_j_receiver_is_valid(
 		       !receiver->prime_candidate &&
 		       (receiver->trn1d_symbols != 0 ||
 			(receiver->coding.previous_sign == 0 &&
-			 receiver->coding.scrambler.history == 0));
+			 receiver->coding.scrambler.feedback.history == 0));
 	case PCM_PHASE3_J_RECEIVER_JD_SEARCH:
 		return receiver->trn1d_symbols >=
 			       V90_PHASE3_TRN1D_MIN_SYMBOLS &&

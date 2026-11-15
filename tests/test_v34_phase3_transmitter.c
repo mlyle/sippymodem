@@ -19,7 +19,7 @@ static bool scramblers_match(
 	const struct v34_scrambler *left,
 	const struct v34_scrambler *right)
 {
-	return left->history == right->history &&
+	return left->feedback.history == right->feedback.history &&
 	       left->polynomial == right->polynomial;
 }
 

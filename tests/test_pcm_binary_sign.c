@@ -27,7 +27,7 @@ static bool states_match(
 	const struct pcm_binary_sign *second)
 {
 	return first->scrambler.polynomial == second->scrambler.polynomial &&
-	       first->scrambler.history == second->scrambler.history &&
+	       first->scrambler.feedback.history == second->scrambler.feedback.history &&
 	       first->previous_sign == second->previous_sign;
 }
 
@@ -84,7 +84,7 @@ static bool test_training_handoff(void)
 			      &decoder, final_sign) == PCM_BINARY_SIGN_OK,
 		      "binary-sign training stopped at bit %zu", index);
 	}
-	CHECK(decoder.scrambler.history == source.history &&
+	CHECK(decoder.scrambler.feedback.history == source.feedback.history &&
 	      decoder.previous_sign == final_sign &&
 	      pcm_binary_sign_init_from_scrambler(
 		      &encoder, &source, final_sign) == PCM_BINARY_SIGN_OK &&

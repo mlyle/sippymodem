@@ -13,7 +13,7 @@ static bool coding_matches(
 	const struct pcm_binary_sign *first,
 	const struct pcm_binary_sign *second)
 {
-	return first->scrambler.history == second->scrambler.history &&
+	return first->scrambler.feedback.history == second->scrambler.feedback.history &&
 	       first->scrambler.polynomial == second->scrambler.polynomial &&
 	       first->previous_sign == second->previous_sign;
 }

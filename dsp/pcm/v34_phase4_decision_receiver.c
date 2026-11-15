@@ -23,7 +23,7 @@ static bool s_is_initial(const struct v34_phase3_s_hunt *receiver)
 
 static bool trn_is_initial(const struct v34_training_sequence *trn)
 {
-	return trn->scrambler.history == 0u &&
+	return trn->scrambler.feedback.history == 0u &&
 	       trn->last_clockwise_quarter_turns == 0u &&
 	       !trn->has_last_symbol;
 }
@@ -71,7 +71,7 @@ static bool call_j_prime_state_is_valid(
 		V34_CALLING_STATION;
 
 	if (!calling_peer)
-		return j_prime->descrambler.history == 0u &&
+		return j_prime->descrambler.feedback.history == 0u &&
 		       j_prime->descrambler.polynomial == V34_POLYNOMIAL_GPC &&
 		       j_prime->decoded_history == 0u &&
 		       j_prime->previous_clockwise_quarter_turns == 0u &&
@@ -177,8 +177,8 @@ static bool trn_state_is_valid(
 		       receiver->trn_symbols ==
 			       V34_TRAINING_SEQUENCE_MIN_SYMBOLS &&
 		       receiver->mp_receiver.has_previous_symbol &&
-		       receiver->mp_receiver.descrambler.history ==
-			       receiver->expected_trn.scrambler.history &&
+		       receiver->mp_receiver.descrambler.feedback.history ==
+			       receiver->expected_trn.scrambler.feedback.history &&
 		       receiver->mp_receiver.descrambler.polynomial ==
 			       receiver->expected_trn.scrambler.polynomial &&
 		       receiver->mp_receiver
@@ -577,7 +577,7 @@ static bool mp_decoder_matches_trn(
 	const struct v34_training_sequence *trn)
 {
 	return receiver->has_previous_symbol &&
-	       receiver->descrambler.history == trn->scrambler.history &&
+	       receiver->descrambler.feedback.history == trn->scrambler.feedback.history &&
 	       receiver->descrambler.polynomial == trn->scrambler.polynomial &&
 	       receiver->previous_clockwise_quarter_turns ==
 		       trn->last_clockwise_quarter_turns;

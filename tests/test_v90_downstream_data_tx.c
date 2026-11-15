@@ -206,7 +206,7 @@ static bool run_stream(
 	      v90_downstream_data_tx_init(&transmitter, &mapping) ==
 		      V90_DOWNSTREAM_DATA_TX_OK &&
 	      receiver_init(&receiver, &mapping) &&
-	      transmitter.scrambler.history == 0,
+	      transmitter.scrambler.feedback.history == 0,
 	      "data epoch did not initialize for law %d", law);
 	if (differing_planes) {
 		CHECK(mapping.law == law && mapping.codec_plane_differs,

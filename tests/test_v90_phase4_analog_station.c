@@ -221,7 +221,7 @@ static bool run_exchange(
 				struct v90_phase4_analog_receive_handoff corrupted =
 					receive_handoff;
 
-				corrupted.receiver.stream.descrambler.history = 1;
+				corrupted.receiver.stream.descrambler.feedback.history = 1;
 				CHECK(!v90_phase4_analog_receive_handoff_is_valid(
 					      &corrupted),
 				      "handoff accepted a used descrambler epoch");
@@ -294,7 +294,7 @@ static bool run_exchange(
 		      v90_analog_station_states_equal(&station, &saved) &&
 		      sample == 1234,
 		      "completed CPt direction was not transactional");
-		history = transmit_handoff.symbols.scrambler.history;
+		history = transmit_handoff.symbols.scrambler.feedback.history;
 		rotation = transmit_handoff.symbols
 			.previous_clockwise_quarter_turns;
 		data.kind = V90_CP_DATA;
@@ -303,7 +303,7 @@ static bool run_exchange(
 		CHECK(v90_phase4_cp_line_tx_start_next_record(
 			      &transmit_handoff, &data) ==
 			      V90_PHASE4_CP_LINE_TX_OK &&
-		      transmit_handoff.symbols.scrambler.history == history &&
+		      transmit_handoff.symbols.scrambler.feedback.history == history &&
 		      transmit_handoff.symbols
 			      .previous_clockwise_quarter_turns == rotation,
 		      "CP handoff reset continuous coding history");

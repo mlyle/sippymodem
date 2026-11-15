@@ -255,11 +255,11 @@ static bool protocol_state_matches(
 	case V34_TRAINING_TRANSMITTER_J_PRIME:
 		return actual->phase4.j_prime.emitted_symbols ==
 		       model->phase4.j_prime.emitted_symbols &&
-		       actual->phase4.j_prime.scrambler.history ==
-		       model->phase4.j_prime.scrambler.history;
+		       actual->phase4.j_prime.scrambler.feedback.history ==
+		       model->phase4.j_prime.scrambler.feedback.history;
 	case V34_TRAINING_TRANSMITTER_PHASE4_TRN:
-		return actual->phase4.trn.scrambler.history ==
-		       model->phase4.trn.scrambler.history &&
+		return actual->phase4.trn.scrambler.feedback.history ==
+		       model->phase4.trn.scrambler.feedback.history &&
 		       actual->phase4.trn.has_last_symbol ==
 		       model->phase4.trn.has_last_symbol &&
 		       actual->phase4.trn.last_clockwise_quarter_turns ==
@@ -269,8 +269,8 @@ static bool protocol_state_matches(
 			       actual->phase4.mp.frame,
 			       model->phase4.mp.frame,
 			       sizeof(actual->phase4.mp.frame)) == 0 &&
-		       actual->phase4.mp.scrambler.history ==
-			       model->phase4.mp.scrambler.history &&
+		       actual->phase4.mp.scrambler.feedback.history ==
+			       model->phase4.mp.scrambler.feedback.history &&
 		       actual->phase4.mp.scrambler.polynomial ==
 			       model->phase4.mp.scrambler.polynomial &&
 		       actual->phase4.mp.frame_bit_count ==
@@ -280,8 +280,8 @@ static bool protocol_state_matches(
 		       actual->phase4.mp.previous_clockwise_quarter_turns ==
 			       model->phase4.mp.previous_clockwise_quarter_turns;
 	case V34_TRAINING_TRANSMITTER_PHASE4_E:
-		return actual->phase4.e.scrambler.history ==
-			       model->phase4.e.scrambler.history &&
+		return actual->phase4.e.scrambler.feedback.history ==
+			       model->phase4.e.scrambler.feedback.history &&
 		       actual->phase4.e.scrambler.polynomial ==
 			       model->phase4.e.scrambler.polynomial &&
 		       actual->phase4.e.emitted_bits ==

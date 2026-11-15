@@ -254,8 +254,8 @@ static bool run_line(
 			      &decoded_raw) == V92_PHASE4_MODULATOR_OK,
 		      "TRN2u coding oracle failed at %zu", symbol);
 		CHECK(echo_gain_q15 != 0 ||
-		      (receiver.demodulator.descrambler.history ==
-			       decoded_oracle.scrambler.history &&
+		      (receiver.demodulator.descrambler.feedback.history ==
+			       decoded_oracle.scrambler.feedback.history &&
 		       receiver.demodulator.previous_encoded_sign ==
 			       decoded_oracle.previous_encoded_sign),
 		      "TRN2u coding continuity changed at %zu", symbol);
@@ -280,8 +280,8 @@ static bool run_line(
 	      receiver.expected_index ==
 		      receiver.trained_symbols %
 			      V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY &&
-	      receiver.demodulator.descrambler.history ==
-		      decoded_oracle.scrambler.history &&
+	      receiver.demodulator.descrambler.feedback.history ==
+		      decoded_oracle.scrambler.feedback.history &&
 	      receiver.demodulator.previous_encoded_sign ==
 		      decoded_oracle.previous_encoded_sign &&
 	      v92_pcm_phase4_trn2u_line_rx_can_handoff(&receiver),

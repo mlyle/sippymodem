@@ -244,8 +244,8 @@ static bool test_b1_and_superframe_handoff(void)
 					      .data_frame_in_superframe &&
 			      fixture.receiver.schedule.next_mapping_frame ==
 				      fixture.transmit_schedule.next_mapping_frame &&
-			      fixture.receiver.descrambler.history ==
-				      fixture.scrambler.history &&
+			      fixture.receiver.descrambler.feedback.history ==
+				      fixture.scrambler.feedback.history &&
 			      fixture.receiver.mapping_decoder
 					      .previous_differential_output ==
 				      fixture.encoder.previous_differential_output,

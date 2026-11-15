@@ -123,7 +123,7 @@ enum v92_pcm_frame_result v92_pcm_frame_tx_reset_control(
 		return V92_PCM_FRAME_INVALID_ARGUMENT;
 	if (!v92_pcm_frame_tx_is_valid(transmitter))
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
-	transmitter->state.scrambler.history = 0u;
+	transmitter->state.scrambler.feedback.history = 0u;
 	transmitter->state.differential = 0u;
 	return V92_PCM_FRAME_OK;
 }
@@ -924,7 +924,7 @@ enum v92_pcm_frame_result v92_pcm_frame_rx_use_independent(struct v92_pcm_frame_
 				c->margin[j] = 0;
 		}
 
-		c->gpa = p->descrambler.history;
+		c->gpa = p->descrambler.feedback.history;
 		c->sign = p->differential;
 
 		c->code_mismatches = p->b1u_code_mismatches;
@@ -965,7 +965,7 @@ enum v92_pcm_frame_result v92_pcm_frame_rx_use_independent(struct v92_pcm_frame_
 				c->margin[j] = other;
 		}
 
-		if (c->gpa != p->descrambler.history || c->sign != p->differential ||
+		if (c->gpa != p->descrambler.feedback.history || c->sign != p->differential ||
 		    c->rm_frames != p->rm_frames || c->rm_prime_frames != p->rm_prime_frames)
 			for (unsigned j = seeded.fill; j <= seeded.fill + 2u; j++)
 				if (gap < c->margin[j])
@@ -1008,7 +1008,7 @@ enum v92_pcm_frame_result v92_pcm_frame_rx_reset_control(
 		return V92_PCM_FRAME_OK;
 	}
 	for (size_t index = 0u; index < receiver->path_count; ++index) {
-		receiver->paths[index].descrambler.history = 0u;
+		receiver->paths[index].descrambler.feedback.history = 0u;
 		receiver->paths[index].differential = 0u;
 		receiver->paths[index].rm_frames = 0u;
 		receiver->paths[index].rm_prime_frames = 0u;
@@ -2157,7 +2157,7 @@ static enum v92_pcm_frame_result decode_frame(
 			if (state->differential == prior->differential &&
 			    state->rm_frames == prior->rm_frames &&
 			    state->rm_prime_frames == prior->rm_prime_frames &&
-			    state->descrambler.history == prior->descrambler.history &&
+			    state->descrambler.feedback.history == prior->descrambler.feedback.history &&
 			    state->trellis.state == prior->trellis.state &&
 			    same_filter_history(&receiver->mapping, &history_span,
 				&state->filter, &prior->filter))

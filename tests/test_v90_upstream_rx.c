@@ -698,7 +698,7 @@ static bool run_line(
 	      "upstream payload did not survive B1 at rate %u law %u",
 	      rate_2400_bps_units, law);
 	CHECK(!damage_prime ||
-	      (receiver.control_symbols.descrambler.history == cp_tx.symbols.scrambler.history &&
+	      (receiver.control_symbols.descrambler.feedback.history == cp_tx.symbols.scrambler.feedback.history &&
 	       receiver.control_symbols.previous_clockwise_quarter_turns ==
 		       cp_tx.symbols.previous_clockwise_quarter_turns),
 	      "E changed the CP history retained for renegotiation");

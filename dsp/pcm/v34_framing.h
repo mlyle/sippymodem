@@ -4,6 +4,7 @@
 #define V34_FRAMING_H
 
 #include "v34_station.h"
+#include "self_sync_scrambler.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -32,7 +33,7 @@ enum v34_framing_result {
 };
 
 struct v34_scrambler {
-	uint32_t history;
+	struct self_sync_scrambler feedback;
 	enum v34_scrambler_polynomial polynomial;
 };
 

@@ -44,7 +44,7 @@ static bool detection_is_clear(
 	const struct v34_phase3_j_detection *detection)
 {
 	return detection->preceding_symbols == 0u && detection->errors == 0u &&
-	       detection->sequence.scrambler.history == 0u &&
+	       detection->sequence.scrambler.feedback.history == 0u &&
 	       detection->sequence.scrambler.polynomial ==
 		       V34_POLYNOMIAL_GPC &&
 	       detection->sequence.role == V34_CALLING_STATION &&

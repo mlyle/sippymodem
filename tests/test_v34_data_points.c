@@ -139,7 +139,7 @@ static bool queue_and_compare_frame(
 	    !v34_frame_geometry_is_equal(&points->schedule.geometry, &schedule->geometry) ||
 	    points->schedule.data_frame_in_superframe != schedule->data_frame_in_superframe ||
 	    points->schedule.next_mapping_frame != schedule->next_mapping_frame ||
-	    points->scrambler.history != scrambler->history ||
+	    points->scrambler.feedback.history != scrambler->feedback.history ||
 	    points->scrambler.polynomial != scrambler->polynomial ||
 	    !v34_test_encoders_are_equal(&points->encoder, encoder))
 		return false;

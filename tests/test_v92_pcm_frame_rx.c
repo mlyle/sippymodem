@@ -398,10 +398,10 @@ static bool test_control_epoch(enum g711_law law, uint8_t rate, bool filtered)
 			struct v92_pcm_frame_tx expected_tx = transmitter;
 			struct v92_pcm_frame_rx expected_rx = receiver;
 
-			expected_tx.state.scrambler.history = 0u;
+			expected_tx.state.scrambler.feedback.history = 0u;
 			expected_tx.state.differential = 0u;
 			for (size_t path = 0u; path < expected_rx.path_count; ++path) {
-				expected_rx.paths[path].descrambler.history = 0u;
+				expected_rx.paths[path].descrambler.feedback.history = 0u;
 				expected_rx.paths[path].differential = 0u;
 			}
 			CHECK(receiver.pending_frames == V92_PCM_RX_DELAY_FRAMES &&
@@ -504,7 +504,7 @@ static bool test_constellation_coordinates(
 			struct v92_pcm_frame_rx expected = receiver;
 
 			for (size_t path = 0u; path < expected.path_count; ++path) {
-				expected.paths[path].descrambler.history = 0u;
+				expected.paths[path].descrambler.feedback.history = 0u;
 				expected.paths[path].differential = 0u;
 			}
 			CHECK(v92_pcm_frame_tx_reset_control(&transmitter) == V92_PCM_FRAME_OK &&
@@ -979,7 +979,7 @@ static bool test_rm_receive(enum g711_law law, uint8_t rate,
 		if (f == CONTROL) {
 			struct v92_pcm_frame_rx expected = rx;
 			for (unsigned p = 0u; p < expected.path_count; ++p) {
-				expected.paths[p].descrambler.history = 0u;
+				expected.paths[p].descrambler.feedback.history = 0u;
 				expected.paths[p].differential = 0u;
 				expected.paths[p].rm_frames = 0u;
 				expected.paths[p].rm_prime_frames = 0u;

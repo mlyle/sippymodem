@@ -164,7 +164,7 @@ static bool test_record_bit_order(void)
 				      V92_PHASE4_MODULATOR_OK &&
 			      v92_phase4_record_tx_next(&tx, &sample) ==
 				      V92_PHASE4_RECORD_TX_OK && sample == reference &&
-			      tx.modulator.scrambler.history == expected.scrambler.history &&
+			      tx.modulator.scrambler.feedback.history == expected.scrambler.feedback.history &&
 			      tx.modulator.previous_encoded_sign == expected.previous_encoded_sign &&
 			      tx.bit_index == (symbol + 1u) * bits,
 			      "record group order differed at width %u symbol %u", bits, symbol);

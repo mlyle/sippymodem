@@ -136,7 +136,7 @@ static bool check_su_phase(const struct v92_phase3_analog_station *before)
 			      V92_PHASE3_ANALOG_STATION_OK &&
 		      station.transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_CPT &&
 		      station.transmit.cpt.trn1u.emitted_symbols == 0u &&
-		      station.transmit.cpt.trn1u.scrambler.history == 0u &&
+		      station.transmit.cpt.trn1u.scrambler.feedback.history == 0u &&
 		      sample == expected_sample &&
 		      memcmp(&station.transmit_delay, &expected, sizeof(expected)) == 0,
 		      "Su did not hand off directly to zero-seeded TRN1u at the selected phase");

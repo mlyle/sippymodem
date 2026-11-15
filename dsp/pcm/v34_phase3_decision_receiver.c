@@ -36,7 +36,7 @@ static bool trn_state_is_valid(
 	if (receiver->j.received_symbols == 0u)
 		return !receiver->trn.has_last_symbol &&
 		       receiver->trn.last_clockwise_quarter_turns == 0u &&
-		       receiver->trn.scrambler.history == 0u;
+		       receiver->trn.scrambler.feedback.history == 0u;
 	return receiver->trn.has_last_symbol;
 }
 

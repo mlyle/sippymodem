@@ -481,8 +481,8 @@ static bool run_timeline(
 	      fixture.receiver.mp_receiver.previous_clockwise_quarter_turns ==
 		      rotation &&
 	      (constellation != V34_CONSTELLATION_4_POINT ||
-	       (fixture.receiver.mp_receiver.descrambler.history ==
-			trn.scrambler.history &&
+	       (fixture.receiver.mp_receiver.descrambler.feedback.history ==
+			trn.scrambler.feedback.history &&
 		fixture.receiver.mp_receiver.descrambler.polynomial ==
 			trn.scrambler.polynomial)),
 	      "TRN did not retain the MP phase boundary");
@@ -995,8 +995,8 @@ static bool test_false_j_prime_preserves_training(void)
 	CHECK(fixture.receiver.stage == V34_PHASE4_DECISION_RECEIVER_TRN &&
 	      fixture.receiver.trn_symbols ==
 		      V34_PHASE4_DECISION_RECEIVER_TRN_CONFIRM_SYMBOLS &&
-	      fixture.receiver.expected_trn.scrambler.history ==
-		      trn.scrambler.history &&
+	      fixture.receiver.expected_trn.scrambler.feedback.history ==
+		      trn.scrambler.feedback.history &&
 	      fixture.receiver.expected_trn.scrambler.polynomial ==
 		      trn.scrambler.polynomial &&
 	      fixture.receiver.expected_trn.last_clockwise_quarter_turns ==

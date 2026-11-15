@@ -8,7 +8,7 @@
 
 static bool search_is_initial(const struct v90_ja_search *search)
 {
-	return search->descrambler.history == 0 &&
+	return search->descrambler.feedback.history == 0 &&
 	       search->descrambler.polynomial == V34_POLYNOMIAL_GPA &&
 	       search->bit_index == 0 && search->warmup_bits == 0 &&
 	       search->consecutive_ones == 0 &&

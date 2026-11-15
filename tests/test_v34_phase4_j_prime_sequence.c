@@ -129,8 +129,8 @@ static bool test_normative_sequence(void)
 			      &sequence) &&
 		      !v34_phase4_j_prime_sequence_is_complete(
 			      &sequence) &&
-		      sequence.scrambler.history ==
-			      j_sequence.scrambler.history &&
+		      sequence.scrambler.feedback.history ==
+			      j_sequence.scrambler.feedback.history &&
 		      sequence.scrambler.polynomial ==
 			      j_sequence.scrambler.polynomial &&
 		      sequence.role == V34_CALLING_STATION &&
@@ -141,7 +141,7 @@ static bool test_normative_sequence(void)
 		      "J-prime selection %zu handoff failed", selection);
 		expected_rotation = j_sequence.previous_clockwise_quarter_turns;
 		reference_scrambler_init(
-			&reference, j_sequence.scrambler.history, j_sequence.role);
+			&reference, j_sequence.scrambler.feedback.history, j_sequence.role);
 		for (unsigned int symbol = 0;
 		     symbol < V34_PHASE4_J_PRIME_SYMBOLS; ++symbol) {
 			unsigned int bit = symbol * 2u;
@@ -181,7 +181,7 @@ static bool test_normative_sequence(void)
 			      "J-prime selection %zu symbol %u changed", selection,
 			      symbol);
 		}
-		CHECK(sequence.scrambler.history ==
+		CHECK(sequence.scrambler.feedback.history ==
 			      reference_history(&reference) &&
 		      memcmp(&j_sequence, &saved_j, sizeof(j_sequence)) == 0,
 		      "J-prime selection %zu lost continuation state",
@@ -249,7 +249,7 @@ static bool test_copy_and_restart(void)
 	CHECK(v34_phase4_j_prime_sequence_init_from_j(
 		      &restarted, &j_sequence) ==
 		      V34_PHASE4_J_PRIME_SEQUENCE_OK &&
-	      restarted.scrambler.history == j_sequence.scrambler.history &&
+	      restarted.scrambler.feedback.history == j_sequence.scrambler.feedback.history &&
 	      restarted.previous_clockwise_quarter_turns ==
 		      j_sequence.previous_clockwise_quarter_turns &&
 	      restarted.emitted_symbols == 0,
@@ -319,7 +319,7 @@ static bool test_validation(void)
 	      memcmp(&point, &saved_point, sizeof(point)) == 0 &&
 	      rotation == UINT8_MAX,
 	      "invalid J-prime output argument mutated state");
-	sequence.scrambler.history = UINT32_C(1) << 23;
+	sequence.scrambler.feedback.history = UINT32_C(1) << 23;
 	corrupt = sequence;
 	CHECK(!v34_phase4_j_prime_sequence_is_valid(&sequence) &&
 	      !v34_phase4_j_prime_sequence_is_complete(&sequence) &&

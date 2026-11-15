@@ -67,7 +67,7 @@ static inline bool v34_data_points_equal(
 			right->schedule.data_frame_in_superframe &&
 		left->schedule.next_mapping_frame ==
 			right->schedule.next_mapping_frame &&
-		left->scrambler.history == right->scrambler.history &&
+		left->scrambler.feedback.history == right->scrambler.feedback.history &&
 		left->scrambler.polynomial == right->scrambler.polynomial &&
 		v34_test_encoders_are_equal(&left->encoder, &right->encoder) &&
 		v34_normalizers_equal(&left->normalizer, &right->normalizer) &&

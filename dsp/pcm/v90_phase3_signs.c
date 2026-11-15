@@ -28,7 +28,7 @@ bool v90_phase3_signs_is_valid(
 			       V90_PHASE3_TRN1D_ALIGNMENT == 0;
 	if (signs->trn1d_symbols == 0)
 		return signs->coding.previous_sign == 0 &&
-		       signs->coding.scrambler.history == 0;
+		       signs->coding.scrambler.feedback.history == 0;
 	return true;
 }
 

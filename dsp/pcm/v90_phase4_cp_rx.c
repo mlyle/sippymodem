@@ -24,7 +24,7 @@ bool v90_phase4_cp_rx_equal(
 	const struct v90_phase4_cp_rx *right)
 {
 	return left != NULL && right != NULL &&
-	       left->descrambler.history == right->descrambler.history &&
+	       left->descrambler.feedback.history == right->descrambler.feedback.history &&
 	       left->descrambler.polynomial == right->descrambler.polynomial &&
 	       memcmp(left->records.wire.frame, right->records.wire.frame,
 		      sizeof(left->records.wire.frame)) == 0 &&

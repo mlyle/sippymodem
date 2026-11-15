@@ -236,7 +236,7 @@ static bool test_generated_round_trip(void)
 				      pair.transmit_schedule.data_frame_in_superframe &&
 			      pair.receive_schedule.next_mapping_frame ==
 				      pair.transmit_schedule.next_mapping_frame &&
-			      pair.descrambler.history == pair.scrambler.history &&
+			      pair.descrambler.feedback.history == pair.scrambler.feedback.history &&
 			      pair.decoder.previous_differential_output ==
 				      pair.encoder.previous_differential_output,
 			      "mapping frame %zu did not receive", mapping_frame_count);

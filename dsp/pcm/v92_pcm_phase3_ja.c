@@ -50,7 +50,7 @@ enum v92_pcm_phase3_ja_result v92_pcm_phase3_ja_tx_init_dil(
 	initialized.lu_ucode = trn1u->lu_ucode;
 	if (pcm_binary_sign_init_from_scrambler(
 		    &initialized.coding, &trn1u->scrambler,
-		    (uint8_t)(trn1u->scrambler.history & 1u)) !=
+		    (uint8_t)(trn1u->scrambler.feedback.history & 1u)) !=
 		    PCM_BINARY_SIGN_OK ||
 	    v92_pcm_dil_encode(
 		    parameters, initialized.descriptor,

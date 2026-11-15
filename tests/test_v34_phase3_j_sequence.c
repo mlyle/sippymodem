@@ -147,8 +147,8 @@ static bool test_patterns_and_phase(void)
 				      &sequence) &&
 			      v34_phase3_j_sequence_at_pattern_boundary(
 				      &sequence) &&
-			      sequence.scrambler.history ==
-				      trn.scrambler.history &&
+			      sequence.scrambler.feedback.history ==
+				      trn.scrambler.feedback.history &&
 			      sequence.scrambler.polynomial ==
 				      trn.scrambler.polynomial &&
 			      sequence.role == trn.role &&
@@ -159,7 +159,7 @@ static bool test_patterns_and_phase(void)
 			      "J role %zu constellation %zu handoff failed",
 			      role_index, constellation_index);
 			reference_scrambler_init(
-				&reference, trn.scrambler.history, trn.role);
+				&reference, trn.scrambler.feedback.history, trn.role);
 			for (unsigned int symbol = 0;
 			     symbol < J_PATTERN_REPETITIONS *
 					      V34_PHASE3_J_PATTERN_SYMBOLS;
@@ -225,7 +225,7 @@ static bool test_patterns_and_phase(void)
 					first_pattern[constellation_index][symbol] =
 						rotation;
 			}
-			CHECK(sequence.scrambler.history ==
+			CHECK(sequence.scrambler.feedback.history ==
 				      reference_history(&reference) &&
 			      rotation_counts[0] > 0 && rotation_counts[1] > 0 &&
 			      rotation_counts[2] > 0 && rotation_counts[3] > 0,
@@ -286,7 +286,7 @@ static bool test_copy_and_restart(void)
 		      V34_PHASE3_J_SEQUENCE_OK &&
 	      v34_phase3_j_sequence_at_pattern_boundary(
 		      &restarted) &&
-	      restarted.scrambler.history == trn.scrambler.history &&
+	      restarted.scrambler.feedback.history == trn.scrambler.feedback.history &&
 	      restarted.previous_clockwise_quarter_turns ==
 		      trn.last_clockwise_quarter_turns,
 	      "restarted J did not return to the TRN boundary");
@@ -380,7 +380,7 @@ static bool test_validation(void)
 	      memcmp(&fixed, &before_fixed, sizeof(fixed)) == 0 &&
 	      rotation == UINT8_MAX,
 	      "invalid J output argument mutated state");
-	sequence.scrambler.history = UINT32_C(1) << 23;
+	sequence.scrambler.feedback.history = UINT32_C(1) << 23;
 	corrupt = sequence;
 	CHECK(!v34_phase3_j_sequence_is_valid(&sequence) &&
 	      !v34_phase3_j_sequence_at_pattern_boundary(&sequence) &&

@@ -101,8 +101,8 @@ static bool check_groups(
 	      "V.92 Phase 4 group state did not initialize");
 	CHECK(levels != NULL && level_count == group_count / 2u,
 	      "V.92 Phase 4 model constellation differed");
-	modulator.scrambler.history = initial_history;
-	demodulator.descrambler.history = initial_history;
+	modulator.scrambler.feedback.history = initial_history;
+	demodulator.descrambler.feedback.history = initial_history;
 	for (unsigned int cycle = 0; cycle < GROUP_CYCLES; ++cycle) {
 		for (uint8_t input_group = 0;
 		     input_group < group_count; ++input_group) {
@@ -138,14 +138,14 @@ static bool check_groups(
 			      "V.92 Phase 4 group %u/%u did not modulate",
 			      cycle, input_group);
 			CHECK(sample == expected &&
-			      modulator.scrambler.history == history &&
+			      modulator.scrambler.feedback.history == history &&
 			      modulator.previous_encoded_sign == previous_sign &&
 			      recovered_group == input_group &&
 			      nearest_level == sample &&
 			      modulator.previous_encoded_sign ==
 				      demodulator.previous_encoded_sign &&
-			      modulator.scrambler.history ==
-				      demodulator.descrambler.history &&
+			      modulator.scrambler.feedback.history ==
+				      demodulator.descrambler.feedback.history &&
 			      v92_phase4_modulator_is_valid(&modulator) &&
 			      v92_phase4_demodulator_is_valid(&demodulator),
 			      "V.92 Phase 4 continuity differed at %u/%u",
@@ -424,7 +424,7 @@ static bool check_level_range(void)
 						continue;
 					}
 					CHECK(sample == (negative ? -magnitude : magnitude) &&
-					      tx.scrambler.history == history &&
+					      tx.scrambler.feedback.history == history &&
 					      tx.previous_encoded_sign == negative &&
 					      tx.lu == lu && tx.constellation == points &&
 					      v92_phase4_modulator_is_valid(&tx),
@@ -440,7 +440,7 @@ static bool check_level_range(void)
 					CHECK(v92_phase4_demodulator_next(&rx, sample, &recovered, &nearest) ==
 						      V92_PHASE4_MODULATOR_OK &&
 					      recovered == group && nearest == sample &&
-					      rx.descrambler.history == history &&
+					      rx.descrambler.feedback.history == history &&
 					      rx.previous_encoded_sign == negative &&
 					      rx.lu == lu && rx.constellation == points &&
 					      v92_phase4_demodulator_is_valid(&rx),

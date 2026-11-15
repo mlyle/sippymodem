@@ -50,7 +50,7 @@ static void reference_init(
 	memset(stream, 0, sizeof(*stream));
 	for (size_t delay = 0; delay < HISTORY_BITS; ++delay)
 		stream->history[delay] =
-			(uint8_t)((trn->scrambler.history >> delay) & 1u);
+			(uint8_t)((trn->scrambler.feedback.history >> delay) & 1u);
 	stream->previous_rotation =
 		(uint8_t)((trn->last_clockwise_quarter_turns + phase_offset) & 3u);
 }

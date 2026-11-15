@@ -952,7 +952,7 @@ static bool run_v92_width(enum g711_law law, uint8_t frame_bits, bool parameter_
 	      receiver.protocol == PCM_PROTOCOL_V92 &&
 	      (parameter_exchange ?
 		      receiver.stage == PCM_DOWNSTREAM_RX_V92_CONTROL &&
-		      receiver.stream.received_symbols == 0u && receiver.stream.descrambler.history == 0u :
+		      receiver.stream.received_symbols == 0u && receiver.stream.descrambler.feedback.history == 0u :
 		      pcm_downstream_rx_is_fresh(&receiver)),
 	      "V.92 width %u law %u fixture did not initialize",
 	      frame_bits, law);
@@ -1297,7 +1297,7 @@ static bool test_contracts(void)
 		      PCM_DOWNSTREAM_RX_INVALID_STATE,
 	      "receiver accepted an unknown stage");
 	receiver = saved;
-	receiver.stream.descrambler.history = 1;
+	receiver.stream.descrambler.feedback.history = 1;
 	CHECK(pcm_downstream_rx_is_valid(&receiver) &&
 	      !pcm_downstream_rx_is_fresh(&receiver),
 	      "fresh predicate ignored used coding history");

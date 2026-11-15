@@ -156,7 +156,7 @@ enum v92_pcm_phase3_cpt_tx_result v92_pcm_phase3_cpt_tx_start(
 	next = *transmitter;
 	if (pcm_binary_sign_init_from_scrambler(
 		    &next.coding, &next.trn1u.scrambler,
-		    (uint8_t)(next.trn1u.scrambler.history & 1u)) !=
+		    (uint8_t)(next.trn1u.scrambler.feedback.history & 1u)) !=
 	    PCM_BINARY_SIGN_OK)
 		return V92_PCM_PHASE3_CPT_TX_INTERNAL_ERROR;
 	next.stage = V92_PCM_PHASE3_CPT_TX_PREAMBLE;

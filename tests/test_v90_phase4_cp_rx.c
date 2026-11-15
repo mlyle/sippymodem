@@ -327,7 +327,7 @@ static bool test_two_rejections_in_one_symbol(void)
 			      event.frame_result == V90_CP_OK &&
 			      v90_cp_parameters_are_equal(&event.parameters, &retry),
 			      "noisy symbol prevented clean retry");
-			CHECK(rx.descrambler.history == tx.scrambler.history,
+			CHECK(rx.descrambler.feedback.history == tx.scrambler.feedback.history,
 			      "noisy symbol lost continuous history");
 		}
 	}
@@ -380,7 +380,7 @@ static bool test_cp_to_e_continuity(void)
 					      rotation, &event) == V90_CP_OK &&
 				      event.type == V90_CP_RECEIVE_NO_EVENT &&
 				      rx.consecutive_ones == bits + width &&
-				      rx.descrambler.history == tx.scrambler.history,
+				      rx.descrambler.feedback.history == tx.scrambler.feedback.history,
 				      "continuous E count or history changed at %zu/%zu/%u",
 				      role, size, bits);
 				tx.previous_clockwise_quarter_turns = rotation;

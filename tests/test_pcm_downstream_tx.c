@@ -446,8 +446,8 @@ static bool run_v92_width(
 		      parameter_exchange &&
 	      transmitter.accepted_frames == 0u &&
 	      transmitter.transmitted_symbols == 0u &&
-	      transmitter.scrambler.history == 0u &&
-	      receiver.stream.descrambler.history == 0u,
+	      transmitter.scrambler.feedback.history == 0u &&
+	      receiver.stream.descrambler.feedback.history == 0u,
 	      "V.92 width %u law %u fixture did not initialize",
 	      frame_bits, law);
 	while (stage != CONTROL_COMPLETE && symbol_count < maximum_symbols) {

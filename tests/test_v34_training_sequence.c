@@ -95,7 +95,7 @@ static bool training_states_match(
 	const struct v34_training_sequence *left,
 	const struct v34_training_sequence *right)
 {
-	return left->scrambler.history == right->scrambler.history &&
+	return left->scrambler.feedback.history == right->scrambler.feedback.history &&
 	       left->scrambler.polynomial == right->scrambler.polynomial &&
 	       left->role == right->role &&
 	       left->constellation == right->constellation &&
@@ -141,7 +141,7 @@ static bool test_role_and_constellation_sequences(void)
 				      &fixed_trn, role, constellation) ==
 				      V34_TRAINING_SEQUENCE_OK &&
 			      v34_training_sequence_is_valid(&trn) &&
-			      trn.scrambler.history == 0 &&
+			      trn.scrambler.feedback.history == 0 &&
 			      trn.role == role &&
 			      trn.constellation == constellation &&
 			      !trn.has_last_symbol &&
@@ -218,7 +218,7 @@ static bool test_role_and_constellation_sequences(void)
 					}
 				}
 			}
-			CHECK(trn.scrambler.history ==
+			CHECK(trn.scrambler.feedback.history ==
 				      reference_history(&reference) &&
 			      rotation_counts[0] > 0 && rotation_counts[1] > 0 &&
 			      rotation_counts[2] > 0 && rotation_counts[3] > 0 &&
@@ -293,7 +293,7 @@ static bool test_copy_and_restart(void)
 			      &restarted, V34_ANSWERING_STATION,
 			      constellations[selection]) ==
 			      V34_TRAINING_SEQUENCE_OK &&
-		      restarted.scrambler.history == 0 &&
+		      restarted.scrambler.feedback.history == 0 &&
 		      !restarted.has_last_symbol,
 		      "restarted TRN selection %zu retained state", selection);
 	}
@@ -394,7 +394,7 @@ static bool test_validation(void)
 		     sizeof(fixed_point)) == 0 &&
 	      quarter == UINT8_MAX && rotation == UINT8_MAX,
 	      "invalid fixed TRN output argument mutated state");
-	trn.scrambler.history = UINT32_C(1) << V34_SCRAMBLER_BITS;
+	trn.scrambler.feedback.history = UINT32_C(1) << V34_SCRAMBLER_BITS;
 	before = trn;
 	CHECK(!v34_training_sequence_is_valid(&trn) &&
 	      v34_training_sequence_next(

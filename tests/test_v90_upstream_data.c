@@ -19,7 +19,7 @@ static bool e_states_equal(const struct v90_phase4_e_line_tx *left,
 	const struct v90_phase4_e_line_tx *right)
 {
 	return v34_training_lines_equal(&left->line, &right->line) &&
-	       left->sequence.scrambler.history == right->sequence.scrambler.history &&
+	       left->sequence.scrambler.feedback.history == right->sequence.scrambler.feedback.history &&
 	       left->sequence.scrambler.polynomial == right->sequence.scrambler.polynomial &&
 	       left->sequence.role == right->sequence.role &&
 	       left->sequence.constellation == right->sequence.constellation &&

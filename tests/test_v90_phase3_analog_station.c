@@ -263,8 +263,8 @@ static bool run_exchange(
 	      v90_phase3_return_line_handoff_is_valid(&return_handoff) &&
 	      v90_jd_parameters_equal(&receive_handoff.jd, &parameters) &&
 	      v90_jd_parameters_equal(&transmit_handoff.jd, &parameters) &&
-	      receive_handoff.scrambler.history ==
-		      transmit_handoff.scrambler.history &&
+	      receive_handoff.scrambler.feedback.history ==
+		      transmit_handoff.scrambler.feedback.history &&
 	      receive_handoff.last_sign ==
 		      transmit_handoff.last_sign &&
 	      receive_handoff.trn1d_symbols == V90_PHASE3_TRN1D_MIN_SYMBOLS &&

@@ -113,7 +113,7 @@ static bool run_marker(
 {
 	struct pcm_binary_sign handoff;
 	struct pcm_binary_sign saved = {
-		.scrambler = { .history = UINT32_C(0x123456),
+		.scrambler = { .feedback.history = UINT32_C(0x123456),
 			       .polynomial = V34_POLYNOMIAL_GPC },
 		.previous_sign = 1u,
 	};
@@ -144,7 +144,7 @@ static bool run_marker(
 	CHECK(v92_phase3_sync_is_complete(sync) &&
 	      v92_phase3_sync_handoff(sync, &handoff) &&
 	      handoff.scrambler.polynomial == V34_POLYNOMIAL_GPA &&
-	      handoff.scrambler.history == source->scrambler.history &&
+	      handoff.scrambler.feedback.history == source->scrambler.feedback.history &&
 	      handoff.previous_sign == source->previous_sign,
 	      "Phase 3 synchronization did not repair its coding handoff");
 	{
