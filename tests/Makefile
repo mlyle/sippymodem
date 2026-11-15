@@ -1947,6 +1947,7 @@ V92_CPD_DIRECT_TEST_BINARY := $(BUILD_DIR)/test_v92_cpd_direct
 V92_CPD_DIRECT_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_v92_cpd_direct.o \
 	$(BUILD_DIR)/v92_cpd_direct.o \
+	$(BUILD_DIR)/v92_cpd_gain.o \
 	$(filter-out $(BUILD_DIR)/test_v92_pcm_frame.o, \
 		$(V92_PCM_FRAME_TEST_OBJECTS)))
 V92_CPD_CHANNEL_TEST_BINARY := $(BUILD_DIR)/test_v92_cpd_channel
@@ -5681,6 +5682,10 @@ $(BUILD_DIR)/v92_survivor.o: \
 
 $(BUILD_DIR)/v92_cpd_direct.o: \
 	$(DSP_PCM_SOURCE_DIR)/v92_cpd_direct.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v92_cpd_gain.o: \
+	$(DSP_PCM_SOURCE_DIR)/v92_cpd_gain.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v92_cpd_channel.o: \

@@ -252,6 +252,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v92_residual.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_data_quality.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_cpd_direct.c \
+	$(DSP_PCM_SOURCE_DIR)/v92_cpd_gain.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_cpd_channel.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_phase4_cpd_tx.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_cleardown.c \
