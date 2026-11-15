@@ -111,6 +111,23 @@ static inline struct wide_uint wide_product_u64(uint64_t left, uint64_t right)
 #endif
 }
 
+/* A signed 64-by-64 product fits signed 128 bits exactly. Keep its
+ * two's-complement residue for the unsigned centered-moment arithmetic. */
+static inline struct wide_uint wide_product_s64(int64_t left, int64_t right)
+{
+#if defined(__SIZEOF_INT128__) && !defined(WIDE_UINT_PORTABLE)
+	return wide_from_native((__uint128_t)((__int128_t)left * right));
+#else
+	struct wide_uint result = wide_product_u64((uint64_t)left, (uint64_t)right);
+
+	if (left < 0)
+		result.high -= (uint64_t)right;
+	if (right < 0)
+		result.high -= (uint64_t)left;
+	return result;
+#endif
+}
+
 static inline struct wide_uint wide_multiply(struct wide_uint left, struct wide_uint right)
 {
 #if defined(__SIZEOF_INT128__) && !defined(WIDE_UINT_PORTABLE)

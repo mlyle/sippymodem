@@ -159,7 +159,7 @@ static inline bool centered_energy(
 	uint32_t samples, uint64_t energy, int64_t sum, struct wide_uint *centered)
 {
 	struct wide_uint total = wide_product_u64(energy, samples);
-	struct wide_uint mean = wide_product_u64(magnitude_s64(sum), magnitude_s64(sum));
+	struct wide_uint mean = wide_product_s64(sum, sum);
 
 	if (magnitude_s64(sum) > (uint64_t)samples * 32768u ||
 	    wide_compare(total, mean) <= 0)
@@ -173,15 +173,14 @@ static long double correlation_score(
 	long double input_variance)
 {
 	int64_t reference_sum = scan->scan_reference_sum[index];
-	struct wide_uint count = wide_from_u64(scan->scan_samples);
 	struct wide_uint reference;
 
 	if (!centered_energy(scan->scan_samples,
 		scan->scan_reference_energy[index], reference_sum, &reference))
 		return -1.0L;
 	struct wide_uint cross = wide_subtract(
-		wide_multiply(wide_from_s64(scan->scan_cross_energy[index]), count),
-		wide_multiply(wide_from_s64(reference_sum), wide_from_s64(scan->scan_input_sum)));
+		wide_product_s64(scan->scan_cross_energy[index], scan->scan_samples),
+		wide_product_s64(reference_sum, scan->scan_input_sum));
 	if (cross.high >> 63)
 		cross = wide_subtract(wide_from_u64(0), cross);
 	long double value = moment_value(cross);

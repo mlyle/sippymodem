@@ -70,6 +70,27 @@ static bool test_boundaries(void)
 	return true;
 }
 
+static bool test_signed_products(void)
+{
+	CHECK(equal(wide_product_s64(INT64_MIN, INT64_MIN),
+		      UINT64_C(0x4000000000000000), 0) &&
+	      equal(wide_product_s64(INT64_MIN, INT64_MAX),
+		      UINT64_C(0xc000000000000000), UINT64_C(0x8000000000000000)) &&
+	      equal(wide_product_s64(INT64_MAX, INT64_MAX),
+		      UINT64_C(0x3fffffffffffffff), 1) &&
+	      equal(wide_product_s64(-1, INT64_MIN), 0, UINT64_C(0x8000000000000000)) &&
+	      equal(wide_product_s64(INT64_MIN, 2), UINT64_MAX, 0) &&
+	      equal(wide_product_s64(0, INT64_MIN), 0, 0) &&
+	      equal(wide_product_s64(-1, -1), 0, 1),
+	      "signed product lost its sign or full-width magnitude");
+	struct wide_uint centered = wide_subtract(
+		wide_product_s64(-17, 31), wide_product_s64(-3, 5));
+
+	CHECK(equal(centered, UINT64_MAX, UINT64_C(0xfffffffffffffe00)),
+	      "signed product centering lost the negative residue");
+	return true;
+}
+
 #ifdef __SIZEOF_INT128__
 static uint64_t random_word(uint64_t *state)
 {
@@ -107,6 +128,12 @@ static bool test_native_oracle(void)
 		expected = (__uint128_t)a.low * b.low;
 		CHECK(equal(wide_product_u64(a.low, b.low), expected >> 64, expected),
 		      "64-bit product oracle differs at %u", index);
+		int64_t other_magnitude = (int64_t)(b.low >> 1);
+		int64_t other = b.low & 1u ? -other_magnitude - 1 : other_magnitude;
+
+		expected = (__uint128_t)((__int128_t)moment * other);
+		CHECK(equal(wide_product_s64(moment, other), expected >> 64, expected),
+		      "signed product oracle differs at %u", index);
 		expected = x * y;
 		CHECK(equal(wide_multiply(a, b), expected >> 64, expected),
 		      "full-width product oracle differs at %u", index);
@@ -130,7 +157,7 @@ static bool test_native_oracle(void)
 
 int main(void)
 {
-	if (!test_boundaries())
+	if (!test_boundaries() || !test_signed_products())
 		return 1;
 #ifdef __SIZEOF_INT128__
 	if (!test_native_oracle())
