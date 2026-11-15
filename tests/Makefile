@@ -3731,7 +3731,7 @@ $(BUILD_DIR)/test_pam_distance: $(BUILD_DIR)/test_pam_distance.o
 $(BUILD_DIR)/test_echo_timing: $(BUILD_DIR)/test_echo_timing.o $(BUILD_DIR)/echo_timing.o
 	$(CC) $(LDFLAGS) -o $@ $^
 
-$(BUILD_DIR)/test_echo_shift: $(BUILD_DIR)/test_echo_shift.o
+$(BUILD_DIR)/test_echo_shift: $(BUILD_DIR)/test_echo_shift.o $(BUILD_DIR)/echo_timing.o
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(BUILD_DIR)/test_pcm_tx_recovery: $(BUILD_DIR)/test_pcm_tx_recovery.o

@@ -1,12 +1,31 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include "echo_timing.h"
+#include "echo_shift.h"
 
 #include "integer_math.h"
 #include "wide_uint.h"
 
 #include <limits.h>
 #include <string.h>
+
+int echo_shift_finish(struct echo_shift_window *window, double ratio)
+{
+	unsigned best = ECHO_TIMING_RADIUS;
+	for (unsigned i = 0; i < ECHO_TIMING_BINS; ++i)
+		if (window->score[0][i] < window->score[0][best])
+			best = i;
+	bool qualified = best != ECHO_TIMING_RADIUS &&
+		window->score[0][best] <= ratio * window->score[0][ECHO_TIMING_RADIUS] &&
+		window->score[1][best] <= ratio * window->score[1][ECHO_TIMING_RADIUS];
+	int delta = qualified && window->previous_qualified &&
+		(int)best == window->previous_bin ? (int)best - ECHO_TIMING_RADIUS : 0;
+
+	window->previous_qualified = qualified;
+	window->previous_bin = (int)best;
+	window->position = 0;
+	memset(window->score, 0, sizeof(window->score));
+	return delta;
+}
 
 /* Predictions are differences of unclipped int16 samples. Even two
  * UINT16_MAX-sample windows keep cross below 2^48, energy below 2^49,
