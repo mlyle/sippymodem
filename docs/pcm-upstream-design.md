@@ -2078,3 +2078,60 @@ alongside complete-event geometry, with a concrete mu-law native improvement
 in the declared model. Retain the current selector until gain/LU variation,
 learned prefilters, echo/postcursor impairment, other rates and coders, peak
 headroom, training behavior and physical CPd interoperability are qualified.
+
+
+## Admit a learned observation model with coherent coding history
+
+A forced G.711 codeword bit merges two neighboring integer encoder cells.
+The existing `g711_octet_interval_lsb` helper supplies their exact union;
+post-codec host gain remains a separate observation contract. In a declared
+noiseless scalar channel, fit a positive gain and a six-phase descriptor by
+intersecting the known training samples with these cell preimages, including
+nearest-integer tie boundaries. Consider all `3^6` combinations of unchanged,
+forced-zero and forced-one phases. Decline an empty or ambiguous identified
+set rather than guessing from a constant observed low bit. Freeze the fit
+before checking independent later training.
+
+A finite 36k study uses both banks above, both laws, LU 2048/4096/8192, gains
+63/64, 1 and 65/64, and transparent or one forced phase out of six. Its first
+24 B1u frames uniquely identify all 468 descriptors; a frozen midpoint gain
+reproduces every octet in the untouched final 24 frames. Independent forward
+encoding over all relevant gain intervals/endpoints agrees in 48,464 probes.
+Replacing the held-out gain or bit operation rejects each of 468 controls.
+These results assume aligned B1u coding and the local encoder's representative
+choice. Known B1u source bits alone do not establish those exact points for an
+arbitrary V.92 peer: the precoder selects within permitted residue classes.
+
+Publishing the fit can still leave coding histories formed under the earlier
+metric. In the complete native noiseless matrix, each entry below is an exact
+held-out-B1u and 400-payload-frame pass count out of 936:
+
+| Bank | Native | Fit applied at frame 24 | Fit plus causal history replay |
+| --- | ---: | ---: | ---: |
+| Current | 884 | 928 | 936 |
+| Positional-prior | 901 | 928 | 936 |
+
+The middle arm introduces one regression despite its net improvement. The
+last arm retains the actual first 24 input frames and initial decoder state.
+Only after fitting, it rebuilds a private decoder using free observed-frame
+decisions, discards all replay outputs, and replaces coding history while
+preserving physical noise evidence and its clock. The next live frame and
+traceback delay do not change. Expected source bits validate the later B1u;
+they never rank replay paths. All 3,744 earlier control runs reproduce their
+outputs exactly. Repeated payload seeds share their B1u prefix and do not
+provide independent statistical evidence or physical-call success rates.
+
+Separate controls reject corrupted held-out B1u at frames 30 and 47 in 72
+cases each. Missing training media disables model application and replay,
+preserving baseline output in 216 comparisons. Thirty-six changed held-out
+bit-operation cases reject the frozen model. The audit also checks that
+history replacement leaves line state, fit state and physical noise intact.
+
+Model admission must therefore account for retained coding history; replay
+is one demonstrated way to rebuild it without weakening independent B1u.
+Production integration still needs
+bounded work across native service steps, legal peer representative choices,
+unknown coding/alignment, noise, channel memory, other rates and coders, and
+physical interoperability. The diagnostic replays one synchronous batch and
+makes no packet-headroom claim. Keep the current selector and observation
+policy until those boundaries are qualified.
