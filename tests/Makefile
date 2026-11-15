@@ -59,6 +59,7 @@ PCM_RUNTIME_SOURCE_NAMES := \
 	$(notdir $(wildcard $(DSP_PCM_SOURCE_DIR)/v92_*.c))
 PCM_RUNTIME_OBJECTS := \
 	$(PCM_RUNTIME_SOURCE_NAMES:%.c=$(BUILD_DIR)/%.o) \
+	$(BUILD_DIR)/pam_distance.o \
 	$(BUILD_DIR)/binary_equalizer.o \
 	$(BUILD_DIR)/fractional_delay.o \
 	$(BUILD_DIR)/mixed_radix.o
@@ -1557,6 +1558,7 @@ PCM_HOST_ECHO_TEST_OBJECTS := \
 V92_TRAINING_ECHO_TEST_BINARY := $(BUILD_DIR)/test_v92_training_echo
 V92_ECHO_TIMING_TEST_BINARY := $(BUILD_DIR)/test_v92_echo_timing
 V92_ECHO_TIMING_TEST_OBJECTS := \
+	$(BUILD_DIR)/pam_distance.o \
 	$(BUILD_DIR)/test_v92_echo_timing.o $(BUILD_DIR)/v92_echo_timing.o \
 	$(BUILD_DIR)/pcm_host_echo.o $(BUILD_DIR)/pcm_echo_reference.o \
 	$(BUILD_DIR)/echo_timing.o $(BUILD_DIR)/v92_residual.o \
@@ -2183,6 +2185,7 @@ V92_UPSTREAM_CONTROL_LINE_RX_TEST_OBJECTS := $(sort \
 		$(V92_CONTROL_RX_TEST_OBJECTS)))
 V92_UPSTREAM_DATA_RX_TEST_BINARY := $(BUILD_DIR)/test_v92_upstream_data_rx
 V92_UPSTREAM_DATA_RX_TEST_OBJECTS := $(sort \
+	$(BUILD_DIR)/pam_distance.o \
 	$(BUILD_DIR)/v92_b1_echo.o $(BUILD_DIR)/v92_data_quality.o \
 	$(BUILD_DIR)/pcm_host_echo.o $(BUILD_DIR)/pcm_echo_reference.o $(BUILD_DIR)/echo_timing.o \
 	$(BUILD_DIR)/v92_b1_sync.o \
@@ -3726,7 +3729,7 @@ $(BUILD_DIR)/test_gram_fit: $(BUILD_DIR)/test_gram_fit.o
 $(BUILD_DIR)/test_interval_fit: $(BUILD_DIR)/test_interval_fit.o
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
-$(BUILD_DIR)/test_pam_distance: $(BUILD_DIR)/test_pam_distance.o
+$(BUILD_DIR)/test_pam_distance: $(BUILD_DIR)/test_pam_distance.o $(BUILD_DIR)/pam_distance.o
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(BUILD_DIR)/test_echo_timing: $(BUILD_DIR)/test_echo_timing.o $(BUILD_DIR)/echo_timing.o
@@ -6453,6 +6456,9 @@ $(BUILD_DIR)/test_library_wait: $(BUILD_DIR)/test_library_wait.o ../src/libsippy
 
 $(BUILD_DIR)/test_rtp_read_event: $(BUILD_DIR)/test_rtp_read_event.o $(filter-out $(BUILD_DIR)/test_rtp_endpoint.o,$(ENDPOINT_TEST_OBJECTS))
 	$(CC) $(LDFLAGS) -o $@ $^
+
+$(BUILD_DIR)/pam_distance.o: $(DSP_SOURCE_DIR)/pam_distance.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/echo_timing.o: \
 	$(DSP_SOURCE_DIR)/echo_timing.c | $(BUILD_DIR)

@@ -116,6 +116,7 @@ SHARED_DSP_SOURCES := \
 	$(DSP_SOURCE_DIR)/g711.c \
 	$(DSP_SOURCE_DIR)/gaussian.c \
 	$(DSP_SOURCE_DIR)/mixed_radix.c \
+	$(DSP_SOURCE_DIR)/pam_distance.c \
 	$(DSP_SOURCE_DIR)/qam_equalizer.c \
 	$(DSP_SOURCE_DIR)/qam.c \
 	$(DSP_SOURCE_DIR)/qam_gain.c \
