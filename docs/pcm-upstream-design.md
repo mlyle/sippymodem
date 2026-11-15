@@ -2182,3 +2182,105 @@ unknown modulation level/coding/alignment, other filters and physical calls
 still require qualification. The checked-in alternate-representative regression
 covers ordinary unquantized frame decoding, not this learned receiver model.
 Keep production selection and observation policy unchanged.
+
+## Bound a shared-offset likelihood with finite work
+
+A coherent observation offset differs from independent noise at each symbol.
+For finite fixed predicted levels `u_i`, independent Gaussian noise with finite,
+positive standard deviations `sigma_i`, and one connected observation interval
+`[a_i,b_i]` per symbol, define
+
+```
+p_i(d) = Phi((b_i-u_i-d)/sigma_i) - Phi((a_i-u_i-d)/sigma_i)
+g(d) = sum_i log(p_i(d)) - (d-mu)^2 / (2*tau^2)
+Z = integral from -B to B of exp(g(d)) dd.
+```
+
+Here `mu,tau,B` are finite, `tau > 0`, `B > 0`, and all three are fixed before
+comparing candidates. The common truncated-prior normalization cancels between
+those candidates.
+A changed prior needs its own normalization. Infinite interval endpoints can
+represent clipping; an empty interval has zero probability.
+
+For nonempty intervals, let `m_i(d)` and `v_i(d)` be the conditional mean and
+variance of a normal variable with mean `u_i+d` and variance `sigma_i^2`,
+restricted to its observed interval. Differentiation gives
+
+```
+g'(d) = sum_i (m_i(d)-u_i-d)/sigma_i^2 - (d-mu)/tau^2
+g''(d) = sum_i (v_i(d)/sigma_i^4 - 1/sigma_i^2) - 1/tau^2.
+```
+
+For one interval, `0 <= v_i <= sigma_i^2`. The upper bound follows by integrating
+`(y-m_i)(y-u_i-d)` against the normal density: its endpoint terms have signs
+`(a_i-m_i) <= 0` and `-(b_i-m_i) <= 0`. Infinite endpoints contribute zero.
+Thus, with `c = 1/tau^2` and `C = c + sum_i 1/sigma_i^2`,
+
+```
+-C <= g''(d) <= -c.
+```
+
+At a panel midpoint `m`, write `t=d-m` and let `h` be its half width. One value
+and derivative bound the entire panel:
+
+```
+g(m) + g'(m)*t - C*t^2/2 <= g(m+t)
+g(m+t) <= g(m) + g'(m)*t - c*t^2/2.
+```
+
+Both envelopes integrate in closed form. For `k > 0`,
+
+```
+J(k,s,h) = sqrt(2*pi/k) * exp(s^2/(2*k))
+           * [Phi(sqrt(k)*(h-s/k)) - Phi(sqrt(k)*(-h-s/k))].
+```
+
+The panel's lower and upper masses are `exp(g(m))*J(C,g'(m),h)` and
+`exp(g(m))*J(c,g'(m),h)`. Add panel masses, using log arithmetic to avoid overflow
+in the completed square. Previously established bounds can be intersected with
+refined bounds; raw midpoint refinements need not be assumed nested.
+
+This gives a finite-budget comparison of two **fixed block hypotheses**: a lower
+mass exceeding the other's upper mass establishes their order in this model.
+An unresolved comparison must retain its uncertainty or use an independently
+qualified fallback. Mathematical envelopes alone are not outward-rounded
+binary64 bounds. Numerical error in tail probabilities, conditional moments,
+and cancellation in the completed square must be bounded before operational
+pruning. A finite log probability does not guarantee that
+[`gaussian_interval_moments`](../dsp/gaussian.h) can return a usable derivative;
+its ordinary probability can underflow. Numerical failure is not proof that a
+candidate has zero probability.
+
+## Keep latent phase and coding history in the model
+
+Unknown robbed-bit phase creates a mixture. If phase `j` has fixed nonnegative
+weight `w_j`, the weights sum to one, and its conditional block likelihood is
+`Z_j`, then
+
+```
+Z = sum_j w_j * Z_j
+sum_j w_j * lower_j <= Z <= sum_j w_j * upper_j.
+```
+
+Apply the interval curvature argument to each eligible phase component, then
+sum bounds. A mixture of log-concave likelihoods need not be log-concave;
+applying the single-component tangent bound to the mixture can produce a false
+upper bound. Each component must still have one interval per observation.
+Arbitrary disjoint preimages need a separate decomposition or another proof.
+
+For ordinary one-in-six signalling, the phase is shared across the block: in a
+12-symbol block each phase selects two affected positions. Averaging phases
+independently at every symbol changes the channel model. A known forced LSB can
+merge adjacent codec cells; an observed bit inconsistent with that forcing has
+an exactly empty preimage. That logical exclusion differs from numerical
+underflow. All phase weights and shared-offset assumptions must remain explicit.
+
+These are observation-block bounds, not a new trellis survivor rule. A common
+offset or phase retained across blocks carries a posterior into later blocks;
+resetting its prior in every block changes the model. An instantaneous frame
+order also does not establish final traceback order or equivalence of future
+coding histories. Existing complete-state, wrong-bit and delayed-output checks
+remain necessary. Shared-offset integration adds work per candidate and per
+phase, so it also needs measured worst-packet cost before entering the Pi's
+receive path. The current bounded causal correction remains a separate, much
+smaller mechanism; none of these bounds changes rate selection or readiness.
