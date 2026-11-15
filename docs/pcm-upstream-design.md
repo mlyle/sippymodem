@@ -2010,3 +2010,71 @@ concrete reason to include probabilities of confusion and event multiplicity
 alongside minimum separation. It does not establish the complete
 coded-error mechanism or a globally optimal bank. Retain the current selector;
 future candidates need both probabilistic models and native decoding checks.
+
+
+## Weight bank design by the actual symbol positions
+
+The uniform-point probability companion above can be refined without treating
+coded symbols as independent. In the direct 36k, 16-state example, the twelve
+radices are `32,32,32,16 | 32,32,32,16 | 16,16,16,16`, whose product is exactly
+`2^54`. Conditional on the incoming coder state, scrambling is a bijection and
+the differential mapper either retains or complements each digit. A uniform
+54-bit data word therefore gives independent uniform radix digits. This is a
+data-source assumption, not the distribution of B1u or idle ones.
+
+Minimum-magnitude representative selection makes symbols 8, 9 and 10 uniform
+on the inner 16 signed points. The other nine positions have uniform 32-point
+marginals. Each fourth symbol still depends on the preceding three parities
+and the trellis state; enumerating both incoming parities gives its full-point
+marginal but does not make it independent of those preceding symbols.
+
+Let `E32` and `E16` be the best memoryless point-classification error counts
+with 65,536 equiprobable noise draws per point in those two alphabets. The
+position-aware average risk is `(3*E32 + 2*E16)/(4*32*65536)`. It is not coded
+BER, a native-receiver error bound, or a classifier with a position-blind
+mixture prior. The earlier per-position mean-square power comparison already
+included the inner alphabets; its uniform-32-point probability companion did
+not. Independent coding reproduces the native position histograms exactly for
+589,824 symbols; exhaustive parity enumeration establishes the stated prior.
+
+A finite follow-up screens 68 cubic banks per law plus current and the earlier
+candidate. For `i=0..15`, `x=2*i+1`, round
+`P*x*(32*31^2+t*x^2)/((32+t)*31^3)` with `P` in
+`{8192,12000,20000,30000}` and integer `t=-8..8`. Recompute gain from native
+48-frame B1u and retain both existing power limits. Rank by equal-weight
+positional risk at noise peaks 192 and 224 before examining native grades.
+The selected mu-law bank uses `P=30000,t=5,F=17`; A-law uses
+`P=20000,t=3,F=25`. Their physical peaks rise from 7,564 to 7,968 and 7,812,
+respectively: unchanged mean-square limits do not remove this headroom cost.
+
+The native check combines the original sixteen seeds with 32 fresh,
+prespecified seeds, requiring all 400 payload frames and held-out B1u exactly.
+Each table entry is current → selected passes, each out of 48:
+
+| Law/noise peak | Raw constellation receiver | E2u/filter-output receiver |
+| --- | --- | --- |
+| mu-law/192 | 21 → 48 | 37 → 48 |
+| mu-law/224 | 0 → 44 | 0 → 45 |
+| A-law/192 | 46 → 48 | 46 → 48 |
+| A-law/224 | 22 → 30 | 22 → 28 |
+
+The first A-law/224 raw subset regresses from 10/16 to 8/16; the fresh subset
+improves from 12/32 to 22/32. Retain both observations. The selected banks pass
+48/48 at peak 160 in both paths and laws. These deterministic case counts are
+neither independent statistical replicates nor physical-call success rates.
+All 192 current/previous-bank raw controls reproduce their retained outputs.
+Independent integer masses match 37,748,736 actual floating noise/G.711 draws;
+the complete mass output also agrees on the Pi.
+
+Independent complete-event certificates and native remerging witnesses at the
+same sampled shared gains and known robbed phases give minimum radii of
+161.828125 (open) for mu-law and 131.921875 (closed) for A-law, improving the
+current 119 and 116.6875. This uses the earlier floor/support model, separately
+from the nearest-integer probabilistic fixtures. It does not certify an
+interval of unknown gains or combined impairments.
+
+Position-weighted confusion therefore supplies a useful design objective
+alongside complete-event geometry, with a concrete mu-law native improvement
+in the declared model. Retain the current selector until gain/LU variation,
+learned prefilters, echo/postcursor impairment, other rates and coders, peak
+headroom, training behavior and physical CPd interoperability are qualified.
