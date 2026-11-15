@@ -1963,3 +1963,50 @@ Retain the current selector. Any proposed replacement must also qualify actual
 receiver coordinates, training uncertainty, transient noise, physical gain and
 peak headroom. No default, wire timing, admission threshold or physical-call
 grade changes follow from this study.
+
+
+## Account for probabilities of error events
+
+A follow-up keeps the same 192 raw-receiver conditions and compares four
+scoring arms. The native arm reproduces every original grade and first-miss
+trace. The Gaussian arm supplies the synthetic noise standard deviation
+`peak/sqrt(3)` in frozen calibrated coordinates. An integer-coordinate arm
+instead uses the known physical gain and exact transmitter rounding to measure
+distance to the received integer G.711 cell. A fourth arm sums the exact cell
+mass over the fixture's 65,536 possible 16-bit noise draws, scoring by
+`-2e6*log(probability)`. The latter assumes independent draws for sequence
+ranking; the deterministic LCG stream is not evidence of independence.
+
+These are diagnostic oracles: they know the channel, noise level and onset
+after clean B1u. Every arm retains the native coding and traceback. Each table
+entry is current/candidate exact-payload passes, each out of sixteen:
+
+| Peak/law | Native | Gaussian | Integer distance | Discrete marginal |
+| --- | --- | --- | --- | --- |
+| 192/mu-law | 7/15 | 7/15 | 12/15 | 15/15 |
+| 224/A-law | 10/0 | 6/0 | 10/0 | 12/1 |
+
+The identity prefilter's Q15 rounding precedes F/LU scaling in the physical
+oracles, including large points changed by that rounding. Exhaustive encoding
+checks 25,165,824 noise draws and 98,304 exact octet masses, including distinct
+PCMU zero cells. Corrected physical coordinates and matching marginal scoring
+help some cases but do not rescue the candidate's A-law regression. Gaussian
+scoring alone is not a supported cure for noise appearing after training.
+
+A separate finite model makes the probability tradeoff explicit. Give each
+of the 32 signed points equal prior probability and let `M(i,o)` count the
+65,536 noise draws producing network octet `o` from point `i`. The best
+memoryless point classifier has error probability
+
+```
+1 - sum_o max_i M(i,o) / (32 * 65536).
+```
+
+At A-law peak 224, this value increases from `83975/2097152` (4.00424%) to
+`121790/2097152` (5.80740%), despite the candidate's improved worst-case event
+bound. This declared uniform-point model is neither coded BER nor the actual
+payload prior: the mapping also contains inner-alphabet positions. It gives a
+concrete reason to include probabilities of confusion and event multiplicity
+alongside minimum separation. It does not establish the complete
+coded-error mechanism or a globally optimal bank. Retain the current selector;
+future candidates need both probabilistic models and native decoding checks.
