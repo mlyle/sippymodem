@@ -4956,7 +4956,7 @@ static bool test_raw_b1_echo(void)
  * using the transmitter clock. The two small postcursors and codec precede
  * reception; receiver decisions never affect the supplied waveform. */
 static bool run_b1_drift(enum g711_law law, int polarity, int amplitude,
-	unsigned noise, int wrong_bit, enum v92_cpd_trellis trellis)
+	unsigned noise, int wrong_bit, enum v92_cpd_trellis trellis, unsigned ramp_frames)
 {
 	struct channel channel = { .gain = 1., .law = law, .polarity = polarity };
 	struct v92_phase4_record_tx control_tx;
@@ -4998,7 +4998,8 @@ static bool run_b1_drift(enum g711_law law, int polarity, int amplitude,
 		CHECK(v92_pcm_frame_encode(&tx, bits, mapping.data_bits_per_frame, &encoded) ==
 		      V92_PCM_FRAME_OK, "B1 drift encode");
 		for (unsigned k = 0; k < V92_PCM_MAPPING_FRAME_SYMBOLS; ++k) {
-			unsigned progress = f < 24 ? 0 : f < 48 ? f - 23 : 24;
+			unsigned progress = f < 24 ? 0 : (f - 23) * 24 / ramp_frames;
+			if (progress > 24) progress = 24;
 			random = random * 1664525u + 1013904223u;
 			int perturb = noise ? (int)(random % (2 * noise + 1)) - (int)noise : 0;
 			double raw = (encoded.u[k] - .027 * history[(cursor + 2) % 6] +
@@ -5050,13 +5051,26 @@ static bool test_b1_drift(void)
 			for (unsigned trellis = 0; trellis < 3; ++trellis) {
 				for (int amplitude = -128; amplitude <= 128; amplitude += 64)
 					for (unsigned noise = 0; noise <= 16; noise += 16)
-						CHECK(run_b1_drift(law, polarity, amplitude, noise, -1, trellis),
+						CHECK(run_b1_drift(law, polarity, amplitude, noise, -1, trellis, 24),
 						      "B1 drift control failed");
 				for (int amplitude = -64; amplitude <= 64; amplitude += 64)
 					for (int bit = 0; bit < 54; ++bit)
-						CHECK(run_b1_drift(law, polarity, amplitude, 16, bit, trellis),
+						CHECK(run_b1_drift(law, polarity, amplitude, 16, bit, trellis, 24),
 						      "B1 drift concealed a wrong training bit");
 			}
+	return true;
+}
+
+/* A short, bounded DC transition exercises causal settling, without using
+ * expected B1 bits to steer the tracker. Both laws and polarities must keep
+ * the frozen inverse and deliver every independently encoded validation bit. */
+static bool test_b1_step(void)
+{
+	for (unsigned law = 0; law < 2; ++law)
+		for (int polarity = -1; polarity <= 1; polarity += 2)
+			for (int amplitude = -64; amplitude <= 64; amplitude += 128)
+				CHECK(run_b1_drift(law, polarity, amplitude, 8, -1,
+				      V92_CPD_TRELLIS_16_STATE, 4), "B1 step settling failed");
 	return true;
 }
 
@@ -5065,6 +5079,9 @@ int main(void)
 	fprintf(stderr, "[ RUN      ] bounded decision-directed B1 drift\n");
 	if (!test_b1_drift()) return 1;
 	fprintf(stderr, "[       OK ] bounded decision-directed B1 drift\n");
+	fprintf(stderr, "[ RUN      ] bounded B1 step settling\n");
+	if (!test_b1_step()) return 1;
+	fprintf(stderr, "[       OK ] bounded B1 step settling\n");
 	fprintf(stderr, "[ RUN      ] PCM raw B1 echo recovery and payload continuity\n");
 	if (!test_raw_b1_echo()) return 1;
 	fprintf(stderr, "[       OK ] PCM raw B1 echo recovery and payload continuity\n");

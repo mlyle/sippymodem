@@ -408,8 +408,9 @@ static void track_bias(struct v92_upstream_data_line *line,
 	line->tracking.error_sum += error_sum;
 	if (++line->tracking.frames != window) return;
 	/* Keep the total shift below a quarter of every used signed-point gap,
-	 * and half the existing physical error ceiling. Each update moves at
-	 * most 1/16 of that bound. Never change the gain or residual inverse. */
+	 * and half the existing physical error ceiling. B1u updates move at most
+	 * half that bound; payload retains the 1/16 slew cap. The quarter-error
+	 * update changes neither gain nor the frozen residual inverse. */
 	double spacing = INFINITY;
 	for (unsigned phase = 0; phase < V92_PCM_MAPPING_PHASES; phase++) {
 		const struct v92_cpd_constellation *points = &decoder->mapping.cpd.constellation[
@@ -419,7 +420,8 @@ static void track_bias(struct v92_upstream_data_line *line,
 	double bound = fmin(ceiling / 2., spacing / (4. * line->calibration.gain));
 	double step = line->tracking.error_sum /
 		(4. * window * V92_PCM_MAPPING_FRAME_SYMBOLS);
-	step = fmax(-bound / 16., fmin(bound / 16., step));
+	double slew = bound / (window == 1u ? 2. : 16.);
+	step = fmax(-slew, fmin(slew, step));
 	line->tracking.bias = fmax(-bound, fmin(bound, line->tracking.bias + step));
 	line->tracking.error_sum = 0.;
 	line->tracking.frames = 0;
