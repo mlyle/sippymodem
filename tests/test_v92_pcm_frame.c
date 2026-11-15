@@ -2021,6 +2021,87 @@ static bool test_b1_digits(void)
 	return true;
 }
 
+/* V.92 6.4.2 permits another point in the same modulus class. Change
+ * those representatives without duplicating the encoder: equal pair labels
+ * preserve its convolutional state, and this boundary observes linear u(n)
+ * rather than the stateful wire filters. Decode B1 and payload freely. */
+static bool test_alternate_representatives(void)
+{
+	const uint8_t rates[] = { 10, 13 };
+	enum { DATA_FRAMES = 16 };
+
+	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned rate = 0; rate < ARRAY_LENGTH(rates); ++rate) {
+			struct v92_pcm_frame_tx tx;
+			struct v92_pcm_frame_rx rx;
+			unsigned changed = 0, checked = 0;
+
+			CHECK(initialize(&tx, rates[rate], law) &&
+			      v92_pcm_frame_rx_init_constellation(&rx, &tx.mapping) == V92_PCM_FRAME_OK,
+			      "alternate representative initialization failed");
+			size_t count = tx.mapping.data_bits_per_frame;
+			for (unsigned f = 0;
+			     f < V92_B1U_FRAMES + DATA_FRAMES + V92_PCM_RX_DELAY_FRAMES; ++f) {
+				uint8_t bits[V92_PCM_MAPPING_MAX_BITS], decoded[V92_PCM_MAPPING_MAX_BITS];
+				struct v92_pcm_frame frame;
+				struct v92_pcm_frame_decision decision;
+				int16_t indices[V92_PCM_MAPPING_FRAME_SYMBOLS];
+				int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
+
+				if (f < V92_B1U_FRAMES)
+					memset(bits, 1, count);
+				else
+					generated_bits(bits, count, f);
+				CHECK(v92_pcm_frame_encode(&tx, bits, count, &frame) == V92_PCM_FRAME_OK,
+				      "alternate representative source failed");
+				memcpy(indices, frame.signed_index, sizeof(indices));
+				memcpy(samples, frame.u, sizeof(samples));
+				for (unsigned j = 0; j < V92_PCM_MAPPING_FRAME_SYMBOLS; ++j) {
+					const struct v92_cpd_constellation *points = &tx.mapping.cpd.constellation[
+						tx.mapping.cpd.frame_constellation[j % V92_PCM_MAPPING_PHASES]];
+					int step = tx.mapping.cpd.modulus[j] * (j % 4 == 3 ? 2 : 1);
+					int other = indices[j] < 0 ? indices[j] + step : indices[j] - step;
+
+					if (other < -(int)points->count || other >= points->count)
+						continue;
+					indices[j] = (int16_t)other;
+					samples[j] = v92_cpd_signed_point(points, other);
+					++changed;
+				}
+				for (unsigned j = 0; j < V92_PCM_MAPPING_FRAME_SYMBOLS; j += 2) {
+					struct v34_grid_point original = {
+						2 * frame.signed_index[j] + 1, 2 * frame.signed_index[j + 1] + 1,
+					};
+					struct v34_grid_point alternate = { 2 * indices[j] + 1, 2 * indices[j + 1] + 1 };
+					uint8_t original_label, alternate_label;
+
+					CHECK(v34_grid_subset_label(&original, &original_label) == V34_TRELLIS_OK &&
+					      v34_grid_subset_label(&alternate, &alternate_label) == V34_TRELLIS_OK &&
+					      original_label == alternate_label,
+					      "alternate source changed convolutional history");
+				}
+				CHECK(v92_pcm_frame_decode(&rx, samples, f < V92_B1U_FRAMES,
+					decoded, count, &decision) == V92_PCM_FRAME_OK,
+				      "alternate representative decode failed");
+				if (f < V92_B1U_ACQUISITION_FRAMES + V92_PCM_RX_DELAY_FRAMES)
+					continue;
+				unsigned delivered = f - V92_PCM_RX_DELAY_FRAMES;
+
+				if (delivered < V92_B1U_FRAMES)
+					memset(bits, 1, count);
+				else
+					generated_bits(bits, count, delivered);
+				CHECK(decision.bits_ready && !decision.ambiguous && memcmp(decoded, bits, count) == 0,
+				      "alternate representative bits differ: law %u rate %u frame %u",
+				      law, rates[rate], delivered);
+				checked += delivered >= V92_B1U_FRAMES;
+			}
+			CHECK(changed != 0 && checked == DATA_FRAMES,
+			      "alternate representative coverage was incomplete");
+		}
+	return true;
+}
+
 static bool test_b1_class_error(void)
 {
 	const unsigned counts[] = { 1, 2, 3, 7, 13, 32, 63, 127, 128 };
@@ -2059,7 +2140,7 @@ static bool test_b1_class_error(void)
 
 int main(void)
 {
-	if (!test_b1_digits() || !test_b1_class_error() ||
+	if (!test_b1_digits() || !test_b1_class_error() || !test_alternate_representatives() ||
 	    !test_input_rounding_identity() || !test_b1u_measurement() || !test_b1u_measurement_contracts() ||
 	    !test_b1u_output_range() || !test_b1u_oracle() || !test_b1u_coding_acquisition() ||
 	    !test_b1u_parity_completion() || !test_b1u_validation_history(false, V92_CPD_TRELLIS_16_STATE) ||

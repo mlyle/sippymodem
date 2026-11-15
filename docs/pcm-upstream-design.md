@@ -2135,3 +2135,50 @@ unknown coding/alignment, noise, channel memory, other rates and coders, and
 physical interoperability. The diagnostic replays one synchronous batch and
 makes no packet-headroom claim. Keep the current selector and observation
 policy until those boundaries are qualified.
+
+
+### Learn from legal representatives rather than a local point sequence
+
+For memoryless banks, replace each assumed B1u point with all levels in its
+permitted modulus class. Each observation then supplies a union of scalar-gain
+intervals. For the fourth symbol, allowing either coset parity independently
+provides a conservative superset without assuming a trellis state. This does
+not identify that state; the ordinary decoder still owns coding history.
+
+A finite extension uses minimum-power, maximum-absolute-level and two seeded
+legal point rankings through the actual encoder. All four policies share the
+same mapping-derived hypothesis sets. The class learner uniquely identifies
+all 1,872 scalar/codec-bit channels from their first 24 frames and accepts the
+untouched final 24 frames. The learner using the local encoder's point sequence rejects every
+alternative-policy source. Independent forward encoding agrees at 226,200
+gain probes, including interval endpoints.
+
+Combining these frozen fits with causal history replay retains strict B1u and
+400-payload-frame checks. Each entry is a pass count out of 1,872 channel/seed
+cases; the four payload seeds share training and are not independent channels.
+
+| Representative policy | Native | Fit at frame 24 | Fit plus history replay |
+| --- | ---: | ---: | ---: |
+| Minimum power | 1785 | 1856 | 1872 |
+| Maximum absolute level | 1568 | 1836 | 1872 |
+| Seeded ranking 1 | 1678 | 1852 | 1872 |
+| Seeded ranking 7 | 1682 | 1852 | 1872 |
+
+All 5,616 canonical control runs preserve their original results and DSP
+numeric traces. Separate guards retain rejection of 576 corrupted held-out B1u cases
+and 144 changed bit-operation cases. Missing training disables the learned
+model and preserves baseline behavior exactly in 864 paired comparisons,
+including its successes and failures. History replacement preserves line,
+fit and physical-noise evidence.
+
+These source controls check residue classes and coding; their transmit-power
+and PSD compliance is not established.
+
+This removes the local representative assumption in the declared noiseless,
+aligned, known-level, memoryless 36k model. The fit is computed from the same
+retained prefix outside the native replay experiment; inference cost and the
+synchronous replay batch remain unqualified for production scheduling. Noise,
+unknown modulation level/coding/alignment, other filters and physical calls
+still require qualification. The checked-in alternate-representative regression
+covers ordinary unquantized frame decoding, not this learned receiver model.
+Keep production selection and observation policy unchanged.
