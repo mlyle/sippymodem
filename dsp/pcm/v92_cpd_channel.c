@@ -4,6 +4,7 @@
 
 #include "wide_uint.h"
 #include "gram_fit.h"
+#include "sample_math.h"
 
 #include "memory_region.h"
 #include "v92_cpd_gain.h"
@@ -488,13 +489,10 @@ static bool design(struct v92_cpd_parameters *parameters,
 	next.filter[V92_CPD_PREFILTER_FEED_FORWARD].count = Z2_TAPS;
 	for (size_t tap = 0; tap < Z2_TAPS; ++tap)
 		next.filter[V92_CPD_PREFILTER_FEED_FORWARD].coefficient[tap] = (int16_t)lround(coefficients[tap] * z2_scale);
-	for (size_t tap = 0; tap < P1_TAPS; ++tap) {
-		long value = lround(coefficients[Z2_TAPS + tap] * 16384.0);
-
-		if (value < INT16_MIN || value > INT16_MAX)
+	for (size_t tap = 0; tap < P1_TAPS; ++tap)
+		if (!sample_round_checked_s16(coefficients[Z2_TAPS + tap] * 16384.0,
+		    &next.filter[V92_CPD_PRECODER_FEEDBACK].coefficient[tap]))
 			return false;
-		next.filter[V92_CPD_PRECODER_FEEDBACK].coefficient[tap] = (int16_t)value;
-	}
 	/* Table 30 carries the actual filter lengths. Trailing zero taps add
 	 * no response but consume peer capacity and CPd wire time. Preserve
 	 * leading zeros: they own the selected prefilter delay. */

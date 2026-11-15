@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "v92_pcm_phase4_trn2u_line_rx.h"
+#include "sample_math.h"
 #include "v92_control_target.h"
 #include "v92_ru_line_rx.h"
 
@@ -197,16 +198,17 @@ v92_pcm_phase4_trn2u_line_rx_init(
 	struct v92_pcm_phase4_trn2u_line_rx initialized = { 0 };
 	unsigned int bits;
 	int16_t outer_level;
-	long rounded_level;
+	int16_t rounded_level;
 
 	if (receiver == NULL || !g711_law_is_valid(law) ||
 	    !v92_pcm_phase3_cpt_line_handoff_is_valid(handoff))
 		return V92_PCM_PHASE4_TRN2U_LINE_RX_INVALID_ARGUMENT;
-	rounded_level = lround(handoff->signal_level);
+	if (!sample_round_checked_s16(handoff->signal_level, &rounded_level))
+		return V92_PCM_PHASE4_TRN2U_LINE_RX_INVALID_ARGUMENT;
 	bits = v92_phase4_modulator_bits_per_symbol(constellation);
-	if (rounded_level <= 0 || rounded_level > INT16_MAX || bits == 0 ||
+	if (rounded_level <= 0 || bits == 0 ||
 	    v92_phase4_modulator_level(
-		    constellation, (int16_t)rounded_level,
+		    constellation, rounded_level,
 		    (uint8_t)((1u << (bits - 1u)) - 1u), 0u,
 		    &outer_level) != V92_PHASE4_MODULATOR_OK)
 		return V92_PCM_PHASE4_TRN2U_LINE_RX_INVALID_ARGUMENT;
@@ -224,11 +226,11 @@ v92_pcm_phase4_trn2u_line_rx_init(
 		    QAM_EQUALIZER_OK ||
 	    v92_pcm_phase4_trn2u_init(
 		    &initialized.reference, constellation,
-		    handoff->previous_sign, (int16_t)rounded_level) !=
+		    handoff->previous_sign, rounded_level) !=
 		    V92_PCM_PHASE4_TRN2U_OK ||
 	    v92_phase4_demodulator_init(
 		    &initialized.demodulator, constellation,
-		    handoff->previous_sign, (int16_t)rounded_level) !=
+		    handoff->previous_sign, rounded_level) !=
 		    V92_PHASE4_MODULATOR_OK ||
 	    !initialize_targets(&initialized) ||
 	    !v92_pcm_phase4_trn2u_line_rx_is_valid(&initialized))
