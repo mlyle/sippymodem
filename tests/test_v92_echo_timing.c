@@ -46,6 +46,29 @@ static bool test_residual_projection(void)
 	      v92_residual_output(&filter, 20) == -106 &&
 	      memcmp(&filter, &saved, sizeof(filter)) == 0,
 	      "projection changed feedback order, channel DC, or retained history");
+	/* Feed a chronological ramp through every delay pair and ring cursor.
+	 * Expected ages come from the ramp, independently of physical slots. */
+	for (unsigned first = 1; first <= V92_RESIDUAL_LAGS; ++first)
+		for (unsigned second = first; second <= V92_RESIDUAL_LAGS; ++second) {
+			bool pair = first != second;
+			struct v92_residual ramp = {
+				.active = true, .count = pair ? 2 : 1,
+				.delay = { first, pair ? second : 0 },
+				.coefficient = { .03125, pair ? -.015625 : 0 },
+				.offset = 123,
+			};
+			for (unsigned n = 1; n <= 3u * V92_RESIDUAL_LAGS; ++n) {
+				v92_residual_retain(&ramp, n);
+				if (n < V92_RESIDUAL_LAGS) continue;
+				double expected = 20 - .03125 * (n - first + 1u);
+				if (pair) expected += .015625 * (n - second + 1u);
+				CHECK(v92_residual_is_valid(&ramp) &&
+				      v92_residual_project(&ramp, 20) == expected &&
+				      v92_residual_output(&ramp, 20) == expected - 123,
+				      "residual feedback age changed at %u, delays %u/%u",
+				      n, first, second);
+			}
+		}
 	return true;
 }
 

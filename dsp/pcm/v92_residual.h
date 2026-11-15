@@ -3,6 +3,7 @@
 #define V92_RESIDUAL_H
 
 #include "v92_pcm_frame.h"
+#include "ring_history.h"
 
 /* A small causal inverse for residual ISI after the peer's CPd prefilter.
  * The l1 bound is a sufficient stability condition independent of delay.
@@ -23,7 +24,7 @@ static inline double v92_residual_project(const struct v92_residual *filter, dou
 	double corrected = raw;
 	for (unsigned j = 0; j < filter->count; j++)
 		corrected -= filter->coefficient[j] * filter->history[
-			(filter->cursor + V92_RESIDUAL_LAGS - filter->delay[j]) % V92_RESIDUAL_LAGS];
+			ring_index_at_age(filter->cursor, V92_RESIDUAL_LAGS, filter->delay[j])];
 	return corrected;
 }
 
