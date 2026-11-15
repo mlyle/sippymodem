@@ -2176,8 +2176,10 @@ and PSD compliance is not established.
 
 This removes the local representative assumption in the declared noiseless,
 aligned, known-level, memoryless 36k model. The fit is computed from the same
-retained prefix outside the native replay experiment; inference cost and the
-synchronous replay batch remain unqualified for production scheduling. Noise,
+retained prefix outside the native replay experiment. The
+[bounded native fit study](#compute-legal-class-fits-with-bounded-native-work)
+measures inference separately; the synchronous decoder-history replay batch
+and complete receive packet still need scheduling qualification. Noise,
 unknown modulation level/coding/alignment, other filters and physical calls
 still require qualification. The checked-in alternate-representative regression
 covers ordinary unquantized frame decoding, not this learned receiver model.
@@ -2284,3 +2286,109 @@ remain necessary. Shared-offset integration adds work per candidate and per
 phase, so it also needs measured worst-packet cost before entering the Pi's
 receive path. The current bounded causal correction remains a separate, much
 smaller mechanism; none of these bounds changes rate selection or readiness.
+
+## Compute legal-class fits with bounded native work
+
+The class-derived scalar fit can retain exact identified sets without
+materializing all 729 six-phase bit-operation patterns. For phase `p` and
+operation `m`, let `F[p,m]` be the gain set surviving that phase's acquisition
+observations, allowing each symbol's legal representative alternatives. Set
+
+```
+U[p] = union over m of F[p,m]
+U = intersection over p of U[p].
+```
+
+Distributivity makes `U` the union of the gain sets of every complete pattern.
+A mode is possible at phase `p` exactly when `F[p,m]` intersects `U`. A nonempty
+`U` identifies one pattern exactly when every phase has one possible mode.
+If two modes remain possible, each extends to a complete pattern at some
+shared gain, so ambiguity must survive. Marginal mode masks alone do not
+retain the complete joint answer: different gain regions may support different
+combinations. Keep the phase/mode sets as well as `U`. A synthetic codec control
+has 64 combinations of marginal choices but only 33 feasible joint patterns.
+
+For this two-representative geometry, each observation contributes at most two
+positive-gain intervals. Intersecting 48 such constraints needs at most 49
+components per phase/mode. Three mode sets need at most 147 components in their
+union. Intersecting six phase unions needs at most
+`1 + 6*(147-1) = 877` components. A unique pattern's gain set needs at most
+`1 + 6*(49-1) = 289`. These bounds include open endpoints and isolated points;
+they apply to the declared class geometry, rather than arbitrary CPd banks.
+
+A native prototype consumes one observation per update, then closes the fit in
+12 steps: six phase-union/intersection steps and six mode-feasibility steps.
+Sorted linear merges replace pattern enumeration. Owned state is 53,008 bytes
+on both tested architectures, with no allocation in the learner. Update scratch
+holds three 49-component sets and small two-interval arrays; closing scratch
+holds one 147-component union, with scalar locals in both cases.
+Observation updates require fewer than 2,048 rational comparisons; each closing
+step requires fewer than 16,384. These are conservative work bounds for the
+fixed capacities, rather than measured cycle limits. Capacity exhaustion is an
+explicit refusal, never truncation of a hypothesis set. Missing acquisition
+media disables selection; an incomplete prefix cannot publish a fit.
+
+Round-half-away-from-zero codec preimages have rational endpoints of the form
+`(2*codec_bound +/- 1)/(2*nominal_level)`. Keep endpoint inclusion exactly.
+Their bounded 32-bit parts permit exact signed 64-bit comparison products.
+Selecting the widest final component needs wider intermediate products; use
+exact wide arithmetic instead of subtracting rounded floating endpoints.
+Choose the lowest component on an exact width tie. Its midpoint has integer
+numerator and denominator below `2^34`, permitting one binary64 division with
+exact operands. Unbounded or zero-width sets remain represented but decline
+gain publication. A unique bit-operation pattern therefore does not by itself
+establish a usable gain calibration.
+
+The native implementation reproduces all 1,872 earlier class-fit descriptors,
+exact gain sets and frozen binary64 midpoints. Thirty added controls cover
+ambiguous and contradictory observations, missing and incomplete input,
+representative ordering, integer-domain endpoints and shared-gain correlation.
+All 1,902 outputs agree across ordinary, UBSan and portable-wide builds.
+Independent rational checks cover 6,396 set-algebra cases, including the full
+49/147/877-component bounds and 447 capacity refusals with intact buffer guards.
+A separate 917-case gain-publication check includes 64 cases where naive
+floating width subtraction chooses a different component, plus an intermediate
+product exceeding 64 bits. Rejected publication preserves its output storage.
+
+### Isolated inference cost
+
+Hardware reference counters measure 80-symbol/10-ms processing groups across
+all 1,872 synthetic positive prefixes and all 80 packet-start offsets. Five
+repeats process 748,800 training streams and 3,435,120 groups per architecture.
+Timing includes initialization, acquisition, all closing steps and gain
+publication. Consecutive-three sums exclude idle gaps and reset at call
+boundaries. The table reports the median of five average costs and the largest
+observed single-group and consecutive-three costs across those repeats.
+
+| Host | Average group, us | Worst group, us | Worst three, us |
+| --- | ---: | ---: | ---: |
+| x86-64 | 7.16 | 683.25 | 700.29 |
+| Pi 5 | 12.40 | 54.91 | 88.93 |
+
+The counters are invariant TSC reference cycles on x86-64 and generic timer
+ticks on Pi. Elapsed counters include scheduling interference; these peaks do
+not establish hard worst-case execution times or an architectural speed ranking.
+Both machines use identical source and synthetic-input hashes and reproduce
+identical inference outputs and benchmark checksums. Pi temperature rose from
+59.5 to 72.15 C; its current throttling flags remained clear and its reported
+ARM clock remained near 2.4 GHz. Historical throttling flags were retained.
+The host thermal sensor returned an explicit unavailable-data error.
+
+Separate generic interval-state stress reaches 289 unique-pattern components
+and 877 ambiguous-pattern components. The entire close/select operation peaks
+at 65.93/285.50 us on x86-64 and 55.65/266.26 us on Pi, respectively. These states
+exercise the structural bounds; their realization by modem observations is not
+established. They remain separate from the source-derived packet measurements.
+
+This closes an offline-inference gap in the aligned, known-level, noiseless,
+positive-scalar 36k experiment. The integer rounding result must remain inside
+the int16 domain; saturation outside that domain is excluded. The retained
+class sets still overapproximate fourth-symbol trellis parity. Source power/PSD
+compliance, unknown alignment/level, noise, offset, echo, channel memory and
+other filters/coders/rates retain their earlier qualification requirements.
+
+The published models match the inputs used by the prior causal-history replay
+study. A deployable receiver still needs bounded history rebuilding, mapping
+and class preparation, observation-model construction, independent held-out
+admission, and measured complete-packet cost. These isolated measurements add
+no live receiver branch, rate policy or readiness decision.
