@@ -198,14 +198,9 @@ static inline int16_t multiply_shift_s16(
 static inline uint16_t normalized_reciprocal_q15(
 	uint16_t value, uint16_t *exponent)
 {
-	uint16_t normalized = value;
-	uint16_t shift = 0;
+	uint16_t shift = (uint16_t)(16u - bit_width_unsigned(value));
+	uint16_t normalized = (uint16_t)((uint32_t)value << shift);
 	uint16_t high;
-
-	while ((normalized & UINT16_C(0x8000)) == 0) {
-		normalized = (uint16_t)(normalized << 1);
-		shift++;
-	}
 	high = (uint16_t)(((uint32_t)normalized + 0x80u) >> 8);
 	*exponent = shift;
 	return (uint16_t)((UINT32_C(1) << 22) / high);
@@ -300,10 +295,9 @@ static inline uint16_t fixed_square_root_u32(uint32_t value)
 
 	if (value == 0)
 		return 0;
-	while (normalized <= UINT32_C(0x1fffffff)) {
-		normalized <<= 1;
-		shift++;
-	}
+	unsigned width = bit_width_unsigned(value);
+	shift = width < 30u ? (uint16_t)(30u - width) : 0u;
+	normalized <<= shift;
 	mantissa = (uint16_t)(normalized >> 15);
 	if ((shift & 1u) != 0)
 		mantissa >>= 1;

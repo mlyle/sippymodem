@@ -269,6 +269,36 @@ static bool test_arithmetic_shift(void)
 	return true;
 }
 
+static bool test_fixed_square_root_profile(void)
+{
+	/* Powers exercise every normalization shift. The odd-power profile
+	 * uses floor(sqrt(2^29)) = 23170 before its final right shift. */
+	CHECK(fixed_square_root_u32(0) == 0, "zero square-root profile changed");
+	for (unsigned exponent = 0; exponent <= 14; ++exponent) {
+		CHECK(fixed_square_root_u32(UINT32_C(1) << (2u * exponent)) ==
+		      (UINT16_C(1) << exponent) &&
+		      fixed_square_root_u32(UINT32_C(1) << (2u * exponent + 1u)) ==
+		      (UINT16_C(23170) >> (14u - exponent)),
+		      "square-root normalization changed at exponent %u", exponent);
+	}
+	/* Retain the quantized profile, including its 16-bit mantissa wrap;
+	 * this helper is deliberately not an exact mathematical square root. */
+	static const struct { uint32_t input; uint16_t expected; } cases[] = {
+		{ UINT32_C(0x1fffffff), 23170 },
+		{ UINT32_C(0x20000000), 23170 },
+		{ UINT32_C(0x3fffffff), 32703 },
+		{ UINT32_C(0x40000000), 32703 },
+		{ UINT32_C(0x7fffffff), 32703 },
+		{ UINT32_C(0x80000000), 32703 },
+		{ UINT32_C(0x90000000), 16384 },
+		{ UINT32_MAX, 32703 },
+	};
+	for (size_t i = 0; i < ARRAY_LENGTH(cases); ++i)
+		CHECK(fixed_square_root_u32(cases[i].input) == cases[i].expected,
+		      "square-root profile boundary %zu changed", i);
+	return true;
+}
+
 static bool test_normalized_reciprocal(void)
 {
 	uint16_t exponent;
@@ -369,6 +399,7 @@ int main(void)
 		{ "wide energy arithmetic", test_wide_energy_arithmetic },
 		{ "arithmetic shift", test_arithmetic_shift },
 		{ "normalized reciprocal", test_normalized_reciprocal },
+		{ "fixed square-root profile", test_fixed_square_root_profile },
 		{ "fixed smoothing", test_smoothing },
 	};
 	unsigned int failures = 0;
