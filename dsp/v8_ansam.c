@@ -340,6 +340,12 @@ static bool process_block(
 			    V8_LINE_CONDITIONER_OK)
 			return false;
 		if (carrier) {
+			/* Gain feedback must not absorb the amplitude modulation or
+			 * keep resetting its stability gate during measurement. */
+			if (v8_line_conditioner_set_gain_mode(
+				    conditioner, V8_LINE_GAIN_FROZEN) !=
+			    V8_LINE_CONDITIONER_OK)
+				return false;
 			detector->stage = V8_ANSAM_WAIT_MODULATION;
 			detector->dwell_blocks = 0;
 			detector->modulation_energy = 0;

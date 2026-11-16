@@ -349,6 +349,56 @@ static bool test_reversal_alignment(void)
 	return true;
 }
 
+static bool test_envelope_with_channel_flutter(void)
+{
+	/* A small channel-level variation can keep coarse gain moving. The
+	 * detector must retain the answer tone's envelope rather than track it
+	 * away, while the same flutter on plain ANS must not imply V.8. */
+	for (enum test_codec codec = TEST_LINEAR; codec <= TEST_PCMA; ++codec) {
+		for (unsigned modulated = 0; modulated < 2; ++modulated) {
+			struct v8_ansam_detector detector;
+			struct v8_line_conditioner line;
+			bool detected = false;
+			const size_t limit = modulated ?
+				3u * V8_ANSAM_SAMPLE_RATE / 2u :
+				3u * V8_ANSAM_SAMPLE_RATE;
+
+			CHECK(v8_ansam_detector_init(&detector) == V8_ANSAM_OK &&
+			      v8_line_conditioner_init(&line, V8_CALLING_STATION) ==
+				      V8_LINE_CONDITIONER_OK,
+			      "flutter detector initialization failed");
+			for (size_t first = 0; first < limit; first += 80) {
+				int16_t samples[80];
+
+				for (size_t index = 0; index < ARRAY_LENGTH(samples); ++index) {
+					size_t n = first + index;
+					double time = (double)n / V8_ANSAM_SAMPLE_RATE;
+					double envelope = 1.0 + (modulated ? 0.2 : 0.0) *
+						cos(TEST_TWO_PI * 15.0 * time);
+					double flutter = 1.0 + 0.08 *
+						sin(TEST_TWO_PI * 3.0 * time + TEST_TWO_PI / 4.0);
+					double carrier = sin(TEST_TWO_PI * 2100.0 * time + 0.231);
+					int reversal = (n / V8_ANSAM_REVERSAL_SAMPLES) % 2 ? -1 : 1;
+					int16_t sample = (int16_t)lround(
+						2005.0 * envelope * flutter * carrier * reversal);
+
+					samples[index] = codec_round_trip(sample, codec);
+				}
+				CHECK(v8_ansam_detect(&detector, &line, samples,
+					      ARRAY_LENGTH(samples), &detected) == V8_ANSAM_OK,
+				      "flutter detection failed for codec %u", codec);
+				if (detected)
+					break;
+			}
+			CHECK(detected == (modulated != 0),
+			      "codec %u: channel flutter %s ANSam evidence (energy=%u)",
+			      codec, modulated ? "erased" : "invented",
+			      detector.modulation_energy);
+		}
+	}
+	return true;
+}
+
 static bool test_gain_stability(void)
 {
 	static const struct {
@@ -709,6 +759,7 @@ int main(void)
 		{ "generated waveform", test_generated_waveform },
 		{ "detection and rejection", test_detection_and_rejection },
 		{ "phase-reversal alignment", test_reversal_alignment },
+		{ "envelope with channel flutter", test_envelope_with_channel_flutter },
 		{ "gain stability", test_gain_stability },
 		{ "interrupted carrier", test_interrupted_carrier },
 		{ "block validation", test_block_validation },
