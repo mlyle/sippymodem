@@ -7,6 +7,12 @@
 #include <stdint.h>
 #include <string.h>
 
+int16_t agc_measure_owned_level_s16(
+	const int16_t *samples, size_t count)
+{
+	return wrap_s16_from_s32((int32_t)sample_level_s16(samples, count, 0x038e));
+}
+
 enum agc_result agc_measure_level_s16(
 	const int16_t *samples, size_t count, int16_t *level)
 {
