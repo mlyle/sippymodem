@@ -44,6 +44,7 @@ PCM_RUNTIME_SOURCE_NAMES := \
 	gram_fit.c \
 	gaussian.c \
 	pcm_gain.c \
+	pcm_control_receiver.c \
 	pcm_octet_probe.c v91_profile.c v91_control.c v91_call.c v91_datapump.c \
 	pcm_dil_descriptor.c pcm_downstream_rx.c pcm_downstream_tx.c pcm_downstream_equalizer.c \
 	pcm_echo_reference.c pcm_host_echo.c echo_timing.c \
@@ -2006,6 +2007,7 @@ V92_CONTROL_RX_TEST_OBJECTS := \
 	$(CRC16_CCITT_FALSE_OBJECT)
 V92_CPT_RECEIVER_TEST_BINARY := $(BUILD_DIR)/test_v92_cpt_receiver
 V92_CPT_RECEIVER_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_receiver.o \
 	$(BUILD_DIR)/test_v92_cpt_receiver.o \
 	$(BUILD_DIR)/v92_cpt_receiver.o \
 	$(BUILD_DIR)/v92_cpt.o \
@@ -2026,6 +2028,7 @@ V92_PCM_PHASE3_CPT_TX_TEST_OBJECTS := \
 V92_PCM_PHASE3_CPT_RX_TEST_BINARY := \
 	$(BUILD_DIR)/test_v92_pcm_phase3_cpt_rx
 V92_PCM_PHASE3_CPT_RX_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_receiver.o \
 	$(BUILD_DIR)/test_v92_pcm_phase3_cpt_rx.o \
 	$(BUILD_DIR)/v92_pcm_phase3_cpt_rx.o \
 	$(BUILD_DIR)/v92_pcm_phase3_cpt_tx.o \
@@ -2042,6 +2045,7 @@ V92_PCM_PHASE3_CPT_RX_TEST_OBJECTS := \
 V92_PCM_PHASE3_CPT_LINE_RX_TEST_BINARY := \
 	$(BUILD_DIR)/test_v92_pcm_phase3_cpt_line_rx
 V92_PCM_PHASE3_CPT_LINE_RX_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_receiver.o \
 	$(BUILD_DIR)/gram_fit.o \
 	$(BUILD_DIR)/test_v92_pcm_phase3_cpt_line_rx.o \
 	$(BUILD_DIR)/v92_pcm_phase3_cpt_line_rx.o \
@@ -2068,6 +2072,7 @@ V90_PCM_MAPPING_OBJECTS := $(BUILD_DIR)/v90_pcm_mapping.o \
 V92_PHASE3_DIGITAL_STATION_TEST_BINARY := \
 	$(BUILD_DIR)/test_v92_phase3_digital_station
 V92_PHASE3_DIGITAL_STATION_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_receiver.o \
 	$(BUILD_DIR)/gram_fit.o \
 	$(BUILD_DIR)/test_v92_phase3_digital_station.o \
 	$(BUILD_DIR)/v92_control_target.o \
@@ -2447,6 +2452,7 @@ V90_PCM_STREAM_RX_TEST_OBJECTS := \
 	$(BUILD_DIR)/g711.o
 V90_CP_RECEIVER_TEST_BINARY := $(BUILD_DIR)/test_v90_cp_receiver
 V90_CP_RECEIVER_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_receiver.o \
 	$(BUILD_DIR)/test_v90_cp_receiver.o \
 	$(BUILD_DIR)/v90_cp_receiver.o \
 	$(BUILD_DIR)/v90_cp.o $(CRC16_CCITT_FALSE_OBJECT)
@@ -2463,6 +2469,7 @@ V90_PHASE4_CP_TX_TEST_OBJECTS := \
 V90_PHASE4_CP_RX_TEST_BINARY := \
 	$(BUILD_DIR)/test_v90_phase4_cp_rx
 V90_PHASE4_CP_RX_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_receiver.o \
 	$(BUILD_DIR)/test_v90_phase4_cp_rx.o \
 	$(BUILD_DIR)/v90_phase4_cp_rx.o \
 	$(BUILD_DIR)/v90_phase4_cp_tx.o \
@@ -2754,6 +2761,7 @@ V90_PHASE3_RETURN_LINE_RX_TEST_OBJECTS := $(sort \
 V90_PHASE4_CP_LINE_RX_TEST_BINARY := \
 	$(BUILD_DIR)/test_v90_phase4_cp_line_rx
 V90_PHASE4_CP_LINE_RX_TEST_OBJECTS := $(sort \
+	$(BUILD_DIR)/pcm_control_receiver.o \
 	$(BUILD_DIR)/test_v90_phase4_cp_line_rx.o \
 	$(BUILD_DIR)/v90_phase4_line_fixture.o \
 	$(BUILD_DIR)/v90_phase4_cp_line_rx.o \
@@ -6479,6 +6487,9 @@ $(BUILD_DIR)/rtp_transmit.o: ../src/rtp_transmit.c | $(BUILD_DIR)
 
 $(BUILD_DIR)/test_rtp_transmit: $(BUILD_DIR)/test_rtp_transmit.o $(BUILD_DIR)/rtp_transmit.o $(BUILD_DIR)/frame_pacer.o
 	$(CC) $(LDFLAGS) -o $@ $^
+
+$(BUILD_DIR)/pcm_control_receiver.o: $(DSP_PCM_SOURCE_DIR)/pcm_control_receiver.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/gram_fit.o: $(DSP_SOURCE_DIR)/gram_fit.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<

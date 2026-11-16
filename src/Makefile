@@ -205,6 +205,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v34_framing.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_info0.c \
 	$(DSP_PCM_SOURCE_DIR)/pcm_call.c \
+	$(DSP_PCM_SOURCE_DIR)/pcm_control_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/pcm_echo_reference.c \
 	$(DSP_PCM_SOURCE_DIR)/pcm_rate.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_profile.c \
