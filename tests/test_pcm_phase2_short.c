@@ -275,6 +275,84 @@ static bool test_info1_timeout_recovery(void)
 	return true;
 }
 
+static bool check_marks_after_unanswered_reversal(
+	unsigned protocol, unsigned law, unsigned signal)
+{
+	struct v34_info0 analog = { 0 };
+	struct v90_info0d digital = {
+		.nominal_transmit_power = 9, .maximum_transmit_power = 18,
+		.pcm_law = law ? V90_PCM_A_LAW : V90_PCM_MU_LAW,
+	};
+	struct v92_info0a a92 = { .v90 = analog, .v92_capable = true,
+		.short_phase2_requested = protocol == 2 };
+	struct v92_info0d d92 = { .v90 = digital, .v92_capable = true,
+		.short_phase2_requested = protocol == 2 };
+	struct pcm_phase2 owner;
+	struct v34_phase2_tone_transmitter tone;
+	struct v34_phase2_dpsk_transmitter marks;
+	unsigned recovery = 0, requested = 0;
+
+	CHECK((protocol ? pcm_phase2_init_retrain_v92_digital(
+		&owner, 12000, &d92, &a92, 0) :
+		pcm_phase2_init_retrain_v90_digital(
+		&owner, 12000, &digital, &analog, 0)) == PCM_PHASE2_OK &&
+	      v34_phase2_tone_transmitter_init(
+		&tone, V34_ANSWERING_STATION, 12000) == V34_PHASE2_TONE_OK &&
+	      v34_phase2_dpsk_transmitter_init(
+		&marks, V34_ANSWERING_STATION, 12000) == V34_PHASE2_DPSK_OK,
+	      "recovery waveform initialization");
+	for (unsigned n = 0; n < 32000; ++n) {
+		struct pcm_phase2_event event = { 0 };
+		int16_t input = 0, output = 0;
+
+		if (!recovery && owner.stage == PCM_PHASE2_RANGING &&
+		    owner.state.ranging.control.phase ==
+			    PHASE2_SIGNAL_B_RECOVERY_WAIT_REMOTE_TONE)
+			recovery = n;
+		if (recovery && signal != 0) {
+			bool accepted;
+
+			CHECK(v34_phase2_dpsk_transmitter_sample(
+				&marks, signal == 2, &input, &accepted) ==
+				      V34_PHASE2_DPSK_OK, "generate DPSK");
+		} else if (!recovery && n < 1200) {
+			if (n == 1000)
+				CHECK(v34_phase2_tone_transmitter_reverse(&tone) ==
+					      V34_PHASE2_TONE_OK, "first reversal");
+			CHECK(v34_phase2_tone_transmitter_sample(&tone, &input) ==
+				      V34_PHASE2_TONE_OK, "generate Tone A");
+		}
+		CHECK(pcm_phase2_sample(&owner, media_sample(law, input),
+			&output, &event) == PCM_PHASE2_OK &&
+		      !pcm_phase2_has_failed(&owner), "consume recovery signal");
+		if (event.kind == PCM_PHASE2_EVENT_RETRAIN_REQUESTED) {
+			requested = n;
+			break;
+		}
+	}
+	CHECK(recovery >= 16000 && (requested != 0) == (signal == 2),
+	      "recovery protocol=%u law=%u signal=%u entered=%u request=%u",
+	      protocol, law, signal, recovery, requested);
+	CHECK(!requested || requested - recovery < 1600,
+	      "qualified marks did not request bounded recovery");
+	CHECK(owner.peer_info0_stored && !owner.remote_probe_stored &&
+	      owner.stage == PCM_PHASE2_RANGING && pcm_phase2_is_valid(&owner),
+	      "recovery invented probe or changed the retained agreement");
+	return true;
+}
+
+static bool test_marks_after_unanswered_reversal(void)
+{
+	/* Missing the second Tone-A reversal leads to silence. The peer's
+	 * INFOMARKSa must break that wait; silence and DPSK zeros must not. */
+	for (unsigned protocol = 0; protocol < 3; ++protocol)
+		for (unsigned law = 0; law < 2; ++law)
+			for (unsigned signal = 0; signal < 3; ++signal)
+				CHECK(check_marks_after_unanswered_reversal(
+					protocol, law, signal), "marks recovery");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -283,6 +361,7 @@ int main(void)
 	} cases[] = {
 		{"short Phase 2 and actual INFO1 handoff", test_short_exchange},
 		{"short INFO1 timeout resumes full probing", test_info1_timeout_recovery},
+		{"INFOMARKS breaks unanswered PCM ranging recovery", test_marks_after_unanswered_reversal},
 	};
 
 	for (unsigned i = 0; i < ARRAY_LENGTH(cases); ++i) {

@@ -596,6 +596,7 @@ pcm_phase2_info0_exchange_sample(
 		    &next.transport, received_sample, &generated, &raw_event) !=
 		    PHASE2_INFO0_EXCHANGE_OK)
 		return PCM_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
+	emitted.info_marks = raw_event.info_event.info_marks;
 	info_started = exchange->transport.info_receiver.frame.stage ==
 		       V34_PHASE2_INFO_SEARCH_SYNC &&
 	       next.transport.info_receiver.frame.stage !=

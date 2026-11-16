@@ -842,6 +842,21 @@ static bool sample_ranging(
 		    &phase2->state.ranging, received_sample,
 		    transmit_sample, &child) != PCM_PHASE2_RANGING_OK)
 		return false;
+	/* The analogue peer can wait for INFO1d with INFOMARKSa (V.90
+	 * 9.2.2.2.4) while our unanswered second reversal has left us silent,
+	 * waiting for Tone A (9.2.1.2.3). Neither side then changes its signal.
+	 * We have no probe from which to construct INFO1d: ask the call owner
+	 * for a full retrain, including the silence and fresh Tone B of 9.5.1.1.
+	 * Reuse the existing DPSK qualification only in this recovery state. */
+	if (phase2->local_role == V90_DIGITAL_MODEM &&
+	    child.exchange_event.info_marks &&
+	    (phase2->state.ranging.path == PCM_RANGING_FULL ||
+	     phase2->state.ranging.path == PCM_RANGING_SHORT_FULL_RECOVERY) &&
+	    phase2->state.ranging.control.phase ==
+		    PHASE2_SIGNAL_B_RECOVERY_WAIT_REMOTE_TONE) {
+		event->kind = PCM_PHASE2_EVENT_RETRAIN_REQUESTED;
+		return true;
+	}
 	if (child.exchange_event.peer_info0_event == PCM_PEER_INFO0_RECEIVED) {
 		phase2->peer_info0 = child.exchange_event.peer_info0;
 		phase2->peer_info0_stored = true;

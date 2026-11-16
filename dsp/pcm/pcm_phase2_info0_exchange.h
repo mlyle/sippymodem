@@ -56,6 +56,8 @@ struct pcm_phase2_info0_exchange_event {
 	enum pcm_protocol protocol;
 	/* Exact start and validation boundaries of a repeated peer INFO0. */
 	enum pcm_info0_recovery_event recovery_event;
+	/* Qualified unframed DPSK marks remain observable during ranging. */
+	bool info_marks;
 };
 
 struct pcm_phase2_info0_exchange {
