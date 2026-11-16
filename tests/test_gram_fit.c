@@ -179,6 +179,36 @@ static void test_rejection(void)
 	assert(!gram_fit(gram, rhs, 5, fitted));
 }
 
+static void test_fit_rejection_preserves_output(void)
+{
+	for (unsigned count = 1; count <= GRAM_FIT_COLUMNS; ++count) {
+		for (unsigned failed = 0; failed < count; ++failed) {
+			double gram[GRAM_FIT_MOMENTS], rhs[GRAM_FIT_COLUMNS];
+			double fitted[GRAM_FIT_COLUMNS + 2], saved[GRAM_FIT_COLUMNS + 2];
+			for (unsigned i = 0; i < GRAM_FIT_MOMENTS; ++i) gram[i] = NAN;
+			for (unsigned i = 0; i < count * (count + 1) / 2; ++i) gram[i] = 0.;
+			for (unsigned i = 0; i < GRAM_FIT_COLUMNS; ++i) rhs[i] = NAN;
+			for (unsigned i = 0; i < count; ++i) {
+				gram[gram_moment_index(i, i)] = i == failed ? 1e-300 : 1.;
+				rhs[i] = i == failed ? 1e150 : i + 1.;
+			}
+			/* All inputs and normalized coefficients are finite. Only the
+			 * final conversion back to this column's units overflows, after
+			 * any earlier coefficients would already have been published. */
+			for (unsigned i = 0; i < GRAM_FIT_COLUMNS + 2; ++i)
+				fitted[i] = i & 1u ? -0. : 99. + i;
+			memcpy(saved, fitted, sizeof(saved));
+			double saved_gram[GRAM_FIT_MOMENTS], saved_rhs[GRAM_FIT_COLUMNS];
+			memcpy(saved_gram, gram, sizeof(gram));
+			memcpy(saved_rhs, rhs, sizeof(rhs));
+			assert(!gram_fit(gram, rhs, count, fitted + 1));
+			assert(memcmp(fitted, saved, sizeof(fitted)) == 0);
+			assert(memcmp(gram, saved_gram, sizeof(gram)) == 0);
+			assert(memcmp(rhs, saved_rhs, sizeof(rhs)) == 0);
+		}
+	}
+}
+
 static void test_raw_solver(void)
 {
 	double gram[GRAM_FIT_MOMENTS] = { 4., 2., 5., 0., 1., 3., NAN, NAN, NAN, NAN };
@@ -299,6 +329,7 @@ int main(void)
 	test_column_selection();
 	for (unsigned count = 1; count <= 4; count++) test_polynomial(count);
 	test_rejection();
+	test_fit_rejection_preserves_output();
 	test_raw_solver();
 	test_residual();
 	test_projection();

@@ -54,7 +54,7 @@ bool gram_solve(
  * Read only count * (count + 1) / 2 moments. Normalize columns before
  * elimination and reject unidentifiable fits using the relative
  * determinant. The caller owns any coefficient bounds or model selection.
- * Only the first count coefficients are written; failure may write a prefix. */
+ * Only the first count coefficients are written; failure leaves them unchanged. */
 bool gram_fit(
 	const double gram[GRAM_FIT_MOMENTS],
 	const double rhs[GRAM_FIT_COLUMNS], unsigned count,
@@ -78,8 +78,11 @@ bool gram_fit(
 	if (!gram_reduce(matrix, count, 0., &determinant)) return false;
 	if (!(determinant > 64. * DBL_EPSILON)) return false;
 	for (unsigned i = 0; i < count; i++) {
-		fitted[i] = matrix[i][count] / scale[i];
-		if (!isfinite(fitted[i])) return false;
+		matrix[i][count] /= scale[i];
+		if (!isfinite(matrix[i][count])) return false;
 	}
+	/* A later column can overflow when restored to its original units.
+	 * Validate every coefficient in existing scratch before publishing any. */
+	for (unsigned i = 0; i < count; i++) fitted[i] = matrix[i][count];
 	return true;
 }

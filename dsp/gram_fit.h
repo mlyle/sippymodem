@@ -100,7 +100,8 @@ bool gram_solve(
  * Read only count * (count + 1) / 2 moments. Normalize columns before
  * elimination and reject unidentifiable fits using the relative
  * determinant. The caller owns any coefficient bounds or model selection.
- * Only the first count coefficients are written; failure may write a prefix. */
+ * Only the first count coefficients are written; failure leaves them unchanged.
+ * Input and output arrays must be separate. */
 bool gram_fit(
 	const double gram[GRAM_FIT_MOMENTS],
 	const double rhs[GRAM_FIT_COLUMNS], unsigned count,
