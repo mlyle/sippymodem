@@ -4906,7 +4906,9 @@ $(BINARY_EQUALIZER_TEST_BINARY): $(BINARY_EQUALIZER_TEST_OBJECTS)
 
 $(V8_HANDOFF_INTEGRATION_BINARY): $(BUILD_DIR)/test_v8_handoff_integration.o \
 	$(filter-out $(BUILD_DIR)/test_fsk_integration.o,$(FSK_INTEGRATION_TEST_OBJECTS))
-	$(CC) $(LDFLAGS) -Wl,--wrap=v8_cj_bit -o $@ $^ -lm
+	$(CC) $(LDFLAGS) -Wl,--wrap=v8_cj_bit \
+		-Wl,--wrap=v8_handoff_retry_init -Wl,--wrap=v8_handoff_retry_sample \
+		-Wl,--wrap=pcm_call_octet_owned -o $@ $^ -lm
 
 $(FSK_INTEGRATION_TEST_BINARY): $(FSK_INTEGRATION_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm

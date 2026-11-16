@@ -1023,6 +1023,8 @@ static bool process_octet(
 	};
 	struct pcm_call_data_event event = { 0 };
 	enum pcm_call_result result;
+	enum v8_handoff_result retry = V8_HANDOFF_FINISHED;
+	int16_t retry_sample = 0;
 	bool was_online = training_session_is_online(&datapump->training);
 	bool was_qc = datapump->call.stage == PCM_CALL_QC;
 	bool was_rate_exchange = pcm_call_uses_conventional_upstream(&datapump->call) &&
@@ -1040,19 +1042,10 @@ static bool process_octet(
 			/* Never reuse initial menu evidence during an online retrain. */
 			datapump->v8_retry.remaining = 0;
 		} else {
-			int16_t sample;
-			enum v8_handoff_result retry = v8_handoff_retry_sample(
-				&datapump->v8_retry, host_sample, received_available, &sample);
+			retry = v8_handoff_retry_sample(
+				&datapump->v8_retry, host_sample, received_available, &retry_sample);
 			if (retry == V8_HANDOFF_INVALID)
 				return false;
-			if (retry == V8_HANDOFF_RESTART) {
-				if (pcm_call_restart_initial_info0(&datapump->call) != PCM_CALL_OK)
-					return false;
-			}
-			if (retry == V8_HANDOFF_SEND || retry == V8_HANDOFF_RESTART) {
-				*transmitted = g711_encode(datapump->media_law, sample);
-				return true;
-			}
 		}
 	}
 
@@ -1110,6 +1103,20 @@ static bool process_octet(
 	if (result != PCM_CALL_OK) {
 		modem_note_disconnect(datapump->dp.modem, true, failure_v90(&datapump->call, result));
 		return false;
+	}
+	/* CM/CJ temporarily owns TX, not the PCM receive timeline. A peer can
+	 * send valid INFO0 while late JM still prompts our retry. Keep the one
+	 * PCM owner advancing and stop the retry on its first accepted record,
+	 * before sending another menu or resetting that receive history. */
+	if (retry == V8_HANDOFF_SEND || retry == V8_HANDOFF_RESTART) {
+		if (!datapump->call.peer_info0_stored) {
+			if (retry == V8_HANDOFF_RESTART &&
+			    pcm_call_restart_initial_info0(&datapump->call) != PCM_CALL_OK)
+				return false;
+			*transmitted = g711_encode(datapump->media_law, retry_sample);
+			return true;
+		}
+		datapump->v8_retry.remaining = 0;
 	}
 	if (datapump->protocol == PCM_PROTOCOL_V92 && datapump->call.protocol == PCM_PROTOCOL_V90) {
 		datapump->protocol = PCM_PROTOCOL_V90;
