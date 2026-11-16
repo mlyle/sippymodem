@@ -2463,3 +2463,84 @@ remain outside the measurements. Unknown LU/alignment, noise, channel memory,
 broader coding/filter geometries, independent admission and physical calls
 retain their earlier qualification requirements. No production learning branch,
 rate policy, B1 readiness decision or deadline changes.
+
+
+### Keep raw-cell history in bounded native work
+
+A forward observation model can retain the original probability cell instead
+of replacing the received octet by a reconstructed centre. For the declared
+sparse postcursor family, use
+
+```
+raw_cell = host_gain * polarity_adjusted_codec_cell
+           + (raw - polarity * host_sample)
+mean = (u[n] + a4*u[n-4] + a6*u[n-6]) / calibration_gain + physical_DC
+cost = -log GaussianMass(raw_cell; mean, sigma_raw)
+```
+
+This places Gaussian innovations before the codec. It does not establish that
+all physical noise has that placement. Fixed delays four and six split the
+latent history into even and odd chains. Retain three preceding representatives
+per chain, updating `(u[n-6], u[n-4], u[n-2])` to
+`(u[n-4], u[n-2], u[n])`. Minimize accumulated cost over the discarded choice.
+The emission is independent of `u[n-2]`, so reuse its Gaussian evaluation
+across those alternatives. This is exact profiling over the declared relaxed
+legal classes, including both fourth-symbol parity choices. It is neither a
+uniform representative prior nor the full coupled coding likelihood.
+
+A private native prototype copies the accepted mapping, uses the existing B1
+class generator, and constructs raw cells from the original wire and host
+facts. The caller declares the source-word lag established by the receive
+pipeline. Native host-gain bounds are preserved. Models and call, mapping and
+observation-domain epochs are immutable within a job; no caller pointer or
+allocation is retained. The core owns 8,992 bytes; the native mapping/class
+wrapper brings that to 13,248 bytes. Another observation is refused while the
+current one is pending, so an integration still needs bounded native storage
+for arriving facts and decoder replay.
+
+A bound on live states alone does not bound a service call adequately. A
+synthetic example with 216 live states requires 46,656 Gaussian queries,
+46,656 relaxations and 216 normalizations for one observation. The prototype
+meters those operations separately and resumes at any of their boundaries.
+Each service call spends at most its declared budget, capped at 4,096 units.
+Initialization and class copying have separate fixed capacity bounds. Partial,
+pruned, numerically failed and stale-generation work cannot return a completed
+result. Nonnegative emissions certify pruning only after a closed prefix
+exceeds a completed incumbent; exact ties preserve the native anchor.
+
+Twelve globally exhaustive synthetic paths match at four budgets, alongside
+60 changing-class-shape cases, eight interleaved owners and 292 transactional
+refusals. Native controls cover missing or unknown samples, clipping, invalid
+bounds, output aliasing and epoch replacement during pending work. Overwriting
+the source mapping buffer after initialization preserves the complete scores.
+ASan/UBSan checks cover the new owner, Gaussian and class-preparation code.
+
+Two retained 36 kbit/s traces match all native classes and 408 prefix costs at
+budgets 1, 7, 64 and 4,096: 3,264 prefix comparisons. Only frames 14 through 23
+choose the nine-model DC/noise grid; frames 24 through 47 are held out from
+that choice. Calibration gain and sparse postcursors stay at their native
+values, which may themselves depend on native decisions and are not
+independently measured channel truth. Both native anchors still win. Pruning
+reduces acquisition queries from 24,786 to 11,986 and 11,694 without changing
+selection. This establishes no better BER or live-call reliability.
+
+Five native host repeats give the following component costs in microseconds.
+Invariant TSC reference counters include scheduling interference. The search
+column sums native C trials, excluding Python idle between them; it includes
+mapping validation/copy, seed preparation, raw cells and likelihood work.
+
+| Codec | Median 408-observation score | Median nine-model acquisition | Largest 64-unit service step |
+| --- | ---: | ---: | ---: |
+| A-law | 760.71 | 1,284.44 | 20.64 |
+| Mu-law | 806.86 | 1,102.32 | 19.08 |
+
+These are component costs, not whole-modem packet timing or Pi results. A
+receiver still needs the native retained-fact ring, scheduling, independent
+admission/publication and bounded history replay measured together over all
+80 packet alignments. Preserve the original held-out bit and physical-quality
+gates and native fallback for incomplete or unsupported work. Gain inference,
+broader residual histories, missing/clipped inputs and noise placement remain
+open. Phase-aware preimage unions describe post-codec robbed-bit forcing;
+robbing before a later codec or filter requires a different forward model.
+No production learner, rate policy, B1 readiness or deadline changes follow
+from this component study.
