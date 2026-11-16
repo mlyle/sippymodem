@@ -408,6 +408,29 @@ static bool check_level_range(void)
 						(2u * (group & ((1u << (bits - 1u)) - 1u)) + 1u) *
 						(double)lu / normalization + 0.5);
 					bool negative = ((group >> (bits - 1u)) ^ sign) != 0u;
+					uint64_t numerator = (2u * (group &
+						((1u << (bits - 1u)) - 1u)) + 1u) * (uint64_t)lu;
+					uint64_t squared = 4u * numerator * numerator;
+					uint64_t denominator = (points * points - 1u) / 3u;
+					uint64_t rounded = (uint64_t)magnitude;
+					int16_t direct = 123;
+
+					/* Independent exact inequalities bracket the nearest
+					 * integer without a reciprocal or square root. Neither
+					 * irrational normalization has half-integer ties. */
+					CHECK((rounded == 0 || squared > denominator *
+						      (2u * rounded - 1u) * (2u * rounded - 1u)) &&
+					      squared < denominator *
+						      (2u * rounded + 1u) * (2u * rounded + 1u),
+					      "Phase 4 formula is not the exact nearest level");
+					CHECK(v92_phase4_modulator_level(points, (int16_t)lu,
+						      (uint8_t)(group & ((1u << (bits - 1u)) - 1u)),
+						      negative, &direct) == (magnitude > 0 ?
+						      V92_PHASE4_MODULATOR_OK :
+						      V92_PHASE4_MODULATOR_INVALID_ARGUMENT) &&
+					      direct == (magnitude > 0 ?
+						      (negative ? -magnitude : magnitude) : 123),
+					      "Phase 4 direct level or rejection changed");
 
 					tx.previous_encoded_sign = rx.previous_encoded_sign = sign;
 					saved = tx;

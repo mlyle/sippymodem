@@ -40,8 +40,9 @@ unsigned int v92_phase4_modulator_bits_per_symbol(
 	enum v92_constellation_size constellation);
 
 /* Generate one of Tables 28 and 29's normalized signed levels. The formula
- * uses sqrt((M*M - 1)/3), where M is four or eight, instead of a table. LU
- * must keep the selected constellation within int16_t. Rejected calls leave
+ * uses sqrt((M*M - 1)/3), where M is four or eight. Integer normalization
+ * gives the same nearest levels throughout the int16_t LU domain. LU must
+ * keep the selected constellation within int16_t. Rejected calls leave
  * sample unchanged. */
 enum v92_phase4_modulator_result v92_phase4_modulator_level(
 	enum v92_constellation_size constellation, int16_t lu,

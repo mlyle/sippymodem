@@ -3,7 +3,6 @@
 #include "v92_phase4_modulator.h"
 
 #include "memory_region.h"
-#include "sample_math.h"
 
 #include <limits.h>
 #include <math.h>
@@ -35,21 +34,24 @@ static inline bool raw_level(
 	enum v92_constellation_size constellation, int16_t lu,
 	uint8_t magnitude_index, uint8_t encoded_sign, int16_t *sample)
 {
-	double mean_square;
-	double scaled;
-	int16_t rounded;
+	uint64_t reciprocal;
+	uint64_t magnitude;
 
 	if (sample == NULL || lu <= 0 || encoded_sign > 1u ||
 	    magnitude_index >= magnitude_count(constellation))
 		return false;
-	mean_square = ((double)constellation * (double)constellation - 1.0) /
-		3.0;
-	scaled = (double)(2u * magnitude_index + 1u) * (double)lu /
-		sqrt(mean_square);
-	if (!sample_round_checked_s16(scaled, &rounded) || rounded <= 0)
+	/* round(2^40 / sqrt((M*M-1)/3)) for M=4,8. The product is
+	 * below 2^56. Across every positive int16 LU and legal magnitude,
+	 * Q40 error cannot cross a half-integer; the exhaustive level test
+	 * also checks the original formula in every IEEE rounding mode. */
+	reciprocal = constellation == V92_CONSTELLATION_4_POINT ?
+		UINT64_C(491716548352) : UINT64_C(239933107703);
+	magnitude = ((uint64_t)(2u * magnitude_index + 1u) * (uint16_t)lu *
+		reciprocal + (UINT64_C(1) << 39)) >> 40;
+	if (magnitude == 0 || magnitude > INT16_MAX)
 		return false;
 	*sample = encoded_sign != 0u ?
-		(int16_t)-rounded : (int16_t)rounded;
+		(int16_t)-(int32_t)magnitude : (int16_t)magnitude;
 	return true;
 }
 
