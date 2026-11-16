@@ -985,8 +985,7 @@ static bool source_record_rejection_is_transactional(
 	before_symbol = symbol;
 	return pcm_downstream_tx_next_source_record(
 		       &transmitter, &record, &symbol) == expected &&
-	       memcmp(&transmitter, &before_transmitter,
-		      sizeof(transmitter)) == 0 &&
+	       pcm_downstream_tx_states_equal(&transmitter, &before_transmitter) &&
 	       memcmp(&record, &before_record, sizeof(record)) == 0 &&
 	       memcmp(&symbol, &before_symbol, sizeof(symbol)) == 0;
 }
@@ -1105,6 +1104,70 @@ static bool test_source_record_contracts(void)
 	CHECK(record.complete && record.bit_index == record.sequence_bits &&
 	      pcm_downstream_tx_is_valid(&transmitter),
 	      "source record did not reach its exact terminal cursor");
+	return true;
+}
+
+static bool test_queued_output(void)
+{
+	for (unsigned protocol = PCM_PROTOCOL_V90; protocol <= PCM_PROTOCOL_V92;
+	     ++protocol) {
+		for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+			struct v90_pcm_mapping mapping;
+			struct pcm_downstream_tx tx, before;
+			struct pcm_downstream_symbol symbol, saved;
+
+			CHECK(make_mapping(&mapping, V90_CP_TRAINING, law, 1, 3) &&
+			      pcm_downstream_tx_init(&tx, protocol, &mapping) == PCM_DOWNSTREAM_TX_OK &&
+			      pcm_downstream_tx_next(&tx, &symbol) == PCM_DOWNSTREAM_TX_OK &&
+			      tx.queue_count != 0u, "queued training fixture failed");
+			before = tx;
+			CHECK(pcm_downstream_tx_next(&tx, &symbol) == PCM_DOWNSTREAM_TX_OK &&
+			      symbols_equal(&symbol, &before.queue[0]) &&
+			      tx.queue_count + 1u == before.queue_count &&
+			      tx.transmitted_symbols == before.transmitted_symbols + 1u &&
+			      tx.accepted_frames == before.accepted_frames &&
+			      memcmp(&tx.encoder, &before.encoder, sizeof(tx.encoder)) == 0 &&
+			      memcmp(&tx.scrambler, &before.scrambler, sizeof(tx.scrambler)) == 0 &&
+			      pcm_downstream_tx_is_valid(&tx), "queued output advanced the coder");
+			/* A queued symbol does not waive validation or transactional rejection. */
+			tx.queue_count = V90_CP_FRAME_INTERVALS + 1u;
+			before = tx;
+			memset(&symbol, 0xa5, sizeof(symbol));
+			saved = symbol;
+			CHECK(pcm_downstream_tx_next(&tx, &symbol) == PCM_DOWNSTREAM_TX_INVALID_STATE &&
+			      pcm_downstream_tx_states_equal(&tx, &before) &&
+			      memcmp(&symbol, &saved, sizeof(symbol)) == 0,
+			      "invalid queued state changed output or transmitter");
+		}
+	}
+	struct pcm_downstream_tx tx, before;
+	struct pcm_downstream_source_record record, saved;
+	struct pcm_downstream_symbol symbol;
+	uint8_t sequence[9];
+
+	CHECK(source_record_fixture(&tx, &record, sequence) &&
+	      pcm_downstream_tx_next_source_record(&tx, &record, &symbol) == PCM_DOWNSTREAM_TX_OK &&
+	      tx.queue_count != 0u, "queued source fixture failed");
+	struct pcm_downstream_source_record invalid = record;
+
+	invalid.sequence_capacity = 0u;
+	CHECK(source_record_rejection_is_transactional(tx, invalid, PCM_DOWNSTREAM_TX_INVALID_STATE),
+	      "queued output bypassed source capacity validation");
+	invalid = record;
+	invalid.bit_index = 1u;
+	CHECK(source_record_rejection_is_transactional(tx, invalid, PCM_DOWNSTREAM_TX_INVALID_STATE),
+	      "queued output bypassed source cursor validation");
+	before = tx;
+	saved = record;
+	CHECK(pcm_downstream_tx_next_source_record(&tx, &record, &symbol) == PCM_DOWNSTREAM_TX_OK &&
+	      symbols_equal(&symbol, &before.queue[0]) &&
+	      memcmp(&record, &saved, sizeof(record)) == 0 &&
+	      tx.queue_count + 1u == before.queue_count &&
+	      tx.transmitted_symbols == before.transmitted_symbols + 1u &&
+	      tx.accepted_frames == before.accepted_frames &&
+	      memcmp(&tx.encoder, &before.encoder, sizeof(tx.encoder)) == 0 &&
+	      memcmp(&tx.scrambler, &before.scrambler, sizeof(tx.scrambler)) == 0 &&
+	      pcm_downstream_tx_is_valid(&tx), "queued output consumed the borrowed record");
 	return true;
 }
 
@@ -1534,6 +1597,7 @@ int main(void)
 		{ "V.92 parameter exchange contracts", test_v92_parameter_exchange_contracts },
 		{ "V.92 switch contracts", test_v92_switch_contracts },
 		{ "source-record contracts", test_source_record_contracts },
+		{ "queued output", test_queued_output },
 		{ "empty finish", test_empty_finish },
 		{ "zero-rate cleardown", test_zero_rate_cleardown },
 		{ "CP-dependent conditioning", test_conditioning },

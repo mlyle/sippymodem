@@ -1083,6 +1083,12 @@ enum pcm_downstream_tx_result pcm_downstream_tx_next(
 		return PCM_DOWNSTREAM_TX_INVALID_STATE;
 	if (transmitter->complete)
 		return PCM_DOWNSTREAM_TX_COMPLETE;
+	/* A queued symbol cannot generate a new failure: validation already
+	 * bounds the output cursor, and popping preserves the queue balance. */
+	if (transmitter->queue_count != 0u) {
+		*symbol = pop_symbol(transmitter);
+		return PCM_DOWNSTREAM_TX_OK;
+	}
 	next = *transmitter;
 	result = generate_symbol(&next, NULL, &generated);
 	if (result != PCM_DOWNSTREAM_TX_OK && result != PCM_DOWNSTREAM_TX_COMPLETE)
@@ -1133,6 +1139,12 @@ enum pcm_downstream_tx_result pcm_downstream_tx_next_source_record(
 		    record->sequence, sequence_bytes,
 		    symbol, sizeof(*symbol)))
 		return PCM_DOWNSTREAM_TX_INVALID_ARGUMENT;
+	/* Keep all source and alias checks above, even when only draining
+	 * an already generated symbol. Its source cursor stays unchanged. */
+	if (transmitter->queue_count != 0u) {
+		*symbol = pop_symbol(transmitter);
+		return PCM_DOWNSTREAM_TX_OK;
+	}
 	next_transmitter = *transmitter;
 	next_record = *record;
 	result = generate_symbol(
