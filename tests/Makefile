@@ -44,6 +44,7 @@ PCM_RUNTIME_SOURCE_NAMES := \
 	gram_fit.c \
 	gaussian.c \
 	pcm_gain.c \
+	pcm_control_frame.c \
 	pcm_control_receiver.c \
 	pcm_octet_probe.c v91_profile.c v91_control.c v91_call.c v91_datapump.c \
 	pcm_dil_descriptor.c pcm_downstream_rx.c pcm_downstream_tx.c pcm_downstream_equalizer.c \
@@ -1180,6 +1181,7 @@ V34_POWER_CALIBRATION_TEST_OBJECTS := \
 V34_DATA_MAPPING_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_data_mapping
 V34_DATA_MAPPING_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v34_data_mapping.o \
 	$(filter-out $(BUILD_DIR)/test_v34_power_calibration.o, \
 		$(V34_POWER_CALIBRATION_TEST_OBJECTS)) \
@@ -1320,6 +1322,7 @@ V34_PHASE2_SELECTION_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_phase3_profile.o
 V34_PROFILE_TEST_BINARY := $(BUILD_DIR)/test_v34_profile
 V34_PROFILE_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v34_profile.o \
 	$(BUILD_DIR)/v34_mp.o \
 	$(BUILD_DIR)/v34_phase2_probe.o \
@@ -1449,6 +1452,7 @@ V34_PHASE3_EXCHANGE_TEST_OBJECTS = \
 V34_TRAINING_TRANSMITTER_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_training_transmitter
 V34_TRAINING_TRANSMITTER_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v34_training_transmitter.o \
 	$(BUILD_DIR)/v34_training_transmitter.o \
 	$(CRC16_CCITT_FALSE_OBJECT) \
@@ -1481,6 +1485,7 @@ V34_TRAINING_SEQUENCE_TEST_OBJECTS := \
 V34_PHASE4_MP_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_phase4_mp
 V34_PHASE4_MP_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v34_phase4_mp.o \
 	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
@@ -1493,6 +1498,7 @@ V34_PHASE4_MP_TEST_OBJECTS := \
 V34_PHASE4_DECISION_RECEIVER_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_phase4_decision_receiver
 V34_PHASE4_DECISION_RECEIVER_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v34_phase4_decision_receiver.o \
 	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(BUILD_DIR)/qam.o \
@@ -1578,6 +1584,7 @@ V34_CALL_TEST_BINARY := $(BUILD_DIR)/test_v34_call
 V34_PHASE4_E_SEQUENCE_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_phase4_e_sequence
 V34_PHASE4_E_SEQUENCE_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v34_phase4_e_sequence.o \
 	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
@@ -1590,6 +1597,7 @@ V34_PHASE4_E_SEQUENCE_TEST_OBJECTS := \
 V34_PHASE4_E_RECEIVER_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_phase4_e_receiver
 V34_PHASE4_E_RECEIVER_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v34_phase4_e_receiver.o \
 	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
@@ -1603,11 +1611,13 @@ V34_PHASE4_E_RECEIVER_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_phase4_e_receiver.o
 V34_MP_TEST_BINARY := $(BUILD_DIR)/test_v34_mp
 V34_MP_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v34_mp.o \
 	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(BUILD_DIR)/v34_mp.o
 V34_DATA_MODE_TEST_BINARY := $(BUILD_DIR)/test_v34_data_mode
 V34_DATA_MODE_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v34_data_mode.o \
 	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(BUILD_DIR)/v34_mp.o \
@@ -1703,6 +1713,7 @@ V92_PCM_INFO1A_TEST_OBJECTS := \
 	$(BUILD_DIR)/v90_info1.o
 V92_PCM_DIL_TEST_BINARY := $(BUILD_DIR)/test_v92_pcm_dil
 V92_PCM_DIL_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v92_pcm_dil.o \
 	$(BUILD_DIR)/v92_pcm_dil.o \
 	$(BUILD_DIR)/v90_dil.o \
@@ -1758,6 +1769,7 @@ V92_PCM_PHASE3_TRN1U_LINE_RX_TEST_OBJECTS := \
 V92_PCM_PHASE3_JA_TEST_BINARY := \
 	$(BUILD_DIR)/test_v92_pcm_phase3_ja
 V92_PCM_PHASE3_JA_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v92_pcm_phase3_ja.o \
 	$(BUILD_DIR)/v92_pcm_phase3_ja.o \
 	$(BUILD_DIR)/pcm_binary_sign.o \
@@ -1772,6 +1784,7 @@ V92_PCM_PHASE3_JA_TEST_OBJECTS := \
 V92_PCM_PHASE3_INITIAL_TX_TEST_BINARY := \
 	$(BUILD_DIR)/test_v92_pcm_phase3_initial_tx
 V92_PCM_PHASE3_INITIAL_TX_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v92_pcm_phase3_initial_tx.o \
 	$(BUILD_DIR)/v92_pcm_phase3_initial_tx.o \
 	$(BUILD_DIR)/v92_pcm_phase3_opening.o \
@@ -1790,6 +1803,7 @@ V92_PCM_PHASE3_INITIAL_TX_TEST_OBJECTS := \
 V92_PCM_PHASE3_INITIAL_RX_TEST_BINARY := \
 	$(BUILD_DIR)/test_v92_pcm_phase3_initial_rx
 V92_PCM_PHASE3_INITIAL_RX_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/gram_fit.o \
 	$(BUILD_DIR)/test_v92_pcm_phase3_initial_rx.o \
 	$(BUILD_DIR)/v92_pcm_phase3_initial_rx.o \
@@ -1824,6 +1838,7 @@ V92_PHASE3_SYNC_TEST_OBJECTS := \
 	$(BUILD_DIR)/self_sync_scrambler.o
 V92_JA_DECODER_TEST_BINARY := $(BUILD_DIR)/test_v92_ja_decoder
 V92_JA_DECODER_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v92_ja_decoder.o \
 	$(BUILD_DIR)/v92_ja_decoder.o \
 	$(BUILD_DIR)/v92_phase3_sync.o \
@@ -1836,6 +1851,7 @@ V92_JA_DECODER_TEST_OBJECTS := \
 V92_PCM_PHASE3_JA_LINE_RX_TEST_BINARY := \
 	$(BUILD_DIR)/test_v92_pcm_phase3_ja_line_rx
 V92_PCM_PHASE3_JA_LINE_RX_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/gram_fit.o \
 	$(BUILD_DIR)/test_v92_pcm_phase3_ja_line_rx.o \
 	$(BUILD_DIR)/v92_pcm_phase3_ja_line_rx.o \
@@ -1858,6 +1874,7 @@ V92_PCM_PHASE3_JA_LINE_RX_TEST_OBJECTS := \
 	$(BUILD_DIR)/g711.o
 V92_J_TEST_BINARY := $(BUILD_DIR)/test_v92_j
 V92_J_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v92_j.o \
 	$(BUILD_DIR)/v92_j.o \
 	$(BUILD_DIR)/pcm_j_frame.o \
@@ -1865,6 +1882,7 @@ V92_J_TEST_OBJECTS := \
 V92_PHASE3_DIGITAL_TX_TEST_BINARY := \
 	$(BUILD_DIR)/test_v92_phase3_digital_tx
 V92_PHASE3_DIGITAL_TX_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v92_phase3_digital_tx.o \
 	$(BUILD_DIR)/pcm_phase3_digital_tx.o \
 	$(BUILD_DIR)/pcm_phase3_digital_prefix.o \
@@ -1885,6 +1903,7 @@ V92_PHASE3_DIGITAL_TX_TEST_OBJECTS := \
 V92_PHASE3_J_RECEIVER_TEST_BINARY := \
 	$(BUILD_DIR)/test_v92_phase3_j_receiver
 V92_PHASE3_J_RECEIVER_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v92_phase3_j_receiver.o \
 	$(BUILD_DIR)/pcm_phase3_j_receiver.o \
 	$(BUILD_DIR)/v90_jd.o \
@@ -1899,6 +1918,7 @@ V92_PHASE3_J_RECEIVER_TEST_OBJECTS := \
 	$(BUILD_DIR)/g711.o
 V92_SU_TEST_BINARY := $(BUILD_DIR)/test_v92_su
 V92_SU_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v92_su.o \
 	$(BUILD_DIR)/v92_su.o \
 	$(BUILD_DIR)/fractional_delay.o \
@@ -1907,6 +1927,7 @@ V92_SU_TEST_OBJECTS := \
 	$(CRC16_CCITT_FALSE_OBJECT)
 V92_SU_RX_TEST_BINARY := $(BUILD_DIR)/test_v92_su_rx
 V92_SU_RX_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v92_su_rx.o \
 	$(BUILD_DIR)/v92_su_rx.o \
 	$(BUILD_DIR)/v92_su.o \
@@ -1918,21 +1939,25 @@ V92_SU_RX_TEST_OBJECTS := \
 	$(CRC16_CCITT_FALSE_OBJECT)
 V92_CPT_TEST_BINARY := $(BUILD_DIR)/test_v92_cpt
 V92_CPT_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v92_cpt.o \
 	$(BUILD_DIR)/v92_cpt.o \
 	$(CRC16_CCITT_FALSE_OBJECT)
 V92_CPU_TEST_BINARY := $(BUILD_DIR)/test_v92_cpu
 V92_CPU_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v92_cpu.o \
 	$(BUILD_DIR)/v92_cpu.o \
 	$(CRC16_CCITT_FALSE_OBJECT)
 V92_CPD_TEST_BINARY := $(BUILD_DIR)/test_v92_cpd
 V92_CPD_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v92_cpd.o \
 	$(BUILD_DIR)/v92_cpd.o \
 	$(CRC16_CCITT_FALSE_OBJECT)
 V92_PCM_MAPPING_TEST_BINARY := $(BUILD_DIR)/test_v92_pcm_mapping
 V92_PCM_MAPPING_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v92_pcm_mapping.o \
 	$(BUILD_DIR)/v92_pcm_mapping.o \
 	$(BUILD_DIR)/v92_cpd.o \
@@ -1940,6 +1965,7 @@ V92_PCM_MAPPING_TEST_OBJECTS := \
 	$(CRC16_CCITT_FALSE_OBJECT)
 V92_PCM_FRAME_TEST_BINARY := $(BUILD_DIR)/test_v92_pcm_frame
 V92_PCM_FRAME_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/gram_fit.o \
 	$(BUILD_DIR)/test_v92_pcm_frame.o \
 	$(BUILD_DIR)/v92_pcm_frame.o \
@@ -1971,6 +1997,7 @@ V92_CPD_CHANNEL_TEST_OBJECTS := $(sort \
 		$(V92_CPD_DIRECT_TEST_OBJECTS)))
 V92_PCM_FRAME_RX_TEST_BINARY := $(BUILD_DIR)/test_v92_pcm_frame_rx
 V92_PCM_FRAME_RX_TEST_OBJECTS := $(sort \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v92_pcm_frame_rx.o \
 	$(BUILD_DIR)/v92_cpu.o \
 	$(filter-out $(BUILD_DIR)/test_v92_cpd_direct.o, \
@@ -1983,17 +2010,20 @@ V92_UPSTREAM_DATA_TX_TEST_OBJECTS := $(sort \
 		$(V92_CPD_DIRECT_TEST_OBJECTS)))
 V92_SUVU_TEST_BINARY := $(BUILD_DIR)/test_v92_suvu
 V92_SUVU_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v92_suvu.o \
 	$(BUILD_DIR)/v92_suvu.o \
 	$(BUILD_DIR)/v92_status_update.o \
 	$(CRC16_CCITT_FALSE_OBJECT)
 V92_SUVD_TEST_BINARY := $(BUILD_DIR)/test_v92_suvd
 V92_SUVD_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v92_suvd.o \
 	$(BUILD_DIR)/v92_suvd.o \
 	$(BUILD_DIR)/v92_status_update.o \
 	$(CRC16_CCITT_FALSE_OBJECT)
 V92_CONTROL_RX_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/v92_control_rx.o \
 	$(BUILD_DIR)/v92_cpd.o \
 	$(BUILD_DIR)/v92_cpu.o \
@@ -2007,6 +2037,7 @@ V92_CONTROL_RX_TEST_OBJECTS := \
 	$(CRC16_CCITT_FALSE_OBJECT)
 V92_CPT_RECEIVER_TEST_BINARY := $(BUILD_DIR)/test_v92_cpt_receiver
 V92_CPT_RECEIVER_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/pcm_control_receiver.o \
 	$(BUILD_DIR)/test_v92_cpt_receiver.o \
 	$(BUILD_DIR)/v92_cpt_receiver.o \
@@ -2015,6 +2046,7 @@ V92_CPT_RECEIVER_TEST_OBJECTS := \
 V92_PCM_PHASE3_CPT_TX_TEST_BINARY := \
 	$(BUILD_DIR)/test_v92_pcm_phase3_cpt_tx
 V92_PCM_PHASE3_CPT_TX_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v92_pcm_phase3_cpt_tx.o \
 	$(BUILD_DIR)/v92_pcm_phase3_cpt_tx.o \
 	$(BUILD_DIR)/v92_pcm_phase3_trn1u.o \
@@ -2028,6 +2060,7 @@ V92_PCM_PHASE3_CPT_TX_TEST_OBJECTS := \
 V92_PCM_PHASE3_CPT_RX_TEST_BINARY := \
 	$(BUILD_DIR)/test_v92_pcm_phase3_cpt_rx
 V92_PCM_PHASE3_CPT_RX_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/pcm_control_receiver.o \
 	$(BUILD_DIR)/test_v92_pcm_phase3_cpt_rx.o \
 	$(BUILD_DIR)/v92_pcm_phase3_cpt_rx.o \
@@ -2045,6 +2078,7 @@ V92_PCM_PHASE3_CPT_RX_TEST_OBJECTS := \
 V92_PCM_PHASE3_CPT_LINE_RX_TEST_BINARY := \
 	$(BUILD_DIR)/test_v92_pcm_phase3_cpt_line_rx
 V92_PCM_PHASE3_CPT_LINE_RX_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/pcm_control_receiver.o \
 	$(BUILD_DIR)/gram_fit.o \
 	$(BUILD_DIR)/test_v92_pcm_phase3_cpt_line_rx.o \
@@ -2067,11 +2101,13 @@ V92_PCM_PHASE3_CPT_LINE_RX_TEST_OBJECTS := \
 	$(BUILD_DIR)/g711.o \
 	$(CRC16_CCITT_FALSE_OBJECT)
 V90_PCM_MAPPING_OBJECTS := $(BUILD_DIR)/v90_pcm_mapping.o \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/v92_cpt.o $(BUILD_DIR)/v92_cpu.o
 
 V92_PHASE3_DIGITAL_STATION_TEST_BINARY := \
 	$(BUILD_DIR)/test_v92_phase3_digital_station
 V92_PHASE3_DIGITAL_STATION_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/pcm_control_receiver.o \
 	$(BUILD_DIR)/gram_fit.o \
 	$(BUILD_DIR)/test_v92_phase3_digital_station.o \
@@ -2152,6 +2188,7 @@ V92_PCM_PHASE4_TRN2U_TEST_OBJECTS := \
 V92_PHASE4_ANALOG_TX_TEST_BINARY := \
 	$(BUILD_DIR)/test_v92_phase4_analog_tx
 V92_PHASE4_ANALOG_TX_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v92_phase4_analog_tx.o \
 	$(BUILD_DIR)/g711.o \
 	$(BUILD_DIR)/v92_phase4_analog_tx.o \
@@ -2219,11 +2256,13 @@ V92_DATA_QUALITY_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v92_data_quality.o $(BUILD_DIR)/v92_data_quality.o
 V90_MP_TEST_BINARY := $(BUILD_DIR)/test_v90_mp
 V90_MP_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v90_mp.o \
 	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(BUILD_DIR)/v90_mp.o
 V90_MP_RECEIVER_TEST_BINARY := $(BUILD_DIR)/test_v90_mp_receiver
 V90_MP_RECEIVER_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v90_mp_receiver.o \
 	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(BUILD_DIR)/v90_mp.o \
@@ -2239,6 +2278,7 @@ PCM_DOWNSTREAM_EQUALIZER_TEST_OBJECTS := \
 	$(BUILD_DIR)/qam_equalizer.o $(BUILD_DIR)/qam.o $(BUILD_DIR)/g711.o
 PCM_DOWNSTREAM_RX_TEST_BINARY := $(BUILD_DIR)/test_pcm_downstream_rx
 PCM_DOWNSTREAM_RX_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_pcm_downstream_rx.o \
 	$(BUILD_DIR)/pcm_downstream_rx.o \
 	$(BUILD_DIR)/v90_pcm_stream_rx.o \
@@ -2257,13 +2297,17 @@ PCM_DOWNSTREAM_RX_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_framing.o $(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/g711.o
 V91_CONTROL_TEST_BINARY := $(BUILD_DIR)/test_v91_control
-V91_CONTROL_TEST_OBJECTS := $(BUILD_DIR)/test_v91_control.o $(BUILD_DIR)/v91_control.o
+V91_CONTROL_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
+	$(BUILD_DIR)/test_v91_control.o $(BUILD_DIR)/v91_control.o
 V90_CP_TEST_BINARY := $(BUILD_DIR)/test_v90_cp
 V90_CP_TEST_OBJECTS := $(BUILD_DIR)/test_v90_cp.o \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/v90_cp.o $(CRC16_CCITT_FALSE_OBJECT)
 V90_PCM_MAPPING_TEST_BINARY := \
 	$(BUILD_DIR)/test_v90_pcm_mapping
 V90_PCM_MAPPING_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v90_pcm_mapping.o \
 	$(V90_PCM_MAPPING_OBJECTS) \
 	$(MIXED_RADIX_OBJECT) \
@@ -2272,6 +2316,7 @@ V90_PCM_MAPPING_TEST_OBJECTS := \
 V90_PCM_FRAME_ENCODER_TEST_BINARY := \
 	$(BUILD_DIR)/test_v90_pcm_frame_encoder
 V90_PCM_FRAME_ENCODER_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v90_pcm_frame_encoder.o \
 	$(BUILD_DIR)/v90_pcm_frame_encoder.o \
 	$(V90_PCM_MAPPING_OBJECTS) \
@@ -2284,6 +2329,7 @@ V90_PCM_FRAME_ENCODER_TEST_OBJECTS := \
 V90_PCM_FRAME_DECODER_TEST_BINARY := \
 	$(BUILD_DIR)/test_v90_pcm_frame_decoder
 V90_PCM_FRAME_DECODER_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v90_pcm_frame_decoder.o \
 	$(BUILD_DIR)/v90_pcm_frame_decoder.o \
 	$(BUILD_DIR)/v90_pcm_frame_encoder.o \
@@ -2297,6 +2343,7 @@ V90_PCM_FRAME_DECODER_TEST_OBJECTS := \
 	$(BUILD_DIR)/g711.o
 PCM_OCTET_PROBE_TEST_BINARY := $(BUILD_DIR)/test_pcm_octet_probe
 PCM_OCTET_PROBE_TEST_OBJECTS := $(BUILD_DIR)/test_pcm_octet_probe.o \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/pcm_octet_probe.o $(BUILD_DIR)/v91_profile.o \
 	$(BUILD_DIR)/v90_dil.o $(BUILD_DIR)/v90_dil_sequence.o \
 	$(BUILD_DIR)/pcm_dil_descriptor.o \
@@ -2304,12 +2351,14 @@ PCM_OCTET_PROBE_TEST_OBJECTS := $(BUILD_DIR)/test_pcm_octet_probe.o \
 		$(V90_PCM_FRAME_DECODER_TEST_OBJECTS))
 V91_CALL_TEST_BINARY := $(BUILD_DIR)/test_v91_call
 V91_CALL_TEST_OBJECTS := $(BUILD_DIR)/test_v91_call.o $(BUILD_DIR)/v91_call.o \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/v91_control.o $(BUILD_DIR)/pcm_binary_sign.o \
 	$(BUILD_DIR)/v34_framing.o $(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(filter-out $(BUILD_DIR)/test_pcm_octet_probe.o, $(PCM_OCTET_PROBE_TEST_OBJECTS))
 V90_DOWNSTREAM_DATA_TX_TEST_BINARY := \
 	$(BUILD_DIR)/test_v90_downstream_data_tx
 V90_DOWNSTREAM_DATA_TX_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v90_downstream_data_tx.o \
 	$(BUILD_DIR)/v90_downstream_data_tx.o \
 	$(BUILD_DIR)/v90_pcm_frame_decoder.o \
@@ -2345,6 +2394,7 @@ V90_SIGN_DECODER_TEST_OBJECTS := \
 V90_SPECTRAL_SHAPER_TEST_BINARY := \
 	$(BUILD_DIR)/test_v90_spectral_shaper
 V90_SPECTRAL_SHAPER_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v90_spectral_shaper.o \
 	$(BUILD_DIR)/v90_spectral_shaper.o \
 	$(V90_PCM_MAPPING_OBJECTS) \
@@ -2354,6 +2404,7 @@ V90_SPECTRAL_SHAPER_TEST_OBJECTS := \
 	$(BUILD_DIR)/g711.o
 PCM_DOWNSTREAM_TX_TEST_BINARY := $(BUILD_DIR)/test_pcm_downstream_tx
 PCM_DOWNSTREAM_TX_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_pcm_downstream_tx.o \
 	$(BUILD_DIR)/pcm_downstream_tx.o \
 	$(BUILD_DIR)/pcm_downstream_rx.o \
@@ -2432,6 +2483,7 @@ V92_PHASE4_E2U_TEST_OBJECTS := $(sort \
 		$(V90_DOWNSTREAM_STREAM_TEST_OBJECTS)))
 V90_PCM_STREAM_RX_TEST_BINARY := $(BUILD_DIR)/test_v90_pcm_stream_rx
 V90_PCM_STREAM_RX_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v90_pcm_stream_rx.o \
 	$(BUILD_DIR)/v90_pcm_stream_rx.o \
 	$(BUILD_DIR)/pcm_downstream_tx.o \
@@ -2452,6 +2504,7 @@ V90_PCM_STREAM_RX_TEST_OBJECTS := \
 	$(BUILD_DIR)/g711.o
 V90_CP_RECEIVER_TEST_BINARY := $(BUILD_DIR)/test_v90_cp_receiver
 V90_CP_RECEIVER_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/pcm_control_receiver.o \
 	$(BUILD_DIR)/test_v90_cp_receiver.o \
 	$(BUILD_DIR)/v90_cp_receiver.o \
@@ -2459,6 +2512,7 @@ V90_CP_RECEIVER_TEST_OBJECTS := \
 V90_PHASE4_CP_TX_TEST_BINARY := \
 	$(BUILD_DIR)/test_v90_phase4_cp_tx
 V90_PHASE4_CP_TX_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v90_phase4_cp_tx.o \
 	$(BUILD_DIR)/v90_phase4_cp_tx.o \
 	$(BUILD_DIR)/v90_cp.o \
@@ -2469,6 +2523,7 @@ V90_PHASE4_CP_TX_TEST_OBJECTS := \
 V90_PHASE4_CP_RX_TEST_BINARY := \
 	$(BUILD_DIR)/test_v90_phase4_cp_rx
 V90_PHASE4_CP_RX_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/pcm_control_receiver.o \
 	$(BUILD_DIR)/test_v90_phase4_cp_rx.o \
 	$(BUILD_DIR)/v90_phase4_cp_rx.o \
@@ -2482,6 +2537,7 @@ V90_PHASE4_CP_RX_TEST_OBJECTS := \
 V90_PHASE4_CP_LINE_TX_TEST_BINARY := \
 	$(BUILD_DIR)/test_v90_phase4_cp_line_tx
 V90_PHASE4_CP_LINE_TX_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v90_phase4_cp_line_tx.o \
 	$(BUILD_DIR)/v90_phase4_cp_line_tx.o \
 	$(BUILD_DIR)/v90_phase4_e_line_tx.o \
@@ -2503,6 +2559,7 @@ V90_PHASE4_CP_LINE_TX_TEST_OBJECTS := \
 V90_UPSTREAM_DATA_TEST_BINARY := \
 	$(BUILD_DIR)/test_v90_upstream_data
 V90_UPSTREAM_DATA_TEST_OBJECTS := $(sort \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v90_upstream_data.o \
 	$(BUILD_DIR)/v90_upstream_fixture.o \
 	$(BUILD_DIR)/v90_upstream_mode.o \
@@ -2518,6 +2575,7 @@ V90_UPSTREAM_DATA_TEST_OBJECTS := $(sort \
 V90_PHASE4_ANALOG_STATION_TEST_BINARY := \
 	$(BUILD_DIR)/test_v90_phase4_analog_station
 V90_PHASE4_ANALOG_STATION_TEST_OBJECTS := $(sort \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v90_phase4_analog_station.o \
 	$(BUILD_DIR)/v90_phase4_analog_station.o \
 	$(BUILD_DIR)/v90_phase4_ri.o \
@@ -2542,14 +2600,17 @@ PCM_J_FRAME_OBJECT := $(BUILD_DIR)/pcm_j_frame.o
 PCM_J_FRAME_TEST_BINARY := $(BUILD_DIR)/test_pcm_j_frame
 PCM_CONTROL_FRAME_TEST_BINARY := $(BUILD_DIR)/test_pcm_control_frame
 PCM_CONTROL_FRAME_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_pcm_control_frame.o $(CRC16_CCITT_FALSE_OBJECT)
 PCM_J_FRAME_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_pcm_j_frame.o \
 	$(PCM_J_FRAME_OBJECT) \
 	$(CRC16_CCITT_FALSE_OBJECT)
 PCM_DIL_DESCRIPTOR_TEST_BINARY := \
 	$(BUILD_DIR)/test_pcm_dil_descriptor
 PCM_DIL_DESCRIPTOR_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_pcm_dil_descriptor.o \
 	$(PCM_DIL_DESCRIPTOR_OBJECT)
 PCM_BINARY_SIGN_TEST_BINARY := $(BUILD_DIR)/test_pcm_binary_sign
@@ -2572,11 +2633,13 @@ PCM_PHASE3_DIGITAL_PREFIX_TEST_OBJECTS := \
 	$(BUILD_DIR)/g711.o
 V90_DIL_TEST_BINARY := $(BUILD_DIR)/test_v90_dil
 V90_DIL_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v90_dil.o \
 	$(PCM_DIL_DESCRIPTOR_OBJECT) \
 	$(BUILD_DIR)/v90_dil.o
 V90_DIL_SEQUENCE_TEST_BINARY := $(BUILD_DIR)/test_v90_dil_sequence
 V90_DIL_SEQUENCE_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/pcm_dil_receiver.o \
 	$(BUILD_DIR)/test_v90_dil_sequence.o \
 	$(PCM_DIL_DESCRIPTOR_OBJECT) \
@@ -2586,6 +2649,7 @@ V90_DIL_SEQUENCE_TEST_OBJECTS := \
 	$(BUILD_DIR)/g711.o
 V90_JA_TEST_BINARY := $(BUILD_DIR)/test_v90_ja
 V90_JA_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v90_ja.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/v34_constellation.o \
@@ -2596,6 +2660,7 @@ V90_JA_TEST_OBJECTS := \
 	$(BUILD_DIR)/v90_ja.o
 V90_JA_SEARCH_TEST_BINARY := $(BUILD_DIR)/test_v90_ja_search
 V90_JA_SEARCH_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v90_ja_search.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/v34_constellation.o \
@@ -2607,6 +2672,7 @@ V90_JA_SEARCH_TEST_OBJECTS := \
 	$(BUILD_DIR)/v90_ja_search.o
 V90_JD_TEST_BINARY := $(BUILD_DIR)/test_v90_jd
 V90_JD_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v90_jd.o \
 	$(BUILD_DIR)/v90_jd.o \
 	$(PCM_J_FRAME_OBJECT) \
@@ -2620,6 +2686,7 @@ V90_PHASE3_SD_TEST_OBJECTS := \
 	$(BUILD_DIR)/g711.o
 V90_PHASE3_SIGNS_TEST_BINARY := $(BUILD_DIR)/test_v90_phase3_signs
 V90_PHASE3_SIGNS_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v90_phase3_signs.o \
 	$(BUILD_DIR)/pcm_phase3_j_receiver.o \
 	$(BUILD_DIR)/v92_j.o \
@@ -2635,6 +2702,7 @@ V90_PHASE3_SIGNS_TEST_OBJECTS := \
 V90_PHASE3_DIGITAL_TX_TEST_BINARY := \
 	$(BUILD_DIR)/test_v90_phase3_digital_tx
 V90_PHASE3_DIGITAL_TX_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v90_phase3_digital_tx.o \
 	$(BUILD_DIR)/pcm_phase3_digital_tx.o \
 	$(BUILD_DIR)/pcm_phase3_digital_prefix.o \
@@ -2661,6 +2729,7 @@ V90_PHASE3_RETURN_TX_TEST_OBJECTS := \
 V90_PHASE3_ANALOG_TX_TEST_BINARY := \
 	$(BUILD_DIR)/test_v90_phase3_analog_tx
 V90_PHASE3_ANALOG_TX_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v90_phase3_analog_tx.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/v34_constellation.o \
@@ -2796,6 +2865,7 @@ V90_UPSTREAM_RX_TEST_OBJECTS := $(sort \
 V90_PHASE4_DIGITAL_STATION_TEST_BINARY := \
 	$(BUILD_DIR)/test_v90_phase4_digital_station
 V90_PHASE4_DIGITAL_STATION_TEST_OBJECTS := $(sort \
+	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_v90_phase4_digital_station.o \
 	$(BUILD_DIR)/v90_phase4_digital_station.o \
 	$(BUILD_DIR)/v90_phase4_ri.o \
@@ -6487,6 +6557,9 @@ $(BUILD_DIR)/rtp_transmit.o: ../src/rtp_transmit.c | $(BUILD_DIR)
 
 $(BUILD_DIR)/test_rtp_transmit: $(BUILD_DIR)/test_rtp_transmit.o $(BUILD_DIR)/rtp_transmit.o $(BUILD_DIR)/frame_pacer.o
 	$(CC) $(LDFLAGS) -o $@ $^
+
+$(BUILD_DIR)/pcm_control_frame.o: $(DSP_PCM_SOURCE_DIR)/pcm_control_frame.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/pcm_control_receiver.o: $(DSP_PCM_SOURCE_DIR)/pcm_control_receiver.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<

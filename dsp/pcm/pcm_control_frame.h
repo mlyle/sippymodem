@@ -99,18 +99,8 @@ static inline bool pcm_control_frame_framing_is_valid(
  * output in its most-significant bit, including for LSB-first DIL fields.
  * The caller validates storage and supplies the exclusive payload end; this
  * may point at the CRC word's start bit or its first information bit. */
-static inline uint16_t pcm_control_frame_crc(
-	const uint8_t *frame, size_t payload_end)
-{
-	uint16_t remainder = CRC16_CCITT_FALSE_INITIAL_REMAINDER;
-
-	for (size_t bit = 18u; bit < payload_end; ++bit) {
-		if (bit % 17u != 0u)
-			remainder = crc16_ccitt_false_step(
-				remainder, packed_msb_bit(frame, bit) != 0u);
-	}
-	return remainder;
-}
+uint16_t pcm_control_frame_crc(
+	const uint8_t *frame, size_t payload_end);
 
 /* CP, CPt and CPu share these Table 14/V.90 and Table 23/V.92 slots.
  * Callers provide seven header bytes and validated field values. Record
