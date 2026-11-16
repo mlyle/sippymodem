@@ -53,6 +53,16 @@ v34_phase2_probe_turnaround_sample(
 	if (!v34_phase2_probe_turnaround_is_valid(turnaround) ||
 	    transmit_sample == NULL || event == NULL)
 		return PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT;
+	/* A finished or disabled concurrent capture is immutable. Reuse the
+	 * same small control/transport transaction as the PCM turnaround. */
+	if (!turnaround->initial_probe.concurrent_receive_enabled ||
+	    turnaround->initial_probe.concurrent_receive.phase ==
+		    V34_PHASE2_PROBE_ACQUISITION_COMPLETE)
+		return phase2_probe_turnaround_sample(
+			&turnaround->control, &turnaround->initial_probe.control,
+			&turnaround->initial_probe.ranging.info0_exchange.transport,
+			received_sample, transmit_sample, event);
+
 	next = *turnaround;
 	if (v34_phase2_initial_probe_sample_concurrent_owned(
 		    &next.initial_probe, received_sample, &concurrent) !=

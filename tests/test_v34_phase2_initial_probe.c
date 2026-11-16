@@ -856,6 +856,18 @@ static bool test_concurrent_probe_crosses_turnaround(void)
 		      V34_PHASE2_PROBE_L1_SAMPLES &&
 	      receive_gain > 0,
 	      "turnaround did not finish and retain the overlapping probe");
+	struct v34_phase2_probe_acquisition retained =
+		turnaround.initial_probe.concurrent_receive;
+	for (unsigned sample = 0; sample < 80; ++sample) {
+		int16_t transmitted;
+
+		CHECK(v34_phase2_probe_turnaround_sample(&turnaround, INT16_MIN,
+			      &transmitted, &turnaround_event) == PHASE2_PROBE_TURNAROUND_OK &&
+		      v34_phase2_probe_turnaround_is_valid(&turnaround) &&
+		      memcmp(&retained, &turnaround.initial_probe.concurrent_receive,
+			      sizeof(retained)) == 0,
+		      "completed concurrent capture changed at sample %u", sample);
+	}
 	return true;
 }
 
