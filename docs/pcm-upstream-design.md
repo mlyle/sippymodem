@@ -2392,3 +2392,74 @@ study. A deployable receiver still needs bounded history rebuilding, mapping
 and class preparation, observation-model construction, independent held-out
 admission, and measured complete-packet cost. These isolated measurements add
 no live receiver branch, rate policy or readiness decision.
+
+
+### Prepare legal classes natively from the negotiated mapping
+
+The preceding learner need not receive a table of prepared B1u levels. A
+native preparation owner can clone and validate the accepted CPd, retain its
+known B1u scrambler/differential epoch, and use the shared B1 digit generator.
+For a positive constellation of size `K`, modulus `m` and known digit `d`,
+ordinary symbols permit signed indices congruent to `d modulo m`. Fourth
+symbols permit `2*d + parity modulo 2*m`, conservatively allowing either
+parity. The first index for each eligible residue is
+
+```
+first = -K + ((stride*d + parity + K) modulo (stride*m)).
+```
+
+Advance by `stride*m` while the index is below `K`. Here `stride=1` for
+ordinary symbols and `stride=2` for fourth symbols. For the studied mappings,
+`m >= K` bounds an ordinary class at two representatives. Valid fourth-symbol
+geometry also requires `m <= K`, hence `m=K`; each parity then contributes one
+index. Sort those two indices to preserve the class order. This derives the
+classes without running a precoder or choosing the transmitter's actual
+representative, and does not infer its trellis state.
+
+A private native prototype emits one class per update and reuses the existing
+B1 mapper, exact Q15 prefilter and frame scaling. It accepts only the declared
+memoryless 36k/16-state geometry, with known positive LU and at most 16 positive
+points. Initialization refuses other filter responses, wider classes and any
+possible signed-PCM saturation; it preserves declared zero filter tails.
+Every symbol requires at most two scaled levels. Mapping validation and copying
+occur once, and neither preparation nor fitting allocates memory. Rejected
+initialization or stepping preserves its owner and output; independent owners
+retain separate coding state.
+
+All 6,912 classes from twelve negotiated bank/law/LU configurations equal the
+previous independently checked table. Preparing classes during acquisition
+reproduces all 1,872 earlier complete fit outputs, including exact gain regions,
+mode masks and published gains. Native inference input contains only the known
+mapping identity and observed octets. Source representative policy and true
+channel parameters remain outside that path. A minimal public-source build and
+ASan/UBSan builds reproduce the same results. Controls cover 180 transactional
+refusals, twelve interleaved owners, seven missing-input and seven incomplete-
+prefix cases, and exhaustion after the full 576-symbol B1u.
+
+### Cost including mapping validation and class preparation
+
+The same 80-symbol groups, all 80 packet-start offsets and five repeats now
+include accepted-CPd validation/copy, B1 digit generation, class scaling, fit
+initialization, acquisition, closing and gain publication. Each architecture
+processes 748,800 synthetic prefixes and 3,435,120 groups. Report the median
+of five average costs and the largest observed single-group and consecutive-
+three costs, resetting the three-group history between streams.
+
+| Host | Average group, us | Worst group, us | Worst three, us |
+| --- | ---: | ---: | ---: |
+| x86-64 | 10.21 | 204.75 | 227.79 |
+| Pi 5 | 17.81 | 52.30 | 108.89 |
+
+Preparation adds 4,188 bytes to the learner's 53,008-byte owned state on both
+architectures. Public source, synthetic input, output and counter checksums
+match. Pi temperature rose from 66.1 to 74.35 C with current throttling flags
+clear, historical flags retained and ARM clock near 2.4 GHz. Host thermal data
+was unavailable. Reference counters include scheduling interference; these
+observations are not hard execution-time bounds or a comparison of CPU speed.
+
+This closes the prepared-class-input gap for the declared model. CPd selector
+search, text/input parsing, decoder-history rebuilding and the full DSP packet
+remain outside the measurements. Unknown LU/alignment, noise, channel memory,
+broader coding/filter geometries, independent admission and physical calls
+retain their earlier qualification requirements. No production learning branch,
+rate policy, B1 readiness decision or deadline changes.
