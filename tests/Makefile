@@ -41,6 +41,7 @@ V34_NATIVE_SOURCE_NAMES := \
 V34_NATIVE_OBJECTS := \
 	$(V34_NATIVE_SOURCE_NAMES:%.c=$(BUILD_DIR)/%.o)
 PCM_RUNTIME_SOURCE_NAMES := \
+	gram_fit.c \
 	gaussian.c \
 	pcm_gain.c \
 	pcm_octet_probe.c v91_profile.c v91_control.c v91_call.c v91_datapump.c \
@@ -107,6 +108,7 @@ PCM_GAIN_TEST_OBJECTS := $(BUILD_DIR)/test_pcm_gain.o \
 	$(BUILD_DIR)/pcm_gain.o $(BUILD_DIR)/g711.o
 V92_OBSERVATION_TEST_BINARY := $(BUILD_DIR)/test_v92_observation
 V92_OBSERVATION_TEST_OBJECTS := $(BUILD_DIR)/test_v92_observation.o \
+	$(BUILD_DIR)/gram_fit.o \
 	$(BUILD_DIR)/v92_observation.o $(BUILD_DIR)/g711.o $(BUILD_DIR)/gaussian.o
 CHANNEL_BENCH_TEST_BINARY := $(BUILD_DIR)/test_channel_bench
 CHANNEL_BENCH_TEST_OBJECTS := $(BUILD_DIR)/test_channel_bench.o \
@@ -1558,12 +1560,14 @@ PCM_HOST_ECHO_TEST_OBJECTS := \
 V92_TRAINING_ECHO_TEST_BINARY := $(BUILD_DIR)/test_v92_training_echo
 V92_ECHO_TIMING_TEST_BINARY := $(BUILD_DIR)/test_v92_echo_timing
 V92_ECHO_TIMING_TEST_OBJECTS := \
+	$(BUILD_DIR)/gram_fit.o \
 	$(BUILD_DIR)/pam_distance.o \
 	$(BUILD_DIR)/test_v92_echo_timing.o $(BUILD_DIR)/v92_echo_timing.o \
 	$(BUILD_DIR)/pcm_host_echo.o $(BUILD_DIR)/pcm_echo_reference.o \
 	$(BUILD_DIR)/echo_timing.o $(BUILD_DIR)/v92_residual.o \
 	$(BUILD_DIR)/pcm_gain.o $(BUILD_DIR)/g711.o
 V92_TRAINING_ECHO_TEST_OBJECTS := \
+	$(BUILD_DIR)/gram_fit.o \
 	$(BUILD_DIR)/test_v92_training_echo.o $(BUILD_DIR)/v92_training_echo.o \
 	$(BUILD_DIR)/pcm_host_echo.o $(BUILD_DIR)/echo_timing.o \
 	$(BUILD_DIR)/pcm_echo_reference.o $(BUILD_DIR)/v92_pcm_phase4_trn2u.o \
@@ -1737,6 +1741,7 @@ V92_PCM_PHASE3_TRN1U_TEST_OBJECTS := \
 V92_PCM_PHASE3_TRN1U_LINE_RX_TEST_BINARY := \
 	$(BUILD_DIR)/test_v92_pcm_phase3_trn1u_line_rx
 V92_PCM_PHASE3_TRN1U_LINE_RX_TEST_OBJECTS := \
+	$(BUILD_DIR)/gram_fit.o \
 	$(BUILD_DIR)/test_v92_pcm_phase3_trn1u_line_rx.o \
 	$(BUILD_DIR)/v92_pcm_phase3_trn1u_line_rx.o \
 	$(BUILD_DIR)/v92_pcm_phase3_trn1u.o \
@@ -1784,6 +1789,7 @@ V92_PCM_PHASE3_INITIAL_TX_TEST_OBJECTS := \
 V92_PCM_PHASE3_INITIAL_RX_TEST_BINARY := \
 	$(BUILD_DIR)/test_v92_pcm_phase3_initial_rx
 V92_PCM_PHASE3_INITIAL_RX_TEST_OBJECTS := \
+	$(BUILD_DIR)/gram_fit.o \
 	$(BUILD_DIR)/test_v92_pcm_phase3_initial_rx.o \
 	$(BUILD_DIR)/v92_pcm_phase3_initial_rx.o \
 	$(BUILD_DIR)/v92_pcm_phase3_initial_tx.o \
@@ -1829,6 +1835,7 @@ V92_JA_DECODER_TEST_OBJECTS := \
 V92_PCM_PHASE3_JA_LINE_RX_TEST_BINARY := \
 	$(BUILD_DIR)/test_v92_pcm_phase3_ja_line_rx
 V92_PCM_PHASE3_JA_LINE_RX_TEST_OBJECTS := \
+	$(BUILD_DIR)/gram_fit.o \
 	$(BUILD_DIR)/test_v92_pcm_phase3_ja_line_rx.o \
 	$(BUILD_DIR)/v92_pcm_phase3_ja_line_rx.o \
 	$(BUILD_DIR)/binary_equalizer.o \
@@ -1932,6 +1939,7 @@ V92_PCM_MAPPING_TEST_OBJECTS := \
 	$(CRC16_CCITT_FALSE_OBJECT)
 V92_PCM_FRAME_TEST_BINARY := $(BUILD_DIR)/test_v92_pcm_frame
 V92_PCM_FRAME_TEST_OBJECTS := \
+	$(BUILD_DIR)/gram_fit.o \
 	$(BUILD_DIR)/test_v92_pcm_frame.o \
 	$(BUILD_DIR)/v92_pcm_frame.o \
 	$(BUILD_DIR)/v92_survivor.o \
@@ -2034,6 +2042,7 @@ V92_PCM_PHASE3_CPT_RX_TEST_OBJECTS := \
 V92_PCM_PHASE3_CPT_LINE_RX_TEST_BINARY := \
 	$(BUILD_DIR)/test_v92_pcm_phase3_cpt_line_rx
 V92_PCM_PHASE3_CPT_LINE_RX_TEST_OBJECTS := \
+	$(BUILD_DIR)/gram_fit.o \
 	$(BUILD_DIR)/test_v92_pcm_phase3_cpt_line_rx.o \
 	$(BUILD_DIR)/v92_pcm_phase3_cpt_line_rx.o \
 	$(BUILD_DIR)/binary_equalizer.o \
@@ -2059,6 +2068,7 @@ V90_PCM_MAPPING_OBJECTS := $(BUILD_DIR)/v90_pcm_mapping.o \
 V92_PHASE3_DIGITAL_STATION_TEST_BINARY := \
 	$(BUILD_DIR)/test_v92_phase3_digital_station
 V92_PHASE3_DIGITAL_STATION_TEST_OBJECTS := \
+	$(BUILD_DIR)/gram_fit.o \
 	$(BUILD_DIR)/test_v92_phase3_digital_station.o \
 	$(BUILD_DIR)/v92_control_target.o \
 	$(BUILD_DIR)/v92_pcm_phase4_trn2u_line_rx.o \
@@ -3723,10 +3733,10 @@ $(G711_TEST_BINARY): $(G711_TEST_OBJECTS)
 $(SAMPLE_MATH_TEST_BINARY): $(SAMPLE_MATH_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
-$(BUILD_DIR)/test_gram_fit: $(BUILD_DIR)/test_gram_fit.o
+$(BUILD_DIR)/test_gram_fit: $(BUILD_DIR)/test_gram_fit.o $(BUILD_DIR)/gram_fit.o
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
-$(BUILD_DIR)/test_interval_fit: $(BUILD_DIR)/test_interval_fit.o $(BUILD_DIR)/gaussian.o
+$(BUILD_DIR)/test_interval_fit: $(BUILD_DIR)/test_interval_fit.o $(BUILD_DIR)/gram_fit.o $(BUILD_DIR)/gaussian.o
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(BUILD_DIR)/test_pam_distance: $(BUILD_DIR)/test_pam_distance.o $(BUILD_DIR)/pam_distance.o
@@ -6469,6 +6479,9 @@ $(BUILD_DIR)/rtp_transmit.o: ../src/rtp_transmit.c | $(BUILD_DIR)
 
 $(BUILD_DIR)/test_rtp_transmit: $(BUILD_DIR)/test_rtp_transmit.o $(BUILD_DIR)/rtp_transmit.o $(BUILD_DIR)/frame_pacer.o
 	$(CC) $(LDFLAGS) -o $@ $^
+
+$(BUILD_DIR)/gram_fit.o: $(DSP_SOURCE_DIR)/gram_fit.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/gaussian.o: $(DSP_SOURCE_DIR)/gaussian.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
