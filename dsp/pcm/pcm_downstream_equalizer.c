@@ -3,6 +3,7 @@
 #include "pcm_downstream_equalizer.h"
 
 #include "memory_region.h"
+#include "qam_equalizer_undo.h"
 #include "sample_math.h"
 
 bool pcm_downstream_equalizer_is_valid(const struct pcm_downstream_equalizer *equalizer)
@@ -31,7 +32,7 @@ bool pcm_downstream_equalizer_init(struct pcm_downstream_equalizer *equalizer,
 bool pcm_downstream_equalizer_train(struct pcm_downstream_equalizer *equalizer,
 	uint8_t octet)
 {
-	struct pcm_downstream_equalizer next;
+	struct qam_equalizer_push_undo undo;
 	struct qam_point output;
 	bool ready;
 
@@ -40,15 +41,17 @@ bool pcm_downstream_equalizer_train(struct pcm_downstream_equalizer *equalizer,
 	int16_t sample = g711_decode(equalizer->law, octet);
 	if (sample == 0)
 		return false;
-	next = *equalizer;
+	qam_equalizer_save_push(&equalizer->filter, &undo);
 	struct qam_point input = { sample / 32768.0, 0.0 };
 	struct qam_point target = {
-		(sample > 0 ? next.training_level : -next.training_level) / 32768.0, 0.0
+		(sample > 0 ? equalizer->training_level : -equalizer->training_level) / 32768.0, 0.0
 	};
-	if (qam_equalizer_push_owned(&next.filter, &input, &output, &ready) != QAM_EQUALIZER_OK || !ready ||
-	    qam_equalizer_adapt(&next.filter, &target, 0.1) != QAM_EQUALIZER_OK)
+	if (qam_equalizer_push_owned(&equalizer->filter, &input, &output, &ready) != QAM_EQUALIZER_OK)
 		return false;
-	*equalizer = next;
+	if (!ready || qam_equalizer_adapt(&equalizer->filter, &target, 0.1) != QAM_EQUALIZER_OK) {
+		qam_equalizer_undo_push(&equalizer->filter, &undo);
+		return false;
+	}
 	return true;
 }
 

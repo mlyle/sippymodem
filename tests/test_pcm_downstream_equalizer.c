@@ -6,6 +6,7 @@
 
 #include "test.h"
 
+#include <float.h>
 #include <math.h>
 #include <string.h>
 
@@ -214,7 +215,35 @@ static bool test_validation(void)
 	return true;
 }
 
+static bool test_failed_training_preserves_filter(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+	for (unsigned warmed = 0; warmed < 2; ++warmed) {
+		struct pcm_downstream_equalizer equalizer, before;
+
+		CHECK(pcm_downstream_equalizer_init(&equalizer, law, 7932),
+		      "rollback initialization failed");
+		if (warmed)
+			CHECK(pcm_downstream_equalizer_train(&equalizer, encode(law, 7932)),
+			      "rollback warmup failed");
+		/* A valid finite history can overflow its adaptation energy after
+		 * push. Restore history, readiness and erasure state on rejection;
+		 * inactive storage must stay untouched as well. */
+		equalizer.filter.history[1].in_phase = DBL_MAX / 4.0;
+		equalizer.filter.history[3] = (struct qam_point){ 17, -19 };
+		equalizer.filter.coefficients[3] = (struct qam_point){ 23, -29 };
+		equalizer.filter.unavailable_history = 1;
+		CHECK(pcm_downstream_equalizer_is_valid(&equalizer),
+		      "rollback fixture was rejected before push");
+		before = equalizer;
+		CHECK(!pcm_downstream_equalizer_train(&equalizer, encode(law, -7932)) &&
+		      memcmp(&equalizer, &before, sizeof(equalizer)) == 0,
+		      "failed law %u warmup %u training changed its owner", law, warmed);
+	}
+	return true;
+}
+
 int main(void)
 {
-	return test_identity() && test_filtered_channel() && test_training_before_ri() && test_validation() ? 0 : 1;
+	return test_identity() && test_filtered_channel() && test_training_before_ri() && test_failed_training_preserves_filter() && test_validation() ? 0 : 1;
 }

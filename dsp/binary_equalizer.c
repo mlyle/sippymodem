@@ -2,10 +2,9 @@
 
 #include "binary_equalizer.h"
 #include "memory_region.h"
+#include "qam_equalizer_undo.h"
 
 #include <math.h>
-#include <stddef.h>
-#include <string.h>
 
 bool binary_equalizer_is_valid(
 	const struct binary_equalizer *receiver)
@@ -44,9 +43,7 @@ enum binary_equalizer_result binary_equalizer_receive(
 	uint8_t *sign)
 {
 	struct qam_equalizer *equalizer;
-	struct qam_point oldest;
-	unsigned char control[sizeof(struct qam_equalizer) -
-		offsetof(struct qam_equalizer, last_output)];
+	struct qam_equalizer_push_undo undo;
 	struct qam_point output;
 	struct qam_point input;
 	struct qam_point target;
@@ -59,12 +56,7 @@ enum binary_equalizer_result binary_equalizer_receive(
 	if (!binary_equalizer_is_valid(receiver))
 		return BINARY_EQUALIZER_INVALID_STATE;
 	equalizer = &receiver->equalizer;
-	/* Push changes the shifted history and output/carrier state.
-	 * Adaptation rejects without changing coefficients. Retain only enough
-	 * to undo a successful push if the later adaptation cannot commit. */
-	oldest = equalizer->history[equalizer->tap_count - 1u];
-	memcpy(control, (unsigned char *)equalizer +
-		offsetof(struct qam_equalizer, last_output), sizeof(control));
+	qam_equalizer_save_push(equalizer, &undo);
 	input = (struct qam_point){
 		.in_phase = receiver->polarity > 0 ? sample : -(double)sample,
 	};
@@ -86,10 +78,6 @@ enum binary_equalizer_result binary_equalizer_receive(
 	return BINARY_EQUALIZER_OK;
 
 undo_push:
-	memmove(equalizer->history, equalizer->history + 1,
-		(equalizer->tap_count - 1u) * sizeof(oldest));
-	equalizer->history[equalizer->tap_count - 1u] = oldest;
-	memcpy((unsigned char *)equalizer +
-		offsetof(struct qam_equalizer, last_output), control, sizeof(control));
+	qam_equalizer_undo_push(equalizer, &undo);
 	return BINARY_EQUALIZER_INTERNAL_ERROR;
 }
