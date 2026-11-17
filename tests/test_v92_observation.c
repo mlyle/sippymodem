@@ -1349,6 +1349,16 @@ static void check_seed_moments(const struct v92_observation_fit_work *work,
 	const struct v92_observation_training *training)
 {
 	if (work->stage != V92_FIT_SWEEP && work->stage != V92_FIT_CENTER) return;
+	/* Every noninitial coordinate owns one event, even after saturation.
+	 * Check the whole bounded permutation and heap ordering at suspension. */
+	bool seen[V92_OBSERVATION_TRAINING] = { false };
+	for (size_t i = 0; i + 1u < training->count; ++i) {
+		size_t row = work->heap[i];
+		assert(row > 0 && row < training->count && !seen[row]);
+		seen[row] = true;
+		if (i != 0)
+			assert(work->events[work->heap[(i - 1u) / 2u]].at <= work->events[row].at);
+	}
 	double gram[GRAM_FIT_MOMENTS] = { 0 }, rhs[V92_OBSERVATION_TAPS] = { 0 }, energy = 0.;
 	unsigned total = 0;
 	for (size_t row = training->taps; row < training->count; ++row) {
@@ -1431,7 +1441,6 @@ static void check_periodic_training(enum g711_law law, unsigned taps,
 			memset(work.q, 0xa5, sizeof(work.q));
 			memset(&work.moments, 0xa5, sizeof(work.moments));
 			memset(&work.seed, 0xa5, sizeof(work.seed));
-			work.used = SIZE_MAX;
 		}
 		result = v92_observation_fit_step(&work, &training, &model);
 		check_seed_moments(&work, &training);

@@ -81,7 +81,9 @@ struct v92_observation_fit_work {
 		struct {
 			struct v92_observation_fit_boundary events[V92_OBSERVATION_TRAINING];
 			struct v92_observation_fit_moments moments;
-			size_t heap[V92_OBSERVATION_TRAINING], used;
+			/* Coordinates 1..count-1 each retain one event, including
+			 * saturated tails. Cardinality follows validated training. */
+			uint16_t heap[V92_OBSERVATION_TRAINING - 1];
 			int16_t q[V92_OBSERVATION_TRAINING];
 			/* Integer targets and dyadic row scales make the gain
 			 * sweep's seed normal-equation updates exact. */
@@ -111,6 +113,9 @@ struct v92_observation_fit_work {
 	enum v92_observation_fit_stage stage;
 	unsigned cursor;
 };
+
+_Static_assert(V92_OBSERVATION_TRAINING - 1 <= UINT16_MAX,
+	"gain-sweep coordinate indices must fit their queue entries");
 
 _Static_assert(V92_OBSERVATION_TRAINING < 512,
 	"288 bounded integer rows with weights <=16384 fit binary64 exactly");

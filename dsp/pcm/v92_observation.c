@@ -523,14 +523,14 @@ static inline bool gain_sweep_next(struct gain_sweep *sweep,
 	return !sweep->failed;
 }
 
-static void heap_down(size_t *heap, size_t count, const struct v92_observation_fit_boundary *events)
+static void heap_down(uint16_t *heap, size_t count, const struct v92_observation_fit_boundary *events)
 {
 	size_t parent = 0;
 	while (2 * parent + 1 < count) {
 		size_t child = 2 * parent + 1;
 		if (child + 1 < count && events[heap[child + 1]].at < events[heap[child]].at) child++;
 		if (events[heap[parent]].at <= events[heap[child]].at) return;
-		size_t swap = heap[parent]; heap[parent] = heap[child]; heap[child] = swap;
+		uint16_t swap = heap[parent]; heap[parent] = heap[child]; heap[child] = swap;
 		parent = child;
 	}
 }
@@ -582,12 +582,12 @@ static void fit_intervals_begin(struct v92_observation_fit_work *w,
 		unsigned magnitude = (unsigned)fmin(limit, round(w->low * fabs((double)x[j])));
 		w->q[j] = magnitude_code(law, x[j], magnitude);
 		w->events[j] = next_boundary(law, x[j], magnitude);
-		size_t child = w->used++;
-		w->heap[child] = j;
+		size_t child = j - 1u;
+		w->heap[child] = (uint16_t)j;
 		while (child) {
 			size_t parent = (child - 1) / 2;
 			if (w->events[w->heap[parent]].at <= w->events[w->heap[child]].at) break;
-			size_t swap = w->heap[parent]; w->heap[parent] = w->heap[child]; w->heap[child] = swap;
+			uint16_t swap = w->heap[parent]; w->heap[parent] = w->heap[child]; w->heap[child] = swap;
 			child = parent;
 		}
 	}
@@ -657,7 +657,7 @@ static int fit_intervals_step(struct v92_observation_fit_work *w,
 			}
 			w->q[j] = value;
 			w->events[j] = next_boundary(law, x[j], w->events[j].next);
-			heap_down(w->heap, w->used, w->events);
+			heap_down(w->heap, count - 1u, w->events);
 		}
 		w->low = high;
 		w->pending = false;
