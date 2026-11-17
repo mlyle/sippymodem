@@ -408,7 +408,7 @@ static bool normalize_gain(struct v92_cpd_parameters *cpd, enum g711_law law, ui
 		return false;
 	*point_energy = measurement.point_energy;
 	cpd->four_times_gain_q0_16 =
-		v92_cpd_gain_for_energy(measurement.prefilter_energy, V92_B1U_SYMBOLS);
+		v92_cpd_gain_for_b1u_energy(measurement.prefilter_energy);
 	return cpd->four_times_gain_q0_16 != 0u;
 }
 

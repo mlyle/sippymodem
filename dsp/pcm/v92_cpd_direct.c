@@ -128,7 +128,7 @@ static bool normalize_gain(
 		energy += (uint64_t)(v * v) * frequencies[eta + V92_CPD_MAX_CONSTELLATION_POINTS];
 	}
 	parameters->four_times_gain_q0_16 =
-		v92_cpd_gain_for_energy(energy, V92_B1U_FRAMES * V92_PCM_MAPPING_FRAME_SYMBOLS);
+		v92_cpd_gain_for_b1u_energy(energy);
 	return parameters->four_times_gain_q0_16 != 0u;
 }
 
@@ -145,7 +145,7 @@ static bool initialize_direct(
 	memcpy(frequencies, measurement.signed_frequencies,
 		sizeof(measurement.signed_frequencies));
 	parameters->four_times_gain_q0_16 =
-		v92_cpd_gain_for_energy(measurement.prefilter_energy, V92_B1U_SYMBOLS);
+		v92_cpd_gain_for_b1u_energy(measurement.prefilter_energy);
 	return parameters->four_times_gain_q0_16 != 0u &&
 	       v92_cpd_parameters_are_valid(parameters);
 }
