@@ -29,6 +29,7 @@ enum {
 	V92_STARTUP_RETRY_MAX_STEP = 16,
 	PCM_PHASE3_RETURN_BASE_DEADLINE_SAMPLES =
 		V34_PHASE2_SAMPLE_RATE * 51 / 10,
+	V92_PHASE3_FINAL_SU_GRACE_SAMPLES = 48,
 	PCM_PHASE3_SD_DEADLINE_SAMPLES = V34_PHASE2_SAMPLE_RATE * 3 / 2,
 	/* Compatibility exception to V.90 9.3.2.4 and V.92 9.5.2.2:
 	 * allow 500 ms beyond the 1500 ms Sd reversal deadline. Recorded
@@ -3237,7 +3238,8 @@ static enum pcm_call_result retain_v92_peer_jd(
 		       PCM_CALL_OK : PCM_CALL_UNUSABLE_SELECTION;
 }
 
-static bool phase3_response_timed_out(const struct pcm_call *call)
+static bool phase3_response_timed_out(const struct pcm_call *call,
+	bool received_available)
 {
 	const struct pcm_phase3_digital_tx *transmit;
 	uint64_t elapsed;
@@ -3284,8 +3286,22 @@ static bool phase3_response_timed_out(const struct pcm_call *call)
 		elapsed = (uint64_t)transmit->sequence.signs.trn1d_symbols +
 			  ((uint64_t)transmit->jd_records + transmit->jp_records) * PCM_J_FRAME_BITS +
 			  transmit->bit_index;
-		return elapsed >= PCM_PHASE3_RETURN_BASE_DEADLINE_SAMPLES +
+		uint32_t deadline = PCM_PHASE3_RETURN_BASE_DEADLINE_SAMPLES +
 			(uint32_t)call->round_trip_delay_samples;
+		if (elapsed < deadline)
+			return false;
+		/* Compatibility allowance for peers still sending Su at the
+		 * nominal final-reversal deadline. Keep the extra wait bound
+		 * to eight periods and require recent real input. */
+		if (received_available && transmit->stage == PCM_PHASE3_DIGITAL_TX_JP &&
+		    station->receive_stage == V92_PHASE3_DIGITAL_RECEIVE_SU_RESPONSE) {
+			const struct v92_su_rx *su = &station->receive.response.su;
+
+			if (su->stage == V92_SU_RX_WAITING_TRANSITION &&
+			    su->total_symbols - su->last_periodic_symbol <= V92_SU_PATTERN_SYMBOLS)
+				return elapsed >= deadline + V92_PHASE3_FINAL_SU_GRACE_SAMPLES;
+		}
+		return true;
 	}
 	if (call->local_role == V90_ANALOG_MODEM) {
 		const struct v90_phase3_analog_station *station =
@@ -3431,7 +3447,7 @@ static enum pcm_call_result sample_phase3(
 					&call->state.phase3.digital,
 					received_sample));
 	}
-	if (result == PCM_CALL_OK && phase3_response_timed_out(call))
+	if (result == PCM_CALL_OK && phase3_response_timed_out(call, received_available))
 		return begin_retrain(call, RETRAIN_RESPONSE_TIMEOUT);
 	return result == PCM_CALL_OK ? advance_phase3(call) : result;
 }

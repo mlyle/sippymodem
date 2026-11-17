@@ -3809,6 +3809,50 @@ static bool v92_phase3_timely_response(const struct pcm_call *before, uint8_t re
 	return true;
 }
 
+static bool v92_phase3_final_su_grace(const struct pcm_call *boundary)
+{
+	const struct v92_su_rx *su = &boundary->state.phase3.v92_digital.receive.response.su;
+	uint32_t deadline = 40800u + boundary->round_trip_delay_samples;
+
+	for (unsigned variant = 0u; variant < 3u; ++variant) {
+		struct pcm_call call = *boundary;
+		struct pcm_phase3_digital_tx *tx = &call.state.phase3.v92_digital.downstream;
+		uint32_t tail = deadline - 1u - tx->sequence.signs.trn1d_symbols - PCM_J_FRAME_BITS;
+		bool reversal = variant == 0u;
+		bool received = variant != 2u;
+
+		tx->jd_records = 1u;
+		tx->jp_records = tail / PCM_J_FRAME_BITS;
+		tx->bit_index = tail % PCM_J_FRAME_BITS;
+		CHECK(pcm_call_is_valid(&call), "final Su grace boundary is invalid");
+		unsigned sample;
+		for (sample = 0u; sample <= 48u; ++sample) {
+			bool positive = (su->history_signs & (1u << (5u - sample % 6u))) != 0u;
+			if (reversal && sample >= 30u)
+				positive = !positive;
+			int16_t input = positive ? 4096 : -4096;
+			uint8_t output;
+			struct pcm_call_observation event;
+
+			CHECK(pcm_call_octet_owned(&call, g711_encode(call.law, input),
+				input, input, received, &output, &event) == PCM_CALL_OK,
+				"final Su fixture failed at sample %u", sample);
+			if (call.stage != PCM_CALL_PHASE3 ||
+			    call.state.phase3.v92_digital.receive_stage !=
+			    V92_PHASE3_DIGITAL_RECEIVE_SU_RESPONSE)
+				break;
+		}
+		CHECK(reversal ?
+			(sample >= 30u && sample < 48u && call.stage == PCM_CALL_PHASE3 &&
+			 call.state.phase3.v92_digital.receive_stage ==
+			 V92_PHASE3_DIGITAL_RECEIVE_SECOND_TRN1U) :
+			(sample == (received ? 48u : 0u) &&
+			 call.stage == PCM_CALL_RETRAIN_SILENCE),
+			"final Su grace variant %u ended at %u in stage %u", variant, sample, call.stage);
+	}
+	return true;
+}
+
 static bool run_v92_phase3_deadlines(enum g711_law law, size_t delay)
 {
 	struct pcm_call_configuration ac = v92_configuration(V90_ANALOG_MODEM, law);
@@ -3817,6 +3861,7 @@ static bool run_v92_phase3_deadlines(enum g711_law law, size_t delay)
 	struct channel wire;
 	bool captured[3] = { false };
 	bool timely[2] = { false };
+	bool grace_checked = false;
 	size_t info1a_end = SIZE_MAX;
 	bool ru_started = false;
 	CHECK(pcm_call_init(&calls[0], &ac) == PCM_CALL_OK &&
@@ -3870,6 +3915,17 @@ static bool run_v92_phase3_deadlines(enum g711_law law, size_t delay)
 				timely[1] = true;
 			}
 		}
+		if (!grace_checked && txp->stage == PCM_PHASE3_DIGITAL_TX_JP &&
+		    station->receive_stage == V92_PHASE3_DIGITAL_RECEIVE_SU_RESPONSE) {
+			const struct v92_su_rx *su = &station->receive.response.su;
+
+			if (su->stage == V92_SU_RX_WAITING_TRANSITION &&
+			    su->last_periodic_symbol == su->total_symbols &&
+			    !su->comparison_opposite) {
+				CHECK(v92_phase3_final_su_grace(&calls[1]), "final Su grace failed");
+				grace_checked = true;
+			}
+		}
 		bool reached[] = {
 			station->receive_stage == V92_PHASE3_DIGITAL_RECEIVE_INITIAL,
 			station->transmit_stage == V92_PHASE3_DIGITAL_TRANSMIT_DOWNSTREAM &&
@@ -3884,7 +3940,8 @@ static bool run_v92_phase3_deadlines(enum g711_law law, size_t delay)
 				captured[kind] = true;
 			}
 	}
-	CHECK(ru_started && captured[0] && captured[1] && captured[2] && timely[0] && timely[1],
+	CHECK(ru_started && captured[0] && captured[1] && captured[2] &&
+	      timely[0] && timely[1] && grace_checked,
 		"did not capture Ru and all three response boundaries");
 	bool passed = true;
 	for (unsigned kind = 0; kind < 3; ++kind)
