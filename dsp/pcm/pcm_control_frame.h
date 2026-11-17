@@ -226,70 +226,16 @@ static inline size_t pcm_control_frame_align_bits(size_t bits, size_t alignment)
 	return (bits + alignment - 1u) / alignment * alignment;
 }
 
-/* CP, CPt and CPu share 136-bit constellation rows after a 136-bit header.
- * Each row carries eight words: a start bit followed by sixteen Ucode bits,
- * lowest Ucode first. The caller validates row counts and storage bounds.
- * Only mask information is read/written; framing and padding stay with the
- * record owner. Decoding replaces each mask without requiring zeroed rows. */
-static inline void pcm_control_frame_write_constellations(
-	uint8_t *frame, size_t first_row,
-	const struct pcm_constellation *rows, size_t count)
-{
-	for (size_t row = 0; row < count; ++row) {
-		size_t first = (first_row + row + 1u) * 136u + 1u;
-
-		for (size_t byte = 0; byte < PCM_CONSTELLATION_MASK_BYTES; ++byte)
-			packed_msb_write_lsb_field(frame,
-				first + byte * 8u + byte / 2u, 8u,
-				rows[row].ucode_mask[byte]);
-	}
-}
-
-static inline void pcm_control_frame_read_constellations(
-	const uint8_t *frame, size_t first_row,
-	struct pcm_constellation *rows, size_t count)
-{
-	for (size_t row = 0; row < count; ++row) {
-		size_t first = (first_row + row + 1u) * 136u + 1u;
-
-		for (size_t byte = 0; byte < PCM_CONSTELLATION_MASK_BYTES; ++byte)
-			rows[row].ucode_mask[byte] =
-				(uint8_t)packed_msb_read_lsb_field(frame,
-					first + byte * 8u + byte / 2u, 8u);
-	}
-}
-
 /* CP, CPt and CPu have the same 136-bit header, constellation rows and
  * 16-bit CRC word. Record owners validate the row count and frame bounds;
  * their distinct header, framing and tail rules stay protocol-local. */
-static inline void pcm_control_frame_write_constellation_payload(
+void pcm_control_frame_write_constellation_payload(
 	uint8_t *frame, const struct pcm_constellation *transmit,
-	const struct pcm_constellation *codec, size_t count, bool codec_differs)
-{
-	size_t payload_end = pcm_control_frame_payload_end(count, codec_differs);
-
-	pcm_control_frame_write_constellations(frame, 0u, transmit, count);
-	if (codec_differs)
-		pcm_control_frame_write_constellations(frame, count, codec, count);
-	packed_msb_write_msb_field(frame, payload_end + 1u, 16u,
-		pcm_control_frame_crc(frame, payload_end));
-}
+	const struct pcm_constellation *codec, size_t count, bool codec_differs);
 
 /* Verify the shared CRC before changing either output constellation plane. */
-static inline bool pcm_control_frame_read_constellation_payload(
+bool pcm_control_frame_read_constellation_payload(
 	const uint8_t *frame, struct pcm_constellation *transmit,
-	struct pcm_constellation *codec, size_t count, bool codec_differs)
-{
-	size_t payload_end = pcm_control_frame_payload_end(count, codec_differs);
-	uint16_t received = (uint16_t)packed_msb_read_msb_field(
-		frame, payload_end + 1u, 16u);
-
-	if (received != pcm_control_frame_crc(frame, payload_end))
-		return false;
-	pcm_control_frame_read_constellations(frame, 0u, transmit, count);
-	if (codec_differs)
-		pcm_control_frame_read_constellations(frame, count, codec, count);
-	return true;
-}
+	struct pcm_constellation *codec, size_t count, bool codec_differs);
 
 #endif /* PCM_CONTROL_FRAME_H */
