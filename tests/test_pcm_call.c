@@ -14301,37 +14301,42 @@ static bool erasure_receiver_contracts(const struct pcm_call *online)
 		      "stale recovery input %u consumed receiver state or output", fault);
 	}
 	for (unsigned fault = 0; fault < 12; ++fault) {
+		*receiver = *original;
 		owner = bound;
 		owner.bounded = true;
 		owner.inverse = (struct v92_erasure_inverse){
-			.source = receiver->line.residual, .polarity = receiver->line.polarity, .ready = true,
+			.polarity = receiver->line.polarity, .ready = true,
 		};
 		for (unsigned i = 0; i < V92_RESIDUAL_LAGS; ++i)
-			owner.inverse.lower[i] = owner.inverse.upper[i] = owner.inverse.source.history[i];
-		CHECK(v92_erasure_is_valid(&owner), "valid bounded inverse was rejected");
+			owner.inverse.lower[i] = owner.inverse.upper[i] = receiver->line.residual.history[i];
+		CHECK(v92_erasure_is_valid(&owner, &receiver->line.residual), "valid bounded inverse was rejected");
 		switch (fault) {
-		case 0: owner.inverse.source.count = UINT8_MAX; break;
-		case 1: owner.inverse.source.cursor = V92_RESIDUAL_LAGS; break;
-		case 2: owner.inverse.source.coefficient[0] = NAN; break;
-		case 3: owner.inverse.source.history[0] = NAN; break;
+		case 0: receiver->line.residual.count = UINT8_MAX; break;
+		case 1: receiver->line.residual.cursor = V92_RESIDUAL_LAGS; break;
+		case 2: receiver->line.residual.coefficient[0] = NAN; break;
+		case 3: receiver->line.residual.history[0] = NAN; break;
 		case 4: owner.inverse.ready = false; break;
 		case 5: owner.inverse.polarity = 0; break;
 		case 6: owner.inverse.lower[0] = NAN; break;
 		case 7: owner.inverse.upper[0] = NAN; break;
 		case 8: owner.inverse.lower[0] = nextafter(owner.inverse.upper[0], INFINITY); break;
 		case 9: owner.inverse.upper[0] = nextafter(owner.inverse.lower[0], -INFINITY); break;
-		case 10: owner.inverse.source.active = false; break;
+		case 10: receiver->line.residual.active = false; break;
 		case 11: owner.inverse.polarity = -owner.inverse.polarity; break;
 		}
+		struct v92_residual invalid_model = receiver->line.residual;
 		struct v92_erasure before = owner;
 		struct v92_upstream_data_frame output = { 0 }, sentinel = output;
 		CHECK(v92_erasure_octet(receiver, &owner, 1, owner.epoch, 0, 0, 0, true, &output) ==
 			V92_UPSTREAM_DATA_RX_INVALID_STATE && !memcmp(&owner, &before, sizeof(owner)) &&
-		      !memcmp(receiver, original, sizeof(*receiver)) && !memcmp(&output, &sentinel, sizeof(output)),
+		      !memcmp(&receiver->line.residual, &invalid_model, sizeof(invalid_model)) && !memcmp(&output, &sentinel, sizeof(output)),
 		      "invalid bounded inverse %u consumed input or output", fault);
 		struct pcm_call corrupted = *online;
 		corrupted.pcm_upstream_erasure = owner;
+		corrupted.state.data_path.v92_digital.upstream.line.residual = invalid_model;
 		CHECK(!pcm_call_is_valid(&corrupted), "call accepted invalid inverse %u", fault);
+		receiver->line.residual = original->line.residual;
+		CHECK(!memcmp(receiver, original, sizeof(*receiver)), "invalid borrowed model changed receiver state");
 	}
 	/* Clipping must fail atomically even while a bounded history is active.
 	 * An exact representable rail remains valid. Exercise both polarities at

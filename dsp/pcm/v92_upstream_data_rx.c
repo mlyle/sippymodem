@@ -865,7 +865,7 @@ static bool erasure_supported(const struct v92_upstream_data_rx *receiver)
 bool v92_erasure_bind(struct v92_upstream_data_rx *receiver,
 	struct v92_erasure *owner, uint64_t call, uint64_t epoch)
 {
-	if (!receiver || !v92_erasure_is_valid(owner) || owner->initialized || owner->disabled ||
+	if (!receiver || !v92_erasure_is_valid(owner, NULL) || owner->initialized || owner->disabled ||
 	    !call || !epoch || (owner->call && owner->call != call) ||
 	    (owner->epoch && owner->epoch != epoch) ||
 	    memory_regions_overlap(receiver, sizeof(*receiver), owner, sizeof(*owner)) ||
@@ -893,7 +893,7 @@ enum v92_upstream_data_rx_result v92_erasure_octet(
 	    memory_regions_overlap(receiver, sizeof(*receiver), frame, sizeof(*frame)) ||
 	    memory_regions_overlap(owner, sizeof(*owner), frame, sizeof(*frame)))
 		return V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT;
-	if (!v92_erasure_is_valid(owner) || !owner->initialized ||
+	if (!v92_erasure_is_valid(owner, &receiver->line.residual) || !owner->initialized ||
 	    owner->call != call || owner->epoch != epoch ||
 	    owner->input != receiver->line.input_samples ||
 	    owner->frames != receiver->line.received_frames || owner->symbols != receiver->line.symbol_count ||

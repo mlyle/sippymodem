@@ -17,7 +17,6 @@ enum {
 };
 
 struct v92_erasure_inverse {
-	struct v92_residual source;
 	double lower[V92_RESIDUAL_LAGS], upper[V92_RESIDUAL_LAGS];
 	uint64_t received, missing;
 	int polarity;
@@ -60,7 +59,9 @@ struct v92_erasure {
 struct v92_upstream_data_rx;
 
 void v92_erasure_reset(struct v92_erasure *owner);
-bool v92_erasure_is_valid(const struct v92_erasure *owner);
+/* Initialized owners borrow the receiver's current residual state. */
+bool v92_erasure_is_valid(const struct v92_erasure *owner,
+	const struct v92_residual *residual);
 bool v92_erasure_is_stable(const struct v92_erasure *owner);
 bool v92_erasure_bind(struct v92_upstream_data_rx *receiver,
 	struct v92_erasure *owner, uint64_t call, uint64_t epoch);

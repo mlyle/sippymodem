@@ -18,15 +18,16 @@ enum window_result {
 
 _Static_assert(V92_ERASURE_HISTORY > V92_PCM_RX_DELAY_FRAMES + 2, "live trust span");
 
-static bool inverse_is_valid(const struct v92_erasure_inverse *inverse)
+static bool inverse_is_valid(const struct v92_erasure_inverse *inverse,
+	const struct v92_residual *model)
 {
 	if (!inverse->ready || (inverse->polarity != 1 && inverse->polarity != -1) ||
-	    !inverse->source.active || !v92_residual_is_valid(&inverse->source))
+	    !model || !model->active || !v92_residual_is_valid(model))
 		return false;
 	for (unsigned i = 0; i < V92_RESIDUAL_LAGS; ++i)
 		if (!isfinite(inverse->lower[i]) || !isfinite(inverse->upper[i]) ||
-		    inverse->lower[i] > inverse->source.history[i] ||
-		    inverse->source.history[i] > inverse->upper[i])
+		    inverse->lower[i] > model->history[i] ||
+		    model->history[i] > inverse->upper[i])
 			return false;
 	return true;
 }
@@ -39,7 +40,7 @@ static bool inverse_begin(struct v92_erasure_inverse *inverse,
 	    !v92_residual_is_valid(model))
 		return false;
 	struct v92_erasure_inverse next = {
-		.source = *model, .polarity = polarity, .ready = true, .rejoined = true,
+		.polarity = polarity, .ready = true, .rejoined = true,
 	};
 	for (unsigned i = 0; i < V92_RESIDUAL_LAGS; ++i)
 		next.lower[i] = next.upper[i] = model->history[i];
@@ -48,27 +49,29 @@ static bool inverse_begin(struct v92_erasure_inverse *inverse,
 }
 
 static bool inverse_step(struct v92_erasure_inverse *inverse,
-	int32_t raw, bool received, struct v92_erasure_interval *output)
+	struct v92_residual *model, int32_t raw, bool received, struct v92_erasure_interval *output)
 {
-	if (!inverse || !output || !inverse_is_valid(inverse) ||
+	if (!inverse || !output || !inverse_is_valid(inverse, model) ||
 	    memory_regions_overlap(inverse, sizeof(*inverse), output, sizeof(*output)) ||
+	    memory_regions_overlap(inverse, sizeof(*inverse), model, sizeof(*model)) ||
+	    memory_regions_overlap(model, sizeof(*model), output, sizeof(*output)) ||
 	    (received && (raw < INT16_MIN || raw > INT16_MAX)))
 		return false;
-	struct v92_residual lower = inverse->source, upper = inverse->source;
+	struct v92_residual lower = *model, upper = *model;
 	/* Fixed finite coefficients make each native multiply/subtract monotone
 	 * in every fixed rounding mode. Evaluate both endpoints with the same
 	 * native recurrence. These bound program outputs, rather than a separate
 	 * real-arithmetic filter. Fast-math and excess precision are unsupported. */
-	for (unsigned i = 0; i < inverse->source.count; ++i) {
-		unsigned at = (unsigned)ring_index_at_age(inverse->source.cursor,
-			V92_RESIDUAL_LAGS, inverse->source.delay[i]);
-		bool positive = inverse->source.coefficient[i] >= 0.;
+	for (unsigned i = 0; i < model->count; ++i) {
+		unsigned at = (unsigned)ring_index_at_age(model->cursor,
+			V92_RESIDUAL_LAGS, model->delay[i]);
+		bool positive = model->coefficient[i] >= 0.;
 		lower.history[at] = positive ? inverse->upper[at] : inverse->lower[at];
 		upper.history[at] = positive ? inverse->lower[at] : inverse->upper[at];
 	}
 	double lo = v92_residual_output(&lower, received ? raw : (double)INT16_MIN);
 	double hi = v92_residual_output(&upper, received ? raw : (double)INT16_MAX);
-	double point = v92_residual_output(&inverse->source, received ? raw : 0.);
+	double point = v92_residual_output(model, received ? raw : 0.);
 	if (!isfinite(lo) || !isfinite(hi) || !isfinite(point) || lo > point || point > hi)
 		return false;
 	struct v92_erasure_interval result = {
@@ -82,19 +85,19 @@ static bool inverse_step(struct v92_erasure_inverse *inverse,
 		if (result.unique)
 			result.rounded = (int16_t)a;
 	}
-	unsigned cursor = inverse->source.cursor;
+	unsigned cursor = model->cursor;
 	inverse->lower[cursor] = lo;
 	inverse->upper[cursor] = hi;
-	v92_residual_retain(&inverse->source, point);
+	v92_residual_retain(model, point);
 	/* Numeric equality alone cannot certify the sign of a rounded zero.
 	 * Keep any zero-containing history under bounded ownership. */
 	bool exact = true;
 	for (unsigned i = 0; i < V92_RESIDUAL_LAGS; ++i)
 		exact &= inverse->lower[i] != 0. &&
 			!memcmp(inverse->lower + i, inverse->upper + i, sizeof(double)) &&
-			!memcmp(inverse->lower + i, inverse->source.history + i, sizeof(double));
+			!memcmp(inverse->lower + i, model->history + i, sizeof(double));
 	inverse->rejoined = result.rejoined =
-		received && exact && v92_residual_is_valid(&inverse->source);
+		received && exact && v92_residual_is_valid(model);
 	if (received) {
 		if (inverse->received != UINT64_MAX)
 			++inverse->received;
@@ -261,7 +264,8 @@ void v92_erasure_reset(struct v92_erasure *owner)
 	*owner = next;
 }
 
-bool v92_erasure_is_valid(const struct v92_erasure *owner)
+bool v92_erasure_is_valid(const struct v92_erasure *owner,
+	const struct v92_residual *residual)
 {
 	if (!owner || owner->trust.episodes > V92_ERASURE_MAX_EPISODES ||
 	    owner->trust.reseeds > V92_ERASURE_MAX_RESEEDS ||
@@ -270,7 +274,8 @@ bool v92_erasure_is_valid(const struct v92_erasure *owner)
 		return false;
 	if (!owner->initialized)
 		return !owner->bounded;
-	if (owner->bounded && !inverse_is_valid(&owner->inverse))
+	if (!residual || !residual->active ||
+	    (owner->bounded ? !inverse_is_valid(&owner->inverse, residual) : !v92_residual_is_valid(residual)))
 		return false;
 	return !owner->disabled && owner->call && owner->epoch && owner->trust.initialized &&
 		owner->trust.call == owner->call && owner->trust.epoch == owner->epoch &&
@@ -304,8 +309,8 @@ bool v92_erasure_correct(struct v92_erasure *owner, struct v92_residual *residua
 	if (!owner->bounded)
 		return v92_residual_sample(residual, raw, polarity, true, correction);
 	struct v92_erasure_interval interval;
-	if (!inverse_step(&owner->inverse, raw, available, &interval) ||
-	    !v92_residual_is_valid(&owner->inverse.source))
+	if (!inverse_step(&owner->inverse, residual, raw, available, &interval) ||
+	    !v92_residual_is_valid(residual))
 		return false;
 	double physical = interval.point * polarity;
 	if (available && (physical < INT16_MIN || physical > INT16_MAX))
@@ -316,7 +321,6 @@ bool v92_erasure_correct(struct v92_erasure *owner, struct v92_residual *residua
 	owner->uncertain += available && !interval.unique;
 	int16_t value = interval.unique ? interval.rounded : sample_round_s16(physical);
 	*correction = raw - (int32_t)value * polarity;
-	*residual = owner->inverse.source;
 	if (interval.rejoined) {
 		owner->bounded = false;
 		++owner->rejoins;

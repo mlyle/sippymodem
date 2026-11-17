@@ -883,12 +883,13 @@ static unsigned v92_training_failure_limit(const struct pcm_call *call)
 static bool erasure_belongs_to_call(const struct pcm_call *call)
 {
 	const struct v92_erasure *owner = &call->pcm_upstream_erasure;
-	if (!v92_erasure_is_valid(owner)) return false;
-	if (!owner->initialized) return true;
+	if (!owner->initialized)
+		return v92_erasure_is_valid(owner, NULL);
 	if (call->protocol != PCM_PROTOCOL_V92 || call->local_role != V90_DIGITAL_MODEM ||
 	    call->stage != PCM_CALL_DATA_PATH || !uses_pcm_upstream(call)) return false;
 	const struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
-	return owner->call == 1 && path->fast.stage == PCM_CALL_V92_FAST_IDLE &&
+	return v92_erasure_is_valid(owner, &path->upstream.line.residual) &&
+		owner->call == 1 && path->fast.stage == PCM_CALL_V92_FAST_IDLE &&
 		(!owner->bounded || owner->inverse.polarity == path->upstream.line.polarity) &&
 		owner->input == path->upstream.line.input_samples &&
 		owner->frames == path->upstream.line.received_frames &&
