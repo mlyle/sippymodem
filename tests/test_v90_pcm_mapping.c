@@ -1191,9 +1191,10 @@ static bool test_capacity_and_codec_fallback(void)
 	CHECK(rejected_init_is_transactional(&source),
 	      "mapping accepted a cleardown CP");
 
-	source = parameters(V90_CP_TRAINING, 13, 1, 8, true);
-	source.codec_constellations[0].ucode_mask[64u / 8u] &=
-		(uint8_t)~(1u << (64u % 8u));
+	/* Reject the codec plane only after all earlier rows match in size. */
+	source = mixed_parameters();
+	source.codec_constellations[5].ucode_mask[87u / 8u] &=
+		(uint8_t)~(1u << (87u % 8u));
 	CHECK(v90_cp_parameters_are_valid(&source) &&
 	      v90_pcm_mapping_init(&mapping, &source) ==
 		      V90_PCM_MAPPING_OK &&

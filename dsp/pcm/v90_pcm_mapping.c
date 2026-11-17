@@ -46,7 +46,7 @@ static bool shaping_coefficients_are_valid(
 	       pcm_shaping_coefficient_is_valid(mapping->shaping_b2_q1_6);
 }
 
-bool v90_pcm_mapping_is_valid(const struct v90_pcm_mapping *mapping)
+static bool mapping_geometry_is_valid(const struct v90_pcm_mapping *mapping)
 {
 	uint8_t base;
 
@@ -73,11 +73,17 @@ bool v90_pcm_mapping_is_valid(const struct v90_pcm_mapping *mapping)
 	}
 	base = mapping->kind == V90_CP_TRAINING ?
 		       V90_PHASE4_RATE_BASE : V90_DATA_RATE_BASE;
-	if (mapping->frame_bits !=
-		    mapping->modulus_bits + mapping->sign_bits ||
-	    mapping->frame_bits < base + 1u ||
-	    mapping->frame_bits > (mapping->format == PCM_MAPPING_V91 ?
-		PCM_FRAME_MAX_BITS : base + V90_CP_RATE_INDEX_MAX))
+	return mapping->frame_bits == mapping->modulus_bits + mapping->sign_bits &&
+	       mapping->frame_bits > base &&
+	       mapping->frame_bits <= (mapping->format == PCM_MAPPING_V91 ?
+		PCM_FRAME_MAX_BITS : base + V90_CP_RATE_INDEX_MAX) &&
+	       pcm_moduli_have_capacity(mapping->modulus, V90_CP_FRAME_INTERVALS,
+		mapping->modulus_bits);
+}
+
+bool v90_pcm_mapping_is_valid(const struct v90_pcm_mapping *mapping)
+{
+	if (!mapping_geometry_is_valid(mapping))
 		return false;
 	for (size_t interval = 0;
 	     interval < V90_CP_FRAME_INTERVALS; ++interval) {
@@ -87,10 +93,7 @@ bool v90_pcm_mapping_is_valid(const struct v90_pcm_mapping *mapping)
 			    mapping->modulus[interval])
 			return false;
 	}
-	return mapping->codec_plane_differs ==
-		       mapping_planes_differ(mapping) &&
-	       pcm_moduli_have_capacity(mapping->modulus, V90_CP_FRAME_INTERVALS,
-		       mapping->modulus_bits);
+	return mapping->codec_plane_differs == mapping_planes_differ(mapping);
 }
 
 bool v90_pcm_mapping_equal(
@@ -170,70 +173,55 @@ enum v90_pcm_mapping_result v90_pcm_mapping_power(
 	return V90_PCM_MAPPING_OK;
 }
 
-enum v90_pcm_mapping_result v90_pcm_mapping_init_v91(
-	struct v90_pcm_mapping *mapping, enum g711_law law, uint8_t frame_bits,
-	const struct pcm_constellation constellations[PCM_CONSTELLATION_FRAME_INTERVALS])
-{
-	struct v90_pcm_mapping next = {
-		.kind = V90_CP_DATA, .format = PCM_MAPPING_V91, .law = law,
-		.frame_bits = frame_bits, .sign_bits = 6,
-	};
-
-	if (mapping == NULL || constellations == NULL)
-		return V90_PCM_MAPPING_INVALID_ARGUMENT;
-	if (!g711_law_is_valid(law) || frame_bits < 21 || frame_bits > PCM_FRAME_MAX_BITS)
-		return V90_PCM_MAPPING_INVALID_PARAMETERS;
-	next.modulus_bits = frame_bits - next.sign_bits;
-	for (unsigned i = 0; i < PCM_CONSTELLATION_FRAME_INTERVALS; ++i) {
-		next.transmit[i] = next.codec[i] = constellations[i];
-		next.modulus[i] = pcm_constellation_count(&constellations[i]);
-	}
-	if (!v90_pcm_mapping_is_valid(&next))
-		return V90_PCM_MAPPING_INVALID_PARAMETERS;
-	*mapping = next;
-	return V90_PCM_MAPPING_OK;
-}
-
-/* Protocol validation stays with the caller. Resolve borrowed masks into
- * one local mapping, then publish only after capacity/shaping validation.
- * No received parameter record or constellation pointer is retained. */
+/* Expand validated wire rows, or use the interval order supplied by V.91.
+ * Derive the moduli and matching planes together before publishing. */
 static enum v90_pcm_mapping_result finish_mapping(
 	struct v90_pcm_mapping *mapping, struct v90_pcm_mapping *initialized,
 	const struct pcm_constellation *transmit,
 	const struct pcm_constellation *codec,
-	const uint8_t frame_constellation[V90_CP_FRAME_INTERVALS], bool codec_differs)
+	const uint8_t frame_constellation[V90_CP_FRAME_INTERVALS], bool use_codec)
 {
-	bool codec_counts_match = true;
-
-	if (!g711_law_is_valid(initialized->law))
-		return V90_PCM_MAPPING_INVALID_PARAMETERS;
 	initialized->sign_bits = (uint8_t)(V90_CP_FRAME_INTERVALS -
 		initialized->sign_redundancy);
 	initialized->modulus_bits = (uint8_t)(initialized->frame_bits -
 		initialized->sign_bits);
 	for (size_t interval = 0;
 	     interval < V90_CP_FRAME_INTERVALS; ++interval) {
-		uint8_t index = frame_constellation[interval];
-		uint8_t codec_count;
+		size_t index = frame_constellation ? frame_constellation[interval] :
+			interval;
 
 		initialized->transmit[interval] = transmit[index];
-		initialized->codec[interval] =
-			codec_differs ? codec[index] : initialized->transmit[interval];
 		initialized->modulus[interval] =
 			pcm_constellation_count(&initialized->transmit[interval]);
-		codec_count = pcm_constellation_count(&initialized->codec[interval]);
-		if (codec_count != initialized->modulus[interval])
-			codec_counts_match = false;
+		if (use_codec && pcm_constellation_count(&codec[index]) ==
+				 initialized->modulus[interval])
+			initialized->codec[interval] = codec[index];
+		else
+			use_codec = false;
 	}
-	if (!codec_differs || !codec_counts_match)
+	if (!use_codec)
 		memcpy(initialized->codec, initialized->transmit,
 		       sizeof(initialized->codec));
 	initialized->codec_plane_differs =
-		mapping_planes_differ(initialized);
-	if (!v90_pcm_mapping_is_valid(initialized))
+		use_codec && mapping_planes_differ(initialized);
+	if (!mapping_geometry_is_valid(initialized))
 		return V90_PCM_MAPPING_INVALID_PARAMETERS;
 	*mapping = *initialized;
 	return V90_PCM_MAPPING_OK;
+}
+
+enum v90_pcm_mapping_result v90_pcm_mapping_init_v91(
+	struct v90_pcm_mapping *mapping, enum g711_law law, uint8_t frame_bits,
+	const struct pcm_constellation constellations[PCM_CONSTELLATION_FRAME_INTERVALS])
+{
+	struct v90_pcm_mapping initialized = {
+		.kind = V90_CP_DATA, .format = PCM_MAPPING_V91, .law = law,
+		.frame_bits = frame_bits,
+	};
+
+	if (mapping == NULL || constellations == NULL)
+		return V90_PCM_MAPPING_INVALID_ARGUMENT;
+	return finish_mapping(mapping, &initialized, constellations, NULL, NULL, false);
 }
 
 enum v90_pcm_mapping_result v90_pcm_mapping_init_transmit(
@@ -312,7 +300,8 @@ v90_pcm_mapping_init_rate_renegotiation(
 	initialized.shaping_a2_q1_6 = preceding_data->shaping_a2_q1_6;
 	initialized.shaping_b1_q1_6 = preceding_data->shaping_b1_q1_6;
 	initialized.shaping_b2_q1_6 = preceding_data->shaping_b2_q1_6;
-	if (!v90_pcm_mapping_is_valid(&initialized))
+	/* The validated training mapping supplies both planes and their moduli. */
+	if (!mapping_geometry_is_valid(&initialized))
 		return V90_PCM_MAPPING_INVALID_PARAMETERS;
 	*mapping = initialized;
 	return V90_PCM_MAPPING_OK;
