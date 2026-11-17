@@ -872,6 +872,51 @@ static bool test_level_refinement(void)
 	return true;
 }
 
+/* Delayed output is still owned by the input history while the local copy
+ * shifts its queue. Different old words may merge into the same future. */
+static bool test_history_output_origin(void)
+{
+	struct v92_cpd_parameters cpd = parameters(10);
+	memset(cpd.filter, 0, sizeof(cpd.filter));
+	struct v92_pcm_mapping mapping;
+	CHECK(v92_pcm_mapping_init(&mapping, G711_LAW_PCMU, &cpd) == V92_PCM_MAPPING_OK,
+	      "output-origin mapping failed");
+	for (unsigned equal = 0; equal < 2; ++equal) {
+		struct v92_pcm_frame_rx rx;
+		struct v92_pcm_frame_tx tx;
+		CHECK(v92_pcm_frame_rx_init_constellation(&rx, &mapping) == V92_PCM_FRAME_OK &&
+		      v92_pcm_frame_tx_init(&tx, &mapping) == V92_PCM_FRAME_OK,
+		      "output-origin initialization failed");
+		rx.pending_frames = rx.post_b1_frames = V92_PCM_RX_DELAY_FRAMES;
+		rx.b1u_frames = V92_B1U_FRAMES;
+		rx.path_count = 2;
+		rx.paths[1] = rx.paths[0];
+		rx.paths[0].metric = equal ? 0 : 1;
+		uint8_t expected[2][V92_PCM_MAPPING_MAX_BITS];
+		for (unsigned i = 0; i < mapping.data_bits_per_frame; ++i) {
+			expected[0][i] = (uint8_t)(i & 1u);
+			expected[1][i] = (uint8_t)((i & 1u) ^ 1u);
+			rx.paths[0].pending[0][i] = expected[0][i];
+			rx.paths[1].pending[0][i] = expected[1][i];
+		}
+		CHECK(v92_pcm_frame_rx_is_valid(&rx), "output-origin histories invalid");
+		uint8_t source[V92_PCM_MAPPING_MAX_BITS], bits[V92_PCM_MAPPING_MAX_BITS];
+		generated_bits(source, mapping.data_bits_per_frame, 17);
+		struct v92_pcm_frame frame;
+		struct v92_pcm_frame_decision decision;
+		CHECK(v92_pcm_frame_encode(&tx, source, mapping.data_bits_per_frame, &frame) ==
+		      V92_PCM_FRAME_OK && v92_pcm_frame_decode(&rx, frame.u, false, bits,
+		      mapping.data_bits_per_frame, &decision) == V92_PCM_FRAME_OK,
+		      "output-origin frame failed");
+		CHECK(decision.bits_ready && decision.ambiguous == (equal != 0),
+		      "output-origin merge lost delayed ambiguity");
+		CHECK(!memcmp(bits, expected[1], mapping.data_bits_per_frame) ||
+		      (equal && !memcmp(bits, expected[0], mapping.data_bits_per_frame)),
+		      "output-origin emitted shifted or wrong input history");
+	}
+	return true;
+}
+
 static bool test_pending_bit_validation(void)
 {
 	static const uint8_t rates[] = { 1u, 2u, 4u, 19u };
@@ -2350,7 +2395,7 @@ int main(void)
 	    !test_16_state_pair_partition() ||
 	    !test_filters() || !test_causal_filter_history() ||
 	    !test_delayed_filter_stream() || !test_level_refinement() ||
-	    !test_pending_bit_validation() || !test_receiver_initialization() ||
+	    !test_history_output_origin() || !test_pending_bit_validation() || !test_receiver_initialization() ||
 	    !test_rejection_and_names())
 		return 1;
 	return 0;

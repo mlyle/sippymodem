@@ -1021,13 +1021,19 @@ struct frame_path {
 	struct v92_pcm_frame_rx_path state;
 	struct v92_pcm_frame frame;
 	uint64_t frame_metric;
-	uint8_t output_bits[V92_PCM_MAPPING_MAX_BITS];
-	uint8_t known_digits[V92_PCM_MAPPING_FRAME_SYMBOLS];
 	bool output_ambiguous;
 	bool output_nondata;
 	bool output_b1u_code_mismatch;
 	bool uncertain;
 };
+
+/* Resolve delayed output before committing new histories. The receiver owns
+ * it unchanged while candidates extend and merge; origin follows every copy. */
+static const uint8_t *delayed_bits(const struct v92_pcm_frame_rx *receiver,
+	const struct frame_path *path)
+{
+	return receiver->paths[path->origin].pending[0];
+}
 
 /* Pending payload and unused filter capacity do not change while extending
  * a frame. Keep their source path by origin and restore them once the beam
@@ -1498,6 +1504,8 @@ static enum v92_pcm_frame_result decode_frame(
 	struct frame_path *paths = banks[0];
 	struct frame_path *next = banks[1];
 	uint8_t decoded[V92_PCM_MAPPING_MAX_BITS];
+	/* Known digits belong to each input history, not each extended path. */
+	uint8_t known_digits[V92_PCM_RX_PATHS][V92_PCM_MAPPING_FRAME_SYMBOLS];
 	size_t path_count;
 	size_t best = SIZE_MAX;
 	const struct memory_region regions[] = {
@@ -1665,8 +1673,7 @@ static enum v92_pcm_frame_result decode_frame(
 		copy_path_state(&paths[index].state, &receiver->paths[index], history_bytes);
 		memset(&paths[index].frame, 0,
 		       sizeof(paths[index]) - offsetof(struct frame_path, frame));
-		if (known && !b1u_digits(receiver, &paths[index].state,
-				      paths[index].known_digits))
+		if (known && !b1u_digits(receiver, &receiver->paths[index], known_digits[index]))
 			return V92_PCM_FRAME_INVALID_PARAMETERS;
 	}
 	uint8_t maximum_digits[V92_PCM_MAPPING_FRAME_SYMBOLS];
@@ -1983,7 +1990,8 @@ static enum v92_pcm_frame_result decode_frame(
 			}
 			int offset = equivalence_offset(symbol, paths[path].frame.signed_index, y0);
 			unsigned step = known ? stride * modulus : stride;
-			int residue = offset + (known ? (int)(stride * paths[path].known_digits[symbol]) : 0);
+			int residue = offset + (known ?
+				(int)(stride * known_digits[paths[path].origin][symbol]) : 0);
 
 			first_eta += nonnegative_remainder_s32(residue - first_eta, step);
 			unsigned next_digit = (unsigned)nonnegative_remainder_s32((first_eta - offset) / (int)stride, modulus);
@@ -2178,7 +2186,6 @@ static enum v92_pcm_frame_result decode_frame(
 			nondata = true;
 		}
 		paths[index].frame.frame_sign = state->differential;
-		memcpy(paths[index].output_bits, state->pending[0], bit_count);
 		paths[index].output_ambiguous = (state->ambiguous_frames & 1u) != 0u;
 		paths[index].output_nondata = (state->nondata_frames & 1u) != 0u;
 		paths[index].output_b1u_code_mismatch = (state->b1u_code_mismatches & 1u) != 0u;
@@ -2226,7 +2233,8 @@ static enum v92_pcm_frame_result decode_frame(
 		 * their disputed payload. Tag either possible winner for this
 		 * observation only; leave its delayed ambiguity tags unchanged. */
 		if (measure_confidence && survivor != valid && gap <= resolution &&
-		    (memcmp(paths[survivor].output_bits, paths[index].output_bits, bit_count) != 0 ||
+		    (memcmp(delayed_bits(receiver, &paths[survivor]),
+		            delayed_bits(receiver, &paths[index]), bit_count) != 0 ||
 		     memcmp(paths[survivor].state.pending, state->pending, sizeof(state->pending)) != 0)) {
 			paths[survivor].uncertain = true;
 			paths[index].uncertain = true;
@@ -2247,7 +2255,8 @@ static enum v92_pcm_frame_result decode_frame(
 			}
 			prior->output_ambiguous |= paths[index].output_ambiguous ||
 				prior->output_nondata != paths[index].output_nondata ||
-				memcmp(prior->output_bits, paths[index].output_bits, bit_count) != 0;
+				memcmp(delayed_bits(receiver, prior),
+				       delayed_bits(receiver, &paths[index]), bit_count) != 0;
 			prior->state.ambiguous_frames |= state->ambiguous_frames |
 				(prior->state.nondata_frames ^ state->nondata_frames);
 			prior->output_b1u_code_mismatch |= paths[index].output_b1u_code_mismatch;
@@ -2266,7 +2275,7 @@ static enum v92_pcm_frame_result decode_frame(
 	}
 	if (best == SIZE_MAX)
 		return V92_PCM_FRAME_NO_PATH;
-	memcpy(decoded, paths[best].output_bits, bit_count);
+	memcpy(decoded, delayed_bits(receiver, &paths[best]), bit_count);
 	bool ambiguous = paths[best].output_ambiguous;
 	bool nondata = paths[best].output_nondata;
 	bool uncertain = paths[best].uncertain;
@@ -2276,13 +2285,13 @@ static enum v92_pcm_frame_result decode_frame(
 	for (size_t index = 0u; index < valid; ++index) {
 		if (measure_confidence &&
 		    paths[index].state.metric - paths[best].state.metric <= resolution &&
-		    memcmp(decoded, paths[index].output_bits, bit_count) != 0)
+		    memcmp(decoded, delayed_bits(receiver, &paths[index]), bit_count) != 0)
 			uncertain = true;
 		if (paths[index].state.metric == paths[best].state.metric) {
 			code_mismatch |= paths[index].output_b1u_code_mismatch;
 			ambiguous |= paths[index].output_ambiguous ||
 				nondata != paths[index].output_nondata ||
-				memcmp(decoded, paths[index].output_bits, bit_count) != 0;
+				memcmp(decoded, delayed_bits(receiver, &paths[index]), bit_count) != 0;
 			if (rm_state(&paths[index].state) != rm) rm = V92_PCM_FRAME_RM_NONE;
 		}
 	}
