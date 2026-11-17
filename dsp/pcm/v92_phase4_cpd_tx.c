@@ -75,7 +75,6 @@ bool v92_phase4_cpd_tx_next(
 	struct pcm_downstream_symbol *symbol)
 {
 	struct pcm_downstream_source_record record;
-	struct pcm_downstream_symbol generated;
 
 	if (transmitter == NULL || downstream == NULL || symbol == NULL ||
 	    memory_regions_overlap(
@@ -88,7 +87,6 @@ bool v92_phase4_cpd_tx_next(
 		    downstream, sizeof(*downstream), symbol, sizeof(*symbol)) ||
 	    !v92_phase4_cpd_tx_is_valid(transmitter) ||
 	    transmitter->complete ||
-	    !pcm_downstream_tx_is_valid(downstream) ||
 	    downstream->encoder.mapping.law != transmitter->law ||
 	    downstream->encoder.mapping.frame_bits != transmitter->frame_bits)
 		return false;
@@ -98,25 +96,23 @@ bool v92_phase4_cpd_tx_next(
 		.sequence_bits = transmitter->sequence_bits,
 		.bit_index = transmitter->bit_index,
 	};
-	if (pcm_downstream_tx_next_source_record(
-		    downstream, &record, &generated) !=
+	/* The shared transaction validates the downstream line and commits its
+	 * cursor and output only on success. */
+	if (pcm_downstream_tx_next_source_record(downstream, &record, symbol) !=
 	    PCM_DOWNSTREAM_TX_OK)
 		return false;
-	/* The shared transaction validates and commits the line and bounded
-	 * cursor together; neither the source nor its mapping changes. */
 	transmitter->bit_index = record.bit_index;
 	transmitter->complete = record.complete;
-	*symbol = generated;
 	return true;
 }
 
 bool v92_phase4_ed_tx_is_valid(const struct v92_phase4_ed_tx *tail)
 {
-	if (tail == NULL || !pcm_downstream_tx_is_valid(&tail->transmit) ||
-	    tail->transmit.protocol != PCM_PROTOCOL_V92)
+	if (tail == NULL || tail->transmit.protocol != PCM_PROTOCOL_V92)
 		return false;
 	if (!tail->cpd_pending)
-		return tail->transmit.ed_requested;
+		return tail->transmit.ed_requested &&
+		       pcm_downstream_tx_is_valid(&tail->transmit);
 	return !tail->transmit.ed_requested &&
 	       pcm_downstream_tx_is_v92_control_boundary(&tail->transmit) &&
 	       tail->transmit.v92_control_kind == PCM_DOWNSTREAM_V92_CONTROL_SUVD &&
@@ -143,16 +139,16 @@ bool v92_phase4_ed_tx_init(
 	if (pending_cpd != NULL) {
 		initialized.cpd = *pending_cpd;
 		initialized.cpd_pending = true;
-		if (!v92_phase4_ed_tx_is_valid(&initialized) ||
-		    v92_cpd_decode(pending_cpd->sequence, sizeof(pending_cpd->sequence),
-			    pending_cpd->sequence_bits, pending_cpd->frame_bits,
-			    &parameters) != V92_CPD_OK || !parameters.acknowledges_cpu)
-			return false;
 	} else if (pcm_downstream_tx_request_ed(&initialized.transmit) !=
 			   PCM_DOWNSTREAM_TX_OK) {
 		return false;
 	}
 	if (!v92_phase4_ed_tx_is_valid(&initialized))
+		return false;
+	if (pending_cpd != NULL &&
+	    (v92_cpd_decode(pending_cpd->sequence, sizeof(pending_cpd->sequence),
+		    pending_cpd->sequence_bits, pending_cpd->frame_bits,
+		    &parameters) != V92_CPD_OK || !parameters.acknowledges_cpu))
 		return false;
 	*tail = initialized;
 	return true;
