@@ -1419,13 +1419,27 @@ static void check_periodic_training(enum g711_law law, unsigned taps,
 	check_seed_moments(&work, &training);
 	enum v92_observation_fit_result result;
 	unsigned steps = 0;
+	bool discarded_sweep = false;
 	do {
+		/* Refinement must initialize its own rows and costs. Neither the
+		 * completed gain sweep nor its weighted targets remain live. */
+		if (work.stage == V92_FIT_REFINE && work.cursor == 0) {
+			assert(!discarded_sweep);
+			discarded_sweep = true;
+			memset(work.events, 0xa5, sizeof(work.events));
+			memset(work.heap, 0xa5, sizeof(work.heap));
+			memset(work.q, 0xa5, sizeof(work.q));
+			memset(&work.moments, 0xa5, sizeof(work.moments));
+			memset(&work.seed, 0xa5, sizeof(work.seed));
+			work.used = SIZE_MAX;
+		}
 		result = v92_observation_fit_step(&work, &training, &model);
 		check_seed_moments(&work, &training);
 		assert(++steps < 128);
 		if (result == V92_OBSERVATION_FIT_MORE)
 			assert(!memcmp(&model, &before, sizeof(model)) && work.training_cost == UINT64_MAX);
 	} while (result == V92_OBSERVATION_FIT_MORE);
+	assert(discarded_sweep);
 	assert(result == V92_OBSERVATION_FIT_READY && v92_observation_is_valid(&model));
 	assert(model.lsb_mask == (1u << phase) && !memcmp(model.lsb, pattern, sizeof(pattern)));
 	assert(v92_observation_fit(&whole, &training) && !memcmp(&whole, &model, sizeof(model)));

@@ -74,26 +74,32 @@ struct v92_observation_fit_work {
 		struct v92_observation_fit_interval fits[V92_OBSERVATION_INTERVALS];
 		struct { struct v92_scalar_fit fit; double low, high; } scalar;
 	};
-	struct v92_observation_fit_boundary events[V92_OBSERVATION_TRAINING];
-	struct v92_observation_fit_moments moments;
-	size_t heap[V92_OBSERVATION_TRAINING], used;
-	int16_t q[V92_OBSERVATION_TRAINING];
+	/* Sweep state expires after CENTER. Refinement initializes each bin
+	 * row and its score before WEIGHTS reads them. Neither stage retains
+	 * a pointer into the other's scratch. */
+	union {
+		struct {
+			struct v92_observation_fit_boundary events[V92_OBSERVATION_TRAINING];
+			struct v92_observation_fit_moments moments;
+			size_t heap[V92_OBSERVATION_TRAINING], used;
+			int16_t q[V92_OBSERVATION_TRAINING];
+			/* Integer targets and dyadic row scales make the gain
+			 * sweep's seed normal-equation updates exact. */
+			struct {
+				int16_t target[V92_OBSERVATION_TRAINING];
+				uint8_t shift[V92_OBSERVATION_TRAINING];
+				uint32_t total;
+			} seed;
+		};
+		struct {
+			double costs[V92_OBSERVATION_INTERVALS], variances[V92_OBSERVATION_INTERVALS];
+			int16_t bins[V92_OBSERVATION_INTERVALS][V92_OBSERVATION_TRAINING];
+		};
+	};
 	double low, end, linear_error;
 	bool pending;
 	/* Host-coordinate codec cells, prepared once before fitting. */
 	double lower[V92_OBSERVATION_TRAINING], upper[V92_OBSERVATION_TRAINING];
-	double costs[V92_OBSERVATION_INTERVALS], variances[V92_OBSERVATION_INTERVALS];
-	/* Gain ranking and conditional-bin refinement own these bytes in
-	 * separate stages. Integer targets and dyadic row scales keep seed
-	 * normal-equation updates exact without enlarging the scratch. */
-	union {
-		int16_t bins[V92_OBSERVATION_INTERVALS][V92_OBSERVATION_TRAINING];
-		struct {
-			int16_t target[V92_OBSERVATION_TRAINING];
-			uint8_t shift[V92_OBSERVATION_TRAINING];
-			uint32_t total;
-		} seed;
-	};
 	/* Exact sum from completed final admission; only a current READY grants
 	 * access. UINT64_MAX means unavailable: missing/unscorable wire evidence,
 	 * pruned/declined fits and scalar-only jobs publish no cost.
@@ -106,9 +112,6 @@ struct v92_observation_fit_work {
 	unsigned cursor;
 };
 
-_Static_assert(sizeof(((struct v92_observation_fit_work *)0)->seed) <=
-	sizeof(((struct v92_observation_fit_work *)0)->bins),
-	"seed ranking reuses refinement storage");
 _Static_assert(V92_OBSERVATION_TRAINING < 512,
 	"288 bounded integer rows with weights <=16384 fit binary64 exactly");
 
