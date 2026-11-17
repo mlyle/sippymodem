@@ -257,31 +257,17 @@ static enum v92_phase4_digital_rx_result receive_control(
 		v92_upstream_control_line_rx_sample(
 			&next->signal.control, sample, event);
 
+	/* The line rolls back a failed sample and latches only its own flag.
+	 * The phase owner keeps that failure on the enclosing receiver. */
+	if (result == V92_UPSTREAM_CONTROL_LINE_RX_INTERNAL_ERROR)
+		next->signal.control.signal.failed = false;
+
 	if (remaining &&
 	    (result == V92_UPSTREAM_CONTROL_LINE_RX_OK || result == V92_UPSTREAM_CONTROL_LINE_RX_EVENT) &&
 	    !observe_channel(next, expected, &signal->line.equalizer,
 		    signal->line.law))
 		return fail(receiver);
 	return control_result(receiver, result);
-}
-
-static enum v92_phase4_digital_rx_result receive_frozen_control(
-	struct v92_phase4_digital_rx *receiver, int16_t sample,
-	struct v92_control_event *event)
-{
-	struct v92_upstream_control_line_rx next = receiver->signal.control;
-	struct v92_control_event emitted = { 0 };
-	enum v92_phase4_digital_rx_result result = control_result(receiver,
-		v92_upstream_control_line_rx_sample(&next, sample, &emitted));
-
-	if (result != V92_PHASE4_DIGITAL_RX_OK && result != V92_PHASE4_DIGITAL_RX_EVENT)
-		return result;
-	/* The checked child preserves its training extent and empty tail. The
-	 * channel, stage and measurement boundary are frozen, so updating this
-	 * line preserves the enclosing invariants without copying its channel. */
-	receiver->signal.control = next;
-	*event = emitted;
-	return result;
 }
 
 enum v92_phase4_digital_rx_result v92_phase4_digital_rx_sample(
@@ -300,9 +286,11 @@ enum v92_phase4_digital_rx_result v92_phase4_digital_rx_sample(
 		return V92_PHASE4_DIGITAL_RX_INVALID_STATE;
 	if (state_has_failed(receiver))
 		return V92_PHASE4_DIGITAL_RX_FAILED;
+	/* After the measured tail, the line transaction preserves the frozen
+	 * channel and enclosing invariants, so it can publish directly. */
 	if (receiver->stage != V92_PHASE4_DIGITAL_RX_TRN2U &&
 	    receiver->signal.control.signal.training_tail_remaining == 0u)
-		return receive_frozen_control(receiver, sample, event);
+		return receive_control(receiver, receiver, sample, event);
 	next = *receiver;
 	result = next.stage == V92_PHASE4_DIGITAL_RX_TRN2U ?
 			 receive_training(receiver, &next, sample) :
