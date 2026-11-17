@@ -109,4 +109,12 @@ enum v92_pcm_frame_result v92_upstream_model_decode(struct v92_upstream_model *m
 	double predictions[V92_PCM_MAPPING_FRAME_SYMBOLS],
 	struct v92_observation_geometry geometry[2]);
 
+/* Explicit usable mask ranks only certified observations; original wire and
+ * received facts remain intact. Restricted to frozen linear data epochs. */
+enum v92_pcm_frame_result v92_upstream_model_decode_usable(struct v92_upstream_model *model,
+	struct v92_pcm_frame_rx *decoder, const struct v92_upstream_data_line *line,
+	uint8_t *bits, struct v92_pcm_frame_decision *decision,
+	double predictions[V92_PCM_MAPPING_FRAME_SYMBOLS],
+	struct v92_observation_geometry geometry[2], const bool *usable);
+
 #endif /* V92_UPSTREAM_MODEL_H */

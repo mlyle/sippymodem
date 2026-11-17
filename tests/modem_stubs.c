@@ -59,3 +59,17 @@ bool modem_ec_cancel_retrain_request(struct modem *modem, uint64_t grant)
 	(void)grant;
 	return false;
 }
+
+/* Bare DSP fixtures have no established HDLC/LAPM owner. */
+bool modem_accepts_erased_bits(const struct modem *modem)
+{
+	(void)modem;
+	return false;
+}
+
+bool modem_put_erasure_bits(struct modem *modem, int bits)
+{
+	(void)modem;
+	(void)bits;
+	return false;
+}

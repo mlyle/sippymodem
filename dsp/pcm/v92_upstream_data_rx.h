@@ -124,6 +124,8 @@ struct v92_upstream_data_frame {
 	uint8_t bit_count;
 	bool b1u;
 	bool ambiguous;
+	/* Withheld delayed payload: advance framed receive time, deliver no bits. */
+	bool erased;
 	uint8_t b1u_mismatches;
 };
 
@@ -258,5 +260,14 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_drain_owned(
 
 const char *v92_upstream_data_rx_result_name(
 	enum v92_upstream_data_rx_result result);
+
+struct v92_erasure;
+/* Established framed DATA only, with a bound exclusive recovery owner. Unknown
+ * intervals produce erased words, never payload. Failures retain both input
+ * clocks and frame output; NO_PATH marks the receiver failed for normal retry. */
+enum v92_upstream_data_rx_result v92_erasure_octet(
+	struct v92_upstream_data_rx *receiver, struct v92_erasure *owner,
+	uint64_t call, uint64_t epoch, uint8_t code, int16_t sample,
+	int16_t host_sample, bool available, struct v92_upstream_data_frame *frame);
 
 #endif /* V92_UPSTREAM_DATA_RX_H */

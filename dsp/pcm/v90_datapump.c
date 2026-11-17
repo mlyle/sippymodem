@@ -851,10 +851,13 @@ static bool deliver_event(
 		const struct v92_upstream_data_frame *frame = &event->frame.pcm_upstream;
 
 		if (datapump->protocol != PCM_PROTOCOL_V92 ||
-		    datapump->role != V90_DIGITAL_MODEM || frame->b1u || frame->ambiguous)
+		    datapump->role != V90_DIGITAL_MODEM || frame->b1u)
 			return false;
 		if (!training_session_is_online(&datapump->training))
 			return true;
+		if (frame->erased)
+			return modem_put_erasure_bits(datapump->dp.modem, frame->bit_count);
+		if (frame->ambiguous) return false;
 		return deliver_bits(datapump, frame->bits, frame->bit_count);
 	}
 	if (event->kind != PCM_CALL_UPSTREAM_FRAME ||
@@ -1020,6 +1023,7 @@ static bool process_octet(
 		.downstream_context = datapump,
 		.pcm_upstream = source_pcm_frame,
 		.pcm_upstream_context = datapump,
+		.allow_pcm_upstream_erasures = modem_accepts_erased_bits(datapump->dp.modem),
 	};
 	struct pcm_call_data_event event = { 0 };
 	enum pcm_call_result result;

@@ -880,6 +880,21 @@ static unsigned v92_training_failure_limit(const struct pcm_call *call)
 	return call->pcm_upstream_trained ? 3u : 2u;
 }
 
+static bool erasure_belongs_to_call(const struct pcm_call *call)
+{
+	const struct v92_erasure *owner = &call->pcm_upstream_erasure;
+	if (!v92_erasure_is_valid(owner)) return false;
+	if (!owner->initialized) return true;
+	if (call->protocol != PCM_PROTOCOL_V92 || call->local_role != V90_DIGITAL_MODEM ||
+	    call->stage != PCM_CALL_DATA_PATH || !uses_pcm_upstream(call)) return false;
+	const struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
+	return owner->call == 1 && path->fast.stage == PCM_CALL_V92_FAST_IDLE &&
+		(!owner->bounded || owner->inverse.polarity == path->upstream.line.polarity) &&
+		owner->input == path->upstream.line.input_samples &&
+		owner->frames == path->upstream.line.received_frames &&
+		owner->symbols == path->upstream.line.symbol_count;
+}
+
 static bool call_is_valid(
 	const struct pcm_call *call, bool owned_phase3)
 {
@@ -899,6 +914,7 @@ static bool call_is_valid(
 	     (call->local_role != V90_ANALOG_MODEM || call->downstream_equalizer.law != call->law ||
 	      !uses_pcm_upstream(call))) ||
 	    !v92_data_quality_is_valid(&call->pcm_upstream_quality) ||
+	    !erasure_belongs_to_call(call) ||
 	    (call->downstream_retry_ceiling != 0u &&
 	     (call->local_role != V90_ANALOG_MODEM ||
 	      !call->analog_phase4_configuration.generate_constellations ||
@@ -1379,6 +1395,7 @@ static enum pcm_call_result begin_retrain(
 			next.v92_upstream_retry_step = 0u;
 		}
 	}
+	v92_erasure_reset(&next.pcm_upstream_erasure);
 	next.state = (union pcm_call_state){ 0 };
 	next.downstream_equalizer = (struct pcm_downstream_equalizer){ 0 };
 	next.downstream_dil = (struct pcm_dil_result){ 0 };
@@ -1892,6 +1909,8 @@ enum pcm_call_result pcm_call_v34_fallback_handoff(
 		.v92_phase4 = call->v92_digital_phase4_configuration,
 		.enabled_downstream_rate_mask = call->enabled_downstream_rate_mask,
 		.upstream_retry_ceiling = call->v92_upstream_retry_ceiling,
+		.pcm_upstream_quality = call->pcm_upstream_quality,
+		.pcm_upstream_erasure = call->pcm_upstream_erasure,
 		.pcm_upstream_trained = call->pcm_upstream_trained,
 		.suppress_v90_info1d_3429 = call->suppress_v90_info1d_3429,
 		.round_trip_delay_samples = call->round_trip_delay_samples,
@@ -1936,6 +1955,11 @@ enum pcm_call_result pcm_call_init_from_v34(
 	initialized.peer_info0 = restart->peer_info0;
 	initialized.peer_info0_stored = true;
 	initialized.v92_upstream_retry_ceiling = restart->upstream_retry_ceiling;
+	initialized.pcm_upstream_quality = restart->pcm_upstream_quality;
+	initialized.pcm_upstream_erasure = restart->pcm_upstream_erasure;
+	v92_erasure_reset(&initialized.pcm_upstream_erasure);
+	if (!v92_data_quality_restart(&initialized.pcm_upstream_quality))
+		return PCM_CALL_INVALID_ARGUMENT;
 	initialized.pcm_upstream_trained = restart->pcm_upstream_trained;
 	initialized.round_trip_delay_samples = restart->round_trip_delay_samples;
 	initialized.round_trip_delay_stored = true;
@@ -4433,6 +4457,7 @@ enum pcm_call_result pcm_call_start_data_path(struct pcm_call *call)
 	if (!pcm_call_phase4_is_ready(call))
 		return PCM_CALL_INVALID_STATE;
 	next = *call;
+	v92_erasure_reset(&next.pcm_upstream_erasure);
 	next.state = (union pcm_call_state){ 0 };
 	if (uses_pcm_upstream(call)) {
 		if (!start_v92_data_path(&next, call))
@@ -4651,6 +4676,8 @@ static void complete_cleardown(struct pcm_call *call)
 	call->downstream_dil = (struct pcm_dil_result){ 0 };
 	if (uses_pcm_upstream(call))
 		memset(&call->state, 0, sizeof(call->state));
+	if (call->stage != PCM_CALL_CLOSED)
+		v92_erasure_reset(&call->pcm_upstream_erasure);
 	call->stage = PCM_CALL_CLOSED;
 	call->retrain_active = false;
 	call->v92_rate_renegotiation_active = false;
@@ -4724,6 +4751,7 @@ static enum pcm_call_result begin_v92_rate_request(struct pcm_call *call, bool l
 	    pcm_downstream_tx_init(&state.owner.ru.transmit, PCM_PROTOCOL_V92, &mapping) != PCM_DOWNSTREAM_TX_OK ||
 	    pcm_downstream_tx_start_suvd(&state.owner.ru.transmit, &suvd) != PCM_DOWNSTREAM_TX_OK)
 		return PCM_CALL_NUMERIC_FAILURE;
+	v92_erasure_reset(&call->pcm_upstream_erasure);
 	call->state = (union pcm_call_state){ .phase4.v92 = state };
 	call->stage = PCM_CALL_PHASE4;
 	call->retrain_active = true;
@@ -5038,6 +5066,7 @@ static bool v92_fast_analog_receive(struct pcm_call *call, uint8_t octet)
 
 static bool begin_v92_fast_response(struct pcm_call *call)
 {
+	if (!v92_erasure_is_stable(&call->pcm_upstream_erasure)) return false;
 	struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
 	struct pcm_call_v92_fast_exchange fast = {
 		.stage = PCM_CALL_V92_FAST_WAIT_PRIME,
@@ -5057,6 +5086,7 @@ static bool begin_v92_fast_response(struct pcm_call *call)
 	    v92_control_rx_init_upstream(&fast.receive, path->upstream.decoder.mapping.data_bits_per_frame) != V92_CONTROL_RX_OK ||
 	    pcm_r_tx_init(&fast.rf, mapping, PCM_R_RF) != PCM_R_TX_OK)
 		return false;
+	v92_erasure_reset(&call->pcm_upstream_erasure);
 	path->fast = fast;
 	path->quality_guard_samples = 0u;
 	path->pending_media_loss = false;
@@ -5068,6 +5098,8 @@ enum pcm_call_result pcm_call_start_fast_exchange(struct pcm_call *call)
 {
 	if (!pcm_call_is_valid(call))
 		return PCM_CALL_INVALID_ARGUMENT;
+	if (!v92_erasure_is_stable(&call->pcm_upstream_erasure))
+		return PCM_CALL_INVALID_STATE;
 	if (!uses_pcm_upstream(call) || !pcm_call_is_online(call) || call->retrain_active)
 		return PCM_CALL_INVALID_STATE;
 	struct pcm_call next = *call;
@@ -5186,7 +5218,7 @@ static enum pcm_call_result observe_v92_data_quality(
 		return PCM_CALL_OK;
 	double error = v92_upstream_quality_error(path->upstream.line.host.gain, frame->squared_error);
 	quality = v92_data_quality_observe(&next, error,
-		frame->ambiguous, frame->uncertain);
+		frame->ambiguous && !frame->erased, frame->uncertain || frame->erased);
 	if (quality == V92_DATA_QUALITY_OK) {
 		call->pcm_upstream_quality = next;
 		event->frame.pcm_upstream = *frame;
@@ -5376,6 +5408,7 @@ static enum pcm_call_result v92_data_octet_owned(
 				if (v92_upstream_data_rx_start_b1u(&path->upstream, &mapping, &plan) != V92_UPSTREAM_DATA_RX_OK ||
 				    !v92_data_quality_restart(&call->pcm_upstream_quality))
 					return PCM_CALL_NUMERIC_FAILURE;
+				v92_erasure_reset(&call->pcm_upstream_erasure);
 				path->b1u_quality.squared_error = 0.0;
 				path->b1u_quality.failed = false;
 				path->b1u_quality.mismatches = 0u;
@@ -5390,6 +5423,23 @@ static enum pcm_call_result v92_data_octet_owned(
 			if (transmitted != V90_DOWNSTREAM_DATA_STREAM_OK)
 				return PCM_CALL_NUMERIC_FAILURE;
 		}
+		struct v92_erasure *erasure = &call->pcm_upstream_erasure;
+		bool permitted = sources && sources->allow_pcm_upstream_erasures &&
+			path->fast.stage == PCM_CALL_V92_FAST_IDLE && !path->quality_guard_samples &&
+			!call->b1_deadline_armed && v92_peer_b1_received_owned(call) &&
+			!path->b1_sync.stage && !path->b1_sync.count;
+		if (erasure->initialized && !permitted) {
+			/* Legacy receive must never inherit an uncertain point history. */
+			if (!v92_erasure_is_stable(erasure)) {
+				path->upstream.failed = true;
+				guard_v92_upstream_failure(path);
+				path->pending_media_loss = erasure->epoch_missing != 0;
+			}
+			v92_erasure_reset(erasure);
+		}
+		if (permitted && !erasure->initialized && !path->upstream.line.symbol_count)
+			(void)v92_erasure_bind(&path->upstream, erasure, 1, erasure->epoch);
+		bool recovering = permitted && erasure->initialized;
 		/* Concealed media is not a received PCM zero. An erased symbol can
 		 * eliminate the true survivor, including its delayed payload history,
 		 * before a later score tie exposes the uncertainty. Clamp delivery
@@ -5397,7 +5447,7 @@ static enum pcm_call_result v92_data_octet_owned(
 		 * own recovery. Repeated loss must not extend that bounded guard.
 		 * Apply this only after transmit succeeds: SOURCE_FAILURE consumes
 		 * neither this sample nor its loss notification. */
-		if (!received_available && !path->upstream.line.delay_remaining) {
+		if (!received_available && !recovering && !path->upstream.line.delay_remaining) {
 			if (!v92_peer_b1_received_owned(call))
 				path->b1u_quality.failed = true;
 			if (!path->quality_guard_samples) {
@@ -5414,6 +5464,8 @@ static enum pcm_call_result v92_data_octet_owned(
 			path->upstream.line.received_frames >= V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES &&
 			!v92_peer_b1_received_owned(call);
 		received = path->upstream.failed || startup_rejected ? V92_UPSTREAM_DATA_RX_OK :
+			recovering ? v92_erasure_octet(&path->upstream, erasure, erasure->call, erasure->epoch,
+				received_octet, received_sample, host_sample, received_available, &frame) :
 			v92_b1_sync_octet_owned(&path->b1_sync, &path->upstream,
 				received_octet, received_sample, host_sample, received_available, &frame);
 		if (received == V92_UPSTREAM_DATA_RX_NO_PATH) {
@@ -5427,6 +5479,8 @@ static enum pcm_call_result v92_data_octet_owned(
 			if (call->b1_deadline_armed)
 				path->b1u_quality.failed = true;
 			guard_v92_upstream_failure(path);
+			if (recovering && (!received_available || erasure->epoch_missing))
+				path->pending_media_loss = true;
 			received = V92_UPSTREAM_DATA_RX_OK;
 		}
 		if (received != V92_UPSTREAM_DATA_RX_FRAME && received != V92_UPSTREAM_DATA_RX_OK)
@@ -5443,9 +5497,14 @@ static enum pcm_call_result v92_data_octet_owned(
 		if (ru != V92_RU_RX_BUFFERING && ru != V92_RU_RX_MISMATCH && ru != V92_RU_RX_DETECTED)
 			return PCM_CALL_SEQUENCE_MISMATCH;
 		if (received == V92_UPSTREAM_DATA_RX_FRAME && path->fast.stage == PCM_CALL_V92_FAST_IDLE &&
-		    frame.rm == V92_PCM_FRAME_RM_SIGNAL && data_path_is_online_owned(call) &&
-		    !begin_v92_fast_response(call))
-			return PCM_CALL_NUMERIC_FAILURE;
+		    frame.rm == V92_PCM_FRAME_RM_SIGNAL && data_path_is_online_owned(call)) {
+			/* A peer request cannot inherit an uncertain inverse. Honor it
+			 * with fresh full training rather than failing the connection. */
+			if (!v92_erasure_is_stable(erasure))
+				return begin_retrain(call, RETRAIN_LOCAL);
+			if (!begin_v92_fast_response(call))
+				return PCM_CALL_NUMERIC_FAILURE;
+		}
 		if (path->fast.stage != PCM_CALL_V92_FAST_IDLE) {
 			if ((received == V92_UPSTREAM_DATA_RX_FRAME && !v92_fast_receive(call, &frame)) ||
 			    ru == V92_RU_RX_DETECTED) {
@@ -5591,7 +5650,11 @@ static enum pcm_call_result data_octet_owned(
 	if (uses_pcm_upstream(call)) {
 		result = v92_data_octet_owned(call, received_octet, received_sample, host_sample, received_available,
 			sources, &generated, &emitted, alternate);
-		if (retrain_candidate)
+		/* Quiet can be a missing packet rather than a peer retrain. Keep
+		 * qualified erasure notifications clocking HDLC while the independent
+		 * detector decides; they contain no deliverable payload. */
+		if (retrain_candidate && !(emitted.kind == PCM_CALL_PCM_UPSTREAM_FRAME &&
+		    emitted.frame.pcm_upstream.erased))
 			emitted = (struct pcm_call_data_event){ 0 };
 	} else if (call->local_role == V90_ANALOG_MODEM) {
 		analog_result = v90_analog_path_transmit_owned(

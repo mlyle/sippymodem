@@ -599,6 +599,11 @@ extern void modem_hdlc_start(struct modem *m);
 extern int  modem_hdlc_reframe(struct modem *m);
 extern int  modem_hdlc_get_bits(struct modem *m,int nbits,u8 *buf,int cnt);
 extern int  modem_hdlc_put_bits(struct modem *m,int nbits,u8 *buf,int cnt);
+/* Established framed data only. An erased interval publishes no payload,
+ * preserves TX/LAPM/compression and advances the ordinary receive bit clock. */
+extern bool modem_accepts_erased_bits(const struct modem *m);
+extern bool modem_put_erasure_bits(struct modem *m, int bits);
+extern int modem_hdlc_discard_partial_receive(struct modem *m);
 
 extern int  modem_ec_init(struct modem *m);
 extern void modem_ec_exit(struct modem *m);

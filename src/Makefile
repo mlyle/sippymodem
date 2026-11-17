@@ -254,6 +254,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v92_b1_sync.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_upstream_model.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_residual.c \
+	$(DSP_PCM_SOURCE_DIR)/v92_erasure.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_data_quality.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_cpd_direct.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_cpd_gain.c \

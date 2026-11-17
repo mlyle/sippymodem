@@ -573,7 +573,7 @@ bool v92_upstream_model_finish_b1u(struct v92_upstream_data_rx *receiver)
 }
 
 static bool wire_cells(const struct v92_upstream_data_line *line,
-	enum g711_law law, bool probability,
+	enum g711_law law, bool probability, const bool *usable,
 	struct v92_pcm_frame_cell cells[V92_PCM_MAPPING_FRAME_SYMBOLS])
 {
 	if (line->plan.observation != V92_PCM_FRAME_CONSTELLATION ||
@@ -594,6 +594,10 @@ static bool wire_cells(const struct v92_upstream_data_line *line,
 		return false;
 	for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i) {
 		struct pcm_gain_interval cell;
+		if (usable && !usable[i]) {
+			cells[i] = (struct v92_pcm_frame_cell){ 0 };
+			continue;
+		}
 		int32_t raw = line->raw[i] * line->polarity;
 		int16_t host = line->host_samples[i];
 		if (!line->wire_known[i] || !line->received[i] ||
@@ -660,12 +664,15 @@ static bool recover_acquisition(const struct v92_upstream_model *model,
 	return true;
 }
 
-enum v92_pcm_frame_result v92_upstream_model_decode(struct v92_upstream_model *model,
+enum v92_pcm_frame_result v92_upstream_model_decode_usable(struct v92_upstream_model *model,
 	struct v92_pcm_frame_rx *decoder, const struct v92_upstream_data_line *line,
 	uint8_t *bits, struct v92_pcm_frame_decision *decision,
 	double predictions[V92_PCM_MAPPING_FRAME_SYMBOLS],
-	struct v92_observation_geometry geometry[2])
+	struct v92_observation_geometry geometry[2], const bool *usable)
 {
+	if (usable && (model->valid || model->scalar_gain || model->acquiring || model->fitting ||
+	    line->received_frames < V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES))
+		return V92_PCM_FRAME_INVALID_PARAMETERS;
 	bool b1u = line->received_frames < V92_B1U_FRAMES;
 	size_t count = decoder->mapping.data_bits_per_frame;
 	/* A model cannot be fitted without every actual wire observation. Decline
@@ -707,10 +714,15 @@ enum v92_pcm_frame_result v92_upstream_model_decode(struct v92_upstream_model *m
 		enum v92_pcm_frame_result result;
 		if (model->acquiring) {
 			result = v92_pcm_frame_acquire_model(decoder, line->samples, bits, count, decision);
-		} else if (wire_cells(line, decoder->mapping.law, sigma > 0., cells)) {
-			struct v92_pcm_frame_channel channel = { .cells = cells, .cell_sigma = sigma };
+		} else if (wire_cells(line, decoder->mapping.law, sigma > 0., usable, cells)) {
+			struct v92_pcm_frame_channel channel = { .cells = cells, .cell_sigma = sigma, .received = usable };
 			struct v92_pcm_frame_likelihood likelihood;
 
+			result = v92_pcm_frame_decode_observed_owned(decoder, line->samples,
+				b1u, bits, count, decision, &channel, &likelihood);
+		} else if (usable) {
+			struct v92_pcm_frame_channel channel = { .received = usable };
+			struct v92_pcm_frame_likelihood likelihood;
 			result = v92_pcm_frame_decode_observed_owned(decoder, line->samples,
 				b1u, bits, count, decision, &channel, &likelihood);
 		} else {
@@ -818,4 +830,13 @@ enum v92_pcm_frame_result v92_upstream_model_decode(struct v92_upstream_model *m
 	for (unsigned i = 0u; i < 2u; ++i)
 		model->cost[i] = (model->valid & (1u << i)) ? model->cost[i] - minimum : 0u;
 	return V92_PCM_FRAME_OK;
+}
+
+enum v92_pcm_frame_result v92_upstream_model_decode(struct v92_upstream_model *model,
+	struct v92_pcm_frame_rx *decoder, const struct v92_upstream_data_line *line,
+	uint8_t *bits, struct v92_pcm_frame_decision *decision,
+	double predictions[V92_PCM_MAPPING_FRAME_SYMBOLS],
+	struct v92_observation_geometry geometry[2])
+{
+	return v92_upstream_model_decode_usable(model, decoder, line, bits, decision, predictions, geometry, NULL);
 }

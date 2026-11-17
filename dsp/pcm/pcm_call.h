@@ -3,6 +3,8 @@
 #ifndef PCM_CALL_H
 #define PCM_CALL_H
 
+#include "v92_erasure.h"
+
 #include "pcm_phase3_entry.h"
 #include "pcm_downstream_rx.h"
 #include "pcm_downstream_equalizer.h"
@@ -218,6 +220,8 @@ struct pcm_fallback_restart {
 	uint16_t round_trip_delay_samples;
 	int16_t phase2_nominal_amplitude;
 	uint8_t upstream_retry_ceiling;
+	struct v92_data_quality pcm_upstream_quality;
+	struct v92_erasure pcm_upstream_erasure;
 	enum pcm_protocol protocol;
 	enum g711_law law;
 	bool pcm_upstream_trained;
@@ -469,6 +473,8 @@ struct pcm_call_data_sources {
 	/* PCM upstream has no conventional mapping request or auxiliary bit. */
 	pcm_frame_source pcm_upstream;
 	void *pcm_upstream_context;
+	/* The host has established framed error control and can consume erasures. */
+	bool allow_pcm_upstream_erasures;
 };
 
 enum pcm_call_data_event_kind {
@@ -523,6 +529,7 @@ struct pcm_call {
 	 * across Phase 4, data and rate exchanges on the same 8 kHz grid. */
 	struct fractional_delay upstream_transmit_delay;
 	struct v92_data_quality pcm_upstream_quality;
+	struct v92_erasure pcm_upstream_erasure;
 	struct v92_jd v92_peer_jd;
 	uint32_t enabled_downstream_rate_mask;
 	uint32_t b1_deadline_remaining_samples;

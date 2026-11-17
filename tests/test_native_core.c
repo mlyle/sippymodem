@@ -21,6 +21,8 @@
 #include <v90_profile.h>
 #include <pcm_rate.h>
 #include <pcm_tx_recovery.h>
+#include <hdlc_tx.h>
+#include <hdlc_fcs.h>
 
 #include "test.h"
 #include "lapm_state_fixture.h"
@@ -150,6 +152,147 @@ static bool test_bit_timers_follow_duplex_time(void)
 	CHECK(check_bit_timer_transition(true) &&
 		      check_bit_timer_transition(false),
 	      "link timer transition accounting failed");
+	return true;
+}
+
+struct erasure_timer_state {
+	unsigned mode, expirations;
+};
+
+static void erasure_timer_expired(struct modem *m)
+{
+	struct erasure_timer_state *state = m->dev_data;
+	state->expirations++;
+	if (state->mode == 1)
+		m->bit_timer = 31;
+	else if (state->mode == 2) {
+		m->state = STATE_MODEM_IDLE;
+		m->cfg.ec = 0;
+		m->put_bits = NULL;
+	}
+}
+
+static int accept_timer_bits(struct modem *m, int width, u8 *bits, int count)
+{
+	(void)m; (void)width; (void)bits;
+	return count;
+}
+
+static bool test_erasure_receive_clock(void)
+{
+	struct modem *m = calloc(1, sizeof(*m)), *normal = calloc(1, sizeof(*normal));
+	CHECK(m && normal && !modem_accepts_erased_bits(NULL) &&
+	      !modem_put_erasure_bits(NULL, 1), "erasure fixture allocation failed");
+	const int timers[] = { 0, 1, 17, INT_MAX }, bits[] = { 1, 16, INT_MAX };
+	for (unsigned online_command = 0; online_command < 2; ++online_command)
+	for (unsigned mode = 0; mode < 3; ++mode)
+	for (unsigned t = 0; t < ARRAY_LENGTH(timers); ++t)
+	for (unsigned b = 0; b < ARRAY_LENGTH(bits); ++b) {
+		memset(m, 0, sizeof(*m)); memset(normal, 0, sizeof(*normal));
+		struct erasure_timer_state actual = { .mode = mode }, expected = actual;
+		m->state = normal->state = online_command ? STATE_COMMAND_ONLINE : STATE_MODEM_ONLINE;
+		m->cfg.ec = normal->cfg.ec = 1;
+		m->get_bits = modem_hdlc_get_bits; m->put_bits = modem_hdlc_put_bits;
+		m->packer.hdlc.rx_frame = &m->packer.hdlc._rx_frame;
+		m->packer.hdlc.rx_frame->buf = m->packer.hdlc._rx_buf;
+		m->packer.hdlc.rx_frame->size = sizeof(m->packer.hdlc._rx_buf);
+		m->dev_data = &actual; normal->dev_data = &expected;
+		m->bit_timer = normal->bit_timer = timers[t];
+		m->bit_timer_func = normal->bit_timer_func = erasure_timer_expired;
+		normal->put_bits = accept_timer_bits;
+		u8 dummy = 0;
+		CHECK(modem_accepts_erased_bits(m) &&
+		      !modem_put_erasure_bits(m, 0) && !modem_put_erasure_bits(m, -1) &&
+		      modem_put_bits(normal, 1, &dummy, bits[b]) == bits[b] &&
+		      modem_put_erasure_bits(m, bits[b]), "erasure receive rejected framed owner");
+		CHECK(m->bit_timer == normal->bit_timer && m->bit_timer_func == normal->bit_timer_func &&
+		      m->state == normal->state && m->cfg.ec == normal->cfg.ec &&
+		      actual.expirations == expected.expirations,
+		      "erasure interval diverged from native duplex timer");
+	}
+	m->state = STATE_MODEM_ONLINE; m->cfg.ec = 1; m->bit_timer = 0;
+	m->put_bits = modem_async_put_bits;
+	memcpy(normal, m, sizeof(*m));
+	CHECK(!modem_accepts_erased_bits(m) && !modem_put_erasure_bits(m, 12) &&
+	      !memcmp(normal, m, sizeof(*m)), "raw erasure changed state");
+	m->put_bits = modem_hdlc_put_bits; m->state = STATE_EC_ESTAB;
+	memcpy(normal, m, sizeof(*m));
+	CHECK(!modem_accepts_erased_bits(m) && !modem_put_erasure_bits(m, 12) &&
+	      !memcmp(normal, m, sizeof(*m)), "unestablished erasure changed state");
+	free(m); free(normal);
+	return true;
+}
+
+
+struct erasure_frame_sink {
+	uint8_t payload[32];
+	unsigned frames;
+	size_t count;
+};
+
+static void erasure_frame_received(void *context, frame_t *frame)
+{
+	struct erasure_frame_sink *sink = context;
+	++sink->frames;
+	sink->count = frame->count;
+	if (frame->count <= (int)sizeof(sink->payload))
+		memcpy(sink->payload, frame->buf, (size_t)frame->count);
+}
+
+static bool test_erasure_receive_framing(void)
+{
+	const uint8_t body[] = { 3, 0, 'b', 'y', 't', 'e', 0xff, 0x7e, 0x1f, 0 };
+	uint8_t encoded[256];
+	size_t length = 0;
+	uint16_t fcs = (uint16_t)~hdlc_fcs16(body, sizeof(body));
+	uint32_t packed = 0;
+	int ones = 0;
+	for (unsigned i = 0; i < 8; ++i)
+		encoded[length++] = (0x7eu >> i) & 1u;
+	for (size_t i = 0; i < sizeof(body) + 2; ++i) {
+		uint8_t octet = i < sizeof(body) ? body[i] :
+			(uint8_t)(fcs >> (8 * (i - sizeof(body))));
+		unsigned count = hdlc_tx_append_octet(&packed, &ones, octet);
+		for (unsigned bit = count; bit; --bit)
+			encoded[length++] = (packed >> (bit - 1)) & 1u;
+	}
+	for (unsigned i = 0; i < 8; ++i)
+		encoded[length++] = (0x7eu >> i) & 1u;
+	struct modem *m = calloc(1, sizeof(*m));
+	CHECK(m != NULL, "erasure framing allocation failed");
+	for (size_t cut = 8; cut < length - 8; ++cut) {
+		for (unsigned width = 1; width <= 9; width += 4) {
+			unsigned missing = width < length - 8 - cut ? width : (unsigned)(length - 8 - cut);
+			memset(m, 0, sizeof(*m));
+			modem_hdlc_start(m);
+			m->state = STATE_MODEM_ONLINE;
+			m->cfg.ec = 1;
+			m->count = 123;
+			m->get_bits = modem_hdlc_get_bits;
+			m->put_bits = modem_hdlc_put_bits;
+			struct erasure_frame_sink sink = { 0 };
+			struct hdlc_state *h = &m->packer.hdlc;
+			h->framer = &sink;
+			h->rx_complete = erasure_frame_received;
+			frame_t outgoing = { 0 };
+			h->tx_frame = &outgoing;
+			h->tx_ones = 2;
+			m->pack.bit = 3;
+			m->pack.data = 5;
+			CHECK(modem_put_bits(m, 1, encoded, (int)cut) == (int)cut &&
+			      modem_put_erasure_bits(m, (int)missing) && h->rx_frame->count == 0 &&
+			      h->tx_frame == &outgoing && h->tx_ones == 2 &&
+			      m->pack.bit == 3 && m->pack.data == 5 &&
+			      h->receive_health.quarantine == m->count + MODEM_RATE,
+			      "erasure damaged TX state or retained a partial RX frame");
+			size_t suffix = cut + missing;
+			CHECK(modem_put_bits(m, 1, encoded + suffix, (int)(length - suffix)) == (int)(length - suffix) &&
+			      !sink.frames && modem_put_bits(m, 1, encoded, (int)length) == (int)length &&
+			      sink.frames == 1 && sink.count == sizeof(body) && !memcmp(sink.payload, body, sizeof(body)),
+			      "erased frame leaked or next valid frame failed at bit %zu width %u", cut, missing);
+		}
+	}
+	free(m);
 	return true;
 }
 
@@ -12215,6 +12358,8 @@ int main(void)
 	} tests[] = {
 		{ "duplex link timer accounting",
 		  test_bit_timers_follow_duplex_time },
+		{ "erased receive bit clock", test_erasure_receive_clock },
+		{ "erased receive HDLC resynchronization", test_erasure_receive_framing },
 		{ "instance-owned modem events",
 		  test_modem_events_are_instance_owned },
 		{ "escape discards async transmit fragment",

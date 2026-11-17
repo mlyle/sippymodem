@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "v92_upstream_data_rx.h"
+#include "v92_erasure.h"
 
 #include "memory_region.h"
 #include "sample_math.h"
@@ -449,7 +450,7 @@ static void copy_line(struct v92_upstream_data_line *to,
 
 static enum v92_upstream_data_rx_result receive_frame(
 	struct v92_upstream_data_rx *receiver, struct v92_upstream_data_line *line,
-	struct v92_upstream_data_frame *frame)
+	struct v92_upstream_data_frame *frame, struct v92_erasure *owner)
 {
 	bool budgeted = receiver->input.frame_limited && paired_b1(receiver);
 	if (budgeted && !receiver->input.frame_budget) return V92_UPSTREAM_DATA_RX_INVALID_STATE;
@@ -470,13 +471,23 @@ static enum v92_upstream_data_rx_result receive_frame(
 	memcpy(&model, &receiver->model, model_core);
 	if (alternate_active)
 		model.alternate = receiver->model.alternate;
-	result = v92_upstream_model_decode(
-		&model, &decoder, line, generated.bits, &decision, predictions, receiver->geometry);
+	bool full = true, seed = false, release = true, recovering = false;
+	if (owner) {
+		for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
+			full &= owner->usable[i];
+		recovering = owner->bounded || owner->trust.active || owner->trust.dirty || !full;
+		if (!v92_erasure_frame_begin(owner, &decoder, full, &seed))
+			return fail(receiver, V92_UPSTREAM_DATA_RX_NO_PATH);
+	}
+	result = v92_upstream_model_decode_usable(
+		&model, &decoder, line, generated.bits, &decision, predictions, receiver->geometry, owner ? owner->usable : NULL);
 
 	if (result != V92_PCM_FRAME_OK)
 		return fail(receiver, result == V92_PCM_FRAME_NO_PATH ?
 			V92_UPSTREAM_DATA_RX_NO_PATH :
 			V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE);
+	if (owner && !v92_erasure_frame_end(owner, decision.bits_ready, decision.ambiguous, &release))
+		return fail(receiver, V92_UPSTREAM_DATA_RX_NO_PATH);
 	v92_upstream_model_observe(&model, &decision, line);
 	if (raw && line->received_frames < V92_B1U_ACQUISITION_FRAMES &&
 	    (model.acquiring || line->received_frames >=
@@ -515,6 +526,7 @@ static enum v92_upstream_data_rx_result receive_frame(
 		struct qam_point target = { .in_phase = decision.predicted_samples[symbol] };
 
 		if (raw) {
+			if (owner && !owner->usable[symbol]) continue;
 			/* Use the decoder's channel prediction in original input
 			 * units. G.711 conversion preceded any host conditioning: a
 			 * second quantization here would invent different wire cells.
@@ -561,16 +573,21 @@ static enum v92_upstream_data_rx_result receive_frame(
 		    QAM_EQUALIZER_OK)
 			return fail(receiver, V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE);
 	}
-	generated.rm = decision.rm;
-	generated.uncertain = decision.uncertain;
+	generated.rm = owner && (!full || seed || owner->trust.active) ? V92_PCM_FRAME_RM_NONE : decision.rm;
+	generated.uncertain = decision.uncertain || !full || !release;
 	if (decision.bits_ready) {
 		generated.bit_count = decoder.mapping.data_bits_per_frame;
 		generated.b1u = line->received_frames - V92_PCM_RX_DELAY_FRAMES <
 			V92_B1U_FRAMES;
-		generated.ambiguous = decision.ambiguous;
+		generated.ambiguous = decision.ambiguous || !release;
 		generated.b1u_mismatches = decision.b1u_mismatches;
 	}
-	track_bias(line, &model, &decoder, &decision, error_sum, generated.squared_error);
+	if (!owner || (!owner->bounded && !owner->trust.active && release))
+		track_bias(line, &model, &decoder, &decision, error_sum, generated.squared_error);
+	else {
+		line->tracking.frames = 0;
+		line->tracking.error_sum = 0.;
+	}
 	observe_host_gain(line);
 	if (raw && !model.acquiring)
 		fit_offset(line);
@@ -593,6 +610,11 @@ static enum v92_upstream_data_rx_result receive_frame(
 			sizeof(model) - model_core);
 	copy_line(&receiver->line, line);
 	if (budgeted) receiver->input.frame_budget--;
+	if (owner) {
+		owner->release = release;
+		owner->erased = generated.erased = generated.bit_count && !release && recovering;
+		memset(owner->usable, 0, sizeof owner->usable);
+	}
 	*frame = generated;
 	return V92_UPSTREAM_DATA_RX_FRAME;
 }
@@ -650,7 +672,7 @@ static enum v92_upstream_data_rx_result decode_sample(
 			(line->raw[line->symbol_count] - v92_upstream_line_offset(line) -
 			 line->correction[line->symbol_count]) * line->calibration.gain);
 		if (++line->symbol_count == V92_PCM_MAPPING_FRAME_SYMBOLS)
-			return receive_frame(receiver, line, frame);
+			return receive_frame(receiver, line, frame, NULL);
 		return V92_UPSTREAM_DATA_RX_OK;
 	}
 	input = (struct qam_point){ .in_phase = line->polarity * (double)sample };
@@ -663,7 +685,7 @@ static enum v92_upstream_data_rx_result decode_sample(
 	line->symbol_count++;
 	line->input_samples++;
 	if (final_sample)
-		return receive_frame(receiver, line, frame);
+		return receive_frame(receiver, line, frame, NULL);
 	if (!direct)
 		receiver->line = next;
 	return V92_UPSTREAM_DATA_RX_OK;
@@ -823,4 +845,91 @@ const char *v92_upstream_data_rx_result_name(
 		return "numeric failure";
 	}
 	return "unknown";
+}
+
+/* Codec-only fitted hypotheses and acquisition need their existing bounded
+ * retry policy. This owner applies only to a frozen linear DATA inverse. */
+static bool erasure_supported(const struct v92_upstream_data_rx *receiver)
+{
+	return receiver && !receiver->failed && !receiver->input.count &&
+		!receiver->line.delay_remaining &&
+		receiver->line.plan.observation == V92_PCM_FRAME_CONSTELLATION &&
+		receiver->line.residual.active &&
+		receiver->line.received_frames >= V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES &&
+		!receiver->model.valid && !receiver->model.scalar_gain &&
+		!receiver->model.acquiring && !receiver->model.residual_acquiring && !receiver->model.fitting &&
+		receiver->decoder.kind == V92_PCM_RX_HISTORY && receiver->decoder.path_count &&
+		v34_trellis_state_count(receiver->decoder.paths[0].trellis.selection) <= V92_PCM_RX_PATHS / 2;
+}
+
+bool v92_erasure_bind(struct v92_upstream_data_rx *receiver,
+	struct v92_erasure *owner, uint64_t call, uint64_t epoch)
+{
+	if (!receiver || !v92_erasure_is_valid(owner) || owner->initialized || owner->disabled ||
+	    !call || !epoch || (owner->call && owner->call != call) ||
+	    (owner->epoch && owner->epoch != epoch) ||
+	    memory_regions_overlap(receiver, sizeof(*receiver), owner, sizeof(*owner)) ||
+	    !erasure_supported(receiver) || receiver->line.symbol_count ||
+	    !v92_upstream_data_rx_is_valid(receiver))
+		return false;
+	struct v92_erasure next = {
+		.input = receiver->line.input_samples, .frames = receiver->line.received_frames,
+		.call = call, .epoch = epoch, .initialized = true,
+		.missing = owner->missing, .uncertain = owner->uncertain, .rejoins = owner->rejoins,
+	};
+	if (!v92_erasure_prime(&next, owner))
+		return false;
+	*owner = next;
+	return true;
+}
+
+enum v92_upstream_data_rx_result v92_erasure_octet(
+	struct v92_upstream_data_rx *receiver, struct v92_erasure *owner,
+	uint64_t call, uint64_t epoch, uint8_t code, int16_t sample,
+	int16_t host_sample, bool available, struct v92_upstream_data_frame *frame)
+{
+	if (!receiver || !owner || !frame ||
+	    memory_regions_overlap(receiver, sizeof(*receiver), owner, sizeof(*owner)) ||
+	    memory_regions_overlap(receiver, sizeof(*receiver), frame, sizeof(*frame)) ||
+	    memory_regions_overlap(owner, sizeof(*owner), frame, sizeof(*frame)))
+		return V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT;
+	if (!v92_erasure_is_valid(owner) || !owner->initialized ||
+	    owner->call != call || owner->epoch != epoch ||
+	    owner->input != receiver->line.input_samples ||
+	    owner->frames != receiver->line.received_frames || owner->symbols != receiver->line.symbol_count ||
+	    (owner->bounded && owner->inverse.polarity != receiver->line.polarity) ||
+	    owner->input == UINT64_MAX || !erasure_supported(receiver))
+		return V92_UPSTREAM_DATA_RX_INVALID_STATE;
+	if (receiver->line.symbol_count + 1 == V92_PCM_MAPPING_FRAME_SYMBOLS && frame_blocked(receiver))
+		return V92_UPSTREAM_DATA_RX_INVALID_STATE;
+	struct v92_erasure next = *owner;
+	struct v92_upstream_data_line line;
+	copy_line(&line, &receiver->line);
+	int32_t raw = (int32_t)line.polarity * sample, correction;
+	bool usable;
+	if (!v92_erasure_correct(&next, &line.residual, line.polarity, raw, available, &correction, &usable))
+		return fail(receiver, V92_UPSTREAM_DATA_RX_NO_PATH);
+	unsigned at = line.symbol_count;
+	next.usable[at] = usable;
+	line.raw[at] = raw;
+	line.correction[at] = correction;
+	line.wire[at] = line.polarity * g711_decode(receiver->decoder.mapping.law, code);
+	line.octet[at] = code;
+	line.wire_known[at] = true;
+	line.host_samples[at] = host_sample;
+	line.received[at] = available;
+	line.samples[at] = sample_round_s16(
+		(raw - v92_upstream_line_offset(&line) - correction) * line.calibration.gain);
+	++line.symbol_count;
+	++line.input_samples;
+	++next.input;
+	next.symbols = line.symbol_count;
+	enum v92_upstream_data_rx_result result = V92_UPSTREAM_DATA_RX_OK;
+	if (line.symbol_count == V92_PCM_MAPPING_FRAME_SYMBOLS)
+		result = receive_frame(receiver, &line, frame, &next);
+	else
+		copy_line(&receiver->line, &line);
+	if (result == V92_UPSTREAM_DATA_RX_OK || result == V92_UPSTREAM_DATA_RX_FRAME)
+		*owner = next;
+	return result;
 }

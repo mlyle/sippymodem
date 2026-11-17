@@ -719,6 +719,25 @@ static void modem_tick_bit_timer(struct modem *m, int bits)
 	}
 }
 
+bool modem_accepts_erased_bits(const struct modem *m)
+{
+	return m != NULL && m->cfg.ec &&
+		(m->state == STATE_MODEM_ONLINE || m->state == STATE_COMMAND_ONLINE) &&
+		m->get_bits == modem_hdlc_get_bits && m->put_bits == modem_hdlc_put_bits &&
+		m->bit_timer >= 0 && (!m->bit_timer || m->bit_timer_func != NULL) &&
+		m->packer.hdlc.rx_frame != NULL && m->packer.hdlc.rx_frame->buf != NULL &&
+		m->packer.hdlc.rx_frame->size > 0;
+}
+
+bool modem_put_erasure_bits(struct modem *m, int bits)
+{
+	if (bits <= 0 || !modem_accepts_erased_bits(m) ||
+	    modem_hdlc_discard_partial_receive(m) != 0)
+		return false;
+	modem_tick_bit_timer(m, bits);
+	return true;
+}
+
 /* get/put bits */
 int modem_get_bits(struct modem *m, int nbits, u8 *buf, int n)
 {

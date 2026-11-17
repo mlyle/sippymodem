@@ -14079,6 +14079,385 @@ static bool test_conditioning_recovery(void)
 	return true;
 }
 
+/* Exercise the declared general-filter path through real CPd/E2u/B1u. A tiny
+ * second feed-forward tap makes the optional codec-only fit inapplicable;
+ * production negotiation and residual acquisition otherwise run unchanged. */
+static bool erasure_general_filter;
+
+enum v92_phase4_digital_station_result __real_v92_phase4_digital_station_select_upstream(
+	struct v92_phase4_digital_station *station,
+	const struct v92_cpd_parameters *cpd, const struct v92_upstream_plan *plan);
+
+enum v92_phase4_digital_station_result __wrap_v92_phase4_digital_station_select_upstream(
+	struct v92_phase4_digital_station *station,
+	const struct v92_cpd_parameters *cpd, const struct v92_upstream_plan *plan)
+{
+	if (!erasure_general_filter)
+		return __real_v92_phase4_digital_station_select_upstream(station, cpd, plan);
+	struct v92_cpd_parameters declared = *cpd;
+	struct v92_cpd_filter *filter = &declared.filter[V92_CPD_PREFILTER_FEED_FORWARD];
+	if ((size_t)plan->delay + 1 >= ARRAY_LENGTH(filter->coefficient) ||
+	    filter->count > plan->delay + 1)
+		return V92_PHASE4_DIGITAL_STATION_INVALID_PARAMETERS;
+	filter->count = plan->delay + 2;
+	filter->coefficient[plan->delay + 1] = 1;
+	return __real_v92_phase4_digital_station_select_upstream(station, &declared, plan);
+}
+
+struct erasure_payload {
+	uint32_t frames;
+	bool reject;
+};
+
+static bool erasure_payload(void *context, uint8_t *bits, size_t count)
+{
+	struct erasure_payload *source = context;
+	if (source->reject)
+		return false;
+	pcm_payload_bits(bits, count, source->frames++);
+	return true;
+}
+
+static bool erasure_transitions(const struct pcm_call *online)
+{
+	const struct v92_erasure *owner = &online->pcm_upstream_erasure;
+	CHECK(owner->initialized && v92_erasure_is_stable(owner), "erasure transition needs stable DATA");
+	for (unsigned transition = 0; transition < 3; ++transition) {
+		struct pcm_call call = *online;
+		enum pcm_call_result result = transition == 0 ? pcm_call_start_retrain(&call) :
+			transition == 1 ? pcm_call_start_rate_renegotiation(&call) : pcm_call_start_fast_exchange(&call);
+		CHECK(result == PCM_CALL_OK && pcm_call_is_valid(&call) &&
+		      !call.pcm_upstream_erasure.initialized && call.pcm_upstream_erasure.epoch > owner->epoch &&
+		      call.pcm_upstream_erasure.trust.episodes == owner->trust.episodes &&
+		      call.pcm_upstream_erasure.trust.reseeds == owner->trust.reseeds &&
+		      call.pcm_upstream_erasure.trust.held == owner->trust.held &&
+		      call.pcm_upstream_quality.recovery.attempts == online->pcm_upstream_quality.recovery.attempts,
+		      "transition %u renewed recovery limits or retained a mapping owner", transition);
+	}
+	return true;
+}
+
+static bool erasure_withdrawal(const struct pcm_call *online, uint8_t octet)
+{
+	struct pcm_call call = *online, before = call;
+	CHECK(!v92_erasure_is_stable(&call.pcm_upstream_erasure) &&
+	      pcm_call_start_fast_exchange(&call) == PCM_CALL_INVALID_STATE &&
+	      call_states_equal(&call, &before), "uncertain history started a fast exchange");
+	CHECK(pcm_call_start_retrain(&call) == PCM_CALL_OK && pcm_call_is_valid(&call) &&
+	      pcm_call_is_full_retraining(&call) && !call.pcm_upstream_erasure.initialized &&
+	      call.pcm_upstream_erasure.trust.episodes == before.pcm_upstream_erasure.trust.episodes,
+	      "uncertain history could not yield to full training");
+	call = *online;
+	struct erasure_payload source = { 0 };
+	const struct pcm_call_data_sources sources = {
+		.downstream = erasure_payload, .downstream_context = &source,
+	};
+	struct pcm_call_data_event event;
+	uint8_t output;
+	int16_t sample = decode_octet(call.law, octet);
+	CHECK(pcm_call_data_octet_owned(&call, octet, sample, sample, true, &sources,
+		&output, &event) == PCM_CALL_OK && pcm_call_is_valid(&call) &&
+	      call.state.data_path.v92_digital.upstream.failed &&
+	      call.state.data_path.v92_digital.quality_guard_samples &&
+	      call.state.data_path.v92_digital.pending_media_loss &&
+	      !call.pcm_upstream_erasure.initialized &&
+	      call.pcm_upstream_erasure.epoch > before.pcm_upstream_erasure.epoch,
+	      "withdrawn framed admission reused uncertain receiver history");
+	return true;
+}
+
+static bool run_erasure_call(struct v92_online_pair *pair, unsigned phase, unsigned missing)
+{
+	struct erasure_payload payload[2] = { { 0 }, { .frames = 10000 } };
+	unsigned expected[2] = { 10000, 0 }, held = 0, delivered[2] = { 0 };
+	bool aligned[2] = { false, false }, rejected = false;
+	pair->digital.pcm_upstream_quality.recovery.attempts = 1;
+	for (unsigned clock = 0; clock < 8000; ++clock) {
+		uint8_t input[2], output[2];
+		channel_receive(&pair->wire, &input[0], &input[1]);
+		struct pcm_call *call[] = { &pair->analog, &pair->digital };
+		for (unsigned side = 0; side < 2; ++side) {
+			struct pcm_call_data_sources sources = {
+				.pcm_upstream = erasure_payload, .pcm_upstream_context = &payload[side],
+				.downstream = erasure_payload, .downstream_context = &payload[side],
+				.allow_pcm_upstream_erasures = true,
+			};
+			struct pcm_call_data_event event;
+			bool available = !(side == 1 && clock >= 1536 + phase && clock < 1536 + phase + missing);
+			int16_t sample = available ? decode_octet(call[side]->law, input[side]) : 0;
+			if (side == 1 && clock < 32 && !rejected) {
+				/* Try source refusal on a clone until its next TX boundary.
+				 * Neither loss notification nor either output may be consumed. */
+				struct pcm_call trial = *call[side], before = trial;
+				struct erasure_payload refusal = { .reject = true };
+				struct pcm_call_data_sources refusing = sources;
+				refusing.downstream_context = &refusal;
+				uint8_t sentinel = 0xa5;
+				struct pcm_call_data_event untouched = { 0 };
+				event = untouched;
+				enum pcm_call_result result = pcm_call_data_octet_owned(&trial,
+					input[side], sample, sample, false, &refusing, &sentinel, &event);
+				if (result == PCM_CALL_SOURCE_FAILURE) {
+					CHECK(sentinel == 0xa5 && !memcmp(&event, &untouched, sizeof(event)) &&
+					      call_states_equal(&trial, &before), "source refusal consumed recovery state");
+					rejected = true;
+				}
+			}
+			enum pcm_call_result result = pcm_call_data_octet_owned(call[side], input[side],
+				sample, sample, available, &sources, &output[side], &event);
+			CHECK(result == PCM_CALL_OK && pcm_call_is_online(call[side]),
+			      "law %u phase %u missing %u clock %u side %u left DATA: %s",
+			      call[side]->law, phase, missing, clock, side, pcm_call_result_name(result));
+			if (side == 1) {
+				CHECK(!call[side]->state.data_path.v92_digital.quality_guard_samples &&
+				      call[side]->pcm_upstream_quality.recovery.attempts == 1,
+				      "bounded packet erasure armed recovery or renewed quality credit");
+				if (missing && clock == 1536 + phase)
+					CHECK(erasure_withdrawal(call[side], input[side]), "admission withdrawal failed");
+			}
+			if (event.kind != PCM_CALL_DATA_NONE) {
+				const uint8_t *bits = side ? event.frame.pcm_upstream.bits : event.frame.downstream.bits;
+				size_t count = side ? event.frame.pcm_upstream.bit_count : event.frame.downstream.bit_count;
+				CHECK(event.kind == (side ? PCM_CALL_PCM_UPSTREAM_FRAME : PCM_CALL_DOWNSTREAM_FRAME) &&
+				      count && count <= V92_PCM_MAPPING_MAX_BITS, "unexpected recovered payload event");
+				if (side && event.frame.pcm_upstream.erased) {
+					CHECK(aligned[side] && event.frame.pcm_upstream.ambiguous && missing,
+					      "clean or unaligned word became an erasure");
+					++held;
+					++expected[side];
+					continue;
+				}
+				uint8_t wanted[V92_PCM_MAPPING_MAX_BITS];
+				pcm_payload_bits(wanted, count, expected[side]);
+				if (!aligned[side] && clock < 512 && memcmp(bits, wanted, count))
+					continue; /* Retire only the old source's bounded coding tail. */
+				CHECK(!memcmp(bits, wanted, count) && (!side || !event.frame.pcm_upstream.ambiguous),
+				      "law %u phase %u loss %u clock %u side %u released wrong frame %u",
+				      call[side]->law, phase, missing, clock, side, expected[side]);
+				aligned[side] = true;
+				++expected[side];
+				++delivered[side];
+			}
+			if (clock % 160 == 0)
+				CHECK(pcm_call_is_valid(call[side]), "recovery broke call ownership");
+		}
+		channel_transmit(&pair->wire, output[0], output[1]);
+	}
+	const struct v92_erasure *owner = &pair->digital.pcm_upstream_erasure;
+	CHECK(rejected && aligned[0] && aligned[1] && delivered[0] > 500 && delivered[1] > 500 &&
+	      owner->initialized && owner->missing == missing && held == owner->trust.held &&
+	      v92_erasure_is_stable(owner) &&
+	      (!missing || (held && owner->rejoins)), "packet erasure failed to rejoin bounded DATA");
+	CHECK(erasure_transitions(&pair->digital), "mapping transition retained an old recovery epoch");
+	return true;
+}
+
+
+static bool erasure_receiver_contracts(const struct pcm_call *online)
+{
+	const struct v92_upstream_data_rx *original = &online->state.data_path.v92_digital.upstream;
+	struct v92_erasure owner = online->pcm_upstream_erasure;
+	struct v92_upstream_data_rx *receiver = malloc(sizeof(*receiver));
+	CHECK(receiver, "erasure contract allocation failed");
+	for (unsigned fault = 0; fault < 7; ++fault) {
+		*receiver = *original;
+		owner = online->pcm_upstream_erasure;
+		uint64_t call = 1, epoch = owner.epoch;
+		switch (fault) {
+		case 0: call = 0; break;
+		case 1: epoch = 0; break;
+		case 2: ++epoch; break;
+		case 3: owner.disabled = true; break;
+		case 4: owner.trust.episodes = V92_ERASURE_MAX_EPISODES + 1; break;
+		case 5: receiver->line.residual.active = false; break;
+		case 6: receiver->input.count = 1; break;
+		}
+		struct v92_erasure before = owner;
+		CHECK(!v92_erasure_bind(receiver, &owner, call, epoch) && !memcmp(&owner, &before, sizeof(owner)),
+		      "invalid binding %u mutated recovery ownership", fault);
+	}
+	*receiver = *original;
+	owner = online->pcm_upstream_erasure;
+	CHECK(v92_erasure_bind(receiver, &owner, 1, owner.epoch), "valid receiver did not bind");
+	struct v92_erasure bound = owner;
+	CHECK(!v92_erasure_bind(receiver, &owner, 1, owner.epoch) &&
+	      !memcmp(&owner, &bound, sizeof(owner)), "duplicate binding changed state");
+	for (unsigned fault = 0; fault < 6; ++fault) {
+		owner = bound;
+		uint64_t call = owner.call, epoch = owner.epoch;
+		switch (fault) {
+		case 0: ++call; break;
+		case 1: ++epoch; break;
+		case 2: ++owner.input; break;
+		case 3: ++owner.frames; break;
+		case 4: ++owner.symbols; break;
+		case 5: owner.trust.held = V92_ERASURE_MAX_HELD + 1; break;
+		}
+		struct v92_erasure before = owner;
+		struct v92_upstream_data_frame output = { 0 }, sentinel = output;
+		CHECK(v92_erasure_octet(receiver, &owner, call, epoch, 0, 0, 0, false, &output) ==
+			V92_UPSTREAM_DATA_RX_INVALID_STATE && !memcmp(&owner, &before, sizeof(owner)) &&
+		      !memcmp(receiver, original, sizeof(*receiver)) && !memcmp(&output, &sentinel, sizeof(output)),
+		      "stale recovery input %u consumed receiver state or output", fault);
+	}
+	for (unsigned fault = 0; fault < 12; ++fault) {
+		owner = bound;
+		owner.bounded = true;
+		owner.inverse = (struct v92_erasure_inverse){
+			.source = receiver->line.residual, .polarity = receiver->line.polarity, .ready = true,
+		};
+		for (unsigned i = 0; i < V92_RESIDUAL_LAGS; ++i)
+			owner.inverse.lower[i] = owner.inverse.upper[i] = owner.inverse.source.history[i];
+		CHECK(v92_erasure_is_valid(&owner), "valid bounded inverse was rejected");
+		switch (fault) {
+		case 0: owner.inverse.source.count = UINT8_MAX; break;
+		case 1: owner.inverse.source.cursor = V92_RESIDUAL_LAGS; break;
+		case 2: owner.inverse.source.coefficient[0] = NAN; break;
+		case 3: owner.inverse.source.history[0] = NAN; break;
+		case 4: owner.inverse.ready = false; break;
+		case 5: owner.inverse.polarity = 0; break;
+		case 6: owner.inverse.lower[0] = NAN; break;
+		case 7: owner.inverse.upper[0] = NAN; break;
+		case 8: owner.inverse.lower[0] = nextafter(owner.inverse.upper[0], INFINITY); break;
+		case 9: owner.inverse.upper[0] = nextafter(owner.inverse.lower[0], -INFINITY); break;
+		case 10: owner.inverse.source.active = false; break;
+		case 11: owner.inverse.polarity = -owner.inverse.polarity; break;
+		}
+		struct v92_erasure before = owner;
+		struct v92_upstream_data_frame output = { 0 }, sentinel = output;
+		CHECK(v92_erasure_octet(receiver, &owner, 1, owner.epoch, 0, 0, 0, true, &output) ==
+			V92_UPSTREAM_DATA_RX_INVALID_STATE && !memcmp(&owner, &before, sizeof(owner)) &&
+		      !memcmp(receiver, original, sizeof(*receiver)) && !memcmp(&output, &sentinel, sizeof(output)),
+		      "invalid bounded inverse %u consumed input or output", fault);
+		struct pcm_call corrupted = *online;
+		corrupted.pcm_upstream_erasure = owner;
+		CHECK(!pcm_call_is_valid(&corrupted), "call accepted invalid inverse %u", fault);
+	}
+	/* Clipping must fail atomically even while a bounded history is active.
+	 * An exact representable rail remains valid. Exercise both polarities at
+	 * every non-boundary position so a frame commit cannot hide the fault. */
+	for (int polarity = -1; polarity <= 1; polarity += 2)
+	for (unsigned position = 1; position < V92_PCM_MAPPING_FRAME_SYMBOLS; ++position) {
+		*receiver = *original;
+		receiver->line.polarity = (int8_t)polarity;
+		receiver->line.residual = (struct v92_residual){ .active = true, .offset = -.25 * polarity };
+		for (unsigned i = 0; i < V92_RESIDUAL_LAGS; ++i)
+			receiver->line.residual.history[i] = 17.;
+		owner = online->pcm_upstream_erasure;
+		CHECK(v92_upstream_data_rx_is_valid(receiver) && v92_erasure_bind(receiver, &owner, 1, owner.epoch),
+		      "clipped input fixture did not bind");
+		struct v92_upstream_data_frame output = { 0 }, sentinel = output;
+		uint8_t zero = g711_encode(receiver->decoder.mapping.law, 0);
+		for (unsigned i = 0; i < position; ++i)
+			CHECK(v92_erasure_octet(receiver, &owner, 1, owner.epoch, zero, 0, 0, i != 0, &output) ==
+				V92_UPSTREAM_DATA_RX_OK, "clipped input prefix failed");
+		struct v92_upstream_data_rx saved = *receiver;
+		saved.failed = true;
+		struct v92_erasure before = owner;
+		CHECK(v92_erasure_octet(receiver, &owner, 1, owner.epoch,
+			g711_encode(receiver->decoder.mapping.law, INT16_MAX), INT16_MAX, INT16_MAX, true, &output) ==
+			V92_UPSTREAM_DATA_RX_NO_PATH && !memcmp(receiver, &saved, sizeof(saved)) &&
+		      !memcmp(&owner, &before, sizeof(owner)) && !memcmp(&output, &sentinel, sizeof(output)),
+		      "clipped bounded point consumed input or published output");
+	}
+	for (int polarity = -1; polarity <= 1; polarity += 2) {
+		*receiver = *original;
+		receiver->line.polarity = (int8_t)polarity;
+		receiver->line.residual = (struct v92_residual){ .active = true };
+		for (unsigned i = 0; i < V92_RESIDUAL_LAGS; ++i)
+			receiver->line.residual.history[i] = 17.;
+		owner = online->pcm_upstream_erasure;
+		struct v92_upstream_data_frame output = { 0 };
+		CHECK(v92_erasure_bind(receiver, &owner, 1, owner.epoch) &&
+		      v92_erasure_octet(receiver, &owner, 1, owner.epoch, 0, 0, 0, false, &output) == V92_UPSTREAM_DATA_RX_OK &&
+		      v92_erasure_octet(receiver, &owner, 1, owner.epoch,
+			g711_encode(receiver->decoder.mapping.law, INT16_MAX), INT16_MAX, INT16_MAX, true, &output) ==
+			V92_UPSTREAM_DATA_RX_OK, "exact bounded rail was rejected");
+	}
+	*receiver = *original;
+	owner = bound;
+	owner.trust.episodes = V92_ERASURE_MAX_EPISODES;
+	owner.trust.reseeds = V92_ERASURE_MAX_RESEEDS;
+	owner.trust.held = V92_ERASURE_MAX_HELD;
+	v92_erasure_reset(&owner);
+	CHECK(v92_erasure_bind(receiver, &owner, 1, owner.epoch) &&
+	      owner.trust.episodes == V92_ERASURE_MAX_EPISODES &&
+	      owner.trust.reseeds == V92_ERASURE_MAX_RESEEDS && owner.trust.held == V92_ERASURE_MAX_HELD,
+	      "mapping reset renewed call-wide recovery limits");
+	owner.epoch = UINT64_MAX;
+	v92_erasure_reset(&owner);
+	CHECK(owner.epoch == UINT64_MAX && owner.disabled &&
+	      !v92_erasure_bind(receiver, &owner, 1, owner.epoch), "wrapped epoch accepted stale ownership");
+	free(receiver);
+	return true;
+}
+
+static bool run_erasure_budget(struct v92_online_pair *pair)
+{
+	struct erasure_payload payload[2] = { { 0 }, { .frames = 10000 } };
+	for (unsigned clock = 0; clock < 7500; ++clock) {
+		uint8_t input[2], output[2];
+		channel_receive(&pair->wire, &input[0], &input[1]);
+		struct pcm_call *calls[] = { &pair->analog, &pair->digital };
+		for (unsigned side = 0; side < 2; ++side) {
+			struct pcm_call_data_sources sources = {
+				.pcm_upstream = erasure_payload, .pcm_upstream_context = &payload[side],
+				.downstream = erasure_payload, .downstream_context = &payload[side],
+				.allow_pcm_upstream_erasures = true,
+			};
+			bool available = !(side == 1 && clock >= 512 && (clock - 512) / 640 <= V92_ERASURE_MAX_EPISODES &&
+				(clock - 512) % 640 < 80);
+			int16_t sample = available ? decode_octet(calls[side]->law, input[side]) : 0;
+			struct pcm_call_data_event event;
+			CHECK(pcm_call_data_octet_owned(calls[side], input[side], sample, sample,
+				available, &sources, &output[side], &event) == PCM_CALL_OK,
+			      "repeated erasure changed the data clock");
+			if (side == 1 && calls[side]->state.data_path.v92_digital.quality_guard_samples) {
+				const struct pcm_call_v92_digital_data *path = &calls[side]->state.data_path.v92_digital;
+				CHECK(clock >= 512 + V92_ERASURE_MAX_EPISODES * 640 && path->upstream.failed &&
+				      path->pending_media_loss && pcm_call_is_valid(calls[side]) &&
+				      calls[side]->pcm_upstream_erasure.trust.episodes == V92_ERASURE_MAX_EPISODES,
+				      "erasure exhaustion renewed its budget or lost known-loss fallback");
+				return true;
+			}
+		}
+		channel_transmit(&pair->wire, output[0], output[1]);
+	}
+	CHECK(false, "ninth separated erasure did not enter bounded recovery");
+}
+
+static bool test_v92_erasure_calls(void)
+{
+	struct v92_online_pair *trained = malloc(sizeof(*trained)), *pair = malloc(sizeof(*pair));
+	CHECK(trained && pair, "erasure call allocation failed");
+	bool success = true;
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA && success; ++law) {
+		const struct v92_upstream_offer offer = {
+			.peer_mask = UINT32_C(1) << 9, .local_maximum = 10, .expected = 10,
+			.payload_frames = 200, .postcursor = .1,
+		};
+		erasure_general_filter = true;
+		success = capture_v92_duplex_data(law, 3, false, &offer, NULL, 0, trained);
+		erasure_general_filter = false;
+		if (!success)
+			break;
+		success = erasure_receiver_contracts(&trained->digital);
+		*pair = *trained;
+		if (success)
+			success = run_erasure_budget(pair);
+		const unsigned losses[] = { 0, 80, 160, 320 };
+		const unsigned phases[] = { 0, 5, 11 };
+		for (size_t loss = 0; loss < ARRAY_LENGTH(losses) && success; ++loss)
+			for (size_t phase = 0; phase < ARRAY_LENGTH(phases) && success; ++phase) {
+				*pair = *trained;
+				success = run_erasure_call(pair, phases[phase], losses[loss]);
+			}
+	}
+	free(pair);
+	free(trained);
+	return success;
+}
+
 int main(int argc, char **argv)
 {
 	static const struct {
@@ -14146,6 +14525,7 @@ int main(int argc, char **argv)
 		{ "V.92 role-local Phase 4 handoffs",
 		  test_v92_phase4_control },
 		{ "V.92 continuous duplex PCM data", test_v92_duplex_data },
+		{ "V.92 bounded erasures through call ownership", test_v92_erasure_calls },
 		{ "V.92 damaged TRN2u recovers within budget", test_v92_trn2u_recovery },
 		{ "V.92 weak-postcursor PCM data", test_v92_weak_postcursor_data },
 		{ "V.92 two-postcursor PCM data", test_v92_two_postcursor_data },

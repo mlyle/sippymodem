@@ -2246,6 +2246,7 @@ V92_UPSTREAM_DATA_RX_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_v92_upstream_data_rx.o \
 	$(BUILD_DIR)/v92_cpd_channel.o \
 	$(BUILD_DIR)/v92_upstream_data_rx.o \
+	$(BUILD_DIR)/v92_erasure.o \
 	$(filter-out \
 		$(BUILD_DIR)/test_v92_upstream_control_line_rx.o \
 		$(BUILD_DIR)/test_v92_upstream_data_tx.o, \
@@ -2472,6 +2473,7 @@ V92_PHASE4_E2U_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_v92_phase4_e2u.o \
 	$(BUILD_DIR)/v92_phase4_e2u.o \
 	$(BUILD_DIR)/v92_upstream_data_rx.o \
+	$(BUILD_DIR)/v92_erasure.o \
 	$(BUILD_DIR)/v92_upstream_data_tx.o \
 	$(V92_PHASE4_DIGITAL_STATION_OBJECTS) \
 	$(filter-out \
@@ -3066,6 +3068,7 @@ PCM_CALL_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/v90_profile.o \
 	$(BUILD_DIR)/pcm_rate.o \
 	$(BUILD_DIR)/v92_upstream_data_rx.o \
+	$(BUILD_DIR)/v92_erasure.o \
 	$(BUILD_DIR)/v92_upstream_data_tx.o \
 	$(BUILD_DIR)/v34_data_quality.o \
 	$(BUILD_DIR)/pcm_call.o \
@@ -3397,6 +3400,7 @@ FSK_INTEGRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/media.o \
 	$(BUILD_DIR)/g711.o
 V8_HANDOFF_INTEGRATION_BINARY := $(BUILD_DIR)/test_v8_handoff_integration
+PCM_ERASURE_TEST_BINARY := $(BUILD_DIR)/test_pcm_erasures
 DS0_DATAPUMP_TEST_BINARY := $(BUILD_DIR)/test_ds0_datapump
 DS0_SIP_TEST_BINARY := $(BUILD_DIR)/test_ds0_sip
 DS0_PPP_TEST_BINARY := $(BUILD_DIR)/test_ds0_ppp
@@ -3457,6 +3461,7 @@ TEST_BINARIES := $(BUILD_DIR)/test_pcm_tx_recovery $(BUILD_DIR)/test_rtp_transmi
 	$(V8_CALLING_TEST_BINARY) \
 	$(V8_HANDOFF_TEST_BINARY) \
 	$(V8_HANDOFF_INTEGRATION_BINARY) \
+	$(PCM_ERASURE_TEST_BINARY) \
 	$(V8_FSK_TEST_BINARY) \
 	$(V8_LINE_CONDITIONER_TEST_BINARY) \
 	$(V8_FRAMING_TEST_BINARY) $(V8_MENU_TEST_BINARY) \
@@ -4814,7 +4819,7 @@ $(V90_PHASE2_INITIAL_PROBE_TEST_BINARY): \
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(PCM_CALL_TEST_BINARY): $(PCM_CALL_TEST_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^ -lm
+	$(CC) $(LDFLAGS) -o $@ $^ -lm -Wl,--wrap=v92_phase4_digital_station_select_upstream
 
 $(V90_PROFILE_TEST_BINARY): $(V90_PROFILE_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
@@ -4912,6 +4917,13 @@ $(V8_HANDOFF_INTEGRATION_BINARY): $(BUILD_DIR)/test_v8_handoff_integration.o \
 
 $(FSK_INTEGRATION_TEST_BINARY): $(FSK_INTEGRATION_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
+
+$(PCM_ERASURE_TEST_BINARY): $(BUILD_DIR)/test_pcm_erasures.o \
+	$(filter-out $(BUILD_DIR)/test_fsk_integration.o,$(FSK_INTEGRATION_TEST_OBJECTS))
+	$(CC) $(LDFLAGS) -Wl,--wrap=v92_profile_init \
+		-Wl,--wrap=v92_phase4_digital_station_select_upstream \
+		-Wl,--wrap=v92_erasure_bind -Wl,--wrap=modem_put_erasure_bits -o $@ $^ -lm
+
 
 $(BUILD_DIR)/test_v22_startup: $(BUILD_DIR)/test_v22_startup.o \
 	$(filter-out $(BUILD_DIR)/test_fsk_integration.o,$(FSK_INTEGRATION_TEST_OBJECTS))
@@ -5791,6 +5803,9 @@ $(BUILD_DIR)/v92_upstream_data_tx.o: \
 
 $(BUILD_DIR)/v92_upstream_data_rx.o: \
 	$(DSP_PCM_SOURCE_DIR)/v92_upstream_data_rx.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v92_erasure.o: $(DSP_PCM_SOURCE_DIR)/v92_erasure.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v92_residual.o: $(DSP_PCM_SOURCE_DIR)/v92_residual.c | $(BUILD_DIR)

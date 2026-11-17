@@ -1004,17 +1004,34 @@ int modem_hdlc_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt)
 	return bit_cnt;
 }
 
+static void hdlc_reset_receive_frame(struct hdlc_state *h)
+{
+	hdlc_rx_reset(&h->rx);
+	h->rx_frame->count = 0;
+	h->rx_frame->fcs = INIT_FCS;
+}
+
+int modem_hdlc_discard_partial_receive(struct modem *m)
+{
+	if (m == NULL || m->put_bits != modem_hdlc_put_bits)
+		return -1;
+	struct hdlc_state *h = &m->packer.hdlc;
+	if (h->rx_frame == NULL || h->rx_frame->buf == NULL || h->rx_frame->size <= 0)
+		return -1;
+	hdlc_reset_receive_frame(h);
+	modem_hdlc_receive_gap(m, m->count);
+	return 0;
+}
+
 static void hdlc_reset_physical_framing(
 	struct modem *m, struct hdlc_state *h)
 {
 	h->tx_frame = NULL;
 	h->tx_ones = 0;
-	hdlc_rx_reset(&h->rx);
+	hdlc_reset_receive_frame(h);
 	h->receive_health = (struct hdlc_receive_health){0};
 	h->raw_text = (struct raw_text_probe){0};
 	h->raw_bits = (struct bits_state){0};
-	h->rx_frame->count = 0;
-	h->rx_frame->fcs = INIT_FCS;
 	m->pack.bit = m->unpack.bit = 0;
 	m->pack.data = m->unpack.data = 0;
 }

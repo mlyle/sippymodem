@@ -181,6 +181,8 @@ struct modem_test_case {
 	bool request_lapm;
 	bool require_lapm;
 	bool require_v44;
+	/* Nonzero selects a bounded PCM erasure case, without sample-slip faults. */
+	unsigned pcm_erasure_samples;
 	bool digital_caller;
 	bool automatic_pcm_roles;
 	bool startup_robbed_bits;
@@ -568,9 +570,9 @@ static bool process_transmit_frame(
 			endpoint->prior_codeword = current;
 		}
 	}
-	CHECK(endpoint->erased_samples <= SIP_FRAME_SAMPLES, "invalid media erasure fixture");
+	size_t erased = endpoint->erased_samples < SIP_FRAME_SAMPLES ? endpoint->erased_samples : SIP_FRAME_SAMPLES;
 	for (size_t index = 0; index < SIP_FRAME_SAMPLES; ++index) {
-		received_mask[index] = index >= endpoint->erased_samples;
+		received_mask[index] = index >= erased;
 		if (!received_mask[index] && !endpoint->concealment_matches_signal) {
 			endpoint->receive_codewords[index] = (uint8_t)silence;
 			endpoint->receive[index] = decode_codeword(law, (uint8_t)silence);
@@ -590,7 +592,7 @@ static bool process_transmit_frame(
 			finished.tv_nsec - started.tv_nsec);
 		endpoint->process_samples += SIP_FRAME_SAMPLES;
 	}
-	endpoint->erased_samples = 0;
+	endpoint->erased_samples -= erased;
 	endpoint->concealment_matches_signal = false;
 	if (!exact_output)
 		return media_encode(
@@ -1858,10 +1860,12 @@ static bool exercise_v34_media_gap(
 
 static bool exercise_lapm_media_loss(
 	struct integration_endpoint *caller, struct integration_endpoint *answerer,
-	enum DP_ID id, enum media_codec codec, const struct media_recorder *recorder)
+	enum DP_ID id, enum media_codec codec, const struct media_recorder *recorder,
+	unsigned pcm_erasure_samples)
 {
 	enum { PAYLOAD = 128 };
 	bool pcm_upstream = id == DP_V92;
+	bool expect_retrain = pcm_upstream && !pcm_erasure_samples;
 	struct integration_endpoint *ends[] = { caller, answerer };
 	struct dp *owned[] = { caller->modem->dp, answerer->modem->dp };
 	uint32_t rates[2][2] = {
@@ -1899,7 +1903,7 @@ static bool exercise_lapm_media_loss(
 		/* PCM upstream recovers autonomously; conventional V.34 coasts the
 		 * interval. Neither may discard the acknowledged link's queues. */
 		if (!pcm_upstream || m->dsp_info.pcm_role == MODEM_PCM_ROLE_DIGITAL)
-			ends[side]->erased_samples = pcm_upstream ? 80u : SIP_FRAME_SAMPLES;
+			ends[side]->erased_samples = pcm_upstream ? (pcm_erasure_samples ? pcm_erasure_samples : 80u) : SIP_FRAME_SAMPLES;
 		ends[side]->concealment_matches_signal = !pcm_upstream;
 		CHECK(modem_write(m, (const char *)payload[side] + PAYLOAD, PAYLOAD) == PAYLOAD,
 		      "media loss fixture did not retain following terminal data");
@@ -1926,7 +1930,7 @@ static bool exercise_lapm_media_loss(
 		if (settled == 25u)
 			break;
 	}
-	CHECK(poll_seen[0] == pcm_upstream && poll_seen[1] == pcm_upstream && settled == 25u &&
+	CHECK(poll_seen[0] == expect_retrain && poll_seen[1] == expect_retrain && settled == 25u &&
 	      (!pcm_upstream ||
 	       (caller->modem->dsp_info.upstream_mode == MODEM_UPSTREAM_PCM &&
 	        answerer->modem->dsp_info.upstream_mode == MODEM_UPSTREAM_PCM)) &&
@@ -2677,6 +2681,15 @@ static bool run_media_call(
 			       &caller_rate_monitor,
 			       test_case->minimum_caller_rate_signal_sample)),
 	      "%s integration endpoints did not initialize", test_case->name);
+	if (test_case->pcm_erasure_samples) {
+		const struct channel_bench_effect_spec postcursor = {
+			.kind = CHANNEL_BENCH_ECHO,
+			.parameters.echo = { .delay_samples = 1, .gain_q15 = 3277 },
+		};
+		struct integration_endpoint *digital = test_case->digital_caller ? &caller : &answerer;
+		CHECK(channel_bench_init(&digital->receive_bench, &postcursor, 1) == CHANNEL_BENCH_OK,
+		      "PCM erasure postcursor fixture failed");
+	}
 	caller.robbed_bits = answerer.robbed_bits = test_case->startup_robbed_bits;
 	if (test_case->playout_echo) {
 		CHECK(test_case->playout_step_samples < ARRAY_LENGTH(playout.forward),
@@ -3151,7 +3164,7 @@ static bool run_media_call(
 			CHECK(exercise_v34_media_gap(&caller, &answerer, codec, &recorder),
 			      "%s did not recover after a short media gap", test_case->name);
 		if (connected_id == DP_V34 && !test_case->raw_transport)
-			CHECK(exercise_lapm_media_loss(&caller, &answerer, DP_V34, codec, &recorder),
+			CHECK(exercise_lapm_media_loss(&caller, &answerer, DP_V34, codec, &recorder, 0),
 			      "%s media loss did not preserve outstanding LAPM data", test_case->name);
 		CHECK(caller.modem->cfg.ec == !test_case->raw_transport &&
 		      answerer.modem->cfg.ec == !test_case->raw_transport,
@@ -3237,13 +3250,15 @@ static bool run_media_call(
 	/* Automatic quality recovery can lower the upstream rate. Exercise it
 	 * after the fixed-rate ATO1 checks, before protocol cleardown. */
 	if (connected_id == DP_V92 && !test_case->raw_transport && !test_case->playout_echo) {
-		CHECK(exercise_lapm_media_loss(&caller, &answerer, DP_V92, codec, &recorder),
+		CHECK(exercise_lapm_media_loss(&caller, &answerer, DP_V92, codec, &recorder,
+			      test_case->pcm_erasure_samples),
 		      "%s media loss did not preserve outstanding LAPM data", test_case->name);
-		CHECK(exercise_pcm_sample_slip(&caller, &answerer, codec, &recorder, false),
-		      "%s upstream slip did not preserve outstanding LAPM data", test_case->name);
+		if (!test_case->pcm_erasure_samples)
+			CHECK(exercise_pcm_sample_slip(&caller, &answerer, codec, &recorder, false),
+			      "%s upstream slip did not preserve outstanding LAPM data", test_case->name);
 	}
 	if ((connected_id == DP_V90 || connected_id == DP_V92) && !test_case->raw_transport &&
-	    !test_case->playout_echo)
+	    !test_case->playout_echo && !test_case->pcm_erasure_samples)
 		CHECK(exercise_pcm_sample_slip(&caller, &answerer, codec, &recorder, true),
 		      "%s downstream slip did not preserve outstanding LAPM data", test_case->name);
 	if (connected_id == DP_V91) {
