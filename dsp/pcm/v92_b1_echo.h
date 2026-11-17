@@ -11,6 +11,7 @@ enum {
 	V92_B1_ECHO_RADIUS = 320,
 	V92_B1_ECHO_BINS = 2 * V92_B1_ECHO_RADIUS + 1,
 	V92_B1_ECHO_SAMPLES = V92_B1U_SYMBOLS,
+	V92_B1_ECHO_FIT_INPUTS = 144,
 	V92_B1_ECHO_INPUTS = (V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES) *
 		V92_PCM_MAPPING_FRAME_SYMBOLS,
 };
@@ -46,7 +47,10 @@ struct v92_b1_echo {
 	unsigned stage;
 	bool retained;
 	int16_t ideal[V92_B1_ECHO_SAMPLES];
-	int16_t raw[V92_B1_ECHO_INPUTS], cleaned[V92_B1_ECHO_INPUTS];
+	int16_t raw[V92_B1_ECHO_INPUTS];
+	/* Only the fitting interval is reread to validate captured subtraction.
+	 * The full raw and wire histories serve the alternate decoder below. */
+	int16_t cleaned[V92_B1_ECHO_FIT_INPUTS];
 	uint8_t code[V92_B1_ECHO_INPUTS];
 	double prediction[V92_B1_ECHO_INPUTS + 2 * V92_B1_ECHO_RADIUS];
 	float coefficients[PCM_HOST_ECHO_FILTER_TAPS];

@@ -4777,6 +4777,12 @@ static bool run_b1_echo_owners(unsigned block, unsigned fault)
 			      PCM_HOST_ECHO_INVALID_STATE && sentinel == 123.0, "unavailable projection changed output");
 			CHECK(pcm_host_echo_predict(&owner->echo, PCM_HOST_ECHO_FILTER, raw, &cleaned) == PCM_HOST_ECHO_OK,
 			      "B1 echo prediction failed");
+			/* The early prediction prefix is still being captured at input
+			 * zero. Check both sides of the deferred-fit boundary as well:
+			 * inconsistent subtraction must never publish an alternate. */
+			if ((fault == 7 && i == 0) || (fault == 8 && i == 143) ||
+			    (fault == 9 && i == 144))
+				++cleaned;
 			if (i % block == 0)
 				v92_b1_echo_begin_block_owned(&owner->recovery, block);
 			unsigned budget = owner->recovery.budget;
@@ -4826,6 +4832,9 @@ static bool run_b1_echo_owners(unsigned block, unsigned fault)
 			CHECK(pcm_host_echo_active_delay_owned(&owner->echo, PCM_HOST_ECHO_FILTER) == 900 &&
 			      !v92_b1_echo_accept_owned(&owner->recovery, &owner->echo), "declined B1 echo changed delay");
 		}
+		if (fault >= 7)
+			CHECK(owner->recovery.count == (fault == 9 ? 145u : 144u),
+			      "B1 echo consistency failure changed its observation boundary");
 		v92_b1_echo_reset(&owner->recovery);
 		CHECK(owner->recovery.count == 0 && owner->recovery.replayed == 0,
 		      "B1 echo reset retained the previous epoch");
@@ -4839,7 +4848,7 @@ static bool test_b1_echo_owners(void)
 	const unsigned blocks[] = { 40, 80, 160, 240 };
 	for (unsigned b = 0; b < ARRAY_LENGTH(blocks); ++b)
 		CHECK(run_b1_echo_owners(blocks[b], 0), "B1 echo owner/block isolation failed");
-	for (unsigned fault = 1; fault <= 6; ++fault)
+	for (unsigned fault = 1; fault <= 9; ++fault)
 		CHECK(run_b1_echo_owners(80, fault), "B1 echo decline isolation failed");
 	return true;
 }

@@ -17,7 +17,7 @@
 enum {
 	RADIUS = V92_B1_ECHO_RADIUS, BINS = V92_B1_ECHO_BINS,
 	B1_SAMPLES = V92_B1_ECHO_SAMPLES,
-	FIT_FIRST = 24, FIT_END = 128, FIT_READY = FIT_END + 16,
+	FIT_FIRST = 24, FIT_READY = V92_B1_ECHO_FIT_INPUTS, FIT_END = FIT_READY - 16,
 	FIT_SAMPLES = FIT_END - FIT_FIRST, HELD = 200,
 	SCORE_END = FIT_READY + 2 * HELD, CONSTELLATION_MODEL = 3,
 };
@@ -372,7 +372,8 @@ static bool capture(struct v92_b1_echo *recovery, const struct pcm_host_echo *ec
 	unsigned i, uint8_t code, int16_t raw, int16_t cleaned)
 {
 	recovery->raw[i] = raw;
-	recovery->cleaned[i] = cleaned;
+	if (i < FIT_READY)
+		recovery->cleaned[i] = cleaned;
 	recovery->code[i] = code;
 	/* Capture the initial shifted prediction prefix over 80 inputs. Future
 	 * received times use existing past TX: the frozen delay exceeds radius.
