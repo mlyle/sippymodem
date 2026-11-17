@@ -4,6 +4,7 @@
 
 #include "integer_math.h"
 #include "memory_region.h"
+#include "ring_history.h"
 #include "sample_math.h"
 #include "wide_uint.h"
 
@@ -225,7 +226,7 @@ static bool estimate_echo(
 		predicted += coefficient * sample;
 		if (energy != NULL)
 			accumulated_energy += sample * sample;
-		index = index == 0 ? PCM_ECHO_REFERENCE_HISTORY_SAMPLES - 1u : index - 1u;
+		index = ring_index_previous(index, PCM_ECHO_REFERENCE_HISTORY_SAMPLES);
 	}
 	/* Finite float coefficients times int16 references cannot overflow double
 	 * in 384 taps. Any nonfinite coefficient propagates to the final sum,
@@ -346,7 +347,7 @@ static enum pcm_host_echo_result prepare_training_step(
 		step->coefficients[tap] = (float)coefficient;
 		/* Preserve the float product used by post-update qualification. */
 		post_estimate += step->coefficients[tap] * echo->reference.samples[index];
-		index = index == 0 ? PCM_ECHO_REFERENCE_HISTORY_SAMPLES - 1u : index - 1u;
+		index = ring_index_previous(index, PCM_ECHO_REFERENCE_HISTORY_SAMPLES);
 	}
 	if (!isfinite(post_estimate))
 		return PCM_HOST_ECHO_NUMERIC_FAILURE;

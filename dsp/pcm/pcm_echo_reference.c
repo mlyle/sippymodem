@@ -270,6 +270,24 @@ static bool find_best_scan(
 	return found;
 }
 
+static void accumulate_scan_span(struct pcm_echo_reference *reference,
+	uint32_t first, uint32_t stop, const int16_t *end, int16_t received_sample)
+{
+	for (uint32_t index = first; index < stop; ++index) {
+		int16_t sample = *--end;
+		int64_t cross = (int64_t)sample * received_sample;
+
+		/* Valid first moments cannot overflow their 47-bit bound. Keep
+		 * corrupt state defined too; scoring rejects out-of-bound sums. */
+		reference->scan_reference_sum[index] = wrap_s64_from_u64(
+			(uint64_t)reference->scan_reference_sum[index] + (uint64_t)(int64_t)sample);
+		reference->scan_reference_energy[index] = add_u64_saturating(
+			reference->scan_reference_energy[index], square_s16(sample));
+		reference->scan_cross_energy[index] = add_s64_saturating(
+			reference->scan_cross_energy[index], cross);
+	}
+}
+
 enum pcm_echo_reference_result pcm_echo_reference_scan_observe(
 	struct pcm_echo_reference *reference, int16_t received_sample,
 	struct pcm_echo_reference_scan_result *result)
@@ -302,25 +320,12 @@ enum pcm_echo_reference_result pcm_echo_reference_scan_observe(
 		reference->scan_input_energy, input_energy);
 	size_t cursor = ring_index_at_age(reference->write,
 		PCM_ECHO_REFERENCE_HISTORY_SAMPLES, reference->scan_pre_samples + 1u);
-	for (uint32_t index = 0; index < reference->scan_count; ++index) {
-		int16_t sample = reference->samples[cursor];
+	uint32_t split = ring_reverse_head_count(cursor, reference->scan_count);
 
-		if (cursor == 0u)
-			cursor = PCM_ECHO_REFERENCE_HISTORY_SAMPLES;
-		--cursor;
-		int64_t cross;
-		cross = (int64_t)sample * received_sample;
-		/* Valid first moments cannot overflow their 47-bit bound. Keep
-		 * corrupt state defined too; scoring rejects out-of-bound sums. */
-		reference->scan_reference_sum[index] = wrap_s64_from_u64(
-			(uint64_t)reference->scan_reference_sum[index] + (uint64_t)(int64_t)sample);
-
-		reference->scan_reference_energy[index] = add_u64_saturating(
-			reference->scan_reference_energy[index],
-			square_s16(sample));
-		reference->scan_cross_energy[index] = add_s64_saturating(
-			reference->scan_cross_energy[index], cross);
-	}
+	accumulate_scan_span(reference, 0, split,
+		reference->samples + cursor + 1u, received_sample);
+	accumulate_scan_span(reference, split, reference->scan_count,
+		reference->samples + PCM_ECHO_REFERENCE_HISTORY_SAMPLES, received_sample);
 	reference->scan_samples++;
 	if (!scan_report_is_due(reference) ||
 	    !find_best_scan(reference, &best_index, &best_score,

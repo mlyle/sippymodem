@@ -25,6 +25,19 @@ static inline size_t ring_index_at_age(
 	return index >= capacity ? index - capacity : index;
 }
 
+/* Number of newest-first items available before wrapping. An empty
+ * window has no first span, even if its newest index is unspecified. */
+static inline size_t ring_reverse_head_count(size_t newest, size_t count)
+{
+	return newest < count ? newest + 1u : count;
+}
+
+/* Step backwards from a valid index in a nonempty ring. */
+static inline size_t ring_index_previous(size_t index, size_t capacity)
+{
+	return index ? index - 1u : capacity - 1u;
+}
+
 /* Advance after storing at *write. Callers ensure *write < capacity and
  * *fill <= capacity; the fill saturates at capacity. */
 static inline void ring_history_advance(

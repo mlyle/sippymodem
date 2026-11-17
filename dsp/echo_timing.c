@@ -3,6 +3,7 @@
 #include "echo_shift.h"
 
 #include "integer_math.h"
+#include "ring_history.h"
 #include "wide_uint.h"
 
 #include <limits.h>
@@ -203,7 +204,7 @@ static void measure_fast_energy(struct echo_timing *timing, unsigned newest)
 	for (unsigned i = 0; i < ECHO_TIMING_FAST_WINDOW; ++i) {
 		int64_t sample = timing->prediction[oldest];
 		energy += (uint64_t)(sample * sample);
-		oldest = oldest == 0 ? ECHO_TIMING_HISTORY - 1u : oldest - 1u;
+		oldest = ring_index_previous(oldest, ECHO_TIMING_HISTORY);
 	}
 	timing->fast.energy[0] = energy;
 	for (unsigned i = 1; i < ECHO_TIMING_BINS; ++i) {
@@ -213,8 +214,8 @@ static void measure_fast_energy(struct echo_timing *timing, unsigned newest)
 		energy -= (uint64_t)(leaving * leaving);
 		energy += (uint64_t)(entering * entering);
 		timing->fast.energy[i] = energy;
-		newest = newest == 0 ? ECHO_TIMING_HISTORY - 1u : newest - 1u;
-		oldest = oldest == 0 ? ECHO_TIMING_HISTORY - 1u : oldest - 1u;
+		newest = ring_index_previous(newest, ECHO_TIMING_HISTORY);
+		oldest = ring_index_previous(oldest, ECHO_TIMING_HISTORY);
 	}
 }
 
@@ -242,7 +243,7 @@ void echo_timing_observe(struct echo_timing *t,
 		return;
 
 	t->fast.input += (int32_t)input * input;
-	unsigned split = index + 1u < bins ? index + 1u : bins;
+	unsigned split = ring_reverse_head_count(index, bins);
 	accumulate_prediction_span(&t->fast, 0, t->prediction + index + 1u, split, input);
 	accumulate_prediction_span(&t->fast, split, t->prediction + ECHO_TIMING_HISTORY, bins - split, input);
 	if (++t->count % ECHO_TIMING_FAST_WINDOW != 0)
