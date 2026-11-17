@@ -1210,14 +1210,19 @@ static uint64_t constellation_weight(const struct v92_pcm_frame_rx *receiver, in
 static uint64_t cell_metric(const struct v92_pcm_frame_cell *cell,
 	int16_t point, uint64_t weight, bool present, double sigma)
 {
-	double distance = fmax(cell->lower - point, fmax(point - cell->upper, 0.0));
-	double cost = present ? distance * distance * weight : 0.0;
-	if (present && sigma > 0. && cell->lower < cell->upper) {
+	if (!present) return 0;
+	double cost;
+	if (sigma > 0. && cell->lower < cell->upper) {
 		double log_probability = gaussian_log_probability(
 			(cell->lower - point) / (sqrt(2.) * sigma),
 			(cell->upper - point) / (sqrt(2.) * sigma));
 		cost = isfinite(log_probability) ?
 			-2. * sigma * sigma * log_probability * weight : 0x1p64;
+	} else {
+		double distance = point < cell->lower ? cell->lower - point :
+			point > cell->upper ? point - cell->upper : 0.;
+
+		cost = distance * distance * weight;
 	}
 
 	/* Compare with exactly representable 2^64 before converting to uint64_t. */
@@ -1607,8 +1612,10 @@ static enum v92_pcm_frame_result decode_frame(
 	 * recover a pruned path by looking farther ahead. The bound orders the
 	 * existing beam without adding future costs to history or changing
 	 * filter-dependent scoring, known-bit constraints or residual units. */
+	/* Cell input requires constellation observations and enters through
+	 * the unconstrained decoder, so it always uses these cached scores. */
 	bool lookahead = !known && !model &&
-		(cells || receiver->observation == V92_PCM_FRAME_CONSTELLATION);
+		receiver->observation == V92_PCM_FRAME_CONSTELLATION;
 	/* Constellation scores are independent of filter history, including B1u.
 	 * Filter-output scores can share work when CPd has zero history taps:
 	 * precoding is then x=u, with the prefilter's current-input scaling. */
@@ -1835,7 +1842,7 @@ static enum v92_pcm_frame_result decode_frame(
 			struct v92_observation_point *history = seed_paths ?
 				model_paths[path].history : local_history;
 
-			bool filter_metric = !cache_points && !model && !cells &&
+			bool filter_metric = !cache_points && !model &&
 				receiver->observation == V92_PCM_FRAME_FILTER_OUTPUT;
 			/* Candidate and lookahead costs are nonnegative; ties cannot replace.
 			 * A path skipped here on its first visit cannot revive as the heap
@@ -2042,8 +2049,6 @@ static enum v92_pcm_frame_result decode_frame(
 
 					cost = !present ? 0 :
 						v92_observation_score_history(&cache, precoder_output(precoder, u), history, budget, scoring);
-				} else if (cells) {
-					cost = cell_metric(cells + symbol, u, weight, present, channel->cell_sigma);
 				} else {
 					int32_t v = receiver->observation == V92_PCM_FRAME_FILTER_OUTPUT ?
 						prefilter_output(&receiver->mapping, prefilter,
