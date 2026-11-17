@@ -1818,6 +1818,55 @@ struct channel_plan_workspace {
 	struct v92_upstream_data_rx seed_saved;
 };
 
+static bool check_rejected_inverse_input(struct channel_plan_workspace *work,
+	enum g711_law law)
+{
+	const uint8_t code = g711_encode(law, 0);
+	const int16_t sample = g711_decode(law, code);
+	CHECK(work->receiver.line.symbol_count == 0 && !work->receiver.input.count,
+	      "inverse rejection fixture must start at a decoded frame boundary");
+	for (unsigned fault = 0; fault < 2; ++fault)
+		for (unsigned position = 0; position < V92_PCM_MAPPING_FRAME_SYMBOLS; ++position)
+			for (unsigned route = 0; route < 3; ++route) {
+				work->lost = work->receiver;
+				if (fault) {
+					/* Guarantee a clipped inverse while preserving a valid
+					 * frozen model, independent of its acquired coefficients. */
+					work->lost.line.residual.count = 0;
+					memset(work->lost.line.residual.delay, 0, sizeof(work->lost.line.residual.delay));
+					memset(work->lost.line.residual.coefficient, 0, sizeof(work->lost.line.residual.coefficient));
+					work->lost.line.residual.offset = -512. * work->lost.line.polarity;
+				}
+				struct v92_upstream_data_frame output, unchanged;
+				memset(&output, 0xa5, sizeof(output));
+				unchanged = output;
+				for (unsigned i = 0; i < position; ++i)
+					CHECK(fixture_octet_owned(&work->lost, code, sample, sample, true, &output) ==
+					      V92_UPSTREAM_DATA_RX_OK, "inverse rejection prefix failed");
+				int16_t rejected = fault ? INT16_MAX : sample;
+				if (route == 2) {
+					work->lost.input.samples[0] = (struct v92_upstream_input){
+						.sample = rejected, .host = rejected, .code = code,
+						.flags = fault ? 3 : 1,
+					};
+					work->lost.input.count = 1;
+				}
+				CHECK(v92_upstream_data_rx_is_valid(&work->lost), "invalid inverse rejection fixture");
+				work->owned = work->lost;
+				work->owned.failed = true;
+				enum v92_upstream_data_rx_result result = route == 2 ?
+					v92_upstream_data_rx_drain_owned(&work->lost, &output) : route == 1 ?
+					fixture_octet_owned(&work->lost, code, rejected, rejected, fault, &output) :
+					fixture_octet(&work->lost, code, rejected, fault, &output);
+				CHECK(result == V92_UPSTREAM_DATA_RX_NO_PATH &&
+				      memcmp(&work->lost, &work->owned, sizeof(work->owned)) == 0 &&
+				      memcmp(&output, &unchanged, sizeof(output)) == 0,
+				      "rejected inverse input changed clocks, queue, history or output: fault=%u position=%u route=%u",
+				      fault, position, route);
+			}
+	return true;
+}
+
 static bool check_channel_plan(
 	struct channel_plan_workspace *work,
 	enum g711_law law, int polarity, bool extended, bool biased, bool conditioned,
@@ -2175,6 +2224,7 @@ static bool check_channel_plan(
 		      "inverted constellation did not acquire valid B1u");
 	}
 	if (fault == CHANNEL_RESIDUAL || fault == CHANNEL_DRIFT) {
+		CHECK(check_rejected_inverse_input(work, law), "inverse input rejection was not transactional");
 		work->lost = work->receiver;
 		struct v92_upstream_data_frame output, unchanged;
 		memset(&output, 0xa5, sizeof(output)); unchanged = output;

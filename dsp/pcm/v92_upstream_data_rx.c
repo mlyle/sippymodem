@@ -628,8 +628,8 @@ static enum v92_upstream_data_rx_result decode_sample(
 	if (!direct)
 		copy_line(&next, &receiver->line);
 	if (line->plan.observation == V92_PCM_FRAME_CONSTELLATION) {
-		++line->input_samples;
 		if (line->delay_remaining != 0u) {
+			++line->input_samples;
 			--line->delay_remaining;
 			return V92_UPSTREAM_DATA_RX_OK;
 		}
@@ -637,6 +637,7 @@ static enum v92_upstream_data_rx_result decode_sample(
 		if (!v92_residual_sample(&line->residual, raw, line->polarity,
 		    wire_known && available, &correction))
 			return fail(receiver, V92_UPSTREAM_DATA_RX_NO_PATH);
+		++line->input_samples;
 		line->raw[line->symbol_count] = raw;
 		line->correction[line->symbol_count] = correction;
 		line->wire[line->symbol_count] = wire_known ? line->polarity *
