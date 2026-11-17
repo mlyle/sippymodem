@@ -3,8 +3,24 @@
 #define PCM_DOWNSTREAM_STATE_FIXTURE_H
 
 #include <pcm_downstream_tx.h>
+#include <v90_downstream_data_stream.h>
 #include <stddef.h>
 #include <string.h>
+
+/* Copy named character bytes without reading the ABI's intervening padding. */
+static inline void pcm_symbol_snapshot(struct v90_pcm_symbol *snapshot,
+	const struct v90_pcm_symbol *symbol)
+{
+	unsigned char bytes[sizeof(*symbol)] = { 0 };
+#define COPY(field) memcpy(bytes + offsetof(struct v90_pcm_symbol, field), \
+	&symbol->field, sizeof(symbol->field))
+	COPY(ucode);
+	COPY(positive);
+	COPY(octet);
+	COPY(sample);
+#undef COPY
+	memcpy(snapshot, bytes, sizeof(bytes));
+}
 
 /* Snapshot every state byte, replacing only queued symbols' C padding.
  * Do not normalize the live transmitter or omit unused queue entries. */
@@ -18,16 +34,24 @@ static inline void pcm_downstream_tx_snapshot(
 		unsigned char bytes[sizeof(*symbol)] = { 0 };
 #define COPY(field) memcpy(bytes + offsetof(struct pcm_downstream_symbol, field), \
 	&symbol->field, sizeof(symbol->field))
-		COPY(pcm.ucode);
-		COPY(pcm.positive);
-		COPY(pcm.octet);
-		COPY(pcm.sample);
+		struct v90_pcm_symbol pcm;
+		pcm_symbol_snapshot(&pcm, &symbol->pcm);
+		memcpy(bytes + offsetof(struct pcm_downstream_symbol, pcm), &pcm, sizeof(pcm));
 		COPY(shaping_rule);
 		COPY(shaping_rule_valid);
 		COPY(shaping_frame_start);
 #undef COPY
 		memcpy(&snapshot->queue[index], bytes, sizeof(bytes));
 	}
+}
+
+static inline void pcm_downstream_data_snapshot(
+	struct v90_downstream_data_stream *snapshot,
+	const struct v90_downstream_data_stream *stream)
+{
+	memcpy(snapshot, stream, sizeof(*snapshot));
+	for (size_t index = 0; index < V90_CP_FRAME_INTERVALS; index++)
+		pcm_symbol_snapshot(&snapshot->queue[index], &stream->queue[index]);
 }
 
 static inline bool pcm_downstream_tx_states_equal(

@@ -21,6 +21,7 @@
 #include "v92_clipping_fixture.h"
 #include "pcm_phase2_state_fixture.h"
 #include "pcm_sign_state_fixture.h"
+#include "pcm_downstream_state_fixture.h"
 #include "v34_state_fixture.h"
 #include "v90_path_state_fixture.h"
 
@@ -1294,6 +1295,32 @@ static bool ri_progress_is_consistent(const struct endpoint *endpoint)
 	return endpoint->phase4_entry_ri_symbols == expected;
 }
 
+static void snapshot_v92_digital_downstream(
+	union v92_phase4_e2u_digital_downstream *snapshot,
+	const union v92_phase4_e2u_digital_downstream *downstream,
+	enum v92_phase4_e2u_downstream_stage stage)
+{
+	memcpy(snapshot, downstream, sizeof(*snapshot));
+	if (stage == V92_PHASE4_E2U_DOWNSTREAM_TRAINING ||
+	    stage == V92_PHASE4_E2U_DOWNSTREAM_PAUSE)
+		pcm_downstream_tx_snapshot(&snapshot->training.transmit,
+			&downstream->training.transmit);
+	else if (stage == V92_PHASE4_E2U_DOWNSTREAM_DATA)
+		pcm_downstream_data_snapshot(&snapshot->data, &downstream->data);
+}
+
+static bool v92_digital_downstreams_equal(
+	const union v92_phase4_e2u_digital_downstream *left,
+	const union v92_phase4_e2u_digital_downstream *right,
+	enum v92_phase4_e2u_downstream_stage stage)
+{
+	union v92_phase4_e2u_digital_downstream copies[2];
+
+	snapshot_v92_digital_downstream(&copies[0], left, stage);
+	snapshot_v92_digital_downstream(&copies[1], right, stage);
+	return memcmp(&copies[0], &copies[1], sizeof(copies[0])) == 0;
+}
+
 /* Compare shared retained records by their owned fields before checking the
  * selected path and every remaining state byte. C padding is not modem state. */
 static bool compare_call_snapshots(struct pcm_call copies[2],
@@ -1315,6 +1342,23 @@ static bool compare_call_snapshots(struct pcm_call copies[2],
 			copies[i].local_role == V90_ANALOG_MODEM ? V90_DIGITAL_MODEM : V90_ANALOG_MODEM);
 		memset(&copies[i].phase3_entry, 0, sizeof(copies[i].phase3_entry));
 		memset(&copies[i].v92_peer_jd, 0, sizeof(copies[i].v92_peer_jd));
+		const struct pcm_call *source = i ? right : left;
+		if (source->protocol != PCM_PROTOCOL_V92 ||
+		    source->local_role != V90_DIGITAL_MODEM ||
+		    pcm_call_uses_conventional_upstream(source))
+			continue;
+		if (source->stage == PCM_CALL_PHASE4 &&
+		    source->state.phase4.v92.child == PCM_CALL_V92_PHASE4_E2U) {
+			const struct v92_phase4_e2u_digital_state *from =
+				&source->state.phase4.v92.owner.e2u.state.digital;
+			snapshot_v92_digital_downstream(
+				&copies[i].state.phase4.v92.owner.e2u.state.digital.downstream,
+				&from->downstream, from->downstream_stage);
+		} else if (source->stage == PCM_CALL_DATA_PATH) {
+			const struct pcm_call_v92_digital_data *from = &source->state.data_path.v92_digital;
+			snapshot_v92_digital_downstream(&copies[i].state.data_path.v92_digital.downstream,
+				&from->downstream, from->downstream_stage);
+		}
 	}
 	if ((left->stage != PCM_CALL_PHASE4 && left->stage != PCM_CALL_DATA_PATH &&
 	     left->stage != PCM_CALL_CLOSED) ||
@@ -1410,6 +1454,81 @@ static bool call_states_equal(
 #define MARK_FIELD(mask, type, field) \
 	memset((mask) + offsetof(type, field), 1, sizeof(((type *)0)->field))
 
+static bool test_downstream_queue_comparison(void)
+{
+	unsigned char training_mask[sizeof(struct pcm_downstream_symbol)] = { 0 };
+	unsigned char data_mask[sizeof(struct v90_pcm_symbol)] = { 0 };
+	struct pcm_call *calls = calloc(2, sizeof(*calls));
+	CHECK(calls, "queue comparison allocation failed");
+#define QUEUE_CHECK(condition, ...) do { \
+	if (!(condition)) { free(calls); CHECK(false, __VA_ARGS__); } \
+} while (0)
+	MARK_FIELD(training_mask, struct pcm_downstream_symbol, pcm.ucode);
+	MARK_FIELD(training_mask, struct pcm_downstream_symbol, pcm.positive);
+	MARK_FIELD(training_mask, struct pcm_downstream_symbol, pcm.octet);
+	MARK_FIELD(training_mask, struct pcm_downstream_symbol, pcm.sample);
+	MARK_FIELD(training_mask, struct pcm_downstream_symbol, shaping_rule);
+	MARK_FIELD(training_mask, struct pcm_downstream_symbol, shaping_rule_valid);
+	MARK_FIELD(training_mask, struct pcm_downstream_symbol, shaping_frame_start);
+	MARK_FIELD(data_mask, struct v90_pcm_symbol, ucode);
+	MARK_FIELD(data_mask, struct v90_pcm_symbol, positive);
+	MARK_FIELD(data_mask, struct v90_pcm_symbol, octet);
+	MARK_FIELD(data_mask, struct v90_pcm_symbol, sample);
+	for (unsigned phase = 0; phase < 2; phase++) {
+		for (unsigned kind = V92_PHASE4_E2U_DOWNSTREAM_TRAINING;
+		     kind <= V92_PHASE4_E2U_DOWNSTREAM_PAUSE; kind++) {
+			memset(calls, 0, 2 * sizeof(*calls));
+			calls[0].protocol = PCM_PROTOCOL_V92;
+			calls[0].local_role = V90_DIGITAL_MODEM;
+			calls[0].stage = phase ? PCM_CALL_DATA_PATH : PCM_CALL_PHASE4;
+			union v92_phase4_e2u_digital_downstream *downstream[2];
+			for (size_t side = 0; side < 2; side++) {
+				if (!side) memcpy(&calls[1], &calls[0], sizeof(calls[0]));
+				if (phase) {
+					calls[side].state.data_path.v92_digital.downstream_stage = kind;
+					downstream[side] = &calls[side].state.data_path.v92_digital.downstream;
+				} else {
+					calls[side].state.phase4.v92.child = PCM_CALL_V92_PHASE4_E2U;
+					calls[side].state.phase4.v92.owner.e2u.local_role = V90_DIGITAL_MODEM;
+					calls[side].state.phase4.v92.owner.e2u.state.digital.downstream_stage = kind;
+					downstream[side] = &calls[side].state.phase4.v92.owner.e2u.state.digital.downstream;
+				}
+			}
+			bool data = kind == V92_PHASE4_E2U_DOWNSTREAM_DATA;
+			const unsigned char *mask = data ? data_mask : training_mask;
+			size_t size = data ? sizeof(data_mask) : sizeof(training_mask);
+			for (size_t index = 0; index < V90_CP_FRAME_INTERVALS; index++) {
+				unsigned char *bytes = data ?
+					(unsigned char *)&downstream[1]->data.queue[index] :
+					(unsigned char *)&downstream[1]->training.transmit.queue[index];
+				for (size_t byte = 0; byte < size; byte++)
+					if (!mask[byte]) bytes[byte] ^= 0xffu;
+			}
+			QUEUE_CHECK(call_states_equal(&calls[0], &calls[1]) &&
+				v92_digital_downstreams_equal(downstream[0], downstream[1], kind),
+				"queue comparison read padding in phase %u kind %u", phase, kind);
+			/* All six entries remain significant even with queue_count zero. */
+			for (size_t index = 0; index < V90_CP_FRAME_INTERVALS; index++) {
+				unsigned char *bytes = data ?
+					(unsigned char *)&downstream[1]->data.queue[index] :
+					(unsigned char *)&downstream[1]->training.transmit.queue[index];
+				for (size_t byte = 0; byte < size; byte++) {
+					if (!mask[byte]) continue;
+					bytes[byte] ^= 1u;
+					QUEUE_CHECK(!call_states_equal(&calls[0], &calls[1]) &&
+						!v92_digital_downstreams_equal(downstream[0], downstream[1], kind),
+						"queue comparison lost phase %u kind %u entry %zu byte %zu",
+						phase, kind, index, byte);
+					bytes[byte] ^= 1u;
+				}
+			}
+		}
+	}
+	free(calls);
+#undef QUEUE_CHECK
+	return true;
+}
+
 static bool test_call_state_comparison(void)
 {
 	unsigned char common_mask[sizeof(struct v34_info1_common)] = { 0 };
@@ -1474,7 +1593,7 @@ static bool test_call_state_comparison(void)
 			CHECK(!call_states_equal(&before, &after), "call comparison lost exact floating-point bits");
 		}
 	}
-	return true;
+	return test_downstream_queue_comparison();
 }
 #undef MARK_FIELD
 
@@ -7024,7 +7143,8 @@ static bool v92_data_boundary(struct pcm_call *call)
 			memcmp(&path->upstream.line.equalizer, &from->receive.line.equalizer,
 			       sizeof(path->upstream.line.equalizer)) == 0) &&
 		      path->downstream_stage == from->downstream_stage &&
-		      memcmp(&path->downstream, &from->downstream, sizeof(path->downstream)) == 0,
+		      v92_digital_downstreams_equal(&path->downstream, &from->downstream,
+			      path->downstream_stage),
 		      "V.92 digital data entry reset trained line or downstream history");
 	}
 	snapshot = *call;
