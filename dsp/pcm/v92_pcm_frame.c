@@ -2,6 +2,7 @@
 
 #include "v92_pcm_frame.h"
 #include "v92_b1.h"
+#include "v92_frame_bounds.h"
 #include "gaussian.h"
 
 #include "v92_observation.h"
@@ -539,8 +540,7 @@ enum v92_pcm_frame_result v92_pcm_frame_encode_rm(
 	/* V.92 Tables 25/26 specify digits at the modulus encoder output,
 	 * bypassing scrambling and differential coding, not the channel coder. */
 	for (size_t i = 0u; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
-		encoded.digit[i] = (i % 4u < 2u) != prime ?
-			(uint8_t)(mapping->cpd.modulus[i] - 1u) : 0u;
+		encoded.digit[i] = v92_rm_digit(mapping->cpd.modulus[i], i, prime);
 	if (!encode_digits(mapping, &next, &encoded))
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
 	*state = next;
@@ -1076,9 +1076,8 @@ static unsigned rm_prefix(const struct v92_pcm_mapping *mapping,
 	unsigned words = 3u;
 
 	for (size_t i = 0u; i < symbols && words; ++i) {
-		uint8_t high = (uint8_t)(mapping->cpd.modulus[i] - 1u);
-		if (digits[i] != (i % 4u < 2u ? high : 0u)) words &= ~1u;
-		if (digits[i] != (i % 4u < 2u ? 0u : high)) words &= ~2u;
+		if (digits[i] != v92_rm_digit(mapping->cpd.modulus[i], i, false)) words &= ~1u;
+		if (digits[i] != v92_rm_digit(mapping->cpd.modulus[i], i, true)) words &= ~2u;
 	}
 	return words;
 }
@@ -1684,6 +1683,19 @@ static enum v92_pcm_frame_result decode_frame(
 		for (size_t i = 0u; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
 			constrain_words |= maximum_digits[i] != receiver->mapping.cpd.modulus[i] - 1u;
 	}
+	/* Spare words can consume the bounded beam before the final digit
+	 * rejects them. Rank complete possible payload/control continuations;
+	 * keep only consumed observation costs in each path's actual metric. */
+	struct v92_frame_bounds frame_bounds;
+	bool bound_words = lookahead && constrain_words;
+	if (bound_words) {
+		uint8_t counts[V92_PCM_MAPPING_FRAME_SYMBOLS];
+		for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
+			counts[i] = receiver->mapping.cpd.constellation[
+				receiver->mapping.cpd.frame_constellation[i % V92_PCM_MAPPING_PHASES]].count;
+		v92_frame_bounds_prepare(&frame_bounds, point_cost, tail, counts,
+			receiver->mapping.cpd.modulus, maximum_digits[V92_PCM_MAPPING_FRAME_SYMBOLS - 1u]);
+	}
 	bool initial = !known && b1u && receiver->noise.frames == 0u &&
 		receiver->pending_frames == 0u;
 	/* Inverting the four coordinates complements only convolutional input
@@ -1708,6 +1720,26 @@ static enum v92_pcm_frame_result decode_frame(
 		size_t count = 0u;
 		uint64_t weight = 1u;
 		bool present = !received || received[symbol];
+		/* The two differential signs and four possible request-prefix sets
+		 * share these suffix costs across every parent and candidate. */
+		uint64_t completion[2][4][2];
+		uint8_t request_digit[2] = {
+			v92_rm_digit((uint8_t)modulus, symbol, false),
+			v92_rm_digit((uint8_t)modulus, symbol, true),
+		};
+		if (bound_words)
+			for (unsigned sign = 0; sign < 2; ++sign)
+				for (unsigned requests = 0; requests < 4; ++requests)
+					for (unsigned p = 0; p < 2; ++p) {
+						uint64_t bound = v92_frame_bounds_remaining(&frame_bounds, symbol, p, sign);
+						for (unsigned request = 0; request < 2; ++request)
+							if (requests & (1u << request)) {
+								uint64_t control = v92_frame_bounds_remaining(&frame_bounds,
+									symbol, p, V92_BOUND_RM + request);
+								if (control < bound) bound = control;
+							}
+						completion[sign][requests][p] = bound;
+					}
 		bool input_metric = !b1u &&
 			receiver->observation == V92_PCM_FRAME_FILTER_OUTPUT;
 		struct g711_interval cell;
@@ -1835,6 +1867,21 @@ static enum v92_pcm_frame_result decode_frame(
 					parity ^= (unsigned)paths[path].frame.signed_index[previous] & 1u;
 			int data_limit = (int)modulus - 1;
 			unsigned requests = 0u;
+			if (constrain_words && (bound_words || symbol + 1u == V92_PCM_MAPPING_FRAME_SYMBOLS)) {
+				requests = rm_prefix(&receiver->mapping, paths[path].frame.digit, symbol);
+				if (paths[path].state.rm_frames != V92_PCM_RM_QUALIFY_FRAMES)
+					requests &= ~2u;
+			}
+			uint64_t future_floor = 0;
+			if (bound_words) {
+				const uint64_t *remaining = completion[paths[path].state.differential][requests];
+				future_floor = remaining[0] < remaining[1] ? remaining[0] : remaining[1];
+				/* Every point can only remove possible request continuations.
+				 * The relaxed prefix bound therefore also limits its budget. */
+				if (count == V92_PCM_RX_PATHS && add_u64_saturating(
+				    paths[path].state.metric, future_floor) >= candidates[0].metric)
+					continue;
+			}
 			if (constrain_words && symbol + 1u == V92_PCM_MAPPING_FRAME_SYMBOLS) {
 				/* Restrict the completed word before the heap fills with
 				 * unused codes. Compare its lower digits with 2^K-1 once
@@ -1851,9 +1898,6 @@ static enum v92_pcm_frame_result decode_frame(
 						break;
 					}
 				}
-				requests = rm_prefix(&receiver->mapping, paths[path].frame.digit, symbol);
-				if (paths[path].state.rm_frames != V92_PCM_RM_QUALIFY_FRAMES)
-					requests &= ~2u;
 			}
 			int first_eta = -(int)constellation->count, end_eta = constellation->count;
 			/* Independent squared point/cell distances are unimodal on
@@ -1862,7 +1906,7 @@ static enum v92_pcm_frame_result decode_frame(
 			 * Keep original eta order and strict tie retention. */
 			if (lookahead && count == V92_PCM_RX_PATHS) {
 				const uint64_t *costs = point_cost[symbol];
-				uint64_t budget = candidates[0].metric - paths[path].state.metric;
+				uint64_t budget = candidates[0].metric - paths[path].state.metric - future_floor;
 				unsigned middle = minimum_point[symbol];
 				if (costs[middle] >= budget) continue;
 				unsigned low = 0, high = middle;
@@ -2006,7 +2050,14 @@ static enum v92_pcm_frame_result decode_frame(
 					.digit = digit, .y0 = y0,
 				};
 				candidate.path_metric = candidate.metric;
-				if (lookahead && symbol % V92_PCM_TRELLIS_INTERVAL_SYMBOLS != 3u)
+				if (bound_words) {
+					unsigned p = parity ^ ((unsigned)eta & 1u);
+					unsigned next_requests = requests &
+						((digit == request_digit[0] ? 1u : 0u) |
+						 (digit == request_digit[1] ? 2u : 0u));
+					uint64_t bound = completion[paths[path].state.differential][next_requests][p];
+					candidate.metric = add_u64_saturating(candidate.metric, bound);
+				} else if (lookahead && symbol % V92_PCM_TRELLIS_INTERVAL_SYMBOLS != 3u)
 					candidate.metric = add_u64_saturating(candidate.metric,
 						tail[symbol + 1][parity ^ ((unsigned)eta & 1u)]);
 				if (count < V92_PCM_RX_PATHS) {

@@ -4,6 +4,7 @@
 
 #include <v92_pcm_frame.h>
 #include <v92_b1.h>
+#include <v92_frame_bounds.h>
 
 #include <integer_math.h>
 
@@ -13,6 +14,7 @@
 #include <limits.h>
 #include <math.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 enum {
@@ -1593,19 +1595,25 @@ static bool test_input_rounding_identity(void)
 
 /* Learned constellation weights change distance units. A unique received
  * request must not be compared with the channel-likelihood ambiguity floor. */
-static bool test_independent_request_units(void)
+static bool test_request_units(bool independent)
 {
 	for (unsigned selection = V92_CPD_TRELLIS_16_STATE; selection <= V92_CPD_TRELLIS_64_STATE;
 	     selection++) {
 		struct v92_cpd_parameters cpd = parameters(10);
 		cpd.trellis = selection;
+		if (!independent) {
+			memset(cpd.filter, 0, sizeof(cpd.filter));
+			for (unsigned i = 0; i < 12; ++i) cpd.modulus[i] = 23;
+			cpd.constellation[0].count = 64;
+			for (unsigned i = 0; i < 64; ++i) cpd.constellation[0].positive_linear[i] = 256 + 512 * i;
+		}
 		struct v92_pcm_mapping mapping;
 		struct v92_pcm_frame_tx tx;
 		struct v92_pcm_frame_rx rx;
 		CHECK(v92_pcm_mapping_init(&mapping, G711_LAW_PCMU, &cpd) == V92_PCM_MAPPING_OK &&
 			  v92_pcm_frame_tx_init(&tx, &mapping) == V92_PCM_FRAME_OK &&
 			  v92_pcm_frame_rx_init_constellation(&rx, &mapping) == V92_PCM_FRAME_OK &&
-			  v92_pcm_frame_rx_use_independent(&rx) == V92_PCM_FRAME_OK,
+			  (!independent || v92_pcm_frame_rx_use_independent(&rx) == V92_PCM_FRAME_OK),
 		      "request-units initialization failed");
 		uint8_t expected[132][V92_PCM_MAPPING_MAX_BITS];
 		for (unsigned frame = 0; frame < 132; frame++) {
@@ -1739,7 +1747,7 @@ static bool test_independent_rates(void)
 
 static bool test_independent_owner(void)
 {
-	CHECK(test_independent_request_units(), "request confidence mixed score units");
+	CHECK(test_request_units(true), "request confidence mixed score units");
 	CHECK(test_independent_rates(), "independent complete word-domain matrix failed");
 	for (unsigned selection = V92_CPD_TRELLIS_16_STATE; selection <= V92_CPD_TRELLIS_64_STATE;
 	     ++selection)
@@ -2138,9 +2146,200 @@ static bool test_b1_class_error(void)
 	return true;
 }
 
+struct bounds_oracle {
+	uint64_t costs[12][2 * V92_CPD_MAX_CONSTELLATION_POINTS];
+	uint8_t counts[12], moduli[12], maximum;
+	enum v34_trellis_selection selection;
+	unsigned mode, group;
+	bool relax;
+};
+
+static unsigned bounds_advance(enum v34_trellis_selection selection,
+	unsigned state, const int16_t eta[4])
+{
+	struct v34_grid_point first = { 2 * eta[0] + 1, 2 * eta[1] + 1 };
+	struct v34_grid_point second = { 2 * eta[2] + 1, 2 * eta[3] + 1 };
+	struct v34_convolutional_input input;
+	struct v34_convolutional_encoder encoder = { .state = state, .selection = selection };
+	uint8_t a, b;
+
+	if (v34_grid_subset_label(&first, &a) != V34_TRELLIS_OK ||
+	    v34_grid_subset_label(&second, &b) != V34_TRELLIS_OK ||
+	    v34_convolutional_input_from_subset_labels(a, b, &input) != V34_TRELLIS_OK ||
+	    v34_convolutional_encoder_advance(&encoder, &input) != V34_TRELLIS_OK) {
+		fputs("invalid physical transition in frame-bound oracle\n", stderr);
+		abort();
+	}
+	return encoder.state;
+}
+
+/* Exhaust actual signed points, rather than constructing parity minima.
+ * Relaxing future group state gives the exact implemented domain; retaining
+ * physical transitions checks admissibility for each of the three codes. */
+static uint64_t bounds_enumerate(const struct bounds_oracle *o,
+	unsigned symbol, unsigned state, int16_t eta[12])
+{
+	if (symbol == 12)
+		return 0;
+	uint64_t best = UINT64_MAX;
+	for (int point = -(int)o->counts[symbol]; point < o->counts[symbol]; ++point) {
+		unsigned parity = (unsigned)point & 1u;
+		int coordinate = symbol % 4u == 3u ? (point - (int)parity) / 2 : point;
+		unsigned digit = nonnegative_remainder_s32(coordinate, o->moduli[symbol]);
+		if (o->mode < 2 && symbol == 11 &&
+		    (o->mode ? o->moduli[symbol] - 1u - digit : digit) > o->maximum)
+			continue;
+		if (o->mode >= 2) {
+			bool high = (symbol % 4u < 2u) == (o->mode == 2);
+			if (digit != (high ? o->moduli[symbol] - 1u : 0u))
+				continue;
+		}
+		eta[symbol] = (int16_t)point;
+		unsigned next = state;
+		if (symbol % 4u == 3u) {
+			unsigned group_parity = 0;
+			for (unsigned i = symbol - 3u; i <= symbol; ++i)
+				group_parity ^= (unsigned)eta[i] & 1u;
+			if ((!o->relax || symbol / 4u == o->group) && group_parity != (state & 1u))
+				continue;
+			next = bounds_advance(o->selection, state, eta + symbol - 3u);
+		}
+		uint64_t suffix = bounds_enumerate(o, symbol + 1u, next, eta);
+		uint64_t cost = o->costs[symbol][point + o->counts[symbol]];
+		uint64_t sum = suffix > UINT64_MAX - cost ? UINT64_MAX : cost + suffix;
+		if (sum < best)
+			best = sum;
+	}
+	return best;
+}
+
+static bool test_frame_bounds(void)
+{
+	struct bounds_oracle o;
+	struct v92_frame_bounds bounds;
+	uint32_t random = UINT32_C(0x974f29bd);
+	unsigned queries = 0;
+	for (unsigned test = 0; test < 4; ++test) {
+		o.maximum = (uint8_t)(test & 1u);
+		for (unsigned i = 0; i < 12; ++i) {
+			o.counts[i] = i % 4u == 3u || i == 0 ? 2u : 1u;
+			o.moduli[i] = i == 0 ? 3u : 2u;
+			for (unsigned j = 0; j < 2u * o.counts[i]; ++j) {
+				random = random * 1664525u + 1013904223u;
+				o.costs[i][j] = test == 0 ? 0 : test == 3 ?
+					UINT64_MAX / 3u + random % 1000u : random % 10000u;
+			}
+		}
+		uint64_t group_tail[12][2];
+		for (unsigned symbol = 12; symbol-- > 0;) {
+			uint64_t minimum[2] = { UINT64_MAX, UINT64_MAX };
+			for (int eta = -(int)o.counts[symbol]; eta < o.counts[symbol]; ++eta) {
+				unsigned p = (unsigned)eta & 1u;
+				if (o.costs[symbol][eta + o.counts[symbol]] < minimum[p])
+					minimum[p] = o.costs[symbol][eta + o.counts[symbol]];
+			}
+			for (unsigned p = 0; p < 2; ++p) {
+				if (symbol % 4u == 3u) group_tail[symbol][p] = minimum[p];
+				else {
+					uint64_t even = add_u64_saturating(minimum[0], group_tail[symbol + 1u][p]);
+					uint64_t odd = add_u64_saturating(minimum[1], group_tail[symbol + 1u][p ^ 1u]);
+					group_tail[symbol][p] = even < odd ? even : odd;
+				}
+			}
+		}
+		v92_frame_bounds_prepare(&bounds, o.costs, group_tail, o.counts, o.moduli, o.maximum);
+		for (o.selection = V34_TRELLIS_16_STATE; o.selection <= V34_TRELLIS_64_STATE; ++o.selection)
+			for (unsigned state = 0; state < v34_trellis_state_count(o.selection); ++state)
+				for (o.group = 0; o.group < 3; ++o.group) {
+					int16_t eta[12] = { 0 };
+					unsigned parity = state & 1u;
+					for (unsigned used = 1; used <= 4; ++used) {
+						unsigned symbol = 4u * o.group + used - 1u;
+						random = random * 1664525u + 1013904223u;
+						int point = (int)(random % (2u * o.counts[symbol])) - o.counts[symbol];
+						if (used == 4) {
+							point = 0;
+							while (((unsigned)point & 1u) != parity) --point;
+						}
+						eta[symbol] = (int16_t)point;
+						parity ^= (unsigned)point & 1u;
+						unsigned next = used == 4 ?
+							bounds_advance(o.selection, state, eta + 4u * o.group) : state;
+						for (o.mode = 0; o.mode < V92_BOUND_MODES; ++o.mode) {
+							uint64_t bound = v92_frame_bounds_remaining(&bounds, symbol, parity, o.mode);
+							int16_t copy[12];
+							memcpy(copy, eta, sizeof(copy)); o.relax = true;
+							CHECK(bound == bounds_enumerate(&o, symbol + 1u, next, copy),
+							      "remaining-frame bound differs from exhaustive relaxed completion");
+							memcpy(copy, eta, sizeof(copy)); o.relax = false;
+							CHECK(bound <= bounds_enumerate(&o, symbol + 1u, next, copy),
+							      "remaining-frame bound excludes a legal physical continuation");
+							queries += 2;
+						}
+					}
+				}
+	}
+	CHECK(queries == 43008, "remaining-frame oracle missed geometry cases");
+	return true;
+}
+
+/* The first group has ambiguous cells. Many cheap old-sign hypotheses can
+ * fill the beam, but their most-significant digit cannot finish inside the
+ * narrow final cell. The valid alternative's prior is half one point cost.
+ * This seeds valid component hypotheses, not a complete modem training trace. */
+static bool test_word_completion(void)
+{
+	struct v92_cpd_parameters cpd = parameters(10);
+	memset(cpd.filter, 0, sizeof(cpd.filter));
+	for (unsigned i = 0; i < 12; ++i) cpd.modulus[i] = 23;
+	cpd.constellation[0].count = 64;
+	for (unsigned i = 0; i < 64; ++i) cpd.constellation[0].positive_linear[i] = 256 + 512 * i;
+	struct v92_pcm_mapping mapping;
+	CHECK(v92_pcm_mapping_init(&mapping, G711_LAW_PCMU, &cpd) == V92_PCM_MAPPING_OK,
+	      "word-completion mapping failed");
+	for (unsigned sign = 0; sign < 2; ++sign) {
+		struct v92_pcm_frame_rx rx;
+		struct v92_pcm_frame_tx tx;
+		CHECK(v92_pcm_frame_rx_init_constellation(&rx, &mapping) == V92_PCM_FRAME_OK &&
+		      v92_pcm_frame_tx_init(&tx, &mapping) == V92_PCM_FRAME_OK,
+		      "word-completion initialization failed");
+		rx.pending_frames = rx.post_b1_frames = V92_PCM_RX_DELAY_FRAMES;
+		rx.noise.frames = V92_B1U_FRAMES; rx.path_count = V92_PCM_RX_PATHS;
+		for (unsigned i = 1; i < V92_PCM_RX_PATHS; ++i) rx.paths[i] = rx.paths[0];
+		for (unsigned i = 0; i + 1u < V92_PCM_RX_PATHS; ++i) {
+			rx.paths[i].differential = (uint8_t)(sign ^ 1u);
+			rx.paths[i].descrambler.feedback.history = i + 1u;
+		}
+		uint64_t prior = UINT64_C(512) * 512u * 65536u / 2u;
+		rx.paths[V92_PCM_RX_PATHS - 1u].differential = (uint8_t)sign;
+		rx.paths[V92_PCM_RX_PATHS - 1u].metric = prior;
+		CHECK(v92_pcm_frame_rx_is_valid(&rx), "word-completion hypotheses invalid");
+		tx.state.differential = (uint8_t)sign;
+		uint8_t source[54] = { 0 }, bits[54];
+		struct v92_pcm_frame frame;
+		CHECK(v92_pcm_frame_encode(&tx, source, 54, &frame) == V92_PCM_FRAME_OK,
+		      "word-completion source failed");
+		int16_t samples[12]; struct v92_pcm_frame_cell cells[12];
+		for (unsigned i = 0; i < 12; ++i) {
+			samples[i] = frame.u[i];
+			cells[i] = (struct v92_pcm_frame_cell){ i < 4 ? -256 : samples[i], i < 4 ? 256 : samples[i] };
+		}
+		struct v92_pcm_frame_channel channel = { .cells = cells };
+		struct v92_pcm_frame_decision decision; struct v92_pcm_frame_likelihood likelihood;
+		CHECK(v92_pcm_frame_decode_observed(&rx, samples, false, bits, 54, &decision,
+		      &channel, &likelihood) == V92_PCM_FRAME_OK && likelihood.cost == prior,
+		      "spare-word prefixes discarded the cheaper valid completion, sign=%u", sign);
+		for (unsigned i = 0; i < 12; ++i)
+			CHECK(decision.frame.u[i] >= cells[i].lower && decision.frame.u[i] <= cells[i].upper,
+			      "valid completion left an observed cell");
+	}
+	return true;
+}
+
 int main(void)
 {
-	if (!test_b1_digits() || !test_b1_class_error() || !test_alternate_representatives() ||
+	if (!test_frame_bounds() || !test_word_completion() || !test_request_units(false) ||
+	    !test_b1_digits() || !test_b1_class_error() || !test_alternate_representatives() ||
 	    !test_input_rounding_identity() || !test_b1u_measurement() || !test_b1u_measurement_contracts() ||
 	    !test_b1u_output_range() || !test_b1u_oracle() || !test_b1u_coding_acquisition() ||
 	    !test_b1u_parity_completion() || !test_b1u_validation_history(false, V92_CPD_TRELLIS_16_STATE) ||
