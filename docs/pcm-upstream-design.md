@@ -2544,3 +2544,87 @@ open. Phase-aware preimage unions describe post-codec robbed-bit forcing;
 robbing before a later codec or filter requires a different forward model.
 No production learner, rate policy, B1 readiness or deadline changes follow
 from this component study.
+
+
+## Bound common gain sensitivity of fixed cell-score trajectories
+
+The general inverse's steady DATA path uses uniformly weighted squared
+interval distances after its delayed B1 decisions drain. For this score alone,
+consider two fixed point trajectories `A` and `B` and the family of cells
+`[g*L[i], g*U[i]]`, with one positive gain `g` shared over the entire context:
+
+```
+C_p(g) = fixed_prior_p + W * sum(distance(p[i], [g*L[i], g*U[i]])^2)
+Delta(g) = C_B(g) - C_A(g), W = 65536
+```
+
+This scales recorded cells in the existing inverse coordinates. It does not
+refit the residual, move each symbol independently, or describe arbitrary
+physical gain, DC, ISI or codec-likelihood changes. Recomputing a calibration
+with different arithmetic also needs its own rounding enclosure.
+
+The exact difference is piecewise quadratic. Breakpoints occur at `p/L[i]`
+and `p/U[i]` where defined; endpoints and interior stationary points supply
+its extrema. Checking gain endpoints alone is insufficient. For example,
+cells `[10,20]`, `[10,10]`, trajectories `A=(-10,50)`, `B=(40,-10)`, and
+`fixed_prior_B-fixed_prior_A=1200*W-3277` give gaps `14417.72` at both
+`g=.97` and `g=1.03`, but `-3277` at `g=1`. This is a score counterexample,
+not a claimed normative constellation or complete codeword pair.
+
+A cheaper conservative test follows from the derivative. For one point the
+gain derivative is zero inside its cell and `2*e*(g*e-p)` outside, where `e`
+is the appropriate endpoint. As a function of `p` this derivative is continuous
+at both cell edges and has slope magnitude at most `2*M[i]`, with
+`M[i]=max(abs(L[i]),abs(U[i]))`. Consequently,
+
+```
+abs(Delta'(g)) <= 2*W*sum(M[i]*abs(A[i]-B[i]))
+```
+
+A gain radius `r/65536` therefore changes the real gap by at most `2*r*S`,
+where `S=sum(ceil(M[i])*abs(A[i]-B[i]))` is an integer upper bound. This uses
+trajectory separation, without requiring an absolute common metric floor.
+The prior score difference must actually remain fixed as `g` varies.
+
+Native rounding must also be covered. For finite original endpoints within
+`[-32768,32768]`, signed-16-bit points, positive gain in `[.97,1.03]`, present
+samples, zero cell sigma and uniform `W`, a binary64 forward-error enclosure
+bounds pre-cast error below `.259` score units per symbol in each rounding
+direction. Including native truncation gives absolute error below two units
+per symbol. Comparing two candidates at two gains can conservatively use
+
+```
+native_gap_at_1 > 2*r*S + 8*N
+```
+
+for `N` scored symbols. For `N<=4096` and `r<=1966`, sensitivity arithmetic
+fits unsigned 64 bits and the declared distance scores cannot saturate.
+A tie or failed bound is unresolved evidence, not a bit error or permission
+to suppress data. Variable weights, missing samples, Gaussian codec scores,
+score saturation and changing priors need separate bounds.
+
+An exact rational prototype covers 800 randomized geometries and 32,800
+independent grid evaluations. A bounded C predicate agrees conservatively with
+4,610 oracle queries over those geometries and 122 selected native point pairs;
+there are no false pair certifications in that study. The native score probe
+checks 24,944 values over four rounding modes, including cell-edge cases.
+These are scoped pair-ordering checks, not a BER or model-validity guarantee.
+
+The kernel cost is small enough to justify further integration work. A Pi 5
+hot-cache batch of 403 comparisons, each over 156 symbols, averages `.210 ms`,
+with observed maximum `.223 ms` and maximum-three `.642 ms` over 256 batches.
+CPU PMU observations are 502,646 mean cycles, 503,351 maximum and 1,509,116
+maximum-three. The batch models 13 words times 31 competitors; it excludes
+trajectory collection, DSP, RTP, application work and cache disturbance.
+These finite kernel observations establish no whole-modem timing bound.
+
+The integration boundary remains essential. Current point choices can be
+revised before delayed word commitment. A word's entry plus ten lookahead
+frames does not cover preceding differential/modulus state and the GPA
+inverse's 23-bit input history. Longer quiet observation windows alone do not
+certify that prior state. The decoder's normalized gap also omits the
+model-dependent sensitivity of earlier scored context. Retained trajectories,
+merged alternatives and discarded-path bounds need explicit ownership before
+this predicate can describe decoded-word confidence. The gain radius needs
+independent physical evidence as well. No unused DSP API, live confidence
+policy, retrain threshold or rate change follows from the component result.
