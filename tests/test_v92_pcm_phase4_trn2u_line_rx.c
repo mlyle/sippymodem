@@ -154,8 +154,6 @@ static bool make_handoff(
 		.input_samples = UINT64_C(4096),
 		.signal_level = lu,
 		.adaptation = adaptation,
-		.input_advance_symbols =
-			V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY,
 		.previous_sign = previous_sign,
 		.polarity = polarity,
 	};

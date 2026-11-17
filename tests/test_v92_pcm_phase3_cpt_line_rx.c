@@ -323,7 +323,7 @@ static bool check_channel(enum g711_law law, bool impaired,
 		      extra_training + V92_PCM_PHASE3_CPT_PREAMBLE_SYMBOLS +
 		      (2u + damaged_descriptors) * frame_bits +
 			      V92_CPT_SYMBOLS_PER_FRAME &&
-	      receiver.input_advance_symbols ==
+	      receiver.line.equalizer.decision_delay ==
 		      V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY &&
 	      receiver.line.polarity == expected_polarity &&
 	      tail_symbols ==
@@ -340,7 +340,7 @@ static bool check_channel(enum g711_law law, bool impaired,
 	      extra_training + V92_PCM_PHASE3_CPT_PREAMBLE_SYMBOLS +
 		      (2u + damaged_descriptors) * frame_bits +
 		      V92_CPT_SYMBOLS_PER_FRAME,
-	      receiver.input_advance_symbols, receiver.line.polarity,
+	      receiver.line.equalizer.decision_delay, receiver.line.polarity,
 	      expected_polarity, (unsigned long long)tail_symbols,
 	      V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY +
 		      (impaired ? 7u : 0u));
@@ -381,7 +381,7 @@ static bool check_channel(enum g711_law law, bool impaired,
 		      handoff.input_samples == receiver.input_samples &&
 		      handoff.signal_level == receiver.line.magnitude &&
 		      handoff.adaptation == receiver.line.adaptation &&
-		      handoff.input_advance_symbols ==
+		      handoff.equalizer.decision_delay ==
 			      V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY &&
 		      handoff.previous_sign == transmitter.coding.previous_sign &&
 		      handoff.polarity == receiver.line.polarity,
@@ -484,7 +484,7 @@ static bool test_contracts(void)
 
 	CHECK(make_handoff(&handoff), "CPt line contract handoff failed");
 	invalid = handoff;
-	invalid.input_advance_symbols = 0u;
+	invalid.equalizer.decision_delay = 0u;
 	memset(&receiver, 0xa5, sizeof(receiver));
 	before = receiver;
 	CHECK(v92_pcm_phase3_cpt_line_rx_init(NULL, &handoff) ==

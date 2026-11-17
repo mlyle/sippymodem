@@ -94,7 +94,7 @@ static bool check_channel(
 		      &receiver, &handoff) ==
 		      V92_PCM_PHASE3_TRN1U_LINE_RX_OK &&
 	      v92_pcm_phase3_trn1u_line_handoff_is_valid(&handoff) &&
-	      handoff.input_advance_symbols ==
+	      handoff.equalizer.decision_delay ==
 		      V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY &&
 	      handoff.input_samples == source_symbols &&
 	      sample_count != 0 && receiver.sample_count == sample_count &&

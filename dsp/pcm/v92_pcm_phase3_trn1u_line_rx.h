@@ -80,7 +80,8 @@ struct v92_pcm_phase3_trn1u_line_rx {
 
 /* The equalizer has consumed decision_delay samples beyond its last emitted
  * sign. Keeping its history in the handoff prevents CPt from losing those
- * already accepted samples. */
+ * already accepted samples. Its decision_delay is the sole delayed-input
+ * extent carried across this boundary. */
 struct v92_pcm_phase3_trn1u_line_handoff {
 	struct qam_equalizer equalizer;
 	struct v92_phase3_sync sync;
@@ -89,7 +90,6 @@ struct v92_pcm_phase3_trn1u_line_handoff {
 	double signal_level;
 	double adaptation;
 	int16_t dc_offset;
-	uint8_t input_advance_symbols;
 	int8_t polarity;
 };
 

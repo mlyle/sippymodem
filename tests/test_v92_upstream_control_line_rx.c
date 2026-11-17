@@ -139,8 +139,6 @@ static bool build_predecessor(
 		.input_samples = STARTING_INPUT_SAMPLES,
 		.signal_level = TEST_LU,
 		.adaptation = 0.05,
-		.input_advance_symbols =
-			V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY,
 		.previous_sign = previous_sign,
 		.polarity = polarity,
 	};
@@ -1469,7 +1467,7 @@ static bool test_digital_receive_contracts(void)
 	memset(&untouched, 0xa5, sizeof(untouched));
 	saved = untouched;
 	invalid = handoff;
-	invalid.input_advance_symbols = 0u;
+	invalid.equalizer.decision_delay = 0u;
 	unrepresentable = handoff;
 	unrepresentable.signal_level = 32768.0;
 	CHECK(v92_phase4_digital_rx_init(

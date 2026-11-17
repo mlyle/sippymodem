@@ -417,11 +417,9 @@ bool v92_pcm_phase3_trn1u_line_handoff_is_valid(
 		       V92_PCM_PHASE3_TRN1U_LINE_MIN_SIGNAL_LEVEL &&
 	       handoff->signal_level <= 32768.0 &&
 	       qam_adaptation_is_valid(handoff->adaptation) &&
-	       handoff->input_advance_symbols ==
-		       V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY &&
 	       handoff->input_samples >=
 		       (uint64_t)V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS +
-			       handoff->input_advance_symbols &&
+			       handoff->equalizer.decision_delay &&
 	       (handoff->polarity == -1 || handoff->polarity == 1);
 }
 
@@ -448,8 +446,6 @@ v92_pcm_phase3_trn1u_line_rx_handoff(
 		.adaptation = receiver->adaptation,
 		.dc_offset = (int16_t)lround(
 			(double)receiver->sample_sum / receiver->sample_count),
-		.input_advance_symbols =
-			V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY,
 		.polarity = receiver->polarity,
 	};
 	if (!v92_pcm_phase3_trn1u_line_handoff_is_valid(&generated))

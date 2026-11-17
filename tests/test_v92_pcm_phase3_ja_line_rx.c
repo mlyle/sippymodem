@@ -147,11 +147,11 @@ static bool check_line(
 	      decoded.downstream.segment_count == 0u &&
 	      processed_samples == V92_PCM_PHASE3_JA_MIN_SYMBOLS +
 		      damaged_descriptors * V92_PCM_DIL_ZERO_DESCRIPTOR_BITS &&
-	      receiver.input_advance_symbols ==
+	      receiver.line.equalizer.decision_delay ==
 		      V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY &&
 	      receiver.line.polarity == expected_polarity &&
 	      ja_symbols == processed_samples +
-			    receiver.input_advance_symbols + channel_delay,
+			    receiver.line.equalizer.decision_delay + channel_delay,
 	      "Ja line differed: started=%u detected=%u sync=%u mask=%05x/%05x "
 	      "processed=%llu/%u polarity=%d/%d source=%llu delay=%u",
 	      receiver_started, detected, synchronization_events,

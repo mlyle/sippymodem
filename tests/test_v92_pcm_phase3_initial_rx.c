@@ -116,7 +116,7 @@ static bool check_line(
 	      receiver.sequence.ja.line.polarity == expected_polarity &&
 	      transmitter.sequence.ja.emitted_symbols ==
 		      ja_samples +
-			      receiver.sequence.ja.input_advance_symbols +
+			      receiver.sequence.ja.line.equalizer.decision_delay +
 			      channel_delay,
 	      "initial receive differed: detected=%u events=%u/%u/%u "
 	      "mask=%05x/%05x processed=%llu/%u polarity=%d/%d "

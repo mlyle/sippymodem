@@ -32,9 +32,7 @@ bool v92_pcm_phase3_cpt_line_rx_is_valid(
 	       v92_pcm_phase3_line_geometry_is_valid(&receiver->line) &&
 	       v92_pcm_phase3_cpt_rx_is_valid(&receiver->signs) &&
 	       receiver->signs.stage != V92_PCM_PHASE3_CPT_RX_TRAINING &&
-	       receiver->starting_input_samples <= receiver->input_samples &&
-	       receiver->input_advance_symbols ==
-		       receiver->line.equalizer.decision_delay;
+	       receiver->starting_input_samples <= receiver->input_samples;
 }
 
 bool v92_pcm_phase3_cpt_line_rx_is_complete(
@@ -65,7 +63,6 @@ v92_pcm_phase3_cpt_line_rx_init(
 	initialized = (struct v92_pcm_phase3_cpt_line_rx){
 		.starting_input_samples = handoff->input_samples,
 		.input_samples = handoff->input_samples,
-		.input_advance_symbols = handoff->input_advance_symbols,
 	};
 	if (binary_equalizer_init(
 		    &initialized.line, &handoff->equalizer,
@@ -191,9 +188,7 @@ bool v92_pcm_phase3_cpt_line_handoff_is_valid(
 	       qam_equalizer_is_handoff_ready(&handoff->equalizer) &&
 	       v92_pcm_phase3_equalizer_has_geometry(&handoff->equalizer) &&
 	       v92_cpt_parameters_are_valid(&handoff->parameters) &&
-	       handoff->input_advance_symbols ==
-		       V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY &&
-	       handoff->input_samples >= handoff->input_advance_symbols &&
+	       handoff->input_samples >= handoff->equalizer.decision_delay &&
 	       isfinite(handoff->signal_level) &&
 	       handoff->signal_level >=
 		       V92_PCM_PHASE3_TRN1U_LINE_MIN_SIGNAL_LEVEL &&
@@ -221,7 +216,6 @@ v92_pcm_phase3_cpt_line_rx_handoff(
 		.input_samples = receiver->input_samples,
 		.signal_level = receiver->line.magnitude,
 		.adaptation = receiver->line.adaptation,
-		.input_advance_symbols = receiver->input_advance_symbols,
 		.polarity = receiver->line.polarity,
 	};
 	for (unsigned i = 0; i < generated.equalizer.tap_count; i++)

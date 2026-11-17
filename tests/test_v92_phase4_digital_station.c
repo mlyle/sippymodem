@@ -264,8 +264,6 @@ static bool build_predecessor(
 		.input_samples = STARTING_INPUT_SAMPLES,
 		.signal_level = TEST_LU,
 		.adaptation = 0.05,
-		.input_advance_symbols =
-			V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY,
 		.previous_sign = previous_sign,
 		.polarity = polarity,
 	};
@@ -1579,7 +1577,7 @@ static bool run_paired_station_exchange(
 	CHECK(!digital.control.transmit.control_configured, "fixture announced readiness early");
 	/* The warm receive handoff already owns these delayed input symbols. */
 	for (size_t symbol = 0u;
-	     symbol < digital_handoff.input_advance_symbols; ++symbol) {
+	     symbol < digital_handoff.equalizer.decision_delay; ++symbol) {
 		int16_t ignored;
 
 		CHECK(v92_phase4_analog_station_transmit(&analog, &ignored) ==

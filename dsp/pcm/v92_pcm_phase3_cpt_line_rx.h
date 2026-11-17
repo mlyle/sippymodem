@@ -28,7 +28,8 @@ struct v92_cpt_line_candidate {
 
 /* Continue a locked PCM-upstream line from second TRN1u through repeated CPt
  * records and E1u. The inherited equalizer owns its delayed samples, so the
- * first new input produces the first sign not delivered by the handoff. */
+ * first new input produces the first sign not delivered by the handoff.
+ * Its decision_delay remains the sole owner of that delayed-input extent. */
 struct v92_pcm_phase3_cpt_line_rx {
 	struct binary_equalizer line;
 	struct v92_pcm_phase3_cpt_rx signs;
@@ -38,7 +39,6 @@ struct v92_pcm_phase3_cpt_line_rx {
 	/* Fixed handoff origin; elapsed input is input_samples minus this. */
 	uint64_t starting_input_samples;
 	uint64_t input_samples;
-	uint8_t input_advance_symbols;
 	int16_t dc_offset;
 	bool alternate_active;
 	bool failed;
@@ -55,7 +55,6 @@ struct v92_pcm_phase3_cpt_line_handoff {
 	uint64_t input_samples;
 	double signal_level;
 	double adaptation;
-	uint8_t input_advance_symbols;
 	uint8_t previous_sign;
 	int8_t polarity;
 };

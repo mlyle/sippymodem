@@ -17,10 +17,6 @@ bool v92_pcm_phase3_ja_line_rx_is_valid(
 	if (receiver == NULL || !stage_is_valid(receiver->stage) ||
 	    !v92_pcm_phase3_line_geometry_is_valid(&receiver->line) ||
 	    receiver->starting_input_samples > receiver->input_samples ||
-	    receiver->input_advance_symbols !=
-		    receiver->line.equalizer.decision_delay ||
-	    receiver->input_advance_symbols !=
-		    V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY ||
 	    (receiver->failed &&
 	     receiver->stage == V92_PCM_PHASE3_JA_LINE_RX_COMPLETE))
 		return false;
@@ -51,7 +47,6 @@ enum v92_pcm_phase3_ja_line_rx_result v92_pcm_phase3_ja_line_rx_init(
 		.sequence.sync = handoff->sync,
 		.starting_input_samples = handoff->input_samples,
 		.input_samples = handoff->input_samples,
-		.input_advance_symbols = handoff->input_advance_symbols,
 	};
 	if (binary_equalizer_init(
 		    &initialized.line, &handoff->equalizer,

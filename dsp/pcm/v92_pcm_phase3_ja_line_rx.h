@@ -43,7 +43,6 @@ struct v92_pcm_phase3_ja_line_rx {
 	uint64_t starting_input_samples;
 	uint64_t input_samples;
 	enum v92_pcm_phase3_ja_line_rx_stage stage;
-	uint8_t input_advance_symbols;
 	bool failed;
 };
 
