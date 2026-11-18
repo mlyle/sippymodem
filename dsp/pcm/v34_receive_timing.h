@@ -73,6 +73,14 @@ bool v34_receive_timing_is_valid(
 bool v34_receive_timing_is_acquired(
 	const struct v34_receive_timing *timing);
 
+/* Query acquisition after validating the timing owner. */
+static inline bool v34_receive_timing_is_acquired_owned(
+	const struct v34_receive_timing *timing)
+{
+	return timing->s_detector.detected &&
+	       timing->timing.mode != V34_TIMING_CONTROL_INITIAL_PHASE;
+}
+
 /* Freeze the AGC at a qualified training boundary. */
 enum v34_receive_timing_result v34_receive_timing_freeze_gain(
 	struct v34_receive_timing *timing);
@@ -93,12 +101,10 @@ enum v34_receive_timing_result v34_receive_timing_set_data_frozen(
 enum v34_receive_timing_result v34_receive_timing_set_feedback_held(
 	struct v34_receive_timing *timing, bool held);
 
-/* Consume one line sample. SAMPLES_READY publishes the one or two recovered
- * samples produced before this call exhausts its input or completes a symbol
- * interval. symbol_complete identifies the exact second-sample boundary. OK
- * leaves the output unchanged. Invalid calls leave owner and output unchanged.
- */
-enum v34_receive_timing_result v34_receive_timing_sample(
+/* Consume one line sample with a validated timing owner and separate output.
+ * SAMPLES_READY publishes one or two recovered samples. symbol_complete marks
+ * the exact second-sample boundary. OK leaves the output unchanged. */
+enum v34_receive_timing_result v34_receive_timing_sample_owned(
 	struct v34_receive_timing *timing, int16_t sample,
 	struct v34_receive_timing_samples *samples);
 

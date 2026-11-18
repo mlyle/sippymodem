@@ -12,7 +12,7 @@ bool v90_phase4_e_line_rx_is_valid(
 	return rx != NULL &&
 	       v34_line_receiver_matches_profile(
 		       &rx->line, &rx->transmitting_profile) &&
-	       v34_receive_timing_is_acquired(&rx->line.timing) &&
+	       v34_receive_timing_is_acquired_owned(&rx->line.timing) &&
 	       rx->line.equalizer.feedback_mode ==
 		       V34_ADAPTIVE_EQUALIZER_FEEDBACK_NONE &&
 	       !rx->line.equalizer.decision_pending &&

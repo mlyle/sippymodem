@@ -20,7 +20,7 @@ bool v34_cleardown_is_valid(const struct v34_cleardown *cleardown)
 	parameters = &cleardown->parameters;
 	return v34_training_line_is_valid(&cleardown->transmit_line) &&
 	       v34_line_receiver_is_valid(&cleardown->receive_line) &&
-	       v34_receive_timing_is_acquired(&cleardown->receive_line.timing) &&
+	       v34_receive_timing_is_acquired_owned(&cleardown->receive_line.timing) &&
 	       !cleardown->receive_line.equalizer.decision_pending &&
 	       !cleardown->receive_line.equalizer.retained.pending &&
 	       v34_phase3_s_sequence_is_valid(&cleardown->transmit_s) &&

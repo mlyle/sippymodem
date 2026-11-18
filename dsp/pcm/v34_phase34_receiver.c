@@ -173,7 +173,7 @@ bool v34_phase34_receiver_is_valid(
 		     receiver->semantic.data.data_receiver.channel_receiver
 			     .receive_precoder.coefficients)))
 		return false;
-	if (!v34_receive_timing_is_acquired(&receiver->line.timing))
+	if (!v34_receive_timing_is_acquired_owned(&receiver->line.timing))
 		return receiver->line.equalizer.epoch == 0u &&
 		       receiver->line.equalizer.inputs_since_observation == 0u &&
 		       !receiver->line.equalizer.decision_pending &&
@@ -689,7 +689,7 @@ enum v34_phase34_receiver_result v34_phase34_receiver_rearm_phase4_s(
 		    V34_PHASE4_DECISION_RECEIVER_ANSWER_S ||
 	    receiver->phase4_s_rearmed ||
 	    receiver->line.equalizer.decision_pending ||
-	    !v34_receive_timing_is_acquired(&receiver->line.timing) ||
+	    !v34_receive_timing_is_acquired_owned(&receiver->line.timing) ||
 	    receiver->line.equalizer.epoch <
 		    V34_ADAPTIVE_EQUALIZER_FIRST_SIGNAL_EPOCH)
 		return V34_PHASE34_RECEIVER_INVALID_STATE;

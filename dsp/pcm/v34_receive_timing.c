@@ -94,8 +94,7 @@ bool v34_receive_timing_is_acquired(
 	const struct v34_receive_timing *timing)
 {
 	return v34_receive_timing_is_valid(timing) &&
-	       timing->s_detector.detected &&
-	       timing->timing.mode != V34_TIMING_CONTROL_INITIAL_PHASE;
+	       v34_receive_timing_is_acquired_owned(timing);
 }
 
 enum v34_receive_timing_result v34_receive_timing_freeze_gain(
@@ -308,12 +307,6 @@ static inline enum v34_receive_timing_result process_sample(
 	struct v34_analytic_sample demodulated;
 	enum v34_receive_timing_result result;
 
-	if (!(track ? v34_receive_timing_is_valid(timing) : reference_clock_is_valid(timing)))
-		return V34_RECEIVE_TIMING_INVALID_STATE;
-	if (samples == NULL ||
-	    memory_regions_overlap(
-		    timing, sizeof(*timing), samples, sizeof(*samples)))
-		return V34_RECEIVE_TIMING_INVALID_ARGUMENT;
 	if (timing->input_count == V34_RECEIVE_TIMING_INPUT_CAPACITY)
 		return V34_RECEIVE_TIMING_INVALID_STATE;
 	if (v34_analytic_filter_process(
@@ -351,7 +344,7 @@ static inline enum v34_receive_timing_result process_sample(
 	return V34_RECEIVE_TIMING_SAMPLES_READY;
 }
 
-enum v34_receive_timing_result v34_receive_timing_sample(
+enum v34_receive_timing_result v34_receive_timing_sample_owned(
 	struct v34_receive_timing *timing, int16_t sample,
 	struct v34_receive_timing_samples *samples)
 {
@@ -373,5 +366,10 @@ enum v34_receive_timing_result v34_receive_timing_project_owned(
 	reference->input_advance_pending = control->input_advance_pending;
 	reference->timing_output_count = control->timing_output_count;
 	reference->current_valid = control->current_valid;
+	if (!reference_clock_is_valid(reference))
+		return V34_RECEIVE_TIMING_INVALID_STATE;
+	if (samples == NULL || memory_regions_overlap(
+		    reference, sizeof(*reference), samples, sizeof(*samples)))
+		return V34_RECEIVE_TIMING_INVALID_ARGUMENT;
 	return process_sample(reference, sample, samples, false);
 }

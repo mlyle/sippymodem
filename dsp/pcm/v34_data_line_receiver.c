@@ -63,7 +63,7 @@ bool v34_data_line_receiver_is_valid(
 		       receiver->geometry.symbol_rate &&
 	       v34_line_receiver_matches_profile(
 		       &receiver->line, &receiver->transmitting_profile) &&
-	       v34_receive_timing_is_acquired(&receiver->line.timing) &&
+	       v34_receive_timing_is_acquired_owned(&receiver->line.timing) &&
 	       receiver->line.equalizer.feedback_mode ==
 		       V34_ADAPTIVE_EQUALIZER_FEEDBACK_NONE &&
 	       !receiver->line.equalizer.decision_pending &&
@@ -104,7 +104,7 @@ enum v34_data_receive_result v34_data_line_receiver_init(
 		    configuration->geometry.symbol_rate ||
 	    !v34_line_receiver_matches_profile(
 		    line, &configuration->transmitting_profile) ||
-	    !v34_receive_timing_is_acquired(&line->timing) ||
+	    !v34_receive_timing_is_acquired_owned(&line->timing) ||
 	    line->equalizer.feedback_mode !=
 		    V34_ADAPTIVE_EQUALIZER_FEEDBACK_NONE ||
 	    line->equalizer.decision_pending)

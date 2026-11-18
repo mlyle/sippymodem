@@ -10,16 +10,11 @@
 bool v34_line_receiver_is_valid(
 	const struct v34_line_receiver *receiver)
 {
-	bool acquired;
-
-	if (receiver == NULL || !receiver->initialized)
-		return false;
-	/* The acquisition predicate validates the complete timing owner. */
-	acquired = v34_receive_timing_is_acquired(&receiver->timing);
-	if ((!acquired && !v34_receive_timing_is_valid(&receiver->timing)) ||
+	if (receiver == NULL || !receiver->initialized ||
+	    !v34_receive_timing_is_valid(&receiver->timing) ||
 	    !v34_adaptive_equalizer_is_valid(&receiver->equalizer))
 		return false;
-	if (!acquired)
+	if (!v34_receive_timing_is_acquired_owned(&receiver->timing))
 		return receiver->equalizer.epoch == 0u &&
 		       receiver->equalizer.inputs_since_observation == 0u &&
 		       !receiver->equalizer.decision_pending;
@@ -75,7 +70,6 @@ enum v34_line_receiver_result v34_line_receiver_sample(
 	struct v34_adaptive_equalizer_observation generated;
 	enum v34_receive_timing_result timing_result;
 	bool was_acquired;
-	bool acquired;
 
 	if (observation == NULL ||
 	    memory_regions_overlap(
@@ -85,18 +79,17 @@ enum v34_line_receiver_result v34_line_receiver_sample(
 	if (!v34_line_receiver_is_valid(receiver) ||
 	    receiver->equalizer.decision_pending)
 		return V34_LINE_RECEIVER_INVALID_STATE;
-	was_acquired = v34_receive_timing_is_acquired(&receiver->timing);
-	timing_result = v34_receive_timing_sample(
+	was_acquired = v34_receive_timing_is_acquired_owned(&receiver->timing);
+	timing_result = v34_receive_timing_sample_owned(
 		&receiver->timing, sample, &recovered);
 	if (timing_result != V34_RECEIVE_TIMING_OK &&
 	    timing_result != V34_RECEIVE_TIMING_SAMPLES_READY)
 		return V34_LINE_RECEIVER_NUMERIC_FAILURE;
-	acquired = v34_receive_timing_is_acquired(&receiver->timing);
 	/* Carrier confirmation owns the start of the recovered symbol stream.
 	 * Do not train on samples produced while acquisition was provisional. */
 	if (!was_acquired)
-		return acquired ? V34_LINE_RECEIVER_TIMING_ACQUIRED :
-				  V34_LINE_RECEIVER_OK;
+		return v34_receive_timing_is_acquired_owned(&receiver->timing) ?
+			V34_LINE_RECEIVER_TIMING_ACQUIRED : V34_LINE_RECEIVER_OK;
 	if (timing_result == V34_RECEIVE_TIMING_OK)
 		return V34_LINE_RECEIVER_OK;
 	for (uint8_t index = 0; index < recovered.count; ++index)

@@ -146,6 +146,16 @@ static bool test_line_validation(const struct v34_line_receiver *receiver)
 #define CHECK_INVALID_LINE(field, value) do { \
 	invalid = *receiver; \
 	invalid.field = (value); \
+	struct v34_line_receiver before; \
+	struct v34_adaptive_equalizer_observation observation, saved_observation; \
+	memcpy(&before, &invalid, sizeof(before)); \
+	memset(&observation, 0xa5, sizeof(observation)); \
+	memcpy(&saved_observation, &observation, sizeof(observation)); \
+	CHECK(v34_line_receiver_sample(&invalid, 123, &observation) == \
+		      V34_LINE_RECEIVER_INVALID_STATE && \
+	      memcmp(&invalid, &before, sizeof(before)) == 0 && \
+	      memcmp(&observation, &saved_observation, sizeof(observation)) == 0, \
+	      "line sample accepted or modified invalid " #field); \
 	CHECK(!v34_line_receiver_is_valid(&invalid) && \
 	      !v34_line_receiver_matches_profile(&invalid, owned) && \
 	      !v34_line_receiver_matches_profile( \

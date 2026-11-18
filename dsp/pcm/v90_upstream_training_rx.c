@@ -79,7 +79,7 @@ bool v90_upstream_training_rx_is_handoff_ready(
 	return receiver != NULL &&
 	       v90_phase3_analog_profile_is_valid(&receiver->transmitting_profile) &&
 	       v90_upstream_training_rx_is_tracking(receiver) &&
-	       v34_receive_timing_is_acquired(&receiver->line.timing) &&
+	       v34_receive_timing_is_acquired_owned(&receiver->line.timing) &&
 	       !receiver->line.equalizer.decision_pending &&
 	       !receiver->line.equalizer.retained.pending;
 }
