@@ -122,9 +122,60 @@ That path passed the second exchange in all 16 persistent-drift cases
 at the map selected in the first exchange. The four unchanged controls
 kept 56 kbps through both exchanges.
 
-The active filters in these trials were effectively scalar. Both
-stations supplied exact physical alignment and the experiment kept
-the original decoded waveform evidence separate from its model. An
-active filter with material postcursor coefficients, a phase
-discontinuity on a physical link, and whole-modem packet cost through
-selection still need qualification before enabling this behavior.
+The active filters in those trials were effectively scalar. The
+paired material-memory trials below use the same station and clock
+ownership. Physical-link qualification still requires evidence from
+an analogue receiver on a live connection.
+
+## Bound the shared predecessor through the receive filter
+
+When the channel and equalizer both have memory, the current raw
+input and the preceding raw input depend on the same transmitted
+predecessor. Giving each FIR history input an independent full-scale
+range loses that dependence and can eliminate every permissible rate.
+Partition the allowed predecessor range. In each partition, bound the
+current input and the first history input using the same predecessor
+interval. Apply the codec to those two ranges before weighting them by
+the frozen FIR taps. Bound the oldest tap by its own phase and peak.
+Take the union of the per-partition sums and apply the receiver's
+final rounding and quantization. This retains the dominant cancellation
+without requiring a search over full symbol histories.
+
+In both laws the prototype used a material three-tap equalizer trained
+by the ordinary startup, at 34.667–40 kbps downstream and 40 kbps PCM
+upstream. Across 20 persistent gain or first-postcursor changes, the
+full-scale history bound produced zero recoveries. The 32-partition
+bound recovered 11 at 28–37.333 kbps downstream. Each recovery passed
+B1d and at least 1,500 payload frames in both directions. Independent
+checks compared 336,000 phase-specific test samples against the native
+codec and FIR, including near clipping. The partitioned intervals
+contained every output under the fitted channel assumptions.
+
+## Predict B1d errors beyond the TRN2d labels
+
+An exchange with zero wrong training labels can still provide evidence
+for a change. Regenerate the known B1d symbols for the old map and
+project their exact predecessor tuples using each window's own fit.
+Require both windows to put the same known symbols outside their
+old decision cells. The prototype requires such errors in at least two
+of the ninth through forty-fourth B1d frames. The native admission
+check requires forty trailing clean frames out of forty-eight. Both
+windows must also contradict the retained calibration in the affected
+phase, and their observations must admit a common physical model.
+
+This trigger recovered five additional pairs for a total of 16/20.
+Four of the five had zero wrong labels in both TRN2d windows. When the
+same pairs kept their prior maps, all 58 independently predicted
+wrong labels appeared during B1d. The six stable pairs, including two
+at 56 kbps, kept their rates. Four transient changes kept their old
+maps. Eight late channel steps or timing slips withheld publication.
+Four persistent cases still failed to recover.
+
+The material-memory comparison used the calibrated Rd path for each
+explicitly requested exchange while its phase bounds remained valid.
+It also recovered an A-law startup map that missed its first requested
+Rd reversal with the ordinary detector. Three initial and four
+recovered pairs passed a second exchange at the same rates, and nine
+malformed marker controls failed before TRN2d. The prototype keeps
+native B1d and payload checks. Live enablement still needs calibration
+ownership and physical analogue-side validation.
