@@ -128,4 +128,11 @@ enum v92_control_rx_result v92_control_rx_receive_bits(
 	struct v92_control_rx *receiver, const uint8_t *bits, size_t count,
 	struct v92_control_event *event);
 
+/* Consume a chunk within the caller's transaction. The caller provides
+ * validated parser state, disjoint storage and a count in 1..72. On error
+ * discard the staged state. The event is published only on success. */
+enum v92_control_rx_result v92_control_rx_receive_bits_owned(
+	struct v92_control_rx *receiver, const uint8_t *bits, size_t count,
+	struct v92_control_event *event);
+
 #endif /* V92_CONTROL_RX_H */

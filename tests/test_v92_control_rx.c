@@ -709,15 +709,15 @@ static bool check_chunks(const uint8_t *frame, size_t bits, bool upstream,
 	static const size_t chunks[] = { 1u, 2u, 3u, 9u, 24u, 42u, 72u };
 
 	for (size_t trial = 0u; trial < sizeof(chunks) / sizeof(chunks[0]); ++trial) {
-		struct v92_control_rx reference, receiver;
+		struct v92_control_rx reference, receiver, owned;
 		CHECK((upstream ? v92_control_rx_init_upstream(&receiver, width) :
 			v92_control_rx_init_downstream(&receiver, width)) == V92_CONTROL_RX_OK,
 		      "chunk receiver initialization failed");
-		reference = receiver;
+		reference = owned = receiver;
 		for (size_t first = 0u; first < bits + 7u;) {
 			uint8_t input[V92_CONTROL_UPSTREAM_DATA_MAX_BITS];
 			size_t count = chunks[trial];
-			struct v92_control_event expected = { 0 }, actual;
+			struct v92_control_event expected = { 0 }, actual, emitted;
 
 			if (count > bits + 7u - first)
 				count = bits + 7u - first;
@@ -737,6 +737,11 @@ static bool check_chunks(const uint8_t *frame, size_t bits, bool upstream,
 			      memcmp(&receiver, &reference, sizeof(receiver)) == 0 &&
 			      events_match(&actual, &expected),
 			      "chunk %zu changed control decisions/state at %zu", count, first);
+			CHECK(v92_control_rx_receive_bits_owned(&owned, input, count, &emitted) ==
+				V92_CONTROL_RX_OK &&
+			      memcmp(&owned, &reference, sizeof(owned)) == 0 &&
+			      events_match(&emitted, &expected),
+			      "owned chunk %zu changed control decisions/state at %zu", count, first);
 			first += count;
 		}
 	}
@@ -810,6 +815,17 @@ static bool test_chunks(void)
 	      memcmp(&receiver, &before, sizeof(receiver)) == 0 &&
 	      memcmp(&event, &event_before, sizeof(event)) == 0,
 	      "multiple events were lost or partially committed");
+	struct v92_control_rx staged = receiver;
+	CHECK(v92_control_rx_receive_bits_owned(&staged, input, bits + 1u, &event) ==
+		V92_CONTROL_RX_INTERNAL_ERROR &&
+	      memcmp(&event, &event_before, sizeof(event)) == 0,
+	      "owned parser published the first event before rejecting the chunk");
+	staged = receiver;
+	input[1] = 2u;
+	CHECK(v92_control_rx_receive_bits_owned(&staged, input, 2u, &event) ==
+		V92_CONTROL_RX_INVALID_ARGUMENT &&
+	      memcmp(&event, &event_before, sizeof(event)) == 0,
+	      "owned parser published an event from nonbinary input");
 	return true;
 }
 

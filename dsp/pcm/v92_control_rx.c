@@ -383,12 +383,39 @@ enum v92_control_rx_result v92_control_rx_receive_bit(
 	return v92_control_rx_receive_bits(receiver, &bit, 1u, event);
 }
 
+enum v92_control_rx_result v92_control_rx_receive_bits_owned(
+	struct v92_control_rx *receiver, const uint8_t *bits, size_t count,
+	struct v92_control_event *event)
+{
+	struct v92_control_event emitted = { 0 };
+	enum v92_control_event_type type = V92_CONTROL_EVENT_NONE;
+
+	/* Continuation bits leave the last event payload intact. Track its type
+	 * separately so a later bit can report a second event without publishing either. */
+	for (size_t bit = 0u; bit < count; ++bit) {
+		if (bits[bit] > 1u)
+			return V92_CONTROL_RX_INVALID_ARGUMENT;
+		receiver->record_boundary = false;
+		emitted.type = V92_CONTROL_EVENT_NONE;
+		if (!receive_valid_bit(receiver, bits[bit], &emitted))
+			return V92_CONTROL_RX_INTERNAL_ERROR;
+		if (emitted.type != V92_CONTROL_EVENT_NONE) {
+			if (type != V92_CONTROL_EVENT_NONE)
+				return V92_CONTROL_RX_INTERNAL_ERROR;
+			type = emitted.type;
+		}
+	}
+	emitted.type = type;
+	*event = emitted;
+	return V92_CONTROL_RX_OK;
+}
+
 enum v92_control_rx_result v92_control_rx_receive_bits(
 	struct v92_control_rx *receiver, const uint8_t *bits, size_t count,
 	struct v92_control_event *event)
 {
 	struct v92_control_rx next;
-	struct v92_control_event emitted = { 0 };
+	struct v92_control_event emitted;
 
 	if (receiver == NULL || event == NULL || bits == NULL || count == 0u ||
 	    count > V92_CONTROL_UPSTREAM_DATA_MAX_BITS ||
@@ -399,20 +426,10 @@ enum v92_control_rx_result v92_control_rx_receive_bits(
 	if (!v92_control_rx_is_valid(receiver))
 		return V92_CONTROL_RX_INVALID_STATE;
 	next = *receiver;
-	for (size_t bit = 0u; bit < count; ++bit) {
-		struct v92_control_event current = { 0 };
-
-		if (bits[bit] > 1u)
-			return V92_CONTROL_RX_INVALID_ARGUMENT;
-		next.record_boundary = false;
-		if (!receive_valid_bit(&next, bits[bit], &current))
-			return V92_CONTROL_RX_INTERNAL_ERROR;
-		if (current.type != V92_CONTROL_EVENT_NONE) {
-			if (emitted.type != V92_CONTROL_EVENT_NONE)
-				return V92_CONTROL_RX_INTERNAL_ERROR;
-			emitted = current;
-		}
-	}
+	enum v92_control_rx_result result = v92_control_rx_receive_bits_owned(
+		&next, bits, count, &emitted);
+	if (result != V92_CONTROL_RX_OK)
+		return result;
 	if (!v92_control_rx_is_valid(&next))
 		return V92_CONTROL_RX_INTERNAL_ERROR;
 	*receiver = next;

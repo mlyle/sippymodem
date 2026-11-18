@@ -134,7 +134,7 @@ v92_upstream_control_line_rx_sample(
 		return fail(receiver);
 	for (unsigned int bit = 0u; bit < bits; ++bit)
 		unpacked[bit] = (uint8_t)((decision.group >> bit) & 1u);
-	if (v92_control_rx_receive_bits(&next.control, unpacked, bits, &emitted) !=
+	if (v92_control_rx_receive_bits_owned(&next.control, unpacked, bits, &emitted) !=
 		V92_CONTROL_RX_OK)
 		return fail(receiver);
 	/* CPu selection is fixed for this exchange once its owner accepts it.

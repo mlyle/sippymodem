@@ -302,7 +302,7 @@ static enum pcm_downstream_rx_result feed_v92_control_frame(
 	struct pcm_downstream_event *event)
 {
 	struct v92_control_event emitted = { 0 };
-	if (v92_control_rx_receive_bits(&receiver->control.v92, frame->bits,
+	if (v92_control_rx_receive_bits_owned(&receiver->control.v92, frame->bits,
 		    frame->bit_count, &emitted) != V92_CONTROL_RX_OK)
 		return PCM_DOWNSTREAM_RX_INTERNAL_ERROR;
 	if (emitted.type == V92_CONTROL_EVENT_NONE)
