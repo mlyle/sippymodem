@@ -484,13 +484,27 @@ static bool test_biased_return_scan(int sign)
 	      scan.best_correlation_ppm > 100000u,
 	      "DC hid the earlier return: sign=%d delay=%u strength=%u", sign,
 	      scan.best_window_delay_samples, scan.best_correlation_ppm);
-	CHECK(pcm_echo_reference_start_scan(&reference, DEFAULT_RETURN_DELAY,
+	int64_t previous_cross = reference.scan_cross_energy[0];
+	CHECK(pcm_echo_reference_start_scan(&reference,
+		      PCM_ECHO_REFERENCE_MAX_WINDOW_DELAY_SAMPLES,
 		      FILTER_PRE_SAMPLES) == PCM_ECHO_REFERENCE_OK &&
-	      reference.scan_input_sum == 0 && reference.scan_samples == 0,
-	      "new scan retained input first moments");
-	for (unsigned index = 0; index < reference.scan_count; ++index)
-		CHECK(reference.scan_reference_sum[index] == 0,
-		      "new scan retained reference first moments at %u", index);
+	      reference.scan_input_sum == 0 && reference.scan_input_energy == 0 &&
+	      reference.scan_samples == 0, "new scan retained input evidence");
+	CHECK(previous_cross != 0 && reference.scan_cross_energy[0] == previous_cross,
+	      "new scan cleared inactive candidate storage");
+	const int16_t observation = -1931;
+	CHECK(pcm_echo_reference_scan_observe(&reference, observation, &scan) ==
+		      PCM_ECHO_REFERENCE_OK && reference.scan_samples == 1u,
+	      "restarted scan did not seed its moments");
+	for (unsigned index = 0; index < reference.scan_count; ++index) {
+		int16_t sample;
+		CHECK(pcm_echo_reference_read_at_age(&reference,
+			      index + FILTER_PRE_SAMPLES + 1u, &sample) == PCM_ECHO_REFERENCE_OK &&
+		      reference.scan_reference_sum[index] == sample &&
+		      reference.scan_reference_energy[index] == (uint64_t)((int32_t)sample * sample) &&
+		      reference.scan_cross_energy[index] == (int64_t)sample * observation,
+		      "restarted scan did not replace moments at %u", index);
+	}
 	return true;
 }
 

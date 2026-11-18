@@ -7,8 +7,6 @@
 #include "ring_history.h"
 #include "wide_uint.h"
 
-#include <string.h>
-
 static bool scan_state_is_valid(const struct pcm_echo_reference *reference)
 {
 	if (reference->scan_count == 0)
@@ -93,22 +91,6 @@ enum pcm_echo_reference_result pcm_echo_reference_window_index(
 	return PCM_ECHO_REFERENCE_OK;
 }
 
-static void clear_scan(struct pcm_echo_reference *reference)
-{
-	memset(reference->scan_reference_energy, 0,
-	       sizeof(reference->scan_reference_energy));
-	memset(reference->scan_cross_energy, 0,
-	       sizeof(reference->scan_cross_energy));
-	memset(reference->scan_reference_sum, 0,
-	       sizeof(reference->scan_reference_sum));
-	reference->scan_input_sum = 0;
-	reference->scan_input_energy = 0;
-	reference->scan_count = 0;
-	reference->scan_current_index = 0;
-	reference->scan_pre_samples = 0;
-	reference->scan_samples = 0;
-}
-
 enum pcm_echo_reference_result pcm_echo_reference_start_scan(
 	struct pcm_echo_reference *reference,
 	uint32_t current_window_delay_samples,
@@ -136,7 +118,9 @@ enum pcm_echo_reference_result pcm_echo_reference_start_scan(
 		PCM_ECHO_REFERENCE_REQUIRED_DELAY_SAMPLES - pre_samples : 1u;
 	if (stop < required_stop)
 		stop = required_stop;
-	clear_scan(reference);
+	reference->scan_input_sum = 0;
+	reference->scan_input_energy = 0;
+	reference->scan_samples = 0;
 	reference->scan_count = stop;
 	reference->scan_current_index = current_window_delay_samples - 1u;
 	reference->scan_pre_samples = pre_samples;
@@ -270,6 +254,18 @@ static bool find_best_scan(
 	return found;
 }
 
+static void seed_scan_span(struct pcm_echo_reference *reference,
+	uint32_t first, uint32_t stop, const int16_t *end, int16_t received_sample)
+{
+	for (uint32_t index = first; index < stop; ++index) {
+		int16_t sample = *--end;
+
+		reference->scan_reference_sum[index] = sample;
+		reference->scan_reference_energy[index] = square_s16(sample);
+		reference->scan_cross_energy[index] = (int64_t)sample * received_sample;
+	}
+}
+
 static void accumulate_scan_span(struct pcm_echo_reference *reference,
 	uint32_t first, uint32_t stop, const int16_t *end, int16_t received_sample)
 {
@@ -322,10 +318,15 @@ enum pcm_echo_reference_result pcm_echo_reference_scan_observe(
 		PCM_ECHO_REFERENCE_HISTORY_SAMPLES, reference->scan_pre_samples + 1u);
 	uint32_t split = ring_reverse_head_count(cursor, reference->scan_count);
 
-	accumulate_scan_span(reference, 0, split,
-		reference->samples + cursor + 1u, received_sample);
-	accumulate_scan_span(reference, split, reference->scan_count,
-		reference->samples + PCM_ECHO_REFERENCE_HISTORY_SAMPLES, received_sample);
+	const int16_t *head = reference->samples + cursor + 1u;
+	const int16_t *tail = reference->samples + PCM_ECHO_REFERENCE_HISTORY_SAMPLES;
+	if (reference->scan_samples == 0) {
+		seed_scan_span(reference, 0, split, head, received_sample);
+		seed_scan_span(reference, split, reference->scan_count, tail, received_sample);
+	} else {
+		accumulate_scan_span(reference, 0, split, head, received_sample);
+		accumulate_scan_span(reference, split, reference->scan_count, tail, received_sample);
+	}
 	reference->scan_samples++;
 	if (!scan_report_is_due(reference) ||
 	    !find_best_scan(reference, &best_index, &best_score,

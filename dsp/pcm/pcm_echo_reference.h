@@ -75,7 +75,8 @@ struct pcm_echo_reference {
 	uint32_t scan_current_index;
 	uint32_t scan_pre_samples;
 	/* Each eligible observation advances this count once; it also owns
-	 * reporting cadence. Saturation preserves evidence without reporting. */
+	 * reporting cadence. Zero invalidates all candidate moments until the
+	 * first eligible observation seeds them. Saturation retains evidence. */
 	uint32_t scan_samples;
 };
 
