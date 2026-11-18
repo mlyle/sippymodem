@@ -381,6 +381,23 @@ static bool check_level_range(void)
 			long outer = (long)floor((points - 1u) * (double)lu /
 					       normalization + 0.5);
 			bool valid = lu > 0 && outer <= INT16_MAX;
+			int16_t magnitudes[V92_CONSTELLATION_8_POINT / 2] = {
+				-1, -1, -1, -1,
+			};
+			unsigned int count = v92_phase4_modulator_magnitudes(
+				points, (int16_t)lu, magnitudes);
+
+			CHECK(count == (valid ? points / 2u : 0u),
+			      "Phase 4 magnitude count differed points=%u lu=%d",
+			      points, (int)lu);
+			for (unsigned int index = 0; index < ARRAY_LENGTH(magnitudes); ++index) {
+				long expected = index < count ? (long)floor(
+					(2u * index + 1u) * (double)lu / normalization + 0.5) : -1;
+
+				CHECK(magnitudes[index] == expected,
+				      "Phase 4 magnitude differed points=%u lu=%d index=%u",
+				      points, (int)lu, index);
+			}
 
 			saved = modulator;
 			saved_rx = demodulator;

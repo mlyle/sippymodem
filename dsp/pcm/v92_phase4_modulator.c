@@ -30,24 +30,33 @@ static unsigned int magnitude_count(
 	return bits == 0 ? 0 : 1u << (bits - 1u);
 }
 
+static inline uint64_t magnitude_scale(
+	enum v92_constellation_size constellation, int16_t lu)
+{
+	/* round(2^40 / sqrt((M*M-1)/3)) for M=4,8. */
+	uint64_t reciprocal = constellation == V92_CONSTELLATION_4_POINT ?
+		UINT64_C(491716548352) : UINT64_C(239933107703);
+
+	return reciprocal * (uint16_t)lu;
+}
+
+static inline uint64_t rounded_magnitude(uint64_t scale, unsigned int index)
+{
+	/* The product is below 2^56. Across every positive int16 LU and legal
+	 * magnitude the Q40 error cannot cross a half-integer. The exhaustive
+	 * level test also checks the original formula in every rounding mode. */
+	return ((2u * index + 1u) * scale + (UINT64_C(1) << 39)) >> 40;
+}
+
 static inline bool raw_level(
 	enum v92_constellation_size constellation, int16_t lu,
 	uint8_t magnitude_index, uint8_t encoded_sign, int16_t *sample)
 {
-	uint64_t reciprocal;
-	uint64_t magnitude;
-
 	if (sample == NULL || lu <= 0 || encoded_sign > 1u ||
 	    magnitude_index >= magnitude_count(constellation))
 		return false;
-	/* round(2^40 / sqrt((M*M-1)/3)) for M=4,8. The product is
-	 * below 2^56. Across every positive int16 LU and legal magnitude,
-	 * Q40 error cannot cross a half-integer; the exhaustive level test
-	 * also checks the original formula in every IEEE rounding mode. */
-	reciprocal = constellation == V92_CONSTELLATION_4_POINT ?
-		UINT64_C(491716548352) : UINT64_C(239933107703);
-	magnitude = ((uint64_t)(2u * magnitude_index + 1u) * (uint16_t)lu *
-		reciprocal + (UINT64_C(1) << 39)) >> 40;
+	uint64_t magnitude = rounded_magnitude(
+		magnitude_scale(constellation, lu), magnitude_index);
 	if (magnitude == 0 || magnitude > INT16_MAX)
 		return false;
 	*sample = encoded_sign != 0u ?
@@ -69,6 +78,20 @@ static bool parameters_are_valid(
 	 * Keep actual level generation and its rounding in raw_level(). */
 	return UINT64_C(12) * (uint64_t)lu * (uint64_t)lu * (points - 1u) <
 		UINT64_C(65535) * UINT64_C(65535) * (points + 1u);
+}
+
+unsigned int v92_phase4_modulator_magnitudes(
+	enum v92_constellation_size constellation, int16_t lu,
+	int16_t levels[V92_CONSTELLATION_8_POINT / 2])
+{
+	if (levels == NULL || !parameters_are_valid(constellation, lu))
+		return 0;
+	unsigned int count = (unsigned int)constellation / 2u;
+	uint64_t scale = magnitude_scale(constellation, lu);
+
+	for (unsigned int index = 0; index < count; ++index)
+		levels[index] = (int16_t)rounded_magnitude(scale, index);
+	return count;
 }
 
 enum v92_phase4_modulator_result v92_phase4_modulator_level(

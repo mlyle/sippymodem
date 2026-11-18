@@ -26,33 +26,20 @@ static bool targets_are_valid(
 	const struct v92_phase4_demodulator *demodulator,
 	const int16_t *targets)
 {
-	unsigned int bits = v92_phase4_modulator_bits_per_symbol(
-		demodulator->constellation);
-	unsigned int magnitudes = bits == 0u ? 0u : 1u << (bits - 1u);
-	int16_t points[V92_CONSTELLATION_8_POINT];
-	size_t count = 0;
+	int16_t levels[V92_CONSTELLATION_8_POINT / 2];
+	unsigned int count = v92_phase4_modulator_magnitudes(
+		demodulator->constellation, demodulator->lu, levels);
 
-	/* All pending targets share the same constellation and LU. Retain both
-	 * signs and the original linear levels; codec rounding belongs to the
-	 * decision comparison, not this delayed reference waveform. */
-	for (uint8_t sign = 0u; sign <= 1u; ++sign) {
-		for (unsigned int magnitude = 0u;
-		     magnitude < magnitudes; ++magnitude) {
-			int16_t level;
-
-			if (v92_phase4_modulator_level(
-				    demodulator->constellation,
-				    demodulator->lu,
-				    (uint8_t)magnitude, sign, &level) !=
-			    V92_PHASE4_MODULATOR_OK)
-				return false;
-			points[count++] = level;
-		}
-	}
+	/* Every target uses the same linear, sign-symmetric constellation.
+	 * Reject a missing inner symbol before checking the delayed samples. */
+	if (count == 0 || levels[0] == 0)
+		return false;
 	for (size_t index = 0;
 	     index < V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY; ++index) {
-		size_t point = 0;
-		while (point < count && points[point] != targets[index])
+		int32_t magnitude = targets[index] < 0 ?
+			-(int32_t)targets[index] : targets[index];
+		unsigned int point = 0;
+		while (point < count && levels[point] != magnitude)
 			++point;
 		if (point == count)
 			return false;

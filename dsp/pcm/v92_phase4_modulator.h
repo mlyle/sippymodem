@@ -39,6 +39,14 @@ struct v92_phase4_demodulator {
 unsigned int v92_phase4_modulator_bits_per_symbol(
 	enum v92_constellation_size constellation);
 
+/* Generate the nonnegative levels in wire magnitude order. An inner level
+ * rounded to zero is reported as zero so callers can distinguish a missing
+ * symbol from a duplicate nonzero level. Invalid parameters return zero
+ * without writing. Only the returned number of entries is written. */
+unsigned int v92_phase4_modulator_magnitudes(
+	enum v92_constellation_size constellation, int16_t lu,
+	int16_t levels[V92_CONSTELLATION_8_POINT / 2]);
+
 /* Generate one of Tables 28 and 29's normalized signed levels. The formula
  * uses sqrt((M*M - 1)/3), where M is four or eight. Integer normalization
  * gives the same nearest levels throughout the int16_t LU domain. LU must

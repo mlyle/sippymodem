@@ -11,26 +11,21 @@ bool v92_control_target(
 	int16_t nominal, double observed, int16_t *target)
 {
 	struct g711_interval interval;
-	unsigned int bits, magnitudes, magnitude = 0u, matches = 0u;
+	int16_t levels[V92_CONSTELLATION_8_POINT / 2];
+	unsigned int magnitude = 0u, matches = 0u;
 	int16_t nominal_target, best;
 	double best_error;
 	int lower, upper;
 	int sign = nominal < 0 ? -1 : 1;
 
-	if (demodulator == NULL || target == NULL || !isfinite(observed) ||
-	    demodulator->lu <= 0 ||
+	if (demodulator == NULL || target == NULL || nominal == 0 ||
+	    !isfinite(observed) || demodulator->lu <= 0 ||
 	    !g711_quantization_interval(law, demodulator->lu, &interval))
 		return false;
-	bits = v92_phase4_modulator_bits_per_symbol(demodulator->constellation);
-	magnitudes = bits == 0u ? 0u : 1u << (bits - 1u);
+	unsigned int magnitudes = v92_phase4_modulator_magnitudes(
+		demodulator->constellation, demodulator->lu, levels);
 	for (unsigned int index = 0u; index < magnitudes; ++index) {
-		int16_t level;
-
-		if (v92_phase4_modulator_level(demodulator->constellation,
-			    demodulator->lu, (uint8_t)index, nominal < 0,
-			    &level) != V92_PHASE4_MODULATOR_OK)
-			continue;
-		if (level == nominal) {
+		if (levels[index] == sign * (int32_t)nominal) {
 			magnitude = index;
 			++matches;
 		}
