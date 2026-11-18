@@ -29,12 +29,20 @@ phases cover the required radix product. Enumerate that ceiling and its floor
 only where they differ. The original family wins whenever it fits at the
 same distance. This preserves existing maps unless spacing strictly improves.
 
-These families are fixed before distance bisection. There are at most 103
-families through the existing rail: at most 64 assignments in the original
-family, and at most 32 in each added family because at least one phase has a
-fixed cap. This deliberately bounded search does not enumerate arbitrary
-six-cardinality vectors. It does not change the maximum enabled rate, power
-budget, sign redundancy, training constellation, or DIL qualification.
+Counting qualified levels at unit spacing can miss a phase whose levels are
+clustered. After the first search, count each phase's greedily spaced levels
+at one unit above the best distance. Try the asymmetric families from those
+caps if they can improve the map under the same power ceiling. This lets
+a phase trade capacity at a distance where its extra codes cannot all be
+used. The second search only replaces a map at a strictly greater distance
+with at least the previous raw noise and first-postcursor margins. The
+resulting map can use more of the allowed transmit power.
+
+Each search fixes its families before bisecting. There are at most 103
+families per search through the existing rail. The original family has at
+most 64 assignments. Each added family has at most 32 because at least one
+phase has a fixed cap. Both searches use the existing enabled rates, power
+ceiling, sign redundancy, training constellation, and qualified masks.
 
 For a proposed distance, greedily taking the lowest available positive level
 at each step minimizes every ordered magnitude. The first magnitude must be
@@ -44,8 +52,8 @@ this gives the minimum power for that fixed cardinality and distance.
 Feasibility is monotone, permitting integer bisection across the family.
 Equal distance retains the common-cardinality baseline and original root
 family. Other ties use the lower exact power ceiling, then stable family
-and phase-pattern order. This is optimal within the stated family, not over
-arbitrary six-cardinality maps.
+and phase-pattern order. Each search finds the greatest distance within
+its families before the replacement is checked against the earlier map.
 
 ## Exact power without enumerating words
 
@@ -133,6 +141,14 @@ and phases, capped at 32768, guarantees unchanged symbol decisions for every
 predecessor and every integer coefficient from zero through that bound.
 Monotonicity of the channel and contiguous decision regions make the extrema
 sufficient. The bound is specific to this model, not a BER estimate.
+
+For a proposed replacement, compute the exact raw decision edge between
+each pair of signed neighbors. Slicing uses decoded magnitudes with ties
+going to the larger magnitude. Evaluate each edge against both neighbors
+and the preceding phase's extremes. This computes the postcursor bound
+above and the symmetric raw-noise radius with zero postcursor. Require
+both to be at least as large as for the first map. The comparison uses
+the entire declared constellation and needs no assumed channel coefficient.
 
 The stream-receiver regression obtains decisions through normal native receive
 calls, exhausts every signed 16-bit encoder input, and independently enumerates

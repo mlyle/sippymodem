@@ -318,6 +318,16 @@ static void prepare_levels(struct spaced_levels *levels, enum g711_law law,
 	}
 }
 
+static void prepare_phase_levels(struct spaced_levels storage[V90_CP_FRAME_INTERVALS],
+	const unsigned source[V90_CP_FRAME_INTERVALS], enum g711_law law,
+	uint32_t distance, const struct pcm_constellation *available)
+{
+	for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++)
+		if (source[slot] == slot)
+			prepare_levels(&storage[slot], law, distance,
+				available ? available + slot : NULL);
+}
+
 static uint32_t constellation_power(const struct spaced_levels *const levels[6],
 	const uint8_t sizes[6], unsigned bits)
 {
@@ -356,32 +366,17 @@ static uint64_t capped_capacity(const unsigned caps[V90_CP_FRAME_INTERVALS],
 
 /* Fix every family's cardinalities before distance bisection. A phase with
  * fewer than the root's levels can trade capacity with less impaired phases.
- * Sweep its cap, then find the smallest common ceiling for the other phases.
- * Include the original root-1/root family first to preserve its tie order. */
-static unsigned data_families(const struct v90_pcm_mapping *mapping,
-	const struct pcm_constellation *available,
-	const unsigned source[V90_CP_FRAME_INTERVALS],
-	struct cardinality_family families[PCM_CONSTELLATION_UCODES])
+ * Sweep its cap, then find the smallest common ceiling for the other phases. */
+static unsigned asymmetric_families(unsigned root, uint64_t words,
+	const struct spaced_levels *const levels[V90_CP_FRAME_INTERVALS],
+	struct cardinality_family *families)
 {
-	unsigned root = mapping->modulus[0], caps[V90_CP_FRAME_INTERVALS];
-	unsigned weak = 0, largest = 0, count = 1;
-	uint64_t words = UINT64_C(1) << mapping->modulus_bits, capacity = 1;
+	unsigned caps[V90_CP_FRAME_INTERVALS];
+	unsigned weak = 0, largest = 0, count = 0;
+	uint64_t capacity = 1;
 
-	families[0].choices = (1u << V90_CP_FRAME_INTERVALS) - 1u;
 	for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++) {
-		families[0].low[slot] = (uint8_t)(root - 1u);
-		families[0].high[slot] = (uint8_t)root;
-	}
-	if (available == NULL)
-		return count;
-	for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++) {
-		if (source[slot] != slot) {
-			caps[slot] = caps[source[slot]];
-		} else {
-			struct spaced_levels levels;
-			prepare_levels(&levels, mapping->law, 1, available + slot);
-			caps[slot] = levels.size;
-		}
+		caps[slot] = levels[slot]->size;
 		if (caps[slot] < V90_INITIAL_CONSTELLATION_SIZE)
 			return 0;
 		capacity *= caps[slot];
@@ -391,10 +386,8 @@ static unsigned data_families(const struct v90_pcm_mapping *mapping,
 				largest = caps[slot];
 		}
 	}
-	if (capacity < words)
+	if (capacity < words || weak == 0)
 		return 0;
-	if (weak == 0)
-		return count;
 	/* Increasing weak-phase caps cannot increase the least feasible ceiling
 	 * for the other phases. Keep that ceiling across the ascending sweep;
 	 * before any family fits, the full rail remains the upper bound. */
@@ -419,6 +412,18 @@ static unsigned data_families(const struct v90_pcm_mapping *mapping,
 		}
 	}
 	return count;
+}
+
+static struct cardinality_family balanced_family(unsigned root)
+{
+	struct cardinality_family family = {
+		.choices = (1u << V90_CP_FRAME_INTERVALS) - 1u,
+	};
+	for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++) {
+		family.low[slot] = (uint8_t)(root - 1u);
+		family.high[slot] = (uint8_t)root;
+	}
+	return family;
 }
 
 /* All variable phases in a family share one low/high pair. Capacity
@@ -447,6 +452,129 @@ static void prepare_capacity_counts(struct cardinality_family *families,
 	}
 }
 
+static bool choose_cardinalities(const struct v90_pcm_mapping *mapping,
+	uint32_t maximum_power, const struct spaced_levels *const levels[V90_CP_FRAME_INTERVALS],
+	const struct cardinality_family *families, unsigned count,
+	uint8_t best[V90_CP_FRAME_INTERVALS])
+{
+	bool fits = true;
+	for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++)
+		fits &= mapping->modulus[slot] <= levels[slot]->size;
+	if (fits && constellation_power(levels, mapping->modulus,
+			mapping->modulus_bits) <= maximum_power) {
+		memcpy(best, mapping->modulus, V90_CP_FRAME_INTERVALS);
+		return true;
+	}
+	fits = false;
+	uint32_t best_power = UINT32_MAX;
+	for (unsigned family = 0; family < count; family++) {
+		const struct cardinality_family *f = &families[family];
+		unsigned choices = f->choices;
+		bool feasible = true;
+		/* At this distance, an unavailable low excludes the family;
+		 * an unavailable high merely fixes that phase to its low. */
+		for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++) {
+			feasible &= f->low[slot] <= levels[slot]->size;
+			if (f->high[slot] > levels[slot]->size)
+				choices &= ~(1u << slot);
+		}
+		if (!feasible || bit_count_u8((uint8_t)choices) < f->minimum_high)
+			continue;
+		unsigned pattern = 0;
+		do {
+			if (bit_count_u8((uint8_t)pattern) >= f->minimum_high) {
+				uint8_t sizes[V90_CP_FRAME_INTERVALS];
+				for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++)
+					sizes[slot] = pattern & (1u << slot) ? f->high[slot] : f->low[slot];
+				uint32_t power = constellation_power(levels, sizes, mapping->modulus_bits);
+				if (power <= maximum_power && power < best_power) {
+					fits = true;
+					best_power = power;
+					memcpy(best, sizes, sizeof(sizes));
+				}
+			}
+			/* Visit feasible branch subsets in the original ascending order. */
+			pattern = (pattern - choices) & choices;
+		} while (pattern != 0);
+		if (family == 0 && fits)
+			break;
+	}
+	return fits;
+}
+
+struct constellation_margin {
+	uint32_t noise;
+	uint32_t postcursor_q15;
+};
+
+/* The right label begins at edge. Test each neighboring symbol against that
+ * exact raw-input boundary. The worst one-sample postcursor comes from an
+ * extreme of the preceding phase. Scale by 32768 before truncation. */
+static void include_decision_edge(struct constellation_margin *margin,
+	int left, int right, int edge, int previous_peak)
+{
+	enum { UNITY = 32768 };
+	int left_limit = edge - 1;
+	uint32_t left_noise = (uint32_t)(left_limit - left);
+	uint32_t right_noise = (uint32_t)(right - edge);
+	if (left_noise < margin->noise)
+		margin->noise = left_noise;
+	if (right_noise < margin->noise)
+		margin->noise = right_noise;
+	if (previous_peak > left) {
+		uint32_t room = left_noise * UNITY + (left_limit >= 0 ? UNITY - 1u : 0u);
+		uint32_t q = room / (uint32_t)(previous_peak - left);
+		if (q < margin->postcursor_q15)
+			margin->postcursor_q15 = q;
+	}
+	if (-previous_peak < right) {
+		uint32_t room = right_noise * UNITY + (edge <= 0 ? UNITY - 1u : 0u);
+		uint32_t q = room / (uint32_t)(right + previous_peak);
+		if (q < margin->postcursor_q15)
+			margin->postcursor_q15 = q;
+	}
+}
+
+static struct constellation_margin decision_margins(enum g711_law law,
+	const struct pcm_constellation selected[V90_CP_FRAME_INTERVALS])
+{
+	struct constellation_margin margin = { UINT32_MAX, 32768 };
+	unsigned last_code = 0;
+	const struct pcm_constellation *last = &selected[V90_CP_FRAME_INTERVALS - 1u];
+	for (unsigned code = pcm_constellation_next(last, 0); code < PCM_CONSTELLATION_UCODES;
+	     code = pcm_constellation_next(last, code + 1u))
+		last_code = code;
+	int previous_peak = g711_decode(law, g711_ucode_positive_octet(law, (uint8_t)last_code));
+
+	for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; ++slot) {
+		unsigned code = pcm_constellation_next(selected + slot, 0);
+		int lower = g711_decode(law, g711_ucode_positive_octet(law, (uint8_t)code));
+		include_decision_edge(&margin, -lower, lower, 0, previous_peak);
+		for (code = pcm_constellation_next(selected + slot, code + 1u);
+		     code < PCM_CONSTELLATION_UCODES;
+		     code = pcm_constellation_next(selected + slot, code + 1u)) {
+			int upper = g711_decode(law, g711_ucode_positive_octet(law, (uint8_t)code));
+			/* The slicer gives ties to the larger magnitude. Find its
+			 * first codec cell on either sign of the midpoint. */
+			int midpoint = (lower + upper + 1) / 2;
+			uint8_t octet = g711_encode(law, (int16_t)midpoint);
+			if (g711_decode(law, octet) < midpoint) {
+				uint8_t ucode = octet ^ g711_ucode_positive_octet(law, 0);
+				octet = g711_ucode_positive_octet(law, (uint8_t)(ucode + 1u));
+			}
+			struct g711_interval positive, negative;
+			if (!g711_octet_interval(law, octet, &positive) ||
+			    !g711_octet_interval(law, octet ^ 0x80u, &negative))
+				return (struct constellation_margin){ 0, 0 };
+			include_decision_edge(&margin, lower, upper, positive.lower, previous_peak);
+			include_decision_edge(&margin, -upper, -lower, negative.upper + 1, previous_peak);
+			lower = upper;
+		}
+		previous_peak = lower;
+	}
+	return margin;
+}
+
 /* A fixed size vector's feasibility is monotone in distance. A union of
  * fixed families therefore permits bisection, sharing one greedy level
  * prefix per phase and distance. Preserve the original moduli at equal distance;
@@ -460,82 +588,44 @@ static bool select_constellations(const struct v90_pcm_mapping *mapping,
 	uint64_t capacity = 1, words = UINT64_C(1) << mapping->modulus_bits;
 	struct cardinality_family families[PCM_CONSTELLATION_UCODES];
 	unsigned count = 0;
-	bool found = false;
+	bool found = false, distinct_masks = false, expanded = false;
 	int16_t peak;
 	unsigned source[V90_CP_FRAME_INTERVALS];
 	struct spaced_levels storage[V90_CP_FRAME_INTERVALS];
 	const struct spaced_levels *levels[V90_CP_FRAME_INTERVALS];
+	struct pcm_constellation original[V90_CP_FRAME_INTERVALS];
 
 	pcm_constellation_sources(available, source);
 	for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++) {
 		levels[slot] = &storage[source[slot]];
+		distinct_masks |= source[slot] != 0;
 		if (mapping->modulus[slot] > largest)
 			largest = mapping->modulus[slot];
 		capacity *= root;
 	}
 	/* Only generated common-row maps may trade capacity between phases.
 	 * Peer-owned maps retain every interval's independent cardinality. */
+	bool refine = balance && root != V90_INITIAL_CONSTELLATION_SIZE && distinct_masks;
 	if (balance && root != V90_INITIAL_CONSTELLATION_SIZE) {
-		count = data_families(mapping, available, source, families);
+		families[0] = balanced_family(root);
+		count = 1;
+		if (available) {
+			prepare_phase_levels(storage, source, mapping->law, 1, available);
+			count += asymmetric_families(root, words, levels, families + 1);
+		}
 		if (count == 1 && capacity == words)
 			count = 0;
 	}
 	if (!g711_ucode_sample(mapping->law, V90_CONSTELLATION_LAST_UCODE, true, &peak))
 		return false;
 	prepare_capacity_counts(families, count, words);
-	uint32_t low = 1, high = 2u * (uint32_t)peak / (2u * largest - 1u);
+	uint32_t maximum_spacing = 2u * (uint32_t)peak / (2u * largest - 1u);
+	uint32_t low = 1, high = maximum_spacing;
 	while (low <= high) {
-		uint32_t spacing = low + (high - low) / 2u, best_power = UINT32_MAX;
+		uint32_t spacing = low + (high - low) / 2u;
 		uint8_t best[V90_CP_FRAME_INTERVALS] = { 0 };
-		bool fits = true;
-		for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++)
-			if (source[slot] == slot)
-				prepare_levels(&storage[slot], mapping->law, spacing,
-					available ? available + slot : NULL);
-		/* The original cardinalities win at equal distance. Both searches
-		 * use the same componentwise-minimal levels and exact power sum. */
-		for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++)
-			fits &= mapping->modulus[slot] <= levels[slot]->size;
-		fits = fits && constellation_power(levels, mapping->modulus,
-			mapping->modulus_bits) <= maximum_power;
-		if (fits)
-			memcpy(best, mapping->modulus, sizeof(best));
-		unsigned family_count = fits ? 0 : count;
-		for (unsigned family = 0; family < family_count; family++) {
-			const struct cardinality_family *f = &families[family];
-			unsigned choices = f->choices;
-			bool feasible = true;
-			/* At this distance, an unavailable low excludes the family;
-			 * an unavailable high merely fixes that phase to its low.
-			 * Every remaining high has the same capacity ratio, so the
-			 * precomputed minimum count still applies to these choices. */
-			for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++) {
-				feasible &= f->low[slot] <= levels[slot]->size;
-				if (f->high[slot] > levels[slot]->size)
-					choices &= ~(1u << slot);
-			}
-			if (!feasible || bit_count_u8((uint8_t)choices) < f->minimum_high)
-				continue;
-			unsigned pattern = 0;
-			do {
-				if (bit_count_u8((uint8_t)pattern) >= f->minimum_high) {
-					uint8_t sizes[V90_CP_FRAME_INTERVALS];
-					for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++)
-						sizes[slot] = pattern & (1u << slot) ? f->high[slot] : f->low[slot];
-					uint32_t power = constellation_power(levels, sizes, mapping->modulus_bits);
-					if (power <= maximum_power && power < best_power) {
-						fits = true;
-						best_power = power;
-						memcpy(best, sizes, sizeof(best));
-					}
-				}
-				/* Visit feasible branch subsets in the original ascending order. */
-				pattern = (pattern - choices) & choices;
-			} while (pattern != 0);
-			if (family == 0 && fits)
-				break;
-		}
-		if (fits) {
+		prepare_phase_levels(storage, source, mapping->law, spacing, available);
+		if (choose_cardinalities(mapping, maximum_power, levels, families, count, best)) {
 			for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; slot++) {
 				selected[slot] = (struct pcm_constellation){ 0 };
 				for (unsigned point = 0; point < best[slot]; point++)
@@ -546,6 +636,27 @@ static bool select_constellations(const struct v90_pcm_mapping *mapping,
 		} else {
 			high = spacing - 1u;
 		}
+		/* A mask may qualify many tightly clustered levels. At the first
+		 * rejected distance, freeze caps from the spaced levels for a
+		 * second search. The new search must improve the previous map. */
+		if (refine && found && low > high && low <= maximum_spacing) {
+			refine = false;
+			prepare_phase_levels(storage, source, mapping->law, low, available);
+			count = 1 + asymmetric_families(root, words, levels, families + 1);
+			prepare_capacity_counts(families, count, words);
+			if (count > 1 &&
+			    choose_cardinalities(mapping, maximum_power, levels, families, count, best)) {
+				memcpy(original, selected, sizeof(original));
+				high = maximum_spacing;
+				expanded = true;
+			}
+		}
+	}
+	if (expanded) {
+		struct constellation_margin before = decision_margins(mapping->law, original);
+		struct constellation_margin after = decision_margins(mapping->law, selected);
+		if (after.noise < before.noise || after.postcursor_q15 < before.postcursor_q15)
+			memcpy(selected, original, sizeof(original));
 	}
 	return found;
 }

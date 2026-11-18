@@ -1107,6 +1107,88 @@ static bool test_asymmetric_optimality(void)
 	return true;
 }
 
+static bool test_clustered_phase_spacing(void)
+{
+	const uint8_t clustered[] = { 8, 9, 16, 17, 24, 25, 32, 40, 48, 56, 64, 72 };
+	const uint32_t power_limit = 16000000;
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++) {
+		for (unsigned weak = 0; weak < V90_CP_FRAME_INTERVALS; ++weak) {
+			struct pcm_constellation available[V90_CP_FRAME_INTERVALS] = { 0 };
+			for (unsigned phase = 0; phase < V90_CP_FRAME_INTERVALS; ++phase)
+				for (unsigned code = 8; code <= 104; code += 8)
+					pcm_constellation_add(available + phase, (uint8_t)code);
+			available[weak] = (struct pcm_constellation){ 0 };
+			for (unsigned code = 0; code < ARRAY_LENGTH(clustered); ++code)
+				pcm_constellation_add(available + weak, clustered[code]);
+			struct v90_cp_parameters cp = {
+				.kind = V90_CP_DATA, .law = law, .selected_rate_index = 6,
+			};
+			struct v90_pcm_mapping mapping;
+			uint32_t floor, ceiling, distance = UINT32_MAX;
+			CHECK(v90_profile_generate_measured_constellations(law, 6, 0, power_limit,
+				available, cp.transmit_constellations, cp.frame_constellation,
+				&cp.constellation_count) &&
+			      v90_pcm_mapping_init(&mapping, &cp) == V90_PCM_MAPPING_OK &&
+			      v90_pcm_mapping_power(&mapping, V90_PCM_MAPPING_CODEC, law,
+				      &floor, &ceiling) == V90_PCM_MAPPING_OK && ceiling <= power_limit,
+			      "clustered phase %u failed its rate or power limit", weak);
+			CHECK(mapping.modulus_bits == 20 && mapping.modulus[weak] == 8,
+			      "twelve raw codes concealed a weaker spaced phase");
+			for (unsigned phase = 0; phase < V90_CP_FRAME_INTERVALS; ++phase) {
+				int16_t previous = 0;
+				for (unsigned code = 0; code < PCM_CONSTELLATION_UCODES; ++code) {
+					if (!pcm_constellation_contains(mapping.transmit + phase, code))
+						continue;
+					int16_t value;
+					CHECK(pcm_constellation_contains(available + phase, code) &&
+					      g711_ucode_sample(law, (uint8_t)code, true, &value),
+					      "selection escaped the phase's measured mask");
+					uint32_t gap = previous ?
+						(uint32_t)(value - previous) : 2u * value;
+					if (gap < distance)
+						distance = gap;
+					previous = value;
+				}
+			}
+			CHECK(distance == (law == G711_LAW_PCMU ? 128u : 136u),
+			      "law %u phase %u retained only %u units of spacing", law, weak, distance);
+		}
+	}
+	return true;
+}
+
+static bool test_clustered_phase_postcursor_margin(void)
+{
+	/* The wider map raises the linear gap from 48 to 64 and reduces the
+	 * raw one-sample postcursor bound from 65 to 45 Q15 units. */
+	static const uint8_t codes[6][18] = {
+		{ 34, 36, 54, 56, 58, 60, 62, 64, 66, 68, 70, 72, 76, 78, 80, 82, 84, 86 },
+		{ 6, 43, 46, 48, 50, 59, 65, 73, 96, 102 },
+		{ 1, 11, 31, 35, 49, 53, 65, 70, 86, 88 },
+		{ 7, 11, 49, 52, 57, 58, 75, 80, 81, 87, 94, 98 },
+		{ 16, 24, 32, 37, 47, 49, 52, 62, 63, 76, 79, 83, 108 },
+		{ 5, 8, 21, 28, 34, 39, 54, 58, 71, 77, 85, 92, 103 },
+	};
+	struct pcm_constellation available[V90_CP_FRAME_INTERVALS] = { 0 };
+	for (unsigned phase = 0; phase < V90_CP_FRAME_INTERVALS; ++phase)
+		for (unsigned i = 0; i < ARRAY_LENGTH(codes[phase]) && codes[phase][i]; ++i)
+			pcm_constellation_add(available + phase, codes[phase][i]);
+	struct v90_cp_parameters cp = {
+		.kind = V90_CP_DATA, .law = G711_LAW_PCMA,
+		.selected_rate_index = 4, .sign_redundancy = 3,
+	};
+	struct v90_pcm_mapping mapping;
+	const uint8_t expected_modulus[V90_CP_FRAME_INTERVALS] = { 13, 10, 10, 12, 12, 12 };
+	CHECK(v90_profile_generate_measured_constellations(cp.law, cp.selected_rate_index,
+		cp.sign_redundancy, 14000000, available, cp.transmit_constellations,
+		cp.frame_constellation, &cp.constellation_count) &&
+	      v90_pcm_mapping_init(&mapping, &cp) == V90_PCM_MAPPING_OK &&
+	      mapping.modulus_bits == 21, "postcursor fixture lost its original rate");
+	CHECK(!memcmp(mapping.modulus, expected_modulus, sizeof(expected_modulus)),
+	      "wider map reduced the preceding phase's postcursor margin");
+	return true;
+}
+
 static bool test_fixed_unequal_cardinalities(void)
 {
 	/* Peer-owned V.91 maps need not share the generated V.90 sixth root.
@@ -1379,6 +1461,8 @@ int main(void)
 		{ "fixed unequal cardinalities", test_fixed_unequal_cardinalities },
 		{ "common masks retain fixed cardinalities", test_common_masks_fixed_cardinalities },
 		{ "asymmetric exhaustive optimality", test_asymmetric_optimality },
+		{ "clustered phase spacing", test_clustered_phase_spacing },
+		{ "clustered phase preserves postcursor margin", test_clustered_phase_postcursor_margin },
 		{ "maximum phase capacity", test_maximum_phase_capacity },
 		{ "digital probe capabilities", test_digital_probe_capabilities },
 		{ "upstream policy", test_upstream_policy },
