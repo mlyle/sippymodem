@@ -123,26 +123,8 @@ bool v34_echo_timing_prepare(struct v34_echo_timing *timing,
 		if (!configure(timing, receiver, scale, rate, carrier, model_delay))
 			goto unsupported;
 	}
-	/* Refresh controls without copying the reference's analytic, input or
-	 * prefilter histories. Its timing error never feeds the real loops. */
-	struct v34_receive_timing *reference = &timing->reference_timing;
-	const struct v34_receive_timing *control = &receiver->timing;
-	reference->gain = control->gain;
-	reference->s_detector = control->s_detector;
-	reference->carrier = control->carrier;
-	reference->timing = control->timing;
-	reference->transmitting_profile = control->transmitting_profile;
-	memcpy(reference->timing_observations, control->timing_observations,
-	       sizeof(reference->timing_observations));
-	reference->input_read = control->input_read;
-	reference->input_count = control->input_count;
-	reference->input_advance_pending = control->input_advance_pending;
-	reference->timing_output_count = control->timing_output_count;
-	reference->current_valid = control->current_valid;
-	reference->reanchor_at_s = control->reanchor_at_s;
-	reference->initialized = control->initialized;
-	enum v34_receive_timing_result result = v34_receive_timing_sample(
-		&timing->reference_timing, prediction, &samples);
+	enum v34_receive_timing_result result = v34_receive_timing_project_owned(
+		&timing->reference_timing, &receiver->timing, prediction, &samples);
 	if (result != V34_RECEIVE_TIMING_OK && result != V34_RECEIVE_TIMING_SAMPLES_READY)
 		goto unsupported;
 	for (unsigned i = 0; i < samples.count; ++i) {

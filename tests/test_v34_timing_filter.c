@@ -210,6 +210,36 @@ static bool test_ownership(void)
 	return true;
 }
 
+static bool test_reference_prefilter(void)
+{
+	struct v34_timing_filter real, reference;
+	uint32_t random = UINT32_C(0x59b3e96f);
+
+	CHECK(v34_timing_filter_init(&real) == V34_TIMING_FILTER_OK &&
+	      v34_timing_filter_init(&reference) == V34_TIMING_FILTER_OK,
+	      "could not initialize timing filters");
+	for (unsigned i = 0; i < 4 * V34_TIMING_FILTER_FIR_TAPS; ++i) {
+		struct v34_analytic_sample input = {
+			.in_phase = (int16_t)(next_word(&random) >> 17) - 16384,
+			.quadrature = (int16_t)(next_word(&random) >> 17) - 16384,
+		};
+		int16_t error;
+
+		CHECK(v34_timing_filter_observe(&real, input, &error) == V34_TIMING_FILTER_OK,
+		      "timing observation failed at %u", i);
+		v34_timing_filter_retain(&reference, input);
+		if ((i & 1u) != 0u) {
+			struct v34_analytic_sample a, b;
+
+			CHECK(v34_timing_filter_prefilter(&real, &a) == V34_TIMING_FILTER_OK &&
+			      v34_timing_filter_prefilter(&reference, &b) == V34_TIMING_FILTER_OK &&
+			      a.in_phase == b.in_phase && a.quadrature == b.quadrature,
+			      "reference prefilter diverged at %u", i);
+		}
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -218,6 +248,7 @@ int main(void)
 	} tests[] = {
 		{ "exact filter", test_exact_filter },
 		{ "ownership", test_ownership },
+		{ "reference prefilter", test_reference_prefilter },
 	};
 	unsigned int failures = 0;
 

@@ -102,4 +102,13 @@ enum v34_receive_timing_result v34_receive_timing_sample(
 	struct v34_receive_timing *timing, int16_t sample,
 	struct v34_receive_timing_samples *samples);
 
+/* Project the reference along the real receiver's pre-sample clock. The
+ * projection retains independent signal histories. Only the real receiver
+ * measures timing error and steers the clock at the symbol boundary. The
+ * owner passes separate valid objects and discards the projection on error. */
+enum v34_receive_timing_result v34_receive_timing_project_owned(
+	struct v34_receive_timing *reference,
+	const struct v34_receive_timing *control, int16_t sample,
+	struct v34_receive_timing_samples *samples);
+
 #endif /* V34_RECEIVE_TIMING_H */

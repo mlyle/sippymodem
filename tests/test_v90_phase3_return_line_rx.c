@@ -36,6 +36,22 @@ enum {
 	TEST_INITIAL_RECEIVE_GAIN = 0x0600,
 };
 
+static bool upstream_states_match(const struct v90_upstream_training_rx *left,
+	const struct v90_upstream_training_rx *right)
+{
+	const size_t observation = offsetof(struct v90_upstream_training_rx,
+		line.latest_observation);
+	const size_t after = observation + sizeof(left->line.latest_observation);
+
+	/* Independent receiver steps can leave different padding bytes in the
+	 * published observation. Compare its decision and lineage explicitly. */
+	return v34_adaptive_equalizer_observations_are_equal(
+			&left->line.latest_observation, &right->line.latest_observation) &&
+	       memcmp(left, right, observation) == 0 &&
+	       memcmp((const unsigned char *)left + after,
+			(const unsigned char *)right + after, sizeof(*left) - after) == 0;
+}
+
 static struct v34_phase3_profile profile(void)
 {
 	return (struct v34_phase3_profile){
@@ -505,8 +521,7 @@ static bool run_line(enum g711_law law, bool scr)
 			     sizeof(saved.marker)) == 0 &&
 		      memcmp(&return_rx.precoder, &saved.precoder,
 			     sizeof(saved.precoder)) == 0 &&
-		      memcmp(&return_rx.upstream, &expected,
-			     sizeof(expected)) == 0 &&
+		      upstream_states_match(&return_rx.upstream, &expected) &&
 		      memcmp(&return_rx.upstream.line, &saved.upstream.line,
 			     sizeof(saved.upstream.line)) != 0 &&
 		      memcmp(&return_rx.upstream.initial, &saved.upstream.initial,
@@ -516,8 +531,7 @@ static bool run_line(enum g711_law law, bool scr)
 		      v90_phase3_return_line_rx_handoff(
 			      &return_rx, &return_handoff) ==
 			      V90_PHASE3_RETURN_LINE_RX_OK &&
-		      memcmp(&return_handoff.upstream, &expected,
-			     sizeof(expected)) == 0 &&
+		      upstream_states_match(&return_handoff.upstream, &expected) &&
 		      memcmp(&return_handoff.precoder, &saved.precoder,
 			     sizeof(return_handoff.precoder)) == 0 &&
 		      memcmp(&return_handoff.marker, &saved.marker.marker.detection,
@@ -762,7 +776,7 @@ static bool check_weak_decision(
 
 		CHECK(v90_phase3_return_line_rx_sample(&rx, 0) ==
 			      V90_PHASE3_RETURN_LINE_RX_OK &&
-		      memcmp(&rx.upstream, &expected, sizeof(expected)) == 0 &&
+		      upstream_states_match(&rx.upstream, &expected) &&
 		      memcmp(&rx.precoder, &prepared->precoder, sizeof(rx.precoder)) == 0,
 		      "weak onset reset its physical owner");
 		if (result != V90_UPSTREAM_TRAINING_RX_DECISION_READY)

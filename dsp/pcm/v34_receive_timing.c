@@ -20,24 +20,28 @@ static bool queue_state_is_valid(const struct v34_receive_timing *timing)
 		 timing->timing_output_count == 0u) : true);
 }
 
-bool v34_receive_timing_is_valid(
-	const struct v34_receive_timing *timing)
+static bool tracking_state_is_valid(const struct v34_receive_timing *timing)
 {
-	return timing != NULL && timing->initialized &&
-	       v34_phase3_profile_is_valid(&timing->transmitting_profile) &&
-	       v34_analytic_filter_is_valid(&timing->analytic) &&
+	return v34_analytic_filter_is_valid(&timing->analytic) &&
 	       v34_gain_control_is_valid(&timing->gain) &&
 	       v34_s_tone_detector_is_valid(&timing->s_detector) &&
 	       v34_carrier_demodulator_is_valid(&timing->carrier) &&
 	       v34_timing_filter_is_valid(&timing->timing_filter) &&
 	       v34_timing_control_is_valid(&timing->timing) &&
-	       timing->timing.local_role ==
-		       v34_station_peer_role(
-			       timing->transmitting_profile.local_role) &&
 	       (!timing->reanchor_at_s || !timing->s_detector.detected) &&
 	       (timing->s_detector.acquired ||
 		timing->timing.mode == V34_TIMING_CONTROL_LOCKED) &&
 	       queue_state_is_valid(timing);
+}
+
+bool v34_receive_timing_is_valid(
+	const struct v34_receive_timing *timing)
+{
+	return timing != NULL && timing->initialized &&
+	       v34_phase3_profile_is_valid(&timing->transmitting_profile) &&
+	       timing->timing.local_role ==
+		       v34_station_peer_role(timing->transmitting_profile.local_role) &&
+	       tracking_state_is_valid(timing);
 }
 
 enum v34_receive_timing_result v34_receive_timing_init(
@@ -217,21 +221,56 @@ static void advance_phase(struct v34_receive_timing *timing)
 	timing->input_advance_pending = (uint8_t)advances;
 }
 
+static bool track_symbol(struct v34_receive_timing *timing)
+{
+	bool was_acquired = timing->s_detector.acquired;
+	bool was_detected = timing->s_detector.detected;
+	uint16_t increment;
+	enum v34_s_tone_detector_result result =
+		v34_s_tone_detector_end_group(&timing->s_detector);
+
+	if (result != V34_S_TONE_DETECTOR_OK &&
+	    result != V34_S_TONE_DETECTOR_DETECTED)
+		return false;
+	/* Carrier acquisition begins timing and gain pull-in. The qualified
+	 * S detector result still gates readiness of the receive epoch. */
+	if (!was_acquired && timing->s_detector.acquired) {
+		if (timing->timing.mode == V34_TIMING_CONTROL_LOCKED &&
+		    v34_timing_control_begin_acquisition(
+			    &timing->timing, true) != V34_TIMING_CONTROL_OK)
+			return false;
+		if (v34_gain_control_set_mode(
+			    &timing->gain, V34_GAIN_TRACKING) != V34_GAIN_CONTROL_OK)
+			return false;
+	}
+	if (!was_detected && timing->s_detector.detected && timing->reanchor_at_s) {
+		/* Discard the provisional carrier epoch without discarding the
+		 * qualified S group that established this boundary. */
+		if (v34_timing_control_begin_acquisition(
+			    &timing->timing, true) != V34_TIMING_CONTROL_OK)
+			return false;
+		timing->reanchor_at_s = false;
+	}
+	return v34_timing_control_process(&timing->timing,
+		timing->timing_observations, &increment) == V34_TIMING_CONTROL_OK &&
+		increment == timing->timing.phase_increment;
+}
+
 static enum v34_receive_timing_result drain_timing(
 	struct v34_receive_timing *timing,
-	struct v34_receive_timing_samples *samples)
+	struct v34_receive_timing_samples *samples, bool track)
 {
 	while (advance_input(timing)) {
 		struct v34_analytic_sample interpolated =
 			interpolate_current(timing);
-		int16_t timing_error;
 		uint8_t output_index = timing->timing_output_count;
 
-		if (v34_timing_filter_observe(
-			    &timing->timing_filter, interpolated,
-			    &timing_error) != V34_TIMING_FILTER_OK)
+		if (!track)
+			v34_timing_filter_retain(&timing->timing_filter, interpolated);
+		else if (v34_timing_filter_observe(&timing->timing_filter,
+			    interpolated, &timing->timing_observations[output_index + 1u]) !=
+			    V34_TIMING_FILTER_OK)
 			return V34_RECEIVE_TIMING_INVALID_STATE;
-		timing->timing_observations[output_index + 1u] = timing_error;
 		if ((output_index & 1u) != 0u) {
 			if (v34_timing_filter_prefilter(
 				    &timing->timing_filter,
@@ -243,47 +282,7 @@ static enum v34_receive_timing_result drain_timing(
 		timing->timing_output_count++;
 		advance_phase(timing);
 		if (timing->timing_output_count == V34_RECEIVE_TIMING_OUTPUTS) {
-			enum v34_s_tone_detector_result detector_result;
-			bool detector_was_acquired = timing->s_detector.acquired;
-			bool detector_was_detected = timing->s_detector.detected;
-			uint16_t increment;
-
-			detector_result = v34_s_tone_detector_end_group(
-				&timing->s_detector);
-			if (detector_result != V34_S_TONE_DETECTOR_OK &&
-			    detector_result != V34_S_TONE_DETECTOR_DETECTED)
-				return V34_RECEIVE_TIMING_INVALID_STATE;
-			/* Begin clock pull-in at the detector's lower carrier-acquired
-			 * boundary.  The later qualified result gates public readiness,
-			 * leaving the loop several S intervals to establish its phase. */
-			if (!detector_was_acquired && timing->s_detector.acquired &&
-			    timing->timing.mode == V34_TIMING_CONTROL_LOCKED &&
-			    v34_timing_control_begin_acquisition(
-				    &timing->timing, true) != V34_TIMING_CONTROL_OK)
-				return V34_RECEIVE_TIMING_INVALID_STATE;
-			/* Silence and echo must not train the line gain.  The
-			 * carrier-specific S acquisition edge starts gain pull-in;
-			 * later qualification still gates the semantic receive epoch. */
-			if (!detector_was_acquired && timing->s_detector.acquired &&
-			    v34_gain_control_set_mode(
-				    &timing->gain, V34_GAIN_TRACKING) !=
-				    V34_GAIN_CONTROL_OK)
-				return V34_RECEIVE_TIMING_INVALID_STATE;
-			if (!detector_was_detected && timing->s_detector.detected &&
-			    timing->reanchor_at_s) {
-				/* Discard the provisional carrier epoch without discarding
-				 * the qualified S group that established this boundary. */
-				if (v34_timing_control_begin_acquisition(
-					    &timing->timing, true) !=
-					    V34_TIMING_CONTROL_OK)
-					return V34_RECEIVE_TIMING_INVALID_STATE;
-				timing->reanchor_at_s = false;
-			}
-			if (v34_timing_control_process(
-				    &timing->timing,
-				    timing->timing_observations,
-				    &increment) != V34_TIMING_CONTROL_OK ||
-			    increment != timing->timing.phase_increment)
+			if (track && !track_symbol(timing))
 				return V34_RECEIVE_TIMING_INVALID_STATE;
 			timing->timing_output_count = 0;
 			samples->symbol_complete = true;
@@ -293,18 +292,23 @@ static enum v34_receive_timing_result drain_timing(
 	return V34_RECEIVE_TIMING_OK;
 }
 
-enum v34_receive_timing_result v34_receive_timing_sample(
+static inline bool reference_clock_is_valid(const struct v34_receive_timing *timing)
+{
+	return queue_state_is_valid(timing) &&
+	       v34_timing_control_is_valid(&timing->timing);
+}
+
+static inline enum v34_receive_timing_result process_sample(
 	struct v34_receive_timing *timing, int16_t sample,
-	struct v34_receive_timing_samples *samples)
+	struct v34_receive_timing_samples *samples, bool track)
 {
 	struct v34_receive_timing_samples generated = { 0 };
 	struct v34_analytic_sample analytic;
 	struct v34_analytic_sample gained;
 	struct v34_analytic_sample demodulated;
-	enum v34_s_tone_detector_result detector_result;
 	enum v34_receive_timing_result result;
 
-	if (!v34_receive_timing_is_valid(timing))
+	if (!(track ? v34_receive_timing_is_valid(timing) : reference_clock_is_valid(timing)))
 		return V34_RECEIVE_TIMING_INVALID_STATE;
 	if (samples == NULL ||
 	    memory_regions_overlap(
@@ -318,20 +322,23 @@ enum v34_receive_timing_result v34_receive_timing_sample(
 	    v34_gain_control_process(&timing->gain, analytic, &gained) !=
 		    V34_GAIN_CONTROL_OK)
 		return V34_RECEIVE_TIMING_INVALID_STATE;
-	detector_result = v34_s_tone_detector_sample(
-		&timing->s_detector, gained.in_phase);
-	if (detector_result != V34_S_TONE_DETECTOR_OK &&
-	    detector_result != V34_S_TONE_DETECTOR_DETECTED)
-		return V34_RECEIVE_TIMING_INVALID_STATE;
+	if (track) {
+		enum v34_s_tone_detector_result detector_result =
+			v34_s_tone_detector_sample(&timing->s_detector, gained.in_phase);
+		if (detector_result != V34_S_TONE_DETECTOR_OK &&
+		    detector_result != V34_S_TONE_DETECTOR_DETECTED)
+			return V34_RECEIVE_TIMING_INVALID_STATE;
+	}
 	if (v34_carrier_demodulator_process(
 		    &timing->carrier, gained, &demodulated) !=
 		    V34_CARRIER_DEMODULATOR_OK)
 		return V34_RECEIVE_TIMING_INVALID_STATE;
 	queue_push(timing, demodulated);
-	result = drain_timing(timing, &generated);
+	result = drain_timing(timing, &generated, track);
 	if (result != V34_RECEIVE_TIMING_OK)
 		return result;
-	if (!v34_receive_timing_is_valid(timing))
+	/* Neither path changes the selected receive profile within a sample. */
+	if (!(track ? tracking_state_is_valid(timing) : reference_clock_is_valid(timing)))
 		return V34_RECEIVE_TIMING_INVALID_STATE;
 	if (generated.count > V34_RECEIVE_TIMING_INTERVAL_SAMPLES ||
 	    (generated.symbol_complete && generated.count == 0u) ||
@@ -342,4 +349,29 @@ enum v34_receive_timing_result v34_receive_timing_sample(
 		return V34_RECEIVE_TIMING_OK;
 	*samples = generated;
 	return V34_RECEIVE_TIMING_SAMPLES_READY;
+}
+
+enum v34_receive_timing_result v34_receive_timing_sample(
+	struct v34_receive_timing *timing, int16_t sample,
+	struct v34_receive_timing_samples *samples)
+{
+	return process_sample(timing, sample, samples, true);
+}
+
+enum v34_receive_timing_result v34_receive_timing_project_owned(
+	struct v34_receive_timing *reference,
+	const struct v34_receive_timing *control, int16_t sample,
+	struct v34_receive_timing_samples *samples)
+{
+	/* Borrow the real receiver's controls and queue positions. The reference
+	 * has its own contents for each of the linear filter and queue histories. */
+	reference->gain = control->gain;
+	reference->carrier = control->carrier;
+	reference->timing = control->timing;
+	reference->input_read = control->input_read;
+	reference->input_count = control->input_count;
+	reference->input_advance_pending = control->input_advance_pending;
+	reference->timing_output_count = control->timing_output_count;
+	reference->current_valid = control->current_valid;
+	return process_sample(reference, sample, samples, false);
 }

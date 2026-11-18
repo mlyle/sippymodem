@@ -39,6 +39,15 @@ enum v34_timing_filter_result v34_timing_filter_init(
 bool v34_timing_filter_is_valid(
 	const struct v34_timing_filter *filter);
 
+/* Keep the two inputs needed by the prefilter. A reference projection
+ * follows a borrowed clock and needs no timing-error history. */
+static inline void v34_timing_filter_retain(struct v34_timing_filter *filter,
+	struct v34_analytic_sample input)
+{
+	filter->previous = filter->current;
+	filter->current = input;
+}
+
 /* Observe one timing-resampler output and publish its signed timing error. */
 enum v34_timing_filter_result v34_timing_filter_observe(
 	struct v34_timing_filter *filter,

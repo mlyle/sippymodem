@@ -130,8 +130,7 @@ enum v34_timing_filter_result v34_timing_filter_observe(
 		return V34_TIMING_FILTER_INVALID_ARGUMENT;
 	input_real = scale_input(input.in_phase);
 	input_imag = scale_input(input.quadrature);
-	filter->previous = filter->current;
-	filter->current = input;
+	v34_timing_filter_retain(filter, input);
 	b_real = fir_shift_s16(filter->positive_b_real, B_REAL,
 		V34_TIMING_FILTER_COMPLEX_TAPS, input_real);
 	b_imag = fir_shift_s16(filter->positive_b_imag, B_REAL,
