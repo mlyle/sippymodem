@@ -59,11 +59,8 @@ bool v92_pcm_mapping_equal(
 	    !v92_pcm_mapping_is_valid(right) ||
 	    left->law != right->law ||
 	    left->data_bits_per_frame != right->data_bits_per_frame ||
-	    left->cpd.four_times_gain_q0_16 !=
-		    right->cpd.four_times_gain_q0_16 ||
-	    left->cpd.data_rate_number != right->cpd.data_rate_number ||
-	    left->cpd.trellis != right->cpd.trellis ||
-	    left->cpd.extend_e2u != right->cpd.extend_e2u ||
+	    !v92_cpd_selection_equal(v92_cpd_base(&left->cpd),
+		v92_cpd_base(&right->cpd)) ||
 	    left->cpd.acknowledges_cpu != right->cpd.acknowledges_cpu ||
 	    left->cpd.modulus_present != right->cpd.modulus_present ||
 	    left->cpd.filters_present != right->cpd.filters_present ||

@@ -165,6 +165,29 @@ struct v92_cpd_parameters {
 	bool constellations_present;
 };
 
+/* Extract the fixed fields of a nonnull full record. */
+static inline struct v92_cpd_base_parameters v92_cpd_base(
+	const struct v92_cpd_parameters *parameters)
+{
+	return (struct v92_cpd_base_parameters){
+		.four_times_gain_q0_16 = parameters->four_times_gain_q0_16,
+		.data_rate_number = parameters->data_rate_number,
+		.trellis = parameters->trellis,
+		.extend_e2u = parameters->extend_e2u,
+		.acknowledges_cpu = parameters->acknowledges_cpu,
+	};
+}
+
+/* Acknowledgement policy belongs to the exchange using the selection. */
+static inline bool v92_cpd_selection_equal(
+	struct v92_cpd_base_parameters left, struct v92_cpd_base_parameters right)
+{
+	return left.four_times_gain_q0_16 == right.four_times_gain_q0_16 &&
+	       left.data_rate_number == right.data_rate_number &&
+	       left.trellis == right.trellis &&
+	       left.extend_e2u == right.extend_e2u;
+}
+
 /* Complete omitted tables from the preceding selection. Both records must
  * be canonical CPd parameters and previous must contain all three tables.
  * Fixed fields, including the new acknowledgment, belong to the update. */

@@ -131,18 +131,9 @@ static bool constellations_are_valid(
 bool v92_cpd_parameters_are_valid(
 	const struct v92_cpd_parameters *parameters)
 {
-	struct v92_cpd_base_parameters base;
-
 	if (parameters == NULL)
 		return false;
-	base = (struct v92_cpd_base_parameters){
-		.four_times_gain_q0_16 =
-			parameters->four_times_gain_q0_16,
-		.data_rate_number = parameters->data_rate_number,
-		.trellis = parameters->trellis,
-		.extend_e2u = parameters->extend_e2u,
-		.acknowledges_cpu = parameters->acknowledges_cpu,
-	};
+	struct v92_cpd_base_parameters base = v92_cpd_base(parameters);
 	return v92_cpd_base_parameters_are_valid(&base) &&
 	       modulus_is_valid(parameters) && filters_are_valid(parameters) &&
 	       constellations_are_valid(parameters);
@@ -519,14 +510,7 @@ static bool wire_base_fields(
 static bool wire_payload(
 	struct cpd_wire *wire, struct v92_cpd_parameters *parameters)
 {
-	struct v92_cpd_base_parameters base = {
-		.four_times_gain_q0_16 =
-			parameters->four_times_gain_q0_16,
-		.data_rate_number = parameters->data_rate_number,
-		.trellis = parameters->trellis,
-		.extend_e2u = parameters->extend_e2u,
-		.acknowledges_cpu = parameters->acknowledges_cpu,
-	};
+	struct v92_cpd_base_parameters base = v92_cpd_base(parameters);
 	struct cpd_presence presence = {
 		.modulus = parameters->modulus_present,
 		.filters = parameters->filters_present,

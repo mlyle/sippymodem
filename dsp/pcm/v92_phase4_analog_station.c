@@ -8,38 +8,6 @@
 #include <stddef.h>
 #include <string.h>
 
-static bool cpd_selection_equal(
-	const struct v92_cpd_base_parameters *left,
-	const struct v92_cpd_base_parameters *right)
-{
-	return left->four_times_gain_q0_16 == right->four_times_gain_q0_16 &&
-	       left->data_rate_number == right->data_rate_number &&
-	       left->trellis == right->trellis &&
-	       left->extend_e2u == right->extend_e2u;
-}
-
-static struct v92_cpd_base_parameters cpd_base(
-	const struct v92_cpd_parameters *parameters)
-{
-	return (struct v92_cpd_base_parameters){
-		.four_times_gain_q0_16 = parameters->four_times_gain_q0_16,
-		.data_rate_number = parameters->data_rate_number,
-		.trellis = parameters->trellis,
-		.extend_e2u = parameters->extend_e2u,
-		.acknowledges_cpu = parameters->acknowledges_cpu,
-	};
-}
-
-static bool mapping_matches_base(
-	const struct v92_pcm_mapping *mapping,
-	const struct v92_cpd_base_parameters *base)
-{
-	struct v92_cpd_base_parameters mapped = cpd_base(&mapping->cpd);
-
-	return cpd_selection_equal(&mapped, base) &&
-	       mapped.acknowledges_cpu == base->acknowledges_cpu;
-}
-
 /* Complete mappings enter only through v92_pcm_mapping_init() and remain
  * immutable except for the acknowledgement bit. Keep the per-symbol owner
  * check bounded; event acceptance and handoff perform the deep table check. */
@@ -51,8 +19,9 @@ static bool owned_mapping_is_valid(
 		return false;
 	if (!station->cpd_received && !station->transmit.control.renegotiation)
 		return station->mapping.data_bits_per_frame == 0u;
-	struct v92_cpd_base_parameters base = station->cpd_received ?
-		station->cpd : cpd_base(&station->mapping.cpd);
+	const struct v92_cpd_base_parameters mapped = v92_cpd_base(&station->mapping.cpd);
+	const struct v92_cpd_base_parameters base =
+		station->cpd_received ? station->cpd : mapped;
 	return g711_law_is_valid(station->mapping.law) &&
 	       station->mapping.law == station->transmit.control.cpu.law &&
 	       station->mapping.data_bits_per_frame != 0u &&
@@ -63,7 +32,8 @@ static bool owned_mapping_is_valid(
 	       station->mapping.cpd.filters_present &&
 	       station->mapping.cpd.constellations_present &&
 	       v92_cpd_base_parameters_are_valid(&base) &&
-	       mapping_matches_base(&station->mapping, &base);
+	       v92_cpd_selection_equal(mapped, base) &&
+	       mapped.acknowledges_cpu == base.acknowledges_cpu;
 }
 
 static bool owned_state_is_valid(
@@ -176,9 +146,9 @@ static enum v92_phase4_analog_station_result note_cpd(
 
 	if (!v92_cpd_parameters_are_valid(parameters))
 		return V92_PHASE4_ANALOG_STATION_FAILED;
-	base = cpd_base(parameters);
+	base = v92_cpd_base(parameters);
 	if (station->cpd_received &&
-	    (!cpd_selection_equal(&station->cpd, &base) ||
+	    (!v92_cpd_selection_equal(station->cpd, base) ||
 	     (station->cpd.acknowledges_cpu && !base.acknowledges_cpu)))
 		return V92_PHASE4_ANALOG_STATION_FAILED;
 	selected = *parameters;

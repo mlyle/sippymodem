@@ -278,11 +278,8 @@ static bool retain_matching_cpd(
 	bool acknowledged;
 
 	if (!v92_cpd_parameters_are_valid(parameters) ||
-	    retained->cpd.four_times_gain_q0_16 !=
-		    parameters->four_times_gain_q0_16 ||
-	    retained->cpd.data_rate_number != parameters->data_rate_number ||
-	    retained->cpd.trellis != parameters->trellis ||
-	    retained->cpd.extend_e2u != parameters->extend_e2u ||
+	    !v92_cpd_selection_equal(v92_cpd_base(&retained->cpd),
+		v92_cpd_base(parameters)) ||
 	    (retained->cpd.acknowledges_cpu &&
 	     !parameters->acknowledges_cpu))
 		return false;
