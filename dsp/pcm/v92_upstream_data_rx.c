@@ -32,6 +32,11 @@ enum {
 	 * a 0.667 s small-signal time constant at 8 kHz. */
 	BIAS_WINDOW_FRAMES = 128,
 };
+enum {
+	INPUT_WIRE_KNOWN = 1u,
+	INPUT_AVAILABLE = 2u,
+	INPUT_WIRE_RECEIVED = INPUT_WIRE_KNOWN | INPUT_AVAILABLE,
+};
 _Static_assert((int)V92_UPSTREAM_INPUT_QUEUE >= (int)FIT_QUEUE_SAMPLES,
 	"fitting and independent B1 validation must fit in retained input");
 _Static_assert(sizeof(((struct v92_upstream_model *)0)->fit) <=
@@ -619,26 +624,38 @@ static enum v92_upstream_data_rx_result receive_frame(
 	return V92_UPSTREAM_DATA_RX_FRAME;
 }
 
+/* Both inverse owners publish the same physical observation. Erasure
+ * decoding tracks its stricter usability separately from RTP availability. */
+static void store_constellation_sample(struct v92_upstream_data_line *line,
+	enum g711_law law, const struct v92_upstream_input *input,
+	int32_t raw, int32_t correction)
+{
+	unsigned at = line->symbol_count++;
+	bool wire_known = input->flags & INPUT_WIRE_KNOWN;
+
+	line->raw[at] = raw;
+	line->correction[at] = correction;
+	line->wire[at] = wire_known ? line->polarity * g711_decode(law, input->code) : 0;
+	line->octet[at] = wire_known ? input->code : 0;
+	line->wire_known[at] = wire_known;
+	line->host_samples[at] = wire_known ? input->host : 0;
+	line->received[at] = (input->flags & INPUT_WIRE_RECEIVED) == INPUT_WIRE_RECEIVED;
+	line->samples[at] = sample_round_s16(
+		(raw - v92_upstream_line_offset(line) - correction) * line->calibration.gain);
+	++line->input_samples;
+}
+
+/* The direct and queued callers have already checked the output and wire
+ * contract. Check the clock before a queued input is allowed to advance it. */
 static enum v92_upstream_data_rx_result decode_sample(
-	struct v92_upstream_data_rx *receiver, int16_t sample,
-	struct v92_upstream_data_frame *frame, uint8_t code, bool wire_known,
-	int16_t host_sample, bool available, bool owned)
+	struct v92_upstream_data_rx *receiver, const struct v92_upstream_input *input,
+	struct v92_upstream_data_frame *frame)
 {
 	struct v92_upstream_data_line next, *line;
-	struct qam_point input;
 	bool ready;
 
-	if (receiver == NULL || frame == NULL ||
-	    memory_regions_overlap(receiver, sizeof(*receiver),
-				   frame, sizeof(*frame)))
-		return V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT;
-	if ((!owned && !v92_upstream_data_rx_is_valid(receiver)) ||
-	    receiver->line.input_samples == UINT64_MAX)
+	if (receiver->line.input_samples == UINT64_MAX)
 		return V92_UPSTREAM_DATA_RX_INVALID_STATE;
-	if (receiver->failed)
-		return V92_UPSTREAM_DATA_RX_FAILED;
-	if ((receiver->model.valid || receiver->model.scalar_gain) && !wire_known)
-		return V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT;
 	/* An equalizer observation is transactional, and a handed-off FIR is
 	 * always ready. Only the final frame decode needs a private line. */
 	bool final_sample = receiver->line.symbol_count + 1u ==
@@ -655,28 +672,18 @@ static enum v92_upstream_data_rx_result decode_sample(
 			--line->delay_remaining;
 			return V92_UPSTREAM_DATA_RX_OK;
 		}
-		int32_t raw = (int32_t)line->polarity * sample, correction;
+		int32_t raw = (int32_t)line->polarity * input->sample, correction;
+		bool available = (input->flags & INPUT_WIRE_RECEIVED) == INPUT_WIRE_RECEIVED;
 		if (!v92_residual_sample(&line->residual, raw, line->polarity,
-		    wire_known && available, &correction))
+		    available, &correction))
 			return fail(receiver, V92_UPSTREAM_DATA_RX_NO_PATH);
-		++line->input_samples;
-		line->raw[line->symbol_count] = raw;
-		line->correction[line->symbol_count] = correction;
-		line->wire[line->symbol_count] = wire_known ? line->polarity *
-			g711_decode(receiver->decoder.mapping.law, code) : 0;
-		line->octet[line->symbol_count] = wire_known ? code : 0;
-		line->wire_known[line->symbol_count] = wire_known;
-		line->host_samples[line->symbol_count] = wire_known ? host_sample : 0;
-		line->received[line->symbol_count] = wire_known && available;
-		line->samples[line->symbol_count] = sample_round_s16(
-			(line->raw[line->symbol_count] - v92_upstream_line_offset(line) -
-			 line->correction[line->symbol_count]) * line->calibration.gain);
-		if (++line->symbol_count == V92_PCM_MAPPING_FRAME_SYMBOLS)
+		store_constellation_sample(line, receiver->decoder.mapping.law, input, raw, correction);
+		if (final_sample)
 			return receive_frame(receiver, line, frame, NULL);
 		return V92_UPSTREAM_DATA_RX_OK;
 	}
-	input = (struct qam_point){ .in_phase = line->polarity * (double)sample };
-	if (qam_equalizer_observe(&line->equalizer, &input,
+	struct qam_point point = { .in_phase = line->polarity * (double)input->sample };
+	if (qam_equalizer_observe(&line->equalizer, &point,
 				  &line->observations[line->symbol_count], &ready) !=
 		    QAM_EQUALIZER_OK || !ready)
 		return fail(receiver, V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE);
@@ -720,10 +727,9 @@ static enum v92_upstream_data_rx_result decode_pending(
 {
 	if (frame_blocked(receiver)) return V92_UPSTREAM_DATA_RX_OK;
 	struct v92_upstream_input *input = &receiver->input.samples[receiver->input.head];
-	if (!(input->flags & 1) && (receiver->model.valid || receiver->model.scalar_gain))
+	if (!(input->flags & INPUT_WIRE_KNOWN) && (receiver->model.valid || receiver->model.scalar_gain))
 		return fail(receiver, V92_UPSTREAM_DATA_RX_NO_PATH);
-	enum v92_upstream_data_rx_result result = decode_sample(receiver, input->sample, frame,
-		input->code, input->flags & 1, input->host, input->flags & 2, true);
+	enum v92_upstream_data_rx_result result = decode_sample(receiver, input, frame);
 	if (result != V92_UPSTREAM_DATA_RX_OK && result != V92_UPSTREAM_DATA_RX_FRAME) return result;
 	memset(input, 0, sizeof(*input));
 	receiver->input.head = (receiver->input.head + 1) % V92_UPSTREAM_INPUT_QUEUE;
@@ -760,13 +766,14 @@ static enum v92_upstream_data_rx_result receive_sample(
 	if (receiver->failed) return V92_UPSTREAM_DATA_RX_FAILED;
 	if ((receiver->model.valid || receiver->model.scalar_gain) && !wire_known)
 		return V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT;
+	const struct v92_upstream_input input = { sample, host_sample, code,
+		(wire_known ? INPUT_WIRE_KNOWN : 0u) | (available ? INPUT_AVAILABLE : 0u) };
 	if (!receiver->model.fitting && !receiver->input.count && !frame_blocked(receiver))
-		return decode_sample(receiver, sample, frame, code, wire_known, host_sample, available, true);
+		return decode_sample(receiver, &input, frame);
 	if (receiver->input.count == V92_UPSTREAM_INPUT_QUEUE)
 		return fail(receiver, V92_UPSTREAM_DATA_RX_NO_PATH);
 	unsigned tail = (receiver->input.head + receiver->input.count) % V92_UPSTREAM_INPUT_QUEUE;
-	receiver->input.samples[tail] = (struct v92_upstream_input){sample, host_sample, code,
-		(wire_known ? 1 : 0) | (available ? 2 : 0)};
+	receiver->input.samples[tail] = input;
 	receiver->input.count++;
 	if (receiver->model.fitting) {
 		v92_upstream_model_progress(receiver);
@@ -788,8 +795,9 @@ static enum v92_upstream_data_rx_result receive_sample(
 			!catchup || receiver->input.catchup < catchup ||
 			receiver->line.symbol_count + 1 == V92_PCM_MAPPING_FRAME_SYMBOLS || i) break;
 		const struct v92_upstream_input *next = &receiver->input.samples[receiver->input.head];
-		if ((!(next->flags & 1) && (receiver->model.valid || receiver->model.scalar_gain)) ||
-			(receiver->line.residual.active && (next->flags & 3) != 3)) break;
+		if ((!(next->flags & INPUT_WIRE_KNOWN) && (receiver->model.valid || receiver->model.scalar_gain)) ||
+		    (receiver->line.residual.active &&
+		     (next->flags & INPUT_WIRE_RECEIVED) != INPUT_WIRE_RECEIVED)) break;
 		receiver->input.catchup = 0;
 	}
 	return result;
@@ -909,19 +917,10 @@ enum v92_upstream_data_rx_result v92_erasure_octet(
 	bool usable;
 	if (!v92_erasure_correct(&next, &line.residual, line.polarity, raw, available, &correction, &usable))
 		return fail(receiver, V92_UPSTREAM_DATA_RX_NO_PATH);
-	unsigned at = line.symbol_count;
-	next.usable[at] = usable;
-	line.raw[at] = raw;
-	line.correction[at] = correction;
-	line.wire[at] = line.polarity * g711_decode(receiver->decoder.mapping.law, code);
-	line.octet[at] = code;
-	line.wire_known[at] = true;
-	line.host_samples[at] = host_sample;
-	line.received[at] = available;
-	line.samples[at] = sample_round_s16(
-		(raw - v92_upstream_line_offset(&line) - correction) * line.calibration.gain);
-	++line.symbol_count;
-	++line.input_samples;
+	const struct v92_upstream_input input = { sample, host_sample, code,
+		INPUT_WIRE_KNOWN | (available ? INPUT_AVAILABLE : 0u) };
+	next.usable[line.symbol_count] = usable;
+	store_constellation_sample(&line, receiver->decoder.mapping.law, &input, raw, correction);
 	++next.input;
 	next.symbols = line.symbol_count;
 	enum v92_upstream_data_rx_result result = V92_UPSTREAM_DATA_RX_OK;
