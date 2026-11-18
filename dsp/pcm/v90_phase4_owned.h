@@ -12,6 +12,7 @@
  * Public entry points always validate the complete caller-provided state. */
 
 struct pcm_call;
+/* The call must already have been validated by its owner. */
 bool pcm_call_phase4_is_ready_owned(const struct pcm_call *call);
 
 bool v90_phase4_cp_tx_owned_state_is_valid(

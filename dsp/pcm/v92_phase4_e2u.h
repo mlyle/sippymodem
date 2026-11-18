@@ -137,6 +137,15 @@ enum v92_phase4_e2u_result v92_phase4_e2u_next(
 	struct v92_phase4_e2u *owner, uint8_t received_octet,
 	int16_t received_sample, uint8_t *transmit_octet, int16_t *transmit_sample);
 
+/* For the serialized PCM call after validated E2u initialization. The active
+ * output must be present and disjoint from the owner and any other output.
+ * A failed step leaves outputs untouched, but may have advanced child state.
+ * The call must retire the failed exchange or replace it during recovery. */
+enum v92_phase4_e2u_result v92_phase4_e2u_next_owned(
+	struct v92_phase4_e2u *owner, uint8_t received_octet,
+	int16_t received_sample, uint8_t *transmit_octet, int16_t *transmit_sample);
+bool v92_phase4_e2u_is_data_ready_owned(const struct v92_phase4_e2u *owner);
+
 bool v92_phase4_e2u_handoff_is_valid(
 	const struct v92_phase4_e2u_handoff *handoff);
 enum v92_phase4_e2u_result v92_phase4_e2u_handoff(

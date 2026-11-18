@@ -111,20 +111,12 @@ static bool digital_state_is_valid(
 
 bool v92_phase4_e2u_is_valid(const struct v92_phase4_e2u *owner)
 {
-	bool child_valid;
-	bool child_failed;
-
 	if (owner == NULL || !pcm_modem_role_is_valid(owner->local_role))
 		return false;
-	if (owner->local_role == V90_ANALOG_MODEM) {
-		child_valid = analog_state_is_valid(&owner->state.analog);
-		child_failed = false;
-	} else {
-		child_valid = digital_state_is_valid(&owner->state.digital);
-		child_failed = v92_e2u_rx_has_failed(
-			&owner->state.digital.receive);
-	}
-	return child_valid && (owner->failed || !child_failed);
+	if (owner->local_role == V90_ANALOG_MODEM)
+		return analog_state_is_valid(&owner->state.analog);
+	return digital_state_is_valid(&owner->state.digital) &&
+	       (owner->failed || !owner->state.digital.receive.failed);
 }
 
 bool v92_phase4_e2u_has_failed(const struct v92_phase4_e2u *owner)
@@ -132,23 +124,42 @@ bool v92_phase4_e2u_has_failed(const struct v92_phase4_e2u *owner)
 	return v92_phase4_e2u_is_valid(owner) && owner->failed;
 }
 
+static enum v92_phase4_e2u_result terminal_result(
+	const struct v92_phase4_e2u *owner)
+{
+	if (owner->failed)
+		return V92_PHASE4_E2U_FAILED;
+	if (owner->local_role == V90_ANALOG_MODEM) {
+		const struct v92_phase4_e2u_analog_state *state = &owner->state.analog;
+
+		if (state->downstream_stage == V92_PHASE4_E2U_DOWNSTREAM_CLEARDOWN)
+			return V92_PHASE4_E2U_PEER_CLEARDOWN;
+		if (!state->finishing_control &&
+		    state->transmit.bit_index == state->transmit.frame_bit_count)
+			return V92_PHASE4_E2U_COMPLETE;
+	} else if (owner->state.digital.receive.matched) {
+		return V92_PHASE4_E2U_COMPLETE;
+	}
+	return V92_PHASE4_E2U_OK;
+}
+
 bool v92_phase4_e2u_is_complete(const struct v92_phase4_e2u *owner)
 {
-	if (!v92_phase4_e2u_is_valid(owner) || owner->failed)
-		return false;
-	return owner->local_role == V90_ANALOG_MODEM ?
-		owner->state.analog.downstream_stage != V92_PHASE4_E2U_DOWNSTREAM_CLEARDOWN &&
-		!owner->state.analog.finishing_control &&
-		v92_phase4_record_tx_is_complete(
-			&owner->state.analog.transmit) :
-		v92_e2u_rx_is_complete(&owner->state.digital.receive);
+	return v92_phase4_e2u_is_valid(owner) &&
+	       terminal_result(owner) == V92_PHASE4_E2U_COMPLETE;
+}
+
+bool v92_phase4_e2u_is_data_ready_owned(const struct v92_phase4_e2u *owner)
+{
+	return terminal_result(owner) == V92_PHASE4_E2U_COMPLETE &&
+		(owner->local_role == V90_ANALOG_MODEM ? owner->state.analog.downstream_stage :
+		 owner->state.digital.downstream_stage) != V92_PHASE4_E2U_DOWNSTREAM_PAUSE;
 }
 
 bool v92_phase4_e2u_is_data_ready(const struct v92_phase4_e2u *owner)
 {
-	return v92_phase4_e2u_is_complete(owner) &&
-		(owner->local_role == V90_ANALOG_MODEM ? owner->state.analog.downstream_stage :
-		 owner->state.digital.downstream_stage) != V92_PHASE4_E2U_DOWNSTREAM_PAUSE;
+	return v92_phase4_e2u_is_valid(owner) &&
+	       v92_phase4_e2u_is_data_ready_owned(owner);
 }
 
 static bool arm_analog_ed(struct pcm_downstream_rx *receiver)
@@ -523,14 +534,70 @@ static enum v92_phase4_e2u_result fail(struct v92_phase4_e2u *owner)
 	return V92_PHASE4_E2U_FAILED;
 }
 
+static enum v92_phase4_e2u_result advance(
+	struct v92_phase4_e2u *owner, uint8_t received_octet,
+	int16_t received_sample, uint8_t *transmit_octet, int16_t *transmit_sample)
+{
+	if (owner->local_role == V90_ANALOG_MODEM) {
+		struct v92_phase4_e2u_analog_state *state = &owner->state.analog;
+		int16_t sample;
+
+		if (v92_phase4_record_tx_next(&state->transmit, &sample) !=
+			    V92_PHASE4_RECORD_TX_OK)
+			return fail(owner);
+		/* V.92 9.6.2.1.4/6: finish our control record before E2u,
+		 * independently of the peer's Ed/B1d receive boundary. */
+		if (state->finishing_control &&
+		    state->transmit.bit_index == state->transmit.frame_bit_count &&
+		    !start_analog_e2u(state))
+			return fail(owner);
+		struct v90_pcm_stream_frame frame;
+		enum v90_downstream_data_rx_result received = v92_downstream_receive_owned(
+			&state->downstream, &state->downstream_stage,
+			&state->cpu, &state->mapping, received_octet, &frame);
+		if (received == V90_DOWNSTREAM_DATA_RX_PEER_CLEARDOWN)
+			return V92_PHASE4_E2U_PEER_CLEARDOWN;
+		if (received != V90_DOWNSTREAM_DATA_RX_BUFFERING &&
+		    received != V90_DOWNSTREAM_DATA_RX_B1D_FRAME &&
+		    received != V90_DOWNSTREAM_DATA_RX_B1D_COMPLETE &&
+		    received != V90_DOWNSTREAM_DATA_RX_DATA_FRAME)
+			return fail(owner);
+		*transmit_sample = sample;
+	} else {
+		struct v92_phase4_e2u_digital_state *state = &owner->state.digital;
+		uint8_t octet;
+
+		if (v92_downstream_transmit_owned(
+			    &state->downstream, &state->downstream_stage,
+			    &state->cpu, NULL, NULL, &octet) !=
+		    V90_DOWNSTREAM_DATA_STREAM_OK)
+			return fail(owner);
+		enum v92_phase4_e2u_result result = digital_receive(state, received_sample);
+		if (result != V92_PHASE4_E2U_OK && result != V92_PHASE4_E2U_COMPLETE) {
+			owner->failed = true;
+			return result;
+		}
+		*transmit_octet = octet;
+		return result;
+	}
+	return terminal_result(owner);
+}
+
+enum v92_phase4_e2u_result v92_phase4_e2u_next_owned(
+	struct v92_phase4_e2u *owner, uint8_t received_octet,
+	int16_t received_sample, uint8_t *transmit_octet, int16_t *transmit_sample)
+{
+	enum v92_phase4_e2u_result result = terminal_result(owner);
+
+	return result == V92_PHASE4_E2U_OK ?
+		advance(owner, received_octet, received_sample, transmit_octet, transmit_sample) :
+		result;
+}
+
 enum v92_phase4_e2u_result v92_phase4_e2u_next(
 	struct v92_phase4_e2u *owner, uint8_t received_octet,
 	int16_t received_sample, uint8_t *transmit_octet, int16_t *transmit_sample)
 {
-	struct v92_phase4_e2u next;
-	uint8_t generated = 0;
-	int16_t sample = 0;
-
 	if (owner == NULL)
 		return V92_PHASE4_E2U_INVALID_ARGUMENT;
 	if (!v92_phase4_e2u_is_valid(owner))
@@ -543,69 +610,27 @@ enum v92_phase4_e2u_result v92_phase4_e2u_next(
 	    (transmit_sample != NULL && transmit_octet != NULL && memory_regions_overlap(
 		transmit_sample, sizeof(*transmit_sample), transmit_octet, sizeof(*transmit_octet))))
 		return V92_PHASE4_E2U_INVALID_ARGUMENT;
-	if (owner->failed)
-		return V92_PHASE4_E2U_FAILED;
-	if (owner->local_role == V90_ANALOG_MODEM &&
-	    owner->state.analog.downstream_stage == V92_PHASE4_E2U_DOWNSTREAM_CLEARDOWN)
-		return V92_PHASE4_E2U_PEER_CLEARDOWN;
-	if (v92_phase4_e2u_is_complete(owner))
-		return V92_PHASE4_E2U_COMPLETE;
-	next = *owner;
-	if (next.local_role == V90_ANALOG_MODEM) {
-		struct v90_pcm_stream_frame frame;
-		struct v92_phase4_e2u_analog_state *state = &next.state.analog;
-		enum v90_downstream_data_rx_result received;
-
-		if (v92_phase4_record_tx_next(
-			    &next.state.analog.transmit, &sample) !=
-			    V92_PHASE4_RECORD_TX_OK)
-			return fail(owner);
-		/* V.92 9.6.2.1.4/6: finish our control record before E2u,
-		 * independently of the peer's Ed/B1d receive boundary. */
-		if (state->finishing_control &&
-		    v92_phase4_record_tx_is_complete(&state->transmit) &&
-		    !start_analog_e2u(state))
-			return fail(owner);
-		received = v92_downstream_receive_owned(
-			&state->downstream, &state->downstream_stage,
-			&state->cpu, &state->mapping, received_octet, &frame);
-		if (received == V90_DOWNSTREAM_DATA_RX_PEER_CLEARDOWN) {
-			if (!v92_phase4_e2u_is_valid(&next))
-				return fail(owner);
-			*owner = next;
-			return V92_PHASE4_E2U_PEER_CLEARDOWN;
-		}
-		if (received != V90_DOWNSTREAM_DATA_RX_BUFFERING &&
-		    received != V90_DOWNSTREAM_DATA_RX_B1D_FRAME &&
-		    received != V90_DOWNSTREAM_DATA_RX_B1D_COMPLETE &&
-		    received != V90_DOWNSTREAM_DATA_RX_DATA_FRAME)
-			return fail(owner);
-	} else {
-		enum v92_phase4_e2u_result receive_result;
-		struct v92_phase4_e2u_digital_state *state = &next.state.digital;
-
-		if (v92_downstream_transmit_owned(
-			    &state->downstream, &state->downstream_stage,
-			    &state->cpu, NULL, NULL, &generated) !=
-		    V90_DOWNSTREAM_DATA_STREAM_OK)
-			return fail(owner);
-		receive_result = digital_receive(
-			&next.state.digital, received_sample);
-		if (receive_result != V92_PHASE4_E2U_OK &&
-		    receive_result != V92_PHASE4_E2U_COMPLETE) {
-			owner->failed = true;
-			return receive_result;
-		}
+	enum v92_phase4_e2u_result result = terminal_result(owner);
+	if (result != V92_PHASE4_E2U_OK)
+		return result;
+	struct v92_phase4_e2u next = *owner;
+	uint8_t octet = 0;
+	int16_t sample = 0;
+	result = advance(&next, received_octet, received_sample, &octet, &sample);
+	if (next.failed) {
+		owner->failed = true;
+		return result;
 	}
 	if (!v92_phase4_e2u_is_valid(&next))
 		return fail(owner);
 	*owner = next;
+	if (result == V92_PHASE4_E2U_PEER_CLEARDOWN)
+		return result;
 	if (owner->local_role == V90_ANALOG_MODEM)
 		*transmit_sample = sample;
 	else
-		*transmit_octet = generated;
-	return v92_phase4_e2u_is_complete(owner) ?
-		V92_PHASE4_E2U_COMPLETE : V92_PHASE4_E2U_OK;
+		*transmit_octet = octet;
+	return result;
 }
 
 bool v92_phase4_e2u_handoff_is_valid(

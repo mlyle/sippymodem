@@ -1129,8 +1129,7 @@ static bool call_is_valid(
 				&call->state.phase4.v92.owner.e2u) &&
 				call->state.phase4.v92.owner.e2u.local_role ==
 					call->local_role;
-			child_failed = v92_phase4_e2u_has_failed(
-				&call->state.phase4.v92.owner.e2u);
+			child_failed = call->state.phase4.v92.owner.e2u.failed;
 		} else if (uses_pcm_upstream(call) &&
 			   call->state.phase4.v92.child ==
 				   PCM_CALL_V92_PHASE4_CONTROL &&
@@ -1746,13 +1745,12 @@ bool pcm_call_has_failed(const struct pcm_call *call)
 
 bool pcm_call_phase4_is_ready_owned(const struct pcm_call *call)
 {
-	if (!pcm_call_owned_state_is_valid(call) || call->failed ||
-	    call->stage != PCM_CALL_PHASE4)
+	if (call->failed || call->stage != PCM_CALL_PHASE4)
 		return false;
 	if (uses_pcm_upstream(call))
 		return call->state.phase4.v92.child ==
 			       PCM_CALL_V92_PHASE4_E2U &&
-		       v92_phase4_e2u_is_data_ready(
+		       v92_phase4_e2u_is_data_ready_owned(
 			       &call->state.phase4.v92.owner.e2u);
 	return call->local_role == V90_ANALOG_MODEM ?
 		       v90_phase4_analog_startup_is_complete_owned(
@@ -3870,7 +3868,7 @@ static enum pcm_call_result enter_v92_e2u(struct pcm_call *call)
 	}
 	/* E2u may itself have confirmed the pause in the control station.
 	 * Transition at that consumed boundary; do not clock E2u a second time. */
-	if (v92_phase4_e2u_is_complete(&e2u) && !v92_phase4_e2u_is_data_ready(&e2u)) {
+	if (v92_pause_is_committed(call) && v92_phase4_e2u_is_complete(&e2u)) {
 		enum pcm_call_result result = enter_v92_pause(call);
 		if (result != PCM_CALL_OK) {
 			call->state.phase4.v92 = saved_state;
@@ -4062,7 +4060,7 @@ static enum pcm_call_result sample_v92_pause(struct pcm_call *call,
 
 static enum pcm_call_result sample_v92_phase4(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
-	uint8_t *transmit_octet, int16_t *transmit_sample)
+	uint8_t *transmit_octet, int16_t *transmit_sample, bool owned)
 {
 	bool prefix_sent = false;
 	if (!activate_v92_cleardown(call))
@@ -4095,12 +4093,14 @@ static enum pcm_call_result sample_v92_phase4(
 	}
 	if (call->state.phase4.v92.child == PCM_CALL_V92_PHASE4_E2U) {
 		struct v92_phase4_e2u *e2u = &call->state.phase4.v92.owner.e2u;
-		enum pcm_call_result result = v92_e2u_result(v92_phase4_e2u_next(
-			e2u, received_octet, received_sample, transmit_octet, transmit_sample));
-		if (result == PCM_CALL_OK && v92_phase4_e2u_is_complete(e2u) &&
-		    !v92_phase4_e2u_is_data_ready(e2u))
+		enum v92_phase4_e2u_result result = owned ?
+			v92_phase4_e2u_next_owned(e2u, received_octet, received_sample,
+				transmit_octet, transmit_sample) :
+			v92_phase4_e2u_next(e2u, received_octet, received_sample,
+				transmit_octet, transmit_sample);
+		if (result == V92_PHASE4_E2U_COMPLETE && v92_pause_is_committed(call))
 			return enter_v92_pause(call);
-		return result;
+		return v92_e2u_result(result);
 	}
 	if (call->state.phase4.v92.child == PCM_CALL_V92_PHASE4_PAUSE)
 		return sample_v92_pause(call, received_octet, received_sample, transmit_octet, transmit_sample);
@@ -4256,12 +4256,12 @@ static enum pcm_call_result filter_v92_upstream(struct pcm_call *call,
 
 static enum pcm_call_result sample_phase4(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
-	uint8_t *transmit_octet)
+	uint8_t *transmit_octet, bool owned)
 {
 	if (uses_pcm_upstream(call)) {
 		int16_t sample = 0;
 		enum pcm_call_result result = sample_v92_phase4(
-			call, received_octet, received_sample, transmit_octet, &sample);
+			call, received_octet, received_sample, transmit_octet, &sample, owned);
 		/* Retain the selected Jp phase and reconstruction history across
 		 * all control coders, including the final CPu. Keep analogue
 		 * samples linear until this filter, just as in B1u and data;
@@ -5904,7 +5904,7 @@ static enum pcm_call_result call_octet(
 		break;
 	case PCM_CALL_PHASE4:
 		result = sample_phase4(
-			call, received_octet, received_sample, &generated);
+			call, received_octet, received_sample, &generated, owned);
 		break;
 	case PCM_CALL_RETRAIN_SILENCE:
 		result = sample_retrain_silence(call, received_sample);

@@ -803,10 +803,12 @@ static bool run_control_rejection(enum g711_law law, enum rejected_control kind)
 	      start_cpu_record(&record, &fixture.transmit, &changed, true) :
 	      start_cpus_record(&record, &fixture.transmit, &changed),
 	      "law %u rejected control %u did not start", (unsigned int)law, kind);
+	struct v92_phase4_e2u owned = fixture.owner;
 	while (!v92_phase4_record_tx_is_complete(&record)) {
 		struct v92_phase4_e2u before = fixture.owner;
 		int16_t raw;
 		uint8_t octet = 0xa5;
+		uint8_t owned_octet = 0xa5;
 		enum v92_phase4_e2u_result result;
 
 		CHECK(v92_phase4_record_tx_next(&record, &raw) ==
@@ -815,6 +817,10 @@ static bool run_control_rejection(enum g711_law law, enum rejected_control kind)
 		      (unsigned int)law);
 		result = v92_phase4_e2u_next(
 			&fixture.owner, 0u, quantize(law, raw), &octet, NULL);
+		CHECK(v92_phase4_e2u_next_owned(
+			      &owned, 0u, quantize(law, raw), &owned_octet, NULL) == result &&
+		      owned_octet == octet,
+		      "in-place CPu handling changed the result or output");
 		if (result == V92_PHASE4_E2U_SEQUENCE_MISMATCH) {
 			rejected = true;
 			CHECK(octet == 0xa5 && fixture.owner.failed &&
@@ -826,6 +832,10 @@ static bool run_control_rejection(enum g711_law law, enum rejected_control kind)
 				      V92_PHASE4_E2U_FAILED && octet == 0xa5 &&
 			      memcmp(&fixture.owner.state, &before.state, sizeof(before.state)) == 0,
 			      "control rejection did not latch failure");
+			CHECK(!v92_phase4_e2u_is_data_ready_owned(&owned) &&
+			      v92_phase4_e2u_next_owned(&owned, 0u, 0, &owned_octet, NULL) ==
+				      V92_PHASE4_E2U_FAILED && owned_octet == 0xa5,
+			      "in-place control rejection did not terminate the exchange");
 			break;
 		}
 		CHECK(result == V92_PHASE4_E2U_OK,
@@ -1000,6 +1010,8 @@ static bool run_crossing(
 	      memcmp(&analog, &saved, sizeof(analog)) == 0,
 	      "law %u overlapping output changed the owner",
 	      (unsigned int)law);
+	struct v92_phase4_e2u owned_analog = analog;
+	struct v92_phase4_e2u owned_digital = digital;
 	for (size_t index = 0u; index < tail_symbols + symbols; ++index) {
 		int16_t raw;
 		uint8_t downstream_octet = 0xa5;
@@ -1016,6 +1028,19 @@ static bool run_crossing(
 			&digital, 0u, quantize(law, raw), &downstream_octet, &unused_sample);
 		analog_result = v92_phase4_e2u_next(
 			&analog, downstream_octet, 0, &unused_octet, &upstream_sample);
+		uint8_t owned_octet = 0xa5;
+		int16_t owned_sample = 0x5a5a;
+		CHECK(v92_phase4_e2u_next_owned(
+			      &owned_digital, 0u, quantize(law, raw), &owned_octet, &unused_sample) ==
+			      digital_result && owned_octet == downstream_octet &&
+		      v92_phase4_e2u_next_owned(
+			      &owned_analog, owned_octet, 0, &unused_octet, &owned_sample) ==
+			      analog_result && owned_sample == upstream_sample &&
+		      v92_phase4_e2u_is_data_ready_owned(&owned_analog) ==
+			      v92_phase4_e2u_is_data_ready_owned(&analog) &&
+		      v92_phase4_e2u_is_data_ready_owned(&owned_digital) ==
+			      v92_phase4_e2u_is_data_ready_owned(&digital),
+		      "in-place E2u changed crossing sample %zu", index);
 		CHECK(digital_result ==
 			      (index + 1u == tail_symbols + symbols ?
 				       V92_PHASE4_E2U_COMPLETE :
@@ -1036,6 +1061,15 @@ static bool run_crossing(
 			      "finishing control truncated or consumed E2u");
 		}
 	}
+	uint8_t after_octet = 0xa5;
+	int16_t after_sample = 0x5a5a;
+	CHECK(v92_phase4_e2u_is_complete(&owned_analog) &&
+	      v92_phase4_e2u_is_complete(&owned_digital) &&
+	      v92_phase4_e2u_next_owned(&owned_analog, 0u, 0, NULL, &after_sample) ==
+		      V92_PHASE4_E2U_COMPLETE && after_sample == 0x5a5a &&
+	      v92_phase4_e2u_next_owned(&owned_digital, 0u, 0, &after_octet, NULL) ==
+		      V92_PHASE4_E2U_COMPLETE && after_octet == 0xa5,
+	      "in-place E2u advanced past completion");
 	CHECK(v92_phase4_e2u_is_complete(&analog) &&
 	      v92_phase4_e2u_is_complete(&digital) &&
 	      v92_phase4_e2u_is_data_ready(&analog) && v92_phase4_e2u_is_data_ready(&digital) &&
@@ -1700,9 +1734,9 @@ static bool run_pause_crossing(enum g711_law law, enum v92_constellation_size co
 		}
 		CHECK(v92_phase4_record_tx_next(&reference, &sample) == V92_PHASE4_RECORD_TX_OK,
 		      "pause reference ended early");
-		enum v92_phase4_e2u_result dr = v92_phase4_e2u_next(&digital, 0u,
+		enum v92_phase4_e2u_result dr = v92_phase4_e2u_next_owned(&digital, 0u,
 			quantize(law, sample), &down, NULL);
-		enum v92_phase4_e2u_result ar = v92_phase4_e2u_next(&analog, down, 0, NULL, &up);
+		enum v92_phase4_e2u_result ar = v92_phase4_e2u_next_owned(&analog, down, 0, NULL, &up);
 		CHECK(dr == (n + 1u == count ? V92_PHASE4_E2U_COMPLETE : V92_PHASE4_E2U_OK) && ar == dr &&
 		      sample == up,
 		      "pause crossing failed at %u: %s/%s", n,
@@ -1710,7 +1744,7 @@ static bool run_pause_crossing(enum g711_law law, enum v92_constellation_size co
 	}
 	CHECK(v92_phase4_e2u_handoff(&analog, &ah) == V92_PHASE4_E2U_OK &&
 	      v92_phase4_e2u_handoff(&digital, &dh) == V92_PHASE4_E2U_OK &&
-	      !v92_phase4_e2u_is_data_ready(&analog) && !v92_phase4_e2u_is_data_ready(&digital) &&
+	      !v92_phase4_e2u_is_data_ready_owned(&analog) && !v92_phase4_e2u_is_data_ready_owned(&digital) &&
 	      ah.state.analog.downstream_stage == V92_PHASE4_E2U_DOWNSTREAM_PAUSE &&
 	      dh.state.digital.downstream_stage == V92_PHASE4_E2U_DOWNSTREAM_PAUSE,
 	      "silence agreement entered a parameter/data handoff");
