@@ -9750,6 +9750,7 @@ static bool test_lapm_stalled_retrain(void)
 	static const uint8_t payload[] = { 'a', 'b' };
 	int16_t receive[MODEM_FRAG] = { 0 }, transmit[MODEM_FRAG];
 
+	for (unsigned queued = 0; queued < 2; ++queued)
 	for (int result = -1; result <= 0; ++result) {
 		struct dp_operations operations = {
 			.name = "LAPM stalled retrain", .create = create_retrain_dp,
@@ -9808,6 +9809,9 @@ static bool test_lapm_stalled_retrain(void)
 		operations.process = process_stalled_lapm_dp;
 		modem_process(m, receive, transmit, MODEM_FRAG);
 		CHECK(l->rtx_count == 1 && !retrain_dp.retrain_calls, "retrained before two polls");
+		frame_t *poll = m->packer.hdlc.get_tx_frame(l);
+		CHECK(poll && poll->size == 3 && poll->buf[2] == 1, "missing first T401 poll");
+		m->packer.hdlc.tx_complete(l, poll);
 		modem_process(m, receive, transmit, MODEM_FRAG);
 		CHECK(l->rtx_count == 2 && retrain_dp.retrain_calls == 1 && l->stalled_retrain &&
 		      m->state == ONLINE && !m->command && !m->retrain_pending &&
@@ -9818,10 +9822,36 @@ static bool test_lapm_stalled_retrain(void)
 		for (unsigned frame = 0; frame < 20; ++frame)
 			modem_process(m, receive, transmit, MODEM_FRAG);
 		CHECK(retrain_dp.retrain_calls == 1, "stall retrain repeated on each media chunk");
-		CHECK(modem_ec_resume_after_retrain(m) == 0 && l->stalled_retrain,
-		      "physical retrain rearmed its own recovery allowance");
-		uint8_t reply[] = { l->cmd_addr, 1, 5 }; /* RR F=1, N(R)=2 */
+		if (!queued) {
+			/* HDLC can consume the retry before the datapump leaves data mode. */
+			poll = m->packer.hdlc.get_tx_frame(l);
+			CHECK(poll && poll->size == 3 && poll->buf[2] == 1, "missing second T401 poll");
+			m->packer.hdlc.tx_complete(l, poll);
+		}
+		m->bit_timer /= 2;
+		int remaining = m->bit_timer;
+		void (*timeout)(struct modem *) = m->bit_timer_func;
+		CHECK(modem_ec_resume_after_retrain(m) == 0 && l->stalled_retrain &&
+		      l->rtx_count == (queued ? 2 : 3) && m->bit_timer == remaining &&
+		      m->bit_timer_func == timeout && l->sent_info == retained,
+		      "resume did not preserve T401, charge an emitted retry, and retain information");
+		poll = m->packer.hdlc.get_tx_frame(l);
+		CHECK(poll && poll->size == 3 && poll->buf[0] == l->cmd_addr &&
+		      poll->buf[1] == 1 && poll->buf[2] == 1, "no immediate RR/P=1 after physical recovery");
+		m->packer.hdlc.tx_complete(l, poll);
+		CHECK(modem_ec_resume_after_retrain(m) == 0 && l->rtx_count == (queued ? 2 : 3) &&
+		      m->bit_timer == remaining && m->packer.hdlc.get_tx_frame(l) == NULL,
+		      "duplicate resume emitted a poll or released information without a Final");
+		uint8_t reply[] = { l->cmd_addr, 1, 1 }; /* RR F=1, N(R)=0 */
 		frame_t incoming = { .buf = reply, .count = sizeof(reply) };
+		m->packer.hdlc.rx_complete(l, &incoming);
+		for (unsigned frame = 0; frame < sizeof(payload); ++frame) {
+			frame_t *outgoing = m->packer.hdlc.get_tx_frame(l);
+			CHECK(outgoing && outgoing->size == 4 && outgoing->buf[1] == frame * 2 &&
+			      outgoing->buf[3] == payload[frame], "Final did not retransmit retained information");
+			m->packer.hdlc.tx_complete(l, outgoing);
+		}
+		reply[2] = 4; /* RR F=0, N(R)=2 */
 		m->packer.hdlc.rx_complete(l, &incoming);
 		CHECK(!l->stalled_retrain && !l->rtx_count &&
 		      l->sent_info == l->tx_info && l->va == 2,

@@ -2018,6 +2018,18 @@ bool modem_ec_cancel_retrain_request(struct modem *m, uint64_t grant)
 	return true;
 }
 
+static bool queue_tx_recovery_poll(struct lapm_state *l)
+{
+	for (frame_t *f = l->tx_ctrl; f != l->ctrl_list; f = f->next)
+		if (FRAME_TYPE(f) == FRAME_S && FRAME_ADDR(f) == l->cmd_addr && FRAME_S_PF(f))
+			return true;
+	if (l->rtx_count >= LAPM_MAX_RTX || l->ctrl_list->next == l->tx_ctrl ||
+	    tx_status(l, l->cmd_addr, 1) != 0)
+		return false;
+	++l->rtx_count;
+	return true;
+}
+
 /* A short physical repair may start after the current T401 poll has already
  * left HDLC. Queue a fresh query behind that exchange, not before advancing
  * the PCM coder: advancing can consume a new mapping frame. Charge any new
@@ -2032,17 +2044,8 @@ bool modem_ec_probe_after_tx_recovery(struct modem *m, uint64_t grant)
 		     !observation.first_retry))
 		return false;
 	struct lapm_state *l = &m->ec.lapm;
-	for (frame_t *f = l->tx_ctrl; f != l->ctrl_list; f = f->next) {
-		if (FRAME_TYPE(f) == FRAME_S && FRAME_ADDR(f) == l->cmd_addr && FRAME_S_PF(f)) {
-			if (!grant) claim_retrain_request(l);
-			m->recovery_probed = true;
-			return true;
-		}
-	}
-	if (l->rtx_count >= LAPM_MAX_RTX || l->ctrl_list->next == l->tx_ctrl ||
-	    tx_status(l, l->cmd_addr, 1) != 0)
+	if (!queue_tx_recovery_poll(l))
 		return false;
-	++l->rtx_count;
 	if (!grant) claim_retrain_request(l);
 	m->recovery_probed = true;
 	return true;
@@ -2188,6 +2191,14 @@ int modem_ec_resume_after_retrain(struct modem *m)
 		l->initial_sabme_sample = m->count;
 		l->initial_sabme_retries = 0;
 	}
+	/* The T401 poll that triggered a physical recovery may already have
+	 * left HDLC when training starts. Confirm the recovered link once with
+	 * the same counted poll used after a short physical repair. Keep the
+	 * suspended T401 deadline and any already queued command. */
+	if (l->stalled_retrain && !m->recovery_probed && !l->retrain_poll &&
+	    l->rtx_count && !xid_pending(l) && m->bit_timer > 0 &&
+	    m->bit_timer_func == t401_timeout)
+		m->recovery_probed = queue_tx_recovery_poll(l);
 	/* Probe every established link after the physical interruption, including
 	 * an empty retained window. Incoming commands can refresh T403 without
 	 * confirming the outgoing direction; retain ordinary T401/N400 recovery. */
