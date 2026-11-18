@@ -310,6 +310,34 @@ static bool test_prediction_numeric_bounds(void)
 	return true;
 }
 
+static bool test_prediction_across_ring_boundary(void)
+{
+	struct pcm_host_echo echo;
+	const size_t capacity = PCM_ECHO_REFERENCE_HISTORY_SAMPLES;
+	const size_t boundaries[] = {
+		0, 1, PCM_HOST_ECHO_FILTER_TAPS - 1, PCM_HOST_ECHO_FILTER_TAPS,
+		PCM_HOST_ECHO_FILTER_TAPS + 1,
+	};
+	size_t written = 0;
+
+	CHECK(pcm_host_echo_init(&echo) == PCM_HOST_ECHO_OK, "ring fixture failed to initialize");
+	for (unsigned tap = 0; tap < PCM_HOST_ECHO_FILTER_TAPS; ++tap)
+		echo.coefficients[tap] = ((int)(tap % 17) - 8) / 16.0f;
+	for (unsigned i = 0; i < sizeof(boundaries) / sizeof(boundaries[0]); ++i) {
+		for (; written < capacity + boundaries[i]; ++written)
+			CHECK(pcm_echo_reference_push(&echo.reference, transmit_sample(written)) ==
+			      PCM_ECHO_REFERENCE_OK, "ring fixture failed to push sample");
+		double expected = 0.0;
+		for (unsigned tap = 0; tap < PCM_HOST_ECHO_FILTER_TAPS; ++tap)
+			expected += (double)echo.coefficients[tap] *
+				transmit_sample(written - 1u - tap);
+		double prediction = 0.0;
+		CHECK(pcm_host_echo_project_owned(&echo, 1, &prediction) == PCM_HOST_ECHO_OK &&
+		      prediction == expected, "tap order changed at ring cursor %zu", boundaries[i]);
+	}
+	return true;
+}
+
 static bool test_long_delay_cancellation(void)
 {
 	struct pcm_host_echo echo;
@@ -1533,7 +1561,7 @@ int main(void)
 	    !test_explicit_observation(PCM_HOST_ECHO_FILTER_DATA, true, -98) ||
 	    !test_contracts() || !test_explicit_retime() || !test_training_quiet_boundary() ||
 	    !test_half_sample_prediction() ||
-	    !test_prediction_numeric_bounds() ||
+	    !test_prediction_numeric_bounds() || !test_prediction_across_ring_boundary() ||
 	    !test_prediction_energy_saturation() ||
 	    !test_long_delay_cancellation() ||
 	    !test_near_window_seed() || !test_negligible_return_does_not_qualify() ||
