@@ -179,3 +179,64 @@ recovered pairs passed a second exchange at the same rates, and nine
 malformed marker controls failed before TRN2d. The prototype keeps
 native B1d and payload checks. Live enablement still needs calibration
 ownership and physical analogue-side validation.
+
+## Separate input collisions from equalizer rounding
+
+The receive codec can map two transmitted levels to the same raw
+octet. Any subsequent single-symbol equalizer or slicer sees the same
+input in that case. Separately, rounding and companding the linear FIR
+output can push it over the final decision midpoint. Keep raw and
+equalized observations when diagnosing B1d. They distinguish the
+two mechanisms.
+
+In two scalar-gain 56 kbps pairs, a bounded disturbance of ±2 linear
+PCM units after startup caused two μ-law and three A-law wrong B1d
+labels. Slicing the linear FIR result directly eliminated both μ-law
+errors and two of the A-law errors. The remaining A-law symbol shared
+an input codec cell with a different transmitted level. With direct
+slicing, that A-law pair passed native B1d and then accumulated 747
+downstream payload bit errors. Training qualification still needs
+constellation spacing that protects the payload alphabet.
+
+## Select levels with a declared noise reserve
+
+For a scalar channel, intersect the gain intervals from separate DIL
+windows. Each observation constrains the gain through the integer
+G.711 cell, expanded by half a sample for rounding and by the declared
+disturbance bound. Intersect the retained calibration with the early
+TRN2d window. Require the independent holdout to agree before selecting
+the map. Both DIL windows rejected this scalar model on two
+material-postcursor controls.
+
+Project each eligible level through both signs of the fitted gain
+range and the disturbance reserve. Apply the receive codec, the
+frozen equalizer, and the final companding if that slicer uses it.
+Join two consecutive levels only when their projected ranges stay
+strictly on opposite sides of their decision midpoint. An increasing
+chain of compatible levels supplies one phase. For each tested
+six-phase radix allocation, minimize power using the exact number
+of mixed-radix words that visit each rank. Keep the original
+transmit-power ceiling and the peer's rate mask.
+
+In 48 native exchanges using fitted gain bounds, all maps passed
+B1d and verified at least 1,500 payload frames in each direction.
+The tests used both G.711 laws, four disturbance budgets, and three
+bounded disturbance sequences. Upstream held 40 kbps in every pair.
+
+| Linear disturbance reserve | Companded slicer | Direct linear slicer |
+| --- | ---: | ---: |
+| ±2 or ±3 | 56 kbps | 56 kbps |
+| ±4 | 54.667 kbps | 56 kbps |
+| ±8 | 52 kbps | 53.333 kbps |
+
+A direct slicer can use the companded cell as an index for its two
+neighboring levels and compare the original linear magnitude against
+their midpoint. A phase table splits each codec cell at its decoded
+center. Each half names the nearest enclosing levels, so per-symbol
+work is bounded even when the allowed levels are sparse.
+
+The paired study supplies the disturbance reserves and calculates
+maps offline. Live selection needs a justified reserve, calibration
+lifetime checks, bounded search scheduling, and analogue-side
+qualification. Use the material-memory projection when the scalar
+gain model fails.
