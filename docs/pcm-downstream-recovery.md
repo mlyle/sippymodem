@@ -240,3 +240,50 @@ maps offline. Live selection needs a justified reserve, calibration
 lifetime checks, bounded search scheduling, and analogue-side
 qualification. Use the material-memory projection when the scalar
 gain model fails.
+
+## Project the same discrete history through all three taps
+
+Each tap's input depends on two consecutive transmitted symbols. For
+each allowed pair, bound the raw sample with the phase's gain,
+postcursor, DC, and disturbance reserve. Apply the input codec to the
+endpoint samples and multiply by the tap, taking its sign into account.
+
+Reduce the oldest tap to a minimum and maximum for each possible
+symbol two samples back. Add that range to the middle tap at the
+same symbol and reduce again for each possible predecessor. The
+front tap uses the corresponding predecessor result. This takes
+quadratic work and linear storage in the number of allowed signed
+levels. Within the model, each bound uses a consistent history through
+the filter. Apply any final companding before testing the decision
+midpoints and the transmit-power ceiling.
+
+Test each candidate against the entire allowed phase alphabet used
+for its history bounds, including both signs. Smaller peak limits
+can make narrower bounds possible at the cost of fewer candidate
+levels. Search multiple peak limits with the same power ceiling and
+rate mask. Exact mixed-radix rank weights account for the power of
+each tested constellation.
+
+The paired tests used eight channel configurations, both G.711 laws,
+and disturbance reserves of ±2, ±4 and ±8 linear PCM units. The
+early TRN2d fit supplied the phase bounds, and the holdout was
+checked for consistency. The shared-history search gained 1.333 kbps
+over the same search with 32 predecessor bins in seven of the 24
+cases with the ordinary slicer and eight with direct linear slicing.
+All 72 native shared-history exchanges per slicer passed B1d and
+at least 1,500 payload frames in both directions, using three
+disturbance sequences per case. The μ-law negative-postcursor
+fixture held 40 kbps in both directions under all three disturbance
+reserves. The A-law fixture with a postcursor increase reached
+29.333 kbps downstream and 40 kbps upstream at ±8 with the
+ordinary slicer. The previous recovery selector failed the three
+disturbance sequences on that fixture.
+
+Seven phase passes suffice for the six-phase projection when the
+front and middle taps share each raw codec conversion. The extra
+pass closes the wrap from the last phase to the first. In the dense
+254-level benchmark, the Pi 5 averaged at most 14.7 ms for the full
+projection. Chunks of eight rows took at most 0.091 ms each and
+0.238 ms for three in succession. These timings cover the projection
+alone. Live use also needs bounded fitting and map search, a
+measured disturbance reserve, and analogue-side validation.
