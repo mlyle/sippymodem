@@ -24,6 +24,8 @@ enum {
 	SIP_MEDIA_ADDRESS_MAX = 64,
 	SIP_REGISTRATION_REASON_MAX = 128,
 	SIP_UNREGISTER_TIMEOUT_MS = 1000,
+	SIP_BYE_DRAIN_MS = 2000,
+	SIP_BRANCH_MAX = PJSIP_RFC3261_BRANCH_LEN + PJ_GUID_MAX_LENGTH + 2,
 };
 
 struct sip_signaling {
@@ -91,6 +93,13 @@ struct sip_endpoint {
 	bool account_configured;
 };
 
+struct sip_bye {
+	uint64_t deadline_ms;
+	pj_int32_t cseq;
+	pj_ssize_t branch_size;
+	char branch[SIP_BRANCH_MAX];
+};
+
 /* PJSUA has process callbacks and one endpoint. This bridge selects the owned
  * server; call/account ids select a line within that server. */
 struct sip_server {
@@ -101,7 +110,11 @@ struct sip_server {
 	struct sip_endpoint *endpoints[PJSUA_MAX_ACC];
 	struct sip_transport transports[PJSUA_MAX_ACC];
 	pjsip_module incoming_filter;
+	pjsip_module bye_observer;
+	struct sip_bye pending_byes[PJSUA_MAX_CALLS];
+	uint64_t untracked_bye_deadline_ms;
 	unsigned int next_endpoint_id;
+	bool standalone;
 	bool default_enabled;
 	bool library_created;
 	bool opened;
@@ -111,6 +124,92 @@ struct sip_server {
 
 static struct sip_server *pjsua_owner;
 static void pjsip_trace(int level, const char *data, int length);
+
+static uint64_t tick_ms(void)
+{
+	pj_time_val t;
+	return pj_gettickcount(&t) == PJ_SUCCESS ?
+		(uint64_t)t.sec * 1000 + (uint64_t)t.msec : UINT64_MAX;
+}
+
+static bool bye_matches(const struct sip_bye *bye, const pjsip_cseq_hdr *cseq,
+			const pj_str_t *branch)
+{
+	return bye->deadline_ms != 0 && bye->cseq == cseq->cseq &&
+		bye->branch_size == branch->slen &&
+		strncasecmp(bye->branch, branch->ptr, (size_t)branch->slen) == 0;
+}
+
+static pj_status_t observe_bye_request(pjsip_tx_data *request)
+{
+	struct sip_server *server = pjsua_owner;
+	if (server == NULL || request->msg->line.req.method.id != PJSIP_BYE_METHOD)
+		return PJ_SUCCESS;
+	const pjsip_via_hdr *via = pjsip_msg_find_hdr(request->msg, PJSIP_H_VIA, NULL);
+	const pjsip_cseq_hdr *cseq = pjsip_msg_find_hdr(request->msg, PJSIP_H_CSEQ, NULL);
+	uint64_t now = tick_ms();
+	if (now == UINT64_MAX)
+		return PJ_SUCCESS;
+	struct sip_bye *available = NULL;
+	if (via != NULL && cseq != NULL &&
+	    via->branch_param.slen > 0 && via->branch_param.slen <= SIP_BRANCH_MAX) {
+		for (unsigned int i = 0; i < PJSUA_MAX_CALLS; ++i) {
+			struct sip_bye *bye = &server->pending_byes[i];
+			if (bye_matches(bye, cseq, &via->branch_param))
+				return PJ_SUCCESS; /* Retransmission of the same BYE. */
+			if (available == NULL && bye->deadline_ms <= now)
+				available = bye;
+		}
+	}
+	if (available != NULL) {
+		available->deadline_ms = now + SIP_BYE_DRAIN_MS;
+		available->cseq = cseq->cseq;
+		available->branch_size = via->branch_param.slen;
+		memcpy(available->branch, via->branch_param.ptr, (size_t)available->branch_size);
+	} else {
+		server->untracked_bye_deadline_ms = now + SIP_BYE_DRAIN_MS;
+	}
+	return PJ_SUCCESS;
+}
+
+static pj_bool_t observe_bye_response(pjsip_rx_data *response)
+{
+	struct sip_server *server = pjsua_owner;
+	const pjsip_cseq_hdr *cseq = response->msg_info.cseq;
+	const pjsip_via_hdr *via = response->msg_info.via;
+	if (server == NULL || via == NULL || cseq == NULL || cseq->method.id != PJSIP_BYE_METHOD ||
+	    response->msg_info.msg->line.status.code < 200)
+		return PJ_FALSE;
+	for (unsigned int i = 0; i < PJSUA_MAX_CALLS; ++i) {
+		struct sip_bye *bye = &server->pending_byes[i];
+		if (bye_matches(bye, cseq, &via->branch_param)) {
+			bye->deadline_ms = 0;
+			break;
+		}
+	}
+	return PJ_FALSE; /* Let PJSIP complete the transaction. */
+}
+
+/* PJSUA detaches its call before the BYE transaction finishes. Keep the
+ * standalone endpoint alive for the response and native retransmissions. */
+static void drain_byes(const struct sip_server *server)
+{
+	const uint64_t started = tick_ms();
+	if (started == UINT64_MAX)
+		return;
+	const uint64_t limit = started + SIP_BYE_DRAIN_MS;
+	for (;;) {
+		uint64_t now = tick_ms();
+		uint64_t deadline = server->untracked_bye_deadline_ms;
+		for (unsigned int i = 0; i < PJSUA_MAX_CALLS; ++i)
+			if (server->pending_byes[i].deadline_ms > deadline)
+				deadline = server->pending_byes[i].deadline_ms;
+		if (deadline > limit)
+			deadline = limit;
+		if (now >= deadline || pjsua_handle_events((unsigned int)(deadline - now)) < 0)
+			return;
+	}
+}
 
 /* PJSUA logging is process-global. Scope it to each native SDK entry and
  * restore the embedding logger on every return, including failure/unwind.
@@ -1487,6 +1586,8 @@ enum sip_signaling_result sip_server_open(struct sip_server *server)
 	if (result != SIP_SIGNALING_OK)
 		return result;
 	memset(server->retired, 0, sizeof(server->retired));
+	memset(server->pending_byes, 0, sizeof(server->pending_byes));
+	server->untracked_bye_deadline_ms = 0;
 	pjsua_owner = server;
 	result = initialize_library(administrative);
 	if (result == SIP_SIGNALING_OK) {
@@ -1503,6 +1604,22 @@ enum sip_signaling_result sip_server_open(struct sip_server *server)
 	}
 	if (result != SIP_SIGNALING_OK)
 		goto fail;
+	if (server->standalone) {
+		memset(&server->bye_observer, 0, sizeof(server->bye_observer));
+		server->bye_observer.name = pj_str((char *)"mod-bye-observer");
+		server->bye_observer.id = -1;
+		/* Observe responses before the transaction layer consumes them. */
+		server->bye_observer.priority = PJSIP_MOD_PRIORITY_TSX_LAYER - 1;
+		server->bye_observer.on_tx_request = observe_bye_request;
+		server->bye_observer.on_rx_response = observe_bye_response;
+		pj_status_t observer_status = pjsip_endpt_register_module(
+			pjsua_get_pjsip_endpt(), &server->bye_observer);
+		if (observer_status != PJ_SUCCESS) {
+			emit_library_error(administrative, "register BYE observer", observer_status);
+			result = SIP_SIGNALING_LIBRARY_ERROR;
+			goto fail;
+		}
+	}
 	pj_status_t status = pjsua_start();
 	if (status != PJ_SUCCESS) {
 		emit_library_error(administrative, "start signaling library", status);
@@ -1532,7 +1649,7 @@ enum sip_signaling_result sip_server_close(struct sip_server *server)
 		return SIP_SIGNALING_BUSY;
 	server->closing = true;
 	/* Stop admission before any hangup callbacks; per-line close clears its
-	 * userdata before releasing the line. No network wait belongs in stop. */
+	 * userdata before releasing the line. */
 	server->opened = false;
 	enum sip_signaling_result result = SIP_SIGNALING_OK;
 	for (unsigned int index = 0; index < server->max_lines; ++index)
@@ -1543,6 +1660,9 @@ enum sip_signaling_result sip_server_close(struct sip_server *server)
 		}
 	pj_status_t status = PJ_SUCCESS;
 	if (server->library_created) {
+		/* Shared SDK owners service transactions in their event loop. */
+		if (server->standalone)
+			drain_byes(server);
 		for (unsigned int index = 0; index < PJSUA_MAX_ACC; ++index)
 			if (server->endpoints[index] != NULL) {
 				enum sip_signaling_result stopped = sip_endpoint_close(server->endpoints[index]);
@@ -1639,6 +1759,7 @@ struct sip_signaling *sip_signaling_create(const struct app_config *config,
 	struct sip_server *server = sip_server_create(config, 1);
 	if (server == NULL)
 		return NULL;
+	server->standalone = true;
 	struct sip_signaling *signaling = sip_signaling_create_shared(server, config, callbacks);
 	if (signaling == NULL) {
 		sip_server_destroy(server);

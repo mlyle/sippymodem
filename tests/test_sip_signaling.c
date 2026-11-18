@@ -900,6 +900,24 @@ static bool finish_incoming_call(struct loopback_incoming_peer *peer)
 	return succeeded;
 }
 
+static void *serve_retransmitted_bye(void *context)
+{
+	struct loopback_incoming_peer *peer = context;
+	struct sockaddr_in remote;
+	socklen_t size = sizeof(remote);
+	char first[TEST_SIP_MESSAGE_MAX];
+	char retry[TEST_SIP_MESSAGE_MAX];
+
+	/* Give the first BYE no response, as if the socket had lost it. */
+	if (!receive_datagram(peer->socket_fd, first, sizeof(first), &remote, &size) ||
+	    strncmp(first, "BYE ", 4) != 0 ||
+	    !receive_datagram(peer->socket_fd, retry, sizeof(retry), &remote, &size) ||
+	    strcmp(first, retry) != 0 ||
+	    !send_empty_response(peer->socket_fd, &remote, size, retry, 200, "OK"))
+		peer->failed = true;
+	return NULL;
+}
+
 static bool test_loopback_registration_lifecycle(void)
 {
 	struct callback_capture capture = { 0 };
@@ -1150,6 +1168,8 @@ static bool test_incoming_call_lifecycle(void)
 	bool connected = false;
 	bool final_state_idle = false;
 	bool final_media_inactive = false;
+	bool bye_worker_started = false;
+	bool bye_retransmitted = false;
 
 	config_init(&config);
 	config.sip.listen_port = 0;
@@ -1185,7 +1205,11 @@ static bool test_incoming_call_lifecycle(void)
 			connected =
 				sip_signaling_call_state(signaling) ==
 				SIP_CALL_CONNECTED;
-			peer_succeeded = finish_incoming_call(&peer);
+			peer_succeeded = pthread_join(peer.worker, NULL) == 0 &&
+				!peer.failed;
+			if (connected && peer_succeeded)
+				bye_worker_started = pthread_create(&peer.worker, NULL,
+					serve_retransmitted_bye, &peer) == 0;
 			if (sip_signaling_call_state(signaling) !=
 			    SIP_CALL_IDLE)
 				hangup_result =
@@ -1198,6 +1222,11 @@ static bool test_incoming_call_lifecycle(void)
 				SIP_MEDIA_INACTIVE;
 		}
 		close_result = sip_signaling_close(signaling);
+		if (bye_worker_started)
+			bye_retransmitted = pthread_join(peer.worker, NULL) == 0 &&
+				!peer.failed;
+		if (peer_started)
+			(void)close(peer.socket_fd);
 	}
 	sip_signaling_destroy(signaling);
 
@@ -1214,6 +1243,7 @@ static bool test_incoming_call_lifecycle(void)
 	      "incoming call did not connect after answer");
 	CHECK(hangup_result == SIP_SIGNALING_OK && final_state_idle,
 	      "incoming call did not return to idle after hangup");
+	CHECK(bye_retransmitted, "standalone close discarded a pending BYE retry");
 	CHECK(capture.media_count == 2 &&
 		      capture.media_states[0] ==
 			      SIP_MEDIA_CONFIGURED &&
