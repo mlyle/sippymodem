@@ -307,7 +307,7 @@ static enum v34_data_stream_result initialize_b1(
 
 	if (stream == NULL || !v34_data_points_is_valid(points) ||
 	    !v34_training_line_is_valid(line) ||
-	    !v34_data_points_needs_mapping_frame(points) ||
+	    !v34_data_points_needs_mapping_frame_owned(points) ||
 	    !schedule_is_at_b1_start(&points->schedule) ||
 	    !b1_primary_delay(
 		    &points->schedule, &points->encoder.parameters,
@@ -370,8 +370,8 @@ static bool acquire_mapping_frame(
 	return true;
 }
 
-/* A queued frame changes only its point cursor. The line owner already stages
- * its waveform, so retain just that cursor until emission succeeds. */
+/* The validated stream has at least one queued point. The line owner stages
+ * its waveform, so retain just the point cursor until emission succeeds. */
 static enum v34_data_stream_result emit_sample(
 	struct v34_data_stream *stream, int16_t *sample, bool *symbol_accepted)
 {
@@ -380,10 +380,8 @@ static enum v34_data_stream_result emit_sample(
 	const struct qam_point *supplied = NULL;
 	enum v34_data_stream_result result;
 
-	if (v34_training_line_needs_point(&stream->line)) {
-		result = points_result(v34_data_points_next(&stream->points, &point));
-		if (result != V34_DATA_STREAM_OK)
-			return result;
+	if (v34_pulse_modulator_needs_point_owned(&stream->line.carrier)) {
+		point = v34_data_points_take_owned(&stream->points);
 		supplied = &point;
 	}
 	result = line_result(v34_training_line_sample(
@@ -416,7 +414,7 @@ enum v34_data_stream_result v34_data_stream_sample(
 	    symbol_accepted == NULL ||
 	    memory_region_set_overlaps(regions, sizeof regions / sizeof *regions))
 		return V34_DATA_STREAM_INVALID_ARGUMENT;
-	if (!v34_data_points_needs_mapping_frame(&stream->points))
+	if (!v34_data_points_needs_mapping_frame_owned(&stream->points))
 		return emit_sample(stream, sample, symbol_accepted);
 
 	/* The source and mapper can change more than a cursor. Stage them together

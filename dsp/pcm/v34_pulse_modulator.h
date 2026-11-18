@@ -68,6 +68,13 @@ bool v34_pulse_modulator_is_valid(
 bool v34_pulse_modulator_needs_point(
 	const struct v34_pulse_modulator *modulator);
 
+/* The waveform owner has already validated the carrier and symbol clock. */
+static inline bool v34_pulse_modulator_needs_point_owned(
+	const struct v34_pulse_modulator *modulator)
+{
+	return modulator->symbol_phase_units < modulator->channel.symbol_rate_numerator;
+}
+
 /* Emit one unscaled, pre-emphasized passband sample. Supply a finite, in-range
  * point exactly when needs_point() is true. Rejected calls preserve owner and
  * outputs. */

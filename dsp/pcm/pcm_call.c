@@ -3320,7 +3320,7 @@ static bool phase3_response_timed_out(const struct pcm_call *call,
 		carrier = &initial->line.carrier;
 		elapsed = (uint64_t)(initial->symbols.ja_symbols - 1u) *
 			  carrier->symbol_period_units + carrier->symbol_phase_units;
-		if (carrier->symbol_phase_units < carrier->channel.symbol_rate_numerator)
+		if (v34_pulse_modulator_needs_point_owned(carrier))
 			elapsed += carrier->symbol_period_units;
 		return elapsed >= (uint64_t)PCM_PHASE3_SD_RECEIVE_LIMIT_SAMPLES *
 				  carrier->channel.symbol_rate_numerator;

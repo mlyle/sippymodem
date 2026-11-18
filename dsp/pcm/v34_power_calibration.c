@@ -514,7 +514,8 @@ enum v34_power_calibration_result v34_line_power_calibration_step(
 			return result;
 		/* queue_generated_points validates every normalized point. Only the
 		 * owned cursor changes while draining this frame into the waveform. */
-		while (calibration->points.next_point < V34_SYMBOLS_PER_MAPPING_FRAME) {
+		while (!v34_data_points_needs_mapping_frame_owned(
+			    &calibration->points)) {
 			struct qam_point point;
 			const struct qam_point *point_pointer = NULL;
 			double line_sample;
@@ -522,9 +523,9 @@ enum v34_power_calibration_result v34_line_power_calibration_step(
 
 			if (++frame_samples > calibration->maximum_frame_samples)
 				return V34_POWER_CALIBRATION_NUMERIC_FAILURE;
-			if (calibration->carrier.symbol_phase_units <
-			    calibration->carrier.channel.symbol_rate_numerator) {
-				point = calibration->points.point[calibration->points.next_point++];
+			if (v34_pulse_modulator_needs_point_owned(
+				    &calibration->carrier)) {
+				point = v34_data_points_take_owned(&calibration->points);
 				point_pointer = &point;
 			}
 			result = pulse_result(v34_pulse_modulator_sample_owned(

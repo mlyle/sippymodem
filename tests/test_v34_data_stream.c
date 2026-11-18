@@ -711,6 +711,18 @@ static bool test_transactional_boundaries(void)
 		corrupt.points.normalizer.maximum_normalized_point_power * 0.5;
 	CHECK(!v34_data_stream_is_valid(&corrupt),
 	      "undersized point capacity was accepted");
+	CHECK(!v34_data_points_needs_mapping_frame(&stream.points),
+	      "corruption check needs a queued frame");
+	corrupt = stream;
+	corrupt.points.point[corrupt.points.next_point].in_phase = NAN;
+	before = corrupt;
+	sample = 1234;
+	accepted = true;
+	CHECK(v34_data_stream_sample(&corrupt, generated_source, &source,
+		      &sample, &accepted) == V34_DATA_STREAM_INVALID_ARGUMENT &&
+	      v34_data_streams_equal(&corrupt, &before) &&
+	      sample == 1234 && accepted && source.calls == 2u,
+	      "corrupt queued point reached the waveform path");
 	stream.b1_active = true;
 	CHECK(!v34_data_stream_is_valid(&stream),
 	      "B1 state accepted an ordinary data frame");

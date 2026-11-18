@@ -47,7 +47,7 @@ void v34_b1_gain_init(struct v34_b1_gain *fit,
 		    normalizer, role) != V34_DATA_POINTS_OK)
 		goto unsupported;
 	for (unsigned i = 0; i < V34_B1_GAIN_POINTS; ++i) {
-		if (v34_data_points_needs_mapping_frame(&points)) {
+		if (v34_data_points_needs_mapping_frame_owned(&points)) {
 			struct v34_mapping_frame frame;
 			uint8_t ones[V34_MAX_MAPPING_FRAME_BITS], auxiliary = 1;
 
@@ -57,8 +57,7 @@ void v34_b1_gain_init(struct v34_b1_gain *fit,
 				    frame.carries_auxiliary_bit ? &auxiliary : NULL) != V34_DATA_POINTS_OK)
 				goto unsupported;
 		}
-		if (v34_data_points_next(&points, &initialized.expected[i]) != V34_DATA_POINTS_OK)
-			goto unsupported;
+		initialized.expected[i] = v34_data_points_take_owned(&points);
 	}
 	initialized.normalization_gain = normalizer->normalization_gain;
 	initialized.active = true;

@@ -233,8 +233,7 @@ bool v34_pulse_modulator_needs_point(
 	const struct v34_pulse_modulator *modulator)
 {
 	return v34_pulse_modulator_is_valid(modulator) &&
-	       modulator->symbol_phase_units <
-		       modulator->channel.symbol_rate_numerator;
+	       v34_pulse_modulator_needs_point_owned(modulator);
 }
 
 static int16_t source_coefficient(
@@ -339,8 +338,7 @@ static enum v34_pulse_modulator_result pulse_sample(
 	    !outputs_are_disjoint(modulator, point, sample, point_accepted) ||
 	    (validate && !v34_pulse_modulator_is_valid(modulator)))
 		return V34_PULSE_MODULATOR_INVALID_ARGUMENT;
-	accepting = modulator->symbol_phase_units <
-		modulator->channel.symbol_rate_numerator;
+	accepting = v34_pulse_modulator_needs_point_owned(modulator);
 	if ((point != NULL) != accepting ||
 	    (point != NULL &&
 	     (!qam_point_fits_power(point, modulator->maximum_point_power) ||

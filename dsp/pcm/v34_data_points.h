@@ -47,6 +47,20 @@ bool v34_data_points_is_valid(
 bool v34_data_points_needs_mapping_frame(
 	const struct v34_data_points *points);
 
+/* Use a cursor validated by its owner or by a successful frame queue.
+ * Taking a point requires that the frame still has a point to consume. */
+static inline bool v34_data_points_needs_mapping_frame_owned(
+	const struct v34_data_points *points)
+{
+	return points->next_point == V34_SYMBOLS_PER_MAPPING_FRAME;
+}
+
+static inline struct qam_point v34_data_points_take_owned(
+	struct v34_data_points *points)
+{
+	return points->point[points->next_point++];
+}
+
 /* Describe the next frame without advancing any state. */
 enum v34_data_points_result v34_data_points_preview_mapping_frame(
 	const struct v34_data_points *points,

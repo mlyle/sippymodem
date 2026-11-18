@@ -60,7 +60,7 @@ bool v34_data_points_needs_mapping_frame(
 	const struct v34_data_points *points)
 {
 	return v34_data_points_is_valid(points) &&
-	       points->next_point == V34_SYMBOLS_PER_MAPPING_FRAME;
+	       v34_data_points_needs_mapping_frame_owned(points);
 }
 
 enum v34_data_points_result v34_data_points_preview_mapping_frame(
@@ -72,7 +72,7 @@ enum v34_data_points_result v34_data_points_preview_mapping_frame(
 
 	if (!v34_data_points_is_valid(points) || mapping_frame == NULL)
 		return V34_DATA_POINTS_INVALID_ARGUMENT;
-	if (points->next_point != V34_SYMBOLS_PER_MAPPING_FRAME)
+	if (!v34_data_points_needs_mapping_frame_owned(points))
 		return V34_DATA_POINTS_MAPPING_FRAME_PENDING;
 	schedule = points->schedule;
 	if (v34_frame_schedule_prepare_mapping_frame(&schedule) !=
@@ -128,7 +128,7 @@ enum v34_data_points_result v34_data_points_queue_mapping_frame(
 
 	if (!v34_data_points_is_valid(points))
 		return V34_DATA_POINTS_INVALID_ARGUMENT;
-	if (points->next_point != V34_SYMBOLS_PER_MAPPING_FRAME)
+	if (!v34_data_points_needs_mapping_frame_owned(points))
 		return V34_DATA_POINTS_MAPPING_FRAME_PENDING;
 	next = *points;
 	if (v34_frame_schedule_prepare_mapping_frame(&next.schedule) !=
@@ -160,15 +160,12 @@ enum v34_data_points_result v34_data_points_queue_mapping_frame(
 enum v34_data_points_result v34_data_points_next(
 	struct v34_data_points *points, struct qam_point *point)
 {
-	struct qam_point generated;
-
 	if (!v34_data_points_is_valid(points) || point == NULL)
 		return V34_DATA_POINTS_INVALID_ARGUMENT;
-	if (points->next_point == V34_SYMBOLS_PER_MAPPING_FRAME)
+	if (v34_data_points_needs_mapping_frame_owned(points))
 		return V34_DATA_POINTS_MAPPING_FRAME_REQUIRED;
 	/* Only the bounded cursor changes; the validated mapping and points
 	 * remain intact, including points already consumed from this frame. */
-	generated = points->point[points->next_point++];
-	*point = generated;
+	*point = v34_data_points_take_owned(points);
 	return V34_DATA_POINTS_OK;
 }
