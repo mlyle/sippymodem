@@ -199,21 +199,10 @@ static bool transmit_local_probe(
 	struct v34_phase2_probe_sequence *transmit =
 		&probe->path.transmit;
 
-	if (!phase2_info0_exchange_observe_tone(
-		    exchange, received_sample, &event->tone_event))
+	if (!phase2_probe_transmit_sample(transmit, exchange, true, received_sample,
+		    transmit_sample, &event->tone_event, &event->transmit_event))
 		return false;
-	bool finish_l2 = event->tone_event.kind == V34_PHASE2_TONE_STARTED &&
-	    ((transmit->phase == V34_PHASE2_PROBE_SEQUENCE_PHASE_L2 &&
-	      transmit->samples_emitted > V34_PHASE2_PROBE_L1_SAMPLES) ||
-	     transmit->phase ==
-		     V34_PHASE2_PROBE_SEQUENCE_PHASE_LIMIT_REACHED);
-	if (v34_phase2_probe_sequence_sample(
-		    transmit, finish_l2, transmit_sample,
-		    &event->transmit_event) != V34_PHASE2_PROBE_SEQUENCE_OK ||
-	    (finish_l2 && event->transmit_event.kind !=
-		     V34_PHASE2_PROBE_SEQUENCE_EVENT_COMPLETED))
-		return false;
-	if (finish_l2) {
+	if (event->transmit_event.kind == V34_PHASE2_PROBE_SEQUENCE_EVENT_COMPLETED) {
 		probe->phase = PHASE2_RECIPROCAL_PROBE_SIGNAL_B_COMPLETE;
 		probe->signal_b_tone_wait_samples = 0;
 		event->kind =
