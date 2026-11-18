@@ -295,8 +295,6 @@ static bool accept_event(
 	const struct v92_control_event *event)
 {
 	switch (event->type) {
-	case V92_CONTROL_EVENT_NONE:
-		return true;
 	case V92_CONTROL_EVENT_SUVU:
 		if (control->transmit.encoder.mapping.kind == V90_CP_DATA &&
 		    event->record.suvu.parameters.request_silence)
@@ -335,6 +333,7 @@ static bool accept_event(
 	case V92_CONTROL_EVENT_CPU_REJECTED:
 	case V92_CONTROL_EVENT_CPUS_REJECTED:
 		return true;
+	case V92_CONTROL_EVENT_NONE:
 	case V92_CONTROL_EVENT_SUVD:
 	case V92_CONTROL_EVENT_CPD:
 	case V92_CONTROL_EVENT_SUVD_REJECTED:
@@ -372,6 +371,8 @@ enum v92_downstream_control_result v92_downstream_control_receive(
 {
 	if (!v92_downstream_control_is_valid(control) || control->failed || received == NULL)
 		return V92_DOWNSTREAM_CONTROL_ERROR;
+	if (received->type == V92_CONTROL_EVENT_NONE)
+		return V92_DOWNSTREAM_CONTROL_OK;
 	struct v92_control_event event = *received;
 	/* Decoded events are a public boundary: a malformed zero-rate record
 	 * must not bypass selection validation and trigger cleardown. */

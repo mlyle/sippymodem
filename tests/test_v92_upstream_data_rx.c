@@ -1060,6 +1060,18 @@ static bool downstream_control_contracts(const struct v92_downstream_control *in
 	      selected.cleardown.peer_requested && !selected.failed &&
 	      v90_pcm_mapping_equal(&selected.transmit.encoder.mapping, &initial->transmit.encoder.mapping),
 	      "peer codec blocked cleardown or changed the network mapping");
+	event = (struct v92_control_event){ 0 };
+	struct v92_downstream_control clearing = selected;
+	CHECK(v92_downstream_control_receive(&selected, &event) == V92_DOWNSTREAM_CONTROL_OK &&
+	      memcmp(&selected, &clearing, sizeof(selected)) == 0,
+	      "empty input changed active cleardown");
+	selected = *initial;
+	CHECK(v92_downstream_control_receive(&selected, &event) == V92_DOWNSTREAM_CONTROL_OK &&
+	      memcmp(&selected, initial, sizeof(selected)) == 0,
+	      "empty input changed downstream control");
+	selected.failed = true;
+	CHECK(v92_downstream_control_receive(&selected, &event) == V92_DOWNSTREAM_CONTROL_ERROR,
+	      "empty input accepted a failed exchange");
 	selected = *initial;
 	event = (struct v92_control_event){ .type = V92_CONTROL_EVENT_CPUS_REJECTED };
 	CHECK(v92_downstream_control_receive(&selected, &event) == V92_DOWNSTREAM_CONTROL_OK && memcmp(&selected, initial, sizeof(selected)) == 0,

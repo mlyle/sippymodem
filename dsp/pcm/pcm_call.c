@@ -5209,7 +5209,8 @@ static bool v92_fast_receive(struct pcm_call *call, const struct v92_upstream_da
 	for (size_t bit = 0; bit < frame->bit_count; ++bit) {
 		struct v92_control_event event;
 		if (v92_control_rx_receive_bit(&fast->receive, frame->bits[bit], &event) != V92_CONTROL_RX_OK ||
-		    v92_downstream_control_receive(&fast->control, &event) != V92_DOWNSTREAM_CONTROL_OK)
+		    (event.type != V92_CONTROL_EVENT_NONE &&
+		     v92_downstream_control_receive(&fast->control, &event) != V92_DOWNSTREAM_CONTROL_OK))
 			return false;
 		if (fast->control.cpu_received &&
 		    (!downstream_rate_is_enabled(call->enabled_downstream_rate_mask, fast->control.cpu.data_rate_number) ||

@@ -224,12 +224,16 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_receive(
 		}
 		result = v92_phase4_digital_rx_sample(&station->receive, sample, &event);
 	}
-	enum v92_downstream_control_result control_result =
-		v92_downstream_control_receive(&station->control, &event);
-	if (control_result == V92_DOWNSTREAM_CONTROL_REJECTED)
-		return V92_PHASE4_DIGITAL_STATION_REJECTED_CONTROL;
-	if (control_result != V92_DOWNSTREAM_CONTROL_OK)
-		return fail(station);
+	/* The receiver owns incomplete input. Only a record event advances the
+	 * downstream exchange. */
+	if (event.type != V92_CONTROL_EVENT_NONE) {
+		enum v92_downstream_control_result control_result =
+			v92_downstream_control_receive(&station->control, &event);
+		if (control_result == V92_DOWNSTREAM_CONTROL_REJECTED)
+			return V92_PHASE4_DIGITAL_STATION_REJECTED_CONTROL;
+		if (control_result != V92_DOWNSTREAM_CONTROL_OK)
+			return fail(station);
+	}
 	if (event.type == V92_CONTROL_EVENT_CPU && station->control.cpu_received &&
 	    !station->control.cleardown.active) {
 		struct v92_upstream_control_line_rx *line = &station->receive.signal.control;
