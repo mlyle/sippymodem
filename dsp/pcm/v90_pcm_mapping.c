@@ -355,25 +355,19 @@ enum v90_pcm_mapping_result v90_pcm_mapping_init_from_v92_cpu(
 		parameters->frame_constellation, parameters->codec_constellations_differ);
 }
 
-enum v90_pcm_mapping_result v90_pcm_mapping_encode_modulus(
-	const struct v90_pcm_mapping *mapping,
-	const uint8_t *bits, size_t bit_count,
+enum v90_pcm_mapping_result v90_pcm_mapping_encode_modulus_owned(
+	const struct v90_pcm_mapping *mapping, const uint8_t *bits,
 	uint8_t labels[V90_CP_FRAME_INTERVALS])
 {
 	uint32_t radices[V90_CP_FRAME_INTERVALS];
 	uint32_t digits[V90_CP_FRAME_INTERVALS];
 	enum mixed_radix_result result;
 
-	if (!v90_pcm_mapping_is_valid(mapping) || bits == NULL ||
-	    labels == NULL)
-		return V90_PCM_MAPPING_INVALID_ARGUMENT;
-	if (bit_count != mapping->modulus_bits)
-		return V90_PCM_MAPPING_OUT_OF_RANGE;
 	for (size_t interval = 0;
 	     interval < V90_CP_FRAME_INTERVALS; ++interval)
 		radices[interval] = mapping->modulus[interval];
 	result = mixed_radix_encode(
-		radices, V90_CP_FRAME_INTERVALS, bits, bit_count, digits);
+		radices, V90_CP_FRAME_INTERVALS, bits, mapping->modulus_bits, digits);
 	if (result == MIXED_RADIX_OUT_OF_RANGE)
 		return V90_PCM_MAPPING_OUT_OF_RANGE;
 	if (result != MIXED_RADIX_OK)
@@ -384,20 +378,27 @@ enum v90_pcm_mapping_result v90_pcm_mapping_encode_modulus(
 	return V90_PCM_MAPPING_OK;
 }
 
-enum v90_pcm_mapping_result v90_pcm_mapping_decode_modulus(
+enum v90_pcm_mapping_result v90_pcm_mapping_encode_modulus(
 	const struct v90_pcm_mapping *mapping,
-	const uint8_t labels[V90_CP_FRAME_INTERVALS],
-	uint8_t *bits, size_t bit_count)
+	const uint8_t *bits, size_t bit_count,
+	uint8_t labels[V90_CP_FRAME_INTERVALS])
+{
+	if (!v90_pcm_mapping_is_valid(mapping) || bits == NULL ||
+	    labels == NULL)
+		return V90_PCM_MAPPING_INVALID_ARGUMENT;
+	if (bit_count != mapping->modulus_bits)
+		return V90_PCM_MAPPING_OUT_OF_RANGE;
+	return v90_pcm_mapping_encode_modulus_owned(mapping, bits, labels);
+}
+
+enum v90_pcm_mapping_result v90_pcm_mapping_decode_modulus_owned(
+	const struct v90_pcm_mapping *mapping,
+	const uint8_t labels[V90_CP_FRAME_INTERVALS], uint8_t *bits)
 {
 	uint32_t radices[V90_CP_FRAME_INTERVALS];
 	uint32_t digits[V90_CP_FRAME_INTERVALS];
 	enum mixed_radix_result result;
 
-	if (!v90_pcm_mapping_is_valid(mapping) || labels == NULL ||
-	    bits == NULL)
-		return V90_PCM_MAPPING_INVALID_ARGUMENT;
-	if (bit_count != mapping->modulus_bits)
-		return V90_PCM_MAPPING_OUT_OF_RANGE;
 	for (size_t interval = 0;
 	     interval < V90_CP_FRAME_INTERVALS; ++interval) {
 		radices[interval] = mapping->modulus[interval];
@@ -405,12 +406,25 @@ enum v90_pcm_mapping_result v90_pcm_mapping_decode_modulus(
 	}
 	result = mixed_radix_decode_low_bits(
 		radices, V90_CP_FRAME_INTERVALS, digits,
-		bits, bit_count);
+		bits, mapping->modulus_bits);
 	if (result == MIXED_RADIX_OUT_OF_RANGE)
 		return V90_PCM_MAPPING_OUT_OF_RANGE;
 	if (result != MIXED_RADIX_OK)
 		return V90_PCM_MAPPING_INVALID_PARAMETERS;
 	return V90_PCM_MAPPING_OK;
+}
+
+enum v90_pcm_mapping_result v90_pcm_mapping_decode_modulus(
+	const struct v90_pcm_mapping *mapping,
+	const uint8_t labels[V90_CP_FRAME_INTERVALS],
+	uint8_t *bits, size_t bit_count)
+{
+	if (!v90_pcm_mapping_is_valid(mapping) || labels == NULL ||
+	    bits == NULL)
+		return V90_PCM_MAPPING_INVALID_ARGUMENT;
+	if (bit_count != mapping->modulus_bits)
+		return V90_PCM_MAPPING_OUT_OF_RANGE;
+	return v90_pcm_mapping_decode_modulus_owned(mapping, labels, bits);
 }
 
 enum v90_pcm_mapping_result v90_pcm_mapping_ucode(

@@ -86,9 +86,8 @@ enum v90_pcm_frame_decoder_result v90_pcm_frame_decoder_decode(
 		return V90_PCM_FRAME_DECODER_INVALID_SYMBOLS;
 	if (!decode_labels(decoder, ucodes, labels))
 		return V90_PCM_FRAME_DECODER_INVALID_SYMBOLS;
-	mapping_result = v90_pcm_mapping_decode_modulus(
-		&decoder->mapping, labels, modulus_bits,
-		decoder->mapping.modulus_bits);
+	mapping_result = v90_pcm_mapping_decode_modulus_owned(
+		&decoder->mapping, labels, modulus_bits);
 	if (mapping_result == V90_PCM_MAPPING_OUT_OF_RANGE)
 		return V90_PCM_FRAME_DECODER_INVALID_SYMBOLS;
 	if (mapping_result != V90_PCM_MAPPING_OK)

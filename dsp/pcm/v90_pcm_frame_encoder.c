@@ -68,9 +68,8 @@ static bool encode_unsigned_symbols(
 {
 	uint8_t labels[V90_CP_FRAME_INTERVALS];
 
-	if (v90_pcm_mapping_encode_modulus(
-		    mapping, modulus_bits, mapping->modulus_bits,
-		    labels) != V90_PCM_MAPPING_OK)
+	if (v90_pcm_mapping_encode_modulus_owned(mapping, modulus_bits, labels) !=
+	    V90_PCM_MAPPING_OK)
 		return false;
 	for (size_t interval = 0;
 	     interval < V90_CP_FRAME_INTERVALS; ++interval) {

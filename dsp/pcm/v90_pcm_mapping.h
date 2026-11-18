@@ -149,6 +149,15 @@ enum v90_pcm_mapping_result v90_pcm_mapping_decode_modulus(
 	const uint8_t labels[V90_CP_FRAME_INTERVALS],
 	uint8_t *bits, size_t bit_count);
 
+/* Frame owners reuse their mapping validation. Buffers are nonnull and cover
+ * the mapping's modulus_bits or the six labels, as appropriate. */
+enum v90_pcm_mapping_result v90_pcm_mapping_encode_modulus_owned(
+	const struct v90_pcm_mapping *mapping, const uint8_t *bits,
+	uint8_t labels[V90_CP_FRAME_INTERVALS]);
+enum v90_pcm_mapping_result v90_pcm_mapping_decode_modulus_owned(
+	const struct v90_pcm_mapping *mapping,
+	const uint8_t labels[V90_CP_FRAME_INTERVALS], uint8_t *bits);
+
 /* Resolve a label using the descending-Ucode ordering required by the PCM
  * mapper. Codec masks with incompatible cardinality fall back atomically to
  * the transmitter plane during initialization. */
