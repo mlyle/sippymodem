@@ -75,3 +75,56 @@ They qualify the candidate trigger and publication rule for those
 channels. Production use needs analogue-side field evidence, a call-owned
 calibration lifecycle, and whole-packet timing through the fitting and
 selection work.
+
+## Active downstream equalization
+
+Use the conditioned octet to score the old map and the original G.711
+octet to constrain physical gain, postcursor, and DC. For a replacement
+map, project the raw-code interval through the frozen receive filter,
+rounding and requantizing as the receiver does. A shorter interval in
+the raw plane can still cross a decision boundary after conditioning.
+
+Four native pairs trained an active analogue equalizer, with μ-law at
+three line gains and A-law at one. They each verified initial data at
+56 kbps down and 40 kbps up. On an unchanged short exchange the raw
+trigger lowered all four downstream rates to 30.667–42.667 kbps. The
+conditioned trigger kept all four at 56 kbps. Projecting candidate
+levels through the active filter recovered 16/16 persistent global or
+single-phase gain changes, at 33.333–45.333 kbps down with 40 kbps up.
+Keeping the old map passed 0/16.
+
+Fresh fits can matter even when the retained and current constraints
+intersect. In three small-gain trials an anchored map reached B1d at
+49.333 kbps but failed it. Bounding candidate levels with the fresh
+training fit reduced those selections to 40–42.667 kbps and passed all
+three. The revised procedure passed 7/8 small-gain trials. One μ-law
+case produced zero wrong old-map labels in both TRN2d windows and 617
+wrong bits during B1d at 56 kbps. Training support for the levels used
+later remains a separate admission requirement. All four transient
+controls retained 56 kbps. Late gain and one-sample timing changes
+withheld replacement.
+
+## Verify the next rate exchange
+
+Rd uses the highest level of each phase in the newly selected map.
+A map with adequate midpoint spacing for data can leave that marker
+outside the exact codec cell used for acquisition. In 14 of 16 modeled
+calls that recovered from persistent drift, the unmodified Rd detector
+missed the marker at the following short exchange on the same call.
+
+The paired prototype retires only the phases with independently
+contradictory raw evidence. It qualifies replacement bounds from new
+B1d and verifies payload before reusing them. On a later locally
+requested exchange, the fresh bounds and owned phase can translate a
+compatible raw marker sample into the corresponding mapped label.
+The ordinary periodic run and reversal checks still govern acceptance.
+That path passed the second exchange in all 16 persistent-drift cases
+at the map selected in the first exchange. The four unchanged controls
+kept 56 kbps through both exchanges.
+
+The active filters in these trials were effectively scalar. Both
+stations supplied exact physical alignment and the experiment kept
+the original decoded waveform evidence separate from its model. An
+active filter with material postcursor coefficients, a phase
+discontinuity on a physical link, and whole-modem packet cost through
+selection still need qualification before enabling this behavior.
