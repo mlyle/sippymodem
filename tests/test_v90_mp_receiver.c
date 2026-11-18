@@ -271,6 +271,47 @@ static bool test_truncation_recovery(void)
 	return true;
 }
 
+static bool test_frame_batch(void)
+{
+	enum { FRAME_BITS = 17 };
+	struct v90_mp_record record = type0_record(true);
+	struct v90_mp_receiver receiver, prefix;
+	struct v90_mp_event event;
+	uint8_t sequence[V90_MP_MAXIMUM_SEQUENCE_BYTES];
+	uint8_t tail[3];
+	size_t bit_count;
+
+	CHECK(v90_mp_receiver_init(&prefix, FRAME_BITS) == V90_MP_RECEIVER_OK &&
+	      encode_record(&record, FRAME_BITS, sequence, &bit_count) &&
+	      feed_bits(&prefix, sequence, 0, bit_count - 1u, &event, false),
+	      "batched MP fixture did not reach the last bit");
+	tail[0] = packed_bit(sequence, bit_count - 1u);
+	tail[1] = 1u;
+	tail[2] = 1u;
+	receiver = prefix;
+	CHECK(v90_mp_receive_bits(&receiver, tail, 1u, &event) ==
+		      V90_MP_RECEIVER_OK &&
+	      event.type == V90_MP_EVENT_TYPE0 && event.record_boundary,
+	      "aligned MP did not report its boundary");
+	receiver = prefix;
+	CHECK(v90_mp_receive_bits(&receiver, tail, sizeof(tail), &event) ==
+		      V90_MP_RECEIVER_OK &&
+	      event.type == V90_MP_EVENT_TYPE0 && !event.record_boundary &&
+	      records_match(&event.record, &record, FRAME_BITS) &&
+	      receiver.wire.stage == PCM_MP_SEARCH_SYNC &&
+	      receiver.wire.sync_one_count == 2u,
+	      "batched MP lost its event or suffix bits");
+	receiver = prefix;
+	struct v90_mp_event saved_event = event;
+	tail[2] = 2u;
+	CHECK(v90_mp_receive_bits(&receiver, tail, sizeof(tail), &event) ==
+		      V90_MP_RECEIVER_INVALID_ARGUMENT &&
+	      memcmp(&receiver, &prefix, sizeof(receiver)) == 0 &&
+	      memcmp(&event, &saved_event, sizeof(event)) == 0,
+	      "bad suffix published a partial batch");
+	return true;
+}
+
 static bool test_contracts(void)
 {
 	struct v90_mp_receiver receiver;
@@ -378,6 +419,7 @@ int main(void)
 		{ "rejection and recovery", test_rejection_and_recovery },
 		{ "overlapping reacquisition", test_overlapping_reacquisition },
 		{ "truncated record recovery", test_truncation_recovery },
+		{ "frame batch boundary and rollback", test_frame_batch },
 		{ "contracts", test_contracts },
 	};
 	unsigned int failures = 0;

@@ -71,19 +71,36 @@ enum v90_mp_receiver_result v90_mp_receive_bit(
 	struct v90_mp_receiver *receiver, uint8_t bit,
 	struct v90_mp_event *event)
 {
+	return v90_mp_receive_bits(receiver, &bit, 1u, event);
+}
+
+enum v90_mp_receiver_result v90_mp_receive_bits(
+	struct v90_mp_receiver *receiver, const uint8_t *bits, size_t count,
+	struct v90_mp_event *event)
+{
 	struct v90_mp_receiver next;
 	struct v90_mp_event emitted = { 0 };
 	size_t type0_bits, type1_bits;
 
-	if (receiver == NULL || event == NULL || bit > 1u ||
-	    memory_regions_overlap(receiver, sizeof(*receiver), event, sizeof(*event)))
+	if (receiver == NULL || event == NULL || bits == NULL ||
+	    count == 0u || count > V90_MP_TRAINING_FRAME_MAXIMUM_BITS ||
+	    memory_regions_overlap(receiver, sizeof(*receiver), event, sizeof(*event)) ||
+	    memory_regions_overlap(receiver, sizeof(*receiver), bits, count) ||
+	    memory_regions_overlap(event, sizeof(*event), bits, count) ||
+	    !unpacked_bits_are_binary(bits, count))
 		return V90_MP_RECEIVER_INVALID_ARGUMENT;
 	if (!frame_lengths(receiver, &type0_bits, &type1_bits) ||
 	    !pcm_mp_receiver_is_valid(&receiver->wire, type0_bits, type1_bits))
 		return V90_MP_RECEIVER_INVALID_STATE;
 	next = *receiver;
-	if (pcm_mp_receiver_receive_bit(&next.wire, bit, type0_bits, type1_bits))
+	for (size_t index = 0; index < count; ++index) {
+		if (!pcm_mp_receiver_receive_bit(&next.wire, bits[index],
+			    type0_bits, type1_bits))
+			continue;
+		/* At most one record can end in a training frame. */
 		finish_candidate(&next, &emitted);
+		emitted.record_boundary = index + 1u == count;
+	}
 	if (!pcm_mp_receiver_is_valid(&next.wire, type0_bits, type1_bits))
 		return V90_MP_RECEIVER_INTERNAL_ERROR;
 	*receiver = next;

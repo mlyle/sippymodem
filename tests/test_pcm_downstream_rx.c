@@ -1301,6 +1301,22 @@ static bool test_contracts(void)
 	CHECK(pcm_downstream_rx_is_valid(&receiver) &&
 	      !pcm_downstream_rx_is_fresh(&receiver),
 	      "fresh predicate ignored used coding history");
+	receiver = saved;
+	for (size_t count = 0; count < V90_CP_FRAME_INTERVALS; ++count) {
+		struct pcm_downstream_rx invalid = receiver;
+		invalid.stream.received_bits++;
+		struct pcm_downstream_rx before = invalid;
+
+		CHECK(pcm_downstream_rx_receive(&invalid, noisy.octet, &event) ==
+			      PCM_DOWNSTREAM_RX_INVALID_STATE &&
+		      memcmp(&invalid, &before, sizeof(invalid)) == 0 &&
+		      memcmp(&event, &event_saved, sizeof(event)) == 0,
+		      "invalid stream at interval %zu changed state or event", count);
+		if (count + 1u < V90_CP_FRAME_INTERVALS)
+			CHECK(pcm_downstream_rx_receive(&receiver, noisy.octet, &event) ==
+				      PCM_DOWNSTREAM_RX_BUFFERING,
+			      "fixture lost a stream interval");
+	}
 	CHECK(strcmp(pcm_downstream_rx_result_name(
 		     PCM_DOWNSTREAM_RX_MP_PRIME),
 		     "MP prime") == 0 &&

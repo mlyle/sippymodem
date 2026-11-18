@@ -70,7 +70,9 @@ static bool stage_matches_protocol(const struct pcm_downstream_rx *receiver)
 	       receiver->stage == PCM_DOWNSTREAM_RX_COMPLETE;
 }
 
-bool pcm_downstream_rx_is_valid(
+/* The stream receiver owns mapper and coding validation. The control owner
+ * checks how the current stream position relates to its protocol state. */
+static bool phase_is_valid(
 	const struct pcm_downstream_rx *receiver)
 {
 	size_t ed_bits;
@@ -79,7 +81,6 @@ bool pcm_downstream_rx_is_valid(
 	if (receiver == NULL || !pcm_protocol_is_valid(receiver->protocol) ||
 	    !stage_is_valid(receiver->stage) ||
 	    !stage_matches_protocol(receiver) ||
-	    !v90_pcm_stream_rx_is_valid(&receiver->stream) ||
 	    (receiver->stream.decoder.mapping.kind != V90_CP_TRAINING &&
 	     (receiver->protocol != PCM_PROTOCOL_V92 ||
 	      receiver->stage == PCM_DOWNSTREAM_RX_TRN2D ||
@@ -127,6 +128,12 @@ bool pcm_downstream_rx_is_valid(
 	if (receiver->stage == PCM_DOWNSTREAM_RX_ED_SEARCH)
 		return receiver->ed_frames < V90_PHASE4_ED_FRAMES;
 	return receiver->ed_frames == V90_PHASE4_ED_FRAMES;
+}
+
+bool pcm_downstream_rx_is_valid(const struct pcm_downstream_rx *receiver)
+{
+	return phase_is_valid(receiver) &&
+	       v90_pcm_stream_rx_is_valid(&receiver->stream);
 }
 
 enum pcm_downstream_rx_result pcm_downstream_rx_init(
@@ -269,25 +276,13 @@ static enum pcm_downstream_rx_result feed_mp_frame(
 	struct pcm_downstream_event *event)
 {
 	struct v90_mp_event emitted = { 0 };
-	bool aligned = false;
 
-	for (size_t bit = 0; bit < frame->bit_count; ++bit) {
-		struct v90_mp_event current;
-
-		if (v90_mp_receive_bit(
-			    &receiver->control.mp, frame->bits[bit], &current) !=
-		    V90_MP_RECEIVER_OK)
-			return PCM_DOWNSTREAM_RX_INTERNAL_ERROR;
-		if (current.type == V90_MP_EVENT_NONE)
-			continue;
-		if (emitted.type != V90_MP_EVENT_NONE)
-			return PCM_DOWNSTREAM_RX_INTERNAL_ERROR;
-		emitted = current;
-		aligned = bit + 1u == frame->bit_count;
-	}
+	if (v90_mp_receive_bits(&receiver->control.mp, frame->bits,
+		    frame->bit_count, &emitted) != V90_MP_RECEIVER_OK)
+		return PCM_DOWNSTREAM_RX_INTERNAL_ERROR;
 	if (emitted.type == V90_MP_EVENT_NONE)
 		return PCM_DOWNSTREAM_RX_BUFFERING;
-	if (!aligned && emitted.type != V90_MP_EVENT_REJECTED) {
+	if (!emitted.record_boundary && emitted.type != V90_MP_EVENT_REJECTED) {
 		emitted = (struct v90_mp_event){
 			.type = V90_MP_EVENT_REJECTED,
 			.frame_result = V90_MP_INVALID_FRAME,
@@ -477,13 +472,11 @@ enum pcm_downstream_rx_result pcm_downstream_rx_receive(
 	    memory_regions_overlap(receiver, sizeof(*receiver),
 				   event, sizeof(*event)))
 		return PCM_DOWNSTREAM_RX_INVALID_ARGUMENT;
-	if (!pcm_downstream_rx_is_valid(receiver))
+	if (!phase_is_valid(receiver) ||
+	    receiver->stage == PCM_DOWNSTREAM_RX_COMPLETE)
 		return PCM_DOWNSTREAM_RX_INVALID_STATE;
-	if (receiver->stage == PCM_DOWNSTREAM_RX_COMPLETE)
-		return PCM_DOWNSTREAM_RX_INVALID_STATE;
-	/* A partial frame cannot advance control or stage. The stream call is
-	 * transactional; clear only the MP-prime boundary after it accepts the
-	 * symbol. Skip copying and revalidating the whole receiver. */
+	/* Both branches let the checked stream call validate the mapper and
+	 * coding state. A partial frame only clears the MP-prime boundary. */
 	if (receiver->stream.pending_count + 1u < V90_CP_FRAME_INTERVALS) {
 		stream_result = v90_pcm_stream_rx_receive_octet(
 			&receiver->stream, network_octet, &frame);
@@ -527,7 +520,7 @@ enum pcm_downstream_rx_result pcm_downstream_rx_receive(
 		if (result == PCM_DOWNSTREAM_RX_INTERNAL_ERROR)
 			return result;
 	}
-	if (!pcm_downstream_rx_is_valid(&next))
+	if (!phase_is_valid(&next))
 		return PCM_DOWNSTREAM_RX_INTERNAL_ERROR;
 	*receiver = next;
 	if (result != PCM_DOWNSTREAM_RX_BUFFERING)

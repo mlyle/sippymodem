@@ -30,6 +30,8 @@ struct v90_mp_event {
 	/* OK for accepted records; the decoder failure for rejected records. */
 	enum v90_mp_result frame_result;
 	struct v90_mp_record record;
+	/* The event completed on the final bit of this input block. */
+	bool record_boundary;
 };
 
 /* Incremental detector for one continuous, descrambled Phase 4 bit stream.
@@ -51,6 +53,13 @@ bool v90_mp_receiver_is_valid(
  * and event unchanged. */
 enum v90_mp_receiver_result v90_mp_receive_bit(
 	struct v90_mp_receiver *receiver, uint8_t bit,
+	struct v90_mp_event *event);
+
+/* Consume up to one training frame of binary decisions in one transaction.
+ * A record can end inside the block; subsequent bits still advance the
+ * receiver. Input, receiver and event storage must be disjoint. */
+enum v90_mp_receiver_result v90_mp_receive_bits(
+	struct v90_mp_receiver *receiver, const uint8_t *bits, size_t count,
 	struct v90_mp_event *event);
 
 const char *v90_mp_receiver_result_name(
