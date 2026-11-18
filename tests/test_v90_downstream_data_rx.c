@@ -119,7 +119,8 @@ static bool observe_output(
 		CHECK(result == expected_result,
 		      "frame %zu returned %d", observer->received_frames,
 		      (int)result);
-		CHECK(v90_downstream_data_rx_b1d_complete(&observer->receiver) ==
+		CHECK(v90_downstream_data_rx_is_valid(&observer->receiver) &&
+		      (observer->receiver.stage == V90_DOWNSTREAM_DATA_RX_STAGE_DATA) ==
 			      (observer->received_frames + 1u >= V90_PHASE4_B1D_FRAMES),
 		      "B1d readiness changed at frame %zu", observer->received_frames);
 		CHECK(frame.bit_count ==
@@ -218,7 +219,7 @@ static bool run_stream(
 	      observer.receiver.b1d_frames == V90_PHASE4_B1D_FRAMES &&
 	      (observer.receiver.b1d_bit_errors > 0) == (damage_b1d != 0u) &&
 	      v90_downstream_data_rx_b1d_qualified(&observer.receiver) == (damage_b1d != 1u) &&
-	      v90_downstream_data_rx_b1d_complete(&observer.receiver) &&
+	      observer.receiver.stage == V90_DOWNSTREAM_DATA_RX_STAGE_DATA &&
 	      v90_downstream_data_rx_is_valid(&observer.receiver),
 	      "B1d/DATA boundary or accounting changed");
 	return true;
@@ -268,7 +269,7 @@ static bool test_contracts(void)
 		      &receiver, &data_mapping,
 		      V90_PCM_MAPPING_TRANSMIT) ==
 		      V90_DOWNSTREAM_DATA_RX_OK &&
-	      !v90_downstream_data_rx_b1d_complete(&receiver),
+	      receiver.stage == V90_DOWNSTREAM_DATA_RX_STAGE_B1D,
 	      "contract receiver did not initialize");
 	saved = receiver;
 	aliased.receiver = receiver;
@@ -313,7 +314,6 @@ static bool test_contracts(void)
 	receiver.stage = (enum v90_downstream_data_rx_stage)99;
 	CHECK(!v90_downstream_data_rx_is_valid(&receiver) &&
 	      !v90_downstream_data_rx_is_valid(NULL) &&
-	      !v90_downstream_data_rx_b1d_complete(NULL) &&
 	      !v90_downstream_data_rx_b1d_qualified(NULL),
 	      "state contract changed");
 	return true;

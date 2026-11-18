@@ -55,4 +55,12 @@ enum v90_pcm_frame_decoder_result v90_pcm_frame_decoder_decode(
 	const uint8_t signs[V90_CP_FRAME_INTERVALS], size_t symbol_count,
 	struct v90_pcm_frame_decode_output *output);
 
+/* Requires an initialized, exclusively owned decoder, six binary signs,
+ * and an output disjoint from the decoder. Ucodes are still checked. */
+enum v90_pcm_frame_decoder_result v90_pcm_frame_decoder_decode_owned(
+	struct v90_pcm_frame_decoder *decoder,
+	const uint8_t ucodes[V90_CP_FRAME_INTERVALS],
+	const uint8_t signs[V90_CP_FRAME_INTERVALS],
+	struct v90_pcm_frame_decode_output *output);
+
 #endif /* V90_PCM_FRAME_DECODER_H */

@@ -89,10 +89,14 @@ enum v90_pcm_stream_rx_result v90_pcm_stream_rx_init(
 	return V90_PCM_STREAM_RX_OK;
 }
 
-static enum v90_pcm_stream_rx_result decode_frame(
-	struct v90_pcm_stream_rx *receiver,
-	struct v90_pcm_stream_frame *generated)
+static enum v90_pcm_stream_rx_result complete_frame(
+	struct v90_pcm_stream_rx *receiver, uint8_t ucode, bool positive,
+	struct v90_pcm_stream_frame *frame)
 {
+	const size_t last = V90_CP_FRAME_INTERVALS - 1u;
+	const struct v90_sign_decoder previous_signs = receiver->decoder.signs;
+	uint8_t ucodes[V90_CP_FRAME_INTERVALS];
+	uint8_t signs[V90_CP_FRAME_INTERVALS];
 	struct v90_pcm_frame_decode_output decoded;
 	struct v90_pcm_stream_frame decoded_frame = { 0 };
 	enum v90_pcm_frame_decoder_result result;
@@ -100,21 +104,27 @@ static enum v90_pcm_stream_rx_result decode_frame(
 	if (receiver->received_bits >
 	    UINT64_MAX - receiver->decoder.mapping.frame_bits)
 		return V90_PCM_STREAM_RX_OUT_OF_RANGE;
-	result = v90_pcm_frame_decoder_decode(
-		&receiver->decoder, receiver->pending_ucodes,
-		receiver->pending_signs, receiver->pending_count, &decoded);
+	memcpy(ucodes, receiver->pending_ucodes, last);
+	memcpy(signs, receiver->pending_signs, last);
+	ucodes[last] = ucode;
+	signs[last] = positive;
+	result = v90_pcm_frame_decoder_decode_owned(
+		&receiver->decoder, ucodes, signs, &decoded);
 	if (result == V90_PCM_FRAME_DECODER_INVALID_SYMBOLS)
 		return V90_PCM_STREAM_RX_INVALID_SYMBOL;
 	if (result != V90_PCM_FRAME_DECODER_OK)
 		return V90_PCM_STREAM_RX_INTERNAL_ERROR;
 	if (v34_descramble_unpacked_bits(
 		    &receiver->descrambler, decoded.bits, decoded.bit_count,
-		    decoded_frame.bits) != V34_FRAMING_OK)
+		    decoded_frame.bits) != V34_FRAMING_OK) {
+		receiver->decoder.signs = previous_signs;
 		return V90_PCM_STREAM_RX_INTERNAL_ERROR;
+	}
 	memcpy(decoded_frame.rules, decoded.rules,
 	       decoded.rule_count * sizeof(decoded.rules[0]));
 	decoded_frame.bit_count = decoded.bit_count;
 	decoded_frame.rule_count = decoded.rule_count;
+	receiver->received_symbols++;
 	receiver->received_frames++;
 	receiver->received_bits += decoded.bit_count;
 	receiver->pending_count = 0;
@@ -122,7 +132,7 @@ static enum v90_pcm_stream_rx_result decode_frame(
 	       sizeof(receiver->pending_ucodes));
 	memset(receiver->pending_signs, 0,
 	       sizeof(receiver->pending_signs));
-	*generated = decoded_frame;
+	*frame = decoded_frame;
 	return V90_PCM_STREAM_RX_FRAME_READY;
 }
 
@@ -130,35 +140,17 @@ static enum v90_pcm_stream_rx_result receive_valid_decision(
 	struct v90_pcm_stream_rx *receiver, uint8_t ucode, bool positive,
 	struct v90_pcm_stream_frame *frame)
 {
-	struct v90_pcm_stream_rx completed;
-	struct v90_pcm_stream_rx *target = receiver;
-	struct v90_pcm_stream_frame generated;
-	enum v90_pcm_stream_rx_result result;
+	size_t interval = receiver->pending_count;
 
-	if (!pcm_constellation_contains(
-		    constellation_at(receiver, receiver->pending_count), ucode))
-		return V90_PCM_STREAM_RX_INVALID_SYMBOL;
-	/* Valid mappings have at least nine bits per six-symbol frame, so the
-	 * symbol counter cannot overflow. Snapshot only frame completion, where
-	 * decoding and bit accounting may reject the frame. */
-	if (receiver->pending_count == V90_CP_FRAME_INTERVALS - 1u) {
-		completed = *receiver;
-		target = &completed;
-	}
-	target->pending_ucodes[target->pending_count] = ucode;
-	target->pending_signs[target->pending_count] = positive ? 1u : 0u;
-	target->pending_count++;
-	target->received_symbols++;
-	if (target->pending_count < V90_CP_FRAME_INTERVALS)
-		return V90_PCM_STREAM_RX_BUFFERING;
-	result = decode_frame(target, &generated);
-	if (result != V90_PCM_STREAM_RX_FRAME_READY)
-		return result;
-	if (!v90_pcm_stream_rx_is_valid(target))
-		return V90_PCM_STREAM_RX_INTERNAL_ERROR;
-	*receiver = *target;
-	*frame = generated;
-	return result;
+	/* Valid mappings have at least nine bits per six-symbol frame, so
+	 * bounding received_bits also bounds the symbol counter. */
+	if (interval == V90_CP_FRAME_INTERVALS - 1u)
+		return complete_frame(receiver, ucode, positive, frame);
+	receiver->pending_ucodes[interval] = ucode;
+	receiver->pending_signs[interval] = positive;
+	receiver->pending_count++;
+	receiver->received_symbols++;
+	return V90_PCM_STREAM_RX_BUFFERING;
 }
 
 enum v90_pcm_stream_rx_result v90_pcm_stream_rx_receive_decision(
@@ -171,6 +163,9 @@ enum v90_pcm_stream_rx_result v90_pcm_stream_rx_receive_decision(
 		return V90_PCM_STREAM_RX_INVALID_ARGUMENT;
 	if (!v90_pcm_stream_rx_is_valid(receiver))
 		return V90_PCM_STREAM_RX_INVALID_STATE;
+	if (!pcm_constellation_contains(
+		    constellation_at(receiver, receiver->pending_count), ucode))
+		return V90_PCM_STREAM_RX_INVALID_SYMBOL;
 	return receive_valid_decision(receiver, ucode, positive, frame);
 }
 
@@ -216,15 +211,22 @@ enum v90_pcm_stream_rx_result v90_pcm_stream_rx_receive_octet(
 	struct v90_pcm_stream_rx *receiver, uint8_t network_octet,
 	struct v90_pcm_stream_frame *frame)
 {
-	struct v90_pcm_symbol symbol;
-	uint8_t decision;
-
 	if (receiver == NULL || frame == NULL ||
 	    memory_regions_overlap(receiver, sizeof(*receiver),
 				   frame, sizeof(*frame)))
 		return V90_PCM_STREAM_RX_INVALID_ARGUMENT;
 	if (!v90_pcm_stream_rx_is_valid(receiver))
 		return V90_PCM_STREAM_RX_INVALID_STATE;
+	return v90_pcm_stream_rx_receive_octet_owned(receiver, network_octet, frame);
+}
+
+enum v90_pcm_stream_rx_result v90_pcm_stream_rx_receive_octet_owned(
+	struct v90_pcm_stream_rx *receiver, uint8_t network_octet,
+	struct v90_pcm_stream_frame *frame)
+{
+	struct v90_pcm_symbol symbol;
+	uint8_t decision;
+
 	if (!v90_pcm_symbol_parse(
 		    &symbol, receiver->decoder.mapping.law, network_octet))
 		return V90_PCM_STREAM_RX_INVALID_SYMBOL;

@@ -70,13 +70,6 @@ enum v90_downstream_data_rx_result v90_downstream_data_rx_init(
 	return V90_DOWNSTREAM_DATA_RX_OK;
 }
 
-bool v90_downstream_data_rx_b1d_complete(
-	const struct v90_downstream_data_rx *receiver)
-{
-	return v90_downstream_data_rx_is_valid(receiver) &&
-	       receiver->stage == V90_DOWNSTREAM_DATA_RX_STAGE_DATA;
-}
-
 static enum v90_downstream_data_rx_result map_stream_failure(
 	enum v90_pcm_stream_rx_result result)
 {
@@ -100,37 +93,28 @@ static enum v90_downstream_data_rx_result map_stream_failure(
 	return V90_DOWNSTREAM_DATA_RX_INTERNAL_ERROR;
 }
 
-static enum v90_downstream_data_rx_result commit_stream_result(
+static enum v90_downstream_data_rx_result classify_stream_result(
 	struct v90_downstream_data_rx *receiver,
 	enum v90_pcm_stream_rx_result stream_result,
-	const struct v90_pcm_stream_frame *decoded,
-	struct v90_pcm_stream_frame *frame)
+	const struct v90_pcm_stream_frame *frame)
 {
-	enum v90_downstream_data_rx_result result;
-
 	if (stream_result == V90_PCM_STREAM_RX_BUFFERING)
 		return V90_DOWNSTREAM_DATA_RX_BUFFERING;
 	if (stream_result != V90_PCM_STREAM_RX_FRAME_READY)
 		return map_stream_failure(stream_result);
 	/* The stream commits a valid complete frame; its bounded bit count
 	 * also bounds B1d error accounting. */
-	if (receiver->stage == V90_DOWNSTREAM_DATA_RX_STAGE_B1D) {
-		uint8_t errors = v90_pcm_stream_frame_bit_errors(decoded, 1u);
+	if (receiver->stage == V90_DOWNSTREAM_DATA_RX_STAGE_DATA)
+		return V90_DOWNSTREAM_DATA_RX_DATA_FRAME;
+	uint8_t errors = v90_pcm_stream_frame_bit_errors(frame, 1u);
 
-		receiver->b1d_bit_errors += errors;
-		receiver->b1d_clean_frames = errors ? 0u : receiver->b1d_clean_frames + 1u;
-		receiver->b1d_frames++;
-		if (receiver->b1d_frames == V90_PHASE4_B1D_FRAMES) {
-			receiver->stage = V90_DOWNSTREAM_DATA_RX_STAGE_DATA;
-			result = V90_DOWNSTREAM_DATA_RX_B1D_COMPLETE;
-		} else {
-			result = V90_DOWNSTREAM_DATA_RX_B1D_FRAME;
-		}
-	} else {
-		result = V90_DOWNSTREAM_DATA_RX_DATA_FRAME;
-	}
-	*frame = *decoded;
-	return result;
+	receiver->b1d_bit_errors += errors;
+	receiver->b1d_clean_frames = errors ? 0u : receiver->b1d_clean_frames + 1u;
+	receiver->b1d_frames++;
+	if (receiver->b1d_frames < V90_PHASE4_B1D_FRAMES)
+		return V90_DOWNSTREAM_DATA_RX_B1D_FRAME;
+	receiver->stage = V90_DOWNSTREAM_DATA_RX_STAGE_DATA;
+	return V90_DOWNSTREAM_DATA_RX_B1D_COMPLETE;
 }
 
 enum v90_downstream_data_rx_result
@@ -138,7 +122,6 @@ v90_downstream_data_rx_receive_decision(
 	struct v90_downstream_data_rx *receiver, uint8_t ucode,
 	bool positive, struct v90_pcm_stream_frame *frame)
 {
-	struct v90_pcm_stream_frame decoded;
 	enum v90_pcm_stream_rx_result stream_result;
 
 	if (receiver == NULL || frame == NULL ||
@@ -149,26 +132,31 @@ v90_downstream_data_rx_receive_decision(
 	if (!b1d_state_is_valid(receiver))
 		return V90_DOWNSTREAM_DATA_RX_INVALID_STATE;
 	stream_result = v90_pcm_stream_rx_receive_decision(
-		&receiver->stream, ucode, positive, &decoded);
-	return commit_stream_result(
-		receiver, stream_result, &decoded, frame);
+		&receiver->stream, ucode, positive, frame);
+	return classify_stream_result(receiver, stream_result, frame);
 }
 
 enum v90_downstream_data_rx_result v90_downstream_data_rx_receive_octet(
 	struct v90_downstream_data_rx *receiver, uint8_t network_octet,
 	struct v90_pcm_stream_frame *frame)
 {
-	struct v90_pcm_stream_frame decoded;
-	enum v90_pcm_stream_rx_result stream_result;
-
 	if (receiver == NULL || frame == NULL ||
 	    memory_regions_overlap(receiver, sizeof(*receiver),
 				   frame, sizeof(*frame)))
 		return V90_DOWNSTREAM_DATA_RX_INVALID_ARGUMENT;
-	if (!b1d_state_is_valid(receiver))
+	if (!v90_downstream_data_rx_is_valid(receiver))
 		return V90_DOWNSTREAM_DATA_RX_INVALID_STATE;
-	stream_result = v90_pcm_stream_rx_receive_octet(
-		&receiver->stream, network_octet, &decoded);
-	return commit_stream_result(
-		receiver, stream_result, &decoded, frame);
+	return v90_downstream_data_rx_receive_octet_owned(
+		receiver, network_octet, frame);
+}
+
+enum v90_downstream_data_rx_result v90_downstream_data_rx_receive_octet_owned(
+	struct v90_downstream_data_rx *receiver, uint8_t network_octet,
+	struct v90_pcm_stream_frame *frame)
+{
+	enum v90_pcm_stream_rx_result stream_result =
+		v90_pcm_stream_rx_receive_octet_owned(
+			&receiver->stream, network_octet, frame);
+
+	return classify_stream_result(receiver, stream_result, frame);
 }

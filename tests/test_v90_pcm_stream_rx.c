@@ -281,7 +281,8 @@ static bool check_noisy_octet(
 	enum v90_pcm_mapping_plane plane = prefix->decoder.decision_plane;
 	size_t phase = prefix->pending_count;
 	struct v90_pcm_stream_rx expected = *prefix, received = *prefix;
-	struct v90_pcm_stream_frame want = { 0 }, got = { 0 };
+	struct v90_pcm_stream_rx owned = *prefix;
+	struct v90_pcm_stream_frame want = { 0 }, got = { 0 }, fast = { 0 };
 	struct v90_pcm_symbol input;
 	uint8_t nearest = 0;
 	int32_t best_distance = INT32_MAX;
@@ -309,8 +310,11 @@ static bool check_noisy_octet(
 	CHECK(result == (phase == V90_CP_FRAME_INTERVALS - 1u ?
 			 V90_PCM_STREAM_RX_FRAME_READY : V90_PCM_STREAM_RX_BUFFERING) &&
 	      v90_pcm_stream_rx_receive_octet(&received, octet, &got) == result &&
+	      v90_pcm_stream_rx_receive_octet_owned(&owned, octet, &fast) == result &&
 	      memcmp(&expected, &received, sizeof(expected)) == 0 &&
-	      memcmp(&want, &got, sizeof(want)) == 0,
+	      memcmp(&expected, &owned, sizeof(expected)) == 0 &&
+	      memcmp(&want, &got, sizeof(want)) == 0 &&
+	      memcmp(&want, &fast, sizeof(want)) == 0,
 	      "law %u plane %u phase %zu octet %02x decision differed",
 	      (unsigned int)mapping->law, (unsigned int)plane, phase, octet);
 	return true;
@@ -431,6 +435,13 @@ static bool test_contracts(void)
 		      memcmp(&frame, &saved_frame, sizeof(frame)) == 0,
 		      "partial frame %zu changed output", interval);
 	}
+	saved_receiver = receiver;
+	CHECK(v90_pcm_stream_rx_receive_decision(
+		      &receiver, 0, false, &frame) ==
+		      V90_PCM_STREAM_RX_INVALID_SYMBOL &&
+	      memcmp(&receiver, &saved_receiver, sizeof(receiver)) == 0 &&
+	      memcmp(&frame, &saved_frame, sizeof(frame)) == 0,
+	      "rejected final decision changed the pending frame");
 	CHECK(v90_pcm_stream_rx_receive_decision(
 		      &receiver, ucodes[V90_CP_FRAME_INTERVALS - 1u],
 		      false, &frame) == V90_PCM_STREAM_RX_FRAME_READY &&

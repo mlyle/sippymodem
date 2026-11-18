@@ -74,4 +74,9 @@ enum v90_pcm_stream_rx_result v90_pcm_stream_rx_receive_octet(
 	struct v90_pcm_stream_rx *receiver, uint8_t network_octet,
 	struct v90_pcm_stream_frame *frame);
 
+/* Requires an initialized, exclusively owned stream and disjoint output. */
+enum v90_pcm_stream_rx_result v90_pcm_stream_rx_receive_octet_owned(
+	struct v90_pcm_stream_rx *receiver, uint8_t network_octet,
+	struct v90_pcm_stream_frame *frame);
+
 #endif /* V90_PCM_STREAM_RX_H */

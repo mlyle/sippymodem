@@ -316,7 +316,7 @@ enum v90_downstream_data_rx_result v92_downstream_receive_owned(
 	if (*stage == V92_PHASE4_E2U_DOWNSTREAM_CLEARDOWN)
 		return V90_DOWNSTREAM_DATA_RX_PEER_CLEARDOWN;
 	if (*stage == V92_PHASE4_E2U_DOWNSTREAM_DATA)
-		return v90_downstream_data_rx_receive_octet(
+		return v90_downstream_data_rx_receive_octet_owned(
 			&downstream->data, octet, frame);
 	receive = &downstream->training;
 	if (pcm_downstream_rx_is_complete(receive)) {
@@ -324,7 +324,7 @@ enum v90_downstream_data_rx_result v92_downstream_receive_owned(
 			return V90_DOWNSTREAM_DATA_RX_BUFFERING;
 		if (!start_analog_downstream_data(downstream, stage, cpu))
 			return V90_DOWNSTREAM_DATA_RX_INTERNAL_ERROR;
-		return v90_downstream_data_rx_receive_octet(
+		return v90_downstream_data_rx_receive_octet_owned(
 			&downstream->data, octet, frame);
 	}
 	result = pcm_downstream_rx_receive(receive, octet, &event);

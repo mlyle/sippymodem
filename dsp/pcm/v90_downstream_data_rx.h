@@ -60,9 +60,6 @@ enum v90_downstream_data_rx_result v90_downstream_data_rx_init(
 	enum v90_pcm_mapping_plane decision_plane);
 bool v90_downstream_data_rx_is_valid(
 	const struct v90_downstream_data_rx *receiver);
-bool v90_downstream_data_rx_b1d_complete(
-	const struct v90_downstream_data_rx *receiver);
-
 /* Consume one hard decision at the known mapper phase. A complete frame is
  * always returned, including the 48th B1d frame reported by B1D_COMPLETE.
  * B1d departures from binary ones do not shift this decoder's DATA boundary.
@@ -76,6 +73,11 @@ v90_downstream_data_rx_receive_decision(
  * accepts the character but leaves frame unchanged. Rejected calls change
  * neither receiver nor frame. */
 enum v90_downstream_data_rx_result v90_downstream_data_rx_receive_octet(
+	struct v90_downstream_data_rx *receiver, uint8_t network_octet,
+	struct v90_pcm_stream_frame *frame);
+
+/* Requires an initialized, exclusively owned receiver and disjoint output. */
+enum v90_downstream_data_rx_result v90_downstream_data_rx_receive_octet_owned(
 	struct v90_downstream_data_rx *receiver, uint8_t network_octet,
 	struct v90_pcm_stream_frame *frame);
 

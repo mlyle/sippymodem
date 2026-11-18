@@ -235,7 +235,7 @@ bool v90_analog_path_downstream_is_online(
 {
 	return v90_analog_path_is_valid(path) && !path->failed &&
 	       path->downstream_stage == V90_ANALOG_PATH_DOWNSTREAM_DATA &&
-	       v90_downstream_data_rx_b1d_complete(&path->downstream.data);
+	       path->downstream.data.stage == V90_DOWNSTREAM_DATA_RX_STAGE_DATA;
 }
 
 bool v90_analog_path_is_online(const struct v90_analog_path *path)
@@ -423,7 +423,7 @@ static void finish_rate_renegotiation_if_online(
 	    path->upstream_stage == V90_ANALOG_PATH_UPSTREAM_DATA &&
 	    !v34_data_stream_is_transmitting_b1(&path->upstream.data) &&
 	    path->downstream_stage == V90_ANALOG_PATH_DOWNSTREAM_DATA &&
-	    v90_downstream_data_rx_b1d_complete(&path->downstream.data))
+	    path->downstream.data.stage == V90_DOWNSTREAM_DATA_RX_STAGE_DATA)
 		path->rate_renegotiation_active = false;
 }
 
@@ -684,7 +684,7 @@ static enum v90_analog_path_result begin_rate_renegotiation(
 	    path->upstream_stage != V90_ANALOG_PATH_UPSTREAM_DATA ||
 	    path->downstream_stage != V90_ANALOG_PATH_DOWNSTREAM_DATA ||
 	    v34_data_stream_is_transmitting_b1(&path->upstream.data) ||
-	    !v90_downstream_data_rx_b1d_complete(&path->downstream.data))
+	    path->downstream.data.stage != V90_DOWNSTREAM_DATA_RX_STAGE_DATA)
 		return V90_ANALOG_PATH_SEQUENCE_MISMATCH;
 	if (v90_pcm_mapping_init_rate_renegotiation(
 		    &control_mapping, &path->training_mapping,
@@ -771,7 +771,7 @@ static enum v90_analog_path_result receive_data_frame(
 {
 	struct v90_pcm_stream_frame decoded;
 	enum v90_downstream_data_rx_result result =
-		v90_downstream_data_rx_receive_octet(
+		v90_downstream_data_rx_receive_octet_owned(
 			&path->downstream.data, octet, &decoded);
 
 	switch (result) {
@@ -809,7 +809,7 @@ static enum v90_analog_path_result receive_data(
 {
 	enum pcm_r_rx_result rrn_result;
 
-	if (!v90_downstream_data_rx_b1d_complete(&path->downstream.data))
+	if (path->downstream.data.stage == V90_DOWNSTREAM_DATA_RX_STAGE_B1D)
 		return receive_data_frame(
 			path, octet, frame, frame_ready,
 			path->rate_renegotiation_active);
