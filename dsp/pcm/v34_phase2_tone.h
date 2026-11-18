@@ -123,6 +123,7 @@ enum v34_full_retrain_response_event {
 	V34_FULL_RETRAIN_RESPONSE_CONTINUES,
 	V34_FULL_RETRAIN_RESPONSE_COMPLETES,
 	V34_FULL_RETRAIN_RESPONSE_COMPLETES_WITH_PEER_TONE,
+	V34_FULL_RETRAIN_RESPONSE_INVALID,
 };
 
 /* Tone B is the calling station's 1200 Hz carrier. Tone A is the answering
@@ -246,11 +247,13 @@ bool v34_full_retrain_response_is_active(
 /* retain_peer_tone is true only after detector emitted a peer request. */
 enum v34_phase2_tone_result v34_full_retrain_begin_response(
 	struct v34_full_retrain *retrain, bool retain_peer_tone);
-/* On COMPLETE_WITH_PEER_TONE, detector.tone is the phase-continuous state
- * to graft into the restarted Phase 2 receiver. Tone loss during the response
- * instead emits COMPLETE on the original deadline, requiring reacquisition. */
-enum v34_phase2_tone_result v34_full_retrain_sample_response(
+/* Clock the active response in place until the last sample. On the last
+ * sample write only completed, so the caller can first prepare Phase 2.
+ * completed may equal retrain to commit immediately. A completed response
+ * with a peer tone carries its phase in detector.tone. Tone loss requires
+ * reacquisition at the original deadline. Invalid input changes neither. */
+enum v34_full_retrain_response_event v34_full_retrain_sample_response(
 	struct v34_full_retrain *retrain, int16_t received_sample,
-	enum v34_full_retrain_response_event *event);
+	struct v34_full_retrain *completed);
 
 #endif

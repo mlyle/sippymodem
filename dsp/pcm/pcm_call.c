@@ -2470,22 +2470,18 @@ static enum pcm_call_result sample_qc(
 }
 
 static enum pcm_call_result sample_retrain_silence(
-	struct pcm_call *call, int16_t received_sample,
-	uint8_t *transmit_octet)
+	struct pcm_call *call, int16_t received_sample)
 {
 	struct pcm_phase2 restarted;
-	struct v34_full_retrain next_retrain = call->retrain;
+	struct v34_full_retrain next_retrain;
 	enum v34_full_retrain_response_event event;
 
-	*transmit_octet = g711_encode(call->law, 0);
-	if (v34_full_retrain_sample_response(
-		    &next_retrain, received_sample, &event) !=
-	    V34_PHASE2_TONE_OK)
+	event = v34_full_retrain_sample_response(
+		&call->retrain, received_sample, &next_retrain);
+	if (event == V34_FULL_RETRAIN_RESPONSE_INVALID)
 		return PCM_CALL_NUMERIC_FAILURE;
-	if (event == V34_FULL_RETRAIN_RESPONSE_CONTINUES) {
-		call->retrain = next_retrain;
+	if (event == V34_FULL_RETRAIN_RESPONSE_CONTINUES)
 		return PCM_CALL_OK;
-	}
 	if (initialize_retrain_phase2(call, &restarted) != PCM_PHASE2_OK)
 		return PCM_CALL_NUMERIC_FAILURE;
 	if (event ==
@@ -5911,8 +5907,7 @@ static enum pcm_call_result call_octet(
 			call, received_octet, received_sample, &generated);
 		break;
 	case PCM_CALL_RETRAIN_SILENCE:
-		result = sample_retrain_silence(
-			call, received_sample, &generated);
+		result = sample_retrain_silence(call, received_sample);
 		break;
 	default:
 		return PCM_CALL_NUMERIC_FAILURE;

@@ -656,8 +656,7 @@ bool v34_full_retrain_is_valid(
 		return true;
 	return retrain_request_state_is_clear(&retrain->detector) &&
 	       (!retrain->peer_tone_retained ||
-		v34_phase2_tone_detector_measure(&retrain->detector.tone)
-			.tone_present);
+		retrain->detector.tone.carrier.tone_present);
 }
 
 bool v34_full_retrain_response_is_active(
@@ -688,13 +687,12 @@ enum v34_phase2_tone_result v34_full_retrain_begin_response(
 	struct v34_full_retrain next;
 
 	if (!v34_full_retrain_is_valid(retrain) ||
-	    v34_full_retrain_response_is_active(retrain))
+	    retrain->response_silence_samples_remaining != 0u)
 		return V34_PHASE2_TONE_INVALID_ARGUMENT;
 	next = *retrain;
 	if (retain_peer_tone) {
 		if (!retrain_request_state_is_clear(&next.detector) ||
-		    !v34_phase2_tone_detector_measure(&next.detector.tone)
-			     .tone_present)
+		    !next.detector.tone.carrier.tone_present)
 			return V34_PHASE2_TONE_INVALID_ARGUMENT;
 	} else if (v34_retrain_detector_reset(&next.detector) !=
 		   V34_PHASE2_TONE_OK) {
@@ -709,38 +707,37 @@ enum v34_phase2_tone_result v34_full_retrain_begin_response(
 	return V34_PHASE2_TONE_OK;
 }
 
-enum v34_phase2_tone_result v34_full_retrain_sample_response(
+enum v34_full_retrain_response_event v34_full_retrain_sample_response(
 	struct v34_full_retrain *retrain, int16_t received_sample,
-	enum v34_full_retrain_response_event *event)
+	struct v34_full_retrain *completed)
 {
 	struct v34_full_retrain next;
-	enum v34_full_retrain_response_event emitted =
-		V34_FULL_RETRAIN_RESPONSE_CONTINUES;
+	struct v34_full_retrain *response = retrain;
 
-	if (!v34_full_retrain_response_is_active(retrain) || event == NULL)
-		return V34_PHASE2_TONE_INVALID_ARGUMENT;
-	next = *retrain;
-	if (next.peer_tone_retained) {
+	if (!v34_full_retrain_response_is_active(retrain) || completed == NULL)
+		return V34_FULL_RETRAIN_RESPONSE_INVALID;
+	if (retrain->response_silence_samples_remaining == 1u) {
+		next = *retrain;
+		response = &next;
+	}
+	if (response->peer_tone_retained) {
 		struct v34_phase2_tone_event tone_event;
 
-		if (v34_phase2_tone_detector_sample(
-			    &next.detector.tone, received_sample,
+		/* The tone sampler commits only a valid observation. Other
+		 * detector state is dormant during response silence. */
+		if (sample_valid_tone_detector(
+			    &response->detector.tone, received_sample,
 			    &tone_event) != V34_PHASE2_TONE_OK)
-			return V34_PHASE2_TONE_INVALID_ARGUMENT;
-		/* A lost phase reference is a channel event, not corrupt state.
-		 * Finish the original silence interval and reacquire in Phase 2. */
+			return V34_FULL_RETRAIN_RESPONSE_INVALID;
 		if (tone_event.kind == V34_PHASE2_TONE_ENDED)
-			next.peer_tone_retained = false;
+			response->peer_tone_retained = false;
 	}
-	if (--next.response_silence_samples_remaining == 0u) {
-		emitted = next.peer_tone_retained ?
-			V34_FULL_RETRAIN_RESPONSE_COMPLETES_WITH_PEER_TONE :
-			V34_FULL_RETRAIN_RESPONSE_COMPLETES;
-		next.peer_tone_retained = false;
-	}
-	if (!v34_full_retrain_is_valid(&next))
-		return V34_PHASE2_TONE_INVALID_ARGUMENT;
-	*retrain = next;
-	*event = emitted;
-	return V34_PHASE2_TONE_OK;
+	if (--response->response_silence_samples_remaining != 0u)
+		return V34_FULL_RETRAIN_RESPONSE_CONTINUES;
+	bool retained = response->peer_tone_retained;
+
+	response->peer_tone_retained = false;
+	*completed = *response;
+	return retained ? V34_FULL_RETRAIN_RESPONSE_COMPLETES_WITH_PEER_TONE :
+			  V34_FULL_RETRAIN_RESPONSE_COMPLETES;
 }

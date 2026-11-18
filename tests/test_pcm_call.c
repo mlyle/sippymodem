@@ -13797,14 +13797,12 @@ static bool check_v34_restart(
 	/* A datapump switch happens at the next media-block boundary, not at
 	 * the exact sample that recognizes the peer or starts local ATO1. */
 	for (size_t index = 0; index < 79u; ++index) {
-		enum v34_full_retrain_response_event event;
 		int16_t sample;
 
 		CHECK(v34_phase2_tone_transmitter_sample(&peer, &sample) ==
 			      V34_PHASE2_TONE_OK &&
-		      v34_full_retrain_sample_response(&response, sample, &event) ==
-			      V34_PHASE2_TONE_OK &&
-		      event == V34_FULL_RETRAIN_RESPONSE_CONTINUES,
+		      v34_full_retrain_sample_response(&response, sample, &response) ==
+			      V34_FULL_RETRAIN_RESPONSE_CONTINUES,
 		      "fallback block consumed the entire response");
 	}
 	CHECK(pcm_call_init_from_v34(&call, &restart, &response) == PCM_CALL_OK &&
@@ -13852,14 +13850,13 @@ static bool check_v34_restart(
 	      "invalid fallback ranging or alias changed the call");
 	for (size_t index = 0; index < 481u; ++index) {
 		struct pcm_call_observation observed;
-		enum v34_full_retrain_response_event event;
 		uint8_t transmitted;
 		int16_t sample;
 
 		CHECK(v34_phase2_tone_transmitter_sample(&peer, &sample) ==
 			      V34_PHASE2_TONE_OK &&
-		      v34_full_retrain_sample_response(&response, sample, &event) ==
-			      V34_PHASE2_TONE_OK &&
+		      v34_full_retrain_sample_response(&response, sample, &response) !=
+			      V34_FULL_RETRAIN_RESPONSE_INVALID &&
 		      pcm_call_octet(&call, encode_octet(law, sample), sample,
 				     &transmitted, &observed) == PCM_CALL_OK &&
 		      transmitted == silence_octet(law) &&

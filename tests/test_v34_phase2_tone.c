@@ -1147,14 +1147,12 @@ static bool test_receiver_silence_ceiling(void)
 			for (size_t index = 0;
 			     index < V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES; ++index) {
 				int16_t sample;
-				enum v34_full_retrain_response_event event;
 
 				CHECK(v34_phase2_tone_transmitter_sample(&tone, &sample) ==
 					      V34_PHASE2_TONE_OK &&
 				      v34_full_retrain_sample_response(
-					      &response, codec_round_trip(sample, codec), &event) ==
-					      V34_PHASE2_TONE_OK &&
-				      event == (index + 1u == V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES ?
+					      &response, codec_round_trip(sample, codec), &response) ==
+				      (index + 1u == V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES ?
 					      V34_FULL_RETRAIN_RESPONSE_COMPLETES_WITH_PEER_TONE :
 					      V34_FULL_RETRAIN_RESPONSE_CONTINUES),
 				      "weak tone lost its 70-ms response ownership");
@@ -1196,6 +1194,9 @@ static bool check_full_retrain_response(
 	size_t dropout_start)
 {
 	struct v34_full_retrain retrain;
+	struct v34_full_retrain completed = {
+		.response_silence_samples_remaining = UINT16_MAX,
+	};
 	struct v34_phase2_tone_transmitter peer_tone;
 	struct v34_phase2_tone_detector retained;
 	bool detected = false;
@@ -1230,6 +1231,7 @@ static bool check_full_retrain_response(
 	     index < V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES; ++index) {
 		struct v34_phase2_tone_event tone_event;
 		enum v34_full_retrain_response_event event;
+		struct v34_full_retrain before;
 		int16_t sample;
 		int16_t received;
 		enum v34_full_retrain_response_event expected;
@@ -1253,10 +1255,19 @@ static bool check_full_retrain_response(
 			(tone_lost ? V34_FULL_RETRAIN_RESPONSE_COMPLETES :
 			 V34_FULL_RETRAIN_RESPONSE_COMPLETES_WITH_PEER_TONE) :
 			V34_FULL_RETRAIN_RESPONSE_CONTINUES;
-		CHECK(v34_full_retrain_sample_response(
-			      &retrain, received, &event) == V34_PHASE2_TONE_OK &&
-		      event == expected &&
-		      retrain.response_silence_samples_remaining ==
+		if (expected != V34_FULL_RETRAIN_RESPONSE_CONTINUES)
+			memcpy(&before, &retrain, sizeof(before));
+		event = v34_full_retrain_sample_response(&retrain, received, &completed);
+		CHECK(event == expected, "peer response event changed at %zu", index);
+		if (event != V34_FULL_RETRAIN_RESPONSE_CONTINUES) {
+			CHECK(memcmp(&retrain, &before, sizeof(retrain)) == 0,
+			      "completing a response modified its active state");
+			retrain = completed;
+		} else {
+			CHECK(completed.response_silence_samples_remaining == UINT16_MAX,
+			      "response published a completion at sample %zu", index);
+		}
+		CHECK(retrain.response_silence_samples_remaining ==
 			V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES - index - 1u &&
 		      retrain.peer_tone_retained ==
 			(!tone_lost && event == V34_FULL_RETRAIN_RESPONSE_CONTINUES),
@@ -1284,7 +1295,6 @@ static bool check_full_retrain_response(
 	      "local full-retrain response did not begin");
 	for (size_t index = 0;
 	     index < V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES; ++index) {
-		enum v34_full_retrain_response_event event;
 		enum v34_full_retrain_response_event expected =
 			index + 1u ==
 					V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES ?
@@ -1292,9 +1302,7 @@ static bool check_full_retrain_response(
 				V34_FULL_RETRAIN_RESPONSE_CONTINUES;
 
 		CHECK(v34_full_retrain_sample_response(
-			      &retrain, INT16_MAX, &event) ==
-			      V34_PHASE2_TONE_OK &&
-		      event == expected,
+			      &retrain, INT16_MAX, &retrain) == expected,
 		      "local full-retrain response failed at %zu", index);
 	}
 	return v34_full_retrain_is_valid(&retrain) &&
@@ -1433,8 +1441,9 @@ static bool test_validation(void)
 	struct v34_retrain_detector retrain_before;
 	struct v34_full_retrain full_retrain;
 	struct v34_full_retrain full_retrain_before;
-	enum v34_full_retrain_response_event response_event =
-		V34_FULL_RETRAIN_RESPONSE_COMPLETES_WITH_PEER_TONE;
+	struct v34_full_retrain completion = {
+		.response_silence_samples_remaining = UINT16_MAX,
+	};
 	struct v34_phase2_tone_event event = {
 		.kind = V34_PHASE2_TONE_ENDED,
 		.reversal_delay_samples = 99,
@@ -1564,12 +1573,11 @@ static bool test_validation(void)
 		V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES + 1u;
 	full_retrain_before = full_retrain;
 	CHECK(v34_full_retrain_sample_response(
-		      &full_retrain, 0, &response_event) ==
-		      V34_PHASE2_TONE_INVALID_ARGUMENT &&
+		      &full_retrain, 0, &completion) ==
+		      V34_FULL_RETRAIN_RESPONSE_INVALID &&
 	      memcmp(&full_retrain, &full_retrain_before,
 		     sizeof(full_retrain)) == 0 &&
-	      response_event ==
-		      V34_FULL_RETRAIN_RESPONSE_COMPLETES_WITH_PEER_TONE,
+	      completion.response_silence_samples_remaining == UINT16_MAX,
 	      "corrupt response state was not rejected transactionally");
 	return true;
 }

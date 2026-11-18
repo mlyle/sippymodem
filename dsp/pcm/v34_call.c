@@ -898,18 +898,16 @@ static enum v34_call_result sample_retrain_silence(
 	int16_t *transmit_sample)
 {
 	struct v34_phase2 restarted;
-	struct v34_full_retrain next_retrain = call->retrain;
+	struct v34_full_retrain next_retrain;
 	enum v34_full_retrain_response_event event;
 
 	*transmit_sample = 0;
-	if (v34_full_retrain_sample_response(
-		    &next_retrain, received_sample, &event) !=
-	    V34_PHASE2_TONE_OK)
+	event = v34_full_retrain_sample_response(
+		&call->retrain, received_sample, &next_retrain);
+	if (event == V34_FULL_RETRAIN_RESPONSE_INVALID)
 		return V34_CALL_NUMERIC_FAILURE;
-	if (event == V34_FULL_RETRAIN_RESPONSE_CONTINUES) {
-		call->retrain = next_retrain;
+	if (event == V34_FULL_RETRAIN_RESPONSE_CONTINUES)
 		return V34_CALL_OK;
-	}
 	if (v34_phase2_init_retrain(
 		    &restarted, call->local_role,
 		    call->phase2_nominal_amplitude, &call->local_info0,
