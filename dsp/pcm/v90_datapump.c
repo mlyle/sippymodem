@@ -1314,12 +1314,6 @@ static int process_v90_g711(
 		enum v92_training_echo_result training_echo = V92_TRAINING_ECHO_UNOBSERVED;
 		int16_t cleaned_sample = receive_samples[index];
 		uint8_t pcm_transmit;
-		struct v34_line_receiver before;
-		struct v34_data_line_receiver *data = upstream_data_receiver(datapump);
-		bool observe_echo = data != NULL &&
-			(received_mask == NULL || received_mask[index]);
-		if (observe_echo)
-			before = data->line;
 
 		/* An accepted hangup owns the line until its bounded protocol
 		 * tail drains, even if the original CONNECT deadline expires. */
@@ -1372,6 +1366,15 @@ static int process_v90_g711(
 					goto failure;
 			}
 		}
+		struct v34_data_line_receiver *data = upstream_data_receiver(datapump);
+		/* The conventional upstream has fixed decision geometry online.
+		 * Borrow its pre-sample controls while they still belong to the
+		 * receiver. PCM B1 adoption cannot retime this V.34 data path. */
+		bool echo_prepared = datapump->host_echo != NULL && data != NULL &&
+			(received_mask == NULL || received_mask[index]) &&
+			v34_echo_timing_prepare(&datapump->echo_timing,
+				datapump->host_echo, echo_mode, &data->line, &data->decisions,
+				receive_samples[index], cleaned_sample);
 		uint32_t predicted_delay = pcm_host_echo_active_delay_owned(datapump->host_echo, echo_mode);
 		if (!process_octet(
 			    datapump, receive_codewords[index],
@@ -1395,10 +1398,7 @@ static int process_v90_g711(
 				    receive_samples[index], &cleaned_sample) != PCM_HOST_ECHO_OK)
 				goto failure;
 			data = upstream_data_receiver(datapump);
-			if (observe_echo && data != NULL) {
-				v34_echo_timing_prepare(&datapump->echo_timing,
-					datapump->host_echo, echo_mode, &before, &data->decisions,
-					receive_samples[index], cleaned_sample);
+			if (echo_prepared && data != NULL) {
 				int timing_shift = v34_echo_timing_observe(&datapump->echo_timing,
 					datapump->host_echo, &data->line);
 				if (timing_shift)
