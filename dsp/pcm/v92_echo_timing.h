@@ -4,8 +4,8 @@
 #define V92_ECHO_TIMING_H
 
 #include "echo_shift.h"
-#include "pam_distance.h"
 #include "pcm_host_echo.h"
+#include "v92_cpd_distance.h"
 #include "v92_upstream_data_rx.h"
 
 enum {
@@ -25,29 +25,24 @@ struct v92_echo_timing {
 	float half_width[V92_ECHO_TIMING_OBSERVATIONS];
 	struct v92_residual inverse;
 	double gain, offset;
-	double step[V92_CPD_MAX_CONSTELLATIONS];
-	double inverse_step[V92_CPD_MAX_CONSTELLATIONS];
 	uint64_t samples, expected_sample;
 	uint32_t model_delay;
 	int8_t polarity;
 	bool initialized;
-	/* Keep last: configure resets the prefix and rebuilds nonuniform banks.
-	 * Generated from this epoch's alphabet; no borrowed mapping pointers. */
-	struct pam_distance_range range[V92_CPD_MAX_CONSTELLATIONS]
-		[PAM_DISTANCE_BINS];
 };
 
 void v92_echo_timing_reset(struct v92_echo_timing *timing);
 
 /* Internal pre-sample owner path. The receiver and echo are already validated
  * for this media block; the mapping stays fixed within one ordinary data
- * epoch. Unsupported coordinates or a discontinuity discard old evidence.
+ * epoch. The owner supplies the shared CPd distance bank for this receiver.
+ * Unsupported coordinates or a discontinuity discard old evidence.
  * No borrowed pointer is retained. A nonzero result has retimed only the
  * frozen echo model: predict this unconsumed input again before receiving it.
  * Coding, quality recovery and error-control state remain with their owners. */
 int v92_echo_timing_observe(
 	struct v92_echo_timing *timing, struct pcm_host_echo *echo,
-	const struct v92_upstream_data_rx *receiver,
+	const struct v92_upstream_data_rx *receiver, struct v92_cpd_distances *distances,
 	enum pcm_host_echo_mode mode, uint8_t wire,
 	int16_t received, int16_t cleaned, bool available);
 

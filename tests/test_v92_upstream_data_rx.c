@@ -4697,6 +4697,7 @@ static bool test_b1_sync(enum g711_law law, int polarity, unsigned prefix, unsig
 
 struct b1_echo_owner {
 	struct v92_b1_echo recovery;
+	struct v92_cpd_distances distances;
 	struct pcm_host_echo echo;
 	struct v92_upstream_data_rx primary;
 	struct v92_upstream_data_tx transmitter;
@@ -4808,7 +4809,7 @@ static bool run_b1_echo_owners(unsigned block, unsigned fault)
 				owner->primary.line.input_samples++;
 			bool available = !((fault == 1 && i == 88) || (fault == 2 && i == 200));
 			bool ready = v92_b1_echo_observe_owned(&owner->recovery, &owner->echo, &owner->primary,
-				g711_encode(side, raw), raw, cleaned, available);
+				&owner->distances, g711_encode(side, raw), raw, cleaned, available);
 			CHECK(owner->recovery.budget <= budget && replayed <= owner->recovery.replayed &&
 			      owner->recovery.replayed - replayed <= 2,
 			      "B1 echo exceeded its bounded replay budget");
@@ -4883,6 +4884,7 @@ static bool run_raw_b1_echo(enum g711_law law, int polarity, unsigned block,
 	struct {
 		struct pcm_host_echo echo;
 		struct v92_b1_echo recovery;
+	struct v92_cpd_distances distances;
 		struct v92_upstream_data_rx primary;
 		struct v92_pcm_frame_tx tx;
 	} *owner = calloc(1, sizeof(*owner));
@@ -4958,7 +4960,7 @@ static bool run_raw_b1_echo(enum g711_law law, int polarity, unsigned block,
 		unsigned replayed = owner->recovery.replayed, budget = owner->recovery.budget;
 		bool available = !(fault == 1 && i == 88);
 		bool ready = !offered && v92_b1_echo_observe_owned(&owner->recovery, &owner->echo,
-			&owner->primary, g711_encode(law, raw), raw, cleaned, available);
+			&owner->primary, &owner->distances, g711_encode(law, raw), raw, cleaned, available);
 		CHECK(owner->recovery.replayed >= replayed && owner->recovery.replayed - replayed <= 2 &&
 		      owner->recovery.budget <= budget, "raw B1 exceeded replay budget");
 		if (!owner->primary.failed) {

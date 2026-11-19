@@ -4,7 +4,6 @@
 
 #include <limits.h>
 #include <math.h>
-#include <stddef.h>
 #include <string.h>
 
 _Static_assert((unsigned)V92_ECHO_TIMING_HISTORY > (unsigned)ECHO_TIMING_BINS,
@@ -17,8 +16,6 @@ _Static_assert(V92_PCM_MAPPING_FRAME_SYMBOLS % V92_PCM_MAPPING_PHASES == 0,
 _Static_assert(V92_ECHO_TIMING_HISTORY % V92_ECHO_TIMING_STRIDE == 0 &&
 	       ECHO_TIMING_RADIUS % V92_ECHO_TIMING_STRIDE == 0,
 	       "delayed scoring must preserve the observation stride");
-_Static_assert(V92_CPD_MAX_CONSTELLATION_POINTS <= UINT8_MAX + 1u,
-	       "point brackets fit in byte indices");
 
 void v92_echo_timing_reset(struct v92_echo_timing *timing)
 {
@@ -37,12 +34,9 @@ static bool same_inverse(const struct v92_residual *a, const struct v92_residual
 }
 
 static void configure(struct v92_echo_timing *timing,
-	const struct v92_upstream_data_line *line,
-	const struct v92_pcm_mapping *mapping, uint32_t delay)
+	const struct v92_upstream_data_line *line, uint32_t delay)
 {
-	/* Nonuniform banks rebuild every cache entry below. Uniform banks never
-	 * read the cache, so leave it out of the common epoch reset. */
-	memset(timing, 0, offsetof(struct v92_echo_timing, range));
+	memset(timing, 0, sizeof(*timing));
 	timing->gain = line->calibration.gain;
 	timing->offset = line->calibration.offset;
 	timing->polarity = line->polarity;
@@ -53,11 +47,6 @@ static void configure(struct v92_echo_timing *timing,
 	timing->initialized = true;
 	/* Two selection/validation pairs, each half spanning 128 physical inputs. */
 	timing->window.points = V92_ECHO_TIMING_WINDOW_SAMPLES / V92_ECHO_TIMING_STRIDE;
-	for (unsigned j = 0; j < V92_CPD_MAX_CONSTELLATIONS; j++) {
-		const struct v92_cpd_constellation *points = &mapping->cpd.constellation[j];
-		pam_distance_prepare(points->positive_linear, points->count,
-			&timing->step[j], &timing->inverse_step[j], timing->range[j]);
-	}
 }
 
 static inline void score_shifts(struct v92_echo_timing *timing,
@@ -78,7 +67,7 @@ static inline void score_shifts(struct v92_echo_timing *timing,
 
 int v92_echo_timing_observe(
 	struct v92_echo_timing *timing, struct pcm_host_echo *echo,
-	const struct v92_upstream_data_rx *receiver,
+	const struct v92_upstream_data_rx *receiver, struct v92_cpd_distances *distances,
 	enum pcm_host_echo_mode mode, uint8_t wire,
 	int16_t received, int16_t cleaned, bool available)
 {
@@ -99,8 +88,10 @@ int v92_echo_timing_observe(
 	if (!timing->initialized || timing->gain != line->calibration.gain ||
 	    timing->offset != line->calibration.offset || timing->polarity != line->polarity ||
 	    !same_inverse(&timing->inverse, &line->residual) ||
-	    timing->expected_sample != line->input_samples || timing->model_delay != delay)
-		configure(timing, line, &receiver->decoder.mapping, delay);
+	    timing->expected_sample != line->input_samples || timing->model_delay != delay) {
+		configure(timing, line, delay);
+		v92_cpd_distances_prepare(distances, &receiver->decoder.mapping.cpd);
+	}
 	timing->expected_sample = line->input_samples + 1;
 	double projected = ((int32_t)received - cleaned) * line->polarity;
 	double corrected = (int32_t)cleaned * line->polarity;
@@ -165,17 +156,17 @@ int v92_echo_timing_observe(
 	unsigned phase = (line->symbol_count + V92_PCM_MAPPING_PHASES -
 		ECHO_TIMING_RADIUS % V92_PCM_MAPPING_PHASES) % V92_PCM_MAPPING_PHASES;
 	unsigned set = receiver->decoder.mapping.cpd.frame_constellation[phase];
-	const struct v92_cpd_constellation *points = &receiver->decoder.mapping.cpd.constellation[set];
+	const struct v92_cpd_distance *entry = &distances->set[set];
 	unsigned part = echo_shift_part(&timing->window);
 	/* Alphabet geometry is fixed across this window's hypotheses. Keep the
 	 * uniform kernel independent of the nonuniform cache. */
-	if (timing->step[set] > 0)
-		score_shifts(timing, points, center, part, x,
-			timing->half_width[observation], timing->step[set],
-			timing->inverse_step[set], NULL);
+	if (entry->step > 0)
+		score_shifts(timing, &entry->points, center, part, x,
+			timing->half_width[observation], entry->step,
+			entry->inverse_step, NULL);
 	else
-		score_shifts(timing, points, center, part, x,
-			timing->half_width[observation], 0, 0, timing->range[set]);
+		score_shifts(timing, &entry->points, center, part, x,
+			timing->half_width[observation], 0, 0, entry->range);
 	int shift = echo_shift_advance(&timing->window, .5);
 	if (shift != 0) {
 		bool applied = pcm_host_echo_retime(echo, shift) == PCM_HOST_ECHO_OK;

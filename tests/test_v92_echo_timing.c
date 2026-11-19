@@ -21,6 +21,7 @@ struct fixture {
 	struct pcm_host_echo echo;
 	struct v92_upstream_data_rx receiver, saved;
 	struct v92_echo_timing timing;
+	struct v92_cpd_distances distances;
 };
 
 static uint32_t random_value(uint32_t *seed)
@@ -122,8 +123,8 @@ static bool test_wire_cells(void)
 					if (host <= INT16_MIN || host >= INT16_MAX) continue;
 					CHECK(lower[byte] <= upper[byte], "encoder cell absent");
 					v92_echo_timing_reset(timing);
-					CHECK(v92_echo_timing_observe(timing, echo, receiver, PCM_HOST_ECHO_FILTER,
-					      byte, (int16_t)host, (int16_t)host, true) == 0 &&
+					CHECK(v92_echo_timing_observe(timing, echo, receiver, &fixture->distances,
+					        PCM_HOST_ECHO_FILTER, byte, (int16_t)host, (int16_t)host, true) == 0 &&
 					      timing->initialized && timing->samples == 1,
 					      "wire-cell observation failed: law %u byte %02x gain %g", law, byte, gains[gain]);
 					double scale = gains[gain] * line->calibration.gain;
@@ -142,6 +143,30 @@ static bool test_wire_cells(void)
 /* Compare the complete shift score plane with an exhaustive signed-alphabet
  * oracle. Cover table endpoints, interior points, and cells overlapping more
  * than one point, independently of the monitor's search and uniform shortcut. */
+static bool test_distance_bank_refresh(void)
+{
+	struct v92_cpd_distances distances = {0};
+	struct v92_cpd_parameters cpd = {0};
+	cpd.constellation[1] = (struct v92_cpd_constellation){ { 3, 17, 100 }, 3 };
+	cpd.constellation[4] = (struct v92_cpd_constellation){ { 12, 24, 36 }, 3 };
+	v92_cpd_distances_prepare(&distances, &cpd);
+	CHECK(distances.set[1].step == 0 && distances.set[4].step == 12,
+	      "wrong distance geometry for independent CPd sets");
+
+	/* Change the levels in the same CPd storage and retire a previous set. */
+	cpd.constellation[1].positive_linear[0] = 5;
+	cpd.constellation[1].positive_linear[1] = 10;
+	cpd.constellation[1].positive_linear[2] = 15;
+	cpd.constellation[4] = (struct v92_cpd_constellation){0};
+	v92_cpd_distances_prepare(&distances, &cpd);
+	CHECK(distances.set[1].points.count == 3 &&
+	      distances.set[1].points.positive_linear[0] == 5 &&
+	      distances.set[1].step == 5 && distances.set[1].inverse_step == .2 &&
+	      distances.set[4].points.count == 0 && distances.set[4].step == 0,
+	      "updated CPd kept obsolete distance geometry");
+	return true;
+}
+
 static bool test_constellation_scores(void)
 {
 	const unsigned counts[] = { 1, 2, 32, V92_CPD_MAX_CONSTELLATION_POINTS };
@@ -185,8 +210,8 @@ static bool test_constellation_scores(void)
 						value = 16000 + j + j / 3;
 					points->positive_linear[j] = (int16_t)value;
 				}
-				CHECK(v92_echo_timing_observe(timing, echo, receiver,
-				      PCM_HOST_ECHO_FILTER, 0, 0, 0, true) == 0 &&
+				CHECK(v92_echo_timing_observe(timing, echo, receiver, &fixture->distances,
+				        PCM_HOST_ECHO_FILTER, 0, 0, 0, true) == 0 &&
 				      timing->initialized, "score monitor initialization failed");
 				/* Seed a full, disjoint history; this call scores exactly one
 				 * observation without completing the selection window. */
@@ -210,8 +235,8 @@ static bool test_constellation_scores(void)
 				timing->observation[center / V92_ECHO_TIMING_STRIDE] = observed;
 				timing->half_width[center / V92_ECHO_TIMING_STRIDE] = widths[w];
 				memcpy(&fixture->saved, receiver, sizeof(*receiver));
-				CHECK(v92_echo_timing_observe(timing, echo, receiver,
-				      PCM_HOST_ECHO_FILTER, 0, 0, 0, true) == 0 &&
+				CHECK(v92_echo_timing_observe(timing, echo, receiver, &fixture->distances,
+				        PCM_HOST_ECHO_FILTER, 0, 0, 0, true) == 0 &&
 				      timing->window.position == 1 &&
 				      memcmp(&fixture->saved, receiver, sizeof(*receiver)) == 0,
 				      "single score observation changed receive state or cadence");
@@ -273,8 +298,8 @@ static bool test_phase_clock(void)
 			for (unsigned i = 0; i < prefixes[n]; i++) {
 				source_phases[i % V92_ECHO_TIMING_HISTORY] = (uint8_t)source_phase;
 				source_phase = (source_phase + 1) % V92_PCM_MAPPING_PHASES;
-				CHECK(v92_echo_timing_observe(timing, echo, receiver,
-				      PCM_HOST_ECHO_FILTER, 0, 0, 0, true) == 0 &&
+				CHECK(v92_echo_timing_observe(timing, echo, receiver, &fixture->distances,
+				        PCM_HOST_ECHO_FILTER, 0, 0, 0, true) == 0 &&
 				      timing->samples == i + 1,
 				      "phase-clock prefix restarted at %u", i);
 				line->input_samples++;
@@ -293,8 +318,8 @@ static bool test_phase_clock(void)
 			timing->observation[center / V92_ECHO_TIMING_STRIDE] = 123.25f;
 			timing->half_width[center / V92_ECHO_TIMING_STRIDE] = .25f;
 			memcpy(&fixture->saved, receiver, sizeof(*receiver));
-			CHECK(v92_echo_timing_observe(timing, echo, receiver,
-			      PCM_HOST_ECHO_FILTER, 0, 0, 0, true) == 0 &&
+			CHECK(v92_echo_timing_observe(timing, echo, receiver, &fixture->distances,
+			        PCM_HOST_ECHO_FILTER, 0, 0, 0, true) == 0 &&
 			      timing->window.position == 1 &&
 			      memcmp(&fixture->saved, receiver, sizeof(*receiver)) == 0,
 			      "phase-clock scoring changed the receiver or cadence");
@@ -368,8 +393,8 @@ static bool test_observation_cadence(void)
 				 * predictions are zero, so no candidate may win a retime. */
 				memset(timing->window.score, 0, sizeof(timing->window.score));
 				timing->window.position = 0;
-				CHECK(v92_echo_timing_observe(timing, echo, receiver, PCM_HOST_ECHO_FILTER,
-				      byte, host, host, true) == 0 && timing->samples == i + 1,
+				CHECK(v92_echo_timing_observe(timing, echo, receiver, &fixture->distances,
+				        PCM_HOST_ECHO_FILTER, byte, host, host, true) == 0 && timing->samples == i + 1,
 				      "cadence input restarted the monitor at %u", i);
 				if (timing->window.position) {
 					unsigned center = (i - ECHO_TIMING_RADIUS) % V92_ECHO_TIMING_HISTORY;
@@ -467,8 +492,8 @@ static bool run_case(const struct channel_case *test)
 		if (finishing)
 			memcpy(&fixture->saved, receiver, sizeof(*receiver));
 		uint64_t prior_samples = timing->samples;
-		int moved = v92_echo_timing_observe(timing, echo, receiver, PCM_HOST_ECHO_FILTER,
-			wire, received, cleaned, (int)i != test->gap);
+		int moved = v92_echo_timing_observe(timing, echo, receiver, &fixture->distances,
+		        PCM_HOST_ECHO_FILTER, wire, received, cleaned, (int)i != test->gap);
 		CHECK(!test->drift || !i || i % 1536u || timing->samples == prior_samples + 1,
 		      "a data bias update restarted the echo timing window");
 		CHECK(!timing->initialized || timing->inverse.offset == line->residual.offset,
@@ -506,8 +531,8 @@ static bool run_case(const struct channel_case *test)
 		memcpy(&fixture->saved, receiver, sizeof(*receiver));
 		uint8_t wire = g711_encode(test->law, 0);
 		int16_t received = (int16_t)lrint(test->host_gain * g711_decode(test->law, wire));
-		CHECK(v92_echo_timing_observe(timing, echo, receiver, PCM_HOST_ECHO_FILTER,
-		      wire, received, received, true) == 0 && timing->initialized &&
+		CHECK(v92_echo_timing_observe(timing, echo, receiver, &fixture->distances,
+		        PCM_HOST_ECHO_FILTER, wire, received, received, true) == 0 && timing->initialized &&
 		      timing->samples == 1 && timing->inverse.offset == line->residual.offset &&
 		      memcmp(&fixture->saved, receiver, sizeof(*receiver)) == 0,
 		      "changed channel DC reused old timing evidence or changed receive state");
@@ -519,8 +544,8 @@ static bool run_case(const struct channel_case *test)
 	line->host.gain = 0;
 	line->residual = (struct v92_residual){ .active = true, .offset = -1.75 };
 	memcpy(&fixture->saved, receiver, sizeof(*receiver));
-	CHECK(v92_echo_timing_observe(timing, echo, receiver, PCM_HOST_ECHO_FILTER,
-	      0, 32000, 32766, true) == 0 && !timing->initialized &&
+	CHECK(v92_echo_timing_observe(timing, echo, receiver, &fixture->distances,
+	        PCM_HOST_ECHO_FILTER, 0, 32000, 32766, true) == 0 && !timing->initialized &&
 	      memcmp(&fixture->saved, receiver, sizeof(*receiver)) == 0,
 	      "physical overflow retained evidence or changed the receiver");
 	free(fixture);
@@ -531,6 +556,9 @@ int main(void)
 {
 	if (!test_residual_projection()) return 1;
 	if (!test_wire_cells()) return 1;
+	fprintf(stderr, "[ RUN      ] PCM echo distance bank refresh\n");
+	if (!test_distance_bank_refresh()) return 1;
+	fprintf(stderr, "[       OK ] PCM echo distance bank refresh\n");
 	fprintf(stderr, "[ RUN      ] PCM echo timing observation cadence\n");
 	if (!test_observation_cadence()) return 1;
 	fprintf(stderr, "[       OK ] PCM echo timing observation cadence\n");

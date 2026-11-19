@@ -139,26 +139,26 @@ static const double *prediction_row(const struct v92_b1_echo_fit *fit,
 /* Score a raw-coordinate B1u against the mapping's signed alphabet. The
  * precoder may select different representatives; no prescribed waveform is
  * used as a reference. Geometry and coordinates stay frozen with the copy. */
-static double raw_cost(const struct v92_b1_echo *recovery, unsigned i,
-	int16_t raw, double prediction)
+static double raw_cost(const struct v92_b1_echo *recovery,
+	const struct v92_cpd_distances *distances, unsigned i, int16_t raw, double prediction)
 {
 	const struct v92_pcm_mapping *mapping = &recovery->receiver.decoder.mapping;
 	unsigned phase = mapping->cpd.frame_constellation[i % V92_PCM_MAPPING_PHASES];
-	const struct v92_cpd_constellation *points = &mapping->cpd.constellation[phase];
+	const struct v92_cpd_distance *entry = &distances->set[phase];
 	double gain = recovery->receiver.line.plan.gain;
-	return pam_distance_squared(points->positive_linear, points->count,
-		recovery->step[phase], recovery->inverse_step[phase], 0.,
-		(raw - prediction) * gain, recovery->ranges[phase]) / (gain * gain);
+	return pam_distance_squared(entry->points.positive_linear, entry->points.count,
+		entry->step, entry->inverse_step, 0.,
+		(raw - prediction) * gain, entry->range) / (gain * gain);
 }
 
-static bool fit_raw(struct v92_b1_echo *recovery)
+static bool fit_raw(struct v92_b1_echo *recovery, const struct v92_cpd_distances *distances)
 {
 	struct v92_b1_echo_fit *fit = &recovery->fit;
 	*fit = (struct v92_b1_echo_fit){ .model = CONSTELLATION_MODEL };
 	double cost[BINS] = {0};
 	for (unsigned i = FIT_FIRST; i < FIT_END; ++i)
 		for (unsigned j = 0; j < BINS; ++j)
-			cost[j] += raw_cost(recovery, i, recovery->raw[i],
+			cost[j] += raw_cost(recovery, distances, i, recovery->raw[i],
 				recovery->prediction[i + 2 * RADIUS - j]);
 	unsigned chosen = 0;
 	for (unsigned j = 1; j < BINS; ++j)
@@ -236,14 +236,14 @@ static bool fit_delay(struct v92_b1_echo_fit *fit, const int16_t *ideal, const i
 }
 
 static void observe_delay(const struct v92_b1_echo *recovery, struct v92_b1_echo_evidence *ev,
-	const double *prediction, int16_t raw, unsigned i)
+	const struct v92_cpd_distances *distances, const double *prediction, int16_t raw, unsigned i)
 {
 	const struct v92_b1_echo_fit *fit = &recovery->fit;
 	const double *p = prediction_row(fit, prediction, i);
 	if (fit->model == CONSTELLATION_MODEL) {
 		double error[BINS];
 		for (unsigned j = 0; j < BINS; ++j) {
-			error[j] = raw_cost(recovery, i, raw, p[2 * RADIUS - j]);
+			error[j] = raw_cost(recovery, distances, i, raw, p[2 * RADIUS - j]);
 			ev->score[j] += error[j];
 		}
 		double good = error[fit->shift + RADIUS];
@@ -314,7 +314,7 @@ static const float *frozen_coefficients(const struct pcm_host_echo *echo)
 }
 
 static bool start(struct v92_b1_echo *recovery, const struct pcm_host_echo *echo,
-	const struct v92_upstream_data_rx *receiver)
+	const struct v92_upstream_data_rx *receiver, struct v92_cpd_distances *distances)
 {
 	uint32_t delay = pcm_host_echo_active_delay_owned(echo, PCM_HOST_ECHO_FILTER);
 	if ((receiver->line.plan.observation != V92_PCM_FRAME_FILTER_OUTPUT &&
@@ -334,11 +334,7 @@ static bool start(struct v92_b1_echo *recovery, const struct pcm_host_echo *echo
 	recovery->receiver.input.frame_limited = false;
 	recovery->receiver.input.frame_budget = recovery->receiver.input.frame_credit = 0;
 	if (receiver->line.plan.observation == V92_PCM_FRAME_CONSTELLATION) {
-		for (unsigned c = 0; c < V92_CPD_MAX_CONSTELLATIONS; ++c) {
-			const struct v92_cpd_constellation *points = &receiver->decoder.mapping.cpd.constellation[c];
-			pam_distance_prepare(points->positive_linear, points->count,
-				&recovery->step[c], &recovery->inverse_step[c], recovery->ranges[c]);
-		}
+		v92_cpd_distances_prepare(distances, &receiver->decoder.mapping.cpd);
 	} else {
 		struct v92_upstream_data_tx tx;
 		if (v92_upstream_data_tx_init(&tx, &receiver->decoder.mapping,
@@ -406,6 +402,7 @@ static bool replay_one(struct v92_b1_echo *recovery, unsigned i)
 
 bool v92_b1_echo_observe_owned(struct v92_b1_echo *recovery,
 	const struct pcm_host_echo *echo, const struct v92_upstream_data_rx *receiver,
+	struct v92_cpd_distances *distances,
 	uint8_t code, int16_t raw, int16_t cleaned, bool available)
 {
 	/* A new zero-frame handoff can begin another bounded attempt. A declined
@@ -415,7 +412,7 @@ bool v92_b1_echo_observe_owned(struct v92_b1_echo *recovery,
 		v92_b1_echo_reset(recovery);
 	if (recovery->stage == FINISHED || recovery->stage == COMMITTED)
 		return false;
-	if (recovery->stage == IDLE && !start(recovery, echo, receiver))
+	if (recovery->stage == IDLE && !start(recovery, echo, receiver, distances))
 		goto decline;
 	if (!available || raw == INT16_MIN || raw == INT16_MAX ||
 	    recovery->count >= V92_B1_ECHO_INPUTS || receiver->failed || receiver->input.count ||
@@ -433,14 +430,14 @@ bool v92_b1_echo_observe_owned(struct v92_b1_echo *recovery,
 			if (sample_round_s16(recovery->raw[k] - recovery->prediction[k + RADIUS]) != recovery->cleaned[k])
 				goto decline;
 		if (!(receiver->line.plan.observation == V92_PCM_FRAME_CONSTELLATION ?
-		    fit_raw(recovery) :
+		    fit_raw(recovery, distances) :
 		    fit_delay(&recovery->fit, recovery->ideal, recovery->raw, recovery->prediction,
 			    receiver->decoder.mapping.law)) || !recovery->fit.shift)
 			goto decline;
 	}
 	if (i >= FIT_READY && i < SCORE_END) {
 		unsigned h = (i - FIT_READY) / HELD;
-		observe_delay(recovery, &recovery->held[h], recovery->prediction, raw,
+		observe_delay(recovery, &recovery->held[h], distances, recovery->prediction, raw,
 			(unsigned)((int)i - recovery->fit.alignment));
 		if (recovery->held[h].count == HELD) {
 			double old_z, runner_z;

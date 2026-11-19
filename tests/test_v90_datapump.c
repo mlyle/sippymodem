@@ -181,17 +181,19 @@ enum v90_downstream_data_stream_result __wrap_v90_downstream_data_stream_next_ow
 }
 
 extern int __real_v92_echo_timing_observe(struct v92_echo_timing *, struct pcm_host_echo *,
-	const struct v92_upstream_data_rx *, enum pcm_host_echo_mode, uint8_t, int16_t, int16_t, bool);
+	const struct v92_upstream_data_rx *, struct v92_cpd_distances *,
+	enum pcm_host_echo_mode, uint8_t, int16_t, int16_t, bool);
 
 int __wrap_v92_echo_timing_observe(struct v92_echo_timing *timing, struct pcm_host_echo *echo,
-	const struct v92_upstream_data_rx *receiver, enum pcm_host_echo_mode mode,
+	const struct v92_upstream_data_rx *receiver, struct v92_cpd_distances *distances,
+	enum pcm_host_echo_mode mode,
 	uint8_t wire, int16_t received, int16_t cleaned, bool available)
 {
 	if (echo_recovery.enabled && echo_recovery.data_mode) {
 		echo_recovery.mismatch |= echo_recovery.injected && !echo_recovery.advanced;
 		++echo_recovery.sample;
 	}
-	int result = __real_v92_echo_timing_observe(timing, echo, receiver, mode,
+	int result = __real_v92_echo_timing_observe(timing, echo, receiver, distances, mode,
 		wire, received, cleaned, available);
 	if (echo_recovery.enabled && echo_recovery.data_mode && !echo_recovery.injected &&
 	    receiver != NULL && available && pcm_host_echo_is_ready(echo)) {

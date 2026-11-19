@@ -57,6 +57,7 @@ struct v90_datapump {
 	bool upstream_quality_ready;
 	struct v34_echo_timing echo_timing;
 	struct v92_training_echo training_echo;
+	struct v92_cpd_distances cpd_distances;
 	struct v92_echo_timing pcm_echo_timing;
 	struct v92_b1_echo b1_echo;
 	struct pcm_tx_recovery transmit_recovery;
@@ -1005,7 +1006,7 @@ static bool prepare_b1_echo(struct v90_datapump *datapump, uint8_t wire,
 		      path->upstream.line.plan.observation == V92_PCM_FRAME_FILTER_OUTPUT)) &&
 		    !path->upstream.line.delay_remaining)
 			return v92_b1_echo_observe_owned(&datapump->b1_echo, datapump->host_echo,
-				&path->upstream, wire, raw, cleaned, available);
+				&path->upstream, &datapump->cpd_distances, wire, raw, cleaned, available);
 	}
 	v92_b1_echo_reset(&datapump->b1_echo);
 	return false;
@@ -1332,7 +1333,7 @@ static int process_v90_g711(
 			goto failure;
 		if (datapump->host_echo != NULL) {
 			int timing_shift = v92_echo_timing_observe(&datapump->pcm_echo_timing, datapump->host_echo,
-				pcm_upstream_receiver(datapump), echo_mode, receive_codewords[index],
+				pcm_upstream_receiver(datapump), &datapump->cpd_distances, echo_mode, receive_codewords[index],
 				receive_samples[index], cleaned_sample,
 				received_mask == NULL || received_mask[index]);
 			if (timing_shift != 0) {
