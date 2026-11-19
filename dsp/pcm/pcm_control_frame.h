@@ -106,66 +106,28 @@ uint16_t pcm_control_frame_crc(
  * Callers provide seven header bytes and validated field values. Record
  * owners interpret the acknowledgment and retain their rate/type fields;
  * start and unrelated bits remain unchanged. */
-static inline void pcm_control_frame_write_options(
+void pcm_control_frame_write_options(
 	uint8_t *frame, uint8_t sign_redundancy, bool acknowledgment,
-	enum g711_law law, uint8_t lookahead)
-{
-	packed_msb_write_lsb_field(frame, 31u, 2u, sign_redundancy);
-	packed_msb_set_bit(frame, 33u, acknowledgment);
-	packed_msb_set_bit(frame, 35u, law == G711_LAW_PCMA);
-	packed_msb_write_lsb_field(frame, 49u, 2u, lookahead);
-}
+	enum g711_law law, uint8_t lookahead);
 
 /* Read the same slots into separately owned fields. The caller validates
  * framing and storage; no protocol-specific interpretation is applied. */
-static inline void pcm_control_frame_read_options(
+void pcm_control_frame_read_options(
 	const uint8_t *frame, uint8_t *sign_redundancy, bool *acknowledgment,
-	enum g711_law *law, uint8_t *lookahead)
-{
-	*sign_redundancy = (uint8_t)packed_msb_read_lsb_field(frame, 31u, 2u);
-	*acknowledgment = packed_msb_bit(frame, 33u) != 0u;
-	*law = packed_msb_bit(frame, 35u) != 0u ? G711_LAW_PCMA : G711_LAW_PCMU;
-	*lookahead = (uint8_t)packed_msb_read_lsb_field(frame, 49u, 2u);
-}
+	enum g711_law *law, uint8_t *lookahead);
 
 /* V.90 Table 14 and V.92 Table 23 share these Q3.13/Q1.6 fields.
  * Callers provide thirteen header bytes. Start and unrelated bits remain
  * unchanged; record owners validate storage and coefficient semantics. */
-static inline void pcm_control_frame_write_shaping(
-	uint8_t *frame, uint16_t ratio, int8_t a1, int8_t a2,
-	int8_t b1, int8_t b2)
-{
-	packed_msb_write_lsb_field(frame, 52u, 16u, ratio);
-	packed_msb_write_lsb_field(frame, 69u, 8u, (uint8_t)a1);
-	packed_msb_write_lsb_field(frame, 77u, 8u, (uint8_t)a2);
-	packed_msb_write_lsb_field(frame, 86u, 8u, (uint8_t)b1);
-	packed_msb_write_lsb_field(frame, 94u, 8u, (uint8_t)b2);
-}
-
-/* Read one signed Q1.6 coefficient as eight LSB-first bits. The caller
- * supplies its bounded first bit; return the exact transmitted integer. */
-static inline int8_t pcm_control_frame_read_q1_6(
-	const uint8_t *frame, size_t first_bit)
-{
-	uint8_t raw = (uint8_t)packed_msb_read_lsb_field(frame, first_bit, 8u);
-
-	return raw <= INT8_MAX ? (int8_t)raw :
-	       (int8_t)(-1 - (int16_t)(UINT8_MAX - raw));
-}
+void pcm_control_frame_write_shaping(
+	uint8_t *frame, uint16_t ratio, int8_t a1, int8_t a2, int8_t b1, int8_t b2);
 
 /* Read the matching Table 14/V.90 and Table 23/V.92 shaping fields.
  * Callers provide thirteen header bytes and separately owned output fields;
  * record owners retain validation of framing and coefficient semantics. */
-static inline void pcm_control_frame_read_shaping(
+void pcm_control_frame_read_shaping(
 	const uint8_t *frame, uint16_t *ratio, int8_t *a1, int8_t *a2,
-	int8_t *b1, int8_t *b2)
-{
-	*ratio = (uint16_t)packed_msb_read_lsb_field(frame, 52u, 16u);
-	*a1 = pcm_control_frame_read_q1_6(frame, 69u);
-	*a2 = pcm_control_frame_read_q1_6(frame, 77u);
-	*b1 = pcm_control_frame_read_q1_6(frame, 86u);
-	*b2 = pcm_control_frame_read_q1_6(frame, 94u);
-}
+	int8_t *b1, int8_t *b2);
 
 /* CP, CPt and CPu map six frame intervals to constellation rows. Each index
  * is four bits, LSB first; the start bit at 119 splits the first four indices

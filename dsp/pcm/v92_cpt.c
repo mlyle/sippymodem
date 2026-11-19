@@ -73,7 +73,7 @@ enum v92_cpt_result v92_cpt_encode(
 {
 	uint8_t encoded[V92_CPT_MAX_FRAME_BYTES] = { 0 };
 	size_t bit_count = v92_cpt_frame_bits(parameters);
-	size_t byte_count = v92_cpt_frame_bytes(parameters);
+	size_t byte_count = (bit_count + 7u) / 8u;
 
 	if (parameters == NULL || frame == NULL || frame_bit_count == NULL)
 		return V92_CPT_INVALID_ARGUMENT;

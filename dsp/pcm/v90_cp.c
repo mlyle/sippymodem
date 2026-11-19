@@ -132,7 +132,7 @@ enum v90_cp_result v90_cp_encode(
 {
 	uint8_t encoded[V90_CP_MAX_FRAME_BYTES] = { 0 };
 	size_t bit_count = v90_cp_frame_bits(parameters);
-	size_t byte_count = v90_cp_frame_bytes(parameters);
+	size_t byte_count = (bit_count + 7u) / 8u;
 
 	if (parameters == NULL || frame == NULL || frame_bit_count == NULL)
 		return V90_CP_INVALID_ARGUMENT;
