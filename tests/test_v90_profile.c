@@ -1193,14 +1193,14 @@ static bool test_clustered_phase_joint_margin(void)
 {
 	static const struct {
 		enum g711_law law;
-		uint8_t signs, bits;
+		uint8_t rate, signs, bits;
 		uint32_t power;
-		uint8_t codes[V90_CP_FRAME_INTERVALS][13];
+		uint8_t codes[V90_CP_FRAME_INTERVALS][25];
 		uint8_t moduli[V90_CP_FRAME_INTERVALS];
 	} cases[] = {
 		/* At q=36 the wider map handles 9 units of noise instead of 13,
 		 * despite preserving the zero-noise and zero-postcursor margins. */
-		{ G711_LAW_PCMU, 2, 20, 5500000, {
+		{ G711_LAW_PCMU, 4, 2, 20, 5500000, {
 			{ 49, 54, 55, 64, 65, 75, 80, 84 },
 			{ 8, 16, 23, 31, 35, 36, 43, 56, 65, 94, 97 },
 			{ 11, 21, 25, 31, 47, 66, 70, 78, 79, 80, 89 },
@@ -1210,7 +1210,7 @@ static bool test_clustered_phase_joint_margin(void)
 		}, { 8, 10, 10, 11, 11, 11 } },
 		/* Both endpoints have identical margins. At q=117 the
 		 * wider map drops from 129 to 92 raw units of reserve. */
-		{ G711_LAW_PCMA, 1, 19, 44000000, {
+		{ G711_LAW_PCMA, 4, 1, 19, 44000000, {
 			{ 84, 91, 94, 97, 101, 103, 104, 106, 107 },
 			{ 33, 46, 53, 60, 65, 68, 73, 77, 80, 82 },
 			{ 23, 42, 56, 67, 70, 77, 81, 90, 95 },
@@ -1218,12 +1218,34 @@ static bool test_clustered_phase_joint_margin(void)
 			{ 39, 49, 56, 63, 69, 77, 83, 87, 91 },
 			{ 22, 40, 49, 56, 63, 88, 93, 95, 98 },
 		}, { 9, 9, 9, 9, 9, 9 } },
+		/* At (q1, q2) = (6, -129) the wider map crosses a slicer
+		 * boundary even without added noise. */
+		{ G711_LAW_PCMU, 7, 2, 23, 44000000, {
+			{ 10, 16, 22, 35, 41, 42, 51, 54, 56, 57, 61, 64, 67, 69, 74, 76, 79, 87, 91, 94 },
+			{ 12, 16, 32, 39, 46, 49, 51, 54, 55, 66, 70, 78, 82, 83, 84, 87, 88, 89 },
+			{ 9, 15, 23, 31, 33, 38, 40, 43, 47, 49, 52, 55, 56, 58, 60, 63,
+			  64, 65, 69, 71, 73, 78, 80, 82, 83 },
+			{ 9, 15, 22, 30, 31, 36, 38, 41, 45, 46, 49, 50, 52, 54, 56, 58,
+			  59, 64, 66, 68, 70, 72, 75, 77, 79 },
+			{ 14, 26, 29, 39, 44, 50, 56, 60, 64, 71, 74, 80, 85, 100, 103, 105 },
+			{ 18, 30, 46, 49, 59, 65, 67, 69, 70, 87, 88, 91, 93, 94, 100 },
+		}, { 14, 14, 15, 15, 14, 14 } },
+		/* At (q1, q2) = (135, 205) the wider map handles three
+		 * raw units of noise instead of six. */
+		{ G711_LAW_PCMA, 5, 1, 20, 44000000, {
+			{ 8, 15, 24, 34, 37, 44, 45, 52, 56, 57, 60, 62, 68, 71, 73, 74, 79, 81, 84 },
+			{ 9, 10, 26, 31, 37, 42, 46, 50, 52, 56, 62, 65, 67, 73, 77, 80, 83 },
+			{ 14, 30, 41, 54, 61, 70, 75, 88, 96, 100 },
+			{ 9, 10, 32, 42, 50, 55, 59, 60, 73, 80, 82, 83, 84, 86 },
+			{ 8, 10, 24, 31, 36, 42, 46, 51, 56, 60, 61, 65, 69, 71, 74, 79, 81, 83 },
+			{ 8, 10, 26, 42, 50, 55, 61, 66, 74, 91, 92 },
+		}, { 10, 10, 10, 10, 11, 10 } },
 	};
 	for (size_t i = 0; i < ARRAY_LENGTH(cases); ++i) {
 		struct pcm_constellation available[V90_CP_FRAME_INTERVALS] = { 0 };
 		struct v90_cp_parameters cp = {
 			.kind = V90_CP_DATA, .law = cases[i].law,
-			.selected_rate_index = 4, .sign_redundancy = cases[i].signs,
+			.selected_rate_index = cases[i].rate, .sign_redundancy = cases[i].signs,
 		};
 		for (unsigned phase = 0; phase < V90_CP_FRAME_INTERVALS; ++phase)
 			for (unsigned code = 0; code < ARRAY_LENGTH(cases[i].codes[phase]) &&
@@ -1240,7 +1262,7 @@ static bool test_clustered_phase_joint_margin(void)
 		      mapping.modulus_bits == cases[i].bits && ceiling <= cases[i].power,
 		      "joint margin fixture lost its rate or exceeded its power budget");
 		CHECK(!memcmp(mapping.modulus, cases[i].moduli, sizeof(cases[i].moduli)),
-		      "law %u selected a map with less noise reserve inside its postcursor bound", cp.law);
+		      "case %zu selected a map with less noise reserve inside its postcursor bound", i);
 	}
 	return true;
 }

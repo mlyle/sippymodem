@@ -4,6 +4,7 @@
 #include "v34_profile.h"
 #include "v34_frame_schedule.h"
 #include "pcm_power.h"
+#include "wide_uint.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -513,21 +514,6 @@ struct margin_line {
 	int32_t approach;
 };
 
-struct margin_position {
-	uint32_t numerator;
-	uint32_t denominator;
-};
-
-struct margin_segment {
-	struct margin_line line;
-	struct margin_position start;
-};
-
-struct decision_curve {
-	struct margin_segment segment[V90_CP_FRAME_INTERVALS * MARGIN_LINES_PER_PHASE];
-	size_t count;
-};
-
 static int32_t room_below(int point, int limit)
 {
 	return (limit - point) * MARGIN_UNITY +
@@ -545,13 +531,12 @@ static int32_t room_above(int point, int limit)
  * symbol. Reflected signed neighbors have the same approach, so only the
  * tighter bound of each pair can affect the envelope. */
 static size_t phase_margin_lines(enum g711_law law,
-	const struct pcm_constellation *row, int *previous_peak,
+	const struct pcm_constellation *row, int previous_peak,
 	struct margin_line lines[MARGIN_LINES_PER_PHASE])
 {
 	size_t count = pcm_constellation_count(row);
 	if (count == 0)
 		return 0;
-	int peak = *previous_peak;
 	unsigned code = pcm_constellation_next(row, 0);
 	int lower = g711_decode(law, g711_ucode_positive_octet(law, (uint8_t)code));
 	if (lower <= 0)
@@ -560,7 +545,7 @@ static size_t phase_margin_lines(enum g711_law law,
 	/* Fill by increasing approach: left edges in reverse Ucode order,
 	 * the sign edge, then right edges in forward order. */
 	size_t left = count - 1u, right = count;
-	lines[left] = (struct margin_line){ room_below(-lower, -1), peak + lower };
+	lines[left] = (struct margin_line){ room_below(-lower, -1), previous_peak + lower };
 	for (code = pcm_constellation_next(row, code + 1u);
 	     code < PCM_CONSTELLATION_UCODES;
 	     code = pcm_constellation_next(row, code + 1u)) {
@@ -581,149 +566,311 @@ static size_t phase_margin_lines(enum g711_law law,
 		int32_t right_room = room_above(upper, positive.lower);
 		int32_t right_mirror = room_below(-upper, negative.upper);
 		lines[--left] = (struct margin_line){
-			left_room < left_mirror ? left_room : left_mirror, peak - lower,
+			left_room < left_mirror ? left_room : left_mirror, previous_peak - lower,
 		};
 		lines[right++] = (struct margin_line){
-			right_room < right_mirror ? right_room : right_mirror, peak + upper,
+			right_room < right_mirror ? right_room : right_mirror, previous_peak + upper,
 		};
 		lower = upper;
 	}
-	*previous_peak = lower;
 	return right;
 }
 
-static bool margin_position_less(struct margin_position a, struct margin_position b)
+/* Each knot uses a difference of two nonnegative Q15 rooms and
+ * a difference of two sample approaches. Both fit int32_t. */
+struct tap_knot {
+	int32_t numerator, denominator;
+};
+
+struct tap_segment {
+	struct margin_line line;
+	struct tap_knot start;
+};
+
+struct tap_phase {
+	struct tap_segment segment[MARGIN_LINES_PER_PHASE];
+	size_t count;
+	int previous, older;
+};
+
+struct tap_plane {
+	int64_t x, y, room;
+};
+
+struct tap_vertex {
+	int64_t x, y, d;
+	struct tap_plane edge;
+};
+
+/* Four box edges, two strip edges, six safe planes and five comparisons. */
+enum { TAP_CELL_VERTICES = 4 + 2 + V90_CP_FRAME_INTERVALS + (V90_CP_FRAME_INTERVALS - 1) };
+
+struct tap_cell {
+	struct tap_vertex point[TAP_CELL_VERTICES];
+	size_t count;
+};
+
+static bool tap_wide_negative(struct wide_uint value)
 {
-	/* Rooms span at most the signed 16-bit input range scaled by 32768.
-	 * Approach differences fit within four times that unscaled range. */
-	return (uint64_t)a.numerator * b.denominator < (uint64_t)b.numerator * a.denominator;
+	return value.high >> 63 != 0;
 }
 
-static void add_margin_support(struct decision_curve *curve, struct margin_line line)
+static bool tap_knot_less(struct tap_knot a, struct tap_knot b)
 {
-	const struct margin_position limit = { MARGIN_UNITY, 1 };
-	struct margin_segment next = { line, { 0, 1 } };
+	return (int64_t)a.numerator * b.denominator < (int64_t)b.numerator * a.denominator;
+}
 
-	while (curve->count != 0) {
-		const struct margin_segment *last = &curve->segment[curve->count - 1u];
-		int32_t faster = line.approach - last->line.approach;
-		int64_t later = (int64_t)line.room - last->line.room;
-		/* Merge order gives the smallest room first at equal approach. */
-		if (faster == 0)
-			return;
-		if (later > 0) {
-			struct margin_position cross = { (uint32_t)later, (uint32_t)faster };
-			if (margin_position_less(last->start, cross)) {
-				if (margin_position_less(cross, limit)) {
-					next.start = cross;
-					curve->segment[curve->count++] = next;
-				}
+static void tap_add_line(struct tap_phase *phase, struct margin_line line)
+{
+	struct tap_knot crossing;
+
+	while (phase->count != 0u) {
+		const struct tap_segment *last = &phase->segment[phase->count - 1u];
+		crossing.denominator = line.approach - last->line.approach;
+		crossing.numerator = line.room - last->line.room;
+		if (crossing.denominator == 0) {
+			if (crossing.numerator >= 0)
 				return;
-			}
+		} else if (phase->count == 1u || tap_knot_less(last->start, crossing)) {
+			break;
 		}
-		/* This support is replaced before it would have become active. */
-		curve->count--;
+		--phase->count;
 	}
-	curve->segment[curve->count++] = next;
+	if (phase->count == 0u)
+		crossing = (struct tap_knot){ 0, 1 };
+	phase->segment[phase->count++] = (struct tap_segment){ line, crossing };
 }
 
-static bool build_decision_curve(enum g711_law law,
+/* With x = q1 + q2 and y = |q2|, all supports in one phase have
+ * the same y slope. Their active support changes only at a knot in x. */
+static bool tap_phases(enum g711_law law,
 	const struct pcm_constellation selected[V90_CP_FRAME_INTERVALS],
-	struct decision_curve *curve)
+	struct tap_phase phase[V90_CP_FRAME_INTERVALS])
 {
-	struct margin_line lines[V90_CP_FRAME_INTERVALS][MARGIN_LINES_PER_PHASE];
-	size_t limit[V90_CP_FRAME_INTERVALS], cursor[V90_CP_FRAME_INTERVALS] = { 0 };
-	uint8_t code;
-	if (!pcm_constellation_descending_select(&selected[V90_CP_FRAME_INTERVALS - 1u], 0, &code))
-		return false;
-	int peak = g711_decode(law, g711_ucode_positive_octet(law, code));
-	for (unsigned phase = 0; phase < V90_CP_FRAME_INTERVALS; ++phase) {
-		limit[phase] = phase_margin_lines(law, &selected[phase], &peak, lines[phase]);
-		if (limit[phase] == 0)
+	int peak[V90_CP_FRAME_INTERVALS];
+	struct margin_line lines[MARGIN_LINES_PER_PHASE];
+	for (unsigned i = 0; i < V90_CP_FRAME_INTERVALS; ++i) {
+		uint8_t code;
+		if (!pcm_constellation_descending_select(&selected[i], 0, &code))
 			return false;
+		peak[i] = g711_decode(law, g711_ucode_positive_octet(law, code));
 	}
+	for (unsigned i = 0; i < V90_CP_FRAME_INTERVALS; ++i) {
+		int previous = peak[(i + V90_CP_FRAME_INTERVALS - 1u) % V90_CP_FRAME_INTERVALS];
+		phase[i].previous = previous;
+		phase[i].older = peak[(i + V90_CP_FRAME_INTERVALS - 2u) % V90_CP_FRAME_INTERVALS];
+		phase[i].count = 0;
+		size_t count = phase_margin_lines(law, &selected[i], previous, lines);
+		if (count == 0u)
+			return false;
+		for (size_t j = 0; j < count; ++j)
+			tap_add_line(&phase[i], lines[j]);
+	}
+	return true;
+}
 
-	/* Merge six ordered runs. This keeps the envelope construction
-	 * bounded by the number of edges, with a fixed array and no heap. */
-	curve->count = 0;
-	for (;;) {
-		const struct margin_line *first = NULL;
-		unsigned next = 0;
-		for (unsigned phase = 0; phase < V90_CP_FRAME_INTERVALS; ++phase) {
-			if (cursor[phase] == limit[phase])
-				continue;
-			const struct margin_line *line = &lines[phase][cursor[phase]];
-			if (first == NULL || line->approach < first->approach ||
-			    (line->approach == first->approach && line->room < first->room)) {
-				first = line;
-				next = phase;
+static struct tap_plane tap_at(const struct tap_phase *phase, size_t index, int sign)
+{
+	struct margin_line line = phase->segment[index].line;
+	return (struct tap_plane){
+		-line.approach, sign * phase->previous - phase->older, line.room,
+	};
+}
+
+static struct tap_plane tap_subtract(struct tap_plane a, struct tap_plane b)
+{
+	return (struct tap_plane){ a.x - b.x, a.y - b.y, a.room - b.room };
+}
+
+/* Retain each incoming edge's supporting line. Intersections stay as
+ * determinants of two original lines, even after repeated clipping.
+ * Line slopes are bounded by 2^17 and offsets by 2^31. Coordinates fit
+ * int64_t. Evaluating a plane at those coordinates needs wider products. */
+static struct tap_vertex tap_intersection(struct tap_plane edge, struct tap_plane cut)
+{
+	struct tap_vertex p = {
+		edge.y * cut.room - edge.room * cut.y,
+		edge.room * cut.x - edge.x * cut.room,
+		edge.x * cut.y - edge.y * cut.x,
+		edge,
+	};
+	if (p.d < 0) {
+		p.d = -p.d;
+		p.x = -p.x;
+		p.y = -p.y;
+	}
+	return p;
+}
+
+static int tap_side(struct tap_plane p, struct tap_vertex v)
+{
+	struct wide_uint sum, product;
+	sum = wide_product_s64(p.x, v.x);
+	product = wide_product_s64(p.y, v.y);
+	(void)wide_add(sum, product, &sum);
+	product = wide_product_s64(p.room, v.d);
+	(void)wide_add(sum, product, &sum);
+	if (tap_wide_negative(sum))
+		return -1;
+	return sum.low != 0u || sum.high != 0u;
+}
+
+static bool tap_push(struct tap_cell *cell, struct tap_vertex p)
+{
+	if (cell->count == TAP_CELL_VERTICES || p.d == 0)
+		return false;
+	cell->point[cell->count++] = p;
+	return true;
+}
+
+/* Walk the convex polygon in order. Vertices on the cut belong to
+ * both halves; only a strict crossing creates a new vertex. */
+static bool tap_clip(struct tap_cell *cell, struct tap_plane cut)
+{
+	if (cell->count == 0)
+		return true;
+	if (cut.x == 0 && cut.y == 0) {
+		if (cut.room < 0)
+			cell->count = 0;
+		return true;
+	}
+	struct tap_cell clipped;
+	clipped.count = 0;
+	int before = tap_side(cut, cell->point[cell->count - 1u]);
+	for (size_t i = 0; i < cell->count; ++i) {
+		struct tap_vertex v = cell->point[i];
+		int side = tap_side(cut, v);
+		if ((before < 0 && side > 0) || (before > 0 && side < 0)) {
+			struct tap_vertex crossing = tap_intersection(v.edge, cut);
+			if (before < 0)
+				crossing.edge = cut;
+			if (!tap_push(&clipped, crossing))
+				return false;
+		}
+		if (side >= 0) {
+			if (side == 0 && before < 0)
+				v.edge = cut;
+			if (!tap_push(&clipped, v))
+				return false;
+		}
+		before = side;
+	}
+	memcpy(cell->point, clipped.point, clipped.count * sizeof(*cell->point));
+	cell->count = clipped.count;
+	return true;
+}
+
+static size_t tap_search(const struct tap_phase *phase, int64_t numerator, int64_t denominator)
+{
+	size_t low = 0, high = phase->count;
+	while (low + 1u < high) {
+		size_t mid = (low + high) / 2u;
+		struct tap_knot knot = phase->segment[mid].start;
+		if (tap_wide_negative(wide_subtract(wide_product_s64(numerator, knot.denominator),
+			wide_product_s64(knot.numerator, denominator))))
+			high = mid;
+		else
+			low = mid;
+	}
+	return low;
+}
+
+static int32_t tap_axis_limit(int32_t limit, int64_t slope, int64_t room)
+{
+	if (slope <= 0)
+		return limit;
+	int64_t crossing = (room + slope - 1) / slope;
+	return crossing < limit ? (int32_t)crossing : limit;
+}
+
+/* Crop the tap box to the range in which the original map can
+ * have nonnegative reserve, then walk the strips between its knots. */
+static bool tap_compare_sector(
+	const struct tap_phase original[V90_CP_FRAME_INTERVALS],
+	const struct tap_phase selected[V90_CP_FRAME_INTERVALS], int sign,
+	unsigned *strips_left)
+{
+	int32_t first = MARGIN_UNITY, second = MARGIN_UNITY;
+	size_t active[V90_CP_FRAME_INTERVALS];
+	for (unsigned i = 0; i < V90_CP_FRAME_INTERVALS; ++i) {
+		for (size_t j = 0; j < original[i].count; ++j) {
+			struct tap_plane p = tap_at(&original[i], j, sign);
+			int64_t first_approach = -p.x, second_approach = -(sign * p.x + p.y);
+			/* The other nonnegative coefficient can only use more room. */
+			if (second_approach >= 0)
+				first = tap_axis_limit(first, first_approach, p.room);
+			if (first_approach >= 0)
+				second = tap_axis_limit(second, second_approach, p.room);
+		}
+	}
+	struct tap_cell box = { {
+		{ 0, 0, 1, { 1, -sign, 0 } },
+		{ first, 0, 1, { 0, 1, 0 } },
+		{ first + sign * second, second, 1, { -1, sign, first } },
+		{ sign * second, second, 1, { 0, -1, second } },
+	}, 4 };
+	struct tap_knot left = { sign < 0 ? -second : 0, 1 };
+	const struct tap_knot end = { first + (sign > 0 ? second : 0), 1 };
+	for (unsigned i = 0; i < V90_CP_FRAME_INTERVALS; ++i)
+		active[i] = tap_search(&original[i], left.numerator, left.denominator);
+	while (*strips_left != 0u) {
+		--*strips_left;
+		struct tap_knot right = end;
+		struct tap_plane plane[V90_CP_FRAME_INTERVALS];
+		for (unsigned i = 0; i < V90_CP_FRAME_INTERVALS; ++i) {
+			plane[i] = tap_at(&original[i], active[i], sign);
+			if (active[i] + 1u < original[i].count &&
+			    tap_knot_less(original[i].segment[active[i] + 1u].start, right))
+				right = original[i].segment[active[i] + 1u].start;
+		}
+		struct tap_cell region = box;
+		if (!tap_clip(&region, (struct tap_plane){ left.denominator, 0, -left.numerator }) ||
+		    !tap_clip(&region, (struct tap_plane){ -right.denominator, 0, right.numerator }))
+			return false;
+		for (unsigned i = 0; i < V90_CP_FRAME_INTERVALS && region.count != 0u; ++i)
+			if (!tap_clip(&region, plane[i]))
+				return false;
+		/* Clip each cell where one baseline plane is the minimum.
+		 * The candidate reserve is concave, so vertices suffice. */
+		for (unsigned i = 0; i < V90_CP_FRAME_INTERVALS && region.count != 0u; ++i) {
+			struct tap_cell cell = region;
+			for (unsigned j = 0; j < V90_CP_FRAME_INTERVALS && cell.count != 0u; ++j)
+				if (i != j && !tap_clip(&cell, tap_subtract(plane[j], plane[i])))
+					return false;
+			for (size_t j = 0; j < cell.count; ++j) {
+				const struct tap_vertex vertex = cell.point[j];
+				for (unsigned k = 0; k < V90_CP_FRAME_INTERVALS; ++k) {
+					size_t at = tap_search(&selected[k], vertex.x, vertex.d);
+					struct tap_plane candidate = tap_at(&selected[k], at, sign);
+					if (tap_side(tap_subtract(candidate, plane[i]), vertex) < 0)
+						return false;
+				}
 			}
 		}
-		if (first == NULL)
+		if (!tap_knot_less(right, end))
 			return true;
-		add_margin_support(curve, *first);
-		++cursor[next];
-	}
-}
-
-static uint32_t postcursor_limit(const struct decision_curve *curve)
-{
-	uint32_t limit = MARGIN_UNITY;
-	for (size_t i = 0; i < curve->count; ++i) {
-		struct margin_line line = curve->segment[i].line;
-		if (line.approach > 0) {
-			uint32_t q = (uint32_t)line.room / (uint32_t)line.approach;
-			if (q < limit)
-				limit = q;
+		left = right;
+		for (unsigned i = 0; i < V90_CP_FRAME_INTERVALS; ++i) {
+			if (active[i] + 1u < original[i].count &&
+			    !tap_knot_less(left, original[i].segment[active[i] + 1u].start))
+				++active[i];
 		}
 	}
-	return limit;
-}
-
-static int64_t margin_at(struct margin_line line, struct margin_position q)
-{
-	return (int64_t)line.room * q.denominator - (int64_t)line.approach * q.numerator;
+	return false;
 }
 
 static bool preserves_joint_margin(enum g711_law law,
 	const struct pcm_constellation original[V90_CP_FRAME_INTERVALS],
 	const struct pcm_constellation selected[V90_CP_FRAME_INTERVALS])
 {
-	struct decision_curve before;
-	struct margin_line lines[MARGIN_LINES_PER_PHASE];
-	uint8_t code;
-
-	if (!build_decision_curve(law, original, &before) ||
-	    !pcm_constellation_descending_select(&selected[V90_CP_FRAME_INTERVALS - 1u], 0, &code))
-		return false;
-
-	const struct margin_position limit = { postcursor_limit(&before), 1 };
-	size_t last = 0;
-	while (last + 1u < before.count &&
-	       !margin_position_less(limit, before.segment[last + 1u].start))
-		++last;
-
-	int peak = g711_decode(law, g711_ucode_positive_octet(law, code));
-	for (unsigned phase = 0; phase < V90_CP_FRAME_INTERVALS; ++phase) {
-		size_t count = phase_margin_lines(law, &selected[phase], &peak, lines);
-		if (count == 0)
-			return false;
-		size_t support = 0;
-		for (size_t i = 0; i < count; ++i) {
-			/* The baseline minus this line reaches its maximum when
-			 * the baseline approach reaches the line's approach, or
-			 * at the limit. Each phase's lines visit knots in order. */
-			struct margin_line line = lines[i];
-			while (support < last && before.segment[support].line.approach < line.approach)
-				++support;
-			const struct margin_segment *segment = &before.segment[support];
-			const struct margin_position q = segment->line.approach < line.approach ?
-				limit : segment->start;
-			if (margin_at(line, q) < margin_at(segment->line, q))
-				return false;
-		}
-	}
-	return true;
+	/* Bound synchronous training work. A map that cannot be certified
+	 * within this budget falls back to the first map at the same rate. */
+	unsigned strips_left = 64;
+	struct tap_phase before[V90_CP_FRAME_INTERVALS];
+	struct tap_phase after[V90_CP_FRAME_INTERVALS];
+	return tap_phases(law, original, before) && tap_phases(law, selected, after) &&
+		tap_compare_sector(before, after, 1, &strips_left) &&
+		tap_compare_sector(before, after, -1, &strips_left);
 }
 
 /* A fixed size vector's feasibility is monotone in distance. A union of

@@ -103,22 +103,22 @@ must also cover the DSP, framing, compression and training transitions.
 Neither synthetic self-calls nor exact replay of a received recording proves
 interoperability with every physical digital peer.
 
-## Decision margins after a quantized postcursor
+## Decision margins with two quantized postcursors
 
 Linear minimum spacing does not by itself describe a sampled channel with
 memory. Consider the specific integer model
 
 ```
-z = trunc(((32768 - q)*c + q*p) / 32768)
-y = G711(z)
+z = trunc((32768*c + q1*(p1 - c) + q2*(p2 - c)) / 32768)
+received = G711(clip16(z))
 ```
 
-Here `c` is the current transmitted reconstruction, `p` is its predecessor,
-and `q` is a nonnegative first-order postcursor coefficient. The receiver
+Here `c` is the current reconstruction and `p1` and `p2` are the preceding
+two reconstructions. The first coefficient `q1` ranges from 0 to 32768.
+The second coefficient `q2` ranges from -32768 to 32768. The receiver
 uses its fixed native hard slicer after this additional codec. This models a
-quantized causal channel; a pure codeword pipe and a physical ADC are different
-channels. In particular, decoding and re-encoding mu-law negative zero loses
-its sign even when `q` is zero.
+quantized causal channel. In particular, decoding and re-encoding mu-law
+negative zero loses its sign even when both coefficients are zero.
 
 For each signed point `c`, enumerate the encoder and native slicer to obtain
 its inclusive raw-input decision region `[L(c), U(c)]`. Verify that this region
@@ -134,50 +134,42 @@ A = L*32768                 if L > 0, else (L-1)*32768 + 1
 B = U*32768                 if U < 0, else (U+1)*32768 - 1
 ```
 
-Let `p_min` and `p_max` be the preceding phase's extreme signed points. For
-`p_min < c`, the lower constraint is
-`q <= floor((32768*c - A)/(c - p_min))`. For `p_max > c`, the upper constraint
-is `q <= floor((B - 32768*c)/(p_max - c))`. Their minimum over current points
-and phases, capped at 32768, guarantees unchanged symbol decisions for every
-predecessor and every integer coefficient from zero through that bound.
-Monotonicity of the channel and contiguous decision regions make the extrema
-sufficient. The bound is specific to this model, not a BER estimate.
-
 With additive disturbance before truncation, the exact symmetric reserve in
-numerator units at coefficient `q` is the minimum of the two affine supports
-at every current point and phase:
+numerator units is the minimum of the lower and upper boundary supports
+over all current points and phases. In each sector `s = sign(q2)`, write
+`x = q1 + q2` and `y = |q2|`. If `P1` and `P2` are the peaks of the two
+preceding phases, the supports are
 
 ```
-32768*c - A + q*(p_min - c)
-B - 32768*c - q*(p_max - c)
+32768*c - A - (P1 + c)*x + (s*P1 - P2)*y
+B - 32768*c - (P1 - c)*x + (s*P1 - P2)*y
 ```
 
-An outside rail contributes no constraint because clipping keeps that
-outermost label. The supports use the exact raw boundaries of the native
-G.711 slicer, including its tie rule. Reflecting a boundary and its
-neighbors keeps the support's slope, so the implementation keeps the
-tighter of each mirrored pair. The negative label supplies the tighter
-support at the sign boundary.
+Each predecessor contributes linearly, so its extreme label gives the
+worst case for each boundary. The outside rails need no constraints because
+clipping keeps those labels. Reflecting a boundary and its neighbors keeps
+the support's slopes, so the implementation keeps the tighter support.
 
-The minimum of these lines is a concave, piecewise-linear curve. The selector
-merges the six ordered phase runs to build the first map's curve. Since the
-candidate margin is also a minimum, each candidate line must be at least as
-high as the first map's curve throughout its guaranteed postcursor range.
-Subtract a candidate line from that curve. The resulting concave function
-attains its maximum where its slope first becomes nonpositive, or at the
-range limit. The candidate lines within each phase visit these breakpoints
-in order. Integer cross products compare the exact rational positions.
-At integer coefficients in this range, flooring the reserve
-to raw-sample units also gives the symmetric integer noise radius when
-noise is applied after truncation. Each label stays on its own side of
-zero, and the tighter negative sign boundary supplies the limit if sign
-is the nearest decision.
+The supports of a phase share their slope in `y`. Its lower envelope
+therefore changes active support only at its breakpoints in `x`. The
+selector divides each sector into strips at the first map's phase
+breakpoints, then clips each strip to where all its active supports are
+nonnegative. Within each strip, the region where one baseline support is
+the minimum is a convex polygon.
+
+The candidate's reserve is concave. Subtracting the affine baseline
+support on each polygon preserves concavity, so checking the difference
+at every polygon vertex suffices. Integer cross products give exact
+comparisons, including on the lines shared by neighboring polygons.
+This includes the first-order test along `q2 = 0`. A certificate that
+exceeds the fixed work budget retains the first map at the original rate.
 
 The stream-receiver regression obtains decisions through normal native receive
 calls, exhausts every signed 16-bit encoder input, and independently enumerates
 all symbol pairs and coefficients through the first failing coefficient. It
 covers both laws, low-level polarity, a codec segment boundary and saturation.
-It does not fit a receiver, replace B1 admission, or enable a new selector.
+The profile regressions additionally check maps whose wider alternatives
+lose reserve under a second postcursor.
 
 A channel-aware design can use these margins alongside exact radix capacity,
 occupation-weighted power, peak limits and noise tolerance. Improving only
