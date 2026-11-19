@@ -10,17 +10,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-enum pcm_phase2_info1_event_kind {
-	PCM_PHASE2_INFO1_EVENT_NONE,
-	PCM_PHASE2_INFO1_EVENT_LOCAL_INFO1D_SENT,
-	PCM_PHASE2_INFO1_EVENT_PEER_INFO1D_RECEIVED,
-	PCM_PHASE2_INFO1_EVENT_LOCAL_INFO1A_SENT,
-	PCM_PHASE2_INFO1_EVENT_PEER_INFO1A_RECEIVED,
-	PCM_PHASE2_INFO1_EVENT_PEER_FRAME_REJECTED,
-	PCM_PHASE2_INFO1_EVENT_RETRAIN_REQUESTED,
-	PCM_PHASE2_INFO1_EVENT_FAILED,
-};
-
 struct pcm_phase2_info1a {
 	union pcm_info1a_record record;
 	enum pcm_info1a_kind kind;
@@ -34,10 +23,8 @@ union pcm_phase2_info1_peer_record {
 };
 
 struct pcm_phase2_info1_event {
-	struct v34_phase2_info_event frame_event;
+	struct phase2_info1_event transport;
 	union pcm_phase2_info1_peer_record peer_record;
-	enum pcm_phase2_info1_event_kind kind;
-	enum phase2_info1_failure failure;
 	enum pcm_protocol protocol;
 };
 

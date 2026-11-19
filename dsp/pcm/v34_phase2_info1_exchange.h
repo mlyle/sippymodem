@@ -9,26 +9,14 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-enum v34_phase2_info1_exchange_event_kind {
-	V34_PHASE2_INFO1_EVENT_NONE,
-	V34_PHASE2_INFO1_EVENT_LOCAL_INFO1C_SENT,
-	V34_PHASE2_INFO1_EVENT_PEER_INFO1C_RECEIVED,
-	V34_PHASE2_INFO1_EVENT_LOCAL_INFO1A_SENT,
-	V34_PHASE2_INFO1_EVENT_PEER_INFO1A_RECEIVED,
-	V34_PHASE2_INFO1_EVENT_PEER_FRAME_REJECTED,
-	V34_PHASE2_INFO1_EVENT_FAILED,
-};
-
 union v34_phase2_info1_parameters {
 	struct v34_info1c info1c;
 	struct v34_info1a info1a;
 };
 
 struct v34_phase2_info1_exchange_event {
-	struct v34_phase2_info_event frame_event;
+	struct phase2_info1_event transport;
 	union v34_phase2_info1_parameters peer_parameters;
-	enum v34_phase2_info1_exchange_event_kind kind;
-	enum phase2_info1_failure failure;
 };
 
 struct v34_phase2_info1_exchange {

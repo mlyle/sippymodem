@@ -68,9 +68,9 @@ static bool check_short_exchange(unsigned mode, enum g711_law law, unsigned dela
 		CHECK(!pcm_phase2_info1_retry_pending(&analog) &&
 		      !pcm_phase2_info1_retry_pending(&digital),
 		      "short adapter permits INFO1d resend");
-		if (ae.kind == PCM_PHASE2_INFO1_EVENT_LOCAL_INFO1A_SENT)
+		if (ae.transport.kind == PHASE2_INFO1_EVENT_LOCAL_SECOND_SENT)
 			sent = true;
-		if (de.kind == PCM_PHASE2_INFO1_EVENT_PEER_INFO1A_RECEIVED) {
+		if (de.transport.kind == PHASE2_INFO1_EVENT_PEER_SECOND_RECEIVED) {
 			struct pcm_info1_selection decoded = {
 				.startup = selection.startup,
 				.short_high_carrier = digital.analog.short_high_carrier,
@@ -147,15 +147,15 @@ static bool test_validation(void)
 		CHECK(pcm_phase2_info1_sample(&exchange, 0, &output, &event) ==
 			      PHASE2_INFO1_OK && output == 0,
 		      "typed timeout sample failed");
-	CHECK(event.kind == PCM_PHASE2_INFO1_EVENT_FAILED &&
-	      event.failure == PHASE2_INFO1_PEER_TIMEOUT &&
+	CHECK(event.transport.kind == PHASE2_INFO1_EVENT_FAILED &&
+	      event.transport.failure == PHASE2_INFO1_PEER_TIMEOUT &&
 	      !exchange.digital_record_stored &&
 	      !pcm_phase2_info1_retry_pending(&exchange),
 	      "typed timeout created INFO1d recovery");
 	before = exchange;
 	CHECK(pcm_phase2_info1_sample(&exchange, INT16_MAX, &output, &event) ==
 		      PHASE2_INFO1_OK && output == 0 &&
-	      event.kind == PCM_PHASE2_INFO1_EVENT_NONE &&
+	      event.transport.kind == PHASE2_INFO1_EVENT_NONE &&
 	      memcmp(&before, &exchange, sizeof(exchange)) == 0,
 	      "typed short timeout is not stable");
 	{
@@ -231,8 +231,8 @@ static bool test_semantic_rejection(void)
 			      !digital.digital_record_stored &&
 			      digital.control.peer_deadline_elapsed_samples == i + 1u,
 			      "invalid INFO1a renewed its budget or stored a selection");
-			if (de.kind == PCM_PHASE2_INFO1_EVENT_PEER_FRAME_REJECTED) {
-				CHECK(de.frame_event.type == V34_PHASE2_INFO_FRAME_RECEIVED,
+			if (de.transport.kind == PHASE2_INFO1_EVENT_PEER_FRAME_REJECTED) {
+				CHECK(de.transport.frame_event.type == V34_PHASE2_INFO_FRAME_RECEIVED,
 				      "semantic fixture failed wire CRC instead");
 				rejected++;
 			}

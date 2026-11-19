@@ -320,6 +320,28 @@ enum phase2_info1_result phase2_info1_reject_peer(
 	return PHASE2_INFO1_OK;
 }
 
+enum phase2_info1_result phase2_info1_resolve_peer(
+	struct phase2_info1_exchange *exchange, struct phase2_info1_event *event,
+	bool accepted)
+{
+	if (event == NULL || event->kind != PHASE2_INFO1_EVENT_PEER_FRAME_PENDING)
+		return PHASE2_INFO1_INVALID_ARGUMENT;
+	enum phase2_info1_result result = accepted ? phase2_info1_accept_peer(exchange) :
+		phase2_info1_reject_peer(exchange);
+
+	if (result != PHASE2_INFO1_OK)
+		return result;
+	if (accepted)
+		event->kind = exchange->signal_role == PHASE2_SIGNAL_A ?
+			PHASE2_INFO1_EVENT_PEER_FIRST_RECEIVED :
+			PHASE2_INFO1_EVENT_PEER_SECOND_RECEIVED;
+	else
+		event->kind = exchange->phase == PHASE2_INFO1_FAILED ?
+			PHASE2_INFO1_EVENT_FAILED : PHASE2_INFO1_EVENT_PEER_FRAME_REJECTED;
+	event->failure = exchange->failure;
+	return PHASE2_INFO1_OK;
+}
+
 enum phase2_info1_result phase2_info1_recover(
 	struct phase2_info1_exchange *exchange)
 {
@@ -561,41 +583,52 @@ static bool generate_transmit_sample(
 	return false;
 }
 
+enum phase2_info1_result phase2_info1_sample_owned(
+	struct phase2_info1_exchange *exchange,
+	int16_t received_sample, int16_t *transmit_sample,
+	struct phase2_info1_event *event)
+{
+	struct phase2_info1_event emitted = { 0 };
+	int16_t generated = 0;
+	bool waiting = exchange->phase == PHASE2_INFO1_WAITING_FOR_PEER;
+
+	if (!exchange->short_exchange && exchange->signal_role == PHASE2_SIGNAL_B &&
+	    exchange->phase != PHASE2_INFO1_TRANSMITTING &&
+	    exchange->phase != PHASE2_INFO1_CARRIER_TAIL &&
+	    exchange->phase != PHASE2_INFO1_COMPLETE &&
+	    exchange->phase != PHASE2_INFO1_FAILED &&
+	    exchange->first_record_elapsed_samples != UINT32_MAX)
+		++exchange->first_record_elapsed_samples;
+	if ((phase2_info1_is_waiting_for_peer(exchange) &&
+	     !receive_peer_frame(exchange, received_sample, &emitted)) ||
+	    !generate_transmit_sample(exchange, &generated, &emitted))
+		return PHASE2_INFO1_INVALID_ARGUMENT;
+	if (waiting && exchange->phase == PHASE2_INFO1_WAITING_FOR_PEER) {
+		advance_peer_deadline(exchange);
+		if (exchange->phase == PHASE2_INFO1_FAILED) {
+			emitted.kind = PHASE2_INFO1_EVENT_FAILED;
+			emitted.failure = exchange->failure;
+		}
+	}
+	*transmit_sample = generated;
+	*event = emitted;
+	return PHASE2_INFO1_OK;
+}
+
 enum phase2_info1_result phase2_info1_sample(
 	struct phase2_info1_exchange *exchange,
 	int16_t received_sample, int16_t *transmit_sample,
 	struct phase2_info1_event *event)
 {
-	struct phase2_info1_exchange next;
-	struct phase2_info1_event emitted = { 0 };
-	int16_t generated = 0;
-	bool waited_for_peer;
-
 	if (!phase2_info1_is_valid(exchange) || transmit_sample == NULL ||
 	    event == NULL || exchange->phase == PHASE2_INFO1_PEER_FRAME_PENDING)
 		return PHASE2_INFO1_INVALID_ARGUMENT;
-	next = *exchange;
-	if (!next.short_exchange && next.signal_role == PHASE2_SIGNAL_B &&
-	    next.phase != PHASE2_INFO1_TRANSMITTING &&
-	    next.phase != PHASE2_INFO1_CARRIER_TAIL &&
-	    next.phase != PHASE2_INFO1_COMPLETE &&
-	    next.phase != PHASE2_INFO1_FAILED &&
-	    next.first_record_elapsed_samples != UINT32_MAX)
-		++next.first_record_elapsed_samples;
-	waited_for_peer = phase2_info1_is_waiting_for_peer(&next);
-	if ((waited_for_peer &&
-	     !receive_peer_frame(&next, received_sample, &emitted)) ||
-	    !generate_transmit_sample(&next, &generated, &emitted))
-		return PHASE2_INFO1_INVALID_ARGUMENT;
-	if (waited_for_peer && exchange->phase == PHASE2_INFO1_WAITING_FOR_PEER &&
-	    next.phase == PHASE2_INFO1_WAITING_FOR_PEER) {
-		advance_peer_deadline(&next);
-		if (next.phase == PHASE2_INFO1_FAILED) {
-			emitted.kind = PHASE2_INFO1_EVENT_FAILED;
-			emitted.failure = next.failure;
-		}
-	}
-	if (!phase2_info1_is_valid(&next))
+	struct phase2_info1_exchange next = *exchange;
+	struct phase2_info1_event emitted;
+	int16_t generated;
+
+	if (phase2_info1_sample_owned(&next, received_sample, &generated, &emitted) !=
+	    PHASE2_INFO1_OK || !phase2_info1_is_valid(&next))
 		return PHASE2_INFO1_INVALID_ARGUMENT;
 	*exchange = next;
 	*transmit_sample = generated;

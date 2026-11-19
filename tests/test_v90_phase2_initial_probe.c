@@ -237,7 +237,7 @@ static bool check_pcm_info1d_retry(
 			      &late, 0, &transmit, &event) ==
 			      PHASE2_INFO1_OK,
 		      "PCM late INFO1a fixture failed before recovery");
-		if (event.kind == PCM_PHASE2_INFO1_EVENT_FAILED)
+		if (event.transport.kind == PHASE2_INFO1_EVENT_FAILED)
 			break;
 	}
 	CHECK(late.control.phase == PHASE2_INFO1_FAILED &&
@@ -282,7 +282,7 @@ static bool check_pcm_info1d_retry(
 				      &late, received, &transmit, &event) ==
 				      PHASE2_INFO1_OK,
 			      "late invalid INFO1a caused an internal error");
-			if (event.kind == PCM_PHASE2_INFO1_EVENT_PEER_FRAME_REJECTED) {
+			if (event.transport.kind == PHASE2_INFO1_EVENT_PEER_FRAME_REJECTED) {
 				rejected = true;
 				break;
 			}
@@ -313,7 +313,7 @@ static bool check_pcm_info1d_retry(
 		      "PCM late INFO1a receiver failed at sample %zu", index);
 		CHECK(late.info1d_resends == 0u,
 		      "late INFO1a prefix was mistaken for INFOMARKSa");
-		if (event.kind == PCM_PHASE2_INFO1_EVENT_PEER_INFO1A_RECEIVED) {
+		if (event.transport.kind == PHASE2_INFO1_EVENT_PEER_SECOND_RECEIVED) {
 			late_received = true;
 			break;
 		}
@@ -329,7 +329,7 @@ static bool check_pcm_info1d_retry(
 			      &recovery, 0, &transmit, &event) ==
 			      PHASE2_INFO1_OK,
 		      "PCM INFO1d retry fixture failed before recovery");
-		if (event.kind == PCM_PHASE2_INFO1_EVENT_FAILED)
+		if (event.transport.kind == PHASE2_INFO1_EVENT_FAILED)
 			break;
 	}
 	CHECK(recovery.control.phase == PHASE2_INFO1_FAILED &&
@@ -353,7 +353,7 @@ static bool check_pcm_info1d_retry(
 		      "PCM INFOMARKSa retry failed at sample %zu", index);
 		if (recovery.info1d_resends != 0u) {
 			CHECK(transmit == 0 &&
-			      event.kind == PCM_PHASE2_INFO1_EVENT_NONE,
+			      event.transport.kind == PHASE2_INFO1_EVENT_NONE,
 			      "PCM INFO1d retry consumed its marker interval");
 			break;
 		}
@@ -377,7 +377,7 @@ static bool check_pcm_info1d_retry(
 			      PHASE2_INFO1_OK &&
 		      transmit == expected,
 		      "PCM repeated INFO1d failed at sample %zu", index);
-		if (event.kind == PCM_PHASE2_INFO1_EVENT_LOCAL_INFO1D_SENT) {
+		if (event.transport.kind == PHASE2_INFO1_EVENT_LOCAL_FIRST_SENT) {
 			frame_complete = repeated_event.kind ==
 				PHASE2_INFO1_EVENT_LOCAL_FIRST_SENT;
 			retry_sent = true;
@@ -409,7 +409,7 @@ static bool check_pcm_info1d_retry(
 			      &late, received, &transmit, &event) ==
 			      PHASE2_INFO1_OK,
 		      "PCM INFO1a response failed at %zu", index);
-		if (event.kind == PCM_PHASE2_INFO1_EVENT_PEER_INFO1A_RECEIVED) {
+		if (event.transport.kind == PHASE2_INFO1_EVENT_PEER_SECOND_RECEIVED) {
 			late_received = true;
 			break;
 		}
@@ -417,7 +417,7 @@ static bool check_pcm_info1d_retry(
 	CHECK(late_received && late.analog_record_stored &&
 	      late.protocol == initial->protocol && late.info1d_resends == 1u &&
 	      late.control.phase == PHASE2_INFO1_SILENCE &&
-	      memcmp(event.frame_event.payload, peer_payload,
+	      memcmp(event.transport.frame_event.payload, peer_payload,
 		     V90_INFO1A_PAYLOAD_BYTES) == 0,
 	      "PCM INFO1a response did not complete the repeated exchange");
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
@@ -427,7 +427,7 @@ static bool check_pcm_info1d_retry(
 			      &recovery, 0, &transmit, &event) ==
 			      PHASE2_INFO1_OK,
 		      "PCM retry exhaustion failed at sample %zu", index);
-		if (event.kind == PCM_PHASE2_INFO1_EVENT_FAILED)
+		if (event.transport.kind == PHASE2_INFO1_EVENT_FAILED)
 			break;
 	}
 	CHECK(recovery.control.phase == PHASE2_INFO1_FAILED &&
@@ -451,7 +451,7 @@ static bool check_pcm_info1d_retry(
 			      &recovery, received, &transmit, &event) ==
 			      PHASE2_INFO1_OK,
 		      "PCM exhausted INFOMARKSa failed at sample %zu", index);
-		if (event.kind == PCM_PHASE2_INFO1_EVENT_RETRAIN_REQUESTED) {
+		if (event.transport.kind == PHASE2_INFO1_EVENT_RETRAIN_REQUESTED) {
 			retrain_requested = true;
 			break;
 		}
@@ -489,7 +489,7 @@ static bool check_v34_fallback_info1a(
 			      &digital, 0, &transmit, &event) ==
 			      PHASE2_INFO1_OK,
 		      "PCM INFO1d did not reach its fallback receive boundary");
-		if (event.kind == PCM_PHASE2_INFO1_EVENT_LOCAL_INFO1D_SENT) {
+		if (event.transport.kind == PHASE2_INFO1_EVENT_LOCAL_FIRST_SENT) {
 			local_sent = true;
 			break;
 		}
@@ -513,7 +513,7 @@ static bool check_v34_fallback_info1a(
 			      &digital, received, &transmit, &event) ==
 			      PHASE2_INFO1_OK,
 		      "PCM fallback receiver failed at sample %zu", index);
-		if (event.kind == PCM_PHASE2_INFO1_EVENT_PEER_INFO1A_RECEIVED) {
+		if (event.transport.kind == PHASE2_INFO1_EVENT_PEER_SECOND_RECEIVED) {
 			peer_received = true;
 			break;
 		}
@@ -651,11 +651,11 @@ static bool check_info1_exchange(
 		delay_line_transmit(
 			digital_to_analog,
 			codec_round_trip(digital_transmit, codec));
-		if (digital_event.kind ==
-		    PCM_PHASE2_INFO1_EVENT_LOCAL_INFO1D_SENT)
+		if (digital_event.transport.kind ==
+		    PHASE2_INFO1_EVENT_LOCAL_FIRST_SENT)
 			digital_sent = index;
-		if (analog_event.kind ==
-		    PCM_PHASE2_INFO1_EVENT_PEER_INFO1D_RECEIVED) {
+		if (analog_event.transport.kind ==
+		    PHASE2_INFO1_EVENT_PEER_FIRST_RECEIVED) {
 			struct pcm_phase2_info1_exchange before = analog;
 			bool peer_matches =
 				analog_event.peer_record.digital.protocol == protocol &&
@@ -714,15 +714,15 @@ static bool check_info1_exchange(
 			      "analog modem did not select INFO1 mode %d phase-continuously",
 			      mode);
 		}
-		if (analog_event.kind ==
-		    PCM_PHASE2_INFO1_EVENT_LOCAL_INFO1A_SENT) {
+		if (analog_event.transport.kind ==
+		    PHASE2_INFO1_EVENT_LOCAL_SECOND_SENT) {
 			analog_sent = index;
 			CHECK(analog.control.phase == PHASE2_INFO1_SILENCE &&
 			      analog.control.silence_samples == 0,
 			      "analog modem did not begin INFO1a silence at its line edge");
 		}
-		if (digital_event.kind ==
-		    PCM_PHASE2_INFO1_EVENT_PEER_INFO1A_RECEIVED) {
+		if (digital_event.transport.kind ==
+		    PHASE2_INFO1_EVENT_PEER_SECOND_RECEIVED) {
 			digital_received = index;
 			digital_silence_start = digital.control.silence_samples;
 			CHECK(digital_event.peer_record.analog.kind == expected_kind &&

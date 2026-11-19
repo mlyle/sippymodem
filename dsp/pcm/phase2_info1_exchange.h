@@ -54,6 +54,10 @@ enum phase2_info1_event_kind {
 	PHASE2_INFO1_EVENT_LOCAL_SECOND_SENT,
 	PHASE2_INFO1_EVENT_PEER_FRAME_REJECTED,
 	PHASE2_INFO1_EVENT_FAILED,
+	/* Resolved by the record adapter after checking the decoded payload. */
+	PHASE2_INFO1_EVENT_PEER_FIRST_RECEIVED,
+	PHASE2_INFO1_EVENT_PEER_SECOND_RECEIVED,
+	PHASE2_INFO1_EVENT_RETRAIN_REQUESTED,
 };
 
 struct phase2_info1_event {
@@ -158,6 +162,13 @@ enum phase2_info1_result phase2_info1_accept_peer(
 enum phase2_info1_result phase2_info1_reject_peer(
 	struct phase2_info1_exchange *exchange);
 
+/* Resolve a pending record after mode-specific decoding, keeping the original
+ * frame evidence. Rejecting on the deadline reports the same timeout as
+ * waiting without a record. The caller owns separate exchange and event state. */
+enum phase2_info1_result phase2_info1_resolve_peer(
+	struct phase2_info1_exchange *exchange, struct phase2_info1_event *event,
+	bool accepted);
+
 /* A mode owner may replace the role-specific peer deadline with a recovery
  * procedure. Recovery preserves the INFO receiver and local waveform: Signal
  * B remains silent while Signal A retains Tone A. A late peer INFO frame can
@@ -185,6 +196,14 @@ enum phase2_info1_result phase2_info1_reply_signal_a(
  * or reject PEER_FRAME_PENDING before requesting another sample. Terminal
  * states are silent and stable. */
 enum phase2_info1_result phase2_info1_sample(
+	struct phase2_info1_exchange *exchange,
+	int16_t received_sample, int16_t *transmit_sample,
+	struct phase2_info1_event *event);
+
+/* Advance validated scratch state with no pending frame. The record adapter
+ * owns the surrounding transaction and must validate the final state.
+ * On failure the scratch exchange may have advanced. */
+enum phase2_info1_result phase2_info1_sample_owned(
 	struct phase2_info1_exchange *exchange,
 	int16_t received_sample, int16_t *transmit_sample,
 	struct phase2_info1_event *event);

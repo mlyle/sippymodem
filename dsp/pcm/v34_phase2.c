@@ -779,34 +779,36 @@ static bool sample_info1(
 		    transmit_sample, &child) !=
 	    PHASE2_INFO1_OK)
 		return false;
-	switch (child.kind) {
-	case V34_PHASE2_INFO1_EVENT_NONE:
+	switch (child.transport.kind) {
+	case PHASE2_INFO1_EVENT_NONE:
 		break;
-	case V34_PHASE2_INFO1_EVENT_LOCAL_INFO1C_SENT:
+	case PHASE2_INFO1_EVENT_LOCAL_FIRST_SENT:
 		event->kind = V34_PHASE2_EVENT_LOCAL_INFO1C_SENT;
 		break;
-	case V34_PHASE2_INFO1_EVENT_PEER_INFO1C_RECEIVED:
+	case PHASE2_INFO1_EVENT_PEER_FIRST_RECEIVED:
 		event->kind = V34_PHASE2_EVENT_PEER_INFO1C_RECEIVED;
 		break;
-	case V34_PHASE2_INFO1_EVENT_LOCAL_INFO1A_SENT:
+	case PHASE2_INFO1_EVENT_LOCAL_SECOND_SENT:
 		event->kind = V34_PHASE2_EVENT_LOCAL_INFO1A_SENT;
 		break;
-	case V34_PHASE2_INFO1_EVENT_PEER_INFO1A_RECEIVED:
+	case PHASE2_INFO1_EVENT_PEER_SECOND_RECEIVED:
 		event->kind = V34_PHASE2_EVENT_PEER_INFO1A_RECEIVED;
 		break;
-	case V34_PHASE2_INFO1_EVENT_PEER_FRAME_REJECTED:
+	case PHASE2_INFO1_EVENT_PEER_FRAME_REJECTED:
 		event->kind = V34_PHASE2_EVENT_PEER_INFO1_REJECTED;
 		break;
-	case V34_PHASE2_INFO1_EVENT_FAILED:
-		if (child.failure != PHASE2_INFO1_PEER_TIMEOUT ||
+	case PHASE2_INFO1_EVENT_FAILED:
+		if (child.transport.failure != PHASE2_INFO1_PEER_TIMEOUT ||
 		    phase2_info1_recover(&phase2->state.info1.control) !=
 			    PHASE2_INFO1_OK)
 			return false;
 		event->kind = V34_PHASE2_EVENT_INFO1_RECOVERY_STARTED;
 		break;
+	default:
+		return false;
 	}
-	if ((child.kind == V34_PHASE2_INFO1_EVENT_PEER_INFO1C_RECEIVED ||
-	     child.kind == V34_PHASE2_INFO1_EVENT_PEER_INFO1A_RECEIVED) &&
+	if ((child.transport.kind == PHASE2_INFO1_EVENT_PEER_FIRST_RECEIVED ||
+	     child.transport.kind == PHASE2_INFO1_EVENT_PEER_SECOND_RECEIVED) &&
 	    !info1_records_are_consistent(phase2)) {
 		phase2->failure = V34_PHASE2_FAILURE_INCONSISTENT_INFO1;
 		event->kind = V34_PHASE2_EVENT_FAILED;

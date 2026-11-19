@@ -1042,32 +1042,32 @@ static bool sample_info1(
 		    &phase2->state.info1, received_sample,
 		    transmit_sample, &child) != PHASE2_INFO1_OK)
 		return false;
-	switch (child.kind) {
-	case PCM_PHASE2_INFO1_EVENT_NONE:
+	switch (child.transport.kind) {
+	case PHASE2_INFO1_EVENT_NONE:
 		return true;
-	case PCM_PHASE2_INFO1_EVENT_LOCAL_INFO1D_SENT:
+	case PHASE2_INFO1_EVENT_LOCAL_FIRST_SENT:
 		event->kind = PCM_PHASE2_EVENT_LOCAL_INFO1D_SENT;
 		return true;
-	case PCM_PHASE2_INFO1_EVENT_PEER_INFO1D_RECEIVED:
+	case PHASE2_INFO1_EVENT_PEER_FIRST_RECEIVED:
 		event->kind = PCM_PHASE2_EVENT_PEER_INFO1D_RECEIVED;
 		return true;
-	case PCM_PHASE2_INFO1_EVENT_LOCAL_INFO1A_SENT:
+	case PHASE2_INFO1_EVENT_LOCAL_SECOND_SENT:
 		event->kind = PCM_PHASE2_EVENT_LOCAL_INFO1A_SENT;
 		return true;
-	case PCM_PHASE2_INFO1_EVENT_PEER_INFO1A_RECEIVED:
+	case PHASE2_INFO1_EVENT_PEER_SECOND_RECEIVED:
 		event->kind = PCM_PHASE2_EVENT_PEER_INFO1A_RECEIVED;
 		return true;
-	case PCM_PHASE2_INFO1_EVENT_PEER_FRAME_REJECTED:
+	case PHASE2_INFO1_EVENT_PEER_FRAME_REJECTED:
 		event->kind = PCM_PHASE2_EVENT_PEER_INFO1_REJECTED;
 		return true;
-	case PCM_PHASE2_INFO1_EVENT_RETRAIN_REQUESTED:
+	case PHASE2_INFO1_EVENT_RETRAIN_REQUESTED:
 		event->kind = PCM_PHASE2_EVENT_RETRAIN_REQUESTED;
 		return true;
-	case PCM_PHASE2_INFO1_EVENT_FAILED:
+	case PHASE2_INFO1_EVENT_FAILED:
 		if (phase2->startup.phase2 == PCM_PHASE2_SHORT) {
 			struct pcm_phase2_ranging recovered = phase2->state.short_recovery;
 			if (phase2->local_role != V90_DIGITAL_MODEM ||
-			    child.failure != PHASE2_INFO1_PEER_TIMEOUT ||
+			    child.transport.failure != PHASE2_INFO1_PEER_TIMEOUT ||
 			    !pcm_phase2_ranging_recover_short_info1(&recovered))
 				return false;
 			phase2->state.ranging = recovered;
@@ -1077,14 +1077,15 @@ static bool sample_info1(
 			event->kind = PCM_PHASE2_EVENT_SHORT_RECOVERY_STARTED;
 			return true;
 		}
-		if (child.failure != PHASE2_INFO1_PEER_TIMEOUT ||
+		if (child.transport.failure != PHASE2_INFO1_PEER_TIMEOUT ||
 		    phase2_info1_recover(&phase2->state.info1.control) !=
 			    PHASE2_INFO1_OK)
 			return false;
 		event->kind = PCM_PHASE2_EVENT_INFO1_RECOVERY_STARTED;
 		return true;
+	default:
+		return false;
 	}
-	return false;
 }
 
 enum pcm_phase2_result pcm_phase2_sample(

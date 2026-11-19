@@ -90,26 +90,11 @@ enum phase2_info1_result v34_phase2_info1_exchange_answerer_reply(
 	return PHASE2_INFO1_OK;
 }
 
-static bool reject_peer_frame(
-	struct v34_phase2_info1_exchange *exchange,
-	struct v34_phase2_info1_exchange_event *event)
-{
-	if (phase2_info1_reject_peer(&exchange->control) != PHASE2_INFO1_OK)
-		return false;
-	if (exchange->control.phase == PHASE2_INFO1_FAILED) {
-		event->kind = V34_PHASE2_INFO1_EVENT_FAILED;
-		event->failure = exchange->control.failure;
-	} else {
-		event->kind = V34_PHASE2_INFO1_EVENT_PEER_FRAME_REJECTED;
-	}
-	return true;
-}
-
 static bool resolve_peer_frame(
 	struct v34_phase2_info1_exchange *exchange,
-	const struct v34_phase2_info_event *frame,
 	struct v34_phase2_info1_exchange_event *event)
 {
+	const struct v34_phase2_info_event *frame = &event->transport.frame_event;
 	union v34_phase2_info1_parameters decoded = { 0 };
 	bool valid;
 
@@ -123,56 +108,15 @@ static bool resolve_peer_frame(
 				frame->payload, sizeof(frame->payload),
 				frame->payload_bit_count, &decoded.info1c) ==
 			V34_INFO1_OK;
-	if (!valid)
-		return reject_peer_frame(exchange, event);
-	if (phase2_info1_accept_peer(&exchange->control) != PHASE2_INFO1_OK)
+	if (phase2_info1_resolve_peer(&exchange->control, &event->transport, valid) !=
+	    PHASE2_INFO1_OK)
 		return false;
-	exchange->peer_parameters = decoded;
-	exchange->peer_parameters_received = true;
-	event->peer_parameters = decoded;
-	event->kind = exchange->control.signal_role == PHASE2_SIGNAL_B ?
-			      V34_PHASE2_INFO1_EVENT_PEER_INFO1A_RECEIVED :
-			      V34_PHASE2_INFO1_EVENT_PEER_INFO1C_RECEIVED;
-	return true;
-}
-
-static bool map_common_event(
-	struct v34_phase2_info1_exchange *exchange,
-	const struct phase2_info1_event *common,
-	struct v34_phase2_info1_exchange_event *event)
-{
-	event->frame_event = common->frame_event;
-	switch (common->kind) {
-	case PHASE2_INFO1_EVENT_NONE:
-		return true;
-	case PHASE2_INFO1_EVENT_LOCAL_FIRST_SENT:
-		event->kind = V34_PHASE2_INFO1_EVENT_LOCAL_INFO1C_SENT;
-		return true;
-	case PHASE2_INFO1_EVENT_PEER_FRAME_STARTED:
-		return true;
-	case PHASE2_INFO1_EVENT_PEER_INFOMARKS:
-		/* V.34 11.2.2.1.6: after the peer deadline, INFOMARKSa
-		 * requests INFO1c again. Reuse the retained record and its
-		 * normal response deadline; the host bounds the whole call. */
-		if (exchange->control.signal_role != PHASE2_SIGNAL_B ||
-		    exchange->control.phase != PHASE2_INFO1_RECOVERING)
-			return true;
-		return phase2_info1_repeat_signal_b(&exchange->control) ==
-		       PHASE2_INFO1_OK;
-	case PHASE2_INFO1_EVENT_PEER_FRAME_PENDING:
-		return resolve_peer_frame(exchange, &common->frame_event, event);
-	case PHASE2_INFO1_EVENT_LOCAL_SECOND_SENT:
-		event->kind = V34_PHASE2_INFO1_EVENT_LOCAL_INFO1A_SENT;
-		return true;
-	case PHASE2_INFO1_EVENT_PEER_FRAME_REJECTED:
-		event->kind = V34_PHASE2_INFO1_EVENT_PEER_FRAME_REJECTED;
-		return true;
-	case PHASE2_INFO1_EVENT_FAILED:
-		event->kind = V34_PHASE2_INFO1_EVENT_FAILED;
-		event->failure = common->failure;
-		return true;
+	if (valid) {
+		exchange->peer_parameters = decoded;
+		exchange->peer_parameters_received = true;
+		event->peer_parameters = decoded;
 	}
-	return false;
+	return true;
 }
 
 enum phase2_info1_result v34_phase2_info1_exchange_sample(
@@ -182,18 +126,35 @@ enum phase2_info1_result v34_phase2_info1_exchange_sample(
 {
 	struct v34_phase2_info1_exchange next;
 	struct v34_phase2_info1_exchange_event emitted = { 0 };
-	struct phase2_info1_event common;
 	int16_t generated;
 
 	if (!v34_phase2_info1_exchange_is_valid(exchange) ||
 	    transmit_sample == NULL || event == NULL)
 		return PHASE2_INFO1_INVALID_ARGUMENT;
 	next = *exchange;
-	if (phase2_info1_sample(
-		    &next.control, received_sample, &generated, &common) !=
-		    PHASE2_INFO1_OK ||
-	    !map_common_event(&next, &common, &emitted) ||
-	    !v34_phase2_info1_exchange_is_valid(&next))
+	if (phase2_info1_sample_owned(
+		    &next.control, received_sample, &generated, &emitted.transport) !=
+	    PHASE2_INFO1_OK)
+		return PHASE2_INFO1_INVALID_ARGUMENT;
+	switch (emitted.transport.kind) {
+	case PHASE2_INFO1_EVENT_PEER_FRAME_PENDING:
+		if (!resolve_peer_frame(&next, &emitted))
+			return PHASE2_INFO1_INVALID_ARGUMENT;
+		break;
+	case PHASE2_INFO1_EVENT_PEER_INFOMARKS:
+		/* Retain V.34 INFO1c resend policy in the mode owner. */
+		if (next.control.signal_role == PHASE2_SIGNAL_B &&
+		    next.control.phase == PHASE2_INFO1_RECOVERING &&
+		    phase2_info1_repeat_signal_b(&next.control) != PHASE2_INFO1_OK)
+			return PHASE2_INFO1_INVALID_ARGUMENT;
+		/* fall through */
+	case PHASE2_INFO1_EVENT_PEER_FRAME_STARTED:
+		emitted.transport.kind = PHASE2_INFO1_EVENT_NONE;
+		break;
+	default:
+		break;
+	}
+	if (!v34_phase2_info1_exchange_is_valid(&next))
 		return PHASE2_INFO1_INVALID_ARGUMENT;
 	*exchange = next;
 	*transmit_sample = generated;

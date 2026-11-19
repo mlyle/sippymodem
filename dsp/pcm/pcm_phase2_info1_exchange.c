@@ -282,21 +282,6 @@ enum phase2_info1_result pcm_phase2_info1_reply_pcm(
 	return reply_analog(exchange, &selected, payload);
 }
 
-static bool reject_peer_frame(
-	struct pcm_phase2_info1_exchange *exchange,
-	struct pcm_phase2_info1_event *event)
-{
-	if (phase2_info1_reject_peer(&exchange->control) != PHASE2_INFO1_OK)
-		return false;
-	if (exchange->control.phase == PHASE2_INFO1_FAILED) {
-		event->kind = PCM_PHASE2_INFO1_EVENT_FAILED;
-		event->failure = exchange->control.failure;
-	} else {
-		event->kind = PCM_PHASE2_INFO1_EVENT_PEER_FRAME_REJECTED;
-	}
-	return true;
-}
-
 static bool decode_digital_record(
 	const struct pcm_phase2_info1_exchange *exchange,
 	const struct v34_phase2_info_event *frame,
@@ -388,9 +373,9 @@ static bool decode_analog_record(
 
 static bool resolve_peer_frame(
 	struct pcm_phase2_info1_exchange *exchange,
-	const struct v34_phase2_info_event *frame,
 	struct pcm_phase2_info1_event *event)
 {
+	const struct v34_phase2_info_event *frame = &event->transport.frame_event;
 	struct pcm_info1d digital = { 0 };
 	struct pcm_phase2_info1a analog = { 0 };
 	bool peer_is_analog =
@@ -399,69 +384,38 @@ static bool resolve_peer_frame(
 		decode_analog_record(exchange, frame, &analog) :
 		decode_digital_record(exchange, frame, &digital);
 
-	if (!valid)
-		return reject_peer_frame(exchange, event);
-	if (phase2_info1_accept_peer(&exchange->control) != PHASE2_INFO1_OK)
+	if (phase2_info1_resolve_peer(&exchange->control, &event->transport, valid) !=
+	    PHASE2_INFO1_OK)
 		return false;
+	if (!valid)
+		return true;
 	if (peer_is_analog) {
 		exchange->analog = analog;
 		exchange->analog_record_stored = true;
 		event->peer_record.analog = analog;
-		event->kind = PCM_PHASE2_INFO1_EVENT_PEER_INFO1A_RECEIVED;
 	} else {
 		exchange->digital = digital;
 		exchange->digital_record_stored = true;
 		event->peer_record.digital = digital;
-		event->kind = PCM_PHASE2_INFO1_EVENT_PEER_INFO1D_RECEIVED;
 	}
 	return true;
 }
 
-static bool map_common_event(
-	struct pcm_phase2_info1_exchange *exchange,
-	const struct phase2_info1_event *common,
-	struct pcm_phase2_info1_event *event)
+static bool recover_on_infomarks(
+	struct pcm_phase2_info1_exchange *exchange, struct phase2_info1_event *event)
 {
-	event->frame_event = common->frame_event;
-	switch (common->kind) {
-	case PHASE2_INFO1_EVENT_NONE:
+	if (exchange->control.signal_role != PHASE2_SIGNAL_B ||
+	    exchange->control.phase != PHASE2_INFO1_RECOVERING)
 		return true;
-	case PHASE2_INFO1_EVENT_LOCAL_FIRST_SENT:
-		event->kind = PCM_PHASE2_INFO1_EVENT_LOCAL_INFO1D_SENT;
-		return true;
-	case PHASE2_INFO1_EVENT_PEER_FRAME_STARTED:
-		return true;
-	case PHASE2_INFO1_EVENT_PEER_INFOMARKS:
-		/* V.92 9.3 shares V.90 9.2.1.2.6 recovery: INFOMARKSa
-		 * permits INFO1d resend or full retrain. Bound resends to one
-		 * before selecting full retrain on a repeated request. */
-		if (exchange->control.signal_role != PHASE2_SIGNAL_B ||
-		    exchange->control.phase != PHASE2_INFO1_RECOVERING)
-			return true;
-		if (!pcm_phase2_info1_retry_pending(exchange))
-			event->kind =
-				PCM_PHASE2_INFO1_EVENT_RETRAIN_REQUESTED;
-		else {
-			if (phase2_info1_repeat_signal_b(&exchange->control) !=
-			    PHASE2_INFO1_OK)
-				return false;
-			exchange->info1d_resends++;
-		}
-		return true;
-	case PHASE2_INFO1_EVENT_PEER_FRAME_PENDING:
-		return resolve_peer_frame(exchange, &common->frame_event, event);
-	case PHASE2_INFO1_EVENT_LOCAL_SECOND_SENT:
-		event->kind = PCM_PHASE2_INFO1_EVENT_LOCAL_INFO1A_SENT;
-		return true;
-	case PHASE2_INFO1_EVENT_PEER_FRAME_REJECTED:
-		event->kind = PCM_PHASE2_INFO1_EVENT_PEER_FRAME_REJECTED;
-		return true;
-	case PHASE2_INFO1_EVENT_FAILED:
-		event->kind = PCM_PHASE2_INFO1_EVENT_FAILED;
-		event->failure = common->failure;
+	/* Bound INFOMARKSa requests to one resend before full retrain. */
+	if (!pcm_phase2_info1_retry_pending(exchange)) {
+		event->kind = PHASE2_INFO1_EVENT_RETRAIN_REQUESTED;
 		return true;
 	}
-	return false;
+	if (phase2_info1_repeat_signal_b(&exchange->control) != PHASE2_INFO1_OK)
+		return false;
+	exchange->info1d_resends++;
+	return true;
 }
 
 enum phase2_info1_result pcm_phase2_info1_sample(
@@ -471,7 +425,6 @@ enum phase2_info1_result pcm_phase2_info1_sample(
 {
 	struct pcm_phase2_info1_exchange next;
 	struct pcm_phase2_info1_event emitted = { 0 };
-	struct phase2_info1_event common;
 	int16_t generated;
 
 	if (!pcm_phase2_info1_is_valid(exchange) ||
@@ -479,11 +432,27 @@ enum phase2_info1_result pcm_phase2_info1_sample(
 		return PHASE2_INFO1_INVALID_ARGUMENT;
 	next = *exchange;
 	emitted.protocol = next.protocol;
-	if (phase2_info1_sample(
-		    &next.control, received_sample, &generated, &common) !=
-		    PHASE2_INFO1_OK ||
-	    !map_common_event(&next, &common, &emitted) ||
-	    !pcm_phase2_info1_is_valid(&next))
+	if (phase2_info1_sample_owned(
+		    &next.control, received_sample, &generated, &emitted.transport) !=
+	    PHASE2_INFO1_OK)
+		return PHASE2_INFO1_INVALID_ARGUMENT;
+	switch (emitted.transport.kind) {
+	case PHASE2_INFO1_EVENT_PEER_FRAME_PENDING:
+		if (!resolve_peer_frame(&next, &emitted))
+			return PHASE2_INFO1_INVALID_ARGUMENT;
+		break;
+	case PHASE2_INFO1_EVENT_PEER_INFOMARKS:
+		emitted.transport.kind = PHASE2_INFO1_EVENT_NONE;
+		if (!recover_on_infomarks(&next, &emitted.transport))
+			return PHASE2_INFO1_INVALID_ARGUMENT;
+		break;
+	case PHASE2_INFO1_EVENT_PEER_FRAME_STARTED:
+		emitted.transport.kind = PHASE2_INFO1_EVENT_NONE;
+		break;
+	default:
+		break;
+	}
+	if (!pcm_phase2_info1_is_valid(&next))
 		return PHASE2_INFO1_INVALID_ARGUMENT;
 	*exchange = next;
 	*transmit_sample = generated;

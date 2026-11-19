@@ -244,11 +244,11 @@ static bool check_bidirectional_exchange(
 		CHECK(exchange_pair_sample(&pair, &event),
 		      "INFO1 exchange failed for codec %d delay %zu at sample %zu",
 		      codec, delay_samples, index);
-		if (event.caller.kind ==
-		    V34_PHASE2_INFO1_EVENT_LOCAL_INFO1C_SENT)
+		if (event.caller.transport.kind ==
+		    PHASE2_INFO1_EVENT_LOCAL_FIRST_SENT)
 			caller_sent = index;
-		if (event.answerer.kind ==
-		    V34_PHASE2_INFO1_EVENT_PEER_INFO1C_RECEIVED) {
+		if (event.answerer.transport.kind ==
+		    PHASE2_INFO1_EVENT_PEER_FIRST_RECEIVED) {
 			answerer_received = index;
 			CHECK(info1c_equal(
 				      &event.answerer.peer_parameters.info1c,
@@ -266,16 +266,16 @@ static bool check_bidirectional_exchange(
 				      pair.answerer.control.signal_a_tone.guard_phase,
 			      "Tone A to INFO1a phase continuity changed");
 		}
-		if (event.answerer.kind ==
-		    V34_PHASE2_INFO1_EVENT_LOCAL_INFO1A_SENT) {
+		if (event.answerer.transport.kind ==
+		    PHASE2_INFO1_EVENT_LOCAL_SECOND_SENT) {
 			answerer_sent = index;
 			CHECK(pair.answerer.control.phase ==
 				      PHASE2_INFO1_SILENCE &&
 			      pair.answerer.control.silence_samples == 0,
 			      "answerer did not begin INFO1a silence at its line edge");
 		}
-		if (event.caller.kind ==
-		    V34_PHASE2_INFO1_EVENT_PEER_INFO1A_RECEIVED) {
+		if (event.caller.transport.kind ==
+		    PHASE2_INFO1_EVENT_PEER_SECOND_RECEIVED) {
 			caller_received = index;
 			caller_silence_start =
 				pair.caller.control.silence_samples;
@@ -343,8 +343,8 @@ static bool check_bidirectional_exchange(
 		invalid.control.silence_samples--;
 		CHECK(exchange_pair_sample(&pair, &event) &&
 		      event.caller_transmit == 0 && event.answerer_transmit == 0 &&
-		      event.caller.kind == V34_PHASE2_INFO1_EVENT_NONE &&
-		      event.answerer.kind == V34_PHASE2_INFO1_EVENT_NONE &&
+		      event.caller.transport.kind == PHASE2_INFO1_EVENT_NONE &&
+		      event.answerer.transport.kind == PHASE2_INFO1_EVENT_NONE &&
 		      memcmp(&pair.caller, &caller, sizeof(caller)) == 0 &&
 		      memcmp(&pair.answerer, &answerer, sizeof(answerer)) == 0 &&
 		      !v34_phase2_info1_exchange_is_valid(&invalid),
@@ -431,7 +431,7 @@ static bool test_exact_deadlines(void)
 	      caller.control.peer_deadline_elapsed_samples == caller_deadline &&
 	      caller.control.failure == PHASE2_INFO1_PEER_TIMEOUT &&
 	      !phase2_info1_is_waiting_for_peer(&caller.control) &&
-	      event.kind == V34_PHASE2_INFO1_EVENT_FAILED,
+	      event.transport.kind == PHASE2_INFO1_EVENT_FAILED,
 	      "caller did not fail exactly 700 ms plus RTD after INFO1c");
 
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
@@ -452,7 +452,7 @@ static bool test_exact_deadlines(void)
 		      answerer_deadline - answerer_initial_elapsed &&
 	      answerer.control.peer_deadline_elapsed_samples == answerer_deadline &&
 	      answerer.control.failure == PHASE2_INFO1_PEER_TIMEOUT &&
-	      event.kind == V34_PHASE2_INFO1_EVENT_FAILED,
+	      event.transport.kind == PHASE2_INFO1_EVENT_FAILED,
 	      "answerer did not preserve the 2000 ms plus two-RTD epoch");
 
 	terminal = caller;
@@ -461,7 +461,7 @@ static bool test_exact_deadlines(void)
 		      &caller, INT16_MIN, &transmit, &event) ==
 		      PHASE2_INFO1_OK &&
 	      transmit == 0 &&
-	      event.kind == V34_PHASE2_INFO1_EVENT_NONE &&
+	      event.transport.kind == PHASE2_INFO1_EVENT_NONE &&
 	      memcmp(&caller, &terminal, sizeof(caller)) == 0,
 	      "failed INFO1 controller was not silent and stable");
 	CHECK(phase2_info1_repeat_signal_b(&caller.control) ==
@@ -536,7 +536,7 @@ static bool check_infomarks_recovery(enum test_codec codec)
 				      &observed) == V34_PHASE2_INFO_AUDIO_OK,
 			      "INFOMARKSa recovery sample failed");
 			waited += waiting;
-			sent += event.kind == V34_PHASE2_INFO1_EVENT_LOCAL_INFO1C_SENT;
+			sent += event.transport.kind == PHASE2_INFO1_EVENT_LOCAL_FIRST_SENT;
 			if (observed.type == V34_PHASE2_INFO_FRAME_RECEIVED) {
 				struct v34_info1c decoded;
 
@@ -586,7 +586,7 @@ static bool check_infomarks_recovery(enum test_codec codec)
 			      &caller, codec_round_trip(rx, codec), &tx, &event) ==
 			      PHASE2_INFO1_OK,
 		      "INFO1a reception failed after resend");
-		received_reply = event.kind == V34_PHASE2_INFO1_EVENT_PEER_INFO1A_RECEIVED;
+		received_reply = event.transport.kind == PHASE2_INFO1_EVENT_PEER_SECOND_RECEIVED;
 	}
 	CHECK(received_reply && info1a_equal(&event.peer_parameters.info1a, &selected),
 	      "codec %d: retry did not accept the peer's valid INFO1a", codec);
@@ -661,8 +661,8 @@ static bool test_semantic_frame_rejection(void)
 			      PHASE2_INFO1_OK,
 		      "caller failed while rejecting semantic frame");
 		received_samples++;
-		rejected = event.kind ==
-			   V34_PHASE2_INFO1_EVENT_PEER_FRAME_REJECTED;
+		rejected = event.transport.kind ==
+			   PHASE2_INFO1_EVENT_PEER_FRAME_REJECTED;
 	}
 	CHECK(rejected &&
 	      caller.control.phase == PHASE2_INFO1_WAITING_FOR_PEER &&
