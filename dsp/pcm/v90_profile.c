@@ -502,77 +502,217 @@ static bool choose_cardinalities(const struct v90_pcm_mapping *mapping,
 	return fits;
 }
 
-struct constellation_margin {
-	uint32_t noise;
-	uint32_t postcursor_q15;
+enum {
+	MARGIN_UNITY = 32768,
+	/* Two mirrored supports per positive gap, plus the sign boundary. */
+	MARGIN_LINES_PER_PHASE = 2 * PCM_CONSTELLATION_UCODES - 1,
 };
 
-/* The right label begins at edge. Test each neighboring symbol against that
- * exact raw-input boundary. The worst one-sample postcursor comes from an
- * extreme of the preceding phase. Scale by 32768 before truncation. */
-static void include_decision_edge(struct constellation_margin *margin,
-	int left, int right, int edge, int previous_peak)
+struct margin_line {
+	int32_t room;
+	int32_t approach;
+};
+
+struct margin_position {
+	uint32_t numerator;
+	uint32_t denominator;
+};
+
+struct margin_segment {
+	struct margin_line line;
+	struct margin_position start;
+};
+
+struct decision_curve {
+	struct margin_segment segment[V90_CP_FRAME_INTERVALS * MARGIN_LINES_PER_PHASE];
+	size_t count;
+};
+
+static int32_t room_below(int point, int limit)
 {
-	enum { UNITY = 32768 };
-	int left_limit = edge - 1;
-	uint32_t left_noise = (uint32_t)(left_limit - left);
-	uint32_t right_noise = (uint32_t)(right - edge);
-	if (left_noise < margin->noise)
-		margin->noise = left_noise;
-	if (right_noise < margin->noise)
-		margin->noise = right_noise;
-	if (previous_peak > left) {
-		uint32_t room = left_noise * UNITY + (left_limit >= 0 ? UNITY - 1u : 0u);
-		uint32_t q = room / (uint32_t)(previous_peak - left);
-		if (q < margin->postcursor_q15)
-			margin->postcursor_q15 = q;
+	return (limit - point) * MARGIN_UNITY +
+		(limit >= 0 ? MARGIN_UNITY - 1 : 0);
+}
+
+static int32_t room_above(int point, int limit)
+{
+	return (point - limit) * MARGIN_UNITY +
+		(limit <= 0 ? MARGIN_UNITY - 1 : 0);
+}
+
+/* Each support is the room before truncation at one exact codec boundary,
+ * diminished by the movement toward that boundary from the worst preceding
+ * symbol. Reflected signed neighbors have the same approach, so only the
+ * tighter bound of each pair can affect the envelope. */
+static size_t phase_margin_lines(enum g711_law law,
+	const struct pcm_constellation *row, int *previous_peak,
+	struct margin_line lines[MARGIN_LINES_PER_PHASE])
+{
+	size_t count = pcm_constellation_count(row);
+	if (count == 0)
+		return 0;
+	int peak = *previous_peak;
+	unsigned code = pcm_constellation_next(row, 0);
+	int lower = g711_decode(law, g711_ucode_positive_octet(law, (uint8_t)code));
+	if (lower <= 0)
+		return 0;
+
+	/* Fill by increasing approach: left edges in reverse Ucode order,
+	 * the sign edge, then right edges in forward order. */
+	size_t left = count - 1u, right = count;
+	lines[left] = (struct margin_line){ room_below(-lower, -1), peak + lower };
+	for (code = pcm_constellation_next(row, code + 1u);
+	     code < PCM_CONSTELLATION_UCODES;
+	     code = pcm_constellation_next(row, code + 1u)) {
+		int upper = g711_decode(law, g711_ucode_positive_octet(law, (uint8_t)code));
+		/* Ties in the reconstructed magnitude go to the larger label. */
+		int midpoint = (lower + upper + 1) / 2;
+		uint8_t octet = g711_encode(law, (int16_t)midpoint);
+		if (g711_decode(law, octet) < midpoint) {
+			uint8_t ucode = octet ^ g711_ucode_positive_octet(law, 0);
+			octet = g711_ucode_positive_octet(law, (uint8_t)(ucode + 1u));
+		}
+		struct g711_interval positive, negative;
+		if (!g711_octet_interval(law, octet, &positive) ||
+		    !g711_octet_interval(law, octet ^ 0x80u, &negative))
+			return 0;
+		int32_t left_room = room_below(lower, positive.lower - 1);
+		int32_t left_mirror = room_above(-lower, negative.upper + 1);
+		int32_t right_room = room_above(upper, positive.lower);
+		int32_t right_mirror = room_below(-upper, negative.upper);
+		lines[--left] = (struct margin_line){
+			left_room < left_mirror ? left_room : left_mirror, peak - lower,
+		};
+		lines[right++] = (struct margin_line){
+			right_room < right_mirror ? right_room : right_mirror, peak + upper,
+		};
+		lower = upper;
 	}
-	if (-previous_peak < right) {
-		uint32_t room = right_noise * UNITY + (edge <= 0 ? UNITY - 1u : 0u);
-		uint32_t q = room / (uint32_t)(right + previous_peak);
-		if (q < margin->postcursor_q15)
-			margin->postcursor_q15 = q;
+	*previous_peak = lower;
+	return right;
+}
+
+static bool margin_position_less(struct margin_position a, struct margin_position b)
+{
+	/* Rooms span at most the signed 16-bit input range scaled by 32768.
+	 * Approach differences fit within four times that unscaled range. */
+	return (uint64_t)a.numerator * b.denominator < (uint64_t)b.numerator * a.denominator;
+}
+
+static void add_margin_support(struct decision_curve *curve, struct margin_line line)
+{
+	const struct margin_position limit = { MARGIN_UNITY, 1 };
+	struct margin_segment next = { line, { 0, 1 } };
+
+	while (curve->count != 0) {
+		const struct margin_segment *last = &curve->segment[curve->count - 1u];
+		int32_t faster = line.approach - last->line.approach;
+		int64_t later = (int64_t)line.room - last->line.room;
+		/* Merge order gives the smallest room first at equal approach. */
+		if (faster == 0)
+			return;
+		if (later > 0) {
+			struct margin_position cross = { (uint32_t)later, (uint32_t)faster };
+			if (margin_position_less(last->start, cross)) {
+				if (margin_position_less(cross, limit)) {
+					next.start = cross;
+					curve->segment[curve->count++] = next;
+				}
+				return;
+			}
+		}
+		/* This support is replaced before it would have become active. */
+		curve->count--;
+	}
+	curve->segment[curve->count++] = next;
+}
+
+static bool build_decision_curve(enum g711_law law,
+	const struct pcm_constellation selected[V90_CP_FRAME_INTERVALS],
+	struct decision_curve *curve)
+{
+	struct margin_line lines[V90_CP_FRAME_INTERVALS][MARGIN_LINES_PER_PHASE];
+	size_t limit[V90_CP_FRAME_INTERVALS], cursor[V90_CP_FRAME_INTERVALS] = { 0 };
+	uint8_t code;
+	if (!pcm_constellation_descending_select(&selected[V90_CP_FRAME_INTERVALS - 1u], 0, &code))
+		return false;
+	int peak = g711_decode(law, g711_ucode_positive_octet(law, code));
+	for (unsigned phase = 0; phase < V90_CP_FRAME_INTERVALS; ++phase) {
+		limit[phase] = phase_margin_lines(law, &selected[phase], &peak, lines[phase]);
+		if (limit[phase] == 0)
+			return false;
+	}
+
+	/* Merge six ordered runs. This keeps the envelope construction
+	 * bounded by the number of edges, with a fixed array and no heap. */
+	curve->count = 0;
+	for (;;) {
+		const struct margin_line *first = NULL;
+		unsigned next = 0;
+		for (unsigned phase = 0; phase < V90_CP_FRAME_INTERVALS; ++phase) {
+			if (cursor[phase] == limit[phase])
+				continue;
+			const struct margin_line *line = &lines[phase][cursor[phase]];
+			if (first == NULL || line->approach < first->approach ||
+			    (line->approach == first->approach && line->room < first->room)) {
+				first = line;
+				next = phase;
+			}
+		}
+		if (first == NULL)
+			return true;
+		add_margin_support(curve, *first);
+		++cursor[next];
 	}
 }
 
-static struct constellation_margin decision_margins(enum g711_law law,
+static uint32_t postcursor_limit(const struct decision_curve *curve)
+{
+	uint32_t limit = MARGIN_UNITY;
+	for (size_t i = 0; i < curve->count; ++i) {
+		struct margin_line line = curve->segment[i].line;
+		if (line.approach > 0) {
+			uint32_t q = (uint32_t)line.room / (uint32_t)line.approach;
+			if (q < limit)
+				limit = q;
+		}
+	}
+	return limit;
+}
+
+static int64_t margin_at(struct margin_line line, struct margin_position q)
+{
+	return (int64_t)line.room * q.denominator - (int64_t)line.approach * q.numerator;
+}
+
+static bool preserves_joint_margin(enum g711_law law,
+	const struct pcm_constellation original[V90_CP_FRAME_INTERVALS],
 	const struct pcm_constellation selected[V90_CP_FRAME_INTERVALS])
 {
-	struct constellation_margin margin = { UINT32_MAX, 32768 };
-	unsigned last_code = 0;
-	const struct pcm_constellation *last = &selected[V90_CP_FRAME_INTERVALS - 1u];
-	for (unsigned code = pcm_constellation_next(last, 0); code < PCM_CONSTELLATION_UCODES;
-	     code = pcm_constellation_next(last, code + 1u))
-		last_code = code;
-	int previous_peak = g711_decode(law, g711_ucode_positive_octet(law, (uint8_t)last_code));
+	struct decision_curve before, after;
+	if (!build_decision_curve(law, original, &before) ||
+	    !build_decision_curve(law, selected, &after) ||
+	    after.segment[0].line.room < before.segment[0].line.room)
+		return false;
 
-	for (unsigned slot = 0; slot < V90_CP_FRAME_INTERVALS; ++slot) {
-		unsigned code = pcm_constellation_next(selected + slot, 0);
-		int lower = g711_decode(law, g711_ucode_positive_octet(law, (uint8_t)code));
-		include_decision_edge(&margin, -lower, lower, 0, previous_peak);
-		for (code = pcm_constellation_next(selected + slot, code + 1u);
-		     code < PCM_CONSTELLATION_UCODES;
-		     code = pcm_constellation_next(selected + slot, code + 1u)) {
-			int upper = g711_decode(law, g711_ucode_positive_octet(law, (uint8_t)code));
-			/* The slicer gives ties to the larger magnitude. Find its
-			 * first codec cell on either sign of the midpoint. */
-			int midpoint = (lower + upper + 1) / 2;
-			uint8_t octet = g711_encode(law, (int16_t)midpoint);
-			if (g711_decode(law, octet) < midpoint) {
-				uint8_t ucode = octet ^ g711_ucode_positive_octet(law, 0);
-				octet = g711_ucode_positive_octet(law, (uint8_t)(ucode + 1u));
-			}
-			struct g711_interval positive, negative;
-			if (!g711_octet_interval(law, octet, &positive) ||
-			    !g711_octet_interval(law, octet ^ 0x80u, &negative))
-				return (struct constellation_margin){ 0, 0 };
-			include_decision_edge(&margin, lower, upper, positive.lower, previous_peak);
-			include_decision_edge(&margin, -upper, -lower, negative.upper + 1, previous_peak);
-			lower = upper;
-		}
-		previous_peak = lower;
+	const struct margin_position limit = { postcursor_limit(&before), 1 };
+	size_t j = 0;
+	/* The candidate envelope is concave. On each affine baseline
+	 * interval, comparison at its two endpoints suffices. */
+	for (size_t i = 0; i < before.count; ++i) {
+		struct margin_position end = i + 1u < before.count ?
+			before.segment[i + 1u].start : limit;
+		bool last = !margin_position_less(end, limit);
+		if (last)
+			end = limit;
+		while (j + 1u < after.count && !margin_position_less(end, after.segment[j + 1u].start))
+			++j;
+		if (margin_at(after.segment[j].line, end) < margin_at(before.segment[i].line, end))
+			return false;
+		if (last)
+			break;
 	}
-	return margin;
+	return true;
 }
 
 /* A fixed size vector's feasibility is monotone in distance. A union of
@@ -652,12 +792,8 @@ static bool select_constellations(const struct v90_pcm_mapping *mapping,
 			}
 		}
 	}
-	if (expanded) {
-		struct constellation_margin before = decision_margins(mapping->law, original);
-		struct constellation_margin after = decision_margins(mapping->law, selected);
-		if (after.noise < before.noise || after.postcursor_q15 < before.postcursor_q15)
-			memcpy(selected, original, sizeof(original));
-	}
+	if (expanded && !preserves_joint_margin(mapping->law, original, selected))
+		memcpy(selected, original, sizeof(original));
 	return found;
 }
 

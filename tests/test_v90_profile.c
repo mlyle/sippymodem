@@ -1189,6 +1189,62 @@ static bool test_clustered_phase_postcursor_margin(void)
 	return true;
 }
 
+static bool test_clustered_phase_joint_margin(void)
+{
+	static const struct {
+		enum g711_law law;
+		uint8_t signs, bits;
+		uint32_t power;
+		uint8_t codes[V90_CP_FRAME_INTERVALS][13];
+		uint8_t moduli[V90_CP_FRAME_INTERVALS];
+	} cases[] = {
+		/* At q=36 the wider map handles 9 units of noise instead of 13,
+		 * despite preserving the zero-noise and zero-postcursor margins. */
+		{ G711_LAW_PCMU, 2, 20, 5500000, {
+			{ 49, 54, 55, 64, 65, 75, 80, 84 },
+			{ 8, 16, 23, 31, 35, 36, 43, 56, 65, 94, 97 },
+			{ 11, 21, 25, 31, 47, 66, 70, 78, 79, 80, 89 },
+			{ 3, 9, 17, 20, 25, 30, 40, 57, 60, 70, 75, 85, 89 },
+			{ 25, 32, 36, 40, 44, 46, 50, 54, 56, 58, 68, 70 },
+			{ 15, 20, 24, 28, 31, 34, 40, 44, 46, 48, 52, 79, 83 },
+		}, { 8, 10, 10, 11, 11, 11 } },
+		/* Both endpoints have identical margins. At q=117 the
+		 * wider map drops from 129 to 92 raw units of reserve. */
+		{ G711_LAW_PCMA, 1, 19, 44000000, {
+			{ 84, 91, 94, 97, 101, 103, 104, 106, 107 },
+			{ 33, 46, 53, 60, 65, 68, 73, 77, 80, 82 },
+			{ 23, 42, 56, 67, 70, 77, 81, 90, 95 },
+			{ 74, 80, 84, 87, 91, 94, 98, 100, 103 },
+			{ 39, 49, 56, 63, 69, 77, 83, 87, 91 },
+			{ 22, 40, 49, 56, 63, 88, 93, 95, 98 },
+		}, { 9, 9, 9, 9, 9, 9 } },
+	};
+	for (size_t i = 0; i < ARRAY_LENGTH(cases); ++i) {
+		struct pcm_constellation available[V90_CP_FRAME_INTERVALS] = { 0 };
+		struct v90_cp_parameters cp = {
+			.kind = V90_CP_DATA, .law = cases[i].law,
+			.selected_rate_index = 4, .sign_redundancy = cases[i].signs,
+		};
+		for (unsigned phase = 0; phase < V90_CP_FRAME_INTERVALS; ++phase)
+			for (unsigned code = 0; code < ARRAY_LENGTH(cases[i].codes[phase]) &&
+			     cases[i].codes[phase][code]; ++code)
+				pcm_constellation_add(available + phase, cases[i].codes[phase][code]);
+		struct v90_pcm_mapping mapping;
+		uint32_t floor, ceiling;
+		CHECK(v90_profile_generate_measured_constellations(cp.law, cp.selected_rate_index,
+			      cp.sign_redundancy, cases[i].power, available,
+			      cp.transmit_constellations, cp.frame_constellation, &cp.constellation_count) &&
+		      v90_pcm_mapping_init(&mapping, &cp) == V90_PCM_MAPPING_OK &&
+		      v90_pcm_mapping_power(&mapping, V90_PCM_MAPPING_CODEC, cp.law,
+			      &floor, &ceiling) == V90_PCM_MAPPING_OK &&
+		      mapping.modulus_bits == cases[i].bits && ceiling <= cases[i].power,
+		      "joint margin fixture lost its rate or exceeded its power budget");
+		CHECK(!memcmp(mapping.modulus, cases[i].moduli, sizeof(cases[i].moduli)),
+		      "law %u selected a map with less noise reserve inside its postcursor bound", cp.law);
+	}
+	return true;
+}
+
 static bool test_fixed_unequal_cardinalities(void)
 {
 	/* Peer-owned V.91 maps need not share the generated V.90 sixth root.
@@ -1463,6 +1519,7 @@ int main(void)
 		{ "asymmetric exhaustive optimality", test_asymmetric_optimality },
 		{ "clustered phase spacing", test_clustered_phase_spacing },
 		{ "clustered phase preserves postcursor margin", test_clustered_phase_postcursor_margin },
+		{ "clustered phase preserves joint noise reserve", test_clustered_phase_joint_margin },
 		{ "maximum phase capacity", test_maximum_phase_capacity },
 		{ "digital probe capabilities", test_digital_probe_capabilities },
 		{ "upstream policy", test_upstream_policy },

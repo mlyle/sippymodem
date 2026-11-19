@@ -35,7 +35,8 @@ at one unit above the best distance. Try the asymmetric families from those
 caps if they can improve the map under the same power ceiling. This lets
 a phase trade capacity at a distance where its extra codes cannot all be
 used. The second search only replaces a map at a strictly greater distance
-with at least the previous raw noise and first-postcursor margins. The
+with at least the previous noise reserve across the guaranteed postcursor
+range. The
 resulting map can use more of the allowed transmit power.
 
 Each search fixes its families before bisecting. There are at most 103
@@ -142,13 +143,34 @@ predecessor and every integer coefficient from zero through that bound.
 Monotonicity of the channel and contiguous decision regions make the extrema
 sufficient. The bound is specific to this model, not a BER estimate.
 
-For a proposed replacement, compute the exact raw decision edge between
-each pair of signed neighbors. Slicing uses decoded magnitudes with ties
-going to the larger magnitude. Evaluate each edge against both neighbors
-and the preceding phase's extremes. This computes the postcursor bound
-above and the symmetric raw-noise radius with zero postcursor. Require
-both to be at least as large as for the first map. The comparison uses
-the entire declared constellation and needs no assumed channel coefficient.
+With additive disturbance before truncation, the exact symmetric reserve in
+numerator units at coefficient `q` is the minimum of the two affine supports
+at every current point and phase:
+
+```
+32768*c - A + q*(p_min - c)
+B - 32768*c - q*(p_max - c)
+```
+
+An outside rail contributes no constraint because clipping keeps that
+outermost label. The supports use the exact raw boundaries of the native
+G.711 slicer, including its tie rule. Reflecting a boundary and its
+neighbors keeps the support's slope, so the implementation keeps the
+tighter of each mirrored pair. The negative label supplies the tighter
+support at the sign boundary.
+
+The minimum of these lines is a concave, piecewise-linear curve. Within
+every segment of the first map's curve, the candidate curve only needs to
+dominate at the segment endpoints. Concavity guarantees the comparison
+between those endpoints. The selector merges the six ordered phase runs
+and compares rational breakpoints by integer cross products, from zero
+through the first map's guaranteed integer postcursor bound. This covers
+the endpoint margins and any interior trade-off without assuming a channel
+coefficient. At integer coefficients in this range, flooring the reserve
+to raw-sample units also gives the symmetric integer noise radius when
+noise is applied after truncation. Each label stays on its own side of
+zero, and the tighter negative sign boundary supplies the limit if sign
+is the nearest decision.
 
 The stream-receiver regression obtains decisions through normal native receive
 calls, exhausts every signed 16-bit encoder input, and independently enumerates
@@ -164,4 +186,4 @@ layout needs independent channel/noise holdouts and native control, B1 and
 payload qualification. An automatically selected rate additionally needs a
 receiver-owned, independently acquired channel bound that remains valid for
 the epoch. Missing channel evidence must not be replaced with an assumed
-postcursor coefficient. Existing generated selection remains unchanged.
+postcursor coefficient.
