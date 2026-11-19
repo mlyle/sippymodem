@@ -288,24 +288,36 @@ static bool inverse_system_init(struct inverse_system *system,
 	return true;
 }
 
-/* The solver supplies distinct input and output scratch. Visit each packed
- * entry once, completing earlier outputs as later rows arrive. Each output
- * still accumulates its columns in ascending order, including the diagonal. */
+_Static_assert(TAPS % 2u == 1u, "the remaining normal rows must form pairs");
+
+/* Keep the first row's two-term setup, then advance two independent row
+ * reductions together. Each output still
+ * sees its columns in ascending order, so fitting and wire rounding retain
+ * the same arithmetic. */
 static void apply_normal(const struct inverse_system *system,
 	const double input[restrict TAPS], double regularization, double output[restrict TAPS])
 {
-	for (unsigned i = 0; i < TAPS; ++i) {
-		double sum = regularization * input[i];
-
-		const double *row = system->normal + gram_moment_index(i, 0u);
+	output[0] = regularization * input[0] + system->normal[0] * input[0];
+	for (unsigned i = 1; i < TAPS; i += 2u) {
+		const double *first = system->normal + gram_moment_index(i, 0u);
+		const double *second = first + i + 1u;
+		double x0 = input[i], x1 = input[i + 1u];
+		double sum0 = regularization * x0, sum1 = regularization * x1;
 
 		for (unsigned j = 0; j < i; ++j) {
-			double value = row[j];
+			double y = input[j];
+			double z = output[j];
 
-			sum += value * input[j];
-			output[j] += value * input[i];
+			sum0 += first[j] * y;
+			sum1 += second[j] * y;
+			z += first[j] * x0;
+			z += second[j] * x1;
+			output[j] = z;
 		}
-		output[i] = sum + row[i] * input[i];
+		output[i] = sum0 + first[i] * x0;
+		output[i] += second[i] * x1;
+		sum1 += second[i] * x0;
+		output[i + 1u] = sum1 + second[i + 1u] * x1;
 	}
 }
 

@@ -94,6 +94,12 @@ not a V.92 wire limit or a measured noise floor. The solver permits at most
 700 iterations and rejects an uninformative inverse whose residual exceeds
 5% of target energy. These bounds do not replace later signal qualification.
 
+The packed matrix product handles the first row separately and advances
+the remaining rows in pairs. This lets the CPU work on independent sums
+and reuses loaded input and output entries. Each result still receives the
+ridge term and matrix columns in the original order. The separate first
+row also preserves its native fused arithmetic on ARM.
+
 An isotropic coefficient penalty encodes a prior on coefficient magnitudes.
 Rescaling only one group of input columns changes that prior. A comparison
 using different measurement units must transform the penalty too, or label
