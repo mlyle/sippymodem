@@ -159,14 +159,15 @@ neighbors keeps the support's slope, so the implementation keeps the
 tighter of each mirrored pair. The negative label supplies the tighter
 support at the sign boundary.
 
-The minimum of these lines is a concave, piecewise-linear curve. Within
-every segment of the first map's curve, the candidate curve only needs to
-dominate at the segment endpoints. Concavity guarantees the comparison
-between those endpoints. The selector merges the six ordered phase runs
-and compares rational breakpoints by integer cross products, from zero
-through the first map's guaranteed integer postcursor bound. This covers
-the endpoint margins and any interior trade-off without assuming a channel
-coefficient. At integer coefficients in this range, flooring the reserve
+The minimum of these lines is a concave, piecewise-linear curve. The selector
+merges the six ordered phase runs to build the first map's curve. Since the
+candidate margin is also a minimum, each candidate line must be at least as
+high as the first map's curve throughout its guaranteed postcursor range.
+Subtract a candidate line from that curve. The resulting concave function
+attains its maximum where its slope first becomes nonpositive, or at the
+range limit. The candidate lines within each phase visit these breakpoints
+in order. Integer cross products compare the exact rational positions.
+At integer coefficients in this range, flooring the reserve
 to raw-sample units also gives the symmetric integer noise radius when
 noise is applied after truncation. Each label stays on its own side of
 zero, and the tighter negative sign boundary supplies the limit if sign

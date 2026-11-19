@@ -689,28 +689,39 @@ static bool preserves_joint_margin(enum g711_law law,
 	const struct pcm_constellation original[V90_CP_FRAME_INTERVALS],
 	const struct pcm_constellation selected[V90_CP_FRAME_INTERVALS])
 {
-	struct decision_curve before, after;
+	struct decision_curve before;
+	struct margin_line lines[MARGIN_LINES_PER_PHASE];
+	uint8_t code;
+
 	if (!build_decision_curve(law, original, &before) ||
-	    !build_decision_curve(law, selected, &after) ||
-	    after.segment[0].line.room < before.segment[0].line.room)
+	    !pcm_constellation_descending_select(&selected[V90_CP_FRAME_INTERVALS - 1u], 0, &code))
 		return false;
 
 	const struct margin_position limit = { postcursor_limit(&before), 1 };
-	size_t j = 0;
-	/* The candidate envelope is concave. On each affine baseline
-	 * interval, comparison at its two endpoints suffices. */
-	for (size_t i = 0; i < before.count; ++i) {
-		struct margin_position end = i + 1u < before.count ?
-			before.segment[i + 1u].start : limit;
-		bool last = !margin_position_less(end, limit);
-		if (last)
-			end = limit;
-		while (j + 1u < after.count && !margin_position_less(end, after.segment[j + 1u].start))
-			++j;
-		if (margin_at(after.segment[j].line, end) < margin_at(before.segment[i].line, end))
+	size_t last = 0;
+	while (last + 1u < before.count &&
+	       !margin_position_less(limit, before.segment[last + 1u].start))
+		++last;
+
+	int peak = g711_decode(law, g711_ucode_positive_octet(law, code));
+	for (unsigned phase = 0; phase < V90_CP_FRAME_INTERVALS; ++phase) {
+		size_t count = phase_margin_lines(law, &selected[phase], &peak, lines);
+		if (count == 0)
 			return false;
-		if (last)
-			break;
+		size_t support = 0;
+		for (size_t i = 0; i < count; ++i) {
+			/* The baseline minus this line reaches its maximum when
+			 * the baseline approach reaches the line's approach, or
+			 * at the limit. Each phase's lines visit knots in order. */
+			struct margin_line line = lines[i];
+			while (support < last && before.segment[support].line.approach < line.approach)
+				++support;
+			const struct margin_segment *segment = &before.segment[support];
+			const struct margin_position q = segment->line.approach < line.approach ?
+				limit : segment->start;
+			if (margin_at(line, q) < margin_at(segment->line, q))
+				return false;
+		}
 	}
 	return true;
 }
