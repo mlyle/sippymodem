@@ -86,7 +86,7 @@ static void write_constellations(
 	const struct pcm_constellation *rows, size_t count)
 {
 	for (size_t row = 0; row < count; ++row) {
-		size_t first = (first_row + row + 1u) * 136u + 1u;
+		size_t first = (first_row + row + 1u) * PCM_CONTROL_CONSTELLATION_ROW_BITS + 1u;
 
 		for (size_t byte = 0; byte < PCM_CONSTELLATION_MASK_BYTES; ++byte)
 			packed_msb_write_lsb_field(frame,
@@ -100,7 +100,7 @@ static void read_constellations(
 	struct pcm_constellation *rows, size_t count)
 {
 	for (size_t row = 0; row < count; ++row) {
-		size_t first = (first_row + row + 1u) * 136u + 1u;
+		size_t first = (first_row + row + 1u) * PCM_CONTROL_CONSTELLATION_ROW_BITS + 1u;
 
 		for (size_t byte = 0; byte < PCM_CONSTELLATION_MASK_BYTES; ++byte)
 			rows[row].ucode_mask[byte] =
@@ -132,4 +132,20 @@ bool pcm_control_frame_read_constellation_payload(
 	if (codec_differs)
 		read_constellations(frame, count, codec, count);
 	return true;
+}
+
+enum pcm_control_constellation_result pcm_control_frame_decode_constellations(
+	const uint8_t *frame, size_t frame_bits, size_t alignment,
+	struct pcm_control_constellation_layout layout,
+	struct pcm_constellation *transmit, struct pcm_constellation *codec)
+{
+	size_t payload_end = pcm_control_frame_payload_end(layout.rows, layout.codec_differs);
+
+	if (layout.rows == 0 ||
+	    frame_bits != pcm_control_frame_constellation_bits(layout.rows, layout.codec_differs, alignment) ||
+	    !pcm_control_frame_framing_is_valid(frame, payload_end, frame_bits))
+		return PCM_CONTROL_CONSTELLATION_INVALID_FRAME;
+	return pcm_control_frame_read_constellation_payload(
+		frame, transmit, codec, layout.rows, layout.codec_differs) ?
+		PCM_CONTROL_CONSTELLATION_OK : PCM_CONTROL_CONSTELLATION_CRC_MISMATCH;
 }

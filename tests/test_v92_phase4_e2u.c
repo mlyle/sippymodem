@@ -2254,7 +2254,7 @@ static bool test_corrupted_cpu_tail(enum g711_law law,
 		/* Keep both wire rows, but reference only the second. Decoding compacts
 		 * this to one row without changing the transmitted record length. */
 		const uint8_t map[V92_CPU_FRAME_INTERVALS] = { 1, 1, 1, 1, 1, 1 };
-		pcm_control_frame_write_map(frame, map);
+		pcm_control_frame_write_map(frame, map, cpu.codec_constellations_differ);
 		pcm_control_frame_write_constellation_payload(frame, cpu.transmit_constellations,
 			cpu.codec_constellations, cpu.constellation_count, cpu.codec_constellations_differ);
 	}

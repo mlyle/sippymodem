@@ -8,6 +8,12 @@
 #include "packed_bits.h"
 #include "pcm_constellation.h"
 
+enum {
+	PCM_CONTROL_CONSTELLATION_ROW_BITS = 136,
+	PCM_CONTROL_CODEC_DIFFERENCE_BIT = 128,
+	PCM_CONTROL_CONSTELLATION_TRAILER_BITS = 18,
+};
+
 /* Write the seventeen sync ones and first zero start bit into three bytes.
  * The caller owns storage bounds; information bits 18 onward are preserved. */
 static inline void pcm_control_frame_write_prefix(uint8_t *frame)
@@ -143,31 +149,36 @@ void pcm_control_frame_read_shaping(
 
 /* CP, CPt and CPu map six frame intervals to constellation rows. Each index
  * is four bits, LSB first; the start bit at 119 splits the first four indices
- * from the last two. Callers provide at least sixteen header bytes and six
- * map entries. Writing requires four-bit indices; reading rejects indices
- * beyond the six supported rows. Framing bits remain with the record owner. */
+ * from the last two. Callers provide at least seventeen header bytes and
+ * six map entries. The plane flag is at bit 128.
+ * Writing requires four-bit indices; reading accepts up to six rows. */
 static inline size_t pcm_control_frame_map_bit(size_t interval)
 {
 	return 103u + interval * 4u + (interval >= 4u ? 1u : 0u);
 }
 
 static inline void pcm_control_frame_write_map(
-	uint8_t *frame, const uint8_t map[PCM_CONSTELLATION_FRAME_INTERVALS])
+	uint8_t *frame, const uint8_t map[PCM_CONSTELLATION_FRAME_INTERVALS], bool codec_differs)
 {
 	for (size_t interval = 0;
 	     interval < PCM_CONSTELLATION_FRAME_INTERVALS; ++interval)
 		packed_msb_write_lsb_field(frame,
 			pcm_control_frame_map_bit(interval), 4u, map[interval]);
+	packed_msb_set_bit(frame, PCM_CONTROL_CODEC_DIFFERENCE_BIT, codec_differs);
 }
 
-/* Return the declared row count, or zero for an out-of-range index. A NULL
- * map probes the shape without copying indices. Otherwise map may be partly
- * filled on failure; record owners retain their transactional output policy.
- * Missing rows are not rejected here: CP cleardown ignores their contents. */
-static inline size_t pcm_control_frame_read_map(
-	const uint8_t *frame, uint8_t *map)
+struct pcm_control_constellation_layout {
+	uint8_t rows;
+	bool codec_differs;
+};
+
+/* The map and plane flag are complete at bit 129. A NULL map probes the
+ * layout without copying indices; zero rows reports an invalid index.
+ * Record owners interpret unused rows and publish decoded fields. */
+static inline struct pcm_control_constellation_layout
+pcm_control_frame_read_constellation_layout(const uint8_t *frame, uint8_t *map)
 {
-	size_t count = 1u;
+	uint8_t count = 1u;
 
 	for (size_t interval = 0;
 	     interval < PCM_CONSTELLATION_FRAME_INTERVALS; ++interval) {
@@ -175,13 +186,16 @@ static inline size_t pcm_control_frame_read_map(
 			frame, pcm_control_frame_map_bit(interval), 4u);
 
 		if (index >= PCM_CONSTELLATION_MAX_ROWS)
-			return 0;
+			return (struct pcm_control_constellation_layout){ 0 };
 		if (map != NULL)
 			map[interval] = index;
-		if ((size_t)index + 1u > count)
-			count = (size_t)index + 1u;
+		if (index + 1u > count)
+			count = index + 1u;
 	}
-	return count;
+	return (struct pcm_control_constellation_layout){
+		.rows = count,
+		.codec_differs = packed_msb_bit(frame, PCM_CONTROL_CODEC_DIFFERENCE_BIT) != 0u,
+	};
 }
 
 /* Table 14/V.90 and Table 23/V.92 share one 136-bit header followed by
@@ -189,7 +203,8 @@ static inline size_t pcm_control_frame_read_map(
  * the declared row count (1..6) before calculating the CRC start bit. */
 static inline size_t pcm_control_frame_payload_end(size_t count, bool codec_differs)
 {
-	return (1u + count * (codec_differs ? 2u : 1u)) * 136u;
+	return (1u + count * (codec_differs ? 2u : 1u)) *
+		PCM_CONTROL_CONSTELLATION_ROW_BITS;
 }
 
 /* Round a bounded control record, including its mandatory trailer, to the
@@ -198,6 +213,17 @@ static inline size_t pcm_control_frame_payload_end(size_t count, bool codec_diff
 static inline size_t pcm_control_frame_align_bits(size_t bits, size_t alignment)
 {
 	return (bits + alignment - 1u) / alignment * alignment;
+}
+
+/* The CRC word and first zero fill bit occupy eighteen bits. CP aligns to
+ * four bits, CPt to twelve, and CPu to the negotiated mapping frame. */
+static inline size_t pcm_control_frame_constellation_bits(
+	size_t rows, bool codec_differs, size_t alignment)
+{
+	return rows == 0 ? 0 :
+		pcm_control_frame_align_bits(
+			pcm_control_frame_payload_end(rows, codec_differs) +
+			PCM_CONTROL_CONSTELLATION_TRAILER_BITS, alignment);
 }
 
 /* CP, CPt and CPu have the same 136-bit header, constellation rows and
@@ -211,5 +237,18 @@ void pcm_control_frame_write_constellation_payload(
 bool pcm_control_frame_read_constellation_payload(
 	const uint8_t *frame, struct pcm_constellation *transmit,
 	struct pcm_constellation *codec, size_t count, bool codec_differs);
+
+enum pcm_control_constellation_result {
+	PCM_CONTROL_CONSTELLATION_OK,
+	PCM_CONTROL_CONSTELLATION_INVALID_FRAME,
+	PCM_CONTROL_CONSTELLATION_CRC_MISMATCH,
+};
+
+/* Check the shared CP/CPt/CPu length, starts, fill and CRC before reading
+ * the rows. Callers validate storage, fixed type bits and decoded fields. */
+enum pcm_control_constellation_result pcm_control_frame_decode_constellations(
+	const uint8_t *frame, size_t frame_bits, size_t alignment,
+	struct pcm_control_constellation_layout layout,
+	struct pcm_constellation *transmit, struct pcm_constellation *codec);
 
 #endif /* PCM_CONTROL_FRAME_H */

@@ -59,9 +59,10 @@ enum v92_cpt_result v92_cpt_receiver_receive_bit(
 	 * valid record. Normalize only that non-information bit; the strict
 	 * codec still checks all framing, the full CRC and remaining padding. */
 	if (bit != 0u && next.wire.stage == PCM_CONTROL_READ_FRAME) {
-		size_t payload_end = pcm_control_frame_payload_end(
-			pcm_control_frame_read_map(next.wire.frame, NULL),
-			packed_msb_bit(next.wire.frame, 128u) != 0u);
+		/* The validated frame length includes less than one row of
+		 * trailer, so its remainder locates the CRC word. */
+		size_t bits = next.wire.frame_bit_count;
+		size_t payload_end = bits - bits % PCM_CONTROL_CONSTELLATION_ROW_BITS;
 
 		if (next.wire.bit_index == payload_end + 17u)
 			bit = 0u;

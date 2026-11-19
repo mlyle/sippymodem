@@ -50,7 +50,7 @@ bool v91_info_decode(const uint8_t frame[V91_INFO_BYTES], struct v91_info *p)
 
 static size_t cp_length(unsigned count)
 {
-	return ((136u * (1u + count) + 18u + 5u) / 6u) * 6u;
+	return pcm_control_frame_constellation_bits(count, false, 6u);
 }
 
 static bool cp_valid(const struct v91_cp *p)
@@ -82,7 +82,7 @@ size_t v91_cp_encode(const struct v91_cp *p, uint8_t frame[V91_CP_MAX_BYTES])
 	packed_msb_set_bit(next, 19, 1);
 	packed_msb_write_lsb_field(next, 20, 5, p->rate);
 	packed_msb_set_bit(next, 33, p->acknowledges_peer);
-	pcm_control_frame_write_map(next, p->frame_constellation);
+	pcm_control_frame_write_map(next, p->frame_constellation, false);
 	pcm_control_frame_write_constellation_payload(next, p->constellations,
 		NULL, p->count, false);
 	size_t bits = cp_length(p->count);
@@ -92,31 +92,29 @@ size_t v91_cp_encode(const struct v91_cp *p, uint8_t frame[V91_CP_MAX_BYTES])
 
 size_t v91_cp_length(const uint8_t *header, size_t bits)
 {
-	uint8_t map[6];
-	size_t count;
 	if (header == NULL || bits < 136 || !pcm_control_frame_prefix_is_valid(header) ||
 	    !packed_msb_bit(header, 19) ||
-	    !packed_msb_bits_are_zero(header, 30, 3) || packed_msb_bit(header, 128) ||
-	    (count = pcm_control_frame_read_map(header, map)) == 0)
+	    !packed_msb_bits_are_zero(header, 30, 3))
 		return 0;
-	return cp_length(count);
+	struct pcm_control_constellation_layout layout =
+		pcm_control_frame_read_constellation_layout(header, NULL);
+	return layout.codec_differs ? 0 : cp_length(layout.rows);
 }
 
 bool v91_cp_decode(const uint8_t *frame, size_t bits, struct v91_cp *p)
 {
 	struct v91_cp next = { 0 };
-	size_t count;
 	if (frame == NULL || p == NULL || bits < cp_length(1) || bits > V91_CP_MAX_BITS ||
-	    bits != v91_cp_length(frame, bits) ||
-	    (count = pcm_control_frame_read_map(frame, next.frame_constellation)) == 0)
+	    bits != v91_cp_length(frame, bits))
 		return false;
-	size_t payload = 136u * (1u + count);
-	if (!pcm_control_frame_starts_are_zero(frame, 17, payload + 1) ||
-	    !packed_msb_bits_are_zero(frame, payload + 17, bits - payload - 17) ||
+	struct pcm_control_constellation_layout layout =
+		pcm_control_frame_read_constellation_layout(frame, next.frame_constellation);
+	size_t payload = pcm_control_frame_payload_end(layout.rows, false);
+	if (!pcm_control_frame_wire_is_valid(frame, payload, bits) ||
 	    !pcm_control_frame_read_constellation_payload(frame, next.constellations,
-		NULL, count, false))
+		NULL, layout.rows, false))
 		return false;
-	next.count = count;
+	next.count = layout.rows;
 	next.rate = packed_msb_read_lsb_field(frame, 20, 5);
 	next.transparent = packed_msb_bit(frame, 18);
 	next.acknowledges_peer = packed_msb_bit(frame, 33);

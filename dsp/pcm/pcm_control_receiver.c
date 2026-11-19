@@ -5,15 +5,11 @@
 static inline size_t pcm_control_receiver_frame_bits(
 	const uint8_t *frame, enum pcm_control_format format)
 {
-	size_t count = pcm_control_frame_read_map(frame, NULL);
+	struct pcm_control_constellation_layout layout =
+		pcm_control_frame_read_constellation_layout(frame, NULL);
 
-	if (count == 0)
-		return 0;
-	size_t bits = pcm_control_frame_payload_end(count,
-		packed_msb_bit(frame, 128u) != 0u);
-
-	return format == PCM_CONTROL_CP ? bits + 20u :
-		pcm_control_frame_align_bits(bits + 18u, 12u);
+	return pcm_control_frame_constellation_bits(layout.rows, layout.codec_differs,
+		format == PCM_CONTROL_CP ? 4u : 12u);
 }
 
 bool pcm_control_receiver_is_valid(
@@ -37,12 +33,12 @@ bool pcm_control_receiver_is_valid(
 			       receiver->frame, 0, sizeof(receiver->frame)));
 	case PCM_CONTROL_READ_HEADER:
 		if (receiver->frame_bit_count != 0 || receiver->bit_index < 18u ||
-		    receiver->bit_index > 128u)
+		    receiver->bit_index > PCM_CONTROL_CODEC_DIFFERENCE_BIT)
 			return false;
 		break;
 	case PCM_CONTROL_READ_FRAME:
 		/* A valid map supplies the complete bounds and protocol alignment. */
-		if (receiver->bit_index <= 128u ||
+		if (receiver->bit_index <= PCM_CONTROL_CODEC_DIFFERENCE_BIT ||
 		    receiver->bit_index >= receiver->frame_bit_count ||
 		    receiver->frame_bit_count !=
 			    pcm_control_receiver_frame_bits(receiver->frame, format))
@@ -92,7 +88,7 @@ struct pcm_control_receive_event pcm_control_receiver_receive_bit(
 		 index >= receiver->frame_bit_count - 3u));
 
 	if (!rejected && receiver->stage == PCM_CONTROL_READ_HEADER &&
-	    receiver->bit_index == 129u) {
+	    receiver->bit_index == PCM_CONTROL_CODEC_DIFFERENCE_BIT + 1u) {
 		receiver->frame_bit_count =
 			pcm_control_receiver_frame_bits(receiver->frame, format);
 		rejected = receiver->frame_bit_count == 0;

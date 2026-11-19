@@ -303,10 +303,11 @@ static bool test_constellation_rows(void)
 
 static bool check_constellation_map(const uint8_t map[6], unsigned pattern)
 {
-	uint8_t frame[18], expected[sizeof(frame)], exact_header[16], decoded[8];
+	uint8_t frame[19], expected[sizeof(frame)], exact_header[17], decoded[8];
 	size_t cursor = 103u;
 	uint8_t count = 1u;
 	bool valid = true;
+	bool codec_differs = (pattern & 1u) == 0u;
 
 	memset(frame, pattern, sizeof(frame));
 	memcpy(expected, frame, sizeof(frame));
@@ -326,15 +327,19 @@ static bool check_constellation_map(const uint8_t map[6], unsigned pattern)
 			++cursor;
 		}
 	}
-	pcm_control_frame_write_map(frame + 1u, map);
+	packed_msb_set_bit(expected + 1u, 128u, codec_differs);
+	pcm_control_frame_write_map(frame + 1u, map, codec_differs);
 	CHECK(memcmp(frame, expected, sizeof(frame)) == 0,
 	      "constellation map changed wire bits or adjacent fields");
 	memcpy(exact_header, expected + 1u, sizeof(exact_header));
 	memset(decoded, 0xa5, sizeof(decoded));
-	CHECK(pcm_control_frame_read_map(exact_header, decoded + 1u) ==
-		      (valid ? count : 0u) &&
-	      pcm_control_frame_read_map(exact_header, NULL) ==
-		      (valid ? count : 0u) &&
+	struct pcm_control_constellation_layout layout =
+		pcm_control_frame_read_constellation_layout(exact_header, decoded + 1u);
+	struct pcm_control_constellation_layout probe =
+		pcm_control_frame_read_constellation_layout(exact_header, NULL);
+	CHECK(layout.rows == (valid ? count : 0u) && probe.rows == layout.rows &&
+	      probe.codec_differs == layout.codec_differs &&
+	      (!valid || layout.codec_differs == codec_differs) &&
 	      decoded[0] == 0xa5 && decoded[7] == 0xa5,
 	      "constellation map count, bounds or shape-only probe changed");
 	CHECK(!valid || memcmp(decoded + 1u, map, 6u) == 0,

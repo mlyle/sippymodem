@@ -5,13 +5,11 @@
 #include "pcm_control_frame.h"
 #include "packed_bits.h"
 
-#include <limits.h>
 #include <string.h>
 
 enum {
 	CPT_RATE_FIRST_BIT = 21,
 	CPT_RATE_BITS = 5,
-	CPT_CODEC_DIFFERENCE_BIT = 128,
 };
 
 bool v92_cpt_parameters_are_valid(
@@ -34,10 +32,8 @@ size_t v92_cpt_frame_bits(
 {
 	if (!v92_cpt_parameters_are_valid(parameters))
 		return 0;
-	return pcm_control_frame_align_bits(
-		pcm_control_frame_payload_end(parameters->constellation_count,
-			parameters->codec_constellations_differ) + V92_CPT_MIN_TRAILER_BITS,
-		V92_CPT_SYMBOLS_PER_FRAME);
+	return pcm_control_frame_constellation_bits(parameters->constellation_count,
+		parameters->codec_constellations_differ, V92_CPT_SYMBOLS_PER_FRAME);
 }
 
 size_t v92_cpt_frame_bytes(
@@ -60,9 +56,7 @@ static void encode_header(
 		frame, parameters->trn1d_ratio_q3_13,
 		parameters->shaping_a1_q1_6, parameters->shaping_a2_q1_6,
 		parameters->shaping_b1_q1_6, parameters->shaping_b2_q1_6);
-	pcm_control_frame_write_map(frame, parameters->frame_constellation);
-	packed_msb_set_bit(
-		frame, CPT_CODEC_DIFFERENCE_BIT,
+	pcm_control_frame_write_map(frame, parameters->frame_constellation,
 		parameters->codec_constellations_differ);
 }
 
@@ -112,9 +106,6 @@ enum v92_cpt_result v92_cpt_decode(
 	struct v92_cpt_parameters *parameters)
 {
 	struct v92_cpt_parameters decoded = { 0 };
-	size_t constellation_count;
-	size_t expected_bits;
-	size_t payload_end;
 
 	if (frame == NULL || parameters == NULL)
 		return V92_CPT_INVALID_ARGUMENT;
@@ -124,27 +115,19 @@ enum v92_cpt_result v92_cpt_decode(
 		return V92_CPT_INVALID_FRAME;
 	if (frame_capacity < (frame_bit_count + 7u) / 8u)
 		return V92_CPT_INVALID_ARGUMENT;
-	constellation_count = pcm_control_frame_read_map(
+	if (!packed_msb_bits_are_zero(frame, 18u, 3u))
+		return V92_CPT_INVALID_FRAME;
+	struct pcm_control_constellation_layout layout = pcm_control_frame_read_constellation_layout(
 		frame, decoded.frame_constellation);
-	if (constellation_count == 0)
-		return V92_CPT_INVALID_FRAME;
-	decoded.codec_constellations_differ =
-		packed_msb_bit(frame, CPT_CODEC_DIFFERENCE_BIT) != 0;
-	payload_end = pcm_control_frame_payload_end(
-		constellation_count, decoded.codec_constellations_differ);
-	expected_bits = pcm_control_frame_align_bits(
-		payload_end + V92_CPT_MIN_TRAILER_BITS, V92_CPT_SYMBOLS_PER_FRAME);
-	if (frame_bit_count != expected_bits ||
-	    !pcm_control_frame_framing_is_valid(frame, payload_end, frame_bit_count) ||
-	    !packed_msb_bits_are_zero(frame, 18u, 3u))
-		return V92_CPT_INVALID_FRAME;
-	if (!pcm_control_frame_read_constellation_payload(
-		    frame, decoded.transmit_constellations,
-		    decoded.codec_constellations, constellation_count,
-		    decoded.codec_constellations_differ))
-		return V92_CPT_CRC_MISMATCH;
+	enum pcm_control_constellation_result result = pcm_control_frame_decode_constellations(
+		frame, frame_bit_count, V92_CPT_SYMBOLS_PER_FRAME, layout,
+		decoded.transmit_constellations, decoded.codec_constellations);
+	if (result != PCM_CONTROL_CONSTELLATION_OK)
+		return result == PCM_CONTROL_CONSTELLATION_CRC_MISMATCH ?
+			V92_CPT_CRC_MISMATCH : V92_CPT_INVALID_FRAME;
 	decode_header(frame, &decoded);
-	decoded.constellation_count = (uint8_t)constellation_count;
+	decoded.constellation_count = layout.rows;
+	decoded.codec_constellations_differ = layout.codec_differs;
 	if (!pcm_constellations_compact(
 		    decoded.transmit_constellations, decoded.codec_constellations,
 		    decoded.frame_constellation, &decoded.constellation_count,

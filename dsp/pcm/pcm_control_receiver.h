@@ -14,7 +14,7 @@
  * ends 20 bits after the payload; shorter CPt records still align to 12 symbols. */
 enum {
 	PCM_CONTROL_MAX_FRAME_BITS =
-		(1 + 2 * PCM_CONSTELLATION_MAX_ROWS) * 136 + 20,
+		(1 + 2 * PCM_CONSTELLATION_MAX_ROWS) * PCM_CONTROL_CONSTELLATION_ROW_BITS + 20,
 	PCM_CONTROL_MAX_FRAME_BYTES = (PCM_CONTROL_MAX_FRAME_BITS + 7) / 8,
 };
 
