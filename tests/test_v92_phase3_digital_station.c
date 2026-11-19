@@ -386,11 +386,24 @@ static bool run_exchange(enum g711_law law, unsigned delay,
 			if (measuring_su && digital.receive_stage == V92_PHASE3_DIGITAL_RECEIVE_SU_RESPONSE)
 				CHECK(check_trn1u_without_su_reversal(&digital), "TRN1u acquisition failed");
 			if (receiving_ja && digital.receive_stage ==
-					    V92_PHASE3_DIGITAL_RECEIVE_SU_PHASE)
+					    V92_PHASE3_DIGITAL_RECEIVE_SU_PHASE) {
+				struct v92_phase3_digital_station corrupt = digital;
+				struct v92_phase3_digital_station saved;
+				uint8_t sentinel = 0xa5;
+
+				corrupt.downstream.jp_frame[2] ^= 1u;
+				saved = corrupt;
+				CHECK(v92_phase3_digital_station_transmit(&corrupt, &sentinel) ==
+					      V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
+				      v92_phase3_digital_station_receive(&corrupt, 0, true) ==
+					      V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
+				      sentinel == 0xa5 && memcmp(&corrupt, &saved, sizeof(corrupt)) == 0,
+				      "corrupt Jp was accepted by a checked station operation");
 				CHECK(digital.receive.su.minimum_magnitude == TEST_SU_THRESHOLD &&
 				      digital.receive.su.phase_minimum_magnitude ==
 					      expected_phase_minimum,
 				      "Su did not retain separate sign and measured-level phase thresholds");
+			}
 		}
 		cursor = delay ? (cursor + 1u) % delay : 0u;
 		finished =

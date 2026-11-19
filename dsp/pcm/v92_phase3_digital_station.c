@@ -2,6 +2,7 @@
 
 #include "v92_phase3_digital_station.h"
 
+#include "pcm_phase3_owned.h"
 #include "v90_info1.h"
 
 #include <stddef.h>
@@ -51,25 +52,26 @@ static bool receive_is_valid(
 }
 
 static bool transmit_is_valid(
-	const struct v92_phase3_digital_station *station)
+	const struct v92_phase3_digital_station *station, bool check_records)
 {
+	if (station->transmit_stage != V92_PHASE3_DIGITAL_TRANSMIT_SILENCE &&
+	    !(check_records ? pcm_phase3_digital_tx_is_valid(&station->downstream) :
+			      pcm_phase3_digital_tx_owned_state_is_valid(&station->downstream)))
+		return false;
 	switch (station->transmit_stage) {
 	case V92_PHASE3_DIGITAL_TRANSMIT_SILENCE:
 		return station->receive_stage ==
 		       V92_PHASE3_DIGITAL_RECEIVE_INITIAL;
 	case V92_PHASE3_DIGITAL_TRANSMIT_DOWNSTREAM:
-		return pcm_phase3_digital_tx_is_valid(&station->downstream) &&
-		       station->downstream.stage !=
+		return station->downstream.stage !=
 			       PCM_PHASE3_DIGITAL_TX_COMPLETE;
 	case V92_PHASE3_DIGITAL_TRANSMIT_RI:
-		return pcm_phase3_digital_tx_is_valid(&station->downstream) &&
-		       station->downstream.stage ==
+		return station->downstream.stage ==
 			       PCM_PHASE3_DIGITAL_TX_COMPLETE &&
 		       v90_phase4_ri_tx_is_valid(&station->ri) &&
 		       !v90_phase4_ri_tx_is_complete(&station->ri);
 	case V92_PHASE3_DIGITAL_TRANSMIT_COMPLETE:
-		return pcm_phase3_digital_tx_is_valid(&station->downstream) &&
-		       station->downstream.stage ==
+		return station->downstream.stage ==
 			       PCM_PHASE3_DIGITAL_TX_COMPLETE &&
 		       v90_phase4_ri_tx_is_complete(&station->ri);
 	}
@@ -138,8 +140,8 @@ static bool coordination_is_valid(
 	return false;
 }
 
-bool v92_phase3_digital_station_is_valid(
-	const struct v92_phase3_digital_station *station)
+static bool station_is_valid(
+	const struct v92_phase3_digital_station *station, bool check_records)
 {
 	if (station == NULL ||
 	    !receive_stage_is_valid(station->receive_stage) ||
@@ -156,7 +158,7 @@ bool v92_phase3_digital_station_is_valid(
 		    sizeof(station->early_trn2u) / sizeof(station->early_trn2u[0]) ||
 	    (station->early_trn2u_samples != 0u &&
 	     station->receive_stage != V92_PHASE3_DIGITAL_RECEIVE_COMPLETE) ||
-	    !receive_is_valid(station) || !transmit_is_valid(station) ||
+	    !receive_is_valid(station) || !transmit_is_valid(station, check_records) ||
 	    !coordination_is_valid(station) ||
 	    (receive_has_failed(station) && !station->failed))
 		return false;
@@ -164,6 +166,12 @@ bool v92_phase3_digital_station_is_valid(
 	    station->upstream_rate_mask == 0u)
 		return false;
 	return true;
+}
+
+bool v92_phase3_digital_station_is_valid(
+	const struct v92_phase3_digital_station *station)
+{
+	return station_is_valid(station, true);
 }
 
 bool v92_phase3_digital_station_has_failed(
@@ -262,7 +270,7 @@ enum v92_phase3_digital_station_result v92_phase3_digital_station_transmit(
 	}
 	next = *station;
 	if (next.transmit_stage == V92_PHASE3_DIGITAL_TRANSMIT_DOWNSTREAM) {
-		if (pcm_phase3_digital_tx_next(&next.downstream, &symbol) !=
+		if (pcm_phase3_digital_tx_next_owned(&next.downstream, &symbol) !=
 		    PCM_PHASE3_DIGITAL_TX_OK)
 			goto fail;
 		generated = symbol.octet;
@@ -276,7 +284,7 @@ enum v92_phase3_digital_station_result v92_phase3_digital_station_transmit(
 			next.transmit_stage =
 				V92_PHASE3_DIGITAL_TRANSMIT_COMPLETE;
 	}
-	if (!v92_phase3_digital_station_is_valid(&next))
+	if (!station_is_valid(&next, false))
 		goto fail;
 	*station = next;
 	*network_octet = generated;
@@ -572,9 +580,11 @@ enum v92_phase3_digital_station_result v92_phase3_digital_station_receive(
 	default:
 		return V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT;
 	}
+	/* The checked entry verified both records. Only initialization and
+	 * the late Su phase update can change them, and each checks its result. */
 	if (result_is_terminal(result)) {
 		next.failed = true;
-		if (v92_phase3_digital_station_is_valid(&next))
+		if (station_is_valid(&next, false))
 			*station = next;
 		else
 			station->failed = true;
@@ -582,7 +592,7 @@ enum v92_phase3_digital_station_result v92_phase3_digital_station_receive(
 	}
 	if ((result != V92_PHASE3_DIGITAL_STATION_OK &&
 	     result != V92_PHASE3_DIGITAL_STATION_COMPLETE) ||
-	    !v92_phase3_digital_station_is_valid(&next)) {
+	    !station_is_valid(&next, false)) {
 		station->failed = true;
 		return V92_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE;
 	}
