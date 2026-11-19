@@ -163,6 +163,9 @@ static enum v92_phase4_digital_rx_result fail(
 	return V92_PHASE4_DIGITAL_RX_NUMERIC_FAILURE;
 }
 
+/* Commit the measurement only after the next line state is ready. The
+ * bounded integer update adds one known target, or leaves a full window
+ * frozen. No operation after this update may reject the sample. */
 static bool observe_channel(
 	struct v92_phase4_digital_rx *receiver, int16_t linear,
 	const struct qam_equalizer *equalizer,
@@ -184,20 +187,17 @@ static bool observe_channel(
 
 static enum v92_phase4_digital_rx_result receive_training(
 	struct v92_phase4_digital_rx *receiver,
-	struct v92_phase4_digital_rx *next, int16_t sample)
+	int16_t sample, struct v92_control_event *event)
 {
-	int16_t expected = next->signal.trn2u.expected[next->signal.trn2u.expected_index];
+	struct v92_pcm_phase4_trn2u_line_rx next = receiver->signal.trn2u;
+	int16_t expected = next.expected[next.expected_index];
 	enum v92_pcm_phase4_trn2u_line_rx_result result =
-		v92_pcm_phase4_trn2u_line_rx_sample_owned(
-			&next->signal.trn2u, sample);
+		v92_pcm_phase4_trn2u_line_rx_sample_owned(&next, sample);
 
-	if ((result == V92_PCM_PHASE4_TRN2U_LINE_RX_OK ||
-	     result == V92_PCM_PHASE4_TRN2U_LINE_RX_ALIGNED) &&
-	    !observe_channel(next, expected, &next->signal.trn2u.equalizer,
-		    next->signal.trn2u.law))
-		return fail(receiver);
-	if (result == V92_PCM_PHASE4_TRN2U_LINE_RX_OK)
-		return V92_PHASE4_DIGITAL_RX_OK;
+	if (result == V92_PCM_PHASE4_TRN2U_LINE_RX_INVALID_STATE)
+		return V92_PHASE4_DIGITAL_RX_INVALID_STATE;
+	if (result == V92_PCM_PHASE4_TRN2U_LINE_RX_FAILED)
+		return V92_PHASE4_DIGITAL_RX_FAILED;
 	if (result == V92_PCM_PHASE4_TRN2U_LINE_RX_ALIGNED) {
 		/* V.92 9.6.2.1.1 allows SUVu after the original 12000T span;
 		 * a measurement reset cannot extend the peer's TRN2u. The control
@@ -206,22 +206,26 @@ static enum v92_phase4_digital_rx_result receive_training(
 		struct v92_upstream_control_line_rx control;
 
 		if (v92_pcm_phase4_trn2u_line_rx_handoff(
-			    &next->signal.trn2u, &handoff) !=
+			    &next, &handoff) !=
 			    V92_PCM_PHASE4_TRN2U_LINE_RX_OK ||
 		    v92_upstream_control_line_rx_init(
 			    &control, &handoff) !=
-			    V92_UPSTREAM_CONTROL_LINE_RX_OK)
+			    V92_UPSTREAM_CONTROL_LINE_RX_OK ||
+		    !observe_channel(receiver, expected, &next.equalizer, next.law))
 			return fail(receiver);
-		next->signal =
+		receiver->signal =
 			(union v92_phase4_digital_receive){ .control = control };
-		next->stage = V92_PHASE4_DIGITAL_RX_CONTROL;
+		receiver->stage = V92_PHASE4_DIGITAL_RX_CONTROL;
+		*event = (struct v92_control_event){ 0 };
 		return V92_PHASE4_DIGITAL_RX_ALIGNED;
 	}
-	if (result == V92_PCM_PHASE4_TRN2U_LINE_RX_INVALID_STATE)
-		return V92_PHASE4_DIGITAL_RX_INVALID_STATE;
-	if (result == V92_PCM_PHASE4_TRN2U_LINE_RX_FAILED)
-		return V92_PHASE4_DIGITAL_RX_FAILED;
-	return fail(receiver);
+	if (result != V92_PCM_PHASE4_TRN2U_LINE_RX_OK ||
+	    !v92_pcm_phase4_trn2u_line_rx_is_valid(&next) ||
+	    !observe_channel(receiver, expected, &next.equalizer, next.law))
+		return fail(receiver);
+	receiver->signal.trn2u = next;
+	*event = (struct v92_control_event){ 0 };
+	return V92_PHASE4_DIGITAL_RX_OK;
 }
 
 static enum v92_phase4_digital_rx_result control_result(
@@ -246,27 +250,16 @@ static enum v92_phase4_digital_rx_result control_result(
 
 static enum v92_phase4_digital_rx_result receive_control(
 	struct v92_phase4_digital_rx *receiver,
-	struct v92_phase4_digital_rx *next, int16_t sample,
+	struct v92_upstream_control_line_rx *line, int16_t sample,
 	struct v92_control_event *event)
 {
-	const struct v92_upstream_rx *signal = &next->signal.control.signal;
-	uint8_t remaining = signal->training_tail_remaining;
-	int16_t expected = remaining ? signal->line.pending_training_targets[
-		V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY - remaining] : 0;
 	enum v92_upstream_control_line_rx_result result =
-		v92_upstream_control_line_rx_sample_validated(
-			&next->signal.control, sample, event);
+		v92_upstream_control_line_rx_sample_validated(line, sample, event);
 
 	/* The line rolls back a failed sample and latches only its own flag.
 	 * The phase owner keeps that failure on the enclosing receiver. */
 	if (result == V92_UPSTREAM_CONTROL_LINE_RX_INTERNAL_ERROR)
-		next->signal.control.signal.failed = false;
-
-	if (remaining &&
-	    (result == V92_UPSTREAM_CONTROL_LINE_RX_OK || result == V92_UPSTREAM_CONTROL_LINE_RX_EVENT) &&
-	    !observe_channel(next, expected, &signal->line.equalizer,
-		    signal->line.law))
-		return fail(receiver);
+		line->signal.failed = false;
 	return control_result(receiver, result);
 }
 
@@ -274,10 +267,6 @@ enum v92_phase4_digital_rx_result v92_phase4_digital_rx_sample(
 	struct v92_phase4_digital_rx *receiver, int16_t sample,
 	struct v92_control_event *event)
 {
-	struct v92_phase4_digital_rx next;
-	struct v92_control_event emitted = { 0 };
-	enum v92_phase4_digital_rx_result result;
-
 	if (receiver == NULL || event == NULL ||
 	    memory_regions_overlap(
 		    receiver, sizeof(*receiver), event, sizeof(*event)))
@@ -286,22 +275,29 @@ enum v92_phase4_digital_rx_result v92_phase4_digital_rx_sample(
 		return V92_PHASE4_DIGITAL_RX_INVALID_STATE;
 	if (state_has_failed(receiver))
 		return V92_PHASE4_DIGITAL_RX_FAILED;
+	if (receiver->stage == V92_PHASE4_DIGITAL_RX_TRN2U)
+		return receive_training(receiver, sample, event);
+	struct v92_upstream_control_line_rx *line = &receiver->signal.control;
+	unsigned remaining = line->signal.training_tail_remaining;
+
 	/* After the measured tail, the line transaction preserves the frozen
 	 * channel and enclosing invariants, so it can publish directly. */
-	if (receiver->stage != V92_PHASE4_DIGITAL_RX_TRN2U &&
-	    receiver->signal.control.signal.training_tail_remaining == 0u)
-		return receive_control(receiver, receiver, sample, event);
-	next = *receiver;
-	result = next.stage == V92_PHASE4_DIGITAL_RX_TRN2U ?
-			 receive_training(receiver, &next, sample) :
-			 receive_control(receiver, &next, sample, &emitted);
-	if (result != V92_PHASE4_DIGITAL_RX_OK &&
-	    result != V92_PHASE4_DIGITAL_RX_ALIGNED &&
-	    result != V92_PHASE4_DIGITAL_RX_EVENT)
+	if (remaining == 0u)
+		return receive_control(receiver, line, sample, event);
+	/* Like TRN2u, stage only the line until its delayed sample is ready.
+	 * The checked channel update advances the measurement exactly once and
+	 * leaves it untouched on rejection. The channel needs no snapshot. */
+	struct v92_upstream_control_line_rx next = *line;
+	struct v92_control_event emitted;
+	int16_t expected = line->signal.line.pending_training_targets[
+		V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY - remaining];
+	enum v92_phase4_digital_rx_result result = receive_control(receiver, &next, sample, &emitted);
+
+	if (result != V92_PHASE4_DIGITAL_RX_OK && result != V92_PHASE4_DIGITAL_RX_EVENT)
 		return result;
-	if (!v92_phase4_digital_rx_is_valid(&next))
+	if (!observe_channel(receiver, expected, &next.signal.line.equalizer, next.signal.line.law))
 		return fail(receiver);
-	*receiver = next;
+	*line = next;
 	*event = emitted;
 	return result;
 }

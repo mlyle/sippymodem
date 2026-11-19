@@ -380,6 +380,27 @@ static bool check_digital_failures(const struct v92_phase4_digital_rx *receiver)
 	return true;
 }
 
+static bool check_measurement_rollback(const struct v92_phase4_digital_rx *receiver)
+{
+	struct v92_phase4_digital_rx rejected = *receiver;
+	struct qam_equalizer *fir = rejected.stage == V92_PHASE4_DIGITAL_RX_TRN2U ?
+		&rejected.signal.trn2u.equalizer : &rejected.signal.control.signal.line.equalizer;
+	struct v92_control_event event = { .type = V92_CONTROL_EVENT_CPU };
+	struct v92_control_event saved = event;
+
+	/* The FIR accepts fractional history, but it cannot be raw line PCM.
+	 * The next push moves this entry onto the delayed measurement tap. */
+	fir->history[fir->decision_delay - 1u].in_phase = 0.5;
+	CHECK(v92_phase4_digital_rx_is_valid(&rejected), "measurement rollback fixture is invalid");
+	struct v92_phase4_digital_rx expected = rejected;
+	expected.failed = true;
+	CHECK(v92_phase4_digital_rx_sample(&rejected, 1234, &event) == V92_PHASE4_DIGITAL_RX_NUMERIC_FAILURE &&
+	      memcmp(&rejected, &expected, sizeof(rejected)) == 0 &&
+	      memcmp(&event, &saved, sizeof(event)) == 0,
+	      "bad delayed observation consumed a sample at stage %u", receiver->stage);
+	return true;
+}
+
 static bool run_records(
 	enum g711_law law, enum v92_constellation_size constellation,
 	uint8_t previous_sign, int8_t polarity, int16_t offset)
@@ -411,6 +432,7 @@ static bool run_records(
 		      V92_PHASE4_DIGITAL_RX_OK,
 	      "digital Phase 4 line did not initialize");
 	CHECK(check_digital_failures(&receiver), "training failure contract changed");
+	CHECK(check_measurement_rollback(&receiver), "training measurement rollback changed");
 	CHECK(v92_pcm_phase4_trn2u_init(&reference, constellation, previous_sign, TEST_LU) ==
 		      V92_PCM_PHASE4_TRN2U_OK, "channel reference did not initialize");
 	for (uint32_t symbol = 0;
@@ -426,6 +448,8 @@ static bool run_records(
 		CHECK(v92_pcm_phase4_trn2u_next(&transmitter, &raw) ==
 			      V92_PCM_PHASE4_TRN2U_OK,
 		      "digital Phase 4 training failed at %u", symbol);
+		if (symbol + 1u == V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS - V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY)
+			CHECK(check_measurement_rollback(&receiver), "handoff measurement rollback changed");
 		result = v92_phase4_digital_rx_sample(
 			&receiver, line_sample(law, polarity, raw) + polarity * offset, &event);
 		CHECK(result ==
@@ -450,6 +474,7 @@ static bool run_records(
 	      !receiver.channel_distorted &&
 	      memcmp(&receiver.channel, &expected_channel, sizeof(expected_channel)) == 0,
 	      "physical handoff lost channel history or used equalized rather than raw samples");
+	CHECK(check_measurement_rollback(&receiver), "delayed training measurement rollback changed");
 	CHECK(transmitter.emitted_symbols ==
 		      V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS &&
 	      v92_phase4_digital_rx_is_receiving_control(&receiver) &&
