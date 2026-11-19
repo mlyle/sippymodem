@@ -25,15 +25,15 @@ struct stream_configuration {
 static unsigned int line_calibrations;
 static bool reject_line_sample;
 
-extern __typeof__(v34_training_line_sample) __real_v34_training_line_sample;
+extern __typeof__(v34_training_line_sample_owned) __real_v34_training_line_sample_owned;
 
-enum v34_training_line_result __wrap_v34_training_line_sample(
+enum v34_training_line_result __wrap_v34_training_line_sample_owned(
 	struct v34_training_line *line, const struct qam_point *point,
-	int16_t *sample, bool *accepted)
+	int16_t *sample)
 {
 	if (reject_line_sample)
 		return V34_TRAINING_LINE_CLIPPING_RISK;
-	return __real_v34_training_line_sample(line, point, sample, accepted);
+	return __real_v34_training_line_sample_owned(line, point, sample);
 }
 
 enum v34_power_calibration_result __real_v34_line_power_calibration_begin(

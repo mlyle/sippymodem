@@ -466,8 +466,6 @@ enum v34_training_transmitter_result v34_training_transmitter_sample(
 	struct qam_point point;
 	const struct qam_point *point_pointer = NULL;
 	int16_t next_sample;
-	bool accepting;
-	bool accepted;
 	enum v34_training_transmitter_result result;
 	enum v34_training_line_result waveform_result;
 
@@ -478,18 +476,16 @@ enum v34_training_transmitter_result v34_training_transmitter_sample(
 		    training->phase4_constellation))
 		return V34_TRAINING_TRANSMITTER_INVALID_STATE;
 	next = *training;
-	accepting = v34_training_line_needs_point(&next.line);
-	if (accepting) {
+	if (v34_training_line_needs_point_owned(&next.line)) {
 		point_pointer = &point;
 		result = next_point(&next, &point);
 		if (result != V34_TRAINING_TRANSMITTER_OK)
 			return result;
 	}
-	waveform_result = v34_training_line_sample(
-		&next.line, point_pointer, &next_sample, &accepted);
+	waveform_result = v34_training_line_sample_owned(&next.line, point_pointer, &next_sample);
 	if (waveform_result != V34_TRAINING_LINE_OK)
 		return line_result(waveform_result);
-	if (accepted != accepting || !v34_training_transmitter_is_valid(&next))
+	if (!v34_training_transmitter_is_valid(&next))
 		return V34_TRAINING_TRANSMITTER_NUMERIC_FAILURE;
 	*training = next;
 	*sample = next_sample;

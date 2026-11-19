@@ -60,6 +60,13 @@ bool v34_training_line_is_valid(
 bool v34_training_line_needs_point(
 	const struct v34_training_line *line);
 
+/* The owner has validated the line and keeps its configuration fixed. */
+static inline bool v34_training_line_needs_point_owned(
+	const struct v34_training_line *line)
+{
+	return v34_pulse_modulator_needs_point_owned(&line->carrier);
+}
+
 /* Conservative 8-kHz flush bound for a valid profile: retain the current
  * accepted point, then emit zero points through the pulse and line filters.
  * Protocol owners retain their own tail counters and completion policy. */
@@ -74,5 +81,12 @@ enum v34_training_line_result v34_training_line_sample(
 	struct v34_training_line *line,
 	const struct qam_point *point, int16_t *sample,
 	bool *point_accepted);
+
+/* The owner has validated the line and provides disjoint storage. A point
+ * must be supplied exactly at its symbol boundary. Success consumes that
+ * point if present. Failure preserves the line and sample. */
+enum v34_training_line_result v34_training_line_sample_owned(
+	struct v34_training_line *line,
+	const struct qam_point *point, int16_t *sample);
 
 #endif

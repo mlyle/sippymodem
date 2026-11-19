@@ -216,7 +216,7 @@ bool v34_training_line_needs_point(
 	const struct v34_training_line *line)
 {
 	return v34_training_line_is_valid(line) &&
-	       v34_pulse_modulator_needs_point_owned(&line->carrier);
+	       v34_training_line_needs_point_owned(line);
 }
 
 enum v34_training_line_result v34_training_line_sample(
@@ -224,24 +224,33 @@ enum v34_training_line_result v34_training_line_sample(
 	const struct qam_point *point, int16_t *sample,
 	bool *point_accepted)
 {
-	struct v34_pulse_modulator next;
 	const struct memory_region regions[] = {
 		{ line, sizeof(*line) },
 		{ sample, sizeof(*sample) },
 		{ point_accepted, sizeof(*point_accepted) },
 		{ point, sizeof(*point) },
 	};
-	double line_sample;
-	double scaled_sample;
-	bool accepting;
-	bool accepted;
 
 	if (sample == NULL || point_accepted == NULL ||
 	    memory_region_set_overlaps(regions, point == NULL ? 3u : 4u) ||
 	    !v34_training_line_is_valid(line))
 		return V34_TRAINING_LINE_INVALID_ARGUMENT;
-	accepting = v34_pulse_modulator_needs_point_owned(&line->carrier);
-	if ((point != NULL) != accepting)
+	enum v34_training_line_result result = v34_training_line_sample_owned(line, point, sample);
+
+	if (result == V34_TRAINING_LINE_OK)
+		*point_accepted = point != NULL;
+	return result;
+}
+
+enum v34_training_line_result v34_training_line_sample_owned(
+	struct v34_training_line *line, const struct qam_point *point, int16_t *sample)
+{
+	struct v34_pulse_modulator next;
+	double line_sample;
+	double scaled_sample;
+	bool accepted;
+
+	if ((point != NULL) != v34_training_line_needs_point_owned(line))
 		return V34_TRAINING_LINE_INVALID_ARGUMENT;
 	if (line->generated_samples == UINT64_MAX)
 		return V34_TRAINING_LINE_OUT_OF_RANGE;
@@ -252,7 +261,7 @@ enum v34_training_line_result v34_training_line_sample(
 		return point != NULL ? V34_TRAINING_LINE_INVALID_ARGUMENT :
 				       V34_TRAINING_LINE_NUMERIC_FAILURE;
 	scaled_sample = line_sample * line->output_gain;
-	if (!isfinite(scaled_sample))
+	if (accepted != (point != NULL) || !isfinite(scaled_sample))
 		return V34_TRAINING_LINE_NUMERIC_FAILURE;
 	if (scaled_sample < INT16_MIN - 0.499 ||
 	    scaled_sample > INT16_MAX + 0.499)
@@ -262,6 +271,5 @@ enum v34_training_line_result v34_training_line_sample(
 	line->carrier = next;
 	line->generated_samples = next.generated_samples;
 	*sample = sample_round_s16(scaled_sample);
-	*point_accepted = accepted;
 	return V34_TRAINING_LINE_OK;
 }

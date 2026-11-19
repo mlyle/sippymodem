@@ -346,15 +346,9 @@ static enum v34_phase3_exchange_result drive_silence(
 	struct v34_training_line *line, int16_t *sample)
 {
 	static const struct qam_point zero;
-	const struct qam_point *point = NULL;
-	bool accepting = v34_training_line_needs_point(line);
-	bool accepted;
+	const struct qam_point *point = v34_training_line_needs_point_owned(line) ? &zero : NULL;
 
-	if (accepting)
-		point = &zero;
-	if (v34_training_line_sample(line, point, sample, &accepted) !=
-		    V34_TRAINING_LINE_OK ||
-	    accepted != accepting)
+	if (v34_training_line_sample_owned(line, point, sample) != V34_TRAINING_LINE_OK)
 		return V34_PHASE3_EXCHANGE_NUMERIC_FAILURE;
 	return V34_PHASE3_EXCHANGE_OK;
 }

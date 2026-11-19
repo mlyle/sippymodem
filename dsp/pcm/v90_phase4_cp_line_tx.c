@@ -51,7 +51,7 @@ bool v90_phase4_cp_line_tx_is_handoff_ready_owned(
 	const struct v90_phase4_cp_line_tx *tx)
 {
 	return v90_phase4_cp_line_tx_record_is_complete_owned(tx) &&
-	       v34_training_line_needs_point(&tx->line);
+	       v34_training_line_needs_point_owned(&tx->line);
 }
 
 static enum v90_phase4_cp_line_tx_result symbol_result(
@@ -192,12 +192,11 @@ static enum v90_phase4_cp_line_tx_result sample_owned(
 	const struct qam_point *supplied = NULL;
 	int16_t generated;
 	bool accepting;
-	bool accepted;
 
 	if (!v90_phase4_cp_line_tx_owned_state_is_valid(tx) || sample == NULL ||
 	    memory_regions_overlap(tx, sizeof(*tx), sample, sizeof(*sample)))
 		return V90_PHASE4_CP_LINE_TX_INVALID_ARGUMENT;
-	accepting = v34_training_line_needs_point(&tx->line);
+	accepting = v34_training_line_needs_point_owned(&tx->line);
 	if (scr && tx->symbols.bit_index != tx->symbols.frame_bit_count)
 		return V90_PHASE4_CP_LINE_TX_RECORD_IN_PROGRESS;
 	if (accepting && (scr ? stop_at_boundary :
@@ -223,14 +222,12 @@ static enum v90_phase4_cp_line_tx_result sample_owned(
 	}
 	{
 		enum v90_phase4_cp_line_tx_result result = line_result(
-			v34_training_line_sample(
-				&next.line, supplied, &generated, &accepted));
+			v34_training_line_sample_owned(&next.line, supplied, &generated));
 
 		if (result != V90_PHASE4_CP_LINE_TX_OK)
 			return result;
 	}
-	if (accepted != accepting ||
-	    !v90_phase4_cp_line_tx_owned_state_is_valid(&next))
+	if (!v90_phase4_cp_line_tx_owned_state_is_valid(&next))
 		return V90_PHASE4_CP_LINE_TX_INTERNAL_ERROR;
 	*tx = next;
 	*sample = generated;

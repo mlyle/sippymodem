@@ -161,8 +161,7 @@ static bool next_point(
 static bool transmit_sample(struct v34_cleardown *cleardown, int16_t *sample)
 {
 	struct qam_point point = { 0 };
-	bool needs_point = v34_training_line_needs_point(&cleardown->transmit_line);
-	bool accepted;
+	bool needs_point = v34_training_line_needs_point_owned(&cleardown->transmit_line);
 
 	if (cleardown->stage == V34_CLEARDOWN_FINISHED) {
 		*sample = 0;
@@ -177,9 +176,9 @@ static bool transmit_sample(struct v34_cleardown *cleardown, int16_t *sample)
 	if (cleardown->stage != V34_CLEARDOWN_TAIL && needs_point &&
 	    !next_point(cleardown, &point))
 		return false;
-	if (v34_training_line_sample(
+	if (v34_training_line_sample_owned(
 		    &cleardown->transmit_line, needs_point ? &point : NULL,
-		    sample, &accepted) != V34_TRAINING_LINE_OK)
+		    sample) != V34_TRAINING_LINE_OK)
 		return false;
 	if (cleardown->stage == V34_CLEARDOWN_TAIL)
 		cleardown->tail_samples--;

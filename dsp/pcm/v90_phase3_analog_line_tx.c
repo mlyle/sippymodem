@@ -143,7 +143,7 @@ bool v90_phase3_analog_line_tx_owned_handoff_is_ready(
 	return v90_phase3_analog_line_tx_owned_state_is_valid(tx) &&
 	       tx->leading_silence_samples == 0 &&
 	       tx->symbols.stage == V90_PHASE3_ANALOG_TX_COMPLETE &&
-	       v34_training_line_needs_point(&tx->line);
+	       v34_training_line_needs_point_owned(&tx->line);
 }
 
 bool v90_phase3_analog_line_tx_is_handoff_ready(
@@ -161,8 +161,6 @@ enum v90_phase3_analog_line_tx_result v90_phase3_analog_line_tx_sample(
 	const struct qam_point *point_pointer = NULL;
 	enum v34_training_line_result waveform_result;
 	int16_t generated;
-	bool accepting;
-	bool accepted;
 
 	if (!v90_phase3_analog_line_tx_owned_state_is_valid(tx) ||
 	    sample == NULL)
@@ -178,19 +176,16 @@ enum v90_phase3_analog_line_tx_result v90_phase3_analog_line_tx_sample(
 		*sample = 0;
 		return V90_PHASE3_ANALOG_LINE_TX_OK;
 	}
-	accepting = v34_training_line_needs_point(&next.line);
-	if (accepting) {
+	if (v34_training_line_needs_point_owned(&next.line)) {
 		if (v90_phase3_analog_tx_next(&next.symbols, &point) !=
 		    V90_PHASE3_ANALOG_TX_OK)
 			return V90_PHASE3_ANALOG_LINE_TX_INTERNAL_ERROR;
 		point_pointer = &point;
 	}
-	waveform_result = v34_training_line_sample(
-		&next.line, point_pointer, &generated, &accepted);
+	waveform_result = v34_training_line_sample_owned(&next.line, point_pointer, &generated);
 	if (waveform_result != V34_TRAINING_LINE_OK)
 		return line_result(waveform_result);
-	if (accepted != accepting ||
-	    !v90_phase3_analog_line_tx_owned_state_is_valid(&next))
+	if (!v90_phase3_analog_line_tx_owned_state_is_valid(&next))
 		return V90_PHASE3_ANALOG_LINE_TX_INTERNAL_ERROR;
 	*tx = next;
 	*sample = generated;

@@ -4272,7 +4272,7 @@ $(V34_DATA_STARTUP_TEST_BINARY): $(V34_DATA_STARTUP_TEST_OBJECTS)
 
 $(V34_DATA_STREAM_TEST_BINARY): $(V34_DATA_STREAM_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -Wl,--wrap=v34_line_power_calibration_begin \
-		-Wl,--wrap=v34_training_line_sample -o $@ $^ -lm
+		-Wl,--wrap=v34_training_line_sample_owned -o $@ $^ -lm
 
 $(V34_ANALYTIC_FILTER_TEST_BINARY): \
 	$(V34_ANALYTIC_FILTER_TEST_OBJECTS)

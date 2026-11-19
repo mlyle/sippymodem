@@ -22,7 +22,7 @@ bool v90_phase4_e_line_tx_is_complete(
 {
 	return v90_phase4_e_line_tx_is_valid(transmitter) &&
 	       v34_phase4_e_sequence_is_complete(&transmitter->sequence) &&
-	       v34_training_line_needs_point(&transmitter->line);
+	       v34_training_line_needs_point_owned(&transmitter->line);
 }
 
 enum v90_phase4_e_line_tx_result v90_phase4_e_line_tx_init(
@@ -84,8 +84,6 @@ enum v90_phase4_e_line_tx_result v90_phase4_e_line_tx_sample(
 	struct qam_point point;
 	const struct qam_point *supplied = NULL;
 	int16_t generated;
-	bool accepting;
-	bool accepted;
 	enum v90_phase4_e_line_tx_result result;
 
 	if (!v90_phase4_e_line_tx_is_valid(transmitter) || sample == NULL)
@@ -93,8 +91,7 @@ enum v90_phase4_e_line_tx_result v90_phase4_e_line_tx_sample(
 	if (v90_phase4_e_line_tx_is_complete(transmitter))
 		return V90_PHASE4_E_LINE_TX_COMPLETE;
 	next = *transmitter;
-	accepting = v34_training_line_needs_point(&next.line);
-	if (accepting) {
+	if (v34_training_line_needs_point_owned(&next.line)) {
 		uint8_t quarter_point;
 		uint8_t clockwise_quarter_turns;
 
@@ -105,12 +102,10 @@ enum v90_phase4_e_line_tx_result v90_phase4_e_line_tx_sample(
 			return V90_PHASE4_E_LINE_TX_INTERNAL_ERROR;
 		supplied = &point;
 	}
-	result = line_result(v34_training_line_sample(
-		&next.line, supplied, &generated, &accepted));
+	result = line_result(v34_training_line_sample_owned(&next.line, supplied, &generated));
 	if (result != V90_PHASE4_E_LINE_TX_OK)
 		return result;
-	if (accepted != accepting ||
-	    !v90_phase4_e_line_tx_is_valid(&next))
+	if (!v90_phase4_e_line_tx_is_valid(&next))
 		return V90_PHASE4_E_LINE_TX_INTERNAL_ERROR;
 	*transmitter = next;
 	*sample = generated;

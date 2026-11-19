@@ -316,13 +316,12 @@ static enum v90_analog_path_result emit_cp(
 	    path->cleardown_records == CLEARDOWN_RECORDS) {
 		const struct qam_point zero = { 0 };
 		struct v34_training_line *line = &path->upstream.cp.line;
-		bool accepted;
 
 		if (path->cleardown_tail_samples == 0u)
 			return V90_ANALOG_PATH_CLEARDOWN_COMPLETE;
-		if (v34_training_line_sample(line,
-			    v34_training_line_needs_point(line) ? &zero : NULL,
-			    sample, &accepted) != V34_TRAINING_LINE_OK)
+		if (v34_training_line_sample_owned(line,
+			    v34_training_line_needs_point_owned(line) ? &zero : NULL,
+			    sample) != V34_TRAINING_LINE_OK)
 			return V90_ANALOG_PATH_INTERNAL_ERROR;
 		path->cleardown_tail_samples--;
 		*ready = true;

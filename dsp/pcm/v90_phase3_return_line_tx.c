@@ -25,11 +25,11 @@ bool v90_phase3_return_line_tx_is_valid(
 	if (!tx->draining_accepted_point)
 		return tx->points.stage != V90_PHASE3_RETURN_TX_S ||
 		       tx->points.s_symbols != 0u ||
-		       v34_training_line_needs_point(&tx->line);
+		       v34_training_line_needs_point_owned(&tx->line);
 	return tx->points.stage == V90_PHASE3_RETURN_TX_S &&
 	       tx->points.s_symbols == 0u &&
 	       tx->points.s_bar_symbols == 0u &&
-	       !v34_training_line_needs_point(&tx->line);
+	       !v34_training_line_needs_point_owned(&tx->line);
 }
 
 bool v90_phase3_return_line_tx_is_handoff_ready(
@@ -37,7 +37,7 @@ bool v90_phase3_return_line_tx_is_handoff_ready(
 {
 	return v90_phase3_return_line_tx_is_valid(tx) &&
 	       v90_phase3_return_tx_is_complete(&tx->points) &&
-	       v34_training_line_needs_point(&tx->line);
+	       v34_training_line_needs_point_owned(&tx->line);
 }
 
 static enum v90_phase3_return_line_tx_result initialize(
@@ -167,8 +167,6 @@ enum v90_phase3_return_line_tx_result v90_phase3_return_line_tx_sample(
 	struct qam_point point;
 	const struct qam_point *supplied = NULL;
 	int16_t generated;
-	bool accepting;
-	bool accepted;
 
 	if (!v90_phase3_return_line_tx_is_valid(tx) || sample == NULL)
 		return V90_PHASE3_RETURN_LINE_TX_INVALID_ARGUMENT;
@@ -176,12 +174,10 @@ enum v90_phase3_return_line_tx_result v90_phase3_return_line_tx_sample(
 		return V90_PHASE3_RETURN_LINE_TX_COMPLETE;
 	next = *tx;
 	if (next.draining_accepted_point) {
-		if (v34_training_line_sample(
-			    &next.line, NULL, &generated, &accepted) !=
-			    V34_TRAINING_LINE_OK ||
-		    accepted)
+		if (v34_training_line_sample_owned(&next.line, NULL, &generated) !=
+		    V34_TRAINING_LINE_OK)
 			return V90_PHASE3_RETURN_LINE_TX_INTERNAL_ERROR;
-		if (v34_training_line_needs_point(&next.line))
+		if (v34_training_line_needs_point_owned(&next.line))
 			next.draining_accepted_point = false;
 		if (!v90_phase3_return_line_tx_is_valid(&next))
 			return V90_PHASE3_RETURN_LINE_TX_INTERNAL_ERROR;
@@ -189,8 +185,7 @@ enum v90_phase3_return_line_tx_result v90_phase3_return_line_tx_sample(
 		*sample = generated;
 		return V90_PHASE3_RETURN_LINE_TX_OK;
 	}
-	accepting = v34_training_line_needs_point(&next.line);
-	if (accepting) {
+	if (v34_training_line_needs_point_owned(&next.line)) {
 		enum v90_phase3_return_tx_stage point_stage = next.points.stage;
 		enum v90_phase3_return_tx_result point_result =
 			v90_phase3_return_tx_next(&next.points, &point);
@@ -209,10 +204,8 @@ enum v90_phase3_return_line_tx_result v90_phase3_return_line_tx_sample(
 			return V90_PHASE3_RETURN_LINE_TX_INTERNAL_ERROR;
 		supplied = &point;
 	}
-	if (v34_training_line_sample(
-		    &next.line, supplied, &generated, &accepted) !=
-		    V34_TRAINING_LINE_OK ||
-	    accepted != accepting ||
+	if (v34_training_line_sample_owned(&next.line, supplied, &generated) !=
+	    V34_TRAINING_LINE_OK ||
 	    !v90_phase3_return_line_tx_is_valid(&next))
 		return V90_PHASE3_RETURN_LINE_TX_INTERNAL_ERROR;
 	*tx = next;

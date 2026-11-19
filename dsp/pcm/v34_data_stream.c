@@ -380,14 +380,15 @@ static enum v34_data_stream_result emit_sample(
 	const struct qam_point *supplied = NULL;
 	enum v34_data_stream_result result;
 
-	if (v34_pulse_modulator_needs_point_owned(&stream->line.carrier)) {
+	if (v34_training_line_needs_point_owned(&stream->line)) {
 		point = v34_data_points_take_owned(&stream->points);
 		supplied = &point;
 	}
-	result = line_result(v34_training_line_sample(
-		&stream->line, supplied, sample, symbol_accepted));
+	result = line_result(v34_training_line_sample_owned(&stream->line, supplied, sample));
 	if (result != V34_DATA_STREAM_OK)
 		stream->points.next_point = cursor;
+	else
+		*symbol_accepted = supplied != NULL;
 	return result;
 }
 
