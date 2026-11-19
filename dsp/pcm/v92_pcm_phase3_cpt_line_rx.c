@@ -102,11 +102,31 @@ static enum v92_pcm_phase3_cpt_line_rx_result fail_sample(
 
 static bool receive_sign(struct binary_equalizer *line,
 	struct v92_pcm_phase3_cpt_rx *signs, int32_t sample, bool received_available,
-	struct v92_pcm_phase3_cpt_rx_event *event)
+	double *inferred_e1u_energy, struct v92_pcm_phase3_cpt_rx_event *event)
 {
 	uint8_t sign;
-	return binary_equalizer_receive_owned(line, sample, received_available, &sign) == BINARY_EQUALIZER_OK &&
-	       v92_pcm_phase3_cpt_rx_receive(signs, sign, event) == V92_PCM_PHASE3_CPT_RX_OK;
+
+	if (!received_available)
+		v92_pcm_phase3_cpt_rx_discard_repeat(signs);
+	if (binary_equalizer_receive_owned(line, sample, received_available, &sign) !=
+	    BINARY_EQUALIZER_OK)
+		return false;
+	if (signs->boundary_requires_zeros) {
+		const struct qam_equalizer *equalizer = &line->equalizer;
+		double input = equalizer->history[equalizer->decision_delay].in_phase;
+
+		*inferred_e1u_energy = (signs->boundary_count ? *inferred_e1u_energy : 0.0) +
+			input * input;
+		/* A quiet line between CPt and retraining can yield twelve zero
+		 * bits. Check the decision-aligned input before adaptive gain.
+		 * A marker needs at least a quarter of the trained RMS level. */
+		if (signs->boundary_count + 1u == V92_CPT_SYMBOLS_PER_FRAME &&
+		    *inferred_e1u_energy * 16.0 <
+			    V92_CPT_SYMBOLS_PER_FRAME * line->magnitude * line->magnitude)
+			v92_pcm_phase3_cpt_rx_discard_repeat(signs);
+	}
+	return v92_pcm_phase3_cpt_rx_receive(signs, sign, event) ==
+	       V92_PCM_PHASE3_CPT_RX_OK;
 }
 
 static void discard_alternate(struct v92_pcm_phase3_cpt_line_rx *receiver)
@@ -135,11 +155,13 @@ v92_pcm_phase3_cpt_line_rx_sample(
 	next.input_samples++;
 	int32_t centered = (int32_t)sample - next.dc_offset;
 	bool primary_ok = receive_sign(&next.line, &next.signs,
-		next.alternate_active ? sample : centered, received_available, &emitted);
+		next.alternate_active ? sample : centered, received_available,
+		&next.inferred_e1u_energy, &emitted);
 	if (next.alternate_active) {
 		struct v92_pcm_phase3_cpt_rx_event other = { 0 };
 		bool alternate_ok = receive_sign(&next.alternate.line,
-			&next.alternate.signs, centered, received_available, &other);
+			&next.alternate.signs, centered, received_available,
+			&next.inferred_e1u_energy, &other);
 		if (primary_ok && emitted.type == V92_PCM_PHASE3_CPT_RX_PARAMETERS) {
 			next.dc_offset = 0;
 			discard_alternate(&next);

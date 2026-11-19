@@ -467,6 +467,74 @@ static bool make_handoff(
 	return false;
 }
 
+static bool test_inferred_e1u_level(void)
+{
+	struct v92_cpt_parameters parameters = make_parameters(G711_LAW_PCMU);
+	struct v92_pcm_phase3_trn1u_line_handoff handoff;
+	struct v92_pcm_phase3_cpt_tx transmitter;
+	struct v92_pcm_phase3_cpt_line_rx normal, quiet;
+	size_t end = V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS +
+		V92_PCM_PHASE3_CPT_PREAMBLE_SYMBOLS +
+		3u * v92_cpt_frame_bits(&parameters) + V92_PCM_PHASE3_E1U_SYMBOLS;
+
+	CHECK(make_handoff(&handoff) &&
+	      v92_pcm_phase3_cpt_line_rx_init(&normal, &handoff) ==
+		      V92_PCM_PHASE3_CPT_LINE_RX_OK &&
+	      v92_pcm_phase3_cpt_tx_init(&transmitter, G711_LAW_PCMU,
+		      TEST_UCODE, &parameters) == V92_PCM_PHASE3_CPT_TX_OK,
+	      "damaged CPt line fixture did not initialize");
+	quiet = normal;
+	for (size_t i = 0; i < end + handoff.equalizer.decision_delay; i++) {
+		bool marker = transmitter.stage == V92_PCM_PHASE3_CPT_TX_E1U;
+		int16_t sample = 0;
+
+		if (i == V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS)
+			CHECK(v92_pcm_phase3_cpt_tx_start(&transmitter) ==
+			      V92_PCM_PHASE3_CPT_TX_OK, "CPt did not start");
+		if (transmitter.completed_records == 2u && transmitter.frame_bit_index == 80u)
+			CHECK(v92_pcm_phase3_cpt_tx_request_finish(&transmitter) ==
+			      V92_PCM_PHASE3_CPT_TX_OK, "CPt did not request E1u");
+		if (!v92_pcm_phase3_cpt_tx_is_complete(&transmitter)) {
+			bool damage = transmitter.completed_records == 2u &&
+				transmitter.frame_bit_index == V92_CPT_HEADER_BITS + 40u;
+			struct v90_pcm_symbol symbol;
+
+			CHECK(v92_pcm_phase3_cpt_tx_next(&transmitter, &symbol) ==
+			      V92_PCM_PHASE3_CPT_TX_OK, "CPt did not emit a symbol");
+			sample = damage ? -symbol.sample : symbol.sample;
+		}
+		if (i < handoff.input_samples)
+			continue;
+		struct v92_pcm_phase3_cpt_rx_event event;
+		bool last = i + 1u == end + handoff.equalizer.decision_delay;
+
+		if (last)
+			CHECK(normal.signs.boundary_requires_zeros &&
+			      quiet.signs.boundary_requires_zeros &&
+			      normal.signs.boundary_count == V92_PCM_PHASE3_E1U_SYMBOLS - 1u &&
+			      quiet.signs.boundary_count == normal.signs.boundary_count,
+			      "expected inferred marker at %zu: normal %u/%u (%u), quiet %u/%u (%u)",
+			      i, normal.signs.stage, normal.signs.boundary_count,
+			      normal.signs.matching_records, quiet.signs.stage,
+			      quiet.signs.boundary_count, quiet.signs.matching_records);
+		enum v92_pcm_phase3_cpt_line_rx_result result =
+			v92_pcm_phase3_cpt_line_rx_sample(&normal, sample, true, &event);
+		CHECK((result == V92_PCM_PHASE3_CPT_LINE_RX_SIGN ||
+		       result == V92_PCM_PHASE3_CPT_LINE_RX_EVENT) &&
+		      (event.type == V92_PCM_PHASE3_CPT_RX_E1U) == last,
+		      "normal level E1u was not recognized at the expected boundary");
+		result = v92_pcm_phase3_cpt_line_rx_sample(&quiet,
+			marker ? sample / 16 : sample, true, &event);
+		CHECK((result == V92_PCM_PHASE3_CPT_LINE_RX_SIGN ||
+		       result == V92_PCM_PHASE3_CPT_LINE_RX_EVENT) &&
+		      event.type != V92_PCM_PHASE3_CPT_RX_E1U, "quiet line left CPt reception");
+	}
+	CHECK(v92_pcm_phase3_cpt_line_rx_is_complete(&normal) &&
+	      quiet.signs.stage == V92_PCM_PHASE3_CPT_RX_RECORDS,
+	      "quiet E1u candidate should return to CPt search");
+	return true;
+}
+
 static bool test_contracts(void)
 {
 	struct v92_pcm_phase3_trn1u_line_handoff handoff;
@@ -637,6 +705,7 @@ int main(void)
 		{ "offset channel", test_offset_channel },
 		{ "erased TRN1u preserves CPt acquisition", test_receive_gap },
 		{ "lost preamble, CRC and E1u", test_lost_preamble },
+		{ "E1u level after a damaged CPt repeat", test_inferred_e1u_level },
 		{ "contracts", test_contracts },
 		{ "offset contracts", test_offset_contracts },
 	};

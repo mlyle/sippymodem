@@ -33,6 +33,7 @@ struct v92_cpt_line_candidate {
 struct v92_pcm_phase3_cpt_line_rx {
 	struct binary_equalizer line;
 	struct v92_pcm_phase3_cpt_rx signs;
+	double inferred_e1u_energy;
 	/* A training-derived DC interpretation competes only until the first
 	 * CRC-valid CPt record. Raw wins ties; the selected state owns E1u. */
 	struct v92_cpt_line_candidate alternate;

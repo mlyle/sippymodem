@@ -359,6 +359,65 @@ static bool test_mismatched_repeat_and_e1u_tolerance(void)
 	return true;
 }
 
+static bool test_e1u_after_damaged_repeat(void)
+{
+	struct cpt_pair pair;
+	struct v92_pcm_phase3_cpt_rx_event event;
+	uint8_t frame[V92_CPT_MAX_FRAME_BYTES];
+	size_t bits;
+
+	CHECK(initialize_pair(&pair, G711_LAW_PCMU, 2u, false) &&
+	      receive_first_record(&pair) &&
+	      v92_cpt_encode(&pair.parameters, frame, sizeof(frame), &bits) == V92_CPT_OK,
+	      "damaged final CPt fixture did not initialize");
+	for (size_t i = 0; i < bits; ++i)
+		CHECK(feed_symbol(&pair, false, &event), "CPt repeat failed at bit %zu", i);
+	CHECK(event.type == V92_PCM_PHASE3_CPT_RX_REPEAT && pair.receiver.repeat.confirmed,
+	      "two matching CPt records did not establish a repeat boundary");
+
+	/* Reject a bad payload at its CRC and a bad word start during parsing. */
+	const size_t damaged[] = { V92_CPT_HEADER_BITS + 6u, V92_CPT_HEADER_BITS + 17u };
+	for (size_t d = 0; d < ARRAY_LENGTH(damaged); ++d) {
+		struct v92_pcm_phase3_cpt_rx receiver = pair.receiver;
+		struct pcm_binary_sign source = pair.transmitter.coding;
+		bool rejected = false;
+
+		for (size_t i = 0; i < bits; ++i) {
+			CHECK(feed_encoded_bit(&receiver, &source,
+			      packed_bit(frame, i) ^ (i == damaged[d]), &event),
+			      "damaged CPt failed at %zu", i);
+			rejected |= event.type == V92_PCM_PHASE3_CPT_RX_REJECTED;
+			CHECK(!receiver.boundary_requires_zeros || i + 1u == bits,
+			      "damaged CPt moved the E1u boundary");
+		}
+		CHECK(rejected && receiver.boundary_requires_zeros &&
+		      receiver.matching_records == 2u,
+		      "damaged CPt changed the established parameters or lost its boundary");
+
+		for (unsigned trial = 0; trial < 3; ++trial) {
+			struct v92_pcm_phase3_cpt_rx next = receiver;
+			struct pcm_binary_sign tx = source;
+
+			for (size_t i = 0; i < V92_CPT_SYMBOLS_PER_FRAME; ++i) {
+				if (trial == 2u && i == 3u)
+					v92_pcm_phase3_cpt_rx_discard_repeat(&next);
+				CHECK(feed_encoded_bit(&next, &tx, trial == 1u && i == 5u, &event),
+				      "E1u failed at bit %zu", i);
+				CHECK((event.type == V92_PCM_PHASE3_CPT_RX_E1U) ==
+				      (trial == 0u && i + 1u == V92_CPT_SYMBOLS_PER_FRAME),
+				      "inferred boundary accepted a damaged or interrupted E1u");
+			}
+			if (trial == 0u) {
+				uint8_t sign;
+				CHECK(v92_pcm_phase3_cpt_rx_previous_sign(&next, &sign) &&
+				      sign == tx.previous_sign,
+				      "recovered marker lost differential coding history");
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_repeat_fields(void)
 {
 	struct cpt_pair pair;
@@ -529,6 +588,7 @@ int main(void)
 	} tests[] = {
 		{ "generated CPt and E1u sequences", test_generated_sequences },
 		{ "corrupt repeat recovery", test_corrupt_repeat_recovery },
+		{ "E1u after a damaged CPt repeat", test_e1u_after_damaged_repeat },
 		{ "repeat identity and E1u tolerance",
 		  test_mismatched_repeat_and_e1u_tolerance },
 		{ "repeat field identity and recovery", test_repeat_fields },

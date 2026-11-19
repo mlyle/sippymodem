@@ -35,6 +35,13 @@ struct v92_pcm_phase3_cpt_rx_event {
 	struct v92_cpt_parameters parameters;
 };
 
+struct v92_cpt_repeat {
+	uint16_t bits;
+	uint16_t remaining;
+	bool confirmed;
+	bool rejected;
+};
+
 enum v92_pcm_phase3_cpt_rx_result {
 	V92_PCM_PHASE3_CPT_RX_OK,
 	V92_PCM_PHASE3_CPT_RX_DONE,
@@ -53,11 +60,13 @@ struct v92_pcm_phase3_cpt_rx {
 	/* The first CRC-checked record owns the negotiated parameters. Compare
 	 * decoded repeats directly; no second serialized copy is needed. */
 	struct v92_cpt_parameters parameters;
+	struct v92_cpt_repeat repeat;
 	uint8_t boundary_bits[V92_CPT_SYMBOLS_PER_FRAME];
 	uint32_t matching_records;
 	enum v92_pcm_phase3_cpt_rx_stage stage;
 	uint8_t boundary_count;
 	uint8_t boundary_ones;
+	bool boundary_requires_zeros;
 };
 
 enum v92_pcm_phase3_cpt_rx_result v92_pcm_phase3_cpt_rx_init(
@@ -81,11 +90,16 @@ enum v92_pcm_phase3_cpt_rx_result v92_pcm_phase3_cpt_rx_begin(
 
 /* Consume one differential CPt/E1u sign. A PARAMETERS event is emitted for
  * the first valid record, REPEAT for an identical later record, and E1U at
- * the end of the one-frame all-zero transition. One decoded error is
- * tolerated in E1u. Rejected calls change neither state nor event. */
+ * the end of the one-frame all-zero transition. A CRC-valid CPt permits
+ * one decoded error in E1u. A damaged repeat with a confirmed wire length
+ * requires twelve exact zeros. Rejected calls change neither state nor event. */
 enum v92_pcm_phase3_cpt_rx_result v92_pcm_phase3_cpt_rx_receive(
 	struct v92_pcm_phase3_cpt_rx *receiver, uint8_t sign,
 	struct v92_pcm_phase3_cpt_rx_event *event);
+
+/* An unavailable line sample retires the inferred repeat boundary.
+ * Ordinary CRC-validated records and their transitions remain usable. */
+void v92_pcm_phase3_cpt_rx_discard_repeat(struct v92_pcm_phase3_cpt_rx *receiver);
 
 bool v92_pcm_phase3_cpt_rx_parameters(
 	const struct v92_pcm_phase3_cpt_rx *receiver,

@@ -19,7 +19,10 @@ static bool boundary_is_valid(
 	uint8_t ones = 0u;
 
 	if (receiver->boundary_count > V92_CPT_SYMBOLS_PER_FRAME ||
-	    receiver->boundary_ones > receiver->boundary_count)
+	    receiver->boundary_ones > receiver->boundary_count ||
+	    (receiver->boundary_requires_zeros &&
+	     (receiver->boundary_ones != 0u ||
+	      receiver->stage < V92_PCM_PHASE3_CPT_RX_E1U_CANDIDATE)))
 		return false;
 	for (size_t index = 0; index < V92_CPT_SYMBOLS_PER_FRAME; ++index) {
 		if (receiver->boundary_bits[index] > 1u ||
@@ -32,6 +35,21 @@ static bool boundary_is_valid(
 	return receiver->boundary_ones == ones;
 }
 
+static bool repeat_is_valid(const struct v92_pcm_phase3_cpt_rx *receiver)
+{
+	const struct v92_cpt_repeat *repeat = &receiver->repeat;
+
+	if (repeat->bits == 0u)
+		return !repeat->remaining && !repeat->confirmed && !repeat->rejected;
+	return receiver->matching_records != 0u &&
+	       repeat->bits >= V92_CPT_MIN_FRAME_BITS &&
+	       repeat->bits <= V92_CPT_MAX_FRAME_BITS &&
+	       repeat->bits % V92_CPT_SYMBOLS_PER_FRAME == 0u &&
+	       repeat->remaining != 0u && repeat->remaining <= repeat->bits &&
+	       (!repeat->confirmed || receiver->matching_records > 1u) &&
+	       (!repeat->rejected || repeat->confirmed);
+}
+
 bool v92_pcm_phase3_cpt_rx_is_valid(
 	const struct v92_pcm_phase3_cpt_rx *receiver)
 {
@@ -40,6 +58,7 @@ bool v92_pcm_phase3_cpt_rx_is_valid(
 	    !pcm_binary_sign_is_gpa(&receiver->coding) ||
 	    !v92_cpt_receiver_is_valid(&receiver->records) ||
 	    !boundary_is_valid(receiver) ||
+	    !repeat_is_valid(receiver) ||
 	    (receiver->matching_records != 0u &&
 	     !v92_cpt_parameters_are_valid(&receiver->parameters)))
 		return false;
@@ -176,12 +195,30 @@ static enum v92_pcm_phase3_cpt_rx_result receive_search_sign(
 	return V92_PCM_PHASE3_CPT_RX_OK;
 }
 
-static void begin_boundary(struct v92_pcm_phase3_cpt_rx *receiver)
+static void begin_boundary(struct v92_pcm_phase3_cpt_rx *receiver, bool exact)
 {
 	memset(receiver->boundary_bits, 0, sizeof(receiver->boundary_bits));
 	receiver->boundary_count = 0u;
 	receiver->boundary_ones = 0u;
+	receiver->boundary_requires_zeros = exact;
 	receiver->stage = V92_PCM_PHASE3_CPT_RX_E1U_CANDIDATE;
+}
+
+static void resume_records(struct v92_pcm_phase3_cpt_rx *receiver)
+{
+	memset(receiver->boundary_bits, 0, sizeof(receiver->boundary_bits));
+	receiver->boundary_count = 0u;
+	receiver->boundary_ones = 0u;
+	receiver->boundary_requires_zeros = false;
+	receiver->stage = V92_PCM_PHASE3_CPT_RX_RECORDS;
+}
+
+void v92_pcm_phase3_cpt_rx_discard_repeat(struct v92_pcm_phase3_cpt_rx *receiver)
+{
+	receiver->repeat = (struct v92_cpt_repeat){ 0 };
+	if (receiver->stage == V92_PCM_PHASE3_CPT_RX_E1U_CANDIDATE &&
+	    receiver->boundary_requires_zeros)
+		resume_records(receiver);
 }
 
 static bool parameters_match(
@@ -232,7 +269,19 @@ static enum v92_pcm_phase3_cpt_rx_result accept_frame(
 			event->frame_result = V92_CPT_INVALID_FRAME;
 		}
 	}
-	begin_boundary(receiver);
+	if (event->type != V92_PCM_PHASE3_CPT_RX_REJECTED) {
+		bool consecutive = receiver->repeat.bits == record->observed_bits &&
+			receiver->repeat.remaining == 0u;
+
+		receiver->repeat = (struct v92_cpt_repeat){
+			.bits = (uint16_t)record->observed_bits,
+			.remaining = (uint16_t)record->observed_bits,
+			.confirmed = consecutive,
+		};
+	} else {
+		receiver->repeat = (struct v92_cpt_repeat){ 0 };
+	}
+	begin_boundary(receiver, false);
 	return V92_PCM_PHASE3_CPT_RX_OK;
 }
 
@@ -241,6 +290,7 @@ static enum v92_pcm_phase3_cpt_rx_result receive_record_bit(
 	struct v92_pcm_phase3_cpt_rx_event *event)
 {
 	struct v92_cpt_receive_event record;
+	size_t expected = receiver->records.wire.frame_bit_count;
 
 	if (v92_cpt_receiver_receive_bit(
 		    &receiver->records, bit, &record) != V92_CPT_OK)
@@ -251,6 +301,12 @@ static enum v92_pcm_phase3_cpt_rx_result receive_record_bit(
 	case V92_CPT_RECEIVE_FRAME:
 		return accept_frame(receiver, &record, event);
 	case V92_CPT_RECEIVE_REJECTED:
+		/* The decoder had accepted the header at the established cadence.
+		 * Preserve its ending time even if a bad start bit or CRC made
+		 * the parser abandon the record before that boundary. */
+		if (receiver->repeat.confirmed && expected == receiver->repeat.bits &&
+		    record.observed_bits + receiver->repeat.remaining == expected)
+			receiver->repeat.rejected = true;
 		event->type = V92_PCM_PHASE3_CPT_RX_REJECTED;
 		event->frame_result = record.frame_result;
 		event->observed_bits = record.observed_bits;
@@ -271,10 +327,7 @@ static enum v92_pcm_phase3_cpt_rx_result replay_boundary(
 		    ignored.type != V92_PCM_PHASE3_CPT_RX_NO_EVENT)
 			return V92_PCM_PHASE3_CPT_RX_INTERNAL_ERROR;
 	}
-	memset(receiver->boundary_bits, 0, sizeof(receiver->boundary_bits));
-	receiver->boundary_count = 0u;
-	receiver->boundary_ones = 0u;
-	receiver->stage = V92_PCM_PHASE3_CPT_RX_RECORDS;
+	resume_records(receiver);
 	return V92_PCM_PHASE3_CPT_RX_OK;
 }
 
@@ -284,10 +337,11 @@ static enum v92_pcm_phase3_cpt_rx_result receive_boundary_bit(
 {
 	receiver->boundary_bits[receiver->boundary_count++] = bit;
 	receiver->boundary_ones += bit;
-	if (receiver->boundary_ones > 1u)
+	if (receiver->boundary_ones > (receiver->boundary_requires_zeros ? 0u : 1u))
 		return replay_boundary(receiver);
 	if (receiver->boundary_count < V92_CPT_SYMBOLS_PER_FRAME)
 		return V92_PCM_PHASE3_CPT_RX_OK;
+	receiver->repeat = (struct v92_cpt_repeat){ 0 };
 	receiver->stage = V92_PCM_PHASE3_CPT_RX_COMPLETE;
 	event->type = V92_PCM_PHASE3_CPT_RX_E1U;
 	event->observed_bits = V92_CPT_SYMBOLS_PER_FRAME;
@@ -299,13 +353,28 @@ static enum v92_pcm_phase3_cpt_rx_result receive_data_sign(
 	struct v92_pcm_phase3_cpt_rx_event *event)
 {
 	uint8_t bit;
+	bool completed_repeat = receiver->repeat.remaining != 0u &&
+		--receiver->repeat.remaining == 0u;
 
 	if (pcm_binary_sign_decode(&receiver->coding, sign, &bit) !=
 	    PCM_BINARY_SIGN_OK)
 		return V92_PCM_PHASE3_CPT_RX_INTERNAL_ERROR;
 	if (receiver->stage == V92_PCM_PHASE3_CPT_RX_E1U_CANDIDATE)
 		return receive_boundary_bit(receiver, bit, event);
-	return receive_record_bit(receiver, bit, event);
+	enum v92_pcm_phase3_cpt_rx_result result = receive_record_bit(receiver, bit, event);
+	if (result != V92_PCM_PHASE3_CPT_RX_OK || !completed_repeat ||
+	    receiver->repeat.remaining != 0u)
+		return result;
+	bool rejected = receiver->repeat.rejected;
+	receiver->repeat = (struct v92_cpt_repeat){ 0 };
+	if (rejected && receiver->stage == V92_PCM_PHASE3_CPT_RX_RECORDS) {
+		/* Only the exact E1u word can qualify after one damaged repeat.
+		 * The previously CRC-validated parameters still own the handoff. */
+		if (v92_cpt_receiver_init(&receiver->records) != V92_CPT_OK)
+			return V92_PCM_PHASE3_CPT_RX_INTERNAL_ERROR;
+		begin_boundary(receiver, true);
+	}
+	return result;
 }
 
 enum v92_pcm_phase3_cpt_rx_result v92_pcm_phase3_cpt_rx_receive(
