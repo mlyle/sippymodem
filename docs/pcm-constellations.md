@@ -151,6 +151,52 @@ bounds on the sampled codec models. Qualification of a replacement
 also needs rate-flexible trials, media loss, and an independent digital
 peer that decodes the requested descriptor.
 
+## Probe the second postcursor within the short segment
+
+At 96 symbols each wire phase gets exactly 16 observations. If all
+three pairs from the current symbol and its two predecessors are
+balanced, that phase takes each state `(a,b)` once and advances it to
+`(b,c)`. The rule giving `c` from `(a,b)` is a four-by-four Latin square.
+Enumeration of the 576 squares gives an even permutation of the
+16 states in each case. Composing six even permutations cannot give
+the odd permutation required for a single cycle through all 16
+states at the starting phase.
+
+Choose six such permutations whose composition has two cycles.
+Exchange the outputs of two states with the same `b` in one phase,
+one from each cycle. The exchange joins the cycles and preserves
+every adjacent pair. It leaves 94 of 96 pairs at lag two. Both gaps
+are in that one phase. Two is the minimum because all four row and
+column totals in each pair table are fixed, so one missing pair
+cannot be balanced by one duplicate at a different position.
+
+The screened pattern uses the same 120-sample segments, 115 distinct
+training levels and reference level as the adjacent-pair design.
+Within a settled 96-sample interval, the signed current and two
+prior levels have zero mean. Their normalized Gram matrix is the
+identity in five phases. Across both laws and all trained levels the
+worst condition number falls from 3.00 to 1.67. Mean probe power and
+the largest 10 ms energy are equal for the two short patterns. The
+largest 20 ms energy decreases by 2.4% with the new pattern.
+
+In an exact codec-cell fit with signed two-tap channels, both short
+probes identify all 288 planted bit-substitution modes. Across
+3,456 held-out triples, the median prediction interval narrows
+from 6.27 to 6.12 linear PCM units. The number of ambiguous received
+cells falls from 1,316 to 1,296. The long probe gives a 5.04-unit
+median interval and 1,268 ambiguous cells.
+
+Eight clean SIP pairs using a separate digital binary verified
+LAPM data at the same rates with the long and new short probes.
+The short version finished 1.879–1.901 seconds sooner. Across 24
+milder signed two-tap cases, the long and previous short probes
+each verified two-way data in 23 cases and the new waveform in 22.
+Both short probes reached at least 1,000 verified bytes per direction
+in 18 cases. The four captured downstream training epochs from
+one physical destination all admit a single-postcursor fit. The
+second-lag design still needs a qualification criterion that
+predicts native data delivery.
+
 ## Decision margins with two quantized postcursors
 
 Linear minimum spacing does not by itself describe a sampled channel with
