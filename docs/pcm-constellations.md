@@ -274,3 +274,51 @@ payload qualification. An automatically selected rate additionally needs a
 receiver-owned, independently acquired channel bound that remains valid for
 the epoch. Missing channel evidence must not be replaced with an assumed
 postcursor coefficient.
+
+## Bounded estimates for the first downstream rate
+
+A received DIL octet bounds what could have entered the codec. For each
+phase, model the apparent linear input as the current reconstruction plus
+a gain correction, two differential postcursors and a DC offset. If that
+input is outside the observed codec cell, its distance to the cell is the
+constraint violation. Minimize the largest violation first. Among fits with
+that error bound, minimize the weighted absolute coefficients to favor a
+small correction. Gain and postcursor weights express their contribution
+at the probe's peak level.
+
+A bounded search starts with the most violated inequality in each
+coefficient sign sector. It solves the reduced problem and scans all
+observations for the next cuts. The reduced optimum bounds the full
+optimum from below. When the reduced optimum also satisfies the omitted
+inequalities, subject to numerical tolerance, the full fit is certified
+to that tolerance. The search can stop without a candidate when it
+exhausts its rounds or pivot budget. The prototype allowed eight rounds
+per objective, 96 retained constraints per phase and 128 pivots per solve.
+
+A fitted channel can score each feasible rate by sending deterministic
+input bits through the native mapper and counting predicted exits from
+the intended signed decision region. The scorer includes the mapper's
+mixed-radix occupation and spectral sign selection. Four independent
+512-frame streams reproduced the prior 16,384-frame decisions in 52
+native groups. One 1,024-frame stream reproduced 50. On the Pi 5, the
+largest measured sum of the six phase fits was 1.77 million core cycles.
+Scoring one map took at most 9.34 million core cycles, plus up to 0.96
+million to prepare its decision boundaries. These measurements start
+with prepared observations and a selected map. Collecting observations,
+generating additional maps and running the modem also consume the packet
+budget.
+
+Choosing the first of up to three feasible maps below a 0.2% predicted
+symbol error fraction gave 42 sustained two-way passes, up from 37.
+A sustained pass delivered at least 1,000 verified bytes per direction.
+Six calls delivered fewer bytes with the selected rate. In one pair of
+V.92 profiles, all three downstream maps and their scores were identical.
+At the lower rate, one delivered 13,056 bytes per direction where its
+first map delivered 128. The other dropped from 13,440 to 1,024. The
+downstream score cannot distinguish upstream or later training outcomes.
+
+In 24 further native pairs, the first DIL observations and selected maps
+matched exactly. A channel change after map selection reduced the sustained
+passes from 21 to zero. These experiments support estimating the downstream
+margin during DIL. A rate policy also needs evidence that the model still
+fits the channel seen by B1 and that the other direction can deliver data.
