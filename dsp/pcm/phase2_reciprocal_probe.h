@@ -72,13 +72,16 @@ static inline bool phase2_reciprocal_probe_is_complete(
 
 /* Continue after probe turnaround. Signal B transmits reciprocal L1/L2, then
  * waits silently for a bounded Tone-A response if L2 reaches its wire limit.
- * Signal A measures the probe and raises Tone A when the fixed windows complete. */
+ * Signal A measures the probe and raises Tone A when the fixed windows
+ * complete. A completed overlapping capture, when supplied for Signal A,
+ * bypasses acquisition and retains its measured result. */
 enum phase2_reciprocal_probe_result phase2_reciprocal_probe_init(
 	struct phase2_reciprocal_probe *probe,
 	const struct phase2_probe_turnaround *completed_turnaround,
 	const struct phase2_initial_probe *completed_initial_probe,
 	struct phase2_info0_exchange *exchange,
-	uint16_t round_trip_delay_samples);
+	uint16_t round_trip_delay_samples,
+	const struct v34_phase2_probe_acquisition *completed_receive);
 bool phase2_reciprocal_probe_is_valid(
 	const struct phase2_reciprocal_probe *probe,
 	const struct phase2_probe_turnaround *completed_turnaround,

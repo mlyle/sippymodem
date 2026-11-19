@@ -2585,7 +2585,7 @@ static bool test_final_tone_timeout(void)
 				}
 			}
 			CHECK(started && caller.call.round_trip_delay_stored &&
-			      caller.call.state.phase2.state.reciprocal_probe.control.path.transmit.samples_emitted == 0,
+			      caller.call.state.phase2.state.probe.reciprocal.path.transmit.samples_emitted == 0,
 			      "final Tone-A deadline missed the first reciprocal L1 sample");
 			struct v34_info0 peer = caller.call.state.phase2.peer_info0;
 			uint16_t rtd = caller.call.round_trip_delay_samples;

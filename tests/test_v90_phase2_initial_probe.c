@@ -1063,12 +1063,12 @@ static bool check_initial_probe(enum test_codec codec)
 	CHECK(phase2_reciprocal_probe_init(
 		      &analog_path.reciprocal, &analog_path.turnaround,
 		      &analog_path.initial.control, analog_transport,
-		      analog_path.initial.ranging.control.round_trip_delay_samples) ==
+		      analog_path.initial.ranging.control.round_trip_delay_samples, NULL) ==
 		      PHASE2_RECIPROCAL_PROBE_OK &&
 	      phase2_reciprocal_probe_init(
 		      &digital_path.reciprocal, &digital_path.turnaround,
 		      &digital_path.initial.control, digital_transport,
-		      digital_path.initial.ranging.control.round_trip_delay_samples) ==
+		      digital_path.initial.ranging.control.round_trip_delay_samples, NULL) ==
 		      PHASE2_RECIPROCAL_PROBE_OK,
 	      "V.90 reciprocal-probe endpoints did not initialize");
 	{

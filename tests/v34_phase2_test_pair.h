@@ -3,7 +3,7 @@
 #ifndef V34_PHASE2_TEST_PAIR_H
 #define V34_PHASE2_TEST_PAIR_H
 
-#include <v34_phase2_reciprocal_probe.h>
+#include <v34_phase2.h>
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -37,7 +37,7 @@ struct test_endpoint {
 	struct v34_phase2_ranging ranging;
 	struct v34_phase2_initial_probe initial_probe;
 	struct v34_phase2_probe_turnaround turnaround;
-	struct v34_phase2_reciprocal_probe reciprocal_probe;
+	struct v34_phase2_probe reciprocal_probe;
 	enum test_endpoint_stage stage;
 	bool continue_to_turnaround;
 	bool continue_to_reciprocal_probe;
@@ -67,6 +67,18 @@ struct test_pair_event {
 	int16_t caller_transmit;
 	int16_t answerer_transmit;
 };
+
+/* Standalone probe fixtures keep a separate snapshot of the turnaround
+ * because individual unit tests still exercise the completed input state. */
+enum phase2_reciprocal_probe_result test_reciprocal_probe_init(
+	struct v34_phase2_probe *probe, const struct v34_phase2_probe_turnaround *source);
+bool test_reciprocal_probe_is_valid(const struct v34_phase2_probe *probe);
+enum phase2_reciprocal_probe_result test_reciprocal_probe_sample(
+	struct v34_phase2_probe *probe, int16_t receive, int16_t *transmit,
+	struct phase2_reciprocal_probe_event *event);
+enum phase2_reciprocal_probe_result test_reciprocal_probe_measure(
+	const struct v34_phase2_probe *probe,
+	struct v34_phase2_probe_receiver_measurement *measurement, int16_t *gain);
 
 struct v34_info0 test_v34_phase2_capabilities(
 	enum v34_station_role role);

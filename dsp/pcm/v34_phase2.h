@@ -3,8 +3,9 @@
 #ifndef V34_PHASE2_H
 #define V34_PHASE2_H
 
+#include "phase2_reciprocal_probe.h"
 #include "v34_phase2_info1_exchange.h"
-#include "v34_phase2_reciprocal_probe.h"
+#include "v34_phase2_probe_turnaround.h"
 #include "v34_phase2_selection.h"
 
 #include <stdbool.h>
@@ -62,11 +63,15 @@ struct v34_phase2_event {
 	uint16_t round_trip_delay_samples;
 };
 
+struct v34_phase2_probe {
+	struct v34_phase2_probe_turnaround turnaround;
+	struct phase2_reciprocal_probe reciprocal;
+};
+
 union v34_phase2_state {
 	struct v34_phase2_ranging ranging;
 	struct v34_phase2_initial_probe initial_probe;
-	struct v34_phase2_probe_turnaround turnaround;
-	struct v34_phase2_reciprocal_probe reciprocal_probe;
+	struct v34_phase2_probe probe;
 	struct v34_phase2_info1_exchange info1;
 };
 

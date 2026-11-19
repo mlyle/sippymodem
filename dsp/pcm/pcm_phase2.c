@@ -816,7 +816,7 @@ static bool enter_reciprocal_probe(
 	if (phase2_reciprocal_probe_init(
 		    &probe->reciprocal, &probe->turnaround, &probe->initial.control,
 		    &ranging->info0_exchange.transport,
-		    ranging->control.round_trip_delay_samples) !=
+		    ranging->control.round_trip_delay_samples, NULL) !=
 	    PHASE2_RECIPROCAL_PROBE_OK)
 		return false;
 	phase2->stage = PCM_PHASE2_RECIPROCAL_PROBE;

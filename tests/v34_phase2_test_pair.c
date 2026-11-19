@@ -4,6 +4,58 @@
 
 #include <g711.h>
 
+enum phase2_reciprocal_probe_result test_reciprocal_probe_init(
+	struct v34_phase2_probe *probe, const struct v34_phase2_probe_turnaround *source)
+{
+	if (probe == NULL || !v34_phase2_probe_turnaround_is_valid(source))
+		return PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT;
+	struct v34_phase2_probe next = { .turnaround = *source };
+	struct v34_phase2_initial_probe *initial = &next.turnaround.initial_probe;
+	const struct v34_phase2_probe_acquisition *completed = NULL;
+
+	if (initial->concurrent_receive_enabled &&
+	    initial->concurrent_receive.phase == V34_PHASE2_PROBE_ACQUISITION_COMPLETE)
+		completed = &initial->concurrent_receive;
+	if (phase2_reciprocal_probe_init(&next.reciprocal, &next.turnaround.control,
+		    &initial->control, &initial->ranging.info0_exchange.transport,
+		    initial->ranging.control.round_trip_delay_samples, completed) !=
+	    PHASE2_RECIPROCAL_PROBE_OK)
+		return PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT;
+	*probe = next;
+	return PHASE2_RECIPROCAL_PROBE_OK;
+}
+
+bool test_reciprocal_probe_is_valid(const struct v34_phase2_probe *probe)
+{
+	const struct v34_phase2_initial_probe *initial = &probe->turnaround.initial_probe;
+
+	return phase2_reciprocal_probe_is_valid(&probe->reciprocal,
+		&probe->turnaround.control, &initial->control,
+		&initial->ranging.info0_exchange.transport);
+}
+
+enum phase2_reciprocal_probe_result test_reciprocal_probe_sample(
+	struct v34_phase2_probe *probe, int16_t receive, int16_t *transmit,
+	struct phase2_reciprocal_probe_event *event)
+{
+	struct v34_phase2_initial_probe *initial = &probe->turnaround.initial_probe;
+
+	return phase2_reciprocal_probe_sample(&probe->reciprocal,
+		&probe->turnaround.control, &initial->control,
+		&initial->ranging.info0_exchange.transport, receive, transmit, event);
+}
+
+enum phase2_reciprocal_probe_result test_reciprocal_probe_measure(
+	const struct v34_phase2_probe *probe,
+	struct v34_phase2_probe_receiver_measurement *measurement, int16_t *gain)
+{
+	const struct v34_phase2_initial_probe *initial = &probe->turnaround.initial_probe;
+
+	return phase2_reciprocal_probe_measure(&probe->reciprocal,
+		&probe->turnaround.control, &initial->control,
+		&initial->ranging.info0_exchange.transport, measurement, gain);
+}
+
 static int16_t codec_round_trip(int16_t sample, enum test_codec codec)
 {
 	switch (codec) {
@@ -174,7 +226,7 @@ static bool endpoint_sample(
 			return false;
 		if (endpoint->continue_to_reciprocal_probe &&
 		    emitted.turnaround.kind == expected_ready) {
-			if (v34_phase2_reciprocal_probe_init(
+			if (test_reciprocal_probe_init(
 				    &endpoint->reciprocal_probe,
 				    &endpoint->turnaround) !=
 			    PHASE2_RECIPROCAL_PROBE_OK)
@@ -182,7 +234,7 @@ static bool endpoint_sample(
 			endpoint->stage = TEST_ENDPOINT_RECIPROCAL_PROBE;
 			emitted.entered_reciprocal_probe = true;
 		}
-	} else if (v34_phase2_reciprocal_probe_sample(
+	} else if (test_reciprocal_probe_sample(
 			   &endpoint->reciprocal_probe, received_sample, transmit_sample,
 			   &emitted.reciprocal_probe) !=
 		   PHASE2_RECIPROCAL_PROBE_OK) {

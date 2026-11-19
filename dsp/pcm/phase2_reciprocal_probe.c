@@ -136,7 +136,8 @@ enum phase2_reciprocal_probe_result phase2_reciprocal_probe_init(
 	const struct phase2_probe_turnaround *completed_turnaround,
 	const struct phase2_initial_probe *completed_initial_probe,
 	struct phase2_info0_exchange *exchange,
-	uint16_t round_trip_delay_samples)
+	uint16_t round_trip_delay_samples,
+	const struct v34_phase2_probe_acquisition *completed_receive)
 {
 	struct phase2_reciprocal_probe initialized = { 0 };
 	struct phase2_info0_exchange next_exchange;
@@ -148,6 +149,8 @@ enum phase2_reciprocal_probe_result phase2_reciprocal_probe_init(
 		return PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT;
 	next_exchange = *exchange;
 	if (phase2_info0_signal_is_b(&next_exchange)) {
+		if (completed_receive != NULL)
+			return PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT;
 		initialized.phase =
 			PHASE2_RECIPROCAL_PROBE_SIGNAL_B_TRANSMITTING;
 		if (v34_phase2_tone_detector_reset(
@@ -163,12 +166,15 @@ enum phase2_reciprocal_probe_result phase2_reciprocal_probe_init(
 		initialized.signal_a_reversal_elapsed_samples =
 			completed_turnaround
 				->signal_a_reversal_elapsed_samples;
-		initialized.phase =
-			PHASE2_RECIPROCAL_PROBE_SIGNAL_A_RECEIVING;
-		if (v34_phase2_probe_acquisition_init(
-			    &initialized.path.receive) !=
-		    V34_PHASE2_PROBE_ACQUISITION_OK)
-			return PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT;
+		if (completed_receive != NULL) {
+			initialized.path.receive = *completed_receive;
+			initialized.phase = PHASE2_RECIPROCAL_PROBE_SIGNAL_A_TONE;
+		} else {
+			initialized.phase = PHASE2_RECIPROCAL_PROBE_SIGNAL_A_RECEIVING;
+			if (v34_phase2_probe_acquisition_init(&initialized.path.receive) !=
+			    V34_PHASE2_PROBE_ACQUISITION_OK)
+				return PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT;
+		}
 	}
 	if (!phase2_reciprocal_probe_is_valid(
 		    &initialized, completed_turnaround,

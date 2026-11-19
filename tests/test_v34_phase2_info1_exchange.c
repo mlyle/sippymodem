@@ -129,9 +129,9 @@ static bool probes_are_complete(const struct test_pair *pair)
 {
 	return pair->caller.stage == TEST_ENDPOINT_RECIPROCAL_PROBE &&
 	       pair->answerer.stage == TEST_ENDPOINT_RECIPROCAL_PROBE &&
-	       pair->caller.reciprocal_probe.control.phase ==
+	       pair->caller.reciprocal_probe.reciprocal.phase ==
 		       PHASE2_RECIPROCAL_PROBE_SIGNAL_B_COMPLETE &&
-	       pair->answerer.reciprocal_probe.control.phase ==
+	       pair->answerer.reciprocal_probe.reciprocal.phase ==
 		       PHASE2_RECIPROCAL_PROBE_SIGNAL_A_TONE;
 }
 
@@ -178,7 +178,7 @@ static bool exchange_pair_init(
 		    &initialized.answerer,
 		    &answerer->info0_exchange.transport.tone_transmitter,
 		    answerer->control.round_trip_delay_samples,
-		    initialized.channel.answerer.reciprocal_probe.control
+		    initialized.channel.answerer.reciprocal_probe.reciprocal
 			    .signal_a_reversal_elapsed_samples) !=
 		    PHASE2_INFO1_OK)
 		return false;

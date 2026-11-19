@@ -2,7 +2,7 @@
 #ifndef V34_PHASE2_STATE_FIXTURE_H
 #define V34_PHASE2_STATE_FIXTURE_H
 
-#include <v34_phase2_reciprocal_probe.h>
+#include <v34_phase2.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -50,7 +50,7 @@ PROBE_EQUAL(v34_initial_probes_equal, v34_phase2_initial_probe,
 	ranging.info0_exchange)
 PROBE_EQUAL(v34_probe_turnarounds_equal, v34_phase2_probe_turnaround,
 	initial_probe.ranging.info0_exchange)
-PROBE_EQUAL(v34_reciprocal_probes_equal, v34_phase2_reciprocal_probe,
+PROBE_EQUAL(v34_reciprocal_probes_equal, v34_phase2_probe,
 	turnaround.initial_probe.ranging.info0_exchange)
 #undef PROBE_EQUAL
 

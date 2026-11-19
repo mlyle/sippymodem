@@ -3192,7 +3192,6 @@ V34_PHASE2_PROBE_FLOW_OBJECTS := \
 	$(BUILD_DIR)/v34_phase2_probe_turnaround.o \
 	$(BUILD_DIR)/v34_phase2_ranging.o \
 	$(BUILD_DIR)/phase2_reciprocal_probe.o \
-	$(BUILD_DIR)/v34_phase2_reciprocal_probe.o \
 	$(V34_PHASE2_TONE_OBJECTS)
 V34_PHASE2_TEST_BINARY := $(BUILD_DIR)/test_v34_phase2
 V34_PHASE2_TEST_OBJECTS := \
@@ -6346,10 +6345,6 @@ $(BUILD_DIR)/v34_phase2_probe_turnaround.o: \
 
 $(BUILD_DIR)/phase2_reciprocal_probe.o: \
 	$(DSP_PCM_SOURCE_DIR)/phase2_reciprocal_probe.c | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
-
-$(BUILD_DIR)/v34_phase2_reciprocal_probe.o: \
-	$(DSP_PCM_SOURCE_DIR)/v34_phase2_reciprocal_probe.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v34_phase2_ranging.o: \

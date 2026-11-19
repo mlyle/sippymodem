@@ -73,13 +73,13 @@ static enum v34_phase2_failure active_failure(
 		return probe_failure(
 			phase2->state.initial_probe.control.failure);
 	case V34_PHASE2_PROBE_TURNAROUND:
-		return phase2->state.turnaround.control.failure ==
+		return phase2->state.probe.turnaround.control.failure ==
 			       PHASE2_PROBE_TURNAROUND_REMOTE_REVERSAL_TIMEOUT ?
 			       V34_PHASE2_FAILURE_REMOTE_REVERSAL_TIMEOUT :
 			       V34_PHASE2_FAILURE_NONE;
 	case V34_PHASE2_RECIPROCAL_PROBE:
 		return probe_failure(
-			phase2->state.reciprocal_probe.control.failure);
+			phase2->state.probe.reciprocal.failure);
 	case V34_PHASE2_INFO1:
 		if (phase2->state.info1.control.failure ==
 		    PHASE2_INFO1_PEER_TIMEOUT)
@@ -101,10 +101,8 @@ static enum v34_station_role child_role(
 		return phase2->state.initial_probe.ranging.info0_exchange
 			.local_role;
 	case V34_PHASE2_PROBE_TURNAROUND:
-		return phase2->state.turnaround.initial_probe.ranging
-			.info0_exchange.local_role;
 	case V34_PHASE2_RECIPROCAL_PROBE:
-		return phase2->state.reciprocal_probe.turnaround.initial_probe
+		return phase2->state.probe.turnaround.initial_probe
 			.ranging.info0_exchange.local_role;
 	case V34_PHASE2_INFO1:
 		return v34_phase2_station_for_signal(
@@ -151,20 +149,15 @@ static bool concurrent_probe_receive_matches_stage(
 			return false;
 		break;
 	case V34_PHASE2_PROBE_TURNAROUND:
-		round_trip_delay = phase2->state.turnaround.initial_probe.ranging
-					   .control.round_trip_delay_samples;
-		if (phase2->state.turnaround.initial_probe
-			    .concurrent_receive_enabled != child_enabled)
+	case V34_PHASE2_RECIPROCAL_PROBE: {
+		const struct v34_phase2_initial_probe *initial =
+			&phase2->state.probe.turnaround.initial_probe;
+
+		round_trip_delay = initial->ranging.control.round_trip_delay_samples;
+		if (initial->concurrent_receive_enabled != child_enabled)
 			return false;
 		break;
-	case V34_PHASE2_RECIPROCAL_PROBE:
-		round_trip_delay = phase2->state.reciprocal_probe.turnaround
-					   .initial_probe.ranging.control
-					   .round_trip_delay_samples;
-		if (phase2->state.reciprocal_probe.turnaround.initial_probe
-			    .concurrent_receive_enabled != child_enabled)
-			return false;
-		break;
+	}
 	case V34_PHASE2_INFO1:
 		return !child_enabled;
 	}
@@ -208,12 +201,18 @@ bool v34_phase2_is_valid(const struct v34_phase2 *phase2)
 		break;
 	case V34_PHASE2_PROBE_TURNAROUND:
 		child_valid = v34_phase2_probe_turnaround_is_valid(
-			&phase2->state.turnaround);
+			&phase2->state.probe.turnaround);
 		break;
-	case V34_PHASE2_RECIPROCAL_PROBE:
-		child_valid = v34_phase2_reciprocal_probe_is_valid(
-			&phase2->state.reciprocal_probe);
+	case V34_PHASE2_RECIPROCAL_PROBE: {
+		const struct v34_phase2_probe *probe = &phase2->state.probe;
+		const struct v34_phase2_initial_probe *initial = &probe->turnaround.initial_probe;
+
+		child_valid = v34_phase2_initial_probe_is_valid(initial) &&
+			phase2_reciprocal_probe_is_valid(
+				&probe->reciprocal, &probe->turnaround.control, &initial->control,
+				&initial->ranging.info0_exchange.transport);
 		break;
+	}
 	case V34_PHASE2_INFO1:
 		child_valid = phase2->peer_info0_stored &&
 			      phase2->remote_probe_stored &&
@@ -243,7 +242,7 @@ static bool ready_for_info1(const struct v34_phase2 *phase2)
 	    phase2->stage != V34_PHASE2_RECIPROCAL_PROBE)
 		return false;
 	return phase2_reciprocal_probe_is_complete(
-		&phase2->state.reciprocal_probe.control);
+		&phase2->state.probe.reciprocal);
 }
 
 bool v34_phase2_is_ready_for_info1(const struct v34_phase2 *phase2)
@@ -353,7 +352,7 @@ enum v34_phase2_result v34_phase2_start_caller_info1(
 	if (!v34_phase2_info1c_is_consistent(
 		    caller_info0(phase2), answerer_info0(phase2), local_info1c))
 		return V34_PHASE2_INVALID_ARGUMENT;
-	ranging = &phase2->state.reciprocal_probe.turnaround.initial_probe.ranging;
+	ranging = &phase2->state.probe.turnaround.initial_probe.ranging;
 	if (v34_phase2_info1_exchange_caller_init(
 		    &exchange, v34_phase2_tone_nominal_amplitude(
 			    &ranging->info0_exchange.transport.tone_transmitter),
@@ -385,11 +384,11 @@ enum v34_phase2_result v34_phase2_start_answerer_info1(
 	    !ready_for_info1(phase2) || !phase2->peer_info0_stored ||
 	    !phase2->remote_probe_stored)
 		return V34_PHASE2_INVALID_STATE;
-	ranging = &phase2->state.reciprocal_probe.turnaround.initial_probe.ranging;
+	ranging = &phase2->state.probe.turnaround.initial_probe.ranging;
 	if (v34_phase2_info1_exchange_answerer_init(
 		    &exchange, &ranging->info0_exchange.transport.tone_transmitter,
 		    ranging->control.round_trip_delay_samples,
-		    phase2->state.reciprocal_probe.control.signal_a_reversal_elapsed_samples) !=
+		    phase2->state.probe.reciprocal.signal_a_reversal_elapsed_samples) !=
 	    PHASE2_INFO1_OK)
 		return V34_PHASE2_INVALID_STATE;
 	next = *phase2;
@@ -537,13 +536,10 @@ static bool enter_initial_probe(
 static bool enter_turnaround(
 	struct v34_phase2 *phase2, struct v34_phase2_event *event)
 {
-	struct v34_phase2_probe_turnaround next;
-
 	if (v34_phase2_probe_turnaround_init(
-		    &next, &phase2->state.initial_probe) !=
+		    &phase2->state.probe.turnaround, &phase2->state.initial_probe) !=
 	    PHASE2_PROBE_TURNAROUND_OK)
 		return false;
-	phase2->state.turnaround = next;
 	phase2->stage = V34_PHASE2_PROBE_TURNAROUND;
 	event->kind = V34_PHASE2_EVENT_PROBE_TURNAROUND_STARTED;
 	return true;
@@ -552,26 +548,25 @@ static bool enter_turnaround(
 static bool enter_reciprocal_probe(
 	struct v34_phase2 *phase2, struct v34_phase2_event *event)
 {
-	struct v34_phase2_reciprocal_probe next;
-	const struct v34_phase2_initial_probe *initial =
-		&phase2->state.turnaround.initial_probe;
+	struct v34_phase2_probe *probe = &phase2->state.probe;
+	struct v34_phase2_initial_probe *initial = &probe->turnaround.initial_probe;
+	const struct v34_phase2_probe_acquisition *overlap = NULL;
 	struct v34_phase2_probe_receiver_measurement measurement;
 	int16_t receive_gain = 0;
-	bool retain_concurrent = false;
 
 	if (initial->concurrent_receive_enabled &&
 	    initial->concurrent_receive.phase ==
-		    V34_PHASE2_PROBE_ACQUISITION_COMPLETE &&
-	    !phase2->remote_probe_stored) {
-		if (v34_phase2_initial_probe_measure(
-			    initial, &measurement,
-			    &receive_gain) != PHASE2_INITIAL_PROBE_OK)
-			return false;
-		retain_concurrent = true;
-	}
+		    V34_PHASE2_PROBE_ACQUISITION_COMPLETE)
+		overlap = &initial->concurrent_receive;
+	bool retain_concurrent = overlap != NULL && !phase2->remote_probe_stored;
+	if (retain_concurrent && v34_phase2_initial_probe_measure(
+		    initial, &measurement, &receive_gain) != PHASE2_INITIAL_PROBE_OK)
+		return false;
 
-	if (v34_phase2_reciprocal_probe_init(
-		    &next, &phase2->state.turnaround) !=
+	uint16_t round_trip_delay = initial->ranging.control.round_trip_delay_samples;
+	if (phase2_reciprocal_probe_init(
+		    &probe->reciprocal, &probe->turnaround.control, &initial->control,
+		    &initial->ranging.info0_exchange.transport, round_trip_delay, overlap) !=
 	    PHASE2_RECIPROCAL_PROBE_OK)
 		return false;
 	if (retain_concurrent) {
@@ -579,11 +574,9 @@ static bool enter_reciprocal_probe(
 		phase2->remote_receive_gain = receive_gain;
 		phase2->remote_probe_stored = true;
 	}
-	phase2->state.reciprocal_probe = next;
 	phase2->stage = V34_PHASE2_RECIPROCAL_PROBE;
 	event->kind = V34_PHASE2_EVENT_RECIPROCAL_PROBE_STARTED;
-	event->round_trip_delay_samples = next.turnaround.initial_probe.ranging
-		.control.round_trip_delay_samples;
+	event->round_trip_delay_samples = round_trip_delay;
 	return true;
 }
 
@@ -711,12 +704,12 @@ static bool sample_turnaround(
 	struct phase2_probe_turnaround_event child;
 
 	if (v34_phase2_probe_turnaround_sample(
-		    &phase2->state.turnaround, received_sample,
+		    &phase2->state.probe.turnaround, received_sample,
 		    transmit_sample, &child) !=
 	    PHASE2_PROBE_TURNAROUND_OK)
 		return false;
 	phase2->concurrent_probe_receive =
-		phase2->state.turnaround.initial_probe
+		phase2->state.probe.turnaround.initial_probe
 			.concurrent_receive_enabled;
 	if (child.kind == PHASE2_PROBE_TURNAROUND_EVENT_FAILED) {
 		phase2->failure = V34_PHASE2_FAILURE_REMOTE_REVERSAL_TIMEOUT;
@@ -740,10 +733,13 @@ static bool sample_reciprocal_probe(
 	int16_t *transmit_sample, struct v34_phase2_event *event)
 {
 	struct phase2_reciprocal_probe_event child;
+	struct v34_phase2_probe *probe = &phase2->state.probe;
+	struct v34_phase2_initial_probe *initial = &probe->turnaround.initial_probe;
+	struct phase2_info0_exchange *transport = &initial->ranging.info0_exchange.transport;
 
-	if (v34_phase2_reciprocal_probe_sample(
-		    &phase2->state.reciprocal_probe, received_sample,
-		    transmit_sample, &child) !=
+	if (phase2_reciprocal_probe_sample(
+		    &probe->reciprocal, &probe->turnaround.control, &initial->control,
+		    transport, received_sample, transmit_sample, &child) !=
 	    PHASE2_RECIPROCAL_PROBE_OK)
 		return false;
 	if (child.kind == PHASE2_RECIPROCAL_PROBE_EVENT_FAILED) {
@@ -755,9 +751,9 @@ static bool sample_reciprocal_probe(
 		struct v34_phase2_probe_receiver_measurement measurement;
 		int16_t receive_gain;
 
-		if (v34_phase2_reciprocal_probe_measure(
-			    &phase2->state.reciprocal_probe, &measurement,
-			    &receive_gain) != PHASE2_RECIPROCAL_PROBE_OK)
+		if (phase2_reciprocal_probe_measure(
+			    &probe->reciprocal, &probe->turnaround.control, &initial->control,
+			    transport, &measurement, &receive_gain) != PHASE2_RECIPROCAL_PROBE_OK)
 			return false;
 		phase2->remote_probe = measurement;
 		phase2->remote_receive_gain = receive_gain;
