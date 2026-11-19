@@ -86,6 +86,50 @@ accept mixed data rows while still validating capacity and canonical framing.
 DIL qualification, its common-mask fallback, rate policy and B1 admission are
 unchanged.
 
+## Count ambiguous words after a forced codec bit
+
+When one slot in the six-symbol mapping frame loses its codec least
+significant bit, two magnitudes with the same remaining bits have the
+same observed label. The number of distinct labels gives a capacity
+bound for a redesigned map. For an existing map, count the legal words
+that actually use both labels in a colliding pair.
+
+Let `W = 2^K` be the number of legal magnitude words, `A` the product
+of the radices before the affected slot, and `M` its radix. The mapper
+numbers the slot's labels from zero in descending Ucode order. For
+each collision between labels `d_low` and `d_high`, a word using
+`d_high` has a partner below it that uses `d_low` and retains all the
+other digits. Both words lie within the legal prefix. The number of
+such pairs is the number of occurrences of the higher digit:
+
+```
+floor(W / (A*M)) * A + clamp((W mod (A*M)) - A*d_high, 0, A)
+```
+
+A forced bit creates groups of at most two, so these pairs
+are disjoint. Sum the counts over the colliding label pairs. Twice
+that sum counts all ambiguous words. The sum divided by `W` is the
+minimum word error fraction for a magnitude-only decoder with uniform
+word probabilities, known slot and no other impairment. It excludes
+any evidence from the sign shaper, coding history or link framing.
+
+On five captured mu-law links, the two initial maps used 40–41 points
+per phase at 49,333 bit/s and 45–46 at 50,667 bit/s. Under a modeled
+forced bit in any one slot, the distinct-label product could support
+a redesigned map only one bit per six-symbol frame below the original
+rate. Keeping the original labels yielded magnitude-word error floors
+of 29.3–30.0% and 31.1–32.9%, respectively. A later 48,000 bit/s map
+still had a 27.8–28.2% floor. A later 37,333 bit/s map used at most one
+point per collision group in every slot and had a zero collision floor.
+Its existing hard slicer still lost some recorded frames under the
+modeled operation.
+
+The counts describe a specific channel hypothesis. Both passing and
+delayed calls used byte-identical initial maps. The physical link's
+bit behavior remains unobserved. A generator with a
+qualified robbed-bit model should count and eliminate collisions in
+the observed alphabet before spending power on increased spacing.
+
 ## Verification boundaries
 
 Focused tests exercise mixed 57/58 capacity, exact power boundaries and failed
