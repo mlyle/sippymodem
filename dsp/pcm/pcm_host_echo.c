@@ -211,31 +211,15 @@ uint32_t pcm_host_echo_window_delay_samples(
 	return header_is_valid(echo) ? pcm_echo_reference_current_delay(&echo->reference) : 0;
 }
 
-struct echo_tap_span {
-	const int16_t *begin, *end;
-};
-
-/* Both passes consume the same newest-first window in tap order. Split at
- * the ring boundary once, leaving consecutive reads within each span. */
-static void split_tap_window(const struct pcm_echo_reference *reference,
-	size_t newest, struct echo_tap_span spans[2])
-{
-	size_t head = ring_reverse_head_count(newest, PCM_HOST_ECHO_FILTER_TAPS);
-	const int16_t *end = reference->samples + newest + 1u;
-	const int16_t *wrap = reference->samples + PCM_ECHO_REFERENCE_HISTORY_SAMPLES;
-
-	spans[0] = (struct echo_tap_span){ end - head, end };
-	spans[1] = (struct echo_tap_span){ wrap - (PCM_HOST_ECHO_FILTER_TAPS - head), wrap };
-}
-
-static bool estimate_echo(const float *coefficients,
-	const struct echo_tap_span spans[2], double *estimate, double *energy)
+static bool estimate_echo(const float *coefficients, const int16_t *samples,
+	const struct ring_reverse_span spans[2], double *estimate, double *energy)
 {
 	double predicted = 0.0;
 	double accumulated_energy = 0.0;
 
 	for (unsigned i = 0; i < 2; ++i) {
-		for (const int16_t *cursor = spans[i].end; cursor != spans[i].begin;) {
+		const int16_t *begin = samples + spans[i].begin;
+		for (const int16_t *cursor = samples + spans[i].end; cursor != begin;) {
 			double sample = *--cursor;
 
 			predicted += (double)*coefficients++ * sample;
@@ -258,7 +242,7 @@ enum pcm_host_echo_result pcm_host_echo_project_owned(
 	const struct pcm_host_echo *echo, uint32_t delay, double *prediction)
 {
 	size_t index;
-	struct echo_tap_span spans[2];
+	struct ring_reverse_span spans[2];
 	const float *coefficients = echo->retained_delay_samples ?
 		echo->retained_coefficients : echo->coefficients;
 	double estimate;
@@ -266,8 +250,9 @@ enum pcm_host_echo_result pcm_host_echo_project_owned(
 	if (pcm_echo_reference_window_index(&echo->reference, delay,
 		PCM_HOST_ECHO_FILTER_TAPS, &index) != PCM_ECHO_REFERENCE_OK)
 		return PCM_HOST_ECHO_INVALID_STATE;
-	split_tap_window(&echo->reference, index, spans);
-	if (!estimate_echo(coefficients, spans, &estimate, NULL))
+	ring_reverse_spans(index, PCM_HOST_ECHO_FILTER_TAPS,
+		PCM_ECHO_REFERENCE_HISTORY_SAMPLES, spans);
+	if (!estimate_echo(coefficients, echo->reference.samples, spans, &estimate, NULL))
 		return PCM_HOST_ECHO_NUMERIC_FAILURE;
 	*prediction = estimate;
 	return PCM_HOST_ECHO_OK;
@@ -329,7 +314,7 @@ static enum pcm_host_echo_result prepare_training_step(
 	struct training_step *step)
 {
 	size_t index;
-	struct echo_tap_span spans[2];
+	struct ring_reverse_span spans[2];
 	double estimate;
 	double energy;
 	double error;
@@ -345,8 +330,9 @@ static enum pcm_host_echo_result prepare_training_step(
 		return PCM_HOST_ECHO_OK;
 	if (window_result != PCM_ECHO_REFERENCE_OK)
 		return PCM_HOST_ECHO_INVALID_STATE;
-	split_tap_window(&echo->reference, index, spans);
-	if (!estimate_echo(echo->coefficients, spans, &estimate, &energy))
+	ring_reverse_spans(index, PCM_HOST_ECHO_FILTER_TAPS,
+		PCM_ECHO_REFERENCE_HISTORY_SAMPLES, spans);
+	if (!estimate_echo(echo->coefficients, echo->reference.samples, spans, &estimate, &energy))
 		return PCM_HOST_ECHO_NUMERIC_FAILURE;
 	if (energy <= 0.0)
 		return PCM_HOST_ECHO_OK;
@@ -357,7 +343,9 @@ static enum pcm_host_echo_result prepare_training_step(
 		return PCM_HOST_ECHO_NUMERIC_FAILURE;
 	size_t tap = 0;
 	for (unsigned i = 0; i < 2; ++i) {
-		for (const int16_t *cursor = spans[i].end; cursor != spans[i].begin; ++tap) {
+		const int16_t *begin = echo->reference.samples + spans[i].begin;
+		for (const int16_t *cursor = echo->reference.samples + spans[i].end;
+		     cursor != begin; ++tap) {
 			int16_t sample = *--cursor;
 			double coefficient = echo->coefficients[tap] + scale * sample;
 

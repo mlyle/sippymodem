@@ -51,8 +51,35 @@ bool v32_echo_canceller_header_is_valid(
 	       (!canceller->adapting || canceller->adaptation > 0.0);
 }
 
-static struct qam_point tap_reference(
-	const struct v32_echo_canceller *canceller, size_t window, size_t tap);
+struct echo_reference_windows {
+	struct qam_point points[V32_ECHO_WINDOW_COUNT][V32_ECHO_WINDOW_SYMBOLS];
+};
+
+/* The near and far references are fixed across all phases of a symbol. Read
+ * each available span once in tap order, then pad only the unfilled tail. */
+static void read_reference_windows(const struct v32_echo_canceller *canceller,
+	struct echo_reference_windows *windows)
+{
+	for (size_t window = 0; window < V32_ECHO_WINDOW_COUNT; ++window) {
+		size_t age = canceller->near_delay_symbols +
+			(window == V32_ECHO_DELAYED_WINDOW ? canceller->round_trip_symbols : 0u);
+		size_t count = age < canceller->reference_fill ?
+			canceller->reference_fill - age : 0u;
+		size_t newest = ring_index_at_age(canceller->reference_write,
+			V32_ECHO_REFERENCE_CAPACITY, age + 1u);
+		struct ring_reverse_span spans[2];
+		struct qam_point *destination = windows->points[window];
+
+		if (count > V32_ECHO_WINDOW_SYMBOLS)
+			count = V32_ECHO_WINDOW_SYMBOLS;
+		ring_reverse_spans(newest, count, V32_ECHO_REFERENCE_CAPACITY, spans);
+		for (size_t span = 0; span < 2; ++span)
+			for (size_t index = spans[span].end; index != spans[span].begin;)
+				*destination++ = canceller->reference[--index];
+		while (destination != windows->points[window] + V32_ECHO_WINDOW_SYMBOLS)
+			*destination++ = (struct qam_point){ 0 };
+	}
+}
 
 bool v32_echo_canceller_is_valid(
 	const struct v32_echo_canceller *canceller)
@@ -69,12 +96,13 @@ bool v32_echo_canceller_is_valid(
 		return false;
 	if (canceller->pending_samples != 0 &&
 	    canceller->pending_samples != V32_ECHO_PHASE_COUNT) {
+		struct echo_reference_windows windows;
 		double energy = 0.0;
+
+		read_reference_windows(canceller, &windows);
 		for (size_t window = 0; window < V32_ECHO_WINDOW_COUNT; ++window)
-			for (size_t tap = 0; tap < V32_ECHO_WINDOW_SYMBOLS; ++tap) {
-				struct qam_point point = tap_reference(canceller, window, tap);
-				energy += qam_point_power(&point);
-			}
+			for (size_t tap = 0; tap < V32_ECHO_WINDOW_SYMBOLS; ++tap)
+				energy += qam_point_power(&windows.points[window][tap]);
 		return energy == canceller->reference_energy;
 	}
 	return true;
@@ -146,21 +174,9 @@ enum v32_echo_result v32_echo_canceller_push_reference(
 	return V32_ECHO_OK;
 }
 
-static struct qam_point tap_reference(
-	const struct v32_echo_canceller *canceller, size_t window, size_t tap)
-{
-	size_t age = canceller->near_delay_symbols + tap;
-
-	if (window == V32_ECHO_DELAYED_WINDOW)
-		age += canceller->round_trip_symbols;
-	if (age >= canceller->reference_fill)
-		return (struct qam_point){ 0 };
-	return canceller->reference[ring_index_at_age(
-		canceller->reference_write, V32_ECHO_REFERENCE_CAPACITY, age + 1u)];
-}
-
 static inline bool prediction_and_energy(
-	const struct v32_echo_canceller *canceller, size_t phase,
+	const struct v32_echo_canceller *canceller,
+	const struct echo_reference_windows *windows, size_t phase,
 	double *prediction, double *energy, double *far_prediction)
 {
 	double predicted = 0.0;
@@ -170,17 +186,16 @@ static inline bool prediction_and_energy(
 	for (size_t window = 0; window < V32_ECHO_WINDOW_COUNT; ++window) {
 		for (size_t tap = 0;
 		     tap < V32_ECHO_WINDOW_SYMBOLS; ++tap) {
-			struct qam_point point =
-				tap_reference(canceller, window, tap);
+			const struct qam_point *point = &windows->points[window][tap];
 			const struct qam_point *coefficient =
 				&canceller->coefficients[phase][window][tap];
 
-			double value = qam_point_correlation(coefficient, &point).in_phase;
+			double value = qam_point_correlation(coefficient, point).in_phase;
 			predicted += value;
 			if (window == V32_ECHO_DELAYED_WINDOW)
 				far += value;
 			if (energy != NULL)
-				reference_energy += qam_point_power(&point);
+				reference_energy += qam_point_power(point);
 		}
 	}
 	*far_prediction = far;
@@ -195,21 +210,21 @@ static inline bool prediction_and_energy(
 }
 
 static bool prepare_update(
-	const struct v32_echo_canceller *canceller, size_t phase,
+	const struct v32_echo_canceller *canceller,
+	const struct echo_reference_windows *windows, size_t phase,
 	double scale, struct qam_point updated[V32_ECHO_WINDOW_COUNT]
 					      [V32_ECHO_WINDOW_SYMBOLS])
 {
 	for (size_t window = 0; window < V32_ECHO_WINDOW_COUNT; ++window) {
 		for (size_t tap = 0;
 		     tap < V32_ECHO_WINDOW_SYMBOLS; ++tap) {
-			struct qam_point point =
-				tap_reference(canceller, window, tap);
+			const struct qam_point *point = &windows->points[window][tap];
 			const struct qam_point *coefficient =
 				&canceller->coefficients[phase][window][tap];
 
 			updated[window][tap] = (struct qam_point){
-				.in_phase = coefficient->in_phase + scale * point.in_phase,
-				.quadrature = coefficient->quadrature + scale * point.quadrature,
+				.in_phase = coefficient->in_phase + scale * point->in_phase,
+				.quadrature = coefficient->quadrature + scale * point->quadrature,
 			};
 			if (!point_is_finite(&updated[window][tap]))
 				return false;
@@ -242,6 +257,7 @@ enum v32_echo_result v32_echo_canceller_process(
 {
 	double error[V32_ECHO_PHASE_COUNT];
 	double far[V32_ECHO_PHASE_COUNT];
+	struct echo_reference_windows windows;
 	struct qam_point updated[V32_ECHO_PHASE_COUNT]
 				[V32_ECHO_WINDOW_COUNT][V32_ECHO_WINDOW_SYMBOLS];
 	size_t bytes;
@@ -265,6 +281,7 @@ enum v32_echo_result v32_echo_canceller_process(
 		return V32_ECHO_INVALID_ARGUMENT;
 	if (!canceller->pending_samples)
 		return V32_ECHO_INVALID_STATE;
+	read_reference_windows(canceller, &windows);
 	energy = canceller->reference_energy;
 	for (size_t index = 0; index < count; ++index) {
 		double prediction;
@@ -273,8 +290,10 @@ enum v32_echo_result v32_echo_canceller_process(
 		if (!isfinite(received[index]))
 			return V32_ECHO_INVALID_ARGUMENT;
 		bool predicted = phase == 0 ?
-			prediction_and_energy(canceller, phase, &prediction, &energy, &far[index]) :
-			prediction_and_energy(canceller, phase, &prediction, NULL, &far[index]);
+			prediction_and_energy(canceller, &windows, phase,
+				&prediction, &energy, &far[index]) :
+			prediction_and_energy(canceller, &windows, phase,
+				&prediction, NULL, &far[index]);
 		if (!predicted)
 			return V32_ECHO_INVALID_STATE;
 		error[index] = received[index] - prediction;
@@ -285,7 +304,7 @@ enum v32_echo_result v32_echo_canceller_process(
 		double scale = canceller->adaptation * error[index] /
 			       (energy + V32_ECHO_ENERGY_FLOOR);
 		if (!isfinite(scale) ||
-		    !prepare_update(canceller, phase, scale, updated[index]))
+		    !prepare_update(canceller, &windows, phase, scale, updated[index]))
 			return V32_ECHO_INVALID_STATE;
 	}
 	canceller->reference_energy = energy;

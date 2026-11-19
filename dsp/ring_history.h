@@ -32,6 +32,22 @@ static inline size_t ring_reverse_head_count(size_t newest, size_t count)
 	return newest < count ? newest + 1u : count;
 }
 
+struct ring_reverse_span {
+	size_t begin, end;
+};
+
+/* A newest-first window uses at most two spans. Read each span backwards
+ * from its exclusive end. The caller bounds newest and count by capacity. */
+static inline void ring_reverse_spans(size_t newest, size_t count,
+	size_t capacity, struct ring_reverse_span spans[2])
+{
+	size_t end = newest + 1u;
+	size_t head = ring_reverse_head_count(newest, count);
+
+	spans[0] = (struct ring_reverse_span){ end - head, end };
+	spans[1] = (struct ring_reverse_span){ capacity - (count - head), capacity };
+}
+
 /* Step backwards from a valid index in a nonempty ring. */
 static inline size_t ring_index_previous(size_t index, size_t capacity)
 {
