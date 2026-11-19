@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import termios
 import unittest
 from unittest import mock
 
@@ -544,6 +545,32 @@ class LiveTerminalTests(unittest.TestCase):
             [call.args[0] for call in write.call_args_list],
             [b"+++", b"ATO1\r", b"ATH0\r"],
         )
+
+    def test_hangup_drops_line_speed_if_connect_races_escape(self) -> None:
+        terminal = ModemTerminal(-1)
+        terminal._decoder.feed(b"CONNECT 28000\r\n")
+        attributes = [0, 0, 0, 0, termios.B115200, termios.B115200, []]
+        with (
+            mock.patch("tools.live_terminal.time.sleep"),
+            mock.patch.object(terminal, "_write") as write,
+            mock.patch("tools.live_terminal._wait_for_descriptor",
+                       side_effect=[None, None, TimeoutError, None, None, None]),
+            mock.patch("tools.live_terminal.os.read", side_effect=[
+                b"OK\r\n", b"OK\r\n",
+                b"TxRate: 50667\r\nCONNECT 28000\r\n",
+                b"OK\r\n", b"NO CARRIER\r\n",
+            ]),
+            mock.patch("tools.live_terminal.termios.tcgetattr", return_value=attributes),
+            mock.patch("tools.live_terminal.termios.tcsetattr") as set_attributes,
+        ):
+            with self.assertRaises(TimeoutError):
+                terminal.return_online(2.0, 0.0)
+            self.assertTrue(terminal.escape_and_hang_up())
+        self.assertEqual(
+            [call.args[0] for call in write.call_args_list], [b"+++", b"ATO1\r", b"+++"]
+        )
+        set_attributes.assert_called_once_with(-1, termios.TCSANOW, attributes)
+        self.assertEqual(attributes[4:6], [termios.B0, termios.B0])
 
     def test_escape_guard_capture_is_bounded_even_if_escape_fails(self) -> None:
         terminal = ModemTerminal(-1)

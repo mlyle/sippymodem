@@ -323,6 +323,10 @@ class ModemTerminal:
                 self._decoder.begin_command_response()
                 self._write(b"+++", deadline)
                 response = self._read_result(deadline)
+                if response == "connect" and self._awaiting_reconnect:
+                    # The retrain completed during the escape. Its CONNECT
+                    # does not tell us whether +++ reached command mode.
+                    return self._drop_line_speed()
                 if response in {"ok", "no-carrier"}:
                     self._awaiting_reconnect = False
                 if response == "no-carrier":
@@ -335,8 +339,20 @@ class ModemTerminal:
             # Allow the core's 1.5s LAPM and 3s datapump release bounds,
             # plus delivery of the final media block and terminal response.
             return self.command("ATH0", 5.0) in {"ok", "no-carrier"}
-        except (LiveTerminalError, OSError, TimeoutError):
+        except (LiveTerminalError, OSError, TimeoutError, termios.error):
             return False
+
+    def _drop_line_speed(self) -> bool:
+        attributes = termios.tcgetattr(self._descriptor)
+        attributes[4] = attributes[5] = termios.B0
+        self._decoder.begin_command_response()
+        termios.tcsetattr(self._descriptor, termios.TCSANOW, attributes)
+        self._awaiting_reconnect = False
+        deadline = time.monotonic() + 5.0
+        response = self._read_result(deadline)
+        while response == "ok":  # The outstanding escape can still reply.
+            response = self._read_result(deadline)
+        return response == "no-carrier"
 
     def exchange_online(
         self, send: bytes, expected: bytes, timeout_seconds: float
