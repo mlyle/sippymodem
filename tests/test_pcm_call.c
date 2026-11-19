@@ -1995,14 +1995,14 @@ static bool run_configured_call(
 		if (impairment == CALL_INITIAL_TONE_A_LOST) {
 			if (digital.call.stage == PCM_CALL_PHASE2 &&
 			    digital.call.state.phase2.stage == PCM_PHASE2_PROBE_TURNAROUND &&
-			    digital.call.state.phase2.state.turnaround.control.phase ==
+			    digital.call.state.phase2.state.probe.turnaround.phase ==
 				    PHASE2_PROBE_TURNAROUND_SIGNAL_B_RESPONSE_DELAY &&
-			    digital.call.state.phase2.state.turnaround.control.phase_samples_remaining == 320u)
+			    digital.call.state.phase2.state.probe.turnaround.phase_samples_remaining == 320u)
 				reversal_recovered = true;
 			if (digital.call.stage == PCM_CALL_PHASE2 &&
 			    (digital.call.state.phase2.stage == PCM_PHASE2_PROBE_TURNAROUND ||
 			     (digital.call.state.phase2.stage == PCM_PHASE2_INITIAL_PROBE &&
-			      digital.call.state.phase2.state.initial_probe.control.phase ==
+			      digital.call.state.phase2.state.probe.initial.control.phase ==
 				      PHASE2_INITIAL_PROBE_SIGNAL_B_TONE)))
 				probe_interrupted = true;
 			if (probe_interrupted && lost_a_samples < 8000u) {
@@ -3603,9 +3603,9 @@ static bool run_probe_response_timeout(
 	}
 	CHECK(probe_started && source->round_trip_delay_stored &&
 	      (role == V90_ANALOG_MODEM ?
-		      source->state.phase2.state.initial_probe.control.path.transmit
+		      source->state.phase2.state.probe.initial.control.path.transmit
 			      .samples_emitted :
-		      source->state.phase2.state.reciprocal_probe.control.path.transmit
+		      source->state.phase2.state.probe.reciprocal.path.transmit
 			      .samples_emitted) == 0u,
 	      "probe-timeout test missed the first L1 sample");
 	waiting = *source;
@@ -13140,7 +13140,7 @@ static bool check_missing_probe_boundary(
 	missing_probe_limit = role == V90_DIGITAL_MODEM ?
 		V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES :
 		PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES -
-			waiting.state.phase2.state.reciprocal_probe.control.
+			waiting.state.phase2.state.probe.reciprocal.
 				signal_a_reversal_elapsed_samples;
 	for (unsigned int clock = 0; clock < missing_probe_limit; ++clock) {
 		struct pcm_call_observation observed;

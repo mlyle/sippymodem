@@ -5,7 +5,7 @@
 
 #include "pcm_info1.h"
 #include "phase2_info1_exchange.h"
-#include "v90_phase2_reciprocal_probe.h"
+#include "pcm_phase2_probe.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -65,15 +65,15 @@ enum phase2_info1_result pcm_phase2_info1_init_short_digital(
  * immutable codec before the digital modem sends INFO1d. */
 enum phase2_info1_result pcm_phase2_info1_init_digital(
 	struct pcm_phase2_info1_exchange *exchange,
-	const struct v90_phase2_reciprocal_probe *completed_probe,
+	const struct pcm_phase2_probe *completed_probe,
 	const struct pcm_info1d *local_info1d);
 
 enum phase2_info1_result pcm_phase2_info1_init_v90_analog(
 	struct pcm_phase2_info1_exchange *exchange,
-	const struct v90_phase2_reciprocal_probe *completed_probe);
+	const struct pcm_phase2_probe *completed_probe);
 enum phase2_info1_result pcm_phase2_info1_init_v92_analog(
 	struct pcm_phase2_info1_exchange *exchange,
-	const struct v90_phase2_reciprocal_probe *completed_probe);
+	const struct pcm_phase2_probe *completed_probe);
 
 bool pcm_phase2_info1_is_valid(
 	const struct pcm_phase2_info1_exchange *exchange);

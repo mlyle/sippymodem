@@ -12,24 +12,15 @@ _Static_assert(
 	(int)V92_PCM_INFO1A_PAYLOAD_BITS == (int)V90_INFO1A_PAYLOAD_BITS,
 	"PCM INFO1a records must share one transport width");
 
-static enum v90_modem_role probe_role(
-	const struct v90_phase2_reciprocal_probe *probe)
+static bool probe_completed(
+	const struct pcm_phase2_probe *probe, enum v90_modem_role role)
 {
-	return probe->turnaround.initial_probe.ranging.info0_exchange.local_role;
-}
-
-static const struct v34_phase2_tone_transmitter *probe_tone(
-	const struct v90_phase2_reciprocal_probe *probe)
-{
-	return &probe->turnaround.initial_probe.ranging.info0_exchange.transport
-			.tone_transmitter;
-}
-
-static uint16_t probe_round_trip_delay(
-	const struct v90_phase2_reciprocal_probe *probe)
-{
-	return probe->turnaround.initial_probe.ranging.control
-		.round_trip_delay_samples;
+	return probe != NULL && pcm_phase2_probe_ranging_complete(probe) &&
+	       probe->initial.ranging.info0_exchange.local_role == role &&
+	       phase2_reciprocal_probe_is_complete(&probe->reciprocal) &&
+	       phase2_reciprocal_probe_is_valid(
+		       &probe->reciprocal, &probe->turnaround, &probe->initial.control,
+		       &probe->initial.ranging.info0_exchange.transport);
 }
 
 static bool analog_record_is_valid(
@@ -158,7 +149,7 @@ bool pcm_phase2_info1_retry_pending(
 
 enum phase2_info1_result pcm_phase2_info1_init_digital(
 	struct pcm_phase2_info1_exchange *exchange,
-	const struct v90_phase2_reciprocal_probe *completed_probe,
+	const struct pcm_phase2_probe *completed_probe,
 	const struct pcm_info1d *local_info1d)
 {
 	struct pcm_phase2_info1_exchange initialized = { 0 };
@@ -166,9 +157,7 @@ enum phase2_info1_result pcm_phase2_info1_init_digital(
 
 	if (exchange == NULL ||
 	    !pcm_info1d_is_valid(local_info1d) ||
-	    !v90_phase2_reciprocal_probe_is_valid(completed_probe) ||
-	    !phase2_reciprocal_probe_is_complete(&completed_probe->control) ||
-	    probe_role(completed_probe) != V90_DIGITAL_MODEM)
+	    !probe_completed(completed_probe, V90_DIGITAL_MODEM))
 		return PHASE2_INFO1_INVALID_ARGUMENT;
 	if (local_info1d->protocol == PCM_PROTOCOL_V90 ?
 	    v34_info1c_encode(&local_info1d->record.v90, payload,
@@ -179,10 +168,12 @@ enum phase2_info1_result pcm_phase2_info1_init_digital(
 	initialized.digital = *local_info1d;
 	initialized.protocol = local_info1d->protocol;
 	initialized.digital_record_stored = true;
+	const struct pcm_phase2_ranging *ranging = &completed_probe->initial.ranging;
 	if (phase2_info1_init_signal_b(
 		    &initialized.control,
-		    v34_phase2_tone_nominal_amplitude(probe_tone(completed_probe)),
-		    probe_round_trip_delay(completed_probe), payload,
+		    v34_phase2_tone_nominal_amplitude(
+			    &ranging->info0_exchange.transport.tone_transmitter),
+		    ranging->control.round_trip_delay_samples, payload,
 		    V34_INFO1C_PAYLOAD_BITS, V90_INFO1A_PAYLOAD_BITS) !=
 		    PHASE2_INFO1_OK ||
 	    !pcm_phase2_info1_is_valid(&initialized))
@@ -193,7 +184,7 @@ enum phase2_info1_result pcm_phase2_info1_init_digital(
 
 static enum phase2_info1_result initialize_analog(
 	struct pcm_phase2_info1_exchange *exchange,
-	const struct v90_phase2_reciprocal_probe *completed_probe,
+	const struct pcm_phase2_probe *completed_probe,
 	enum pcm_protocol protocol)
 {
 	struct pcm_phase2_info1_exchange initialized = {
@@ -201,14 +192,15 @@ static enum phase2_info1_result initialize_analog(
 	};
 
 	if (exchange == NULL || !pcm_protocol_is_valid(protocol) ||
-	    !v90_phase2_reciprocal_probe_is_valid(completed_probe) ||
-	    !phase2_reciprocal_probe_is_complete(&completed_probe->control) ||
-	    probe_role(completed_probe) != V90_ANALOG_MODEM ||
-	    phase2_info1_init_signal_a(
-		    &initialized.control, probe_tone(completed_probe),
-		    v34_phase2_tone_nominal_amplitude(probe_tone(completed_probe)),
-		    probe_round_trip_delay(completed_probe),
-		    completed_probe->control.signal_a_reversal_elapsed_samples,
+	    !probe_completed(completed_probe, V90_ANALOG_MODEM))
+		return PHASE2_INFO1_INVALID_ARGUMENT;
+	const struct pcm_phase2_ranging *ranging = &completed_probe->initial.ranging;
+	const struct v34_phase2_tone_transmitter *tone =
+		&ranging->info0_exchange.transport.tone_transmitter;
+	if (phase2_info1_init_signal_a(
+		    &initialized.control, tone, v34_phase2_tone_nominal_amplitude(tone),
+		    ranging->control.round_trip_delay_samples,
+		    completed_probe->reciprocal.signal_a_reversal_elapsed_samples,
 		    V34_INFO1C_PAYLOAD_BITS, V90_INFO1A_PAYLOAD_BITS) !=
 		    PHASE2_INFO1_OK ||
 	    !pcm_phase2_info1_is_valid(&initialized))
@@ -219,14 +211,14 @@ static enum phase2_info1_result initialize_analog(
 
 enum phase2_info1_result pcm_phase2_info1_init_v90_analog(
 	struct pcm_phase2_info1_exchange *exchange,
-	const struct v90_phase2_reciprocal_probe *completed_probe)
+	const struct pcm_phase2_probe *completed_probe)
 {
 	return initialize_analog(exchange, completed_probe, PCM_PROTOCOL_V90);
 }
 
 enum phase2_info1_result pcm_phase2_info1_init_v92_analog(
 	struct pcm_phase2_info1_exchange *exchange,
-	const struct v90_phase2_reciprocal_probe *completed_probe)
+	const struct pcm_phase2_probe *completed_probe)
 {
 	return initialize_analog(exchange, completed_probe, PCM_PROTOCOL_V92);
 }

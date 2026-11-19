@@ -3035,9 +3035,7 @@ V90_PHASE2_INITIAL_PROBE_TEST_OBJECTS := \
 	$(BUILD_DIR)/phase2_initial_probe.o \
 	$(BUILD_DIR)/v90_phase2_initial_probe.o \
 	$(BUILD_DIR)/phase2_probe_turnaround.o \
-	$(BUILD_DIR)/v90_phase2_probe_turnaround.o \
 	$(BUILD_DIR)/phase2_reciprocal_probe.o \
-	$(BUILD_DIR)/v90_phase2_reciprocal_probe.o \
 	$(BUILD_DIR)/phase2_info1_exchange.o \
 	$(BUILD_DIR)/pcm_phase2_info1_exchange.o \
 	$(BUILD_DIR)/pcm_phase2.o \
@@ -3307,9 +3305,7 @@ PCM_PHASE2_INFO1_EXCHANGE_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/phase2_initial_probe.o \
 	$(BUILD_DIR)/v90_phase2_initial_probe.o \
 	$(BUILD_DIR)/phase2_probe_turnaround.o \
-	$(BUILD_DIR)/v90_phase2_probe_turnaround.o \
 	$(BUILD_DIR)/phase2_reciprocal_probe.o \
-	$(BUILD_DIR)/v90_phase2_reciprocal_probe.o \
 	$(filter-out \
 		$(BUILD_DIR)/test_pcm_info1.o \
 		$(BUILD_DIR)/test_phase2_info1_exchange.o \
@@ -6110,14 +6106,6 @@ $(BUILD_DIR)/pcm_phase2_ranging.o: \
 
 $(BUILD_DIR)/v90_phase2_initial_probe.o: \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase2_initial_probe.c | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
-
-$(BUILD_DIR)/v90_phase2_probe_turnaround.o: \
-	$(DSP_PCM_SOURCE_DIR)/v90_phase2_probe_turnaround.c | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
-
-$(BUILD_DIR)/v90_phase2_reciprocal_probe.o: \
-	$(DSP_PCM_SOURCE_DIR)/v90_phase2_reciprocal_probe.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/pcm_phase2_info1_exchange.o: \

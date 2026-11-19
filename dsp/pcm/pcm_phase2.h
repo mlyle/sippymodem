@@ -63,9 +63,7 @@ struct pcm_phase2_event {
 
 union pcm_phase2_state {
 	struct pcm_phase2_ranging ranging;
-	struct v90_phase2_initial_probe initial_probe;
-	struct v90_phase2_probe_turnaround turnaround;
-	struct v90_phase2_reciprocal_probe reciprocal_probe;
+	struct pcm_phase2_probe probe;
 	struct {
 		struct pcm_phase2_info1_exchange info1;
 		/* The silent short INFO1a receiver must resume Tone B and full

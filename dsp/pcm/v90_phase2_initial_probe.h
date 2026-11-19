@@ -16,7 +16,9 @@ struct v90_phase2_initial_probe {
 
 /* Continue after the role-appropriate V.90 ranging event. The analog modem
  * begins L1 on the next sample and the digital modem begins bounded probe
- * acquisition on the next received sample. */
+ * acquisition on the next received sample. The initializer snapshots the
+ * ranging state before publishing the probe, allowing the same call-state
+ * union to hold the completed ranging and the new probe in turn. */
 enum phase2_initial_probe_result v90_phase2_initial_probe_init(
 	struct v90_phase2_initial_probe *probe,
 	const struct pcm_phase2_ranging *completed_ranging);
