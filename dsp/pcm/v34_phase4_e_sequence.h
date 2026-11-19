@@ -33,6 +33,23 @@ static inline uint8_t v34_phase4_e_extend_one_run(uint8_t current, uint8_t dibit
 	return dibit == 1u ? 1u : 0u;
 }
 
+/* Decode one MP, CP or E decision into transmission-order bits. The
+ * receiver supplies disjoint state and output within its own transaction.
+ * MP and CP parsing and E detection use the same phase and descrambler. */
+static inline bool v34_phase4_receive_symbol(struct v34_scrambler *descrambler,
+	uint8_t *previous_rotation, uint8_t *ones, uint8_t quarter_point,
+	uint8_t rotation, unsigned bit_count, uint8_t *bits)
+{
+	if (v34_descramble_control_symbol(descrambler, *previous_rotation,
+		    rotation, quarter_point, bit_count, bits) != V34_FRAMING_OK)
+		return false;
+	for (; bit_count != 0u; bit_count -= 2u)
+		*ones = v34_phase4_e_extend_one_run(*ones,
+			(uint8_t)((*bits >> (bit_count - 2u)) & 3u));
+	*previous_rotation = rotation;
+	return true;
+}
+
 enum v34_phase4_e_sequence_result {
 	V34_PHASE4_E_SEQUENCE_OK,
 	V34_PHASE4_E_SEQUENCE_COMPLETE,

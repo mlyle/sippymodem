@@ -54,23 +54,13 @@ static enum v34_phase4_e_receiver_result search_decision(
 	uint8_t quarter_point, uint8_t clockwise_quarter_turns)
 {
 	struct v34_phase4_e_receiver next = *receiver;
-	unsigned int count = v34_constellation_bits_per_symbol(next.constellation);
+	unsigned count = v34_constellation_bits_per_symbol(next.constellation);
 	uint8_t bits;
 
-	if (v34_descramble_control_symbol(
-		    &next.descrambler,
-		    next.previous_clockwise_quarter_turns,
-		    clockwise_quarter_turns, quarter_point, count,
-		    &bits) != V34_FRAMING_OK)
-		return V34_PHASE4_E_RECEIVER_INVALID_ARGUMENT;
-
-	for (; count != 0u; count -= 2u)
-		next.received_bits = v34_phase4_e_extend_one_run(
-			next.received_bits,
-			(uint8_t)((bits >> (count - 2u)) & 3u));
-
-	next.previous_clockwise_quarter_turns = clockwise_quarter_turns;
-	if (!v34_phase4_e_receiver_is_valid(&next))
+	if (!v34_phase4_receive_symbol(&next.descrambler,
+		    &next.previous_clockwise_quarter_turns, &next.received_bits,
+		    quarter_point, clockwise_quarter_turns, count, &bits) ||
+	    !v34_phase4_e_receiver_is_valid(&next))
 		return V34_PHASE4_E_RECEIVER_INVALID_ARGUMENT;
 	*receiver = next;
 	return v34_phase4_e_receiver_is_complete(receiver) ?

@@ -61,26 +61,6 @@ enum v90_cp_result v90_phase4_cp_rx_init(
 	return V90_CP_OK;
 }
 
-static enum v90_cp_result receive_dibit(
-	struct v90_cp_receiver *records, uint8_t dibit,
-	struct v90_cp_receive_event *event)
-{
-	struct v90_cp_receive_event first = { 0 };
-	struct v90_cp_receive_event second = { 0 };
-
-	if (v90_cp_receiver_receive_bit(
-		    records, (uint8_t)((dibit >> 1) & 1u), &first) !=
-		    V90_CP_OK ||
-	    v90_cp_receiver_receive_bit(
-		    records, (uint8_t)(dibit & 1u), &second) !=
-		    V90_CP_OK ||
-	    (first.type != V90_CP_RECEIVE_NO_EVENT &&
-	     second.type != V90_CP_RECEIVE_NO_EVENT))
-		return V90_CP_INVALID_ARGUMENT;
-	*event = first.type != V90_CP_RECEIVE_NO_EVENT ? first : second;
-	return V90_CP_OK;
-}
-
 enum v90_cp_result v90_phase4_cp_rx_receive_decision(
 	struct v90_phase4_cp_rx *rx,
 	uint8_t quarter_point, uint8_t clockwise_quarter_turns,
@@ -89,6 +69,7 @@ enum v90_cp_result v90_phase4_cp_rx_receive_decision(
 	struct v90_phase4_cp_rx next;
 	struct v90_cp_receive_event emitted = { 0 };
 	uint8_t bits;
+	unsigned count, emitted_dibit = 0;
 
 	if (!v90_phase4_cp_rx_is_valid(rx) ||
 	    !v34_training_decision_is_valid(
@@ -97,31 +78,32 @@ enum v90_cp_result v90_phase4_cp_rx_receive_decision(
 		return V90_CP_INVALID_ARGUMENT;
 
 	next = *rx;
-	unsigned int count = v34_constellation_bits_per_symbol(next.constellation);
+	count = v34_constellation_bits_per_symbol(next.constellation);
 
-	if (v34_descramble_control_symbol(
-		    &next.descrambler,
-		    next.previous_clockwise_quarter_turns,
-		    clockwise_quarter_turns, quarter_point, count,
-		    &bits) != V34_FRAMING_OK)
+	if (!v34_phase4_receive_symbol(&next.descrambler,
+		    &next.previous_clockwise_quarter_turns, &next.consecutive_ones,
+		    quarter_point, clockwise_quarter_turns, count, &bits))
 		return V90_CP_INVALID_ARGUMENT;
-	for (; count != 0u; count -= 2u) {
-		struct v90_cp_receive_event received = { 0 };
-		uint8_t dibit = (uint8_t)((bits >> (count - 2u)) & 3u);
+	for (; count != 0u; --count) {
+		struct v90_cp_receive_event received;
+		unsigned index = count - 1u;
+		uint8_t bit = (uint8_t)((bits >> index) & 1u);
 
-		/* One noisy symbol can terminate two rejected CP candidates. */
-		if (receive_dibit(&next.records, dibit, &received) != V90_CP_OK ||
-		    (emitted.type != V90_CP_RECEIVE_NO_EVENT &&
-		     received.type != V90_CP_RECEIVE_NO_EVENT &&
-		     (emitted.type != V90_CP_RECEIVE_REJECTED ||
-		      received.type != V90_CP_RECEIVE_REJECTED)))
+		if (v90_cp_receiver_receive_bit(&next.records, bit, &received) != V90_CP_OK)
 			return V90_CP_INVALID_ARGUMENT;
-		if (emitted.type == V90_CP_RECEIVE_NO_EVENT)
+		if (received.type == V90_CP_RECEIVE_NO_EVENT)
+			continue;
+		/* Retain the first event. A noisy symbol can terminate one
+		 * rejected candidate in each dibit. */
+		if (emitted.type == V90_CP_RECEIVE_NO_EVENT) {
 			emitted = received;
-		next.consecutive_ones = v34_phase4_e_extend_one_run(
-			next.consecutive_ones, dibit);
+			emitted_dibit = index / 2u;
+		} else if (emitted_dibit == index / 2u ||
+			   emitted.type != V90_CP_RECEIVE_REJECTED ||
+			   received.type != V90_CP_RECEIVE_REJECTED) {
+			return V90_CP_INVALID_ARGUMENT;
+		}
 	}
-	next.previous_clockwise_quarter_turns = clockwise_quarter_turns;
 	if (!v90_phase4_cp_rx_is_valid(&next))
 		return V90_CP_INVALID_ARGUMENT;
 	*rx = next;
