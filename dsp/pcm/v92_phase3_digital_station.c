@@ -2,6 +2,7 @@
 
 #include "v92_phase3_digital_station.h"
 
+#include "memory_region.h"
 #include "pcm_phase3_owned.h"
 #include "v90_info1.h"
 
@@ -235,9 +236,10 @@ bool v92_phase3_digital_station_transmit_complete(
 }
 
 static bool begin_ri_if_downstream_complete(
-	struct v92_phase3_digital_station *station)
+	struct v92_phase3_digital_station *station,
+	enum pcm_phase3_digital_tx_stage downstream_stage)
 {
-	if (station->downstream.stage != PCM_PHASE3_DIGITAL_TX_COMPLETE)
+	if (downstream_stage != PCM_PHASE3_DIGITAL_TX_COMPLETE)
 		return true;
 	if (station->transmit_stage == V92_PHASE3_DIGITAL_TRANSMIT_RI)
 		return true;
@@ -253,12 +255,12 @@ static bool begin_ri_if_downstream_complete(
 enum v92_phase3_digital_station_result v92_phase3_digital_station_transmit(
 	struct v92_phase3_digital_station *station, uint8_t *network_octet)
 {
-	struct v92_phase3_digital_station next;
-	struct v90_pcm_symbol symbol;
 	uint8_t generated;
 
 	if (!v92_phase3_digital_station_is_valid(station) ||
-	    network_octet == NULL)
+	    network_octet == NULL ||
+	    memory_regions_overlap(station, sizeof(*station), network_octet,
+				   sizeof(*network_octet)))
 		return V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT;
 	if (station->failed)
 		return V92_PHASE3_DIGITAL_STATION_FAILED;
@@ -268,25 +270,27 @@ enum v92_phase3_digital_station_result v92_phase3_digital_station_transmit(
 		*network_octet = g711_encode(station->law, 0);
 		return V92_PHASE3_DIGITAL_STATION_OK;
 	}
-	next = *station;
-	if (next.transmit_stage == V92_PHASE3_DIGITAL_TRANSMIT_DOWNSTREAM) {
-		if (pcm_phase3_digital_tx_next_owned(&next.downstream, &symbol) !=
-		    PCM_PHASE3_DIGITAL_TX_OK)
+	if (station->transmit_stage == V92_PHASE3_DIGITAL_TRANSMIT_DOWNSTREAM) {
+		struct pcm_phase3_digital_tx downstream = station->downstream;
+		struct v90_pcm_symbol symbol;
+
+		/* Advance only the transmit cursor. It preserves the finish
+		 * requests and DIL parameters that coordinate with the receiver.
+		 * Commit the cursor after the downstream-to-Ri handoff succeeds. */
+		if (pcm_phase3_digital_tx_next_owned(&downstream, &symbol) !=
+		    PCM_PHASE3_DIGITAL_TX_OK ||
+		    !begin_ri_if_downstream_complete(station, downstream.stage))
 			goto fail;
+		station->downstream = downstream;
 		generated = symbol.octet;
-		if (!begin_ri_if_downstream_complete(&next))
-			goto fail;
 	} else {
-		if (v90_phase4_ri_tx_next(&next.ri, &generated) !=
+		if (v90_phase4_ri_tx_next(&station->ri, &generated) !=
 		    V90_PHASE4_RI_OK)
 			goto fail;
-		if (v90_phase4_ri_tx_is_complete(&next.ri))
-			next.transmit_stage =
+		if (v90_phase4_ri_tx_is_complete(&station->ri))
+			station->transmit_stage =
 				V92_PHASE3_DIGITAL_TRANSMIT_COMPLETE;
 	}
-	if (!station_is_valid(&next, false))
-		goto fail;
-	*station = next;
 	*network_octet = generated;
 	return V92_PHASE3_DIGITAL_STATION_OK;
 
@@ -453,7 +457,8 @@ static enum v92_phase3_digital_station_result receive_second_trn1u(
 		if (station->downstream.dil.parameters.segment_count == 0u &&
 		    (pcm_phase3_digital_tx_finish_scr(&station->downstream) !=
 			     PCM_PHASE3_DIGITAL_TX_OK ||
-		     !begin_ri_if_downstream_complete(station)))
+		     !begin_ri_if_downstream_complete(
+			     station, station->downstream.stage)))
 			return V92_PHASE3_DIGITAL_STATION_SEQUENCE_MISMATCH;
 		station->receive =
 			(union v92_phase3_digital_receive){ .cpt = cpt };
@@ -489,7 +494,8 @@ static enum v92_phase3_digital_station_result receive_cpt(
 					    V92_PHASE3_DIGITAL_TRANSMIT_DOWNSTREAM ||
 				    pcm_phase3_digital_tx_finish_dil(
 					    &station->downstream) != PCM_PHASE3_DIGITAL_TX_OK ||
-				    !begin_ri_if_downstream_complete(station))
+				    !begin_ri_if_downstream_complete(
+					    station, station->downstream.stage))
 					return V92_PHASE3_DIGITAL_STATION_SEQUENCE_MISMATCH;
 			} else if (station->transmit_stage !=
 				    V92_PHASE3_DIGITAL_TRANSMIT_RI ||

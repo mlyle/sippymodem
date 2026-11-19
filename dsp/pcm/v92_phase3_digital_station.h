@@ -89,8 +89,9 @@ bool v92_phase3_digital_station_is_valid(
 bool v92_phase3_digital_station_has_failed(
 	const struct v92_phase3_digital_station *station);
 
-/* Emit one raw G.711 network character. Before Ja, canonical silence is
- * emitted. COMPLETE consumes no character and preserves the destination. */
+/* Emit one raw G.711 network character into a destination outside station
+ * storage. Before Ja, emit canonical silence. COMPLETE preserves the
+ * destination. */
 enum v92_phase3_digital_station_result v92_phase3_digital_station_transmit(
 	struct v92_phase3_digital_station *station, uint8_t *network_octet);
 

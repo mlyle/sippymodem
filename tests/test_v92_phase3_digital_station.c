@@ -179,6 +179,35 @@ static bool check_early_jp_prime(
 	return true;
 }
 
+static bool check_jp_transmit_failure(
+	const struct v92_phase3_digital_station *boundary)
+{
+	struct v92_phase3_digital_station failed = *boundary;
+	const struct pcm_binary_sign *before =
+		&boundary->downstream.sequence.signs.coding;
+	const struct pcm_binary_sign *after =
+		&failed.downstream.sequence.signs.coding;
+	uint8_t octet = 0xa5u;
+
+	failed.downstream.jp_records = UINT32_MAX - 1u;
+	failed.downstream.bit_index = PCM_J_FRAME_BITS - 1u;
+	CHECK(failed.downstream.stage == PCM_PHASE3_DIGITAL_TX_JP &&
+	      v92_phase3_digital_station_transmit(&failed, &octet) ==
+		      V92_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE &&
+	      failed.failed && octet == 0xa5u &&
+	      failed.receive_stage == V92_PHASE3_DIGITAL_RECEIVE_SU_RESPONSE &&
+	      failed.receive.response.su.total_symbols ==
+		      boundary->receive.response.su.total_symbols &&
+	      failed.transmit_stage == boundary->transmit_stage &&
+	      failed.downstream.stage == PCM_PHASE3_DIGITAL_TX_JP &&
+	      failed.downstream.jp_records == UINT32_MAX - 1u &&
+	      failed.downstream.bit_index == PCM_J_FRAME_BITS - 1u &&
+	      after->scrambler.feedback.history == before->scrambler.feedback.history &&
+	      after->previous_sign == before->previous_sign,
+	      "Jp counter exhaustion changed station state or output");
+	return true;
+}
+
 static bool check_trn1u_without_su_reversal(
 	const struct v92_phase3_digital_station *boundary)
 {
@@ -194,6 +223,7 @@ static bool check_trn1u_without_su_reversal(
 			      V92_PHASE3_DIGITAL_STATION_OK, "Jp transmission failed");
 	}
 	CHECK(digital.downstream.jp_records, "Jp did not finish a record");
+	CHECK(check_jp_transmit_failure(&digital), "Jp failure was not transactional");
 	/* Model an obscured Su response. Acquisition must retain TRN1u's first
 	 * symbol even when the reversal detector has not established Su. */
 	CHECK(v92_pcm_phase3_trn1u_init(&training, digital.law, TEST_UCODE) ==
@@ -1023,6 +1053,9 @@ static bool test_digital_contracts(void)
 	      "pre-Ja silence changed digital state");
 	CHECK(v92_phase3_digital_station_transmit(NULL, &octet) ==
 		      V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
+	      v92_phase3_digital_station_transmit(&station, &station.training_ucode) ==
+		      V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
+	      station.training_ucode == TEST_UCODE &&
 	      v92_phase3_digital_station_receive(NULL, 0, true) ==
 		      V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
 	      v92_phase3_digital_station_receive_handoff(
