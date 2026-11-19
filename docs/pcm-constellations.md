@@ -103,6 +103,54 @@ must also cover the DSP, framing, compression and training transitions.
 Neither synthetic self-calls nor exact replay of a received recording proves
 interoperability with every physical digital peer.
 
+## Design the probe for phase-dependent memory
+
+The DIL descriptor lets the analogue modem choose a signed reference or
+training level at each point in a repeating pattern. Each segment starts
+the pattern again. The descriptor also carries a reference and a segment
+length for each Ucode chord. These fields can probe both the present
+level and the preceding level at each of the six receiver phases.
+[ITU-T V.90 §§8.3.1 and 8.4.1](https://www.itu.int/rec/dologin_pub.asp?id=T-REC-V.90-199809-I%21%21PDF-E&lang=e&type=items)
+[ITU-T V.92 §8.6.1 and Table 20](https://www.itu.int/rec/dologin_pub.asp?id=T-REC-V.92-200011-I%21%21PDF-E&lang=e&type=items)
+
+Represent the four signed reference and training choices by four symbols.
+Make one vertex for each pair of phase and preceding symbol. Each vertex
+has four outgoing edges, one per current symbol, into the next phase.
+The graph is strongly connected and has equal in-degree and out-degree
+at each vertex. An Euler circuit generates a 96-symbol pattern that
+visits every ordered pair once in each phase. This balance also makes
+the signed reference and training sequences separately zero-mean over
+a full period.
+
+Use 120 samples per segment when the receiver skips the first 18 samples
+for settling. A full 96-symbol cycle then fits inside positions 18
+through 118, even when the last sample goes to the next stage. The
+144-segment probe retains the conventional training levels and takes
+17,280 samples instead of 32,280, saving 1.875 seconds of probe time at
+8,000 symbols per second. A 102-sample budget leaves at most 84
+observations after settling.
+
+Screen candidate patterns against both codec laws. For a given reference
+level, the exact squared energy of each window is the sum of the training
+and fixed reference contributions plus the count of the remaining
+reference symbols times their squared level. This permits a direct
+bound on the largest admissible reference level. Use the conventional
+probe as the ceiling for mean-square traversal power and maximum 10 ms
+and 20 ms window energy. Prefer the highest admissible reference level,
+then minimize the largest spectral bin of the two signed pulse trains,
+allowing for their level weights.
+
+Transition coverage establishes which channel inputs were exercised.
+The precision of a codec-cell fit also depends on the levels, noise,
+and number of repetitions. In a paired test of the 120-sample design,
+fixed-rate calls preserved the conventional outcome in 112 cases across
+both laws and both roles. In the 68 cases that verified bidirectional
+payload, the shorter probe advanced data readiness by 1.88–1.94 seconds.
+The longer conventional probe gave tighter median gain and postcursor
+bounds on the sampled codec models. Qualification of a replacement
+also needs rate-flexible trials, media loss, and an independent digital
+peer that decodes the requested descriptor.
+
 ## Decision margins with two quantized postcursors
 
 Linear minimum spacing does not by itself describe a sampled channel with
