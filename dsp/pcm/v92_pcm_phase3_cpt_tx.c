@@ -112,8 +112,10 @@ bool v92_pcm_phase3_cpt_tx_is_valid(
 bool v92_pcm_phase3_cpt_tx_is_complete(
 	const struct v92_pcm_phase3_cpt_tx *transmitter)
 {
-	return v92_pcm_phase3_cpt_tx_is_valid(transmitter) &&
-	       transmitter->stage == V92_PCM_PHASE3_CPT_TX_COMPLETE;
+	/* Only a finished E1u can justify revalidating the packed record. */
+	return transmitter != NULL &&
+	       transmitter->stage == V92_PCM_PHASE3_CPT_TX_COMPLETE &&
+	       v92_pcm_phase3_cpt_tx_is_valid(transmitter);
 }
 
 enum v92_pcm_phase3_cpt_tx_result v92_pcm_phase3_cpt_tx_init(

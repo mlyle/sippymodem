@@ -73,9 +73,8 @@ static bool transmit_is_valid(
 		       station->transmit_delay.phase_q16 ==
 			       station->transmit.su.phase_q16;
 	case V92_PHASE3_ANALOG_TRANSMIT_CPT:
-		return v92_pcm_phase3_cpt_tx_is_valid(&station->transmit.cpt) &&
-		       !v92_pcm_phase3_cpt_tx_is_complete(
-			       &station->transmit.cpt);
+		return station->transmit.cpt.stage != V92_PCM_PHASE3_CPT_TX_COMPLETE &&
+		       v92_pcm_phase3_cpt_tx_is_valid(&station->transmit.cpt);
 	case V92_PHASE3_ANALOG_TRANSMIT_TRN2U:
 		return v92_pcm_phase4_trn2u_is_valid(&station->transmit.trn2u);
 	}
