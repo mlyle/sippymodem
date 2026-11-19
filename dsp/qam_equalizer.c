@@ -261,16 +261,26 @@ enum qam_equalizer_result qam_equalizer_push(
 	return qam_equalizer_push_owned(equalizer, received, output, ready);
 }
 
+enum qam_equalizer_result qam_equalizer_push_erasure_owned(
+	struct qam_equalizer *equalizer,
+	const struct qam_point *concealed,
+	struct qam_point *output, bool *ready)
+{
+	enum qam_equalizer_result result = qam_equalizer_push_owned(
+		equalizer, concealed, output, ready);
+	if (result == QAM_EQUALIZER_OK)
+		equalizer->unavailable_history = (uint8_t)equalizer->tap_count;
+	return result;
+}
+
 enum qam_equalizer_result qam_equalizer_push_erasure(
 	struct qam_equalizer *equalizer,
 	const struct qam_point *concealed,
 	struct qam_point *output, bool *ready)
 {
-	enum qam_equalizer_result result = qam_equalizer_push(
-		equalizer, concealed, output, ready);
-	if (result == QAM_EQUALIZER_OK)
-		equalizer->unavailable_history = (uint8_t)equalizer->tap_count;
-	return result;
+	if (!qam_equalizer_is_valid(equalizer))
+		return QAM_EQUALIZER_INVALID_ARGUMENT;
+	return qam_equalizer_push_erasure_owned(equalizer, concealed, output, ready);
 }
 
 enum qam_equalizer_result qam_equalizer_observe(

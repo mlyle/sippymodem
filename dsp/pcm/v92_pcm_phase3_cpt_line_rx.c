@@ -105,7 +105,7 @@ static bool receive_sign(struct binary_equalizer *line,
 	struct v92_pcm_phase3_cpt_rx_event *event)
 {
 	uint8_t sign;
-	return binary_equalizer_receive(line, sample, received_available, &sign) == BINARY_EQUALIZER_OK &&
+	return binary_equalizer_receive_owned(line, sample, received_available, &sign) == BINARY_EQUALIZER_OK &&
 	       v92_pcm_phase3_cpt_rx_receive(signs, sign, event) == V92_PCM_PHASE3_CPT_RX_OK;
 }
 

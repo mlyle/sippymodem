@@ -38,9 +38,9 @@ enum binary_equalizer_result binary_equalizer_init(
 	return BINARY_EQUALIZER_OK;
 }
 
-enum binary_equalizer_result binary_equalizer_receive(
+static enum binary_equalizer_result receive(
 	struct binary_equalizer *receiver, int32_t sample, bool received_available,
-	uint8_t *sign)
+	uint8_t *sign, bool owned)
 {
 	struct qam_equalizer *equalizer;
 	struct qam_equalizer_push_undo undo;
@@ -53,7 +53,7 @@ enum binary_equalizer_result binary_equalizer_receive(
 	if (receiver == NULL || sign == NULL || memory_regions_overlap(
 		    receiver, sizeof(*receiver), sign, sizeof(*sign)))
 		return BINARY_EQUALIZER_INVALID_ARGUMENT;
-	if (!binary_equalizer_is_valid(receiver))
+	if (!owned && !binary_equalizer_is_valid(receiver))
 		return BINARY_EQUALIZER_INVALID_STATE;
 	equalizer = &receiver->equalizer;
 	qam_equalizer_save_push(equalizer, &undo);
@@ -61,8 +61,8 @@ enum binary_equalizer_result binary_equalizer_receive(
 		.in_phase = receiver->polarity > 0 ? sample : -(double)sample,
 	};
 	enum qam_equalizer_result pushed = received_available ?
-		qam_equalizer_push(equalizer, &input, &output, &ready) :
-		qam_equalizer_push_erasure(equalizer, &input, &output, &ready);
+		qam_equalizer_push_owned(equalizer, &input, &output, &ready) :
+		qam_equalizer_push_erasure_owned(equalizer, &input, &output, &ready);
 	if (pushed != QAM_EQUALIZER_OK)
 		return BINARY_EQUALIZER_INTERNAL_ERROR;
 	if (!ready)
@@ -80,4 +80,18 @@ enum binary_equalizer_result binary_equalizer_receive(
 undo_push:
 	qam_equalizer_undo_push(equalizer, &undo);
 	return BINARY_EQUALIZER_INTERNAL_ERROR;
+}
+
+enum binary_equalizer_result binary_equalizer_receive(
+	struct binary_equalizer *receiver, int32_t sample, bool received_available,
+	uint8_t *sign)
+{
+	return receive(receiver, sample, received_available, sign, false);
+}
+
+enum binary_equalizer_result binary_equalizer_receive_owned(
+	struct binary_equalizer *receiver, int32_t sample, bool received_available,
+	uint8_t *sign)
+{
+	return receive(receiver, sample, received_available, sign, true);
 }

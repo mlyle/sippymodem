@@ -119,6 +119,12 @@ enum qam_equalizer_result qam_equalizer_push_erasure(
 	const struct qam_point *concealed,
 	struct qam_point *output, bool *ready);
 
+/* As push_erasure, with the validated-state contract of push_owned. */
+enum qam_equalizer_result qam_equalizer_push_erasure_owned(
+	struct qam_equalizer *equalizer,
+	const struct qam_point *concealed,
+	struct qam_point *output, bool *ready);
+
 /* Push one symbol while retaining the exact output and tap inputs needed for
  * delayed adaptation. observation must not already be pending. It changes
  * only when ready becomes true; the caller then owns it until adaptation or

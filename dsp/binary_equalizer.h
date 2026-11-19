@@ -42,5 +42,9 @@ enum binary_equalizer_result binary_equalizer_receive(
 	struct binary_equalizer *receiver, int32_t sample, bool received_available,
 	uint8_t *sign);
 
+/* Same transaction under exclusive ownership of an already validated line. */
+enum binary_equalizer_result binary_equalizer_receive_owned(
+	struct binary_equalizer *receiver, int32_t sample, bool received_available,
+	uint8_t *sign);
 
 #endif /* BINARY_EQUALIZER_H */
