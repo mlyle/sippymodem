@@ -159,3 +159,91 @@ cannot establish peer reception, infer BER from a residual alone, or prove
 that a changed protocol would have elicited the same recorded reply. Keep
 replay qualification, model prediction, and live bidirectional data results
 as separate evidence.
+
+## Qualify a second observation of short V.92 control records
+
+The short rate exchange has a known TRN2u waveform before the analogue
+modem sends status. A separate observer can measure residual gain, DC, and
+one-symbol memory after the receive equalizer. The ordinary control parser
+continues to own the timed exchange. The observer can supply another complete
+status record when the established slicer misses it.
+
+For each candidate sample alignment, fit
+
+```
+y[n] = g * x[n] + h * x[n - 1] + b
+```
+
+Here `x` is the known signed 4-PAM or 8-PAM training reference, normalized
+to unit mean square over the alphabet, and `y` is the equalized observation
+in units of the acquired training level. Fit both reference polarities.
+A constant sign reversal leaves differential decisions unchanged after the
+first symbol and its descrambler history. Use the signed fit to predict
+received training. The protocol state still owns differential initialization.
+[ITU-T V.92 Amendment 1, §8.7.6](https://www.itu.int/rec/dologin_pub.asp?id=T-REC-V.92-200107-I%21Amd1%21PDF-E&lang=e&type=items)
+
+Use disjoint training windows to fit and validate the model. The prototype
+searches offsets from −6 through +6 samples. It admits direct gain magnitudes
+of 0.50–1.55, postcursor magnitudes up to 0.35 times the direct gain, and DC
+magnitudes up to 0.40 times the direct gain. Apply the bounds before ranking
+fits. Otherwise a one-sample displacement can move the direct response into
+the postcursor and nearly tie the physical alignment. The retained fit must
+predict the held-out window within 0.22 times the direct gain in RMS error,
+and the next admissible alignment must have at least twice that error.
+Qualification compares samples against known training before reading status.
+
+First try gain and offset correction. For a channel with measurable memory,
+use one state per possible preceding PAM level. For each new sample, compare
+every predecessor `p` and current level `s`. Extend the predecessor's best
+path by `(y[n] - g*s - h*p - b)^2`. The best predecessor per `s` suffices
+because older symbols cannot affect the next observation in this model.
+The direct gain and postcursor used here have the same physical polarity as
+the measured signal. Subtract the minimum path cost before the next iteration.
+More distant echoes or rapidly moving timing require a different model.
+
+The bounded experiment used up to 160 new symbols and 96 symbols of overlap.
+The overlap covers a complete pair of 36-symbol 4-PAM records and the
+scrambler and differential history needed before them. Accept two consecutive
+records on the calibrated 12-symbol frame phase only when a single traceback
+produces both with the same payload, correct CRCs, and all required zero
+fill. A single CRC-valid prefix can survive a corrupted or interrupted
+record. Its CRC excludes the fill. A shared disturbance can also correlate
+the CRC outcomes of successive records.
+[ITU-T V.92, Table 27](https://www.itu.int/rec/dologin_pub.asp?id=T-REC-V.92-200011-I%21%21PDF-E&lang=e&type=items)
+
+### Qualification results
+
+In the test below, the nominal path needs one complete record and the
+alternative needs a matching consecutive pair. The columns are cumulative.
+An alternate recovery counts only if it succeeds at all five tested packet
+alignments. The measured-waveform tests apply additional gain, DC, and
+one-symbol residual echo to six equalized captures. They model the waveform
+at the slicer input, independently of adaptation in the live receive filter.
+
+| Test stream | Nominal slicer | With gain and DC | With one-symbol sequence detection |
+| --- | ---: | ---: | ---: |
+| Generated 4-PAM | 45/216 | 108/216 | 150/216 |
+| Generated 8-PAM | 2/216 | 28/216 | 73/216 |
+| Measured 4-PAM waveforms with added impairments | 105/216 | 141/216 | 178/216 |
+
+All 28 stable-offset trials recovered their intended alignment and status.
+Changing the clock between the two training windows withheld the fit in all
+24 nonzero-step trials. Neither alternative accepted a pair among 192
+controls with random traffic after training, partial status, bad CRC,
+silence, clipping, an unqualified phase step, or changing status payloads.
+The fixed kernel matched 144 small exhaustive path comparisons.
+
+A clean 4-PAM recording can have a valid status CRC followed by fill
+whose high-confidence symbols disagree with the complete record. A field
+failure exhibited this pattern with no second complete status. Its training
+fit had the same alignment as good exchanges and neither alternate decoder
+recovered a complete pair. Keep the ordinary parser's fill and CRC
+requirements for every accepted record.
+
+The eight-state, 256-symbol decoder averaged 0.012 ms on Ryzen and 0.038 ms
+on Pi 5. The highest single-window times were 0.188 ms and 0.046 ms, and the
+highest three-window work totals were 0.240 ms and 0.125 ms. These measurements
+cover the isolated sequence detector. Production integration needs call-owned
+shadow state, a packet budget that includes fitting and parsing, and live
+bidirectional qualification before the additional observation may affect
+negotiation.
