@@ -253,3 +253,54 @@ cover the isolated sequence detector. Production integration needs call-owned
 shadow state, a packet budget that includes fitting and parsing, and live
 bidirectional qualification before the additional observation may affect
 negotiation.
+
+## Rank the data cadence after a sample slip
+
+A PCM-upstream mapping word spans twelve samples, with a trellis transition
+after each group of four. A step within a call can move both boundaries while
+leaving the constellation, gain, and channel inverse usable. When CPd uses
+the same signed alphabet in all six phases, nearest-level error by itself
+has no timing information. The order of the trellis constraints still does.
+
+Use the frozen receive gain and causal inverse to project the received
+samples. Let `c[n][r]` be the squared distance from sample `n` to the nearest
+signed constellation point whose index is `r` modulo four, weighted by the
+sample's amplitude-dependent uncertainty. For adjacent pairs, keep the
+minimum sum for each V.34 subset label. For a pair of those subsets, the
+parity and branch label select a transition. This reduces the group score
+from 256 residue combinations to two 16-combination pair reductions and a
+64-combination join. The reduction is exact for this relaxed metric.
+
+For each of the four group offsets, initialize all trellis states at equal
+cost. Find the minimum path cost over the window and subtract the sum of
+the unconstrained per-sample minima over the same samples. This measures
+the extra error required to make the waveform obey the proposed cadence.
+It omits word range, differential history, and payload interpretation. A
+winning four-sample offset leaves three possible twelve-sample boundaries.
+The full CPd decoder must still distinguish these candidates.
+
+In the prototype, two disjoint 480-sample blocks chose the same correct
+group offset in all 63 aligned or displaced windows from twelve recorded
+receiver epochs. Native decoding from a fresh coding hypothesis then
+found a long flag run and a valid LAPM FCS on the unique correct mapping
+boundary in all 55 windows with a captured frame. Eight idle or mark
+windows supplied no FCS. One failed startup had sustained flags on its
+existing phase and no reply recoverable at any of the twelve boundaries.
+The waveform data used the already learned CPd and receive calibration.
+
+Allow a timing search only within an established receive epoch. Rebuild
+coding history from the observed samples with the frozen channel inverse
+and discard old delayed bits when testing a displaced boundary. Two
+disjoint timing votes can shortlist candidates. Qualification must also
+require uniquely framed evidence. The prototype looks for at least 64
+consecutive flags and an FCS-valid LAPM frame. Isolate its parsing and
+receiver state until qualification. Any clipped or unavailable history
+must remain missing evidence. FCS cannot prove the integrity of previously
+lost words, and a shift by a whole mapping word leaves cadence unchanged.
+Recovery of discarded data remains the responsibility of error control.
+
+These replay results cover identical constellation rows and a still
+usable channel inverse. A live implementation needs a bounded buffer,
+packet work limits for the remaining three decoders, and a transactional
+receiver handoff that preserves carrier and error-control state.
+Qualification used an offline prototype.
