@@ -199,7 +199,7 @@ bool v92_rate_pause_digital_receive(struct v92_rate_pause_digital *pause, int16_
 	if (!v92_rate_pause_digital_is_valid(pause) || pause->failed)
 		return false;
 	enum v92_upstream_control_line_rx_result result =
-		v92_upstream_control_line_rx_sample(&pause->upstream, sample, &event);
+		v92_upstream_control_line_rx_sample_validated(&pause->upstream, sample, &event);
 	if (result == V92_UPSTREAM_CONTROL_LINE_RX_OK)
 		return true;
 	if (result == V92_UPSTREAM_CONTROL_LINE_RX_EVENT) {

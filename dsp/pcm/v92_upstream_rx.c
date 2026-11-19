@@ -144,10 +144,11 @@ static enum v92_upstream_rx_result sample(
 	generated.equalized_level = output.in_phase;
 	generated.reference_level = nominal_level;
 	next->line.input_samples++;
-	if (!v92_upstream_rx_is_valid(next))
-		return fail(receiver);
-	if (!staged)
+	if (!staged) {
+		if (!v92_upstream_rx_is_valid(next))
+			return fail(receiver);
 		*receiver = *next;
+	}
 	*decision = generated;
 	return V92_UPSTREAM_RX_OK;
 }

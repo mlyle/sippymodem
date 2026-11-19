@@ -51,10 +51,9 @@ enum v92_upstream_rx_result v92_upstream_rx_sample(
 	struct v92_upstream_rx *receiver, int16_t sample,
 	struct v92_upstream_decision *decision);
 
-/* Composite-owner path: receiver is a validated, unpublished local snapshot.
- * Skip its repeated entry scan and copy; retain per-sample argument, counter
- * and DSP checks. On non-OK the owner must discard the snapshot, which can
- * contain partial progress. decision keeps the standalone output contract. */
+/* Composite-owner path: process a validated, unpublished local snapshot.
+ * The owner validates the updated snapshot before committing it and discards
+ * it on error. Per-sample argument, counter and DSP checks still apply. */
 enum v92_upstream_rx_result v92_upstream_rx_sample_owned(
 	struct v92_upstream_rx *receiver, int16_t sample,
 	struct v92_upstream_decision *decision);

@@ -104,7 +104,7 @@ static void track_repetition(struct v92_upstream_control_line_rx *receiver,
 }
 
 enum v92_upstream_control_line_rx_result
-v92_upstream_control_line_rx_sample(
+v92_upstream_control_line_rx_sample_validated(
 	struct v92_upstream_control_line_rx *receiver, int16_t sample,
 	struct v92_control_event *event)
 {
@@ -115,7 +115,7 @@ v92_upstream_control_line_rx_sample(
 	enum v92_upstream_rx_result signal_result;
 	unsigned int bits;
 
-	if (!v92_upstream_control_line_rx_is_valid(receiver) || event == NULL)
+	if (event == NULL)
 		return V92_UPSTREAM_CONTROL_LINE_RX_INVALID_ARGUMENT;
 	if (receiver->signal.failed)
 		return V92_UPSTREAM_CONTROL_LINE_RX_FAILED;
@@ -164,6 +164,16 @@ v92_upstream_control_line_rx_sample(
 	return emitted.type == V92_CONTROL_EVENT_NONE ?
 		       V92_UPSTREAM_CONTROL_LINE_RX_OK :
 		       V92_UPSTREAM_CONTROL_LINE_RX_EVENT;
+}
+
+enum v92_upstream_control_line_rx_result
+v92_upstream_control_line_rx_sample(
+	struct v92_upstream_control_line_rx *receiver, int16_t sample,
+	struct v92_control_event *event)
+{
+	if (!v92_upstream_control_line_rx_is_valid(receiver))
+		return V92_UPSTREAM_CONTROL_LINE_RX_INVALID_ARGUMENT;
+	return v92_upstream_control_line_rx_sample_validated(receiver, sample, event);
 }
 
 const char *v92_upstream_control_line_rx_result_name(

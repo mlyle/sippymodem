@@ -55,6 +55,12 @@ v92_upstream_control_line_rx_sample(
 	struct v92_upstream_control_line_rx *receiver, int16_t sample,
 	struct v92_control_event *event);
 
+/* Same transaction when the enclosing owner has validated the input state. */
+enum v92_upstream_control_line_rx_result
+v92_upstream_control_line_rx_sample_validated(
+	struct v92_upstream_control_line_rx *receiver, int16_t sample,
+	struct v92_control_event *event);
+
 const char *v92_upstream_control_line_rx_result_name(
 	enum v92_upstream_control_line_rx_result result);
 

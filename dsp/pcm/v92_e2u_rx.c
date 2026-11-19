@@ -330,7 +330,8 @@ bool v92_e2u_search_retain_record_owned(struct v92_e2u_search *search,
 	 * record whose reserved/duplicate fields may differ. */
 	struct v92_upstream_rx signal = before->signal;
 	struct v92_upstream_decision decision;
-	if (v92_upstream_rx_sample_owned(&signal, sample, &decision) != V92_UPSTREAM_RX_OK)
+	if (v92_upstream_rx_sample_owned(&signal, sample, &decision) != V92_UPSTREAM_RX_OK ||
+	    !v92_upstream_rx_is_valid(&signal))
 		return false;
 	memset(search->frame, 0, sizeof(search->frame));
 	memcpy(search->frame, record->frame, (record->frame_bit_count + 7u) / 8u);
@@ -460,7 +461,7 @@ static enum v92_e2u_rx_result search_sample(
 	}
 
 	enum v92_upstream_control_line_rx_result result =
-		v92_upstream_control_line_rx_sample(&line, sample, &emitted);
+		v92_upstream_control_line_rx_sample_validated(&line, sample, &emitted);
 	if (eligible && (boundary || next.received_symbols != 0u) &&
 	    next.received_symbols < next.expected_symbols) {
 		enum v92_e2u_rx_result trial = v92_e2u_rx_sample(&next, sample);

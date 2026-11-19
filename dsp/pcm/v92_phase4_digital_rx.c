@@ -254,7 +254,7 @@ static enum v92_phase4_digital_rx_result receive_control(
 	int16_t expected = remaining ? signal->line.pending_training_targets[
 		V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY - remaining] : 0;
 	enum v92_upstream_control_line_rx_result result =
-		v92_upstream_control_line_rx_sample(
+		v92_upstream_control_line_rx_sample_validated(
 			&next->signal.control, sample, event);
 
 	/* The line rolls back a failed sample and latches only its own flag.
