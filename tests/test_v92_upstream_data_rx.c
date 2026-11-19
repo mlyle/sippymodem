@@ -4879,7 +4879,7 @@ static int16_t raw_echo_reference(unsigned clock, unsigned salt)
  * raw B1 receiver. Both the native delayed decisions and echo history must
  * survive publication; a B1-only residual check would miss that boundary. */
 static bool run_raw_b1_echo(enum g711_law law, int polarity, unsigned block,
-	int shift, bool retained, unsigned fault)
+	int shift, bool retained, unsigned settle_samples, unsigned fault)
 {
 	struct {
 		struct pcm_host_echo echo;
@@ -4935,6 +4935,8 @@ static bool run_raw_b1_echo(enum g711_law law, int polarity, unsigned block,
 			      V92_PCM_FRAME_OK, "raw B1 source stopped");
 		}
 		int actual_shift = shift + (fault == 5 && i >= 400 ? 37 : 0);
+		if (i < settle_samples)
+			actual_shift = -shift;
 		int16_t raw = g711_quantize(law, sample_round_s16(
 			polarity * encoded.u[i % V92_PCM_MAPPING_FRAME_SYMBOLS] + (double).025f *
 			raw_echo_reference((unsigned)(2000 + (int)i - 900 - actual_shift), salt)));
@@ -5015,10 +5017,12 @@ static bool test_raw_b1_echo(void)
 			for (unsigned retained = 0; retained < 2; ++retained) {
 				for (int shift = -120; shift <= 120; shift += 120)
 					for (unsigned b = 0; b < ARRAY_LENGTH(blocks); ++b)
-						CHECK(run_raw_b1_echo(law, polarity, blocks[b], shift, retained, 0),
+					CHECK(run_raw_b1_echo(law, polarity, blocks[b], shift, retained, 0, 0),
 						      "raw B1 continuation failed");
+			CHECK(run_raw_b1_echo(law, polarity, 80, 120, retained, 184, 0),
+			      "raw B1 failed after the echo settled");
 				for (unsigned fault = 1; fault <= 9; ++fault)
-					CHECK(run_raw_b1_echo(law, polarity, 80, 120, retained, fault),
+				CHECK(run_raw_b1_echo(law, polarity, 80, 120, retained, 0, fault),
 					      "raw B1 fault rejection failed");
 			}
 	return true;

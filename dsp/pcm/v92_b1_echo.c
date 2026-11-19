@@ -20,9 +20,18 @@ enum {
 	FIT_FIRST = 24, FIT_READY = V92_B1_ECHO_FIT_INPUTS, FIT_END = FIT_READY - 16,
 	FIT_SAMPLES = FIT_END - FIT_FIRST, HELD = 200,
 	SCORE_END = FIT_READY + 2 * HELD, CONSTELLATION_MODEL = 3,
+	RAW_FIT_FIRST = 184, RAW_FIT_END = 248, RAW_HELD = 148,
 };
 enum { IDLE, ACTIVE, FINISHED, COMMITTED };
 _Static_assert(SCORE_END + 24 <= B1_SAMPLES, "holdout exceeds known B1u");
+_Static_assert(RAW_FIT_END + 2 * RAW_HELD == SCORE_END, "raw holdout exceeds score interval");
+_Static_assert(8 * (V92_B1_ECHO_INPUTS - RAW_FIT_END + 1) >= 5 * V92_B1_ECHO_INPUTS,
+	"late delay fit cannot catch up to B1u");
+
+static unsigned validation_samples(const struct v92_b1_echo_fit *fit)
+{
+	return fit->model == CONSTELLATION_MODEL ? RAW_HELD : HELD;
+}
 
 static bool find_alignment(struct v92_b1_echo_fit *fit, const int16_t *ideal, const int16_t *host)
 {
@@ -156,7 +165,10 @@ static bool fit_raw(struct v92_b1_echo *recovery, const struct v92_cpd_distances
 	struct v92_b1_echo_fit *fit = &recovery->fit;
 	*fit = (struct v92_b1_echo_fit){ .model = CONSTELLATION_MODEL };
 	double cost[BINS] = {0};
-	for (unsigned i = FIT_FIRST; i < FIT_END; ++i)
+	/* The echo path can still be moving through the first B1u words.
+	 * Select the delay from later raw observations, then use two disjoint
+	 * confirmation windows and replay from the original coding boundary. */
+	for (unsigned i = RAW_FIT_FIRST; i < RAW_FIT_END; ++i)
 		for (unsigned j = 0; j < BINS; ++j)
 			cost[j] += raw_cost(recovery, distances, i, recovery->raw[i],
 				recovery->prediction[i + 2 * RADIUS - j]);
@@ -282,7 +294,7 @@ static double evidence_z(double sum, double square, unsigned n)
 static bool confirm_delay(const struct v92_b1_echo_fit *fit, const struct v92_b1_echo_evidence *ev,
 	double *old_z, double *runner_z)
 {
-	if (ev->count != HELD)
+	if (ev->count != validation_samples(fit))
 		return false;
 	unsigned selected = fit->shift + RADIUS;
 	*old_z = evidence_z(ev->old_sum, ev->old_square, ev->count);
@@ -305,7 +317,7 @@ void v92_b1_echo_reset(struct v92_b1_echo *recovery)
 
 void v92_b1_echo_begin_block_owned(struct v92_b1_echo *recovery, unsigned samples)
 {
-	recovery->budget = (unsigned)(((uint64_t)samples * 13 + 9) / 10);
+	recovery->budget = (unsigned)(((uint64_t)samples * 8 + 4) / 5);
 }
 
 static const float *frozen_coefficients(const struct pcm_host_echo *echo)
@@ -380,7 +392,7 @@ static bool capture(struct v92_b1_echo *recovery, const struct pcm_host_echo *ec
 			return false;
 	if (!predict_at(recovery, echo, i, (int)i + RADIUS, &recovery->prediction[2 * RADIUS + i]))
 		return false;
-	if (recovery->prefix > i + RADIUS &&
+	if ((i >= RADIUS || recovery->prefix > i + RADIUS) &&
 	    sample_round_s16(raw - recovery->prediction[i + RADIUS]) != cleaned)
 		return false;
 	return true;
@@ -425,27 +437,30 @@ bool v92_b1_echo_observe_owned(struct v92_b1_echo *recovery,
 	unsigned i = recovery->count++;
 	if (!capture(recovery, echo, i, code, raw, cleaned))
 		goto decline;
+	bool raw_plan = receiver->line.plan.observation == V92_PCM_FRAME_CONSTELLATION;
+	unsigned fit_at = raw_plan ? RAW_FIT_END : FIT_READY;
 	if (recovery->count == FIT_READY) {
 		for (unsigned k = 0; k < FIT_READY; ++k)
 			if (sample_round_s16(recovery->raw[k] - recovery->prediction[k + RADIUS]) != recovery->cleaned[k])
 				goto decline;
-		if (!(receiver->line.plan.observation == V92_PCM_FRAME_CONSTELLATION ?
-		    fit_raw(recovery, distances) :
-		    fit_delay(&recovery->fit, recovery->ideal, recovery->raw, recovery->prediction,
-			    receiver->decoder.mapping.law)) || !recovery->fit.shift)
-			goto decline;
 	}
-	if (i >= FIT_READY && i < SCORE_END) {
-		unsigned h = (i - FIT_READY) / HELD;
+	if (recovery->count == fit_at &&
+	    (!(raw_plan ? fit_raw(recovery, distances) :
+		fit_delay(&recovery->fit, recovery->ideal, recovery->raw, recovery->prediction,
+		    receiver->decoder.mapping.law)) || !recovery->fit.shift))
+		goto decline;
+	unsigned held = validation_samples(&recovery->fit);
+	if (i >= fit_at && i < SCORE_END) {
+		unsigned h = (i - fit_at) / held;
 		observe_delay(recovery, &recovery->held[h], distances, recovery->prediction, raw,
 			(unsigned)((int)i - recovery->fit.alignment));
-		if (recovery->held[h].count == HELD) {
+		if (recovery->held[h].count == held) {
 			double old_z, runner_z;
 			if (!confirm_delay(&recovery->fit, &recovery->held[h], &old_z, &runner_z))
 				goto decline;
 		}
 	}
-	if (recovery->count < FIT_READY)
+	if (recovery->count < fit_at)
 		return false;
 	/* Start in the fit's own block. Waiting for the next packet can prevent
 	 * catching up by the native delayed B1u verdict at 696 physical inputs. */
@@ -458,7 +473,7 @@ bool v92_b1_echo_observe_owned(struct v92_b1_echo *recovery,
 		return false;
 	recovery->stage = FINISHED;
 	return recovery->replayed == recovery->count &&
-	       recovery->held[0].count == HELD && recovery->held[1].count == HELD &&
+	       recovery->held[0].count == held && recovery->held[1].count == held &&
 	       !recovery->receiver.input.count &&
 	       v92_b1_quality_is_ready(&recovery->quality, recovery->receiver.line.received_frames);
 
@@ -469,9 +484,10 @@ decline:
 
 bool v92_b1_echo_accept_owned(struct v92_b1_echo *recovery, struct pcm_host_echo *echo)
 {
+	unsigned held = validation_samples(&recovery->fit);
 	if (recovery->stage != FINISHED || recovery->count != V92_B1_ECHO_INPUTS ||
-	    recovery->replayed != recovery->count || recovery->held[0].count != HELD ||
-	    recovery->held[1].count != HELD || recovery->receiver.failed || recovery->receiver.input.count ||
+	    recovery->replayed != recovery->count || recovery->held[0].count != held ||
+	    recovery->held[1].count != held || recovery->receiver.failed || recovery->receiver.input.count ||
 	    !v92_b1_quality_is_ready(&recovery->quality, recovery->receiver.line.received_frames) ||
 	    !model_unchanged(recovery, echo) ||
 	    pcm_host_echo_retime(echo, recovery->fit.shift) != PCM_HOST_ECHO_OK)

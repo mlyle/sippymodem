@@ -60,7 +60,7 @@ void v92_b1_echo_begin_block_owned(struct v92_b1_echo *recovery, unsigned sample
  * owner qualifies an initial raw or short B1u epoch and validates echo/receiver.
  * The owner's distance bank follows that receiver through the data epoch.
  * Missing media, clipping, queued input or any model/clock change abandon it.
- * Work is bounded by two replay submissions per input and ceil(1.3 times
+ * Work is bounded by two replay submissions per input and ceil(1.6 times
  * the block length) submissions per block.
  * True supplies a complete native alternate for this input only; the ordinary
  * call still validates and decides whether to publish it. */
