@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <g711.h>
+#include <pcm_j_frame.h>
 #include <v90_dil_sequence.h>
 #include <v90_phase3_analog_station.h>
 #include <v90_phase3_digital_station.h>
@@ -132,6 +133,7 @@ static bool run_exchange(
 	bool phase4_line_active = false;
 	bool second_s_seen = false;
 	bool dil_completion_seen = false;
+	bool overflow_checked = false;
 
 	CHECK(v90_dil_profile_init(&expected_dil, dil_profile) == V90_DIL_OK &&
 	      v90_dil_training_symbol_count(
@@ -175,6 +177,24 @@ static bool run_exchange(
 			bool post_ja_silence = digital.transmit_started &&
 				digital.post_ja_silence_symbols_remaining != 0u;
 
+			if (!overflow_checked && digital.transmit_started &&
+			    digital.transmit.stage == PCM_PHASE3_DIGITAL_TX_JD) {
+				struct v90_phase3_digital_station exhausted = digital;
+				struct v90_phase3_digital_station expected;
+				uint8_t sentinel = 0xa5;
+
+				exhausted.transmit.jd_records = UINT32_MAX - 1u;
+				exhausted.transmit.bit_index = PCM_J_FRAME_BITS - 1;
+				expected = exhausted;
+				expected.failed = true;
+				CHECK(v90_phase3_digital_station_is_valid(&exhausted) &&
+				      v90_phase3_digital_station_transmit(&exhausted, &sentinel) ==
+					      V90_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE &&
+				      sentinel == 0xa5 &&
+				      v90_digital_station_states_equal(&exhausted, &expected),
+				      "Jd counter exhaustion changed state or output");
+				overflow_checked = true;
+			}
 			CHECK(v90_phase3_digital_station_transmit(
 				      &digital, &digital_octet) ==
 				      V90_PHASE3_DIGITAL_STATION_OK,
@@ -245,7 +265,7 @@ static bool run_exchange(
 		    v90_phase3_digital_station_transmit_complete(&digital))
 			break;
 	}
-	CHECK(post_ja_silence_octets == 160u &&
+	CHECK(overflow_checked && post_ja_silence_octets == 160u &&
 	      receive_complete_at < transmit_complete_at &&
 	      phase4_line_active &&
 	      v90_phase3_digital_station_receive_complete(&digital) &&

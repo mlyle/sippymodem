@@ -161,7 +161,6 @@ enum v90_phase3_digital_station_result v90_phase3_digital_station_transmit(
 enum v90_phase3_digital_station_result v90_phase3_digital_station_transmit_owned(
 	struct v90_phase3_digital_station *station, uint8_t *network_octet)
 {
-	struct v90_phase3_digital_station next;
 	struct v90_pcm_symbol symbol;
 
 	if (!v90_phase3_digital_station_owned_state_is_valid(station) ||
@@ -178,24 +177,17 @@ enum v90_phase3_digital_station_result v90_phase3_digital_station_transmit_owned
 		return V90_PHASE3_DIGITAL_STATION_OK;
 	}
 	if (station->post_ja_silence_symbols_remaining != 0u) {
-		next = *station;
-		next.post_ja_silence_symbols_remaining--;
-		if (!v90_phase3_digital_station_owned_state_is_valid(&next)) {
-			station->failed = true;
-			return V90_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE;
-		}
-		*station = next;
+		station->post_ja_silence_symbols_remaining--;
 		*network_octet = g711_encode(station->law, 0);
 		return V90_PHASE3_DIGITAL_STATION_OK;
 	}
-	next = *station;
-	if (pcm_phase3_digital_tx_next_owned(&next.transmit, &symbol) !=
-		    PCM_PHASE3_DIGITAL_TX_OK ||
-	    !v90_phase3_digital_station_owned_state_is_valid(&next)) {
+	/* The transmitter owns its update. Its cursor changes leave the
+	 * receive stage, DIL parameters, and finish requests unchanged. */
+	if (pcm_phase3_digital_tx_next_owned(&station->transmit, &symbol) !=
+	    PCM_PHASE3_DIGITAL_TX_OK) {
 		station->failed = true;
 		return V90_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE;
 	}
-	*station = next;
 	*network_octet = symbol.octet;
 	return V90_PHASE3_DIGITAL_STATION_OK;
 }
