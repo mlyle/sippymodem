@@ -49,6 +49,9 @@ static bool run(enum stimulus stimulus, int shift, unsigned configuration)
 	CHECK(v92_pcm_phase4_trn2u_init(&line->reference, configuration & 1u ?
 		V92_CONSTELLATION_8_POINT : V92_CONSTELLATION_4_POINT, 1, 1100) ==
 		V92_PCM_PHASE4_TRN2U_OK, "training initialization");
+	for (unsigned i = 0; i < V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY; ++i)
+		CHECK(v92_pcm_phase4_trn2u_next(&line->reference, &line->expected[i]) ==
+		      V92_PCM_PHASE4_TRN2U_OK, "training tail");
 	struct v92_pcm_phase4_trn2u source = line->reference;
 	if (stimulus == WRONG_REFERENCE)
 		for (unsigned i = 0; i < 83; ++i) {
@@ -59,9 +62,13 @@ static bool run(enum stimulus stimulus, int shift, unsigned configuration)
 	unsigned original_delay = pcm_host_echo_window_delay_samples(echo), events = 0, observed = 0;
 	int16_t history[5] = { 0 };
 	for (unsigned n = 0; n < 12000; ++n) {
-		int16_t generated, cleaned, ignored;
+		int16_t generated, cleaned;
 		CHECK(v92_pcm_phase4_trn2u_next(&source, &generated) == V92_PCM_PHASE4_TRN2U_OK,
 		      "source sample");
+		line->trained_symbols = n;
+		int16_t *target = &line->expected[V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY];
+		CHECK(v92_pcm_phase4_trn2u_next(&line->reference, target) == V92_PCM_PHASE4_TRN2U_OK,
+		      "prefetched reference");
 		for (unsigned k = 4; k; --k)
 			history[k] = history[k - 1];
 		history[0] = generated * line->polarity;
@@ -79,6 +86,7 @@ static bool run(enum stimulus stimulus, int shift, unsigned configuration)
 		CHECK(pcm_host_echo_predict(echo, PCM_HOST_ECHO_FILTER, raw, &cleaned) ==
 			PCM_HOST_ECHO_OK, "echo prediction");
 		struct v92_pcm_phase4_trn2u reference = line->reference;
+		int16_t prefetched = *target;
 		size_t pushed = echo->reference.write;
 		float coefficient = echo->coefficients[PCM_HOST_ECHO_FILTER_PRE_SAMPLES];
 		int delay_change = 999;
@@ -87,6 +95,7 @@ static bool run(enum stimulus stimulus, int shift, unsigned configuration)
 			!(n == 7800 && stimulus == MISSING), &delay_change);
 		CHECK(result != V92_TRAINING_ECHO_ERROR, "monitor failed at %u", n);
 		CHECK(memcmp(&reference, &line->reference, sizeof(reference)) == 0 &&
+			*target == prefetched &&
 			echo->reference.write == pushed &&
 			echo->coefficients[PCM_HOST_ECHO_FILTER_PRE_SAMPLES] == coefficient,
 			"observation advanced the receiver, TX history or fitted echo");
@@ -105,8 +114,6 @@ static bool run(enum stimulus stimulus, int shift, unsigned configuration)
 			PCM_HOST_ECHO_FILTER, raw, cleaned, transmit(4096 + n))) == PCM_HOST_ECHO_OK,
 			"reference advance");
 		CHECK(echo->reference.write == (pushed + 1) % PCM_ECHO_REFERENCE_HISTORY_SAMPLES, "TX reference count");
-		CHECK(v92_pcm_phase4_trn2u_next(&line->reference, &ignored) == V92_PCM_PHASE4_TRN2U_OK,
-		      "receiver reference advance");
 	}
 	unsigned expected = stimulus == SHIFT && shift != 0;
 	CHECK(observed > 1000 && events == expected &&
@@ -128,6 +135,9 @@ static bool test_boundaries(void)
 	line->polarity = 1;
 	CHECK(v92_pcm_phase4_trn2u_init(&line->reference, V92_CONSTELLATION_4_POINT,
 		1, 1100) == V92_PCM_PHASE4_TRN2U_OK, "reference initialization");
+	for (unsigned i = 0; i < V92_PCM_PHASE4_TRN2U_LINE_TARGETS; ++i)
+		CHECK(v92_pcm_phase4_trn2u_next(&line->reference, &line->expected[i]) ==
+		      V92_PCM_PHASE4_TRN2U_OK, "reference targets");
 	/* Enter the projected view with a completed fit. Clearing it must reset
 	 * timing evidence while preserving qualified filters and actual history. */
 	timing.active = timing.ready = timing.view = true;
@@ -149,7 +159,7 @@ static bool test_boundaries(void)
 	CHECK(v92_training_echo_observe(&timing, echo, line, PCM_HOST_ECHO_FILTER,
 		100, 50, true, &change) == V92_TRAINING_ECHO_UNOBSERVED && timing.fill == 1,
 		"duplicate reference");
-	line->reference.emitted_symbols += 2;
+	line->trained_symbols += 2;
 	CHECK(v92_training_echo_observe(&timing, echo, line, PCM_HOST_ECHO_FILTER,
 		100, 50, true, &change) == V92_TRAINING_ECHO_UNOBSERVED && timing.fill == 1,
 		"reference gap");

@@ -28,14 +28,14 @@ static bool target(const struct v92_pcm_phase4_trn2u_line_rx *receiver,
 	int32_t *sample, uint32_t *symbol)
 {
 	if (receiver == NULL || receiver->failed || receiver->renegotiation ||
-	    (receiver->polarity != 1 && receiver->polarity != -1))
+	    (receiver->polarity != 1 && receiver->polarity != -1) ||
+	    receiver->expected_index >= V92_PCM_PHASE4_TRN2U_LINE_TARGETS ||
+	    receiver->trained_symbols >= UINT32_MAX - V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY)
 		return false;
-	struct v92_pcm_phase4_trn2u reference = receiver->reference;
-	int16_t generated;
-	*symbol = reference.emitted_symbols;
-	if (v92_pcm_phase4_trn2u_next(&reference, &generated) != V92_PCM_PHASE4_TRN2U_OK)
-		return false;
-	*sample = (int32_t)generated * receiver->polarity;
+	unsigned index = (receiver->expected_index + V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY) %
+		V92_PCM_PHASE4_TRN2U_LINE_TARGETS;
+	*symbol = v92_pcm_phase4_trn2u_line_rx_position(receiver);
+	*sample = (int32_t)receiver->expected[index] * receiver->polarity;
 	return true;
 }
 

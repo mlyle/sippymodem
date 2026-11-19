@@ -196,7 +196,7 @@ static bool run_line(
 	      receiver.equalizer.decision_delay ==
 		      handoff.equalizer.decision_delay &&
 	      receiver.reference.emitted_symbols ==
-		      V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY,
+		      V92_PCM_PHASE4_TRN2U_LINE_TARGETS,
 	      "TRN2u line boundary state changed");
 	for (size_t tap = 0; tap < handoff.equalizer.tap_count; ++tap) {
 		CHECK(memcmp(
@@ -234,6 +234,11 @@ static bool run_line(
 		CHECK(v92_pcm_phase4_trn2u_next(&transmitter, &raw) ==
 			      V92_PCM_PHASE4_TRN2U_OK,
 		      "TRN2u transmitter failed at %zu", symbol);
+		size_t prefetched = (receiver.expected_index + V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY) %
+			V92_PCM_PHASE4_TRN2U_LINE_TARGETS;
+		CHECK(receiver.expected[prefetched] == raw &&
+		      v92_pcm_phase4_trn2u_line_rx_position(&receiver) + 1u == physical,
+		      "TRN2u prefetch lost the current physical symbol at %zu", symbol);
 		line = channel_sample(&channel, law, raw);
 		struct v92_pcm_phase4_trn2u_line_rx owned = receiver;
 		enum v92_pcm_phase4_trn2u_line_rx_result owned_result =
@@ -274,10 +279,10 @@ static bool run_line(
 		      starting_samples + receiver.trained_symbols &&
 	      receiver.reference.emitted_symbols ==
 		      V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS +
-			      EXTRA_ALIGNED_SYMBOLS &&
+			      EXTRA_ALIGNED_SYMBOLS + 1u &&
 	      receiver.expected_index ==
 		      receiver.trained_symbols %
-			      V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY &&
+			      V92_PCM_PHASE4_TRN2U_LINE_TARGETS &&
 	      receiver.demodulator.descrambler.feedback.history ==
 		      decoded_oracle.scrambler.feedback.history &&
 	      receiver.demodulator.previous_encoded_sign ==
@@ -690,21 +695,24 @@ static bool test_pending_target_membership(void)
 				receiver.demodulator.lu = receiver.reference.modulator.lu = levels[li];
 				handoff.demodulator.lu = levels[li];
 				for (size_t i = 0; i < ARRAY_LENGTH(receiver.expected); ++i)
-					receiver.expected[i] = handoff.pending_training_targets[i] = first;
+					receiver.expected[i] = first;
+				for (size_t i = 0; i < ARRAY_LENGTH(handoff.pending_training_targets); ++i)
+					handoff.pending_training_targets[i] = first;
 				/* Exhaust every signed sample, rotating through all queue slots.
 				 * Include collapsed low-LU points and clipped constellations. */
 				for (int candidate = INT16_MIN; candidate <= INT16_MAX; ++candidate) {
 					size_t slot = (unsigned)(candidate - INT16_MIN) % ARRAY_LENGTH(receiver.expected);
-					receiver.expected[slot] = handoff.pending_training_targets[slot] = (int16_t)candidate;
+					size_t tail = (unsigned)(candidate - INT16_MIN) % ARRAY_LENGTH(handoff.pending_training_targets);
+					receiver.expected[slot] = handoff.pending_training_targets[tail] = (int16_t)candidate;
 					bool accepted = usable && member[(uint16_t)candidate];
 					CHECK(v92_pcm_phase4_trn2u_line_rx_is_valid(&receiver) == accepted &&
 					      v92_pcm_phase4_trn2u_line_handoff_is_valid(&handoff) == accepted,
 					      "membership law=%u points=%u LU=%d slot=%zu sample=%d",
 					      law, points, levels[li], slot, candidate);
-					receiver.expected[slot] = handoff.pending_training_targets[slot] = first;
+					receiver.expected[slot] = handoff.pending_training_targets[tail] = first;
 				}
 				for (size_t slot = 0; slot < ARRAY_LENGTH(receiver.expected); ++slot) {
-					receiver.expected[slot] = handoff.pending_training_targets[slot] = INT16_MIN;
+					receiver.expected[slot] = INT16_MIN;
 					struct v92_pcm_phase4_trn2u_line_rx before = receiver;
 					struct v92_pcm_phase4_trn2u_line_handoff saved = handoff;
 					CHECK(v92_pcm_phase4_trn2u_line_rx_sample(&receiver, 0) ==
@@ -714,7 +722,7 @@ static bool test_pending_target_membership(void)
 					      memcmp(&receiver, &before, sizeof(before)) == 0 &&
 					      memcmp(&handoff, &saved, sizeof(saved)) == 0,
 					      "bad pending target changed receiver/handoff");
-					receiver.expected[slot] = handoff.pending_training_targets[slot] = first;
+					receiver.expected[slot] = first;
 				}
 			}
 		}
@@ -820,10 +828,15 @@ static bool test_contracts(void)
 	      "invalid TRN2u decoder state was not transactional");
 	receiver.demodulator.previous_encoded_sign = 0u;
 	receiver.trained_symbols =
-		UINT32_MAX - V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY;
+		UINT32_MAX - V92_PCM_PHASE4_TRN2U_LINE_TARGETS;
 	receiver.reference.emitted_symbols = UINT32_MAX;
 	receiver.input_samples = receiver.starting_input_samples +
 		receiver.trained_symbols;
+	CHECK(v92_pcm_phase4_trn2u_line_rx_is_valid(&receiver) &&
+	      v92_pcm_phase4_trn2u_line_rx_sample(&receiver, line) ==
+	      V92_PCM_PHASE4_TRN2U_LINE_RX_OK &&
+	      v92_pcm_phase4_trn2u_line_rx_position(&receiver) == UINT32_MAX,
+	      "prefetch prevented the final usable TRN2u input");
 	before = receiver;
 	CHECK(v92_pcm_phase4_trn2u_line_rx_is_valid(&receiver) &&
 	      v92_pcm_phase4_trn2u_line_rx_sample(&receiver, line) ==

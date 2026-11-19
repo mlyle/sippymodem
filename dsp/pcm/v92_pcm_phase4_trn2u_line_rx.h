@@ -13,6 +13,8 @@ enum {
 	V92_PCM_PHASE4_TRN2U_LINE_EQUALIZER_TAPS = 61,
 	V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY =
 		V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY,
+	V92_PCM_PHASE4_TRN2U_LINE_TARGETS =
+		V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY + 1,
 };
 
 enum v92_pcm_phase4_trn2u_line_rx_result {
@@ -24,22 +26,21 @@ enum v92_pcm_phase4_trn2u_line_rx_result {
 	V92_PCM_PHASE4_TRN2U_LINE_RX_NUMERIC_FAILURE,
 };
 
-/* Continue the analogue-modem line from E1u or Ru-bar into TRN2u. The reference
- * is kept one equalizer delay ahead of trained_symbols because those physical
- * inputs have already entered the inherited FIR. Initial Phase 4 adds zeroed
+/* Continue the analogue-modem line from E1u or Ru-bar into TRN2u. The target
+ * ring holds the inherited FIR tail in receive order, followed by one
+ * prefetched target for the next physical input. Initial Phase 4 adds zeroed
  * postcursor taps; renegotiation retains the full trained filter. Neither
  * changes the decision point. */
 struct v92_pcm_phase4_trn2u_line_rx {
 	struct qam_equalizer equalizer;
 	struct v92_pcm_phase4_trn2u reference;
 	struct v92_phase4_demodulator demodulator;
-	/* Preserve the known linear waveform across the FIR delay. Quantize
-	 * only when comparing a training decision with its codec-cell target. */
-	int16_t expected[
-		V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY];
+	uint32_t trained_symbols;
+	/* Preserve the linear targets through the FIR. Quantize only when
+	 * comparing a training decision with its codec-cell target. */
+	int16_t expected[V92_PCM_PHASE4_TRN2U_LINE_TARGETS];
 	uint64_t starting_input_samples;
 	uint64_t input_samples;
-	uint32_t trained_symbols;
 	/* Keep physical decisions distinct from temporary descrambler fallout. */
 	uint32_t symbol_errors;
 	uint32_t coding_errors;
@@ -53,6 +54,13 @@ struct v92_pcm_phase4_trn2u_line_rx {
 	bool renegotiation;
 	bool failed;
 };
+
+/* The prefetched target has this index. It does not count as accepted input. */
+static inline uint32_t v92_pcm_phase4_trn2u_line_rx_position(
+	const struct v92_pcm_phase4_trn2u_line_rx *receiver)
+{
+	return receiver->trained_symbols + V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY;
+}
 
 /* Exact physical-boundary continuation into upstream control records. The
  * equalizer still owns decision_delay accepted TRN2u symbols; their known

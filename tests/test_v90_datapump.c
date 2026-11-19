@@ -224,9 +224,10 @@ enum v92_training_echo_result __wrap_v92_training_echo_observe(
 	enum v92_training_echo_result result = __real_v92_training_echo_observe(
 		timing, echo, line, mode, raw, cleaned, available, change);
 	if (echo_recovery.enabled && !echo_recovery.data_mode && !echo_recovery.injected && line != NULL &&
-	    line->reference.emitted_symbols >= echo_recovery.trigger_symbol && result == V92_TRAINING_ECHO_OBSERVED) {
+	    v92_pcm_phase4_trn2u_line_rx_position(line) >= echo_recovery.trigger_symbol &&
+	    result == V92_TRAINING_ECHO_OBSERVED) {
 		echo_recovery.injected = true;
-		echo_recovery.symbol = line->reference.emitted_symbols;
+		echo_recovery.symbol = v92_pcm_phase4_trn2u_line_rx_position(line);
 		echo_recovery.injected_sample = echo_recovery.sample;
 		echo_recovery.echo = echo;
 		*change = 98;
@@ -245,7 +246,8 @@ enum pcm_call_result __wrap_pcm_call_recover_upstream_training(struct pcm_call *
 	if (echo_recovery.enabled)
 		echo_recovery.mismatch |= !echo_recovery.injected ||
 			call->stage != PCM_CALL_PHASE4 ||
-			call->state.phase4.v92.owner.digital.receive.signal.trn2u.reference.emitted_symbols !=
+			v92_pcm_phase4_trn2u_line_rx_position(
+			    &call->state.phase4.v92.owner.digital.receive.signal.trn2u) !=
 				echo_recovery.symbol;
 	enum pcm_call_result result = __real_pcm_call_recover_upstream_training(call);
 	if (echo_recovery.enabled) {

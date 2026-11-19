@@ -37,8 +37,8 @@ enum v92_training_echo_result {
 /* Call after echo prediction and before consuming the same physical sample.
  * receiver is the valid, owned initial digital TRN2u line; NULL ends its epoch.
  * Missing/clipped input, discontinuities and short renegotiation discard the
- * projection. The receiver's current reference includes its inherited FIR
- * lookahead; preview it without advancing the receiver or its reference.
+ * projection. The receiver's prefetched linear target accounts for the
+ * inherited FIR delay. Observing it leaves the target ring unchanged.
  *
  * OBSERVED/RETIMED have observed echo timing: finish with advance_reference,
  * not advance_predicted. Other successful calls leave ordinary observation to

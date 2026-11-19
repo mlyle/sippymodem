@@ -24,7 +24,7 @@ static unsigned control_search_minimum(bool renegotiation)
 
 static bool targets_are_valid(
 	const struct v92_phase4_demodulator *demodulator,
-	const int16_t *targets)
+	const int16_t *targets, size_t target_count)
 {
 	int16_t levels[V92_CONSTELLATION_8_POINT / 2];
 	unsigned int count = v92_phase4_modulator_magnitudes(
@@ -34,8 +34,7 @@ static bool targets_are_valid(
 	 * Reject a missing inner symbol before checking the delayed samples. */
 	if (count == 0 || levels[0] == 0)
 		return false;
-	for (size_t index = 0;
-	     index < V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY; ++index) {
+	for (size_t index = 0; index < target_count; ++index) {
 		int32_t magnitude = targets[index] < 0 ?
 			-(int32_t)targets[index] : targets[index];
 		unsigned int point = 0;
@@ -65,8 +64,9 @@ bool v92_pcm_phase4_trn2u_line_rx_is_valid(
 		       UINT32_MAX -
 			       V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY &&
 	       receiver->reference.emitted_symbols ==
-		       receiver->trained_symbols +
-			       V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY &&
+		       v92_pcm_phase4_trn2u_line_rx_position(receiver) +
+		       (receiver->trained_symbols <
+			UINT32_MAX - V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY) &&
 	       receiver->symbol_errors <= receiver->trained_symbols &&
 	       receiver->coding_errors <= receiver->trained_symbols &&
 	       receiver->starting_input_samples <= receiver->input_samples &&
@@ -77,21 +77,24 @@ bool v92_pcm_phase4_trn2u_line_rx_is_valid(
 	       qam_adaptation_is_valid(receiver->adaptation) &&
 	       isfinite(receiver->output_bias) &&
 	       g711_law_is_valid(receiver->law) &&
-	       receiver->expected_index <
-		       V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY &&
+	       receiver->expected_index < V92_PCM_PHASE4_TRN2U_LINE_TARGETS &&
 	       (receiver->polarity == -1 || receiver->polarity == 1) &&
-	       targets_are_valid(&receiver->demodulator, receiver->expected);
+	       targets_are_valid(&receiver->demodulator, receiver->expected,
+		       V92_PCM_PHASE4_TRN2U_LINE_TARGETS);
+}
+
+static bool aligned(const struct v92_pcm_phase4_trn2u_line_rx *receiver)
+{
+	uint32_t position = v92_pcm_phase4_trn2u_line_rx_position(receiver);
+	return position >= control_search_minimum(receiver->renegotiation) &&
+	       position % V92_PCM_PHASE4_TRN2U_ALIGNMENT == 0u;
 }
 
 bool v92_pcm_phase4_trn2u_line_rx_can_handoff(
 	const struct v92_pcm_phase4_trn2u_line_rx *receiver)
 {
 	return v92_pcm_phase4_trn2u_line_rx_is_valid(receiver) &&
-	       !receiver->failed &&
-	       receiver->reference.emitted_symbols >=
-		       control_search_minimum(receiver->renegotiation) &&
-	       receiver->reference.emitted_symbols %
-		       V92_PCM_PHASE4_TRN2U_ALIGNMENT == 0u;
+	       !receiver->failed && aligned(receiver);
 }
 
 bool v92_pcm_phase4_trn2u_line_rx_has_failed(
@@ -120,7 +123,8 @@ bool v92_pcm_phase4_trn2u_line_handoff_is_valid(
 	       isfinite(handoff->output_bias) &&
 	       g711_law_is_valid(handoff->law) &&
 	       (handoff->polarity == -1 || handoff->polarity == 1) &&
-	       targets_are_valid(&handoff->demodulator, handoff->pending_training_targets);
+	       targets_are_valid(&handoff->demodulator, handoff->pending_training_targets,
+		       V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY);
 }
 
 enum v92_pcm_phase4_trn2u_line_rx_result
@@ -141,7 +145,7 @@ v92_pcm_phase4_trn2u_line_rx_handoff(
 		.equalizer = receiver->equalizer,
 		.demodulator = receiver->demodulator,
 		.input_samples = receiver->input_samples,
-		.training_symbols = receiver->reference.emitted_symbols,
+		.training_symbols = v92_pcm_phase4_trn2u_line_rx_position(receiver),
 		.adaptation = receiver->adaptation,
 		.output_bias = receiver->output_bias,
 		.law = receiver->law,
@@ -152,7 +156,7 @@ v92_pcm_phase4_trn2u_line_rx_handoff(
 	     index < V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY; ++index) {
 		generated.pending_training_targets[index] = receiver->expected[
 			(receiver->expected_index + index) %
-			V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY];
+			V92_PCM_PHASE4_TRN2U_LINE_TARGETS];
 	}
 	if (!v92_pcm_phase4_trn2u_line_handoff_is_valid(&generated))
 		return V92_PCM_PHASE4_TRN2U_LINE_RX_NUMERIC_FAILURE;
@@ -163,15 +167,11 @@ v92_pcm_phase4_trn2u_line_rx_handoff(
 static bool initialize_targets(
 	struct v92_pcm_phase4_trn2u_line_rx *receiver)
 {
-	for (size_t index = 0;
-	     index < V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY; ++index) {
-		int16_t level;
-
+	for (size_t index = 0; index < V92_PCM_PHASE4_TRN2U_LINE_TARGETS; ++index) {
 		if (v92_pcm_phase4_trn2u_next(
-			    &receiver->reference, &level) !=
+			    &receiver->reference, &receiver->expected[index]) !=
 		    V92_PCM_PHASE4_TRN2U_OK)
 			return false;
-		receiver->expected[index] = level;
 	}
 	return true;
 }
@@ -279,7 +279,6 @@ static enum v92_pcm_phase4_trn2u_line_rx_result sample(
 	int16_t next_expected;
 	int16_t selected;
 	int16_t selected_level;
-	int16_t raw_expected;
 	bool ready;
 
 	if (receiver == NULL ||
@@ -295,15 +294,16 @@ static enum v92_pcm_phase4_trn2u_line_rx_result sample(
 		snapshot = *receiver;
 		next = &snapshot;
 	}
-	if (v92_pcm_phase4_trn2u_next(
-		    &next->reference, &raw_expected) !=
-	    V92_PCM_PHASE4_TRN2U_OK)
-		return fail(receiver);
 	next_expected = g711_quantize(next->law, next->expected[next->expected_index]);
-	next->expected[next->expected_index] = raw_expected;
+	/* The final physical input already has its target in the ring. */
+	if (next->reference.emitted_symbols != UINT32_MAX &&
+	    v92_pcm_phase4_trn2u_next(
+		    &next->reference, &next->expected[next->expected_index]) !=
+		    V92_PCM_PHASE4_TRN2U_OK)
+		return fail(receiver);
 	next->expected_index = (uint8_t)(
 		(next->expected_index + 1u) %
-		V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY);
+		V92_PCM_PHASE4_TRN2U_LINE_TARGETS);
 	input = (struct qam_point){
 		.in_phase = next->polarity > 0 ? input_sample : -(double)input_sample,
 	};
@@ -349,10 +349,7 @@ static enum v92_pcm_phase4_trn2u_line_rx_result sample(
 			return fail(receiver);
 		*receiver = *next;
 	}
-	return next->reference.emitted_symbols >=
-			control_search_minimum(next->renegotiation) &&
-	       next->reference.emitted_symbols %
-			V92_PCM_PHASE4_TRN2U_ALIGNMENT == 0u ?
+	return aligned(next) ?
 		       V92_PCM_PHASE4_TRN2U_LINE_RX_ALIGNED :
 		       V92_PCM_PHASE4_TRN2U_LINE_RX_OK;
 }
