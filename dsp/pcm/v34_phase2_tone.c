@@ -538,7 +538,7 @@ enum v34_phase2_tone_result v34_retrain_detector_sample(
 		detected);
 }
 
-static enum v34_phase2_tone_result sample_retrain_detector(
+enum v34_phase2_tone_result v34_retrain_detector_sample_owned(
 	struct v34_retrain_detector *detector, int16_t sample,
 	uint32_t maximum_window_energy, bool require_silence, bool *detected)
 {
@@ -546,8 +546,7 @@ static enum v34_phase2_tone_result sample_retrain_detector(
 	struct single_tone_event event, guard_event;
 	bool emitted = false;
 
-	if (!v34_retrain_detector_is_valid(detector) || detected == NULL ||
-	    maximum_window_energy == 0u ||
+	if (detected == NULL || maximum_window_energy == 0u ||
 	    maximum_window_energy > V34_RETRAIN_SILENCE_MAX_WINDOW_ENERGY)
 		return V34_PHASE2_TONE_INVALID_ARGUMENT;
 	/* Keep observations in raw physical units, including any retained phase.
@@ -572,9 +571,8 @@ static enum v34_phase2_tone_result sample_retrain_detector(
 		*detected = false;
 		return V34_PHASE2_TONE_OK;
 	}
-	/* The complete owner check above covers both histories. Each shared
-	 * observation validates its update and returns the same measurement
-	 * used for acquisition, avoiding another validation/measurement pass. */
+	/* The call owner has validated both histories. Each shared observation
+	 * still validates its own update and returns the acquisition measurement. */
 	if (single_tone_detector_observe_owned(
 		    &detector->tone.carrier, sample, &event, &measurement) != SINGLE_TONE_OK ||
 	    (detector->tone.local_role == V34_CALLING_STATION &&
@@ -623,14 +621,18 @@ enum v34_phase2_tone_result v34_retrain_detector_sample_with_power_limit(
 	struct v34_retrain_detector *detector, int16_t sample,
 	uint32_t maximum_window_energy, bool *detected)
 {
-	return sample_retrain_detector(
+	if (!v34_retrain_detector_is_valid(detector))
+		return V34_PHASE2_TONE_INVALID_ARGUMENT;
+	return v34_retrain_detector_sample_owned(
 		detector, sample, maximum_window_energy, true, detected);
 }
 
 enum v34_phase2_tone_result v34_retrain_detector_sample_tone(
 	struct v34_retrain_detector *detector, int16_t sample, bool *detected)
 {
-	return sample_retrain_detector(
+	if (!v34_retrain_detector_is_valid(detector))
+		return V34_PHASE2_TONE_INVALID_ARGUMENT;
+	return v34_retrain_detector_sample_owned(
 		detector, sample, V34_RETRAIN_SILENCE_MAX_WINDOW_ENERGY,
 		false, detected);
 }

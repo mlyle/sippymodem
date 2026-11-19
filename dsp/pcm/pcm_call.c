@@ -2524,17 +2524,6 @@ static bool retrain_detection_is_active(const struct pcm_call *call)
 		       &call->state.phase2.state.info1.control);
 }
 
-static enum pcm_call_result sample_retrain_detector(
-	const struct pcm_call *call, int16_t received_sample,
-	struct v34_full_retrain *observed, bool *detected)
-{
-	*observed = call->retrain;
-	return v34_retrain_detector_sample(
-		       &observed->detector, received_sample, detected) ==
-		       V34_PHASE2_TONE_OK ?
-		       PCM_CALL_OK : PCM_CALL_NUMERIC_FAILURE;
-}
-
 static uint32_t retrain_silence_ceiling(
 	const struct pcm_call *call, uint32_t nominal_window_energy)
 {
@@ -2588,12 +2577,13 @@ static bool retrain_candidate_is_active(
 static enum pcm_call_result observe_retrain_tone(
 	struct pcm_call *call, int16_t received_sample)
 {
-	struct v34_full_retrain observed;
+	struct v34_full_retrain observed = call->retrain;
 	bool detected;
 
-	if (sample_retrain_detector(
-		    call, received_sample, &observed, &detected) !=
-	    PCM_CALL_OK)
+	if (v34_retrain_detector_sample_owned(
+		    &observed.detector, received_sample,
+		    V34_RETRAIN_SILENCE_MAX_WINDOW_ENERGY, true,
+		    &detected) != V34_PHASE2_TONE_OK)
 		return PCM_CALL_NUMERIC_FAILURE;
 	call->retrain = observed;
 	return detected ? begin_retrain(call, RETRAIN_PEER) : PCM_CALL_OK;
@@ -5745,9 +5735,9 @@ static enum pcm_call_result data_octet_owned(
 	} else if (result == PCM_CALL_OK &&
 		   call->stage == PCM_CALL_DATA_PATH &&
 		   retrain_detection_active) {
-		if (v34_retrain_detector_sample_with_power_limit(
+		if (v34_retrain_detector_sample_owned(
 			    &call->retrain.detector, received_sample,
-			    silence_ceiling, &retrain_detected) != V34_PHASE2_TONE_OK)
+			    silence_ceiling, true, &retrain_detected) != V34_PHASE2_TONE_OK)
 			result = PCM_CALL_NUMERIC_FAILURE;
 	}
 	if (result == PCM_CALL_OK && retrain_detected)

@@ -953,6 +953,7 @@ static bool retrain_detection_is_active(const struct v34_call *call)
 static enum v34_call_result observe_retrain_tone(
 	struct v34_call *call, int16_t received_sample)
 {
+	bool require_silence = true;
 	bool detected;
 
 	if (call->stage == V34_CALL_PHASE2 &&
@@ -970,12 +971,11 @@ static enum v34_call_result observe_retrain_tone(
 		/* V.34 11.2.2.1.6 conditions Tone A reception after the INFO1
 		 * deadline, including a peer still holding its earlier Tone A.
 		 * Ordinary online retrains retain their silence preamble. */
-		if (v34_retrain_detector_sample_tone(
-			    &call->retrain.detector, received_sample, &detected) !=
-		    V34_PHASE2_TONE_OK)
-			return V34_CALL_NUMERIC_FAILURE;
-	} else if (v34_retrain_detector_sample(
+		require_silence = false;
+	}
+	if (v34_retrain_detector_sample_owned(
 		    &call->retrain.detector, received_sample,
+		    V34_RETRAIN_SILENCE_MAX_WINDOW_ENERGY, require_silence,
 		    &detected) != V34_PHASE2_TONE_OK)
 		return V34_CALL_NUMERIC_FAILURE;
 	return detected ? begin_retrain(call, true) : V34_CALL_OK;

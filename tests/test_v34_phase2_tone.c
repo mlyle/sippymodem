@@ -724,12 +724,19 @@ static bool feed_retrain_sample(
 	struct v34_retrain_detector *detector, int16_t sample,
 	enum test_codec codec, bool *seen)
 {
-	bool detected;
+	struct v34_retrain_detector checked;
+	bool detected, checked_detected;
 
-	CHECK(v34_retrain_detector_sample(
-		      detector, codec_round_trip(sample, codec),
-		      &detected) == V34_PHASE2_TONE_OK,
-	      "full-retrain detector rejected a sample");
+	memcpy(&checked, detector, sizeof(checked));
+	sample = codec_round_trip(sample, codec);
+	CHECK(v34_retrain_detector_sample(&checked, sample,
+		      &checked_detected) == V34_PHASE2_TONE_OK &&
+	      v34_retrain_detector_sample_owned(detector, sample,
+		      V34_RETRAIN_SILENCE_MAX_WINDOW_ENERGY, true,
+		      &detected) == V34_PHASE2_TONE_OK &&
+	      detected == checked_detected &&
+	      memcmp(detector, &checked, sizeof(checked)) == 0,
+	      "owned retrain observation differs from checked sampling");
 	*seen |= detected;
 	return true;
 }

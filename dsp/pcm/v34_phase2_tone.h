@@ -237,6 +237,13 @@ enum v34_phase2_tone_result v34_retrain_detector_sample_with_power_limit(
 	struct v34_retrain_detector *detector, int16_t sample,
 	uint32_t maximum_window_energy, bool *detected);
 
+/* Advance a detector already validated by its call owner. The owner may
+ * waive the silence preamble only while waiting for the INFO1 recovery tone.
+ * Power bounds and the output argument are checked in either mode. */
+enum v34_phase2_tone_result v34_retrain_detector_sample_owned(
+	struct v34_retrain_detector *detector, int16_t sample,
+	uint32_t maximum_window_energy, bool require_silence, bool *detected);
+
 enum v34_phase2_tone_result v34_full_retrain_init(
 	struct v34_full_retrain *retrain,
 	enum v34_station_role local_role);
