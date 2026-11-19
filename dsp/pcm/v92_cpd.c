@@ -19,7 +19,6 @@ enum {
 	CPD_TRELLIS_BITS = 2,
 	CPD_GAIN_FIRST_BIT = 35,
 	CPD_GAIN_BITS = 16,
-	CPD_CRC_BITS = 16,
 };
 
 _Static_assert((int)V92_CPD_FRAME_INTERVALS == (int)PCM_CONSTELLATION_FRAME_INTERVALS &&
@@ -583,9 +582,7 @@ enum v92_cpd_result v92_cpd_encode_base(
 	    wire.cursor != V92_CPD_FIXED_BITS || presence.modulus ||
 	    presence.filters || presence.constellations)
 		return V92_CPD_INVALID_PARAMETERS;
-	packed_msb_write_msb_field(
-		encoded, V92_CPD_FIXED_BITS + 1u, CPD_CRC_BITS,
-		pcm_control_frame_crc(encoded, V92_CPD_FIXED_BITS));
+	pcm_control_frame_write_crc(encoded, V92_CPD_FIXED_BITS);
 	memcpy(frame, encoded, byte_count);
 	*frame_bit_count = bit_count;
 	return V92_CPD_OK;
@@ -625,9 +622,7 @@ enum v92_cpd_result v92_cpd_encode(
 	if (!wire_payload(&wire, &encoded_parameters) ||
 	    wire.cursor != payload_end)
 		return V92_CPD_INVALID_PARAMETERS;
-	packed_msb_write_msb_field(
-		encoded, payload_end + 1u, CPD_CRC_BITS,
-		pcm_control_frame_crc(encoded, payload_end));
+	pcm_control_frame_write_crc(encoded, payload_end);
 	memcpy(frame, encoded, byte_count);
 	*frame_bit_count = bit_count;
 	return V92_CPD_OK;
@@ -642,7 +637,6 @@ enum v92_cpd_result v92_cpd_decode(
 	struct cpd_wire wire;
 	size_t frame_bytes;
 	size_t expected_bits;
-	uint16_t received_crc;
 
 	if (frame == NULL || parameters == NULL)
 		return V92_CPD_INVALID_ARGUMENT;
@@ -670,13 +664,9 @@ enum v92_cpd_result v92_cpd_decode(
 	if (expected_bits != frame_bit_count ||
 	    wire.cursor + V92_CPD_TRAILER_BITS > frame_bit_count ||
 	    packed_msb_bit(frame, wire.cursor) != 0u ||
-	    !packed_msb_bits_are_zero(
-		    frame, wire.cursor + 1u + CPD_CRC_BITS,
-		    frame_bit_count - wire.cursor - 1u - CPD_CRC_BITS))
+	    !pcm_control_frame_crc_fill_is_zero(frame, wire.cursor, frame_bit_count))
 		return V92_CPD_INVALID_FRAME;
-	received_crc = (uint16_t)packed_msb_read_msb_field(
-		frame, wire.cursor + 1u, CPD_CRC_BITS);
-	if (received_crc != pcm_control_frame_crc(frame, wire.cursor))
+	if (!pcm_control_frame_crc_matches(frame, wire.cursor))
 		return V92_CPD_CRC_MISMATCH;
 	*parameters = decoded;
 	return V92_CPD_OK;

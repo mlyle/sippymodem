@@ -14,8 +14,6 @@ enum {
 	CPU_RATE_BITS = 5,
 	CPU_ACKNOWLEDGMENT_BIT = 33,
 	CPU_CODEC_DIFFERENCE_BIT = 128,
-	CPU_MASKS_FIRST_BIT = V92_CPU_HEADER_BITS,
-	CPU_CRC_BITS = 16,
 	CPUS_INFORMATION_BITS = 34,
 	CPUS_UNFILLED_BITS = 52,
 };
@@ -149,9 +147,7 @@ enum v92_cpu_result v92_cpus_encode(
 		parameters->data_rate_number);
 	packed_msb_set_bit(
 		encoded, CPU_ACKNOWLEDGMENT_BIT, parameters->acknowledges_cpd);
-	packed_msb_write_msb_field(
-		encoded, CPUS_INFORMATION_BITS + 1u, CPU_CRC_BITS,
-		pcm_control_frame_crc(encoded, CPUS_INFORMATION_BITS));
+	pcm_control_frame_write_crc(encoded, CPUS_INFORMATION_BITS);
 	memcpy(frame, encoded, bytes);
 	*frame_bit_count = bits;
 	return V92_CPU_OK;
@@ -173,15 +169,9 @@ enum v92_cpu_result v92_cpus_decode(
 	if (frame_capacity < bytes)
 		return V92_CPU_INVALID_ARGUMENT;
 	if (!prefix_is_valid(frame, 2u) ||
-	    packed_msb_bit(frame, CPUS_INFORMATION_BITS) != 0u ||
-	    !packed_msb_bits_are_zero(
-		    frame, CPUS_UNFILLED_BITS - 1u,
-		    bits - CPUS_UNFILLED_BITS + 1u) ||
-	    !packed_msb_tail_is_zero(frame, bits, bytes))
+	    !pcm_control_frame_framing_is_valid(frame, CPUS_INFORMATION_BITS, bits))
 		return V92_CPU_INVALID_FRAME;
-	if (packed_msb_read_msb_field(
-		    frame, CPUS_INFORMATION_BITS + 1u, CPU_CRC_BITS) !=
-	    pcm_control_frame_crc(frame, CPUS_INFORMATION_BITS))
+	if (!pcm_control_frame_crc_matches(frame, CPUS_INFORMATION_BITS))
 		return V92_CPU_CRC_MISMATCH;
 	decoded = (struct v92_cpus_parameters){
 		.data_rate_number = (uint8_t)packed_msb_read_lsb_field(
@@ -291,7 +281,7 @@ enum v92_cpu_result v92_cpu_decode(
 	frame_bytes = (frame_bit_count + 7u) / 8u;
 	if (frame_capacity < frame_bytes)
 		return V92_CPU_INVALID_ARGUMENT;
-	if (!header_framing_is_valid(frame) || !decode_header(frame, &decoded))
+	if (!prefix_is_valid(frame, 1u) || !decode_header(frame, &decoded))
 		return V92_CPU_INVALID_FRAME;
 	payload_end = pcm_control_frame_payload_end(
 		decoded.constellation_count, decoded.codec_constellations_differ);
@@ -299,13 +289,7 @@ enum v92_cpu_result v92_cpu_decode(
 		    payload_end + V92_CPU_MIN_TRAILER_BITS, mapping_frame_bits))
 		return V92_CPU_INVALID_FRAME;
 
-	if (!pcm_control_frame_starts_are_zero(
-		    frame, CPU_MASKS_FIRST_BIT, payload_end + 1u) ||
-	    !packed_msb_bits_are_zero(
-		    frame, payload_end + 1u + CPU_CRC_BITS,
-		    frame_bit_count - payload_end - 1u - CPU_CRC_BITS) ||
-	    !packed_msb_tail_is_zero(
-		    frame, frame_bit_count, frame_bytes))
+	if (!pcm_control_frame_framing_is_valid(frame, payload_end, frame_bit_count))
 		return V92_CPU_INVALID_FRAME;
 	if (!pcm_control_frame_read_constellation_payload(
 		    frame, decoded.transmit_constellations,

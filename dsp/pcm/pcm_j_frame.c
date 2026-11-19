@@ -13,14 +13,9 @@
 enum {
 	FIRST_PAYLOAD_BIT = 18,
 	FIRST_PAYLOAD_BITS = 16,
-	START1_BIT = 34,
 	SECOND_PAYLOAD_BIT = 35,
 	SECOND_PAYLOAD_BITS = 16,
-	START2_BIT = 51,
-	CRC_FIRST_BIT = 52,
-	CRC_BITS = 16,
-	FILL_FIRST_BIT = 68,
-	FILL_BITS = 4,
+	CRC_START_BIT = 51,
 };
 
 static void encode_payload(uint8_t *frame, uint32_t payload)
@@ -41,19 +36,9 @@ enum pcm_j_frame_result pcm_j_frame_encode(
 		return PCM_J_FRAME_INVALID_ARGUMENT;
 	pcm_control_frame_write_prefix(encoded);
 	encode_payload(encoded, payload);
-	packed_msb_write_msb_field(encoded, CRC_FIRST_BIT, CRC_BITS,
-		pcm_control_frame_crc(encoded, START2_BIT));
+	pcm_control_frame_write_crc(encoded, CRC_START_BIT);
 	memcpy(frame, encoded, sizeof(encoded));
 	return PCM_J_FRAME_OK;
-}
-
-static bool framing_is_valid(const uint8_t *frame)
-{
-	if (!pcm_control_frame_prefix_is_valid(frame) ||
-	    packed_msb_bit(frame, START1_BIT) != 0 ||
-	    packed_msb_bit(frame, START2_BIT) != 0)
-		return false;
-	return packed_msb_bits_are_zero(frame, FILL_FIRST_BIT, FILL_BITS);
 }
 
 static uint32_t decode_payload(const uint8_t *frame)
@@ -73,11 +58,10 @@ enum pcm_j_frame_result pcm_j_frame_decode(
 	if (frame == NULL || payload == NULL ||
 	    frame_capacity < PCM_J_FRAME_BYTES)
 		return PCM_J_FRAME_INVALID_ARGUMENT;
-	if (!framing_is_valid(frame))
+	if (!pcm_control_frame_wire_is_valid(frame, CRC_START_BIT, PCM_J_FRAME_BITS))
 		return PCM_J_FRAME_INVALID_FRAME;
 	decoded = decode_payload(frame);
-	if (packed_msb_read_msb_field(frame, CRC_FIRST_BIT, CRC_BITS) !=
-	    pcm_control_frame_crc(frame, START2_BIT))
+	if (!pcm_control_frame_crc_matches(frame, CRC_START_BIT))
 		return PCM_J_FRAME_CRC_MISMATCH;
 	*payload = decoded;
 	return PCM_J_FRAME_OK;

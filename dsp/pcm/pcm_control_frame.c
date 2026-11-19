@@ -15,6 +15,18 @@ uint16_t pcm_control_frame_crc(
 	return remainder;
 }
 
+void pcm_control_frame_write_crc(uint8_t *frame, size_t crc_start)
+{
+	packed_msb_write_msb_field(frame, crc_start + 1u, 16u,
+		pcm_control_frame_crc(frame, crc_start));
+}
+
+bool pcm_control_frame_crc_matches(const uint8_t *frame, size_t crc_start)
+{
+	return packed_msb_read_msb_field(frame, crc_start + 1u, 16u) ==
+	       pcm_control_frame_crc(frame, crc_start);
+}
+
 void pcm_control_frame_write_options(
 	uint8_t *frame, uint8_t sign_redundancy, bool acknowledgment,
 	enum g711_law law, uint8_t lookahead)
@@ -106,8 +118,7 @@ void pcm_control_frame_write_constellation_payload(
 	write_constellations(frame, 0u, transmit, count);
 	if (codec_differs)
 		write_constellations(frame, count, codec, count);
-	packed_msb_write_msb_field(frame, payload_end + 1u, 16u,
-		pcm_control_frame_crc(frame, payload_end));
+	pcm_control_frame_write_crc(frame, payload_end);
 }
 
 bool pcm_control_frame_read_constellation_payload(
@@ -115,10 +126,7 @@ bool pcm_control_frame_read_constellation_payload(
 	struct pcm_constellation *codec, size_t count, bool codec_differs)
 {
 	size_t payload_end = pcm_control_frame_payload_end(count, codec_differs);
-	uint16_t received = (uint16_t)packed_msb_read_msb_field(
-		frame, payload_end + 1u, 16u);
-
-	if (received != pcm_control_frame_crc(frame, payload_end))
+	if (!pcm_control_frame_crc_matches(frame, payload_end))
 		return false;
 	read_constellations(frame, 0u, transmit, count);
 	if (codec_differs)

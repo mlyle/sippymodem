@@ -211,7 +211,6 @@ enum v90_mp_result v90_mp_encode(
 	size_t bit_count;
 	size_t byte_count;
 	size_t crc_start_bit;
-	uint16_t crc;
 
 	if (record == NULL || sequence == NULL ||
 	    sequence_bit_count == NULL)
@@ -234,9 +233,7 @@ enum v90_mp_result v90_mp_encode(
 	} else {
 		crc_start_bit = V90_MP_TYPE0_CRC_START_BIT;
 	}
-	crc = pcm_control_frame_crc(encoded, crc_start_bit);
-	packed_msb_write_msb_field(
-		encoded, crc_start_bit + 1u, V90_MP_CRC_BITS, crc);
+	pcm_control_frame_write_crc(encoded, crc_start_bit);
 	memcpy(sequence, encoded, byte_count);
 	*sequence_bit_count = bit_count;
 	return V90_MP_OK;
@@ -265,7 +262,6 @@ enum v90_mp_result v90_mp_decode(
 	struct v90_mp_record decoded = { 0 };
 	size_t expected_bit_count;
 	size_t crc_start_bit;
-	uint16_t received_crc;
 
 	if (sequence == NULL || record == NULL)
 		return V90_MP_INVALID_ARGUMENT;
@@ -287,9 +283,7 @@ enum v90_mp_result v90_mp_decode(
 	if (!pcm_control_frame_wire_is_valid(
 		    sequence, crc_start_bit, sequence_bit_count))
 		return V90_MP_INVALID_FRAME;
-	received_crc = (uint16_t)packed_msb_read_msb_field(
-		sequence, crc_start_bit + 1u, V90_MP_CRC_BITS);
-	if (received_crc != pcm_control_frame_crc(sequence, crc_start_bit))
+	if (!pcm_control_frame_crc_matches(sequence, crc_start_bit))
 		return V90_MP_CRC_MISMATCH;
 
 	decode_common(sequence, v90_mp_record_mutable_common(&decoded));

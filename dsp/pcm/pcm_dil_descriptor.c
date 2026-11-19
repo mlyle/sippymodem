@@ -89,16 +89,8 @@ enum pcm_dil_descriptor_result pcm_dil_descriptor_validate_framing(
 {
 	if (!span_is_valid(descriptor, capacity, layout))
 		return PCM_DIL_DESCRIPTOR_INVALID_ARGUMENT;
-	if (!pcm_control_frame_prefix_is_valid(descriptor) ||
-	    !pcm_control_frame_starts_are_zero(
-		    descriptor, FRAME_START_FIRST_BIT,
-		    layout->crc_start_bit + 1u))
-		return PCM_DIL_DESCRIPTOR_INVALID_FRAME;
-	if (!packed_msb_bits_are_zero(
-		    descriptor,
-		    layout->crc_start_bit + PCM_DIL_CRC_BITS + 1u,
-		    layout->bit_count - layout->crc_start_bit -
-			    PCM_DIL_CRC_BITS - 1u))
+	if (!pcm_control_frame_wire_is_valid(
+		    descriptor, layout->crc_start_bit, layout->bit_count))
 		return PCM_DIL_DESCRIPTOR_INVALID_FRAME;
 	return PCM_DIL_DESCRIPTOR_OK;
 }
@@ -113,10 +105,7 @@ enum pcm_dil_descriptor_result pcm_dil_descriptor_validate_crc(
 
 	if (framing != PCM_DIL_DESCRIPTOR_OK)
 		return framing;
-	return pcm_control_frame_crc(descriptor, layout->crc_start_bit) ==
-		       packed_msb_read_msb_field(
-			       descriptor, layout->crc_start_bit + 1u,
-			       PCM_DIL_CRC_BITS) ?
+	return pcm_control_frame_crc_matches(descriptor, layout->crc_start_bit) ?
 		       PCM_DIL_DESCRIPTOR_OK :
 		       PCM_DIL_DESCRIPTOR_CRC_MISMATCH;
 }
@@ -142,13 +131,9 @@ enum pcm_dil_descriptor_result pcm_dil_descriptor_finalize(
 	enum pcm_dil_descriptor_result framing =
 		pcm_dil_descriptor_validate_framing(
 			descriptor, capacity, layout);
-	uint16_t remainder;
 
 	if (framing != PCM_DIL_DESCRIPTOR_OK)
 		return framing;
-	remainder = pcm_control_frame_crc(descriptor, layout->crc_start_bit);
-	packed_msb_write_msb_field(
-		descriptor, layout->crc_start_bit + 1u,
-		PCM_DIL_CRC_BITS, remainder);
+	pcm_control_frame_write_crc(descriptor, layout->crc_start_bit);
 	return PCM_DIL_DESCRIPTOR_OK;
 }

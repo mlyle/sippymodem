@@ -16,8 +16,8 @@ enum {
 	V34_MP_AUXILIARY_CHANNEL_BIT = 28,
 	V34_MP_RATE_CAPABILITY_FIRST_BIT = 35,
 	V34_MP_ASYMMETRIC_RATES_BIT = 50,
-	V34_MP_TYPE0_CRC_FIRST_BIT = 69,
-	V34_MP_TYPE1_CRC_FIRST_BIT = 171,
+	V34_MP_TYPE0_CRC_START_BIT = 68,
+	V34_MP_TYPE1_CRC_START_BIT = 170,
 };
 
 static bool rate_is_valid(uint8_t rate_2400_bps_units)
@@ -228,7 +228,6 @@ enum v34_mp_result v34_mp_type0_encode(
 	uint8_t *frame, size_t frame_capacity)
 {
 	uint8_t encoded[V34_MP_TYPE0_FRAME_BYTES] = { 0 };
-	uint16_t crc;
 
 	if (parameters == NULL || frame == NULL ||
 	    frame_capacity < V34_MP_TYPE0_FRAME_BYTES)
@@ -238,21 +237,16 @@ enum v34_mp_result v34_mp_type0_encode(
 
 	encode_common_parameters(encoded, parameters, false);
 
-	crc = pcm_control_frame_crc(encoded, V34_MP_TYPE0_CRC_FIRST_BIT);
-	/* The CCITT-FALSE numeric representation holds the first V.34 CRC
-	 * output in its most-significant bit. */
-	packed_msb_write_msb_field(
-		encoded, V34_MP_TYPE0_CRC_FIRST_BIT,
-		V34_MP_CRC_BITS, crc);
+	pcm_control_frame_write_crc(encoded, V34_MP_TYPE0_CRC_START_BIT);
 	memcpy(frame, encoded, sizeof(encoded));
 	return V34_MP_OK;
 }
 
 static bool framing_bits_are_valid(
-	const uint8_t *frame, bool type1, size_t crc_first_bit,
+	const uint8_t *frame, bool type1, size_t crc_start_bit,
 	size_t frame_bits)
 {
-	return pcm_control_frame_wire_is_valid(frame, crc_first_bit - 1u, frame_bits) &&
+	return pcm_control_frame_wire_is_valid(frame, crc_start_bit, frame_bits) &&
 	       packed_msb_bit(frame, V34_MP_TYPE_BIT) == (uint8_t)type1;
 }
 
@@ -261,20 +255,15 @@ enum v34_mp_result v34_mp_type0_decode(
 	struct v34_mp_parameters *parameters)
 {
 	struct v34_mp_parameters decoded = { 0 };
-	uint16_t received_crc;
 
 	if (frame == NULL || parameters == NULL ||
 	    frame_capacity < V34_MP_TYPE0_FRAME_BYTES)
 		return V34_MP_INVALID_ARGUMENT;
 	if (!framing_bits_are_valid(
-		    frame, false, V34_MP_TYPE0_CRC_FIRST_BIT,
+		    frame, false, V34_MP_TYPE0_CRC_START_BIT,
 		    V34_MP_TYPE0_FRAME_BITS))
 		return V34_MP_INVALID_FRAME;
-	received_crc = (uint16_t)packed_msb_read_msb_field(
-		frame, V34_MP_TYPE0_CRC_FIRST_BIT,
-		V34_MP_CRC_BITS);
-	if (received_crc != pcm_control_frame_crc(
-			    frame, V34_MP_TYPE0_CRC_FIRST_BIT))
+	if (!pcm_control_frame_crc_matches(frame, V34_MP_TYPE0_CRC_START_BIT))
 		return V34_MP_CRC_MISMATCH;
 
 	decode_common_parameters(frame, &decoded);
@@ -289,7 +278,6 @@ enum v34_mp_result v34_mp_type1_encode(
 	uint8_t *frame, size_t frame_capacity)
 {
 	uint8_t encoded[V34_MP_TYPE1_FRAME_BYTES] = { 0 };
-	uint16_t crc;
 
 	if (parameters == NULL || frame == NULL ||
 	    frame_capacity < V34_MP_TYPE1_FRAME_BYTES)
@@ -299,10 +287,7 @@ enum v34_mp_result v34_mp_type1_encode(
 
 	encode_common_parameters(encoded, &parameters->common, true);
 	pcm_mp_write_precoder(encoded, parameters->precoder_coefficients);
-	crc = pcm_control_frame_crc(encoded, V34_MP_TYPE1_CRC_FIRST_BIT);
-	packed_msb_write_msb_field(
-		encoded, V34_MP_TYPE1_CRC_FIRST_BIT,
-		V34_MP_CRC_BITS, crc);
+	pcm_control_frame_write_crc(encoded, V34_MP_TYPE1_CRC_START_BIT);
 	memcpy(frame, encoded, sizeof(encoded));
 	return V34_MP_OK;
 }
@@ -312,20 +297,15 @@ enum v34_mp_result v34_mp_type1_decode(
 	struct v34_mp_type1_parameters *parameters)
 {
 	struct v34_mp_type1_parameters decoded = { 0 };
-	uint16_t received_crc;
 
 	if (frame == NULL || parameters == NULL ||
 	    frame_capacity < V34_MP_TYPE1_FRAME_BYTES)
 		return V34_MP_INVALID_ARGUMENT;
 	if (!framing_bits_are_valid(
-		    frame, true, V34_MP_TYPE1_CRC_FIRST_BIT,
+		    frame, true, V34_MP_TYPE1_CRC_START_BIT,
 		    V34_MP_TYPE1_FRAME_BITS))
 		return V34_MP_INVALID_FRAME;
-	received_crc = (uint16_t)packed_msb_read_msb_field(
-		frame, V34_MP_TYPE1_CRC_FIRST_BIT,
-		V34_MP_CRC_BITS);
-	if (received_crc != pcm_control_frame_crc(
-			    frame, V34_MP_TYPE1_CRC_FIRST_BIT))
+	if (!pcm_control_frame_crc_matches(frame, V34_MP_TYPE1_CRC_START_BIT))
 		return V34_MP_CRC_MISMATCH;
 
 	decode_common_parameters(frame, &decoded.common);

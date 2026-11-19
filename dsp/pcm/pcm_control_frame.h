@@ -70,7 +70,15 @@ static inline bool pcm_control_frame_starts_are_zero(
 	return true;
 }
 
-/* MP, CP and CPt share prefix, word starts and zero fill after the CRC.
+/* The caller bounds the CRC word and exclusive frame end. */
+static inline bool pcm_control_frame_crc_fill_is_zero(
+	const uint8_t *frame, size_t crc_start, size_t frame_bits)
+{
+	return packed_msb_bits_are_zero(frame, crc_start + 17u,
+		frame_bits - crc_start - 17u);
+}
+
+/* These control records share prefix, word starts and zero fill after the CRC.
  * The caller validates storage and exact wire length; payload_end is the
  * CRC word's zero start bit and its 16 information bits must follow.
  * Bits outside frame_bits and protocol fields stay with the codec. */
@@ -79,12 +87,11 @@ static inline bool pcm_control_frame_wire_is_valid(
 {
 	return pcm_control_frame_prefix_is_valid(frame) &&
 	       pcm_control_frame_starts_are_zero(frame, 34u, payload_end + 1u) &&
-	       packed_msb_bits_are_zero(frame, payload_end + 17u,
-		       frame_bits - payload_end - 17u);
+	       pcm_control_frame_crc_fill_is_zero(frame, payload_end, frame_bits);
 }
 
-/* CP/CPt additionally require zero unused bits in their final storage byte.
- * MP ignores those bits; do not extend its wire length to the byte boundary. */
+/* Use this when the record also requires zero unused bits in its final storage
+ * byte. MP checks only the wire bits with pcm_control_frame_wire_is_valid. */
 static inline bool pcm_control_frame_framing_is_valid(
 	const uint8_t *frame, size_t payload_end, size_t frame_bits)
 {
@@ -101,6 +108,11 @@ static inline bool pcm_control_frame_framing_is_valid(
  * may point at the CRC word's start bit or its first information bit. */
 uint16_t pcm_control_frame_crc(
 	const uint8_t *frame, size_t payload_end);
+
+/* Read or write the sixteen CRC bits following their start bit. Record
+ * owners verify bounds, start bits and any fill before checking the CRC. */
+void pcm_control_frame_write_crc(uint8_t *frame, size_t crc_start);
+bool pcm_control_frame_crc_matches(const uint8_t *frame, size_t crc_start);
 
 /* CP, CPt and CPu share these Table 14/V.90 and Table 23/V.92 slots.
  * Callers provide seven header bytes and validated field values. Record

@@ -12,9 +12,6 @@ enum {
 	STATUS_MARKER_BIT = 18,
 	STATUS_PAYLOAD_FIRST_BIT = 19,
 	STATUS_CRC_START_BIT = 34,
-	STATUS_CRC_FIRST_BIT = 35,
-	STATUS_CRC_BITS = 16,
-	STATUS_FILL_FIRST_BIT = 51,
 };
 
 static bool alignment_is_valid(unsigned int alignment_bits)
@@ -66,9 +63,7 @@ enum v92_status_update_result v92_status_update_encode(
 	packed_msb_write_lsb_field(
 		encoded, STATUS_PAYLOAD_FIRST_BIT,
 		V92_STATUS_UPDATE_PAYLOAD_BITS, payload);
-	packed_msb_write_msb_field(
-		encoded, STATUS_CRC_FIRST_BIT, STATUS_CRC_BITS,
-		pcm_control_frame_crc(encoded, STATUS_CRC_START_BIT));
+	pcm_control_frame_write_crc(encoded, STATUS_CRC_START_BIT);
 	memcpy(frame, encoded, byte_count);
 	*frame_bit_count = bit_count;
 	return V92_STATUS_UPDATE_OK;
@@ -93,18 +88,10 @@ enum v92_status_update_result v92_status_update_decode(
 	expected_bytes = (expected_bits + 7u) / 8u;
 	if (frame_capacity < expected_bytes)
 		return V92_STATUS_UPDATE_INVALID_ARGUMENT;
-	if (!pcm_control_frame_prefix_is_valid(frame) ||
-	    packed_msb_bit(frame, STATUS_MARKER_BIT) != 1u ||
-	    packed_msb_bit(frame, STATUS_CRC_START_BIT) != 0u ||
-	    !packed_msb_bits_are_zero(
-		    frame, STATUS_FILL_FIRST_BIT,
-		    frame_bit_count - STATUS_FILL_FIRST_BIT) ||
-	    !packed_msb_tail_is_zero(
-		    frame, frame_bit_count, expected_bytes))
+	if (!pcm_control_frame_framing_is_valid(frame, STATUS_CRC_START_BIT, frame_bit_count) ||
+	    packed_msb_bit(frame, STATUS_MARKER_BIT) != 1u)
 		return V92_STATUS_UPDATE_INVALID_FRAME;
-	if (packed_msb_read_msb_field(
-		    frame, STATUS_CRC_FIRST_BIT, STATUS_CRC_BITS) !=
-	    pcm_control_frame_crc(frame, STATUS_CRC_START_BIT))
+	if (!pcm_control_frame_crc_matches(frame, STATUS_CRC_START_BIT))
 		return V92_STATUS_UPDATE_CRC_MISMATCH;
 	decoded = (uint16_t)packed_msb_read_lsb_field(
 		frame, STATUS_PAYLOAD_FIRST_BIT,
