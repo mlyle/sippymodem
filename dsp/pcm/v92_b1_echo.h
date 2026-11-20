@@ -8,8 +8,6 @@
 #include "v92_upstream_data_rx.h"
 
 enum {
-	V92_B1_ECHO_RADIUS = 320,
-	V92_B1_ECHO_BINS = 2 * V92_B1_ECHO_RADIUS + 1,
 	V92_B1_ECHO_SAMPLES = V92_B1U_SYMBOLS,
 	V92_B1_ECHO_FIT_INPUTS = 144,
 	V92_B1_ECHO_INPUTS = (V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES) *
@@ -24,7 +22,7 @@ struct v92_b1_echo_fit {
 };
 
 struct v92_b1_echo_evidence {
-	double score[V92_B1_ECHO_BINS];
+	double score[ECHO_TIMING_BINS];
 	double old_sum, old_square, runner_sum, runner_square;
 	unsigned count;
 };
@@ -48,7 +46,7 @@ struct v92_b1_echo {
 	 * The full raw and wire histories serve the alternate decoder below. */
 	int16_t cleaned[V92_B1_ECHO_FIT_INPUTS];
 	uint8_t code[V92_B1_ECHO_INPUTS];
-	double prediction[V92_B1_ECHO_INPUTS + 2 * V92_B1_ECHO_RADIUS];
+	double prediction[V92_B1_ECHO_INPUTS + 2 * ECHO_TIMING_RADIUS];
 	float coefficients[PCM_HOST_ECHO_FILTER_TAPS];
 	struct v92_upstream_data_rx receiver;
 };

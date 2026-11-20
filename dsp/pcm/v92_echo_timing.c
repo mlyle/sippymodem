@@ -2,6 +2,8 @@
 
 #include "v92_echo_timing.h"
 
+#include "ring_history.h"
+
 #include <limits.h>
 #include <math.h>
 #include <string.h>
@@ -49,19 +51,19 @@ static void configure(struct v92_echo_timing *timing,
 	timing->window.points = V92_ECHO_TIMING_WINDOW_SAMPLES / V92_ECHO_TIMING_STRIDE;
 }
 
-static inline void score_shifts(struct v92_echo_timing *timing,
-	const struct v92_cpd_constellation *points, unsigned center,
-	unsigned part, double x, double half_width, double step,
-	double inverse_step, const struct pam_distance_range *ranges)
+static inline void score_shifts(double *score, const float *prediction, unsigned newest,
+	const struct v92_cpd_constellation *points, double x, double half_width,
+	double step, double inverse_step, const struct pam_distance_range *ranges)
 {
-	const unsigned mask = V92_ECHO_TIMING_HISTORY - 1;
+	struct ring_reverse_span spans[2];
+	ring_reverse_spans(newest, ECHO_TIMING_BINS, V92_ECHO_TIMING_HISTORY, spans);
+	for (unsigned i = 0; i < 2; ++i) {
+		const float *begin = prediction + spans[i].begin;
+		const float *cursor = prediction + spans[i].end;
 
-	for (unsigned i = 0; i < ECHO_TIMING_BINS; i++) {
-		unsigned shifted = (center + V92_ECHO_TIMING_HISTORY +
-			ECHO_TIMING_RADIUS - i) & mask;
-		timing->window.score[part][i] += pam_distance_squared(
-			points->positive_linear, points->count, step, inverse_step,
-			half_width, x - timing->prediction[shifted], ranges);
+		while (cursor != begin)
+			*score++ += pam_distance_squared(points->positive_linear, points->count,
+				step, inverse_step, half_width, x - *--cursor, ranges);
 	}
 }
 
@@ -157,15 +159,16 @@ int v92_echo_timing_observe(
 		ECHO_TIMING_RADIUS % V92_PCM_MAPPING_PHASES) % V92_PCM_MAPPING_PHASES;
 	unsigned set = receiver->decoder.mapping.cpd.frame_constellation[phase];
 	const struct v92_cpd_distance *entry = &distances->set[set];
-	unsigned part = echo_shift_part(&timing->window);
+	double *score = timing->window.score[echo_shift_part(&timing->window)];
+	/* Bin zero uses the newest prediction, one radius past the center.
+	 * Each successive bin uses the next older prediction. */
 	/* Alphabet geometry is fixed across this window's hypotheses. Keep the
 	 * uniform kernel independent of the nonuniform cache. */
 	if (entry->step > 0)
-		score_shifts(timing, &entry->points, center, part, x,
-			timing->half_width[observation], entry->step,
-			entry->inverse_step, NULL);
+		score_shifts(score, timing->prediction, at, &entry->points, x,
+			timing->half_width[observation], entry->step, entry->inverse_step, NULL);
 	else
-		score_shifts(timing, &entry->points, center, part, x,
+		score_shifts(score, timing->prediction, at, &entry->points, x,
 			timing->half_width[observation], 0, 0, entry->range);
 	int shift = echo_shift_advance(&timing->window, .5);
 	if (shift != 0) {

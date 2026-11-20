@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "v92_b1_echo.h"
-#include "pam_distance.h"
 #include "gram_fit.h"
+#include "pam_distance.h"
 #include "sample_math.h"
 #include "v92_upstream_data_tx.h"
 
@@ -15,7 +15,7 @@
  * independently prefer it to every other delay. These local guards do not
  * supply a statistical false-trigger bound for correlated channel samples. */
 enum {
-	RADIUS = V92_B1_ECHO_RADIUS, BINS = V92_B1_ECHO_BINS,
+	RADIUS = ECHO_TIMING_RADIUS, BINS = ECHO_TIMING_BINS,
 	B1_SAMPLES = V92_B1_ECHO_SAMPLES,
 	FIT_FIRST = 24, FIT_READY = V92_B1_ECHO_FIT_INPUTS, FIT_END = FIT_READY - 16,
 	FIT_SAMPLES = FIT_END - FIT_FIRST, HELD = 200,
@@ -148,16 +148,34 @@ static const double *prediction_row(const struct v92_b1_echo_fit *fit,
 /* Score a raw-coordinate B1u against the mapping's signed alphabet. The
  * precoder may select different representatives; no prescribed waveform is
  * used as a reference. Geometry and coordinates stay frozen with the copy. */
-static double raw_cost(const struct v92_b1_echo *recovery,
-	const struct v92_cpd_distances *distances, unsigned i, int16_t raw, double prediction)
+static inline void score_raw(const struct v92_b1_echo *recovery,
+	const struct v92_cpd_distances *distances, unsigned i, int16_t raw,
+	const double *newest, double *cost, double *error)
 {
 	const struct v92_pcm_mapping *mapping = &recovery->receiver.decoder.mapping;
-	unsigned phase = mapping->cpd.frame_constellation[i % V92_PCM_MAPPING_PHASES];
-	const struct v92_cpd_distance *entry = &distances->set[phase];
+	unsigned set = mapping->cpd.frame_constellation[i % V92_PCM_MAPPING_PHASES];
+	const struct v92_cpd_distance *entry = &distances->set[set];
 	double gain = recovery->receiver.line.plan.gain;
-	return pam_distance_squared(entry->points.positive_linear, entry->points.count,
-		entry->step, entry->inverse_step, 0.,
-		(raw - prediction) * gain, entry->range) / (gain * gain);
+	double gain_squared = gain * gain;
+	const double *prediction = newest + 1;
+	for (unsigned j = 0; j < BINS; ++j) {
+		double value = (raw - *--prediction) * gain;
+		double squared = pam_distance_squared(entry->points.positive_linear,
+			entry->points.count, entry->step, entry->inverse_step, 0., value,
+			entry->range) / gain_squared;
+		cost[j] += squared;
+		if (error != NULL)
+			error[j] = squared;
+	}
+}
+
+static unsigned runner_up(const double *cost, unsigned chosen)
+{
+	unsigned runner = chosen ? 0 : 1;
+	for (unsigned j = 0; j < BINS; ++j)
+		if (j != chosen && cost[j] < cost[runner])
+			runner = j;
+	return runner;
 }
 
 static bool fit_raw(struct v92_b1_echo *recovery, const struct v92_cpd_distances *distances)
@@ -169,19 +187,14 @@ static bool fit_raw(struct v92_b1_echo *recovery, const struct v92_cpd_distances
 	 * Select the delay from later raw observations, then use two disjoint
 	 * confirmation windows and replay from the original coding boundary. */
 	for (unsigned i = RAW_FIT_FIRST; i < RAW_FIT_END; ++i)
-		for (unsigned j = 0; j < BINS; ++j)
-			cost[j] += raw_cost(recovery, distances, i, recovery->raw[i],
-				recovery->prediction[i + 2 * RADIUS - j]);
+		score_raw(recovery, distances, i, recovery->raw[i],
+			&recovery->prediction[i + 2 * RADIUS], cost, NULL);
 	unsigned chosen = 0;
 	for (unsigned j = 1; j < BINS; ++j)
 		if (cost[j] < cost[chosen])
 			chosen = j;
-	unsigned runner = chosen ? 0 : 1;
-	for (unsigned j = 0; j < BINS; ++j)
-		if (j != chosen && cost[j] < cost[runner])
-			runner = j;
 	fit->shift = (int)chosen - RADIUS;
-	fit->runner = (int)runner - RADIUS;
+	fit->runner = (int)runner_up(cost, chosen) - RADIUS;
 	return isfinite(cost[chosen]);
 }
 
@@ -231,14 +244,8 @@ static bool fit_delay(struct v92_b1_echo_fit *fit, const int16_t *ideal, const i
 				fit->shift = (int)j - RADIUS;
 			}
 		}
-		if (fit->model == m) {
-			unsigned chosen = fit->shift + RADIUS;
-			unsigned runner = chosen ? 0 : 1;
-			for (unsigned j = 0; j < BINS; ++j)
-				if (j != chosen && costs[j] < costs[runner])
-					runner = j;
-			fit->runner = (int)runner - RADIUS;
-		}
+		if (fit->model == m)
+			fit->runner = (int)runner_up(costs, fit->shift + RADIUS) - RADIUS;
 	}
 	for (unsigned i = 0; i < B1_SAMPLES; ++i)
 		fit->target[i] = fit->model ? linear_target(
@@ -252,37 +259,30 @@ static void observe_delay(const struct v92_b1_echo *recovery, struct v92_b1_echo
 {
 	const struct v92_b1_echo_fit *fit = &recovery->fit;
 	const double *p = prediction_row(fit, prediction, i);
+	double good, old, runner;
 	if (fit->model == CONSTELLATION_MODEL) {
 		double error[BINS];
+		score_raw(recovery, distances, i, raw, p + 2 * RADIUS, ev->score, error);
+		good = error[fit->shift + RADIUS];
+		old = error[RADIUS] - good;
+		runner = error[fit->runner + RADIUS] - good;
+	} else {
+		double r = raw - fit->target[i];
+		good = r - p[RADIUS - fit->shift];
+		good *= good;
+		old = r - p[RADIUS];
+		runner = r - p[RADIUS - fit->runner];
+		old = old * old - good;
+		runner = runner * runner - good;
 		for (unsigned j = 0; j < BINS; ++j) {
-			error[j] = raw_cost(recovery, distances, i, raw, p[2 * RADIUS - j]);
-			ev->score[j] += error[j];
+			double error = r - p[2 * RADIUS - j];
+			ev->score[j] += error * error;
 		}
-		double good = error[fit->shift + RADIUS];
-		double old = error[RADIUS] - good, runner = error[fit->runner + RADIUS] - good;
-		ev->old_sum += old;
-		ev->old_square += old * old;
-		ev->runner_sum += runner;
-		ev->runner_square += runner * runner;
-		++ev->count;
-		return;
 	}
-
-	double r = raw - fit->target[i];
-	double good = r - p[RADIUS - fit->shift];
-	good *= good;
-	double old = r - p[RADIUS];
-	double runner = r - p[RADIUS - fit->runner];
-	old = old*old - good;
-	runner = runner*runner - good;
 	ev->old_sum += old;
-	ev->old_square += old*old;
+	ev->old_square += old * old;
 	ev->runner_sum += runner;
-	ev->runner_square += runner*runner;
-	for (unsigned j = 0; j < BINS; ++j) {
-		double error = r - p[2*RADIUS-j];
-		ev->score[j] += error*error;
-	}
+	ev->runner_square += runner * runner;
 	++ev->count;
 }
 
