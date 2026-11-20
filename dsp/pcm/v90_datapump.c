@@ -986,10 +986,17 @@ static bool start_call(
 	return true;
 }
 
+struct b1_echo_acceptance {
+	struct v90_datapump *datapump;
+	bool retimed;
+};
+
 static bool accept_b1_echo(void *context)
 {
-	struct v90_datapump *datapump = context;
-	return v92_b1_echo_accept_owned(&datapump->b1_echo, datapump->host_echo);
+	struct b1_echo_acceptance *acceptance = context;
+	struct v90_datapump *datapump = acceptance->datapump;
+	acceptance->retimed = v92_b1_echo_accept_owned(&datapump->b1_echo, datapump->host_echo);
+	return acceptance->retimed;
 }
 
 static bool prepare_b1_echo(struct v90_datapump *datapump, uint8_t wire,
@@ -1015,7 +1022,8 @@ static bool prepare_b1_echo(struct v90_datapump *datapump, uint8_t wire,
 static bool process_octet(
 	struct v90_datapump *datapump, uint8_t received,
 	int16_t received_sample, int16_t host_sample, bool received_available,
-	uint8_t *transmitted, bool *connected, bool *fallback, bool *disconnected)
+	uint8_t *transmitted, bool *connected, bool *fallback, bool *disconnected,
+	bool *echo_retimed)
 {
 	struct pcm_call_data_sources sources = {
 		.upstream = source_upstream_frame,
@@ -1064,15 +1072,17 @@ static bool process_octet(
 		return false;
 	bool alternate_ready = prepare_b1_echo(datapump, received, host_sample, received_sample, received_available);
 	if (datapump->call.stage == PCM_CALL_DATA_PATH) {
+		struct b1_echo_acceptance acceptance = { .datapump = datapump };
 		const struct pcm_call_b1_alternate alternate = {
 			.receiver = &datapump->b1_echo.receiver,
 			.quality = &datapump->b1_echo.quality,
 			.accept = accept_b1_echo,
-			.context = datapump,
+			.context = &acceptance,
 		};
 		result = pcm_call_data_octet_alternate_owned(
 			&datapump->call, received, received_sample, host_sample, received_available, &sources,
 			alternate_ready ? &alternate : NULL, transmitted, &event);
+		*echo_retimed = acceptance.retimed;
 	} else {
 		struct pcm_call_observation observation;
 
@@ -1198,8 +1208,8 @@ static const struct v92_upstream_data_rx *pcm_upstream_receiver(
 	const struct v90_datapump *datapump)
 {
 	const struct pcm_call *call = &datapump->call;
-	if (call->failed || call->protocol != PCM_PROTOCOL_V92 ||
-	    call->local_role != V90_DIGITAL_MODEM || call->stage != PCM_CALL_DATA_PATH ||
+	if (call->stage != PCM_CALL_DATA_PATH || call->failed ||
+	    call->protocol != PCM_PROTOCOL_V92 || call->local_role != V90_DIGITAL_MODEM ||
 	    !call->phase3_entry_stored || call->b1_deadline_armed ||
 	    call->phase3_entry.selection.upstream != PCM_UPSTREAM_PCM)
 		return NULL;
@@ -1213,9 +1223,9 @@ static const struct v92_pcm_phase4_trn2u_line_rx *upstream_training_receiver(
 {
 	const struct pcm_call *call = &datapump->call;
 
-	if (call->failed || call->protocol != PCM_PROTOCOL_V92 ||
+	if (call->stage != PCM_CALL_PHASE4 || call->failed || call->protocol != PCM_PROTOCOL_V92 ||
 	    call->local_role != V90_DIGITAL_MODEM ||
-	    pcm_call_uses_conventional_upstream(call) || call->stage != PCM_CALL_PHASE4 ||
+	    pcm_call_uses_conventional_upstream(call) ||
 	    call->state.phase4.v92.child != PCM_CALL_V92_PHASE4_CONTROL)
 		return NULL;
 	const struct v92_phase4_digital_station *station = &call->state.phase4.v92.owner.digital;
@@ -1313,7 +1323,9 @@ static int process_v90_g711(
 		enum pcm_call_stage stage_before = datapump->call.stage;
 		enum pcm_host_echo_mode echo_mode = host_echo_mode(datapump);
 		enum v92_training_echo_result training_echo = V92_TRAINING_ECHO_UNOBSERVED;
-		int16_t cleaned_sample = receive_samples[index];
+		int16_t raw_sample = receive_samples[index];
+		int16_t cleaned_sample = raw_sample;
+		bool available = received_mask == NULL || received_mask[index];
 		uint8_t pcm_transmit;
 
 		/* An accepted hangup owns the line until its bounded protocol
@@ -1326,27 +1338,27 @@ static int process_v90_g711(
 			goto failure;
 		}
 		if (datapump->host_echo != NULL &&
-		    pcm_host_echo_predict(
-			    datapump->host_echo, echo_mode,
-			    receive_samples[index], &cleaned_sample) !=
-			    PCM_HOST_ECHO_OK)
+		    pcm_host_echo_predict(datapump->host_echo, echo_mode,
+			    raw_sample, &cleaned_sample) != PCM_HOST_ECHO_OK)
 			goto failure;
 		if (datapump->host_echo != NULL) {
-			int timing_shift = v92_echo_timing_observe(&datapump->pcm_echo_timing, datapump->host_echo,
-				pcm_upstream_receiver(datapump), &datapump->cpd_distances, echo_mode, receive_codewords[index],
-				receive_samples[index], cleaned_sample,
-				received_mask == NULL || received_mask[index]);
-			if (timing_shift != 0) {
+			const struct v92_upstream_data_rx *online = pcm_upstream_receiver(datapump);
+			const struct v92_pcm_phase4_trn2u_line_rx *training = upstream_training_receiver(datapump);
+			int timing_shift = 0;
+			if (online != NULL || datapump->pcm_echo_timing.initialized)
+				timing_shift = v92_echo_timing_observe(&datapump->pcm_echo_timing,
+					datapump->host_echo, online, &datapump->cpd_distances, echo_mode,
+					receive_codewords[index], raw_sample, cleaned_sample, available);
+			if (timing_shift)
 				note_transmit_timing(datapump, timing_shift);
-				if (pcm_host_echo_predict(datapump->host_echo, echo_mode,
-					receive_samples[index], &cleaned_sample) != PCM_HOST_ECHO_OK)
-					goto failure;
+			/* The two receivers own disjoint phases. Let the training observer
+			 * clear its projected timing view on the first sample outside TRN2u. */
+			if (training != NULL || datapump->training_echo.active) {
+				int delay_change;
+				training_echo = v92_training_echo_observe(&datapump->training_echo,
+					datapump->host_echo, training, echo_mode, raw_sample, cleaned_sample,
+					available, &delay_change);
 			}
-			int delay_change;
-			training_echo = v92_training_echo_observe(&datapump->training_echo,
-				datapump->host_echo, upstream_training_receiver(datapump), echo_mode,
-				receive_samples[index], cleaned_sample,
-				received_mask == NULL || received_mask[index], &delay_change);
 			if (training_echo == V92_TRAINING_ECHO_ERROR) {
 				modem_note_disconnect(dp->modem, true, "PCM upstream echo timing failed");
 				goto failure;
@@ -1362,25 +1374,24 @@ static int process_v90_g711(
 						"PCM upstream training recovery rejected");
 					goto failure;
 				}
-				if (pcm_host_echo_predict(datapump->host_echo, echo_mode,
-					    receive_samples[index], &cleaned_sample) != PCM_HOST_ECHO_OK)
-					goto failure;
 			}
+			if ((timing_shift || training_echo == V92_TRAINING_ECHO_RETIMED) &&
+			    pcm_host_echo_predict(datapump->host_echo, echo_mode,
+				    raw_sample, &cleaned_sample) != PCM_HOST_ECHO_OK)
+				goto failure;
 		}
 		struct v34_data_line_receiver *data = upstream_data_receiver(datapump);
 		/* The conventional upstream has fixed decision geometry online.
 		 * Borrow its pre-sample controls while they still belong to the
 		 * receiver. PCM B1 adoption cannot retime this V.34 data path. */
-		bool echo_prepared = datapump->host_echo != NULL && data != NULL &&
-			(received_mask == NULL || received_mask[index]) &&
+		bool echo_prepared = datapump->host_echo != NULL && data != NULL && available &&
 			v34_echo_timing_prepare(&datapump->echo_timing,
 				datapump->host_echo, echo_mode, &data->line, &data->decisions,
-				receive_samples[index], cleaned_sample);
-		uint32_t predicted_delay = pcm_host_echo_active_delay_owned(datapump->host_echo, echo_mode);
+				raw_sample, cleaned_sample);
+		bool echo_retimed = false;
 		if (!process_octet(
-			    datapump, receive_codewords[index],
-			    cleaned_sample, receive_samples[index], received_mask == NULL || received_mask[index],
-			    &pcm_transmit, &connected, &fallback, &disconnected))
+			    datapump, receive_codewords[index], cleaned_sample, raw_sample, available,
+			    &pcm_transmit, &connected, &fallback, &disconnected, &echo_retimed))
 			goto failure;
 		transmit_codewords[index] = pcm_transmit;
 		transmit_samples[index] = g711_decode(law, transmit_codewords[index]);
@@ -1394,9 +1405,9 @@ static int process_v90_g711(
 			/* B1u adoption can retime the model after this input is decoded.
 			 * Refresh only its timing view before observation; do not decode
 			 * again or advance the physical TX/RX clock twice. */
-			if (predicted_delay != pcm_host_echo_active_delay_owned(datapump->host_echo, echo_mode) &&
+			if (echo_retimed &&
 			    pcm_host_echo_predict(datapump->host_echo, echo_mode,
-				    receive_samples[index], &cleaned_sample) != PCM_HOST_ECHO_OK)
+				    raw_sample, &cleaned_sample) != PCM_HOST_ECHO_OK)
 				goto failure;
 			data = upstream_data_receiver(datapump);
 			if (echo_prepared && data != NULL) {
@@ -1414,7 +1425,7 @@ static int process_v90_g711(
 			if (training_echo == V92_TRAINING_ECHO_UNOBSERVED) {
 				int delay_change = 0;
 				if (pcm_host_echo_observe_timing(datapump->host_echo, echo_mode,
-					    receive_samples[index], cleaned_sample, &delay_change) != PCM_HOST_ECHO_OK)
+					    raw_sample, cleaned_sample, &delay_change) != PCM_HOST_ECHO_OK)
 					goto failure;
 				if (delay_change) {
 					note_transmit_timing(datapump, delay_change);
@@ -1426,7 +1437,7 @@ static int process_v90_g711(
 				}
 			}
 			if (pcm_host_echo_advance_reference(datapump->host_echo, echo_mode,
-				    receive_samples[index], transmit_samples[index]) != PCM_HOST_ECHO_OK)
+				    raw_sample, transmit_samples[index]) != PCM_HOST_ECHO_OK)
 				goto failure;
 			/* Retain qualified cancellation through retrain ranging, but
 			 * reacquire it for the new Phase 3/TRN1d epoch. Old margin and
