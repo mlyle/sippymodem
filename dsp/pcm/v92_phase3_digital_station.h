@@ -107,6 +107,12 @@ enum v92_phase3_digital_station_result v92_phase3_digital_station_receive(
 	struct v92_phase3_digital_station *station, int16_t sample,
 	bool received_available);
 
+/* Advance downstream before consuming upstream. A null output holds TX
+ * while waiting for a Quick Connect frame boundary or after TX handoff. */
+enum v92_phase3_digital_station_result v92_phase3_digital_station_step(
+	struct v92_phase3_digital_station *station, int16_t sample,
+	bool received_available, uint8_t *network_octet);
+
 bool v92_phase3_digital_station_transmit_complete(
 	const struct v92_phase3_digital_station *station);
 bool v92_phase3_digital_station_receive_complete(

@@ -1032,8 +1032,7 @@ static bool call_is_valid(
 		} else if (uses_pcm_upstream(call)) {
 			child_valid = v92_phase3_digital_station_is_valid(
 				&call->state.phase3.v92_digital);
-			child_failed = v92_phase3_digital_station_has_failed(
-				&call->state.phase3.v92_digital);
+			child_failed = child_valid && call->state.phase3.v92_digital.failed;
 		} else if (call->local_role == V90_ANALOG_MODEM) {
 			child_valid = owned_phase3 ?
 				v90_phase3_analog_station_owned_state_is_valid(
@@ -1061,8 +1060,7 @@ static bool call_is_valid(
 			child_failed = call->local_role == V90_ANALOG_MODEM ?
 				v92_phase3_analog_station_has_failed(
 					&call->state.mixed.v92_analog.phase3) :
-				v92_phase3_digital_station_has_failed(
-					&call->state.mixed.v92_digital.phase3);
+				child_valid && call->state.mixed.v92_digital.phase3.failed;
 		} else {
 			child_valid = call->local_role == V90_ANALOG_MODEM ?
 				      analog_mixed_is_valid(call) :
@@ -2725,8 +2723,8 @@ static bool v92_trailing_phase3_is_complete(const struct pcm_call *call)
 	return call->local_role == V90_ANALOG_MODEM ?
 		       v92_phase3_analog_station_transmit_complete(
 			       &call->state.mixed.v92_analog.phase3) :
-		       v92_phase3_digital_station_receive_complete(
-			       &call->state.mixed.v92_digital.phase3);
+	       call->state.mixed.v92_digital.phase3.receive_stage ==
+		       V92_PHASE3_DIGITAL_RECEIVE_COMPLETE;
 }
 
 static enum pcm_call_result enter_v92_mixed_phase3(struct pcm_call *call)
@@ -3152,6 +3150,8 @@ static enum pcm_call_result enter_v92_phase4(struct pcm_call *call)
 	return PCM_CALL_OK;
 }
 
+/* The sample step has already checked the V.92 digital child. Its
+ * completion stages remain valid after a checked handoff. */
 static enum pcm_call_result advance_phase3(struct pcm_call *call)
 {
 	enum pcm_call_result result;
@@ -3162,8 +3162,8 @@ static enum pcm_call_result advance_phase3(struct pcm_call *call)
 				call->local_role == V90_ANALOG_MODEM ?
 					v92_phase3_analog_station_receive_complete(
 						&call->state.phase3.v92_analog) :
-					v92_phase3_digital_station_transmit_complete(
-						&call->state.phase3.v92_digital);
+					call->state.phase3.v92_digital.transmit_stage ==
+						V92_PHASE3_DIGITAL_TRANSMIT_COMPLETE;
 
 			if (!leading_direction_complete)
 				return PCM_CALL_OK;
@@ -3382,16 +3382,12 @@ static enum pcm_call_result sample_phase3(
 		if (result == PCM_CALL_OK)
 			result = retain_v92_peer_jd(call);
 	} else if (uses_pcm_upstream(call)) {
-		result = qc_wait_for_frame(call) ? PCM_CALL_OK : v92_digital_phase3_result(
-			v92_phase3_digital_station_transmit(
-				&call->state.phase3.v92_digital,
-				transmit_octet));
-		if (result != PCM_CALL_OK)
-			return result;
+		uint8_t *output = qc_wait_for_frame(call) ? NULL : transmit_octet;
+
 		result = v92_digital_phase3_result(
-			v92_phase3_digital_station_receive(
+			v92_phase3_digital_station_step(
 				&call->state.phase3.v92_digital,
-				received_sample, received_available));
+				received_sample, received_available, output));
 	} else if (call->local_role == V90_ANALOG_MODEM) {
 		int16_t sample;
 

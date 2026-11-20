@@ -252,18 +252,11 @@ static bool begin_ri_if_downstream_complete(
 	return true;
 }
 
-enum v92_phase3_digital_station_result v92_phase3_digital_station_transmit(
+static enum v92_phase3_digital_station_result transmit_sample(
 	struct v92_phase3_digital_station *station, uint8_t *network_octet)
 {
 	uint8_t generated;
 
-	if (!v92_phase3_digital_station_is_valid(station) ||
-	    network_octet == NULL ||
-	    memory_regions_overlap(station, sizeof(*station), network_octet,
-				   sizeof(*network_octet)))
-		return V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT;
-	if (station->failed)
-		return V92_PHASE3_DIGITAL_STATION_FAILED;
 	if (station->transmit_stage == V92_PHASE3_DIGITAL_TRANSMIT_COMPLETE)
 		return V92_PHASE3_DIGITAL_STATION_COMPLETE;
 	if (station->transmit_stage == V92_PHASE3_DIGITAL_TRANSMIT_SILENCE) {
@@ -297,6 +290,19 @@ enum v92_phase3_digital_station_result v92_phase3_digital_station_transmit(
 fail:
 	station->failed = true;
 	return V92_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE;
+}
+
+enum v92_phase3_digital_station_result v92_phase3_digital_station_transmit(
+	struct v92_phase3_digital_station *station, uint8_t *network_octet)
+{
+	if (!v92_phase3_digital_station_is_valid(station) ||
+	    network_octet == NULL ||
+	    memory_regions_overlap(station, sizeof(*station), network_octet,
+				   sizeof(*network_octet)))
+		return V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT;
+	if (station->failed)
+		return V92_PHASE3_DIGITAL_STATION_FAILED;
+	return transmit_sample(station, network_octet);
 }
 
 static enum v92_phase3_digital_station_result receive_initial(
@@ -544,17 +550,13 @@ bool v92_phase3_digital_station_receive_complete(
 	       station->receive_stage == V92_PHASE3_DIGITAL_RECEIVE_COMPLETE;
 }
 
-enum v92_phase3_digital_station_result v92_phase3_digital_station_receive(
+static enum v92_phase3_digital_station_result receive_sample(
 	struct v92_phase3_digital_station *station, int16_t sample,
 	bool received_available)
 {
 	struct v92_phase3_digital_station next;
 	enum v92_phase3_digital_station_result result;
 
-	if (!v92_phase3_digital_station_is_valid(station))
-		return V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT;
-	if (station->failed)
-		return V92_PHASE3_DIGITAL_STATION_FAILED;
 	if (station->receive_stage == V92_PHASE3_DIGITAL_RECEIVE_COMPLETE) {
 		if (station->early_trn2u_samples ==
 		    sizeof(station->early_trn2u) / sizeof(station->early_trn2u[0])) {
@@ -604,6 +606,35 @@ enum v92_phase3_digital_station_result v92_phase3_digital_station_receive(
 	}
 	*station = next;
 	return result;
+}
+
+enum v92_phase3_digital_station_result v92_phase3_digital_station_step(
+	struct v92_phase3_digital_station *station, int16_t sample,
+	bool received_available, uint8_t *network_octet)
+{
+	if (!v92_phase3_digital_station_is_valid(station) ||
+	    (network_octet != NULL &&
+	     memory_regions_overlap(station, sizeof(*station), network_octet,
+				    sizeof(*network_octet))))
+		return V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT;
+	if (station->failed)
+		return V92_PHASE3_DIGITAL_STATION_FAILED;
+	if (network_octet != NULL) {
+		enum v92_phase3_digital_station_result result =
+			transmit_sample(station, network_octet);
+
+		if (result != V92_PHASE3_DIGITAL_STATION_OK &&
+		    result != V92_PHASE3_DIGITAL_STATION_COMPLETE)
+			return result;
+	}
+	return receive_sample(station, sample, received_available);
+}
+
+enum v92_phase3_digital_station_result v92_phase3_digital_station_receive(
+	struct v92_phase3_digital_station *station, int16_t sample,
+	bool received_available)
+{
+	return v92_phase3_digital_station_step(station, sample, received_available, NULL);
 }
 
 bool v92_phase3_digital_station_upstream_rate_mask(

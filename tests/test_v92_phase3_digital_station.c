@@ -192,7 +192,7 @@ static bool check_jp_transmit_failure(
 	failed.downstream.jp_records = UINT32_MAX - 1u;
 	failed.downstream.bit_index = PCM_J_FRAME_BITS - 1u;
 	CHECK(failed.downstream.stage == PCM_PHASE3_DIGITAL_TX_JP &&
-	      v92_phase3_digital_station_transmit(&failed, &octet) ==
+	      v92_phase3_digital_station_step(&failed, 1000, true, &octet) ==
 		      V92_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE &&
 	      failed.failed && octet == 0xa5u &&
 	      failed.receive_stage == V92_PHASE3_DIGITAL_RECEIVE_SU_RESPONSE &&
@@ -487,6 +487,8 @@ static bool run_exchange(enum g711_law law, unsigned delay,
 				CHECK(v92_phase3_digital_station_transmit(&corrupt, &sentinel) ==
 					      V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
 				      v92_phase3_digital_station_receive(&corrupt, 0, true) ==
+					      V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
+				      v92_phase3_digital_station_step(&corrupt, 0, true, &sentinel) ==
 					      V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
 				      sentinel == 0xa5 && memcmp(&corrupt, &saved, sizeof(corrupt)) == 0,
 				      "corrupt Jp was accepted by a checked station operation");
@@ -1115,6 +1117,8 @@ static bool test_digital_contracts(void)
 	CHECK(v92_phase3_digital_station_transmit(NULL, &octet) ==
 		      V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
 	      v92_phase3_digital_station_transmit(&station, &station.training_ucode) ==
+		      V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
+	      v92_phase3_digital_station_step(&station, 0, true, &station.training_ucode) ==
 		      V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
 	      station.training_ucode == TEST_UCODE &&
 	      v92_phase3_digital_station_receive(NULL, 0, true) ==
