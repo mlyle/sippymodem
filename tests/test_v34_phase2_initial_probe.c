@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <v34_phase2_initial_probe.h>
-#include <v34_phase2_probe_turnaround.h>
 #include <g711.h>
 
 #include "v34_phase2_test_pair.h"
@@ -10,6 +9,13 @@
 
 #include <stdint.h>
 #include <string.h>
+
+static bool v34_probe_turnarounds_equal(
+	const struct test_probe_turnaround *left, const struct test_probe_turnaround *right)
+{
+	return v34_initial_probes_equal(&left->initial_probe, &right->initial_probe) &&
+	       memcmp(&left->control, &right->control, sizeof(left->control)) == 0;
+}
 
 enum {
 	TEST_SAMPLE_LIMIT = 12000,
@@ -512,8 +518,8 @@ static bool samples_are_close(size_t first, size_t second, size_t tolerance)
 static bool check_probe_turnaround(
 	enum test_codec codec, size_t delay_samples)
 {
-	struct v34_phase2_probe_turnaround caller_terminal;
-	struct v34_phase2_probe_turnaround answerer_terminal;
+	struct test_probe_turnaround caller_terminal;
+	struct test_probe_turnaround answerer_terminal;
 	struct turnaround_observation observation;
 	struct test_pair pair;
 
@@ -658,9 +664,9 @@ static bool check_probe_turnaround(
 		CHECK(observation.answerer_ready == expected_ready,
 		      "answerer did not hand off the first reciprocal-probe sample");
 	}
-	CHECK(v34_phase2_probe_turnaround_is_valid(
+	CHECK(test_probe_turnaround_is_valid(
 		      &pair.caller.turnaround) &&
-	      v34_phase2_probe_turnaround_is_valid(
+	      test_probe_turnaround_is_valid(
 		      &pair.answerer.turnaround),
 	      "completed turnaround state is invalid");
 	caller_terminal = pair.caller.turnaround;
@@ -761,7 +767,7 @@ static bool test_concurrent_probe_crosses_turnaround(void)
 	struct v34_phase2_probe_receiver_measurement measurement;
 	struct v34_phase2_initial_probe caller_probe;
 	struct v34_phase2_initial_probe answerer_probe;
-	struct v34_phase2_probe_turnaround turnaround;
+	struct test_probe_turnaround turnaround;
 	struct v34_phase2_probe_sequence peer_probe;
 	struct v34_phase2_probe_acquisition_event concurrent_event;
 	struct phase2_probe_turnaround_event turnaround_event;
@@ -822,7 +828,7 @@ static bool test_concurrent_probe_crosses_turnaround(void)
 		      V34_PHASE2_PROBE_L1_SAMPLES &&
 	      answerer_probe.concurrent_receive.phase !=
 		      V34_PHASE2_PROBE_ACQUISITION_COMPLETE &&
-	      v34_phase2_probe_turnaround_init(
+	      test_probe_turnaround_init(
 		      &turnaround, &answerer_probe) ==
 		      PHASE2_PROBE_TURNAROUND_OK,
 	      "probe did not retain its partial L2 at turnaround");
@@ -834,7 +840,7 @@ static bool test_concurrent_probe_crosses_turnaround(void)
 		CHECK(v34_phase2_probe_sequence_sample(
 			      &peer_probe, false, &peer_transmit,
 			      &peer_event) == V34_PHASE2_PROBE_SEQUENCE_OK &&
-		      v34_phase2_probe_turnaround_sample(
+		      test_probe_turnaround_sample(
 			      &turnaround, peer_transmit, &local_transmit,
 			      &turnaround_event) ==
 			      PHASE2_PROBE_TURNAROUND_OK,
@@ -861,9 +867,9 @@ static bool test_concurrent_probe_crosses_turnaround(void)
 	for (unsigned sample = 0; sample < 80; ++sample) {
 		int16_t transmitted;
 
-		CHECK(v34_phase2_probe_turnaround_sample(&turnaround, INT16_MIN,
+		CHECK(test_probe_turnaround_sample(&turnaround, INT16_MIN,
 			      &transmitted, &turnaround_event) == PHASE2_PROBE_TURNAROUND_OK &&
-		      v34_phase2_probe_turnaround_is_valid(&turnaround) &&
+		      test_probe_turnaround_is_valid(&turnaround) &&
 		      memcmp(&retained, &turnaround.initial_probe.concurrent_receive,
 			      sizeof(retained)) == 0,
 		      "completed concurrent capture changed at sample %u", sample);
@@ -875,7 +881,7 @@ static bool test_answerer_reversal_recovery(void)
 {
 	struct v34_phase2_initial_probe caller_probe;
 	struct v34_phase2_initial_probe answerer_probe;
-	struct v34_phase2_probe_turnaround answerer;
+	struct test_probe_turnaround answerer;
 	struct phase2_probe_turnaround_event event = { 0 };
 	struct v34_phase2_tone_transmitter peer_tone;
 	int16_t peer_sample;
@@ -888,7 +894,7 @@ static bool test_answerer_reversal_recovery(void)
 	      v34_phase2_tone_detector_reset(
 		      &answerer_probe.ranging.info0_exchange.transport
 			       .tone_detector) == V34_PHASE2_TONE_OK &&
-	      v34_phase2_probe_turnaround_init(
+	      test_probe_turnaround_init(
 		      &answerer, &answerer_probe) ==
 		      PHASE2_PROBE_TURNAROUND_OK &&
 	      v34_phase2_tone_transmitter_init(
@@ -903,7 +909,7 @@ static bool test_answerer_reversal_recovery(void)
 		CHECK(v34_phase2_tone_transmitter_sample(
 			      &peer_tone, &peer_sample) ==
 			      V34_PHASE2_TONE_OK &&
-		      v34_phase2_probe_turnaround_sample(
+		      test_probe_turnaround_sample(
 			      &answerer, peer_sample, &transmit, &event) ==
 			      PHASE2_PROBE_TURNAROUND_OK,
 		      "answerer reversal recovery failed at sample %zu",
@@ -929,7 +935,7 @@ static bool test_answerer_reversal_recovery(void)
 		CHECK(v34_phase2_tone_transmitter_sample(
 			      &peer_tone, &peer_sample) ==
 			      V34_PHASE2_TONE_OK &&
-		      v34_phase2_probe_turnaround_sample(
+		      test_probe_turnaround_sample(
 			      &answerer, peer_sample, &transmit, &event) ==
 			      PHASE2_PROBE_TURNAROUND_OK,
 		      "retried answerer turn failed at sample %zu", samples);
@@ -942,7 +948,7 @@ static bool test_answerer_reversal_recovery(void)
 	CHECK(ready &&
 	      answerer.control.phase ==
 		      PHASE2_PROBE_TURNAROUND_SIGNAL_A_PROBE_READY &&
-	      v34_phase2_probe_turnaround_is_valid(&answerer),
+	      test_probe_turnaround_is_valid(&answerer),
 	      "retried answerer turn did not accept the returning reversal");
 	return true;
 }
@@ -1155,9 +1161,9 @@ static bool test_bounded_failures(void)
 		      7200u + caller_ranging.control.round_trip_delay_samples,
 	      "probe measurement restarted the 900 ms plus RTD reversal deadline");
 	{
-		struct v34_phase2_probe_turnaround turnaround;
+		struct test_probe_turnaround turnaround;
 
-		CHECK(v34_phase2_probe_turnaround_init(&turnaround, &caller) ==
+		CHECK(test_probe_turnaround_init(&turnaround, &caller) ==
 			      PHASE2_PROBE_TURNAROUND_OK &&
 		      turnaround.control.wait_samples ==
 			      caller.control.reversal_wait_samples_remaining,
@@ -1252,11 +1258,11 @@ static bool test_shared_turnaround_owned_step(void)
 	CHECK(completed_initial_probe_states(&caller_probe, &answerer_probe),
 	      "owned turnaround fixtures did not complete probing");
 	for (unsigned int role = 0; role < 2; ++role) {
-		struct v34_phase2_probe_turnaround checked, owned;
+		struct test_probe_turnaround checked, owned;
 		const struct v34_phase2_initial_probe *initial =
 			role == 0 ? &caller_probe : &answerer_probe;
 
-		CHECK(v34_phase2_probe_turnaround_init(&checked, initial) ==
+		CHECK(test_probe_turnaround_init(&checked, initial) ==
 			      PHASE2_PROBE_TURNAROUND_OK,
 		      "owned turnaround fixture did not initialize");
 		owned = checked;
@@ -1277,7 +1283,7 @@ static bool test_shared_turnaround_owned_step(void)
 				      &owned.initial_probe.ranging.info0_exchange.transport,
 				      0, &actual_tx, &actual) ==
 				      PHASE2_PROBE_TURNAROUND_OK &&
-			      v34_phase2_probe_turnaround_is_valid(&owned) &&
+			      test_probe_turnaround_is_valid(&owned) &&
 			      v34_probe_turnarounds_equal(&checked, &owned) &&
 			      expected_tx == actual_tx && expected.kind == actual.kind &&
 			      expected.failure == actual.failure &&
@@ -1297,26 +1303,26 @@ static bool test_turnaround_failures_and_validation(void)
 	struct v34_phase2_initial_probe unready_probe;
 	struct v34_phase2_ranging caller_ranging;
 	struct v34_phase2_ranging answerer_ranging;
-	struct v34_phase2_probe_turnaround caller;
-	struct v34_phase2_probe_turnaround answerer;
-	struct v34_phase2_probe_turnaround before;
-	struct v34_phase2_probe_turnaround invalid;
+	struct test_probe_turnaround caller;
+	struct test_probe_turnaround answerer;
+	struct test_probe_turnaround before;
+	struct test_probe_turnaround invalid;
 	struct phase2_probe_turnaround_event event;
 	struct phase2_probe_turnaround_event event_before;
 	int16_t transmit;
 	size_t samples;
 
 	CHECK(completed_initial_probe_states(&caller_probe, &answerer_probe) &&
-	      v34_phase2_probe_turnaround_init(
+	      test_probe_turnaround_init(
 		      &caller, &caller_probe) ==
 		      PHASE2_PROBE_TURNAROUND_OK &&
-	      v34_phase2_probe_turnaround_init(
+	      test_probe_turnaround_init(
 		      &answerer, &answerer_probe) ==
 		      PHASE2_PROBE_TURNAROUND_OK,
 	      "turnaround failure fixtures did not initialize");
 	const size_t remaining = caller.control.wait_samples;
 	for (samples = 0; samples < remaining; ++samples)
-		CHECK(v34_phase2_probe_turnaround_sample(
+		CHECK(test_probe_turnaround_sample(
 			      &caller, 0, &transmit, &event) ==
 			      PHASE2_PROBE_TURNAROUND_OK &&
 		      event.kind == (samples + 1u == remaining ?
@@ -1328,7 +1334,7 @@ static bool test_turnaround_failures_and_validation(void)
 	      caller.control.failure == PHASE2_PROBE_TURNAROUND_NO_FAILURE,
 	      "caller did not start the exact 40 ms recovery response");
 	for (samples = 1; samples < 400u; ++samples) {
-		CHECK(v34_phase2_probe_turnaround_sample(
+		CHECK(test_probe_turnaround_sample(
 			      &caller, 0, &transmit, &event) ==
 			      PHASE2_PROBE_TURNAROUND_OK &&
 		      event.kind == (samples == 399u ?
@@ -1342,7 +1348,7 @@ static bool test_turnaround_failures_and_validation(void)
 	}
 	before = caller;
 	transmit = 1234;
-	CHECK(v34_phase2_probe_turnaround_sample(
+	CHECK(test_probe_turnaround_sample(
 		      &caller, INT16_MIN, &transmit, &event) ==
 		      PHASE2_PROBE_TURNAROUND_OK &&
 	      transmit == 0 &&
@@ -1357,7 +1363,7 @@ static bool test_turnaround_failures_and_validation(void)
 			     PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES &&
 	     answerer.control.phase != PHASE2_PROBE_TURNAROUND_TIMED_OUT;
 	     ++samples)
-		CHECK(v34_phase2_probe_turnaround_sample(
+		CHECK(test_probe_turnaround_sample(
 			      &answerer, 0, &transmit, &event) ==
 			      PHASE2_PROBE_TURNAROUND_OK,
 		      "answerer reversal timeout failed at sample %zu", samples);
@@ -1380,14 +1386,14 @@ static bool test_turnaround_failures_and_validation(void)
 	      "turnaround validation fixtures did not initialize");
 	memset(&invalid, 0xa5, sizeof(invalid));
 	before = invalid;
-	CHECK(v34_phase2_probe_turnaround_init(
+	CHECK(test_probe_turnaround_init(
 		      &invalid, &unready_probe) ==
 		      PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT &&
 	      memcmp(&invalid, &before, sizeof(invalid)) == 0 &&
-	      v34_phase2_probe_turnaround_init(NULL, &caller_probe) ==
+	      test_probe_turnaround_init(NULL, &caller_probe) ==
 		      PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT,
 	      "invalid turnaround initialization changed caller-owned state");
-	CHECK(v34_phase2_probe_turnaround_init(
+	CHECK(test_probe_turnaround_init(
 		      &caller, &caller_probe) ==
 		      PHASE2_PROBE_TURNAROUND_OK,
 	      "turnaround validation controller did not initialize");
@@ -1399,10 +1405,10 @@ static bool test_turnaround_failures_and_validation(void)
 	};
 	event_before = event;
 	transmit = 1234;
-	CHECK(v34_phase2_probe_turnaround_sample(
+	CHECK(test_probe_turnaround_sample(
 		      &caller, 0, NULL, &event) ==
 		      PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT &&
-	      v34_phase2_probe_turnaround_sample(
+	      test_probe_turnaround_sample(
 		      &caller, 0, &transmit, NULL) ==
 		      PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT &&
 	      v34_probe_turnarounds_equal(&caller, &before) &&
@@ -1414,7 +1420,7 @@ static bool test_turnaround_failures_and_validation(void)
 		PHASE2_PROBE_TURNAROUND_SIGNAL_A_INITIAL_TONE;
 	invalid.control.phase_samples_remaining =
 		PHASE2_PROBE_TURNAROUND_INITIAL_TONE_SAMPLES;
-	CHECK(!v34_phase2_probe_turnaround_is_valid(&invalid),
+	CHECK(!test_probe_turnaround_is_valid(&invalid),
 	      "turnaround validation contract changed");
 	return true;
 }

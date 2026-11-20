@@ -181,6 +181,39 @@ v34_phase2_initial_probe_sample_concurrent(
 	return PHASE2_INITIAL_PROBE_OK;
 }
 
+enum phase2_probe_turnaround_result
+v34_phase2_initial_probe_turnaround_sample_owned(
+	struct v34_phase2_initial_probe *initial,
+	struct phase2_probe_turnaround *turnaround, int16_t received_sample,
+	int16_t *transmit_sample, struct phase2_probe_turnaround_event *event)
+{
+	if (!initial->concurrent_receive_enabled ||
+	    initial->concurrent_receive.phase == V34_PHASE2_PROBE_ACQUISITION_COMPLETE)
+		return phase2_probe_turnaround_sample(turnaround, &initial->control,
+			&initial->ranging.info0_exchange.transport, received_sample,
+			transmit_sample, event);
+
+	struct v34_phase2_initial_probe next = *initial;
+	struct phase2_probe_turnaround next_turnaround = *turnaround;
+	struct phase2_info0_exchange *transport = &next.ranging.info0_exchange.transport;
+	struct phase2_probe_turnaround_event emitted;
+	struct v34_phase2_probe_acquisition_event concurrent;
+	int16_t generated;
+
+	if (v34_phase2_initial_probe_sample_concurrent_owned(
+		    &next, received_sample, &concurrent) != PHASE2_INITIAL_PROBE_OK ||
+	    phase2_probe_turnaround_sample_owned(&next_turnaround, transport,
+		    received_sample, &generated, &emitted) != PHASE2_PROBE_TURNAROUND_OK ||
+	    !v34_phase2_initial_probe_is_valid(&next) ||
+	    !phase2_probe_turnaround_is_valid(&next_turnaround, &next.control, transport))
+		return PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT;
+	*initial = next;
+	*turnaround = next_turnaround;
+	*transmit_sample = generated;
+	*event = emitted;
+	return PHASE2_PROBE_TURNAROUND_OK;
+}
+
 enum phase2_initial_probe_result v34_phase2_initial_probe_sample(
 	struct v34_phase2_initial_probe *probe,
 	int16_t received_sample, int16_t *transmit_sample,

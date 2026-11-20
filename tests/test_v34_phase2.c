@@ -582,7 +582,7 @@ static bool check_retrain_timeline(bool late_alias)
 			answerer_rtd = answerer_event.round_trip_delay_samples;
 			answerer_concurrent_receive_armed =
 				pair.answerer.concurrent_probe_receive &&
-				pair.answerer.state.initial_probe
+				pair.answerer.state.probe.initial
 					.concurrent_receive_enabled;
 		}
 		if (pair.caller.stage == V34_PHASE2_RANGING &&
@@ -682,7 +682,7 @@ static bool check_concurrent_trial(bool retraining)
 			measured_round_trip_delay =
 				answerer_event.round_trip_delay_samples;
 			armed = pair.answerer.concurrent_probe_receive &&
-				pair.answerer.state.initial_probe
+				pair.answerer.state.probe.initial
 					.concurrent_receive_enabled;
 			break;
 		}
@@ -708,7 +708,7 @@ static bool check_concurrent_trial(bool retraining)
 		}
 	}
 	CHECK(disabled == !retraining &&
-	      empty_trial.state.initial_probe.concurrent_receive_enabled ==
+	      empty_trial.state.probe.initial.concurrent_receive_enabled ==
 		      retraining &&
 	      !empty_trial.remote_probe_stored &&
 	      v34_phase2_is_valid(&empty_trial) &&
@@ -728,7 +728,7 @@ static bool check_concurrent_trial(bool retraining)
 			      &peer_probe, false, &peer_transmit,
 			      &peer_event) == V34_PHASE2_PROBE_SEQUENCE_OK &&
 		      v34_phase2_initial_probe_sample_concurrent(
-			      &pair.answerer.state.initial_probe,
+			      &pair.answerer.state.probe.initial,
 			      peer_transmit, &receive_event) ==
 			      PHASE2_INITIAL_PROBE_OK,
 		      "overlapping probe stopped at %zu", index);
@@ -736,13 +736,13 @@ static bool check_concurrent_trial(bool retraining)
 		 * the local probe after its echo-safe capture has expired. */
 		if (!retraining)
 			CHECK(v34_phase2_initial_probe_sample_concurrent(
-				      &empty_trial.state.initial_probe,
+				      &empty_trial.state.probe.initial,
 				      peer_transmit, &receive_event) ==
 				      PHASE2_INITIAL_PROBE_OK &&
-			      !empty_trial.state.initial_probe.concurrent_receive_enabled &&
+			      !empty_trial.state.probe.initial.concurrent_receive_enabled &&
 			      !empty_trial.remote_probe_stored,
 			      "expired initial trial adopted delayed echo at %zu", index);
-		if (pair.answerer.state.initial_probe.concurrent_receive.phase ==
+		if (pair.answerer.state.probe.initial.concurrent_receive.phase ==
 		    V34_PHASE2_PROBE_ACQUISITION_COMPLETE) {
 			received = true;
 			break;
@@ -868,7 +868,7 @@ static bool check_retrain_probe_boundary(bool delayed_probe)
 		}
 		if (event.kind == V34_PHASE2_EVENT_INITIAL_PROBE_STARTED) {
 			const struct v34_phase2_initial_probe *initial =
-				&caller.state.initial_probe;
+				&caller.state.probe.initial;
 
 			CHECK(event.round_trip_delay_samples ==
 				      RETRAIN_PRIOR_RTD_SAMPLES &&
@@ -1011,7 +1011,7 @@ static bool test_probe_recovery(void)
 			}
 		}
 		CHECK(started, "probe recovery did not reach L1");
-		uint16_t delay = pair.answerer.state.initial_probe.ranging.control
+		uint16_t delay = pair.answerer.state.probe.initial.ranging.control
 			.round_trip_delay_samples;
 		struct v34_info0 peer = pair.answerer.peer_info0;
 		uint32_t deadline = (160u + 600u) * 8u + delay;

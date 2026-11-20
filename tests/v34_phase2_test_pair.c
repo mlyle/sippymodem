@@ -4,19 +4,61 @@
 
 #include <g711.h>
 
-enum phase2_reciprocal_probe_result test_reciprocal_probe_init(
-	struct v34_phase2_probe *probe, const struct v34_phase2_probe_turnaround *source)
+bool test_probe_turnaround_is_valid(
+	const struct test_probe_turnaround *turnaround)
 {
-	if (probe == NULL || !v34_phase2_probe_turnaround_is_valid(source))
+	return turnaround != NULL &&
+	       v34_phase2_initial_probe_is_valid(
+		       &turnaround->initial_probe) &&
+	       phase2_probe_turnaround_is_valid(&turnaround->control,
+		       &turnaround->initial_probe.control,
+		       &turnaround->initial_probe.ranging.info0_exchange.transport);
+}
+
+enum phase2_probe_turnaround_result
+test_probe_turnaround_init(
+	struct test_probe_turnaround *turnaround,
+	const struct v34_phase2_initial_probe *completed_probe)
+{
+	struct phase2_probe_turnaround control;
+
+	if (turnaround == NULL ||
+	    !v34_phase2_initial_probe_is_valid(completed_probe) ||
+	    phase2_probe_turnaround_init(&control, &completed_probe->control,
+		    &completed_probe->ranging.info0_exchange.transport) != PHASE2_PROBE_TURNAROUND_OK)
+		return PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT;
+	*turnaround = (struct test_probe_turnaround){ .initial_probe = *completed_probe, .control = control };
+	return PHASE2_PROBE_TURNAROUND_OK;
+}
+
+enum phase2_probe_turnaround_result test_probe_turnaround_sample(
+	struct test_probe_turnaround *turnaround, int16_t received_sample,
+	int16_t *transmit_sample, struct phase2_probe_turnaround_event *event)
+{
+	if (!test_probe_turnaround_is_valid(turnaround) ||
+	    transmit_sample == NULL || event == NULL)
+		return PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT;
+	return v34_phase2_initial_probe_turnaround_sample_owned(
+		&turnaround->initial_probe, &turnaround->control, received_sample,
+		transmit_sample, event);
+}
+
+enum phase2_reciprocal_probe_result test_reciprocal_probe_init(
+	struct v34_phase2_probe *probe, const struct test_probe_turnaround *source)
+{
+	if (probe == NULL || !test_probe_turnaround_is_valid(source))
 		return PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT;
-	struct v34_phase2_probe next = { .turnaround = *source };
-	struct v34_phase2_initial_probe *initial = &next.turnaround.initial_probe;
+	struct v34_phase2_probe next = {
+		.initial = source->initial_probe,
+		.turnaround = source->control,
+	};
+	struct v34_phase2_initial_probe *initial = &next.initial;
 	const struct v34_phase2_probe_acquisition *completed = NULL;
 
 	if (initial->concurrent_receive_enabled &&
 	    initial->concurrent_receive.phase == V34_PHASE2_PROBE_ACQUISITION_COMPLETE)
 		completed = &initial->concurrent_receive;
-	if (phase2_reciprocal_probe_init(&next.reciprocal, &next.turnaround.control,
+	if (phase2_reciprocal_probe_init(&next.reciprocal, &next.turnaround,
 		    &initial->control, &initial->ranging.info0_exchange.transport,
 		    initial->ranging.control.round_trip_delay_samples, completed) !=
 	    PHASE2_RECIPROCAL_PROBE_OK)
@@ -27,10 +69,10 @@ enum phase2_reciprocal_probe_result test_reciprocal_probe_init(
 
 bool test_reciprocal_probe_is_valid(const struct v34_phase2_probe *probe)
 {
-	const struct v34_phase2_initial_probe *initial = &probe->turnaround.initial_probe;
+	const struct v34_phase2_initial_probe *initial = &probe->initial;
 
 	return phase2_reciprocal_probe_is_valid(&probe->reciprocal,
-		&probe->turnaround.control, &initial->control,
+		&probe->turnaround, &initial->control,
 		&initial->ranging.info0_exchange.transport);
 }
 
@@ -38,10 +80,10 @@ enum phase2_reciprocal_probe_result test_reciprocal_probe_sample(
 	struct v34_phase2_probe *probe, int16_t receive, int16_t *transmit,
 	struct phase2_reciprocal_probe_event *event)
 {
-	struct v34_phase2_initial_probe *initial = &probe->turnaround.initial_probe;
+	struct v34_phase2_initial_probe *initial = &probe->initial;
 
 	return phase2_reciprocal_probe_sample(&probe->reciprocal,
-		&probe->turnaround.control, &initial->control,
+		&probe->turnaround, &initial->control,
 		&initial->ranging.info0_exchange.transport, receive, transmit, event);
 }
 
@@ -49,10 +91,10 @@ enum phase2_reciprocal_probe_result test_reciprocal_probe_measure(
 	const struct v34_phase2_probe *probe,
 	struct v34_phase2_probe_receiver_measurement *measurement, int16_t *gain)
 {
-	const struct v34_phase2_initial_probe *initial = &probe->turnaround.initial_probe;
+	const struct v34_phase2_initial_probe *initial = &probe->initial;
 
 	return phase2_reciprocal_probe_measure(&probe->reciprocal,
-		&probe->turnaround.control, &initial->control,
+		&probe->turnaround, &initial->control,
 		&initial->ranging.info0_exchange.transport, measurement, gain);
 }
 
@@ -203,7 +245,7 @@ static bool endpoint_sample(
 			return false;
 		if (endpoint->continue_to_turnaround &&
 		    emitted.initial_probe.kind == expected_ready) {
-			if (v34_phase2_probe_turnaround_init(
+			if (test_probe_turnaround_init(
 				    &endpoint->turnaround,
 				    &endpoint->initial_probe) !=
 			    PHASE2_PROBE_TURNAROUND_OK)
@@ -219,7 +261,7 @@ static bool endpoint_sample(
 				PHASE2_PROBE_TURNAROUND_EVENT_PROBE_TRANSMIT_READY :
 				PHASE2_PROBE_TURNAROUND_EVENT_PROBE_RECEIVE_READY;
 
-		if (v34_phase2_probe_turnaround_sample(
+		if (test_probe_turnaround_sample(
 			    &endpoint->turnaround, received_sample, transmit_sample,
 			    &emitted.turnaround) !=
 		    PHASE2_PROBE_TURNAROUND_OK)

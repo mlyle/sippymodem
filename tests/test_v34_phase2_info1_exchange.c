@@ -167,8 +167,8 @@ static bool exchange_pair_init(
 	if (!completed_probe_pair(
 		    &initialized.channel, codec, delay_samples))
 		return false;
-	caller = &initialized.channel.caller.reciprocal_probe.turnaround.initial_probe.ranging;
-	answerer = &initialized.channel.answerer.reciprocal_probe.turnaround.initial_probe.ranging;
+	caller = &initialized.channel.caller.reciprocal_probe.initial.ranging;
+	answerer = &initialized.channel.answerer.reciprocal_probe.initial.ranging;
 	if (v34_phase2_info1_exchange_caller_init(
 		    &initialized.caller, v34_phase2_tone_nominal_amplitude(
 			    &caller->info0_exchange.transport.tone_transmitter),

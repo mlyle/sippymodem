@@ -48,10 +48,8 @@ static inline bool name(const struct type *left, const struct type *right) \
 
 PROBE_EQUAL(v34_initial_probes_equal, v34_phase2_initial_probe,
 	ranging.info0_exchange)
-PROBE_EQUAL(v34_probe_turnarounds_equal, v34_phase2_probe_turnaround,
-	initial_probe.ranging.info0_exchange)
 PROBE_EQUAL(v34_reciprocal_probes_equal, v34_phase2_probe,
-	turnaround.initial_probe.ranging.info0_exchange)
+	initial.ranging.info0_exchange)
 #undef PROBE_EQUAL
 
 #endif

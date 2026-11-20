@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-
 #include "v34_phase2_test_pair.h"
 #include "v34_phase2_state_fixture.h"
 #include "test.h"
@@ -242,7 +241,7 @@ static bool check_reciprocal_probe(
 	      observation.caller_l2_samples <
 		      (uint32_t)
 			      V34_PHASE2_PROBE_L2_ECHO_LIMIT_BASE_SAMPLES +
-		      pair.caller.reciprocal_probe.turnaround.initial_probe.ranging
+		      pair.caller.reciprocal_probe.initial.ranging
 			      .control.round_trip_delay_samples,
 	      "final Tone A did not end caller L2 within its RTD-adjusted bound");
 	CHECK(test_reciprocal_probe_measure(
@@ -306,8 +305,8 @@ static bool test_bidirectional_probe(void)
 }
 
 static bool completed_turnaround_states(
-	struct v34_phase2_probe_turnaround *caller,
-	struct v34_phase2_probe_turnaround *answerer)
+	struct test_probe_turnaround *caller,
+	struct test_probe_turnaround *answerer)
 {
 	struct test_pair pair;
 	bool caller_ready = false;
@@ -345,8 +344,8 @@ static bool test_delayed_remote_probe(void)
 	enum {
 		POST_RESTART_SILENCE_SAMPLES = 80,
 	};
-	struct v34_phase2_probe_turnaround caller_turnaround;
-	struct v34_phase2_probe_turnaround answerer_turnaround;
+	struct test_probe_turnaround caller_turnaround;
+	struct test_probe_turnaround answerer_turnaround;
 	struct v34_phase2_probe caller;
 	struct v34_phase2_probe answerer;
 	struct phase2_reciprocal_probe_event caller_event;
@@ -453,8 +452,8 @@ static bool test_completed_concurrent_probe_handoff(void)
 {
 	struct v34_phase2_probe_receiver_measurement expected;
 	struct v34_phase2_probe_receiver_measurement retained;
-	struct v34_phase2_probe_turnaround caller_turnaround;
-	struct v34_phase2_probe_turnaround answerer_turnaround;
+	struct test_probe_turnaround caller_turnaround;
+	struct test_probe_turnaround answerer_turnaround;
 	struct v34_phase2_probe answerer;
 	int16_t expected_gain;
 	int16_t retained_gain;
@@ -465,7 +464,7 @@ static bool test_completed_concurrent_probe_handoff(void)
 		      &answerer_turnaround.initial_probe.concurrent_receive),
 	      "completed concurrent-probe fixture did not initialize");
 	answerer_turnaround.initial_probe.concurrent_receive_enabled = true;
-	CHECK(v34_phase2_probe_turnaround_is_valid(&answerer_turnaround) &&
+	CHECK(test_probe_turnaround_is_valid(&answerer_turnaround) &&
 	      v34_phase2_probe_acquisition_measure(
 		      &answerer_turnaround.initial_probe.concurrent_receive,
 		      &expected, &expected_gain) == V34_PHASE2_PROBE_ACQUISITION_OK &&
@@ -485,7 +484,7 @@ static bool test_completed_concurrent_probe_handoff(void)
 	      "reciprocal handoff discarded the concurrent measurement");
 
 	struct v34_phase2_probe_acquisition incomplete;
-	const struct v34_phase2_probe_turnaround *inputs[] = {
+	const struct test_probe_turnaround *inputs[] = {
 		&caller_turnaround, &answerer_turnaround,
 	};
 	const struct v34_phase2_probe_acquisition *captures[] = {
@@ -514,8 +513,8 @@ static bool test_completed_concurrent_probe_handoff(void)
 
 static bool test_bounded_failures(void)
 {
-	struct v34_phase2_probe_turnaround caller_turnaround;
-	struct v34_phase2_probe_turnaround answerer_turnaround;
+	struct test_probe_turnaround caller_turnaround;
+	struct test_probe_turnaround answerer_turnaround;
 	struct v34_phase2_probe caller;
 	struct v34_phase2_probe answerer;
 	struct v34_phase2_probe terminal;
@@ -627,8 +626,8 @@ static bool test_late_tone_after_l2_limit(void)
 			V34_PHASE2_TONE_ACQUIRE_SAMPLES -
 			V34_PHASE2_TONE_WINDOW_SAMPLES * 2,
 	};
-	struct v34_phase2_probe_turnaround caller_turnaround;
-	struct v34_phase2_probe_turnaround answerer_turnaround;
+	struct test_probe_turnaround caller_turnaround;
+	struct test_probe_turnaround answerer_turnaround;
 	struct v34_phase2_tone_transmitter tone_a;
 	struct v34_phase2_probe caller;
 	struct phase2_reciprocal_probe_event event;
@@ -702,10 +701,10 @@ static bool test_late_tone_after_l2_limit(void)
 
 static bool test_validation(void)
 {
-	struct v34_phase2_probe_turnaround caller_turnaround;
+	struct test_probe_turnaround caller_turnaround;
 	int16_t receive_gain;
-	struct v34_phase2_probe_turnaround answerer_turnaround;
-	struct v34_phase2_probe_turnaround unready;
+	struct test_probe_turnaround answerer_turnaround;
+	struct test_probe_turnaround unready;
 	struct v34_phase2_probe probe;
 	struct v34_phase2_probe before;
 	struct v34_phase2_probe invalid;
@@ -720,10 +719,10 @@ static bool test_validation(void)
 	CHECK(completed_turnaround_states(
 		      &caller_turnaround, &answerer_turnaround),
 	      "reciprocal-probe validation fixtures did not initialize");
-	CHECK(v34_phase2_probe_turnaround_init(
+	CHECK(test_probe_turnaround_init(
 		      &unready, &caller_turnaround.initial_probe) ==
 		      PHASE2_PROBE_TURNAROUND_OK &&
-	      v34_phase2_probe_turnaround_is_valid(&unready),
+	      test_probe_turnaround_is_valid(&unready),
 	      "unready turnaround fixture is invalid");
 	memset(&probe, 0xa5, sizeof(probe));
 	before = probe;

@@ -3,7 +3,7 @@
 #ifndef V34_PHASE2_INITIAL_PROBE_H
 #define V34_PHASE2_INITIAL_PROBE_H
 
-#include "phase2_initial_probe.h"
+#include "phase2_probe_turnaround.h"
 #include "v34_phase2_ranging.h"
 
 #include <stdbool.h>
@@ -59,6 +59,15 @@ v34_phase2_initial_probe_sample_concurrent_owned(
 	struct v34_phase2_initial_probe *probe,
 	int16_t received_sample,
 	struct v34_phase2_probe_acquisition_event *event);
+
+/* The Phase 2 owner has validated both controllers and supplies distinct
+ * outputs. Advance the shared tone reversal and any live overlapping capture
+ * together, publishing neither if either child rejects the sample. */
+enum phase2_probe_turnaround_result
+v34_phase2_initial_probe_turnaround_sample_owned(
+	struct v34_phase2_initial_probe *initial,
+	struct phase2_probe_turnaround *turnaround, int16_t received_sample,
+	int16_t *transmit_sample, struct phase2_probe_turnaround_event *event);
 
 enum phase2_initial_probe_result
 v34_phase2_initial_probe_measure(
