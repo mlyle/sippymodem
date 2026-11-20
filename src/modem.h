@@ -641,8 +641,9 @@ extern bool modem_ec_probe_after_tx_recovery(struct modem *m, uint64_t grant);
 /* Only the owner of an unstarted grant may return it. Stale grants are inert. */
 extern bool modem_ec_cancel_retrain_request(struct modem *m, uint64_t grant);
 extern void modem_hdlc_receive_gap(struct modem *m, uint64_t end_sample);
-/* Consume a bounded request; the host invokes retrain outside DSP callbacks. */
-extern bool modem_ec_take_retrain_request(struct modem *m);
+/* Claim a bounded physical recovery request, returning its nonzero grant or
+ * zero when unavailable. The host invokes retrain outside DSP callbacks. */
+extern uint64_t modem_ec_take_retrain_request(struct modem *m);
 extern int modem_ec_resume_after_retrain(struct modem *m,
 	enum modem_reframe_direction direction);
 extern bool modem_ec_transmit_idle(const struct modem *m);

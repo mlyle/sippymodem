@@ -8658,7 +8658,7 @@ static bool test_lapm_acknowledgement_progress(void)
 				break;
 			}
 			CHECK(l->state == DATA && l->stalled_polls == expiry &&
-			      modem_ec_take_retrain_request(m) ==
+			      (modem_ec_take_retrain_request(m) != 0) ==
 				      (scenario != EARLY_ACK && expiry == INFORMATION_POLLS) &&
 			      !modem_ec_take_retrain_request(m),
 			      "nonadvancing enquiries did not request exactly one recovery");
@@ -8856,7 +8856,7 @@ static bool test_lapm_idle_tx_verification(void)
 			if (scenario == HEAL_RETRY) {
 				/* The reply needs 1903 samples to make its round trip.
 				 * Keep the retry guard open beyond the old 100 ms limit. */
-				pcm_tx_recovery_arm(&timing, m->count);
+				pcm_tx_recovery_arm(&timing, m->count, 0);
 				m->count += 1903;
 				CHECK(!pcm_tx_recovery_ready(&timing, m->count, 1903),
 				      "physical recovery preempted the delayed Final");
@@ -8869,8 +8869,8 @@ static bool test_lapm_idle_tx_verification(void)
 				      observation.ack_generation != generation && !observation.peer_noack,
 				      "Final did not retire idle verification");
 				if (scenario == HEAL_RETRY) {
-					pcm_tx_recovery_progress(&timing, observation.ack_generation);
-					CHECK(!timing.pending &&
+					pcm_tx_recovery_observe(&timing, &observation);
+					CHECK(timing.state == PCM_TX_RECOVERY_AVAILABLE &&
 					      !pcm_tx_recovery_ready(&timing, m->count + MODEM_RATE, 1903),
 					      "delayed Final retained a physical recovery request");
 				}
@@ -9022,7 +9022,7 @@ static bool test_lapm_post_retrain_enquiry(void)
 			while ((outgoing = m->packer.hdlc.get_tx_frame(l)) != NULL)
 				m->packer.hdlc.tx_complete(l, outgoing);
 			m->bit_timer_func(m);
-			CHECK(l->rtx_count == 3 && modem_ec_take_retrain_request(m) == !recovered &&
+			CHECK(l->rtx_count == 3 && (modem_ec_take_retrain_request(m) != 0) == !recovered &&
 			      !modem_ec_take_retrain_request(m), "post-retrain enquiry lost its remaining recovery");
 			remaining = m->bit_timer;
 			CHECK(modem_ec_resume_after_retrain(m, MODEM_REFRAME_BOTH) == 0 && l->rtx_count == 3 &&
@@ -9266,7 +9266,7 @@ static bool test_lapm_retrain_recovery_budget(void)
 				m->packer.hdlc.tx_complete(l, outgoing);
 			}
 			m->bit_timer_func(m);
-			CHECK(modem_ec_take_retrain_request(m) == (l->state == 2 && expiry == 1u) &&
+			CHECK((modem_ec_take_retrain_request(m) != 0) == (l->state == 2 && expiry == 1u) &&
 			      !modem_ec_take_retrain_request(m),
 			      "post-retrain enquiry reused earlier retry history or renewed recovery");
 			CHECK(l->state != 2 || l->stalled_polls == 0,
@@ -9731,10 +9731,9 @@ static bool test_lapm_deferred_recovery_grant(void)
 			      !observation.peer_noack, "second retry facts incorrect");
 			int timer = m->bit_timer;
 			void (*timeout)(struct modem *) = m->bit_timer_func;
-			CHECK(modem_ec_take_retrain_request(m) &&
-			      modem_ec_get_tx_recovery(m, &observation), "grant not claimed");
-			uint64_t returned = observation.grant_generation;
-			CHECK(returned && observation.recovery_active &&
+			uint64_t returned = modem_ec_take_retrain_request(m);
+			CHECK(returned && modem_ec_get_tx_recovery(m, &observation) &&
+			      observation.grant_generation == returned && observation.recovery_active &&
 			      !modem_ec_take_retrain_request(m) &&
 			      !modem_ec_cancel_retrain_request(m, 0) &&
 			      !modem_ec_cancel_retrain_request(m, stale), "stale grant changed owner");
@@ -9743,10 +9742,10 @@ static bool test_lapm_deferred_recovery_grant(void)
 			      m->bit_timer == timer && m->bit_timer_func == timeout &&
 			      l->rtx_count == 2 && l->va != l->vs,
 			      "returning unstarted grant changed supervision or data");
-			CHECK(modem_ec_take_retrain_request(m) &&
-			      modem_ec_get_tx_recovery(m, &observation), "returned grant not reusable");
-			uint64_t owned = observation.grant_generation;
-			CHECK(owned != returned && !modem_ec_cancel_retrain_request(m, returned) &&
+			uint64_t owned = modem_ec_take_retrain_request(m);
+			CHECK(owned && modem_ec_get_tx_recovery(m, &observation) &&
+			      observation.grant_generation == owned && observation.recovery_active &&
+			      owned != returned && !modem_ec_cancel_retrain_request(m, returned) &&
 			      !modem_ec_probe_after_tx_recovery(m, returned),
 			      "stale grant consumed a new owner");
 			CHECK(modem_ec_probe_after_tx_recovery(m, owned) &&

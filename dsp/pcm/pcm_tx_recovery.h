@@ -5,28 +5,54 @@
 #include "modem.h"
 #include "v90_cp.h"
 
-/* One datapump owns the timing hypothesis and each pending recovery. */
-struct pcm_tx_recovery {
-	uint64_t ack_generation, event_sample, poll_sample, deferred_grant;
-	uint64_t startup_poll_sample;
-	unsigned phase;
-	bool used, pending, applied, startup_attempted;
+enum pcm_tx_recovery_state {
+	PCM_TX_RECOVERY_AVAILABLE,
+	PCM_TX_RECOVERY_WAIT_FIRST,
+	PCM_TX_RECOVERY_FIRST_READY,
+	PCM_TX_RECOVERY_WAIT_GRANT,
+	PCM_TX_RECOVERY_SPENT,
 };
 
-static inline void pcm_tx_recovery_progress(struct pcm_tx_recovery *recovery,
-	uint64_t ack_generation)
+/* One datapump owns the timing hypothesis and each pending recovery. */
+struct pcm_tx_recovery {
+	uint64_t ack_generation, event_sample, poll_sample, grant;
+	uint64_t startup_poll_sample;
+	unsigned phase;
+	enum pcm_tx_recovery_state state;
+	bool startup_attempted;
+};
+
+static inline bool pcm_tx_recovery_owns_grant(const struct pcm_tx_recovery *recovery,
+	const struct modem_tx_recovery *observation)
 {
-	if (recovery->ack_generation != ack_generation)
-		*recovery = (struct pcm_tx_recovery){ .ack_generation = ack_generation };
+	return recovery->state == PCM_TX_RECOVERY_WAIT_GRANT &&
+		observation->recovery_active && observation->grant_generation == recovery->grant;
+}
+
+static inline void pcm_tx_recovery_observe(struct pcm_tx_recovery *recovery,
+	const struct modem_tx_recovery *observation)
+{
+	if (recovery->ack_generation == observation->ack_generation)
+		return;
+	/* A Final can retire the phase evidence without releasing an already
+	 * claimed fallback. Keep the request until LAPM releases the grant. */
+	if (pcm_tx_recovery_owns_grant(recovery, observation)) {
+		recovery->ack_generation = observation->ack_generation;
+		recovery->phase = 0;
+	} else {
+		*recovery = (struct pcm_tx_recovery){ .ack_generation = observation->ack_generation };
+	}
 }
 
 /* First allow an ordinary Final to return after the retry query. The guard
  * includes the measured round trip as well as local framing/processing slack;
  * otherwise a long path can be interrupted before its reply arrives.
  * LAPM's T401 deadline continues unchanged. */
-static inline void pcm_tx_recovery_arm(struct pcm_tx_recovery *recovery, uint64_t now)
+static inline void pcm_tx_recovery_arm(struct pcm_tx_recovery *recovery,
+	uint64_t now, uint64_t grant)
 {
-	recovery->used = recovery->pending = true;
+	recovery->state = grant ? PCM_TX_RECOVERY_WAIT_GRANT : PCM_TX_RECOVERY_WAIT_FIRST;
+	recovery->grant = grant;
 	recovery->poll_sample = now;
 }
 
@@ -40,14 +66,15 @@ static inline bool pcm_tx_recovery_waited(uint64_t now, uint64_t poll_sample,
 static inline bool pcm_tx_recovery_ready(const struct pcm_tx_recovery *recovery,
 	uint64_t now, uint16_t round_trip_delay_samples)
 {
-	return recovery->pending &&
+	return (recovery->state == PCM_TX_RECOVERY_WAIT_FIRST ||
+		recovery->state == PCM_TX_RECOVERY_WAIT_GRANT) &&
 		pcm_tx_recovery_waited(now, recovery->poll_sample, round_trip_delay_samples);
 }
 
 static inline void pcm_tx_recovery_note(struct pcm_tx_recovery *recovery,
 	uint64_t now, int shift)
 {
-	if (recovery->used)
+	if (recovery->state != PCM_TX_RECOVERY_AVAILABLE)
 		return;
 	if (now < recovery->event_sample || now - recovery->event_sample > 15u * MODEM_RATE)
 		recovery->phase = 0;
@@ -68,12 +95,18 @@ static inline bool pcm_tx_recovery_timing_valid(const struct pcm_tx_recovery *re
 		now - recovery->event_sample <= 15u * MODEM_RATE;
 }
 
-static inline bool pcm_tx_recovery_eligible(const struct pcm_tx_recovery *recovery,
+static inline bool pcm_tx_recovery_peer_poll(const struct pcm_tx_recovery *recovery,
 	uint64_t now, const struct modem_tx_recovery *observation)
 {
 	return pcm_tx_recovery_timing_valid(recovery, now, observation) &&
-		observation->first_retry && observation->peer_noack &&
+		observation->peer_noack &&
 		observation->peer_poll_sample >= recovery->event_sample;
+}
+
+static inline bool pcm_tx_recovery_eligible(const struct pcm_tx_recovery *recovery,
+	uint64_t now, const struct modem_tx_recovery *observation)
+{
+	return observation->first_retry && pcm_tx_recovery_peer_poll(recovery, now, observation);
 }
 
 static inline bool pcm_tx_recovery_take_startup_attempt(struct pcm_tx_recovery *recovery,

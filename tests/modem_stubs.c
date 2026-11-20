@@ -49,10 +49,10 @@ bool modem_ec_verify_tx(struct modem *modem)
 	return false;
 }
 
-bool modem_ec_take_retrain_request(struct modem *modem)
+uint64_t modem_ec_take_retrain_request(struct modem *modem)
 {
 	(void)modem;
-	return false;
+	return 0;
 }
 
 bool modem_ec_cancel_retrain_request(struct modem *modem, uint64_t grant)

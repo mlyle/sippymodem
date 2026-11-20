@@ -2066,7 +2066,7 @@ bool modem_ec_probe_after_tx_recovery(struct modem *m, uint64_t grant)
 	return true;
 }
 
-bool modem_ec_take_retrain_request(struct modem *m)
+uint64_t modem_ec_take_retrain_request(struct modem *m)
 {
 	struct lapm_state *l;
 	bool establishing;
@@ -2076,7 +2076,7 @@ bool modem_ec_take_retrain_request(struct modem *m)
 
 	if (m == NULL || !m->cfg.ec || m->get_bits != modem_hdlc_get_bits ||
 	    m->put_bits != modem_hdlc_put_bits)
-		return false;
+		return 0;
 	l = &m->ec.lapm;
 	passive_establishment = m->state == STATE_EC_ESTAB &&
 		l->state == LAPM_IDLE && l->passive_establishment_expired;
@@ -2098,14 +2098,14 @@ bool modem_ec_take_retrain_request(struct modem *m)
 	 * answers after several XIDs. Anchor connected recovery to resumption
 	 * so older polls cannot shortcut its budget. */
 	if (l->busy || l->peer_busy || l->stalled_retrain)
-		return false;
+		return 0;
 	if (!repeated_initial_sabme && !passive_establishment) {
 		if ((!establishing && (l->state != LAPM_DATA || xid_pending(l))) ||
 		    m->bit_timer <= 0 || m->bit_timer_func != t401_timeout ||
 		    (l->retrain_poll ? l->rtx_count - l->retrain_poll < polls :
 		     (l->rtx_count < polls &&
 		      l->stalled_polls < LAPM_INFORMATION_RETRAIN_POLLS)))
-			return false;
+			return 0;
 	}
 	/* A usable receive direction need not imply a usable transmit direction.
 	 * This also applies to unanswered XID/SABME during establishment. Try
@@ -2121,7 +2121,7 @@ bool modem_ec_take_retrain_request(struct modem *m)
 		l->initial_sabme_sample = m->count;
 		l->initial_sabme_retries = 0;
 	}
-	return true;
+	return m->recovery_sequence;
 }
 
 static int start_tx_enquiry(struct lapm_state *l)

@@ -697,6 +697,7 @@ static bool transmit_recovery_observation(struct v90_datapump *datapump,
 	struct modem_tx_recovery *observation)
 {
 	struct pcm_call *call = &datapump->call;
+	struct pcm_tx_recovery *recovery = &datapump->transmit_recovery;
 	if (datapump->role != V90_DIGITAL_MODEM ||
 	    !datapump->call_started || call->stage != PCM_CALL_DATA_PATH ||
 	    (pcm_call_uses_conventional_upstream(call) &&
@@ -706,26 +707,13 @@ static bool transmit_recovery_observation(struct v90_datapump *datapump,
 		/* A physical interruption consumes the owned allowance, including
 		 * a peer/manual retrain that preempts this deferred request. Only
 		 * an otherwise online owner may return an unstarted allowance. */
-		if (datapump->transmit_recovery.pending &&
+		if (recovery->state == PCM_TX_RECOVERY_WAIT_GRANT &&
 		    training_session_is_online(&datapump->training) && pcm_call_is_online_owned(call))
-			modem_ec_cancel_retrain_request(datapump->dp.modem,
-				datapump->transmit_recovery.deferred_grant);
-		datapump->transmit_recovery = (struct pcm_tx_recovery){0};
+			modem_ec_cancel_retrain_request(datapump->dp.modem, recovery->grant);
+		*recovery = (struct pcm_tx_recovery){0};
 		return false;
 	}
-	struct pcm_tx_recovery *recovery = &datapump->transmit_recovery;
-	if (recovery->pending && recovery->deferred_grant && observation->recovery_active &&
-	    recovery->deferred_grant == observation->grant_generation) {
-		/* Retiring a timing hypothesis is not necessarily accepted I-frame
-		 * progress. Keep the owned full fallback until the grant itself is
-		 * released; an ignored/zero-progress Final must not swallow it. */
-		if (recovery->ack_generation != observation->ack_generation) {
-			recovery->ack_generation = observation->ack_generation;
-			recovery->phase = 0;
-		}
-	} else {
-		pcm_tx_recovery_progress(recovery, observation->ack_generation);
-	}
+	pcm_tx_recovery_observe(recovery, observation);
 	return true;
 }
 
@@ -745,16 +733,15 @@ static void apply_transmit_recovery(struct v90_datapump *datapump)
 {
 	struct dp *dp = &datapump->dp;
 	struct pcm_tx_recovery *recovery = &datapump->transmit_recovery;
-	if (!recovery->pending || recovery->deferred_grant)
+	if (recovery->state != PCM_TX_RECOVERY_WAIT_FIRST)
 		return;
 	struct modem_tx_recovery observation;
 	if (!transmit_recovery_observation(datapump, &observation) ||
 	    !pcm_tx_recovery_ready(recovery, dp->modem->count,
 		    datapump->call.round_trip_delay_samples))
 		return;
-	recovery->pending = false;
-	if (pcm_tx_recovery_eligible(recovery, dp->modem->count, &observation))
-		recovery->applied = true;
+	recovery->state = pcm_tx_recovery_eligible(recovery, dp->modem->count, &observation)
+		? PCM_TX_RECOVERY_FIRST_READY : PCM_TX_RECOVERY_SPENT;
 }
 
 static bool start_transmit_rate_recovery(struct v90_datapump *datapump)
@@ -766,6 +753,15 @@ static bool start_transmit_rate_recovery(struct v90_datapump *datapump)
 	return v90_datapump_start_rate_renegotiation(&datapump->dp, false);
 }
 
+static bool try_transmit_rate_recovery(struct v90_datapump *datapump, uint64_t grant)
+{
+	if (!start_transmit_rate_recovery(datapump))
+		return false;
+	datapump->transmit_recovery.state = PCM_TX_RECOVERY_SPENT;
+	modem_ec_probe_after_tx_recovery(datapump->dp.modem, grant);
+	return true;
+}
+
 static void service_link_v90(struct dp *dp)
 {
 	struct v90_datapump *datapump = v90_from_dp(dp);
@@ -773,65 +769,57 @@ static void service_link_v90(struct dp *dp)
 	if (datapump == NULL || !transmit_recovery_observation(datapump, &observation))
 		return;
 	struct pcm_tx_recovery *recovery = &datapump->transmit_recovery;
-	if (recovery->deferred_grant) {
-		uint64_t grant = recovery->deferred_grant;
-		if (!observation.recovery_active || observation.grant_generation != grant) {
-			recovery->pending = false;
-			recovery->deferred_grant = 0;
+	uint64_t now = dp->modem->count;
+	uint16_t round_trip = datapump->call.round_trip_delay_samples;
+	switch (recovery->state) {
+	case PCM_TX_RECOVERY_WAIT_GRANT: {
+		bool owned = pcm_tx_recovery_owns_grant(recovery, &observation);
+		if (owned && !pcm_tx_recovery_ready(recovery, now, round_trip))
 			return;
-		}
-		if (!pcm_tx_recovery_ready(recovery, dp->modem->count,
-			    datapump->call.round_trip_delay_samples))
+		uint64_t grant = recovery->grant;
+		recovery->state = PCM_TX_RECOVERY_SPENT;
+		recovery->grant = 0;
+		if (!owned)
 			return;
-		recovery->pending = false;
-		recovery->deferred_grant = 0;
 		if (observation.flow_controlled) {
 			modem_ec_cancel_retrain_request(dp->modem, grant);
 			return;
 		}
 		/* The grant already belongs to this owner. Failed or retired phase
 		 * evidence keeps the normal full repair; it must not swallow it. */
-		if (pcm_tx_recovery_second_eligible(recovery, dp->modem->count, &observation) &&
-		    start_transmit_rate_recovery(datapump)) {
-			modem_ec_probe_after_tx_recovery(dp->modem, grant);
-		} else {
+		if (!pcm_tx_recovery_second_eligible(recovery, now, &observation) ||
+		    !try_transmit_rate_recovery(datapump, grant))
 			retrain_v90(dp);
-		}
-	} else if (recovery->applied) {
-		recovery->applied = false;
-		if (start_transmit_rate_recovery(datapump))
-			modem_ec_probe_after_tx_recovery(dp->modem, 0);
-	} else if (!recovery->used) {
-		/* Repeated peer polls can keep T403 alive while our empty transmit
-		 * window has no T401. Verify that direction before any physical
-		 * repair; a received Final retires the timing hypothesis normally. */
-		if (pcm_tx_recovery_timing_valid(recovery, dp->modem->count, &observation) &&
-		    observation.peer_noack && observation.peer_poll_sample >= recovery->event_sample &&
-		    modem_ec_verify_tx(dp->modem))
-			return;
-		if (pcm_tx_recovery_eligible(recovery, dp->modem->count, &observation)) {
-			pcm_tx_recovery_arm(recovery, dp->modem->count);
-		} else if (pcm_upstream_receiver(datapump) &&
-			   pcm_tx_recovery_take_startup_attempt(recovery, dp->modem->count,
-				   datapump->call.round_trip_delay_samples, &observation)) {
-			/* Incoming idle flags can stay sound after a downstream frame
-			 * slip. Grant the first I frame one short exchange when neither
-			 * its acknowledgment nor a status Final reaches LAPM. */
-			if (start_transmit_rate_recovery(datapump)) {
-				recovery->used = true;
-				modem_ec_probe_after_tx_recovery(dp->modem, 0);
-			}
-		} else if (pcm_tx_recovery_second_eligible(recovery, dp->modem->count, &observation) &&
-			   modem_ec_take_retrain_request(dp->modem)) {
-			/* Claim the already due allowance before deferring it. The host's
-			 * subsequent check cannot start a second physical owner. */
-			if (modem_ec_get_tx_recovery(dp->modem, &observation)) {
-				recovery->deferred_grant = observation.grant_generation;
-				pcm_tx_recovery_arm(recovery, dp->modem->count);
-			} else {
-				retrain_v90(dp);
-			}
-		}
+		return;
+	}
+	case PCM_TX_RECOVERY_FIRST_READY:
+		recovery->state = PCM_TX_RECOVERY_SPENT;
+		try_transmit_rate_recovery(datapump, 0);
+		return;
+	case PCM_TX_RECOVERY_WAIT_FIRST:
+	case PCM_TX_RECOVERY_SPENT:
+		return;
+	case PCM_TX_RECOVERY_AVAILABLE:
+		break;
+	}
+
+	/* Repeated peer polls can keep T403 alive while our empty transmit
+	 * window has no T401. Verify that direction before any physical repair. */
+	if (pcm_tx_recovery_peer_poll(recovery, now, &observation) &&
+	    modem_ec_verify_tx(dp->modem))
+		return;
+	if (pcm_tx_recovery_eligible(recovery, now, &observation)) {
+		pcm_tx_recovery_arm(recovery, now, 0);
+	} else if (pcm_upstream_receiver(datapump) &&
+		   pcm_tx_recovery_take_startup_attempt(recovery, now, round_trip, &observation)) {
+		/* Incoming idle flags can stay sound after a downstream frame slip.
+		 * Give the first I frame one short exchange if no reply reaches LAPM. */
+		try_transmit_rate_recovery(datapump, 0);
+	} else if (pcm_tx_recovery_second_eligible(recovery, now, &observation)) {
+		/* Claim the due allowance so the host cannot start a second repair. */
+		uint64_t grant = modem_ec_take_retrain_request(dp->modem);
+		if (grant)
+			pcm_tx_recovery_arm(recovery, now, grant);
 	}
 }
 

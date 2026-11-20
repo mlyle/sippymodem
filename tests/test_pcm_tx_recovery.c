@@ -12,16 +12,41 @@ static void test_reply_guard(void)
 		uint64_t start = 16000;
 		uint64_t end = start + MODEM_RATE / 10 + delays[i];
 
-		pcm_tx_recovery_arm(&recovery, start);
+		pcm_tx_recovery_arm(&recovery, start, 0);
 		assert(!pcm_tx_recovery_ready(&recovery, start - 1, delays[i]));
 		assert(!pcm_tx_recovery_ready(&recovery, end - 1, delays[i]));
 		assert(pcm_tx_recovery_ready(&recovery, end, delays[i]));
 		/* A Final arriving inside the round-trip guard retires the timing
 		 * hypothesis. It must not start a deferred physical exchange. */
-		pcm_tx_recovery_progress(&recovery, 1);
-		assert(!recovery.pending && !recovery.used && !recovery.phase);
+		struct modem_tx_recovery final = { .ack_generation = 1 };
+		pcm_tx_recovery_observe(&recovery, &final);
+		assert(recovery.state == PCM_TX_RECOVERY_AVAILABLE && !recovery.phase);
 		assert(!pcm_tx_recovery_ready(&recovery, end, delays[i]));
 	}
+}
+
+static void test_deferred_grant(void)
+{
+	const uint64_t poll = 16000;
+	const uint64_t grant = 123;
+	struct pcm_tx_recovery recovery = { .phase = 1 };
+	struct modem_tx_recovery evidence = {
+		.ack_generation = 1, .grant_generation = grant,
+		.recovery_active = true, .second_information_retry = true,
+	};
+	pcm_tx_recovery_arm(&recovery, poll, grant);
+	pcm_tx_recovery_observe(&recovery, &evidence);
+	assert(pcm_tx_recovery_owns_grant(&recovery, &evidence));
+	assert(recovery.ack_generation == 1 && recovery.poll_sample == poll && !recovery.phase);
+	assert(pcm_tx_recovery_ready(&recovery, poll + MODEM_RATE / 10, 0));
+	assert(!pcm_tx_recovery_second_eligible(&recovery, poll + MODEM_RATE / 10, &evidence));
+
+	++evidence.ack_generation;
+	++evidence.grant_generation;
+	assert(!pcm_tx_recovery_owns_grant(&recovery, &evidence));
+	pcm_tx_recovery_observe(&recovery, &evidence);
+	assert(recovery.state == PCM_TX_RECOVERY_AVAILABLE && !recovery.grant);
+	assert(!pcm_tx_recovery_ready(&recovery, poll + MODEM_RATE / 10, 0));
 }
 
 static void test_startup_guard(void)
@@ -36,7 +61,7 @@ static void test_startup_guard(void)
 	};
 
 	assert(!pcm_tx_recovery_take_startup_attempt(&recovery, poll, round_trip, &evidence));
-	assert(recovery.startup_poll_sample == poll && !recovery.used);
+	assert(recovery.startup_poll_sample == poll && recovery.state == PCM_TX_RECOVERY_AVAILABLE);
 	assert(!pcm_tx_recovery_take_startup_attempt(&recovery, deadline, round_trip, &evidence));
 	evidence.receive_sample = deadline - 1;
 	assert(!pcm_tx_recovery_take_startup_attempt(&recovery, deadline - 1, round_trip, &evidence));
@@ -53,18 +78,20 @@ static void test_startup_guard(void)
 	struct pcm_tx_recovery final = recovery;
 	evidence.first_startup_retry = false;
 	assert(!pcm_tx_recovery_take_startup_attempt(&final, deadline, round_trip, &evidence));
-	assert(!final.startup_poll_sample && !final.startup_attempted && !final.used);
+	assert(!final.startup_poll_sample && !final.startup_attempted &&
+	       final.state == PCM_TX_RECOVERY_AVAILABLE);
 
 	evidence.first_startup_retry = true;
 	assert(pcm_tx_recovery_take_startup_attempt(&recovery, deadline, round_trip, &evidence));
 	assert(!pcm_tx_recovery_take_startup_attempt(&recovery, deadline + 80, round_trip, &evidence));
-	assert(!recovery.used);
+	assert(recovery.state == PCM_TX_RECOVERY_AVAILABLE);
 
 	/* A refused startup exchange leaves the ordinary second-retry path. */
 	evidence.first_startup_retry = false;
 	evidence.second_information_retry = true;
 	assert(pcm_tx_recovery_second_eligible(&recovery, deadline + 80, &evidence));
-	pcm_tx_recovery_progress(&recovery, 1);
+	evidence.ack_generation = 1;
+	pcm_tx_recovery_observe(&recovery, &evidence);
 	assert(!recovery.startup_attempted && !recovery.startup_poll_sample && !recovery.phase);
 }
 
@@ -76,6 +103,7 @@ int main(void)
 		.receive_sample = 16000, .peer_poll_sample = 16000,
 	};
 	test_reply_guard();
+	test_deferred_grant();
 	test_startup_guard();
 	for (int shift = -12; shift <= 12; ++shift) {
 		recovery = (struct pcm_tx_recovery){0};
@@ -105,19 +133,21 @@ int main(void)
 	assert(pcm_tx_recovery_second_eligible(&recovery, 16000, &second));
 	second.flow_controlled = true;
 	assert(!pcm_tx_recovery_second_eligible(&recovery, 16000, &second));
-	pcm_tx_recovery_arm(&recovery, 16000);
-	assert(recovery.used && recovery.pending && !pcm_tx_recovery_ready(&recovery, 15999, 0));
+	pcm_tx_recovery_arm(&recovery, 16000, 0);
+	assert(recovery.state == PCM_TX_RECOVERY_WAIT_FIRST);
+	assert(!pcm_tx_recovery_ready(&recovery, 15999, 0));
 	assert(!pcm_tx_recovery_ready(&recovery, 16000 + MODEM_RATE / 10 - 1, 0));
 	assert(pcm_tx_recovery_ready(&recovery, 16000 + MODEM_RATE / 10, 0));
-	recovery.applied = true;
+	recovery.state = PCM_TX_RECOVERY_FIRST_READY;
 	pcm_tx_recovery_note(&recovery, 16000, 1);
 	assert(recovery.phase == 4);
-	pcm_tx_recovery_progress(&recovery, 128);
-	assert(recovery.ack_generation == 128 && !recovery.phase && !recovery.used &&
-	       !recovery.pending && !recovery.applied && !pcm_tx_recovery_ready(&recovery, 20000, 0));
+	second.ack_generation = 128;
+	pcm_tx_recovery_observe(&recovery, &second);
+	assert(recovery.ack_generation == 128 && !recovery.phase &&
+	       recovery.state == PCM_TX_RECOVERY_AVAILABLE && !pcm_tx_recovery_ready(&recovery, 20000, 0));
 	assert(!pcm_tx_recovery_eligible(&recovery, 16000, &evidence));
 	pcm_tx_recovery_note(&recovery, 16000, 1);
-	pcm_tx_recovery_progress(&recovery, 128);
+	pcm_tx_recovery_observe(&recovery, &second);
 	assert(recovery.phase == 1);
 	assert(!pcm_tx_recovery_eligible(&recovery, 16000, &evidence));
 	evidence.ack_generation = 128;
