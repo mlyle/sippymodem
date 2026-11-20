@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <pcm_downstream_rx.h>
+#include <pcm_downstream_tx.h>
 
 #include <v34_framing.h>
 #include <v90_pcm_frame_encoder.h>
@@ -1339,6 +1340,58 @@ static bool test_contracts(void)
 	return true;
 }
 
+static bool test_v92_status_realign(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		struct v90_pcm_mapping mapping;
+		struct pcm_downstream_tx tx;
+		struct pcm_downstream_rx rx;
+		struct v92_suvd_parameters status = { 0 };
+		struct pcm_downstream_event event;
+		struct pcm_downstream_symbol symbol;
+		uint8_t training[PCM_DOWNSTREAM_STATUS_HISTORY];
+		uint8_t control[PCM_DOWNSTREAM_STATUS_HISTORY * 2];
+		CHECK(make_mapping(&mapping, law, 2u, 2u) &&
+		      pcm_downstream_tx_init(&tx, PCM_PROTOCOL_V92, &mapping) == PCM_DOWNSTREAM_TX_OK &&
+		      pcm_downstream_rx_init(&rx, PCM_PROTOCOL_V92, &mapping,
+			      V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK,
+		      "status realignment fixture did not initialize");
+		const size_t warmup = V90_PHASE4_TRN2D_MINIMUM_SYMBOLS + sizeof(training);
+		for (size_t i = 0; i < warmup; ++i) {
+			CHECK(pcm_downstream_tx_next(&tx, &symbol) == PCM_DOWNSTREAM_TX_OK,
+			      "TRN2d source stopped");
+			pcm_downstream_rx_receive(&rx, symbol.pcm.octet, &event);
+			training[i % sizeof(training)] = symbol.pcm.octet;
+		}
+		struct pcm_downstream_rx before = rx;
+		CHECK(!pcm_downstream_rx_realign_status(&rx, training) &&
+		      memcmp(&rx, &before, sizeof(rx)) == 0, "TRN2d qualified a false phase");
+		CHECK(pcm_downstream_tx_start_suvd(&tx, &status) == PCM_DOWNSTREAM_TX_OK,
+		      "SUVd source did not start");
+		for (size_t i = 0; i < sizeof(control); ++i) {
+			CHECK(pcm_downstream_tx_next(&tx, &symbol) == PCM_DOWNSTREAM_TX_OK,
+			      "SUVd source stopped");
+			control[i] = symbol.pcm.octet;
+		}
+		for (size_t skip = 0; skip < V90_CP_FRAME_INTERVALS; ++skip) {
+			rx = before;
+			bool saw_status = false;
+			for (size_t i = skip; i < skip + PCM_DOWNSTREAM_STATUS_HISTORY; ++i)
+				saw_status |= pcm_downstream_rx_receive(&rx, control[i], &event) ==
+					PCM_DOWNSTREAM_RX_SUVD;
+			CHECK(saw_status == (skip == 0), "fixture produced unintended SUVd at phase %zu", skip);
+			CHECK(pcm_downstream_rx_realign_status(&rx, control + skip) == (skip != 0),
+			      "wrong realignment decision at phase %zu", skip);
+			saw_status = false;
+			for (size_t i = skip + PCM_DOWNSTREAM_STATUS_HISTORY; i < sizeof(control); ++i)
+				saw_status |= pcm_downstream_rx_receive(&rx, control[i], &event) ==
+					PCM_DOWNSTREAM_RX_SUVD;
+			CHECK(saw_status, "subsequent aligned record did not qualify at phase %zu", skip);
+		}
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -1353,6 +1406,7 @@ int main(void)
 		{ "V.92 buffered-prefix Ed", test_v92_buffered_prefix_ed },
 		{ "V.92 control width matrix", test_v92_control_widths },
 		{ "V.92 control recovery", test_v92_control_recovery },
+		{ "V.92 initial status realignment", test_v92_status_realign },
 		{ "contracts", test_contracts },
 	};
 	unsigned int failures = 0;

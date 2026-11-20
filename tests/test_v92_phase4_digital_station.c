@@ -2043,6 +2043,61 @@ static bool test_analog_early_control(void)
 	return true;
 }
 
+static bool test_status_phase_returns(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		struct v92_cpt_parameters cpt = cpt_parameters(law);
+		struct v92_cpu_parameters cpu = cpu_parameters(law);
+		const struct v92_suvu_parameters suvu = { 0 };
+		const struct v92_suvd_parameters suvd = { 0 };
+		struct v90_pcm_mapping mapping;
+		struct v92_pcm_phase4_trn2u handoff;
+		struct pcm_downstream_rx downstream;
+		struct pcm_downstream_tx tx;
+		struct v92_phase4_analog_station station;
+		struct pcm_downstream_symbol symbol;
+
+		CHECK(v90_pcm_mapping_init_from_v92_cpt(&mapping, &cpt, law) == V90_PCM_MAPPING_OK &&
+		      v92_pcm_phase4_trn2u_init(&handoff, V92_CONSTELLATION_4_POINT,
+			      1u, TEST_LU) == V92_PCM_PHASE4_TRN2U_OK &&
+		      pcm_downstream_rx_init(&downstream, PCM_PROTOCOL_V92, &mapping,
+			      V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK &&
+		      v92_phase4_analog_station_init(&station, &handoff, &downstream,
+			      &suvu, &cpu, NULL, NULL) == V92_PHASE4_ANALOG_STATION_OK &&
+		      pcm_downstream_tx_init(&tx, PCM_PROTOCOL_V92, &mapping) == PCM_DOWNSTREAM_TX_OK,
+		      "status phase fixture did not initialize");
+		for (size_t i = 0; i < V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS; ++i) {
+			CHECK(pcm_downstream_tx_next(&tx, &symbol) == PCM_DOWNSTREAM_TX_OK &&
+			      v92_phase4_analog_station_receive(&station, symbol.pcm.octet) ==
+				      V92_PHASE4_ANALOG_STATION_OK, "fixture TRN2d stopped");
+		}
+		CHECK(pcm_downstream_tx_start_suvd(&tx, &suvd) == PCM_DOWNSTREAM_TX_OK &&
+		      pcm_downstream_tx_next(&tx, &symbol) == PCM_DOWNSTREAM_TX_OK,
+		      "fixture could not omit the first status symbol");
+
+		bool restored = false;
+		for (size_t i = 0; i < 960 && !station.suvd_received; ++i) {
+			CHECK(pcm_downstream_tx_next(&tx, &symbol) == PCM_DOWNSTREAM_TX_OK,
+			      "fixture status stopped");
+			enum v92_phase4_analog_station_result result =
+				v92_phase4_analog_station_receive(&station, symbol.pcm.octet);
+			CHECK(result == V92_PHASE4_ANALOG_STATION_OK ||
+			      result == V92_PHASE4_ANALOG_STATION_EVENT, "fixture status failed at %zu", i);
+			if (station.status_phase_moves == 1 && !restored) {
+				CHECK(!station.suvd_received && station.status_history_count == 0,
+				      "first move published status or retained its old evidence");
+				/* Restore the skipped interval just after the first move. */
+				restored = true;
+				CHECK(v92_phase4_analog_station_receive(&station, symbol.pcm.octet) ==
+				      V92_PHASE4_ANALOG_STATION_OK, "repeated symbol failed");
+			}
+		}
+		CHECK(restored && station.status_phase_moves == 2 && station.suvd_received,
+		      "the second phase did not acquire on law %u", (unsigned)law);
+	}
+	return true;
+}
+
 static bool test_compact_boundary(void)
 {
 	struct v92_pcm_phase3_cpt_line_handoff handoff;
@@ -2911,6 +2966,7 @@ int main(void)
 		  test_paired_station_matrix },
 		{ "selected CPd filter handoff and payload", test_selected_filters },
 		{ "analogue early control handoff", test_analog_early_control },
+		{ "analogue status returns to the original frame phase", test_status_phase_returns },
 		{ "analogue retry at complete peer records", test_analog_retry_boundary },
 		{ "compact station boundary", test_compact_boundary },
 		{ "CPd transmitter boundaries", test_cpd_transmitter_boundaries },

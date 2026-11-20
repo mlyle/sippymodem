@@ -528,6 +528,91 @@ enum pcm_downstream_rx_result pcm_downstream_rx_receive(
 	return result;
 }
 
+static bool status_phase(struct v90_pcm_stream_rx *stream,
+	struct v92_control_rx *control, const uint8_t *history, size_t first)
+{
+	const uint8_t frame_bits = stream->decoder.mapping.frame_bits;
+	const size_t spacing = v92_suvd_frame_bits(frame_bits) /
+		frame_bits * V90_CP_FRAME_INTERVALS;
+	size_t previous = 0;
+	bool pause = false, qualified = false;
+	for (size_t i = first; i < PCM_DOWNSTREAM_STATUS_HISTORY; ++i) {
+		struct v90_pcm_stream_frame frame;
+		enum v90_pcm_stream_rx_result result =
+			v90_pcm_stream_rx_receive_octet_owned(stream, history[i], &frame);
+		if (result == V90_PCM_STREAM_RX_BUFFERING)
+			continue;
+		if (result != V90_PCM_STREAM_RX_FRAME_READY)
+			return false;
+		/* Allow the shaping, differential and GPC histories to settle. */
+		if (stream->received_frames <= 4)
+			continue;
+		struct v92_control_event event;
+		if (v92_control_rx_receive_bits_owned(control, frame.bits, frame.bit_count,
+			    &event) != V92_CONTROL_RX_OK)
+			return false;
+		if (event.type != V92_CONTROL_EVENT_SUVD || !control->record_boundary ||
+		    event.record.suvd.parameters.acknowledges_cpu)
+			continue;
+		bool reported_pause = event.record.suvd.parameters.request_silence;
+		if (previous && i - previous == spacing && pause == reported_pause)
+			qualified = true;
+		previous = i;
+		pause = reported_pause;
+	}
+	return qualified;
+}
+
+bool pcm_downstream_rx_realign_status(struct pcm_downstream_rx *receiver,
+	const uint8_t history[PCM_DOWNSTREAM_STATUS_HISTORY])
+{
+	if (!receiver || !history || receiver->stage != PCM_DOWNSTREAM_RX_V92_CONTROL ||
+	    receiver->ed_requested || receiver->stream.decoder.mapping.kind != V90_CP_TRAINING ||
+	    receiver->stream.received_symbols < V90_PHASE4_TRN2D_MINIMUM_SYMBOLS +
+		    V90_CP_FRAME_INTERVALS)
+		return false;
+
+	const struct v90_pcm_frame_decoder *decoder = &receiver->stream.decoder;
+	struct v90_pcm_stream_rx initial;
+	struct v92_control_rx initial_control;
+	if (v90_pcm_stream_rx_init(&initial, &decoder->mapping, decoder->decision_plane) !=
+	    V90_PCM_STREAM_RX_OK ||
+	    v92_control_rx_init_downstream(&initial_control, decoder->mapping.frame_bits) != V92_CONTROL_RX_OK)
+		return false;
+	struct v90_pcm_stream_rx best;
+	struct v92_control_rx parser;
+	size_t selected = V90_CP_FRAME_INTERVALS;
+	for (size_t phase = 0; phase < V90_CP_FRAME_INTERVALS; ++phase) {
+		struct v90_pcm_stream_rx stream = initial;
+		struct v92_control_rx control = initial_control;
+		if (!status_phase(&stream, &control, history, phase))
+			continue;
+		if (selected != V90_CP_FRAME_INTERVALS)
+			return false;
+		selected = phase;
+		best = stream;
+		parser = control;
+	}
+	if (selected == V90_CP_FRAME_INTERVALS)
+		return false;
+	uint64_t symbols = receiver->stream.received_symbols;
+	size_t shift = (symbols - PCM_DOWNSTREAM_STATUS_HISTORY + selected) %
+		V90_CP_FRAME_INTERVALS;
+	if (!shift)
+		return false;
+
+	/* Account for the discarded partial word in the old phase. Keep the
+	 * new pending symbols and decoder histories from the end of the window. */
+	best.received_symbols = symbols - shift;
+	best.received_frames = best.received_symbols / V90_CP_FRAME_INTERVALS;
+	best.received_bits = best.received_frames * best.decoder.mapping.frame_bits;
+	if (!v90_pcm_stream_rx_is_valid(&best) || !v92_control_rx_is_valid(&parser))
+		return false;
+	receiver->stream = best;
+	receiver->control.v92 = parser;
+	return true;
+}
+
 const char *pcm_downstream_rx_result_name(
 	enum pcm_downstream_rx_result result)
 {

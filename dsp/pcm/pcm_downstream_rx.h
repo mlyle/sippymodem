@@ -71,6 +71,8 @@ union pcm_downstream_control_rx {
 	struct v92_control_rx v92;
 };
 
+enum { PCM_DOWNSTREAM_STATUS_HISTORY = 192 };
+
 /* Own the continuous digital-to-analogue Phase 4 decoding epoch. The selected
  * protocol routes the shared TRN2d suffix into MP or V.92 control without resetting
  * the PCM decoder, GPC descrambler, differential decoder, or spectral-shaping
@@ -134,6 +136,12 @@ bool pcm_downstream_rx_has_failed(
 enum pcm_downstream_rx_result pcm_downstream_rx_receive(
 	struct pcm_downstream_rx *receiver, uint8_t network_octet,
 	struct pcm_downstream_event *event);
+
+/* History ends at the most recently received symbol. Adopt a different
+ * frame phase only after two consecutive valid unacknowledging SUVd records
+ * agree and the phase is unique. The caller still owns record acceptance. */
+bool pcm_downstream_rx_realign_status(struct pcm_downstream_rx *receiver,
+	const uint8_t history[PCM_DOWNSTREAM_STATUS_HISTORY]);
 
 const char *pcm_downstream_rx_result_name(
 	enum pcm_downstream_rx_result result);

@@ -3,10 +3,13 @@
 #include "v92_phase4_analog_station.h"
 
 #include "memory_region.h"
+#include "ring_history.h"
 #include "v92_pcm_frame.h"
 
 #include <stddef.h>
 #include <string.h>
+
+enum { MAX_STATUS_PHASE_MOVES = 2 };
 
 /* Complete mappings enter only through v92_pcm_mapping_init() and remain
  * immutable except for the acknowledgement bit. Keep the per-symbol owner
@@ -51,6 +54,9 @@ bool v92_phase4_analog_station_is_valid(
 	const struct v92_phase4_analog_station *station)
 {
 	if (station == NULL || !pcm_downstream_rx_is_valid(&station->receive) ||
+	    !ring_history_state_is_valid(station->status_history_write,
+		    station->status_history_count, PCM_DOWNSTREAM_STATUS_HISTORY) ||
+	    station->status_phase_moves > MAX_STATUS_PHASE_MOVES ||
 	    !v92_cleardown_is_valid(&station->cleardown))
 		return false;
 	if (station->cleardown.active)
@@ -284,6 +290,39 @@ static bool arm_ed_confirmation(
 		       PCM_DOWNSTREAM_RX_OK;
 }
 
+static void observe_status_phase(struct v92_phase4_analog_station *station, uint8_t octet)
+{
+	enum { scan_period = 120 };
+	uint64_t symbols = station->receive.stream.received_symbols;
+	const unsigned first_scan = V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS + scan_period;
+	if (symbols <= first_scan - PCM_DOWNSTREAM_STATUS_HISTORY ||
+	    station->suvd_received || station->cpd_received ||
+	    station->status_phase_moves >= MAX_STATUS_PHASE_MOVES ||
+	    station->transmit.control.renegotiation || station->cleardown.active ||
+	    station->receive.stage != PCM_DOWNSTREAM_RX_V92_CONTROL)
+		return;
+
+	size_t write = station->status_history_write;
+	size_t count = station->status_history_count;
+	station->status_history[write] = octet;
+	ring_history_advance(&write, &count, PCM_DOWNSTREAM_STATUS_HISTORY);
+	station->status_history_write = (uint16_t)write;
+	station->status_history_count = (uint16_t)count;
+	if (count != PCM_DOWNSTREAM_STATUS_HISTORY || symbols % scan_period)
+		return;
+	uint8_t history[PCM_DOWNSTREAM_STATUS_HISTORY];
+	size_t tail = sizeof(history) - write;
+	memcpy(history, station->status_history + write, tail);
+	memcpy(history + tail, station->status_history, write);
+	if (pcm_downstream_rx_realign_status(&station->receive, history)) {
+		++station->status_phase_moves;
+		/* A second move, including a return to the original phase, needs
+		 * an entirely new receive window. */
+		station->status_history_write = 0;
+		station->status_history_count = 0;
+	}
+}
+
 enum v92_phase4_analog_station_result v92_phase4_analog_station_receive(
 	struct v92_phase4_analog_station *station, uint8_t network_octet)
 {
@@ -298,6 +337,9 @@ enum v92_phase4_analog_station_result v92_phase4_analog_station_receive(
 		return V92_PHASE4_ANALOG_STATION_FAILED;
 	result = pcm_downstream_rx_receive(
 		&station->receive, network_octet, &event);
+	if (result == PCM_DOWNSTREAM_RX_BUFFERING || result == PCM_DOWNSTREAM_RX_SUVD_REJECTED ||
+	    result == PCM_DOWNSTREAM_RX_CPD_REJECTED)
+		observe_status_phase(station, network_octet);
 	if (result == PCM_DOWNSTREAM_RX_CPD &&
 	    event.control.record.cpd.frame_result == V92_CPD_OK) {
 		const struct v92_cpd_parameters *cpd = &event.control.record.cpd.parameters;

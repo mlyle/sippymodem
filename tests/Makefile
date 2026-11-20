@@ -2286,6 +2286,7 @@ PCM_DOWNSTREAM_RX_TEST_OBJECTS := \
 	$(BUILD_DIR)/pcm_control_frame.o \
 	$(BUILD_DIR)/test_pcm_downstream_rx.o \
 	$(BUILD_DIR)/pcm_downstream_rx.o \
+	$(BUILD_DIR)/pcm_downstream_tx.o \
 	$(BUILD_DIR)/v90_pcm_stream_rx.o \
 	$(BUILD_DIR)/v90_mp_receiver.o \
 	$(BUILD_DIR)/v90_mp.o \

@@ -41,11 +41,15 @@ struct v92_phase4_analog_station {
 	struct v92_suvd_parameters suvd;
 	struct v92_cpd_base_parameters cpd;
 	struct v92_cleardown cleardown;
+	uint8_t status_history[PCM_DOWNSTREAM_STATUS_HISTORY];
+	uint16_t status_history_write;
+	uint16_t status_history_count;
 	uint64_t transmitted_symbols;
 	uint16_t round_trip_delay_samples;
 	bool cleardown_cp_started;
 	bool suvd_received;
 	bool cpd_received;
+	uint8_t status_phase_moves;
 	bool failed;
 };
 
