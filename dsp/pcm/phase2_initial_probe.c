@@ -23,9 +23,7 @@ static bool signal_b_path_is_valid(
 		return false;
 	switch (probe->phase) {
 	case PHASE2_INITIAL_PROBE_SIGNAL_B_RECEIVING:
-		return probe->tone_wait_samples == 0 &&
-		       probe->failure ==
-			       PHASE2_PROBE_NO_FAILURE &&
+		return probe->failure == PHASE2_PROBE_NO_FAILURE &&
 		       (receive->phase ==
 				V34_PHASE2_PROBE_ACQUISITION_SEARCHING ||
 			receive->phase ==
@@ -38,8 +36,7 @@ static bool signal_b_path_is_valid(
 	case PHASE2_INITIAL_PROBE_FAILED:
 		switch (probe->failure) {
 		case PHASE2_PROBE_REMOTE_NOT_FOUND:
-			return probe->tone_wait_samples == 0 &&
-			       receive->phase ==
+			return receive->phase ==
 				       V34_PHASE2_PROBE_ACQUISITION_NOT_FOUND;
 		case PHASE2_PROBE_NO_FAILURE:
 		case PHASE2_PROBE_LOCAL_TRANSMIT_LIMIT:
@@ -284,6 +281,54 @@ static bool wait_for_remote_tone(
 }
 
 enum phase2_initial_probe_result
+phase2_initial_probe_sample_owned(
+	struct phase2_initial_probe *probe,
+	struct phase2_info0_exchange *exchange,
+	bool initial_call, int16_t received_sample, int16_t *transmit_sample,
+	struct phase2_initial_probe_event *event)
+{
+	struct phase2_initial_probe_event emitted = { 0 };
+	int16_t generated = 0;
+	bool accepted = true;
+
+	if (probe->reversal_wait_samples_remaining != 0 &&
+	    probe->phase != PHASE2_INITIAL_PROBE_FAILED)
+		probe->reversal_wait_samples_remaining--;
+	switch (probe->phase) {
+	case PHASE2_INITIAL_PROBE_SIGNAL_B_RECEIVING:
+		accepted = receive_remote_probe(
+			probe, exchange, initial_call, received_sample,
+			&generated, &emitted);
+		break;
+	case PHASE2_INITIAL_PROBE_SIGNAL_A_TRANSMITTING:
+		accepted = transmit_local_probe(
+			probe, exchange, received_sample,
+			&generated, &emitted);
+		break;
+	case PHASE2_INITIAL_PROBE_SIGNAL_A_WAIT_TONE:
+		accepted = wait_for_remote_tone(
+			probe, exchange, received_sample,
+			&generated, &emitted);
+		break;
+	case PHASE2_INITIAL_PROBE_SIGNAL_A_TONE:
+	case PHASE2_INITIAL_PROBE_SIGNAL_B_TONE:
+		accepted = phase2_info0_exchange_observe_tone(
+				   exchange, received_sample,
+				   &emitted.tone_event) &&
+			   phase2_info0_exchange_generate_tone(
+				   exchange, &generated);
+		break;
+	case PHASE2_INITIAL_PROBE_FAILED:
+		break;
+	}
+	if (!accepted)
+		return PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
+	*transmit_sample = generated;
+	*event = emitted;
+	return PHASE2_INITIAL_PROBE_OK;
+}
+
+enum phase2_initial_probe_result
 phase2_initial_probe_sample(
 	struct phase2_initial_probe *probe,
 	struct phase2_info0_exchange *exchange,
@@ -292,46 +337,17 @@ phase2_initial_probe_sample(
 {
 	struct phase2_initial_probe next;
 	struct phase2_info0_exchange next_exchange;
-	struct phase2_initial_probe_event emitted = { 0 };
-	int16_t generated = 0;
-	bool accepted = true;
+	struct phase2_initial_probe_event emitted;
+	int16_t generated;
 
 	if (!phase2_initial_probe_is_valid(probe, exchange) ||
 	    transmit_sample == NULL || event == NULL)
 		return PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
 	next = *probe;
 	next_exchange = *exchange;
-	if (next.reversal_wait_samples_remaining != 0 &&
-	    next.phase != PHASE2_INITIAL_PROBE_FAILED)
-		next.reversal_wait_samples_remaining--;
-	switch (next.phase) {
-	case PHASE2_INITIAL_PROBE_SIGNAL_B_RECEIVING:
-		accepted = receive_remote_probe(
-			&next, &next_exchange, initial_call, received_sample,
-			&generated, &emitted);
-		break;
-	case PHASE2_INITIAL_PROBE_SIGNAL_A_TRANSMITTING:
-		accepted = transmit_local_probe(
-			&next, &next_exchange, received_sample,
-			&generated, &emitted);
-		break;
-	case PHASE2_INITIAL_PROBE_SIGNAL_A_WAIT_TONE:
-		accepted = wait_for_remote_tone(
-			&next, &next_exchange, received_sample,
-			&generated, &emitted);
-		break;
-	case PHASE2_INITIAL_PROBE_SIGNAL_A_TONE:
-	case PHASE2_INITIAL_PROBE_SIGNAL_B_TONE:
-		accepted = phase2_info0_exchange_observe_tone(
-				   &next_exchange, received_sample,
-				   &emitted.tone_event) &&
-			   phase2_info0_exchange_generate_tone(
-				   &next_exchange, &generated);
-		break;
-	case PHASE2_INITIAL_PROBE_FAILED:
-		break;
-	}
-	if (!accepted ||
+	if (phase2_initial_probe_sample_owned(&next, &next_exchange,
+		    initial_call, received_sample, &generated, &emitted) !=
+		    PHASE2_INITIAL_PROBE_OK ||
 	    !phase2_initial_probe_is_valid(&next, &next_exchange))
 		return PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
 	*probe = next;

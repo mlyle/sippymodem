@@ -41,19 +41,10 @@ v34_phase2_initial_probe_sample(
 	int16_t received_sample, int16_t *transmit_sample,
 	struct phase2_initial_probe_event *event);
 
-/* Keep an armed overlapping-probe receiver live after the local probe has
- * handed transmission to the turnaround owner. Initial-call trials are
- * deliberately one-shot so a later copy of the local probe cannot be adopted
- * as the remote line measurement. */
-enum phase2_initial_probe_result
-v34_phase2_initial_probe_sample_concurrent(
-	struct v34_phase2_initial_probe *probe,
-	int16_t received_sample,
-	struct v34_phase2_probe_acquisition_event *event);
-
 /* Internal step shared by initial probing and turnaround. Supply a validated
  * private owner copy and a distinct event. Validate and commit the complete
- * owner only after every child succeeds; discard staged state on rejection. */
+ * owner only after every child succeeds. Initial-call trials run once so a
+ * later copy of the local probe cannot become the remote measurement. */
 enum phase2_initial_probe_result
 v34_phase2_initial_probe_sample_concurrent_owned(
 	struct v34_phase2_initial_probe *probe,

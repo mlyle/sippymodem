@@ -727,7 +727,7 @@ static bool check_concurrent_trial(bool retraining)
 		CHECK(v34_phase2_probe_sequence_sample(
 			      &peer_probe, false, &peer_transmit,
 			      &peer_event) == V34_PHASE2_PROBE_SEQUENCE_OK &&
-		      v34_phase2_initial_probe_sample_concurrent(
+		      v34_phase2_initial_probe_sample_concurrent_owned(
 			      &pair.answerer.state.probe.initial,
 			      peer_transmit, &receive_event) ==
 			      PHASE2_INITIAL_PROBE_OK,
@@ -735,7 +735,7 @@ static bool check_concurrent_trial(bool retraining)
 		/* The initial-call trial must not adopt a later returned copy of
 		 * the local probe after its echo-safe capture has expired. */
 		if (!retraining)
-			CHECK(v34_phase2_initial_probe_sample_concurrent(
+			CHECK(v34_phase2_initial_probe_sample_concurrent_owned(
 				      &empty_trial.state.probe.initial,
 				      peer_transmit, &receive_event) ==
 				      PHASE2_INITIAL_PROBE_OK &&

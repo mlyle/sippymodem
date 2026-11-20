@@ -79,6 +79,14 @@ enum phase2_initial_probe_result phase2_initial_probe_sample(
 	bool initial_call, int16_t received_sample, int16_t *transmit_sample,
 	struct phase2_initial_probe_event *event);
 
+/* Advance a validated, staged probe and its distinct tone transport.
+ * The owner validates the result and commits both or discards the step. */
+enum phase2_initial_probe_result phase2_initial_probe_sample_owned(
+	struct phase2_initial_probe *probe,
+	struct phase2_info0_exchange *exchange,
+	bool initial_call, int16_t received_sample, int16_t *transmit_sample,
+	struct phase2_initial_probe_event *event);
+
 enum phase2_initial_probe_result phase2_initial_probe_measure(
 	const struct phase2_initial_probe *probe,
 	const struct phase2_info0_exchange *exchange,
