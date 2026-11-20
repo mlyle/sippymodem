@@ -5242,8 +5242,7 @@ static bool receive_b1_alternate(struct pcm_call *call,
 	bool stopped = pcm_call_failed_raw_b1_owned(call);
 	if (alternate == NULL || alternate->replaces_failed_primary != stopped ||
 	    (!stopped && path->upstream.failed) ||
-	    (!call->v92_rate_renegotiation_active &&
-	     path->upstream.line.plan.observation != V92_PCM_FRAME_CONSTELLATION) ||
+	    !pcm_call_b1_echo_observation_owned(call) ||
 	    path->fast.stage != PCM_CALL_V92_FAST_IDLE || path->pending_media_loss ||
 	    (!stopped && path->quality_guard_samples) || v92_peer_b1_received_owned(call))
 		return false;

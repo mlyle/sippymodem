@@ -7268,7 +7268,8 @@ static enum pcm_call_result v92_fixture_data_octet(
 	fixture->saw_primary_failure |= primary->failed;
 	if (fixture->inputs % FIXTURE_ECHO_BLOCK == 0)
 		v92_b1_echo_begin_block_owned(&fixture->receiver, FIXTURE_ECHO_BLOCK);
-	bool ready = !fixture->accepted && v92_b1_echo_observe_owned(&fixture->receiver,
+	bool ready = !fixture->accepted && pcm_call_b1_echo_observation_owned(call) &&
+		v92_b1_echo_observe_owned(&fixture->receiver,
 		&fixture->echo, primary, &fixture->distances, wire, raw, cleaned, available);
 	const struct pcm_call_b1_alternate alternate = {
 		.receiver = &fixture->receiver.receiver,
@@ -12078,6 +12079,13 @@ static bool test_b1_alternate_boundary(const struct pcm_call *incomplete, const 
 			NULL, &tx, &event) == PCM_CALL_OK, "B1 alternate prelude failed");
 	CHECK(before->v92_rate_renegotiation_active && before->state.data_path.v92_digital.upstream.line.received_frames ==
 	      V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES - 1, "B1 alternate lost its short-exchange boundary");
+	*actual = *before;
+	actual->state.data_path.v92_digital.upstream.line.plan.observation = V92_PCM_FRAME_FILTER_OUTPUT;
+	CHECK(pcm_call_b1_echo_observation_owned(actual), "filter-output B1 was excluded during rate renegotiation");
+	actual->v92_rate_renegotiation_active = false;
+	CHECK(!pcm_call_b1_echo_observation_owned(actual), "steady-state filter output enabled B1 recovery");
+	actual->b1_deadline_armed = true;
+	CHECK(pcm_call_b1_echo_observation_owned(actual), "filter-output B1 was excluded during startup");
 	for (unsigned fault = 0; fault < 11; ++fault) {
 		*expected = *before;
 		struct pcm_call_v92_digital_data *path = &expected->state.data_path.v92_digital;

@@ -576,6 +576,17 @@ struct pcm_call {
 	bool suppress_v90_info1d_3429;
 };
 
+/* Valid digital V.92 PCM data path. Filter-output alternates are useful
+ * while qualifying B1, before either startup or a short exchange completes. */
+static inline bool pcm_call_b1_echo_observation_owned(const struct pcm_call *call)
+{
+	const struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
+	enum v92_pcm_frame_observation observation = path->upstream.line.plan.observation;
+	return observation == V92_PCM_FRAME_CONSTELLATION ||
+	       (observation == V92_PCM_FRAME_FILTER_OUTPUT &&
+		(call->b1_deadline_armed || call->v92_rate_renegotiation_active));
+}
+
 /* Valid digital V.92 PCM data path, before the call's normal startup guard
  * expires. A receive alternate can finish independently of the failed raw
  * decoder. Keep media loss and online/short-exchange guards separate. */

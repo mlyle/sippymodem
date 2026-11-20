@@ -1008,9 +1008,7 @@ static bool prepare_b1_echo(struct v90_datapump *datapump, uint8_t wire,
 		const struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
 		if (path->fast.stage == PCM_CALL_V92_FAST_IDLE && !path->pending_media_loss &&
 		    (!path->quality_guard_samples || pcm_call_failed_raw_b1_owned(call)) &&
-		    (path->upstream.line.plan.observation == V92_PCM_FRAME_CONSTELLATION ||
-		     (call->v92_rate_renegotiation_active &&
-		      path->upstream.line.plan.observation == V92_PCM_FRAME_FILTER_OUTPUT)) &&
+		    pcm_call_b1_echo_observation_owned(call) &&
 		    !path->upstream.line.delay_remaining)
 			return v92_b1_echo_observe_owned(&datapump->b1_echo, datapump->host_echo,
 				&path->upstream, &datapump->cpd_distances, wire, raw, cleaned, available);
