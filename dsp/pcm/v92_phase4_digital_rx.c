@@ -263,16 +263,10 @@ static enum v92_phase4_digital_rx_result receive_control(
 	return control_result(receiver, result);
 }
 
-enum v92_phase4_digital_rx_result v92_phase4_digital_rx_sample(
+enum v92_phase4_digital_rx_result v92_phase4_digital_rx_sample_validated(
 	struct v92_phase4_digital_rx *receiver, int16_t sample,
 	struct v92_control_event *event)
 {
-	if (receiver == NULL || event == NULL ||
-	    memory_regions_overlap(
-		    receiver, sizeof(*receiver), event, sizeof(*event)))
-		return V92_PHASE4_DIGITAL_RX_INVALID_ARGUMENT;
-	if (!v92_phase4_digital_rx_is_valid(receiver))
-		return V92_PHASE4_DIGITAL_RX_INVALID_STATE;
 	if (state_has_failed(receiver))
 		return V92_PHASE4_DIGITAL_RX_FAILED;
 	if (receiver->stage == V92_PHASE4_DIGITAL_RX_TRN2U)
@@ -300,6 +294,19 @@ enum v92_phase4_digital_rx_result v92_phase4_digital_rx_sample(
 	*line = next;
 	*event = emitted;
 	return result;
+}
+
+enum v92_phase4_digital_rx_result v92_phase4_digital_rx_sample(
+	struct v92_phase4_digital_rx *receiver, int16_t sample,
+	struct v92_control_event *event)
+{
+	if (receiver == NULL || event == NULL ||
+	    memory_regions_overlap(
+		    receiver, sizeof(*receiver), event, sizeof(*event)))
+		return V92_PHASE4_DIGITAL_RX_INVALID_ARGUMENT;
+	if (!v92_phase4_digital_rx_is_valid(receiver))
+		return V92_PHASE4_DIGITAL_RX_INVALID_STATE;
+	return v92_phase4_digital_rx_sample_validated(receiver, sample, event);
 }
 
 const char *v92_phase4_digital_rx_result_name(

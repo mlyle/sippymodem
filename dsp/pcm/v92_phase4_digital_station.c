@@ -185,16 +185,10 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_select_upstrea
 	return V92_PHASE4_DIGITAL_STATION_OK;
 }
 
-enum v92_phase4_digital_station_result v92_phase4_digital_station_receive(
+static enum v92_phase4_digital_station_result receive_sample(
 	struct v92_phase4_digital_station *station, int16_t sample)
 {
 	struct v92_control_event event = { 0 };
-	if (station == NULL)
-		return V92_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT;
-	if (!v92_phase4_digital_station_is_valid(station))
-		return V92_PHASE4_DIGITAL_STATION_INVALID_STATE;
-	if (station->control.failed)
-		return V92_PHASE4_DIGITAL_STATION_FAILED;
 	if (station->searching_e2u && v92_e2u_rx_is_complete(&station->e2u))
 		return V92_PHASE4_DIGITAL_STATION_INVALID_STATE;
 	enum v92_phase4_digital_rx_result result;
@@ -210,7 +204,7 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_receive(
 		result = event.type == V92_CONTROL_EVENT_NONE ? V92_PHASE4_DIGITAL_RX_OK :
 			V92_PHASE4_DIGITAL_RX_EVENT;
 	} else {
-		result = v92_phase4_digital_rx_sample(&station->receive, sample, &event);
+		result = v92_phase4_digital_rx_sample_validated(&station->receive, sample, &event);
 	}
 	/* The receiver owns incomplete input. Only a record event advances the
 	 * downstream exchange. */
@@ -258,16 +252,9 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_receive(
 		V92_PHASE4_DIGITAL_STATION_EVENT : V92_PHASE4_DIGITAL_STATION_OK;
 }
 
-enum v92_phase4_digital_station_result v92_phase4_digital_station_transmit(
+static enum v92_phase4_digital_station_result transmit_sample(
 	struct v92_phase4_digital_station *station, uint8_t *network_octet)
 {
-	if (station == NULL || network_octet == NULL ||
-	    memory_regions_overlap(station, sizeof(*station), network_octet, sizeof(*network_octet)))
-		return V92_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT;
-	if (!v92_phase4_digital_station_is_valid(station))
-		return V92_PHASE4_DIGITAL_STATION_INVALID_STATE;
-	if (station->control.failed)
-		return V92_PHASE4_DIGITAL_STATION_FAILED;
 	/* Initial training waits for channel measurement; rate renegotiation
 	 * enables the inherited mapping at initialization instead. */
 	if (!station->control.cleardown.active &&
@@ -279,6 +266,45 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_transmit(
 		return fail(station);
 	return station->control.transmit.complete ? V92_PHASE4_DIGITAL_STATION_CLEARDOWN_COMPLETE :
 		V92_PHASE4_DIGITAL_STATION_OK;
+}
+
+enum v92_phase4_digital_station_result v92_phase4_digital_station_step(
+	struct v92_phase4_digital_station *station, int16_t sample,
+	uint8_t *network_octet)
+{
+	if (station == NULL || (network_octet != NULL &&
+	    memory_regions_overlap(station, sizeof(*station), network_octet, sizeof(*network_octet))))
+		return V92_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT;
+	if (!v92_phase4_digital_station_is_valid(station))
+		return V92_PHASE4_DIGITAL_STATION_INVALID_STATE;
+	if (station->control.failed)
+		return V92_PHASE4_DIGITAL_STATION_FAILED;
+	if (network_octet != NULL) {
+		enum v92_phase4_digital_station_result result =
+			transmit_sample(station, network_octet);
+		if (result != V92_PHASE4_DIGITAL_STATION_OK)
+			return result;
+	}
+	return receive_sample(station, sample);
+}
+
+enum v92_phase4_digital_station_result v92_phase4_digital_station_receive(
+	struct v92_phase4_digital_station *station, int16_t sample)
+{
+	return v92_phase4_digital_station_step(station, sample, NULL);
+}
+
+enum v92_phase4_digital_station_result v92_phase4_digital_station_transmit(
+	struct v92_phase4_digital_station *station, uint8_t *network_octet)
+{
+	if (station == NULL || network_octet == NULL ||
+	    memory_regions_overlap(station, sizeof(*station), network_octet, sizeof(*network_octet)))
+		return V92_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT;
+	if (!v92_phase4_digital_station_is_valid(station))
+		return V92_PHASE4_DIGITAL_STATION_INVALID_STATE;
+	if (station->control.failed)
+		return V92_PHASE4_DIGITAL_STATION_FAILED;
+	return transmit_sample(station, network_octet);
 }
 
 bool v92_phase4_digital_station_cpu_parameters(

@@ -123,6 +123,13 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_receive(
 enum v92_phase4_digital_station_result v92_phase4_digital_station_transmit(
 	struct v92_phase4_digital_station *station, uint8_t *network_octet);
 
+/* Transmit first and then consume one upstream sample under the same
+ * station validation. A null output leaves transmission to the preceding
+ * rate-exchange prefix. A terminal transmit result stops before receive. */
+enum v92_phase4_digital_station_result v92_phase4_digital_station_step(
+	struct v92_phase4_digital_station *station, int16_t sample,
+	uint8_t *network_octet);
+
 /* Copy the accepted CPu, including an acknowledgement advanced by a
  * semantically identical repeat, for the later E2u/data-path owner. */
 bool v92_phase4_digital_station_cpu_parameters(

@@ -102,6 +102,12 @@ enum v92_phase4_digital_rx_result v92_phase4_digital_rx_sample(
 	struct v92_phase4_digital_rx *receiver, int16_t sample,
 	struct v92_control_event *event);
 
+/* The station owns a validated receiver and a separate event. Retain the
+ * same staged receive updates and failure semantics as the checked entry. */
+enum v92_phase4_digital_rx_result v92_phase4_digital_rx_sample_validated(
+	struct v92_phase4_digital_rx *receiver, int16_t sample,
+	struct v92_control_event *event);
+
 const char *v92_phase4_digital_rx_result_name(
 	enum v92_phase4_digital_rx_result result);
 

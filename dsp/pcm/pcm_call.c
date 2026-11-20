@@ -4146,19 +4146,10 @@ static enum pcm_call_result sample_v92_phase4(
 		struct v92_phase4_digital_station *station = &call->state.phase4.v92.owner.digital;
 		bool measured = v92_phase4_digital_rx_channel_ready(&station->receive);
 		bool cpu_received = station->control.cpu_received;
-		const struct v92_cpu_parameters *cpu = &call->state.phase4.v92.owner.digital.control.cpu;
-		enum v92_phase4_digital_station_result station_result = prefix_sent ?
-			V92_PHASE4_DIGITAL_STATION_OK : v92_phase4_digital_station_transmit(
-				&call->state.phase4.v92.owner.digital,
-				transmit_octet);
-		enum pcm_call_result result =
-			v92_digital_phase4_result(call, station_result);
-
-		if (result != PCM_CALL_OK)
-			return result;
-		station_result = v92_phase4_digital_station_receive(
-			&call->state.phase4.v92.owner.digital, received_sample);
-		result = v92_digital_phase4_result(call, station_result);
+		const struct v92_cpu_parameters *cpu = &station->control.cpu;
+		enum pcm_call_result result = v92_digital_phase4_result(call,
+			v92_phase4_digital_station_step(station, received_sample,
+				prefix_sent ? NULL : transmit_octet));
 		/* Recovery replaced the phase union; station/cpu no longer own it. */
 		if (result != PCM_CALL_OK || call->stage == PCM_CALL_RETRAIN_SILENCE)
 			return result;

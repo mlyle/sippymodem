@@ -1451,25 +1451,20 @@ static bool check_cleardown_pair(
 			if (done[0]) ended[0] = analog.transmitted_symbols;
 		}
 		if (!done[1] && (!drop_peer || (initiators & 2u))) {
-			enum v92_phase4_digital_station_result result = v92_phase4_digital_station_transmit(&digital, &down);
+			enum v92_phase4_digital_station_result result = drop_peer ?
+				v92_phase4_digital_station_transmit(&digital, &down) :
+				v92_phase4_digital_station_step(&digital, line_sample(law, polarity, up), &down);
 			CHECK(result == V92_PHASE4_DIGITAL_STATION_OK ||
+			      result == V92_PHASE4_DIGITAL_STATION_EVENT ||
 			      result == V92_PHASE4_DIGITAL_STATION_CLEARDOWN_COMPLETE,
 			      "digital close stopped at %u: %s", clock, v92_phase4_digital_station_result_name(result));
 			done[1] = result == V92_PHASE4_DIGITAL_STATION_CLEARDOWN_COMPLETE;
 			if (done[1]) ended[1] = digital.control.transmit.transmitted_symbols;
 		}
-		if (!drop_peer) {
-			if (!done[0]) {
-				enum v92_phase4_analog_station_result result = v92_phase4_analog_station_receive(&analog, down);
-				CHECK(result == V92_PHASE4_ANALOG_STATION_OK || result == V92_PHASE4_ANALOG_STATION_EVENT,
-				      "analogue closing receive failed");
-			}
-			if (!done[1]) {
-				enum v92_phase4_digital_station_result result = v92_phase4_digital_station_receive(&digital,
-					line_sample(law, polarity, up));
-				CHECK(result == V92_PHASE4_DIGITAL_STATION_OK || result == V92_PHASE4_DIGITAL_STATION_EVENT,
-				      "digital closing receive failed");
-			}
+		if (!drop_peer && !done[0]) {
+			enum v92_phase4_analog_station_result result = v92_phase4_analog_station_receive(&analog, down);
+			CHECK(result == V92_PHASE4_ANALOG_STATION_OK || result == V92_PHASE4_ANALOG_STATION_EVENT,
+			      "analogue closing receive failed");
 		}
 		CHECK(v92_phase4_analog_station_is_valid(&analog) &&
 		      v92_phase4_digital_station_is_valid(&digital), "cleardown state invalid");
@@ -1494,9 +1489,12 @@ static bool check_cleardown_pair(
 		CHECK(!done[0] || (v92_phase4_analog_station_transmit(&analog, &up) ==
 		      V92_PHASE4_ANALOG_STATION_CLEARDOWN_COMPLETE && up == 123 &&
 		      analog.transmitted_symbols == ended[0]), "analogue close emitted another symbol");
-		CHECK(!done[1] || (v92_phase4_digital_station_transmit(&digital, &down) ==
+		uint64_t received = digital.receive.signal.control.signal.line.input_samples;
+		CHECK(!done[1] || (v92_phase4_digital_station_step(&digital, 123, &down) ==
 		      V92_PHASE4_DIGITAL_STATION_CLEARDOWN_COMPLETE && down == 123u &&
-		      digital.control.transmit.transmitted_symbols == ended[1]), "digital close emitted another symbol");
+		      digital.control.transmit.transmitted_symbols == ended[1] &&
+		      digital.receive.signal.control.signal.line.input_samples == received),
+		      "digital cleardown consumed a sample after transmission stopped");
 	}
 	CHECK(!v92_phase4_analog_station_can_handoff(&analog) &&
 	      !v92_phase4_digital_station_is_ed_ready(&digital), "cleardown restarted data");
@@ -1618,14 +1616,9 @@ static bool run_paired_station_exchange(
 		if (analog.transmit.stage == V92_PHASE4_ANALOG_TX_CPU)
 			expected_cpu.acknowledges_cpd =
 				analog.transmit.control.current_record_acknowledges;
-		CHECK(v92_phase4_digital_station_transmit(
-			      &digital, &downstream_octet) ==
-			      V92_PHASE4_DIGITAL_STATION_OK,
-		      "paired digital transmit stopped at %zu", symbol);
 		bool had_cpu = digital.control.cpu_received;
-		digital_result = v92_phase4_digital_station_receive(
-			&digital,
-			line_sample(law, polarity, upstream_sample));
+		digital_result = v92_phase4_digital_station_step(
+			&digital, line_sample(law, polarity, upstream_sample), &downstream_octet);
 		CHECK(digital_result == V92_PHASE4_DIGITAL_STATION_OK ||
 		      digital_result == V92_PHASE4_DIGITAL_STATION_EVENT,
 		      "paired digital receive stopped at %zu: %s", symbol,
@@ -2182,6 +2175,11 @@ static bool test_compact_boundary(void)
 		      V92_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT &&
 	      v92_phase4_digital_station_transmit(&station, &octet) ==
 		      V92_PHASE4_DIGITAL_STATION_INVALID_STATE &&
+	      v92_phase4_digital_station_step(&station, 0, &octet) ==
+		      V92_PHASE4_DIGITAL_STATION_INVALID_STATE &&
+	      v92_phase4_digital_station_step(&station, 0, (uint8_t *)&station) ==
+		      V92_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT &&
+	      memcmp(&station, &saved, sizeof(station)) == 0 &&
 	      octet == UINT8_C(0xa5) &&
 	      strcmp(v92_phase4_digital_station_result_name(
 		     V92_PHASE4_DIGITAL_STATION_INVALID_STATE),
