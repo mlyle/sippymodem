@@ -284,22 +284,39 @@ static bool generate_transmit_sample(
 	return false;
 }
 
+enum phase2_info0_exchange_result phase2_info0_exchange_sample_owned(
+	struct phase2_info0_exchange *exchange,
+	int16_t received_sample, int16_t *transmit_sample,
+	struct phase2_info0_exchange_event *event)
+{
+	struct phase2_info0_exchange_event emitted = { 0 };
+	int16_t generated;
+
+	if (!receive_sample(exchange, received_sample, &emitted) ||
+	    !generate_transmit_sample(exchange, &generated) ||
+	    !phase2_info0_exchange_is_valid(exchange))
+		return PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
+	*transmit_sample = generated;
+	*event = emitted;
+	return PHASE2_INFO0_EXCHANGE_OK;
+}
+
 enum phase2_info0_exchange_result phase2_info0_exchange_sample(
 	struct phase2_info0_exchange *exchange,
 	int16_t received_sample, int16_t *transmit_sample,
 	struct phase2_info0_exchange_event *event)
 {
 	struct phase2_info0_exchange next;
-	struct phase2_info0_exchange_event emitted = { 0 };
+	struct phase2_info0_exchange_event emitted;
 	int16_t generated;
 
 	if (!phase2_info0_exchange_is_valid(exchange) ||
 	    transmit_sample == NULL || event == NULL)
 		return PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
 	next = *exchange;
-	if (!receive_sample(&next, received_sample, &emitted) ||
-	    !generate_transmit_sample(&next, &generated) ||
-	    !phase2_info0_exchange_is_valid(&next))
+	if (phase2_info0_exchange_sample_owned(
+	    &next, received_sample, &generated, &emitted) !=
+	    PHASE2_INFO0_EXCHANGE_OK)
 		return PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
 	*exchange = next;
 	*transmit_sample = generated;

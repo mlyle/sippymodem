@@ -111,4 +111,12 @@ enum phase2_info0_exchange_result phase2_info0_exchange_sample(
 	int16_t received_sample, int16_t *transmit_sample,
 	struct phase2_info0_exchange_event *event);
 
+/* Advance a validated exchange in the protocol owner's staged copy. Outputs
+ * must be non-null and separate from the exchange. A rejection leaves the
+ * outputs unchanged and the owner must discard the staged exchange. */
+enum phase2_info0_exchange_result phase2_info0_exchange_sample_owned(
+	struct phase2_info0_exchange *exchange,
+	int16_t received_sample, int16_t *transmit_sample,
+	struct phase2_info0_exchange_event *event);
+
 #endif

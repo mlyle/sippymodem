@@ -217,7 +217,7 @@ v34_phase2_info0_exchange_sample(
 	    transmit_sample == NULL || event == NULL)
 		return V34_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
 	next = *exchange;
-	if (phase2_info0_exchange_sample(
+	if (phase2_info0_exchange_sample_owned(
 		    &next.transport, received_sample, &generated, &raw_event) !=
 		    PHASE2_INFO0_EXCHANGE_OK)
 		return V34_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
