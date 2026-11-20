@@ -1275,6 +1275,8 @@ static int rx_info(struct lapm_state *l, frame_t *f)
 	}
 	/* increment vr */
 	l->vr = (l->vr+1)&0x7f;
+	if (payload_length > 0)
+		l->received_information = true;
 	/* response I,RR,RNR */
 	if (l->busy)
 		TX_RNR(l,FRAME_ADDR(f),FRAME_I_PF(f));
@@ -1434,8 +1436,10 @@ static void rx_unnum_cmd(struct lapm_state *l, frame_t *f)
 		l->initial_sabme_recovery = already_linked ? recovery : LAPM_SABME_RECOVERY_NONE;
 		if (already_linked)
 			l->stalled_retrain = recovery_used;
-		if (!already_linked)
+		if (!already_linked) {
+			l->established_sample = l->modem->count;
 			modem_update_status(l->modem, STATUS_EC_LINK);
+		}
 		break;
 	}
 	case FRAME_U_DISC:
@@ -1472,6 +1476,7 @@ static bool complete_link_establishment(struct lapm_state *l)
 	}
 	l->state = LAPM_DATA;
 	TIMER_STOP(l);
+	l->established_sample = l->modem->count;
 	modem_update_status(l->modem, STATUS_EC_LINK);
 	return true;
 }
@@ -1600,6 +1605,7 @@ static frame_t *lapm_get_tx_frame(void *framer)
 	f->buf[1] = l->vs << 1;
 	f->buf[2] = l->vr << 1;
 	l->vs = (l->vs + 1)&0x7f;
+	l->sent_information = true;
 	if (!l->modem->bit_timer || l->modem->bit_timer_func == t403_timeout)
 		TIMER_START(l);
 
@@ -1827,6 +1833,8 @@ static void reset_lapm_link(struct lapm_state *l)
 	l->stalled_retrain = false;
 	++l->ack_generation;
 	l->peer_noack = false;
+	l->received_information = false;
+	l->sent_information = false;
 	l->passive_establishment_expired = false;
 	l->reject = LAPM_REJECT_NONE;
 	l->vs = 0;
@@ -2137,8 +2145,13 @@ bool modem_ec_verify_tx(struct modem *m)
 	    !observation.receive_healthy || !observation.peer_noack)
 		return false;
 	struct lapm_state *l = &m->ec.lapm;
-	if (l->va != l->vs || l->sent_info != l->info_list ||
-	    l->rtx_count || l->retrain_poll)
+	if (!modem_ec_transmit_idle(m) || l->rtx_count || l->retrain_poll)
+		return false;
+	/* In the first idle interval after establishment, give application
+	 * data precedence over probing a link that has already received an I
+	 * frame. The first outgoing I frame starts ordinary T401. */
+	if (l->received_information && !l->sent_information &&
+	    m->count - l->established_sample < LAPM_IDLE_TIMER_SECONDS * MODEM_RATE)
 		return false;
 	/* Incoming commands restart T403 without proving that our replies arrive.
 	 * Verify the idle direction under ordinary T401/N400, retaining payload

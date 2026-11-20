@@ -279,6 +279,8 @@ struct lapm_state {
          * from a wrapped seven-bit sequence number. */
         uint64_t ack_generation, peer_noack_sample;
         bool peer_noack;
+        unsigned long established_sample;
+        bool received_information, sent_information;
         u8  cmd_addr;
         u8  rsp_addr;
         u8 vs;
