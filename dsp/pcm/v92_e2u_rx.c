@@ -293,59 +293,39 @@ static bool advance_repeat(struct v92_e2u_search *search, unsigned bits, int16_t
 	return true;
 }
 
-bool v92_e2u_search_retain_record_owned(struct v92_e2u_search *search,
-	const struct v92_upstream_control_line_rx *before,
-	const struct v92_upstream_control_line_rx *after,
-	const struct v92_control_event *event, int16_t sample)
+void v92_e2u_search_retain_record_owned(struct v92_e2u_search *search,
+	const struct v92_upstream_control_line_rx *line,
+	const struct v92_control_event *event)
 {
-	unsigned bits = v92_phase4_modulator_bits_per_symbol(
-		after->signal.line.demodulator.constellation);
-	if (event->type == V92_CONTROL_EVENT_CPUS) {
-		search->frame_bits = 0;
-		search->bit_index = 0;
-		search->candidate_active = false;
-		search->acknowledgment_active = false;
-	}
-	if (event->type != V92_CONTROL_EVENT_CPU && event->type != V92_CONTROL_EVENT_SUVU)
-		return true;
+	if (event->type != V92_CONTROL_EVENT_CPU && event->type != V92_CONTROL_EVENT_SUVU &&
+	    event->type != V92_CONTROL_EVENT_CPUS)
+		return;
 	search->frame_bits = 0;
 	search->bit_index = 0;
 	search->candidate_active = false;
 	search->acknowledgment_active = false;
-	const struct v92_control_rx *record = &before->control;
 	/* A valid control record fixes its coding clock without confirming CPd.
 	 * The downstream owner still guards E2u against our acknowledgement;
 	 * E2u itself can confirm the exchange if the last repeat was damaged. */
-	bool status = event->type == V92_CONTROL_EVENT_SUVU;
-	if ((status && (record->stage != V92_CONTROL_RX_RECEIVE_STATUS ||
-	     record->frame_bit_count != V92_SUVU_FRAME_BITS)) ||
-	    (!status && (!event->record.cpu.parameters.data_rate_number ||
-	     record->stage != V92_CONTROL_RX_RECEIVE_PARAMETERS)) ||
-	    record->frame_bit_count > V92_CPU_MAX_FRAME_BITS ||
-	    record->bit_index + bits != record->frame_bit_count ||
-	    !after->control.record_boundary)
-		return true;
-	/* The parser cleared its candidate after the CRC passed. Retain its
-	 * original wire prefix plus this sample's final group, not a re-encoded
-	 * record whose reserved/duplicate fields may differ. */
-	struct v92_upstream_rx signal = before->signal;
-	struct v92_upstream_decision decision;
-	if (v92_upstream_rx_sample_owned(&signal, sample, &decision) != V92_UPSTREAM_RX_OK ||
-	    !v92_upstream_rx_is_valid(&signal))
-		return false;
-	memset(search->frame, 0, sizeof(search->frame));
-	memcpy(search->frame, record->frame, (record->frame_bit_count + 7u) / 8u);
-	for (unsigned bit = 0; bit < bits; ++bit)
-		packed_msb_set_bit(search->frame, record->bit_index + bit,
-			(decision.group >> bit) & 1u);
-	search->frame_bits = (uint16_t)record->frame_bit_count;
-	search->bit_index = 0;
-	const struct v92_phase4_demodulator *from = &after->signal.line.demodulator;
+	if (!line->control.record_boundary || event->type == V92_CONTROL_EVENT_CPUS)
+		return;
+	const struct v92_control_wire_record *wire;
+	if (event->type == V92_CONTROL_EVENT_SUVU) {
+		wire = &event->record.suvu.wire;
+		if (wire->bit_count != V92_SUVU_FRAME_BITS)
+			return;
+	} else {
+		wire = &event->record.cpu.wire;
+		if (!event->record.cpu.parameters.data_rate_number || !wire->bit_count)
+			return;
+	}
+	memcpy(search->frame, wire->frame, sizeof(search->frame));
+	search->frame_bits = wire->bit_count;
+	const struct v92_phase4_demodulator *from = &line->signal.line.demodulator;
 	search->coder = (struct v92_phase4_modulator){
 		.scrambler = from->descrambler, .constellation = from->constellation,
 		.lu = from->lu, .previous_encoded_sign = from->previous_encoded_sign,
 	};
-	return true;
 }
 
 static enum v92_e2u_rx_result search_sample(
@@ -507,8 +487,7 @@ static enum v92_e2u_rx_result search_sample(
 			repeat.candidate_active = false;
 			repeat.acknowledgment_active = false;
 		}
-		if (!v92_e2u_search_retain_record_owned(&repeat, control, &line, &emitted, sample))
-			return fail(receiver);
+		v92_e2u_search_retain_record_owned(&repeat, &line, &emitted);
 		*search = repeat;
 	}
 	*receiver = next;

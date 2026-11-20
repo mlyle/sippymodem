@@ -16,6 +16,9 @@ enum {
 _Static_assert(
 	(size_t)V92_CPD_MAX_FRAME_BYTES >= (size_t)V92_CPU_MAX_FRAME_BYTES,
 	"shared control receiver buffer must hold either parameter record");
+_Static_assert(sizeof(struct v92_control_cpu_event) <= sizeof(struct v92_control_cpd_event) &&
+	sizeof(struct v92_control_suvu_event) <= sizeof(struct v92_control_cpd_event),
+	"retaining upstream wire bits must not grow the control event");
 
 static bool stage_is_valid(enum v92_control_rx_stage stage)
 {
@@ -219,6 +222,13 @@ static void finish_cpd(
 	finish_candidate(receiver, result == V92_CPD_OK);
 }
 
+static void retain_upstream_wire(struct v92_control_wire_record *wire,
+	const struct v92_control_rx *receiver)
+{
+	wire->bit_count = (uint16_t)receiver->frame_bit_count;
+	memcpy(wire->frame, receiver->frame, (wire->bit_count + 7u) / 8u);
+}
+
 static void finish_cpu(
 	struct v92_control_rx *receiver,
 	struct v92_control_event *event)
@@ -253,6 +263,7 @@ static void finish_cpu(
 	if (result == V92_CPU_OK) {
 		event->type = V92_CONTROL_EVENT_CPU;
 		event->record.cpu.parameters = parameters;
+		retain_upstream_wire(&event->record.cpu.wire, receiver);
 	} else {
 		event->type = V92_CONTROL_EVENT_CPU_REJECTED;
 	}
@@ -289,8 +300,10 @@ static void finish_status(
 		accepted = result == V92_SUVU_OK;
 		event->type = accepted ? V92_CONTROL_EVENT_SUVU :
 			V92_CONTROL_EVENT_SUVU_REJECTED;
-		if (accepted)
+		if (accepted) {
 			event->record.suvu.parameters = parameters;
+			retain_upstream_wire(&event->record.suvu.wire, receiver);
+		}
 	}
 	finish_candidate(receiver, accepted);
 }

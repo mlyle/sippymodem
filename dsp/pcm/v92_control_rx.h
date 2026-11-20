@@ -44,14 +44,23 @@ struct v92_control_cpd_event {
 	struct v92_cpd_parameters parameters;
 };
 
+/* Preserve accepted upstream wire bits before the parser clears its buffer.
+ * Decoded parameters can canonicalize reserved bits and constellation rows. */
+struct v92_control_wire_record {
+	uint8_t frame[V92_CPU_MAX_FRAME_BYTES];
+	uint16_t bit_count;
+};
+
 struct v92_control_suvu_event {
 	enum v92_suvu_result frame_result;
 	struct v92_suvu_parameters parameters;
+	struct v92_control_wire_record wire;
 };
 
 struct v92_control_cpu_event {
 	enum v92_cpu_result frame_result;
 	struct v92_cpu_parameters parameters;
+	struct v92_control_wire_record wire;
 };
 
 struct v92_control_cpus_event {

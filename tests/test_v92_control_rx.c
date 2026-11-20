@@ -742,6 +742,14 @@ static bool check_chunks(const uint8_t *frame, size_t bits, bool upstream,
 			      memcmp(&owned, &reference, sizeof(owned)) == 0 &&
 			      events_match(&emitted, &expected),
 			      "owned chunk %zu changed control decisions/state at %zu", count, first);
+			if (emitted.type == V92_CONTROL_EVENT_SUVU || emitted.type == V92_CONTROL_EVENT_CPU) {
+				const struct v92_control_wire_record *wire = emitted.type == V92_CONTROL_EVENT_SUVU ?
+					&emitted.record.suvu.wire : &emitted.record.cpu.wire;
+				CHECK(wire->bit_count == bits && memcmp(wire->frame, frame, (bits + 7u) / 8u) == 0,
+				      "chunk %zu changed the accepted upstream wire record", count);
+			} else if (emitted.type == V92_CONTROL_EVENT_CPU_REJECTED) {
+				CHECK(!emitted.record.cpu.wire.bit_count, "rejected CPu supplied a wire reference");
+			}
 			first += count;
 		}
 	}
@@ -764,8 +772,11 @@ static bool test_chunks(void)
 	CHECK(check_chunks(frame, bits, false, 17u), "damaged SUVd chunk decisions differ");
 	CHECK(v92_cpd_encode(&cpd, 30u, frame, sizeof(frame), &bits) == V92_CPD_OK &&
 	      check_chunks(frame, bits, false, 30u), "CPd chunk decisions differ");
+	uint16_t payload;
 	CHECK(v92_suvu_encode(&suvu, 24u, frame, sizeof(frame), &bits) == V92_SUVU_OK &&
-	      check_chunks(frame, bits, true, 24u), "SUVu chunk decisions differ");
+	      v92_status_update_decode(frame, sizeof(frame), bits, 24u, &payload) == V92_STATUS_UPDATE_OK &&
+	      v92_status_update_encode(payload | 0x55u, 24u, frame, sizeof(frame), &bits) == V92_STATUS_UPDATE_OK &&
+	      check_chunks(frame, bits, true, 24u), "SUVu chunk decisions differ with reserved wire bits");
 	CHECK(v92_cpu_encode(&cpu, 36u, frame, sizeof(frame), &bits) == V92_CPU_OK &&
 	      check_chunks(frame, bits, true, 36u), "CPu chunk decisions differ");
 	flip_bit(frame, 25u);
