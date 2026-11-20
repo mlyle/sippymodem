@@ -4049,7 +4049,7 @@ static enum pcm_call_result sample_v92_pause(struct pcm_call *call,
 }
 
 static enum pcm_call_result sample_v92_phase4(
-	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
+	struct pcm_call *call, uint8_t received_octet, int16_t received_sample, bool received_available,
 	uint8_t *transmit_octet, int16_t *transmit_sample, bool owned)
 {
 	bool prefix_sent = false;
@@ -4164,6 +4164,17 @@ static enum pcm_call_result sample_v92_phase4(
 			return result;
 		if (station->control.cleardown.active)
 			return PCM_CALL_OK;
+		if (received_available && !call->pcm_upstream_trained &&
+		    !call->v92_retried_stalled_startup &&
+		    v92_downstream_control_startup_stalled(&station->control)) {
+			/* V.92 9.6.1.2 allows a full retrain during Phase 4.
+			 * Advance the normal unanswered-training recovery.
+			 * Keep its PCM fallback budget even when retrying early. */
+			result = begin_retrain(call, RETRAIN_RESPONSE_TIMEOUT);
+			if (result == PCM_CALL_OK)
+				call->v92_retried_stalled_startup = true;
+			return result;
+		}
 		/* The final delayed TRN2u target completes the channel measurement
 		 * before SUVu can start CPd. Freeze wire filters and local receive
 		 * coordinates together here; repeats must not redesign either.
@@ -4245,13 +4256,14 @@ static enum pcm_call_result filter_v92_upstream(struct pcm_call *call,
 }
 
 static enum pcm_call_result sample_phase4(
-	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
+	struct pcm_call *call, uint8_t received_octet, int16_t received_sample, bool received_available,
 	uint8_t *transmit_octet, bool owned)
 {
 	if (uses_pcm_upstream(call)) {
 		int16_t sample = 0;
 		enum pcm_call_result result = sample_v92_phase4(
-			call, received_octet, received_sample, transmit_octet, &sample, owned);
+			call, received_octet, received_sample, received_available,
+			transmit_octet, &sample, owned);
 		/* Retain the selected Jp phase and reconstruction history across
 		 * all control coders, including the final CPu. Keep analogue
 		 * samples linear until this filter, just as in B1u and data;
@@ -5914,7 +5926,7 @@ static enum pcm_call_result call_octet(
 		break;
 	case PCM_CALL_PHASE4:
 		result = sample_phase4(
-			call, received_octet, received_sample, &generated, owned);
+			call, received_octet, received_sample, received_available, &generated, owned);
 		break;
 	case PCM_CALL_RETRAIN_SILENCE:
 		result = sample_retrain_silence(call, received_sample);

@@ -37,7 +37,11 @@ struct v92_downstream_control {
 	uint64_t cpd_start_frame;
 	uint64_t status_start_frame;
 	uint64_t acknowledgement_end_frame;
+	uint64_t first_cpd_end_frame;
+	uint64_t third_cpd_end_frame;
+	uint64_t stalled_suvu_symbol;
 	uint16_t round_trip_delay_samples;
+	uint8_t startup_cpd_count;
 	enum v92_downstream_control_stage transmit_stage;
 	bool previous_cpu;
 	bool request_silence;
@@ -86,6 +90,9 @@ bool v92_downstream_control_start_cleardown(struct v92_downstream_control *contr
 /* The receiver may begin E2u while the independent transmitter still drains
  * its current record. The caller uses v92_phase4_ed_tx for that final tail. */
 bool v92_downstream_control_is_ed_ready(const struct v92_downstream_control *control);
+/* A fresh unacknowledging SUVu after repeated startup CPd and its reply
+ * interval. This is evidence for the call owner, which decides to retrain. */
+bool v92_downstream_control_startup_stalled(const struct v92_downstream_control *control);
 /* Remaining 8 kHz intervals until an E2u response is physically possible:
  * the acknowledging record must leave the wire, then traverse the round trip.
  * UINT64_MAX means no acknowledgement has been scheduled or invalid state.

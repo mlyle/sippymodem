@@ -9689,6 +9689,80 @@ static bool test_v92_missing_training(void)
 	return true;
 }
 
+static bool run_v92_stalled_startup(enum g711_law law, unsigned loss_samples)
+{
+	struct pcm_call_configuration ac = v92_configuration(V90_ANALOG_MODEM, law);
+	struct pcm_call_configuration dc = v92_configuration(V90_DIGITAL_MODEM, law);
+	struct pcm_call calls[2];
+	struct channel wire;
+	struct pcm_payload_source sources[2] = { { .reject = true }, { .reject = true } };
+	uint32_t frames[2] = { 0u, 0u };
+	unsigned erased = 0u, retrains = 0u;
+	bool saw_peer_status = false;
+
+	CHECK(codec_v92_profile_init(&dc, V90_DIGITAL_MODEM, law, 28000u, 56000u, 1u, NULL) == V92_PROFILE_OK &&
+	      channel_init(&wire, law, 3u) && pcm_call_init(&calls[0], &ac) == PCM_CALL_OK &&
+	      pcm_call_init(&calls[1], &dc) == PCM_CALL_OK, "stalled-startup setup failed");
+	for (unsigned clock = 0u; clock < 3u * CALL_SAMPLE_LIMIT; ++clock) {
+		uint8_t rx[2], tx[2];
+		const bool was_active = pcm_call_is_full_retraining(&calls[1]);
+
+		channel_receive(&wire, &rx[0], &rx[1]);
+		for (unsigned side = 0u; side < 2u; ++side) {
+			struct pcm_call *call = &calls[side];
+
+			if (pcm_call_phase4_is_ready(call))
+				CHECK(pcm_call_start_data_path(call) == PCM_CALL_OK,
+				      "stalled-startup data handoff failed");
+			if (call->stage == PCM_CALL_DATA_PATH) {
+				CHECK(v92_payload_sample(call, rx[side], decode_octet(law, rx[side]),
+					&sources[side], &frames[side], &tx[side]),
+				      "stalled-startup payload failed");
+			} else {
+				struct pcm_call_observation observation;
+				CHECK(pcm_call_octet(call, rx[side], decode_octet(law, rx[side]),
+					&tx[side], &observation) == PCM_CALL_OK,
+				      "stalled startup failed at %u side %u", clock, side);
+			}
+		}
+		if (calls[1].stage == PCM_CALL_PHASE4 &&
+		    calls[1].state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL) {
+			const struct v92_downstream_control *control =
+				&calls[1].state.phase4.v92.owner.digital.control;
+			saw_peer_status |= control->suvu_received && !control->cpu_received;
+			if (!calls[1].v92_retried_stalled_startup && erased < loss_samples &&
+			    control->transmit.stage == PCM_DOWNSTREAM_TX_V92_CONTROL) {
+				tx[1] = silence_octet(law);
+				++erased;
+			}
+		} else if (!was_active && pcm_call_is_full_retraining(&calls[1])) {
+			CHECK(++retrains == 1u && saw_peer_status && calls[1].v92_retried_stalled_startup &&
+			      calls[1].v92_training_failures == 1u &&
+			      calls[1].b1_deadline_remaining_samples == 0u,
+			      "expected one retry charged to startup at %u, erased %u status %u early %u failures %u",
+			      clock, erased, saw_peer_status, calls[1].v92_retried_stalled_startup,
+			      calls[1].v92_training_failures);
+		}
+		channel_transmit(&wire, tx[0], tx[1]);
+		if (frames[0] >= 20u && frames[1] >= 20u) {
+			CHECK(retrains == (loss_samples != 0u) &&
+			      calls[1].pcm_upstream_trained && !calls[1].v92_upstream_retry_ceiling &&
+			      calls[1].pcm_upstream_quality.recovery.attempts == 0u,
+			      "stalled-startup recovery changed a passing call or the selected rate");
+			return true;
+		}
+	}
+	CHECK(false, "stalled startup did not verify two-way data, law %u erased %u retrains %u",
+	      law, erased, retrains);
+}
+
+static bool test_v92_stalled_startup(void)
+{
+	return run_v92_stalled_startup(G711_LAW_PCMU, 0u) &&
+	       run_v92_stalled_startup(G711_LAW_PCMA, 0u) &&
+	       run_v92_stalled_startup(G711_LAW_PCMU, 24000u);
+}
+
 static bool test_v92_trained_permission_recovery(void)
 {
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
@@ -14771,6 +14845,7 @@ int main(int argc, char **argv)
 	} tests[] = {
 		{ "V.92 repeated training rejection fallback", test_v92_training_rejections },
 		{ "V.92 missing training response fallback", test_v92_missing_training },
+		{ "V.92 live unconfirmed startup recovers exact data", test_v92_stalled_startup },
 		{ "V.92 trained PCM permission survives recovery", test_v92_trained_permission_recovery },
 		{ "V.92 clipping selection retrain", test_v92_clipping_recovery },
 		{ "V.92 cleaned input through Phase 3", test_v92_phase3_cleaned_input },

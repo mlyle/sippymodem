@@ -6,7 +6,11 @@
 
 #include <string.h>
 
-enum { CPD_REPEAT_BASE_SAMPLES = 800 };
+enum {
+	CPD_REPEAT_BASE_SAMPLES = 800,
+	CPD_STARTUP_STALL_SAMPLES = 12000,
+	CPD_STARTUP_MIN_RECORDS = 3,
+};
 
 static bool silence_requested(const struct v92_downstream_control *control)
 {
@@ -412,6 +416,21 @@ enum v92_downstream_control_result v92_downstream_control_receive(
 		fail(control);
 		return V92_DOWNSTREAM_CONTROL_REJECTED;
 	}
+	if (event.type == V92_CONTROL_EVENT_SUVU &&
+	    !control->cpu_received && !control->peer_confirmation_received &&
+	    !control->request_silence && !control->suvu.request_silence &&
+	    control->startup_cpd_count == CPD_STARTUP_MIN_RECORDS) {
+		const uint64_t sent = control->transmit.transmitted_symbols;
+		const uint64_t first_end = control->first_cpd_end_frame * V90_CP_FRAME_INTERVALS;
+		const uint64_t third_end = control->third_cpd_end_frame * V90_CP_FRAME_INTERVALS;
+		const unsigned rtd = control->round_trip_delay_samples;
+
+		/* The source runs ahead of the wire. Give the peer time from
+		 * the emitted ends, and take the decision on a fresh status. */
+		if (sent >= first_end + rtd + CPD_STARTUP_STALL_SAMPLES &&
+		    sent >= third_end + rtd)
+			control->stalled_suvu_symbol = sent;
+	}
 	/* V.92 9.6.1.1.3: expiry alone is insufficient. Wait through a whole
 	 * valid CPu/SUVu at or after the deadline; damaged records do not count.
 	 * The output clock includes queued coder frames, so use the CPd's wire
@@ -432,6 +451,14 @@ enum v92_downstream_control_result v92_downstream_control_receive(
 		return V92_DOWNSTREAM_CONTROL_ERROR;
 	}
 	return V92_DOWNSTREAM_CONTROL_OK;
+}
+
+bool v92_downstream_control_startup_stalled(const struct v92_downstream_control *control)
+{
+	return control != NULL && control->stalled_suvu_symbol != 0u &&
+		control->stalled_suvu_symbol == control->transmit.transmitted_symbols &&
+		!control->cleardown.active && !control->cpu_received &&
+		!control->peer_confirmation_received;
 }
 
 static bool apply_pending_downstream(
@@ -625,6 +652,14 @@ bool v92_downstream_control_transmit(
 				control->cpd_start_frame +
 				control->initial_cpd.sequence_bits /
 					control->initial_cpd.frame_bits;
+			if (!control->previous_cpu && !control->cpu_received &&
+			    control->startup_cpd_count < CPD_STARTUP_MIN_RECORDS) {
+				++control->startup_cpd_count;
+				if (control->startup_cpd_count == 1u)
+					control->first_cpd_end_frame = control->status_start_frame;
+				else if (control->startup_cpd_count == CPD_STARTUP_MIN_RECORDS)
+					control->third_cpd_end_frame = control->status_start_frame;
+			}
 			control->transmit_acknowledges_cpu =
 				control->transmit.control.suvd.acknowledges_cpu;
 		}

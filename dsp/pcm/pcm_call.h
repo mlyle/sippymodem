@@ -570,6 +570,8 @@ struct pcm_call {
 	bool failed;
 	/* Peer rejections and response timeouts before PCM Phase 4 reaches data. */
 	uint8_t v92_training_failures;
+	/* One early retry while the peer keeps sending SUVu without CPu. */
+	bool v92_retried_stalled_startup;
 	/* Both B1 directions qualified at least once. Retain this history through
 	 * recovery, with one extra failed exchange before conventional fallback. */
 	bool pcm_upstream_trained;
