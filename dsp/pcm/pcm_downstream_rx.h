@@ -137,11 +137,14 @@ enum pcm_downstream_rx_result pcm_downstream_rx_receive(
 	struct pcm_downstream_rx *receiver, uint8_t network_octet,
 	struct pcm_downstream_event *event);
 
-/* History ends at the most recently received symbol. Adopt a different
- * frame phase only after two consecutive valid unacknowledging SUVd records
- * agree and the phase is unique. The caller still owns record acceptance. */
+/* History ends at the most recently received symbol. Require two consecutive
+ * valid, identical SUVd records at a unique phase. Acknowledgement is only
+ * eligible after CPu, when the caller supplies its retained status. Preserve
+ * the retained pause and any established acknowledgement. The caller still
+ * owns record acceptance. */
 bool pcm_downstream_rx_realign_status(struct pcm_downstream_rx *receiver,
-	const uint8_t history[PCM_DOWNSTREAM_STATUS_HISTORY]);
+	const uint8_t history[PCM_DOWNSTREAM_STATUS_HISTORY],
+	const struct v92_suvd_parameters *retained);
 
 const char *pcm_downstream_rx_result_name(
 	enum pcm_downstream_rx_result result);

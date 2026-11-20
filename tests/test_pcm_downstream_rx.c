@@ -1364,29 +1364,47 @@ static bool test_v92_status_realign(void)
 			training[i % sizeof(training)] = symbol.pcm.octet;
 		}
 		struct pcm_downstream_rx before = rx;
-		CHECK(!pcm_downstream_rx_realign_status(&rx, training) &&
+		CHECK(!pcm_downstream_rx_realign_status(&rx, training, NULL) &&
 		      memcmp(&rx, &before, sizeof(rx)) == 0, "TRN2d qualified a false phase");
-		CHECK(pcm_downstream_tx_start_suvd(&tx, &status) == PCM_DOWNSTREAM_TX_OK,
-		      "SUVd source did not start");
-		for (size_t i = 0; i < sizeof(control); ++i) {
-			CHECK(pcm_downstream_tx_next(&tx, &symbol) == PCM_DOWNSTREAM_TX_OK,
-			      "SUVd source stopped");
-			control[i] = symbol.pcm.octet;
-		}
-		for (size_t skip = 0; skip < V90_CP_FRAME_INTERVALS; ++skip) {
-			rx = before;
-			bool saw_status = false;
-			for (size_t i = skip; i < skip + PCM_DOWNSTREAM_STATUS_HISTORY; ++i)
-				saw_status |= pcm_downstream_rx_receive(&rx, control[i], &event) ==
-					PCM_DOWNSTREAM_RX_SUVD;
-			CHECK(saw_status == (skip == 0), "fixture produced unintended SUVd at phase %zu", skip);
-			CHECK(pcm_downstream_rx_realign_status(&rx, control + skip) == (skip != 0),
-			      "wrong realignment decision at phase %zu", skip);
-			saw_status = false;
-			for (size_t i = skip + PCM_DOWNSTREAM_STATUS_HISTORY; i < sizeof(control); ++i)
-				saw_status |= pcm_downstream_rx_receive(&rx, control[i], &event) ==
-					PCM_DOWNSTREAM_RX_SUVD;
-			CHECK(saw_status, "subsequent aligned record did not qualify at phase %zu", skip);
+		for (unsigned acknowledge = 0; acknowledge < 2; ++acknowledge) {
+			struct pcm_downstream_tx sender = tx;
+			status.acknowledges_cpu = acknowledge != 0;
+			CHECK(pcm_downstream_tx_start_suvd(&sender, &status) == PCM_DOWNSTREAM_TX_OK,
+			      "SUVd source did not start");
+			for (size_t i = 0; i < sizeof(control); ++i) {
+				CHECK(pcm_downstream_tx_next(&sender, &symbol) == PCM_DOWNSTREAM_TX_OK,
+				      "SUVd source stopped");
+				control[i] = symbol.pcm.octet;
+			}
+			for (size_t skip = 0; skip < V90_CP_FRAME_INTERVALS; ++skip) {
+				rx = before;
+				bool saw_status = false;
+				for (size_t i = skip; i < skip + PCM_DOWNSTREAM_STATUS_HISTORY; ++i)
+					saw_status |= pcm_downstream_rx_receive(&rx, control[i], &event) ==
+						PCM_DOWNSTREAM_RX_SUVD;
+				CHECK(saw_status == (skip == 0), "fixture produced unintended SUVd at phase %zu", skip);
+				const struct pcm_downstream_rx unaligned = rx;
+				const struct v92_suvd_parameters retained = { 0 };
+				const struct v92_suvd_parameters incompatible = {
+					.request_silence = acknowledge != 0,
+					.acknowledges_cpu = true,
+				};
+				CHECK(!pcm_downstream_rx_realign_status(&rx, control + skip, &incompatible) &&
+				      memcmp(&rx, &unaligned, sizeof(rx)) == 0,
+				      "changed pause or regressed acknowledgment realigned the receiver");
+				if (acknowledge)
+					CHECK(!pcm_downstream_rx_realign_status(&rx, control + skip, NULL) &&
+					      memcmp(&rx, &unaligned, sizeof(rx)) == 0,
+					      "acknowledgment realigned before CPu");
+				CHECK(pcm_downstream_rx_realign_status(&rx, control + skip,
+				      acknowledge ? &retained : NULL) == (skip != 0),
+				      "wrong realignment decision at phase %zu", skip);
+				saw_status = false;
+				for (size_t i = skip + PCM_DOWNSTREAM_STATUS_HISTORY; i < sizeof(control); ++i)
+					saw_status |= pcm_downstream_rx_receive(&rx, control[i], &event) ==
+						PCM_DOWNSTREAM_RX_SUVD;
+				CHECK(saw_status, "subsequent aligned record did not qualify at phase %zu", skip);
+			}
 		}
 	}
 	return true;

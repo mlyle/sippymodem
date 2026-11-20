@@ -296,7 +296,8 @@ static void observe_status_phase(struct v92_phase4_analog_station *station, uint
 	uint64_t symbols = station->receive.stream.received_symbols;
 	const unsigned first_scan = V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS + scan_period;
 	if (symbols <= first_scan - PCM_DOWNSTREAM_STATUS_HISTORY ||
-	    station->suvd_received || station->cpd_received ||
+	    (station->suvd_received && !station->transmit.control.cpu_sent) ||
+	    station->cpd_received ||
 	    station->status_phase_moves >= MAX_STATUS_PHASE_MOVES ||
 	    station->transmit.control.renegotiation || station->cleardown.active ||
 	    station->receive.stage != PCM_DOWNSTREAM_RX_V92_CONTROL)
@@ -314,7 +315,8 @@ static void observe_status_phase(struct v92_phase4_analog_station *station, uint
 	size_t tail = sizeof(history) - write;
 	memcpy(history, station->status_history + write, tail);
 	memcpy(history + tail, station->status_history, write);
-	if (pcm_downstream_rx_realign_status(&station->receive, history)) {
+	const struct v92_suvd_parameters *retained = station->suvd_received ? &station->suvd : NULL;
+	if (pcm_downstream_rx_realign_status(&station->receive, history, retained)) {
 		++station->status_phase_moves;
 		/* A second move, including a return to the original phase, needs
 		 * an entirely new receive window. */
@@ -364,6 +366,9 @@ enum v92_phase4_analog_station_result v92_phase4_analog_station_receive(
 			    &event.control.record.suvd.parameters) ||
 		    !arm_ed_confirmation(station))
 			return fail(station);
+		/* Start a new history after a valid status on the current clock. */
+		station->status_history_write = 0;
+		station->status_history_count = 0;
 		return V92_PHASE4_ANALOG_STATION_EVENT;
 	case PCM_DOWNSTREAM_RX_CPD: {
 		if (event.control.type != V92_CONTROL_EVENT_CPD ||

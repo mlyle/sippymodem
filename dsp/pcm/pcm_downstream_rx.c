@@ -529,13 +529,15 @@ enum pcm_downstream_rx_result pcm_downstream_rx_receive(
 }
 
 static bool status_phase(struct v90_pcm_stream_rx *stream,
-	struct v92_control_rx *control, const uint8_t *history, size_t first)
+	struct v92_control_rx *control, const uint8_t *history, size_t first,
+	const struct v92_suvd_parameters *retained)
 {
 	const uint8_t frame_bits = stream->decoder.mapping.frame_bits;
 	const size_t spacing = v92_suvd_frame_bits(frame_bits) /
 		frame_bits * V90_CP_FRAME_INTERVALS;
 	size_t previous = 0;
-	bool pause = false, qualified = false;
+	struct v92_suvd_parameters previous_status = { 0 };
+	bool qualified = false;
 	for (size_t i = first; i < PCM_DOWNSTREAM_STATUS_HISTORY; ++i) {
 		struct v90_pcm_stream_frame frame;
 		enum v90_pcm_stream_rx_result result =
@@ -551,20 +553,26 @@ static bool status_phase(struct v90_pcm_stream_rx *stream,
 		if (v92_control_rx_receive_bits_owned(control, frame.bits, frame.bit_count,
 			    &event) != V92_CONTROL_RX_OK)
 			return false;
-		if (event.type != V92_CONTROL_EVENT_SUVD || !control->record_boundary ||
-		    event.record.suvd.parameters.acknowledges_cpu)
+		if (event.type != V92_CONTROL_EVENT_SUVD || !control->record_boundary)
 			continue;
-		bool reported_pause = event.record.suvd.parameters.request_silence;
-		if (previous && i - previous == spacing && pause == reported_pause)
+		const struct v92_suvd_parameters status = event.record.suvd.parameters;
+		if (retained ? (status.request_silence != retained->request_silence ||
+				(retained->acknowledges_cpu && !status.acknowledges_cpu)) :
+				status.acknowledges_cpu)
+			continue;
+		if (previous && i - previous == spacing &&
+		    previous_status.request_silence == status.request_silence &&
+		    previous_status.acknowledges_cpu == status.acknowledges_cpu)
 			qualified = true;
 		previous = i;
-		pause = reported_pause;
+		previous_status = status;
 	}
 	return qualified;
 }
 
 bool pcm_downstream_rx_realign_status(struct pcm_downstream_rx *receiver,
-	const uint8_t history[PCM_DOWNSTREAM_STATUS_HISTORY])
+	const uint8_t history[PCM_DOWNSTREAM_STATUS_HISTORY],
+	const struct v92_suvd_parameters *retained)
 {
 	if (!receiver || !history || receiver->stage != PCM_DOWNSTREAM_RX_V92_CONTROL ||
 	    receiver->ed_requested || receiver->stream.decoder.mapping.kind != V90_CP_TRAINING ||
@@ -585,7 +593,7 @@ bool pcm_downstream_rx_realign_status(struct pcm_downstream_rx *receiver,
 	for (size_t phase = 0; phase < V90_CP_FRAME_INTERVALS; ++phase) {
 		struct v90_pcm_stream_rx stream = initial;
 		struct v92_control_rx control = initial_control;
-		if (!status_phase(&stream, &control, history, phase))
+		if (!status_phase(&stream, &control, history, phase, retained))
 			continue;
 		if (selected != V90_CP_FRAME_INTERVALS)
 			return false;

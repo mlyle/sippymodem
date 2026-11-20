@@ -2043,13 +2043,13 @@ static bool test_analog_early_control(void)
 	return true;
 }
 
-static bool test_status_phase_returns(void)
+static bool run_status_phase_returns(bool after_cpu)
 {
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
 		struct v92_cpt_parameters cpt = cpt_parameters(law);
 		struct v92_cpu_parameters cpu = cpu_parameters(law);
 		const struct v92_suvu_parameters suvu = { 0 };
-		const struct v92_suvd_parameters suvd = { 0 };
+		struct v92_suvd_parameters suvd = { 0 };
 		struct v90_pcm_mapping mapping;
 		struct v92_pcm_phase4_trn2u handoff;
 		struct pcm_downstream_rx downstream;
@@ -2071,12 +2071,38 @@ static bool test_status_phase_returns(void)
 			      v92_phase4_analog_station_receive(&station, symbol.pcm.octet) ==
 				      V92_PHASE4_ANALOG_STATION_OK, "fixture TRN2d stopped");
 		}
-		CHECK(pcm_downstream_tx_start_suvd(&tx, &suvd) == PCM_DOWNSTREAM_TX_OK &&
-		      pcm_downstream_tx_next(&tx, &symbol) == PCM_DOWNSTREAM_TX_OK,
+		CHECK(pcm_downstream_tx_start_suvd(&tx, &suvd) == PCM_DOWNSTREAM_TX_OK,
+		      "fixture could not start status");
+		if (after_cpu) {
+			bool at_boundary = false;
+			for (size_t i = 0; i < 960 && !at_boundary; ++i) {
+				CHECK(pcm_downstream_tx_next(&tx, &symbol) == PCM_DOWNSTREAM_TX_OK,
+				      "fixture status stopped before CPu");
+				enum v92_phase4_analog_station_result result =
+					v92_phase4_analog_station_receive(&station, symbol.pcm.octet);
+				CHECK(result == V92_PHASE4_ANALOG_STATION_OK ||
+				      result == V92_PHASE4_ANALOG_STATION_EVENT, "aligned status failed");
+				at_boundary = station.suvd_received &&
+					pcm_downstream_tx_is_v92_control_boundary(&tx);
+			}
+			CHECK(at_boundary && !station.status_phase_moves, "first status was not aligned");
+			for (unsigned i = 0; i < V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS + 4000u &&
+			     !station.transmit.control.cpu_sent; ++i) {
+				int16_t sample;
+				CHECK(v92_phase4_analog_station_transmit(&station, &sample) ==
+				      V92_PHASE4_ANALOG_STATION_OK, "fixture CPu stopped");
+			}
+			suvd.acknowledges_cpu = true;
+			CHECK(station.transmit.control.cpu_sent && !station.suvd.acknowledges_cpu &&
+			      pcm_downstream_tx_start_suvd(&tx, &suvd) == PCM_DOWNSTREAM_TX_OK,
+			      "fixture could not send the CPu acknowledgment");
+		}
+		CHECK(pcm_downstream_tx_next(&tx, &symbol) == PCM_DOWNSTREAM_TX_OK,
 		      "fixture could not omit the first status symbol");
 
 		bool restored = false;
-		for (size_t i = 0; i < 960 && !station.suvd_received; ++i) {
+		for (size_t i = 0; i < 960 &&
+		     !(after_cpu ? station.suvd.acknowledges_cpu : station.suvd_received); ++i) {
 			CHECK(pcm_downstream_tx_next(&tx, &symbol) == PCM_DOWNSTREAM_TX_OK,
 			      "fixture status stopped");
 			enum v92_phase4_analog_station_result result =
@@ -2084,7 +2110,8 @@ static bool test_status_phase_returns(void)
 			CHECK(result == V92_PHASE4_ANALOG_STATION_OK ||
 			      result == V92_PHASE4_ANALOG_STATION_EVENT, "fixture status failed at %zu", i);
 			if (station.status_phase_moves == 1 && !restored) {
-				CHECK(!station.suvd_received && station.status_history_count == 0,
+				CHECK(station.suvd_received == after_cpu && !station.suvd.acknowledges_cpu &&
+				      station.status_history_count == 0,
 				      "first move published status or retained its old evidence");
 				/* Restore the skipped interval just after the first move. */
 				restored = true;
@@ -2092,10 +2119,16 @@ static bool test_status_phase_returns(void)
 				      V92_PHASE4_ANALOG_STATION_OK, "repeated symbol failed");
 			}
 		}
-		CHECK(restored && station.status_phase_moves == 2 && station.suvd_received,
+		CHECK(restored && station.status_phase_moves == 2 && station.suvd_received &&
+		      station.suvd.acknowledges_cpu == after_cpu,
 		      "the second phase did not acquire on law %u", (unsigned)law);
 	}
 	return true;
+}
+
+static bool test_status_phase_returns(void)
+{
+	return run_status_phase_returns(false) && run_status_phase_returns(true);
 }
 
 static bool test_compact_boundary(void)
