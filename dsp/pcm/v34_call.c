@@ -763,13 +763,14 @@ static enum v34_call_result sample_phase4(
 	struct v34_call *call, int16_t received_sample,
 	v34_mapping_frame_source source, void *source_context,
 	int16_t *transmit_sample, struct v34_call_observation *observation,
-	struct v34_received_mapping_frame *received)
+	struct v34_received_mapping_frame *received,
+	const struct v34_phase4_echo_sample *echo_sample)
 {
 	enum v34_phase4_exchange_result result =
 		v34_phase4_exchange_sample(
 			&call->state.phase4, received_sample, source,
 			source_context, transmit_sample,
-			&observation->events.phase4, received);
+			&observation->events.phase4, received, echo_sample);
 	enum v34_call_result translated = phase4_result(result);
 
 	if (translated != V34_CALL_OK)
@@ -989,15 +990,6 @@ static enum v34_call_result reset_retrain_detector(struct v34_call *call)
 	return V34_CALL_OK;
 }
 
-static const struct v34_phase34_receiver *data_receiver(const struct v34_call *call)
-{
-	if (call->stage != V34_CALL_PHASE4 ||
-	    call->state.phase4.receive.stage != V34_PHASE34_RECEIVER_DATA ||
-	    call->state.phase4.receive.data_erasure)
-		return NULL;
-	return &call->state.phase4.receive;
-}
-
 enum v34_call_result v34_call_sample(
 	struct v34_call *call, int16_t received_sample,
 	v34_mapping_frame_source source, void *source_context,
@@ -1012,8 +1004,6 @@ enum v34_call_result v34_call_sample(
 	enum pcm_host_echo_mode echo_mode;
 	bool echo_advanced;
 	bool retrain_requested = false;
-	struct v34_line_receiver before;
-	bool observe_echo;
 	bool receive_erased;
 
 	if (!v34_call_is_valid(call) || transmit_sample == NULL ||
@@ -1044,10 +1034,6 @@ enum v34_call_result v34_call_sample(
 		call->failed = true;
 		return V34_CALL_NUMERIC_FAILURE;
 	}
-	const struct v34_phase34_receiver *data = data_receiver(call);
-	observe_echo = data != NULL;
-	if (observe_echo)
-		before = data->line;
 	switch (call->stage) {
 	case V34_CALL_PHASE2:
 		result = sample_phase2(
@@ -1060,7 +1046,13 @@ enum v34_call_result v34_call_sample(
 	case V34_CALL_PHASE4:
 		result = sample_phase4(
 			call, conditioned, source, source_context,
-			&generated, &emitted, &decoded);
+			&generated, &emitted, &decoded,
+			&(const struct v34_phase4_echo_sample){
+				.timing = &call->echo_timing,
+				.model = &call->echo,
+				.mode = echo_mode,
+				.received = received_sample,
+			});
 		if (result == V34_CALL_SOURCE_FAILURE)
 			return result;
 		if (result != V34_CALL_OK &&
@@ -1103,14 +1095,8 @@ enum v34_call_result v34_call_sample(
 		retrain_requested = true;
 	if (result == V34_CALL_OK && peer_s_has_timed_out(call, &emitted))
 		retrain_requested = true;
-	data = data_receiver(call);
-	if (result == V34_CALL_OK && observe_echo && data != NULL) {
-		v34_echo_timing_prepare(&call->echo_timing, &call->echo, echo_mode,
-			&before, &data->semantic.data, received_sample, conditioned);
-		v34_echo_timing_observe(&call->echo_timing, &call->echo, &data->line);
-	} else {
+	if (result != V34_CALL_OK || call->stage != V34_CALL_PHASE4)
 		v34_echo_timing_reset(&call->echo_timing);
-	}
 	/* An erased data interval still clocks actual TX into the reference,
 	 * but cannot qualify or suspend a frozen echo model from concealment. */
 	if (receive_erased)

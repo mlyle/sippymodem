@@ -5,6 +5,7 @@
 
 #include "v34_data_startup.h"
 #include "v34_data_stream.h"
+#include "v34_echo_timing.h"
 #include "v34_mp.h"
 #include "v34_phase3_exchange.h"
 #include "v34_training_transmitter.h"
@@ -151,6 +152,13 @@ bool v34_phase4_exchange_get_data_startup(
 	const struct v34_phase4_exchange *exchange,
 	struct v34_data_startup *startup);
 
+struct v34_phase4_echo_sample {
+	struct v34_echo_timing *timing;
+	struct pcm_host_echo *model;
+	enum pcm_host_echo_mode mode;
+	int16_t received;
+};
+
 /* Consume and produce one simultaneous line sample. `source` supplies local
  * post-B1 mapping frames; NULL deliberately emits idle ones. `received` changes
  * only with MAPPING_FRAME_RECEIVED and never exposes the peer's B1 frame.
@@ -159,11 +167,16 @@ bool v34_phase4_exchange_get_data_startup(
  * and E require completed calibration. Receive events affect the next unconsumed
  * transmit symbol.
  * SOURCE_FAILURE consumes neither the input nor any output. Terminal receive
- * errors still commit the consumed input, generated output, and event bits. */
+ * errors still commit the consumed input, generated output, and event bits.
+ * An optional echo sample borrows the caller's already validated echo and
+ * projection owners, disjoint from the exchange and outputs. The reference
+ * uses the previous line controls and the accepted data normalization.
+ * Source rejection leaves both echo owners untouched. */
 enum v34_phase4_exchange_result v34_phase4_exchange_sample(
 	struct v34_phase4_exchange *exchange, int16_t received_sample,
 	v34_mapping_frame_source source, void *source_context,
 	int16_t *transmit_sample, uint32_t *events,
-	struct v34_received_mapping_frame *received);
+	struct v34_received_mapping_frame *received,
+	const struct v34_phase4_echo_sample *echo_sample);
 
 #endif /* V34_PHASE4_EXCHANGE_H */

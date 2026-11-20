@@ -1546,6 +1546,10 @@ V34_PHASE4_EXCHANGE_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v34_phase4_exchange.o \
 	$(BUILD_DIR)/v34_data_quality.o \
 	$(BUILD_DIR)/v34_phase4_exchange.o \
+	$(BUILD_DIR)/v34_echo_timing.o \
+	$(BUILD_DIR)/pcm_host_echo.o \
+	$(BUILD_DIR)/echo_timing.o \
+	$(BUILD_DIR)/pcm_echo_reference.o \
 	$(sort $(filter-out \
 		$(BUILD_DIR)/test_v34_data_startup.o \
 		$(BUILD_DIR)/test_v34_phase3_exchange.o \
@@ -3210,11 +3214,7 @@ V34_PHASE2_TEST_OBJECTS := \
 V34_CALL_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v34_call.o \
 	$(BUILD_DIR)/v34_call.o \
-	$(BUILD_DIR)/v34_echo_timing.o \
 	$(BUILD_DIR)/v34_cleardown.o \
-	$(BUILD_DIR)/pcm_host_echo.o \
-	$(BUILD_DIR)/echo_timing.o \
-	$(BUILD_DIR)/pcm_echo_reference.o \
 	$(sort $(filter-out \
 		$(BUILD_DIR)/test_v34_phase2.o \
 		$(BUILD_DIR)/test_v34_phase4_exchange.o \

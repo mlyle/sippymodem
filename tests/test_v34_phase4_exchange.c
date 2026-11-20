@@ -250,7 +250,7 @@ static bool endpoint_sample(
 			v34_phase4_exchange_sample(
 				&endpoint->phase4, received,
 				supply_mapping_frame, endpoint,
-				transmit, phase4_events, &received_frame);
+				transmit, phase4_events, &received_frame, NULL);
 
 		if (result != V34_PHASE4_EXCHANGE_OK) {
 			fprintf(stderr, "Phase 4 sample: %d\n", result);
@@ -1144,7 +1144,7 @@ static bool test_peer_mp_preserves_trn_schedule(void)
 		}
 		CHECK(v34_phase4_exchange_sample(
 			      &crossed, 0, NULL, NULL, &sample, &events,
-			      &received) == V34_PHASE4_EXCHANGE_OK &&
+			      &received, NULL) == V34_PHASE4_EXCHANGE_OK &&
 		      events == V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_MP_STARTED &&
 		      crossed.transmit_mp_started &&
 		      crossed.receive.semantic.phase4.stage ==
@@ -1277,7 +1277,7 @@ static bool test_source_backpressure(void)
 		result = v34_phase4_exchange_sample(
 			&caller.phase4, caller.next_received,
 			reject_mapping_frame, NULL, &caller_transmit,
-			&caller_events, &received);
+			&caller_events, &received, NULL);
 		if (result == V34_PHASE4_EXCHANGE_SOURCE_FAILURE) {
 			CHECK(v34_phase4_exchanges_equal(&caller.phase4, &before) &&
 			      caller_transmit == 1234 &&
@@ -1389,7 +1389,7 @@ static bool test_mp_acknowledgment_boundaries(void)
 		events = 0;
 		CHECK(v34_phase4_exchange_sample(
 			      &pending, 0, NULL, NULL, &sample, &events,
-			      &received) == V34_PHASE4_EXCHANGE_OK,
+			      &received, NULL) == V34_PHASE4_EXCHANGE_OK,
 		      "ordinary MP record did not complete");
 		CHECK(pending.transmit_mp_prime_started &&
 		      !pending.transmit_mp_prime_complete &&
@@ -1405,7 +1405,7 @@ static bool test_mp_acknowledgment_boundaries(void)
 		events = 0;
 		CHECK(v34_phase4_exchange_sample(
 			      &pending, 0, NULL, NULL, &sample, &events,
-			      &received) == V34_PHASE4_EXCHANGE_OK &&
+			      &received, NULL) == V34_PHASE4_EXCHANGE_OK &&
 		      pending.transmit_mp_prime_complete &&
 		      pending.transmit.training.stage ==
 			      V34_TRAINING_TRANSMITTER_PHASE4_E &&
@@ -1545,25 +1545,25 @@ static bool test_validation_and_transactionality(void)
 	saved = caller.phase4;
 	CHECK(v34_phase4_exchange_sample(
 		      &caller.phase4, 0, NULL, NULL,
-		      NULL, &events, (struct v34_received_mapping_frame[1]){ 0 }) ==
+		      NULL, &events, (struct v34_received_mapping_frame[1]){ 0 }, NULL) ==
 		      V34_PHASE4_EXCHANGE_INVALID_ARGUMENT &&
 	      v34_phase4_exchange_sample(
 		      &caller.phase4, 0, NULL, NULL,
-		      &sample, NULL, (struct v34_received_mapping_frame[1]){ 0 }) ==
+		      &sample, NULL, (struct v34_received_mapping_frame[1]){ 0 }, NULL) ==
 		      V34_PHASE4_EXCHANGE_INVALID_ARGUMENT &&
 	      v34_phase4_exchange_sample(
 		      &caller.phase4, 0, NULL, NULL,
-		      &sample, &events, NULL) ==
+		      &sample, &events, NULL, NULL) ==
 		      V34_PHASE4_EXCHANGE_INVALID_ARGUMENT &&
 	      v34_phase4_exchange_sample(
 		      &caller.phase4, 0,
 		      NULL, NULL, &overlap.samples[0], &overlap.events,
-		      (struct v34_received_mapping_frame[1]){ 0 }) ==
+		      (struct v34_received_mapping_frame[1]){ 0 }, NULL) ==
 		      V34_PHASE4_EXCHANGE_INVALID_ARGUMENT &&
 	      v34_phase4_exchange_sample(
 		      &caller.phase4, 0,
 		      NULL, NULL, &overlap.samples[1], &overlap.events,
-		      (struct v34_received_mapping_frame[1]){ 0 }) ==
+		      (struct v34_received_mapping_frame[1]){ 0 }, NULL) ==
 		      V34_PHASE4_EXCHANGE_INVALID_ARGUMENT &&
 	      v34_phase4_exchanges_equal(&caller.phase4, &saved) &&
 	      sample == 1234 && events == UINT32_C(0x5aa5a55a) &&

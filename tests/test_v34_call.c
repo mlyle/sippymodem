@@ -1049,10 +1049,21 @@ static bool test_source_backpressure(void)
 {
 	struct endpoint caller;
 	struct endpoint answerer;
-	struct channel channel;
+	struct channel channel = {
+		.echo[V34_CALLING_STATION] = {
+			.delay_samples = 256,
+			.gain_q15 = 700,
+		},
+	};
 
-	CHECK(run_online_pair(&caller, &answerer, &channel, false),
+	CHECK(endpoint_init_symmetric(&caller, V34_CALLING_STATION,
+		V34_SYMBOL_RATE_3200, 12) &&
+	      endpoint_init_symmetric(&answerer, V34_ANSWERING_STATION,
+		V34_SYMBOL_RATE_3200, 12) &&
+	      run_pair_until_frames(&caller, &answerer, &channel, 256),
 	      "backpressure pair failed");
+	CHECK(caller.call.echo_timing.initialized,
+	      "backpressure test needs active echo projection");
 	for (size_t index = 0; index < 1000u; ++index) {
 		struct v34_call before = caller.call;
 		struct v34_call_observation observation;

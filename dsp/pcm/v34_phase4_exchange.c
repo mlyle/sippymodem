@@ -1017,7 +1017,8 @@ enum v34_phase4_exchange_result v34_phase4_exchange_sample(
 	struct v34_phase4_exchange *exchange, int16_t received_sample,
 	v34_mapping_frame_source source, void *source_context,
 	int16_t *transmit_sample, uint32_t *events,
-	struct v34_received_mapping_frame *received)
+	struct v34_received_mapping_frame *received,
+	const struct v34_phase4_echo_sample *echo_sample)
 {
 	struct v34_phase4_exchange next;
 	struct v34_received_mapping_frame decoded;
@@ -1057,6 +1058,23 @@ enum v34_phase4_exchange_result v34_phase4_exchange_sample(
 	if (!v34_phase4_exchange_is_valid(&next)) {
 		exchange->failed = true;
 		return V34_PHASE4_EXCHANGE_NUMERIC_FAILURE;
+	}
+	if (echo_sample != NULL) {
+		const struct v34_phase34_receiver *before = &exchange->receive;
+		const struct v34_phase34_receiver *after = &next.receive;
+
+		/* Both line versions are already available in this transaction.
+		 * B1 can update the data gain on the just-accepted sample. */
+		if (result == V34_PHASE4_EXCHANGE_OK &&
+		    before->stage == V34_PHASE34_RECEIVER_DATA && !before->data_erasure &&
+		    after->stage == V34_PHASE34_RECEIVER_DATA && !after->data_erasure &&
+		    v34_echo_timing_prepare(echo_sample->timing, echo_sample->model,
+			echo_sample->mode, &before->line, &after->semantic.data,
+			echo_sample->received, received_sample))
+			v34_echo_timing_observe(echo_sample->timing, echo_sample->model,
+				&after->line);
+		else
+			v34_echo_timing_reset(echo_sample->timing);
 	}
 	*exchange = next;
 	*transmit_sample = generated;
