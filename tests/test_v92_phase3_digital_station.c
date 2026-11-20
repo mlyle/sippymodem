@@ -245,6 +245,59 @@ static bool check_trn1u_without_su_reversal(
 	return true;
 }
 
+/* Fault only the sliding receiver. The CPt/E1u stream already accepted Ri,
+ * so reacquisition must preserve it in both outgoing stages. */
+static bool check_ri_reacquisition(const struct v92_phase3_analog_station *source)
+{
+	struct v92_phase3_analog_station committed = *source;
+	uint8_t levels[2];
+	uint8_t silence = g711_encode(source->law, 0);
+
+	CHECK(g711_ucode_octet(source->law, TEST_UCODE, false, &levels[0]) &&
+	      g711_ucode_octet(source->law, TEST_UCODE, true, &levels[1]),
+	      "Ri level fixture failed");
+	for (unsigned stage = 0; stage < 2u; ++stage) {
+		struct v92_phase3_analog_station probe = committed;
+
+		CHECK(v92_phase3_analog_station_receive(&probe, silence, silence) ==
+		      V92_PHASE3_ANALOG_STATION_OK &&
+		      probe.receive.ri.stage == V90_PHASE4_RI_SEARCH_HUNT,
+		      "damaged Ri did not restart the hunt");
+		for (unsigned i = 0; i < V90_PHASE4_RI_SEARCH_SYMBOLS; ++i) {
+			uint8_t octet = levels[i % V90_PHASE4_RI_PERIOD < V90_PHASE4_RI_PERIOD / 2u];
+
+			CHECK(v92_phase3_analog_station_receive(&probe, octet, octet) ==
+			      V92_PHASE3_ANALOG_STATION_OK,
+			      "Ri reacquisition failed at sample %u in transmit stage %u",
+			      i, (unsigned)committed.transmit_stage);
+		}
+		CHECK(probe.receive.ri.stage == V90_PHASE4_RI_SEARCH_AMBIGUOUS,
+		      "Ri search did not reacquire");
+		struct v92_phase3_analog_station expected = committed;
+		for (unsigned i = 0; i < 64u; ++i) {
+			int16_t sample, reference;
+
+			CHECK(v92_phase3_analog_station_transmit(&probe, NULL, &sample) ==
+			      V92_PHASE3_ANALOG_STATION_OK &&
+			      v92_phase3_analog_station_transmit(&expected, NULL, &reference) ==
+			      V92_PHASE3_ANALOG_STATION_OK &&
+			      probe.transmit_stage == expected.transmit_stage && sample == reference,
+			      "Ri reacquisition changed the outgoing stream at sample %u", i);
+		}
+		if (stage == 0u) {
+			for (unsigned i = 0; i <= V92_CPT_MAX_FRAME_BITS + V92_PCM_PHASE3_E1U_SYMBOLS &&
+			     !v92_phase3_analog_station_transmit_complete(&committed); ++i) {
+				int16_t sample;
+				CHECK(v92_phase3_analog_station_transmit(&committed, NULL, &sample) ==
+				      V92_PHASE3_ANALOG_STATION_OK, "emitting E1u failed");
+			}
+			CHECK(committed.transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_TRN2U,
+			      "Ri transmit fixture did not finish E1u");
+		}
+	}
+	return true;
+}
+
 static bool run_exchange(enum g711_law law, unsigned delay,
 	enum v90_dil_profile dil_profile, int32_t channel_phase)
 {
@@ -279,6 +332,7 @@ static bool run_exchange(enum g711_law law, unsigned delay,
 	int16_t previous_channel_sample = 0;
 	size_t su_started = SIZE_MAX;
 	bool cpt_started = false;
+	bool tested_ri_reacquisition = false;
 	bool trn2u_started = false;
 	bool finished = false;
 
@@ -331,6 +385,13 @@ static bool run_exchange(enum g711_law law, unsigned delay,
 			      result == V92_PHASE3_ANALOG_STATION_COMPLETE,
 			      "downstream receive failed at %zu: %s", index,
 			      v92_phase3_analog_station_result_name(result));
+			if (dil_symbols && !tested_ri_reacquisition &&
+			    analog.receive_stage == V92_PHASE3_ANALOG_RECEIVE_RI &&
+			    analog.transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_CPT &&
+			    analog.transmit.cpt.finish_requested) {
+				CHECK(check_ri_reacquisition(&analog), "committed CPt lost after Ri damage");
+				tested_ri_reacquisition = true;
+			}
 			if (waiting_jp_prime && analog.receive_stage == V92_PHASE3_ANALOG_RECEIVE_RI)
 				CHECK(memcmp(&analog.transmit, &before.transmit, sizeof(analog.transmit)) == 0 &&
 				      memcmp(&analog.transmit_delay, &before.transmit_delay,
@@ -442,7 +503,7 @@ static bool run_exchange(enum g711_law law, unsigned delay,
 			v92_phase3_digital_station_transmit_complete(&digital) &&
 			v92_phase3_digital_station_receive_complete(&digital);
 	}
-	CHECK(finished && trn2u_started &&
+	CHECK(finished && trn2u_started && (!dil_symbols || tested_ri_reacquisition) &&
 	      !v92_phase3_analog_station_has_failed(&analog) &&
 	      !v92_phase3_digital_station_has_failed(&digital) &&
 	      analog.transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_TRN2U &&

@@ -623,16 +623,19 @@ static enum v92_phase3_analog_station_result receive_ri(
 		v90_phase4_ri_search_receive_owned(
 			&station->receive.ri, network_octet);
 
-	/* The acknowledgement ending CPt is Ri-bar for N=0, plain Ri for DIL. */
-	if (result == (station->dil_profile == V90_DIL_PROFILE_NONE ?
-		V90_PHASE4_RI_SEARCH_TRANSITION_DETECTED :
-		V90_PHASE4_RI_SEARCH_ACQUIRED))
-		return station->transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_CPT &&
-		       v92_pcm_phase3_cpt_tx_request_finish(
-			       &station->transmit.cpt) ==
-			       V92_PCM_PHASE3_CPT_TX_OK ?
-			       V92_PHASE3_ANALOG_STATION_OK :
-			       V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH;
+	/* Ri-bar ends CPt for N=0, plain Ri with DIL. A later reacquisition
+	 * can repeat the acknowledgement after the transmitter has accepted it. */
+	enum v90_phase4_ri_search_result cpt_acknowledgement =
+		station->dil_profile == V90_DIL_PROFILE_NONE ?
+		V90_PHASE4_RI_SEARCH_TRANSITION_DETECTED : V90_PHASE4_RI_SEARCH_ACQUIRED;
+	if (result == cpt_acknowledgement &&
+	    station->transmit_stage != V92_PHASE3_ANALOG_TRANSMIT_TRN2U) {
+		if (station->transmit_stage != V92_PHASE3_ANALOG_TRANSMIT_CPT ||
+		    (!station->transmit.cpt.finish_requested &&
+		     v92_pcm_phase3_cpt_tx_request_finish(&station->transmit.cpt) !=
+		     V92_PCM_PHASE3_CPT_TX_OK))
+			return V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH;
+	}
 	if (result == V90_PHASE4_RI_SEARCH_OK ||
 	    result == V90_PHASE4_RI_SEARCH_ACQUIRED ||
 	    result == V90_PHASE4_RI_SEARCH_TRANSITION_DETECTED)
